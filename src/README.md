@@ -12,15 +12,13 @@ The following components are required to minimally build Altirra:
     * C++ core desktop features
     * MSVC v143 - VS 2022 C++ x64/x86 build tools (Latest)
     * Windows 11 SDK (10.0.22621.0 or newer)
-* MADS 2.1.0+ (6502 assembler) (<https://mads.atari8.info>) 
+* MADS 2.1.0+ (6502 assembler) (<https://mads.atari8.info>)
 
 VS2019 or earlier, MinGW, GCC, and Clang compilers are not supported.
 
 Additional components to compile for Windows on ARM (ARM64) (*not* AMD64):
 * Visual Studio components
     * MSVC v143 - VS 2022 C++ ARM64 build tools (Latest)
-    
-    
 
 Additional components to compile the help file:
 * Visual Studio components
