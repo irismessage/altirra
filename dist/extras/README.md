@@ -1,10 +1,10 @@
-* `sampledevices/`
+* sampledevices/
 
     Contains sample device descriptions to use with the Custom Device feature
     of the emulator, in System > Configure System > Devices > Add > Custom
     Device. The .atdevice file specification is in the help file.
 
-* `deviceserver/`
+* deviceserver/
 
     Base implementation of the TCP device server for handling custom requests
     from a custom device, and sample device servers for printer and R-Verter
