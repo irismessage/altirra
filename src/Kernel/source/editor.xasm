@@ -1,0 +1,306 @@
+;	Altirra - Atari 800/800XL emulator
+;	Kernel ROM replacement
+;	Copyright (C) 2008 Avery Lee
+;
+;	This program is free software; you can redistribute it and/or modify
+;	it under the terms of the GNU General Public License as published by
+;	the Free Software Foundation; either version 2 of the License, or
+;	(at your option) any later version.
+;
+;	This program is distributed in the hope that it will be useful,
+;	but WITHOUT ANY WARRANTY; without even the implied warranty of
+;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;	GNU General Public License for more details.
+;
+;	You should have received a copy of the GNU General Public License
+;	along with this program; if not, write to the Free Software
+;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+.proc	EditorOpen
+	jsr		ScreenOpen
+	rts
+.endp
+
+.proc	EditorClose
+	rts
+.endp
+
+.proc	EditorGetByte
+	jsr		KeyboardGetByte
+	bpl		readOK
+	rts
+readOK:
+	pha
+	jsr		EditorPutByte
+	pla
+	ldy		#0
+	rts
+.endp
+
+;ATASCII	Internal
+;00-1F		40-5F
+;20-3F		00-1F
+;40-5F		20-3F
+;60-7F		60-7F
+;80-9F		C0-DF
+;A0-BF		80-9F
+;C0-DF		A0-BF
+;E0-FF		E0-FF
+
+ATASCIIToInternalTab:
+	dta		$40
+	dta		$20
+	dta		$60
+	dta		$00
+
+.proc	EditorPutByte
+	ldy		botscr
+	bne		screenok
+
+	pha
+	lda		icax1z
+	pha
+	lda		icax2z
+	pha
+	
+	mva		#$0c	icax1z
+	mva		#0		icax2z
+	jsr		ScreenOpen
+	
+	pla
+	sta		icax2z
+	pla
+	sta		icax1z
+	pla
+screenok:
+
+	;check if display is suspended
+suspendloop:
+	ldx		ssflag
+	bne		suspendloop
+
+	;check if display of control codes is desired
+	ldx		dspflg
+	bne		rawput	
+
+	cmp		#$9b
+	bne		notret
+	
+	jsr		EditorToggleCursor	
+	lda		lmargn
+	sta		colcrs
+	inc		rowcrs
+	lda		rowcrs
+	cmp		botscr
+	bcc		noywrap
+	jsr		EditorScroll
+	ldx		botscr
+	dex
+	stx		rowcrs
+noywrap:
+	jsr		EditorRecomputeCursorAddr	
+	jsr		EditorToggleCursor
+	
+	ldy		#0
+	rts
+
+isclear:
+	jsr		EditorClear
+	ldy		#0
+	rts
+	
+isup:
+	ldx		rowcrs
+	bne		isup2
+	ldx		botscr
+isup2:
+	dex
+	stx		rowcrs
+	jmp		moveexit
+	
+isdown:
+	ldx		rowcrs
+	inx
+	cpx		botscr
+	bcc		isdown2
+	ldx		#0
+isdown2:
+	stx		rowcrs
+	jmp		moveexit
+	
+moveexit:
+	jsr		EditorToggleCursor
+	jsr		EditorRecomputeCursorAddr
+	jsr		EditorToggleCursor
+	ldy		#0
+	rts
+	
+notret:
+	cmp		#$7d
+	beq		isclear
+	cmp		#$1c
+	beq		isup
+	cmp		#$1d
+	beq		isdown
+
+rawput:
+	sta		a0
+	rol
+	rol
+	rol
+	rol
+	and		#$03
+	tax
+	lda		ATASCIIToInternalTab,x
+	eor		a0
+	
+	;plot character
+	ldy		#0
+	sta		(oldadr),y
+	
+	;inc pos
+	inw		oldadr
+	inc		colcrs
+	lda		colcrs
+	cmp		rmargn
+	bcc		nowrap
+	inc		rowcrs
+	lda		botscr
+	cmp		rowcrs
+	bcs		noscroll	
+	jsr		EditorScroll
+noscroll:
+	mva		lmargn colcrs
+	jsr		EditorRecomputeCursorAddr
+nowrap:
+
+	jsr		EditorToggleCursor
+
+	ldy		#0
+	rts
+.endp
+
+.proc	EditorToggleCursor
+	lda		#$80
+	ldy		#0
+	eor		(oldadr),y
+	sta		(oldadr),y
+	rts
+.endp
+
+.proc	EditorRecomputeCursorAddr
+	mva		#0		oldadr+1
+	lda		rowcrs
+	asl
+	rol		oldadr+1		;row*2
+	asl
+	rol		oldadr+1		;row*4
+	clc
+	adc		rowcrs			;row*5
+	bcc		nobump
+	inc		oldadr+1
+nobump:
+	asl
+	rol		oldadr+1		;row*10
+	asl
+	rol		oldadr+1		;row*20
+	asl
+	rol		oldadr+1		;row*40
+	clc
+	adc		colcrs			;row*40+col
+	bcc		nobump2
+	inc		oldadr+1
+nobump2:
+	clc
+	adc		txtmsc
+	sta		oldadr
+	lda		oldadr+1
+	adc		txtmsc+1
+	sta		oldadr+1
+	rts
+.endp
+
+.proc	EditorScroll
+	mwa		txtmsc	a0
+	lda		a0
+	clc
+	adc		#40	
+	sta		a1
+	lda		a0+1
+	adc		#0
+	sta		a1+1
+	
+	ldx		botscr
+	dex
+vertloop:
+	ldy		#39
+horizloop:
+	lda		(a1),y
+	sta		(a0),y
+	dey
+	bpl		horizloop
+	
+	lda		a1
+	sta		a0
+	clc
+	adc		#40
+	sta		a1
+	lda		a1+1
+	sta		a0+1
+	adc		#0
+	sta		a1+1
+	
+	dex
+	bne		vertloop
+	
+	ldy		#39
+	lda		#0
+clearloop:
+	sta		(a0),y
+	dey
+	bpl		clearloop
+	rts
+.endp
+
+.proc	EditorClear
+	ldx		botscr
+	beq		norows
+	mwa		txtmsc	a0
+	dex
+vertloop:
+	ldy		#39
+	lda		#0
+horizloop:
+	sta		(a0),y
+	dey
+	bpl		horizloop
+	
+	lda		a0
+	clc
+	adc		#40
+	sta		a0
+	lda		a0+1
+	adc		#0
+	sta		a0+1
+	
+	dex
+	bne		vertloop
+norows:
+	mva		lmargn	colcrs
+	mva		#0		rowcrs
+	jsr		EditorRecomputeCursorAddr
+	jsr		EditorToggleCursor
+	rts
+.endp
+
+.proc	EditorGetStatus
+	rts
+.endp
+
+.proc	EditorSpecial
+	rts
+.endp
+
+.proc	EditorInit
+	rts
+.endp

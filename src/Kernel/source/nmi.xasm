@@ -1,0 +1,234 @@
+;	Altirra - Atari 800/800XL emulator
+;	Kernel ROM replacement
+;	Copyright (C) 2008 Avery Lee
+;
+;	This program is free software; you can redistribute it and/or modify
+;	it under the terms of the GNU General Public License as published by
+;	the Free Software Foundation; either version 2 of the License, or
+;	(at your option) any later version.
+;
+;	This program is distributed in the hope that it will be useful,
+;	but WITHOUT ANY WARRANTY; without even the implied warranty of
+;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;	GNU General Public License for more details.
+;
+;	You should have received a copy of the GNU General Public License
+;	along with this program; if not, write to the Free Software
+;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+.proc NmiRoutine
+	bit		nmist		;check nmi status
+	bpl		NotDLI		;skip if not a DLI
+	jmp		(vdslst)	;jump to display list vector
+NotVBI:
+	lda		#$20
+	bit		nmist
+	bne		IsBreak
+	sta		nmires
+	rti
+IsBreak
+	jmp		DefaultHandler_A_RTI
+
+NotDLI
+	pha
+	bvc		NotVBI		;skip if not a VBI
+	txa
+	pha
+	tya
+	pha
+	sta		nmires		;reset VBI interrupt
+	jmp		(vvblki)	;jump through vblank immediate vector	
+.endp
+
+.proc VBlankImmediate
+
+	;increment real-time clock
+	inc		rtclok+2
+	bne		ClockDone
+	inc		rtclok+1
+	bne		ClockDone
+	inc		rtclok
+ClockDone
+
+	;TODO: Attract processing
+
+	;decrement timer 1 and check for underflow
+	lda		cdtmv1				;check low byte
+	bne		Timer1DecCheck		;if non-zero, decrement and check for fire
+	lda		cdtmv1+1			;check high byte
+	beq		Timer1Done			;if clear, timer's not running
+	dec		cdtmv1+1			;decrement high byte
+	dec		cdtmv1				;decrement low byte
+	bne		Timer1Done			;we're done
+Timer1DecCheck
+	dec		cdtmv1				;decrement low byte
+	bne		Timer1Done
+	jsr		Timer1Dispatch
+Timer1Done
+
+	;check for critical operation
+	lda		critic			;is the critical flag set?
+	bne		VBlankExit		;yes, abort
+	lda		#$04			;I flag
+	tsx
+	and		$0104,x			;I flag set on pushed stack?
+	beq		VBlankStage2	;exit if so
+xit:
+	pla
+	tay
+	pla
+	tax
+	pla
+	rti
+
+Timer1Dispatch:
+	jmp		(cdtma1)
+.endp
+
+VBlankExit = VBlankImmediate.xit
+	
+.proc VBlankStage2
+	
+	;======== stage 2 processing
+	
+	;re-enable interrupts
+	cli
+
+	;update shadow registers
+	mva		sdlsth	dlisth
+	mva		sdlstl	dlistl
+	mva		sdmctl	dmactl
+	mva		chbas	chbase
+	mva		chact	chactl
+	mva		gprior	prior
+	
+	ldx		#8
+ColorLoop
+	lda		pcolr0,x
+	eor		colrsh
+	and		drkmsk
+	sta		colpm0,x
+	dex
+	bpl		ColorLoop
+
+	mva		#8		consol
+	
+	;decrement timer 2 and check for underflow
+	lda		cdtmv2				;check low byte
+	bne		Timer2DecCheck		;if non-zero, decrement and check for fire
+	lda		cdtmv2+1			;check high byte
+	beq		Timer2Done			;if clear, timer's not running
+	dec		cdtmv2+1			;decrement high byte
+	dec		cdtmv2				;decrement low byte
+	bne		Timer2Done			;we're done
+Timer2DecCheck
+	dec		cdtmv2				;decrement low byte
+	bne		Timer2Done
+	jsr		Timer2Dispatch
+Timer2Done
+
+	;decrement timers 3-5 and set flags
+	ldx		#4
+TimerNLoop:
+	lda		cdtmv3,x			;check low byte
+	bne		TimerNDecCheck		;if non-zero, decrement and check for fire
+	lda		cdtmv3+1,x			;check high byte
+	beq		TimerNDone			;if clear, timer's not running
+	dec		cdtmv3+1,x			;decrement high byte
+	dec		cdtmv3,x			;decrement low byte
+	bne		TimerNDone			;we're done
+TimerNDecCheck:
+	dec		cdtmv3,x			;decrement low byte
+	bne		TimerNDone
+	mva		#0 cdtmf3,x
+TimerNDone:
+	dex
+	dex
+	bpl		TimerNLoop
+	
+	;TODO: read POKEY keyboard register and handle auto-repeat
+	
+	;decrement keyboard debounce counter
+	lda		keydel
+	bne		NoDebounce
+	dec		keydel
+NoDebounce:
+	
+	;update controller shadows
+	ldx		#3
+PotReadLoop:
+	lda		pot0,x
+	sta		paddl0,x
+	lda		pot4,x
+	sta		paddl4,x
+	lda		trig0,x
+	sta		strig0,x
+	dex
+	bpl		PotReadLoop
+	
+	lda		porta
+	tax
+	and		#$0f
+	sta		stick0
+	txa
+	lsr
+	lsr
+	lsr
+	lsr
+	sta		stick1
+
+	lda		portb
+	tax
+	and		#$0f
+	sta		stick2
+	txa
+	lsr
+	lsr
+	lsr
+	lsr
+	sta		stick3
+	
+	jmp		(vvblkd)	;jump through vblank deferred vector
+	
+Timer2Dispatch
+	jmp		(cdtma2)
+.endp
+
+.proc VBlankDeferred
+	
+	jmp		VBlankExit
+.endp
+
+.proc SetVBlankVector
+	;A = item to update
+	;	1-5	timer 1-5 counter value
+	;	6	VVBLKI
+	;	7	VVBLKD
+	;X = MSB
+	;Y = LSB
+	
+	asl
+	sta		intemp
+	lda		#0
+	sei
+	sta		nmien
+	tya
+	ldy		intemp
+	sta		cdtmv1-2,y
+	txa
+	sta		cdtmv1-1,y
+	cli
+	
+	mva		#$40 nmien
+
+	bit		nmist
+	bvc		xit
+	lda		#<xit
+	pha
+	lda		#>xit
+	pha
+	php
+	jmp		(nmivec)
+xit:
+	rts
+.endp

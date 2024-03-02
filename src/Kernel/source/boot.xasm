@@ -1,0 +1,97 @@
+;	Altirra - Atari 800/800XL emulator
+;	Kernel ROM replacement
+;	Copyright (C) 2008 Avery Lee
+;
+;	This program is free software; you can redistribute it and/or modify
+;	it under the terms of the GNU General Public License as published by
+;	the Free Software Foundation; either version 2 of the License, or
+;	(at your option) any later version.
+;
+;	This program is distributed in the hope that it will be useful,
+;	but WITHOUT ANY WARRANTY; without even the implied warranty of
+;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;	GNU General Public License for more details.
+;
+;	You should have received a copy of the GNU General Public License
+;	along with this program; if not, write to the Free Software
+;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+.proc DiskBoot
+	;read first sector to $0400
+	mva		#1		dunit
+	mva		#$52	dcomnd
+	mwa		#$0400	dbuflo
+	mwa		#1		daux1
+	jsr		dskinv
+	bmi		fail
+	
+	mva		$0400	dflags
+	mva		$0401	dbsect
+	mwa		$0402	bootad
+	mwa		$0404	dosini
+	
+	;copy page 0 to boot address
+	mwa		$0402	a0
+	mwa		a0		dbuflo
+	ldy		#$7f
+page0copy:
+	lda		$0400,y
+	sta		(a0),y
+	dey
+	bpl		page0copy
+
+	;load remaining sectors
+sectorloop:
+	dec		dbsect
+	beq		loaddone
+	inc		daux1
+	adw		dbuflo #$80
+	jsr		dskinv
+	bpl		sectorloop
+	
+	;read failed
+fail:
+	cpy		#SIOErrorTimeout
+	bne		failmsg
+	rts
+	
+failmsg:
+	ldx		#0
+msgloop:
+	txa
+	pha
+	lda		errormsg,x
+	jsr		EditorPutByte
+	pla
+	tax
+	inx
+	cpx		#11
+	bne		msgloop
+	jmp		DiskBoot
+
+loaddone:
+	mva		#1 boot?
+	jsr		multiboot
+	jsr		appinit
+	jmp		(dosvec)
+	
+multiboot:
+	lda		bootad
+	add		#$05
+	tax
+	lda		bootad+1
+	adc		#0
+	pha
+	txa
+	pha
+	rts
+	
+appinit:
+	jmp		(dosini)
+
+errormsg:
+	dta		'BOOT ERROR',$9B
+
+.endp
+
+	nop

@@ -1,0 +1,506 @@
+// Microsoft Visual C++ generated resource script.
+//
+#include "resource.h"
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include "winresrc.h"
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE 
+BEGIN
+    "resource.h\0"
+END
+
+2 TEXTINCLUDE 
+BEGIN
+    "#include ""winresrc.h""\r\n"
+    "\0"
+END
+
+3 TEXTINCLUDE 
+BEGIN
+    "\r\n"
+    "\0"
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Menu
+//
+
+IDR_MENU1 MENU 
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&Open Disk/Program...\tAlt+O", ID_FILE_OPENDISK
+        MENUITEM "Dis&k Drives...",             ID_FILE_DISKDRIVES
+        POPUP "Cassette"
+        BEGIN
+            MENUITEM "Load...",                     ID_CASSETTE_LOAD
+        END
+        MENUITEM SEPARATOR
+        MENUITEM "Quick load state",            ID_FILE_QUICKLOADSTATE
+        MENUITEM "Quick save state",            ID_FILE_QUICKSAVESTATE
+        MENUITEM SEPARATOR
+        MENUITEM "&Attach Cartridge...",        ID_FILE_ATTACHCARTRIDGE
+        MENUITEM "&Detach Cartridge",           ID_FILE_DETACHCARTRIDGE
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit",                       ID_FILE_EXIT
+    END
+    POPUP "&View"
+    BEGIN
+        MENUITEM "&Full Screen\tAlt+Enter",     ID_VIEW_FULLSCREEN
+        POPUP "Fi&lter Mode"
+        BEGIN
+            MENUITEM "Next Mode\tCtrl+F1",          ID_FILTERMODE_NEXTMODE
+            MENUITEM SEPARATOR
+            MENUITEM "Point",                       ID_FILTERMODE_POINT
+            MENUITEM "Bilinear",                    ID_FILTERMODE_BILINEAR
+            MENUITEM "Bicubic",                     ID_FILTERMODE_BICUBIC
+            MENUITEM "Any Suitable",                ID_FILTERMODE_ANYSUITABLE
+        END
+        POPUP "&GTIA Visualization"
+        BEGIN
+            MENUITEM "&Next Mode\tCtrl+F8",         ID_GTIAVISUALIZATION_NEXTMODE
+        END
+        POPUP "&ANTIC Visualization"
+        BEGIN
+            MENUITEM "&Next Mode\tShift+F8",        ID_ANTICVISUALIZATION_NEXTMODE
+        END
+        MENUITEM SEPARATOR
+        MENUITEM "&Display\tAlt+1",             ID_VIEW_DISPLAY
+    END
+    POPUP "&System"
+    BEGIN
+        MENUITEM "Warm Reset\tCtrl+F5",         ID_SYSTEM_WARMRESET
+        MENUITEM "&Cold Reset\tShift+F5",       ID_SYSTEM_COLDRESET
+        MENUITEM SEPARATOR
+        MENUITEM "&Warp Speed\tF1",             ID_SYSTEM_WARPSPEED
+        MENUITEM "Pause When Inactive",         ID_SYSTEM_PAUSEWHENINACTIVE
+        MENUITEM SEPARATOR
+        POPUP "&Hardware"
+        BEGIN
+            MENUITEM "800",                         ID_HARDWARE_800
+            MENUITEM "800XL",                       ID_HARDWARE_800XL
+        END
+        POPUP "&Firmware"
+        BEGIN
+            MENUITEM "Default",                     40089
+            MENUITEM "800 (OS-B)",                  40090
+            MENUITEM "600XL/800XL",                 40091
+            MENUITEM "HLE Kernel",                  ID_FIRMWARE_HLE
+            MENUITEM "LLE Kernel",                  ID_FIRMWARE_LLE
+            MENUITEM SEPARATOR
+            MENUITEM "BASIC",                       ID_FIRMWARE_BASIC
+        END
+        POPUP "&Memory Size"
+        BEGIN
+            MENUITEM "&48K (800)",                  ID_MEMORYSIZE_48K
+            MENUITEM "52K",                         ID_MEMORYSIZE_52K
+            MENUITEM "&64K (XL)",                   ID_MEMORYSIZE_64K
+            MENUITEM "&128K (130XE)",               ID_MEMORYSIZE_128K
+            MENUITEM "320K",                        ID_MEMORYSIZE_320K
+            MENUITEM "576K",                        ID_MEMORYSIZE_576K
+            MENUITEM "1088K",                       ID_MEMORYSIZE_1088K
+        END
+        POPUP "&Video"
+        BEGIN
+            MENUITEM "&PAL",                        ID_SYSTEM_PAL
+            MENUITEM "&Artifacting",                ID_SYSTEM_ARTIFACTING
+        END
+        POPUP "&Disk Drive"
+        BEGIN
+            MENUITEM "&Enabled",                    ID_DISKDRIVE_ENABLED
+            MENUITEM SEPARATOR
+            MENUITEM "&SIO Patch",                  ID_DISKDRIVE_SIOPATCH
+            MENUITEM "&Burst SIO Transfer",         ID_DISKDRIVE_BURSTSIOTRANSFER
+            MENUITEM "&Accurate Sector Timing",     ID_DISKDRIVE_ACCURATESECTORTIMING
+        END
+        MENUITEM "Ha&rd Disk...",               ID_SYSTEM_HARDDISK
+        POPUP "&Cassette"
+        BEGIN
+            MENUITEM "&SIO Patch",                  ID_CASSETTE_SIOPATCH
+        END
+        MENUITEM "CP&U Options...",             ID_SYSTEM_CPUOPTIONS
+        MENUITEM "Accelerated Floating-Point",  ID_SYSTEM_FPPATCH
+        POPUP "Audio"
+        BEGIN
+            MENUITEM "Stereo",                      ID_AUDIO_STEREO
+        END
+    END
+    POPUP "&Input"
+    BEGIN
+        MENUITEM "&Joystick\tShift+F1",         ID_INPUT_JOYSTICK
+        MENUITEM "&Mouse",                      ID_INPUT_MOUSE
+    END
+    POPUP "&Debug"
+    BEGIN
+        MENUITEM "Enable Debugger",             ID_DEBUG_ENABLEDEBUGGER
+        MENUITEM "Open Source File...\tCtrl+Shift+O", ID_DEBUG_OPENSOURCE
+        POPUP "&Window"
+        BEGIN
+            MENUITEM "&Console\tAlt+2",             ID_VIEW_CONSOLE
+            MENUITEM "&Registers\tAlt+3",           ID_VIEW_REGISTERS
+            MENUITEM "D&isassembly\tAlt+4",         ID_VIEW_DISASSEMBLY
+            MENUITEM "Call Stac&k\tAlt+5",          ID_VIEW_CALLSTACK
+            MENUITEM "&History\tAlt+6",             ID_VIEW_HISTORY
+            MENUITEM "&Memory\tAlt+7",              ID_VIEW_MEMORY
+        END
+        POPUP "Options"
+        BEGIN
+            MENUITEM "Auto-Reload ROMs on Cold Reset", ID_DEBUG_AUTORELOADROMS
+            MENUITEM "Auto-Load Kernel Symbols",    ID_DEBUG_AUTOLOADKERNELSYMBOLS
+        END
+        MENUITEM SEPARATOR
+        MENUITEM "Run\tF5",                     ID_DEBUG_RUN
+        MENUITEM "Break\tCtrl+Break",           ID_DEBUG_BREAK
+        MENUITEM SEPARATOR
+        MENUITEM "Step Into\tF11",              ID_DEBUG_STEPINTO
+        MENUITEM "Step Over\tF10",              ID_DEBUG_STEPOVER
+        MENUITEM "Step Out\tShift+F11",         ID_DEBUG_STEPOUT
+    END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&About...",                   ID_HELP_ABOUT
+        MENUITEM "&Change Log...",              ID_HELP_CHANGELOG
+    END
+END
+
+IDR_DEBUGGER_MENU MENU 
+BEGIN
+    MENUITEM "&Debug",                      65535
+END
+
+IDR_SOURCE_CONTEXT_MENU MENU 
+BEGIN
+    POPUP "Context"
+    BEGIN
+        MENUITEM "Go to Disassembly",           ID_CONTEXT_GOTODISASSEMBLY
+        MENUITEM "Set Next Statement",          ID_CONTEXT_SETNEXTSTATEMENT
+    END
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Accelerator
+//
+
+IDR_DEBUGGER_ACCEL ACCELERATORS 
+BEGIN
+    VK_CANCEL,      ID_DEBUG_BREAK,         VIRTKEY, CONTROL, NOINVERT
+    VK_F5,          ID_DEBUG_RUN,           VIRTKEY, NOINVERT
+    VK_F11,         ID_DEBUG_STEPINTO,      VIRTKEY, NOINVERT
+    VK_F11,         ID_DEBUG_STEPOUT,       VIRTKEY, SHIFT, NOINVERT
+    VK_F10,         ID_DEBUG_STEPOVER,      VIRTKEY, NOINVERT
+    VK_F9,          ID_DEBUG_TOGGLEBREAKPOINT, VIRTKEY, NOINVERT
+END
+
+IDR_ACCELERATOR1 ACCELERATORS 
+BEGIN
+    "O",            ID_FILE_OPENDISK,       VIRTKEY, ALT, NOINVERT
+    "5",            ID_VIEW_CALLSTACK,      VIRTKEY, ALT, NOINVERT
+    "2",            ID_VIEW_CONSOLE,        VIRTKEY, ALT, NOINVERT
+    "4",            ID_VIEW_DISASSEMBLY,    VIRTKEY, ALT, NOINVERT
+    "1",            ID_VIEW_DISPLAY,        VIRTKEY, ALT, NOINVERT
+    "6",            ID_VIEW_HISTORY,        VIRTKEY, ALT, NOINVERT
+    "3",            ID_VIEW_REGISTERS,      VIRTKEY, ALT, NOINVERT
+    "7",            ID_VIEW_MEMORY,         VIRTKEY, ALT, NOINVERT
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_CPU_OPTIONS DIALOGEX 0, 0, 186, 125
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "CPU options"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    CONTROL         "Record instruction &history",IDC_ENABLE_HISTORY,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,7,98,10
+    CONTROL         "Track code &paths",IDC_ENABLE_PATHS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,18,71,10
+    CONTROL         "Enable illegal instructions",IDC_ENABLE_ILLEGALS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,29,95,10
+    CONTROL         "Stop on BRK instruction",IDC_STOP_ON_BRK,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,40,91,10
+    LTEXT           "CPU model:",IDC_STATIC,7,57,38,8
+    CONTROL         "6502C",IDC_CPUMODEL_6502C,"Button",BS_AUTORADIOBUTTON | WS_GROUP,17,67,37,10
+    CONTROL         "65C02",IDC_CPUMODEL_65C02,"Button",BS_AUTORADIOBUTTON,17,77,37,10
+    CONTROL         "65C816",IDC_CPUMODEL_65C816,"Button",BS_AUTORADIOBUTTON,17,87,41,10
+    DEFPUSHBUTTON   "OK",IDOK,76,104,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,129,104,50,14
+END
+
+IDD_DISK_DRIVES DIALOGEX 0, 0, 335, 162
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Disk drives"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Drive &1",IDC_STATIC,7,7,40,14,SS_CENTERIMAGE
+    EDITTEXT        IDC_DISKPATH1,47,7,206,14,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "...",IDC_BROWSE1,256,7,18,14
+    PUSHBUTTON      "Save As...",IDC_SAVEAS1,277,7,51,14
+    LTEXT           "Write mode",IDC_STATIC,47,23,48,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_WRITEMODE1,101,23,119,64,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "New disk...",IDC_NEWDISK1,223,22,51,14
+    PUSHBUTTON      "Eject",IDC_EJECT1,277,22,51,14
+    LTEXT           "Drive &2",IDC_STATIC,7,39,40,14,SS_CENTERIMAGE
+    EDITTEXT        IDC_DISKPATH2,47,39,206,14,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "...",IDC_BROWSE2,256,39,18,14
+    PUSHBUTTON      "Save As...",IDC_SAVEAS2,277,39,51,14
+    LTEXT           "Write mode",IDC_STATIC,47,55,48,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_WRITEMODE2,101,55,119,62,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "New disk...",IDC_NEWDISK2,223,54,51,14
+    PUSHBUTTON      "Eject",IDC_EJECT2,277,54,51,14
+    LTEXT           "Drive &3",IDC_STATIC,7,71,40,14,SS_CENTERIMAGE
+    EDITTEXT        IDC_DISKPATH3,47,71,206,14,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "...",IDC_BROWSE3,256,71,18,14
+    PUSHBUTTON      "Save As...",IDC_SAVEAS3,277,71,51,14
+    LTEXT           "Write mode",IDC_STATIC,47,87,48,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_WRITEMODE3,101,87,119,68,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "New disk...",IDC_NEWDISK3,223,86,51,14
+    PUSHBUTTON      "Eject",IDC_EJECT3,277,86,51,14
+    LTEXT           "Drive &4",IDC_STATIC,7,103,40,14,SS_CENTERIMAGE
+    EDITTEXT        IDC_DISKPATH4,47,103,206,14,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "...",IDC_BROWSE4,256,103,18,14
+    PUSHBUTTON      "Save As...",IDC_SAVEAS4,277,103,51,14
+    LTEXT           "Write mode",IDC_STATIC,47,119,48,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_WRITEMODE4,101,119,119,81,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "New disk...",IDC_NEWDISK4,223,118,51,14
+    PUSHBUTTON      "Eject",IDC_EJECT4,277,118,51,14
+    DEFPUSHBUTTON   "OK",IDOK,278,141,50,14
+END
+
+IDD_CREATE_DISK DIALOGEX 0, 0, 229, 94
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Create new disk"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Sector count",IDC_STATIC,7,7,70,14,SS_CENTERIMAGE
+    EDITTEXT        IDC_SECTOR_COUNT,77,7,145,14,ES_AUTOHSCROLL
+    LTEXT           "Boot sector count",IDC_STATIC,7,24,70,14,SS_CENTERIMAGE
+    EDITTEXT        IDC_BOOT_SECTOR_COUNT,77,24,145,14,ES_AUTOHSCROLL
+    LTEXT           "Sector size",IDC_STATIC,7,42,70,10,SS_CENTERIMAGE
+    CONTROL         "128 (SD)",IDC_SECTOR_SIZE_128,"Button",BS_AUTORADIOBUTTON | WS_GROUP,77,42,44,10
+    CONTROL         "256 (DD)",IDC_SECTOR_SIZE_256,"Button",BS_AUTORADIOBUTTON,77,53,45,10
+    DEFPUSHBUTTON   "OK",IDOK,119,73,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,172,73,50,14
+END
+
+IDD_ABOUT DIALOGEX 0, 0, 290, 113
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "About Altirra"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    DEFPUSHBUTTON   "OK",IDOK,120,92,50,14
+    LTEXT           "Altirra -- Atari 800/800XL emulator\nCopyright (C) 2008-2009 Avery Lee, All Rights Reserved.",IDC_STATIC,7,7,276,20
+    LTEXT           "This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation; either version 2 of the License, or (at your option) any later version.",IDC_STATIC,7,29,276,36
+    LTEXT           "This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.",IDC_STATIC,7,59,276,27
+END
+
+IDD_CHANGE_LOG DIALOG  0, 0, 350, 199
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Altirra Change Log"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    DEFPUSHBUTTON   "OK",IDOK,293,178,50,14
+    CONTROL         "",IDC_TEXT,"RICHEDIT",TCS_HOTTRACK | TCS_RAGGEDRIGHT | TCS_MULTISELECT | WS_BORDER | WS_VSCROLL | WS_TABSTOP,7,7,336,166
+END
+
+IDD_HARD_DISK DIALOGEX 0, 0, 320, 71
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Hard disk setup"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    CONTROL         "&Enable hard disk (H:) handler",IDC_ENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,7,109,10
+    LTEXT           "&Host path",IDC_STATIC,7,20,50,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_PATH,57,20,239,12,ES_AUTOHSCROLL
+    PUSHBUTTON      "&...",IDC_BROWSE,298,20,15,12
+    CONTROL         "&Read only",IDC_READONLY,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,57,35,48,10
+    DEFPUSHBUTTON   "OK",IDOK,210,50,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,263,50,50,14
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO 
+BEGIN
+    IDD_CPU_OPTIONS, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 179
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 118
+    END
+
+    IDD_DISK_DRIVES, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 328
+        VERTGUIDE, 47
+        VERTGUIDE, 220
+        VERTGUIDE, 253
+        VERTGUIDE, 274
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 155
+    END
+
+    IDD_CREATE_DISK, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 222
+        VERTGUIDE, 77
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 87
+    END
+
+    IDD_ABOUT, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 283
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 106
+    END
+
+    IDD_CHANGE_LOG, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 179
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 88
+    END
+
+    IDD_HARD_DISK, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 313
+        VERTGUIDE, 57
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 64
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Version
+//
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,1,0,0
+ PRODUCTVERSION 1,1,0,0
+ FILEFLAGSMASK 0x17L
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x4L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "FileDescription", "Altirra 8-bit computer emulator"
+            VALUE "FileVersion", "1, 1, 0, 0"
+            VALUE "InternalName", "Altirra"
+            VALUE "LegalCopyright", "Copyright (C) 2008-2009 Avery Lee, All Rights Reserved."
+            VALUE "OriginalFilename", "Altirra.exe"
+            VALUE "ProductName", "Altirra"
+            VALUE "ProductVersion", "1.1"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// KERNEL
+//
+
+#if defined(APSTUDIO_INVOKED) || defined(NDEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_KERNEL$(NDEBUG)     KERNEL                  "..\\..\\..\\out\\release\\kernel.rom"
+#else
+IDR_KERNEL              KERNEL                  "..\\..\\..\\out\\release\\kernel.rom"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(DEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_KERNEL$(DEBUG)      KERNEL                  "..\\..\\..\\out\\debug\\kernel.rom"
+#else
+IDR_KERNEL              KERNEL                  "..\\..\\..\\out\\debug\\kernel.rom"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(NDEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_HLEKERNEL$(NDEBUG)  KERNEL                  "..\\..\\..\\out\\release\\hlekernel.rom"
+#else
+IDR_HLEKERNEL           KERNEL                  "..\\..\\..\\out\\release\\hlekernel.rom"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(DEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_HLEKERNEL$(DEBUG)   KERNEL                  "..\\..\\..\\out\\debug\\hlekernel.rom"
+#else
+IDR_HLEKERNEL           KERNEL                  "..\\..\\..\\out\\debug\\hlekernel.rom"
+#endif
+#endif
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// STUFF
+//
+
+IDR_CHANGES             STUFF                   "changes.txt"
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+

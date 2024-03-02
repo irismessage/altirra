@@ -1,0 +1,265 @@
+;	Altirra - Atari 800/800XL emulator
+;	Kernel ROM replacement
+;	Copyright (C) 2008 Avery Lee
+;
+;	This program is free software; you can redistribute it and/or modify
+;	it under the terms of the GNU General Public License as published by
+;	the Free Software Foundation; either version 2 of the License, or
+;	(at your option) any later version.
+;
+;	This program is distributed in the hope that it will be useful,
+;	but WITHOUT ANY WARRANTY; without even the implied warranty of
+;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;	GNU General Public License for more details.
+;
+;	You should have received a copy of the GNU General Public License
+;	along with this program; if not, write to the Free Software
+;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+.proc	ScreenInit
+	mva		memtop+1 ramtop
+	
+	mva		#0	colrsh
+	mva		#$FE	drkmsk
+	rts
+.endp
+
+;Display list:
+;	24 blank lines (3 bytes)
+;	initial mode line with LMS (3 bytes)
+;	mode lines
+;	LMS for modes >4 pages
+;	wait VBL (3 bytes)
+;
+;	total is 8-10 bytes + mode lines
+
+;Mode	Type	Res		Colors	ANTIC	Mem(unsplit)	Mem(split)
+; 0		Text	40x24	1.5		2		960+32 (4)		960+32 (4)
+; 1		Text	20x24	5		6		480+32 (2)		560+32 (3)
+; 2		Text	20x12	5		7		240+20 (2)		360+22 (2)
+; 3		Bitmap	40x24	4		8		240+32 (2)		360+32 (2)
+; 4		Bitmap	80x48	2		9		480+56 (3)		560+52 (3)
+; 5		Bitmap	80x48	4		A		960+56 (4)		960+52 (4)
+; 6		Bitmap	160x96	2		B		1920+104 (8)	1760+92 (8)
+; 7		Bitmap	160x96	4		C		3840+104 (16)	3360+92 (14)
+; 8		Bitmap	320x192	1.5		F		7680+202 (32)	6560+174 (27)
+; 9		Bitmap	80x192	16		F		7680+202 (32)	6560+174 (27)
+; 10	Bitmap	80x192	9		F		7680+202 (32)	6560+174 (27)
+; 11	Bitmap	80x192	16		F		7680+202 (32)	6560+174 (27)
+; 12	Text	40x24	5		4		960+32 (4)		960+32 (4)
+; 13	Text	40x12	5		5		480+20 (2)		560+24 (3)
+; 14	Bitmap	160x192	2		D		3840+200 (16)	3360+172 (14)
+; 15	Bitmap	160x192	4		E		7680+202 (32)	6560+172 (27)
+
+ScreenANTICModeTable	dta		2,6,7,8,9,10,11,12,15,15,15,15,4,5,13,14
+ScreenRowCount			dta		24,24,12,24,48,48,96,96,192,192,192,192,24,12,192,192
+						dta		24,20,10,20,40,40,80,80,160,160,160,160,20,10,160,160
+ScreenPRIORTable		dta		0,0,0,0,0,0,0,0,0,$40,$80,$c0,0,0,0,0
+ScreenPageCount			dta		3,1,1,1,3,3,7,15,31,31,31,31,3,1,15,31	;-1
+						dta		3,3,1,1,3,3,7,15,31,31,31,31,3,3,15,31
+ScreenDLSize			dta		32,32,20,32,56,56,104,104,202,202,202,202,32,20,200,202
+						dta		32,32,22,32,52,52,92,92,174,174,174,174,32,24,172,172
+						
+ScreenTextSplitOffset:
+	dta		a(40*20)
+	dta		a(20*20)
+	dta		a(20*10)
+	dta		a(10*20)
+	dta		a(10*40)
+	dta		a(20*40)
+	dta		a(20*80)
+	dta		a(40*80)
+	dta		a(40*160)
+	dta		a(40*160)
+	dta		a(40*160)
+	dta		a(40*160)
+	dta		a(40*20)
+	dta		a(40*10)
+	dta		a(20*160)
+	dta		a(40*160)
+	
+ScreenTextRows			dta		
+
+.proc	ScreenOpen
+	;shut off ANTIC playfield and instruction DMA
+	lda		sdmctl
+	and		#$dc
+	sta		sdmctl
+	sta		dmactl
+	
+	;read mode value and mask
+	lda		icax2z
+	and		#15
+	sta		icax2z
+
+	;--- allocate pages of memory at top
+	lda		icax1z
+	and		#$10
+	ora		icax2z
+	tax
+	lda		ScreenPageCount,x	;get page count minus 1 (power of two)
+	eor		#$ff
+	ora		#$f0				;don't align to more than 4K
+	and		memtop+1			;mask down to nearest boundary
+	clc
+	sbc		ScreenPageCount,x	;drop off number of pages
+	
+	sta		savmsc+1
+	sta		txtmsc+1
+	
+	lda		ScreenDLSize,x
+	sta		savmsc
+	sta		txtmsc
+	
+	;--- set row count
+	ldy		#0
+	txa
+	bne		nodefaultrows
+	ldy		#24
+nodefaultrows:
+	sty		botscr
+
+	;--- construct display list
+	mva		savmsc+1	a0+1
+	mva		#0		a0
+	ldy		#0
+	
+	;add 24 blank lines
+	lda		#$70
+	sta		(a0),y
+	iny
+	sta		(a0),y
+	iny
+	sta		(a0),y
+	iny
+	
+	;add initial mode line with LMS
+	ldx		icax2z
+	lda		ScreenANTICModeTable,x
+	ora		#$40
+	sta		(a0),y
+	iny
+	lda		savmsc
+	sta		(a0),y
+	iny
+	lda		savmsc+1
+	sta		(a0),y
+	iny
+	
+	;add remaining mode lines
+	ldx		icax2z
+	lda		ScreenANTICModeTable,x
+	pha
+	lda		icax1z
+	and		#$10
+	ora		icax2z
+	tax
+	lda		ScreenRowCount,x
+	tax
+	dex
+	pla
+rowloop:
+	sta		(a0),y
+	iny
+	dex
+	bne		rowloop
+	
+	;add 4 lines of mode 2 if split is enabled and we're not in mode 0
+	lda		icax1z
+	and		#$10
+	beq		nosplit
+	lda		icax2z
+	beq		nosplit
+	
+	;adjust text window offset
+	asl
+	tax
+	clc
+	lda		savmsc
+	adc		ScreenTextSplitOffset,x
+	sta		txtmsc
+	lda		savmsc+1
+	adc		ScreenTextSplitOffset+1,x
+	sta		txtmsc+1
+	
+	;add split mode lines
+	ldx		#4
+	stx		botscr
+	lda		#$02
+splitloop:
+	sta		(a0),y
+	iny
+	dex
+	bne		splitloop
+nosplit:
+
+	;add waitvbl
+	lda		#$41
+	sta		(a0),y
+	iny
+	lda		a0
+	sta		(a0),y
+	iny
+	lda		a0+1
+	sta		(a0),y
+	iny
+		
+	;init character set
+	mva		#$e0	chbas
+	mva		#$02	chact
+	
+	;init colors
+	mva		#$28	color0
+	mva		#$ca	color1
+	mva		#$94	color2
+	mva		#$46	color3
+	mva		#$00	color4
+	
+	;init PRIOR
+	ldx		icax2z
+	lda		ScreenPRIORTable,x
+	sta		gprior
+	
+	;reset cursor
+	lda		lmargn
+	sta		colcrs
+	lda		#0
+	sta		colcrs+1
+	sta		rowcrs
+
+	;init display list and playfield dma
+	mwa		a0	sdlstl
+	lda		sdmctl
+	ora		#$22
+	sta		sdmctl
+	
+	;enable VBI
+	lda		#$40
+	sta		nmires
+	sta		nmien
+	
+	;clear if requested
+	lda		#$20
+	bit		icax1z
+	bne		noclear
+	jsr		EditorClear
+	jsr		EditorToggleCursor
+noclear:
+	
+	jsr		EditorRecomputeCursorAddr
+	jsr		EditorToggleCursor
+	
+	;all good
+	ldy		#0
+	rts		
+.endp
+
+.proc ScreenClose
+	ldy		#0
+	rts
+.endp
+
+.proc ScreenPutByte
+	ldy		#0
+	rts
+.endp

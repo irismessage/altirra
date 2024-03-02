@@ -1,0 +1,99 @@
+Altirra Change Log
+
+Version 1.2 [July 5, 2009]:
+   [features added]
+   * Debugger: Added memory pane.
+   * Debugger: Shift+F11 is now a shortcut for Step Out.
+   * Debugger: History window now supports the mouse wheel.
+   * GTIA: Added artifacting support.
+   * UI: Cursor auto-hides when over display pane.
+   * UI: Added window pane layout saving.
+   * UI: Basic support for an Atari ST mouse in port 2.
+   * UI: Added more keyboard mappings.
+   * Simulator: Added initial save state support.
+   * Simulator: Added option to pause when not the active application.
+   * CPU: Initial 65C02 and 65C816 support.
+
+   [bugs fixed]
+   * Simulator: Fixed RUNAD handling in executable loader.
+   * Simulator: Fixed incorrect TRIG3 cartridge sense on launch.
+   * UI: Tweaked aspect ratio constants.
+   * UI: Fixed some bugs with pane undocking.
+   * ANTIC: Added missing address wrapping (fixes hang loading Bounty Bob).
+   * ANTIC: Fixed VSCROL timing to acccommodate more mode line extension tricks.
+   * ANTIC: Fixed low bits in NMIST register.
+   * POKEY: Tweaked hi-pass to sound better.
+   * POKEY: Implemented fast pot scan mode.
+   * POKEY: Two-tone serial mode now affects timer 1/2 sound output.
+   * Debugger: Breakpoints can now be seen on the active line.
+   * Debugger: Fixed early stop when trying to Step Out across a PLA or PLP instruction.
+   * Debugger: CPU status traces on single-step use the instruction PC rather than the raw PC.
+   * HLE: Fixed black status pane in Pole Position due to incorrect attract mode handling.
+   * HLE: Fixed startup path problems that prevented SpartaDOS X from starting.
+   * HLE: Screen handler now adjusts user memory limit.
+   * HLE: Fixed length return value bug in CIO put characters command.
+   * HLE: Control codes now work with S:.
+   * Disk: Fixed CIO return codes for H: handler.
+   * Cartridge: Cart bank is now reset on cold reset.
+   * Cartridge: Fixed banking and recognition problems with MaxFlash 1M cartridge format.
+   * CPU: Added option to halt on BRK instructions.
+   * GTIA: Fixed nasty bug where P/M collisions got messed up whenever the simulator dropped a frame.
+   * GTIA: Fixed behavior of sprites when repositioned during active region.
+   * GTIA: Implemented text blink and vertical reflect bits.
+   * GTIA: Fixed low bit in PAL register in NTSC mode.
+
+Version 1.1 [May 12, 2009]:
+   [features added]
+   * CPU: Added an option to disable illegal opcode support.
+   * Disk: Added .XFD support.
+   * Disk: Added rudimentary hard disk (H:) support.
+   * UI: Added exception handler to write crash information.
+   * UI: F8 now also breaks into the debugger.
+   * UI: Fixed some window activation issues in the docking system.
+   * UI: Display is now locked to correct aspect ratio.
+   * UI: Dockable panes are now based on percentage rather than absolute width.
+   * UI: Changed location of Registry key to work around antivirus false positives.
+   * Cartridge: Added support for cartridge images that have headers.
+   * Cartridge: Added support for MaxFlash 128K and 1M cartridge formats.
+   * Debugger: F5/F8/F9/F10/Shift+F10 now work.
+   * Debugger: Frames are now double-clickable in the call stack window.
+   * Debugger: F10 now works in the console command line.
+   * Debugger: Added history window.
+   * HLE: Rewrote HLE kernel mode to be based off the LLE kernel for better compatibility.
+
+   [bugs fixed]
+   * Simulator: Init and run vectors are now implemented properly -- fixes New Year's Miracle demo.
+   * Simulator: $FFFF optional headers in executables no longer produce load errors.
+   * Kernel: DRKMSK was not set -- fixes missing status bar in The Last Word.
+   * Debugger: The start of instruction PC is now reported instead of the CPU raw internal PC.
+   * Debugger: Fixed infinite loop when viewing disassembly beyond $FFFF.
+   * Debugger: Disassembly view edit window now works.
+   * Debugger: Fixed a cycle being lost by the CPU on each step or breakpoint hit.
+   * Debugger: Console window now scrolls to bottom when updating.
+   * UI: Implemented some Ctrl+Key combinations.
+   * UI: Fixed jittering problems in full-screen mode.
+   * UI: Fixed some focus problems when docking and undocking panes.
+   * UI: Full-screen mode no longer shows window borders when using GDI or DirectDraw for display.
+   * UI: Removed horizontal and vertical blank regions from display window.
+   * UI: Caps Lock now works.
+   * UI: Mouse pointer is now hidden in full-screen mode.
+   * Disk: Improved disk emulation compatibility with SpartaDOS X.
+   * Disk: Fixed corruption of first byte on sector writes.
+   * Pokey: Added missing channel 2+4 high pass filter.
+   * Pokey: Fixed off-by-one in 1.79MHz 16-bit timing that screwed up some demos using 4-bit polynomial beats.
+   * Pokey: Pot scanning is now implemented.
+   * GTIA: Color mixing with PRIOR D0-D3=0 now works.
+   * GTIA: Fixed incorrect luminance for background in 16 color mode.
+   * GTIA: Fixed player/playfield priorities in 9 color mode.
+   * GTIA: Fifth player now mixes in PF3 color properly in 16 color/luma modes.
+   * GTIA: Color registers no longer have four luma bits.
+   * GTIA: ANTIC modes other than 2, 3, and F now work with GTIA modes.
+   * GTIA: Implemented psuedo-mode-E caused by resetting the GTIA mode mid-scanline.
+   * GTIA: Collisions now register in 9 color mode.
+   * GTIA: Implemented one color clock shift in 9 color mode.
+   * GTIA: Changing HSCROL in the middle of a mode line now works.
+   * ANTIC: Corrected WSYNC, DLI, and VBI timing.
+   * CPU: Fixed instruction timing for read-modify-write opcodes using abs,X addressing.
+
+Version 1.0:
+   * Initial release.

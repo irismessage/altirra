@@ -1,0 +1,134 @@
+;	Altirra - Atari 800/800XL emulator
+;	Kernel ROM replacement
+;	Copyright (C) 2008 Avery Lee
+;
+;	This program is free software; you can redistribute it and/or modify
+;	it under the terms of the GNU General Public License as published by
+;	the Free Software Foundation; either version 2 of the License, or
+;	(at your option) any later version.
+;
+;	This program is distributed in the hope that it will be useful,
+;	but WITHOUT ANY WARRANTY; without even the implied warranty of
+;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;	GNU General Public License for more details.
+;
+;	You should have received a copy of the GNU General Public License
+;	along with this program; if not, write to the Free Software
+;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+.proc BugCheck
+	; turn off all ANTIC interrupts
+	lda		#$00
+	sta		nmien
+	sta		nmires
+
+	;initialize CPU
+	cld
+	ldx		#$ff
+	txs
+	
+	;shut off ANTIC DMA
+	lda		#$00
+	sta		dmactl
+	
+	;construct display list at $0800
+	lda		#$70
+	sta		$0800
+	sta		$0801
+	sta		$0802
+	lda		#$42
+	sta		$0803
+	lda		#$00
+	sta		$0804
+	lda		#$10
+	sta		$0805
+	lda		#$02
+	ldx		#23
+textloop:
+	dex
+	sta		$0806,x
+	bpl		textloop
+	lda		#$41
+	sta		$081d
+	lda		#$00
+	sta		$081e
+	lda		#$08
+	sta		$081f
+	
+	;init character set
+	lda		#$e0
+	sta		chbase
+	lda		#$00
+	sta		chactl
+	
+	;init colors
+	lda		#$00
+	sta		colbk
+	lda		#$82
+	sta		colpf2
+	lda		#$0f
+	sta		colpf1
+	
+	;init display list and playfield dma
+	lda		#$00
+	sta		dlistl
+	lda		#$08
+	sta		dlisth
+	lda		#$22
+	sta		dmactl
+	lda		#$00
+	sta		hscrol
+	sta		vscrol
+	
+	;clear screen
+	lda		#$00
+	ldx		#$10
+	sta		$00
+	stx		$01
+	ldy		#$00
+clearloop:
+	sta		($00),y
+	iny
+	bne		clearloop
+	inx
+	stx		$01
+	cpx		#$14
+	bne		clearloop
+	
+	;fill text
+	ldx		#$10
+	stx		$01
+	
+	lda		#<text
+	ldx		#>text
+	jsr		copytext
+	
+	;lock up cpu
+jam:
+	sta		wsync
+	jmp		jam
+
+copytext:
+	ldy		#0
+	sta		$02
+	stx		$03
+copyloop:
+	lda		($02),y
+	cmp		#$ff
+	beq		copydone
+	sta		($00),y
+	iny
+	bne		copyloop
+copydone:
+	tya
+	clc
+	adc		$00
+	sta		$00
+	bne		copyxit
+	inc		$01
+copyxit:
+	rts
+	
+text:
+	dta		d'Unimplemented command',$ff
+.endp

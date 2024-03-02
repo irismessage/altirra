@@ -1,0 +1,448 @@
+;	Altirra - Atari 800/800XL emulator
+;	Kernel ROM replacement
+;	Copyright (C) 2008 Avery Lee
+;
+;	This program is free software; you can redistribute it and/or modify
+;	it under the terms of the GNU General Public License as published by
+;	the Free Software Foundation; either version 2 of the License, or
+;	(at your option) any later version.
+;
+;	This program is distributed in the hope that it will be useful,
+;	but WITHOUT ANY WARRANTY; without even the implied warranty of
+;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;	GNU General Public License for more details.
+;
+;	You should have received a copy of the GNU General Public License
+;	along with this program; if not, write to the Free Software
+;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+SIOSuccess			= $01
+SIOErrorTimeout		= $8A
+SIOErrorNAK			= $8B
+SIOErrorBadFrame	= $8C
+SIOErrorOverrun		= $8E
+SIOErrorChecksum	= $8F
+SIOErrorDeviceDone	= $90
+
+.proc SIOInit
+	mwa		#SIOCountdown1Handler	cdtma1
+	rts
+.endp
+
+;==============================================================================
+.proc SIO
+	tsx
+	stx		stackp
+	
+	jsr		SIOInitBaseTransfers
+	
+	;init command buffer
+	lda		ddevic
+	clc
+	adc		dunit
+	sec
+	sbc		#1
+	sta		cdevic
+
+	mva		dcomnd		ccomnd
+	mva		daux1		caux1
+	mva		daux2		caux2
+		
+	;assert command line
+	mva		#$34		pbctl
+
+	;clear stray bytes
+	lda		serin
+
+	;send command frame
+	mva		#0			nocksm
+	mwa		#cdevic-1	bufrlo
+	mwa		#caux2+1	bfenlo
+	jsr		SIOSend
+	bmi		xit
+	
+	;negate command line
+	mva		#$3c		pbctl
+	
+	;setup 3 frame delay for ack
+	mva		#$ff		timflg
+	lda		#1
+	ldx		#>3
+	ldy		#<3
+	jsr		SetVBlankVector
+
+	;setup for receiving ACK
+	mwa		#temp		bufrlo
+	mwa		#temp+1		bfenlo
+	mva		#$ff		nocksm
+	jsr		SIOReceive
+	bmi		xit
+	lda		temp
+	cmp		#'A'
+	bpl		ackOK
+	
+	ldy		#SIOErrorNAK
+	jmp		xit
+ackOK:
+	
+	;setup 90 frame delay for complete
+	mva		#$ff		timflg
+	lda		#1
+	ldx		#>90
+	ldy		#<90
+	jsr		SetVBlankVector
+
+	;setup for receiving complete
+	mva		#$ff		nocksm
+	mwa		#temp		bufrlo
+	jsr		SIOReceive
+	bmi		xit
+	lda		temp
+	cmp		#'C'
+	bpl		completeOK
+	
+	ldy		#SIOErrorNAK
+	jmp		xit
+	
+xit:
+	mva		#0		audf3
+	mva		#$10	audc3
+	mva		#$10	audc4
+
+	ldx		stackp
+	txs
+	tya
+	sty		dstats
+	rts
+
+completeOK:
+
+	;setup buffer pointers
+	clc
+	lda		dbuflo
+	sta		bufrlo
+	adc		dbytlo
+	sta		bfenlo
+	lda		dbufhi
+	sta		bufrhi
+	adc		dbythi
+	sta		bfenhi
+		
+	;check if we should send a data frame
+	bit		dstats
+	bmi		sendFrame
+	bvc		dataSendOK
+	
+	jsr		SIOReceive
+	bmi		xit
+	ldy		#SIOSuccess
+	jmp		xit
+
+sendFrame:
+	;send data frame
+	dew		bufrlo				;must be -1 for (vseror)
+	
+	jsr		SIOSend
+	bmi		xit
+		
+dataSendOK:	
+	ldy		#SIOSuccess
+	jmp		xit
+.endp
+
+;==============================================================================
+;SIO base init routine
+;
+.proc SIOInitBaseTransfers
+	;clock channel 3 and 4 together at 1.79MHz
+	mva		#$28	audctl
+
+	;configure pokey timers 3 and 4 for 19200 baud (1789773/(2*40+7) = 19040)
+	mva		#40		audf3
+	mva		#0		audf4
+	mva		#$a0	audc3
+	mva		#$a8	audc4
+	
+	;reset serial status
+	sta		skres
+	rts
+.endp
+
+;==============================================================================
+;SIO send routine
+;
+.proc SIOSend
+	;configure serial port for synchronous transmission
+	;enable transmission IRQs
+	sei
+	lda		sskctl
+	and		#$8f
+	ora		#$20
+	sta		sskctl
+	sta		skctl
+	lda		pokmsk
+	ora		#$10
+	and		#$f7
+	sta		pokmsk
+	sta		irqen
+	cli
+	
+	mva		#0		xmtdon
+	mva		#0		status
+	mva		#0		chksum
+	mva		#0		chksnt
+	
+	;send first byte
+	lda		#>wait
+	pha
+	lda		#<wait
+	pha
+	php
+	sei
+	pha
+	jmp		(vseror)
+	
+	;wait for transmit to complete
+wait:
+	ldy		status
+	bmi		error
+	lda		xmtdon
+	beq		wait
+	ldy		status
+	
+	;shut off transmission IRQs
+error:
+	sei
+	lda		pokmsk
+	and		#$e7
+	sta		pokmsk
+	sta		irqen
+	cli
+
+	;we're done
+	tya
+	rts
+.endp
+
+;==============================================================================
+;SIO receive routine
+;
+.proc SIOReceive
+	mva		#0		bufrfl
+	mva		#0		recvdn
+	mva		#0		status
+	mva		#0		chksum
+
+	;configure serial port for asynchronous receive
+	;enable receive IRQ
+	sei
+	lda		sskctl
+	and		#$8f
+	ora		#$10
+	sta		sskctl
+	sta		skctl
+	lda		pokmsk
+	ora		#$20
+	sta		pokmsk
+	sta		irqen
+	cli
+	
+	;wait for receive to complete
+wait:
+	lda		timflg
+	beq		timeout
+	ldy		status
+	bmi		error
+	lda		recvdn
+	beq		wait
+	ldy		status
+	
+	;shut off receive IRQs
+error:
+	sei
+	lda		pokmsk
+	and		#$df
+	sta		pokmsk
+	sta		irqen
+	cli
+	
+	;we're done
+	tya
+	rts
+	
+timeout:
+	ldy		#SIOErrorTimeout
+	jmp		error
+.endp
+
+;==============================================================================
+; SIO serial input routine
+;
+; DOS 2.0S replaces (VSERIN), so it's critical that this routine follow the
+; rules compatible with DOS. The rules are as follows:
+;
+;	BUFRLO/BUFRHI:	Points to next byte to read. Note that this is different
+;					from (VSEROR)!
+;	BFENLO/BFENHI:	Points one after last byte in buffer.
+;	BUFRFL:			Set when all data bytes have been read.
+;	NOCKSM:			Set if no checksum byte is expected. Cleared after checked.
+;	RECVDN:			Set when receive is complete, including any checksum.	
+;
+.proc SerialInputReady
+	lda		bufrfl
+	bne		receiveChecksum
+
+	;receive data byte
+	tya
+	pha
+	lda		serin
+	ldy		#$00
+	sta		(bufrlo),y
+	clc
+	adc		chksum
+	adc		#$00
+	sta		chksum
+	
+	;bump buffer pointer
+	inw		bufrlo
+	
+	;check for EOB
+	lda		bufrlo
+	cmp		bfenlo
+	beq		possiblyEnd
+xit:
+	pla
+	tay
+	pla
+	rti
+	
+receiveChecksum:
+	;read and compare checksum
+	lda		serin
+	cmp		chksum
+	beq		checksumOK
+	
+	mva		#SIOErrorChecksum	status
+checksumOK:
+	
+	;set receive done flag
+	mva		#$ff	recvdn
+
+	;exit
+	pla
+	rti
+	
+possiblyEnd:	
+	lda		bufrhi
+	cmp		bfenhi
+	bne		xit
+
+	mva		#$ff	bufrfl
+	
+	;should there be a checksum?
+	lda		nocksm
+	bne		skipChecksum
+	jmp		xit
+
+skipChecksum:
+	;set receive done flag
+	sta		recvdn
+	
+	;clear no checksum flag
+	lda		#0
+	sta		nocksm
+	jmp		xit
+.endp
+
+;==============================================================================
+; SIO serial output ready routine
+;
+; DOS 2.0S replaces (VSEROR), so it's critical that this routine follow the
+; rules compatible with DOS. The rules are as follows:
+;
+;	BUFRLO/BUFRHI:	On entry, points to one LESS than the next byte to write.
+;	BFENLO/BFENHI:	Points to byte immediately after buffer.
+;	CHKSUM:			Holds running checksum as bytes are output.
+;	CHKSNT:			$00 if checksum not yet sent, $FF if checksum sent.
+;	POKMSK:			Used to enable the serial output complete IRQ after sending
+;					checksum.
+;
+.proc SerialOutputReady
+	;increment buffer pointer
+	inc		bufrlo
+	bne		addrcc
+	inc		bufrhi
+addrcc:
+
+	;compare against buffer end
+	lda		bufrlo
+	cmp		bfenlo
+	lda		bufrhi
+	sbc		bfenhi			;set flags according to (dst - end)
+	bcs		doChecksum
+
+	;save Y
+	tya
+	pha
+
+	;send out next byte
+	ldy		#0
+	lda		(bufrlo),y
+	sta		serout
+	
+	;update checksum
+	adc		chksum
+	adc		#0
+	sta		chksum
+
+	;restore registers and exit
+	pla
+	tay
+	pla
+	rti
+	
+doChecksum:
+	;send checksum
+	lda		chksum
+	sta		serout
+	
+	;set checksum sent flag
+	mva		#$ff	chksnt
+	
+	;enable output complete IRQ and disable serial output IRQ
+	lda		pokmsk
+	ora		#$08
+	and		#$ef
+	sta		pokmsk
+	sta		irqen
+	
+	pla
+	rti
+.endp
+
+;==============================================================================
+.proc SerialOutputComplete
+	;check that we've sent the checksum
+	lda		chksnt
+	beq		xit
+	
+	;we're done sending the checksum
+	sta		xmtdon
+	
+	;need to shut off this interrupt as it is not latched
+	lda		pokmsk
+	and		#$f7
+	sta		pokmsk
+	sta		irqen
+
+xit:
+	pla
+	rti
+.endp
+
+;==============================================================================
+.proc SIOCountdown1Handler
+	;signal operation timeout
+	mva		#0	timflg
+	rts
+.endp
