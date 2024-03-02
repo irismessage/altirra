@@ -137,7 +137,7 @@ public:
 
 class VDD3D9Manager : public vdlist_node {
 public:
-	VDD3D9Manager();
+	VDD3D9Manager(HMONITOR hmonitor);
 	~VDD3D9Manager();
 
 	bool Attach(VDD3D9Client *pClient);
@@ -153,6 +153,7 @@ public:
 	const D3DPRESENT_PARAMETERS& GetPresentParms() const { return mPresentParms; }
 	UINT					GetAdapter() const { return mAdapter; }
 	D3DDEVTYPE				GetDeviceType() const { return mDevType; }
+	HMONITOR				GetMonitor() const { return mhMonitor; }
 
 	IDirect3DSurface9		*GetRenderTarget() const { return mpD3DRTMain; }
 	int			GetMainRTWidth() const { return mPresentParms.BackBufferWidth; }
@@ -203,7 +204,7 @@ public:
 		return CreateSharedTexture(name, VDRefCountObjectFactory<T, IVDD3D9TextureGenerator>, ppTexture);
 	}
 
-	bool		CreateSwapChain(int width, int height, IVDD3D9SwapChain **ppSwapChain);
+	bool		CreateSwapChain(int width, int height, bool clipToMonitor, IVDD3D9SwapChain **ppSwapChain);
 	void		SetSwapChainActive(IVDD3D9SwapChain *pSwapChain);
 	HRESULT		PresentSwapChain(IVDD3D9SwapChain *pSwapChain, const RECT *srcRect, HWND hwndDest, bool vsync, bool newframe, bool donotwait, float& syncDelta, VDD3DPresentHistory& history);
 
@@ -223,6 +224,7 @@ protected:
 	IDirect3DSurface9	*mpD3DRTMain;
 	UINT				mAdapter;
 	D3DDEVTYPE			mDevType;
+	HMONITOR			mhMonitor;
 
 	ATOM				mDevWndClass;
 	HWND				mhwndDevice;
@@ -267,7 +269,7 @@ protected:
 	uint32			mFenceQueueHeadIndex;
 };
 
-VDD3D9Manager *VDInitDirect3D9(VDD3D9Client *pClient);
+VDD3D9Manager *VDInitDirect3D9(VDD3D9Client *pClient, HMONITOR hmonitor);
 void VDDeinitDirect3D9(VDD3D9Manager *p, VDD3D9Client *pClient);
 
 #endif

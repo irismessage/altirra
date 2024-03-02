@@ -204,6 +204,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\audiofilters.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\audiowriter.cpp"
 				>
 			</File>
@@ -212,11 +216,19 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\aviwriter.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\cartridge.cpp"
 				>
 			</File>
 			<File
 				RelativePath=".\source\cassette.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\common_png.cpp"
 				>
 			</File>
 			<File
@@ -264,6 +276,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\encode_png.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\gtia.cpp"
 				>
 			</File>
@@ -281,6 +297,10 @@
 			</File>
 			<File
 				RelativePath=".\source\hlekernel.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\ide.cpp"
 				>
 			</File>
 			<File
@@ -364,11 +384,19 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uirender.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\vbxe.cpp"
 				>
 			</File>
 			<File
 				RelativePath=".\source\verifier.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\videowriter.cpp"
 				>
 			</File>
 		</Filter>
@@ -386,11 +414,19 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\audiofilters.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\audiowriter.h"
 				>
 			</File>
 			<File
 				RelativePath=".\h\autotest.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\aviwriter.h"
 				>
 			</File>
 			<File
@@ -403,6 +439,10 @@
 			</File>
 			<File
 				RelativePath=".\h\cio.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\common_png.h"
 				>
 			</File>
 			<File
@@ -442,6 +482,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\encode_png.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\gtia.h"
 				>
 			</File>
@@ -459,6 +503,10 @@
 			</File>
 			<File
 				RelativePath=".\h\hlekernel.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\ide.h"
 				>
 			</File>
 			<File
@@ -546,11 +594,19 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\uirender.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\vbxe.h"
 				>
 			</File>
 			<File
 				RelativePath=".\h\verifier.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\videowriter.h"
 				>
 			</File>
 		</Filter>
@@ -641,15 +697,11 @@
 			</Filter>
 		</Filter>
 		<File
-			RelativePath="..\..\out\release\basic.rom"
-			>
-		</File>
-		<File
 			RelativePath="..\..\out\debug\basic.rom"
 			>
 		</File>
 		<File
-			RelativePath="..\..\out\release\hlekernel.rom"
+			RelativePath="..\..\out\release\basic.rom"
 			>
 		</File>
 		<File
@@ -657,7 +709,7 @@
 			>
 		</File>
 		<File
-			RelativePath="..\..\out\debug\kernel.rom"
+			RelativePath="..\..\out\release\hlekernel.rom"
 			>
 		</File>
 		<File
@@ -665,11 +717,15 @@
 			>
 		</File>
 		<File
-			RelativePath="..\..\out\release\nokernel.rom"
+			RelativePath="..\..\out\debug\kernel.rom"
 			>
 		</File>
 		<File
 			RelativePath="..\..\out\debug\nokernel.rom"
+			>
+		</File>
+		<File
+			RelativePath="..\..\out\release\nokernel.rom"
 			>
 		</File>
 	</Files>

@@ -244,7 +244,7 @@ namespace {
 
 		void Write(FILE *f, const char *sym) {
 			if (mConstantsUsed > 0) {
-				fprintf(f, "static const float %s_constants[][4]={\n", sym, mConstantsUsed);
+				fprintf(f, "static const float %s_constants[][4]={\n", sym);
 				for(int i=0; i<mConstantsUsed; ++i) {
 					fprintf(f, "\t{");
 
@@ -339,9 +339,6 @@ IGLCFragmentShader *CompileFragmentShaderNVRegisterCombiners(GLCErrorSink& errou
 			switch(opsrc.mReg & kRegTypeMask) {
 				case 0:
 					rsrc.mReg = 0;
-					break;
-				case kRegZero:
-					rsrc.mReg = GL_ZERO;
 					break;
 				case kRegC0:
 					{

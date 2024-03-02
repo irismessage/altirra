@@ -25,11 +25,14 @@
 #include <commctrl.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/cpuaccel.h>
+#include <vd2/system/filesys.h>
+#include <vd2/system/fraction.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/system/error.h>
 #include <vd2/system/registry.h>
+#include <vd2/system/registrymemory.h>
 #include <vd2/system/cmdline.h>
 #include <vd2/system/thunk.h>
 #include <vd2/system/binary.h>
@@ -55,6 +58,8 @@
 #include "joystick.h"
 #include "cartridge.h"
 #include "version.h"
+#include "videowriter.h"
+#include "ide.h"
 
 #ifdef _DEBUG
 	#define AT_VERSION_DEBUG "-debug"
@@ -79,7 +84,9 @@ void ATShowChangeLog(VDGUIHandle hParent);
 
 void SaveInputMaps();
 
-void ProcessKey(char c, bool repeat, bool allowQueue);
+void ProcessKey(char c, bool repeat, bool allowQueue, bool useCooldown);
+void ProcessVirtKey(int vkey, uint8 keycode, bool repeat);
+void ProcessRawKeyUp(int vkey);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -113,6 +120,9 @@ bool g_mouseCaptured = false;
 bool g_pauseInactive = true;
 bool g_winActive = true;
 bool g_showFps = false;
+bool g_rawKeys = false;
+int g_lastVkeyPressed;
+int g_lastVkeySent;
 IVDVideoDisplay::FilterMode g_dispFilterMode = IVDVideoDisplay::kFilterBilinear;
 int g_enhancedText = 0;
 LOGFONTW g_enhancedTextFont;
@@ -120,6 +130,7 @@ LOGFONTW g_enhancedTextFont;
 ATSaveStateWriter::Storage g_quickSave;
 
 vdautoptr<ATAudioWriter> g_pAudioWriter;
+vdautoptr<IATVideoWriter> g_pVideoWriter;
 
 enum ATDisplayStretchMode {
 	kATDisplayStretchMode_Unconstrained,
@@ -346,7 +357,12 @@ void ATInputConsoleCallback::SetConsoleTrigger(uint32 id, bool state) {
 			g_sim.SetTurboModeEnabled(state);
 			break;
 		case kATInputTrigger_KeySpace:
-			if (state)
+			if (g_rawKeys) {
+				if (state)
+					g_sim.GetPokey().PushRawKey(0x21);
+				else
+					g_sim.GetPokey().ReleaseRawKey();
+			} else if (state)
 				g_sim.GetPokey().PushKey(0x21, false);
 			break;
 	}
@@ -661,6 +677,7 @@ namespace {
 bool ATDiskDriveDialog::OnLoaded() {
 	for(int i=0; i<8; ++i) {
 		uint32 id = kWriteModeID[i];
+		CBAddString(id, L"Off");
 		CBAddString(id, L"R/O");
 		CBAddString(id, L"VirtRW");
 		CBAddString(id, L"R/W");
@@ -675,7 +692,7 @@ void ATDiskDriveDialog::OnDataExchange(bool write) {
 			ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
 			SetControlText(kDiskPathID[i], disk.GetPath());
 
-			CBSetSelectedIndex(kWriteModeID[i], disk.IsWriteEnabled() ? disk.IsAutoFlushEnabled() ? 2 : 1 : 0);
+			CBSetSelectedIndex(kWriteModeID[i], !disk.IsEnabled() ? 0 : disk.IsWriteEnabled() ? disk.IsAutoFlushEnabled() ? 3 : 2 : 1);
 		}
 	}
 }
@@ -692,8 +709,17 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 		case IDC_EJECT3:	++index;
 		case IDC_EJECT2:	++index;
 		case IDC_EJECT1:
-			g_sim.GetDiskDrive(index).UnloadDisk();
-			SetControlText(kDiskPathID[index], L"");
+			{
+				ATDiskEmulator& disk = g_sim.GetDiskDrive(index);
+
+				if (disk.IsDiskLoaded()) {
+					disk.UnloadDisk();
+					SetControlText(kDiskPathID[index], L"");
+				} else {
+					disk.SetEnabled(false);
+					CBSetSelectedIndex(kWriteModeID[index], 0);
+				}
+			}
 			return true;
 
 		case IDC_BROWSE8:	++index;
@@ -705,14 +731,28 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 		case IDC_BROWSE2:	++index;
 		case IDC_BROWSE1:
 			{
-				VDStringW s(VDGetLoadFileName('disk', (VDGUIHandle)mhdlg, L"Load disk image", L"All supported types\0*.atr;*.pro;*.atx;*.xfd\0Atari disk image (*.atr, *.xfd)\0*.atr;*.xfd\0Protected disk image (*.pro)\0*.pro\0VAPI disk image (*.atx)\0*.atx\0All files\0*.*\0", L"atr"));
+				VDStringW s(VDGetLoadFileName('disk', (VDGUIHandle)mhdlg, L"Load disk image",
+					L"All supported types\0*.atr;*.pro;*.atx;*.xfd;*.zip\0"
+					L"Atari disk image (*.atr, *.xfd)\0*.atr;*.xfd\0"
+					L"Protected disk image (*.pro)\0*.pro\0"
+					L"VAPI disk image (*.atx)\0*.atx\0"
+					L"Zip archive (*.zip)\0*.zip\0"
+					L"All files\0*.*\0"
+					, L"atr"));
 
 				if (!s.empty()) {
 					ATDiskEmulator& disk = g_sim.GetDiskDrive(index);
 
 					try {
-						disk.LoadDisk(s.c_str());
-						SetControlText(kDiskPathID[index], s.c_str());
+						ATLoadContext ctx;
+						ctx.mLoadType = kATLoadType_Disk;
+						ctx.mLoadIndex = index;
+
+						bool writeEnabled = disk.IsWriteEnabled();
+						bool autoFlushEnabled = disk.IsAutoFlushEnabled();
+
+						g_sim.Load(s.c_str(), writeEnabled, writeEnabled && autoFlushEnabled, &ctx);
+						OnDataExchange(false);
 					} catch(const MyError& e) {
 						e.post(mhdlg, "Disk load error");
 					}
@@ -738,7 +778,7 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 					disk.SetWriteFlushMode(true, false);
 
 					SetControlText(kDiskPathID[index], disk.GetPath());
-					CBSetSelectedIndex(kWriteModeID[index], 1);
+					CBSetSelectedIndex(kWriteModeID[index], 2);
 				}
 			}
 			return true;
@@ -793,7 +833,13 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 				int mode = CBGetSelectedIndex(id);
 				ATDiskEmulator& disk = g_sim.GetDiskDrive(index);
 
-				disk.SetWriteFlushMode(mode > 0, mode == 2);
+				if (mode == 0) {
+					disk.UnloadDisk();
+					disk.SetEnabled(false);
+				} else {
+					disk.SetEnabled(true);
+					disk.SetWriteFlushMode(mode > 1, mode == 3);
+				}
 			}
 			return true;
 	}
@@ -814,12 +860,18 @@ public:
 	void Update(int id);
 
 protected:
+	void UpdateEnables();
+	void UpdateCapacity();
+	void UpdateGeometry();
+
 	IATHardDiskEmulator *mpHardDisk;
+	uint32 mInhibitUpdateLocks;
 };
 
 ATHardDiskDialog::ATHardDiskDialog(IATHardDiskEmulator *hd)
 	: VDDialogFrameW32(IDD_HARD_DISK)
 	, mpHardDisk(hd)
+	, mInhibitUpdateLocks(0)
 {
 }
 
@@ -834,7 +886,40 @@ void ATHardDiskDialog::OnDataExchange(bool write) {
 	if (!write) {
 		CheckButton(IDC_ENABLE, mpHardDisk->IsEnabled());
 		CheckButton(IDC_READONLY, mpHardDisk->IsReadOnly());
+		CheckButton(IDC_BURSTIO, mpHardDisk->IsBurstIOEnabled());
 		SetControlText(IDC_PATH, mpHardDisk->GetBasePath());
+
+		ATIDEEmulator *ide = g_sim.GetIDEEmulator();
+		CheckButton(IDC_IDE_ENABLE, ide != NULL);
+
+		if (ide) {
+			SetControlText(IDC_IDE_IMAGEPATH, ide->GetImagePath());
+			CheckButton(IDC_IDEREADONLY, !ide->IsWriteEnabled());
+
+			uint32 cylinders = ide->GetCylinderCount();
+			uint32 heads = ide->GetHeadCount();
+			uint32 spt = ide->GetSectorsPerTrack();
+
+			if (!cylinders || !heads || !spt) {
+				heads = 16;
+				spt = 63;
+				cylinders = 20;
+			} else {
+				SetControlTextF(IDC_IDE_CYLINDERS, L"%u", cylinders);
+				SetControlTextF(IDC_IDE_HEADS, L"%u", heads);
+				SetControlTextF(IDC_IDE_SPT, L"%u", spt);
+			}
+
+			UpdateCapacity();
+
+			bool d5xx = g_sim.IsIDEUsingD5xx();
+			CheckButton(IDC_IDE_D1XX, !d5xx);
+			CheckButton(IDC_IDE_D5XX, d5xx);
+		} else {
+			CheckButton(IDC_IDE_D5XX, true);
+		}
+
+		UpdateEnables();
 	} else {
 		bool enable = IsButtonChecked(IDC_ENABLE);
 		bool reset = false;
@@ -845,10 +930,64 @@ void ATHardDiskDialog::OnDataExchange(bool write) {
 		}
 
 		mpHardDisk->SetReadOnly(IsButtonChecked(IDC_READONLY));
+		mpHardDisk->SetBurstIOEnabled(IsButtonChecked(IDC_BURSTIO));
 
 		VDStringW path;
 		GetControlText(IDC_PATH, path);
 		mpHardDisk->SetBasePath(path.c_str());
+
+		ATIDEEmulator *ide = g_sim.GetIDEEmulator();
+		if (IsButtonChecked(IDC_IDE_ENABLE)) {
+			const bool d5xx = IsButtonChecked(IDC_IDE_D5XX);
+			const bool write = !IsButtonChecked(IDC_IDEREADONLY);
+
+			GetControlText(IDC_IDE_IMAGEPATH, path);
+
+			uint32 cylinders = 0;
+			uint32 heads = 0;
+			uint32 sectors = 0;
+
+			ExchangeControlValueUint32(true, IDC_IDE_CYLINDERS, cylinders, 1, 65536);
+			ExchangeControlValueUint32(true, IDC_IDE_HEADS, heads, 1, 16);
+			ExchangeControlValueUint32(true, IDC_IDE_SPT, sectors, 1, 63);
+
+			if (!mbValidationFailed) {
+				bool changed = true;
+
+				if (ide) {
+					changed = false;
+
+					if (ide->GetImagePath() != path)
+						changed = true;
+					else if (ide->IsWriteEnabled() != write)
+						changed = true;
+					else if (g_sim.IsIDEUsingD5xx() != d5xx)
+						changed = true;
+					else if (ide->GetCylinderCount() != cylinders)
+						changed = true;
+					else if (ide->GetHeadCount() != heads)
+						changed = true;
+					else if (ide->GetSectorsPerTrack() != sectors)
+						changed = true;
+				}
+
+				if (changed) {
+					try {
+						g_sim.LoadIDE(d5xx, write, cylinders, heads, sectors, path.c_str());
+						reset = true;
+					} catch(const MyError& e) {
+						e.post(mhdlg, "Altirra Error");
+						FailValidation(IDC_IDE_IMAGEPATH);
+						// fall through to force a reset
+					}
+				}
+			}
+		} else {
+			if (ide) {
+				g_sim.UnloadIDE();
+				reset = true;
+			}
+		}
 
 		if (reset)
 			g_sim.ColdReset();
@@ -866,9 +1005,118 @@ bool ATHardDiskDialog::OnCommand(uint32 id, uint32 extcode) {
 					SetControlText(IDC_PATH, s.c_str());
 			}
 			return true;
+
+		case IDC_IDE_IMAGEBROWSE:
+			{
+				int optvals[1]={false};
+
+				static const VDFileDialogOption kOpts[]={
+					{ VDFileDialogOption::kConfirmFile, 0 },
+					{0}
+				};
+
+				VDStringW s(VDGetSaveFileName('ide ', (VDGUIHandle)mhdlg, L"Select IDE image file", L"All files\0*.*\0", NULL, kOpts, optvals));
+				if (!s.empty())
+					SetControlText(IDC_IDE_IMAGEPATH, s.c_str());
+			}
+			return true;
+
+		case IDC_ENABLE:
+		case IDC_IDE_ENABLE:
+			if (extcode == BN_CLICKED)
+				UpdateEnables();
+			return true;
+
+		case IDC_IDE_CYLINDERS:
+		case IDC_IDE_HEADS:
+		case IDC_IDE_SPT:
+			if (extcode == EN_UPDATE && !mInhibitUpdateLocks)
+				UpdateCapacity();
+			return true;
+
+		case IDC_IDE_SIZE:
+			if (extcode == EN_UPDATE && !mInhibitUpdateLocks)
+				UpdateGeometry();
+			return true;
 	}
 
 	return false;
+}
+
+void ATHardDiskDialog::UpdateEnables() {
+	bool henable = IsButtonChecked(IDC_ENABLE);
+	bool ideenable = IsButtonChecked(IDC_IDE_ENABLE);
+
+	EnableControl(IDC_STATIC_HOSTPATH, henable);
+	EnableControl(IDC_PATH, henable);
+	EnableControl(IDC_BROWSE, henable);
+	EnableControl(IDC_READONLY, henable);
+	EnableControl(IDC_BURSTIO, henable);
+
+	EnableControl(IDC_STATIC_IDE_IMAGEPATH, ideenable);
+	EnableControl(IDC_IDE_IMAGEPATH, ideenable);
+	EnableControl(IDC_IDE_IMAGEBROWSE, ideenable);
+	EnableControl(IDC_IDEREADONLY, ideenable);
+	EnableControl(IDC_STATIC_IDE_GEOMETRY, ideenable);
+	EnableControl(IDC_STATIC_IDE_CYLINDERS, ideenable);
+	EnableControl(IDC_STATIC_IDE_HEADS, ideenable);
+	EnableControl(IDC_STATIC_IDE_SPT, ideenable);
+	EnableControl(IDC_STATIC_IDE_SIZE, ideenable);
+	EnableControl(IDC_IDE_CYLINDERS, ideenable);
+	EnableControl(IDC_IDE_HEADS, ideenable);
+	EnableControl(IDC_IDE_SPT, ideenable);
+	EnableControl(IDC_IDE_SIZE, ideenable);
+	EnableControl(IDC_STATIC_IDE_IOREGION, ideenable);
+	EnableControl(IDC_IDE_D1XX, ideenable);
+	EnableControl(IDC_IDE_D5XX, ideenable);
+}
+
+void ATHardDiskDialog::UpdateGeometry() {
+	uint32 imageSizeMB = GetControlValueUint32(IDC_IDE_SIZE);
+
+	if (imageSizeMB) {
+		uint32 heads;
+		uint32 sectors;
+		uint32 cylinders;
+
+		if (imageSizeMB <= 64) {
+			heads = 4;
+			sectors = 32;
+			cylinders = imageSizeMB << 4;
+		} else {
+			heads = 16;
+			sectors = 63;
+			cylinders = (imageSizeMB * 128 + 31) / 63;
+		}
+
+		if (cylinders > 65536)
+			cylinders = 65536;
+
+		++mInhibitUpdateLocks;
+		SetControlTextF(IDC_IDE_CYLINDERS, L"%u", cylinders);
+		SetControlTextF(IDC_IDE_HEADS, L"%u", heads);
+		SetControlTextF(IDC_IDE_SPT, L"%u", sectors);
+		--mInhibitUpdateLocks;
+	}
+}
+
+void ATHardDiskDialog::UpdateCapacity() {
+	uint32 cyls = GetControlValueUint32(IDC_IDE_CYLINDERS);
+	uint32 heads = GetControlValueUint32(IDC_IDE_HEADS);
+	uint32 spt = GetControlValueUint32(IDC_IDE_SPT);
+	uint32 size = 0;
+
+	if (cyls || heads || spt)
+		size = (cyls * heads * spt) >> 11;
+
+	++mInhibitUpdateLocks;
+
+	if (size)
+		SetControlTextF(IDC_IDE_SIZE, L"%u", size);
+	else
+		SetControlText(IDC_IDE_SIZE, L"--");
+
+	--mInhibitUpdateLocks;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1153,6 +1401,36 @@ bool ATAdjustColorsDialog::OnCommand(uint32 id, uint32 extcode) {
 		ATGTIAEmulator& gtia = g_sim.GetGTIA();
 		gtia.SetColorParams(params);
 		OnDataExchange(false);
+	} else if (id == ID_COLORS_G2F) {
+		ATColorParams params;
+
+		params.mHueStart = -9.36754f;
+		params.mHueRange = 361.019f;
+		params.mBrightness = +0.174505f;
+		params.mContrast = 0.82371f;
+		params.mSaturation = 0.21993f;
+		params.mArtifactHue = 96.0f;
+		params.mArtifactSat = 2.76f;
+		params.mArtifactBias = 0.35f;
+
+		ATGTIAEmulator& gtia = g_sim.GetGTIA();
+		gtia.SetColorParams(params);
+		OnDataExchange(false);
+	} else if (id == ID_COLORS_OLIVIERPAL) {
+		ATColorParams params;
+
+		params.mHueStart = -14.7889f;
+		params.mHueRange = 385.155f;
+		params.mBrightness = +0.057038f;
+		params.mContrast = 0.941149f;
+		params.mSaturation = 0.195861f;
+		params.mArtifactHue = 96.0f;
+		params.mArtifactSat = 2.76f;
+		params.mArtifactBias = 0.35f;
+
+		ATGTIAEmulator& gtia = g_sim.GetGTIA();
+		gtia.SetColorParams(params);
+		OnDataExchange(false);
 	}
 
 	return false;
@@ -1320,15 +1598,220 @@ void ATAdjustColorsDialog::UpdateColorImage() {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+
+class ATKeyboardDialog : public VDDialogFrameW32 {
+public:
+	ATKeyboardDialog();
+
+protected:
+	void OnDataExchange(bool write);
+};
+
+ATKeyboardDialog::ATKeyboardDialog()
+	: VDDialogFrameW32(IDD_KEYBOARD)
+{
+}
+
+void ATKeyboardDialog::OnDataExchange(bool write) {
+	ATGTIAEmulator& gtia = g_sim.GetGTIA();
+
+	if (write) {
+		g_rawKeys = IsButtonChecked(IDC_KPMODE_RAW);
+	} else {
+		CheckButton(g_rawKeys ? IDC_KPMODE_RAW : IDC_KPMODE_COOKED, true);
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogCartridgeMapper : public VDDialogFrameW32 {
+public:
+	ATUIDialogCartridgeMapper(uint32 cartSize);
+
+	int GetMapper() const { return mMapper; }
+
+protected:
+	bool OnLoaded();
+	void OnDataExchange(bool write);
+
+	static uint32 GetModeSize(int mode);
+	static const wchar_t *GetModeName(int mode);
+	static int GetModeMapper(int mode);
+
+	int mMapper;
+	uint32 mCartSize;
+	typedef vdfastvector<int> Mappers;
+	Mappers mMappers;
+
+	struct MapSorter {
+		bool operator()(int x, int y) const {
+			return GetModeMapper(x) < GetModeMapper(y);
+		}
+	};
+};
+
+ATUIDialogCartridgeMapper::ATUIDialogCartridgeMapper(uint32 cartSize)
+	: VDDialogFrameW32(IDD_CARTRIDGE_MAPPER)
+	, mMapper(0)
+	, mCartSize(cartSize)
+{
+}
+
+bool ATUIDialogCartridgeMapper::OnLoaded() {
+	for(int i=1; i<kATCartridgeModeCount; ++i) {
+		if (GetModeSize(i) != mCartSize)
+			continue;
+
+		mMappers.push_back(i);
+	}
+
+	std::sort(mMappers.begin(), mMappers.end(), MapSorter());
+
+	for(Mappers::const_iterator it(mMappers.begin()), itEnd(mMappers.end()); it != itEnd; ++it) {
+		LBAddString(IDC_LIST, GetModeName(*it));
+	}
+
+	return VDDialogFrameW32::OnLoaded();
+}
+
+void ATUIDialogCartridgeMapper::OnDataExchange(bool write) {
+	if (write) {
+		int idx = LBGetSelectedIndex(IDC_LIST);
+
+		if (idx < 0) {
+			FailValidation(IDC_LIST);
+			return;
+		}
+
+		mMapper = mMappers[idx];
+	}
+}
+
+uint32 ATUIDialogCartridgeMapper::GetModeSize(int mode) {
+	switch(mode) {
+		case kATCartridgeMode_8K:					return 8192;
+		case kATCartridgeMode_16K:					return 16384;
+		case kATCartridgeMode_OSS_034M:				return 16384;
+		case kATCartridgeMode_XEGS_32K:				return 32768;
+		case kATCartridgeMode_XEGS_64K:				return 65536;
+		case kATCartridgeMode_XEGS_128K:			return 131072;
+		case kATCartridgeMode_OSS_091M:				return 16384;
+		case kATCartridgeMode_BountyBob800:			return 40960;
+		case kATCartridgeMode_MegaCart_16K:			return 16384;
+		case kATCartridgeMode_MegaCart_32K:			return 32768;
+		case kATCartridgeMode_MegaCart_64K:			return 65536;
+		case kATCartridgeMode_MegaCart_128K:		return 131072;
+		case kATCartridgeMode_MegaCart_256K:		return 262144;
+		case kATCartridgeMode_MegaCart_512K:		return 524288;
+		case kATCartridgeMode_MegaCart_1M:			return 1048576;
+		case kATCartridgeMode_Switchable_XEGS_32K:	return 32768;
+		case kATCartridgeMode_Switchable_XEGS_64K:	return 65536;
+		case kATCartridgeMode_Switchable_XEGS_128K:	return 131072;
+		case kATCartridgeMode_Switchable_XEGS_256K:	return 262144;
+		case kATCartridgeMode_Switchable_XEGS_512K:	return 524288;
+		case kATCartridgeMode_Switchable_XEGS_1M:	return 1048576;
+		case kATCartridgeMode_MaxFlash_128K:		return 131072;
+		case kATCartridgeMode_MaxFlash_128K_MyIDE:	return 131072;
+		case kATCartridgeMode_MaxFlash_1024K:		return 1048576;
+		default:
+			return 0;
+	}
+}
+
+const wchar_t *ATUIDialogCartridgeMapper::GetModeName(int mode) {
+	switch(mode) {
+		case kATCartridgeMode_8K:					return L"1: 8K";
+		case kATCartridgeMode_16K:					return L"2: 16K";
+		case kATCartridgeMode_OSS_034M:				return L"3: OSS '034M'";
+		case kATCartridgeMode_XEGS_32K:				return L"12: 32K XEGS";
+		case kATCartridgeMode_XEGS_64K:				return L"13: 64K XEGS";
+		case kATCartridgeMode_XEGS_128K:			return L"14: 128K XEGS";
+		case kATCartridgeMode_OSS_091M:				return L"15: OSS '019M'";
+		case kATCartridgeMode_BountyBob800:			return L"18: Bounty Bob";
+		case kATCartridgeMode_MegaCart_16K:			return L"26: 16K MegaCart";
+		case kATCartridgeMode_MegaCart_32K:			return L"27: 32K MegaCart";
+		case kATCartridgeMode_MegaCart_64K:			return L"28: 64K MegaCart";
+		case kATCartridgeMode_MegaCart_128K:		return L"29: 128K MegaCart";
+		case kATCartridgeMode_MegaCart_256K:		return L"30: 256K MegaCart";
+		case kATCartridgeMode_MegaCart_512K:		return L"31: 512K MegaCart";
+		case kATCartridgeMode_MegaCart_1M:			return L"32: 1M MegaCart";
+		case kATCartridgeMode_Switchable_XEGS_32K:	return L"33: 32K Switchable XEGS";
+		case kATCartridgeMode_Switchable_XEGS_64K:	return L"34: 64K Switchable XEGS";
+		case kATCartridgeMode_Switchable_XEGS_128K:	return L"35: 128K Switchable XEGS";
+		case kATCartridgeMode_Switchable_XEGS_256K:	return L"36: 256K Switchable XEGS";
+		case kATCartridgeMode_Switchable_XEGS_512K:	return L"37: 512K Switchable XEGS";
+		case kATCartridgeMode_Switchable_XEGS_1M:	return L"38: 1M Switchable XEGS";
+		case kATCartridgeMode_MaxFlash_128K:		return L"41: MaxFlash 128K";
+		case kATCartridgeMode_MaxFlash_128K_MyIDE:	return L"MaxFlash 128K + MyIDE";
+		case kATCartridgeMode_MaxFlash_1024K:		return L"42: MaxFlash 1M";
+		default:
+			return L"";
+	}
+}
+
+int ATUIDialogCartridgeMapper::GetModeMapper(int mode) {
+	switch(mode) {
+		case kATCartridgeMode_8K:					return 1;
+		case kATCartridgeMode_16K:					return 2;
+		case kATCartridgeMode_OSS_034M:				return 3;
+		case kATCartridgeMode_XEGS_32K:				return 12;
+		case kATCartridgeMode_XEGS_64K:				return 13;
+		case kATCartridgeMode_XEGS_128K:			return 14;
+		case kATCartridgeMode_OSS_091M:				return 15;
+		case kATCartridgeMode_BountyBob800:			return 18;
+		case kATCartridgeMode_MegaCart_16K:			return 26;
+		case kATCartridgeMode_MegaCart_32K:			return 27;
+		case kATCartridgeMode_MegaCart_64K:			return 28;
+		case kATCartridgeMode_MegaCart_128K:		return 29;
+		case kATCartridgeMode_MegaCart_256K:		return 30;
+		case kATCartridgeMode_MegaCart_512K:		return 31;
+		case kATCartridgeMode_MegaCart_1M:			return 32;
+		case kATCartridgeMode_Switchable_XEGS_32K:	return 33;
+		case kATCartridgeMode_Switchable_XEGS_64K:	return 34;
+		case kATCartridgeMode_Switchable_XEGS_128K:	return 35;
+		case kATCartridgeMode_Switchable_XEGS_256K:	return 36;
+		case kATCartridgeMode_Switchable_XEGS_512K:	return 37;
+		case kATCartridgeMode_Switchable_XEGS_1M:	return 38;
+		case kATCartridgeMode_MaxFlash_128K:		return 41;
+		case kATCartridgeMode_MaxFlash_1024K:		return 42;
+		default:
+			return 0;
+	}
+}
+
+void DoLoad(VDGUIHandle h, const wchar_t *path, bool vrw, bool rw, int cartmapper) {
+	ATCartLoadContext cartctx = {};
+	cartctx.mbReturnOnUnknownMapper = true;
+
+	if (cartmapper) {
+		cartctx.mbReturnOnUnknownMapper = false;
+		cartctx.mCartMapper = cartmapper;
+	}
+
+	ATLoadContext ctx;
+	ctx.mpCartLoadContext = &cartctx;
+	if (!g_sim.Load(path, vrw, rw, &ctx)) {
+		ATUIDialogCartridgeMapper mapperdlg(cartctx.mCartSize);
+
+		if (mapperdlg.ShowDialog(h)) {
+			cartctx.mbReturnOnUnknownMapper = false;
+			cartctx.mCartMapper = mapperdlg.GetMapper();
+
+			g_sim.Load(path, vrw, rw, &ctx);
+		}
+	}
+}
+
 void OnCommandOpen(bool forceColdBoot) {
 	VDStringW fn(VDGetLoadFileName('load', (VDGUIHandle)g_hwnd, L"Load disk, cassette, cartridge, or program image",
-		L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.car;*.rom;*.bin;*.cas;*.wav\0"
+		L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.car;*.rom;*.bin;*.cas;*.wav;*.zip\0"
 		L"Atari program (*.xex,*.obx,*.com)\0*.xex;*.obx;*.com\0"
 		L"Atari disk image (*.atr,*.xfd,*.dcm)\0*.atr;*.xfd;*.dcm\0"
 		L"Protected disk image (*.pro)\0*.pro\0"
 		L"VAPI disk image (*.atx)\0*.atx\0"
 		L"Cartridge (*.rom,*.bin)\0*.rom;*.bin\0"
 		L"Cassette tape (*.cas,*.wav)\0*.cas;*.wav\0"
+		L"Zip archive (*.zip)\0*.zip\0"
 		L"All files\0*.*\0",
 		L"atr"
 		));
@@ -1338,7 +1821,7 @@ void OnCommandOpen(bool forceColdBoot) {
 			if (forceColdBoot)
 				g_sim.UnloadAll();
 
-			g_sim.Load(fn.c_str());
+			DoLoad((VDGUIHandle)g_hwnd, fn.c_str(), false, false, 0);
 
 			if (forceColdBoot)
 				g_sim.ColdReset();
@@ -1463,6 +1946,27 @@ void OnCommandEnhancedTextFont() {
 	}
 }
 
+void Paste(const char *s, size_t len, bool useCooldown) {
+	char skipLT = 0;
+	while(len--) {
+		char c = *s++;
+
+		if (c == skipLT) {
+			skipLT = 0;
+			continue;
+		}
+
+		skipLT = 0;
+
+		if (c == '\r' || c == '\n') {
+			skipLT = c ^ ('\r' ^ '\n');
+
+			g_sim.GetPokey().PushKey(0x0C, false, true, false, useCooldown);
+		} else
+			ProcessKey(c, false, true, useCooldown);
+	}
+}
+
 void OnCommandPaste() {
 	if (OpenClipboard(NULL)) {
 		HANDLE hData = GetClipboardData(CF_TEXT);
@@ -1474,24 +1978,7 @@ void OnCommandPaste() {
 				size_t len = GlobalSize(hData);
 				const char *s = (const char *)data;
 
-				char skipLT = 0;
-				while(len--) {
-					char c = *s++;
-
-					if (c == skipLT) {
-						skipLT = 0;
-						continue;
-					}
-
-					skipLT = 0;
-
-					if (c == '\r' || c == '\n') {
-						skipLT = c ^ ('\r' ^ '\n');
-						g_sim.GetPokey().PushKey(0x0C, false, true, false);
-					} else
-						ProcessKey(c, false, true);
-				}
-
+				Paste(s, len, true);
 				GlobalUnlock(hData);
 			}
 		}
@@ -1504,6 +1991,63 @@ void ResizeDisplay() {
 	ATDisplayBasePane *pane = static_cast<ATDisplayBasePane *>(ATGetUIPane(kATUIPaneId_Display));
 	if (pane)
 		pane->OnSize();
+}
+
+void StopRecording() {
+	if (g_pAudioWriter) {
+		g_sim.GetPokey().SetAudioTap(NULL);
+		g_pAudioWriter = NULL;
+	}
+
+	if (g_pVideoWriter) {
+		g_pVideoWriter->Shutdown();
+		g_sim.GetPokey().SetAudioTap(NULL);
+		g_sim.GetGTIA().SetVideoTap(NULL);
+		g_pVideoWriter = NULL;
+	}
+}
+
+class ATUIDialogVideoRecording : public VDDialogFrameW32 {
+public:
+	ATUIDialogVideoRecording() : VDDialogFrameW32(IDD_VIDEO_RECORDING), mEncoding(kATVideoEncoding_ZMBV) {}
+
+	ATVideoEncoding GetEncoding() const { return mEncoding; }
+
+protected:
+	void OnDataExchange(bool write);
+
+	ATVideoEncoding mEncoding;
+};
+
+void ATUIDialogVideoRecording::OnDataExchange(bool write) {
+	VDRegistryAppKey key("Settings");
+
+	if (write) {
+		if (IsButtonChecked(IDC_VC_ZMBV))
+			mEncoding = kATVideoEncoding_ZMBV;
+		else if (IsButtonChecked(IDC_VC_RLE))
+			mEncoding = kATVideoEncoding_RLE;
+		else
+			mEncoding = kATVideoEncoding_Raw;
+
+		key.setInt("Video Recording: Compression Mode", mEncoding);
+	} else {
+		mEncoding = (ATVideoEncoding)key.getEnumInt("Video Recording: Compression Mode", kATVideoEncodingCount, kATVideoEncoding_ZMBV);
+
+		switch(mEncoding) {
+			case kATVideoEncoding_Raw:
+				CheckButton(IDC_VC_NONE, true);
+				break;
+
+			case kATVideoEncoding_RLE:
+				CheckButton(IDC_VC_RLE, true);
+				break;
+
+			case kATVideoEncoding_ZMBV:
+				CheckButton(IDC_VC_ZMBV, true);
+				break;
+		}
+	}
 }
 
 bool OnCommand(UINT id) {
@@ -1547,15 +2091,29 @@ bool OnCommand(UINT id) {
 		case ID_FILE_ATTACHCARTRIDGE:
 			{
 				VDStringW fn(VDGetLoadFileName('cart', (VDGUIHandle)g_hwnd, L"Load cartridge",
-					L"All supported types\0*.bin;*.car;*.rom\0"
+					L"All supported types\0*.bin;*.car;*.rom;*.zip\0"
 					L"Cartridge image (*.bin,*.car,*.rom)\0*.bin;*.car;*.rom\0"
+					L"Zip archive (*.zip)\0*.zip\0"
 					L"All files\0*.*\0",
 
 					L"bin"));
 
 				if (!fn.empty()) {
 					try {
-						g_sim.LoadCartridge(fn.c_str());
+						ATCartLoadContext cartctx = {};
+						cartctx.mbReturnOnUnknownMapper = true;
+
+						if (!g_sim.LoadCartridge(fn.c_str(), &cartctx)) {
+							ATUIDialogCartridgeMapper mapperdlg(cartctx.mCartSize);
+
+							if (mapperdlg.ShowDialog((VDGUIHandle)g_hwnd)) {
+								cartctx.mbReturnOnUnknownMapper = false;
+								cartctx.mCartMapper = mapperdlg.GetMapper();
+
+								g_sim.LoadCartridge(fn.c_str(), &cartctx);
+							}
+						}
+
 						g_sim.ColdReset();
 					} catch(const MyError& e) {
 						e.post(g_hwnd, "Altirra Error");
@@ -1565,13 +2123,63 @@ bool OnCommand(UINT id) {
 			return true;
 
 		case ID_FILE_DETACHCARTRIDGE:
-			g_sim.LoadCartridge(NULL);
+			g_sim.UnloadCartridge();
 			g_sim.ColdReset();
 			return true;
 
 		case ID_ATTACHSPECIALCARTRIDGE_SUPERCHARGER3D:
 			g_sim.LoadCartridgeSC3D();
 			g_sim.ColdReset();
+			return true;
+
+		case ID_ATTACHSPECIALCARTRIDGE_EMPTY1MB:
+			g_sim.LoadCartridgeFlash1Mb(false);
+			g_sim.ColdReset();
+			return true;
+
+		case ID_ATTACHSPECIALCARTRIDGE_EMPTY1MBMYIDE:
+			g_sim.LoadCartridgeFlash1Mb(true);
+			g_sim.ColdReset();
+			return true;
+
+		case ID_ATTACHSPECIALCARTRIDGE_EMPTY8MB:
+			g_sim.LoadCartridgeFlash8Mb();
+			g_sim.ColdReset();
+			return true;
+
+		case ID_FILE_SAVECARTRIDGE:
+			try {
+				ATCartridgeEmulator *cart = g_sim.GetCartridge();
+				int mode = 0;
+
+				if (cart)
+					mode = cart->GetMode();
+
+				if (!mode)
+					throw MyError("There is no cartridge to save.");
+
+				if (mode == kATCartridgeMode_SuperCharger3D)
+					throw MyError("The current cartridge cannot be saved to an image file.");
+
+				VDFileDialogOption opts[]={
+					{VDFileDialogOption::kSelectedFilter, 0, NULL, 0, 0},
+					{0}
+				};
+
+				int optval[1]={0};
+
+				VDStringW fn(VDGetSaveFileName('cart', (VDGUIHandle)g_hwnd, L"Save cartridge",
+					L"Cartridge image with header\0*.bin;*.car;*.rom\0"
+					L"Raw cartridge image\0*.bin;*.car;*.rom\0",
+
+					L"car", opts, optval));
+
+				if (!fn.empty()) {
+					cart->Save(fn.c_str(), optval[0] == 1);
+				}
+			} catch(const MyError& e) {
+				e.post(g_hwnd, "Altirra Error");
+			}
 			return true;
 
 		case ID_FILE_EXIT:
@@ -1762,6 +2370,21 @@ bool OnCommand(UINT id) {
 			}
 			return true;
 
+		case ID_VIEW_SAVEFRAME:
+			try {
+				const VDPixmap *frame = g_sim.GetGTIA().GetLastFrameBuffer();
+
+				if (frame) {
+					const VDStringW fn(VDGetSaveFileName('scrn', (VDGUIHandle)g_hwnd, L"Save Screenshot", L"Portable Network Graphics (*.png)\0*.png\0", L"png"));
+
+					if (!fn.empty())
+						ATSaveFrame(g_hwnd, *frame, fn.c_str());
+				}
+			} catch(const MyError& e) {
+				e.post(g_hwnd, "Altirra Error");
+			}
+			return true;
+
 		case ID_VIEW_RESETWINDOWLAYOUT:
 			ATLoadDefaultPaneLayout();
 			return true;
@@ -1853,6 +2476,10 @@ bool OnCommand(UINT id) {
 
 		case ID_FIRMWARE_BASIC:
 			g_sim.SetBASICEnabled(!g_sim.IsBASICEnabled());
+			return true;
+
+		case ID_FIRMWARE_FASTBOOT:
+			g_sim.SetFastBootEnabled(!g_sim.IsFastBootEnabled());
 			return true;
 
 		case ID_MEMORYSIZE_48K:
@@ -2124,6 +2751,13 @@ bool OnCommand(UINT id) {
 			ATReloadPortMenus();
 			return true;
 
+		case ID_INPUT_KEYBOARD:
+			{
+				ATKeyboardDialog dlg;
+				dlg.ShowDialog((VDGUIHandle)g_hwnd);
+			}
+			return true;
+
 		case ID_CHEAT_DISABLEPMCOLLISIONS:
 			g_sim.GetGTIA().SetPMCollisionsEnabled(!g_sim.GetGTIA().ArePMCollisionsEnabled());
 			return true;
@@ -2180,14 +2814,11 @@ bool OnCommand(UINT id) {
 			return true;
 
 		case ID_RECORD_STOPRECORDING:
-			if (g_pAudioWriter) {
-				g_sim.GetPokey().SetAudioTap(NULL);
-				g_pAudioWriter = NULL;
-			}
+			StopRecording();
 			return true;
 
 		case ID_RECORD_RECORDRAWAUDIO:
-			{
+			if (!g_pAudioWriter && !g_pVideoWriter) {
 				VDStringW s(VDGetSaveFileName('raud', (VDGUIHandle)g_hwnd, L"Record raw audio", L"Raw 32-bit float data\0*.pcm\0", L"pcm"));
 
 				if (!s.empty()) {
@@ -2195,10 +2826,54 @@ bool OnCommand(UINT id) {
 						g_pAudioWriter = new ATAudioWriter(s.c_str());
 						g_sim.GetPokey().SetAudioTap(g_pAudioWriter);
 					} catch(const MyError& e) {
+						StopRecording();
 						e.post(g_hwnd, "Altirra Error");
 					}
 				}
 			}
+			return true;
+
+		case ID_RECORD_RECORDVIDEO:
+			if (!g_pAudioWriter && !g_pVideoWriter) {
+				VDStringW s(VDGetSaveFileName('rvid', (VDGUIHandle)g_hwnd, L"Record raw video", L"Audio/visual interleaved (*.avi)\0*.avi\0", L"avi"));
+
+				if (!s.empty()) {
+					ATUIDialogVideoRecording dlg;
+
+					if (dlg.ShowDialog((VDGUIHandle)g_hwnd)) {
+						try {
+							ATGTIAEmulator& gtia = g_sim.GetGTIA();
+
+							ATCreateVideoWriter((IATVideoWriter **)&g_pVideoWriter);
+
+							int w;
+							int h;
+							bool rgb32;
+							gtia.GetRawFrameFormat(w, h, rgb32);
+
+							uint32 palette[256];
+							if (!rgb32)
+								gtia.GetPalette(palette);
+
+							bool pal = g_sim.IsPALMode();
+							const VDFraction& frameRate = g_sim.IsPALMode() ? VDFraction(1773447, 114*312) : VDFraction(3579545, 2*114*262);
+							const VDFraction& samplingRate = pal ? VDFraction(1773447, 28) : VDFraction(3579545, 56);
+
+							g_pVideoWriter->Init(s.c_str(), dlg.GetEncoding(), w, h, frameRate, rgb32 ? NULL : palette, samplingRate, g_sim.IsDualPokeysEnabled(), pal ? 1773447.0f : 1789772.5f, g_sim.GetUIRenderer());
+
+							g_sim.GetPokey().SetAudioTap(g_pVideoWriter);
+							gtia.SetVideoTap(g_pVideoWriter);
+						} catch(const MyError& e) {
+							StopRecording();
+							e.post(g_hwnd, "Altirra Error");
+						}
+					}
+				}
+			}
+			return true;
+
+		case ID_HELP_CONTENTS:
+			ATShowHelp(g_hwnd, NULL);
 			return true;
 
 		case ID_HELP_ABOUT:
@@ -2236,8 +2911,10 @@ bool OnCommand(UINT id) {
 }
 
 void OnInitMenu(HMENU hmenu) {
+	bool cartAttached = g_sim.IsCartridgeAttached();
 	VDEnableMenuItemByCommandW32(hmenu, ID_CASSETTE_UNLOAD, g_sim.GetCassette().IsLoaded());
-	VDEnableMenuItemByCommandW32(hmenu, ID_FILE_DETACHCARTRIDGE, g_sim.IsCartridgeAttached());
+	VDEnableMenuItemByCommandW32(hmenu, ID_FILE_DETACHCARTRIDGE, cartAttached);
+	VDEnableMenuItemByCommandW32(hmenu, ID_FILE_SAVECARTRIDGE, cartAttached);
 
 	VDCheckMenuItemByCommandW32(hmenu, ID_SYSTEM_PAL, g_sim.IsPALMode());
 	VDCheckMenuItemByCommandW32(hmenu, ID_SYSTEM_PRINTER, g_sim.IsPrinterEnabled());
@@ -2293,6 +2970,7 @@ void OnInitMenu(HMENU hmenu) {
 	VDCheckRadioMenuItemByCommandW32(hmenu, ID_FIRMWARE_LLE, kernelMode == kATKernelMode_LLE);
 	VDCheckRadioMenuItemByCommandW32(hmenu, ID_FIRMWARE_HLE, kernelMode == kATKernelMode_HLE);
 	VDCheckMenuItemByCommandW32(hmenu, ID_FIRMWARE_BASIC, g_sim.IsBASICEnabled());
+	VDCheckMenuItemByCommandW32(hmenu, ID_FIRMWARE_FASTBOOT, g_sim.IsFastBootEnabled());
 
 	ATMemoryMode memMode = g_sim.GetMemoryMode();
 	VDCheckRadioMenuItemByCommandW32(hmenu, ID_MEMORYSIZE_48K, memMode == kATMemoryMode_48K);
@@ -2324,7 +3002,10 @@ void OnInitMenu(HMENU hmenu) {
 	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_MEMORY, debuggerEnabled);
 
 	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_FULLSCREEN, g_enhancedText == 0);
-	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_COPYFRAMETOCLIPBOARD, gtia.GetLastFrameBuffer() != NULL);
+
+	bool frameAvailable = gtia.GetLastFrameBuffer() != NULL;
+	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_COPYFRAMETOCLIPBOARD, frameAvailable);
+	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_SAVEFRAME, frameAvailable);
 
 	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_PASTE, !!IsClipboardFormatAvailable(CF_TEXT));
 
@@ -2363,8 +3044,12 @@ void OnInitMenu(HMENU hmenu) {
 	VDCheckRadioMenuItemByCommandW32(hmenu, ID_VIDEO_STANDARDVIDEO, g_enhancedText == 0);
 	VDCheckRadioMenuItemByCommandW32(hmenu, ID_VIDEO_ENHANCEDTEXT, g_enhancedText == 1);
 
-	VDEnableMenuItemByCommandW32(hmenu, ID_RECORD_STOPRECORDING, g_pAudioWriter != NULL);
+	bool recording = g_pAudioWriter != NULL || g_pVideoWriter != NULL;
+	VDEnableMenuItemByCommandW32(hmenu, ID_RECORD_STOPRECORDING, recording);
+	VDEnableMenuItemByCommandW32(hmenu, ID_RECORD_RECORDRAWAUDIO, !recording);
 	VDCheckMenuItemByCommandW32(hmenu, ID_RECORD_RECORDRAWAUDIO, g_pAudioWriter != NULL);
+	VDEnableMenuItemByCommandW32(hmenu, ID_RECORD_RECORDVIDEO, !recording);
+	VDCheckMenuItemByCommandW32(hmenu, ID_RECORD_RECORDVIDEO, g_pVideoWriter != NULL);
 
 	ATUpdatePortMenus();
 }
@@ -2424,7 +3109,7 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 		case VK_CAPITAL:
 			// drop injected CAPS LOCK keys
 			if (lParam & 0x00ff0000)
-				g_sim.GetPokey().PushKey(0x3C + modifier, isRepeat);
+				ProcessVirtKey(key, 0x3C + modifier, isRepeat);
 			return true;
 
 		case VK_SHIFT:
@@ -2482,7 +3167,7 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
 		case VK_F6:
 			if (!alt) {
-				g_sim.GetPokey().PushKey(0x11 | modifier, isRepeat);
+				ProcessVirtKey(key, 0x11 | modifier, isRepeat);
 				return true;
 			}
 			break;
@@ -2513,19 +3198,19 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			return true;
 
 		case VK_UP:
-			g_sim.GetPokey().PushKey(0x8E + shiftmod, isRepeat);
+			ProcessVirtKey(key, 0x8E + shiftmod, isRepeat);
 			return true;
 
 		case VK_DOWN:
-			g_sim.GetPokey().PushKey(0x8F + shiftmod, isRepeat);
+			ProcessVirtKey(key, 0x8F + shiftmod, isRepeat);
 			return true;
 
 		case VK_LEFT:
-			g_sim.GetPokey().PushKey(0x86 + shiftmod, isRepeat);
+			ProcessVirtKey(key, 0x86 + shiftmod, isRepeat);
 			return true;
 
 		case VK_RIGHT:
-			g_sim.GetPokey().PushKey(0x87 + shiftmod, isRepeat);
+			ProcessVirtKey(key, 0x87 + shiftmod, isRepeat);
 			return true;
 
 		case VK_CANCEL:
@@ -2539,7 +3224,7 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			return true;
 
 		case 'C':
-			if (alt) {
+			if (alt && shift) {
 				OnCommand(ID_VIEW_COPYFRAMETOCLIPBOARD);
 				return true;
 			}
@@ -2548,14 +3233,14 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
 		case VK_TAB:
 			if (!alt) {
-				g_sim.GetPokey().PushKey(0x2C | modifier, isRepeat);
+				ProcessVirtKey(key, 0x2C | modifier, isRepeat);
 				return true;
 			}
 			break;
 
 		case VK_BACK:
 			if (!alt) {
-				g_sim.GetPokey().PushKey(0x34 | modifier, isRepeat);
+				ProcessVirtKey(key, 0x34 | modifier, isRepeat);
 				return true;
 			}
 			break;
@@ -2564,98 +3249,127 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			if (alt) {
 				OnCommandToggleFullScreen();
 			} else {
-				g_sim.GetPokey().PushKey(0x0C | modifier, isRepeat);
+				ProcessVirtKey(key, 0x0C | modifier, isRepeat);
 			}
 			return true;
 
 		case VK_ESCAPE:
 			if (!alt) {
-				g_sim.GetPokey().PushKey(0x1C | modifier, isRepeat);
+				ProcessVirtKey(key, 0x1C | modifier, isRepeat);
 				return true;
 			}
 			break;
 
 		case VK_END:	// Fuji
 			if (!alt) {
-				g_sim.GetPokey().PushKey(0x27 | modifier, isRepeat);
+				ProcessVirtKey(key, 0x27 | modifier, isRepeat);
 				return true;
 			}
+			break;
 
 		case VK_NEXT:	// Help
 			if (!alt) {
-				g_sim.GetPokey().PushKey(0x11 | modifier, isRepeat);
+				ProcessVirtKey(key, 0x11 | modifier, isRepeat);
 				return true;
 			}
 			break;
 
 		case VK_OEM_1:		// ;: in US
 			if (!alt && ctrl) {
-				g_sim.GetPokey().PushKey(0x82 | shiftmod, isRepeat);
+				ProcessVirtKey(key, 0x82 | shiftmod, isRepeat);
 				return true;
 			}
+			break;
 
 		case VK_OEM_PLUS:	// + any country
 			if (!alt && ctrl) {
-				g_sim.GetPokey().PushKey(0x86, isRepeat);
+				ProcessVirtKey(key, 0x86, isRepeat);
 				return true;
 			}
+			break;
 
 		case VK_OEM_4:		// [{ in US
 			if (!alt && ctrl) {
-				g_sim.GetPokey().PushKey(0xE0, isRepeat);	// ignore shift
+				ProcessVirtKey(key, 0xE0, isRepeat);	// ignore shift
 				return true;
 			}
+			break;
+
+		case VK_OEM_5:		// \| in US -> Ctrl+Esc
+			if (!alt && ctrl) {
+				ProcessVirtKey(key, 0x9C | shiftmod, isRepeat);
+			}
+			break;
 
 		case VK_OEM_6:		// ]} in US
 			if (!alt && ctrl) {
-				g_sim.GetPokey().PushKey(0xE2, isRepeat);	// ignore shift
+				ProcessVirtKey(key, 0xE2, isRepeat);	// ignore shift
 				return true;
 			}
+			break;
 
 		case VK_OEM_COMMA:	// , any country
 			if (!alt && ctrl && !shift) {
-				g_sim.GetPokey().PushKey(0xA0, isRepeat);
+				ProcessVirtKey(key, 0xA0, isRepeat);
 				return true;
 			}
 			break;
 
 		case VK_OEM_PERIOD:	// . any country
 			if (!alt && ctrl && !shift) {
-				g_sim.GetPokey().PushKey(0xA2, isRepeat);
+				ProcessVirtKey(key, 0xA2, isRepeat);
 				return true;
 			}
 			break;
 
 		case VK_OEM_2:		// /? in US
 			if (!alt && ctrl) {
-				g_sim.GetPokey().PushKey(0xA6 | shiftmod, isRepeat);
+				ProcessVirtKey(key, 0xA6 | shiftmod, isRepeat);
+				return true;
+			}
+			break;
+
+		case VK_HOME:
+			if (!alt) {
+				// Home -> Shift+< (Clear)
+				ProcessVirtKey(key, 0x76, isRepeat);
 				return true;
 			}
 			break;
 
 		case VK_DELETE:
 			if (!alt) {
-				if (!ctrl && !shift)
-					g_sim.GetPokey().PushKey(0x76, isRepeat);
+				// Delete -> Ctrl+Backspace
+				// Shift+Delete -> Shift+Backspace
+				if (ctrl)
+					ProcessVirtKey(key, 0xF4, isRepeat);
+				else if (shift)
+					ProcessVirtKey(key, 0x74, isRepeat);
 				else
-					g_sim.GetPokey().PushKey(0x36 | modifier, isRepeat);
+					ProcessVirtKey(key, 0xB4, isRepeat);
 				return true;
 			}
 			break;
 
 		case VK_INSERT:
 			if (!alt) {
-				if (!ctrl && !shift)
-					g_sim.GetPokey().PushKey(0x77, isRepeat);
+				// Insert -> Ctrl+>
+				// Shift+Insert -> Shift+> (Insert)
+				// Ctrl[+Shift]+Insert -> Ctrl+Shift+>
+
+				if (ctrl)
+					ProcessVirtKey(key, 0xF7, isRepeat);
+				else if (shift)
+					ProcessVirtKey(key, 0x77, isRepeat);
 				else
-					g_sim.GetPokey().PushKey(0x37 | modifier, isRepeat);
+					ProcessVirtKey(key, 0xB7, isRepeat);
 				return true;
 			}
 			break;
 
 		case VK_SPACE:
 			if (!alt && (ctrl || shift)) {
-				g_sim.GetPokey().PushKey(0x21 | modifier, isRepeat);
+				ProcessVirtKey(key, 0x21 | modifier, isRepeat);
 				return true;
 			}
 	}
@@ -2698,7 +3412,7 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 				if (shift)
 					scanCode |= 0x40;
 
-				g_sim.GetPokey().PushKey(scanCode, isRepeat);
+				ProcessVirtKey(key, scanCode, isRepeat);
 				return true;
 			}
 		}
@@ -2723,12 +3437,13 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 				if (shift)
 					scanCode |= 0x40;
 
-				g_sim.GetPokey().PushKey(scanCode, isRepeat);
+				ProcessVirtKey(key, scanCode, isRepeat);
 				return true;
 			}
 		}
 	}
 
+	g_lastVkeyPressed = key;
 	return false;
 }
 
@@ -2753,6 +3468,7 @@ bool OnKeyUp(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 				// force caps lock back off
 				keybd_event(VK_CAPITAL, 0, 0, NULL);
 			}
+			ProcessRawKeyUp(key);
 			return true;
 
 		case VK_SHIFT:
@@ -2785,11 +3501,12 @@ bool OnKeyUp(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			return true;
 	}
 
+	ProcessRawKeyUp(key);
+
 	return false;
 }
 
-void ProcessKey(char c, bool repeat, bool allowQueue) {
-	uint8 ch;
+bool TranslateCharacterToKeyCode(char c, uint8& ch) {
 	switch(c) {
 
 	case 'l': ch = 0x00; break;
@@ -2931,10 +3648,33 @@ void ProcessKey(char c, bool repeat, bool allowQueue) {
 	case 'A': ch = 0x7F; break;
 
 	default:
-		return;
+		return false;
 	}
 
-	g_sim.GetPokey().PushKey(ch, repeat, allowQueue);
+	return true;
+}
+
+void ProcessKey(char c, bool repeat, bool allowQueue, bool useCooldown) {
+	uint8 ch;
+
+	if (!TranslateCharacterToKeyCode(c, ch))
+		return;
+
+	g_sim.GetPokey().PushKey(ch, repeat, allowQueue, !allowQueue, useCooldown);
+}
+
+void ProcessVirtKey(int vkey, uint8 keycode, bool repeat) {
+	g_lastVkeySent = vkey;
+
+	if (g_rawKeys)
+		g_sim.GetPokey().PushRawKey(keycode);
+	else
+		g_sim.GetPokey().PushKey(keycode, repeat);
+}
+
+void ProcessRawKeyUp(int vkey) {
+	if (g_lastVkeySent == vkey)
+		g_sim.GetPokey().ReleaseRawKey();
 }
 
 void OnChar(HWND hwnd, WPARAM wParam, LPARAM lParam) {
@@ -2942,7 +3682,21 @@ void OnChar(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 	if (code <= 0 || code > 127)
 		return;
 
-	ProcessKey((char)code, (lParam & 0x40000000) != 0, false);
+	const bool repeat = (lParam & 0x40000000) != 0;
+
+	if (g_rawKeys) {
+		uint8 ch;
+
+		if (repeat || !TranslateCharacterToKeyCode(code, ch))
+			return;
+
+		g_lastVkeySent = g_lastVkeyPressed;
+
+		g_sim.GetPokey().PushRawKey(ch);
+		return;
+	}
+
+	ProcessKey((char)code, repeat, false, true);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2973,7 +3727,8 @@ protected:
 
 	bool	mbTextModeEnabled;
 	HFONT	mTextModeFont;
-	HFONT	mTextModeWideFont;
+	HFONT	mTextModeFont2x;
+	HFONT	mTextModeFont4x;
 	int		mTextCharW;
 	int		mTextCharH;
 
@@ -2982,6 +3737,7 @@ protected:
 	uint32	mTextLastBorderColor;
 	int		mTextLastTotalHeight;
 	int		mTextLastLineCount;
+	uint8	mTextLineMode[30];
 	uint8	mTextLastData[30][40];
 };
 
@@ -2994,6 +3750,8 @@ ATDisplayPane::ATDisplayPane()
 	, mLastTrackMouseY(0)
 	, mbTextModeEnabled(false)
 	, mTextModeFont((HFONT)GetStockObject(DEFAULT_GUI_FONT))
+	, mTextModeFont2x((HFONT)GetStockObject(DEFAULT_GUI_FONT))
+	, mTextModeFont4x((HFONT)GetStockObject(DEFAULT_GUI_FONT))
 	, mTextCharW(16)
 	, mTextCharH(16)
 	, mTextLastForeColor(0)
@@ -3003,6 +3761,7 @@ ATDisplayPane::ATDisplayPane()
 {
 	mPreferredDockCode = kATContainerDockCenter;
 
+	memset(mTextLineMode, 0, sizeof mTextLineMode);
 	memset(mTextLastData, 0, sizeof mTextLastData);
 }
 
@@ -3018,9 +3777,20 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case WM_DESTROY:
 			g_adjustColorsDialog.Destroy();
 			ATShutdownPortMenus();
+
 			if (mTextModeFont) {
 				DeleteObject(mTextModeFont);
 				mTextModeFont = NULL;
+			}
+
+			if (mTextModeFont2x) {
+				DeleteObject(mTextModeFont2x);
+				mTextModeFont2x = NULL;
+			}
+
+			if (mTextModeFont4x) {
+				DeleteObject(mTextModeFont4x);
+				mTextModeFont4x = NULL;
 			}
 			break;
 
@@ -3412,20 +4182,30 @@ void ATDisplayPane::UpdateTextDisplay(bool enabled) {
 	for(int y=8; y<240; ++y) {
 		const ATAnticEmulator::DLHistoryEntry& hval = history[y];
 
-		if (!hval.mbValid || (hval.mControl & 0x0F) != 2)
+		if (!hval.mbValid)
+			continue;
+		
+		const uint8 mode = (hval.mControl & 0x0F);
+		
+		if (mode != 2 && mode != 6 && mode != 7)
 			continue;
 
 		uint32 pfAddr = hval.mPFAddress;
 
+		const int width = (mode == 2 ? 40 : 20);
 		uint8 *lastData = mTextLastData[line];
 		uint8 data[40];
-		for(int i=0; i<40; ++i) {
+		for(int i=0; i<width; ++i) {
 			uint8 c = g_sim.DebugAnticReadByte(pfAddr + i);
 
 			data[i] = c;
 		}
 
-		if (forceInvalidate || line >= mTextLastLineCount || memcmp(data, lastData, 40)) {
+		if (mode != mTextLineMode[line])
+			forceInvalidate = true;
+
+		if (forceInvalidate || line >= mTextLastLineCount || memcmp(data, lastData, width)) {
+			mTextLineMode[line] = mode;
 			memcpy(lastData, data, 40);
 			redrawFlags[line] = true;
 			linesDirty = true;
@@ -3454,13 +4234,13 @@ void ATDisplayPane::RepaintTextDisplay(HDC hdc, const bool *lineRedrawFlags) {
 	const COLORREF colorFore = mTextLastForeColor;
 	const COLORREF colorBorder = mTextLastBorderColor;
 
-	SelectObject(hdc, mTextModeFont);
 	SetTextAlign(hdc, TA_TOP | TA_LEFT);
 	SetBkMode(hdc, OPAQUE);
 
 	RECT rClient;
 	GetClientRect(mhwnd, &rClient);
 
+	uint8 lastMode = 0;
 	int py = 0;
 	for(int line = 0; line < mTextLastLineCount; ++line) {
 		uint8 *data = mTextLastData[line];
@@ -3469,10 +4249,17 @@ void ATDisplayPane::RepaintTextDisplay(HDC hdc, const bool *lineRedrawFlags) {
 			0x20, 0x60, 0x40, 0x00
 		};
 
+		const uint8 mode = mTextLineMode[line];
+		int charWidth = (mode == 2 ? mTextCharW : mTextCharW*2);
+		int charHeight = (mode != 7 ? mTextCharH : mTextCharH*2);
+
 		if (!lineRedrawFlags || lineRedrawFlags[line]) {
 			char buf[41];
 			bool inverted[41];
-			for(int i=0; i<40; ++i) {
+
+			int N = (mode == 2 ? 40 : 20);
+
+			for(int i=0; i<N; ++i) {
 				uint8 c = data[i];
 
 				c ^= kInternalToATASCIIXorTab[(c >> 5) & 3];
@@ -3484,11 +4271,30 @@ void ATDisplayPane::RepaintTextDisplay(HDC hdc, const bool *lineRedrawFlags) {
 				inverted[i] = (c & 0x80) != 0;
 			}
 
-			buf[40] = 0;
-			inverted[40] = !inverted[39];
+			buf[N] = 0;
+			inverted[N] = !inverted[N-1];
+
+			if (lastMode != mode) {
+				lastMode = mode;
+
+				switch(mode) {
+					case 2:
+					default:
+						SelectObject(hdc, mTextModeFont);
+						break;
+
+					case 6:
+						SelectObject(hdc, mTextModeFont2x);
+						break;
+
+					case 7:
+						SelectObject(hdc, mTextModeFont4x);
+						break;
+				}
+			}
 
 			int x = 0;
-			while(x < 40) {
+			while(x < N) {
 				bool invertSpan = inverted[x];
 				int xe = x + 1;
 
@@ -3503,17 +4309,17 @@ void ATDisplayPane::RepaintTextDisplay(HDC hdc, const bool *lineRedrawFlags) {
 					SetBkColor(hdc, colorBack);
 				}
 
-				TextOutA(hdc, mTextCharW * x, py, buf + x, xe - x);
+				TextOutA(hdc, charWidth * x, py, buf + x, xe - x);
 
 				x = xe;
 			}
 
-			RECT rClear = { mTextCharW * x, py, rClient.right, py + mTextCharH };
+			RECT rClear = { charWidth * x, py, rClient.right, py + charHeight };
 			SetBkColor(hdc, colorBorder);
 			ExtTextOutW(hdc, 0, py, ETO_OPAQUE, &rClear, L"", 0, NULL);
 		}
 
-		py += mTextCharH;
+		py += charHeight;
 	}
 
 	if (mTextLastTotalHeight != py || !lineRedrawFlags) {
@@ -3530,6 +4336,12 @@ void ATDisplayPane::RepaintTextDisplay(HDC hdc, const bool *lineRedrawFlags) {
 void ATDisplayPane::UpdateTextModeFont() {
 	if (mTextModeFont)
 		DeleteObject(mTextModeFont);
+
+	if (mTextModeFont2x)
+		DeleteObject(mTextModeFont2x);
+
+	if (mTextModeFont4x)
+		DeleteObject(mTextModeFont4x);
 
 	mTextModeFont = CreateFontIndirectW(&g_enhancedTextFont);
 	if (!mTextModeFont)
@@ -3550,6 +4362,18 @@ void ATDisplayPane::UpdateTextModeFont() {
 		}
 		ReleaseDC(mhwnd, hdc);
 	}
+
+	LOGFONTW logfont2x4x(g_enhancedTextFont);
+	logfont2x4x.lfWidth = mTextCharW * 2;
+
+	mTextModeFont2x = CreateFontIndirectW(&logfont2x4x);
+	if (!mTextModeFont2x)
+		mTextModeFont2x = CreateFontW(16, mTextCharW * 2, 0, 0, 0, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FF_DONTCARE | DEFAULT_PITCH, L"Lucida Console");
+
+	logfont2x4x.lfHeight *= 2;
+	mTextModeFont4x = CreateFontIndirectW(&logfont2x4x);
+	if (!mTextModeFont4x)
+		mTextModeFont4x = CreateFontW(32, mTextCharW * 2, 0, 0, 0, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FF_DONTCARE | DEFAULT_PITCH, L"Lucida Console");
 
 	InvalidateRect(mhwnd, NULL, TRUE);
 }
@@ -3690,7 +4514,7 @@ void ATMainWindow::OnDropFiles(HDROP hdrop) {
 		vdfastvector<wchar_t> buf(len+1, 0);
 		if (DragQueryFileW(hdrop, 0, buf.data(), len+1)) {
 			try {
-				g_sim.Load(buf.data());
+				DoLoad((VDGUIHandle)mhwnd, buf.data(), false, false, 0);
 			} catch(const MyError& e) {
 				e.post(g_hwnd, "Altirra Error");
 			}
@@ -3706,7 +4530,7 @@ public:
 
 	void Lock() {
 		if (!mpMgr)
-			mpMgr = VDInitDirect3D9(this);
+			mpMgr = VDInitDirect3D9(this, NULL);
 	}
 
 	void Unlock() {
@@ -3725,6 +4549,11 @@ private:
 void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 	bool coldReset = false;
 	bool debugMode = false;
+	bool bootrw = false;
+	bool bootvrw = false;
+	bool unloaded = false;
+	VDStringA keysToType;
+	int cartmapper = 0;
 
 	try {
 		ATDiskEmulator& disk = g_sim.GetDiskDrive(0);
@@ -3748,6 +4577,12 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		} else if (cmdLine.FindAndRemoveSwitch(L"nosiopatch")) {
 			g_sim.SetDiskSIOPatchEnabled(false);
 			g_sim.SetCassetteSIOPatchEnabled(false);
+		}
+
+		if (cmdLine.FindAndRemoveSwitch(L"fastboot")) {
+			g_sim.SetFastBootEnabled(true);
+		} else if (cmdLine.FindAndRemoveSwitch(L"nofastboot")) {
+			g_sim.SetFastBootEnabled(false);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"casautoboot")) {
@@ -3814,6 +4649,8 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		if (cmdLine.FindAndRemoveSwitch(L"kernel", arg)) {
 			if (!_wcsicmp(arg, L"default"))
 				g_sim.SetKernelMode(kATKernelMode_Default);
+			else if (!_wcsicmp(arg, L"osa"))
+				g_sim.SetKernelMode(kATKernelMode_OSA);
 			else if (!_wcsicmp(arg, L"osb"))
 				g_sim.SetKernelMode(kATKernelMode_OSB);
 			else if (!_wcsicmp(arg, L"xl"))
@@ -3847,6 +4684,19 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				throw MyError("Command line error: Invalid memory mode '%ls'", arg);
 		}
 
+		if (cmdLine.FindAndRemoveSwitch(L"artifact", arg)) {
+			if (!_wcsicmp(arg, L"none"))
+				g_sim.GetGTIA().SetArtifactingMode(ATGTIAEmulator::kArtifactNone);
+			else if (!_wcsicmp(arg, L"ntsc"))
+				g_sim.GetGTIA().SetArtifactingMode(ATGTIAEmulator::kArtifactNTSC);
+			else if (!_wcsicmp(arg, L"ntschi"))
+				g_sim.GetGTIA().SetArtifactingMode(ATGTIAEmulator::kArtifactNTSCHi);
+			else if (!_wcsicmp(arg, L"pal"))
+				g_sim.GetGTIA().SetArtifactingMode(ATGTIAEmulator::kArtifactPAL);
+			else
+				throw MyError("Command line error: Invalid hardware mode '%ls'", arg);
+		}
+
 		if (cmdLine.FindAndRemoveSwitch(L"vsync"))
 			g_sim.GetGTIA().SetVsyncEnabled(true);
 		else if (cmdLine.FindAndRemoveSwitch(L"novsync"))
@@ -3855,23 +4705,131 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		if (cmdLine.FindAndRemoveSwitch(L"debug"))
 			debugMode = true;
 
+		if (cmdLine.FindAndRemoveSwitch(L"bootrw")) {
+			bootrw = true;
+		}
+
+		if (cmdLine.FindAndRemoveSwitch(L"bootvrw")) {
+			bootvrw = true;
+		}
+
+		if (cmdLine.FindAndRemoveSwitch(L"type", arg)) {
+			keysToType += VDTextWToA(arg);
+		}
+
+		if (cmdLine.FindAndRemoveSwitch(L"nohdpath", arg)) {
+			IATHardDiskEmulator *hd = g_sim.GetHardDisk();
+
+			if (hd && hd->IsEnabled()) {
+				hd->SetEnabled(false);
+				coldReset = true;
+			}
+		}
+
+		if (cmdLine.FindAndRemoveSwitch(L"hdpath", arg)) {
+			IATHardDiskEmulator *hd = g_sim.GetHardDisk();
+			if (hd) {
+				if (!hd->IsEnabled())
+					hd->SetEnabled(true);
+
+				hd->SetReadOnly(true);
+				hd->SetBasePath(arg);
+
+				coldReset = true;
+			}
+		}
+
+		if (cmdLine.FindAndRemoveSwitch(L"hdpathrw", arg)) {
+			IATHardDiskEmulator *hd = g_sim.GetHardDisk();
+			if (hd) {
+				if (!hd->IsEnabled())
+					hd->SetEnabled(true);
+
+				hd->SetReadOnly(false);
+				hd->SetBasePath(arg);
+
+				coldReset = true;
+			}
+		}
+
+		if (cmdLine.FindAndRemoveSwitch(L"noide")) {
+			g_sim.UnloadIDE();
+			coldReset = true;
+		} else if (cmdLine.FindAndRemoveSwitch(L"ide", arg)) {
+			VDStringRefW tokenizer(arg);
+			VDStringRefW iorange;
+			VDStringRefW mode;
+			VDStringRefW cylinders;
+			VDStringRefW heads;
+			VDStringRefW spt;
+
+			if (!tokenizer.split(',', iorange) ||
+				!tokenizer.split(',', mode) ||
+				!tokenizer.split(',', cylinders) ||
+				!tokenizer.split(',', heads) ||
+				!tokenizer.split(',', spt))
+				throw MyError("Invalid IDE mount string: %ls", arg);
+
+			bool useD5xx = false;
+			if (iorange == L"d5xx")
+				useD5xx = true;
+			else if (iorange != L"d1xx")
+				throw MyError("Invalid IDE I/O range: %.*ls", iorange.size(), iorange.data());
+
+			bool write = false;
+			if (mode == L"rw")
+				write = true;
+			else if (mode != L"ro")
+				throw MyError("Invalid IDE mount mode: %.*ls", mode.size(), mode.data());
+
+			unsigned cylval;
+			unsigned headsval;
+			unsigned sptval;
+			char dummy;
+			if (1 != swscanf(VDStringW(cylinders).c_str(), L"%u%c", &cylval, &dummy) || !cylval || cylval > 65536 ||
+				1 != swscanf(VDStringW(heads).c_str(), L"%u%c", &headsval, &dummy) || !headsval || headsval > 16 ||
+				1 != swscanf(VDStringW(spt).c_str(), L"%u%c", &sptval, &dummy) || !sptval || sptval > 63
+				)
+				throw MyError("Invalid IDE image geometry: %.*ls / %.*ls / %.*ls"
+					, cylinders.size(), cylinders.data()
+					, heads.size(), heads.data()
+					, spt.size(), spt.data()
+				);
+
+			g_sim.LoadIDE(useD5xx, write, cylval, headsval, sptval, VDStringW(tokenizer).c_str());
+		}
+
+		if (cmdLine.FindAndRemoveSwitch(L"rawkeys"))
+			g_rawKeys = true;
+		else if (cmdLine.FindAndRemoveSwitch(L"norawkeys"))
+			g_rawKeys = false;
+
+		if (cmdLine.FindAndRemoveSwitch(L"cartmapper", arg)) {
+			cartmapper = ATGetCartridgeModeForMapper(wcstol(arg, NULL, 10));
+
+			if (cartmapper <= 0 || cartmapper >= kATCartridgeModeCount)
+				throw MyError("Unsupported or invalid cartridge mapper: %ls", arg);
+		}
+
 		if (cmdLine.FindAndRemoveSwitch(L"?")) {
 			MessageBox(g_hwnd,
-				"Usage: Altirra [switches] <disk/cassette/cartridge image>\n"
+				"Usage: Altirra [switches] <disk/cassette/cartridge images...>\n"
 				"\n"
 				"/resetall - Reset all settings to default\n"
 				"/baseline - Reset hardware settings to default\n"
 				"/ntsc - select NTSC timing\n"
 				"/pal - select PAL timing\n"
+				"/artifact:none|ntsc|ntschi|pal - set video artifacting\n"
 				"/[no]burstio|burstiopolled - control SIO burst I/O mode\n"
 				"/[no]siopatch - control SIO kernel patch\n"
+				"/[no]fastboot - control fast kernel boot initialization\n"
 				"/[no]casautoboot - control cassette auto-boot\n"
 				"/[no]accuratedisk - control accurate sector timing\n"
 				"/[no]basic - enable/disable BASIC ROM\n"
 				"/[no]vbxe - enable/disable VBXE support\n"
 				"/[no]vbxeshared - enable/disable VBXE shared memory\n"
 				"/[no]vbxealtpage - enable/disable VBXE $D7xx register window\n"
-				"/kernel:default|osb|xl|lle|hle|other - select kernel ROM\n"
+				"/kernel:default|osa|osb|xl|lle|hle|other - select kernel ROM\n"
 				"/hardware:800|800xl - select hardware type\n"
 				"/memsize:48K|52K|64K|128K|320K|576K|1088K - select memory size\n"
 				"/[no]stereo - enable dual pokeys\n"
@@ -3881,15 +4839,33 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				"/[no]vsync - synchronize to vertical blank\n"
 				"/debug - launch in debugger mode"
 				"/f - start full screen"
+				"/bootvrw - boot disk images in virtual R/W mode\n"
+				"/bootrw - boot disk images in read/write mode\n"
+				"/type \"keys\" - type keys on keyboard (~ for enter, ` for \")\n"
+				"/[no]hdpath|hdpathrw <path> - mount H: device\n"
+				"/[no]rawkeys - enable/disable raw keyboard presses\n"
+				"/cartmapper <mapper> - set cartridge mapper for untagged image\n"
+				"/portable - create Altirra.ini file and switch to portable mode\n"
+				"/ide:d1xx|d5xx,ro|rw,c,h,s,path - set IDE emulation\n"
 				,
 				"Altirra command-line help", MB_OK | MB_ICONINFORMATION);
 		}
 
 		VDCommandLineIterator it;
-		if (cmdLine.GetNextNonSwitchArgument(it, arg)) {
-			g_sim.Load(arg);
+		if (cmdLine.GetNextSwitchArgument(it, arg)) {
+			throw MyError("Unknown command-line switch: %ls. Use /? for help.", arg);
+		}
+
+		while(cmdLine.GetNextNonSwitchArgument(it, arg)) {
+			if (!unloaded) {
+				unloaded = true;
+				g_sim.UnloadAll();
+			}
+
+			DoLoad((VDGUIHandle)hwnd, arg, bootvrw, bootrw, cartmapper);
 			coldReset = true;// required to set up cassette autoboot
 		}
+
 	} catch(const MyError& e) {
 		e.post(hwnd, "Altirra error");
 	}
@@ -3899,6 +4875,22 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 
 	if (debugMode)
 		ATShowConsole();
+
+	if (!keysToType.empty()) {
+		VDStringA::size_type i = 0;
+		while((i = keysToType.find('~', i)) != VDStringA::npos) {
+			keysToType[i] = '\n';
+			++i;
+		}
+
+		i = 0;
+		while((i = keysToType.find('`', i)) != VDStringA::npos) {
+			keysToType[i] = '"';
+			++i;
+		}
+
+		Paste(keysToType.data(), keysToType.size(), false);
+	}
 }
 
 void LoadSettingsEarly(bool useHardwareBaseline) {
@@ -3939,9 +4931,10 @@ void SaveMountedImages() {
 		ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
 		name.sprintf("Disk %d", i);
 
-		const wchar_t *path = disk.GetPath();
 
-		if (path && disk.IsDiskBacked()) {
+		if (disk.IsEnabled()) {
+			const wchar_t *path = disk.GetPath();
+			
 			wchar_t c = 'R';
 
 			if (disk.IsWriteEnabled()) {
@@ -3951,7 +4944,11 @@ void SaveMountedImages() {
 					c = 'V';
 			}
 
-			imagestr.sprintf(L"%c%ls", c, path);
+			if (path && disk.IsDiskBacked())
+				imagestr.sprintf(L"%c%ls", c, path);
+			else
+				imagestr.sprintf(L"%c", c);
+
 			key.setString(name.c_str(), imagestr.c_str());
 		} else {
 			key.removeValue(name.c_str());
@@ -3960,13 +4957,40 @@ void SaveMountedImages() {
 
 	ATCartridgeEmulator *cart = g_sim.GetCartridge();
 	const wchar_t *cartPath = NULL;
-	if (cart)
+	int cartMode = 0;
+	if (cart) {
 		cartPath = cart->GetPath();
+		cartMode = cart->GetMode();
+	}
 
-	if (cartPath)
+	if (cartPath && *cartPath) {
 		key.setString("Cartridge", cartPath);
-	else
+		key.setInt("Cartridge Mode", cartMode);
+	} else if (cartMode == kATCartridgeMode_SuperCharger3D) {
+		key.setString("Cartridge", "special:sc3d");
+		key.removeValue("Cartridge Mode");
+	} else {
 		key.removeValue("Cartridge");
+		key.removeValue("Cartridge Mode");
+	}
+
+	ATIDEEmulator *ide = g_sim.GetIDEEmulator();
+
+	if (ide) {
+		key.setString("IDE: Image path", ide->GetImagePath());
+		key.setBool("IDE: Use D5xx", g_sim.IsIDEUsingD5xx());
+		key.setBool("IDE: Write enabled", ide->IsWriteEnabled());
+		key.setInt("IDE: Image cylinders", ide->GetCylinderCount());
+		key.setInt("IDE: Image heads", ide->GetHeadCount());
+		key.setInt("IDE: Image sectors per track", ide->GetSectorsPerTrack());
+	} else {
+		key.removeValue("IDE: Image path");
+		key.removeValue("IDE: Use D5xx");
+		key.removeValue("IDE: Write enabled");
+		key.removeValue("IDE: Image cylinders");
+		key.removeValue("IDE: Image heads");
+		key.removeValue("IDE: Image sectors per track");
+	}
 }
 
 void LoadMountedImages() {
@@ -3977,37 +5001,67 @@ void LoadMountedImages() {
 	for(int i=0; i<8; ++i) {
 		name.sprintf("Disk %d", i);
 
-		if (key.getString(name.c_str(), imagestr) && imagestr.size() > 1) {
+		if (key.getString(name.c_str(), imagestr) && !imagestr.empty()) {
 			ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
 
 			wchar_t mode = imagestr[0];
-			bool writeEnabled;
-			bool autoFlush;
+			bool vrw;
+			bool rw;
 
 			if (mode == L'V') {
-				writeEnabled = true;
-				autoFlush = false;
+				vrw = true;
+				rw = false;
 			} else if (mode == L'R') {
-				writeEnabled = false;
-				autoFlush = false;
+				vrw = false;
+				rw = false;
 			} else if (mode == L'W') {
-				writeEnabled = true;
-				autoFlush = true;
+				vrw = false;
+				rw = true;
 			} else
 				continue;
 
-			try {
-				disk.LoadDisk(imagestr.c_str() + 1);
-			} catch(const MyError&) {
-			}
+			if (imagestr.size() > 1) {
+				try {
+					ATLoadContext ctx;
+					ctx.mLoadType = kATLoadType_Disk;
+					ctx.mLoadIndex = i;
 
-			disk.SetWriteFlushMode(writeEnabled, autoFlush);
+					g_sim.Load(imagestr.c_str() + 1, vrw, rw, &ctx);
+				} catch(const MyError&) {
+				}
+			} else {
+				disk.SetEnabled(true);
+				disk.SetWriteFlushMode(vrw || rw, rw);
+			}
 		}
 	}
 
 	if (key.getString("Cartridge", imagestr)) {
+		int cartMode = key.getInt("Cartridge Mode", 0);
+
 		try {
-			g_sim.LoadCartridge(imagestr.c_str());
+			ATCartLoadContext cartLoadCtx = {0};
+			cartLoadCtx.mbReturnOnUnknownMapper = false;
+			cartLoadCtx.mCartMapper = cartMode;
+
+			if (imagestr == L"special:sc3d")
+				g_sim.LoadCartridgeSC3D();
+			else
+				g_sim.LoadCartridge(imagestr.c_str(), &cartLoadCtx);
+		} catch(const MyError&) {
+		}
+	}
+
+	VDStringW idePath;
+	if (key.getString("IDE: Image path", idePath)) {
+		bool d5xx = key.getBool("IDE: Use D5xx", true);
+		bool write = key.getBool("IDE: Write enabled", false);
+		uint32 cyls = key.getInt("IDE: Image cylinders", 0);
+		uint32 heads = key.getInt("IDE: Image heads", 0);
+		uint32 sectors = key.getInt("IDE: Image sectors per track", 0);
+
+		try {
+			g_sim.LoadIDE(d5xx, write, cyls, heads, sectors, idePath.c_str());
 		} catch(const MyError&) {
 		}
 	}
@@ -4028,6 +5082,7 @@ void LoadSettings(bool useHardwareBaseline) {
 		g_sim.SetCassetteSIOPatchEnabled(key.getBool("Cassette: SIO patch enabled", g_sim.IsCassetteSIOPatchEnabled()));
 		g_sim.SetCassetteAutoBootEnabled(key.getBool("Cassette: Auto-boot enabled", g_sim.IsCassetteAutoBootEnabled()));
 		g_sim.SetFPPatchEnabled(key.getBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled()));
+		g_sim.SetFastBootEnabled(key.getBool("Kernel: Fast boot enabled", g_sim.IsFastBootEnabled()));
 		pokey.SetSerialBurstMode((ATPokeyEmulator::SerialBurstMode)key.getEnumInt("POKEY: Burst mode", ATPokeyEmulator::kSerialBurstModeCount, pokey.GetSerialBurstMode()));
 		g_sim.SetVBXEEnabled(key.getBool("GTIA: VBXE support", g_sim.GetVBXE() != NULL));
 		g_sim.SetVBXESharedMemoryEnabled(key.getBool("GTIA: VBXE shared memory", g_sim.IsVBXESharedMemoryEnabled()));
@@ -4044,6 +5099,7 @@ void LoadSettings(bool useHardwareBaseline) {
 		g_sim.SetRTime8Enabled(key.getBool("Misc: R-Time 8 Enabled", g_sim.IsRTime8Enabled()));
 
 		g_sim.SetRandomFillEnabled(key.getBool("Memory: Randomize on start", g_sim.IsRandomFillEnabled()));
+		g_rawKeys = key.getBool("Keyboard: Raw mode", g_rawKeys);
 	}
 
 	g_sim.SetTurboModeEnabled(key.getBool("Turbo mode", g_sim.IsTurboModeEnabled()));
@@ -4090,6 +5146,7 @@ void LoadSettings(bool useHardwareBaseline) {
 
 		hd->SetEnabled(key.getBool("Hard disk: Enabled", hd->IsEnabled()));
 		hd->SetReadOnly(key.getBool("Hard disk: Read only", hd->IsReadOnly()));
+		hd->SetBurstIOEnabled(key.getBool("Hard disk: Burst IO enabled", hd->IsBurstIOEnabled()));
 	}
 
 	pokey.SetNonlinearMixingEnabled(key.getBool("Audio: Non-linear mixing", pokey.IsNonlinearMixingEnabled()));
@@ -4124,6 +5181,7 @@ void SaveSettings() {
 	key.setBool("Memory: Randomize on start", g_sim.IsRandomFillEnabled());
 
 	key.setBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled());
+	key.setBool("Kernel: Fast boot enabled", g_sim.IsFastBootEnabled());
 
 	key.setBool("Cassette: SIO patch enabled", g_sim.IsCassetteSIOPatchEnabled());
 	key.setBool("Cassette: Auto-boot enabled", g_sim.IsCassetteAutoBootEnabled());
@@ -4172,6 +5230,7 @@ void SaveSettings() {
 		key.setString("Hard disk: Host path", hd->GetBasePath());
 		key.setBool("Hard disk: Enabled", hd->IsEnabled());
 		key.setBool("Hard disk: Read only", hd->IsReadOnly());
+		key.setBool("Hard disk: Burst IO enabled", hd->IsBurstIOEnabled());
 	}
 
 	key.setInt("Display: Filter mode", g_dispFilterMode);
@@ -4184,6 +5243,7 @@ void SaveSettings() {
 
 	key.setBool("Printer: Enabled", g_sim.IsPrinterEnabled());
 	key.setBool("Misc: R-Time 8 Enabled", g_sim.IsRTime8Enabled());
+	key.setBool("Keyboard: Raw mode", g_rawKeys);
 
 	SaveInputMaps();
 	SaveMountedImages();
@@ -4441,13 +5501,16 @@ int RunMainLoop2(HWND hwnd, VDCommandLine& cmdLine) {
 	winCaptionUpdater.Update(hwnd, true, 0, 0);
 
 	MSG msg;
+	int rcode = 0;
 	for(;;) {
 		for(int i=0; i<2; ++i) {
 			DWORD flags = i ? PM_REMOVE : PM_QS_INPUT | PM_REMOVE;
 
 			while(PeekMessage(&msg, NULL, 0, 0, flags)) {
-				if (msg.message == WM_QUIT)
-					return (int)msg.wParam;
+				if (msg.message == WM_QUIT) {
+					rcode = (int)msg.wParam;
+					goto xit;
+				}
 
 				if (msg.hwnd) {
 					if (msg.message == WM_SYSCHAR) {
@@ -4587,7 +5650,7 @@ int RunMainLoop2(HWND hwnd, VDCommandLine& cmdLine) {
 
 		WaitMessage();
 	}
-
+xit:
 	return 0;
 }
 
@@ -4602,18 +5665,311 @@ int RunMainLoop(HWND hwnd, VDCommandLine& cmdLine) {
 	return rc;
 }
 
-int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
-	VDCommandLine cmdLine(GetCommandLineW());
+void LoadRegistry(const wchar_t *path) {
+	VDTextInputFile ini(path);
 
-	VDFastMemcpyAutodetect();
+	vdautoptr<VDRegistryKey> key;
+	VDStringA token;
+	VDStringW strvalue;
+	vdfastvector<char> binvalue;
+	while(const char *s = ini.GetNextLine()) {
+		while(*s == ' ' || *s == '\t')
+			++s;
+
+		if (!*s || *s == ';')
+			continue;
+
+		if (*s == '[') {
+			key = NULL;
+
+			++s;
+			const char *end = strchr(s, ']');
+			if (!end)
+				continue;
+
+			if (!strncmp(s, "Shared\\", 7)) {
+				token.assign(s + 7, end);
+				key = new VDRegistryKey(token.c_str(), true, true);
+			} else if (!strncmp(s, "User\\", 5)) {
+				token.assign(s + 5, end);
+				key = new VDRegistryKey(token.c_str(), false, true);
+			}
+
+			continue;
+		}
+
+		if (!key)
+			continue;
+
+		// expect lines of form:
+		//
+		//	"key" = <int-value>
+		//	"key" = "<string-value>"
+		//	"key" = [<binary-value>]
+
+		if (*s != '"')
+			continue;
+
+		++s;
+		const char *nameStart = s;
+		while(*s != '"')
+			++s;
+
+		if (!*s)
+			continue;
+
+		token.assign(nameStart, s);
+		++s;
+
+		while(*s == ' ' || *s == '\t')
+			++s;
+
+		if (*s != '=')
+			continue;
+		++s;
+
+		while(*s == ' ' || *s == '\t')
+			++s;
+
+		static const uint8 kUnhexTab[32]={
+			0,10,11,12,13,14,15,0,0,0,0,0,0,0,0,0,
+			0,1,2,3,4,5,6,7,8,9,0,0,0,0,0,0
+		};
+
+		if (*s == '-' || (*s >= '0' && *s <= '9')) {
+			// integer
+			long v = strtol(s, NULL, 0);
+
+			key->setInt(token.c_str(), (int)v);
+		} else if (*s == '"') {
+			// string
+			++s;
+
+			strvalue.clear();
+			for(;;) {
+				char c = *s++;
+
+				if (!c || c == '"')
+					break;
+
+				if (c == '\\') {
+					c = *s++;
+
+					if (!c)
+						break;
+
+					switch(c) {
+						case 'n':	c = '\n'; break;
+						case 't':	c = '\t'; break;
+						case 'v':	c = '\v'; break;
+						case 'b':	c = '\b'; break;
+						case 'r':	c = '\r'; break;
+						case 'f':	c = '\f'; break;
+						case 'a':	c = '\a'; break;
+						case '\\':	break;
+						case '?':	break;
+						case '\'':	break;
+						case '"':	break;
+						case 'x':
+							{
+								c = *s++;
+								if (!isxdigit((uint8)c))
+									goto stop;
+
+								uint32 v = 0;
+								do {
+									v = (v << 4) + kUnhexTab[c & 0x1f];
+
+									c = *s++;
+								} while(isxdigit((uint8)c));
+
+								--s;
+
+								strvalue.push_back((wchar_t)c);
+							}
+							continue;
+
+						default:
+							goto stop;
+
+					}
+				}
+
+				strvalue.push_back((wchar_t)(uint8)c);
+			}
+
+stop:
+			key->setString(token.c_str(), strvalue.c_str());
+		} else if (*s == '[') {
+			binvalue.clear();
+
+			++s;
+			for(;;) {
+				uint8 a = s[0];
+				if (!isxdigit(a))
+					break;
+
+				uint8 b = s[1];
+				if (!isxdigit(b))
+					break;
+
+				binvalue.push_back(kUnhexTab[b & 0x1f] + (kUnhexTab[a & 0x1f] << 4));
+
+				if (s[2] != ' ')
+					break;
+
+				s += 3;
+			}
+
+			key->setBinary(token.c_str(), binvalue.data(), binvalue.size());
+		}
+	}
+}
+
+void SaveRegistryPath(VDTextOutputStream& os, VDStringA& path, bool global) {
+	VDRegistryKey key(path.c_str(), global, false);
+	if (!key.isReady())
+		return;
+
+	size_t baseLen = path.size();
+
+	VDRegistryValueIterator valIt(key);
+	VDStringW strval;
+	vdfastvector<uint8> binval;
+
+	bool wroteGroup = false;
+	while(const char *name = valIt.Next()) {
+		if (!wroteGroup) {
+			wroteGroup = true;
+
+			os.PutLine();
+			os.FormatLine("[%s%s]", global ? "Shared" : "User", path.c_str());
+		}
+
+		VDRegistryKey::Type type = key.getValueType(name);
+		switch(type) {
+			case VDRegistryKey::kTypeInt:
+				os.FormatLine("\"%s\" = %d", name, key.getInt(name));
+				break;
+
+			case VDRegistryKey::kTypeString:
+				if (key.getString(name, strval)) {
+					os.Format("\"%s\" = \"", name);
+
+					bool lastWasHexEscape = false;
+					for(VDStringW::const_iterator it(strval.begin()), itEnd(strval.end()); it != itEnd; ++it) {
+						uint32 c = *it;
+
+						if ((c >= 0x20 && c < 0x7f) && c != '"' && c != '\\') {
+							if (!lastWasHexEscape || !isxdigit(c)) {
+								lastWasHexEscape = false;
+								char c8 = (char)c;
+								os.Write(&c8, 1);
+								continue;
+							}
+						}
+
+						lastWasHexEscape = false;
+
+						switch(c) {
+							case L'\n':	os.Write("\\n");	break;
+							case L'\t':	os.Write("\\t");	break;
+							case L'\v':	os.Write("\\v");	break;
+							case L'\b':	os.Write("\\b");	break;
+							case L'\r':	os.Write("\\r");	break;
+							case L'\f':	os.Write("\\f");	break;
+							case L'\a':	os.Write("\\a");	break;
+							case L'\"':	os.Write("\\\"");	break;
+							case L'\\':	os.Write("\\\\");		break;
+							default:
+								lastWasHexEscape = true;
+								os.Format("\\x%X", c);
+								break;
+						}
+					}
+
+					os.PutLine("\"");
+				}
+				break;
+
+			case VDRegistryKey::kTypeBinary:
+				{
+					int len = key.getBinaryLength(name);
+
+					if (len >= 0) {
+						binval.resize(len);
+
+						if (key.getBinary(name, (char *)binval.data(), len)) {
+							os.Format("\"%s\" = ", name);
+							for(int i=0; i<len; ++i)
+								os.Format("%c%02X", i ? ' ' : '[', (uint8)binval[i]);
+							os.PutLine("]");
+						}
+					}
+				}
+				break;
+		}
+	}
+
+	VDRegistryKeyIterator keyIt(key);
+	while(const char *name = keyIt.Next()) {
+		path += '\\';
+		path.append(name);
+
+		SaveRegistryPath(os, path, global);
+
+		path.resize(baseLen);
+	}
+}
+
+void SaveRegistry(const wchar_t *fnpath) {
+	VDFileStream fs(fnpath, nsVDFile::kWrite | nsVDFile::kDenyRead | nsVDFile::kCreateAlways);
+	VDTextOutputStream os(&fs);
+
+	os.PutLine("; Altirra settings file. EDIT AT YOUR OWN RISK.");
+
+	VDStringA path;
+	SaveRegistryPath(os, path, false);
+	SaveRegistryPath(os, path, true);
+}
+
+int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
+	#ifdef _MSC_VER
+		_CrtSetDbgFlag(_CrtSetDbgFlag(_CRTDBG_REPORT_FLAG) | _CRTDBG_LEAK_CHECK_DF);
+	#endif
+
 	CPUEnableExtensions(CPUCheckForExtensions());
+	VDFastMemcpyAutodetect();
 	VDInitThunkAllocator();
 
 	InitCommonControls();
 
+	VDCommandLine cmdLine(GetCommandLineW());
+
+	VDRegistryProviderMemory *rpmem = NULL;
+
 	const bool resetAll = cmdLine.FindAndRemoveSwitch(L"resetall");
-	if (resetAll)
-		SHDeleteKey(HKEY_CURRENT_USER, "Software\\virtualdub.org\\Altirra");
+	const VDStringW portableRegPath(VDMakePath(VDGetProgramPath().c_str(), L"Altirra.ini"));
+
+	if (cmdLine.FindAndRemoveSwitch(L"portable") || VDDoesPathExist(portableRegPath.c_str())) {
+		rpmem = new VDRegistryProviderMemory;
+		VDSetRegistryProvider(rpmem);
+
+		if (!resetAll && VDDoesPathExist(portableRegPath.c_str())) {
+			try {
+				LoadRegistry(portableRegPath.c_str());
+			} catch(const MyError& err) {
+				VDStringA message;
+
+				message.sprintf("There was an error loading the settings file:\n\n%s\n\nDo you want to continue? If so, settings will be reset to defaults and may not be saved.", err.c_str());
+				if (IDYES != MessageBox(NULL, message.c_str(), "Altirra Warning", MB_YESNO | MB_ICONWARNING))
+					return 5;
+			}
+		}
+	} else {
+		if (resetAll)
+			SHDeleteKey(HKEY_CURRENT_USER, "Software\\virtualdub.org\\Altirra");
+	}
 
 	VDRegisterVideoDisplayControl();
 
@@ -4645,6 +6001,8 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 		VDVideoDisplaySetFeatures(true, true, false, false, true, false, false);
 	//VDVideoDisplaySetD3DFXFileName(L"d:\\shaders\\tvela2.fx");
 	VDVideoDisplaySetDebugInfoEnabled(false);
+	VDVideoDisplaySetMonitorSwitchingDXEnabled(true);
+	VDVideoDisplaySetSecondaryDXEnabled(true);
 
 	VDInitFilespecSystem();
 	VDLoadFilespecSystemData();
@@ -4708,7 +6066,7 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 
 	timeEndPeriod(1);
 
-	g_pAudioWriter = NULL;
+	StopRecording();
 
 	SaveSettings();
 	VDSaveFilespecSystemData();
@@ -4724,6 +6082,17 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 
 	ATShutdownUIPanes();
 	ATShutdownUIFrameSystem();
+
+	if (rpmem) {
+		try {
+			SaveRegistry(portableRegPath.c_str());
+		} catch(const MyError&) {
+		}
+
+		VDSetRegistryProvider(NULL);
+		delete rpmem;
+	}
+
 	VDShutdownThunkAllocator();
 
 	return returnCode;

@@ -423,6 +423,26 @@ struct VDSize {
 };
 
 template<class T>
+class VDPoint {
+public:
+	VDPoint();
+	VDPoint(T x_, T y_);
+
+	T x;
+	T y;
+};
+
+template<class T>
+VDPoint<T>::VDPoint() {
+}
+
+template<class T>
+VDPoint<T>::VDPoint(T x_, T y_)
+	: x(x_), y(y_)
+{
+}
+
+template<class T>
 class VDRect {
 public:
 	typedef T value_type;
@@ -564,6 +584,7 @@ template<class T>
 VDSize<T> VDRect<T>::size() const { return VDSize<T>(right-left, bottom-top); }
 
 ///////////////////////////////////////////////////////////////////////////////
+typedef VDPoint<sint32>	vdpoint32;
 typedef VDSize<sint32>	vdsize32;
 typedef VDSize<float>	vdsize32f;
 typedef	VDRect<sint32>	vdrect32;

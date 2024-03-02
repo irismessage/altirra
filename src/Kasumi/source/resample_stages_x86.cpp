@@ -1,7 +1,26 @@
+//	VirtualDub - Video processing and capture application
+//	Graphics support library
+//	Copyright (C) 1998-2009 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License
+//	along with this program; if not, write to the Free Software
+//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+#include <stdafx.h>
 #include <numeric>
 #include "blt_spanutils_x86.h"
 #include "resample_stages_x86.h"
-#include "resample_kernels.h"
+#include <vd2/Kasumi/resample_kernels.h>
 
 #ifdef _MSC_VER
 	#pragma warning(disable: 4799)		// warning C4799: function 'vdasm_resize_table_row_8_k8_4x_MMX' has no EMMS instruction
@@ -155,7 +174,7 @@ void VDResamplerSeparableTableRowStage8MMX::RedoRowFilters(const VDResamplerAxis
 
 		sint32 u = axis.u;
 		sint32 uoffmin = -byteOffset;
-		sint32 uoffmax = ((srcw - 1 + byteOffset) & ~3) - byteOffset;
+		sint32 uoffmax = ((srcw + byteOffset + 3) & ~3) - byteOffset - ksizeThisOffset;
 		for(uint32 i=0; i<w; ++i) {
 			sint32 uoffset = u >> 16;
 			sint32 uoffset2 = ((uoffset + byteOffset) & ~3) - byteOffset;
@@ -165,6 +184,8 @@ void VDResamplerSeparableTableRowStage8MMX::RedoRowFilters(const VDResamplerAxis
 
 			if (uoffset2 > uoffmax)
 				uoffset2 = uoffmax;
+
+			VDASSERT(uoffset2 + ksizeThisOffset <= (((sint32)srcw + byteOffset + 3) & ~3));
 
 			*(sint32 *)dst = uoffset2;
 			dst += 2;
@@ -268,6 +289,8 @@ void VDResamplerSeparableTableRowStage8MMX::RedoRowFilters(const VDResamplerAxis
 			}
 
 			memcpy(dst, src0, unswizzledStride * 4 * quadRemainder);
+
+			VDASSERT(dst + unswizzledStride * quadRemainder <= (void *)(mRowKernels.data() + (mRowKernelSize * (byteOffset + 1))));
 		}
 	}
 }
@@ -444,23 +467,23 @@ yloop:
 		paddd		mm2, mm4
 
 		pmaddwd		mm5, [edi+72]
-		movd		mm4, [eax+4]
+		movd		mm4, [eax+8]
 		punpcklbw	mm4, mm7
 
 		paddd		mm3, mm5
-		movd		mm5, [ebx+4]
+		movd		mm5, [ebx+8]
 		punpcklbw	mm5, mm7
 
 		pmaddwd		mm4, [edi+80]
 		paddd		mm0, mm4
-		movd		mm4, [ecx+4]
+		movd		mm4, [ecx+8]
 
 		pmaddwd		mm5, [edi+88]
 		paddd		mm1, mm5
 		punpcklbw	mm4, mm7
 
 		pmaddwd		mm4, [edi+96]
-		movd		mm5, [edx+4]
+		movd		mm5, [edx+8]
 		punpcklbw	mm5, mm7
 
 		pmaddwd		mm5, [edi+104]
@@ -587,9 +610,104 @@ void VDResamplerSeparableTableRowStage8MMX::Process(void *dst, const void *src, 
 	int ksize = mKernelSizeByOffset[byteOffset];
 	if (mbQuadOptimizationEnabled[byteOffset]) {
 		if (w >= 4) {
-			if (ksize == 12)
+			if (ksize == 12) {
 				vdasm_resize_table_row_8_k12_4x_MMX(dst, src, w >> 2, ksrc);
-			else
+
+#if 0
+				int w4 = w >> 2;
+				uint8 *dst2 = (uint8 *)dst;
+				const uint8 *src2 = (const uint8 *)src;
+				const sint16 *ksrc2 = ksrc;
+
+				do {
+					int off0 = ksrc2[0];
+					int off1 = ksrc2[2];
+					int off2 = ksrc2[4];
+					int off3 = ksrc2[6];
+					const uint8 *d0 = src2 + off0;
+					const uint8 *d1 = src2 + off1;
+					const uint8 *d2 = src2 + off2;
+					const uint8 *d3 = src2 + off3;
+
+					int acc0 = 0;
+					int acc1 = 0;
+					int acc2 = 0;
+					int acc3 = 0;
+
+					acc0 += d0[ 0]*ksrc2[   8]
+						  + d0[ 1]*ksrc2[   9]
+						  + d0[ 2]*ksrc2[  10]
+						  + d0[ 3]*ksrc2[  11]
+						  + d0[ 4]*ksrc2[  24]
+						  + d0[ 5]*ksrc2[  25]
+						  + d0[ 6]*ksrc2[  26]
+						  + d0[ 7]*ksrc2[  27]
+						  + d0[ 8]*ksrc2[  40]
+						  + d0[ 9]*ksrc2[  41]
+						  + d0[10]*ksrc2[  42]
+						  + d0[11]*ksrc2[  43];
+
+					acc0 = (acc0 + 0x2000) >> 14;
+					if (acc0 < 0) acc0 = 0; else if (acc0 > 255) acc0 = 255;
+
+					acc1 += d1[ 0]*ksrc2[  12]
+						  + d1[ 1]*ksrc2[  13]
+						  + d1[ 2]*ksrc2[  14]
+						  + d1[ 3]*ksrc2[  15]
+						  + d1[ 4]*ksrc2[  28]
+						  + d1[ 5]*ksrc2[  29]
+						  + d1[ 6]*ksrc2[  30]
+						  + d1[ 7]*ksrc2[  31]
+						  + d1[ 8]*ksrc2[  44]
+						  + d1[ 9]*ksrc2[  45]
+						  + d1[10]*ksrc2[  46]
+						  + d1[11]*ksrc2[  47];
+
+					acc1 = (acc1 + 0x2000) >> 14;
+					if (acc1 < 0) acc1 = 0; else if (acc1 > 255) acc1 = 255;
+
+					acc2 += d2[ 0]*ksrc2[  16]
+						  + d2[ 1]*ksrc2[  17]
+						  + d2[ 2]*ksrc2[  18]
+						  + d2[ 3]*ksrc2[  19]
+						  + d2[ 4]*ksrc2[  32]
+						  + d2[ 5]*ksrc2[  33]
+						  + d2[ 6]*ksrc2[  34]
+						  + d2[ 7]*ksrc2[  35]
+						  + d2[ 8]*ksrc2[  48]
+						  + d2[ 9]*ksrc2[  49]
+						  + d2[10]*ksrc2[  50]
+						  + d2[11]*ksrc2[  51];
+
+					acc2 = (acc2 + 0x2000) >> 14;
+					if (acc2 < 0) acc2 = 0; else if (acc2 > 255) acc2 = 255;
+
+					acc3 += d3[ 0]*ksrc2[  20]
+						  + d3[ 1]*ksrc2[  21]
+						  + d3[ 2]*ksrc2[  22]
+						  + d3[ 3]*ksrc2[  23]
+						  + d3[ 4]*ksrc2[  36]
+						  + d3[ 5]*ksrc2[  37]
+						  + d3[ 6]*ksrc2[  38]
+						  + d3[ 7]*ksrc2[  39]
+						  + d3[ 8]*ksrc2[  52]
+						  + d3[ 9]*ksrc2[  53]
+						  + d3[10]*ksrc2[  54]
+						  + d3[11]*ksrc2[  55];
+
+					acc3 = (acc3 + 0x2000) >> 14;
+					if (acc3 < 0) acc3 = 0; else if (acc3 > 255) acc3 = 255;
+
+					ksrc2 += 56;
+
+					dst2[0] = (uint8)acc0;
+					dst2[1] = (uint8)acc1;
+					dst2[2] = (uint8)acc2;
+					dst2[3] = (uint8)acc3;
+					dst2 += 4;
+				} while(--w4);
+#endif
+			} else
 				vdasm_resize_table_row_8_k8_4x_MMX(dst, src, w >> 2, ksrc);
 		}
 
@@ -829,18 +947,20 @@ void VDResamplerSeparableTableColStage8MMX::Process(void *dst0, const void *cons
 
 	int w4 = w & ~3;
 
-	switch(ksize) {
-		case 2:
-			vdasm_resize_table_col_8_k2_MMX(dst, (const void *const *)src, w4, filter);
-			break;
+	if (w4) {
+		switch(ksize) {
+			case 2:
+				vdasm_resize_table_col_8_k2_MMX(dst, (const void *const *)src, w4, filter);
+				break;
 
-		case 4:
-			vdasm_resize_table_col_8_k4_MMX(dst, (const void *const *)src, w4, filter);
-			break;
+			case 4:
+				vdasm_resize_table_col_8_k4_MMX(dst, (const void *const *)src, w4, filter);
+				break;
 
-		default:
-			vdasm_resize_table_col_8_MMX(dst, (const void *const *)src, w4, filter, ksize);
-			break;
+			default:
+				vdasm_resize_table_col_8_MMX(dst, (const void *const *)src, w4, filter, ksize);
+				break;
+		}
 	}
 
 	for(uint32 i=w4; i<w; ++i) {
@@ -965,7 +1085,7 @@ void VDResamplerSeparableTableRowStage8SSE41::RedoRowFilters(const VDResamplerAx
 
 		sint32 u = axis.u;
 		sint32 uoffmin = -byteOffset;
-		sint32 uoffmax = ((srcw - 1 + byteOffset) & ~7) - byteOffset;
+		sint32 uoffmax = ((srcw + byteOffset + 7) & ~7) - byteOffset - ksizeThisOffset;
 		for(uint32 i=0; i<w; ++i) {
 			sint32 uoffset = u >> 16;
 			sint32 uoffset2 = ((uoffset + byteOffset) & ~7) - byteOffset;

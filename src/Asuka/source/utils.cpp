@@ -39,7 +39,7 @@ string		g_machineName;
 
 
 void help() {
-	puts("VirtualDub Build/Post-Mortem Utility Version 1.7.7 for "
+	puts("VirtualDub Build/Post-Mortem Utility Version 1.9.3 for "
 #if VD_CPU_AMD64
 			"AMD64"
 #else
@@ -59,6 +59,7 @@ void help() {
 	puts("Asuka mapconv      Generate runtime symbol database");
 	puts("Asuka snapsetup    Temporarily change windows settings for screencaps");
 	puts("Asuka verinc       Increment version file");
+	puts("Asuka psa          Assemble Direct3D pixel shader");
 	exit(5);
 }
 

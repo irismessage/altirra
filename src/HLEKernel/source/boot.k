@@ -16,7 +16,7 @@
 ;	along with this program; if not, write to the Free Software
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-.proc DiskBoot
+.proc BootDisk
 	;read first sector to $0400
 	mva		#1		dunit
 	mva		#$52	dcomnd
@@ -56,18 +56,8 @@ fail:
 	rts
 	
 failmsg:
-	ldx		#0
-msgloop:
-	txa
-	pha
-	lda		errormsg,x
-	jsr		EditorPutByte
-	pla
-	tax
-	inx
-	cpx		#11
-	bne		msgloop
-	jmp		DiskBoot
+	jsr		BootShowError
+	jmp		BootDisk
 
 loaddone:
 	mva		#1 boot?
@@ -89,9 +79,90 @@ multiboot:
 appinit:
 	jmp		(dosini)
 
+.endp
+
+;============================================================================
+
+.proc BootCassette
+	;open cassette device
+	jsr		csopiv
+	
+	;read first block
+	jsr		rblokv
+	bmi		load_failure
+	
+	mva		casbuf+4 iccomt
+	mwa		casbuf+5 bufadr
+	mwa		casbuf+7 casini
+	
+	;copy init address
+	mwa		bufadr ramlo
+
+block_loop:
+	ldy		#$7f
+copy_block:
+	lda		casbuf+3,y
+	sta		(bufadr),y
+	dey
+	bpl		copy_block
+	
+	;update write address
+	lda		bufadr
+	eor		#$80
+	sta		bufadr
+	smi:inc	bufadr+1
+	
+	dec		iccomt
+	beq		block_loop_exit
+
+	;read next block
+	jsr		rblokv
+	bmi		load_failure
+	jmp		block_loop
+
+block_loop_exit:
+	
+	;set cassette boot flag
+	mva		#2 boot?
+
+	;run loader
+	jsr		go_loader
+
+	;run cassette init routine
+	jsr		go_init
+	
+	;run application
+	jmp		(dosvec)
+
+load_failure:
+	jsr		CassetteClose
+	jmp		BootShowError
+
+go_loader:
+	jmp		(ramlo)
+	
+go_init:
+	jmp		(casini)
+.endp
+
+;============================================================================
+
+.proc BootShowError
+	ldx		#0
+msgloop:
+	txa
+	pha
+	lda		errormsg,x
+	jsr		EditorPutByte
+	pla
+	tax
+	inx
+	cpx		#11
+	bne		msgloop
+	rts
+	
 errormsg:
 	dta		'BOOT ERROR',$9B
-
 .endp
 
 	nop

@@ -1,0 +1,28 @@
+<?xml version='1.0' standalone='yes'?>
+<?xml-stylesheet type="text/xsl" href="index.xsl" ?>
+<topic title="Hardware status">
+  <toc/>
+
+  <!-- *************************************************** -->
+
+  <h1>ANTIC</h1>
+  <featurelist>
+    <yes>Display list interrupt (DLI)</yes>
+    <yes>Vertical blank interrupt (VBI)</yes>
+    <yes>System reset interrupt (800 only)</yes>
+    <yes>Horizontal scrolling</yes>
+    <yes>Vertical scrolling</yes>
+    <yes>Vertical count (VCOUNT) register</yes>
+    <yes>Wait for horizontal sync (WSYNC)</yes>
+    <yes>One-line P/M graphics resolution</yes>
+    <yes>Two-line P/M graphics resolution</yes>
+    <yes>Player/missile DMA</yes>
+    <yes>Narrow/normal/wide playfield widths</yes>
+    <yes>Character vertical reflect</yes>
+    <yes>Character blink</yes>
+    <yes>Character invert</yes>
+  </featurelist>
+  
+  <h1>GTIA</h1>
+
+</topic>

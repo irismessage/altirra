@@ -296,7 +296,7 @@ waitvbl:
 	
 	lda		ckey
 	bne		postcasboot
-	jsr		BugCheck
+	jsr		BootCassette
 	jmp		postcasboot
 
 reinitcas:	
@@ -316,7 +316,7 @@ postcasboot:
 	beq		noCartBBoot
 	lda		#$01
 	bit		$9ffd
-	bne		bootDisk
+	bne		doBootDisk
 	lda		tramsz
 	beq		postDiskBoot
 noCartBBoot:
@@ -328,8 +328,8 @@ noCartBBoot:
 	bit		$bffd
 	beq		postDiskBoot
 noCartABoot:
-bootDisk:
-	jsr		DiskBoot
+doBootDisk:
+	jsr		BootDisk
 	jmp		postDiskBoot
 	
 reinitDisk:

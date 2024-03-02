@@ -38,6 +38,8 @@ namespace
 		"vd_srctexture",
 		"vd_src2atexture",
 		"vd_src2btexture",
+		"vd_src2ctexture",
+		"vd_src2dtexture",
 		"vd_srcpaltexture",
 		"vd_temptexture",
 		"vd_temp2texture",
@@ -66,6 +68,8 @@ namespace
 		"vd_interphtexsize",
 		"vd_interpvtexsize",
 		"vd_fieldinfo",
+		"vd_chromauvscale",
+		"vd_chromauvoffset",
 	};
 }
 

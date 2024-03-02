@@ -1,0 +1,60 @@
+<?xml version='1.0' standalone='yes'?>
+<?xml-stylesheet type="text/xsl" href="index.xsl" ?>
+<topic title="Introduction">
+  <toc/>
+
+  <h2>
+    System requirements
+  </h2>
+  
+  <h3>Why does Altirra require a 1GHz processor to emulate a 1.79MHz machine?</h3>
+  <p>
+    Altirra uses a precise but slow way to emulate the Atari hardware: it emulates hardware
+    on a per-cycle basis. This is required to properly sequence memory accesses between ANTIC
+    and the 6502 CPU. Event queues are used whenever possible to reduce the load, particularly
+    with GTIA and POKEY, but there are still patterns of memory writes to hardware registers
+    that will force frequent synchronization.
+  </p>
+  <p>
+    In the past, emulators have made some compromises
+    like atomically executing 6502 instructions and only firing POKEY interrupts on a scan line basis.
+    This was required for good performance on older machines and is still required on some embedded
+    platforms, but doing this introduces slight emulation inaccuracies. Altirra deliberately uses slower algorithms in order to do more precise emulation.
+  </p>
+  <p>
+    Further optimizations are always possible, but in general it takes a lot of cycles on a sequential
+    CPU to precisely emulate parallel hardware.
+  </p>
+
+  <h2>Other</h2>
+  
+  <h3>Why can't I use a palette file (*.pal, *.act)?</h3>
+  <p>
+    The graphics code requires knowledge of the upstream luma and chroma signals in order to
+    properly handle some video output modes, particularly artifacting modes. That is why the
+    Adjust Colors dialog exposes the parameters used to generate the palette instead of the
+    palette colors themselves.
+  </p>
+
+  <h3>Can I use a physical Atari disk drive over a serial or USB adapter with Altirra?</h3>
+  <p>
+    No, this is not currently supported. The best way to use such hardware is to use another
+    program to image the entire disk through the drive, then mount that disk image in Altirra.
+  </p>
+  <p>
+    It is possible for an emulator to directly use a disk drive in this manner, but the timing
+    is critical enough that it isn't a good idea, at least in Windows. The main reason is that
+    while a PC is fast enough to emulate an Atari, it isn't necessarily fast enough to support
+    the stable timing and low latency needed to use a live drive during emulation.
+  </p>
+  <p>
+    For instance, the Atari SIO specification states that the computer must negate the command line within
+    650-950 microseconds of transmitting the last bit of the command frame, and begin transmission
+    of a data frame 1.0-1.8 milliseconds after receiving the last bit of an ACK byte from the peripheral.
+    This timing is even more critical if
+    a protected disk is being read, as slight timing variations can cause the wrong sector
+    to be read and the game to crash.
+    In contrast, a single call to Present() to draw a frame on screen can delay the emulator
+    by up to 16.7 milliseconds when vsync is enabled.
+  </p>
+</topic>

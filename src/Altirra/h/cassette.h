@@ -45,6 +45,7 @@ protected:
 };
 
 class ATCPUEmulatorMemory;
+class IVDRandomAccessStream;
 
 class ATCassetteEmulator : public IATSchedulerCallback, public IATPokeyCassetteDevice {
 public:
@@ -63,6 +64,7 @@ public:
 	bool IsLoadDataAsAudioEnabled() const { return mbLoadDataAsAudio; }
 
 	void Load(const wchar_t *fn);
+	void Load(IVDRandomAccessStream& stream);
 	void Unload();
 
 	void SetLogDataEnable(bool enable);
@@ -96,8 +98,8 @@ protected:
 
 	BitResult ProcessBit();
 
-	void ParseWAVE(VDFile& file);
-	void ParseCAS(VDFile& file);
+	void ParseWAVE(IVDRandomAccessStream& stream);
+	void ParseCAS(IVDRandomAccessStream& stream);
 
 	void ConvertDataToAudio();
 

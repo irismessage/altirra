@@ -380,14 +380,12 @@ void VS_YCbCr_to_RGB_1_1(
 	out float4 oPos : POSITION,
 	out float2 oT0 : TEXCOORD0,
 	out float2 oT1 : TEXCOORD1,
-	out float2 oT2 : TEXCOORD2,
-	uniform float2 scale,
-	uniform float2 offset)
+	out float2 oT2 : TEXCOORD2)
 {
 	oPos = pos;
 	oT0 = uv;
-	oT1 = (uv2 * scale * vd_srcsize.xy + offset) * vd_tex2size.wz;
-	oT2 = (uv2 * scale * vd_srcsize.xy + offset) * vd_tex2size.wz;
+	oT1 = (uv2 * vd_chromauvscale * vd_srcsize.xy + vd_chromauvoffset) * vd_tex2size.wz;
+	oT2 = (uv2 * vd_chromauvscale * vd_srcsize.xy + vd_chromauvoffset) * vd_tex2size.wz;
 }
 
 pixelshader PS_YCbCr_to_RGB_1_1 = asm {
@@ -405,84 +403,9 @@ pixelshader PS_YCbCr_to_RGB_1_1 = asm {
 	mad_x2 r0, t0, c1.a, r0
 };
 
-technique yvu9_to_rgb_1_1 {
+technique ycbcr_to_rgb_1_1 {
 	pass < string vd_viewport = "unclipped,unclipped"; > {
-		VertexShader = compile vs_1_1 VS_YCbCr_to_RGB_1_1(float2(0.25, 0.25), float2(0, 0));
-		PixelShader = <PS_YCbCr_to_RGB_1_1>;
-		
-		Texture[0] = <vd_srctexture>;
-		AddressU[0] = Clamp;
-		AddressV[0] = Clamp;
-		MinFilter[0] = Point;
-		MagFilter[0] = Point;
-
-		Texture[1] = <vd_src2atexture>;
-		AddressU[1] = Clamp;
-		AddressV[1] = Clamp;
-		MinFilter[1] = Linear;
-		MagFilter[1] = Linear;
-		
-		Texture[2] = <vd_src2btexture>;
-		AddressU[2] = Clamp;
-		AddressV[2] = Clamp;
-		MinFilter[2] = Linear;
-		MagFilter[2] = Linear;
-	}
-}
-
-technique yv12_to_rgb_1_1 {
-	pass < string vd_viewport = "unclipped,unclipped"; > {
-		VertexShader = compile vs_1_1 VS_YCbCr_to_RGB_1_1(float2(0.5, 0.5), float2(-0.25, 0));
-		PixelShader = <PS_YCbCr_to_RGB_1_1>;
-		
-		Texture[0] = <vd_srctexture>;
-		AddressU[0] = Clamp;
-		AddressV[0] = Clamp;
-		MinFilter[0] = Point;
-		MagFilter[0] = Point;
-
-		Texture[1] = <vd_src2atexture>;
-		AddressU[1] = Clamp;
-		AddressV[1] = Clamp;
-		MinFilter[1] = Linear;
-		MagFilter[1] = Linear;
-		
-		Texture[2] = <vd_src2btexture>;
-		AddressU[2] = Clamp;
-		AddressV[2] = Clamp;
-		MinFilter[2] = Linear;
-		MagFilter[2] = Linear;
-	}
-}
-
-technique yv16_to_rgb_1_1 {
-	pass < string vd_viewport = "unclipped,unclipped"; > {
-		VertexShader = compile vs_1_1 VS_YCbCr_to_RGB_1_1(float2(0.5, 1), float2(-0.25, 0));
-		PixelShader = <PS_YCbCr_to_RGB_1_1>;
-		
-		Texture[0] = <vd_srctexture>;
-		AddressU[0] = Clamp;
-		AddressV[0] = Clamp;
-		MinFilter[0] = Point;
-		MagFilter[0] = Point;
-
-		Texture[1] = <vd_src2atexture>;
-		AddressU[1] = Clamp;
-		AddressV[1] = Clamp;
-		MinFilter[1] = Linear;
-		MagFilter[1] = Linear;
-		
-		Texture[2] = <vd_src2btexture>;
-		AddressU[2] = Clamp;
-		AddressV[2] = Clamp;
-		MinFilter[2] = Linear;
-		MagFilter[2] = Linear;
-	}
-}
-
-technique yv24_to_rgb_1_1 {
-	pass < string vd_viewport = "unclipped,unclipped"; > {
-		VertexShader = compile vs_1_1 VS_YCbCr_to_RGB_1_1(float2(1, 1), float2(0, 0));
+		VertexShader = compile vs_1_1 VS_YCbCr_to_RGB_1_1();
 		PixelShader = <PS_YCbCr_to_RGB_1_1>;
 		
 		Texture[0] = <vd_srctexture>;

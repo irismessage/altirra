@@ -106,11 +106,6 @@ isEOL:
 			if (logMask & (0x800000 >> y1))
 				break;
 		}
-		
-		// advance by beginning of logical line
-		uint8 offset = kdb.BUFCNT & 0xff;
-		x1 = offset % 40;
-		y1 += offset / 40;
 			
 		// record start of logical line
 		kdb.BUFADR = (uint16)(x1 + (y1 << 8));
@@ -120,6 +115,7 @@ isEOL:
 		uint32 lastLen = 0;
 		uint32 x = x1;
 		uint32 y = y1;
+		uint32 h = kdb.BOTSCR;
 		uint16 addr = ScreenComputeLineAddr(y);
 		
 		for(;;) {
@@ -132,7 +128,7 @@ isEOL:
 				x = kdb.LMARGN;
 				++y;
 				
-				if (logMask & (0x800000 >> y))
+				if (y >= h || (logMask & (0x800000 >> y)))
 					break;
 				
 				addr = ScreenComputeLineAddr(y);
@@ -462,12 +458,11 @@ suspendloop:
 				uint8 scrolled = ScreenScroll();
 				kdb.ROWCRS = kdb.BOTSCR - scrolled;
 			}
+			kdb.LOGMAP[kdb.ROWCRS >> 3] &= ~(0x80 >> (kdb.ROWCRS & 7));
 			
 			if (logcol >= 120) {
 				logcol -= 120;
 				kdb.LOGMAP[kdb.ROWCRS >> 3] |= (0x80 >> (kdb.ROWCRS & 7));
-			} else {
-				kdb.LOGMAP[kdb.ROWCRS >> 3] &= ~(0x80 >> (kdb.ROWCRS & 7));
 			}
 
 			kdb.COLCRS = kdb.LMARGN;
@@ -532,7 +527,7 @@ void EditorRecomputeLogicalColumn() {
 
 #<
 uint32 EditorReadLogicalLineMask() {
-	return ((uint32)kdb.LOGMAP[0] << 16) + ((uint32)kdb.LOGMAP[1] << 8) + ((uint32)kdb.LOGMAP[0] << 0);
+	return ((uint32)kdb.LOGMAP[0] << 16) + ((uint32)kdb.LOGMAP[1] << 8) + ((uint32)kdb.LOGMAP[2] << 0);
 }
 #>
 

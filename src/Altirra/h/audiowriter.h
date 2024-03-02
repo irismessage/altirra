@@ -28,7 +28,7 @@ public:
 	ATAudioWriter(const wchar_t *filename);
 	~ATAudioWriter();
 
-	void WriteRawAudio(const float *left, const float *right, uint32 count);
+	void WriteRawAudio(const float *left, const float *right, uint32 count, uint32 timestamp);
 	
 protected:
 	void WriteInterleaved(const float *left, const float *right, uint32 count);

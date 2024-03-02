@@ -229,6 +229,9 @@ public:
 	bool	IsPathfindingEnabled() const { return mbPathfindingEnabled; }
 	void	SetPathfindingEnabled(bool enable);
 
+	bool	IsPathBreakEnabled() const { return mbPathBreakEnabled; }
+	void	SetPathBreakEnabled(bool enable) { mbPathBreakEnabled = enable; }
+
 	void	SetProfiler(ATCPUProfiler *profiler);
 	void	SetVerifier(ATCPUVerifier *verifier);
 
@@ -267,6 +270,7 @@ public:
 	void	Push(uint8 v);
 	uint8	Pop();
 	void	Jump(uint16 addr);
+	void	Ldy(uint8 v);
 
 	void	AssertIRQ();
 	void	NegateIRQ();
@@ -363,6 +367,7 @@ protected:
 	bool	mbHistoryOrProfilingEnabled;
 	bool	mbHistoryEnabled;
 	bool	mbPathfindingEnabled;
+	bool	mbPathBreakEnabled;
 	bool	mbIllegalInsnsEnabled;
 	bool	mbStopOnBRK;
 	bool	mbMarkHistoryIRQ;

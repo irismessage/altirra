@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<toc>
+  <t name="Introduction" href="index.html"/>
+  <t name="How to use">
+    <t name="Getting started" href="getting-started.html"/>
+    <t name="Keyboard layout" href="keyboard.html"/>
+    <t name="Portable mode" href="portable-mode.html"/>
+  </t>
+  <t name="Reference">
+    <t name="Options" href="options.html"/>
+    <t name="MyIDE emulation" href="myide.html"/>
+  </t>
+  <t name="Troubleshooting">
+    <t name="General issues" href="troubleshooting.html"/>
+    <t name="Program-specific issues" href="compatibility.html"/>
+    <t name="Bugs to avoid in new programs" href="common-errors.html"/>
+  </t>
+  <t name="License" href="license.html"/>
+</toc>

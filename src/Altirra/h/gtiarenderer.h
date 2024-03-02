@@ -80,9 +80,10 @@ public:
 	~ATGTIARenderer();
 
 	void SetAnalysisMode(bool analysisMode);
+	void SetVBlank(bool vblank);
 
 	void BeginScanline(uint8 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires);
-	void RenderScanline(int x2);
+	void RenderScanline(int x2, bool pmgraphics);
 	void EndScanline();
 
 	void AddRegisterChange(uint8 pos, uint8 addr, uint8 value);
@@ -102,7 +103,9 @@ protected:
 	template<class T> void ExchangeState(T& io);
 	void UpdateRegisters(const RegisterChange *changes, int count);
 	void RenderLores(int x1, int x2);
+	void RenderLoresFast(int x1, int x2);
 	void RenderMode8(int x1, int x2);
+	void RenderMode8Fast(int x1, int x2);
 	void RenderMode9(int x1, int x2);
 	void RenderMode10(int x1, int x2);
 	void RenderMode11(int x1, int x2);
@@ -116,6 +119,7 @@ protected:
 	int mRCCount;
 
 	bool mbHiresMode;
+	bool mbVBlank;
 	uint8 mPRIOR;
 
 	const uint8 *mpPriTable;

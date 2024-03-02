@@ -135,7 +135,15 @@ dispatch:
 	bpl		isOpen
 	
 	;IOCB isn't open - issue error
+	;
+	;don't issue an error for close ($0C); you can "close #5" as much as you
+	;want from basic
+	ldy		#1
+	lda		iccomz
+	cmp		#CIOCmdClose
+	beq		ignoreOpen
 	ldy		#CIOStatNotOpen
+ignoreOpen:
 	jmp		xit
 	
 isOpen:
@@ -209,14 +217,18 @@ foundHandler:
 	iny
 	
 nodevnum:
-	;check for ':'
-	lda		(icbalz),y
-	cmp		#':'
-	beq		foundColon
-	
-	;invalid filename
-	ldy		#CIOStatFileNameErr
-	jmp		xit
+
+; We don't validate the colon anymore -- Atari OS allows opening just "C" to get
+; to the cassette.
+;
+;	;check for ':'
+;	lda		(icbalz),y
+;	cmp		#':'
+;	beq		foundColon
+;	
+;	;invalid filename
+;	ldy		#CIOStatFileNameErr
+;	jmp		xit
 	
 foundColon:
 	;request open

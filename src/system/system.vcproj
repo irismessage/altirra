@@ -754,6 +754,10 @@
 				</FileConfiguration>
 			</File>
 			<File
+				RelativePath=".\linearalloc.cpp"
+				>
+			</File>
+			<File
 				RelativePath="source\list.cpp"
 				>
 				<FileConfiguration
@@ -1040,6 +1044,10 @@
 						PreprocessorDefinitions=""
 					/>
 				</FileConfiguration>
+			</File>
+			<File
+				RelativePath="..\h\vd2\system\source\registrymemory.cpp"
+				>
 			</File>
 			<File
 				RelativePath="source\strutil.cpp"
@@ -1330,6 +1338,14 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\vdstl_hash.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\vdstl_hashtable.cpp"
+				>
+			</File>
+			<File
 				RelativePath="source\VDString.cpp"
 				>
 				<FileConfiguration
@@ -1567,6 +1583,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\h\vd2\system\linearalloc.h"
+				>
+			</File>
+			<File
 				RelativePath="..\h\VD2\system\list.h"
 				>
 			</File>
@@ -1600,6 +1620,10 @@
 			</File>
 			<File
 				RelativePath="..\h\VD2\system\registry.h"
+				>
+			</File>
+			<File
+				RelativePath="..\h\vd2\system\registrymemory.h"
 				>
 			</File>
 			<File
@@ -1652,6 +1676,18 @@
 			</File>
 			<File
 				RelativePath="..\h\vd2\system\vdstl.h"
+				>
+			</File>
+			<File
+				RelativePath="..\h\vd2\system\vdstl_hash.h"
+				>
+			</File>
+			<File
+				RelativePath="..\h\vd2\system\vdstl_hashmap.h"
+				>
+			</File>
+			<File
+				RelativePath="..\h\vd2\system\vdstl_hashtable.h"
 				>
 			</File>
 			<File

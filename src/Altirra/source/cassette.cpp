@@ -262,14 +262,14 @@ void ATCassetteEmulator::ColdReset() {
 }
 
 namespace {
-	void ReadMono8(sint16 *dst, VDFile& src, uint32 count) {
+	void ReadMono8(sint16 *dst, IVDRandomAccessStream& src, uint32 count) {
 		uint8 buf[1024];
 
 		while(count) {
 			uint32 tc = count > 1024 ? 1024 : count;
 			count -= tc;
 
-			src.read(buf, tc);
+			src.Read(buf, tc);
 
 			for(uint32 i=0; i<tc; ++i) {
 				dst[0] = dst[1] = (buf[i] << 8) - 0x8000;
@@ -278,14 +278,14 @@ namespace {
 		}
 	}
 
-	void ReadMono16(sint16 *dst, VDFile& src, uint32 count) {
+	void ReadMono16(sint16 *dst, IVDRandomAccessStream& src, uint32 count) {
 		sint16 buf[1024];
 
 		while(count) {
 			uint32 tc = count > 1024 ? 1024 : count;
 			count -= tc;
 
-			src.read(buf, tc*2);
+			src.Read(buf, tc*2);
 
 			for(uint32 i=0; i<tc; ++i) {
 				dst[0] = dst[1] = buf[i];
@@ -294,14 +294,14 @@ namespace {
 		}
 	}
 
-	void ReadStereo8(sint16 *dst, VDFile& src, uint32 count) {
+	void ReadStereo8(sint16 *dst, IVDRandomAccessStream& src, uint32 count) {
 		uint8 buf[1024][2];
 
 		while(count) {
 			uint32 tc = count > 1024 ? 1024 : count;
 			count -= tc;
 
-			src.read(buf, tc*2);
+			src.Read(buf, tc*2);
 
 			for(uint32 i=0; i<tc; ++i) {
 				dst[0] = (buf[i][0] << 8) - 0x8000;
@@ -311,8 +311,8 @@ namespace {
 		}
 	}
 
-	void ReadStereo16(sint16 *dst, VDFile& src, uint32 count) {
-		src.read(dst, count*4);
+	void ReadStereo16(sint16 *dst, IVDRandomAccessStream& src, uint32 count) {
+		src.Read(dst, count*4);
 	}
 
 	extern "C" __declspec(align(16)) const sint16 kernel[32][8] = {
@@ -397,14 +397,18 @@ namespace {
 void ATCassetteEmulator::Load(const wchar_t *fn) {
 	Unload();
 
-	VDFile file;
+	VDFileStream file;
 	file.open(fn);
 
+	Load(file);
+}
+
+void ATCassetteEmulator::Load(IVDRandomAccessStream& file) {
 	uint32 basehdr;
-	if (file.readData(&basehdr, 4) != 4)
+	if (file.ReadData(&basehdr, 4) != 4)
 		basehdr = 0;
 
-	file.seek(0);
+	file.Seek(0);
 
 	uint32 baseid = VDFromLE32(basehdr);
 	if (baseid == VDMAKEFOURCC('R', 'I', 'F', 'F'))
@@ -412,7 +416,7 @@ void ATCassetteEmulator::Load(const wchar_t *fn) {
 	else if (baseid == VDMAKEFOURCC('F', 'U', 'J', 'I'))
 		ParseCAS(file);
 	else
-		throw MyError("%ls is not in a recognizable Atari cassette format.", fn);
+		throw MyError("%ls is not in a recognizable Atari cassette format.", file.GetNameForError());
 
 	mPosition = 0;
 	mLength = mBitstream.size();
@@ -433,19 +437,19 @@ void ATCassetteEmulator::Unload() {
 	UpdateMotorState();
 }
 
-void ATCassetteEmulator::ParseWAVE(VDFile& file) {
+void ATCassetteEmulator::ParseWAVE(IVDRandomAccessStream& file) {
 	WaveFormatEx wf = {0};
-	sint64 limit = file.size();
+	sint64 limit = file.Length();
 	sint64 datapos = -1;
 	uint32 datalen = 0;
 
 	for(;;) {
 		uint32 hdr[2];
 
-		if (file.tell() >= limit)
+		if (file.Pos() >= limit)
 			break;
 
-		if (8 != file.readData(hdr, 8))
+		if (8 != file.ReadData(hdr, 8))
 			break;
 
 		uint32 fcc = hdr[0];
@@ -453,13 +457,13 @@ void ATCassetteEmulator::ParseWAVE(VDFile& file) {
 
 		switch(fcc) {
 		case VDMAKEFOURCC('R', 'I', 'F', 'F'):
-			limit = file.tell() + len;
+			limit = file.Pos() + len;
 			if (len < 4)
-				throw MyError("'%ls' is an invalid WAV file.", file.getFilenameForError());
+				throw MyError("'%ls' is an invalid WAV file.", file.GetNameForError());
 
-			file.read(hdr, 4);
+			file.Read(hdr, 4);
 			if (hdr[0] != VDMAKEFOURCC('W', 'A', 'V', 'E'))
-				throw MyError("'%ls' is not a WAV file.", file.getFilenameForError());
+				throw MyError("'%ls' is not a WAV file.", file.GetNameForError());
 
 			len = 0;
 			break;
@@ -468,7 +472,7 @@ void ATCassetteEmulator::ParseWAVE(VDFile& file) {
 			{
 				uint32 toread = std::min<uint32>(sizeof(wf), len);
 
-				file.read(&wf, toread);
+				file.Read(&wf, toread);
 				len -= toread;
 
 				// validate format
@@ -478,23 +482,23 @@ void ATCassetteEmulator::ParseWAVE(VDFile& file) {
 					|| (wf.mBlockAlign != wf.mBitsPerSample * wf.mChannels / 8)
 					|| wf.mSamplesPerSec < 8000)
 				{
-					throw MyError("'%ls' uses an unsupported WAV format.", file.getFilenameForError());
+					throw MyError("'%ls' uses an unsupported WAV format.", file.GetNameForError());
 				}
 			}
 			break;
 
 		case VDMAKEFOURCC('d', 'a', 't', 'a'):
-			datapos = file.tell();
+			datapos = file.Pos();
 			datalen = len;
 			break;
 		}
 
 		if (len)
-			file.skip(len + (len & 1));
+			file.Seek(file.Pos() + len + (len & 1));
 	}
 
 	if (!wf.mBlockAlign || datapos < 0)
-		throw MyError("'%ls' is not a valid WAV file.", file.getFilenameForError());
+		throw MyError("'%ls' is not a valid WAV file.", file.GetNameForError());
 
 	// These are hard-coded into the 410 hardware.
 	ATCassetteDecoderFSK	decoder;
@@ -512,7 +516,7 @@ void ATCassetteEmulator::ParseWAVE(VDFile& file) {
 
 	uint32	inputSamplesLeft = datalen / wf.mBlockAlign;
 
-	file.seek(datapos);
+	file.Seek(datapos);
 
 	bool outputBit = false;
 	bool lastBit = false;
@@ -653,7 +657,7 @@ namespace {
 	}
 }
 
-void ATCassetteEmulator::ParseCAS(VDFile& file) {
+void ATCassetteEmulator::ParseCAS(IVDRandomAccessStream& file) {
 	ATCassetteEncoder enc(mBitstream);
 	uint32 baudRate = 0;
 	uint32 currentCycle = 0;
@@ -670,7 +674,7 @@ void ATCassetteEmulator::ParseCAS(VDFile& file) {
 			uint8 aux2;
 		} hdr;
 
-		if (file.readData(&hdr, 8) != 8)
+		if (file.ReadData(&hdr, 8) != 8)
 			break;
 
 		uint32 len = VDFromLE16(hdr.len);
@@ -705,7 +709,7 @@ void ATCassetteEmulator::ParseCAS(VDFile& file) {
 						tc -= 1;
 					}
 
-					file.read(buf + offset, tc);
+					file.Read(buf + offset, tc);
 					enc.EncodeBytes(buf, tc);
 
 					firstBlock = false;
@@ -713,7 +717,7 @@ void ATCassetteEmulator::ParseCAS(VDFile& file) {
 				break;
 		}
 
-		file.skip(len);
+		file.Seek(file.Pos() + len);
 	}
 
 	// add two second footer

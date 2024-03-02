@@ -19,15 +19,25 @@
 #ifndef f_VD2_RIZA_VIDEOCODEC_H
 #define f_VD2_RIZA_VIDEOCODEC_H
 
+#include <vd2/system/unknown.h>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/fraction.h>
 #include <vd2/system/vdstl.h>
 
 struct tagBITMAPINFOHEADER;
 
+class IVDVideoCompressor;
+
+class IVDVideoCompressorDesc : public IVDRefUnknown {
+public:
+	virtual void CreateInstance(IVDVideoCompressor **pp) = 0;
+};
+
 class VDINTERFACE IVDVideoCompressor {
 public:
 	virtual ~IVDVideoCompressor() {}
+
+	virtual bool IsKeyFrameOnly() = 0;
 
 	virtual bool Query(const void *inputFormat, const void *outputFormat = NULL) = 0;
 	virtual void GetOutputFormat(const void *inputFormat, vdstructex<tagBITMAPINFOHEADER>& outputFormat) = 0;
@@ -40,9 +50,11 @@ public:
 	virtual void DropFrame() = 0;
 	virtual bool CompressFrame(void *dst, const void *src, bool& keyframe, uint32& size) = 0;
 	virtual void Stop() = 0;
+
+	virtual void Clone(IVDVideoCompressor **vc) = 0;
 };
 
-IVDVideoCompressor *VDCreateVideoCompressorVCM(const void *pHIC, uint32 kilobytesPerSecond, long quality, long keyrate);
+IVDVideoCompressor *VDCreateVideoCompressorVCM(const void *pHIC, uint32 kilobytesPerSecond, long quality, long keyrate, bool ownHandle);
 
 class VDINTERFACE IVDVideoDecompressor {
 public:

@@ -85,6 +85,8 @@ NotDLI:
 Timer1DecCheck:
 	dec		cdtmv1				;decrement low byte
 	bne		Timer1Done
+	lda		cdtmv1+1
+	bne		Timer1Done
 	jsr		Timer1Dispatch
 Timer1Done:
 

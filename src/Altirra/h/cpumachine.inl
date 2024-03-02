@@ -146,8 +146,14 @@ for(;;) {
 		case kStateAddToPath:
 			{
 				uint16 adjpc = mPC - 1;
-				if (!(mInsnFlags[adjpc] & kInsnFlagPathExecuted))
+				if (!(mInsnFlags[adjpc] & kInsnFlagPathExecuted)) {
 					mInsnFlags[adjpc] |= kInsnFlagPathExecuted;
+
+					if (mbPathBreakEnabled) {
+						mbUnusedCycle = true;
+						return kATSimEvent_CPUNewPath;
+					}
+				}
 			}
 			break;
 
@@ -490,8 +496,8 @@ for(;;) {
 
 		case kStateCmp:
 			{
-				mData ^= 0xff;
-				uint32 result = mA + mData + 1;
+				// must leave data alone to not break DCP
+				uint32 result = mA + (mData ^ 0xff) + 1;
 
 				mP &= ~(kFlagC | kFlagN | kFlagZ);
 
@@ -613,6 +619,29 @@ for(;;) {
 				mP |= kFlagN;
 			if (!mX)
 				mP |= kFlagZ;
+			break;
+
+		case kStateArr:
+			mA &= mData;
+			mA = (mA >> 1) + (mP << 7);
+			mP &= ~(kFlagN | kFlagZ | kFlagC | kFlagV);
+
+			switch(mA & 0x60) {
+				case 0x00:	break;
+				case 0x20:	mP += kFlagC | kFlagV; break;
+				case 0x40:	mP += kFlagV; break;
+				case 0x60:	mP += kFlagC; break;
+			}
+
+			mP += (mA & 0x80);
+
+			if (!mA)
+				mP |= kFlagZ;
+			break;
+
+		case kStateXas:
+			mS = (mX & mA);
+			mData = mS & (uint32)((mAddr >> 8) + 1);
 			break;
 
 		case kStateOr:

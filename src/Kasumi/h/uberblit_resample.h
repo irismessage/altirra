@@ -5,7 +5,7 @@
 #include <vd2/system/math.h>
 #include "uberblit.h"
 #include "uberblit_base.h"
-#include "resample_kernels.h"
+#include <vd2/Kasumi/resample_kernels.h>
 
 class IVDResamplerSeparableRowStage;
 class IVDResamplerSeparableRowStage2;

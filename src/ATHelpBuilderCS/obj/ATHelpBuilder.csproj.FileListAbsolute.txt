@@ -1,0 +1,10 @@
+d:\p4root\Altirra\dev\out\Debug\ATHelpBuilder.exe
+d:\p4root\Altirra\dev\out\Debug\ATHelpBuilder.pdb
+d:\p4root\Altirra\dev\src\ATHelpBuilder\obj\Debug\ResolveAssemblyReference.cache
+d:\p4root\Altirra\dev\src\ATHelpBuilder\obj\Debug\ATHelpBuilder.exe
+d:\p4root\Altirra\dev\src\ATHelpBuilder\obj\Debug\ATHelpBuilder.pdb
+D:\p4root\Altirra\dev\out\Release\ATHelpBuilder.exe
+D:\p4root\Altirra\dev\out\Release\ATHelpBuilder.pdb
+D:\p4root\Altirra\dev\src\ATHelpBuilder\obj\Release\ResolveAssemblyReference.cache
+D:\p4root\Altirra\dev\src\ATHelpBuilder\obj\Release\ATHelpBuilder.exe
+D:\p4root\Altirra\dev\src\ATHelpBuilder\obj\Release\ATHelpBuilder.pdb

@@ -30,6 +30,8 @@
 #include "scheduler.h"
 #include "vbxe.h"
 
+struct ATCartLoadContext;
+
 enum ATMemoryMode {
 	kATMemoryMode_48K,
 	kATMemoryMode_52K,
@@ -65,6 +67,7 @@ enum ATSimulatorEvent {
 	kATSimEvent_CPUPCBreakpoint,
 	kATSimEvent_CPUPCBreakpointsUpdated,
 	kATSimEvent_CPUIllegalInsn,
+	kATSimEvent_CPUNewPath,
 	kATSimEvent_ReadBreakpoint,
 	kATSimEvent_WriteBreakpoint,
 	kATSimEvent_DiskSectorBreakpoint,
@@ -98,10 +101,28 @@ class ATVBXEEmulator;
 class ATRTime8Emulator;
 class ATCPUProfiler;
 class ATCPUVerifier;
+class ATIDEEmulator;
 
 class IATSimulatorCallback {
 public:
 	virtual void OnSimulatorEvent(ATSimulatorEvent ev) = 0;
+};
+
+enum ATLoadType {
+	kATLoadType_Other,
+	kATLoadType_Cartridge,
+	kATLoadType_Disk
+};
+
+struct ATLoadContext {
+	ATLoadType mLoadType;
+	ATCartLoadContext *mpCartLoadContext;
+	int mLoadIndex;
+
+	ATLoadContext()
+		: mLoadType(kATLoadType_Other)
+		, mpCartLoadContext(NULL)
+		, mLoadIndex(-1) {}
 };
 
 class ATSimulator : ATCPUEmulatorMemory,
@@ -146,6 +167,8 @@ public:
 	IATPrinterEmulator *GetPrinter() { return mpPrinter; }
 	ATVBXEEmulator *GetVBXE() { return mpVBXE; }
 	ATCartridgeEmulator *GetCartridge() { return mpCartridge; }
+	IATUIRenderer *GetUIRenderer() { return mpUIRenderer; }
+	ATIDEEmulator *GetIDEEmulator() { return mpIDE; }
 
 	bool IsTurboModeEnabled() const { return mbTurbo; }
 	bool IsFrameSkipEnabled() const { return mbFrameSkip; }
@@ -166,6 +189,7 @@ public:
 	bool IsVBXESharedMemoryEnabled() const { return mbVBXESharedMemory; }
 	bool IsVBXEAltPageEnabled() const { return mbVBXEUseD7xx; }
 	bool IsRTime8Enabled() const { return mpRTime8 != NULL; }
+	bool IsIDEUsingD5xx() const { return mbIDEUseD5xx; }
 
 	uint8	GetBankRegister() const { return mPORTBOUT | ~mPORTBDDR; }
 	uint32	GetCPUBankBase() const { return mpReadMemoryMap[0x40] - mMemory; }
@@ -218,19 +242,30 @@ public:
 	bool IsPrinterEnabled() const;
 	void SetPrinterEnabled(bool enable);
 
+	bool IsFastBootEnabled() const { return mbFastBoot; }
+	void SetFastBootEnabled(bool enable);
+
 	void ColdReset();
 	void WarmReset();
 	void Resume();
 	void Suspend();
 
 	void UnloadAll();
-	void Load(const wchar_t *s);
-	void LoadProgram(const wchar_t *s);
+	bool Load(const wchar_t *path, bool vrw, bool rw, ATLoadContext *loadCtx);
+	bool Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, bool vrw, bool rw, ATLoadContext *loadCtx);
+	void LoadProgram(const wchar_t *symbolHintPath, IVDRandomAccessStream& stream);
 
 	bool IsCartridgeAttached() const;
 
-	void LoadCartridge(const wchar_t *s);
+	void UnloadCartridge();
+	bool LoadCartridge(const wchar_t *s, ATCartLoadContext *loadCtx);
+	bool LoadCartridge(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream&, ATCartLoadContext *loadCtx);
 	void LoadCartridgeSC3D();
+	void LoadCartridgeFlash1Mb(bool altbank);
+	void LoadCartridgeFlash8Mb();
+
+	void LoadIDE(bool d5xx, bool write, uint32 cylinders, uint32 heads, uint32 sectors, const wchar_t *path);
+	void UnloadIDE();
 
 	enum AdvanceResult {
 		kAdvanceResult_Stopped,
@@ -283,6 +318,7 @@ private:
 	void AnticEndScanline();
 	bool AnticIsNextCPUCycleWrite();
 	uint32 GTIAGetXClock();
+	uint32 GTIAGetTimestamp() const;
 	void GTIASetSpeaker(bool newState);
 	void GTIARequestAnticSync();
 	void PokeyAssertIRQ();
@@ -290,6 +326,8 @@ private:
 	void PokeyBreak();
 	bool PokeyIsInInterrupt() const;
 	bool PokeyIsKeyPushOK(uint8 c) const;
+	uint32 PokeyGetTimestamp() const;
+
 	void OnDiskActivity(uint8 drive, bool active, uint32 sector);
 	void VBXERequestMemoryMapUpdate();
 	void VBXEAssertIRQ();
@@ -303,6 +341,7 @@ private:
 	void HookCassetteOpenVector();
 	void UnhookCassetteOpenVector();
 	void UpdatePrinterHook();
+	void UpdateSIOVHook();
 	void UpdateCIOVHook();
 
 	bool mbRunning;
@@ -323,6 +362,8 @@ private:
 	bool mbDualPokeys;
 	bool mbVBXESharedMemory;
 	bool mbVBXEUseD7xx;
+	bool mbFastBoot;
+	bool mbIDEUseD5xx;
 	int mBreakOnScanline;
 
 	int		mStartupDelay;
@@ -344,6 +385,7 @@ private:
 	ATScheduler		mSlowScheduler;
 	ATDiskEmulator	mDiskDrives[8];
 	ATCassetteEmulator	*mpCassette;
+	ATIDEEmulator	*mpIDE;
 	IATJoystickManager	*mpJoysticks;
 	IATHardDiskEmulator	*mpHardDisk;
 	ATCartridgeEmulator	*mpCartridge;
@@ -353,6 +395,7 @@ private:
 	IATPrinterEmulator	*mpPrinter;
 	ATVBXEEmulator *mpVBXE;
 	ATRTime8Emulator *mpRTime8;
+	IATUIRenderer *mpUIRenderer;
 
 	uint8	mPORTAOUT;
 	uint8	mPORTADDR;

@@ -79,8 +79,8 @@ public:
 	const_iterator		end() const			{ return mpEnd; }
 
 	// 21.3.3 capacity
-	size_type			size() const		{ return mpEnd - mpBegin; }
-	size_type			length() const		{ return mpEnd - mpBegin; }
+	size_type			size() const		{ return (size_type)(mpEnd - mpBegin); }
+	size_type			length() const		{ return (size_type)(mpEnd - mpBegin); }
 	bool				empty() const		{ return mpBegin == mpEnd; }
 
 	// 21.3.4 element access
@@ -109,20 +109,43 @@ public:
 		VDASSERT(pos <= (size_type)(mpEnd - mpBegin));
 		const void *p = memchr(mpBegin + pos, c, mpEnd - (mpBegin + pos));
 
-		return p ? (const value_type *)p - mpBegin : npos;
+		return p ? (size_type)((const value_type *)p - mpBegin) : npos;
 	}
 
 	int compare(const VDStringSpanA& s) const {
-		size_type l1 = mpEnd - mpBegin;
-		size_type l2 = s.mpEnd - s.mpBegin;
+		size_type l1 = (size_type)(mpEnd - mpBegin);
+		size_type l2 = (size_type)(s.mpEnd - s.mpBegin);
 		size_type lm = l1 < l2 ? l1 : l2;
 
 		int r = memcmp(mpBegin, s.mpBegin, lm);
 
-		if (!r)
+		if (!r && l1 != l2)
 			r = (int)mpBegin[lm] - (int)s.mpBegin[lm];
 
 		return r;
+	}
+
+	int comparei(const char *s) const {
+		return comparei(VDStringSpanA(s));
+	}
+
+	int comparei(const VDStringSpanA& s) const {
+		size_type l1 = (size_type)(mpEnd - mpBegin);
+		size_type l2 = (size_type)(s.mpEnd - s.mpBegin);
+		size_type lm = l1 < l2 ? l1 : l2;
+
+		const char *p = mpBegin;
+		const char *q = s.mpBegin;
+
+		while(lm--) {
+			const unsigned char c = tolower((unsigned char)*p++);
+			const unsigned char d = tolower((unsigned char)*q++);
+
+			if (c != d)
+				return (int)c - (int)d;
+		}
+
+		return (int)l1 - (int)l2;
 	}
 
 	const VDStringSpanA trim(const value_type *s) const {
@@ -234,6 +257,10 @@ public:
 		static_cast<VDStringSpanA&>(*this) = s;
 	}
 
+	void clear() {
+		mpBegin = mpEnd = NULL;
+	}
+
 	bool split(value_type c, VDStringRefA& token) {
 		size_type pos = find(c);
 
@@ -341,9 +368,9 @@ public:
 			resize_slow(n, current, v);
 	}
 
-	size_type			capacity() const	{ return mpEOS - mpBegin; }
+	size_type			capacity() const	{ return (size_type)(mpEOS - mpBegin); }
 
-	void reserve(size_t n) {
+	void reserve(size_type n) {
 		size_type current = (size_type)(mpEOS - mpBegin);
 
 		if (n > current)
@@ -430,6 +457,11 @@ public:
 			push_back_extend();
 
 		*mpEnd++ = c;
+		*mpEnd = 0;
+	}
+
+	void pop_back() {
+		--mpEnd;
 		*mpEnd = 0;
 	}
 
@@ -588,7 +620,7 @@ protected:
 
 inline VDStringA operator+(const VDStringA& str, const VDStringA& s) {
 	VDStringA result;
-	result.reserve(str.size() + s.size());
+	result.reserve((VDStringA::size_type)(str.size() + s.size()));
 	result.assign(str);
 	result.append(s);
 	return result;
@@ -596,7 +628,7 @@ inline VDStringA operator+(const VDStringA& str, const VDStringA& s) {
 
 inline VDStringA operator+(const VDStringA& str, const char *s) {
 	VDStringA result;
-	result.reserve(str.size() + strlen(s));
+	result.reserve((VDStringA::size_type)(str.size() + strlen(s)));
 	result.assign(str);
 	result.append(s);
 	return result;
@@ -658,8 +690,8 @@ public:
 	const_iterator		end() const			{ return mpEnd; }
 
 	// 21.3.3 capacity
-	size_type			size() const		{ return mpEnd - mpBegin; }
-	size_type			length() const		{ return mpEnd - mpBegin; }
+	size_type			size() const		{ return (size_type)(mpEnd - mpBegin); }
+	size_type			length() const		{ return (size_type)(mpEnd - mpBegin); }
 	bool				empty() const		{ return mpBegin == mpEnd; }
 
 	// 21.3.4 element access
@@ -688,7 +720,7 @@ public:
 		VDASSERT(pos <= (size_type)(mpEnd - mpBegin));
 		const void *p = wmemchr(mpBegin + pos, c, mpEnd - (mpBegin + pos));
 
-		return p ? (const value_type *)p - mpBegin : npos;
+		return p ? (size_type)((const value_type *)p - mpBegin) : npos;
 	}
 
 	// extensions
@@ -764,6 +796,10 @@ public:
 
 	void assign(const VDStringSpanW& s) {
 		static_cast<VDStringSpanW&>(*this) = s;
+	}
+
+	void clear() {
+		mpBegin = mpEnd = NULL;
 	}
 
 	bool split(value_type c, VDStringRefW& token) {
@@ -868,9 +904,9 @@ public:
 		wmemset(mpBegin, v, n);
 	}
 
-	size_type			capacity() const	{ return mpEOS - mpBegin; }
+	size_type			capacity() const	{ return (size_type)(mpEOS - mpBegin); }
 
-	void reserve(size_t n) {
+	void reserve(size_type n) {
 		size_type current = (size_type)(mpEOS - mpBegin);
 
 		if (n > current)
@@ -956,6 +992,11 @@ public:
 			push_back_extend();
 
 		*mpEnd++ = c;
+		*mpEnd = 0;
+	}
+
+	void pop_back() {
+		--mpEnd;
 		*mpEnd = 0;
 	}
 
@@ -1109,7 +1150,7 @@ protected:
 
 inline VDStringW operator+(const VDStringW& str, const VDStringW& s) {
 	VDStringW result;
-	result.reserve(str.size() + s.size());
+	result.reserve((VDStringA::size_type)(str.size() + s.size()));
 	result.assign(str);
 	result.append(s);
 	return result;
@@ -1117,7 +1158,7 @@ inline VDStringW operator+(const VDStringW& str, const VDStringW& s) {
 
 inline VDStringW operator+(const VDStringW& str, const wchar_t *s) {
 	VDStringW result;
-	result.reserve(str.size() + wcslen(s));
+	result.reserve((VDStringA::size_type)(str.size() + wcslen(s)));
 	result.assign(str);
 	result.append(s);
 	return result;

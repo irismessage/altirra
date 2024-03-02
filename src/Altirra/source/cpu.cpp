@@ -42,6 +42,7 @@ ATCPUEmulator::ATCPUEmulator()
 	mbHistoryOrProfilingEnabled = false;
 	mbHistoryEnabled = false;
 	mbPathfindingEnabled = false;
+	mbPathBreakEnabled = false;
 	mbIllegalInsnsEnabled = true;
 	mbStopOnBRK = false;
 
@@ -493,6 +494,16 @@ void ATCPUEmulator::Jump(uint16 pc) {
 	mpDstState = mStates;
 	mpNextState = mStates;
 	*mpDstState++ = kStateReadOpcode;
+}
+
+void ATCPUEmulator::Ldy(uint8 v) {
+	mY = v;
+
+	mP &= ~kFlagN & ~kFlagZ;
+	mP |= (v & 0x80);
+
+	if (!v)
+		mP |= kFlagZ;
 }
 
 void ATCPUEmulator::AssertIRQ() {

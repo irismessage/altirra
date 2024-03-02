@@ -146,6 +146,38 @@ end_prolog
 
 	test		r9d, 8
 	jz			.pixelloop_even_pairs
+	cmp			r9d, 8
+	jnz			.pixelloop_odd_pairs
+
+.pixelloop_single_pairs:
+	mov			eax, edi
+	shr			eax, 24
+	imul		eax, r9d
+	
+	lea			rdx, [rsi*4]
+
+	movd		xmm0, dword [rdx]			;xmm0 = p0
+	movd		xmm1, dword [rdx+4]		;xmm1 = p1
+	punpcklbw	xmm0, xmm1
+	punpcklbw	xmm0, xmm5
+	movq		xmm1, qword [r8+rax]
+	pshufd		xmm1, xmm1, 01000100b
+	pmaddwd		xmm0, xmm1
+	
+	movdqa		xmm4, xmm6
+	paddd		xmm4, xmm0
+
+	psrad		xmm4, 14
+	packssdw	xmm4, xmm4
+	packuswb	xmm4, xmm4
+
+	add			edi, ebp
+	adc			rsi, r11
+
+	movd		dword [rcx+r10], xmm4
+	add			r10, 4
+	jnz			.pixelloop_single_pairs
+	jmp			.xit
 
 .pixelloop_odd_pairs:
 	movdqa		xmm4, xmm6

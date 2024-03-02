@@ -104,6 +104,27 @@ void VDSetWindowTextFW32(HWND hwnd, const wchar_t *format, ...) {
 	va_end(val);
 }
 
+VDStringA VDGetWindowTextAW32(HWND hwnd) {
+	char buf[512];
+
+	int len = GetWindowTextLengthA(hwnd);
+
+	if (len > 511) {
+		vdblock<char> tmp(len + 1);
+		len = GetWindowTextA(hwnd, tmp.data(), tmp.size());
+
+		const char *s = tmp.data();
+		VDStringA text(s, s+len);
+		return text;
+	} else if (len > 0) {
+		len = GetWindowTextA(hwnd, buf, 512);
+
+		return VDStringA(buf, buf + len);
+	}
+
+	return VDStringA();
+}
+
 VDStringW VDGetWindowTextW32(HWND hwnd) {
 	union {
 		wchar_t w[256];

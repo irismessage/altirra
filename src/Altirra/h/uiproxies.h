@@ -1,9 +1,10 @@
-#ifndef f_AT_UIPROXIES_H
-#define f_AT_UIPROXIES_H
+#ifndef f_VD2_VDLIB_UIPROXIES_H
+#define f_VD2_VDLIB_UIPROXIES_H
 
 #include <vd2/system/event.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/system/vectors.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/win32/miniwindows.h>
 
@@ -17,6 +18,8 @@ public:
 
 	virtual void Attach(VDZHWND hwnd);
 	virtual void Detach();
+
+	void SetArea(const vdrect32& r);
 
 	virtual VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
 	virtual VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
@@ -43,6 +46,8 @@ protected:
 	typedef vdlist<VDUIProxyControl> HashChain;
 	HashChain mHashTable[kHashTableSize];
 };
+
+/////////////////////////////////////////////////////////////////////////////
 
 class IVDUIListViewVirtualItem : public IVDRefCount {
 public:
@@ -126,6 +131,8 @@ protected:
 	VDEvent<VDUIProxyListView, LabelEventData> mEventItemLabelEdited;
 };
 
+/////////////////////////////////////////////////////////////////////////////
+
 class VDUIProxyHotKeyControl : public VDUIProxyControl {
 public:
 	VDUIProxyHotKeyControl();
@@ -142,6 +149,54 @@ protected:
 	VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
 
 	VDEvent<VDUIProxyHotKeyControl, VDUIAccelerator> mEventHotKeyChanged;
+};
+
+/////////////////////////////////////////////////////////////////////////////
+
+class VDUIProxyTabControl : public VDUIProxyControl {
+public:
+	VDUIProxyTabControl();
+	~VDUIProxyTabControl();
+
+	void AddItem(const wchar_t *s);
+	void DeleteItem(int index);
+
+	vdsize32 GetControlSizeForContent(const vdsize32&) const;
+	vdrect32 GetContentArea() const;
+
+	int GetSelection() const;
+	void SetSelection(int index);
+
+	VDEvent<VDUIProxyTabControl, int>& OnSelectionChanged() {
+		return mSelectionChanged;
+	}
+
+protected:
+	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
+
+	VDEvent<VDUIProxyTabControl, int> mSelectionChanged;
+};
+
+/////////////////////////////////////////////////////////////////////////////
+
+class VDUIProxyComboBoxControl : public VDUIProxyControl {
+public:
+	VDUIProxyComboBoxControl();
+	~VDUIProxyComboBoxControl();
+
+	void AddItem(const wchar_t *s);
+
+	int GetSelection() const;
+	void SetSelection(int index);
+
+	VDEvent<VDUIProxyComboBoxControl, int>& OnSelectionChanged() {
+		return mSelectionChanged;
+	}
+
+protected:
+	VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
+
+	VDEvent<VDUIProxyComboBoxControl, int> mSelectionChanged;
 };
 
 #endif

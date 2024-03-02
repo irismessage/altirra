@@ -23,11 +23,39 @@
 #include <vd2/system/log.h>
 #include <vd2/system/math.h>
 #include <vd2/system/protscope.h>
+#include <vd2/system/refcount.h>
+#include <vd2/system/vdalloc.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Riza/videocodec.h>
 
 extern IVDVideoCodecBugTrap *g_pVDVideoCodecBugTrap;
+
+class VDVideoCompressorDescVCM : public vdrefcounted<IVDVideoCompressorDesc> {
+public:
+	void *AsInterface(uint32 id) { return NULL; }
+	void CreateInstance(IVDVideoCompressor **comp);
+
+	uint32	mfccType;
+	uint32	mfccHandler;
+	uint32	mKilobytesPerSecond;
+	int		mQuality;
+	int		mKeyFrameInterval;
+	vdfastvector<uint8> mState;
+};
+
+void VDVideoCompressorDescVCM::CreateInstance(IVDVideoCompressor **comp) {
+	HIC hic = ICOpen(mfccType, mfccHandler, ICMODE_COMPRESS);
+	if (!hic)
+		throw MyError("Unable to create video compressor.");
+
+	try {
+		*comp = VDCreateVideoCompressorVCM(hic, mKilobytesPerSecond, mQuality, mKeyFrameInterval, true);
+	} catch(...) {
+		ICClose(hic);
+		throw;
+	}
+}
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -78,9 +106,10 @@ extern IVDVideoCodecBugTrap *g_pVDVideoCodecBugTrap;
 
 class VDVideoCompressorVCM : public IVDVideoCompressor {
 public:
-	VDVideoCompressorVCM(HIC hic, uint32 kilobytesPerSecond, long quality, long keyrate);
+	VDVideoCompressorVCM(HIC hic, uint32 kilobytesPerSecond, long quality, long keyrate, bool ownHandle);
 	~VDVideoCompressorVCM();
 
+	bool IsKeyFrameOnly();
 	bool Query(const void *inputFormat, const void *outputFormat);
 	void GetOutputFormat(const void *inputFormat, vdstructex<tagBITMAPINFOHEADER>& outputFormat);
 	const void *GetOutputFormat();
@@ -92,18 +121,25 @@ public:
 	bool CompressFrame(void *dst, const void *src, bool& keyframe, uint32& size);
 	void Stop();
 
+	void Clone(IVDVideoCompressor **vcRet);
+
+	void GetDesc(IVDVideoCompressorDesc **desc);
+
 	uint32 GetMaxOutputSize() {
 		return lMaxPackedSize;
 	}
 
 private:
 	void PackFrameInternal(void *dst, DWORD frameSize, DWORD q, const void *pBits, DWORD dwFlagsIn, DWORD& dwFlagsOut, sint32& bytes);
+	void GetState(vdfastvector<uint8>& data);
 
 	HIC			hic;
 	DWORD		dwFlags;
 	DWORD		mVFWExtensionMessageID;
 	vdstructex<BITMAPINFOHEADER>	mInputFormat;
 	vdstructex<BITMAPINFOHEADER>	mOutputFormat;
+	VDFraction	mFrameRate;
+	VDPosition	mFrameCount;
 	char		*pPrevBuffer;
 	long		lFrameNum;
 	long		lKeyRate;
@@ -118,6 +154,7 @@ private:
 
 	bool		mbKeyframeOnly;
 	bool		mbCompressionRestarted;
+	const bool	mbOwnHandle;
 
 	// crunch emulation
 	sint32		mQualityLo;
@@ -131,11 +168,13 @@ private:
 	VDStringW	mDriverName;
 };
 
-IVDVideoCompressor *VDCreateVideoCompressorVCM(const void *pHIC, uint32 kilobytesPerSecond, long quality, long keyrate) {
-	return new VDVideoCompressorVCM((HIC)pHIC, kilobytesPerSecond, quality, keyrate);
+IVDVideoCompressor *VDCreateVideoCompressorVCM(const void *pHIC, uint32 kilobytesPerSecond, long quality, long keyrate, bool ownHandle) {
+	return new VDVideoCompressorVCM((HIC)pHIC, kilobytesPerSecond, quality, keyrate, ownHandle);
 }
 
-VDVideoCompressorVCM::VDVideoCompressorVCM(HIC hic, uint32 kilobytesPerSecond, long quality, long keyrate) {
+VDVideoCompressorVCM::VDVideoCompressorVCM(HIC hic, uint32 kilobytesPerSecond, long quality, long keyrate, bool ownHandle)
+	: mbOwnHandle(ownHandle)
+{
 	pPrevBuffer		= NULL;
 	pConfigData		= NULL;
 
@@ -143,13 +182,34 @@ VDVideoCompressorVCM::VDVideoCompressorVCM(HIC hic, uint32 kilobytesPerSecond, l
 	lDataRate = kilobytesPerSecond;
 	lKeyRate = keyrate;
 	lQuality = quality;
+
+	ICINFO info = {sizeof(ICINFO)};
+	DWORD rv;
+
+	{
+		VDExternalCodeBracket bracket(mDriverName.c_str(), __FILE__, __LINE__);
+		rv = ICGetInfo(hic, &info, sizeof info);
+	}
+
+	mbKeyframeOnly = true;
+	if (keyrate != 1 && rv >= sizeof info) {
+		if (info.dwFlags & (VIDCF_TEMPORAL | VIDCF_FASTTEMPORALC))
+			mbKeyframeOnly = false;
+	}
 }
 
 VDVideoCompressorVCM::~VDVideoCompressorVCM() {
 	Stop();
 
+	if (mbOwnHandle)
+		ICClose(hic);
+
 	delete pConfigData;
 	delete pPrevBuffer;
+}
+
+bool VDVideoCompressorVCM::IsKeyFrameOnly() {
+	return mbKeyframeOnly;
 }
 
 bool VDVideoCompressorVCM::Query(const void *inputFormat, const void *outputFormat) {
@@ -196,6 +256,8 @@ void VDVideoCompressorVCM::Start(const void *inputFormat, uint32 inputFormatSize
 	const BITMAPINFOHEADER *pbihOutput = (const BITMAPINFOHEADER *)outputFormat;
 	mInputFormat.assign(pbihInput, inputFormatSize);
 	mOutputFormat.assign(pbihOutput, outputFormatSize);
+	mFrameRate = frameRate;
+	mFrameCount = frameCount;
 
 	lKeyRateCounter = 1;
 
@@ -215,9 +277,7 @@ void VDVideoCompressorVCM::Start(const void *inputFormat, uint32 inputFormatSize
 
 	this->dwFlags = info.dwFlags;
 
-	mbKeyframeOnly = true;
 	if (info.dwFlags & (VIDCF_TEMPORAL | VIDCF_FASTTEMPORALC)) {
-		mbKeyframeOnly = false;
 		if (!(info.dwFlags & VIDCF_FASTTEMPORALC)) {
 			// Allocate backbuffer
 
@@ -397,6 +457,37 @@ void VDVideoCompressorVCM::Stop() {
 	}
 }
 
+void VDVideoCompressorVCM::GetDesc(IVDVideoCompressorDesc **descRet) {
+	vdrefptr<VDVideoCompressorDescVCM> desc(new VDVideoCompressorDescVCM);
+
+	ICINFO info = {0};
+	if (!ICGetInfo(hic, &info, sizeof info))
+		throw MyError("Unable to retrieve base video codec information.");
+
+	desc->mfccType = info.fccType;
+	desc->mfccHandler = info.fccHandler;
+	desc->mKilobytesPerSecond = lDataRate;
+	desc->mQuality = lQuality;
+	desc->mKeyFrameInterval = lKeyRate;
+
+	GetState(desc->mState);
+
+	*descRet = desc.release();
+}
+
+void VDVideoCompressorVCM::Clone(IVDVideoCompressor **vcRet) {
+	vdrefptr<IVDVideoCompressorDesc> desc;
+	GetDesc(~desc);
+
+	vdautoptr<IVDVideoCompressor> vc;
+	desc->CreateInstance(~vc);
+
+	if (fCompressionStarted)
+		vc->Start(mInputFormat.data(), mInputFormat.size(), mOutputFormat.data(), mOutputFormat.size(), mFrameRate, mFrameCount);
+
+	*vcRet = vc.release();
+}
+
 void VDVideoCompressorVCM::SkipFrame() {
 	if (lKeyRate && lKeyRateCounter>1)
 		--lKeyRateCounter;
@@ -415,6 +506,8 @@ void VDVideoCompressorVCM::Restart() {
 		return;
 
 	mbCompressionRestarted = true;
+	lFrameNum = 0;
+	lKeyRateCounter = 1;
 
 	DWORD res;
 
@@ -708,5 +801,30 @@ void VDVideoCompressorVCM::PackFrameInternal(void *dst, DWORD frameSize, DWORD q
 	mOutputFormat->biSizeImage = sizeImage;
 
 	if (res != ICERR_OK)
+		throw MyICError("Video compression", res);
+}
+
+void VDVideoCompressorVCM::GetState(vdfastvector<uint8>& data) {
+	DWORD res;
+	sint32 size;
+
+	{
+		VDExternalCodeBracket bracket(mDriverName.c_str(), __FILE__, __LINE__);
+		size = ICGetStateSize(hic);
+	}
+
+	if (size <= 0) {
+		data.clear();
+		return;
+	}
+
+	data.resize(size);
+
+	{
+		VDExternalCodeBracket bracket(mDriverName.c_str(), __FILE__, __LINE__);
+		res = ICGetState(hic, data.data(), size);
+	}
+
+	if (res < 0)
 		throw MyICError("Video compression", res);
 }

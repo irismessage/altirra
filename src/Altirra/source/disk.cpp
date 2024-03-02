@@ -71,7 +71,10 @@ namespace {
 	// Delay from end of ACK byte to end of first data byte, not counting rotational delay.
 //	static const int kCyclesToFirstData = kCyclesToFDCCommand + 0;
 //	static const int kCyclesToFirstData = kCyclesToFDCCommand + 10000;
-	static const int kCyclesToFirstData = kCyclesToFDCCommand + 28000;
+	static const int kCyclesToComplete = kCyclesToFDCCommand + 28000;
+
+	// Delay from end of Complete byte to end of first data byte, at high speed.
+	static const int kCyclesToFirstDataHighSpeed = 945;
 
 	static const int kTrackInterleave18[18]={
 //		17, 8, 16, 7, 15, 6, 14, 5, 13, 4, 12, 3, 11, 2, 10, 1, 9, 0
@@ -189,18 +192,22 @@ void ATDiskEmulator::Reset() {
 }
 
 void ATDiskEmulator::LoadDisk(const wchar_t *s) {
+	VDFileStream f(s);
+
+	LoadDisk(s, s, f);
+}
+
+void ATDiskEmulator::LoadDisk(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream) {
 	UnloadDisk();
 
 	try {
-		VDFile f(s);
+		sint64 fileSize = stream.Length();
 
-		sint64 fileSize = f.size();
-
-		if (fileSize <= 65535 * 128 && !vdwcsicmp(VDFileSplitExt(s), L".xfd")) {
+		if (fileSize <= 65535 * 128 && !vdwcsicmp(VDFileSplitExt(imagePath), L".xfd")) {
 			sint32 len = (sint32)fileSize;
 
 			mDiskImage.resize(len);
-			f.read(mDiskImage.data(), len);
+			stream.Read(mDiskImage.data(), len);
 
 			mBootSectorCount = 3;
 			mSectorSize = 128;
@@ -227,32 +234,32 @@ void ATDiskEmulator::LoadDisk(const wchar_t *s) {
 				psi.mbDirty		= false;
 			}
 		} else {
-			sint32 len = VDClampToSint32(f.size()) - 16;
+			sint32 len = VDClampToSint32(stream.Length()) - 16;
 			
 			uint8 header[16];
 
 			mDiskImage.resize(len);
-			f.read(header, 16);
-			f.read(mDiskImage.data(), len);
+			stream.Read(header, 16);
+			stream.Read(mDiskImage.data(), len);
 
 			mbAccurateSectorPrediction = false;
 
 			if (header[0] == 0xF9 || header[0] == 0xFA) {
-				LoadDiskDCM(f, len, s, header);
+				LoadDiskDCM(stream, len, origPath, header);
 			} else if (header[0] == 'A' && header[1] == 'T' && header[2] == '8' && header[3] == 'X') {
-				LoadDiskATX(f, len, s, header);
+				LoadDiskATX(stream, len, header);
 			} else if (header[2] == 'P' && header[3] == '2') {
-				LoadDiskP2(f, len, s, header);
+				LoadDiskP2(stream, len, header);
 			} else if (header[2] == 'P' && header[3] == '3') {
-				LoadDiskP3(f, len, s, header);
+				LoadDiskP3(stream, len, header);
 			} else if (header[0] == 0x96 && header[1] == 0x02) {
-				LoadDiskATR(f, len, s, header);
+				LoadDiskATR(stream, len, origPath, header);
 			} else {
-				throw MyError("Disk image \"%ls\" is corrupt or uses an unsupported format.", VDFileSplitPath(s));
+				throw MyError("Disk image \"%ls\" is corrupt or uses an unsupported format.", VDFileSplitPath(origPath));
 			}
 		}
 
-		mPath = s;
+		mPath = origPath;
 	} catch(const MyError&) {
 		UnloadDisk();
 		throw;
@@ -276,8 +283,8 @@ public:
 	}
 };
 
-void ATDiskEmulator::LoadDiskDCM(VDFile& f, uint32 len, const wchar_t *s, const uint8 *header) {
-	f.seek(0);
+void ATDiskEmulator::LoadDiskDCM(IVDRandomAccessStream& stream, uint32 len, const wchar_t *origPath, const uint8 *header) {
+	stream.Seek(0);
 	mDiskImage.clear();
 
 	// read passes
@@ -307,10 +314,10 @@ void ATDiskEmulator::LoadDiskDCM(VDFile& f, uint32 len, const wchar_t *s, const 
 			uint8 mSectorHi;
 		} passHeader;
 
-		f.read(&passHeader, sizeof(PassHeader));
+		stream.Read(&passHeader, sizeof(PassHeader));
 
 		if (passHeader.mArchiveType != 0xF9 && passHeader.mArchiveType != 0xFA)
-			throw ATInvalidDiskFormatException(s);
+			throw ATInvalidDiskFormatException(origPath);
 
 		uint32 sectorSize = (passHeader.mPassInfo & 0x60) == 0x20 ? 256 : 128;
 		uint32 sectorNum = passHeader.mSectorLo + 256*passHeader.mSectorHi;
@@ -334,10 +341,10 @@ void ATDiskEmulator::LoadDiskDCM(VDFile& f, uint32 len, const wchar_t *s, const 
 
 		for(;;) {
 			if (!sectorNum)
-				throw ATInvalidDiskFormatException(s);
+				throw ATInvalidDiskFormatException(origPath);
 
 			uint8 contentType;
-			f.read(&contentType, 1);
+			stream.Read(&contentType, 1);
 
 			if ((contentType & 0x7F) == 0x45)
 				break;
@@ -345,14 +352,14 @@ void ATDiskEmulator::LoadDiskDCM(VDFile& f, uint32 len, const wchar_t *s, const 
 			uint8 c;
 			switch(contentType & 0x7F) {
 				case 0x41:		// modify begin
-					f.read(&c, 1);
-					f.read(sectorBuffer, c + 1);
+					stream.Read(&c, 1);
+					stream.Read(sectorBuffer, c + 1);
 					for(uint32 i=0, j=c; i < j; ++i, --j) {
 						std::swap(sectorBuffer[i], sectorBuffer[j]);
 					}
 					break;
 				case 0x42:		// 128 byte DOS sector
-					f.read(sectorBuffer + 123, 5);
+					stream.Read(sectorBuffer + 123, 5);
 					memset(sectorBuffer, sectorBuffer[123], 123);
 					break;
 				case 0x43:		// compressed sector
@@ -362,24 +369,24 @@ void ATDiskEmulator::LoadDiskDCM(VDFile& f, uint32 len, const wchar_t *s, const 
 						bool compressed = false;
 						bool first = true;
 						while(pos < sectorSize) {
-							f.read(&offset, 1);
+							stream.Read(&offset, 1);
 
 							// offset cannot exceed sectorSize, ever.
 							if (offset > sectorSize)
-								throw ATInvalidDiskFormatException(s);
+								throw ATInvalidDiskFormatException(origPath);
 
 							// offset cannot go backwards, except in two specific cases:
 							//  - offset is 0, pos is 0 (null span)
 							//  - offset is 0, sectorSize is 256 (fill to end of DD sector)
 							if (offset < pos && (offset || (pos && sectorSize != 256)))
-								throw ATInvalidDiskFormatException(s);
+								throw ATInvalidDiskFormatException(origPath);
 
 							uint32 spanLen = (offset || first ? offset : sectorSize) - pos;
 							if (compressed) {
-								f.read(&c, 1);
+								stream.Read(&c, 1);
 								memset(sectorBuffer + pos, c, spanLen);
 							} else if (spanLen) {
-								f.read(sectorBuffer + pos, spanLen);
+								stream.Read(sectorBuffer + pos, spanLen);
 							}
 
 							pos += spanLen;
@@ -389,19 +396,19 @@ void ATDiskEmulator::LoadDiskDCM(VDFile& f, uint32 len, const wchar_t *s, const 
 					}
 					break;
 				case 0x44:		// modify end
-					f.read(&c, 1);
+					stream.Read(&c, 1);
 					if (c >= sectorSize)
-						throw ATInvalidDiskFormatException(s);
-					f.read(sectorBuffer + c, sectorSize - c);
+						throw ATInvalidDiskFormatException(origPath);
+					stream.Read(sectorBuffer + c, sectorSize - c);
 					break;
 				case 0x46:		// repeat last sector
 					break;
 				case 0x47:		// uncompressed sector
-					f.read(sectorBuffer, sectorSize);
+					stream.Read(sectorBuffer, sectorSize);
 					break;
 
 				default:
-					throw ATInvalidDiskFormatException(s);
+					throw ATInvalidDiskFormatException(origPath);
 			}
 
 			// create entry for sector
@@ -443,7 +450,7 @@ void ATDiskEmulator::LoadDiskDCM(VDFile& f, uint32 len, const wchar_t *s, const 
 				++sectorNum;
 			} else {
 				uint8 newSec[2];
-				f.read(newSec, 2);
+				stream.Read(newSec, 2);
 				sectorNum = VDReadUnalignedLEU16(newSec);
 			}
 		}
@@ -497,7 +504,7 @@ void ATDiskEmulator::LoadDiskDCM(VDFile& f, uint32 len, const wchar_t *s, const 
 	mReWriteOffset = -1;
 }
 
-void ATDiskEmulator::LoadDiskATX(VDFile& f, uint32 len, const wchar_t *s, const uint8 *header) {
+namespace {
 	struct ATXHeader {
 		uint8	mSignature[4];
 		uint16	mVersionMajor;
@@ -511,25 +518,30 @@ void ATDiskEmulator::LoadDiskATX(VDFile& f, uint32 len, const wchar_t *s, const 
 	};
 
 	struct ATXTrackHeader {
-		uint16	mBlockLength;
-		uint8	mFill1[6];
-		uint16	mTrackNum;
+		uint32	mSize;
+		uint16	mType;
+		uint16	mReserved06;
+		uint8	mTrackNum;
+		uint8	mReserved09;
 		uint16	mNumSectors;
 		uint8	mFill2[5];
 		uint8	mMysteryIndex;
 		uint8	mFill3[2];
-		uint8	mUnknown1;
-		uint8	mFill4[11];
-		uint32	mUnknown2;
-		uint32	mUnknown3;
+		uint32	mDataOffset;
+		uint8	mFill4[8];
+	};
+
+	struct ATXSectorListHeader {
+		uint32	mSize;
+		uint8	mType;
+		uint8	mReserved05[3];
 	};
 
 	struct ATXSectorHeader {
 		uint8	mIndex;
 		uint8	mFDCStatus;		// not inverted
 		uint16	mTimingOffset;
-		uint16	mDataOffset;
-		uint8	mFill1[2];
+		uint32	mDataOffset;
 	};
 
 	struct ATXSectorExtraData {
@@ -542,36 +554,51 @@ void ATDiskEmulator::LoadDiskATX(VDFile& f, uint32 len, const wchar_t *s, const 
 		uint8	mSectorIndex;
 		uint16	mWeakDataOffset;	// starting byte at which to inject garbage
 	};
+}
 
-	struct ATXTrackFooter {
-		uint8	mUnknown1;
-		uint8	mUnknown2;
-		uint8	mFill1[6];
-	};
-
+void ATDiskEmulator::LoadDiskATX(IVDRandomAccessStream& stream, uint32 len, const uint8 *header) {
 	ATXHeader atxhdr;
-	f.seek(0);
-	f.read(&atxhdr, sizeof atxhdr);
+	stream.Seek(0);
+	stream.Read(&atxhdr, sizeof atxhdr);
 
-	f.seek(atxhdr.mTrackDataOffset);
+	stream.Seek(atxhdr.mTrackDataOffset);
 
 	mDiskImage.clear();
 	mBootSectorCount = 3;
 	mSectorSize = 128;
 	mTotalSectorCount = 720;
 
+	sint64 imageSize = stream.Length();
+
 	vdfastvector<ATXSectorHeader> sectorHeaders;
 	vdfastvector<int> phySectorLookup;
 	for(uint32 i=0; i<40; ++i) {
 		ATXTrackHeader trkhdr;
-		sint64 baseAddr = f.tell();
+		sint64 trackBaseOffset = stream.Pos();
 
-		f.read(&trkhdr, sizeof trkhdr);
-		ATConsolePrintf("track %d [%d] at %04x\n", i, trkhdr.mTrackNum, (uint32)baseAddr);
+		stream.Read(&trkhdr, sizeof trkhdr);
+		ATConsolePrintf("track %d [%d] at %04x\n", i, trkhdr.mTrackNum, (uint32)trackBaseOffset);
 
-		// read sectors
+		// validate track
+		if (trackBaseOffset + trkhdr.mSize > imageSize)
+			throw MyError("Invalid ATX image: Track header at %08x extends beyond end of file.", (uint32)trackBaseOffset);
+
+		if (trkhdr.mType != 0)
+			throw MyError("Invalid ATX image: Track header at %08x has the wrong type.", (uint32)trackBaseOffset);
+
+		// read sector list header
+		const sint64 sectorListOffset = trackBaseOffset + trkhdr.mDataOffset;
+		stream.Seek(sectorListOffset);
+
+		ATXSectorListHeader sectorListHeader;
+		stream.Read(&sectorListHeader, sizeof sectorListHeader);
+
+		if (sectorListHeader.mType != 1)
+			throw MyError("Invalid ATX image: Sector list header at %08x has the wrong type.", (uint32)sectorListOffset);
+
+		// read sector headers
 		sectorHeaders.resize(trkhdr.mNumSectors);
-		f.read(sectorHeaders.data(), sizeof(sectorHeaders[0])*trkhdr.mNumSectors);
+		stream.Read(sectorHeaders.data(), sizeof(sectorHeaders[0])*trkhdr.mNumSectors);
 
 		phySectorLookup.clear();
 		phySectorLookup.resize(trkhdr.mNumSectors, -1);
@@ -599,7 +626,7 @@ void ATDiskEmulator::LoadDiskATX(VDFile& f, uint32 len, const wchar_t *s, const 
 				// Missing sectors do not have data.
 				if (!(sechdr.mFDCStatus & 0x10)) {
 					uint32 dataEnd = sechdr.mDataOffset + 128;
-					if (dataEnd > trkhdr.mBlockLength)
+					if (dataEnd > trkhdr.mSize)
 						throw MyError("Invalid protected disk: sector extends outside of track.");
 
 					if (highestEnd < dataEnd)
@@ -620,31 +647,25 @@ void ATDiskEmulator::LoadDiskATX(VDFile& f, uint32 len, const wchar_t *s, const 
 				psi.mbDirty = false;
 				++vsi.mNumPhysSectors;
 
-				ATConsolePrintf("trk %d sector %d (vsec=%d) (%d): %02x %02x %04x %04x %02x %02x\n", i, k, i*18 + sechdr.mIndex, sechdr.mIndex
+				ATConsolePrintf("Track %2d sector %2d (vsec=%3d) (%d): %02x %02x %04x %04x\n", i, k, i*18 + sechdr.mIndex, sechdr.mIndex
 					, sechdr.mIndex
 					, sechdr.mFDCStatus
 					, sechdr.mTimingOffset
 					, sechdr.mDataOffset
-					, sechdr.mFill1[0]
-					, sechdr.mFill1[1]
 				);
 			}
 		}
 
-		// read footer
-		ATXTrackFooter trkftr;
-		f.read(&trkftr, sizeof trkftr);
-
 		// read sector data
-		f.seek(baseAddr);
+		stream.Seek(trackBaseOffset);
 		size_t offset = mDiskImage.size();
 		mDiskImage.resize(offset + highestEnd);
-		f.read(mDiskImage.data() + offset, highestEnd);
+		stream.Read(mDiskImage.data() + offset, highestEnd);
 
 		// read extra sector data
 		ATXSectorExtraData extraData;
 		for(uint32 j=0; j<sectorsWithExtraData; ++j) {
-			f.read(&extraData, sizeof extraData);
+			stream.Read(&extraData, sizeof extraData);
 			ATConsolePrintf("    extra sector data %08X %02X | sector %d | weak offset %04x\n", extraData.mFlags, extraData.mUnknown2, extraData.mSectorIndex, extraData.mWeakDataOffset);
 
 			if (extraData.mSectorIndex >= trkhdr.mNumSectors)
@@ -663,14 +684,14 @@ void ATDiskEmulator::LoadDiskATX(VDFile& f, uint32 len, const wchar_t *s, const 
 			}
 		}
 
-		f.seek(baseAddr + trkhdr.mBlockLength);
+		stream.Seek(trackBaseOffset + trkhdr.mSize);
 	}
 
 	mbAccurateSectorPrediction = true;
 	mReWriteOffset = -1;
 }
 
-void ATDiskEmulator::LoadDiskP2(VDFile& f, uint32 len, const wchar_t *s, const uint8 *header) {
+void ATDiskEmulator::LoadDiskP2(IVDRandomAccessStream& stream, uint32 len, const uint8 *header) {
 	mBootSectorCount = 3;
 	mSectorSize = 128;
 	mReWriteOffset = -1;
@@ -738,7 +759,7 @@ void ATDiskEmulator::LoadDiskP2(VDFile& f, uint32 len, const wchar_t *s, const u
 	}
 }
 
-void ATDiskEmulator::LoadDiskP3(VDFile& f, uint32 len, const wchar_t *s, const uint8 *header) {
+void ATDiskEmulator::LoadDiskP3(IVDRandomAccessStream& stream, uint32 len, const uint8 *header) {
 	mBootSectorCount = 3;
 	mSectorSize = 128;
 	mReWriteOffset = -1;
@@ -805,7 +826,7 @@ void ATDiskEmulator::LoadDiskP3(VDFile& f, uint32 len, const wchar_t *s, const u
 	}
 }
 
-void ATDiskEmulator::LoadDiskATR(VDFile& f, uint32 len, const wchar_t *s, const uint8 *header) {
+void ATDiskEmulator::LoadDiskATR(IVDRandomAccessStream& stream, uint32 len, const wchar_t *origPath, const uint8 *header) {
 	mSectorSize = header[4] + 256*header[5];
 
 	int imageBootSectorCount = 0;
@@ -826,7 +847,7 @@ void ATDiskEmulator::LoadDiskATR(VDFile& f, uint32 len, const wchar_t *s, const 
 		mBootSectorCount = 0;
 
 	if (mSectorSize > 512)
-		throw MyError("Disk image \"%ls\" uses an unsupported sector size of %u bytes.", VDFileSplitPath(s), mSectorSize);
+		throw MyError("Disk image \"%ls\" uses an unsupported sector size of %u bytes.", VDFileSplitPath(origPath), mSectorSize);
 
 	mReWriteOffset = 16;
 
@@ -959,6 +980,7 @@ void ATDiskEmulator::SaveDisk(const wchar_t *s) {
 	mbDirty = false;
 	mbDiskFormatDirty = false;
 	mbHasDiskSource = true;
+	mReWriteOffset = 16;
 }
 
 void ATDiskEmulator::CreateDisk(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize) {
@@ -1083,7 +1105,7 @@ uint8 ATDiskEmulator::ReadSector(uint16 bufadr, uint16 len, uint16 sector, ATCPU
 			ProcessCommandPacket();
 
 			// fake rotation
-			uint32 rotPos = mRotationalPosition + kCyclesPerSIOByte * (mTransferLength - 1) + kCyclesToFirstData + kCyclesToExitSIO;
+			uint32 rotPos = mRotationalPosition + kCyclesPerSIOByte * (mTransferLength - 1) + kCyclesToComplete + kCyclesToExitSIO;
 
 			mRotationalCounter = rotPos % kCyclesPerDiskRotation;
 			mRotations += rotPos / kCyclesPerDiskRotation;
@@ -1324,7 +1346,7 @@ void ATDiskEmulator::OnScheduledEvent(uint32 id) {
 		// SIO barfs if the third byte is sent too quickly
 		uint32 transferDelay = mbWriteHighSpeed ? kCyclesPerSIOByteHighSpeed : kCyclesPerSIOByte;
 		if (mTransferOffset == 1) {
-			transferDelay = kCyclesToFirstData;
+			transferDelay = kCyclesToComplete;
 
 			if (mbWriteRotationalDelay) {
 				// compute rotational delay
@@ -1349,6 +1371,11 @@ void ATDiskEmulator::OnScheduledEvent(uint32 id) {
 				}
 			}
 		}
+
+		// Doc Wire's Solitaire Solution needs a bit more delay between the Complete byte and the first
+		// data byte at high speed.
+		if (mTransferOffset == 2 && mbWriteHighSpeed)
+			transferDelay = kCyclesToFirstDataHighSpeed;
 
 		if (mTransferOffset >= mTransferLength) {
 			UpdateRotationalCounter();
@@ -1776,6 +1803,10 @@ void ATDiskEmulator::ProcessCommandPacket() {
 
 				switch(command) {
 					case 0x3F:
+						desc = "Get high speed index";
+						break;
+
+					case 0x4F:
 						desc = "Write PERCOM block";
 						break;
 

@@ -49,8 +49,10 @@ zfr0:
 	ldx		#fr0
 	org		$da46
 zf1:
+	ldy		#6
+zfl:
 	#{
-		ATAccelZF1(*mpCPU, *mpMemory);
+		ATAccelZFL(*mpCPU, *mpMemory);
 	#}
 	rts
 

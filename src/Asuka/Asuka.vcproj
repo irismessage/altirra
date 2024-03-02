@@ -539,6 +539,10 @@
 				</FileConfiguration>
 			</File>
 			<File
+				RelativePath=".\source\psa.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\snapsetup.cpp"
 				>
 			</File>

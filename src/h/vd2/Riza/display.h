@@ -106,6 +106,8 @@ void VDVideoDisplaySetFeatures(bool enableDirectX, bool enableOverlays, bool ena
 void VDVideoDisplaySetD3DFXFileName(const wchar_t *path);
 void VDVideoDisplaySetDebugInfoEnabled(bool enable);
 void VDVideoDisplaySetBackgroundFallbackEnabled(bool enable);
+void VDVideoDisplaySetSecondaryDXEnabled(bool enable);
+void VDVideoDisplaySetMonitorSwitchingDXEnabled(bool enable);
 
 IVDVideoDisplay *VDGetIVideoDisplay(VDGUIHandle hwnd);
 bool VDRegisterVideoDisplayControl();

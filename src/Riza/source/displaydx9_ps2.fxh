@@ -219,7 +219,7 @@ void VS_UYVY_to_RGB_2_0(
 	oT2.y = 0;
 }
 
-float4 PS_UYVY_to_RGB_2_0(float2 uvY : TEXCOORD0, float2 uvC : TEXCOORD1, float2 uvSelect : TEXCOORD2) : COLOR0 {
+float4 PS_UYVY_to_RGB_2_0(float2 uvY : TEXCOORD0, float2 uvC : TEXCOORD1, float2 uvSelect : TEXCOORD2, uniform int colorSpace) : COLOR0 {
 	float4 pxY = tex2D(samp0, uvY);
 	float4 pxC = tex2D(samp1, uvC);
 	float4 pxSelect = tex2D(samp2, uvSelect);
@@ -228,72 +228,54 @@ float4 PS_UYVY_to_RGB_2_0(float2 uvY : TEXCOORD0, float2 uvC : TEXCOORD1, float2
 	float cr = pxC.r;
 	float cb = pxC.b;
 	
-	return ConvertYCbCrToRGB(y, cb, cr);
+	return ConvertYCbCrToRGB(y, cb, cr, colorSpace);
 }
 
-technique uyvy_to_rgb_2_0 {
+technique uyvy601_to_rgb_2_0 {
 	pass < string vd_viewport = "unclipped,unclipped"; > {
 		VertexShader = compile vs_2_0 VS_UYVY_to_RGB_2_0();
-		PixelShader = compile ps_2_0 PS_UYVY_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_UYVY_to_RGB_2_0(COLOR_SPACE_REC601);
 		
-		Texture[0] = <vd_srctexture>;
-		AddressU[0] = Clamp;
-		AddressV[0] = Clamp;
-		MinFilter[0] = Point;
-		MagFilter[0] = Point;
-
-		Texture[1] = <vd_srctexture>;
-		AddressU[1] = Clamp;
-		AddressV[1] = Clamp;
-		MinFilter[1] = Linear;
-		MagFilter[1] = Linear;
-		
-		Texture[2] = <vd_hevenoddtexture>;
-		AddressU[2] = Wrap;
-		AddressV[2] = Clamp;
-		MinFilter[2] = Point;
-		MagFilter[2] = Point;
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_srcsampler_clamp_linear>;
+		Sampler[2] = <vd_hevenoddsampler>;
 	}
 }
 
-float4 PS_HDYC_to_RGB_2_0(float2 uvY : TEXCOORD0, float2 uvC : TEXCOORD1, float2 uvSelect : TEXCOORD2) : COLOR0 {
-	float4 pxY = tex2D(samp0, uvY);
-	float4 pxC = tex2D(samp1, uvC);
-	float4 pxSelect = tex2D(samp2, uvSelect);
-
-	float y = lerp(pxY.g, pxY.a, pxSelect.a);
-	float cr = pxC.r;
-	float cb = pxC.b;
-	
-	return ConvertYCbCrToRGB_709(y, cb, cr);
-}
-
-technique hdyc_to_rgb_2_0 {
+technique uyvy709_to_rgb_2_0 {
 	pass < string vd_viewport = "unclipped,unclipped"; > {
 		VertexShader = compile vs_2_0 VS_UYVY_to_RGB_2_0();
-		PixelShader = compile ps_2_0 PS_HDYC_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_UYVY_to_RGB_2_0(COLOR_SPACE_REC709);
 		
-		Texture[0] = <vd_srctexture>;
-		AddressU[0] = Clamp;
-		AddressV[0] = Clamp;
-		MinFilter[0] = Point;
-		MagFilter[0] = Point;
-
-		Texture[1] = <vd_srctexture>;
-		AddressU[1] = Clamp;
-		AddressV[1] = Clamp;
-		MinFilter[1] = Linear;
-		MagFilter[1] = Linear;
-		
-		Texture[2] = <vd_hevenoddtexture>;
-		AddressU[2] = Wrap;
-		AddressV[2] = Clamp;
-		MinFilter[2] = Point;
-		MagFilter[2] = Point;
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_srcsampler_clamp_linear>;
+		Sampler[2] = <vd_hevenoddsampler>;
 	}
 }
 
-float4 PS_YUY2_to_RGB_2_0(float2 uvY : TEXCOORD0, float2 uvC : TEXCOORD1, float2 uvSelect : TEXCOORD2) : COLOR0 {
+technique uyvy601fr_to_rgb_2_0 {
+	pass < string vd_viewport = "unclipped,unclipped"; > {
+		VertexShader = compile vs_2_0 VS_UYVY_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_UYVY_to_RGB_2_0(COLOR_SPACE_REC601_FR);
+		
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_srcsampler_clamp_linear>;
+		Sampler[2] = <vd_hevenoddsampler>;
+	}
+}
+
+technique uyvy709fr_to_rgb_2_0 {
+	pass < string vd_viewport = "unclipped,unclipped"; > {
+		VertexShader = compile vs_2_0 VS_UYVY_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_UYVY_to_RGB_2_0(COLOR_SPACE_REC709_FR);
+		
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_srcsampler_clamp_linear>;
+		Sampler[2] = <vd_hevenoddsampler>;
+	}
+}
+
+float4 PS_YUYV_to_RGB_2_0(float2 uvY : TEXCOORD0, float2 uvC : TEXCOORD1, float2 uvSelect : TEXCOORD2, uniform int colorSpace) : COLOR0 {
 	float4 pxY = tex2D(samp0, uvY);
 	float4 pxC = tex2D(samp1, uvC);
 	float4 pxSelect = tex2D(samp2, uvSelect);
@@ -302,31 +284,50 @@ float4 PS_YUY2_to_RGB_2_0(float2 uvY : TEXCOORD0, float2 uvC : TEXCOORD1, float2
 	float cr = pxC.a;
 	float cb = pxC.g;
 	
-	return ConvertYCbCrToRGB(y, cb, cr);
+	return ConvertYCbCrToRGB(y, cb, cr, colorSpace);
 }
 
-technique yuy2_to_rgb_2_0 {
+technique yuyv601_to_rgb_2_0 {
 	pass < string vd_viewport = "unclipped,unclipped"; > {
 		VertexShader = compile vs_2_0 VS_UYVY_to_RGB_2_0();
-		PixelShader = compile ps_2_0 PS_YUY2_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_YUYV_to_RGB_2_0(COLOR_SPACE_REC601);
 		
-		Texture[0] = <vd_srctexture>;
-		AddressU[0] = Clamp;
-		AddressV[0] = Clamp;
-		MinFilter[0] = Point;
-		MagFilter[0] = Point;
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_srcsampler_clamp_linear>;
+		Sampler[2] = <vd_hevenoddsampler>;
+	}
+}
 
-		Texture[1] = <vd_srctexture>;
-		AddressU[1] = Clamp;
-		AddressV[1] = Clamp;
-		MinFilter[1] = Linear;
-		MagFilter[1] = Linear;
+technique yuyv709_to_rgb_2_0 {
+	pass < string vd_viewport = "unclipped,unclipped"; > {
+		VertexShader = compile vs_2_0 VS_UYVY_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_YUYV_to_RGB_2_0(COLOR_SPACE_REC709);
 		
-		Texture[2] = <vd_hevenoddtexture>;
-		AddressU[2] = Wrap;
-		AddressV[2] = Clamp;
-		MinFilter[2] = Point;
-		MagFilter[2] = Point;
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_srcsampler_clamp_linear>;
+		Sampler[2] = <vd_hevenoddsampler>;
+	}
+}
+
+technique yuyv601fr_to_rgb_2_0 {
+	pass < string vd_viewport = "unclipped,unclipped"; > {
+		VertexShader = compile vs_2_0 VS_UYVY_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_YUYV_to_RGB_2_0(COLOR_SPACE_REC601_FR);
+		
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_srcsampler_clamp_linear>;
+		Sampler[2] = <vd_hevenoddsampler>;
+	}
+}
+
+technique yuyv709fr_to_rgb_2_0 {
+	pass < string vd_viewport = "unclipped,unclipped"; > {
+		VertexShader = compile vs_2_0 VS_UYVY_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_YUYV_to_RGB_2_0(COLOR_SPACE_REC709_FR);
+		
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_srcsampler_clamp_linear>;
+		Sampler[2] = <vd_hevenoddsampler>;
 	}
 }
 
@@ -353,7 +354,7 @@ float4 PS_NV12_to_RGB_2_0(float2 uvY : TEXCOORD0, float2 uvC : TEXCOORD1) : COLO
 	float4 pxY = tex2D(samp0, uvY);
 	float4 pxC = tex2D(samp1, uvC);
 	
-	return ConvertYCbCrToRGB(pxY.g, pxC.g, pxC.a);
+	return ConvertYCbCrToRGB(pxY.g, pxC.g, pxC.a, COLOR_SPACE_REC601);
 }
 
 technique nv12_to_rgb_2_0 {
@@ -387,120 +388,149 @@ void VS_YCbCr_to_RGB_2_0(
 	float2 uv2 : TEXCOORD1,
 	out float4 oPos : POSITION,
 	out float2 oT0 : TEXCOORD0,
-	out float2 oT1 : TEXCOORD1,
-	uniform float2 scale,
-	uniform float2 offset)
+	out float2 oT1 : TEXCOORD1)
 {
 	oPos = pos;
 	oT0 = uv;
-	oT1 = (uv2 * scale * vd_srcsize.xy + offset) * vd_tex2size.wz;
+	oT1 = (uv2 * vd_chromauvscale * vd_srcsize.xy + vd_chromauvoffset) * vd_tex2size.wz;
 }
 
-float4 PS_YCbCr_to_RGB_2_0(float2 uvY : TEXCOORD0, float2 uvC : TEXCOORD1) : COLOR0 {
+float4 PS_YCbCr_to_RGB_2_0(float2 uvY : TEXCOORD0, float2 uvC : TEXCOORD1, uniform int colorSpace) : COLOR0 {
 	float y = tex2D(samp0, uvY).b;
 	float cb = tex2D(samp1, uvC).b;
 	float cr = tex2D(samp2, uvC).b;
 		
-	return ConvertYCbCrToRGB(y, cb, cr);
+	return ConvertYCbCrToRGB(y, cb, cr, colorSpace);
 }
 
-technique yvu9_to_rgb_2_0 {
+technique ycbcr_601_to_rgb_2_0 {
 	pass < string vd_viewport = "unclipped,unclipped"; > {
-		VertexShader = compile vs_2_0 VS_YCbCr_to_RGB_2_0(float2(0.25, 0.25), float2(0, 0));
-		PixelShader = compile ps_2_0 PS_YCbCr_to_RGB_2_0();
+		VertexShader = compile vs_2_0 VS_YCbCr_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_YCbCr_to_RGB_2_0(COLOR_SPACE_REC601);
 		
-		Texture[0] = <vd_srctexture>;
-		AddressU[0] = Clamp;
-		AddressV[0] = Clamp;
-		MinFilter[0] = Point;
-		MagFilter[0] = Point;
-
-		Texture[1] = <vd_src2atexture>;
-		AddressU[1] = Clamp;
-		AddressV[1] = Clamp;
-		MinFilter[1] = Linear;
-		MagFilter[1] = Linear;
-		
-		Texture[2] = <vd_src2btexture>;
-		AddressU[2] = Clamp;
-		AddressV[2] = Clamp;
-		MinFilter[2] = Linear;
-		MagFilter[2] = Linear;
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_src2asampler_clamp_linear>;
+		Sampler[2] = <vd_src2bsampler_clamp_linear>;
 	}
 }
 
-technique yv12_to_rgb_2_0 {
+technique ycbcr_709_to_rgb_2_0 {
 	pass < string vd_viewport = "unclipped,unclipped"; > {
-		VertexShader = compile vs_2_0 VS_YCbCr_to_RGB_2_0(float2(0.5, 0.5), float2(-0.25, 0));
-		PixelShader = compile ps_2_0 PS_YCbCr_to_RGB_2_0();
+		VertexShader = compile vs_2_0 VS_YCbCr_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_YCbCr_to_RGB_2_0(COLOR_SPACE_REC601);
 		
-		Texture[0] = <vd_srctexture>;
-		AddressU[0] = Clamp;
-		AddressV[0] = Clamp;
-		MinFilter[0] = Point;
-		MagFilter[0] = Point;
-
-		Texture[1] = <vd_src2atexture>;
-		AddressU[1] = Clamp;
-		AddressV[1] = Clamp;
-		MinFilter[1] = Linear;
-		MagFilter[1] = Linear;
-		
-		Texture[2] = <vd_src2btexture>;
-		AddressU[2] = Clamp;
-		AddressV[2] = Clamp;
-		MinFilter[2] = Linear;
-		MagFilter[2] = Linear;
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_src2asampler_clamp_linear>;
+		Sampler[2] = <vd_src2bsampler_clamp_linear>;
 	}
 }
 
-technique yv16_to_rgb_2_0 {
+technique ycbcr_601fr_to_rgb_2_0 {
 	pass < string vd_viewport = "unclipped,unclipped"; > {
-		VertexShader = compile vs_2_0 VS_YCbCr_to_RGB_2_0(float2(0.5, 1), float2(-0.25, 0));
-		PixelShader = compile ps_2_0 PS_YCbCr_to_RGB_2_0();
+		VertexShader = compile vs_2_0 VS_YCbCr_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_YCbCr_to_RGB_2_0(COLOR_SPACE_REC601_FR);
 		
-		Texture[0] = <vd_srctexture>;
-		AddressU[0] = Clamp;
-		AddressV[0] = Clamp;
-		MinFilter[0] = Point;
-		MagFilter[0] = Point;
-
-		Texture[1] = <vd_src2atexture>;
-		AddressU[1] = Clamp;
-		AddressV[1] = Clamp;
-		MinFilter[1] = Linear;
-		MagFilter[1] = Linear;
-		
-		Texture[2] = <vd_src2btexture>;
-		AddressU[2] = Clamp;
-		AddressV[2] = Clamp;
-		MinFilter[2] = Linear;
-		MagFilter[2] = Linear;
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_src2asampler_clamp_linear>;
+		Sampler[2] = <vd_src2bsampler_clamp_linear>;
 	}
 }
 
-technique yv24_to_rgb_2_0 {
+technique ycbcr_709fr_to_rgb_2_0 {
 	pass < string vd_viewport = "unclipped,unclipped"; > {
-		VertexShader = compile vs_2_0 VS_YCbCr_to_RGB_2_0(float2(1, 1), float2(0, 0));
-		PixelShader = compile ps_2_0 PS_YCbCr_to_RGB_2_0();
+		VertexShader = compile vs_2_0 VS_YCbCr_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_YCbCr_to_RGB_2_0(COLOR_SPACE_REC709_FR);
 		
-		Texture[0] = <vd_srctexture>;
-		AddressU[0] = Clamp;
-		AddressV[0] = Clamp;
-		MinFilter[0] = Point;
-		MagFilter[0] = Point;
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_src2asampler_clamp_linear>;
+		Sampler[2] = <vd_src2bsampler_clamp_linear>;
+	}
+}
 
-		Texture[1] = <vd_src2atexture>;
-		AddressU[1] = Clamp;
-		AddressV[1] = Clamp;
-		MinFilter[1] = Linear;
-		MagFilter[1] = Linear;
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//	YCbCr 4:2:0 interlaced to RGB -- pixel shader 2.0
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void VS_YCbCr420i_to_RGB_2_0(
+	float4 pos : POSITION,
+	float2 uv : TEXCOORD0,
+	float2 uv2 : TEXCOORD1,
+	out float4 oPos : POSITION,
+	out float2 oT0 : TEXCOORD0,
+	out float2 oT1 : TEXCOORD1,
+	out float2 oT2 : TEXCOORD2,
+	out float oT3 : TEXCOORD3)
+{
+	oPos = pos;
+	oT0 = uv;
+	oT1 = (uv2 * float2(0.5f, 0.25f) * vd_srcsize.xy + float2(0.25f, -0.125f)) * vd_tex2size.wz;
+	oT2 = (uv2 * float2(0.5f, 0.25f) * vd_srcsize.xy + float2(0.25f, +0.125f)) * vd_tex2size.wz;
+	oT3 = uv2.y * vd_srcsize.y * 0.5f;
+}
+
+float4 PS_YCbCr420i_to_RGB_2_0(float2 uvY : TEXCOORD0, float2 uvC1 : TEXCOORD1, float2 uvC2 : TEXCOORD2, float field : TEXCOORD3, uniform int colorSpace) : COLOR0 {
+	float y = tex2D(samp0, uvY).b;
+	float cb1 = tex2D(samp1, uvC1).b;
+	float cr1 = tex2D(samp2, uvC1).b;
+	float cb2 = tex2D(samp3, uvC2).b;
+	float cr2 = tex2D(samp4, uvC2).b;
+
+	field = frac(field);
+	float cb = (field > 0.5) ? cb2 : cb1;
+	float cr = (field > 0.5) ? cr2 : cr1;
 		
-		Texture[2] = <vd_src2btexture>;
-		AddressU[2] = Clamp;
-		AddressV[2] = Clamp;
-		MinFilter[2] = Linear;
-		MagFilter[2] = Linear;
+	return ConvertYCbCrToRGB(y, cb, cr, colorSpace);
+}
+
+technique ycbcr420i_601_to_rgb_2_0 {
+	pass < string vd_viewport = "unclipped,unclipped"; > {
+		VertexShader = compile vs_2_0 VS_YCbCr420i_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_YCbCr420i_to_RGB_2_0(COLOR_SPACE_REC601);
+		
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_src2asampler_clamp_linear>;
+		Sampler[2] = <vd_src2bsampler_clamp_linear>;
+		Sampler[3] = <vd_src2csampler_clamp_linear>;
+		Sampler[4] = <vd_src2dsampler_clamp_linear>;
+	}
+}
+
+technique ycbcr420i_709_to_rgb_2_0 {
+	pass < string vd_viewport = "unclipped,unclipped"; > {
+		VertexShader = compile vs_2_0 VS_YCbCr420i_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_YCbCr420i_to_RGB_2_0(COLOR_SPACE_REC601);
+		
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_src2asampler_clamp_linear>;
+		Sampler[2] = <vd_src2bsampler_clamp_linear>;
+		Sampler[3] = <vd_src2csampler_clamp_linear>;
+		Sampler[4] = <vd_src2dsampler_clamp_linear>;
+	}
+}
+
+technique ycbcr420i_601fr_to_rgb_2_0 {
+	pass < string vd_viewport = "unclipped,unclipped"; > {
+		VertexShader = compile vs_2_0 VS_YCbCr420i_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_YCbCr420i_to_RGB_2_0(COLOR_SPACE_REC601_FR);
+		
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_src2asampler_clamp_linear>;
+		Sampler[2] = <vd_src2bsampler_clamp_linear>;
+		Sampler[3] = <vd_src2csampler_clamp_linear>;
+		Sampler[4] = <vd_src2dsampler_clamp_linear>;
+	}
+}
+
+technique ycbcr420i_709fr_to_rgb_2_0 {
+	pass < string vd_viewport = "unclipped,unclipped"; > {
+		VertexShader = compile vs_2_0 VS_YCbCr420i_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_YCbCr420i_to_RGB_2_0(COLOR_SPACE_REC709_FR);
+		
+		Sampler[0] = <vd_srcsampler_clamp_point>;
+		Sampler[1] = <vd_src2asampler_clamp_linear>;
+		Sampler[2] = <vd_src2bsampler_clamp_linear>;
 	}
 }
 
@@ -582,7 +612,7 @@ float4 PS_v210_to_RGB_2_0_pass0(float stipple : TEXCOORD0, float2 t0 : TEXCOORD1
 
 	float4 d0 = tex2D(samp0, t0);
 		
-	return ConvertYCbCrToRGB(d0.g, d0.r, d0.b);
+	return ConvertYCbCrToRGB(d0.g, d0.r, d0.b, COLOR_SPACE_REC601);
 }
 
 float4 PS_v210_to_RGB_2_0_pass1(float stipple : TEXCOORD0, float2 t0 : TEXCOORD1, float2 t1 : TEXCOORD2, float2 t2 : TEXCOORD3) : COLOR0 {
@@ -592,7 +622,7 @@ float4 PS_v210_to_RGB_2_0_pass1(float stipple : TEXCOORD0, float2 t0 : TEXCOORD1
 	float4 d1 = tex2D(samp0, t1);
 	float4 d2 = tex2D(samp0, t2);
 		
-	return ConvertYCbCrToRGB(d1.r, 0.5f*(d0.r + d1.g), 0.5f*(d0.b + d2.r));
+	return ConvertYCbCrToRGB(d1.r, 0.5f*(d0.r + d1.g), 0.5f*(d0.b + d2.r), COLOR_SPACE_REC601);
 }
 
 float4 PS_v210_to_RGB_2_0_pass2(float stipple : TEXCOORD0, float2 t0 : TEXCOORD1, float2 t1 : TEXCOORD2) : COLOR0 {
@@ -601,7 +631,7 @@ float4 PS_v210_to_RGB_2_0_pass2(float stipple : TEXCOORD0, float2 t0 : TEXCOORD1
 	float4 d1 = tex2D(samp0, t0);
 	float4 d2 = tex2D(samp0, t1);
 		
-	return ConvertYCbCrToRGB(d1.b, d1.g, d2.r);
+	return ConvertYCbCrToRGB(d1.b, d1.g, d2.r, COLOR_SPACE_REC601);
 }
 
 float4 PS_v210_to_RGB_2_0_pass3(float stipple : TEXCOORD0, float2 t0 : TEXCOORD1, float2 t1 : TEXCOORD2, float2 t2 : TEXCOORD3) : COLOR0 {
@@ -611,7 +641,7 @@ float4 PS_v210_to_RGB_2_0_pass3(float stipple : TEXCOORD0, float2 t0 : TEXCOORD1
 	float4 d2 = tex2D(samp0, t1);
 	float4 d3 = tex2D(samp0, t2);
 		
-	return ConvertYCbCrToRGB(d2.g, 0.5f*(d1.g + d2.b), 0.5f*(d2.r + d3.g));
+	return ConvertYCbCrToRGB(d2.g, 0.5f*(d1.g + d2.b), 0.5f*(d2.r + d3.g), COLOR_SPACE_REC601);
 }
 
 float4 PS_v210_to_RGB_2_0_pass4(float stipple : TEXCOORD0, float2 t0 : TEXCOORD1, float2 t1 : TEXCOORD2) : COLOR0 {
@@ -620,7 +650,7 @@ float4 PS_v210_to_RGB_2_0_pass4(float stipple : TEXCOORD0, float2 t0 : TEXCOORD1
 	float4 d2 = tex2D(samp0, t0);
 	float4 d3 = tex2D(samp0, t1);
 		
-	return ConvertYCbCrToRGB(d3.r, d2.b, d3.g);
+	return ConvertYCbCrToRGB(d3.r, d2.b, d3.g, COLOR_SPACE_REC601);
 }
 
 float4 PS_v210_to_RGB_2_0_pass5(float stipple : TEXCOORD0, float2 t0 : TEXCOORD1, float2 t1 : TEXCOORD2, float2 t2 : TEXCOORD3) : COLOR0 {
@@ -630,7 +660,7 @@ float4 PS_v210_to_RGB_2_0_pass5(float stipple : TEXCOORD0, float2 t0 : TEXCOORD1
 	float4 d3 = tex2D(samp0, t1);
 	float4 d4 = tex2D(samp0, t2);
 		
-	return ConvertYCbCrToRGB(d3.b, 0.5f*(d2.b + d4.r), 0.5f*(d3.g + d4.b));
+	return ConvertYCbCrToRGB(d3.b, 0.5f*(d2.b + d4.r), 0.5f*(d3.g + d4.b), COLOR_SPACE_REC601);
 }
 
 technique v210_to_rgb_2_0 {
@@ -639,23 +669,7 @@ technique v210_to_rgb_2_0 {
 		VertexShader = compile vs_2_0 VS_v210_to_RGB_2_0_A(0, 0);
 		PixelShader = compile ps_2_0 PS_v210_to_RGB_2_0_pass0();
 		
-		Texture[0] = <vd_srctexture>;
-		AddressU[0] = Clamp;
-		AddressV[0] = Clamp;
-		MinFilter[0] = Point;
-		MagFilter[0] = Point;
-
-		Texture[1] = <vd_srctexture>;
-		AddressU[1] = Clamp;
-		AddressV[1] = Clamp;
-		MinFilter[1] = Point;
-		MagFilter[1] = Point;
-		
-		Texture[2] = <vd_srctexture>;
-		AddressU[2] = Clamp;
-		AddressV[2] = Clamp;
-		MinFilter[2] = Point;
-		MagFilter[2] = Point;
+		Sampler[0] = <vd_srcsampler_clamp_point>;
 	}
 	
 	// pass 1 - base offset 1

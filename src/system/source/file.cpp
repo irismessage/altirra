@@ -733,6 +733,10 @@ void VDTextOutputStream::Flush() {
 	}
 }
 
+void VDTextOutputStream::Write(const char *s) {
+	PutData(s, strlen(s));
+}
+
 void VDTextOutputStream::Write(const char *s, int len) {
 	PutData(s, len);
 }
@@ -744,6 +748,23 @@ void VDTextOutputStream::PutLine() {
 void VDTextOutputStream::PutLine(const char *s) {
 	PutData(s, strlen(s));
 	PutData("\r\n", 2);
+}
+
+void VDTextOutputStream::Format(const char *format, ...) {
+	va_list val;
+
+	va_start(val, format);
+
+	int rv = -1;
+	if (mLevel < kBufSize-4)
+		rv = _vsnprintf(mBuf+mLevel, kBufSize-mLevel, format, val);
+
+	if (rv >= 0)
+		mLevel += rv;
+	else
+		Format2(format, val);
+
+	va_end(val);
 }
 
 void VDTextOutputStream::FormatLine(const char *format, ...) {
@@ -758,13 +779,13 @@ void VDTextOutputStream::FormatLine(const char *format, ...) {
 	if (rv >= 0)
 		mLevel += rv;
 	else
-		FormatLine2(format, val);
+		Format2(format, val);
 
 	PutData("\r\n", 2);
 	va_end(val);
 }
 
-void VDTextOutputStream::FormatLine2(const char *format, va_list val) {
+void VDTextOutputStream::Format2(const char *format, va_list val) {
 	char buf[3072];
 
 	int rv = _vsnprintf(buf, 3072, format, val);

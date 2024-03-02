@@ -4,13 +4,18 @@
 #include <vd2/system/vdtypes.h>
 
 struct VDPixmap;
+class VDStringW;
 
 bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size);
 void ATFileSetReadOnlyAttribute(const wchar_t *path, bool readOnly);
 
 void ATCopyFrameToClipboard(void *hwnd, const VDPixmap& px);
+void ATSaveFrame(void *hwnd, const VDPixmap& px, const wchar_t *filename);
 
 void ATUISaveWindowPlacement(void *hwnd, const char *name);
 void ATUIRestoreWindowPlacement(void *hwnd, const char *name, int nCmdShow);
+
+VDStringW ATGetHelpPath();
+void ATShowHelp(void *hwnd, const wchar_t *filename);
 
 #endif

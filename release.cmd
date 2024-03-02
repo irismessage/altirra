@@ -40,13 +40,38 @@ if errorlevel 1 (
 	goto :cleanup
 )
 
+devenv src\ATHelpFile.sln /Rebuild Release /Out publish\build.log
+if errorlevel 1 (
+	echo Build failed!
+	goto :cleanup
+)
+
 zip -9 -X -r publish\Altirra-!_verid!-src.zip ^
 	src ^
 	src\Kasumi\data\Tuffy.* ^
 	src\Kernel\Makefile ^
 	Copying ^
 	README.html ^
-	-i *.vcproj *.sln *.cpp *.h *.fx *.rules *.asm *.xasm *.vsprops *.rc *.asm64 *.inl *.fxh *.vdfx *.inc *.k *.txt *.bmp
+	-i ^
+	*.vcproj ^
+	*.sln ^
+	*.cpp ^
+	*.h ^
+	*.fx ^
+	*.rules ^
+	*.asm ^
+	*.xasm ^
+	*.vsprops ^
+	*.rc ^
+	*.asm64 ^
+	*.inl ^
+	*.fxh ^
+	*.vdfx ^
+	*.inc ^
+	*.k ^
+	*.txt ^
+	*.bmp ^
+	*.ico
 
 zip -9 -X publish\Altirra-!_verid!-src.zip ^
 	Copying ^
@@ -56,11 +81,16 @@ zip -9 -X publish\Altirra-!_verid!-src.zip ^
 	src\Kernel\source\atarifont.bin ^
 	src\Kernel\Makefile ^
 	src\HLEKernel\Makefile ^
+	src\ATHelpFile\source\*.xml ^
+	src\ATHelpFile\source\*.xsl ^
+	src\ATHelpFile\source\*.css ^
+	src\ATHelpFile\source\*.hhp ^
+	src\ATHelpFile\source\*.hhw ^
+	src\ATHelpFile\source\*.hhc ^
 	out\debug\kernel.rom ^
 	out\release\kernel.rom
 
-
-zip -9 -X -j publish\Altirra-!_verid!.zip out\release\Altirra.exe copying README.html
+zip -9 -X -j publish\Altirra-!_verid!.zip out\release\Altirra.exe Copying README.html out\Helpfile\Altirra.chm
 copy out\release\Altirra.pdb publish\Altirra-!_verid!.pdb
 
 dir publish

@@ -59,6 +59,8 @@
 				MinimalRebuild="true"
 				RuntimeLibrary="0"
 				EnableFunctionLevelLinking="true"
+				UsePrecompiledHeader="2"
+				PrecompiledHeaderThrough="stdafx.h"
 				WarningLevel="3"
 				SuppressStartupBanner="true"
 				DebugInformationFormat="3"
@@ -205,6 +207,8 @@
 				MinimalRebuild="true"
 				BasicRuntimeChecks="3"
 				RuntimeLibrary="1"
+				UsePrecompiledHeader="2"
+				PrecompiledHeaderThrough="stdafx.h"
 				WarningLevel="3"
 				SuppressStartupBanner="true"
 				DebugInformationFormat="3"
@@ -325,6 +329,10 @@
 			>
 			<File
 				RelativePath=".\source\alphablt.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\blitter.cpp"
 				>
 			</File>
 			<File
@@ -928,6 +936,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uberblit_ycbcr_generic.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uberblit_ycbcr_x86.cpp"
 				>
 				<FileConfiguration
@@ -993,10 +1005,6 @@
 				>
 			</File>
 			<File
-				RelativePath=".\h\resample_kernels.h"
-				>
-			</File>
-			<File
 				RelativePath=".\h\resample_stages.h"
 				>
 			</File>
@@ -1049,6 +1057,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\uberblit_interlace.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\uberblit_pal.h"
 				>
 			</File>
@@ -1086,6 +1098,10 @@
 			</File>
 			<File
 				RelativePath=".\h\uberblit_ycbcr.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uberblit_ycbcr_generic.h"
 				>
 			</File>
 			<File
@@ -1572,6 +1588,38 @@
 			>
 			<File
 				RelativePath="..\h\vd2\Kasumi\blitter.h"
+				>
+			</File>
+			<File
+				RelativePath="..\h\vd2\Kasumi\resample_kernels.h"
+				>
+			</File>
+		</Filter>
+		<Filter
+			Name="Precompiled Header Files"
+			>
+			<File
+				RelativePath=".\source\stdafx.cpp"
+				>
+				<FileConfiguration
+					Name="Release|Win32"
+					>
+					<Tool
+						Name="VCCLCompilerTool"
+						UsePrecompiledHeader="1"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Debug|Win32"
+					>
+					<Tool
+						Name="VCCLCompilerTool"
+						UsePrecompiledHeader="1"
+					/>
+				</FileConfiguration>
+			</File>
+			<File
+				RelativePath=".\h\stdafx.h"
 				>
 			</File>
 		</Filter>

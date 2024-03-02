@@ -58,6 +58,8 @@ public:
 	bool FindAndRemoveSwitch(const wchar_t *name, const wchar_t *& token);
 
 protected:
+	void RemoveArgument(int index);
+
 	vdfastvector<wchar_t>	mLine;
 
 	struct Token {

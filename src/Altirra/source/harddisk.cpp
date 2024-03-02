@@ -17,11 +17,13 @@
 
 #include "stdafx.h"
 #include <vd2/system/error.h>
+#include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
 #include "harddisk.h"
 #include "kerneldb.h"
 #include "oshelper.h"
 #include "cio.h"
+#include "uirender.h"
 
 using namespace ATCIOSymbols;
 
@@ -32,11 +34,16 @@ public:
 	ATHardDiskEmulator();
 	~ATHardDiskEmulator();
 
+	void SetUIRenderer(IATUIRenderer *uir);
+
 	bool IsEnabled() const;
 	void SetEnabled(bool enabled);
 
 	bool IsReadOnly() const;
 	void SetReadOnly(bool enabled);
+
+	bool IsBurstIOEnabled() const;
+	void SetBurstIOEnabled(bool enabled);
 
 	const wchar_t *GetBasePath() const;
 	void SetBasePath(const wchar_t *s);
@@ -77,6 +84,9 @@ protected:
 	VDStringW	mFilter;
 	bool		mbEnabled;
 	bool		mbReadOnly;
+	bool		mbBurstIOEnabled;
+
+	IATUIRenderer	*mpUIRenderer;
 
 	char		mFilename[128];
 };
@@ -88,12 +98,18 @@ IATHardDiskEmulator *ATCreateHardDiskEmulator() {
 ATHardDiskEmulator::ATHardDiskEmulator()
 	: mbEnabled(false)
 	, mbReadOnly(false)
+	, mbBurstIOEnabled(true)
+	, mpUIRenderer(NULL)
 {
 	ColdReset();
 }
 
 ATHardDiskEmulator::~ATHardDiskEmulator() {
 	ColdReset();
+}
+
+void ATHardDiskEmulator::SetUIRenderer(IATUIRenderer *uir) {
+	mpUIRenderer = uir;
 }
 
 bool ATHardDiskEmulator::IsEnabled() const {
@@ -115,6 +131,14 @@ bool ATHardDiskEmulator::IsReadOnly() const {
 
 void ATHardDiskEmulator::SetReadOnly(bool enabled) {
 	mbReadOnly = enabled;
+}
+
+bool ATHardDiskEmulator::IsBurstIOEnabled() const {
+	return mbBurstIOEnabled;
+}
+
+void ATHardDiskEmulator::SetBurstIOEnabled(bool enabled) {
+	mbBurstIOEnabled = enabled;
 }
 
 const wchar_t *ATHardDiskEmulator::GetBasePath() const {
@@ -226,6 +250,9 @@ void ATHardDiskEmulator::DoOpen(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem) {
 
 	if (!ReadFilename(cpu, mem))
 		return;
+
+	if (mpUIRenderer)
+		mpUIRenderer->SetHActivity(false);
 
 	if (mode == 0x06) {
 		ch.mbOpen = true;
@@ -339,6 +366,8 @@ void ATHardDiskEmulator::DoClose(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem) {
 }
 
 void ATHardDiskEmulator::DoGetByte(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem) {
+	ATKernelDatabase kdb(mem);
+
 	const int idx = (cpu->GetX() >> 4) & 7;
 	Channel& ch = mChannels[idx];
 
@@ -352,6 +381,9 @@ void ATHardDiskEmulator::DoGetByte(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem)
 		return;
 	}
 
+	if (mpUIRenderer)
+		mpUIRenderer->SetHActivity(false);
+
 	if (ch.mbUsingRawData) {
 		if (ch.mOffset >= ch.mData.size()) {
 			cpu->SetY(CIOStatEndOfFile);
@@ -363,6 +395,37 @@ void ATHardDiskEmulator::DoGetByte(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem)
 	}
 
 	try {
+		// check if we can do a burst read
+		if (mbBurstIOEnabled && kdb.ICCOMZ == 0x07) {
+			uint16 addr = kdb.ICBAZ;
+			uint16 len = kdb.ICBLZ;
+
+			int tc = len;
+
+			if (tc > 1024)
+				tc = 1024;
+
+			uint8 buf[1024];
+
+			int actual = ch.mFile.readData(buf, tc);
+
+			if (!actual) {
+				cpu->SetY(CIOStatEndOfFile);
+			} else {
+				int actualm1 = actual - 1;
+				for(int i=0; i<actualm1; ++i)
+					mem->WriteByte(addr + i, buf[i]);
+
+				kdb.ICBAZ = (uint16)(addr + actualm1);
+				kdb.ICBLZ = (uint16)(len - actualm1);
+
+				cpu->SetA(buf[actualm1]);
+				cpu->SetY(1);
+			}
+
+			return;
+		}
+
 		uint8 buf;
 		int actual = ch.mFile.readData(&buf, 1);
 
@@ -391,14 +454,39 @@ void ATHardDiskEmulator::DoPutByte(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem)
 		return;
 	}
 
-	try {
-		uint8 buf = cpu->GetA();
-		int actual = ch.mFile.writeData(&buf, 1);
+	if (mpUIRenderer)
+		mpUIRenderer->SetHActivity(true);
 
-		if (!actual)
-			cpu->SetY(CIOStatFatalDiskIO);
-		else
-			cpu->SetY(1);
+	try {
+		// check if we can do a burst write
+		ATKernelDatabase kdb(mem);
+		if (mbBurstIOEnabled && kdb.ICCOMZ == 0x0B) {
+			uint16 addr = kdb.ICBAZ;
+			uint16 len = kdb.ICBLZ;
+
+			int tc = len;
+
+			if (tc > 1024)
+				tc = 1024;
+
+			uint8 buf[1024];
+
+			buf[0] = cpu->GetA();
+
+			for(int i=1; i<tc; ++i)
+				buf[i] = mem->ReadByte(addr + i);
+
+			ch.mFile.write(buf, tc);
+
+			int tcm1 = tc - 1;
+			kdb.ICBAZ = (uint16)(addr + tcm1);
+			kdb.ICBLZ = (uint16)(len - tcm1);
+		} else {
+			uint8 buf = cpu->GetA();
+			ch.mFile.write(&buf, 1);
+		}
+
+		cpu->SetY(1);
 
 	} catch(const MyError&) {
 		cpu->SetY(CIOStatFatalDiskIO);
@@ -413,7 +501,7 @@ void ATHardDiskEmulator::DoGetStatus(ATCPUEmulator *cpu, ATCPUEmulatorMemory *me
 
 void ATHardDiskEmulator::DoSpecial(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem) {
 	ATKernelDatabase kdb(mem);
-	const uint8 command = kdb.ICDNOZ;
+	const uint8 command = kdb.ICCOMZ;
 
 	try {
 		if (command == 0x25) {			// note
@@ -432,7 +520,7 @@ void ATHardDiskEmulator::DoSpecial(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem)
 			kdb.ICAX4Z = (uint8)(sector >> 8);
 			kdb.ICAX5Z = (uint8)(offset % 125);
 
-			cpu->SetY(1);		
+			cpu->SetY(CIOStatSuccess);
 		} else if (command == 0x26) {	// point
 			const int idx = (cpu->GetX() >> 4) & 7;
 			Channel& ch = mChannels[idx];
@@ -457,13 +545,14 @@ void ATHardDiskEmulator::DoSpecial(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem)
 
 				ch.mOffset = pos;
 			} else {
-				if (pos > ch.mFile.tell()) {
+				if (pos > ch.mFile.size()) {
 					cpu->SetY(CIOStatInvPoint);
 					return;
 				}
 
 				ch.mFile.seek(pos);
 			}
+			cpu->SetY(CIOStatSuccess);
 
 		} else if (command == 0x23) {	// lock
 			if (!ReadFilename(cpu, mem))
@@ -473,6 +562,8 @@ void ATHardDiskEmulator::DoSpecial(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem)
 
 			while(GetNextMatch(it))
 				ATFileSetReadOnlyAttribute(it.GetFullPath().c_str(), true);
+
+			cpu->SetY(CIOStatSuccess);
 		} else if (command == 0x24) {	// unlock
 			if (!ReadFilename(cpu, mem))
 				return;
@@ -481,6 +572,8 @@ void ATHardDiskEmulator::DoSpecial(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem)
 
 			while(GetNextMatch(it))
 				ATFileSetReadOnlyAttribute(it.GetFullPath().c_str(), false);
+
+			cpu->SetY(CIOStatSuccess);
 		} else if (command == 0x21) {	// delete
 			if (mbReadOnly) {
 				cpu->SetY(CIOStatReadOnly);
@@ -494,6 +587,8 @@ void ATHardDiskEmulator::DoSpecial(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem)
 
 			while(GetNextMatch(it))
 				VDRemoveFile(it.GetFullPath().c_str());
+
+			cpu->SetY(CIOStatSuccess);
 		}
 	} catch(const MyError&) {
 		cpu->SetY(CIOStatFatalDiskIO);
@@ -507,7 +602,7 @@ bool ATHardDiskEmulator::ReadFilename(ATCPUEmulator *cpu, ATCPUEmulatorMemory *m
 	for(int i=0; i<128; ++i) {
 		uint8 c = mem->ReadByte(bufadr + i);
 
-		if (c == 0x9B || c == 0x20 || c == ',') {
+		if (c == 0x9B || c == 0x20 || c == ',' || c == 0) {
 			mFilename[i] = 0;
 			break;
 		}

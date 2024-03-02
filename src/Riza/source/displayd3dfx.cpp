@@ -246,11 +246,11 @@ namespace {
 
 class VDVideoDisplayMinidriverD3DFX : public VDVideoDisplayMinidriver, protected VDD3D9Client {
 public:
-	VDVideoDisplayMinidriverD3DFX();
+	VDVideoDisplayMinidriverD3DFX(bool clipToMonitor);
 	~VDVideoDisplayMinidriverD3DFX();
 
 protected:
-	bool Init(HWND hwnd, const VDVideoDisplaySourceInfo& info);
+	bool Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info);
 	void ShutdownEffect();
 	void Shutdown();
 
@@ -349,6 +349,7 @@ protected:
 	bool				mbSwapChainImageValid;
 	bool				mbFirstPresent;
 	bool				mbFullScreen;
+	bool				mbClipToMonitor;
 
 	VDAtomicInt			mTickPending;
 
@@ -424,11 +425,11 @@ protected:
 };
 
 
-IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverD3DFX() {
-	return new VDVideoDisplayMinidriverD3DFX;
+IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverD3DFX(bool clipToMonitor) {
+	return new VDVideoDisplayMinidriverD3DFX(clipToMonitor);
 }
 
-VDVideoDisplayMinidriverD3DFX::VDVideoDisplayMinidriverD3DFX()
+VDVideoDisplayMinidriverD3DFX::VDVideoDisplayMinidriverD3DFX(bool clipToMonitor)
 	: mhwnd(NULL)
 	, mhwndError(NULL)
 	, mhmodD3DX(NULL)
@@ -440,6 +441,7 @@ VDVideoDisplayMinidriverD3DFX::VDVideoDisplayMinidriverD3DFX()
 	, mbSwapChainPresentPolling(false)
 	, mbFirstPresent(false)
 	, mbFullScreen(false)
+	, mbClipToMonitor(clipToMonitor)
 	, mTickPending(0)
 	, mpD3DTempTexture(NULL)
 	, mpD3DTempTexture2(NULL)
@@ -462,7 +464,7 @@ VDVideoDisplayMinidriverD3DFX::VDVideoDisplayMinidriverD3DFX()
 VDVideoDisplayMinidriverD3DFX::~VDVideoDisplayMinidriverD3DFX() {
 }
 
-bool VDVideoDisplayMinidriverD3DFX::Init(HWND hwnd, const VDVideoDisplaySourceInfo& info) {
+bool VDVideoDisplayMinidriverD3DFX::Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info) {
 	GetClientRect(hwnd, &mrClient);
 	mhwnd = hwnd;
 	mSource = info;
@@ -515,7 +517,7 @@ bool VDVideoDisplayMinidriverD3DFX::Init(HWND hwnd, const VDVideoDisplaySourceIn
 	}
 
 	// attempt to initialize D3D9
-	mpManager = VDInitDirect3D9(this);
+	mpManager = VDInitDirect3D9(this, hmonitor);
 	if (!mpManager) {
 		Shutdown();
 		return false;
@@ -741,7 +743,7 @@ bool VDVideoDisplayMinidriverD3DFX::Init(HWND hwnd, const VDVideoDisplaySourceIn
 		return false;
 	}
 
-	if (!mpUploadContext->Init(info.pixmap, info.bAllowConversion, false, mhPrevSrc2Texture ? 3 : mhPrevSrcTexture ? 2 : 1)) {
+	if (!mpUploadContext->Init(hmonitor, info.pixmap, info.bAllowConversion, false, mhPrevSrc2Texture ? 3 : mhPrevSrcTexture ? 2 : 1)) {
 		Shutdown();
 		return false;
 	}
@@ -847,6 +849,9 @@ bool VDVideoDisplayMinidriverD3DFX::Resize(int width, int height) {
 	mbSwapChainImageValid = false;
 	mbSwapChainPresentPending = false;
 	mbSwapChainPresentPolling = false;
+
+	mrClient.right = width;
+	mrClient.bottom = height;
 
 	if (mhwndError)
 		SetWindowPos(mhwndError, NULL, 0, 0, width, height, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
@@ -955,7 +960,7 @@ bool VDVideoDisplayMinidriverD3DFX::UpdateBackbuffer(const RECT& rClient0, Updat
 
 		VDDEBUG("Resizing swap chain to %dx%d\n", scw, sch);
 
-		if (!mpManager->CreateSwapChain(scw, sch, ~mpSwapChain))
+		if (!mpManager->CreateSwapChain(scw, sch, mbClipToMonitor, ~mpSwapChain))
 			return false;
 
 		mSwapChainW = scw;

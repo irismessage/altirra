@@ -35,10 +35,14 @@ float4 vd_temp2size;
 float4 vd_interphtexsize;
 float4 vd_interpvtexsize;
 float4 vd_fieldinfo;
+float2 vd_chromauvscale;
+float2 vd_chromauvoffset;
 
 texture vd_srctexture;
 texture vd_src2atexture;
 texture vd_src2btexture;
+texture vd_src2ctexture;
+texture vd_src2dtexture;
 texture vd_srcpaltexture;
 texture vd_temptexture;
 texture vd_temp2texture;
@@ -53,5 +57,61 @@ extern sampler samp1 : register(s1);
 extern sampler samp2 : register(s2);
 extern sampler samp3 : register(s3);
 extern sampler samp4 : register(s4);
+
+const sampler vd_srcsampler_clamp_point = sampler_state {
+	Texture = <vd_srctexture>;
+	AddressU = Clamp;
+	AddressV = Clamp;
+	MinFilter = Point;
+	MagFilter = Point;
+};
+
+const sampler vd_srcsampler_clamp_linear = sampler_state {
+	Texture = <vd_srctexture>;
+	AddressU = Clamp;
+	AddressV = Clamp;
+	MinFilter = Linear;
+	MagFilter = Linear;
+};
+
+const sampler vd_src2asampler_clamp_linear = sampler_state {
+	Texture = <vd_src2atexture>;
+	AddressU = Clamp;
+	AddressV = Clamp;
+	MinFilter = Linear;
+	MagFilter = Linear;
+};
+
+const sampler vd_src2bsampler_clamp_linear = sampler_state {
+	Texture = <vd_src2btexture>;
+	AddressU = Clamp;
+	AddressV = Clamp;
+	MinFilter = Linear;
+	MagFilter = Linear;
+};
+
+const sampler vd_src2csampler_clamp_linear = sampler_state {
+	Texture = <vd_src2ctexture>;
+	AddressU = Clamp;
+	AddressV = Clamp;
+	MinFilter = Linear;
+	MagFilter = Linear;
+};
+
+const sampler vd_src2dsampler_clamp_linear = sampler_state {
+	Texture = <vd_src2dtexture>;
+	AddressU = Clamp;
+	AddressV = Clamp;
+	MinFilter = Linear;
+	MagFilter = Linear;
+};
+
+const sampler vd_hevenoddsampler = sampler_state {
+	Texture = <vd_hevenoddtexture>;
+	AddressU = Wrap;
+	AddressV = Clamp;
+	MinFilter = Point;
+	MagFilter = Point;
+};
 
 #endif

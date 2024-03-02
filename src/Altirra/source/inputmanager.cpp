@@ -842,7 +842,7 @@ void ATInputManager::RebuildMappings() {
 			} else {
 				switch(c.mType) {
 					case kATInputControllerType_Joystick:
-						if (c.mIndex < 2) {
+						if (c.mIndex < 4) {
 							ATJoystickController *joy = new ATJoystickController;
 
 							joy->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0);
@@ -852,7 +852,7 @@ void ATInputManager::RebuildMappings() {
 						break;
 
 					case kATInputControllerType_Mouse:
-						if (c.mIndex < 2) {
+						if (c.mIndex < 4) {
 							ATMouseController *mouse = new ATMouseController;
 
 							mouse->Init(mpScheduler);
@@ -863,7 +863,7 @@ void ATInputManager::RebuildMappings() {
 						break;
 
 					case kATInputControllerType_Paddle:
-						if (c.mIndex < 4) {
+						if (c.mIndex < 8) {
 							ATPaddleController *paddle = new ATPaddleController;
 
 							paddle->SetHalf((c.mIndex & 1) != 0);

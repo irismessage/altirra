@@ -532,7 +532,9 @@ void ATDebugger::DumpCIOParameters() {
 
 				fn[idx] = 0;
 
-				ATConsolePrintf("CIO: IOCB=%u, CMD=$03 (open), filename=\"%s\"\n", iocbIdx, fn);
+				const uint8 aux1 = g_sim.DebugReadByte(iocb + ATKernelSymbols::ICAX1);
+
+				ATConsolePrintf("CIO: IOCB=%u, CMD=$03 (open), AUX1=$%02x, filename=\"%s\"\n", iocbIdx, aux1, fn);
 			}
 			break;
 
@@ -935,7 +937,8 @@ void ATDebugger::OnSimulatorEvent(ATSimulatorEvent ev) {
 
 	cpu.SetRTSBreak();
 
-	mFramePC = cpu.GetInsnPC();
+	if (ev != kATSimEvent_CPUPCBreakpointsUpdated)
+		mFramePC = cpu.GetInsnPC();
 
 	UpdateClientSystemState();
 
@@ -1674,7 +1677,12 @@ void ATConsoleCmdUnloadSymbols(int argc, const char *const *argv) {
 	if (argc != 1)
 		throw MyError("Syntax: .unloadsym index");
 
-	unsigned long index = strtoul(argv[0], NULL, 0);
+	const char *s = argv[0];
+	char *t = (char *)s;
+	unsigned long index = strtoul(s, &t, 0);
+
+	if (*t)
+		throw MyError("Invalid index: %s\n", s);
 
 	g_debugger.UnloadSymbolsByIndex(index);
 }
@@ -1839,6 +1847,26 @@ void ATConsoleCmdPathDump(int argc, const char *const *argv) {
 	g_debugger.RemoveModule(0, 0x10000, pSymbolStore);
 
 	ATConsolePrintf("Paths dumped to %s\n", argv[0]);
+}
+
+void ATConsoleCmdPathBreak(int argc, const char **argv) {
+	ATCPUEmulator& cpu = g_sim.GetCPU();
+
+	if (!argc) {
+		ATConsolePrintf("Breaking on new paths is %s.\n", cpu.IsPathBreakEnabled() ? "on" : "off");
+		return;
+	}
+
+	bool newState = false;
+	if (!_stricmp(argv[0], "on")) {
+		newState = true;
+	} else if (_stricmp(argv[0], "off")) {
+		ATConsoleWrite("Syntax: .pathbreak on|off\n");
+		return;
+	}
+
+	cpu.SetPathBreakEnabled(newState);
+	ATConsolePrintf("Breaking on new paths is now %s.\n", newState ? "on" : "off");
 }
 
 void ATConsoleCmdLoadKernelSymbols(int argc, const char *const *argv) {
@@ -2184,6 +2212,8 @@ void ATConsoleExecuteCommand(char *s) {
 			ATConsoleCmdPathReset();
 		} else if (!strcmp(cmd, ".pathdump")) {
 			ATConsoleCmdPathDump(argc-1, argv+1);
+		} else if (!strcmp(cmd, ".pathbreak")) {
+			ATConsoleCmdPathBreak(argc-1, argv+1);
 		} else if (!strcmp(cmd, ".loadksym")) {
 			ATConsoleCmdLoadKernelSymbols(argc-1, argv+1);
 		} else if (!strcmp(cmd, ".tracecio")) {

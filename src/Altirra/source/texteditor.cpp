@@ -67,8 +67,13 @@ public:
 
 	bool	Find(const char *text, int len, bool caseSensitive, bool wholeWord, bool searchUp);
 
+	int		GetVisibleHeight();
+	int		GetParagraphForYPos(int y);
+	int		GetVisibleLineCount();
 	void	MakeLineVisible(int line);
 	void	CenterViewOnLine(int line);
+	
+	void	SetUpdateEnabled(bool updateEnabled);
 
 	void	Undo();
 	void	Redo();
@@ -105,10 +110,10 @@ protected:
 	int OnGetTextLength();
 	bool OnSetText(const char *s);
 
-	void MoveCaret(const Iterator& pos, bool anchor);
-	void ScrollTo(int y);
+	void MoveCaret(const Iterator& pos, bool anchor, bool sendScrollUpdate);
+	void ScrollTo(int y, bool sendScrollUpdate);
 
-	void UpdateCaretPos(bool autoscroll);
+	void UpdateCaretPos(bool autoscroll, bool sendScrollUpdate);
 	void UpdateScrollPos();
 	void UpdateScrollRange();
 	void AnchorSelection();
@@ -147,6 +152,10 @@ protected:
 	bool	mbReadOnly;
 	bool	mbWordWrap;
 	bool	mbDragging;
+
+	bool	mbUpdateEnabled;
+	bool	mbUpdateScrollbarPending;
+
 	IVDTextEditorCallback	*mpCB;
 	IVDTextEditorColorizer	*mpColorizer;
 	IVDUIMessageFilterW32	*mpMsgFilter;
@@ -184,6 +193,8 @@ TextEditor::TextEditor()
 	, mbReadOnly(false)
 	, mbWordWrap(false)
 	, mbDragging(false)
+	, mbUpdateEnabled(true)
+	, mbUpdateScrollbarPending(false)
 	, mpCB(NULL)
 	, mpColorizer(NULL)
 	, mpMsgFilter(NULL)
@@ -271,7 +282,7 @@ void TextEditor::SetWordWrap(bool enable) {
 
 	mbWordWrap = enable;
 	Reflow(true);
-	UpdateCaretPos(false);
+	UpdateCaretPos(false, false);
 }
 
 int TextEditor::GetCursorLine() {
@@ -303,11 +314,11 @@ void TextEditor::SetCursorPos(int line, int offset) {
 			mCaretPos.mOffset = offset;
 	}
 
-	UpdateCaretPos(true);
+	UpdateCaretPos(true, false);
 }
 
 void TextEditor::SetCursorPixelPos(int x, int y) {
-	MoveCaret(PixelToPos(x, y + mScrollY), false);
+	MoveCaret(PixelToPos(x, y + mScrollY), false, false);
 }
 
 namespace {
@@ -454,8 +465,20 @@ hit:
 	mSelectionAnchor.Attach(mDocument);
 	mSelectionAnchor.MoveToParaOffset(paraIdx, hitOffset+len);
 	InvalidateRange(mCaretPos, mSelectionAnchor);
-	UpdateCaretPos(true);
+	UpdateCaretPos(true, false);
 	return true;
+}
+
+int	TextEditor::GetVisibleHeight() {
+	return mVisibleHeight;
+}
+
+int	TextEditor::GetParagraphForYPos(int y) {
+	return mDocument.GetParagraphFromY(y + mScrollY);
+}
+
+int TextEditor::GetVisibleLineCount() {
+	return mFontHeight ? (mVisibleHeight + mFontHeight - 1) / mFontHeight : 0;
 }
 
 void TextEditor::MakeLineVisible(int line) {
@@ -468,11 +491,11 @@ void TextEditor::MakeLineVisible(int line) {
 
 	if (tooHigh) {
 		if (tooLow)
-			ScrollTo(yp + ((int)(mVisibleHeight - mFontHeight) >> 1));
+			ScrollTo(yp + ((int)(mVisibleHeight - mFontHeight) >> 1), false);
 		else
-			ScrollTo(yp - mEffectiveScrollVertMargin);
+			ScrollTo(yp - mEffectiveScrollVertMargin, false);
 	} else if (tooLow)
-		ScrollTo(yp + mFontHeight - mVisibleHeight + mEffectiveScrollVertMargin);
+		ScrollTo(yp + mFontHeight - mVisibleHeight + mEffectiveScrollVertMargin, false);
 }
 
 void TextEditor::CenterViewOnLine(int line) {
@@ -486,7 +509,23 @@ void TextEditor::CenterViewOnLine(int line) {
 	Iterator it(mDocument, line);
 	PosToPixel(xp, yp, it);
 
-	ScrollTo(yp - ((int)(mVisibleHeight - mFontHeight) >> 1));
+	ScrollTo(yp - ((int)(mVisibleHeight - mFontHeight) >> 1), false);
+}
+
+void TextEditor::SetUpdateEnabled(bool updateEnabled) {
+	if (mbUpdateEnabled == updateEnabled)
+		return;
+
+	mbUpdateEnabled = updateEnabled;
+
+	if (updateEnabled) {
+		if (mbUpdateScrollbarPending) {
+			mbUpdateScrollbarPending = false;
+
+			UpdateScrollRange();
+			UpdateScrollPos();
+		}
+	}
 }
 
 void TextEditor::Undo() {
@@ -564,7 +603,7 @@ void TextEditor::Paste() {
 		}
 
 		mDocument.Insert(mCaretPos, base, t-base, &mCaretPos);
-		UpdateCaretPos(true);
+		UpdateCaretPos(true, false);
 	}
 }
 
@@ -575,7 +614,7 @@ void TextEditor::Delete() {
 		Iterator oldPos(mCaretPos);
 		Iterator newPos(mCaretPos);
 		newPos.MoveToPrevChar();
-		MoveCaret(newPos, false);
+		MoveCaret(newPos, false, false);
 
 		if (oldPos != newPos) {
 			mDocument.Delete(newPos, oldPos);
@@ -589,7 +628,7 @@ void TextEditor::DeleteSelection() {
 	if (mCaretPos != mSelectionAnchor) {
 		mDocument.Delete(mCaretPos, mSelectionAnchor);
 		mSelectionAnchor.Detach();
-		UpdateCaretPos(true);
+		UpdateCaretPos(true, false);
 
 		if (mpCB)
 			mpCB->OnTextEditorUpdated();
@@ -601,7 +640,7 @@ void TextEditor::SelectAll() {
 	mSelectionAnchor.MoveToStart();
 	Iterator it(mDocument);
 	it.MoveToEnd();
-	MoveCaret(it, true);
+	MoveCaret(it, true, false);
 	InvalidateRange(mSelectionAnchor, mCaretPos);
 }
 
@@ -1056,7 +1095,7 @@ void TextEditor::OnSetFocus() {
 	mbCaretPresent = true;
 	mbCaretVisible = false;
 
-	UpdateCaretPos(false);
+	UpdateCaretPos(false, false);
 }
 
 void TextEditor::OnKillFocus() {
@@ -1074,48 +1113,55 @@ void TextEditor::OnKeyDown(WPARAM key) {
 		{
 			Iterator it2(mCaretPos);
 			it2.MoveToPrevChar();
-			MoveCaret(it2, GetKeyState(VK_SHIFT) < 0);
+			bool doSelect = GetKeyState(VK_SHIFT) < 0;
+			MoveCaret(it2, doSelect, !doSelect);
 		}
 		break;
 	case VK_RIGHT:
 		{
 			Iterator it2(mCaretPos);
 			it2.MoveToNextChar();
-			MoveCaret(it2, GetKeyState(VK_SHIFT) < 0);
+			bool doSelect = GetKeyState(VK_SHIFT) < 0;
+			MoveCaret(it2, doSelect, !doSelect);
 		}
 		break;
 	case VK_UP:
 		if (GetKeyState(VK_CONTROL) < 0) {
-			ScrollTo(mScrollY - mFontHeight);
-			UpdateCaretPos(false);
+			ScrollTo(mScrollY - mFontHeight, true);
+			UpdateCaretPos(false, false);
 		} else {
 			Iterator it2(mCaretPos);
 			it2.MoveToPrevLine();
-			MoveCaret(it2, GetKeyState(VK_SHIFT) < 0);
+			bool doSelect = GetKeyState(VK_SHIFT) < 0;
+			MoveCaret(it2, doSelect, !doSelect);
 		}
 		break;
 	case VK_DOWN:
 		if (GetKeyState(VK_CONTROL) < 0) {
-			ScrollTo(mScrollY + mFontHeight);
-			UpdateCaretPos(false);
+			ScrollTo(mScrollY + mFontHeight, true);
+			UpdateCaretPos(false, false);
 		} else {
 			Iterator it2(mCaretPos);
 			it2.MoveToNextLine();
-			MoveCaret(it2, GetKeyState(VK_SHIFT) < 0);
+			bool doSelect = GetKeyState(VK_SHIFT) < 0;
+			MoveCaret(it2, doSelect, !doSelect);
 		}
 		break;
 	case VK_PRIOR:
 		{
 			int px, py;
 			PosToPixel(px, py, mCaretPos);
-			MoveCaret(PixelToPos(px, py - mVisibleHeight), GetKeyState(VK_SHIFT) < 0);
+
+			bool doSelect = GetKeyState(VK_SHIFT) < 0;
+			MoveCaret(PixelToPos(px, py - mVisibleHeight), doSelect, !doSelect);
 		}
 		break;
 	case VK_NEXT:
 		{
 			int px, py;
 			PosToPixel(px, py, mCaretPos);
-			MoveCaret(PixelToPos(px, py + mVisibleHeight), GetKeyState(VK_SHIFT) < 0);
+			bool doSelect = GetKeyState(VK_SHIFT) < 0;
+			MoveCaret(PixelToPos(px, py + mVisibleHeight), doSelect, !doSelect);
 		}
 		break;
 	case VK_HOME:
@@ -1127,7 +1173,8 @@ void TextEditor::OnKeyDown(WPARAM key) {
 			else
 				it2.MoveToLineStart();
 
-			MoveCaret(it2, GetKeyState(VK_SHIFT) < 0);
+			bool doSelect = GetKeyState(VK_SHIFT) < 0;
+			MoveCaret(it2, doSelect, !doSelect);
 		}
 		break;
 
@@ -1140,7 +1187,8 @@ void TextEditor::OnKeyDown(WPARAM key) {
 			else
 				it2.MoveToLineEnd();
 
-			MoveCaret(it2, GetKeyState(VK_SHIFT) < 0);
+			bool doSelect = GetKeyState(VK_SHIFT) < 0;
+			MoveCaret(it2, doSelect, !doSelect);
 		}
 		break;
 	case VK_DELETE:
@@ -1179,7 +1227,7 @@ void TextEditor::OnChar(int ch) {
 
 		if (mSelectionAnchor) {
 			mDocument.Delete(mCaretPos, mSelectionAnchor);
-			UpdateCaretPos(true);
+			UpdateCaretPos(true, false);
 		}
 
 		if (c == '\r')
@@ -1190,7 +1238,7 @@ void TextEditor::OnChar(int ch) {
 		Iterator oldPos(mCaretPos);
 		Iterator newPos(mCaretPos);
 		newPos.MoveToNextChar();
-		MoveCaret(newPos, false);
+		MoveCaret(newPos, false, false);
 
 		if (mpCB)
 			mpCB->OnTextEditorUpdated();
@@ -1198,7 +1246,7 @@ void TextEditor::OnChar(int ch) {
 }
 
 void TextEditor::OnLButtonDown(WPARAM modifiers, int x, int y) {
-	MoveCaret(PixelToPos(x, y + mScrollY), GetKeyState(VK_SHIFT) < 0);
+	MoveCaret(PixelToPos(x, y + mScrollY), GetKeyState(VK_SHIFT) < 0, false);
 	mbDragging = true;
 }
 
@@ -1210,7 +1258,7 @@ void TextEditor::OnMouseMove(WPARAM modifiers, int x, int y) {
 	if (modifiers & MK_LBUTTON) {
 		if (mbDragging) {
 			Iterator newPos(PixelToPos(x, y + mScrollY));
-			MoveCaret(newPos, true);
+			MoveCaret(newPos, true, false);
 		}
 	} else {
 		mbDragging = false;
@@ -1223,7 +1271,7 @@ void TextEditor::OnMouseWheel(int wheelClicks, WPARAM modifiers, int x, int y) {
 
 	if (lines) {
 		mMouseWheelAccum -= lines*120;
-		ScrollTo(mScrollY - lines);
+		ScrollTo(mScrollY - lines, true);
 	}
 }
 
@@ -1270,7 +1318,7 @@ void TextEditor::OnVScroll(int cmd) {
 			si.fMask = SIF_POS;
 			si.nPos = newPos;
 			SetScrollInfo(mhwnd, SB_VERT, &si, TRUE);
-			ScrollTo(si.nPos);
+			ScrollTo(si.nPos, cmd != SB_THUMBTRACK);
 		}
 	}
 }
@@ -1320,11 +1368,11 @@ bool TextEditor::OnSetText(const char *s) {
 	it2.MoveToEnd();
 	mDocument.Delete(it1, it2);
 	mDocument.Insert(it1, s, strlen(s), NULL);
-	UpdateCaretPos(true);
+	UpdateCaretPos(true, false);
 	return true;
 }
 
-void TextEditor::MoveCaret(const Iterator& newPos, bool anchor) {
+void TextEditor::MoveCaret(const Iterator& newPos, bool anchor, bool sendScrollUpdate) {
 	if (anchor) {
 		if (!mSelectionAnchor)
 			AnchorSelection();
@@ -1335,13 +1383,13 @@ void TextEditor::MoveCaret(const Iterator& newPos, bool anchor) {
 	Iterator oldPos(mCaretPos);
 	
 	mCaretPos = newPos;
-	UpdateCaretPos(true);
+	UpdateCaretPos(true, sendScrollUpdate);
 
 	if (mSelectionAnchor)
 		InvalidateRange(oldPos, mCaretPos);
 }
 
-void TextEditor::ScrollTo(int y) {
+void TextEditor::ScrollTo(int y, bool sendUpdate) {
 	if (y > mTotalHeight - mFontHeight)
 		y = mTotalHeight - mFontHeight;
 	if (y < 0)
@@ -1359,10 +1407,17 @@ void TextEditor::ScrollTo(int y) {
 		ScrollWindowEx(mhwnd, 0, delta, NULL, NULL, NULL, NULL, SW_INVALIDATE);
 
 	UpdateScrollPos();
-	UpdateCaretPos(false);
+	UpdateCaretPos(false, false);
+
+	if (mpCB && sendUpdate) {
+		mpCB->OnTextEditorScrolled(mDocument.GetParagraphFromY(mScrollY),
+		mDocument.GetParagraphFromY(mScrollY + mVisibleHeight),
+		mFontHeight ? (mVisibleHeight + mFontHeight - 1) / mFontHeight : 0,
+		mDocument.GetParagraphCount());
+	}
 }
 
-void TextEditor::UpdateCaretPos(bool autoscroll) {
+void TextEditor::UpdateCaretPos(bool autoscroll, bool sendScrollUpdate) {
 	int xp, yp;
 
 	PosToPixel(xp, yp, mCaretPos);
@@ -1373,11 +1428,11 @@ void TextEditor::UpdateCaretPos(bool autoscroll) {
 
 		if (tooHigh) {
 			if (tooLow)
-				ScrollTo(yp + ((int)(mVisibleHeight - mFontHeight) >> 1));
+				ScrollTo(yp + ((int)(mVisibleHeight - mFontHeight) >> 1), sendScrollUpdate);
 			else
-				ScrollTo(yp - mEffectiveScrollVertMargin);
+				ScrollTo(yp - mEffectiveScrollVertMargin, sendScrollUpdate);
 		} else if (tooLow)
-			ScrollTo(yp + mFontHeight - mVisibleHeight + mEffectiveScrollVertMargin);
+			ScrollTo(yp + mFontHeight - mVisibleHeight + mEffectiveScrollVertMargin, sendScrollUpdate);
 	}
 
 	if (mbCaretPresent) {
@@ -1512,7 +1567,7 @@ void TextEditor::Reflow(bool force) {
 	mDocument.RecomputeParaPositions();
 
 	InvalidateRect(mhwnd, NULL, FALSE);
-	UpdateCaretPos(false);
+	UpdateCaretPos(false, false);
 }
 
 void TextEditor::CutCopy(bool doCut) {
@@ -1546,7 +1601,7 @@ void TextEditor::CutCopy(bool doCut) {
 						if (SetClipboardData(CF_TEXT, hmem)) {
 							if (doCut) {
 								mDocument.Delete(first, second);
-								UpdateCaretPos(true);
+								UpdateCaretPos(true, false);
 							}
 
 							hmem = NULL;
@@ -1727,6 +1782,11 @@ void TextEditor::InvalidateRows(int ystart, int yend) {
 }
 
 void TextEditor::VerticalShiftRows(int ysrc, int ydst) {
+	// check for scroll below bottom of window; we can ignore those
+	if (std::min(ysrc, ydst) - mScrollY < mVisibleHeight)
+		return;
+
+	// check for scroll bigger than screen
 	int delta = ydst - ysrc;
 	if (abs(delta) >= mVisibleHeight) {
 		InvalidateRect(mhwnd, NULL, FALSE);
@@ -1943,5 +2003,9 @@ void TextEditor::ChangeTotalHeight(int y) {
 		return;
 
 	mTotalHeight = y;
-	UpdateScrollRange();
+
+	if (mbUpdateEnabled)
+		UpdateScrollRange();
+	else
+		mbUpdateScrollbarPending = true;
 }

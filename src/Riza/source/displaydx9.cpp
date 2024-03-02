@@ -36,6 +36,7 @@
 #include <vd2/system/time.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/w32assist.h>
+#include <vd2/Kasumi/blitter.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
@@ -624,6 +625,8 @@ public:
 		IDirect3DTexture9 *mpSourceTexture1;
 		IDirect3DTexture9 *mpSourceTexture2;
 		IDirect3DTexture9 *mpSourceTexture3;
+		IDirect3DTexture9 *mpSourceTexture4;
+		IDirect3DTexture9 *mpSourceTexture5;
 		IDirect3DTexture9 *mpPaletteTexture;
 		IDirect3DTexture9 *mpInterpFilterH;
 		IDirect3DTexture9 *mpInterpFilterV;
@@ -649,10 +652,16 @@ public:
 		float mDefaultUVScaleCorrectionX;
 		float mDefaultUVScaleCorrectionY;
 		float mFieldOffset;
+
+		float mChromaScaleU;
+		float mChromaScaleV;
+		float mChromaOffsetU;
+		float mChromaOffsetV;
+
 		bool mbHighPrecision;
 	};
 
-	VDVideoDisplayDX9Manager(VDThreadID tid);
+	VDVideoDisplayDX9Manager(VDThreadID tid, HMONITOR hmonitor);
 	~VDVideoDisplayDX9Manager();
 
 	int AddRef();
@@ -670,6 +679,7 @@ public:
 	bool Is16FEnabled() const { return mbIs16FEnabled; }
 
 	VDThreadID GetThreadId() const { return mThreadId; }
+	HMONITOR GetMonitor() const { return mhMonitor; }
 
 	IVDD3D9Texture	*GetTempRTT(int i) const { return mpRTTs[i]; }
 	IVDD3D9Texture	*GetFilterTexture() const { return mpFilterTexture; }
@@ -704,6 +714,7 @@ protected:
 	bool				mbIs16FEnabled;
 
 	const VDThreadID	mThreadId;
+	const HMONITOR		mhMonitor;
 	int					mRefCount;
 };
 
@@ -716,7 +727,7 @@ protected:
 static VDCriticalSection g_csVDDisplayDX9Managers;
 static vdlist<VDVideoDisplayDX9ManagerNode> g_VDDisplayDX9Managers;
 
-bool VDInitDisplayDX9(VDVideoDisplayDX9Manager **ppManager) {
+bool VDInitDisplayDX9(HMONITOR hmonitor, VDVideoDisplayDX9Manager **ppManager) {
 	VDVideoDisplayDX9Manager *pMgr = NULL;
 	bool firstClient = false;
 
@@ -728,16 +739,16 @@ bool VDInitDisplayDX9(VDVideoDisplayDX9Manager **ppManager) {
 		for(; it != itEnd; ++it) {
 			VDVideoDisplayDX9Manager *mgr = static_cast<VDVideoDisplayDX9Manager *>(*it);
 
-			if (mgr->GetThreadId() == tid) {
+			if (mgr->GetThreadId() == tid && mgr->GetMonitor() == hmonitor) {
 				pMgr = mgr;
 				break;
 			}
 		}
 
 		if (!pMgr) {
-			pMgr = new_nothrow VDVideoDisplayDX9Manager(tid);
+			pMgr = new_nothrow VDVideoDisplayDX9Manager(tid, hmonitor);
 			if (!pMgr)
-				return NULL;
+				return false;
 
 			g_VDDisplayDX9Managers.push_back(pMgr);
 			firstClient = true;
@@ -760,10 +771,11 @@ bool VDInitDisplayDX9(VDVideoDisplayDX9Manager **ppManager) {
 	return true;
 }
 
-VDVideoDisplayDX9Manager::VDVideoDisplayDX9Manager(VDThreadID tid)
+VDVideoDisplayDX9Manager::VDVideoDisplayDX9Manager(VDThreadID tid, HMONITOR hmonitor)
 	: mpManager(NULL)
 	, mCubicRefCount(0)
 	, mThreadId(tid)
+	, mhMonitor(hmonitor)
 	, mRefCount(0)
 {
 	mCubicTempSurfacesRefCount[0] = 0;
@@ -796,7 +808,7 @@ int VDVideoDisplayDX9Manager::Release() {
 
 bool VDVideoDisplayDX9Manager::Init() {
 	VDASSERT(!mpManager);
-	mpManager = VDInitDirect3D9(this);
+	mpManager = VDInitDirect3D9(this, mhMonitor);
 	if (!mpManager)
 		return false;
 
@@ -1033,11 +1045,8 @@ namespace {
 			case nsVDPixmap::kPixFormat_XRGB8888:
 				return D3DFMT_X8R8G8B8;
 
-			case nsVDPixmap::kPixFormat_YUV422_UYVY:
-				return D3DFMT_UYVY;
-
-			case nsVDPixmap::kPixFormat_YUV422_YUYV:
-				return D3DFMT_YUY2;
+			case nsVDPixmap::kPixFormat_Y8_FR:
+				return D3DFMT_L8;
 
 			default:
 				return D3DFMT_UNKNOWN;
@@ -1067,14 +1076,6 @@ void VDVideoDisplayDX9Manager::DetermineBestTextureFormat(int srcFormat, int& ds
 
 			case kPixFormat_RGB565:
 				dstFormat = kPixFormat_XRGB1555;
-				break;
-
-			case kPixFormat_YUV422_UYVY:
-				dstFormat =	kPixFormat_YUV422_YUYV;
-				break;
-
-			case kPixFormat_YUV422_YUYV:
-				dstFormat = kPixFormat_YUV422_UYVY;
 				break;
 
 			default:
@@ -1200,11 +1201,13 @@ bool VDVideoDisplayDX9Manager::ValidateBicubicShader(CubicMode mode) {
 bool VDVideoDisplayDX9Manager::RunEffect(const EffectContext& ctx, const TechniqueInfo& technique, IDirect3DSurface9 *pRTOverride) {
 	const int firstRTTIndex = ctx.mbHighPrecision ? 2 : 0;
 
-	IDirect3DTexture9 *const textures[12]={
+	IDirect3DTexture9 *const textures[14]={
 		NULL,
 		ctx.mpSourceTexture1,
 		ctx.mpSourceTexture2,
 		ctx.mpSourceTexture3,
+		ctx.mpSourceTexture4,
+		ctx.mpSourceTexture5,
 		ctx.mpPaletteTexture,
 		mpRTTs[firstRTTIndex] ? mpRTTs[firstRTTIndex]->GetD3DTexture() : NULL,
 		mpRTTs[1] ? mpRTTs[1]->GetD3DTexture() : NULL,
@@ -1240,6 +1243,8 @@ bool VDVideoDisplayDX9Manager::RunEffect(const EffectContext& ctx, const Techniq
 		float interphtexsize[4];	// (cubic htex interp info)
 		float interpvtexsize[4];	// (cubic vtex interp info)
 		float fieldinfo[4];			// (field information)		fieldoffset, -fieldoffset/4, und, und
+		float chromauvscale[4];		// (chroma UV scale)		U scale, V scale, und, und
+		float chromauvoffset[4];	// (chroma UV offset)		U offset, V offset, und, und
 	};
 
 	static const struct StdParam {
@@ -1262,6 +1267,8 @@ bool VDVideoDisplayDX9Manager::RunEffect(const EffectContext& ctx, const Techniq
 		offsetof(StdParamData, interphtexsize),
 		offsetof(StdParamData, interpvtexsize),
 		offsetof(StdParamData, fieldinfo),
+		offsetof(StdParamData, chromauvscale),
+		offsetof(StdParamData, chromauvoffset),
 	};
 
 	StdParamData data;
@@ -1330,6 +1337,14 @@ bool VDVideoDisplayDX9Manager::RunEffect(const EffectContext& ctx, const Techniq
 	data.fieldinfo[1] = ctx.mFieldOffset * -0.25f;
 	data.fieldinfo[2] = 0.0f;
 	data.fieldinfo[3] = 0.0f;
+	data.chromauvscale[0] = ctx.mChromaScaleU;
+	data.chromauvscale[1] = ctx.mChromaScaleV;
+	data.chromauvscale[2] = 0.0f;
+	data.chromauvscale[3] = 0.0f;
+	data.chromauvoffset[0] = ctx.mChromaOffsetU;
+	data.chromauvoffset[1] = ctx.mChromaOffsetV;
+	data.chromauvoffset[2] = 0.0f;
+	data.chromauvoffset[3] = 0.0f;
 
 	uint32 t = VDGetAccurateTick();
 	data.time[0] = (t % 1000) / 1000.0f;
@@ -1647,7 +1662,7 @@ public:
 
 	IDirect3DTexture9 *GetD3DTexture(int i = 0) { return mpD3DConversionTextures[0] ? mpD3DConversionTextures[i] : mpD3DImageTextures[i]; }
 
-	bool Init(const VDPixmap& source, bool allowConversion, bool highPrecision, int buffers);
+	bool Init(void *hmonitor, const VDPixmap& source, bool allowConversion, bool highPrecision, int buffers);
 	void Shutdown();
 
 	bool Update(const VDPixmap& source, int fieldMask);
@@ -1663,6 +1678,7 @@ protected:
 	enum UploadMode {
 		kUploadModeNormal,
 		kUploadModeDirect8,
+		kUploadModeDirect8Laced,
 		kUploadModeDirect16,
 		kUploadModeDirectV210,
 		kUploadModeDirectNV12
@@ -1674,11 +1690,14 @@ protected:
 	bool mbHighPrecision;
 
 	VDPixmap			mTexFmt;
+	VDPixmapCachedBlitter mCachedBlitter;
 
 	IDirect3DTexture9	*mpD3DImageTextures[3];
 	IDirect3DTexture9	*mpD3DPaletteTexture;
 	IDirect3DTexture9	*mpD3DImageTexture2a;
 	IDirect3DTexture9	*mpD3DImageTexture2b;
+	IDirect3DTexture9	*mpD3DImageTexture2c;
+	IDirect3DTexture9	*mpD3DImageTexture2d;
 	IDirect3DTexture9	*mpD3DConversionTextures[3];
 };
 
@@ -1691,6 +1710,8 @@ VDVideoUploadContextD3D9::VDVideoUploadContextD3D9()
 	, mpD3DPaletteTexture(NULL)
 	, mpD3DImageTexture2a(NULL)
 	, mpD3DImageTexture2b(NULL)
+	, mpD3DImageTexture2c(NULL)
+	, mpD3DImageTexture2d(NULL)
 	, mbHighPrecision(false)
 {
 	for(int i=0; i<3; ++i) {
@@ -1703,16 +1724,18 @@ VDVideoUploadContextD3D9::~VDVideoUploadContextD3D9() {
 	Shutdown();
 }
 
-bool VDVideoUploadContextD3D9::Init(const VDPixmap& source, bool allowConversion, bool highPrecision, int buffers) {
+bool VDVideoUploadContextD3D9::Init(void *hmonitor, const VDPixmap& source, bool allowConversion, bool highPrecision, int buffers) {
+	mCachedBlitter.Invalidate();
+
 	mBufferCount = buffers;
 	mbHighPrecision = highPrecision;
 
 	VDASSERT(!mpManager);
-	mpManager = VDInitDirect3D9(this);
+	mpManager = VDInitDirect3D9(this, (HMONITOR)hmonitor);
 	if (!mpManager)
 		return false;
 
-	if (!VDInitDisplayDX9(~mpVideoManager)) {
+	if (!VDInitDisplayDX9((HMONITOR)hmonitor, ~mpVideoManager)) {
 		Shutdown();
 		return false;
 	}
@@ -1724,6 +1747,11 @@ bool VDVideoUploadContextD3D9::Init(const VDPixmap& source, bool allowConversion
 		VDDEBUG_DX9DISP("VideoDisplay/DX9: source image is larger than maximum texture size\n");
 		Shutdown();
 		return false;
+	}
+
+	// high precision requires VS/PS 2.0
+	if (caps.VertexShaderVersion < D3DVS_VERSION(2, 0) || caps.PixelShaderVersion < D3DPS_VERSION(2, 0)) {
+		mbHighPrecision = false;
 	}
 
 	// create source texture
@@ -1739,91 +1767,240 @@ bool VDVideoUploadContextD3D9::Init(const VDPixmap& source, bool allowConversion
 	D3DFORMAT d3dfmt;
 	IDirect3DDevice9 *dev = mpManager->GetDevice();
 
-	if ((	source.format == nsVDPixmap::kPixFormat_YUV410_Planar ||
-			source.format == nsVDPixmap::kPixFormat_YUV420_Planar ||
-			source.format == nsVDPixmap::kPixFormat_YUV422_Planar ||
-			source.format == nsVDPixmap::kPixFormat_YUV444_Planar ||
-			source.format == nsVDPixmap::kPixFormat_Pal8)
-		&& mpManager->IsTextureFormatAvailable(D3DFMT_L8) && caps.PixelShaderVersion >= D3DPS_VERSION(1, 1))
-	{
-		mUploadMode = kUploadModeDirect8;
-		d3dfmt = D3DFMT_L8;
+	mUploadMode = kUploadModeNormal;
 
-		uint32 subw = texw;
-		uint32 subh = texh;
+	switch(source.format) {
+		case nsVDPixmap::kPixFormat_YUV420i_Planar:
+		case nsVDPixmap::kPixFormat_YUV420i_Planar_709:
+		case nsVDPixmap::kPixFormat_YUV420i_Planar_FR:
+		case nsVDPixmap::kPixFormat_YUV420i_Planar_709_FR:
+			if (mpManager->IsTextureFormatAvailable(D3DFMT_L8) && caps.PixelShaderVersion >= D3DPS_VERSION(2, 0)) {
+				mUploadMode = kUploadModeDirect8Laced;
+				d3dfmt = D3DFMT_L8;
 
-		switch(source.format) {
-			case nsVDPixmap::kPixFormat_Pal8:
-			case nsVDPixmap::kPixFormat_YUV444_Planar:
-				break;
-			case nsVDPixmap::kPixFormat_YUV422_Planar:
-				subw >>= 1;
-				break;
-			case nsVDPixmap::kPixFormat_YUV420_Planar:
-				subw >>= 1;
-				subh >>= 1;
-				break;
-			case nsVDPixmap::kPixFormat_YUV410_Planar:
-				subw >>= 2;
-				subh >>= 2;
-				break;
-		}
+				int subw = (source.w + 1) >> 1;
+				int subh = (source.h + 3) >> 2;
 
-		if (subw < 1)
-			subw = 1;
-		if (subh < 1)
-			subh = 1;
+				if (subw < 1)
+					subw = 1;
+				if (subh < 1)
+					subh = 1;
 
-		if (source.format == nsVDPixmap::kPixFormat_Pal8) {
-			hr = dev->CreateTexture(256, 1, 1, 0, D3DFMT_X8R8G8B8, D3DPOOL_MANAGED, &mpD3DPaletteTexture, NULL);
-			if (FAILED(hr)) {
-				Shutdown();
-				return false;
+				if (!mpManager->AdjustTextureSize(subw, subh)) {
+					Shutdown();
+					return false;
+				}
+
+				hr = dev->CreateTexture(subw, subh, 1, 0, D3DFMT_L8, D3DPOOL_MANAGED, &mpD3DImageTexture2a, NULL);
+				if (FAILED(hr)) {
+					Shutdown();
+					return false;
+				}
+
+				hr = dev->CreateTexture(subw, subh, 1, 0, D3DFMT_L8, D3DPOOL_MANAGED, &mpD3DImageTexture2b, NULL);
+				if (FAILED(hr)) {
+					Shutdown();
+					return false;
+				}
+
+				hr = dev->CreateTexture(subw, subh, 1, 0, D3DFMT_L8, D3DPOOL_MANAGED, &mpD3DImageTexture2c, NULL);
+				if (FAILED(hr)) {
+					Shutdown();
+					return false;
+				}
+
+				hr = dev->CreateTexture(subw, subh, 1, 0, D3DFMT_L8, D3DPOOL_MANAGED, &mpD3DImageTexture2d, NULL);
+				if (FAILED(hr)) {
+					Shutdown();
+					return false;
+				}
 			}
-		}
+			break;
 
-		hr = dev->CreateTexture(subw, subh, 1, 0, D3DFMT_L8, D3DPOOL_MANAGED, &mpD3DImageTexture2a, NULL);
-		if (FAILED(hr)) {
-			Shutdown();
-			return false;
-		}
+		case nsVDPixmap::kPixFormat_YUV410_Planar_709:
+		case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
+		case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
+		case nsVDPixmap::kPixFormat_YUV420_Planar_709:
+		case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
+		case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
+		case nsVDPixmap::kPixFormat_YUV422_Planar_709:
+		case nsVDPixmap::kPixFormat_YUV422_Planar_FR:
+		case nsVDPixmap::kPixFormat_YUV422_Planar_709_FR:
+		case nsVDPixmap::kPixFormat_YUV444_Planar_709:
+		case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
+		case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
+		case nsVDPixmap::kPixFormat_YUV420it_Planar:
+		case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
+		case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
+		case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
+		case nsVDPixmap::kPixFormat_YUV420ib_Planar:
+		case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
+		case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
+		case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
+			if (mpManager->IsTextureFormatAvailable(D3DFMT_L8) && caps.PixelShaderVersion >= D3DPS_VERSION(2, 0)) {
+				mUploadMode = kUploadModeDirect8;
+				d3dfmt = D3DFMT_L8;
 
-		hr = dev->CreateTexture(subw, subh, 1, 0, D3DFMT_L8, D3DPOOL_MANAGED, &mpD3DImageTexture2b, NULL);
-		if (FAILED(hr)) {
-			Shutdown();
-			return false;
-		}
-	} else if (
-			source.format == nsVDPixmap::kPixFormat_YUV420_NV12 &&
-			mpManager->IsTextureFormatAvailable(D3DFMT_L8) &&
-			mpManager->IsTextureFormatAvailable(D3DFMT_A8L8) &&
-			caps.PixelShaderVersion >= D3DPS_VERSION(1, 1)) {
-		mUploadMode = kUploadModeDirectNV12;
-		d3dfmt = D3DFMT_L8;
+				uint32 subw = texw;
+				uint32 subh = texh;
 
-		uint32 subw = (texw + 1) >> 1;
-		uint32 subh = (texh + 1) >> 1;
+				switch(source.format) {
+					case nsVDPixmap::kPixFormat_YUV444_Planar:
+					case nsVDPixmap::kPixFormat_YUV444_Planar_709:
+					case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
+					case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
+						break;
+					case nsVDPixmap::kPixFormat_YUV422_Planar:
+					case nsVDPixmap::kPixFormat_YUV422_Planar_709:
+					case nsVDPixmap::kPixFormat_YUV422_Planar_FR:
+					case nsVDPixmap::kPixFormat_YUV422_Planar_709_FR:
+						subw >>= 1;
+						break;
+					case nsVDPixmap::kPixFormat_YUV420_Planar:
+					case nsVDPixmap::kPixFormat_YUV420_Planar_709:
+					case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
+					case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
+					case nsVDPixmap::kPixFormat_YUV420it_Planar:
+					case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
+					case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
+					case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
+					case nsVDPixmap::kPixFormat_YUV420ib_Planar:
+					case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
+					case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
+					case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
+						subw >>= 1;
+						subh >>= 1;
+						break;
+					case nsVDPixmap::kPixFormat_YUV410_Planar:
+					case nsVDPixmap::kPixFormat_YUV410_Planar_709:
+					case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
+					case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
+						subw >>= 2;
+						subh >>= 2;
+						break;
+				}
 
-		if (subw < 1)
-			subw = 1;
-		if (subh < 1)
-			subh = 1;
+				if (subw < 1)
+					subw = 1;
+				if (subh < 1)
+					subh = 1;
 
-		hr = dev->CreateTexture(subw, subh, 1, 0, D3DFMT_A8L8, D3DPOOL_MANAGED, &mpD3DImageTexture2a, NULL);
-		if (FAILED(hr)) {
-			Shutdown();
-			return false;
-		}
-	} else if (source.format == nsVDPixmap::kPixFormat_YUV422_V210 && mpManager->IsTextureFormatAvailable(D3DFMT_A2B10G10R10) && caps.PixelShaderVersion >= D3DPS_VERSION(2, 0)) {
-		mUploadMode = kUploadModeDirectV210;
-		d3dfmt = D3DFMT_A2B10G10R10;
-	} else {
+				hr = dev->CreateTexture(subw, subh, 1, 0, D3DFMT_L8, D3DPOOL_MANAGED, &mpD3DImageTexture2a, NULL);
+				if (FAILED(hr)) {
+					Shutdown();
+					return false;
+				}
+
+				hr = dev->CreateTexture(subw, subh, 1, 0, D3DFMT_L8, D3DPOOL_MANAGED, &mpD3DImageTexture2b, NULL);
+				if (FAILED(hr)) {
+					Shutdown();
+					return false;
+				}
+			}
+			break;
+
+		case nsVDPixmap::kPixFormat_Pal8:
+		case nsVDPixmap::kPixFormat_YUV410_Planar:
+		case nsVDPixmap::kPixFormat_YUV420_Planar:
+		case nsVDPixmap::kPixFormat_YUV422_Planar:
+		case nsVDPixmap::kPixFormat_YUV444_Planar:
+			if (mpManager->IsTextureFormatAvailable(D3DFMT_L8) && caps.PixelShaderVersion >= D3DPS_VERSION(1, 1)) {
+				mUploadMode = kUploadModeDirect8;
+				d3dfmt = D3DFMT_L8;
+
+				uint32 subw = texw;
+				uint32 subh = texh;
+
+				switch(source.format) {
+					case nsVDPixmap::kPixFormat_Pal8:
+					case nsVDPixmap::kPixFormat_YUV444_Planar:
+						break;
+					case nsVDPixmap::kPixFormat_YUV422_Planar:
+						subw >>= 1;
+						break;
+					case nsVDPixmap::kPixFormat_YUV420_Planar:
+					case nsVDPixmap::kPixFormat_YUV420i_Planar:
+						subw >>= 1;
+						subh >>= 1;
+						break;
+					case nsVDPixmap::kPixFormat_YUV410_Planar:
+						subw >>= 2;
+						subh >>= 2;
+						break;
+				}
+
+				if (subw < 1)
+					subw = 1;
+				if (subh < 1)
+					subh = 1;
+
+				if (source.format == nsVDPixmap::kPixFormat_Pal8) {
+					hr = dev->CreateTexture(256, 1, 1, 0, D3DFMT_X8R8G8B8, D3DPOOL_MANAGED, &mpD3DPaletteTexture, NULL);
+					if (FAILED(hr)) {
+						Shutdown();
+						return false;
+					}
+				}
+
+				hr = dev->CreateTexture(subw, subh, 1, 0, D3DFMT_L8, D3DPOOL_MANAGED, &mpD3DImageTexture2a, NULL);
+				if (FAILED(hr)) {
+					Shutdown();
+					return false;
+				}
+
+				hr = dev->CreateTexture(subw, subh, 1, 0, D3DFMT_L8, D3DPOOL_MANAGED, &mpD3DImageTexture2b, NULL);
+				if (FAILED(hr)) {
+					Shutdown();
+					return false;
+				}
+			}
+			break;
+
+		case nsVDPixmap::kPixFormat_YUV420_NV12:
+			if (mpManager->IsTextureFormatAvailable(D3DFMT_L8) &&
+				mpManager->IsTextureFormatAvailable(D3DFMT_A8L8) &&
+				caps.PixelShaderVersion >= D3DPS_VERSION(1, 1))
+			{
+				mUploadMode = kUploadModeDirectNV12;
+				d3dfmt = D3DFMT_L8;
+
+				uint32 subw = (texw + 1) >> 1;
+				uint32 subh = (texh + 1) >> 1;
+
+				if (subw < 1)
+					subw = 1;
+				if (subh < 1)
+					subh = 1;
+
+				hr = dev->CreateTexture(subw, subh, 1, 0, D3DFMT_A8L8, D3DPOOL_MANAGED, &mpD3DImageTexture2a, NULL);
+				if (FAILED(hr)) {
+					Shutdown();
+					return false;
+				}
+			}
+			break;
+
+		case nsVDPixmap::kPixFormat_YUV422_V210:
+			if (mpManager->IsTextureFormatAvailable(D3DFMT_A2B10G10R10) && caps.PixelShaderVersion >= D3DPS_VERSION(2, 0)) {
+				mUploadMode = kUploadModeDirectV210;
+				d3dfmt = D3DFMT_A2B10G10R10;
+			}
+			break;
+	}
+	
+	if (mUploadMode == kUploadModeNormal) {
 		mpVideoManager->DetermineBestTextureFormat(source.format, mTexFmt.format, d3dfmt);
 
-		mUploadMode = kUploadModeNormal;
-
 		if (source.format != mTexFmt.format) {
-			if ((source.format == nsVDPixmap::kPixFormat_YUV422_UYVY || source.format == nsVDPixmap::kPixFormat_YUV422_YUYV || source.format == nsVDPixmap::kPixFormat_YUV422_UYVY_709)
+			if ((source.format == nsVDPixmap::kPixFormat_YUV422_UYVY ||
+				 source.format == nsVDPixmap::kPixFormat_YUV422_YUYV ||
+				 source.format == nsVDPixmap::kPixFormat_YUV422_UYVY_709 ||
+				 source.format == nsVDPixmap::kPixFormat_YUV422_YUYV_709 ||
+				 source.format == nsVDPixmap::kPixFormat_YUV422_UYVY_FR ||
+				 source.format == nsVDPixmap::kPixFormat_YUV422_YUYV_FR ||
+				 source.format == nsVDPixmap::kPixFormat_YUV422_UYVY_709_FR ||
+				 source.format == nsVDPixmap::kPixFormat_YUV422_YUYV_709_FR
+				 )
 				&& caps.PixelShaderVersion >= D3DPS_VERSION(1,1))
 			{
 				if (mpManager->IsTextureFormatAvailable(D3DFMT_A8R8G8B8)) {
@@ -1881,16 +2058,37 @@ bool VDVideoUploadContextD3D9::Init(const VDPixmap& source, bool allowConversion
 
 			switch(source.format) {
 				case nsVDPixmap::kPixFormat_YUV422_UYVY:
+				case nsVDPixmap::kPixFormat_YUV422_UYVY_709:
 					VDMemset32Rect(lr.pBits, lr.Pitch, 0x80108010, (texw + 1) >> 1, texh);
 					break;
+				case nsVDPixmap::kPixFormat_YUV422_UYVY_FR:
+				case nsVDPixmap::kPixFormat_YUV422_UYVY_709_FR:
+					VDMemset32Rect(lr.pBits, lr.Pitch, 0x80008000, (texw + 1) >> 1, texh);
+					break;
 				case nsVDPixmap::kPixFormat_YUV422_YUYV:
+				case nsVDPixmap::kPixFormat_YUV422_YUYV_709:
 					VDMemset32Rect(lr.pBits, lr.Pitch, 0x10801080, (texw + 1) >> 1, texh);
 					break;
+				case nsVDPixmap::kPixFormat_YUV422_YUYV_FR:
+				case nsVDPixmap::kPixFormat_YUV422_YUYV_709_FR:
+					VDMemset32Rect(lr.pBits, lr.Pitch, 0x00800080, (texw + 1) >> 1, texh);
+					break;
 				case nsVDPixmap::kPixFormat_YUV444_Planar:
+				case nsVDPixmap::kPixFormat_YUV444_Planar_709:
 				case nsVDPixmap::kPixFormat_YUV422_Planar:
+				case nsVDPixmap::kPixFormat_YUV422_Planar_709:
 				case nsVDPixmap::kPixFormat_YUV420_Planar:
+				case nsVDPixmap::kPixFormat_YUV420_Planar_709:
+				case nsVDPixmap::kPixFormat_YUV420i_Planar:
+				case nsVDPixmap::kPixFormat_YUV420i_Planar_709:
+				case nsVDPixmap::kPixFormat_YUV420it_Planar:
+				case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
+				case nsVDPixmap::kPixFormat_YUV420ib_Planar:
+				case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
 				case nsVDPixmap::kPixFormat_YUV411_Planar:
+				case nsVDPixmap::kPixFormat_YUV411_Planar_709:
 				case nsVDPixmap::kPixFormat_YUV410_Planar:
+				case nsVDPixmap::kPixFormat_YUV410_Planar_709:
 				case nsVDPixmap::kPixFormat_YUV420_NV12:
 					VDMemset8Rect(lr.pBits, lr.Pitch, 0x10, texw, texh);
 					break;
@@ -1901,7 +2099,25 @@ bool VDVideoUploadContextD3D9::Init(const VDPixmap& source, bool allowConversion
 				case nsVDPixmap::kPixFormat_RGB565:
 					VDMemset16Rect(lr.pBits, lr.Pitch, 0, texw, texh);
 					break;
+				case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
+				case nsVDPixmap::kPixFormat_YUV422_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV422_Planar_709_FR:
+				case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
+				case nsVDPixmap::kPixFormat_YUV420i_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV420i_Planar_709_FR:
+				case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
+				case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
+				case nsVDPixmap::kPixFormat_YUV411_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV411_Planar_709_FR:
+				case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
 				case nsVDPixmap::kPixFormat_Pal8:
+				case nsVDPixmap::kPixFormat_Y8:
+				case nsVDPixmap::kPixFormat_Y8_FR:
 					VDMemset8Rect(lr.pBits, lr.Pitch, 0, texw, texh);
 					break;
 				default:
@@ -1929,10 +2145,22 @@ void VDVideoUploadContextD3D9::Shutdown() {
 			mpD3DConversionTextures[i] = NULL;
 		}
 	}
+
+	if (mpD3DImageTexture2d) {
+		mpD3DImageTexture2d->Release();
+		mpD3DImageTexture2d = NULL;
+	}
+
+	if (mpD3DImageTexture2c) {
+		mpD3DImageTexture2c->Release();
+		mpD3DImageTexture2c = NULL;
+	}
+
 	if (mpD3DImageTexture2b) {
 		mpD3DImageTexture2b->Release();
 		mpD3DImageTexture2b = NULL;
 	}
+
 	if (mpD3DImageTexture2a) {
 		mpD3DImageTexture2a->Release();
 		mpD3DImageTexture2a = NULL;
@@ -1996,27 +2224,21 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
 	VDPixmap src(source);
 
 	if (fieldMask == 1) {
-		dst.pitch *= 2;
-		dst.h = (dst.h + 1) >> 1;
-		src.pitch *= 2;
-		src.h = (src.h + 1) >> 1;
+		dst = VDPixmapExtractField(mTexFmt, false);
+		src = VDPixmapExtractField(source, false);
 	} else if (fieldMask == 2) {
-		dst.data = vdptroffset(dst.data, dst.pitch);
-		dst.pitch *= 2;
-		dst.h >>= 1;
-		src.data = vdptroffset(src.data, src.pitch);
-		src.pitch *= 2;
-		src.h >>= 1;
+		dst = VDPixmapExtractField(mTexFmt, true);
+		src = VDPixmapExtractField(source, true);
 	}
 
 	if (mUploadMode == kUploadModeDirectV210) {
 		VDMemcpyRect(dst.data, dst.pitch, src.data, src.pitch, ((src.w + 5) / 6) * 16, src.h);
 	} else if (mUploadMode == kUploadModeDirect16) {
 		VDMemcpyRect(dst.data, dst.pitch, src.data, src.pitch, src.w * 2, src.h);
-	} else if (mUploadMode == kUploadModeDirect8 || mUploadMode == kUploadModeDirectNV12) {
+	} else if (mUploadMode == kUploadModeDirect8 || mUploadMode == kUploadModeDirect8Laced || mUploadMode == kUploadModeDirectNV12) {
 		VDMemcpyRect(dst.data, dst.pitch, src.data, src.pitch, src.w, src.h);
 	} else {
-		VDPixmapBlt(dst, src);
+		mCachedBlitter.Blit(dst, src);
 	}
 
 	VDVERIFY(SUCCEEDED(mpD3DImageTextures[0]->UnlockRect(0)));
@@ -2039,23 +2261,92 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
 
 		VDVERIFY(SUCCEEDED(mpD3DImageTexture2a->UnlockRect(0)));
 
+	} else if (mUploadMode == kUploadModeDirect8Laced) {
+		uint32 subw = (source.w + 1) >> 1;
+		uint32 subh = (source.h + 1) >> 1;
+		sint32 subh1 = (subh + 1) >> 1;
+		sint32 subh2 = subh >> 1;
+
+		if (fieldMask & 1) {
+			const VDPixmap srcPlane1(VDPixmapExtractField(source, false));
+
+			// upload Cb plane
+			hr = mpD3DImageTexture2a->LockRect(0, &lr, NULL, 0);
+			if (FAILED(hr))
+				return false;
+
+			VDMemcpyRect(lr.pBits, lr.Pitch, srcPlane1.data2, srcPlane1.pitch2, subw, subh1);
+
+			VDVERIFY(SUCCEEDED(mpD3DImageTexture2a->UnlockRect(0)));
+
+			// upload Cr plane
+			hr = mpD3DImageTexture2b->LockRect(0, &lr, NULL, 0);
+			if (FAILED(hr))
+				return false;
+
+			VDMemcpyRect(lr.pBits, lr.Pitch, srcPlane1.data3, srcPlane1.pitch3, subw, subh1);
+
+			VDVERIFY(SUCCEEDED(mpD3DImageTexture2b->UnlockRect(0)));
+		}
+
+		if (fieldMask & 2) {
+			const VDPixmap srcPlane2(VDPixmapExtractField(source, true));
+
+			// upload Cb plane
+			hr = mpD3DImageTexture2c->LockRect(0, &lr, NULL, 0);
+			if (FAILED(hr))
+				return false;
+
+			VDMemcpyRect(lr.pBits, lr.Pitch, srcPlane2.data2, srcPlane2.pitch2, subw, subh2);
+
+			VDVERIFY(SUCCEEDED(mpD3DImageTexture2c->UnlockRect(0)));
+
+			// upload Cr plane
+			hr = mpD3DImageTexture2d->LockRect(0, &lr, NULL, 0);
+			if (FAILED(hr))
+				return false;
+
+			VDMemcpyRect(lr.pBits, lr.Pitch, srcPlane2.data3, srcPlane2.pitch3, subw, subh2);
+
+			VDVERIFY(SUCCEEDED(mpD3DImageTexture2d->UnlockRect(0)));
+		}
 	} else if (mUploadMode == kUploadModeDirect8) {
 		uint32 subw = source.w;
 		uint32 subh = source.h;
 
 		switch(source.format) {
 			case nsVDPixmap::kPixFormat_YUV410_Planar:
+			case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
+			case nsVDPixmap::kPixFormat_YUV410_Planar_709:
+			case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
 				subw >>= 2;
 				subh >>= 2;
 				break;
 			case nsVDPixmap::kPixFormat_YUV420_Planar:
+			case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
+			case nsVDPixmap::kPixFormat_YUV420_Planar_709:
+			case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
+			case nsVDPixmap::kPixFormat_YUV420it_Planar:
+			case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
+			case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
+			case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
+			case nsVDPixmap::kPixFormat_YUV420ib_Planar:
+			case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
+			case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
+			case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
 				subw >>= 1;
 				subh >>= 1;
 				break;
 			case nsVDPixmap::kPixFormat_YUV422_Planar:
+			case nsVDPixmap::kPixFormat_YUV422_Planar_FR:
+			case nsVDPixmap::kPixFormat_YUV422_Planar_709:
+			case nsVDPixmap::kPixFormat_YUV422_Planar_709_FR:
 				subw >>= 1;
 				break;
 			case nsVDPixmap::kPixFormat_YUV444_Planar:
+			case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
+			case nsVDPixmap::kPixFormat_YUV444_Planar_709:
+			case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
 				break;
 		}
 
@@ -2141,6 +2432,8 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
 				ctx.mpSourceTexture1 = mpD3DImageTextures[0];
 				ctx.mpSourceTexture2 = mpD3DImageTexture2a;
 				ctx.mpSourceTexture3 = mpD3DImageTexture2b;
+				ctx.mpSourceTexture4 = mpD3DImageTexture2c;
+				ctx.mpSourceTexture5 = mpD3DImageTexture2d;
 				ctx.mpPaletteTexture = mpD3DPaletteTexture;
 				ctx.mpInterpFilterH = NULL;
 				ctx.mpInterpFilterV = NULL;
@@ -2160,111 +2453,328 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
 				ctx.mOutputH = source.h;
 				ctx.mDefaultUVScaleCorrectionX = 1.0f;
 				ctx.mDefaultUVScaleCorrectionY = 1.0f;
+				ctx.mChromaScaleU = 1.0f;
+				ctx.mChromaScaleV = 1.0f;
+				ctx.mChromaOffsetU = 0.0f;
+				ctx.mChromaOffsetV = 0.0f;
 				ctx.mbHighPrecision = mbHighPrecision;
 
-				if (source.format == nsVDPixmap::kPixFormat_YUV422_V210) {
-					if (!mpVideoManager->RunEffect(ctx, g_technique_v210_to_rgb_2_0, rtsurface))
-						success = false;
-				} else if (mbHighPrecision) {
-					switch(source.format) {
-						case nsVDPixmap::kPixFormat_YUV422_UYVY:
-							ctx.mDefaultUVScaleCorrectionX = 0.5f;
-							if (!mpVideoManager->RunEffect(ctx, g_technique_uyvy_to_rgb_2_0, rtsurface))
-								success = false;
-							break;
+				switch(source.format) {
+					case nsVDPixmap::kPixFormat_YUV422_V210:
+						if (!mpVideoManager->RunEffect(ctx, g_technique_v210_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+					case nsVDPixmap::kPixFormat_YUV422_UYVY_FR:
+						ctx.mDefaultUVScaleCorrectionX = 0.5f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_uyvy601fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+					case nsVDPixmap::kPixFormat_YUV422_UYVY_709_FR:
+						ctx.mDefaultUVScaleCorrectionX = 0.5f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_uyvy709fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+					case nsVDPixmap::kPixFormat_YUV422_YUYV_709:
+						ctx.mDefaultUVScaleCorrectionX = 0.5f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_yuyv709_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+					case nsVDPixmap::kPixFormat_YUV422_YUYV_FR:
+						ctx.mDefaultUVScaleCorrectionX = 0.5f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_yuyv601fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+					case nsVDPixmap::kPixFormat_YUV422_YUYV_709_FR:
+						ctx.mDefaultUVScaleCorrectionX = 0.5f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_yuyv709fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+					case nsVDPixmap::kPixFormat_YUV444_Planar_709:
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_709_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+					case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_601fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+					case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_709fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+					case nsVDPixmap::kPixFormat_YUV422_Planar_709:
+						ctx.mChromaScaleU = 0.5f;
+						ctx.mChromaOffsetU = -0.25f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_709_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+					case nsVDPixmap::kPixFormat_YUV422_Planar_FR:
+						ctx.mChromaScaleU = 0.5f;
+						ctx.mChromaOffsetU = -0.25f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_601fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+					case nsVDPixmap::kPixFormat_YUV422_Planar_709_FR:
+						ctx.mChromaScaleU = 0.5f;
+						ctx.mChromaOffsetU = -0.25f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_709fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+					case nsVDPixmap::kPixFormat_YUV420_Planar_709:
+						ctx.mChromaScaleU = 0.5f;
+						ctx.mChromaScaleV = 0.5f;
+						ctx.mChromaOffsetU = -0.25f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_709_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+					case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
+						ctx.mChromaScaleU = 0.5f;
+						ctx.mChromaScaleV = 0.5f;
+						ctx.mChromaOffsetU = -0.25f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_601fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+					case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
+						ctx.mChromaScaleU = 0.5f;
+						ctx.mChromaScaleV = 0.5f;
+						ctx.mChromaOffsetU = -0.25f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_709fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
 
-						case nsVDPixmap::kPixFormat_YUV422_UYVY_709:
-							ctx.mDefaultUVScaleCorrectionX = 0.5f;
-							if (!mpVideoManager->RunEffect(ctx, g_technique_hdyc_to_rgb_2_0, rtsurface))
-								success = false;
-							break;
+					case nsVDPixmap::kPixFormat_YUV420i_Planar:
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr420i_601_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
 
-						case nsVDPixmap::kPixFormat_YUV422_YUYV:
-							ctx.mDefaultUVScaleCorrectionX = 0.5f;
-							if (!mpVideoManager->RunEffect(ctx, g_technique_yuy2_to_rgb_2_0, rtsurface))
-								success = false;
-							break;
+					case nsVDPixmap::kPixFormat_YUV420i_Planar_709:
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr420i_709_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
 
-						case nsVDPixmap::kPixFormat_YUV444_Planar:
-							if (!mpVideoManager->RunEffect(ctx, g_technique_yv24_to_rgb_2_0, rtsurface))
-								success = false;
-							break;
+					case nsVDPixmap::kPixFormat_YUV420i_Planar_FR:
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr420i_601fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
 
-						case nsVDPixmap::kPixFormat_YUV422_Planar:
-							if (!mpVideoManager->RunEffect(ctx, g_technique_yv16_to_rgb_2_0, rtsurface))
-								success = false;
-							break;
+					case nsVDPixmap::kPixFormat_YUV420i_Planar_709_FR:
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr420i_709fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
 
-						case nsVDPixmap::kPixFormat_YUV420_Planar:
-							if (!mpVideoManager->RunEffect(ctx, g_technique_yv12_to_rgb_2_0, rtsurface))
-								success = false;
-							break;
+					// 4:2:0 interlaced field
 
-						case nsVDPixmap::kPixFormat_YUV410_Planar:
-							if (!mpVideoManager->RunEffect(ctx, g_technique_yvu9_to_rgb_2_0, rtsurface))
-								success = false;
-							break;
+					case nsVDPixmap::kPixFormat_YUV420it_Planar:
+						ctx.mChromaScaleU = 0.5f;
+						ctx.mChromaScaleV = 0.5f;
+						ctx.mChromaOffsetU = +0.25f;
+						ctx.mChromaOffsetV = +0.125f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_601_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
 
-						case nsVDPixmap::kPixFormat_Pal8:
-							if (!mpVideoManager->RunEffect(ctx, g_technique_pal8_to_rgb_1_1, rtsurface))
-								success = false;
-							break;
+					case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
+						ctx.mChromaScaleU = 0.5f;
+						ctx.mChromaScaleV = 0.5f;
+						ctx.mChromaOffsetU = +0.25f;
+						ctx.mChromaOffsetV = +0.125f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_709_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
 
-						case nsVDPixmap::kPixFormat_YUV420_NV12:
-							if (!mpVideoManager->RunEffect(ctx, g_technique_nv12_to_rgb_2_0, rtsurface))
-								success = false;
-							break;
-					}
-				} else {
-					switch(source.format) {
-						case nsVDPixmap::kPixFormat_YUV422_UYVY:
-							ctx.mDefaultUVScaleCorrectionX = 0.5f;
-							if (!mpVideoManager->RunEffect(ctx, g_technique_uyvy_to_rgb_1_1, rtsurface))
-								success = false;
-							break;
+					case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
+						ctx.mChromaScaleU = 0.5f;
+						ctx.mChromaScaleV = 0.5f;
+						ctx.mChromaOffsetU = +0.25f;
+						ctx.mChromaOffsetV = +0.125f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_601fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
 
-						case nsVDPixmap::kPixFormat_YUV422_UYVY_709:
-							ctx.mDefaultUVScaleCorrectionX = 0.5f;
-							if (!mpVideoManager->RunEffect(ctx, g_technique_hdyc_to_rgb_1_1, rtsurface))
-								success = false;
-							break;
+					case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
+						ctx.mChromaScaleU = 0.5f;
+						ctx.mChromaScaleV = 0.5f;
+						ctx.mChromaOffsetU = +0.25f;
+						ctx.mChromaOffsetV = +0.125f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_709fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
 
-						case nsVDPixmap::kPixFormat_YUV422_YUYV:
-							ctx.mDefaultUVScaleCorrectionX = 0.5f;
-							if (!mpVideoManager->RunEffect(ctx, g_technique_yuy2_to_rgb_1_1, rtsurface))
-								success = false;
-							break;
+					case nsVDPixmap::kPixFormat_YUV420ib_Planar:
+						ctx.mChromaScaleU = 0.5f;
+						ctx.mChromaScaleV = 0.5f;
+						ctx.mChromaOffsetU = +0.25f;
+						ctx.mChromaOffsetV = -0.125f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_601_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
 
-						case nsVDPixmap::kPixFormat_YUV444_Planar:
-							if (!mpVideoManager->RunEffect(ctx, g_technique_yv24_to_rgb_1_1, rtsurface))
-								success = false;
-							break;
+					case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
+						ctx.mChromaScaleU = 0.5f;
+						ctx.mChromaScaleV = 0.5f;
+						ctx.mChromaOffsetU = +0.25f;
+						ctx.mChromaOffsetV = -0.125f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_709_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
 
-						case nsVDPixmap::kPixFormat_YUV422_Planar:
-							if (!mpVideoManager->RunEffect(ctx, g_technique_yv16_to_rgb_1_1, rtsurface))
-								success = false;
-							break;
+					case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
+						ctx.mChromaScaleU = 0.5f;
+						ctx.mChromaScaleV = 0.5f;
+						ctx.mChromaOffsetU = +0.25f;
+						ctx.mChromaOffsetV = -0.125f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_601fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
 
-						case nsVDPixmap::kPixFormat_YUV420_Planar:
-							if (!mpVideoManager->RunEffect(ctx, g_technique_yv12_to_rgb_1_1, rtsurface))
-								success = false;
-							break;
+					case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
+						ctx.mChromaScaleU = 0.5f;
+						ctx.mChromaScaleV = 0.5f;
+						ctx.mChromaOffsetU = +0.25f;
+						ctx.mChromaOffsetV = -0.125f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_709fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
 
-						case nsVDPixmap::kPixFormat_YUV410_Planar:
-							if (!mpVideoManager->RunEffect(ctx, g_technique_yvu9_to_rgb_1_1, rtsurface))
-								success = false;
-							break;
+					// 4:1:0
 
-						case nsVDPixmap::kPixFormat_Pal8:
-							if (!mpVideoManager->RunEffect(ctx, g_technique_pal8_to_rgb_1_1, rtsurface))
-								success = false;
-							break;
+					case nsVDPixmap::kPixFormat_YUV410_Planar_709:
+						ctx.mChromaScaleU = 0.25f;
+						ctx.mChromaScaleV = 0.25f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_709_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
 
-						case nsVDPixmap::kPixFormat_YUV420_NV12:
-							if (!mpVideoManager->RunEffect(ctx, g_technique_nv12_to_rgb_1_1, rtsurface))
-								success = false;
-							break;
-					}
+					case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
+						ctx.mChromaScaleU = 0.25f;
+						ctx.mChromaScaleV = 0.25f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_601fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+
+					case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
+						ctx.mChromaScaleU = 0.25f;
+						ctx.mChromaScaleV = 0.25f;
+						if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_709fr_to_rgb_2_0, rtsurface))
+							success = false;
+						break;
+
+					default:
+						if (mbHighPrecision) {
+							switch(source.format) {
+								case nsVDPixmap::kPixFormat_YUV422_UYVY:
+									ctx.mDefaultUVScaleCorrectionX = 0.5f;
+									if (!mpVideoManager->RunEffect(ctx, g_technique_uyvy601_to_rgb_2_0, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_YUV422_UYVY_709:
+									ctx.mDefaultUVScaleCorrectionX = 0.5f;
+									if (!mpVideoManager->RunEffect(ctx, g_technique_uyvy709_to_rgb_2_0, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_YUV422_YUYV:
+									ctx.mDefaultUVScaleCorrectionX = 0.5f;
+									if (!mpVideoManager->RunEffect(ctx, g_technique_yuyv601_to_rgb_2_0, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_YUV444_Planar:
+									if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_601_to_rgb_2_0, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_YUV422_Planar:
+									ctx.mChromaScaleU = 0.5f;
+									ctx.mChromaOffsetU = -0.25f;
+									if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_601_to_rgb_2_0, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_YUV420_Planar:
+									ctx.mChromaScaleU = 0.5f;
+									ctx.mChromaScaleV = 0.5f;
+									ctx.mChromaOffsetU = -0.25f;
+									if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_601_to_rgb_2_0, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_YUV410_Planar:
+									ctx.mChromaScaleU = 0.25f;
+									ctx.mChromaScaleV = 0.25f;
+									if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_601_to_rgb_2_0, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_Pal8:
+									if (!mpVideoManager->RunEffect(ctx, g_technique_pal8_to_rgb_1_1, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_YUV420_NV12:
+									if (!mpVideoManager->RunEffect(ctx, g_technique_nv12_to_rgb_2_0, rtsurface))
+										success = false;
+									break;
+							}
+						} else {
+							switch(source.format) {
+								case nsVDPixmap::kPixFormat_YUV422_UYVY:
+									ctx.mDefaultUVScaleCorrectionX = 0.5f;
+									if (!mpVideoManager->RunEffect(ctx, g_technique_uyvy_to_rgb_1_1, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_YUV422_UYVY_709:
+									ctx.mDefaultUVScaleCorrectionX = 0.5f;
+									if (!mpVideoManager->RunEffect(ctx, g_technique_hdyc_to_rgb_1_1, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_YUV422_YUYV:
+									ctx.mDefaultUVScaleCorrectionX = 0.5f;
+									if (!mpVideoManager->RunEffect(ctx, g_technique_yuy2_to_rgb_1_1, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_YUV444_Planar:
+									if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_to_rgb_1_1, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_YUV422_Planar:
+									ctx.mChromaScaleU = 0.5f;
+									ctx.mChromaOffsetU = -0.25f;
+									if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_to_rgb_1_1, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_YUV420_Planar:
+									ctx.mChromaScaleU = 0.5f;
+									ctx.mChromaScaleV = 0.5f;
+									ctx.mChromaOffsetU = -0.25f;
+									if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_to_rgb_1_1, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_YUV410_Planar:
+									ctx.mChromaScaleU = 0.25f;
+									ctx.mChromaScaleV = 0.25f;
+									if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_to_rgb_1_1, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_Pal8:
+									if (!mpVideoManager->RunEffect(ctx, g_technique_pal8_to_rgb_1_1, rtsurface))
+										success = false;
+									break;
+
+								case nsVDPixmap::kPixFormat_YUV420_NV12:
+									if (!mpVideoManager->RunEffect(ctx, g_technique_nv12_to_rgb_1_1, rtsurface))
+										success = false;
+									break;
+							}
+						}
+						break;
 				}
 			}
 
@@ -2318,11 +2828,11 @@ bool VDVideoUploadContextD3D9::ReinitVRAMTextures() {
 
 class VDVideoDisplayMinidriverDX9 : public VDVideoDisplayMinidriver, protected VDD3D9Client {
 public:
-	VDVideoDisplayMinidriverDX9();
+	VDVideoDisplayMinidriverDX9(bool clipToMonitor);
 	~VDVideoDisplayMinidriverDX9();
 
 protected:
-	bool Init(HWND hwnd, const VDVideoDisplaySourceInfo& info);
+	bool Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info);
 	void Shutdown();
 
 	bool ModifySource(const VDVideoDisplaySourceInfo& info);
@@ -2379,6 +2889,7 @@ protected:
 	bool				mbFirstPresent;
 	bool				mbFullScreen;
 	bool				mbFullScreenSet;
+	const bool			mbClipToMonitor;
 
 	VDVideoDisplayDX9Manager::CubicMode	mCubicMode;
 	bool				mbCubicInitialized;
@@ -2397,11 +2908,11 @@ protected:
 	VDStringA		mDebugString;
 };
 
-IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverDX9() {
-	return new VDVideoDisplayMinidriverDX9;
+IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverDX9(bool clipToMonitor) {
+	return new VDVideoDisplayMinidriverDX9(clipToMonitor);
 }
 
-VDVideoDisplayMinidriverDX9::VDVideoDisplayMinidriverDX9()
+VDVideoDisplayMinidriverDX9::VDVideoDisplayMinidriverDX9(bool clipToMonitor)
 	: mpManager(NULL)
 	, mpD3DDevice(NULL)
 	, mInterpFilterHSize(0)
@@ -2417,6 +2928,7 @@ VDVideoDisplayMinidriverDX9::VDVideoDisplayMinidriverDX9()
 	, mbFirstPresent(true)
 	, mbFullScreen(false)
 	, mbFullScreenSet(false)
+	, mbClipToMonitor(clipToMonitor)
 	, mbCubicInitialized(false)
 	, mbCubicAttempted(false)
 	, mbCubicUsingHighPrecision(false)
@@ -2429,20 +2941,20 @@ VDVideoDisplayMinidriverDX9::VDVideoDisplayMinidriverDX9()
 VDVideoDisplayMinidriverDX9::~VDVideoDisplayMinidriverDX9() {
 }
 
-bool VDVideoDisplayMinidriverDX9::Init(HWND hwnd, const VDVideoDisplaySourceInfo& info) {
+bool VDVideoDisplayMinidriverDX9::Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info) {
 	VDASSERT(!mpManager);
 	mhwnd = hwnd;
 	mSource = info;
 
 	// attempt to initialize D3D9
 	mbFullScreenSet = false;
-	mpManager = VDInitDirect3D9(this);
+	mpManager = VDInitDirect3D9(this, hmonitor);
 	if (!mpManager) {
 		Shutdown();
 		return false;
 	}
 
-	if (!VDInitDisplayDX9(~mpVideoManager)) {
+	if (!VDInitDisplayDX9(hmonitor, ~mpVideoManager)) {
 		Shutdown();
 		return false;
 	}
@@ -2465,7 +2977,7 @@ bool VDVideoDisplayMinidriverDX9::Init(HWND hwnd, const VDVideoDisplaySourceInfo
 	}
 
 	mpUploadContext = new_nothrow VDVideoUploadContextD3D9;
-	if (!mpUploadContext || !mpUploadContext->Init(info.pixmap, info.bAllowConversion, mbHighPrecision && mpVideoManager->Is16FEnabled(), 1)) {
+	if (!mpUploadContext || !mpUploadContext->Init(hmonitor, info.pixmap, info.bAllowConversion, mbHighPrecision && mpVideoManager->Is16FEnabled(), 1)) {
 		Shutdown();
 		return false;
 	}
@@ -2602,6 +3114,18 @@ namespace {
 				double red		= kx * 2;
 				double alpha	= -c3*4;
 
+				blue = fabs(c0 + c3) > 1e-9 ? c0 / (c0 + c3) : 0;
+				green = fabs(green + red) > 1e-9 ? green / (green + red) : 0;
+				red = fabs(c0 + c3);
+
+				// The rounding here is a bit tricky. Here's how we use the values:
+				//	r = p2 * (g + 0.5) + p3 * (r / 2) - p1 * (b / 4) - p4 * (a / 4)
+				//
+				// Which means we need:
+				//	g + 0.5 + r/2 - b/4 - a/4 = 1
+				//	g + r/2 - b/4 - a/4 = 0.5
+				//	g*4 + r*2 - (b + a) = 2 (510 / 1020)
+
 				uint8 ib = VDClampedRoundFixedToUint8Fast((float)blue);
 				uint8 ig = VDClampedRoundFixedToUint8Fast((float)green);
 				uint8 ir = VDClampedRoundFixedToUint8Fast((float)red);
@@ -2722,11 +3246,61 @@ void VDVideoDisplayMinidriverDX9::Shutdown() {
 }
 
 bool VDVideoDisplayMinidriverDX9::ModifySource(const VDVideoDisplaySourceInfo& info) {
-	if (mSource.pixmap.w == info.pixmap.w && mSource.pixmap.h == info.pixmap.h && mSource.pixmap.format == info.pixmap.format && mSource.pixmap.pitch == info.pixmap.pitch) {
-		mSource = info;
-		return true;
+	if (mSource.pixmap.w != info.pixmap.w || mSource.pixmap.h != info.pixmap.h || mSource.pixmap.pitch != info.pixmap.pitch)
+		return false;
+
+	const int prevFormat = mSource.pixmap.format;
+	const int nextFormat = info.pixmap.format;
+	if (prevFormat != nextFormat) {
+		// Check for compatible formats.
+		switch(prevFormat) {
+			case nsVDPixmap::kPixFormat_YUV420it_Planar:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar)
+					break;
+				return false;
+
+			case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar_FR)
+					break;
+				return false;
+
+			case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar_709)
+					break;
+				return false;
+
+			case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR)
+					break;
+				return false;
+
+			case nsVDPixmap::kPixFormat_YUV420ib_Planar:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar)
+					break;
+				return false;
+
+			case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar_FR)
+					break;
+				return false;
+
+			case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar_709)
+					break;
+				return false;
+
+			case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR)
+					break;
+				return false;
+
+			default:
+				return false;
+		}
 	}
-	return false;
+
+	mSource = info;
+	return true;
 }
 
 bool VDVideoDisplayMinidriverDX9::IsValid() {
@@ -2838,7 +3412,7 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 		int scw = std::min<int>((rClippedClient.right + 127) & ~127, rtw);
 		int sch = std::min<int>((rClippedClient.bottom + 127) & ~127, rth);
 
-		if (!mpManager->CreateSwapChain(scw, sch, ~mpSwapChain))
+		if (!mpManager->CreateSwapChain(scw, sch, mbClipToMonitor, ~mpSwapChain))
 			return false;
 
 		mSwapChainW = scw;
@@ -3004,6 +3578,8 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 			ctx.mpSourceTexture1 = mpUploadContext->GetD3DTexture();
 			ctx.mpSourceTexture2 = NULL;
 			ctx.mpSourceTexture3 = NULL;
+			ctx.mpSourceTexture4 = NULL;
+			ctx.mpSourceTexture5 = NULL;
 			ctx.mpInterpFilterH = NULL;
 			ctx.mpInterpFilterV = NULL;
 			ctx.mSourceW = mSource.pixmap.w;
@@ -3030,6 +3606,10 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 			ctx.mFieldOffset = 0.0f;
 			ctx.mDefaultUVScaleCorrectionX = 1.0f;
 			ctx.mDefaultUVScaleCorrectionY = 1.0f;
+			ctx.mChromaScaleU = 1.0f;
+			ctx.mChromaScaleV = 1.0f;
+			ctx.mChromaOffsetU = 0.0f;
+			ctx.mChromaOffsetV = 0.0f;
 			ctx.mbHighPrecision = mbHighPrecision;
 
 			if (updateMode & kModeBobEven)

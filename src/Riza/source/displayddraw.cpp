@@ -3,13 +3,15 @@
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/time.h>
+#include <vd2/system/math.h>
+#include <vd2/Kasumi/blitter.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include "displaydrv.h"
 
-#define VDDEBUG_DISP (void)sizeof printf
-//#define VDDEBUG_DISP VDDEBUG
+//#define VDDEBUG_DISP (void)sizeof printf
+#define VDDEBUG_DISP VDDEBUG
 
 #if 0
 	#define DEBUG_LOG(x) VDLog(kVDLogInfo, VDStringW(L##x))
@@ -34,6 +36,7 @@ public:
 	virtual IDirectDrawSurface2 *GetPrimary() = 0;
 	virtual const DDSURFACEDESC& GetPrimaryDesc() = 0;
 	virtual HMONITOR GetMonitor() = 0;
+	virtual const vdrect32& GetMonitorRect() = 0;
 	virtual bool Restore() = 0;
 };
 
@@ -85,10 +88,20 @@ public:
 	}
 };
 
-class VDDirectDrawManager : public IVDDirectDrawManager {
+struct VDVideoDisplayDDManagerNode : public vdlist_node {};
+
+class VDDirectDrawManager : public IVDDirectDrawManager, public VDVideoDisplayDDManagerNode {
+	VDDirectDrawManager(const VDDirectDrawManager&);
+	VDDirectDrawManager& operator=(const VDDirectDrawManager&);
 public:
+	VDDirectDrawManager(VDThreadId tid, HMONITOR hMonitor);
+	~VDDirectDrawManager();
+
 	bool Init(IVDDirectDrawClient *pClient);
-	void Shutdown(IVDDirectDrawClient *pClient);
+	bool Shutdown(IVDDirectDrawClient *pClient);
+
+	VDThreadID GetThreadId() const { return mThreadId; }
+	HMONITOR GetMonitor() const { return mhMonitor; }
 
 	IDirectDraw2 *GetDDraw() { return mpdd; }
 	const DDCAPS& GetCaps() { return mCaps; }
@@ -97,6 +110,7 @@ public:
 	const DDSURFACEDESC& GetPrimaryDesc() { return mPrimaryDesc; }
 
 	HMONITOR GetMonitor() { return mhMonitor; }
+	const vdrect32& GetMonitorRect() { return mMonitorRect; }
 
 	bool Restore();
 
@@ -105,10 +119,11 @@ protected:
 	void ShutdownPrimary();
 
 
-	int mInitCount;
+	uint32					mInitCount;
 
 	HMODULE					mhmodDD;
-	HMONITOR				mhMonitor;
+	const HMONITOR			mhMonitor;
+	const VDThreadId		mThreadId;
 
 	IDirectDraw2			*mpdd;
 	IDirectDrawSurface2		*mpddsPrimary;
@@ -116,9 +131,49 @@ protected:
 	DDSURFACEDESC			mPrimaryDesc;
 	DDCAPS					mCaps;
 
+	vdrect32				mMonitorRect;
+
 	typedef vdfastvector<IVDDirectDrawClient *> tClients;
 	tClients mClients;
 };
+
+VDDirectDrawManager::VDDirectDrawManager(VDThreadId tid, HMONITOR hMonitor)
+	: mInitCount(0)
+	, mhmodDD(NULL)
+	, mhMonitor(hMonitor)
+	, mThreadId(tid)
+	, mpdd(NULL)
+	, mpddsPrimary(NULL)
+	, mPrimaryDesc()
+	, mCaps()
+	, mMonitorRect(0, 0, 0, 0)
+{
+}
+
+VDDirectDrawManager::~VDDirectDrawManager() {
+}
+
+namespace {
+	struct VDDDGuidFinder {
+		VDDDGuidFinder(HMONITOR hMonitor) : mhMonitor(hMonitor), mbFound(false) {}
+
+		static BOOL WINAPI EnumCallback(GUID FAR *lpGUID, LPSTR lpDriverDescription, LPSTR lpDriverName, LPVOID lpContext, HMONITOR hm) {
+			VDDDGuidFinder *finder = (VDDDGuidFinder *)lpContext;
+
+			if (hm == finder->mhMonitor) {
+				finder->mGuid = *lpGUID;
+				finder->mbFound = true;
+				return FALSE;
+			}
+
+			return TRUE;
+		}
+
+		HMONITOR mhMonitor;
+		GUID mGuid;
+		bool mbFound;
+	};
+}
 
 bool VDDirectDrawManager::Init(IVDDirectDrawClient *pClient) {
 	if (mInitCount) {
@@ -127,8 +182,19 @@ bool VDDirectDrawManager::Init(IVDDirectDrawClient *pClient) {
 		return true;
 	}
 
-	POINT pt = {0,0};
-	mhMonitor = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
+	mMonitorRect.set(0, 0, ::GetSystemMetrics(SM_CXSCREEN), ::GetSystemMetrics(SM_CYSCREEN));
+
+	// GetMonitorInfo() requires Windows 98/2000.
+	if (mhMonitor) {
+		typedef BOOL (APIENTRY *tpGetMonitorInfoA)(HMONITOR mon, LPMONITORINFO lpmi);
+		tpGetMonitorInfoA pGetMonitorInfoA = (tpGetMonitorInfoA)GetProcAddress(GetModuleHandle("user32"), "GetMonitorInfoA");
+
+		if (pGetMonitorInfoA) {
+			MONITORINFO monInfo = {sizeof(MONITORINFO)};
+			if (pGetMonitorInfoA(mhMonitor, &monInfo))
+				mMonitorRect.set(monInfo.rcMonitor.left, monInfo.rcMonitor.top, monInfo.rcMonitor.right, monInfo.rcMonitor.bottom);
+		}
+	}
 
 	mhmodDD = LoadLibrary("ddraw");
 	if (!mhmodDD)
@@ -141,11 +207,31 @@ bool VDDirectDrawManager::Init(IVDDirectDrawClient *pClient) {
 		if (!pDirectDrawCreate)
 			break;
 
+		GUID guid;
+		GUID *pguid = NULL;
+
+		if (mhMonitor) {
+			// NOTE: This is a DX6 function.
+			typedef HRESULT (WINAPI *tpDirectDrawEnumerateEx)(LPDDENUMCALLBACKEXA callback, LPVOID context, DWORD dwFlags);
+			tpDirectDrawEnumerateEx pDirectDrawEnumerateEx = (tpDirectDrawEnumerateEx)GetProcAddress(mhmodDD, "DirectDrawEnumerateExA");
+
+			if (pDirectDrawEnumerateEx) {
+				VDDDGuidFinder finder(mhMonitor);
+				pDirectDrawEnumerateEx(VDDDGuidFinder::EnumCallback, &finder, DDENUM_ATTACHEDSECONDARYDEVICES);
+
+				if (!finder.mbFound)
+					break;
+
+				guid = finder.mGuid;
+				pguid = &guid;
+			}
+		}
+
 		IDirectDraw *pdd;
 		HRESULT hr;
 
 		// create DirectDraw object
-		if (FAILED(pDirectDrawCreate(NULL, &pdd, NULL))) {
+		if (FAILED(pDirectDrawCreate(pguid, &pdd, NULL))) {
 			DEBUG_LOG("VideoDriver/DDraw: Couldn't create DirectDraw2 object\n");
 			break;
 		}
@@ -275,7 +361,7 @@ void VDDirectDrawManager::ShutdownPrimary() {
 	}
 }
 
-void VDDirectDrawManager::Shutdown(IVDDirectDrawClient *pClient) {
+bool VDDirectDrawManager::Shutdown(IVDDirectDrawClient *pClient) {
 	if (pClient) {
 		tClients::iterator it(std::find(mClients.begin(), mClients.end(), pClient));
 
@@ -285,7 +371,7 @@ void VDDirectDrawManager::Shutdown(IVDDirectDrawClient *pClient) {
 		}
 
 		if (--mInitCount)
-			return;
+			return false;
 	}
 
 	ShutdownPrimary();
@@ -298,29 +384,80 @@ void VDDirectDrawManager::Shutdown(IVDDirectDrawClient *pClient) {
 	if (mhmodDD) {
 		FreeLibrary(mhmodDD);
 		mhmodDD = 0;
-	}	
+	}
+
+	return true;
 }
 
-VDDirectDrawManager g_ddman;
+static VDCriticalSection g_csVDDisplayDDManagers;
+static vdlist<VDVideoDisplayDDManagerNode> g_VDDisplayDDManagers;
 
-IVDDirectDrawManager *VDInitDirectDraw(IVDDirectDrawClient *pClient) {
-	VDASSERT(pClient);
-	return g_ddman.Init(pClient) ? &g_ddman : NULL;
+IVDDirectDrawManager *VDInitDirectDraw(HMONITOR hmonitor, IVDDirectDrawClient *pClient) {
+	VDDirectDrawManager *pMgr = NULL;
+	bool firstClient = false;
+	VDThreadID tid = VDGetCurrentThreadID();
+
+	vdsynchronized(g_csVDDisplayDDManagers) {
+		vdlist<VDVideoDisplayDDManagerNode>::iterator it(g_VDDisplayDDManagers.begin()), itEnd(g_VDDisplayDDManagers.end());
+
+		for(; it != itEnd; ++it) {
+			VDDirectDrawManager *mgr = static_cast<VDDirectDrawManager *>(*it);
+
+			if (mgr->GetThreadId() == tid && mgr->GetMonitor() == hmonitor) {
+				pMgr = mgr;
+				break;
+			}
+		}
+
+		if (!pMgr) {
+			pMgr = new_nothrow VDDirectDrawManager(tid, hmonitor);
+			if (!pMgr)
+				return NULL;
+
+			g_VDDisplayDDManagers.push_back(pMgr);
+			firstClient = true;
+		}
+	}
+
+	if (firstClient) {
+		if (!pMgr->Init(pClient)) {
+			vdsynchronized(g_csVDDisplayDDManagers) {
+				g_VDDisplayDDManagers.erase(pMgr);
+			}
+
+			delete pMgr;
+
+			return NULL;
+		}
+	}
+
+	return pMgr;
 }
 
-void VDShutdownDirectDraw(IVDDirectDrawClient *pClient) {
-	VDASSERT(pClient);
-	g_ddman.Shutdown(pClient);
+void VDShutdownDirectDraw(IVDDirectDrawManager *pIMgr, IVDDirectDrawClient *pClient) {
+	VDDirectDrawManager *pMgr = static_cast<VDDirectDrawManager *>(pIMgr);
+
+	if (!pMgr->Shutdown(pClient))
+		return;
+
+	vdsynchronized(g_csVDDisplayDDManagers) {
+		vdlist<VDVideoDisplayDDManagerNode>::iterator it(g_VDDisplayDDManagers.find(pMgr));
+
+		if (it != g_VDDisplayDDManagers.end())
+			g_VDDisplayDDManagers.erase(it);
+	}
+
+	delete pMgr;
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
 class VDVideoDisplayMinidriverDirectDraw : public VDVideoDisplayMinidriver, protected IVDDirectDrawClient {
 public:
-	VDVideoDisplayMinidriverDirectDraw(bool enableOverlays);
+	VDVideoDisplayMinidriverDirectDraw(bool enableOverlays, bool enableOldSecondaryMonitorBehavior);
 	~VDVideoDisplayMinidriverDirectDraw();
 
-	bool Init(HWND hwnd, const VDVideoDisplaySourceInfo& info);
+	bool Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info);
 	void Shutdown();
 
 	bool ModifySource(const VDVideoDisplaySourceInfo& info);
@@ -388,18 +525,21 @@ protected:
 	vdrect32	mSubrect;
 
 	bool		mbEnableOverlays;
+	bool		mbEnableSecondaryDraw;
 
 	DDCAPS		mCaps;
 	VDVideoDisplaySourceInfo	mSource;
 
+	VDPixmapCachedBlitter	mCachedBlitter;
+
 	VDDDrawPresentHistory	mPresentHistory;
 };
 
-IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverDirectDraw(bool enableOverlays) {
-	return new VDVideoDisplayMinidriverDirectDraw(enableOverlays);
+IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverDirectDraw(bool enableOverlays, bool enableOldSecondaryMonitorBehavior) {
+	return new VDVideoDisplayMinidriverDirectDraw(enableOverlays, enableOldSecondaryMonitorBehavior);
 }
 
-VDVideoDisplayMinidriverDirectDraw::VDVideoDisplayMinidriverDirectDraw(bool enableOverlays)
+VDVideoDisplayMinidriverDirectDraw::VDVideoDisplayMinidriverDirectDraw(bool enableOverlays, bool enableOldSecondaryMonitorBehavior)
 	: mhwnd(0)
 	, mpddman(0)
 	, mpddc(0)
@@ -415,6 +555,7 @@ VDVideoDisplayMinidriverDirectDraw::VDVideoDisplayMinidriverDirectDraw(bool enab
 	, mbUseSubrect(false)
 	, mPresentPendingFlags(0)
 	, mbEnableOverlays(enableOverlays)
+	, mbEnableSecondaryDraw(enableOldSecondaryMonitorBehavior)
 {
 	memset(&mSource, 0, sizeof mSource);
 }
@@ -422,7 +563,9 @@ VDVideoDisplayMinidriverDirectDraw::VDVideoDisplayMinidriverDirectDraw(bool enab
 VDVideoDisplayMinidriverDirectDraw::~VDVideoDisplayMinidriverDirectDraw() {
 }
 
-bool VDVideoDisplayMinidriverDirectDraw::Init(HWND hwnd, const VDVideoDisplaySourceInfo& info) {
+bool VDVideoDisplayMinidriverDirectDraw::Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info) {
+	mCachedBlitter.Invalidate();
+
 	switch(info.pixmap.format) {
 	case nsVDPixmap::kPixFormat_Pal8:
 	case nsVDPixmap::kPixFormat_XRGB1555:
@@ -430,15 +573,35 @@ bool VDVideoDisplayMinidriverDirectDraw::Init(HWND hwnd, const VDVideoDisplaySou
 	case nsVDPixmap::kPixFormat_RGB888:
 	case nsVDPixmap::kPixFormat_XRGB8888:
 	case nsVDPixmap::kPixFormat_YUV422_YUYV:
+	case nsVDPixmap::kPixFormat_YUV422_YUYV_FR:
+	case nsVDPixmap::kPixFormat_YUV422_YUYV_709:
+	case nsVDPixmap::kPixFormat_YUV422_YUYV_709_FR:
 	case nsVDPixmap::kPixFormat_YUV422_UYVY:
+	case nsVDPixmap::kPixFormat_YUV422_UYVY_FR:
+	case nsVDPixmap::kPixFormat_YUV422_UYVY_709:
+	case nsVDPixmap::kPixFormat_YUV422_UYVY_709_FR:
 	case nsVDPixmap::kPixFormat_YUV444_Planar:
+	case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
+	case nsVDPixmap::kPixFormat_YUV444_Planar_709:
+	case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
 	case nsVDPixmap::kPixFormat_YUV422_Planar:
+	case nsVDPixmap::kPixFormat_YUV422_Planar_FR:
+	case nsVDPixmap::kPixFormat_YUV422_Planar_709:
+	case nsVDPixmap::kPixFormat_YUV422_Planar_709_FR:
 	case nsVDPixmap::kPixFormat_YUV420_Planar:
+	case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
+	case nsVDPixmap::kPixFormat_YUV420_Planar_709:
+	case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
 	case nsVDPixmap::kPixFormat_YUV411_Planar:
+	case nsVDPixmap::kPixFormat_YUV411_Planar_FR:
+	case nsVDPixmap::kPixFormat_YUV411_Planar_709:
+	case nsVDPixmap::kPixFormat_YUV411_Planar_709_FR:
 	case nsVDPixmap::kPixFormat_YUV410_Planar:
+	case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
+	case nsVDPixmap::kPixFormat_YUV410_Planar_709:
+	case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
 	case nsVDPixmap::kPixFormat_Y8:
 	case nsVDPixmap::kPixFormat_YUV422_V210:
-	case nsVDPixmap::kPixFormat_YUV422_UYVY_709:
 	case nsVDPixmap::kPixFormat_YUV420_NV12:
 		break;
 	default:
@@ -449,7 +612,7 @@ bool VDVideoDisplayMinidriverDirectDraw::Init(HWND hwnd, const VDVideoDisplaySou
 	mSource	= info;
 
 	do {
-		mpddman = VDInitDirectDraw(this);
+		mpddman = VDInitDirectDraw(hmonitor, this);
 		if (!mpddman)
 			break;
 
@@ -559,6 +722,13 @@ bool VDVideoDisplayMinidriverDirectDraw::InitOverlay() {
 	}
 
 	do {
+		// attempt to create clipper (we need this for chromakey fills)
+		if (FAILED(mpddman->GetDDraw()->CreateClipper(0, &mpddc, 0)))
+			break;
+
+		if (FAILED(mpddc->SetHWnd(0, mhwnd)))
+			break;
+
 		// create overlay surface
 		DDSURFACEDESC ddsdOff = {sizeof(DDSURFACEDESC)};
 
@@ -742,7 +912,7 @@ void VDVideoDisplayMinidriverDirectDraw::Shutdown() {
 	ShutdownDisplay();
 	
 	if (mpddman) {
-		VDShutdownDirectDraw(this);
+		VDShutdownDirectDraw(mpddman, this);
 		mpddman = NULL;
 	}
 }
@@ -1035,7 +1205,7 @@ bool VDVideoDisplayMinidriverDirectDraw::Update(UpdateMode mode) {
 	if (dither)
 		VDDitherImage(dstbm, source, mpLogicalPalette);
 	else
-		VDPixmapBlt(dstbm, source);
+		mCachedBlitter.Blit(dstbm, source);
 	
 	hr = pTarget->Unlock(0);
 
@@ -1099,7 +1269,9 @@ bool VDVideoDisplayMinidriverDirectDraw::Paint(HDC hdc, const RECT& rClient, Upd
 			if (pDest) {
 				pDest->SetClipper(mpddc);
 
-				InternalFill(pDest, rClient, mRawChromaKey);
+				RECT rFill = rClient;
+				MapWindowPoints(mhwnd, NULL, (LPPOINT)&rFill, 2);
+				InternalFill(pDest, rFill, mRawChromaKey);
 
 				if (pDest)
 					pDest->SetClipper(NULL);
@@ -1199,23 +1371,9 @@ void VDVideoDisplayMinidriverDirectDraw::InternalRefresh(const RECT& rClient, Up
 		IDirectDraw2 *pDD = mpddman->GetDDraw();
 
 		if (newFrame && !mPresentHistory.mbPresentPending) {
-			int top = 0;
-			int bottom = GetSystemMetrics(SM_CYSCREEN);
-
-			// GetMonitorInfo() requires Windows 98. We might never fail on this because
-			// I think DirectX 9.0c requires 98+, but we have to dynamically link anyway
-			// to avoid a startup link failure on 95.
-			typedef BOOL (APIENTRY *tpGetMonitorInfo)(HMONITOR mon, LPMONITORINFO lpmi);
-			static tpGetMonitorInfo spGetMonitorInfo = (tpGetMonitorInfo)GetProcAddress(GetModuleHandle("user32"), "GetMonitorInfo");
-
-			if (spGetMonitorInfo) {
-				HMONITOR hmon = mpddman->GetMonitor();
-				MONITORINFO monInfo = {sizeof(MONITORINFO)};
-				if (spGetMonitorInfo(hmon, &monInfo)) {
-					top = monInfo.rcMonitor.top;
-					bottom = monInfo.rcMonitor.bottom;
-				}
-			}
+			const vdrect32& monitorRect = mpddman->GetMonitorRect();
+			int top = monitorRect.top;
+			int bottom = monitorRect.bottom;
 
 			RECT r(rDst);
 			if (r.top < top)
@@ -1439,10 +1597,97 @@ void VDVideoDisplayMinidriverDirectDraw::InternalRefresh(const RECT& rClient, Up
 bool VDVideoDisplayMinidriverDirectDraw::InternalBlt(IDirectDrawSurface2 *&pDest, RECT *prDst, RECT *prSrc, bool doNotWait, bool& stillDrawing) {
 	HRESULT hr;
 	DWORD flags = doNotWait ? DDBLT_ASYNC : DDBLT_ASYNC | DDBLT_WAIT;
+	RECT rdstClip;
+	RECT rsrcClip;
+
+	if (prDst && !mbEnableSecondaryDraw) {
+		// NVIDIA drivers have an annoying habit of glitching horribly when the blit rectangle extends outside of the
+		// primary monitor onto a secondary, so we clip manually.
+		const vdrect32& rclip = mpddman->GetMonitorRect();
+
+		if (prDst->left >= prDst->right && prDst->bottom >= prDst->top) {
+			stillDrawing = false;
+			return true;
+		}
+
+		RECT rsrc0;
+		if (prSrc)
+			rsrc0 = *prSrc;
+		else {
+			rsrc0.left = 0;
+			rsrc0.top = 0;
+			rsrc0.right = mSource.pixmap.w;
+			rsrc0.bottom = mSource.pixmap.h;
+		}
+
+		rsrcClip = rsrc0;
+		int offsetL = prDst->left - rclip.left;
+		int offsetT = prDst->top - rclip.top;
+		int offsetR = rclip.right - prDst->right;
+		int offsetB = rclip.bottom - prDst->bottom;
+
+		if ((offsetL | offsetT | offsetR | offsetB) < 0) {
+			rdstClip = *prDst;
+
+			float xRatio = (float)(rsrc0.right - rsrc0.left) / (float)(rdstClip.right - rdstClip.left);
+			float yRatio = (float)(rsrc0.bottom - rsrc0.top) / (float)(rdstClip.bottom - rdstClip.top);
+
+			if (offsetL < 0) {
+				rdstClip.left = rclip.left;
+				rsrcClip.left -= VDRoundToInt(offsetL * xRatio);
+			}
+
+			if (offsetT < 0) {
+				rdstClip.top = rclip.top;
+				rsrcClip.top -= VDRoundToInt(offsetT * yRatio);
+			}
+
+			if (offsetR < 0) {
+				rdstClip.right = rclip.right;
+				rsrcClip.right += VDRoundToInt(offsetR * xRatio);
+			}
+
+			if (offsetB < 0) {
+				rdstClip.bottom = rclip.bottom;
+				rsrcClip.bottom += VDRoundToInt(offsetB * yRatio);
+			}
+
+			if (rdstClip.left >= rdstClip.right || rdstClip.top >= rdstClip.bottom) {
+				stillDrawing = false;
+				return true;
+			}
+
+			if (rsrcClip.right <= rsrcClip.left) {
+				rsrcClip.left = (rsrc0.left + rsrc0.right) >> 1;
+				rsrcClip.right = rsrcClip.left + 1;
+			}
+
+			if (rsrcClip.bottom <= rsrcClip.top) {
+				rsrcClip.top = (rsrc0.top + rsrc0.bottom) >> 1;
+				rsrcClip.bottom = rsrcClip.top + 1;
+			}
+
+			prDst = &rdstClip;
+			prSrc = &rsrcClip;
+		}
+	}
 
 	stillDrawing = false;
 	for(;;) {
-		hr = pDest->Blt(prDst, mpddsBitmap, prSrc, flags, NULL);
+		RECT rdstOffset;
+
+		// offset dest rect from screen coordinates to primary surface coordinates
+		if (prDst) {
+			const vdrect32& rMonitor = mpddman->GetMonitorRect();
+			rdstOffset.left = prDst->left - rMonitor.left;
+			rdstOffset.top = prDst->top - rMonitor.top;
+			rdstOffset.right = prDst->right - rMonitor.left;
+			rdstOffset.bottom = prDst->bottom - rMonitor.top;
+
+			prDst = &rdstOffset;
+		}
+
+		hr = pDest->Blt(prDst, mpddsBitmap, prSrc, 0, NULL);
 
 		if (hr == DDERR_WASSTILLDRAWING) {
 			stillDrawing = true;
@@ -1487,6 +1732,10 @@ bool VDVideoDisplayMinidriverDirectDraw::InternalFill(IDirectDrawSurface2 *&pDes
 	fx.dwFillColor = nativeColor;
 
 	RECT rDst2 = rDst;
+	const vdrect32& rMonitor = mpddman->GetMonitorRect();
+
+	OffsetRect(&rDst2, -rMonitor.left, -rMonitor.top);
+
 	HRESULT hr = pDest->Blt(&rDst2, NULL, NULL, DDBLT_ASYNC | DDBLT_WAIT | DDBLT_COLORFILL, &fx);
 	if (SUCCEEDED(hr))
 		return true;

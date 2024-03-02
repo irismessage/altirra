@@ -2,12 +2,16 @@
 #include "oshelper.h"
 #include <windows.h>
 #include <vd2/system/error.h>
+#include <vd2/system/file.h>
+#include <vd2/system/filesys.h>
 #include <vd2/system/registry.h>
+#include <vd2/system/vdalloc.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Riza/bitmap.h>
+#include "encode_png.h"
 
 bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size) {
 	HMODULE hmod = VDGetLocalModuleHandleW32();
@@ -89,6 +93,21 @@ void ATCopyFrameToClipboard(void *hwnd, const VDPixmap& px) {
 	}
 }
 
+void ATSaveFrame(void *hwnd, const VDPixmap& px, const wchar_t *filename) {
+	VDPixmapBuffer pxbuf(px.w, px.h, nsVDPixmap::kPixFormat_RGB888);
+
+	VDPixmapBlt(pxbuf, px);
+
+	vdautoptr<IVDImageEncoderPNG> encoder(VDCreateImageEncoderPNG());
+	const void *mem;
+	uint32 len;
+	encoder->Encode(pxbuf, mem, len, false);
+
+	VDFile f(filename, nsVDFile::kWrite | nsVDFile::kDenyRead | nsVDFile::kCreateAlways);
+
+	f.write(mem, len);
+}
+
 namespace {
 	struct ATUISavedWindowPlacement {
 		sint32 mLeft;
@@ -145,5 +164,63 @@ void ATUIRestoreWindowPlacement(void *hwnd, const char *name, int nCmdShow) {
 				SetWindowPlacement((HWND)hwnd, &wp);
 			}
 		}
+	}
+}
+
+
+VDStringW ATGetHelpPath() {
+	return VDMakePath(VDGetProgramPath().c_str(), L"Altirra.chm");
+}
+
+void ATShowHelp(void *hwnd, const wchar_t *filename) {
+	try {
+		VDStringW helpFile(ATGetHelpPath());
+
+		if (!VDDoesPathExist(helpFile.c_str()))
+			throw MyError("Cannot find help file: %ls", helpFile.c_str());
+
+		// If we're on Windows NT, check for the ADS and/or network drive.
+		if (VDIsWindowsNT()) {
+			VDStringW helpFileADS(helpFile);
+			helpFileADS += L":Zone.Identifier";
+			if (VDDoesPathExist(helpFileADS.c_str())) {
+				int rv = MessageBox((HWND)hwnd, "Altirra has detected that its help file, Altirra.chm, has an Internet Explorer download location marker on it. This may prevent the help file from being displayed properly, resulting in \"Action canceled\" errors being displayed. Would you like to remove it?", "VirtualDub warning", MB_YESNO|MB_ICONEXCLAMATION);
+
+				if (rv == IDYES)
+					DeleteFileW(helpFileADS.c_str());
+			}
+		}
+
+		if (filename) {
+			helpFile.append(L"::/");
+			helpFile.append(filename);
+		}
+
+		VDStringW helpCommand(VDStringW(L"\"hh.exe\" \"") + helpFile + L'"');
+
+		PROCESS_INFORMATION pi;
+		BOOL retval;
+
+		// CreateProcess will actually modify the string that it gets, soo....
+		if (VDIsWindowsNT()) {
+			STARTUPINFOW si = {sizeof(STARTUPINFOW)};
+			std::vector<wchar_t> tempbufW(helpCommand.size() + 1, 0);
+			helpCommand.copy(&tempbufW[0], tempbufW.size());
+			retval = CreateProcessW(NULL, &tempbufW[0], NULL, NULL, FALSE, CREATE_DEFAULT_ERROR_MODE, NULL, NULL, &si, &pi);
+		} else {
+			STARTUPINFOA si = {sizeof(STARTUPINFOA)};
+			VDStringA strA(VDTextWToA(helpCommand));
+			std::vector<char> tempbufA(strA.size() + 1, 0);
+			strA.copy(&tempbufA[0], tempbufA.size());
+			retval = CreateProcessA(NULL, &tempbufA[0], NULL, NULL, FALSE, CREATE_DEFAULT_ERROR_MODE, NULL, NULL, &si, &pi);
+		}
+
+		if (retval) {
+			CloseHandle(pi.hThread);
+			CloseHandle(pi.hProcess);
+		} else
+			throw MyWin32Error("Cannot launch HTML Help: %%s", GetLastError());
+	} catch(const MyError& e) {
+		e.post((HWND)hwnd, "Altirra Error");
 	}
 }

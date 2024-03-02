@@ -685,6 +685,14 @@ Document::Document()
 }
 
 Document::~Document() {
+	while(!mParagraphs.empty()) {
+		Paragraph *p = mParagraphs.back();
+
+		if (p)
+			delete p;
+
+		mParagraphs.pop_back();
+	}
 }
 
 void Document::SetCallback(IDocumentCallback *pCB) {

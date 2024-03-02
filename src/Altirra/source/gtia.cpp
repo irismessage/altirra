@@ -27,6 +27,7 @@
 #include "console.h"
 #include "artifacting.h"
 #include "savestate.h"
+#include "uirender.h"
 #include "vbxe.h"
 
 using namespace ATGTIA;
@@ -57,7 +58,9 @@ namespace {
 }
 
 ATGTIAEmulator::ATGTIAEmulator()
-	: mpFrameTracker(new ATFrameTracker)
+	: mpConn(NULL)
+	, mpVideoTap(NULL)
+	, mpFrameTracker(new ATFrameTracker)
 	, mArtifactMode(kArtifactNone)
 	, mOverscanMode(kOverscanExtended)
 	, mVBlankMode(kVBlankModeOn)
@@ -71,14 +74,13 @@ ATGTIAEmulator::ATGTIAEmulator()
 	, mbFieldPolarity(false)
 	, mbLastFieldPolarity(false)
 	, mbPostProcessThisFrame(false)
-	, mbShowCassetteIndicator(false)
 	, mPreArtifactFrameBuffer(456*312)
 	, mpArtifactingEngine(new ATArtifactingEngine)
 	, mpRenderer(new ATGTIARenderer)
+	, mpUIRenderer(NULL)
 	, mpVBXE(NULL)
 	, mRCIndex(0)
 	, mRCCount(0)
-	, mShowCassetteIndicatorCounter(0)
 {
 	ResetColors();
 
@@ -104,9 +106,6 @@ ATGTIAEmulator::ATGTIAEmulator()
 	mTRIG[2] = 0x01;
 	mTRIG[3] = 0x01;
 	SetAnalysisMode(kAnalyzeNone);
-	mStatusFlags = 0;
-	mStickyStatusFlags = 0;
-	mCassettePos = 0;
 	memset(mPlayerCollFlags, 0, sizeof mPlayerCollFlags);
 	memset(mMissileCollFlags, 0, sizeof mMissileCollFlags);
 	mCollisionMask = 0xFF;
@@ -130,14 +129,60 @@ ATGTIAEmulator::ATGTIAEmulator()
 
 	SetPALMode(false);
 
-	mStatusCounter[0] = 1;
-	mStatusCounter[1] = 2;
-	mStatusCounter[2] = 3;
-	mStatusCounter[3] = 4;
-	mStatusCounter[4] = 5;
-	mStatusCounter[5] = 6;
-	mStatusCounter[6] = 7;
-	mStatusCounter[7] = 8;
+#if 0
+	FILE *f = fopen("e:\\g2f\\g2f.act", "rb");
+//	FILE *f = fopen("e:\\g2f\\olivierp.act", "rb");
+	uint8 pal[256][3];
+
+	fread(pal, 768, 1, f);
+	fclose(f);
+
+	ResetColors();
+
+	mColorParams.mContrast = 0.823529f;
+
+	int bestError = 0x7fffffff;
+	float th = 0;
+	for(;;) {
+		ATColorParams cp(mColorParams);
+
+		float scale = sin(th) + 1.0f;
+		th += 0.001f;
+		mColorParams.mBrightness += ((float)rand() / 32767.0f - 0.5f) * 0.1f * scale;
+		mColorParams.mContrast += ((float)rand() / 32767.0f - 0.5f) * 0.1f * scale;
+		mColorParams.mSaturation += ((float)rand() / 32767.0f - 0.5f) * 0.1f * scale;
+		mColorParams.mHueRange += ((float)rand() / 32767.0f - 0.5f) * 10.0f * scale;
+		mColorParams.mHueStart += ((float)rand() / 32767.0f - 0.5f) * 10.0f * scale;
+
+		SetColorParams(mColorParams);
+
+		int e = 0;
+		for(int i=1; i<256; ++i) {
+			uint32 cv = mPalette[i];
+			int r1 = pal[i][0];
+			int g1 = pal[i][1];
+			int b1 = pal[i][2];
+			int r2 = (cv >> 16) & 0xff;
+			int g2 = (cv >>  8) & 0xff;
+			int b2 = (cv >>  0) & 0xff;
+
+			int re = r1 - r2;
+			int ge = g1 - g2;
+			int be = b1 - b2;
+
+			e += re*re + ge*ge + be*be;
+		}
+
+		if (e < bestError) {
+			bestError = e;
+
+			VDDEBUG2("Error %d | Brightness %g | Contrast %g | Saturation %g | HueRange %g | HueStart %g\n"
+				, bestError, mColorParams.mBrightness, mColorParams.mContrast, mColorParams.mSaturation, mColorParams.mHueRange, mColorParams.mHueStart);
+		} else {
+			mColorParams = cp;
+		}
+	}
+#endif
 }
 
 ATGTIAEmulator::~ATGTIAEmulator() {
@@ -175,6 +220,10 @@ void ATGTIAEmulator::SetVBXE(ATVBXEEmulator *vbxe) {
 	// kill current frame update
 	mpDst = NULL;
 	mpFrame = NULL;
+}
+
+void ATGTIAEmulator::SetUIRenderer(IATUIRenderer *r) {
+	mpUIRenderer = r;
 }
 
 ATColorParams ATGTIAEmulator::GetColorParams() const {
@@ -222,43 +271,83 @@ void ATGTIAEmulator::SetOverscanPALExtended(bool extended) {
 	mbOverscanPALExtended = extended;
 }
 
+void ATGTIAEmulator::GetRawFrameFormat(int& w, int& h, bool& rgb32) const {
+	rgb32 = (mpVBXE != NULL) || mArtifactMode || mbBlendMode;
+
+	OverscanMode omode = mOverscanMode;
+
+	if (mAnalysisMode || mbForcedBorder)
+		omode = kOverscanFull;
+
+	switch(omode) {
+		case kOverscanFull:
+			w = 456;
+
+			if (mbPALMode && mbOverscanPALExtended)
+				h = 312;
+			else
+				h = 262;
+			break;
+
+		case kOverscanExtended:
+			w = 376;
+
+			if (mbPALMode && mbOverscanPALExtended)
+				h = 288;
+			else
+				h = 240;
+			break;
+
+		case kOverscanNormal:
+			w = 336;
+
+			if (mbPALMode && mbOverscanPALExtended)
+				h = 288;
+			else
+				h = 240;
+			break;
+	}
+
+	if (mbInterlaceEnabled)
+		h *= 2;
+
+	if (mpVBXE != NULL || mArtifactMode == kArtifactNTSCHi)
+		w *= 2;
+}
+
 void ATGTIAEmulator::GetFrameSize(int& w, int& h) const {
-	if (mAnalysisMode || mbForcedBorder) {
-		w = 456;
+	OverscanMode omode = mOverscanMode;
 
-		if (mbPALMode && mbOverscanPALExtended)
-			h = 312;
-		else
-			h = 262;
-	} else {
-		switch(mOverscanMode) {
-			case kOverscanFull:
-				w = 456;
+	if (mAnalysisMode || mbForcedBorder)
+		omode = kOverscanFull;
 
-				if (mbPALMode && mbOverscanPALExtended)
-					h = 312;
-				else
-					h = 262;
-				break;
+	switch(omode) {
+		case kOverscanFull:
+			w = 456;
 
-			case kOverscanExtended:
-				w = 376;
+			if (mbPALMode && mbOverscanPALExtended)
+				h = 312;
+			else
+				h = 262;
+			break;
 
-				if (mbPALMode && mbOverscanPALExtended)
-					h = 288;
-				else
-					h = 240;
-				break;
+		case kOverscanExtended:
+			w = 376;
 
-			case kOverscanNormal:
-				w = 336;
+			if (mbPALMode && mbOverscanPALExtended)
+				h = 288;
+			else
+				h = 240;
+			break;
 
-				if (mbPALMode && mbOverscanPALExtended)
-					h = 288;
-				else
-					h = 240;
-				break;
-		}
+		case kOverscanNormal:
+			w = 336;
+
+			if (mbPALMode && mbOverscanPALExtended)
+				h = 288;
+			else
+				h = 240;
+			break;
 	}
 
 	if (mb14MHzThisFrame) {
@@ -310,14 +399,6 @@ void ATGTIAEmulator::SetVideoOutput(IVDVideoDisplay *pDisplay) {
 	}
 }
 
-void ATGTIAEmulator::SetStatusCounter(uint32 index, uint32 value) {
-	mStatusCounter[index] = value;
-}
-
-void ATGTIAEmulator::SetCassettePosition(float pos) {
-	mCassettePos = pos;
-}
-
 void ATGTIAEmulator::SetPALMode(bool enabled) {
 	mbPALMode = enabled;
 }
@@ -331,6 +412,10 @@ void ATGTIAEmulator::SetConsoleSwitch(uint8 c, bool set) {
 
 void ATGTIAEmulator::SetForcedConsoleSwitches(uint8 c) {
 	mForcedSwitchInput = c;
+}
+
+void ATGTIAEmulator::SetVideoTap(IATGTIAVideoTap *vtap) {
+	mpVideoTap = vtap;
 }
 
 const VDPixmap *ATGTIAEmulator::GetLastFrameBuffer() const {
@@ -549,8 +634,10 @@ bool ATGTIAEmulator::BeginFrame(bool force) {
 			fb->mbAllowConversion = true;
 			fb->mbInterlaced = false;
 			fb->mFlags = IVDVideoDisplay::kAllFields;
-		} else if (!mbTurbo && !force)
-			return false;
+		} else if ((mpVideoTap || !mbTurbo) && !force) {
+			if (!mpDisplay->RevokeBuffer(true, ~mpFrame))
+				return false;
+		}
 	}
 
 	bool use14MHz = (mpVBXE != NULL) || mArtifactMode == kArtifactNTSCHi;
@@ -597,8 +684,13 @@ bool ATGTIAEmulator::BeginFrame(bool force) {
 		mPreArtifactFrameVisibleY1 = 0;
 		mPreArtifactFrameVisibleY2 = mPreArtifactFrame.h;
 
-		if (!mAnalysisMode && !mbForcedBorder && mOverscanMode != kOverscanFull) {
-			ptrdiff_t offset = (mOverscanMode == kOverscanExtended ? 34*2 : 44*2);
+		OverscanMode omode = mOverscanMode;
+
+		if (mbForcedBorder || mAnalysisMode)
+			omode = kOverscanFull;
+
+		if (omode != kOverscanFull) {
+			ptrdiff_t offset = (omode == kOverscanExtended ? 34*2 : 44*2);
 
 			if (use14MHz)
 				offset *= 8;
@@ -609,13 +701,13 @@ bool ATGTIAEmulator::BeginFrame(bool force) {
 				offset += fb->mPixmap.pitch * (mbInterlaceEnabledThisFrame ? 16 : 8);
 
 			fb->mPixmap.data = (char *)fb->mPixmap.data + offset;
-			fb->mPixmap.w = ((mOverscanMode == kOverscanExtended) ? (222 - 34)*2 : (212 - 44)*2) * (use14MHz ? 2 : 1);
+			fb->mPixmap.w = ((omode == kOverscanExtended) ? (222 - 34)*2 : (212 - 44)*2) * (use14MHz ? 2 : 1);
 			fb->mPixmap.h = mbOverscanPALExtendedThisFrame ? 288 : 240;
 
 			mPreArtifactFrameVisibleY1 = mbOverscanPALExtendedThisFrame ? 0 : 8;
 			mPreArtifactFrameVisibleY2 = mPreArtifactFrameVisibleY1 + fb->mPixmap.h;
 
-			mPreArtifactFrameVisible.data = (char *)mPreArtifactFrameVisible.data + (mOverscanMode == kOverscanExtended ? 34*2 : 44*2) * (use14MHz ? 2 : 1) + mPreArtifactFrameVisibleY1*mPreArtifactFrameVisible.pitch;
+			mPreArtifactFrameVisible.data = (char *)mPreArtifactFrameVisible.data + (omode == kOverscanExtended ? 34*2 : 44*2) * (use14MHz ? 2 : 1) + mPreArtifactFrameVisibleY1*mPreArtifactFrameVisible.pitch;
 			mPreArtifactFrameVisible.w = fb->mPixmap.w;
 			mPreArtifactFrameVisible.h = fb->mPixmap.h;
 
@@ -624,6 +716,7 @@ bool ATGTIAEmulator::BeginFrame(bool force) {
 		}
 	}
 
+	mFrameTimestamp = mpConn->GTIAGetTimestamp();
 	return true;
 }
 
@@ -642,6 +735,7 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 	mY = y;
 	mX = 0;
 	mLastSyncX = 34;
+	mbPMRendered = false;
 
 	if (mpFrame) {
 		ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
@@ -684,8 +778,10 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 
 	if (mpVBXE)
 		mpVBXE->BeginScanline((uint32*)mpDst, mMergeBuffer, mAnticData, mbHiresMode);
-	else if (mpDst)
+	else if (mpDst) {
+		mpRenderer->SetVBlank((uint32)(y - 8) >= 240);
 		mpRenderer->BeginScanline(mpDst, mMergeBuffer, mAnticData, mbHiresMode);
+	}
 
 	mPlayerTriggerPos[0] = mPlayerPos[0] < 34 ? mPlayerPos[0] : 0;
 	mPlayerTriggerPos[1] = mPlayerPos[1] < 34 ? mPlayerPos[1] : 0;
@@ -714,7 +810,7 @@ void ATGTIAEmulator::EndScanline(uint8 dlControl) {
 		if (mpVBXE)
 			mpVBXE->RenderScanline(222);
 		else
-			mpRenderer->RenderScanline(222);
+			mpRenderer->RenderScanline(222, mbPMRendered);
 	}
 
 	if (mpVBXE)
@@ -1003,6 +1099,8 @@ void ATGTIAEmulator::SyncTo(int x1, int x2) {
 					px2 = xend;
 
 				if (px1 < px2) {
+					mbPMRendered = true;
+
 					uint8 *pldst = mMergeBuffer + px1;
 					uint8 bit = P0 << player;
 					sint32 mask = Expand(mPlayerShiftData[player], mPlayerSize[player]) << (px1 - px);
@@ -1131,6 +1229,9 @@ void ATGTIAEmulator::SyncTo(int x1, int x2) {
 			}
 		}
 
+		if (mranges != mrnext)
+			mbPMRendered = true;
+
 		for(MissileRange *mr = mranges; mr != mrnext; ++mr) {
 			int missile = mr->mIndex;
 
@@ -1175,208 +1276,7 @@ void ATGTIAEmulator::RenderActivityMap(const uint8 *src) {
 	}
 }
 
-namespace {
-	static const uint8 kCharData[12][7][4]={
-#define X 0xFF
-		{
-			X,X,X,X,
-			X,X,0,X,
-			X,0,X,0,
-			X,0,X,0,
-			X,0,X,0,
-			X,X,0,X,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,X,0,X,
-			X,0,0,X,
-			X,X,0,X,
-			X,X,0,X,
-			X,0,0,0,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,0,0,X,
-			X,X,X,0,
-			X,X,0,X,
-			X,0,X,X,
-			X,0,0,0,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,0,0,X,
-			X,X,X,0,
-			X,X,0,X,
-			X,X,X,0,
-			X,0,0,X,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,0,X,0,
-			X,0,X,0,
-			X,0,0,0,
-			X,X,X,0,
-			X,X,X,0,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,0,0,0,
-			X,0,X,X,
-			X,0,0,X,
-			X,X,X,0,
-			X,0,0,X,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,X,0,0,
-			X,0,X,X,
-			X,0,0,X,
-			X,0,X,0,
-			X,X,0,X,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,0,0,0,
-			X,X,X,0,
-			X,X,0,X,
-			X,X,0,X,
-			X,X,0,X,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,X,0,X,
-			X,0,X,0,
-			X,X,0,X,
-			X,0,X,0,
-			X,X,0,X,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,X,0,X,
-			X,0,X,0,
-			X,X,0,0,
-			X,X,X,0,
-			X,0,0,X,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,X,0,0,
-			X,0,X,X,
-			X,0,X,X,
-			X,0,X,X,
-			X,X,0,0,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,X,X,X,
-			X,X,0,X,
-			X,X,X,X,
-			X,X,0,X,
-			X,X,X,X,
-			X,X,X,X,
-		},
-#undef X
-	};
-
-	void DrawString8(const VDPixmap& px, const uint32 *palette, int x, int y, uint8 forecolor, uint8 backcolor, const char *str) {
-		size_t len = strlen(str);
-		int w = px.w;
-		int h = px.h;
-
-		if (x >= w || y >= h || y <= -7)
-			return;
-
-		int y1 = y < 0 ? -y : 0;
-		int y2 = y > h - 7 ? h - y : 7;
-		uint8 xorcolor = forecolor ^ backcolor;
-
-		for(;;) {
-			const uint8 *data = NULL;
-
-			if (!len) {
-				if (x < 0 || x >= w)
-					break;
-
-				uint8 *dst = (uint8 *)px.data + px.pitch * (y + y1);
-
-				if (px.format == nsVDPixmap::kPixFormat_XRGB8888) {
-					for(int yi = y1; yi < y2; ++yi) {
-						((uint32 *)dst)[x] = palette[backcolor];
-						dst += px.pitch;
-					}
-				} else {
-					for(int yi = y1; yi < y2; ++yi) {
-						dst[x] = backcolor;
-						dst += px.pitch;
-					}
-				}
-
-				break;
-			}
-
-			--len;
-			const char c = *str++;
-
-			if (c >= '0' && c <= '9')
-				data = kCharData[c - '0'][0];
-			else if (c == 'C')
-				data = kCharData[10][0];
-			else if (c == ':')
-				data = kCharData[11][0];
-
-			if (data) {
-				int x1 = 0;
-				int x2 = 4;
-
-				if (x < 0)
-					x1 = -x;
-
-				if (x > w - 4)
-					x2 = w - x;
-
-				const uint8 *src = data + 5 * y1;
-				uint8 *dst = (uint8 *)px.data + px.pitch * (y + y1);
-
-				if (px.format == nsVDPixmap::kPixFormat_XRGB8888) {
-					for(int yi = y1; yi < y2; ++yi) {
-						uint32 *dstrow = (uint32 *)dst;
-
-						for(int xi = x1; xi < x2; ++xi) {
-							dstrow[x + xi] = palette[forecolor ^ (src[xi] & xorcolor)];
-						}
-
-						src += 4;
-						dst += px.pitch;
-					}
-				} else {
-					for(int yi = y1; yi < y2; ++yi) {
-						for(int xi = x1; xi < x2; ++xi) {
-							dst[x + xi] = forecolor ^ (src[xi] & xorcolor);
-						}
-
-						src += 4;
-						dst += px.pitch;
-					}
-				}
-			}
-
-			x += 4;
-		} 
-	}
-}
-
-void ATGTIAEmulator::UpdateScreen() {
+void ATGTIAEmulator::UpdateScreen(bool immediate) {
 	if (!mpFrame)
 		return;
 
@@ -1392,10 +1292,23 @@ void ATGTIAEmulator::UpdateScreen() {
 			if (mpVBXE)
 				mpVBXE->RenderScanline(x);
 			else
-				mpRenderer->RenderScanline(x);
+				mpRenderer->RenderScanline(x, mbPMRendered);
 		}
 
-		uint8 *row = (uint8 *)pxdst.data + (mY+1)*pxdst.pitch;
+		uint32 y = mY + 1;
+
+		if (mbOverscanPALExtendedThisFrame) {
+			// What we do here is wrap the last 16 lines back up to the top of
+			// the display. This isn't correct, as it causes those lines to
+			// lead by a frame, but it at least solves the vertical position
+			// issue.
+			if (y >= 312 - 16)
+				y -= 312 - 16;
+			else
+				y += 16;
+		}
+
+		uint8 *row = (uint8 *)pxdst.data + y*pxdst.pitch;
 
 		if (mpVBXE) {
 			VDMemset32(row, 0x00, 4*x);
@@ -1413,62 +1326,8 @@ void ATGTIAEmulator::UpdateScreen() {
 		mpDisplay->SetSourcePersistent(true, mpFrame->mPixmap);
 	} else {
 		const VDPixmap& pxdst = mbPostProcessThisFrame ? mPreArtifactFrameVisible : fb->mPixmap;
-		uint32 statusFlags = mStatusFlags | mStickyStatusFlags;
-		mStickyStatusFlags = mStatusFlags;
 
-		int x = pxdst.w;
-		int y = pxdst.h - 7;
-
-		for(int i = 7; i >= 0; --i) {
-			if (statusFlags & (1 << i)) {
-				char buf[11];
-
-				sprintf(buf, "%u", mStatusCounter[i]);
-
-				x -= 4 * strlen(buf) + 1;
-
-				DrawString8(pxdst, mPalette, x, y, 0, 0x1F + (i << 5), buf);
-			} else {
-				x -= 5;
-			}
-		}
-
-		if (statusFlags & 0x100) {
-			DrawString8(pxdst, mPalette, 0, y, 0, 0x9F, "C");
-			mShowCassetteIndicatorCounter = 60;
-		} else if (mbShowCassetteIndicator)
-			mShowCassetteIndicatorCounter = 60;
-
-		if (mShowCassetteIndicatorCounter) {
-			--mShowCassetteIndicatorCounter;
-
-			char buf[64];
-			int cpos = VDRoundToInt(mCassettePos);
-
-			int secs = cpos % 60;
-			int mins = cpos / 60;
-			int hours = mins / 60;
-			mins %= 60;
-
-			sprintf(buf, "%02u:%02u:%02u", hours, mins, secs);
-			DrawString8(pxdst, mPalette, 5, y, 0x94, 0, buf);
-		}
-
-#if 0
-		for(int x=0; x<256; ++x) {
-			int y = VDRoundToInt(pxdst.h * (0.5 - g_arhist[x] / 3200.0));
-
-			if ((unsigned)x < pxdst.w && (unsigned)y < pxdst.h)
-				((uint8 *)pxdst.data)[pxdst.pitch * y + x] = 0x0F;
-		}
-
-		for(int x=0; x<256; ++x) {
-			int y = VDRoundToInt(pxdst.h * (1.0 - g_arhist2[x] / 16384.0));
-
-			if ((unsigned)x < pxdst.w && (unsigned)y < pxdst.h)
-				((uint8 *)pxdst.data)[pxdst.pitch * y + x] = 0x4C;
-		}
-#endif
+		ApplyArtifacting();
 
 		// copy over previous field
 		if (mbInterlaceEnabledThisFrame) {
@@ -1491,7 +1350,12 @@ void ATGTIAEmulator::UpdateScreen() {
 			mbLastFieldPolarity = mbFieldPolarity;
 		}
 
-		ApplyArtifacting();
+		if (mpVideoTap)
+			mpVideoTap->WriteFrame(mpFrame->mPixmap, mFrameTimestamp);
+
+		if (mpUIRenderer)
+			mpUIRenderer->Render(mpFrame->mPixmap, mPalette);
+
 		mpDisplay->PostBuffer(mpFrame);
 
 		mpLastFrame = mpFrame;

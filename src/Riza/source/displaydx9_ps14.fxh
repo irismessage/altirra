@@ -72,10 +72,17 @@ pixelshader bicubic1_4_ps = asm {
 	texld r2, t2
 	texld r3, t3
 	texld r4, t4
+#if 0
 	mad_x4 r2, r2, r0_bias.g, r2
 	mad r2, r1, -r0.b, r2
 	mad_d2 r2, r4, -r0.a, r2
 	mad_d2 r0, r3, r0.r, r2
+#else
+	lrp r1, r0.b, r1, r4
+	lrp r2, r0.g, r2, r3
+	add r1, r2, -r1
+	mad r0, r1, r0.r, r2
+#endif
 };
 
 technique bicubic1_4 {

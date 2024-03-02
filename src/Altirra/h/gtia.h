@@ -24,12 +24,19 @@
 
 class IVDVideoDisplay;
 class VDVideoDisplayFrame;
+class IATUIRenderer;
 
 class IATGTIAEmulatorConnections {
 public:
 	virtual uint32 GTIAGetXClock() = 0;
+	virtual uint32 GTIAGetTimestamp() const = 0;
 	virtual void GTIASetSpeaker(bool state) = 0;
 	virtual void GTIARequestAnticSync() = 0;
+};
+
+class IATGTIAVideoTap {
+public:
+	virtual void WriteFrame(const VDPixmap& px, uint32 timestamp) = 0;
 };
 
 class ATFrameTracker;
@@ -58,6 +65,7 @@ public:
 	void Init(IATGTIAEmulatorConnections *);
 
 	void SetVBXE(ATVBXEEmulator *);
+	void SetUIRenderer(IATUIRenderer *);
 	
 	enum AnalysisMode {
 		kAnalyzeNone,
@@ -100,6 +108,7 @@ public:
 	bool IsOverscanPALExtended() const { return mbOverscanPALExtended; }
 	void SetOverscanPALExtended(bool extended);
 
+	void GetRawFrameFormat(int& w, int& h, bool& rgb32) const;
 	void GetFrameSize(int& w, int& h) const;
 
 	void SetForcedBorder(bool forcedBorder) { mbForcedBorder = forcedBorder; }
@@ -112,14 +121,6 @@ public:
 	void SetPFCollisionsEnabled(bool enable);
 
 	void SetVideoOutput(IVDVideoDisplay *pDisplay);
-	void SetStatusFlags(uint32 flags) { mStatusFlags |= flags; mStickyStatusFlags |= flags; }
-	void ResetStatusFlags(uint32 flags) { mStatusFlags &= ~flags; }
-	void PulseStatusFlags(uint32 flags) { mStickyStatusFlags |= flags; }
-
-	void SetStatusCounter(uint32 index, uint32 value);
-
-	void SetCassetteIndicatorVisible(bool vis) { mbShowCassetteIndicator = vis; }
-	void SetCassettePosition(float pos);
 
 	void SetPALMode(bool enabled);
 
@@ -135,6 +136,8 @@ public:
 	void SetConsoleSwitch(uint8 c, bool down);
 	void SetForcedConsoleSwitches(uint8 c);
 	void SetControllerTrigger(int index, bool state) { mTRIG[index] = state ? 0x00 : 0x01; }
+
+	void SetVideoTap(IATGTIAVideoTap *vtap);
 
 	const VDPixmap *GetLastFrameBuffer() const;
 
@@ -166,7 +169,7 @@ public:
 	void Sync();
 
 	void RenderActivityMap(const uint8 *src);
-	void UpdateScreen();
+	void UpdateScreen(bool immediate);
 	void RecomputePalette();
 
 	uint8 DebugReadByte(uint8 reg) const;
@@ -189,9 +192,11 @@ protected:
 
 	IATGTIAEmulatorConnections *mpConn; 
 	IVDVideoDisplay *mpDisplay;
+	IATGTIAVideoTap *mpVideoTap;
 	uint32	mX;
 	uint32	mY;
 	uint32	mLastSyncX;
+	bool	mbPMRendered;
 
 	AnalysisMode	mAnalysisMode;
 	ArtifactMode	mArtifactMode;
@@ -248,19 +253,13 @@ protected:
 
 	uint8	*mpDst;
 	vdrefptr<VDVideoDisplayFrame>	mpFrame;
+	uint32	mFrameTimestamp;
 	ATFrameTracker *mpFrameTracker;
 	bool	mbANTICHiresMode;
 	bool	mbHiresMode;
 	bool	mbTurbo;
 	bool	mbPALMode;
-	bool	mbShowCassetteIndicator;
-	int		mShowCassetteIndicatorCounter;
 	bool	mbForcedBorder;
-
-	uint32	mStatusFlags;
-	uint32	mStickyStatusFlags;
-	uint32	mStatusCounter[8];
-	float	mCassettePos;
 
 	const uint8 *mpPriTable;
 	const uint8 *mpColorTable;
@@ -282,6 +281,7 @@ protected:
 	vdrefptr<VDVideoDisplayFrame> mpLastFrame;
 
 	ATGTIARenderer *mpRenderer;
+	IATUIRenderer *mpUIRenderer;
 	ATVBXEEmulator *mpVBXE;
 
 	typedef vdfastvector<RegisterChange> RegisterChanges;

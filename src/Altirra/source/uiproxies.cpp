@@ -4,7 +4,7 @@
 
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/accel.h>
-#include "UIProxies.h"
+#include "uiproxies.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -20,6 +20,11 @@ void VDUIProxyControl::Attach(VDZHWND hwnd) {
 
 void VDUIProxyControl::Detach() {
 	mhwnd = NULL;
+}
+
+void VDUIProxyControl::SetArea(const vdrect32& r) {
+	if (mhwnd)
+		SetWindowPos(mhwnd, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 VDZLRESULT VDUIProxyControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
@@ -471,6 +476,7 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 				mEventItemDoubleClicked.Raise(this, selIndex);
 			}
 			return 0;
+
 	}
 
 	return 0;
@@ -532,6 +538,124 @@ VDZLRESULT VDUIProxyHotKeyControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lPa
 		VDUIAccelerator accel;
 		GetAccelerator(accel);
 		mEventHotKeyChanged.Raise(this, accel);
+	}
+
+	return 0;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+VDUIProxyTabControl::VDUIProxyTabControl() {
+}
+
+VDUIProxyTabControl::~VDUIProxyTabControl() {
+}
+
+void VDUIProxyTabControl::AddItem(const wchar_t *s) {
+	if (!mhwnd)
+		return;
+
+	int n = TabCtrl_GetItemCount(mhwnd);
+	if (VDIsWindowsNT()) {
+		TCITEMW tciw = { TCIF_TEXT };
+
+		tciw.pszText = (LPWSTR)s;
+
+		SendMessageW(mhwnd, TCM_INSERTITEMW, n, (LPARAM)&tciw);
+	} else {
+		TCITEMA tcia = { TCIF_TEXT };
+		VDStringA sa(VDTextWToA(s));
+
+		tcia.pszText = (LPSTR)sa.c_str();
+
+		SendMessageA(mhwnd, TCM_INSERTITEMA, n, (LPARAM)&tcia);
+	}
+}
+
+void VDUIProxyTabControl::DeleteItem(int index) {
+	if (mhwnd)
+		SendMessage(mhwnd, TCM_DELETEITEM, index, 0);
+}
+
+vdsize32 VDUIProxyTabControl::GetControlSizeForContent(const vdsize32& sz) const {
+	if (!mhwnd)
+		return vdsize32(0, 0);
+
+	RECT r = { 0, 0, sz.w, sz.h };
+	TabCtrl_AdjustRect(mhwnd, TRUE, &r);
+
+	return vdsize32(r.right - r.left, r.bottom - r.top);
+}
+
+vdrect32 VDUIProxyTabControl::GetContentArea() const {
+	if (!mhwnd)
+		return vdrect32(0, 0, 0, 0);
+
+	RECT r = {0};
+	GetWindowRect(mhwnd, &r);
+
+	HWND hwndParent = GetParent(mhwnd);
+	if (hwndParent)
+		MapWindowPoints(NULL, hwndParent, (LPPOINT)&r, 2);
+
+	TabCtrl_AdjustRect(mhwnd, FALSE, &r);
+
+	return vdrect32(r.left, r.top, r.right, r.bottom);
+}
+
+int VDUIProxyTabControl::GetSelection() const {
+	if (!mhwnd)
+		return -1;
+
+	return (int)SendMessage(mhwnd, TCM_GETCURSEL, 0, 0);
+}
+
+void VDUIProxyTabControl::SetSelection(int index) {
+	if (mhwnd)
+		SendMessage(mhwnd, TCM_SETCURSEL, index, 0);
+}
+
+VDZLRESULT VDUIProxyTabControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
+	if (((const NMHDR *)lParam)->code == TCN_SELCHANGE) {
+		mSelectionChanged.Raise(this, GetSelection());
+	}
+
+	return 0;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+VDUIProxyComboBoxControl::VDUIProxyComboBoxControl() {
+}
+
+VDUIProxyComboBoxControl::~VDUIProxyComboBoxControl() {
+}
+
+void VDUIProxyComboBoxControl::AddItem(const wchar_t *s) {
+	if (!mhwnd)
+		return;
+
+	if (VDIsWindowsNT())
+		SendMessageW(mhwnd, CB_ADDSTRING, 0, (LPARAM)s);
+	else
+		SendMessageA(mhwnd, CB_ADDSTRING, 0, (LPARAM)VDTextWToA(s).c_str());
+}
+
+int VDUIProxyComboBoxControl::GetSelection() const {
+	if (!mhwnd)
+		return -1;
+
+	return (int)SendMessage(mhwnd, CB_GETCURSEL, 0, 0);
+}
+
+void VDUIProxyComboBoxControl::SetSelection(int index) {
+	if (mhwnd)
+		SendMessage(mhwnd, CB_SETCURSEL, index, 0);
+}
+
+VDZLRESULT VDUIProxyComboBoxControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
+	if (HIWORD(wParam) == CBN_SELCHANGE) {
+		mSelectionChanged.Raise(this, GetSelection());
 	}
 
 	return 0;

@@ -30,6 +30,7 @@
 #include <vd2/system/log.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/registry.h>
+#include <vd2/system/strutil.h>
 #include <vd2/system/thread.h>
 #include <objbase.h>
 #include <dshow.h>
@@ -549,6 +550,7 @@ namespace {
 		if (pEm) {
 			IMoniker *pM;
 			ULONG cFetched;
+			vdvector<VDStringW> namesToCheck;
 
 			while(S_OK == pEm->Next(1, &pM, &cFetched) && cFetched==1) {
 				IPropertyBag *pPropBag;
@@ -561,6 +563,34 @@ namespace {
 
 					if (SUCCEEDED(pPropBag->Read(L"FriendlyName", &varName, 0))) {
 						VDStringW name(varName.bstrVal);
+
+						// Check if we have a name conflict.
+						VDStringW nameTemplate;
+						int collisionCounter = 1;
+
+						for(;;) {
+							bool collisionDetected = false;
+
+							for(vdvector<VDStringW>::const_iterator it(namesToCheck.begin()), itEnd(namesToCheck.end()); it != itEnd; ++it) {
+								const VDStringW& ent = *it;
+
+								if (!vdwcsicmp(ent.c_str(), name.c_str())) {
+									if (collisionCounter == 1)
+										nameTemplate = name;
+
+									++collisionCounter;
+
+									name.sprintf(L"%ls #%d", nameTemplate.c_str(), collisionCounter);
+									collisionDetected = true;
+									break;
+								}
+							}
+
+							if (!collisionDetected)
+								break;
+						}
+
+						namesToCheck.push_back(name);
 
 						if (devclsid == CLSID_VideoInputDeviceCategory) {
 							bool isVFWDriver = false;
@@ -1639,6 +1669,10 @@ bool VDCaptureDriverDS::Init(VDGUIHandle hParent) {
 	}
 
 	Enumerate(mAudioDevices, CLSID_AudioInputDeviceCategory);
+
+#if 0	// Disabled Dazzle hack for now.
+	Enumerate(mAudioDevices, KSCATEGORY_CAPTURE);
+#endif
 
 	// Select the first audio device if there is one.
 	mAudioDeviceIndex = -1;

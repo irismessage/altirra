@@ -36,6 +36,7 @@ public:
 class IVDTextEditorCallback {
 public:
 	virtual void OnTextEditorUpdated() = 0;
+	virtual void OnTextEditorScrolled(int firstVisiblePara, int lastVisiblePara, int visibleParaCount, int totalParaCount) = 0;
 };
 
 class IVDTextEditorColorization {
@@ -83,8 +84,13 @@ public:
 
 	virtual bool Find(const char *text, int len, bool caseSensitive, bool wholeWord, bool searchUp) = 0;
 
+	virtual int	GetVisibleHeight() = 0;
+	virtual	int	GetParagraphForYPos(int y) = 0;
+	virtual int GetVisibleLineCount() = 0;
 	virtual void MakeLineVisible(int line) = 0;
 	virtual void CenterViewOnLine(int line) = 0;
+
+	virtual void SetUpdateEnabled(bool updateEnabled) = 0;
 
 	virtual void Undo() = 0;
 	virtual void Redo() = 0;

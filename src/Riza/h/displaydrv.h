@@ -68,7 +68,7 @@ public:
 
 	virtual ~IVDVideoDisplayMinidriver() {}
 
-	virtual bool Init(HWND hwnd, const VDVideoDisplaySourceInfo& info) = 0;
+	virtual bool Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info) = 0;
 	virtual void Shutdown() = 0;
 
 	virtual bool ModifySource(const VDVideoDisplaySourceInfo& info) = 0;
@@ -134,8 +134,8 @@ protected:
 };
 
 IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverOpenGL();
-IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverDirectDraw(bool enableOverlays);
+IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverDirectDraw(bool enableOverlays, bool enableSecondaryDraw);
 IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverGDI();
-IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverDX9();
+IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverDX9(bool clipToMonitor);
 
 #endif

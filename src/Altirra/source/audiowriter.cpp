@@ -26,7 +26,7 @@ ATAudioWriter::ATAudioWriter(const wchar_t *filename)
 ATAudioWriter::~ATAudioWriter() {
 }
 
-void ATAudioWriter::WriteRawAudio(const float *left, const float *right, uint32 count) {
+void ATAudioWriter::WriteRawAudio(const float *left, const float *right, uint32 count, uint32 timestamp) {
 	if (right) {
 		WriteInterleaved(left, right, count);
 	} else {

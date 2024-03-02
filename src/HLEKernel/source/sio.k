@@ -40,6 +40,11 @@ SIOErrorDeviceDone	= $90
 	
 	jsr		SIOInitBaseTransfers
 	
+	;check for cassette
+	lda		ddevic
+	cmp		#$5f
+	sne:jmp	SIOCassette
+	
 	;init command buffer
 	lda		ddevic
 	clc
@@ -54,9 +59,6 @@ SIOErrorDeviceDone	= $90
 		
 	;assert command line
 	mva		#$34		pbctl
-
-	;clear stray bytes
-	lda		serin
 
 	;send command frame
 	mva		#0			nocksm
@@ -110,6 +112,8 @@ ackOK:
 	
 xit:
 	lda		#0
+	sta		critic
+
 	ldx		#6
 silenceloop:
 	sta		audc1,x
@@ -126,15 +130,7 @@ silenceloop:
 completeOK:
 
 	;setup buffer pointers
-	clc
-	lda		dbuflo
-	sta		bufrlo
-	adc		dbytlo
-	sta		bfenlo
-	lda		dbufhi
-	sta		bufrhi
-	adc		dbythi
-	sta		bfenhi
+	jsr		SIOSetupBufferPointers
 		
 	;check if we should send a data frame
 	bit		dstats
@@ -173,6 +169,23 @@ dataSendOK:
 	
 	;reset serial status
 	sta		skres
+	
+	;set critic flag
+	mva		#$ff	critic
+	rts
+.endp
+
+;==============================================================================
+.proc SIOSetupBufferPointers
+	clc
+	lda		dbuflo
+	sta		bufrlo
+	adc		dbytlo
+	sta		bfenlo
+	lda		dbufhi
+	sta		bufrhi
+	adc		dbythi
+	sta		bfenhi
 	rts
 .endp
 
@@ -196,7 +209,7 @@ dataSendOK:
 	cli
 	
 	mva		#0		xmtdon
-	mva		#0		status
+	mva		#1		status
 	mva		#0		chksum
 	mva		#0		chksnt
 	
@@ -236,10 +249,12 @@ error:
 ;SIO receive routine
 ;
 .proc SIOReceive
+	lda		#0
+use_checksum:
+	sta		chksum
 	mva		#0		bufrfl
 	mva		#0		recvdn
-	mva		#0		status
-	mva		#0		chksum
+	mva		#1		status
 
 	;configure serial port for asynchronous receive
 	;enable receive IRQ
@@ -454,3 +469,162 @@ xit:
 	mva		#0	timflg
 	rts
 .endp
+
+;==============================================================================
+.proc SIOCassette
+	;check if it's read sector
+	lda		dcomnd
+	cmp		#$52
+	beq		isread
+
+	;nope, bail	
+	ldy		#SIOErrorNAK
+	jmp		xit
+	
+isread:
+	jsr		SIOCassetteReadFrame
+xit:
+	jmp		SIO.xit
+	
+.endp
+
+;==============================================================================
+.proc SIOCassetteReadFrame
+	;set to 600 baud, turn on async read to shut off annoying tone
+	mva		#$cc audf3
+	mva		#$05 audf4
+	mva		#$00 audc3
+	mva		#$00 audc4
+	lda		sskctl
+	and		#$8f
+	ora		#$10
+	sta		sskctl
+	mva		#$ff critic
+
+	;set timeout (approx; no NTSC/PAL switching yet)
+	mva		#$ff timflg
+	lda		#1
+	ldx		#>3600
+	ldy		#<3600
+	jsr		SetVBlankVector
+
+	;wait for beginning of frame
+	lda		#$10		;test bit 4 of SKSTAT
+waitzerostart:
+	bit		timflg
+	bpl		timeout
+	bit		skstat
+	bne		waitzerostart
+	
+	;take first time measurement
+	jsr		readtimer
+	sty		timer1+1
+	sta		timer1
+
+	;wait for 19 bit transitions
+	lda		#$10		;test bit 4 of SKSTAT
+	ldx		#10			;test 10 pairs of bits
+waitone:
+	bit		timflg
+	bpl		timeout
+	bit		skstat
+	beq		waitone
+	dex
+	beq		waitdone
+waitzero:
+	bit		timflg
+	bpl		timeout
+	bit		skstat
+	bne		waitzero
+	beq		waitone
+waitdone:
+	
+	;take second time measurement
+	jsr		readtimer
+	sta		timer2
+	sty		timer2+1
+	
+	;compute baud rate and adjust pokey divisor
+	;
+	; counts = (pal ? 156 : 131)*rtdelta + vdelta;
+	; lines = counts * 2
+	; lines_per_bit = lines / 16
+	; cycles_per_bit = lines_per_bit * 114
+	; pokey_divisor = cycles_per_bit / 2 - 7
+	;
+	; -or-
+	;
+	; pokey_divisor = counts * 2 * 114 / 15 / 2 - 7
+	;               = counts * 114 / 15 - 7
+	;
+	;16 bits at 600 baud is nominally 209 scanline pairs. This means that we
+	;don't have to worry about more than two frames, which is at least 262
+	;scanline pairs or less than 480 baud. However, since we're using HLE,
+	;we can cheat and do this in C++.
+	
+	#{
+		const bool pal = (kdb.PALNTS >= 0x80);
+		uint32 t2 = kdb.TIMER2;
+		uint32 t1 = kdb.TIMER1;
+		int lines = (pal ? 156 : 131);
+		int vbldelta = ((t2 >> 8) - (t1 >> 8)) & 0xff;
+		int line2 = (int)(t2 & 0xff);
+		int line1 = (int)(t1 & 0xff);
+		
+		if (line2 >= 124)
+			line2 -= lines;
+			
+		if (line1 >= 124)
+			line1 -= lines;
+		
+		int linedelta = line2 - line1;
+		int counts = vbldelta * lines + linedelta;
+		int divisor = counts * 114 / 19 - 7;
+		
+		VDDEBUG2("%d counts (divisor %d)", counts, divisor);
+		
+		kdb.AUDF3 = (uint8)divisor;
+		kdb.AUDF4 = (uint8)(divisor >> 8);
+	#}
+	
+	;kick pokey into init mode to reset serial input shift hw
+	ldx		sskctl
+	txa
+	and		#$fc
+	sta		skctl
+	
+	;reset serial port status
+	sta		skres
+	
+	;re-enable serial input hw
+	stx		skctl
+	
+	jsr		SIOSetupBufferPointers
+	
+	;stuff two $55 bytes into the buffer, which we "read" above
+	lda		#$55
+	ldy		#0
+	ldx		#2
+aaloop:
+	sta		(bufrlo),y
+	inw		bufrlo
+	dex:bne	aaloop
+	
+	;reset checksum for two $55 bytes and receive frame
+	lda		#$aa
+	sta		chksum
+	
+	jmp		SIOReceive.use_checksum
+
+readtimer:
+	ldy		rtclok+2
+	lda		vcount
+	cpy		rtclok+2
+	bne		readtimer
+	rts
+	
+timeout:
+	ldy		#SIOErrorTimeout
+	jmp		SIO.xit
+.endp
+

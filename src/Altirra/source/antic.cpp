@@ -417,7 +417,9 @@ bool ATAnticEmulator::AdvanceSpecial() {
 		UpdateCurrentCharRow();
 		UpdatePlayfieldTiming();
 
-		memset(mPFCharBuffer, 0, sizeof mPFCharBuffer);
+		if (((unsigned)(mDLControl & 15) - 2) < 6)
+			memset(mPFCharBuffer, 0, sizeof mPFCharBuffer);
+
 		memset(mPFDecodeBuffer, 0x00, sizeof mPFDecodeBuffer);
 
 		if ((unsigned)(mY - 8) >= 240) {

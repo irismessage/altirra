@@ -4,6 +4,7 @@
 #include <vd2/system/vectors.h>
 
 struct VDPixmap;
+struct VDPixmapLayout;
 
 class IVDPixmapBlitter {
 public:
@@ -13,5 +14,26 @@ public:
 };
 
 IVDPixmapBlitter *VDPixmapCreateBlitter(const VDPixmap& dst, const VDPixmap& src);
+IVDPixmapBlitter *VDPixmapCreateBlitter(const VDPixmapLayout& dst, const VDPixmapLayout& src);
+
+class VDPixmapCachedBlitter {
+	VDPixmapCachedBlitter(const VDPixmapCachedBlitter&);
+	VDPixmapCachedBlitter& operator=(const VDPixmapCachedBlitter&);
+public:
+	VDPixmapCachedBlitter();
+	~VDPixmapCachedBlitter();
+
+	void Blit(const VDPixmap& dst, const VDPixmap& src);
+	void Invalidate();
+
+protected:
+	sint32 mSrcWidth;
+	sint32 mSrcHeight;
+	int mSrcFormat;
+	sint32 mDstWidth;
+	sint32 mDstHeight;
+	int mDstFormat;
+	IVDPixmapBlitter *mpCachedBlitter;
+};
 
 #endif

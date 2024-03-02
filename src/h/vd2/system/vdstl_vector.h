@@ -95,6 +95,7 @@ public:
 	template<class U>
 	void		push_back_as(const U& x);
 
+	reference	push_back();
 	void		push_back(const T& x);
 	void		pop_back();
 	iterator	insert(iterator position, const T& x);
@@ -302,6 +303,16 @@ void vdvector<T,A>::push_back_as(const U& x) {
 		++m.mpEnd;
 	} else {
 		insert_as(m.mpEnd, x);
+	}
+}
+
+template <class T, class A>
+typename vdvector<T,A>::reference vdvector<T,A>::push_back() {
+	if (m.mpEnd != m.mpEOS) {
+		new(m.mpEnd) T();
+		return *m.mpEnd++;
+	} else {
+		return *insert(m.mpEnd, T());
 	}
 }
 

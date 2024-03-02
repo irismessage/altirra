@@ -45,6 +45,7 @@ void tool_fontextract(const vdfastvector<const char *>& args, const vdfastvector
 void tool_snapsetup();
 void tool_filecreate(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_maketables(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
+void tool_psa(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 
 int main(int argc, char **argv) {
 	--argc;
@@ -95,6 +96,8 @@ int main(int argc, char **argv) {
 			tool_filecreate(args, switches);
 		} else if (!_stricmp(s, "maketables")) {
 			tool_maketables(args, switches);
+		} else if (!_stricmp(s, "psa")) {
+			tool_psa(args, switches);
 		} else
 			help();
 	} catch(const char *s) {

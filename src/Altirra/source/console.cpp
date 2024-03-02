@@ -80,6 +80,7 @@ public:
 	void OnDebuggerEvent(ATDebugEvent eventId);
 
 	void OnTextEditorUpdated();
+	void OnTextEditorScrolled(int firstVisiblePara, int lastVisiblePara, int visibleParaCount, int totalParaCount);
 	void RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *colorization);
 
 	void SetPosition(uint32 addr);
@@ -273,13 +274,19 @@ void ATDisassemblyWindow::OnDestroy() {
 void ATDisassemblyWindow::OnSize() {
 	RECT r;
 	if (GetClientRect(mhwnd, &r)) {
-		RECT rAddr;
-		GetWindowRect(mhwndAddress, &rAddr);
+		RECT rAddr = {0};
+		int comboHt = 0;
 
-		int comboHt = rAddr.bottom - rAddr.top;
+		if (mhwndAddress) {
+			GetWindowRect(mhwndAddress, &rAddr);
 
-		SetWindowPos(mhwndAddress, NULL, 0, 0, r.right, comboHt, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
-		SetWindowPos(mhwndTextEditor, NULL, 0, comboHt, r.right, r.bottom - comboHt, SWP_NOZORDER|SWP_NOACTIVATE);
+			comboHt = rAddr.bottom - rAddr.top;
+			VDVERIFY(SetWindowPos(mhwndAddress, NULL, 0, 0, r.right, comboHt, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE));
+		}
+
+		if (mhwndTextEditor) {
+			VDVERIFY(SetWindowPos(mhwndTextEditor, NULL, 0, comboHt, r.right, r.bottom - comboHt, SWP_NOZORDER|SWP_NOACTIVATE));
+		}
 	}
 }
 
@@ -369,9 +376,17 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 	if (g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C816)
 		autoModeSwitching = true;
 
+	uint32 viewLength = mpTextEditor->GetVisibleLineCount() * 24;
+
+	if (viewLength < 0x100)
+		viewLength = 0x100;
+
 	int line = 0;
 	int focusLine = -1;
-	while((uint16)(pc - mViewStart) < 0x100) {
+
+	mpTextEditor->SetUpdateEnabled(false);
+
+	while((uint32)(pc - mViewStart) < viewLength) {
 		if (pc == mPCAddr)
 			mPCLine = line;
 		else if (pc == mFramePCAddr)
@@ -444,6 +459,8 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 		mpTextEditor->Append(buf.c_str());
 	}
 
+	mpTextEditor->SetUpdateEnabled(true);
+
 	mLastSubMode = g_sim.GetCPU().GetCPUSubMode();
 
 	if (focusLine >= 0) {
@@ -456,6 +473,11 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 }
 
 void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
+	if (state.mbRunning) {
+		mpTextEditor->RecolorAll();
+		return;
+	}
+
 	bool changed = false;
 
 	if (mLastState.mPC != state.mPC || mLastState.mFramePC != state.mFramePC)
@@ -514,6 +536,27 @@ void ATDisassemblyWindow::OnDebuggerEvent(ATDebugEvent eventId) {
 void ATDisassemblyWindow::OnTextEditorUpdated() {
 }
 
+void ATDisassemblyWindow::OnTextEditorScrolled(int firstVisiblePara, int lastVisiblePara, int visibleParaCount, int totalParaCount) {
+	if (mpTextEditor->IsSelectionPresent())
+		return;
+
+	if (!mAddressesByLine.empty()) {
+		bool prev = (firstVisiblePara < visibleParaCount);
+		bool next = (lastVisiblePara >= totalParaCount - visibleParaCount);
+
+		if (prev ^ next) {
+			int cenIdx = mpTextEditor->GetParagraphForYPos(mpTextEditor->GetVisibleHeight() >> 1);
+			
+			if (cenIdx < 0)
+				cenIdx = 0;
+			else if ((uint32)cenIdx >= mAddressesByLine.size())
+				cenIdx = mAddressesByLine.size() - 1;
+
+			SetPosition(mAddressesByLine[cenIdx]);
+		}
+	}
+}
+
 void ATDisassemblyWindow::RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *cl) {
 	int next = 0;
 
@@ -536,7 +579,13 @@ void ATDisassemblyWindow::RecolorLine(int line, const char *text, int length, IV
 void ATDisassemblyWindow::SetPosition(uint32 addr) {
 	VDStringA text(ATGetDebugger()->GetAddressText(addr, true));
 	VDSetWindowTextFW32(mhwndAddress, L"%hs", text.c_str());
-	mViewStart = ATDisassembleGetFirstAnchor(addr >= 0x80 ? addr - 0x80 : 0, addr);
+
+	uint32 offset = mpTextEditor->GetVisibleLineCount() * 12;
+
+	if (offset < 0x80)
+		offset = 0x80;
+
+	mViewStart = ATDisassembleGetFirstAnchor(addr >= offset ? addr - offset : 0, addr);
 	mViewBank = (uint8)(addr >> 16);
 
 	RemakeView(addr);
@@ -566,6 +615,7 @@ protected:
 
 ATRegistersWindow::ATRegistersWindow()
 	: ATUIPane(kATUIPaneId_Registers, "Registers")
+	, mhwndEdit(NULL)
 {
 	mPreferredDockCode = kATContainerDockRight;
 }
@@ -606,8 +656,9 @@ void ATRegistersWindow::OnDestroy() {
 
 void ATRegistersWindow::OnSize() {
 	RECT r;
-	if (GetClientRect(mhwnd, &r))
-		SetWindowPos(mhwndEdit, NULL, 0, 0, r.right, r.bottom, SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOMOVE);
+	if (mhwndEdit && GetClientRect(mhwnd, &r)) {
+		VDVERIFY(SetWindowPos(mhwndEdit, NULL, 0, 0, r.right, r.bottom, SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOMOVE));
+	}
 }
 
 void ATRegistersWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
@@ -721,6 +772,7 @@ protected:
 
 ATCallStackWindow::ATCallStackWindow()
 	: ATUIPane(kATUIPaneId_CallStack, "Call Stack")
+	, mhwndList(NULL)
 {
 	mPreferredDockCode = kATContainerDockRight;
 }
@@ -770,8 +822,9 @@ void ATCallStackWindow::OnDestroy() {
 
 void ATCallStackWindow::OnSize() {
 	RECT r;
-	if (GetClientRect(mhwnd, &r))
-		SetWindowPos(mhwndList, NULL, 0, 0, r.right, r.bottom, SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOMOVE);
+	if (mhwndList && GetClientRect(mhwnd, &r)) {
+		VDVERIFY(SetWindowPos(mhwndList, NULL, 0, 0, r.right, r.bottom, SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOMOVE));
+	}
 }
 
 void ATCallStackWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
@@ -841,6 +894,7 @@ protected:
 	bool OnCommand(UINT cmd);
 
 	void OnTextEditorUpdated();
+	void OnTextEditorScrolled(int firstVisiblePara, int lastVisiblePara, int visibleParaCount, int totalParaCount);
 	void RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *colorization);
 
 	void OnSimulatorEvent(ATSimulatorEvent ev);
@@ -1097,7 +1151,9 @@ void ATSourceWindow::OnSize() {
 	RECT r;
 	VDVERIFY(GetClientRect(mhwnd, &r));
 
-	SetWindowPos(mhwndTextEditor, NULL, 0, 0, r.right, r.bottom, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+	if (mhwndTextEditor) {
+		VDVERIFY(SetWindowPos(mhwndTextEditor, NULL, 0, 0, r.right, r.bottom, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE));
+	}
 }
 
 bool ATSourceWindow::OnCommand(UINT cmd) {
@@ -1179,6 +1235,9 @@ bool ATSourceWindow::OnCommand(UINT cmd) {
 }
 
 void ATSourceWindow::OnTextEditorUpdated() {
+}
+
+void ATSourceWindow::OnTextEditorScrolled(int firstVisiblePara, int lastVisiblePara, int visibleParaCount, int totalParaCount) {
 }
 
 void ATSourceWindow::RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *cl) {
@@ -1632,7 +1691,7 @@ void ATHistoryWindow::OnSize() {
 		hdl.pwpos = &wp;
 		if (Header_Layout(mhwndHeader, &hdl)) {
 			mHeaderHeight = wp.cy;
-			SetWindowPos(mhwndHeader, NULL, wp.x, wp.y, wp.cx, wp.cy, SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS);
+			VDVERIFY(SetWindowPos(mhwndHeader, NULL, wp.x, wp.y, wp.cx, wp.cy, SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS));
 		}
 	}
 
@@ -2073,9 +2132,7 @@ void ATHistoryWindow::ScrollToPixel(int pos) {
 void ATHistoryWindow::InvalidateStartingAtNode(TreeNode *node) {
 	int y = GetNodeYPos(node);
 
-	if (y < 0)
-		InvalidateRect(mhwnd, NULL, TRUE);
-	else
+	if ((uint32)y < mScrollY + mHeight)
 		InvalidateRect(mhwnd, NULL, TRUE);
 }
 
@@ -2411,10 +2468,8 @@ void ATHistoryWindow::UpdateOpcodes() {
 		last = InsertNode(parent, parent ? parent->mpLastChild : NULL, "", &hent);
 	}
 
-	if (last) {
-		EnsureNodeVisible(last);
-		mpSelectedNode = last;
-	}
+	if (last)
+		SelectNode(last);
 
 	if (quickMode)
 		InvalidateRect(mhwnd, NULL, TRUE);
@@ -2433,7 +2488,8 @@ void ATHistoryWindow::ClearAllNodes() {
 	mRootNode.mbExpanded = true;
 	mRootNode.mHeight = 1;
 
-	InvalidateRect(mhwnd, NULL, TRUE);
+	if (mhwnd)
+		InvalidateRect(mhwnd, NULL, TRUE);
 }
 
 ATHistoryWindow::TreeNode *ATHistoryWindow::InsertNode(TreeNode *parent, TreeNode *insertAfter, const char *text, const ATCPUHistoryEntry *hent) {
@@ -2604,6 +2660,8 @@ ATConsoleWindow *g_pConsoleWindow;
 ATConsoleWindow::ATConsoleWindow()
 	: ATUIPane(kATUIPaneId_Console, "Console")
 	, mMenu(LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_DEBUGGER_MENU)))
+	, mhwndLog(NULL)
+	, mhwndEdit(NULL)
 	, mpCmdEditThunk(NULL)
 {
 	mPreferredDockCode = kATContainerDockBottom;
@@ -2696,8 +2754,13 @@ void ATConsoleWindow::OnSize() {
 	if (GetClientRect(mhwnd, &r)) {
 		int h = 20;
 
-		SetWindowPos(mhwndLog, NULL, 0, 0, r.right, r.bottom > h ? r.bottom - h : 0, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS);
-		SetWindowPos(mhwndEdit, NULL, 0, r.bottom - h, r.right, h, SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS);
+		if (mhwndLog) {
+			VDVERIFY(SetWindowPos(mhwndLog, NULL, 0, 0, r.right, r.bottom > h ? r.bottom - h : 0, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS));
+		}
+
+		if (mhwndEdit) {
+			VDVERIFY(SetWindowPos(mhwndEdit, NULL, 0, r.bottom - h, r.right, h, SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS));
+		}
 	}
 }
 
@@ -3022,11 +3085,15 @@ void ATMemoryWindow::OnSize() {
 	if (!GetClientRect(mhwnd, &r))
 		return;
 
-	RECT rAddr;
-	GetWindowRect(mhwndAddress, &rAddr);
+	RECT rAddr = {0};
+	int comboHt = 0;
 
-	int comboHt = rAddr.bottom - rAddr.top;
-	SetWindowPos(mhwndAddress, NULL, 0, 0, r.right, comboHt, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+	if (mhwndAddress) {
+		GetWindowRect(mhwndAddress, &rAddr);
+
+		comboHt = rAddr.bottom - rAddr.top;
+		VDVERIFY(SetWindowPos(mhwndAddress, NULL, 0, 0, r.right, comboHt, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE));
+	}
 
 	mTextArea.left = 0;
 	mTextArea.top = comboHt;
@@ -3310,12 +3377,15 @@ void ATPrinterOutputWindow::OnDestroy() {
 
 	if (p)
 		p->SetOutput(NULL);
+
+	ATUIPane::OnDestroy();
 }
 
 void ATPrinterOutputWindow::OnSize() {
 	RECT r;
-	if (GetClientRect(mhwnd, &r))
-		SetWindowPos(mhwndTextEditor, NULL, 0, 0, r.right, r.bottom, SWP_NOZORDER|SWP_NOACTIVATE);
+	if (mhwndTextEditor && GetClientRect(mhwnd, &r)) {
+		VDVERIFY(SetWindowPos(mhwndTextEditor, NULL, 0, 0, r.right, r.bottom, SWP_NOZORDER|SWP_NOACTIVATE));
+	}
 }
 
 void ATPrinterOutputWindow::OnSetFocus() {

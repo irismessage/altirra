@@ -21,6 +21,14 @@
 	
 	mva		#0	colrsh
 	mva		#$FE	drkmsk
+	
+	;set XL/XE PAL/NTSC flag
+	lda		pal
+	ldx		#0
+	cmp		#$0f
+	seq:ldx	#$ff
+	stx		palnts
+
 	rts
 .endp
 

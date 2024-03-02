@@ -33,6 +33,9 @@
 #define IDR_PROFILE_MODE_MENU           131
 #define IDI_ICON1                       132
 #define IDI_APPICON                     132
+#define IDD_VIDEO_RECORDING             133
+#define IDD_KEYBOARD                    134
+#define IDD_CARTRIDGE_MAPPER            135
 #define IDC_ENABLE_HISTORY              1001
 #define IDC_ENABLE_PATHS                1002
 #define IDC_DISKPATH1                   1002
@@ -66,12 +69,15 @@
 #define IDC_ENABLE                      1017
 #define IDC_NEWDISK1                    1018
 #define IDC_CPUMODEL_6502C              1018
+#define IDC_READONLY2                   1018
+#define IDC_BURSTIO                     1018
 #define IDC_NEWDISK2                    1019
 #define IDC_CPUMODEL_65C02              1019
 #define IDC_NEWDISK3                    1020
 #define IDC_RADIO3                      1020
 #define IDC_CPUMODEL_65C816             1020
 #define IDC_LIST                        1020
+#define IDC_VC_ZMBV                     1020
 #define IDC_NEWDISK4                    1021
 #define IDC_ADD                         1021
 #define IDC_WRITEMODE3                  1022
@@ -134,6 +140,29 @@
 #define IDC_COLORS                      1054
 #define IDC_GAMEPAD                     1055
 #define IDC_FORMAT                      1056
+#define IDC_VC_NONE                     1057
+#define IDC_VC_RLE                      1058
+#define IDC_KPMODE_COOKED               1059
+#define IDC_KPMODE_RAW                  1060
+#define IDC_IDE_ENABLE                  1062
+#define IDC_IDE_IMAGEPATH               1063
+#define IDC_IDE_IMAGEBROWSE             1064
+#define IDC_IDEREADONLY                 1065
+#define IDC_IDE_D1XX                    1066
+#define IDC_IDE_D5XX                    1067
+#define IDC_STATIC_HOSTPATH             1068
+#define IDC_STATIC_IDE_IMAGEPATH        1069
+#define IDC_STATIC_IDE_IOREGION         1070
+#define IDC_IDE_SIZE                    1071
+#define IDC_STATIC_IDE_GEOMETRY         1072
+#define IDC_STATIC_IDE_SIZE             1073
+#define IDC_IDE_CYLINDERS               1075
+#define IDC_IDE_HEADS                   1076
+#define IDC_IDE_SPT                     1077
+#define IDC_STATIC_IDE_SPT              1078
+#define IDC_STATIC_IDE_HEADS            1079
+#define IDC_STATIC_IDE_CYLINDERS        1080
+#define IDC_STATIC_IDE_CYLINDERS2       1081
 #define ID_FILE_EXIT                    40001
 #define ID_RUN_COLDRESET                40002
 #define ID_RUN_MAXIMUMSPEED             40003
@@ -382,6 +411,23 @@
 #define ID_VIDEO_NTSCARTIFACTINGFULL    40274
 #define ID_VIDEO_NTSCARTIFACTINGHI      40275
 #define ID_VIEW_PASTE                   40276
+#define ID_RECORD_RECORDVIDEO           40279
+#define ID_SYSTEM_KEYBOARD              40280
+#define ID_INPUT_KEYBOARD               40281
+#define ID_FIRMWARE_FASTBOOT            40282
+#define ID_ATTACHSPECIALCARTRIDGE_EMPTYATARIMAX1MBCARTRIDGE 40285
+#define ID_ATTACHSPECIALCARTRIDGE_EMPTYATARIMAX8MBCARTRIDGE 40286
+#define ID_ATTACHSPECIALCARTRIDGE_EMPTY1MB 40287
+#define ID_ATTACHSPECIALCARTRIDGE_EMPTY8MB 40288
+#define ID_FILE_SAVECARTRIDGE           40289
+#define ID_CONTEXTMENU_G2F              40290
+#define ID_COLORS_G2F                   40291
+#define ID_CONTEXTMENU_OLIVIERPAL       40292
+#define ID_COLORS_OLIVIERPAL            40293
+#define ID_ATTACHSPECIALCARTRIDGE_EMPTY1MBFLASHCARTRIDGE 40294
+#define ID_ATTACHSPECIALCARTRIDGE_EMPTY1MBMYIDE 40295
+#define ID_VIEW_SAVEFRAME               40296
+#define ID_HELP_CONTENTS                40299
 #define ID_INPUT_PORT1_NONE             45000
 #define ID_INPUT_PORT2_NONE             45100
 #define ID_INPUT_PORT3_NONE             45200
@@ -393,9 +439,9 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
-#define _APS_NEXT_RESOURCE_VALUE        133
-#define _APS_NEXT_COMMAND_VALUE         40279
-#define _APS_NEXT_CONTROL_VALUE         1057
+#define _APS_NEXT_RESOURCE_VALUE        136
+#define _APS_NEXT_COMMAND_VALUE         40300
+#define _APS_NEXT_CONTROL_VALUE         1081
 #define _APS_NEXT_SYMED_VALUE           105
 #endif
 #endif

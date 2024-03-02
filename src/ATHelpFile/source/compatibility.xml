@@ -1,0 +1,126 @@
+<?xml version='1.0' standalone='yes'?>
+<?xml-stylesheet type="text/xsl" href="index.xsl" ?>
+<topic title="Program-specific issues">
+  <p>
+    If you have trouble with the following programs....
+  </p>
+  <toc/>
+
+  <!-- *************************************************** -->
+
+  <stockmsg id="nosiopatch">
+    <p>
+      Unmodified versions of this game contain a RTCLOK check during the disk load and must be
+      booted with the SIO patch disabled.
+    </p>
+  </stockmsg>
+
+  <stockmsg id="diskrw">
+    <p>
+      This program writes to the disk during normal operation and requires read/write or virtual
+      read/write mode to be selected.
+    </p>
+  </stockmsg>
+  
+  <!-- *************************************************** -->
+
+  <h2>Demos</h2>
+  <h3>Cup of Tea</h3>
+  <p>
+    There is a bug in the IRQ handling that causes it to occasionally crash after playing
+    the sample: it assumes that an IRQ cannot happen after it is shut off in IRQEN, but there is
+    a one-cycle window where this can still occur.
+  </p>
+  
+  <h3>Total Daze</h3>
+  <p>
+    Due to a bug in the detection routine, this demo occasionally misdetects a single POKEY as
+    dual POKEYs, resulting in garbled audio during the loading screen.
+  </p>
+
+  <!-- *************************************************** -->
+
+  <h2>Games</h2>
+
+  <h3>Assault Force 3D</h3>
+  <p>
+    This game requires the SuperCharger 3D cartridge, which is used for hardware multiply/divide.
+  </p>
+
+  <h3>Berzerk</h3>
+  <p>
+    Some versions do not initialize SKCTL properly and therefore fail to play shot sounds.
+  </p>
+
+  <h3>Bounty Bob Strikes Back!</h3>
+  <p>
+    Some versions require <b>exactly</b> 64K of RAM to work.
+  </p>
+
+  <h3>Bubble Bobble (demo)</h3>
+  <p>
+    Some versions of this homebrew game copy the kernel into RAM, write over part of the SIO
+    routine, and then invoke the corrupted SIO routine. This will only work in some emulators
+    when SIO patch is enabled, bypassing the broken code; it does not work in Altirra because
+    SIO hooks are not allowed to activate from code in RAM.
+  </p>
+
+  <h3>Castle Wolfenstein</h3>
+  <stockref id="diskrw"/>
+
+  <h3>DARG</h3>
+  <p>
+    The clock runs too quickly if accelerated floating-point is enabled.
+  </p>
+  
+  <h3>Gruds in Space</h3>
+  <stockref id="nosiopatch"/>
+  
+  <h3>His Dark Majesty</h3>
+  <p>
+    Version 1.0 has a bug that can cause it to crash if the opening animation is interrupted due
+    to infinite DLI interrupts. The workaround is to hit a key during the title screen instead.
+    This bug is fixed in version 1.01.
+  </p>
+
+  <h3>Mr. DO!</h3>
+  <p>
+    Unmodified versions should be run with the SIO patch disabled. The game may appear to load
+    correctly, but will malfunction in certain game elements due to the silently failed timing
+    check.
+  </p>
+  
+  <h3>M.U.L.E.</h3>
+  <p>
+    The tiny sound glitches that occur when notes are played happen on a real Atari, too.
+  </p>
+  
+  <h3>Transylvania</h3>
+  <stockref id="nosiopatch"/>
+
+  <h3>Twerps</h3>
+  <stockref id="nosiopatch"/>
+
+  <h3>Zebuland</h3>
+  <stockref id="diskrw"/>
+  
+  <!-- *************************************************** -->
+  
+  <h2>Disk Operating Systems</h2>
+  <h3>MyDOS</h3>
+  <p>
+    The Load Binary command in the MyDOS menu uses a MyDOS-specific XIO call to load the binary
+    instead of regular CIO read calls. This prevents Load Binary from working with the H: handler
+    as the handler does not know how to handle MyDOS XIO calls.
+  </p>
+  <p>
+    There is also a bug in MyDOS that prevents wildcarded copies from working when using H: as
+    the source: MyDOS passes the wrong flags when enumerating files from non-disk devices, causing
+    the copy to fail.
+  </p>
+  <h3>SpartaDOS X</h3>
+  <p>
+    SpartaDOS X uses a polling loop for SIO transfers, so regular burst I/O mode does not work
+    with it. Use the burst (polled) mode instead.
+  </p>
+</topic>

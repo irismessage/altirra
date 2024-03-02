@@ -16,7 +16,6 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include <windows.h>
 #include <vd2/Riza/bitmap.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmaputils.h>
@@ -41,9 +40,21 @@ int VDBitmapFormatToPixmapFormat(const VDAVIBitmapInfoHeader& hdr, int& variant)
 				return kPixFormat_Pal2;
 			else if (hdr.biBitCount == 4)
 				return kPixFormat_Pal4;
-			else if (hdr.biBitCount == 8)
-				return kPixFormat_Pal8;
-			else if (hdr.biBitCount == 16)
+			else if (hdr.biBitCount == 8) {
+				if (hdr.biClrUsed != 256)
+					return kPixFormat_Pal8;
+
+				const VDAVIRGBQuad *palette = (const VDAVIRGBQuad *)((const char *)&hdr + hdr.biSize);
+
+				for(int i=0; i<256; ++i) {
+					if (palette->rgbRed != i || palette->rgbGreen != i || palette->rgbBlue != i || palette->rgbReserved)
+						return kPixFormat_Pal8;
+
+					++palette;
+				}
+
+				return kPixFormat_Y8_FR;
+			} else if (hdr.biBitCount == 16)
 				return kPixFormat_XRGB1555;
 			else if (hdr.biBitCount == 24)
 				return kPixFormat_RGB888;
@@ -53,11 +64,11 @@ int VDBitmapFormatToPixmapFormat(const VDAVIBitmapInfoHeader& hdr, int& variant)
 		break;
 	case VDAVIBitmapInfoHeader::kCompressionBitfields:
 		{
-			const BITMAPV4HEADER& v4hdr = (const BITMAPV4HEADER&)hdr;
-			const int bits = v4hdr.bV4BitCount;
-			const uint32 r = v4hdr.bV4RedMask;
-			const uint32 g = v4hdr.bV4GreenMask;
-			const uint32 b = v4hdr.bV4BlueMask;
+			const uint32 *bitfields = (const uint32 *)(&hdr + 1);
+			const int bits = hdr.biBitCount;
+			const uint32 r = bitfields[0];
+			const uint32 g = bitfields[1];
+			const uint32 b = bitfields[2];
 
 			if (bits == 16 && r == 0x7c00 && g == 0x03e0 && b == 0x001f)
 				return kPixFormat_XRGB1555;
@@ -134,7 +145,7 @@ bool VDMakeBitmapFormatFromPixmapFormat(vdstructex<VDAVIBitmapInfoHeader>& dst, 
 		uint32 clrImportant = src->biClrImportant;
 
 		if (clrUsed == 0) {
-			if (src->biCompression != BI_RGB && src->biCompression != BI_RLE4 && src->biCompression != BI_RLE8)
+			if (src->biCompression != VDAVIBitmapInfoHeader::kCompressionRGB && src->biCompression != VDAVIBitmapInfoHeader::kCompressionRLE4 && src->biCompression != VDAVIBitmapInfoHeader::kCompressionRLE8)
 				return false;
 
 			clrUsed = 1 << src->biBitCount;
@@ -148,20 +159,20 @@ bool VDMakeBitmapFormatFromPixmapFormat(vdstructex<VDAVIBitmapInfoHeader>& dst, 
 		if (!clrEntries)
 			clrEntries = 256;
 
-		dst.resize(sizeof(VDAVIBitmapInfoHeader) + sizeof(RGBQUAD) * clrEntries);
+		dst.resize(sizeof(VDAVIBitmapInfoHeader) + sizeof(VDAVIRGBQuad) * clrEntries);
 		dst->biSize				= sizeof(VDAVIBitmapInfoHeader);
 		dst->biWidth			= w;
 		dst->biHeight			= h;
 		dst->biPlanes			= 1;
 		dst->biBitCount			= 8;
-		dst->biCompression		= BI_RGB;
+		dst->biCompression		= VDAVIBitmapInfoHeader::kCompressionRGB;
 		dst->biSizeImage		= ((w+3)&~3)*h;
 		dst->biXPelsPerMeter	= src->biXPelsPerMeter;
 		dst->biYPelsPerMeter	= src->biYPelsPerMeter;
 		dst->biClrUsed			= src->biClrUsed;
 		dst->biClrImportant		= src->biClrImportant;
 
-		uint32 clrTableSize = sizeof(RGBQUAD)*clrEntries;
+		uint32 clrTableSize = sizeof(VDAVIRGBQuad)*clrEntries;
 		memcpy((char *)dst.data() + sizeof(VDAVIBitmapInfoHeader), (const char *)src.data() + src->biSize, clrTableSize);
 
 		return true;
@@ -176,7 +187,7 @@ bool VDMakeBitmapFormatFromPixmapFormat(vdstructex<VDAVIBitmapInfoHeader>& dst, 
 	return true;
 }
 
-bool VDMakeBitmapFormatFromPixmapFormat(vdstructex<VDAVIBitmapInfoHeader>& dst, int format, int variant, uint32 w, uint32 h) {
+bool VDMakeBitmapFormatFromPixmapFormat(vdstructex<VDAVIBitmapInfoHeader>& dst, int format, int variant, uint32 w, uint32 h, bool allowNonstandardMappings) {
 	using namespace nsVDPixmap;
 
 	dst.resize(sizeof(VDAVIBitmapInfoHeader));
@@ -189,31 +200,75 @@ bool VDMakeBitmapFormatFromPixmapFormat(vdstructex<VDAVIBitmapInfoHeader>& dst, 
 	dst->biClrUsed			= 0;
 	dst->biClrImportant		= 0;
 
+	if (allowNonstandardMappings) {
+		switch(format) {
+			case kPixFormat_YUV422_UYVY_FR:
+			case kPixFormat_YUV422_UYVY_709:
+			case kPixFormat_YUV422_UYVY_709_FR:
+				format = kPixFormat_YUV422_UYVY;
+				break;
+
+			case kPixFormat_YUV422_YUYV_FR:
+			case kPixFormat_YUV422_YUYV_709:
+			case kPixFormat_YUV422_YUYV_709_FR:
+				format = kPixFormat_YUV422_YUYV;
+				break;
+
+			case kPixFormat_YUV444_Planar_FR:
+			case kPixFormat_YUV444_Planar_709:
+			case kPixFormat_YUV444_Planar_709_FR:
+				format = kPixFormat_YUV444_Planar;
+				break;
+
+			case kPixFormat_YUV422_Planar_FR:
+			case kPixFormat_YUV422_Planar_709:
+			case kPixFormat_YUV422_Planar_709_FR:
+				format = kPixFormat_YUV422_Planar;
+				break;
+
+			case kPixFormat_YUV420_Planar_FR:
+			case kPixFormat_YUV420_Planar_709:
+			case kPixFormat_YUV420_Planar_709_FR:
+				format = kPixFormat_YUV420_Planar;
+				break;
+
+			case kPixFormat_YUV410_Planar_FR:
+			case kPixFormat_YUV410_Planar_709:
+			case kPixFormat_YUV410_Planar_709_FR:
+				format = kPixFormat_YUV410_Planar;
+				break;
+
+			case kPixFormat_Y8_FR:
+				format = kPixFormat_Y8;
+				break;
+		}
+	}
+
 	switch(format) {
 	case kPixFormat_XRGB1555:
-		dst->biCompression	= BI_RGB;
+		dst->biCompression	= VDAVIBitmapInfoHeader::kCompressionRGB;
 		dst->biBitCount		= 16;
 		dst->biSizeImage	= ((w*2+3)&~3) * h;
 		break;
 	case kPixFormat_RGB565:
-		dst->biCompression	= BI_BITFIELDS;
+		dst->biCompression	= VDAVIBitmapInfoHeader::kCompressionBitfields;
 		dst->biBitCount		= 16;
 		dst->biSizeImage	= ((w*2+3)&~3) * h;
-		dst.resize(sizeof(VDAVIBitmapInfoHeader) + 3*sizeof(DWORD));
+		dst.resize(sizeof(VDAVIBitmapInfoHeader) + 3*sizeof(uint32));
 		{
-			DWORD *fields = (DWORD *)(dst.data() + 1);
+			uint32 *fields = (uint32 *)(dst.data() + 1);
 			fields[0] = 0xf800;
 			fields[1] = 0x07e0;
 			fields[2] = 0x001f;
 		}
 		break;
 	case kPixFormat_RGB888:
-		dst->biCompression	= BI_RGB;
+		dst->biCompression	= VDAVIBitmapInfoHeader::kCompressionRGB;
 		dst->biBitCount		= 24;
 		dst->biSizeImage	= ((w*3+3)&~3) * h;
 		break;
 	case kPixFormat_XRGB8888:
-		dst->biCompression	= BI_RGB;
+		dst->biCompression	= VDAVIBitmapInfoHeader::kCompressionRGB;
 		dst->biBitCount		= 32;
 		dst->biSizeImage	= w*4 * h;
 		break;
@@ -286,6 +341,26 @@ bool VDMakeBitmapFormatFromPixmapFormat(vdstructex<VDAVIBitmapInfoHeader>& dst, 
 		dst->biBitCount		= 16;
 		dst->biSizeImage	= w*h + ((w+1)>>1)*((h+1)>>1)*2;
 		break;
+	case kPixFormat_Y8_FR:
+		dst->biCompression	= VDAVIBitmapInfoHeader::kCompressionRGB;
+		dst->biBitCount		= 8;
+		dst->biClrUsed		= 256;
+		dst->biClrImportant	= 256;
+		dst->biSizeImage	= ((w+3) & ~3)*h;
+		dst.resize(sizeof(VDAVIBitmapInfoHeader) + 256*sizeof(VDAVIRGBQuad));
+
+		{
+			VDAVIRGBQuad *pal = (VDAVIRGBQuad *)(dst.data() + 1);
+
+			for(int i=0; i<256; ++i) {
+				pal[i].rgbRed = i;
+				pal[i].rgbGreen = i;
+				pal[i].rgbBlue = i;
+				pal[i].rgbReserved = 0;
+			}
+		}
+		break;
+
 	default:
 		return false;
 	};
@@ -306,25 +381,54 @@ uint32 VDMakeBitmapCompatiblePixmapLayout(VDPixmapLayout& layout, sint32 w, sint
 	case kPixFormat_RGB888:
 	case kPixFormat_RGB565:
 	case kPixFormat_XRGB8888:
+	case kPixFormat_Y8_FR:
 		// RGB can be flipped (but YUV can't)
 		if (h > 0) {
 			layout.data += layout.pitch * (h-1);
 			layout.pitch = -layout.pitch;
 		}
 		break;
+	case kPixFormat_YUV444_Planar:		// swap YV24 to match YV12
+	case kPixFormat_YUV444_Planar_FR:
+	case kPixFormat_YUV444_Planar_709:
+	case kPixFormat_YUV444_Planar_709_FR:
+	case kPixFormat_YUV422_Planar:		// swap YV16 to match YV12
+	case kPixFormat_YUV422_Planar_FR:
+	case kPixFormat_YUV422_Planar_709:
+	case kPixFormat_YUV422_Planar_709_FR:
+		std::swap(layout.data2, layout.data3);
+		std::swap(layout.pitch2, layout.pitch3);
+		break;
 	case kPixFormat_YUV420_Planar:
+	case kPixFormat_YUV420_Planar_FR:
+	case kPixFormat_YUV420_Planar_709:
+	case kPixFormat_YUV420_Planar_709_FR:
 		if (variant < 2) {				// need to swap UV planes for YV12 (1)
 			std::swap(layout.data2, layout.data3);
 			std::swap(layout.pitch2, layout.pitch3);
 		}
 		break;
 	case kPixFormat_YUV410_Planar:
+	case kPixFormat_YUV410_Planar_FR:
+	case kPixFormat_YUV410_Planar_709:
+	case kPixFormat_YUV410_Planar_709_FR:
 		std::swap(layout.data2, layout.data3);
 		std::swap(layout.pitch2, layout.pitch3);
 		break;
 	}
 
 	return linspace;
+}
+
+bool VDGetPixmapLayoutForBitmapFormat(const VDAVIBitmapInfoHeader& hdr, uint32 hdrsize, VDPixmapLayout& layout) {
+	int variant;
+
+	int format = VDBitmapFormatToPixmapFormat(hdr, variant);
+	if (!format)
+		return false;
+
+	VDMakeBitmapCompatiblePixmapLayout(layout, hdr.biWidth, hdr.biHeight, format, variant);
+	return true;
 }
 
 VDPixmap VDGetPixmapForBitmap(const VDAVIBitmapInfoHeader& hdr, const void *data) {

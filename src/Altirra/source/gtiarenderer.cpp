@@ -30,6 +30,7 @@ ATGTIARenderer::ATGTIARenderer()
 	, mRCIndex(0)
 	, mRCCount(0)
 	, mbHiresMode(false)
+	, mbVBlank(true)
 	, mPRIOR(0)
 	, mpPriTable(NULL)
 	, mpColorTable(NULL)
@@ -49,17 +50,21 @@ void ATGTIARenderer::SetAnalysisMode(bool enable) {
 	mpColorTable = enable ? kATAnalysisColorTable : mColorTable;
 }
 
+void ATGTIARenderer::SetVBlank(bool vblank) {
+	mbVBlank = vblank;
+}
+
 void ATGTIARenderer::BeginScanline(uint8 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires) {
 	mpDst = dst;
 	mbHiresMode = hires;
-	mX = 0;
+	mX = mbVBlank ? 34 : 0;
 	mpMergeBuffer = mergeBuffer;
 	mpAnticBuffer = anticBuffer;
 
 	memset(mpDst, mpColorTable[kColorBAK], 68);
 }
 
-void ATGTIARenderer::RenderScanline(int xend) {
+void ATGTIARenderer::RenderScanline(int xend, bool pmgraphics) {
 	int x1 = mX;
 
 	if (x1 >= xend)
@@ -104,10 +109,17 @@ void ATGTIARenderer::RenderScanline(int xend) {
 
 		switch(mPRIOR & 0xc0) {
 			case 0x00:
-				if (mbHiresMode)
-					RenderMode8(x1, x2);
-				else
-					RenderLores(x1, x2);
+				if (pmgraphics) {
+					if (mbHiresMode)
+						RenderMode8(x1, x2);
+					else
+						RenderLores(x1, x2);
+				} else {
+					if (mbHiresMode)
+						RenderMode8Fast(x1, x2);
+					else
+						RenderLoresFast(x1, x2);
+				}
 				break;
 
 			case 0x40:
@@ -321,6 +333,38 @@ void ATGTIARenderer::RenderLores(int x1, int x2) {
 	}
 }
 
+void ATGTIARenderer::RenderLoresFast(int x1, int x2) {
+	const uint8 *__restrict colorTable = mpColorTable;
+
+	uint8 *dst = mpDst + x1*2;
+	const uint8 *src = mpMergeBuffer + x1;
+
+	int w = x2 - x1;
+	int w4 = w >> 2;
+
+	uint16 fasttab[9];
+	fasttab[  0] = (uint16)colorTable[kColorBAK] * 0x0101;
+	fasttab[PF0] = (uint16)colorTable[kColorPF0] * 0x0101;
+	fasttab[PF1] = (uint16)colorTable[kColorPF1] * 0x0101;
+	fasttab[PF2] = (uint16)colorTable[kColorPF2] * 0x0101;
+	fasttab[PF3] = (uint16)colorTable[kColorPF3] * 0x0101;
+
+	for(int i=0; i<w4; ++i) {
+		*(uint16 *)&dst[0] = fasttab[src[0]];
+		*(uint16 *)&dst[2] = fasttab[src[1]];
+		*(uint16 *)&dst[4] = fasttab[src[2]];
+		*(uint16 *)&dst[6] = fasttab[src[3]];
+		src += 4;
+		dst += 8;
+	}
+
+	for(int i=w & 3; i; --i) {
+		*(uint16 *)&dst[0] = fasttab[src[0]];
+		++src;
+		dst += 2;
+	}
+}
+
 void ATGTIARenderer::RenderMode8(int x1, int x2) {
 	const uint8 *__restrict colorTable = mpColorTable;
 	const uint8 *__restrict priTable = mpPriTable;
@@ -352,6 +396,45 @@ void ATGTIARenderer::RenderMode8(int x1, int x2) {
 		uint32 c0 = (uint32)colorTable[priTable[*src++]];
 
 		c0 += (c0 << 8);
+
+		*(uint16 *)dst = (c0 & andtab[lb]) + addtab[lb];
+		dst += 2;
+	}
+}
+
+void ATGTIARenderer::RenderMode8Fast(int x1, int x2) {
+	const uint8 *__restrict colorTable = mpColorTable;
+	const uint8 *__restrict priTable = mpPriTable;
+
+	const uint8 *lumasrc = &mpAnticBuffer[x1];
+	uint8 *dst = mpDst + x1*2;
+	const uint8 *src = mpMergeBuffer + x1;
+
+	const uint8 luma1 = mpColorTable[5] & 0xf;
+
+	const uint32 andtab[4]={
+		0xffff,
+		0xf0ff,
+		0xfff0,
+		0xf0f0,
+	};
+
+	const uint32 addtab[4]={
+		0x0000,
+		(uint32)luma1 << 8,
+		luma1,
+		(uint32)luma1 * 0x0101
+	};
+
+	const uint32 coltab[2]={
+		(uint32)colorTable[kColorBAK] * 0x00000101,
+		(uint32)colorTable[kColorPF2] * 0x00000101
+	};
+
+	int w = x2 - x1;
+	while(w--) {
+		uint32 lb = *lumasrc++;
+		uint32 c0 = *(const uint32 *)((const uint8 *)coltab + (*src++));
 
 		*(uint16 *)dst = (c0 & andtab[lb]) + addtab[lb];
 		dst += 2;

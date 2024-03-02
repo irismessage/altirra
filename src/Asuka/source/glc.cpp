@@ -305,7 +305,7 @@ void GLCErrorSink::ThrowError(const char *format, ...) {
 	va_end(val);
 
 	if ((unsigned)cnt >= 4096)
-		buf[cnt] = 0;
+		buf[4095] = 0;
 
 	const GLCCodeLocation loc(GetLocation());
 	throw MyError("Shader compilation failed.\n%s(%d,%d): Error! %s", loc.mpFileName, loc.mLine, loc.mColumn, buf);
@@ -320,7 +320,7 @@ void GLCErrorSink::ThrowError(const GLCCodeLocation& loc, const char *format, ..
 	va_end(val);
 
 	if ((unsigned)cnt >= 4096)
-		buf[cnt] = 0;
+		buf[4095] = 0;
 
 	throw MyError("Shader compilation failed.\n%s(%d,%d): Error! %s", loc.mpFileName, loc.mLine, loc.mColumn, buf);
 }

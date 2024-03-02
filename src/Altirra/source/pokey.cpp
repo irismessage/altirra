@@ -28,6 +28,7 @@
 #include "console.h"
 #include "cpu.h"
 #include "savestate.h"
+#include "audiofilters.h"
 
 namespace {
 	enum {
@@ -47,83 +48,6 @@ namespace {
 	};
 }
 
-ATAudioFilter::ATAudioFilter()
-	: mHiPassAccum(0)
-{
-	SetScale(1.0f);
-
-	// Set up a FIR low pass filter, Blackman window, 15KHz cutoff (63920Hz sampling rate)
-	const float fc = 15000.0f / 63920.0f;
-	float sum = 0.5f;
-	mLoPassCoeffs[0] = 1.0f;
-
-	for(int i=1; i<kFilterOverlap; ++i) {
-		float x = (float)i * nsVDMath::kfPi;
-		float y = x / 128.0f * 2.0f;
-		float w = 0.42f + 0.5f * cosf(y) + 0.08f * cosf(y+y);
-
-		float f = sinf(2.0f * x * fc) / (2.0f * x * fc) * w;
-
-		mLoPassCoeffs[i] = f;
-
-		sum += f;
-	}
-
-	float scale = 0.5f / sum;
-
-	for(int i=0; i<kFilterOverlap; ++i)
-		mLoPassCoeffs[i] *= scale;
-}
-
-float ATAudioFilter::GetScale() const {
-	return mRawScale;
-}
-
-void ATAudioFilter::SetScale(float scale) {
-	// We accumulate 28 cycles worth of output per sample, and each output can
-	// be from 0-60 (4*15). We ignore the speaker and cassette inputs in order
-	// to get a little more range.
-	mRawScale = scale;
-	mScale = scale * (1.0f / (60.0f * 28.0f));
-}
-
-void ATAudioFilter::PreFilter(float * VDRESTRICT dst, uint32 count) {
-//	const float kHiPass = 0.0055f;
-	const float kHiPass = 0.0001f;
-
-	const float scale = mScale;
-	float hiAccum = mHiPassAccum;
-
-	do {
-		float v0 = *dst;
-		float v1 = v0 - hiAccum;
-		hiAccum += v1 * kHiPass;
-
-		*dst++ = v1 * scale;
-	} while(--count);
-
-	mHiPassAccum = hiAccum;
-}
-
-void ATAudioFilter::Filter(float * VDRESTRICT dst, const float * VDRESTRICT src, uint32 count) {
-	src -= kFilterOverlap;
-
-	do {
-		float v = src[0] * mLoPassCoeffs[0]
-				+ (src[- 1] + src[ 1]) * mLoPassCoeffs[ 1]
-				+ (src[- 2] + src[ 2]) * mLoPassCoeffs[ 2]
-				+ (src[- 3] + src[ 3]) * mLoPassCoeffs[ 3]
-				+ (src[- 4] + src[ 4]) * mLoPassCoeffs[ 4]
-				+ (src[- 5] + src[ 5]) * mLoPassCoeffs[ 5]
-				+ (src[- 6] + src[ 6]) * mLoPassCoeffs[ 6]
-				+ (src[- 7] + src[ 7]) * mLoPassCoeffs[ 7];
-
-		++src;
-
-		*dst++ = v;
-	} while(--count);
-}
-
 ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	: mAccum(0)
 	, mSampleCounter(0)
@@ -140,6 +64,7 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mResampleSamplesPresent(0)
 	, mResampleSamplesNeeded(0)
 	, mResampleRestabilizeCounter(0)
+	, mpFilter(new ATAudioFilter)
 	, mTicksAccumulated(0)
 	, mbCommandLineState(false)
 	, mbPal(false)
@@ -149,6 +74,7 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mKBCODE(0)
 	, mKeyCodeTimer(0)
 	, mKeyCooldownTimer(0)
+	, mbUseKeyCooldownTimer(true)
 	, mIRQEN(0)
 	, mIRQST(0)
 	, mAUDCTL(0)
@@ -227,6 +153,8 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 }
 
 ATPokeyEmulator::~ATPokeyEmulator() {
+	delete mpFilter;
+	mpFilter = NULL;
 }
 
 void ATPokeyEmulator::Init(IATPokeyEmulatorConnections *mem, ATScheduler *sched) {
@@ -404,7 +332,7 @@ void ATPokeyEmulator::SetSlave(ATPokeyEmulator *slave) {
 
 	if (mpSlave) {
 		mpSlave->mSamplingRate = mSamplingRate;
-		mpSlave->mFilter.SetScale(mFilter.GetScale());
+		mpSlave->mpFilter->SetScale(mpFilter->GetScale());
 		mpSlave->ColdReset();
 	}
 
@@ -508,14 +436,14 @@ void ATPokeyEmulator::SetCommandLine(bool newState) {
 }
 
 float ATPokeyEmulator::GetVolume() const {
-	return mFilter.GetScale();
+	return mpFilter->GetScale();
 }
 
 void ATPokeyEmulator::SetVolume(float vol) {
-	mFilter.SetScale(vol);
+	mpFilter->SetScale(vol);
 
 	if (mpSlave)
-		mpSlave->mFilter.SetScale(vol);
+		mpSlave->mpFilter->SetScale(vol);
 }
 
 void ATPokeyEmulator::SetChannelEnabled(uint32 channel, bool enabled) {
@@ -543,9 +471,11 @@ void ATPokeyEmulator::SetShiftKeyState(bool newState) {
 		mSKSTAT |= 0x08;
 }
 
-void ATPokeyEmulator::PushKey(uint8 c, bool repeat, bool allowQueue, bool flushQueue) {
+void ATPokeyEmulator::PushKey(uint8 c, bool repeat, bool allowQueue, bool flushQueue, bool useCooldown) {
+	mbUseKeyCooldownTimer = useCooldown;
+
 	if (allowQueue) {
-		if (mKeyCodeTimer || mKeyCooldownTimer || !(mIRQST & 0x40)) {
+		if (!mKeyQueue.empty() || mKeyCodeTimer || mKeyCooldownTimer || !(mIRQST & 0x40) || !mpConn->PokeyIsKeyPushOK(c)) {
 			mKeyQueue.push_back(c);
 			return;
 		}
@@ -569,6 +499,26 @@ void ATPokeyEmulator::PushKey(uint8 c, bool repeat, bool allowQueue, bool flushQ
 
 	mKeyCodeTimer = 1;
 	mKeyCooldownTimer = 0;
+}
+
+void ATPokeyEmulator::PushRawKey(uint8 c) {
+	mKeyQueue.clear();
+
+	mKBCODE = c;
+	mSKSTAT &= ~0x04;
+
+	if (mIRQEN & 0x40) {
+		// If keyboard IRQ is already active, set the keyboard overrun bit.
+		if (!(mIRQST & 0x40))
+			mSKSTAT &= ~0x40;
+
+		mIRQST &= ~0x40;
+		mpConn->PokeyAssertIRQ();
+	}
+}
+
+void ATPokeyEmulator::ReleaseRawKey() {
+	mSKSTAT |= 0x04;
 }
 
 void ATPokeyEmulator::PushBreak() {
@@ -645,6 +595,11 @@ void ATPokeyEmulator::FireTimers(uint8 activeChannels) {
 			mCounter[0] = (uint32)mAUDF[0] + 1;
 			SetupTimers(0x01);
 		}
+
+		if (mSerialOutputCounter) {
+			if ((mSKCTL & 0x60) == 0x60)
+				OnSerialOutputTick();
+		}
 	}
 
 	// count timer 3
@@ -702,51 +657,60 @@ void ATPokeyEmulator::FireTimers(uint8 activeChannels) {
 		}
 
 		if (mSerialOutputCounter) {
-			--mSerialOutputCounter;
-
-			// We've already transmitted the start bit (low), so we need to do data bits and then
-			// stop bit (high).
-			mbSerialOutputState = mSerialOutputCounter ? (mSerialOutputShiftRegister & (1 << (9 - (mSerialOutputCounter >> 1)))) != 0 : true;
-
-			if (!mSerialOutputCounter) {
-				if (mbTraceSIO)
-					ATConsoleTaggedPrintf("POKEY: Transmitted serial byte %02x to SIO bus\n", mSerialOutputShiftRegister);
-
-				for(Devices::const_iterator it(mDevices.begin()), itEnd(mDevices.end()); it!=itEnd; ++it)
-					(*it)->PokeyWriteSIO(mSerialOutputShiftRegister);
-
-				if (mbSerOutValid) {
-					mSerialOutputCounter = 20;
-					mbSerialOutputState = true;
-					mSerialOutputShiftRegister = mSEROUT;
-					mbSerOutValid = false;
-				}
-
-				if (mIRQEN & 0x10) {
-					mIRQST &= ~0x10;
-					mpConn->PokeyAssertIRQ();
-				}
-
-				// bit 3 is special and doesn't get cleared by IRQEN
-				if (!mSerialOutputCounter) {
-					mIRQST &= ~0x08;
-					if (mIRQEN & 0x08) {
-						mpConn->PokeyAssertIRQ();
-					}
-				}
-			}
-
-			if (!mbSerOutValid) {
-				if (mIRQEN & 0x10) {
-					mIRQST &= ~0x10;
-					mpConn->PokeyAssertIRQ();
-				}
+			switch(mSKCTL & 0x60) {
+				case 0x20:
+				case 0x40:
+					OnSerialOutputTick();
+					break;
 			}
 		}
 	}
 
 	if (outputsChanged)
 		UpdateOutput();
+}
+
+void ATPokeyEmulator::OnSerialOutputTick() {
+	--mSerialOutputCounter;
+
+	// We've already transmitted the start bit (low), so we need to do data bits and then
+	// stop bit (high).
+	mbSerialOutputState = mSerialOutputCounter ? (mSerialOutputShiftRegister & (1 << (9 - (mSerialOutputCounter >> 1)))) != 0 : true;
+
+	if (!mSerialOutputCounter) {
+		if (mbTraceSIO)
+			ATConsoleTaggedPrintf("POKEY: Transmitted serial byte %02x to SIO bus\n", mSerialOutputShiftRegister);
+
+		for(Devices::const_iterator it(mDevices.begin()), itEnd(mDevices.end()); it!=itEnd; ++it)
+			(*it)->PokeyWriteSIO(mSerialOutputShiftRegister);
+
+		if (mbSerOutValid) {
+			mSerialOutputCounter = 20;
+			mbSerialOutputState = true;
+			mSerialOutputShiftRegister = mSEROUT;
+			mbSerOutValid = false;
+		}
+
+		if (mIRQEN & 0x10) {
+			mIRQST &= ~0x10;
+			mpConn->PokeyAssertIRQ();
+		}
+
+		// bit 3 is special and doesn't get cleared by IRQEN
+		if (!mSerialOutputCounter) {
+			mIRQST &= ~0x08;
+			if (mIRQEN & 0x08) {
+				mpConn->PokeyAssertIRQ();
+			}
+		}
+	}
+
+	if (!mbSerOutValid) {
+		if (mIRQEN & 0x10) {
+			mIRQST &= ~0x10;
+			mpConn->PokeyAssertIRQ();
+		}
+	}
 }
 
 void ATPokeyEmulator::AdvanceScanLine() {
@@ -796,7 +760,7 @@ void ATPokeyEmulator::AdvanceFrame() {
 		if (mKeyCooldownTimer)
 			--mKeyCooldownTimer;
 
-		if ((mIRQST & mIRQEN & 0x40) && !mKeyQueue.empty() && (!mKeyCooldownTimer || mpConn->PokeyIsKeyPushOK(mKeyQueue.front())))
+		if ((mIRQST & mIRQEN & 0x40) && !mKeyQueue.empty() && ((mbUseKeyCooldownTimer && !mKeyCooldownTimer) || mpConn->PokeyIsKeyPushOK(mKeyQueue.front())))
 			TryPushNextKey();
 	}
 
@@ -1059,100 +1023,6 @@ void ATPokeyEmulator::UpdateOutput() {
 					;
 }
 
-extern "C" __declspec(align(16)) const float gVDCaptureAudioResamplingKernel[32][8] = {
-	{+0x0000,+0x0000,+0x0000,+0x4000,+0x0000,+0x0000,+0x0000,+0x0000 },
-	{-0x000a,+0x0052,-0x0179,+0x3fe2,+0x019f,-0x005b,+0x000c,+0x0000 },
-	{-0x0013,+0x009c,-0x02cc,+0x3f86,+0x0362,-0x00c0,+0x001a,+0x0000 },
-	{-0x001a,+0x00dc,-0x03f9,+0x3eef,+0x054a,-0x012c,+0x002b,+0x0000 },
-	{-0x001f,+0x0113,-0x0500,+0x3e1d,+0x0753,-0x01a0,+0x003d,+0x0000 },
-	{-0x0023,+0x0141,-0x05e1,+0x3d12,+0x097c,-0x021a,+0x0050,-0x0001 },
-	{-0x0026,+0x0166,-0x069e,+0x3bd0,+0x0bc4,-0x029a,+0x0066,-0x0001 },
-	{-0x0027,+0x0182,-0x0738,+0x3a5a,+0x0e27,-0x031f,+0x007d,-0x0002 },
-	{-0x0028,+0x0197,-0x07b0,+0x38b2,+0x10a2,-0x03a7,+0x0096,-0x0003 },
-	{-0x0027,+0x01a5,-0x0807,+0x36dc,+0x1333,-0x0430,+0x00af,-0x0005 },
-	{-0x0026,+0x01ab,-0x083f,+0x34db,+0x15d5,-0x04ba,+0x00ca,-0x0007 },
-	{-0x0024,+0x01ac,-0x085b,+0x32b3,+0x1886,-0x0541,+0x00e5,-0x0008 },
-	{-0x0022,+0x01a6,-0x085d,+0x3068,+0x1b40,-0x05c6,+0x0101,-0x000b },
-	{-0x001f,+0x019c,-0x0846,+0x2dfe,+0x1e00,-0x0644,+0x011c,-0x000d },
-	{-0x001c,+0x018e,-0x0819,+0x2b7a,+0x20c1,-0x06bb,+0x0136,-0x0010 },
-	{-0x0019,+0x017c,-0x07d9,+0x28e1,+0x2380,-0x0727,+0x014f,-0x0013 },
-	{-0x0016,+0x0167,-0x0788,+0x2637,+0x2637,-0x0788,+0x0167,-0x0016 },
-	{-0x0013,+0x014f,-0x0727,+0x2380,+0x28e1,-0x07d9,+0x017c,-0x0019 },
-	{-0x0010,+0x0136,-0x06bb,+0x20c1,+0x2b7a,-0x0819,+0x018e,-0x001c },
-	{-0x000d,+0x011c,-0x0644,+0x1e00,+0x2dfe,-0x0846,+0x019c,-0x001f },
-	{-0x000b,+0x0101,-0x05c6,+0x1b40,+0x3068,-0x085d,+0x01a6,-0x0022 },
-	{-0x0008,+0x00e5,-0x0541,+0x1886,+0x32b3,-0x085b,+0x01ac,-0x0024 },
-	{-0x0007,+0x00ca,-0x04ba,+0x15d5,+0x34db,-0x083f,+0x01ab,-0x0026 },
-	{-0x0005,+0x00af,-0x0430,+0x1333,+0x36dc,-0x0807,+0x01a5,-0x0027 },
-	{-0x0003,+0x0096,-0x03a7,+0x10a2,+0x38b2,-0x07b0,+0x0197,-0x0028 },
-	{-0x0002,+0x007d,-0x031f,+0x0e27,+0x3a5a,-0x0738,+0x0182,-0x0027 },
-	{-0x0001,+0x0066,-0x029a,+0x0bc4,+0x3bd0,-0x069e,+0x0166,-0x0026 },
-	{-0x0001,+0x0050,-0x021a,+0x097c,+0x3d12,-0x05e1,+0x0141,-0x0023 },
-	{+0x0000,+0x003d,-0x01a0,+0x0753,+0x3e1d,-0x0500,+0x0113,-0x001f },
-	{+0x0000,+0x002b,-0x012c,+0x054a,+0x3eef,-0x03f9,+0x00dc,-0x001a },
-	{+0x0000,+0x001a,-0x00c0,+0x0362,+0x3f86,-0x02cc,+0x009c,-0x0013 },
-	{+0x0000,+0x000c,-0x005b,+0x019f,+0x3fe2,-0x0179,+0x0052,-0x000a },
-};
-
-namespace {
-	uint64 ResampleMono(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc) {
-		do {
-			const float *s2 = s + (accum >> 32);
-			const float *f = gVDCaptureAudioResamplingKernel[(uint32)accum >> 27];
-
-			accum += inc;
-
-			float v = s2[0]*f[0]
-					+ s2[1]*f[1]
-					+ s2[2]*f[2]
-					+ s2[3]*f[3]
-					+ s2[4]*f[4]
-					+ s2[5]*f[5]
-					+ s2[6]*f[6]
-					+ s2[7]*f[7];
-
-			d[0] = d[1] = VDClampedRoundFixedToInt16Fast(v * (1.0f / 16384.0f));
-			d += 2;
-		} while(--count);
-
-		return accum;
-	}
-
-	uint64 ResampleStereo(sint16 *d, const float *s1, const float *s2, uint32 count, uint64 accum, sint64 inc) {
-		do {
-			const float *r1 = s1 + (accum >> 32);
-			const float *r2 = s2 + (accum >> 32);
-			const float *f = gVDCaptureAudioResamplingKernel[(uint32)accum >> 27];
-
-			accum += inc;
-
-			float a = r1[0]*f[0]
-					+ r1[1]*f[1]
-					+ r1[2]*f[2]
-					+ r1[3]*f[3]
-					+ r1[4]*f[4]
-					+ r1[5]*f[5]
-					+ r1[6]*f[6]
-					+ r1[7]*f[7];
-
-			float b = r2[0]*f[0]
-					+ r2[1]*f[1]
-					+ r2[2]*f[2]
-					+ r2[3]*f[3]
-					+ r2[4]*f[4]
-					+ r2[5]*f[5]
-					+ r2[6]*f[6]
-					+ r2[7]*f[7];
-
-			d[0] = VDClampedRoundFixedToInt16Fast(a * (1.0f / 16384.0f));
-			d[1] = VDClampedRoundFixedToInt16Fast(b * (1.0f / 16384.0f));
-			d += 2;
-		} while(--count);
-
-		return accum;
-	}
-}
-
 void ATPokeyEmulator::FlushBlock() {
 	VDASSERT(mResampleSamplesFiltered < kRawBlockSize);
 	VDASSERT(mResampleSamplesPresent < kRawBlockSize);
@@ -1160,23 +1030,24 @@ void ATPokeyEmulator::FlushBlock() {
 	uint32 newSamples = mResampleSamplesPresent - mResampleSamplesFiltered;
 
 	if (newSamples) {
-		mFilter.PreFilter(mRawOutputBuffer + mResampleSamplesFiltered, newSamples);
-		mFilter.Filter(mFilteredOutputBuffer + mResampleSamplesFiltered, mRawOutputBuffer + mResampleSamplesFiltered, newSamples);
+		mpFilter->PreFilter(mRawOutputBuffer + mResampleSamplesFiltered, newSamples);
+		mpFilter->Filter(mFilteredOutputBuffer + mResampleSamplesFiltered, mRawOutputBuffer + mResampleSamplesFiltered, newSamples);
 		
 		if (mpSlave) {
-			mpSlave->mFilter.PreFilter(mpSlave->mRawOutputBuffer + mResampleSamplesFiltered, newSamples);
-			mpSlave->mFilter.Filter(mpSlave->mFilteredOutputBuffer + mResampleSamplesFiltered, mpSlave->mRawOutputBuffer + mResampleSamplesFiltered, newSamples);
+			mpSlave->mpFilter->PreFilter(mpSlave->mRawOutputBuffer + mResampleSamplesFiltered, newSamples);
+			mpSlave->mpFilter->Filter(mpSlave->mFilteredOutputBuffer + mResampleSamplesFiltered, mpSlave->mRawOutputBuffer + mResampleSamplesFiltered, newSamples);
 		}
 
 		mResampleSamplesFiltered = mResampleSamplesPresent;
 
 		if (mpAudioTap) {
 			uint32 offset = mResampleSamplesFiltered - newSamples;
+			uint32 timestamp = mpConn->PokeyGetTimestamp() - 28 * newSamples;
 
 			if (mpSlave)
-				mpAudioTap->WriteRawAudio(mFilteredOutputBuffer + offset, mpSlave->mFilteredOutputBuffer + offset, newSamples);
+				mpAudioTap->WriteRawAudio(mFilteredOutputBuffer + offset, mpSlave->mFilteredOutputBuffer + offset, newSamples, timestamp);
 			else
-				mpAudioTap->WriteRawAudio(mFilteredOutputBuffer + offset, NULL, newSamples);
+				mpAudioTap->WriteRawAudio(mFilteredOutputBuffer + offset, NULL, newSamples, timestamp);
 		}
 	}
 
@@ -1184,9 +1055,9 @@ void ATPokeyEmulator::FlushBlock() {
 	VDASSERT((uint32)((mResampleAccum + mResampleRate * (kSamplesPerBlock - 1)) >> 32) + 7 < mResampleSamplesPresent + ATAudioFilter::kFilterOverlap);
 
 	if (mpSlave)
-		mResampleAccum = ResampleStereo(mOutputBuffer, mFilteredOutputBuffer, mpSlave->mFilteredOutputBuffer, kSamplesPerBlock, mResampleAccum, mResampleRate);
+		mResampleAccum = ATFilterResampleStereo(mOutputBuffer, mFilteredOutputBuffer, mpSlave->mFilteredOutputBuffer, kSamplesPerBlock, mResampleAccum, mResampleRate);
 	else
-		mResampleAccum = ResampleMono(mOutputBuffer, mFilteredOutputBuffer, kSamplesPerBlock, mResampleAccum, mResampleRate);
+		mResampleAccum = ATFilterResampleMonoToStereo(mOutputBuffer, mFilteredOutputBuffer, kSamplesPerBlock, mResampleAccum, mResampleRate);
 
 	VDASSERT(mResampleSamplesPresent >= (uint32)((mResampleAccum - mResampleRate) >> 32));
 
@@ -1382,6 +1253,17 @@ void ATPokeyEmulator::SetupTimers(uint8 channels) {
 
 uint8 ATPokeyEmulator::DebugReadByte(uint8 reg) const {
 	switch(reg) {
+		case 0x00:	// $D200 POT0
+		case 0x01:	// $D201 POT1
+		case 0x02:	// $D202 POT2
+		case 0x03:	// $D203 POT3
+		case 0x04:	// $D204 POT4
+		case 0x05:	// $D205 POT5
+		case 0x06:	// $D206 POT6
+		case 0x07:	// $D207 POT7
+			return const_cast<ATPokeyEmulator *>(this)->ReadByte(reg);
+		case 0x08:	// $D208 ALLPOT
+			return mALLPOT;
 		case 0x09:	// $D209 KBCODE
 			return mKBCODE;
 		case 0x0A:	// $D20A RANDOM
@@ -1402,7 +1284,7 @@ uint8 ATPokeyEmulator::DebugReadByte(uint8 reg) const {
 			return DebugReadByte(reg & 0x0f);
 	}
 
-	return 0;
+	return 0xFF;
 }
 
 uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
@@ -1487,7 +1369,7 @@ uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
 			return ReadByte(reg & 0x0f);
 	}
 
-	return 0;
+	return 0xFF;
 }
 
 void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
@@ -1804,6 +1686,7 @@ void ATPokeyEmulator::DumpStatus(bool isSlave) {
 	ATConsolePrintf("SKCTL: %02x\n", mSKCTL);
 	ATConsolePrintf("SERIN: %02x\n", mSERIN);
 	ATConsolePrintf("SEROUT: %02x (%s)\n", mSEROUT, mbSerOutValid ? "pending" : "done");
+	ATConsolePrintf("        shift register %02x (%d: %s)\n", mSerialOutputShiftRegister, mSerialOutputCounter, mSerialOutputCounter ? "pending" : "done");
 	ATConsolePrintf("IRQEN:  %02x%s%s%s%s%s%s%s%s\n"
 		, mIRQEN
 		, mIRQEN & 0x80 ? ", break key" : ""
@@ -1930,5 +1813,5 @@ void ATPokeyEmulator::TryPushNextKey() {
 	uint8 c = mKeyQueue.front();
 	mKeyQueue.pop_front();
 
-	PushKey(c, false, false, false);
+	PushKey(c, false, false, false, mbUseKeyCooldownTimer);
 }

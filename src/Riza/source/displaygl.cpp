@@ -189,7 +189,7 @@ public:
 	VDVideoDisplayMinidriverOpenGL();
 	~VDVideoDisplayMinidriverOpenGL();
 
-	bool Init(HWND hwnd, const VDVideoDisplaySourceInfo& info);
+	bool Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info);
 	void Shutdown();
 
 	bool ModifySource(const VDVideoDisplaySourceInfo& info);
@@ -293,7 +293,7 @@ VDVideoDisplayMinidriverOpenGL::VDVideoDisplayMinidriverOpenGL()
 VDVideoDisplayMinidriverOpenGL::~VDVideoDisplayMinidriverOpenGL() {
 }
 
-bool VDVideoDisplayMinidriverOpenGL::Init(HWND hwnd, const VDVideoDisplaySourceInfo& info) {
+bool VDVideoDisplayMinidriverOpenGL::Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info) {
 	mSource = info;
 	mhwnd = hwnd;
 

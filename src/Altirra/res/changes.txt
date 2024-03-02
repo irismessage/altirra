@@ -1,6 +1,71 @@
 Altirra Change Log
 
-Version 1.6:
+Version 1.7:
+   [features added]
+   * Cartridge: Fixed ID mistake on mappers 1 and 2; added 3, 15, 26-30, 32-38.
+   * Cartridge: Added dialog to ask for mapper when header is missing.
+   * Cartridge: Added write support for 1Mb/8Mb flash cartridges.
+   * Cartridge: Added option to create new 1Mb/8Mb flash cartridges.
+   * Cartridge: Added option to save cartridge images.
+   * Cartridge: Added support for AtariMax 1Mb+MyIDE cartridge banking mapper.
+   * UI: Added /bootvrw and /bootrw to boot disks in read/write or virtual R/W mode.
+   * UI: Added /artifact switch for controlling video artifacting.
+   * UI: Multiple types of images can now be mounted simultaneously via the command line.
+   * UI: Added /type switch to push keys on startup.
+   * UI: Added /cartmapper switch to specify mapper when booting headerless cartridges.
+   * UI: Added support for saving settings in an .ini file instead of the Registry.
+   * UI: Added more color presets.
+   * UI: Added save screenshot command.
+   * UI: Ctrl+\ and Ctrl+Shift+\ now produce Ctrl+Esc and Ctrl+Shift+Esc.
+   * UI: Added /portable mode to switch to Altirra.ini for settings.
+   * UI: Added help file.
+   * UI: Disk, cartridge, and tape images can now be loaded from .zip files.
+   * UI: Heads-up display now indicates H: access.
+   * Recording: Added video recording.
+   * Simulator: Added option for faster kernel boot by accelerating checksum and RAM test routines.
+   * Simulator: .bin and .xfd extensions now override content-based identification for images.
+   * Simulator: BASIC disable now lifts Option key on playfield enable rather than VBI enable to avoid breaking games that don't use VBIs.
+   * Debugger: Added .pathbreak command to stop when new code is executed for the first time.
+   * Debugger: Disassembly window now auto-pages when scrolling up or down beyond the current view.
+   * Disk: Individual disk drives can now be powered on and off from the Disk Drives dialog.
+   * Disk: Improved compatibility of H: device.
+   * Disk: Added support for H: burst I/O.
+   * IDE: Added emulation support for MyIDE interface.
+   * HLE: Rearranged SIO to improve compatibility with naughty programs that copy out parts of kernel ROM.
+
+   [bugs fixed]
+   * UI: Fixed random crash when opening debugger or new debug panes.
+   * UI: Booting images on the command line now removes previously mounted images.
+   * UI: Fixed Alt+8 keyboard shortcut.
+   * UI: Remapped Insert/Delete/Home keys to better match their Atari equivalents.
+   * UI: Fixed joystick ports 3 and 4 not being mappable.
+   * UI: Fixed focus anomalies when bringing up profile view undocked.
+   * UI: Rewrote bicubic pixel shader to fix artifacts on Intel GMA 950.
+   * UI: Display acceleration is now supported on secondary monitors.
+   * POKEY: Added support for using channel 2 as serial transmit clock (SKCTL[6:5]=11).
+   * POKEY: Unassigned registers now properly read $FF.
+   * Disk: Increased delay from complete byte to first data in high speed mode to fix data overruns in SIO-based routines.
+   * Disk: Fixed bug that caused corruption of newly created disk images during incremental updates.
+   * CPU: Fixed bug in DCP opcodes.
+   * CPU: Added missing ARR #imm ($6B) opcode.
+   * CPU: Added missing SAX zp,Y ($97) opcode.
+   * CPU: Added missing XAS abs,Y ($9B) opcode.
+   * CPU: Fixed ATX #imm ($AB) opcode.
+   * Debugger: Fixed crash/errors when trying to reopen printer pane after closing it.
+   * Debugger: Memory leak fixes.
+   * Debugger: Fixed disassembly window jumping when changing breakpoints after selecting a nested call stack frame.
+   * Debugger: Fixed Alt+Shift+0 shortcut for profiler view.
+   * Simulator: Fixed bug where BASIC bit wasn't handled properly in 576K and 1088K memory modes.
+   * Cartridge: SuperCharger 3D cartridge is now saved and restored properly across runs.
+   * HLE: Added initial cassette reading support.
+   * HLE: Fixed bugs in E: logical line handling in bottom third of screen.
+   * HLE: Fixed handling of undocumented ZFL entry point in math pack with accelerated FP disabled (improves compatibility with Atari BASIC).
+   * HLE: SIO now disables level 2 VBLANK when active.
+   * HLE: CIO no longer throws an error when closing an IOCB that is not open.
+   * HLE: CIO now allows opening a device without a colon, i.e. "K".
+   * GTIA: Fixed some display artifacts when extended PAL height is enabled.
+
+Version 1.6 [April 25, 2010]:
    [features added]
    * Debugger: Added profiler.
    * Debugger: Added support for loading CA65 labels.

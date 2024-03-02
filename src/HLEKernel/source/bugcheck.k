@@ -32,8 +32,6 @@
 
 	;initialize CPU
 	cld
-	ldx		#$ff
-	txs
 	
 	;shut off ANTIC DMA
 	lda		#$00

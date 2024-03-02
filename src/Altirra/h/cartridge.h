@@ -24,6 +24,49 @@
 class ATSaveStateReader;
 class ATSaveStateWriter;
 
+enum ATCartridgeMode {
+	kATCartridgeMode_None,
+	kATCartridgeMode_8K,
+	kATCartridgeMode_16K,
+	kATCartridgeMode_XEGS_32K,
+	kATCartridgeMode_XEGS_64K,
+	kATCartridgeMode_XEGS_128K,
+	kATCartridgeMode_Switchable_XEGS_32K,
+	kATCartridgeMode_Switchable_XEGS_64K,
+	kATCartridgeMode_Switchable_XEGS_128K,
+	kATCartridgeMode_Switchable_XEGS_256K,
+	kATCartridgeMode_Switchable_XEGS_512K,
+	kATCartridgeMode_Switchable_XEGS_1M,
+	kATCartridgeMode_MaxFlash_128K,
+	kATCartridgeMode_MaxFlash_128K_MyIDE,
+	kATCartridgeMode_MaxFlash_1024K,
+	kATCartridgeMode_MegaCart_16K,
+	kATCartridgeMode_MegaCart_32K,
+	kATCartridgeMode_MegaCart_64K,
+	kATCartridgeMode_MegaCart_128K,
+	kATCartridgeMode_MegaCart_256K,
+	kATCartridgeMode_MegaCart_512K,
+	kATCartridgeMode_MegaCart_1M,
+	kATCartridgeMode_SuperCharger3D,
+	kATCartridgeMode_BountyBob800,
+	kATCartridgeMode_OSS_034M,
+	kATCartridgeMode_OSS_091M,
+	kATCartridgeModeCount
+};
+
+enum ATCartLoadStatus {
+	kATCartLoadStatus_Ok,
+	kATCartLoadStatus_UnknownMapper
+};
+
+struct ATCartLoadContext {
+	bool mbReturnOnUnknownMapper;
+	int mCartMapper;
+	uint32 mCartSize;
+
+	ATCartLoadStatus mLoadStatus;
+};
+
 class ATCartridgeEmulator {
 	ATCartridgeEmulator(const ATCartridgeEmulator&);
 	ATCartridgeEmulator& operator=(const ATCartridgeEmulator&);
@@ -40,9 +83,16 @@ public:
 		return mCartMode ? mImagePath.c_str() : NULL;
 	}
 
+	int GetMode() const { return mCartMode; }
+
 	void LoadSuperCharger3D();
-	void Load(const wchar_t *fn);
+	void LoadFlash1Mb(bool altbank);
+	void LoadFlash8Mb();
+	bool Load(const wchar_t *fn, ATCartLoadContext *loadCtx);
+	bool Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, ATCartLoadContext *loadCtx);
 	void Unload();
+
+	void Save(const wchar_t *fn, bool includeHeader);
 
 	void ColdReset();
 
@@ -65,11 +115,22 @@ protected:
 	int	mCartBank2;
 	int	mInitialCartBank;
 	int	mInitialCartBank2;
+	int mCommandPhase;
+
+	enum FlashReadMode {
+		kFlashReadMode_Normal,
+		kFlashReadMode_Autoselect,
+		kFlashReadMode_WriteStatus
+	};
+
+	FlashReadMode mFlashReadMode;
 
 	uint8	mSC3D[4];
 
 	vdfastvector<uint8> mCARTROM;
 	VDStringW mImagePath;
 };
+
+int ATGetCartridgeModeForMapper(int mapper);
 
 #endif	// f_AT_CARTRIDGE_H

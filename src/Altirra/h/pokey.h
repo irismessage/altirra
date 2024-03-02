@@ -30,6 +30,7 @@ class IVDAudioOutput;
 class ATPokeyEmulator;
 class ATSaveStateReader;
 class ATSaveStateWriter;
+class ATAudioFilter;
 
 class IATPokeyEmulatorConnections {
 public:
@@ -38,6 +39,7 @@ public:
 	virtual void PokeyBreak() = 0;
 	virtual bool PokeyIsInInterrupt() const = 0;
 	virtual bool PokeyIsKeyPushOK(uint8 c) const = 0;
+	virtual uint32 PokeyGetTimestamp() const = 0;
 };
 
 class IATPokeySIODevice {
@@ -57,29 +59,8 @@ public:
 
 class IATPokeyAudioTap {
 public:
-	virtual void WriteRawAudio(const float *left, const float *right, uint32 count) = 0;
+	virtual void WriteRawAudio(const float *left, const float *right, uint32 count, uint32 timestamp) = 0;
 };
-
-class ATAudioFilter {
-public:
-	enum { kFilterOverlap = 8 };
-
-	ATAudioFilter();
-
-	float GetScale() const;
-	void SetScale(float scale);
-
-	void PreFilter(float * VDRESTRICT dst, uint32 count);
-	void Filter(float * VDRESTRICT dst, const float * VDRESTRICT src, uint32 count);
-
-protected:
-	float	mHiPassAccum;
-	float	mScale;
-	float	mRawScale;
-
-	float	mLoPassCoeffs[kFilterOverlap];
-};
-
 
 class ATPokeyEmulator : public IATSchedulerCallback {
 public:
@@ -134,7 +115,9 @@ public:
 	void	SetNonlinearMixingEnabled(bool enable);
 
 	void	SetShiftKeyState(bool down);
-	void	PushKey(uint8 c, bool repeat, bool allowQueue = false, bool flushQueue = true);
+	void	PushKey(uint8 c, bool repeat, bool allowQueue = false, bool flushQueue = true, bool useCooldown = true);
+	void	PushRawKey(uint8 c);
+	void	ReleaseRawKey();
 	void	PushBreak();
 
 	int	GetPotPos(unsigned idx) const { return mPOT[idx]; }
@@ -167,6 +150,7 @@ protected:
 	void	GenerateSample(uint32 pos, uint32 t);
 	void	UpdatePolynomialCounters() const;
 	void	FireTimers(uint8 activeChannels);
+	void	OnSerialOutputTick();
 	void	UpdateOutput();
 	void	FlushBlock();
 	void	UpdateTimerCounters(uint8 channels);
@@ -205,7 +189,7 @@ protected:
 	uint32	mResampleSamplesNeeded;
 	int		mResampleRestabilizeCounter;
 
-	ATAudioFilter	mFilter;
+	ATAudioFilter	*mpFilter;
 
 	int		mTicksAccumulated;
 
@@ -227,6 +211,7 @@ protected:
 	uint8	mKBCODE;
 	uint32	mKeyCodeTimer;
 	uint32	mKeyCooldownTimer;
+	bool	mbUseKeyCooldownTimer;
 
 	uint8	mIRQEN;
 	uint8	mIRQST;

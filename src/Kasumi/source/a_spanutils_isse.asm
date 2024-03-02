@@ -2,6 +2,7 @@
 
 xfefefefefefefefe	dq	0fefefefefefefefeh
 xe0e0e0e0e0e0e0e0	dq	0e0e0e0e0e0e0e0e0h
+x0002000200020002	dq	00002000200020002h
 
 		section	.text
 
@@ -152,6 +153,8 @@ _vdasm_horiz_expand4x_coaligned_MMX:
 		mov			edx, [esp+4]
 		mov			ecx, [esp+8]
 		mov			eax, [esp+12]
+		movq		mm6, qword [x0002000200020002]
+		pxor		mm7, mm7
 .xloop:
 		movd		mm0, [ecx]
 		movd		mm1, [ecx+1]
@@ -178,8 +181,9 @@ _vdasm_horiz_expand4x_coaligned_MMX:
 		punpcklbw	mm0, mm1
 		punpcklbw	mm2, mm3
 		movq		mm1, mm0
-		punpcklbw	mm0, mm2
-		punpckhbw	mm1, mm2
+		punpcklwd	mm0, mm2
+		punpckhwd	mm1, mm2
+		
 		movq		[edx], mm0
 		movq		[edx+8], mm1
 		add			edx, 16

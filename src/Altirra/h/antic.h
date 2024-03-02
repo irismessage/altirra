@@ -74,7 +74,11 @@ public:
 	AnalysisMode	GetAnalysisMode() const { return mAnalysisMode; }
 	void			SetAnalysisMode(AnalysisMode mode) { mAnalysisMode = mode; }
 
-	bool	IsVBIEnabled() const {
+	bool IsPlayfieldDMAEnabled() const {
+		return (mDMACTL & 0x03) != 0;
+	}
+
+	bool IsVBIEnabled() const {
 		return (mNMIEN & 0x40) != 0;
 	}
 

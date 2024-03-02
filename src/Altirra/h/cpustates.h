@@ -90,6 +90,8 @@ namespace AT6502States {
 		kStateXaa,
 		kStateLas,
 		kStateSbx,
+		kStateArr,
+		kStateXas,
 		kStateOr,
 		kStateXor,
 		kStateAsl,

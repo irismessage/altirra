@@ -90,9 +90,25 @@ public:
 	T& operator*() const { return *ptr; }
 	T *operator->() const { return ptr; }
 
+	T** operator~() {
+		if (ptr) {
+			delete ptr;
+			ptr = NULL;
+		}
+
+		return &ptr;
+	}
+
 	vdautoptr<T>& from(vdautoptr<T>& src) { delete ptr; ptr=src.ptr; src.ptr=0; }
 	T *get() const { return ptr; }
 	T *release() { T *v = ptr; ptr = NULL; return v; }
+
+	void reset() {
+		if (ptr) {
+			delete ptr;
+			ptr = NULL;
+		}
+	}
 
 	void swap(vdautoptr<T>& other) {
 		T *p = other.ptr;

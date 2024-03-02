@@ -651,6 +651,7 @@ public:
 
 protected:
 	bool OnLoaded();
+	void OnDestroy();
 	bool OnCommand(uint32 id, uint32 extcode);
 	void OnDataExchange(bool write);
 	void SortItems();
@@ -691,6 +692,10 @@ bool ATUIDialogInput::OnLoaded() {
 	OnDataExchange(false);
 	SetFocusToControl(IDC_LIST);
 	return true;
+}
+
+void ATUIDialogInput::OnDestroy() {
+	mListView.Clear();
 }
 
 bool ATUIDialogInput::OnCommand(uint32 id, uint32 extcode) {

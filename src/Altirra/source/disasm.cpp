@@ -125,6 +125,7 @@ namespace {
 		kOpcodeRLA,
 		kOpcodeROL,
 		kOpcodeROR,
+		kOpcodeRRA,
 		kOpcodeRTI,
 		kOpcodeRTS,
 		kOpcodeSAX,
@@ -147,6 +148,7 @@ namespace {
 		kOpcodeTXS,
 		kOpcodeTYA,
 		kOpcodeXAA,
+		kOpcodeXAS,
 
 		// 65C02
 		kOpcodeBRA,
@@ -245,6 +247,7 @@ namespace {
 		"RLA",
 		"ROL",
 		"ROR",
+		"RRA",
 		"RTI",
 		"RTS",
 		"SAX",
@@ -267,6 +270,7 @@ namespace {
 		"TXS",
 		"TYA",
 		"XAA",
+		"XAS",
 
 		"BRA",
 		"TSB",
@@ -344,20 +348,20 @@ namespace {
 	const uint8 kModeTbl_6502[256][2]={
 		//			   0,       1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
 		/* 00 */	Im(BRK), Ix(ORA), xx(bad), Ix(SLO), Zp(NOP), Zp(ORA), Zp(ASL), Zp(SLO), Ip(PHP), Im(ORA), Ip(ASL), Im(ANC), Ab(NOP), Ab(ORA), Ab(ASL), Ab(SLO), 
-		/* 10 */	Re(BPL), Iy(ORA), xx(bad), xx(bad), Zx(NOP), Zx(ORA), Zx(ASL), Zx(SLO), Ip(CLC), Ay(ORA), Ip(NOP), xx(bad), Ax(NOP), Ax(ORA), Ax(ASL), Ax(SLO), 
-		/* 20 */	Ab(JSR), Ix(AND), xx(bad), xx(bad), Zp(BIT), Zp(AND), Zp(ROL), xx(bad), Ip(PLP), Im(AND), Ip(ROL), Im(ANC), Ab(BIT), Ab(AND), Ab(ROL), xx(bad), 
-		/* 30 */	Re(BMI), Iy(AND), xx(bad), xx(bad), xx(bad), Zx(AND), Zx(ROL), Zx(RLA), Ip(SEC), Ay(AND), Ip(NOP), xx(bad), Ax(NOP), Ax(AND), Ax(ROL), xx(bad), 
+		/* 10 */	Re(BPL), Iy(ORA), xx(bad), Iy(SLO), Zx(NOP), Zx(ORA), Zx(ASL), Zx(SLO), Ip(CLC), Ay(ORA), Ip(NOP), Ay(SLO), Ax(NOP), Ax(ORA), Ax(ASL), Ax(SLO), 
+		/* 20 */	Ab(JSR), Ix(AND), xx(bad), Ix(RLA), Zp(BIT), Zp(AND), Zp(ROL), Zp(RLA), Ip(PLP), Im(AND), Ip(ROL), Im(ANC), Ab(BIT), Ab(AND), Ab(ROL), Ab(RLA), 
+		/* 30 */	Re(BMI), Iy(AND), xx(bad), Iy(RLA), Zx(NOP), Zx(AND), Zx(ROL), Zx(RLA), Ip(SEC), Ay(AND), Ip(NOP), Ay(RLA), Ax(NOP), Ax(AND), Ax(ROL), Ax(RLA), 
 		/* 40 */	Ip(RTI), Ix(EOR), I2(HLE), Ix(SRE), Zp(NOP), Zp(EOR), Zp(LSR), Zp(SRE), Ip(PHA), Im(EOR), Ip(LSR), Im(ASR), Ab(JMP), Ab(EOR), Ab(LSR), Ab(SRE), 
 		/* 50 */	Re(BVC), Iy(EOR), xx(bad), Iy(SRE), Zx(NOP), Zx(EOR), Zx(LSR), Zx(SRE), Ip(CLI), Ay(EOR), Ip(NOP), Ay(SRE), Ax(NOP), Ax(EOR), Ax(LSR), Ax(SRE), 
-		/* 60 */	Ip(RTS), Ix(ADC), xx(bad), xx(bad), xx(bad), Zp(ADC), Zp(ROR), xx(bad), Ip(PLA), Im(ADC), Ip(ROR), xx(bad), Ia(JMP), Ab(ADC), Ab(ROR), xx(bad), 
-		/* 70 */	Re(BVS), Iy(ADC), xx(bad), xx(bad), xx(bad), Zx(ADC), Zx(ROR), xx(bad), Ip(SEI), Ay(ADC), Ip(NOP), xx(bad), Ax(NOP), Ax(ADC), Ax(ROR), xx(bad), 
-		/* 80 */	Im(NOP), Ix(STA), xx(bad), xx(bad), Zp(STY), Zp(STA), Zp(STX), Zp(SAX), Ip(DEY), Im(STA), Ip(TXA), Im(XAA), Ab(STY), Ab(STA), Ab(STX), Ab(SAX), 
-		/* 90 */	Re(BCC), Iy(STA), xx(bad), Iy(SHA), Zx(STY), Zx(STA), Zy(STX), xx(bad), Ip(TYA), Ay(STA), Ip(TXS), xx(bad), Ax(SHY), Ax(STA), xx(bad), xx(bad), 
+		/* 60 */	Ip(RTS), Ix(ADC), xx(bad), Ix(RRA), Zp(NOP), Zp(ADC), Zp(ROR), Zp(RRA), Ip(PLA), Im(ADC), Ip(ROR), xx(bad), Ia(JMP), Ab(ADC), Ab(ROR), Ab(RRA), 
+		/* 70 */	Re(BVS), Iy(ADC), xx(bad), Iy(RRA), Zx(NOP), Zx(ADC), Zx(ROR), Zx(RRA), Ip(SEI), Ay(ADC), Ip(NOP), Ay(RRA), Ax(NOP), Ax(ADC), Ax(ROR), Ax(RRA), 
+		/* 80 */	Im(NOP), Ix(STA), Im(DOP), Ix(SAX), Zp(STY), Zp(STA), Zp(STX), Zp(SAX), Ip(DEY), Im(STA), Ip(TXA), Im(XAA), Ab(STY), Ab(STA), Ab(STX), Ab(SAX), 
+		/* 90 */	Re(BCC), Iy(STA), xx(bad), Iy(SHA), Zx(STY), Zx(STA), Zy(STX), Zy(SAX), Ip(TYA), Ay(STA), Ip(TXS), Ay(XAS), Ax(SHY), Ax(STA), xx(bad), xx(bad), 
 		/* A0 */	Im(LDY), Ix(LDA), Im(LDX), Ix(LAX), Zp(LDY), Zp(LDA), Zp(LDX), Zp(LAX), Ip(TAY), Im(LDA), Ip(TAX), Im(ATX), Ab(LDY), Ab(LDA), Ab(LDX), Ab(LAX), 
 		/* B0 */	Re(BCS), Iy(LDA), xx(bad), Iy(LAX), Zx(LDY), Zx(LDA), Zy(LDX), Zy(LAX), Ip(CLV), Ay(LDA), Ip(TSX), Ab(LAS), Ax(LDY), Ax(LDA), Ay(LDX), Ay(LAX), 
 		/* C0 */	Im(CPY), Ix(CMP), Im(DOP), Ix(DCP), Zp(CPY), Zp(CMP), Zp(DEC), Zp(DCP), Ip(INY), Im(CMP), Ip(DEX), Im(SBX), Ab(CPY), Ab(CMP), Ab(DEC), Ab(DCP), 
-		/* D0 */	Re(BNE), Iy(CMP), xx(bad), Iy(DCP), xx(bad), Zx(CMP), Zx(DEC), Zx(DCP), Ip(CLD), Ay(CMP), Ip(NOP), Ay(DCP), Ax(NOP), Ax(CMP), Ax(DEC), Ax(DCP), 
-		/* E0 */	Im(CPX), Ix(SBC), xx(bad), Ix(ISB), Zp(CPX), Zp(SBC), Zp(INC), Zp(ISB), Ip(INX), Im(SBC), Ip(NOP), xx(bad), Ab(CPX), Ab(SBC), Ab(INC), Ab(ISB), 
+		/* D0 */	Re(BNE), Iy(CMP), xx(bad), Iy(DCP), Zx(NOP), Zx(CMP), Zx(DEC), Zx(DCP), Ip(CLD), Ay(CMP), Ip(NOP), Ay(DCP), Ax(NOP), Ax(CMP), Ax(DEC), Ax(DCP), 
+		/* E0 */	Im(CPX), Ix(SBC), Im(DOP), Ix(ISB), Zp(CPX), Zp(SBC), Zp(INC), Zp(ISB), Ip(INX), Im(SBC), Ip(NOP), Im(SBC), Ab(CPX), Ab(SBC), Ab(INC), Ab(ISB), 
 		/* F0 */	Re(BEQ), Iy(SBC), xx(bad), Iy(ISB), Zx(NOP), Zx(SBC), Zx(INC), Zx(ISB), Ip(SED), Ay(SBC), Ip(NOP), Ay(ISB), Ax(NOP), Ax(SBC), Ax(INC), Ax(ISB),
 	};
 

@@ -147,6 +147,9 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::ICBALZ> ICBALZ;
 		ATByteAdapter<ATKernelSymbols::ICBAHZ> ICBAHZ;
 		ATWordAdapter<ATKernelSymbols::ICBALZ> ICBAZ;
+		ATByteAdapter<ATKernelSymbols::ICBLLZ> ICBLLZ;
+		ATByteAdapter<ATKernelSymbols::ICBLHZ> ICBLHZ;
+		ATWordAdapter<ATKernelSymbols::ICBLLZ> ICBLZ;
 		ATByteAdapter<ATKernelSymbols::ICAX1Z> ICAX1Z;
 		ATByteAdapter<ATKernelSymbols::ICAX2Z> ICAX2Z;
 		ATByteAdapter<ATKernelSymbols::ICAX3Z> ICAX3Z;
@@ -179,6 +182,7 @@ struct ATKernelDatabase {
 		ATWordAdapter<ATKernelSymbols::OLDCOL> OLDCOL;
 		ATByteAdapter<ATKernelSymbols::OLDCHR> OLDCHR;
 		ATWordAdapter<ATKernelSymbols::OLDADR> OLDADR;
+		ATByteAdapter<ATKernelSymbols::PALNTS> PALNTS;
 		ATByteAdapter<ATKernelSymbols::LOGCOL> LOGCOL;
 		ATByteAdapter<ATKernelSymbols::RAMTOP> RAMTOP;
 		ATByteAdapter<ATKernelSymbols::BUFCNT> BUFCNT;
@@ -245,6 +249,9 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::DSPFLG> DSPFLG;
 		ATByteAdapter<ATKernelSymbols::DDEVIC> DDEVIC;
 		ATByteAdapter<ATKernelSymbols::DUNIT > DUNIT;
+		ATByteAdapter<ATKernelSymbols::DSTATS> DSTATS;
+		ATWordAdapter<ATKernelSymbols::TIMER1> TIMER1;
+		ATWordAdapter<ATKernelSymbols::TIMER2> TIMER2;
 		ATByteAdapter<ATKernelSymbols::HATABS> HATABS;
 		ATByteAdapter<ATKernelSymbols::ICCMD > ICCMD;
 		ATByteAdapter<ATKernelSymbols::ICSTA > ICSTA;
@@ -268,6 +275,10 @@ struct ATKernelDatabase {
 		// POKEY (D2xx)
 		ATByteAdapter<ATKernelSymbols::AUDC1 > AUDC1 ;
 		ATByteAdapter<ATKernelSymbols::AUDF1 > AUDF1 ;
+		ATByteAdapter<ATKernelSymbols::AUDC3 > AUDC3 ;
+		ATByteAdapter<ATKernelSymbols::AUDF3 > AUDF3 ;
+		ATByteAdapter<ATKernelSymbols::AUDC4 > AUDC4 ;
+		ATByteAdapter<ATKernelSymbols::AUDF4 > AUDF4 ;
 		ATByteAdapter<ATKernelSymbols::AUDCTL> AUDCTL;
 		ATByteAdapter<ATKernelSymbols::SKCTL > SKCTL ;
 

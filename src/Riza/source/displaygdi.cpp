@@ -2,6 +2,7 @@
 #include <vd2/system/binary.h>
 #include <vd2/system/vectors.h>
 #include <vd2/system/VDString.h>
+#include <vd2/Kasumi/blitter.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
@@ -19,7 +20,7 @@ public:
 	VDVideoDisplayMinidriverGDI();
 	~VDVideoDisplayMinidriverGDI();
 
-	bool Init(HWND hwnd, const VDVideoDisplaySourceInfo& info);
+	bool Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info);
 	void Shutdown();
 
 	bool ModifySource(const VDVideoDisplaySourceInfo& info);
@@ -44,6 +45,7 @@ protected:
 	bool		mbPaletted;
 	bool		mbValid;
 	bool		mbUseSubrect;
+	bool		mbConvertToScreenFormat;
 	int			mScreenFormat;
 
 	vdrect32	mSubrect;
@@ -51,6 +53,7 @@ protected:
 	uint8		mIdentTab[256];
 
 	VDVideoDisplaySourceInfo	mSource;
+	VDPixmapCachedBlitter mCachedBlitter;
 
 	void InternalRefresh(HDC hdc, const RECT& rClient, UpdateMode mode);
 	static int GetScreenIntermediatePixmapFormat(HDC);
@@ -75,7 +78,9 @@ VDVideoDisplayMinidriverGDI::VDVideoDisplayMinidriverGDI()
 VDVideoDisplayMinidriverGDI::~VDVideoDisplayMinidriverGDI() {
 }
 
-bool VDVideoDisplayMinidriverGDI::Init(HWND hwnd, const VDVideoDisplaySourceInfo& info) {
+bool VDVideoDisplayMinidriverGDI::Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info) {
+	mCachedBlitter.Invalidate();
+
 	switch(info.pixmap.format) {
 	case nsVDPixmap::kPixFormat_Pal8:
 	case nsVDPixmap::kPixFormat_XRGB1555:
@@ -85,15 +90,47 @@ bool VDVideoDisplayMinidriverGDI::Init(HWND hwnd, const VDVideoDisplaySourceInfo
 		break;
 
 	case nsVDPixmap::kPixFormat_YUV422_YUYV:
+	case nsVDPixmap::kPixFormat_YUV422_YUYV_FR:
+	case nsVDPixmap::kPixFormat_YUV422_YUYV_709:
+	case nsVDPixmap::kPixFormat_YUV422_YUYV_709_FR:
 	case nsVDPixmap::kPixFormat_YUV422_UYVY:
+	case nsVDPixmap::kPixFormat_YUV422_UYVY_FR:
+	case nsVDPixmap::kPixFormat_YUV422_UYVY_709:
+	case nsVDPixmap::kPixFormat_YUV422_UYVY_709_FR:
 	case nsVDPixmap::kPixFormat_YUV444_Planar:
+	case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
+	case nsVDPixmap::kPixFormat_YUV444_Planar_709:
+	case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
 	case nsVDPixmap::kPixFormat_YUV422_Planar:
+	case nsVDPixmap::kPixFormat_YUV422_Planar_FR:
+	case nsVDPixmap::kPixFormat_YUV422_Planar_709:
+	case nsVDPixmap::kPixFormat_YUV422_Planar_709_FR:
 	case nsVDPixmap::kPixFormat_YUV420_Planar:
+	case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
+	case nsVDPixmap::kPixFormat_YUV420_Planar_709:
+	case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
+	case nsVDPixmap::kPixFormat_YUV420i_Planar:
+	case nsVDPixmap::kPixFormat_YUV420i_Planar_FR:
+	case nsVDPixmap::kPixFormat_YUV420i_Planar_709:
+	case nsVDPixmap::kPixFormat_YUV420i_Planar_709_FR:
+	case nsVDPixmap::kPixFormat_YUV420it_Planar:
+	case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
+	case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
+	case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
+	case nsVDPixmap::kPixFormat_YUV420ib_Planar:
+	case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
+	case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
+	case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
 	case nsVDPixmap::kPixFormat_YUV411_Planar:
+	case nsVDPixmap::kPixFormat_YUV411_Planar_FR:
+	case nsVDPixmap::kPixFormat_YUV411_Planar_709:
+	case nsVDPixmap::kPixFormat_YUV411_Planar_709_FR:
 	case nsVDPixmap::kPixFormat_YUV410_Planar:
+	case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
+	case nsVDPixmap::kPixFormat_YUV410_Planar_709:
+	case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
 	case nsVDPixmap::kPixFormat_Y8:
 	case nsVDPixmap::kPixFormat_YUV422_V210:
-	case nsVDPixmap::kPixFormat_YUV422_UYVY_709:
 	case nsVDPixmap::kPixFormat_YUV420_NV12:
 		if (!info.bAllowConversion)
 	default:
@@ -102,6 +139,7 @@ bool VDVideoDisplayMinidriverGDI::Init(HWND hwnd, const VDVideoDisplaySourceInfo
 	
 	mhwnd	= hwnd;
 	mSource	= info;
+	mbConvertToScreenFormat = false;
 
 	if (HDC hdc = GetDC(mhwnd)) {
 		mScreenFormat = GetScreenIntermediatePixmapFormat(hdc);
@@ -186,10 +224,37 @@ bool VDVideoDisplayMinidriverGDI::Init(HWND hwnd, const VDVideoDisplaySourceInfo
 				case nsVDPixmap::kPixFormat_YUV422_YUYV:
 				case nsVDPixmap::kPixFormat_YUV422_UYVY:
 				case nsVDPixmap::kPixFormat_YUV444_Planar:
+				case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV444_Planar_709:
+				case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
 				case nsVDPixmap::kPixFormat_YUV422_Planar:
+				case nsVDPixmap::kPixFormat_YUV422_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV422_Planar_709:
+				case nsVDPixmap::kPixFormat_YUV422_Planar_709_FR:
 				case nsVDPixmap::kPixFormat_YUV420_Planar:
+				case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV420_Planar_709:
+				case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
+				case nsVDPixmap::kPixFormat_YUV420i_Planar:
+				case nsVDPixmap::kPixFormat_YUV420i_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV420i_Planar_709:
+				case nsVDPixmap::kPixFormat_YUV420i_Planar_709_FR:
+				case nsVDPixmap::kPixFormat_YUV420it_Planar:
+				case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
+				case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
+				case nsVDPixmap::kPixFormat_YUV420ib_Planar:
+				case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
+				case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
 				case nsVDPixmap::kPixFormat_YUV411_Planar:
+				case nsVDPixmap::kPixFormat_YUV411_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV411_Planar_709:
+				case nsVDPixmap::kPixFormat_YUV411_Planar_709_FR:
 				case nsVDPixmap::kPixFormat_YUV410_Planar:
+				case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
+				case nsVDPixmap::kPixFormat_YUV410_Planar_709:
+				case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
 				case nsVDPixmap::kPixFormat_Y8:
 				case nsVDPixmap::kPixFormat_YUV422_V210:
 				case nsVDPixmap::kPixFormat_YUV422_UYVY_709:
@@ -213,6 +278,7 @@ bool VDVideoDisplayMinidriverGDI::Init(HWND hwnd, const VDVideoDisplaySourceInfo
 						bih.bV4BitCount			= 32;
 						break;
 					}
+					mbConvertToScreenFormat = true;
 					break;
 				default:
 					return false;
@@ -271,12 +337,64 @@ bool VDVideoDisplayMinidriverGDI::ModifySource(const VDVideoDisplaySourceInfo& i
 	if (!mhdc)
 		return false;
 
-	if (!mSource.pSharedObject && mSource.pixmap.w == info.pixmap.w && mSource.pixmap.h == info.pixmap.h && mSource.pixmap.format == info.pixmap.format) {
-		mSource = info;
-		return true;
+	if (mSource.pSharedObject)
+		return false;
+	
+	if (mSource.pixmap.w != info.pixmap.w || mSource.pixmap.h != info.pixmap.h || mSource.pixmap.pitch != info.pixmap.pitch)
+		return false;
+
+	const int prevFormat = mSource.pixmap.format;
+	const int nextFormat = info.pixmap.format;
+	if (prevFormat != nextFormat) {
+		// Check for compatible formats.
+		switch(prevFormat) {
+			case nsVDPixmap::kPixFormat_YUV420it_Planar:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar)
+					break;
+				return false;
+
+			case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar_FR)
+					break;
+				return false;
+
+			case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar_709)
+					break;
+				return false;
+
+			case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR)
+					break;
+				return false;
+
+			case nsVDPixmap::kPixFormat_YUV420ib_Planar:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar)
+					break;
+				return false;
+
+			case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar_FR)
+					break;
+				return false;
+
+			case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar_709)
+					break;
+				return false;
+
+			case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
+				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR)
+					break;
+				return false;
+
+			default:
+				return false;
+		}
 	}
 
-	return false;
+	mSource = info;
+	return true;
 }
 
 bool VDVideoDisplayMinidriverGDI::Update(UpdateMode mode) {
@@ -292,16 +410,42 @@ bool VDVideoDisplayMinidriverGDI::Update(UpdateMode mode) {
 		ptrdiff_t dstpitch = -mPitch;
 
 		if (mSource.bInterlaced && (mode & kModeFieldMask) != kModeAllFields) {
-			if ((mode & kModeFieldMask) == kModeOddField) {
-				source.data = (char *)source.data + source.pitch;
-				source.h >>= 1;
+			const bool oddField = ((mode & kModeFieldMask) == kModeOddField);
+			source = VDPixmapExtractField(mSource.pixmap, oddField);
+			if (oddField)
 				dst += dstpitch;
-			} else {
-				source.h = (source.h + 1) >> 1;
-			}
 
-			source.pitch += source.pitch;
 			dstpitch += dstpitch;
+
+			switch(source.format) {
+				case nsVDPixmap::kPixFormat_YUV420i_Planar:
+					if (oddField)
+						source.format = nsVDPixmap::kPixFormat_YUV420ib_Planar;
+					else
+						source.format = nsVDPixmap::kPixFormat_YUV420it_Planar;
+					break;
+
+				case nsVDPixmap::kPixFormat_YUV420i_Planar_FR:
+					if (oddField)
+						source.format = nsVDPixmap::kPixFormat_YUV420ib_Planar_FR;
+					else
+						source.format = nsVDPixmap::kPixFormat_YUV420it_Planar_FR;
+					break;
+
+				case nsVDPixmap::kPixFormat_YUV420i_Planar_709:
+					if (oddField)
+						source.format = nsVDPixmap::kPixFormat_YUV420ib_Planar_709;
+					else
+						source.format = nsVDPixmap::kPixFormat_YUV420it_Planar_709;
+					break;
+
+				case nsVDPixmap::kPixFormat_YUV420i_Planar_709_FR:
+					if (oddField)
+						source.format = nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR;
+					else
+						source.format = nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR;
+					break;
+			}
 		}
 
 		VDPixmap dstbm = { dst, NULL, source.w, source.h, dstpitch, source.format };
@@ -311,23 +455,10 @@ bool VDVideoDisplayMinidriverGDI::Update(UpdateMode mode) {
 
 			VDDitherImage(dstbm, source, mIdentTab);
 		} else {
-			switch(source.format) {
-			case nsVDPixmap::kPixFormat_YUV422_UYVY:
-			case nsVDPixmap::kPixFormat_YUV422_YUYV:
-			case nsVDPixmap::kPixFormat_YUV444_Planar:
-			case nsVDPixmap::kPixFormat_YUV422_Planar:
-			case nsVDPixmap::kPixFormat_YUV420_Planar:
-			case nsVDPixmap::kPixFormat_YUV411_Planar:
-			case nsVDPixmap::kPixFormat_YUV410_Planar:
-			case nsVDPixmap::kPixFormat_Y8:
-			case nsVDPixmap::kPixFormat_YUV422_V210:
-			case nsVDPixmap::kPixFormat_YUV422_UYVY_709:
-			case nsVDPixmap::kPixFormat_YUV420_NV12:
+			if (mbConvertToScreenFormat)
 				dstbm.format = mScreenFormat;
-				break;
-			}
 
-			VDPixmapBlt(dstbm, source);
+			mCachedBlitter.Blit(dstbm, source);
 		}
 
 		if (mbDisplayDebugInfo) {
@@ -394,6 +525,9 @@ bool VDVideoDisplayMinidriverGDI::SetSubrect(const vdrect32 *r) {
 }
 
 void VDVideoDisplayMinidriverGDI::InternalRefresh(HDC hdc, const RECT& rClient, UpdateMode mode) {
+	if (rClient.right <= 0 || rClient.bottom <= 0)
+		return;
+
 	SetStretchBltMode(hdc, COLORONCOLOR);
 
 	const VDPixmap& source = mSource.pixmap;

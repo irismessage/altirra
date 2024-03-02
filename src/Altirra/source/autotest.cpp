@@ -85,7 +85,7 @@ uint32 ATExecuteAutotestCommand(const wchar_t *cmd, IATAutotestReplyPort *replyP
 		if (!fn)
 			return 0;
 
-		g_sim.Load(fn);
+		g_sim.Load(fn, false, false, NULL);
 		return 1;
 	} else if (s == L"closedebugger") {
 		ATCloseConsole();

@@ -132,7 +132,7 @@ namespace {
 
 		void Write(FILE *f, const char *sym) {
 			if (!mConstants.empty()) {
-				fprintf(f, "static const float %s_constants[][4]={\n", sym, (int)mConstants.size() >> 2);
+				fprintf(f, "static const float %s_constants[][4]={\n", sym);
 				for(int i=0; i<(int)mConstants.size(); i += 4) {
 					fprintf(f, "\t{");
 

@@ -286,6 +286,12 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			*mpDstState++ = kStateWrite;
 			break;
 
+		case 0x6B:	// ARR #imm
+			*mpDstState++ = kStateReadImm;
+			*mpDstState++ = kStateArr;
+			*mpDstState++ = kStateWait;
+			break;
+
 		case 0x6F:	// RRA abs
 			DecodeReadAbs();
 			*mpDstState++ = kStateWrite;
@@ -388,6 +394,22 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			*mpDstState++ = kStateWrite;			// 6
 			break;
 
+		case 0x97:	// SAX zp,Y
+			*mpDstState++ = kStateReadAddrL;
+			*mpDstState++ = kStateReadAddY;
+			*mpDstState++ = kStateXtoD;
+			*mpDstState++ = kStateAnd;
+			*mpDstState++ = kStateWrite;
+			break;
+
+		case 0x9B:	// XAS abs,Y
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateReadAddrHY;		// 3
+			*mpDstState++ = kStateXas;
+			*mpDstState++ = kStateWait;
+			*mpDstState++ = kStateWrite;
+			break;
+
 		case 0x9C:	// SHY abs,X
 			*mpDstState++ = kStateReadAddrL;
 			*mpDstState++ = kStateReadAddrHX_SHY;
@@ -412,7 +434,7 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 		case 0xAB:	// ATX #imm
 			*mpDstState++ = kStateReadImm;
 			*mpDstState++ = kStateAnd;
-			*mpDstState++ = kStateAtoD;
+			*mpDstState++ = kStateDtoA;
 			*mpDstState++ = kStateDtoX;
 			break;
 

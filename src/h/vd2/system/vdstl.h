@@ -1637,5 +1637,7 @@ void vdfastdeque<T,A>::validate() {
 }
 
 #include <vd2/system/vdstl_vector.h>
+#include <vd2/system/vdstl_hash.h>
+#include <vd2/system/vdstl_hashmap.h>
 
 #endif

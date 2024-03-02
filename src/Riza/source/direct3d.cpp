@@ -216,7 +216,7 @@ VDD3D9SwapChain::~VDD3D9SwapChain() {
 static VDCriticalSection g_csVDDirect3D9Managers;
 static vdlist<VDD3D9Manager> g_VDDirect3D9Managers;
 
-VDD3D9Manager *VDInitDirect3D9(VDD3D9Client *pClient) {
+VDD3D9Manager *VDInitDirect3D9(VDD3D9Client *pClient, HMONITOR hmonitor) {
 	VDD3D9Manager *pMgr = NULL;
 	bool firstClient = false;
 
@@ -228,14 +228,14 @@ VDD3D9Manager *VDInitDirect3D9(VDD3D9Client *pClient) {
 		for(; it != itEnd; ++it) {
 			VDD3D9Manager *mgr = *it;
 
-			if (mgr->GetThreadID() == tid) {
+			if (mgr->GetThreadID() == tid && mgr->GetMonitor() == hmonitor) {
 				pMgr = mgr;
 				break;
 			}
 		}
 
 		if (!pMgr) {
-			pMgr = new_nothrow VDD3D9Manager;
+			pMgr = new_nothrow VDD3D9Manager(hmonitor);
 			if (!pMgr)
 				return NULL;
 
@@ -267,11 +267,12 @@ void VDDeinitDirect3D9(VDD3D9Manager *p, VDD3D9Client *pClient) {
 	}
 }
 
-VDD3D9Manager::VDD3D9Manager()
+VDD3D9Manager::VDD3D9Manager(HMONITOR hmonitor)
 	: mhmodDX9(NULL)
 	, mpD3D(NULL)
 	, mpD3DDevice(NULL)
 	, mpD3DRTMain(NULL)
+	, mhMonitor(hmonitor)
 	, mDevWndClass(NULL)
 	, mhwndDevice(NULL)
 	, mThreadID(0)
@@ -408,6 +409,17 @@ bool VDD3D9Manager::Init() {
 		}
 	}
 
+	if (adapter == D3DADAPTER_DEFAULT && mhMonitor) {
+		for(UINT n=0; n<adapters; ++n) {
+			HMONITOR hmon = mpD3D->GetAdapterMonitor(n);
+
+			if (hmon == mhMonitor) {
+				adapter = n;
+				break;
+			}
+		}
+	}
+
 	mAdapter = adapter;
 	mDevType = type;
 
@@ -419,14 +431,8 @@ bool VDD3D9Manager::Init() {
 		return false;
 	}
 
-#if 1
 	mPresentParms.BackBufferWidth	= mode.Width;
 	mPresentParms.BackBufferHeight	= mode.Height;
-#else
-	mPresentParms.BackBufferWidth	= 1600;
-	mPresentParms.BackBufferHeight	= 1200;
-	mPresentParms.BackBufferCount	= 3;
-#endif
 
 	// Make sure we have at least X8R8G8B8 for a texture format
 	hr = mpD3D->CheckDeviceFormat(adapter, type, D3DFMT_X8R8G8B8, 0, D3DRTYPE_TEXTURE, D3DFMT_X8R8G8B8);
@@ -1313,7 +1319,7 @@ bool VDD3D9Manager::CreateSharedTexture(const char *name, SharedTextureFactory f
 	return true;
 }
 
-bool VDD3D9Manager::CreateSwapChain(int width, int height, IVDD3D9SwapChain **ppSwapChain) {
+bool VDD3D9Manager::CreateSwapChain(int width, int height, bool clipToMonitor, IVDD3D9SwapChain **ppSwapChain) {
 	D3DPRESENT_PARAMETERS pparms={};
 
 	pparms.Windowed			= TRUE;
@@ -1323,6 +1329,7 @@ bool VDD3D9Manager::CreateSwapChain(int width, int height, IVDD3D9SwapChain **pp
 	pparms.BackBufferHeight	= height;
 	pparms.BackBufferCount	= 1;
 	pparms.BackBufferFormat	= mPresentParms.BackBufferFormat;
+	pparms.Flags = clipToMonitor ? D3DPRESENTFLAG_DEVICECLIP : 0;
 
 	vdrefptr<IDirect3DSwapChain9> pD3DSwapChain;
 	HRESULT hr = mpD3DDevice->CreateAdditionalSwapChain(&pparms, ~pD3DSwapChain);

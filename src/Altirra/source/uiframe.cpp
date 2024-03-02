@@ -1578,7 +1578,10 @@ void ATActivateUIPane(uint32 id, bool giveFocus, bool visible) {
 
 		if (hwndPaneParent) {
 			ATFrameWindow *frame = ATFrameWindow::GetFrameWindow(hwndPaneParent);
-			if (frame)
+
+			// We must not set an undocked pane as activated, as it leads to focus badness
+			// (the container window keeps giving activation away).
+			if (frame && frame->GetPane())
 				g_pMainWindow->NotifyFrameActivated(frame);
 		}
 	}

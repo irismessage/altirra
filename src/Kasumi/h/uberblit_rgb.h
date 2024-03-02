@@ -116,7 +116,7 @@ protected:
 			uint32 px_rb5 = ((px & 0xf800) << 8) + ((px & 0x001f) << 3);
 			uint32 px_g6 = ((px & 0x07e0) << 5);
 
-			dst[i] = px_rb5 + (((px_rb5 >> 5) + (px_g6 >> 6)) & 0x070307);
+			dst[i] = px_rb5 + px_g6 + (((px_rb5 >> 5) + (px_g6 >> 6)) & 0x070307);
 		}
 	}
 };

@@ -31,6 +31,7 @@ class ATPokeyEmulator;
 
 class ATCPUEmulatorMemory;
 class VDFile;
+class IVDRandomAccessStream;
 
 class IATDiskActivity {
 public:
@@ -53,6 +54,7 @@ public:
 	int GetSectorBreakpoint() const { return mSectorBreakpoint; }
 
 	bool IsDirty() const;
+	bool IsDiskLoaded() const { return mTotalSectorCount > 0; }
 	bool IsDiskBacked() const { return mbHasDiskSource; }
 	const wchar_t *GetPath() const { return mPath.empty() ? NULL : mPath.c_str(); }
 
@@ -63,6 +65,7 @@ public:
 	void Flush();
 	void Reset();
 	void LoadDisk(const wchar_t *s);
+	void LoadDisk(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream);
 	void SaveDisk(const wchar_t *s);
 	void CreateDisk(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize);
 	void FormatDisk(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize);
@@ -91,11 +94,11 @@ public:
 	void PokeySerInReady();
 
 protected:
-	void LoadDiskDCM(VDFile& file, uint32 len, const wchar_t *s, const uint8 *header);
-	void LoadDiskATX(VDFile& file, uint32 len, const wchar_t *s, const uint8 *header);
-	void LoadDiskP2(VDFile& file, uint32 len, const wchar_t *s, const uint8 *header);
-	void LoadDiskP3(VDFile& file, uint32 len, const wchar_t *s, const uint8 *header);
-	void LoadDiskATR(VDFile& file, uint32 len, const wchar_t *s, const uint8 *header);
+	void LoadDiskDCM(IVDRandomAccessStream& file, uint32 len, const wchar_t *origPath, const uint8 *header);
+	void LoadDiskATX(IVDRandomAccessStream& file, uint32 len, const uint8 *header);
+	void LoadDiskP2(IVDRandomAccessStream& file, uint32 len, const uint8 *header);
+	void LoadDiskP3(IVDRandomAccessStream& file, uint32 len, const uint8 *header);
+	void LoadDiskATR(IVDRandomAccessStream& file, uint32 len, const wchar_t *origPath, const uint8 *header);
 
 	void BeginTransfer(uint32 length, uint32 cyclesToFirstByte, bool useRotationalDelay, bool useHighSpeed = false);
 	void UpdateRotationalCounter();

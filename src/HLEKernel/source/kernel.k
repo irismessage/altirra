@@ -22,6 +22,7 @@ trig2	equ	$d012
 colpm0	equ	$d012
 trig3	equ	$d013
 colpm1	equ	$d013
+pal		equ	$d014
 colpm2	equ	$d014
 colpm3	equ	$d015
 colpf0	equ	$d016
@@ -56,6 +57,7 @@ serout	equ	$d20d
 irqen	equ	$d20e
 irqst	equ	$d20e
 skctl	equ	$d20f
+skstat	equ	$d20f
 porta	equ	$d300
 portb	equ	$d301
 pactl	equ	$d302
@@ -76,6 +78,7 @@ nmires	equ	$d40f
 	opt		o-
 
 casini	= $0002			;cassette initialization vector
+ramlo	= $0004			;
 tramsz	= $0006			;temporary ram size / cart A flag
 tstdat	= $0007			;RAM test data register / cart B flag
 warmst	= $0008			;warmstart flag
@@ -88,6 +91,7 @@ rtclok	= $0012
 a0		= $0015
 bufadr	= $0015			;indirect buffer address pointer (temp for disk buffer)
 		; $0016
+iccomt	= $0017			;CIO: command byte
 ziocb	= $0020			;zero-page IOCB
 ichidz	= $0020			;Zero page IOCB: device index ($FF = not open)
 icdnoz	= $0021			;Zero page IOCB: device number
@@ -131,6 +135,7 @@ dindex	= $0057			;display mode index (0-15)
 savmsc	= $0058			;lowest address of screen region
 oldchr	= $005d			;cursor character save/restore
 oldadr	= $005e			;cursor memory address
+palnts	= $0062			;[XL/XE] PAL/NTSC flag; 0=NTSC
 logcol	= $0063			;logical line column
 adress	= $0064			;temporary storage (display code)
 		; $0065
@@ -251,6 +256,8 @@ dbytlo	= $0308			;byte count lo
 dbythi	= $0309			;byte count hi
 daux1	= $030a			;sector number lo
 daux2	= $030b			;sector number hi
+timer1	= $030c			;baud rate determination - first timer value
+timer2	= $0310			;baud rate determination - second timer value
 timflg	= $0317			;SIO: operation timeout flag (set by countdown timer 1 IRQ)
 stackp	= $0318			;SIO: stack pointer save
 hatabs	= $031a			;handler table
@@ -334,7 +341,7 @@ casetv	dta		a(CassetteOpen-1)
 	
 		;vector table
 		org	$e450
-diskiv	jsr		DiskInit
+diskiv	jmp		DiskInit
 dskinv	jmp		DiskHandler
 ciov	jmp		CIO
 siov	jmp		SIO
@@ -343,13 +350,13 @@ sysvbv	jmp		VBlankImmediate
 xitvbv	jmp		VBlankDeferred
 sioinv	jmp		SIOInit
 sendev	jsr		BugCheck
-intinv	jsr		InitInterrupts
+intinv	jmp		InitInterrupts
 cioinv	jmp		CIOInit
 blkbdv	jmp		Blackboard
 warmsv	jmp		WarmStart
 coldsv	jmp		ColdStart
-rblokv	jsr		BugCheck
-csopiv	jsr		BugCheck
+rblokv	jmp		CassetteReadBlock
+csopiv	jmp		CassetteOpenRead
 
 		;handler table
 HandlerTable:
@@ -359,16 +366,31 @@ HandlerTable:
 		dta		c'S',a(screnv)
 		dta		c'K',a(keybdv)
 
-#include <blackboard.k>
-#include <boot.k>
+;HDM requires SIO and interrupt handlers to be within either $C000-CFFF
+;or $DFF0-EFFF.
+#include <sio.k>
+#include <nmi.k>
+#include <irq.k>
+
+;==============================================================================
+DefaultHandler_A_RTI:
+	pla
+DefaultHandler_RTI:
+	rti
+;==============================================================================
+
+.print 'Disk support end: ',*
+.if * >= $f000
+.error 'Disk support extends beyond $F000. 
+.endif
+
+;==============================================================================
+
 #include <bugcheck.k>
 #include <cio.k>
 #include <disk.k>
 #include <editor.k>
-#include <init.k>
-#include <irq.k>
 #include <keyboard.k>
-#include <nmi.k>
 #include <screen.k>
 #include <cassette.k>
 
@@ -378,14 +400,10 @@ HandlerTable:
 	org		$f3f6
 	jmp		ScreenOpen
 
-#include <sio.k>
+#include <boot.k>
+#include <init.k>
+#include <blackboard.k>
 	
-;==============================================================================
-DefaultHandler_A_RTI:
-	pla
-DefaultHandler_RTI:
-	rti
-
 ;==============================================================================
 .proc ResetRoutine
 	jmp		ColdStart
