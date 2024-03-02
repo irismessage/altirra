@@ -51,13 +51,16 @@ public:
 class IATPokeySIODevice {
 public:
 	virtual void PokeyAttachDevice(ATPokeyEmulator *pokey) = 0;
+	
+	virtual void PokeyBeginWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) = 0;
 
 	// Returns true if burst I/O is allowed.
-	virtual bool PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit, uint64 startTime, bool framingError) = 0;
+	virtual bool PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit, uint64 startTime, bool framingError, bool truncated) = 0;
 
 	virtual void PokeyBeginCommand() = 0;
 	virtual void PokeyEndCommand() = 0;
 	virtual void PokeySerInReady() = 0;
+	virtual void PokeySetBreak(bool enabled) = 0;
 };
 
 class IATPokeyCassetteDevice {
@@ -142,6 +145,7 @@ public:
 	void	SetStereoAsMonoEnabled(bool enable);
 
 	void	SetExternalSerialClock(uint32 basetime, uint32 period);
+	uint32	GetSerialCyclesPerBitSend() const;
 	uint32	GetSerialCyclesPerBitRecv() const;
 	uint32	GetSerialInputResetCounter() const { return mSerialInputResetCounter; }
 
@@ -191,6 +195,7 @@ public:
 	void	AdvanceScanLine();
 	void	AdvanceFrame(bool pushAudio, uint64 timestamp);
 
+	sint32	ReadBackWriteRegister(uint8 reg) const;
 	uint8	DebugReadByte(uint8 reg) const;
 	uint8	ReadByte(uint8 reg);
 	void	WriteByte(uint8 reg, uint8 value);
@@ -198,7 +203,8 @@ public:
 	void	DumpStatus(ATConsoleOutput& out);
 
 	void	SaveState(IATObjectState **pp);
-	void	LoadState(const IATObjectState& state);
+	void	LoadState(const IATObjectState *state);
+	void	LoadState(const class ATSaveStatePokey& state);
 	void	PostLoadState();
 
 	void	GetRegisterState(ATPokeyRegisterState& state) const;
@@ -227,6 +233,7 @@ private:
 
 	void	OnSerialInputTick();
 	void	OnSerialOutputTick();
+	void	ResyncExternalOutputClock();
 	bool	IsSerialOutputClockRunning() const;
 	void	FlushSerialOutput();
 
@@ -428,12 +435,15 @@ private:
 
 	uint8	mPotPositions[8] = {};
 	uint8	mPotHiPositions[8] = {};
+	uint16	mPotBasePositions[8] = {};
 	uint8	mPotLatches[8] = {};
-	uint8	mALLPOT = 0;
+	uint8	mPotGroundedMask = 0;			// mask POTn lines that are grounded
+	uint8	mALLPOT = 0;					// architectural ALLPOT register, at last pot update
 	uint8	mPotMasterCounter = 0;
-	uint64	mPotLastScanTime = 0;		// cycle time of last write to POTGO
+	uint64	mPotLastScanTime = 0;			// cycle time of last write to POTGO
 	uint32	mPotLastTimeFast = 0;
 	uint32	mPotLastTimeSlow = 0;
+	bool	mbPotScanLastActive = false;	// true if pot scan was active at last update
 
 	bool	mbAllowImmediatePotUpdate = false;
 	bool	mbStereoSoftEnable = true;

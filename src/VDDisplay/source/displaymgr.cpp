@@ -121,7 +121,7 @@ bool VDVideoDisplayManager::Init() {
 			return false;
 		}
 
-		mhwnd = CreateWindowEx(WS_EX_NOPARENTNOTIFY, (LPCTSTR)mWndClass, L"", WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, NULL, NULL, VDGetLocalModuleHandleW32(), this);
+		mhwnd = CreateWindowEx(WS_EX_NOPARENTNOTIFY, MAKEINTATOM(mWndClass), L"", WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, NULL, NULL, VDGetLocalModuleHandleW32(), this);
 		if (!mhwnd) {
 			Shutdown();
 			return false;
@@ -382,7 +382,7 @@ void VDVideoDisplayManager::ThreadRun() {
 
 void VDVideoDisplayManager::ThreadRunFullRemote() {
 	if (RegisterWindowClass()) {
-		mhwnd = CreateWindowEx(WS_EX_NOPARENTNOTIFY, (LPCTSTR)mWndClass, L"", WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, NULL, NULL, VDGetLocalModuleHandleW32(), this);
+		mhwnd = CreateWindowEx(WS_EX_NOPARENTNOTIFY, MAKEINTATOM(mWndClass), L"", WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, NULL, NULL, VDGetLocalModuleHandleW32(), this);
 
 		if (mhwnd) {
 			MSG msg;
@@ -577,7 +577,7 @@ bool VDVideoDisplayManager::RegisterWindowClass() {
 void VDVideoDisplayManager::UnregisterWindowClass() {
 	if (mWndClass) {
 		HMODULE hInst = VDGetLocalModuleHandleW32();
-		UnregisterClass((LPCTSTR)mWndClass, hInst);
+		UnregisterClass(MAKEINTATOM(mWndClass), hInst);
 		mWndClass = NULL;
 	}
 }

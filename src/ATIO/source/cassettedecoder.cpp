@@ -80,13 +80,13 @@ void ATCassetteDecoderFSK::Process(const sint16 *samples, uint32 n, uint32 *bitf
 
 #if defined(VD_CPU_X86) || defined(VD_CPU_X64)
 	static constexpr struct RotTabSSE2 {
-		alignas(16) __m128i vec[24] {};
+		alignas(16) sint16 vec[24][8] {};
 
 		constexpr RotTabSSE2() {
 			for(int i=0; i<24; ++i) {
 				for(int j=0; j<4; ++j) {
-					vec[i].m128i_i16[j*2+0] =  kRotTab.vec[i][j];
-					vec[i].m128i_i16[j*2+1] = -kRotTab.vec[i][j];
+					vec[i][j*2+0] =  kRotTab.vec[i][j];
+					vec[i][j*2+1] = -kRotTab.vec[i][j];
 				}
 			}
 		}
@@ -163,7 +163,7 @@ void ATCassetteDecoderFSK::Process(const sint16 *samples, uint32 n, uint32 *bitf
 
 		mHistory[hpos1] = x1;
 
-		acc01 = _mm_add_epi32(acc01, _mm_madd_epi16(x01, kRotTabSSE2.vec[hpos1]));
+		acc01 = _mm_add_epi32(acc01, _mm_madd_epi16(x01, _mm_load_si128((const __m128i *)kRotTabSSE2.vec[hpos1])));
 
 		// compute mark/space magnitudes
 		__m128 resp = _mm_cvtepi32_ps(acc01);
@@ -311,7 +311,7 @@ void ATCassetteDecoderTurbo::Reset() {
 }
 
 template<bool T_DoAnalysis, ATCassetteDecoderTurbo::DetectorType T_Detector, ATCassetteDecoderTurbo::PreFilterType T_PreFilter>
-void ATCassetteDecoderTurbo::Process(const sint16 *samples, uint32 n, float *adest0) VDRESTRICT {
+void ATCassetteDecoderTurbo::Process(const sint16 *samples, uint32 n, float *adest0) {
 	float *VDRESTRICT adest = adest0;
 
 	uint32 bitaccum = mBitAccum;

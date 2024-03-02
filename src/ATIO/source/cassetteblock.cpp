@@ -45,6 +45,31 @@ uint8 *ATCassetteGetAudioPhaseTable() {
 	return sPhaseTable;
 }
 
+class ATCassetteDirectFilterTable {
+public:
+	constexpr ATCassetteDirectFilterTable() {
+		float filter[7] {};
+
+		// A flat rectangular filter just seems to sound better compared to alternatives,
+		// as simple as it may be.
+		for(int i=0; i<7; ++i)
+			filter[i] = 1.0f/7.0f * 0.707f;
+
+		for(int i=0; i<128; ++i) {
+			float y = 0;
+
+			for(int j=0; j<7; ++j)
+				y += (i & (0x40 >> j) ? 1.f : -1.f) * filter[j];
+
+			mTab[i] = (sint8)((uint8)(128.5f + 127.0f * y) - 0x80);
+		}
+	}
+
+	sint8 mTab[128] {};
+};
+
+constexpr ATCassetteDirectFilterTable g_ATCassetteDirectFilterTable;
+
 ///////////////////////////////////////////////////////////////////////////////
 
 bool ATCassetteImageBlock::GetBit(uint32 pos, bool bypassFSK) const {
@@ -277,6 +302,68 @@ void ATCassetteImageBlockRawData::GetTransitionCounts(uint32 pos, uint32 n, bool
 	mcount = msum;
 }
 
+uint32 ATCassetteImageBlockRawData::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const {
+	if (mDataRaw.empty()) {
+		posCycle += kATCyclesPerSyncSample * n;
+		posSample += posCycle / kATCassetteCyclesPerAudioSample;
+		posCycle %= kATCassetteCyclesPerAudioSample;
+
+		return n;
+	}
+
+	const uint32 numSamples = mDataLength;
+	const sint32 lastIdx = (sint32)((numSamples - 1) >> 5);
+	const sint32 endSubIdx = numSamples & 31;
+	const uint32 lastMask = endSubIdx ? ~(UINT32_C(0xFFFFFFFF) >> endSubIdx) : UINT32_C(0xFFFFFFFF);
+	uint32 actual = 0;
+	while(actual < n) {
+		++actual;
+
+		// sample 8 direct bits around the desired sample, 7 centered and 7 shifted forward one
+		sint32 startSample = (sint32)posSample - 3;
+		uint32 v;
+
+		if (startSample < 0)
+			v = mDataRaw[0] >> -startSample;
+		else {
+			sint32 startIdx = startSample >> 5;
+			sint32 startSubIdx = startSample & 31;
+
+			if (startIdx >= lastIdx)
+				v = (mDataRaw.back() & lastMask) << startSubIdx;
+			else {
+				v = mDataRaw[startIdx] << startSubIdx;
+
+				if (startSubIdx)
+					v += mDataRaw[startIdx + 1] >> (32 - startSubIdx);
+			}
+		}
+
+		// compute two filtered samples
+		const float sample1 = (float)g_ATCassetteDirectFilterTable.mTab[v >> 25];
+		const float sample2 = (float)g_ATCassetteDirectFilterTable.mTab[(v >> 24) & 127];
+
+		// interpolate sample
+		const float sample3 = sample1 + (sample2 - sample1) * (float)(sint32)posCycle * (1.0f / (float)kATCassetteCyclesPerAudioSample);
+
+		// apply volume, and accumulate
+		const float sample = sample3 * volume;
+
+		*dst++ += sample;
+
+		posCycle += kATCyclesPerSyncSample;
+		if (posCycle >= kATCassetteCyclesPerAudioSample) {
+			posCycle -= kATCassetteCyclesPerAudioSample;
+			++posSample;
+
+			if (posSample >= numSamples)
+				break;
+		}
+	}
+
+	return actual;
+}
+
 void ATCassetteImageBlockRawData::SetBits(bool fsk, uint32 startPos, uint32 n, bool polarity) {
 	const uint32 pos1 = startPos;
 	const uint32 pos2 = startPos + n - 1;
@@ -411,7 +498,7 @@ const uint8 *ATCassetteImageDataBlockStd::GetData() const {
 	return mData.data();
 }
 
-const uint32 ATCassetteImageDataBlockStd::GetDataLen() const {
+uint32 ATCassetteImageDataBlockStd::GetDataLen() const {
 	return (uint32)mData.size();
 }
 

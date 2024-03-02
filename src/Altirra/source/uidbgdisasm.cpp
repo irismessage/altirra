@@ -45,7 +45,8 @@ ATDisassemblyWindow::ATDisassemblyWindow()
 	mbShowProcedureBreaks.Attach(g_ATDbgSettingShowProcedureBreaks, refresh);
 	mbShowCallPreviews.Attach(g_ATDbgSettingShowCallPreviews, refresh);
 	mbShowSourceInDisasm.Attach(g_ATDbgSettingShowSourceInDisasm, refresh);
-	m816PredictionMode.Attach(g_ATDbgSetting816PredictionMode, refresh);
+	m816MXPredictionMode.Attach(g_ATDbgSetting816MXPredictionMode, refresh);
+	mb816PredictD.Attach(g_ATDbgSetting816PredictD, refresh);
 }
 
 ATDisassemblyWindow::~ATDisassemblyWindow() {
@@ -116,11 +117,6 @@ LRESULT ATDisassemblyWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				}
 			}
 			break;
-
-		case WM_COMMAND:
-			if (OnCommand(LOWORD(wParam), HIWORD(wParam)))
-				return true;
-			break;
 	}
 
 	return ATUIDebuggerPaneWindow::WndProc(msg, wParam, lParam);
@@ -175,26 +171,30 @@ bool ATDisassemblyWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lPa
 				VDCheckMenuItemByCommandW32(menu, ID_CONTEXT_SHOWCALLPREVIEWS, mbShowCallPreviews);
 				VDCheckMenuItemByCommandW32(menu, ID_CONTEXT_SHOWMIXEDSOURCE, mbShowSourceInDisasm);
 
-				ATDebugger816PredictionMode predictMode = m816PredictionMode;
+				ATDebugger816MXPredictionMode predictMode = m816MXPredictionMode;
 
-				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_AUTO, predictMode == ATDebugger816PredictionMode::Auto);
-				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_CURRENTCONTEXT, predictMode == ATDebugger816PredictionMode::CurrentContext);
-				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_M16X16, predictMode == ATDebugger816PredictionMode::M16X16);
-				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_M16X8, predictMode == ATDebugger816PredictionMode::M16X8);
-				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_M8X16, predictMode == ATDebugger816PredictionMode::M8X16);
-				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_M8X8, predictMode == ATDebugger816PredictionMode::M8X8);
-				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_EMULATION, predictMode == ATDebugger816PredictionMode::Emulation);
+				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_AUTO, predictMode == ATDebugger816MXPredictionMode::Auto);
+				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_CURRENTCONTEXT, predictMode == ATDebugger816MXPredictionMode::CurrentContext);
+				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_M16X16, predictMode == ATDebugger816MXPredictionMode::M16X16);
+				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_M16X8, predictMode == ATDebugger816MXPredictionMode::M16X8);
+				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_M8X16, predictMode == ATDebugger816MXPredictionMode::M8X16);
+				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_M8X8, predictMode == ATDebugger816MXPredictionMode::M8X8);
+				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_EMULATION, predictMode == ATDebugger816MXPredictionMode::Emulation);
 
-				if (x >= 0 && y >= 0) {
+				VDCheckMenuItemByCommandW32(menu, ID_CONTEXT_USEDPREGISTERSTATE, mb816PredictD);
+
+				if (x == -1 && y == -1) {
+					const vdpoint32& pt = mpTextEditor->GetScreenPosForContextMenu();
+					x = pt.x;
+					y = pt.y;
+				} else {
 					POINT pt = {x, y};
 
-					if (ScreenToClient(mhwndTextEditor, &pt)) {
+					if (ScreenToClient(mhwndTextEditor, &pt))
 						mpTextEditor->SetCursorPixelPos(pt.x, pt.y);
-						TrackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
-					}
-				} else {
-					TrackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
 				}
+
+				TrackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
 			}
 			break;
 	}
@@ -370,31 +370,36 @@ bool ATDisassemblyWindow::OnCommand(UINT cmd, UINT code) {
 			return true;
 
 		case ID_65C816M_AUTO:
-			m816PredictionMode = ATDebugger816PredictionMode::Auto;
+			m816MXPredictionMode = ATDebugger816MXPredictionMode::Auto;
 			break;
 
 		case ID_65C816M_CURRENTCONTEXT:
-			m816PredictionMode = ATDebugger816PredictionMode::CurrentContext;
+			m816MXPredictionMode = ATDebugger816MXPredictionMode::CurrentContext;
 			break;
 
 		case ID_65C816M_M8X8:
-			m816PredictionMode = ATDebugger816PredictionMode::M8X8;
+			m816MXPredictionMode = ATDebugger816MXPredictionMode::M8X8;
 			break;
 
 		case ID_65C816M_M8X16:
-			m816PredictionMode = ATDebugger816PredictionMode::M8X16;
+			m816MXPredictionMode = ATDebugger816MXPredictionMode::M8X16;
 			break;
 
 		case ID_65C816M_M16X8:
-			m816PredictionMode = ATDebugger816PredictionMode::M16X8;
+			m816MXPredictionMode = ATDebugger816MXPredictionMode::M16X8;
 			break;
 
 		case ID_65C816M_M16X16:
-			m816PredictionMode = ATDebugger816PredictionMode::M16X16;
+			m816MXPredictionMode = ATDebugger816MXPredictionMode::M16X16;
 			break;
 
 		case ID_65C816M_EMULATION:
-			m816PredictionMode = ATDebugger816PredictionMode::Emulation;
+			m816MXPredictionMode = ATDebugger816MXPredictionMode::Emulation;
+			break;
+
+		case ID_CONTEXT_USEDPREGISTERSTATE:
+			mb816PredictD = !mb816PredictD;
+			RemakeView(mFocusAddr);
 			break;
 
 		case kID_ButtonPrev:
@@ -495,6 +500,15 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 		if (viewLength < 0x100)
 			viewLength = 0x100;
 
+		mbViewDNonZero = false;
+
+		if (target->GetDisasmMode() == kATDebugDisasmMode_65C816) {
+			mbViewDNonZero = mb816PredictD && hent0.mD != 0;
+
+			if (!mbViewDNonZero)
+				hent0.mD = 0;
+		}
+
 		VDStringA buf;
 		const auto& result = Disassemble(buf,
 			mLines,
@@ -564,42 +578,42 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 		uint8 forcedModeMX = 0;
 		bool forcedModeEmulation = false;
 
-		switch(m816PredictionMode) {
-			case ATDebugger816PredictionMode::Auto:
+		switch(m816MXPredictionMode) {
+			case ATDebugger816MXPredictionMode::Auto:
 				forcedMode = false;
 				autoModeSwitching = true;
 				break;
 
-			case ATDebugger816PredictionMode::CurrentContext:
+			case ATDebugger816MXPredictionMode::CurrentContext:
 				forcedMode = false;
 				autoModeSwitching = false;
 				break;
 
-			case ATDebugger816PredictionMode::M8X8:
+			case ATDebugger816MXPredictionMode::M8X8:
 				forcedMode = true;
 				forcedModeMX = 0x30;
 				forcedModeEmulation = false;
 				break;
 
-			case ATDebugger816PredictionMode::M8X16:
+			case ATDebugger816MXPredictionMode::M8X16:
 				forcedMode = true;
 				forcedModeMX = 0x20;
 				forcedModeEmulation = false;
 				break;
 
-			case ATDebugger816PredictionMode::M16X8:
+			case ATDebugger816MXPredictionMode::M16X8:
 				forcedMode = true;
 				forcedModeMX = 0x10;
 				forcedModeEmulation = false;
 				break;
 
-			case ATDebugger816PredictionMode::M16X16:
+			case ATDebugger816MXPredictionMode::M16X16:
 				forcedMode = true;
 				forcedModeMX = 0x00;
 				forcedModeEmulation = false;
 				break;
 
-			case ATDebugger816PredictionMode::Emulation:
+			case ATDebugger816MXPredictionMode::Emulation:
 				forcedMode = true;
 				forcedModeMX = 0x30;
 				forcedModeEmulation = true;
@@ -701,6 +715,25 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 		return breakMap;
 	}();
 
+	static constexpr std::array<uint8, 256> kBreakMap8048 = [] {
+		std::array<uint8, 256> breakMap {};
+
+		breakMap[0x04] |= kBM_EndBlock;		// JMP
+		breakMap[0x24] |= kBM_EndBlock;		// JMP
+		breakMap[0x44] |= kBM_EndBlock;		// JMP
+		breakMap[0x64] |= kBM_EndBlock;		// JMP
+		breakMap[0x84] |= kBM_EndBlock;		// JMP
+		breakMap[0xA4] |= kBM_EndBlock;		// JMP
+		breakMap[0xC4] |= kBM_EndBlock;		// JMP
+		breakMap[0xE4] |= kBM_EndBlock;		// JMP
+
+		breakMap[0x83] |= kBM_EndBlock;		// RET
+		breakMap[0x93] |= kBM_EndBlock;		// RETR
+		breakMap[0xB3] |= kBM_EndBlock;		// JMPP
+
+		return breakMap;
+	}();
+
 	const uint8 *VDRESTRICT breakMap = nullptr;
 	uint8 (*breakMapSpecialHandler)(const uint8 *insn) = nullptr;
 
@@ -728,6 +761,10 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 
 				return 0;
 			};
+			break;
+
+		case kATDebugDisasmMode_8048:
+			breakMap = kBreakMap8048.data();
 			break;
 	}
 
@@ -777,16 +814,16 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 
 					if (lineInfo.mLine != lastLine) {
 						auto sourceWinLookup = sourceWindowCache.insert(std::pair<uint32, uint32>(moduleId, lineInfo.mFileId));
-						VDStringW path;
+						ATDebuggerSourceFileInfo sourceFileInfo;
 
 						if (sourceWinLookup.second) {
-							if (ATGetDebuggerSymbolLookup()->GetSourceFilePath(moduleId, lineInfo.mFileId, path)) {
-								IATSourceWindow *sw = ATGetSourceWindow(path.c_str());
+							if (ATGetDebuggerSymbolLookup()->GetSourceFilePath(moduleId, lineInfo.mFileId, sourceFileInfo)) {
+								IATSourceWindow *sw = ATGetSourceWindow(sourceFileInfo.mSourcePath.c_str());
 
 								sourceWinLookup.first->second = sw;
 
 								if (!sw)
-									mFailedSourcePaths.emplace_back(path);
+									mFailedSourcePaths.emplace_back(sourceFileInfo.mSourcePath);
 							}
 						}
 
@@ -808,16 +845,16 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 						}
 
 						if (sourceLines.empty()) {
-							const wchar_t *pathStr = path.c_str();
+							const wchar_t *pathStr = sourceFileInfo.mSourcePath.c_str();
 
 							if (sw)
 								pathStr = sw->GetPath();
 							else if (!*pathStr) {
-								ATGetDebuggerSymbolLookup()->GetSourceFilePath(moduleId, lineInfo.mFileId, path);
-								pathStr = path.c_str();
+								ATGetDebuggerSymbolLookup()->GetSourceFilePath(moduleId, lineInfo.mFileId, sourceFileInfo);
+								pathStr = sourceFileInfo.mSourcePath.c_str();
 							}
 
-							sourceLines.sprintf("[%ls:%d]\n", sw ? sw->GetPath() : path.c_str(), lineInfo.mLine);
+							sourceLines.sprintf("[%ls:%d]\n", sw ? sw->GetPath() : sourceFileInfo.mSourcePath.c_str(), lineInfo.mLine);
 						}
 
 						VDStringRefA sourceRange(sourceLines);
@@ -991,6 +1028,13 @@ void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemStat
 
 	if (changed && !memoryViewChanged) {
 		if ((uint32)(state.mFrameExtPC - (mViewAddrBank + mViewStart)) >= mViewLength || g_sim.GetCPU().GetCPUSubMode() != mLastSubMode)
+			memoryViewChanged = true;
+
+		bool dNonZero = false;
+		if (!memoryViewChanged && state.mpDebugTarget->GetDisasmMode() == kATDebugDisasmMode_65C816)
+			dNonZero = mb816PredictD && state.mExecState.m6502.mDP != 0;
+
+		if (mbViewDNonZero != dNonZero)
 			memoryViewChanged = true;
 	}
 

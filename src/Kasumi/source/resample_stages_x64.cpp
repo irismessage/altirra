@@ -285,6 +285,9 @@ void VDResamplerSeparableTableRowStage8SSE2::Process(void *dst, const void *src,
 	uint32 fastGroups = mNumFastGroups;
 	if (fastGroups) {
 		if (mbUseFastLerp) {
+#ifdef VD_COMPILER_CLANG
+			[&] __attribute__((target("ssse3"))) {
+#endif
 			const __m128i round8 = _mm_set1_epi16(0x40);
 			const uint16 *VDRESTRICT offsets = mFastLerpOffsets.data();
 
@@ -299,6 +302,9 @@ void VDResamplerSeparableTableRowStage8SSE2::Process(void *dst, const void *src,
 				rowFilter += 16;
 				dst8 += 8;
 			} while(--fastGroups);
+#ifdef VD_COMPILER_CLANG
+			}();
+#endif
 
 			w &= 7;
 		} else {
@@ -483,6 +489,7 @@ namespace {
 		}
 	}
 
+	VD_CPU_TARGET("ssse3")
 	void FilterColumnsLerp_SSSE3(void *dst0, const uint8 *const *src, const sint16 *filter, uint32 n) {
 		uint8 *VDRESTRICT dst = (uint8 *)dst0;
 

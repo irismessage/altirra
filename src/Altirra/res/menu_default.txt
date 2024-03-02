@@ -49,7 +49,9 @@
 		&Empty 128K (1Mbit) MaxFlash cartridge (MyIDE banking)			{Cart.AttachMaxFlash1MBMyIDE}
 		Empty 1M (8Mbit) MaxFlash cartridge (older - bank 127)			{Cart.AttachMaxFlash8MB}
 		Empty 1M (8Mbit) MaxFlash cartridge (newer - bank 0)			{Cart.AttachMaxFlash8MBBank0}
-		Empty SIC! flash cartridge									{Cart.AttachSIC}
+		Empty SIC! 512K flash cartridge								{Cart.AttachSIC}
+		Empty SIC! 256K flash cartridge								{Cart.AttachSIC256K}
+		Empty SIC! 128K flash cartridge								{Cart.AttachSIC128K}
 		Empty SIC+ flash cartridge									{Cart.AttachSICPlus}
 		Empty 512K MegaCart flash cartridge							{Cart.AttachMegaCart512K}
 		Empty 4MB MegaCart flash cartridge							{Cart.AttachMegaCart4MB}
@@ -88,12 +90,17 @@
 		Normal				{View.FilterSharpnessNormal}
 		Sharp				{View.FilterSharpnessSharp}
 		Sharper				{View.FilterSharpnessSharper}
-	&Stretch Mode
+	Video Fra&me
 		&Fit to Window			{View.StretchFitToWindow}
 		&Preserve Aspect Ratio	{View.StretchPreserveAspectRatio}
 		P&reserve Aspect Ratio (fixed multiples only)	{View.StretchPreserveAspectRatioInt}
 		&Square Pixels			{View.StretchSquarePixels}
 		&Square Pixels (fixed multiples only)	{View.StretchSquarePixelsInt}
+		---
+		Pan/Zoom Tool			{View.PanZoomTool}
+		Reset Pan and Zoom		{View.ResetViewFrame}
+		Reset Panning			{View.ResetPan}
+		Reset Zoom				{View.ResetZoom}
 	&Overscan Mode
 		&OS Screen Only			{View.OverscanOSScreen}
 		&Normal					{View.OverscanNormal}
@@ -129,12 +136,15 @@
 	Copy Frame to Clipboard (True Aspect)		{Edit.CopyFrameTrueAspect}
 	Save Frame...				{Edit.SaveFrame}
 	Save Frame (True Aspect)...	{Edit.SaveFrameTrueAspect}
-	Copy
+	&Text Selection
 		Copy &Text					{Edit.CopyText}
 		Copy &Escaped Text			{Edit.CopyEscapedText}
 		Copy &Hex					{Edit.CopyHex}
 		Copy &Unicode				{Edit.CopyUnicode}
-	Paste Text					{Edit.PasteText}
+		Paste Text					{Edit.PasteText}
+		---
+		Select &All				{Edit.SelectAll}
+		&Deselect				{Edit.Deselect}
 
 S&ystem
 	&Profiles					{$profiles}
@@ -165,7 +175,7 @@ S&ystem
 		Keyboard Present (XEGS)			{System.ToggleKeyboardPresent}
 		Force Self-Test					{System.ToggleForcedSelfTest}
 		Activate Cart Menu Button		{Cart.ActivateMenuButton}
-		Enable Cart SDX					{Cart.ToggleSwitch}
+		Enable Cart Switch				{Cart.ToggleSwitch}
 		BlackBox: Dump Screen			{Console.BlackBoxDumpScreen}
 		BlackBox: Menu					{Console.BlackBoxMenu}
 		IDE Plus 2.0: Switch Disks		{Console.IDEPlus2SwitchDisks}
@@ -278,6 +288,8 @@ Debu&g
 &Window
 	&Close								{Window.Close}
 	&Undock								{Window.Undock}
+	&Next Pane							{Window.NextPane}
+	&Previous Pane						{Window.PrevPane}
 	---
 	Adjust Window Size					{View.AdjustWindowSize}
 	Reset Window Layout					{View.ResetWindowLayout}
@@ -287,5 +299,6 @@ Help
 	&About								{Help.About}
 	&Change Log							{Help.ChangeLog}
 	Command-Line Help					{Help.CommandLine}
+	Export Debugger Help...				{Help.ExportDebuggerHelp}
 	Check For Updates					{Help.CheckForUpdates}
 	Altirra Home...						{Help.Online}

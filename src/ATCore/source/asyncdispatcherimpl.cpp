@@ -54,9 +54,11 @@ void ATAsyncDispatcher::Queue(uint64 *token, vdfunction<void()> fn) {
 		if (mCallbacks.empty())
 			isFirst = true;
 
-		InternalCancel(token);
+		if (token) {
+			InternalCancel(*token);
 
-		*token = mHeadToken + 2 * (uint64)mCallbacks.size();
+			*token = mHeadToken + 2 * (uint64)mCallbacks.size();
+		}
 
 		mCallbacks.emplace_back(std::move(fn));
 	}
@@ -65,20 +67,22 @@ void ATAsyncDispatcher::Queue(uint64 *token, vdfunction<void()> fn) {
 		mWakeCallback();
 }
 
-void ATAsyncDispatcher::Cancel(uint64 *token) {
-	vdsynchronized(mMutex) {
-		InternalCancel(token);
+void ATAsyncDispatcher::Cancel(uint64 *tokenPtr) {
+	if (tokenPtr) {
+		vdsynchronized(mMutex) {
+			InternalCancel(*tokenPtr);
+			*tokenPtr = 0;
+		}
 	}
 }
 
-void ATAsyncDispatcher::InternalCancel(uint64 *token) {
-	if (!(*token & 1)) {
-		VDASSERT(*token == 0);
+void ATAsyncDispatcher::InternalCancel(uint64 token) {
+	if (!(token & 1)) {
+		VDASSERT(token == 0);
 		return;
 	}
 
-	const uint64 offset = (uint64)((*token - mHeadToken) >> 1);
-	*token = 0;
+	const uint64 offset = (uint64)((token - mHeadToken) >> 1);
 
 	if (offset < mCallbacks.size())
 		mCallbacks[offset] = nullptr;

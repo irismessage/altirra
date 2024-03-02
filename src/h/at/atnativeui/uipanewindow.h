@@ -55,7 +55,7 @@ private:
 	bool mbDeferredUpdatePosted = false;
 };
 
-extern template ATUIPaneWindowT<ATUIPane, ATUIPaneWindowBase>;
+extern template class ATUIPaneWindowT<ATUIPane, ATUIPaneWindowBase>;
 
 using ATUIPaneWindow = ATUIPaneWindowT<ATUIPane, ATUIPaneWindowBase>;
 

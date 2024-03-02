@@ -218,6 +218,9 @@ public:
 
 	void ActivateCommandPopupMenu(int x, int y, uint32 menuID, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer);
 
+	bool PostCall(const vdfunction<void()>& call);
+	bool PostCall(vdfunction<void()>&& call);
+
 protected:
 	VDDialogFrameW32(uint32 dlgid);
 
@@ -295,9 +298,6 @@ protected:
 	// up/down controls
 	void UDSetRange(uint32 id, sint32 minval, sint32 maxval);
 
-	bool PostCall(const vdfunction<void()>& call);
-	bool PostCall(vdfunction<void()>&& call);
-
 protected:
 	struct ButtonInfo;
 
@@ -312,6 +312,7 @@ protected:
 	virtual void OnDestroy();
 	virtual void OnEnable(bool enable);
 	virtual bool OnTimer(uint32 id);
+	virtual bool OnShouldErase();
 	virtual bool OnErase(VDZHDC hdc);
 	virtual bool OnPaint();
 	virtual bool OnCommand(uint32 id, uint32 extcode);
@@ -326,6 +327,7 @@ protected:
 	virtual void OnMouseLeave();
 	virtual bool OnSetCursor(ATUICursorImage& image);
 	virtual void OnCaptureLost();
+	virtual void OnSetFocus();
 	virtual void OnHelp();
 	virtual void OnInitMenu(VDZHMENU hmenu);
 	virtual void OnContextMenu(uint32 id, int x, int y);
@@ -337,6 +339,9 @@ protected:
 
 	// Very last call at end of lifetime; intended for delete/release. No default.
 	virtual void PostNCDestroy();
+
+	virtual bool OnPreTranslate(VDZMSG& msg);
+	bool DelegatePreTranslate(VDZMSG& msg);
 
 	virtual bool ShouldSetDialogIcon() const;
 	virtual sint32 GetBackgroundColor() const;

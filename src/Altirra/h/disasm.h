@@ -65,7 +65,6 @@ void ATDisassemblePredictContext(ATCPUHistoryEntry& hent, ATDebugDisasmMode exec
 int ATGetOpcodeLength(uint8 opcode);
 int ATGetOpcodeLength(uint8 opcode, uint8 p, bool emuMode);
 int ATGetOpcodeLength(uint8 opcode, uint8 p, bool emuMode, ATDebugDisasmMode disasmMode);
-bool ATIsValidOpcode(uint8 opcode);
 
 uint32 ATGetOpcodeLengthZ80(uint8 opcode);
 uint32 ATGetOpcodeLengthZ80ED(uint8 opcode);

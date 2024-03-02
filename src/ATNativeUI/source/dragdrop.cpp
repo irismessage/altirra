@@ -298,6 +298,9 @@ ULONG STDMETHODCALLTYPE ATUIDropTargetBaseW32::Release() {
 }
 
 HRESULT STDMETHODCALLTYPE ATUIDropTargetBaseW32::QueryInterface(REFIID riid, void **ppvObj) {
+	if (!ppvObj)
+		return E_POINTER;
+
 	if (riid == IID_IDropTarget)
 		*ppvObj = static_cast<IDropTarget *>(this);
 	else if (riid == IID_IUnknown)

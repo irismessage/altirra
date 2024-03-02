@@ -620,6 +620,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStatePopL16;
 			*mpDstState++ = kStatePopH16;
+			*mpDstState++ = kStateDSetSZ16;
 			*mpDstState++ = kStateDtoDP16;
 			break;
 
@@ -1515,6 +1516,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			*mpDstState++ = kStatePopNative;	//** doesn't wrap even in emu mode
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateWait;
+			*mpDstState++ = kStateDSetSZ;
 			*mpDstState++ = kStateDtoB;
 			break;
 

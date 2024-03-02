@@ -35,6 +35,10 @@ extern const ATDeviceDefinition g_ATDeviceDefVideoStillImage {
 	}
 };
 
+ATDeviceVideoStillImage::ATDeviceVideoStillImage() {
+	SetSaveStateAgnostic();
+}
+
 void *ATDeviceVideoStillImage::AsInterface(uint32 id) {
 	if (id == IATDeviceVideoSource::kTypeID)
 		return static_cast<IATDeviceVideoSource *>(this);

@@ -69,7 +69,7 @@ private:
 	};
 
 	template<bool T_DoAnalysis, DetectorType T_Detector, PreFilterType T_PreFilter>
-	void Process(const sint16 *samples, uint32 n, float *adest) VDRESTRICT;
+	void Process(const sint16 *samples, uint32 n, float *adest);
 
 	uint32 mBitAccum {};
 	uint32 mBitCounter {};

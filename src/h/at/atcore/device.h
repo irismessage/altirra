@@ -49,6 +49,13 @@ enum ATDeviceDefFlag : uint32 {
 	// implementations must support continued execution without rebooting, though the device
 	// may be in a useless state.
 	kATDeviceDefFlag_RebootOnPlug = 0x00000001,
+
+	// An internal device is automatically added by the emulator and cannot be removed by
+	// the user. It is still configurable and persistable unless the Hidden flag is set.
+	kATDeviceDefFlag_Internal = 0x00000002,
+
+	// A hidden device is not visible in the device tree.
+	kATDeviceDefFlag_Hidden = 0x00000004,
 };
 
 /// Describes static information about the device type. This is constant for all
@@ -142,7 +149,7 @@ enum ATDeviceButton : uint32 {
 	kATDeviceButton_BlackBoxDumpScreen,
 	kATDeviceButton_BlackBoxMenu,
 	kATDeviceButton_CartridgeResetBank,
-	kATDeviceButton_CartridgeSDXEnable,
+	kATDeviceButton_CartridgeSwitch,
 	kATDeviceButton_IDEPlus2SwitchDisks,
 	kATDeviceButton_IDEPlus2WriteProtect,
 	kATDeviceButton_IDEPlus2SDX,
@@ -216,6 +223,10 @@ public:
 	virtual void SetTraceContext(ATTraceContext *context) = 0;
 
 	virtual bool GetErrorStatus(uint32 idx, VDStringW& error) = 0;
+
+	// Return true if this device has no state to save or restore in a save state, and
+	// thus is OK for save states even if it doesn't implement the save state interface.
+	virtual bool IsSaveStateAgnostic() const = 0;
 };
 
 class IATDeviceManager {
@@ -226,6 +237,8 @@ public:
 	T *GetService() {
 		return (T *)GetService(T::kTypeID);
 	}
+
+	virtual void NotifyDeviceStatusChanged(IATDevice& dev) = 0;
 };
 
 #endif

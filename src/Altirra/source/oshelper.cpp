@@ -36,6 +36,7 @@
 #include "decode_png.h"
 #include "encode_png.h"
 #include "common_png.h"
+#include "uiaccessors.h"
 
 const void *ATLockResource(uint32 id, size_t& size) {
 	HMODULE hmod = VDGetLocalModuleHandleW32();
@@ -564,11 +565,20 @@ void ATShowHelp(void *hwnd, const wchar_t *filename) {
 }
 
 void ATLaunchURL(const wchar_t *url) {
-	const VDStringW path = VDGetProgramFilePath();
-
 	SHELLEXECUTEINFOW execInfo = {sizeof(SHELLEXECUTEINFOW)};
+	execInfo.hwnd = (HWND)ATUIGetMainWindow();
 	execInfo.lpVerb = nullptr;
 	execInfo.lpFile = url;
+	execInfo.nShow = SW_SHOWNORMAL;
+
+	ShellExecuteExW(&execInfo);
+}
+
+void ATLaunchFileForEdit(const wchar_t *file) {
+	SHELLEXECUTEINFOW execInfo = {sizeof(SHELLEXECUTEINFOW)};
+	execInfo.hwnd = (HWND)ATUIGetMainWindow();
+	execInfo.lpVerb = L"edit";
+	execInfo.lpFile = file;
 	execInfo.nShow = SW_SHOWNORMAL;
 
 	ShellExecuteExW(&execInfo);

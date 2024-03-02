@@ -24,13 +24,15 @@
 
 class ATPIAEmulator;
 class IATDevicePortManager;
+class IATObjectState;
+template<typename T> class vdrefptr;
 
 struct ATXEP80TextDisplayInfo {
 	int mColumns;
 	int mRows;
 };
 
-class ATXEP80Emulator : public IATSchedulerCallback {
+class ATXEP80Emulator final : public IATSchedulerCallback {
 	ATXEP80Emulator(const ATXEP80Emulator&);
 	ATXEP80Emulator& operator=(const ATXEP80Emulator&);
 public:
@@ -70,14 +72,16 @@ public:
 	const vdrect32 CharToPixelRect(const vdrect32& r) const;
 	int ReadRawText(uint8 *dst, int x, int y, int n) const;
 
-	static void StaticOnPIAOutputChanged(void *data, uint32 outputState);
-	void OnPIAOutputChanged(uint32 outputState);
+	void LoadState(const IATObjectState *state);
+	vdrefptr<IATObjectState> SaveState() const;
 
 public:
-	virtual void OnScheduledEvent(uint32 id);
+	void OnScheduledEvent(uint32 id) override;
 
 private:
 	struct CommandInfo;
+
+	void OnPIAOutputChanged(uint32 outputState);
 	
 	static const CommandInfo *LookupCommand(uint8 ch);
 
@@ -126,6 +130,7 @@ private:
 	void OnCmdWriteVCR(uint8);
 	void OnCmdSetTCP(uint8);
 	void OnCmdWriteTCP(uint8);
+	void WriteTimingChain(uint8 reg, uint8 val);
 	void OnCmdSetBeginAddr(uint8);
 	void OnCmdSetEndAddr(uint8);
 	void OnCmdSetStatusAddr(uint8);
@@ -153,6 +158,11 @@ private:
 	void UpdatePIAInput();
 
 	uint8 *GetRowPtr(int y) { return &mVRAM[(mRowPtrs[y] & 0x1F) << 8]; }
+
+	enum : uint32 {
+		kEventId_ReadBit = 1,
+		kEventId_WriteBit = 2
+	};
 
 	enum CommandState {
 		kState_WaitCommand,

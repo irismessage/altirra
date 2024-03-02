@@ -34,6 +34,7 @@ class IATDeviceVideoOutput;
 class IATDeviceVideoManager;
 
 class ATUIDisplayTool;
+struct ATUIDisplayAccessibilityScreen;
 
 enum class ATTextCopyMode : uint8;
 
@@ -51,6 +52,8 @@ public:
 	bool Init(ATSimulatorEventManager& sem, IATDeviceVideoManager& videoMgr);
 	void Shutdown();
 
+	void SelectAll();
+	void Deselect();
 	void Copy(ATTextCopyMode copyMode);
 	bool CopyFrameImage(bool trueAspect, VDPixmapBuffer& buf);
 	void CopySaveFrame(bool saveFrame, bool trueAspect, const wchar_t *path = nullptr);
@@ -62,6 +65,7 @@ public:
 	void CaptureMouse();
 
 	void RecalibrateLightPen();
+	void ActivatePanZoomTool();
 
 	void OpenOSK();
 	void CloseOSK();
@@ -90,7 +94,11 @@ public:
 	void AddTool(ATUIDisplayTool& tool);
 	void RemoveTool(ATUIDisplayTool& tool);
 
-public:
+	void ReadScreen(ATUIDisplayAccessibilityScreen& screenInfo) const;
+	vdrect32 GetTextSpanBoundingBox(int ypos, int xc1, int xc2) const;
+	vdpoint32 GetNearestBeamPositionForPoint(const vdpoint32& pt) const;
+
+public:		// IATUIEnhancedTextOutput
 	void InvalidateTextOutput() override;
 
 private:
@@ -102,35 +110,37 @@ public:
 	void OnRemovingVideoOutput(uint32 index);
 
 protected:
-	virtual ATUITouchMode GetTouchModeAtPoint(const vdpoint32& pt) const;
-	virtual void OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dblclk);
-	virtual void OnMouseUp(sint32 x, sint32 y, uint32 vk);
-	virtual void OnMouseRelativeMove(sint32 dx, sint32 dy);
-	virtual void OnMouseMove(sint32 x, sint32 y);
-	virtual void OnMouseLeave();
-	virtual void OnMouseHover(sint32 x, sint32 y);
+	ATUITouchMode GetTouchModeAtPoint(const vdpoint32& pt) const override;
+	void OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dblclk) override;
+	void OnMouseUp(sint32 x, sint32 y, uint32 vk) override;
+	void OnMouseRelativeMove(sint32 dx, sint32 dy) override;
+	void OnMouseMove(sint32 x, sint32 y) override;
+	bool OnMouseWheel(sint32 x, sint32 y, float delta, bool doPages) override;
+	bool OnMouseHWheel(sint32 x, sint32 y, float delta, bool doPages) override;
+	void OnMouseLeave() override;
+	void OnMouseHover(sint32 x, sint32 y) override;
 
-	virtual bool OnContextMenu(const vdpoint32 *pt);
+	bool OnContextMenu(const vdpoint32 *pt) override;
 
-	virtual bool OnKeyDown(const ATUIKeyEvent& event);
-	virtual bool OnKeyUp(const ATUIKeyEvent& event);
-	virtual bool OnChar(const ATUICharEvent& event);
-	virtual bool OnCharUp(const ATUICharEvent& event);
+	bool OnKeyDown(const ATUIKeyEvent& event) override;
+	bool OnKeyUp(const ATUIKeyEvent& event) override;
+	bool OnChar(const ATUICharEvent& event) override;
+	bool OnCharUp(const ATUICharEvent& event) override;
 
-	virtual void OnForceKeysUp();
+	void OnForceKeysUp() override;
 
-	virtual void OnActionStart(uint32 id);
-	virtual void OnActionStop(uint32 id);
+	void OnActionStart(uint32 id) override;
+	void OnActionStop(uint32 id) override;
 
-	virtual void OnCreate();
-	virtual void OnDestroy();
-	virtual void OnSize();
+	void OnCreate() override;
+	void OnDestroy() override;
+	void OnSize() override;
 
-	virtual void OnSetFocus();
-	virtual void OnKillFocus();
-	virtual void OnCaptureLost();
+	void OnSetFocus() override;
+	void OnKillFocus() override;
+	void OnCaptureLost() override;
 	
-	virtual void OnDeactivate() override;
+	void OnDeactivate() override;
 
 	ATUIDragEffect OnDragEnter(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) override;
 	ATUIDragEffect OnDragOver(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) override;
@@ -149,6 +159,7 @@ public:
 	bool IsAltOutputAvailable() const;
 	bool IsAltOutputAvailable(const char *name) const;
 	VDStringW GetCurrentOutputName() const;
+	vdrect32 GetCurrentOutputArea() const;
 
 private:
 	bool ProcessKeyDown(const ATUIKeyEvent& event, bool enableKeyInput);
@@ -165,16 +176,40 @@ private:
 	const vdrect32 GetAltDisplayArea() const;
 	bool MapPixelToBeamPosition(int x, int y, float& hcyc, float& vcyc, bool clamp) const;
 	bool MapPixelToBeamPosition(int x, int y, int& xc, int& yc, bool clamp) const;
+	vdint2 MapBeamPositionToPoint(int xc, int yc) const;
 	void MapBeamPositionToPoint(int xc, int yc, int& x, int& y) const;
 	vdfloat2 MapBeamPositionToPointF(vdfloat2 pt) const;
 	void UpdateDragPreview(int x, int y);
+	void SelectByCaretPosAlt(vdpoint32 caretPos1, vdpoint32 caretPos2);
 	void UpdateDragPreviewAlt(int x, int y);
+	void SelectByBeamPositionAntic(int xc1, int yc1, int xc2, int yc2);
 	void UpdateDragPreviewAntic(int x, int y);
 	void UpdateDragPreviewRects();
 	void ClearDragPreview();
 	int GetModeLineYPos(int ys, bool checkValidCopyText) const;
 	std::pair<int, int> GetModeLineXYPos(int xcc, int ys, bool checkValidCopyText) const;
-	int ReadText(uint8 *dst, int yc, int startChar, int numChars, bool& intl) const;
+
+	struct ModeLineInfo {
+		uint8 mMode = 0;
+		uint8 mVPos = 0;
+		uint8 mHeight = 0;
+		uint8 mHScroll = 0;
+		uint8 mDisplayHposStart = 0;
+		uint8 mDisplayHposEnd = 0;
+		uint8 mFetchHposStart = 0;
+		uint8 mFetchHposEnd = 0;
+		uint8 mCellWidth = 0;
+		uint8 mCellToHRPixelShift = 0;
+
+		bool IsTextMode() const {
+			return (mMode == 2 || mMode == 3 || mMode == 6 || mMode == 7);
+		}
+	};
+
+	ModeLineInfo GetModeLineInfo(int vpos) const;
+
+	int ReadText(uint8 *dst, uint8 *raw, int yc, int startChar, int numChars, bool& intl) const;
+
 	void ClearCoordinateIndicator();
 	void SetCoordinateIndicator(int x, int y);
 
@@ -188,8 +223,10 @@ private:
 	bool mbShiftDepressed = false;
 	bool mbShiftToggledPostKeyDown = false;
 	bool mbHoldKeys = false;
+	uint32 mSelectionCommandProcessedCounter = 0;
 
 	vdrect32 mDisplayRect = { 0, 0, 0, 0 };
+	vdrect32 mPadArea { 0, 0, 0, 0 };
 
 	vdfunction<bool(vdfloat2&)> mpMapDisplayToSourcePt;
 	vdfunction<bool(vdfloat2&)> mpMapSourceToDisplayPt;
@@ -274,6 +311,9 @@ private:
 	vdfastvector<ActiveKey> mActiveKeys;
 	uint32 mActiveSpecialVKeys[kATUIKeyScanCodeLast + 1 - kATUIKeyScanCodeFirst] = {};
 	uint32 mActiveSpecialScanCodes[kATUIKeyScanCodeLast + 1 - kATUIKeyScanCodeFirst] = {};
+
+	struct ATASCIIDecodeTabs;
+	static const ATASCIIDecodeTabs kATASCIIDecodeTabs;
 };
 
 #endif

@@ -6,7 +6,7 @@
 #include <vd2/system/unknown.h>
 #include <vd2/Tessa/Types.h>
 
-class VDRTProfileChannel;
+class IVDTTexture;
 
 class IVDTResource : public IVDRefUnknown {
 public:
@@ -25,6 +25,7 @@ public:
 	virtual bool Readback(IVDTReadbackBuffer *target) = 0;
 	virtual void Copy(uint32 dx, uint32 dy, IVDTSurface *src, uint32 sx, uint32 sy, uint32 w, uint32 h) = 0;
 	virtual void GetDesc(VDTSurfaceDesc& desc) = 0;
+	virtual IVDTTexture *GetTexture() const = 0;
 };
 
 class IVDTTexture : public IVDTResource {
@@ -215,7 +216,6 @@ public:
 
 	virtual void BeginScope(uint32 color, const char *message) = 0;
 	virtual void EndScope() = 0;
-	virtual VDRTProfileChannel *GetProfileChannel() = 0;
 };
 
 void VDTBeginScopeF(IVDTContext *profiler, uint32 color, const char *format, ...);

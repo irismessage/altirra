@@ -6,7 +6,8 @@
 enum ATEthernetFrameType {
 	kATEthernetFrameType_IP = 0x0800,
 	kATEthernetFrameType_ARP = 0x0806,
-	kATEthernetFrameType_TransparentEthernet = 0x6558		// [NVGRE]
+	kATEthernetFrameType_TransparentEthernet = 0x6558,		// [NVGRE]
+	kATEthernetFrameType_IPv6 = 0x86DD,
 };
 
 struct ATEthernetArpFrameInfo {
@@ -37,6 +38,14 @@ struct ATIPv4HeaderInfo {
 	uint32	mDataLength;
 };
 
+struct ATIPv6HeaderInfo {
+	uint8 mSrcAddr[16];
+	uint8 mDstAddr[16];
+	uint16 mPayloadLength;
+	uint8 mProtocol;
+	uint8 mHopLimit;
+};
+
 bool ATEthernetDecodeArpPacket(ATEthernetArpFrameInfo& dstInfo, const uint8 *data, uint32 len);
 uint32 ATEthernetEncodeArpPacket(uint8 *data, uint32 len, const ATEthernetArpFrameInfo& srcInfo);
 
@@ -45,7 +54,7 @@ uint16 ATIPComputeChecksum(uint64 initialSum, const uint8 *data, uint32 dwords);
 bool ATIPv4DecodeHeader(ATIPv4HeaderInfo& dstInfo, const uint8 *data, uint32 len);
 uint32 ATIPv4EncodeHeader(uint8 *data, uint32 len, const ATIPv4HeaderInfo& srcInfo);
 
-bool ATIPv6DecodeHeader(const uint8 *data, uint32 len);
+bool ATIPv6DecodeHeader(ATIPv6HeaderInfo& dstInfo, const uint8 *data, uint32 len);
 
 inline ATEthernetAddr ATEthernetGetBroadcastAddr() {
 	return ATEthernetAddr { { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } };

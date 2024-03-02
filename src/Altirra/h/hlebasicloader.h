@@ -54,7 +54,6 @@ protected:
 	enum class State : uint8 {
 		None,
 		RunProgram,
-		LoadTape,
 		RunTape
 	} mState = State::None;
 

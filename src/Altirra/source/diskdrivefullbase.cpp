@@ -15,6 +15,7 @@
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include "stdafx.h"
+#include <vd2/system/int128.h>
 #include <at/atcore/devicesio.h>
 #include <at/atcore/wraptime.h>
 #include <at/atcpu/history.h>
@@ -47,11 +48,11 @@ void ATDiskDriveAudioPlayer::SetRotationSoundEnabled(bool enabled) {
 	}
 }
 
-void ATDiskDriveAudioPlayer::PlayStepSound(ATAudioSampleId sampleId, float volume) {
+void ATDiskDriveAudioPlayer::PlayStepSound(ATAudioSampleId sampleId, float volume, uint32 cycleDelay) {
 	if (!mpAudioMixer)
 		return;
 
-	mpAudioMixer->GetSamplePlayer().AddSound(*mpStepSoundGroup, 0, sampleId, volume);
+	mpAudioMixer->GetSamplePlayer().AddSound(*mpStepSoundGroup, cycleDelay, sampleId, volume);
 }
 
 void ATDiskDriveAudioPlayer::InitAudioOutput(IATAudioMixer *mixer) {
@@ -605,7 +606,7 @@ void ATDiskDriveDebugTargetControl::InitTargetControl(IATDiskDriveDebugTargetPro
 	mpReadMap = rwmaps.first;
 	mpWriteMap = rwmaps.second;
 
-	mDisplayName = "Disk Drive CPU";
+	mDisplayName = "Device MCU";
 
 	if (parentDevice) {
 		ATDeviceInfo devInfo;
@@ -624,12 +625,16 @@ void ATDiskDriveDebugTargetControl::ApplyDisplayCPUClockMultiplier(double f) {
 void ATDiskDriveDebugTargetControl::ResetTargetControl() {
 	mLastSync = ATSCHEDULER_GETTIME(mpScheduler);
 	mLastSyncDriveTime = ATSCHEDULER_GETTIME(&mDriveScheduler);
-	mLastSyncDriveTimeSubCycles = 0;
+	mLastSyncDriveTimeF32 = 0;
+	mRawTimestampToDriveAdjust = mLastSyncDriveTime - mpProxy->GetTime();
 
 	mpScheduler->UnsetEvent(mpImmRunEvent);
 
-	mClockDivisor = VDRoundToInt((512.0 / mTimestampFrequency) * mpScheduler->GetRate().asDouble());
-	mSubCycleAccum = 0;
+	const auto systemRate = mpScheduler->GetRate();
+	mSystemCyclesPerDriveCycleF32 = VDRoundToInt64(0x1.0p+32 / mTimestampFrequency * systemRate.asDouble());
+	mDriveCyclesPerSystemCycleF32 = VDRoundToInt64(0x1.0p+32 * mTimestampFrequency * systemRate.AsInverseDouble());
+
+	mDriveCycleAccumF32 = 0;
 	mDriveCycleLimit = ATSCHEDULER_GETTIME(&mDriveScheduler);
 }
 
@@ -646,20 +651,44 @@ void ATDiskDriveDebugTargetControl::ShutdownTargetControl() {
 }
 
 uint32 ATDiskDriveDebugTargetControl::DriveTimeToMasterTime() const {
-	// convert device time to computer time
-	uint32 dt = mLastSyncDriveTimeSubCycles - (ATSCHEDULER_GETTIME(&mDriveScheduler) - mLastSyncDriveTime) * mClockDivisor;
-	VDASSERT(dt < UINT32_C(0x80000000));
+	// convert drive time to computer time
+	const uint32 currentDriveTime = ATSCHEDULER_GETTIME(&mDriveScheduler);
+	const uint64 driveTimeSyncDeltaF32 = mLastSyncDriveTimeF32 - ((uint64)(currentDriveTime - mLastSyncDriveTime) << 32);
+	VDASSERT(driveTimeSyncDeltaF32 < UINT64_C(0x80000000'00000000));
 
-	dt >>= 9;
+	const uint64 systemTimeSyncDelta = VDUMul64x64To128(driveTimeSyncDeltaF32, mSystemCyclesPerDriveCycleF32).getHi();
+	VDASSERT(systemTimeSyncDelta < UINT64_C(0x80000000'00000000));
 
-	const uint32 t = mLastSync - dt;
-
+	const uint32 t = mLastSync - (uint32)systemTimeSyncDelta;
 	return t;
 }
 
 uint32 ATDiskDriveDebugTargetControl::MasterTimeToDriveTime() const {
-	const uint32 ct = (ATSCHEDULER_GETTIME(mpScheduler) - mLastSync) * 512;
-	return mLastSyncDriveTime + ct / mClockDivisor;
+	const uint64 ct = (ATSCHEDULER_GETTIME(mpScheduler) - mLastSync) * mDriveCyclesPerSystemCycleF32;
+	return mLastSyncDriveTime + (uint32)(ct >> 32);
+}
+
+uint64 ATDiskDriveDebugTargetControl::MasterTimeToDriveTime64(uint64 t) const {
+	const uint64 currentSystemTime64 = mpScheduler->GetTick64();
+	const uint64 currentDriveTime64 = mDriveScheduler.GetTick64();
+
+	// compute system time delta from sync
+	uint64 deltaSystemTime64 = ((uint32)currentSystemTime64 - mLastSync) + (t - currentSystemTime64);
+	bool neg = false;
+
+	if (deltaSystemTime64 >= UINT64_C(0x80000000'00000000)) {
+		deltaSystemTime64 = UINT64_C(0) - deltaSystemTime64;
+		neg = true;
+	}
+
+	// convert system time delta to drive time delta (64 * 32.32 fixed point)
+	const uint64 deltaDriveTime64 = (uint64)(VDUMul64x64To128(deltaSystemTime64, mDriveCyclesPerSystemCycleF32) >> 32);
+
+	// extend drive sync time to 64-bit
+	const uint64 driveTime64 = currentDriveTime64 + (sint64)(sint32)(mLastSyncDriveTime - (uint32)currentDriveTime64);
+
+	// add drive time delta to drive sync time to get drive time
+	return neg ? driveTime64 - deltaDriveTime64 : driveTime64 + deltaDriveTime64;
 }
 
 uint32 ATDiskDriveDebugTargetControl::AccumSubCycles() {
@@ -669,21 +698,19 @@ uint32 ATDiskDriveDebugTargetControl::AccumSubCycles() {
 
 	mLastSync = t;
 
-	mSubCycleAccum += cycles << 9;
+	uint64 driveCyclesF32 = mDriveCycleAccumF32 + cycles * mDriveCyclesPerSystemCycleF32;
+	mDriveCycleAccumF32 = (uint32)driveCyclesF32;
 
 	mLastSyncDriveTime = mDriveCycleLimit;
-	mLastSyncDriveTimeSubCycles = mSubCycleAccum;
+	mLastSyncDriveTimeF32 = driveCyclesF32;
 
-	if (mSubCycleAccum >= mClockDivisor) {
-		mDriveCycleLimit += mSubCycleAccum / mClockDivisor;
-		mSubCycleAccum %= mClockDivisor;
-	}
+	mDriveCycleLimit += (uint32)(driveCyclesF32 >> 32);
 
 	return mDriveCycleLimit;
 }
 
 void ATDiskDriveDebugTargetControl::ScheduleImmediateResume() {
-		mpScheduler->SetEvent(1, this, kEventId_ImmRun, mpImmRunEvent);
+	mpScheduler->SetEvent(1, this, kEventId_ImmRun, mpImmRunEvent);
 }
 
 void *ATDiskDriveDebugTargetControl::AsInterface(uint32 iid) {
@@ -743,7 +770,7 @@ sint32 ATDiskDriveDebugTargetControl::GetTimeSkew() {
 
 	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 	const uint32 cot = ATSCHEDULER_GETTIME(&mDriveScheduler);
-	const uint32 cycles = (t - mLastSync) + (((mDriveCycleLimit - cot) * mClockDivisor + mSubCycleAccum + 511) >> 9);
+	const uint32 cycles = (t - mLastSync) + (((mDriveCycleLimit - cot) * mSystemCyclesPerDriveCycleF32 + ((mDriveCycleAccumF32 * mSystemCyclesPerDriveCycleF32) >> 32) + 0xFFFFFFFF) >> 32);
 
 	return -(sint32)cycles;
 }
@@ -752,7 +779,7 @@ uint32 ATDiskDriveDebugTargetControl::ConvertRawTimestamp(uint32 rawTimestamp) c
 	// mLastSync is the machine cycle at which all sub-cycles have been pushed into the
 	// coprocessor, and the coprocessor's time base is the sub-cycle corresponding to
 	// the end of that machine cycle.
-	return mLastSync - (((mDriveCycleLimit - rawTimestamp) * mClockDivisor + mSubCycleAccum + 511) >> 9);
+	return mLastSync - (((mDriveCycleLimit - rawTimestamp - mRawTimestampToDriveAdjust) * mSystemCyclesPerDriveCycleF32 + ((mDriveCycleAccumF32 * mSystemCyclesPerDriveCycleF32) >> 32) + 0xFFFFFFFF) >> 32);
 }
 
 void ATDiskDriveDebugTargetControl::GetExecState(ATCPUExecState& state) {

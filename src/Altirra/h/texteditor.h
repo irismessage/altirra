@@ -78,13 +78,17 @@ public:
 
 	virtual int  GetCursorLine() = 0;
 	virtual void SetCursorPos(int line, int offset) = 0;
+	virtual bool GetCursorPixelPos(int& clientX, int& clientY) = 0;
 	virtual void SetCursorPixelPos(int x, int y) = 0;
+
+	virtual vdpoint32 GetScreenPosForContextMenu() = 0;
 
 	virtual void RecolorLine(int line) = 0;
 	virtual void RecolorAll() = 0;
 
 	virtual bool Find(const char *text, int len, bool caseSensitive, bool wholeWord, bool searchUp) = 0;
 
+	virtual vdrect32 GetVisibleArea() const = 0;
 	virtual int	GetVisibleHeight() = 0;
 	virtual	int	GetParagraphForYPos(int y) = 0;
 	virtual int GetVisibleLineCount() = 0;

@@ -92,7 +92,6 @@ void ATDecodePartitionTable(IATBlockDevice& bdev, vdvector<ATPartitionInfo>& par
 		for(;;) {
 			const int headerOffset = headerIndex*16;
 			int numEntries = buf[headerOffset + 5];
-			bool tableEnded = false;
 
 			for(int i=0; i<numEntries; ++i) {
 				if (i == headerIndex)
@@ -107,7 +106,6 @@ void ATDecodePartitionTable(IATBlockDevice& bdev, vdvector<ATPartitionInfo>& par
 						continue;
 
 					// terminate table
-					tableEnded = true;
 					break;
 				}
 

@@ -55,7 +55,7 @@ void *ATSDriveEmulator::AsInterface(uint32 iid) {
 		case IATDeviceIndicators::kTypeID: return static_cast<IATDeviceIndicators *>(this);
 	}
 
-	return nullptr;
+	return ATDevice::AsInterface(iid);
 }
 
 void ATSDriveEmulator::GetDeviceInfo(ATDeviceInfo& info) {

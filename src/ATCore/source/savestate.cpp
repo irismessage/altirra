@@ -22,7 +22,7 @@
 #include <at/atcore/savestate.h>
 
 ATInvalidSaveStateException::ATInvalidSaveStateException()
-	: MyError("The save state data is invalid.")
+	: MyError("The saved state data is invalid.")
 {
 }
 

@@ -28,4 +28,18 @@ inline void ATMaskedWrite_NEON(uint8x16_t src, uint8x16_t mask, void *dstp) {
 	vst1q_u8((uint8_t *)dstp, vbslq_u8(mask, src, vld1q_u8((const uint8_t *)dstp)));
 }
 
+alignas(64) inline const uint8 g_ATWindowTable[48] = {
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+};
+
+inline uint8x16_t ATIntrinGetStartMask_NEON(uint32 offset) {
+	return vld1q_u8(g_ATWindowTable + 16 - offset);
+}
+
+inline uint8x16_t ATIntrinGetEndMask_NEON(uint32 offset) {
+	return vld1q_u8(g_ATWindowTable + 32 - offset);
+}
+
 #endif

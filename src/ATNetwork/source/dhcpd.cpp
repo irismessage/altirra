@@ -22,17 +22,15 @@ struct ATNetDhcpPacket {
 	uint32	mOptionsKey;
 };
 
-ATNetDhcpDaemon::ATNetDhcpDaemon()
-	: mpUdpStack(NULL)
-	, mNextLeaseIdx(0)
-{
+ATNetDhcpDaemon::ATNetDhcpDaemon() {
 }
 
-void ATNetDhcpDaemon::Init(IATNetUdpStack *udp) {
+void ATNetDhcpDaemon::Init(IATEmuNetUdpStack *udp, bool enableRouter) {
 	VDASSERTCT(sizeof(ATNetDhcpPacket) == 240);
 
 	mpUdpStack = udp;
 	mpUdpStack->Bind(67, this);
+	mbRouterEnabled = enableRouter;
 
 	Reset();
 }
@@ -150,7 +148,7 @@ void ATNetDhcpDaemon::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 		return;
 
 	// Form reply
-	IATNetIpStack *const ipStack = mpUdpStack->GetIpStack();
+	IATEmuNetIpStack *const ipStack = mpUdpStack->GetIpStack();
 
 	struct Reply {
 		ATNetDhcpPacket mPkt;
@@ -240,22 +238,18 @@ void ATNetDhcpDaemon::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 			optdst += 4;
 
 			// set up router (optional)
-			*optdst++ = 3;
-			*optdst++ = 4;
-			VDWriteUnalignedU32(optdst, ipStack->GetIpAddress());
-			optdst += 4;
+			if (mbRouterEnabled) {
+				*optdst++ = 3;
+				*optdst++ = 4;
+				VDWriteUnalignedU32(optdst, ipStack->GetIpAddress());
+				optdst += 4;
 
-			// set up DNS option (optional)
-			*optdst++ = 6;
-			*optdst++ = 4;
-			VDWriteUnalignedU32(optdst, ipStack->GetIpAddress());
-			optdst += 4;
-
-			// set up DNS option (optional)
-			*optdst++ = 6;
-			*optdst++ = 4;
-			VDWriteUnalignedU32(optdst, ipStack->GetIpAddress());
-			optdst += 4;
+				// set up DNS option (optional)
+				*optdst++ = 6;
+				*optdst++ = 4;
+				VDWriteUnalignedU32(optdst, ipStack->GetIpAddress());
+				optdst += 4;
+			}
 		}
 	} else if (messageType == kATNetDhcpMsgType_DHCPDECLINE || messageType == kATNetDhcpMsgType_DHCPRELEASE) {
 		// these messages require a server identifier -- so make sure it's
@@ -325,17 +319,19 @@ void ATNetDhcpDaemon::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 			VDWriteUnalignedU32(optdst, ipStack->GetIpNetMask());
 			optdst += 4;
 
-			// set up router (optional)
-			*optdst++ = 3;
-			*optdst++ = 4;
-			VDWriteUnalignedU32(optdst, ipStack->GetIpAddress());
-			optdst += 4;
+			if (mbRouterEnabled) {
+				// set up router (optional)
+				*optdst++ = 3;
+				*optdst++ = 4;
+				VDWriteUnalignedU32(optdst, ipStack->GetIpAddress());
+				optdst += 4;
 
-			// set up DNS option (optional)
-			*optdst++ = 6;
-			*optdst++ = 4;
-			VDWriteUnalignedU32(optdst, ipStack->GetIpAddress());
-			optdst += 4;
+				// set up DNS option (optional)
+				*optdst++ = 6;
+				*optdst++ = 4;
+				VDWriteUnalignedU32(optdst, ipStack->GetIpAddress());
+				optdst += 4;
+			}
 		} else {
 			// no addresses available -- send DHCPNAK
 			reply.mPkt.mSiaddr = 0;

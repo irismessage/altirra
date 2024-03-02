@@ -73,7 +73,9 @@ enum ATCartridgeMode : uint32 {
 	kATCartridgeMode_Phoenix_8K,
 	kATCartridgeMode_Blizzard_16K,
 	kATCartridgeMode_Blizzard_32K,
-	kATCartridgeMode_SIC,
+	kATCartridgeMode_SIC_128K,
+	kATCartridgeMode_SIC_256K,
+	kATCartridgeMode_SIC_512K,
 	kATCartridgeMode_Atrax_SDX_128K,
 	kATCartridgeMode_OSS_043M,
 	kATCartridgeMode_OSS_8K,
@@ -103,7 +105,7 @@ enum ATCartridgeMode : uint32 {
 	kATCartridgeMode_Atrax_128K_Raw,		// (type 68)
 	kATCartridgeMode_aDawliah_32K,			// (type 69)
 	kATCartridgeMode_aDawliah_64K,			// (type 70)
-	kATCartridgeMode_JRC_64K_RAM,			// (unofficial type 160 used by AVGCart)
+	kATCartridgeMode_JRC_RAMBOX,
 	kATCartridgeMode_XEMulticart_8K,		// XE Multicart by Idorobots (Kajetan Rzepecki)
 	kATCartridgeMode_XEMulticart_16K,
 	kATCartridgeMode_XEMulticart_32K,
@@ -113,6 +115,11 @@ enum ATCartridgeMode : uint32 {
 	kATCartridgeMode_XEMulticart_512K,
 	kATCartridgeMode_XEMulticart_1M,
 	kATCartridgeMode_SICPlus,
+	kATCartridgeMode_Williams_16K,
+	kATCartridgeMode_JRC6_64K,		// (unofficial type 160 used by AVGCart)
+	kATCartridgeMode_MDDOS,
+	kATCartridgeMode_COS32K,
+	kATCartridgeMode_Pronto,
 	kATCartridgeModeCount
 };
 

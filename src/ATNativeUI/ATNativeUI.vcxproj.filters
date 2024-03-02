@@ -78,6 +78,9 @@
     <ClCompile Include="source\uipanedialog.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\accessibility_win32.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="res\resource.h">
@@ -144,6 +147,9 @@
       <Filter>Interface Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\at\atnativeui\uipanedialog.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atnativeui\accessibility_win32.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
   </ItemGroup>

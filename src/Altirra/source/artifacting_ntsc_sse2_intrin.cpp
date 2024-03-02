@@ -20,7 +20,7 @@
 #include <intrin.h>
 #include "artifacting.h"
 
-#if defined(VD_COMPILER_MSVC) && (defined(VD_CPU_X86) || defined(VD_CPU_X64))
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
 bool ATArtifactingEngine::ArtifactNTSC_SSE2(uint32 *dst0, const uint8 *src0, uint32 num7MHzPixels) {
 	// The max we support is 456 pixels, the number of 7MHz cycles per scanline.
 	static constexpr uint32_t kMaxPixels = 456;
@@ -171,7 +171,7 @@ bool ATArtifactingEngine::ArtifactNTSC_SSE2(uint32 *dst0, const uint8 *src0, uin
 
 #endif
 
-#if defined(VD_COMPILER_MSVC) && defined(VD_CPU_AMD64)
+#if defined(VD_CPU_AMD64)
 
 void ATArtifactNTSCAccum_SSE2(void *rout, const void *table, const void *src, uint32 count) {
 	__m128i acc0 = _mm_setzero_si128();

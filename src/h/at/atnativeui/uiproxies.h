@@ -460,7 +460,7 @@ class VDUIProxyTreeViewControl final : public VDUIProxyControl {
 public:
 	typedef uintptr NodeRef;
 
-	static constexpr NodeRef kNodeNull = (NodeRef)(uintptr)nullptr;
+	static constexpr NodeRef kNodeNull = 0;
 	static const NodeRef kNodeRoot;
 	static const NodeRef kNodeFirst;
 	static const NodeRef kNodeLast;
@@ -488,10 +488,12 @@ public:
 	NodeRef AddVirtualItem(NodeRef parent, NodeRef insertAfter, IVDUITreeViewVirtualItem *item);
 	NodeRef AddIndexedItem(NodeRef parent, NodeRef insertAfter, uint32 id);
 
+	NodeRef GetRootNode() const;
 	NodeRef GetChildNode(NodeRef ref) const;
 	NodeRef GetParentNode(NodeRef ref) const;
 	NodeRef GetPrevNode(NodeRef ref) const;
 	NodeRef GetNextNode(NodeRef ref) const;
+	NodeRef GetSelectedNode() const;
 
 	void MakeNodeVisible(NodeRef node);
 	void SelectNode(NodeRef node);

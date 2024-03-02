@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <at/atcore/snapshotimpl.h>
 #include <at/atcore/scheduler.h>
 #include <at/atemulation/via.h>
 
@@ -561,6 +562,101 @@ void ATVIA6522Emulator::WriteByte(uint8 address, uint8 value) {
 		case 15:
 			break;
 	}
+}
+
+struct ATSaveStateVIA6522 final : public ATSnapExchangeObject<ATSaveStateVIA6522, "ATSaveStateVIA6522"> {
+public:
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	uint8 mORA = 0;
+	uint8 mORB = 0;
+	uint8 mDDRA = 0;
+	uint8 mDDRB = 0;
+	uint16 mT1L = 0;
+	uint16 mT1C = 0;
+	uint16 mT2L = 0;
+	uint16 mT2C = 0;
+	uint8 mSR = 0;
+	uint8 mACR = 0;
+	uint8 mPCR = 0;
+	uint8 mIFR = 0;
+	uint8 mIER = 0;
+};
+
+template<ATExchanger T>
+void ATSaveStateVIA6522::Exchange(T& ex) {
+	ex.Transfer("arch_ora", &mORA);
+	ex.Transfer("arch_orb", &mORB);
+	ex.Transfer("arch_ddra", &mDDRA);
+	ex.Transfer("arch_ddrb", &mDDRB);
+
+	ex.Transfer("arch_t1l", &mT1L);
+	ex.Transfer("arch_t1c", &mT1C);
+	ex.Transfer("arch_t2l", &mT2L);
+	ex.Transfer("arch_t2c", &mT2C);
+
+	ex.Transfer("arch_sr", &mSR);
+	ex.Transfer("arch_acr", &mACR);
+	ex.Transfer("arch_pcr", &mPCR);
+
+	ex.Transfer("arch_ifr", &mIFR);
+	ex.Transfer("arch_ier", &mIER);
+}
+
+void ATVIA6522Emulator::LoadState(const IATObjectState *state) {
+	Reset();
+
+	if (!state)
+		return;
+
+	const auto& viastate = atser_cast<const ATSaveStateVIA6522&>(*state);
+
+	mORA = viastate.mORA;
+	mORB = viastate.mORB;
+	mDDRA = viastate.mDDRA;
+	mDDRB = viastate.mDDRB;
+
+	mT1L = viastate.mT1L;
+	mT1C = viastate.mT1C;
+	mT2L = viastate.mT2L;
+	mT2C = viastate.mT2C;
+
+	mSR = viastate.mSR;
+	mACR = viastate.mACR;
+
+	// Invoke write path to ensure invariants are upheld for PCR and IER
+	WriteByte(12, viastate.mPCR);
+
+	mIFR = viastate.mIFR & 0x7F;
+	WriteByte(14, viastate.mIER | 0x80);
+	WriteByte(14, ~viastate.mIER & 0x7F);
+
+	UpdateOutput();
+}
+
+vdrefptr<IATObjectState> ATVIA6522Emulator::SaveState() {
+	vdrefptr viastate { new ATSaveStateVIA6522 };
+
+	viastate->mORA = mORA;
+	viastate->mORB = mORB;
+	viastate->mDDRA = mDDRA;
+	viastate->mDDRB = mDDRB;
+
+	viastate->mT1L = mT1L;
+	viastate->mT1C = mT1C;
+	viastate->mT2L = mT2L;
+	viastate->mT2C = mT2C;
+	viastate->mSR = mSR;
+	viastate->mACR = mACR;
+	viastate->mPCR = mPCR;
+
+	// encode derived IFR bit 7 for consistency with spec even though we don't use it
+	viastate->mIFR = DebugReadByte(13);
+
+	viastate->mIER = mIER;
+
+	return viastate;
 }
 
 void ATVIA6522Emulator::OnScheduledEvent(uint32 id) {

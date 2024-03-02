@@ -53,6 +53,8 @@ public:
 	bool IsEmpty() const override final;
 	void StartIteration(double startTime, double endTime, double eventThreshold) override final;
 	bool GetNextEvent(ATTraceEvent& ev) override final;
+	uint32 GetEventCount() const override final;
+	uint64 GetTraceSize() const override final;
 
 private:
 	vdfastdeque<EventInfo> mEvents;

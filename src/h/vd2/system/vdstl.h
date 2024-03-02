@@ -335,6 +335,11 @@ public:
 		}
 	}
 
+	void assign(const T *p, const T *q) {
+		resize((size_type)(q - p));
+		memcpy(mpBlock, p, (const char *)q - (const char *)p);
+	}
+
 	void swap(vdblock& x) {
 		std::swap(mpBlock, x.mpBlock);
 		std::swap(mSize, x.mSize);
@@ -780,6 +785,9 @@ public:
 	VDTINLINE pointer				data();
 	VDTINLINE const_pointer			data() const;
 
+	VDTINLINE const_iterator		cbegin() const;
+	VDTINLINE const_iterator		cend() const;
+
 	VDTINLINE iterator				begin();
 	VDTINLINE const_iterator			begin() const;
 	VDTINLINE iterator				end();
@@ -829,9 +837,11 @@ template<class T> VDTINLINE bool					vdspan<T>::empty() const { return mpBegin =
 template<class T> VDTINLINE typename vdspan<T>::size_type			vdspan<T>::size() const { return size_type(mpEnd - mpBegin); }
 template<class T> VDTINLINE typename vdspan<T>::pointer				vdspan<T>::data() { return mpBegin; }
 template<class T> VDTINLINE typename vdspan<T>::const_pointer		vdspan<T>::data() const { return mpBegin; }
-template<class T> VDTINLINE typename vdspan<T>::iterator				vdspan<T>::begin() { return mpBegin; }
+template<class T> VDTINLINE typename vdspan<T>::const_iterator		vdspan<T>::cbegin() const { return mpBegin; }
+template<class T> VDTINLINE typename vdspan<T>::const_iterator		vdspan<T>::cend() const { return mpEnd; }
+template<class T> VDTINLINE typename vdspan<T>::iterator			vdspan<T>::begin() { return mpBegin; }
 template<class T> VDTINLINE typename vdspan<T>::const_iterator		vdspan<T>::begin() const { return mpBegin; }
-template<class T> VDTINLINE typename vdspan<T>::iterator				vdspan<T>::end() { return mpEnd; }
+template<class T> VDTINLINE typename vdspan<T>::iterator			vdspan<T>::end() { return mpEnd; }
 template<class T> VDTINLINE typename vdspan<T>::const_iterator		vdspan<T>::end() const { return mpEnd; }
 template<class T> VDTINLINE typename vdspan<T>::reverse_iterator		vdspan<T>::rbegin() { return reverse_iterator(mpEnd); }
 template<class T> VDTINLINE typename vdspan<T>::const_reverse_iterator vdspan<T>::rbegin() const { return const_reverse_iterator(mpEnd); }
@@ -1377,8 +1387,11 @@ public:
 	typedef std::random_access_iterator_tag iterator_category;
 
 	vdfastdeque_iterator() = default;
-	vdfastdeque_iterator(const vdfastdeque_iterator<T_Base, T_Base, kBlockSizeBits>&);
+	vdfastdeque_iterator(const vdfastdeque_iterator&) = default;
+	vdfastdeque_iterator(const vdfastdeque_iterator<T_Base, T_Base, kBlockSizeBits>&) requires (!std::is_same_v<T, T_Base>);
 	vdfastdeque_iterator(vdfastdeque_block<T_Base, kBlockSizeBits> **pMapEntry, size_t index);
+
+	vdfastdeque_iterator& operator=(const vdfastdeque_iterator&) = default;
 
 	T& operator *() const;
 	T* operator ->() const;
@@ -1402,7 +1415,7 @@ public:
 };
 
 template<class T, class T_Base, int kBlockSizeBits>
-vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::vdfastdeque_iterator(const vdfastdeque_iterator<T_Base, T_Base, kBlockSizeBits>& x)
+vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::vdfastdeque_iterator(const vdfastdeque_iterator<T_Base, T_Base, kBlockSizeBits>& x) requires (!std::is_same_v<T, T_Base>)
 	: mpMap(x.mpMap)
 	, mpBlock(x.mpBlock)
 	, mIndex(x.mIndex)

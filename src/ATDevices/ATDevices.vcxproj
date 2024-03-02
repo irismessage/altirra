@@ -11,11 +11,14 @@
     <ClCompile Include="source\exeloader.cpp" />
     <ClCompile Include="source\loopback.cpp" />
     <ClCompile Include="source\modemsound.cpp" />
+    <ClCompile Include="source\netserial.cpp" />
     <ClCompile Include="source\parfilewriter.cpp" />
+    <ClCompile Include="source\serialsplitter.cpp" />
     <ClCompile Include="source\sioclock.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="source\supersalt.cpp" />
     <ClCompile Include="source\testdevicesiohs.cpp" />
     <ClCompile Include="source\testdevicesiopoll.cpp" />
     <ClCompile Include="source\videogenerator.cpp" />
@@ -28,6 +31,7 @@
     <ClInclude Include="h\at\atdevices\corvus.h" />
     <ClInclude Include="h\at\atdevices\dongle.h" />
     <ClInclude Include="h\at\atdevices\parfilewriter.h" />
+    <ClInclude Include="h\at\atdevices\supersalt.h" />
     <ClInclude Include="h\at\atdevices\videogenerator.h" />
     <ClInclude Include="h\diskdrive.h" />
     <ClInclude Include="h\exeloader.h" />

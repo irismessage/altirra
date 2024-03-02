@@ -115,7 +115,8 @@ public:
 	void EndLoadState(ATSaveStateReader& reader);
 
 	void SaveState(IATObjectState **pp) const;
-	void LoadState(IATObjectState& state);
+	void LoadState(const IATObjectState *state);
+	void LoadState(const class ATSaveStatePia& state);
 	void PostLoadState();
 
 private:
@@ -154,6 +155,9 @@ private:
 	void UpdateTraceCRA();
 	void UpdateTraceCRB();
 	void UpdateTraceInputA();
+
+	uint8 ComputePortAInput() const;
+	uint8 ComputePortBInput() const;
 
 	uint8 ReadDynamicInputs(bool portb) const;
 

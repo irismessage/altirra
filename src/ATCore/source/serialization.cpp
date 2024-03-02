@@ -24,26 +24,35 @@
 #include <vd2/system/VDString.h>
 #include <at/atcore/serialization.h>
 
-vdfastvector<const ATSerializationTypeDef *> g_ATSerializationTypes;
+ATSerializationException::ATSerializationException() {
+	assign("A serialization error has occurred.");
+}
+
+auto &ATGetSerializationRegistry() {
+	static vdfastvector<const ATSerializationTypeDef *> g_ATSerializationTypes;
+
+	return g_ATSerializationTypes;
+}
 
 void ATSerializationRegisterType(const ATSerializationTypeDef *& ref, const ATSerializationTypeDef& def) {
 	if (!ref) {
 		ref = &def;
 
-		g_ATSerializationTypes.push_back(&def);
+		ATGetSerializationRegistry().push_back(&def);
 	}
 }
 
 const ATSerializationTypeDef *ATSerializationFindType(const char *name) {
 	uint32 hash = ATSerializationTypeDef::CTHash(name);
+	auto& reg = ATGetSerializationRegistry();
 
-	auto it = std::find_if(g_ATSerializationTypes.begin(), g_ATSerializationTypes.end(),
+	auto it = std::find_if(reg.begin(), reg.end(),
 		[=](const ATSerializationTypeDef *e) {
 			return e->mNameHash == hash && !strcmp(e->mpName, name);
 		}
 	);
 
-	return it != g_ATSerializationTypes.end() ? *it : nullptr;
+	return it != reg.end() ? *it : nullptr;
 }
 
 vdrefptr<IATSerializable> ATSerializationCreateObject(const ATSerializationTypeDef& def) {
@@ -190,7 +199,8 @@ void ATDeserializer::Transfer(const char *key, sint64 *p, size_t n) {
 }
 
 void ATDeserializer::Transfer(const char *key, float *p, size_t n) {
-	mInput.OpenArray(key);
+	if (key)
+		mInput.OpenArray(key);
 
 	while(n--) {
 		double v = 0;
@@ -198,11 +208,13 @@ void ATDeserializer::Transfer(const char *key, float *p, size_t n) {
 		*p++ = (float)v;
 	}
 
-	mInput.Close();
+	if (key)
+		mInput.Close();
 }
 
 void ATDeserializer::Transfer(const char *key, double *p, size_t n) {
-	mInput.OpenArray(key);
+	if (key)
+		mInput.OpenArray(key);
 
 	while(n--) {
 		double v = 0;
@@ -210,7 +222,32 @@ void ATDeserializer::Transfer(const char *key, double *p, size_t n) {
 		*p++ = v;
 	}
 
-	mInput.Close();
+	if (key)
+		mInput.Close();
+}
+
+void ATDeserializer::Transfer(const char *key, VDStringA *p, size_t n) {
+	if (key)
+		mInput.OpenArray(key);
+
+	while(n--) {
+		mInput.ReadStringA(nullptr, *p++);
+	}
+
+	if (key)
+		mInput.Close();
+}
+
+void ATDeserializer::Transfer(const char *key, VDStringW *p, size_t n) {
+	if (key)
+		mInput.OpenArray(key);
+
+	while(n--) {
+		mInput.ReadStringW(nullptr, *p++);
+	}
+
+	if (key)
+		mInput.Close();
 }
 
 IATSerializable *ATDeserializer::ReadReference(const char *key, const ATSerializationTypeDef *def) {
@@ -287,7 +324,7 @@ template<> void ATSerializer::Write<const VDStringSpanW&>(const char *key, const
 
 void ATSerializer::Transfer(const char *key, const char *p, size_t n) {
 	mOutput.CreateMember(key);
-	mOutput.OpenArray();
+	mOutput.OpenArray(true);
 	while(n--)
 		mOutput.WriteInt64(*p++);
 	mOutput.CloseArray();
@@ -295,7 +332,7 @@ void ATSerializer::Transfer(const char *key, const char *p, size_t n) {
 
 void ATSerializer::Transfer(const char *key, const wchar_t *p, size_t n) {
 	mOutput.CreateMember(key);
-	mOutput.OpenArray();
+	mOutput.OpenArray(true);
 	while(n--)
 		mOutput.WriteUint64(*p++);
 	mOutput.CloseArray();
@@ -303,7 +340,7 @@ void ATSerializer::Transfer(const char *key, const wchar_t *p, size_t n) {
 
 void ATSerializer::Transfer(const char *key, const uint8 *p, size_t n) {
 	mOutput.CreateMember(key);
-	mOutput.OpenArray();
+	mOutput.OpenArray(true);
 	while(n--)
 		mOutput.WriteUint64(*p++);
 	mOutput.CloseArray();
@@ -311,7 +348,7 @@ void ATSerializer::Transfer(const char *key, const uint8 *p, size_t n) {
 
 void ATSerializer::Transfer(const char *key, const sint8 *p, size_t n) {
 	mOutput.CreateMember(key);
-	mOutput.OpenArray();
+	mOutput.OpenArray(true);
 	while(n--)
 		mOutput.WriteInt64(*p++);
 	mOutput.CloseArray();
@@ -319,7 +356,7 @@ void ATSerializer::Transfer(const char *key, const sint8 *p, size_t n) {
 
 void ATSerializer::Transfer(const char *key, const uint16 *p, size_t n) {
 	mOutput.CreateMember(key);
-	mOutput.OpenArray();
+	mOutput.OpenArray(true);
 	while(n--)
 		mOutput.WriteUint64(*p++);
 	mOutput.CloseArray();
@@ -327,7 +364,7 @@ void ATSerializer::Transfer(const char *key, const uint16 *p, size_t n) {
 
 void ATSerializer::Transfer(const char *key, const sint16 *p, size_t n) {
 	mOutput.CreateMember(key);
-	mOutput.OpenArray();
+	mOutput.OpenArray(true);
 	while(n--)
 		mOutput.WriteInt64(*p++);
 	mOutput.CloseArray();
@@ -335,7 +372,7 @@ void ATSerializer::Transfer(const char *key, const sint16 *p, size_t n) {
 
 void ATSerializer::Transfer(const char *key, const uint32 *p, size_t n) {
 	mOutput.CreateMember(key);
-	mOutput.OpenArray();
+	mOutput.OpenArray(true);
 	while(n--)
 		mOutput.WriteUint64(*p++);
 	mOutput.CloseArray();
@@ -343,7 +380,7 @@ void ATSerializer::Transfer(const char *key, const uint32 *p, size_t n) {
 
 void ATSerializer::Transfer(const char *key, const sint32 *p, size_t n) {
 	mOutput.CreateMember(key);
-	mOutput.OpenArray();
+	mOutput.OpenArray(true);
 	while(n--)
 		mOutput.WriteInt64(*p++);
 	mOutput.CloseArray();
@@ -351,7 +388,7 @@ void ATSerializer::Transfer(const char *key, const sint32 *p, size_t n) {
 
 void ATSerializer::Transfer(const char *key, const uint64 *p, size_t n) {
 	mOutput.CreateMember(key);
-	mOutput.OpenArray();
+	mOutput.OpenArray(true);
 	while(n--)
 		mOutput.WriteUint64(*p++);
 	mOutput.CloseArray();
@@ -359,7 +396,7 @@ void ATSerializer::Transfer(const char *key, const uint64 *p, size_t n) {
 
 void ATSerializer::Transfer(const char *key, const sint64 *p, size_t n) {
 	mOutput.CreateMember(key);
-	mOutput.OpenArray();
+	mOutput.OpenArray(true);
 	while(n--)
 		mOutput.WriteInt64(*p++);
 	mOutput.CloseArray();
@@ -367,7 +404,7 @@ void ATSerializer::Transfer(const char *key, const sint64 *p, size_t n) {
 
 void ATSerializer::Transfer(const char *key, const float *p, size_t n) {
 	mOutput.CreateMember(key);
-	mOutput.OpenArray();
+	mOutput.OpenArray(true);
 	while(n--)
 		mOutput.WriteDouble(*p++);
 	mOutput.CloseArray();
@@ -375,9 +412,41 @@ void ATSerializer::Transfer(const char *key, const float *p, size_t n) {
 
 void ATSerializer::Transfer(const char *key, const double *p, size_t n) {
 	mOutput.CreateMember(key);
-	mOutput.OpenArray();
+	mOutput.OpenArray(true);
 	while(n--)
 		mOutput.WriteDouble(*p++);
+	mOutput.CloseArray();
+}
+
+void ATSerializer::Transfer(const char *key, const VDStringSpanA *p, size_t n) {
+	mOutput.CreateMember(key);
+	mOutput.OpenArray(true);
+	while(n--)
+		mOutput.WriteStringA(*p++);
+	mOutput.CloseArray();
+}
+
+void ATSerializer::Transfer(const char *key, const VDStringSpanW *p, size_t n) {
+	mOutput.CreateMember(key);
+	mOutput.OpenArray(true);
+	while(n--)
+		mOutput.WriteStringW(*p++);
+	mOutput.CloseArray();
+}
+
+void ATSerializer::Transfer(const char *key, const VDStringA *p, size_t n) {
+	mOutput.CreateMember(key);
+	mOutput.OpenArray(true);
+	while(n--)
+		mOutput.WriteStringA(*p++);
+	mOutput.CloseArray();
+}
+
+void ATSerializer::Transfer(const char *key, const VDStringW *p, size_t n) {
+	mOutput.CreateMember(key);
+	mOutput.OpenArray(true);
+	while(n--)
+		mOutput.WriteStringW(*p++);
 	mOutput.CloseArray();
 }
 

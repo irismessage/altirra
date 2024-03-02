@@ -39,6 +39,8 @@ public:
 	virtual void OnSize() = 0;
 	virtual void ResetDisplay() = 0;
 	virtual bool IsTextSelected() const = 0;
+	virtual void Deselect() = 0;
+	virtual void SelectAll() = 0;
 	virtual void Copy(ATTextCopyMode copyMode) = 0;
 	virtual void CopyFrame(bool trueAspect) = 0;
 	virtual bool CopyFrameImage(bool trueAspect, VDPixmapBuffer& buf) = 0;

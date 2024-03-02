@@ -22,6 +22,7 @@
 #include <vd2/system/vdstl_hashset.h>
 #include <at/atcore/device.h>
 #include <at/atcore/devicestorage.h>
+#include <at/atcore/notifylist.h>
 
 class IATDevice;
 class IATDeviceParent;
@@ -32,6 +33,9 @@ struct VDJSONValueRef;
 class VDJSONWriter;
 class VDRegistryKey;
 class ATDeviceManager;
+class IATObjectState;
+template<typename T> class vdrefptr;
+struct ATSnapshotStatus;
 
 enum ATSettingsCategory : uint32;
 
@@ -138,9 +142,10 @@ struct ATDeviceXCmdInfo {
 
 class IATDeviceXCmd : public IVDRefCount {
 public:
-	virtual bool IsSupported(IATDevice& dev) const = 0;
+	virtual bool IsPostRefreshNeeded() const { return true; }
+	virtual bool IsSupported(IATDevice *dev, int busIndex) const = 0;
 	virtual ATDeviceXCmdInfo GetInfo() const = 0;
-	virtual void Invoke(ATDeviceManager& devmgr, IATDevice& dev) = 0;
+	virtual void Invoke(ATDeviceManager& devmgr, IATDevice *dev, int busIndex) = 0;
 };
 
 class ATDeviceManager final : public IATDeviceManager, public IATDeviceStorageManager {
@@ -158,15 +163,15 @@ public:
 
 	void Init();
 
-	ATDeviceInterfaceSequence<IATDevice> GetDevices(bool nonChildOnly, bool visibleOnly) const {
-		auto ilist = GetInterfaceList(0, nonChildOnly, visibleOnly);
+	ATDeviceInterfaceSequence<IATDevice> GetDevices(bool nonChildOnly, bool visibleOnly, bool externalOnly) const {
+		auto ilist = GetInterfaceList(0, nonChildOnly, visibleOnly, externalOnly);
 
 		return ATDeviceInterfaceSequence<IATDevice>(ilist->begin(), ilist->end());
 	}
 
 	template<class T>
-	ATDeviceInterfaceSequence<T> GetInterfaces(bool nonChildOnly, bool visibleOnly) const {
-		auto *ilist = GetInterfaceList(T::kTypeID, nonChildOnly, visibleOnly);
+	ATDeviceInterfaceSequence<T> GetInterfaces(bool nonChildOnly, bool visibleOnly, bool externalOnly) const {
+		auto *ilist = GetInterfaceList(T::kTypeID, nonChildOnly, visibleOnly, externalOnly);
 
 		return ATDeviceInterfaceSequence<T>(ilist->begin(), ilist->end());
 	}
@@ -174,12 +179,12 @@ public:
 	template<class T>
 	T *GetInterface() { return static_cast<T *>(GetInterface(T::kTypeID)); }
 
-	IATDevice *AddDevice(const char *tag, const ATPropertySet& pset, bool child, bool hidden);
-	IATDevice *AddDevice(const ATDeviceDefinition *def, const ATPropertySet& pset, bool child, bool hidden);
-	void AddDevice(IATDevice *dev, bool child, bool hidden);
+	IATDevice *AddDevice(const char *tag, const ATPropertySet& pset, bool child = false);
+	IATDevice *AddDevice(const ATDeviceDefinition *def, const ATPropertySet& pset, bool child = false);
+	void AddDevice(IATDevice *dev, bool child = false);
 	void RemoveDevice(const char *tag);
 	void RemoveDevice(IATDevice *dev);
-	void RemoveAllDevices(bool includeHidden);
+	void RemoveAllDevices(bool includeInternal);
 	void ToggleDevice(const char *tag);
 
 	uint32 GetDeviceCount() const;
@@ -202,9 +207,12 @@ public:
 	void RemoveDeviceChangeCallback(uint32 iid, IATDeviceChangeCallback *cb);
 	void AddInitCallback(vdfunction<void(IATDevice& dev)> cb);
 
+	void AddDeviceStatusCallback(const vdfunction<void(IATDevice&)> *cb);
+	void RemoveDeviceStatusCallback(const vdfunction<void(IATDevice&)> *cb);
+
 	void MarkAndSweep(IATDevice *const *pExcludedDevs, size_t numExcludedDevs, vdfastvector<IATDevice *>& garbage);
 
-	void SerializeDevice(IATDevice *dev, VDStringW& str) const;
+	void SerializeDevice(IATDevice *dev, VDStringW& str, bool compact, bool includeChildren) const;
 	void DeserializeDevices(IATDeviceParent *parent, IATDeviceBus *bus, const wchar_t *str);
 
 	void SerializeProps(const ATPropertySet& props, VDStringW& str) const;
@@ -224,14 +232,19 @@ public:
 	}
 
 	void RegisterExtendedCommand(IATDeviceXCmd& extCmd);
-	vdfastvector<IATDeviceXCmd *> GetExtendedCommandsForDevice(IATDevice& dev) const;
+	vdfastvector<IATDeviceXCmd *> GetExtendedCommandsForDevice(IATDevice *dev, int busIndex) const;
 
 	void LoadSettings(VDRegistryKey& key);
 	void SaveSettings(VDRegistryKey& key);
 
+	void GetSnapshotStatus(ATSnapshotStatus& status) const;
+	void LoadState(const IATObjectState *);
+	vdrefptr<IATObjectState> SaveState() const;
+
 public:		// IATDeviceManager
 	using IATDeviceManager::GetService;
 	void *GetService(uint32 iid) override;
+	void NotifyDeviceStatusChanged(IATDevice& dev) override;
 
 public:		// IATDeviceStorageManager
 	void RegisterDeviceStorage(IATDeviceStorage& storage) override;
@@ -245,9 +258,9 @@ public:		// IATDeviceStorageManager
 protected:
 	typedef vdfastvector<void *> InterfaceList;
 
-	const InterfaceList *GetInterfaceList(uint32 iid, bool rootOnly, bool visibleOnly) const;
+	const InterfaceList *GetInterfaceList(uint32 iid, bool rootOnly, bool visibleOnly, bool externalOnly) const;
 	void Mark(IATDevice *dev, IATDevice *const *pExcludedDevs, size_t numExcludedDevs, vdhashset<IATDevice *>& devSet);
-	void SerializeDevice(IATDevice *dev, VDJSONWriter& writer) const;
+	void SerializeDevice(IATDevice *dev, VDJSONWriter& writer, bool includeChildren) const;
 	void DeserializeDevice(IATDeviceParent *parent, IATDeviceBus *bus, const VDJSONValueRef& val);
 	void SerializeProps(const ATPropertySet& props, VDJSONWriter& writer) const;
 	void DeserializeProps(ATPropertySet& props, const VDJSONValueRef& val);
@@ -259,6 +272,7 @@ protected:
 		const char *mpTag;
 		bool mbChild;
 		bool mbHidden;
+		bool mbInternal;
 	};
 
 	vdfastvector<DeviceEntry> mDevices;
@@ -277,6 +291,7 @@ protected:
 	vdhashmap<uint32, vdfastvector<IATDeviceChangeCallback *>> mChangeCallbacks;
 
 	vdvector<vdfunction<void(IATDevice&)>> mInitHandlers;
+	ATNotifyList<const vdfunction<void(IATDevice&)> *> mStatusHandlers;
 
 	vdhashmap<uint32, void *> mServices;
 

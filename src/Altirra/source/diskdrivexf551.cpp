@@ -116,7 +116,11 @@ void *ATDeviceDiskDriveXF551::AsInterface(uint32 iid) {
 		case ATFDCEmulator::kTypeID: return &mFDC;
 	}
 
-	return ATDiskDriveDebugTargetControl::AsInterface(iid);
+	void *p = ATDiskDriveDebugTargetControl::AsInterface(iid);
+	if (p)
+		return p;
+
+	return ATDevice::AsInterface(iid);
 }
 
 void ATDeviceDiskDriveXF551::GetDeviceInfo(ATDeviceInfo& info) {
@@ -243,7 +247,8 @@ void ATDeviceDiskDriveXF551::PeripheralColdReset() {
 	mbMotorRunning = false;
 	mFDC.SetMotorRunning(false);
 	mFDC.SetDensity(false);
-	mFDC.SetWriteProtectOverride(false);
+
+	UpdateWriteProtectStatus();
 
 	mbExtendedRAMEnabled = false;
 
@@ -580,7 +585,5 @@ void ATDeviceDiskDriveXF551::UpdateDiskStatus() {
 }
 
 void ATDeviceDiskDriveXF551::UpdateWriteProtectStatus() {
-	const bool wpoverride = (mDiskChangeState & 1) != 0;
-
-	mFDC.SetWriteProtectOverride(wpoverride);
+	mFDC.SetWriteProtectOverride(mDiskChangeState ? std::optional<bool>((mDiskChangeState & 1) != 0) : std::nullopt);
 }

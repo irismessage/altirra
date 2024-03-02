@@ -383,3 +383,25 @@ void ATFFT_DIF_Radix2_Scalar(float *y0, const float *w4, int N, int logStep) {
 		case 12: ATFFT_DIF_Radix2_Scalar<12>(y0, w4, N); break;
 	}
 }
+
+/////////////////////////////////////////////////////////////////////////////
+
+void ATFFT_MultiplyAdd_Scalar(float *VDRESTRICT dst, const float *VDRESTRICT src1, const float *VDRESTRICT src2, int N) {
+	// first two values are real DC and fsc*0.5, rest are complex
+	dst[0] += src1[0] * src2[0];
+	dst[1] += src1[1] * src2[1];
+	dst += 2;
+	src1 += 2;
+	src2 += 2;
+
+	const int N2m1 = (N >> 1)-1;
+	for(int i=0; i<N2m1; ++i) {
+		const float r1 = *src1++;
+		const float i1 = *src1++;
+		const float r2 = *src2++;
+		const float i2 = *src2++;
+
+		*dst++ += r1*r2 - i1*i2;
+		*dst++ += r1*i2 + r2*i1;
+	}
+}

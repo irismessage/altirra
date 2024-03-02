@@ -38,6 +38,10 @@ public:
 
 	void LoadFile(const wchar_t *s, const wchar_t *alias);
 
+	const wchar_t *GetFullPath() const override {
+		return mFullPath.c_str();
+	}
+
 	const wchar_t *GetPath() const override {
 		return mPath.c_str();
 	}
@@ -58,7 +62,7 @@ protected:
 	void OnDestroy();
 	void OnSize();
 	void OnFontsUpdated();
-	bool OnCommand(UINT cmd);
+	bool OnCommand(uint32 id, uint32 extcode) override;
 
 	void OnTextEditorUpdated() override;
 	void OnTextEditorScrolled(int firstVisiblePara, int lastVisiblePara, int visibleParaCount, int totalParaCount) override;
@@ -95,6 +99,7 @@ protected:
 
 	vdrefptr<IVDTextEditor>	mpTextEditor;
 	HWND	mhwndTextEditor;
+	VDStringW	mFullPath;
 	VDStringW	mPath;
 	VDStringW	mPathAlias;
 

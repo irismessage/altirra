@@ -28,101 +28,154 @@
 
 // Rest in peace, Phil Katz.
 
+#include <string.h>
+#include <intrin.h>
 #include <vd2/system/vdtypes.h>
-#include <vd2/system/file.h>
+#include <vd2/system/binary.h>
+#include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/VDString.h>
-#include <string.h>
-#include <vector>
+#include <vd2/system/vdstl.h>
 
 class VDDeflateEncoder;
+class VDBufferedStream;
+
+class VDDeflateDecompressionException final : public MyError {
+public:
+	VDDeflateDecompressionException();
+};
+
+class VDDeflateBitReaderL2Buffer {
+public:
+	struct ValidRange {
+		const uint8 *mpStart;
+		const uint8 *mpEnd;
+	};
+
+	void Init(IVDStream& src, uint64 readLimit);
+
+	// Refill the buffer, consuming all of the bytes up to the given pointer
+	// (optional), and returning the new valid range. The unconsumed portion
+	// of the buffer is preserved (up to header=16 bytes). Note that the
+	// valid range may extend beyond EOF; this is deliberate to ensure that
+	// the bit reader can read ahead far enough to consume all valid bits;
+	// EOF is checked later.
+	ValidRange Refill(const void *consumed);
+
+	// Throw an exception if data has been consumed beyond EOF.
+	void CheckEOF(const void *consumed);
+
+	IVDStream& GetSource() const { return *mpSrc; }
+
+private:
+	static constexpr uint32 kBufferSize = 65536;
+	static constexpr uint32 kHeaderSize = 16;
+
+	uint32	mReadValidEnd = 0;
+	uint64	mReadLimitRemaining = 0;
+	bool	mbTailAdded = false;
+	IVDStream *mpSrc = nullptr;
+	uint8	mReadBuffer[kBufferSize + kHeaderSize];
+};
 
 class VDDeflateBitReader {
 public:
-	void init(IVDStream *pSrc, uint64 limit) {
-		mpSrc = pSrc;
-		mBytesLeft = limit;
-		refill();
-		consume(0);
+#if VD_PTR_SIZE > 4
+	using BitField = uint64;
+	static constexpr bool kUsing64 = true;
+#else
+	using BitField = uint32;
+	static constexpr bool kUsing64 = false;
+#endif
+
+	static constexpr uint32 kAccumBitSize = sizeof(BitField)*8;
+
+	void init(VDDeflateBitReaderL2Buffer& src) {
+		mpBuffer = &src;
+		mBitsLeft = 0;
+		mBitAccum = 0;
 	}
 
-	IVDStream *stream() const {
-		return mpSrc;
+	void CheckEOF();
+
+	VDFORCEINLINE uint32 Peek32() {
+		Refill();
+
+		return (uint32)mBitAccum;
 	}
 
-	unsigned long peek() const {
-		return accum;
+	VDFORCEINLINE uint32 PeekUnchecked32() const {
+		return (uint32)mBitAccum;
 	}
 
-	bool consume(unsigned n) {
-//		printf("%08lx/%d\n", accum << ((-bits)&7), bits);
-		bits -= n;
-
-		if ((int)bits < 0)
-			return false;
-
-		accum >>= n;
-
-		while(bits <= 24 && (mBufferPt || refill())) {
-			accum += mBuffer[kBufferSize + mBufferPt++] << bits;
-			bits += 8;
-		}
-
-		return true;
+	VDFORCEINLINE void Consume(unsigned n) {
+		mBitsLeft -= n;
+		mBitAccum >>= n;
 	}
 
-	bool refill();
+	VDFORCEINLINE bool getbit() {
+		Refill();
 
-	bool getbit() {
-		unsigned rv = accum;
-
-		consume(1);
-
-		return (rv&1) != 0;
+		bool v = (mBitAccum & 1) != 0;
+		mBitAccum >>= 1;
+		--mBitsLeft;
+		return v;
 	}
 
-	unsigned getbits(unsigned n) {
-		unsigned rv = accum & ((1<<n)-1);
+	VDFORCEINLINE uint32 getbits(unsigned n) {
+		Refill();
 
-		consume(n);
-
-		return rv;
+		return GetBitsUnchecked(n);
 	}
 
-	bool empty() const {
-		return bits != 0;
-	}
+	VDFORCEINLINE uint32 GetBitsUnchecked(unsigned n) {
+		const uint32 v = (uint32)mBitAccum & ((1 << n) - 1);
+		mBitAccum >>= n;
+		mBitsLeft -= n;
 
-	unsigned avail() const {
-		return bits;
-	}
-
-	unsigned bitsleft() const {
-		return bits + (mBytesLeftLimited<<3);
-	}
-
-	unsigned bytesleft() const {
-		return (bits>>3) + mBytesLeftLimited;
+		return v;
 	}
 
 	void align() {
-		consume(bits&7);
+		const uint32 alignCount = mBitsLeft & 7;
+		mBitAccum >>= alignCount;
+		mBitsLeft -= alignCount;
 	}
 
-	void readbytes(void *dst, unsigned len);
+	void readbytes(void *dst, size_t len);
 
-protected:
-	enum { kBigAvailThreshold = 16777216 };
-	enum { kBufferSize = 256 };
+private:
+	VDFORCEINLINE void Refill() {
+		if (mpSrc >= mpSrcLimit)
+			[[unlikely]] RefillBuffer();
 
-	unsigned	accum = 0;
-	unsigned	bits = 0;
-	int			mBufferPt = 0;			// counts from -256 to 0
-	uint64		mBytesLeft = 0;
-	unsigned	mBytesLeftLimited = 0;
+		// Refill using fgiesen's variant 4 strategy:
+		// https://fgiesen.wordpress.com/2018/02/20/reading-bits-in-far-too-many-ways-part-2/
 
-	IVDStream *mpSrc = nullptr;
-	uint8	mBuffer[kBufferSize];
+		if constexpr (sizeof(mBitAccum) > 4)
+			mBitAccum |= VDReadUnalignedLEU64(mpSrc) << mBitsLeft;
+		else
+			mBitAccum |= VDReadUnalignedLEU32(mpSrc) << mBitsLeft;
+
+		// Advance by the number of bytes that were added to the accumulator.
+		mpSrc += ((kAccumBitSize - 1) - mBitsLeft) >> 3;
+
+		// update bit counter for the number of bytes added; the result will always be
+		// 24-31 (32-bit) or 56-63 (64-bit).
+		mBitsLeft |= kAccumBitSize - 8;
+	}
+
+	VDNOINLINE void RefillBuffer();
+
+	BitField mBitAccum = 0;
+
+	// Number of valid bits in accumulator, biased by -N where N = accum bit width.
+	uint32 mBitsLeft = 0;
+
+	const uint8 *mpSrc = nullptr;
+	const uint8 *mpSrcLimit = nullptr;
+
+	VDDeflateBitReaderL2Buffer *mpBuffer = nullptr;
 };
 
 class VDCRCTable {
@@ -153,7 +206,7 @@ private:
 
 class VDCRCChecker {
 public:
-	VDCRCChecker(const VDCRCTable& table) : mValue(0xFFFFFFFF), mTable(table) {}
+	VDCRCChecker(const VDCRCTable& table);
 
 	void Init() { mValue = 0xFFFFFFFF; }
 	void Process(const void *src, sint32 len);
@@ -162,16 +215,32 @@ public:
 
 protected:
 	uint32	mValue;
-	const VDCRCTable& mTable;
+	const VDCRCTable *mpTable;
 };
 
-class VDInflateStream : public IVDStream {
+class IVDInflateStream : public IVDStream {
 public:
-	VDInflateStream() : mCRCChecker(mCRCTable) {}
+	virtual ~IVDInflateStream() = default;
+
+	virtual void EnableCRC() = 0;
+	virtual void SetExpectedCRC(uint32 crc) = 0;
+	virtual uint32 CRC() const = 0;
+	virtual void VerifyCRC() const = 0;
+};
+
+template<bool T_Enhanced>
+class VDInflateStream : public IVDInflateStream {
+	VDInflateStream(const VDInflateStream&) = delete;
+	VDInflateStream& operator=(const VDInflateStream&) = delete;
+public:
+	VDInflateStream() : mCRCChecker(VDCRCTable::CRC32) {}
+	~VDInflateStream();
 
 	void	Init(IVDStream *pSrc, uint64 limit, bool bStored);
-	void	EnableCRC(uint32 crc = VDCRCTable::kCRC32) { mCRCTable.Init(crc); mbCRCEnabled = true; }
-	uint32	CRC() { return mCRCChecker.CRC(); }
+	void	EnableCRC() override { mbCRCEnabled = true; }
+	void	SetExpectedCRC(uint32 expectedCRC) override { mExpectedCRC = expectedCRC; }
+	uint32	CRC() const override { return mCRCChecker.CRC(); }
+	void	VerifyCRC() const override;
 
 	const wchar_t *GetNameForError() final override;
 
@@ -181,8 +250,9 @@ public:
 	void	Write(const void *buffer, sint32 bytes) final override;
 
 protected:
-	bool	ParseBlockHeader();
+	void	ParseBlockHeader();
 	bool	Inflate();
+	VDNOINLINE void	InflateBlock();
 
 	VDDeflateBitReader mBits;					// critical -- make this first!
 	uint32	mReadPt = 0;
@@ -200,24 +270,43 @@ protected:
 	bool	mbCRCEnabled = false;
 
 	sint64	mPos = 0;
-	uint8	mBuffer[65536];
 
-	uint16	mCodeDecode[32768];
-	uint8	mCodeLengths[288 + 32];
-	uint16	mDistDecode[32768];
+	static constexpr uint32 kQuickBits = 10;
+	static constexpr uint32 kQuickCodes = 1 << kQuickBits;
+	static constexpr uint32 kQuickCodeMask = kQuickCodes - 1;
+
+	static constexpr uint32 kBufferSize = T_Enhanced ? 131072 : 65536;
+	static constexpr uint32 kBufferMask = kBufferSize - 1;
+	
+	// +32 bytes so we can overrun a copy
+	uint8	mBuffer[kBufferSize + 32] {};
+
+	uint16	mCodeQuickDecode[kQuickCodes][2] {};
+	uint16	mDistQuickDecode[kQuickCodes][2] {};
+	uint8	mCodeLengths[288 + 32] {};
+
+	uint16	mCodeDecode[32768] {};
+	uint8	mDistDecode[32768] {};
 
 	VDCRCChecker	mCRCChecker;
-	VDCRCTable		mCRCTable;
+	uint32			mExpectedCRC;
+
+	// L2 read buffer behind the bit reader's small buffer. We can't use
+	// the regular buffered stream because we only require a non random access
+	// stream.
+	VDDeflateBitReaderL2Buffer	mL2Buffer;
 };
 
 class VDZipArchive {
 public:
 	struct FileInfo {
 		VDString	mFileName;
-		uint32		mCompressedSize;
-		uint32		mUncompressedSize;
-		uint32		mCRC32;
-		bool		mbPacked;
+		uint32		mCompressedSize = 0;
+		uint32		mUncompressedSize = 0;
+		uint32		mCRC32 = 0;
+		bool		mbPacked = false;
+		bool		mbEnhancedDeflate = false;
+		bool		mbSupported = false;
 	};
 
 	VDZipArchive();
@@ -226,28 +315,40 @@ public:
 	void Init(IVDRandomAccessStream *pSrc);
 
 	sint32			GetFileCount();
-	const FileInfo&	GetFileInfo(sint32 idx);
+	const FileInfo&	GetFileInfo(sint32 idx) const;
+	sint32			FindFile(const char *name, bool caseSensitive) const;
+
 	IVDStream		*OpenRawStream(sint32 idx);
+	IVDInflateStream *OpenDecodedStream(sint32 idx, bool allowLarge = false);
+
+	// Read the raw contents of the file into the given buffer. Returns true if
+	// the contents are uncompressed and can be directly used, false if they
+	// need to be decompressed.
+	bool ReadRawStream(sint32 idx, vdfastvector<uint8>& buf, bool allowLarge = false);
+
+	// Decompress a previously read raw stream for the given file (by index).
+	void DecompressStream(sint32 idx, vdfastvector<uint8>& buf) const;
 
 protected:
 	struct FileInfoInternal : public FileInfo {
 		uint32		mDataStart;
 	};
 
-	std::vector<FileInfoInternal>	mDirectory;
+	vdvector<FileInfoInternal>	mDirectory;
 	IVDRandomAccessStream			*mpStream;
 };
 
-class VDZipStream final : public VDInflateStream {
+template<bool T_Enhanced>
+class VDZipStream final : public VDInflateStream<T_Enhanced> {
 public:
 	VDZipStream() = default;
 
 	VDZipStream(IVDStream *pSrc, uint64 limit, bool bStored) {
-		Init(pSrc, limit, bStored);
+		this->Init(pSrc, limit, bStored);
 	}
 };
 
-class VDGUnzipStream final : public VDInflateStream {
+class VDGUnzipStream final : public VDInflateStream<false> {
 public:
 	VDGUnzipStream() = default;
 	VDGUnzipStream(IVDStream *pSrc, uint64 limit) {
@@ -261,6 +362,16 @@ public:
 protected:
 	VDStringA mFilename;
 };
+
+enum class VDDeflateCompressionLevel : uint8 {
+	Quick,
+	Best
+};
+
+inline bool operator< (VDDeflateCompressionLevel a, VDDeflateCompressionLevel b) { return (uint8)a <  (uint8)b; }
+inline bool operator<=(VDDeflateCompressionLevel a, VDDeflateCompressionLevel b) { return (uint8)a <= (uint8)b; }
+inline bool operator> (VDDeflateCompressionLevel a, VDDeflateCompressionLevel b) { return (uint8)a >  (uint8)b; }
+inline bool operator>=(VDDeflateCompressionLevel a, VDDeflateCompressionLevel b) { return (uint8)a >= (uint8)b; }
 
 // Adapter stream for compressing data with the Deflate algorithm, as
 // described in RFC1951. The child stream receives the raw Deflate
@@ -278,6 +389,8 @@ class VDDeflateStream final : public IVDStream {
 public:
 	VDDeflateStream(IVDStream& dest);
 	~VDDeflateStream();
+
+	void SetCompressionLevel(VDDeflateCompressionLevel level);
 
 	// Reset the stream state to prepare for compressing another source
 	// stream to the same destination stream. This must be called after
@@ -309,8 +422,9 @@ private:
 	void WriteOutput(const void *p, uint32 n);
 
 	IVDStream& mDestStream;
-	VDDeflateEncoder *mpEncoder;
-	sint64 mPos;
+	VDDeflateEncoder *mpEncoder = nullptr;
+	sint64 mPos = 0;
+	VDDeflateCompressionLevel mCompressionLevel = VDDeflateCompressionLevel::Best;
 
 	VDCRCChecker mCRCChecker;
 };
@@ -324,7 +438,7 @@ public:
 	// one file can be written at a time. EndFile() must be called after the
 	// file data is written. The path may contain subdirectories; the path
 	// is normalized to zip file conventions.
-	virtual VDDeflateStream& BeginFile(const wchar_t *path) = 0;
+	virtual VDDeflateStream& BeginFile(const wchar_t *path, VDDeflateCompressionLevel compressionLevel = VDDeflateCompressionLevel::Best) = 0;
 
 	// End writing a file and complete the file metadata.
 	virtual void EndFile() = 0;

@@ -246,6 +246,7 @@ protected:
 	void Shutdown();
 
 	bool UpdateCachedDisplayMode();
+	void ModifyDeviceCaps(D3DCAPS9& caps);
 
 	static LRESULT CALLBACK StaticDeviceWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 

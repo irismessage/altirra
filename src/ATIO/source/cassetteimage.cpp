@@ -551,7 +551,7 @@ public:
 	bool HasCASIncompatibleStdBlocks() const override;
 
 	void InitNew();
-	void Load(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, const ATCassetteLoadContext& ctx);
+	void Load(IVDRandomAccessStream& file, const wchar_t *origNameOpt, IVDRandomAccessStream *afile, const ATCassetteLoadContext& ctx);
 	void SaveCAS(IVDRandomAccessStream& file);
 	void SaveWAV(IVDRandomAccessStream& file);
 
@@ -681,7 +681,6 @@ ATCassetteImage::NextBitInfo ATCassetteImage::FindNextBit(uint32 pos, uint32 lim
 	if (!p->mpImageBlock)
 		return { level ? pos : UINT32_C(0) - 1, true };
 
-	uint32 offset = pos - p->mStart;
 	for(const auto *p = &mDataTrack.mSpans[idx]; p->mpImageBlock; ++p) {
 		uint32 sectionEnd = p[1].mStart;
 		uint32 sectionOffset = p->mOffset - p->mStart;
@@ -706,8 +705,6 @@ ATCassetteImage::NextBitInfo ATCassetteImage::FindNextBit(uint32 pos, uint32 lim
 
 			pos = sectionEnd;
 		}
-
-		offset = 0;
 	}
 
 	// after end of tape is all mark bits
@@ -1095,7 +1092,7 @@ void ATCassetteImage::InitNew() {
 	mbAudioCreated = false;
 }
 
-void ATCassetteImage::Load(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, const ATCassetteLoadContext& ctx) {
+void ATCassetteImage::Load(IVDRandomAccessStream& file, const wchar_t *origNameOpt, IVDRandomAccessStream *afile, const ATCassetteLoadContext& ctx) {
 	uint32 basehdr;
 	if (file.ReadData(&basehdr, 4) != 4)
 		basehdr = 0;
@@ -1116,7 +1113,7 @@ void ATCassetteImage::Load(IVDRandomAccessStream& file, IVDRandomAccessStream *a
 	else if (baseid == VDMAKEFOURCC('F', 'U', 'J', 'I'))
 		ParseCAS(file);
 	else
-		throw MyError("%ls is not in a recognizable Atari cassette format.", file.GetNameForError());
+		throw MyError("%ls is not in a recognizable Atari cassette format.", origNameOpt ? origNameOpt : file.GetNameForError());
 }
 
 void ATCassetteImage::SaveCAS(IVDRandomAccessStream& file) {
@@ -2500,12 +2497,12 @@ void ATCreateNewCassetteImage(IATCassetteImage **ppImage) {
 	*ppImage = pImage.release();
 }
 
-void ATLoadCassetteImage(IVDRandomAccessStream& stream, IVDRandomAccessStream *analysisOutput, const ATCassetteLoadContext& ctx, IATCassetteImage **ppImage) {
+void ATLoadCassetteImage(IVDRandomAccessStream& stream, const wchar_t *origNameOverride, IVDRandomAccessStream *analysisOutput, const ATCassetteLoadContext& ctx, IATCassetteImage **ppImage) {
 	vdrefptr<ATCassetteImage> pImage(new ATCassetteImage);
 
 	VDBufferedStream bs(&stream, 65536);
 
-	pImage->Load(bs, analysisOutput, ctx);
+	pImage->Load(bs, origNameOverride, analysisOutput, ctx);
 
 	*ppImage = pImage.release();
 }

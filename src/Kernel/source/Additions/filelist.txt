@@ -17,3 +17,4 @@ additions-license.txt -> license.txt
 xepvhold.xex -> xepvhold.com
 xepvhldp.xex -> xepvhldp.com
 atdebugx.sys -> atdebugx.sys
+phload.xex -> phload.com

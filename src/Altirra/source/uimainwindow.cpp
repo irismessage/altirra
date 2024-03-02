@@ -95,6 +95,7 @@ private:
 
 	bool mbTrackingNonClient = false;
 	bool mbMouseInNonClientArea = false;
+	bool mbSuppressNextKeyMenu = false;
 	sint32 mMenuHeight = 0;
 
 	static inline constexpr UINT ATWM_SUBCLASS_CUSTOMIZE_MENU_ITEM = ATWM_SUBCLASS_PRIVATE + 1;
@@ -203,8 +204,14 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case WM_SYSCOMMAND:
 			// Check if the menu is being accessed by Alt+Key, and unhide it if the key is valid. If Alt
 			// is just being pressed by itself, we'll get 0.
-			if (wParam == SC_KEYMENU && (!lParam || ATUIIsMenuCharacter((wchar_t)lParam))) {
-				ATUISetMenuAutoHidden(false);
+			if (wParam == SC_KEYMENU) {
+				if (!lParam && mbSuppressNextKeyMenu) {
+					mbSuppressNextKeyMenu = false;
+					return 0;
+				}
+
+				if (!lParam || ATUIIsMenuCharacter((wchar_t)lParam))
+					ATUISetMenuAutoHidden(false);
 			}
 
 			// Need to drop capture for Alt+F4 to work.
@@ -352,6 +359,10 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 				return 0;
 			}
 			break;
+
+		case ATWM_SUPPRESS_KEYMENU:
+			mbSuppressNextKeyMenu = true;
+			return 0;
 
 		case ATWM_SUBCLASS_PRIVATE:
 			g_sim.OnWake();

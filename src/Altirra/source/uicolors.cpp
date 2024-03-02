@@ -48,7 +48,7 @@ extern ATSimulator g_sim;
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATSaveStateColorParameters final : public ATSnapExchangeObject<ATSaveStateColorParameters> {
+class ATSaveStateColorParameters final : public ATSnapExchangeObject<ATSaveStateColorParameters, "ATSaveStateColorParameters"> {
 public:
 	ATSaveStateColorParameters();
 	ATSaveStateColorParameters(const ATNamedColorParams& params);
@@ -81,8 +81,6 @@ public:
 	ATNamedColorParams mParams;
 };
 
-ATSERIALIZATION_DEFINE(ATSaveStateColorParameters);
-
 ATSaveStateColorParameters::ATSaveStateColorParameters() {
 	mParams.mPresetTag = ATGetColorPresetTagByIndex(0);
 	static_cast<ATColorParams&>(mParams) = ATGetColorPresetByIndex(0);
@@ -92,7 +90,7 @@ ATSaveStateColorParameters::ATSaveStateColorParameters(const ATNamedColorParams&
 	mParams = params;
 }
 
-class ATSaveStateColorSettings final : public ATSnapExchangeObject<ATSaveStateColorSettings> {
+class ATSaveStateColorSettings final : public ATSnapExchangeObject<ATSaveStateColorSettings, "ATSaveStateColorSettings"> {
 public:
 	ATSaveStateColorSettings() = default;
 	ATSaveStateColorSettings(const ATColorSettings& settings);
@@ -106,8 +104,6 @@ public:
 	vdrefptr<ATSaveStateColorParameters> mpNTSCParams;
 	vdrefptr<ATSaveStateColorParameters> mpPALParams;
 };
-
-ATSERIALIZATION_DEFINE(ATSaveStateColorSettings);
 
 ATSaveStateColorSettings::ATSaveStateColorSettings(const ATColorSettings& settings) {
 	mpNTSCParams = new ATSaveStateColorParameters(settings.mNTSCParams);

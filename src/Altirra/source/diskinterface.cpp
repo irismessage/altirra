@@ -64,6 +64,9 @@ void ATDiskInterface::SwapSettings(ATDiskInterface& other) {
 	other.SetSectorBreakpoint(bpA);
 
 	// swap disk images
+	this->OnDiskChanging();
+	other.OnDiskChanging();
+
 	mpDiskImage.swap(other.mpDiskImage);
 	mPath.swap(other.mPath);
 	std::swap(mbHasPersistentSource, other.mbHasPersistentSource);
@@ -209,7 +212,7 @@ void ATDiskInterface::MountFolder(const wchar_t *path, bool sdfs) {
 		else
 			ATMountDiskImageVirtualFolder(path, 720, ~mpDiskImage);
 
-		mPath = VDMakePath(path, L"**" + !sdfs);
+		mPath = VDMakePath(path, &L"**"[sdfs ? 0 : 1]);
 	} catch(const MyError&) {
 		UnloadDisk();
 		throw;
@@ -307,6 +310,8 @@ void ATDiskInterface::FormatDisk(uint32 sectorCount, uint32 bootSectorCount, uin
 	if (mpDiskImage)
 		imageFormat = mpDiskImage->GetImageFormat();
 
+	OnDiskChanging();
+
 	ATCreateDiskImage(sectorCount, bootSectorCount, sectorSize, ~mpDiskImage);
 
 	if (mbHasPersistentSource)
@@ -321,6 +326,8 @@ void ATDiskInterface::FormatDisk(const ATDiskGeometryInfo& geometry) {
 	if (mpDiskImage)
 		imageFormat = mpDiskImage->GetImageFormat();
 
+	OnDiskChanging();
+
 	ATCreateDiskImage(geometry, ~mpDiskImage);
 
 	if (mbHasPersistentSource)
@@ -330,6 +337,9 @@ void ATDiskInterface::FormatDisk(const ATDiskGeometryInfo& geometry) {
 }
 
 void ATDiskInterface::UnloadDisk() {
+	if (mpDiskImage)
+		OnDiskChanging();
+
 	mpDiskImage.clear();
 	mPath.clear();
 	mbHasPersistentSource = false;
@@ -349,6 +359,15 @@ void ATDiskInterface::OnDiskModified() {
 		// mark current time; oddify it so it can't be 0 (which means not started).
 		mFlushTimeStart = VDGetCurrentTick() | 1;
 	}
+}
+
+void ATDiskInterface::OnDiskChanging() {
+	NotifyStateSuspend();
+
+	for(auto *client : mClients)
+		client->OnDiskChanging();
+
+	NotifyStateResume(true);
 }
 
 void ATDiskInterface::OnDiskChanged(bool mediaRemoved) {

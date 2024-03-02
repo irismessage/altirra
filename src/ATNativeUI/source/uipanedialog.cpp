@@ -113,4 +113,4 @@ void ATUIPaneDialogBase::PostDeferredUpdate() {
 	}
 }
 
-template ATUIPaneWindowT<ATUIPane, ATUIPaneDialogBase>;
+template class ATUIPaneWindowT<ATUIPane, ATUIPaneDialogBase>;

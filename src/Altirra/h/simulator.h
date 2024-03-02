@@ -30,6 +30,7 @@
 #include "constants.h"
 
 enum ATAddressSpace : uint32;
+enum ATCartridgePriority : uint8;
 
 struct ATCartLoadContext;
 class ATMemoryManager;
@@ -51,6 +52,7 @@ class IATDeviceCIOManager;
 class IATPrinterOutput;
 class IATDebugTarget;
 class IATDevice;
+class IATDeviceSnapshot;
 struct ATCPUHookInitNode;
 class ATDiskInterface;
 class ATDiskEmulator;
@@ -85,6 +87,7 @@ class IATCartridgeImage;
 struct ATTraceContext;
 
 class IATSerializable;
+struct ATSnapshotStatus;
 
 enum ATCPUMode : uint8;
 
@@ -101,6 +104,8 @@ public:
 	void Shutdown();
 
 	void SetJoystickManager(IATJoystickManager *jm);
+
+	void SetFrontEnd(IATDeviceSnapshot *dev);
 
 	// Reload any currently used ROM images. Returns true if an actively used ROM image was
 	// changed.
@@ -210,7 +215,7 @@ public:
 	uint8	GetBankRegister() const;
 	int		GetCartBank(uint32 unit) const;
 
-	const uint8 *GetRawMemory() const { return mMemory; }
+	const uint8 *GetRawMemory() const;
 	uint32 RandomizeRawMemory(uint16 start, uint32 count, uint32 seed);
 
 	ATCPUProfiler *GetProfiler() const { return mpProfiler; }
@@ -421,7 +426,8 @@ public:
 	bool LoadState(ATSaveStateReader& reader, ATStateLoadContext *context);
 	void SaveState(const wchar_t *path);
 
-	void CreateSnapshot(IATSerializable**);
+	ATSnapshotStatus GetSnapshotStatus() const;
+	void CreateSnapshot(IATSerializable **snapshot, IATSerializable **snapInfo);
 	bool ApplySnapshot(const IATSerializable& snapshot, ATStateLoadContext *context);
 
 	void UpdateXLCartridgeLine();
@@ -443,6 +449,8 @@ private:
 	void LoadStateSection(ATSaveStateReader& reader, int section);
 	void LoadStateMemoryArch(ATSaveStateReader& reader);
 
+	void InitNewCartridge(uint32 index);
+
 	bool UpdateKernel(bool trackChanges, bool forceReload = false);
 	bool ReloadU1MBFirmware();
 	void InitMemoryMap();
@@ -460,6 +468,8 @@ private:
 	void AnticAssertNMI_VBI() override;
 	void AnticAssertNMI_DLI() override;
 	void AnticAssertNMI_RES() override;
+	void AnticAssertRDY() override;
+	void AnticNegateRDY() override;
 	void AnticEndFrame() override;
 	void AnticEndScanline() override;
 	bool AnticIsNextCPUCycleWrite() override;
@@ -630,6 +640,7 @@ private:
 	ATMemoryLayer	*mpMemLayerBASICROM;
 	ATMemoryLayer	*mpMemLayerSelfTestROM;
 	ATMemoryLayer	*mpMemLayerGameROM;
+	ATMemoryLayer	*mpMemLayerPBIRAM;
 	ATMemoryLayer	*mpMemLayerHiddenRAM;
 	ATMemoryLayer	*mpMemLayerANTIC;
 	ATMemoryLayer	*mpMemLayerGTIA;
@@ -641,12 +652,6 @@ private:
 	ATDeviceManager		*mpDeviceManager;
 
 	vdblock<uint8> mAxlonMemory;
-
-	////////////////////////////////////
-	VDALIGN(4)	uint8	mKernelROM[0x4000];
-	VDALIGN(4)	uint8	mBASICROM[0x2000];
-	VDALIGN(4)	uint8	mGameROM[0x2000];
-	VDALIGN(4)	uint8	mMemory[0x440000];
 };
 
 #endif

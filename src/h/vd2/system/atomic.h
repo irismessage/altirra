@@ -39,8 +39,10 @@ inline void *VDAtomicCompareExchangePointer(void *volatile *pp, void *p, void *c
 	#else
 		return (void *)(sintptr)_InterlockedCompareExchange((volatile long *)(volatile sintptr *)pp, (long)(sintptr)p, (long)(sintptr)compare);
 	#endif
-#elif defined(VD_COMPILER_GCC)
+#elif defined(VD_COMPILER_CLANG)
 	return __sync_val_compare_and_swap(pp, compare, p);
+#else
+	#error not implemented
 #endif
 }
 
@@ -62,12 +64,12 @@ public:
 	VDAtomicInt(int v) : n(v) {}
 
 	bool operator!() const { return !n; }
-	bool operator!=(volatile int v) const  { return n!=v; }
-	bool operator==(volatile int v) const { return n==v; }
-	bool operator<=(volatile int v) const { return n<=v; }
-	bool operator>=(volatile int v) const { return n>=v; }
-	bool operator<(volatile int v) const { return n<v; }
-	bool operator>(volatile int v) const { return n>v; }
+	bool operator!=(int v) const  { return n!=v; }
+	bool operator==(int v) const { return n==v; }
+	bool operator<=(int v) const { return n<=v; }
+	bool operator>=(int v) const { return n>=v; }
+	bool operator<(int v) const { return n<v; }
+	bool operator>(int v) const { return n>v; }
 
 	///////////////////////////////
 
@@ -75,8 +77,10 @@ public:
 	static inline int staticExchange(volatile int *dst, int v) {
 		#if defined(VD_COMPILER_MSVC)
 			return (int)_InterlockedExchange((volatile long *)dst, v);
-		#elif defined(VD_COMPILER_GCC)
-			return __sync_lock_test_and_set((int *)&dst, v);
+		#elif defined(VD_COMPILER_CLANG)
+			return __sync_lock_test_and_set((int *)dst, v);
+		#else
+			#error not implemented
 		#endif
 	}
 
@@ -84,8 +88,10 @@ public:
 	static inline void staticIncrement(volatile int *dst) {
 		#if defined(VD_COMPILER_MSVC)
 			_InterlockedExchangeAdd((volatile long *)dst, 1);
-		#elif defined(VD_COMPILER_GCC)
-			__sync_fetch_and_add(&dst, 1);
+		#elif defined(VD_COMPILER_CLANG)
+			__sync_fetch_and_add(dst, 1);
+		#else
+			#error not implemented
 		#endif
 	}
 
@@ -93,8 +99,10 @@ public:
 	static inline void staticDecrement(volatile int *dst) {
 		#if defined(VD_COMPILER_MSVC)
 			_InterlockedExchangeAdd((volatile long *)dst, -1);
-		#elif defined(VD_COMPILER_GCC)
-			__sync_fetch_and_sub(&dst, 1);
+		#elif defined(VD_COMPILER_CLANG)
+			__sync_fetch_and_sub(dst, 1);
+		#else
+			#error not implemented
 		#endif
 	}
 
@@ -103,8 +111,10 @@ public:
 	static inline bool staticDecrementTestZero(volatile int *dst) {
 		#if defined(VD_COMPILER_MSVC)
 			return 1 == _InterlockedExchangeAdd((volatile long *)dst, -1);
-		#elif defined(VD_COMPILER_GCC)
-			return 1 == __sync_fetch_and_sub((int *)&dst, 1);
+		#elif defined(VD_COMPILER_CLANG)
+			return 1 == __sync_fetch_and_sub((int *)dst, 1);
+		#else
+			#error not implemented
 		#endif
 	}
 
@@ -113,8 +123,10 @@ public:
 	static inline int staticAdd(volatile int *dst, int v) {
 		#if defined(VD_COMPILER_MSVC)
 			return (int)_InterlockedExchangeAdd((volatile long *)dst, v) + v;
-		#elif defined(VD_COMPILER_GCC)
-			return __sync_fetch_and_add((int *)&dst, v) + v;
+		#elif defined(VD_COMPILER_CLANG)
+			return __sync_fetch_and_add((int *)dst, v) + v;
+		#else
+			#error not implemented
 		#endif
 	}
 
@@ -123,8 +135,10 @@ public:
 	static inline int staticExchangeAdd(volatile int *dst, int v) {
 		#if defined(VD_COMPILER_MSVC)
 			return _InterlockedExchangeAdd((volatile long *)dst, v);
-		#elif defined(VD_COMPILER_GCC)
-			return __sync_fetch_and_add((int *)&dst, v);
+		#elif defined(VD_COMPILER_CLANG)
+			return __sync_fetch_and_add((int *)dst, v);
+		#else
+			#error not implemented
 		#endif
 	}
 
@@ -134,14 +148,16 @@ public:
 	static inline int staticCompareExchange(volatile int *dst, int v, int compare) {
 		#if defined(VD_COMPILER_MSVC)
 			return _InterlockedCompareExchange((volatile long *)dst, v, compare);
-		#elif defined(VD_COMPILER_GCC)
-			return __sync_val_compare_and_swap((int *)&dst, compare, v);
+		#elif defined(VD_COMPILER_CLANG)
+			return __sync_val_compare_and_swap((int *)dst, compare, v);
+		#else
+			#error not implemented
 		#endif
 	}
 
 	///////////////////////////////
 
-	int operator=(int v) { return n = v; }
+	int operator=(int v) { n = v; return v; }
 
 	int operator++()		{ return staticAdd(&n, 1); }
 	int operator--()		{ return staticAdd(&n, -1); }
@@ -156,7 +172,7 @@ public:
 	void operator|=(int v)	{ _InterlockedOr((volatile long *)&n, v); }		///< Atomic bitwise OR.
 	void operator^=(int v)	{ _InterlockedXor((volatile long *)&n, v); }	///< Atomic bitwise XOR.
 
-#elif defined(VD_COMPILER_GCC)
+#elif defined(VD_COMPILER_CLANG)
 
 	void operator&=(int v) {
 		__sync_fetch_and_and(&n, v);
@@ -239,7 +255,7 @@ public:
 	bool operator<(float v) const { return n<v; }
 	bool operator>(float v) const { return n>v; }
 
-	float operator=(float v) { return n = v; }
+	float operator=(float v) { n = v; return v; }
 
 	operator float() const {
 		return n;
@@ -266,7 +282,7 @@ public:
 	bool operator!=(bool v) const { return (n != 0) != v; }
 	bool operator==(bool v) const { return (n != 0) == v; }
 
-	bool operator=(bool v) { return n = v; }
+	bool operator=(bool v) { n = v; return v; }
 
 	operator bool() const {
 		return n != 0;
@@ -283,7 +299,7 @@ public:
 			const uint32 prevval = *p;
 			const uint32 newval = (prevval & andval) + orval;
 
-			if (prevval == VDAtomicInt::staticCompareExchange(p, newval, prevval))
+			if (prevval == (uint32)VDAtomicInt::staticCompareExchange(p, newval, prevval))
 				return (prevval & mask) != 0;
 		}
 	}
@@ -312,7 +328,8 @@ public:
 	T* operator->() const { return ptr; }
 
 	T* operator=(T* p) {
-		return ptr = p;
+		ptr = p;
+		return p;
 	}
 
 	/// Atomic pointer exchange.
@@ -323,7 +340,7 @@ public:
 			#else
 				return ptr == p ? p : (T *)_InterlockedExchange((volatile long *)&ptr, (long)p);
 			#endif
-		#elif defined(VD_COMPILER_GCC)
+		#elif defined(VD_COMPILER_CLANG)
 			return __sync_lock_test_and_set(&ptr, p);
 		#endif
 	}
@@ -335,7 +352,7 @@ public:
 			#else
 				return (T *)_InterlockedCompareExchange((volatile long *)&ptr, (long)(size_t)newValue, (long)(size_t)oldValue);
 			#endif
-		#elif defined(VD_COMPILER_GCC)
+		#elif defined(VD_COMPILER_CLANG)
 			return __sync_val_compare_and_swap(&ptr, oldValue, newValue);
 		#endif
 	}

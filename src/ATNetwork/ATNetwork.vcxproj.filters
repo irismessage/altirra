@@ -48,6 +48,9 @@
     <ClCompile Include="source\udpstack.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\socket.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\at\atnetwork\internal\dhcpd.h">
@@ -84,6 +87,9 @@
       <Filter>Interface Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\at\atnetwork\udp.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atnetwork\emusocket.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
   </ItemGroup>

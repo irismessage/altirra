@@ -25,6 +25,12 @@
 ATPropertySet::ATPropertySet() {
 }
 
+vdnothrow ATPropertySet::ATPropertySet(ATPropertySet&& src) noexcept
+	: mProperties(std::move(src.mProperties))
+{
+	src.mProperties.clear();
+}
+
 ATPropertySet::ATPropertySet(const ATPropertySet& src) {
 	operator=(src);
 }
@@ -63,6 +69,15 @@ ATPropertySet& ATPropertySet::operator=(const ATPropertySet& src) {
 				newstr.release();
 			}
 		}
+	}
+
+	return *this;
+}
+
+vdnothrow ATPropertySet& ATPropertySet::operator=(ATPropertySet&& src) noexcept {
+	if (&src != this) {
+		mProperties = std::move(src.mProperties);
+		src.mProperties.clear();
 	}
 
 	return *this;

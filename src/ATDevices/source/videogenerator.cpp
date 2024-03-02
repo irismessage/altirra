@@ -32,6 +32,10 @@ extern const ATDeviceDefinition g_ATDeviceDefVideoGenerator {
 	}
 };
 
+ATDeviceVideoGenerator::ATDeviceVideoGenerator() {
+	SetSaveStateAgnostic();
+}
+
 void *ATDeviceVideoGenerator::AsInterface(uint32 id) {
 	if (id == IATDeviceVideoSource::kTypeID)
 		return static_cast<IATDeviceVideoSource *>(this);

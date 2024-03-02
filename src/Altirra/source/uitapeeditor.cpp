@@ -2978,7 +2978,7 @@ void ATUITapeEditorDialog::Load(const wchar_t *path) {
 	ctx.mbStoreWaveform = mpTapeView->GetStoreWaveformOnLoad();
 
 	vdrefptr<IATCassetteImage> image;
-	ATLoadCassetteImage(view->GetStream(), nullptr, ctx, ~image);
+	ATLoadCassetteImage(view->GetStream(), nullptr, nullptr, ctx, ~image);
 
 	cas.Load(image, path, true);
 }

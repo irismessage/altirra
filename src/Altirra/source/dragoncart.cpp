@@ -20,11 +20,13 @@
 #include <vd2/system/date.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdalloc.h>
+#include <at/atcore/asyncdispatcher.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
 #include <at/atnetwork/ethernetbus.h>
+#include <at/atnetwork/socket.h>
 #include <at/atnetwork/gatewayserver.h>
 #include <at/atnetworksockets/vxlantunnel.h>
 #include <at/atnetworksockets/worker.h>
@@ -378,7 +380,7 @@ ATDragonCartEmulator::~ATDragonCartEmulator() {
 	Shutdown();
 }
 
-void ATDragonCartEmulator::Init(ATMemoryManager *memmgr, ATScheduler *slowSched, const ATDragonCartSettings& settings) {
+void ATDragonCartEmulator::Init(ATMemoryManager *memmgr, ATScheduler *slowSched, IATAsyncDispatcher *dispatcher, const ATDragonCartSettings& settings) {
 	mpMemMgr = memmgr;
 	mSettings = settings;
 
@@ -401,11 +403,11 @@ void ATDragonCartEmulator::Init(ATMemoryManager *memmgr, ATScheduler *slowSched,
 	mEthernetClockId = mpEthernetBus->AddClock(mpEthernetClock);
 
 	if (settings.mTunnelAddr)
-		ATCreateNetSockVxlanTunnel(VDToBE32(settings.mTunnelAddr), settings.mTunnelSrcPort, settings.mTunnelTgtPort, mpEthernetBus, mEthernetClockId, &mpNetSockVxlanTunnel);
+		ATCreateNetSockVxlanTunnel(VDToBE32(settings.mTunnelAddr), settings.mTunnelSrcPort, settings.mTunnelTgtPort, mpEthernetBus, mEthernetClockId, dispatcher, &mpNetSockVxlanTunnel);
 
 	if (settings.mAccessMode != ATDragonCartSettings::kAccessMode_None) {
 		ATCreateEthernetGatewayServer(&mpGateway);
-		mpGateway->Init(mpEthernetBus, mEthernetClockId, VDToBE32(mSettings.mNetAddr), VDToBE32(mSettings.mNetMask));
+		mpGateway->Init(mpEthernetBus, mEthernetClockId, VDToBE32(mSettings.mNetAddr), VDToBE32(mSettings.mNetMask), mSettings.mAccessMode == mSettings.kAccessMode_NAT);
 
 		ATCreateNetSockWorker(
 			mpGateway->GetUdpStack(),
@@ -569,7 +571,10 @@ void ATDragonCartEmulator::DumpConnectionInfo(ATConsoleOutput& output) {
 
 	std::sort(connInfos.begin(), connInfos.end(), ConnectionSort());
 
-	output <<= "  Proto  Local address          Foreign address        State        NAT address";
+	//                    1         2         3         4         5         6         7         8         9         0
+	//          01234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+	output <<= "  Proto  Local address          Foreign address        State        NAT host address         NAT remote address";
+	//            TCP    255.255.255.255:65535  255.255.255.255:65535  ESTABLISHED
 
 	VDStringA line;
 
@@ -582,25 +587,29 @@ void ATDragonCartEmulator::DumpConnectionInfo(ATConsoleOutput& output) {
 		line.sprintf("  %-5s  ", conn.mpProtocol);
 
 		line.append_sprintf("%u.%u.%u.%u:%u", conn.mRemoteAddr[0], conn.mRemoteAddr[1], conn.mRemoteAddr[2], conn.mRemoteAddr[3], conn.mRemotePort);
-		if (line.size() < 30)
-			line.resize(30, ' ');
+		if (line.size() < 32)
+			line.resize(32, ' ');
 
 		line.append_sprintf("%u.%u.%u.%u:%u", conn.mLocalAddr[0], conn.mLocalAddr[1], conn.mLocalAddr[2], conn.mLocalAddr[3], conn.mLocalPort);
-		if (line.size() < 55)
-			line.resize(55, ' ');
+		if (line.size() < 53)
+			line.resize(53, ' ');
 
 		line.append_sprintf("  %s", conn.mpState);
 
-		uint32 natIpAddr;
-		uint16 natPort;
-		if (mpNetSockWorker->GetHostAddressForLocalAddress(!strcmp(conn.mpProtocol, "TCP"), VDReadUnalignedU32(conn.mRemoteAddr), conn.mRemotePort, VDReadUnalignedU32(conn.mLocalAddr), conn.mLocalPort, natIpAddr, natPort)) {
-			if (line.size() < 68)
-				line.resize(68, ' ');
+		ATSocketAddress hostAddr;
+		ATSocketAddress remoteAddr;
+		if (mpNetSockWorker->GetHostAddressesForLocalAddress(!strcmp(conn.mpProtocol, "TCP"), VDReadUnalignedU32(conn.mLocalAddr), conn.mLocalPort, VDReadUnalignedU32(conn.mRemoteAddr), conn.mRemotePort, hostAddr, remoteAddr)) {
+			if (line.size() < 67)
+				line.resize(67, ' ');
 
-			uint8 natIpAddr4[4];
-			VDWriteUnalignedU32(natIpAddr4, natIpAddr);
+			line += ' ';
+			line += hostAddr.ToString();
 
-			line.append_sprintf("%u.%u.%u.%u:%u", natIpAddr4[0], natIpAddr4[1], natIpAddr4[2], natIpAddr4[3], natPort);
+			if (line.size() < 92)
+				line.resize(92, ' ');
+
+			line += ' ';
+			line += remoteAddr.ToString();
 		}
 
 		output <<= line.c_str();
@@ -727,7 +736,7 @@ bool ATDeviceDragonCart::SetSettings(const ATPropertySet& props) {
 
 		if (mbDragonCartInited) {
 			mDragonCart.Shutdown();
-			mDragonCart.Init(mpMemMan, mpSlowScheduler, mSettings);
+			mDragonCart.Init(mpMemMan, mpSlowScheduler, GetService<IATAsyncDispatcher>(), mSettings);
 		}
 	}
 
@@ -743,7 +752,7 @@ void ATDeviceDragonCart::ColdReset() {
 }
 
 void ATDeviceDragonCart::Init() {
-	mDragonCart.Init(mpMemMan, mpSlowScheduler, mSettings);
+	mDragonCart.Init(mpMemMan, mpSlowScheduler, GetService<IATAsyncDispatcher>(), mSettings);
 	mbDragonCartInited = true;
 }
 

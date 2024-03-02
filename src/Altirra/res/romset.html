@@ -48,6 +48,29 @@
         margin-top: 5pt;
         margin-bottom: 5pt;
       }
+
+      @media (prefers-color-scheme: dark) {
+        body {
+          background: #111;
+          color: #eee;
+        }
+
+        tt {
+          color: #c66;
+        }
+
+        h1 {
+          background: linear-gradient(to right, #135, #888)
+        }
+
+        h2 {
+          border-bottom-color: #eee;
+        }
+
+        a {
+          color: #68f;
+        }
+      }
     </style>
   </head>
   <body>
@@ -105,7 +128,7 @@
         AltirraOS for 5200 SuperSystem<br/>
         AltirraOS for 65C816 Accelerators<br/>
       </p>
-      <p class="copy">Copyright &copy; 2017-2019 Avery Lee, All Rights Reserved.</p>
+      <p class="copy">Copyright &copy; 2017-2023 Avery Lee, All Rights Reserved.</p>
       <p class="copy">
         Copying and distribution of this file, with or without modification,
         are permitted in any medium without royalty provided the copyright
@@ -119,7 +142,8 @@
     </p>
     <h2>Source code</h2>
     <p>
-      The source code for these files is included in the source of the <a href="http://virtualdub.org/altirra.html">Altirra emulator</a>.
+      The source code for these files is included in the source of the <a href="http://virtualdub.org/altirra.html">Altirra emulator</a>. AltirraOS is within the Visual C++ project called <tt>Kernel</tt>,
+      while Altirra BASIC has its own project called <tt>atbasic</tt>. Both are Makefile projects that invoke NMAKE to do the actual build through MADS.
     </p>
     <h2>Other stuff</h2>
     <p>
@@ -134,6 +158,39 @@
 		as part of the memo pad banner.
 	</p>
     <ul class="verhistory">
+    <li>Version 3.41</li>
+    <ul>
+      <li>SIO now resets BRKKEY after returning Break condition.</li>
+    </ul>
+    <li>Version 3.40</li>
+    <ul>
+      <li>FASC no longer alters the first byte of FR0.</li>
+    </ul>
+    <li>Version 3.39</li>
+    <ul>
+      <li>S: now properly ignores the no-clear flag when opening a GR.0 screen.</li>
+    </ul>
+    <li>Version 3.38</li>
+    <ul>
+      <li>Fixed K: handler not allowing inverse video to be applied to vertical bar (<tt>|</tt>).</li>
+      <li>XL/XE/XEGS: $85 EOF code is now supported in custom key definition tables.</li>
+      <li>65C816: Fixed incorrect Y return value from screen editor with cursor inhibited.</li>
+      <li>Fixed a timing issue in SETVBV.</li>
+    </ul>
+    <li>Version 3.37</li>
+    <ul>
+      <li>XL/XE/XEGS: HELPFG now has bits 6 and 7 set for Shift+Help and Ctrl+Help.</li>
+      <li>XL/XE/XEGS: Improved compatibility with NOCLIK values in $01-7F range.</li>
+      <li>65C816: Fixed KEYREP and KRPDEL not being implemented only in the 816-specific version.</li>
+    </ul>
+    <li>Version 3.36</li>
+    <ul>
+      <li>Improve compatibility with programs that rely on C=1 on exit from CIO on program launch (fixes GUNDISK.XEX).</li>
+    </ul>
+    <li>Version 3.35</li>
+    <ul>
+      <li>XL/XE/XEGS: Fixed a bug in the peripheral handler loader where handlers loaded through a CIO type 4 poll were improperly raising MEMLO. This is only supposed to happen for startup (type 3) polls.</li>
+    </ul>
     <li>Version 3.34</li>
     <ul>
       <li>Adjusted TIMFLG usage in SIO routines to match the official description.</li>

@@ -1420,6 +1420,41 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATDebugExpNodeHwWriteReg final : public ATDebugExpNodeUnary {
+public:
+	ATDebugExpNodeHwWriteReg(ATDebugExpNode *x)
+		: ATDebugExpNodeUnary(kATDebugExpNodeType_HwReg, x)
+	{
+	}
+
+	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+		sint32 x;
+
+		if (!mpArg->Evaluate(x, context, cache))
+			return false;
+
+		if (!context.mpHwWriteRegFn)
+			return false;
+
+		result = context.mpHwWriteRegFn(context.mpHwWriteRegFnData, x);
+		return result >= 0;
+	}
+
+	void EmitUnaryOp(VDStringA& s) override {
+		// unused
+	}
+
+	void ToString(VDStringA& s, int prec) override {
+		s += "@hwwritereg(";
+		mpArg->ToString(s);
+		s += ")";
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////
+
 class ATDebugExpNodePC final : public ATDebugExpNode {
 public:
 	ATDebugExpNodePC() : ATDebugExpNode(kATDebugExpNodeType_PC) {}
@@ -2199,6 +2234,7 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup
 		kOpDerefSignedDoubleWord,
 		kOpLoByte,
 		kOpHiByte,
+		kOpHwWriteReg,
 		kOpAddrSpace
 	};
 
@@ -2254,7 +2290,7 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup
 		21,21,21,
 
 		// unary
-		23,23,23,23,23,23,23,23,23,
+		23,23,23,23,23,23,23,23,23,23,
 
 		// addr space
 		25
@@ -2299,6 +2335,7 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup
 		kTokCpuClock,
 		kTokXPC,
 		kTokTapePos,
+		kTokHwReg
 	};
 
 	vdfastvector<ATDebugExpNode *> valstack;
@@ -2449,9 +2486,12 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup
 					hexVal = false;
 				} else if (isalpha((unsigned char)c) || c == '_' || c == '#') {
 					const char *idstart = s-1;
+					bool escaped = false;
 
-					if (c == '#')
+					if (c == '#') {
+						escaped = true;
 						++idstart;
+					}
 
 					// we allow a single exclamation mark for module name
 					bool seenModuleSplit = false;
@@ -2471,8 +2511,10 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup
 								break;
 
 							seenModuleSplit = true;
-						} else if (!isalnum((unsigned char)*s) && *s != '_' && *s != '.')
-							break;
+						} else if (!isalnum((unsigned char)*s) && *s != '_' && *s != '.') {
+							if (!escaped || *s != '@')
+								break;
+						}
 
 						++s;
 					}
@@ -2654,7 +2696,15 @@ force_ident:
 							tok = kTokXBankANTIC;
 						else if (name == "tapepos")
 							tok = kTokTapePos;
-						else
+						else if (name == "hwwritereg") {
+							if (*s != '(')
+								throw ATDebuggerExprParseException("Expected '(' after function name");
+
+							++s;
+
+							opstack.push_back(kOpHwWriteReg);
+							tok = '(';
+						} else
 							throw ATDebuggerExprParseException("Unknown special variable '@%.*s'", nameEnd - nameStart, nameStart);
 					}
 				} else
@@ -3077,6 +3127,11 @@ force_ident:
 
 						case kOpDerefSignedDoubleWord:
 							node = new ATDebugExpNodeDerefSignedDoubleWord(sp[0]);
+							argcount = 1;
+							break;
+
+						case kOpHwWriteReg:
+							node = new ATDebugExpNodeHwWriteReg(sp[0]);
 							argcount = 1;
 							break;
 

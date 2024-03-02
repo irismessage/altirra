@@ -22,6 +22,7 @@
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicecart.h>
 #include <at/atcore/deviceparentimpl.h>
+#include <at/atcore/devicesnapshot.h>
 #include <at/atemulation/flash.h>
 #include "ide.h"
 
@@ -39,6 +40,7 @@ class ATMyIDEEmulator final
 	, public IATDeviceIndicators
 	, public IATDeviceFirmware
 	, public IATDeviceParent
+	, public IATDeviceSnapshot
 	, public ATDeviceBus
 {
 	ATMyIDEEmulator(const ATMyIDEEmulator&) = delete;
@@ -92,6 +94,11 @@ public:		// IATDeviceBus
 	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
 	void AddChildDevice(IATDevice *dev) override;
 	void RemoveChildDevice(IATDevice *dev) override;
+
+public:		// IATDeviceSnapshot
+	void GetSnapshotStatus(ATSnapshotStatus& status) const override;
+	void LoadState(const IATObjectState *state, ATSnapshotContext& ctx) override;
+	vdrefptr<IATObjectState> SaveState(ATSnapshotContext& ctx) const override;
 
 protected:
 	static sint32 OnDebugReadByte_CCTL(void *thisptr, uint32 addr);

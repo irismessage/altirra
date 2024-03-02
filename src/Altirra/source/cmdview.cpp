@@ -186,6 +186,41 @@ void OnCommandViewVideoOutputNormal() {
 	ATUISetAltViewEnabled(false);
 }
 
+void OnCommandViewResetPan() {
+	ATUISetDisplayPanOffset(vdfloat2(0.0f, 0.0f));
+}
+
+void OnCommandViewResetZoom() {
+	ATUISetDisplayZoom(1.0f);
+}
+
+void OnCommandViewResetViewFrame() {
+	OnCommandViewResetPan();
+	OnCommandViewResetZoom();
+}
+
+void OnCommandViewPanZoomTool() {
+	ATUIActivatePanZoomTool();
+}
+
+void OnCommandViewTogglePadBounds() {
+	ATUISetDrawPadBoundsEnabled(!ATUIGetDrawPadBoundsEnabled());
+}
+
+void OnCommandViewTogglePadPointers() {
+	ATUISetDrawPadPointersEnabled(!ATUIGetDrawPadPointersEnabled());
+}
+
+void OnCommandViewToggleAccEnabled() {
+	ATOptions prev(g_ATOptions);
+
+	g_ATOptions.mbDirty = true;
+	g_ATOptions.mbAccEnabled = !g_ATOptions.mbAccEnabled;
+
+	ATOptionsSave();
+	ATOptionsRunUpdateCallbacks(&prev);
+}
+
 namespace ATCommands {
 	static constexpr ATUICommand kATCommandsView[] = 
 	{
@@ -195,6 +230,8 @@ namespace ATCommands {
 		{ "View.ToggleAutoHidePointer", OnCommandViewToggleAutoHidePointer, nullptr, [] { return ToChecked(ATUIGetPointerAutoHide()); } },
 		{ "View.ToggleConstrainPointerFullScreen", [] { ATUISetConstrainMouseFullScreen(!ATUIGetConstrainMouseFullScreen()); }, nullptr, [] { return ToChecked(ATUIGetConstrainMouseFullScreen()); } },
 		{ "View.ToggleTargetPointer", OnCommandViewToggleTargetPointer, nullptr, [] { return ToChecked(!ATUIGetTargetPointerVisible()); } },
+		{ "View.TogglePadBounds", OnCommandViewTogglePadBounds, nullptr, [] { return ToChecked(ATUIGetDrawPadBoundsEnabled()); } },
+		{ "View.TogglePadPointers", OnCommandViewTogglePadPointers, nullptr, [] { return ToChecked(ATUIGetDrawPadPointersEnabled()); } },
 		{ "View.ToggleAutoHideMenu", [] { ATUISetMenuAutoHideEnabled(!ATUIIsMenuAutoHideEnabled()); }, nullptr, [] { return ToChecked(ATUIIsMenuAutoHideEnabled()); } },
 		{ "View.CustomizeHUD", OnCommandViewCustomizeHud },
 		{ "View.Calibrate", OnCommandViewCalibrate },
@@ -202,6 +239,13 @@ namespace ATCommands {
 		{ "View.VideoOutputNormal", OnCommandViewVideoOutputNormal, nullptr, [] { return ToRadio(!ATUIGetAltViewEnabled()); } },
 		{ "View.VideoOutputPrev", ATUISelectPrevAltOutput, ATUIIsAltOutputAvailable },
 		{ "View.VideoOutputNext", ATUISelectNextAltOutput, ATUIIsAltOutputAvailable },
+
+		{ "View.PanZoomTool", OnCommandViewPanZoomTool },
+		{ "View.ResetViewFrame", OnCommandViewResetViewFrame },
+		{ "View.ResetPan", OnCommandViewResetPan },
+		{ "View.ResetZoom", OnCommandViewResetZoom },
+
+		{ "View.ToggleReaderEnabled", OnCommandViewToggleAccEnabled, nullptr, [] { return ToChecked(g_ATOptions.mbAccEnabled); } },
 	};
 }
 

@@ -3,6 +3,7 @@
   <PropertyGroup>
     <_ProjectFileVersion>10.0.40219.1</_ProjectFileVersion>
     <CodeAnalysisRuleSet>..\Build\Altirra.ruleset</CodeAnalysisRuleSet>
+    <UseStructuredOutput>false</UseStructuredOutput>
   </PropertyGroup>
   <ImportGroup Label="PropertySheets">
     <Import Project="VCDisableTelemetry.props" />
@@ -28,7 +29,7 @@
     <ATBuildToolConfig>Release</ATBuildToolConfig>
 
     <!-- Use the same platform as the build, except for ARM64 where we cross-compile and use X64 tools instead. -->
-    <ATBuildToolPath Condition="'$(Platform)'!='ARM64'">$(VDBaseDir)\out\$(ATBuildToolConfig)</ATBuildToolPath>
+    <ATBuildToolPath Condition="'$(Platform)'!='ARM64'">$(VDBaseDir)\out\$(ATBuildToolConfig)$(VDPlatformDirTag)</ATBuildToolPath>
     <ATBuildToolPath Condition="'$(Platform)'=='ARM64'">$(VDBaseDir)\out\$(ATBuildToolConfig)AMD64</ATBuildToolPath>
 
     <ATLibPath>$(VDLibPath)</ATLibPath>
@@ -65,7 +66,14 @@
       <!--
         warning as error C4834: discarding return value of function with 'nodiscard' attribute
       -->
-      <AdditionalOptions>%(AdditionalOptions) /Zc:inline /Zc:externConstexpr /permissive- /we4834</AdditionalOptions>
+      <AdditionalOptions>%(AdditionalOptions) /Zc:inline /permissive- /we4834</AdditionalOptions>
+      
+      <!--
+        workaround for Clang 15 lld-llvm link errors on /INFERASANLIBS switch, which comes from new MS STL support
+        for string/vector ASAN checking
+      -->
+      <AdditionalOptions Condition="'$(PlatformToolset)'=='llvm' or '$(PlatformToolset)'=='clangcl'">%(AdditionalOptions) /D_DISABLE_VECTOR_ANNOTATION /D_DISABLE_STRING_ANNOTATION</AdditionalOptions>
+      
       <AdditionalOptions Condition="'$(Configuration)'!='Debug'">%(AdditionalOptions) /Zo</AdditionalOptions>
       <AdditionalOptions Condition="'$(Configuration)'=='Analysis'">%(AdditionalOptions) /analyze:rulesetdirectory "$(VSInstallDir)Team Tools\Static Analysis Tools\Rule Sets" /analyze:ruleset "$(MSBuildThisFileDirectory)Altirra.ruleset"</AdditionalOptions>
 
@@ -80,8 +88,10 @@
         -Wno-reorder: Cleanup TODO, too much noise right now.
         -Wno-unused-variable: Cleanup TODO, too much noise right now.
         -Wno-unused-private-field: Cleanup TODO, too much noise right now.
+        -Wsign-compare: Cleanup TODO, too much noise right now.
+        -Wno-unused-lambda-capture: Cleanup TODO, too much noise right now.
       -->
-      <AdditionalOptions Condition="'$(PlatformToolset)'=='llvm'">
+      <AdditionalOptions Condition="'$(PlatformToolset)'=='llvm' or '$(PlatformToolset)'=='clangcl'">
         %(AdditionalOptions)
         -Wno-nonportable-include-path
         -Wno-switch
@@ -91,6 +101,12 @@
         -Wno-reorder
         -Wno-unused-variable
         -Wno-unused-private-field
+        -Wno-unused-parameter
+        -Wno-missing-field-initializers
+        -Wno-sign-compare
+        -Wno-unused-lambda-capture
+        
+        -fdiagnostics-absolute-paths
       </AdditionalOptions>
       <AdditionalOptions Condition="'$(PlatformToolset)'=='llvm' and $(ATEnableUBsan)">%(AdditionalOptions) -fsanitize=undefined</AdditionalOptions>
       <AdditionalOptions Condition="'$(PlatformToolset)'=='llvm' and $(ATEnableAsan)">%(AdditionalOptions) -fsanitize=address</AdditionalOptions>
@@ -146,6 +162,9 @@
       <SupportJustMyCode>false</SupportJustMyCode>
 
       <AdditionalOptions Condition="$(ATEnableCFG)">%(AdditionalOptions) /guard:cf</AdditionalOptions>
+      
+      <!-- workaround for 17.6/17.7p1 bogus C1010 error due to std modules trying to use PCH -->
+      <BuildStlModules>false</BuildStlModules>
     </ClCompile>
     <Lib>
       <SuppressStartupBanner>true</SuppressStartupBanner>
@@ -171,6 +190,20 @@
       -->
       <AdditionalDependencies Condition="'$(PlatformToolset)'=='llvm'">%(AdditionalDependencies);$(LLVMInstallDir)lib\clang\9.0.0\lib\windows\clang_rt.builtins-x86_64.lib</AdditionalDependencies>
       
+      <!--
+        Needed for __udivti3 for uint128_t division - we _must_ use a full path to dodge MSVC ASAN's older .lib
+        As of Clang 16, we need to strip the minor versions from the directory name.
+      -->
+      <AdditionalDependencies Condition="'$(PlatformToolset)'=='clangcl'">%(AdditionalDependencies);$(LLVMInstallDir)\lib\clang\$([System.Text.RegularExpressions.Regex]::Replace($(LLVMToolsVersion), '^(\d+).*$', '$1'))\lib\windows\clang_rt.builtins-x86_64.lib</AdditionalDependencies>
+
+      <!--
+        Clang-cl needs explicit ASAN linking
+      -->
+      <AdditionalDependencies Condition="'$(PlatformToolset)'=='clangcl' and $(ATEnableAsan)">%(AdditionalDependencies);$(LLVMInstallDir)\lib\clang\$(LLVMToolsVersion)\lib\windows\clang_rt.asan_static-x86_64.lib;$(LLVMInstallDir)\lib\clang\$(LLVMToolsVersion)\lib\windows\clang_rt.asan-x86_64.lib</AdditionalDependencies>
+      
+      <!-- ASAN in Clang 15 has a bug with bogus traps on strlen("") unless tail merging is disabled -->
+      <AdditionalOptions Condition="'$(PlatformToolset)'=='clangcl' and $(ATEnableAsan)">%(AdditionalOptions) /opt:nolldtailmerge</AdditionalOptions>
+
       <AdditionalOptions Condition="$(ATEnableCFG)">%(AdditionalOptions) /guard:cf</AdditionalOptions>
     </Link>
     <ResourceCompile>

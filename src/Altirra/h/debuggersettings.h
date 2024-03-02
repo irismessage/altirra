@@ -104,7 +104,7 @@ extern ATDebuggerSetting<bool> g_ATDbgSettingCollapseLoops;
 extern ATDebuggerSetting<bool> g_ATDbgSettingCollapseCalls;
 extern ATDebuggerSetting<bool> g_ATDbgSettingCollapseInterrupts;
 
-enum class ATDebugger816PredictionMode : uint8 {
+enum class ATDebugger816MXPredictionMode : uint8 {
 	Auto,
 	CurrentContext,
 	M8X8,
@@ -114,8 +114,9 @@ enum class ATDebugger816PredictionMode : uint8 {
 	Emulation,
 };
 
-AT_DECLARE_ENUM_TABLE(ATDebugger816PredictionMode);
+AT_DECLARE_ENUM_TABLE(ATDebugger816MXPredictionMode);
 
-extern ATDebuggerSetting<ATDebugger816PredictionMode> g_ATDbgSetting816PredictionMode;
+extern ATDebuggerSetting<ATDebugger816MXPredictionMode> g_ATDbgSetting816MXPredictionMode;
+extern ATDebuggerSetting<bool> g_ATDbgSetting816PredictD;
 
 #endif

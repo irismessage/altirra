@@ -16,136 +16,114 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <numeric>
+#include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/registry.h>
 #include <vd2/system/thread.h>
 #include <vd2/system/date.h>
+#include <vd2/system/zip.h>
+#include <at/atcore/vfs.h>
 #include "firmwaremanager.h"
 #include "oshelper.h"
 #include "resource.h"
 
 bool g_ATFirmwarePathPortabilityEnabled;
 
+static constexpr const char *kATFirmwareTypeNames[]={
+	"",
+	"kernel800_osa",
+	"kernel800_osb",
+	"kernelxl",
+	"kernelxegs",
+	"kernel5200",
+	"kernel1200xl",
+	"basic",
+	"5200cart",
+	"u1mb",
+	"myide",
+	"myide2",
+	"side",
+	"side2",
+	"kmkjzide",
+	"kmkjzide2",
+	"kmkjzide2_sdx",
+	"blackbox",
+	"game",
+	"mio",
+	"850handler",
+	"850relocator",
+	"1030firmware",
+	"810",
+	"happy810",
+	"810archiver",
+	"1050",
+	"usdoubler",
+	"speedy1050",
+	"happy1050",
+	"superarchiver",
+	"toms1050",
+	"tygrys1050",
+	"1050duplicator",
+	"indusgt",
+	"1050turbo",
+	"1050turboii",
+	"xf551",
+	"atr8000",
+	"percom",
+	"rapidus_flash",
+	"rapidus_corepbi",
+	"isplate",
+	"warpos",
+	"810turbo",
+	"amdc",
+	"percom_at",
+	"percom_atspd",
+	"815",
+	"side3",
+	"1090firmware",
+	"1090charset",
+	"bit3firmware",
+	"bit3charset",
+	"1400xlhandler",
+	"1450xldiskhandler",
+	"1450xldiskcontroller",
+	"1450xltongdiskcontroller",
+	"1030irom",
+	"1030xrom",
+	"835",
+};
+
+VDASSERTCT(vdcountof(kATFirmwareTypeNames) == kATFirmwareTypeCount);
+
+bool ATIsKernelFirmwareType(ATFirmwareType type) {
+	switch(type) {
+		case kATFirmwareType_Kernel800_OSA:
+		case kATFirmwareType_Kernel800_OSB:
+		case kATFirmwareType_KernelXL:
+		case kATFirmwareType_KernelXEGS:
+		case kATFirmwareType_Kernel5200:
+		case kATFirmwareType_Kernel1200XL:
+			return true;
+
+		default:
+			return false;
+	}
+}
+
 const char *ATGetFirmwareTypeName(ATFirmwareType type) {
-	static const char *kTypeNames[]={
-		"",
-		"kernel800_osa",
-		"kernel800_osb",
-		"kernelxl",
-		"kernelxegs",
-		"kernel5200",
-		"kernel1200xl",
-		"basic",
-		"5200cart",
-		"u1mb",
-		"myide",
-		"myide2",
-		"side",
-		"side2",
-		"kmkjzide",
-		"kmkjzide2",
-		"kmkjzide2_sdx",
-		"blackbox",
-		"game",
-		"mio",
-		"850handler",
-		"850relocator",
-		"1030firmware",
-		"810",
-		"happy810",
-		"810archiver",
-		"1050",
-		"usdoubler",
-		"speedy1050",
-		"happy1050",
-		"superarchiver",
-		"toms1050",
-		"tygrys1050",
-		"1050duplicator",
-		"indusgt",
-		"1050turbo",
-		"1050turboii",
-		"xf551",
-		"atr8000",
-		"percom",
-		"rapidus_flash",
-		"rapidus_corepbi",
-		"isplate",
-		"warpos",
-		"810turbo",
-		"amdc",
-		"percom_at",
-		"percom_atspd",
-		"815",
-		"side3",
-		"1090firmware",
-		"1090charset",
-		"bit3firmware",
-		"bit3charset",
-	};
-
-	VDASSERTCT(vdcountof(kTypeNames) == kATFirmwareTypeCount);
-
-	return kTypeNames[type];
+	return kATFirmwareTypeNames[type];
 }
 
 ATFirmwareType ATGetFirmwareTypeFromName(const char *type) {
-	     if (!strcmp(type, "kernel800_osa")) return kATFirmwareType_Kernel800_OSA;
-	else if (!strcmp(type, "kernel800_osb")) return kATFirmwareType_Kernel800_OSB;
-	else if (!strcmp(type, "kernelxl")) return kATFirmwareType_KernelXL;
-	else if (!strcmp(type, "kernelxegs")) return kATFirmwareType_KernelXEGS;
-	else if (!strcmp(type, "game")) return kATFirmwareType_Game;
-	else if (!strcmp(type, "kernel1200xl")) return kATFirmwareType_Kernel1200XL;
-	else if (!strcmp(type, "kernel5200")) return kATFirmwareType_Kernel5200;
-	else if (!strcmp(type, "basic")) return kATFirmwareType_Basic;
-	else if (!strcmp(type, "5200cart")) return kATFirmwareType_5200Cartridge;
-	else if (!strcmp(type, "u1mb")) return kATFirmwareType_U1MB;
-	else if (!strcmp(type, "myide")) return kATFirmwareType_MyIDE;
-	else if (!strcmp(type, "myide2")) return kATFirmwareType_MyIDE2;
-	else if (!strcmp(type, "side")) return kATFirmwareType_SIDE;
-	else if (!strcmp(type, "side2")) return kATFirmwareType_SIDE2;
-	else if (!strcmp(type, "kmkjzide")) return kATFirmwareType_KMKJZIDE;
-	else if (!strcmp(type, "kmkjzide2")) return kATFirmwareType_KMKJZIDE2;
-	else if (!strcmp(type, "kmkjzide2_sdx")) return kATFirmwareType_KMKJZIDE2_SDX;
-	else if (!strcmp(type, "blackbox")) return kATFirmwareType_BlackBox;
-	else if (!strcmp(type, "mio")) return kATFirmwareType_MIO;
-	else if (!strcmp(type, "850handler")) return kATFirmwareType_850Handler;
-	else if (!strcmp(type, "850relocator")) return kATFirmwareType_850Relocator;
-	else if (!strcmp(type, "1030firmware")) return kATFirmwareType_1030Firmware;
-	else if (!strcmp(type, "810")) return kATFirmwareType_810;
-	else if (!strcmp(type, "happy810")) return kATFirmwareType_Happy810;
-	else if (!strcmp(type, "810archiver")) return kATFirmwareType_810Archiver;
-	else if (!strcmp(type, "1050")) return kATFirmwareType_1050;
-	else if (!strcmp(type, "usdoubler")) return kATFirmwareType_USDoubler;
-	else if (!strcmp(type, "speedy1050")) return kATFirmwareType_Speedy1050;
-	else if (!strcmp(type, "happy1050")) return kATFirmwareType_Happy1050;
-	else if (!strcmp(type, "superarchiver")) return kATFirmwareType_SuperArchiver;
-	else if (!strcmp(type, "toms1050")) return kATFirmwareType_TOMS1050;
-	else if (!strcmp(type, "tygrys1050")) return kATFirmwareType_Tygrys1050;
-	else if (!strcmp(type, "1050duplicator")) return kATFirmwareType_1050Duplicator;
-	else if (!strcmp(type, "indusgt")) return kATFirmwareType_IndusGT;
-	else if (!strcmp(type, "1050turbo")) return kATFirmwareType_1050Turbo;
-	else if (!strcmp(type, "1050turboii")) return kATFirmwareType_1050TurboII;
-	else if (!strcmp(type, "xf551")) return kATFirmwareType_XF551;
-	else if (!strcmp(type, "atr8000")) return kATFirmwareType_ATR8000;
-	else if (!strcmp(type, "percom")) return kATFirmwareType_Percom;
-	else if (!strcmp(type, "rapidus_flash")) return kATFirmwareType_RapidusFlash;
-	else if (!strcmp(type, "rapidus_corepbi")) return kATFirmwareType_RapidusCorePBI;
-	else if (!strcmp(type, "isplate")) return kATFirmwareType_ISPlate;
-	else if (!strcmp(type, "warpos")) return kATFirmwareType_WarpOS;
-	else if (!strcmp(type, "810turbo")) return kATFirmwareType_810Turbo;
-	else if (!strcmp(type, "amdc")) return kATFirmwareType_AMDC;
-	else if (!strcmp(type, "percom_at")) return kATFirmwareType_PercomAT;
-	else if (!strcmp(type, "percom_atspd")) return kATFirmwareType_PercomATSPD;
-	else if (!strcmp(type, "815")) return kATFirmwareType_815;
-	else if (!strcmp(type, "side3")) return kATFirmwareType_SIDE3;
-	else if (!strcmp(type, "1090firmware")) return kATFirmwareType_1090Firmware;
-	else if (!strcmp(type, "1090charset")) return kATFirmwareType_1090Charset;
-	else if (!strcmp(type, "bit3firmware")) return kATFirmwareType_Bit3Firmware;
-	else if (!strcmp(type, "bit3charset")) return kATFirmwareType_Bit3Charset;
-	else return kATFirmwareType_Unknown;
+	for(int i=1; i<(int)kATFirmwareTypeCount; ++i) {
+		if (!strcmp(type, kATFirmwareTypeNames[i]))
+			return (ATFirmwareType)i;
+	}
+
+	return kATFirmwareType_Unknown;
 }
 
 const char *ATGetSpecificFirmwareTypeKey(ATSpecificFirmwareType ft) {
@@ -315,6 +293,8 @@ ATFirmwareManager::ATFirmwareManager() {
 	for(uint64& id : mSpecificFirmwares) {
 		id = 0xFFFF;
 	}
+
+	ATVFSSetSpecialProtocolHandler(std::bind_front(&ATFirmwareManager::GetVFSSpecialFirmware, this));
 }
 
 ATFirmwareManager::~ATFirmwareManager() {
@@ -348,7 +328,7 @@ bool ATFirmwareManager::GetFirmwareInfo(uint64 id, ATFirmwareInfo& fwinfo) const
 			{ true, false, kATFirmwareType_KMKJZIDE, L"Altirra NoBIOS for KMK/JZ IDE" },
 			{ true, false, kATFirmwareType_850Relocator, L"Altirra 850 Relocator Firmware" },
 			{ true, false, kATFirmwareType_850Handler, L"Altirra 850 Handler Firmware" },
-			{ true, true, kATFirmwareType_1030Firmware, L"Altirra 1030 Modem Firmware" },
+			{ true, true, kATFirmwareType_1030Firmware, L"Altirra 1030 Modem Download Image" },
 			{ true, false, kATFirmwareType_MIO, L"Altirra NoFirmware for MIO" },
 			{ true, false, kATFirmwareType_BlackBox, L"Altirra NoFirmware for BlackBox" },
 			{ true, false, kATFirmwareType_Game, L"Altirra placeholder NoGame" },
@@ -578,16 +558,68 @@ VDStringW ATFirmwareManager::GetFirmwareRefString(uint64 id) const {
 	return info.mPath;
 }
 
-uint64 ATFirmwareManager::GetFirmwareByRefString(const wchar_t *refstr) const {
+uint64 ATFirmwareManager::GetFirmwareByRefString(const wchar_t *refstr, vdfunction<bool(ATFirmwareType)> typeFilter) const {
 	if (!*refstr)
 		return 0;
 
 	if (!wcsncmp(refstr, L"internal:", 9))
 		return wcstoul(refstr + 9, NULL, 16);
 
+	// try to find firmware by path
 	uint64 id = ATGetFirmwareIdFromPath(refstr);
 	ATFirmwareInfo info;
-	return GetFirmwareInfo(id, info) ? id : 0;
+
+	if (GetFirmwareInfo(id, info)) {
+		if (!typeFilter || typeFilter(info.mType))
+			return id;
+	}
+
+	// try to find firmware by name
+	const VDStringSpanW refspan(refstr);
+
+	vdvector<ATFirmwareInfo> fws;
+	GetFirmwareList(fws);
+
+	for(const ATFirmwareInfo& fw : fws) {
+		if (typeFilter && !typeFilter(fw.mType))
+			continue;
+
+		// try to match by filename
+		const VDStringSpanW& fn = VDFileSplitExtLeftSpan(VDFileSplitPathRightSpan(fw.mPath));
+		if (fn.comparei(refspan) == 0)
+			return fw.mId;
+
+		// try to match by description
+		if (fw.mName.comparei(refspan) == 0)
+			return fw.mId;
+	}
+
+	// If we have a name of the form [XXXXXXXX] where X is a hex digit, then
+	// try to match by CRC32. This can be slow, so it is only allowed when a type filter
+	// is supplied.
+	if (typeFilter
+		&& refspan.size() == 10
+		&& refspan[0] == L'['
+		&& refspan[9] == L']'
+		&& std::all_of(refspan.begin() + 1, refspan.end() -1, iswxdigit))
+	{
+		const uint32 crc32 = (uint32)wcstoul(refspan.data() + 1, nullptr, 16);
+		vdfastvector<uint8> buf;
+
+		for(const ATFirmwareInfo& fw : fws) {
+			if (typeFilter && !typeFilter(fw.mType))
+				continue;
+
+			if (LoadFirmware(fw.mId, nullptr, 0, 0, nullptr, nullptr, &buf)
+				&& VDCRCTable::CRC32.CRC(buf.data(), buf.size()) == crc32)
+			{
+				return fw.mId;
+			}
+		}
+	}
+
+	// we failed
+	return 0;
 }
 
 uint64 ATFirmwareManager::GetDefaultFirmware(ATFirmwareType type) const {
@@ -633,7 +665,7 @@ void ATFirmwareManager::SetSpecificFirmware(ATSpecificFirmwareType ft, uint64 id
 	mSpecificFirmwares[ft] = id;
 }
 
-bool ATFirmwareManager::LoadFirmware(uint64 id, void *dst, uint32 offset, uint32 len, bool *changed, uint32 *actualLen, vdfastvector<uint8> *dstbuf, const uint8 *fill, bool *isUsable) {
+bool ATFirmwareManager::LoadFirmware(uint64 id, void *dst, uint32 offset, uint32 len, bool *changed, uint32 *actualLen, vdfastvector<uint8> *dstbuf, const uint8 *fill, bool *isUsable) const {
 	if (id < kATFirmwareId_Custom)
 		return ATLoadInternalFirmware(id, dst, offset, len, changed, actualLen, dstbuf, isUsable);
 
@@ -650,7 +682,22 @@ bool ATFirmwareManager::LoadFirmware(uint64 id, void *dst, uint32 offset, uint32
 	try {
 		VDFile f;
 		f.open(fwinfo.mPath.c_str());
-		f.seek(offset);
+
+		if (offset)
+			f.seek(offset);
+
+		if (dstbuf) {
+			auto fileSize = f.size();
+
+			if (fileSize >= 16*1024*1024)
+				throw MyError("Firmware image is too big: %llu bytes.", (unsigned long long)fileSize);
+
+			dstbuf->clear();
+			dstbuf->resize((size_t)fileSize, fill ? *fill : 0);
+
+			dst = dstbuf->data();
+			len = (uint32)dstbuf->size();
+		}
 
 		if (changed) {
 			vdblock<char> tmpData(len);
@@ -736,4 +783,137 @@ void ATFirmwareManager::RemoveFirmware(uint64 id) {
 
 	VDRegistryAppKey key("Firmware\\Available");
 	key.removeKeyRecursive(name.c_str());
+}
+
+void ATFirmwareManager::GetVFSSpecialFirmware(const wchar_t *path, bool write, bool update, ATVFSFileView **outView) {
+	VDStringW lowerPath(path);
+	for(wchar_t& ch : lowerPath)
+		ch = towlower(ch);
+
+	class VFSMemoryView final : public ATVFSFileView {
+	public:
+		VFSMemoryView() {
+			mpStream = &mMemStream;
+		}
+
+		void SetFileName(const wchar_t *name) {
+			mFileName = name;
+		}
+
+		vdfastvector<uint8> mBuf;
+		VDMemoryStream mMemStream { nullptr, 0 };
+	};
+
+	vdrefptr<VFSMemoryView> view(new VFSMemoryView);
+	bool addCarHeader = false;
+
+	static constexpr struct {
+		const wchar_t *mpName;
+		uint32 mFirmwareId = 0;
+		bool mbAddCarHeader = false;
+	} kSpecificFirmwares[] = {
+		{ L"atbasic.bin", kATFirmwareId_Basic_ATBasic, false },
+		{ L"atbasic.car", kATFirmwareId_Basic_ATBasic, true },
+	};
+
+	for(const auto& fw : kSpecificFirmwares) {
+		if (lowerPath == fw.mpName) {
+			VDVERIFY(LoadFirmware(fw.mFirmwareId, nullptr, 0, 0, nullptr, nullptr, &view->mBuf, nullptr, nullptr));
+			addCarHeader = fw.mbAddCarHeader;
+			break;
+		}
+	}
+
+	if (view->mBuf.empty()) {
+		static constexpr struct {
+			const wchar_t *mpName;
+			ATFirmwareType mFirmwareType;
+			bool mbAddCarHeader = false;
+		} kDefaultFirmwares[] = {
+			{ L"basic.bin", kATFirmwareType_Basic, false },
+			{ L"basic.car", kATFirmwareType_Basic, true },
+		};
+
+		for(const auto& fw : kDefaultFirmwares) {
+			if (lowerPath == fw.mpName) {
+				auto firmwareId = GetDefaultFirmware(fw.mFirmwareType);
+
+				if (!firmwareId) {
+					firmwareId = GetCompatibleFirmware(fw.mFirmwareType);
+
+					if (!firmwareId)
+						throw ATVFSNotAvailableException();
+				}
+
+				if (!LoadFirmware(firmwareId, nullptr, 0, 0, nullptr, nullptr, &view->mBuf, nullptr, nullptr))
+					throw ATVFSNotAvailableException();
+
+				addCarHeader = fw.mbAddCarHeader;
+				break;
+			}
+		}
+	}
+
+	if (view->mBuf.empty()) {
+		static constexpr struct {
+			const wchar_t *mpName;
+			ATSpecificFirmwareType mSpecificFirmware;
+			bool mbAddCarHeader = false;
+		} kSpecificFirmwares[] = {
+			{ L"ataribas-a.bin", kATSpecificFirmwareType_BASICRevA, false },
+			{ L"ataribas-a.car", kATSpecificFirmwareType_BASICRevA, true },
+			{ L"ataribas-b.bin", kATSpecificFirmwareType_BASICRevB, false },
+			{ L"ataribas-b.car", kATSpecificFirmwareType_BASICRevB, true },
+			{ L"ataribas-c.bin", kATSpecificFirmwareType_BASICRevC, false },
+			{ L"ataribas-c.car", kATSpecificFirmwareType_BASICRevC, true },
+		};
+
+		for(const auto& fw : kSpecificFirmwares) {
+			if (lowerPath == fw.mpName) {
+				const auto firmwareId = GetSpecificFirmware(fw.mSpecificFirmware);
+
+				if (!firmwareId)
+					throw ATVFSNotAvailableException();
+
+				if (!LoadFirmware(firmwareId, nullptr, 0, 0, nullptr, nullptr, &view->mBuf, nullptr, nullptr))
+					throw ATVFSNotAvailableException();
+
+				addCarHeader = fw.mbAddCarHeader;
+				break;
+			}
+		}
+	}
+
+	if (view->mBuf.empty())
+		throw ATVFSNotFoundException();
+
+	if (write)
+		throw ATVFSReadOnlyException();
+
+	const wchar_t *name = path;
+	if (const wchar_t *split = wcsrchr(name, L'/'))
+		name = split;
+
+	view->SetFileName(name);
+
+	// currently, all cart images we support are 8K
+	if (addCarHeader) {
+		alignas(uint32) uint8 mHeader[16] {
+			(uint8)'C',
+			(uint8)'A',
+			(uint8)'R',
+			(uint8)'T',
+			0, 0, 0, 1,		// 8K cart
+			0, 0, 0, 0,
+			0, 0, 0, 0,
+		};
+
+		VDWriteUnalignedBEU32(&mHeader[8], std::accumulate(view->mBuf.begin(), view->mBuf.end(), (uint32)0));
+
+		view->mBuf.insert(view->mBuf.begin(), std::begin(mHeader), std::end(mHeader));
+	}
+
+	view->mMemStream = VDMemoryStream(view->mBuf.data(), view->mBuf.size());
+
+	*outView = view.release();
 }

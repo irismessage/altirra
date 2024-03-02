@@ -17,6 +17,8 @@
 
 #include <stdafx.h>
 #include <windows.h>
+#include <combaseapi.h>
+#include <UIAutomation.h>
 #include <vd2/system/file.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdalloc.h>
@@ -27,12 +29,14 @@
 #include <at/atcore/devicevideo.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/profile.h>
+#include <at/atui/accessibility.h>
 #include <at/atui/uimanager.h>
 #include <at/atui/uimenulist.h>
 #include <at/atui/uicontainer.h>
 #include <at/atuicontrols/uitextedit.h>
 #include <at/atuicontrols/uibutton.h>
 #include <at/atuicontrols/uilistview.h>
+#include <at/atnativeui/accessibility_win32.h>
 #include <at/atnativeui/messageloop.h>
 #include <at/atnativeui/uiframe.h>
 #include <at/atnativeui/uipanewindow.h>
@@ -42,6 +46,8 @@
 #include "oshelper.h"
 #include "simulator.h"
 #include "uidisplay.h"
+#include "uidisplayaccessibility.h"
+#include "uidisplayaccessibility_win32.h"
 #include "uienhancedtext.h"
 #include "uirender.h"
 #include "uitypes.h"
@@ -61,54 +67,6 @@
 
 ///////////////////////////////////////////////////////////////////////////
 
-#ifndef WM_GESTURE
-#define WM_GESTURE 0x0119
-
-#ifndef GID_BEGIN
-#define GID_BEGIN			1
-#endif
-
-#ifndef GID_END
-#define GID_END				2
-#endif
-
-#ifndef GID_ZOOM
-#define GID_ZOOM			3
-#endif
-
-#ifndef GID_PAN
-#define GID_PAN				4
-#endif
-
-DECLARE_HANDLE(HGESTUREINFO);
-
-typedef struct _GESTUREINFO {
-	UINT cbSize;
-	DWORD dwFlags;
-	DWORD dwID;
-	HWND hwndTarget;
-	POINTS ptsLocation;
-	DWORD dwInstanceID;
-	DWORD dwSequenceID;
-	ULONGLONG ullArguments;
-	UINT cbExtraArgs;
-} GESTUREINFO, *PGESTUREINFO;
-#endif
-
-BOOL WINAPI ATGetGestureInfoW32(HGESTUREINFO hGestureInfo, PGESTUREINFO pGestureInfo) {
-	static auto pfn = GetProcAddress(GetModuleHandle(_T("user32")), "GetGestureInfo");
-
-	return pfn && ((BOOL (WINAPI *)(HGESTUREINFO, PGESTUREINFO))pfn)(hGestureInfo, pGestureInfo);
-}
-
-BOOL WINAPI ATCloseGestureInfoHandleW32(HGESTUREINFO hGestureInfo) {
-	static auto pfn = GetProcAddress(GetModuleHandle(_T("user32")), "CloseGestureInfoHandle");
-
-	return pfn && ((BOOL (WINAPI *)(HGESTUREINFO))pfn)(hGestureInfo);
-}
-
-///////////////////////////////////////////////////////////////////////////
-
 void ATUIUpdateNativeProfiler();
 
 extern ATSimulator g_sim;
@@ -123,11 +81,14 @@ extern float g_dispCustomRefreshRate;
 extern int g_dispFilterSharpness;
 
 extern ATDisplayStretchMode g_displayStretchMode;
+extern float g_displayZoom;
+extern vdfloat2 g_displayPan;
 
 ATLogChannel g_ATLCHostKeys(false, false, "HOSTKEYS", "Host keyboard activity");
 ATLogChannel g_ATLCHostUI(false, false, "HOSTUI", "Host UI debug output");
 
 ATConfigVarBool g_ATCVUIShowNativeProfiler("ui.show_native_profiler", false, ATUIUpdateNativeProfiler);
+ATConfigVarBool g_ATCVWorkaroundsWindowsTouchKeyboardCodes("workaround.windows.touch_keyboard_codes", true);
 
 ATUIManager g_ATUIManager;
 
@@ -160,6 +121,11 @@ void ATUIToggleHoldKeys() {
 void ATUIRecalibrateLightPen() {
 	if (g_pATVideoDisplayWindow)
 		g_pATVideoDisplayWindow->RecalibrateLightPen();
+}
+
+void ATUIActivatePanZoomTool() {
+	if (g_pATVideoDisplayWindow)
+		g_pATVideoDisplayWindow->ActivatePanZoomTool();
 }
 
 bool ATUIGetDisplayPadIndicators() {
@@ -744,7 +710,7 @@ bool ATUIIsActiveModal() {
 	return g_ATUIManager.GetModalWindow() != NULL;
 }
 
-class ATDisplayPane final : public ATUIPaneWindow, public IATDisplayPane {
+class ATDisplayPane final : public ATUIPaneWindow, public IATDisplayPane, public IATUIDisplayAccessibilityCallbacksW32 {
 public:
 	ATDisplayPane();
 	~ATDisplayPane();
@@ -756,6 +722,8 @@ public:
 	void ResetDisplay();
 
 	bool IsTextSelected() const { return g_pATVideoDisplayWindow->IsTextSelected(); }
+	void SelectAll();
+	void Deselect();
 	void Copy(ATTextCopyMode copyMode);
 	void CopyFrame(bool trueAspect);
 	bool CopyFrameImage(bool trueAspect, VDPixmapBuffer& buf);
@@ -767,6 +735,10 @@ public:
 	void UpdateFilterMode();
 	void UpdateCustomRefreshRate();
 	void RequestRenderedFrame(vdfunction<void(const VDPixmap *)> fn) override;
+
+public:		// IATUIDisplayAccessibilityCallbacksW32
+	vdpoint32 GetNearestBeamPositionForScreenPoint(sint32 x, sint32 y) const override;
+	vdrect32 GetTextSpanBoundingBox(int ypos, int xc1, int xc2) const override;
 
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
@@ -783,6 +755,7 @@ protected:
 	void WarpCapturedMouse();
 	void UpdateTextDisplay(bool enabled);
 	void UpdateTextModeFont();
+	void UpdateAccessibilityProvider();
 
 	void OnMenuActivating(ATUIMenuList *);
 	void OnMenuItemSelected(ATUIMenuList *sender, uint32 id);
@@ -794,6 +767,7 @@ protected:
 	HWND	mhwndDisplay = nullptr;
 	HMENU	mhmenuContext = nullptr;
 	IVDVideoDisplay *mpDisplay = nullptr;
+	bool	mbDestroying = false;
 	bool	mbLastTrackMouseValid = false;
 	int		mLastTrackMouseX = 0;
 	int		mLastTrackMouseY = 0;
@@ -806,7 +780,7 @@ protected:
 
 	vdpoint32	mGestureOrigin = { 0, 0 };
 
-	vdrect32	mDisplayRect = { 0, 0, 0, 0 };
+	vdrect32f	mDisplayRectF = { 0, 0, 0, 0 };
 
 	bool	mbTextModeEnabled = false;
 	bool	mbTextModeVirtScreen = false;
@@ -833,8 +807,12 @@ protected:
 
 	vdfunction<void()> mIndicatorSafeAreaChangedFn;
 
-	TOUCHINPUT mRawTouchInputs[32];
-	ATUITouchInput mTouchInputs[32];
+	TOUCHINPUT mRawTouchInputs[32] {};
+	ATUITouchInput mTouchInputs[32] {};
+
+	vdrefptr<IATUIDisplayAccessibilityProviderW32> mpAccessibilityProvider;
+	vdrefptr<ATUIDisplayAccessibilityScreen> mpAccessibilityCurrentScreen;
+	vdrefptr<ATUIDisplayAccessibilityScreen> mpAccessibilityNextScreen;
 };
 
 ATDisplayPane::ATDisplayPane()
@@ -856,6 +834,18 @@ void *ATDisplayPane::AsInterface(uint32 iid) {
 		return static_cast<IATDisplayPane *>(this);
 
 	return ATUIPane::AsInterface(iid);
+}
+
+vdpoint32 ATDisplayPane::GetNearestBeamPositionForScreenPoint(sint32 x, sint32 y) const {
+	vdpoint32 cpt = TransformScreenToClient(vdpoint32(x, y));
+
+	return g_pATVideoDisplayWindow->GetNearestBeamPositionForPoint(vdpoint32(x, y));
+}
+
+vdrect32 ATDisplayPane::GetTextSpanBoundingBox(int ypos, int xc1, int xc2) const {
+	vdrect32 r = g_pATVideoDisplayWindow->GetTextSpanBoundingBox(ypos, xc1, xc2);
+
+	return TransformClientToScreen(r);
 }
 
 LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -1126,7 +1116,37 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					doPages = true;
 				}
 
-				g_ATUIManager.OnMouseWheel(pt.x, pt.y, (float)dz / (float)WHEEL_DELTA * (float)lines, doPages);
+				if (g_ATUIManager.OnMouseWheel(pt.x, pt.y, (float)dz / (float)WHEEL_DELTA * (float)lines, doPages)) {
+					if (GetKeyState(VK_MENU) < 0)
+						SendMessage(GetAncestor(mhwnd, GA_ROOT), ATWM_SUPPRESS_KEYMENU, 0, 0);
+					return 0;
+				}
+			}
+			break;
+
+		case WM_MOUSEHWHEEL:
+			{
+				int x = (short)LOWORD(lParam);
+				int y = (short)HIWORD(lParam);
+				int dz = (short)HIWORD(wParam);
+
+				POINT pt = { x, y };
+				ScreenToClient(mhwnd, &pt);
+
+				UINT lines = 1;
+				::SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &lines, FALSE);
+
+				bool doPages = false;
+				if (lines == WHEEL_PAGESCROLL) {
+					lines = 1;
+					doPages = true;
+				}
+
+				if (g_ATUIManager.OnMouseHWheel(pt.x, pt.y, (float)dz / (float)WHEEL_DELTA * (float)lines, doPages)) {
+					if (GetKeyState(VK_MENU) < 0)
+						SendMessage(GetAncestor(mhwnd, GA_ROOT), ATWM_SUPPRESS_KEYMENU, 0, 0);
+					return 0;
+				}
 			}
 			break;
 
@@ -1242,6 +1262,9 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			// active.
 			g_ATUIManager.SetForeground(true);
 			g_ATUINativeDisplay.SetMouseConstraintEnabled(true);
+
+			if (mpAccessibilityProvider)
+				mpAccessibilityProvider->OnGainedFocus();
 			break;
 
 		case WM_KILLFOCUS:
@@ -1288,8 +1311,8 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			{
 				vdsize32& sz = *(vdsize32 *)lParam;
 
-				sz.w = mDisplayRect.width();
-				sz.h = mDisplayRect.height();
+				sz.w = VDCeilToInt(mDisplayRectF.width());
+				sz.h = VDCeilToInt(mDisplayRectF.height());
 
 				if (g_dispPadIndicators) {
 					if (auto *p = g_sim.GetUIRenderer())
@@ -1404,6 +1427,19 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			}
 
 			break;
+
+		case WM_GETOBJECT:
+			if (ATUIAccGetEnabled() && !mbDestroying && (long)lParam == (long)UiaRootObjectId) {
+				if (!mpAccessibilityProvider) {
+					ATUICreateDisplayAccessibilityProviderW32(mhwnd, *this, ~mpAccessibilityProvider);
+
+					mpAccessibilityCurrentScreen = new ATUIDisplayAccessibilityScreen;
+					mpAccessibilityNextScreen = new ATUIDisplayAccessibilityScreen;
+				}
+
+				return UiaReturnRawElementProvider(mhwnd, wParam, lParam, mpAccessibilityProvider->AsRawElementProviderSimple());
+			}
+			break;
 	}
 
 	return ATUIPaneWindow::WndProc(msg, wParam, lParam);
@@ -1414,6 +1450,8 @@ ATUITouchMode ATDisplayPane::GetTouchModeAtPoint(const vdpoint32& pt) const {
 }
 
 bool ATDisplayPane::OnCreate() {
+	mbDestroying = false;
+
 	if (!ATUIPaneWindow::OnCreate())
 		return false;
 
@@ -1422,6 +1460,8 @@ bool ATDisplayPane::OnCreate() {
 	mhwndDisplay = (HWND)VDCreateDisplayWindowW32(WS_EX_NOPARENTNOTIFY, WS_CHILD|WS_VISIBLE, 0, 0, 0, 0, (VDGUIHandle)mhwnd);
 	if (!mhwndDisplay)
 		return false;
+
+	SetWindowTextW(mhwndDisplay, L"Video Display");
 
 	mpDisplay = VDGetIVideoDisplay((VDGUIHandle)mhwndDisplay);
 	g_pDisplay = mpDisplay;
@@ -1507,6 +1547,26 @@ bool ATDisplayPane::OnCreate() {
 }
 
 void ATDisplayPane::OnDestroy() {
+	// Block any more accessibility objects from being created -- this is important
+	// to avoid memory leaks from being created while trying to disconnect.
+	mbDestroying = true;
+
+	if (mpAccessibilityProvider) {
+		auto p = std::move(mpAccessibilityProvider);
+		mpAccessibilityProvider = nullptr;
+		mpAccessibilityCurrentScreen = nullptr;
+		mpAccessibilityNextScreen = nullptr;
+
+		// Must be done while the provider is still valid, or it'll proc an error
+		// from the provider, since UiaDisconnectProvider() calls get_ProviderOptions()
+		// and get_HostRawElementProvider().
+		ATUiaDisconnectProviderW32(p->AsRawElementProviderSimple());
+
+		p->Detach();
+
+		VDVERIFY(SUCCEEDED(UiaReturnRawElementProvider(mhwnd, 0, 0, nullptr)));
+	}
+
 	ATUISetDragDropSubTarget(nullptr, nullptr);
 
 	g_sim.GetUIRenderer()->RemoveIndicatorSafeHeightChangedHandler(&mIndicatorSafeAreaChangedFn);
@@ -1613,6 +1673,28 @@ ATUIKeyEvent ATDisplayPane::ConvertVirtKeyEvent(WPARAM wParam, LPARAM lParam) {
 	event.mbIsRepeat = (HIWORD(lParam) & KF_REPEAT) != 0;
 	event.mbIsExtendedKey = (HIWORD(lParam) & KF_EXTENDED) != 0;
 
+	// Fix some broken keys injected by the Windows 10/11 touch keyboard (_not_ osk.exe).
+	// These keys not only have an invalid scan code, but in some cases are missing the
+	// extended key flag as well.
+	const uint8 scanCode = (lParam >> 16) & 0xFF;
+
+	if (!scanCode && !event.mbIsExtendedKey && g_ATCVWorkaroundsWindowsTouchKeyboardCodes) {
+		switch(event.mVirtKey) {
+			case VK_LEFT:
+			case VK_RIGHT:
+			case VK_UP:
+			case VK_DOWN:
+			case VK_PRIOR:
+			case VK_NEXT:
+			case VK_INSERT:
+			case VK_DELETE:
+			case VK_HOME:
+			case VK_END:
+				event.mbIsExtendedKey = true;
+				break;
+		}
+	}
+
 	// Decode extended virt key.
 	switch(event.mExtendedVirtKey) {
 		case VK_RETURN:
@@ -1656,6 +1738,14 @@ void ATDisplayPane::ResetDisplay() {
 		mpDisplay->Reset();
 		mpDisplay->SetUse16Bit(g_ATOptions.mbDisplay16Bit);
 	}
+}
+
+void ATDisplayPane::SelectAll() {
+	g_pATVideoDisplayWindow->SelectAll();
+}
+
+void ATDisplayPane::Deselect() {
+	g_pATVideoDisplayWindow->Deselect();
 }
 
 void ATDisplayPane::Copy(ATTextCopyMode copyMode) {
@@ -1788,6 +1878,9 @@ void ATDisplayPane::WarpCapturedMouse() {
 void ATDisplayPane::UpdateTextDisplay(bool enabled) {
 	g_ATUINativeDisplay.SetIgnoreAutoFlipping(enabled);
 
+	if (mpAccessibilityProvider)
+		UpdateAccessibilityProvider();
+
 	if (!enabled) {
 		if (mbTextModeEnabled) {
 			mbTextModeEnabled = false;
@@ -1846,6 +1939,25 @@ void ATDisplayPane::UpdateTextModeFont() {
 		// Must be done after we have changed the font to reinitialize char dimensions based on char size.
 		g_pATVideoDisplayWindow->SetEnhancedTextEngine(nullptr);
 		g_pATVideoDisplayWindow->SetEnhancedTextEngine(mpEnhTextEngine);
+	}
+}
+
+void ATDisplayPane::UpdateAccessibilityProvider() {
+	if (!mpAccessibilityProvider)
+		return;
+
+	if (!UiaClientsAreListening()) {
+		mpAccessibilityProvider->Detach();
+		mpAccessibilityProvider = nullptr;
+		UiaReturnRawElementProvider(mhwnd, 0, 0, nullptr);
+		return;
+	}
+
+	g_pATVideoDisplayWindow->ReadScreen(*mpAccessibilityNextScreen);
+
+	if (*mpAccessibilityNextScreen != *mpAccessibilityCurrentScreen) {
+		std::swap(mpAccessibilityCurrentScreen, mpAccessibilityNextScreen);
+		mpAccessibilityProvider->SetScreen(mpAccessibilityCurrentScreen);
 	}
 }
 
@@ -1909,26 +2021,23 @@ void ATDisplayPane::OnOSKChange() {
 void ATDisplayPane::ResizeDisplay() {
 	UpdateFilterMode();
 
-	RECT r;
+	RECT r {};
 	GetClientRect(mhwnd, &r);
 
-	vdrect32 rd(r.left, r.top, r.right, r.bottom);
-	sint32 w = rd.width();
-	sint32 h = rd.height();
+	float viewportWidth = (float)r.right;
+	float viewportHeight = (float)r.bottom;
 
-	if (g_dispPadIndicators) {
-		h -= g_sim.GetUIRenderer()->GetIndicatorSafeHeight();
-	}
+	if (g_dispPadIndicators)
+		viewportHeight -= g_sim.GetUIRenderer()->GetIndicatorSafeHeight();
 
 	if (g_pATVideoDisplayWindow) {
 		vdrect32 rsafe = g_pATVideoDisplayWindow->GetOSKSafeArea();
 
-		h = std::min<sint32>(h, rsafe.height());
+		viewportHeight = std::min<sint32>(viewportHeight, rsafe.height());
 	}
 
-	int sw = 1;
-	int sh = 1;
-	g_sim.GetGTIA().GetFrameSize(sw, sh);
+	float w = viewportWidth;
+	float h = viewportHeight;
 
 	if (w < 1)
 		w = 1;
@@ -1936,63 +2045,90 @@ void ATDisplayPane::ResizeDisplay() {
 	if (h < 1)
 		h = 1;
 
+	const auto& gtia = g_sim.GetGTIA();
+
 	if (g_displayStretchMode == kATDisplayStretchMode_PreserveAspectRatio || g_displayStretchMode == kATDisplayStretchMode_IntegralPreserveAspectRatio) {
-		// NTSC-50 and PAL-60 are de-facto standards for when NTSC video needs to be played in
-		// a PAL environment or vice versa. PAL-60, for instance, involves munging NTSC video
-		// into a form good enough for a PAL decoder to accept. Therefore, we assume that the
-		// video uses NTSC pixel aspect ratio, but is displayed with PAL colors.
-		const bool pal = g_sim.GetVideoStandard() != kATVideoStandard_NTSC && g_sim.GetVideoStandard() != kATVideoStandard_PAL60;
-		const float desiredAspect = (pal ? 1.03964f : 0.857141f);
-		const float fsw = (float)sw * desiredAspect;
+		int sw = 1;
+		int sh = 1;
+		bool rgb32 = false;
+
+		gtia.GetRawFrameFormat(sw, sh, rgb32);
+
+		const float fsw = (float)sw * gtia.GetPixelAspectRatio();
 		const float fsh = (float)sh;
-		const float fw = (float)w;
-		const float fh = (float)h;
-		float zoom = std::min<float>(fw / fsw, fh / fsh);
+		float zoom = std::min<float>(w / fsw, h / fsh);
 
 		if (g_displayStretchMode == kATDisplayStretchMode_IntegralPreserveAspectRatio && zoom > 1) {
 			// We may have some small rounding errors, so give a teeny bit of leeway.
 			zoom = floorf(zoom * 1.0001f);
 		}
 
-		sint32 w2 = (sint32)(0.5f + fsw * zoom);
-		sint32 h2 = (sint32)(0.5f + fsh * zoom);
-
-		rd.left		= (w - w2) >> 1;
-		rd.right	= rd.left + w2;
-		rd.top		= (h - h2) >> 1;
-		rd.bottom	= rd.top + h2;
+		w = fsw * zoom;
+		h = fsh * zoom;
 	} else if (g_displayStretchMode == kATDisplayStretchMode_SquarePixels || g_displayStretchMode == kATDisplayStretchMode_Integral) {
-		int ratio = std::min<int>(w / sw, h / sh);
+		int sw = 1;
+		int sh = 1;
+		gtia.GetFrameSize(sw, sh);
+
+		float fsw = (float)sw;
+		float fsh = (float)sh;
+
+		float ratio = floorf(std::min<float>(w / fsw, h / fsh));
 
 		if (ratio < 1 || g_displayStretchMode == kATDisplayStretchMode_SquarePixels) {
-			if (w*sh < h*sw) {		// (w / sw) < (h / sh) -> w*sh < h*sw
+			if (w*fsh < h*fsw) {		// (w / sw) < (h / sh) -> w*sh < h*sw
 				// width is smaller ratio -- compute restricted height
-				int restrictedHeight = (sh * w + (sw >> 1)) / sw;
-
-				rd.top = (h - restrictedHeight) >> 1;
-				rd.bottom = rd.top + restrictedHeight;
+				h = (sh * w) / fsw;
 			} else {
 				// height is smaller ratio -- compute restricted width
-				int restrictedWidth = (sw * h + (sh >> 1)) / sh;
-
-				rd.left = (w - restrictedWidth) >> 1;
-				rd.right = rd.left+ restrictedWidth;
+				w = (sw * h) / sh;
 			}
 		} else {
-			int finalWidth = sw * ratio;
-			int finalHeight = sh * ratio;
-
-			rd.left = (w - finalWidth) >> 1;
-			rd.right = rd.left + finalWidth;
-
-			rd.top = (h - finalHeight) >> 1;
-			rd.bottom = rd.top + finalHeight;
+			w = sw * ratio;
+			h = sh * ratio;
 		}
 	}
+	
+	w *= g_displayZoom;
+	h *= g_displayZoom;
 
-	mDisplayRect = rd;
-	mpDisplay->SetDestRect(&rd, 0);
-	g_pATVideoDisplayWindow->SetDisplayRect(mDisplayRect);
+	vdfloat2 relativeSourceOrigin = vdfloat2(0.5f, 0.5f) - g_displayPan;
+
+	vdrect32f rd(
+		w * (relativeSourceOrigin.x - 1.0f),
+		h * (relativeSourceOrigin.y - 1.0f),
+		w * relativeSourceOrigin.x,
+		h * relativeSourceOrigin.y
+	);
+
+	rd.translate(viewportWidth * 0.5f, viewportHeight * 0.5f);
+
+	// try to pixel snap the rectangle if possible
+	vdrect32f error(
+		rd.left   - roundf(rd.left  ),
+		rd.top    - roundf(rd.top   ),
+		rd.right  - roundf(rd.right ),
+		rd.bottom - roundf(rd.bottom)
+	);
+
+	rd.translate(-0.5f*(error.left + error.right), -0.5f*(error.top + error.bottom));
+
+	if (mDisplayRectF != rd) {
+		mDisplayRectF = rd;
+
+		g_ATUIManager.Invalidate(nullptr);
+	}
+
+	vdrect32 ri;
+
+	ri.left = VDRoundToInt(mDisplayRectF.left);
+	ri.top = VDRoundToInt(mDisplayRectF.top);
+	ri.right = ri.left + VDRoundToInt(mDisplayRectF.width());
+	ri.bottom = ri.top + VDRoundToInt(mDisplayRectF.height());
+
+	if (mpDisplay)
+		mpDisplay->SetDestRectF(&mDisplayRectF, 0);
+	g_pATVideoDisplayWindow->SetDisplayRect(ri);
 }
 
 ///////////////////////////////////////////////////////////////////////////

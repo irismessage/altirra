@@ -168,6 +168,8 @@ struct ATDeviceSIORequest : public ATDeviceSIOCommand {
 
 class IATDeviceSIOManager {
 public:
+	static constexpr auto kTypeID = "IATDeviceSIOManager"_vdtypeid;
+
 	virtual void AddDevice(IATDeviceSIO *dev) = 0;
 	virtual void RemoveDevice(IATDeviceSIO *dev) = 0;
 
@@ -271,6 +273,9 @@ public:
 	// Returns true if the SIO ready line is asserted (high), which means that the computer
 	// is turned on.
 	virtual bool IsSIOReadyAsserted() const = 0;
+	
+	// Returns true if POKEY is in force break status and holding the SIO data out line down.
+	virtual bool IsSIOForceBreakAsserted() const = 0;
 
 	// Control SIO interrupt and proceed lines. These lines are normally high and active
 	// low if any device is pulling them low.
@@ -318,7 +323,10 @@ public:
 
 	virtual void OnCommandStateChanged(bool asserted) = 0;
 	virtual void OnMotorStateChanged(bool asserted) = 0;
+	virtual void OnBreakStateChanged(bool asserted) {}
+	virtual void OnBeginReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) {}
 	virtual void OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) = 0;
+	virtual void OnTruncateByte() {}
 	virtual void OnSendReady() = 0;
 };
 

@@ -1468,7 +1468,9 @@ for(;;) {
 				if (newEmuFlag != mbEmulationFlag) {
 					rP &= ~kFlagC;
 					if (mbEmulationFlag)
-						rP |= kFlagC | kFlagM | kFlagX;
+						rP |= kFlagC;
+
+					rP |= kFlagM | kFlagX;
 
 					mbEmulationFlag = newEmuFlag;
 					ATCP_SWITCH_DECODE_TABLES();
@@ -1509,13 +1511,13 @@ for(;;) {
 
 		case kStatePushPCLNative:
 			AT_CPU_WRITE_BYTE_HL(rSH, rS, rPC & 0xff);
-			if (!rS--)
+			if (!rS-- && !mbEmulationFlag)
 				--rSH;
 			END_SUB_CYCLE();
 
 		case kStatePushPCHNative:
 			AT_CPU_WRITE_BYTE_HL(rSH, rS, rPC >> 8);
-			if (!rS--)
+			if (!rS-- && !mbEmulationFlag)
 				--rSH;
 			END_SUB_CYCLE();
 
@@ -1538,6 +1540,8 @@ for(;;) {
 			if (!++rS)
 				++rSH;
 			rData = AT_CPU_READ_BYTE_HL(rSH, rS);
+			if (mbEmulationFlag)
+				rSH = 1;
 			END_SUB_CYCLE();
 
 		case kStatePopL16:

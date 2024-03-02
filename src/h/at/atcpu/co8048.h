@@ -53,6 +53,7 @@ public:
 	void SetXRAMWriteHandler(const vdfunction<void(uint8, uint8)>& fn);
 	void SetPortReadHandler(const vdfunction<uint8(uint8, uint8)>& fn);
 	void SetPortWriteHandler(const vdfunction<void(uint8, uint8)>& fn);
+	void SetBusReadHandler(const vdfunction<uint8()>& fn);
 	void SetBreakpointMap(const bool bpMap[65536], IATCPUBreakpointHandler *bphandler);
 
 	const uint8 *GetInternalRAM() const { return mRAM; }
@@ -97,6 +98,7 @@ private:
 	bool	mbIrqEnabled = false;
 	bool	mbIrqPending = false;
 	bool	mbIrqAttention = false;
+	bool	mbTimerIrqPending = false;
 
 	uint16		mPC = 0;
 	sint32		mCyclesLeft = 0;
@@ -119,6 +121,7 @@ private:
 	vdfunction<void(uint8, uint8)> mpFnWriteXRAM;
 	vdfunction<uint8(uint8, uint8)> mpFnReadPort;
 	vdfunction<void(uint8, uint8)> mpFnWritePort;
+	vdfunction<uint8()> mpFnReadBus;
 	
 	alignas(2) uint8	mRAM[256];
 

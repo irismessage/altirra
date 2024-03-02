@@ -27,10 +27,6 @@
 ///////////////////////////////////////////////////////////////////////////
 
 namespace {
-	inline sint32 scale32x32_fp16(sint32 x, sint32 y) {
-		return (sint32)(((sint64)x * y + 0x8000) >> 16);
-	}
-
 	inline double sinc(double x) {
 		return fabs(x) < 1e-9 ? 1.0 : sin(x) / x;
 	}

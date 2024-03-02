@@ -113,6 +113,7 @@ void ATFLACReconstructLPC_Narrow_SSE2_Impl(sint32 *__restrict y, uint32 n, const
 }
 
 template<int Order>
+VD_CPU_TARGET("ssse3")
 void ATFLACReconstructLPC_Narrow_SSSE3_Impl(sint32 *__restrict y, uint32 n, const sint32 *__restrict lpcCoeffs, int qlpShift) {
 	__m128i pipe0;
 	__m128i coeff0;
@@ -200,6 +201,7 @@ void ATFLACReconstructLPC_Narrow_SSSE3_Impl(sint32 *__restrict y, uint32 n, cons
 }
 
 template<int Order>
+VD_CPU_TARGET("ssse3")
 void ATFLACReconstructLPC_Medium_SSSE3_Impl(sint32 *__restrict y, uint32 n, const sint32 *__restrict lpcCoeffs, int qlpShift) {
 	__m128i pipel0;
 	__m128i pipeh0;
@@ -247,6 +249,8 @@ void ATFLACReconstructLPC_Medium_SSSE3_Impl(sint32 *__restrict y, uint32 n, cons
 	}
 
 	__m128i vshift = _mm_cvtsi32_si128(qlpShift);
+	__m128i ubias1 = _mm_set1_epi32(-0x7FFFFFFF - 1);
+	__m128i ubias2 = _mm_set1_epi32((uint32)((UINT64_C(0x80000000) * ((1 << 12) + 1)) >> qlpShift));
 
 	// run the pipeline -- note that we must specifically NOT using saturating adds here,
 	// as we can rely on temporary overflows getting corrected back into range for the final
@@ -279,14 +283,18 @@ void ATFLACReconstructLPC_Medium_SSSE3_Impl(sint32 *__restrict y, uint32 n, cons
 			predvh = _mm_add_epi32(predvh, _mm_slli_epi64(predvh, 32));
 		}
 
+		// convert to unsigned as 64-bit arithmetic shifts aren't a thing in SSSE3
+		predvl = _mm_add_epi32(predvl, ubias1);
+		predvh = _mm_add_epi32(predvh, ubias1);
+
 		// merge high-low
-		__m128i predv = _mm_add_epi64(_mm_slli_epi64(_mm_srai_epi64(predvh, 32), 12), _mm_srai_epi64(predvl, 32));
+		__m128i predv = _mm_add_epi64(_mm_slli_epi64(_mm_srli_epi64(predvh, 32), 12), _mm_srli_epi64(predvl, 32));
 
-		// apply quantization shift
-		predv = _mm_sra_epi64(predv, vshift);
+		// apply quantization shift - shift is 0-31 so we don't need sign extension
+		predv = _mm_srl_epi64(predv, vshift);
 
-		// add residual
-		__m128i v = _mm_add_epi32(predv, _mm_cvtsi32_si128(y[Order]));
+		// remove ubias and add residual
+		__m128i v = _mm_add_epi32(predv, _mm_sub_epi32(_mm_cvtsi32_si128(y[Order]), ubias2));
 
 		// write new sample
 		y[Order] = _mm_cvtsi128_si32(v);
@@ -367,17 +375,17 @@ void ATFLACReconstructLPC_Medium_SSSE3(sint32 *y, uint32 n, const sint32 *lpcCoe
 	}
 }
 
+VD_CPU_TARGET("pclmul,ssse3")
 VDNOINLINE uint16 ATFLACUpdateCRC16_PCMUL(uint16 crc16v, const void *buf, size_t n) {
 	const uint8 *__restrict p = (const uint8 *)buf;
 
 	__m128i endianSwap = _mm_set_epi8(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15);
 
-	const auto updateSmall = [=](__m128i crc16, const uint8 *__restrict p, size_t n) -> __m128i {
-		__m128i buf = _mm_setzero_si128();
+	const auto updateSmall = [=](__m128i crc16, const uint8 *__restrict p, size_t n) VD_CPU_TARGET_LAMBDA("pclmul,ssse3") -> __m128i {
+		alignas(16) char buf[16] {};
+		memcpy(buf + 16 - n, p, n);
 
-		memcpy(buf.m128i_u8 + 16 - n, p, n);
-
-		__m128i v = _mm_shuffle_epi8(buf, endianSwap);
+		__m128i v = _mm_shuffle_epi8(_mm_load_si128((const __m128i *)buf), endianSwap);
 
 		// table of x^8^(i+1) mod P
 		static constexpr uint32 k[23] {

@@ -21,7 +21,9 @@
 #ifndef f_AT_ATCORE_SERIALIZATION_H
 #define f_AT_ATCORE_SERIALIZATION_H
 
+#include <vd2/system/error.h>
 #include <vd2/system/refcount.h>
+#include <vd2/system/VDString.h>
 #include <at/atcore/serializable.h>
 #include <at/atcore/enumparse.h>
 
@@ -33,7 +35,11 @@ class VDStringA;
 class VDStringW;
 template<typename T, typename A> class vdfastvector;
 
-class ATSerializationException {};
+class ATSerializationException : public MyError {
+public:
+	ATSerializationException();
+};
+
 class ATSerializationCastException final : public ATSerializationException {};
 class ATSerializationNullReferenceException final : public ATSerializationException {};
 
@@ -77,18 +83,44 @@ static constexpr ATSerializationTypeDef ATMakeSerializationTypeDef(const char *n
 	return ATSerializationTypeDef { name, ATSerializationTypeDef::CTHash(name), ATSerializationTypeDef::Factory<T> };
 }
 
-#define ATSERIALIZATION_DEFINE(name) extern const ATSerializationTypeDef g_ATSerTypeDef_##name = ATMakeSerializationTypeDef<name>(#name);
-#define ATSERIALIZATION_REGISTER(name) extern const ATSerializationTypeDef g_ATSerTypeDef_##name; ATSerializationRegisterType(ATSerializationTypeRef<name>, g_ATSerTypeDef_##name)
-
 void ATSerializationRegisterType(const ATSerializationTypeDef *& ref, const ATSerializationTypeDef& def);
 const ATSerializationTypeDef *ATSerializationFindType(const char *name);
 vdrefptr<IATSerializable> ATSerializationCreateObject(const ATSerializationTypeDef& def);
 
+template<size_t N>
+struct ATSerializationStaticName {
+	constexpr ATSerializationStaticName(const char (&name)[N]) {
+		for(size_t i=0; i<N; ++i) {
+			mName[i] = name[i];
+		}
+	}
+
+	char mName[N];
+};
+
+template<typename T, ATSerializationStaticName T_Name>
+struct ATSerializationAutoRegister {
+	ATSerializationAutoRegister() {
+		ATSerializationRegisterType(ATSerializationTypeRef<T>, sTypeDef);
+	}
+
+	const ATSerializationTypeDef& GetTypeDef() const {
+		return sTypeDef;
+	}
+
+	static inline constexpr ATSerializationTypeDef sTypeDef = ATMakeSerializationTypeDef<T>(T_Name.mName);
+};
+
+template<typename T, ATSerializationStaticName T_Name>
+const ATSerializationAutoRegister<T, T_Name> g_ATSerializationAutoRegister {};
+
 class IATSerializationOutput {
 public:
 	virtual void CreateMember(const char *key) = 0;
-	virtual void OpenArray() = 0;
+	virtual void OpenArray(bool compact) = 0;
 	virtual void CloseArray() = 0;
+	virtual void OpenObject(const char *key) = 0;
+	virtual void CloseObject() = 0;
 	virtual void WriteStringA(VDStringSpanA s) = 0;
 	virtual void WriteStringW(VDStringSpanW s) = 0;
 	virtual void WriteBool(bool v) = 0;
@@ -130,15 +162,16 @@ public:
 	T Read(const char *key) = delete;
 
 	template<typename T>
-	T ReadEnum(const char *key) {
-		const VDStringA& s = Read<VDStringA>(key);
+	T ReadEnum(const char *key);
 
-		return ATParseEnum<T>(s).mValue;
-	}
-
-	template<typename T, typename = std::enable_if_t<std::is_convertible_v<T, const IATSerializable *>>, typename=int>
+	template<typename T> requires std::is_convertible_v<T, const IATSerializable *>
 	T *ReadReference(const char *key) {
 		return static_cast<T *>(ReadReference(key, ATSerializationTypeRef<std::remove_cv_t<T>>));
+	}
+	
+	template<typename T>
+	void Transfer(const T&) {
+		static_assert(std::is_same_v<T, void>, "Transfer() requires a key name");
 	}
 
 	template<typename T>
@@ -146,14 +179,21 @@ public:
 		*p = Read<T>(key);
 	}
 
-	template<typename T, typename = std::enable_if_t<std::is_convertible_v<T *, const IATSerializable *>>>
+	template<typename T> requires std::is_convertible_v<T *, const IATSerializable *>
 	void Transfer(const char *key, vdrefptr<T> *p) {
 		*p = static_cast<T *>(ReadReference(key, ATSerializationTypeRef<std::remove_cv_t<T>>));
 	}
 
-	template<typename T, typename = std::enable_if_t<std::is_convertible_v<T *, const IATSerializable *>>>
+	template<typename T> requires std::is_convertible_v<T *, const IATSerializable *>
 	void Transfer(const char *key, T **p) {
 		*p = static_cast<T *>(ReadReference(key, ATSerializationTypeRef<std::remove_cv_t<T>>));
+	}
+
+	template<ATExchangeable T>
+	void Transfer(const char *key, T *p) {
+		mInput.OpenObject(key);
+		p->Exchange(*this);
+		mInput.Close();
 	}
 
 	template<typename T, size_t N>
@@ -163,6 +203,11 @@ public:
 
 	template<typename T>
 	void TransferEnum(const char *key, T *p) {
+		*p = ReadEnum<T>(key);
+	}
+
+	template<typename T> requires std::is_enum_v<T>
+	void Transfer(const char *key, T *p) {
 		*p = ReadEnum<T>(key);
 	}
 
@@ -178,8 +223,22 @@ public:
 	void Transfer(const char *key, sint64 *p, size_t n);
 	void Transfer(const char *key, float *p, size_t n);
 	void Transfer(const char *key, double *p, size_t n);
+	void Transfer(const char *key, VDStringA *p, size_t n);
+	void Transfer(const char *key, VDStringW *p, size_t n);
 
-	template<typename T, typename = std::enable_if_t<std::is_convertible_v<T *, const IATSerializable *>>>
+	template<ATExchangeable T>
+	void Transfer(const char *key, T *p, size_t n) {
+		if (key)
+			mInput.OpenArray(key);
+
+		while(n--)
+			Transfer(nullptr, p++);
+
+		if (key)
+			mInput.Close();
+	}
+
+	template<typename T> requires std::is_convertible_v<T *, const IATSerializable *>
 	void Transfer(const char *key, T **p, size_t n) {
 		if (key)
 			mInput.OpenArray(key);
@@ -191,7 +250,7 @@ public:
 			mInput.Close();
 	}
 
-	template<typename T, typename = std::enable_if_t<std::is_convertible_v<T *, const IATSerializable *>>>
+	template<typename T> requires std::is_convertible_v<T *, const IATSerializable *>
 	void Transfer(const char *key, vdrefptr<T> *p, size_t n) {
 		if (key)
 			mInput.OpenArray(key);
@@ -216,6 +275,17 @@ public:
 
 	template<typename T, typename A>
 	void Transfer(const char *key, vdvector<T, A> *p) {
+		uint32 n = mInput.OpenArray(key);
+
+		p->resize(n);
+		if (n)
+			Transfer(nullptr, p->data(), n);
+
+		mInput.Close();
+	}
+
+	template<typename T, typename A>
+	void Transfer(const char *key, vdblock<T, A> *p) {
 		uint32 n = mInput.OpenArray(key);
 
 		p->resize(n);
@@ -250,6 +320,13 @@ template<> double	ATDeserializer::Read<double	>(const char *key);
 template<> VDStringA	ATDeserializer::Read<VDStringA>(const char *key);
 template<> VDStringW	ATDeserializer::Read<VDStringW>(const char *key);
 
+template<typename T>
+T ATDeserializer::ReadEnum(const char *key) {
+	const VDStringA& s = Read<VDStringA>(key);
+
+	return ATParseEnum<T>(s).mValue;
+}
+
 class ATSerializer {
 public:
 	enum : bool { IsReader = false, IsWriter = true };
@@ -263,8 +340,11 @@ public:
 	void Write(const char *key, T v) = delete;
 
 	template<typename T>
-	void WriteEnum(const char *key, T v) {
-		Write<const VDStringSpanA&>(key, VDStringSpanA(ATEnumToString(v)));
+	void WriteEnum(const char *key, T v);
+
+	template<typename T>
+	void Transfer(const T&) {
+		static_assert(std::is_same_v<T, void>, "Transfer() requires a key name");
 	}
 
 	inline void Transfer(const char *key, const bool *p);
@@ -281,12 +361,12 @@ public:
 	inline void Transfer(const char *key, const VDStringSpanA *p);
 	inline void Transfer(const char *key, const VDStringSpanW *p);
 
-	template<typename T, typename = std::enable_if_t<std::is_convertible_v<T *, const IATSerializable *>>>
+	template<typename T> requires std::is_convertible_v<T *, const IATSerializable *>
 	void Transfer(const char *key, T *const *p) {
 		WriteReference(key, *p);
 	}
 
-	template<typename T, typename = std::enable_if_t<std::is_convertible_v<T *, const IATSerializable *>>>
+	template<typename T> requires std::is_convertible_v<T *, const IATSerializable *>
 	void Transfer(const char *key, const vdrefptr<T> *p) {
 		WriteReference(key, *p);
 	}
@@ -298,6 +378,11 @@ public:
 
 	template<typename T>
 	void TransferEnum(const char *key, const T *p) {
+		WriteEnum(key, *p);
+	}
+
+	template<typename T> requires std::is_enum_v<T>
+	void Transfer(const char *key, const T *p) {
 		WriteEnum(key, *p);
 	}
 
@@ -313,11 +398,15 @@ public:
 	void Transfer(const char *key, const sint64 *p, size_t n);
 	void Transfer(const char *key, const float *p, size_t n);
 	void Transfer(const char *key, const double *p, size_t n);
+	void Transfer(const char *key, const VDStringSpanA *p, size_t n);
+	void Transfer(const char *key, const VDStringSpanW *p, size_t n);
+	void Transfer(const char *key, const VDStringA *p, size_t n);
+	void Transfer(const char *key, const VDStringW *p, size_t n);
 
-	template<typename T, typename = std::enable_if_t<std::is_convertible_v<T *, const IATSerializable *>>>
-	void Transfer(const char *key, T *const *p, size_t n) {
+	template<ATExchangeable T>
+	void Transfer(const char *key, const T *p, size_t n) {
 		mOutput.CreateMember(key);
-		mOutput.OpenArray();
+		mOutput.OpenArray(false);
 
 		while(n--)
 			Transfer(nullptr, p++);
@@ -325,10 +414,21 @@ public:
 		mOutput.CloseArray();
 	}
 
-	template<typename T, typename = std::enable_if_t<std::is_convertible_v<T *, const IATSerializable *>>>
+	template<typename T> requires std::is_convertible_v<T *, const IATSerializable *>
+	void Transfer(const char *key, T *const *p, size_t n) {
+		mOutput.CreateMember(key);
+		mOutput.OpenArray(false);
+
+		while(n--)
+			Transfer(nullptr, p++);
+
+		mOutput.CloseArray();
+	}
+
+	template<typename T> requires std::is_convertible_v<T *, const IATSerializable *>
 	void Transfer(const char *key, const vdrefptr<T> *p, size_t n) {
 		mOutput.CreateMember(key);
-		mOutput.OpenArray();
+		mOutput.OpenArray(false);
 
 		while(n--)
 			Transfer(nullptr, p++);
@@ -346,6 +446,17 @@ public:
 		Transfer(key, v->data(), v->size());
 	}
 
+	template<typename T, typename A>
+	void Transfer(const char *key, const vdblock<T, A> *v) {
+		Transfer(key, v->data(), v->size());
+	}
+
+	template<ATExchangeable T>
+	void Transfer(const char *key, const T *p) {
+		mOutput.OpenObject(key);
+		p->Exchange(*this);
+		mOutput.CloseObject();
+	}
 private:
 	void WriteReference(const char *key, IATSerializable *p);
 
@@ -367,6 +478,11 @@ template<> void ATSerializer::Write<ATSerializationObjectId>(const char *key, AT
 template<> void ATSerializer::Write<const VDStringSpanA&>(const char *key, const VDStringSpanA& v);
 template<> void ATSerializer::Write<const VDStringSpanW&>(const char *key, const VDStringSpanW& v);
 
+template<typename T>
+void ATSerializer::WriteEnum(const char *key, T v) {
+	Write<const VDStringSpanA&>(key, VDStringSpanA(ATEnumToString(v)));
+}
+
 inline void ATSerializer::Transfer(const char *key, const VDStringSpanA *p) { Write<const VDStringSpanA&>(key, *p); }
 inline void ATSerializer::Transfer(const char *key, const VDStringSpanW *p) { Write<const VDStringSpanW&>(key, *p); }
 inline void ATSerializer::Transfer(const char *key, const bool *p) { Write(key, *p); }
@@ -381,12 +497,12 @@ inline void ATSerializer::Transfer(const char *key, const sint64 *p) { Write(key
 inline void ATSerializer::Transfer(const char *key, const float *p) { Write(key, *p); }
 inline void ATSerializer::Transfer(const char *key, const double *p) { Write(key, *p); }
 
-template<typename T, typename = std::enable_if_t<std::is_pointer_v<T>>>
+template<typename T> requires std::is_pointer_v<T>
 T atser_cast(std::conditional_t<std::is_const_v<std::remove_pointer_t<T>>, const IATSerializable *, IATSerializable *> src) {
 	return src && &src->GetSerializationType() == ATSerializationTypeRef<std::remove_const_t<std::remove_pointer_t<T>>> ? static_cast<T>(src) : nullptr;
 }
 
-template<typename T, typename = std::enable_if_t<std::is_reference_v<T>>>
+template<typename T> requires(std::is_reference_v<T>)
 T atser_cast(std::conditional_t<std::is_const_v<std::remove_reference_t<T>>, const IATSerializable&, IATSerializable&> src) {
 	if (&src.GetSerializationType() != ATSerializationTypeRef<std::remove_const_t<std::remove_reference_t<T>>>)
 		throw ATSerializationCastException();
@@ -394,7 +510,7 @@ T atser_cast(std::conditional_t<std::is_const_v<std::remove_reference_t<T>>, con
 	return static_cast<T>(src);
 }
 
-template<typename T, typename = std::enable_if_t<!std::is_reference_v<T> && !std::is_pointer_v<T> && !std::is_const_v<T>>>
+template<typename T> requires(!std::is_reference_v<T> && !std::is_pointer_v<T> && !std::is_const_v<T>)
 const T& atser_unpack(const IATSerializable *src) {
 	if (!src)
 		throw ATSerializationNullReferenceException();

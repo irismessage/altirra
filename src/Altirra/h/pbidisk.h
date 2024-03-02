@@ -31,6 +31,8 @@ class ATPBIDiskEmulator final : public ATDevice
 	, public ATDeviceSIO
 {
 public:
+	ATPBIDiskEmulator();
+
 	void *AsInterface(uint32 iid) override;
 
 	void GetDeviceInfo(ATDeviceInfo& info) override;

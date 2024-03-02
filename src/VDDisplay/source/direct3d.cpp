@@ -39,6 +39,7 @@
 #include <vd2/VDDisplay/direct3d.h>
 #include <vd2/VDDisplay/display.h>
 #include <vd2/VDDisplay/logging.h>
+#include <vd2/VDDisplay/internal/options.h>
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -736,27 +737,11 @@ bool VDD3D9Manager::Init() {
 	mPresentParms.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
 
 	HRESULT hr;
-
-	// Look for the NVPerfHUD 2.0 driver
 	
 	const UINT adapters = mpD3D->GetAdapterCount();
 	DWORD dwFlags = D3DCREATE_FPU_PRESERVE | D3DCREATE_NOWINDOWCHANGES;
 	UINT adapter = D3DADAPTER_DEFAULT;
 	D3DDEVTYPE type = D3DDEVTYPE_HAL;
-	bool perfHudActive = false;
-
-	for(UINT n=0; n<adapters; ++n) {
-		D3DADAPTER_IDENTIFIER9 ident;
-
-		if (SUCCEEDED(mpD3D->GetAdapterIdentifier(n, 0, &ident))) {
-			if (strstr(ident.Description, "PerfHUD")) {
-				adapter = n;
-				type = D3DDEVTYPE_REF;
-				perfHudActive = true;
-				break;
-			}
-		}
-	}
 
 	if (adapter == D3DADAPTER_DEFAULT && mhMonitor) {
 		for(UINT n=0; n<adapters; ++n) {
@@ -788,13 +773,8 @@ bool VDD3D9Manager::Init() {
 		return false;
 	}
 
-	if (perfHudActive) {
-		mPresentParms.BackBufferWidth	= mode.Width;
-		mPresentParms.BackBufferHeight	= mode.Height;
-	} else {
-		mPresentParms.BackBufferWidth	= 32;
-		mPresentParms.BackBufferHeight	= 32;
-	}
+	mPresentParms.BackBufferWidth	= 32;
+	mPresentParms.BackBufferHeight	= 32;
 
 	if (mpD3DDeviceEx)
 		mPresentParms.Flags |= D3DPRESENTFLAG_UNPRUNEDMODE;
@@ -829,6 +809,8 @@ bool VDD3D9Manager::Init() {
 		return false;
 	}
 
+	ModifyDeviceCaps(mDevCaps);
+
 	if (mDevCaps.VertexShaderVersion >= D3DVS_VERSION(1, 1))
 		dwFlags |= D3DCREATE_HARDWARE_VERTEXPROCESSING;
 	else
@@ -859,6 +841,8 @@ bool VDD3D9Manager::Init() {
 		Shutdown();
 		return false;
 	}
+
+	ModifyDeviceCaps(mDevCaps);
 
 	VDDEBUG_D3D("VideoDisplay/DX9: Successfully created Direct3D 9%s device.", mpD3DEx ? "Ex" : "");
 	VDDEBUG_D3D("Device: %s (%s)", mAdapterIdentifier.Driver, mAdapterIdentifier.Description);
@@ -1146,6 +1130,24 @@ bool VDD3D9Manager::UpdateCachedDisplayMode() {
 
 
 	return true;
+}
+
+void VDD3D9Manager::ModifyDeviceCaps(D3DCAPS9& caps) {
+	if (VDDInternalOptions::sbD3D9LimitPS2_0 && caps.PixelShaderVersion >= D3DPS_VERSION(2, 0)) {
+		caps.VertexShaderVersion = D3DVS_VERSION(2, 0);
+		caps.PixelShaderVersion = D3DPS_VERSION(2, 0);
+
+		if (!(caps.TextureCaps & D3DPTEXTURECAPS_POW2))
+			caps.TextureCaps |= D3DPTEXTURECAPS_NONPOW2CONDITIONAL;
+	}
+
+	if (VDDInternalOptions::sbD3D9LimitPS1_1 && caps.PixelShaderVersion >= D3DPS_VERSION(1, 1)) {
+		caps.VertexShaderVersion = D3DVS_VERSION(1, 1);
+		caps.PixelShaderVersion = D3DPS_VERSION(1, 1);
+
+		caps.TextureCaps |= D3DPTEXTURECAPS_POW2;
+		caps.TextureCaps &= ~D3DPTEXTURECAPS_NONPOW2CONDITIONAL;
+	}
 }
 
 void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh, bool use16bit, HWND hwnd) {

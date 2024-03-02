@@ -61,7 +61,6 @@ source\Shared\sysdev816.s \
 source\Shared\vbi816.s
 
 NOKERNEL_SRCFILES = source\nokernel\main.xasm
-BASIC_SRCFILES = source\basic\main.xasm
 SUPERKERNEL_SRCFILES = source\superkernel\main.xasm source\superkernel\includes.xasm
 NOCARTRIDGE_SRCFILES = source\nocartridge\main.s
 ATDISKLOADER_SRCFILES = source\ATDiskLoader\main.s
@@ -74,7 +73,7 @@ SOFTKICK_SRCFILES = source\softkick.s
 VERSION_SRCFILES =
 
 all: madscheck atcompilercheck kernel kernelxl kernelxlsoftkick kernel816 \
-	nokernel basic superkernel nocartridge \
+	nokernel superkernel nocartridge \
 	atdiskloader64 atdiskloader128 \
 	nohdbios nomio noblackbox \
 	nogame ultimate bootsecdos2 \
@@ -90,7 +89,6 @@ clean:
 	if exist "$(OUT)\kernelxl.rom" del "$(OUT)\kernelxl.rom"
 	if exist "$(OUT)\kernel816.rom" del "$(OUT)\kernel816.rom"
 	if exist "$(OUT)\nokernel.rom" del "$(OUT)\nokernel.rom"
-	if exist "$(OUT)\basic.rom" del "$(OUT)\basic.rom"
 	if exist "$(OUT)\superkernel.rom" del "$(OUT)\superkernel.rom"
 	if exist "$(OUT)\nocartridge.rom" del "$(OUT)\nocartridge.rom"
 	if exist "$(OUT)\atdiskloader64.bin" del "$(OUT)\atdiskloader64.bin"
@@ -129,8 +127,6 @@ kernelxlsoftkick: $(OUT)\kernelxlsoftkick.xex
 kernel816: $(OUT)\kernel816.rom
 
 nokernel: $(OUT)\nokernel.rom
-
-basic: $(OUT)\basic.rom
 
 superkernel: $(OUT)\superkernel.rom
 
@@ -175,7 +171,7 @@ $(OUT)\Additions.atr: $(INT)\dos.sys source\Additions\filelist.txt $(INT)\boot85
 		$(INT)\xep80.sys $(INT)\xep80u.sys $(INT)\xep80p.sys $(INT)\xep80up.sys $(INT)\xep80sdx.sys \
 		$(INT)\boot1030.xex $(INT)\thnd1030.xex $(INT)\autorun.sys $(INT)\atbasicx.xex $(INT)\sx212.xex \
 		$(INT)\colormap.xex $(INT)\additions-license.txt $(INT)\loadexe.xex $(INT)\xepvhold.xex $(INT)\xepvhldp.xex \
-		$(INT)\atdebugx.sys
+		$(INT)\atdebugx.sys $(INT)\phload.xex
 	@"$(ATCOMPILER)" mkfsdos2 source\Additions\filelist.txt $(INT)\ $(OUT)\Additions.atr
 
 $(OUT)\kernel.rom: $(SRCFILES) $(SHARED_SRCFILES)
@@ -195,9 +191,6 @@ $(OUT)\kernel816.rom: $(SRCFILES) $(SHARED_SRCFILES) $(SHARED_SRCFILES816) $(VER
 
 $(OUT)\nokernel.rom: $(NOKERNEL_SRCFILES) $(SHARED_SRCFILESMIN)
 	@"$(MADS)"  -s -p -i:source\shared -b:$$c000 -l:$(OUT)\nokernel.lst -o:$(OUT)\nokernel.rom source\nokernel\main.xasm
-
-$(OUT)\basic.rom: $(BASIC_SRCFILES)
-	@"$(MADS)"  -s -p -b:$$a000 -l:$(OUT)\basic.lst -o:$(OUT)\basic.rom source\basic\main.xasm
 
 $(OUT)\superkernel.rom: $(SUPERKERNEL_SRCFILES)
 	@"$(MADS)"  -s -p -i:source\shared -b:$$f800 -l:$(OUT)\superkernel.lst -o:$(OUT)\superkernel.rom source\superkernel\main.xasm
@@ -428,3 +421,6 @@ $(INT)\rapidflash.lzrom: $(OUT)\rapidflash.bin
 
 $(INT)\atdebugx.sys: $(SHARED_SRCFILESINC) source\Additions\atdebugx.s
 	@"$(MADS)" -s -p -i:source\Shared -i:$(INT) -t:$(INT)\atdebugx.lab -l:$(INT)\atdebugx.lst -o:$(INT)\atdebugx.sys source\Additions\atdebugx.s
+
+$(INT)\phload.xex: $(SHARED_SRCFILESINC) source\Additions\phload.s
+	@"$(MADS)" -s -p -i:source\Shared -i:$(INT) -t:$(INT)\phload.lab -l:$(INT)\phload.lst -o:$(INT)\phload.xex source\Additions\phload.s

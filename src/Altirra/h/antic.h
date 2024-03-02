@@ -48,6 +48,8 @@ public:
 	virtual void AnticAssertNMI_DLI() = 0;
 	virtual void AnticAssertNMI_VBI() = 0;
 	virtual void AnticAssertNMI_RES() = 0;
+	virtual void AnticAssertRDY() = 0;
+	virtual void AnticNegateRDY() = 0;
 	virtual void AnticEndFrame() = 0;
 	virtual void AnticEndScanline() = 0;
 	virtual bool AnticIsNextCPUCycleWrite() = 0;
@@ -151,6 +153,7 @@ public:
 	void SyncWithGTIA(int offset);
 	void Decode(int offset);
 
+	sint32 ReadBackWriteRegister(uint8 reg) const;
 	uint8 ReadByte(uint8 reg) const;
 	void WriteByte(uint8 reg, uint8 value);
 
@@ -165,7 +168,8 @@ public:
 	void	EndLoadState(ATSaveStateReader& reader);
 
 	void	SaveState(IATObjectState **p);
-	void	LoadState(const IATObjectState& state);
+	void	LoadState(const IATObjectState *state);
+	void	LoadState(const class ATSaveStateAntic& state);
 
 	void	GetRegisterState(ATAnticRegisterState& state) const;
 

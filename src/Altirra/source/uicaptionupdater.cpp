@@ -673,7 +673,7 @@ bool ATUIWindowCaptionUpdater::SetTemplate(const char *s, uint32 *errorPos) {
 		VDVERIFY(parser.Parse(ATUIGetDefaultWindowCaptionTemplate()));
 	}
 
-	mTemplateCode = std::move(parser.GetTemplate());
+	mTemplateCode = parser.GetTemplate();
 
 	MarkDirty();
 	return true;
@@ -762,7 +762,7 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 
 		bool basic = mpSim->IsBASICEnabled();
 
-		if (mLastHardwareMode != kATHardwareMode_800XL && mLastHardwareMode != kATHardwareMode_XEGS && mLastHardwareMode != kATHardwareMode_130XE)
+		if (!kATHardwareModeTraits[mLastHardwareMode].mbInternalBASIC)
 			basic = false;
 
 		DetectChange(change, mbLastBASICState, basic);
@@ -892,6 +892,10 @@ void ATUIWindowCaptionUpdater::ExecuteTemplateCode() {
 								mTemplate += L"XEGS";
 								break;
 
+							case kATHardwareMode_1400XL:
+								mTemplate += L"1400XL";
+								break;
+
 							case kATHardwareMode_5200:
 								mTemplate += L"5200";
 								break;
@@ -920,18 +924,7 @@ void ATUIWindowCaptionUpdater::ExecuteTemplateCode() {
 										break;
 
 									case kATFirmwareId_Kernel_LLEXL:
-										switch(mLastHardwareMode) {
-											case kATHardwareMode_800XL:
-											case kATHardwareMode_1200XL:
-											case kATHardwareMode_XEGS:
-											case kATHardwareMode_130XE:
-												mTemplate += L"ATOS";
-												break;
-
-											default:
-												mTemplate += L"ATOS/XL";
-												break;
-										}
+										mTemplate += L"ATOS";
 										break;
 
 									case kATFirmwareId_Kernel_816:

@@ -648,3 +648,43 @@ void ATFFT_DIF_Radix4_NEON(float *y0, const float *w4, int N, int logStep) {
 		case 12: ATFFT_DIF_Radix4_NEON<12>(y0, w4, N); break;
 	}
 }
+
+/////////////////////////////////////////////////////////////////////////////
+
+void ATFFT_MultiplyAdd_NEON(float *VDRESTRICT dst, const float *VDRESTRICT src1, const float *VDRESTRICT src2, int N) {
+	const int N2 = N >> 1;
+	const uint32x4_t inv_even = vshll_n_u16(vmov_n_u64(0x0000800000008000ULL), 16);
+	for(int i=0; i<N2; ++i) {
+		const float32x4_t ri1 = vld1q_f32(src1);
+		src1 += 4;
+
+		const float32x4_t ri2 = vld1q_f32(src2);
+		src2 += 4;
+
+		//    r      i
+		//  r1*r2  i1*r2
+		// -i1*i2  r1*i2
+
+		const float32x4_t rr2 = vtrn1q_f32(ri2, ri2);
+		const float32x4_t ii2 = vtrn2q_f32(ri2, ri2);
+		const float32x4_t nir1 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(vrev64q_f32(ri1)), inv_even));
+
+		vst1q_f32(dst,
+			vmlaq_f32(
+				vmlaq_f32(vld1q_f32(dst), ri1, rr2),
+				nir1,
+				ii2
+			)
+		);
+
+		dst += 4;
+	}
+
+	// patch DC and Nyquist values
+	// first two values are real DC and fsc*0.5, rest are complex
+	dst -= 4*N2;
+	src1 -= 4*N2;
+	src2 -= 4*N2;
+
+	vst1_f32(dst, vmla_f32(vld1_f32(dst), vld1_f32(src1), vld1_f32(src2)));
+}

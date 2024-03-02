@@ -35,6 +35,8 @@ void ATFFT_DIF_Radix8_Scalar(float *dst0, const float *src0, const int *order0, 
 void ATFFT_DIT_R2C_Scalar(float *dst0, const float *src0, const float *w, int N);
 void ATFFT_DIF_C2R_Scalar(float *dst0, const float *x, const float *w, int N);
 
+void ATFFT_MultiplyAdd_Scalar(float *VDRESTRICT dst, const float *VDRESTRICT src1, const float *VDRESTRICT src2, int N);
+
 /////////////////////////////////////////////////////////////////////////////
 
 void ATFFT_DIT_Radix2_SSE2(float *y0, const float *w4, int N, int logStep);
@@ -47,6 +49,8 @@ void ATFFT_DIF_Radix8_SSE2(float *dst0, const float *src0, const int *order0, in
 
 void ATFFT_DIT_R2C_SSE2(float *dst0, const float *src0, const float *w, int N);
 void ATFFT_DIF_C2R_SSE2(float *dst0, const float *x, const float *w, int N);
+
+void ATFFT_MultiplyAdd_SSE2(float *VDRESTRICT dst, const float *VDRESTRICT src1, const float *VDRESTRICT src2, int N);
 
 /////////////////////////////////////////////////////////////////////////////
 
@@ -253,3 +257,12 @@ void ATFFTBase::InverseImpl(float *dst, const float *src, float *work, float *wt
 		ATFFT_DIF_Radix8_Scalar(dst, work, fwdorder, N);
 	#endif
 }
+
+void ATFFTBase::MultiplyAddImpl(float *dst, const float *src1, const float *src2, int N) {
+	#if defined(ATFFT_USE_SSE2)
+		ATFFT_MultiplyAdd_SSE2(dst, src1, src2, N);
+	#else
+		ATFFT_MultiplyAdd_Scalar(dst, src1, src2, N);
+	#endif
+}
+

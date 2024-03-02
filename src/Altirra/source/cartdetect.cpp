@@ -81,6 +81,7 @@ namespace {
 		kHeaderFirst4K,
 		kHeaderFirst8K,
 		kHeaderFirst8K_PreferAll8K,
+		kHeaderFirst16K,
 		kHeaderFirst16K_PreferAll16K,
 		kHeaderFirst32K,
 		kHeaderLast32K,
@@ -150,6 +151,7 @@ static constexpr struct ATCartDetectInfo {
 {	kATCartridgeMode_Corina_512K_SRAM_EEPROM,	kType800,	kSize512K,	kWrs8K,		kBankData,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_BountyBob5200,				kType5200,	kSize40K,	kWrsNone,	kBankOther,		kInit32K,	kHeaderLast16B,					},
 {	kATCartridgeMode_BountyBob5200Alt,			kType5200,	kSize40K,	kWrsNone,	kBankOther,		kInit32K,	kHeaderFirst8K,					},
+{	kATCartridgeMode_Williams_16K,				kType800,	kSize16K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_Williams_32K,				kType800,	kSize32K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_Williams_64K,				kType800,	kSize64K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_Diamond_64K,				kType800,	kSize64K,	kWrsNone,	kBankAddrDx,	kInit8K,	kHeaderFirst8K,					},
@@ -165,11 +167,12 @@ static constexpr struct ATCartDetectInfo {
 {	kATCartridgeMode_Atrax_128K,				kType800,	kSize128K,	kWrsNone,	kBankData,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_Atrax_128K_Raw,			kType800,	kSize128K,	kWrsNone,	kBankData,		kInit8K,	kHeaderFirst8K,					ATCartDetectFlags::DontRecommend },
 {	kATCartridgeMode_Phoenix_8K,				kType800,	kSize8K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderLast16B,					},
+{	kATCartridgeMode_Blizzard_32K,				kType800,	kSize32K,	kWrsNone,	kBankAny,		kInit32K,	kHeaderLast16B,					},
 {	kATCartridgeMode_Blizzard_16K,				kType800,	kSize16K,	kWrsNone,	kBankAny,		kInit16K,	kHeaderLast16B,					},
 {	kATCartridgeMode_Blizzard_4K,				kType800,	kSize4K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderLast16B,					},
-{	kATCartridgeMode_SIC,						kType800,	kSize128K |
-															kSize256K |
-															kSize512K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst16K_PreferAll16K,	},
+{	kATCartridgeMode_SIC_128K,					kType800,	kSize128K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst16K_PreferAll16K,	},
+{	kATCartridgeMode_SIC_256K,					kType800,	kSize256K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst16K_PreferAll16K,	},
+{	kATCartridgeMode_SIC_512K,					kType800,	kSize512K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst16K_PreferAll16K,	},
 {	kATCartridgeMode_AST_32K,					kType800,	kSize32K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_Turbosoft_64K,				kType800,	kSize64K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_Turbosoft_128K,			kType800,	kSize128K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
@@ -186,9 +189,13 @@ static constexpr struct ATCartDetectInfo {
 
 {	kATCartridgeMode_aDawliah_32K,				kType800,	kSize32K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					ATCartDetectFlags::DontRecommend },
 {	kATCartridgeMode_aDawliah_64K,				kType800,	kSize64K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					ATCartDetectFlags::DontRecommend },
-{	kATCartridgeMode_JRC_64K_RAM,				kType800,	kSize64K,	kWrsNone,	kBankData,		kInit8K,	kHeaderLast16B,					ATCartDetectFlags::DontRecommend },
+{	kATCartridgeMode_JRC6_64K,					kType800,	kSize64K,	kWrsNone,	kBankData,		kInit8K,	kHeaderLast16B,					ATCartDetectFlags::DontRecommend },
+{	kATCartridgeMode_JRC_RAMBOX,				kType800,	kSize64K,	kWrsNone,	kBankData,		kInit8K,	kHeaderFirst8K,					ATCartDetectFlags::DontRecommend },
 
 {	kATCartridgeMode_SICPlus,					kType800,	kSize1M,	kWrsNone,	kBankData,		kInit8K,	kHeaderFirst16K_PreferAll16K,	},
+{	kATCartridgeMode_MDDOS,						kType800,	kSize64K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst16K_PreferAll16K,	ATCartDetectFlags::DontRecommend },
+{	kATCartridgeMode_COS32K,					kType800,	kSize32K,	kWrsNone,	kBankNone,		kInit16K,	kHeaderFirst16K,				ATCartDetectFlags::DontRecommend },
+{	kATCartridgeMode_Pronto,					kType800,	kSize16K,	kWrsNone,	kBankNone,		kInit16K,	kHeaderFirst16K,				ATCartDetectFlags::DontRecommend },
 
 // 5200 carts
 //
@@ -349,6 +356,10 @@ not_recommended:
 				case kHeaderFirst8K_PreferAll8K:
 					headerOffset = 0x1FF0;
 					headerStep = 0x2000;
+					break;
+
+				case kHeaderFirst16K:
+					headerOffset = 0x3FF0;
 					break;
 
 				case kHeaderFirst16K_PreferAll16K:

@@ -165,31 +165,8 @@ bool VDThread::isThreadActive() {
 	return false;
 }
 
-void VDThread::ThreadFinish() {
-	_endthreadex(0);
-}
-
-void *VDThread::ThreadLocation() const {
-	if (!isThreadAttached())
-		return NULL;
-
-	CONTEXT ctx;
-
-	ctx.ContextFlags = CONTEXT_CONTROL;
-
-	SuspendThread(mhThread);
-	GetThreadContext(mhThread, &ctx);
-	ResumeThread(mhThread);
-
-#if defined(VD_CPU_AMD64)
-	return (void *)ctx.Rip;
-#elif defined(VD_CPU_X86)
-	return (void *)ctx.Eip;
-#elif defined(VD_CPU_ARM64)
-	return (void *)ctx.Pc;
-#else
-#error Unhandled platform
-#endif
+bool VDThread::IsCurrentThread() const {
+	return GetCurrentThreadId() == mThreadID;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -271,17 +248,22 @@ int VDSignalBase::wait(VDSignalBase *second, VDSignalBase *third) {
 	return dwRet == WAIT_FAILED ? -1 : dwRet - WAIT_OBJECT_0;
 }
 
-int VDSignalBase::waitMultiple(const VDSignalBase **signals, int count) {
-	VDASSERT(count <= 16);
+int VDSignalBase::waitMultiple(const VDSignalBase *const *signals, int count) {
+	static_assert(MAXIMUM_WAIT_OBJECTS <= 64);
+	VDASSERT(count <= MAXIMUM_WAIT_OBJECTS);
 
-	HANDLE handles[16];
+	HANDLE handles[MAXIMUM_WAIT_OBJECTS];
+	uint8 index[MAXIMUM_WAIT_OBJECTS];
 	int active = 0;
 
 	for(int i=0; i<count; ++i) {
 		HANDLE h = signals[i]->hEvent;
 
-		if (h)
-			handles[active++] = h;
+		if (h) {
+			index[active] = i;
+			handles[active] = h;
+			++active;
+		}
 	}
 
 	if (!active)
@@ -289,7 +271,7 @@ int VDSignalBase::waitMultiple(const VDSignalBase **signals, int count) {
 
 	DWORD dwRet = WaitForMultipleObjects(active, handles, FALSE, INFINITE);
 
-	return dwRet == WAIT_FAILED ? -1 : dwRet - WAIT_OBJECT_0;
+	return dwRet == WAIT_FAILED ? -1 : index[dwRet - WAIT_OBJECT_0];
 }
 
 bool VDSignalBase::tryWait(uint32 timeoutMillisec) {

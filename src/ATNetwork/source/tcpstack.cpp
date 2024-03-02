@@ -102,11 +102,10 @@ void ATNetTcpRingBuffer::Ack(uint32 n) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATNetTcpStack::ATNetTcpStack()
-	: mpIpStack(NULL)
-	, mpBridgeListener(NULL)
-	, mPortCounter(49152)
-{
+ATNetTcpStack::ATNetTcpStack() {
+}
+
+ATNetTcpStack::~ATNetTcpStack() {
 }
 
 void ATNetTcpStack::Init(ATNetIpStack *ipStack) {
@@ -125,11 +124,11 @@ void ATNetTcpStack::Shutdown() {
 	mpIpStack = NULL;
 }
 
-void ATNetTcpStack::SetBridgeListener(IATSocketListener *p) {
+void ATNetTcpStack::SetBridgeListener(IATEmuNetSocketListener *p) {
 	mpBridgeListener = p;
 }
 
-bool ATNetTcpStack::Bind(uint16 port, IATSocketListener *listener) {
+bool ATNetTcpStack::Bind(uint16 port, IATEmuNetSocketListener *listener) {
 	ListeningSockets::insert_return_type r = mListeningSockets.insert(port);
 
 	if (!r.second)
@@ -139,40 +138,20 @@ bool ATNetTcpStack::Bind(uint16 port, IATSocketListener *listener) {
 	return true;
 }
 
-void ATNetTcpStack::Unbind(uint16 port, IATSocketListener *listener) {
+void ATNetTcpStack::Unbind(uint16 port, IATEmuNetSocketListener *listener) {
 	ListeningSockets::iterator it = mListeningSockets.find(port);
 
 	if (it != mListeningSockets.end() && it->second.mpHandler == listener)
 		mListeningSockets.erase(it);
 }
 
- bool ATNetTcpStack::Connect(uint32 dstIpAddr, uint16 dstPort, IATSocketHandler *handler, IATSocket **newSocket) {
-	// find an unused port in dynamic range
-	for(uint32 i=49152; i<65535; ++i) {
-		if (++mPortCounter == 0)
-			mPortCounter = 49152;
+ bool ATNetTcpStack::Connect(uint32 dstIpAddr, uint16 dstPort, IATSocketHandler& handler, IATStreamSocket **newSocket) {
+	const uint16 localPort = FindUnusedDynamicPort();
 
-		bool valid = true;
-
-		if (mListeningSockets.find(mPortCounter) != mListeningSockets.end()) {
-			valid = false;
-		} else {
-			for(const auto& conn : mConnections) {
-				if (conn.first.mLocalPort == mPortCounter) {
-					valid = false;
-					break;
-				}
-			}
-		}
-
-		if (valid)
-			goto found_free_port;
+	if (!localPort) {
+		// no free ports
+		return false;
 	}
-
-	// doh... no free ports!
-	return false;
-
-found_free_port:
 
 	// create connection key
 	ATNetTcpConnectionKey connKey;
@@ -182,12 +161,13 @@ found_free_port:
 	connKey.mRemotePort = dstPort;
 
 	// initialize new connection
-	vdrefptr<ATNetTcpConnection> conn(new ATNetTcpConnection(this, connKey));
+	vdrefptr conn(new ATNetTcpConnection(this, connKey));
+	vdrefptr conn2(conn);	// ensure that refcount >= 2 through handoff
 
-	conn->InitOutgoing(handler, mXmitInitialSequenceSalt);
+	conn->InitOutgoing(&handler, mXmitInitialSequenceSalt);
 
-	mConnections[connKey] = conn;
-	conn->AddRef();
+	mConnections[connKey] = conn2;
+	conn2.release();
 
 	// Send SYN+ACK
 	conn->Transmit(false);
@@ -256,7 +236,7 @@ void ATNetTcpStack::OnPacket(const ATEthernetPacket& packet, const ATIPv4HeaderI
 	}
 
 	// check if this is a connection to the gateway or if we are bridging/NATing
-	IATSocketListener *listener = mpBridgeListener;
+	IATEmuNetSocketListener *listener = mpBridgeListener;
 
 	if (iphdr.mDstAddr == mpIpStack->GetIpAddress()) {
 		// see if we have a listening socket for this port
@@ -273,7 +253,8 @@ void ATNetTcpStack::OnPacket(const ATEthernetPacket& packet, const ATIPv4HeaderI
 	}
 
 	// Socket is listening -- establish a new connection in SYN_RCVD state
-	vdrefptr<ATNetTcpConnection> conn(new ATNetTcpConnection(this, connKey));
+	vdrefptr conn(new ATNetTcpConnection(this, connKey));
+	vdrefptr conn2(conn);	// ensure that refcount >= 2 through handoff
 
 	conn->Init(packet, iphdr, tcpHdr, data);
 
@@ -286,11 +267,11 @@ void ATNetTcpStack::OnPacket(const ATEthernetPacket& packet, const ATIPv4HeaderI
 
 	conn->SetSocketHandler(socketHandler);
 
-	mConnections[connKey] = conn;
-	ATNetTcpConnection *conn2 = conn.release();
+	mConnections[connKey] = conn2;
+	conn2.release();
 
 	// Send SYN+ACK
-	conn2->Transmit(true);
+	conn->Transmit(true);
 }
 
 uint32 ATNetTcpStack::EncodePacket(uint8 *dst, uint32 len, uint32 srcIpAddr, uint32 dstIpAddr, const ATTcpHeaderInfo& hdrInfo, const void *data, uint32 dataLen, const void *opts, uint32 optLen) {
@@ -403,6 +384,12 @@ void ATNetTcpStack::SendFrame(const ATEthernetAddr& dstAddr, const void *data, u
 	mpIpStack->SendFrame(dstAddr, data, len);
 }
 
+void ATNetTcpStack::NotifyAbandonedConnection() {
+	if (!mAbandonedSocketEvent) {
+		mAbandonedSocketEvent = mpClock->AddClockEvent(mpClock->GetTimestamp(0) + 1, this, 0);
+	}
+}
+
 void ATNetTcpStack::DeleteConnection(const ATNetTcpConnectionKey& connKey) {
 	Connections::iterator it = mConnections.find(connKey);
 
@@ -415,6 +402,47 @@ void ATNetTcpStack::DeleteConnection(const ATNetTcpConnectionKey& connKey) {
 		VDASSERT(!"Attempt to delete a nonexistent TCP connection.");
 	}
 }
+
+void ATNetTcpStack::OnClockEvent(uint32 eventid, uint32 userid) {
+	mAbandonedSocketEvent = 0;
+
+	auto it = mConnections.begin();
+
+	while(it != mConnections.end()) {
+		ATNetTcpConnection& conn = *it->second;
+
+		conn.CheckAbandoned();
+		++it;
+	}
+}
+
+uint16 ATNetTcpStack::FindUnusedDynamicPort() {
+	// find an unused port in dynamic range
+	for(uint32 i=49152; i<65535; ++i) {
+		if (++mPortCounter == 0)
+			mPortCounter = 49152;
+
+		bool valid = true;
+
+		if (mListeningSockets.find(mPortCounter) != mListeningSockets.end()) {
+			valid = false;
+		} else {
+			for(const auto& conn : mConnections) {
+				if (conn.first.mLocalPort == mPortCounter) {
+					valid = false;
+					break;
+				}
+			}
+		}
+
+		if (valid)
+			return mPortCounter;
+	}
+
+	// doh... no free ports!
+	return 0;
+}
+
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -434,6 +462,23 @@ ATNetTcpConnection::ATNetTcpConnection(ATNetTcpStack *stack, const ATNetTcpConne
 
 ATNetTcpConnection::~ATNetTcpConnection() {
 	ClearEvents();
+}
+
+int ATNetTcpConnection::Release() {
+	int rc = vdrefcounted::Release();
+
+	if (rc == 1 && mpTcpStack)
+		mpTcpStack->NotifyAbandonedConnection();
+
+	return rc;
+}
+
+void ATNetTcpConnection::CheckAbandoned() {
+	// If the socket has been abandoned (no external refs) and hasn't already been closed,
+	// do a hard shutdown. Note that we shouldn't do this if the socket has already been
+	// soft closed (graceful shutdown).
+	if (mRefCount == 1 && (mbLocalRecvOpen || mbLocalSendOpen))
+		CloseSocket(true);
 }
 
 void ATNetTcpConnection::GetInfo(ATNetTcpConnectionInfo& info) const {
@@ -523,7 +568,7 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 
 		// mark both ends closed so we don't send a RST in response to a RST and so that we
 		// don't respond to a local close
-		mbLocalOpen = false;
+		mbLocalSendOpen = false;
 		mbFinReceived = true;
 		// delete the connection :-/
 		if (mpSocketHandler)
@@ -531,7 +576,7 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 
 		g_ATLCTCP("Closing connection due to RST\n");
 
-		Shutdown();
+		CloseSocket(true);
 		return;
 	}
 
@@ -553,7 +598,7 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 			if (mpSocketHandler)
 				mpSocketHandler->OnSocketError();
 
-			Shutdown();
+			CloseSocket(true);
 			return;
 		}
 
@@ -642,7 +687,7 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 
 				// if our side is closed but we haven't yet allocated the sequence number
 				// for the FIN packet, do so now as now we have space
-				if (!mbLocalOpen && !mbFinQueued) {
+				if (!mbLocalSendOpen && !mbFinQueued) {
 					mbFinQueued = true;
 					mXmitRing.Write("", 1);
 				}
@@ -653,7 +698,7 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 
 				// notify the socket handler that more space is available; however, note
 				// that this is internal buffer, not window space
-				if (mpSocketHandler && mbLocalOpen)
+				if (mpSocketHandler && mbLocalSendOpen)
 					mpSocketHandler->OnSocketWriteReady(mXmitRing.GetSpace());
 
 				if (!mpTcpStack)
@@ -665,14 +710,7 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 			if (mbFinQueued && !mXmitRing.GetLevel()) {
 				switch(mConnState) {
 					case kATNetTcpConnectionState_CLOSING:
-						mConnState = kATNetTcpConnectionState_TIME_WAIT;
-
-						VDASSERT(!mEventClose);
-						{
-							IATEthernetClock *clk = mpTcpStack->GetClock();
-
-							mEventClose = clk->AddClockEvent(clk->GetTimestamp(500), this, kEventId_Close);
-						}
+						ChangeToTimeWait();
 						break;
 
 					case kATNetTcpConnectionState_LAST_ACK:
@@ -708,6 +746,12 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 				tc = recvSpace;
 
 			if (tc) {
+				// check if we received data after shutting down receive -- if so, reset
+				if (tcpHdr.mDataLength && !mbLocalRecvOpen) {
+					ResetConnection();
+					return;
+				}
+
 				// check for special case where we are ending with FIN
 				if (tc > tcpHdr.mDataLength) {
 					mRecvRing.Write(data + tcpHdr.mDataOffset, tcpHdr.mDataLength);
@@ -722,10 +766,7 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 								break;
 
 							case kATNetTcpConnectionState_FIN_WAIT_2:
-								mConnState = kATNetTcpConnectionState_TIME_WAIT;
-
-								VDASSERT(!mEventClose);
-								mEventClose = mpTcpStack->GetClock()->AddClockEvent(500, this, kEventId_Close);
+								ChangeToTimeWait();
 								break;
 						}
 
@@ -750,7 +791,8 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 	// if the connection is dead, delete it now -- this should be done before we send a reply
 	// packet, in case we got both an ACK and the last FIN
 	if (mConnState == kATNetTcpConnectionState_CLOSED) {
-		Shutdown();
+		if (mpTcpStack)
+			mpTcpStack->DeleteConnection(mConnKey);
 		return;
 	}
 
@@ -800,8 +842,8 @@ void ATNetTcpConnection::TryTransmitMore(bool immediate) {
 }
 
 void ATNetTcpConnection::Transmit(bool ack, int retransmitCount, bool enableWindowProbe) {
-	uint8 replyPacket[576];
-	uint8 data[512];
+	uint8 replyPacket[kMaxMSS + 44];
+	uint8 data[kMaxMSS];
 
 	VDASSERT(sizeof(data) >= mXmitMaxSegment);
 
@@ -834,16 +876,18 @@ void ATNetTcpConnection::Transmit(bool ack, int retransmitCount, bool enableWind
 	//  inspection systems."
 	//
 	// Therefore, we always force the SYN to be sent alone first. Any additional data
-	// is held until we have confirmed that the 3WHS is completed.
+	// is held until we have confirmed that the 3WHS is completed. This also has the
+	// nice side effect of not having to worry about options stealing space, since
+	// we also only send options in the SYN packet.
 	//
-	const uint32 xmitOffset = mXmitNext - mXmitRing.GetBaseSeq();
+	const uint32 xmitBase = mXmitRing.GetBaseSeq();
+	const uint32 xmitOffset = mXmitNext - xmitBase;
 	bool syn = mbSynQueued && xmitOffset == 0;
 	bool fin = false;
 
 	// compute how much data payload to send; we avoid doing so for a SYN packet
 	// because it's considered unusual behavior, although normal
 	uint32 dataLen = syn || mbSynQueued ? 0 : mXmitRing.GetLevel() - xmitOffset;
-	bool sendingLast = true;
 
 	// limit data send according to window
 	uint32 windowSpace = mXmitWindowLimit - mXmitNext;
@@ -854,10 +898,14 @@ void ATNetTcpConnection::Transmit(bool ack, int retransmitCount, bool enableWind
 	}
 
 	// probe with one byte if we have data waiting, window is closed, and we are waiting
-	if (enableWindowProbe && !windowSpace && dataLen > 0 && !syn)
-		dataLen = 1;
+	bool sendingLast = true;
 
-	if (dataLen > windowSpace) {
+	if (enableWindowProbe && !windowSpace && dataLen > 0 && !syn) {
+		if (dataLen > 1)
+			sendingLast = false;
+
+		dataLen = 1;
+	} else if (dataLen > windowSpace) {
 		dataLen = windowSpace;
 		sendingLast = false;
 	}
@@ -923,6 +971,15 @@ void ATNetTcpConnection::Transmit(bool ack, int retransmitCount, bool enableWind
 
 	uint32 replyLen = mpTcpStack->EncodePacket(replyPacket + 2, sizeof replyPacket - 2, mConnKey.mLocalAddress, mConnKey.mRemoteAddress, replyTcpHeader, data, dataLen, opts, optLen);
 
+	// do state transitions now, if we are sending FIN
+	if (fin) {
+		if (mConnState == kATNetTcpConnectionState_ESTABLISHED)
+			mConnState = kATNetTcpConnectionState_FIN_WAIT_1;
+		else if (mConnState == kATNetTcpConnectionState_CLOSE_WAIT)
+			mConnState = kATNetTcpConnectionState_LAST_ACK;
+	}
+
+	// send the packet
 	mpTcpStack->SendFrame(mConnKey.mRemoteAddress, replyPacket + 2, replyLen);
 
 	mXmitNext = xmitNextNext;
@@ -967,7 +1024,11 @@ void ATNetTcpConnection::OnClockEvent(uint32 eventid, uint32 userid) {
 			VDASSERT(mEventClose == eventid);
 			mEventClose = 0;
 
-			Shutdown();
+			g_ATLCTCP <<= "Closing connection after TIME_WAIT.\n";
+
+			mConnState = kATNetTcpConnectionState_CLOSED;
+			if (mpTcpStack)
+				mpTcpStack->DeleteConnection(mConnKey);
 			return;
 
 		case kEventId_Transmit:
@@ -994,14 +1055,14 @@ void ATNetTcpConnection::OnClockEvent(uint32 eventid, uint32 userid) {
 					// uh oh -- nuke the connection
 					g_ATLCTCP("Dropping connection due to max retransmit limit being reached.\n");
 
-					mbLocalOpen = false;
+					mbLocalSendOpen = false;
 					mbFinReceived = true;
 
 					AddRef();
 					if (mpSocketHandler)
 						mpSocketHandler->OnSocketError();
 
-					Shutdown();
+					CloseSocket(true);
 					Release();
 					return;
 				}
@@ -1049,28 +1110,36 @@ void ATNetTcpConnection::OnClockEvent(uint32 eventid, uint32 userid) {
 	}
 }
 
-void ATNetTcpConnection::Shutdown() {
+void ATNetTcpConnection::SetOnEvent(IATAsyncDispatcher *dispatcher, vdfunction<void(const ATSocketStatus&)> fn, bool callIfReady) {
+	VDFAIL("Not implemented");
+}
+
+void ATNetTcpConnection::CloseSocket(bool force) {
 	if (!mpTcpStack)
 		return;
 
-	AddRef();
+	mpOnEvent = nullptr;
 
-	// If one side hasn't been closed, send an RST.
-	if (mbLocalOpen || !mbFinReceived) {
-		ATTcpHeaderInfo dummyHdr = {};
-		dummyHdr.mAckNo = mXmitNext;
-		mpTcpStack->SendReset(mConnKey.mRemoteAddress, mConnKey.mLocalAddress, mConnKey.mRemotePort, mConnKey.mLocalPort, dummyHdr);
+	if (mConnState == kATNetTcpConnectionState_TIME_WAIT || mConnState == kATNetTcpConnectionState_CLOSED)
+		return;
+
+	if (force) {
+		ResetConnection();
+	} else {
+		// Shut down both directions.
+		ShutdownSocket(true, true);
 	}
-
-	// Delete us.
-	ClearEvents();
-	mpTcpStack->DeleteConnection(mConnKey);
-	mpTcpStack = nullptr;
-
-	Release();
 }
 
-uint32 ATNetTcpConnection::Read(void *buf, uint32 len) {
+ATSocketAddress ATNetTcpConnection::GetLocalAddress() const {
+	return ATSocketAddress::CreateIPv4(mConnKey.mLocalAddress, mConnKey.mLocalPort);
+}
+
+ATSocketAddress ATNetTcpConnection::GetRemoteAddress() const {
+	return ATSocketAddress::CreateIPv4(mConnKey.mRemoteAddress, mConnKey.mRemotePort);
+}
+
+sint32 ATNetTcpConnection::Recv(void *buf, uint32 len) {
 	uint32 tc = mRecvRing.GetLevel();
 
 	if (tc > len)
@@ -1084,8 +1153,8 @@ uint32 ATNetTcpConnection::Read(void *buf, uint32 len) {
 	return tc;
 }
 
-uint32 ATNetTcpConnection::Write(const void *buf, uint32 len) {
-	VDASSERT(mbLocalOpen);
+sint32 ATNetTcpConnection::Send(const void *buf, uint32 len) {
+	VDASSERT(mbLocalSendOpen);
 
 	if (len) {
 		uint32 space = mXmitRing.GetSpace();
@@ -1104,9 +1173,17 @@ uint32 ATNetTcpConnection::Write(const void *buf, uint32 len) {
 	return len;
 }
 
-void ATNetTcpConnection::Close() {
-	if (mbLocalOpen) {
-		mbLocalOpen = false;
+void ATNetTcpConnection::ShutdownSocket(bool send, bool receive) {
+	if (receive && mbLocalRecvOpen) {
+		mbLocalRecvOpen = false;
+
+		// If we have data already received, force RST.
+		if (mRecvRing.GetLevel())
+			ResetConnection();
+	}
+
+	if (send && mbLocalSendOpen) {
+		mbLocalSendOpen = false;
 
 		mpSocketHandler = nullptr;
 
@@ -1114,11 +1191,6 @@ void ATNetTcpConnection::Close() {
 			mXmitRing.Write("", 1);
 			mbFinQueued = true;
 		}
-
-		if (mConnState == kATNetTcpConnectionState_ESTABLISHED)
-			mConnState = kATNetTcpConnectionState_FIN_WAIT_1;
-		else if (mConnState == kATNetTcpConnectionState_CLOSE_WAIT)
-			mConnState = kATNetTcpConnectionState_CLOSED;
 
 		TryTransmitMore(false);
 	}
@@ -1215,7 +1287,7 @@ void ATNetTcpConnection::ProcessSynOptions(const ATEthernetPacket& packet, const
 
 		switch(kind) {
 			case 2:		// Maximum Segment Size
-				{
+				if (len >= 4) {
 					uint32 mss = VDReadUnalignedBEU16(src + 2);
 
 					// Check if the MSS is below 256 bytes; if so, just ignore it and hope
@@ -1228,8 +1300,7 @@ void ATNetTcpConnection::ProcessSynOptions(const ATEthernetPacket& packet, const
 					// but we don't send any with packets that have data payloads.
 
 					if (mss >= 256) {
-						if (mXmitMaxSegment > mss)
-							mXmitMaxSegment = mss;
+						mXmitMaxSegment = std::min<uint32>(mss, kMaxMSS);
 					}
 				}
 				break;
@@ -1237,4 +1308,37 @@ void ATNetTcpConnection::ProcessSynOptions(const ATEthernetPacket& packet, const
 
 		src += len;
 	}
+}
+
+void ATNetTcpConnection::ChangeToTimeWait() {
+	VDASSERT(mConnState != kATNetTcpConnectionState_TIME_WAIT && mConnState != kATNetTcpConnectionState_CLOSED);
+
+	mConnState = kATNetTcpConnectionState_TIME_WAIT;
+
+	ClearEvents();
+
+	IATEthernetClock *clk = mpTcpStack->GetClock();
+
+	mEventClose = clk->AddClockEvent(clk->GetTimestamp(500), this, kEventId_Close);
+}
+
+void ATNetTcpConnection::ResetConnection() {
+	// Empty send ring; leave receive ring.
+	mXmitRing.Reset(mXmitRing.GetBaseSeq());
+	mXmitNext = mXmitRing.GetBaseSeq();
+
+	mRecvRing.Reset(mRecvRing.GetBaseSeq());
+
+	mbLocalRecvOpen = false;
+	mbLocalSendOpen = false;
+
+	// Send an RST.
+	ATTcpHeaderInfo dummyHdr = {};
+	dummyHdr.mAckNo = mXmitNext;
+	mpTcpStack->SendReset(mConnKey.mRemoteAddress, mConnKey.mLocalAddress, mConnKey.mRemotePort, mConnKey.mLocalPort, dummyHdr);
+
+	// Move to TIME_WAIT state.
+	ChangeToTimeWait();
+
+	// Notify if we have a callback.
 }

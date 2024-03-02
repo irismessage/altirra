@@ -10,7 +10,7 @@ public:
 	ATNetSockVxlanTunnel();
 	~ATNetSockVxlanTunnel();
 
-	bool Init(uint32 tunnelAddr, uint16 tunnelSrcPort, uint16 tunnelTgtPort, IATEthernetSegment *ethSeg, uint32 ethClockIndex);
+	bool Init(uint32 tunnelAddr, uint16 tunnelSrcPort, uint16 tunnelTgtPort, IATEthernetSegment *ethSeg, uint32 ethClockIndex, IATAsyncDispatcher *dispatcher);
 	void Shutdown();
 
 public:
@@ -22,16 +22,11 @@ private:
 	};
 
 	LRESULT WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-	void OnReadPacket(uint32 len);
+	void OnReadPacket();
 
-	VDFunctionThunkInfo *mpWndThunk = nullptr;
-	ATOM mWndClass = 0;
-	HWND mhwnd = nullptr;
-
-	SOCKET mTunnelSocket = INVALID_SOCKET;
-	uint32 mTunnelAddr = 0;
+	vdrefptr<IATDatagramSocket> mpTunnelSocket;
 	uint16 mTunnelSrcPort = 0;
-	uint16 mTunnelTgtPort = 0;
+	ATSocketAddress mTunnelAddress;
 
 	IATEthernetSegment *mpEthSegment = nullptr;
 	uint32 mEthSource = 0;

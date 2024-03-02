@@ -20,7 +20,10 @@
 #include <vd2/system/refcount.h>
 #include <vd2/system/math.h>
 #include <at/atcore/audiomixer.h>
+#include <at/atcore/configvar.h>
 #include <at/atdevices/modemsound.h>
+
+ATConfigVarFloat g_ATCVModem1030RelayVolume("modem.audio.volumes.1030relay", 0.15f);
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -267,16 +270,27 @@ void ATSoundSourceModemData::MixAudio(float *dst, uint32 len, float volume, uint
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATSoundSourceOnOffHook final : public IATAudioSampleSource, public vdrefcounted<IVDRefCount> {
+public:
+	void MixAudio(float *dst, uint32 len, float volume, uint64 offset, float mixingRate);
+};
+
+void ATSoundSourceOnOffHook::MixAudio(float *dst, uint32 len, float volume, uint64 offset, float mixingRate) {
+	// generate samples
+	while(len--) {
+		*dst++ += volume * sinf((float)offset++ * nsVDMath::kfPi / 100.0f);
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 ATModemSoundEngine::ATModemSoundEngine() {
 	mpSingleToneSource = new ATSoundSourceSingleTone;
-	mpSingleToneSource->AddRef();
 	mpDualToneSource = new ATSoundSourceDualTone;
-	mpDualToneSource->AddRef();
+	mpOnOffHookSource = new ATSoundSourceOnOffHook;
 }
 
 ATModemSoundEngine::~ATModemSoundEngine() {
-	vdsaferelease <<= mpSingleToneSource;
-	vdsaferelease <<= mpDualToneSource;
 }
 
 void ATModemSoundEngine::Reset() {
@@ -304,6 +318,14 @@ void ATModemSoundEngine::SetSpeakerEnabled(bool enabled) {
 
 		UpdateAudioEnabled();
 	}
+}
+
+void ATModemSoundEngine::PlayOnOffHookSound() {
+	mpAudioMixer->GetSamplePlayer().AddSound(*mpSoundGroup, 0, mpOnOffHookSource, mpOnOffHookSource, 100, 1.0f);
+}
+
+void ATModemSoundEngine::Play1030RelaySound() {
+	mpAudioMixer->GetSamplePlayer().AddSound(*mpSoundGroup, 0, kATAudioSampleId_1030Relay, g_ATCVModem1030RelayVolume);
 }
 
 void ATModemSoundEngine::PlayDialTone() {
@@ -369,8 +391,6 @@ void ATModemSoundEngine::PlayModemDataV22(bool answering, bool scrambled) {
 	if (!mbAudioEnabled)
 		return;
 
-	mbDialToneActive = false;
-
 	ATSoundId& sid = answering ? mSoundId2 : mSoundId;
 	if (sid != ATSoundId::Invalid) {
 		mpAudioMixer->GetSamplePlayer().StopSound(sid);
@@ -386,8 +406,6 @@ void ATModemSoundEngine::PlayModemDataV22(bool answering, bool scrambled) {
 void ATModemSoundEngine::PlayOriginatingToneBell103() {
 	if (!mbAudioEnabled)
 		return;
-
-	mbDialToneActive = false;
 
 	if (mSoundId != ATSoundId::Invalid) {
 		mpAudioMixer->GetSamplePlayer().StopSound(mSoundId);
@@ -447,8 +465,6 @@ void ATModemSoundEngine::PlayEchoSuppressionTone() {
 	if (!mbAudioEnabled)
 		return;
 
-	mbDialToneActive = false;
-
 	if (mSoundId != ATSoundId::Invalid) {
 		mpAudioMixer->GetSamplePlayer().StopSound(mSoundId);
 		mSoundId = ATSoundId::Invalid;
@@ -468,8 +484,6 @@ void ATModemSoundEngine::Stop() {
 }
 
 void ATModemSoundEngine::Stop1() {
-	mbDialToneActive = false;
-
 	if (mSoundId != ATSoundId::Invalid) {
 		mpAudioMixer->GetSamplePlayer().StopSound(mSoundId);
 		mSoundId = ATSoundId::Invalid;

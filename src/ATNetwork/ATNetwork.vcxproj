@@ -28,6 +28,7 @@
     <ClCompile Include="source\ethernetframe.cpp" />
     <ClCompile Include="source\gatewayserver.cpp" />
     <ClCompile Include="source\ipstack.cpp" />
+    <ClCompile Include="source\socket.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
@@ -37,6 +38,7 @@
     <ClCompile Include="source\udpstack.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\h\at\atnetwork\emusocket.h" />
     <ClInclude Include="h\at\atnetwork\internal\dhcpd.h" />
     <ClInclude Include="h\ipstack.h" />
     <ClInclude Include="h\stdafx.h" />

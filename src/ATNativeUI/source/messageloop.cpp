@@ -92,7 +92,7 @@ void ATUISetGlobalEnableState(bool enable) {
 void ATUIDestroyModelessDialogs(VDZHWND parent) {
 	g_ATModelessDialogs.Notify(
 		[parent](HWND hwnd) {
-			if (GetParent(hwnd) == parent)
+			if (!parent || GetParent(hwnd) == parent)
 				DestroyWindow(hwnd);
 
 			return false;
@@ -175,6 +175,7 @@ bool ATUIProcessMessages(bool waitForMessage, int& returnCode) {
 						break;
 
 					case WM_MOUSEWHEEL:
+					case WM_MOUSEHWHEEL:
 						{
 							POINT pt = { (short)LOWORD(msg.lParam), (short)HIWORD(msg.lParam) };
 							HWND hwndUnder = WindowFromPoint(pt);

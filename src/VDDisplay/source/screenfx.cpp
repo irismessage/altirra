@@ -39,6 +39,10 @@ void VDDisplayCreateGammaRamp(uint32 *gammaTex, uint32 len, bool enableInputConv
 }
 
 void VDDisplayCreateScanlineMaskTexture(uint32 *scanlineTex, ptrdiff_t pitch, uint32 srcH, uint32 dstH, uint32 texSize, float intensity, bool renderLinear) {
+	VDDisplayCreateScanlineMaskTexture(scanlineTex, pitch, srcH, dstH, 0, dstH, texSize, intensity, renderLinear);
+}
+
+void VDDisplayCreateScanlineMaskTexture(uint32 *scanlineTex, ptrdiff_t pitch, uint32 srcH, uint32 dstH, float outY, float outH, uint32 texSize, float intensity, bool renderLinear) {
 	vdblock<float> rawMask(dstH);
 
 	// Compute the stepping rate over the scanline mask pattern and check if we are
@@ -46,13 +50,13 @@ void VDDisplayCreateScanlineMaskTexture(uint32 *scanlineTex, ptrdiff_t pitch, ui
 	// Since the mask is a raised cosine, we can trivially apply a brickwall low pass
 	// filter to it: just reduce it to DC-only below the Nyquist rate.
 
-	float dvdy = (float)srcH / (float)dstH;
+	float dvdy = (float)srcH / (float)outH;
 	if (dvdy <= 0.5f) {
 		// Straight mapping would place the peak of the raised cosine in the center of
 		// each scanline. We shift the pattern up by 1/4 scanline so that the two halves
 		// of the scanline are full bright and full dark.
 
-		float v = 0.25f + dvdy * 0.5f;
+		float v = 0.25f + dvdy * (0.5f - outY);
 
 		for(uint32 i=0; i<dstH; ++i) {
 			float y = 0.5f - 0.5f * cosf((v - floorf(v)) * nsVDMath::kfTwoPi);

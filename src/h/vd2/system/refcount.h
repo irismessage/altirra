@@ -111,6 +111,9 @@ public:
 		return rc;
 	}
 
+	bool operator==(const vdrefcount&) const { return true; }
+	bool operator!=(const vdrefcount&) const { return false; }
+
 protected:
 	VDAtomicInt		mRefCount;
 };
@@ -195,6 +198,14 @@ public:
 		: ptr(src.ptr)
 	{
 		src.ptr = nullptr;
+	}
+
+	template<class U> requires std::is_convertible_v<T *, U *> || std::is_convertible_v<U *, T *>
+	vdnothrow explicit(!std::is_convertible_v<U *, T *>) vdrefptr(const vdrefptr<U>& src) vdnoexcept
+		: ptr(static_cast<T *>(src))
+	{
+		if (ptr)
+			ptr->AddRef();
 	}
 
 	template<class U> requires std::is_convertible_v<T *, U *> || std::is_convertible_v<U *, T *>

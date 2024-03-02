@@ -20,81 +20,10 @@
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/strutil.h>
+#include <at/atcore/comsupport_win32.h>
 #include <at/atnativeui/dragdrop.h>
 #include <at/atio/diskfs.h>
 #include "uidiskexplorer_win32.h"
-
-template<class... Interfaces>
-class ATCOMBaseW32 : public Interfaces... {
-public:
-	virtual ~ATCOMBaseW32() = default;
-
-	ULONG STDMETHODCALLTYPE AddRef() override final;
-	ULONG STDMETHODCALLTYPE Release() override final;
-
-protected:
-	VDAtomicInt mRefCount{0};
-};
-
-template<class... Interfaces>
-ULONG STDMETHODCALLTYPE ATCOMBaseW32<Interfaces...>::AddRef() {
-	return ++mRefCount;
-}
-
-template<class... Interfaces>
-ULONG STDMETHODCALLTYPE ATCOMBaseW32<Interfaces...>::Release() {
-	DWORD rc = --mRefCount;
-
-	if (!rc)
-		delete this;
-
-	return rc;
-}
-
-template<class Base, class... Interfaces>
-class ATCOMQIW32 : public Base {
-public:
-	HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObj) override;
-};
-
-namespace {
-	static_assert(std::is_assignable_v<IUnknown *&, IDataObject *>);
-
-	template<typename T, typename U>
-	T ATStaticCastFirst(U ptr) {
-		return nullptr;
-	}
-
-	template<typename T, typename U> requires std::is_assignable_v<T&, U>
-	T ATStaticCastFirst(U ptr) {
-		return static_cast<T>(ptr);
-	}
-
-	template<typename T, typename... Interfaces>
-	T ATStaticCastFirst(ATCOMBaseW32<Interfaces...> *ptr) {
-		T result = nullptr;
-
-		(void)(... || (result = ATStaticCastFirst<T>(static_cast<Interfaces *>(ptr))));
-
-		return result;
-	}
-
-	template<typename T, typename Base, typename... Interfaces>
-	T ATStaticCastFirst(ATCOMQIW32<Base, Interfaces...> *ptr) {
-		return ATStaticCastFirst<T>(static_cast<Base *>(ptr));
-	}
-}
-
-template<typename Base, class... Interfaces>
-HRESULT STDMETHODCALLTYPE ATCOMQIW32<Base, Interfaces...>::QueryInterface(REFIID riid, void **ppvObj) {
-	if ((... || (riid == __uuidof(Interfaces) ? (*ppvObj = ATStaticCastFirst<Interfaces *>(this)), true : false))) {
-		this->AddRef();
-		return S_OK;
-	}
-
-	*ppvObj = nullptr;
-	return E_NOINTERFACE;
-}
 
 class ATUIDiskExplorerGenericDropSource final : public ATCOMQIW32<ATCOMBaseW32<IDropSource>, IDropSource, IUnknown> {
 public:

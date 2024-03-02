@@ -33,6 +33,7 @@ extern const ATDeviceDefinition g_ATDeviceDefDongle = { "dongle", "dongle", L"Jo
 ///////////////////////////////////////////////////////////////////////////
 
 ATDeviceDongle::ATDeviceDongle() {
+	SetSaveStateAgnostic();
 }
 
 ATDeviceDongle::~ATDeviceDongle() {

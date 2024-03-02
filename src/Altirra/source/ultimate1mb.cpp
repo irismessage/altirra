@@ -23,6 +23,7 @@
 #include <vd2/system/int128.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/devicestorage.h>
+#include <at/atcore/snapshotimpl.h>
 #include "ultimate1mb.h"
 #include "mmu.h"
 #include "pbi.h"
@@ -34,29 +35,7 @@
 #include "options.h"
 #include "firmwaremanager.h"
 
-ATUltimate1MBEmulator::ATUltimate1MBEmulator()
-	: mCartBankOffset(0)
-	, mKernelBank(0)
-	, mCurrentPBIID(0)
-	, mSelectedPBIID(0)
-	, mColdFlag(0)
-	, mbControlLocked(false)
-	, mbSDXEnabled(false)
-	, mbSDXModuleEnabled(false)
-	, mbFlashWriteEnabled(false)
-	, mbIORAMEnabled(false)
-	, mbPBIEnabled(false)
-	, mbPBISelected(false)
-	, mbPBIButton(false)
-	, mbExternalCartEnabled(false)
-	, mbExternalCartEnabledRD4(false)
-	, mbExternalCartEnabledRD5(false)
-	, mbExternalCartActive(false)
-	, mbSoundBoardEnabled(false)
-	, mVBXEPage(0)
-	, mVBXEPageHandler()
-	, mSBPageHandler()
-{
+ATUltimate1MBEmulator::ATUltimate1MBEmulator() {
 	memset(mFirmware, 0xFF, sizeof mFirmware);
 }
 
@@ -348,7 +327,8 @@ void ATUltimate1MBEmulator::ColdReset() {
 void ATUltimate1MBEmulator::WarmReset() {
 	mClockEmu.ColdReset();
 
-	mpMMU->SetModeOverrides(kATMemoryMode_1088K, true);
+	mMemoryMode = 3;
+	UpdateMemoryMode();
 	mpHookMgr->EnableOSHooks(false);
 
 	mbControlLocked = false;
@@ -413,6 +393,133 @@ void ATUltimate1MBEmulator::DumpStatus(ATConsoleOutput& output) {
 
 void ATUltimate1MBEmulator::DumpRTCStatus(ATConsoleOutput& output) {
 	mClockEmu.DumpStatus(output);
+}
+
+class ATSaveStateUltimate1MB final : public ATSnapExchangeObject<ATSaveStateUltimate1MB, "ATSaveStateUltimate1MB"> {
+public:
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	// For clarity, we pack/unpack architectural state into the original register
+	// definitions.
+	uint8 mUCTL = 0;
+	uint8 mUAUX = 0;
+	uint8 mUPBI = 0;
+	uint8 mCOLDF = 0;
+	uint8 mSDXCTL = 0;
+};
+
+template<ATExchanger T>
+void ATSaveStateUltimate1MB::Exchange(T& ex) {
+	ex.Transfer("uctl", &mUCTL);
+	ex.Transfer("uaux", &mUAUX);
+	ex.Transfer("upbi", &mUPBI);
+	ex.Transfer("coldf", &mCOLDF);
+	ex.Transfer("sdxctl", &mSDXCTL);
+}
+
+void ATUltimate1MBEmulator::LoadState(const IATObjectState *state, ATSnapshotContext& ctx) {
+	if (!state) {
+		const ATSaveStateUltimate1MB defaultState;
+		return LoadState(&defaultState, ctx);
+	}
+
+	// Unpack architectural register state.
+	//
+	// Note that there are some significant differences between this code path
+	// and the register write path. The most critical one is that we need to
+	// bypass config lock here.
+
+	const ATSaveStateUltimate1MB& u1state = atser_cast<const ATSaveStateUltimate1MB&>(*state);
+
+	mMemoryMode = u1state.mUCTL & 3;
+	UpdateMemoryMode();
+
+	SetKernelBank((u1state.mUCTL >> 2) & 3);
+	SetSDXEnabled((u1state.mUCTL & 0x10) == 0);
+	SetIORAMEnabled((u1state.mUCTL & 0x40) != 0);
+	mbControlLocked = (u1state.mUCTL & 0x80) != 0;
+
+	mStereoEnableOutput.SetValue((u1state.mUAUX & 0x01) != 0);
+	mCovoxEnableOutput.SetValue((u1state.mUAUX & 0x02) != 0);
+
+	SetUAUX(u1state.mUAUX);
+	SetUPBI(u1state.mUPBI);
+
+	mColdFlag = u1state.mCOLDF & 0x80;
+
+	// update SDX bank and cart enables - must be after control lock is loaded
+	SetSDXCTL(u1state.mSDXCTL);
+
+	// update PBI control layer state as it is sensitive to config lock
+	mpMemMan->EnableLayer(mpLayerPBIControl, !mbControlLocked || mbPBISelected);
+
+	// recompute derived state
+	UpdateKernelBank();
+	UpdatePBIDevice();
+	UpdateHooks();
+
+	mpSystemController->OnU1MBConfigPreLocked(!mbControlLocked);
+}
+
+vdrefptr<IATObjectState> ATUltimate1MBEmulator::SaveState(ATSnapshotContext& ctx) const {
+	vdrefptr state { new ATSaveStateUltimate1MB };
+
+	// reconstruct architectural register state
+	state->mUCTL += mMemoryMode;
+	state->mUCTL += mKernelBank << 2;
+	state->mUCTL += mbSDXEnabled ? 0x00 : 0x10;
+	state->mUCTL += mbIORAMEnabled ? 0x40 : 0x00;
+	state->mUCTL += mbControlLocked ? 0x80 : 0x00;
+
+	state->mUAUX += mStereoEnableOutput.GetValue() ? 0x01 : 0x00;
+	state->mUAUX += mCovoxEnableOutput.GetValue() ? 0x02 : 0x00;
+
+	state->mUAUX +=
+		  mVBXEPage == 0xD6 ? 0x00
+		: mVBXEPage == 0xD7 ? 0x10
+		: 0x20;
+
+	state->mUAUX += mbSoundBoardEnabled ? 0x40 : 0x00;
+	state->mUAUX += mbFlashWriteEnabled ? 0x00 : 0x80;
+
+	if (mbPBIEnabled) {
+		switch(mSelectedPBIID) {
+			case 0x01:
+			default:
+				state->mUPBI += 0x00;
+				break;
+
+			case 0x04:
+				state->mUPBI += 0x01;
+				break;
+
+			case 0x10:
+				state->mUPBI += 0x02;
+				break;
+
+			case 0x40:
+				state->mUPBI += 0x03;
+				break;
+		}
+	}
+
+	state->mUPBI += mbPBIButton ? 0x08 : 0x00;
+	state->mUPBI += mBasicBank << 4;
+	state->mUPBI += mGameBank << 6;
+
+	state->mCOLDF = mColdFlag;
+
+	state->mSDXCTL = (mCartBankOffset >> 13) & 0x3F;
+
+	if (!mbSDXEnabled) {
+		if (!mbExternalCartEnabled)
+			state->mSDXCTL += 0x80;
+		else
+			state->mSDXCTL += 0xC0;
+	}
+
+	return state;
 }
 
 void ATUltimate1MBEmulator::InitCartridge(IATDeviceCartridgePort *cartPort) {
@@ -525,6 +632,55 @@ void ATUltimate1MBEmulator::UpdatePBIDevice() {
 	}
 }
 
+void ATUltimate1MBEmulator::UpdateMemoryMode() {
+	static constexpr ATMemoryMode kMemModes[4]={
+		kATMemoryMode_64K,
+		kATMemoryMode_320K,
+		kATMemoryMode_576K_Compy,
+		kATMemoryMode_1088K
+	};
+
+	mpMMU->SetModeOverrides(kMemModes[mMemoryMode], true);
+}
+
+void ATUltimate1MBEmulator::UpdateHooks() {
+	bool validOS = false;
+
+	if (mbControlLocked) {
+		// Check the kernel and see if it's a sensible one that we can enable OS
+		// hooks on.
+
+		const uint8 *kernelbase = mFirmware + 0x70000 + ((uint32)mKernelBank << 14) - 0xC000;
+		validOS = true;
+
+		// not an OS kernel if any of the CIO vectors are outside of ROM
+		// careful: these vectors are -1, so $BFFF is within range
+		for(uint32 i=0xE400; i<=0xE440; i+=16) {
+			for(uint32 j=0; j<=10; j+=2) {
+				if (VDReadUnalignedLEU16(&kernelbase[i+j]) < 0xBFFF)
+					validOS = false;
+			}
+		}
+
+		// not an OS kernel if any of the standard vectors are not a JMP or JSR
+		// (we allow JSR or our internal kernel ROM that has bugchecks)
+		for(uint32 i=0xE450; i<=0xE47D; i+=3) {
+			if (kernelbase[i] != 0x4C && kernelbase[i] != 0x20) {
+				validOS = false;
+				break;
+			}
+
+			if (kernelbase[i+2] < 0xC0) {
+				validOS = false;
+				break;
+			}
+		}
+	}
+					
+	if (validOS)
+		mpHookMgr->EnableOSHooks(validOS);
+}
+
 void ATUltimate1MBEmulator::SetPBIBank(uint8 bank) {
 	if (mpLayerPBIFirmware)
 		mpMemMan->SetLayerMemory(mpLayerPBIFirmware, mFirmware + 0x59800 + ((uint32)bank << 13));
@@ -580,6 +736,70 @@ void ATUltimate1MBEmulator::SetIORAMEnabled(bool enabled) {
 
 	if (mVBXEPage && mVBXEPageHandler)
 		mVBXEPageHandler();
+}
+
+void ATUltimate1MBEmulator::SetUAUX(uint8 value) {
+	const uint8 vbxePage = (value & 0x20) ? 0 : (value & 0x10) ? 0xD7 : 0xD6;
+
+	mStereoEnableOutput.SetValue((value & 0x01) != 0);
+	mCovoxEnableOutput.SetValue((value & 0x02) != 0);
+
+	if (mVBXEPage != vbxePage) {
+		mVBXEPage = vbxePage;
+
+		if (mVBXEPageHandler)
+			mVBXEPageHandler();
+	}
+
+	const bool sb = (value & 0x40) != 0;
+
+	if (mbSoundBoardEnabled != sb) {
+		mbSoundBoardEnabled = sb;
+
+		if (mSBPageHandler)
+			mSBPageHandler();
+	}
+
+	bool flashWritesEnabled = !(value & 0x80);
+	if (mbFlashWriteEnabled != flashWritesEnabled) {
+		mbFlashWriteEnabled = flashWritesEnabled;
+		UpdateCartLayers();
+		UpdateFlashShadows();
+	}
+}
+
+void ATUltimate1MBEmulator::SetUPBI(uint8 value) {
+	mSelectedPBIID = 0x01 << (2 * (value & 3));
+	mbPBIEnabled = (value & 4) != 0;
+	mbPBIButton = (value & 8) != 0;
+	mBasicBank = (value >> 4) & 3;
+	mGameBank = (value >> 6) & 3;
+	UpdatePBIDevice();
+	UpdateExternalCart();
+	UpdateKernelBank();
+}
+
+void ATUltimate1MBEmulator::SetSDXCTL(uint8 value) {
+	// SDX control (write only)
+	//
+	// D7 = 0	=> Enable SDX
+	// D6 = 0	=> Enable external cartridge (only if SDX disabled)
+	// D0:D5	=> SDX bank
+	//
+	// Forced to 10000000 if SDX module is disabled.
+
+	if (mbSDXModuleEnabled) {
+		SetSDXBank(value & 63);
+		SetSDXEnabled(!(value & 0x80));
+
+		mbExternalCartEnabled = ((value & 0xc0) == 0x80);
+		UpdateExternalCart();
+	}
+
+	// Pre-control lock, the SDX bank is also used for the BASIC and GAME
+	// banks (!).
+	if (!mbControlLocked)
+		UpdateKernelBank();
 }
 
 sint32 ATUltimate1MBEmulator::DebugReadByteFlash(void *thisptr0, uint32 addr) {
@@ -725,14 +945,9 @@ bool ATUltimate1MBEmulator::WriteByteD3xx(void *thisptr0, uint32 addr, uint8 val
 			if (addr == 0xD380) {
 				// UCTL (write only)
 
-				static const ATMemoryMode kMemModes[4]={
-					kATMemoryMode_64K,
-					kATMemoryMode_320K,
-					kATMemoryMode_576K_Compy,
-					kATMemoryMode_1088K
-				};
+				thisptr->mMemoryMode = value & 3;
+				thisptr->UpdateMemoryMode();
 
-				thisptr->mpMMU->SetModeOverrides(kMemModes[value & 3], true);
 				thisptr->SetKernelBank((value >> 2) & 3);
 				thisptr->SetSDXModuleEnabled(!(value & 0x10));
 				thisptr->SetIORAMEnabled((value & 0x40) != 0);
@@ -745,82 +960,16 @@ bool ATUltimate1MBEmulator::WriteByteD3xx(void *thisptr0, uint32 addr, uint8 val
 					thisptr->UpdateKernelBank();
 					thisptr->UpdatePBIDevice();
 
-					// Check the kernel and see if it's a sensible one that we can enable OS
-					// hooks on.
-
-					const uint8 *kernelbase = thisptr->mFirmware + 0x70000 + ((uint32)thisptr->mKernelBank << 14) - 0xC000;
-					bool validOS = true;
-
-					// not an OS kernel if any of the CIO vectors are outside of ROM
-					// careful: these vectors are -1, so $BFFF is within range
-					for(uint32 i=0xE400; i<=0xE440; i+=16) {
-						for(uint32 j=0; j<=10; j+=2) {
-							if (VDReadUnalignedLEU16(&kernelbase[i+j]) < 0xBFFF)
-								validOS = false;
-						}
-					}
-
-					// not an OS kernel if any of the standard vectors are not a JMP or JSR
-					// (we allow JSR or our internal kernel ROM that has bugchecks)
-					for(uint32 i=0xE450; i<=0xE47D; i+=3) {
-						if (kernelbase[i] != 0x4C && kernelbase[i] != 0x20) {
-							validOS = false;
-							break;
-						}
-
-						if (kernelbase[i+2] < 0xC0) {
-							validOS = false;
-							break;
-						}
-					}
-					
-					if (validOS) {
-						thisptr->mpHookMgr->EnableOSHooks(true);
-					}
+					thisptr->UpdateHooks();
 
 					thisptr->mpSystemController->OnU1MBConfigPreLocked(false);
 				}
 			} else if (addr == 0xD381) {
 				// UAUX (write only)
-
-				const uint8 vbxePage = (value & 0x20) ? 0 : (value & 0x10) ? 0xD7 : 0xD6;
-
-				thisptr->mStereoEnableOutput.SetValue((value & 0x01) != 0);
-				thisptr->mCovoxEnableOutput.SetValue((value & 0x02) != 0);
-
-				if (thisptr->mVBXEPage != vbxePage) {
-					thisptr->mVBXEPage = vbxePage;
-
-					if (thisptr->mVBXEPageHandler)
-						thisptr->mVBXEPageHandler();
-				}
-
-				const bool sb = (value & 0x40) != 0;
-
-				if (thisptr->mbSoundBoardEnabled != sb) {
-					thisptr->mbSoundBoardEnabled = sb;
-
-					if (thisptr->mSBPageHandler)
-						thisptr->mSBPageHandler();
-				}
-
-				bool flashWritesEnabled = !(value & 0x80);
-				if (thisptr->mbFlashWriteEnabled != flashWritesEnabled) {
-					thisptr->mbFlashWriteEnabled = flashWritesEnabled;
-					thisptr->UpdateCartLayers();
-					thisptr->UpdateFlashShadows();
-				}
+				thisptr->SetUAUX(value);
 			} else if (addr == 0xD382) {
 				// UPBI/UCAR (write only)
-
-				thisptr->mSelectedPBIID = 0x01 << (2 * (value & 3));
-				thisptr->mbPBIEnabled = (value & 4) != 0;
-				thisptr->mbPBIButton = (value & 8) != 0;
-				thisptr->mBasicBank = (value >> 4) & 3;
-				thisptr->mGameBank = (value >> 6) & 3;
-				thisptr->UpdatePBIDevice();
-				thisptr->UpdateExternalCart();
-				thisptr->UpdateKernelBank();
+				thisptr->SetUPBI(value);
 			} else if (addr == 0xD383) {
 				// COLDF
 				thisptr->mColdFlag = (value & 0x80);
@@ -858,26 +1007,7 @@ bool ATUltimate1MBEmulator::WriteByteD5xx(void *thisptr0, uint32 addr, uint8 val
 		}
 	} else if (thisptr->mbSDXModuleEnabled) {
 		if (addr == 0xD5E0) {
-			// SDX control (write only)
-			//
-			// D7 = 0	=> Enable SDX
-			// D6 = 0	=> Enable external cartridge (only if SDX disabled)
-			// D0:D5	=> SDX bank
-			//
-			// Forced to 10000000 if SDX module is disabled.
-
-			if (thisptr->mbSDXModuleEnabled) {
-				thisptr->SetSDXBank(value & 63);
-				thisptr->SetSDXEnabled(!(value & 0x80));
-
-				thisptr->mbExternalCartEnabled = ((value & 0xc0) == 0x80);
-				thisptr->UpdateExternalCart();
-			}
-
-			// Pre-control lock, the SDX bank is also used for the BASIC and GAME
-			// banks (!).
-			if (!thisptr->mbControlLocked)
-				thisptr->UpdateKernelBank();
+			thisptr->SetSDXCTL(value);
 
 			// We have to let this through so that SIDE also sees writes here.
 			// Otherwise, the internal BIOS cannot disable the SIDE cartridge.

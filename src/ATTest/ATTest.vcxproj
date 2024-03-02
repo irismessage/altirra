@@ -14,7 +14,13 @@
     <ClCompile Include="source\TestDebugger_HistoryTree.cpp" />
     <ClCompile Include="source\TestDebugger_SymbolIO.cpp" />
     <ClCompile Include="source\TestEmu_PCLink.cpp" />
+    <ClCompile Include="source\TestEmu_PokeyPots.cpp" />
     <ClCompile Include="source\TestEmu_PokeyTimers.cpp" />
+    <ClCompile Include="source\TestNet_NativeDatagramLiveTest.cpp" />
+    <ClCompile Include="source\TestNet_NativeSockets.cpp" />
+    <ClCompile Include="source\TestSystem_CRC.cpp" />
+    <ClCompile Include="source\TestSystem_HashMap.cpp" />
+    <ClCompile Include="source\TestSystem_HashSet.cpp" />
     <ClCompile Include="source\TestIO_DiskImage.cpp" />
     <ClCompile Include="source\TestIO_FLAC.cpp" />
     <ClCompile Include="source\TestIO_TapeWrite.cpp" />
@@ -26,7 +32,11 @@
     <ClCompile Include="source\TestSystem_Function.cpp" />
     <ClCompile Include="source\TestSystem_Int128.cpp" />
     <ClCompile Include="source\TestSystem_Math.cpp" />
+    <ClCompile Include="source\TestSystem_FastVector.cpp" />
+    <ClCompile Include="source\TestSystem_Vector.cpp" />
     <ClCompile Include="source\TestSystem_Zip.cpp" />
+    <ClCompile Include="source\TestTrace_CPU.cpp" />
+    <ClCompile Include="source\TestTrace_IO.cpp" />
     <ClCompile Include="source\TestUI_TextDOM.cpp" />
     <ClCompile Include="source\utils.cpp" />
   </ItemGroup>

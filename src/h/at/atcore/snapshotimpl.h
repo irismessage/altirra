@@ -26,30 +26,76 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
 #include <at/atcore/snapshot.h>
-#include <at/atcore/snappable.h>
 #include <at/atcore/serialization.h>
 
 class ATSnapObjectBase : public vdrefcounted<IATObjectState> {
 public:
+	void *AsInterface(uint32 iid) override;
 	const wchar_t *GetDirectPackagingPath() const override;
+	bool SupportsDirectDeserialization() const override;
 	void Deserialize(ATDeserializer& reader) override;
 	void DeserializeDirect(IVDStream& stream, uint32 len) override;
+	void DeserializeDirectDeferred(IATDeferredDirectDeserializer& defSer) override;
+	void PostDeserialize() override;
 	void Serialize(ATSerializer& writer) const override;
 	void SerializeDirect(IVDStream& stream) const override;
+	void SerializeDirectAndRelease(IVDStream& stream) override;
 	bool Difference(const IATObjectState& base, IATDeltaObject **result) override;
 	void Accumulate(const IATDeltaObject& delta) override;
 };
 
-template<typename T>
-class ATSnapObject : public ATSnapObjectBase {
+template<typename... T_ExtraBases>
+class ATSnapObjectBases : public ATSnapObjectBase, public T_ExtraBases... {
 public:
-	const ATSerializationTypeDef& GetSerializationType() const override {
-		return *ATSerializationTypeRef<T>;
+	int AddRef() override {
+		return ATSnapObjectBase::AddRef();
+	}
+
+	int Release() override {
+		return ATSnapObjectBase::Release();
+	}
+
+	void *AsInterface(uint32 iid) override {
+		void *p = nullptr;
+
+		if (( ... || (p = TryAsInterface<T_ExtraBases>(iid))))
+			return p;
+
+		return ATSnapObjectBase::AsInterface(iid);
+	}
+
+private:
+	template<typename T> requires VDUnknownIdentifiable<T>
+	void *TryAsInterface(uint32 iid) {
+		return iid == T::kTypeID ? static_cast<T *>(this) : nullptr;
+	}
+
+	template<typename T> requires (!VDUnknownIdentifiable<T>)
+	void *TryAsInterface(uint32 iid) {
+		return nullptr;
 	}
 };
 
-template<typename T>
-class ATSnapExchangeObject : public ATSnapObject<T> {
+template<typename T, ATSerializationStaticName T_Name, typename... T_ExtraBases>
+class ATSnapObject : public std::conditional_t<(sizeof...(T_ExtraBases)>0), ATSnapObjectBases<T_ExtraBases...>, ATSnapObjectBase> {
+public:
+	const ATSerializationTypeDef& GetSerializationType() const override {
+		return g_ATSerializationAutoRegister<T, T_Name>.GetTypeDef();
+	}
+
+private:
+};
+
+// Based class used by most snapshottable objects.
+//
+// This base class routes both the Serialize() and Deserialize() calls into a single
+// Exchange() method taking the (de)serializer as a template parameter. This allows
+// the paths to be mostly merged in source while having separately optimized runtime
+// paths. The argument is guaranteed to be convertable to ATSerializer& or
+// ATDeserializer& and Exchange() can be pre-instantiated only for those two paths.
+//
+template<typename T, ATSerializationStaticName T_Name, typename... T_ExtraBases>
+class ATSnapExchangeObject : public ATSnapObject<T, T_Name, T_ExtraBases...> {
 public:
 	void Deserialize(ATDeserializer& reader) override {
 		static_cast<T *>(this)->Exchange(reader);
@@ -60,37 +106,31 @@ public:
 	}
 };
 
-class ATSaveStateMemoryBuffer final : public ATSnapObject<ATSaveStateMemoryBuffer> {
+// Common snappable type for a plain unstructured memory buffer.
+class ATSaveStateMemoryBuffer final : public ATSnapObject<ATSaveStateMemoryBuffer, "ATSaveStateMemoryBuffer"> {
 public:
 	ATSaveStateMemoryBuffer();
 
+	const vdfastvector<uint8>& GetReadBuffer() const;
+	void ReleaseReadBuffer();
+	void PrefetchReadBuffer();
+
+	vdfastvector<uint8>& GetWriteBuffer();
+
 	const wchar_t *GetDirectPackagingPath() const override;
+	bool SupportsDirectDeserialization() const override;
+	void Deserialize(ATDeserializer& reader) override;
 	void DeserializeDirect(IVDStream& stream, uint32 len) override;
+	void DeserializeDirectDeferred(IATDeferredDirectDeserializer& defSer) override;
+	void Serialize(ATSerializer& writer) const override;
 	void SerializeDirect(IVDStream& stream) const override;
+	void SerializeDirectAndRelease(IVDStream& stream) override;
 
 	const wchar_t *mpDirectName = nullptr;
-	vdblock<uint8> mBuffer;
-};
-
-class ATSnapDecoder {
-public:
-	void Add(ATSerializationObjectId id, IATSnappable *obj, IATSerializable *snap);
-
-	// Try to obtain an object by ID; either returns the object or null if
-	// it is not available.
-	IATSnappable *TryGetObject(ATSerializationObjectId id);
-
-	// Obtain an object by ID; throws if the object is not available. Note
-	// that this will legitimately return null if the id is Invalid.
-	IATSnappable *MustGetObject(ATSerializationObjectId id);
 
 private:
-	struct SnappedObject {
-		IATSnappable *mpLiveObject;
-		vdrefptr<IATSerializable> mpSnapObject;
-	};
-
-	vdvector<SnappedObject> mObjects;
+	mutable vdfastvector<uint8> mBuffer;
+	mutable vdrefptr<IATDeferredDirectDeserializer> mpDeferredSerializer;
 };
 
 #endif

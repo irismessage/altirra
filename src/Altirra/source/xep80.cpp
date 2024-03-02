@@ -16,15 +16,18 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
-#include <vd2/system/math.h>
 #include <vd2/system/binary.h>
+#include <vd2/system/math.h>
+#include <vd2/system/memory.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceparentimpl.h>
 #include <at/atcore/deviceport.h>
 #include <at/atcore/deviceprinter.h>
+#include <at/atcore/devicesnapshot.h>
 #include <at/atcore/devicevideo.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
+#include <at/atcore/snapshotimpl.h>
 #include "xep80.h"
 #include "pia.h"
 #include "debuggerlog.h"
@@ -148,7 +151,13 @@ void ATXEP80Emulator::Init(ATScheduler *sched, IATDevicePortManager *pia) {
 	mpPIA = pia;
 
 	mPIAInput = pia->AllocInput();
-	mPIAOutput = pia->AllocOutput(StaticOnPIAOutputChanged, this, 0x00010);
+	mPIAOutput = pia->AllocOutput(
+		[](void *data, uint32 outputState) { 
+			((ATXEP80Emulator *)data)->OnPIAOutputChanged(outputState);
+		},
+		this,
+		0x00010
+	);
 
 	memset(mPalette, 0, sizeof mPalette);
 	mPalette[1] = 0xFFFFFF;
@@ -856,8 +865,283 @@ int ATXEP80Emulator::ReadRawText(uint8 *dst, int x, int y, int n) const {
 	return n;
 }
 
-void ATXEP80Emulator::StaticOnPIAOutputChanged(void *data, uint32 outputState) {
-	((ATXEP80Emulator *)data)->OnPIAOutputChanged(outputState);
+struct ATSaveStateXEP80 final : public ATSnapExchangeObject<ATSaveStateXEP80, "ATSaveStateXEP80"> {
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	uint8 mX = 0;
+	uint8 mY = 0;
+	uint8 mScrollX = 0;
+	uint8 mLeftMargin = 0;
+	uint8 mRightMargin = 0;
+	bool mbBurstMode = false;
+	bool mbEscapeMode = false;
+	bool mbListMode = false;
+	bool mbPrinterMode = false;
+	uint8 mLastChar = 0;
+	uint8 mExtraByte = 0;
+	uint8 mAttrLatchA = 0;
+	uint8 mAttrLatchB = 0;
+
+	uint8 mVCR = 0;
+	uint16 mBEGD = 0;
+	uint16 mENDD = 0;
+	uint16 mHOME = 0;
+	uint16 mCURS = 0;
+	uint16 mSROW = 0;
+	uint8 mBAUD = 0;
+	uint8 mPSR = 0;
+	uint8 mUMX = 0;
+
+	uint8 mTCP = 0;
+	uint8 mTimingChain[14] {};
+
+	uint8 mRowPtrs[25] {};
+
+	uint16 mRecvShifter = 0;
+	uint8 mRecvBitIndex = 0;
+	float mRecvCyclesToNextEdge = 0;
+
+	vdfastvector<uint16> mXmitQueue;
+	uint16 mXmitShifter = 0;
+	uint8 mXmitBitIndex = 0;
+	float mXmitCyclesToNextEdge = 0;
+
+	vdrefptr<ATSaveStateMemoryBuffer> mpVRAM;
+};
+
+template<ATExchanger T>
+void ATSaveStateXEP80::Exchange(T& ex) {
+	ex.Transfer("x", &mX);
+	ex.Transfer("y", &mY);
+	ex.Transfer("scroll_x", &mScrollX);
+	ex.Transfer("left_margin", &mLeftMargin);
+	ex.Transfer("right_margin", &mRightMargin);
+	ex.Transfer("burst_mode", &mbBurstMode);
+	ex.Transfer("escape_mode", &mbEscapeMode);
+	ex.Transfer("list_mode", &mbListMode);
+	ex.Transfer("printer_mode", &mbPrinterMode);
+	ex.Transfer("last_char", &mLastChar);
+	ex.Transfer("extra_byte", &mExtraByte);
+	ex.Transfer("attr_latch_a", &mAttrLatchA);
+	ex.Transfer("attr_latch_b", &mAttrLatchB);
+	ex.Transfer("vcr", &mVCR);
+	ex.Transfer("begd", &mBEGD);
+	ex.Transfer("endd", &mENDD);
+	ex.Transfer("home", &mHOME);
+	ex.Transfer("curs", &mCURS);
+	ex.Transfer("srow", &mSROW);
+	ex.Transfer("baud", &mBAUD);
+	ex.Transfer("psr", &mPSR);
+	ex.Transfer("umx", &mUMX);
+	
+	ex.Transfer("tcp", &mTCP);
+	ex.TransferArray("timing_chain", mTimingChain);
+	
+	ex.TransferArray("row_ptrs", mRowPtrs);
+
+	ex.Transfer("recv_shifter", &mRecvShifter);
+	ex.Transfer("recv_bit_index", &mRecvBitIndex);
+	ex.Transfer("recv_cycles_to_next_edge", &mRecvCyclesToNextEdge);
+
+	ex.Transfer("xmit_queue", &mXmitQueue);
+	ex.Transfer("xmit_shifter", &mXmitShifter);
+	ex.Transfer("xmit_bit_index", &mXmitBitIndex);
+	ex.Transfer("xmit_cycles_to_next_edge", &mXmitCyclesToNextEdge);
+
+	ex.Transfer("vram", &mpVRAM);
+}
+
+void ATXEP80Emulator::LoadState(const IATObjectState *state) {
+	if (!state) {
+		const ATSaveStateXEP80 kDefaultState {};
+
+		return LoadState(&kDefaultState);
+	}
+
+	const auto& xepstate = atser_cast<const ATSaveStateXEP80&>(*state);
+
+	mX = xepstate.mX;
+	mY = xepstate.mY <= 24 ? xepstate.mY : 0;
+	mScrollX = xepstate.mScrollX;
+	mLeftMargin = xepstate.mLeftMargin;
+	mRightMargin = xepstate.mRightMargin;
+	mbBurstMode = xepstate.mbBurstMode;
+	mbEscape = xepstate.mbEscapeMode;
+	mbDisplayControl = xepstate.mbListMode;
+	mbPrinterMode = xepstate.mbPrinterMode;
+	mLastChar = xepstate.mLastChar;
+	mExtraByte = xepstate.mExtraByte;
+	mAttrA = xepstate.mAttrLatchA;
+	mAttrB = xepstate.mAttrLatchB;
+
+	mbReverseVideoBlinkField = (xepstate.mVCR & 0x01) != 0;
+	mbCursorBlinkEnabled = (xepstate.mVCR & 0x02) == 0;
+	mbCursorReverseVideo = (xepstate.mVCR & 0x04) != 0;
+	mbReverseVideo = (xepstate.mVCR & 0x08) != 0;
+	mbGraphicsMode = (xepstate.mVCR & 0xC0) == 0xC0;
+	mbInternalCharset = (xepstate.mVCR & 0x80) == 0;
+
+	mBeginAddr = xepstate.mBEGD;
+	mEndAddr = xepstate.mENDD;
+	mHomeAddr = xepstate.mHOME;
+	mCursorAddr = xepstate.mCURS;
+	mStatusAddr = xepstate.mSROW;
+
+	mUARTBaud = xepstate.mBAUD;
+	mUARTMultiplex = xepstate.mUMX;
+	mUARTPrescale = xepstate.mPSR;
+
+	mTCP = xepstate.mTCP & 15;
+
+	for(int i=0; i<14; ++i)
+		WriteTimingChain((uint8)i, xepstate.mTimingChain[i]);
+
+	// restore row pointers in internal RAM
+	static_assert(sizeof(mRowPtrs) == sizeof(xepstate.mRowPtrs));
+	memcpy(mRowPtrs, xepstate.mRowPtrs, sizeof mRowPtrs);
+
+	// restore recv/xmit state
+	mpScheduler->UnsetEvent(mpReadBitEvent);
+	mpScheduler->UnsetEvent(mpWriteBitEvent);
+
+	mCurrentData = xepstate.mRecvShifter;
+	mReadBitState = 0;
+
+	if (xepstate.mRecvBitIndex < 12) {
+		mReadBitState = xepstate.mRecvBitIndex;
+
+		const uint32 cyclesToNextRead = (uint32)(std::clamp<float>(xepstate.mRecvCyclesToNextEdge, 0.0f, 10000.0f) + 0.5f);
+
+		if (cyclesToNextRead)
+			mpScheduler->SetEvent(cyclesToNextRead, this, kEventId_ReadBit, mpReadBitEvent);
+	}
+
+	mWriteIndex = 0;
+	mWriteLength = std::min<size_t>(xepstate.mXmitQueue.size(), vdcountof(mWriteBuffer));
+
+	std::copy_n(xepstate.mXmitQueue.begin(), mWriteLength, mWriteBuffer);
+
+	mCurrentWriteData = xepstate.mXmitShifter;
+	mWriteBitState = 0;
+
+	if (xepstate.mXmitBitIndex < 13) {
+		mWriteBitState = xepstate.mXmitBitIndex;
+
+		const float cyclesToNextWriteF = std::clamp<float>(xepstate.mXmitCyclesToNextEdge, 0.0f, 10000.0f);
+		const uint32 cyclesToNextWrite = (uint32)(cyclesToNextWriteF + 0.5f);
+
+		// The accumulator contains the rounding constant, so it should be 0x80 when
+		// on an exact integer. However, it's possible to round up to 256, which we
+		// should fudge slightly.
+		mXmitTimingAccum = (uint8)std::clamp<int>((int)((cyclesToNextWriteF + 0.5f) - cyclesToNextWrite) * 256.0f + 0.5f, 0, 255);
+
+		if (cyclesToNextWrite)
+			mpScheduler->SetEvent(cyclesToNextWrite, this, kEventId_WriteBit, mpWriteBitEvent);
+	}
+
+	// restore video RAM
+	VDBitZero(mVRAM);
+
+	if (xepstate.mpVRAM) {
+		const auto& readBuffer = xepstate.mpVRAM->GetReadBuffer();
+		if (!readBuffer.empty())
+			memcpy(mVRAM, readBuffer.data(), std::min<size_t>(sizeof mVRAM, readBuffer.size()));
+	}
+
+	// last X/Y are only used for cursor tracking during command processing,
+	// so they don't need to be saved separately
+	mLastX = mX;
+	mLastY = mY;
+	
+	UpdatePIAInput();
+	RecomputeBaudRate();
+	InvalidateFrame();
+
+	// execute xmit/recv events immediately if needed
+	if (mReadBitState && !mpReadBitEvent)
+		OnScheduledEvent(kEventId_ReadBit);
+
+	if (mWriteBitState && !mpWriteBitEvent)
+		OnScheduledEvent(kEventId_WriteBit);
+}
+
+vdrefptr<IATObjectState> ATXEP80Emulator::SaveState() const {
+	vdrefptr xepstate { new ATSaveStateXEP80 };
+
+	xepstate->mX = mX;
+	xepstate->mY = mY;
+	xepstate->mScrollX = mScrollX;
+	xepstate->mLeftMargin = mLeftMargin;
+	xepstate->mRightMargin = mRightMargin;
+	xepstate->mbBurstMode = mbBurstMode;
+	xepstate->mbEscapeMode = mbEscape;
+	xepstate->mbListMode = mbDisplayControl;
+	xepstate->mbPrinterMode = mbPrinterMode;
+	xepstate->mLastChar = mLastChar;
+	xepstate->mExtraByte = mExtraByte;
+	xepstate->mAttrLatchA = mAttrA;
+	xepstate->mAttrLatchB = mAttrB;
+
+	// The default VCR value for the XEP80 is %10000110. Of these, we have
+	// all but bits 4 and 5 reflected in internal state.
+	xepstate->mVCR
+		= (mbReverseVideoBlinkField ? 0x01 : 0x00)
+		+ (mbCursorBlinkEnabled ? 0x00 : 0x02)
+		+ (mbCursorReverseVideo ? 0x04 : 0x00)
+		+ (mbReverseVideo ? 0x08 : 0x00)
+		+ (mbGraphicsMode ? 0xC0 : mbInternalCharset ? 0x00 : 0x80)
+		;
+
+	xepstate->mBEGD = mBeginAddr;
+	xepstate->mENDD = mEndAddr;
+	xepstate->mHOME = mHomeAddr;
+	xepstate->mCURS = mCursorAddr;
+	xepstate->mSROW = mStatusAddr;
+
+	xepstate->mBAUD = mUARTBaud;
+	xepstate->mUMX = mUARTMultiplex;
+	xepstate->mPSR = mUARTPrescale;
+
+	xepstate->mTCP = mTCP;
+	xepstate->mTimingChain[ 0] = mHorzCount;
+	xepstate->mTimingChain[ 1] = mHorzBlankStart;
+	xepstate->mTimingChain[ 2] = mHorzSyncStart;
+	xepstate->mTimingChain[ 3] = mHorzSyncEnd;
+	xepstate->mTimingChain[ 4] = ((mCharHeight - 1) << 4) + mVertExtraScans;
+	xepstate->mTimingChain[ 5] = mVertCount;
+	xepstate->mTimingChain[ 6] = mVertBlankStart;
+	xepstate->mTimingChain[ 7] = (mVertSyncBegin << 4) + mVertSyncEnd;
+	xepstate->mTimingChain[ 8] = mVertStatusRow;
+	xepstate->mTimingChain[ 9] = ((mBlinkRate - 1) << 3) + mBlinkDutyCycle;
+	xepstate->mTimingChain[10] = mGfxColumns;
+	xepstate->mTimingChain[11] = (mGfxRowMid << 4) + mGfxRowBot;
+	xepstate->mTimingChain[12] = (mUnderlineStart << 4) + mUnderlineEnd;
+	xepstate->mTimingChain[13] = 0x0F;
+	
+	static_assert(sizeof(mRowPtrs) == sizeof(xepstate->mRowPtrs));
+	memcpy(xepstate->mRowPtrs, mRowPtrs, sizeof xepstate->mRowPtrs);
+
+	xepstate->mRecvShifter = mCurrentData;
+	xepstate->mRecvBitIndex = mReadBitState;
+
+	if (mpReadBitEvent)
+		xepstate->mRecvCyclesToNextEdge = mpScheduler->GetTicksToEvent(mpReadBitEvent);
+
+	xepstate->mXmitQueue.assign(&mWriteBuffer[mWriteIndex], &mWriteBuffer[mWriteLength]);
+	xepstate->mXmitShifter = mCurrentWriteData;
+	xepstate->mXmitBitIndex = mWriteBitState;
+
+	if (mpWriteBitEvent) {
+		xepstate->mXmitCyclesToNextEdge = mpScheduler->GetTicksToEvent(mpWriteBitEvent)
+			+ ((float)mXmitTimingAccum / 256.0f) - 0.5f;
+	}
+
+	xepstate->mpVRAM = new ATSaveStateMemoryBuffer;
+	xepstate->mpVRAM->mpDirectName = L"xep80-vram.bin";
+	xepstate->mpVRAM->GetWriteBuffer().assign(std::begin(mVRAM), std::end(mVRAM));
+
+	return xepstate;
 }
 
 void ATXEP80Emulator::OnPIAOutputChanged(uint32 outputState) {
@@ -873,6 +1157,13 @@ void ATXEP80Emulator::OnPIAOutputChanged(uint32 outputState) {
 	// transition is detected that signifies the start bit. From there,
 	// we delay by one-half bit (57 cycles) to read the middle of D0,
 	// then read at 114 bit intervals to capture D1-D8 and the stop bit.
+	//
+	// Read/receive states:
+	//	0: waiting for start bit edge
+	//	1: start bit edge seen, waiting for bit center
+	//	2: sample and check start bit
+	//	3-11: sample data bits
+	//	12: sample stop bit (never actually stored)
 
 	const bool data = (outputState & mPIAOutputBit) == mPIAOutputBit;
 
@@ -881,12 +1172,12 @@ void ATXEP80Emulator::OnPIAOutputChanged(uint32 outputState) {
 	if (mReadBitState == 0 && !data) {
 		mReadBitState = 1;
 
-		mpScheduler->SetEvent(mCyclesPerBitRecv >> 1, this, 1, mpReadBitEvent);
+		mpScheduler->SetEvent(mCyclesPerBitRecv >> 1, this, kEventId_ReadBit, mpReadBitEvent);
 	}
 }
 
 void ATXEP80Emulator::OnScheduledEvent(uint32 id) {
-	if (id == 1) {
+	if (id == kEventId_ReadBit) {
 		mpReadBitEvent = NULL;
 		++mReadBitState;
 
@@ -896,7 +1187,7 @@ void ATXEP80Emulator::OnScheduledEvent(uint32 id) {
 				mReadBitState = 0;
 				return;
 			}
-		} else if (mReadBitState == 12) {
+		} else if (mReadBitState >= 12) {
 			mReadBitState = 0;
 			if (mCurrentData & 0x200) {
 				OnReceiveByte(mCurrentData & 0x1ff);
@@ -904,23 +1195,24 @@ void ATXEP80Emulator::OnScheduledEvent(uint32 id) {
 			}
 		}
 
-		mpReadBitEvent = mpScheduler->AddEvent(mCyclesPerBitRecv, this, 1);
+		mpReadBitEvent = mpScheduler->AddEvent(mCyclesPerBitRecv, this, kEventId_ReadBit);
 
 		mCurrentData = (mCurrentData >> 1) + (mCurrentData & 0x200);
-	} else if (id == 2) {
+	} else if (id == kEventId_WriteBit) {
 		mpWriteBitEvent = NULL;
 
 		UpdatePIAInput();
 
 		++mWriteBitState;
 
-		// We reach state 1 here at the leading edge of the start bit and thus
-		// state 11 at the leading edge of the stop bit. At state 12, the byte
+		// We reach state 2 here at the leading edge of the start bit and thus
+		// state 12 at the leading edge of the stop bit. At state 13, the byte
 		// is finished (9 data bits + 1 stop bit). The XEP80 actually configures
 		// its UART for two stop bits, but we don't wait around for it here.
-		if (mWriteBitState >= 12) {
+		if (mWriteBitState >= 13) {
 			if (mWriteIndex >= mWriteLength) {
 				mCommandState = kState_WaitCommand;
+				mWriteBitState = 0;
 				return;
 			}
 
@@ -929,7 +1221,7 @@ void ATXEP80Emulator::OnScheduledEvent(uint32 id) {
 			g_ATLCXEPData("Sending byte %03x\n", data);
 
 			mCurrentWriteData = ((uint32)data << 1) + 0x1c00;
-			mWriteBitState = 0;
+			mWriteBitState = 1;
 
 			// At 9 data bits a 2 stop bits, the UART can send a byte every
 			// 64*12 = 768us. In practice the XEP80 firmware takes a bit longer
@@ -949,7 +1241,7 @@ void ATXEP80Emulator::OnScheduledEvent(uint32 id) {
 		uint32 cyclesToNextEdge = mXmitTimingAccum >> 8;
 		mXmitTimingAccum &= 0xFF;
 
-		mpWriteBitEvent = mpScheduler->AddEvent(cyclesToNextEdge, this, 2);
+		mpWriteBitEvent = mpScheduler->AddEvent(cyclesToNextEdge, this, kEventId_WriteBit);
 	}
 }
 
@@ -1052,8 +1344,9 @@ void ATXEP80Emulator::BeginWrite(uint8 len, uint32 delay) {
 
 	g_ATLCXEPData("Sending byte %03x\n", mWriteBuffer[0]);
 
+	// 1 start bit + 9 data bits + 3 stop bits
 	mCurrentWriteData = ((uint32)mWriteBuffer[0] << 1) + 0x1c00;
-	mWriteBitState = 0;
+	mWriteBitState = 1;
 
 	mpWriteBitEvent = mpScheduler->AddEvent(200, this, 2);
 }
@@ -1586,82 +1879,85 @@ void ATXEP80Emulator::OnCmdSetTCP(uint8) {
 }
 
 void ATXEP80Emulator::OnCmdWriteTCP(uint8) {
-	switch(mTCP) {
+	WriteTimingChain(mTCP, mLastChar);
+	mTCP = (mTCP + 1) & 15;
+}
+
+void ATXEP80Emulator::WriteTimingChain(uint8 reg, uint8 val) {
+	switch(reg) {
 		case 0:		// horizontal length register
-			mHorzCount = mLastChar;
+			mHorzCount = val;
 			RecomputeVideoTiming();
 			break;
 
 		case 1:		// horizontal blank start
-			mHorzBlankStart = mLastChar;
+			mHorzBlankStart = val;
 			RecomputeVideoTiming();
 			break;
 
 		case 2:		// horizontal sync start
-			mHorzSyncStart = mLastChar;
+			mHorzSyncStart = val;
 			RecomputeVideoTiming();
 			break;
 
 		case 3:		// horizontal sync end
-			mHorzSyncEnd = mLastChar;
+			mHorzSyncEnd = val;
 			RecomputeVideoTiming();
 			break;
 
 		case 4:		// character scan height / extra scans
-			mCharHeight = (mLastChar >> 4) + 1;
-			mVertExtraScans = mLastChar & 15;
+			mCharHeight = (val >> 4) + 1;
+			mVertExtraScans = val & 15;
 			RecomputeVideoTiming();
 			break;
 
 		case 5:		// vertical length register
-			mVertCount = mLastChar & 31;
+			mVertCount = val & 31;
 			RecomputeVideoTiming();
 			break;
 
 		case 6:		// vertical blank start
-			mVertBlankStart = mLastChar & 31;
+			mVertBlankStart = val & 31;
 			RecomputeVideoTiming();
 			break;
 
 		case 7:		// vertical sync start/end
-			mVertSyncBegin = mLastChar >> 4;
-			mVertSyncEnd = mLastChar & 15;
+			mVertSyncBegin = val >> 4;
+			mVertSyncEnd = val & 15;
 			RecomputeVideoTiming();
 			break;
 
 		case 8:		// status row pos (5 bits)
-			mVertStatusRow = mLastChar & 31;
+			mVertStatusRow = val & 31;
 			break;
 
 		case 9:		// blink rate / duty cycle
-			mBlinkRate = (mLastChar >> 3) + 1;
-			mBlinkDutyCycle = mLastChar & 7;
+			mBlinkRate = (val >> 3) + 1;
+			mBlinkDutyCycle = val & 7;
 			break;
 
 		case 10:	// graphics column register
-			mGfxColumns = mLastChar;
+			mGfxColumns = val;
 			mbInvalidBlockGraphics = true;
 			mbInvalidActiveFont = true;
 			InvalidateFrame();
 			break;
 
 		case 11:	// graphics row register
-			mGfxRowMid = mLastChar >> 4;
-			mGfxRowBot = mLastChar & 15;
+			mGfxRowMid = val >> 4;
+			mGfxRowBot = val & 15;
 			mbInvalidBlockGraphics = true;
 			mbInvalidActiveFont = true;
 			InvalidateFrame();
 			break;
 
 		case 12:	// underline size register
-			mUnderlineStart = mLastChar >> 4;
-			mUnderlineEnd = mLastChar & 15;
+			mUnderlineStart = val >> 4;
+			mUnderlineEnd = val & 15;
 			mbInvalidActiveFont = true;
 			InvalidateFrame();
 			break;
 	}
-
-	mTCP = (mTCP + 1) & 15;
 }
 
 void ATXEP80Emulator::OnCmdSetBeginAddr(uint8) {
@@ -2291,7 +2587,7 @@ void ATXEP80Emulator::UpdatePIABits() {
 
 void ATXEP80Emulator::UpdatePIAInput() {
 	if (mpPIA)
-		mpPIA->SetInput(mPIAInput, (mCurrentWriteData & (1 << mWriteBitState) ? mPIAInputBit : 0) + ~mPIAInputBit);
+		mpPIA->SetInput(mPIAInput, (mWriteBitState == 0 || (mCurrentWriteData & (1 << (mWriteBitState-1))) ? mPIAInputBit : 0) + ~mPIAInputBit);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2302,6 +2598,7 @@ class ATDeviceXEP80 : public ATDevice
 					, public IATDeviceDiagnostics
 					, public IATDevicePrinterPort
 					, public IATDeviceParent
+					, public IATDeviceSnapshot
 {
 public:
 	ATDeviceXEP80();
@@ -2339,6 +2636,10 @@ public:	// IATDevicePrinterPort
 
 public:	// IATDeviceParent
 	IATDeviceBus *GetDeviceBus(uint32 index) override;
+
+public:	// IATDeviceSnapshot
+	void LoadState(const IATObjectState *state, ATSnapshotContext& ctx) override;
+	vdrefptr<IATObjectState> SaveState(ATSnapshotContext& ctx) const override;
 
 private:
 	static sint32 ReadByte(void *thisptr0, uint32 addr);
@@ -2390,6 +2691,9 @@ void *ATDeviceXEP80::AsInterface(uint32 id) {
 
 		case IATDeviceParent::kTypeID:
 			return static_cast<IATDeviceParent *>(this);
+
+		case IATDeviceSnapshot::kTypeID:
+			return static_cast<IATDeviceSnapshot *>(this);
 
 		default:
 			return ATDevice::AsInterface(id);
@@ -2516,4 +2820,12 @@ void ATDeviceXEP80::SetPrinterDefaultOutput(IATPrinterOutput *out) {
 
 IATDeviceBus *ATDeviceXEP80::GetDeviceBus(uint32 index) {
 	return index ? nullptr : &mParallelBus;
+}
+
+void ATDeviceXEP80::LoadState(const IATObjectState *state, ATSnapshotContext& ctx) {
+	mXEP80.LoadState(state);
+}
+
+vdrefptr<IATObjectState> ATDeviceXEP80::SaveState(ATSnapshotContext& ctx) const {
+	return mXEP80.SaveState();
 }

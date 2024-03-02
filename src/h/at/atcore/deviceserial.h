@@ -48,6 +48,7 @@ public:
 
 	virtual void SetTerminalState(const ATDeviceSerialTerminalState&) = 0;
 	virtual ATDeviceSerialStatus GetStatus() = 0;
+	virtual void SetOnReadReady(vdfunction<void()> fn) = 0;
 	virtual bool Read(uint32 baudRate, uint8& c, bool& framingError) = 0;
 	virtual bool Read(uint32& baudRate, uint8& c) = 0;
 	virtual void Write(uint32 baudRate, uint8 c) = 0;

@@ -63,11 +63,24 @@
 
 class ATDeserializer;
 class ATSerializer;
-class ATSnapEncoder;
-class ATSnapDecoder;
 class IVDStream;
 
 class IATDeltaObject : public IVDRefCount {};
+
+struct ATSnapshotContext {
+	// If set, storage is specifically excluded from snapshot operations: they will
+	// not be captured to or restored from snapshots. This includes both actual storage
+	// data as well as external storage signatures. Setting this flag therefore avoids
+	// rolling back storage when restoring a snapshot or save state.
+	//
+	// A corner case occurs when loading storage is enabled but the snapshot wasn't
+	// saved with it. The expectation in that case is that existing storage is kept
+	// and not reset. That means that whether storage was skipped also needs to be
+	// saved into the snapshot. In most cases, this is done by saving a null memory
+	// buffer reference.
+	//
+	bool mbSkipStorage = false;
+};
 
 class IATObjectState : public IATSerializable {
 public:

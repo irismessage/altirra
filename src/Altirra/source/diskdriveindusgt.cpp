@@ -72,7 +72,11 @@ void *ATDeviceDiskDriveIndusGT::AsInterface(uint32 iid) {
 		case ATFDCEmulator::kTypeID: return &mFDC;
 	}
 
-	return ATDiskDriveDebugTargetControl::AsInterface(iid);
+	void *p = ATDiskDriveDebugTargetControl::AsInterface(iid);
+	if (p)
+		return p;
+
+	return ATDevice::AsInterface(iid);
 }
 
 void ATDeviceDiskDriveIndusGT::GetDeviceInfo(ATDeviceInfo& info) {
@@ -194,8 +198,8 @@ void ATDeviceDiskDriveIndusGT::Init() {
 
 	mFDC.Init(&mDriveScheduler, 288.0f, 1.0f, ATFDCEmulator::kType_2793);
 	mFDC.SetDiskInterface(mpDiskInterface);
-	mFDC.SetOnDrqChange([this](bool drq) {  });
-	mFDC.SetOnIrqChange([this](bool irq) {  });
+	mFDC.SetOnDrqChange([](bool drq) { });
+	mFDC.SetOnIrqChange([](bool irq) { });
 
 	mDriveScheduler.UnsetEvent(mpEventDriveDiskChange);
 	mDiskChangeState = 0;

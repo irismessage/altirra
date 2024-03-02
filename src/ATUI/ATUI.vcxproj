@@ -3,6 +3,7 @@
   <Import Project="../Build/ProjectConfigurations.props" />
   <ItemGroup>
     <ClInclude Include="..\h\at\atui\constants.h" />
+    <ClInclude Include="..\h\at\atui\accessibility.h" />
     <ClInclude Include="..\h\at\atui\uianchor.h" />
     <ClInclude Include="..\h\at\atui\uicommandmanager.h" />
     <ClInclude Include="..\h\at\atui\uicontainer.h" />
@@ -17,6 +18,7 @@
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="source\uiaccessibility.cpp" />
     <ClCompile Include="source\uianchor.cpp" />
     <ClCompile Include="source\uicommandmanager.cpp" />
     <ClCompile Include="source\uicontainer.cpp" />

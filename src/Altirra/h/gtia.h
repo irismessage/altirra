@@ -46,11 +46,12 @@ public:
 
 class IATGTIAVideoTap {
 public:
-	virtual void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd) = 0;
+	virtual void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd, float par) = 0;
 };
 
 using ATGTIARawFrameFn = vdfunction<void(const VDPixmap& px)>;
 
+class ATFrameBuffer;
 class ATFrameTracker;
 class ATArtifactingEngine;
 class ATSaveStateReader;
@@ -158,6 +159,12 @@ enum class ATMonitorMode : uint8 {
 
 AT_DECLARE_ENUM_TABLE(ATMonitorMode);
 
+enum class ATVideoFieldPolarity : uint8 {
+	Unknown,
+	Upper,
+	Lower
+};
+
 struct ATVideoFrameProperties {
 	ATArtifactMode mArtifactMode;
 
@@ -219,7 +226,13 @@ struct ATGTIARegisterState {
 	uint8	mReg[0x20];
 };
 
-class ATGTIAEmulator {
+struct ATGTIAColorTrace {
+	uint8	mColors[240][9];
+};
+
+class ATGTIAEmulator final {
+	ATGTIAEmulator(const ATGTIAEmulator&);
+	ATGTIAEmulator& operator=(const ATGTIAEmulator&);
 public:
 	ATGTIAEmulator();
 	~ATGTIAEmulator();
@@ -267,6 +280,10 @@ public:
 	void GetPalette(uint32 pal[256]) const;
 	void GetNTSCArtifactColors(uint32 c[2]) const;
 
+	const ATGTIAColorTrace& GetColorTrace() const {
+		return mColorTrace;
+	}
+
 	bool IsFrameInProgress() const { return mpFrame != NULL; }
 	bool AreAcceleratedEffectsAvailable() const;
 
@@ -302,10 +319,34 @@ public:
 	ATMonitorMode GetMonitorMode() const { return mMonitorMode; }
 	void SetMonitorMode(ATMonitorMode mode);
 
+	// Return the scan area covered by the raw frame, in ANTIC/GTIA horizontal and vertical
+	// positions. Horizontal units are color clocks and vertical units are non-interlaced
+	// scanlines.
 	vdrect32 GetFrameScanArea() const;
+
+	// Return the pixel size of the raw image. This can be heavily distorted when high
+	// artifacting or interlacing/scanlines are enabled; the pixel aspect multiple restores
+	// gross aspect to nearest integral factor and using the PAR gives the fully accurate
+	// aspect.
 	void GetRawFrameFormat(int& w, int& h, bool& rgb32) const;
+
+	// Return the frame size to display the raw frame image at, taking integer multipliers
+	// into account. This is the raw frame size times the transpose of the pixel aspect
+	// multiple. Essentially, if one axis is doubled due to higher resolution rendering,
+	// the other axis is doubled in the frame size to compensate.
 	void GetFrameSize(int& w, int& h) const;
+
+	// Size of a hires pixel in the raw image. 1x1 for base display modes, 2x1 if
+	// high artifacting is enabled, and 1x2 if interlace or scanlines. y/x is
+	// usually a close approximation to the true PAR.
 	void GetPixelAspectMultiple(int& x, int& y) const;
+
+	// Pixel aspect ratio (PAR) of each pixel in the raw image as width/height, where
+	// PAR > 1 represents a pixel wider than square. This is the actual PAR including true
+	// NTSC/PAL aspect ratio adjustments, and includes the pixel multipliers returned by
+	// GetPixelAspectMultiple(). Note that this is relative to the raw image size and not
+	// the frame size.
+	double GetPixelAspectRatio() const;
 
 	void SetForcedBorder(bool forcedBorder) { mbForcedBorder = forcedBorder; }
 	void SetFrameSkip(bool turbo) { mbTurbo = turbo; }
@@ -321,9 +362,17 @@ public:
 	bool IsCTIAMode() const { return mbCTIAMode; }
 	void SetCTIAMode(bool enabled);
 
+	// Query/set whether the video mode is 50Hz or 60Hz. Note that this is NOT the same
+	// as PAL/NTSC, as 50Hz can be NTSC50 and 60Hz can be PAL60.
+	bool Is50HzMode() const { return mb50HzMode; }
+	void Set50HzMode(bool enabled);
+
+	// Query/set whether the video standard is PAL. This does not necessarily imply 50Hz
+	// as it can be PAL60.
 	bool IsPALMode() const { return mbPALMode; }
 	void SetPALMode(bool enabled);
 
+	// Query/set whether the video standard is SECAM.
 	bool IsSECAMMode() const { return mbSECAMMode; }
 	void SetSECAMMode(bool enabled);
 
@@ -389,7 +438,8 @@ public:
 	void EndLoadState(ATSaveStateReader& reader);
 
 	void SaveState(IATObjectState **pp);
-	void LoadState(const IATObjectState& state);
+	void LoadState(const IATObjectState *state);
+	void LoadState(const class ATSaveStateGtia& state);
 	void PostLoadState();
 
 	void GetRegisterState(ATGTIARegisterState& state) const;
@@ -401,7 +451,7 @@ public:
 		kVBlankModeBugged
 	};
 
-	void SetFieldPolarity(bool polarity);
+	void SetNextFieldPolarity(ATVideoFieldPolarity polarity);
 	void SetVBLANK(VBlankMode vblMode);
 	void SetOnRetryFrame(vdfunction<void()> fn);
 	bool BeginFrame(uint32 y, bool force, bool drop);
@@ -418,6 +468,8 @@ public:
 	void RenderActivityMap(const uint8 *src);
 	void UpdateScreen(bool immediate, bool forceAnyScreen);
 	void RecomputePalette();
+
+	sint32 ReadBackWriteRegister(uint8 reg) const;
 
 	uint8 DebugReadByte(uint8 reg) {
 		return ReadByte(reg);
@@ -520,9 +572,11 @@ protected:
 	bool	mbOverscanPALExtended = false;
 	bool	mbInterlaceEnabled = false;
 	bool	mbScanlinesEnabled = false;
-	bool	mbFieldPolarity = false;
-	bool	mbLastFieldPolarity = false;
 	bool	mbAccelScreenFX = false;
+
+	ATVideoFieldPolarity mNextFieldPolarity = ATVideoFieldPolarity::Unknown;
+	ATVideoFieldPolarity mLastFieldPolarity = ATVideoFieldPolarity::Unknown;
+	bool mbUseLowerField = false;
 
 	ATVideoFrameProperties mFrameProperties {};
 
@@ -554,7 +608,8 @@ protected:
 	uint32	mTRIGSECAMLastUpdate[4];
 
 	uint8	*mpDst;
-	vdrefptr<VDVideoDisplayFrame>	mpFrame;
+	vdrefptr<ATFrameBuffer>	mpFrame;
+	vdrefptr<ATFrameBuffer>	mpDroppedFrame;
 	VDPixmap	mRawFrame;
 	uint64	mFrameTimestamp;
 	ATFrameTracker *mpFrameTracker;
@@ -562,6 +617,7 @@ protected:
 	bool	mbGTIADisableTransition;
 	bool	mbTurbo;
 	bool	mbCTIAMode;
+	bool	mb50HzMode;
 	bool	mbPALMode;
 	bool	mbSECAMMode;
 	bool	mbForcedBorder;
@@ -582,7 +638,7 @@ protected:
 	uint32		mPreArtifactFrameVisibleY2;
 
 	ATArtifactingEngine	*mpArtifactingEngine;
-	vdrefptr<VDVideoDisplayFrame> mpLastFrame;
+	vdrefptr<ATFrameBuffer> mpLastFrame;
 
 	ATGTIARenderer *mpRenderer;
 	IATUIRenderer *mpUIRenderer;
@@ -590,6 +646,8 @@ protected:
 
 	vdfunction<void()> mpOnRetryFrame;
 	bool mbWaitingForFrame = false;
+
+	ATGTIAColorTrace mColorTrace {};
 
 	ATNotifyList<const ATGTIARawFrameFn *> mRawFrameCallbacks;
 

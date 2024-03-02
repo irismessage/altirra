@@ -19,11 +19,14 @@
 #include <windowsx.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
+#include <vd2/system/vdstl_hashset.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
 #include <at/atnativeui/theme.h>
+#include "oshelper.h"
 #include "simulator.h"
 #include "resource.h"
+#include "uiaccessors.h"
 #include "uidbgsource.h"
 
 extern ATSimulator g_sim;
@@ -66,6 +69,7 @@ void ATSourceWindow::LoadFile(const wchar_t *s, const wchar_t *alias) {
 	mModuleId = 0;
 	mFileId = 0;
 	mPath = s;
+	mFullPath = VDGetFullPath(s);
 
 	BindToSymbols();
 
@@ -230,26 +234,24 @@ LRESULT ATSourceWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			}
 			return 0;
 
-		case WM_COMMAND:
-			if (OnCommand(LOWORD(wParam)))
-				return 0;
-			break;
-
 		case WM_CONTEXTMENU:
 			{
 				int x = GET_X_LPARAM(lParam);
 				int y = GET_Y_LPARAM(lParam);
 
-				if (x >= 0 && y >= 0) {
-					POINT pt = {x, y};
-
-					if (ScreenToClient(mhwndTextEditor, &pt)) {
-						mpTextEditor->SetCursorPixelPos(pt.x, pt.y);
-						TrackPopupMenu(ATUIGetSourceContextMenuW32(), TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
-					}
+				// if we don't have a point (Shift+F10), try to use the cursor
+				// position, else just use the center
+				if (x == -1 && y == -1) {
+					const vdpoint32& pt = mpTextEditor->GetScreenPosForContextMenu();
+					x = pt.x;
+					y = pt.y;
 				} else {
-					TrackPopupMenu(ATUIGetSourceContextMenuW32(), TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
+					POINT pt = {x, y};
+					if (ScreenToClient(mhwndTextEditor, &pt))
+						mpTextEditor->SetCursorPixelPos(pt.x, pt.y);
 				}
+
+				TrackPopupMenu(ATUIGetSourceContextMenuW32(), TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
 			}
 			return 0;
 
@@ -323,7 +325,7 @@ void ATSourceWindow::OnFontsUpdated() {
 		SendMessage(mhwndTextEditor, WM_SETFONT, (WPARAM)ATGetConsoleFontW32(), TRUE);
 }
 
-bool ATSourceWindow::OnCommand(UINT cmd) {
+bool ATSourceWindow::OnCommand(uint32 cmd, uint32 extcode) {
 	switch(cmd) {
 		case ID_CONTEXT_TOGGLEBREAKPOINT:
 			ToggleBreakpoint();
@@ -335,9 +337,9 @@ bool ATSourceWindow::OnCommand(UINT cmd) {
 				ATSourceLineInfo lineInfo;
 				IATDebuggerSymbolLookup *lookup = ATGetDebuggerSymbolLookup();
 				if (lookup->LookupLine(ATGetDebugger()->GetFramePC(), false, moduleId, lineInfo)) {
-					VDStringW path;
-					if (lookup->GetSourceFilePath(moduleId, lineInfo.mFileId, path) && lineInfo.mLine) {
-						IATSourceWindow *w = ATOpenSourceWindow(path.c_str());
+					ATDebuggerSourceFileInfo sourceFileInfo;
+					if (lookup->GetSourceFilePath(moduleId, lineInfo.mFileId, sourceFileInfo) && lineInfo.mLine) {
+						IATSourceWindow *w = ATOpenSourceWindow(sourceFileInfo);
 						if (w) {
 							w->FocusOnLine(lineInfo.mLine - 1);
 
@@ -372,6 +374,14 @@ bool ATSourceWindow::OnCommand(UINT cmd) {
 					ATGetDebugger()->SetPC((uint16)addr);
 				}
 			}
+			return true;
+
+		case ID_OPENIN_DEFAULTEDITOR:
+			ATLaunchFileForEdit(mFullPath.c_str());
+			return true;
+
+		case ID_OPENIN_FILEEXPLORER:
+			ATShowFileInSystemExplorer(mFullPath.c_str());
 			return true;
 	}
 	return false;
@@ -591,10 +601,10 @@ bool ATSourceWindow::BindToSymbols() {
 	if (!symlookup->LookupFile(mPath.c_str(), mModuleId, mFileId))
 		return false;
 
-	VDStringW modulePath;
-	symlookup->GetSourceFilePath(mModuleId, mFileId, modulePath);
+	ATDebuggerSourceFileInfo sourceFileInfo;
+	symlookup->GetSourceFilePath(mModuleId, mFileId, sourceFileInfo);
 
-	mModulePath = VDTextWToA(modulePath);
+	mModulePath = VDTextWToA(sourceFileInfo.mSourcePath);
 
 	vdfastvector<ATSourceLineInfo> lines;
 	ATGetDebuggerSymbolLookup()->GetLinesForFile(mModuleId, mFileId, lines);
@@ -666,42 +676,94 @@ IATSourceWindow *ATGetSourceWindow(const wchar_t *s) {
 }
 
 IATSourceWindow *ATOpenSourceWindow(const wchar_t *s) {
-	IATSourceWindow *w = ATGetSourceWindow(s);
+	ATDebuggerSourceFileInfo sourceFileInfo;
+	sourceFileInfo.mSourcePath = s;
+
+	return ATOpenSourceWindow(sourceFileInfo, true);
+}
+
+IATSourceWindow *ATOpenSourceWindow(const ATDebuggerSourceFileInfo& sourceFileInfo, bool searchPaths) {
+	IATSourceWindow *w = ATGetSourceWindow(sourceFileInfo.mSourcePath.c_str());
 	if (w)
 		return w;
 
-	HWND hwndParent = GetActiveWindow();
-
-	if (!hwndParent || (hwndParent != g_hwnd && GetWindow(hwndParent, GA_ROOT) != g_hwnd))
-		hwndParent = g_hwnd;
-
 	VDStringW fn;
-	if (!VDDoesPathExist(s)) {
+	bool fnValid = false;
+
+	if (searchPaths) {
+		// try module relative path
+		vdhashset<VDStringW> seenPaths;
+
+		if (!fnValid && !sourceFileInfo.mModulePath.empty()) {
+			const auto moduleDir = VDFileSplitPathLeftSpan(sourceFileInfo.mModulePath);
+
+			if (!moduleDir.empty()) {
+				seenPaths.insert(moduleDir);
+
+				fn = VDMakePath(
+					moduleDir,
+					VDFileSplitPathRightSpan(sourceFileInfo.mSourcePath)
+				);
+
+				fnValid = VDDoesPathExist(fn.c_str());
+			}
+		}
+
+		// try full paths of any other open source windows
+		if (!fnValid) {
+			for (IATSourceWindow *sw : g_sourceWindows) {
+				if (!sw)
+					continue;
+
+				VDStringSpanW baseDir = VDFileSplitPathLeftSpan(VDStringSpanW(sw->GetFullPath()));
+
+				if (!baseDir.empty() && seenPaths.insert(baseDir).second) {
+					fn = VDMakePath(
+						baseDir,
+						VDFileSplitPathRightSpan(sourceFileInfo.mSourcePath)
+					);
+
+					fnValid = VDDoesPathExist(fn.c_str());
+					if (fnValid)
+						break;
+				}
+			}
+		}
+	}
+
+	if (!fnValid) {
+		fn = sourceFileInfo.mSourcePath;
+		fnValid = VDDoesPathExist(fn.c_str());
+	}
+
+	if (!fnValid) {
 		VDStringW title(L"Find source file ");
-		title += s;
+		title += fn;
 
 		static const wchar_t kCatchAllFilter[] = L"\0All files (*.*)\0*.*";
-		const wchar_t *baseName = VDFileSplitPath(s);
+		const wchar_t *baseName = VDFileSplitPath(fn.c_str());
 		VDStringW filter(baseName);
 		filter += L'\0';
 		filter += baseName;
 		filter.append(std::begin(kCatchAllFilter), std::end(kCatchAllFilter));		// !! intentionally capturing end null
 
-		fn = VDGetLoadFileName('src ', (VDGUIHandle)hwndParent, title.c_str(), filter.c_str(), NULL);
+		const auto parent = ATUIGetNewPopupOwner();
+		fn = VDGetLoadFileName('src ', parent, title.c_str(), filter.c_str(), NULL);
 
 		if (fn.empty())
-			return NULL;
+			return nullptr;
 	}
 
 	// find a free pane ID
-	SourceWindows::iterator it = std::find(g_sourceWindows.begin(), g_sourceWindows.end(), (IATSourceWindow *)NULL);
+	SourceWindows::iterator it = std::find(g_sourceWindows.begin(), g_sourceWindows.end(), nullptr);
 	const uint32 paneIndex = (uint32)(it - g_sourceWindows.begin());
 
-	if (it == g_sourceWindows.end())
-		g_sourceWindows.push_back(NULL);
-
 	const uint32 paneId = kATUIPaneId_Source + paneIndex;
-	vdrefptr<ATSourceWindow> srcwin(new ATSourceWindow(paneId, VDFileSplitPath(s)));
+	vdrefptr<ATSourceWindow> srcwin(new ATSourceWindow(paneId, VDFileSplitPath(fn.c_str())));
+
+	if (it == g_sourceWindows.end())
+		g_sourceWindows.push_back(nullptr);
+
 	g_sourceWindows[paneIndex] = srcwin;
 
 	// If the active window is a source or disassembly window, dock in the same place.
@@ -723,10 +785,10 @@ IATSourceWindow *ATOpenSourceWindow(const wchar_t *s) {
 
 	if (srcwin->GetHandleW32()) {
 		try {
-			if (fn.empty())
-				srcwin->LoadFile(s, NULL);
+			if (fn == sourceFileInfo.mSourcePath)
+				srcwin->LoadFile(fn.c_str(), nullptr);
 			else
-				srcwin->LoadFile(fn.c_str(), s);
+				srcwin->LoadFile(fn.c_str(), sourceFileInfo.mSourcePath.c_str());
 		} catch(const MyError& e) {
 			ATCloseUIPane(paneId);
 			e.post(g_hwnd, "Altirra error");

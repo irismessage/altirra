@@ -39,6 +39,7 @@ class VDFunctionThunkInfo;
 // resolution is 55ms under Win9x and 10-15ms under WinNT. The advantage of this
 // call is that it is usually extremely fast (just reading from the PEB).
 uint32 VDGetCurrentTick();
+uint64 VDGetCurrentTick64();
 
 // VDGetPreciseTick: Retrieves high-performance timer (QueryPerformanceCounter in
 // Win32). This is very precise, often <1us, but often suffers from various bugs.

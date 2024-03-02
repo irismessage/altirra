@@ -31,7 +31,7 @@ protected:
 	void *mhDir;
 	void *mhExitEvent;
 	void *mhDirChangeEvent;
-	void *mpChangeBuffer;
+	char *mpChangeBuffer;
 	uint32 mChangeBufferSize;
 	bool mbRecursive;
 

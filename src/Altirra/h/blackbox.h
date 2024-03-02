@@ -22,6 +22,7 @@
 #include <vd2/system/refcount.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceparentimpl.h>
+#include <at/atcore/devicesnapshot.h>
 #include <at/atcore/scheduler.h>
 #include "pia.h"
 #include <at/atemulation/via.h>
@@ -45,6 +46,7 @@ class ATBlackBoxEmulator final : public ATDevice
 	, public ATDeviceBus
 	, public IATDeviceIndicators
 	, public IATDevicePrinterPort
+	, public IATDeviceSnapshot
 	, public IATSCSIBusMonitor
 	, public IATSchedulerCallback
 {
@@ -102,6 +104,11 @@ public:
 
 public:
 	void SetPrinterDefaultOutput(IATPrinterOutput *out) override;
+
+public:		// IATDeviceSnapshot
+	void GetSnapshotStatus(ATSnapshotStatus& status) const override;
+	void LoadState(const IATObjectState *state, ATSnapshotContext& ctx) override;
+	vdrefptr<IATObjectState> SaveState(ATSnapshotContext& ctx) const override;
 
 public:
 	void OnSCSIControlStateChanged(uint32 state) override;

@@ -637,20 +637,20 @@ bool AVIOutputFile::init(const wchar_t *szFile) {
 	for(; it != itEnd; ++it, ++i) {
 		StreamInfo& stream = *it;
 
-		// set chunk ID for stream
+		// set chunk ID for stream (##db, ##dc, or ##wb)
 		char buf[4];
 		sprintf(buf, "%02x", i);
-		stream.mChunkID = buf[0] + (buf[1]<<8);
+		stream.mChunkID = VDToLE32(buf[0] + (buf[1]<<8));
 
 		if (stream.mbIsVideo) {
 			const VDAVIBitmapInfoHeader& bih = *(const VDAVIBitmapInfoHeader *)stream.mpStream->getFormat();
 
 			if (bih.biCompression == VDAVIBitmapInfoHeader::kCompressionRGB)
-				stream.mChunkID += 'bd'<<16;
+				stream.mChunkID += VDToLE32(('d' << 16) + ('b' << 24));
 			else
-				stream.mChunkID += 'cd'<<16;
+				stream.mChunkID += VDToLE32(('d' << 16) + ('c' << 24));
 		} else {
-			stream.mChunkID += 'bw'<<16;
+			stream.mChunkID += VDToLE32(('w' << 16) + ('b' << 24));
 		}
 
 		// open stream header list
@@ -1390,7 +1390,13 @@ void AVIOutputFile::WriteSubIndexAVI2(struct _avisuperindex_entry *asie, const I
 	} else
 		asie->dwDuration = size;
 
-	asi.fcc				= ((dwChunkId & 0xFFFF)<<16) + 'xi';
+	// 18dc -> ix18
+	asi.fcc				= VDToLE32(
+		((VDFromLE32(dwChunkId) & 0xFFFF)<<16)
+		+ 'i'
+		+ ('x' << 8)
+	);
+
 	asi.cb				= asie->dwSize - 8;
 	asi.wLongsPerEntry	= 2;
 	asi.bIndexSubType	= 0;

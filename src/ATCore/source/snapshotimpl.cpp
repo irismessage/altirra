@@ -28,8 +28,19 @@ class ATInvalidSnapObjectIdException {};
 
 ///////////////////////////////////////////////////////////////////////////
 
+void *ATSnapObjectBase::AsInterface(uint32 iid) {
+	if (iid == IATSerializable::kTypeID)
+		return static_cast<IATSerializable *>(this);
+
+	return nullptr;
+}
+
 const wchar_t *ATSnapObjectBase::GetDirectPackagingPath() const {
 	return nullptr;
+}
+
+bool ATSnapObjectBase::SupportsDirectDeserialization() const {
+	return false;
 }
 
 void ATSnapObjectBase::Deserialize(ATDeserializer& reader) {
@@ -40,11 +51,23 @@ void ATSnapObjectBase::DeserializeDirect(IVDStream& stream, uint32 len) {
 	throw ATSerializationException();
 }
 
+void ATSnapObjectBase::DeserializeDirectDeferred(IATDeferredDirectDeserializer& defSer) {
+	throw ATSerializationException();
+}
+
+void ATSnapObjectBase::PostDeserialize() {
+	// do nothing
+}
+
 void ATSnapObjectBase::Serialize(ATSerializer& writer) const {
 	throw ATSerializationException();
 }
 
 void ATSnapObjectBase::SerializeDirect(IVDStream& stream) const {
+	throw ATSerializationException();
+}
+
+void ATSnapObjectBase::SerializeDirectAndRelease(IVDStream& stream) {
 	throw ATSerializationException();
 }
 
@@ -60,10 +83,41 @@ void ATSnapObjectBase::Accumulate(const IATDeltaObject& delta) {
 ATSaveStateMemoryBuffer::ATSaveStateMemoryBuffer() {
 }
 
-ATSERIALIZATION_DEFINE(ATSaveStateMemoryBuffer);
+const vdfastvector<uint8>& ATSaveStateMemoryBuffer::GetReadBuffer() const {
+	if (mpDeferredSerializer) {
+		auto ds { std::move(mpDeferredSerializer) };
+		mpDeferredSerializer = nullptr;
+
+		ds->DeserializeDirect(const_cast<ATSaveStateMemoryBuffer&>(*this));
+	}
+
+	return mBuffer;
+}
+
+void ATSaveStateMemoryBuffer::ReleaseReadBuffer() {
+	vdfastvector<uint8> v;
+	v.swap(mBuffer);
+}
+
+void ATSaveStateMemoryBuffer::PrefetchReadBuffer() {
+	if (mpDeferredSerializer)
+		mpDeferredSerializer->Prefetch();
+}
+
+vdfastvector<uint8>& ATSaveStateMemoryBuffer::GetWriteBuffer() {
+	return mBuffer;
+}
 
 const wchar_t *ATSaveStateMemoryBuffer::GetDirectPackagingPath() const {
 	return mpDirectName;
+}
+
+bool ATSaveStateMemoryBuffer::SupportsDirectDeserialization() const {
+	return true;
+}
+
+void ATSaveStateMemoryBuffer::Deserialize(ATDeserializer& reader) {
+	reader.Transfer("data", &mBuffer);
 }
 
 void ATSaveStateMemoryBuffer::DeserializeDirect(IVDStream& stream, uint32 len) {
@@ -71,34 +125,21 @@ void ATSaveStateMemoryBuffer::DeserializeDirect(IVDStream& stream, uint32 len) {
 	stream.Read(mBuffer.data(), len);
 }
 
+void ATSaveStateMemoryBuffer::DeserializeDirectDeferred(IATDeferredDirectDeserializer& defSer) {
+	mpDeferredSerializer = &defSer;
+}
+
+void ATSaveStateMemoryBuffer::Serialize(ATSerializer& writer) const {
+	writer.Transfer("data", &mBuffer);
+}
+
 void ATSaveStateMemoryBuffer::SerializeDirect(IVDStream& stream) const {
 	stream.Write(mBuffer.data(), mBuffer.size());
 }
 
-///////////////////////////////////////////////////////////////////////////
+void ATSaveStateMemoryBuffer::SerializeDirectAndRelease(IVDStream& stream) {
+	stream.Write(mBuffer.data(), mBuffer.size());
 
-void ATSnapDecoder::Add(ATSerializationObjectId id, IATSnappable *obj, IATSerializable *snap) {
-	VDASSERT(id != ATSerializationObjectId::Invalid);
-
-	if (mObjects.size() <= (uint32)id)
-		mObjects.resize((uint32)id + 1);
-
-	SnappedObject& so = mObjects[(uint32)id - 1];
-	so.mpLiveObject = obj;
-	so.mpSnapObject = snap;
-}
-
-IATSnappable *ATSnapDecoder::TryGetObject(ATSerializationObjectId id) {
-	return nullptr;
-}
-
-IATSnappable *ATSnapDecoder::MustGetObject(ATSerializationObjectId id) {
-	if (id == ATSerializationObjectId::Invalid)
-		return nullptr;
-
-	IATSnappable *obj = TryGetObject(id);
-	if (!obj)
-		throw ATInvalidSnapObjectIdException();
-
-	return obj;
+	vdfastvector<uint8> emptyBuf;
+	emptyBuf.swap(mBuffer);
 }

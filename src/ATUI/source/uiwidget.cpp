@@ -564,6 +564,10 @@ bool ATUIWidget::OnMouseWheel(sint32 x, sint32 y, float delta, bool doPages) {
 	return false;
 }
 
+bool ATUIWidget::OnMouseHWheel(sint32 x, sint32 y, float delta, bool doPages) {
+	return false;
+}
+
 void ATUIWidget::OnMouseLeave() {
 }
 

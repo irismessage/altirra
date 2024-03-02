@@ -83,6 +83,7 @@ public:
 	void WarmReset() override;
 	void ComputerColdReset() override;
 	void PeripheralColdReset() override;
+	void SetTraceContext(ATTraceContext *context) override;
 
 public:		// IATDeviceFirmware
 	void InitFirmware(ATFirmwareManager *fwman) override;
@@ -134,6 +135,7 @@ protected:
 	void UpdateROMBank();
 	void UpdateROMBankSuperArchiver();
 	void UpdateROMBankHappy810();
+	void UpdateROMBankHappy1050(uint32 addr);
 	void UpdateROMBankHappy1050();
 	void UpdateROMBank1050Turbo();
 	void OnToggleFastSlow();
@@ -193,12 +195,19 @@ protected:
 	ATCoProcReadMemNode mReadNodeRIOTRAM {};
 	ATCoProcReadMemNode mReadNodeRIOTRegisters {};
 	ATCoProcReadMemNode mReadNodeROMBankSwitch {};
+	ATCoProcReadMemNode mReadNodeROMBankSwitch23 {};
+	ATCoProcReadMemNode mReadNodeROMBankSwitchAB {};
+	ATCoProcReadMemNode mReadNodeROMBankSwitchEF {};
 	ATCoProcReadMemNode mReadNodeFastSlowToggle {};
 	ATCoProcReadMemNode mReadNodeWriteProtectToggle {};
+	ATCoProcReadMemNode mReadNodeROMConflict {};
 	ATCoProcWriteMemNode mWriteNodeFDCRAM {};
 	ATCoProcWriteMemNode mWriteNodeRIOTRAM {};
 	ATCoProcWriteMemNode mWriteNodeRIOTRegisters {};
 	ATCoProcWriteMemNode mWriteNodeROMBankSwitch {};
+	ATCoProcWriteMemNode mWriteNodeROMBankSwitch23 {};
+	ATCoProcWriteMemNode mWriteNodeROMBankSwitchAB {};
+	ATCoProcWriteMemNode mWriteNodeROMBankSwitchEF {};
 	ATCoProcWriteMemNode mWriteNodeFastSlowToggle {};
 	ATCoProcWriteMemNode mWriteNodeWriteProtectToggle {};
 

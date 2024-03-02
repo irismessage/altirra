@@ -114,6 +114,13 @@ template<class T> struct vdhash<T *> {
 	size_t operator()(T *val) const { return (size_t)val; }
 };
 
+template<class T> class vdrefptr;
+
+template<typename T>
+struct vdhash<vdrefptr<T>> {
+	size_t operator()(const vdrefptr<T>& p) const { return (size_t)p.get(); }
+};
+
 struct vdstringhashi {
 	size_t operator()(const VDStringA& s) const;
 	size_t operator()(const char *s) const;

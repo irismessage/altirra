@@ -1,5 +1,6 @@
 #include <stdafx.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <signal.h>
 #include <corecrt_startup.h>
 #include <vd2/system/vdtypes.h>
@@ -95,12 +96,19 @@ int ATTestMain(int argc, wchar_t **argv) {
 	_CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
 	_CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
 
+	_set_abort_behavior(_CALL_REPORTFAULT, _CALL_REPORTFAULT);
+
 	wprintf(L"Altirra test harness utility for " BUILD L"\n");
-	wprintf(L"Copyright (C) 2016-2022 Avery Lee. Licensed under GNU General Public License, version 2 or later\n\n");
+	wprintf(L"Copyright (C) 2016-2023 Avery Lee. Licensed under GNU General Public License, version 2 or later\n\n");
 
 	ATTestInitBlobHandler();
 
-	Tests selectedTests;
+	struct SelectedTest {
+		const TestInfo *testInfo = nullptr;
+		VDStringW mArgs;
+	};
+
+	vdvector<SelectedTest> selectedTests;
 
 #ifdef VD_CPU_ARM64
 	bool useBigCores = false;
@@ -114,51 +122,60 @@ int ATTestMain(int argc, wchar_t **argv) {
 		exit(0);
 	} else {
 		for(int i=1; i<argc; ++i) {
-			const wchar_t *test = argv[i];
+			VDStringSpanW test(argv[i]);
 
-			if (!wcscmp(test, L"/v")) {
+			if (test == L"/v") {
 				g_ATTestTracingEnabled = true;
 				continue;
 			}
 
-			if (!wcscmp(test, L"/allexts")) {
+			if (test == L"/allexts") {
 				testAllCpuExts = true;
 				continue;
 			}
 
 #ifdef VD_CPU_ARM64
-			if (!wcscmp(test, L"/big")) {
+			if (test == L"/big") {
 				useBigCores = true;
 				continue;
 			}
 
-			if (!wcscmp(test, L"/little")) {
+			if (test == L"/little") {
 				useLittleCores = true;
 				continue;
 			}
 #endif
 
 			if (test[0] == L'/') {
-				wprintf(L"Unknown switch: %ls\n", test);
+				wprintf(L"Unknown switch: %ls\n", argv[i]);
 				exit(5);
 			}
 
-			if (!_wcsicmp(test, L"all")) {
+			if (test.comparei(L"all") == 0) {
 				for(const TestInfo& ent : GetTests()) {
 					if (ent.mbAutoRun)
-						selectedTests.push_back(ent);
+						selectedTests.emplace_back(&ent);
 				}
 				break;
 			}
 
+			VDStringW testName = test;
+			VDStringW testArgs;
+			auto splitPt = test.find(L':');
+
+			if (splitPt != VDStringW::npos) {
+				testArgs = testName.subspan(splitPt + 1);
+				testName.erase(splitPt, VDStringW::npos);
+			}
+
 			for(const TestInfo& ent : GetTests()) {
-				if (!vdwcsicmp(VDTextAToW(ent.mpName).c_str(), test)) {
-					selectedTests.push_back(ent);
+				if (VDTextAToW(ent.mpName).comparei(testName) == 0) {
+					selectedTests.emplace_back(&ent, testArgs);
 					goto next;
 				}
 			}
 
-			wprintf(L"\nUnknown test: %ls\n", test);
+			wprintf(L"\nUnknown test: %ls\n", testName.c_str());
 			ATTestHelp();
 			exit(5);
 next:
@@ -251,13 +268,13 @@ next:
 		if (testAllCpuExts)
 			wprintf(L"\n=== Setting CPU extensions: %08X ===\n\n", exts);
 
-		for(Tests::const_iterator it(selectedTests.begin()), itEnd(selectedTests.end()); it!=itEnd; ++it) {
-			const Tests::value_type& ent = *it;
+		for(const SelectedTest& selTest : selectedTests) {
 
-			wprintf(L"Running test: %hs\n", ent.mpName);
+			wprintf(L"Running test: %hs\n", selTest.testInfo->mpName);
 
 			try {
-				ent.mpTestFn();
+				ATTestSetArguments(selTest.mArgs.c_str());
+				selTest.testInfo->mpTestFn();
 			} catch(const AssertionException& e) {
 				wprintf(L"    TEST FAILED: %hs\n", e.gets());
 				++failedTests;

@@ -87,17 +87,4 @@ struct ATRS232Config {
 	}
 };
 
-class IATRS232Device : public IVDRefUnknown {
-public:
-	enum { kTypeID = 'r2dv' };
-
-	virtual void SetConfig(const ATRS232Config&) = 0;
-
-	virtual void SetToneDialingMode(bool enable) = 0;
-	virtual bool IsToneDialingMode() const = 0;
-	virtual void HangUp() = 0;
-	virtual void Dial(const char *address, const char *service, const char *desc = nullptr) = 0;
-	virtual void Answer() = 0;
-};
-
 #endif

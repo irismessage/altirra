@@ -95,7 +95,7 @@ public:
 	uint32 EstimateAddData(uint32 len) const;
 
 	const uint8 *GetData() const;
-	const uint32 GetDataLen() const;
+	uint32 GetDataLen() const;
 
 	uint32 GetBaudRate() const { return mBaudRate; }
 	uint32 GetDataSampleCount() const;
@@ -150,6 +150,8 @@ public:
 	FindBitResult FindBit(uint32 pos, uint32 limit, bool polarity, bool bypassFSK) const override;
 
 	void GetTransitionCounts(uint32 pos, uint32 n, bool lastPolarity, bool bypassFSK, uint32& xcount, uint32& mcount) const override;
+
+	uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const override;
 
 	void SetBits(bool fsk, uint32 startPos, uint32 n, bool polarity);
 

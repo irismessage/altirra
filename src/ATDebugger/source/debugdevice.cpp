@@ -25,7 +25,13 @@ void ATCreateDeviceDebug(const ATPropertySet& pset, IATDevice **dev) {
 	(*dev)->AddRef();
 }
 
-extern constexpr ATDeviceDefinition g_ATDeviceDefDebug = { "debug", "debug", L"Debug Link Device", ATCreateDeviceDebug };
+extern constexpr ATDeviceDefinition g_ATDeviceDefDebug = {
+	"debug",
+	"debug",
+	L"Debug Link Device",
+	ATCreateDeviceDebug,
+	kATDeviceDefFlag_Internal | kATDeviceDefFlag_Hidden
+};
 
 void *ATDebugDevice::AsInterface(uint32 id) {
 	if (id == IATDeviceSIO::kTypeID)

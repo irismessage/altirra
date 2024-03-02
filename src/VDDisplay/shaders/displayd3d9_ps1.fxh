@@ -35,8 +35,8 @@ VertexOutputBoxlinear1_1 VertexShaderBoxlinear1_1(VertexInput IN) {
 	VertexOutputBoxlinear1_1 OUT;
 	
 	OUT.pos = IN.pos;
-	OUT.uvfilt = IN.uv2 * vd_vpsize.xy * vd_interptexsize.wz;
-	OUT.uvsrc = IN.uv + float2(0, vd_fieldinfo.y)*vd_texsize.wz;
+	OUT.uvfilt = IN.uv2;
+	OUT.uvsrc = IN.uv*vd_texsize.wz;
 	return OUT;
 }
 

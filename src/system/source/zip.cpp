@@ -32,19 +32,40 @@
 #include <vd2/system/error.h>
 #include <vd2/system/function.h>
 
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+#include <vd2/system/cpuaccel.h>
+#include <intrin.h>
+#elif defined(VD_CPU_ARM64)
+#include <vd2/system/cpuaccel.h>
+#include <intrin.h>
+#endif
+
 //#define VDDEBUG_DEFLATE VDDEBUG2
 #define VDDEBUG_DEFLATE(...) ((void)0)
 
 //#define VDDEBUG_INFLATE VDDEBUG2
 #define VDDEBUG_INFLATE(...) ((void)0)
 
-//#define VDDEBUG_INFLATE_ERROR VDDEBUG2
-#define VDDEBUG_INFLATE_ERROR VDFAIL
-
 namespace nsVDDeflate {
+	// The tables below are mostly standard Deflate, except with extensions for
+	// enhanced Deflate (a.k.a. Deflate64(tm)). The differences are two additional
+	// distance codes to extend the reference window to 64K and changing the last
+	// length code from fixed 258 to explicit 16-bit + 3.
+	//
+	// The best documentation for this is from a version of PKWARE's APPNOTE.TXT
+	// document, annotated and extended by the Info-Zip folks. The original location
+	// of this doc seems to be offline, but as of 2/2023 it was retrieved from:
+	//
+	// https://github.com/zlib-ng/minizip-ng/blob/master/doc/zip/appnote.iz.txt
+
 	const unsigned len_tbl[32]={
 		3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,
 		131,163,195,227,258
+	};
+
+	const unsigned len_tbl64[32]={
+		3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,
+		131,163,195,227,3
 	};
 
 	const unsigned len_pack_tbl[32]={
@@ -60,8 +81,12 @@ namespace nsVDDeflate {
 		0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0
 	};
 
+	const unsigned char len_bits_tbl64[32]={
+		0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,16
+	};
+
 	const unsigned char dist_bits_tbl[]={
-		0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13
+		0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13,14,14
 	};
 
 	const unsigned dist_tbl[]={
@@ -79,31 +104,139 @@ namespace nsVDDeflate {
 		4097,6145,	// +11 bits
 		8193,12289,	// +12 bits
 		16385,24577,// +13 bits
-		32769
+		32769,49153,// +14 bits (Enhanced Deflate only)
+		65537
 	};
 };
 
-bool VDDeflateBitReader::refill() {
-	sint32 tc = mBytesLeft>kBufferSize?kBufferSize:(sint32)mBytesLeft;
+////////////////////////////////////////////////////////////////////////////////
 
-	if (!tc)
-		return false;
-
-	mpSrc->Read(mBuffer+kBufferSize-tc, tc);	// might throw
-
-	mBufferPt = -tc;
-
-	mBytesLeftLimited = mBytesLeft > kBigAvailThreshold ? kBigAvailThreshold : (unsigned)mBytesLeft;
-	mBytesLeft -= tc;
-
-	return true;
+VDDeflateDecompressionException::VDDeflateDecompressionException()
+	: MyError("Decompression error while reading Deflate-compressed data.")
+{
 }
 
-void VDDeflateBitReader::readbytes(void *dst, unsigned len) {
-	// LAME: OPTIMIZE LATER
-	uint8 *dst2 = (uint8 *)dst;
-	while(len-->0)
-		*dst2++ = getbits(8);
+void VDDeflateBitReaderL2Buffer::Init(IVDStream& src, uint64 readLimit) {
+	mpSrc = &src;
+	mReadLimitRemaining = readLimit;
+	mReadValidEnd = kHeaderSize;
+}
+
+VDDeflateBitReaderL2Buffer::ValidRange VDDeflateBitReaderL2Buffer::Refill(const void *consumed) {
+	// determine how many bytes we have left to preserve
+	uint32 validStart = mReadValidEnd;
+
+	if (consumed) {
+		ptrdiff_t consumedPos = (const uint8 *)consumed - mReadBuffer;
+		if (consumedPos < 0)
+			throw VDDeflateDecompressionException();
+
+		// We may get a refill at the very end of the L2 buffer with less than
+		// 4/8 bytes. In that case, we must waive the EOF check and allow the
+		// buffer to "refill" so the bitstream reader can continue to pull
+		// up to 56 bits into its accumulator. We're fine as long as those bits
+		// aren't actually used, and if they are, we'll catch it at the end
+		if ((size_t)consumedPos < validStart)
+			validStart = (uint32)consumedPos;
+	}
+
+	// copy down tail
+	uint32 tailLen = mReadValidEnd - validStart;
+	if (tailLen > kHeaderSize)
+		throw VDDeflateDecompressionException();
+
+	if (tailLen)
+		memcpy(&mReadBuffer[kHeaderSize - tailLen], &mReadBuffer[validStart], tailLen);
+
+	validStart = kHeaderSize - tailLen;
+
+	mReadValidEnd = kHeaderSize;
+
+	// read in as much new data as we can up to the read limit
+	if (mReadLimitRemaining) {
+		uint32 toRead = kBufferSize;
+		if (toRead > mReadLimitRemaining)
+			toRead = (uint32)mReadLimitRemaining;
+
+		mReadLimitRemaining -= toRead;
+
+		mpSrc->Read(mReadBuffer + kHeaderSize, toRead);
+		mReadValidEnd += toRead;
+	}
+
+	// Return the new range. Note that we always return the full buffer
+	// to allow for read-ahead, with read-beyond-EOF being checked on
+	// the next refill or at CheckEOF().
+	return { &mReadBuffer[validStart], std::end(mReadBuffer) };
+}
+
+void VDDeflateBitReaderL2Buffer::CheckEOF(const void *consumed) {
+	if (consumed > &mReadBuffer[mReadValidEnd])
+		throw VDDeflateDecompressionException();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+void VDDeflateBitReader::CheckEOF() {
+	mpBuffer->CheckEOF(mpSrc - (mBitsLeft >> 3));
+}
+
+VDNOINLINE void VDDeflateBitReader::RefillBuffer() {
+	VDASSERT(mpSrc <= mpSrcLimit + sizeof(mBitAccum));
+
+	CheckEOF();
+
+	auto validRange = mpBuffer->Refill(mpSrc);
+
+	mpSrc = validRange.mpStart;
+	mpSrcLimit = validRange.mpEnd - sizeof(mBitAccum);
+}
+
+void VDDeflateBitReader::readbytes(void *dst, size_t len) {
+	if (!len)
+		return;
+
+	// if the bit accumulator is not byte aligned, do it the slow way
+	// (uncommon)
+	uint8 *VDRESTRICT dst2 = (uint8 *)dst;
+	if (mBitsLeft & 7) {
+		while(len-- > 0)
+			*dst2++ = getbits(8);
+		return;
+	}
+
+	// consume any whole bytes left in the accumulator
+	while(mBitsLeft >= 8) {
+		*dst2++ = (uint8)mBitAccum;
+		mBitAccum >>= 8;
+		mBitsLeft -= 8;
+
+		if (!--len)
+			return;
+	}
+
+	// In rare cases, the bit accumulator may have one more byte than is
+	// tracked. Normally this is OK as that byte is correct and will align
+	// with a later refill, but we are bypassing the normal refill flow
+	// here and so we should make sure the accumulator is zeroed.
+	mBitAccum = 0;
+
+	// consume bytes directly
+	while(len) {
+		size_t tc = mpSrcLimit - mpSrc;
+		if (!tc) {
+			RefillBuffer();
+			continue;
+		}
+
+		if (tc > len)
+			tc = len;
+
+		memcpy(dst2, mpSrc, tc);
+		mpSrc += tc;
+		dst2 += tc;
+		len -= tc;
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -145,9 +278,412 @@ constexpr VDCRCTable VDCRCTable::CRC32(VDCRCTable::kCRC32, 0);
 
 ///////////////////////////////////////////////////////////////////////////
 
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+VD_CPU_TARGET("pclmul")
+uint32 VDCRC32Update_CLMUL(uint32 crc, const void *src, size_t len) {
+	// This algorithm is based on Intel's white paper, Fast CRC Computation
+	// Using PCLMULQDQ Instruction. There are a bunch of subtleties in computing
+	// it, however.
+	//
+	// The CRC we're computing is the zlib/PNG/Ethernet CRC, commonly given as
+	// the bit pattern 0xEDB88320 after shr1. The CRC is computed with both
+	// initial and final values inverted, with the precise calculation being
+	// (in GF(2)):
+	//
+	//	CRC32 = (0xFFFFFFFF*x^(8*len) + msg*x^32) mod P'
+	//
+	// where:
+	//	P' = full polynomial (0x1DB710641)
+	//	len = message length in bytes
+	//	msg = message, with the first byte being the most significant byte,
+	//	      and bit 0 being the most significant bit (reversed!).
+	//
+	// This is also equivalent to the four first or most significant bytes of
+	// the message being inverted -- including inverting some bytes of the CRC
+	// area if the message is shorter than 4 bytes.
+	//
+	// Additionally, this computation is bit-reflected, with multiplying by x^1
+	// resulting in a _right_ shift. This means that XMM register math here is
+	// also bit reversed, with the highest bit holding x^0 and the lowest bit
+	// holding x^127. As in the Intel paper, the constants here have been
+	// shifted left one to left-align the 127-bit result from PCLMULQDQ. The
+	// polynomial 0x1DB710641 is in bit-reversed order; in natural arithmetic
+	// bit order, the equivalent is P = 0x104C11DB7.
+	//
+	// Not particularly clear in the Intel paper is that the constants are
+	// right-aligned instead of left-aligned so as to avoid needing a 65-bit
+	// constant, which means that they have an implicit x^32 factor. To combat
+	// this, the pregenerated constants are multiplied by x^32 less before the
+	// modulus. For instance, to multiply by (x^96 mod P), the constant used
+	// is actually (x^64 mod P')*x^32. Taking the bit reversal and extra shl1
+	// into account, this becomes: bitrev((x^64 mod P')*x^32)<<1.
+	//
+	// There are two additional complications here not covered by the Intel
+	// paper. First, the directions in the paper to handle a final partial
+	// xmmword seem incorrect or at least misworded, as it isn't valid to just
+	// zero-pad the final xmmword as it's in the least significant bits.
+	// Instead, we multiply by special x^(8*n) and x^(8*n+64) folding constants
+	// to make room. The tricky part is due to the implicit x^32 in the constant
+	// constant, we actually need negative powers for n=1..3. Fortunately x^8
+	// is invertible mod P and we use that to encode the necessary constants.
+	//
+	// The final issue is that for simplicity, we emulate a standard interface
+	// that takes and returns the intermediate uninverted CRC32. In order to
+	// cleanly XOR in new message data in x^0..127 positions, we need the
+	// incoming CRC32 to be in the fractional x^-32..-1 bits:
+	//
+	//		msg = '01 02 03' -> '80 40 C0' bit reversed
+	//		byte 1: 0x00.FFFFFFFF * x^8 + 0x80 = 0x7F.FFFFFF
+	//		byte 2: 0x7F.FFFFFF * x^8 + 0x40 = 0x7FBF.FFFF
+	//		byte 3: 0x7FBF.FFFF * x^8 + 0xC0 = 0x7FBF3F.FF
+	//		final CRC32 = ~bitrev(0x7FBF3F.FF * x^32 mod P')
+	//		            = ~bitrev(0x47FEC255)
+	//
+	// To make this work, we multiply the incoming CRC by x^-32.
+	
+
+	alignas(16) static constexpr uint64 kByteShifts[] {
+		UINT64_C(0x0B66B1FA6),	// [ 0] = bitrev((x^-32 mod P')<<32) << 1
+		UINT64_C(0x03F036DC2),	// [ 1] = bitrev((x^-24 mod P')<<32) << 1
+		UINT64_C(0x1AE24A6B0),	// [ 2] = bitrev((x^-16 mod P')<<32) << 1
+		UINT64_C(0x0CACF972A),	// [ 3] = bitrev((x^ -8 mod P')<<32) << 1
+		UINT64_C(0x100000000),	// [ 4] = bitrev((x^  0 mod P')<<32) << 1
+		UINT64_C(0x001000000),	// [ 5] = bitrev((x^  8 mod P')<<32) << 1
+		UINT64_C(0x000010000),	// [ 6] = bitrev((x^ 16 mod P')<<32) << 1
+		UINT64_C(0x000000100),	// [ 7] = bitrev((x^ 24 mod P')<<32) << 1
+		UINT64_C(0x1db710640),	// [ 8] = bitrev((x^ 32 mod P')<<32) << 1
+		UINT64_C(0x077073096),	// [ 9] = bitrev((x^ 40 mod P')<<32) << 1
+		UINT64_C(0x1c26a3700),	// [10] = bitrev((x^ 48 mod P')<<32) << 1
+		UINT64_C(0x1dab36c76),	// [11] = bitrev((x^ 56 mod P')<<32) << 1
+		UINT64_C(0x163cd6124),	// [12] = bitrev((x^ 64 mod P')<<32) << 1
+		UINT64_C(0x03d6029b0),	// [13] = bitrev((x^ 72 mod P')<<32) << 1
+		UINT64_C(0x1102dd5e4),	// [14] = bitrev((x^ 80 mod P')<<32) << 1
+		UINT64_C(0x0a6770bb4),	// [15] = bitrev((x^ 88 mod P')<<32) << 1
+		UINT64_C(0x0ccaa009e),	// [16] = bitrev((x^ 96 mod P')<<32) << 1
+		UINT64_C(0x1cc0a1202),	// [17] = bitrev((x^104 mod P')<<32) << 1
+		UINT64_C(0x0efc26b3e),	// [18] = bitrev((x^112 mod P')<<32) << 1
+		UINT64_C(0x0c18edfc0),	// [19] = bitrev((x^120 mod P')<<32) << 1
+		UINT64_C(0x140d44a2e),	// [20] = bitrev((x^128 mod P')<<32) << 1
+		UINT64_C(0x106e7dfc4),	// [21] = bitrev((x^136 mod P')<<32) << 1
+		UINT64_C(0x09d0fe176),	// [22] = bitrev((x^144 mod P')<<32) << 1
+		UINT64_C(0x0b9fbdbe8),	// [23] = bitrev((x^152 mod P')<<32) << 1
+		UINT64_C(0x1751997d0),	// [24] = bitrev((x^160 mod P')<<32) << 1
+	};
+
+	const __m128i vfold128 = _mm_set_epi64x(kByteShifts[16], kByteShifts[24]);
+
+	// Multiply running CRC by (x^-32 mod P') so the next 128 bits are weighted as
+	// x^0..127. The CRC32 comes in at the lowest lane, which is scaled by x^32
+	// in bit-reflected space -- so we need another x^-32 factor to combat that.
+	static constexpr uint64 xn64_modP_shl32 = 0x6CA226EA;
+	
+	__m128i vcrc = _mm_clmulepi64_si128(_mm_cvtsi32_si128(crc), _mm_set_epi64x(0, xn64_modP_shl32), 0x00);
+
+	// do 512-bit chunks
+	if (len >= 64) {
+		__m128i vcrc0 = _mm_setzero_si128();
+		__m128i vcrc1 = vcrc0;
+		__m128i vcrc2 = vcrc0;
+		__m128i vcrc3 = vcrc;
+
+		static constexpr uint64 x480_modP_shl32 = UINT64_C(0x1c6e41596);
+		static constexpr uint64 x544_modP_shl32 = UINT64_C(0x154442bd4);
+		__m128i vfold512 = _mm_set_epi64x(x480_modP_shl32, x544_modP_shl32);
+		while(len >= 64) {
+			vcrc0 = _mm_xor_si128(
+				_mm_clmulepi64_si128(vcrc0, vfold512, 0x11),
+				_mm_xor_si128(
+					_mm_clmulepi64_si128(vcrc0, vfold512, 0x00),
+					_mm_loadu_si128((const __m128i *)src + 0)
+				)
+			);
+
+			vcrc1 = _mm_xor_si128(
+				_mm_clmulepi64_si128(vcrc1, vfold512, 0x11),
+				_mm_xor_si128(
+					_mm_clmulepi64_si128(vcrc1, vfold512, 0x00),
+					_mm_loadu_si128((const __m128i *)src + 1)
+				)
+			);
+
+			vcrc2 = _mm_xor_si128(
+				_mm_clmulepi64_si128(vcrc2, vfold512, 0x11),
+				_mm_xor_si128(
+					_mm_clmulepi64_si128(vcrc2, vfold512, 0x00),
+					_mm_loadu_si128((const __m128i *)src + 2)
+				)
+			);
+
+			vcrc3 = _mm_xor_si128(
+				_mm_clmulepi64_si128(vcrc3, vfold512, 0x11),
+				_mm_xor_si128(
+					_mm_clmulepi64_si128(vcrc3, vfold512, 0x00),
+					_mm_loadu_si128((const __m128i *)src + 3)
+				)
+			);
+
+			src = (const char *)src + 64;
+			len -= 64;
+		}
+
+		// fold down from 512 to 128
+		static constexpr uint64 x224_modP_shl32 = UINT64_C(0x15A546366);
+		static constexpr uint64 x288_modP_shl32 = UINT64_C(0x0F1DA05AA);
+		static constexpr uint64 x352_modP_shl32 = UINT64_C(0x174359406);
+		static constexpr uint64 x416_modP_shl32 = UINT64_C(0x03DB1ECDC);
+
+		const __m128i vfold256 = _mm_set_epi64x(x224_modP_shl32, x288_modP_shl32);
+		const __m128i vfold384 = _mm_set_epi64x(x352_modP_shl32, x416_modP_shl32);
+
+		vcrc = vcrc3;
+		vcrc = _mm_xor_si128(vcrc,
+			_mm_xor_si128(
+				_mm_clmulepi64_si128(vcrc2, vfold128, 0x00),
+				_mm_clmulepi64_si128(vcrc2, vfold128, 0x11)
+			)
+		);
+		vcrc = _mm_xor_si128(vcrc,
+			_mm_xor_si128(
+				_mm_clmulepi64_si128(vcrc1, vfold256, 0x00),
+				_mm_clmulepi64_si128(vcrc1, vfold256, 0x11)
+			)
+		);
+		vcrc = _mm_xor_si128(vcrc,
+			_mm_xor_si128(
+				_mm_clmulepi64_si128(vcrc0, vfold384, 0x00),
+				_mm_clmulepi64_si128(vcrc0, vfold384, 0x11)
+			)
+		);
+	}
+
+	// do 128-bit chunks
+	while(len >= 16) {
+		// multiply current CRC chunks by (x^96 mod P')<<32 and (x^192 mod P')<<32
+		__m128i foldedLo = _mm_clmulepi64_si128(vcrc, vfold128, 0x11);
+		__m128i foldedHi = _mm_clmulepi64_si128(vcrc, vfold128, 0x00);
+
+		// load next 128 bits
+		__m128i va = _mm_loadu_si128((const __m128i *)src);
+		src = (const char *)src + 16;
+
+		// fold existing CRC and add in another 128 bits of the message
+		vcrc = _mm_xor_si128(_mm_xor_si128(va, foldedLo), foldedHi);
+
+		len -= 16;
+	}
+
+	// handle leftover bits
+	if (len) {
+		// multiply running CRC by x^8..120 mod P
+		__m128i vfoldnlo = _mm_loadl_epi64((const __m128i *)&kByteShifts[len]);
+		__m128i vfoldnhi = _mm_loadl_epi64((const __m128i *)&kByteShifts[len + 8]);
+
+		__m128i foldedLo = _mm_clmulepi64_si128(vcrc, vfoldnlo, 0x01);
+		__m128i foldedHi = _mm_clmulepi64_si128(vcrc, vfoldnhi, 0x00);
+
+		// fold and add in remaining message bytes
+		alignas(16) uint8 buf[16] {};
+		memcpy(buf + (16 - len), src, len);
+
+		__m128i va = _mm_loadu_si128((const __m128i *)buf);
+		vcrc = _mm_xor_si128(_mm_xor_si128(va, foldedLo), foldedHi);
+	}
+
+	// At this point, we have a full 128-bit CRC bit-reversed in vcrc.
+	// First, fold down the high 64 bits to produce a 96-bit intermediate,
+	// right-aligned. This also multiplies the low 64 bits by x^32 to make
+	// room for the final CRC.
+	//
+	// 127                                                      0 (reg order)
+	//  +-------------+-------------+-------------+-------------+
+	//  |      CRC low 64 bits      |      CRC high 64 bits     | vcrc
+	//  +-------------+-------------+-------------+-------------+
+	//          |                                 x
+	//          |                                 +-------------+
+	//          |                                 | x^96 mod P' |
+	//          |                                 +-------------+
+	//          |                                 =
+	//          |     +-------------+-------------+-------------+
+	//          |     |             CRC high product            |
+	//          |     +-------------+-------------+-------------+
+	//          |                                 +
+	//          |                   +-------------+-------------+
+	//          +------------------>|      CRC low 64 bits      |
+	//                              +-------------+-------------+
+	//                                            =
+	// + - - - - - - -+-------------+-------------+-------------+
+	// .      0       |               96-bit CRC                |
+	// + - - - - - - -+-------------+-------------+-------------+
+
+	vcrc = _mm_xor_si128(
+		_mm_srli_si128(vcrc, 8),
+		_mm_clmulepi64_si128(vcrc, _mm_load_si128((const __m128i *)&kByteShifts[16]), 0x00)
+	);
+
+	// Fold the high 32-bits. In the bit-reversed register order, this is:
+	// vcrc[95:32] ^ vcrc[31:0]*((x^64 mod P') << 31). This leaves us a 64-bit CRC
+	// in the low 64 bits.
+	//
+	// 127                                                      0 (reg order)
+	// + - - - - - - -+-------------+-------------+-------------+
+	// .      0       |      CRC low 64 bits      | CRC high 32b| vcrc
+	// + - - - - - - -+-------------+-------------+-------------+
+	//                      |                            x
+	//                      |                     +-------------+
+	//                      |                     | x^64 mod P '|
+	//                      |                     +-------------+
+	//                      |                     =
+	//                      |       +-------------+-------------+
+	//                      |       |      CRC high product     |
+	//                      |       +-------------+-------------+
+	//                      |                     +
+	//                      |       +-------------+-------------+
+	//                      +------>|      CRC low 64 bits      |
+	//                              +-------------+-------------+
+	//                                            =
+	//                              +-------------+-------------+
+	//                              |         64-bit CRC        |
+	//                              +-------------+-------------+
+
+	vcrc = _mm_xor_si128(
+		_mm_shuffle_epi32(vcrc, 0b0'11'11'10'01),
+		_mm_clmulepi64_si128(
+			_mm_castps_si128(_mm_move_ss(_mm_setzero_ps(), _mm_castsi128_ps(vcrc))),
+			_mm_load_si128((const __m128i *)&kByteShifts[12]),
+			0x00
+		)
+	);
+
+	// At this point, we now have a bit-reversed 64-bit CRC value in the low
+	// 64 bits and need to do a Barrett reduction.
+	//
+	static constexpr uint64 x64divP = 0X1F7011641;
+	const uint64 P = 0x1DB710640;
+	const __m128i redConsts = _mm_set_epi64x(P, x64divP);
+
+	//	T1(x) = floor(R(x)/x^32)*floor(x^64/P(x))
+	__m128i t1 =
+		_mm_clmulepi64_si128(
+			_mm_castps_si128(_mm_move_ss(_mm_setzero_ps(), _mm_castsi128_ps(vcrc))),
+			redConsts,
+			0x00
+		);
+
+	//	T2(x) = floor(T1(x)/x^32)*P(x)
+	__m128i t2 =
+		_mm_clmulepi64_si128(
+			_mm_castps_si128(_mm_move_ss(_mm_setzero_ps(), _mm_castsi128_ps(t1))),
+			redConsts,
+			0x10
+		);
+
+	//	C(x) = R(x) ^ loword(T2(x) mod x^32)
+	vcrc = _mm_xor_si128(vcrc, t2);
+
+	// extract running CRC32 in low 32-bits (in lane 1 in register).
+	return _mm_cvtsi128_si32(_mm_shuffle_epi32(vcrc, 0x55));
+}
+#endif
+
+#if defined(VD_CPU_ARM64)
+uint32 VDCRC32Update_ARM64_CRC32(uint32 crc, const void *src, size_t len) {
+	// The ARM64 version is stupidly simpler than the x64 version because ARM64
+	// has a native instruction to calculate the Ethernet CRC. It has all
+	// scalar sizes (8/16/32/64-bit) and works on a running CRC32
+	// without the final inversion. It does require the optional CRC32 ISA
+	// extension, which is common, but technically we still need to do a runtime
+	// check.
+
+	const auto partialUpdate = [](uint32 crc, const void *src, size_t len) -> uint32 {
+		if (len & 4) {
+			crc = __crc32w(crc, VDReadUnalignedU32(src));
+			src = (const char *)src + 4;
+		}
+
+		if (len & 2) {
+			crc = __crc32h(crc, VDReadUnalignedU16(src));
+			src = (const char *)src + 2;
+		}
+
+		if (len & 1)
+			crc = __crc32b(crc, *(const uint8 *)src);
+
+		return crc;
+	};
+
+	// check for pre-alignment
+	size_t alignLen = ((size_t)0 - len) & 7;
+	if (alignLen) {
+		if (alignLen > len)
+			alignLen = len;
+
+		crc = partialUpdate(crc, src, alignLen);
+		src = (const char *)src + alignLen;
+		len -= alignLen;
+	}
+
+	// do large blocks
+	if (len >= 64) {
+		size_t numLargeBlocks = len >> 6;
+		do {
+			crc = __crc32d(crc, *((uint64 *)src + 0));
+			crc = __crc32d(crc, *((uint64 *)src + 1));
+			crc = __crc32d(crc, *((uint64 *)src + 2));
+			crc = __crc32d(crc, *((uint64 *)src + 3));
+			crc = __crc32d(crc, *((uint64 *)src + 4));
+			crc = __crc32d(crc, *((uint64 *)src + 5));
+			crc = __crc32d(crc, *((uint64 *)src + 6));
+			crc = __crc32d(crc, *((uint64 *)src + 7));
+			src = (const char *)src + 64;
+		} while(--numLargeBlocks);
+
+		len &= 63;
+	}
+
+	// do small blocks
+	while(len >= 8) {
+		crc = __crc32d(crc, *(uint64 *)src);
+		src = (const char *)src + 8;
+		len -= 8;
+	}
+
+	// do tail
+	return partialUpdate(crc, src, len);
+}
+#endif
+
+VDCRCChecker::VDCRCChecker(const VDCRCTable& table)
+	: mValue(0xFFFFFFFF), mpTable(&table)
+{
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+	if (mpTable == &VDCRCTable::CRC32) {
+		if (CPUGetEnabledExtensions() & CPUF_SUPPORTS_CLMUL)
+			mpTable = nullptr;
+	}
+#elif defined(VD_CPU_ARM64)
+	if (mpTable == &VDCRCTable::CRC32) {
+		if (CPUGetEnabledExtensions() & VDCPUF_SUPPORTS_CRC32)
+			mpTable = nullptr;
+	}
+#endif
+}
 void VDCRCChecker::Process(const void *src, sint32 count) {
-	if (count > 0)
-		mValue = mTable.Process(mValue, src, count);
+	if (count <= 0)
+		return;
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+	if (!mpTable) {
+		mValue = VDCRC32Update_CLMUL(mValue, src, count);
+		return;
+	}
+#elif defined(VD_CPU_ARM64)
+	if (!mpTable) {
+		mValue = VDCRC32Update_ARM64_CRC32(mValue, src, count);
+		return;
+	}
+#endif
+
+	mValue = mpTable->Process(mValue, src, count);
 }
 
 struct VDHuffmanHistoSorterData {
@@ -448,6 +984,8 @@ class VDDeflateEncoder {
 public:
 	VDDeflateEncoder() = default;
 
+	void SetCompressionLevel(VDDeflateCompressionLevel level);
+
 	void Init(bool quick, vdfunction<void(const void *, uint32)> preProcessFn, vdfunction<void(const void *, uint32)> writeFn);
 	void Write(const void *src, size_t len);
 	void ForceNewBlock();
@@ -456,6 +994,10 @@ public:
 protected:
 	void EndBlock(bool term);
 	void Compress(bool flush);
+
+	template<VDDeflateCompressionLevel T_CompressionLevel>
+	void Compress2(bool flush);
+
 	void VDFORCEINLINE PutBits(uint32 encoding, int enclen);
 	void FlushBits();
 	void FlushOutput();
@@ -475,6 +1017,7 @@ protected:
 
 	uint32	mWindowLimit;
 	uint32	mPreprocessPos = 0;
+	VDDeflateCompressionLevel mCompressionLevel = VDDeflateCompressionLevel::Best;
 
 	vdfunction<void(const void *, uint32)> mpPreProcessFn;
 	vdfunction<void(const void *, uint32)> mpOutputFn;
@@ -495,6 +1038,10 @@ protected:
 	uint16	mCodeBuf[32769];
 	uint16	mDistBuf[32769];
 };
+
+void VDDeflateEncoder::SetCompressionLevel(VDDeflateCompressionLevel level) {
+	mCompressionLevel = level;
+}
 
 void VDDeflateEncoder::Init(bool quick, vdfunction<void(const void *, uint32)> preProcessFn, vdfunction<void(const void *, uint32)> writeFn) {
 	std::fill(mHashNext, mHashNext+32768, -0x20000);
@@ -571,10 +1118,29 @@ void VDDeflateEncoder::EndBlock(bool term) {
 		mpLen = mLenBuf;
 		mHistoryBlockStart = mHistoryPos;
 		mLenExtraBits = 0;
+	} else if (term) {
+		// We have no data pending, but need to emit the terminator -- this generally
+		// only occurs if the stream is empty. Emit an empty block. Our best bet
+		// is a static block, as it avoids the overhead of the length bytes and
+		// byte alignment. The encoding is %1 for final block, %01 for static coding,
+		// and %0000000 for EOB.
+		PutBits(0b0'0000000'01'1U << (32-10), 10);
 	}
 }
 
+
 void VDDeflateEncoder::Compress(bool flush) {
+	switch(mCompressionLevel) {
+		case VDDeflateCompressionLevel::Best:
+			return Compress2<VDDeflateCompressionLevel::Best>(flush);
+
+		case VDDeflateCompressionLevel::Quick:
+			return Compress2<VDDeflateCompressionLevel::Quick>(flush);
+	}
+}
+
+template<VDDeflateCompressionLevel T_CompressionLevel>
+void VDDeflateEncoder::Compress2(bool flush) {
 	using namespace nsVDDeflate;
 
 	uint8	*lenptr = mpLen;
@@ -632,6 +1198,8 @@ void VDDeflateEncoder::Compress(bool flush) {
 			const uint16 matchWord1 = *(const uint16 *)s2;
 			const uint8 matchWord2 = *(const uint8 *)(s2 + 2);
 			uint32 hoffset = 0;
+
+			[[maybe_unused]] uint32 patience = 16;
 
 			do {
 				const unsigned char *s1 = hist + hpos - hoffset;
@@ -721,6 +1289,11 @@ void VDDeflateEncoder::Compress(bool flush) {
 						}
 						continue;
 					}
+				}
+
+				if constexpr (T_CompressionLevel == VDDeflateCompressionLevel::Quick) {
+					if (!--patience)
+						break;
 				}
 
 				hpos = mHashNext[hpos & 0x7fff];
@@ -828,7 +1401,7 @@ void VDDeflateEncoder::Finish() {
 	while(mHistoryPos != mHistoryBase + mHistoryTail)
 		Compress(true);
 
-	VDASSERT(mpCode != mCodeBuf);
+	// we may get here with no codes in the unique case of an empty stream
 	EndBlock(true);
 
 	FlushBits();
@@ -1065,8 +1638,10 @@ uint32 VDDeflateEncoder::Flush(int n, int ndists, bool term, bool test) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-void VDInflateStream::Init(IVDStream *pSrc, uint64 limit, bool bStored) {
-	mBits.init(pSrc, limit);
+template<bool T_Enhanced>
+void VDInflateStream<T_Enhanced>::Init(IVDStream *pSrc, uint64 limit, bool bStored) {
+	mL2Buffer.Init(*pSrc, limit);
+	mBits.init(mL2Buffer);
 	mBlockType = kNoBlock;
 	mReadPt = mWritePt = mBufferLevel = 0;
 	mStoredBytesLeft = 0;
@@ -1079,20 +1654,34 @@ void VDInflateStream::Init(IVDStream *pSrc, uint64 limit, bool bStored) {
 	}
 }
 
-const wchar_t *VDInflateStream::GetNameForError() {
-	return mBits.stream()->GetNameForError();
+template<bool T_Enhanced>
+VDInflateStream<T_Enhanced>::~VDInflateStream() {
 }
 
-sint64 VDInflateStream::Pos() {
+template<bool T_Enhanced>
+void VDInflateStream<T_Enhanced>::VerifyCRC() const {
+	if (mbCRCEnabled && CRC() != mExpectedCRC)
+		throw MyError("Read error on compressed data (CRC error).");
+}
+
+template<bool T_Enhanced>
+const wchar_t *VDInflateStream<T_Enhanced>::GetNameForError() {
+	return mL2Buffer.GetSource().GetNameForError();
+}
+
+template<bool T_Enhanced>
+sint64 VDInflateStream<T_Enhanced>::Pos() {
 	return mPos;
 }
 
-void VDInflateStream::Read(void *buffer, sint32 bytes) {
+template<bool T_Enhanced>
+void VDInflateStream<T_Enhanced>::Read(void *buffer, sint32 bytes) {
 	if (bytes != ReadData(buffer, bytes))
-		throw MyError("Read error on compressed data");
+		throw VDDeflateDecompressionException();
 }
 
-sint32 VDInflateStream::ReadData(void *dst0, sint32 bytes) {
+template<bool T_Enhanced>
+sint32 VDInflateStream<T_Enhanced>::ReadData(void *dst0, sint32 bytes) {
 	sint32 actual = 0;
 
 	uint8 *dst = (uint8 *)dst0;
@@ -1100,7 +1689,7 @@ sint32 VDInflateStream::ReadData(void *dst0, sint32 bytes) {
 	while(bytes > 0) {
 		if (mBufferLevel > 0) {
 			unsigned tc = std::min<unsigned>(mBufferLevel, bytes);
-			unsigned bp = 65536 - mReadPt;
+			unsigned bp = kBufferSize - mReadPt;
 
 			if (bp < tc) {
 				memcpy(dst, mBuffer+mReadPt, bp);
@@ -1136,85 +1725,198 @@ sint32 VDInflateStream::ReadData(void *dst0, sint32 bytes) {
 	return actual;
 }
 
-void VDInflateStream::Write(const void *buffer, sint32 bytes) {
+template<bool T_Enhanced>
+void VDInflateStream<T_Enhanced>::Write(const void *buffer, sint32 bytes) {
 	throw MyError("Zip streams are read-only.");
 }
 
-bool VDInflateStream::Inflate() {
-	using namespace nsVDDeflate;
-
-	if (mBlockType == kNoBlock)
-		if (mbNoMoreBlocks || !ParseBlockHeader())
+template<bool T_Enhanced>
+bool VDInflateStream<T_Enhanced>::Inflate() {
+	if (mBlockType == kNoBlock) {
+		if (mbNoMoreBlocks) {
+			mBits.CheckEOF();
 			return false;
+		}
+
+		ParseBlockHeader();
+	}
 
 	if (mBlockType == kStoredBlock) {
-		while(mBufferLevel < 65536) {
+		while(mBufferLevel < kBufferSize) {
 			if (mStoredBytesLeft <= 0) {
 				mBlockType = kNoBlock;
 				break;
 			}
-			uint32 tc = std::min<uint32>(65536 - mWritePt, std::min<uint32>(65536 - mBufferLevel, mStoredBytesLeft));
+			uint32 tc = std::min<uint32>(kBufferSize - mWritePt, std::min<uint32>(kBufferSize - mBufferLevel, mStoredBytesLeft));
 
 			mBits.readbytes(mBuffer + mWritePt, tc);
 
-			mWritePt = (mWritePt + tc) & 65535;
+			mWritePt = (mWritePt + tc) & kBufferMask;
 			mStoredBytesLeft -= tc;
 			mBufferLevel += tc;
 		}
-	} else {
-		while(mBufferLevel < 65024) {
-			unsigned code, bits;
+	} else
+		InflateBlock();
 
-			code	= mCodeDecode[mBits.peek() & 0x7fff];
-			bits	= mCodeLengths[code];
+	return true;
+}
 
-			if (!mBits.consume(bits))
-				return false;
+template<bool T_Enhanced>
+VDNOINLINE void VDInflateStream<T_Enhanced>::InflateBlock() {
+	using namespace nsVDDeflate;
 
-			if (code == 256) {
+	size_t writePt = mWritePt;
+	uint32 bufferLevel = mBufferLevel;
+
+	uint8 *VDRESTRICT buffer = &mBuffer[0];
+	auto bitReader = mBits;
+
+	// We must always have enough space in the buffer to accommodate a full
+	// run. For Deflate, this is 258 octets, but for enhanced Deflate, it's
+	// a full 64K. We also need a little bit more space so we can overrun
+	// with vector copies.
+	while(bufferLevel < 65024) {
+		// Max bit sequences we can encounter:
+		//
+		//	Literal[1..15]
+		//	CopyLen[1..15] + CopyLenExtra[0..5] + Dist[1..15] + DistExtra[0..13] (Deflate)
+		//	CopyLen[1..15] + CopyLenExtra[0..16] + Dist[1..15] + DistExtra[0..14] (Deflate64)
+		//
+		// Refill guarantees 24 bits for 32-bit and 56 bits for 64-bit. For
+		// 32-bit, we can read CopyLenExtra without refilling for Deflate only.
+		// For 64-bit, we can read the entire sequence (49 bits max) for Deflate,
+		// but need one refill for Deflate64.
+
+		uint32 codeWindow = bitReader.Peek32();
+		const auto *VDRESTRICT quickCode = mCodeQuickDecode[codeWindow & kQuickCodeMask];
+		uint32 code = quickCode[0];
+		uint32 bits = quickCode[1];
+		if (code >= kQuickCodes) {
+			code = mCodeDecode[codeWindow & code];
+			bits = code & 15;
+			code >>= 4;
+		}
+
+		bitReader.Consume(bits);
+
+		if (code >= 256) {
+			if (code == 256) [[unlikely]] {
 				mBlockType = kNoBlock;
 				break;
-			} else if (code >= 257) {
-				unsigned	dist, len;
+			}
 
-				code -= 257;
+			code -= 257;
 
-				len = len_tbl[code] + mBits.getbits(len_bits_tbl[code]);
+			unsigned len;
+			if constexpr (T_Enhanced) {
+				if constexpr (VDDeflateBitReader::kUsing64)
+					len = len_tbl64[code] + bitReader.GetBitsUnchecked(len_bits_tbl64[code]);
+				else
+					len = len_tbl64[code] + bitReader.getbits(len_bits_tbl64[code]);
+			} else {
+				// We have at least 24 bits guaranteed available from the peek above, of
+				// which at least 15 bits at most have been used, giving 9 left. The max
+				// bits we consume here is 5. This is not safe for Deflate64 where the
+				// last code can grab 16 bits.
+				len = len_tbl[code] + bitReader.GetBitsUnchecked(len_bits_tbl[code]);
+			}
 
-				if (len < 3)
-					return false;	// can happen with a bad static block
+			if (len < 3)	// can happen with a bad static block
+				throw VDDeflateDecompressionException();
 
-				code = mDistDecode[mBits.peek() & 0x7fff];
-				bits = mCodeLengths[code + 288];
+			uint32 distWindow;
+			
+			if constexpr (VDDeflateBitReader::kUsing64 && !T_Enhanced)
+				distWindow = bitReader.PeekUnchecked32();
+			else
+				distWindow = bitReader.Peek32();
 
-				if (!mBits.consume(bits))
-					return false;
+			const auto *VDRESTRICT distQuickCode = mDistQuickDecode[distWindow & kQuickCodeMask];
+			uint32 dcode = distQuickCode[0];
+			uint32 dbits = distQuickCode[1];
+			if (dcode >= kQuickCodes) {
+				dcode = mDistDecode[distWindow & dcode];
+				dbits = mCodeLengths[dcode + 288];
+			}
 
-				dist = dist_tbl[code] + mBits.getbits(dist_bits_tbl[code]);
+			bitReader.Consume(dbits);
 
-				VDDEBUG_INFLATE("copy (%u, %u)\n", dist, len);
+			uint32 dist = dist_tbl[dcode];
+			
+			if constexpr (VDDeflateBitReader::kUsing64)
+				dist += bitReader.GetBitsUnchecked(dist_bits_tbl[dcode]);
+			else
+				dist += bitReader.getbits(dist_bits_tbl[dcode]);
 
-				unsigned copysrc = (mWritePt - dist) & 65535;
+			VDDEBUG_INFLATE("copy (%u, %u)\n", dist, len);
 
-				mBufferLevel += len;
+			size_t copySrcOffset = (writePt - dist) & kBufferMask;
 
-				// NOTE: This can be a self-replicating copy.  It must be ascending and it must
-				//		 be by bytes.
+			bufferLevel += len;
+
+			// NOTE: This can be a self-replicating copy.  It must be ascending and it must
+			//		 be by bytes.
+			if (((writePt > copySrcOffset ? writePt : copySrcOffset) + len) > kBufferSize) [[unlikely]] {
+				// wrapped copy
 				do {
-					mBuffer[mWritePt++] = mBuffer[copysrc++];
-					mWritePt &= 65535;
-					copysrc &= 65535;
+					buffer[writePt] = buffer[copySrcOffset];
+					++writePt;
+					writePt &= kBufferMask;
+
+					++copySrcOffset;
+					copySrcOffset &= kBufferMask;
 				} while(--len);
 			} else {
-				VDDEBUG_INFLATE("literal %u\n", code);
-				mBuffer[mWritePt++] = code;
-				mWritePt &= 65535;
-				++mBufferLevel;
+				// unwrapped copy
+				writePt += len;
+
+				uint8 *copyDstEnd = &buffer[writePt];	// must use unwrapped value if exactly at EOB
+				const uint8 *copySrcEnd = &buffer[copySrcOffset + len];
+				ptrdiff_t copyOffset = -(ptrdiff_t)len;
+
+				// check if we have a repeating copy
+				if (dist >= len) {
+					// Non-repeating -- copy vecs at a time. We use a larger buffer than the window
+					// (64K > 32K or 128K > 64K) and don't allow the buffer to completely fill up,
+					// so it is OK to overrun a bit.
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+					do {
+						_mm_storeu_si128(
+							(__m128i *)&copyDstEnd[copyOffset],
+							_mm_loadu_si128((const __m128i *)&copySrcEnd[copyOffset])
+						);
+
+						copyOffset += 16;
+					} while(copyOffset < 0);
+#elif defined(VD_CPU_ARM64)
+					do {
+						vst1q_u8(&copyDstEnd[copyOffset], vld1q_u8(&copySrcEnd[copyOffset]));
+
+						copyOffset += 16;
+					} while(copyOffset < 0);
+#else
+#error Unaligned access not implemented
+#endif
+				} else {
+					// Repeating -- must copy a byte at a time
+					do {
+						copyDstEnd[copyOffset] = copySrcEnd[copyOffset];
+					} while(++copyOffset);
+				}
+
+				writePt &= kBufferMask;
 			}
+		} else {
+			VDDEBUG_INFLATE("literal %u\n", code);
+			buffer[writePt++] = code;
+			writePt &= kBufferMask;
+			++bufferLevel;
 		}
 	}
 
-	return true;
+	mBits = bitReader;
+	mBufferLevel = bufferLevel;
+	mWritePt = (uint32)writePt;
 }
 
 namespace {
@@ -1223,6 +1925,48 @@ namespace {
 		x = ((x << 2) & 0xcc) + ((x >> 2) & 0x33);
 		return ((x << 1) & 0xaa) + ((x >> 1) & 0x55);
 	}
+
+	template<int T_Bits>
+	constexpr unsigned revword(uint32 x) {
+		if constexpr (T_Bits == 9) {
+			const uint32 x4 = x & 0x10;
+
+			x =    ((x << 5) & 0b0'1111'0'0000) + ((x >> 5) & 0b0'0000'0'1111);
+			x =    ((x << 2) & 0b0'1100'0'1100) + ((x >> 2) & 0b0'0011'0'0011);
+			return ((x << 1) & 0b0'1010'0'1010) + ((x >> 1) & 0b0'0101'0'0101) + x4;
+		} else if constexpr (T_Bits == 10) {
+			x =    ((x << 5) & 0b0'11111'00000) + ((x >> 5) & 0b0'00000'11111);
+
+			const uint32 xmid = x & 0b0'00100'00100;
+			x =    ((x << 3) & 0b0'11000'11000) + ((x >> 3) & 0b0'00011'00011);
+			return ((x << 1) & 0b0'10010'10010) + ((x >> 1) & 0b0'01001'01001) + xmid;
+		} else if constexpr (T_Bits == 11) {
+			const uint32 xmid1 = x & 0b0'00000'1'00000;
+
+			x =    ((x << 6) & 0b0'11111'0'00000) + ((x >> 6) & 0b0'00000'0'11111);
+
+			const uint32 xmid2 = xmid1 + (x & 0b0'00100'0'00100);
+			x =    ((x << 3) & 0b0'11000'0'11000) + ((x >> 3) & 0b0'00011'0'00011);
+			return ((x << 1) & 0b0'10010'0'10010) + ((x >> 1) & 0b0'01001'0'01001) + xmid2;
+		} else if constexpr (T_Bits == 12) {
+			x =    ((x << 6) & 0b0'111111'000000) + ((x >> 6) & 0b0'000000'111111);
+			x =    ((x << 3) & 0b0'111000'111000) + ((x >> 3) & 0b0'000111'000111);
+			return ((x << 2) & 0b0'100100'100100) + ((x >> 2) & 0b0'001001'001001) + (x & 0b0'010010'010010);
+		} else {
+			return sizeof(int[-T_Bits]);
+		}
+	}
+
+	static_assert(revword<10>(0b0'0000000001) == 0b0'1000000000);
+	static_assert(revword<10>(0b0'0000000010) == 0b0'0100000000);
+	static_assert(revword<10>(0b0'0000000100) == 0b0'0010000000);
+	static_assert(revword<10>(0b0'0000001000) == 0b0'0001000000);
+	static_assert(revword<10>(0b0'0000010000) == 0b0'0000100000);
+	static_assert(revword<10>(0b0'0000100000) == 0b0'0000010000);
+	static_assert(revword<10>(0b0'0001000000) == 0b0'0000001000);
+	static_assert(revword<10>(0b0'0010000000) == 0b0'0000000100);
+	static_assert(revword<10>(0b0'0100000000) == 0b0'0000000010);
+	static_assert(revword<10>(0b0'1000000000) == 0b0'0000000001);
 
 	static unsigned revword15(unsigned x) {
 		x = ((x << 8) & 0xff00) + ((x >> 8) & 0x00ff);
@@ -1252,29 +1996,140 @@ namespace {
 		return !base;
 	}
 
-	static bool InflateExpandTable32K(unsigned short *dst, unsigned char *lens, unsigned codes) {
-		unsigned	k;
-		unsigned	ki;
-		unsigned	base=0;
+//#define VD_INFLATE_PROFILE_TREE_32K
 
-		for(int i=1; i<16; ++i) {
-			ki = 1<<i;
+	template<uint32 T_QuickBits, typename T_Quick, typename T_Full>
+	static bool InflateExpandTable32K(T_Full *dst, T_Quick (*quickDst)[2], uint8 *lens, uint32 codes) {
+#ifdef VD_INFLATE_PROFILE_TREE_32K
+		uint32 quickCodeSpaceUsed = 0;
+#endif
 
-			for(unsigned j=0; j<codes; ++j) {
-				if (lens[j] == i) {
-					for(k=base; k<0x8000; k+=ki)
-						dst[k] = j;
+		constexpr uint32 kQuickCodes = 1 << T_QuickBits;
+		constexpr uint32 kQuickCodeMask = kQuickCodes - 1;
 
-					base = revword15(revword15(base)+(0x8000 >> i));
+		uint32 codesUsed = 0;
+		uint32 codeSpaceUsed = 0;
+		uint32 lastCode = 0;
+		uint32 maxLen = 0;
+
+		for(uint32 i=0; i<codes; ++i) {
+			uint8 len = lens[i];
+			if (len) {
+				lastCode = i;
+				++codesUsed;
+				codeSpaceUsed += 0x8000 >> len;
+				if (maxLen < len)
+					maxLen = len;
+
+#ifdef VD_INFLATE_PROFILE_TREE_32K
+				if (len <= T_QuickBits)
+					quickCodeSpaceUsed += kQuickCodes >> len;
+#endif
+			}
+		}
+
+#ifdef VD_INFLATE_PROFILE_TREE_32K
+		VDDEBUG2("%d/32768 (%.2f%%) within %d-bit | maxlen %d/15 for %d codes\n"
+			, quickCodeSpaceUsed << 6
+			, (float)quickCodeSpaceUsed / 32768.0f * 100.0f
+			, T_QuickBits
+			, maxLen
+			, codes);
+#endif
+
+		// check for tree completeness
+		if (codeSpaceUsed != 0x8000) {
+			// Two special cases:
+			//
+			// 1) If there is exactly one distance code, then it must be coded
+			//    as an incomplete tree with a single 1-bit code.
+			//
+			// 2) If there are no distance codes, then it is coded as a single
+			//    code of length zero.
+			//
+			if (codesUsed == 1 && codeSpaceUsed == 0x4000) {
+				// we don't need the full table, the quick table suffices
+				for(int i=0; i<kQuickCodes; ++i) {
+					quickDst[i][0] = T_Quick(lastCode);
+					quickDst[i][1] = 1;
+				}
+
+				return true;
+			} else if (codeSpaceUsed == 0) {
+				for(int i=0; i<kQuickCodes; ++i) {
+					quickDst[i][0] = T_Quick(0);
+					quickDst[i][1] = 1;
+				}
+
+				return true;
+			}
+
+			// invalid incomplete tree
+			throw VDDeflateDecompressionException();
+		}
+
+		// populate quick (9-bit) table
+		constexpr bool canEncodeQuickMask = std::numeric_limits<T_Quick>().max() >= 0xFFFF;
+		constexpr bool canEncodeFullLen = std::numeric_limits<T_Full>().max() >= 0xFFFF;
+
+		for(int i = 0; i < kQuickCodes; ++i) {
+			if constexpr (canEncodeQuickMask)
+				quickDst[i][0] = ~(~T_Quick(0) >> 1);
+			else
+				quickDst[i][0] = ~T_Quick(0);
+
+			quickDst[i][1] = 0;
+		}
+
+		uint32 quickBase = 0;
+		for(int len = 1; len <= T_QuickBits; ++len) {
+			uint32 ki = 1 << len;
+
+			for(unsigned j = 0; j < codes; ++j) {
+				if (lens[j] == len) {
+					for(uint32 code = quickBase; code < kQuickCodes; code += ki) {
+						quickDst[code][0] = j;
+						quickDst[code][1] = len;
+					}
+
+					quickBase = revword<T_QuickBits>(revword<T_QuickBits>(quickBase)+(kQuickCodes >> len));
 				}
 			}
 		}
 
-		return !base;
+		// populate full (15-bit) table if any codes longer than 9 bit exist
+		if (maxLen > T_QuickBits) {
+			unsigned base = quickBase;
+
+			// we only need 10 bit codes and beyond
+			for(int len = T_QuickBits + 1; len < 16; ++len) {
+				uint32 ki = 1 << len;
+
+				for(unsigned j=0; j<codes; ++j) {
+					if (lens[j] == len) {
+						if constexpr (canEncodeQuickMask)
+							quickDst[base & kQuickCodeMask][0] = (quickDst[base & kQuickCodeMask][0] & 0x7FFF) | ((1U << len) - 1);
+
+						T_Full encoding(j);
+
+						if constexpr (canEncodeFullLen)
+							encoding = T_Full((encoding << 4) + len);
+
+						for(uint32 code = base; code < 0x8000; code += ki)
+							dst[code] = encoding;
+
+						base = revword15(revword15(base)+(0x8000 >> len));
+					}
+				}
+			}
+		}
+
+		return true;
 	}
 }
 
-bool VDInflateStream::ParseBlockHeader() {
+template<bool T_Enhanced>
+void VDInflateStream<T_Enhanced>::ParseBlockHeader() {
 	unsigned char ltbl_lengths[20];
 	unsigned char ltbl_decode[256];
 
@@ -1287,22 +2142,13 @@ bool VDInflateStream::ParseBlockHeader() {
 	case 0:		// stored
 		{
 			mBits.align();
-			if (mBits.avail() < 32)
-				return false;
 
 			mStoredBytesLeft = mBits.getbits(16);
 
-			uint32 invCount = mBits.getbits(16);
+			const uint32 invCount = mBits.getbits(16);
 
-			if ((uint16)~invCount != mStoredBytesLeft) {
-				VDDEBUG_INFLATE_ERROR("Stored block header incorrect\n");
-				return false;
-			}
-
-			if (mBits.bytesleft() < mStoredBytesLeft) {
-				VDDEBUG_INFLATE_ERROR("Stored block header incorrect\n");
-				return false;
-			}
+			if ((uint16)~invCount != mStoredBytesLeft)
+				throw VDDeflateDecompressionException();
 
 			mBlockType = kStoredBlock;
 		}
@@ -1317,37 +2163,23 @@ bool VDInflateStream::ParseBlockHeader() {
 			for(   ; i<288; ++i) mCodeLengths[i] = 8;
 			for(i=0; i< 32; ++i) mCodeLengths[i+288] = 5;
 
-			if (!InflateExpandTable32K(mCodeDecode, mCodeLengths, 288)) {
-				VDDEBUG_INFLATE_ERROR("Static code table bad\n");
-				return false;
-			}
-			if (!InflateExpandTable32K(mDistDecode, mCodeLengths+288, 32)) {
-				VDDEBUG_INFLATE_ERROR("Static distance table bad\n");
-				return false;
-			}
+			if (!InflateExpandTable32K<kQuickBits>(mCodeDecode, mCodeQuickDecode, mCodeLengths, 288))
+				throw VDDeflateDecompressionException();
+
+			if (!InflateExpandTable32K<kQuickBits>(mDistDecode, mDistQuickDecode, mCodeLengths+288, 32))
+				throw VDDeflateDecompressionException();
 
 			mBlockType = kDeflatedBlock;
 		}
 		break;
 	case 2:		// dynamic trees
 		{
-			if (mBits.avail() < 16) {
-				VDDEBUG_INFLATE_ERROR("Dynamic tree header bad\n");
-				return false;
-			}
-
 			const unsigned	code_count	= mBits.getbits(5) + 257;
 			const unsigned	dist_count	= mBits.getbits(5) + 1;
 			const unsigned	total_count	= code_count + dist_count;
 			const unsigned	ltbl_count	= mBits.getbits(4) + 4;
 
 			// decompress length table tree
-
-			if (mBits.bitsleft() < 3*ltbl_count) {
-				VDDEBUG_INFLATE_ERROR("Error redaing length table tree\n");
-				return false;
-			}
-
 			memset(ltbl_lengths, 0, sizeof ltbl_lengths);
 
 			static const unsigned char hclen_tbl[]={
@@ -1358,39 +2190,28 @@ bool VDInflateStream::ParseBlockHeader() {
 				ltbl_lengths[hclen_tbl[i]] = mBits.getbits(3);
 			}
 
-			if (!InflateExpandTable256(ltbl_decode, ltbl_lengths, 20)) {
-				VDDEBUG_INFLATE_ERROR("Length tree table bad\n");
-				return false;
-			}
+			if (!InflateExpandTable256(ltbl_decode, ltbl_lengths, 20))
+				throw VDDeflateDecompressionException();
 
 			// decompress length table
 
 			unsigned j=0;
 			unsigned last = 0;
 			while(j < total_count) {
-				unsigned k = ltbl_decode[0xff & mBits.peek()];
+				unsigned k = ltbl_decode[0xff & mBits.Peek32()];
 				unsigned run = 1;
 
-				if (!mBits.consume(ltbl_lengths[k])) {
-					VDDEBUG_INFLATE_ERROR("EOF while reading length table\n");
-					return false;
-				}
+				mBits.Consume(ltbl_lengths[k]);
 
 				switch(k) {
 				case 16:	// last run of 3-6
-					if (mBits.avail() < 2)
-						return false;
 					run = mBits.getbits(2) + 3;
 					break;
 				case 17:	// zero run of 3-10
-					if (mBits.avail() < 3)
-						return false;
 					run = mBits.getbits(3) + 3;
 					last = 0;
 					break;
 				case 18:	// zero run of 11-138
-					if (mBits.avail() < 7)
-						return false;
 					run = mBits.getbits(7) + 11;
 					last = 0;
 					break;
@@ -1398,10 +2219,8 @@ bool VDInflateStream::ParseBlockHeader() {
 					last = k;
 				}
 
-				if (run+j > total_count) {
-					VDDEBUG_INFLATE_ERROR("Length tree bad\n");
-					return false;
-				}
+				if (run+j > total_count)
+					throw VDDeflateDecompressionException();
 
 				do {
 					mCodeLengths[j++] = last;
@@ -1410,23 +2229,23 @@ bool VDInflateStream::ParseBlockHeader() {
 
 			memmove(mCodeLengths + 288, mCodeLengths + code_count, dist_count);
 
-			if (!InflateExpandTable32K(mCodeDecode, mCodeLengths, code_count)) {
-				VDDEBUG_INFLATE_ERROR("Code tree bad\n");
-				return false;
-			}
-			if (!InflateExpandTable32K(mDistDecode, mCodeLengths+288, dist_count)) {
-				VDDEBUG_INFLATE_ERROR("Distance tree bad\n");
-				return false;
-			}
+			if (!InflateExpandTable32K<kQuickBits>(mCodeDecode, mCodeQuickDecode, mCodeLengths, code_count))
+				throw VDDeflateDecompressionException();
+
+			if (!InflateExpandTable32K<kQuickBits>(mDistDecode, mDistQuickDecode, mCodeLengths+288, dist_count))
+				throw VDDeflateDecompressionException();
+
 			mBlockType = kDeflatedBlock;
 		}
 		break;
-	default:
-		return false;
-	}
 
-	return true;
+	default:
+		throw VDDeflateDecompressionException();
+	}
 }
+
+template class VDInflateStream<false>;
+template class VDInflateStream<true>;
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -1508,6 +2327,14 @@ void VDZipArchive::Init(IVDRandomAccessStream *pSrc) {
 
 	// First, see if the central directory is at the end (common case).
 	const sint64 streamLen = mpStream->Length();
+
+	if (streamLen < sizeof(ZipCentralDir)) {
+		if (streamLen == 0)
+			throw MyError("The .zip file is empty.");
+		else
+			throw MyError("The file is too short to be a .zip archive.");
+	}
+
 	mpStream->Seek(streamLen - sizeof(ZipCentralDir));
 
 	ZipCentralDir cdirhdr;
@@ -1566,18 +2393,33 @@ found_directory:
 		if (ent.signature != ZipFileEntry::kSignature)
 			throw MyError("Zip directory is bad");
 
-		if (ent.method != kZipMethodStore && ent.method != kZipMethodDeflate) {
-			if (ent.method == kZipMethodEnhancedDeflate)
-				throw MyError("The Enhanced Deflate compression method in .zip files is not currently supported.");
-			else
-				throw MyError("Unsupported compression method in zip archive");
+		fii.mbSupported = false;
+		fii.mbPacked = false;
+		fii.mbEnhancedDeflate = false;
+		switch(ent.method) {
+			case kZipMethodStore:
+				fii.mbSupported = true;
+				break;
+				
+			case kZipMethodDeflate:
+				fii.mbSupported = true;
+				fii.mbPacked = true;
+				break;
+
+			case kZipMethodEnhancedDeflate:
+				fii.mbSupported = true;
+				fii.mbPacked = true;
+				fii.mbEnhancedDeflate = true;
+				break;
+
+			default:
+				break;
 		}
 
 		fii.mDataStart			= ent.reloff_localhdr;
 		fii.mCompressedSize		= ent.compressed_size;
 		fii.mUncompressedSize	= ent.uncompressed_size;
 		fii.mCRC32				= ent.crc32;
-		fii.mbPacked			= ent.method == kZipMethodDeflate;
 		fii.mFileName.resize(ent.filename_len);
 
 		mpStream->Read(&*fii.mFileName.begin(), ent.filename_len);
@@ -1590,9 +2432,29 @@ sint32 VDZipArchive::GetFileCount() {
 	return mDirectory.size();
 }
 
-const VDZipArchive::FileInfo& VDZipArchive::GetFileInfo(sint32 idx) {
+const VDZipArchive::FileInfo& VDZipArchive::GetFileInfo(sint32 idx) const {
 	VDASSERT((size_t)idx < mDirectory.size());
 	return mDirectory[idx];
+}
+
+sint32 VDZipArchive::FindFile(const char *name, bool caseSensitive) const {
+	sint32 n = (sint32)mDirectory.size();
+
+	for(sint32 i=0; i<n; ++i) {
+		const auto& fi = mDirectory[i];
+
+		if (caseSensitive) {
+			if (fi.mFileName != name)
+				continue;
+		} else {
+			if (fi.mFileName.comparei(name) != 0)
+				continue;
+		}
+
+		return i;
+	}
+
+	return -1;
 }
 
 IVDStream *VDZipArchive::OpenRawStream(sint32 idx) {
@@ -1609,6 +2471,65 @@ IVDStream *VDZipArchive::OpenRawStream(sint32 idx) {
 	mpStream->Seek(fi.mDataStart + sizeof(hdr) + hdr.filename_len + hdr.extrafield_len);
 
 	return mpStream;
+}
+
+IVDInflateStream *VDZipArchive::OpenDecodedStream(sint32 idx, bool allowLarge) {
+	const FileInfo& info = GetFileInfo(idx);
+
+	if (!info.mbSupported)
+		throw MyError("Unsupported compression method in zip archive for file: %s.", info.mFileName.c_str());
+
+	if ((!allowLarge && info.mUncompressedSize > 384 * 1024 * 1024) || info.mCompressedSize > 0x7FFFFFFF || info.mUncompressedSize > 0x7FFFFFFF)
+		throw MyError("Zip file item is too large (%llu bytes).", (unsigned long long)info.mUncompressedSize);
+
+	IVDStream& innerStream = *OpenRawStream(idx);
+
+	vdautoptr<IVDInflateStream> zs;
+
+	if (info.mbEnhancedDeflate)
+		zs = new VDZipStream<true>(&innerStream, info.mCompressedSize, false);
+	else
+		zs = new VDZipStream<false>(&innerStream, info.mCompressedSize, !info.mbPacked);
+
+	zs->EnableCRC();
+	zs->SetExpectedCRC(info.mCRC32);
+	return zs.release();
+}
+
+bool VDZipArchive::ReadRawStream(sint32 idx, vdfastvector<uint8>& buf, bool allowLarge) {
+	const FileInfoInternal& fi = mDirectory[idx];
+
+	if ((!allowLarge && fi.mUncompressedSize > 384 * 1024 * 1024) || fi.mCompressedSize > 0x7FFFFFFF || fi.mUncompressedSize > 0x7FFFFFFF)
+		throw MyError("Zip file item is too large (%llu bytes).", (unsigned long long)fi.mUncompressedSize);
+
+	buf.resize(fi.mCompressedSize);
+
+	if (fi.mCompressedSize) {
+		IVDStream *src = OpenRawStream(idx);
+		src->Read(buf.data(), fi.mCompressedSize);
+	}
+
+	return !fi.mbPacked;
+}
+
+void VDZipArchive::DecompressStream(sint32 idx, vdfastvector<uint8>& buf) const {
+	const FileInfo& info = GetFileInfo(idx);
+
+	if (!info.mbPacked)
+		return;
+
+	VDMemoryStream ms(buf.data(), buf.size());
+
+	vdautoptr<IVDInflateStream> zs;
+	if (info.mbEnhancedDeflate)
+		zs = new VDZipStream<true>(&ms, info.mCompressedSize, false);
+	else
+		zs = new VDZipStream<false>(&ms, info.mCompressedSize, false);
+
+	vdfastvector<uint8> decompBuf(info.mUncompressedSize);
+	zs->Read(decompBuf.data(), info.mUncompressedSize);
+
+	buf.swap(decompBuf);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1693,8 +2614,6 @@ void VDGUnzipStream::Init(IVDStream *pSrc, uint64 limit) {
 
 VDDeflateStream::VDDeflateStream(IVDStream& dest)
 	: mDestStream(dest)
-	, mpEncoder(nullptr)
-	, mPos(0)
 	, mCRCChecker(VDCRCTable::CRC32)
 {
 	Reset();
@@ -1702,6 +2621,13 @@ VDDeflateStream::VDDeflateStream(IVDStream& dest)
 
 VDDeflateStream::~VDDeflateStream() {
 	delete mpEncoder;
+}
+
+void VDDeflateStream::SetCompressionLevel(VDDeflateCompressionLevel level) {
+	mCompressionLevel = level;
+
+	if (mpEncoder)
+		mpEncoder->SetCompressionLevel(level);
 }
 
 void VDDeflateStream::Reset() {
@@ -1712,6 +2638,7 @@ void VDDeflateStream::Reset() {
 	delete mpEncoder;
 	mpEncoder = nullptr;
 	mpEncoder = new VDDeflateEncoder;
+	mpEncoder->SetCompressionLevel(mCompressionLevel);
 	mpEncoder->Init(false,
 		[this](const void *p, uint32 n) { PreProcessInput(p, n); },
 		[this](const void *p, uint32 n) { WriteOutput(p, n); }
@@ -1757,7 +2684,7 @@ public:
 	VDZipArchiveWriter(IVDStream& dest);
 	~VDZipArchiveWriter();
 
-	VDDeflateStream& BeginFile(const wchar_t *path);
+	VDDeflateStream& BeginFile(const wchar_t *path, VDDeflateCompressionLevel compressionLevel);
 	void EndFile();
 
 	void Finalize();
@@ -1807,7 +2734,7 @@ VDZipArchiveWriter::VDZipArchiveWriter(IVDStream& dest)
 VDZipArchiveWriter::~VDZipArchiveWriter() {
 }
 
-VDDeflateStream& VDZipArchiveWriter::BeginFile(const wchar_t *path) {
+VDDeflateStream& VDZipArchiveWriter::BeginFile(const wchar_t *path, VDDeflateCompressionLevel compressionLevel) {
 	DirEnt& de = mDirectory.emplace_back();
 	de.mPos = mDestStream.Pos();
 
@@ -1832,6 +2759,19 @@ VDDeflateStream& VDZipArchiveWriter::BeginFile(const wchar_t *path) {
 
 	// bit 3: local header size/CRC32 are not filled out, use data descriptor
 	de.mFlags = 0x0008;
+
+	// bits 8-9: compression level (Deflate only)
+	switch(compressionLevel) {
+		case VDDeflateCompressionLevel::Quick:
+			// specify Fast
+			de.mFlags |= 0x04;
+			break;
+
+		case VDDeflateCompressionLevel::Best:
+			// specify Maximum
+			de.mFlags |= 0x02;
+			break;
+	}
 
 	// bit 11: language encoding flag (EFS) - use UTF-8
 	//
@@ -1862,6 +2802,7 @@ VDDeflateStream& VDZipArchiveWriter::BeginFile(const wchar_t *path) {
 
 	mFileStart = mDestStream.Pos();
 
+	mDeflateStream.SetCompressionLevel(compressionLevel);
 	mDeflateStream.Reset();
 
 	return mDeflateStream;

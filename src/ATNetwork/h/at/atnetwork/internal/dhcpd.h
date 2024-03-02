@@ -1,16 +1,16 @@
 #ifndef f_AT_ATNETWORK_INTERNAL_DHCPD_H
 #define f_AT_ATNETWORK_INTERNAL_DHCPD_H
 
-#include <at/atnetwork/socket.h>
+#include <at/atnetwork/emusocket.h>
 #include <at/atnetwork/ethernet.h>
 
-class IATNetUdpStack;
+class IATEmuNetUdpStack;
 
-class ATNetDhcpDaemon : public IATUdpSocketListener {
+class ATNetDhcpDaemon : public IATEmuNetUdpSocketListener {
 public:
 	ATNetDhcpDaemon();
 
-	void Init(IATNetUdpStack *ip);
+	void Init(IATEmuNetUdpStack *ip, bool enableRouter);
 	void Shutdown();
 
 	void Reset();
@@ -18,8 +18,9 @@ public:
 	void OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, const void *data, uint32 dataLen);
 
 protected:
-	IATNetUdpStack *mpUdpStack;
-	uint32 mNextLeaseIdx;
+	IATEmuNetUdpStack *mpUdpStack = nullptr;
+	bool mbRouterEnabled = false;
+	uint32 mNextLeaseIdx = 0;
 
 	struct Lease {
 		bool mbValid;
@@ -27,7 +28,7 @@ protected:
 		ATEthernetAddr mAddr;
 	};
 
-	Lease mLeases[100];
+	Lease mLeases[100] {};
 };
 
 #endif	// f_AT_ATNETWORK_INTERNAL_DHCPD_H

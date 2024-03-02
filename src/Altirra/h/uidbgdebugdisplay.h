@@ -34,7 +34,6 @@ public:
 	void OnDebuggerEvent(ATDebugEvent eventId) override;
 
 protected:
-	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
 
 	bool OnCreate() override;

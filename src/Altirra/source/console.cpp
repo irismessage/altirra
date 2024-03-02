@@ -104,11 +104,11 @@ bool ATConsoleShowSource(uint32 addr) {
 	if (!lookup->LookupLine(addr, false, moduleId, lineInfo))
 		return false;
 
-	VDStringW path;
-	if (!lookup->GetSourceFilePath(moduleId, lineInfo.mFileId, path) && lineInfo.mLine)
+	ATDebuggerSourceFileInfo sourceFileInfo;
+	if (!lookup->GetSourceFilePath(moduleId, lineInfo.mFileId, sourceFileInfo) && lineInfo.mLine)
 		return false;
 
-	IATSourceWindow *w = ATOpenSourceWindow(path.c_str());
+	IATSourceWindow *w = ATOpenSourceWindow(sourceFileInfo);
 	if (!w)
 		return false;
 
@@ -526,7 +526,7 @@ namespace {
 			uint32 id = GetIdFromFrame(w);
 
 			if (id && id < kATUIPaneId_Source) {
-				s.append_sprintf(",%x" + (s.back() == '{'), id);
+				s.append_sprintf(&",%x"[s.back() == '{' ? 1 : 0], id);
 
 				if (w == visFrame)
 					s += '*';
@@ -812,6 +812,33 @@ bool ATRestorePaneLayout(const char *name) {
 			wp.rcNormalPosition.bottom = y2;
 			wp.showCmd = maximized ? SW_MAXIMIZE : SW_RESTORE;
 			::SetWindowPlacement(hwndFrame, &wp);
+
+			// SetWindowPlacement() is documented as ensuring that windows are not off-screen, but
+			// this functionality does not work for windows with WS_EX_TOOLWINDOW, so we have to
+			// fix it ourselves.
+			HMONITOR hmon = ::MonitorFromWindow(hwndFrame, MONITOR_DEFAULTTONULL);
+			if (!hmon) {
+				hmon = ::MonitorFromWindow(hwndFrame, MONITOR_DEFAULTTONEAREST);
+
+				if (hmon) {
+					MONITORINFO mi { sizeof(MONITORINFO) };
+					TITLEBARINFO tbi { sizeof(TITLEBARINFO) };
+					RECT r {};
+
+					if (GetMonitorInfo(hmon, &mi) && GetTitleBarInfo(hwndFrame, &tbi) && GetWindowRect(hwndFrame, &r)) {
+						// move the window so that the center of the title bar is within the
+						// work area of the monitor
+
+						const int tbx = (tbi.rcTitleBar.left + tbi.rcTitleBar.right) >> 1;
+						const int tby = (tbi.rcTitleBar.top + tbi.rcTitleBar.bottom) >> 1;
+						const int tbx2 = std::clamp<int>(tbx, mi.rcWork.left, mi.rcWork.right);
+						const int tby2 = std::clamp<int>(tby, mi.rcWork.top, mi.rcWork.bottom);
+
+						SetWindowPos(hwndFrame, nullptr, r.left + (tbx2 - tbx), r.top + (tby2 - tby), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+					}
+				}
+			}
+
 			::ShowWindow(hwndFrame, SW_SHOWNOACTIVATE);
 		}
 	}

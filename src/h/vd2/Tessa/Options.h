@@ -1,4 +1,3 @@
-#pragma once
 //	Altirra - Atari 800/800XL/5200 emulator
 //	Copyright (C) 2009-2022 Avery Lee
 //
@@ -23,6 +22,9 @@ struct VDTInternalOptions {
 	static bool sbEnableDXFlipDiscard;
 	static bool sbEnableDXWaitableObject;
 	static bool sbEnableDXDoNotWait;
+	static bool sbD3D11Force9_1;
+	static bool sbD3D11Force9_3;
+	static bool sbD3D11Force10_0;
 };
 
 #endif

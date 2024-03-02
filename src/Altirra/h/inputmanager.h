@@ -22,7 +22,9 @@
 #include <set>
 #include <vd2/system/VDString.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/system/vectors.h>
 #include <vd2/system/refcount.h>
+#include "inputtypes.h"
 
 class ATPokeyEmulator;
 class ATPortInputController;
@@ -156,6 +158,12 @@ enum ATInputCode : uint32 {
 	kATInputCode_MouseRight		= 0x1101,
 	kATInputCode_MouseUp		= 0x1102,
 	kATInputCode_MouseDown		= 0x1103,
+	kATInputCode_MouseWheelUp	= 0x1104,
+	kATInputCode_MouseWheelDown	= 0x1105,
+	kATInputCode_MouseWheel		= 0x1106,
+	kATInputCode_MouseHWheelLeft	= 0x1107,
+	kATInputCode_MouseHWheelRight	= 0x1108,
+	kATInputCode_MouseHWheel		= 0x1109,
 	kATInputCode_MouseLMB		= 0x1800,
 	kATInputCode_MouseMMB		= 0x1801,
 	kATInputCode_MouseRMB		= 0x1802,
@@ -205,7 +213,7 @@ enum ATInputCode : uint32 {
 	kATInputCode_UnitShift		= 24
 };
 
-enum ATInputControllerType {
+enum ATInputControllerType : uint32 {
 	kATInputControllerType_None,
 	kATInputControllerType_Joystick,
 	kATInputControllerType_Paddle,
@@ -222,7 +230,9 @@ enum ATInputControllerType {
 	kATInputControllerType_5200Trackball,
 	kATInputControllerType_Driving,
 	kATInputControllerType_Keyboard,
-	kATInputControllerType_LightPen
+	kATInputControllerType_LightPen,
+	kATInputControllerType_PowerPad,
+	kATInputControllerType_LightPenStack
 };
 
 struct atfixedhash_basenode {
@@ -381,6 +391,14 @@ struct ATInputUnitIdentifier {
 	}
 };
 
+struct ATInputPointerInfo {
+	vdfloat2 mPos {};		// center of touch in [-1,+1]
+	float mRadius {};		// radius of touch, or <0 if point because device doesn't do area touches
+	bool mbPrimary {};		// true if this is the primary touch driven by main position inputs
+	bool mbPressed {};		// true if an active touch, false for hover position
+	ATInputPointerCoordinateSpace mCoordSpace {};
+};
+
 class ATInputMap final : public vdrefcounted<IVDRefCount> {
 public:
 	struct Controller {
@@ -461,6 +479,7 @@ public:
 	void Select5200Controller(int index, bool potsEnabled);
 	void SelectMultiJoy(int multiIndex);
 
+	void ColdReset();
 	void Poll(float dt);
 
 	int GetInputUnitCount() const;
@@ -482,9 +501,23 @@ public:
 	void OnButtonUp(int unit, int id);
 	void OnAxisInput(int unit, int axis, sint32 value, sint32 deadifiedValue);
 	void OnMouseMove(int unit, int dx, int dy);
+	bool OnMouseWheel(int unit, float delta);
+	bool OnMouseHWheel(int unit, float delta);
 	void SetMouseBeamPos(int x, int y);
 	void SetMousePadPos(int x, int y);
 	void SetMouseVirtualStickPos(int x, int y);
+
+	// Returns true if there is a mapping from an absolute (positional) mouse input to a pointer controller.
+	// This suggests that primary input pointer visualization should be hidden to avoid overlapping with the
+	// mouse pointer.
+	bool HasAbsMousePointer() const;
+
+	// Returns true if there is a pointer in non-beam space. This means that the pointer positions are not
+	// tied to the screen and so bounds visualizations are useful.
+	bool HasNonBeamPointer() const;
+
+	void GetPointers(vdfastvector<ATInputPointerInfo>& pointers) const;
+
 	void ActivateFlag(uint32 id, bool state);
 	void ReleaseButtons(uint32 idmin, uint32 idmax);
 
@@ -517,7 +550,7 @@ protected:
 	void RebuildMappings();
 	void ActivateMappings(uint32 id, bool state);
 	void ActivateAnalogMappings(uint32 id, int ds, int dsdead);
-	void ActivateImpulseMappings(uint32 id, int ds);
+	bool ActivateImpulseMappings(uint32 id, int ds);
 	void ClearTriggers();
 	void SetTrigger(Mapping& mapping, bool state);
 	void Update5200Controller();
@@ -541,8 +574,17 @@ protected:
 	bool mbMouseMapped;
 	bool mbMouseActiveTarget;
 
+	// True if there is a mapping from a mouse input to a controller with a pointer in absolute mode.
+	bool mbMouseAbsMappedToPointer = false;
+
+	// True if one of the controllers has a pointer in normalized coordinates (thus not directly tied to
+	// screen positions).
+	bool mbControllerHasNonBeamPointer = false;
+
 	uint32 mMouseAvgQueue[4];
 	int mMouseAvgIndex;
+	float mMouseWheelAccum = 0;
+	float mMouseHWheelAccum = 0;
 
 	uint8 mMultiMask = 0xFF;
 

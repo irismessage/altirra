@@ -127,9 +127,10 @@ void ATUIUpdateThemeColors() {
 		tc.mHighlightedFg	= 0xFFFFFF;
 		tc.mInactiveHiBg	= 0x909090;
 		tc.mInactiveHiFg	= 0x000000;
-		tc.mInactiveTextBg	= 0x303030;
+		tc.mInactiveTextBg	= 0x2C2C2C;
 		tc.mHyperlinkText	= 0x50B0FF;
 		tc.mCommentText		= 0x00D800;
+		tc.mKeywordText		= 0x3665FF;
 		tc.mHeadingText		= 0x40A0FF;
 		tc.mDirectLocationBg = 0xC0C060;
 		tc.mDirectLocationFg = 0x000000;

@@ -35,6 +35,7 @@
 class ATEvent;
 class ATDebugTargetBreakpointsBase;
 enum ATFirmwareType : uint32;
+class IATDeviceSIOManager;
 
 class ATDiskDriveAudioPlayer final : public IATDeviceAudioOutput
 {
@@ -48,7 +49,7 @@ public:
 	void Shutdown();
 
 	void SetRotationSoundEnabled(bool enabled);
-	void PlayStepSound(ATAudioSampleId sampleId, float volume);
+	void PlayStepSound(ATAudioSampleId sampleId, float volume, uint32 cycleDelay = 0);
 
 	IATAudioMixer *GetMixer() const { return mpAudioMixer; }
 
@@ -350,6 +351,8 @@ public:
 	uint32 DriveTimeToMasterTime() const;
 	uint32 MasterTimeToDriveTime() const;
 
+	uint64 MasterTimeToDriveTime64(uint64 masterTime) const;
+
 	uint32 AccumSubCycles();
 
 	void FlushStepNotifications() {
@@ -421,10 +424,12 @@ private:
 
 	uint32 mLastSync = 0;
 	uint32 mLastSyncDriveTime = 0;
-	uint32 mLastSyncDriveTimeSubCycles = 0;
-	uint32 mSubCycleAccum = 0;
+	uint64 mLastSyncDriveTimeF32 = 0;
+	uint32 mDriveCycleAccumF32 = 0;
 	uint32 mDriveCycleLimit = 0;
-	uint32 mClockDivisor = 0;
+	uint32 mRawTimestampToDriveAdjust = 0;
+	uint64 mDriveCyclesPerSystemCycleF32 = 0;
+	uint64 mSystemCyclesPerDriveCycleF32 = 0;
 
 	uint32 mHistorySize = 0;
 	uint32 mHistoryMask = 0;

@@ -31,7 +31,7 @@ public:
 	ATPBIManager();
 	~ATPBIManager();
 
-	void Init(ATMemoryManager *memman);
+	void Init(ATMemoryManager *memman, ATIRQController *irqc);
 	void Shutdown();
 
 	uint8 GetSelectRegister() const { return mSelRegister; }
@@ -40,6 +40,9 @@ public:
 	void AddDevice(IATPBIDevice *dev) override;
 	void RemoveDevice(IATPBIDevice *dev) override;
 	void DeselectSelf(IATPBIDevice *dev) override;
+
+	void AssertIRQ(uint8 id) override;
+	void NegateIRQ(uint8 id) override;
 
 	void ColdReset();
 	void WarmReset();
@@ -63,6 +66,10 @@ protected:
 	uint8	mSelRegister = 0;
 	IATPBIDevice *mpSelDevice = nullptr;
 	IATPBIDevice *mpSelectList[8] = {};
+
+	ATIRQController *mpIRQController = nullptr;
+	uint8	mActiveIRQs = 0;
+	uint32	mPBIIRQ = 0;
 
 	typedef vdfastvector<IATPBIDevice *> Devices;
 	Devices mDevices;

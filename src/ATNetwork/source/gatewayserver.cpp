@@ -20,7 +20,7 @@ struct ATTcpHeaderInfo;
 
 class ATTestServer : public vdrefcounted<IATSocketHandler> {
 public:
-	ATTestServer(IATSocket *socket);
+	ATTestServer(IATStreamSocket *socket);
 
 	virtual void OnSocketOpen();
 	virtual void OnSocketReadReady(uint32 len);
@@ -31,7 +31,7 @@ public:
 protected:
 	void ProcessHeaderLine(const char *s);
 
-	vdrefptr<IATSocket> mpSocket;
+	vdrefptr<IATStreamSocket> mpSocket;
 
 	vdfastvector<char> mHeaderBuffer;
 	uint32 mHeaderHead;
@@ -41,7 +41,7 @@ protected:
 	uint32 mReplyOffset;
 };
 
-ATTestServer::ATTestServer(IATSocket *socket)
+ATTestServer::ATTestServer(IATStreamSocket *socket)
 	: mpSocket(socket)
 	, mHeaderHead(0)
 	, mHeaderTail(0)
@@ -59,7 +59,10 @@ void ATTestServer::OnSocketReadReady(uint32 len) {
 	uint32 len0 = (uint32)mHeaderBuffer.size();
 	mHeaderBuffer.resize(len0 + len);
 
-	uint32 actual = mpSocket->Read(mHeaderBuffer.data() + len0, len);
+	sint32 actual = mpSocket->Recv(mHeaderBuffer.data() + len0, len);
+
+	if (actual < 0)
+		actual = 0;
 
 	if (actual != len)
 		mHeaderBuffer.resize(len0 + actual);
@@ -104,12 +107,14 @@ void ATTestServer::OnSocketWriteReady(uint32 len) {
 	if (rlen > len)
 		rlen = len;
 
-	uint32 actual = mpSocket->Write(mReply.data() + mReplyOffset, rlen);
+	sint32 actual = mpSocket->Send(mReply.data() + mReplyOffset, rlen);
+	if (actual < 0)
+		actual = 0;
 
 	mReplyOffset += actual;
 
 	if (mReplyOffset >= mReply.size())
-		mpSocket->Close();
+		mpSocket->CloseSocket(false);
 }
 
 void ATTestServer::OnSocketClose() {
@@ -258,8 +263,8 @@ void ATTestServer::ProcessHeaderLine(const char *s) {
 	}
 }
 
-class ATTestListener : public IATSocketListener {
-	virtual bool OnSocketIncomingConnection(uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, IATSocket *socket, IATSocketHandler **handler) {
+class ATTestListener : public IATEmuNetSocketListener {
+	virtual bool OnSocketIncomingConnection(uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, IATStreamSocket *socket, IATSocketHandler **handler) {
 		ATTestServer *srv = new ATTestServer(socket);
 
 		*handler = srv;
@@ -277,19 +282,19 @@ public:
 	ATEthernetGatewayServer();
 	~ATEthernetGatewayServer();
 
-	void Init(IATEthernetSegment *seg, uint32 clockIndex, uint32 netaddr, uint32 netmask) override;
+	void Init(IATEthernetSegment *seg, uint32 clockIndex, uint32 netaddr, uint32 netmask, bool natEnabled) override;
 	void Shutdown() override;
 
 	void ColdReset() override;
 
-	IATNetUdpStack *GetUdpStack() override { return &mUdpStack; }
-	IATNetTcpStack *GetTcpStack() override { return &mTcpStack; }
+	IATEmuNetUdpStack *GetUdpStack() override { return &mUdpStack; }
+	IATEmuNetTcpStack *GetTcpStack() override { return &mTcpStack; }
 
-	void SetBridgeListener(IATSocketListener *tcp, IATUdpSocketListener *udp) override;
+	void SetBridgeListener(IATEmuNetSocketListener *tcp, IATEmuNetUdpSocketListener *udp) override;
 	void GetConnectionInfo(vdfastvector<ATNetConnectionInfo>& connInfo) const override;
 
-	void Listen(IATSocketListener *listener, uint16 port);
-	void Unlisten(IATSocketListener *listener, uint16 port);
+	void Listen(IATEmuNetSocketListener *listener, uint16 port);
+	void Unlisten(IATEmuNetSocketListener *listener, uint16 port);
 
 public:
 	void ReceiveFrame(const ATEthernetPacket& packet, ATEthernetFrameDecodedType decType, const void *decInfo) override;
@@ -298,13 +303,7 @@ protected:
 	void OnArpPacket(const ATEthernetPacket& packet, const ATEthernetArpFrameInfo& decInfo);
 	void OnIPv4Datagram(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& decInfo);
 	void OnIPv4Packet(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& decInfo, const uint8 *data, const uint32 len);
-
-	void OnTCPPacket(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& decInfo, const uint8 *data, const uint32 len);
-
-	void TcpSendReset(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& iphdr, uint16 srcPort, uint16 dstPort, uint32 seqNo);
-	uint32 TcpEncodePacket(uint8 *dst, uint32 len, const uint8 dstIpAddr[4], const ATTcpHeaderInfo& hdrInfo, const void *data, uint32 dataLen);
-
-	void SendFrame(const ATEthernetAddr& dstAddr, const void *data, uint32 len);
+	void OnICMPPacket(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& decInfo, const uint8 *data, const uint32 len);
 
 	void CloseAllConnections();
 
@@ -328,7 +327,8 @@ ATEthernetGatewayServer::ATEthernetGatewayServer()
 	, mEthEndpointId(0)
 	, mEthClockId(0)
 {
-	static const uint8 kHwAddress[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
+	// use a (one-time) randomized locally administered address
+	static const uint8 kHwAddress[6] = { 0x02, 0xE6, 0x27, 0xC1, 0x32, 0x11 };
 
 	memcpy(mHwAddress.mAddr, kHwAddress, 6);
 }
@@ -337,7 +337,7 @@ ATEthernetGatewayServer::~ATEthernetGatewayServer() {
 	Shutdown();
 }
 
-void ATEthernetGatewayServer::Init(IATEthernetSegment *seg, uint32 clockId, uint32 netaddr, uint32 netmask) {
+void ATEthernetGatewayServer::Init(IATEthernetSegment *seg, uint32 clockId, uint32 netaddr, uint32 netmask, bool natEnabled) {
 	mpEthSegment = seg;
 	mEthClockId = clockId;
 	mEthEndpointId = seg->AddEndpoint(this);
@@ -352,7 +352,7 @@ void ATEthernetGatewayServer::Init(IATEthernetSegment *seg, uint32 clockId, uint
 
 	VDVERIFY(mTcpStack.Bind(80, &gTestListener));
 
-	mDhcpd.Init(&mUdpStack);
+	mDhcpd.Init(&mUdpStack, natEnabled);
 }
 
 void ATEthernetGatewayServer::Shutdown() {
@@ -379,7 +379,7 @@ void ATEthernetGatewayServer::ColdReset() {
 	mDhcpd.Reset();
 }
 
-void ATEthernetGatewayServer::SetBridgeListener(IATSocketListener *tcp, IATUdpSocketListener *udp) {
+void ATEthernetGatewayServer::SetBridgeListener(IATEmuNetSocketListener *tcp, IATEmuNetUdpSocketListener *udp) {
 	mTcpStack.SetBridgeListener(tcp);
 	mUdpStack.SetBridgeListener(udp);
 }
@@ -419,11 +419,11 @@ void ATEthernetGatewayServer::GetConnectionInfo(vdfastvector<ATNetConnectionInfo
 
 }
 
-void ATEthernetGatewayServer::Listen(IATSocketListener *listener, uint16 port) {
+void ATEthernetGatewayServer::Listen(IATEmuNetSocketListener *listener, uint16 port) {
 	mTcpStack.Bind(port, listener);
 }
 
-void ATEthernetGatewayServer::Unlisten(IATSocketListener *listener, uint16 port) {
+void ATEthernetGatewayServer::Unlisten(IATEmuNetSocketListener *listener, uint16 port) {
 	mTcpStack.Unbind(port, listener);
 }
 
@@ -521,14 +521,104 @@ void ATEthernetGatewayServer::OnIPv4Datagram(const ATEthernetPacket& packet, con
 
 void ATEthernetGatewayServer::OnIPv4Packet(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& decInfo, const uint8 *data, const uint32 len) {
 	switch(decInfo.mProtocol) {
-		case 6:
+		case 1:		// ICMP
+			OnICMPPacket(packet, decInfo, data, len);
+			break;
+
+		case 6:		// TCP
 			mTcpStack.OnPacket(packet, decInfo, data, len);
 			break;
 
-		case 17:
+		case 17:	// UDP
 			mUdpStack.OnPacket(packet, decInfo, data, len);
 			break;
 	}
+}
+
+void ATEthernetGatewayServer::OnICMPPacket(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& decInfo, const uint8 *data, const uint32 len) {
+	// drop packets shorter than ICMP header
+	if (len < 8)
+		return;
+
+	// compute checksum
+	uint64 sum64 = 0;
+
+	for(uint32 i = 0; i < len - 3; i += 4)
+		sum64 += VDReadUnalignedU32(data + i);
+
+	switch(len & 3) {
+		case 0:
+		default:
+			break;
+
+		case 1:
+			sum64 += VDFromLE16(data[len - 1]);
+			break;
+
+		case 2:
+			sum64 += VDReadUnalignedU16(&data[len - 2]);
+			break;
+
+		case 3:
+			sum64 += VDReadUnalignedU16(&data[len - 3]);
+			sum64 += VDFromLE16(data[len - 1]);
+			break;
+	}
+
+	// fold checksum
+	sum64 = (uint32)sum64 + (sum64 >> 32);
+
+	uint32 sum32 = (uint32)sum64 + (uint32)(sum64 >> 32);
+	sum32 = (sum32 & 0xffff) + (sum32 >> 16);
+
+	const uint16 sum16 = (uint16)(~((sum32 & 0xffff) + (sum32 >> 16)));
+
+	// verify checksum
+	if (sum16 != 0)
+		return;
+
+	// check ICMP type -- we only support type 8 (echo request)
+	const uint8 type = data[0];
+
+	if (type != 8)
+		return;
+
+	// drop echo requests that are too large
+	if (len > 576)
+		return;
+
+	// copy request frame
+	uint8 reply[576 + 22];
+
+	// encode IPv4 header
+	ATIPv4HeaderInfo iphdr;
+	mIpStack.InitHeader(iphdr);
+	iphdr.mSrcAddr = mIpStack.GetIpAddress();
+	iphdr.mDstAddr = decInfo.mSrcAddr;
+	iphdr.mProtocol = 1;	// ICMP
+	iphdr.mDataOffset = 0;
+	iphdr.mDataLength = len;
+	VDVERIFY(ATIPv4EncodeHeader(reply, 22, iphdr));
+
+	memcpy(reply + 22, data, len);
+
+	// change echo request to echo reply
+	reply[22] = 0;
+	reply[23] = 0;
+
+	// update ICMP checksum (HC' = ~(~HC + ~m + m') in 1's per RFC1624)
+	uint32 chk = VDReadUnalignedU16(reply + 24);
+
+	chk = (chk ^ 0xFFFF) + (VDReadUnalignedU16(data) ^ 0xFFFF);
+
+	chk = (chk & 0xFFFF) + (chk >> 16);
+	chk = (chk & 0xFFFF) + (chk >> 16);
+
+	chk ^= 0xFFFF;
+	VDWriteUnalignedU16(reply + 24, chk);
+
+	// send reply frame
+	mIpStack.SendFrame(decInfo.mSrcAddr, reply, len + 22);
 }
 
 void ATEthernetGatewayServer::CloseAllConnections() {

@@ -35,8 +35,6 @@ extern ATDebuggerLogChannel g_ATLCModemData;
 
 class ATDeviceRVerter final
 	: public ATDevice
-	, public IATDeviceScheduling
-	, public IATDeviceIndicators
 	, public ATDeviceSIO
 	, public IATDeviceRawSIO
 	, public IATSchedulerCallback
@@ -44,7 +42,7 @@ class ATDeviceRVerter final
 	ATDeviceRVerter(const ATDeviceRVerter&) = delete;
 	ATDeviceRVerter& operator=(const ATDeviceRVerter&) = delete;
 public:
-	ATDeviceRVerter();
+	ATDeviceRVerter(bool sioAdapter);
 	~ATDeviceRVerter();
 
 	void *AsInterface(uint32 id);
@@ -54,15 +52,6 @@ public:
 	void GetDeviceInfo(ATDeviceInfo& info) override;
 
 	void ColdReset();
-
-	void GetSettings(ATPropertySet& props);
-	bool SetSettings(const ATPropertySet& props);
-
-public:	// IATDeviceScheduling
-	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
-
-public:	// IATDeviceIndicators
-	void InitIndicators(IATDeviceIndicatorManager *r) override;
 
 public:	// ATDeviceSIO
 	void InitSIO(IATDeviceSIOManager *mgr) override;
@@ -79,43 +68,39 @@ public:
 protected:
 	void SetSerialDevice(IATDeviceSerial *dev);
 	void PollDevice();
+	void ScheduleRead();
 	void OnControlStateChanged(const ATDeviceSerialStatus& status);
+	void UpdateSystemClock();
 
-	ATScheduler *mpScheduler;
-	ATScheduler *mpSlowScheduler;
-	IATDeviceIndicatorManager *mpUIRenderer;
-	IATDeviceSIOManager *mpSIOMgr;
+	ATScheduler *mpScheduler = nullptr;
+	IATDeviceSIOManager *mpSIOMgr = nullptr;
 
-	ATEvent	*mpReceiveEvent;
-	bool	mbActive;
-	uint32	mCyclesPerByteDevice;
+	ATEvent	*mpReceiveEvent = nullptr;
+	bool	mbSIOAdapterMode = false;
+	bool	mbActive = false;
+	uint32	mCyclesPerByteDevice = 0;
+	uint32	mMachineRate = 0;
+	uint32	mMachineRateX10 = 0;
 
-	uint32	mBaudRate;
+	uint32	mBaudRate = 0;
 	vdrefptr<IATDeviceSerial> mpDeviceSerial;
-	ATDeviceSerialTerminalState	mTerminalState;
+	ATDeviceSerialTerminalState	mTerminalState {};
 
 	ATDeviceParentSingleChild mDeviceParent;
 };
 
+template<bool T_SIOAdapter>
 void ATCreateDeviceRVerter(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDeviceRVerter> p(new ATDeviceRVerter);
+	vdrefptr<ATDeviceRVerter> p(new ATDeviceRVerter(T_SIOAdapter));
 
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDefRVerter = { "rverter", nullptr, L"R-Verter", ATCreateDeviceRVerter };
+extern const ATDeviceDefinition g_ATDeviceDefRVerter = { "rverter", nullptr, L"R-Verter", ATCreateDeviceRVerter<false> };
+extern const ATDeviceDefinition g_ATDeviceDefSIOSerialAdapter = { "sioserial", nullptr, L"SIO serial adapter", ATCreateDeviceRVerter<true> };
 
-ATDeviceRVerter::ATDeviceRVerter()
-	: mpScheduler(NULL)
-	, mpSlowScheduler(NULL)
-	, mpUIRenderer(NULL)
-	, mpSIOMgr(nullptr)
-	, mpReceiveEvent(NULL)
-	, mbActive(false)
-	, mCyclesPerByteDevice(0)
-	, mBaudRate(0)
-	, mpDeviceSerial()
-
+ATDeviceRVerter::ATDeviceRVerter(bool sioAdapter)
+	: mbSIOAdapterMode(sioAdapter)
 {
 }
 
@@ -126,8 +111,6 @@ ATDeviceRVerter::~ATDeviceRVerter() {
 void *ATDeviceRVerter::AsInterface(uint32 id) {
 	switch(id) {
 		case IATDeviceParent::kTypeID:		return static_cast<IATDeviceParent *>(&mDeviceParent);
-		case IATDeviceScheduling::kTypeID:	return static_cast<IATDeviceScheduling *>(this);
-		case IATDeviceIndicators::kTypeID:	return static_cast<IATDeviceIndicators *>(this);
 		case IATDeviceSIO::kTypeID:			return static_cast<IATDeviceSIO *>(this);
 		case IATDeviceRawSIO::kTypeID:		return static_cast<IATDeviceRawSIO *>(this);
 	}
@@ -136,18 +119,23 @@ void *ATDeviceRVerter::AsInterface(uint32 id) {
 }
 
 void ATDeviceRVerter::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mpDef = &g_ATDeviceDefRVerter;
+	info.mpDef = mbSIOAdapterMode ? &g_ATDeviceDefSIOSerialAdapter : &g_ATDeviceDefRVerter;
 }
 
 void ATDeviceRVerter::Init() {
-	mCyclesPerByteDevice = 3729;
-	mpScheduler->SetEvent(mCyclesPerByteDevice, this, 1, mpReceiveEvent);
+	mpScheduler = GetService<IATDeviceSchedulingService>()->GetMachineScheduler();
+	UpdateSystemClock();
 
 	mTerminalState.mbDataTerminalReady = true;
 	mTerminalState.mbRequestToSend = false;
 
 	if (mpDeviceSerial)
 		mpDeviceSerial->SetTerminalState(mTerminalState);
+
+	if (mbSIOAdapterMode)
+		mbActive = true;
+
+	ScheduleRead();
 
 	mDeviceParent.Init(IATDeviceSerial::kTypeID, "serial", L"Serial Port", "serial", this);
 	mDeviceParent.SetOnAttach([this] { SetSerialDevice(mDeviceParent.GetChild<IATDeviceSerial>()); });
@@ -172,29 +160,10 @@ void ATDeviceRVerter::Shutdown() {
 
 		mpScheduler = nullptr;
 	}
-
-	mpSlowScheduler = nullptr;
-
-	mpUIRenderer = nullptr;
 }
 
 void ATDeviceRVerter::ColdReset() {
-}
-
-void ATDeviceRVerter::GetSettings(ATPropertySet& props) {
-}
-
-bool ATDeviceRVerter::SetSettings(const ATPropertySet& props) {
-	return true;
-}
-
-void ATDeviceRVerter::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
-	mpScheduler = sch;
-	mpSlowScheduler = slowsch;
-}
-
-void ATDeviceRVerter::InitIndicators(IATDeviceIndicatorManager *r) {
-	mpUIRenderer = r;
+	UpdateSystemClock();
 }
 
 void ATDeviceRVerter::InitSIO(IATDeviceSIOManager *mgr) {
@@ -206,7 +175,7 @@ void ATDeviceRVerter::OnCommandStateChanged(bool asserted) {
 }
 
 void ATDeviceRVerter::OnMotorStateChanged(bool asserted) {
-	if (mbActive == asserted)
+	if (mbActive == asserted || mbSIOAdapterMode)
 		return;
 
 	mbActive = asserted;
@@ -236,10 +205,13 @@ void ATDeviceRVerter::OnMotorStateChanged(bool asserted) {
 }
 
 void ATDeviceRVerter::OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) {
+	if (!cyclesPerBit)
+		return;
+
 	g_ATLCModemData("Sending byte to modem: $%02X\n", c);
 
 	if (mpDeviceSerial)
-		mpDeviceSerial->Write(1789772 / cyclesPerBit, c);
+		mpDeviceSerial->Write(mMachineRate / cyclesPerBit, c);
 }
 
 void ATDeviceRVerter::OnSendReady() {
@@ -249,51 +221,77 @@ void ATDeviceRVerter::OnScheduledEvent(uint32 id) {
 	mpReceiveEvent = nullptr;
 
 	PollDevice();
-
-	mpScheduler->SetEvent(mCyclesPerByteDevice, this, 1, mpReceiveEvent);
 }
 
 void ATDeviceRVerter::SetSerialDevice(IATDeviceSerial *dev) {
 	if (mpDeviceSerial == dev)
 		return;
 
-	if (mpDeviceSerial)
+	if (mpDeviceSerial) {
 		mpDeviceSerial->SetOnStatusChange(nullptr);
+		mpDeviceSerial->SetOnReadReady(nullptr);
+	}
 
 	mpDeviceSerial = dev;
 
 	if (dev) {
-		dev->SetOnStatusChange([this](const ATDeviceSerialStatus& status) { this->OnControlStateChanged(status); });
+		if (!mbSIOAdapterMode)
+			dev->SetOnStatusChange([this](const ATDeviceSerialStatus& status) { this->OnControlStateChanged(status); });
+
 		dev->SetTerminalState(mTerminalState);
+		dev->SetOnReadReady(
+			[this] {
+				ScheduleRead();
+			}
+		);
+
+		ScheduleRead();
 	}
 }
 
 void ATDeviceRVerter::PollDevice() {
-	if (mpDeviceSerial) {
-		uint8 c;
-		uint32 baudRate;
+	if (!mpDeviceSerial)
+		return;
 
-		// If the motor line isn't activated, we won't transmit the byte on the SIO bus. However,
-		// we still need to read it from the device, because the byte's getting dropped on the floor.
-		if (mpDeviceSerial->Read(baudRate, c)) {
-			mCyclesPerByteDevice = 17897725 / baudRate;
+	uint8 c;
+	uint32 baudRate;
 
-			const uint32 cyclesPerBit = mCyclesPerByteDevice / 10;
+	// If the motor line isn't activated, we won't transmit the byte on the SIO bus. However,
+	// we still need to read it from the device, because the byte's getting dropped on the floor.
+	if (!mpDeviceSerial->Read(baudRate, c))
+		return;
 
-			if (mbActive) {
-				g_ATLCModemData("Receiving byte from modem: $%02X\n", c);
-				// baud rate = bits per second
-				// cycles per bit = cycles per second / bits per second
+	mCyclesPerByteDevice = mMachineRateX10 / baudRate;
 
-				mpSIOMgr->SendRawByte(c, cyclesPerBit);
-			}
-		}
+	const uint32 cyclesPerBit = mCyclesPerByteDevice / 10;
+
+	if (mbActive) {
+		g_ATLCModemData("Receiving byte from modem: $%02X\n", c);
+		// baud rate = bits per second
+		// cycles per bit = cycles per second / bits per second
+
+		mpSIOMgr->SendRawByte(c, cyclesPerBit);
 	}
+
+	if (!mpReceiveEvent)
+		mpScheduler->SetEvent(mCyclesPerByteDevice, this, 1, mpReceiveEvent);
+}
+
+void ATDeviceRVerter::ScheduleRead() {
+	if (!mpReceiveEvent)
+		mpScheduler->SetEvent(1, this, 1, mpReceiveEvent);
 }
 
 void ATDeviceRVerter::OnControlStateChanged(const ATDeviceSerialStatus& status) {
-	if (mbActive) {
+	if (mbActive && !mbSIOAdapterMode) {
 		mpSIOMgr->SetSIOProceed(this, status.mbCarrierDetect);
 		mpSIOMgr->SetSIOInterrupt(this, status.mbDataSetReady);
 	}
+}
+
+void ATDeviceRVerter::UpdateSystemClock() {
+	const double rate = mpScheduler->GetRate().asDouble();
+
+	mMachineRate = (uint32)(0.5 + rate);
+	mMachineRateX10 = (uint32)(0.5 + rate * 10);
 }

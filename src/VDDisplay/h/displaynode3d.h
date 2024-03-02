@@ -45,16 +45,28 @@ enum VDDPoolTextureIndex : uint16;
 enum VDDPoolMeshIndex : uint16;
 enum VDDPoolRenderViewId : uint8;
 
+using VDDVertexTransformer = void (*)(void *, const void *, size_t, vdfloat2, vdfloat2);
+
+struct VDDisplaySoftViewport {
+	vdfloat2 mSize { 1, 1 };
+	vdfloat2 mOffset { 0, 0 };
+
+	bool operator==(const VDDisplaySoftViewport&) const = default;
+};
+
 struct VDDRenderView {
-	IVDTSurface *mpTarget;
-	bool mbBypassSrgb;
-	VDTViewport mViewport;
+	IVDTSurface *mpTarget = nullptr;
+	bool mbBypassSrgb = false;
+	VDTViewport mViewport {};
+	VDDisplaySoftViewport mSoftViewport;
 };
 
 class VDDisplayMeshBuilder3D {
 public:
 	void SetVertexFormat(IVDTVertexFormat *vf);
+	void SetVertexProgram(IVDTVertexProgram *vp);
 	void SetVertexProgram(VDTData vpdata);
+	void SetFragmentProgram(IVDTFragmentProgram *fp);
 	void SetFragmentProgram(VDTData fpdata);
 
 	void SetVPConstData(const void *src, size_t len);
@@ -77,7 +89,7 @@ public:
 
 	void SetFPConstDataReuse();
 
-	void *InitVertices(size_t vertexSize, uint32 vertexCount);
+	void *InitVertices(size_t vertexSize, uint32 vertexCount, VDDVertexTransformer vertexTransformer);
 
 	template<typename T>
 	T *InitVertices(uint32 vertexCount) {
@@ -87,13 +99,13 @@ public:
 		return (T *)InitVertex(sizeof(T), vertexCount);
 	}
 
-	void SetVertices(const void *data, size_t vertexSize, size_t vertexCount);
+	void SetVertices(const void *data, size_t vertexSize, size_t vertexCount, VDDVertexTransformer vertexTransformer);
 
 	template<typename T>
 	void SetVertices(const T *vertices, size_t vertexCount) {
 		static_assert(!(sizeof(T) & 3), "Cannot set vertex type that is not 32-bit aligned in size");
 
-		SetVertices(vertices, sizeof(T), vertexCount);
+		SetVertices(vertices, sizeof(T), vertexCount, TransformVerts<T>);
 	}
 
 	template<typename T, size_t N>
@@ -113,6 +125,8 @@ public:
 	void InitSamplers(std::initializer_list<IVDTSamplerState *> samplers);
 	void SetSampler(uint32 samplerSlot, IVDTSamplerState *ss);
 
+	void SetClear(uint32 clearColor);
+
 	void SetRenderView(VDDPoolRenderViewId id);
 	VDDPoolRenderViewId SetRenderView(const VDDRenderView& renderView);
 	VDDPoolRenderViewId SetRenderView(VDDPoolTextureIndex texture, uint32 mipLevel, bool bypassConversion);
@@ -124,6 +138,25 @@ private:
 	friend class VDDisplayMeshPool3D;
 
 	VDDisplayMeshBuilder3D(VDDisplayNodeContext3D& dctx, VDDisplayMeshPool3D& pool, VDDisplayMeshCommand3D& cmd, VDDPoolMeshIndex meshIndex);
+
+	template<typename T>
+	static void TransformVerts(void *dst0, const void *src0, size_t n, vdfloat2 scale, vdfloat2 offset) {
+		static_assert(sizeof(T) % sizeof(uint32) == 0);
+		uint32 *VDRESTRICT dst = (uint32 *)dst0;
+		const uint32 *VDRESTRICT src = (const uint32 *)src0;
+
+		T vx;
+		while(n--) {
+			memcpy(&vx, src, sizeof(T));
+			src = (const uint32 *)((const char *)src + sizeof(T));
+
+			vx.x = vx.x * scale.x + offset.x;
+			vx.y = vx.y * scale.y + offset.y;
+
+			memcpy(dst, &vx, sizeof(T));
+			dst = (uint32 *)((char *)dst + sizeof(T));
+		}
+	}
 
 	VDDisplayNodeContext3D *mpDctx;
 	VDDisplayMeshPool3D *mpPool;
@@ -147,6 +180,7 @@ public:
 
 	VDDPoolRenderViewId RegisterRenderView(const VDDRenderView& renderView);
 	void SetRenderView(VDDPoolRenderViewId id, const VDDRenderView& renderView);
+	void SetRenderViewWithSubrect(VDDPoolRenderViewId id, const VDDRenderView& renderView, float x, float y, float w, float h);
 	void SetRenderViewFromCurrent(VDDPoolRenderViewId id, IVDTContext& ctx);
 
 	VDDisplayMeshBuilder3D AddMesh(VDDisplayNodeContext3D& dctx);
@@ -159,6 +193,7 @@ private:
 	friend class VDDisplayMeshBuilder3D;
 
 	vdfastvector<uint32> mVertexData;
+	vdfastvector<uint32> mVertexTransformedData;
 	vdfastvector<uint16> mIndexData;
 	vdfastvector<IVDTSamplerState *> mpSamplers;
 	vdfastvector<IVDTTexture *> mpTextures;
@@ -184,6 +219,9 @@ private:
 	uint16 mTextureStart = 0;
 	uint8 mSamplerCount = 0;
 	uint8 mTextureCount = 0;
+
+	bool mbRenderClear = false;
+	uint32 mRenderClearColor = 0;
 	VDDPoolRenderViewId mRenderView {};
 
 	// Vertex/fragment program constant data. Special case: len=0, offset>0
@@ -204,6 +242,12 @@ private:
 	uint32 mVertexCachedGeneration = 0;
 	uint32 mIndexCachedOffset = 0;
 	uint32 mIndexCachedGeneration = 0;
+
+	VDDisplaySoftViewport mLastSoftViewport {
+		vdfloat2{0,0},
+		vdfloat2{0,0}
+	};
+	VDDVertexTransformer mVertexTransformer = nullptr;
 };
 
 class VDDisplayNodeContext3D {
@@ -216,9 +260,18 @@ public:
 	bool Init(IVDTContext& ctx, bool preferLinear);
 	void Shutdown();
 
+	void BeginScene(bool traceRTs);
+	void ClearTrace();
+
+	const vdvector<vdrefptr<IVDTSurface>>& GetTracedRTs() const { return mTracedRTs; }
+
 	VDDRenderView CaptureRenderView() const;
 	void ApplyRenderView(const VDDRenderView& targetView);
-	void ApplyRenderViewWithSubrect(const VDDRenderView& targetView, sint32 x, sint32 y, sint32 w, sint32 h);
+	void ApplyRenderViewWithSubrect(const VDDRenderView& targetView, float x, float y, float w, float h);
+
+	const VDDisplaySoftViewport& GetCurrentSoftViewport() const {
+		return mSoftViewport;
+	}
 
 	IVDTVertexProgram *InitVP(VDTData vpdata);
 	IVDTFragmentProgram *InitFP(VDTData ipdata);
@@ -254,6 +307,8 @@ public:
 	uint32 mIBCacheIdxPos = 0;
 	uint32 mIBCacheGeneration = 0;	// always odd when active
 
+	VDDisplaySoftViewport mSoftViewport;
+
 	struct VDTDataHashPred {
 		size_t operator()(const VDTData& x) const;
 		bool operator()(const VDTData& x, const VDTData& y) const;
@@ -261,21 +316,24 @@ public:
 
 	vdhashmap<VDTData, IVDTVertexProgram *, VDTDataHashPred, VDTDataHashPred> mVPCache;
 	vdhashmap<VDTData, IVDTFragmentProgram *, VDTDataHashPred, VDTDataHashPred> mFPCache;
+
+	bool mbTraceRTs = false;
+	vdvector<vdrefptr<IVDTSurface>> mTracedRTs;
 };
 
 struct VDDisplaySourceTexMapping {
-	float mUSize;
-	float mVSize;
-	uint32 mWidth;
-	uint32 mHeight;
+	vdfloat2 mUVOffset;
+	vdfloat2 mTexelOffset;
+	vdfloat2 mUVSize;
+	vdfloat2 mTexelSize;
 	uint32 mTexWidth;
 	uint32 mTexHeight;
 
 	void Init(uint32 w, uint32 h, uint32 texw, uint32 texh) {
-		mUSize = (float)w / (float)texw;
-		mVSize = (float)h / (float)texh;
-		mWidth = w;
-		mHeight = h;
+		mUVOffset = vdfloat2{0, 0};
+		mTexelOffset = vdfloat2{0, 0};
+		mUVSize.set((float)w / (float)texw, (float)h / (float)texh);
+		mTexelSize.set(w, h);
 		mTexWidth = texw;
 		mTexHeight = texh;
 	}
@@ -366,7 +424,7 @@ public:
 	VDDisplayBufferSourceNode3D();
 	~VDDisplayBufferSourceNode3D();
 
-	bool Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, uint32 w, uint32 h, bool hdr, VDDisplayNode3D *child);
+	bool Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, float outx, float outy, float outw, float outh, uint32 w, uint32 h, bool hdr, VDDisplayNode3D *child);
 	void Shutdown();
 
 	VDDisplaySourceTexMapping GetTextureMapping() const;
@@ -375,6 +433,8 @@ public:
 private:
 	struct Vertex;
 
+	float mDestX = 0;
+	float mDestY = 0;
 	IVDTTexture2D *mpRTT;
 	VDDisplayNode3D *mpChildNode;
 	VDDisplaySourceTexMapping mMapping;
@@ -435,7 +495,7 @@ public:
 
 	bool CanStretch() const;
 	void SetBilinear(bool enabled) { mbBilinear = enabled; }
-	void SetDestArea(sint32 x, sint32 y, uint32 w, uint32 h) { mDstX = x; mDstY = y; mDstW = w; mDstH = h; }
+	void SetDestArea(float x, float y, float w, float h) { mDstX = x; mDstY = y; mDstW = w; mDstH = h; }
 
 	bool Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, uint32 w, uint32 h, uint32 format);
 	void Shutdown();
@@ -459,21 +519,20 @@ private:
 	IVDTTexture2D *mpImageTex[3];
 	IVDTTexture2D *mpPaletteTex;
 	IVDTVertexFormat *mpVF;
-	IVDTVertexProgram *mpVP;
-	IVDTFragmentProgram *mpFP;
-	IVDTVertexBuffer *mpVB;
 
 	RenderMode	mRenderMode;
 	bool	mbRender2T;
 	bool	mbBilinear;
-	sint32	mDstX;
-	sint32	mDstY;
-	uint32	mDstW;
-	uint32	mDstH;
+	float	mDstX;
+	float	mDstY;
+	float	mDstW;
+	float	mDstH;
 	uint32	mTexWidth;
 	uint32	mTexHeight;
 	uint32	mTex2Width;
 	uint32	mTex2Height;
+
+	VDDisplayMeshPool3D mMeshPool;
 
 	uint32	mLastPalette[256] {};
 };
@@ -484,12 +543,12 @@ private:
 // This node does a simple render of a source node using point, bilinear,
 // or sharp bilinear filtering.
 //
-class VDDisplayBlitNode3D : public VDDisplayNode3D {
+class VDDisplayBlitNode3D final : public VDDisplayNode3D {
 public:
 	VDDisplayBlitNode3D();
 	~VDDisplayBlitNode3D();
 
-	void SetDestArea(sint32 x, sint32 y, uint32 w, uint32 h) { mDstX = x; mDstY = y; mDstW = w; mDstH = h; }
+	void SetDestArea(float x, float y, float w, float h) { mDstX = x; mDstY = y; mDstW = w; mDstH = h; }
 
 	bool Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, uint32 w, uint32 h, bool linear, float sharpnessX, float sharpnessY, VDDisplaySourceNode3D *source);
 	void Shutdown();
@@ -499,17 +558,14 @@ public:
 private:
 	struct Vertex;
 
-	IVDTVertexBuffer *mpVB;
-	IVDTFragmentProgram *mpFP;
-	VDDisplaySourceNode3D *mpSourceNode;
-	bool mbLinear;
-	float mSharpnessX;
-	float mSharpnessY;
-	sint32	mDstX;
-	sint32	mDstY;
-	uint32	mDstW;
-	uint32	mDstH;
+	VDDisplaySourceNode3D *mpSourceNode = nullptr;
+	float	mDstX = 0;
+	float	mDstY = 0;
+	float	mDstW = 1;
+	float	mDstH = 1;
 	VDDisplaySourceTexMapping mMapping;
+	VDDisplayMeshPool3D mMeshPool;
+	VDDPoolTextureIndex mSourceTextureIndex {};
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -519,9 +575,7 @@ public:
 	VDDisplayStretchBicubicNode3D();
 	~VDDisplayStretchBicubicNode3D();
 
-	const vdrect32 GetDestArea() const;
-
-	bool Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, uint32 srcw, uint32 srch, sint32 dstx, sint32 dsty, uint32 dstw, uint32 dsth, VDDisplaySourceNode3D *child);
+	bool Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, uint32 srcw, uint32 srch, uint32 dstw, uint32 dsth, float outx, float outy, float outw, float outh, VDDisplaySourceNode3D *child);
 	void Shutdown();
 
 	void Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const VDDRenderView& renderView) override;
@@ -529,21 +583,24 @@ public:
 private:
 	struct Vertex;
 
-	IVDTVertexProgram *mpVP;
-	IVDTFragmentProgram *mpFP;
-	IVDTVertexFormat *mpVF;
-	IVDTVertexBuffer *mpVB;
+	IVDTVertexFormat *mpVF = nullptr;
 
-	IVDTTexture2D *mpRTTHoriz;
-	IVDTTexture2D *mpFilterTex;
-	VDDisplaySourceNode3D *mpSourceNode;
+	IVDTTexture2D *mpRTTHoriz = nullptr;
+	IVDTTexture2D *mpFilterTex = nullptr;
+	vdrefptr<VDDisplaySourceNode3D> mpSourceNode;
 
-	uint32	mSrcW;
-	uint32	mSrcH;
-	sint32	mDstX;
-	sint32	mDstY;
-	uint32	mDstW;
-	uint32	mDstH;
+	uint32	mSrcW = 0;
+	uint32	mSrcH = 0;
+	uint32	mDstW = 0;
+	uint32	mDstH = 0;
+	float	mOutX = 0;
+	float	mOutY = 0;
+	float	mOutW = 0;
+	float	mOutH = 0;
+	VDDPoolTextureIndex mSourceTex {};
+	VDDPoolRenderViewId mOutputView {};
+
+	VDDisplayMeshPool3D mMeshPool;
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -556,10 +613,15 @@ public:
 	const vdrect32 GetDestArea() const;
 
 	struct Params {
-		sint32 mDstX;
-		sint32 mDstY;
-		sint32 mDstW;
-		sint32 mDstH;
+		uint32 mSrcH;
+		float mDstX;
+		float mDstY;
+		float mDstW;
+		float mDstH;
+		sint32 mClipDstX;
+		sint32 mClipDstY;
+		uint32 mClipDstW;
+		uint32 mClipDstH;
 		bool mbLinear;
 		bool mbUseAdobeRGB;
 		bool mbRenderLinear;
@@ -583,24 +645,19 @@ public:
 private:
 	struct Vertex;
 
-	IVDTVertexProgram *mpVP = nullptr;
-	IVDTFragmentProgram *mpFP = nullptr;
-	IVDTVertexFormat *mpVF = nullptr;
-	IVDTVertexBuffer *mpVB = nullptr;
-	IVDTIndexBuffer *mpIB = nullptr;
-
 	IVDTTexture2D *mpGammaRampTex = nullptr;
 	IVDTTexture2D *mpScanlineMaskTex = nullptr;
-	VDDisplaySourceNode3D *mpSourceNode = nullptr;
-
-	uint32 mFPMode = 0;
-	float mCachedGamma = 0;
-	bool mbCachedGammaHasSrgb = false;
-	bool mbCachedGammaHasAdobeRGB = false;
+	vdrefptr<VDDisplaySourceNode3D> mpSourceNode;
 
 	VDDisplaySourceTexMapping mMapping {};
 	Params mParams {};
-	float mScanlineMaskNormH = 0;
+	float mScanlineMaskVBase = 0;
+	float mScanlineMaskVScale = 0;
+	
+	VDDPoolTextureIndex mSourceTextureIndex {};
+	VDDPoolRenderViewId mOutputViewId {};
+
+	VDDisplayMeshPool3D mMeshPool;
 
 	static const uint32 kTessellation;
 };
@@ -620,10 +677,9 @@ public:
 private:
 	struct Vertex;
 
-	IVDTFragmentProgram *mpFP = nullptr;
-	IVDTVertexBuffer *mpVB = nullptr;
-
-	VDDisplaySourceNode3D *mpSourceNode = nullptr;
+	vdrefptr<VDDisplaySourceNode3D> mpSourceNode;
+	VDDisplayMeshPool3D mMeshPool;
+	VDDPoolTextureIndex mSourceTextureIndex {};
 
 	VDDisplaySourceTexMapping mMapping {};
 };
@@ -640,6 +696,10 @@ public:
 		float mDstY;
 		float mDstW;
 		float mDstH;
+		sint32 mClipX;
+		sint32 mClipY;
+		uint32 mClipW;
+		uint32 mClipH;
 		float mThreshold;
 		float mBlurRadius;
 		float mDirectIntensity;

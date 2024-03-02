@@ -30,17 +30,17 @@
     </dd>
     
     <dt>ALTXEPX.SYS</dt>
-    <p>
+    <dd>
       SpartaDOS X version of Altirra XEP80 driver, which loads low instead of high and supports
       SDX features. Four switches are supported: /P to default to PAL, /V to adjust video
       timing, /U to enable 31.5Kbaud ultra mode, and /1 to use port 1 instead of port 2.
-    </p>
+    </dd>
     
     <dt>ATDEBUGX.SYS</dt>
-    <p>
+    <dd>
       Altirra debug link driver, to send SDX symbols to the debugger. Requires debug link to
       be enabled in debugger options and for the debugger to be open when the driver loads.
-    </p>
+    </dd>
     
     <dt>BOOT850.COM</dt>
     <dd>
@@ -130,6 +130,12 @@
     <dt>XEPVHLDP.COM</dt>
     <dd>
       Reprograms the XEP80 video timing chain for more standard timing in PAL.
+    </dd>
+
+    <dt>PHLOAD.COM</dt>
+    <dd>
+      Loads peripheral handlers from any devices on the SIO bus that support peripheral
+      handler download through type 4 polls.
     </dd>
 </dl>
 </topic>

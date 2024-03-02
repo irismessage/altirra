@@ -172,4 +172,18 @@ protected:
 	VDLinearAllocator mAllocator;
 };
 
+// Convert a timespan in seconds to cycles using the default NTSC cycle rate. This
+// is used with the default fast scheduler when the distinction between NTSC and
+// PAL is not significant.
+template<typename T = uint32> requires std::is_integral_v<T> || std::is_floating_point_v<T>
+consteval T ATSecondsToDefaultCycles(float seconds) {
+	if (seconds < 0)
+		throw;
+
+	if constexpr (std::is_integral_v<T>)
+		return T(0.5 + seconds * 1789772.5);
+	else
+		return T(seconds * 1789772.5);
+}
+
 #endif

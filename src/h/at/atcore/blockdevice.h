@@ -33,7 +33,7 @@ struct ATBlockDeviceGeometry {
 
 class IATBlockDevice : public IVDRefUnknown {
 public:
-	enum { kTypeID = 'bldv' };
+	static constexpr uint32 kTypeID = "IATBlockDevice"_vdtypeid;
 
 	virtual bool IsReadOnly() const = 0;
 	virtual uint32 GetSectorCount() const = 0;
@@ -51,6 +51,13 @@ public:
 	static constexpr uint32 kTypeID = "IATBlockDeviceDirectAccess"_vdtypeid;
 
 	virtual VDStringW GetVHDDirectAccessPath() const = 0;
+};
+
+class IATBlockDeviceDynamic : public IVDRefUnknown {
+public:
+	static constexpr uint32 kTypeID = "IATBlockDeviceDynamic"_vdtypeid;
+
+	virtual void RescanDynamicDisk() = 0;
 };
 
 #endif

@@ -50,6 +50,7 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeRe
     <None Include="source\Additions\boot1030.s" />
     <None Include="source\Additions\colormap.s" />
     <None Include="source\Additions\cp.s" />
+    <None Include="source\Additions\phload.s" />
     <None Include="source\Additions\sx212.s" />
     <None Include="source\Additions\sx212handler.s" />
     <None Include="source\Additions\thnd1030.s" />
@@ -84,7 +85,6 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeRe
     <None Include="source\Shared\vbi816.s" />
     <None Include="source\Shared\version.inc" />
     <None Include="source\softkick.s" />
-    <None Include="source\BASIC\main.xasm" />
     <None Include="source\NoKernel\main.xasm" />
     <None Include="source\SuperKernel\includes.xasm" />
     <None Include="source\SuperKernel\main.xasm" />

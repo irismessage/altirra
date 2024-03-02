@@ -25,31 +25,26 @@ struct ATTraceContext;
 class ATTraceChannelSimple;
 class ATTraceChannelCPUHistory;
 class ATTraceChannelFormatted;
+struct ATCPUHistoryEntry;
+class ATCPUEmulatorMemory;
+class ATCPUEmulator;
+struct ATCPUTimestampDecoder;
+enum ATDebugDisasmMode : uint8;
+class IATCPUTimestampDecoderProvider;
 
-class ATCPUTracer final : public IATSchedulerCallback {
-	ATCPUTracer(const ATCPUTracer&) = delete;
-	ATCPUTracer& operator=(const ATCPUTracer&) = delete;
+class ATCPUTraceProcessor final {
+	ATCPUTraceProcessor(const ATCPUTraceProcessor&) = delete;
+	ATCPUTraceProcessor& operator=(const ATCPUTraceProcessor&) = delete;
 public:
-	ATCPUTracer();
-	~ATCPUTracer();
+	ATCPUTraceProcessor();
+	~ATCPUTraceProcessor();
 
-	void Init(ATCPUEmulator *cpu, ATScheduler *scheduler, ATScheduler *slowScheduler, IATCPUTimestampDecoderProvider *tsdprovider, ATTraceContext *traceContext, bool traceInsns, bool traceBasic);
+	void Init(uint8 lastS, ATDebugDisasmMode disasmMode, uint8 subCycles, ATTraceContext *traceContext, bool traceInsns, bool traceBasic, ATCPUEmulatorMemory *cpuMemory, const ATCPUTimestampDecoder& dec, bool enableAsync);
 	void Shutdown();
 
-private:
-	void OnScheduledEvent(uint32 id) override;
+	void ProcessInsns(uint64 endTick64, const ATCPUHistoryEntry *const *heptrs, size_t n, const ATCPUTimestampDecoder& tsdecoder);
 
 private:
-	void Reschedule();
-	void Update();
-
-	ATCPUEmulator *mpCPU = nullptr;
-	IATCPUTimestampDecoderProvider *mpTSDProvider = nullptr;
-	ATScheduler *mpScheduler = nullptr;
-	ATScheduler *mpSlowScheduler = nullptr;
-	ATEvent *mpUpdateEvent = nullptr;
-
-	uint32	mLastHistoryCounter = 0;
 	bool	mbAdjustStackNext = false;
 	uint8	mLastS = 0;
 
@@ -76,6 +71,8 @@ private:
 	sint32	mBasicLineAddr = -1;
 	uint64	mBasicLineStartTime = 0;
 
+	ATCPUEmulatorMemory *mpCPUMemory = nullptr;
+
 	ATTraceChannelSimple *mpTraceChannels[7] = {};
 	ATTraceChannelCPUHistory *mpTraceChannelHistory = nullptr;
 	ATTraceChannelFormatted *mpTraceChannelBasic = nullptr;
@@ -86,6 +83,35 @@ private:
 	};
 
 	StackEntry	mStackTable[256] = {};
+};
+
+class ATCPUTracer final : public IATSchedulerCallback {
+	ATCPUTracer(const ATCPUTracer&) = delete;
+	ATCPUTracer& operator=(const ATCPUTracer&) = delete;
+public:
+	ATCPUTracer();
+	~ATCPUTracer();
+
+	void Init(ATCPUEmulator *cpu, ATScheduler *scheduler, ATScheduler *slowScheduler, IATCPUTimestampDecoderProvider *tsdprovider, ATTraceContext *traceContext, bool traceInsns, bool traceBasic);
+	void Shutdown();
+
+private:
+	void OnScheduledEvent(uint32 id) override;
+
+private:
+	void Reschedule();
+	void Update();
+
+	IATCPUTimestampDecoderProvider *mpTSDProvider = nullptr;
+	ATCPUEmulator *mpCPU = nullptr;
+	ATScheduler *mpScheduler = nullptr;
+	ATScheduler *mpSlowScheduler = nullptr;
+	ATEvent *mpUpdateEvent = nullptr;
+	bool mbTraceBasic = false;
+
+	uint32	mLastHistoryCounter = 0;
+
+	ATCPUTraceProcessor mTraceProcessor;
 };
 
 #endif	// f_AT_PROFILER_H

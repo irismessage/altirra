@@ -311,6 +311,8 @@ bool ATSIOManager::TryAccelRequest(const ATSIORequest& req, bool pbi) {
 		devreq.mSector = req.mSector;
 
 		ResetTransfer();
+		
+		mCommandQueueTime = mCommandDeassertTime = mCommandFrameEndTime = mpScheduler->GetTick64();
 
 		// Run down the device chain and see if anyone is interested in this request.
 		for(IATDeviceSIO *dev : mSIODevices) {
@@ -484,7 +486,16 @@ handled:
 void ATSIOManager::PokeyAttachDevice(ATPokeyEmulator *pokey) {
 }
 
-bool ATSIOManager::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit, uint64 startTime, bool framingError) {
+void ATSIOManager::PokeyBeginWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) {
+	RawDeviceListLock lock(this);
+
+	for(auto *rawdev : mSIORawDevices) {
+		if (rawdev)
+			rawdev->OnBeginReceiveByte(c, command, cyclesPerBit);
+	}
+}
+
+bool ATSIOManager::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit, uint64 startTime, bool framingError, bool truncated) {
 	if (mpTraceContext) {
 		const uint64 t = mpScheduler->GetTick64();
 
@@ -547,8 +558,12 @@ bool ATSIOManager::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit, uin
 		RawDeviceListLock lock(this);
 
 		for(auto *rawdev : mSIORawDevices) {
-			if (rawdev)
+			if (rawdev) {
 				rawdev->OnReceiveByte(c, command, cyclesPerBit);
+
+				if (truncated)
+					rawdev->OnTruncateByte();
+			}
 		}
 	}
 
@@ -690,10 +705,25 @@ void ATSIOManager::PokeySerInReady() {
 
 	uint32 existingDelay = mpScheduler->GetTicksToEvent(mpTransferEvent);
 	if (existingDelay > 50) {
+		// Whenever we shorten a byte delay for burst, we extend the next byte
+		// delay by that amount. This means that we need to make sure not to
+		// double-add that amount on the next run.
+		mAccelTimeSkew -= mTransferLastBurstOffset;
 		mTransferBurstOffset = (existingDelay - 50);
 		mAccelTimeSkew += mTransferBurstOffset;
 
 		mpScheduler->SetEvent(50, this, kEventId_Send, mpTransferEvent);
+	}
+}
+
+void ATSIOManager::PokeySetBreak(bool enabled) {
+	{
+		RawDeviceListLock lock(this);
+
+		for(auto *rawdev : mSIORawDevices) {
+			if (rawdev)
+				rawdev->OnBreakStateChanged(enabled);
+		}
 	}
 }
 
@@ -933,7 +963,7 @@ uint32 ATSIOManager::GetRecvResetCounter() const {
 	return mpPokey->GetSerialInputResetCounter();
 }
 
-class ATSaveStateSioCommandStep final : public ATSnapExchangeObject<ATSaveStateSioCommandStep> {
+class ATSaveStateSioCommandStep final : public ATSnapExchangeObject<ATSaveStateSioCommandStep, "ATSaveStateSioCommandStep"> {
 public:
 	ATSaveStateSioCommandStep() = default;
 	ATSaveStateSioCommandStep(const ATSIOManager::Step& step)
@@ -1039,9 +1069,7 @@ public:
 	vdfastvector<uint8> mTransferData;
 };
 
-ATSERIALIZATION_DEFINE(ATSaveStateSioCommandStep);
-
-class ATSaveStateSioActiveCommand final : public ATSnapExchangeObject<ATSaveStateSioActiveCommand> {
+class ATSaveStateSioActiveCommand final : public ATSnapExchangeObject<ATSaveStateSioActiveCommand, "ATSaveStateSioActiveCommand"> {
 public:
 	template<typename T>
 	void Exchange(T& rw) {
@@ -1083,8 +1111,6 @@ public:
 	vdvector<vdrefptr<ATSaveStateSioCommandStep>> mSteps;
 	vdrefptr<ATSaveStateSioCommandStep> mpCurrentStep;
 };
-
-ATSERIALIZATION_DEFINE(ATSaveStateSioActiveCommand);
 
 void ATSIOManager::SaveActiveCommandState(const IATDeviceSIO *device, IATObjectState **ppState) const {
 	if (!device || device != mpActiveDevice) {
@@ -1335,6 +1361,10 @@ bool ATSIOManager::IsSIOReadyAsserted() const {
 	return mbReadyState;
 }
 
+bool ATSIOManager::IsSIOForceBreakAsserted() const {
+	return mpPokey->IsSerialForceBreakEnabled();
+}
+
 void ATSIOManager::SetSIOInterrupt(IATDeviceRawSIO *dev, bool state) {
 	auto it = std::lower_bound(mSIOInterruptActive.begin(), mSIOInterruptActive.end(), dev);
 
@@ -1445,6 +1475,7 @@ void ATSIOManager::OnScheduledEvent(uint32 id) {
 				TraceReceive(c, mTransferCyclesPerBit, false);
 
 				mpScheduler->SetEvent(mTransferCyclesPerByte + mTransferBurstOffset, this, kEventId_Send, mpTransferEvent);
+				mTransferLastBurstOffset = mTransferBurstOffset;
 				mTransferBurstOffset = 0;
 			} else {
 				mTransferStart = mTransferEnd;
@@ -1511,6 +1542,7 @@ void ATSIOManager::ExecuteNextStep() {
 				mTransferStart = mTransferIndex;
 				mTransferEnd = mTransferStart + mCurrentStep.mTransferLength;
 				mTransferBurstOffset = 0;
+				mTransferLastBurstOffset = 0;
 				VDASSERT(mTransferEnd <= vdcountof(mTransferBuffer));
 
 				if (mpAccelRequest) {

@@ -22,10 +22,7 @@
 #include <at/atcore/savestate.h>
 #include <at/ataudio/pokeysavestate.h>
 
-ATSERIALIZATION_DEFINE(ATSaveStatePokey);
-ATSERIALIZATION_DEFINE(ATSaveStatePokeyInternal);
-
-template<typename T>
+template<ATExchanger T>
 void ATSaveStatePokeyInternal::Exchange(T& rw) {
 	rw.Transfer("clock15_offset", &mClock15Offset);
 	rw.Transfer("clock64_offset", &mClock64Offset);
@@ -105,7 +102,7 @@ void ATSaveStatePokeyInternal::Exchange(T& rw) {
 	}
 }
 
-template<typename T>
+template<ATExchanger T>
 void ATSaveStatePokey::Exchange(T& rw) {
 	rw.TransferArray("audf", mAUDF);
 	rw.TransferArray("audc", mAUDC);
@@ -113,6 +110,7 @@ void ATSaveStatePokey::Exchange(T& rw) {
 	rw.Transfer("irqen", &mIRQEN);
 	rw.Transfer("irqst", &mIRQST);
 	rw.Transfer("skctl", &mSKCTL);
+	rw.Transfer("skstat", &mSKSTAT);
 	rw.Transfer("allpot", &mALLPOT);
 	rw.Transfer("kbcode", &mKBCODE);
 	rw.Transfer("internal_state", &mpInternalState);

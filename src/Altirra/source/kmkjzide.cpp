@@ -93,6 +93,27 @@ void *ATKMKJZIDE::AsInterface(uint32 id) {
 
 void ATKMKJZIDE::GetSettingsBlurb(VDStringW& buf) {
 	buf.sprintf(L"ID %u", (unsigned)VDFindLowestSetBit(mDeviceId));
+
+	if (mbVersion2) {
+		switch(mRevision) {
+			default:
+			case kRevision_V2_D:
+				buf += L" (rev D)";
+				break;
+
+			case kRevision_V2_C:
+				buf += L" (rev C)";
+				break;
+
+			case kRevision_V2_S:
+				buf += L" (rev S)";
+				break;
+
+			case kRevision_V2_E:
+				buf += L" (rev E)";
+				break;
+		}
+	}
 }
 
 void ATKMKJZIDE::GetSettings(ATPropertySet& settings) {
@@ -518,7 +539,7 @@ uint8 ATKMKJZIDE::ReadPBIStatus(uint8 busData, bool debugOnly) {
 }
 
 const wchar_t *ATKMKJZIDE::GetBusName() const {
-	return L"IDE Bus";
+	return L"IDE/CF Bus";
 }
 
 const char *ATKMKJZIDE::GetBusTag() const {
@@ -756,9 +777,20 @@ sint32 ATKMKJZIDE::OnControlDebugRead(void *thisptr0, uint32 addr) {
 				return thisptr->mbIrqEnabled ? 0xFF : 0xFF ^ thisptr->mDeviceId;
 			break;
 
-		case 0xFA:	// (rev.E) Write protect register (bit 4)
-			if (thisptr->mRevision == kRevision_V2_E)
-				return thisptr->mbWriteProtect ? 0xFF : 0xEF;
+		case 0xFA:	// (rev.E) Write protect / CF detect register (bit 4)
+			if (thisptr->mRevision == kRevision_V2_E) {
+				uint8 v = 0xCF;
+
+				// CF write protect
+				if (thisptr->mbWriteProtect)
+					v += 0x10;
+
+				// CF card detect
+				if (!thisptr->mpBlockDevices[0])
+					v += 0x20;
+
+				return v;
+			}
 
 			break;
 

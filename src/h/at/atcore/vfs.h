@@ -52,13 +52,60 @@ public:
 	ATUnsupportedVFSPathException(const wchar_t *badPath);
 };
 
+class ATVFSException : public MyError {
+public:
+	template<typename... Args>
+	ATVFSException(bool hasPath, Args&&... args)
+		: mbHasPath(hasPath), MyError(std::forward<Args>(args)...)
+	{
+	}
+
+	bool HasPath() const { return mbHasPath; }
+
+	[[noreturn]]
+	virtual void RethrowWithPath(const wchar_t *path) const = 0;
+
+protected:
+	bool mbHasPath = false;
+};
+
+template<typename T>
+class ATVFSExceptionT : public ATVFSException {
+public:
+	using ATVFSException::ATVFSException;
+
+	[[noreturn]]
+	void RethrowWithPath(const wchar_t *path) const override {
+		throw T(path);
+	}
+};
+
+class ATVFSNotFoundException : public ATVFSExceptionT<ATVFSNotFoundException> {
+public:
+	ATVFSNotFoundException();
+	ATVFSNotFoundException(const wchar_t *path);
+};
+
+class ATVFSReadOnlyException : public ATVFSExceptionT<ATVFSReadOnlyException> {
+public:
+	ATVFSReadOnlyException();
+	ATVFSReadOnlyException(const wchar_t *path);
+};
+
+class ATVFSNotAvailableException : public ATVFSExceptionT<ATVFSNotAvailableException> {
+public:
+	ATVFSNotAvailableException();
+	ATVFSNotAvailableException(const wchar_t *path);
+};
+
 enum ATVFSProtocol : uint8 {
 	kATVFSProtocol_None,
 	kATVFSProtocol_File,
 	kATVFSProtocol_Zip,
 	kATVFSProtocol_GZip,
 	kATVFSProtocol_Atfs,
-	kATVFSProtocol_Blob
+	kATVFSProtocol_Blob,
+	kATVFSProtocol_Special
 };
 
 bool ATDecodeVFSPath(VDStringW& dst, const VDStringSpanW& src);
@@ -109,5 +156,6 @@ void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, bool update, ATVFSFil
 
 void ATVFSSetAtfsProtocolHandler(vdfunction<void(ATVFSFileView *, const wchar_t *, ATVFSFileView **)> handler);
 void ATVFSSetBlobProtocolHandler(vdfunction<void(const wchar_t *, bool, bool, ATVFSFileView **)> handler);
+void ATVFSSetSpecialProtocolHandler(vdfunction<void(const wchar_t *, bool, bool, ATVFSFileView **)> handler);
 
 #endif

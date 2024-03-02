@@ -35,6 +35,7 @@ namespace nsATGTIARenderer {
 	const __declspec(align(16)) uint64 hires_mask_2[2] = { 0x0f0f00000f0f0000, 0x0f0f00000f0f0000 };
 }
 
+VD_CPU_TARGET("ssse3")
 void atasm_gtia_render_lores_fast_ssse3(void *dst0, const uint8 *src, uint32 n, const uint8 *color_table) {
 	using namespace nsATGTIARenderer;
 
@@ -125,6 +126,7 @@ void atasm_gtia_render_lores_fast_ssse3(void *dst0, const uint8 *src, uint32 n, 
 	}
 }
 
+VD_CPU_TARGET("ssse3")
 void atasm_gtia_render_mode8_fast_ssse3(
 	void *dst0,
 	const uint8 *src,

@@ -70,13 +70,17 @@ public:
 
 	int		GetCursorLine() override;
 	void	SetCursorPos(int line, int offset) override;
+	bool	GetCursorPixelPos(int& x, int& y) override;
 	void	SetCursorPixelPos(int x, int y) override;
+
+	vdpoint32	GetScreenPosForContextMenu() override;
 
 	void	RecolorLine(int line) override;
 	void	RecolorAll() override;
 
 	bool	Find(const char *text, int len, bool caseSensitive, bool wholeWord, bool searchUp) override;
 
+	vdrect32	GetVisibleArea() const override;
 	int		GetVisibleHeight() override;
 	int		GetParagraphForYPos(int y) override;
 	int		GetVisibleLineCount() override;
@@ -251,7 +255,7 @@ TextEditor::~TextEditor() {
 }
 
 VDGUIHandle TextEditor::Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id) {
-	return (VDGUIHandle)CreateWindowEx(exStyle, (LPCTSTR)sWndClass, _T(""), style, x, y, cx, cy, (HWND)parent, (HMENU)(UINT_PTR)id, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
+	return (VDGUIHandle)CreateWindowEx(exStyle, MAKEINTATOM(sWndClass), _T(""), style, x, y, cx, cy, (HWND)parent, (HMENU)(UINT_PTR)id, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
 }
 
 void TextEditor::SetCallback(IVDTextEditorCallback *pCB) {
@@ -367,6 +371,19 @@ void TextEditor::SetCursorPos(int line, int offset) {
 	UpdateCaretPos(true, false);
 }
 
+bool TextEditor::GetCursorPixelPos(int& x, int& y) {
+	PosToPixel(x, y, mCaretPos);
+
+	y -= mScrollY;
+
+	const bool valid = x >= 0 && x < mVisibleWidth && y >= 0 && y < mVisibleHeight;
+
+	x += mGutterX;
+	y += mGutterY;
+
+	return valid;
+}
+
 void TextEditor::SetCursorPixelPos(int x, int y) {
 	MoveCaret(ClientToPos(x, y), false, false);
 }
@@ -375,6 +392,20 @@ namespace {
 	bool IsWordChar(char c) {
 		return (unsigned)((c - 'A') & 0xdf) < 26 || (unsigned)(c - '0') < 10 || c == '_';
 	}
+}
+
+vdpoint32 TextEditor::GetScreenPosForContextMenu() {
+	int clientX = 0, clientY = 0;
+
+	if (!GetCursorPixelPos(clientX, clientY)) {
+		clientX = mVisibleWidth >> 1;
+		clientY = mVisibleHeight >> 1;
+	}
+
+	POINT pt = { clientX, clientY };
+	ClientToScreen(mhwnd, &pt);
+
+	return vdpoint32(pt.x, pt.y);
 }
 
 void TextEditor::RecolorLine(int line) {
@@ -517,6 +548,10 @@ hit:
 	InvalidateRange(mCaretPos, mSelectionAnchor);
 	UpdateCaretPos(true, false);
 	return true;
+}
+
+vdrect32 TextEditor::GetVisibleArea() const {
+	return vdrect32(0, 0, mVisibleWidth, mVisibleHeight);
 }
 
 int	TextEditor::GetVisibleHeight() {

@@ -110,6 +110,7 @@ protected:
 	void SetFullScreen(bool fs, uint32 width, uint32 height, uint32 refresh) override;
 	void SetCustomDesiredRefreshRate(float hz, float hzmin, float hzmax) override;
 	void SetDestRect(const vdrect32 *r, uint32 backgroundColor) override;
+	void SetDestRectF(const vdrect32f *r, uint32 backgroundColor) override;
 	void SetPixelSharpness(float xsharpness, float ysharpness) override;
 	void SetCompositor(IVDDisplayCompositor *comp) override;
 	void SetSDRBrightness(float nits) override;
@@ -264,7 +265,7 @@ private:
 	float		mPixelSharpnessX;
 	float		mPixelSharpnessY;
 	vdrect32	mSourceSubrect;
-	vdrect32	mDestRect;
+	vdrect32f	mDestRectF;
 	uint32		mBackgroundColor;
 	VDStringW	mMessage;
 
@@ -462,7 +463,7 @@ VDVideoDisplayWindow::VDVideoDisplayWindow(HWND hwnd, const CREATESTRUCT& create
 	, mFullScreenHeight(0)
 	, mFullScreenRefreshRate(0)
 	, mbDestRectEnabled(false)
-	, mDestRect(0, 0, 0, 0)
+	, mDestRectF(0, 0, 0, 0)
 	, mPixelSharpnessX(1.0f)
 	, mPixelSharpnessY(1.0f)
 	, mBackgroundColor(0)
@@ -618,17 +619,31 @@ void VDVideoDisplayWindow::SetCustomDesiredRefreshRate(float hz, float hzmin, fl
 }
 
 void VDVideoDisplayWindow::SetDestRect(const vdrect32 *r, uint32 backgroundColor) {
+	if (!r)
+		SetDestRectF(nullptr, backgroundColor);
+
+	vdrect32f rf(
+		(float)r->left,
+		(float)r->top,
+		(float)r->right,
+		(float)r->bottom
+	);
+
+	SetDestRectF(&rf, backgroundColor);
+}
+
+void VDVideoDisplayWindow::SetDestRectF(const vdrect32f *r, uint32 backgroundColor) {
 	mbDestRectEnabled = false;
 
 	if (r) {
 		mbDestRectEnabled = true;
-		mDestRect = *r;
+		mDestRectF = *r;
 	}
 
 	mBackgroundColor = backgroundColor;
 
 	if (mpMiniDriver)
-		mpMiniDriver->SetDestRect(r, backgroundColor);
+		mpMiniDriver->SetDestRectF(r, backgroundColor);
 
 	UpdateCoordinateMapping();
 }
@@ -1682,7 +1697,7 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 	mpMiniDriver->SetDesiredCustomRefreshRate(mCustomRefreshRate, mCustomRefreshRateMin, mCustomRefreshRateMax);
 	mpMiniDriver->SetFullScreen(mbFullScreen, mFullScreenWidth, mFullScreenHeight, mFullScreenRefreshRate, mbUse16Bit);
 	mpMiniDriver->SetHighPrecision(sbEnableHighPrecision);
-	mpMiniDriver->SetDestRect(mbDestRectEnabled ? &mDestRect : NULL, mBackgroundColor);
+	mpMiniDriver->SetDestRectF(mbDestRectEnabled ? &mDestRectF : NULL, mBackgroundColor);
 	mpMiniDriver->SetPixelSharpness(mPixelSharpnessX, mPixelSharpnessY);
 	UpdateSDRBrightness();
 
@@ -1796,8 +1811,8 @@ void VDVideoDisplayWindow::UpdateCoordinateMapping() {
 		float destAspect = 1;
 
 		if (mbDestRectEnabled) {
-			if (!mDestRect.empty())
-				destAspect = (float)mDestRect.width() / (float)mDestRect.height();
+			if (!mDestRectF.empty())
+				destAspect = mDestRectF.width() / mDestRectF.height();
 		} else {
 			RECT r;
 			if (mhwndChild && GetClientRect(mhwndChild, &r) && r.right > 0 && r.bottom > 0)

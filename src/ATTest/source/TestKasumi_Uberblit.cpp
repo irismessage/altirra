@@ -123,7 +123,7 @@ AT_DEFINE_TEST_NONAUTO(Kasumi_Uberblit) {
 
 							if ((spx ^ dpx) & 0xffffff) {
 								printf("        Failed: %s -> %s\n", VDPixmapGetInfo(srcformat).name, VDPixmapGetInfo(dstformat).name);
-								printf("            (%d,%d) %08lx != %08lx\n", x, y, spx, dpx);
+								printf("            (%d,%d) %08x != %08x\n", x, y, spx, dpx);
 								VDASSERT(false);
 								goto failed;
 							}
@@ -144,7 +144,7 @@ AT_DEFINE_TEST_NONAUTO(Kasumi_Uberblit) {
 
 							if (abs(re) > 3 || abs(ge) > 3 || abs(be) > 3) {
 								printf("        Failed: %s -> %s\n", VDPixmapGetInfo(srcformat).name, VDPixmapGetInfo(dstformat).name);
-								printf("            (%d,%d) %08lx != %08lx\n", x, y, spx, dpx);
+								printf("            (%d,%d) %08x != %08x\n", x, y, spx, dpx);
 								VDASSERT(false);
 								goto failed;
 							}

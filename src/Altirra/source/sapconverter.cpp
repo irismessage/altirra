@@ -352,7 +352,6 @@ void ATConvertSAPToPlayer(const void *sap, uint32 len, vdfastvector<uint8>& resu
 		// parse remaining data
 		uint8 prevdat[9] = {0};
 		size_t lastduroff = 0;
-		size_t lastcmd = 0;
 
 		uint8 dmhistory[16] = {0};
 		int dmhindex = 0;
@@ -392,7 +391,7 @@ void ATConvertSAPToPlayer(const void *sap, uint32 len, vdfastvector<uint8>& resu
 			}
 
 			if (lastduroff == 0 || deltaMask) {
-				lastcmd = lastduroff = result.size();
+				lastduroff = result.size();
 
 				result.push_back(1);
 

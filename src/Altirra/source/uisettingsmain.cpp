@@ -488,6 +488,7 @@ public:
 				{ kATHardwareMode_800XL, L"600/800XL" },
 				{ kATHardwareMode_130XE, L"130XE" },
 				{ kATHardwareMode_XEGS, L"XEGS" },
+				{ kATHardwareMode_1400XL, L"1400XL" },
 				{ kATHardwareMode_5200, L"5200" },
 			}
 		);

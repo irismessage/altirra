@@ -17,13 +17,12 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
-#include <windows.h>
-#include <shellapi.h>
 #include <vd2/system/time.h>
 #include <at/atcore/cio.h>
 #include <at/atnativeui/genericdialog.h>
 #include "uiaccessors.h"
 #include "browser.h"
+#include "oshelper.h"
 
 void ATCreateDeviceBrowser(const ATPropertySet& pset, IATDevice **dev) {
 	vdrefptr<ATDeviceBrowser> p(new ATDeviceBrowser);
@@ -167,7 +166,7 @@ void ATDeviceBrowser::FlushUrl() {
 			auto result = ATUIShowGenericDialog(opts);
 
 			if (result == kATUIGenericResult_Allow) {
-				ShellExecuteW((HWND)ATUIGetMainWindow(), L"open", VDTextAToW(mUrl).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+				ATLaunchURL(VDTextAToW(mUrl).c_str());
 
 				mCooldownTimer = 0;
 			} else {

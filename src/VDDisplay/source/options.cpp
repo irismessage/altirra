@@ -16,6 +16,10 @@
 
 #include <stdafx.h>
 #include <vd2/Tessa/options.h>
+#include <vd2/VDDisplay/internal/options.h>
+
+bool VDDInternalOptions::sbD3D9LimitPS1_1 = false;
+bool VDDInternalOptions::sbD3D9LimitPS2_0 = false;
 
 void VDVideoDisplaySetDXFlipModeEnabled(bool enable) {
 	VDTInternalOptions::sbEnableDXFlipMode = enable;
@@ -31,4 +35,24 @@ void VDVideoDisplaySetDXWaitableObjectEnabled(bool enable) {
 
 void VDVideoDisplaySetDXDoNotWaitEnabled(bool enable) {
 	VDTInternalOptions::sbEnableDXDoNotWait = enable;
+}
+
+void VDVideoDisplaySetD3D9LimitPS1_1(bool enable) {
+	VDDInternalOptions::sbD3D9LimitPS1_1 = enable;
+}
+
+void VDVideoDisplaySetD3D9LimitPS2_0(bool enable) {
+	VDDInternalOptions::sbD3D9LimitPS2_0 = enable;
+}
+
+void VDVideoDisplaySetD3D11Force9_1(bool enable) {
+	VDTInternalOptions::sbD3D11Force9_1 = enable;
+}
+
+void VDVideoDisplaySetD3D11Force9_3(bool enable) {
+	VDTInternalOptions::sbD3D11Force9_3 = enable;
+}
+
+void VDVideoDisplaySetD3D11Force10_0(bool enable) {
+	VDTInternalOptions::sbD3D11Force10_0 = enable;
 }

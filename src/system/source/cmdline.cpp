@@ -53,7 +53,6 @@ void VDCommandLine::Init(const wchar_t *s) {
 		// 2018 R4 (18.4.334896) launches programs with argv[0] having forward slashes, which
 		// previously screwed up our argument parsing.
 		const bool isArgv0 = mTokens.empty();
-		const char term3 = isArgv0 ? L' ' : L'/';
 
 		Token te = { (int)mLine.size(), !isArgv0 && *s == L'/' };
 
@@ -77,7 +76,7 @@ void VDCommandLine::Init(const wchar_t *s) {
 			if (!c)
 				break;
 
-			if (!inquote && (c == L' ' || c == L'\t' || c == term3))
+			if (!inquote && (c == L' ' || c == L'\t'))
 				break;
 
 			if (te.mbIsSwitch) {

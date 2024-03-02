@@ -54,6 +54,30 @@ struct ATCoProcReadMemNode {
 	uint8 (*mpDebugRead)(uint32 addr, void *thisptr);
 	void *mpThis;
 
+	template<typename T, typename T_Read, typename T_DebugRead>
+	void BindLambdas(T *thisptr, const T_Read&, const T_DebugRead&) {
+		mpThis = thisptr;
+
+		mpRead = [](uint32 addr, void *thisptr) -> uint8 {
+			return T_Read()(addr, (T *)(thisptr));
+		};
+
+		mpDebugRead = [](uint32 addr, void *thisptr) -> uint8 {
+			return T_DebugRead()(addr, (const T *)(thisptr));
+		};
+	}
+
+	template<typename T, typename T_DualRead>
+	void BindLambdas(T *thisptr, const T_DualRead&) {
+		mpThis = thisptr;
+
+		mpDebugRead = [](uint32 addr, uint8 val, void *thisptr) {
+			return T_DualRead()(addr, val, (const T *)(thisptr));
+		};
+
+		mpRead = mpDebugRead;
+	}
+
 	uintptr AsBase() const {
 		return (uintptr)this + 1;
 	}
@@ -62,6 +86,14 @@ struct ATCoProcReadMemNode {
 struct ATCoProcWriteMemNode {
 	void (*mpWrite)(uint32 addr, uint8 val, void *thisptr);
 	void *mpThis;
+
+	template<typename T, typename T_Lambda>
+	void BindLambda(T *thisptr, const T_Lambda&) {
+		mpThis = thisptr;
+		mpWrite = [](uint32 addr, uint8 val, void *thisptr) {
+			return T_Lambda()(addr, val, (T *)(thisptr));
+		};
+	}
 
 	uintptr AsBase() const {
 		return (uintptr)this + 1;

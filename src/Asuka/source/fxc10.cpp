@@ -240,7 +240,8 @@ struct TextureBinding {
 		uint8 mViewportW = 0;
 		uint8 mViewportH = 0;
 		bool mbUseBumpEnv = false;
-		bool mbClipPosition = false;
+		bool mbUseOutputH = false;
+		bool mbUseOutputV = false;
 
 		static void EmitDefinition(FILE *fo) {
 				fputs(R"_x_(
@@ -252,7 +253,8 @@ struct PassInfo {
 	uint8 mViewportW;
 	uint8 mViewportH;
 	uint8 mBumpEnvScale;
-	bool mbClipPosition;
+	bool mbUseOutputH;
+	bool mbUseOutputV;
 };
 )_x_", fo);
 		}
@@ -283,7 +285,8 @@ struct PassInfo {
 			fprintf(fo, "\t\t\t%d,\n", mRenderTarget);
 			fprintf(fo, "\t\t\t%u, %u,\n", mViewportW, mViewportH);
 			fprintf(fo, "\t\t\t%s,\n", mbUseBumpEnv ? "true" : "false");
-			fprintf(fo, "\t\t\t%s,\n", mbClipPosition ? "true" : "false");
+			fprintf(fo, "\t\t\t%s,\n", mbUseOutputH ? "true" : "false");
+			fprintf(fo, "\t\t\t%s,\n", mbUseOutputV ? "true" : "false");
 			fprintf(fo, "\t\t}");
 		}
 	};
@@ -336,7 +339,6 @@ struct TechniqueInfo {
 		"vd_temp2texture",
 		"vd_cubictexture",
 		"vd_hevenoddtexture",
-		"vd_dithertexture",
 		"vd_interphtexture",
 		"vd_interpvtexture",
 		"vd_interptexture",
@@ -536,11 +538,22 @@ struct EffectInfo {
 					lastPass->mRenderTarget = 2;
 				else
 					throw MyError("Unknown target name: %.*s", (int)name.size(), name.data());
-			} else if (command == "$$clip_pos") {
+			} else if (command == "$$clip_pos" || command == "$$use_output_size") {
 				if (!lastPass)
-					throw MyError("Effect compilation failed: clip_pos command with no pass");
+					throw MyError("Effect compilation failed: use_output_size command with no pass");
 
-				lastPass->mbClipPosition = true;
+				lastPass->mbUseOutputH = true;
+				lastPass->mbUseOutputV = true;
+			} else if (command == "$$use_output_width") {
+				if (!lastPass)
+					throw MyError("Effect compilation failed: use_output_width command with no pass");
+
+				lastPass->mbUseOutputH = true;
+			} else if (command == "$$use_output_height") {
+				if (!lastPass)
+					throw MyError("Effect compilation failed: use_output_height command with no pass");
+
+				lastPass->mbUseOutputV = true;
 			} else if (command == "$$viewport") {
 				if (!lastPass)
 					throw MyError("Effect compilation failed: viewport command with no pass");

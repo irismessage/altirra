@@ -271,7 +271,7 @@ void VDSetExternalCallTrap(IVDExternalCallTrap *trap) {
 	g_pExCallTrap = trap;
 }
 
-#if defined(WIN32) && defined(_M_IX86) && defined(__MSC_VER)
+#if defined(WIN32) && defined(_M_IX86) && defined(VD_COMPILER_MSVC)
 	namespace {
 		bool IsFPUStateOK(unsigned& ctlword) {
 			ctlword = 0;
@@ -339,14 +339,13 @@ void VDSetExternalCallTrap(IVDExternalCallTrap *trap) {
 		unsigned fpucw;
 		uint32 mxcsr;
 		bool bFPUStateBad = !IsFPUStateOK(fpucw);
-		bool bSSEStateBad = SSE_enabled && !IsSSEStateOK(mxcsr);
+		bool bSSEStateBad = !IsSSEStateOK(mxcsr);
 		bool bMMXStateBad = IsMMXState();
 
 		if (bMMXStateBad || bFPUStateBad || bSSEStateBad) {
 			ClearMMXState();
 			ResetFPUState();
-			if (SSE_enabled)
-				ResetSSEState();
+			ResetSSEState();
 		}
 
 		if (g_pExCallTrap) {
@@ -365,15 +364,14 @@ void VDSetExternalCallTrap(IVDExternalCallTrap *trap) {
 		unsigned fpucw;
 		uint32 mxcsr;
 		bool bFPUStateBad = !IsFPUStateOK(fpucw);
-		bool bSSEStateBad = SSE_enabled && !IsSSEStateOK(mxcsr);
+		bool bSSEStateBad = !IsSSEStateOK(mxcsr);
 		bool bMMXStateBad = IsMMXState();
 		bool bBadState = bMMXStateBad || bFPUStateBad || bSSEStateBad;
 
 		if (bBadState) {
 			ClearMMXState();
 			ResetFPUState();
-			if (SSE_enabled)
-				ResetSSEState();
+			ResetSSEState();
 		}
 
 		if (g_pExCallTrap) {

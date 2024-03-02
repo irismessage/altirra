@@ -40,7 +40,7 @@ public:
 	virtual const IATSerializable *GetRoot() const = 0;
 };
 
-void ATSetSaveState2Reader(vdfunction<void (VDZipArchive&, IATSerializable **)> fn);
-void ATReadSaveState2(VDZipArchive& zip, IATSaveStateImage2 **saveState);
+void ATSetSaveState2Reader(vdfunction<void (VDZipArchive&, const wchar_t *, IATSerializable **)> fn);
+void ATReadSaveState2(VDZipArchive& zip, const wchar_t *rootFileName, IATSaveStateImage2 **saveState);
 
 #endif	// f_AT_ATIO_SAVESTATE_H

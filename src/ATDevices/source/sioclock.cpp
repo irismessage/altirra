@@ -50,6 +50,7 @@ extern const ATDeviceDefinition g_ATDeviceDefSIOClock = { "sioclock", nullptr, L
 ATDeviceSIOClock::ATDeviceSIOClock()
 	: mpSIOMgr(nullptr)
 {
+	SetSaveStateAgnostic();
 }
 
 void *ATDeviceSIOClock::AsInterface(uint32 id) {

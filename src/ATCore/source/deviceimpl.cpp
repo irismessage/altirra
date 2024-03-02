@@ -92,6 +92,15 @@ bool ATDevice::GetErrorStatus(uint32 idx, VDStringW& error) {
 	return false;
 }
 
+bool ATDevice::IsSaveStateAgnostic() const {
+	return mbSaveStateAgnostic;
+}
+
 void *ATDevice::GetService(uint32 iid) const {
 	return mpDeviceManager ? mpDeviceManager->GetService(iid) : nullptr;
+}
+
+void ATDevice::NotifyStatusChanged() {
+	if (mpDeviceManager)
+		mpDeviceManager->NotifyDeviceStatusChanged(*this);
 }

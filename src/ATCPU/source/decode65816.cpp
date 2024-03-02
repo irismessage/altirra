@@ -707,6 +707,7 @@ bool ATCPUDecoderGenerator65816::DecodeInsn(uint8 opcode, bool unalignedDP, bool
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStatePopL16;
 			*mpDstState++ = kStatePopH16;
+			*mpDstState++ = kStateDSetSZ16;
 			*mpDstState++ = kStateDtoDP16;
 			break;
 
@@ -1573,6 +1574,7 @@ bool ATCPUDecoderGenerator65816::DecodeInsn(uint8 opcode, bool unalignedDP, bool
 			*mpDstState++ = kStatePopNative;		//** always native even in emulation mode
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateWait;
+			*mpDstState++ = kStateDSetSZ;
 			*mpDstState++ = kStateDtoB;
 			break;
 

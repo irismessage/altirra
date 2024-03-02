@@ -27,6 +27,8 @@ class ATMemoryManager;
 class ATMemoryLayer;
 class IATAudioMixer;
 class ATConsoleOutput;
+class IATObjectState;
+template<typename T> class vdrefptr;
 
 class ATCovoxEmulator final : public VDAlignedObject<16>, public IATSyncAudioSource {
 	ATCovoxEmulator(const ATCovoxEmulator&) = delete;
@@ -51,6 +53,9 @@ public:
 
 	void WriteControl(uint8 addr, uint8 value);
 	void WriteMono(uint8 value);
+
+	void LoadState(const IATObjectState *state);
+	vdrefptr<IATObjectState> SaveState() const;
 
 public:
 	bool RequiresStereoMixingNow() const override { return mbUnbalancedSticky; }

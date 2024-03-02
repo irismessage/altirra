@@ -23,5 +23,6 @@
 bool ATUIClipIsTextAvailable();
 
 bool ATUIClipGetText(VDStringA& s8, VDStringW& s16, bool& use16);
+bool ATUIClipGetText(VDStringW& s);
 
 #endif

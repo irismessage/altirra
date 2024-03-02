@@ -2,24 +2,24 @@
 <!-- Created with Inkscape (http://www.inkscape.org/) -->
 
 <svg
-   xmlns:dc="http://purl.org/dc/elements/1.1/"
-   xmlns:cc="http://creativecommons.org/ns#"
-   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-   xmlns:svg="http://www.w3.org/2000/svg"
-   xmlns="http://www.w3.org/2000/svg"
-   xmlns:xlink="http://www.w3.org/1999/xlink"
-   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
-   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    width="144"
    height="16"
    viewBox="0 0 143.99999 16"
    id="svg2"
    version="1.1"
-   inkscape:version="0.91 r13725"
-   inkscape:export-filename="D:\p4root\Altirra\sb2\src\Altirra\res\traceViewerToolbar.png"
-   inkscape:export-xdpi="180"
-   inkscape:export-ydpi="180"
-   sodipodi:docname="traceviewer.svg">
+   inkscape:version="1.2.2 (732a01da63, 2022-12-09)"
+   inkscape:export-filename="..\..\src\Altirra\res\traceViewerToolbar.png"
+   inkscape:export-xdpi="192"
+   inkscape:export-ydpi="192"
+   sodipodi:docname="traceviewer.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
   <defs
      id="defs4">
     <linearGradient
@@ -93,17 +93,17 @@
      borderopacity="1.0"
      inkscape:pageopacity="0.0"
      inkscape:pageshadow="2"
-     inkscape:zoom="15.3125"
-     inkscape:cx="99.593256"
-     inkscape:cy="1.9747896"
+     inkscape:zoom="10.827573"
+     inkscape:cx="85.060617"
+     inkscape:cy="24.890159"
      inkscape:document-units="px"
      inkscape:current-layer="layer1"
      showgrid="true"
      units="px"
      width="16mm"
-     inkscape:window-width="2412"
+     inkscape:window-width="2415"
      inkscape:window-height="1417"
-     inkscape:window-x="140"
+     inkscape:window-x="2697"
      inkscape:window-y="-8"
      inkscape:window-maximized="1"
      showguides="true"
@@ -113,7 +113,10 @@
      inkscape:snap-bbox="true"
      inkscape:bbox-nodes="true"
      inkscape:snap-smooth-nodes="true"
-     inkscape:object-nodes="true">
+     inkscape:object-nodes="true"
+     inkscape:showpageshadow="2"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1">
     <inkscape:grid
        type="xygrid"
        id="grid3336"
@@ -128,35 +131,54 @@
     <sodipodi:guide
        position="15.999999,4"
        orientation="1,0"
-       id="guide4145" />
+       id="guide4145"
+       inkscape:locked="false" />
     <sodipodi:guide
        position="31.999997,19.000005"
        orientation="1,0"
-       id="guide4149" />
+       id="guide4149"
+       inkscape:locked="false" />
     <sodipodi:guide
        position="47.999996,13.000005"
        orientation="1,0"
-       id="guide4151" />
+       id="guide4151"
+       inkscape:locked="false" />
     <sodipodi:guide
        position="63.999996,9"
        orientation="1,0"
-       id="guide4154" />
+       id="guide4154"
+       inkscape:locked="false" />
     <sodipodi:guide
        position="79.999995,11"
        orientation="1,0"
-       id="guide4210" />
+       id="guide4210"
+       inkscape:locked="false" />
     <sodipodi:guide
        position="95.999991,15"
        orientation="1,0"
-       id="guide4214" />
+       id="guide4214"
+       inkscape:locked="false" />
     <sodipodi:guide
        position="111.99999,32"
        orientation="1,0"
-       id="guide4742" />
+       id="guide4742"
+       inkscape:locked="false" />
     <sodipodi:guide
        position="127.99999,36"
        orientation="1,0"
-       id="guide4176" />
+       id="guide4176"
+       inkscape:locked="false" />
+    <inkscape:grid
+       type="xygrid"
+       id="grid388"
+       empspacing="1"
+       empcolor="#e50000"
+       empopacity="1"
+       spacingx="15.999999"
+       spacingy="15.999999"
+       visible="true"
+       color="#0099e5"
+       opacity="0" />
   </sodipodi:namedview>
   <metadata
      id="metadata7">
@@ -166,7 +188,6 @@
         <dc:format>image/svg+xml</dc:format>
         <dc:type
            rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
-        <dc:title></dc:title>
       </cc:Work>
     </rdf:RDF>
   </metadata>
@@ -183,23 +204,6 @@
        x="-711.90265"
        y="768.66919"
        transform="matrix(0.70710678,-0.70710678,0.70710678,0.70710678,0,0)" />
-    <path
-       sodipodi:type="star"
-       style="fill:#00ba00;fill-opacity:1;fill-rule:evenodd;stroke:none;stroke-width:0.05613543px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
-       id="path3338"
-       sodipodi:sides="3"
-       sodipodi:cx="6.1615639"
-       sodipodi:cy="1044.3623"
-       sodipodi:r1="7.2976065"
-       sodipodi:r2="3.6488032"
-       sodipodi:arg1="0"
-       sodipodi:arg2="1.0471976"
-       inkscape:flatsided="false"
-       inkscape:rounded="0"
-       inkscape:randomized="0"
-       d="m 13.45917,1044.3623 -5.4732047,3.16 -5.4732047,3.1599 0,-6.3199 0,-6.3199 5.473205,3.1599 z"
-       inkscape:transform-center-x="-1.9917199"
-       transform="matrix(1.0917102,0,0,1.1051583,15.249991,-109.77439)" />
     <rect
        style="fill:#000000;fill-opacity:1;stroke:none;stroke-opacity:1"
        id="rect4147"
@@ -342,15 +346,21 @@
        y="1037.6223" />
     <text
        xml:space="preserve"
-       style="font-style:normal;font-weight:normal;font-size:13.75px;line-height:125%;font-family:sans-serif;letter-spacing:-0.83999997px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       style="font-style:normal;font-weight:normal;line-height:0%;font-family:sans-serif;letter-spacing:-0.84px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
        x="129.98453"
        y="1047.7207"
-       id="text4267"
-       sodipodi:linespacing="125%"><tspan
+       id="text4267"><tspan
          sodipodi:role="line"
          id="tspan4269"
          x="129.98453"
          y="1047.7207"
-         style="font-size:10px">65</tspan></text>
+         style="font-size:10px;line-height:1.25">65</tspan></text>
+    <ellipse
+       style="fill:#e34d4d;fill-opacity:1"
+       id="path444"
+       cx="23.999998"
+       cy="1044.3623"
+       rx="5.9999995"
+       ry="6" />
   </g>
 </svg>

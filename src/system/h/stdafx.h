@@ -5,8 +5,8 @@
 #pragma setlocale("C")
 #endif
 
-// Select Windows XP baseline.
-#define _WIN32_WINNT 0x0501
+// Select Windows Vista baseline.
+#define _WIN32_WINNT 0x0600
 
 struct IUnknown;
 

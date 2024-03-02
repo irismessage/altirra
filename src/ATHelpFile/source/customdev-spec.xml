@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <?xml-stylesheet type="text/xsl" href="index.xsl" ?>
-<topic title="Custom device specification, v0.3">
+<topic title="Custom device specification, v0.5">
   <toc/>
   <h2>Basic device description structure</h2>
   <p>

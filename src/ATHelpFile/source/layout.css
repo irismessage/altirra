@@ -42,6 +42,14 @@ li {
 	vertical-align: bottom;
 }
 
+li.highlighted {
+	color: #080;
+}
+
+body.dark li.highlighted {
+	color: #0f0;
+}
+
 a {
 	margin: 0;
 	padding: 0;

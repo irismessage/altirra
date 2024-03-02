@@ -121,3 +121,12 @@ bool ATTraceChannelTape::GetNextEvent(ATTraceEvent& ev) {
 
 	return true;
 }
+
+uint32 ATTraceChannelTape::GetEventCount() const {
+	return (uint32)mEvents.size();
+}
+
+uint64 ATTraceChannelTape::GetTraceSize() const {
+	return mEvents.size() * sizeof(mEvents[0]);
+}
+

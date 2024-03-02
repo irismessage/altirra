@@ -107,7 +107,11 @@ void *ATDeviceDiskDriveAMDC::AsInterface(uint32 iid) {
 		case ATFDCEmulator::kTypeID: return &mFDC;
 	}
 
-	return ATDiskDriveDebugTargetControl::AsInterface(iid);
+	void *p = ATDiskDriveDebugTargetControl::AsInterface(iid);
+	if (p)
+		return p;
+
+	return ATDevice::AsInterface(iid);
 }
 
 void ATDeviceDiskDriveAMDC::GetDeviceInfo(ATDeviceInfo& info) {
@@ -286,11 +290,11 @@ void ATDeviceDiskDriveAMDC::Init() {
 	for(auto& drive : mDrives) {
 		drive.mDiskChangeHandler.Init(mpScheduler);
 		drive.mDiskChangeHandler.SetOutputStateFns(
-			[&drive, driveIndex, this](std::optional<bool> wpState) {
+			[driveIndex, this](std::optional<bool> wpState) {
 				if (mSelectedDrive == driveIndex)
 					mFDC.SetWriteProtectOverride(wpState);
 			},
-			[&drive, driveIndex, this](std::optional<bool> readyState) {
+			[driveIndex, this](std::optional<bool> readyState) {
 				if (mSelectedDrive == driveIndex)
 					mFDC.SetDiskImageReady(readyState);
 			}

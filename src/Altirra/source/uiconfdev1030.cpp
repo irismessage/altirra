@@ -24,7 +24,7 @@
 
 class ATUIDialogDevice1030 : public VDDialogFrameW32 {
 public:
-	ATUIDialogDevice1030(ATPropertySet& props);
+	ATUIDialogDevice1030(ATPropertySet& props, bool fullEmu, bool is835);
 
 protected:
 	bool OnLoaded();
@@ -33,14 +33,14 @@ protected:
 	void UpdateEnables();
 
 	ATPropertySet& mPropSet;
+	const bool mbFullEmu;
+	const bool mbIs835;
 	bool mbAccept;
 	bool mbOutbound;
 	bool mbTelnet;
 	VDUIProxyComboBoxControl mComboTermType;
 	VDUIProxyComboBoxControl mComboSioModes;
 	VDUIProxyComboBoxControl mComboNetworkMode;
-
-	static const uint32 kConnectionSpeeds[];
 
 	static const wchar_t *const kSioEmuModes[];
 };
@@ -51,8 +51,10 @@ const wchar_t *const ATUIDialogDevice1030::kSioEmuModes[]={
 	L"Full - SIO protocol and 6502 T: handler",
 };
 
-ATUIDialogDevice1030::ATUIDialogDevice1030(ATPropertySet& props)
+ATUIDialogDevice1030::ATUIDialogDevice1030(ATPropertySet& props, bool fullEmu, bool is835)
 	: VDDialogFrameW32(IDD_DEVICE_1030MODEM)
+	, mbFullEmu(fullEmu)
+	, mbIs835(is835)
 	, mPropSet(props)
 {
 }
@@ -65,14 +67,22 @@ bool ATUIDialogDevice1030::OnLoaded() {
 	ATUIPopulateModemTermTypeList(mComboTermType);
 	ATUIPopulateModemNetworkModeList(mComboNetworkMode);
 
-	for(size_t i=0; i<vdcountof(kSioEmuModes); ++i)
-		mComboSioModes.AddItem(kSioEmuModes[i]);
+	if (mbFullEmu || mbIs835) {
+		mComboSioModes.SetEnabled(false);
+	} else {
+		for(size_t i=0; i<vdcountof(kSioEmuModes); ++i)
+			mComboSioModes.AddItem(kSioEmuModes[i]);
+	}
+
+	EnableControl(IDC_DISABLE_THROTTLING, false);
 
 	return VDDialogFrameW32::OnLoaded();
 }
 
 void ATUIDialogDevice1030::OnDataExchange(bool write) {
 	if (write) {
+		mPropSet.Clear();
+
 		if (IsButtonChecked(IDC_ACCEPT_CONNECTIONS)) {
 			uint32 port = GetControlValueUint32(IDC_LISTEN_PORT);
 
@@ -88,10 +98,14 @@ void ATUIDialogDevice1030::OnDataExchange(bool write) {
 		mPropSet.SetBool("telnet", IsButtonChecked(IDC_TELNET));
 		mPropSet.SetBool("telnetlf", IsButtonChecked(IDC_TELNET_LFCONVERSION));
 		mPropSet.SetBool("ipv6", IsButtonChecked(IDC_ACCEPT_IPV6));
-		mPropSet.SetBool("unthrottled", IsButtonChecked(IDC_DISABLE_THROTTLING));
 
-		int sioLevel = mComboSioModes.GetSelection();
-		mPropSet.SetUint32("emulevel", sioLevel);
+		if (!mbFullEmu)
+			mPropSet.SetBool("unthrottled", IsButtonChecked(IDC_DISABLE_THROTTLING));
+
+		if (!mbFullEmu && !mbIs835) {
+			int sioLevel = mComboSioModes.GetSelection();
+			mPropSet.SetUint32("emulevel", sioLevel);
+		}
 
 		VDStringW address;
 		GetControlText(IDC_DIAL_ADDRESS, address);
@@ -112,9 +126,12 @@ void ATUIDialogDevice1030::OnDataExchange(bool write) {
 		CheckButton(IDC_TELNET_LFCONVERSION, mPropSet.GetBool("telnetlf", true));
 		CheckButton(IDC_ALLOW_OUTBOUND, mbOutbound);
 		CheckButton(IDC_ACCEPT_IPV6, mPropSet.GetBool("ipv6", true));
-		CheckButton(IDC_DISABLE_THROTTLING, mPropSet.GetBool("unthrottled", false));
 
-		mComboSioModes.SetSelection(mPropSet.GetUint32("emulevel", 0));
+		if (!mbFullEmu)
+			CheckButton(IDC_DISABLE_THROTTLING, mPropSet.GetBool("unthrottled", false));
+
+		if (!mbFullEmu && !mbIs835)
+			mComboSioModes.SetSelection(mPropSet.GetUint32("emulevel", 0));
 
 		CheckButton(IDC_ACCEPT_CONNECTIONS, mbAccept);
 		SetControlTextF(IDC_LISTEN_PORT, L"%u", port ? port : 9000);
@@ -171,7 +188,25 @@ void ATUIDialogDevice1030::UpdateEnables() {
 }
 
 bool ATUIConfDev1030(VDGUIHandle hParent, ATPropertySet& props) {
-	ATUIDialogDevice1030 dlg(props);
+	ATUIDialogDevice1030 dlg(props, false, false);
+
+	return dlg.ShowDialog(hParent) != 0;
+}
+
+bool ATUIConfDev1030Full(VDGUIHandle hParent, ATPropertySet& props) {
+	ATUIDialogDevice1030 dlg(props, true, false);
+
+	return dlg.ShowDialog(hParent) != 0;
+}
+
+bool ATUIConfDev835(VDGUIHandle hParent, ATPropertySet& props) {
+	ATUIDialogDevice1030 dlg(props, false, true);
+
+	return dlg.ShowDialog(hParent) != 0;
+}
+
+bool ATUIConfDev835Full(VDGUIHandle hParent, ATPropertySet& props) {
+	ATUIDialogDevice1030 dlg(props, true, true);
 
 	return dlg.ShowDialog(hParent) != 0;
 }

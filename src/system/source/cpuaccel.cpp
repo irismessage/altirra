@@ -30,10 +30,9 @@
 #include <vd2/system/cpuaccel.h>
 
 long g_lCPUExtensionsEnabled;
-static long g_lCPUExtensionsAvailable;
 
 extern "C" {
-	bool FPU_enabled, MMX_enabled, SSE_enabled, ISSE_enabled, SSE2_enabled;
+	bool FPU_enabled, MMX_enabled, ISSE_enabled, SSE2_enabled;
 };
 
 #if VD_CPU_X86 || VD_CPU_X64
@@ -41,11 +40,8 @@ extern "C" {
 // suboptimal in Win64 -- for one thing, it doesn't return true for MMX, at least
 // on Vista 64.
 long CPUCheckForExtensions() {
-	// We no longer check for CPUID support, since we no longer support 80486 CPUs
-	// to any extent.
-
 	// check for features register
-	long flags = CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_CPUID;
+	long flags = 0;
 
 	int cpuInfo[4];
 	__cpuid(cpuInfo, 0);
@@ -102,6 +98,10 @@ long CPUCheckForExtensions() {
 				}
 			}
 
+			if (cpuInfo[2] & (1 << 23)) {
+				flags |= VDCPUF_SUPPORTS_POPCNT;
+			}
+
 			// check OSXSAVE and AVX bits
 			if ((cpuInfo[2] & ((1 << 27) | (1 << 28))) == ((1 << 27) | (1 << 28))) {
 				if ((_xgetbv(0) & 0x06) == 0x06) {
@@ -149,6 +149,9 @@ long CPUCheckForExtensions() {
 	if (IsProcessorFeaturePresent(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE))
 		flags |= VDCPUF_SUPPORTS_CRYPTO;
 
+	if (IsProcessorFeaturePresent(PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE))
+		flags |= VDCPUF_SUPPORTS_CRC32;
+
 	return flags;
 }
 #else
@@ -162,17 +165,11 @@ long CPUEnableExtensions(long lEnableFlags) {
 
 #if VD_CPU_X86 || VD_CPU_X64
 	MMX_enabled = !!(g_lCPUExtensionsEnabled & CPUF_SUPPORTS_MMX);
-	FPU_enabled = !!(g_lCPUExtensionsEnabled & CPUF_SUPPORTS_FPU);
-	SSE_enabled = !!(g_lCPUExtensionsEnabled & CPUF_SUPPORTS_SSE);
 	ISSE_enabled = !!(g_lCPUExtensionsEnabled & CPUF_SUPPORTS_INTEGER_SSE);
 	SSE2_enabled = !!(g_lCPUExtensionsEnabled & CPUF_SUPPORTS_SSE2);
 #endif
 
 	return g_lCPUExtensionsEnabled;
-}
-
-long CPUGetAvailableExtensions() {
-	return g_lCPUExtensionsAvailable;
 }
 
 void VDCPUCleanupExtensions() {
@@ -187,7 +184,14 @@ void VDCPUCleanupExtensions() {
 		_mm_sfence();
 	#endif
 
-	if (g_lCPUExtensionsEnabled & CPUF_SUPPORTS_AVX)
+	if (g_lCPUExtensionsEnabled & CPUF_SUPPORTS_AVX) {
+#ifdef VD_COMPILER_CLANG
+		[] VD_CPU_TARGET("avx") {
+#endif
 		_mm256_zeroupper();
+#ifdef VD_COMPILER_CLANG
+		}();
+#endif
+	}
 #endif
 }

@@ -5,16 +5,17 @@
 		<link>https://www.virtualdub.org/altirra.html</link>
 		<description>Automatic update notifications for release versions of the Altirra emulator.</description>
 		<item>
-			<title>Altirra 4.01 (4.1.200.15442; win7; sse2)</title>
+			<title>Altirra 4.10 (4.10.200.15740; win7; sse2)</title>
 			<description>
 				<ul>
-                    <li>Updated to Altirra BASIC 1.58 and AltirraOS 3.33.</li>
-                    <li>Fixed a crash in FLAC decoder and added workaround for D3D11 crash in Intel graphics driver.</li>
-                    <li>Fixed handling of raw FSK blocks in .CAS images.</li>
-                    <li>Improved compatibility of 850 R: handler bootstrap.</li>
-                    <li>Improved timing of XF551 high speed disk operation.</li>
-                    <li>Fixed LOADEXE.XEX on the Additions disk.</li>
-                    <li>Fixed atfs:// paths accessing the wrong files on a DOS 2 image.</li>
+<li>Cartridges: CAR types 71-75, XE Multicard, SIC+ added.</li>
+<li>Cassette: PWM encoded turbo data in CAS files, Turbo Blizzard support, improved C: acceleration, and fixes to the Tape Editor.</li>
+<li>Debugger: New breakpoint window, editable memory window, and improved source debugging support.</li>
+<li>Disk: Improved accuracy and support for track buffering in standard disk emulator.</li>
+<li>Display: Reduced latency, improved HDR display support, and vsync adaptive mode.</li>
+<li>Emulation: Improved accuracy of POKEY timer and serial port emulation.</li>
+<li>Input: Improved light pen/gun emulation.</li>
+<li>UI: Improved dark mode and copy/paste.</li>
 				</ul>
 			</description>
    			<link>https://www.virtualdub.org/altirra.html</link>

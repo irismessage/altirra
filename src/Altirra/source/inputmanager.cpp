@@ -106,6 +106,8 @@ bool ATInputMap::UsesPhysicalPort(int portIdx) const {
 			case kATInputControllerType_Driving:
 			case kATInputControllerType_Keyboard:
 			case kATInputControllerType_LightGun:
+			case kATInputControllerType_PowerPad:
+			case kATInputControllerType_LightPenStack:
 				if (c.mIndex == portIdx)
 					return true;
 				break;
@@ -343,6 +345,8 @@ void ATInputManager::ResetToDefaults() {
 				case kATInputControllerType_Driving:
 				case kATInputControllerType_Keyboard:
 				case kATInputControllerType_LightGun:
+				case kATInputControllerType_PowerPad:
+				case kATInputControllerType_LightPenStack:
 					if (mb5200Mode)
 						goto reject;
 					break;
@@ -388,6 +392,11 @@ void ATInputManager::Update5200Controller() {
 	}
 }
 
+void ATInputManager::ColdReset() {
+	for(const ControllerInfo& ci : mInputControllers)
+		ci.mpInputController->ColdReset();
+}
+
 void ATInputManager::Poll(float dt) {
 	uint32 avgres = ((mMouseAvgQueue[0] + mMouseAvgQueue[1] + mMouseAvgQueue[2] + mMouseAvgQueue[3] + 0x00020002) & 0xfffcfffc) >> 2;
 	int avgx = (avgres & 0xffff) - 0x2000;
@@ -424,6 +433,43 @@ void ATInputManager::Poll(float dt) {
 
 	mMouseAvgQueue[++mMouseAvgIndex & 3] = 0x20002000;
 
+	const int wheelDelta = VDRoundToInt(mMouseWheelAccum);
+	mMouseWheelAccum -= (float)wheelDelta;
+
+	if (wheelDelta < 0)
+		OnButtonDown(0, kATInputCode_MouseWheelUp);
+	else
+		OnButtonUp(0, kATInputCode_MouseWheelUp);
+
+	if (wheelDelta > 0)
+		OnButtonDown(0, kATInputCode_MouseWheelDown);
+	else
+		OnButtonUp(0, kATInputCode_MouseWheelDown);
+
+	if (wheelDelta)
+		OnButtonDown(0, kATInputCode_MouseWheel);
+	else
+		OnButtonUp(0, kATInputCode_MouseWheel);
+
+	const int hwheelDelta = VDRoundToInt(mMouseHWheelAccum);
+	mMouseHWheelAccum -= (float)hwheelDelta;
+
+	if (hwheelDelta < 0)
+		OnButtonDown(0, kATInputCode_MouseHWheelLeft);
+	else
+		OnButtonUp(0, kATInputCode_MouseHWheelLeft);
+
+	if (hwheelDelta > 0)
+		OnButtonDown(0, kATInputCode_MouseHWheelRight);
+	else
+		OnButtonUp(0, kATInputCode_MouseHWheelRight);
+
+	if (hwheelDelta)
+		OnButtonDown(0, kATInputCode_MouseHWheel);
+	else
+		OnButtonUp(0, kATInputCode_MouseHWheel);
+
+	// process mappings
 	for(Mappings::iterator it(mMappings.begin()), itEnd(mMappings.end()); it != itEnd; ++it) {
 		Mapping& mapping = it->second;
 
@@ -646,6 +692,40 @@ void ATInputManager::OnMouseMove(int unit, int dx, int dy) {
 	ActivateImpulseMappings(kATInputCode_MouseVert | kATInputCode_SpecificUnit | (unit << kATInputCode_UnitShift), dy);
 }
 
+bool ATInputManager::OnMouseWheel(int unit, float delta) {
+	const uint32 dirInputCode = delta < 0 ? kATInputCode_MouseWheelUp : kATInputCode_MouseWheelDown;
+	const sint32 xdelta = VDRoundToInt(0x1p16f * delta);
+	bool handled = false;
+
+	// activate analog directional up/down mappings
+	handled |= ActivateImpulseMappings(dirInputCode, abs(xdelta));
+	handled |= ActivateImpulseMappings(dirInputCode | kATInputCode_SpecificUnit | (unit << kATInputCode_UnitShift), abs(xdelta));
+	handled |= ActivateImpulseMappings(kATInputCode_MouseWheel, xdelta);
+	handled |= ActivateImpulseMappings(kATInputCode_MouseWheel | kATInputCode_SpecificUnit | (unit << kATInputCode_UnitShift), xdelta);
+
+	// accumulate digital mappings for activation in Poll()
+	mMouseWheelAccum += delta;
+
+	return handled || IsInputMapped(0, kATInputCode_MouseWheel) || IsInputMapped(0, kATInputCode_MouseWheelUp) || IsInputMapped(0, kATInputCode_MouseWheelDown);
+}
+
+bool ATInputManager::OnMouseHWheel(int unit, float delta) {
+	const uint32 dirInputCode = delta < 0 ? kATInputCode_MouseHWheelLeft : kATInputCode_MouseHWheelRight;
+	const sint32 xdelta = VDRoundToInt(0x1p16f * delta);
+	bool handled = false;
+
+	// activate analog directional up/down mappings
+	handled |= ActivateImpulseMappings(dirInputCode, abs(xdelta));
+	handled |= ActivateImpulseMappings(dirInputCode | kATInputCode_SpecificUnit | (unit << kATInputCode_UnitShift), abs(xdelta));
+	handled |= ActivateImpulseMappings(kATInputCode_MouseHWheel, xdelta);
+	handled |= ActivateImpulseMappings(kATInputCode_MouseHWheel | kATInputCode_SpecificUnit | (unit << kATInputCode_UnitShift), xdelta);
+
+	// accumulate digital mappings for activation in Poll()
+	mMouseWheelAccum += delta;
+
+	return handled || IsInputMapped(0, kATInputCode_MouseHWheel) || IsInputMapped(0, kATInputCode_MouseHWheelLeft) || IsInputMapped(0, kATInputCode_MouseHWheelRight);
+}
+
 void ATInputManager::SetMouseBeamPos(int beamX, int beamY) {
 	ActivateAnalogMappings(kATInputCode_MouseBeamX, beamX, beamX);
 	ActivateAnalogMappings(kATInputCode_MouseBeamX | kATInputCode_SpecificUnit, beamX, beamX);
@@ -741,6 +821,24 @@ void ATInputManager::GetNameForInputCode(uint32 code, VDStringW& name) const {
 			break;
 		case kATInputCode_MouseDown:
 			name = L"Mouse Down";
+			break;
+		case kATInputCode_MouseWheelUp:
+			name = L"Mouse Wheel Up";
+			break;
+		case kATInputCode_MouseWheelDown:
+			name = L"Mouse Wheel Down";
+			break;
+		case kATInputCode_MouseWheel:
+			name = L"Mouse Wheel";
+			break;
+		case kATInputCode_MouseHWheelLeft:
+			name = L"Mouse HWheel Left";
+			break;
+		case kATInputCode_MouseHWheelRight:
+			name = L"Mouse HWheel Right";
+			break;
+		case kATInputCode_MouseHWheel:
+			name = L"Mouse HWheel";
 			break;
 		case kATInputCode_MouseLMB:
 			name = L"Mouse LMB";
@@ -920,6 +1018,20 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 		L"Raise stylus",
 	};
 
+	static const wchar_t *const kPowerPadAxes[]={
+		L"Pad position X",
+		L"Pad position Y",
+		L"Pointer touch size",
+	};
+
+	static const wchar_t *const kPowerPadButtons[]={
+		L"Touch 1",
+		L"Touch 2",
+		L"Touch 3",
+		L"Touch 4",
+		L"Set touch 2+ shift",
+	};
+
 	static const wchar_t *const kPaddleAxes[]={
 		L"Paddle knob (linear)",
 		L"Paddle knob (2D rotation X)",
@@ -953,6 +1065,7 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 					break;
 
 				case kATInputControllerType_LightPen:
+				case kATInputControllerType_LightPenStack:
 					if (index < sizeof(kLightPenButtons)/sizeof(kLightPenButtons[0])) {
 						if (kLightPenButtons[index]) {
 							name = kLightPenButtons[index];
@@ -976,6 +1089,13 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 						return;
 					}
 					break;
+
+				case kATInputControllerType_PowerPad:
+					if (index < vdcountof(kPowerPadButtons)) {
+						name = kPowerPadButtons[index];
+						return;
+					}
+					break;
 			}
 
 			name.sprintf(L"Button %d", index + 1);
@@ -985,6 +1105,13 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 				case kATInputControllerType_Paddle:
 					if (index < sizeof(kPaddleAxes)/sizeof(kPaddleAxes[0])) {
 						name = kPaddleAxes[index];
+						return;
+					}
+					break;
+
+				case kATInputControllerType_PowerPad:
+					if (index < vdcountof(kPowerPadAxes)) {
+						name = kPowerPadAxes[index];
 						return;
 					}
 					break;
@@ -1016,6 +1143,12 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 				break;
 			case kATInputTrigger_Right:
 				name = L"Right";
+				break;
+			case kATInputTrigger_ScrollUp:
+				name = L"Scroll Up";
+				break;
+			case kATInputTrigger_ScrollDown:
+				name = L"Scroll Down";
 				break;
 			case kATInputTrigger_Start:
 				name = L"Start";
@@ -1133,6 +1266,7 @@ bool ATInputManager::IsAnalogTrigger(uint32 code, ATInputControllerType type) co
 
 	switch(type) {
 		case kATInputControllerType_LightPen:
+		case kATInputControllerType_LightPenStack:
 		case kATInputControllerType_LightGun:
 			switch(code) {
 				case kATInputTrigger_Up:
@@ -1477,6 +1611,7 @@ void ATInputManager::RebuildMappings() {
 	mbMouseAbsMode = false;
 	mbMouseMapped = false;
 	mbMouseActiveTarget = false;
+	mbControllerHasNonBeamPointer = false;
 	
 	uint32 triggerCount = 0;
 
@@ -1667,6 +1802,27 @@ void ATInputManager::RebuildMappings() {
 							pic = lp;
 						}
 						break;
+
+					case kATInputControllerType_PowerPad:
+						if (c.mIndex < 4) {
+							ATPowerPadController *ppc = new ATPowerPadController;
+
+							ppc->Attach(*mpPortMgr, c.mIndex);
+
+							pic = ppc;
+						}
+						break;
+
+					case kATInputControllerType_LightPenStack:
+						if (c.mIndex < 4) {
+							ATLightPenController *lp = new ATLightPenController(ATLightPenController::Type::LightPenStack);
+
+							lp->Init(mpFastScheduler, mpLightPen);
+							lp->Attach(*mpPortMgr, c.mIndex);
+
+							pic = lp;
+						}
+						break;
 				}
 
 				if (pic) {
@@ -1678,6 +1834,9 @@ void ATInputManager::RebuildMappings() {
 					ControllerInfo& ci = mInputControllers.push_back();
 					ci.mpInputController = pic;
 					ci.mbBoundToMouseAbs = false;
+
+					if (!mbControllerHasNonBeamPointer && pic->GetPointerCoordinateSpace() == ATInputPointerCoordinateSpace::Normalized)
+						mbControllerHasNonBeamPointer = true;
 				}
 			}
 		}
@@ -1765,6 +1924,14 @@ void ATInputManager::RebuildMappings() {
 				mapping.mFlagIndex2 = 0;
 				mapping.mbFlagValue2 = true;
 			}
+		}
+	}
+
+	mbMouseAbsMappedToPointer = false;
+	for(const ControllerInfo& ci : mInputControllers) {
+		if (ci.mbBoundToMouseAbs && ci.mpInputController->GetPointerCoordinateSpace() != ATInputPointerCoordinateSpace::None) {
+			mbMouseAbsMappedToPointer = true;
+			break;
 		}
 	}
 
@@ -1913,8 +2080,9 @@ void ATInputManager::ActivateAnalogMappings(uint32 id, int ds, int dsdead) {
 	}
 }
 
-void ATInputManager::ActivateImpulseMappings(uint32 id, int ds) {
+bool ATInputManager::ActivateImpulseMappings(uint32 id, int ds) {
 	std::pair<Mappings::iterator, Mappings::iterator> result(mMappings.equal_range(id));
+	bool somethingHappened = false;
 
 	for(; result.first != result.second; ++result.first) {
 		const Mapping& mapping = result.first->second;
@@ -1944,8 +2112,26 @@ void ATInputManager::ActivateImpulseMappings(uint32 id, int ds) {
 			case kATInputTriggerMode_Default:
 			default:
 				trigger.mpController->ApplyImpulse(id, ds);
+				somethingHappened = true;
 				break;
 		}
+	}
+
+	return somethingHappened;
+}
+
+bool ATInputManager::HasAbsMousePointer() const {
+	return mbMouseAbsMappedToPointer;
+}
+
+bool ATInputManager::HasNonBeamPointer() const {
+	return mbControllerHasNonBeamPointer;
+}
+
+void ATInputManager::GetPointers(vdfastvector<ATInputPointerInfo>& pointers) const {
+	for(const ControllerInfo& cinfo : mInputControllers) {
+		if (cinfo.mpInputController)
+			cinfo.mpInputController->GetPointers(pointers);
 	}
 }
 

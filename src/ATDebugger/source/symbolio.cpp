@@ -464,7 +464,7 @@ void ATLoadSymbolsFromCC65DbgFile(ATSymbolStore& symstore, VDTextStream& ifile) 
 			if (~attribMask & ((1 << kAttrib_Id) | (1 << kAttrib_Name) | (1 << kAttrib_Addrsize) | (1 << kAttrib_Val)))
 				continue;
 
-			if (attribs[kAttrib_Addrsize] != "absolute")
+			if (attribs[kAttrib_Addrsize] != "absolute" && attribs[kAttrib_Addrsize] != "zeropage")
 				continue;
 
 			unsigned val;

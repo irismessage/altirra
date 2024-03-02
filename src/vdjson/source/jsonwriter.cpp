@@ -29,6 +29,7 @@ VDJSONWriter::~VDJSONWriter() {
 void VDJSONWriter::Begin(IVDJSONWriterOutput *output, bool compact) {
 	mpOutput = output;
 	mbArrayMode = false;
+	mbArrayCompactMode = false;
 	mbFirstItem = true;
 	mbCompactMode = compact;
 }
@@ -42,22 +43,43 @@ void VDJSONWriter::OpenArray() {
 	BeginValue();
 	Write(L"[", 1);
 
-	mStack.push_back((mbArrayMode ? 1 : 0) + (mbFirstItem ? 2 : 0));
+	mStack.push_back(
+		StackEntry {
+			.mbArrayMode = mbArrayMode,
+			.mbArrayCompactMode = mbArrayCompactMode,
+			.mbFirstItem = mbFirstItem,
+			.mbCompactMode = mbCompactMode
+		}
+	);
+
 	mbArrayMode = true;
 	mbFirstItem = true;
+	mArrayCounter = 0;
+}
+
+void VDJSONWriter::SetArrayCompact() {
+	mbArrayCompactMode = true;
 }
 
 void VDJSONWriter::OpenObject() {
 	BeginValue();
 	Write(L"{", 1);
 
-	mStack.push_back((mbArrayMode ? 1 : 0) + (mbFirstItem ? 2 : 0));
+	mStack.push_back(
+		StackEntry {
+			.mbArrayMode = mbArrayMode,
+			.mbArrayCompactMode = mbArrayCompactMode,
+			.mbFirstItem = mbFirstItem,
+			.mbCompactMode = mbCompactMode
+		}
+	);
+
 	mbArrayMode = false;
 	mbFirstItem = true;
 }
 
 void VDJSONWriter::Close() {
-	uint8 code = mStack.back();
+	const StackEntry se = mStack.back();
 	mStack.pop_back();
 
 	if (!mbFirstItem) {
@@ -67,8 +89,10 @@ void VDJSONWriter::Close() {
 
 	Write(mbArrayMode ? L"]" : L"}", 1);
 
-	mbArrayMode = (code & 1) != 0;
-	mbFirstItem = (code & 2) != 0;
+	mbArrayMode = se.mbArrayMode;
+	mbArrayCompactMode = se.mbArrayCompactMode;
+	mbFirstItem = se.mbFirstItem;
+	mbCompactMode = se.mbCompactMode;
 }
 
 void VDJSONWriter::WriteMemberName(const wchar_t *name) {
@@ -84,7 +108,11 @@ void VDJSONWriter::WriteMemberName(const wchar_t *name, size_t len) {
 	WriteIndent();
 
 	WriteRawString(name, len);
-	Write(L": ", 2);
+
+	if (mbCompactMode)
+		Write(L":", 1);
+	else
+		Write(L": ", 2);
 }
 
 void VDJSONWriter::WriteNull() {
@@ -173,9 +201,11 @@ void VDJSONWriter::BeginValue() {
 		Write(L",", 1);
 	mbFirstItem = false;
 
-	if (!mStack.empty())
-		WriteLine();
-	WriteIndent();
+	if (!mbArrayCompactMode || !(mArrayCounter++ & 31)) {
+		if (!mStack.empty())
+			WriteLine();
+		WriteIndent();
+	}
 }
 
 void VDJSONWriter::WriteRawStringASCII(const char *s, size_t len) {

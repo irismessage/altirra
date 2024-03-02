@@ -165,6 +165,8 @@ ATBlockDeviceVirtSDFS::ATBlockDeviceVirtSDFS() {
 	// initializing without a disk image. Set the default sector count so the HD
 	// size is stable until the disk image is inited and swapped in.
 	mDefaultSectorCount = 65535;
+
+	SetSaveStateAgnostic();
 }
 
 void ATBlockDeviceVirtSDFS::GetDeviceInfo(ATDeviceInfo& info) {

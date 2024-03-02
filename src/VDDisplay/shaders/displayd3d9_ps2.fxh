@@ -25,10 +25,9 @@
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void VertexShaderPointBilinear_2_0(VertexInput IN, out float4 oPos : POSITION, out float2 oT0 : TEXCOORD0, out float2 oT1 : TEXCOORD1) {
+void VertexShaderPointBilinear_2_0(VertexInput IN, out float4 oPos : POSITION, out float2 oT0 : TEXCOORD0) {
 	oPos = IN.pos;
 	oT0 = IN.uv;
-	oT1 = IN.uv2 * vd_vpsize.xy / 16.0f;
 }
 
 float4 PixelShaderPointBilinear_2_0(float2 t0 : TEXCOORD0, float2 ditherUV : TEXCOORD1) : COLOR0 {
@@ -67,29 +66,27 @@ VertexOutputBicubic_2_0 VertexShaderBicubic_2_0_A(VertexInput IN) {
 	VertexOutputBicubic_2_0 OUT;
 	
 	OUT.pos = IN.pos;
-	OUT.uvfilt.x = IN.uv2.x * vd_vpsize.x * vd_interphtexsize.w;
+	OUT.uvfilt.x = IN.uv2.x * vd_interphtexsize.x + vd_interpvtexsize.y;
 	OUT.uvfilt.y = 0;
 
-	OUT.uvsrc0 = IN.uv + float2(-1.5f, vd_fieldinfo.y)*vd_texsize.wz;
-	OUT.uvsrc1 = IN.uv + float2( 0.0f, vd_fieldinfo.y)*vd_texsize.wz;
-	OUT.uvsrc2 = IN.uv + float2(+1.5f, vd_fieldinfo.y)*vd_texsize.wz;
+	OUT.uvsrc0 = float2(IN.uv.x, IN.uv2.y * vd_srcsize.y * vd_texsize.z) + float2(-1.5f, 0)*vd_texsize.wz;
+	OUT.uvsrc1 = float2(IN.uv.x, IN.uv2.y * vd_srcsize.y * vd_texsize.z) + float2( 0.0f, 0)*vd_texsize.wz;
+	OUT.uvsrc2 = float2(IN.uv.x, IN.uv2.y * vd_srcsize.y * vd_texsize.z) + float2(+1.5f, 0)*vd_texsize.wz;
 	
 	return OUT;
 }
 
-VertexOutputBicubic_2_0 VertexShaderBicubic_2_0_B(VertexInput IN, out float2 ditherUV : TEXCOORD4) {
+VertexOutputBicubic_2_0 VertexShaderBicubic_2_0_B(VertexInput IN) {
 	VertexOutputBicubic_2_0 OUT;
 	
 	OUT.pos = IN.pos;
-	OUT.uvfilt.x = IN.uv2.y * vd_vpsize.y * vd_interpvtexsize.w;
+	OUT.uvfilt.x = IN.uv2.y * vd_interpvtexsize.x + vd_interpvtexsize.y;
 	OUT.uvfilt.y = 0;
 	
-	float2 uv = IN.uv2 * float2(vd_vpsize.x, vd_srcsize.y) * vd_tempsize.wz;
+	float2 uv = float2(IN.uv2.x * vd_vpsize.x, lerp(vd_srcarea.y, vd_srcarea.w, IN.uv2.y)) * vd_tempsize.wz;
 	OUT.uvsrc0 = uv + float2(0, -1.5f)*vd_tempsize.wz;
 	OUT.uvsrc1 = uv + float2(0,  0.0f)*vd_tempsize.wz;
 	OUT.uvsrc2 = uv + float2(0, +1.5f)*vd_tempsize.wz;
-	
-	ditherUV = IN.uv2 * vd_vpsize.xy / 16.0f;
 	
 	return OUT;
 }
@@ -111,16 +108,10 @@ float4 PixelShaderBicubic_2_0_A(VertexOutputBicubic_2_0 IN) : COLOR0 {
 	return float4(PixelShaderBicubic_2_0_Filter(IN).rgb, 0);
 }
 
-float4 PixelShaderBicubic_2_0_B(VertexOutputBicubic_2_0 IN, float2 ditherUV : TEXCOORD4) : COLOR0 {
+float4 PixelShaderBicubic_2_0_B(VertexOutputBicubic_2_0 IN) : COLOR0 {
 	float3 c = PixelShaderBicubic_2_0_Filter(IN).rgb;
 			 			 
 	return float4(c, 0);
-}
-
-float4 PixelShaderBicubic_2_0_B_Dither(VertexOutputBicubic_2_0 IN, float2 ditherUV : TEXCOORD4) : COLOR0 {
-	float3 c = PixelShaderBicubic_2_0_Filter(IN).rgb;
-			 			 
-	return float4(c * (254.0f / 255.0f), 0) + tex2D(samp3, ditherUV) / 256.0f;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

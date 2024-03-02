@@ -22,6 +22,7 @@
 #include <at/atcore/propertyset.h>
 #include <at/atcore/deviceprinter.h>
 #include <at/atcore/deviceserial.h>
+#include <at/atcore/snapshotimpl.h>
 #include "blackbox.h"
 #include "debuggerlog.h"
 #include "memorymanager.h"
@@ -108,9 +109,10 @@ void *ATBlackBoxEmulator::AsInterface(uint32 iid) {
 		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(this);
 		case IATDeviceIndicators::kTypeID: return static_cast<IATDeviceIndicators *>(this);
 		case IATDevicePrinterPort::kTypeID: return static_cast<IATDevicePrinterPort *>(this);
+		case IATDeviceSnapshot::kTypeID: return static_cast<IATDeviceSnapshot *>(this);
 	}
 
-	return nullptr;
+	return ATDevice::AsInterface(iid);
 }
 
 void ATBlackBoxEmulator::GetDeviceInfo(ATDeviceInfo& info) {
@@ -412,6 +414,69 @@ void ATBlackBoxEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 
 void ATBlackBoxEmulator::SetPrinterDefaultOutput(IATPrinterOutput *out) {
 	mpPrinterOutput = out;
+}
+
+void ATBlackBoxEmulator::GetSnapshotStatus(ATSnapshotStatus& status) const {
+	mSCSIBus.GetSnapshotStatus(status);
+}
+
+struct ATSaveStateBlackBox final : public ATSnapExchangeObject<ATSaveStateBlackBox, "ATSaveStateBlackBox"> {
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	uint8 mROMLowBank = 0;
+
+	vdrefptr<IATObjectState> mpPIA;
+	vdrefptr<IATObjectState> mpSCSIBus;
+	vdrefptr<ATSaveStateMemoryBuffer> mpRAM;
+};
+
+template<ATExchanger T>
+void ATSaveStateBlackBox::Exchange(T& ex) {
+	ex.Transfer("rom_low_bank", &mROMLowBank);
+
+	ex.Transfer("pia", &mpPIA);
+	ex.Transfer("scsi_bus", &mpSCSIBus);
+	ex.Transfer("ram", &mpRAM);
+}
+
+void ATBlackBoxEmulator::LoadState(const IATObjectState *state, ATSnapshotContext& ctx) {
+	if (!state) {
+		const ATSaveStateBlackBox kDefaultState {};
+
+		return LoadState(&kDefaultState, ctx);
+	}
+	
+	auto& bbstate = atser_cast<const ATSaveStateBlackBox&>(*state);
+
+	// restore ROM banking bits from PDVS; bit 4 comes from and will be restored by the PIA
+	SetPBIBANK((bbstate.mROMLowBank & 15) + (mPBIBANK & 16));
+
+	mPIA.LoadState(bbstate.mpPIA);
+
+	mSCSIBus.LoadState(bbstate.mpSCSIBus, ctx);
+
+	VDBitZero(mRAM);
+	if (bbstate.mpRAM) {
+		const auto& readBuffer = bbstate.mpRAM->GetReadBuffer();
+		memcpy(mRAM, readBuffer.data(), std::min<size_t>(sizeof mRAM, readBuffer.size()));
+	}
+
+	mPIA.PostLoadState();
+}
+
+vdrefptr<IATObjectState> ATBlackBoxEmulator::SaveState(ATSnapshotContext& ctx) const {
+	vdrefptr state { new ATSaveStateBlackBox };
+	
+	state->mROMLowBank = mPBIBANK & 15;
+
+	mPIA.SaveState(~state->mpPIA);
+	state->mpSCSIBus = mSCSIBus.SaveState(ctx);
+	state->mpRAM = new ATSaveStateMemoryBuffer;
+	state->mpRAM->mpDirectName = L"blackbox-ram.bin";
+	state->mpRAM->GetWriteBuffer().assign(mRAM, mRAM + (mbHiRAMEnabled ? 0x10000 : ((ptrdiff_t)mRAMPAGEMask + 1) << 8));
+
+	return state;
 }
 
 uint32 ATBlackBoxEmulator::GetSupportedButtons() const {

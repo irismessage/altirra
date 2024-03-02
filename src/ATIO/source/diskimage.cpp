@@ -65,6 +65,10 @@ namespace {
 		4, 9, 14, 0, 5, 10, 15, 1, 6, 11, 16, 2, 7, 12, 17, 3, 8, 13
 	};
 
+	static const int kTrackInterleaveSD_2_1[18]={
+		0, 2, 4, 6, 8, 10, 12, 14, 16, 1, 3, 5, 7, 9, 11, 13, 15, 17
+	};
+
 	// 1,7,13,6,12,18,5,11,17,4,10,16,3,9,15,2,8,14
 	static const int kTrackInterleaveDD_15_1[18]={
 		0, 15, 12, 9, 6, 3, 1, 16, 13, 10, 7, 4, 2, 17, 14, 11, 8, 5
@@ -764,7 +768,19 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 		if (trackBaseOffset >= streamLen)
 			break;
 
-		stream.Read(&trkhdr, sizeof trkhdr);
+		sint32 actual = stream.ReadData(&trkhdr, sizeof trkhdr);
+		if (actual < sizeof(trkhdr)) {
+			if (actual == 0)
+				break;
+
+			// Gracefully handle an ATX image with an extra couple of null DWORDs (seen in Candy Factory);
+			// this looks like someone tried to write a terminator that wasn't really necessary. The original
+			// VAPI library stopped once 40 tracks were found, but we want to support more than that.
+			if (actual >= 4 && trkhdr.mSize == 0)
+				break;
+
+			throw MyError("Invalid ATX image: Expected track header at %08X.", (uint32)trackBaseOffset);
+		}
 
 		// validate track
 		if (trackBaseOffset + trkhdr.mSize > imageSize)
@@ -1060,7 +1076,7 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 
 	for(const PhysicalSectorId& psecId : psecIds) {
 		if (psecId.mSector == 0 || psecId.mSector > vsecsPerTrack) {
-			g_ATLCDiskImage("Dropping track %u, sector %u: inaccessible with standard disk drive", psecId.mTrack, psecId.mSector);
+			g_ATLCDiskImage("Dropping track %u, sector %u: inaccessible with standard disk drive\n", psecId.mTrack, psecId.mSector);
 			continue;
 		}
 
@@ -1775,6 +1791,20 @@ void ATDiskImage::ReadPhysicalSector(uint32 index, void *data, uint32 len) {
 void ATDiskImage::WritePhysicalSector(uint32 index, const void *data, uint32 len, uint8 fdcStatus) {
 	PhysSectorInfo& psi = mPhysSectors[index];
 
+	if (len > psi.mPhysicalSize)
+		len = psi.mPhysicalSize;
+
+	// check if the sector has image space allocated -- it may not if it was missing
+	// a data field, in which case we must allocate for it
+	if (!psi.mImageSize && len > 0) {
+		mbDiskFormatDirty = true;
+
+		psi.mOffset = (uint32)mImage.size();
+		psi.mImageSize = psi.mPhysicalSize;
+
+		mImage.resize(psi.mOffset + psi.mImageSize, 0);
+	}
+
 	memcpy(mImage.data() + psi.mOffset, data, std::min<uint32>(len, psi.mImageSize));
 	psi.mbDirty = true;
 	psi.mFDCStatus = fdcStatus;
@@ -2150,6 +2180,10 @@ void ATDiskImage::Reinterleave(ATDiskInterleave interleave) {
 
 		++vsIndex;
 	}
+
+	mbDirty = true;
+	mImageFileCRC.reset();
+	mImageFileSHA256.reset();
 }
 
 void ATDiskImage::ComputeGeometry() {
@@ -3186,6 +3220,9 @@ vdfunction<float(uint32)> ATDiskGetInterleaveFn(ATDiskInterleave interleave, con
 
 		case kATDiskInterleave_SD_5_1:
 			return [](uint32 secIdx) { return (float)kTrackInterleaveSD_5_1[secIdx % 18] * kTurnsPerSectorSD; };
+
+		case kATDiskInterleave_SD_2_1:
+			return [](uint32 secIdx) { return (float)kTrackInterleaveSD_2_1[secIdx % 18] * kTurnsPerSectorSD; };
 
 		case kATDiskInterleave_ED_13_1:
 			return [](uint32 secIdx) { return (float)kTrackInterleaveED_13_1[secIdx % 26] * kTurnsPerSectorED; };

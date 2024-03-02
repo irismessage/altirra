@@ -99,9 +99,9 @@ struct ATCPUBeamPosition {
 };
 
 struct ATCPUTimestampDecoder {
-	uint32 mFrameTimestampBase;
-	uint32 mFrameCountBase;
-	sint32 mCyclesPerFrame;
+	uint32 mFrameTimestampBase = 0;
+	uint32 mFrameCountBase = 0;
+	sint32 mCyclesPerFrame = 1;
 
 	uint32 GetFrameStartTime(uint32 timestamp) const {
 		sint32 cycleDelta = (sint32)(timestamp - mFrameTimestampBase);

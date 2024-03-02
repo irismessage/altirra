@@ -1,5 +1,5 @@
 # Device server for Altirra custom devices (V2 / Altirra 4.0 protocol)
-# Copyright (C) 2020 Avery Lee, All rights reserved.
+# Copyright (C) 2020,2023 Avery Lee, All rights reserved.
 #
 # This software is provided 'as-is', without any express or implied
 # warranty.  In no event will the authors be held liable for any
@@ -162,7 +162,7 @@ class DeviceTCPHandler(socketserver.BaseRequestHandler):
                 return
 
             if self.verbose:
-                print("{1:016X} {0}({2:08X}, {3:08X})".format(command_name, timestamp, param1, param2))
+                print("< {1:016X} {0}({2:08X}, {3:08X})".format(command_name, timestamp, param1, param2))
 
             handler(param1, param2, timestamp)
 
@@ -307,6 +307,18 @@ class DeviceTCPHandler(socketserver.BaseRequestHandler):
     # Request functions
     #
 
+    @staticmethod
+    def request(func):
+        prefix = '> ' + func.__name__
+        def wrapped_fn(self, *args, **kwargs):
+            if self.verbose:
+                print(prefix)
+
+            return func(self, *args, **kwargs) 
+
+        return wrapped_fn
+
+    @request
     def req_enable_layer(self, layer_index: int, read: bool, write: bool):
         """
         Enable or disable a memory layer for read or write access. A memory layer
@@ -316,6 +328,7 @@ class DeviceTCPHandler(socketserver.BaseRequestHandler):
 
         self.request.sendall(struct.pack('<BBB', 2, layer_index, (2 if read else 0) + (1 if write else 0)))
 
+    @request
     def req_set_layer_offset(self, layer_index: int, offset: int):
         """
         Change the starting byte offset for a layer. The starting offset must be
@@ -329,6 +342,7 @@ class DeviceTCPHandler(socketserver.BaseRequestHandler):
 
         self.request.sendall(struct.pack('<BBI', 3, layer_index, offset))
 
+    @request
     def req_set_layer_segment_and_offset(self, layer_index: int, segment_index: int, segment_offset: int):
         """
         Change both the mapped segment and starting byte offset for a layer. The
@@ -341,6 +355,7 @@ class DeviceTCPHandler(socketserver.BaseRequestHandler):
 
         self.request.sendall(struct.pack('<BBBI', 4, layer_index, segment_index, segment_offset))
 
+    @request
     def req_set_layer_readonly(self, layer_index: int, ro: bool):
         """
         Change the read-only status of a layer. If a layer is read-only, writes to
@@ -351,6 +366,7 @@ class DeviceTCPHandler(socketserver.BaseRequestHandler):
 
         self.request.sendall(struct.pack('<BBB', 5, layer_index, 1 if ro else 0))
 
+    @request
     def req_read_seg_mem(self, segment_index: int, offset: int, len: int):
         """
         Read a block of memory from a segment as a bytes object. The region to read
@@ -370,6 +386,7 @@ class DeviceTCPHandler(socketserver.BaseRequestHandler):
         self.request.sendall(struct.pack('<BBII', 6, segment_index, offset, len))
         return self._readall(len)
 
+    @request
     def req_write_seg_mem(self, segment_index: int, offset: int, data:bytes):
         """
         Write data from a bytes object to a segment. The region to write must be
@@ -385,6 +402,7 @@ class DeviceTCPHandler(socketserver.BaseRequestHandler):
         self.request.sendall(struct.pack('<BBII', 7, segment_index, offset, len(data)))
         self.request.sendall(data)
 
+    @request
     def req_fill_seg_mem(self, segment_index: int, offset: int, val: int, len: int):
         """
         Fill a region of a segment with a constant value. The region to fill must be
@@ -402,6 +420,7 @@ class DeviceTCPHandler(socketserver.BaseRequestHandler):
 
         self.request.sendall(struct.pack('<BBIBI', 13, segment_index, offset, val, len))
 
+    @request
     def req_copy_seg_mem(self, dst_segment_index: int, dst_offset: int, src_segment_index: int, src_offset: int, len: int):
         """
         Copy data from one segment region to another. The source and destination
@@ -423,6 +442,7 @@ class DeviceTCPHandler(socketserver.BaseRequestHandler):
         if len > 0:
             self.request.sendall(struct.pack('<BBIBII', 8, dst_segment_index, dst_offset, src_segment_index, src_offset, len))
 
+    @request
     def req_interrupt(self, aux1: int, aux2: int):
         """
         Issue a script interrupt with the arguments (aux1, aux2). This requires an
@@ -432,6 +452,7 @@ class DeviceTCPHandler(socketserver.BaseRequestHandler):
 
         self.request.sendall(struct.pack('<BII', 9, aux1, aux2))
 
+    @request
     def req_get_segment_names(self):
         """
         Retrieve a list of segment variable names from the device script, in ascending
@@ -442,6 +463,7 @@ class DeviceTCPHandler(socketserver.BaseRequestHandler):
         self.request.sendall(b'\x0A')
         return self._read_names()
 
+    @request
     def req_get_layer_names(self):
         """
         Retrieve a list of memory layer names from the device script, in ascending
@@ -476,7 +498,6 @@ class DeviceTCPHandler(socketserver.BaseRequestHandler):
 
         for i in range(0, num_names):
             name_len = struct.unpack('<I', self._readall(4))[0]
-            print(name_len)
             names.append(self._readall(name_len).decode('utf-8'))
 
         return names
@@ -498,7 +519,7 @@ class DeviceTCPHandler(socketserver.BaseRequestHandler):
         return seg_data
 
 def print_banner():
-    print("Altirra Custom Device Server v0.8")
+    print("Altirra Custom Device Server v0.9")
     print()
 
 def run_deviceserver(

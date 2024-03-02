@@ -284,17 +284,6 @@ void ATUIDialogSetupWizardExperience::OnDataExchange(bool write) {
 
 		if (isAuthentic != selectAuthentic) {
 			if (selectAuthentic) {
-				bool isNTSC = false;
-
-				// We call this dialog 'video type', but what we're really after
-				// here is frame rate.
-				switch(g_sim.GetVideoStandard()) {
-					case kATVideoStandard_NTSC:
-					case kATVideoStandard_NTSC50:
-						isNTSC = true;
-						break;
-				}
-
 				g_sim.GetGTIA().SetArtifactingMode(ATArtifactMode::AutoHi);
 
 				g_sim.SetCassetteSIOPatchEnabled(false);

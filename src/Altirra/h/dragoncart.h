@@ -32,6 +32,7 @@ class IATNetSockVxlanTunnel;
 class ATPropertySet;
 class ATConsoleOutput;
 class ATScheduler;
+class IATAsyncDispatcher;
 
 struct ATDragonCartSettings {
 	enum AccessMode {
@@ -72,7 +73,7 @@ public:
 
 	const ATDragonCartSettings& GetSettings() const { return mSettings; }
 
-	void Init(ATMemoryManager *memmgr, ATScheduler *slowSched, const ATDragonCartSettings& settings);
+	void Init(ATMemoryManager *memmgr, ATScheduler *slowSched, IATAsyncDispatcher *dispatcher, const ATDragonCartSettings& settings);
 	void Shutdown();
 
 	void ColdReset();

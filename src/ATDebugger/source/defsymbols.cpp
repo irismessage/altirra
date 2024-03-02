@@ -19,7 +19,7 @@
 #include <at/atdebugger/symbols.h>
 #include <at/atdebugger/internal/symstore.h>
 
-bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
+void ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	vdrefptr<ATSymbolStore> symstore(new ATSymbolStore);
 
 	symstore->Init(0x0000, 0x0400);
@@ -51,6 +51,7 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 		{ ICAX3Z, "ICAX3Z", 1 },
 		{ ICAX4Z, "ICAX4Z", 1 },
 		{ ICAX5Z, "ICAX5Z", 1 },
+		{ CIOCHR, "CIOCHR", 1 },
 		{ STATUS, "STATUS", 1 },
 		{ CHKSUM, "CHKSUM", 1 },
 		{ BUFRLO, "BUFRLO", 1 },
@@ -121,8 +122,8 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 		{ CDTMV5, "CDTMV5", 2 },
 		{ VVBLKI, "VVBLKI", 2 },
 		{ VVBLKD, "VVBLKD", 2 },
-		{ CDTMA1, "CDTMA1", 1 },
-		{ CDTMA2, "CDTMA2", 1 },
+		{ CDTMA1, "CDTMA1", 2 },
+		{ CDTMA2, "CDTMA2", 2 },
 		{ CDTMF3, "CDTMF3", 1 },
 		{ CDTMF4, "CDTMF4", 1 },
 		{ CDTMF5, "CDTMF5", 1 },
@@ -170,11 +171,13 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 		{ TINDEX, "TINDEX", 1 },
 		{ TXTMSC, "TXTMSC", 2 },
 		{ TXTOLD, "TXTOLD", 2 },
+		{ CRETRY, "CRETRY", 1 },
 		{ HOLD2 , "HOLD2" , 1 },
 		{ DMASK , "DMASK" , 1 },
 		{ ESCFLG, "ESCFLG", 1 },
 		{ TABMAP, "TABMAP", 15 },
 		{ LOGMAP, "LOGMAP", 4 },
+		{ DRETRY, "DRETRY", 1 },
 		{ SHFLOK, "SHFLOK", 1 },
 		{ BOTSCR, "BOTSCR", 1 },
 		{ PCOLR0, "PCOLR0", 1 },
@@ -220,6 +223,7 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 		{ DAUX1 , "DAUX1" , 1 },
 		{ DAUX2 , "DAUX2" , 1 },
 		{ TIMER1, "TIMER1", 2 },
+		{ CASFLG, "CASFLG", 1 },
 		{ TIMER2, "TIMER2", 2 },
 		{ TIMFLG, "TIMFLG", 1 },
 		{ STACKP, "STACKP", 1 },
@@ -249,10 +253,9 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbols(kSymbols);
 
 	*ppStore = symstore.release();
-	return true;
 }
 
-bool ATCreateDefaultVariableSymbolStore5200(IATSymbolStore **ppStore) {
+void ATCreateDefaultVariableSymbolStore5200(IATSymbolStore **ppStore) {
 	vdrefptr<ATSymbolStore> symstore(new ATSymbolStore);
 
 	symstore->Init(0x0000, 0x0400);
@@ -296,15 +299,15 @@ bool ATCreateDefaultVariableSymbolStore5200(IATSymbolStore **ppStore) {
 	symstore->AddSymbols(kSymbols);
 
 	*ppStore = symstore.release();
-	return true;
 }
 
-bool ATCreateDefaultKernelSymbolStore(IATSymbolStore **ppStore) {
+void ATCreateDefaultMathPackSymbolStore(IATSymbolStore **ppStore) {
 	using namespace ATKernelSymbols;
 
 	vdrefptr<ATSymbolStore> symstore(new ATSymbolStore);
 
-	symstore->Init(0xD800, 0x0D00);
+	symstore->Init(0xD800, 0x0800);
+
 	static constexpr ATSymbolStore::SymbolInfo kSymbols[] = {
 		{ AFP, "AFP", 1 },
 		{ FASC, "FASC", 1 },
@@ -328,6 +331,21 @@ bool ATCreateDefaultKernelSymbolStore(IATSymbolStore **ppStore) {
 		{ EXP10, "EXP10", 1 },
 		{ LOG, "LOG", 1 },
 		{ LOG10, "LOG10", 1 },
+	};
+
+	symstore->AddSymbols(kSymbols);
+
+	*ppStore = symstore.release();
+}
+
+void ATCreateDefaultKernelSymbolStore(IATSymbolStore **ppStore) {
+	using namespace ATKernelSymbols;
+
+	vdrefptr<ATSymbolStore> symstore(new ATSymbolStore);
+
+	symstore->Init(0xE400, 0x0100);
+
+	static constexpr ATSymbolStore::SymbolInfo kSymbols[] = {
 		{ 0xE400, "EDITRV", 3 },
 		{ 0xE410, "SCRENV", 3 },
 		{ 0xE420, "KEYBDV", 3 },
@@ -355,7 +373,6 @@ bool ATCreateDefaultKernelSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbols(kSymbols);
 
 	*ppStore = symstore.release();
-	return true;
 }
 
 namespace {
@@ -455,7 +472,7 @@ namespace {
 	}
 }
 
-bool ATCreateDefaultHardwareSymbolStore(IATSymbolStore **ppStore) {
+void ATCreateDefaultHardwareSymbolStore(IATSymbolStore **ppStore) {
 	vdrefptr<ATSymbolStore> symstore(new ATSymbolStore);
 
 	symstore->Init(0xD000, 0x0500);
@@ -465,10 +482,9 @@ bool ATCreateDefaultHardwareSymbolStore(IATSymbolStore **ppStore) {
 	AddHardwareSymbols(symstore, 0xD400, kANTICSymbols);
 
 	*ppStore = symstore.release();
-	return true;
 }
 
-bool ATCreateDefault5200HardwareSymbolStore(IATSymbolStore **ppStore) {
+void ATCreateDefault5200HardwareSymbolStore(IATSymbolStore **ppStore) {
 	vdrefptr<ATSymbolStore> symstore(new ATSymbolStore);
 
 	symstore->Init(0xC000, 0x3000);
@@ -477,5 +493,4 @@ bool ATCreateDefault5200HardwareSymbolStore(IATSymbolStore **ppStore) {
 	AddHardwareSymbols(symstore, 0xD400, kANTICSymbols);
 
 	*ppStore = symstore.release();
-	return true;
 }

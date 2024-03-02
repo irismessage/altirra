@@ -22,6 +22,17 @@
 #pragma once
 #endif
 
+///////////////////////////////////////////////////////////////////////////
+//
+// *** This is the old binary save state path ***
+//
+// It is only supported for read-only mode by current versions. Current
+// versions support the more flexible object snapshot/serialization
+// path in snapshot.h.
+//
+///////////////////////////////////////////////////////////////////////////
+
+
 #include <vd2/system/linearalloc.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vdstl_hashmap.h>

@@ -28,6 +28,10 @@
 #include <at/atcore/device.h>
 #include <at/atcore/devicevideo.h>
 #include <at/atdebugger/symbols.h>
+#include <at/atuicontrols/uilabel.h>
+#include <at/atui/uianchor.h>
+#include <at/atui/uidragdrop.h>
+#include <at/atui/uimanager.h>
 #include "console.h"
 #include "debugger.h"
 #include "errordecode.h"
@@ -41,17 +45,13 @@
 #include "uidragdrop.h"
 #include "uienhancedtext.h"
 #include "uikeyboard.h"
-#include <at/atui/uimanager.h>
 #include "uirender.h"
 #include "uivideodisplaywindow.h"
 #include "uionscreenkeyboard.h"
 #include "uisettingswindow.h"
 #include "uitypes.h"
 #include "uicalibrationscreen.h"
-#include <at/atuicontrols/uilabel.h>
-#include <at/atui/uianchor.h>
-#include <at/atui/uidragdrop.h>
-#include "xep80.h"
+#include "uidisplayaccessibility.h"
 
 extern ATSimulator g_sim;
 
@@ -69,12 +69,15 @@ extern ATDisplayStretchMode g_displayStretchMode;
 extern ATDisplayFilterMode g_dispFilterMode;
 extern int g_dispFilterSharpness;
 extern ATUIVideoDisplayWindow *g_pATVideoDisplayWindow;
+extern bool g_dispPadIndicators;
 
 void ATCreateUISettingsScreenMain(IATUISettingsScreen **screen);
 void OnCommandEditPasteText();
 
 VDStringA g_ATCurrentAltViewName;
 bool g_ATCurrentAltViewIsXEP;
+bool g_ATUIDrawPadBounds;
+bool g_ATUIDrawPadPointers = true;
 
 ATConfigVarBool g_ATCVUIShowVSyncAdaptiveGraph("ui.show_vsync_adaptive_graph", false);
 
@@ -147,6 +150,11 @@ void ATUISetAltViewEnabled(bool enabled) {
 		ATUISetCurrentAltOutputName("");
 }
 
+bool ATUIGetDrawPadBoundsEnabled() { return g_ATUIDrawPadBounds; }
+void ATUISetDrawPadBoundsEnabled(bool enabled) { g_ATUIDrawPadBounds = enabled; }
+bool ATUIGetDrawPadPointersEnabled() { return g_ATUIDrawPadPointers; }
+void ATUISetDrawPadPointersEnabled(bool enabled) { g_ATUIDrawPadPointers = enabled; }
+
 ///////////////////////////////////////////////////////////////////////////
 
 namespace {
@@ -161,191 +169,8 @@ namespace {
 	};
 }
 
-ATUIVideoDisplayWindow::ATUIVideoDisplayWindow()
-	: mDisplayRect(0, 0, 0, 0)
-	, mbDragActive(false)
-	, mbDragInitial(false)
-	, mDragAnchorX(0)
-	, mDragAnchorY(0)
-	, mbMouseHidden(false)
-	, mMouseHideX(0)
-	, mMouseHideY(0)
-	, mbOpenSidePanelDeferred(false)
-	, mbCoordIndicatorActive(false)
-	, mbCoordIndicatorEnabled(false)
-	, mHoverTipArea(0, 0, 0, 0)
-	, mbHoverTipActive(false)
-	, mpEnhTextEngine(NULL)
-	, mpOSK(NULL)
-	, mpOSKPanel(nullptr)
-	, mpSidePanel(NULL)
-	, mpSEM(NULL)
-	, mpVideoMgr(nullptr)
-	, mAltVOChangeCount(0)
-	, mAltVOLayoutChangeCount(0)
-	, mpUILabelBadSignal(NULL)
-{
-	mbFastClip = true;
-	SetAlphaFillColor(0);
-	SetTouchMode(kATUITouchMode_Dynamic);
-	SetDropTarget(true);
-
-	mpOnAddedVideoOutput = [this](uint32 index) { OnAddedVideoOutput(index); };
-	mpOnRemovingVideoOutput = [this](uint32 index) { OnRemovingVideoOutput(index); };
-}
-
-ATUIVideoDisplayWindow::~ATUIVideoDisplayWindow() {
-	Shutdown();
-}
-
-bool ATUIVideoDisplayWindow::Init(ATSimulatorEventManager& sem, IATDeviceVideoManager& videoMgr) {
-	mpSEM = &sem;
-	mEventCallbackIdWarmReset = mpSEM->AddEventCallback(kATSimEvent_WarmReset, [this] { OnReset(); });
-	mEventCallbackIdColdReset = mpSEM->AddEventCallback(kATSimEvent_ColdReset, [this] { OnReset(); });
-	mEventCallbackIdFrameTick = mpSEM->AddEventCallback(kATSimEvent_FrameTick, [this] { OnFrameTick(); });
-
-	mpVideoMgr = &videoMgr;
-	mpVideoMgr->OnAddedOutput().Add(&mpOnAddedVideoOutput);
-	mpVideoMgr->OnRemovingOutput().Add(&mpOnRemovingVideoOutput);
-
-	return true;
-}
-
-void ATUIVideoDisplayWindow::Shutdown() {
-	if (mpVideoMgr) {
-		mpVideoMgr->OnAddedOutput().Remove(&mpOnAddedVideoOutput);
-		mpVideoMgr->OnRemovingOutput().Remove(&mpOnRemovingVideoOutput);
-		mpVideoMgr = nullptr;
-	}
-
-	if (mpSEM) {
-		mpSEM->RemoveEventCallback(mEventCallbackIdWarmReset);
-		mpSEM->RemoveEventCallback(mEventCallbackIdColdReset);
-		mpSEM->RemoveEventCallback(mEventCallbackIdFrameTick);
-
-		mpSEM = nullptr;
-	}
-
-	vdsaferelease <<= mpUILabelEnhTextSize;
-}
-
-void ATUIVideoDisplayWindow::ToggleHoldKeys() {
-	mbHoldKeys = !mbHoldKeys;
-
-	if (!mbHoldKeys) {
-		g_sim.ClearPendingHeldKey();
-		g_sim.SetPendingHeldSwitches(0);
-	}
-
-	g_sim.GetUIRenderer()->SetPendingHoldMode(mbHoldKeys);
-}
-
-void ATUIVideoDisplayWindow::ToggleCaptureMouse() {
-	if (g_mouseCaptured)
-		ReleaseMouse();
-	else
-		CaptureMouse();
-}
-
-void ATUIVideoDisplayWindow::ReleaseMouse() {
-	ReleaseCursor();
-	OnCaptureLost();
-}
-
-void ATUIVideoDisplayWindow::CaptureMouse() {
-	ATInputManager *im = g_sim.GetInputManager();
-
-	if (im->IsMouseMapped() && g_sim.IsRunning()) {
-		g_mouseCaptured = true;
-
-		if (im->IsMouseAbsoluteMode()) {
-			CaptureCursor(false, true);
-
-			g_mouseClipped = true;
-		} else {
-			SetCursorImage(kATUICursorImage_Hidden);
-			CaptureCursor(true, false);
-
-		}
-
-		g_winCaptionUpdater->SetMouseCaptured(true, !im->IsInputMapped(0, kATInputCode_MouseMMB));
-	}
-}
-
-void ATUIVideoDisplayWindow::RecalibrateLightPen() {
-	AddTool(*new ATUIDisplayToolRecalibrateLightPen);
-}
-
-void ATUIVideoDisplayWindow::OpenOSK() {
-	if (!mpOSK) {
-		CloseSidePanel();
-
-		mpOSKPanel = new ATUIContainer;
-		mpOSKPanel->AddRef();
-		AddChild(mpOSKPanel);
-
-		mpOSK = new ATUIOnScreenKeyboard;
-		mpOSK->AddRef();
-		mpOSKPanel->AddChild(mpOSK);
-
-		mpOSK->Focus();
-		OnSize();
-
-		if (mpOnOSKChange)
-			mpOnOSKChange();
-	}
-}
-
-void ATUIVideoDisplayWindow::CloseOSK() {
-	if (mpOSK) {
-		mpOSKPanel->Destroy();
-		vdsaferelease <<= mpOSK;
-		vdsaferelease <<= mpOSKPanel;
-
-		if (mpOnOSKChange)
-			mpOnOSKChange();
-	}
-}
-
-void ATUIVideoDisplayWindow::OpenSidePanel() {
-	if (mpSidePanel)
-		return;
-
-	CloseOSK();
-
-	vdrefptr<IATUISettingsScreen> screen;
-	ATCreateUISettingsScreenMain(~screen);
-
-	ATCreateUISettingsWindow(&mpSidePanel);
-	mpSidePanel->SetOnDestroy([this]() { vdsaferelease <<= mpSidePanel; });
-	mpSidePanel->SetSettingsScreen(screen);
-	AddChild(mpSidePanel);
-	mpSidePanel->Focus();
-}
-
-void ATUIVideoDisplayWindow::CloseSidePanel() {
-	if (mpSidePanel) {
-		mpSidePanel->Destroy();
-		vdsaferelease <<= mpSidePanel;
-	}
-}
-
-void ATUIVideoDisplayWindow::BeginEnhTextSizeIndicator() {
-	mbShowEnhSizeIndicator = true;
-}
-
-void ATUIVideoDisplayWindow::EndEnhTextSizeIndicator() {
-	mbShowEnhSizeIndicator = false;
-
-	if (mpUILabelEnhTextSize) {
-		mpUILabelEnhTextSize->Destroy();
-		vdsaferelease <<= mpUILabelEnhTextSize;
-	}
-}
-
-void ATUIVideoDisplayWindow::Copy(ATTextCopyMode copyMode) {
-	if (mDragPreviewSpans.empty())
-		return;
+struct ATUIVideoDisplayWindow::ATASCIIDecodeTabs {
+	uint16 v[2][128];
 
 	static constexpr wchar_t kIntlLowTab[] {
 		0x00E1,		// $00: latin small letter A with acute
@@ -422,45 +247,249 @@ void ATUIVideoDisplayWindow::Copy(ATTextCopyMode copyMode) {
 		0x25B6,	// tall right arrow
 	};
 
-	struct ATASCIIDecodeTabs {
-		uint16 v[2][128];
+	constexpr ATASCIIDecodeTabs() : v{} {
+		// basic
+		for(int i=0; i<32; ++i)
+			v[0][i] = 0x20;
 
-		constexpr ATASCIIDecodeTabs() : v{} {
-			// basic
-			for(int i=0; i<32; ++i)
-				v[0][i] = 0x20;
+		for(int i=32; i<125; ++i)
+			v[0][i] = (uint8)i;
 
-			for(int i=32; i<125; ++i)
-				v[0][i] = (uint8)i;
+		for(int i=125; i<128; ++i)
+			v[0][i] = 0x20;
 
-			for(int i=125; i<128; ++i)
-				v[0][i] = 0x20;
+		for(int i=0; i<128; ++i)
+			v[1][i] = v[0][i];
 
-			for(int i=0; i<128; ++i)
-				v[1][i] = v[0][i];
+		for(int i=0; i<27; ++i)
+			v[1][i] = kIntlLowTab[i];
 
-			for(int i=0; i<27; ++i)
-				v[1][i] = kIntlLowTab[i];
+		for(int i=27; i<32; ++i)
+			v[1][i] = kUnicodeLowTable[i];
 
-			for(int i=27; i<32; ++i)
-				v[1][i] = kUnicodeLowTable[i];
+		for(int i=0; i<32; ++i)
+			v[0][i] = kUnicodeLowTable[i];
 
-			for(int i=0; i<32; ++i)
-				v[0][i] = kUnicodeLowTable[i];
+		v[0][0x60] = 0x2666;	// U+2666 black diamond suit
 
-			v[0][0x60] = 0x2666;	// U+2666 black diamond suit
-
-			for(int i=0; i<5; ++i) {
-				v[0][0x7B + i] = kUnicodeHighTable[i];
-				v[1][0x7B + i] = kUnicodeHighTable[i];
-			}
-
-			v[1][96] = 0xA1;	// $60: inverted exclamation mark
-			v[1][123] = 0xC4;	// $7B: latin capital letter A with diaeresis
+		for(int i=0; i<5; ++i) {
+			v[0][0x7B + i] = kUnicodeHighTable[i];
+			v[1][0x7B + i] = kUnicodeHighTable[i];
 		}
-	};
 
-	static constexpr ATASCIIDecodeTabs kDecodeTabs;
+		v[1][96] = 0xA1;	// $60: inverted exclamation mark
+		v[1][123] = 0xC4;	// $7B: latin capital letter A with diaeresis
+	}
+};
+
+constexpr ATUIVideoDisplayWindow::ATASCIIDecodeTabs ATUIVideoDisplayWindow::kATASCIIDecodeTabs;
+
+///////////////////////////////////////////////////////////////////////////
+
+ATUIVideoDisplayWindow::ATUIVideoDisplayWindow()
+	: mDisplayRect(0, 0, 0, 0)
+	, mbDragActive(false)
+	, mbDragInitial(false)
+	, mDragAnchorX(0)
+	, mDragAnchorY(0)
+	, mbMouseHidden(false)
+	, mMouseHideX(0)
+	, mMouseHideY(0)
+	, mbOpenSidePanelDeferred(false)
+	, mbCoordIndicatorActive(false)
+	, mbCoordIndicatorEnabled(false)
+	, mHoverTipArea(0, 0, 0, 0)
+	, mbHoverTipActive(false)
+	, mpEnhTextEngine(NULL)
+	, mpOSK(NULL)
+	, mpOSKPanel(nullptr)
+	, mpSidePanel(NULL)
+	, mpSEM(NULL)
+	, mpVideoMgr(nullptr)
+	, mAltVOChangeCount(0)
+	, mAltVOLayoutChangeCount(0)
+	, mpUILabelBadSignal(NULL)
+{
+	mbFastClip = true;
+	SetAlphaFillColor(0);
+	SetTouchMode(kATUITouchMode_Dynamic);
+	SetDropTarget(true);
+
+	mpOnAddedVideoOutput = [this](uint32 index) { OnAddedVideoOutput(index); };
+	mpOnRemovingVideoOutput = [this](uint32 index) { OnRemovingVideoOutput(index); };
+}
+
+ATUIVideoDisplayWindow::~ATUIVideoDisplayWindow() {
+	Shutdown();
+}
+
+bool ATUIVideoDisplayWindow::Init(ATSimulatorEventManager& sem, IATDeviceVideoManager& videoMgr) {
+	mpSEM = &sem;
+	mEventCallbackIdWarmReset = mpSEM->AddEventCallback(kATSimEvent_WarmReset, [this] { OnReset(); });
+	mEventCallbackIdColdReset = mpSEM->AddEventCallback(kATSimEvent_ColdReset, [this] { OnReset(); });
+	mEventCallbackIdFrameTick = mpSEM->AddEventCallback(kATSimEvent_FrameTick, [this] { OnFrameTick(); });
+
+	mpVideoMgr = &videoMgr;
+	mpVideoMgr->OnAddedOutput().Add(&mpOnAddedVideoOutput);
+	mpVideoMgr->OnRemovingOutput().Add(&mpOnRemovingVideoOutput);
+
+	AddTool(*new ATUIDisplayToolPanAndZoom(false));
+
+	return true;
+}
+
+void ATUIVideoDisplayWindow::Shutdown() {
+	if (mpVideoMgr) {
+		mpVideoMgr->OnAddedOutput().Remove(&mpOnAddedVideoOutput);
+		mpVideoMgr->OnRemovingOutput().Remove(&mpOnRemovingVideoOutput);
+		mpVideoMgr = nullptr;
+	}
+
+	if (mpSEM) {
+		mpSEM->RemoveEventCallback(mEventCallbackIdWarmReset);
+		mpSEM->RemoveEventCallback(mEventCallbackIdColdReset);
+		mpSEM->RemoveEventCallback(mEventCallbackIdFrameTick);
+
+		mpSEM = nullptr;
+	}
+
+	vdsaferelease <<= mpUILabelEnhTextSize;
+}
+
+void ATUIVideoDisplayWindow::ToggleHoldKeys() {
+	mbHoldKeys = !mbHoldKeys;
+
+	if (!mbHoldKeys) {
+		g_sim.ClearPendingHeldKey();
+		g_sim.SetPendingHeldSwitches(0);
+	}
+
+	g_sim.GetUIRenderer()->SetPendingHoldMode(mbHoldKeys);
+}
+
+void ATUIVideoDisplayWindow::ToggleCaptureMouse() {
+	if (g_mouseCaptured)
+		ReleaseMouse();
+	else
+		CaptureMouse();
+}
+
+void ATUIVideoDisplayWindow::ReleaseMouse() {
+	ReleaseCursor();
+	OnCaptureLost();
+}
+
+void ATUIVideoDisplayWindow::CaptureMouse() {
+	ATInputManager *im = g_sim.GetInputManager();
+
+	if (im->IsMouseMapped() && g_sim.IsRunning()) {
+		g_mouseCaptured = true;
+
+		if (im->IsMouseAbsoluteMode()) {
+			CaptureCursor(false, true);
+
+			g_mouseClipped = true;
+		} else {
+			SetCursorImage(kATUICursorImage_Hidden);
+			CaptureCursor(true, false);
+
+		}
+
+		g_winCaptionUpdater->SetMouseCaptured(true, !im->IsInputMapped(0, kATInputCode_MouseMMB));
+	}
+}
+
+void ATUIVideoDisplayWindow::RecalibrateLightPen() {
+	AddTool(*new ATUIDisplayToolRecalibrateLightPen);
+}
+
+void ATUIVideoDisplayWindow::ActivatePanZoomTool() {
+	AddTool(*new ATUIDisplayToolPanAndZoom(true));
+}
+
+void ATUIVideoDisplayWindow::OpenOSK() {
+	if (!mpOSK) {
+		CloseSidePanel();
+
+		mpOSKPanel = new ATUIContainer;
+		mpOSKPanel->AddRef();
+		AddChild(mpOSKPanel);
+
+		mpOSK = new ATUIOnScreenKeyboard;
+		mpOSK->AddRef();
+		mpOSKPanel->AddChild(mpOSK);
+
+		mpOSK->Focus();
+		OnSize();
+
+		if (mpOnOSKChange)
+			mpOnOSKChange();
+	}
+}
+
+void ATUIVideoDisplayWindow::CloseOSK() {
+	if (mpOSK) {
+		mpOSKPanel->Destroy();
+		vdsaferelease <<= mpOSK;
+		vdsaferelease <<= mpOSKPanel;
+
+		if (mpOnOSKChange)
+			mpOnOSKChange();
+	}
+}
+
+void ATUIVideoDisplayWindow::OpenSidePanel() {
+	if (mpSidePanel)
+		return;
+
+	CloseOSK();
+
+	vdrefptr<IATUISettingsScreen> screen;
+	ATCreateUISettingsScreenMain(~screen);
+
+	ATCreateUISettingsWindow(&mpSidePanel);
+	mpSidePanel->SetOnDestroy([this]() { vdsaferelease <<= mpSidePanel; });
+	mpSidePanel->SetSettingsScreen(screen);
+	AddChild(mpSidePanel);
+	mpSidePanel->Focus();
+}
+
+void ATUIVideoDisplayWindow::CloseSidePanel() {
+	if (mpSidePanel) {
+		mpSidePanel->Destroy();
+		vdsaferelease <<= mpSidePanel;
+	}
+}
+
+void ATUIVideoDisplayWindow::BeginEnhTextSizeIndicator() {
+	mbShowEnhSizeIndicator = true;
+}
+
+void ATUIVideoDisplayWindow::EndEnhTextSizeIndicator() {
+	mbShowEnhSizeIndicator = false;
+
+	if (mpUILabelEnhTextSize) {
+		mpUILabelEnhTextSize->Destroy();
+		vdsaferelease <<= mpUILabelEnhTextSize;
+	}
+}
+
+void ATUIVideoDisplayWindow::Deselect() {
+	++mSelectionCommandProcessedCounter;
+	ClearDragPreview();
+}
+
+void ATUIVideoDisplayWindow::SelectAll() {
+	++mSelectionCommandProcessedCounter;
+	if (mpAltVideoOutput && !mpAltVideoOutput->GetVideoInfo().mbSignalPassThrough)
+		SelectByCaretPosAlt(vdpoint32(0, 0), vdpoint32(65535, 65535));
+	else
+		SelectByBeamPositionAntic(0, 8, 228, 248);
+}
+
+void ATUIVideoDisplayWindow::Copy(ATTextCopyMode copyMode) {
+	if (mDragPreviewSpans.empty())
+		return;
 
 	uint8 data[80];
 	VDStringW s;
@@ -472,13 +501,13 @@ void ATUIVideoDisplayWindow::Copy(ATTextCopyMode copyMode) {
 		if (mpAltVideoOutput && !mpAltVideoOutput->GetVideoInfo().mbSignalPassThrough) {
 			actual = mpAltVideoOutput->ReadRawText(data, ts.mX, ts.mY, 80);
 		} else {
-			actual = ReadText(data, ts.mY, ts.mCharX, ts.mCharWidth, intl);
+			actual = ReadText(data, nullptr, ts.mY, ts.mCharX, ts.mCharWidth, intl);
 		}
 
 		if (!actual)
 			continue;
 	
-		const auto& decodeTab = kDecodeTabs.v[intl];
+		const auto& decodeTab = kATASCIIDecodeTabs.v[intl];
 
 		if (copyMode == ATTextCopyMode::Escaped) {
 			uint8 inv = 0;
@@ -619,14 +648,7 @@ bool ATUIVideoDisplayWindow::CopyFrameImage(bool trueAspect, VDPixmapBuffer& buf
 		if (!gtia.GetLastFrameBuffer(frameStorage, frameView))
 			return false;
 
-		int px = 2;
-		int py = 2;
-		gtia.GetPixelAspectMultiple(px, py);
-
-		par = (double)py / (double)px;
-
-		const bool pal = g_sim.GetVideoStandard() != kATVideoStandard_NTSC && g_sim.GetVideoStandard() != kATVideoStandard_PAL60;
-		par *= (pal ? 1.03964f : 0.857141f);
+		par = gtia.GetPixelAspectRatio();
 	}
 
 	// We may get a really evil format like Pal1 from the XEP-80 layer, so first blit
@@ -787,6 +809,158 @@ void ATUIVideoDisplayWindow::RemoveTool(ATUIDisplayTool& tool) {
 		*it = nullptr;
 }
 
+void ATUIVideoDisplayWindow::ReadScreen(ATUIDisplayAccessibilityScreen& screenInfo) const {
+	screenInfo.mText.clear();
+	screenInfo.mLines.clear();
+	screenInfo.mFormatSpans.clear();
+
+	const ATGTIAEmulator& gtia = g_sim.GetGTIA();
+	const ATGTIAColorTrace& colorTrace = gtia.GetColorTrace();
+	uint32 pal[256];
+	gtia.GetPalette(pal);
+
+	uint8 buf[48] {};
+	uint8 raw[48] {};
+
+	uint32 lastBg = ~0;
+	uint32 lastFg = ~0;
+
+	int y = 8;
+	while(y < 248) {
+		const ModeLineInfo& mli = GetModeLineInfo(y);
+
+		if (!mli.IsTextMode()) {
+			++y;
+			continue;
+		}
+
+		bool intl = false;
+		int len = ReadText(buf, raw, y, 0, 48, intl);
+
+		while(len && buf[len - 1] == 0x20)
+			--len;
+
+		if (!screenInfo.mLines.empty())
+			screenInfo.mText.push_back('\n');
+
+		ATUIDisplayAccessibilityLineInfo& lineInfo = screenInfo.mLines.emplace_back();
+
+		lineInfo.mStartBeamX = mli.mFetchHposStart;
+		lineInfo.mStartBeamY = y;
+		lineInfo.mHeight = mli.mHeight;
+		lineInfo.mBeamToCellShift = mli.mCellToHRPixelShift - 1;
+		lineInfo.mTextOffset = (uint32)screenInfo.mText.size();
+		lineInfo.mTextLength = 0;
+
+		const auto& lineColorTrace = colorTrace.mColors[y - 8];
+		uint32 bg = 0;
+		uint32 fg = 0;
+		bool mode67 = false;
+
+		if (mli.mMode <= 3) {
+			// IR 2, 3: BG = PF2, FG = PF2/PF1
+			bg = pal[lineColorTrace[6]];
+			fg = pal[(lineColorTrace[6] & 0xF0) + (lineColorTrace[5] & 0x0F)];
+		} else if (mli.mMode <= 5) {
+			// IR 4, 5: BG = BAK, FG = PF0 (kluge)
+			bg = pal[lineColorTrace[8]];
+			fg = pal[lineColorTrace[4]];
+		} else {
+			// IR 6, 7: BG = BAK, FG = varies (must do by char)
+			mode67 = true;
+			bg = pal[lineColorTrace[8]];
+		}
+
+		const auto setColors = [&](uint32 newfg, uint32 newbg) {
+			if (newbg != lastBg || newfg != lastFg) {
+				auto& formatSpan = screenInfo.mFormatSpans.emplace_back();
+				formatSpan.mOffset = lineInfo.mTextOffset;
+				formatSpan.mBgColor = newbg;
+				formatSpan.mFgColor = newfg;
+
+				lastFg = newfg;
+				lastBg = newbg;
+			}
+		};
+
+		if (!mode67)
+			setColors(fg, bg);
+
+		if (len) {
+			const auto& decodeTab = kATASCIIDecodeTabs.v[intl ? 1 : 0];
+
+			uint8 prev = 0;
+			for(int i=0; i<len; ++i) {
+				uint8 c = buf[i];
+
+				if (mode67) {
+					if ((c & 0x7F) != 0x20) {
+						fg = pal[lineColorTrace[4 + (raw[i] >> 6)]];
+
+						setColors(fg, bg);
+					}
+
+					screenInfo.mText.push_back(decodeTab[c & 0x7F]);
+				} else {
+					if ((prev ^ c) & 0x80)
+						screenInfo.mText.push_back(c & 0x80 ? L'{' : L'}');
+
+					screenInfo.mText.push_back(decodeTab[c & 0x7F]);
+				}
+
+				prev = c;
+			}
+
+			if (prev & 0x80)
+				screenInfo.mText.push_back(L'}');
+
+			lineInfo.mTextLength = (uint32)screenInfo.mText.size() - lineInfo.mTextOffset;
+		}
+
+		y += mli.mHeight;
+	}
+
+	auto& lastFormatSpan = screenInfo.mFormatSpans.emplace_back();
+	lastFormatSpan.mOffset = (uint32)screenInfo.mText.size();
+	lastFormatSpan.mBgColor = 0;
+	lastFormatSpan.mFgColor = 0xFFFFFF;
+
+	if (screenInfo.mLines.empty())
+		screenInfo.Clear();
+}
+
+vdrect32 ATUIVideoDisplayWindow::GetTextSpanBoundingBox(int ypos, int xc1, int xc2) const {
+	const ModeLineInfo& mli = GetModeLineInfo(ypos);
+
+	float pixelX1F = (float)mli.mFetchHposStart + (float)(xc1 << mli.mCellToHRPixelShift) * 0.5f;
+	float pixelX2F = (float)mli.mFetchHposStart + (float)(xc2 << mli.mCellToHRPixelShift) * 0.5f;
+	float pixelY1F = (float)mli.mVPos;
+	float pixelY2F = pixelY1F + (float)mli.mHeight;
+
+	vdfloat2 pt11 = MapBeamPositionToPointF(vdfloat2(pixelX1F, pixelY1F));
+	vdfloat2 pt21 = MapBeamPositionToPointF(vdfloat2(pixelX2F, pixelY1F));
+	vdfloat2 pt12 = MapBeamPositionToPointF(vdfloat2(pixelX1F, pixelY2F));
+	vdfloat2 pt22 = MapBeamPositionToPointF(vdfloat2(pixelX2F, pixelY2F));
+
+	vdfloat2 ptmin = nsVDMath::min(nsVDMath::min(pt11, pt12), nsVDMath::min(pt21, pt22));
+	vdfloat2 ptmax = nsVDMath::max(nsVDMath::max(pt11, pt12), nsVDMath::max(pt21, pt22));
+
+	return vdrect32(
+		VDRoundToInt32(ptmin.x),
+		VDRoundToInt32(ptmin.y),
+		VDRoundToInt32(ptmax.x),
+		VDRoundToInt32(ptmax.y)
+	);
+}
+
+vdpoint32 ATUIVideoDisplayWindow::GetNearestBeamPositionForPoint(const vdpoint32& pt) const {
+	int xc = 0;
+	int yc = 0;
+	MapPixelToBeamPosition(pt.x, pt.y, xc, yc, true);
+
+	return vdpoint32(xc, yc);
+}
+
 void ATUIVideoDisplayWindow::InvalidateTextOutput() {
 	Invalidate();
 }
@@ -807,6 +981,13 @@ void ATUIVideoDisplayWindow::OnFrameTick() {
 
 		if (idx >= 0)
 			ATUISetCurrentAltOutputName(mpVideoMgr->GetOutput(idx)->GetName());
+	}
+
+	if (g_sim.GetInputManager()->HasNonBeamPointer()) {
+		g_sim.GetUIRenderer()->SetPadInputEnabled(true);
+		mPadArea = g_sim.GetUIRenderer()->GetPadArea();
+	} else {
+		g_sim.GetUIRenderer()->SetPadInputEnabled(false);
 	}
 }
 
@@ -952,17 +1133,16 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 	}
 
 	if (mpActiveTool) {
-		if (vk == kATUIVK_LButton) {
-			if (vdrefptr(mpActiveTool)->OnMouseDownL(x, y))
-				return;
-		}
+		if (vdrefptr(mpActiveTool)->OnMouseDown(x, y, vk))
+			return;
 	}
 
 	for(const auto& tool : mTools) {
 		if (tool) {
 			if (tool->HasPriorityOverInputManager()) {
-				if (vdrefptr(tool)->OnMouseDownL(x, y) && tool) {
+				if (vdrefptr(tool)->OnMouseDown(x, y, vk) && tool) {
 					mpActiveTool = tool;
+					CaptureCursor();
 					return;
 				}
 			}
@@ -973,8 +1153,9 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 	}
 
 	// If the mouse is mapped, it gets first crack at inputs unless Alt is down.
+	// If it is mapped in pad mode, we only handle inputs within the pad area.
 	const bool alt = mpManager->IsKeyDown(kATUIVK_Alt);
-	if (im->IsMouseMapped() && !alt) {
+	if (im->IsMouseMapped() && !alt && (!im->HasNonBeamPointer() || mPadArea.contains(vdpoint32(x, y)))) {
 		if (g_sim.IsRunning()) {
 			// Check if auto-capture is on and we haven't captured the mouse yet. If so, we
 			// should capture the mouse but otherwise eat the click
@@ -1039,19 +1220,20 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 	// We aren't routing this mouse event to the input manager, so do selection if it's the
 	// LMB.
 
-	if (vk == kATUIVK_LButton) {
-		for(const auto& tool : mTools) {
-			if (tool) {
-				if (!tool->HasPriorityOverInputManager() && vdrefptr(tool)->OnMouseDownL(x, y) && tool) {
-					mpActiveTool = tool;
-					return;
-				}
-
-				if (tool->IsMainTool())
-					break;
+	for(const auto& tool : mTools) {
+		if (tool) {
+			if (!tool->HasPriorityOverInputManager() && vdrefptr(tool)->OnMouseDown(x, y, vk) && tool) {
+				mpActiveTool = tool;
+				CaptureCursor();
+				return;
 			}
-		}
 
+			if (tool->IsMainTool())
+				break;
+		}
+	}
+
+	if (vk == kATUIVK_LButton) {
 		if (alt) {
 			// tooltip request -- let's try to grab text
 			int xc;
@@ -1135,7 +1317,7 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 					uint8 data[49];
 					bool intl;
 
-					int actual = ReadText(data, ymode, 0, 48, intl);
+					int actual = ReadText(data, nullptr, ymode, 0, 48, intl);
 					data[actual] = 0;
 
 					char cdata[49];
@@ -1201,12 +1383,15 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 }
 
 void ATUIVideoDisplayWindow::OnMouseUp(sint32 x, sint32 y, uint32 vk) {
-	if (vk == kATUIVK_LButton) {
-		if (mpActiveTool) {
-			vdrefptr(mpActiveTool)->OnMouseUpL(x, y);
-			mpActiveTool = nullptr;
-		}
+	if (mpActiveTool) {
+		vdrefptr tool(mpActiveTool);
+		mpActiveTool = nullptr;
 
+		ReleaseCursor();
+		tool->OnMouseUp(x, y, vk);
+	}
+
+	if (vk == kATUIVK_LButton) {
 		ClearCoordinateIndicator();
 		ClearHoverTip();
 
@@ -1289,6 +1474,7 @@ void ATUIVideoDisplayWindow::OnMouseMove(sint32 x, sint32 y) {
 
 	if (mpActiveTool) {
 		vdrefptr(mpActiveTool)->OnMouseMove(x, y);
+		SetCursorImage(ComputeCursorImage(vdpoint32(x, y)));
 		return;
 	}
 
@@ -1316,6 +1502,43 @@ void ATUIVideoDisplayWindow::OnMouseMove(sint32 x, sint32 y) {
 			ClearHoverTip();
 		}
 	}
+}
+
+bool ATUIVideoDisplayWindow::OnMouseWheel(sint32 x, sint32 y, float delta, bool doPages) {
+	if (delta == 0)
+		return false;
+
+	if (mpActiveTool) {
+		if (vdrefptr(mpActiveTool)->OnMouseWheel(x, y, delta, doPages))
+			return true;
+	}
+
+	for(int pass = 0; pass < 2; ++pass) {
+		const bool doPriority = (pass == 0);
+		for(const auto& tool : mTools) {
+			if (tool && tool->HasPriorityOverInputManager() == doPriority) {
+				if (vdrefptr(tool)->OnMouseWheel(x, y, delta, doPages))
+					return true;
+
+				if (tool->IsMainTool())
+					break;
+			}
+		}
+
+		if (pass == 0) {
+			if (g_sim.GetInputManager()->OnMouseWheel(0, delta))
+				return true;
+		}
+	}
+
+	return false;
+}
+
+bool ATUIVideoDisplayWindow::OnMouseHWheel(sint32 x, sint32 y, float delta, bool doPages) {
+	if (delta == 0)
+		return false;
+
+	return g_sim.GetInputManager()->OnMouseHWheel(0, delta);
 }
 
 void ATUIVideoDisplayWindow::OnMouseLeave() {
@@ -1370,8 +1593,12 @@ bool ATUIVideoDisplayWindow::OnKeyDown(const ATUIKeyEvent& event) {
 	}
 
 	// fall through so the simulator still receives the alt key, in case a key is typed
+	const auto selCmdCounter = mSelectionCommandProcessedCounter;
 	if (ProcessKeyDown(event, !mpEnhTextEngine || mpEnhTextEngine->IsRawInputEnabled())) {
-		ClearDragPreview();
+		// slight hack, don't clear the selection if a selection command was
+		// processed
+		if (selCmdCounter == mSelectionCommandProcessedCounter)
+			ClearDragPreview();
 		return true;
 	}
 
@@ -1590,6 +1817,13 @@ void ATUIVideoDisplayWindow::OnCaptureLost() {
 	g_mouseCaptured = false;
 	g_mouseClipped = false;
 	g_winCaptionUpdater->SetMouseCaptured(false, false);
+
+	if (mpActiveTool) {
+		vdrefptr tool(mpActiveTool);
+		mpActiveTool = nullptr;
+
+		tool->OnCancelMode();
+	}
 }
 
 ATUIDragEffect ATUIVideoDisplayWindow::OnDragEnter(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) {
@@ -1781,6 +2015,99 @@ void ATUIVideoDisplayWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) 
 		}
 	}
 
+	auto& im = *g_sim.GetInputManager();
+	if (g_ATUIDrawPadBounds && im.HasNonBeamPointer()) {
+		const auto& r = mPadArea;
+
+		rdr.SetColorRGB(0xE0E4FF);
+		rdr.FillRect(r.left, r.top, r.width(), 1);
+		rdr.FillRect(r.left, r.top, 1, r.height());
+		rdr.FillRect(r.right - 1, r.top, 1, r.height());
+		rdr.FillRect(r.left, r.bottom - 1, r.width(), 1);
+	}
+
+	if (g_ATUIDrawPadPointers) {
+		vdfastvector<ATInputPointerInfo> pointers;
+		im.GetPointers(pointers);
+
+		if (!pointers.empty()) {
+			const vdsize32 size = mPadArea.size();
+			const bool plf = rdr.GetCaps().mbSupportsPolyLineF;
+
+			for(const ATInputPointerInfo& pointer : pointers) {
+				// If this is the primary pointer for a controller and it's bound to the mouse in
+				// absolute mode, don't show it if we're showing the target mouse pointer cursor.
+				if (pointer.mbPrimary && im.HasAbsMousePointer() && im.IsMouseActiveTarget() && g_ATUITargetPointerVisible)
+					continue;
+
+				sint32 x = 0;
+				sint32 y = 0;
+
+				switch(pointer.mCoordSpace) {
+					case ATInputPointerCoordinateSpace::None:
+						break;
+
+					case ATInputPointerCoordinateSpace::Normalized:
+						x = mPadArea.left + VDRoundToInt((float)(mPadArea.width() - 1) * (pointer.mPos.x * 0.5f + 0.5f));
+						y = mPadArea.top + VDRoundToInt((float)(mPadArea.height() - 1) * (pointer.mPos.y * 0.5f + 0.5f));
+						break;
+
+					case ATInputPointerCoordinateSpace::Beam:
+						{
+							const auto& pt = MapBeamPositionToPointF(vdfloat2 { pointer.mPos.x, pointer.mPos.y });
+
+							x = VDRoundToInt(pt.x);
+							y = VDRoundToInt(pt.y);
+						}
+						break;
+				}
+
+				if (pointer.mRadius < 0) {
+					rdr.SetColorRGB(0xE0E4FF);
+					rdr.FillRect(x - 20, y, 41, 1);
+					rdr.FillRect(x, y - 20, 1, 41);
+					rdr.SetColorRGB(0x101230);
+					rdr.FillRect(x - 10, y, 21, 1);
+					rdr.FillRect(x, y - 10, 1, 21);
+				} else {
+					float rx = pointer.mRadius * (float)mPadArea.width()  * 0.5f;
+					float ry = pointer.mRadius * (float)mPadArea.height() * 0.5f;
+
+					rdr.SetColorRGB(0xE0E4FF);
+					if (plf && rx > 2 && ry > 2) {
+						vdfloat2 fpts[33];
+						vdfloat2 cen { (float)x, (float)y };
+						vdfloat2 del { 1.0f, 0.0f };
+						vdfloat2 r { rx, ry };
+
+						const float cs = 0.98078528040323044912618223613424f;
+						const float sn = 0.19509032201612826784828486847702f;
+
+						for(int i=0; i<32; ++i) {
+							fpts[i] = cen + del * r;
+
+							del = vdfloat2 { del.x*cs + del.y*sn, del.y*cs - del.x*sn };
+						}
+
+						fpts[32] = fpts[0];
+						rdr.PolyLineF(fpts, 32, true);
+					} else {
+						sint32 irx = VDRoundToInt(rx);
+						sint32 iry = VDRoundToInt(ry);
+ 
+						vdpoint32 pts[5];
+						pts[0] = vdpoint32(x - irx, y - iry);
+						pts[1] = vdpoint32(x + irx, y - iry);
+						pts[2] = vdpoint32(x + irx, y + iry);
+						pts[3] = vdpoint32(x - irx, y + iry);
+						pts[4] = vdpoint32(x - irx, y - iry);
+						rdr.PolyLine(pts, 4);
+					}
+				}
+			}
+		}
+	}
+
 	if (g_ATCVUIShowVSyncAdaptiveGraph) {
 		extern float g_frameRefreshPeriod;
 		extern float g_frameCorrectionFactor;
@@ -1897,6 +2224,13 @@ VDStringW ATUIVideoDisplayWindow::GetCurrentOutputName() const {
 		return VDStringW(mpAltVideoOutput->GetDisplayName()) + L" Output";
 	else
 		return VDStringW(L"Normal Output");
+}
+
+vdrect32 ATUIVideoDisplayWindow::GetCurrentOutputArea() const {
+	if (mpAltVideoOutput)
+		return GetAltDisplayArea();
+	else
+		return mDisplayRect;
 }
 
 bool ATUIVideoDisplayWindow::ProcessKeyDown(const ATUIKeyEvent& event, bool enableKeyInput) {
@@ -2160,15 +2494,31 @@ uint32 ATUIVideoDisplayWindow::ComputeCursorImage(const vdpoint32& pt) const {
 		validBeamPosition = (MapPixelToBeamPosition(pt.x, pt.y, xs, ys, false) && GetModeLineYPos(ys, true) >= 0);
 	}
 
-	bool cursorSet = false;
+	ATUICursorImage cursorImage = kATUICursorImage_None;
+	if (mpActiveTool) {
+		cursorImage = mpActiveTool->GetCursorImage(pt.x, pt.y);
 
-	auto *pIM = g_sim.GetInputManager();
+		if (cursorImage != kATUICursorImage_None)
+			return cursorImage;
+	}
+
+	for(const auto& tool : mTools) {
+		if (tool && tool->HasPriorityOverInputManager()) {
+			cursorImage = tool->GetCursorImage(pt.x, pt.y);
+
+			if (cursorImage != kATUICursorImage_None)
+				return cursorImage;
+
+			if (tool->IsMainTool())
+				break;
+		}
+	}
+
+	auto& im = *g_sim.GetInputManager();
 	if (!g_mouseCaptured && validBeamPosition && mpManager->IsKeyDown(kATUIVK_Alt))
 		return kATUICursorImage_Query;
 
-	if (g_sim.GetInputManager()->IsMouseMapped()) {
-		cursorSet = true;
-
+	if (im.IsMouseMapped()) {
 		if (g_mouseAutoCapture && !g_mouseCaptured) {
 
 			// Auto-capture is on but we have not captured the cursor. In this case we show the
@@ -2177,18 +2527,19 @@ uint32 ATUIVideoDisplayWindow::ComputeCursorImage(const vdpoint32& pt) const {
 
 			return kATUICursorImage_Arrow;
 
-		} else if (pIM->IsMouseAbsoluteMode()) {
+		} else if (im.IsMouseAbsoluteMode()) {
 
 			// We're in absolute mode, and either the mouse is captured or auto-capture is off.
 			// In this case we will be passing absolute mouse inputs to the input manager. Show
 			// the target or off-target depending on whether the target is active (light pen
 			// aimed at screen or otherwise not a light pen/gun).
 
-			if (g_sim.GetInputManager()->IsMouseActiveTarget())
-				return g_ATUITargetPointerVisible ? kATUICursorImage_Target : kATUICursorImage_Hidden;
-			else
-				return kATUICursorImage_TargetOff;
-
+			if (!im.HasNonBeamPointer() || mPadArea.contains(pt)) {
+				if (im.IsMouseActiveTarget())
+					return g_ATUITargetPointerVisible ? kATUICursorImage_Target : kATUICursorImage_Hidden;
+				else
+					return kATUICursorImage_TargetOff;
+			}
 		} else if (IsCursorCaptured()) {
 
 			// We're in relative mode and the cursor is captured. We need to hide the mouse
@@ -2201,6 +2552,18 @@ uint32 ATUIVideoDisplayWindow::ComputeCursorImage(const vdpoint32& pt) const {
 		// The mouse is bound in relative mode but not captured, so we should fall through.
 	}
 
+	for(const auto& tool : mTools) {
+		if (tool && !tool->HasPriorityOverInputManager()) {
+			cursorImage = tool->GetCursorImage(pt.x, pt.y);
+
+			if (cursorImage != kATUICursorImage_None)
+				return cursorImage;
+
+			if (tool->IsMainTool())
+				break;
+		}
+	}
+
 	if (validBeamPosition)
 		return kATUICursorImage_IBeam;
 
@@ -2211,13 +2574,13 @@ void ATUIVideoDisplayWindow::UpdateMousePosition(int x, int y) {
 	int padX = 0;
 	int padY = 0;
 
-	const vdsize32 size = mClientArea.size();
+	const vdsize32 size = mPadArea.size();
 
 	if (size.w)
-		padX = VDRoundToInt(x * 131072.0f / ((float)size.w - 1) - 0x10000);
+		padX = VDRoundToInt((x - mPadArea.left) * 131072.0f / ((float)mPadArea.width()  - 1) - 0x10000);
 
 	if (size.h)
-		padY = VDRoundToInt(y * 131072.0f / ((float)size.h - 1) - 0x10000);
+		padY = VDRoundToInt((y - mPadArea.top ) * 131072.0f / ((float)mPadArea.height() - 1) - 0x10000);
 
 	ATInputManager *im = g_sim.GetInputManager();
 	im->SetMousePadPos(padX, padY);
@@ -2256,18 +2619,26 @@ const vdrect32 ATUIVideoDisplayWindow::GetAltDisplayArea() const {
 
 	const auto& vi = mpAltVideoOutput->GetVideoInfo();
 	const vdrect32& r = vi.mDisplayArea;
-	const sint32 w = mArea.width();
-	const sint32 h = mArea.height();
-	sint32 dw = w;
-	sint32 dh = h;
+	float viewportWidth = mArea.width();
+	float viewportHeight = mArea.height();
+
+	if (g_dispPadIndicators)
+		viewportHeight -= g_sim.GetUIRenderer()->GetIndicatorSafeHeight();
+
+	vdrect32 rsafe = g_pATVideoDisplayWindow->GetOSKSafeArea();
+
+	viewportHeight = std::min<float>(viewportHeight, rsafe.height());
+
+	float w = viewportWidth;
+	float h = viewportHeight;
 
 	if (vi.mbForceExactPixels) {
-		double ratio = std::min<double>(1, std::min<double>((double)dw / (double)r.width(), (double)dh / (double)r.height()));
+		float ratio = std::min<float>(1, std::min<float>((float)w / (float)r.width(), (float)h / (float)r.height()));
 
-		dw = VDRoundToInt32((double)r.width() * ratio);
-		dh = VDRoundToInt32((double)r.height() * ratio);
+		w = (float)r.width() * ratio;
+		h = (float)r.height() * ratio;
 	} else if (g_displayStretchMode != kATDisplayStretchMode_Unconstrained) {
-		double par = 0.5;
+		float par = 0.5;
 		
 		switch(g_displayStretchMode) {
 			case kATDisplayStretchMode_SquarePixels:
@@ -2275,13 +2646,13 @@ const vdrect32 ATUIVideoDisplayWindow::GetAltDisplayArea() const {
 				break;
 
 			default:
-				par = vi.mPixelAspectRatio;
+				par = (float)vi.mPixelAspectRatio;
 				break;
 		}
 
-		const double fitw = (double)r.width() * par;
-		const double fith = (double)r.height();
-		double scale = std::min<double>(w / fitw, h / fith);
+		const float fitw = (float)r.width() * par;
+		const float fith = (float)r.height();
+		float scale = std::min<float>(w / fitw, h / fith);
 
 		switch(g_displayStretchMode) {
 			case kATDisplayStretchMode_Integral:
@@ -2291,13 +2662,45 @@ const vdrect32 ATUIVideoDisplayWindow::GetAltDisplayArea() const {
 				break;
 		}
 
-		dw = VDRoundToInt32(fitw * scale);
-		dh = VDRoundToInt32(fith * scale);
+		w = fitw * scale;
+		h = fith * scale;
 	}
 
-	const int dx = (w - dw) >> 1;
-	const int dy = (h - dh) >> 1;
-	return vdrect32(dx, dy, dx + dw, dy + dh);
+	if (!vi.mbForceExactPixels) {
+		const float zoom = ATUIGetDisplayZoom();
+		w *= zoom;
+		h *= zoom;
+	}
+
+	vdfloat2 relativeSourceOrigin = vdfloat2(0.5f, 0.5f) - ATUIGetDisplayPanOffset();
+
+	vdrect32f rd(
+		w * (relativeSourceOrigin.x - 1.0f),
+		h * (relativeSourceOrigin.y - 1.0f),
+		w * relativeSourceOrigin.x,
+		h * relativeSourceOrigin.y
+	);
+
+	rd.translate(viewportWidth * 0.5f, viewportHeight * 0.5f);
+
+	// try to pixel snap the rectangle if possible
+	vdrect32f error(
+		rd.left   - roundf(rd.left  ),
+		rd.top    - roundf(rd.top   ),
+		rd.right  - roundf(rd.right ),
+		rd.bottom - roundf(rd.bottom)
+	);
+
+	rd.translate(-0.5f*(error.left + error.right), -0.5f*(error.top + error.bottom));
+
+	vdrect32 ri;
+
+	ri.left = VDRoundToInt(rd.left);
+	ri.top = VDRoundToInt(rd.top);
+	ri.right = ri.left + VDRoundToInt(rd.width());
+	ri.bottom = ri.top + VDRoundToInt(rd.height());
+
+	return ri;
 }
 
 bool ATUIVideoDisplayWindow::MapPixelToBeamPosition(int x, int y, float& hcyc, float& vcyc, bool clamp) const {
@@ -2349,11 +2752,20 @@ bool ATUIVideoDisplayWindow::MapPixelToBeamPosition(int x, int y, int& xc, int& 
 
 // Map a beam position in (half cycles, scan) to a screen point. This maps points at the corners of
 // pixels instead of the centers since it is used for rectangle/polygon mapping.
-void ATUIVideoDisplayWindow::MapBeamPositionToPoint(int xc, int yc, int& x, int& y) const {
+vdint2 ATUIVideoDisplayWindow::MapBeamPositionToPoint(int xc, int yc) const {
 	const vdfloat2 pt = MapBeamPositionToPointF(vdfloat2 {(float)xc, (float)yc});
 
-	x = VDRoundToInt(pt.x);
-	y = VDRoundToInt(pt.y);
+	return vdint2 {
+		VDRoundToInt(pt.x),
+		VDRoundToInt(pt.y)
+	};
+}
+
+void ATUIVideoDisplayWindow::MapBeamPositionToPoint(int xc, int yc, int& x, int& y) const {
+	const auto& pt = MapBeamPositionToPoint(xc, yc);
+
+	x = pt.x;
+	y = pt.y;
 }
 
 vdfloat2 ATUIVideoDisplayWindow::MapBeamPositionToPointF(vdfloat2 pt) const {
@@ -2408,6 +2820,19 @@ void ATUIVideoDisplayWindow::UpdateDragPreviewAlt(int x, int y) {
 	vdpoint32 caretPos1 = mpAltVideoOutput->PixelToCaretPos(vdpoint32(xepx1, xepy1));
 	vdpoint32 caretPos2 = mpAltVideoOutput->PixelToCaretPos(vdpoint32(xepx2, xepy2));
 
+	SelectByCaretPosAlt(caretPos1, caretPos2);
+}
+
+void ATUIVideoDisplayWindow::SelectByCaretPosAlt(vdpoint32 caretPos1, vdpoint32 caretPos2) {
+	const auto& vi = mpAltVideoOutput->GetVideoInfo();
+	if (!vi.mTextRows || !vi.mTextColumns)
+		return;
+
+	caretPos1.x = std::clamp<sint32>(caretPos1.x, 0, vi.mTextColumns);
+	caretPos1.y = std::clamp<sint32>(caretPos1.y, 0, vi.mTextRows);
+	caretPos2.x = std::clamp<sint32>(caretPos2.x, 0, vi.mTextColumns);
+	caretPos2.y = std::clamp<sint32>(caretPos2.y, 0, vi.mTextRows);
+
 	mDragPreviewSpans.clear();
 
 	if (caretPos1.y == caretPos2.y) {
@@ -2460,6 +2885,16 @@ void ATUIVideoDisplayWindow::UpdateDragPreviewAntic(int x, int y) {
 		ClearDragPreview();
 		return;
 	}
+
+	SelectByBeamPositionAntic(xc1, yc1, xc2, yc2);
+}
+
+void ATUIVideoDisplayWindow::SelectByBeamPositionAntic(int xc1, int yc1, int xc2, int yc2) {
+	xc1 = std::clamp<int>(xc1, 0, 228);
+	xc2 = std::clamp<int>(xc2, 0, 228);
+
+	yc1 = std::clamp<int>(yc1, 8, 248);
+	yc2 = std::clamp<int>(yc2, 8, 248);
 
 	if (yc1 > yc2 || (yc1 == yc2 && xc1 > xc2)) {
 		std::swap(xc1, xc2);
@@ -2641,38 +3076,68 @@ int ATUIVideoDisplayWindow::GetModeLineYPos(int ys, bool checkValidCopyText) con
 }
 
 std::pair<int, int> ATUIVideoDisplayWindow::GetModeLineXYPos(int xcc, int ys, bool checkValidCopyText) const {
-	ATAnticEmulator& antic = g_sim.GetAntic();
-	const ATAnticEmulator::DLHistoryEntry *dlhist = antic.GetDLHistory();
+	const ModeLineInfo& mli = GetModeLineInfo(ys);
 
-	for(int i=0; i<16; ++i, --ys) {
-		if (ys >= 8 && ys < 248) {
-			const ATAnticEmulator::DLHistoryEntry& modeLine = dlhist[ys];
-
-			if (modeLine.mbValid) {
-				int mode = modeLine.mControl & 15;
-
-				if (checkValidCopyText) {
-					if (mode != 2 && mode != 3 && mode != 6 && mode != 7)
-						return {-1,-1};
-				}
-
-				static constexpr uint8 kXCycShift[16] = {
-					15, 15, 2, 2, 2, 2, 3, 3, 2, 2, 1, 1, 0, 0, 0, 0
-				};
-
-				static constexpr int kPFStart[4] = { 64, 64, 48, 32 };
-
-				int hscroll = modeLine.mHVScroll & 15;
-
-				return {
-					((xcc - hscroll - kPFStart[modeLine.mDMACTL & 3]) >> kXCycShift[mode]),
-					ys
-				};
-			}
-		}
+	if (!checkValidCopyText || mli.IsTextMode()) {
+		return {
+			(((xcc - mli.mFetchHposStart)*2) >> mli.mCellToHRPixelShift),
+			mli.mVPos
+		};
 	}
 
 	return {-1, -1};
+}
+
+ATUIVideoDisplayWindow::ModeLineInfo ATUIVideoDisplayWindow::GetModeLineInfo(int vpos) const {
+	ATAnticEmulator& antic = g_sim.GetAntic();
+	const ATAnticEmulator::DLHistoryEntry *dlhist = antic.GetDLHistory();
+
+	ModeLineInfo modeInfo {};
+
+	if (vpos >= 248)
+		vpos = 247;
+
+	for(; vpos >= 8; --vpos) {
+		const ATAnticEmulator::DLHistoryEntry& modeLine = dlhist[vpos];
+
+		if (modeLine.mbValid) {
+			const uint8 pfWidth = modeLine.mDMACTL & 3;
+			const uint8 mode = modeLine.mControl & 15;
+
+			static constexpr uint8 kModeHeight[16] {
+				1, 1, 8, 10, 8, 16, 8, 16, 8, 4, 4, 2, 1, 2, 1, 1
+			};
+
+			static constexpr uint8 kXCycShift[16] = {
+				15, 15, 2, 2, 2, 2, 3, 3, 2, 2, 1, 1, 0, 0, 0, 0
+			};
+
+			const uint8 pfFetchWidth = (modeLine.mControl & 0x10) && pfWidth < 3 ? pfWidth + 1 : pfWidth;
+			static constexpr uint8 kPFStart[4] = { 0x40, 0x40, 0x30, 0x20 };
+			static constexpr uint8 kPFEnd  [4] = { 0x40, 0xC0, 0xD0, 0xE0 };
+
+			int hscroll = modeLine.mHVScroll & 15;
+
+			static constexpr uint8 kCellToHRPixelShift[16] {
+				0, 0, 3, 3, 3, 3, 4, 4, 3, 2, 2, 1, 1, 1, 1, 0
+			};
+
+			modeInfo.mMode = mode;
+			modeInfo.mVPos = vpos;
+			modeInfo.mHeight = kModeHeight[mode];
+			modeInfo.mHScroll = hscroll;
+			modeInfo.mDisplayHposStart = kPFStart[pfWidth];
+			modeInfo.mDisplayHposEnd = kPFStart[pfWidth];
+			modeInfo.mFetchHposStart = kPFStart[pfFetchWidth] + hscroll;
+			modeInfo.mFetchHposEnd = kPFEnd[pfFetchWidth] + hscroll;
+			modeInfo.mCellToHRPixelShift = kCellToHRPixelShift[mode];
+			modeInfo.mCellWidth = mode >= 2 ? ((modeInfo.mFetchHposEnd - modeInfo.mFetchHposStart)*2) >> modeInfo.mCellToHRPixelShift : 0;
+
+			break;
+		}
+	}
+
+	return modeInfo;
 }
 
 /// Read characters from a text mode line into a buffer; returns the number
@@ -2680,7 +3145,7 @@ std::pair<int, int> ATUIVideoDisplayWindow::GetModeLineXYPos(int xcc, int ys, bo
 /// mode line, not a supported text mode line). The returned buffer is _not_
 /// null terminated.
 ///
-int ATUIVideoDisplayWindow::ReadText(uint8 *dst, int yc, int startChar, int numChars, bool& intl) const {
+int ATUIVideoDisplayWindow::ReadText(uint8 *dst, uint8 *raw, int yc, int startChar, int numChars, bool& intl) const {
 	ATAnticEmulator& antic = g_sim.GetAntic();
 	const ATAnticEmulator::DLHistoryEntry *dlhist = antic.GetDLHistory();
 	const ATAnticEmulator::DLHistoryEntry& dle = dlhist[yc];

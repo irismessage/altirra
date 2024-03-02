@@ -101,3 +101,34 @@ bool ATUIClipGetText(VDStringA& s8, VDStringW& s16, bool& use16) {
 
 	return success;
 }
+
+bool ATUIClipGetText(VDStringW& str) {
+	bool success = false;
+
+	if (OpenClipboard(NULL)) {
+		HANDLE hData = GetClipboardData(CF_UNICODETEXT);
+
+		if (hData) {
+			void *udata = GlobalLock(hData);
+
+			if (udata) {
+				size_t len = GlobalSize(hData) / sizeof(WCHAR);
+				const WCHAR *s = (const WCHAR *)udata;
+
+				str.assign(s, s + len);
+
+				GlobalUnlock(hData);
+
+				auto nullPos = str.find(L'\0');
+				if (nullPos != str.npos)
+					str.erase(nullPos);
+
+				success = true;
+			}
+		}
+
+		CloseClipboard();
+	}
+
+	return success;
+}

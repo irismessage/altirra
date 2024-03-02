@@ -27,6 +27,7 @@
 #include <at/atcore/logging.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
+#include <at/atcore/timerservice.h>
 #include <at/atcore/vfs.h>
 #include <at/atvm/compiler.h>
 #include "customdevice.h"
@@ -837,7 +838,7 @@ bool ATDeviceCustom::SetSettings(const ATPropertySet& settings) {
 
 void ATDeviceCustom::Init() {
 	const auto hardwareMode = g_sim.GetHardwareMode();
-	const bool hasPort34 = (hardwareMode != kATHardwareMode_800XL && hardwareMode != kATHardwareMode_1200XL && hardwareMode != kATHardwareMode_XEGS && hardwareMode != kATHardwareMode_130XE);
+	const bool hasPort34 = kATHardwareModeTraits[hardwareMode].mbHasPort34;
 
 	for(int i=0; i<4; ++i) {
 		auto *port = mpControllerPorts[i];
@@ -1369,7 +1370,9 @@ bool ATDeviceCustom::TryRestoreNet() {
 		return false;
 
 	SendNetCommand(0, 0x7F000001, NetworkCommand::ColdReset);
-	mpNetworkEngine->SetRecvNotifyEnabled(true);
+	if (!mpNetworkEngine->SetRecvNotifyEnabled())
+		OnNetRecvOOB();
+
 	return true;
 }
 
@@ -1380,7 +1383,7 @@ sint32 ATDeviceCustom::ExecuteNetRequests(bool waitingForReply) {
 
 	for(;;) {
 		if (!waitingForReply) {
-			if (mpNetworkEngine->SetRecvNotifyEnabled(false))
+			if (mpNetworkEngine->SetRecvNotifyEnabled())
 				break;
 		}
 
@@ -1999,21 +2002,23 @@ void ATDeviceCustom::ReloadConfig() {
 		ReinitSegmentData(true);
 
 		if (mNetworkPort) {
-			mpNetworkEngine = ATCreateDeviceCustomNetworkEngine(mNetworkPort);
-			if (!mpNetworkEngine)
-				throw MyError("Unable to set up local networking for custom device.");
-
-			mpNetworkEngine->SetRecvHandler(
+			mpNetworkEngine = ATCreateDeviceCustomNetworkEngine(
+				mNetworkPort,
+				*GetService<IATTimerService>(),
 				[this] {
 					mpAsyncDispatcher->Queue(&mAsyncNetCallback,
 						[this] {
 							VDASSERT(mpNetworkEngine && mbInitedCustomDevice);
 
-							OnNetRecvOOB();
+							if (!TryRestoreNet())
+								OnNetRecvOOB();
 						}
 					);
 				}
 			);
+
+			if (!mpNetworkEngine)
+				throw MyError("Unable to set up local networking for custom device.");
 		}
 
 		if (mpScriptEventVBLANK) {
@@ -2536,8 +2541,7 @@ bool ATDeviceCustom::OnDefineMemoryLayer(ATVMCompiler& compiler, const char *nam
 			ml.mpPhysLayer = mpMemMan->CreateLayer(pri, srcSegment->mpData + offset, address >> 8, size >> 8, isReadOnly); 
 		}
 
-		if (!ml.mbAutoPBI)
-			mpMemMan->SetLayerModes(ml.mpPhysLayer, accessMode);
+		UpdateLayerModes(ml);
 
 		segmentMembers.AssertNoUnused();
 	} else if (const ATVMDataValue *controlNode = mlMembers.Optional("control")) {
@@ -2752,7 +2756,8 @@ bool ATDeviceCustom::OnDefineMemoryLayer(ATVMCompiler& compiler, const char *nam
 		ml.mpPhysLayer = mpMemMan->CreateLayer(pri, handlers, address >> 8, size >> 8);
 
 		ml.mEnabledModes = memoryLayerMode;
-		mpMemMan->SetLayerModes(ml.mpPhysLayer, (ATMemoryAccessMode)memoryLayerMode);
+
+		UpdateLayerModes(ml);
 	} else
 		throw ATVMCompileError(*initializers, "Memory layer must have a 'control' or 'segment' member.");
 
@@ -3527,15 +3532,10 @@ void ATDeviceCustom::MemoryLayer::VMCallSetModes(sint32 read, sint32 write) {
 	if (read)
 		modes |= kATMemoryAccessMode_AR;
 
-	mpParent->mpMemMan->SetLayerModes(mpPhysLayer, (ATMemoryAccessMode)modes);
+	if (mEnabledModes != modes) {
+		mEnabledModes = modes;
 
-	if (mbAutoRD5) {
-		bool rd5Active = (modes != 0);
-
-		if (mbRD5Active != rd5Active) {
-			mbRD5Active = rd5Active;
-			mpParent->mpCartPort->OnLeftWindowChanged(mpParent->mCartId, mpParent->IsLeftCartActive());
-		}
+		mpParent->UpdateLayerModes(*this);
 	}
 }
 

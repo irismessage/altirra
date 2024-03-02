@@ -467,7 +467,11 @@ void *ATDeviceDiskDriveATR8000::AsInterface(uint32 iid) {
 		case ATCTCEmulator::kTypeID: return &mCTC;
 	}
 
-	return ATDiskDriveDebugTargetControl::AsInterface(iid);
+	void *p = ATDiskDriveDebugTargetControl::AsInterface(iid);
+	if (p)
+		return p;
+
+	return ATDevice::AsInterface(iid);
 }
 
 void ATDeviceDiskDriveATR8000::GetDeviceInfo(ATDeviceInfo& info) {

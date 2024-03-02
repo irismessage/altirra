@@ -390,6 +390,13 @@ float ATSettingsGetFloat(VDRegistryKey& key, const char *name, float defaultValu
 	return std::isfinite(currentValue) ? currentValue : defaultValue;
 }
 
+void ATSettingsExchangeFloat(bool write, VDRegistryKey& key, const char *name, const vdfunction<float()>& getter, const vdfunction<void(float)>& setter) {
+	if (write)
+		key.setInt(name, VDGetFloatAsInt(getter()));
+	else
+		setter(ATSettingsGetFloat(key, name, getter()));
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
@@ -403,6 +410,8 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 	ATSettingsExchangeBool(write, key, "Display: Auto-hide pointer", ATUIGetPointerAutoHide, ATUISetPointerAutoHide);
 	ATSettingsExchangeBool(write, key, "Display: Constrain pointer in full screen", ATUIGetConstrainMouseFullScreen, ATUISetConstrainMouseFullScreen);
 	ATSettingsExchangeBool(write, key, "Display: Show target pointer", ATUIGetTargetPointerVisible, ATUISetTargetPointerVisible);
+	ATSettingsExchangeBool(write, key, "Display: Show pad bounds", ATUIGetDrawPadBoundsEnabled, ATUISetDrawPadBoundsEnabled);
+	ATSettingsExchangeBool(write, key, "Display: Show pad pointers", ATUIGetDrawPadPointersEnabled, ATUISetDrawPadPointersEnabled);
 
 	if (write) {
 		key.setString("Display: Custom effect path", g_ATUIManager.GetCustomEffectPath());
@@ -412,6 +421,13 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 
 		g_ATUIManager.SetCustomEffectPath(path.c_str(), false);
 	}
+
+	ATSettingsExchangeFloat(write, key, "Display: Zoom", ATUIGetDisplayZoom, ATUISetDisplayZoom);
+
+	vdfloat2 pan = ATUIGetDisplayPanOffset();
+	ATSettingsExchangeFloat(write, key, "Display: Pan X Offset", [&] { return pan.x; }, [&](float v) { pan.x = v; });
+	ATSettingsExchangeFloat(write, key, "Display: Pan Y Offset", [&] { return pan.y; }, [&](float v) { pan.y = v; });
+	ATUISetDisplayPanOffset(pan);
 
 	ATSettingsExchangeBool(write, key, "View: Auto-hide menu", ATUIIsMenuAutoHideEnabled, ATUISetMenuAutoHideEnabled);
 	ATSettingsExchangeBool(write, key, "View: Show FPS", ATUIGetShowFPS, ATUISetShowFPS);
@@ -1048,6 +1064,7 @@ void ATSettingsExchangeSound(bool write, VDRegistryKey& key) {
 		key.setBool("Audio: Monitor enabled", g_sim.IsAudioMonitorEnabled());
 		key.setBool("Audio: Scope enabled", g_sim.IsAudioScopeEnabled());
 
+		key.setBool("Audio: Downmix stereo to mono", pokey.IsStereoAsMonoEnabled());
 		key.setBool("Audio: Non-linear mixing", pokey.IsNonlinearMixingEnabled());
 		key.setBool("Audio: Speaker filter enabled", pokey.IsSpeakerFilterEnabled());
 		key.setBool("Audio: Serial noise enabled", pokey.IsSerialNoiseEnabled());
@@ -1074,6 +1091,7 @@ void ATSettingsExchangeSound(bool write, VDRegistryKey& key) {
 		g_sim.SetAudioMonitorEnabled(key.getBool("Audio: Monitor enabled", false));
 		g_sim.SetAudioScopeEnabled(key.getBool("Audio: Scope enabled", false));
 
+		pokey.SetStereoAsMonoEnabled(key.getBool("Audio: Downmix stereo to mono", false));
 		pokey.SetNonlinearMixingEnabled(key.getBool("Audio: Non-linear mixing", pokey.IsNonlinearMixingEnabled()));
 		pokey.SetSpeakerFilterEnabled(key.getBool("Audio: Speaker filter enabled", false));
 		pokey.SetSerialNoiseEnabled(key.getBool("Audio: Serial noise enabled", true));
@@ -1194,7 +1212,7 @@ void ATSettingsExchangeDevices(bool write, VDRegistryKey& key) {
 	auto *dm = g_sim.GetDeviceManager();
 	if (write) {
 		VDStringW devStr;
-		dm->SerializeDevice(nullptr, devStr);
+		dm->SerializeDevice(nullptr, devStr, true, true);
 		key.setString("Devices", devStr.c_str());
 
 		ATDiskEmulator& disk = g_sim.GetDiskDrive(0);

@@ -588,9 +588,13 @@ launch:
 			mpCPUHookMgr->UnsetHook(mpLoadContinueHook);
  
 			// Last of the Dragons requires X to be set to a particular value to avoid stomping CRITIC.
-			// This is what DOS launches with, since it calls SIO right before doing the run.
+			// This is what DOS launches with, since it calls CIO right before doing the run.
 			mpCPU->SetX(0x20);
 			kdb.STATUS = 0x01;
+
+			// C=1 needed by GUNDISK.XEX
+			mpCPU->Ldy(0x03);
+			mpCPU->SetP(0x03);
 
 			// retrieve run address
 			uint16 runAddr = kdb.RUNAD;
@@ -644,6 +648,12 @@ launch:
 		kdb.PBCTL = 0x3C;
 
 		ATClearPokeyTimersOnDiskIo(kdb);
+
+		// fake DOS CIO read through IOCB#1
+		mpCPU->SetA(0x00);
+		mpCPU->SetX(0x10);
+		mpCPU->Ldy(src == srcEnd ? 0x03 : 0x01);
+		mpCPU->SetP(0x03);
 
 		// check if INITAD has changed
 		uint16 initAddr = kdb.INITAD;

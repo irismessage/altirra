@@ -27,8 +27,8 @@ import shutil
 import marshal
 import itertools
 
-EXPECTED_MSVC_VERSION = '19.34.31937'
-EXPECTED_MSVC_VERSION_DESC = 'Visual Studio 2022 v17.4.3'
+EXPECTED_MSVC_VERSION = '19.38.33133'
+EXPECTED_MSVC_VERSION_DESC = 'Visual Studio 2022 v17.8.3'
 
 DIAGNOSTIC_PATTERN = re.compile(r'(?:[0-9]+\>|)(?:[a-zA-Z0-9:\\/.]* *\([0-9,]+\).*(?:warning|error)|.*fatal error LNK[0-9]+:).*', re.I)
 
@@ -470,7 +470,7 @@ def banner() -> None:
     if opts.enable_banner:
         opts.enable_banner = False
 
-        print("Altirra Build Release Utility Version 4.10")
+        print("Altirra Build Release Utility Version 4.20")
         print("Copyright (C) Avery Lee 2014-2023. Licensed under GNU General Public License, v2 or later")
         print()
 

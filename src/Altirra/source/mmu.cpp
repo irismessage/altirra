@@ -119,10 +119,7 @@ void ATMMUEmulator::RebuildMappingTables() {
 			break;
 	}
 
-	const int kernelBankMask = (hwmode == kATHardwareMode_800XL ||
-		hwmode == kATHardwareMode_1200XL ||
-		hwmode == kATHardwareMode_XEGS ||
-		hwmode == kATHardwareMode_130XE) ? 0x00 : 0x01;
+	const int kernelBankMask = kATHardwareModeTraits[hwmode].mbRunsXLOS ? 0x00 : 0x01;
 
 	const int cpuBankBit = (extbankmask != 0) ? 0x10 : 0x00;
 	int anticBankBit = 0;
@@ -180,13 +177,8 @@ void ATMMUEmulator::RebuildMappingTables() {
 	}
 
 	uint8 basicMask = mbForceBasic ? 0 : 0x02;
-	switch(hwmode) {
-		case kATHardwareMode_800XL:
-		case kATHardwareMode_XEGS:
-		case kATHardwareMode_130XE:
-			basicMask = 0;
-			break;
-	}
+	if (kATHardwareModeTraits[hwmode].mbInternalBASIC)
+		basicMask = 0;
 
 	for(int portb=0; portb<256; ++portb) {
 		const bool cpuEnabled = (~portb & cpuBankBit) != 0;

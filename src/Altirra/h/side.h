@@ -22,6 +22,7 @@
 #include <at/atcore/devicecart.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceparentimpl.h>
+#include <at/atcore/devicesnapshot.h>
 #include <at/atemulation/flash.h>
 #include <at/atemulation/rtcds1305.h>
 #include "ide.h"
@@ -44,6 +45,7 @@ class ATSIDEEmulator
 	, public ATDeviceBus
 	, public IATDeviceDiagnostics
 	, public IATDeviceButtons
+	, public IATDeviceSnapshot
 {
 	ATSIDEEmulator(const ATSIDEEmulator&) = delete;
 	ATSIDEEmulator& operator=(const ATSIDEEmulator&) = delete;
@@ -105,6 +107,11 @@ public:		// IATDeviceButtons
 	uint32 GetSupportedButtons() const override;
 	bool IsButtonDepressed(ATDeviceButton idx) const override;
 	void ActivateButton(ATDeviceButton idx, bool state) override;
+
+public:		// IATDeviceSnapshot
+	void GetSnapshotStatus(ATSnapshotStatus& status) const override;
+	void LoadState(const IATObjectState *state, ATSnapshotContext& ctx) override;
+	vdrefptr<IATObjectState> SaveState(ATSnapshotContext& ctx) const override;
 
 protected:
 	void LoadNVRAM();

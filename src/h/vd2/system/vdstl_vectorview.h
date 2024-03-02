@@ -47,7 +47,9 @@ public:
 	constexpr vdvector_view() : mpBegin(nullptr), mSize(0) {}
 	constexpr vdvector_view(T *p, size_t n) : mpBegin(p), mSize(n) {}
 
-	constexpr vdvector_view(const vdvector_view<std::remove_const_t<T>>& v)
+	constexpr vdvector_view(const vdvector_view&) = default;
+
+	constexpr vdvector_view(const vdvector_view<std::remove_const_t<T>>& v) requires std::is_const_v<T>
 		: mpBegin(v.data())
 		, mSize(v.size())
 	{
@@ -59,6 +61,8 @@ public:
 		, mSize(std::size(v))
 	{
 	}
+
+	vdvector_view& operator=(const vdvector_view&) = default;
 
 	bool			empty() const { return !mSize; }
 	size_type		size() const { return mSize; }

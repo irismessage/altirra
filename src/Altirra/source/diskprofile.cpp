@@ -248,6 +248,9 @@ constexpr void ATDiskProfile::Init(ATDiskEmulationMode mode) {
 	setCyc(mCyclesToNAKFromFrameEnd,			700us,		700us,		700us,		700us,		700us,		237us,		237us,		237us,		237us,		237us,		237us,		237us		);
 	setCyc(mCyclesToNAKFromCmdDeassert,			120us,		120us,		120us,		120us,		120us,		184us,		184us,		184us,		184us,		184us,		184us,		184us		);
 
+	//											Generic		Gen57.6		Fastest		810			Happy810	1050		USDoubler	Speedy1050	Happy1050	1050Turbo	XF551		IndusGT
+	setCyc(mCyclesPostReadToCE,					120us,		120us,		120us,		5136us,		5136us,		270us,		270us,		270us,		270us,		270us,		270us,		270us		);
+
 	// The 1050 Turbo V3.5 firmware takes 549 cycles @ 1MHz from leading edge of start bit of Complete byte
 	// to leading edge of the first data byte. Subtract off the 140 cycles it takes to send the
 	// C byte and we have a delay of 409 cycles @ 1MHz.
@@ -259,6 +262,9 @@ constexpr void ATDiskProfile::Init(ATDiskEmulationMode mode) {
 	setVal(mbRetryMode1050,						false,		false,		false,		false,		false,		true,		true,		true,		true,		true,		true,		true		);
 	setVal(mbReverseOnForwardSeeks,				false,		false,		false,		false,		false,		true,		true,		true,		true,		true,		true,		false		);
 	setVal(mbWaitForLongSectors,				false,		false,		false,		false,		false,		true,		true,		true,		true,		true,		true,		true		);
+
+	//											Generic		Gen57.6		Fastest		810			Happy810	1050		USDoubler	Speedy1050	Happy1050	1050Turbo	XF551		IndusGT
+	setVal(mbWritePercomChangesDensity,			false,		false,		false,		false,		false,		false,		false,		true,		false,		true,		true,		true		);
 
 	switch(mode) {
 		case kATDiskEmulationMode_Happy810:
@@ -297,7 +303,7 @@ constexpr void ATDiskProfile::Finalize() {
 }
 
 template<int... T_Indices>
-const ATDiskProfile& ATGetDiskProfile(ATDiskEmulationMode mode, std::index_sequence<T_Indices...>) {
+const ATDiskProfile& ATGetDiskProfile(ATDiskEmulationMode mode, std::integer_sequence<int, T_Indices...>) {
 	static constexpr ATDiskProfile sProfiles[] {
 		ATDiskProfile(ATDiskEmulationMode(T_Indices))...
 	};
@@ -306,7 +312,7 @@ const ATDiskProfile& ATGetDiskProfile(ATDiskEmulationMode mode, std::index_seque
 }
 
 const ATDiskProfile& ATGetDiskProfile(ATDiskEmulationMode mode) {
-	return ATGetDiskProfile(mode, std::make_index_sequence<kATDiskEmulationModeCount>());
+	return ATGetDiskProfile(mode, std::make_integer_sequence<int, kATDiskEmulationModeCount>());
 }
 
 const ATDiskProfile& ATGetDiskProfileIndusGTSynchromesh() {

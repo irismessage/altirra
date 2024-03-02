@@ -41,6 +41,10 @@ uint32 VDGetCurrentTick() {
 	return (uint32)GetTickCount();
 }
 
+uint64 VDGetCurrentTick64() {
+	return (uint64)GetTickCount64();
+}
+
 uint64 VDGetPreciseTick() {
 	LARGE_INTEGER li;
 	QueryPerformanceCounter(&li);

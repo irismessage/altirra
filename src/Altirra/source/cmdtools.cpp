@@ -50,7 +50,7 @@ void OnCommandToolsAnalyzeTapeDecoding() {
 	vdrefptr<IATCassetteImage> image;
 	ATCassetteLoadContext ctx;
 	ctx.mTurboDecodeAlgorithm = g_sim.GetCassette().GetTurboDecodeAlgorithm();
-	ATLoadCassetteImage(f1, &f2, ctx, ~image);
+	ATLoadCassetteImage(f1, nullptr, &f2, ctx, ~image);
 }
 
 void OnCommandToolsAdvancedConfiguration() {

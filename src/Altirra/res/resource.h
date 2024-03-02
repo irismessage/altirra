@@ -58,7 +58,6 @@
 #define IDD_PROGRESS                    160
 #define IDD_OPTIONS_STARTUP             161
 #define IDR_NOGAME                      162
-#define IDD_FILE_ASSOC                  162
 #define IDD_OPTIONS_FILEASSOC           163
 #define IDR_ABOUT                       164
 #define IDD_HDEVICE                     164
@@ -172,6 +171,11 @@
 #define IDD_DEBUG_BREAKPOINT            256
 #define IDR_MENU3                       257
 #define IDR_PERFANALYZER_MENU           257
+#define IDD_FILE_ASSOC2                 258
+#define IDR_ACCELERATOR1                259
+#define IDR_DEVICES_ACCEL               259
+#define IDR_DEBUG_HELP_TEMPLATE         260
+#define IDR_1030RELAY                   261
 #define IDI_DISK                        500
 #define IDI_TAPE                        501
 #define IDI_XEX                         502
@@ -214,6 +218,7 @@
 #define IDC_EJECT2                      1015
 #define IDC_BROWSE                      1015
 #define IDC_CRC32                       1015
+#define IDC_PATH5                       1015
 #define IDC_EJECT3                      1016
 #define IDC_READONLY                    1016
 #define IDC_PATH_PARENT                 1016
@@ -272,6 +277,7 @@
 #define IDC_NEWDISK5                    1030
 #define IDC_LATENCY                     1030
 #define IDC_MORE5                       1030
+#define IDC_BAUDRATE                    1030
 #define IDC_EJECT5                      1031
 #define IDC_STATIC_LATENCY              1031
 #define IDC_DISKPATH6                   1032
@@ -376,10 +382,15 @@
 #define IDC_STATIC_IDE_IMAGEPATH        1069
 #define IDC_BLU_SCALE                   1069
 #define IDC_STATIC_BLU_SCALE            1070
+#define IDC_STATIC_IDE_IMAGEPATH2       1070
 #define IDC_IDE_SIZE                    1071
+#define IDC_STATIC_IDE_IMAGEPATH3       1071
 #define IDC_STATIC_IDE_GEOMETRY         1072
+#define IDC_STATIC_IDE_IMAGEPATH4       1072
 #define IDC_STATIC_IDE_SIZE             1073
+#define IDC_STATIC_IDE_IMAGEPATH5       1073
 #define IDC_STATIC_IDE_SPEED            1074
+#define IDC_STATIC_IDE_IMAGEPATH6       1074
 #define IDC_IDE_CYLINDERS               1075
 #define IDC_IDE_HEADS                   1076
 #define IDC_IDE_SPT                     1077
@@ -527,7 +538,6 @@
 #define IDC_PROGRESS                    1175
 #define IDC_STATIC_STATUS               1176
 #define IDC_STATIC_DESC                 1177
-#define IDC_LIST1                       1178
 #define IDC_SETFILEASSOC                1179
 #define IDC_REMOVEFILEASSOC             1180
 #define IDC_DIAL_ADDRESS                1180
@@ -724,9 +734,11 @@
 #define IDC_PRESERVEEXTRAM              1221
 #define IDC_IGNORENONHUE0LUMA2          1221
 #define IDC_OVERLAYCOMPUTEDCOLORS       1221
+#define IDC_SHOWPADBOUNDS               1221
 #define IDC_NETMASK                     1222
 #define IDC_SIOBURST_D                  1222
 #define IDC_AUDIO_CH1                   1222
+#define IDC_SHOWPADPOINTERS             1222
 #define IDC_STATIC_NETADDR              1223
 #define IDC_SIOBURST_OTHER              1223
 #define IDC_AUDIO_CH2                   1223
@@ -749,6 +761,7 @@
 #define IDC_CIOBURST                    1228
 #define IDC_AUDIO_SCH2                  1228
 #define IDC_TURBODECODER                1228
+#define IDC_UPDATE_CHANNEL              1228
 #define IDC_PEAK_IMAGE                  1229
 #define IDC_SIOOVERRIDEDETECT           1229
 #define IDC_AUDIO_SCH3                  1229
@@ -787,6 +800,7 @@
 #define IDC_EXPAND                      1232
 #define IDC_USE_SEED                    1232
 #define IDC_TRACE                       1232
+#define IDC_DEFAULTAPPS                 1232
 #define IDC_BUTTON2                     1233
 #define IDC_REMOVE                      1233
 #define IDC_COPY_TO_CUSTOM              1233
@@ -977,6 +991,7 @@
 #define IDD_ADJUST_SCREENFX             1319
 #define IDC_INVERTMODE_ACCURATE         1319
 #define IDC_LOCATION_PC                 1319
+#define IDC_MODE_LISTEN                 1319
 #define IDC_HARDWARE_TYPE               1320
 #define IDC_SIOACCEL_PBI                1320
 #define IDC_ENHTEXT_HW                  1320
@@ -985,6 +1000,7 @@
 #define IDC_RADIO3                      1320
 #define IDC_INVERTMODE_COMPATIBLE       1320
 #define IDC_LOCATION_WRITE              1320
+#define IDC_MODE_CONNECT                1320
 #define IDC_VIDEO_STANDARD              1321
 #define IDC_SIOACCEL_BOTH               1321
 #define IDC_ENHTEXT_SW                  1321
@@ -1053,9 +1069,14 @@
 #define IDD_DBG_BREAKPOINTS1            1340
 #define IDD_DBG_TARGETS                 1340
 #define IDC_BOOTUNLOAD_DISKS            1341
+#define IDD_DEVICE_1030MODEM1           1341
+#define IDD_DEVICE_1400XL               1341
 #define IDC_AUTORESET_VIDEOSTD4         1342
 #define IDC_BOOTUNLOAD_TAPES            1342
+#define IDD_DEVICE_NETSERIAL            1342
 #define IDC_PROGRAMLOADMODE             1343
+#define IDD_CONFIGURE_DEBUGGER1         1343
+#define IDD_CONFIGURE_ACCESSIBILITY     1343
 #define IDC_RICHEDIT22                  1344
 #define IDC_CAPTION                     1344
 #define IDC_COMMAND1                    1345
@@ -1129,6 +1150,11 @@
 #define IDC_RADIO4                      1402
 #define IDC_LOCATION_CONDITION          1402
 #define IDC_TARGETS                     1403
+#define IDC_STATIC_MESSAGE              1404
+#define IDC_LISTEN                      1405
+#define IDC_FORCELOWERCASE              1406
+#define IDC_STATIC_CHANNEL_SELECTOR     1407
+#define IDC_STATIC_UPDATE_CHANNEL       1407
 #define ID_FILTERMODE_POINT             40023
 #define ID_FILTERMODE_BILINEAR          40024
 #define ID_FILTERMODE_BICUBIC           40025
@@ -1309,8 +1335,6 @@
 #define ID_CONTEXT_SHOWLABELNAMESPACES  40623
 #define ID_DISKEXP_IMPORTFILE           40624
 #define ID_DISKEXP_EXPORTFILE           40625
-#define ID_FILE_LOAD40626               40626
-#define ID_FILE_SAVE40627               40627
 #define ID_FILE_EXPORTPALETTE           40628
 #define ID_TOOLS_UPDATECHECKSUMSTOSHA256 40629
 #define ID_FILE_IMPORTREFERENCEPICTURE  40630
@@ -1371,11 +1395,7 @@
 #define IDC_EDIT_PASTE                  40696
 #define ID_EDIT_UNDO                    40697
 #define ID_EDIT_REDO                    40698
-#define ID_FILE_NEW40702                40702
 #define ID_FILE_OPEN                    40703
-#define ID_FILE_SAVE40704               40704
-#define ID_FILE_SAVEAS40705             40705
-#define ID_FILE_EXIT40706               40706
 #define ID_FILE_CLOSE                   40707
 #define ID_FILE_EXPORTASCAS             40708
 #define ID_FILE_EXPORTASWAV             40709
@@ -1414,6 +1434,21 @@
 #define ID_DISPLAYCONTEXTMENU_COPYESCAPEDTEXT 40747
 #define ID_DISPLAYCONTEXTMENU_COPYHEX   40748
 #define ID_DISPLAYCONTEXTMENU_COPYUNICODE 40749
+#define ID_CONTEXT_USEDPREGISTERSTATE   40750
+#define ID_CHANGEINTERLEAVE_2           40751
+#define ID_CHANGEINTERLEAVE_SD_2_1      40752
+#define ID_COPY                         40753
+#define ID_PASTE                        40755
+#define ID_TOOLS_VIEWMEMORYSTATISTICS   40756
+#define ID_FILE_LOAD40757               40757
+#define ID_FILE_SAVE40758               40758
+#define ID_CONTEXT_OPENINDEFAULTEDITOR  40759
+#define ID_CONTEXT_OPENIN               40760
+#define ID_OPENIN_FILEEXPLORER          40761
+#define ID_OPENIN_DEFAULTEDITOR         40762
+#define ID_FILE_IMPORT                  40763
+#define ID_IMPORT_ATARI800WINPLUS4      40764
+#define ID_IMPORT_ATARI800              40765
 #define ID_INPUT_PORT1_NONE             45000
 #define ID_INPUT_PORT2_NONE             45100
 #define ID_INPUT_PORT3_NONE             45200
@@ -1427,9 +1462,9 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
-#define _APS_NEXT_RESOURCE_VALUE        258
-#define _APS_NEXT_COMMAND_VALUE         40750
-#define _APS_NEXT_CONTROL_VALUE         1404
+#define _APS_NEXT_RESOURCE_VALUE        262
+#define _APS_NEXT_COMMAND_VALUE         40766
+#define _APS_NEXT_CONTROL_VALUE         1408
 #define _APS_NEXT_SYMED_VALUE           113
 #endif
 #endif

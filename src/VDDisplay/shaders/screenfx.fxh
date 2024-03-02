@@ -45,12 +45,11 @@
 	extern float4 vsScanlineInfo : register(vs, c16);
 	extern float4 vsDistortionInfo : register(vs, c17);
 	extern float4 vsDistortionScales : register(vs, c18);
-	extern float4 vsImageUVSize : register(vs, c19);
 #else
 	extern float4 vsScanlineInfo : register(vs, c1);
 	extern float4 vsDistortionInfo : register(vs, c2);
 	extern float4 vsDistortionScales : register(vs, c3);
-	extern float4 vsImageUVSize : register(vs, c4);
+	extern float4 vd_outputxform : register(vs, c4);
 #endif
 
 cbuffer PS_ScreenFX {
@@ -121,16 +120,18 @@ void VP_ScreenFX(
 	out float2 oT0 : TEXCOORD0,
 	out float2 oTScanMask : TEXCOORD1)
 {
+	oT0 = uv0;
+	oTScanMask = float2(0, uv1.y * vsScanlineInfo.x + vsScanlineInfo.y);
+
+#if ENGINE_D3D9
 	float2 v = uv1 - float2(0.5f, 0.5f);
 	float2 v2 = v * vsDistortionScales.xy;
-	pos.xy = (v * sqrt(vsDistortionScales.z / (1.0f + dot(v2, v2))) + float2(0.5f, 0.5f)) * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f);
-	
-#if ENGINE_D3D9
-	pos.xy += float2(-1.0f, 1.0f)*vd_vpsize.wz;
-#endif
+	pos.xy = v * sqrt(vsDistortionScales.z / (1.0f + dot(v2, v2))) + float2(0.5f, 0.5f);
 
-	oT0 = uv0;
-	oTScanMask = float2(0, uv1.y * vsImageUVSize.w);
+	pos.xy = vd_outputxform.xy * pos.xy + vd_outputxform.wz;
+	
+	pos.xy += float2(-0.5f, 0.5f)*vd_vpsize.wz;
+#endif
 
 	oPos = float4(pos.xy, 0.5, 1);
 	

@@ -62,11 +62,17 @@ enum ATAudioSampleId : uint32 {
 	kATAudioSampleId_DiskStep2,
 	kATAudioSampleId_DiskStep2H,
 	kATAudioSampleId_DiskStep3,
-	kATAudioSampleId_SpeakerStep
+	kATAudioSampleId_SpeakerStep,
+	kATAudioSampleId_1030Relay
 };
 
 enum class ATSoundId : uint32 {
 	Invalid = 0
+};
+
+class IATInternalAudioTap {
+public:
+	virtual void WriteInternalAudio(const float *samples, uint32 count, uint32 timestamp) = 0;
 };
 
 class IATAudioMixer {
@@ -79,6 +85,17 @@ public:
 	virtual IATSyncAudioSamplePlayer& GetSamplePlayer() = 0;
 	virtual IATSyncAudioSamplePlayer& GetEdgeSamplePlayer() = 0;
 	virtual IATSyncAudioEdgePlayer& GetEdgePlayer() = 0;
+
+	// Add/remove internal audio taps, which receive the raw audio output from the computer. Currently this
+	// receives just the main POKEY output.
+	virtual void AddInternalAudioTap(IATInternalAudioTap *tap) = 0;
+	virtual void RemoveInternalAudioTap(IATInternalAudioTap *tap) = 0;
+
+	// Enable or disable internal audio. Unblock must be called once for each
+	// call to Block. This does not block the internal audio tap, which receives
+	// the internal audio regardless.
+	virtual void BlockInternalAudio() = 0;
+	virtual void UnblockInternalAudio() = 0;
 };
 
 class IATAudioSampleSource {

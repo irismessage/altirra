@@ -33,10 +33,11 @@ float4 vd_tempsize : register(c4);
 float4 vd_interphtexsize : register(c5);
 float4 vd_interpvtexsize : register(c6);
 float4 vd_interptexsize : register(c7);
-float4 vd_fieldinfo : register(c8);
+float4 vd_srcarea : register(c8);
 float2 vd_chromauvscale : register(c9);
 float2 vd_chromauvoffset : register(c10);
 float2 vd_pixelsharpness : register(c11);
+float4 vd_outputxform : register(c12);
 
 texture vd_srctexture;
 texture vd_src2atexture;

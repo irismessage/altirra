@@ -796,13 +796,13 @@ protected:
 	ATDeviceParentSingleChild mDeviceParent;
 };
 
-void ATCreateDevice850Modem(const ATPropertySet& pset, IATDevice **dev) {
+void ATCreateDevice850(const ATPropertySet& pset, IATDevice **dev) {
 	vdrefptr<ATRS232Emulator> p(new ATRS232Emulator);
 
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDef850Modem = { "850", "850", L"850 Interface Module", ATCreateDevice850Modem };
+extern const ATDeviceDefinition g_ATDeviceDef850 = { "850", "850", L"850 Interface Module", ATCreateDevice850 };
 
 ATRS232Emulator::ATRS232Emulator()
 	: mpScheduler(NULL)
@@ -836,7 +836,7 @@ void *ATRS232Emulator::AsInterface(uint32 id) {
 }
 
 void ATRS232Emulator::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mpDef = &g_ATDeviceDef850Modem;
+	info.mpDef = &g_ATDeviceDef850;
 }
 
 void ATRS232Emulator::Init() {

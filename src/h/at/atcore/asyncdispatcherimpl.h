@@ -37,7 +37,7 @@ public:
 	void Cancel(uint64 *token) override;
 
 private:
-	void InternalCancel(uint64 *token);
+	void InternalCancel(uint64 token);
 
 	vdfunction<void()> mWakeCallback;
 

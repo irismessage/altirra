@@ -70,6 +70,9 @@ void ATAnticEmulator::Init(ATAnticEmulatorConnections *mem, ATGTIAEmulator *gtia
 void ATAnticEmulator::SetPALMode(bool pal) {
 	mScanlineLimit = pal ? 312 : 262;
 	mScanlineMax = mScanlineLimit - 1;
+
+	// NTSC vsync 251-254
+	// PAL vsync 275-278
 	mVSyncStart = pal ? 275 : 251;
 }
 
@@ -697,6 +700,8 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 				mbWSYNCActive = false;
 
 				mRDYCycleOffset = mWSYNCCycleOffset + mX - mHALTCycles;
+
+				mpConn->AnticNegateRDY();
 			}
 		} else if (mX == 112) {
 			// Check if we have hit the end of the mode line. We need to detect this now in case
@@ -838,7 +843,14 @@ void ATAnticEmulator::AdvanceFrame() {
 	mbDLActive = false;		// necessary when DL DMA disabled for Joyride ptB
 
 	// tell GTIA if the next field is an odd field
-	mpGTIA->SetFieldPolarity(!mbInBuggedVBlank || mVSyncShiftTime < 20);
+	if (mbInBuggedVBlank) {
+		// If the vsync is shifted, then vertical retrace is delayed by half a scan line.
+		// This pulls up the field by half a line. HOWEVER, we've already started the next
+		// frame, so the field polarity is already committed -- so send the opposite.
+		mpGTIA->SetNextFieldPolarity(mVSyncShiftTime < 20 ? ATVideoFieldPolarity::Upper : ATVideoFieldPolarity::Lower);
+	} else {
+		mpGTIA->SetNextFieldPolarity(ATVideoFieldPolarity::Unknown);
+	}
 
 	if (mAnalysisMode)
 		memset(mActivityMap, 0, sizeof mActivityMap);
@@ -1650,6 +1662,25 @@ void ATAnticEmulator::Decode(int offset) {
 	mPFDecodeCounter = x;
 }
 
+sint32 ATAnticEmulator::ReadBackWriteRegister(uint8 reg) const {
+	reg &= 0x0F;
+
+	switch(reg) {
+		case 0x00:	return mDMACTL;
+		case 0x01:	return mCHACTL;
+		case 0x02:	return (uint8)mDLIST;
+		case 0x03:	return (uint8)(mDLIST >> 8);
+		case 0x04:	return mHSCROL;
+		case 0x05:	return mVSCROL;
+		case 0x07:	return mPMBASE;
+		case 0x09:	return mCHBASE;
+		case 0x0E:	return mNMIEN;
+
+		default:
+			return -1;
+	}
+}
+
 uint8 ATAnticEmulator::ReadByte(uint8 reg) const {
 	reg &= 0x0F;
 
@@ -1737,7 +1768,7 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 			}
 			break;
 
-		case 0x01:
+		case 0x01:		// CHACTL
 			value &= 0x07;
 
 			if (mCHACTL != value) {
@@ -1749,15 +1780,15 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 			}
 			break;
 
-		case 0x02:
+		case 0x02:		// DLISTL
 			mDLIST = (mDLIST & 0xff00) + value;
 			break;
 
-		case 0x03:
+		case 0x03:		// DLISTH
 			mDLIST = (mDLIST & 0xff) + (value << 8);
 			break;
 
-		case 0x04:
+		case 0x04:		// HSCROL
 			value &= 15;
 
 			// If we are changing the LSB, we are toggling the color clock delay on and off. This
@@ -1787,7 +1818,7 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 			}
 			break;
 
-		case 0x05:
+		case 0x05:		// VSCROL
 			mVSCROL = value & 15;
 
 			// mLatchedVScroll captures the state of VSCROL at cycle 109 on
@@ -1797,7 +1828,7 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 				mLatchedVScroll = mVSCROL;
 			break;
 
-		case 0x07:
+		case 0x07:		// PMBASE
 			mPMBASE = value & 0xFC;
 			break;
 
@@ -1835,7 +1866,7 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 }
 
 void ATAnticEmulator::DumpStatus() {
-	ATConsolePrintf("DMACTL = %02x  : %s%s%s%s%s\n"
+	ATConsolePrintf("DMACTL = %02X  : %s%s%s%s%s\n"
 		, mDMACTL
 		, (mDMACTL&3) == 0 ? "none"
 		: (mDMACTL&3) == 1 ? "narrow"
@@ -1846,29 +1877,29 @@ void ATAnticEmulator::DumpStatus() {
 		, mDMACTL & 0x10 ? " 1-line" : " 2-line"
 		, mDMACTL & 0x20 ? " dlist" : ""
 		);
-	ATConsolePrintf("CHACTL = %02x  :%s%s%s\n"
+	ATConsolePrintf("CHACTL = %02X  :%s%s%s\n"
 		, mCHACTL
 		, mCHACTL & 0x04 ? " reflect" : ""
 		, mCHACTL & 0x02 ? " invert" : ""
 		, mCHACTL & 0x01 ? " blank" : ""
 		);
-	ATConsolePrintf("DLIST  = %04x\n", mDLIST);
-	ATConsolePrintf("HSCROL = %02x\n", mHSCROL);
-	ATConsolePrintf("VSCROL = %02x\n", mVSCROL);
-	ATConsolePrintf("PMBASE = %02x\n", mPMBASE);
- 	ATConsolePrintf("CHBASE = %02x\n", mCHBASE);
-	ATConsolePrintf("NMIEN  = %02x  :%s%s\n"
+	ATConsolePrintf("DLIST  = %04X\n", mDLIST);
+	ATConsolePrintf("HSCROL = %02X\n", mHSCROL);
+	ATConsolePrintf("VSCROL = %02X\n", mVSCROL);
+	ATConsolePrintf("PMBASE = %02X\n", mPMBASE);
+ 	ATConsolePrintf("CHBASE = %02X\n", mCHBASE);
+	ATConsolePrintf("NMIEN  = %02X  :%s%s\n"
 		, mNMIEN
 		, mNMIEN & 0x80 ? " dli" : ""
 		, mNMIEN & 0x40 ? " vbi" : ""
 		);
-	ATConsolePrintf("NMIST  = %02x  :%s%s%s\n"
+	ATConsolePrintf("NMIST  = %02X  :%s%s%s\n"
 		, mNMIST
 		, mNMIST & 0x80 ? " dli" : ""
 		, mNMIST & 0x40 ? " vbi" : ""
 		, mNMIST & 0x20 ? " reset" : ""
 		);
-	ATConsolePrintf("PENH/V = %02x %02x\n", mPENH, mPENV);
+	ATConsolePrintf("PENH/V = %02X %02X\n", mPENH, mPENV);
 }
 
 void ATAnticEmulator::DumpDMALineBuffer() {
@@ -2201,7 +2232,7 @@ void ATAnticEmulator::EndLoadStateInternal() {
 	ExecuteQueuedUpdates();
 }
 
-class ATSaveStateAnticInternal : public ATSnapExchangeObject<ATSaveStateAnticInternal> {
+class ATSaveStateAnticInternal : public ATSnapExchangeObject<ATSaveStateAnticInternal, "ATSaveStateAnticInternal"> {
 public:
 	template<typename T>
 	void Exchange(T& rw) {
@@ -2355,7 +2386,7 @@ public:
 	uint8	mPFDecodeBuffer[228] {};
 };
 
-class ATSaveStateAntic : public ATSnapExchangeObject<ATSaveStateAntic> {
+class ATSaveStateAntic : public ATSnapExchangeObject<ATSaveStateAntic, "ATSaveStateAntic"> {
 public:
 	template<typename T>
 	void Exchange(T& rw) {
@@ -2386,9 +2417,6 @@ public:
 	uint8 mNMIST;
 	vdrefptr<ATSaveStateAnticInternal> mpInternalState;
 };
-
-ATSERIALIZATION_DEFINE(ATSaveStateAntic);
-ATSERIALIZATION_DEFINE(ATSaveStateAnticInternal);
 
 template<bool write, typename T>
 void ATAnticEmulator::TransferInternalState(T& obj2) {
@@ -2528,9 +2556,14 @@ void ATAnticEmulator::SaveState(IATObjectState **p) {
 	*p = obj.release();
 }
 
-void ATAnticEmulator::LoadState(const IATObjectState& state) {
-	const ATSaveStateAntic& astate = atser_cast<const ATSaveStateAntic&>(state);
+void ATAnticEmulator::LoadState(const IATObjectState *state) {
+	if (state)
+		LoadState(atser_cast<const ATSaveStateAntic&>(*state));
+	else
+		LoadState(ATSaveStateAntic{});
+}
 
+void ATAnticEmulator::LoadState(const ATSaveStateAntic& astate) {
 	mX = astate.mX;
 	mY = astate.mY;
 	mDMACTL = astate.mDMACTL;
@@ -3060,6 +3093,8 @@ void ATAnticEmulator::OnScheduledEvent(uint32 id) {
 			if (mpConn->AnticIsNextCPUCycleWrite())
 				++mWSYNCPending;
 			else {
+				mpConn->AnticAssertRDY();
+
 				mbWSYNCActive = true;
 
 				// +1 because we haven't incremented X yet

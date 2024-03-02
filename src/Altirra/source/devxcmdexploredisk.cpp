@@ -28,13 +28,13 @@ public:
 	int AddRef() override { return 2; }
 	int Release() override { return 1; }
 
-	bool IsSupported(IATDevice& dev) const override;
+	bool IsSupported(IATDevice *dev, int busIndex) const override;
 	ATDeviceXCmdInfo GetInfo() const override;
-	void Invoke(ATDeviceManager& devMgr, IATDevice& dev) override;
+	void Invoke(ATDeviceManager& devMgr, IATDevice *dev, int busIndex) override;
 } g_ATDeviceXCmdExploreDisk;
 
-bool ATDeviceXCmdExploreDisk::IsSupported(IATDevice& dev) const {
-	return vdpoly_cast<IATBlockDevice *>(&dev) != nullptr;
+bool ATDeviceXCmdExploreDisk::IsSupported(IATDevice *dev, int busIndex) const {
+	return vdpoly_cast<IATBlockDevice *>(dev) != nullptr && busIndex < 0;
 }
 
 ATDeviceXCmdInfo ATDeviceXCmdExploreDisk::GetInfo() const {
@@ -45,14 +45,14 @@ ATDeviceXCmdInfo ATDeviceXCmdExploreDisk::GetInfo() const {
 	return info;
 }
 
-void ATDeviceXCmdExploreDisk::Invoke(ATDeviceManager& devmgr, IATDevice& dev) {
-	IATBlockDevice *bd = vdpoly_cast<IATBlockDevice *>(&dev);
+void ATDeviceXCmdExploreDisk::Invoke(ATDeviceManager& devmgr, IATDevice *dev, int busIndex) {
+	IATBlockDevice *bd = vdpoly_cast<IATBlockDevice *>(dev);
 
 	if (!bd)
 		throw MyError("This device cannot be explored as a disk.");
 
 	ATDeviceInfo di;
-	dev.GetDeviceInfo(di);
+	dev->GetDeviceInfo(di);
 	ATUIShowDialogDiskExplorer(ATUIGetNewPopupOwner(), bd, di.mpDef->mpName);
 }
 

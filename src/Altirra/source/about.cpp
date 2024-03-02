@@ -20,7 +20,6 @@
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/theme.h>
 #include <at/atnativeui/uiproxies.h>
-#include <windows.h>
 #include <richedit.h>
 
 #include "resource.h"
@@ -31,67 +30,30 @@
 #include <vd2/system/w32assist.h>
 
 namespace {
-	void append_cooked(VDStringA& stream, const char *string, const char *stringEnd, bool rtfEscape) {
+	void append_cooked(VDStringA& stream, const char *string, const char *stringEnd) {
 		while(string != stringEnd) {
 			const char *s = string;
 
-			if (*s == '%') {
-				const char *varbase = ++s;
+			if (*s == '{' || *s == '\\' || *s == '}')
+				stream.push_back('\\');
 
-				while(s != stringEnd && *s != '%')
-					++s;
-
-				[[maybe_unused]]
-				const ptrdiff_t len = s - varbase;
-
-				VDASSERT(len == 0);
-
-				stream.push_back('%');
-
-				if (s != stringEnd)
-					++s;
-
-				string = s;
-				continue;
-			}
-
-			if (rtfEscape) {
-				if (*s == '{' || *s == '\\' || *s == '}')
-					stream.push_back('\\');
-
+			++s;
+			while(s != stringEnd && *s != '{' && *s != '\\' && *s != '}')
 				++s;
-				while(s != stringEnd && *s != '{' && *s != '\\' && *s != '}' && *s != '%')
-					++s;
-			} else {
-				++s;
-				while(s != stringEnd && *s != '%')
-					++s;
-			}
 
 			stream.append(string, s);
 			string = s;
 		}
 	}
 
-	void TextToRichTextControl(LPCTSTR resName, ATUINativeWindowProxy& dialog, VDUIProxyRichEditControl& richedit) {
-		HRSRC hResource = FindResource(NULL, resName, _T("STUFF"));
-
-		if (!hResource)
+	void TextToRichTextControl(int resId, ATUINativeWindowProxy& dialog, VDUIProxyRichEditControl& richedit) {
+		vdfastvector<uint8> buf;
+		if (!ATLoadMiscResource(resId, buf))
 			return;
 
-		HGLOBAL hGlobal = LoadResource(NULL, hResource);
-		if (!hGlobal)
-			return;
+		buf.push_back(0);
 
-		LPVOID lpData = LockResource(hGlobal);
-		if (!lpData)
-			return;
-
-		DWORD len = SizeofResource(NULL, hResource);
-
-		VDString tmp((const char *)lpData, (const char *)lpData + len);
-
-		const char *const title = (const char *)tmp.c_str();
+		const char *const title = (const char *)buf.data();
 		const char *s = title;
 
 		while(*s!='\r') ++s;
@@ -145,7 +107,7 @@ namespace {
 					++t;
 
 				rtf += "\\li300{\\cf2\\b ";
-				append_cooked(rtf, s, t, true);
+				append_cooked(rtf, s, t);
 				rtf +=  "}\\par ";
 
 				firstLine = false;
@@ -157,7 +119,7 @@ namespace {
 					} else
 						rtf += "\\par ";
 
-					append_cooked(rtf, s + 2, end, true);
+					append_cooked(rtf, s + 2, end);
 
 					firstLine = false;
 				} else if (!firstLine || s != end) {
@@ -178,7 +140,7 @@ namespace {
 							rtf += "\\li0{\\fs23 ";
 					}
 
-					append_cooked(rtf, s, end, true);
+					append_cooked(rtf, s, end);
 
 					if (!list_active) {
 						if (spaces == 0)
@@ -219,7 +181,7 @@ private:
 
 void ATUIDialogChangeLog::OnDataExchange(bool write) {
 	if (!write) {
-		TextToRichTextControl(MAKEINTRESOURCE(IDR_CHANGES), *this, mTextView);
+		TextToRichTextControl(IDR_CHANGES, *this, mTextView);
 	}
 }
 

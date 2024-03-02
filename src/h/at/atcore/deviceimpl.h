@@ -52,18 +52,45 @@ public:
 
 	virtual void SetTraceContext(ATTraceContext *context) override;
 	virtual bool GetErrorStatus(uint32 idx, VDStringW& error) override;
+	virtual bool IsSaveStateAgnostic() const override;
 
-protected:
 	void *GetService(uint32 iid) const;
 
-	template<typename T>
+	template<typename T> requires (T::kTypeID != 0)
 	T *GetService() const {
 		return (T *)GetService(T::kTypeID);
 	}
 
+protected:
+	void SetSaveStateAgnostic() { mbSaveStateAgnostic = true; }
+	void NotifyStatusChanged();
+
 	IATDeviceManager *mpDeviceManager = nullptr;
 	IATDeviceParent *mpDeviceParent = nullptr;
 	uint32 mDeviceParentBusIndex = 0;
+	bool mbSaveStateAgnostic = false;
+};
+
+template<typename... T_Interfaces>
+class ATDeviceT : public ATDevice, public T_Interfaces... {
+public:
+	int AddRef() {
+		return ATDevice::AddRef();
+	}
+
+	int Release() {
+		return ATDevice::Release();
+	}
+
+	void *AsInterface(uint32 iid) {
+		if (iid == IATDevice::kTypeID)
+			return static_cast<IATDevice *>(this);
+
+		void *p = nullptr;
+		(void)(... || (iid == T_Interfaces::kTypeID ? (p = static_cast<T_Interfaces *>(this)) : static_cast<T_Interfaces *>(nullptr)));
+
+		return p;
+	}
 };
 
 #endif

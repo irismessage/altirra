@@ -52,8 +52,19 @@ void ATUISelectNextAltOutput();
 bool ATUIGetAltViewAutoswitchingEnabled();
 void ATUISetAltViewAutoswitchingEnabled(bool enabled);
 
+bool ATUIGetDrawPadBoundsEnabled();
+void ATUISetDrawPadBoundsEnabled(bool enabled);
+bool ATUIGetDrawPadPointersEnabled();
+void ATUISetDrawPadPointersEnabled(bool enabled);
+
 ATDisplayStretchMode ATUIGetDisplayStretchMode();
 void ATUISetDisplayStretchMode(ATDisplayStretchMode mode);
+
+float ATUIGetDisplayZoom();
+void ATUISetDisplayZoom(float zoom);
+
+vdfloat2 ATUIGetDisplayPanOffset();
+void ATUISetDisplayPanOffset(const vdfloat2& pan);
 
 void ATSetVideoStandard(ATVideoStandard vs);
 bool ATUISwitchHardwareMode(VDGUIHandle h, ATHardwareMode mode, bool switchProfile);
@@ -63,6 +74,7 @@ bool ATUIGetDriveSoundsEnabled();
 void ATUISetDriveSoundsEnabled(bool enabled);
 
 void ATUIRecalibrateLightPen();
+void ATUIActivatePanZoomTool();
 void ATUIOpenOnScreenKeyboard();
 void ATUIToggleHoldKeys();
 

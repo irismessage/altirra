@@ -19,8 +19,9 @@
 #include <vd2/system/hash.h>
 #include <vd2/system/int128.h>
 #include <at/atcore/blockdevice.h>
-#include <at/atcore/propertyset.h>
 #include <at/atcore/deviceserial.h>
+#include <at/atcore/propertyset.h>
+#include <at/atcore/snapshotimpl.h>
 #include "mio.h"
 #include "debuggerlog.h"
 #include "memorymanager.h"
@@ -39,31 +40,7 @@ void ATCreateDeviceMIOEmulator(const ATPropertySet& pset, IATDevice **dev) {
 
 extern const ATDeviceDefinition g_ATDeviceDefMIO = { "mio", "mio", L"MIO", ATCreateDeviceMIOEmulator, kATDeviceDefFlag_RebootOnPlug };
 
-ATMIOEmulator::ATMIOEmulator()
-	: mPBIBANK(0)
-	, mRAMPAGE(0)
-	, mDataIn(0)
-	, mDataOut(0)
-	, mStatus1(0)
-	, mStatus2(0)
-	, mbPrinterIRQEnabled(false)
-	, mbACIAIRQActive(false)
-	, mpFwMan(nullptr)
-	, mpUIRenderer(nullptr)
-	, mpIRQController(nullptr)
-	, mIRQBit(0)
-	, mpScheduler(nullptr)
-	, mpEventUpdateSCSIBus(nullptr)
-	, mpMemMan(nullptr)
-	, mpMemLayerPBI(nullptr)
-	, mpMemLayerRAM(nullptr)
-	, mpMemLayerFirmware(nullptr)
-	, mpPrinterOutput(nullptr)
-	, mpSerialDevice(nullptr)
-	, mbRTS(false)
-	, mbDTR(false)
-
-{
+ATMIOEmulator::ATMIOEmulator() {
 	memset(mFirmware, 0xFF, sizeof mFirmware);
 
 	mACIA.SetInterruptFn([this](bool state) { OnACIAIRQStateChanged(state); });
@@ -86,9 +63,10 @@ void *ATMIOEmulator::AsInterface(uint32 iid) {
 		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(this);
 		case IATDeviceIndicators::kTypeID: return static_cast<IATDeviceIndicators *>(this);
 		case IATDevicePrinterPort::kTypeID: return static_cast<IATDevicePrinterPort *>(this);
+		case IATDeviceSnapshot::kTypeID: return static_cast<IATDeviceSnapshot *>(this);
 	}
 
-	return nullptr;
+	return ATDevice::AsInterface(iid);
 }
 
 void ATMIOEmulator::GetDeviceInfo(ATDeviceInfo& info) {
@@ -207,20 +185,23 @@ void ATMIOEmulator::WarmReset() {
 	mRAMPAGE = 1;
 	SetRAMPAGE(0);
 
+	mbRAMEnabled = false;
 	mpMemMan->EnableLayer(mpMemLayerRAM, false);
 
 	mbLastPrinterStrobe = true;
 
 	mACIA.Reset();
 
+	mStatus2 = 0x07;
 	mpIRQController->Negate(mIRQBit, false);
 
+	UpdateControlState();
 	OnSCSIControlStateChanged(mSCSIBus.GetBusState());
 }
 
 void ATMIOEmulator::ColdReset() {
 	mStatus1 = 0xBF;		// D6=0 because printer is never busy
-	mStatus2 = 0xFF;
+	mStatus2 = 0x07;
 
 	memset(mRAM, 0x00, sizeof mRAM);
 
@@ -328,6 +309,107 @@ void ATMIOEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 
 void ATMIOEmulator::SetPrinterDefaultOutput(IATPrinterOutput *out) {
 	mpPrinterOutput = out;
+}
+
+void ATMIOEmulator::GetSnapshotStatus(ATSnapshotStatus& status) const {
+	mSCSIBus.GetSnapshotStatus(status);
+}
+
+struct ATSaveStateMIO final : public ATSnapExchangeObject<ATSaveStateMIO, "ATSaveStateMIO"> {
+public:
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	uint8 mArchDataOut = 0;
+
+	uint8 mArchRAMPage = 0;
+	uint8 mArchControl1 = 0;
+	uint8 mArchControl2 = 0;
+
+	vdrefptr<IATObjectState> mpACIAState;
+	vdrefptr<ATSaveStateMemoryBuffer> mpRAM;
+};
+
+template<ATExchanger T>
+void ATSaveStateMIO::Exchange(T& ex) {
+	ex.Transfer("arch_data_out", &mArchDataOut);
+
+	ex.Transfer("arch_ram_page", &mArchRAMPage);
+	ex.Transfer("arch_control_1", &mArchControl1);
+	ex.Transfer("arch_control_2", &mArchControl2);
+
+	ex.Transfer("acia_state", &mpACIAState);
+	ex.Transfer("ram", &mpRAM);
+}
+
+void ATMIOEmulator::LoadState(const IATObjectState *state, ATSnapshotContext& ctx) {
+	if (!state) {
+		const ATSaveStateMIO kDefaultState {};
+
+		return LoadState(&kDefaultState, ctx);
+	}
+
+	const ATSaveStateMIO& mstate = atser_cast<const ATSaveStateMIO&>(*state);
+	
+	// we need to update the SCSI bus output, but only if the data bus is being driven
+	// from the incoming SCSI I/O line, and without the ACK side effects of the normal
+	// update.
+	mDataOut = mstate.mArchDataOut;
+
+	if (mStatus1 & 0x04)
+		mSCSIBus.SetControl(0, (~mDataOut & 0xff), 0xff);
+
+	// Restore $D1FE. We do need to dodge the side effect if strobe gets pulled low, so
+	// pre-assert strobe so a trailing edge is not possible.
+	mbLastPrinterStrobe = true;
+	OnWrite(this, 0xD1FE, mstate.mArchControl1);
+
+	// apply PBI ROM bank to $D1FF -- no side effects so reuse the write path
+	OnWrite(this, 0xD1FF, mstate.mArchControl2);
+
+	// restore lower 8 bits of RAM bank
+	SetRAMPAGE(mstate.mArchRAMPage + (mRAMPAGE & 0xF00));
+
+	mACIA.LoadState(mstate.mpACIAState);
+
+	memset(mRAM, 0xFF, sizeof mRAM);
+
+	if (mstate.mpRAM) {
+		const auto& readBuffer = mstate.mpRAM->GetReadBuffer();
+		
+		if (!readBuffer.empty())
+			memcpy(mRAM, readBuffer.data(), std::min<size_t>(readBuffer.size(), sizeof mRAM));
+	}
+}
+
+vdrefptr<IATObjectState> ATMIOEmulator::SaveState(ATSnapshotContext& ctx) const {
+	vdrefptr state { new ATSaveStateMIO };
+
+	// Memory state
+	state->mArchRAMPage = mRAMPAGE;
+
+	// SCSI port state
+	state->mArchDataOut = mDataOut;
+
+	// reconstitute equivalent control register values from state
+	state->mArchRAMPage = (uint8)mRAMPAGE;
+
+	state->mArchControl1
+		= (mbPrinterIRQEnabled ? 0x80 : 0x00)
+		+ (mbLastPrinterStrobe ? 0x40 : 0x00)
+		+ (mbRAMEnabled ? 0x20 : 0x00)
+		+ (mbSCSISelAsserted ? 0x10 : 0x00)
+		+ ((mRAMPAGE >> 8) & 0x0F);
+
+	state->mArchControl2 = mPBIBANK >= 0 ? 1 << mPBIBANK : 0;
+
+	state->mpACIAState = mACIA.SaveState();
+
+	state->mpRAM = new ATSaveStateMemoryBuffer;
+	state->mpRAM->mpDirectName = L"mio-ram.bin";
+	state->mpRAM->GetWriteBuffer().assign(std::begin(mRAM), std::end(mRAM));
+
+	return state;
 }
 
 IATDeviceBus *ATMIOEmulator::GetDeviceBus(uint32 index) {
@@ -485,6 +567,15 @@ void ATMIOEmulator::OnScheduledEvent(uint32 id) {
 		mSCSIBus.SetControl(0, newState, newMask);
 }
 
+void ATMIOEmulator::UpdateControlState() {
+	ATDeviceSerialStatus status {};
+
+	if (mpSerialDevice)
+		status = mpSerialDevice->GetStatus();
+
+	OnControlStateChanged(status);
+}
+
 void ATMIOEmulator::OnControlStateChanged(const ATDeviceSerialStatus& status) {
 	mStatus2 &= ~7;
 
@@ -594,32 +685,15 @@ bool ATMIOEmulator::OnWrite(void *thisptr0, uint32 addr, uint8 value) {
 				thisptr->SetRAMPAGE((thisptr->mRAMPAGE & 0x0FF) + ((uint32)value << 8));
 
 				// D4 controls SCSI SEL
-				thisptr->mSCSIBus.SetControl(0, (value & 0x10) ? kATSCSICtrlState_SEL : 0, kATSCSICtrlState_SEL);
+				thisptr->mbSCSISelAsserted = (value & 0x10) != 0;
+				thisptr->mSCSIBus.SetControl(0, thisptr->mbSCSISelAsserted ? kATSCSICtrlState_SEL : 0, kATSCSICtrlState_SEL);
 
 				// D5=1 enables RAM access
-				thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerRAM, (value & 0x20) != 0);
+				thisptr->mbRAMEnabled = (value & 0x20) != 0;
+				thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerRAM, thisptr->mbRAMEnabled);
 
 				// D7 controls printer BUSY IRQ
-				thisptr->mbPrinterIRQEnabled = (value & 0x80) != 0;
-				if (thisptr->mbPrinterIRQEnabled) {
-					// Currently the printer never goes BUSY, so if the IRQ is enabled, it is
-					// active.
-					if (!(thisptr->mStatus2 & 0x08)) {
-						thisptr->mStatus2 |= 0x18;
-
-						if (!thisptr->mbACIAIRQActive)
-							thisptr->mpIRQController->Assert(thisptr->mIRQBit, false);
-					}
-				} else {
-					if (thisptr->mStatus2 & 0x08) {
-						thisptr->mStatus2 &= ~0x08;
-
-						if (!thisptr->mbACIAIRQActive) {
-							thisptr->mStatus2 &= ~0x10;
-							thisptr->mpIRQController->Negate(thisptr->mIRQBit, false);
-						}
-					}
-				}
+				thisptr->SetPrinterIRQEnabled((value & 0x80) != 0);
 
 				// D6 controls printer STROBE
 				if (value & 0x40) {
@@ -735,4 +809,31 @@ void ATMIOEmulator::SetRAMPAGE(uint32 page) {
 	mRAMPAGE = page;
 
 	mpMemMan->SetLayerMemory(mpMemLayerRAM, mRAM + ((uint32)page << 8));
+}
+
+void ATMIOEmulator::SetPrinterIRQEnabled(bool enabled) {
+	if (mbPrinterIRQEnabled == enabled)
+		return;
+
+	mbPrinterIRQEnabled = enabled;
+
+	if (mbPrinterIRQEnabled) {
+		// Currently the printer never goes BUSY, so if the IRQ is enabled, it is
+		// active.
+		if (!(mStatus2 & 0x08)) {
+			mStatus2 |= 0x18;
+
+			if (!mbACIAIRQActive)
+				mpIRQController->Assert(mIRQBit, false);
+		}
+	} else {
+		if (mStatus2 & 0x08) {
+			mStatus2 &= ~0x08;
+
+			if (!mbACIAIRQActive) {
+				mStatus2 &= ~0x10;
+				mpIRQController->Negate(mIRQBit, false);
+			}
+		}
+	}
 }

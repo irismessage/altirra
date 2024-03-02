@@ -76,10 +76,10 @@ public:
 		uint32 mSourceH;
 		uint32 mSourceTexW;
 		uint32 mSourceTexH;
-		uint32 mInterpHTexW;
-		uint32 mInterpHTexH;
-		uint32 mInterpVTexW;
-		uint32 mInterpVTexH;
+		float mInterpHTexW;
+		float mInterpHTexH;
+		float mInterpVTexW;
+		float mInterpVTexH;
 		uint32 mInterpTexW;
 		uint32 mInterpTexH;
 
@@ -93,10 +93,10 @@ public:
 		int mViewportH;
 
 		/// Desired output width and height. May extend outside of viewport, in which case clipping is desired.
-		int mOutputX;
-		int mOutputY;
-		int mOutputW;
-		int mOutputH;
+		float mOutputX;
+		float mOutputY;
+		float mOutputW;
+		float mOutputH;
 
 		bool mbOutputClear = false;
 		int mOutputTessellationX = 1;
@@ -104,7 +104,6 @@ public:
 
 		float mDefaultUVScaleCorrectionX;
 		float mDefaultUVScaleCorrectionY;
-		float mFieldOffset;
 
 		float mChromaScaleU;
 		float mChromaScaleV;
@@ -120,9 +119,11 @@ public:
 		bool mbAutoBilinear;
 
 		bool mbUseUV0Scale;
+		bool mbUseUV0Area;
 		bool mbUseUV1Area;
 
 		vdfloat2 mUV0Scale;
+		vdrect32f mUV0Area;
 		vdrect32f mUV1Area;
 	};
 
@@ -134,7 +135,7 @@ class VDINTERFACE IVDVideoUploadContextD3D9 : public IVDRefCount {
 public:
 	virtual IDirect3DTexture9 *GetD3DTexture(int i) = 0;
 
-	virtual bool Init(void *hmonitor, bool use9ex, const VDPixmap& source, bool allowConversion, bool preserveYCbCr, int buffers, bool use16bit) = 0;
+	virtual bool Init(void *hmonitor, bool use9ex, const VDPixmap& source, bool allowConversion, int buffers, bool use16bit) = 0;
 	virtual void Shutdown() = 0;
 
 	virtual bool Update(const VDPixmap& source) = 0;

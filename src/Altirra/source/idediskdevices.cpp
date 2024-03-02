@@ -25,7 +25,7 @@
 void ATCreateDeviceHardDiskPhysical(const ATPropertySet& pset, IATDevice **dev) {
 	vdrefptr<ATIDEPhysicalDisk> p(new ATIDEPhysicalDisk);
 
-	p->Init(pset.GetString("path"));
+	p->Init(pset.GetString("path", L""));
 
 	*dev = p;
 	(*dev)->AddRef();
@@ -35,7 +35,7 @@ void ATCreateDeviceHardDiskRawImage(const ATPropertySet& pset, IATDevice **dev) 
 	vdrefptr<ATIDERawImage> p(new ATIDERawImage);
 
 	p->Init(
-		pset.GetString("path"),
+		pset.GetString("path", L""),
 		pset.GetBool("write_enabled"),
 		pset.GetBool("solid_state"),
 		pset.GetUint32("sectors"),
@@ -51,14 +51,14 @@ void ATCreateDeviceHardDiskRawImage(const ATPropertySet& pset, IATDevice **dev) 
 void ATCreateDeviceHardDiskVHDImage(const ATPropertySet& pset, IATDevice **dev) {
 	vdrefptr<ATIDEVHDImage> p(new ATIDEVHDImage);
 
-	p->Init(pset.GetString("path"), pset.GetBool("write_enabled"), pset.GetBool("solid_state"));
+	p->Init(pset.GetString("path", L""), pset.GetBool("write_enabled"), pset.GetBool("solid_state"));
 
 	*dev = p;
 	(*dev)->AddRef();
 }
 
 void ATCreateDeviceHardDisk(const ATPropertySet& pset, IATDevice **dev) {
-	const wchar_t *path = pset.GetString("path");
+	const wchar_t *path = pset.GetString("path", L"");
 
 	if (path) {
 		if (ATIDEIsPhysicalDiskPath(path))

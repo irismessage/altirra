@@ -37,16 +37,18 @@ protected:
 
 	static void ForwardImpl(float *dst, const float *src, float *work, float *wtab, int numRadix4, int numRadix2, bool useVec4, int *fwdorder, int log2N);
 	static void InverseImpl(float *dst, const float *src, float *work, float *wtabend, int numRadix4, int numRadix2, bool useVec4, int *fwdorder, int log2N);
+	static void MultiplyAddImpl(float *dst, const float *src1, const float *src2, int N);
 };
 
 // Fast Fourier Transform implementation.
 //
 // Computes the forward DFT from real data to complex frequencies (sign -1), and the
-// inverse DFT from complex frequencies to real data (sign +1). Both transforms are
-// unnormalized with a scaling factor of sqrt(N/2). This means that:
+// inverse DFT from complex frequencies to real data (sign +1). The inverse transform
+// is unnormalized with a scaling factor of N/2. This means that:
 //
-//   - x = sqrt(N/2)*ifft(fft(x))
-//   - conv(x,y) = sqrt(N/2)*ifft(fft(x)*fft(y))
+//   - ifft(fft(x)) = (N/2)*x
+//   - conv(x,y) = (N/2)*ifft(fft(x)*fft(y))
+//               = ifft(fft(x*(N/2))*fft(y))
 //
 // The frequency domain order is: X[0], X[N/2], real(X[1]), imag(X[1]).... All terms
 // except the DC and Nyquist terms represent a pair of symmetric +/- frequency bins,
@@ -91,6 +93,10 @@ public:
 	// Inverse transform, out of place.
 	void Inverse(float *dst, const float *src) {
 		InverseImpl(dst, src, work, std::end(wtab2), kNumStagesRadix4, kNumStagesRadix2, kUseVec, fwdorder, kSizeBits);
+	}
+
+	void MultiplyAdd(float *dst, const float *src1, const float *src2) {
+		MultiplyAddImpl(dst, src1, src2, N);
 	}
 
 private:

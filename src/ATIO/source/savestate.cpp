@@ -57,18 +57,18 @@ void *ATSaveStateImage2::AsInterface(uint32 id) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-vdfunction<void(VDZipArchive&, IATSerializable **)> g_ATSaveState2Reader;
+vdfunction<void(VDZipArchive&, const wchar_t *, IATSerializable **)> g_ATSaveState2Reader;
 
-void ATSetSaveState2Reader(vdfunction<void(VDZipArchive&, IATSerializable **)> fn) {
+void ATSetSaveState2Reader(vdfunction<void(VDZipArchive&, const wchar_t *, IATSerializable **)> fn) {
 	g_ATSaveState2Reader = std::move(fn);
 }
 
-void ATReadSaveState2(VDZipArchive& zip, IATSaveStateImage2 **saveState) {
+void ATReadSaveState2(VDZipArchive& zip, const wchar_t *rootFileName, IATSaveStateImage2 **saveState) {
 	if (!g_ATSaveState2Reader)
 		throw MyError("Save states are not supported.");
 
 	vdrefptr<IATSerializable> rootObj;
-	g_ATSaveState2Reader(zip, ~rootObj);
+	g_ATSaveState2Reader(zip, rootFileName, ~rootObj);
 
 	vdrefptr<ATSaveStateImage2> saveStateObj(new ATSaveStateImage2(rootObj));
 	*saveState = saveStateObj.release();

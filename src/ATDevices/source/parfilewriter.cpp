@@ -18,47 +18,31 @@
 #include <at/atcore/propertyset.h>
 #include <at/atdevices/parfilewriter.h>
 
-void ATCreateDeviceParallelFileWriter(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr p(new ATDeviceParallelFileWriter);
+void ATCreateDeviceFileWriter(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr p(new ATDeviceFileWriter);
 	p->SetSettings(pset);
 
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDefParallelFileWriter = { "parfilewriter", "parfilewriter", L"Parallel Port File Writer", ATCreateDeviceParallelFileWriter };
+extern const ATDeviceDefinition g_ATDeviceDefFileWriter = { "parfilewriter", "parfilewriter", L"File Writer", ATCreateDeviceFileWriter };
 
-int ATDeviceParallelFileWriter::AddRef() {
-	return ATDevice::AddRef();
+void ATDeviceFileWriter::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mpDef = &g_ATDeviceDefFileWriter;
 }
 
-int ATDeviceParallelFileWriter::Release() {
-	return ATDevice::Release();
-}
-
-void *ATDeviceParallelFileWriter::AsInterface(uint32 iid) {
-	switch(iid) {
-		case IATPrinterOutput::kTypeID: return static_cast<IATPrinterOutput *>(this);
-		default:
-			return ATDevice::AsInterface(iid);
-	}
-}
-
-void ATDeviceParallelFileWriter::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mpDef = &g_ATDeviceDefParallelFileWriter;
-}
-
-void ATDeviceParallelFileWriter::GetSettingsBlurb(VDStringW& buf) {
+void ATDeviceFileWriter::GetSettingsBlurb(VDStringW& buf) {
 	buf += mPath;
 
 	buf += mbTextTranslation ? L"; text" : L"; binary";
 }
 
-void ATDeviceParallelFileWriter::GetSettings(ATPropertySet& pset) {
+void ATDeviceFileWriter::GetSettings(ATPropertySet& pset) {
 	pset.SetString("path", mPath.c_str());
 	pset.SetBool("text_mode", mbTextTranslation);
 }
 
-bool ATDeviceParallelFileWriter::SetSettings(const ATPropertySet& pset) {
+bool ATDeviceFileWriter::SetSettings(const ATPropertySet& pset) {
 	const wchar_t *path = pset.GetString("path", L"");
 
 	if (mPath != path) {
@@ -74,21 +58,21 @@ bool ATDeviceParallelFileWriter::SetSettings(const ATPropertySet& pset) {
 	return true;
 }
 
-void ATDeviceParallelFileWriter::Init() {
+void ATDeviceFileWriter::Init() {
 	mbInited = true;
 	TryOpenOutput();
 }
 
-void ATDeviceParallelFileWriter::Shutdown() {
+void ATDeviceFileWriter::Shutdown() {
 	mFile.closeNT();
 	mbInited = false;
 }
 
-void ATDeviceParallelFileWriter::ColdReset() {
+void ATDeviceFileWriter::ColdReset() {
 	TryOpenOutput();
 }
 
-bool ATDeviceParallelFileWriter::GetErrorStatus(uint32 idx, VDStringW& error) {
+bool ATDeviceFileWriter::GetErrorStatus(uint32 idx, VDStringW& error) {
 	if (idx == 0 && !mCurrentError.empty()) {
 		error = VDTextAToW(mCurrentError.c_str());
 		return true;
@@ -97,7 +81,7 @@ bool ATDeviceParallelFileWriter::GetErrorStatus(uint32 idx, VDStringW& error) {
 	return false;
 }
 
-void ATDeviceParallelFileWriter::WriteASCII(const void *buf, size_t len) {
+void ATDeviceFileWriter::WriteASCII(const void *buf, size_t len) {
 	if (!mbTextTranslation) {
 		Write(buf, len);
 		Flush();
@@ -130,7 +114,7 @@ void ATDeviceParallelFileWriter::WriteASCII(const void *buf, size_t len) {
 	Flush();
 }
 
-void ATDeviceParallelFileWriter::WriteATASCII(const void *buf, size_t len) {
+void ATDeviceFileWriter::WriteATASCII(const void *buf, size_t len) {
 	if (!mbTextTranslation) {
 		Write(buf, len);
 		Flush();
@@ -153,14 +137,42 @@ void ATDeviceParallelFileWriter::WriteATASCII(const void *buf, size_t len) {
 	Flush();
 }
 
-void ATDeviceParallelFileWriter::WriteByte(uint8 c) {
+void ATDeviceFileWriter::SetOnStatusChange(const vdfunction<void(const ATDeviceSerialStatus&)>& fn) {
+}
+
+void ATDeviceFileWriter::SetTerminalState(const ATDeviceSerialTerminalState&) {
+}
+
+ATDeviceSerialStatus ATDeviceFileWriter::GetStatus() {
+	return {};
+}
+
+void ATDeviceFileWriter::SetOnReadReady(vdfunction<void()> fn) {
+}
+
+bool ATDeviceFileWriter::Read(uint32 baudRate, uint8& c, bool& framingError) {
+	return false;
+}
+
+bool ATDeviceFileWriter::Read(uint32& baudRate, uint8& c) {
+	return false;
+}
+
+void ATDeviceFileWriter::Write(uint32 baudRate, uint8 c) {
+	WriteATASCII(&c, 1);
+}
+
+void ATDeviceFileWriter::FlushBuffers() {
+}
+
+void ATDeviceFileWriter::WriteByte(uint8 c) {
 	if (mBufferLevel >= kBufferSize)
 		Flush();
 
 	mBuffer[mBufferLevel++] = c;
 }
 
-void ATDeviceParallelFileWriter::Write(const void *buf, size_t len) {
+void ATDeviceFileWriter::Write(const void *buf, size_t len) {
 	while(len) {
 		if (mBufferLevel == 0) {
 			WriteRaw(buf, len);
@@ -181,14 +193,14 @@ void ATDeviceParallelFileWriter::Write(const void *buf, size_t len) {
 	}
 }
 
-void ATDeviceParallelFileWriter::Flush() {
+void ATDeviceFileWriter::Flush() {
 	if (mBufferLevel) {
 		WriteRaw(mBuffer, mBufferLevel);
 		mBufferLevel = 0;
 	}
 }
 
-void ATDeviceParallelFileWriter::WriteRaw(const void *buf, size_t len) {
+void ATDeviceFileWriter::WriteRaw(const void *buf, size_t len) {
 	if (!len || !mFile.isOpen())
 		return;
 
@@ -200,7 +212,7 @@ void ATDeviceParallelFileWriter::WriteRaw(const void *buf, size_t len) {
 	}
 }
 
-void ATDeviceParallelFileWriter::TryOpenOutput() {
+void ATDeviceFileWriter::TryOpenOutput() {
 	if (mbInited && !mPath.empty() && !mFile.isOpen()) {
 		try {
 			mFile.open(mPath.c_str(), nsVDFile::kWrite | nsVDFile::kDenyNone | nsVDFile::kOpenAlways);

@@ -21,6 +21,9 @@
 #include <vd2/system/function.h>
 #include <at/atcore/scheduler.h>
 
+class IATObjectState;
+template<typename T> class vdrefptr;
+
 typedef void (*ATVIA6522OutputFn)(void *data, uint32 outputState);
 
 enum ATVIAOutputBit {
@@ -55,6 +58,9 @@ public:
 	uint8 DebugReadByte(uint8 address) const;
 	uint8 ReadByte(uint8 address);
 	void WriteByte(uint8 address, uint8 value);
+
+	void LoadState(const IATObjectState *state);
+	vdrefptr<IATObjectState> SaveState();
 
 public:
 	virtual void OnScheduledEvent(uint32 id);

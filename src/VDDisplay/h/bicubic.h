@@ -3,6 +3,7 @@
 
 #include <vd2/system/vdtypes.h>
 
-void VDDisplayCreateBicubicTexture(uint32 *dst, int w, int srcw, bool swapRB);
+void VDDisplayCreateBicubicTexture(uint32 *dst, int w, int srcw);
+void VDDisplayCreateBicubicTexture(uint32 *dst, int dstw, int srcw, float outx, float outw);
 
 #endif	// f_VD2_VDDISPLAY_BICUBIC_H

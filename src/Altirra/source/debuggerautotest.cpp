@@ -84,7 +84,7 @@ void ATDebuggerCmdAutotestAddDevice(ATDebuggerCmdParser& parser) {
 		throw MyError("Unknown device definition: %s.", tagArg->c_str());
 
 	ATPropertySet pset;
-	IATDevice *newDev = devMgr.AddDevice(def, pset, busRef.mpDeviceBus != nullptr, false);
+	IATDevice *newDev = devMgr.AddDevice(def, pset, busRef.mpDeviceBus != nullptr);
 
 	try {
 		if (busRef.mpDeviceBus) {
@@ -167,7 +167,7 @@ void ATDebuggerCmdAutotestListDevices(ATDebuggerCmdParser& parser) {
 		}
 	};
 
-	for(IATDevice *dev : dm.GetDevices(true, true)) {
+	for(IATDevice *dev : dm.GetDevices(true, true, false)) {
 		printDevice(dev, 0, printDevice);
 	}
 }
@@ -512,7 +512,7 @@ public:
 	bool ProcessSubCommand(const char *s) { return !mbCompleted; }
 
 private:
-	void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd) {
+	void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd, float par) {
 		if (mFramesRecorded++ == 0)
 			return;
 
