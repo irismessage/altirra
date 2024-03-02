@@ -16,6 +16,7 @@
 
 #include "stdafx.h"
 #include <at/atui/uicommandmanager.h>
+#include "cmdhelpers.h"
 #include "uiaccessors.h"
 #include "uikeyboard.h"
 
@@ -107,15 +108,7 @@ void OnCommandInputKeyboardCustomizeLayout() {
 	ATUIShowDialogKeyboardCustomize(ATUIGetNewPopupOwner());
 }
 
-namespace ATCommands {
-	ATUICmdState ToRadio(bool checked) {
-		return checked ? kATUICmdState_RadioChecked : kATUICmdState_None;
-	}
-
-	ATUICmdState ToChecked(bool checked) {
-		return checked ? kATUICmdState_Checked : kATUICmdState_None;
-	}
-	
+namespace ATCommands {	
 	bool IsCommandInputKeyboardLayout(ATUIKeyboardOptions::LayoutMode mode) {
 		return g_kbdOpts.mLayoutMode == mode;
 	}

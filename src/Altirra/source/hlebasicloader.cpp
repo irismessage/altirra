@@ -20,6 +20,7 @@
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
+#include <vd2/system/vdstl_vectorview.h>
 #include <at/atio/blobimage.h>
 #include "hlebasicloader.h"
 #include "hleutils.h"
@@ -76,6 +77,21 @@ void ATHLEBasicLoader::LoadProgram(IATBlobImage *image) {
 	mpCPUHookMgr->SetHookMethod(mpLaunchHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::CIOV, 10, this, &ATHLEBasicLoader::OnCIOV);
 
 	mbLaunchPending = true;
+	mState = State::RunProgram;
+}
+
+void ATHLEBasicLoader::LoadTape(bool pushKeyToLoadTape) {
+	vdsaferelease <<= mpImage;
+
+	mpCPUHookMgr->SetHookMethod(mpLaunchHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::CIOV, 10, this, &ATHLEBasicLoader::OnCIOV);
+
+	// We don't need to keep the BASIC loader across a cold reset for tape loads since
+	// the simulator will re-create it.
+	mbLaunchPending = false;
+
+	mbPushKeyToLoadTape = pushKeyToLoadTape;
+
+	mState = State::LoadTape;
 }
 
 uint8 ATHLEBasicLoader::OnCIOV(uint16) {
@@ -136,7 +152,7 @@ uint8 ATHLEBasicLoader::OnCIOV(uint16) {
 				mpCPU->Ldy(ATCIOSymbols::CIOStatNotSupported);
 				return 0x60;
 		}
-	} else if (cmd == ATCIOSymbols::CIOCmdOpen) {
+	} else if (mpImage && cmd == ATCIOSymbols::CIOCmdOpen) {
 		uint16 lineAddr = mem->ReadByte(ATKernelSymbols::ICBAL + iocb) + 256*mem->ReadByte(ATKernelSymbols::ICBAH + iocb);
 
 		if (mem->ReadByte(lineAddr) != '*')
@@ -161,20 +177,50 @@ uint8 ATHLEBasicLoader::OnCIOV(uint16) {
 		return 0;
 
 	// write command line
-	static const uint8 kCmdLine[]={ 'R', 'U', 'N', ' ', '"', '*', '"', 0x9B };
+	static const uint8 kRunProgramCmdLine[]={ 'R', 'U', 'N', ' ', '"', '*', '"', 0x9B };
+	static const uint8 kLoadTapeCmdLine[]={ 'C', 'L', 'O', 'A', 'D', 0x9B };
+	static const uint8 kRunTapeCmdLine[]={ 'R', 'U', 'N', 0x9B };
 
 	uint16 lineAddr = kdb.ICBAL_ICBAH;
 	uint32 lineLen = kdb.ICBLL_ICBLH;
 
-	if (lineLen > 8)
-		lineLen = 8;
+	vdvector_view<const uint8> cmdline {};
+
+	switch(mState) {
+		default:
+			return 0;
+
+		case State::RunProgram:
+			cmdline = kRunProgramCmdLine;
+			mState = State::None;
+			// leave hook attached for program load
+			break;
+
+		case State::LoadTape:
+			cmdline = kLoadTapeCmdLine;
+			mState = State::RunTape;
+
+			if (mbPushKeyToLoadTape)
+				kdb.CH = 0x21;
+			break;
+
+		case State::RunTape:
+			mState = State::None;
+			cmdline = kRunTapeCmdLine;
+			mpCPUHookMgr->UnsetHook(mpLaunchHook);
+			break;
+	}
+
+	uint32 cmdlineLen = cmdline.size();
+	if (lineLen > cmdlineLen)
+		lineLen = cmdlineLen;
 
 	for(uint32 i=0; i<lineLen; ++i)
-		mem->WriteByte(lineAddr++, kCmdLine[i]);
+		mem->WriteByte(lineAddr++, cmdline[i]);
 
 	kdb.ICBLL_ICBLH = lineLen;
 
-	uint8 status = lineLen < 8 ? ATCIOSymbols::CIOStatTruncRecord : ATCIOSymbols::CIOStatSuccess;
+	uint8 status = lineLen < cmdlineLen ? ATCIOSymbols::CIOStatTruncRecord : ATCIOSymbols::CIOStatSuccess;
 	kdb.STATUS = status;
 
 	mpCPU->Ldy(status);

@@ -61,6 +61,8 @@ protected:
 template<class T>
 class ATNotifyList : public ATNotifyListBase {
 public:
+	bool IsEmpty() const;
+
 	void Clear();
 
 	/// Adds a new item to the list. No check is made for a duplicate.
@@ -71,6 +73,8 @@ public:
 	/// if any. Silently exits if not found.
 	/// Complexity: O(N)
 	void Remove(T v);
+
+	void NotifyAll(const vdfunction<void(T)>& fn);
 
 	/// Process each element through a callback. If the callback returns
 	/// true, stop and return true; otherwise, return false once all
@@ -88,6 +92,11 @@ private:
 
 	List mList;
 };
+
+template<class T>
+bool ATNotifyList<T>::IsEmpty() const {
+	return mList.empty();
+}
 
 template<class T>
 void ATNotifyList<T>::Clear() {
@@ -112,6 +121,32 @@ void ATNotifyList<T>::Remove(T v) {
 
 		mList.erase(it);
 	}
+}
+
+template<class T>
+void ATNotifyList<T>::NotifyAll(const vdfunction<void(T)>& fn) {
+	if (mList.empty())
+		return;
+
+	bool interrupted = false;
+
+	Iterator it = { mpIteratorList, mFirstValid, mList.size() };
+	mpIteratorList = &it;
+
+	try {
+		while(it.mIndex < it.mLength) {
+			auto v = mList[it.mIndex++];
+
+			fn(v);
+		}
+	} catch(...) {
+		VDASSERT(mpIteratorList == &it);
+		mpIteratorList = it.mpNext;
+		throw;
+	}
+
+	VDASSERT(mpIteratorList == &it);
+	mpIteratorList = it.mpNext;
 }
 
 template<class T>

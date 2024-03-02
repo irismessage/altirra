@@ -90,6 +90,7 @@ enum ATFirmwareType {
 	kATFirmwareType_RapidusFlash,
 	kATFirmwareType_RapidusCorePBI,
 	kATFirmwareType_ISPlate,
+	kATFirmwareType_WarpOS,
 	kATFirmwareTypeCount
 };
 
@@ -158,6 +159,11 @@ public:
 
 private:
 	mutable uint64 mSpecificFirmwares[kATSpecificFirmwareTypeCount];
+
+	mutable VDStringW mKernelVersion;
+	mutable VDStringW mKernelXLVersion;
+	mutable VDStringW mKernel816Version;
+	mutable VDStringW mBASICVersion;
 };
 
 #endif	// f_AT_FIRMWAREMANAGER_H

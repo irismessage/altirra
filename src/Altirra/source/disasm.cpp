@@ -1893,11 +1893,12 @@ uint16 ATDisassembleInsn(VDStringA& line,
 	const uint8 byte2 = hent.mOpcode[2];
 	const uint8 byte3 = hent.mOpcode[3];
 
-	const uint8 pbk = (disasmMode == kATDebugDisasmMode_65C816) ? hent.mK : 0;
+	const bool is816 = (disasmMode == kATDebugDisasmMode_65C816);
+	const uint8 pbk = is816 ? hent.mK : 0;
 	const uint32 d = hent.mD;
 	const uint32 dpmask = !hent.mbEmulation || (uint8)d ? 0xffff : 0xff;
-	const uint32 x = hent.mX + ((uint32)hent.mExt.mXH << 8);
-	const uint32 y = hent.mY + ((uint32)hent.mExt.mYH << 8);
+	const uint32 x = hent.mX + (is816 ? (uint32)hent.mExt.mXH << 8 : 0);
+	const uint32 y = hent.mY + (is816 ? (uint32)hent.mExt.mYH << 8 : 0);
 	const uint32 s16 = ((uint32)hent.mExt.mSH << 8) + hent.mS;
 	
 	const uint8 (*const tbl)[2] = kModeTbl[subMode];
@@ -1916,6 +1917,12 @@ uint16 ATDisassembleInsn(VDStringA& line,
 				static const char kXPCTemplate[]=" 00'0000: ";
 
 				line += kXPCTemplate;
+				WriteHex8(line, 9, (uint8)(xpc >> 16));
+				WriteHex16(line, 6, (uint16)(xpc & 0xFFFF));
+			} else if ((xpc & kATAddressSpaceMask) == kATAddressSpace_CB) {
+				static const char kCBPCTemplate[]="t:00'0000: ";
+
+				line += kCBPCTemplate;
 				WriteHex8(line, 9, (uint8)(xpc >> 16));
 				WriteHex16(line, 6, (uint16)(xpc & 0xFFFF));
 			} else {

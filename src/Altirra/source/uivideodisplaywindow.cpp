@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <regex>
 #include <vd2/system/math.h>
 #include <vd2/system/time.h>
 #include <vd2/Dita/services.h>
@@ -25,12 +26,15 @@
 #include <at/atcore/device.h>
 #include <at/atcore/devicevideo.h>
 #include "console.h"
+#include "debugger.h"
 #include "inputmanager.h"
 #include "oshelper.h"
 #include "pokey.h"
 #include "simulator.h"
+#include "symbols.h"
 #include "uiaccessors.h"
 #include "uicaptionupdater.h"
+#include "uidragdrop.h"
 #include "uienhancedtext.h"
 #include "uikeyboard.h"
 #include <at/atui/uimanager.h>
@@ -41,6 +45,7 @@
 #include "uitypes.h"
 #include <at/atuicontrols/uilabel.h>
 #include <at/atui/uianchor.h>
+#include <at/atui/uidragdrop.h>
 #include "xep80.h"
 
 extern ATSimulator g_sim;
@@ -93,6 +98,18 @@ void ATUISetXEPViewEnabled(bool enabled) {
 
 ///////////////////////////////////////////////////////////////////////////
 
+namespace {
+	const ATUIDropFilesTarget kDropFileTargets[] = {
+		ATUIDropFilesTarget::MountCart,
+		ATUIDropFilesTarget::MountDisk4,
+		ATUIDropFilesTarget::MountDisk3,
+		ATUIDropFilesTarget::MountDisk2,
+		ATUIDropFilesTarget::MountDisk1,
+		ATUIDropFilesTarget::MountImage,
+		ATUIDropFilesTarget::BootImage,
+	};
+}
+
 ATUIVideoDisplayWindow::ATUIVideoDisplayWindow()
 	: mDisplayRect(0, 0, 0, 0)
 	, mbDragActive(false)
@@ -122,6 +139,7 @@ ATUIVideoDisplayWindow::ATUIVideoDisplayWindow()
 	mbFastClip = true;
 	SetAlphaFillColor(0);
 	SetTouchMode(kATUITouchMode_Dynamic);
+	SetDropTarget(true);
 }
 
 ATUIVideoDisplayWindow::~ATUIVideoDisplayWindow() {
@@ -163,7 +181,7 @@ void ATUIVideoDisplayWindow::ToggleHoldKeys() {
 	mbHoldKeys = !mbHoldKeys;
 
 	if (!mbHoldKeys) {
-		g_sim.SetPendingHeldKey(-1);
+		g_sim.ClearPendingHeldKey();
 		g_sim.SetPendingHeldSwitches(0);
 	}
 
@@ -269,80 +287,136 @@ void ATUIVideoDisplayWindow::EndEnhTextSizeIndicator() {
 	}
 }
 
-void ATUIVideoDisplayWindow::Copy() {
+void ATUIVideoDisplayWindow::Copy(bool enableEscaping) {
 	if (mDragPreviewSpans.empty())
 		return;
 
-	if (mpAltVideoOutput) {
-		uint8 data[80];
+	uint8 data[80];
+	VDStringA s;
 
-		VDStringA s;
+	for(const TextSpan& ts : mDragPreviewSpans) {
+		int actual;
 
-		for(TextSpans::const_iterator it(mDragPreviewSpans.begin()), itEnd(mDragPreviewSpans.end());
-			it != itEnd;
-			++it)
-		{
-			const TextSpan& ts = *it;
-			int actual = mpAltVideoOutput->ReadRawText(data, ts.mX, ts.mY, 80);
+		if (mpAltVideoOutput) {
+			actual = mpAltVideoOutput->ReadRawText(data, ts.mX, ts.mY, 80);
+		} else {
+			actual = ReadText(data, ts.mY, ts.mCharX, ts.mCharWidth);
+		}
 
-			if (!actual)
-				continue;
+		if (!actual)
+			continue;
 
+		if (enableEscaping) {
+			uint8 inv = 0;
+			bool started = false;
+
+			for(int i=0; i<actual; ++i) {
+				uint8 c = data[i];
+
+				if (!started) {
+					if (c == 0x20)
+						continue;
+
+					started = true;
+				}
+
+				if ((c ^ inv) & 0x80) {
+					inv ^= 0x80;
+
+					s.append("{inv}");
+				}
+
+				c &= 0x7F;
+
+				if (c == 0x00) {
+					s.append("{^},");
+				} else if (c >= 0x01 && c < 0x1B) {
+					s.append("{^}");
+					s += (char)('a' + (c - 0x01));
+				} else if (c == 0x1B) {
+					s.append("{esc}{esc}");
+				} else if (c == 0x1C) {
+					if (inv)
+						s.append("{esc}{+delete}");
+					else
+						s.append("{esc}{up}");
+				} else if (c == 0x1D) {
+					if (inv)
+						s.append("{esc}{+insert}");
+					else
+						s.append("{esc}{down}");
+				} else if (c == 0x1E) {
+					if (inv)
+						s.append("{esc}{^tab}");
+					else
+						s.append("{esc}{left}");
+				} else if (c == 0x1F) {
+					if (inv)
+						s.append("{esc}{+tab}");
+					else
+						s.append("{esc}{right}");
+				} else if (c >= 0x20 && c < 0x60) {
+					s += (char)c;
+				} else if (c == 0x60) {
+					s.append("{^}.");
+				} else if (c >= 0x61 && c < 0x7B) {
+					s += (char)c;
+				} else if (c == 0x7B) {
+					s.append("{^};");
+				} else if (c == 0x7C) {
+					s += (char)c;
+				} else if (c == 0x7D) {
+					if (inv)
+						s.append("{esc}{^}2");
+					else
+						s.append("{esc}{clear}");
+				} else if (c == 0x7E) {
+					if (inv)
+						s.append("{esc}{del}");
+					else
+						s.append("{esc}{back}");
+				} else if (c == 0x7F) {
+					if (inv)
+						s.append("{esc}{ins}");
+					else
+						s.append("{esc}{tab}");
+				}
+			}
+
+			while(!s.empty() && s.back() == ' ')
+				s.pop_back();
+
+			if (inv)
+				s.append("{inv}");
+		} else {
 			for(int i=0; i<actual; ++i) {
 				data[i] &= 0x7f;
 
-				if ((uint32)(data[i] - 0x20) >= 0x7d)
+				if ((uint8)(data[i] - 0x20) >= 0x7d)
 					data[i] = ' ';
 			}
 
 			int base = 0;
-			while(base < actual && data[base] == ' ')
+			while(base < actual && data[base] == 0x20)
 				++base;
 
-			while(actual > base && data[actual - 1] == ' ')
+			while(actual > base && data[actual - 1] == 0x20)
 				--actual;
 
 			s.append((const char *)data + base, (const char *)data + actual);
-
-			if (&*it != &mDragPreviewSpans.back())
-				s += "\r\n";
 		}
 
-		mpManager->GetClipboard()->CopyText(s.c_str());
-	} else {
-		char data[48];
+		s += "\r\n";
+	}
 
-		VDStringA s;
-
-		for(TextSpans::const_iterator it(mDragPreviewSpans.begin()), itEnd(mDragPreviewSpans.end());
-			it != itEnd;
-			++it)
-		{
-			const TextSpan& ts = *it;
-
-			int actual = ReadText(data, ts.mY, ts.mCharX, ts.mCharWidth);
-
-			if (!actual)
-				continue;
-
-			int base = 0;
-			while(base < actual && data[base] == ' ')
-				++base;
-
-			while(actual > base && data[actual - 1] == ' ')
-				--actual;
-
-			s.append(data + base, data + actual);
-
-			if (&*it != &mDragPreviewSpans.back())
-				s += "\r\n";
-		}
-
+	if (s.size() > 2) {
+		s.pop_back();
+		s.pop_back();
 		mpManager->GetClipboard()->CopyText(s.c_str());
 	}
 }
 
-void ATUIVideoDisplayWindow::CopySaveFrame(bool saveFrame, bool trueAspect) {
+void ATUIVideoDisplayWindow::CopySaveFrame(bool saveFrame, bool trueAspect, const wchar_t *path) {
 	VDPixmap frameView;
 	double par = 1;
 
@@ -432,12 +506,17 @@ void ATUIVideoDisplayWindow::CopySaveFrame(bool saveFrame, bool trueAspect) {
 	frameView = buf;
 
 	if (saveFrame) {
-		const VDStringW fn(VDGetSaveFileName('scrn', ATUIGetMainWindow(), L"Save Screenshot", L"Portable Network Graphics (*.png)\0*.png\0", L"png"));
+		VDStringW fn;
+		
+		if (path)
+			fn = path;
+		else
+			fn = VDGetSaveFileName('scrn', ATUIGetMainWindow(), L"Save Screenshot", L"Portable Network Graphics (*.png)\0*.png\0", L"png");
 
 		if (!fn.empty())
-			ATSaveFrame(ATUIGetMainWindow(), frameView, fn.c_str());
+			ATSaveFrame(frameView, fn.c_str());
 	} else
-		ATCopyFrameToClipboard(ATUIGetMainWindow(), frameView);
+		ATCopyFrameToClipboard(frameView);
 
 }
 
@@ -458,26 +537,21 @@ vdrect32 ATUIVideoDisplayWindow::GetOSKSafeArea() const {
 	return r;
 }
 
+void ATUIVideoDisplayWindow::SetDisplaySourceMapping(vdfunction<bool(vdfloat2&)> dispToSrcFn, vdfunction<bool(vdfloat2&)> srcToDispFn) {
+	mpMapDisplayToSourcePt = std::move(dispToSrcFn);
+	mpMapSourceToDisplayPt = std::move(srcToDispFn);
+}
+
 void ATUIVideoDisplayWindow::SetDisplayRect(const vdrect32& r) {
 	mDisplayRect = r;
 	UpdateDragPreviewRects();
 }
 
-void ATUIVideoDisplayWindow::ClearXorRects() {
-	if (!mXorRects.empty()) {
-		mXorRects.clear();
+void ATUIVideoDisplayWindow::ClearHighlights() {
+	if (!mHighlightPoints.empty()) {
+		mHighlightPoints.clear();
 		Invalidate();
 	}
-}
-
-void ATUIVideoDisplayWindow::AddXorRect(int x1, int y1, int x2, int y2) {
-	XorRect& xr = mXorRects.push_back();
-	xr.mX1 = x1;
-	xr.mY1 = y1;
-	xr.mX2 = x2;
-	xr.mY2 = y2;
-
-	Invalidate();
 }
 
 void ATUIVideoDisplayWindow::SetXEP(IATDeviceVideoOutput *xep) {
@@ -574,7 +648,7 @@ ATUITouchMode ATUIVideoDisplayWindow::GetTouchModeAtPoint(const vdpoint32& pt) c
 }
 
 namespace {
-	VDStringW GetMessageForError(char *data) {
+	VDStringW GetTipMessage(char *data, sint32 x) {
 		// trim and null-terminate the string
 		char *s = data;
 
@@ -593,9 +667,8 @@ namespace {
 			*s2 = toupper((unsigned char)*s2);
 
 		// look for an error
-		t = strstr(s, "ERROR");
 		VDStringW msg;
-		if (t) {
+		if (t = strstr(s, "ERROR"); t) {
 			// skip ERROR string
 			t += 5;
 
@@ -680,6 +753,46 @@ namespace {
 						case 176: msg += L"<b>DOS 3:</b> Incompatible format"; break;
 						case 177: msg += L"<b>DOS 3:</b> Disk structure damaged"; break;
 					}
+				}
+			}
+		}
+		
+		if (msg.empty()) {
+			unsigned address = 0;
+			bool isRead = false;
+
+			const std::regex peekRegex(R"--(PEEK\( *([0-9]+) *\))--", std::regex::extended);
+			for(auto it = std::cregex_iterator(s, s+strlen(s), peekRegex, std::regex_constants::match_any), itEnd = std::cregex_iterator(); it != itEnd; ++it) {
+				const auto& capture = (*it)[0];
+				ptrdiff_t offset1 = capture.first - data;
+				ptrdiff_t offset2 = capture.second - data;
+
+				if (offset1 <= x && offset2 > x) {
+					address = atoi((*it)[1].str().c_str());
+					isRead = true;
+					break;
+				}
+			}
+
+
+			const std::regex pokeRegex(R"--(POKE +([0-9]+) *,)--", std::regex::extended);
+			for(auto it = std::cregex_iterator(s, s+strlen(s), pokeRegex, std::regex_constants::match_any), itEnd = std::cregex_iterator(); it != itEnd; ++it) {
+				const auto& capture = (*it)[0];
+				ptrdiff_t offset1 = capture.first - data;
+				ptrdiff_t offset2 = capture.second - data;
+
+				if (offset1 <= x && offset2 > x) {
+					address = atoi((*it)[1].str().c_str());
+					isRead = false;
+					break;
+				}
+			}
+
+			if (address) {
+				ATSymbol sym;
+
+				if (ATGetDebuggerSymbolLookup()->LookupSymbol(address, isRead ? kATSymbol_Read : kATSymbol_Write, sym)) {
+					msg.sprintf(L"<b>Address %u ($%0*X):</b> %hs", address, address >= 256 ? 4 : 2, address, sym.mpName);
 				}
 			}
 		}
@@ -789,7 +902,7 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 
 					text[actual] = 0;
 
-					const VDStringW& msg = GetMessageForError(text);
+					const VDStringW& msg = GetTipMessage(text, caretPos.x);
 
 					if (!msg.empty()) {
 						const vdrect32& lineRect = mpAltVideoOutput->CharToPixelRect(vdrect32(0, caretPos.y, videoInfo.mTextColumns, caretPos.y + 1));
@@ -815,26 +928,29 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 				SetCursorImage(kATUICursorImage_Cross);
 			} else if (MapPixelToBeamPosition(x, y, xc, yc, false)) {
 				// attempt to copy out text
-				int ymode = GetModeLineYPos(yc, true);
+				auto [xmode, ymode] = GetModeLineXYPos(xc, yc, true);
 
 				if (ymode >= 0) {
-					char data[49];
+					uint8 data[49];
 
 					int actual = ReadText(data, ymode, 0, 48);
 					data[actual] = 0;
 
-					const VDStringW& msg = GetMessageForError(data);
+					char cdata[49];
+					std::transform(std::begin(data), std::end(data), std::begin(cdata), [](uint8 c) { return (char)(c & 0x7F); });
+
+					const VDStringW& msg = GetTipMessage(cdata, xmode);
 
 					if (!msg.empty()) {
 						int xp1, xp2, yp1, yp2;
-						MapBeamPositionToPixel(0, ymode, xp1, yp1);
+						MapBeamPositionToPoint(0, ymode, xp1, yp1);
 
 						ATAnticEmulator& antic = g_sim.GetAntic();
 						const ATAnticEmulator::DLHistoryEntry *dlhist = antic.GetDLHistory();
 						while(++ymode < 248 && !dlhist[ymode].mbValid)
 							;
 
-						MapBeamPositionToPixel(228, ymode, xp2, yp2);
+						MapBeamPositionToPoint(228, ymode, xp2, yp2);
 
 						mHoverTipArea.set(xp1, yp1, xp2, yp2);
 
@@ -1082,6 +1198,8 @@ bool ATUIVideoDisplayWindow::OnChar(const ATUICharEvent& event) {
 			else if (mbHoldKeys)
 				ToggleHeldKey((uint8)ch);
 			else {
+				mbShiftToggledPostKeyDown = false;
+
 				auto it = std::find_if(mActiveKeys.begin(), mActiveKeys.end(), [=](const ActiveKey& ak) { return ak.mVkey == 0 && ak.mNativeScanCode == event.mScanCode; });
 				if (it != mActiveKeys.end())
 					it->mScanCode = ch;
@@ -1135,6 +1253,7 @@ void ATUIVideoDisplayWindow::OnForceKeysUp() {
 	pokey.ReleaseAllRawKeys(!g_kbdOpts.mbFullRawKeys);
 
 	mbShiftDepressed = false;
+	mbShiftToggledPostKeyDown = false;
 	mActiveKeys.clear();
 	UpdateCtrlShiftState();
 
@@ -1247,6 +1366,66 @@ void ATUIVideoDisplayWindow::OnCaptureLost() {
 	g_winCaptionUpdater->SetMouseCaptured(false, false);
 }
 
+ATUIDragEffect ATUIVideoDisplayWindow::OnDragEnter(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) {
+	CreateDropTargetOverlays();
+	return OnDragOver(x, y, modifiers, obj);
+}
+
+ATUIDragEffect ATUIVideoDisplayWindow::OnDragOver(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) {
+	int idx = FindDropTargetOverlay(x, y);
+
+	HighlightDropTargetOverlay(idx);
+
+	if (idx >= 0) {
+		switch(kDropFileTargets[idx]) {
+			case ATUIDropFilesTarget::BootImage:
+				obj->SetDropDescription(ATUIDropIconType::Copy, L"Boot image", nullptr);
+				break;
+			case ATUIDropFilesTarget::MountImage:
+				obj->SetDropDescription(ATUIDropIconType::Copy, L"Mount image", nullptr);
+				break;
+			case ATUIDropFilesTarget::MountCart:
+				obj->SetDropDescription(ATUIDropIconType::Copy, L"Mount as cartridge", nullptr);
+				break;
+			case ATUIDropFilesTarget::MountDisk1:
+				obj->SetDropDescription(ATUIDropIconType::Copy, L"Mount as disk %1", L"D1:");
+				break;
+			case ATUIDropFilesTarget::MountDisk2:
+				obj->SetDropDescription(ATUIDropIconType::Copy, L"Mount as disk %1", L"D2:");
+				break;
+			case ATUIDropFilesTarget::MountDisk3:
+				obj->SetDropDescription(ATUIDropIconType::Copy, L"Mount as disk %1", L"D3:");
+				break;
+			case ATUIDropFilesTarget::MountDisk4:
+				obj->SetDropDescription(ATUIDropIconType::Copy, L"Mount as disk %1", L"D4:");
+				break;
+		}
+	} else {
+		obj->ClearDropDescription();
+	}
+
+	return idx >= 0 ? ATUIDragEffect::Copy : ATUIDragEffect::None;
+}
+
+void ATUIVideoDisplayWindow::OnDragLeave() {
+	DestroyDropTargetOverlays();
+}
+
+ATUIDragEffect ATUIVideoDisplayWindow::OnDragDrop(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) {
+	int idx = FindDropTargetOverlay(x, y);
+
+	HighlightDropTargetOverlay(idx);
+
+	if (idx < 0)
+		return ATUIDragEffect::None;
+
+	ATUIDropFilesTarget target = kDropFileTargets[idx];
+
+	ATUIDropFiles(TranslateClientPtToScreenPt(vdpoint32(x, y)), target, obj);
+
+	return ATUIDragEffect::Copy;
+}
+
 void ATUIVideoDisplayWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 	if (mpAltVideoOutput) {
 		mpAltVideoOutput->UpdateFrame();
@@ -1334,25 +1513,41 @@ void ATUIVideoDisplayWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) 
 		mpUILabelBadSignal->SetVisible(false);
 
 	if (rdr.GetCaps().mbSupportsAlphaBlending) {
-		for(XorRects::const_iterator it(mXorRects.begin()), itEnd(mXorRects.end());
-			it != itEnd; ++it)
-		{
-			XorRect xr = *it;
+		vdfastvector<vdfloat2> pts;
 
-			rdr.AlphaFillRect(xr.mX1, xr.mY1, xr.mX2 - xr.mX1, xr.mY2 - xr.mY1, 0x8000A0FF);
+		for (const HighlightPoint& xr : mHighlightPoints) {
+			pts.push_back(vdfloat2{(float)xr.mX, (float)xr.mY});
+
+			if (xr.mbClose) {
+				rdr.AlphaTriStrip(pts.data(), pts.size(), 0x8000A0FF);
+				pts.clear();
+			}
 		}
 	} else {
 		rdr.SetColorRGB(0x00A0FF);
 
-		for(XorRects::const_iterator it(mXorRects.begin()), itEnd(mXorRects.end());
-			it != itEnd; ++it)
-		{
-			XorRect xr = *it;
+		// Convert the tristrips to polygon outlines. For each tristrip, we need to separate the
+		// even and odd points and place the odd points reversed after the even points.
+		vdfastvector<vdpoint32> pts[2];
+		bool odd = false;
 
-			rdr.FillRect(xr.mX1, xr.mY1, xr.mX2 - xr.mX1, 1);
-			rdr.FillRect(xr.mX1, xr.mY2 - 1, xr.mX2 - xr.mX1, 1);
-			rdr.FillRect(xr.mX1, xr.mY1 + 1, 1, xr.mY2 - xr.mY1 - 2);
-			rdr.FillRect(xr.mX2 - 1, xr.mY1 + 1, 1, xr.mY2 - xr.mY1 - 2);
+		for (const HighlightPoint& xr : mHighlightPoints) {
+			const vdpoint32 pt(xr.mX, xr.mY);
+
+			pts[odd].push_back(pt);
+			odd = !odd;
+
+			if (xr.mbClose) {
+				for(auto it = pts[1].rbegin(), itEnd = pts[1].rend(); it != itEnd; ++it)
+					pts[0].push_back(*it);
+
+				pts[0].push_back(pts[0].front());
+
+				rdr.PolyLine(pts[0].data(), pts[0].size() - 1);
+
+				pts[0].clear();
+				pts[1].clear();
+			}
 		}
 	}
 
@@ -1417,8 +1612,11 @@ bool ATUIVideoDisplayWindow::ProcessKeyDown(const ATUIKeyEvent& event, bool enab
 
 		switch(key) {
 			case kATUIVK_Shift:
-				mbShiftDepressed = true;
-				UpdateCtrlShiftState();
+				if (!mbShiftDepressed) {
+					mbShiftDepressed = true;
+					mbShiftToggledPostKeyDown = true;
+					UpdateCtrlShiftState();
+				}
 				break;
 		}
 	}
@@ -1468,8 +1666,11 @@ bool ATUIVideoDisplayWindow::ProcessKeyUp(const ATUIKeyEvent& event, bool enable
 	if (!ATUIActivateVirtKeyMapping(key, alt, ctrl, shift, ext, true, kATUIAccelContext_Display)) {
 		switch(key) {
 			case kATUIVK_Shift:
-				mbShiftDepressed = false;
-				UpdateCtrlShiftState();
+				if (mbShiftDepressed) {
+					mbShiftDepressed = false;
+					mbShiftToggledPostKeyDown = true;
+					UpdateCtrlShiftState();
+				}
 				break;
 		}
 	}
@@ -1491,6 +1692,8 @@ void ATUIVideoDisplayWindow::ProcessVirtKey(uint32 vkey, uint32 scancode, uint32
 	} else {
 		if (g_kbdOpts.mbRawKeys) {
 			if (!repeat) {
+				mbShiftToggledPostKeyDown = false;
+
 				auto it = std::find_if(mActiveKeys.begin(), mActiveKeys.end(), [=](const ActiveKey& ak) { return ak.mVkey == vkey && ak.mNativeScanCode == scancode; });
 				if (it != mActiveKeys.end())
 					it->mScanCode = keycode;
@@ -1553,7 +1756,8 @@ void ATUIVideoDisplayWindow::UpdateCtrlShiftState() {
 	// It is possible for us to have a conflict where a key mapping has been
 	// created with the Shift or Ctrl key to a key that doesn't require Shift or Ctrl
 	// on the Atari keyboard. Therefore, we override the Shift key state on the host
-	// with whatever is required by the scan code.
+	// with whatever is required by the scan code, unless the Shift key has been
+	// toggled after the initial key down (see below).
 	if (mActiveKeys.empty()) {
 		if (mbShiftDepressed)
 			c = 0x40;
@@ -1565,9 +1769,14 @@ void ATUIVideoDisplayWindow::UpdateCtrlShiftState() {
 	auto& pokey = g_sim.GetPokey();
 	pokey.SetControlKeyState((c & 0x80) != 0);
 
-	if (g_kbdOpts.mbRawKeys)
+	// If the Shift key is toggled after a key down, force the Shift key state to
+	// the host Shift key. This will be consistent except in the case where the
+	// key down has a Shift key mismatch between the host keys, which is an ambiguous
+	// case anyway. When there is no such mismatch, this makes Shift key up/down after
+	// non-Shift key up/down work as expected.
+	if (g_kbdOpts.mbRawKeys && !mbShiftToggledPostKeyDown) {
 		pokey.SetShiftKeyState((c & 0x40) != 0, !g_kbdOpts.mbFullRawKeys);
-	else
+	} else
 		pokey.SetShiftKeyState(mbShiftDepressed, true);
 }
 
@@ -1706,23 +1915,31 @@ const vdrect32 ATUIVideoDisplayWindow::GetAltDisplayArea() const {
 }
 
 bool ATUIVideoDisplayWindow::MapPixelToBeamPosition(int x, int y, float& hcyc, float& vcyc, bool clamp) const {
-	if (!clamp && !mDisplayRect.contains(vdpoint32(x, y)))
-		return false;
+	if (!mDisplayRect.contains(vdpoint32(x, y))) {
+		if (!clamp)
+			return false;
+
+		if (mDisplayRect.empty())
+			return false;
+	}
 
 	x -= mDisplayRect.left;
 	y -= mDisplayRect.top;
 
 	if (clamp) {
-		if (x < 0)
-			x = 0;
-		else if (x > mDisplayRect.width())
-			x = mDisplayRect.width();
-
-		if (y < 0)
-			y = 0;
-		else if (y > mDisplayRect.height())
-			y = mDisplayRect.height();
+		x = std::clamp(x, 0, mDisplayRect.width());
+		y = std::clamp(y, 0, mDisplayRect.height());
 	}
+
+	const vdfloat2 displayRectSize {(float)mDisplayRect.width(), (float)mDisplayRect.height()};
+	vdfloat2 pt = (vdfloat2{(float)x, (float)y} + vdfloat2{0.5f, 0.5f}) / displayRectSize;
+
+	if (mpMapDisplayToSourcePt && !mpMapDisplayToSourcePt(pt) && !clamp)
+		return false;
+
+	pt *= displayRectSize;
+	x = VDFloorToInt(pt.x);
+	y = VDFloorToInt(pt.y);
 
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 	const vdrect32 scanArea(gtia.GetFrameScanArea());
@@ -1744,13 +1961,30 @@ bool ATUIVideoDisplayWindow::MapPixelToBeamPosition(int x, int y, int& xc, int& 
 	return true;
 }
 
-void ATUIVideoDisplayWindow::MapBeamPositionToPixel(int xc, int yc, int& x, int& y) const {
+// Map a beam position in (half cycles, scan) to a screen point. This maps points at the corners of
+// pixels instead of the centers since it is used for rectangle/polygon mapping.
+void ATUIVideoDisplayWindow::MapBeamPositionToPoint(int xc, int yc, int& x, int& y) const {
+	const vdfloat2 pt = MapBeamPositionToPointF(vdfloat2 {(float)xc, (float)yc});
+
+	x = VDRoundToInt(pt.x);
+	y = VDRoundToInt(pt.y);
+}
+
+vdfloat2 ATUIVideoDisplayWindow::MapBeamPositionToPointF(vdfloat2 pt) const {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 	const vdrect32 scanArea(gtia.GetFrameScanArea());
 
 	// map position to cycles
-	x = VDRoundToInt(((float)xc + 0.5f - (float)scanArea.left) * (float)mDisplayRect.width()  / (float)scanArea.width() ) + mDisplayRect.left;
-	y = VDRoundToInt(((float)yc + 0.5f - (float)scanArea.top ) * (float)mDisplayRect.height() / (float)scanArea.height()) + mDisplayRect.top;
+	pt = pt - vdfloat2{(float)scanArea.left, (float)scanArea.top};
+
+	pt /= vdfloat2 { (float)scanArea.width(), (float)scanArea.height() };
+
+	if (mpMapSourceToDisplayPt)
+		mpMapSourceToDisplayPt(pt);
+
+	const vdfloat2 drPos { (float)mDisplayRect.left, (float)mDisplayRect.top };
+	const vdfloat2 drSize { (float)mDisplayRect.width(), (float)mDisplayRect.height() };
+	return pt * drSize + drPos;
 }
 
 void ATUIVideoDisplayWindow::UpdateDragPreview(int x, int y) {
@@ -1930,7 +2164,10 @@ void ATUIVideoDisplayWindow::UpdateDragPreviewAntic(int x, int y) {
 }
 
 void ATUIVideoDisplayWindow::UpdateDragPreviewRects() {
-	ClearXorRects();
+	ClearHighlights();
+
+	if (mDragPreviewSpans.empty())
+		return;
 
 	if (mpAltVideoOutput) {
 		const vdrect32& drawArea = GetAltDisplayArea();
@@ -1946,65 +2183,110 @@ void ATUIVideoDisplayWindow::UpdateDragPreviewRects() {
 				const TextSpan& ts = *it;
 				const vdrect32& spanArea = mpAltVideoOutput->CharToPixelRect(vdrect32(ts.mX, ts.mY, ts.mX + ts.mWidth, ts.mY + 1));
 
-				AddXorRect(
-					VDRoundToInt(spanArea.left   * scaleX) + drawArea.left,
-					VDRoundToInt(spanArea.top    * scaleY) + drawArea.top,
-					VDRoundToInt(spanArea.right  * scaleX) + drawArea.left,
-					VDRoundToInt(spanArea.bottom * scaleY) + drawArea.top);
+				const int x1 = VDRoundToInt(spanArea.left   * scaleX) + drawArea.left;
+				const int y1 = VDRoundToInt(spanArea.top    * scaleY) + drawArea.top;
+				const int x2 = VDRoundToInt(spanArea.right  * scaleX) + drawArea.left;
+				const int y2 = VDRoundToInt(spanArea.bottom * scaleY) + drawArea.top;
+
+				mHighlightPoints.push_back(HighlightPoint { x1, y1, false });
+				mHighlightPoints.push_back(HighlightPoint { x1, y2, false });
+				mHighlightPoints.push_back(HighlightPoint { x2, y1, false });
+				mHighlightPoints.push_back(HighlightPoint { x2, y2, true });
 			}
 		}
 	} else {
-		ATGTIAEmulator& gtia = g_sim.GetGTIA();
-		const vdrect32 scanArea(gtia.GetFrameScanArea());
+		// Due to distortion effects our rect may not stay as one when mapped from beam position to screen.
+		// Worse yet, the resulting polygon may not even be convex. We can, however, expect that a horizontal
+		// strip will mostly stay as such, so we can make do by checking for excessive curvature on the top and
+		// bottom edges and subdivide the strip as necessary, relying on the rendering code using a horizontal
+		// tri-strip.
+		vdfastvector<float> ustack;
 
-		float scaleX = (float)mDisplayRect.width() / (float)scanArea.width();
-		float scaleY = (float)mDisplayRect.height() / (float)scanArea.height();
+		for(const TextSpan& ts : mDragPreviewSpans) {
+			// discard empty spans just in case, as these will cause tesselation problems
+			if (!ts.mWidth || !ts.mHeight)
+				continue;
 
-		TextSpans::const_iterator it(mDragPreviewSpans.begin()), itEnd(mDragPreviewSpans.end());
-		
-		for(; it != itEnd; ++it) {
-			const TextSpan& ts = *it;
+			int u1 = (float)ts.mX;
+			int u2 = u1 + (float)ts.mWidth;
+			const int v1 = (float)ts.mY;
+			const int v2 = v1 + (float)ts.mHeight;
 
-			int hiX1 = ts.mX - scanArea.left;
-			int hiY1 = ts.mY - scanArea.top;
-			int hiX2 = hiX1 + ts.mWidth;
-			int hiY2 = hiY1 + ts.mHeight;
+			for (int u = u1; u <= u2; ) {
+				int x1, y1, x2, y2;
+				MapBeamPositionToPoint(u, v1, x1, y1);
+				MapBeamPositionToPoint(u, v2, x2, y2);
 
-			AddXorRect(
-				VDRoundToInt(hiX1 * scaleX) + mDisplayRect.left,
-				VDRoundToInt(hiY1 * scaleY) + mDisplayRect.top,
-				VDRoundToInt(hiX2 * scaleX) + mDisplayRect.left,
-				VDRoundToInt(hiY2 * scaleY) + mDisplayRect.top);
+				mHighlightPoints.push_back(HighlightPoint { x1, y1, false });
+				mHighlightPoints.push_back(HighlightPoint { x2, y2, false });
+
+				if (u == u2)
+					break;
+
+				if (mpMapSourceToDisplayPt) {
+					// While adaptive tesselation would be more precise and efficient, it runs into
+					// problems with inconsistent tesselation between rows causing gaps or overlaps.
+					// To avoid this, we uniformly tesselate on a common grid used for all highlight
+					// rects.
+
+					u = (u + 16) & ~15;
+					if (u > u2)
+						u = u2;
+				} else {
+					u = u2;
+				}
+			}
+
+			mHighlightPoints.back().mbClose = true;
 		}
 	}
+
+	Invalidate();
 }
 
 void ATUIVideoDisplayWindow::ClearDragPreview() {
 	mDragPreviewSpans.clear();
 
-	ClearXorRects();
+	ClearHighlights();
 }
 
 int ATUIVideoDisplayWindow::GetModeLineYPos(int ys, bool checkValidCopyText) const {
+	return GetModeLineXYPos(0, ys, checkValidCopyText).second;
+}
+
+std::pair<int, int> ATUIVideoDisplayWindow::GetModeLineXYPos(int xcc, int ys, bool checkValidCopyText) const {
 	ATAnticEmulator& antic = g_sim.GetAntic();
 	const ATAnticEmulator::DLHistoryEntry *dlhist = antic.GetDLHistory();
 
 	for(int i=0; i<16; ++i, --ys) {
 		if (ys >= 8 && ys < 248) {
-			if (dlhist[ys].mbValid) {
-				if (checkValidCopyText) {
-					int mode = dlhist[ys].mControl & 15;
+			const ATAnticEmulator::DLHistoryEntry& modeLine = dlhist[ys];
 
+			if (modeLine.mbValid) {
+				int mode = modeLine.mControl & 15;
+
+				if (checkValidCopyText) {
 					if (mode != 2 && mode != 3 && mode != 6 && mode != 7)
-						return -1;
+						return {-1,-1};
 				}
 
-				return ys;
+				static constexpr uint8 kXCycShift[16] = {
+					15, 15, 2, 2, 2, 2, 3, 3, 2, 2, 1, 1, 0, 0, 0, 0
+				};
+
+				static constexpr int kPFStart[4] = { 64, 64, 48, 32 };
+
+				int hscroll = modeLine.mHVScroll & 15;
+
+				return {
+					((xcc - hscroll - kPFStart[modeLine.mDMACTL & 3]) >> kXCycShift[mode]),
+					ys
+				};
 			}
 		}
 	}
 
-	return -1;
+	return {-1, -1};
 }
 
 /// Read characters from a text mode line into a buffer; returns the number
@@ -2012,7 +2294,7 @@ int ATUIVideoDisplayWindow::GetModeLineYPos(int ys, bool checkValidCopyText) con
 /// mode line, not a supported text mode line). The returned buffer is _not_
 /// null terminated.
 ///
-int ATUIVideoDisplayWindow::ReadText(char *dst, int yc, int startChar, int numChars) const {
+int ATUIVideoDisplayWindow::ReadText(uint8 *dst, int yc, int startChar, int numChars) const {
 	ATAnticEmulator& antic = g_sim.GetAntic();
 	const ATAnticEmulator::DLHistoryEntry *dlhist = antic.GetDLHistory();
 	const ATAnticEmulator::DLHistoryEntry& dle = dlhist[yc];
@@ -2064,24 +2346,19 @@ int ATUIVideoDisplayWindow::ReadText(char *dst, int yc, int startChar, int numCh
 		0x20, 0x60, 0x40, 0x00
 	};
 
-	uint8 mask = (dle.mControl & 4) ? 0x3f : 0x7f;
+	uint8 mask = (dle.mControl & 4) ? 0x3f : 0xff;
 	uint8 xorval = (dle.mControl & 4) && (dle.mCHBASE & 1) ? 0x40 : 0x00;
 
 	for(int i=0; i<numChars; ++i) {
 		uint8 c = data[i];
 
-		// convert ATASCII char to ASCII
+		// convert INTERNAL char to ATASCII
 		c &= mask;
 		c ^= xorval;
 
 		c ^= kInternalToATASCIIXorTab[(c & 0x60) >> 5];
 
-		// replace non-printable chars with spaces
-		if ((uint8)(c - 0x20) >= 0x5f)
-			c = ' ';
-
-		// write char
-		*dst++ = (char)c;
+		*dst++ = c;
 	}
 
 	return numChars;
@@ -2182,6 +2459,99 @@ void ATUIVideoDisplayWindow::ClearHoverTip() {
 	if (mbHoverTipActive) {
 		mbHoverTipActive = false;
 		g_sim.GetUIRenderer()->SetHoverTip(0, 0, NULL);
+	}
+}
+
+sint32 ATUIVideoDisplayWindow::FindDropTargetOverlay(sint32 x, sint32 y) const {
+	for (int i=0; i<(int)vdcountof(mpDropTargetOverlays); ++i) {
+		ATUIWidget *w = mpDropTargetOverlays[i];
+
+		if (w && w->GetArea().contains(vdpoint32(x, y)))
+			return i;
+	}
+
+	return -1;
+}
+
+void ATUIVideoDisplayWindow::HighlightDropTargetOverlay(int index) {
+	for (int i=0; i<(int)vdcountof(mpDropTargetOverlays); ++i) {
+		ATUILabel *label = static_cast<ATUILabel *>(mpDropTargetOverlays[i].get());
+
+		if (label) {
+			const uint32 c = (i == index) ? 0xF0A0A0A0 : 0xF0606060;
+
+			label->SetAlphaFillColor(c);
+		}
+	}
+}
+
+void ATUIVideoDisplayWindow::CreateDropTargetOverlays() {
+	if (mpDropTargetOverlays[0])
+		return;
+
+	static_assert(vdcountof(kDropFileTargets) == vdcountof(mpDropTargetOverlays));
+
+	for(int i=0; i<7; ++i) {
+		vdrefptr<ATUILabel> label { new ATUILabel };
+		label->SetTextColor(0xFF000000);
+		label->SetTextAlign(ATUILabel::kAlignCenter);
+		label->SetTextVAlign(ATUILabel::kVAlignMiddle);
+
+		const ATUIDropFilesTarget target = kDropFileTargets[i];
+		switch(target) {
+			case ATUIDropFilesTarget::MountCart:
+				label->SetText(L"Mount cartridge");
+				break;
+
+			case ATUIDropFilesTarget::MountDisk1:
+			case ATUIDropFilesTarget::MountDisk2:
+			case ATUIDropFilesTarget::MountDisk3:
+			case ATUIDropFilesTarget::MountDisk4:
+				label->SetTextF(L"Mount disk D%u:", (unsigned)target - (unsigned)ATUIDropFilesTarget::MountDisk1 + 1);
+				break;
+
+			case ATUIDropFilesTarget::MountImage:
+				label->SetText(L"Mount image");
+				break;
+
+			case ATUIDropFilesTarget::BootImage:
+				label->SetText(L"Boot image");
+				break;
+		}
+
+		vdrect32f r;
+
+		if (i == 6) {
+			r.left = 0.0f;
+			r.right = 0.74f;
+			r.top = 0.0f;
+			r.bottom = 1.0f;
+		} else {
+			r.left = 0.75f;
+			r.right = 1.0f;
+			r.bottom = 1.0f - 0.15f * i;
+			r.top = r.bottom - 0.14f;
+		}
+
+		vdrefptr<IATUIAnchor> anchor; 
+		ATUICreateProportionAnchor(r, ~anchor);
+		label->SetAnchor(anchor);
+		
+		GetManager()->GetMainWindow()->AddChild(label);
+		label->SetFont(GetManager()->GetThemeFont(kATUIThemeFont_Header));
+
+		mpDropTargetOverlays[i] = label;
+	}
+
+	HighlightDropTargetOverlay(-1);
+}
+
+void ATUIVideoDisplayWindow::DestroyDropTargetOverlays() {
+	for(vdrefptr<ATUIWidget>& w : mpDropTargetOverlays) {
+		if (w) {
+			w->GetParent()->RemoveChild(w);
+			w = nullptr;
+		}
 	}
 }
 

@@ -25,6 +25,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/cmdline.h>
+#include <vd2/system/strutil.h>
 #include <vd2/system/VDString.h>
 
 VDCommandLine::VDCommandLine() {
@@ -42,69 +43,19 @@ void VDCommandLine::Init(const wchar_t *s) {
 	mLine.clear();
 
 	for(;;) {
-		while(iswspace(*s))
-			++s;
-
-		if (!*s)
-			break;
-
-		Token te = { (int)mLine.size(), *s == L'/' };
-
-		if (te.mbIsSwitch) {
-			mLine.push_back(L'/');
-			++s;
-		}
-
-		mTokens.push_back(te);
-
-		// special case for /?
-		if (te.mbIsSwitch && *s == L'?') {
-			mLine.push_back(L'?');
-			++s;
-		}
-
-		while(*s && *s != L' ' && *s != L'/') {
-			if (te.mbIsSwitch) {
-				if (!isalnum((unsigned char)*s)) {
-					if (*s == L':')
-						++s;
-					break;
-				}
-
-				mLine.push_back(*s++);
-			} else if (*s == L'"') {
-				++s;
-				while(*s && *s != L'"')
-					mLine.push_back(*s++);
-
-				if (*s) {
-					++s;
-
-					if (*s == ',') {
-						++s;
-						break;
-					}
-				}
-			} else
-				mLine.push_back(*s++);
-		}
-
-		mLine.push_back(0);
-	}
-}
-
-void VDCommandLine::InitAlt(const wchar_t *s) {
-	mTokens.clear();
-	mLine.clear();
-
-	for(;;) {
 		while(*s == L' ' || *s == L'\t')
 			++s;
 
 		if (!*s)
 			break;
 
-		Token te = { (int)mLine.size(), *s == L'/' };
+		// Suppress switch processing in argv[0]. For some strange reason, Intel Graphics Monitor
+		// 2018 R4 (18.4.334896) launches programs with argv[0] having forward slashes, which
+		// previously screwed up our argument parsing.
+		const bool isArgv0 = mTokens.empty();
+		const char term3 = isArgv0 ? L' ' : L'/';
+
+		Token te = { (int)mLine.size(), !isArgv0 && *s == L'/' };
 
 		if (te.mbIsSwitch) {
 			mLine.push_back(L'/');
@@ -126,7 +77,7 @@ void VDCommandLine::InitAlt(const wchar_t *s) {
 			if (!c)
 				break;
 
-			if (!inquote && (c == L' ' || c == L'\t' || c == L'/'))
+			if (!inquote && (c == L' ' || c == L'\t' || c == term3))
 				break;
 
 			if (te.mbIsSwitch) {
@@ -238,7 +189,7 @@ bool VDCommandLine::FindSwitch(const wchar_t *name) const {
 	int count = (int)mTokens.size();
 
 	for(int i=1; i<count; ++i) {
-		if (mTokens[i].mbIsSwitch && !_wcsicmp(name, mLine.data() + mTokens[i].mTokenIndex + 1))
+		if (mTokens[i].mbIsSwitch && !vdwcsicmp(name, mLine.data() + mTokens[i].mTokenIndex + 1))
 			return true;
 	}
 
@@ -249,7 +200,7 @@ bool VDCommandLine::FindAndRemoveSwitch(const wchar_t *name) {
 	int count = (int)mTokens.size();
 
 	for(int i=1; i<count; ++i) {
-		if (mTokens[i].mbIsSwitch && !_wcsicmp(name, mLine.data() + mTokens[i].mTokenIndex + 1)) {
+		if (mTokens[i].mbIsSwitch && !vdwcsicmp(name, mLine.data() + mTokens[i].mTokenIndex + 1)) {
 			mTokens.erase(mTokens.begin() + i);
 			return true;
 		}
@@ -260,7 +211,6 @@ bool VDCommandLine::FindAndRemoveSwitch(const wchar_t *name) {
 
 bool VDCommandLine::FindAndRemoveSwitch(const wchar_t *name, const wchar_t *& token) {
 	int count = (int)mTokens.size();
-	size_t namelen = wcslen(name);
 
 	for(int i=1; i<count; ++i) {
 		if (!mTokens[i].mbIsSwitch)
@@ -268,8 +218,8 @@ bool VDCommandLine::FindAndRemoveSwitch(const wchar_t *name, const wchar_t *& to
 		
 		const wchar_t *s = mLine.data() + mTokens[i].mTokenIndex + 1;
 
-		if (!_wcsnicmp(name, s, namelen)) {
-			token = s+namelen;	// null term
+		if (!vdwcsicmp(name, s)) {
+			token = L"";
 
 			mTokens.erase(mTokens.begin() + i);
 

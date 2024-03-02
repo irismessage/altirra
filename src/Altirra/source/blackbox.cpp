@@ -158,7 +158,7 @@ bool ATBlackBoxEmulator::SetSettings(const ATPropertySet& settings) {
 }
 
 void ATBlackBoxEmulator::Init() {
-	mSerialBus.Init(this, 0, IATDeviceSerial::kTypeID, "serial", L"Serial Port");
+	mSerialBus.Init(this, 0, IATDeviceSerial::kTypeID, "serial", L"Serial Port", "serport");
 
 	mSerialBus.SetOnAttach(
 		[this] {
@@ -189,6 +189,8 @@ void ATBlackBoxEmulator::Init() {
 			mSerialCtlInputs = 0;
 		}
 	);
+
+	UpdateDipSwitches();
 }
 
 void ATBlackBoxEmulator::Shutdown() {
@@ -385,8 +387,8 @@ bool ATBlackBoxEmulator::ReloadFirmware() {
 	return checksum != VDHash128(mFirmware, sizeof mFirmware);
 }
 
-bool ATBlackBoxEmulator::IsUsableFirmwareLoaded() const {
-	return mbFirmwareUsable;
+ATDeviceFirmwareStatus ATBlackBoxEmulator::GetFirmwareStatus() const {
+	return mbFirmwareUsable ? ATDeviceFirmwareStatus::OK : ATDeviceFirmwareStatus::Missing;
 }
 
 void ATBlackBoxEmulator::InitIRQSource(ATIRQController *irqc) {
@@ -449,6 +451,10 @@ IATDeviceBus *ATBlackBoxEmulator::GetDeviceBus(uint32 index) {
 
 const wchar_t *ATBlackBoxEmulator::GetBusName() const {
 	return L"SCSI Bus";
+}
+
+const char *ATBlackBoxEmulator::GetBusTag() const {
+	return "scsibus";
 }
 
 const char *ATBlackBoxEmulator::GetSupportedType(uint32 index) {

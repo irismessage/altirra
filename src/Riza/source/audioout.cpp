@@ -201,6 +201,9 @@ bool VDAudioOutputWaveOutW32::Init(uint32 bufsize, uint32 bufcount, const WAVEFO
 	mBlockCount = bufcount;
 	mBytesQueued = 0;
 
+	mSamplesPerSec = wf->nSamplesPerSec;
+	mAvgBytesPerSec = wf->nAvgBytesPerSec;
+
 	if (!mhWaveEvent) {
 		mhWaveEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
 
@@ -215,8 +218,6 @@ bool VDAudioOutputWaveOutW32::Init(uint32 bufsize, uint32 bufcount, const WAVEFO
 	}
 
 	mCurState = kStateOpened;
-	mSamplesPerSec = wf->nSamplesPerSec;
-	mAvgBytesPerSec = wf->nAvgBytesPerSec;
 
 	// Hmmm... we can't allocate buffers while the wave device
 	// is active...

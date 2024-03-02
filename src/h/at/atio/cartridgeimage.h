@@ -19,6 +19,7 @@
 #ifndef f_AT_ATIO_CARTRIDGEIMAGE_H
 #define f_AT_ATIO_CARTRIDGEIMAGE_H
 
+#include <optional>
 #include <vd2/system/refcount.h>
 #include <vd2/system/vdstl.h>
 #include <at/atio/cartridgetypes.h>
@@ -55,6 +56,7 @@ public:
 	virtual void *GetBuffer() = 0;
 
 	virtual uint64 GetChecksum() = 0;
+	virtual std::optional<uint32> GetFileCRC() const = 0;
 
 	virtual bool IsDirty() const = 0;
 	virtual void SetClean() = 0;

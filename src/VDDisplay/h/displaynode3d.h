@@ -339,4 +339,131 @@ private:
 	uint32	mDstH;
 };
 
+///////////////////////////////////////////////////////////////////////////
+
+class VDDisplayScreenFXNode3D : public VDDisplayNode3D {
+public:
+	VDDisplayScreenFXNode3D();
+	~VDDisplayScreenFXNode3D();
+
+	const vdrect32 GetDestArea() const;
+
+	struct Params {
+		sint32 mDstX;
+		sint32 mDstY;
+		sint32 mDstW;
+		sint32 mDstH;
+		bool mbLinear;
+		bool mbUseAdobeRGB;
+		float mSharpnessX;
+		float mSharpnessY;
+		float mDistortionX;
+		float mDistortionYRatio;
+		float mScanlineIntensity;
+		float mGamma;
+		float mPALBlendingOffset;
+		float mColorCorrectionMatrix[3][3];
+	};
+
+	bool Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const Params& initParams, VDDisplaySourceNode3D *child);
+	void Shutdown();
+
+	void Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx);
+
+private:
+	struct Vertex;
+
+	IVDTVertexProgram *mpVP = nullptr;
+	IVDTFragmentProgram *mpFP = nullptr;
+	IVDTVertexFormat *mpVF = nullptr;
+	IVDTVertexBuffer *mpVB = nullptr;
+
+	IVDTTexture2D *mpGammaRampTex = nullptr;
+	IVDTTexture2D *mpScanlineMaskTex = nullptr;
+	VDDisplaySourceNode3D *mpSourceNode = nullptr;
+
+	uint32 mVPMode = 0;
+	uint32 mFPMode = 0;
+	float mCachedGamma = 0;
+	bool mbCachedGammaHasSrgb = false;
+	bool mbCachedGammaHasAdobeRGB = false;
+
+	VDDisplaySourceTexMapping mMapping {};
+	Params mParams {};
+	float mScanlineMaskNormH = 0;
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class VDDisplayArtifactingNode3D final : public VDDisplayNode3D {
+public:
+	VDDisplayArtifactingNode3D();
+	~VDDisplayArtifactingNode3D();
+
+	bool Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, float dy, VDDisplaySourceNode3D *child);
+	void Shutdown();
+
+	void Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx) override;
+
+private:
+	struct Vertex;
+
+	IVDTFragmentProgram *mpFP = nullptr;
+	IVDTVertexBuffer *mpVB = nullptr;
+
+	VDDisplaySourceNode3D *mpSourceNode = nullptr;
+
+	VDDisplaySourceTexMapping mMapping {};
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class VDDisplayBloomNode3D final : public VDDisplayNode3D {
+public:
+	VDDisplayBloomNode3D();
+	~VDDisplayBloomNode3D();
+
+	struct Params {
+		float mDstX;
+		float mDstY;
+		float mDstW;
+		float mDstH;
+		float mThreshold;
+		float mBlurRadius;
+		float mDirectIntensity;
+		float mIndirectIntensity;
+	};
+
+	bool Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const Params& params, VDDisplaySourceNode3D *child);
+	void Shutdown();
+
+	void Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx) override;
+
+private:
+	struct Vertex;
+
+	IVDTVertexProgram *mpVPs[3] {};
+	IVDTFragmentProgram *mpFPs[4] {};
+	IVDTVertexBuffer *mpVB = nullptr;
+	IVDTTexture2D *mpRTTPrescale = nullptr;
+	IVDTTexture2D *mpRTT1 = nullptr;
+	IVDTTexture2D *mpRTT2 = nullptr;
+
+	Params mParams {};
+	uint32 mBlurW = 0;
+	uint32 mBlurH = 0;
+	uint32 mBlurW2 = 0;
+	uint32 mBlurH2 = 0;
+	bool mbPrescale2x = false;
+
+	float mVPConstants1[12] {};
+	float mVPConstants2[12] {};
+	float mVPConstants3[12] {};
+	float mFPConstants[8] {};
+
+	VDDisplaySourceNode3D *mpSourceNode = nullptr;
+
+	VDDisplaySourceTexMapping mMapping {};
+};
+
 #endif

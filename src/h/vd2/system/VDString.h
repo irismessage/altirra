@@ -959,6 +959,12 @@ public:
 	}
 
 	// extensions
+	VDStringSpanW subspan(size_type pos) const {
+		VDASSERT(pos <= (size_type)(mpEnd - mpBegin));
+
+		return VDStringSpanW(mpBegin + pos, mpEnd);
+	}
+
 	const VDStringSpanW subspan(size_type pos, size_type n) const {
 		size_type len = (size_type)(mpEnd - mpBegin);
 		VDASSERT(pos <= len);

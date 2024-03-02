@@ -45,8 +45,6 @@ public:
 	VDCommandLine(const wchar_t *s);
 	~VDCommandLine();
 
-	void Init(const wchar_t *s);
-
 	// This splits the cmdline using rules that are closer to Visual C++'s:
 	// - 2N+1 backslashes followed by a quote inserts a literal quote.
 	// - 2N backslashes followed by a quote toggles the quote state.
@@ -56,7 +54,7 @@ public:
 	// - A parameter starting with a forward slash followed by a ? or an alphanumeric
 	//   char is a switch. A switch is terminated by a non-alphanumeric character or
 	//   a colon.
-	void InitAlt(const wchar_t *s);
+	void Init(const wchar_t *s);
 
 	uint32 GetCount() const;
 	const wchar_t *operator[](int index) const;

@@ -175,9 +175,17 @@ void ATUltimate1MBEmulator::Init(
 			UpdateFlashShadows();
 		}
 	);
+
+	mStereoEnableOutput.SetValue(true);
+	mStereoEnableOutput.Connect(mpSystemController->GetStereoEnableSignal());
+	mCovoxEnableOutput.SetValue(true);
+	mCovoxEnableOutput.Connect(mpSystemController->GetCovoxEnableSignal());
 }
 
 void ATUltimate1MBEmulator::Shutdown() {
+	mStereoEnableOutput.Disconnect();
+	mCovoxEnableOutput.Disconnect();
+
 	if (mpMMU) {
 		// must happen before we clear the layers
 		mpMMU->SetROMMappingHook(nullptr);
@@ -318,6 +326,8 @@ void ATUltimate1MBEmulator::ColdReset() {
 
 	mVBXEPage = 0xD6;
 	mbSoundBoardEnabled = false;
+	mStereoEnableOutput.SetValue(true);
+	mCovoxEnableOutput.SetValue(true);
 
 	if (mVBXEPageHandler)
 		mVBXEPageHandler();
@@ -772,8 +782,10 @@ bool ATUltimate1MBEmulator::WriteByteD3xx(void *thisptr0, uint32 addr, uint8 val
 
 				const uint8 vbxePage = (value & 0x20) ? 0 : (value & 0x10) ? 0xD7 : 0xD6;
 
-				if (thisptr->mVBXEPage != vbxePage)
-				{
+				thisptr->mStereoEnableOutput.SetValue((value & 0x01) != 0);
+				thisptr->mCovoxEnableOutput.SetValue((value & 0x02) != 0);
+
+				if (thisptr->mVBXEPage != vbxePage) {
 					thisptr->mVBXEPage = vbxePage;
 
 					if (thisptr->mVBXEPageHandler)
@@ -782,8 +794,7 @@ bool ATUltimate1MBEmulator::WriteByteD3xx(void *thisptr0, uint32 addr, uint8 val
 
 				const bool sb = (value & 0x40) != 0;
 
-				if (thisptr->mbSoundBoardEnabled != sb)
-				{
+				if (thisptr->mbSoundBoardEnabled != sb) {
 					thisptr->mbSoundBoardEnabled = sb;
 
 					if (thisptr->mSBPageHandler)

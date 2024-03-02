@@ -1,3 +1,19 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2008-2018 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #include <stdafx.h>
 #include <vd2/VDDisplay/textrenderer.h>
 #include <at/atui/uiwidget.h>
@@ -5,6 +21,7 @@
 #include <at/atui/uimanager.h>
 #include <at/atui/uicontainer.h>
 #include <at/atui/uidrawingutils.h>
+#include <at/atui/uidragdrop.h>
 
 ATUIWidget::ATUIWidget()
 	: mpManager(NULL)
@@ -22,6 +39,7 @@ ATUIWidget::ATUIWidget()
 	, mOwnerId(0)
 	, mbActivated(false)
 	, mbVisible(true)
+	, mbDropTarget(false)
 	, mbFastClip(false)
 	, mbHitTransparent(false)
 	, mPointersOwned(0)
@@ -433,6 +451,25 @@ void ATUIWidget::OnDeactivate() {
 }
 
 void ATUIWidget::OnTrackCursorChanges(ATUIWidget *w) {
+}
+
+ATUIWidget *ATUIWidget::DragHitTest(vdpoint32 pt) {
+	return mbDropTarget ? this : nullptr;
+}
+
+ATUIDragEffect ATUIWidget::OnDragEnter(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) {
+	return ATUIDragEffect::None;
+}
+
+ATUIDragEffect ATUIWidget::OnDragOver(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) {
+	return ATUIDragEffect::None;
+}
+
+void ATUIWidget::OnDragLeave() {
+}
+
+ATUIDragEffect ATUIWidget::OnDragDrop(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) {
+	return ATUIDragEffect::None;
 }
 
 void ATUIWidget::Draw(IVDDisplayRenderer& rdr) {

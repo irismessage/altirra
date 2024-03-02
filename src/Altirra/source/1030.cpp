@@ -753,7 +753,7 @@ public:	// IATDeviceFirmware
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override { return nullptr; }
 	bool IsWritableFirmwareDirty(uint32 idx) const override { return false; }
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override {}
-	bool IsUsableFirmwareLoaded() const override;
+	ATDeviceFirmwareStatus GetFirmwareStatus() const override;
 
 public:	// IATDeviceScheduling
 	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
@@ -934,8 +934,8 @@ bool ATDevice1030Modem::ReloadFirmware() {
 	return changed;
 }
 
-bool ATDevice1030Modem::IsUsableFirmwareLoaded() const {
-	return mbFirmwareUsable;
+ATDeviceFirmwareStatus ATDevice1030Modem::GetFirmwareStatus() const {
+	return mbFirmwareUsable ? ATDeviceFirmwareStatus::OK : ATDeviceFirmwareStatus::Missing;
 }
 
 void ATDevice1030Modem::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {

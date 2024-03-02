@@ -1,3 +1,19 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2008-2018 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #ifndef f_AT2_UIWIDGET_H
 #define f_AT2_UIWIDGET_H
 
@@ -8,9 +24,13 @@
 class IVDDisplayRenderer;
 class VDDisplayTextRenderer;
 class IATUIAnchor;
+class IATUIDragDropObject;
 
 class ATUIContainer;
 class ATUIManager;
+
+enum class ATUIDragModifiers : uint32;
+enum class ATUIDragEffect : uint32;
 
 // Currently these need to match the Win32 definitions.
 enum ATUIVirtKey {
@@ -195,6 +215,9 @@ public:
 	bool IsHitTransparent() const { return mbHitTransparent; }
 	void SetHitTransparent(bool trans) { mbHitTransparent = trans; }
 
+	bool IsDropTarget() const { return mbDropTarget; }
+	void SetDropTarget(bool enabled) { mbDropTarget = enabled; }
+
 	ATUITouchMode GetTouchMode() const { return mTouchMode; }
 	void SetTouchMode(ATUITouchMode mode) { mTouchMode = mode; }
 
@@ -259,6 +282,31 @@ public:
 
 	virtual void OnTrackCursorChanges(ATUIWidget *w);
 
+	// Drag and drop support
+	//
+	// - DragHitTest() returns the widget or sub-widget that is a valid drop
+	//   target at the given point. By default, this is the deepest visible
+	//   widget with the drop target flag set. Regular hit testing including
+	//   hit transparency is ignored, however.
+	// - One drop target has focus at a time, bracketed by OnDragEnter() and
+	//   OnDragLeave(). A leave-enter sequence is guaranteed to occur if
+	//   the drag object changes.
+	// - OnDragOver() is called during movements over the drag target. It is
+	//   the drag analog of mouse move. It always occurs between enter-leave.
+	// - OnDragDrop() is called if the drop actually occurs. It too is called
+	//   between enter-leave, so OnDragLeave() is guaranteed to be available
+	//   for common cleanup after a drop.
+	// - All coordinates are local (client).
+	// - The drag effect determines the cursor and the type of intended
+	//   operation. Copy is recommended, as some drag sources block drags in
+	//   Move mode if their sources are read-only.
+	//
+	virtual ATUIWidget *DragHitTest(vdpoint32 pt);
+	virtual ATUIDragEffect OnDragEnter(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj);
+	virtual ATUIDragEffect OnDragOver(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj);
+	virtual void OnDragLeave();
+	virtual ATUIDragEffect OnDragDrop(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj);
+
 	void Draw(IVDDisplayRenderer& rdr);
 
 public:
@@ -290,6 +338,7 @@ protected:
 
 	bool mbActivated;
 	bool mbVisible;
+	bool mbDropTarget;
 	bool mbFastClip;
 	bool mbHitTransparent;
 	uint8 mPointersOwned;

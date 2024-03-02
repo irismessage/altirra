@@ -38,6 +38,7 @@
 #include <vd2/VDDisplay/display.h>
 #include <at/atui/constants.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/genericdialog.h>
 #include <at/atnativeui/uiframe.h>
 #include <at/atnativeui/uiproxies.h>
 #include <at/atcore/address.h>
@@ -47,6 +48,7 @@
 #include <at/atdebugger/target.h>
 #include <at/atio/cassetteimage.h>
 #include "console.h"
+#include "uiaccessors.h"
 #include "uikeyboard.h"
 #include "uihistoryview.h"
 #include "texteditor.h"
@@ -1848,6 +1850,86 @@ IATSourceWindow *ATOpenSourceWindow(const wchar_t *s) {
 	g_sourceWindows[paneIndex] = NULL;
 
 	return NULL;
+}
+
+class ATUIDebuggerSourceListDialog final : public VDResizableDialogFrameW32 {
+public:
+	ATUIDebuggerSourceListDialog();
+
+private:
+	bool OnLoaded() override;
+	void OnDataExchange(bool write) override;
+	bool OnOK() override;
+
+	VDUIProxyListBoxControl mFileListView;
+
+	vdvector<VDStringW> mFiles;
+};
+
+ATUIDebuggerSourceListDialog::ATUIDebuggerSourceListDialog()
+	: VDResizableDialogFrameW32(IDD_DEBUG_OPENSOURCEFILE)
+{
+	mFileListView.SetOnSelectionChanged([this](int sel) { EnableControl(IDOK, sel >= 0); });
+}
+
+bool ATUIDebuggerSourceListDialog::OnLoaded() {
+	AddProxy(&mFileListView, IDC_LIST);
+
+	mResizer.Add(IDC_LIST, mResizer.kMC);
+	mResizer.Add(IDOK, mResizer.kBR);
+	mResizer.Add(IDCANCEL, mResizer.kBR);
+
+	OnDataExchange(false);
+	mFileListView.Focus();
+	return true;
+}
+
+void ATUIDebuggerSourceListDialog::OnDataExchange(bool write) {
+	if (!write) {
+		mFiles.clear();
+		ATGetDebugger()->EnumSourceFiles(
+			[this](const wchar_t *s, uint32 numLines) {
+				// drop source files that have no lines... CC65 symbols are littered with these
+				if (numLines)
+					mFiles.emplace_back(s);
+			}
+		);
+
+		std::sort(mFiles.begin(), mFiles.end());
+		
+		mFileListView.Clear();
+
+		if (mFiles.empty()) {
+			EnableControl(IDOK, false);
+			mFileListView.SetEnabled(false);
+			mFileListView.AddItem(L"No symbols loaded with source file information.");
+		} else {
+			EnableControl(IDOK, true);
+			mFileListView.SetEnabled(true);
+			for(const VDStringW& s : mFiles) {
+				mFileListView.AddItem(s.c_str());
+			}
+
+			mFileListView.SetSelection(0);
+		}
+	}
+}
+
+bool ATUIDebuggerSourceListDialog::OnOK() {
+	int sel = mFileListView.GetSelection();
+
+	if ((unsigned)sel >= mFiles.size())
+		return true;
+
+	if (!ATOpenSourceWindow(mFiles[sel].c_str()))
+		return true;
+
+	return false;
+}
+
+void ATUIShowSourceListDialog() {
+	ATUIDebuggerSourceListDialog dlg;
+	dlg.ShowDialog(ATUIGetNewPopupOwner());
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -4053,10 +4135,15 @@ void ATShowConsole() {
 		ATSavePaneLayout(NULL);
 		g_uiDebuggerMode = true;
 
+		IATDebugger *d = ATGetDebugger();
+		d->SetEnabled(true);
+
 		if (!ATRestorePaneLayout(NULL)) {
 			ATActivateUIPane(kATUIPaneId_Console, !ATGetUIPane(kATUIPaneId_Console));
 			ATActivateUIPane(kATUIPaneId_Registers, false);
 		}
+
+		d->ShowBannerOnce();
 	}
 }
 
@@ -4064,17 +4151,25 @@ void ATOpenConsole() {
 	if (!g_uiDebuggerMode) {
 		ATSavePaneLayout(NULL);
 		g_uiDebuggerMode = true;
+
+		IATDebugger *d = ATGetDebugger();
+		d->SetEnabled(true);
+
 		if (ATRestorePaneLayout(NULL)) {
 			if (ATGetUIPane(kATUIPaneId_Console))
 				ATActivateUIPane(kATUIPaneId_Console, true);
 		} else {
 			ATLoadDefaultPaneLayout();
 		}
+
+		d->ShowBannerOnce();
 	}
 }
 
 void ATCloseConsole() {
 	if (g_uiDebuggerMode) {
+		ATGetDebugger()->SetEnabled(false);
+
 		ATSavePaneLayout(NULL);
 		g_uiDebuggerMode = false;
 		ATRestorePaneLayout(NULL);
@@ -4220,7 +4315,38 @@ namespace {
 	}
 }
 
+bool ATConsoleConfirmScriptLoad() {
+	ATUIGenericDialogOptions opts {};
+
+	opts.mhParent = ATUIGetMainWindow();
+	opts.mpTitle = L"Debugger script found";
+	opts.mpMessage =
+		L"Do you want to run the debugger script that is included with this image?\n"
+		L"\n"
+		L"Debugger scripts are powerful and should only be run for programs you are debugging and from sources that you trust."
+		L"Automatic debugger script loading and confirmation settings can be toggled in the Debugger section of Configure System."
+		;
+	opts.mpIgnoreTag = "RunDebuggerScript";
+	opts.mIconType = kATUIGenericIconType_Warning;
+	opts.mResultMask = kATUIGenericResultMask_OKCancel;
+	opts.mValidIgnoreMask = kATUIGenericResultMask_OKCancel;
+	opts.mAspectLimit = 4.0f;
+
+	bool wasIgnored = false;
+	opts.mpCustomIgnoreFlag = &wasIgnored;
+
+	const bool result = (ATUIShowGenericDialogAutoCenter(opts) == kATUIGenericResult_OK);
+
+	if (wasIgnored) {
+		ATGetDebugger()->SetScriptAutoLoadMode(result ? ATDebuggerScriptAutoLoadMode::Enabled : ATDebuggerScriptAutoLoadMode::Disabled);
+	}
+
+	return result;
+}
+
 void ATInitUIPanes() {
+	ATGetDebugger()->SetScriptAutoLoadConfirmFn(ATConsoleConfirmScriptLoad);
+
 	VDLoadSystemLibraryW32("msftedit");
 
 	ATRegisterUIPaneType(kATUIPaneId_Registers, VDRefCountObjectFactory<ATRegistersWindow, ATUIPane>);

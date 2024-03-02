@@ -103,6 +103,7 @@ public:
 
 public:
 	const wchar_t *GetBusName() const override;
+	const char *GetBusTag() const override;
 	const char *GetSupportedType(uint32 index) override;
 	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
 	void AddChildDevice(IATDevice *dev) override;
@@ -319,6 +320,10 @@ void ATDeviceDiskDriveATR8000::SerialPort::SetControlState(bool state) {
 
 const wchar_t *ATDeviceDiskDriveATR8000::SerialPort::GetBusName() const {
 	return L"Serial Port";
+}
+
+const char *ATDeviceDiskDriveATR8000::SerialPort::GetBusTag() const {
+	return "serial";
 }
 
 const char *ATDeviceDiskDriveATR8000::SerialPort::GetSupportedType(uint32 index) {
@@ -735,8 +740,8 @@ bool ATDeviceDiskDriveATR8000::IsWritableFirmwareDirty(uint32 idx) const {
 void ATDeviceDiskDriveATR8000::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 }
 
-bool ATDeviceDiskDriveATR8000::IsUsableFirmwareLoaded() const {
-	return mbFirmwareUsable;
+ATDeviceFirmwareStatus ATDeviceDiskDriveATR8000::GetFirmwareStatus() const {
+	return mbFirmwareUsable ? ATDeviceFirmwareStatus::OK : ATDeviceFirmwareStatus::Missing;
 }
 
 void ATDeviceDiskDriveATR8000::InitDiskDrive(IATDiskDriveManager *ddm) {

@@ -336,8 +336,8 @@ bool ATDeviceDiskDrivePercom::IsWritableFirmwareDirty(uint32 idx) const {
 void ATDeviceDiskDrivePercom::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 }
 
-bool ATDeviceDiskDrivePercom::IsUsableFirmwareLoaded() const {
-	return mbFirmwareUsable;
+ATDeviceFirmwareStatus ATDeviceDiskDrivePercom::GetFirmwareStatus() const {
+	return mbFirmwareUsable ? ATDeviceFirmwareStatus::OK : ATDeviceFirmwareStatus::Missing;
 }
 
 void ATDeviceDiskDrivePercom::InitDiskDrive(IATDiskDriveManager *ddm) {

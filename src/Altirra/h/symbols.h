@@ -21,6 +21,8 @@
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/refcount.h>
 
+class IVDRandomAccessStream;
+
 enum {
 	kATSymbol_Read		= 0x01,
 	kATSymbol_Write		= 0x02,
@@ -57,7 +59,7 @@ enum ATSymbolDirectiveType {
 
 struct ATSymbolDirectiveInfo {
 	ATSymbolDirectiveType mType;
-	uint16 mOffset;
+	uint32 mOffset;
 	const char *mpArguments;
 };
 
@@ -83,7 +85,8 @@ public:
 
 class IATCustomSymbolStore : public IATSymbolStore {
 public:
-	virtual void Load(const wchar_t *filename) = 0;
+	virtual void Load(const wchar_t *path) = 0;
+	virtual void Load(const wchar_t *filename, IVDRandomAccessStream& stream) = 0;
 	virtual void Init(uint32 moduleBase, uint32 moduleSize) = 0;
 	virtual void RemoveSymbol(uint32 offset) = 0;
 	virtual void AddSymbol(uint32 offset, const char *name, uint32 size = 1, uint32 flags = kATSymbol_Read | kATSymbol_Write | kATSymbol_Execute, uint16 file = 0, uint16 line = 0) = 0;
@@ -98,7 +101,8 @@ bool ATCreateDefaultKernelSymbolStore(IATSymbolStore **ppStore);
 bool ATCreateDefaultHardwareSymbolStore(IATSymbolStore **ppStore);
 bool ATCreateDefault5200HardwareSymbolStore(IATSymbolStore **ppStore);
 void ATCreateCustomSymbolStore(IATCustomSymbolStore **ppStore);
-void ATLoadSymbols(const wchar_t *filename, IATSymbolStore **ppStore);
-void ATSaveSymbols(const wchar_t *filename, IATSymbolStore *ppStore);
+void ATLoadSymbols(const wchar_t *path, IATSymbolStore **ppStore);
+void ATLoadSymbols(const wchar_t *filename, IVDRandomAccessStream& stream, IATSymbolStore **ppStore);
+void ATSaveSymbols(const wchar_t *path, IATSymbolStore *ppStore);
 
 #endif

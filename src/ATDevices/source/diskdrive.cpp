@@ -360,7 +360,7 @@ IATDeviceSIO::CmdResponse ATDeviceDiskDrive::OnCmdReadSector() {
 
 		// Check if we should emulate weak bits.
 		if (psi.mWeakDataOffset >= 0) {
-			for(int i = psi.mWeakDataOffset; i < (int)psi.mSize; ++i) {
+			for(int i = psi.mWeakDataOffset; i < (int)psi.mPhysicalSize; ++i) {
 				mSectorBuffer[i] ^= (uint8)mWeakBitLFSR;
 
 				mWeakBitLFSR = (mWeakBitLFSR << 8) + (0xff & ((mWeakBitLFSR >> (28 - 8)) ^ (mWeakBitLFSR >> (31 - 8))));

@@ -14,6 +14,12 @@ public:
 		kAlignRight
 	};
 
+	enum VAlign {
+		kVAlignTop,
+		kVAlignMiddle,
+		kVAlignBottom
+	};
+
 	ATUILabel();
 
 	void SetFont(IVDDisplayFont *font);
@@ -23,6 +29,7 @@ public:
 	void SetBorderColor(uint32 c);
 
 	void SetTextAlign(Align align);
+	void SetTextVAlign(VAlign align);
 	void SetTextColor(uint32 c);
 	void SetTextOffset(sint32 x, sint32 y);
 
@@ -49,6 +56,7 @@ protected:
 	VDStringW mText;
 	VDStringW mTextF;
 	Align mTextAlign;
+	VAlign mTextVAlign;
 	uint32 mTextColor;
 	sint32 mTextX;
 	sint32 mTextY;

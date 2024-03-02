@@ -80,13 +80,14 @@ public:		// IATDeviceFirmware
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override;
 	bool IsWritableFirmwareDirty(uint32 idx) const override;
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
-	bool IsUsableFirmwareLoaded() const override;
+	ATDeviceFirmwareStatus GetFirmwareStatus() const override;
 
 public:		// IATDeviceParent
 	IATDeviceBus *GetDeviceBus(uint32 index) override;
 
 public:		// IATDeviceBus
 	const wchar_t *GetBusName() const override;
+	const char *GetBusTag() const override;
 	const char *GetSupportedType(uint32 index) override;
 	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
 	void AddChildDevice(IATDevice *dev) override;

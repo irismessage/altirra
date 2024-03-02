@@ -48,8 +48,8 @@ public:
 	bool Init(ATSimulatorEventManager& sem, ATDeviceManager& devmgr);
 	void Shutdown();
 
-	void Copy();
-	void CopySaveFrame(bool saveFrame, bool trueAspect);
+	void Copy(bool enableEscaping);
+	void CopySaveFrame(bool saveFrame, bool trueAspect, const wchar_t *path = nullptr);
 
 	void ToggleHoldKeys();
 
@@ -70,10 +70,10 @@ public:
 
 	vdrect32 GetOSKSafeArea() const;
 
+	void SetDisplaySourceMapping(vdfunction<bool(vdfloat2&)> dispToSrcFn, vdfunction<bool(vdfloat2&)> srcToDispFn);
 	void SetDisplayRect(const vdrect32& r);
 
-	void ClearXorRects();
-	void AddXorRect(int x1, int y1, int x2, int y2);
+	void ClearHighlights();
 
 	void SetXEP(IATDeviceVideoOutput *xep);
 	void SetEnhancedTextEngine(IATUIEnhancedTextEngine *p);
@@ -125,6 +125,11 @@ protected:
 	
 	virtual void OnDeactivate() override;
 
+	ATUIDragEffect OnDragEnter(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) override;
+	ATUIDragEffect OnDragOver(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) override;
+	void OnDragLeave() override;
+	ATUIDragEffect OnDragDrop(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) override;
+
 	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
 
 public:
@@ -145,23 +150,34 @@ protected:
 	const vdrect32 GetAltDisplayArea() const;
 	bool MapPixelToBeamPosition(int x, int y, float& hcyc, float& vcyc, bool clamp) const;
 	bool MapPixelToBeamPosition(int x, int y, int& xc, int& yc, bool clamp) const;
-	void MapBeamPositionToPixel(int xc, int yc, int& x, int& y) const;
+	void MapBeamPositionToPoint(int xc, int yc, int& x, int& y) const;
+	vdfloat2 MapBeamPositionToPointF(vdfloat2 pt) const;
 	void UpdateDragPreview(int x, int y);
 	void UpdateDragPreviewAlt(int x, int y);
 	void UpdateDragPreviewAntic(int x, int y);
 	void UpdateDragPreviewRects();
 	void ClearDragPreview();
 	int GetModeLineYPos(int ys, bool checkValidCopyText) const;
-	int ReadText(char *dst, int yc, int startChar, int numChars) const;
+	std::pair<int, int> GetModeLineXYPos(int xcc, int ys, bool checkValidCopyText) const;
+	int ReadText(uint8 *dst, int yc, int startChar, int numChars) const;
 	void ClearCoordinateIndicator();
 	void SetCoordinateIndicator(int x, int y);
 
 	void ClearHoverTip();
 
+	sint32 FindDropTargetOverlay(sint32 x, sint32 y) const;
+	void HighlightDropTargetOverlay(int index);
+	void CreateDropTargetOverlays();
+	void DestroyDropTargetOverlays();
+
 	bool mbShiftDepressed = false;
+	bool mbShiftToggledPostKeyDown = false;
 	bool mbHoldKeys = false;
 
 	vdrect32 mDisplayRect = { 0, 0, 0, 0 };
+
+	vdfunction<bool(vdfloat2&)> mpMapDisplayToSourcePt;
+	vdfunction<bool(vdfloat2&)> mpMapSourceToDisplayPt;
 
 	bool	mbDragActive = false;
 	bool	mbDragInitial = false;
@@ -175,15 +191,14 @@ protected:
 
 	bool	mbOpenSidePanelDeferred = false;
 
-	struct XorRect {
-		int mX1;
-		int mY1;
-		int mX2;
-		int mY2;
+	struct HighlightPoint {
+		int mX;
+		int mY;
+		bool mbClose;
 	};
 
-	typedef vdfastvector<XorRect> XorRects;
-	XorRects mXorRects;
+	typedef vdfastvector<HighlightPoint> HighlightPoints;
+	HighlightPoints mHighlightPoints;
 
 	bool	mbShowEnhSizeIndicator = false;
 	bool	mbCoordIndicatorActive = false;
@@ -228,6 +243,8 @@ protected:
 	vdfunction<void()> mpOnAllowContextMenu;
 	vdfunction<void(const vdpoint32&)> mpOnDisplayContextMenu;
 	vdfunction<void()> mpOnOSKChange;
+
+	vdrefptr<ATUIWidget> mpDropTargetOverlays[7];
 
 	struct ActiveKey {
 		uint32 mVkey;

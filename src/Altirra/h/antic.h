@@ -313,7 +313,6 @@ protected:
 	uint8	mPENH = 0;
 	uint8	mPENV = 0;
 
-	uint8	mVCOUNT = 0;
 	int		mWSYNCPending = 0;
 
 	uint32	mVSyncShiftTime = 0;

@@ -73,6 +73,7 @@ const char *ATGetFirmwareTypeName(ATFirmwareType type) {
 		"rapidus_flash",
 		"rapidus_corepbi",
 		"isplate",
+		"warpos",
 	};
 
 	VDASSERTCT(vdcountof(kTypeNames) == kATFirmwareTypeCount);
@@ -123,6 +124,7 @@ ATFirmwareType ATGetFirmwareTypeFromName(const char *type) {
 	else if (!strcmp(type, "rapidus_flash")) return kATFirmwareType_RapidusFlash;
 	else if (!strcmp(type, "rapidus_corepbi")) return kATFirmwareType_RapidusCorePBI;
 	else if (!strcmp(type, "isplate")) return kATFirmwareType_ISPlate;
+	else if (!strcmp(type, "warpos")) return kATFirmwareType_WarpOS;
 	else return kATFirmwareType_Unknown;
 }
 
@@ -326,6 +328,81 @@ bool ATFirmwareManager::GetFirmwareInfo(uint64 id, ATFirmwareInfo& fwinfo) const
 		fwinfo.mName = kPredefFirmwares[id - 1].mpName;
 		fwinfo.mPath.clear();
 		fwinfo.mFlags = 0;
+
+		VDStringW s;
+		if (id == kATFirmwareId_Kernel_LLEXL || id ==kATFirmwareId_Kernel_816) {
+			if (mKernelXLVersion.empty()) {
+				vdfastvector<uint8> buf(16384, 0);
+				ATLoadInternalFirmware(kATFirmwareId_Kernel_LLEXL, buf.data(), 0, buf.size());
+
+				// AltirraOS XL/XE/XEGS places the version string at the top of the
+				// self-test area ($57F8).
+				mKernelXLVersion = L"AltirraOS ";
+
+				for(uint32 i = 0xD7F8 - 0xC000; i < 0xD800 - 0xC000; ++i) {
+					uint8 c = buf[i];
+
+					if (c >= 0x21 && c < 0x7F)
+						mKernelXLVersion += (char)c;
+					else
+						break;
+				}
+
+				mKernel816Version = mKernelXLVersion;
+				mKernelXLVersion += L" for XL/XE/XEGS";
+				mKernel816Version += L" for 65C816";
+			}
+
+			fwinfo.mName = (id == kATFirmwareId_Kernel_LLEXL) ? mKernelXLVersion : mKernel816Version;
+		} else if (id == kATFirmwareId_Kernel_LLE) {
+			if (mKernelVersion.empty()) {
+				vdfastvector<uint8> buf(10240, 0);
+				ATLoadInternalFirmware(id, buf.data(), 0, buf.size());
+
+				// Standard AltirraOS currently places the memo pad version string
+				// at $E4A6, right below KnownRTS. The first 10 chars are 'AltirraOS '.
+				mKernelVersion = L"AltirraOS ";
+
+				for(uint32 i = 0xE4B0 - 0xD800; i < 0xE4C0 - 0xD800; ++i) {
+					uint8 c = buf[i];
+
+					if (c >= 0x21 && c < 0x7F)
+						mKernelVersion += (char)c;
+					else
+						break;
+				}
+
+				mKernelVersion += L" for 400/800";
+			}
+
+			fwinfo.mName = mKernelVersion;
+		} else if (id == kATFirmwareId_Basic_ATBasic) {
+			if (mBASICVersion.empty()) {
+				vdfastvector<uint8> buf(8192, 0);
+				ATLoadInternalFirmware(id, buf.data(), 0, buf.size());
+
+				// Search for the string within the first page: 'Altirra 8K BASIC '.
+				mBASICVersion = L"Altirra BASIC";
+
+				for(uint32 i = 0; i < 256; ++i) {
+					if (!memcmp(&buf[i], "Altirra 8K BASIC ", 17)) {
+						mBASICVersion += ' ';
+
+						for(uint32 j=0; j<16; ++j) {
+							uint8 c = buf[i+j+17];
+
+							if (c >= 0x21 && c < 0x7F)
+								mBASICVersion += (char)c;
+							else
+								break;
+						}
+						break;
+					}
+				}
+			}
+
+			fwinfo.mName = mBASICVersion;
+		}
 
 		return true;
 	} else {

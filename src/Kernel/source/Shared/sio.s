@@ -184,7 +184,7 @@ xit_pbi:
 	lda		#0
 	sta		critic
 
-	tya
+	cpy		#0			;!! - A=0 must be preserved for LiteDOS
 	sty		dstats
 	sty		status
 	rts
@@ -844,9 +844,11 @@ no_frames:
 	adc		bfenhi				;(lines-1)*6 (hi) (and c=0)
 	dex							;-1 line, bringing us to -7
 	stx		audf3
+	stx		cbaudl
 	inx
 	sne:sbc	#0
 	sta		audf4
+	sta		cbaudh
 		
 	;kick pokey into init mode to reset serial input shift hw
 	ldx		sskctl

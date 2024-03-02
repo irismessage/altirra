@@ -95,15 +95,16 @@
 	&Overscan Mode
 		&OS Screen Only			{View.OverscanOSScreen}
 		&Normal					{View.OverscanNormal}
+		&Widescreen				{View.OverscanWidescreen}
 		&Extended				{View.OverscanExtended}
-		&Full					{View.OverscanFull}
+		&Full (With Blanking)	{View.OverscanFull}
 		---
 		&Vertical Override
 			&Off					{View.VerticalOverrideOff}
 			&OS Screen Only			{View.VerticalOverrideOSScreen}
 			&Normal					{View.VerticalOverrideNormal}
 			&Extended				{View.VerticalOverrideExtended}
-			&Full					{View.VerticalOverrideFull}
+			&Full (With Blanking)	{View.VerticalOverrideFull}
 		&Extended PAL Height	{View.TogglePALExtended}
 		&Indicator Margin		{View.ToggleIndicatorMargin}
 	&GTIA Visualization
@@ -114,7 +115,8 @@
 	Show FPS					{View.ToggleFPS}
 	&XEP80 View					{View.ToggleXEP80View}
 	&Auto-switch XEP80 View		{View.ToggleXEP80ViewAutoswitching}
-	Adjust Colors...		{Video.AdjustColorsDialog}
+	Adjust Colors...			{Video.AdjustColorsDialog}
+	Adjust Screen Effects...	{Video.AdjustScreenEffectsDialog}
 	---
 	&Display					{Pane.Display}
 	&Printer Output				{Pane.PrinterOutput}
@@ -124,6 +126,7 @@
 	Save Frame...				{Edit.SaveFrame}
 	Save Frame (True Aspect)...	{Edit.SaveFrameTrueAspect}
 	Copy Text					{Edit.CopyText}
+	Copy Escaped Text			{Edit.CopyEscapedText}
 	Paste Text					{Edit.PasteText}
 
 S&ystem
@@ -199,6 +202,7 @@ C&heat
 Debu&g
 	Enable Debugger						{Debug.ToggleDebugger}
 	Open Source File...					{Debug.OpenSourceFile}
+	Source File List...					{Debug.OpenSourceFileList}
 	&Window
 		&Console						{Pane.Console}
 		&Registers						{Pane.Registers}

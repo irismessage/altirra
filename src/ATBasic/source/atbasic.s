@@ -13,7 +13,7 @@
 
 ;===========================================================================
 .macro _MSG_BANNER
-		dta		c'Altirra 8K BASIC 1.55'
+		dta		c'Altirra 8K BASIC 1.56'
 .endm
 
 ;===========================================================================
@@ -555,7 +555,7 @@ msg_banner_end:
 ; a reload-E: stub when returning to DOS.
 ;
 		.if CART==0
-msg_base = *+10
+msg_base = *+13
 ReturnToDOS:
 		ldx		#0
 		jsr		IoCloseX
@@ -566,7 +566,7 @@ ReturnToDOS:
 		jsr		IoOpenStockDeviceX			;!! this overwrites $BC20+
 		jmp		(dosvec)
 
-		:10 dta 0
+		:13 dta 0
 
 		.else
 main:
@@ -575,6 +575,8 @@ main:
 		bmi		immediateModeReset
 				
 		;print banner
+		sec
+		rol		ioTermFlag
 		jsr		IoPrintMessageIOCB0		;!! - X=0
 		jmp		stNew
 
@@ -587,14 +589,14 @@ msg_banner:
 		dta		0
 		.endif
 
-		.if		msg_base != $A00A
+		.if		msg_base != $A00D
 		.error	"msg_base misaligned: ",*
 		.endif
 
-		.if		* != $A020
+		.if		* != $A023
 		.error	"msg_ready misaligned: ",*
 		.endif
-		org		$A020
+		org		$A023
 
 msg_ready:
 		dta		$9B,c'Ready',$9B,0

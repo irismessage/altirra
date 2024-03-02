@@ -53,9 +53,21 @@ void VDDeflateBitReader::readbytes(void *dst, unsigned len) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-void VDCRCChecker::Init(uint32 crc) {
-	mValue = 0xFFFFFFFF;
+void VDCRCTable::Init(uint32 crc) {
+	InitConst(crc);
+}
 
+uint32 VDCRCTable::Process(uint32 crc, const void *src0, size_t count) const {
+	const uint8 *src = (const uint8 *)src0;
+
+	// This code is from the PNG spec.
+	while(count--)
+		crc = mTable[(uint8)crc ^ *src++] ^ (crc >> 8);
+
+	return crc;
+}
+
+constexpr void VDCRCTable::InitConst(uint32 crc) {
 	for(int i=0; i<256; ++i) {
 		unsigned v = i;
 		for(int j=0; j<8; ++j)
@@ -65,24 +77,21 @@ void VDCRCChecker::Init(uint32 crc) {
 	}
 }
 
-void VDCRCChecker::Process(const void *src0, sint32 count) {
-	const uint8 *src = (const uint8 *)src0;
+constexpr VDCRCTable VDCRCTable::MakeConst(uint32 crc) {
+	VDCRCTable table;
 
-	uint32 v = mValue;
+	table.InitConst(crc);
 
-	// This code is from the PNG spec.
-	if (count > 0)
-		do {
-			v = mTable[(uint8)v ^ *src++] ^ (v >> 8);
-		} while(--count);
-
-	mValue = v;
+	return table;
 }
 
-uint32 VDCRCChecker::CRC(uint32 crc, const void *src, sint32 len) {
-	Init(crc);
-	Process(src, len);
-	return CRC();
+constexpr VDCRCTable VDCRCTable::CRC32 = MakeConst(VDCRCTable::kCRC32);
+
+///////////////////////////////////////////////////////////////////////////
+
+void VDCRCChecker::Process(const void *src, sint32 count) {
+	if (count > 0)
+		mValue = mTable.Process(mValue, src, count);
 }
 
 ///////////////////////////////////////////////////////////////////////////

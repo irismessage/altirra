@@ -20,6 +20,11 @@
 #include <vd2/system/w32assist.h>
 #include <at/atnativeui/nativewindowproxy.h>
 
+void ATUINativeWindowProxy::SetVisible(bool visible) {
+	if (mhwnd)
+		ShowWindow(mhwnd, visible ? SW_SHOWNOACTIVATE : SW_HIDE);
+}
+
 void ATUINativeWindowProxy::Show() {
 	if (mhwnd)
 		ShowWindow(mhwnd, SW_SHOWNOACTIVATE);

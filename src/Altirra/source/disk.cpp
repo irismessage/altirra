@@ -275,7 +275,14 @@ void ATDiskEmulator::Reset() {
 	mRotations = 0;
 	mbCommandMode = false;
 	mbLastOpError = false;
-	mFDCStatus = 0xFF;
+
+	// Power-on status with no disk is $5F for 1050, $FF for XF551. The
+	// get status command will handle the not ready bit.
+	if (mEmuMode == kATDiskEmulationMode_XF551)
+		mFDCStatus = 0xFF;
+	else
+		mFDCStatus = 0xDF;
+
 	mActiveCommand = 0;
 	mCustomCodeState = 0;
 
@@ -641,8 +648,10 @@ void ATDiskEmulator::UpdateAccelTimeSkew() {
 
 void ATDiskEmulator::InitSectorInfoArrays() {
 	IATDiskImage *image = mpDiskInterface->GetDiskImage();
-	if (!image)
+	if (!image) {
+		mTotalSectorCount = 0;
 		return;
+	}
 
 	const uint32 physCount = image->GetPhysicalSectorCount();
 	mExtPhysSectors.resize(physCount);
@@ -947,7 +956,13 @@ void ATDiskEmulator::ProcessCommandStatus() {
 		status += 0x10;
 
 	mSendPacket[0] = status;
-	mSendPacket[1] = mTotalSectorCount > 0 ? mFDCStatus : 0x7F;
+	mSendPacket[1] = mFDCStatus;
+
+	if (!mbSupportedNotReady)
+		mSendPacket[1] |= 0x80;
+	else if (mTotalSectorCount == 0)
+		mSendPacket[1] &= 0x7F;
+
 	mSendPacket[2] = mEmuMode == kATDiskEmulationMode_XF551 ? 0xfe : 0xe0;
 	mSendPacket[3] = 0x00;
 
@@ -1310,14 +1325,18 @@ void ATDiskEmulator::ProcessCommandRead() {
 				// A real 1050 reports 14/94 5F E0 00 when there is no disk in the
 				// drive. Bit 7 of drive status depends on the last FM/MFM state;
 				// bit 4 of drive status and bit 6 of FDC status updates dynamically
-				// based on the write protect sector. Bit 2 of FDC status (lost data)
+				// based on the write protect sensor. Bit 2 of FDC status (lost data)
 				// retains the previous state.
 				mFDCStatus &= 0x7F;
 				mFDCStatus |= 0x32;
 
 				// sector not found....
 				BeginTransferACKCmd();
-				WarpOrDelay(mCyclesPerDiskRotation * 2, 1000);
+
+				// if the drive supports the not ready signal, return error immediately,
+				// otherwise simulate rotations trying to find a sector
+				if (!mbSupportedNotReady)
+					WarpOrDelay(mCyclesPerDiskRotation * 2, 1000);
 
 				// don't clear the sector buffer!
 				SendResult(false, 128);
@@ -1362,13 +1381,13 @@ void ATDiskEmulator::ProcessCommandRead() {
 			//
 			// sector read: ~130 bytes at 125Kbits/sec = ~8.3ms = ~14891 cycles
 			// FDC reset and checksum: ~2568 cycles @ 500KHz = 9192 cycles
-			const uint32 sectorReadDelay = (mbMFM && psi.mSize == 128) ? 7445 : 14891;
+			const uint32 sectorReadDelay = (mbMFM && psi.mPhysicalSize == 128) ? 7445 : 14891;
 			const uint32 postReadDelay = mbMFM ? 0 : 9192;
 			WarpOrDelay(sectorReadDelay + postReadDelay, 1000);
 
 			// check for missing sector
 			// note: must send ACK (41) + ERROR (45) -- BeachHead expects to get DERROR from SIO
-			if (mActiveCommandPhysSector < 0 || psi.mSize == 0) {
+			if (mActiveCommandPhysSector < 0 || psi.mImageSize == 0) {
 				mbLastOpError = true;
 
 				// sector not found....
@@ -1380,11 +1399,13 @@ void ATDiskEmulator::ProcessCommandRead() {
 				return;
 			}
 
+			const uint32 readLength = psi.mPhysicalSize;
+
 			try {
-				image->ReadPhysicalSector((uint32)mActiveCommandPhysSector, mSendPacket, psi.mSize);
+				image->ReadPhysicalSector((uint32)mActiveCommandPhysSector, mSendPacket, readLength);
 			} catch(const MyError&) {
 				// wipe sector and report CRC error
-				memset(mSendPacket, 0, psi.mSize);
+				memset(mSendPacket, 0, readLength);
 				mFDCStatus = 0xF7;
 			}
 			
@@ -1398,7 +1419,7 @@ void ATDiskEmulator::ProcessCommandRead() {
 
 				// Check if we should emulate weak bits.
 				if (psi.mWeakDataOffset >= 0) {
-					for(int i = psi.mWeakDataOffset; i < (int)psi.mSize; ++i) {
+					for(int i = psi.mWeakDataOffset; i < (int)readLength; ++i) {
 						mSendPacket[i] ^= (uint8)mWeakBitLFSR;
 
 						mWeakBitLFSR = (mWeakBitLFSR << 8) + (0xff & ((mWeakBitLFSR >> (28 - 8)) ^ (mWeakBitLFSR >> (31 - 8))));
@@ -1406,7 +1427,7 @@ void ATDiskEmulator::ProcessCommandRead() {
 				}
 			}
 
-			uint32 transferLength = psi.mSize;
+			uint32 transferLength = readLength;
 
 			// Check if this is a boot sector. If so, force the length to 128 bytes per protocol.
 			if (sector <= image->GetBootSectorCount())
@@ -1555,8 +1576,10 @@ void ATDiskEmulator::ProcessCommandWrite() {
 			// commit data to physical sector
 			g_ATLCDisk("Writing vsec=%3u, psec=%3u.\n", mActiveCommandSector, vsi.mStartPhysSector);
 
+			const uint32 writeLength = psi.mPhysicalSize;
+
 			try {
-				image->WritePhysicalSector(vsi.mStartPhysSector, mReceivePacket, psi.mSize);
+				image->WritePhysicalSector(vsi.mStartPhysSector, mReceivePacket, writeLength);
 
 				// set FDC status
 				mFDCStatus = 0xFF;
@@ -2085,6 +2108,18 @@ void ATDiskEmulator::ProcessCommandFormat() {
 			} else if ((mOriginalCommand & 0x7F) == 0x66) {
 				if (!mbSupportedCmdFormatSkewed)
 					return ProcessUnsupportedCommand();
+			} else if ((mOriginalCommand & 0x7F) == 0x21 && mEmuMode == kATDiskEmulationMode_XF551) {
+				// The XF551 does not allow command $21 to format medium density, forcing single
+				// density instead.
+				if (mPERCOM[3] >= 26) {
+					// force XF551 single density
+					mPERCOM[2] = 0;		// spt high
+					mPERCOM[3] = 18;	// spt low
+					mPERCOM[4] = 0;		// sides minus one
+					mPERCOM[5] = 0;		// FM/MFM encoding
+					mPERCOM[6] = 0;		// bps high
+					mPERCOM[7] = 128;	// bps low
+				}
 			}
 
 			TurnOnMotor();
@@ -2297,6 +2332,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 	switch(mEmuMode) {
 		case kATDiskEmulationMode_Generic:
 		default:
+			mbSupportedNotReady = true;
 			mbSupportedCmdHighSpeed = true;
 			mbSupportedCmdFrameHighSpeed = true;
 			mbSupportedCmdPERCOM = true;
@@ -2316,6 +2352,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			break;
 
 		case kATDiskEmulationMode_Generic57600:
+			mbSupportedNotReady = true;
 			mbSupportedCmdHighSpeed = true;
 			mbSupportedCmdFrameHighSpeed = true;
 			mbSupportedCmdPERCOM = true;
@@ -2337,6 +2374,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			break;
 
 		case kATDiskEmulationMode_FastestPossible:
+			mbSupportedNotReady = true;
 			mbSupportedCmdHighSpeed = true;
 			mbSupportedCmdFrameHighSpeed = true;
 			mbSupportedCmdPERCOM = true;
@@ -2358,6 +2396,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			break;
 
 		case kATDiskEmulationMode_810:
+			mbSupportedNotReady = false;
 			mbSupportedCmdHighSpeed = false;
 			mbSupportedCmdFrameHighSpeed = false;
 			mbSupportedCmdPERCOM = false;
@@ -2377,6 +2416,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			break;
 
 		case kATDiskEmulationMode_1050:
+			mbSupportedNotReady = true;
 			mbSupportedCmdHighSpeed = false;
 			mbSupportedCmdFrameHighSpeed = false;
 			mbSupportedCmdPERCOM = false;
@@ -2397,6 +2437,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			break;
 
 		case kATDiskEmulationMode_XF551:
+			mbSupportedNotReady = false;
 			mbSupportedCmdHighSpeed = true;
 			mbSupportedCmdFrameHighSpeed = false;
 			mbSupportedCmdPERCOM = true;
@@ -2417,6 +2458,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			break;
 
 		case kATDiskEmulationMode_USDoubler:
+			mbSupportedNotReady = true;
 			mbSupportedCmdHighSpeed = false;
 			mbSupportedCmdFrameHighSpeed = true;
 			mbSupportedCmdPERCOM = true;
@@ -2439,6 +2481,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			break;
 
 		case kATDiskEmulationMode_Speedy1050:
+			mbSupportedNotReady = true;
 			mbSupportedCmdHighSpeed = false;
 			mbSupportedCmdFrameHighSpeed = true;
 			mbSupportedCmdPERCOM = true;
@@ -2461,6 +2504,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			break;
 
 		case kATDiskEmulationMode_IndusGT:
+			mbSupportedNotReady = true;
 			mbSupportedCmdHighSpeed = true;
 			mbSupportedCmdFrameHighSpeed = false;
 			mbSupportedCmdPERCOM = true;
@@ -2481,6 +2525,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			break;
 
 		case kATDiskEmulationMode_Happy810:
+			mbSupportedNotReady = false;
 			mbSupportedCmdHighSpeed = false;
 			mbSupportedCmdFrameHighSpeed = false;
 			mbSupportedCmdPERCOM = false;
@@ -2502,6 +2547,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			break;
 
 		case kATDiskEmulationMode_Happy1050:
+			mbSupportedNotReady = true;
 			mbSupportedCmdHighSpeed = false;
 			mbSupportedCmdFrameHighSpeed = true;
 			mbSupportedCmdPERCOM = true;
@@ -2524,6 +2570,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			break;
 
 		case kATDiskEmulationMode_1050Turbo:
+			mbSupportedNotReady = true;
 			mbSupportedCmdHighSpeed = false;
 			mbSupportedCmdFrameHighSpeed = false;
 			mbSupportedCmdPERCOM = true;

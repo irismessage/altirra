@@ -53,6 +53,7 @@ public:
 
 IATSourceWindow *ATGetSourceWindow(const wchar_t *s);
 IATSourceWindow *ATOpenSourceWindow(const wchar_t *s);
+void ATUIShowSourceListDialog();
 
 ///////////////////////////////////////////////////////////////////////////
 

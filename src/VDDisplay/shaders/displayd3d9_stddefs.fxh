@@ -59,36 +59,4 @@ extern sampler samp2 : register(s2);
 extern sampler samp3 : register(s3);
 extern sampler samp4 : register(s4);
 
-const sampler vd_srcsampler_clamp_point = sampler_state {
-	Texture = <vd_srctexture>;
-	AddressU = Clamp;
-	AddressV = Clamp;
-	MinFilter = Point;
-	MagFilter = Point;
-};
-
-const sampler vd_srcsampler_clamp_linear = sampler_state {
-	Texture = <vd_srctexture>;
-	AddressU = Clamp;
-	AddressV = Clamp;
-	MinFilter = Linear;
-	MagFilter = Linear;
-};
-
-const sampler vd_src2asampler_clamp_linear = sampler_state {
-	Texture = <vd_src2atexture>;
-	AddressU = Clamp;
-	AddressV = Clamp;
-	MinFilter = Linear;
-	MagFilter = Linear;
-};
-
-const sampler vd_src2bsampler_clamp_linear = sampler_state {
-	Texture = <vd_src2btexture>;
-	AddressU = Clamp;
-	AddressV = Clamp;
-	MinFilter = Linear;
-	MagFilter = Linear;
-};
-
 #endif

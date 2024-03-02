@@ -756,6 +756,7 @@ bool ATDiskDriveDialog::OnLoaded() {
 	SetCurrentSizeAsMaxSize(false, true);
 
 	ATUIRestoreWindowPlacement(mhdlg, "Disk drives", -1, true);
+	Activate();
 
 	if (!mhEjectIcon) {
 		mhEjectIcon = (HICON)LoadImage(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDI_EJECT), IMAGE_ICON, 16, 16, 0);

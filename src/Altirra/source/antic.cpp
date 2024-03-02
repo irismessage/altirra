@@ -25,6 +25,10 @@
 #include "simeventmanager.h"
 #include "trace.h"
 
+#if VD_CPU_X86 || VD_CPU_X64
+#include "antic_sse2.inl"
+#endif
+
 namespace {
 	const uint8 kModeToFetchRate[16]={
 	//  0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
@@ -88,7 +92,6 @@ void ATAnticEmulator::ColdReset() {
 	mCharBaseAddr64 = 0;
 	mCharInvert = 0;
 	mCharBlink = 0xff;
-	mVCOUNT = 0;
 	mPFWidth = kPFDisabled;
 	mPFWidthShift = 0;
 	mPFDMAPatternCacheKey = 0xFFFFFFFF;
@@ -265,6 +268,7 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 
 			// compute stop line
 			uint32 rowStop = mbRowStopUseVScroll ? mLatchedVScroll : ((mRowCount - 1) & 15);
+			mLatchedVScroll = mVSCROL;
 
 			if (mRowCounter != rowStop) {
 				mRowCounter = (mRowCounter + 1) & 15;
@@ -646,10 +650,6 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 			mbPFRendered = false;
 		} else if (mX == 105) {
 			mbWSYNCActive = false;
-		} else if (mX == 109) {
-			mLatchedVScroll = mVSCROL;
-		} else if (mX == 111) {
-			mVCOUNT = (mY + 1 >= mScanlineLimit) ? 0 : (mY + 1) >> 1;
 		} else if (mX == 112) {
 			// Check if we have hit the end of the mode line. We need to detect this now in case
 			// abnormal DMA is active so that playfield DMA can be re-enabled for cycles 0-7
@@ -668,7 +668,7 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 
 					UpdateDMAPattern();
 				}
-			}	
+			}
 		}
 
 		if (mAnalysisMode) {
@@ -1162,6 +1162,9 @@ void ATAnticEmulator::Decode(int offset) {
 						dst += 2;
 					}
 				} else {
+#if VD_CPU_X86 || VD_CPU_X64
+					x = ATAnticDecodeMode2_SSE2(dst, src, chdata, x, limit, mCharInvert, mCharBlink);
+#else
 					for(; x < limit; x += 2) {
 						uint8 c = *src++;
 						uint8 d = *chdata++;
@@ -1176,6 +1179,7 @@ void ATAnticEmulator::Decode(int offset) {
 						dst[1] = d & 15;
 						dst += 2;
 					}
+#endif
 				}
 				break;
 
@@ -1576,15 +1580,22 @@ uint8 ATAnticEmulator::ReadByte(uint8 reg) const {
 	reg &= 0x0F;
 
 	switch(reg) {
-		case 0x0B:
+		case 0x0B: {
 			// There is a one cycle delay between the time that VCOUNT increments and when
 			// it is reset to zero for the beginning of the next frame. The incremented
 			// cycle is seen on cycle 111; it is cleared on cycle 112 if it is wrong and
 			// should be zero.
-			if (mY == mScanlineMax && mX == 111)
-				return (uint8)(mScanlineLimit >> 1);
+			uint32 ypos = mY;
 
-			return mVCOUNT;
+			if (mX >= 111) {
+				++ypos;
+
+				if (mX >= 112 && ypos >= mScanlineLimit)
+					ypos = 0;
+			}
+
+			return (uint8)(ypos >> 1);
+		}
 
 		case 0x0C:
 			return mPENH;
@@ -1704,6 +1715,12 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 
 		case 0x05:
 			mVSCROL = value & 15;
+
+			// mLatchedVScroll captures the state of VSCROL at cycle 109 on
+			// each scanline. It is used at cycles 112 and 1, and always
+			// updated on 1.
+			if (mX >= 1 && mX < 109)
+				mLatchedVScroll = mVSCROL;
 			break;
 
 		case 0x07:
@@ -2165,6 +2182,53 @@ void ATAnticEmulator::SetTraceContext(ATTraceContext *context) {
 	}
 }
 
+inline void ATAnticSetDMACycles(void *dst0, uint32 start, uint32 end, uint8 cyclePattern, uint8 dmaMask) {
+	if (end > 115)
+		end = 115;
+
+	if (end <= start)
+		return;
+
+#if VD_CPU_X86 || VD_CPU_X64
+	ATAnticSetDMACycles_SSE2(dst0, start, end, cyclePattern, dmaMask);
+	return;
+#endif
+
+	uint8 *VDRESTRICT dst = (uint8 *)dst0;
+
+	for (uint32 i = start; i < end; ++i) {
+		if (cyclePattern & (1 << (i & 7)))
+			dst[i] |= dmaMask;
+	}
+}
+
+inline void ATAnticSetRefreshCycles(uint8 *dmaPattern) {
+#if VD_CPU_X86 || VD_CPU_X64
+	ATAnticSetRefreshCycles_SSE2(dmaPattern);
+#else
+	// This is very simple. Refresh does 9 cycles every 4 starting at cycle 25.
+	// If DMA is already occurring, the refresh occurs on the next available cycle.
+	// If refresh hasn't gotten a chance to run by the time the next refresh cycle
+	// occurs, it is simply dropped. The latest a refresh cycle will ever run is
+	// 106, which happens on a wide 40 char badline.
+	uint8 *VDRESTRICT dp = dmaPattern;
+	int r = 24;
+	for(int x=25; x<61; x += 4) {
+		if (r >= x)
+			continue;
+
+		r = x;
+
+		while(r < 107) {
+			if (!(dp[r++] & 1)) {
+				++dp[r-1];
+				break;
+			}
+		}
+	}
+#endif
+}
+
 void ATAnticEmulator::UpdateDMAPattern() {
 	int dmaStart = mPFDMAStart;
 	int dmaVEnd = mPFDMAVEnd;
@@ -2211,7 +2275,11 @@ void ATAnticEmulator::UpdateDMAPattern() {
 				break;
 		}
 
+#if VD_CPU_X86 || VD_CPU_X64
+		ATAnticClearDMACycles_SSE2(mDMAPattern);
+#else
 		memset(mDMAPattern, 0, sizeof(mDMAPattern));
+#endif
 
 		// Playfield DMA
 		// =============
@@ -2329,42 +2397,26 @@ void ATAnticEmulator::UpdateDMAPattern() {
 			// DMA requests are delayed; here we maintain separate delayed clocks instead.
 			//
 			if (graphicFetchMode) {
-				uint8 clock = mAbnormalDMAPattern;
-				int x = 0;
-				
+				uint8 clock = mAbnormalDMAPattern;				
 				if (clock) {
 					if (mode >= 8)
 						clock = (uint8)((clock << 2) + (clock >> 6));
 
 					graphicFetchMode |= 8;
 
-					for(; x<dmaStart; ++x) {
-						if (clock & (1 << (x & 7)))
-							mDMAPattern[x] = graphicFetchMode;
-					}
+					ATAnticSetDMACycles(mDMAPattern, 0, dmaStart, clock, graphicFetchMode);
 				}
-
-				x = dmaStart;
 
 				clock |= kClockPattern[kModeToFetchRate[mode]][dmaStart & 7];
-
-				for(; x<dmaVEnd; ++x) {
-					if (x > 114)
-						break;
-
-					if (clock & (1 << (x & 7)))
-						mDMAPattern[x] = graphicFetchMode;
-				}
+				
+				ATAnticSetDMACycles(mDMAPattern, dmaStart, dmaVEnd, clock, graphicFetchMode);
 
 				clock &= ~kClockPattern[kModeToFetchRate[mode]][dmaVEnd & 7];
 
 				if (clock) {
 					graphicFetchMode |= 8;
 
-					for(; x<=114; ++x) {
-						if (clock & (1 << (x & 7)))
-							mDMAPattern[x] = graphicFetchMode;
-					}
+					ATAnticSetDMACycles(mDMAPattern, dmaVEnd, 115, clock, graphicFetchMode);
 				}
 			}
 
@@ -2381,38 +2433,23 @@ void ATAnticEmulator::UpdateDMAPattern() {
 
 				uint8 clock = mAbnormalDMAPattern;
 				clock = (uint8)((clock << 3) + (clock >> 5));
-				int x = 0;
 
 				if (clock) {
 					textFetchMode |= 8;
 
-					for(; x<textFetchDMAVStart; ++x) {
-						if (clock & (1 << (x & 7)))
-							mDMAPattern[x] |= textFetchMode;
-					}
+					ATAnticSetDMACycles(mDMAPattern, 0, textFetchDMAVStart, clock, textFetchMode);
 				}
-
-				x = textFetchDMAVStart;
 
 				clock |= kClockPattern[kModeToFetchRate[mode]][textFetchDMAVStart & 7];
 
-				for(; x<textFetchDMAVEnd; ++x) {
-					if (x > 114)
-						break;
-
-					if (clock & (1 << (x & 7)))
-						mDMAPattern[x] |= textFetchMode;
-				}
+				ATAnticSetDMACycles(mDMAPattern, textFetchDMAVStart, textFetchDMAVEnd, clock, textFetchMode);
 
 				clock &= ~kClockPattern[kModeToFetchRate[mode]][textFetchDMAVEnd & 7];
 
 				if (clock) {
 					textFetchMode |= 8;
 
-					for(; x<=114; ++x) {
-						if (clock & (1 << (x & 7)))
-							mDMAPattern[x] |= textFetchMode;
-					}
+					ATAnticSetDMACycles(mDMAPattern, textFetchDMAVEnd, 115, clock, textFetchMode);
 				}
 			}
 
@@ -2432,29 +2469,9 @@ void ATAnticEmulator::UpdateDMAPattern() {
 		}
 
 		// Memory refresh
-		//
-		// This is very simple. Refresh does 9 cycles every 4 starting at cycle 25.
-		// If DMA is already occurring, the refresh occurs on the next available cycle.
-		// If refresh hasn't gotten a chance to run by the time the next refresh cycle
-		// occurs, it is simply dropped. The latest a refresh cycle will ever run is
-		// 106, which happens on a wide 40 char badline.
-		int r = 24;
-		for(int x=25; x<61; x += 4) {
-			if (r >= x)
-				continue;
-
-			r = x;
-
-			while(r < 107) {
-				if (!(mDMAPattern[r++] & 1)) {
-					++mDMAPattern[r-1];
-					break;
-				}
-			}
-		}
+		ATAnticSetRefreshCycles(mDMAPattern);
 
 		// Mark off special cycles.
-
 		mDMAPattern[0] |= mDMAPattern[114];
 
 		for(int i=1; i<7; ++i) {
@@ -2479,8 +2496,6 @@ void ATAnticEmulator::UpdateDMAPattern() {
 		mDMAPattern[ 10] |= 0x80;	// NMI
 		mDMAPattern[ 16] |= 0x80;	// end HBLANK
 		mDMAPattern[105] |= 0x80;	// WSYNC end
-		mDMAPattern[109] |= 0x80;
-		mDMAPattern[111] |= 0x80;
 		mDMAPattern[112] |= 0x80;
 		mDMAPattern[114] = 0x80;
 	}

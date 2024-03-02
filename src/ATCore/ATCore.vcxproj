@@ -18,6 +18,7 @@
     <ClInclude Include="..\h\at\atcore\devicecio.h" />
     <ClInclude Include="..\h\at\atcore\deviceimpl.h" />
     <ClInclude Include="..\h\at\atcore\devicemanager.h" />
+    <ClInclude Include="..\h\at\atcore\bussignal.h" />
     <ClInclude Include="..\h\at\atcore\devicesystemcontrol.h" />
     <ClInclude Include="..\h\at\atcore\deviceparent.h" />
     <ClInclude Include="..\h\at\atcore\deviceparentimpl.h" />
@@ -48,6 +49,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\address.cpp" />
+    <ClCompile Include="source\bussignal.cpp" />
     <ClCompile Include="source\checksum.cpp" />
     <ClCompile Include="source\consoleoutput.cpp" />
     <ClCompile Include="source\deferredevent.cpp" />

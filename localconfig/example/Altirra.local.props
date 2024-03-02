@@ -4,6 +4,6 @@
     <_ProjectFileVersion>10.0.40219.1</_ProjectFileVersion>
   </PropertyGroup>
   <PropertyGroup Label="UserMacros">
-    <ATMadsPath>c:\x\mads.exe</ATMadsPath>
+    <ATMadsPath>c:\insert_your_path_to_mads_here\mads.exe</ATMadsPath>
   </PropertyGroup>
 </Project>

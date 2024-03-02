@@ -2,8 +2,8 @@
 setlocal enableextensions enabledelayedexpansion
 
 rem ---echo banner
-echo Altirra Build Release Utility Version 3.10
-echo Copyright (C) Avery Lee 2014-2018. Licensed under GNU General Public License
+echo Altirra Build Release Utility Version 3.20
+echo Copyright (C) Avery Lee 2014-2019. Licensed under GNU General Public License
 echo.
 
 rem ---parse command line arguments
@@ -13,8 +13,8 @@ set _verid=
 set _anyvc=false
 set _checkvc=false
 set _arm64=false
-set _clversionexp=19.14.26433
-set _clversionexpdesc=Visual Studio 2017 Version 15.7.5
+set _clversionexp=19.16.27031.1
+set _clversionexpdesc=Visual Studio 2017 Version 15.9.12
 
 :arglist
 if "%1"=="" goto endargs
@@ -105,7 +105,6 @@ if exist publish\Altirra-!_verid!-src.zip del publish\Altirra-!_verid!-src.zip
 if exist publish\Altirra-!_verid!.zip del publish\Altirra-!_verid!.zip
 
 set _abverfile=src\Altirra\autobuild\version.h
-set _abverfile2=src\Kernel\autobuild\version.inc
 
 if not exist src\Altirra\autobuild md src\Altirra\autobuild
 if not exist src\Kernel\autobuild md src\Kernel\autobuild
@@ -129,10 +128,6 @@ if errorlevel 1 (
 )
 
 echo #endif >>%_abverfile%
-
-echo .macro _VERSIONSTR_INTERNAL >%_abverfile2%
-echo 	dta d"%_verid%" >>%_abverfile2%
-echo .endm >>%_abverfile2%
 
 if not !_packonly!==true (
 	devenv src\Altirra.sln /Build Release^|Win32 /Project Kernel /Out publish\build-kernel.log
@@ -202,6 +197,7 @@ zip -9 -X -r publish\Altirra-!_verid!-src.zip ^
 	*.txt ^
 	*.bmp ^
 	*.png ^
+    *.jpg ^
 	*.ico ^
 	*.cur ^
 	*.manifest ^

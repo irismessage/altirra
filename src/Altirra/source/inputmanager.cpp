@@ -904,6 +904,11 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 		L"Paddle knob (2D rotation Y)"
 	};
 
+	static constexpr const wchar_t *k5200Axes[]={
+		L"Analog stick horiz.",
+		L"Analog stick vert.",
+	};
+
 	name.clear();
 
 	uint32 index = code & 0xFF;
@@ -947,6 +952,14 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 				case kATInputControllerType_Paddle:
 					if (index < sizeof(kPaddleAxes)/sizeof(kPaddleAxes[0])) {
 						name = kPaddleAxes[index];
+						return;
+					}
+					break;
+
+				case kATInputControllerType_5200Controller:
+				case kATInputControllerType_5200Trackball:
+					if (index < vdcountof(k5200Axes)) {
+						name = k5200Axes[index];
 						return;
 					}
 					break;
@@ -1447,7 +1460,9 @@ void ATInputManager::RebuildMappings() {
 		for(uint32 i=0; i<controllerCount; ++i) {
 			const ATInputMap::Controller& c = imap->GetController(i);
 
-			uint32 code = (c.mType << 16) + c.mIndex;
+			// The input state controller must not be shared between input maps; it must
+			// be instanced per input map.
+			const uint32 code = (c.mType << 16) + (c.mType == kATInputControllerType_InputState ? flagIndex : c.mIndex);
 			ControllerMap::iterator itC(controllerMap.find(code));
 			ATPortInputController *pic = NULL;
 			if (itC != controllerMap.end()) {
@@ -1463,7 +1478,7 @@ void ATInputManager::RebuildMappings() {
 				}
 
 				// skip controller if it is not compatible with current mode
-				if (is5200Controller != mb5200Mode)
+				if (is5200Controller != mb5200Mode && c.mType != kATInputControllerType_InputState && c.mType != kATInputControllerType_Console)
 					continue;
 
 				switch(c.mType) {
@@ -1983,6 +1998,17 @@ const ATInputManager::PresetMapDef ATInputManager::kPresetMapDefs[] = {
 			{ kATInputCode_KeyNumpad9, 0, kATInputTrigger_Up },
 			{ kATInputCode_KeyNumpad9, 0, kATInputTrigger_Right },
 			{ kATInputCode_KeyNumpad0, 0, kATInputTrigger_Button0 },
+		},
+	},
+	{
+		true, false, L"Arrow Keys -> Paddle A (port 1)", -1,
+		{
+			{ kATInputControllerType_Paddle, 0 },
+		},
+		{
+			{ kATInputCode_KeyLeft, 0, kATInputTrigger_Left | kATInputTriggerMode_Relative | (6 << kATInputTriggerSpeed_Shift) | (10 << kATInputTriggerAccel_Shift) },
+			{ kATInputCode_KeyRight, 0, kATInputTrigger_Right | kATInputTriggerMode_Relative | (6 << kATInputTriggerSpeed_Shift) | (10 << kATInputTriggerAccel_Shift) },
+			{ kATInputCode_KeyLControl, 0, kATInputTrigger_Button0 },
 		},
 	},
 	{

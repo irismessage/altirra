@@ -341,8 +341,8 @@ void ATRapidusDevice::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 		stream.Write(mPBIFirmware816, sizeof mPBIFirmware816);
 }
 
-bool ATRapidusDevice::IsUsableFirmwareLoaded() const {
-	return mbFirmwareUsable;
+ATDeviceFirmwareStatus ATRapidusDevice::GetFirmwareStatus() const {
+	return mbFirmwareUsable ? ATDeviceFirmwareStatus::OK : ATDeviceFirmwareStatus::Missing;
 }
 
 void ATRapidusDevice::InitIndicators(IATDeviceIndicatorManager *indMgr) {

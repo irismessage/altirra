@@ -35,7 +35,7 @@ public:
 	ATDeviceBusSingleChild();
 	~ATDeviceBusSingleChild();
 
-	void Init(IATDeviceParent *parent, uint32 busIndex, uint32 iid, const char *supportedType, const wchar_t *name);
+	void Init(IATDeviceParent *parent, uint32 busIndex, uint32 iid, const char *supportedType, const wchar_t *name, const char *tag);
 	void Shutdown();
 
 	void SetOnAttach(vdfunction<void()> fn);
@@ -49,6 +49,7 @@ public:
 
 public:
 	const wchar_t *GetBusName() const override;
+	const char *GetBusTag() const override;
 	const char *GetSupportedType(uint32 index) override;
 	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
 	void AddChildDevice(IATDevice *dev) override;
@@ -62,6 +63,7 @@ private:
 	IATDeviceParent *mpParent = nullptr;
 	uint32 mBusIndex = 0;
 	const wchar_t *mpName = nullptr;
+	const char *mpTag = nullptr;
 	vdfunction<void()> mpOnAttach;
 	vdfunction<void()> mpOnDetach;
 };
@@ -69,7 +71,7 @@ private:
 
 class ATDeviceParentSingleChild : public IATDeviceParent {
 public:
-	void Init(uint32 iid, const char *supportedType, const wchar_t *name);
+	void Init(uint32 iid, const char *supportedType, const wchar_t *name, const char *tag, IVDUnknown *owner);
 	void Shutdown();
 
 	void SetOnAttach(vdfunction<void()> fn);
@@ -81,10 +83,12 @@ public:
 	}
 
 public:
+	void *AsInterface(uint32 iid) override;
 	IATDeviceBus *GetDeviceBus(uint32 index) override;
 
 private:
 	ATDeviceBusSingleChild mBus;
+	IVDUnknown *mpOwner;
 };
 
 #endif

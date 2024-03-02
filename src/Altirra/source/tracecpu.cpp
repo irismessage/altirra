@@ -30,6 +30,9 @@ ATTraceChannelCPUHistory::ATTraceChannelCPUHistory(uint64 tickOffset, double tic
 	mpMemTracker = memTracker;
 
 	std::fill(std::begin(mUnpackedBlockIds), std::end(mUnpackedBlockIds), UINT32_MAX);
+
+	for(uint32 i=0; i<vdcountof(mPseudoLRU); ++i)
+		mPseudoLRU[i] = i;
 }
 
 void ATTraceChannelCPUHistory::AddEvent(uint64 tick, const ATCPUHistoryEntry& he) {
@@ -322,14 +325,31 @@ const ATCPUHistoryEntry *ATTraceChannelCPUHistory::UnpackBlock(uint32 id) {
 
 	// check if we already have it unpacked
 	uint8 slot = mUnpackMap[id];
-	if (mUnpackedBlockIds[slot] == id)
+	if (mUnpackedBlockIds[slot] == id) {
+		// We must mark this slot as recently used in order to ensure that
+		// a consecutive number of unpack requests smaller than the window
+		// size is guaranteed to get that many unconflicting slots.
+		mPseudoLRU[slot] = mLRUClock++;
+
 		return mUnpackedBlocks[slot];
+	}
+
+	// find oldest slot
+	uint32 oldestAge = 0;
+	slot = 0;
+
+	for(uint32 i=0; i<kUnpackedSlots; ++i) {
+		const uint32 age = mLRUClock - mPseudoLRU[i];
+
+		if (age > oldestAge) {
+			oldestAge = age;
+			slot = i;
+		}
+	}
+
+	mPseudoLRU[slot] = mLRUClock++;
 
 	// unpack into next slot
-	slot = mNextUnpackSlot;
-	if (++mNextUnpackSlot >= kUnpackedSlots)
-		mNextUnpackSlot = 0;
-
 	mUnpackMap[id] = slot;
 	mUnpackedBlockIds[slot] = id;
 

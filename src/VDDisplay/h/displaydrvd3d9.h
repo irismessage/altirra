@@ -24,6 +24,7 @@
 
 struct IDirect3DTexture9;
 class IVDVideoDisplayDX9Manager;
+class VDD3D9Manager;
 
 namespace nsVDDisplay {
 	struct TechniqueInfo;
@@ -110,6 +111,15 @@ public:
 		float mPixelSharpnessY;
 
 		bool mbHighPrecision;
+
+		// If enabled, map 'autobilinear' samplers to bilinear instead of point.
+		bool mbAutoBilinear;
+
+		bool mbUseUV0Scale;
+		bool mbUseUV1Area;
+
+		vdfloat2 mUV0Scale;
+		vdrect32f mUV1Area;
 	};
 
 	virtual bool IsPS20Enabled() const = 0;
@@ -123,7 +133,7 @@ public:
 	virtual bool Init(void *hmonitor, bool use9ex, const VDPixmap& source, bool allowConversion, bool preserveYCbCr, int buffers, bool use16bit) = 0;
 	virtual void Shutdown() = 0;
 
-	virtual bool Update(const VDPixmap& source, int fieldMask) = 0;
+	virtual bool Update(const VDPixmap& source) = 0;
 };
 
 class VDDisplayCachedImageD3D9 final : public vdrefcounted<IVDRefUnknown>, public vdlist_node {

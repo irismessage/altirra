@@ -35,6 +35,7 @@ void ATUIShowDialogDevices(VDGUIHandle parent);
 void ATUIShowDialogFirmware(VDGUIHandle hParent, ATFirmwareManager& fwm, bool *anyChanges);
 void ATUIShowDialogProfiles(VDGUIHandle hParent);
 void ATUIOpenAdjustColorsDialog(VDGUIHandle hParent);
+void ATUIOpenAdjustScreenEffectsDialog(VDGUIHandle hParent);
 void ATUIShowDialogConfigureSystem(VDGUIHandle hParent);
 
 void ATSyncCPUHistoryState();
@@ -273,10 +274,28 @@ void OnCommandVideoAdjustColorsDialog() {
 	ATUIOpenAdjustColorsDialog(ATUIGetMainWindow());
 }
 
+void OnCommandVideoAdjustScreenEffectsDialog() {
+	ATUIOpenAdjustScreenEffectsDialog(ATUIGetMainWindow());
+}
+
 void OnCommandVideoArtifacting(ATGTIAEmulator::ArtifactMode mode) {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
 	gtia.SetArtifactingMode(mode);
+
+	// We have to adjust the display filter if it is in sharp bilinear
+	// mode, since the horizontal crisping is disabled if high artifacting
+	// is on.
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (pane)
+		pane->UpdateFilterMode();
+}
+
+void OnCommandVideoArtifactingNext() {
+	ATGTIAEmulator& gtia = g_sim.GetGTIA();
+
+	auto mode = gtia.GetArtifactingMode();
+	gtia.SetArtifactingMode((ATGTIAEmulator::ArtifactMode)((mode + 1) % ATGTIAEmulator::kArtifactCount));
 
 	// We have to adjust the display filter if it is in sharp bilinear
 	// mode, since the horizontal crisping is disabled if high artifacting

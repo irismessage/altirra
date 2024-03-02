@@ -31,7 +31,7 @@ void ATArtifactPALFinal(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, con
 #if VD_CPU_X86 || VD_CPU_X64
 	void ATArtifactBlend_SSE2(uint32 *dst, const uint32 *src, uint32 n);
 	void ATArtifactBlendExchange_SSE2(uint32 *dst, uint32 *blendDst, uint32 n);
-	void ATArtifactBlendScanlines_SSE2(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n);
+	void ATArtifactBlendScanlines_SSE2(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n, float intensity);
 	void ATArtifactNTSCFinal_SSE2(void *dst, const void *srcr, const void *srcg, const void *srcb, uint32 count);
 #endif
 
@@ -60,7 +60,7 @@ void ATArtifactPALFinal(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, con
 #ifdef VD_CPU_ARM64
 	void ATArtifactBlend_NEON(uint32 *dst, const uint32 *src, uint32 n);
 	void ATArtifactBlendExchange_NEON(uint32 *dst, uint32 *blendDst, uint32 n);
-	void ATArtifactBlendScanlines_NEON(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n);
+	void ATArtifactBlendScanlines_NEON(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n, float intensity);
 
 	void ATArtifactNTSCAccum_NEON(void *rout, const void *table, const void *src, uint32 count);
 	void ATArtifactNTSCAccumTwin_NEON(void *rout, const void *table, const void *src, uint32 count);
@@ -68,7 +68,47 @@ void ATArtifactPALFinal(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, con
 #endif
 
 namespace {
-	const float kSaturation = 75.0f / 255.0f;
+	constexpr float kSaturation = 75.0f / 255.0f;
+
+	// Unless we are showing horizontal blank, we only need to process pixels within
+	// the visible range of $22-DD in color clocks, or twice that in hires pixels (7MHz
+	// dot clock).
+	constexpr int kLeftBorder7MHz = 34*2;
+	constexpr int kRightBorder7MHz = 222*2;
+	constexpr int kLeftBorder14MHz = kLeftBorder7MHz*2;
+	constexpr int kRightBorder14MHz = kRightBorder7MHz*2;
+
+	// These versions are for the display rect, expanded to the nearest multiples of 2/4/8/16. (They
+	// do not currently differ.)
+	constexpr int kLeftBorder7MHz_2 = kLeftBorder7MHz & ~1;
+	constexpr int kRightBorder7MHz_2 = (kRightBorder7MHz + 1) & ~1;
+	constexpr int kLeftBorder14MHz_2 = kLeftBorder14MHz & ~1;
+	constexpr int kRightBorder14MHz_2 = (kRightBorder14MHz + 1) & ~1;
+
+	constexpr int kLeftBorder7MHz_4 = kLeftBorder7MHz & ~3;
+	constexpr int kRightBorder7MHz_4 = (kRightBorder7MHz + 3) & ~3;
+	constexpr int kLeftBorder14MHz_4 = kLeftBorder14MHz & ~3;
+	constexpr int kRightBorder14MHz_4 = (kRightBorder14MHz + 3) & ~3;
+
+	constexpr int kLeftBorder7MHz_8 = kLeftBorder7MHz & ~7;
+	constexpr int kRightBorder7MHz_8 = (kRightBorder7MHz + 7) & ~7;
+	constexpr int kLeftBorder14MHz_8 = kLeftBorder14MHz & ~7;
+	constexpr int kRightBorder14MHz_8 = (kRightBorder14MHz + 7) & ~7;
+
+	constexpr int kLeftBorder7MHz_16 = kLeftBorder7MHz & ~15;
+	constexpr int kRightBorder7MHz_16 = (kRightBorder7MHz + 15) & ~15;
+	constexpr int kLeftBorder14MHz_16 = kLeftBorder14MHz & ~15;
+	constexpr int kRightBorder14MHz_16 = (kRightBorder14MHz + 15) & ~15;
+
+	void GammaCorrect(uint8 *VDRESTRICT dst8, uint32 N, const uint8 *VDRESTRICT gammaTab) {
+		for(uint32 i=0; i<N; ++i) {
+			dst8[0] = gammaTab[dst8[0]];
+			dst8[1] = gammaTab[dst8[1]];
+			dst8[2] = gammaTab[dst8[2]];
+
+			dst8 += 4;
+		}
+	}
 }
 
 ATArtifactingEngine::ATArtifactingEngine()
@@ -78,7 +118,7 @@ ATArtifactingEngine::ATArtifactingEngine()
 	, mbHighPALTablesInited(false)
 	, mbGammaIdentity(false)
 {
-	mArtifactingParams = {};
+	mArtifactingParams = ATArtifactingParams::GetDefault();
 }
 
 ATArtifactingEngine::~ATArtifactingEngine() {
@@ -90,22 +130,39 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfl
 	float lumaRamp[16];
 	ATComputeLumaRamp(params.mLumaRampMode, lumaRamp);
 
-	mYScale = VDRoundToInt32(params.mContrast * 65280.0f * 1024.0f);
-	mYBias = VDRoundToInt32(params.mBrightness * 65280.0f * 1024.0f) + 512;
+	const float yscale = params.mContrast * params.mIntensityScale;
+	const float ybias = params.mBrightness * params.mIntensityScale;
 
-	const vdfloat2 co_r = vdfloat2x2::rotation(params.mRedShift * (nsVDMath::kfPi / 180.0f)) * vdfloat2 { +0.9563f, +0.6210f } * params.mRedScale;
-	const vdfloat2 co_g = vdfloat2x2::rotation(params.mGrnShift * (nsVDMath::kfPi / 180.0f)) * vdfloat2 { -0.2721f, -0.6474f } * params.mGrnScale;
-	const vdfloat2 co_b = vdfloat2x2::rotation(params.mBluShift * (nsVDMath::kfPi / 180.0f)) * vdfloat2 { -1.1070f, +1.7046f } * params.mBluScale;
+	const vdfloat2 co_r = vdfloat2x2::rotation(params.mRedShift * (nsVDMath::kfPi / 180.0f)) * vdfloat2 { +0.9563f, +0.6210f } * params.mRedScale * params.mIntensityScale;
+	const vdfloat2 co_g = vdfloat2x2::rotation(params.mGrnShift * (nsVDMath::kfPi / 180.0f)) * vdfloat2 { -0.2721f, -0.6474f } * params.mGrnScale * params.mIntensityScale;
+	const vdfloat2 co_b = vdfloat2x2::rotation(params.mBluShift * (nsVDMath::kfPi / 180.0f)) * vdfloat2 { -1.1070f, +1.7046f } * params.mBluScale * params.mIntensityScale;
 
 	const float artphase = params.mArtifactHue * (nsVDMath::kfTwoPi / 360.0f);
 	const vdfloat2 rot_art { cosf(artphase), sinf(artphase) };
-	mArtifactRed   = (int)(65280.0f * nsVDMath::dot(rot_art, co_r) * kSaturation / 15.0f * params.mArtifactSat);
-	mArtifactGreen = (int)(65280.0f * nsVDMath::dot(rot_art, co_g) * kSaturation / 15.0f * params.mArtifactSat);
-	mArtifactBlue  = (int)(65280.0f * nsVDMath::dot(rot_art, co_b) * kSaturation / 15.0f * params.mArtifactSat);
 
-	mChromaVectors[0][0] = 0;
-	mChromaVectors[0][1] = 0;
-	mChromaVectors[0][2] = 0;
+	float artr = 64.0f * 255.0f * nsVDMath::dot(rot_art, co_r) * kSaturation / 15.0f * params.mArtifactSat;
+	float artg = 64.0f * 255.0f * nsVDMath::dot(rot_art, co_g) * kSaturation / 15.0f * params.mArtifactSat;
+	float artb = 64.0f * 255.0f * nsVDMath::dot(rot_art, co_b) * kSaturation / 15.0f * params.mArtifactSat;
+
+	for(int i=-15; i<16; ++i) {
+		int ar = VDRoundToInt32(artr * (float)i);
+		int ag = VDRoundToInt32(artg * (float)i);
+		int ab = VDRoundToInt32(artb * (float)i);
+
+		if (ar != (sint16)ar) ar = (ar < 0) ? -0x8000 : 0x7FFF;
+		if (ag != (sint16)ag) ag = (ag < 0) ? -0x8000 : 0x7FFF;
+		if (ab != (sint16)ab) ab = (ab < 0) ? -0x8000 : 0x7FFF;
+
+		mArtifactRamp[i+15][0] = ab;
+		mArtifactRamp[i+15][1] = ag;
+		mArtifactRamp[i+15][2] = ar;
+		mArtifactRamp[i+15][3] = 0;
+	}
+
+	memset(mChromaVectors, 0, sizeof(mChromaVectors));
+
+	vdfloat3 cvec[16];
+	cvec[0] = vdfloat3 { 0, 0, 0 };
 
 	for(int j=0; j<15; ++j) {
 		float i = 0;
@@ -151,19 +208,29 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfl
 		}
 
 		vdfloat2 iq { i, q };
-		float r = 65280.0f * nsVDMath::dot(co_r, iq) * params.mSaturation;
-		float g = 65280.0f * nsVDMath::dot(co_g, iq) * params.mSaturation;
-		float b = 65280.0f * nsVDMath::dot(co_b, iq) * params.mSaturation;
+		vdfloat3 chroma { nsVDMath::dot(co_r, iq), nsVDMath::dot(co_g, iq), nsVDMath::dot(co_b, iq) };
 
-		mChromaVectors[j+1][0] = VDRoundToInt(r);
-		mChromaVectors[j+1][1] = VDRoundToInt(g);
-		mChromaVectors[j+1][2] = VDRoundToInt(b);
+		chroma *= params.mSaturation;
+
+		cvec[j+1] = chroma;
+
+		int icr = VDRoundToInt(chroma.x * (64.0f * 255.0f));
+		int icg = VDRoundToInt(chroma.y * (64.0f * 255.0f));
+		int icb = VDRoundToInt(chroma.z * (64.0f * 255.0f));
+
+		if (icr != (short)icr) icr = (icr < 0) ? -0x8000 : 0x7FFF;
+		if (icg != (short)icg) icg = (icg < 0) ? -0x8000 : 0x7FFF;
+		if (icb != (short)icb) icb = (icb < 0) ? -0x8000 : 0x7FFF;
+
+		mChromaVectors[j+1][0] = icb;
+		mChromaVectors[j+1][1] = icg;
+		mChromaVectors[j+1][2] = icr;
 	}
 
 	for(int i=0; i<16; ++i) {
-		float y = (lumaRamp[i & 15] * mYScale + mYBias) / 1024.0f;
+		float y = lumaRamp[i & 15] * yscale + ybias;
 
-		mLumaRamp[i] = VDRoundToInt32(y);
+		mLumaRamp[i] = VDRoundToInt32(y * (64.0f * 255.0f)) + 32;
 	}
 
 	// compute gamma correction table
@@ -181,18 +248,10 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfl
 	for(int i=0; i<256; ++i) {
 		int c = i >> 4;
 
-		float cr = (float)mChromaVectors[c][0];
-		float cg = (float)mChromaVectors[c][1];
-		float cb = (float)mChromaVectors[c][2];
-		float y = (lumaRamp[i & 15] * mYScale + mYBias) / 1024.0f;
-
-		cr += y;
-		cg += y;
-		cb += y;
-
-		float r = cr / 65280.0f;
-		float g = cg / 65280.0f;
-		float b = cb / 65280.0f;
+		float y = lumaRamp[i & 15] * yscale + ybias;
+		float r = cvec[c].x + y;
+		float g = cvec[c].y + y;
+		float b = cvec[c].z + y;
 
 		mPalette[i]
 			= (VDClampedRoundFixedToUint8Fast((float)r) << 16)
@@ -280,10 +339,71 @@ void ATArtifactingEngine::SetArtifactingParams(const ATArtifactingParams& params
 	mbHighPALTablesInited = false;
 }
 
-void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chromaArtifactHi, bool blend) {
+void ATArtifactingEngine::GetNTSCArtifactColors(uint32 c[2]) const {
+	for(int i=0; i<2; ++i) {
+		int art = i ? 0 : 30;
+		int y = mLumaRamp[7];
+
+		int cr = mArtifactRamp[art][2] + y;
+		int cg = mArtifactRamp[art][1] + y;
+		int cb = mArtifactRamp[art][0] + y;
+
+		cr >>= 6;
+		cg >>= 6;
+		cb >>= 6;
+
+		if (cr < 0)
+			cr = 0;
+		else if (cr > 255)
+			cr = 255;
+
+		if (cg < 0)
+			cg = 0;
+		else if (cg > 255)
+			cg = 255;
+
+		if (cb < 0)
+			cb = 0;
+		else if (cb > 255)
+			cb = 255;
+
+		if (!mbGammaIdentity && !mbEnableColorCorrection) {
+			cr = mGammaTable[cr];
+			cg = mGammaTable[cg];
+			cb = mGammaTable[cb];
+		}
+
+		c[i] = cb + (cg << 8) + (cr << 16);
+	}
+
+	if (mbEnableColorCorrection)
+		ColorCorrect((uint8 *)c, 2);
+
+}
+
+void ATArtifactingEngine::SuspendFrame() {
+	mbSavedPAL = mbPAL;
+	mbSavedChromaArtifacts = mbChromaArtifacts;
+	mbSavedChromaArtifactsHi = mbChromaArtifactsHi;
+	mbSavedBypassOutputCorrection = mbBypassOutputCorrection;
+	mbSavedBlendActive = mbBlendActive;
+	mbSavedBlendCopy = mbBlendCopy;
+}
+
+void ATArtifactingEngine::ResumeFrame() {
+	mbPAL = mbSavedPAL;
+	mbChromaArtifacts = mbSavedChromaArtifacts;
+	mbChromaArtifactsHi = mbSavedChromaArtifactsHi;
+	mbBypassOutputCorrection = mbSavedBypassOutputCorrection;
+	mbBlendActive = mbSavedBlendActive;
+	mbBlendCopy = mbSavedBlendCopy;
+}
+
+void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chromaArtifactHi, bool blendIn, bool blendOut, bool bypassOutputCorrection) {
 	mbPAL = pal;
 	mbChromaArtifacts = chromaArtifacts;
 	mbChromaArtifactsHi = chromaArtifactHi;
+	mbBypassOutputCorrection = bypassOutputCorrection;
 
 	if (chromaArtifactHi) {
 		if (pal) {
@@ -295,7 +415,7 @@ void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chroma
 		}
 	}
 
-	if (pal) {
+	if (pal && chromaArtifacts) {
 		if (chromaArtifactHi) {
 #if defined(VD_CPU_AMD64)
 			memset(mPALDelayLineUV, 0, sizeof mPALDelayLineUV);
@@ -314,15 +434,11 @@ void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chroma
 		}
 	}
 
-	if (blend) {
-		mbBlendCopy = !mbBlendActive;
-		mbBlendActive = true;
-	} else {
-		mbBlendActive = false;
-	}
+	mbBlendCopy = !blendIn;
+	mbBlendActive = blendOut;
 }
 
-void ATArtifactingEngine::Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool temporaryUpdate) {
+void ATArtifactingEngine::Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool temporaryUpdate, bool includeHBlank) {
 	if (!mbChromaArtifacts)
 		BlitNoArtifacts(dst, src, scanlineHasHiRes);
 	else if (mbPAL) {
@@ -332,14 +448,26 @@ void ATArtifactingEngine::Artifact8(uint32 y, uint32 dst[N], const uint8 src[N],
 			ArtifactPAL8(dst, src);
 	} else {
 		if (mbChromaArtifactsHi)
-			ArtifactNTSCHi(dst, src, scanlineHasHiRes);
+			ArtifactNTSCHi(dst, src, scanlineHasHiRes, includeHBlank);
 		else
-			ArtifactNTSC(dst, src, scanlineHasHiRes);
+			ArtifactNTSC(dst, src, scanlineHasHiRes, includeHBlank);
 	}
 
 	if (mbBlendActive && y < M) {
 		uint32 *blendDst = mbChromaArtifactsHi ? mPrevFrame14MHz[y] : mPrevFrame7MHz[y];
 		uint32 n = mbChromaArtifactsHi ? N*2 : N;
+
+		if (!includeHBlank) {
+			if (mbChromaArtifactsHi) {
+				blendDst += kLeftBorder14MHz_4;
+				dst += kLeftBorder14MHz_4;
+				n = kRightBorder14MHz_4 - kLeftBorder14MHz_4;
+			} else {
+				blendDst += kLeftBorder7MHz_4;
+				dst += kLeftBorder7MHz_4;
+				n = kRightBorder7MHz_4 - kLeftBorder7MHz_4;
+			}
+		}
 
 		if (mbBlendCopy) {
 			if (!temporaryUpdate)
@@ -353,7 +481,7 @@ void ATArtifactingEngine::Artifact8(uint32 y, uint32 dst[N], const uint8 src[N],
 	}
 }
 
-void ATArtifactingEngine::Artifact32(uint32 y, uint32 *dst, uint32 width, bool temporaryUpdate) {
+void ATArtifactingEngine::Artifact32(uint32 y, uint32 *dst, uint32 width, bool temporaryUpdate, bool includeHBlank) {
 	if (mbPAL)
 		ArtifactPAL32(dst, width);
 
@@ -370,16 +498,23 @@ void ATArtifactingEngine::Artifact32(uint32 y, uint32 *dst, uint32 width, bool t
 				BlendExchange(dst, blendDst, width);
 		}
 	}
+
+	if (!mbBypassOutputCorrection) {
+		if (mbEnableColorCorrection)
+			ColorCorrect((uint8 *)dst, width);
+		if (!mbGammaIdentity)
+			GammaCorrect((uint8 *)dst, width, mGammaTable);
+	}
 }
 
 void ATArtifactingEngine::InterpolateScanlines(uint32 *dst, const uint32 *src1, const uint32 *src2, uint32 n) {
 #if VD_CPU_X86 || VD_CPU_X64
 	if (SSE2_enabled) {
-		ATArtifactBlendScanlines_SSE2(dst, src1, src2, n);
+		ATArtifactBlendScanlines_SSE2(dst, src1, src2, n, mArtifactingParams.mScanlineIntensity);
 		return;
 	}
 #elif VD_CPU_ARM64
-	ATArtifactBlendScanlines_NEON(dst, src1, src2, n);
+	ATArtifactBlendScanlines_NEON(dst, src1, src2, n, mArtifactingParams.mScanlineIntensity);
 	return;
 #endif
 
@@ -394,11 +529,13 @@ void ATArtifactingEngine::InterpolateScanlines(uint32 *dst, const uint32 *src1, 
 }
 
 void ATArtifactingEngine::ArtifactPAL8(uint32 dst[N], const uint8 src[N]) {
+	const uint32 *VDRESTRICT palette = mbBypassOutputCorrection ? mPalette : mCorrectedPalette;
+
 	for(int i=0; i<N; ++i) {
 		uint8 prev = mPALDelayLine[i];
 		uint8 next = src[i];
-		uint32 prevColor = mCorrectedPalette[(prev & 0xf0) + (next & 0x0f)];
-		uint32 nextColor = mCorrectedPalette[next];
+		uint32 prevColor = palette[(prev & 0xf0) + (next & 0x0f)];
+		uint32 nextColor = palette[next];
 
 		dst[i] = (prevColor | nextColor) - (((prevColor ^ nextColor) & 0xfefefe) >> 1);
 	}
@@ -449,11 +586,20 @@ void ATArtifactingEngine::ArtifactPAL32(uint32 *dst, uint32 width) {
 	}
 }
 
-void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes) {
+void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool includeHBlank) {
 	if (!scanlineHasHiRes) {
 		BlitNoArtifacts(dst, src, false);
 		return;
 	}
+
+#if defined(VD_COMPILER_MSVC) && (defined(VD_CPU_X86) || defined(VD_CPU_X64))
+	if (SSE2_enabled) {
+		if (!ArtifactNTSC_SSE2(dst, src, N))
+			BlitNoArtifacts(dst, src, true);
+
+		return;
+	}
+#endif
 
 	uint8 luma[N + 4];
 	uint8 luma2[N];
@@ -504,12 +650,9 @@ void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool s
 	}
 
 	// This has no physical basis -- it just looks OK.
-	const int artr = mArtifactRed;
-	const int artg = mArtifactGreen;
-	const int artb = mArtifactBlue;
 	uint32 *dst2 = dst;
 
-	if (mbEnableColorCorrection) {
+	if (mbEnableColorCorrection || mbGammaIdentity || mbBypassOutputCorrection) {
 		for(int x=0; x<N; ++x) {
 			uint8 p = src[x];
 			int art = inv[x]; 
@@ -519,18 +662,18 @@ void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool s
 			} else {
 				int c = p >> 4;
 
-				int cr = mChromaVectors[c][0];
+				int cr = mChromaVectors[c][2];
 				int cg = mChromaVectors[c][1];
-				int cb = mChromaVectors[c][2];
+				int cb = mChromaVectors[c][0];
 				int y = mLumaRamp[luma2[x]];
 
-				cr += artr * art + y;
-				cg += artg * art + y;
-				cb += artb * art + y;
+				cr += mArtifactRamp[art+15][2] + y;
+				cg += mArtifactRamp[art+15][1] + y;
+				cb += mArtifactRamp[art+15][0] + y;
 
-				cr >>= 8;
-				cg >>= 8;
-				cb >>= 8;
+				cr >>= 6;
+				cg >>= 6;
+				cb >>= 6;
 
 				if (cr < 0)
 					cr = 0;
@@ -551,7 +694,8 @@ void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool s
 			}
 		}
 
-		ColorCorrect((uint8 *)dst, N);
+		if (mbEnableColorCorrection && !mbBypassOutputCorrection)
+			ColorCorrect((uint8 *)dst, N);
 	} else {
 		for(int x=0; x<N; ++x) {
 			uint8 p = src[x];
@@ -562,18 +706,18 @@ void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool s
 			} else {
 				int c = p >> 4;
 
-				int cr = mChromaVectors[c][0];
+				int cr = mChromaVectors[c][2];
 				int cg = mChromaVectors[c][1];
-				int cb = mChromaVectors[c][2];
+				int cb = mChromaVectors[c][0];
 				int y = mLumaRamp[luma2[x]];
 
-				cr += artr * art + y;
-				cg += artg * art + y;
-				cb += artb * art + y;
+				cr += mArtifactRamp[art+15][0] + y;
+				cg += mArtifactRamp[art+15][1] + y;
+				cb += mArtifactRamp[art+15][2] + y;
 
-				cr >>= 8;
-				cg >>= 8;
-				cb >>= 8;
+				cr >>= 6;
+				cg >>= 6;
+				cb >>= 6;
 
 				if (cr < 0)
 					cr = 0;
@@ -701,16 +845,6 @@ namespace {
 			*dst8++ = 0;
 		} while(--count);
 	}
-
-	void GammaCorrect(uint8 *VDRESTRICT dst8, uint32 N, const uint8 *VDRESTRICT gammaTab) {
-		for(uint32 i=0; i<N; ++i) {
-			dst8[0] = gammaTab[dst8[0]];
-			dst8[1] = gammaTab[dst8[1]];
-			dst8[2] = gammaTab[dst8[2]];
-
-			dst8 += 4;
-		}
-	}
 }
 
 void ATArtifactColorCorrect_Scalar(uint8 *VDRESTRICT dst8, uint32 N, const sint16 linearTab[256], const uint8 gammaTab[1024], const sint16 matrix16[3][3]) {
@@ -783,7 +917,7 @@ void ATArtifactColorCorrect_SSE2(uint8 *VDRESTRICT dst8, uint32 N, const sint16 
 }
 #endif
 
-void ATArtifactingEngine::ColorCorrect(uint8 *VDRESTRICT dst8, uint32 n) {
+void ATArtifactingEngine::ColorCorrect(uint8 *VDRESTRICT dst8, uint32 n) const {
 #if VD_CPU_X86 || VD_CPU_X64
 	if (SSE2_enabled)
 		ATArtifactColorCorrect_SSE2(dst8, n, mCorrectLinearTable, mCorrectGammaTable, mColorMatchingMatrix16);
@@ -792,7 +926,7 @@ void ATArtifactingEngine::ColorCorrect(uint8 *VDRESTRICT dst8, uint32 n) {
 		ATArtifactColorCorrect_Scalar(dst8, n, mCorrectLinearTable, mCorrectGammaTable, mColorMatchingMatrix16);
 }
 
-void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bool scanlineHasHiRes) {
+void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bool scanlineHasHiRes, bool includeHBlank) {
 	// We are using a 21 tap filter, so we're going to need arrays of N*2+20 (since we are
 	// transforming 7MHz input to 14MHz output). However, we hold two elements in each int,
 	// so we actually only need N+10 elements, which we round up to N+16. We need 8-byte
@@ -863,23 +997,31 @@ void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bo
 	}
 #endif
 
-	////////////////////////// 14MHz SECTION //////////////////////////////
+	// downconvert+interleave RGB channels and do post-processing
+	const int xdfinal = includeHBlank ? 0 : kLeftBorder14MHz_16;
+	const int xfinal = includeHBlank ? 0 : kLeftBorder7MHz_8/2;
+	const int nfinal = includeHBlank ? N : ((kRightBorder7MHz - kLeftBorder7MHz_8) + 7) & ~7;
 
 #if VD_CPU_ARM64
-	ATArtifactNTSCFinal_NEON(dst, rout+4, gout+4, bout+4, N);
+	ATArtifactNTSCFinal_NEON(dst + xdfinal, rout+4+xfinal, gout+4+xfinal, bout+4+xfinal, nfinal);
 #else
 #if VD_CPU_X86 || VD_CPU_X64
 	if (SSE2_enabled)
-		ATArtifactNTSCFinal_SSE2(dst, rout+4, gout+4, bout+4, N);
+		ATArtifactNTSCFinal_SSE2(dst + xdfinal, rout+4+xfinal, gout+4+xfinal, bout+4+xfinal, nfinal);
 	else
 #endif
-		final(dst, rout+4, gout+4, bout+4, N);
+		final(dst + xdfinal, rout+4+xfinal, gout+4+xfinal, bout+4+xfinal, nfinal);
 #endif
 
-	if (mbEnableColorCorrection)
-		ColorCorrect((uint8 *)dst, N*2);
-	else if (!mbGammaIdentity)
-		GammaCorrect((uint8 *)dst, N*2, mGammaTable);
+	if (!mbBypassOutputCorrection) {
+		const int xpost = includeHBlank ? 0 : kLeftBorder14MHz;
+		const int npost = includeHBlank ? N*2 : kRightBorder14MHz - kLeftBorder14MHz;
+
+		if (mbEnableColorCorrection)
+			ColorCorrect((uint8 *)(dst + xpost), npost);
+		else if (!mbGammaIdentity)
+			GammaCorrect((uint8 *)(dst + xpost), npost, mGammaTable);
+	}
 }
 
 void ATArtifactingEngine::ArtifactPALHi(uint32 dst[N*2], const uint8 src[N], bool scanlineHasHiRes, bool oddLine) {
@@ -918,21 +1060,25 @@ void ATArtifactingEngine::ArtifactPALHi(uint32 dst[N*2], const uint8 src[N], boo
 		ATArtifactPALFinal(dst, ybuf, ubuf, vbuf, ulbuf, vlbuf, N);
 	}
 
-	if (mbEnableColorCorrection)
-		ColorCorrect((uint8 *)dst, N*2);
-	else if (!mbGammaIdentity)
-		GammaCorrect((uint8 *)dst, N*2, mGammaTable);
+	if (!mbBypassOutputCorrection) {
+		if (mbEnableColorCorrection)
+			ColorCorrect((uint8 *)dst, N*2);
+		else if (!mbGammaIdentity)
+			GammaCorrect((uint8 *)dst, N*2, mGammaTable);
+	}
 }
 
 void ATArtifactingEngine::BlitNoArtifacts(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes) {
 	static_assert((N & 1) == 0);
 
+	const uint32 *VDRESTRICT palette = mbBypassOutputCorrection ? mPalette : mCorrectedPalette;
+
 	if (scanlineHasHiRes) {
 		for(size_t x=0; x<N; ++x)
-			dst[x] = mCorrectedPalette[src[x]];
+			dst[x] = palette[src[x]];
 	} else {
 		for(size_t x=0; x<N; x += 2) {
-			const uint32 c = mCorrectedPalette[src[x]];
+			const uint32 c = palette[src[x]];
 			dst[x+0] = c;
 			dst[x+1] = c;
 		}
@@ -1332,8 +1478,8 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 			vdfloat3 f0 = fy + fc;
 			vdfloat3 f1 = fy - fc;
 
-			rgbtab[0][j] = f0;
-			rgbtab[1][j] = f1;
+			rgbtab[0][j] = f0 * params.mIntensityScale;
+			rgbtab[1][j] = f1 * params.mIntensityScale;
 		}
 
 		for(int k=0; k<2; ++k) {
@@ -1518,6 +1664,8 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params) {
 
 	// Box filter representing pixel time.
 	kernbase.Init(0) = 1, 1, 1, 1, 1;
+
+	kernbase *= params.mIntensityScale;
 
 	// Chroma low-pass filter. We apply this before encoding to avoid excessive bleeding
 	// into luma.

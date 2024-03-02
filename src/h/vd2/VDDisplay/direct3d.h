@@ -188,6 +188,7 @@ public:
 	bool		CheckDevice();
 	bool		CheckReturn(HRESULT hr);
 
+	bool		AdjustTextureSize(uint32& w, uint32& h, bool nonPow2OK = false);
 	bool		AdjustTextureSize(int& w, int& h, bool nonPow2OK = false);
 	bool		IsTextureFormatAvailable(D3DFORMAT format);
 
@@ -222,6 +223,7 @@ public:
 	bool		Is3DCardLame();
 
 	bool		CreateInitTexture(UINT width, UINT height, UINT levels, D3DFORMAT format, IVDD3D9InitTexture **ppInitTexture);
+	bool		CreateTexture(IVDD3D9InitTexture *initTex, IVDD3D9Texture **ppTexture);
 
 	typedef bool (*SharedTextureFactory)(IVDD3D9TextureGenerator **ppGenerator);
 	bool		CreateSharedTexture(const char *name, SharedTextureFactory factory, IVDD3D9Texture **ppTexture);

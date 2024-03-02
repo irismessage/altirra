@@ -60,6 +60,7 @@ public:
 	ATCartridgeMode GetMode() const { return mCartMode; }
 
 	uint64 GetChecksum();
+	std::optional<uint32> GetImageFileCRC() const;
 
 	void Load5200Default();
 	void LoadNewCartridge(ATCartridgeMode mode);
@@ -77,6 +78,9 @@ public:
 	void EndLoadState(ATSaveStateReader& reader);
 	void BeginSaveState(ATSaveStateWriter& writer);
 	void SaveStatePrivate(ATSaveStateWriter& writer);
+
+	uint8 DebugReadLinear(uint32 offset) const;
+	uint8 DebugReadBanked(uint32 globalAddress) const;
 
 public:		// IATDeviceCartridge
 	void InitCartridge(IATDeviceCartridgePort *cartPort) override;
@@ -227,6 +231,9 @@ protected:
 	void UpdateTheCartBanking();
 	void UpdateTheCart();
 
+	void InitDebugBankMap();
+	void ResetDebugBankMap();
+
 	ATCartridgeMode mCartMode;
 	int	mCartBank;
 	int	mCartBank2;
@@ -294,6 +301,9 @@ protected:
 	};
 
 	TheCartBankMode mTheCartBankMode;
+
+	// Map from bank and A10-A13 to raw cartridge bank offset.
+	sint32 mDebugBankMap[256][4];
 };
 
 bool ATIsCartridgeModeHWCompatible(ATCartridgeMode cartmode, int hwmode);

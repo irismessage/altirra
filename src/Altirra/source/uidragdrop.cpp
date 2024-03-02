@@ -23,6 +23,7 @@
 
 #pragma warning(push)
 #pragma warning(disable: 4768)		// ShlObj.h(1065): warning C4768: __declspec attributes before linkage specification are ignored
+#pragma warning(disable: 4091)		// shlobj.h(1151): warning C4091: 'typedef ': ignored on left of 'tagGPFIDL_FLAGS' when no variable is declared
 #include <shlobj.h>
 #pragma warning(pop)
 
@@ -36,17 +37,50 @@
 #include <at/atcore/vfs.h>
 #include <at/atio/image.h>
 #include <at/atnativeui/dragdrop.h>
+#include <at/atui/uimanager.h>
+#include <at/atui/uidragdrop.h>
 #include "simulator.h"
 #include "disk.h"
 #include "resource.h"
+#include "uidragdrop.h"
 
 extern HWND g_hwnd;
 extern ATSimulator g_sim;
+extern ATUIManager g_ATUIManager;
 
 extern void DoLoad(VDGUIHandle h, const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType = kATImageType_None, bool *suppressColdReset = NULL, int loadIndex = -1, bool autoProfile = false);
 extern void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageName, IVDRandomAccessStream& stream, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType = kATImageType_None, bool *suppressColdReset = NULL, int loadIndex = -1);
 extern void DoBootWithConfirm(const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper);
 extern void DoBootStreamWithConfirm(const wchar_t *origPath, const wchar_t *imageName, IVDRandomAccessStream& stream, const ATMediaWriteMode *writeMode, int cartmapper);
+
+namespace {
+	HWND g_ATDropSubTargetWindow;
+	ATUIManager *g_pATDropSubTargetMgr;
+
+	ATUIDragModifiers ATUIConvertDragModifiersFromNative(DWORD nativeModifiers) {
+		ATUIDragModifiers modifiers {};
+
+		if (nativeModifiers & MK_CONTROL)
+			modifiers |= ATUIDragModifiers::Control;
+
+		if (nativeModifiers & MK_ALT)
+			modifiers |= ATUIDragModifiers::Alt;
+
+		if (nativeModifiers & MK_SHIFT)
+			modifiers |= ATUIDragModifiers::Shift;
+
+		if (nativeModifiers & MK_LBUTTON)
+			modifiers |= ATUIDragModifiers::LButton;
+
+		if (nativeModifiers & MK_MBUTTON)
+			modifiers |= ATUIDragModifiers::MButton;
+
+		if (nativeModifiers & MK_RBUTTON)
+			modifiers |= ATUIDragModifiers::RButton;
+
+		return modifiers;
+	}
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -94,72 +128,57 @@ void ATReadCOMBufferIntoMemory(vdfastvector<char>& data, HGLOBAL hglobal, uint32
 
 ///////////////////////////////////////////////////////////////////////////////
 
-class ATUIDragDropHandler final : public IDropTarget {
+class ATUIWrappedDataObject final : public vdrefcounted<IATUIDragDropObject> {
 public:
-	ATUIDragDropHandler(HWND hwnd);
+	ATUIWrappedDataObject(IDataObject *obj) : mpObject(obj) {}
 
-	virtual ULONG STDMETHODCALLTYPE AddRef();
-	virtual ULONG STDMETHODCALLTYPE Release();
-	virtual HRESULT STDMETHODCALLTYPE QueryInterface(const IID& riid, void **ppvObject);
-    virtual HRESULT STDMETHODCALLTYPE DragEnter(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect);
-    virtual HRESULT STDMETHODCALLTYPE DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect);
-    virtual HRESULT STDMETHODCALLTYPE DragLeave();
-    virtual HRESULT STDMETHODCALLTYPE Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect);
+	void *AsInterface(uint32 iid);
 
-protected:
-	bool GetLoadTarget(POINTL pt, ATImageType& loadType, int& loadIndex, bool& doBoot) const;
-	void SetDropEffect(DWORD grfKeyState);
+	void Shutdown();
 
-	VDAtomicInt mRefCount;
-	DWORD mDropEffect;
-	bool mbOpenContextMenu;
-	HWND mhwnd;
+	void ClearDropDescription() override;
+	void SetDropDescription(ATUIDropIconType type, const wchar_t *templateStr, const wchar_t *insertStr) override;
+
+	void *GetNativeObject() const override { return mpObject; }
+
+private:
+	vdrefptr<IDataObject> mpObject;
 };
+
+void *ATUIWrappedDataObject::AsInterface(uint32 iid) {
+	return nullptr;
+}
+
+void ATUIWrappedDataObject::Shutdown() {
+	mpObject = nullptr;
+}
+
+void ATUIWrappedDataObject::ClearDropDescription() {
+	ATUIClearDropDescriptionW32(mpObject);
+}
+
+void ATUIWrappedDataObject::SetDropDescription(ATUIDropIconType type, const wchar_t *templateStr, const wchar_t *insertStr) {
+	DROPIMAGETYPE nativeType = DROPIMAGE_INVALID;
+
+	switch(type) {
+		case ATUIDropIconType::Default:			nativeType = DROPIMAGE_INVALID; break;
+		case ATUIDropIconType::NotPossible:		nativeType = DROPIMAGE_NONE; break;
+		case ATUIDropIconType::None:			nativeType = DROPIMAGE_NOIMAGE; break;
+		case ATUIDropIconType::Move:			nativeType = DROPIMAGE_MOVE; break;
+		case ATUIDropIconType::Copy:			nativeType = DROPIMAGE_COPY; break;
+		case ATUIDropIconType::Link:			nativeType = DROPIMAGE_LINK; break;
+		case ATUIDropIconType::Label:			nativeType = DROPIMAGE_LABEL; break;
+		case ATUIDropIconType::Warning:			nativeType = DROPIMAGE_WARNING; break;
+	}
+
+	ATUISetDropDescriptionW32(mpObject, nativeType, templateStr, insertStr);
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 
-ATUIDragDropHandler::ATUIDragDropHandler(HWND hwnd)
-	: mRefCount(0)
-	, mDropEffect(DROPEFFECT_NONE)
-	, mhwnd(hwnd)
-{
-}
-
-ULONG STDMETHODCALLTYPE ATUIDragDropHandler::AddRef() {
-	return ++mRefCount;
-}
-
-ULONG STDMETHODCALLTYPE ATUIDragDropHandler::Release() {
-	ULONG rc = --mRefCount;
-
-	if (!rc)
-		delete this;
-
-	return rc;
-}
-
-HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::QueryInterface(const IID& riid, void **ppvObject) {
-	if (riid == IID_IUnknown) {
-		*ppvObject = static_cast<IUnknown *>(this);
-		AddRef();
-		return S_OK;
-	} else if (riid == IID_IDropTarget) {
-		*ppvObject = static_cast<IDropTarget *>(this);
-		AddRef();
-		return S_OK;
-	}
-
-	*ppvObject = NULL;
-	return E_NOINTERFACE;
-}
-
-HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragEnter(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
-	mDropEffect = DROPEFFECT_NONE;
-
-	if (GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED) {
-		*pdwEffect = mDropEffect;
-		return S_OK;
-	}
+bool ATUICanDropFiles(IDataObject *pDataObj) {
+	if (!pDataObj)
+		return false;
 
 	const auto& formats = ATUIInitDragDropFormatsW32();
 
@@ -173,55 +192,158 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragEnter(IDataObject *pDataObj, 
 	HRESULT hr = pDataObj->QueryGetData(&etc);
 
 	// Note that we get S_FALSE if the format is not supported.
+	if (hr == S_OK)
+		return true;
+
+	etc.cfFormat = formats.mDescriptorA;
+	etc.lindex = -1;
+	etc.tymed = TYMED_HGLOBAL;
+
+	hr = pDataObj->QueryGetData(&etc);
+
+	if (hr != S_OK) {
+		etc.cfFormat = formats.mDescriptorW;
+
+		hr = pDataObj->QueryGetData(&etc);
+	}
+
 	if (hr == S_OK) {
-		SetDropEffect(grfKeyState);
-	} else {
-		etc.cfFormat = formats.mDescriptorA;
-		etc.lindex = -1;
-		etc.tymed = TYMED_HGLOBAL;
+		etc.lindex = 0;
+		etc.cfFormat = formats.mContents;
 
 		hr = pDataObj->QueryGetData(&etc);
 
-		if (hr != S_OK) {
-			etc.cfFormat = formats.mDescriptorW;
-
-			hr = pDataObj->QueryGetData(&etc);
-		}
-
 		if (hr == S_OK) {
-			etc.lindex = 0;
-			etc.cfFormat = formats.mContents;
-
-			hr = pDataObj->QueryGetData(&etc);
-
-			if (hr == S_OK) {
-				SetDropEffect(grfKeyState);
-			}
+			return true;
 		}
 	}
 
-	*pdwEffect = mDropEffect;
-	return S_OK;
+	return false;
 }
 
-HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
-	if (mDropEffect != DROPEFFECT_NONE) {
-		SetDropEffect(grfKeyState);
+bool ATUICanDropFiles(IATUIDragDropObject *obj) {
+	if (!obj)
+		return false;
+
+	return ATUICanDropFiles((IDataObject *)obj->GetNativeObject());
+}
+
+namespace {
+	bool AskForDropTarget(POINTL pt, ATImageType& loadType, int& loadIndex, bool& doBoot) {
+		doBoot = false;
+		loadIndex = -1;
+		loadType = kATImageType_None;
+
+		HMENU hmenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_DRAGDROP_MENU));
+		if (!hmenu)
+			return false;
+
+		HMENU hmenu2 = GetSubMenu(hmenu, 0);
+		if (!hmenu2) {
+			DestroyMenu(hmenu);
+			return false;
+		}
+
+		static const UINT kDiskImageIds[]={
+			ID_MOUNTIMAGE_D1,
+			ID_MOUNTIMAGE_D2,
+			ID_MOUNTIMAGE_D3,
+			ID_MOUNTIMAGE_D4,
+		};
+
+		for(uint32 i=0; i<(uint32)vdcountof(kDiskImageIds); ++i) {
+			ATDiskInterface& diskIf = g_sim.GetDiskInterface(i);
+
+			const wchar_t *path = diskIf.GetPath();
+
+			VDStringW s = VDGetMenuItemTextByCommandW32(hmenu2, kDiskImageIds[i]);
+
+			if (path)
+				s.append_sprintf(L" [%ls]", path);
+			else
+				s += L" (empty)";
+
+			VDSetMenuItemTextByCommandW32(hmenu2, kDiskImageIds[i], s.c_str());
+		}
+
+		UINT id = TrackPopupMenu(hmenu2, TPM_RETURNCMD, pt.x, pt.y, 0, g_hwnd, NULL);
+
+		DestroyMenu(hmenu);
+
+		if (!id)
+			return false;
+
+		switch(id) {
+			case ID_DRAGDROP_BOOTIMAGE:
+				doBoot = true;
+				break;
+
+			case ID_MOUNTIMAGE_D1:
+				loadType = kATImageType_Disk;
+				loadIndex = 0;
+				break;
+
+			case ID_MOUNTIMAGE_D2:
+				loadType = kATImageType_Disk;
+				loadIndex = 1;
+				break;
+
+			case ID_MOUNTIMAGE_D3:
+				loadType = kATImageType_Disk;
+				loadIndex = 2;
+				break;
+
+			case ID_MOUNTIMAGE_D4:
+				loadType = kATImageType_Disk;
+				loadIndex = 3;
+				break;
+
+			case ID_MOUNTIMAGE_CARTRIDGE:
+				loadType = kATImageType_Cartridge;
+				loadIndex = 0;
+				break;
+		}
+
+		return true;
+	}
+}
+
+void ATUIDropFiles(POINTL pt, ATUIDropFilesTarget target, IDataObject *pDataObj) {
+	const auto& formats = ATUIInitDragDropFormatsW32();
+	bool coldBoot = false;
+	bool useContextMenu = false;
+
+	int loadIndex = -1;
+	ATImageType loadType = kATImageType_None;
+
+	switch(target) {
+		default:
+		case ATUIDropFilesTarget::BootImage:
+			coldBoot = true;
+			break;
+
+		case ATUIDropFilesTarget::MountImage:
+			break;
+
+		case ATUIDropFilesTarget::MountCart:
+			loadType = kATImageType_Cartridge;
+			break;
+
+		case ATUIDropFilesTarget::MountDisk1:
+		case ATUIDropFilesTarget::MountDisk2:
+		case ATUIDropFilesTarget::MountDisk3:
+		case ATUIDropFilesTarget::MountDisk4:
+			loadType = kATImageType_Disk;
+			loadIndex = (int)target - (int)ATUIDropFilesTarget::MountDisk1;
+			break;
+
+		case ATUIDropFilesTarget::UseContextMenu:
+			useContextMenu = true;
+			break;
 	}
 
-	*pdwEffect = mDropEffect;
-	return S_OK;
-}
-
-HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragLeave() {
-	return S_OK;
-}
-
-HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
-	if (GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED)
-		return S_OK;
-	
-	const auto& formats = ATUIInitDragDropFormatsW32();
+	if (coldBoot)
+		SetForegroundWindow(g_hwnd);
 
 	FORMATETC etc {};
 	etc.cfFormat = formats.mShellIdList;
@@ -234,10 +356,6 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 	medium.tymed = TYMED_HGLOBAL;
 	medium.hGlobal = NULL;
 
-	bool coldBoot = !(grfKeyState & MK_SHIFT);
-	int loadIndex = -1;
-	ATImageType loadType = kATImageType_None;
-
 	HRESULT hr = pDataObj->GetData(&etc, &medium);
 	if (hr == S_OK) {
 		VDStringW vfsPath;
@@ -249,7 +367,7 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 				vdrefptr<ATVFSFileView> view;
 				ATVFSOpenFileView(vfsPath.c_str(), false, ~view);
 
-				if (!mbOpenContextMenu || GetLoadTarget(pt, loadType, loadIndex, coldBoot)) {
+				if (!useContextMenu || AskForDropTarget(pt, loadType, loadIndex, coldBoot)) {
 					try {
 						if (coldBoot)
 							DoBootStreamWithConfirm(vfsPath.c_str(), view->GetFileName(), view->GetStream(), nullptr, 0);
@@ -260,7 +378,7 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 					}
 				}
 
-				return S_OK;
+				return;
 			} catch(const MyError&) {
 				// Eat VFS errors. We assume that it's something like a .zip we can't handle,
 				// and fall through.
@@ -281,9 +399,9 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 	hr = pDataObj->GetData(&etc, &medium);
 
 	if (hr == S_OK) {
-		if (mbOpenContextMenu) {
-			if (!GetLoadTarget(pt, loadType, loadIndex, coldBoot))
-				return S_OK;
+		if (useContextMenu) {
+			if (!AskForDropTarget(pt, loadType, loadIndex, coldBoot))
+				return;
 		}
 
 		HDROP hdrop = (HDROP)medium.hGlobal;
@@ -400,9 +518,9 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 				hr = pDataObj->GetData(&etc, &medium);
 
 				if (hr == S_OK) {
-					if (mbOpenContextMenu) {
-						if (!GetLoadTarget(pt, loadType, loadIndex, coldBoot))
-							return S_OK;
+					if (useContextMenu) {
+						if (!AskForDropTarget(pt, loadType, loadIndex, coldBoot))
+							return;
 					}
 
 					vdfastvector<char> data;
@@ -427,86 +545,220 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 			}
 		}
 	}
+}
+
+void ATUIDropFiles(const vdpoint32& pt, ATUIDropFilesTarget target, IATUIDragDropObject *obj) {
+	if (!obj || !g_ATDropSubTargetWindow)
+		return;
+
+	POINT pt2 { pt.x, pt.y };
+
+	ClientToScreen(g_ATDropSubTargetWindow, &pt2);
+
+	return ATUIDropFiles(POINTL { pt2.x, pt2.y }, target, (IDataObject *)obj->GetNativeObject());
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+class ATUIDragDropHandler final : public IDropTarget {
+public:
+	ATUIDragDropHandler(HWND hwnd);
+
+	virtual ULONG STDMETHODCALLTYPE AddRef();
+	virtual ULONG STDMETHODCALLTYPE Release();
+	virtual HRESULT STDMETHODCALLTYPE QueryInterface(const IID& riid, void **ppvObject);
+    virtual HRESULT STDMETHODCALLTYPE DragEnter(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect);
+    virtual HRESULT STDMETHODCALLTYPE DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect);
+    virtual HRESULT STDMETHODCALLTYPE DragLeave();
+    virtual HRESULT STDMETHODCALLTYPE Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect);
+
+protected:
+	void SetDropEffect(ATUIDragEffect effect);
+	void SetDropEffect(DWORD grfKeyState);
+
+	IATUIDragDropObject *WrapDataObject(IDataObject *obj);
+
+	VDAtomicInt mRefCount;
+	DWORD mDropEffect;
+	bool mbOpenContextMenu;
+	HWND mhwnd;
+
+	vdrefptr<IDropTargetHelper> mpDropTargetHelper;
+	vdrefptr<ATUIWrappedDataObject> mpWrappedDataObject;
+};
+
+///////////////////////////////////////////////////////////////////////////////
+
+ATUIDragDropHandler::ATUIDragDropHandler(HWND hwnd)
+	: mRefCount(0)
+	, mDropEffect(DROPEFFECT_NONE)
+	, mhwnd(hwnd)
+{
+}
+
+ULONG STDMETHODCALLTYPE ATUIDragDropHandler::AddRef() {
+	return ++mRefCount;
+}
+
+ULONG STDMETHODCALLTYPE ATUIDragDropHandler::Release() {
+	ULONG rc = --mRefCount;
+
+	if (!rc)
+		delete this;
+
+	return rc;
+}
+
+HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::QueryInterface(const IID& riid, void **ppvObject) {
+	if (riid == IID_IUnknown) {
+		*ppvObject = static_cast<IUnknown *>(this);
+		AddRef();
+		return S_OK;
+	} else if (riid == IID_IDropTarget) {
+		*ppvObject = static_cast<IDropTarget *>(this);
+		AddRef();
+		return S_OK;
+	}
+
+	*ppvObject = NULL;
+	return E_NOINTERFACE;
+}
+
+HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragEnter(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
+	mDropEffect = DROPEFFECT_NONE;
+
+	if (GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED) {
+		*pdwEffect = mDropEffect;
+		return S_OK;
+	}
+
+	if (g_ATDropSubTargetWindow && !(grfKeyState & MK_RBUTTON)) {
+		mbOpenContextMenu = false;
+
+		POINT cpt { pt.x, pt.y };
+		if (ScreenToClient(g_ATDropSubTargetWindow, &cpt)) {
+			SetDropEffect(g_pATDropSubTargetMgr->OnDragEnter(cpt.x, cpt.y, ATUIConvertDragModifiersFromNative(grfKeyState), WrapDataObject(pDataObj)));
+		}
+	} else {
+		if (g_pATDropSubTargetMgr)
+			g_pATDropSubTargetMgr->OnDragLeave();
+
+		if (ATUICanDropFiles(pDataObj))
+			SetDropEffect(grfKeyState);
+	}
+
+	if (!mpDropTargetHelper) {
+		CoCreateInstance(CLSID_DragDropHelper, nullptr, CLSCTX_INPROC, IID_IDropTargetHelper, (void **)~mpDropTargetHelper);
+
+		if (mpDropTargetHelper) {
+			POINT pt2 { pt.x, pt.y };
+			mpDropTargetHelper->DragEnter(nullptr, pDataObj, &pt2, mDropEffect);
+		}
+	}
+
+	*pdwEffect = mDropEffect;
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
+	if (g_ATDropSubTargetWindow && !(grfKeyState & MK_RBUTTON) && mpWrappedDataObject) {
+		mDropEffect = DROPEFFECT_NONE;
+		mbOpenContextMenu = false;
+
+		POINT cpt { pt.x, pt.y };
+		if (ScreenToClient(g_ATDropSubTargetWindow, &cpt)) {
+			SetDropEffect(g_pATDropSubTargetMgr->OnDragOver(cpt.x, cpt.y, ATUIConvertDragModifiersFromNative(grfKeyState)));
+		}
+	} else {
+		if (g_pATDropSubTargetMgr)
+			g_pATDropSubTargetMgr->OnDragLeave();
+
+		if (mDropEffect != DROPEFFECT_NONE)
+			SetDropEffect(grfKeyState);
+	}
+
+	if (mpDropTargetHelper) {
+		POINT pt2 { pt.x, pt.y };
+		mpDropTargetHelper->DragOver(&pt2, mDropEffect);
+	}
+
+	*pdwEffect = mDropEffect;
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragLeave() {
+	if (mpDropTargetHelper) {
+		mpDropTargetHelper->DragLeave();
+		mpDropTargetHelper = nullptr;
+	}
+
+	if (g_ATDropSubTargetWindow)
+		g_pATDropSubTargetMgr->OnDragLeave();
+
+	if (mpWrappedDataObject) {
+		mpWrappedDataObject->ClearDropDescription();
+		mpWrappedDataObject->Shutdown();
+		mpWrappedDataObject = nullptr;
+	}
 
 	return S_OK;
 }
 
-bool ATUIDragDropHandler::GetLoadTarget(POINTL pt, ATImageType& loadType, int& loadIndex, bool& doBoot) const {
-	doBoot = false;
-	loadIndex = -1;
-	loadType = kATImageType_None;
+HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
+	if (GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED)
+		return S_OK;
 
-	HMENU hmenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_DRAGDROP_MENU));
-	if (!hmenu)
-		return false;
+	if (g_ATDropSubTargetWindow && !mbOpenContextMenu) {
+		mDropEffect = DROPEFFECT_NONE;
 
-	HMENU hmenu2 = GetSubMenu(hmenu, 0);
-	if (!hmenu2) {
-		DestroyMenu(hmenu);
-		return false;
+		POINT cpt { pt.x, pt.y };
+		if (ScreenToClient(g_ATDropSubTargetWindow, &cpt))
+			SetDropEffect(g_pATDropSubTargetMgr->OnDragDrop(cpt.x, cpt.y, ATUIConvertDragModifiersFromNative(grfKeyState), WrapDataObject(pDataObj)));
+	} else {
+		if (g_pATDropSubTargetMgr)
+			g_pATDropSubTargetMgr->OnDragLeave();
+
+		if (mbOpenContextMenu) {
+			ATUIDropFiles(pt, ATUIDropFilesTarget::UseContextMenu, pDataObj);
+		} else if (grfKeyState & MK_SHIFT) {
+			ATUIDropFiles(pt, ATUIDropFilesTarget::MountImage, pDataObj);
+		} else {
+			ATUIDropFiles(pt, ATUIDropFilesTarget::BootImage, pDataObj);
+		}
+
+		mDropEffect = DROPEFFECT_COPY;
 	}
 
-	static const UINT kDiskImageIds[]={
-		ID_MOUNTIMAGE_D1,
-		ID_MOUNTIMAGE_D2,
-		ID_MOUNTIMAGE_D3,
-		ID_MOUNTIMAGE_D4,
-	};
+	*pdwEffect = mDropEffect;
 
-	for(uint32 i=0; i<(uint32)vdcountof(kDiskImageIds); ++i) {
-		ATDiskInterface& diskIf = g_sim.GetDiskInterface(i);
-
-		const wchar_t *path = diskIf.GetPath();
-
-		VDStringW s = VDGetMenuItemTextByCommandW32(hmenu2, kDiskImageIds[i]);
-
-		if (path)
-			s.append_sprintf(L" [%ls]", path);
-		else
-			s += L" (empty)";
-
-		VDSetMenuItemTextByCommandW32(hmenu2, kDiskImageIds[i], s.c_str());
+	if (mpDropTargetHelper) {
+		POINT pt2 { pt.x, pt.y };
+		mpDropTargetHelper->Drop(pDataObj, &pt2, mDropEffect);
+		mpDropTargetHelper = nullptr;
 	}
 
-	UINT id = TrackPopupMenu(hmenu2, TPM_RETURNCMD, pt.x, pt.y, 0, g_hwnd, NULL);
+	return S_OK;
+}
 
-	DestroyMenu(hmenu);
-
-	if (!id)
-		return false;
-
-	switch(id) {
-		case ID_DRAGDROP_BOOTIMAGE:
-			doBoot = true;
+void ATUIDragDropHandler::SetDropEffect(ATUIDragEffect effect) {
+	switch(effect) {
+		default:
+		case ATUIDragEffect::None:
+			mDropEffect = DROPEFFECT_NONE;
 			break;
 
-		case ID_MOUNTIMAGE_D1:
-			loadType = kATImageType_Disk;
-			loadIndex = 0;
+		case ATUIDragEffect::Copy:
+			mDropEffect = DROPEFFECT_COPY;
 			break;
 
-		case ID_MOUNTIMAGE_D2:
-			loadType = kATImageType_Disk;
-			loadIndex = 1;
+		case ATUIDragEffect::Move:
+			mDropEffect = DROPEFFECT_MOVE;
 			break;
 
-		case ID_MOUNTIMAGE_D3:
-			loadType = kATImageType_Disk;
-			loadIndex = 2;
-			break;
-
-		case ID_MOUNTIMAGE_D4:
-			loadType = kATImageType_Disk;
-			loadIndex = 3;
-			break;
-
-		case ID_MOUNTIMAGE_CARTRIDGE:
-			loadType = kATImageType_Cartridge;
-			loadIndex = 0;
+		case ATUIDragEffect::Link:
+			mDropEffect = DROPEFFECT_LINK;
 			break;
 	}
-
-	return true;
 }
 
 void ATUIDragDropHandler::SetDropEffect(DWORD grfKeyState) {
@@ -522,6 +774,22 @@ void ATUIDragDropHandler::SetDropEffect(DWORD grfKeyState) {
 		mDropEffect = DROPEFFECT_COPY;
 }
 
+IATUIDragDropObject *ATUIDragDropHandler::WrapDataObject(IDataObject *obj) {
+	if (obj) {
+		if (!mpWrappedDataObject || mpWrappedDataObject->GetNativeObject() != obj)
+			mpWrappedDataObject = new ATUIWrappedDataObject(obj);
+	} else {
+		if (mpWrappedDataObject) {
+			mpWrappedDataObject->ClearDropDescription();
+			mpWrappedDataObject->Shutdown();
+			mpWrappedDataObject = nullptr;
+		}
+	}
+
+	return mpWrappedDataObject;
+}
+
+
 ///////////////////////////////////////////////////////////////////////////
 
 void ATUIRegisterDragDropHandler(VDGUIHandle h) {
@@ -532,3 +800,7 @@ void ATUIRevokeDragDropHandler(VDGUIHandle h) {
 	RevokeDragDrop((HWND)h);
 }
 
+void ATUISetDragDropSubTarget(VDGUIHandle h, ATUIManager *mgr) {
+	g_ATDropSubTargetWindow = (HWND)h;
+	g_pATDropSubTargetMgr = mgr;
+}

@@ -43,6 +43,8 @@ extern bool g_showFps;
 
 void ATUIInitCommandMappingsInput(ATUICommandManager& cmdMgr);
 void ATUIInitCommandMappingsView(ATUICommandManager& cmdMgr);
+void ATUIInitCommandMappingsDebug(ATUICommandManager& cmdMgr);
+void ATUIInitCommandMappingsCassette(ATUICommandManager& cmdMgr);
 
 void OnCommandOpenImage();
 void OnCommandBootImage();
@@ -72,6 +74,7 @@ void OnCommandCassetteExportAudioTape();
 void OnCommandCassetteTapeControlDialog();
 void OnCommandCassetteToggleSIOPatch();
 void OnCommandCassetteToggleAutoBoot();
+void OnCommandCassetteToggleAutoBasicBoot();
 void OnCommandCassetteToggleAutoRewind();
 void OnCommandCassetteToggleLoadDataAsAudio();
 void OnCommandCassetteToggleRandomizeStartPosition();
@@ -83,6 +86,10 @@ void OnCommandCassetteTurboModeAlways();
 void OnCommandCassetteTogglePolarity();
 void OnCommandCassettePolarityModeNormal();
 void OnCommandCassettePolarityModeInverted();
+void OnCommandCassetteDirectSenseNormal();
+void OnCommandCassetteDirectSenseLowSpeed();
+void OnCommandCassetteDirectSenseHighSpeed();
+void OnCommandCassetteDirectSenseMaxSpeed();
 void OnCommandDebuggerOpenSourceFile();
 void OnCommandDebuggerToggleBreakAtExeRun();
 void OnCommandDebugToggleAutoReloadRoms();
@@ -116,6 +123,7 @@ void OnCommandViewStretchSquarePixelsInt();
 void OnCommandViewStretchPreserveAspectRatioInt();
 void OnCommandViewOverscanOSScreen();
 void OnCommandViewOverscanNormal();
+void OnCommandViewOverscanWidescreen();
 void OnCommandViewOverscanExtended();
 void OnCommandViewOverscanFull();
 void OnCommandViewVerticalOverscan(ATGTIAEmulator::VerticalOverscanMode mode);
@@ -136,6 +144,7 @@ void OnCommandEditCopyFrameTrueAspect();
 void OnCommandEditSaveFrame();
 void OnCommandEditSaveFrameTrueAspect();
 void OnCommandEditCopyText();
+void OnCommandEditCopyEscapedText();
 void OnCommandEditPasteText();
 void OnCommandSystemWarmReset();
 void OnCommandSystemColdReset();
@@ -222,7 +231,9 @@ void OnCommandVideoToggleInterlace();
 void OnCommandVideoToggleScanlines();
 void OnCommandVideoToggleXEP80();
 void OnCommandVideoAdjustColorsDialog();
+void OnCommandVideoAdjustScreenEffectsDialog();
 void OnCommandVideoArtifacting(ATGTIAEmulator::ArtifactMode mode);
+void OnCommandVideoArtifactingNext();
 void OnCommandVideoEnhancedModeNone();
 void OnCommandVideoEnhancedModeHardware();
 void OnCommandVideoEnhancedModeCIO();
@@ -270,28 +281,6 @@ namespace ATCommands {
 	template<int Index>
 	bool CartAttached() {
 		return g_sim.IsCartridgeAttached(Index);
-	}
-
-	bool IsCassetteLoaded() {
-		return g_sim.GetCassette().IsLoaded();
-	}
-
-	bool IsCassetteLoadDataAsAudioEnabled() {
-		return g_sim.GetCassette().IsLoadDataAsAudioEnabled();
-	}
-
-	bool IsCassetteRandomizeStartPositionEnabled() {
-		return g_sim.IsCassetteRandomizedStartEnabled();
-	}
-
-	template<ATCassetteTurboMode T_TurboMode>
-	bool IsCassetteTurboMode() {
-		return g_sim.GetCassette().GetTurboMode() == T_TurboMode;
-	}
-
-	template<ATCassettePolarityMode T_PolarityMode>
-	bool IsCassettePolarityMode() {
-		return g_sim.GetCassette().GetPolarityMode() == T_PolarityMode;
 	}
 
 	bool IsSlightSidEnabled() {
@@ -542,10 +531,6 @@ namespace ATCommands {
 		return g_sim.IsRunning();
 	}
 
-	bool IsNotRunning() {
-		return !g_sim.IsRunning();
-	}
-
 	bool IsSlowMotion() {
 		return ATUIGetSlowMotion();
 	}
@@ -584,18 +569,9 @@ namespace ATCommands {
 		return g_sim.GetInputManager()->IsMouseMapped();
 	}
 
-	bool IsBreakAtExeRunAddrEnabled() {
-		return ATGetDebugger()->IsBreakOnEXERunAddrEnabled();
-	}
-
 	template<int Index>
 	bool PokeyChannelEnabled() {
 		return g_sim.GetPokey().IsChannelEnabled(Index);
-	}
-
-	template<bool (ATSimulator::*T_Method)() const>
-	bool SimTest() {
-		return (g_sim.*T_Method)() ? true : false;
 	}
 
 	template<bool (ATGTIAEmulator::*T_Method)() const>
@@ -679,43 +655,6 @@ namespace ATCommands {
 		{ "System.SaveFirmwareRapidusFlash", OnCommandSaveFirmwareRapidusFlash, IsStoragePresent<(ATStorageId)(kATStorageId_Firmware + 3)> },
 		{ "File.Exit", OnCommandExit, NULL },
 
-		{ "Cassette.LoadNew", OnCommandCassetteLoadNew, NULL },
-		{ "Cassette.Load", OnCommandCassetteLoad, NULL },
-		{ "Cassette.Unload", OnCommandCassetteUnload, IsCassetteLoaded },
-		{ "Cassette.Save", OnCommandCassetteSave, IsCassetteLoaded },
-		{ "Cassette.ExportAudioTape", OnCommandCassetteExportAudioTape, IsCassetteLoaded },
-		{ "Cassette.TapeControlDialog", OnCommandCassetteTapeControlDialog, NULL },
-		{ "Cassette.ToggleSIOPatch", OnCommandCassetteToggleSIOPatch, NULL, CheckedIf<SimTest<&ATSimulator::IsCassetteSIOPatchEnabled> > },
-		{ "Cassette.ToggleAutoBoot", OnCommandCassetteToggleAutoBoot, NULL, CheckedIf<SimTest<&ATSimulator::IsCassetteAutoBootEnabled> > },
-		{ "Cassette.ToggleAutoRewind", OnCommandCassetteToggleAutoRewind, NULL, CheckedIf<SimTest<&ATSimulator::IsCassetteAutoRewindEnabled> > },
-		{ "Cassette.ToggleLoadDataAsAudio", OnCommandCassetteToggleLoadDataAsAudio, NULL, CheckedIf<IsCassetteLoadDataAsAudioEnabled> },
-		{ "Cassette.ToggleRandomizeStartPosition", OnCommandCassetteToggleRandomizeStartPosition, NULL, CheckedIf<IsCassetteRandomizeStartPositionEnabled> },
-		{ "Cassette.TurboModeNone", OnCommandCassetteTurboModeNone, NULL, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_None>> },
-		{ "Cassette.TurboModeAlways", OnCommandCassetteTurboModeAlways, NULL, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_Always>> },
-		{ "Cassette.TurboModeCommandControl", OnCommandCassetteTurboModeCommandControl, NULL, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_CommandControl>> },
-		{ "Cassette.TurboModeProceedSense", OnCommandCassetteTurboModeProceedSense, NULL, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_ProceedSense>> },
-		{ "Cassette.TurboModeInterruptSense", OnCommandCassetteTurboModeInterruptSense, NULL, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_InterruptSense>> },
-		{ "Cassette.TogglePolarity", OnCommandCassetteTogglePolarity, Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Inverted>> },
-		{ "Cassette.PolarityNormal", OnCommandCassettePolarityModeNormal, Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Normal>> },
-		{ "Cassette.PolarityInverted", OnCommandCassettePolarityModeInverted, Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Inverted>> },
-
-		{ "Debug.OpenSourceFile", OnCommandDebuggerOpenSourceFile, NULL },
-		{ "Debug.ToggleBreakAtExeRun", OnCommandDebuggerToggleBreakAtExeRun, NULL, CheckedIf<IsBreakAtExeRunAddrEnabled> },
-
-		{ "Debug.ToggleAutoReloadRoms", OnCommandDebugToggleAutoReloadRoms, NULL, CheckedIf<SimTest<&ATSimulator::IsROMAutoReloadEnabled> > },
-		{ "Debug.ToggleAutoLoadKernelSymbols", OnCommandDebugToggleAutoLoadKernelSymbols, NULL, CheckedIf<SimTest<&ATSimulator::IsAutoLoadKernelSymbolsEnabled> > },
-		{ "Debug.ChangeFontDialog", OnCommandDebugChangeFontDialog },
-		{ "Debug.ToggleDebugger", OnCommandDebugToggleDebugger, NULL, CheckedIf<IsDebuggerEnabled> },
-		{ "Debug.Run", OnCommandDebugRun, IsNotRunning },
-		{ "Debug.Break", OnCommandDebugBreak, IsDebuggerRunning },
-		{ "Debug.RunStop", OnCommandDebugRunStop },
-		{ "Debug.StepInto", OnCommandDebugStepInto, IsNotRunning },
-		{ "Debug.StepOut", OnCommandDebugStepOut, IsNotRunning },
-		{ "Debug.StepOver", OnCommandDebugStepOver, IsNotRunning },
-		{ "Debug.ToggleBreakpoint", OnCommandDebugToggleBreakpoint, IsDebuggerEnabled },
-		{ "Debug.VerifierDialog", OnCommandDebugVerifierDialog, NULL, CheckedIf<SimTest<&ATSimulator::IsVerifierEnabled> > },
-		{ "Debug.ShowTraceViewer", OnCommandDebugShowTraceViewer },
-
 		{ "View.NextFilterMode", OnCommandViewNextFilterMode, NULL },
 		{ "View.FilterModePoint", OnCommandViewFilterModePoint, NULL, RadioCheckedIf<VideoFilterModeIs<kATDisplayFilterMode_Point> > },
 		{ "View.FilterModeBilinear", OnCommandViewFilterModeBilinear, NULL, RadioCheckedIf<VideoFilterModeIs<kATDisplayFilterMode_Bilinear> > },
@@ -737,6 +676,7 @@ namespace ATCommands {
 
 		{ "View.OverscanOSScreen", OnCommandViewOverscanOSScreen, NULL, RadioCheckedIf<VideoOverscanModeIs<ATGTIAEmulator::kOverscanOSScreen> > },
 		{ "View.OverscanNormal", OnCommandViewOverscanNormal, NULL, RadioCheckedIf<VideoOverscanModeIs<ATGTIAEmulator::kOverscanNormal> > },
+		{ "View.OverscanWidescreen", OnCommandViewOverscanWidescreen, NULL, RadioCheckedIf<VideoOverscanModeIs<ATGTIAEmulator::kOverscanWidescreen> > },
 		{ "View.OverscanExtended", OnCommandViewOverscanExtended, NULL, RadioCheckedIf<VideoOverscanModeIs<ATGTIAEmulator::kOverscanExtended> > },
 		{ "View.OverscanFull", OnCommandViewOverscanFull, NULL, RadioCheckedIf<VideoOverscanModeIs<ATGTIAEmulator::kOverscanFull> > },
 		{ "View.VerticalOverrideOff",		[]() { OnCommandViewVerticalOverscan(ATGTIAEmulator::kVerticalOverscan_Default); },		NULL, RadioCheckedIf<VideoVerticalOverscanModeIs<ATGTIAEmulator::kVerticalOverscan_Default> > },
@@ -783,6 +723,7 @@ namespace ATCommands {
 		{ "Edit.SaveFrame", OnCommandEditSaveFrame, IsVideoFrameAvailable },
 		{ "Edit.SaveFrameTrueAspect", OnCommandEditSaveFrameTrueAspect, IsVideoFrameAvailable },
 		{ "Edit.CopyText", OnCommandEditCopyText, IsCopyTextAvailable },
+		{ "Edit.CopyEscapedText", OnCommandEditCopyEscapedText, IsCopyTextAvailable },
 		{ "Edit.PasteText", OnCommandEditPasteText, ATUIClipIsTextAvailable },
 
 		{ "System.WarmReset", OnCommandSystemWarmReset },
@@ -1090,6 +1031,7 @@ namespace ATCommands {
 		{ "Video.ToggleScanlines", OnCommandVideoToggleScanlines, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::AreScanlinesEnabled> > },
 		{ "Video.ToggleXEP80", OnCommandVideoToggleXEP80, NULL, CheckedIf<IsXEP80Enabled> },
 		{ "Video.AdjustColorsDialog", OnCommandVideoAdjustColorsDialog },
+		{ "Video.AdjustScreenEffectsDialog", OnCommandVideoAdjustScreenEffectsDialog },
 
 		{ "Video.ArtifactingNone",		[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactNone); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactNone> > },
 		{ "Video.ArtifactingNTSC",		[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactNTSC); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactNTSC> > },
@@ -1098,6 +1040,7 @@ namespace ATCommands {
 		{ "Video.ArtifactingPALHi",		[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactPALHi); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactPALHi> > },
 		{ "Video.ArtifactingAuto",		[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactAuto); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactAuto> > },
 		{ "Video.ArtifactingAutoHi",	[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactAutoHi); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactAutoHi> > },
+		{ "Video.ArtifactingNextMode",	OnCommandVideoArtifactingNext },
 
 		{ "Video.EnhancedModeNone", OnCommandVideoEnhancedModeNone, NULL, RadioCheckedIf<VideoEnhancedTextModeIs<0> > },
 		{ "Video.EnhancedModeHardware", OnCommandVideoEnhancedModeHardware, NULL, RadioCheckedIf<VideoEnhancedTextModeIs<1> > },
@@ -1170,4 +1113,6 @@ void ATUIInitCommandMappings(ATUICommandManager& cmdMgr) {
 
 	ATUIInitCommandMappingsInput(cmdMgr);
 	ATUIInitCommandMappingsView(cmdMgr);
+	ATUIInitCommandMappingsDebug(cmdMgr);
+	ATUIInitCommandMappingsCassette(cmdMgr);
 }

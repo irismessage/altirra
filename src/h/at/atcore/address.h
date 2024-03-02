@@ -42,11 +42,14 @@ enum ATAddressSpace : uint32 {
 	//	F800-FFFF 5200 OS ROM
 	kATAddressSpace_ROM		= 0x50000000,
 
-	// Cartridge ROM
+	// Cartridge ROM (linear)
 	kATAddressSpace_CART	= 0x60000000,
 
 	// PORTB extended memory, natural view ({00-FF}4000-7FFF)
 	kATAddressSpace_PORTB	= 0x70000000,
+
+	// Cartridge ROM (banked)
+	kATAddressSpace_CB		= 0x80000000,
 
 	kATAddressOffsetMask	= 0x00FFFFFF,
 	kATAddressSpaceMask		= 0xF0000000

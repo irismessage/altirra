@@ -20,6 +20,7 @@
 #include <windows.h>
 #include <richedit.h>
 #include <vd2/system/error.h>
+#include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/math.h>
 #include <vd2/system/w32assist.h>
@@ -264,8 +265,8 @@ ATUIDialogOptionsPageDisplay::ATUIDialogOptionsPageDisplay(ATOptions& opts)
 
 bool ATUIDialogOptionsPageDisplay::OnLoaded() {
 	AddHelpEntry(IDC_GRAPHICS_DDRAW, L"DirectDraw", L"Enable DirectDraw support. This is used if D3D9/OpenGL are disabled or not available.");
-	AddHelpEntry(IDC_GRAPHICS_D3D9, L"Direct3D 9", L"Enable Direct3D 9 support. This is the best option for speed and quality, and also enables the filtering options.");
-	AddHelpEntry(IDC_GRAPHICS_3D, L"Direct3D 11", L"Enable Direct3D 11 support. This is an experimental driver.");
+	AddHelpEntry(IDC_GRAPHICS_D3D9, L"Direct3D 9", L"Enable Direct3D 9 support. This is the best general option for speed and quality, and also enables the filtering options.");
+	AddHelpEntry(IDC_GRAPHICS_3D, L"Direct3D 11", L"Enable Direct3D 11 support. On Windows 8.1 and later, D3D11 can give better performance and power efficiency.");
 	AddHelpEntry(IDC_GRAPHICS_OPENGL, L"OpenGL", L"Enable OpenGL support. Direct3D 9 is a better option, but this is a reasonable fallback.");
 	AddHelpEntry(IDC_16BIT, L"Use 16-bit surfaces", L"Use 16-bit surfaces for faster speed on low-end graphics cards. May reduce visual quality.");
 	AddHelpEntry(IDC_FSMODE_BORDERLESS, L"Full screen mode: Borderless mode", L"Use a full-screen borderless window without switching to exclusive full screen mode.");
@@ -566,10 +567,17 @@ ATUIDialogOptionsPageFlash::ATUIDialogOptionsPageFlash(ATOptions& opts)
 
 bool ATUIDialogOptionsPageFlash::OnLoaded() {
 	AddHelpEntry(IDC_SIC_FLASH, L"SIC! cartridge flash", L"Sets the flash chip used for SIC! cartridges.");
+	AddHelpEntry(IDC_MAXFLASH8MB_FLASH, L"Maxflash 8Mb cartridge flash",
+		L"Sets the flash chip used for MaxFlash 8Mb cartridges. The HY29F040A and SST39SF040 are only recognized by the 2012+ flasher.");
 	AddHelpEntry(IDC_U1MB_FLASH, L"U1MB flash", L"Sets the flash chip used for Ultimate1MB.");
 
 	CBAddString(IDC_SIC_FLASH, L"Am29F040B (64K sectors)");
 	CBAddString(IDC_SIC_FLASH, L"SSF39SF040 (4K sectors)");
+
+	CBAddString(IDC_MAXFLASH8MB_FLASH, L"Am29F040B (64K sectors)");
+	CBAddString(IDC_MAXFLASH8MB_FLASH, L"BM29F040 (64K sectors)");
+	CBAddString(IDC_MAXFLASH8MB_FLASH, L"HY29F040A (64K sectors)");
+	CBAddString(IDC_MAXFLASH8MB_FLASH, L"SST39SF040 (64K sectors)");
 
 	CBAddString(IDC_U1MB_FLASH, L"A29040 (64K sectors)");
 	CBAddString(IDC_U1MB_FLASH, L"SSF39SF040 (4K sectors)");
@@ -582,6 +590,13 @@ bool ATUIDialogOptionsPageFlash::OnLoaded() {
 void ATUIDialogOptionsPageFlash::OnDataExchange(bool write) {
 	static const char *const kSICFlashChips[]={
 		"Am29F040B",
+		"SST39SF040"
+	};
+
+	static const char *const kMaxflash8MbFlashChips[]={
+		"Am29F040B",
+		"BM29F040",
+		"HY29F040A",
 		"SST39SF040"
 	};
 
@@ -598,6 +613,10 @@ void ATUIDialogOptionsPageFlash::OnDataExchange(bool write) {
 		if ((unsigned)idx < vdcountof(kSICFlashChips))
 			mOptions.mSICFlashChip = kSICFlashChips[idx];
 
+		idx = CBGetSelectedIndex(IDC_MAXFLASH8MB_FLASH);
+		if ((unsigned)idx < vdcountof(kMaxflash8MbFlashChips))
+			mOptions.mMaxflash8MbFlashChip = kMaxflash8MbFlashChips[idx];
+
 		idx = CBGetSelectedIndex(IDC_U1MB_FLASH);
 		if ((unsigned)idx < vdcountof(kU1MBFlashChips))
 			mOptions.mU1MBFlashChip = kU1MBFlashChips[idx];
@@ -611,6 +630,16 @@ void ATUIDialogOptionsPageFlash::OnDataExchange(bool write) {
 		}
 
 		CBSetSelectedIndex(IDC_SIC_FLASH, idx);
+
+		idx = 0;
+		for(int i=0; i<(int)vdcountof(kMaxflash8MbFlashChips); ++i) {
+			if (mOptions.mMaxflash8MbFlashChip == kMaxflash8MbFlashChips[i]) {
+				idx = i;
+				break;
+			}
+		}
+
+		CBSetSelectedIndex(IDC_MAXFLASH8MB_FLASH, idx);
 
 		idx = 0;
 		for(int i=0; i<(int)vdcountof(kU1MBFlashChips); ++i) {
@@ -671,7 +700,10 @@ public:
 	ATUIDialogOptionsPageSettings(ATOptions& opts);
 
 protected:
+	bool OnLoaded();
 	bool OnCommand(uint32 id, uint32 cmd);
+
+	void UpdateEnables();
 };
 
 ATUIDialogOptionsPageSettings::ATUIDialogOptionsPageSettings(ATOptions& opts)
@@ -679,17 +711,88 @@ ATUIDialogOptionsPageSettings::ATUIDialogOptionsPageSettings(ATOptions& opts)
 {
 }
 
+bool ATUIDialogOptionsPageSettings::OnLoaded() {
+	bool r = ATUIDialogOptionsPage::OnLoaded();
+
+	AddHelpEntry(IDC_RESETALL, L"Reset All Settings",
+		L"Reset all settings in the program, clearing all settings for the next startup.");
+	AddHelpEntry(IDC_SWITCH_TO_PORTABLE, L"Switch to Registry/Portable Mode",
+		L"Switch between storing settings in the Registry, which is better for reliability with multiple instances and roaming profiles, and in an INI file for portability.");
+	LinkHelpEntry(IDC_SWITCH_TO_REGISTRY, IDC_SWITCH_TO_PORTABLE);
+
+	UpdateEnables();
+	return r;
+}
+
 bool ATUIDialogOptionsPageSettings::OnCommand(uint32 id, uint32 cmd) {
 	if (id == IDC_RESETALL) {
-		if (Confirm(L"This will reset all program settings. Are you sure?")) {
-			ATSettingsScheduleReset();
+		if (!ATSettingsIsResetPending() && !ATSettingsIsMigrationScheduled()) {
+			if (Confirm2(nullptr, L"This will reset all program settings to first-time defaults. Are you sure?", L"Resetting All Settings")) {
+				ATSettingsScheduleReset();
 
-			ShowInfo(L"All settings will be reset the next time the program is restarted.");
+				ShowInfo2(L"All settings will be reset the next time the program is restarted.", L"Reset Scheduled");
+			}
 		}
+
 		return true;
+	} else if (id == IDC_SWITCH_TO_REGISTRY) {
+		if (ATSettingsIsInPortableMode() && !ATSettingsIsMigrationScheduled() && !ATSettingsIsResetPending()) {
+			if (Confirm2(nullptr, L"This will delete Altirra.ini and copy the settings back into the Registry.", L"Switching to Registry Mode")) {
+				ATSettingsScheduleMigration();
+
+				ShowInfo2(L"Settings will be migrated from Altirra.ini to the Registry on exit.", L"Migration Scheduled");
+			}
+		}
+	} else if (id == IDC_SWITCH_TO_PORTABLE) {
+		if (!ATSettingsIsInPortableMode() && !ATSettingsIsMigrationScheduled() && !ATSettingsIsResetPending()) {
+			if (Confirm2(nullptr, L"This will remove settings from the Registry and copy them into Altirra.ini.", L"Switching to Portable Mode")) {
+				// check that we can open for write
+				const VDStringW path = ATSettingsGetDefaultPortablePath();
+				VDFile f;
+				bool success = true;
+
+				if (f.openNT(path.c_str(), nsVDFile::kCreateNew | nsVDFile::kReadWrite)) {
+					// created new -- delete the file so it doesn't exist until we migrate, in case we fail first
+					f.closeNT();
+
+					VDRemoveFile(path.c_str());
+				} else if (f.openNT(path.c_str(), nsVDFile::kOpenExisting | nsVDFile::kReadWrite)) {
+					// already exists somehow -- leave it until migration
+				} else {
+					success = false;
+				}
+
+				f.closeNT();
+
+				if (success) {
+					ATSettingsScheduleMigration();
+					ShowInfo2(L"Settings will be migrated from the Registry to Altirra.ini on exit.", L"Migration Scheduled");
+
+					UpdateEnables();
+				} else {
+					ShowError2(L"There was a problem creating Altirra.ini. Check if the program is in a writable location.", L"Migration failed");
+				}
+			}
+		}
 	}
 
 	return false;
+}
+
+void ATUIDialogOptionsPageSettings::UpdateEnables() {
+	bool isPortable = ATSettingsIsInPortableMode();
+	bool isMigrating = ATSettingsIsMigrationScheduled();
+	bool isScheduled = isMigrating || ATSettingsIsResetPending();
+
+	ShowControl(IDC_STATIC_PORTABLE, isPortable && !isMigrating);
+	ShowControl(IDC_STATIC_REGISTRY, !isPortable && !isMigrating);
+	ShowControl(IDC_STATIC_MIGRATING, isMigrating);
+	ShowControl(IDC_SWITCH_TO_REGISTRY, isPortable);
+	ShowControl(IDC_SWITCH_TO_PORTABLE, !isPortable);
+	EnableControl(IDC_RESETALL, !isScheduled);
+	EnableControl(IDC_SWITCH_TO_REGISTRY, !isScheduled);
+	EnableControl(IDC_SWITCH_TO_REGISTRY, !isScheduled);
+	EnableControl(IDC_SWITCH_TO_PORTABLE, !isScheduled);
 }
 
 ///////////////////////////////////////////////////////////////////////////

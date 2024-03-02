@@ -170,9 +170,11 @@ public:
 	static void SetDefaultCaption(const wchar_t *caption);
 
 	void ShowInfo(const wchar_t *message, const wchar_t *caption = nullptr);
+	void ShowInfo2(const wchar_t *message, const wchar_t *title = nullptr);
 	void ShowWarning(const wchar_t *message, const wchar_t *caption = nullptr);
 	void ShowError(const wchar_t *message, const wchar_t *caption = nullptr);
 	void ShowError(const MyError&);
+	void ShowError2(const wchar_t *message, const wchar_t *title = nullptr);
 	bool Confirm(const wchar_t *message, const wchar_t *caption = nullptr);
 	bool Confirm2(const char *ignoreTag, const wchar_t *message, const wchar_t *title = nullptr);
 
@@ -193,6 +195,7 @@ protected:
 	void SetFocusToControl(uint32 id);
 	void EnableControl(uint32 id, bool enabled);
 	void ShowControl(uint32 id, bool visible);
+	void ApplyFontToControl(uint32 id);
 
 	vdrect32 GetControlPos(uint32 id);
 	vdrect32 GetControlScreenPos(uint32 id);

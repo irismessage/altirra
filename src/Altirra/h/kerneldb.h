@@ -283,6 +283,7 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::CHACT > CHACT;
 		ATByteAdapter<ATKernelSymbols::CHBAS > CHBAS;
 		ATByteAdapter<ATKernelSymbols::ATACHR> ATACHR;
+		ATByteAdapter<ATKernelSymbols::CH    > CH;
 		ATByteAdapter<ATKernelSymbols::FILDAT> FILDAT;
 		ATByteAdapter<ATKernelSymbols::DSPFLG> DSPFLG;
 		ATByteAdapter<ATKernelSymbols::DDEVIC> DDEVIC;

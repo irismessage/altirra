@@ -216,6 +216,7 @@ namespace {
 		bool mbWrapU;
 		bool mbWrapV;
 		bool mbBilinear;
+		bool mbAutoBilinear;
 
 		static void EmitDefinition(FILE *fo) {
 				fputs(R"_x_(
@@ -225,6 +226,7 @@ struct TextureBinding {
 	bool mbWrapU;
 	bool mbWrapV;
 	bool mbBilinear;
+	bool mbAutoBilinear;
 };
 )_x_", fo);
 		}
@@ -256,16 +258,22 @@ struct PassInfo {
 		}
 
 		void PreEmit(FILE *fo, const char *prefix) const {
-			fprintf(fo, "static const TextureBinding %s_texbindings[]={\n", prefix);
-			for (auto&& texb : mTextureBindings) {
-				fprintf(fo, "\t{ %u, %u, %s, %s, %s },\n"
-					, texb.mStage
-					, texb.mTexture
-					, texb.mbWrapU ? "true" : "false"
-					, texb.mbWrapV ? "true" : "false"
-					, texb.mbBilinear ? "true" : "false");
+			if (mTextureBindings.empty()) {
+				fprintf(fo, "static const vdvector_view<TextureBinding> %s_texbindings {};\n", prefix);
+			} else {
+				fprintf(fo, "static const TextureBinding %s_texbindings[]={\n", prefix);
+				for (auto&& texb : mTextureBindings) {
+					fprintf(fo, "\t{ %u, %u, %s, %s, %s, %s },\n"
+						, texb.mStage
+						, texb.mTexture
+						, texb.mbWrapU ? "true" : "false"
+						, texb.mbWrapV ? "true" : "false"
+						, texb.mbBilinear ? "true" : "false"
+						, texb.mbAutoBilinear ? "true" : "false"
+					);
+				}
+				fprintf(fo, "};\n");
 			}
-			fprintf(fo, "};\n");
 		}
 
 		void Emit(FILE *fo, const char *prefix) const {
@@ -388,7 +396,7 @@ void tool_fxc10(const vdfastvector<const char *>& args, const vdfastvector<const
 
 	const char *filename = args[0];
 
-	printf("Asuka: Compiling effect file (D3D10): %s -> %s.\n", filename, args[1]);
+	printf("Asuka: Compiling effect file: %s -> %s.\n", filename, args[1]);
 
 	VDFile f(filename);
 	FILE *fo = fopen(args[1], "w");
@@ -730,14 +738,17 @@ struct EffectInfo {
 				}
 
 				bool bilinear = false;
-				if (filterArg == "bilinear")
+				bool autobilinear = false;
+				if (filterArg == "autobilinear") {
+					autobilinear = true;
+				} else if (filterArg == "bilinear") {
 					bilinear = true;
-				else if (filterArg != "point") {
+				} else if (filterArg != "point") {
 					printf("Effect compilation failed: unknown texture filtering mode '%s'\n", VDStringA(filterArg).c_str());
 					exit(20);
 				}
 
-				lastPass->mTextureBindings.push_back( { (uint8)stage, (uint8)textureNameIndex, wrapU, wrapV, bilinear } );
+				lastPass->mTextureBindings.push_back( { (uint8)stage, (uint8)textureNameIndex, wrapU, wrapV, bilinear, autobilinear } );
 			} else if (command == "$$export_shader") {
 				const auto target = parser.GetIdentifier();
 				const auto function = parser.GetIdentifier();

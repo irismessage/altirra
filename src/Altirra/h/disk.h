@@ -211,6 +211,7 @@ protected:
 	int		mFormatBootSectorCount = 0;
 
 	ATDiskEmulationMode mEmuMode = kATDiskEmulationMode_Generic;
+	bool	mbSupportedNotReady = false;
 	bool	mbSupportedCmdHighSpeed = false;
 	bool	mbSupportedCmdFrameHighSpeed = false;
 	bool	mbSupportedCmdPERCOM = false;

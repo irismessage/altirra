@@ -39,6 +39,11 @@
       span.mono {
         font-family: monospace;
       }
+      
+      ul.verhistory ul {
+        margin-top: 5pt;
+        margin-bottom: 5pt;
+      }
     </style>
   </head>
   <body>
@@ -96,7 +101,7 @@
         AltirraOS for 5200 SuperSystem<br/>
         AltirraOS for 65C816 Accelerators<br/>
       </p>
-      <p class="copy">Copyright &copy; 2017-2018 Avery Lee, All Rights Reserved.</p>
+      <p class="copy">Copyright &copy; 2017-2019 Avery Lee, All Rights Reserved.</p>
       <p class="copy">
         Copying and distribution of this file, with or without modification,
         are permitted in any medium without royalty provided the copyright
@@ -112,5 +117,106 @@
     <p>
       Looking for other software, like a replacement R: device handler? You might find it on the Additions disk that comes with Altirra.
     </p>
+    <h2>Version history</h2>
+    <h3>AltirraOS</h3>
+    <ul class="verhistory">
+      <li>Version 3.17</li>
+	  <ul>
+		<li>Fixed regression in 3.16 where fine scrolling was set up too often on screen opens.</li>
+      </ul>
+      <li>Version 3.16</li>
+	  <ul>
+		<li>Minor optimizations to text I/O routines.</li>
+		<li>XL/XE/XEGS build: HELPFG is now set when Help is pressed.</li>
+		<li>65C816 build: COP #n no longer crashes in emulation mode.</li>
+	  </ul>
+      <li>Version 3.15</li>
+	  <ul>
+		<li>ICBLLZ/ICBLHZ is now updated after a CIO get operation. This fixes Lightspeed DOS directory listings.</li>
+	  </ul>
+      <li>Version 3.14</li>
+	  <ul>
+		<li>Type 3 poll loop is now exited if PBI device firmware responds to a poll request with error Y=$80 (user break). This fixes a boot loop with Black Box 2.16 firmware.</li>
+	  </ul>
+      <li>Version 3.13</li>
+	  <ul>
+		<li>SIOV now sets A=0 (undocumented XL/XE OS behavior).</li>
+	  </ul>
+      <li>Version 3.12</li>
+	  <ul>
+		<li>CBAUDL/H are now set by the cassette routines.</li>
+	  </ul>
+      <li>Version 3.11</li>
+      <ul>
+        <li>Version number now decoupled from main emulator.</li>
+        <li>FDIV no longer returns 0 for 0/0.</li>
+        <li>AFP(".") properly returns an error instead of 0.</li>
+        <li>EXP10() was returning an error instead of underflowing to 0 for some large negative inputs.</li>
+		<li>Entering the boot screen (self test) now sets COLDST to prevent BASIC from attempting to preserve an existing program on reset.</li>
+      </ul>
+      
+      <li>Version 3.10</li>
+      <ul>
+        <li>Added 65C816 version.</li>
+      </ul>
+
+      <li>Version 3.00</li>
+      <ul>
+        <li>Fixed polarity of CKEY.</li>
+      </ul>
+
+      <li>Version 2.90</li>
+      <ul>
+        <li>Modified values of PALNTS for better compatibility with XL/XE OS.</li>
+        <li>Fix short block flag not being handled by direct SIO calls for the cassette device.</li>
+        <li>Suppress type 3 poll to disk boot only (fixes Pole Position and Missile Command cartridge audio).</li>
+      </ul>
+
+      <li>Version 2.80</li>
+      <ul>
+        <li>Fixed XEGS game cartridge activation.</li>
+        <li>Fixed errors getting dropped in cassette handler.</li>
+        <li>Fixed extra initial block and incorrect partial block problems when writing cassette streams.</li>
+        <li>Fixed CIO read record when line exactly fits in buffer.</li>
+        <li>Fixed broken inverse key.</li>
+        <li>S: clear also clears split-screen area.</li>
+        <li>Optimized C/E->data frame path in SIO for better robustness when DLIs are active.</li>
+        <li>Fixed race condition in SETVBV.</li>
+      </ul>
+    </ul>
+
+    <h3>Altirra BASIC</h3>
+    <ul class="verhistory">
+      <li>Version 1.56</li>
+      <ul>
+        <li>Fixed crash when Break is pressed prior to startup banner.</li>
+      </ul>
+
+      <li>Version 1.55</li>
+      <ul>
+        <li>Added compatibility workaround for programs that use locations 183 and 184 to read the current DATA line.</li>
+      </ul>
+
+      <li>Version 1.54</li>
+      <ul>
+        <li>PMBASE is no longer altered if PMGRAPHICS has not been executed.</li>
+      </ul>
+
+      <li>Version 1.53</li>
+      <ul>
+        <li>Fixed READ line not getting reset after NEW.</li>
+      </ul>
+
+      <li>Version 1.52</li>
+      <ul>
+        <li>Disk version now works around SDX bug when restoring screen on exit.</li>
+      </ul>
+
+      <li>Version 1.51</li>
+      <ul>
+        <li>Fixed INT(1000000000) crash.</li>
+        <li>Newly added variables are removed on parsing error.</li>
+      </ul>
+    </ul>
   </body>
 </html>

@@ -1790,38 +1790,7 @@ public:
 	}
 
 	void EmitUnaryOp(VDStringA& s) {
-		switch(mSpace) {
-			case kATAddressSpace_ANTIC:
-				s += "n:";
-				break;
-
-			case kATAddressSpace_CPU:
-				break;
-
-			case kATAddressSpace_EXTRAM:
-				s += "x:";
-				break;
-
-			case kATAddressSpace_RAM:
-				s += "r:";
-				break;
-
-			case kATAddressSpace_VBXE:
-				s += "v:";
-				break;
-
-			case kATAddressSpace_ROM:
-				s += "rom:";
-				break;
-
-			case kATAddressSpace_CART:
-				s += "cart:";
-				break;
-
-			case kATAddressSpace_PORTB:
-				s += "portb:";
-				break;
-		}
+		s += ATAddressGetSpacePrefix(mSpace);
 	}
 
 private:
@@ -2175,7 +2144,7 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup *dbg, const ATDebuggerExprParseOpts& opts) {
+ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup *dbg, const ATDebuggerExprParseOpts& opts, ATDebugExpEvalContext *immContext) {
 	enum {
 		kOpNone,
 		kOpOpenParen,
@@ -2504,6 +2473,8 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup
 							intVal = (sint32)kATAddressSpace_ROM;
 						else if (ident == "cart")
 							intVal = (sint32)kATAddressSpace_CART;
+						else if (ident == "t")
+							intVal = (sint32)kATAddressSpace_CB;
 						else
 							throw ATDebuggerExprParseException("Unknown address space: '%.*s'", ident.size(), ident.data());
 
@@ -2555,7 +2526,7 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup
 					else {
 force_ident:
 						VDString identstr(ident);
-						if (dbg && (intVal = dbg->ResolveSymbol(identstr.c_str(), false, false)) >= 0) {
+						if (dbg && (intVal = dbg->ResolveSymbol(identstr.c_str(), false, false)) != -1) {
 							tok = kTokInt;
 							hexVal = opts.mbDefaultHex;
 						} else {
@@ -2575,7 +2546,43 @@ force_ident:
 
 					const char *nameEnd = s;
 
-					if (nameEnd - nameStart == 2 && nameStart[0] == 't' && nameStart[1] >= '0' && nameStart[1] <= '9') {
+					if (nameStart == nameEnd && *s == '(') {
+						// @(...) -> immediate context
+						const char *exprStart = ++s;
+						int parens = 0;
+
+						while(*s != ')' || parens > 0) {
+							if (!*s)
+								throw ATDebuggerExprParseException("Unterminated immediate subexpression");
+
+							if (*s == '(')
+								++parens;
+							else if (*s == ')')
+								--parens;
+
+							++s;
+						}
+
+						if (!immContext)
+							throw ATDebuggerExprParseException("Cannot evaluate @(...) immediate subexpression in this context");
+						
+						// recurse
+						VDStringA subExprString(exprStart, s);
+						vdautoptr<ATDebugExpNode> subExpr { ATDebuggerParseExpression(subExprString.c_str(), dbg, opts, nullptr) };
+
+						// evaluate
+						sint32 r;
+						if (!subExpr->Evaluate(r, *immContext))
+							throw ATDebuggerExprParseException("Could not evaluate immediate sub-expression: %s", subExprString.c_str());
+
+						vdautoptr<ATDebugExpNode> constNode(new ATDebugExpNodeConst(r, false, subExpr->IsAddress()));
+						valstack.push_back(constNode);
+						constNode.release();
+
+						++s;
+						needValue = false;
+						continue;
+					} else if (nameEnd - nameStart == 2 && nameStart[0] == 't' && nameStart[1] >= '0' && nameStart[1] <= '9') {
 						tok = kTokTemp;
 						intVal = (int)(nameStart[1] - '0');
 					} else if (nameEnd - nameStart == 2 && nameStart[0] == 'r' && nameStart[1] == 'a') {

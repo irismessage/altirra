@@ -3,6 +3,7 @@
 
 #include <vd2/system/refcount.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/VDDisplay/display.h>
 #include <vd2/VDDisplay/displaydrv.h>
 #include <vd2/VDDisplay/renderer.h>
 #include <vd2/Tessa/Context.h>
@@ -31,9 +32,12 @@ public:
 	virtual void SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh, bool use16bit) override;
 	virtual void SetDestRect(const vdrect32 *r, uint32 color) override;
 	virtual void SetPixelSharpness(float xfactor, float yfactor) override;
+	virtual bool SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX) override;
 
 	virtual bool IsValid() override;
 	virtual bool IsFramePending() override;
+	virtual bool IsScreenFXSupported() const override;
+
 	virtual bool Resize(int w, int h) override;
 	virtual bool Update(UpdateMode) override;
 	virtual void Refresh(UpdateMode) override;
@@ -54,6 +58,7 @@ private:
 	bool CreateSwapChain();
 	bool CreateImageNode();
 	void DestroyImageNode();
+	bool BufferNode(VDDisplayNode3D *srcNode, uint32 w, uint32 h, VDDisplaySourceNode3D **ppNode);
 	bool RebuildTree();
 
 	HWND mhwnd;
@@ -67,6 +72,9 @@ private:
 	FilterMode mFilterMode;
 	bool mbCompositionTreeDirty;
 	bool mbFramePending;
+
+	bool mbUseScreenFX = false;
+	VDVideoDisplayScreenFXInfo mScreenFXInfo {};
 
 	bool mbFullScreen;
 	uint32 mFullScreenWidth;

@@ -58,6 +58,13 @@ AT_DEFINE_ENUM_TABLE_BEGIN(ATCassettePolarityMode)
 	{ kATCassettePolarityMode_Inverted, "inverted" },
 AT_DEFINE_ENUM_TABLE_END(ATCassettePolarityMode, kATCassettePolarityMode_Normal)
 
+AT_DEFINE_ENUM_TABLE_BEGIN(ATCassetteDirectSenseMode)
+	{ ATCassetteDirectSenseMode::LowSpeed, "lowspeed" },
+	{ ATCassetteDirectSenseMode::Normal, "normal" },
+	{ ATCassetteDirectSenseMode::HighSpeed, "highspeed" },
+	{ ATCassetteDirectSenseMode::MaxSpeed, "maxspeed" },
+AT_DEFINE_ENUM_TABLE_END(ATCassetteDirectSenseMode, ATCassetteDirectSenseMode::Normal)
+
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -89,6 +96,7 @@ namespace {
 }
 
 ATCassetteEmulator::ATCassetteEmulator() {
+	mDirectSenseMode = ATCassetteDirectSenseMode::Normal;
 }
 
 ATCassetteEmulator::~ATCassetteEmulator() {
@@ -109,6 +117,8 @@ void ATCassetteEmulator::Init(ATPokeyEmulator *pokey, ATScheduler *sched, ATSche
 	mpScheduler = sched;
 	mpSlowScheduler = slowsched;
 	mpAudioMixer = mixer;
+
+	UpdateDirectSenseParameters();
 
 	PositionChanged.Init(defmgr);
 	PlayStateChanged.Init(defmgr);
@@ -260,6 +270,8 @@ void ATCassetteEmulator::UnloadInternal() {
 	mbMotorEnable = false;
 	mbPlayEnable = false;
 	UpdateMotorState();
+
+	mNeedBasic.reset();
 }
 
 void ATCassetteEmulator::SetImagePersistent(const wchar_t *fn) {
@@ -283,6 +295,14 @@ void ATCassetteEmulator::SetLoadDataAsAudioEnable(bool enable) {
 
 void ATCassetteEmulator::SetRandomizedStartEnabled(bool enable) {
 	mbRandomizedStartEnabled = enable;
+}
+
+void ATCassetteEmulator::SetDirectSenseMode(ATCassetteDirectSenseMode mode) {
+	if (mDirectSenseMode != mode) {
+		mDirectSenseMode = mode;
+
+		UpdateDirectSenseParameters();
+	}
 }
 
 void ATCassetteEmulator::SetTurboMode(ATCassetteTurboMode mode) {
@@ -684,6 +704,7 @@ uint8 ATCassetteEmulator::WriteBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMem
 
 	// mark tape dirty, if not already
 	mbImageDirty = true;
+	mNeedBasic.reset();
 
 	// flush any blank time accumulated up to this point
 	FlushRecording(ATSCHEDULER_GETTIME(mpScheduler), true);
@@ -718,6 +739,112 @@ uint8 ATCassetteEmulator::WriteBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMem
 	mRecordLastTime = ATSCHEDULER_GETTIME(mpScheduler);
 
 	return kATCIOStat_Success;
+}
+
+std::optional<bool> ATCassetteEmulator::AutodetectBasicNeeded() {
+	// see if we have the result already cached or don't have an image
+	if (mNeedBasic.has_value())
+		return mNeedBasic.value();
+
+	if (!mpImage)
+		return std::optional<bool>();
+
+	// Try to decode the first data block and see if we have a binary or BASIC loader.
+
+	// start 2 seconds in in case there's junk in the leader
+	uint32 pos = (uint32)VDRoundToInt32(kATCassetteDataSampleRate * 2);
+
+	// do a quick scan for the first start bit, and back off by a bit at 600 baud
+	const uint32 kTapeTicks600 = kATCassetteDataSampleRate / 600;
+	pos = std::max<uint32>(mpImage->GetNearestLowBitPos(pos), kTapeTicks600) - kTapeTicks600;
+
+	// scan forward with decoding at 600 baud and see if we can pull out 7 bytes within
+	// about 150 bit periods (70 nominal required)
+	const uint32 kThresholdZero = kTapeTicks600 / 3;
+	bool currentBit = true;
+	uint32 posLimit = pos + kTapeTicks600 * 150;
+	uint32 state = 0;
+	uint8 shiftRegister = 0;
+	bool framingError = false;
+	size_t bufIdx = 0;
+	uint8 buf[7];
+
+	for(; pos < posLimit; ++pos) {
+		currentBit = mpImage->GetBit(pos, kTapeTicks600, kThresholdZero, currentBit, false);
+
+		switch(state) {
+			case 0:
+				if (!currentBit)
+					state = 1;
+				break;
+
+			case kTapeTicks600 >> 1:
+				if (currentBit)
+					state = 0;
+				++state;
+				break;
+
+			case kTapeTicks600 * 1 + (kTapeTicks600 >> 1):
+			case kTapeTicks600 * 2 + (kTapeTicks600 >> 1):
+			case kTapeTicks600 * 3 + (kTapeTicks600 >> 1):
+			case kTapeTicks600 * 4 + (kTapeTicks600 >> 1):
+			case kTapeTicks600 * 5 + (kTapeTicks600 >> 1):
+			case kTapeTicks600 * 6 + (kTapeTicks600 >> 1):
+			case kTapeTicks600 * 7 + (kTapeTicks600 >> 1):
+			case kTapeTicks600 * 8 + (kTapeTicks600 >> 1):
+				shiftRegister = (shiftRegister >> 1) + (currentBit ? 0x80 : 0x00);
+				++state;
+				break;
+
+			case kTapeTicks600 * 9 + (kTapeTicks600 >> 1):
+				if (!currentBit)
+					framingError = true;
+
+				if (bufIdx < vdcountof(buf)) {
+					buf[bufIdx++] = shiftRegister;
+					if (bufIdx >= vdcountof(buf))
+						pos = posLimit - 1;
+				}
+				++state;
+				break;
+
+			case kTapeTicks600 * 10:
+				state = 0;
+				break;
+
+			default:
+				++state;
+				break;
+		}
+	}
+
+	// cache unknown result
+	mNeedBasic = std::optional<bool>();
+
+	// check if we cleanly decoded all bytes
+	if (!framingError && bufIdx == vdcountof(buf)) {
+		// For BASIC, the first bytes should be: 55 55 FA/FC 00 00 xx 01.
+		// For binary, the first bytes should be: 55 55 FA/FC xx yy zz ww where ww >= $04,
+		// since it is the high byte of the boot address.
+
+		// check sync bytes and cassette block mode (55 55 FA/FC)
+		if (buf[0] == 0x55 && buf[1] == 0x55 && (buf[2] == 0xFA || buf[2] == 0xFC)) {
+			// BASIC: 00 00 x0 01.
+			// Third byte should normally be 00 but may not be due to
+			// BASIC rev. B bug, so we only check if it is a multiple of 16.
+			//
+			// Binary program: xx yy zz ww, where ww >= $04.
+			// This checks that the boot address is valid.
+
+			if (buf[3] == 0 && buf[4] == 0 && (buf[5] & 0xF0) == 0 && buf[6] == 0x01) {
+				mNeedBasic = std::optional<bool>(true);
+			} else if (buf[6] >= 0x04) {
+				mNeedBasic = std::optional<bool>(false);
+			}
+		}
+	}
+
+	return mNeedBasic.value();
 }
 
 void ATCassetteEmulator::OnScheduledEvent(uint32 id) {
@@ -813,7 +940,10 @@ void ATCassetteEmulator::PokeyBeginCassetteData(uint8 skctl) {
 bool ATCassetteEmulator::PokeyWriteCassetteData(uint8 c, uint32 cyclesPerBit) {
 	if (mbRecordEnable && mbMotorRunning) {
 		if (mpImage) {
-			mbImageDirty = true;
+			if (!mbImageDirty) {
+				mbImageDirty = true;
+				mNeedBasic.reset();
+			}
 
 			mpImage->WriteStdData(c, VDRoundToInt32(7159090.0f / 4.0f / cyclesPerBit));
 
@@ -996,7 +1126,7 @@ void ATCassetteEmulator::UpdateInvertData() {
 ATCassetteEmulator::BitResult ATCassetteEmulator::ProcessBit() {
 	// The sync mark has to be read before the baud rate is set, so we force the averaging
 	// period to ~2000 baud.
-	const bool newDataLineState = !mpImage || (mbFSKDecoderEnabled ? mpImage->GetBit(mPosition, 8, 3, mbDataLineState, false) : mpImage->GetTurboBit(mPosition)) != mbInvertData;
+	const bool newDataLineState = !mpImage || (mbFSKDecoderEnabled ? mpImage->GetBit(mPosition, mDirectSenseWindow, mDirectSenseThreshold, mbDataLineState, false) : mpImage->GetTurboBit(mPosition)) != mbInvertData;
 
 	if (mbDataLineState != newDataLineState) {
 		mbDataLineState = newDataLineState;
@@ -1179,7 +1309,11 @@ void ATCassetteEmulator::SeekAudio(uint32 pos) {
 void ATCassetteEmulator::FlushRecording(uint32 t, bool force) {
 	if (force || t - mRecordLastTime > kRecordMaxDelayForBlank) {
 		if (mpImage) {
-			mbImageDirty = true;
+			if (!mbImageDirty) {
+				mbImageDirty = true;
+				mNeedBasic.reset();
+			}
+
 			mpImage->WriteBlankData(VDRoundToInt((float)(t - mRecordLastTime) * kATCassetteDataSampleRate / (7159090.0f / 4.0f)));
 
 			UpdateRecordingPosition();
@@ -1233,3 +1367,23 @@ void ATCassetteEmulator::UpdateTraceState() {
 	}
 }
 
+void ATCassetteEmulator::UpdateDirectSenseParameters() {
+	switch(mDirectSenseMode) {
+		case ATCassetteDirectSenseMode::LowSpeed:	// ~1KHz
+			mDirectSenseWindow = 32;
+			mDirectSenseThreshold = 12;
+			break;
+		case ATCassetteDirectSenseMode::Normal:		// ~2KHz
+			mDirectSenseWindow = 16;
+			mDirectSenseThreshold = 6;
+			break;
+		case ATCassetteDirectSenseMode::HighSpeed:	// ~4KHz
+			mDirectSenseWindow = 8;
+			mDirectSenseThreshold = 3;
+			break;
+		case ATCassetteDirectSenseMode::MaxSpeed:	// ~32KHz
+			mDirectSenseWindow = 1;
+			mDirectSenseThreshold = 1;
+			break;
+	}
+}

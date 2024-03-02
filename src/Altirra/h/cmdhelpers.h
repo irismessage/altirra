@@ -20,6 +20,9 @@
 
 #include <at/atui/uicommandmanager.h>
 
+class ATSimulator;
+extern ATSimulator g_sim;
+
 namespace ATCommands {
 	typedef bool (*BoolTestFn)();
 
@@ -37,6 +40,22 @@ namespace ATCommands {
 
 	template<BoolTestFn A>
 	ATUICmdState RadioCheckedIf() { return A() ? kATUICmdState_RadioChecked : kATUICmdState_None; }
+
+	template<bool (ATSimulator::*T_Method)() const>
+	bool SimTest() {
+		return (g_sim.*T_Method)() ? true : false;
+	}
+
+	inline ATUICmdState ToRadio(bool checked) {
+		return checked ? kATUICmdState_RadioChecked : kATUICmdState_None;
+	}
+
+	inline ATUICmdState ToChecked(bool checked) {
+		return checked ? kATUICmdState_Checked : kATUICmdState_None;
+	}
+
+	bool IsDebuggerEnabled();
+	bool IsDebuggerRunning();
 }
 
 #endif

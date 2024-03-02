@@ -129,7 +129,7 @@ uint32 ATUIGetMonitorDpiW32(HMONITOR hMonitor) {
 	if (VDIsAtLeast81W32()) {
 		HMODULE hmodShCore = VDLoadSystemLibraryW32("shcore");
 		if (hmodShCore) {
-			typedef HRESULT (WINAPI *tpGetDpiForMonitor)(HMONITOR, MONITOR_DPI_TYPE, UINT *, UINT *);
+			typedef HRESULT (__stdcall *tpGetDpiForMonitor)(HMONITOR, MONITOR_DPI_TYPE, UINT *, UINT *);
 			tpGetDpiForMonitor pGetDpiForMonitor = (tpGetDpiForMonitor)GetProcAddress(hmodShCore, "GetDpiForMonitor");
 
 			if (pGetDpiForMonitor) {

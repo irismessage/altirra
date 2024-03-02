@@ -682,12 +682,6 @@ ATUIProfilerSourceTextView::ATUIProfilerSourceTextView(const ATProfileFrame& pro
 	, mTargetAddress(0)
 	, mWheelAccum(0)
 {
-	for(Records::iterator it(mRecords.begin()), itEnd(mRecords.end()); it != itEnd; ++it) {
-		ATProfileRecord& r = *it;
-
-		r.mAddress &= 0x1ffffff;
-	}
-
 	// sort records
 	std::sort(mRecords.begin(), mRecords.end(), RecordSort());
 
@@ -724,8 +718,6 @@ bool ATUIProfilerSourceTextView::Create(HWND hwndParent) {
 }
 
 void ATUIProfilerSourceTextView::SetTargetAddress(uint32 addr) {
-	addr &= 0x1ffffff;
-
 	if (mTargetAddress == addr)
 		return;
 
@@ -906,7 +898,7 @@ void ATUIProfilerSourceTextView::OnPaint() {
 			// render line
 			mBuffer = " ";
 
-			ATDisassembleCaptureInsnContext(addr & 0x1000000 ? addr - 0x1000000 + kATAddressSpace_PORTB : addr, hent);
+			ATDisassembleCaptureInsnContext(addr, hent);
 
 			ATDisassembleInsn(mBuffer, target, disasmMode, hent, false, false, true, true, true, false, false, true, true, true);
 
@@ -1122,6 +1114,15 @@ LRESULT ATUIProfilerSourcePane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) 
 	switch(msg) {
 		case WM_CREATE:
 			OnCreate();
+			break;
+
+		case WM_CLOSE:
+			// Prevent another application window in the global Z-order stack from gaining
+			// focus when we close. This has to be in WM_CLOSE as WM_DESTROY is too late.
+			if (GetActiveWindow() == mhwnd) {
+				if (HWND hwndParent = ::GetWindow(mhwnd, GW_OWNER))
+					SetActiveWindow(hwndParent);
+			}
 			break;
 
 		case WM_DESTROY:
@@ -1379,24 +1380,24 @@ void ATUIProfileViewListSource::GetText(uint32 id, uint32 subItem, VDStringW& s)
 
 	switch(subItem) {
 		case 0:
-			switch(record.mAddress & 0xE000000) {
-				case 0x6000000:
+			switch(record.mContext) {
+				case kATProfileContext_VBI:
 					s = L"VBI";
 					break;
 
-				case 0x8000000:
+				case kATProfileContext_DLI:
 					s = L"DLI";
 					break;
 
-				case 0x4000000:
+				case kATProfileContext_IRQ:
 					s = L"IRQ";
 					break;
 
-				case 0x2000000:
+				case kATProfileContext_Interrupt:
 					s = L"Interrupt";
 					break;
 
-				case 0:
+				case kATProfileContext_Main:
 					s = L"Main";
 					break;
 			}
@@ -1404,25 +1405,43 @@ void ATUIProfileViewListSource::GetText(uint32 id, uint32 subItem, VDStringW& s)
 
 		case 1:
 			{
-				uint32 addr = record.mAddress & 0x1FFFFFF;
+				uint32 addr = record.mAddress;
 
 				if (mCapturedProfileMode == kATProfileMode_BasicLines) {
 					s.sprintf(L"%u", addr);
-				} else if (addr == 0x1FFFFFF) {
+				} else if (addr == ~UINT32_C(0)) {
 					s = L"Unk.";
-				} else if (addr >= 0x1000000) {
-					s.sprintf(L"%02X'%04X", (addr >> 16) & 0xff, addr & 0xffff);
-				} else if (addr >= 0x10000) {
-					s.sprintf(L"%02X:%04X", addr >> 16, addr & 0xffff);
 				} else {
+					switch(addr & kATAddressSpaceMask) {
+						case kATAddressSpace_PORTB:
+							s.sprintf(L"%02X'%04X", (addr >> 16) & 0xff, addr & 0xffff);
+							break;
+
+						case kATAddressSpace_CB:
+							s.sprintf(L"t:%02X'%04X", (addr >> 16) & 0xff, addr & 0xffff);
+							break;
+
+						case kATAddressSpace_CPU:
+							{
+								if (addr >= 0x10000)
+									s.sprintf(L"%02X:%04X", addr >> 16, addr & 0xffff);
+								else
+									s.sprintf(L"%04X", addr);
+							}
+							break;
+
+						default:
+							s.append_sprintf(L"%hs%04X", ATAddressGetSpacePrefix(addr), addr & kATAddressOffsetMask);
+							break;
+					}
+
 					ATSymbol sym;
 					if (ATGetDebuggerSymbolLookup()->LookupSymbol(addr, kATSymbol_Execute, sym)) {
 						if (sym.mOffset == addr)
-							s.sprintf(L"%04X (%hs)", addr, sym.mpName);
+							s.append_sprintf(L" (%hs)", sym.mpName);
 						else
-							s.sprintf(L"%04X (%hs+%u)", addr, sym.mpName, addr - sym.mOffset);
-					} else
-						s.sprintf(L"%04X", addr);
+							s.append_sprintf(L" (%hs+%u)", sym.mpName, addr - sym.mOffset);
+					}
 				}
 			}
 			break;
@@ -1608,19 +1627,34 @@ void ATUIProfileViewTreeSource::GetText(uint32 id, VDStringW& s) const {
 
 		default:
 			{
-				sint32 addr = mpSession->mContexts[id - 1].mAddress;
+				uint32 addr = mpSession->mContexts[id - 1].mAddress;
 
-				if (addr >= 0x1000000) {
-					s.sprintf(L"%02X'%04X", (addr >> 16) & 0xff, addr & 0xffff);
-				} else if (addr >= 0x10000) {
-					s.sprintf(L"%02X:%04X", addr >> 16, addr & 0xffff);
-				} else {
-					s.sprintf(L"%04X", addr);
+				switch(addr & kATAddressSpaceMask) {
+					case kATAddressSpace_PORTB:
+						s.sprintf(L"%02X'%04X", (addr >> 16) & 0xff, addr & 0xffff);
+						break;
 
-					ATSymbol sym;
-					if (ATGetDebuggerSymbolLookup()->LookupSymbol(addr, kATSymbol_Execute, sym) && sym.mOffset == addr)
-						s.append_sprintf(L" (%hs)", sym.mpName);
+					case kATAddressSpace_CB:
+						s.sprintf(L"t:%02X'%04X", (addr >> 16) & 0xff, addr & 0xffff);
+						break;
+
+					case kATAddressSpace_CPU:
+						{
+							if (addr >= 0x10000)
+								s.sprintf(L"%02X:%04X", addr >> 16, addr & 0xffff);
+							else
+								s.sprintf(L"%04X", addr);
+						}
+						break;
+
+					default:
+						s.append_sprintf(L"%hs%04X", ATAddressGetSpacePrefix(addr), addr & kATAddressOffsetMask);
+						break;
 				}
+
+				ATSymbol sym;
+				if (ATGetDebuggerSymbolLookup()->LookupSymbol(addr, kATSymbol_Execute, sym) && sym.mOffset == addr)
+					s.append_sprintf(L" (%hs)", sym.mpName);
 
 				s.append_sprintf(L" [x%u]", cgr.mCalls);
 			}
@@ -2230,6 +2264,7 @@ protected:
 	ATProfileBoundaryRule mBoundaryRule = kATProfileBoundaryRule_None;
 	VDStringA mBoundaryAddrExpr;
 	VDStringA mBoundaryAddrExpr2;
+	bool mbGlobalAddressesEnabled = false;
 
 	ATUIProfileView mProfileView;
 
@@ -2519,7 +2554,7 @@ void ATUIProfilerPane::OnToolbarClicked(uint32 id) {
 							break;
 
 						case ID_PROFMODE_SAMPLEBASIC:
-							mToolbar.SetItemImage(1002, 4);
+							mProfileMode = kATProfileMode_BasicLines;
 							break;
 					}
 
@@ -2566,6 +2601,8 @@ void ATUIProfilerPane::OnToolbarClicked(uint32 id) {
 							VDCheckRadioMenuItemByCommandW32(hmenu, ID_FRAMETRIGGER_PCADDRESS, true);
 							break;
 					}
+
+					VDCheckMenuItemByCommandW32(hmenu, ID_MENU_ENABLEGLOBALADDRESSES, mbGlobalAddressesEnabled);
 
 					TPMPARAMS tpm;
 					tpm.cbSize = sizeof(TPMPARAMS);
@@ -2621,6 +2658,8 @@ void ATUIProfilerPane::OnToolbarClicked(uint32 id) {
 								mBoundaryRule = kATProfileBoundaryRule_PCAddress;
 							}
 						}
+					} else if (selectedId == ID_MENU_ENABLEGLOBALADDRESSES) {
+						mbGlobalAddressesEnabled = !mbGlobalAddressesEnabled;
 					}
 
 					DestroyMenu(hmenu);
@@ -2644,6 +2683,9 @@ void ATUIProfilerPane::UnloadProfile() {
 }
 
 void ATUIProfilerPane::LoadProfile() {
+	// must unload profile before we stomp the session, since the views have a reference to it
+	UnloadProfile();
+
 	g_sim.GetProfiler()->GetSession(mSession);
 
 	MergeFrames(0, 1);
@@ -2755,6 +2797,7 @@ void ATUIProfilerPane::StartProfiler() {
 	auto *profiler = g_sim.GetProfiler();
 	profiler->SetBoundaryRule(mBoundaryRule, param, param2);
 	profiler->Start(mProfileMode, mProfileCounterModes[0], mProfileCounterModes[1]);
+	profiler->SetGlobalAddressesEnabled(mbGlobalAddressesEnabled);
 }
 
 ///////////////////////////////////////////////////////////////////////////

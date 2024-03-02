@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2009-2011 Avery Lee
+//	Copyright (C) 2009-2019 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -11,14 +11,14 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
 
 #pragma warning(push)
 #pragma warning(disable: 4768)		// ShlObj.h(1065): warning C4768: __declspec attributes before linkage specification are ignored
+#pragma warning(disable: 4091)		// shlobj.h(1151): warning C4091: 'typedef ': ignored on left of 'tagGPFIDL_FLAGS' when no variable is declared
 #include <shlobj.h>
 #pragma warning(pop)
 
@@ -405,7 +405,9 @@ namespace {
 		HRESULT STDMETHODCALLTYPE DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) override;
 		HRESULT STDMETHODCALLTYPE Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) override;
 
-	protected:
+	private:
+		void OnDragLeave() override;
+
 		void WriteFromStorageMedium(STGMEDIUM *medium, const char *filename, uint32 len, const FILETIME& creationTime);
 		void WriteFile(const char *filename, const void *data, uint32 len, const VDDate& creationTime);
 
@@ -413,6 +415,8 @@ namespace {
 
 		IATDiskFS *mpFS = nullptr;
 		IATDropTargetNotify *mpNotify = nullptr;
+		vdrefptr<IDataObject> mpDataObject;
+		vdrefptr<IDropTargetHelper> mpDropTargetHelper;
 		bool mbAdjustNames = false;
 		bool mbStrictNames = true;
 	};
@@ -450,6 +454,14 @@ namespace {
 
 			if (hr == S_OK) {
 				mDropEffect = DROPEFFECT_COPY;
+				mpDataObject = pDataObj;
+
+				CoCreateInstance(CLSID_DragDropHelper, nullptr, CLSCTX_INPROC, IID_IDropTargetHelper, (void **)~mpDropTargetHelper);
+
+				if (mpDropTargetHelper) {
+					POINT pt2 = { pt.x, pt.y };
+					mpDropTargetHelper->DragEnter(mhwnd, pDataObj, &pt2, mDropEffect);
+				}
 			}
 		}
 
@@ -458,11 +470,28 @@ namespace {
 	}
 
 	HRESULT STDMETHODCALLTYPE DropTarget::DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
+		if (mpDataObject)
+			ATUISetDropDescriptionW32(mpDataObject, (DROPIMAGETYPE)mDropEffect, L"Copy to disk image", nullptr);
+
 		*pdwEffect = mDropEffect;
+
+		if (mpDropTargetHelper) {
+			POINT pt2 = { pt.x, pt.y };
+			mpDropTargetHelper->DragOver(&pt2, mDropEffect);
+		}
+
 		return S_OK;
 	}
 
 	HRESULT STDMETHODCALLTYPE DropTarget::Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
+		mpDataObject = nullptr;
+
+		if (mpDropTargetHelper) {
+			POINT pt2 = { pt.x, pt.y };
+			mpDropTargetHelper->Drop(pDataObj, &pt2, mDropEffect);
+			mpDropTargetHelper = nullptr;
+		}
+
 		if (GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED)
 			return S_OK;
 		
@@ -619,6 +648,17 @@ namespace {
 
 		mpNotify->OnFSModified();
 		return S_OK;
+	}
+
+	void DropTarget::OnDragLeave() {
+		if (mpDropTargetHelper) {
+			mpDropTargetHelper->DragLeave();
+			mpDropTargetHelper = nullptr;
+		}
+
+		ATUISetDropDescriptionW32(mpDataObject, DROPIMAGE_INVALID, nullptr, nullptr);
+		
+		mpDataObject = nullptr;
 	}
 
 	void DropTarget::WriteFromStorageMedium(STGMEDIUM *medium, const char *filename, uint32 len32, const FILETIME& creationTime) {
@@ -794,6 +834,7 @@ protected:
 	void OnFSModified();
 
 	void RefreshList();
+	void RefreshFsInfo();
 
 	LRESULT ListViewSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -1094,7 +1135,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 
 				RefreshList();
 
-				if ((mpImage && mpImage->IsUpdatable()) && mpFS->IsReadOnly()) {
+				if (mpImage && mpImage->IsUpdatable() && mpFS->IsReadOnly()) {
 					ShowWarning(L"This disk format is only supported in read-only mode.", L"Altirra Warning");
 				} else {
 					ATDiskFSValidationReport validationReport;
@@ -1102,6 +1143,9 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 						mpFS->SetReadOnly(true);
 
 						ShowWarning(L"The file system on this disk is damaged and has been mounted as read-only to prevent further damage.", L"Altirra Warning");
+					} else if (VDFileGetAttributes(fn.c_str()) & kVDFileAttr_ReadOnly) {
+						mpFS->SetReadOnly(true);
+						RefreshFsInfo();
 					}
 				}
 			} catch(const MyError& e) {
@@ -1272,7 +1316,7 @@ namespace {
 namespace {
 	class DataObjectFormatEnumerator : public IEnumFORMATETC {
 	public:
-		DataObjectFormatEnumerator(uint32 fileCount);
+		DataObjectFormatEnumerator();
 
 		ULONG STDMETHODCALLTYPE AddRef();
 		ULONG STDMETHODCALLTYPE Release();
@@ -1287,13 +1331,11 @@ namespace {
 		VDAtomicInt mRefCount;
 
 		ULONG mPos;
-		uint32 mFileCount;
 	};
 
-	DataObjectFormatEnumerator::DataObjectFormatEnumerator(uint32 fileCount)
+	DataObjectFormatEnumerator::DataObjectFormatEnumerator()
 		: mRefCount(0)
 		, mPos(0)
-		, mFileCount(fileCount)
 	{
 	}
 
@@ -1350,9 +1392,10 @@ namespace {
 					break;
 
 				default:
+					// confirmed against shell data object: we should not report this per lindex (file)
 					rgelt->cfFormat = formats.mContents;
 					rgelt->dwAspect = DVASPECT_CONTENT;
-					rgelt->lindex = mPos - 1;
+					rgelt->lindex = -1;
 					rgelt->ptd = NULL;
 					rgelt->tymed = TYMED_ISTREAM;
 					break;
@@ -1374,8 +1417,8 @@ namespace {
 		if (!celt)
 			return S_OK;
 
-		if (mPos > mFileCount || (mFileCount + 1) - mPos < celt) {
-			mPos = mFileCount + 1;
+		if (mPos >= 3 || 3 - mPos < celt) {
+			mPos = 3;
 			return S_FALSE;
 		}
 
@@ -1389,7 +1432,7 @@ namespace {
 	}
 
 	HRESULT STDMETHODCALLTYPE DataObjectFormatEnumerator::Clone(IEnumFORMATETC **ppenum) {
-		DataObjectFormatEnumerator *clone = new_nothrow DataObjectFormatEnumerator(mFileCount);
+		DataObjectFormatEnumerator *clone = new_nothrow DataObjectFormatEnumerator;
 		*ppenum = clone;
 
 		if (!clone)
@@ -1431,6 +1474,8 @@ namespace {
 
 		vdfastvector<const ATUIDiskExplorerFileEntry *> mFiles;
 		VDAtomicInt mRefCount;
+
+		vdrefptr<IDataObject> mpShellDataObj;
 	};
 
 	DataObject::DataObject(IATDiskFS *fs)
@@ -1519,7 +1564,7 @@ namespace {
 			pmedium->tymed = TYMED_HGLOBAL;
 			pmedium->hGlobal = hMem;
 			pmedium->pUnkForRelease = NULL;
-		} else {
+		} else if (pformatetcIn->cfFormat == formats.mContents) {
 			vdrefptr<IStream> stream;
 			hr = CreateStreamOnHGlobal(NULL, TRUE, ~stream);
 			if (FAILED(hr))
@@ -1559,6 +1604,12 @@ namespace {
 			stream->Seek(lizero, STREAM_SEEK_SET, NULL);
 
 			pmedium->pstm = stream.release();
+		} else {
+			// if we have a shell data object, delegate to it
+			if (mpShellDataObj)
+				return mpShellDataObj->GetData(pformatetcIn, pmedium);
+
+			return DV_E_FORMATETC;
 		}
 
 		return S_OK;
@@ -1646,6 +1697,12 @@ namespace {
 			}
 
 			stream->Write(buf.data(), (ULONG)buf.size(), NULL);
+		} else {
+			// if we have a shell data object, delegate to it
+			if (mpShellDataObj)
+				return mpShellDataObj->GetDataHere(pformatetc, pmedium);
+
+			return DV_E_FORMATETC;
 		}
 
 		return S_OK;
@@ -1666,8 +1723,12 @@ namespace {
 
 			if (!(pformatetc->tymed & TYMED_HGLOBAL))
 				return DV_E_TYMED;
-		} else
+		} else {
+			if (mpShellDataObj)
+				return mpShellDataObj->QueryGetData(pformatetc);
+
 			return DV_E_CLIPFORMAT;
+		}
 
 		if (pformatetc->dwAspect != DVASPECT_CONTENT)
 			return DV_E_DVASPECT;
@@ -1683,7 +1744,24 @@ namespace {
 	}
 
 	HRESULT STDMETHODCALLTYPE DataObject::SetData(FORMATETC *pformatetc, STGMEDIUM *pmedium, BOOL fRelease) {
-		return E_FAIL;
+		// If we're on at least Windows Vista, create and delegate to a shell data object
+		// so we can store data types needed for rich drag and drop reporting to work
+		// (DROPDESCRIPTION and DragWindow).
+
+		if (!mpShellDataObj) {
+			if (!VDIsAtLeastVistaW32())
+				return E_FAIL;
+
+			// SHCreateDataObject() is not available on XP
+			typedef HRESULT (__stdcall *tpSHCreateDataObject)(PCIDLIST_ABSOLUTE, UINT, PCUITEMID_CHILD_ARRAY, IDataObject *, REFIID, void **);
+			static const auto pSHCreateDataObject = (tpSHCreateDataObject)GetProcAddress(GetModuleHandle(_T("shell32")), "SHCreateDataObject");
+
+			HRESULT hr = pSHCreateDataObject(nullptr, 0, nullptr, nullptr, IID_IDataObject, (void **)~mpShellDataObj);
+			if (FAILED(hr))
+				return hr;
+		}
+
+		return mpShellDataObj->SetData(pformatetc, pmedium, fRelease);
 	}
 
 	HRESULT STDMETHODCALLTYPE DataObject::EnumFormatEtc(DWORD dwDirection, IEnumFORMATETC **ppenumFormatEtc) {
@@ -1692,7 +1770,9 @@ namespace {
 			return E_NOTIMPL;
 		}
 
-		*ppenumFormatEtc = new_nothrow DataObjectFormatEnumerator((uint32)mFiles.size());
+		// The Windows SDK DragDropVisuals sample doesn't delegate to the shell object for
+		// EnumFormatEtc()... hmm. Well, at least that makes our life easier.
+		*ppenumFormatEtc = new_nothrow DataObjectFormatEnumerator;
 		if (!*ppenumFormatEtc)
 			return E_OUTOFMEMORY;
 
@@ -1785,10 +1865,46 @@ void ATUIDialogDiskExplorer::OnItemBeginDrag(VDUIProxyListView *sender, int item
 			dataObject->AddFile(fle);
 	}
 
-	vdrefptr<IDropSource> dropSource(new GenericDropSource);
 	DWORD srcEffects = 0;
 
-	DoDragDrop(dataObject, dropSource, DROPEFFECT_COPY | DROPEFFECT_MOVE, &srcEffects);
+	if (VDIsAtLeastVistaW32()) {
+		SHSTOCKICONINFO ssii = {sizeof(SHSTOCKICONINFO)};
+
+		typedef HRESULT (__stdcall *tpSHGetStockIconInfo)(SHSTOCKICONID, UINT, SHSTOCKICONINFO*);
+		tpSHGetStockIconInfo pSHGetStockIconInfo = (tpSHGetStockIconInfo)GetProcAddress(GetModuleHandle(_T("shell32")), "SHGetStockIconInfo");
+
+		pSHGetStockIconInfo(SIID_DOCNOASSOC, SHGSI_ICON | SHGSI_LARGEICON, &ssii);
+
+		if (ssii.hIcon) {
+			ICONINFO ii {};
+			BITMAP bm {};
+			if (GetIconInfo(ssii.hIcon, &ii) && GetObject(ii.hbmColor, sizeof(BITMAP), &bm)) {
+				vdrefptr<IDragSourceHelper> dragSourceHelper;
+				HRESULT hr = CoCreateInstance(CLSID_DragDropHelper, nullptr, CLSCTX_INPROC, IID_IDragSourceHelper, (void **)~dragSourceHelper);
+
+				if (SUCCEEDED(hr)) {
+					vdrefptr<IDragSourceHelper2> dragSourceHelper2;
+
+					hr = dragSourceHelper->QueryInterface(IID_IDragSourceHelper2, (void **)~dragSourceHelper2);
+					if (SUCCEEDED(hr))
+						dragSourceHelper2->SetFlags(DSH_ALLOWDROPDESCRIPTIONTEXT);
+
+					SHDRAGIMAGE shdi {};
+					shdi.sizeDragImage = SIZE { bm.bmWidth, bm.bmHeight };
+					shdi.ptOffset = POINT { (LONG)ii.xHotspot, (LONG)ii.yHotspot };
+					shdi.hbmpDragImage = ii.hbmColor;
+					dragSourceHelper->InitializeFromBitmap(&shdi, dataObject);
+				}
+			}
+
+			DestroyIcon(ssii.hIcon);
+		}
+
+		SHDoDragDrop(nullptr, dataObject, nullptr, DROPEFFECT_COPY, &srcEffects);
+	} else {
+		vdrefptr<IDropSource> dropSource(new GenericDropSource);
+		DoDragDrop(dataObject, dropSource, DROPEFFECT_COPY | DROPEFFECT_MOVE, &srcEffects);
+	}
 }
 
 void ATUIDialogDiskExplorer::OnItemContextMenu(VDUIProxyListView *sender, const VDUIProxyListView::ContextMenuEvent& event) {
@@ -1876,10 +1992,14 @@ void ATUIDialogDiskExplorer::OnItemDoubleClick(VDUIProxyListView *sender, int it
 }
 
 void ATUIDialogDiskExplorer::OnFSModified() {
-	mpFS->Flush();
+	try {
+		mpFS->Flush();
 
-	if (mbAutoFlush && mpImage)
-		mpImage->Flush();
+		if (mbAutoFlush && mpImage)
+			mpImage->Flush();
+	} catch(const MyError& e) {
+		ShowError(e);
+	}
 
 	RefreshList();
 }
@@ -1944,6 +2064,10 @@ void ATUIDialogDiskExplorer::RefreshList() {
 
 	mList.AutoSizeColumns();
 
+	RefreshFsInfo();
+}
+
+void ATUIDialogDiskExplorer::RefreshFsInfo() {
 	ATDiskFSInfo fsinfo;
 	mpFS->GetInfo(fsinfo);
 

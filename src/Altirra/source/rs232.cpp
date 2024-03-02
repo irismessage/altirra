@@ -732,7 +732,7 @@ public:	// IATDeviceFirmware
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override { return nullptr; }
 	bool IsWritableFirmwareDirty(uint32 idx) const override { return false; }
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override {}
-	bool IsUsableFirmwareLoaded() const override;
+	ATDeviceFirmwareStatus GetFirmwareStatus() const override;
 
 public:	// IATDeviceScheduling
 	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
@@ -842,7 +842,7 @@ void ATRS232Emulator::GetDeviceInfo(ATDeviceInfo& info) {
 void ATRS232Emulator::Init() {
 	InitChannels();
 
-	mDeviceParent.Init(IATDeviceSerial::kTypeID, "serial", L"Serial Port");
+	mDeviceParent.Init(IATDeviceSerial::kTypeID, "serial", L"Serial Port", "serial", this);
 	mDeviceParent.SetOnAttach(
 		[this] {
 			for(auto *p : mpChannels) {
@@ -979,8 +979,8 @@ bool ATRS232Emulator::ReloadFirmware() {
 	return changed;
 }
 
-bool ATRS232Emulator::IsUsableFirmwareLoaded() const {
-	return mbFirmwareUsable;
+ATDeviceFirmwareStatus ATRS232Emulator::GetFirmwareStatus() const {
+	return mbFirmwareUsable ? ATDeviceFirmwareStatus::OK : ATDeviceFirmwareStatus::Missing;
 }
 
 void ATRS232Emulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {

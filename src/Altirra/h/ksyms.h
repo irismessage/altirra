@@ -192,7 +192,7 @@ namespace ATKernelSymbols {
 		KRPDEL = 0x02D9,	// XL/XE
 		KEYREP = 0x02DA,	// XL/XE
 		NOCLIK = 0x02DB,	// XL/XE
-		HELPPG = 0x02DC,	// XL/XE
+		HELPFG = 0x02DC,	// XL/XE
 		DMASAV = 0x02DD,	// XL/XE
 		RUNAD  = 0x02E0,
 		INITAD = 0x02E2,

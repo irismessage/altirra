@@ -123,30 +123,51 @@ protected:
 	uint8	mBuffer[kBufferSize];
 };
 
-class VDCRCChecker {
+class VDCRCTable {
 public:
 	enum : uint32 {
 		kCRC32		= 0xEDB88320		// CRC-32 used by PKZIP, PNG (x^32 + x^26 + x^23 + x^22 + x^16 + x^12 + x^11 + x^10 + x^8 + x^7 + x^5 + x^4 + x^2 + x^1 + 1)
 	};
 
-	VDCRCChecker() {}
-	VDCRCChecker(uint32 crc) { Init(crc); }
+	VDCRCTable() = default;
+	VDCRCTable(uint32 crc) { Init(crc); }
 
 	void Init(uint32 crc);
+
+	uint32 Process(uint32 crc, const void *src, size_t len) const;
+	uint32 CRC(const void *src, size_t len) const {
+		return ~Process(0xFFFFFFFF, src, len);
+	}
+
+	static const VDCRCTable CRC32;
+
+private:
+	uint32 mTable[256];
+
+	constexpr void InitConst(uint32 crc);
+	constexpr static VDCRCTable MakeConst(uint32 crc);
+};
+
+class VDCRCChecker {
+public:
+	VDCRCChecker(const VDCRCTable& table) : mValue(0xFFFFFFFF), mTable(table) {}
+
+	void Init() { mValue = 0xFFFFFFFF; }
 	void Process(const void *src, sint32 len);
 
 	uint32 CRC() const { return ~mValue; }
-	uint32 CRC(uint32 crc, const void *src, sint32 len);
 
 protected:
 	uint32	mValue;
-	uint32	mTable[256];
+	const VDCRCTable& mTable;
 };
 
 class VDDeflateStream : public IVDStream {
 public:
+	VDDeflateStream() : mCRCChecker(mCRCTable) {}
+
 	void	Init(IVDStream *pSrc, uint64 limit, bool bStored);
-	void	EnableCRC(uint32 crc = VDCRCChecker::kCRC32) { mCRCChecker.Init(crc); mbCRCEnabled = true; }
+	void	EnableCRC(uint32 crc = VDCRCTable::kCRC32) { mCRCTable.Init(crc); mbCRCEnabled = true; }
 	uint32	CRC() { return mCRCChecker.CRC(); }
 
 	const wchar_t *GetNameForError() final override;
@@ -183,6 +204,7 @@ protected:
 	uint16	mDistDecode[32768];
 
 	VDCRCChecker	mCRCChecker;
+	VDCRCTable		mCRCTable;
 };
 
 class VDZipArchive {

@@ -26,6 +26,7 @@
 #include <vd2/system/int128.h>
 #include <vd2/system/hash.h>
 #include <at/atcore/address.h>
+#include <at/atcore/bussignal.h>
 #include <at/atcore/constants.h>
 #include <at/atcore/device.h>
 #include <at/atcore/devicecio.h>
@@ -221,6 +222,7 @@ class ATSimulator::PrivateData final
 	: public IATCPUTimestampDecoderProvider
 	, public IATDiskDriveManager
 	, public IATSystemController
+	, public IATCovoxController
 	, public IATDeviceChangeCallback
 {
 public:
@@ -232,6 +234,14 @@ public:
 		mFloatingInputs.mRandomSeed = 0;
 
 		mCartPort.SetLeftMapChangedHandler([this](bool) { mParent.UpdateXLCartridgeLine(); });
+
+		mCovoxEnableSignal.SetOnUpdated([this] {
+			const bool state = IsCovoxEnabled();
+
+			mCovoxEnableChangedNotifyList.NotifyAll([=](const auto& pfn) {
+				(*pfn)(state);
+			});
+		});
 	}
 
 	ATCPUTimestampDecoder GetTimestampDecoder() const override {
@@ -244,11 +254,19 @@ public:
 
 public:		// IATSystemController
 	void ResetCPU() override;
+	void ResetComputer() override;
 	void AssertABORT() override;
 	void OverrideCPUMode(IATDeviceSystemControl *source, bool use816, uint32 multiplier) override;
 	void OverrideKernelMapping(IATDeviceSystemControl *source, const void *kernelROM, sint8 highSpeed, bool priority) override;
 	bool IsU1MBConfigPreLocked() override;
 	void OnU1MBConfigPreLocked(bool inPreLockState) override;
+	uint8 ReadConsoleButtons() const override;
+	ATBusSignal& GetStereoEnableSignal() override { return mStereoEnableSignal; }
+	ATBusSignal& GetCovoxEnableSignal() override { return mCovoxEnableSignal; }
+
+public:		// IATCovoxController
+	bool IsCovoxEnabled() const override { return mCovoxEnableSignal.OrDefaultTrue(); }
+	ATNotifyList<const vdfunction<void(bool)> *>& GetCovoxEnableNotifyList() override { return mCovoxEnableChangedNotifyList; }
 
 public:
 	void OnDeviceAdded(uint32 iid, IATDevice *dev, void *iface) override;
@@ -294,6 +312,10 @@ public:
 
 	vdblock<uint8> mHighMemory;
 
+	ATBusSignal mStereoEnableSignal;
+	ATBusSignal mCovoxEnableSignal;
+	ATNotifyList<const vdfunction<void(bool)> *> mCovoxEnableChangedNotifyList;
+
 	ATDiskInterface *mpDiskInterfaces[15] = {};
 };
 
@@ -302,6 +324,10 @@ void ATSimulator::PrivateData::ResetCPU() {
 
 	mParent.mpCPUHookManager->CallResetHooks();
 	mParent.mpCPUHookManager->CallInitHooks(mParent.mpKernelLowerROM, mParent.mpKernelUpperROM);
+}
+
+void ATSimulator::PrivateData::ResetComputer() {
+	mParent.InternalWarmReset(true);
 }
 
 void ATSimulator::PrivateData::AssertABORT() {
@@ -355,6 +381,10 @@ void ATSimulator::PrivateData::OnU1MBConfigPreLocked(bool inPreLockState) {
 	for(IATDeviceSystemControl *dsc : mParent.mpDeviceManager->GetInterfaces<IATDeviceSystemControl>(false, false)) {
 		dsc->OnU1MBConfigPreLocked(inPreLockState);
 	}
+}
+
+uint8 ATSimulator::PrivateData::ReadConsoleButtons() const {
+	return mParent.mGTIA.ReadConsoleSwitches() & 7;
 }
 
 void ATSimulator::PrivateData::OnDeviceAdded(uint32 iid, IATDevice *dev, void *iface) {
@@ -629,6 +659,12 @@ void ATSimulator::Init() {
 	mPokey.Init(this, &mScheduler, mpAudioOutput, mpPokeyTables);
 	mPokey2.Init(&g_pokeyDummyConnection, &mScheduler, NULL, mpPokeyTables);
 
+	mpPrivateData->mStereoEnableSignal.SetOnUpdated(
+		[this] {
+			this->mPokey.SetStereoSoftEnable(mpPrivateData->mStereoEnableSignal.AndDefaultTrue());
+		}
+	);
+
 	mPIA.AllocOutput(PrivateData::PIAChangeMotorLine, this, kATPIAOutput_CA2);
 	mPIA.AllocOutput(PrivateData::PIAChangeCommandLine, this, kATPIAOutput_CB2);
 	mPIA.AllocOutput(PrivateData::PIAChangeMultiJoy, this, 0x70);			// port A control lines
@@ -704,6 +740,8 @@ void ATSimulator::Init() {
 void ATSimulator::Shutdown() {
 	if (!mpPrivateData)
 		return;
+
+	mpPrivateData->mStereoEnableSignal.Shutdown();
 
 	SetTracingEnabled(false);
 
@@ -1322,6 +1360,10 @@ void ATSimulator::SetCassetteAutoBootEnabled(bool enable) {
 	mbCassetteAutoBootEnabled = enable;
 }
 
+void ATSimulator::SetCassetteAutoBasicBootEnabled(bool enable) {
+	mbCassetteAutoBasicBootEnabled = enable;
+}
+
 void ATSimulator::SetCassetteAutoRewindEnabled(bool enable) {
 	mpCassette->SetAutoRewindEnabled(enable);
 }
@@ -1700,6 +1742,9 @@ void ATSimulator::ColdResetComputerOnly() {
 }
 
 void ATSimulator::InternalColdReset(bool computerOnly) {
+	ResetAutoHeldButtons();
+	SetupPendingHeldButtons();
+
 	if (mpHLEProgramLoader && !mpHLEProgramLoader->IsLaunchPending()) {
 		mpHLEProgramLoader->Shutdown();
 		delete mpHLEProgramLoader;
@@ -1826,18 +1871,6 @@ void ATSimulator::InternalColdReset(bool computerOnly) {
 		mpMMU->SetBankRegister(0xFF);
 	}
 
-	mGTIA.SetForcedConsoleSwitches(0xF);
-	mpUIRenderer->SetHeldButtonStatus(0);
-
-	mStartupDelay = 0;
-	mStartupDelay2 = 0;
-
-	if (mbStartupHeldKey) {
-		mbStartupHeldKey = false;
-
-		mPokey.ReleaseAllRawKeys(false);
-	}
-
 	if (mpHLEFastBootHook) {
 		ATDestroyHLEFastBootHook(mpHLEFastBootHook);
 		mpHLEFastBootHook = NULL;
@@ -1846,11 +1879,14 @@ void ATSimulator::InternalColdReset(bool computerOnly) {
 	if (mbFastBoot)
 		mpHLEFastBootHook = ATCreateHLEFastBootHook(&mCPU);
 
-	if (!mpCPUHookInitHook)
-		mpCPUHookInitHook = mpCPUHookManager->AddInitHook([this](const uint8 *, const uint8 *) { SetupAutoHeldButtons(); });
+	SetupAutoHeldButtonHook();
 
 	// notify CPU hooks that we're reinitializing the OS
 	mpCPUHookManager->CallResetHooks();
+
+	// Check if we need to toggle BASIC for cassette boot (must be before we call the init hooks,
+	// which set up auto-hold-START).
+	InitCassetteAutoBasicBoot();
 
 	// If Ultimate1MB is enabled, we must suppress all OS hooks until the BIOS has locked config.
 	if (mpUltimate1MB) {
@@ -1861,11 +1897,13 @@ void ATSimulator::InternalColdReset(bool computerOnly) {
 	}
 
 	NotifyEvent(kATSimEvent_ColdReset);
-
-	SetupPendingHeldButtons();
 }
 
 void ATSimulator::WarmReset() {
+	InternalWarmReset(false);
+}
+
+void ATSimulator::InternalWarmReset(bool enableHeldKeys) {
 	if (!mbPowered)
 		return;
 
@@ -1914,6 +1952,11 @@ void ATSimulator::WarmReset() {
 	if (mpCPUHookInitHook) {
 		mpCPUHookManager->RemoveInitHook(mpCPUHookInitHook);
 		mpCPUHookInitHook = nullptr;
+	}
+
+	if (enableHeldKeys) {
+		ResetAutoHeldButtons();
+		SetupAutoHeldButtonHook();
 	}
 
 	// notify CPU hooks that we're reinitializing the OS
@@ -2252,7 +2295,7 @@ bool ATSimulator::Load(const wchar_t *origPath, const wchar_t *imagePath, IATIma
 
 bool ATSimulator::Load(ATMediaLoadContext& ctx) {
 	ATImageLoadContext *const loadCtx = ctx.mpImageLoadContext;
-	const wchar_t *const origPath = ctx.mOriginalPath.empty() ? nullptr : ctx.mOriginalPath.c_str();
+	const wchar_t *origPath = ctx.mOriginalPath.empty() ? nullptr : ctx.mOriginalPath.c_str();
 	const wchar_t *imagePath = ctx.mImageName.empty() ? nullptr : ctx.mImageName.c_str();
 
 	ctx.mbModeIncompatible = false;
@@ -2279,7 +2322,7 @@ bool ATSimulator::Load(ATMediaLoadContext& ctx) {
 				if (!ATImageLoadAuto(origPath, origPath, stream, loadCtx, &resultPath, &canUpdate, ~ctx.mpImage))
 					return false;
 
-				ctx.mImageName = origPath;
+				ctx.mImageName = resultPath.empty() ? origPath : resultPath.c_str();
 				imagePath = ctx.mImageName.c_str();
 			} else {
 				vdrefptr<ATVFSFileView> view;
@@ -2293,6 +2336,11 @@ bool ATSimulator::Load(ATMediaLoadContext& ctx) {
 
 				ctx.mImageName = view->GetFileName();
 				imagePath = ctx.mImageName.c_str();
+			}
+
+			if (!resultPath.empty()) {
+				ctx.mOriginalPath = resultPath;
+				origPath = ctx.mOriginalPath.c_str();
 			}
 		} else {
 			if (!ATImageLoadAuto(origPath, imagePath, *ctx.mpStream, loadCtx, &resultPath, &canUpdate, ~ctx.mpImage))
@@ -2356,7 +2404,7 @@ bool ATSimulator::Load(ATMediaLoadContext& ctx) {
 
 	if (loadType == kATImageType_Program) {
 		IATBlobImage *programImage = vdpoly_cast<IATBlobImage *>(image);
-		const bool internalBasicEnabled = mbBASICEnabled && mpMemLayerBASICROM;
+		const bool internalBasicEnabled = mbBASICEnabled && SupportsInternalBasic();
 		if (ctx.mbStopOnMemoryConflictBasic && internalBasicEnabled) {
 			vdfastvector<ATProgramBlock> blocks;
 			ATParseProgramImage(programImage->GetBuffer(), programImage->GetSize(), blocks);
@@ -2444,7 +2492,7 @@ void ATSimulator::LoadProgram(const wchar_t *path, IATBlobImage *image, bool bas
 
 		SetBASICEnabled(true);
 
-		if (mHardwareMode == kATHardwareMode_800)
+		if (!SupportsInternalBasic())
 			LoadCartridgeBASIC();
 	} else {
 		vdautoptr<ATHLEProgramLoader> loader(new ATHLEProgramLoader);
@@ -2540,14 +2588,14 @@ void ATSimulator::LoadCartridge(uint32 unit, const wchar_t *origPath, IATCartrid
 
 	UpdateXLCartridgeLine();
 
-	if (d && origPath) {
+	if (d && d->IsSymbolLoadingEnabled() && origPath) {
 		static const wchar_t *const kSymExts[]={
 			// Need to load .lab before .lst in case there are symbol-relative
 			// ASSERTs in the listing file.
 			L".lab", L".lst", L".lbl"
 		};
 
-		VDASSERTCT(sizeof(kSymExts)/sizeof(kSymExts[0]) == sizeof(mCartModuleIds)/sizeof(mCartModuleIds[0]));
+		VDASSERTCT(vdcountof(kSymExts) == vdcountof(mCartModuleIds));
 
 		const VDStringSpanW symbolHintPath = VDFileSplitExtLeftSpan(VDStringSpanW(origPath));
 
@@ -2557,14 +2605,12 @@ void ATSimulator::LoadCartridge(uint32 unit, const wchar_t *origPath, IATCartrid
 			sympath += kSymExts[i];
 
 			try {
-				if (!ATVFSIsFilePath(sympath.c_str()) || VDDoesPathExist(sympath.c_str())) {
-					uint32 moduleId = d->LoadSymbols(sympath.c_str());
+				uint32 moduleId = d->LoadSymbols(sympath.c_str(), false);
 
-					if (moduleId) {
-						mCartModuleIds[i] = moduleId;
+				if (moduleId) {
+					mCartModuleIds[i] = moduleId;
 
-						ATConsolePrintf("Loaded symbols %ls\n", sympath.c_str());
-					}
+					ATConsolePrintf("Loaded symbols %ls\n", sympath.c_str());
 				}
 			} catch(const MyError&) {
 				// ignore
@@ -2581,21 +2627,7 @@ void ATSimulator::LoadCartridge(uint32 unit, const wchar_t *origPath, IATCartrid
 		sympath = symbolHintPath;
 		sympath += L".atdbg";
 
-		try {
-			if (VDDoesPathExist(sympath.c_str())) {
-				if (IsRunning()) {
-					// give the debugger script a chance to run
-					Suspend();
-					d->QueueCommandFront("`g -n", false);
-				}
-
-				d->QueueBatchFile(sympath.c_str());
-
-				ATConsolePrintf("Loaded debugger script %ls\n", sympath.c_str());
-			}
-		} catch(const MyError&) {
-			// ignore
-		}
+		d->QueueAutoLoadBatchFile(sympath.c_str());
 	}
 }
 
@@ -2632,7 +2664,7 @@ void ATSimulator::LoadCartridgeBASIC() {
 	ctx.mCartMapper = kATCartridgeMode_8K;
 
 	VDMemoryStream memstream(mBASICROM, sizeof mBASICROM);
-	cart->Load(L"", memstream, &ctx);
+	cart->Load(L"special:basic", memstream, &ctx);
 }
 
 ATSimulator::AdvanceResult ATSimulator::AdvanceUntilInstructionBoundary() {
@@ -2685,6 +2717,8 @@ ATSimulator::AdvanceResult ATSimulator::AdvanceUntilInstructionBoundary() {
 ATSimulator::AdvanceResult ATSimulator::Advance(bool dropFrame) {
 	if (!mbRunning)
 		return kAdvanceResult_Stopped;
+	
+	ATSimulatorEvent cpuEvent = kATSimEvent_None;
 
 	if (!mbPowered) {
 		int scansLeft = (mVideoStandard == kATVideoStandard_NTSC || mVideoStandard == kATVideoStandard_PAL60 ? 262 : 312) - mAntic.GetBeamY();
@@ -2717,10 +2751,6 @@ ATSimulator::AdvanceResult ATSimulator::Advance(bool dropFrame) {
 
 		return mbRunning ? kAdvanceResult_Running : kAdvanceResult_Stopped;
 	}
-
-	ATSimulatorEvent cpuEvent;
-	
-	cpuEvent = kATSimEvent_None;
 
 	if (mCPU.GetUnusedCycle()) {
 		cpuEvent = (ATSimulatorEvent)mCPU.Advance();
@@ -2894,6 +2924,22 @@ uint8 ATSimulator::DebugGlobalReadByte(uint32 address) {
 		case kATAddressSpace_PORTB:
 			if (const uint32 addr16 = address & 0xFFFF; addr16 >= 0x4000 && addr16 < 0x8000)
 				return mMemory[mpMMU->ExtBankToMemoryOffset((uint8)(address >> 16)) + (addr16 - 0x4000)];
+			return 0;
+
+		case kATAddressSpace_CART:
+			for(ATCartridgeEmulator *cart : mpCartridge) {
+				if (cart)
+					return cart->DebugReadLinear(address & kATAddressOffsetMask);
+			}
+
+			return 0;
+
+		case kATAddressSpace_CB:
+			for(ATCartridgeEmulator *cart : mpCartridge) {
+				if (cart)
+					return cart->DebugReadBanked(address & kATAddressOffsetMask);
+			}
+
 			return 0;
 
 		default:
@@ -3096,15 +3142,33 @@ uint32 ATSimulator::ComputeKernelChecksum() const {
 		sum = ComputeFletcher32(mpKernel5200ROM, 0x0800, sum);
 
 	if (mpKernelLowerROM)
-		sum = ComputeFletcher32(mpKernelLowerROM, 0x0800, sum);
+		sum = ComputeFletcher32(mpKernelLowerROM, 0x1000, sum);
 
 	if (mpKernelSelfTestROM)
 		sum = ComputeFletcher32(mpKernelSelfTestROM, 0x0800, sum);
 
 	if (mpKernelUpperROM)
-		sum = ComputeFletcher32(mpKernelUpperROM, 0x0800, sum);
+		sum = ComputeFletcher32(mpKernelUpperROM, 0x2800, sum);
 
 	return sum;
+}
+
+uint32 ATSimulator::ComputeKernelCRC32() const {
+	VDCRCChecker crcChecker(VDCRCTable::CRC32);
+
+	if (mpKernel5200ROM)
+		crcChecker.Process(mpKernel5200ROM, 0x0800);
+
+	if (mpKernelLowerROM)
+		crcChecker.Process(mpKernelLowerROM, 0x1000);
+
+	if (mpKernelSelfTestROM)
+		crcChecker.Process(mpKernelSelfTestROM, 0x0800);
+
+	if (mpKernelUpperROM)
+		crcChecker.Process(mpKernelUpperROM, 0x2800);
+
+	return crcChecker.CRC();
 }
 
 bool ATSimulator::LoadState(ATSaveStateReader& reader, ATStateLoadContext *pctx) {
@@ -4151,10 +4215,14 @@ void ATSimulator::UpdateKernelROMSegments() {
 	mpKernel5200ROM = NULL;
 
 	const uint8 *kernelROM = mKernelROM;
+
+	mKernelFlagsMask = ~UINT32_C(0);
 	
 	for(const auto& override : mpPrivateData->mKernelROMOverrides) {
-		if (override.mpROM)
+		if (override.mpROM) {
 			kernelROM = (const uint8 *)override.mpROM;
+			mKernelFlagsMask = 0;
+		}
 	}
 
 	switch(mKernelMode) {
@@ -4291,12 +4359,17 @@ void ATSimulator::AnticEndFrame() {
 					mbStartupHeldKey = false;
 				}
 
-				if (mpCassette->IsLoaded() && mbCassetteAutoBootEnabled && !mbCassetteSIOPatchEnabled) {
-					// push a space into the keyboard routine
-					mPokey.PushKey(0x21, false);
-				}
-
 				mStartupDelay2 = 0;
+
+				if (mbCassetteAutoBootEnabled && mpCassette->IsLoaded()) {
+					if (mbCassetteAutoBootUseBasic) {
+						mStartupDelay2 = 1;
+					} else if (!mbCassetteSIOPatchEnabled) {
+						// push a space into the keyboard routine (only needed if the SIO patch is
+						// not suppressing this)
+						mPokey.PushKey(0x21, false);
+					}
+				}
 
 				if (mpHeatMap)
 					mpHeatMap->SetEarlyState(false);
@@ -4312,6 +4385,22 @@ void ATSimulator::AnticEndFrame() {
 
 			if (mpHeatMap)
 				mpHeatMap->SetEarlyState(false);
+
+			if (mbCassetteAutoBootEnabled && mpCassette->IsLoaded() && mbCassetteAutoBootUseBasic) {
+				if (mpHLEBasicLoader) {
+					mpHLEBasicLoader->Shutdown();
+					delete mpHLEBasicLoader;
+					mpHLEBasicLoader = NULL;
+				}
+
+				vdautoptr<ATHLEBasicLoader> loader(new ATHLEBasicLoader);
+
+				loader->Init(&mCPU, mpSimEventManager, this);
+				loader->LoadTape(!mbCassetteSIOPatchEnabled);
+
+				mpHLEBasicLoader = loader.release();
+			}
+
 		}
 	} else {
 		if (!mbPowered) {
@@ -4513,6 +4602,25 @@ void ATSimulator::SetupPendingHeldButtons() {
 	}
 }
 
+void ATSimulator::ResetAutoHeldButtons() {
+	mStartupDelay = 0;
+	mStartupDelay2 = 0;
+
+	if (mbStartupHeldKey) {
+		mbStartupHeldKey = false;
+
+		mPokey.ReleaseAllRawKeys(false);
+	}
+
+	mGTIA.SetForcedConsoleSwitches(0xF);
+	mpUIRenderer->SetHeldButtonStatus(0);
+}
+
+void ATSimulator::SetupAutoHeldButtonHook() {
+	if (!mpCPUHookInitHook)
+		mpCPUHookInitHook = mpCPUHookManager->AddInitHook([this](const uint8 *, const uint8 *) { SetupAutoHeldButtons(); });
+}
+
 void ATSimulator::SetupAutoHeldButtons() {
 	if (mStartupDelay)
 		return;
@@ -4525,30 +4633,21 @@ void ATSimulator::SetupAutoHeldButtons() {
 	mStartupDelay2 = 150;
 	mbStartupHeldKey = false;
 
-	switch(mHardwareMode) {
-		case kATHardwareMode_1200XL:
-			// hack -- Ultimate1MB takes over MMU, so it can do BASIC
-			if (!mpUltimate1MB)
-				break;
-		case kATHardwareMode_800XL:
-		case kATHardwareMode_XEGS:
-		case kATHardwareMode_130XE:
-			{
-				const bool holdOptionForBasic = (mActualKernelFlags & kATFirmwareFlags_InvertOPTION) != 0;
+	if (SupportsInternalBasic()) {
+		// If the kernel is being externally overridden, the kernel flags we have are no
+		// good as they pertain to the unoverridden base ROM.
+		const bool holdOptionForBasic = (mActualKernelFlags & mKernelFlagsMask & kATFirmwareFlags_InvertOPTION) != 0;
 
-				if (mbBASICEnabled == holdOptionForBasic) {
-					if (!mpCartridge[0] || mpCartridge[0]->IsBASICDisableAllowed()) {
-						// Don't hold OPTION for a diagnostic cart.
-						if (!mpCartridge[0] || DebugReadByte(0xBFFD) < 0x80)
-							consoleSwitches &= ~4;
-					}
-				}
+		if (mbBASICEnabled == holdOptionForBasic) {
+			if (!mpCartridge[0] || mpCartridge[0]->IsBASICDisableAllowed()) {
+				// Don't hold OPTION for a diagnostic cart.
+				if (!mpCartridge[0] || DebugReadByte(0xBFFD) < 0x80)
+					consoleSwitches &= ~4;
 			}
-
-			break;
+		}
 	}
 
-	if (mpCassette->IsLoaded() && mbCassetteAutoBootEnabled) {
+	if (mpCassette->IsLoaded() && mbCassetteAutoBootEnabled && !mbCassetteAutoBootUseBasic) {
 		consoleSwitches &= ~1;
 		mStartupDelay = 5;
 	}
@@ -4606,6 +4705,8 @@ void ATSimulator::InitDevice(IVDUnknown& dev) {
 			mKernelROM);
 	}
 
+	if (auto devcovoxcon = vdpoly_cast<IATDeviceCovoxControl *>(&dev))
+		devcovoxcon->InitCovoxControl(*mpPrivateData);
 
 	if (auto devdisk = vdpoly_cast<IATDeviceDiskDrive *>(&dev)) {
 		devdisk->InitDiskDrive(mpPrivateData);
@@ -4656,5 +4757,64 @@ void ATSimulator::ResetMemoryBuffer(void *dst, size_t len, uint32 seed) {
 		case kATMemoryClearMode_DRAM3:
 			DRAMPatternFillC(dst, len);
 			break;
+	}
+}
+
+void ATSimulator::InitCassetteAutoBasicBoot() {
+	if (mbCassetteAutoBootEnabled) {
+		mbCassetteAutoBootUseBasic = false;
+
+		if (mbCassetteAutoBasicBootEnabled && mpCassette) {
+			const auto needBasic = mpCassette->AutodetectBasicNeeded();
+
+			if (needBasic.has_value()) {
+				const bool useBasic = needBasic.value();
+
+				mbCassetteAutoBootUseBasic = useBasic;
+
+				// Toggle the BASIC enable state.
+				SetBASICEnabled(useBasic);
+
+				// Check if we're in a hardware mode that supports internal BASIC. If not, we need
+				// to also insert or remove the BASIC cartridge.
+				const bool alreadyHasBasic = mpCartridge[0] && wcscmp(mpCartridge[0]->GetPath(), L"special:basic") == 0;
+
+				if (!SupportsInternalBasic()) {
+					// We need to insert or remove the cart. Check if there is already a cart
+					// inserted that is modified. If so, we should not automatically remove it
+					// as this would cause data loss.
+					if (useBasic != alreadyHasBasic) {
+						if (!mpCartridge[0] || !mpCartridge[0]->IsDirty()) {
+							if (useBasic)
+								LoadCartridgeBASIC();
+							else
+								UnloadCartridge(0);
+						}
+					}
+				} else if (alreadyHasBasic && !useBasic) {
+					UnloadCartridge(0);
+				}
+
+				if (useBasic) {
+					mPokey.ClearKeyQueue();
+				}
+			}
+		}
+	}
+}
+
+bool ATSimulator::SupportsInternalBasic() const {
+	switch(mHardwareMode) {
+		case kATHardwareMode_1200XL:
+			// hack -- Ultimate1MB takes over MMU, so it can do BASIC
+			return mpUltimate1MB != nullptr;
+
+		case kATHardwareMode_800XL:
+		case kATHardwareMode_XEGS:
+		case kATHardwareMode_130XE:
+			return true;
+
+		default:
+			return false;
 	}
 }

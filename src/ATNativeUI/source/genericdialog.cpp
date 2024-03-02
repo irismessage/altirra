@@ -912,11 +912,17 @@ void ATGenericDialogW32::ReinitLayout() {
 		mhIcon = hIcon;
 
 		if (HDC hdc = GetDC(mhdlg)) {
-			SelectObject(hdc, hFontTitle);
+			int savedDC = SaveDC(hdc);
 
-			TEXTMETRIC tm;
-			if (GetTextMetrics(hdc, &tm)) {
-				titleOffsetY = std::max<sint32>(0, (iconHeight - (tm.tmAscent + tm.tmDescent)) / 2);
+			if (savedDC) {
+				SelectObject(hdc, hFontTitle);
+
+				TEXTMETRIC tm;
+				if (GetTextMetrics(hdc, &tm)) {
+					titleOffsetY = std::max<sint32>(0, (iconHeight - (tm.tmAscent + tm.tmDescent)) / 2);
+				}
+
+				RestoreDC(hdc, savedDC);
 			}
 
 			ReleaseDC(mhdlg, hdc);
@@ -946,9 +952,13 @@ void ATGenericDialogW32::ReinitLayout() {
 			RECT rIdeal { 0, 0, sz.w, sz.h };
 
 			if (HDC hdc = GetDC(hwnd)) {
-				SelectObject(hdc, hFont);
+				if (int savedDC = SaveDC(hdc)) {
+					SelectObject(hdc, hFont);
 
-				DrawText(hdc, str.c_str(), (int)str.size(), &rIdeal, DT_NOPREFIX | DT_CALCRECT | DT_WORDBREAK);
+					DrawText(hdc, str.c_str(), (int)str.size(), &rIdeal, DT_NOPREFIX | DT_CALCRECT | DT_WORDBREAK);
+
+					RestoreDC(hdc, savedDC);
+				}
 
 				ReleaseDC(hwnd, hdc);
 			}
@@ -1079,12 +1089,16 @@ ATUIGenericResult ATUIShowGenericDialog(const ATUIGenericDialogOptions& opts) {
 	const ATUIGenericResult result = dlg.GetResult();
 
 	if (opts.mpIgnoreTag && dlg.GetIgnoreEnabled() && (opts.mValidIgnoreMask & (UINT32_C(1) << (int)result))) {
-		for(const auto& mapping : kResultMappings) {
-			if (mapping.mValue == result) {
-				VDRegistryAppKey key("DialogDefaults", true);
+		if (opts.mpCustomIgnoreFlag) {
+			*opts.mpCustomIgnoreFlag = true;
+		} else {
+			for(const auto& mapping : kResultMappings) {
+				if (mapping.mValue == result) {
+					VDRegistryAppKey key("DialogDefaults", true);
 
-				key.setString(opts.mpIgnoreTag, mapping.mpName);
-				break;
+					key.setString(opts.mpIgnoreTag, mapping.mpName);
+					break;
+				}
 			}
 		}
 	}

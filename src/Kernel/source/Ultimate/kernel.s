@@ -22,6 +22,7 @@
 		_KERNEL_USE_BOOT_SCREEN = 0
 		_KERNEL_PRINTER_SUPPORT = 1
 
+		icl		'version.inc'
 		icl		'cio.inc'
 		icl		'sio.inc'
 

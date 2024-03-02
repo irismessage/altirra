@@ -1120,6 +1120,9 @@ uint8 ATHLECIOHook::OnHookCassetteOpen(uint16 pc) {
 	// clear EOF flag
 	kdb.FEOF = 0x00;
 
+	// kill any pending character if there happens to be one
+	kdb.CH = 0xFF;
+
 	// set success
 	mpCPU->Ldy(0x01);
 	return 0x60;

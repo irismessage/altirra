@@ -401,7 +401,7 @@ bool ATDeviceCorvus::SetSettings(const ATPropertySet& pset) {
 }
 
 void ATDeviceCorvus::Init() {
-	mDeviceParent.Init(IATBlockDevice::kTypeID, "harddisk", L"Hard disk bus");
+	mDeviceParent.Init(IATBlockDevice::kTypeID, "harddisk", L"Hard disk bus", "hdbus", this);
 	mDeviceParent.SetOnAttach([this] { mCorvusEmu.SetAttachedDevice(mDeviceParent.GetChild<IATBlockDevice>()); });
 	mDeviceParent.SetOnDetach([this] { mCorvusEmu.SetAttachedDevice(nullptr); });
 }

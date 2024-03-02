@@ -176,13 +176,15 @@ uint32 ATDeviceManager::GetDeviceCount() const {
 	return mDevices.size();
 }
 
-IATDevice *ATDeviceManager::GetDeviceByTag(const char *tag) const {
+IATDevice *ATDeviceManager::GetDeviceByTag(const char *tag, uint32 index) const {
 	for(auto it = mDevices.begin(), itEnd = mDevices.end();
 		it != itEnd;
 		++it)
 	{
-		if (!strcmp(it->mpTag, tag))
-			return it->mpDevice;
+		if (!strcmp(it->mpTag, tag)) {
+			if (!index--)
+				return it->mpDevice;
+		}
 	}
 
 	return nullptr;
@@ -190,6 +192,173 @@ IATDevice *ATDeviceManager::GetDeviceByTag(const char *tag) const {
 
 IATDevice *ATDeviceManager::GetDeviceByIndex(uint32 i) const {
 	return i < mDevices.size() ? mDevices[i].mpDevice : nullptr;
+}
+
+ATParsedDevicePath ATDeviceManager::ParsePath(const char *path) const {
+	ATParsedDevicePath result {};
+
+	const auto parseComponent = [](const char *& path) -> std::pair<VDStringSpanA, uint32> {
+		if (*path != '/')
+			return {};
+
+		++path;
+
+		const char *nameStart = path;
+
+		if (!isalnum((unsigned char)*path))
+			return {};
+
+		++path;
+
+		while(isalnum((unsigned char)*path))
+			++path;
+
+		const char *nameEnd = path;
+		uint32 index = 0;
+
+		if (*path == '.') {
+			++path;
+
+			if (!isdigit((unsigned char)*path))
+				return {};
+
+			do {
+				++path;
+			} while(isdigit((unsigned char)*path));
+		}
+
+		if (*path)
+			return {};
+
+		return { VDStringSpanA(nameStart, nameEnd), index };
+	};
+
+	IATDeviceParent *parent = nullptr;
+	IATDeviceBus *bus = nullptr;
+	uint32 busIndex = 0;
+	for(;;) {
+		const auto deviceComponent = parseComponent(path);
+		if (deviceComponent.first.empty())
+			break;
+
+		IATDevice *dev = nullptr;
+		if (parent) {
+			vdfastvector<IATDevice *> children;
+			bus->GetChildDevices(children);
+
+			uint32 matchIndex = deviceComponent.second;
+			for(IATDevice *child : children) {
+				ATDeviceInfo info;
+				child->GetDeviceInfo(info);
+
+				if (deviceComponent.first == info.mpDef->mpTag) {
+					if (!matchIndex--) {
+						dev = child;
+						break;
+					}
+				}
+			}
+		} else {
+			dev = GetDeviceByTag(VDStringA(deviceComponent.first).c_str(), deviceComponent.second);
+			if (!dev)
+				break;
+		}
+
+		if (!*path) {
+			result.mbValid = true;
+			result.mpDevice = dev;
+		}
+
+		auto busComponent = parseComponent(path);
+		if (busComponent.first.empty())
+			break;
+
+		parent = vdpoly_cast<IATDeviceParent *>(dev);
+		if (!parent)
+			break;
+
+		for(busIndex = 0; ; ++busIndex) {
+			bus = parent->GetDeviceBus(busIndex);
+			if (!bus)
+				break;
+
+			if (busComponent.first == bus->GetBusTag()) {
+				if (!busComponent.second--)
+					break;
+			}
+		}
+
+		if (!bus)
+			break;
+
+		if (!*path) {
+			result.mbValid = true;
+			result.mpDeviceBusParent = parent;
+			result.mpDeviceBus = bus;
+			result.mDeviceBusIndex = busIndex;
+		}
+	}
+
+	return result;
+}
+
+VDStringA ATDeviceManager::GetPathForDevice(IATDevice *dev) const {
+	VDStringA s;
+	AppendPathForDevice(s, dev, true);
+
+	return s;
+}
+
+void ATDeviceManager::AppendPathForDevice(VDStringA& s, IATDevice *dev, bool recurse) const {
+	ATDeviceInfo info;
+	dev->GetDeviceInfo(info);
+
+	IATDeviceParent *parent = dev->GetParent();
+	uint32_t devIndex = 0;
+
+	if (parent) {
+		if (recurse) {
+			IATDevice *parentDev = vdpoly_cast<IATDevice *>(parent);
+			AppendPathForDevice(s, parentDev, true);
+		}
+
+		const uint32 busIndex = dev->GetParentBusIndex();
+		IATDeviceBus *bus = parent->GetDeviceBus(busIndex);
+
+		s += '/';
+		s += bus->GetBusTag();
+
+		vdfastvector<IATDevice *> siblings;
+		bus->GetChildDevices(siblings);
+
+		for(IATDevice *sibling : siblings) {
+			if (sibling == dev)
+				break;
+
+			ATDeviceInfo info2;
+			sibling->GetDeviceInfo(info2);
+
+			if (info2.mpDef == info.mpDef)
+				++devIndex;
+		}
+	} else {
+		for(IATDevice *sibling : GetDevices(true, true)) {
+			if (sibling == dev)
+				break;
+
+			ATDeviceInfo info2;
+			sibling->GetDeviceInfo(info2);
+
+			if (info2.mpDef == info.mpDef)
+				++devIndex;
+		}
+	}
+
+	s += '/';
+	s.append(info.mpDef->mpTag);
+
+	if (devIndex)
+		s.append_sprintf(".%u", devIndex);
 }
 
 void *ATDeviceManager::GetInterface(uint32 id) const {

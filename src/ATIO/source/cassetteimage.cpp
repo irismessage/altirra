@@ -324,6 +324,8 @@ public:
 
 	bool GetBit(uint32 pos, uint32 averagingPeriod, uint32 threshold, bool prevBit, bool bypassFSK) const override;
 	bool GetTurboBit(uint32 pos) const override;
+	uint32 GetNearestLowBitPos(uint32 pos) const override;
+
 	void ReadPeakMap(float t0, float dt, uint32 n, float *data, float *audio) override;
 	void AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const override;
 
@@ -346,7 +348,7 @@ protected:
 	};
 
 	uint32 GetBitSum(uint32 pos, uint32 averagingPeriod, bool bypassFSK) const;
-	int GetSortedDataBlock(uint32 pos) const;
+	uint32 GetSortedDataBlock(uint32 pos) const;
 
 	uint32 SplitBlock(uint32 startBlockIdx, uint32 splitPt);
 
@@ -411,7 +413,7 @@ uint32 ATCassetteImage::GetBitSum(uint32 pos, uint32 len, bool bypassFSK) const 
 	if (pos >= mDataLength)
 		return len;
 
-	int idx = GetSortedDataBlock(pos);
+	uint32 idx = GetSortedDataBlock(pos);
 	const auto *p = &mDataBlocks[idx];
 	if (!p->mpImageBlock)
 		return len;
@@ -452,7 +454,7 @@ bool ATCassetteImage::GetTurboBit(uint32 pos) const {
 	if (pos >= mDataLength)
 		return true;
 
-	int idx = GetSortedDataBlock(pos);
+	uint32 idx = GetSortedDataBlock(pos);
 	const auto *p = &mDataBlocks[idx];
 	if (!p->mpImageBlock)
 		return true;
@@ -468,6 +470,36 @@ bool ATCassetteImage::GetTurboBit(uint32 pos) const {
 	}
 
 	return true;
+}
+
+uint32 ATCassetteImage::GetNearestLowBitPos(uint32 pos) const {
+	if (pos >= mDataLength)
+		return mDataLength;
+
+	uint32 idx = GetSortedDataBlock(pos);
+	const auto *block = &mDataBlocks[idx];
+
+	for(; block->mpImageBlock; ++block) {
+		// if this is a blank block, we can just skip it outright
+		const auto& imageBlock = *block->mpImageBlock;
+		if (imageBlock.GetBlockType() == kATCassetteImageBlockType_Blank) {
+			pos = block[1].mStart;
+			continue;
+		}
+
+		// scan the block looking for a low bit
+		uint32 relOffset = block->mOffset - block->mStart;
+		uint32 nextPos = block[1].mStart;
+
+		while(pos < nextPos) {
+			if (!imageBlock.GetBitSum(pos + relOffset, 1, false))
+				return pos;
+
+			++pos;
+		}
+	}
+
+	return mDataLength;
 }
 
 void ATCassetteImage::ReadPeakMap(float t0, float dt, uint32 n, float *data, float *audio) {
@@ -1297,7 +1329,7 @@ void ATCassetteImage::SaveWAV(IVDRandomAccessStream& file) {
 	file.Write(header, sizeof header);
 }
 
-int ATCassetteImage::GetSortedDataBlock(uint32 pos) const {
+uint32 ATCassetteImage::GetSortedDataBlock(uint32 pos) const {
 	uint32 i = 0;
 	uint32 j = mDataBlockCount;
 
@@ -1917,14 +1949,6 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file) {
 
 				const sint32 gapms = hdr.aux1 + ((uint32)hdr.aux2 << 8);
 
-				if (g_ATLCCasImage.IsEnabled()) {
-					float pos = (float)mDataLength / (float)kATCassetteDataSampleRate;
-					int mins = (int)(pos / 60.0f);
-					float secs = pos - (float)mins * 60.0f;
-
-					g_ATLCCasImage("FSK block @ %3d:%06.3f: %ums gap, %u data bytes @ %u baud\n", mins, secs, gapms, len, baudRate);
-				}
-
 				// Don't use mingap for FSK -- we can't be sure that the early blocks are actual data instead of
 				// noise, and we put more trust whoever decoded it when FSK is used.
 				addGap((float)gapms / 1000.0f);
@@ -1952,6 +1976,7 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file) {
 					// bit due to addGap(); we just ignore that, knowing that it'll be caught later.
 					const uint32 maxBlockLen = mDataLength < kATCassetteDataLimit ? kATCassetteDataLimit - mDataLength : 0;
 					bool polarity = false;
+					const uint32 transitions = len >> 1;
 
 					while(len > 0) {
 						uint16 rawPulseWidth;
@@ -1964,6 +1989,20 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file) {
 
 						polarity = !polarity;
 						len -= 2;
+					}
+
+					if (g_ATLCCasImage.IsEnabled()) {
+						float pos = (float)mDataLength / (float)kATCassetteDataSampleRate;
+						int mins = (int)(pos / 60.0f);
+						float secs = pos - (float)mins * 60.0f;
+
+						g_ATLCCasImage("FSK block @ %3d:%06.3f: %ums gap, %u transition%s (%.1f ms)\n"
+							, mins
+							, secs
+							, gapms
+							, transitions
+							, transitions != 1 ? "s" : ""
+							, fskBlock->GetDataSampleCount() / kATCassetteDataSampleRate * 1000.0f);
 					}
 
 					mDataLength = mDataBlocks.back().mStart + fskBlock->GetDataSampleCount();

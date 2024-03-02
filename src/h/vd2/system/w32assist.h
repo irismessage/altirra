@@ -28,6 +28,11 @@
 
 #include <windows.h>
 
+#ifdef NTDDI_WINBLUE
+struct IUnknown;
+#include <ShellScalingApi.h>
+#endif
+
 #include <vd2/system/VDString.h>
 
 inline bool VDIsWindowsNT() {
@@ -44,7 +49,9 @@ bool VDIsAtLeast10W32();
 // Requires Windows 8.1
 #ifndef WM_DPICHANGED
 #define WM_DPICHANGED 0x02E0
+#endif
 
+#ifndef NTDDI_WINBLUE
 	typedef enum MONITOR_DPI_TYPE {
 		MDT_EFFECTIVE_DPI = 0,
 		MDT_ANGULAR_DPI = 1,

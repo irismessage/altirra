@@ -20,19 +20,13 @@
 #include "uipageddialog.h"
 #include "resource.h"
 
-const ATUIDialogPage::HelpEntry *ATUIDialogPage::GetHelpEntry(const vdpoint32& pt) const {
+const ATUIDialogPage::HelpEntry *ATUIDialogPage::GetHelpEntryByPoint(const vdpoint32& pt) const {
 	for(const HelpEntry& e : mHelpEntries) {
 		if (!e.mArea.contains(pt))
 			continue;
 
-		if (e.mLinkedId) {
-			for (const HelpEntry& e2 : mHelpEntries) {
-				if (e2.mId == e.mLinkedId)
-					return &e2;
-			}
-
-			return nullptr;
-		}
+		if (e.mLinkedId)
+			return GetHelpEntryById(e.mLinkedId);
 
 		return &e;
 	}
@@ -40,7 +34,24 @@ const ATUIDialogPage::HelpEntry *ATUIDialogPage::GetHelpEntry(const vdpoint32& p
 	return nullptr;
 }
 
+const ATUIDialogPage::HelpEntry *ATUIDialogPage::GetHelpEntryById(uint32 id) const {
+	for(const HelpEntry& e : mHelpEntries) {
+		if (e.mId == id) {
+			if (e.mLinkedId)
+				return GetHelpEntryById(e.mLinkedId);
+
+			return &e;
+		}
+	}
+
+	return nullptr;
+}
+
 void ATUIDialogPage::ExchangeOtherSettings(bool write) {
+}
+
+const char *ATUIDialogPage::GetPageTag() const {
+	return "";
 }
 
 void ATUIDialogPage::AddHelpEntry(uint32 id, const wchar_t *label, const wchar_t *s) {
@@ -91,10 +102,42 @@ ATUIPagedDialog::ATUIPagedDialog(uint32 id)
 
 ATUIPagedDialog::~ATUIPagedDialog() {
 	UninstallMouseHook();
+	UninstallKeyboardHook();
 }
 
 void ATUIPagedDialog::SetInitialPage(int index) {
 	mInitialPage = index;
+}
+
+void ATUIPagedDialog::SwitchToPage(const char *tag) {
+	int index = 0;
+	for(ATUIDialogPage *page : mPages) {
+		if (!strcmp(page->GetPageTag(), tag)) {
+			PostCall([index, this] {
+				SelectPage(index);
+
+				if (mPageTreeView.IsValid()) {
+					for(PageTreeItem *pti : mPageTreeItems) {
+						if (pti->mPage == index) {
+							mPageTreeView.SelectNode(pti->mNode);
+							mPageTreeView.MakeNodeVisible(pti->mNode);
+							break;
+						}
+					}
+				}
+			});
+			break;
+		}
+
+		++index;
+	}
+}
+
+VDZINT_PTR ATUIPagedDialog::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) {
+	if (msg == WM_NEXTDLGCTL) {
+	}
+
+	return VDDialogFrameW32::DlgProc(msg, wParam, lParam);
 }
 
 bool ATUIPagedDialog::OnLoaded() {
@@ -127,6 +170,7 @@ bool ATUIPagedDialog::OnLoaded() {
 		mPageTreeView.SelectNode(mPageTreeItems[mInitialPage]->mNode);
 
 	InstallMouseHook();
+	InstallKeyboardHook();
 	return VDDialogFrameW32::OnLoaded();
 }
 
@@ -171,8 +215,36 @@ void ATUIPagedDialog::OnDpiChanged() {
 	}
 }
 
+void ATUIPagedDialog::CheckFocus() {
+	if (mSelectedPage >= 0) {
+		HWND hwndFocus = GetFocus();
+
+		if ((uintptr)hwndFocus != mLastFocus) {
+			mLastFocus = (uintptr)hwndFocus;
+
+			if (hwndFocus) {
+				ATUIDialogPage *page = mPages[mSelectedPage];
+
+				HWND hwndPage = page->GetWindowHandle();
+				do {
+					HWND hwndParent = ::GetParent(hwndFocus);
+
+					if (hwndParent == hwndPage) {
+						const ATUIDialogPage::HelpEntry *he = page->GetHelpEntryById((uint32)GetWindowLongPtr(hwndFocus, GWLP_ID));
+
+						ShowHelp(he);
+						break;
+					}
+
+					hwndFocus = hwndParent;
+				} while(hwndFocus);
+			}
+		}
+	}
+}
+
 void ATUIPagedDialog::CheckFocus(const vdpoint32& pt) {
-	if (mSelectedPage < 0 || mLastHelpRect.contains(pt))
+	if (mSelectedPage < 0 || mLastMouseHelpRect.contains(pt))
 		return;
 
 	// check if there is another window in the way, particularly a combo popup; bypass checks if so
@@ -184,21 +256,31 @@ void ATUIPagedDialog::CheckFocus(const vdpoint32& pt) {
 
 	const vdpoint32 pagePt = page->TransformScreenToClient(pt);
 
-	const ATUIDialogPage::HelpEntry *he = page->GetHelpEntry(pagePt);
-	if (he && he->mId != mLastHelpId) {
-		mLastHelpId = he->mId;
-		mLastHelpRect = page->TransformClientToScreen(he->mArea);
-
-		VDStringA s;
-
-		s = "{\\rtf{\\fonttbl{\\f0\\fnil\\fcharset0 MS Shell Dlg;}}\\f0\\sa90\\fs16{\\b ";
-		AppendRTF(s, he->mLabel.c_str());
-		s += "}\\par ";
-		AppendRTF(s, he->mText.c_str());
-		s += "}";
-
-		mHelpView.SetTextRTF(s.c_str());
+	const ATUIDialogPage::HelpEntry *he = page->GetHelpEntryByPoint(pagePt);
+	if (he) {
+		mLastMouseHelpRect = page->TransformClientToScreen(he->mArea);
+		ShowHelp(he);
 	}
+}
+
+void ATUIPagedDialog::ShowHelp(const ATUIDialogPage::HelpEntry *he) {
+	if (!he)
+		return;
+
+	if (he->mId == mLastHelpId)
+		return;
+
+	mLastHelpId = he->mId;
+
+	VDStringA s;
+
+	s = "{\\rtf{\\fonttbl{\\f0\\fnil\\fcharset0 MS Shell Dlg;}}\\f0\\sa90\\fs16{\\b ";
+	AppendRTF(s, he->mLabel.c_str());
+	s += "}\\par ";
+	AppendRTF(s, he->mText.c_str());
+	s += "}";
+
+	mHelpView.SetTextRTF(s.c_str());
 }
 
 void ATUIPagedDialog::PushCategory(const wchar_t *name) {
@@ -223,6 +305,8 @@ void ATUIPagedDialog::PopCategory() {
 }
 
 void ATUIPagedDialog::AddPage(const wchar_t *name, vdautoptr<ATUIDialogPage> page) {
+	page->SetParentDialog(this);
+
 	if (mPageListView.IsValid())
 		mPageListView.AddItem(name);
 
@@ -253,7 +337,7 @@ void ATUIPagedDialog::SelectPage(int index) {
 		mResizer.Remove(page->GetWindowHandle());
 		page->Destroy();
 		mLastHelpId = 0;
-		mLastHelpRect = { 0, 0, 0, 0 };
+		mLastMouseHelpRect = { 0, 0, 0, 0 };
 		mHelpView.SetText(L"");
 	}
 
@@ -266,8 +350,16 @@ void ATUIPagedDialog::SelectPage(int index) {
 			const auto& r = mPageAreaView.GetArea();
 
 			page->SetArea(r, false);
-			mResizer.AddAlias(page->GetWindowHandle(), mPageAreaView.GetWindowHandle(), mResizer.kTL);
+			HWND hwndPage = page->GetWindowHandle();
+			mResizer.AddAlias(hwndPage, mPageAreaView.GetWindowHandle(), mResizer.kTL);
 			page->Show();
+
+			// bring OK to top of Z-order so tab order is natural from category to page
+			if (HWND hwndOK = GetControl(IDOK)) {
+				ATUINativeWindowProxy proxy(hwndOK);
+
+				proxy.BringToFront();
+			}
 		}
 	}
 }
@@ -319,6 +411,38 @@ VDZLRESULT ATUIPagedDialog::OnMouseEvent(int code, VDZWPARAM wParam, VDZLPARAM l
 	}
 
 	return CallNextHookEx((HHOOK)mpMouseHook, code, wParam, lParam);
+}
+
+void ATUIPagedDialog::InstallKeyboardHook() {
+	if (!mpKeyboardFuncThunk) {
+		mpKeyboardFuncThunk = VDCreateFunctionThunkFromMethod(this, &ATUIPagedDialog::OnKeyboardEvent, true);
+
+		if (!mpKeyboardFuncThunk)
+			return;
+	}
+
+	if (!mpKeyboardHook)
+		mpKeyboardHook = SetWindowsHookEx(WH_KEYBOARD, VDGetThunkFunction<HOOKPROC>(mpKeyboardFuncThunk), nullptr, GetCurrentThreadId());
+}
+
+void ATUIPagedDialog::UninstallKeyboardHook() {
+	if (mpKeyboardHook) {
+		UnhookWindowsHookEx((HHOOK)mpKeyboardHook);
+		mpKeyboardHook = nullptr;
+	}
+
+	if (mpKeyboardFuncThunk) {
+		VDDestroyFunctionThunk(mpKeyboardFuncThunk);
+		mpKeyboardFuncThunk = nullptr;
+	}
+}
+
+VDZLRESULT ATUIPagedDialog::OnKeyboardEvent(int code, VDZWPARAM wParam, VDZLPARAM lParam) {
+	if (code == HC_ACTION) {
+		CheckFocus();
+	}
+
+	return CallNextHookEx((HHOOK)mpKeyboardHook, code, wParam, lParam);
 }
 
 void ATUIPagedDialog::OnTreeSelectedItemChanged() {

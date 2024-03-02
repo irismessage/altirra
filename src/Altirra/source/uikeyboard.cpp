@@ -822,10 +822,10 @@ const wchar_t *ATUIGetNameForKeyCode(uint32 c) {
 	case 0x4F: return L"Shift+= (|)";
 	case 0x66: return L"Shift+/ (?)";
 	case 0x76: return L"Shift+< (Clear)";
-	case 0x77: return L"Shift+> (Insert)";
+	case 0x77: return L"Shift+> (Insert Line)";
 	case 0x61: return L"Shift+Space";
 	case 0x4C: return L"Shift+Enter";
-	case 0x74: return L"Shift+Backspace";
+	case 0x74: return L"Shift+Back (Delete Line)";
 	case 0x5C: return L"Shift+Esc";
 	case 0x6C: return L"Shift+Tab";
 	case 0x67: return L"Shift+Invert (Fuji)";
@@ -880,10 +880,10 @@ const wchar_t *ATUIGetNameForKeyCode(uint32 c) {
 	case 0x8F: return L"Ctrl+= (Down)";
 	case 0xA6: return L"Ctrl+/";
 	case 0xB6: return L"Ctrl+<";
-	case 0xB7: return L"Ctrl+>";
+	case 0xB7: return L"Ctrl+> (Insert Char)";
 	case 0xA1: return L"Ctrl+Space";
 	case 0x8C: return L"Ctrl+Enter";
-	case 0xB4: return L"Ctrl+Backspace";
+	case 0xB4: return L"Ctrl+Back (Delete Char)";
 	case 0x9C: return L"Ctrl+Esc";
 	case 0xAC: return L"Ctrl+Tab";
 	case 0xA7: return L"Ctrl+Invert (Fuji)";

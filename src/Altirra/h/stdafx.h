@@ -44,5 +44,7 @@
 #include <atomic>
 #include <deque>
 #include <iterator>
+#include <utility>
+#include <optional>
 
 struct IUnknown;

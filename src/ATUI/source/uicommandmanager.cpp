@@ -59,11 +59,17 @@ const ATUICommand *ATUICommandManager::GetCommand(const char *str) const {
 	return NULL;
 }
 
-void ATUICommandManager::ExecuteCommand(const char *str) {
+bool ATUICommandManager::ExecuteCommand(const char *str) {
 	const ATUICommand *cmd = GetCommand(str);
 
-	if (cmd)
-		cmd->mpExecuteFn();
+	if (!cmd)
+		return false;
+
+	if (cmd->mpTestFn && !cmd->mpTestFn())
+		return false;
+
+	cmd->mpExecuteFn();
+	return true;
 }
 
 void ATUICommandManager::ListCommands(vdfastvector<VDAccelToCommandEntry>& commands) const {

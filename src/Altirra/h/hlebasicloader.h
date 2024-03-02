@@ -38,6 +38,7 @@ public:
 	bool IsLaunchPending() const { return mbLaunchPending; }
 
 	void LoadProgram(IATBlobImage *image);
+	void LoadTape(bool pushKey);
 
 protected:
 	uint8 OnCIOV(uint16);
@@ -49,6 +50,15 @@ protected:
 	ATCPUHookNode *mpLaunchHook = nullptr;
 
 	IATBlobImage *mpImage = nullptr;
+
+	enum class State : uint8 {
+		None,
+		RunProgram,
+		LoadTape,
+		RunTape
+	} mState = State::None;
+
+	bool		mbPushKeyToLoadTape = false;
 
 	bool		mbLaunchPending = false;
 	uint8		mProgramIOCB = 0;

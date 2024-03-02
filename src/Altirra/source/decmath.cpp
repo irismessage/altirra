@@ -955,15 +955,15 @@ bool ATDecFloatMul(ATDecFloat& dst, const ATDecFloat& x, const ATDecFloat& y) {
 }
 
 bool ATDecFloatDiv(ATDecFloat& dst, const ATDecFloat& x, const ATDecFloat& y) {
+	// check for zero divisor
+	if (!y.mSignExp || !y.mMantissa[0])
+		return false;
+
 	// check for zero dividend
 	if (!x.mSignExp || !x.mMantissa[0]) {
 		dst.SetZero();
 		return true;
 	}
-
-	// check for zero divisor
-	if (!y.mSignExp || !y.mMantissa[0])
-		return false;
 
 	// compute new exponent
 	uint8 sign = (x.mSignExp^y.mSignExp) & 0x80;

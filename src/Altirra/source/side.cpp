@@ -310,8 +310,8 @@ void ATSIDEEmulator::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 	mFlashCtrl.SetDirty(false);
 }
 
-bool ATSIDEEmulator::IsUsableFirmwareLoaded() const {
-	return mbFirmwareUsable;
+ATDeviceFirmwareStatus ATSIDEEmulator::GetFirmwareStatus() const {
+	return mbFirmwareUsable ? ATDeviceFirmwareStatus::OK : ATDeviceFirmwareStatus::Missing;
 }
 
 IATDeviceBus *ATSIDEEmulator::GetDeviceBus(uint32 index) {
@@ -320,6 +320,10 @@ IATDeviceBus *ATSIDEEmulator::GetDeviceBus(uint32 index) {
 
 const wchar_t *ATSIDEEmulator::GetBusName() const {
 	return L"CompactFlash Bus";
+}
+
+const char *ATSIDEEmulator::GetBusTag() const {
+	return "idebus";
 }
 
 const char *ATSIDEEmulator::GetSupportedType(uint32 index) {

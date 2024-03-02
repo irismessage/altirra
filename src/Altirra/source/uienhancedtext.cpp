@@ -46,7 +46,7 @@ public:
 	bool OnKeyDown(uint32 keyCode);
 	bool OnKeyUp(uint32 keyCode);
 
-	void Paste(const char *s, size_t);
+	void Paste(const wchar_t *s, size_t);
 
 	void Update(bool forceInvalidate);
 
@@ -114,7 +114,7 @@ protected:
 	uint32 mLastCursorX = 0;
 	uint32 mLastCursorY = 0;
 
-	vdfastdeque<uint8> mPasteBuffer;
+	vdfastdeque<wchar_t> mPasteBuffer;
 
 	ATGTIAEmulator *mpGTIA = nullptr;
 	ATAnticEmulator *mpANTIC = nullptr;
@@ -536,23 +536,23 @@ bool ATUIEnhancedTextEngine::OnKeyUp(uint32 keyCode) {
 	return false;
 }
 
-void ATUIEnhancedTextEngine::Paste(const char *s, size_t len) {
+void ATUIEnhancedTextEngine::Paste(const wchar_t *s, size_t len) {
 	char skipNext = 0;
 
 	while(len--) {
-		char c = *s++;
+		wchar_t c = *s++;
 
 		if (c == skipNext) {
 			skipNext = 0;
 			continue;
 		}
 
-		if (c == '\r' || c == '\n') {
-			skipNext = c ^ ('\r' ^ '\n');
-			c = '\n';
+		if (c == L'\r' || c == L'\n') {
+			skipNext = c ^ (L'\r' ^ L'\n');
+			c = L'\n';
 		}
 
-		mPasteBuffer.push_back((uint8)c);
+		mPasteBuffer.push_back(c);
 	}
 
 	ProcessPastedInput();
@@ -606,6 +606,7 @@ void ATUIEnhancedTextEngine::Update(bool forceInvalidate) {
 		uint32 cursorX, cursorY;
 		bool cursorPresent = vs->GetCursorInfo(cursorX, cursorY);
 
+		bool dirty = false;
 		uint32 n = w * h;
 		if (n != mLastScreen.size() || !mbLastScreenValid || forceInvalidate) {
 			mLastScreen.resize(n);
@@ -614,6 +615,7 @@ void ATUIEnhancedTextEngine::Update(bool forceInvalidate) {
 			mbLastScreenValid = true;
 			mbLastInputLineDirty = true;
 			lineFlagsPtr = NULL;
+			dirty = true;
 		} else {
 			uint8 *last = mLastScreen.data();
 
@@ -621,6 +623,7 @@ void ATUIEnhancedTextEngine::Update(bool forceInvalidate) {
 				if (memcmp(last, screen, w)) {
 					memcpy(last, screen, w);
 					lineFlagsPtr[y] = true;
+					dirty = true;
 				}
 
 				last += w;
@@ -631,8 +634,10 @@ void ATUIEnhancedTextEngine::Update(bool forceInvalidate) {
 		if (cursorX != mLastCursorX || cursorY != mLastCursorY || cursorPresent != mbLastCursorPresent) {
 			mbLastInputLineDirty = true;
 
-			if (lineFlagsPtr && mLastCursorY < h && mbLastCursorPresent)
+			if (lineFlagsPtr && mLastCursorY < h && mbLastCursorPresent) {
 				lineFlagsPtr[mLastCursorY] = true;
+				dirty = true;
+			}
 		}
 
 		if (mbLastInputLineDirty) {
@@ -644,9 +649,12 @@ void ATUIEnhancedTextEngine::Update(bool forceInvalidate) {
 
 			if (cursorPresent && cursorY < h && lineFlagsPtr)
 				lineFlagsPtr[cursorY] = true;
+
+			dirty = true;
 		}
 
-		Paint(lineFlagsPtr);
+		if (dirty)
+			Paint(lineFlagsPtr);
 		return;
 	}
 
@@ -1213,7 +1221,7 @@ void ATUIEnhancedTextEngine::ProcessPastedInput() {
 		return;
 
 	while(!mPasteBuffer.empty()) {
-		char c = mPasteBuffer.front();
+		wchar_t c = mPasteBuffer.front();
 		mPasteBuffer.pop_front();
 
 		if (c == '\n') {

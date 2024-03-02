@@ -1087,6 +1087,20 @@ void ATUIHistoryView::OnPaint() {
 			ExtTextOut(hdc, r.left, r.top, ETO_OPAQUE, &r, _T(""), 0, NULL);
 		}
 
+		const bool kShowRedraws = false;
+		if constexpr(kShowRedraws) {
+			static unsigned cycle = 0;
+
+			SelectObject(hdc, GetStockObject(DC_PEN));
+			SelectObject(hdc, GetStockObject(NULL_BRUSH));
+
+			static constexpr COLORREF kColors[3] = { RGB(255,0,0), RGB(0,255,0), RGB(0,0,255) };
+			SetDCPenColor(hdc, kColors[cycle]);
+			cycle = (cycle >= 2) ? 0 : cycle+1;
+
+			Rectangle(hdc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right, ps.rcPaint.bottom);
+		}
+
 		RestoreDC(hdc, sdc);
 	}
 
@@ -1635,7 +1649,7 @@ void ATUIHistoryView::InvalidateStartingAtNode(ATHTNode *node) {
 		r.top = (int)y - (int)mScrollY + mHeaderHeight;
 		r.right = mWidth;
 		r.bottom = mContentRect.bottom;
-		InvalidateRect(mhwnd, NULL, TRUE);
+		InvalidateRect(mhwnd, &r, TRUE);
 	}
 }
 
@@ -1905,6 +1919,8 @@ void ATUIHistoryView::UpdateOpcodes(uint32 historyStart, uint32 historyEnd) {
 
 		mbUpdatesBlocked = true;
 
+		const uint32 origHt = mHistoryTree.GetRootNode()->mHeight;
+
 		mHistoryTreeBuilder.SetCollapseCalls(mbCollapseCalls);
 		mHistoryTreeBuilder.SetCollapseInterrupts(mbCollapseInterrupts);
 		mHistoryTreeBuilder.SetCollapseLoops(mbCollapseLoops);
@@ -1930,10 +1946,40 @@ void ATUIHistoryView::UpdateOpcodes(uint32 historyStart, uint32 historyEnd) {
 			mHistoryTreeBuilder.Update(httab, batchSize);
 		}
 
-		const uint32 updateEnd = mHistoryTreeBuilder.EndUpdate(last);
+		const uint32 updatePos = mHistoryTreeBuilder.EndUpdate(last);
 
-		if (!updateEnd || updateEnd < (mScrollY + mHeight) / mItemHeight + 1)
-			InvalidateRect(mhwnd, nullptr, TRUE);
+		const uint32 newHt = mHistoryTree.GetRootNode()->mHeight;
+
+		if (!quickMode) {
+			if (!updatePos || updatePos < (mScrollY + mHeight) / mItemHeight + 1) {
+				// The root node contains a hidden line, which we ignore since it is never displayed.
+				int y1 = (int)updatePos * mItemHeight;
+
+				if ((uint32)y1 < mScrollY + (mContentRect.bottom - mContentRect.top)) {
+					RECT r;
+					r.left = 0;
+					r.top = y1 - (int)mScrollY + mHeaderHeight;
+					r.right = mWidth;
+					r.bottom = mContentRect.bottom;
+					InvalidateRect(mhwnd, &r, TRUE);
+				}
+			} else if (newHt < origHt) {
+				InvalidateRect(mhwnd, nullptr, TRUE);
+			} else if (newHt > origHt) {
+				// The root node contains a hidden line, which we ignore since it is never displayed.
+				int y1 = ((int)origHt - 1) * mItemHeight;
+				int y2 = ((int)newHt - 1) * mItemHeight;
+
+				if ((uint32)y1 < mScrollY + (mContentRect.bottom - mContentRect.top)) {
+					RECT r;
+					r.left = 0;
+					r.top = y1 - (int)mScrollY + mHeaderHeight;
+					r.right = mWidth;
+					r.bottom = y2 - (int)mScrollY + mHeaderHeight;
+					InvalidateRect(mhwnd, &r, TRUE);
+				}
+			}
+		}
 
 		heightChanged = true;
 	}
@@ -2000,8 +2046,20 @@ ATHTNode *ATUIHistoryView::InsertNode(ATHTNode *parent, ATHTNode *insertAfter, u
 
 	UpdateScrollMax();
 
-	if (!mbInvalidatesBlocked)
-		InvalidateStartingAtNode(node);
+	if (!mbInvalidatesBlocked) {
+		// Check if this node is at the bottom of the tree. If so, we only need to invalidate this node.
+		bool lineAtBottom = node->mHeight == 1;
+
+		for(const ATHTNode *p = node; p && lineAtBottom; p = p->mpParent) {
+			if (p->mpNextSibling)
+				lineAtBottom = false;
+		}
+
+		if (lineAtBottom)
+			InvalidateNode(node);
+		else
+			InvalidateStartingAtNode(node);
+	}
 
 	return node;
 }
@@ -2011,8 +2069,20 @@ void ATUIHistoryView::RemoveNode(ATHTNode *node) {
 
 	ATHTNode *successorNode = nullptr;
 	
-	if (!mbInvalidatesBlocked)
-		InvalidateStartingAtNode(node);
+	if (!mbInvalidatesBlocked) {
+		// Check if this node is at the bottom of the tree. If so, we only need to invalidate this node.
+		bool lineAtBottom = node->mHeight == 1;
+
+		for(const ATHTNode *p = node; p && lineAtBottom; p = p->mpParent) {
+			if (p->mpNextSibling)
+				lineAtBottom = false;
+		}
+
+		if (lineAtBottom)
+			InvalidateNode(node);
+		else
+			InvalidateStartingAtNode(node);
+	}
 
 	mHistoryTree.RemoveNode(node);
 }

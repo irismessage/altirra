@@ -392,6 +392,19 @@ void ATMemoryManager::SetLayerMemory(ATMemoryLayer *layer0, const uint8 *base, u
 	}
 }
 
+void ATMemoryManager::SetLayerMemoryAndAddressSpace(ATMemoryLayer *layer0, const uint8 *base, uint32 addressSpace) {
+	VDASSERT(base);
+	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
+
+	if (base != layer->mpBase || addressSpace != layer->mAddressSpace) {
+		layer->mpBase = base;
+		layer->mAddressSpace = addressSpace;
+
+		if (layer->mEffectiveEnd > layer->mEffectiveStart)
+			RebuildAllNodes(layer->mEffectiveStart, layer->mEffectiveEnd - layer->mEffectiveStart, layer->mFlags);
+	}
+}
+
 void ATMemoryManager::SetLayerMemoryAndAddressSpace(ATMemoryLayer *layer0, const uint8 *base, uint32 pageOffset, uint32 pageCount, uint32 addressSpace, uint32 addrMask, int readOnly) {
 	VDASSERT(base);
 	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);

@@ -23,9 +23,9 @@
 
 class vdfloat3x3;
 
-class ATArtifactingEngine : public VDAlignedObject<16> {
-	ATArtifactingEngine(const ATArtifactingEngine&);
-	ATArtifactingEngine& operator=(const ATArtifactingEngine&);
+class ATArtifactingEngine final : public VDAlignedObject<16> {
+	ATArtifactingEngine(const ATArtifactingEngine&) = delete;
+	ATArtifactingEngine& operator=(const ATArtifactingEngine&) = delete;
 public:
 	ATArtifactingEngine();
 	~ATArtifactingEngine();
@@ -35,28 +35,38 @@ public:
 	ATArtifactingParams GetArtifactingParams() const { return mArtifactingParams; }
 	void SetArtifactingParams(const ATArtifactingParams& params);
 
+	void GetNTSCArtifactColors(uint32 c[2]) const;
+
 	enum {
 		N = 456,
 		M = 312
 	};
 
-	void BeginFrame(bool pal, bool chromaArtifact, bool chromaArtifactHi, bool blend);
-	void Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool temporaryUpdate);
-	void Artifact32(uint32 y, uint32 *dst, uint32 width, bool temporaryUpdate);
+	void SuspendFrame();
+	void ResumeFrame();
+
+	void BeginFrame(bool pal, bool chromaArtifact, bool chromaArtifactHi, bool blendIn, bool blendOut, bool bypassOutputCorrection);
+	void Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool temporaryUpdate, bool includeBlanking);
+	void Artifact32(uint32 y, uint32 *dst, uint32 width, bool temporaryUpdate, bool includeBlanking);
 	void InterpolateScanlines(uint32 *dst, const uint32 *src1, const uint32 *src2, uint32 n);
 
 protected:
 	void ArtifactPAL8(uint32 dst[N], const uint8 src[N]);
 	void ArtifactPAL32(uint32 *dst, uint32 width);
 
-	void ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
-	void ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bool scanlineHasHiRes);
+	void ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool includeHBlank);
+
+#if defined(VD_COMPILER_MSVC) && (defined(VD_CPU_X86) || defined(VD_CPU_X64))
+	bool ArtifactNTSC_SSE2(uint32 *dst, const uint8 *src, uint32 num7MHzPixels);
+#endif
+
+	void ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bool scanlineHasHiRes, bool includeHBlank);
 	void ArtifactPALHi(uint32 dst[N*2], const uint8 src[N], bool scanlineHasHiRes, bool oddline);
 	void BlitNoArtifacts(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
 	void Blend(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 n);
 	void BlendExchange(uint32 *VDRESTRICT dst, uint32 *VDRESTRICT blendDst, uint32 n);
 
-	void ColorCorrect(uint8 *VDRESTRICT dst8, uint32 n);
+	void ColorCorrect(uint8 *VDRESTRICT dst8, uint32 n) const;
 
 	void RecomputeNTSCTables(const ATColorParams& params);
 	void RecomputePALTables(const ATColorParams& params);
@@ -71,21 +81,25 @@ protected:
 	bool mbScanlineDelayValid;
 	bool mbGammaIdentity;
 	bool mbEnableColorCorrection = false;
+	bool mbBypassOutputCorrection = false;
+
+	bool mbSavedPAL = false;
+	bool mbSavedChromaArtifacts = false;
+	bool mbSavedChromaArtifactsHi = false;
+	bool mbSavedBypassOutputCorrection = false;
+	bool mbSavedBlendActive = false;
+	bool mbSavedBlendCopy = false;
 
 	vdfloat3x3 mColorMatchingMatrix {};
 	sint16 mColorMatchingMatrix16[3][3] {};
 
-	int mYScale;
-	int mYBias;
-	int mArtifactRed;
-	int mArtifactGreen;
-	int mArtifactBlue;
-
 	ATColorParams mColorParams;
 	ATArtifactingParams mArtifactingParams;
 
-	int mChromaVectors[16][3];
-	int mLumaRamp[16];
+	alignas(16) sint16 mChromaVectors[16][4];		// signed 10.6
+	alignas(16) sint16 mLumaRamp[16];				// signed 10.6
+	alignas(16) sint16 mArtifactRamp[31][4];
+
 	uint8 mGammaTable[256];
 	sint16 mCorrectLinearTable[256];
 	uint8 mCorrectGammaTable[1024];
@@ -97,8 +111,6 @@ protected:
 		uint8 mPALDelayLine32[N*2*3];	// RGB24 @ 14MHz resolution
 		VDALIGN(16) uint32 mPALDelayLineUV[2][N];
 	};
-
-	uint32 mScanlineDelay[N*2];		// RGB32 @ 14MHz resolution
 
 	union {
 		uint32 mPrevFrame7MHz[M][N];
@@ -138,18 +150,6 @@ protected:
 			uint32 mPalToU[2][256][8][12];
 			uint32 mPalToV[2][256][8][12];
 		} mPal2x;
-
-		// PAL high artifacting - scalar (64-bit) (608K)
-		struct {
-			// [oddLine][color][phase][offset]
-			uint32 mPalToY[2][256][8][6];
-			uint32 mPalToU[2][256][8][16];
-			uint32 mPalToV[2][256][8][16];
-
-			uint32 mPalToYTwin[2][256][4][6];
-			uint32 mPalToUTwin[2][256][4][16];
-			uint32 mPalToVTwin[2][256][4][16];
-		} mPal4x;
 
 		// PAL high artifacting - scalar (128-bit) (960K)
 		struct {

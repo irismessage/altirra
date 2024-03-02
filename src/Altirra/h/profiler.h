@@ -50,9 +50,18 @@ enum ATProfileBoundaryRule {
 	kATProfileBoundaryRule_PCAddressFunction
 };
 
+enum ATProfileContext : uint32 {
+	kATProfileContext_Main,
+	kATProfileContext_Interrupt,
+	kATProfileContext_IRQ,
+	kATProfileContext_VBI,
+	kATProfileContext_DLI,
+};
+
 struct ATProfileRecord {
 	uint32 mAddress;
-	uint32 mCalls;
+	uint32 mCalls : 28;
+	uint32 mContext : 4;
 	uint32 mInsns : 29;
 	uint32 mModeBits : 2;
 	uint32 mEmulationMode : 1;
@@ -144,6 +153,7 @@ public:
 
 	void Init(ATProfileMode mode, ATProfileCounterMode c1, ATProfileCounterMode c2);
 	void SetBoundaryRule(ATProfileBoundaryRule rule, uint32 param, uint32 param2);
+	void SetGlobalAddressesEnabled(bool enable);
 
 	void SetS(uint8 s);
 
@@ -166,11 +176,13 @@ public:
 	// one entry between updates, and consequently the array must have one more entry than specified by
 	// the count. The first N entries are the ones processed; the last one is used only for timestamp
 	// delta purposes.
-	void Update(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n, bool enableGlobalAddrs);
+	void Update(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n, bool useGlobalAddrs);
 	void UpdateBasicLines(const ATCPUTimestampDecoder& tsDecoder, uint32 lineNo, const ATCPUHistoryEntry *const *hents, uint32 n);
 
 private:
-	void UpdateCallGraph(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n, bool enableGlobalAddrs);
+	template<ATProfileMode T_ProfileMode>
+	void UpdateNonCallGraph(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n, bool useGlobalAddrs);
+	void UpdateCallGraph(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n, bool useGlobalAddrs);
 	void ClearContexts();
 	void UpdateCounters(uint32 *p, const ATCPUHistoryEntry& he);
 	uint32 ScanForFrameBoundary(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n);
@@ -190,10 +202,13 @@ private:
 	bool mbAdjustStackNext;
 	bool mbCountersEnabled;
 	bool mbKeepNextFrame;
+	bool mbGlobalAddressesEnabled;
 
 	uint8 mLastS;
-	sint32	mCurrentFrameAddress;
+	uint32	mCurrentFrameAddress;
+	uint32	mCurrentFrameContext;
 	sint32	mCurrentContext;
+	bool	mbCallPending;
 	uint32 mTotalSamples;
 	uint32 mTotalContexts;
 	uint32 mStartCycleTime;
@@ -216,7 +231,17 @@ private:
 	HashLink *mpBlockHashTable[256] {};
 	CallGraphHashLink *mpCGHashTable[256] {};
 
-	sint32	mStackTable[256];
+	static constexpr uint32 kInvalidStackEntryAddress = ~UINT32_C(0);
+
+	struct NCGStackEntry {
+		uint32 mAddress;
+		uint32 mContext;
+	};
+
+	union {
+		NCGStackEntry mNCGStackTable[256];
+		sint32	mCGStackTable[256];
+	};
 };
 
 class ATCPUProfiler final : public IATSchedulerCallback {
@@ -229,6 +254,7 @@ public:
 	bool IsRunning() const { return mpUpdateEvent != NULL; }
 
 	void SetBoundaryRule(ATProfileBoundaryRule rule, uint32 param, uint32 param2);
+	void SetGlobalAddressesEnabled(bool enable);
 
 	void Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATCPUEmulatorCallbacks *callbacks, ATScheduler *scheduler, ATScheduler *slowScheduler, IATCPUTimestampDecoderProvider *tsdprovider);
 	void Start(ATProfileMode mode, ATProfileCounterMode c1, ATProfileCounterMode c2);

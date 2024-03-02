@@ -18,6 +18,8 @@
 #include <stdafx.h>
 #include <vd2/system/file.h>
 #include <vd2/system/registry.h>
+#include <vd2/system/registrymemory.h>
+#include "settings.h"
 
 void ATUILoadRegistry(const wchar_t *path) {
 	VDTextInputFile ini(path);
@@ -288,4 +290,42 @@ void ATUISaveRegistry(const wchar_t *fnpath) {
 	VDStringA path;
 	ATUISaveRegistryPath(os, path, false);
 	ATUISaveRegistryPath(os, path, true);
+}
+
+void ATUIMigrateSettingsToPortable() {
+	VDRegistryProviderMemory pvmem;
+	VDRegistryCopy(pvmem, VDRegistryAppKey::getDefaultKey(), *VDGetRegistryProvider(), VDRegistryAppKey::getDefaultKey());
+
+	// we are single threaded by this point, so this is safe(-ish)
+	IVDRegistryProvider *pvprev = VDGetRegistryProvider();
+	VDSetRegistryProvider(&pvmem);
+
+	ATUISaveRegistry(ATSettingsGetDefaultPortablePath().c_str());
+
+	VDSetRegistryProvider(pvprev);
+}
+
+void ATUIMigrateSettingsToRegistry() {
+	IVDRegistryProvider *pvdst = VDGetDefaultRegistryProvider();
+	const char *dstPath = VDRegistryAppKey::getDefaultKey();
+
+	// we're about to blow away an entire subkey in the Registry, so put in
+	// a safeguard against accidentally doing the equivalent of rm -rf /
+	// in case the default path didn't get initialized
+	if (!dstPath || !*dstPath)
+		return;
+
+	pvdst->RemoveKeyRecursive(pvdst->GetUserKey(), dstPath);
+
+	VDRegistryCopy(*pvdst, dstPath, *VDGetRegistryProvider(), dstPath);
+}
+
+void ATUIMigrateSettings() {
+	if (!ATSettingsIsMigrationScheduled())
+		return;
+
+	if (ATSettingsIsInPortableMode())
+		ATUIMigrateSettingsToRegistry();
+	else
+		ATUIMigrateSettingsToPortable();
 }

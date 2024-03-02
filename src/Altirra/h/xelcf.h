@@ -72,6 +72,7 @@ public:		// IATDeviceButtons
 
 public:		// IATDeviceParent
 	const wchar_t *GetBusName() const override;
+	const char *GetBusTag() const override;
 	const char *GetSupportedType(uint32 index) override;
 	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
 	void AddChildDevice(IATDevice *dev) override;

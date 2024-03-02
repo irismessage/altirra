@@ -64,6 +64,7 @@ public:
 	virtual void MultiFillRect(const vdrect32 *rects, uint32 n) = 0;
 
 	virtual void AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, uint32 alphaColor) = 0;
+	virtual void AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint32 alphaColor) = 0;
 
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView) = 0;
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h) = 0;

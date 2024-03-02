@@ -33,15 +33,21 @@
 		typedef __w64 int		VDZINT_PTR;
 		typedef __w64 unsigned	VDZUINT_PTR;
 		typedef __w64 long		VDZLONG_PTR;
+		typedef __w64 unsigned long	VDZULONG_PTR;
+		typedef __w64 unsigned long	VDZDWORD_PTR;
 	#else
 		typedef int			VDZINT_PTR;
 		typedef unsigned	VDZUINT_PTR;
 		typedef long		VDZLONG_PTR;
+		typedef unsigned long	VDZULONG_PTR;
+		typedef unsigned long	VDZDWORD_PTR;
 	#endif
 #else
 	typedef __int64				VDZINT_PTR;
 	typedef unsigned __int64	VDZUINT_PTR;
 	typedef __int64				VDZLONG_PTR;
+	typedef unsigned __int64	VDZULONG_PTR;
+	typedef unsigned __int64	VDZDWORD_PTR;
 #endif
 
 typedef struct tagMSG	MSG;

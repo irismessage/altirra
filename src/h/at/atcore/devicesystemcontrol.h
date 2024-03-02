@@ -27,15 +27,21 @@
 #ifndef f_AT_ATCORE_SYSTEMCONTROL_H
 #define f_AT_ATCORE_SYSTEMCONTROL_H
 
+#include <vd2/system/function.h>
 #include <vd2/system/unknown.h>
+#include <at/atcore/notifylist.h>
 
 class ATMemoryLayer;
 class IATDeviceSystemControl;
+class ATBusSignal;
 
 class IATSystemController {
 public:
 	// Reset the CPU (and only the CPU).
 	virtual void ResetCPU() = 0;
+
+	// Assert /RESET to reset the entire computer, but not peripherals.
+	virtual void ResetComputer() = 0;
 
 	// Assert /ABORT on the 65C816.
 	virtual void AssertABORT() = 0;
@@ -59,6 +65,16 @@ public:
 	// This is required to handle temporary disabling of some functions
 	// when U1MB is in its funky pre-lock state.
 	virtual void OnU1MBConfigPreLocked(bool inPreLockState) = 0;
+
+	// Read the Start/Select/Option buttons. Format is the same as CONSOL:
+	// bit 0 = start, bit 1 = select, bit 2 = option.
+	virtual uint8 ReadConsoleButtons() const = 0;
+
+	// Return bus signal for stereo (dual POKEY) audio enable.
+	virtual ATBusSignal& GetStereoEnableSignal() = 0;
+
+	// Return bus signal for Covox enable.
+	virtual ATBusSignal& GetCovoxEnableSignal() = 0;
 };
 
 class IATDeviceSystemControl {
@@ -75,6 +91,19 @@ public:
 		const void *kernelROM) = 0;
 
 	virtual void OnU1MBConfigPreLocked(bool inPreLockState) = 0;
+};
+
+class IATCovoxController {
+public:
+	virtual bool IsCovoxEnabled() const = 0;
+	virtual ATNotifyList<const vdfunction<void(bool)> *>& GetCovoxEnableNotifyList() = 0;
+};
+
+class IATDeviceCovoxControl {
+public:
+	enum : uint32 { kTypeID = 'dscv' };
+
+	virtual void InitCovoxControl(IATCovoxController& controller) = 0;
 };
 
 #endif

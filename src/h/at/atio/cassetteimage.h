@@ -88,6 +88,12 @@ public:
 	/// Decodes a bit from the tape without averaging and bypassing FSK decoding.
 	virtual bool GetTurboBit(uint32 pos) const = 0;
 
+	/// Return the first position at or after the given position that is a low data bit.
+	/// Does no low-pass filtering. Particularly optimized for skipping blocks that
+	/// are already marked as silence internally. Always uses FSK if both FSK and turbo
+	/// encodings are available.
+	virtual uint32 GetNearestLowBitPos(uint32 pos) const = 0;
+
 	/// Read signal peaks.
 	///
 	/// t0: First sample requested, in seconds.

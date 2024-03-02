@@ -59,6 +59,7 @@
      
      Grouping
       (exp)    Subexpression
+      @(...)   Immediately evaluated subexpression
       
      Unary operators
       db addr  Read memory unsigned byte
@@ -499,7 +500,7 @@
 
     Set a tracepoint on access to a memory location or range.
     
-      bt [-k] [-q] [-g group] <address> [L<length>]
+      bta [-k] [-q] [-g group] <mode> <address> [L<length>]
              format [arguments...]
       
     Sets a non-stopping breakpoint at a memory location or range with a
@@ -520,8 +521,8 @@
 
     Examples:
 
-        bta prior "PRIOR=$%02X" value
-        bta D100 L100 "[$%04X]=$%02X" value
+        bta r prior "PRIOR=$%02X" value
+        bta w D100 L100 "[$%04X]=$%02X" value
     
     See also: bt, .printf, .sprintf
     
@@ -1279,7 +1280,15 @@
 
     Lists pending GOSUB and FOR..NEXT loops on the BASIC stack.
     
-      .basic_dumpstack
+      .basic_dumpstack [-a] [-t]
+
+    -a decodes line references as addresses instead of line numbers.
+    Altirra BASIC and Turbo-Basic XL use addresses on the runtime stack
+    during execution.
+
+    -t decodes stack frames using Turbo-Basic XL format. This adds support
+    for REPEAT, WHILE, DO, and EXEC frames, as well as expanded FOR frames
+    with 256 variable support.
       
     See also: .basic
 
@@ -1457,7 +1466,7 @@
 
     Displays all sectors within a track on D1: in rotational order.
     
-      .disktrack <track>
+      .disktrack [-d <drive>] <track>
       
     The sectors are shown with their virtual sector number and phantom
     index, followed by the position of the sector in fractions of a
@@ -2134,6 +2143,7 @@
 .   v:$00000   VBXE memory
 .   r:$0000    Main memory
 .   x:$00000   Extended memory
+.   t:$01'A000 Cartridge memory, banked view (bank $01, address $A000)
 . 
 . Some commands support length syntax:
 .   db siov L100

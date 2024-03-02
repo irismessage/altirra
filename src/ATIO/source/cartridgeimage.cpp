@@ -19,6 +19,7 @@
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/file.h>
+#include <vd2/system/zip.h>
 #include <at/atcore/checksum.h>
 #include <at/atcore/vfs.h>
 #include <at/atio/cartridgeimage.h>
@@ -228,10 +229,15 @@ public:
 	void *GetBuffer() override { return mCARTROM.data(); }
 
 	uint64 GetChecksum() override;
+	std::optional<uint32> GetFileCRC() const override { return mFileCRC; }
 
 	bool IsDirty() const override { return mbDirty; }
 	void SetClean() { mbDirty = false; }
-	void SetDirty() { mbDirty = true; mbCartChecksumValid = false; }
+	void SetDirty() {
+		mbDirty = true;
+		mbCartChecksumValid = false;
+		mFileCRC = {};
+	}
 
 private:
 	static uint64 ComputeChecksum(const uint8 *p, size_t len);
@@ -245,6 +251,7 @@ private:
 	uint64 mCartChecksum;
 	bool mbCartChecksumValid = false;
 	bool mbDirty = false;
+	std::optional<uint32> mFileCRC {};
 };
 
 void ATCartridgeImage::Init(ATCartridgeMode mode) {
@@ -254,6 +261,7 @@ void ATCartridgeImage::Init(ATCartridgeMode mode) {
 	mImagePath.clear();
 	mbCartChecksumValid = false;
 	mbDirty = false;
+	mFileCRC = {};
 }
 
 bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, ATCartLoadContext *loadCtx) {
@@ -261,6 +269,8 @@ bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, 
 
 	if (size < 1024 || size > 128*1024*1024 + 16)
 		throw MyError("Unsupported cartridge size.");
+
+	mFileCRC = {};
 
 	// check for header
 	char buf[16];
@@ -294,6 +304,12 @@ bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, 
 				throw MyError("The selected cartridge cannot be loaded as it uses unsupported mapper mode %d.", type);
 
 			mCartMode = (ATCartridgeMode)mode;
+
+			VDCRCChecker crcChecker(VDCRCTable::CRC32);
+
+			crcChecker.Process(buf, 16);
+			crcChecker.Process(mCARTROM.data(), size32);
+			mFileCRC = crcChecker.CRC();
 		}
 	}
 
@@ -343,6 +359,8 @@ bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, 
 			else
 				throw MyError("Unsupported cartridge size.");
 		}
+
+		mFileCRC = VDCRCTable::CRC32.CRC(mCARTROM.data(), size32);
 	}
 
 	if (loadCtx) {

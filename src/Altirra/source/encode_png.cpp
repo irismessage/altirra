@@ -1030,8 +1030,8 @@ void VDImageEncoderPNG::Encode(const VDPixmap& px, const void *&p, uint32& len, 
 	ihdr.mFilterMethod		= 0;		// basic adaptive filtering
 	ihdr.mInterlaceMethod	= 0;		// no interlacing
 
-	VDCRCChecker crc;
-	uint32 ihdr_crc = VDToBE32(crc.CRC(VDCRCChecker::kCRC32, &ihdr.mChunkType, 17));
+	const VDCRCTable& crcTable = VDCRCTable::CRC32;
+	uint32 ihdr_crc = VDToBE32(crcTable.CRC(&ihdr.mChunkType, 17));
 
 	mOutput.insert(mOutput.end(), (const uint8 *)&ihdr, (const uint8 *)&ihdr + 21);
 	mOutput.insert(mOutput.end(), (const uint8 *)&ihdr_crc, (const uint8 *)&ihdr_crc + 4);
@@ -1103,17 +1103,17 @@ void VDImageEncoderPNG::Encode(const VDPixmap& px, const void *&p, uint32& len, 
 	mOutput.insert(mOutput.end(), (const uint8 *)&idat, (const uint8 *)&idat + 8);
 	mOutput.insert(mOutput.end(), encoutput.begin(), encoutput.end());
 
-	crc.Init(VDCRCChecker::kCRC32);
-	crc.Process(&idat.mChunkType, 4);
-	crc.Process(encoutput.data(), (sint32)encoutput.size());
-	uint32 idat_crc = VDToBE32(crc.CRC());
+	VDCRCChecker crcChecker(crcTable);
+	crcChecker.Process(&idat.mChunkType, 4);
+	crcChecker.Process(encoutput.data(), (sint32)encoutput.size());
+	uint32 idat_crc = VDToBE32(crcChecker.CRC());
 	mOutput.insert(mOutput.end(), (const uint8 *)&idat_crc, (const uint8 *)&idat_crc + 4);
 
 	uint8 footer[]={
 		0, 0, 0, 0, 'I', 'E', 'N', 'D', 0, 0, 0, 0
 	};
 
-	VDWriteUnalignedBEU32(footer+8, crc.CRC(VDCRCChecker::kCRC32, footer + 4, 4));
+	VDWriteUnalignedBEU32(footer+8, crcTable.CRC(footer + 4, 4));
 
 	mOutput.insert(mOutput.end(), footer, footer+12);
 

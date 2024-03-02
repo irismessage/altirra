@@ -1366,6 +1366,18 @@ bool VDD3D9Manager::CheckReturn(HRESULT hr) {
 	return SUCCEEDED(hr);
 }
 
+bool VDD3D9Manager::AdjustTextureSize(uint32& texw, uint32& texh, bool nonPow2OK) {
+	int texw2 = texw;
+	int texh2 = texh;
+
+	if (!AdjustTextureSize(texw2, texh2, nonPow2OK))
+		return false;
+
+	texw = texw2;
+	texh = texh2;
+	return true;
+}
+
 bool VDD3D9Manager::AdjustTextureSize(int& texw, int& texh, bool nonPow2OK) {
 	int origw = texw;
 	int origh = texh;
@@ -1856,6 +1868,18 @@ bool VDD3D9Manager::CreateInitTexture(UINT width, UINT height, UINT levels, D3DF
 	}
 
 	*ppInitTexture = p;
+	return true;
+}
+
+bool VDD3D9Manager::CreateTexture(IVDD3D9InitTexture *initTex, IVDD3D9Texture **ppTexture) {
+	vdrefptr<VDD3D9Texture> pTexture(new_nothrow VDD3D9Texture);
+	if (!pTexture)
+		return false;
+
+	if (!pTexture->Init(this, nullptr) || !pTexture->Init(initTex))
+		return false;
+
+	*ppTexture = pTexture.release();
 	return true;
 }
 

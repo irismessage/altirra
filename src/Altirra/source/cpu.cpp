@@ -32,6 +32,52 @@
 
 using namespace AT6502;
 
+// #define PROFILE_OPCODES
+
+#ifdef PROFILE_OPCODES
+	class ATCPUOpcodeProfiler {
+	public:
+		~ATCPUOpcodeProfiler() {
+			double scores[256] {};
+
+			for(const auto& e : mPCInsnPairs) {
+				scores[e.first & 0xFF] += log((double)e.second);
+			}
+
+			uint8 order[256];
+
+			for(uint32 i=0; i<256; ++i) {
+				order[i] = (uint8)i;
+			}
+
+			std::stable_sort(std::begin(order), std::end(order), [&](uint8 i, uint8 j) { return scores[i] > scores[j]; });
+
+			for(uint32 i=0; i<256; i += 16) {
+				VDDEBUG2("0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,\n",
+					order[i+ 0], order[i+ 1], order[i+ 2], order[i+ 3],
+					order[i+ 4], order[i+ 5], order[i+ 6], order[i+ 7],
+					order[i+ 8], order[i+ 9], order[i+10], order[i+11],
+					order[i+12], order[i+13], order[i+14], order[i+15]
+				);
+			}
+		}
+
+		void OnOpcode(uint16 pc, uint8 opcode) {
+			++mPCInsnPairs[((uint32)pc << 16) + ((uint32)mLastOpcode << 8) + opcode];
+			mLastOpcode = opcode;
+		}
+
+	private:
+		uint8 mLastOpcode = 0;
+
+		vdhashmap<uint32, uint32> mPCInsnPairs;
+	} g_ATCPUOpcodeProfiler;
+
+	#define ATCPU_PROFILE_OPCODE(pc, opcode) g_ATCPUOpcodeProfiler.OnOpcode(pc, opcode)
+#else
+	#define ATCPU_PROFILE_OPCODE(pc, opcode) ((void)0)
+#endif
+
 ATCPUEmulator::ATCPUEmulator()
 	: mpMemory(NULL)
 	, mpHookMgr(NULL)
@@ -690,8 +736,6 @@ void ATCPUEmulator::LoadState65C816(ATSaveStateReader& reader) {
 	mbEmulationFlag	= (reader.ReadUint8() & 1) != 0;
 	mB		= reader.ReadUint8();
 	mK		= reader.ReadUint8();
-	SetPC(reader.ReadUint16());
-	mIntFlags = reader.ReadUint8();
 }
 
 void ATCPUEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
@@ -1050,6 +1094,8 @@ template<bool is816, bool hispeed>
 void ATCPUEmulator::AddHistoryEntry(bool slowFlag) {
 	HistoryEntry * VDRESTRICT he = &mHistory[mHistoryIndex++ & 131071];
 
+	ATCPU_PROFILE_OPCODE(mPC-1, mOpcode);
+
 	mpCallbacks->CPUGetHistoryTimes(he);
 	he->mEA = 0xFFFFFFFFUL;
 	he->mPC = mPC - 1;
@@ -1224,14 +1270,36 @@ void ATCPUEmulator::RebuildDecodeTables() {
 }
 
 void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
+	// Microcode storage order for better cache utilization. Determined by PROFILE_OPCODES.
+	static constexpr uint8 kStorageOrder[] = {
+		0x85,0xA5,0x8D,0xA9,0xD0,0xBD,0x20,0x18,0xF0,0xAD,0x10,0xE8,0x9D,0x90,0x4C,0x4A,
+		0x60,0x65,0x38,0xC9,0x29,0xB9,0xB1,0x8E,0xA2,0xB0,0xCA,0xA0,0xE5,0x69,0x30,0xB5,
+		0xC8,0x88,0xAA,0xA6,0x49,0xA8,0xA4,0xEA,0x91,0x99,0xC6,0xE6,0x0A,0x95,0x7D,0x8A,
+		0x6D,0x48,0x98,0x86,0x68,0xE0,0xE9,0x2C,0xC5,0xAE,0xCE,0x84,0x24,0x26,0xAC,0xC0,
+		0xBC,0xC4,0x66,0x06,0x09,0x8C,0x6A,0xEE,0x2A,0xCD,0xED,0xB4,0x05,0x45,0x75,0x0D,
+		0x25,0xBE,0xDD,0xF5,0xE4,0x6C,0x40,0x79,0xD9,0x3D,0xD8,0x08,0xDE,0x28,0xD5,0x36,
+		0x2D,0x46,0xF9,0xF8,0x7E,0x1D,0x15,0x59,0x19,0xD1,0xEC,0x71,0xD6,0xFD,0x58,0x31,
+		0x4D,0xF1,0x50,0x94,0x0E,0xAF,0xB6,0x2E,0x5D,0xBA,0x1E,0x4E,0x70,0x35,0xFE,0xCC,
+		0x3E,0x78,0x9A,0x76,0x51,0x39,0xBF,0xA1,0x11,0x6E,0xF6,0x00,0x01,0x02,0x03,0x04,
+		0x07,0x0B,0x0C,0x0F,0x12,0x13,0x14,0x16,0x17,0x1A,0x1B,0x1C,0x1F,0x21,0x22,0x23,
+		0x27,0x2B,0x2F,0x32,0x33,0x34,0x37,0x3A,0x3B,0x3C,0x3F,0x41,0x42,0x43,0x44,0x47,
+		0x4B,0x4F,0x52,0x53,0x54,0x55,0x56,0x57,0x5A,0x5B,0x5C,0x5E,0x5F,0x61,0x62,0x63,
+		0x64,0x67,0x6B,0x6F,0x72,0x73,0x74,0x77,0x7A,0x7B,0x7C,0x7F,0x80,0x81,0x82,0x83,
+		0x87,0x89,0x8B,0x8F,0x92,0x93,0x96,0x97,0x9B,0x9C,0x9E,0x9F,0xA3,0xA7,0xAB,0xB2,
+		0xB3,0xB7,0xB8,0xBB,0xC1,0xC2,0xC3,0xC7,0xCB,0xCF,0xD2,0xD3,0xD4,0xD7,0xDA,0xDB,
+		0xDC,0xDF,0xE1,0xE2,0xE3,0xE7,0xEB,0xEF,0xF2,0xF3,0xF4,0xF7,0xFA,0xFB,0xFC,0xFF,
+	};
+
+	static_assert(std::size(kStorageOrder) == 256);
+
 	mpDstState = mDecodeHeap;
 	for(int i=0; i<256; ++i) {
-		mDecodePtrs[i] = (uint16)(mpDstState - mDecodeHeap);
+		uint8 c = kStorageOrder[i];
+
+		mDecodePtrs[c] = (uint16)(mpDstState - mDecodeHeap);
 
 		if (mbPathfindingEnabled)
 			*mpDstState++ = kStateAddToPath;
-
-		uint8 c = (uint8)i;
 
 		if (cmos) {
 			if (!Decode65C02(c) && !Decode6502(c))
@@ -1254,12 +1322,12 @@ void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
 	*mpDstState++ = kStateReadDummyOpcode;
 	*mpDstState++ = kStateReadDummyOpcode;
 
-	if (mbStepOver)
-		*mpDstState++ = kStateStepOver;
-
 	*mpDstState++ = kStatePushPCH;
 	*mpDstState++ = kStatePushPCL;
 	*mpDstState++ = kStatePtoD_B0;
+
+	if (mbStepOver)
+		*mpDstState++ = kStateStepOver;
 
 	if (mCPUMode == kATCPUMode_65C02)
 		*mpDstState++ = kStateCLD;
@@ -1285,12 +1353,12 @@ void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
 	*mpDstState++ = kStateReadDummyOpcode;
 	*mpDstState++ = kStateReadDummyOpcode;
 
-	if (mbStepOver)
-		*mpDstState++ = kStateStepOver;
-
 	*mpDstState++ = kStatePushPCH;
 	*mpDstState++ = kStatePushPCL;
 	*mpDstState++ = kStatePtoD_B0;
+
+	if (mbStepOver)
+		*mpDstState++ = kStateStepOver;
 
 	if (mCPUMode == kATCPUMode_65C02)
 		*mpDstState++ = kStateCLD;
@@ -1373,9 +1441,6 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 		*mpDstState++ = kStateReadDummyOpcode;
 		*mpDstState++ = kStateReadDummyOpcode;
 
-		if (mbStepOver)
-			*mpDstState++ = kStateStepOver;
-
 		if (emulationMode) {
 			*mpDstState++ = kStatePushPCH;
 			*mpDstState++ = kStatePushPCL;
@@ -1388,6 +1453,9 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 			*mpDstState++ = kStatePtoD;
 			*mpDstState++ = kStatePushNative;
 		}
+
+		if (mbStepOver)
+			*mpDstState++ = kStateStepOver;
 
 		*mpDstState++ = kState816_SetI_ClearD;
 
@@ -1413,9 +1481,6 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 		*mpDstState++ = kStateReadDummyOpcode;
 		*mpDstState++ = kStateReadDummyOpcode;
 
-		if (mbStepOver)
-			*mpDstState++ = kStateStepOver;
-
 		if (emulationMode) {
 			*mpDstState++ = kStatePushPCH;
 			*mpDstState++ = kStatePushPCL;
@@ -1428,6 +1493,9 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 			*mpDstState++ = kStatePtoD;
 			*mpDstState++ = kStatePushNative;
 		}
+
+		if (mbStepOver)
+			*mpDstState++ = kStateStepOver;
 
 		*mpDstState++ = kState816_SetI_ClearD;
 
@@ -1453,9 +1521,6 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 		*mpDstState++ = kStateReadDummyOpcode;
 		*mpDstState++ = kStateReadDummyOpcode;
 
-		if (mbStepOver)
-			*mpDstState++ = kStateStepOver;
-
 		// unlike the other interrupt types, for ABORT we must use the faulting PC.
 		*mpDstState++ = kState816_ABORT;
 
@@ -1471,6 +1536,9 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 			*mpDstState++ = kStatePtoD;
 			*mpDstState++ = kStatePushNative;
 		}
+
+		if (mbStepOver)
+			*mpDstState++ = kStateStepOver;
 		
 		*mpDstState++ = kState816_SetI_ClearD;
 
@@ -1553,3 +1621,5 @@ void ATCPUEmulator::DecodeReadInd() {
 	if (mbHistoryEnabled)
 		*mpDstState++ = kStateAddEAToHistory;
 }
+
+#undef ATCPU_PROFILE_OPCODE

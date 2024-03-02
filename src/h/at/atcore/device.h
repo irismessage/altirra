@@ -81,6 +81,12 @@ public:
 	virtual bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const = 0;
 };
 
+enum class ATDeviceFirmwareStatus : uint8 {
+	OK,
+	Missing,
+	Invalid
+};
+
 class IATDeviceFirmware {
 public:
 	enum { kTypeID = 'adfw' };
@@ -95,7 +101,7 @@ public:
 	virtual bool IsWritableFirmwareDirty(uint32 idx) const = 0;
 	virtual void SaveWritableFirmware(uint32 idx, IVDStream& stream) = 0;
 
-	virtual bool IsUsableFirmwareLoaded() const = 0;
+	virtual ATDeviceFirmwareStatus GetFirmwareStatus() const = 0;
 };
 
 class IATDeviceIRQSource {

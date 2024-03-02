@@ -51,6 +51,7 @@
 #include <at/atappbase/exceptionfilter.h>
 #include <at/atcore/constants.h>
 #include <at/atcore/checksum.h>
+#include <at/atcore/enumparseimpl.h>
 #include <at/atcore/media.h>
 #include <at/atcore/profile.h>
 #include <at/atdevices/devices.h>
@@ -78,7 +79,6 @@
 #include "savestate.h"
 #include "resource.h"
 #include "oshelper.h"
-#include "autotest.h"
 #include "audiowriter.h"
 #include "sapwriter.h"
 #include "inputmanager.h"
@@ -137,7 +137,6 @@ void ATUITriggerButtonUp(uint32 vk);
 void ATUIShowDialogInputMappings(VDZHWND parent, ATInputManager& iman, IATJoystickManager *ijoy);
 void ATUIShowDialogInputSetup(VDZHWND parent, ATInputManager& iman, IATJoystickManager *ijoy);
 void ATUIShowDiskDriveDialog(VDGUIHandle hParent);
-void ATUIShowTapeControlDialog(VDGUIHandle hParent, ATCassetteEmulator& cassette);
 int ATUIShowDialogCartridgeMapper(VDGUIHandle h, uint32 cartSize, const void *data);
 void ATUIShowDialogLightPen(VDGUIHandle h, ATLightPenPort *lpp);
 void ATUIShowDialogCheater(VDGUIHandle hParent, ATCheatEngine *engine);
@@ -152,6 +151,7 @@ void ATUIShowDialogSetupWizard(VDGUIHandle hParent);
 
 void ATUILoadRegistry(const wchar_t *path);
 void ATUISaveRegistry(const wchar_t *fnpath);
+void ATUIMigrateSettings();
 
 void ATRegisterDevices(ATDeviceManager& dm);
 
@@ -171,6 +171,7 @@ void ATUIInitProfileMenuCallbacks();
 
 void ATInitDebugger();
 void ATShutdownDebugger();
+void ATDebuggerInitAutotestCommands();
 void ATInitProfilerUI();
 void ATInitUIPanes();
 void ATShutdownUIPanes();
@@ -203,6 +204,7 @@ VDCommandLine g_ATCmdLine;
 bool g_ATCmdLineRead;
 bool g_ATCmdLineHadAnything;
 bool g_ATRegistryHadAnything;
+bool g_ATRegistryTemp;
 VDRegistryProviderMemory *g_pATRegistryMemory;
 VDStringW g_ATRegistryPathPortable;
 
@@ -280,6 +282,16 @@ void ATUISetWindowCaptionTemplate(const char *s) {
 
 const char *ATUIGetWindowCaptionTemplate() {
 	return g_winCaptionTemplate.c_str();
+}
+
+void ATUIExit(bool forceNoConfirm) {
+	if (!g_hwnd)
+		return;
+
+	if (forceNoConfirm)
+		DestroyWindow(g_hwnd);
+	else
+		::SendMessage(g_hwnd, WM_CLOSE, 0, 0);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1092,6 +1104,16 @@ void ATUIUnloadStorageForBoot() {
 	g_sim.UnloadAll(g_ATUIBootUnloadStorageMask);
 }
 
+void ATUIBootImage(const wchar_t *path) {
+	bool suppressColdReset = false;
+	ATUIUnloadStorageForBoot();
+
+	DoLoad((VDGUIHandle)g_hwnd, path, nullptr, 0);
+
+	if (!suppressColdReset)
+		g_sim.ColdReset();
+}
+
 void DoBootWithConfirm(const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper) {
 	if (!ATUIConfirmDiscardAllStorage((VDGUIHandle)g_hwnd, L"OK to discard?", false, g_ATUIBootUnloadStorageMask))
 		return;
@@ -1435,44 +1457,43 @@ void OnCommandVideoEnhancedTextFontDialog() {
 	}
 }
 
-void Paste(const char *s, size_t len, bool useCooldown) {
-	if (g_enhancedText == 2) {
-		IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
-		if (pane)
-			pane->Paste(s, len);
-	} else {
-		char skipLT = 0;
-		while(len--) {
-			char c = *s++;
+namespace {
+	constexpr ATEnumEntry<uint8> g_scancodeNameTable[] = {
+		{ 0x2C, "tab" },
+		{ 0x34, "back" },
+		{ 0x34, "backspace" },
+		{ 0x34, "bksp" },
+		{ 0x0C, "enter" },
+		{ 0x0C, "return" },
+		{ 0x1C, "esc" },
+		{ 0x1C, "escape" },
+		{ 0x27, "fuji" },
+		{ 0x27, "inv" },
+		{ 0x27, "invert" },
+		{ 0x11, "help" },
+		{ 0x76, "clear" },
+		{ 0xB4, "del" },
+		{ 0xB4, "delete" },
+		{ 0xB7, "ins" },
+		{ 0xB7, "insert" },
+		{ 0x3C, "caps" },
+		{ 0x86, "left" },
+		{ 0x87, "right" },
+		{ 0x8E, "up" },
+		{ 0x8F, "down" },
+	};
 
-			if (c == skipLT) {
-				skipLT = 0;
-				continue;
-			}
-
-			skipLT = 0;
-
-			if (c == '\r' || c == '\n') {
-				skipLT = c ^ ('\r' ^ '\n');
-
-				g_sim.GetPokey().PushKey(0x0C, false, true, false, useCooldown);
-			} else if (c == '\t')
-				g_sim.GetPokey().PushKey(0x2C, false, true, false, useCooldown);
-			else {
-				uint8 ch;
-
-				if (ATUIGetDefaultScanCodeForCharacter(c, ch))
-					g_sim.GetPokey().PushKey(ch, false, true, false, useCooldown);
-			}
-		}
-	}
+	constexpr auto g_scancodeNameMap = ATCreateEnumLookupTable(g_scancodeNameTable);
 }
 
 void Paste(const wchar_t *s, size_t len, bool useCooldown) {
-	vdfastvector<char> s8;
+	vdfastvector<wchar_t> pasteChars;
 
 	while(len--) {
 		wchar_t c = *s++;
+
+		if (!c)
+			continue;
 
 		// fix annoying characters
 		int repeat = 1;
@@ -1513,14 +1534,124 @@ void Paste(const wchar_t *s, size_t len, bool useCooldown) {
 				continue;
 		}
 
-		if ((unsigned)c >= 0x100)
-			continue;
-
 		while(repeat--)
-			s8.push_back((char)c);
+			pasteChars.push_back(c);
 	}
 
-	Paste(s8.data(), s8.size(), useCooldown);
+	if (g_enhancedText == 2) {
+		IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+		if (pane)
+			pane->Paste(s, len);
+
+		return;
+	}
+
+	pasteChars.push_back(0);
+
+	auto& pokey = g_sim.GetPokey();
+	wchar_t skipLT = 0;
+	uint8 scancodeModifier = 0;
+
+	const wchar_t *t = pasteChars.data();
+
+	while(wchar_t c = *t++) {
+		if (c == skipLT) {
+			skipLT = 0;
+			continue;
+		}
+
+		skipLT = 0;
+
+		if (c == '{') {
+			const wchar_t *start = t;
+
+			while(*t && *t != '}')
+				++t;
+
+			if (*t != '}')
+				break;
+
+			VDStringSpanW name(start, t);
+			++t;
+
+			while(!name.empty()) {
+				if (name[0] == L'+') {
+					scancodeModifier |= 0x40;
+					name = name.subspan(1);
+					continue;
+				}
+
+				if (name.subspan(0, 6).comparei(L"shift-") == 0 ||
+					name.subspan(0, 6).comparei(L"shift+") == 0) {
+					scancodeModifier |= 0x40;
+					name = name.subspan(6);
+					continue;
+				}
+
+				if (name[0] == L'^') {
+					scancodeModifier |= 0x80;
+					name = name.subspan(1);
+					continue;
+				}
+
+				if (name.subspan(0, 5).comparei(L"ctrl-") == 0 ||
+					name.subspan(0, 5).comparei(L"ctrl+") == 0) {
+					scancodeModifier |= 0x80;
+					name = name.subspan(5);
+					continue;
+				}
+
+				auto parseResult = ATParseEnum(ATEnumLookupTable { g_scancodeNameMap.mHashEntries, vdcountof(g_scancodeNameMap.mHashEntries), 0}, name);
+				if (parseResult.mValid) {
+					uint8 scancode = parseResult.mValue;
+
+					if (scancodeModifier)
+						scancode = (scancode & 0x3F) | scancodeModifier;
+
+					pokey.PushKey(scancode, false, true, false, useCooldown);
+				} else {
+					VDStringW err;
+					err.sprintf(L"Paste failed: unrecognized token \"%.*ls\"", (int)name.size(), name.data());
+					g_sim.GetUIRenderer()->SetStatusMessage(err.c_str());
+				}
+
+				scancodeModifier = 0;
+				break;
+			}
+
+			continue;
+		}
+
+		const uint8 kInvalidScancode = 0xFF;
+		uint8 scancode = kInvalidScancode;
+
+		switch(c) {
+			case L'\r':
+			case L'\n':
+				skipLT = c ^ (L'\r' ^ L'\n');
+				scancode = 0x0C;
+				break;
+
+			case L'\t':			// Tab
+				scancode = 0x2C;
+				break;
+
+			case L'\x001B':		// Esc
+				scancode = 0x1C;
+				break;
+
+			default:
+				if (!ATUIGetDefaultScanCodeForCharacter(c, scancode))
+					scancode = kInvalidScancode;
+
+				break;
+		}
+
+		if (scancode != kInvalidScancode)
+			pokey.PushKey(scancode | scancodeModifier, false, true, false, useCooldown);
+
+		scancodeModifier = 0;
+	}
 }
 
 void ATUIResizeDisplay() {
@@ -1675,118 +1806,7 @@ void OnCommandSaveFirmwareRapidusFlash() {
 }
 
 void OnCommandExit() {
-	if (g_hwnd)
-		::SendMessage(g_hwnd, WM_CLOSE, 0, 0);
-}
-
-void OnCommandCassetteLoadNew() {
-	g_sim.GetCassette().LoadNew();
-}
-
-void OnCommandCassetteLoad() {
-	VDStringW fn(VDGetLoadFileName('cass', (VDGUIHandle)g_hwnd, L"Load cassette tape", g_ATUIFileFilter_LoadTape, L"wav"));
-
-	if (!fn.empty()) {
-		ATCassetteEmulator& cas = g_sim.GetCassette();
-		cas.Load(fn.c_str());
-		cas.Play();
-	}
-}
-
-void OnCommandCassetteUnload() {
-	g_sim.GetCassette().Unload();
-}
-
-void OnCommandCassetteSave() {
-	ATCassetteEmulator& cas = g_sim.GetCassette();
-	if (!cas.IsLoaded())
-		return;
-
-	VDStringW fn(VDGetSaveFileName('cass', (VDGUIHandle)g_hwnd, L"Save cassette tape", g_ATUIFileFilter_SaveTape, L"cas"));
-
-	if (fn.empty())
-		return;
-
-	VDFileStream f(fn.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kSequential | nsVDFile::kCreateAlways);
-
-	ATSaveCassetteImageCAS(f, cas.GetImage());
-	cas.SetImageClean();
-}
-
-void OnCommandCassetteExportAudioTape() {
-	ATCassetteEmulator& cas = g_sim.GetCassette();
-	if (!cas.IsLoaded())
-		return;
-
-	VDStringW fn(VDGetSaveFileName('casa', (VDGUIHandle)g_hwnd, L"Export cassette tape audio", g_ATUIFileFilter_SaveTapeAudio, L"wav"));
-
-	if (fn.empty())
-		return;
-
-	VDFileStream f(fn.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kSequential | nsVDFile::kCreateAlways);
-
-	ATSaveCassetteImageWAV(f, cas.GetImage());
-	cas.SetImageClean();
-}
-
-void OnCommandCassetteTapeControlDialog() {
-	ATUIShowTapeControlDialog((VDGUIHandle)g_hwnd, g_sim.GetCassette());
-}
-
-void OnCommandCassetteToggleSIOPatch() {
-	g_sim.SetCassetteSIOPatchEnabled(!g_sim.IsCassetteSIOPatchEnabled());
-}
-
-void OnCommandCassetteToggleAutoBoot() {
-	g_sim.SetCassetteAutoBootEnabled(!g_sim.IsCassetteAutoBootEnabled());
-}
-
-void OnCommandCassetteToggleAutoRewind() {
-	g_sim.SetCassetteAutoRewindEnabled(!g_sim.IsCassetteAutoRewindEnabled());
-}
-
-void OnCommandCassetteToggleLoadDataAsAudio() {
-	ATCassetteEmulator& cas = g_sim.GetCassette();
-
-	cas.SetLoadDataAsAudioEnable(!cas.IsLoadDataAsAudioEnabled());
-}
-
-void OnCommandCassetteToggleRandomizeStartPosition() {
-	g_sim.SetCassetteRandomizedStartEnabled(!g_sim.IsCassetteRandomizedStartEnabled());
-}
-
-void OnCommandCassetteTurboModeNone() {
-	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_None);
-}
-
-void OnCommandCassetteTurboModeCommandControl() {
-	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_CommandControl);
-}
-
-void OnCommandCassetteTurboModeProceedSense() {
-	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_ProceedSense);
-}
-
-void OnCommandCassetteTurboModeInterruptSense() {
-	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_InterruptSense);
-}
-
-void OnCommandCassetteTurboModeAlways() {
-	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_Always);
-}
-
-void OnCommandCassetteTogglePolarity() {
-	auto& cas = g_sim.GetCassette();
-
-	cas.SetPolarityMode(cas.GetPolarityMode() == kATCassettePolarityMode_Normal ? kATCassettePolarityMode_Inverted : kATCassettePolarityMode_Normal);
-}
-
-void OnCommandCassettePolarityModeNormal() {
-	g_sim.GetCassette().SetPolarityMode(kATCassettePolarityMode_Normal);
-}
-
-void OnCommandCassettePolarityModeInverted() {
-	g_sim.GetCassette().SetPolarityMode(kATCassettePolarityMode_Inverted);
+	ATUIExit(false);
 }
 
 ATDisplayFilterMode ATUIGetDisplayFilterMode() {
@@ -1890,6 +1910,19 @@ void OnCommandEditSaveFrame() {
 		pane->SaveFrame(false);
 }
 
+bool ATUISaveFrame(const wchar_t *path) {
+	const VDPixmap *px = g_sim.GetGTIA().GetLastFrameBuffer();
+	if (!px)
+		return false;
+
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (!pane)
+		return false;
+
+	pane->SaveFrame(false, path);
+	return true;
+}
+
 void OnCommandEditSaveFrameTrueAspect() {
 	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
 	if (pane)
@@ -1899,7 +1932,13 @@ void OnCommandEditSaveFrameTrueAspect() {
 void OnCommandEditCopyText() {
 	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
 	if (pane)
-		pane->Copy();
+		pane->Copy(false);
+}
+
+void OnCommandEditCopyEscapedText() {
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (pane)
+		pane->Copy(true);
 }
 
 void OnCommandEditPasteText() {
@@ -1910,8 +1949,10 @@ void OnCommandEditPasteText() {
 	if (ATUIClipGetText(s8, s16, use16)) {
 		if (use16)
 			Paste(s16.data(), s16.size(), true);
-		else
-			Paste(s8.data(), s8.size(), true);
+		else {
+			const VDStringW& s16c = VDTextAToW(s8);
+			Paste(s16c.data(), s16c.size(), true);
+		}
 	}
 }
 
@@ -2184,7 +2225,7 @@ void OnCommandDiskRotate(int delta) {
 	// find highest drive in use
 	int activeDrives = 0;
 	for(int i=14; i>=0; --i) {
-		if (g_sim.GetDiskDrive(i).IsEnabled()) {
+		if (g_sim.GetDiskDrive(i).IsEnabled() || g_sim.GetDiskInterface(i).GetClientCount() > 1) {
 			activeDrives = i+1;
 			break;
 		}
@@ -2601,7 +2642,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 	bool debugModeSuspend = false;
 	const ATMediaWriteMode *bootWriteMode = nullptr;
 	bool unloaded = false;
-	VDStringA keysToType;
+	VDStringW keysToType;
 	int cartmapper = 0;
 
 	bool autoProfile = cmdLine.FindAndRemoveSwitch(L"autoprofile");
@@ -2625,7 +2666,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"autotest")) {
-			ATSetAutotestEnabled(true);
+			ATDebuggerInitAutotestCommands();
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"borderless")) {
@@ -2923,7 +2964,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"type", arg)) {
-			keysToType += VDTextWToA(arg);
+			keysToType += arg;
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"nopclink")) {
@@ -3522,7 +3563,7 @@ int RunMainLoop(HWND hwnd) {
 int RunInstance(int nCmdShow);
 
 void ATUISetCommandLine(const wchar_t *s) {
-	g_ATCmdLine.InitAlt(s);
+	g_ATCmdLine.Init(s);
 	g_ATCmdLineRead = false;
 }
 
@@ -3535,7 +3576,8 @@ bool ATInitRegistry() {
 	const wchar_t *portableAltFile = nullptr;
 	g_ATCmdLine.FindAndRemoveSwitch(L"portablealt", portableAltFile);
 
-	const bool portable =  g_ATCmdLine.FindAndRemoveSwitch(L"portable");
+	g_ATRegistryTemp = g_ATCmdLine.FindAndRemoveSwitch(L"portabletemp");
+	const bool portable = g_ATRegistryTemp || g_ATCmdLine.FindAndRemoveSwitch(L"portable");
 
 	// Check for any switches other than /resetall, /portable, and /portablealt
 	g_ATCmdLineHadAnything = g_ATCmdLine.GetCount() > 1;
@@ -3543,13 +3585,15 @@ bool ATInitRegistry() {
 	if (portableAltFile)
 		g_ATRegistryPathPortable = VDGetFullPath(portableAltFile);
 	else
-		g_ATRegistryPathPortable = VDMakePath(VDGetProgramPath().c_str(), L"Altirra.ini");
+		g_ATRegistryPathPortable = ATSettingsGetDefaultPortablePath();
 
 	if (portableAltFile || portable || VDDoesPathExist(g_ATRegistryPathPortable.c_str())) {
 		g_pATRegistryMemory = new VDRegistryProviderMemory;
 		VDSetRegistryProvider(g_pATRegistryMemory);
 
-		if (!resetAll && VDDoesPathExist(g_ATRegistryPathPortable.c_str())) {
+		ATSettingsSetInPortableMode(true);
+
+		if (!resetAll && !g_ATRegistryTemp && VDDoesPathExist(g_ATRegistryPathPortable.c_str())) {
 			try {
 				ATUILoadRegistry(g_ATRegistryPathPortable.c_str());
 			} catch(const MyError& err) {
@@ -3575,23 +3619,37 @@ bool ATInitRegistry() {
 }
 
 void ATShutdownRegistry() {
+	bool migrated = false;
+
+	if (ATSettingsIsMigrationScheduled()) {
+		ATUIMigrateSettings();
+		migrated = true;
+	}
+
 	const bool shouldReset = ATSettingsIsResetPending();
 
 	if (g_pATRegistryMemory) {
-		try {
-			if (shouldReset) {
-				VDFile f(g_ATRegistryPathPortable.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kTruncateExisting);
-			} else {
-				ATUISaveRegistry(g_ATRegistryPathPortable.c_str());
+		if (migrated) {
+			// if we migrated, we should delete
+			VDRemoveFile(g_ATRegistryPathPortable.c_str());
+		} else if (!g_ATRegistryTemp) {
+			try {
+				if (shouldReset) {
+					// reset pending -- truncate the file instead of saving
+					VDFile f(g_ATRegistryPathPortable.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kTruncateExisting);
+				} else {
+					// no reset or migration -- save registry
+					ATUISaveRegistry(g_ATRegistryPathPortable.c_str());
+				}
+			} catch(const MyError&) {
 			}
-		} catch(const MyError&) {
 		}
 
 		VDSetRegistryProvider(nullptr);
 		delete g_pATRegistryMemory;
 		g_pATRegistryMemory = nullptr;
 	} else {
-		if (shouldReset)
+		if (shouldReset || migrated)
 			SHDeleteKey(HKEY_CURRENT_USER, _T("Software\\virtualdub.org\\Altirra"));
 	}
 }
@@ -3807,6 +3865,11 @@ int RunInstance(int nCmdShow) {
 	};
 
 	ATOptionsAddUpdateCallback(true, local::DisplayUpdateFn);
+	ATOptionsAddUpdateCallback(true,
+		[](ATOptions& opts, const ATOptions *prevOpts, void *) {
+			g_sim.GetGTIA().SetAccelScreenFXEnabled(opts.mbDisplayAccelScreenFX);
+		}
+	);
 
 	VDVideoDisplaySetDebugInfoEnabled(g_ATCmdLine.FindAndRemoveSwitch(L"displaydebug"));
 	VDVideoDisplaySetMonitorSwitchingDXEnabled(true);

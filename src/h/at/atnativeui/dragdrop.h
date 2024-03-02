@@ -35,6 +35,8 @@ struct ATUIDragDropFormatsW32 {
 	UINT mDescriptorA;
 	UINT mDescriptorW;
 	UINT mShellIdList;
+	UINT mDropDescription;
+	UINT mDragWindow;
 };
 
 const ATUIDragDropFormatsW32& ATUIInitDragDropFormatsW32();
@@ -56,6 +58,9 @@ struct ATAutoStgMediumW32 : public STGMEDIUM {
 
 void ATReadDragDropFileDescriptorsW32(vdfastvector<FILEDESCRIPTORW>& dst, const FILEGROUPDESCRIPTORW *src);
 void ATReadDragDropFileDescriptorsW32(vdfastvector<FILEDESCRIPTORW>& dst, const FILEGROUPDESCRIPTORA *src);
+
+void ATUIClearDropDescriptionW32(IDataObject *obj);
+void ATUISetDropDescriptionW32(IDataObject *obj, DROPIMAGETYPE dropImageType, const wchar_t *templateStr, const wchar_t *insertStr);
 
 bool ATUIGetVFSPathFromShellIDListW32(HGLOBAL hGlobal, VDStringW& vfsPath);
 

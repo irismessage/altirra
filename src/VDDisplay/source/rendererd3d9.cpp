@@ -27,6 +27,7 @@
 
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/refcount.h>
+#include <vd2/system/seh.h>
 #include <vd2/VDDisplay/renderer.h>
 #include <vd2/VDDisplay/direct3d.h>
 #include <vd2/VDDisplay/textrenderer.h>
@@ -55,6 +56,7 @@ public:
 	virtual void MultiFillRect(const vdrect32 *rects, uint32 n);
 
 	virtual void AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, uint32 alphaColor);
+	virtual void AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint32 alphaColor);
 
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView);
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h);
@@ -309,6 +311,55 @@ void VDDisplayRendererD3D9::AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h
 
 	if (valid)
 		mpD3DManager->DrawArrays(D3DPT_TRIANGLESTRIP, 0, 2);
+
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+}
+
+void VDDisplayRendererD3D9::AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint32 alphaColor) {
+	IDirect3DDevice9 *dev = mpD3DManager->GetDevice();
+	dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_CURRENT);
+	dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+	dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_CURRENT);
+	dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+	dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+	dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+
+	constexpr uint32 maxBatchPts = (nsVDD3D9::kVertexBufferSize / sizeof(nsVDD3D9::Vertex)) & ~1;
+
+	while(numPts >= 3) {
+		const uint32 numBatchPts = std::min(numPts, maxBatchPts);
+
+		nsVDD3D9::Vertex *pvx = mpD3DManager->LockVertices(numBatchPts);
+		if (!pvx)
+			break;
+
+		bool valid = false;
+		vd_seh_guard_try {
+			for(uint32 i=0; i<numPts; ++i) {
+				pvx[i] = nsVDD3D9::Vertex((float)pts[i].x, (float)pts[i].y, alphaColor, 0, 0);
+			}
+
+			valid = true;
+		} vd_seh_guard_except {
+			// lost device -> invalid dynamic pointer on XP - skip draw below
+		}
+
+		mpD3DManager->UnlockVertices();
+
+		if (!valid)
+			break;
+
+		mpD3DManager->DrawArrays(D3DPT_TRIANGLESTRIP, 0, numBatchPts - 2);
+
+		// if we reached the end, we're done
+		if (numBatchPts >= numPts)
+			break;
+
+		// overlap last two points to maintain tristrip continuity
+		pts += numBatchPts - 2;
+		numPts -= numBatchPts - 2;
+	}
 
 	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
 }

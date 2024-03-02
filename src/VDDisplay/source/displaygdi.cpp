@@ -207,7 +207,7 @@ bool VDVideoDisplayMinidriverGDI::Init(HWND hwnd, HMONITOR hmonitor, const VDVid
 				for(int j=0; j<256; ++j)
 					mIdentTab[j] = (uint8)j;
 
-				mhbm = CreateDIBSection(hdc, (const BITMAPINFO *)&bih, DIB_RGB_COLORS, &mpBitmapBits, mSource.pSharedObject, mSource.sharedOffset);
+				mhbm = CreateDIBSection(hdc, (const BITMAPINFO *)&bih, DIB_RGB_COLORS, &mpBitmapBits, nullptr, 0);
 			} else if (mSource.pixmap.format == nsVDPixmap::kPixFormat_Pal8) {
 				struct {
 					BITMAPINFOHEADER hdr;
@@ -233,7 +233,7 @@ bool VDVideoDisplayMinidriverGDI::Init(HWND hwnd, HMONITOR hmonitor, const VDVid
 					bih.pal[i].rgbReserved = 0;
 				}
 
-				mhbm = CreateDIBSection(hdc, (const BITMAPINFO *)&bih, DIB_RGB_COLORS, &mpBitmapBits, mSource.pSharedObject, mSource.sharedOffset);
+				mhbm = CreateDIBSection(hdc, (const BITMAPINFO *)&bih, DIB_RGB_COLORS, &mpBitmapBits, nullptr, 0);
 			} else {
 				BITMAPV4HEADER bih = {0};
 
@@ -315,7 +315,7 @@ bool VDVideoDisplayMinidriverGDI::Init(HWND hwnd, HMONITOR hmonitor, const VDVid
 
 				mPitch = ((mSource.pixmap.w * bih.bV4BitCount + 31)>>5)*4;
 				bih.bV4SizeImage		= mPitch * mSource.pixmap.h;
-				mhbm = CreateDIBSection(hdc, (const BITMAPINFO *)&bih, DIB_RGB_COLORS, &mpBitmapBits, mSource.pSharedObject, mSource.sharedOffset);
+				mhbm = CreateDIBSection(hdc, (const BITMAPINFO *)&bih, DIB_RGB_COLORS, &mpBitmapBits, nullptr, 0);
 			}
 
 			if (mhbm) {
@@ -324,14 +324,11 @@ bool VDVideoDisplayMinidriverGDI::Init(HWND hwnd, HMONITOR hmonitor, const VDVid
 				if (mhbmOld) {
 					ReleaseDC(mhwnd, hdc);
 					VDDEBUG_DISP("VideoDisplay: Using GDI for %dx%d %s display.\n", mSource.pixmap.w, mSource.pixmap.h, VDPixmapGetInfo(mSource.pixmap.format).name);
-					mbValid = (mSource.pSharedObject != 0);
+					mbValid = false;
 
 					mRenderer.Init();
 					return true;
 				}
-
-				if (mSource.pSharedObject && mSource.sharedOffset >= 65536)
-					UnmapViewOfFile(mpBitmapBits);		// Workaround for GDI memory leak in NT4
 
 				DeleteObject(mhbm);
 				mhbm = 0;
@@ -355,8 +352,6 @@ void VDVideoDisplayMinidriverGDI::Shutdown() {
 	if (mhbm) {
 		SelectObject(mhdc, mhbmOld);
 		DeleteObject(mhbm);
-		if (mSource.pSharedObject && mSource.sharedOffset >= 65536)
-			UnmapViewOfFile(mpBitmapBits);		// Workaround for GDI memory leak in NT4
 		mhbm = 0;
 	}
 
@@ -370,9 +365,6 @@ void VDVideoDisplayMinidriverGDI::Shutdown() {
 
 bool VDVideoDisplayMinidriverGDI::ModifySource(const VDVideoDisplaySourceInfo& info) {
 	if (!mhdc)
-		return false;
-
-	if (mSource.pSharedObject)
 		return false;
 	
 	if (mSource.pixmap.w != info.pixmap.w || mSource.pixmap.h != info.pixmap.h || mSource.pixmap.pitch != info.pixmap.pitch)
@@ -442,52 +434,13 @@ bool VDVideoDisplayMinidriverGDI::Update(UpdateMode mode) {
 	if (!mSource.pixmap.data)
 		return false;
 
-	if (!mSource.pSharedObject) {
+	{
 		GdiFlush();
 
 		VDPixmap source(mSource.pixmap);
 
 		char *dst = (char *)mpBitmapBits + mPitch*(source.h - 1);
 		ptrdiff_t dstpitch = -mPitch;
-
-		if (mSource.bInterlaced && (mode & kModeFieldMask) != kModeAllFields) {
-			const bool oddField = ((mode & kModeFieldMask) == kModeOddField);
-			source = VDPixmapExtractField(mSource.pixmap, oddField);
-			if (oddField)
-				dst += dstpitch;
-
-			dstpitch += dstpitch;
-
-			switch(source.format) {
-				case nsVDPixmap::kPixFormat_YUV420i_Planar:
-					if (oddField)
-						source.format = nsVDPixmap::kPixFormat_YUV420ib_Planar;
-					else
-						source.format = nsVDPixmap::kPixFormat_YUV420it_Planar;
-					break;
-
-				case nsVDPixmap::kPixFormat_YUV420i_Planar_FR:
-					if (oddField)
-						source.format = nsVDPixmap::kPixFormat_YUV420ib_Planar_FR;
-					else
-						source.format = nsVDPixmap::kPixFormat_YUV420it_Planar_FR;
-					break;
-
-				case nsVDPixmap::kPixFormat_YUV420i_Planar_709:
-					if (oddField)
-						source.format = nsVDPixmap::kPixFormat_YUV420ib_Planar_709;
-					else
-						source.format = nsVDPixmap::kPixFormat_YUV420it_Planar_709;
-					break;
-
-				case nsVDPixmap::kPixFormat_YUV420i_Planar_709_FR:
-					if (oddField)
-						source.format = nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR;
-					else
-						source.format = nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR;
-					break;
-			}
-		}
 
 		VDPixmap dstbm = { dst, NULL, source.w, source.h, dstpitch, source.format };
 
@@ -621,39 +574,6 @@ void VDVideoDisplayMinidriverGDI::InternalRefresh(HDC hdc, const RECT& rClient, 
 		SetBkColor(hdcComp, VDSwizzleU32(mColorOverride) >> 8);
 		SetBkMode(hdcComp, OPAQUE);
 		ExtTextOut(hdcComp, 0, 0, ETO_OPAQUE, &rDst, L"", 0, NULL);
-	} else if (mSource.bInterlaced) {
-		const int w = rDst.right - rDst.left;
-		const int h = rDst.bottom - rDst.top;
-
-		int fieldMode = mode & kModeFieldMask;
-		uint32 vinc		= (r.height() << 16) / h;
-		uint32 vaccum	= (vinc >> 1) + (r.top << 16);
-		uint32 vtlimit	= (((r.height() + 1) >> 1) << 17) - 1;
-		int fieldbase	= (fieldMode == kModeOddField ? 1 : 0);
-		int ystep		= (fieldMode == kModeAllFields) ? 1 : 2;
-
-		vaccum += vinc*fieldbase;
-		vinc *= ystep;
-
-		for(int y = fieldbase; y < h; y += ystep) {
-			int v;
-
-			if (y & 1) {
-				uint32 vt = vaccum < 0x8000 ? 0 : vaccum - 0x8000;
-
-				v = (y&1) + ((vt>>16) & ~1);
-			} else {
-				uint32 vt = vaccum + 0x8000;
-
-				if (vt > vtlimit)
-					vt = vtlimit;
-
-				v = (vt>>16) & ~1;
-			}
-
-			StretchBlt(hdcComp, rDst.left, rDst.top + y, w, 1, mhdc, r.left, v, r.width(), 1, SRCCOPY);
-			vaccum += vinc;
-		}
 	} else {
 		StretchBlt(hdcComp, rDst.left, rDst.top, rDst.right - rDst.left, rDst.bottom - rDst.top, mhdc, r.left, r.top, r.width(), r.height(), SRCCOPY);
 	}

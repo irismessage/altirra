@@ -127,6 +127,8 @@ void OnCommandEditPasteText();
 void ATUIFlushDisplay();
 void ATUIResizeDisplay();
 
+void ATUISetDragDropSubTarget(VDGUIHandle h, ATUIManager *mgr);
+
 ///////////////////////////////////////////////////////////////////////////
 
 ATUIVideoDisplayWindow *g_pATVideoDisplayWindow;
@@ -152,6 +154,19 @@ void ATUISetDisplayPadIndicators(bool enabled) {
 
 		ATUIResizeDisplay();
 	}
+}
+
+bool ATUIGetDisplayIndicators() {
+	IATUIRenderer *r = g_sim.GetUIRenderer();
+	return r->IsVisible();
+}
+
+void ATUISetDisplayIndicators(bool enabled) {
+	IATUIRenderer *r = g_sim.GetUIRenderer();
+	r->SetVisible(enabled);
+
+	if (g_dispPadIndicators)
+		ATUIResizeDisplay();
 }
 
 #ifndef MOUSEEVENTF_MASK
@@ -521,11 +536,11 @@ public:
 	void ResetDisplay();
 
 	bool IsTextSelected() const { return g_pATVideoDisplayWindow->IsTextSelected(); }
-	void Copy();
+	void Copy(bool enableEscaping);
 	void CopyFrame(bool trueAspect);
-	void SaveFrame(bool trueAspect);
+	void SaveFrame(bool trueAspect, const wchar_t *path = nullptr);
 	void Paste();
-	void Paste(const char *s, size_t len);
+	void Paste(const wchar_t *s, size_t len);
 
 	void OnSize();
 	void UpdateFilterMode();
@@ -941,7 +956,7 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			return 0;
 
 		case WM_COPY:
-			Copy();
+			Copy(false);
 			return 0;
 
 		case WM_PASTE:
@@ -1144,18 +1159,33 @@ bool ATDisplayPane::OnCreate() {
 	g_pATVideoDisplayWindow->SetOnDisplayContextMenu([this](const vdpoint32& pt) { OnDisplayContextMenu(pt); });
 	g_pATVideoDisplayWindow->SetOnOSKChange([this]() { OnOSKChange(); });
 
+	g_pATVideoDisplayWindow->SetDisplaySourceMapping(
+		[this](vdfloat2& pt) -> bool {
+			return !mpDisplay || mpDisplay->MapNormDestPtToSource(pt);
+		},
+
+		[this](vdfloat2& pt) -> bool {
+			return !mpDisplay || mpDisplay->MapNormSourcePtToDest(pt);
+		}
+	);
+
 	mIndicatorSafeAreaChangedFn = [this] { ResizeDisplay(); };
 	g_sim.GetUIRenderer()->AddIndicatorSafeHeightChangedHandler(&mIndicatorSafeAreaChangedFn);
+
+	ATUISetDragDropSubTarget((VDGUIHandle)mhwnd, &g_ATUIManager);
 	return true;
 }
 
 void ATDisplayPane::OnDestroy() {
+	ATUISetDragDropSubTarget(nullptr, nullptr);
+
 	g_sim.GetUIRenderer()->RemoveIndicatorSafeHeightChangedHandler(&mIndicatorSafeAreaChangedFn);
 
 	if (g_pATVideoDisplayWindow) {
 		g_pATVideoDisplayWindow->SetOnAllowContextMenu(nullptr);
 		g_pATVideoDisplayWindow->SetOnDisplayContextMenu(nullptr);
 		g_pATVideoDisplayWindow->SetOnOSKChange(nullptr);
+		g_pATVideoDisplayWindow->SetDisplaySourceMapping({}, {});
 		g_pATVideoDisplayWindow->UnbindAllActions();
 	}
 
@@ -1291,23 +1321,23 @@ void ATDisplayPane::ResetDisplay() {
 	}
 }
 
-void ATDisplayPane::Copy() {
-	g_pATVideoDisplayWindow->Copy();
+void ATDisplayPane::Copy(bool enableEscaping) {
+	g_pATVideoDisplayWindow->Copy(enableEscaping);
 }
 
 void ATDisplayPane::CopyFrame(bool trueAspect) {
 	g_pATVideoDisplayWindow->CopySaveFrame(false, trueAspect);
 }
 
-void ATDisplayPane::SaveFrame(bool trueAspect) {
-	g_pATVideoDisplayWindow->CopySaveFrame(true, trueAspect);
+void ATDisplayPane::SaveFrame(bool trueAspect, const wchar_t *path) {
+	g_pATVideoDisplayWindow->CopySaveFrame(true, trueAspect, path);
 }
 
 void ATDisplayPane::Paste() {
 	OnCommandEditPasteText();
 }
 
-void ATDisplayPane::Paste(const char *s, size_t len) {
+void ATDisplayPane::Paste(const wchar_t *s, size_t len) {
 	if (mpEnhTextEngine)
 		mpEnhTextEngine->Paste(s, len);
 }
@@ -1360,7 +1390,7 @@ void ATDisplayPane::UpdateFilterMode() {
 				const float factor = kFactors[std::max(0, std::min(4, g_dispFilterSharpness + 2))];
 
 				const auto afmode = gtia.GetArtifactingMode();
-				const bool isHighArtifacting = afmode == ATGTIAEmulator::kArtifactNTSCHi || afmode == ATGTIAEmulator::kArtifactPALHi;
+				const bool isHighArtifacting = afmode == ATGTIAEmulator::kArtifactNTSCHi || afmode == ATGTIAEmulator::kArtifactPALHi || afmode == ATGTIAEmulator::kArtifactAutoHi;
 
 				mpDisplay->SetPixelSharpness(isHighArtifacting ? 1.0f : std::max(1.0f, factor / (float)pw), std::max(1.0f, factor / (float)ph));
 			}
@@ -1491,7 +1521,7 @@ void ATDisplayPane::OnDisplayContextMenu(const vdpoint32& pt) {
 		UINT cmd = (UINT)TrackPopupMenu(hmenuPopup, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RETURNCMD, pt2.x, pt2.y, 0, GetAncestor(mhwnd, GA_ROOTOWNER), NULL);
 		switch(cmd) {
 			case ID_DISPLAYCONTEXTMENU_COPY:
-				Copy();
+				Copy(false);
 				break;
 
 			case ID_DISPLAYCONTEXTMENU_PASTE:

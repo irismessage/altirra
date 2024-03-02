@@ -27,10 +27,10 @@ public:
 	virtual void OnSize() = 0;
 	virtual void ResetDisplay() = 0;
 	virtual bool IsTextSelected() const = 0;
-	virtual void Copy() = 0;
+	virtual void Copy(bool enableEscaping) = 0;
 	virtual void CopyFrame(bool trueAspect) = 0;
-	virtual void SaveFrame(bool trueAspect) = 0;
-	virtual void Paste(const char *s, size_t len) = 0;
+	virtual void SaveFrame(bool trueAspect, const wchar_t *path = nullptr) = 0;
+	virtual void Paste(const wchar_t *s, size_t len) = 0;
 	virtual void UpdateTextDisplay(bool enabled) = 0;
 	virtual void UpdateTextModeFont() = 0;
 	virtual void UpdateFilterMode() = 0;

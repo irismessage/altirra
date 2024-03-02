@@ -23,6 +23,7 @@
 #include <vd2/system/filesys.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/VDString.h>
+#include <at/atcore/address.h>
 #include <at/atcore/vfs.h>
 #include <algorithm>
 #include <ctype.h>
@@ -46,8 +47,9 @@ public:
 	ATSymbolStore();
 	~ATSymbolStore();
 
-	void Load(const wchar_t *filename);
-	void Save(const wchar_t *filename);
+	void Load(const wchar_t *path);
+	void Load(const wchar_t *filename, IVDRandomAccessStream& stream);
+	void Save(const wchar_t *path);
 
 	void Init(uint32 moduleBase, uint32 moduleSize);
 	void RemoveSymbol(uint32 offset);
@@ -122,13 +124,14 @@ protected:
 
 	struct Directive {
 		ATSymbolDirectiveType mType;
-		uint16	mOffset;
+		uint32	mOffset;
 		size_t	mArgOffset;
 	};
 
 	uint32	mModuleBase;
 	uint32	mModuleSize;
 	bool	mbSymbolsNeedSorting;
+	bool	mbGlobalBank0;
 
 	typedef vdfastvector<Symbol> Symbols;
 	Symbols					mSymbols;
@@ -155,13 +158,17 @@ ATSymbolStore::ATSymbolStore()
 ATSymbolStore::~ATSymbolStore() {
 }
 
-void ATSymbolStore::Load(const wchar_t *filename) {
+void ATSymbolStore::Load(const wchar_t *path) {
 	vdrefptr<ATVFSFileView> view;
-	ATVFSOpenFileView(filename, false, ~view);
+	ATVFSOpenFileView(path, false, ~view);
 	auto& fs = view->GetStream();
 
+	return Load(path, fs);
+}
+
+void ATSymbolStore::Load(const wchar_t *filename, IVDRandomAccessStream& stream) {
 	{
-		VDTextStream ts(&fs);
+		VDTextStream ts(&stream);
 
 		const char *line = ts.GetNextLine();
 
@@ -186,9 +193,9 @@ void ATSymbolStore::Load(const wchar_t *filename) {
 		}
 	}
 
-	fs.Seek(0);
+	stream.Seek(0);
 
-	VDTextStream ts2(&fs);
+	VDTextStream ts2(&stream);
 
 	const wchar_t *ext = VDFileSplitExt(filename);
 	if (!vdwcsicmp(ext, L".lbl")) {
@@ -283,12 +290,18 @@ bool ATSymbolStore::LookupSymbol(uint32 moduleOffset, uint32 flags, ATSymbol& sy
 	Symbols::const_iterator itBegin(mSymbols.begin());
 	Symbols::const_iterator it(std::upper_bound(mSymbols.begin(), mSymbols.end(), moduleOffset, SymSort()));
 
+	uint32 moduleOffset2 = moduleOffset;
+
+	if (mbGlobalBank0) {
+		moduleOffset2 = UINT32_C(0) - (moduleOffset & 0xFFFF0000);
+	}
+
 	while(it != itBegin) {
 		--it;
 		const Symbol& sym = *it;
 
 		if (sym.mFlags & flags) {
-			if (sym.mSize && (moduleOffset - sym.mOffset) >= sym.mSize)
+			if (sym.mSize && (moduleOffset - sym.mOffset) >= sym.mSize && (moduleOffset2 - sym.mOffset) >= sym.mSize)
 				return false;
 
 			symout.mpName	= mNameBytes.data() + sym.mNameOffset;
@@ -932,11 +945,15 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 	int forcedLine = -1;
 	bool directivePending = false;
 
+	uint32 bankOffsetMap[256] {};
+	bool extBanksUsed = false;
+
 	while(const char *line = ifile.GetNextLine()) {
 		char space0;
 		int origline;
 		int address;
 		int address2;
+		unsigned bank;
 		char dummy;
 		char space1;
 		char space2;
@@ -998,6 +1015,7 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 				}
 
 				// 105 1088 8D ...
+				//  12 02,ACBB A2 FF...
 				// 131 2000-201F> 00 ...
 				//   4 FFFF> 2000-2006> EA              nop
 				if (7 == sscanf(line, "%c%5d%c%4x%c%2x%c", &space0, &origline, &space1, &address, &space2, &op, &space3)
@@ -1007,6 +1025,14 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 					&& (space3 == ' ' || space3 == '\t'))
 				{
 					valid = true;
+				} else if (8 == sscanf(line, "%c%5d%c%2x,%4x%c%2x%c", &space0, &origline, &space1, &bank, &address, &space2, &op, &space3)
+					&& space0 == ' '
+					&& space1 == ' '
+					&& space2 == ' '
+					&& (space3 == ' ' || space3 == '\t'))
+				{
+					valid = true;
+					address += bank << 16;
 				} else if (8 == sscanf(line, "%c%5d%c%4x-%4x>%c%2x%c", &space0, &origline, &space1, &address, &address2, &space2, &op, &space3)
 					&& space0 == ' '
 					&& space1 == ' '
@@ -1117,6 +1143,60 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 
 									directivePending = true;
 								}
+							} else if (!strncmp(s, "BANK", 4) && (s[4] == ' ' || s[4] == '\t')) {
+								s += 5;
+
+								while(*s == ' ' || *s == '\t')
+									++s;
+
+								const char *bankStart = s;
+								unsigned bank = 0;
+								if (*s == '$') {
+									char *t = const_cast<char *>(s);
+									bank = strtoul(s + 1, &t, 16);
+									s = t;
+								} else {
+									char *t = const_cast<char *>(s);
+									bank = strtoul(s + 1, &t, 10);
+									s = t;
+								}
+
+								if (bank < 256) {
+									while(*s == ' ' || *s == '\t')
+										++s;
+
+									const char *typeNameStart = s;
+									while(*s && *s != ' ' && *s != '\t')
+										++s;
+
+									const VDStringSpanA arg(typeNameStart, s);
+
+									while(*s == ' ' || *s == '\t')
+										++s;
+
+									if (arg.comparei("default") == 0) {
+										bankOffsetMap[bank] = 0 - (bank << 16);
+										extBanksUsed = true;
+									} else if (arg.comparei("ram") == 0) {
+										bankOffsetMap[bank] = 0 - (bank << 16) + kATAddressSpace_RAM;
+										extBanksUsed = true;
+									} else if (arg.comparei("cart") == 0) {
+										unsigned cartBank = 0;
+										bool cartBankValid = false;
+										char dummy;
+
+										if (*s == '$') {
+											cartBankValid = (1 == sscanf(s + 1, "%x%c", &cartBank, &dummy));
+										} else {
+											cartBankValid = (1 == sscanf(s, "%u%c", &cartBank, &dummy));
+										}
+
+										if (cartBankValid && cartBank < 256) {
+											bankOffsetMap[bank] = 0 - (bank << 16) + (cartBank << 16) + kATAddressSpace_CB;
+											extBanksUsed = true;
+										}
+									}
+								}
 							}
 						}
 					}
@@ -1166,18 +1246,34 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 			//         2000 MAIN
 
 			if (isxdigit((unsigned char)line[0])) {
-				int pos1;
-				int pos2;
+				int pos1 = -1;
+				int pos2 = -1;
 				unsigned bank;
-				if (3 == sscanf(line, "%2x %4x %n%c%*s%n", &bank, &address, &pos1, &dummy, &pos2)) {
+				if (2 == sscanf(line, "%2x %4x %n%*s%n", &bank, &address, &pos1, &pos2) && pos1 >= 0 && pos2 > pos1) {
 					label.assign(line + pos1, line + pos2);
 
-					AddSymbol(((uint32)bank << 16) + address, label.c_str());
+					char end;
+					char dummy;
+					unsigned srcBank;
+					if (2 == sscanf(label.c_str(), "__ATBANK_%02X_RA%c%c", &srcBank, &end, &dummy) && end == 'M' && srcBank < 256 && address < 256) {
+						extBanksUsed = true;
+						bankOffsetMap[srcBank] = kATAddressSpace_RAM - (srcBank << 16);
+					} else if (2 == sscanf(label.c_str(), "__ATBANK_%02X_CAR%c%c", &srcBank, &end, &dummy) && end == 'T' && srcBank < 256 && address < 256) {
+						extBanksUsed = true;
+						bankOffsetMap[srcBank] = kATAddressSpace_CB - (srcBank << 16) + (address << 16);
+					} else if (2 == sscanf(label.c_str(), "__ATBANK_%02X_SHARE%c%c", &srcBank, &end, &dummy) && end == 'D' && srcBank < 256 && address < 256) {
+						extBanksUsed = true;
+						bankOffsetMap[srcBank] = kATAddressSpace_CB - (srcBank << 16) + 0x1000000;
+					} else if (label == "__ATBANK_00_GLOBAL") {
+						mbGlobalBank0 = true;
+					} else {
+						AddSymbol(((uint32)bank << 16) + address, label.c_str());
+					}
 				}
 			} else {
-				int pos1;
-				int pos2;
-				if (2 == sscanf(line, "%4x %n%c%*s%n", &address, &pos1, &dummy, &pos2)) {
+				int pos1 = -1;
+				int pos2 = -1;
+				if (1 == sscanf(line, "%4x %n%*s%n", &address, &pos1, &pos2) && pos1 >= 0 && pos2 >= pos1) {
 					label.assign(line + pos1, line + pos2);
 
 					AddSymbol(address, label.c_str());
@@ -1188,6 +1284,27 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 
 	mModuleBase = 0;
 	mModuleSize = 0x1000000;
+
+	if (extBanksUsed) {
+		mModuleSize = 0xFFFFFFFF;
+
+		for(Symbol& sym : mSymbols) {
+			uint32 symBankOffset = bankOffsetMap[(sym.mOffset >> 16) & 0xFF];
+
+			if (symBankOffset) {
+				sym.mOffset += symBankOffset;
+
+				if ((sym.mOffset & kATAddressSpaceMask) == kATAddressSpace_CB && (uint16)(sym.mOffset - 0xA000) >= 0x2000)
+					sym.mOffset &= 0xFFFF;
+			}
+		}
+
+		for(Directive& directive : mDirectives) {
+			directive.mOffset += bankOffsetMap[(directive.mOffset >> 16) & 0xFF];
+		}
+
+		mbSymbolsNeedSorting = true;
+	}
 
 	// remove useless directives
 	while(!mDirectives.empty() && mDirectives.back().mOffset == 0)
@@ -1454,7 +1571,7 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 		{ KRPDEL, "KRPDEL", 1 },	// XL/XE
 		{ KEYREP, "KEYREP", 1 },	// XL/XE
 		{ NOCLIK, "NOCLIK", 1 },	// XL/XE
-		{ HELPPG, "HELPPG", 1 },	// XL/XE
+		{ HELPFG, "HELPFG", 1 },	// XL/XE
 		{ DMASAV, "DMASAV", 1 },	// XL/XE
 		{ RUNAD , "RUNAD" , 2 },
 		{ INITAD, "INITAD", 2 },
@@ -1747,17 +1864,26 @@ void ATCreateCustomSymbolStore(IATCustomSymbolStore **ppStore) {
 	*ppStore = symstore.release();
 }
 
-void ATLoadSymbols(const wchar_t *sym, IATSymbolStore **outsymbols) {
+void ATLoadSymbols(const wchar_t *path, IATSymbolStore **outsymbols) {
 	vdrefptr<IATCustomSymbolStore> symbols;
 	ATCreateCustomSymbolStore(~symbols);
 
-	symbols->Load(sym);
+	symbols->Load(path);
 
 	*outsymbols = symbols.release();
 }
 
-void ATSaveSymbols(const wchar_t *filename, IATSymbolStore *syms) {
-	VDFileStream fs(filename, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
+void ATLoadSymbols(const wchar_t *filename, IVDRandomAccessStream& stream, IATSymbolStore **outsymbols) {
+	vdrefptr<IATCustomSymbolStore> symbols;
+	ATCreateCustomSymbolStore(~symbols);
+
+	symbols->Load(filename, stream);
+
+	*outsymbols = symbols.release();
+}
+
+void ATSaveSymbols(const wchar_t *path, IATSymbolStore *syms) {
+	VDFileStream fs(path, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
 	VDTextOutputStream tos(&fs);
 
 	// write header

@@ -18,6 +18,7 @@
 #ifndef f_AT_ULTIMATE1MB_H
 #define f_AT_ULTIMATE1MB_H
 
+#include <at/atcore/bussignal.h>
 #include <at/atcore/devicecart.h>
 #include <at/atcore/devicepbi.h>
 #include <at/atcore/devicesystemcontrol.h>
@@ -195,6 +196,9 @@ protected:
 
 	ATCallbackHandler0<void> mVBXEPageHandler;
 	ATCallbackHandler0<void> mSBPageHandler;
+	
+	ATBusSignalOutput	mStereoEnableOutput;
+	ATBusSignalOutput	mCovoxEnableOutput;
 
 	VDALIGN(4) uint8 mFirmware[0x80000];
 };

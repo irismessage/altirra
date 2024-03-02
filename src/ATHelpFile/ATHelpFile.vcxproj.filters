@@ -129,6 +129,9 @@
     <None Include="source\debug-profiling.xml">
       <Filter>Source Files</Filter>
     </None>
+    <None Include="source\colors.xml">
+      <Filter>Source Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Xml Include="source\1030.xml">

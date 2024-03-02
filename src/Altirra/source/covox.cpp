@@ -19,6 +19,7 @@
 #include <vd2/system/binary.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/devicesystemcontrol.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
 #include "covox.h"
@@ -51,6 +52,16 @@ void ATCovoxEmulator::SetAddressRange(uint32 addrLo, uint32 addrHi, bool passWri
 
 		InitMapping();
 	}
+}
+
+void ATCovoxEmulator::SetEnabled(bool enable) {
+	if (mbEnabled == enable)
+		return;
+
+	mbEnabled = enable;
+
+	if (mpMemLayerControl)
+		mpMemMan->EnableLayer(mpMemLayerControl, kATMemoryAccessMode_CPUWrite, mbEnabled);
 }
 
 void ATCovoxEmulator::Init(ATMemoryManager *memMan, ATScheduler *sch, IATAudioMixer *mixer) {
@@ -216,17 +227,20 @@ void ATCovoxEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 		mOutputLevel = n;
 	}
 
-	float volume = mixInfo.mpMixLevels[kATAudioMix_Covox] * kOutputScale;
-	if (dstRightOpt) {
-		for(uint32 i=0; i<n; ++i) {
-			dstLeft[i] += mAccumBufferLeft[i] * volume;
-			dstRightOpt[i] += mAccumBufferRight[i] * volume;
-		}
-	} else {
-		volume *= 0.5f;
+	if (mbEnabled) {
+		float volume = mixInfo.mpMixLevels[kATAudioMix_Covox] * kOutputScale;
 
-		for(uint32 i=0; i<n; ++i)
-			dstLeft[i] += (mAccumBufferLeft[i] + mAccumBufferRight[i]) * volume;
+		if (dstRightOpt) {
+			for(uint32 i=0; i<n; ++i) {
+				dstLeft[i] += mAccumBufferLeft[i] * volume;
+				dstRightOpt[i] += mAccumBufferRight[i] * volume;
+			}
+		} else {
+			volume *= 0.5f;
+
+			for(uint32 i=0; i<n; ++i)
+				dstLeft[i] += (mAccumBufferLeft[i] + mAccumBufferRight[i]) * volume;
+		}
 	}
 
 	// shift down accumulation buffers
@@ -271,7 +285,7 @@ void ATCovoxEmulator::InitMapping() {
 
 		mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay, handlers, pageLo, pageHi - pageLo + 1);
 
-		mpMemMan->EnableLayer(mpMemLayerControl, kATMemoryAccessMode_CPUWrite, true);
+		mpMemMan->EnableLayer(mpMemLayerControl, kATMemoryAccessMode_CPUWrite, mbEnabled);
 		mpMemMan->SetLayerName(mpMemLayerControl, "Covox");
 	}
 }
@@ -305,6 +319,7 @@ class ATDeviceCovox final : public VDAlignedObject<16>
 					, public IATDeviceScheduling
 					, public IATDeviceAudioOutput
 					, public IATDeviceDiagnostics
+					, public IATDeviceCovoxControl
 {
 public:
 	virtual void *AsInterface(uint32 id) override;
@@ -330,13 +345,21 @@ public:	// IATDeviceAudioOutput
 public:	// IATDeviceDiagnostics
 	virtual void DumpStatus(ATConsoleOutput& output) override;
 
+public:	// IATDeviceCovoxControl
+	virtual void InitCovoxControl(IATCovoxController& controller) override;
+
 private:
+	void OnCovoxEnabled(bool enabled);
+
 	ATMemoryManager *mpMemMan = nullptr;
 	ATScheduler *mpScheduler = nullptr;
 	IATAudioMixer *mpAudioMixer = nullptr;
 
 	uint32 mAddrLo = 0xD600;
 	uint32 mAddrHi = 0xD6FF;
+
+	IATCovoxController *mpCovoxController = nullptr;
+	vdfunction<void(bool)> mCovoxCallback;
 
 	ATCovoxEmulator mCovox;
 };
@@ -362,6 +385,9 @@ void *ATDeviceCovox::AsInterface(uint32 id) {
 
 		case IATDeviceDiagnostics::kTypeID:
 			return static_cast<IATDeviceDiagnostics *>(this);
+
+		case IATDeviceCovoxControl::kTypeID:
+			return static_cast<IATDeviceCovoxControl *>(this);
 
 		default:
 			return ATDevice::AsInterface(id);
@@ -417,6 +443,11 @@ void ATDeviceCovox::Init() {
 }
 
 void ATDeviceCovox::Shutdown() {
+	if (mpCovoxController) {
+		mpCovoxController->GetCovoxEnableNotifyList().Remove(&mCovoxCallback);
+		mpCovoxController = nullptr;
+	}
+
 	mCovox.Shutdown();
 
 	mpAudioMixer = nullptr;
@@ -448,4 +479,16 @@ void ATDeviceCovox::InitAudioOutput(IATAudioMixer *mixer) {
 
 void ATDeviceCovox::DumpStatus(ATConsoleOutput& output) {
 	mCovox.DumpStatus(output);
+}
+
+void ATDeviceCovox::InitCovoxControl(IATCovoxController& controller) {
+	mpCovoxController = &controller;
+	mpCovoxController->GetCovoxEnableNotifyList().Add(&mCovoxCallback);
+
+	OnCovoxEnabled(mpCovoxController->IsCovoxEnabled());
+	mCovoxCallback = [this](bool enable) { OnCovoxEnabled(enable); };
+}
+
+void ATDeviceCovox::OnCovoxEnabled(bool enabled) {
+	mCovox.SetEnabled(enabled);
 }

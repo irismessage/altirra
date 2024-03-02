@@ -175,14 +175,21 @@ void ATCPUProfileBuilder::Init(ATProfileMode mode, ATProfileCounterMode c1, ATPr
 	mProfileMode = mode;
 	mbAdjustStackNext = false;
 	mbKeepNextFrame = true;
-	mCurrentFrameAddress = 0x1FFFFFF;
+	mbGlobalAddressesEnabled = false;
+	mCurrentFrameAddress = ~UINT32_C(0);
+	mCurrentFrameContext = 0;
 	mCurrentContext = 0;
+	mbCallPending = false;
 	mTotalContexts = 0;
 
 	mbCountersEnabled = c1 || c2;
 	mCounterModes[0] = c1;
 	mCounterModes[1] = c2;
-	std::fill(mStackTable, mStackTable+256, -1);
+
+	if (mode == kATProfileMode_CallGraph)
+		std::fill(mCGStackTable, mCGStackTable+256, -1);
+	else
+		std::fill(mNCGStackTable, mNCGStackTable+256, NCGStackEntry { kInvalidStackEntryAddress });
 
 	mSession.mProfileMode = mode;
 
@@ -211,6 +218,10 @@ void ATCPUProfileBuilder::SetBoundaryRule(ATProfileBoundaryRule rule, uint32 par
 	mBoundaryRule = rule;
 	mBoundaryParam = param;
 	mBoundaryParam2 = param2;
+}
+
+void ATCPUProfileBuilder::SetGlobalAddressesEnabled(bool enable) {
+	mbGlobalAddressesEnabled = enable;
 }
 
 void ATCPUProfileBuilder::SetS(uint8 s) {
@@ -287,13 +298,37 @@ void ATCPUProfileBuilder::TakeSession(ATProfileSession& session) {
 	session = std::move(mSession);
 }
 
-void ATCPUProfileBuilder::Update(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n, bool enableGlobalAddrs) {
+void ATCPUProfileBuilder::Update(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n, bool useGlobalAddrs) {
+	if (!mbGlobalAddressesEnabled)
+		useGlobalAddrs = false;
+
 	VDASSERT(mProfileMode != kATProfileMode_BasicLines);
 
-	if (mProfileMode == kATProfileMode_CallGraph) {
-		UpdateCallGraph(tsDecoder, hents, n, enableGlobalAddrs);
-		return;
+	switch(mProfileMode) {
+		case kATProfileMode_Insns:
+			UpdateNonCallGraph<kATProfileMode_Insns>(tsDecoder, hents, n, useGlobalAddrs);
+			break;
+
+		case kATProfileMode_Functions:
+			UpdateNonCallGraph<kATProfileMode_Functions>(tsDecoder, hents, n, useGlobalAddrs);
+			break;
+
+		case kATProfileMode_BasicBlock:
+			UpdateNonCallGraph<kATProfileMode_BasicBlock>(tsDecoder, hents, n, useGlobalAddrs);
+			break;
+
+		case kATProfileMode_CallGraph:
+			UpdateCallGraph(tsDecoder, hents, n, useGlobalAddrs);
+			break;
 	}
+}
+
+template<ATProfileMode T_ProfileMode>
+void ATCPUProfileBuilder::UpdateNonCallGraph(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n, bool useGlobalAddrs) {
+	static_assert(T_ProfileMode == kATProfileMode_Insns
+		|| T_ProfileMode == kATProfileMode_Functions
+		|| T_ProfileMode == kATProfileMode_BasicBlock
+		);
 
 	while(n) {
 		uint32 leftInSegment = ScanForFrameBoundary(tsDecoder, hents, n);
@@ -309,21 +344,23 @@ void ATCPUProfileBuilder::Update(const ATCPUTimestampDecoder& tsDecoder, const A
 			uint32 unhaltedCycles = (uint16)(hentn->mUnhaltedCycle - hentp->mUnhaltedCycle);
 			uint32 extpc = hentp->mPC + (hentp->mK << 16);
 			
-			if (enableGlobalAddrs && (hentp->mGlobalPCBase & kATAddressSpaceMask) == kATAddressSpace_PORTB) {
-				extpc |= 0x1000000 + (hentp->mGlobalPCBase & 0xFF0000);
+			if (useGlobalAddrs) {
+				extpc += hentp->mGlobalPCBase;
 			}
 
 			uint32 addr = extpc;
-			bool isCall = false;
-			bool useFrameAddr = false;
-			uint32 frameAddr;
+			uint32 addrContext = 0;
 
-			if (mProfileMode == kATProfileMode_Insns) {
+			if constexpr (T_ProfileMode == kATProfileMode_Insns) {
 				if (hentp->mP & AT6502::kFlagI)
-					addr += 0x2000000;
-			} else if (mProfileMode == kATProfileMode_Functions) {
-				bool adjustStack = mbAdjustStackNext || hentp->mbIRQ || hentp->mbNMI;
-				mbAdjustStackNext = false;
+					addrContext = kATProfileContext_Interrupt;
+			} else {
+				bool adjustStack = mbAdjustStackNext;
+
+				// In current versions, IRQ and NMI have dedicated history entries, so we
+				// should treat them like a call instruction and only adjust context on the
+				// next entry.
+				mbAdjustStackNext = hentp->mbIRQ || hentp->mbNMI;
 
 				uint8 opcode = hentp->mOpcode[0];
 				switch(opcode) {
@@ -335,134 +372,87 @@ void ATCPUProfileBuilder::Update(const ATCPUTimestampDecoder& tsDecoder, const A
 						break;
 				}
 
+				bool isCall = false;
+
+				if constexpr (T_ProfileMode == kATProfileMode_BasicBlock) {
+					if (mbCallPending) {
+						mbCallPending = false;
+
+						mCurrentFrameAddress = extpc;
+						isCall = true;
+					}
+				}
+
 				if (adjustStack) {
-					uint32 newFrameMode = mCurrentFrameAddress & 0xE000000;
+					uint32 newFrameContext = mCurrentFrameContext;
 					if (hentp->mbNMI) {
 						if (tsDecoder.IsInterruptPositionVBI(hentp->mCycle))
-							newFrameMode = 0x6000000;
+							newFrameContext = kATProfileContext_VBI;
 						else
-							newFrameMode = 0x8000000;
+							newFrameContext = kATProfileContext_DLI;
 					} else if (hentp->mbIRQ) {
-						newFrameMode = 0x4000000;
+						newFrameContext = kATProfileContext_IRQ;
 					} else if (!(hentp->mP & AT6502::kFlagI)) {
-						newFrameMode = 0;
+						newFrameContext = kATProfileContext_Main;
 					}
 
 					sint8 sdir = hentp->mS - mLastS;
 					if (sdir > 0) {
 						// pop
 						do {
-							sint32 prevFrame = mStackTable[mLastS];
+							uint32 prevFrame = mNCGStackTable[mLastS].mAddress;
 
-							if (prevFrame >= 0) {
+							if (prevFrame != kInvalidStackEntryAddress) {
 								mCurrentFrameAddress = prevFrame;
-								mStackTable[mLastS] = -1;
+								mNCGStackTable[mLastS].mAddress = kInvalidStackEntryAddress;
 							}
 						} while(++mLastS != hentp->mS);
 					} else if (sdir < 0) {
 						// push
 						while(--mLastS != hentp->mS) {
-							mStackTable[mLastS] = -1;
+							mNCGStackTable[mLastS].mAddress = kInvalidStackEntryAddress;
 						}
 
-						mStackTable[mLastS] = mCurrentFrameAddress;
-						mCurrentFrameAddress = extpc | newFrameMode;
+						mNCGStackTable[mLastS] = NCGStackEntry { mCurrentFrameAddress, mCurrentFrameContext };
+						mCurrentFrameAddress = extpc;
+						mCurrentFrameContext = newFrameContext;
 						isCall = true;
 					} else {
-						mCurrentFrameAddress = extpc | newFrameMode;
+						mCurrentFrameAddress = extpc;
+						mCurrentFrameContext = newFrameContext;
 						isCall = true;
 					}
 				}
 
-				frameAddr = mCurrentFrameAddress;
-				useFrameAddr = true;
-			} else if (mProfileMode == kATProfileMode_BasicBlock) {
-				bool adjustStack = mbAdjustStackNext || hentp->mbIRQ || hentp->mbNMI;
-				mbAdjustStackNext = false;
-
-				uint8 opcode = hentp->mOpcode[0];
-				switch(opcode) {
-					case 0x20:		// JSR
-					case 0x60:		// RTS
-					case 0x40:		// RTI
-					case 0x6C:		// JMP (abs)
-						mbAdjustStackNext = true;
-						break;
-				}
-
-				if ((mCurrentFrameAddress & 0x1FFFFFF) == 0x1FFFFFF) {
-					mCurrentFrameAddress &= extpc | 0xFE000000;
-					isCall = true;
-				}
-
-				if (adjustStack) {
-					uint32 newFrameMode = mCurrentFrameAddress & 0xE000000;
-					if (hentp->mbNMI) {
-						if (tsDecoder.IsInterruptPositionVBI(hentp->mCycle))
-							newFrameMode = 0x6000000;
-						else
-							newFrameMode = 0x8000000;
-					} else if (hentp->mbIRQ) {
-						newFrameMode = 0x4000000;
-					} else if (!(hentp->mP & AT6502::kFlagI)) {
-						newFrameMode = 0;
-					}
-
-					sint8 sdir = hentp->mS - mLastS;
-					if (sdir > 0) {
-						// pop
-						do {
-							sint32 prevFrame = mStackTable[mLastS];
-
-							if (prevFrame >= 0) {
-								mCurrentFrameAddress = prevFrame;
-								mStackTable[mLastS] = -1;
-							}
-						} while(++mLastS != hentp->mS);
-					} else if (sdir < 0) {
-						// push
-						while(--mLastS != hentp->mS) {
-							mStackTable[mLastS] = -1;
-						}
-
-						mStackTable[mLastS] = mCurrentFrameAddress;
-						mCurrentFrameAddress = extpc | newFrameMode;
-						isCall = true;
-					} else {
-						mCurrentFrameAddress = extpc | newFrameMode;
-						isCall = true;
+				if constexpr (T_ProfileMode == kATProfileMode_BasicBlock) {
+					switch(opcode) {
+						case 0x20:		// JSR
+						case 0x60:		// RTS
+						case 0x40:		// RTI
+						case 0x4C:		// JMP
+						case 0x6C:		// JMP (abs)
+						case 0x10:		// Bcc
+						case 0x30:
+						case 0x50:
+						case 0x70:
+						case 0x90:
+						case 0xB0:
+						case 0xD0:
+						case 0xF0:
+							mbCallPending = true;
+							break;
 					}
 				}
 
-				frameAddr = mCurrentFrameAddress;
-				useFrameAddr = true;
+				const uint32 frameAddr = mCurrentFrameAddress;
+				const uint32 frameAddrContext = mCurrentFrameContext;
 
-				switch(opcode) {
-					case 0x20:		// JSR
-					case 0x60:		// RTS
-					case 0x40:		// RTI
-					case 0x4C:		// JMP
-					case 0x6C:		// JMP (abs)
-					case 0x10:		// Bcc
-					case 0x30:
-					case 0x50:
-					case 0x70:
-					case 0x90:
-					case 0xB0:
-					case 0xD0:
-					case 0xF0:
-						mCurrentFrameAddress |= 0x1FFFFFF;
-						break;
-				}
-			}
-
-			if (useFrameAddr) {
 				uint32 hc = frameAddr & 0xFF;
 				HashLink *hh = mpBlockHashTable[hc];
 				HashLink *hl = hh;
 
 				for(; hl; hl = hl->mpNext) {
-					if (hl->mRecord.mAddress == frameAddr)
+					if (hl->mRecord.mAddress == frameAddr && hl->mRecord.mContext == frameAddrContext)
 						break;
 				}
 
@@ -470,6 +460,7 @@ void ATCPUProfileBuilder::Update(const ATCPUTimestampDecoder& tsDecoder, const A
 					hl = mHashLinkAllocator.Allocate<HashLink>();
 					hl->mpNext = hh;
 					hl->mRecord.mAddress = frameAddr;
+					hl->mRecord.mContext = frameAddrContext;
 					hl->mRecord.mCycles = 0;
 					hl->mRecord.mUnhaltedCycles = 0;
 					hl->mRecord.mInsns = 0;
@@ -493,7 +484,7 @@ void ATCPUProfileBuilder::Update(const ATCPUTimestampDecoder& tsDecoder, const A
 			HashLink *hl = hh;
 
 			for(; hl; hl = hl->mpNext) {
-				if (hl->mRecord.mAddress == addr)
+				if (hl->mRecord.mAddress == addr && hl->mRecord.mContext == addrContext)
 					break;
 			}
 
@@ -501,6 +492,7 @@ void ATCPUProfileBuilder::Update(const ATCPUTimestampDecoder& tsDecoder, const A
 				hl = mHashLinkAllocator.Allocate<HashLink>();
 				hl->mpNext = hh;
 				hl->mRecord.mAddress = addr;
+				hl->mRecord.mContext = addrContext;
 				hl->mRecord.mCycles = 0;
 				hl->mRecord.mUnhaltedCycles = 0;
 				hl->mRecord.mInsns = 0;
@@ -571,7 +563,7 @@ void ATCPUProfileBuilder::UpdateBasicLines(const ATCPUTimestampDecoder& tsDecode
 	}
 }
 
-void ATCPUProfileBuilder::UpdateCallGraph(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n, bool enableGlobalAddrs) {
+void ATCPUProfileBuilder::UpdateCallGraph(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n, bool useGlobalAddresses) {
 	while(n) {
 		uint32 leftInSegment = ScanForFrameBoundary(tsDecoder, hents, n);
 		n -= leftInSegment;
@@ -602,21 +594,21 @@ void ATCPUProfileBuilder::UpdateCallGraph(const ATCPUTimestampDecoder& tsDecoder
 				if (sdir > 0) {
 					// pop
 					do {
-						sint32 prevContext = mStackTable[mLastS];
+						sint32 prevContext = mCGStackTable[mLastS];
 
 						if (prevContext >= 0) {
 							mCurrentContext = prevContext;
-							mStackTable[mLastS] = -1;
+							mCGStackTable[mLastS] = -1;
 						}
 					} while(++mLastS != hentp->mS);
 				} else {
 					if (sdir < 0) {
 						// push
 						while(--mLastS != hentp->mS) {
-							mStackTable[mLastS] = -1;
+							mCGStackTable[mLastS] = -1;
 						}
 
-						mStackTable[mLastS] = mCurrentContext;
+						mCGStackTable[mLastS] = mCurrentContext;
 					}
 
 					if (hentp->mbNMI) {
@@ -627,7 +619,7 @@ void ATCPUProfileBuilder::UpdateCallGraph(const ATCPUTimestampDecoder& tsDecoder
 					} else if (hentp->mbIRQ)
 						mCurrentContext = 1;
 
-					const uint32 newScope = hentp->mPC + (hentp->mK << 16) + (enableGlobalAddrs && (hentp->mGlobalPCBase & kATAddressSpaceMask) == kATAddressSpace_PORTB ? 0x1000000 + (hentp->mGlobalPCBase & 0xFF0000) : 0);
+					const uint32 newScope = hentp->mPC + (hentp->mK << 16) + (useGlobalAddresses ? hentp->mGlobalPCBase : 0);
 					const uint32 hc = newScope & 0xFF;
 					CallGraphHashLink *hh = mpCGHashTable[hc];
 					CallGraphHashLink *hl = hh;
@@ -663,7 +655,7 @@ void ATCPUProfileBuilder::UpdateCallGraph(const ATCPUTimestampDecoder& tsDecoder
 			cgRecord.mUnhaltedCycles += unhaltedCycles;
 			++cgRecord.mInsns;
 
-			uint32 addr = hentp->mPC + (hentp->mK << 16) + (enableGlobalAddrs && (hentp->mGlobalPCBase & kATAddressSpaceMask) == kATAddressSpace_PORTB ? 0x1000000 + (hentp->mGlobalPCBase & 0xFF0000) : 0);
+			uint32 addr = hentp->mPC + (hentp->mK << 16) + (useGlobalAddresses ? hentp->mGlobalPCBase : 0);
 			uint32 hc = addr & 0xFF;
 			HashLink *hh = mpHashTable[hc];
 			HashLink *hl = hh;
@@ -928,6 +920,10 @@ void ATCPUProfiler::SetBoundaryRule(ATProfileBoundaryRule rule, uint32 param, ui
 	mBuilder.SetBoundaryRule(rule, param, param2);
 }
 
+void ATCPUProfiler::SetGlobalAddressesEnabled(bool enable) {
+	mBuilder.SetGlobalAddressesEnabled(enable);
+}
+
 void ATCPUProfiler::Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATCPUEmulatorCallbacks *callbacks, ATScheduler *scheduler, ATScheduler *slowScheduler, IATCPUTimestampDecoderProvider *tsdprovider) {
 	mpTSDProvider = tsdprovider;
 	mpCPU = cpu;
@@ -1018,7 +1014,7 @@ void ATCPUProfiler::Update() {
 		lineNo = (uint32)mpMemory->DebugReadByte(lineAddr) + ((uint32)mpMemory->DebugReadByte(lineAddr + 1) << 8);
 	}
 
-	const bool enableGlobalAddrs = (mpCPU->GetCPUMode() == kATCPUMode_6502);
+	const bool useGlobalAddrs = (mpCPU->GetCPUMode() == kATCPUMode_6502);
 
 	while(count) {
 		// Note that we are constrained to always overlap by one entry, so we consume
@@ -1031,7 +1027,7 @@ void ATCPUProfiler::Update() {
 		if (mProfileMode == kATProfileMode_BasicLines)
 			mBuilder.UpdateBasicLines(tsDecoder, lineNo, heptrs, toRead);
 		else
-			mBuilder.Update(tsDecoder, heptrs, toRead, enableGlobalAddrs);
+			mBuilder.Update(tsDecoder, heptrs, toRead, useGlobalAddrs);
 
 		count -= toRead;
 	}

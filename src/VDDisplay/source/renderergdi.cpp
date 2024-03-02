@@ -364,6 +364,7 @@ void VDDisplayRendererGDI::PolyLine(const vdpoint32 *points, uint32 numLines) {
 		return;
 
 	UpdatePen();
+	SelectObject(mhdc, mhPen);
 
 	POINT pt[100];
 
@@ -381,7 +382,7 @@ void VDDisplayRendererGDI::PolyLine(const vdpoint32 *points, uint32 numLines) {
 
 		points += n;
 
-		::Polyline(mhdc, pt, n);
+		::Polyline(mhdc, pt, n + 1);
 		pt[0] = pt[n];
 	}
 }

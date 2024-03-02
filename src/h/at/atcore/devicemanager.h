@@ -33,6 +33,14 @@ class VDJSONWriter;
 typedef void (*ATDeviceFactoryFn)(const ATPropertySet& pset, IATDevice **);
 typedef bool (*ATDeviceConfigureFn)(VDGUIHandle parent, ATPropertySet& pset);
 
+struct ATParsedDevicePath {
+	bool mbValid;
+	IATDevice *mpDevice;
+	IATDeviceParent *mpDeviceBusParent;
+	IATDeviceBus *mpDeviceBus;
+	uint32 mDeviceBusIndex;
+};
+
 class IATDeviceChangeCallback {
 public:
 	virtual void OnDeviceAdded(uint32 iid, IATDevice *dev, void *iface) = 0;
@@ -158,8 +166,12 @@ public:
 	void ToggleDevice(const char *tag);
 
 	uint32 GetDeviceCount() const;
-	IATDevice *GetDeviceByTag(const char *tag) const;
+	IATDevice *GetDeviceByTag(const char *tag, uint32 index = 0) const;
 	IATDevice *GetDeviceByIndex(uint32 i) const;
+
+	ATParsedDevicePath ParsePath(const char *path) const;
+	VDStringA GetPathForDevice(IATDevice *dev) const;
+	void AppendPathForDevice(VDStringA& s, IATDevice *dev, bool recurse) const;
 
 	void *GetInterface(uint32 id) const;
 

@@ -20,6 +20,7 @@
 #include "uiaccessors.h"
 #include "uitypes.h"
 #include "gtia.h"
+#include "options.h"
 #include "cmdhelpers.h"
 
 extern ATUIManager g_ATUIManager;
@@ -118,6 +119,10 @@ void OnCommandViewOverscanNormal() {
 	ATUISetOverscanMode(ATGTIAEmulator::kOverscanNormal);
 }
 
+void OnCommandViewOverscanWidescreen() {
+	ATUISetOverscanMode(ATGTIAEmulator::kOverscanWidescreen);
+}
+
 void OnCommandViewOverscanExtended() {
 	ATUISetOverscanMode(ATGTIAEmulator::kOverscanExtended);
 }
@@ -146,9 +151,25 @@ void OnCommandViewToggleIndicatorMargin() {
 	ATUISetDisplayPadIndicators(!ATUIGetDisplayPadIndicators());
 }
 
+void OnCommandViewToggleIndicators() {
+	ATUISetDisplayIndicators(!ATUIGetDisplayIndicators());
+}
+
+void OnCommandViewToggleAccelScreenFX() {
+	ATOptions prev(g_ATOptions);
+
+	g_ATOptions.mbDirty = true;
+	g_ATOptions.mbDisplayAccelScreenFX = !g_ATOptions.mbDisplayAccelScreenFX;
+
+	ATOptionsSave();
+	ATOptionsRunUpdateCallbacks(&prev);
+}
+
 namespace ATCommands {
 	static constexpr ATUICommand kATCommandsView[] = {
-		{ "View.ToggleIndicatorMargin", OnCommandViewToggleIndicatorMargin, nullptr, [] { return ATUIGetDisplayPadIndicators() ? kATUICmdState_Checked : kATUICmdState_None; } },
+		{ "View.ToggleIndicatorMargin", OnCommandViewToggleIndicatorMargin, ATUIGetDisplayIndicators, [] { return ATUIGetDisplayPadIndicators() ? kATUICmdState_Checked : kATUICmdState_None; } },
+		{ "View.ToggleIndicators", OnCommandViewToggleIndicators, nullptr, [] { return ATUIGetDisplayIndicators() ? kATUICmdState_Checked : kATUICmdState_None; } },
+		{ "View.ToggleAccelScreenFX", OnCommandViewToggleAccelScreenFX, NULL, [] { return ToChecked(g_ATOptions.mbDisplayAccelScreenFX); } },
 	};
 }
 

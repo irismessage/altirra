@@ -181,12 +181,12 @@ struct VDTData {
 class VDTDataView : public VDTData {
 public:
 	template<class T, size_t N>
-	VDTDataView(T (&array)[N]) {
+	constexpr VDTDataView(T (&array)[N]) {
 		mpData = array;
 		mLength = N * sizeof(T);
 	}
 
-	VDTDataView(const void *p, uint32 len) {
+	constexpr VDTDataView(const void *p, uint32 len) {
 		mpData = p;
 		mLength = len;
 	}

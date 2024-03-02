@@ -63,6 +63,9 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <None Include="source\additions.xml" />
+    <None Include="source\colors.xml">
+      <SubType>Designer</SubType>
+    </None>
     <None Include="source\common-errors.xml" />
     <None Include="source\compatibility.xml" />
     <None Include="source\debug-basic.xml" />

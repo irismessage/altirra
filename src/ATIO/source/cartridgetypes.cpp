@@ -84,7 +84,7 @@ ATCartridgeMode ATGetCartridgeModeForMapper(int mapper) {
 		case 61: return kATCartridgeMode_MegaMax_2M;
 		case 62: return kATCartridgeMode_TheCart_128M;
 		case 63: return kATCartridgeMode_MegaCart_4M_3;
-		case 64: return kATCartridgeMode_MegaCart_2M_3;
+		case 64: return kATCartridgeMode_MegaCart_2M;
 		case 65: return kATCartridgeMode_TheCart_32M;
 		case 66: return kATCartridgeMode_TheCart_64M;
 		case 67: return kATCartridgeMode_XEGS_64K_Alt;
@@ -172,7 +172,7 @@ int ATGetCartridgeMapperForMode(ATCartridgeMode mode, uint32 size) {
 		case kATCartridgeMode_MegaMax_2M:		return 61;
 		case kATCartridgeMode_TheCart_128M:		return 62;
 		case kATCartridgeMode_MegaCart_4M_3:	return 63;
-		case kATCartridgeMode_MegaCart_2M_3:	return 64;
+		case kATCartridgeMode_MegaCart_2M:		return 64;
 		case kATCartridgeMode_TheCart_32M:		return 65;
 		case kATCartridgeMode_TheCart_64M:		return 66;
 		case kATCartridgeMode_XEGS_64K_Alt:		return 67;
@@ -274,7 +274,7 @@ uint32 ATGetImageSizeForCartridgeType(ATCartridgeMode mode) {
 		case kATCartridgeMode_4K:					return 0x1000;
 		case kATCartridgeMode_RightSlot_4K:			return 0x1000;
 		case kATCartridgeMode_MegaCart_512K_3:		return 0x80000;
-		case kATCartridgeMode_MegaCart_2M_3:		return 0x200000;
+		case kATCartridgeMode_MegaCart_2M:			return 0x200000;
 		case kATCartridgeMode_MegaCart_4M_3:		return 0x400000;
 		case kATCartridgeMode_TheCart_32M:			return 32*1024*1024;
 		case kATCartridgeMode_TheCart_64M:			return 64*1024*1024;

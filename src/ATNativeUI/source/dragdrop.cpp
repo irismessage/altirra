@@ -22,6 +22,7 @@
 #include <vd2/system/strutil.h>
 #include <vd2/system/text.h>
 #include <vd2/system/VDString.h>
+#include <vd2/system/w32assist.h>
 #include <at/atcore/vfs.h>
 #include <at/atnativeui/dragdrop.h>
 
@@ -32,6 +33,8 @@ const ATUIDragDropFormatsW32& ATUIInitDragDropFormatsW32() {
 			RegisterClipboardFormat(CFSTR_FILEDESCRIPTORA),
 			RegisterClipboardFormat(CFSTR_FILEDESCRIPTORW),
 			RegisterClipboardFormat(CFSTR_SHELLIDLIST),
+			RegisterClipboardFormat(CFSTR_DROPDESCRIPTION),
+			RegisterClipboardFormat(L"DragWindow"),
 		};
 	} ();
 
@@ -73,6 +76,92 @@ void ATReadDragDropFileDescriptorsW32(vdfastvector<FILEDESCRIPTORW>& dst, const 
 		filew.nFileSizeLow		= filea.nFileSizeLow;
 
 		VDTextAToW(filew.cFileName, vdcountof(filew.cFileName), filea.cFileName, -1);
+	}
+}
+
+void ATUIClearDropDescriptionW32(IDataObject *obj) {
+	ATUISetDropDescriptionW32(obj, DROPIMAGE_INVALID, nullptr, nullptr);
+}
+
+void ATUISetDropDescriptionW32(IDataObject *obj, DROPIMAGETYPE dropImageType, const wchar_t *templateStr, const wchar_t *insertStr) {
+	if (!obj)
+		return;
+
+	// Drag-drop description support was added to the shell starting in Windows Vista. It probably
+	// wouldn't hurt to just have a couple of unrecognized objects in the data source, but let's
+	// avoid tempting fate.
+	if (!VDIsAtLeastVistaW32())
+		return;
+
+	DROPDESCRIPTION *dropDesc = (DROPDESCRIPTION *)GlobalAlloc(GMEM_FIXED | GMEM_ZEROINIT, sizeof(DROPDESCRIPTION));
+
+	if (!dropDesc)
+		return;
+
+	dropDesc->type = dropImageType;
+
+	// If the template string is absent, we replace it with a message that just uses
+	// the insert string. If the template string is present without an insert string,
+	// we escape % signs in it. Otherwise, if both are present, we assume the caller
+	// knows what's going on and has the necessary %% escaping and %1 insertion markers.
+	if (templateStr) {
+		if (insertStr) {
+			vdwcslcpy(dropDesc->szMessage, templateStr, vdcountof(dropDesc->szMessage));
+		} else {
+			VDStringW tmp;
+
+			tmp.reserve(wcslen(templateStr));
+			for(const wchar_t *s = templateStr; *s; ++s) {
+				if (*s == L'%')
+					tmp.push_back(*s);
+
+				tmp.push_back(*s);
+			}
+
+			vdwcslcpy(dropDesc->szMessage, tmp.c_str(), vdcountof(dropDesc->szMessage));
+		}
+	} else
+		vdwcslcpy(dropDesc->szMessage, L"%1", vdcountof(dropDesc->szMessage));
+
+	if (insertStr)
+		vdwcslcpy(dropDesc->szInsert, insertStr, vdcountof(dropDesc->szInsert));
+
+	auto& formats = ATUIInitDragDropFormatsW32();
+
+	FORMATETC fe {};
+	fe.cfFormat = formats.mDropDescription;
+	fe.ptd = nullptr;
+	fe.dwAspect = DVASPECT_CONTENT;
+	fe.lindex = -1;
+	fe.tymed = TYMED_HGLOBAL;
+
+	STGMEDIUM medium {};
+	medium.tymed = TYMED_HGLOBAL;
+	medium.hGlobal = dropDesc;
+
+	HRESULT hr = obj->SetData(&fe, &medium, TRUE);
+	if (SUCCEEDED(hr)) {
+		// notify the drag window of the change
+		FORMATETC fe2 {};
+		fe2.cfFormat = formats.mDragWindow;
+		fe2.ptd = nullptr;
+		fe2.dwAspect = DVASPECT_CONTENT;
+		fe2.lindex = -1;
+		fe2.tymed = TYMED_HGLOBAL;
+		STGMEDIUM medium2 {};
+		hr = obj->GetData(&fe2, &medium2);
+		if (SUCCEEDED(hr)) {
+			HWND hwndTarget = (HWND)ULongToHandle(*(DWORD *)medium2.hGlobal);
+
+			// DDWM_UPDATEWINDOW is defined in MSDN, but curiously not in WSDK headers.
+			const UINT DDWM_UPDATEWINDOW = WM_USER + 3;
+			PostMessage(hwndTarget, DDWM_UPDATEWINDOW, 0, 0);
+
+			ReleaseStgMedium(&medium2);
+		}
+	} else {
+		// drop object didn't take ownership due to failure, so free
+		GlobalFree(dropDesc);
 	}
 }
 

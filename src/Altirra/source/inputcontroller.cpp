@@ -721,7 +721,7 @@ void ATTrackballController::OnDetach() {
 ATPaddleController::ATPaddleController()
 	: mbSecond(false)
 	, mPortBits(0)
-	, mRawPos(0)
+	, mRawPos((228 << 16) + 0x8000)
 	, mRotIndex(0)
 	, mRotXLast(0)
 	, mRotYLast(0)
@@ -742,11 +742,11 @@ void ATPaddleController::AddDelta(int delta) {
 
 	mRawPos -= delta * 113;
 
-	if (mRawPos < (0 << 16) + 0x8000)
-		mRawPos = (0 << 16) + 0x8000;
+	if (mRawPos < (1 << 16) + 0x8000)
+		mRawPos = (1 << 16) + 0x8000;
 
-	if (mRawPos > (229 << 16) + 0x8000)
-		mRawPos = (229 << 16) + 0x8000;
+	if (mRawPos > (228 << 16) + 0x8000)
+		mRawPos = (228 << 16) + 0x8000;
 
 	int newPos = mRawPos;
 
@@ -766,6 +766,14 @@ void ATPaddleController::SetTrigger(bool enable) {
 void ATPaddleController::SetDigitalTrigger(uint32 trigger, bool state) {
 	if (trigger == kATInputTrigger_Button0)
 		SetTrigger(state);
+	else if (trigger == kATInputTrigger_Axis0) {
+		const int pos = state ? (1 << 16) + 0x8000 : (228 << 16) + 0x8000;
+
+		if (mRawPos != pos) {
+			mRawPos = pos;
+			SetPotHiPosition(mbSecond, pos, state);
+		}
+	}
 }
 
 void ATPaddleController::ApplyAnalogInput(uint32 trigger, int ds) {
@@ -775,11 +783,11 @@ void ATPaddleController::ApplyAnalogInput(uint32 trigger, int ds) {
 				int oldPos = mRawPos;
 				mRawPos = (114 << 16) + 0x8000 - ds * 114;
 
-				if (mRawPos < (0 << 16) + 0x8000)
-					mRawPos = (0 << 16) + 0x8000;
+				if (mRawPos < (1 << 16) + 0x8000)
+					mRawPos = (1 << 16) + 0x8000;
 
-				if (mRawPos > (228 << 16) + 0x8000)
-					mRawPos = (228 << 16) + 0x8000;
+				if (mRawPos > (229 << 16) + 0x8000)
+					mRawPos = (229 << 16) + 0x8000;
 
 				int newPos = mRawPos;
 
@@ -822,7 +830,7 @@ void ATPaddleController::Tick() {
 }
 
 void ATPaddleController::OnDetach() {
-	SetPotPosition(mbSecond, 229);
+	SetPotPosition(mbSecond, 228);
 }
 
 ///////////////////////////////////////////////////////////////////////////

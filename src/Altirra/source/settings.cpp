@@ -19,6 +19,7 @@
 #include <vd2/system/bitmath.h>
 #include <vd2/system/date.h>
 #include <vd2/system/error.h>
+#include <vd2/system/filesys.h>
 #include <vd2/system/hash.h>
 #include <vd2/system/math.h>
 #include <vd2/system/registry.h>
@@ -50,6 +51,9 @@
 extern ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
 extern ATUIManager g_ATUIManager;
+
+bool g_ATInPortableMode;
+bool g_ATSettingsMigrationScheduled;
 
 uint32 g_ATCurrentProfileId = 0;
 bool g_ATProfileTemporary = false;
@@ -386,6 +390,7 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 	ATSettingsExchangeEnum<ATDisplayFilterMode>(write, key, "Display: Filter mode", kATDisplayFilterModeCount, ATUIGetDisplayFilterMode, ATUISetDisplayFilterMode);
 	ATSettingsExchangeInt32(write, key, "Display: Filter sharpness", ATUIGetViewFilterSharpness, ATUISetViewFilterSharpness);
 	ATSettingsExchangeEnum<ATDisplayStretchMode>(write, key, "Display: Stretch mode", kATDisplayStretchModeCount, ATUIGetDisplayStretchMode, ATUISetDisplayStretchMode);
+	ATSettingsExchangeBool(write, key, "Display: Show indicators", ATUIGetDisplayIndicators, ATUISetDisplayIndicators);
 	ATSettingsExchangeBool(write, key, "Display: Indicator margin", ATUIGetDisplayPadIndicators, ATUISetDisplayPadIndicators);
 
 	if (write) {
@@ -433,10 +438,53 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 
 	if (write) {
 		key.setBool("Disk: Sector counter enabled", g_sim.IsDiskSectorCounterEnabled());
+
+		const ATArtifactingParams& aparams = gtia.GetArtifactingParams();
+		key.setInt("Scanline intensity", (int)(0.5f + aparams.mScanlineIntensity * 100.0f));
+		key.setBool("ScreenFX: Bloom enable", aparams.mbEnableBloom);
+		key.setBool("ScreenFX: Bloom scanline compensation", aparams.mbBloomScanlineCompensation);
+		key.setInt("ScreenFX: Bloom threshold", (int)(0.5f + aparams.mBloomThreshold * 100.0f));
+		key.setInt("ScreenFX: Bloom radius", (int)(0.5f + aparams.mBloomRadius * 10.0f));
+		key.setInt("ScreenFX: Bloom direct intensity", (int)(0.5f + aparams.mBloomDirectIntensity * 100.0f));
+		key.setInt("ScreenFX: Bloom indirect intensity", (int)(0.5f + aparams.mBloomIndirectIntensity * 100.0f));
+		key.setInt("ScreenFX: Distortion X View Angle", (int)(0.5f + aparams.mDistortionViewAngleX));
+		key.setInt("ScreenFX: Distortion Y Ratio", (int)(0.5f + aparams.mDistortionYRatio * 100.0f));
 	} else {
 		g_sim.SetDiskSectorCounterEnabled(key.getBool("Disk: Sector counter enabled", g_sim.IsDiskSectorCounterEnabled()));
 
 		ATUIResizeDisplay();
+
+		ATArtifactingParams aparams = gtia.GetArtifactingParams();
+		int sli = key.getInt("Scanline intensity", -1);
+		if (sli >= 0 && sli <= 100)
+			aparams.mScanlineIntensity = (float)sli / 100.0f;
+		
+		aparams.mbEnableBloom = key.getBool("ScreenFX: Bloom enable", aparams.mbEnableBloom);
+		aparams.mbBloomScanlineCompensation = key.getBool("ScreenFX: Bloom scanline compensation", aparams.mbBloomScanlineCompensation);
+
+		int bt = key.getInt("ScreenFX: Bloom threshold", -1);
+		if (bt >= 0 && bt <= 100)
+			aparams.mBloomThreshold = (float)bt / 100.0f;
+
+		int br = key.getInt("ScreenFX: Bloom radius", -1);
+		if (br >= 1 && br < 1000)
+			aparams.mBloomRadius = (float)br / 10.0f;
+		int bdi = key.getInt("ScreenFX: Bloom direct intensity", -1);
+		if (bdi >= 0 && bdi <= 200)
+			aparams.mBloomDirectIntensity = (float)bdi / 100.0f;
+		int bii = key.getInt("ScreenFX: Bloom indirect intensity", -1);
+		if (bii >= 0 && bii <= 200)
+			aparams.mBloomIndirectIntensity = (float)bii / 100.0f;
+
+		int disX = key.getInt("ScreenFX: Distortion X View Angle", -1);
+		if (disX >= 0 && disX <= 180)
+			aparams.mDistortionViewAngleX = (float)disX;
+
+		int disY = key.getInt("ScreenFX: Distortion Y Ratio", -1);
+		if (disY >= 0 && disY <= 100)
+			aparams.mDistortionYRatio = (float)disY / 100.0f;
+
+		gtia.SetArtifactingParams(aparams);
 	}
 }
 
@@ -701,10 +749,12 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 	if (write) {
 		key.setBool("Cassette: SIO patch enabled", g_sim.IsCassetteSIOPatchEnabled());
 		key.setBool("Cassette: Auto-boot enabled", g_sim.IsCassetteAutoBootEnabled());
+		key.setBool("Cassette: Auto BASIC boot enabled", g_sim.IsCassetteAutoBasicBootEnabled());
 		key.setBool("Cassette: Auto-rewind enabled", g_sim.IsCassetteAutoRewindEnabled());
 		key.setBool("Cassette: Randomize start position", g_sim.IsCassetteRandomizedStartEnabled());
 		key.setString("Cassette: Turbo mode", ATEnumToString(g_sim.GetCassette().GetTurboMode()));
 		key.setString("Cassette: Polarity mode", ATEnumToString(g_sim.GetCassette().GetPolarityMode()));
+		key.setString("Cassette: Direct sense mode", ATEnumToString(g_sim.GetCassette().GetDirectSenseMode()));
 
 		key.setBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled());
 		key.setBool("Kernel: Fast boot enabled", g_sim.IsFastBootEnabled());
@@ -732,6 +782,7 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 	} else {
 		g_sim.SetCassetteSIOPatchEnabled(key.getBool("Cassette: SIO patch enabled", g_sim.IsCassetteSIOPatchEnabled()));
 		g_sim.SetCassetteAutoBootEnabled(key.getBool("Cassette: Auto-boot enabled", g_sim.IsCassetteAutoBootEnabled()));
+		g_sim.SetCassetteAutoBasicBootEnabled(key.getBool("Cassette: Auto BASIC boot enabled", g_sim.IsCassetteAutoBasicBootEnabled()));
 		g_sim.SetCassetteAutoRewindEnabled(key.getBool("Cassette: Auto-rewind enabled", g_sim.IsCassetteAutoRewindEnabled()));
 		g_sim.SetCassetteRandomizedStartEnabled(key.getBool("Cassette: Randomize start position", g_sim.IsCassetteRandomizedStartEnabled()));
 
@@ -744,6 +795,10 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 		VDStringA polarityMode;
 		key.getString("Cassette: Polarity mode", polarityMode);
 		cassette.SetPolarityMode(ATParseEnum<ATCassettePolarityMode>(polarityMode).mValue);
+
+		VDStringA directSenseMode;
+		key.getString("Cassette: Direct sense mode", directSenseMode);
+		g_sim.GetCassette().SetDirectSenseMode(ATParseEnum<ATCassetteDirectSenseMode>(directSenseMode).mValue);
 
 		g_sim.SetFPPatchEnabled(key.getBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled()));
 		g_sim.SetFastBootEnabled(key.getBool("Kernel: Fast boot enabled", g_sim.IsFastBootEnabled()));
@@ -771,36 +826,56 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 	}
 }
 
-void LoadColorParams(VDRegistryKey& key, ATColorParams& colpa) {
-	colpa.mHueStart = ATSettingsGetFloat(key, "Hue Start", colpa.mHueStart);
-	colpa.mHueRange = ATSettingsGetFloat(key, "Hue Range", colpa.mHueRange);
-	colpa.mBrightness = ATSettingsGetFloat(key, "Brightness", colpa.mBrightness);
-	colpa.mContrast = ATSettingsGetFloat(key, "Contrast", colpa.mContrast);
-	colpa.mSaturation = ATSettingsGetFloat(key, "Saturation", colpa.mSaturation);
-	colpa.mGammaCorrect = ATSettingsGetFloat(key, "Gamma Correction2", colpa.mGammaCorrect);
+void LoadColorParams(VDRegistryKey& key, ATNamedColorParams& colpa) {
+	colpa.mPresetTag.clear();
+	const bool presetNameValid = key.getString("Preset Tag", colpa.mPresetTag);
 
-	// Artifact hue is stored negated for compatibility reasons.
-	colpa.mArtifactHue = -ATSettingsGetFloat(key, "Artifact Hue", -colpa.mArtifactHue);
+	sint32 presetIndex = colpa.mPresetTag.empty() ? -1 : ATGetColorPresetIndexByTag(colpa.mPresetTag.c_str());
 
-	colpa.mArtifactSat = ATSettingsGetFloat(key, "Artifact Saturation", colpa.mArtifactSat);
-	colpa.mArtifactSharpness = ATSettingsGetFloat(key, "Artifact Sharpness", colpa.mArtifactSharpness);
+	if (presetIndex >= 0) {
+		static_cast<ATColorParams&>(colpa) = ATGetColorPresetByIndex(presetIndex);
+	} else {
+		colpa.mHueStart = ATSettingsGetFloat(key, "Hue Start", colpa.mHueStart);
+		colpa.mHueRange = ATSettingsGetFloat(key, "Hue Range", colpa.mHueRange);
+		colpa.mBrightness = ATSettingsGetFloat(key, "Brightness", colpa.mBrightness);
+		colpa.mContrast = ATSettingsGetFloat(key, "Contrast", colpa.mContrast);
+		colpa.mSaturation = ATSettingsGetFloat(key, "Saturation", colpa.mSaturation);
+		colpa.mGammaCorrect = ATSettingsGetFloat(key, "Gamma Correction2", colpa.mGammaCorrect);
 
-	colpa.mRedShift = ATSettingsGetFloat(key, "Red Shift", colpa.mRedShift);
-	colpa.mRedScale = ATSettingsGetFloat(key, "Red Scale", colpa.mRedScale);
-	colpa.mGrnShift = ATSettingsGetFloat(key, "Green Shift", colpa.mGrnShift);
-	colpa.mGrnScale = ATSettingsGetFloat(key, "Green Scale", colpa.mGrnScale);
-	colpa.mBluShift = ATSettingsGetFloat(key, "Blue Shift", colpa.mBluShift);
-	colpa.mBluScale = ATSettingsGetFloat(key, "Blue Scale", colpa.mBluScale);
+		// Artifact hue is stored negated for compatibility reasons.
+		colpa.mArtifactHue = -ATSettingsGetFloat(key, "Artifact Hue", -colpa.mArtifactHue);
 
-	colpa.mbUsePALQuirks = key.getBool("PAL quirks", colpa.mbUsePALQuirks);
-	colpa.mLumaRampMode = (ATLumaRampMode)key.getEnumInt("Luma ramp mode", (int)kATLumaRampModeCount, (int)colpa.mLumaRampMode);
+		colpa.mArtifactSat = ATSettingsGetFloat(key, "Artifact Saturation", colpa.mArtifactSat);
+		colpa.mArtifactSharpness = ATSettingsGetFloat(key, "Artifact Sharpness", colpa.mArtifactSharpness);
 
-	VDStringA s;
-	key.getString("Color matching mode", s);
-	colpa.mColorMatchingMode = ATParseEnum<ATColorMatchingMode>(s).mValue;
+		colpa.mIntensityScale = ATSettingsGetFloat(key, "Intensity Scale", colpa.mIntensityScale);
+		colpa.mRedShift = ATSettingsGetFloat(key, "Red Shift", colpa.mRedShift);
+		colpa.mRedScale = ATSettingsGetFloat(key, "Red Scale", colpa.mRedScale);
+		colpa.mGrnShift = ATSettingsGetFloat(key, "Green Shift", colpa.mGrnShift);
+		colpa.mGrnScale = ATSettingsGetFloat(key, "Green Scale", colpa.mGrnScale);
+		colpa.mBluShift = ATSettingsGetFloat(key, "Blue Shift", colpa.mBluShift);
+		colpa.mBluScale = ATSettingsGetFloat(key, "Blue Scale", colpa.mBluScale);
+
+		colpa.mbUsePALQuirks = key.getBool("PAL quirks", colpa.mbUsePALQuirks);
+		colpa.mLumaRampMode = (ATLumaRampMode)key.getEnumInt("Luma ramp mode", (int)kATLumaRampModeCount, (int)colpa.mLumaRampMode);
+
+		VDStringA s;
+		key.getString("Color matching mode", s);
+		colpa.mColorMatchingMode = ATParseEnum<ATColorMatchingMode>(s).mValue;
+
+		if (!presetNameValid) {
+			for(uint32 i=0, n = ATGetColorPresetCount(); i<n; ++i) {
+				if (ATGetColorPresetByIndex(i).IsSimilar(colpa)) {
+					colpa.mPresetTag = ATGetColorPresetTagByIndex(i);
+					break;
+				}
+			}
+		}
+	}
 }
 
-void SaveColorParams(VDRegistryKey& key, const ATColorParams& colpa) {
+void SaveColorParams(VDRegistryKey& key, const ATNamedColorParams& colpa) {
+	key.setString("Preset Tag", colpa.mPresetTag.c_str());
 	key.setInt("Hue Start", VDGetFloatAsInt(colpa.mHueStart));
 	key.setInt("Hue Range", VDGetFloatAsInt(colpa.mHueRange));
 	key.setInt("Brightness", VDGetFloatAsInt(colpa.mBrightness));
@@ -814,6 +889,7 @@ void SaveColorParams(VDRegistryKey& key, const ATColorParams& colpa) {
 	key.setInt("Artifact Saturation", VDGetFloatAsInt(colpa.mArtifactSat));
 	key.setInt("Artifact Sharpness", VDGetFloatAsInt(colpa.mArtifactSharpness));
 
+	key.setInt("Intensity Scale", VDGetFloatAsInt(colpa.mIntensityScale));
 	key.setInt("Red Shift", VDGetFloatAsInt(colpa.mRedShift));
 	key.setInt("Red Scale", VDGetFloatAsInt(colpa.mRedScale));
 	key.setInt("Green Shift", VDGetFloatAsInt(colpa.mGrnShift));
@@ -828,9 +904,9 @@ void SaveColorParams(VDRegistryKey& key, const ATColorParams& colpa) {
 }
 
 void ATSettingsExchangeColor(bool write, VDRegistryKey& key) {
-	if (write) {
-		ATGTIAEmulator& gtia = g_sim.GetGTIA();
+	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
+	if (write) {
 		ATColorSettings cols(gtia.GetColorSettings());
 
 		VDRegistryKey colKey(key, "Colors", true);
@@ -841,8 +917,6 @@ void ATSettingsExchangeColor(bool write, VDRegistryKey& key) {
 		SaveColorParams(palColKey, cols.mPALParams);
 		colKey.setBool("Use separate color profiles", cols.mbUsePALParams);
 	} else {
-		ATGTIAEmulator& gtia = g_sim.GetGTIA();
-	
 		VDRegistryKey colKey(key, "Colors", false);
 		ATColorSettings cols(gtia.GetColorSettings());
 
@@ -973,6 +1047,9 @@ void ATSettingsExchangeDebugging(bool write, VDRegistryKey& key) {
 		IATDebugger *dbg = ATGetDebugger();
 		if (dbg) {
 			key.setBool("Debugger: Break on EXE run address", dbg->IsBreakOnEXERunAddrEnabled());
+			key.setString("Debugger: Pre-start symbol load mode", ATEnumToString(dbg->GetSymbolLoadMode(false)));
+			key.setString("Debugger: Post-start symbol load mode", ATEnumToString(dbg->GetSymbolLoadMode(true)));
+			key.setString("Debugger: Script auto-load mode", ATEnumToString(dbg->GetScriptAutoLoadMode()));
 		}
 	} else {
 		g_sim.SetRandomFillEXEEnabled(key.getBool("Memory: Randomize on EXE load", g_sim.IsRandomFillEXEEnabled()));
@@ -985,6 +1062,18 @@ void ATSettingsExchangeDebugging(bool write, VDRegistryKey& key) {
 		IATDebugger *dbg = ATGetDebugger();
 		if (dbg) {
 			dbg->SetBreakOnEXERunAddrEnabled(key.getBool("Debugger: Break on EXE run address", dbg->IsBreakOnEXERunAddrEnabled()));
+
+			VDStringA s;
+			key.getString("Debugger: Pre-start symbol load mode", s);
+			dbg->SetSymbolLoadMode(false, ATParseEnum<ATDebuggerSymbolLoadMode>(s).mValue);
+
+			s.clear();
+			key.getString("Debugger: Post-start symbol load mode", s);
+			dbg->SetSymbolLoadMode(true, ATParseEnum<ATDebuggerSymbolLoadMode>(s).mValue);
+
+			s.clear();
+			key.getString("Debugger: Script auto-load mode", s);
+			dbg->SetScriptAutoLoadMode(ATParseEnum<ATDebuggerScriptAutoLoadMode>(s).mValue);
 		}
 	}
 }
@@ -1186,6 +1275,8 @@ void LoadMountedImages(VDRegistryKey& rootKey) {
 
 				if (imagestr == L"special:sc3d")
 					g_sim.LoadNewCartridge(kATCartridgeMode_SuperCharger3D);
+				else if (imagestr == L"special:basic")
+					g_sim.LoadCartridgeBASIC();
 				else
 					g_sim.LoadCartridge(cartUnit, imagestr.c_str(), &cartLoadCtx);
 			} catch(const MyError&) {
@@ -1564,4 +1655,24 @@ bool ATSettingsIsResetPending() {
 	VDRegistryAppKey key("", false);
 
 	return key.getBool("Reset all pending");
+}
+
+void ATSettingsSetInPortableMode(bool portable) {
+	g_ATInPortableMode = portable;
+}
+
+bool ATSettingsIsInPortableMode() {
+	return g_ATInPortableMode;
+}
+
+void ATSettingsScheduleMigration() {
+	g_ATSettingsMigrationScheduled = true;
+}
+
+bool ATSettingsIsMigrationScheduled() {
+	return g_ATSettingsMigrationScheduled;
+}
+
+VDStringW ATSettingsGetDefaultPortablePath() {
+	return VDMakePath(VDGetProgramPath().c_str(), L"Altirra.ini");
 }

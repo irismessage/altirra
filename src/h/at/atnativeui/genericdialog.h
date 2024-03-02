@@ -63,6 +63,7 @@ public:
 	vdrect32 mCenterTarget { 0, 0, 0, 0 };
 	float mAspectLimit = 0;
 	ATUIGenericIconType mIconType {};
+	bool *mpCustomIgnoreFlag = nullptr;
 };
 
 void ATUISetDefaultGenericDialogCaption(const wchar_t *s);

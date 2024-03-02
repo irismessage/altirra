@@ -1178,8 +1178,6 @@ bool VDVideoDisplayMinidriverDirectDraw::Update(UpdateMode mode) {
 	char *dst = (char *)ddsd.lpSurface;
 	ptrdiff_t dstpitch = ddsd.lPitch;
 
-	uint32 fieldmode = mode & kModeFieldMask;
-
 	VDPixmap dstbm = { dst, NULL, (vdpixsize)ddsd.dwWidth, (vdpixsize)ddsd.dwHeight, dstpitch, mPrimaryFormat };
 
 	if (mpddsOverlay)
@@ -1205,45 +1203,6 @@ bool VDVideoDisplayMinidriverDirectDraw::Update(UpdateMode mode) {
 		if (mbSwapChromaPlanes) {
 			std::swap(dstbm.data2, dstbm.data3);
 			std::swap(dstbm.pitch2, dstbm.pitch3);
-		}
-	}
-
-	if (mSource.bInterlaced && fieldmode != kModeAllFields) {
-		const VDPixmapFormatInfo& srcformat = VDPixmapGetInfo(source.format);
-		const VDPixmapFormatInfo& dstformat = VDPixmapGetInfo(dstbm.format);
-
-		if (!srcformat.qhbits && !dstformat.qhbits && !srcformat.auxhbits && !dstformat.auxhbits) {
-			if (fieldmode == kModeOddField) {
-				source.h >>= 1;
-
-				vdptrstep(source.data, source.pitch);
-				switch(srcformat.auxbufs) {
-					case 2:	vdptrstep(source.data3, source.pitch3);
-					case 1:	vdptrstep(source.data2, source.pitch2);
-				}
-
-				dstbm.h >>= 1;
-				vdptrstep(dstbm.data, dstbm.pitch);
-				switch(dstformat.auxbufs) {
-					case 2:	vdptrstep(dstbm.data3, dstbm.pitch3);
-					case 1:	vdptrstep(dstbm.data2, dstbm.pitch2);
-				}
-			} else {
-				source.h = (source.h + 1) >> 1;
-				dstbm.h = (dstbm.h + 1) >> 1;
-			}
-
-			source.pitch += source.pitch;
-			switch(dstformat.auxbufs) {
-				case 2:	source.pitch3 += source.pitch3;
-				case 1:	source.pitch2 += source.pitch2;
-			}
-
-			dstbm.pitch += dstbm.pitch;
-			switch(dstformat.auxbufs) {
-				case 2:	dstbm.pitch3 += dstbm.pitch3;
-				case 1:	dstbm.pitch2 += dstbm.pitch2;
-			}
 		}
 	}
 
@@ -1533,57 +1492,12 @@ void VDVideoDisplayMinidriverDirectDraw::InternalRefresh(const RECT& rClient, Up
 				pDest->SetClipper(mpddc);
 			}
 		}
-	} else if (!mSource.bInterlaced) {
+	} else {
 		if (mbUseSubrect) {
 			RECT rSrc = { mSubrect.left, mSubrect.top, mSubrect.right, mSubrect.bottom };
 			success = InternalBlt(pDest, &rDst, &rSrc, doNotWait, stillDrawing, usingCompositorSurface);
 		} else
 			success = InternalBlt(pDest, &rDst, NULL, doNotWait, stillDrawing, usingCompositorSurface);
-	} else {
-		const VDPixmap& source = mSource.pixmap;
-		vdrect32 r;
-		if (mbUseSubrect)
-			r = mSubrect;
-		else
-			r.set(0, 0, source.w, source.h);
-
-		const uint32 fieldmode = mode & kModeFieldMask;
-
-		uint32 vinc		= (r.height() << 16) / rClient.bottom;
-		uint32 vaccum	= (vinc >> 1) + (r.top << 16);
-		uint32 vtlimit	= (((source.h + 1) >> 1) << 17) - 1;
-		int fieldbase	= (fieldmode == kModeOddField ? 1 : 0);
-		int ystep		= (fieldmode == kModeAllFields) ? 1 : 2;
-
-		vaccum += vinc*fieldbase;
-		vinc *= ystep;
-
-		for(int y = fieldbase; y < rClient.bottom; y += ystep) {
-			int v;
-
-			if (y & 1) {
-				uint32 vt = vaccum < 0x8000 ? 0 : vaccum - 0x8000;
-
-				v = (y&1) + ((vt>>16) & ~1);
-			} else {
-				uint32 vt = vaccum + 0x8000;
-
-				if (vt > vtlimit)
-					vt = vtlimit;
-
-				v = (vt>>16) & ~1;
-			}
-
-			RECT rDstTemp = { rDst.left, rDst.top+y, rDst.right, rDst.top+y+1 };
-			RECT rSrcTemp = { r.left, v, r.width(), v+1 };
-
-			if (!InternalBlt(pDest, &rDstTemp, &rSrcTemp, doNotWait || y > fieldbase, stillDrawing, usingCompositorSurface)) {
-				success = false;
-				break;
-			}
-
-			vaccum += vinc;
-		}
 	}
 
 	if (doNotWait && stillDrawing)

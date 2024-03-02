@@ -25,17 +25,20 @@
 #include <vd2/system/event.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/vdstl.h>
-#include <at/ATCPU/execstate.h>
-#include <at/ATDebugger/target.h>
+#include <at/atcore/enumparse.h>
+#include <at/atcpu/execstate.h>
+#include <at/atdebugger/target.h>
 #include "symbols.h"
 
 struct ATSymbol;
 struct ATSourceLineInfo;
-class ATDebugExpNode;
-class IATDebuggerClient;
 struct ATDebuggerExprParseOpts;
-class IATDebugTarget;
 struct ATDebugExpEvalContext;
+class ATDebugExpNode;
+class IATDebugger;
+class IATDebuggerClient;
+class IATDebugTarget;
+class ATDebuggerCmdParser;
 
 enum ATDebugEvent {
 	kATDebugEvent_BreakpointsChanged,
@@ -53,6 +56,24 @@ enum ATDebuggerStorageId {
 	kATDebuggerStorageId_CustomSymbols	= 0x0100,
 	kATDebuggerStorageId_All
 };
+
+enum class ATDebuggerSymbolLoadMode : uint8 {
+	Default,
+	Disabled,
+	Deferred,
+	Enabled
+};
+
+AT_DECLARE_ENUM_TABLE(ATDebuggerSymbolLoadMode);
+
+enum class ATDebuggerScriptAutoLoadMode : uint8 {
+	Default,
+	Disabled,
+	AskToLoad,
+	Enabled
+};
+
+AT_DECLARE_ENUM_TABLE(ATDebuggerScriptAutoLoadMode);
 
 struct ATDebuggerSystemState {
 	uint16	mPC;
@@ -99,8 +120,6 @@ struct ATDebuggerBreakpointInfo {
 	bool	mbOneShot;
 };
 
-class IATDebugger;
-
 class IATDebuggerActiveCommand : public IVDRefCount {
 public:
 	virtual bool IsBusy() const = 0;
@@ -119,6 +138,11 @@ struct ATDebuggerStepRange {
 	uint32 mSize;
 };
 
+struct ATDebuggerCmdDef {
+	const char *mpName;
+	void (*mpFunction)(ATDebuggerCmdParser&);
+};
+
 class IATDebugger {
 public:
 	virtual bool IsRunning() const = 0;
@@ -126,10 +150,19 @@ public:
 
 	virtual const ATDebuggerExprParseOpts& GetExprOpts() const = 0;
 
-	virtual void Detach() = 0;
+	virtual bool IsEnabled() const = 0;
+	virtual void SetEnabled(bool enabled) = 0;
+
+	virtual ATDebuggerScriptAutoLoadMode GetScriptAutoLoadMode() const = 0;
+	virtual void SetScriptAutoLoadMode(ATDebuggerScriptAutoLoadMode mode) = 0;
+	virtual void SetScriptAutoLoadConfirmFn(vdfunction<bool()> fn) = 0;
+
+	virtual void ShowBannerOnce() = 0;
+
 	virtual void SetSourceMode(ATDebugSrcMode src) = 0;
 	virtual bool Tick() = 0;
 	virtual void Break() = 0;
+	virtual void Stop() = 0;
 	virtual void Run(ATDebugSrcMode sourceMode) = 0;
 	virtual void RunTraced() = 0;
 
@@ -160,11 +193,18 @@ public:
 	virtual void RemoveClient(IATDebuggerClient *client) = 0;
 	virtual void RequestClientUpdate(IATDebuggerClient *client) = 0;
 
-	virtual uint32 LoadSymbols(const wchar_t *fileName, bool processDirectives = true, const uint32 *targetIdOverride = nullptr) = 0;
+	virtual ATDebuggerSymbolLoadMode GetSymbolLoadMode(bool whenEnabled) const = 0;
+	virtual void SetSymbolLoadMode(bool whenEnabled, ATDebuggerSymbolLoadMode mode) = 0;
+
+	virtual bool IsSymbolLoadingEnabled() const = 0;
+	virtual uint32 LoadSymbols(const wchar_t *fileName, bool processDirectives = true, const uint32 *targetIdOverride = nullptr, bool loadImmediately = false) = 0;
 	virtual void UnloadSymbols(uint32 moduleId) = 0;
+	virtual void LoadDeferredSymbols(uint32 moduleId) = 0;
+	virtual void LoadAllDeferredSymbols() = 0;
 	virtual void ProcessSymbolDirectives(uint32 id) = 0;
 
 	virtual sint32 ResolveSymbol(const char *s, bool allowGlobal = false, bool allowShortBase = true, bool allowNakedHex = true) = 0;
+	virtual void EnumSourceFiles(const vdfunction<void(const wchar_t *, uint32)>& fn) const = 0;
 
 	virtual void AddCustomSymbol(uint32 address, uint32 len, const char *name, uint32 rwxmode, uint32 moduleId = 0) = 0;
 	virtual void RemoveCustomSymbol(uint32 address) = 0;
@@ -176,9 +216,12 @@ public:
 	virtual void GetDirtyStorage(vdfastvector<ATDebuggerStorageId>& ids) const = 0;
 
 	virtual sint32 EvaluateThrow(const char *s) = 0;
+	virtual std::pair<bool, sint32> Evaluate(ATDebugExpNode *expr) = 0;
 	virtual ATDebugExpEvalContext GetEvalContext() const = 0;
 
 	virtual void StartActiveCommand(IATDebuggerActiveCommand *cmd) = 0;
+
+	virtual void DefineCommands(const ATDebuggerCmdDef *defs, size_t numDefs) = 0;
 
 	virtual bool IsCommandAliasPresent(const char *alias) const = 0;
 	virtual const char *GetCommandAlias(const char *alias, const char *args) const = 0;
@@ -187,6 +230,7 @@ public:
 	virtual void ClearCommandAliases() = 0;
 
 	virtual void QueueBatchFile(const wchar_t *s) = 0;
+	virtual void QueueAutoLoadBatchFile(const wchar_t *s) = 0;
 	virtual void QueueCommand(const char *cmd, bool echo) = 0;
 	virtual void QueueCommandFront(const char *s, bool echo) = 0;
 

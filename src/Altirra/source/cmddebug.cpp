@@ -23,6 +23,7 @@
 #include "simulator.h"
 #include "trace.h"
 #include "uiaccessors.h"
+#include "cmdhelpers.h"
 
 extern ATSimulator g_sim;
 
@@ -35,6 +36,10 @@ void OnCommandDebuggerOpenSourceFile() {
 	if (!fn.empty()) {
 		ATOpenSourceWindow(fn.c_str());
 	}
+}
+
+void OnCommandDebuggerOpenSourceFileList() {
+	ATUIShowSourceListDialog();
 }
 
 void OnCommandDebuggerToggleBreakAtExeRun() {
@@ -57,7 +62,6 @@ void OnCommandDebugChangeFontDialog() {
 
 void OnCommandDebugToggleDebugger() {
 	if (ATIsDebugConsoleActive()) {
-		ATGetDebugger()->Detach();
 		ATCloseConsole();
 	} else
 		ATOpenConsole();
@@ -150,4 +154,82 @@ extern void ATUIOpenTraceViewer(VDGUIHandle h, ATTraceCollection *collection);
 
 void OnCommandDebugShowTraceViewer() {
 	ATUIOpenTraceViewer(nullptr, g_sim.GetTraceCollection());
+}
+
+namespace ATCommands {
+	bool IsNotRunning() {
+		return !g_sim.IsRunning();
+	}
+
+	bool IsBreakAtExeRunAddrEnabled() {
+		return ATGetDebugger()->IsBreakOnEXERunAddrEnabled();
+	}
+
+	template<bool T_PreStart, ATDebuggerSymbolLoadMode T_Mode>
+	constexpr ATUICommand MakeSymbolLoadCommand(const char *name) {
+		return ATUICommand {
+			name,
+			[] {
+				ATGetDebugger()->SetSymbolLoadMode(T_PreStart, T_Mode);
+			},
+			nullptr,
+			[] {
+				return ToRadio(ATGetDebugger()->GetSymbolLoadMode(T_PreStart) == T_Mode);
+			},
+			nullptr
+		};
+	}
+
+	template<ATDebuggerScriptAutoLoadMode T_Mode>
+	constexpr ATUICommand MakeScriptLoadCommand(const char *name) {
+		return ATUICommand {
+			name,
+			[] {
+				ATGetDebugger()->SetScriptAutoLoadMode(T_Mode);
+			},
+			nullptr,
+			[] {
+				return ToRadio(ATGetDebugger()->GetScriptAutoLoadMode() == T_Mode);
+			},
+			nullptr
+		};
+	}
+
+	static constexpr ATUICommand kATCommandsDebug[] = {
+		{ "Debug.OpenSourceFile", OnCommandDebuggerOpenSourceFile, nullptr },
+		{ "Debug.OpenSourceFileList", OnCommandDebuggerOpenSourceFileList, nullptr },
+		{ "Debug.ToggleBreakAtExeRun", OnCommandDebuggerToggleBreakAtExeRun, nullptr, CheckedIf<IsBreakAtExeRunAddrEnabled> },
+
+		{ "Debug.ToggleAutoReloadRoms", OnCommandDebugToggleAutoReloadRoms, nullptr, [] { return ToChecked(g_sim.IsROMAutoReloadEnabled()); } },
+		{ "Debug.ToggleAutoLoadKernelSymbols", OnCommandDebugToggleAutoLoadKernelSymbols, nullptr, [] { return ToChecked(g_sim.IsAutoLoadKernelSymbolsEnabled()); } },
+
+		MakeSymbolLoadCommand<false, ATDebuggerSymbolLoadMode::Disabled>("Debug.PreStartSymbolLoadDisabled"),
+		MakeSymbolLoadCommand<false, ATDebuggerSymbolLoadMode::Deferred>("Debug.PreStartSymbolLoadDeferred"),
+		MakeSymbolLoadCommand<false, ATDebuggerSymbolLoadMode::Enabled>("Debug.PreStartSymbolLoadEnabled"),
+		MakeSymbolLoadCommand<true, ATDebuggerSymbolLoadMode::Disabled>("Debug.PostStartSymbolLoadDisabled"),
+		MakeSymbolLoadCommand<true, ATDebuggerSymbolLoadMode::Deferred>("Debug.PostStartSymbolLoadDeferred"),
+		MakeSymbolLoadCommand<true, ATDebuggerSymbolLoadMode::Enabled>("Debug.PostStartSymbolLoadEnabled"),
+
+		MakeScriptLoadCommand<ATDebuggerScriptAutoLoadMode::Disabled>("Debug.ScriptAutoLoadDisabled"),
+		MakeScriptLoadCommand<ATDebuggerScriptAutoLoadMode::AskToLoad>("Debug.ScriptAutoLoadAskToLoad"),
+		MakeScriptLoadCommand<ATDebuggerScriptAutoLoadMode::Enabled>("Debug.ScriptAutoLoadEnabled"),
+
+		{ "Debug.ChangeFontDialog", OnCommandDebugChangeFontDialog },
+		{ "Debug.ToggleDebugger", OnCommandDebugToggleDebugger, nullptr, CheckedIf<IsDebuggerEnabled> },
+		{ "Debug.Run", OnCommandDebugRun, IsNotRunning },
+		{ "Debug.Break", OnCommandDebugBreak, IsDebuggerRunning },
+		{ "Debug.RunStop", OnCommandDebugRunStop },
+		{ "Debug.StepInto", OnCommandDebugStepInto, IsNotRunning },
+		{ "Debug.StepOut", OnCommandDebugStepOut, IsNotRunning },
+		{ "Debug.StepOver", OnCommandDebugStepOver, IsNotRunning },
+		{ "Debug.ToggleBreakpoint", OnCommandDebugToggleBreakpoint, IsDebuggerEnabled },
+		{ "Debug.VerifierDialog", OnCommandDebugVerifierDialog, nullptr, [] { return ToChecked(g_sim.IsVerifierEnabled()); } },
+		{ "Debug.ShowTraceViewer", OnCommandDebugShowTraceViewer },
+	};
+}
+
+void ATUIInitCommandMappingsDebug(ATUICommandManager& cmdMgr) {
+	using namespace ATCommands;
+
+	cmdMgr.RegisterCommands(kATCommandsDebug, vdcountof(kATCommandsDebug));
 }

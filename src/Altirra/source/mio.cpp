@@ -103,7 +103,7 @@ bool ATMIOEmulator::SetSettings(const ATPropertySet& settings) {
 }
 
 void ATMIOEmulator::Init() {
-	mSerialBus.Init(this, 0, IATDeviceSerial::kTypeID, "serial", L"Serial Port");
+	mSerialBus.Init(this, 0, IATDeviceSerial::kTypeID, "serial", L"Serial Port", "serport");
 
 	mSerialBus.SetOnAttach(
 		[this] {
@@ -283,8 +283,8 @@ bool ATMIOEmulator::ReloadFirmware() {
 	return checksum != VDHash128(mFirmware, sizeof mFirmware);
 }
 
-bool ATMIOEmulator::IsUsableFirmwareLoaded() const {
-	return mbFirmwareUsable;
+ATDeviceFirmwareStatus ATMIOEmulator::GetFirmwareStatus() const {
+	return mbFirmwareUsable ? ATDeviceFirmwareStatus::OK : ATDeviceFirmwareStatus::Missing;
 }
 
 void ATMIOEmulator::InitIRQSource(ATIRQController *irqc) {
@@ -322,6 +322,10 @@ IATDeviceBus *ATMIOEmulator::GetDeviceBus(uint32 index) {
 
 const wchar_t *ATMIOEmulator::GetBusName() const {
 	return L"SCSI Bus";
+}
+
+const char *ATMIOEmulator::GetBusTag() const {
+	return "scsibus";
 }
 
 const char *ATMIOEmulator::GetSupportedType(uint32 index) {

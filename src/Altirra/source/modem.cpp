@@ -158,31 +158,23 @@ void ATModemEmulator::GetSettings(ATPropertySet& settings) {
 	if (mConfig.mListenPort)
 		settings.SetUint32("port", mConfig.mListenPort);
 
-	if (mConfig.mbAllowOutbound)
-		settings.SetBool("outbound", true);
+	settings.SetBool("outbound", mConfig.mbAllowOutbound);
 
 	if (!mConfig.mTelnetTermType.empty())
 		settings.SetString("termtype", VDTextAToW(mConfig.mTelnetTermType).c_str());
 
-	if (mConfig.mbTelnetEmulation)
-		settings.SetBool("telnet", true);
-
-	if (!mConfig.mbTelnetLFConversion)
-		settings.SetBool("telnetlf", false);
-
-	if (mConfig.mbListenForIPv6)
-		settings.SetBool("ipv6", true);
-
-	if (mConfig.mbDisableThrottling)
-		settings.SetBool("unthrottled", true);
+	settings.SetBool("telnet", mConfig.mbTelnetEmulation);
+	settings.SetBool("telnetlf", mConfig.mbTelnetLFConversion);
+	settings.SetBool("ipv6", mConfig.mbListenForIPv6);
+	settings.SetBool("unthrottled", mConfig.mbDisableThrottling);
 
 	if (mConfig.mDeviceMode == kATRS232DeviceMode_SX212) {
 		if (mConfig.mConnectionSpeed > 300)
 			settings.SetUint32("connect_rate", 1200);
-	} else {
-		if (mConfig.mbRequireMatchedDTERate)
-			settings.SetBool("check_rate", true);
-
+		else
+			settings.SetUint32("connect_rate", 300);
+	} else if (mConfig.mDeviceMode != kATRS232DeviceMode_1030) {
+		settings.SetBool("check_rate", mConfig.mbRequireMatchedDTERate);
 		settings.SetUint32("connect_rate", mConfig.mConnectionSpeed);
 	}
 
@@ -197,14 +189,14 @@ void ATModemEmulator::GetSettings(ATPropertySet& settings) {
 
 bool ATModemEmulator::SetSettings(const ATPropertySet& settings) {
 	mConfig.mListenPort = settings.GetUint32("port");
-	mConfig.mbAllowOutbound = settings.GetBool("outbound");
+	mConfig.mbAllowOutbound = settings.GetBool("outbound", true);
 	mConfig.mTelnetTermType = VDTextWToA(settings.GetString("termtype", L""));
-	mConfig.mbTelnetEmulation = settings.GetBool("telnet");
-	mConfig.mbTelnetLFConversion = settings.GetBool("telnetlf");
-	mConfig.mbListenForIPv6 = settings.GetBool("ipv6");
-	mConfig.mbDisableThrottling = settings.GetBool("unthrottled");
-	mConfig.mbRequireMatchedDTERate = settings.GetBool("check_rate");
-	mConfig.mConnectionSpeed = settings.GetUint32("connect_rate");
+	mConfig.mbTelnetEmulation = settings.GetBool("telnet", true);
+	mConfig.mbTelnetLFConversion = settings.GetBool("telnetlf", true);
+	mConfig.mbListenForIPv6 = settings.GetBool("ipv6", true);
+	mConfig.mbDisableThrottling = settings.GetBool("unthrottled", false);
+	mConfig.mbRequireMatchedDTERate = settings.GetBool("check_rate", false);
+	mConfig.mConnectionSpeed = settings.GetUint32("connect_rate", 9600);
 
 	// enforce civilized speeds (0 is particularly not good)
 	if (mConfig.mConnectionSpeed < 300)
@@ -370,6 +362,9 @@ void ATModemEmulator::UpdateConfig() {
 	if (mConfig.mDeviceMode == kATRS232DeviceMode_SX212) {
 		mConfig.mbRequireMatchedDTERate = true;
 		mConfig.mConnectionSpeed = (mConfig.mConnectionSpeed > 300) ? 1200 : 300;
+	} else if (mConfig.mDeviceMode == kATRS232DeviceMode_1030) {
+		mConfig.mbRequireMatchedDTERate = true;
+		mConfig.mConnectionSpeed = 300;
 	}
 
 	mbListenEnabled = (mConfig.mListenPort != 0);

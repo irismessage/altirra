@@ -50,31 +50,364 @@ extern "C" void VDCDECL atasm_update_playfield_160_sse2(
 );
 #endif
 
-#ifdef VD_CPU_AMD64
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
 #include "gtia_sse2_intrin.inl"
 #elif defined(VD_CPU_ARM64)
 #include "gtia_neon.inl"
 #endif
 
-class ATFrameTracker : public vdrefcounted<IVDRefCount> {
+///////////////////////////////////////////////////////////////////////////
+
+bool ATColorParams::IsSimilar(const ATColorParams& other) const {
+	const auto IsSimilar = [](float x, float y) { return fabsf(x - y) < 1e-5f; };
+
+	return IsSimilar(mHueStart			, other.mHueStart)
+		&& IsSimilar(mHueRange			, other.mHueRange)
+		&& IsSimilar(mBrightness		, other.mBrightness)
+		&& IsSimilar(mContrast			, other.mContrast)
+		&& IsSimilar(mSaturation		, other.mSaturation)
+		&& IsSimilar(mGammaCorrect		, other.mGammaCorrect)
+		&& IsSimilar(mIntensityScale	, other.mIntensityScale)
+		&& IsSimilar(mArtifactHue		, other.mArtifactHue)
+		&& IsSimilar(mArtifactSat		, other.mArtifactSat)
+		&& IsSimilar(mArtifactSharpness	, other.mArtifactSharpness)
+		&& IsSimilar(mRedShift			, other.mRedShift)
+		&& IsSimilar(mRedScale			, other.mRedScale)
+		&& IsSimilar(mGrnShift			, other.mGrnShift)
+		&& IsSimilar(mGrnScale			, other.mGrnScale)
+		&& IsSimilar(mBluShift			, other.mBluShift)
+		&& IsSimilar(mBluScale			, other.mBluScale)
+		&& mbUsePALQuirks == other.mbUsePALQuirks
+		&& mLumaRampMode == other.mLumaRampMode
+		&& mColorMatchingMode == other.mColorMatchingMode;
+}
+
+ATArtifactingParams ATArtifactingParams::GetDefault() {
+	ATArtifactingParams params = {};
+	params.mScanlineIntensity = 0.75f;
+	params.mbEnableBloom = false;
+	params.mbBloomScanlineCompensation = true;
+	params.mBloomThreshold = 0.01f;
+	params.mBloomRadius = 9.8f;
+	params.mBloomDirectIntensity = 1.00f;
+	params.mBloomIndirectIntensity = 0.10f;
+
+	return params;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+namespace nsATColorPresets {
+	constexpr ATColorParams GetPresetBase() {
+		ATColorParams pa {};
+		pa.mRedShift = 0;
+		pa.mRedScale = 1;
+		pa.mGrnShift = 0;
+		pa.mGrnScale = 1;
+		pa.mBluShift = 0;
+		pa.mBluScale = 1;
+		pa.mGammaCorrect = 1.0f;
+		pa.mIntensityScale = 1.0f;
+		pa.mArtifactSharpness = 0.50f;
+		pa.mbUsePALQuirks = false;
+		pa.mLumaRampMode = kATLumaRampMode_XL;
+		pa.mColorMatchingMode = ATColorMatchingMode::None;
+
+		return pa;
+	}
+
+	constexpr ATColorParams GetDefaultNTSCPreset() {
+		ATColorParams pa = GetPresetBase();
+		pa.mHueStart = -57.0f;
+		pa.mHueRange = 27.1f * 15.0f;
+		pa.mBrightness = -0.04f;
+		pa.mContrast = 1.04f;
+		pa.mSaturation = 0.20f;
+		pa.mArtifactHue = 252.0f;
+		pa.mArtifactSat = 1.15f;
+		pa.mArtifactSharpness = 0.50f;
+		pa.mColorMatchingMode = ATColorMatchingMode::SRGB;
+
+		return pa;
+	}
+
+	constexpr ATColorParams GetDefaultPALPreset() {
+		ATColorParams pa = GetPresetBase();
+		pa.mHueStart = -24.0f;
+		pa.mHueRange = 23.5f * 15.0f;
+		pa.mBrightness = 0.0f;
+		pa.mContrast = 1.0f;
+		pa.mSaturation = 0.29f;
+		pa.mArtifactHue = 80.0f;
+		pa.mArtifactSat = 0.80f;
+		pa.mArtifactSharpness = 0.50f;
+		pa.mbUsePALQuirks = true;
+
+		return pa;
+	}
+}
+
+static constexpr struct ATColorPreset {
+	const char *mpTag;
+	const wchar_t *mpName;
+	ATColorParams mParams;
+} kColorPresets[] = {
+	{ "default_ntsc", L"Default NTSC (XL)", nsATColorPresets::GetDefaultNTSCPreset()},
+	{ "default_pal", L"Default PAL", nsATColorPresets::GetDefaultPALPreset()},
+
+	{ "ntsc_xl_contemporary", L"NTSC Contemporary (XL)", []() -> ATColorParams {
+			ATColorParams pa = nsATColorPresets::GetDefaultNTSCPreset();
+			pa.mHueStart = -33.0f;
+			pa.mHueRange = 24.0f * 15.0f;
+			return pa;
+		}() },
+
+	{ "ntsc_xe", L"NTSC (XE)", []() -> ATColorParams {
+			ATColorParams pa = nsATColorPresets::GetDefaultNTSCPreset();
+			pa.mArtifactHue = 191.0f;
+			pa.mArtifactSat = 1.32f;
+			return pa;
+		}() },
+
+	{ "ntsc_800", L"NTSC (800)", []() -> ATColorParams {
+			ATColorParams pa = nsATColorPresets::GetPresetBase();
+			pa.mHueStart = -57.0f;
+			pa.mHueRange = 27.1f * 15.0f;
+			pa.mBrightness = -0.04f;
+			pa.mContrast = 1.04f;
+			pa.mSaturation = 0.20f;
+			pa.mGammaCorrect = 1.0f;
+			pa.mIntensityScale = 0.77f;
+			pa.mArtifactHue = 124.0f;
+			pa.mArtifactSat = 2.08f;
+			pa.mColorMatchingMode = ATColorMatchingMode::SRGB;
+			return pa;
+		}() },
+
+	{ "ntsc_xl_1702", L"NTSC (XL + Commodore 1702 monitor)", []() -> ATColorParams {
+			ATColorParams pa = nsATColorPresets::GetPresetBase();
+			pa.mHueStart = -33.0f;
+			pa.mHueRange = 24.0f * 15.0f;
+			pa.mBrightness = 0;
+			pa.mContrast = 1.08f;
+			pa.mSaturation = 0.30f;
+			pa.mGammaCorrect = 1.0f;
+			pa.mArtifactHue = 277.0f;
+			pa.mArtifactSat = 2.13f;
+			pa.mGrnScale = 0.60f;
+			pa.mBluShift = -5.5f;
+			pa.mBluScale = 1.56f;
+			return pa;
+		}() },
+
+	{ "altirra310_ntsc", L"Altirra 3.10 NTSC", []() -> ATColorParams {
+			ATColorParams pa = nsATColorPresets::GetPresetBase();
+			pa.mHueStart = -57.0f;
+			pa.mHueRange = 27.1f * 15.0f;
+			pa.mBrightness = -0.04f;
+			pa.mContrast = 1.04f;
+			pa.mSaturation = 0.20f;
+			pa.mArtifactHue = 252.0f;
+			pa.mArtifactSat = 1.15f;
+			pa.mArtifactSharpness = 0.50f;
+			pa.mBluScale = 1.50f;
+			return pa;
+		}() },
+
+	{ "altirra280_ntsc", L"Altirra 2.80 NTSC", []() -> ATColorParams {
+			ATColorParams pa = nsATColorPresets::GetPresetBase();
+			pa.mHueStart = -36.0f;
+			pa.mHueRange = 25.5f * 15.0f;
+			pa.mBrightness = -0.08f;
+			pa.mContrast = 1.08f;
+			pa.mSaturation = 0.33f;
+			pa.mGammaCorrect = 1.0f;
+			pa.mArtifactHue = 279.0f;
+			pa.mArtifactSat = 0.68f;
+			return pa;
+		}() },
+
+	{ "altirra250_ntsc", L"Altirra 2.50 NTSC", []() -> ATColorParams {
+			ATColorParams pa = nsATColorPresets::GetPresetBase();
+			pa.mHueStart = -51.0f;
+			pa.mHueRange = 27.9f * 15.0f;
+			pa.mBrightness = 0.0f;
+			pa.mContrast = 1.0f;
+			pa.mSaturation = 75.0f / 255.0f;
+			pa.mGammaCorrect = 1.0f;
+			pa.mArtifactHue = -96.0f;
+			pa.mArtifactSat = 2.76f;
+			return pa;
+		}() },
+
+	{ "jakub", L"Jakub", []() -> ATColorParams {
+			ATColorParams pa = nsATColorPresets::GetPresetBase();
+			pa.mHueStart = -9.36754f;
+			pa.mHueRange = 361.019f;
+			pa.mBrightness = +0.174505f;
+			pa.mContrast = 0.82371f;
+			pa.mSaturation = 0.21993f;
+			pa.mGammaCorrect = 1.0f;
+			pa.mArtifactHue = -96.0f;
+			pa.mArtifactSat = 2.76f;
+			return pa;
+		}() },
+
+	{ "olivierpal", L"OlivierPAL", []() -> ATColorParams {
+			ATColorParams pa = nsATColorPresets::GetPresetBase();
+			pa.mHueStart = -14.7889f;
+			pa.mHueRange = 385.155f;
+			pa.mBrightness = +0.057038f;
+			pa.mContrast = 0.941149f;
+			pa.mSaturation = 0.195861f;
+			pa.mGammaCorrect = 1.0f;
+			pa.mArtifactHue = 80.0f;
+			pa.mArtifactSat = 0.80f;
+			return pa;
+		}() },
+};
+
+uint32 ATGetColorPresetCount() {
+	return vdcountof(kColorPresets);
+}
+
+const char *ATGetColorPresetTagByIndex(uint32 i) {
+	return kColorPresets[i].mpTag;
+}
+
+sint32 ATGetColorPresetIndexByTag(const char *tags) {
+	VDStringRefA tagsRef(tags);
+
+	while(!tagsRef.empty()) {
+		VDStringRefA tag;
+		if (!tagsRef.split(',', tag)) {
+			tag = tagsRef;
+			tagsRef.clear();
+		}
+
+		for(uint32 i=0; i<vdcountof(kColorPresets); ++i) {
+			if (tag == kColorPresets[i].mpTag)
+				return (sint32)i;
+		}
+	}
+
+	return -1;
+}
+
+const wchar_t *ATGetColorPresetNameByIndex(uint32 i) {
+	return kColorPresets[i].mpName;
+}
+
+ATColorParams ATGetColorPresetByIndex(uint32 i) {
+	return kColorPresets[i].mParams;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATFrameTracker final : public vdrefcounted<IVDRefCount> {
 public:
 	ATFrameTracker() : mActiveFrames(0) { }
 	VDAtomicInt mActiveFrames;
 };
 
-class ATFrameBuffer : public VDVideoDisplayFrame {
+class ATFrameBuffer final : public VDVideoDisplayFrame, public IVDVideoDisplayScreenFXEngine {
 public:
-	ATFrameBuffer(ATFrameTracker *tracker) : mpTracker(tracker) {
+	ATFrameBuffer(ATFrameTracker *tracker, ATArtifactingEngine& artengine)
+		: mpTracker(tracker)
+		, mArtEngine(artengine)
+	{
 		++mpTracker->mActiveFrames;
+
+		mpScreenFXEngine = this;
 	}
 
 	~ATFrameBuffer() {
 		--mpTracker->mActiveFrames;
 	}
 
-	const vdrefptr<ATFrameTracker> mpTracker;
+	VDPixmap ApplyScreenFX(const VDPixmap& px) override;
+
+	vdrefptr<ATFrameTracker> mpTracker;
+	ATArtifactingEngine& mArtEngine;
 	VDPixmapBuffer mBuffer;
+	VDPixmapBuffer mEmulatedFXBuffer {};
+	VDVideoDisplayScreenFXInfo mScreenFX {};
+
+	uint32 mViewX1 = 0;
+	uint32 mViewY1 = 0;
+	const uint32 *mpPalette = nullptr;
+
+	bool mbDualFieldFrame = false;
+	bool mbIncludeHBlank = false;
+	bool mbScanlineHasHires[312] {};
 };
+
+VDPixmap ATFrameBuffer::ApplyScreenFX(const VDPixmap& px) {
+	// Software scanlines only support noninterlaced frames.
+	const bool scanlines = mScreenFX.mScanlineIntensity != 0.0f && !mbDualFieldFrame;
+
+	const bool src32 = (mBuffer.format == nsVDPixmap::kPixFormat_XRGB8888);
+	const uint32 w = px.w;
+	const uint32 h = px.h;
+	mEmulatedFXBuffer.init(src32 ? w : mBuffer.w, scanlines ? h * 2 : h, nsVDPixmap::kPixFormat_XRGB8888);
+
+	const char *src = src32 ? (const char *)px.data : (const char *)mBuffer.data + mBuffer.pitch * mViewY1;
+	char *dst = (char *)mEmulatedFXBuffer.data;
+
+	const bool palBlending = (mScreenFX.mPALBlendingOffset != 0);
+
+	// We may be called in the middle of a frame for an immediate update, so we must suspend
+	// and restore the existing frame settings.
+	mArtEngine.SuspendFrame();
+	mArtEngine.BeginFrame(palBlending, palBlending, false, false, false, false);
+
+	const uint32 interpW = src32 ? w : mBuffer.w;
+	const uint32 bpr = src32 ? interpW * 4 : interpW;
+
+	const char *last = nullptr;
+	for(uint32 y = 0; y < h; ++y) {
+		char *dst1 = nullptr;
+		if (last && scanlines) {
+			dst1 = dst;
+			dst += mEmulatedFXBuffer.pitch;
+		}
+
+		char *dst2 = dst;
+		dst += mEmulatedFXBuffer.pitch;
+		if (src32) {
+			memcpy(dst2, src, bpr);
+			mArtEngine.Artifact32(y, (uint32 *)dst2, w, false, mbIncludeHBlank);
+		} else
+			mArtEngine.Artifact8(y, (uint32 *)dst2, (const uint8 *)src, mbScanlineHasHires[y], false, mbIncludeHBlank);
+
+		src += mBuffer.pitch;
+
+		if (dst1) {
+			mArtEngine.InterpolateScanlines((uint32 *)dst1, (const uint32 *)last, (const uint32 *)dst2, interpW);
+		}
+
+		last = dst2;
+	}
+	
+	mArtEngine.ResumeFrame();
+
+	if (scanlines)
+		memcpy(dst, last, interpW*4);
+
+	VDPixmap result = mEmulatedFXBuffer;
+
+	if (!src32)
+		result.data = (char *)result.data + mViewX1 * 4;
+
+	result.w = px.w;
+	result.palette = mpPalette;
+
+	VDASSERT(VDAssertValidPixmap(result));
+
+	return result;
+}
+
+///////////////////////////////////////////////////////////////////////////
 
 namespace {
 	const int kPlayerWidths[4]={8,16,8,32};
@@ -259,13 +592,15 @@ ATGTIAEmulator::ATGTIAEmulator()
 	, mVBlankMode(kVBlankModeOn)
 	, mbVsyncEnabled(true)
 	, mbBlendMode(false)
+	, mbBlendModeLastFrame(false)
 	, mbOverscanPALExtended(false)
 	, mbOverscanPALExtendedThisFrame(false)
 	, mbPALThisFrame(false)
 	, mbInterlaceEnabled(false)
 	, mbInterlaceEnabledThisFrame(false)
 	, mbScanlinesEnabled(false)
-	, mbScanlinesEnabledThisFrame(false)
+	, mbSoftScanlinesEnabledThisFrame(false)
+	, mbIncludeHBlankThisFrame(false)
 	, mbFieldPolarity(false)
 	, mbLastFieldPolarity(false)
 	, mbPostProcessThisFrame(false)
@@ -394,50 +729,10 @@ void ATGTIAEmulator::SetArtifactingParams(const ATArtifactingParams& params) {
 }
 
 void ATGTIAEmulator::ResetColors() {
-	{
-		ATColorParams& colpa = mColorSettings.mNTSCParams;
-		colpa.mHueStart = -57.0f;
-		colpa.mHueRange = 27.1f * 15.0f;
-		colpa.mBrightness = -0.04f;
-		colpa.mContrast = 1.04f;
-		colpa.mSaturation = 0.20f;
-		colpa.mGammaCorrect = 1.0f;
-		colpa.mArtifactHue = 252.0f;
-		colpa.mArtifactSat = 1.15f;
-		colpa.mArtifactSharpness = 0.50f;
-		colpa.mRedShift = 0.0f;
-		colpa.mRedScale = 1.0f;
-		colpa.mGrnShift = 0.0f;
-		colpa.mGrnScale = 1.0f;
-		colpa.mBluShift = 0.0f;
-		colpa.mBluScale = 1.50f;
-		colpa.mbUsePALQuirks = false;
-		colpa.mLumaRampMode = kATLumaRampMode_XL;
-		colpa.mColorMatchingMode = ATColorMatchingMode::None;
-	}
-
-	{
-		ATColorParams& colpa = mColorSettings.mPALParams;
-		colpa.mHueStart = -23.0f;
-		colpa.mHueRange = 23.5f * 15.0f;
-		colpa.mBrightness = 0.0f;
-		colpa.mContrast = 1.0f;
-		colpa.mSaturation = 0.29f;
-		colpa.mGammaCorrect = 1.0f;
-		colpa.mArtifactHue = 80.0f;
-		colpa.mArtifactSat = 0.80f;
-		colpa.mArtifactSharpness = 0.50f;
-		colpa.mRedShift = 0.0f;
-		colpa.mRedScale = 1.0f;
-		colpa.mGrnShift = 0.0f;
-		colpa.mGrnScale = 1.0f;
-		colpa.mBluShift = 0.0f;
-		colpa.mBluScale = 1.0f;
-		colpa.mbUsePALQuirks = true;
-		colpa.mLumaRampMode = kATLumaRampMode_XL;
-		colpa.mColorMatchingMode = ATColorMatchingMode::None;
-	}
-
+	mColorSettings.mNTSCParams.mPresetTag = "default_ntsc";
+	static_cast<ATColorParams&>(mColorSettings.mNTSCParams) = ATGetColorPresetByIndex(ATGetColorPresetIndexByTag("default_ntsc"));
+	mColorSettings.mPALParams.mPresetTag = "default_pal";
+	static_cast<ATColorParams&>(mColorSettings.mPALParams) = ATGetColorPresetByIndex(ATGetColorPresetIndexByTag("default_pal"));
 	mColorSettings.mbUsePALParams = true;
 
 	RecomputePalette();
@@ -445,6 +740,14 @@ void ATGTIAEmulator::ResetColors() {
 
 void ATGTIAEmulator::GetPalette(uint32 pal[256]) const {
 	memcpy(pal, mPalette, sizeof(uint32)*256);
+}
+
+void ATGTIAEmulator::GetNTSCArtifactColors(uint32 c[2]) const {
+	mpArtifactingEngine->GetNTSCArtifactColors(c);
+}
+
+bool ATGTIAEmulator::AreAcceleratedEffectsAvailable() const {
+	return mpDisplay && mpDisplay->IsScreenFXPreferred();
 }
 
 void ATGTIAEmulator::SetAnalysisMode(AnalysisMode mode) {
@@ -502,6 +805,11 @@ vdrect32 ATGTIAEmulator::GetFrameScanArea() const {
 			xlo = 48;
 			xhi = 208;
 			break;
+
+		case kOverscanWidescreen:
+			xlo = 128 - 176/2;
+			xhi = 128 + 176/2;
+			break;
 	}
 
 	switch(vomode) {
@@ -539,64 +847,10 @@ vdrect32 ATGTIAEmulator::GetFrameScanArea() const {
 void ATGTIAEmulator::GetRawFrameFormat(int& w, int& h, bool& rgb32) const {
 	rgb32 = (mpVBXE != NULL) || mArtifactMode || mbBlendMode || mbScanlinesEnabled;
 
-	OverscanMode omode = mOverscanMode;
-	VerticalOverscanMode vomode = DeriveVerticalOverscanMode();
+	const vdrect32 scanArea = GetFrameScanArea();
 
-	if (mAnalysisMode || mbForcedBorder) {
-		omode = kOverscanFull;
-		vomode = kVerticalOverscan_Full;
-	}
-
-	switch(omode) {
-		case kOverscanFull:
-			w = 456;
-			break;
-
-		case kOverscanExtended:
-			w = 376;
-			break;
-
-		case kOverscanNormal:
-			w = 336;
-			break;
-
-		case kOverscanOSScreen:
-			w = 320;
-			break;
-	}
-
-	const bool extpal = (mbPALMode && mbOverscanPALExtended);
-	switch(vomode) {
-		case kVerticalOverscan_Full:
-			if (extpal)
-				h = 312;
-			else
-				h = 262;
-			break;
-
-		case kVerticalOverscan_Extended:
-			if (extpal)
-				h = 288;
-			else
-				h = 240;
-			break;
-
-		case kVerticalOverscan_Normal:
-			if (extpal)
-				h = 288;
-			else if (mbPALMode)
-				h = 240;
-			else
-				h = 224;
-			break;
-
-		case kVerticalOverscan_OSScreen:
-			if (extpal)
-				h = 288;
-			else
-				h = 192;
-			break;
-	}
+	w = scanArea.width() * 2;
+	h = scanArea.height();
 
 	if (mbInterlaceEnabled || mbScanlinesEnabled)
 		h *= 2;
@@ -606,63 +860,10 @@ void ATGTIAEmulator::GetRawFrameFormat(int& w, int& h, bool& rgb32) const {
 }
 
 void ATGTIAEmulator::GetFrameSize(int& w, int& h) const {
-	OverscanMode omode = mOverscanMode;
-	VerticalOverscanMode vomode = DeriveVerticalOverscanMode();
+	const vdrect32 scanArea = GetFrameScanArea();
 
-	if (mAnalysisMode || mbForcedBorder) {
-		omode = kOverscanFull;
-		vomode = kVerticalOverscan_Full;
-	}
-
-	switch(omode) {
-		case kOverscanFull:
-			w = 456;
-			break;
-
-		case kOverscanExtended:
-			w = 376;
-			break;
-
-		case kOverscanNormal:
-			w = 336;
-			break;
-
-		case kOverscanOSScreen:
-			w = 320;
-			break;
-	}
-
-	switch(vomode) {
-		case kVerticalOverscan_Full:
-			if (mbPALMode && mbOverscanPALExtended)
-				h = 312;
-			else
-				h = 262;
-			break;
-
-		case kVerticalOverscan_Extended:
-			if (mbPALMode && mbOverscanPALExtended)
-				h = 288;
-			else
-				h = 240;
-			break;
-
-		case kVerticalOverscan_Normal:
-			if (mbPALMode && mbOverscanPALExtended)
-				h = 288;
-			else if (mbPALMode)
-				h = 240;
-			else
-				h = 224;
-			break;
-
-		case kVerticalOverscan_OSScreen:
-			if (mbPALMode && mbOverscanPALExtended)
-				h = 288;
-			else
-				h = 192;
-			break;
-	}
+	w = scanArea.width() * 2;
+	h = scanArea.height();
 
 	if (mpVBXE != NULL || mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi || mArtifactMode == kArtifactAutoHi || mbInterlaceEnabled || mbScanlinesEnabled) {
 		w *= 2;
@@ -770,6 +971,10 @@ void ATGTIAEmulator::SetConsoleSwitch(uint8 c, bool set) {
 		mSwitchInput |= c;
 }
 
+uint8 ATGTIAEmulator::ReadConsoleSwitches() const {
+	return (~mSwitchOutput & mSwitchInput & mForcedSwitchInput) & 15;
+}
+
 void ATGTIAEmulator::SetForcedConsoleSwitches(uint8 c) {
 	mForcedSwitchInput = c;
 }
@@ -792,6 +997,14 @@ void ATGTIAEmulator::RemoveVideoTap(IATGTIAVideoTap *vtap) {
 				mpVideoTaps = nullptr;
 		}
 	}
+}
+
+void ATGTIAEmulator::AddRawFrameCallback(const ATGTIARawFrameFn *fn) {
+	mRawFrameCallbacks.Add(fn);
+}
+
+void ATGTIAEmulator::RemoveRawFrameCallback(const ATGTIARawFrameFn *fn) {
+	mRawFrameCallbacks.Remove(fn);
 }
 
 const VDPixmap *ATGTIAEmulator::GetLastFrameBuffer() const {
@@ -1139,20 +1352,19 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 
 	if (!drop && !mpDisplay->RevokeBuffer(false, ~mpFrame)) {
 		if (mpFrameTracker->mActiveFrames < 3) {
-			ATFrameBuffer *fb = new ATFrameBuffer(mpFrameTracker);
+			ATFrameBuffer *fb = new ATFrameBuffer(mpFrameTracker, *mpArtifactingEngine);
 			mpFrame = fb;
 
 			fb->mPixmap.format = 0;
 			fb->mbAllowConversion = true;
-			fb->mbInterlaced = false;
-			fb->mFlags = IVDVideoDisplay::kAllFields;
+			fb->mFlags = 0;
 		} else if ((mpVideoTaps || !mbTurbo) && !force) {
 			if (!mpDisplay->RevokeBuffer(true, ~mpFrame))
 				return false;
 		}
 	}
 
-	bool use14MHz = (mpVBXE != NULL) || mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi || mArtifactMode == kArtifactAutoHi;
+	mRawFrame.data = nullptr;
 
 	if (mpFrame) {
 		ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
@@ -1163,40 +1375,74 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 			fb->mFlags &= ~IVDVideoDisplay::kVSync;
 
 		mbFrameCopiedFromPrev = false;
+
+		// Try to use hardware accelerated screen effects except when:
+		//
+		// - The current display driver doesn't support them.
+		// - We have a video recording tap active.
+		// - We have a raw frame callback active.
+		//
+		const bool canAccelFX = mpDisplay->IsScreenFXPreferred();
+		const bool preferSoftFX = !mbAccelScreenFX || !canAccelFX || mpVideoTaps || !mRawFrameCallbacks.IsEmpty();
+
+		// Horizontal resolution is doubled (640ish) if VBXE or high artifacting is enabled.
+		const bool use14MHz = (mpVBXE != NULL) || mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi || mArtifactMode == kArtifactAutoHi;
+
+		bool useArtifacting = mArtifactMode != kArtifactNone;
+		bool usePalArtifacting = mArtifactMode == kArtifactPAL || mArtifactMode == kArtifactPALHi || ((mArtifactMode == kArtifactAuto || mArtifactMode == kArtifactAutoHi) && mbPALMode);
+		bool useHighArtifacting = mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi || mArtifactMode == kArtifactAutoHi;
+		bool useAccelPALBlending = false;
+
+		if (!preferSoftFX && usePalArtifacting && !useHighArtifacting) {
+			useAccelPALBlending = true;
+			useArtifacting = false;
+		}
+
+		const bool rgb32 = useArtifacting || mbBlendMode || mbSoftScanlinesEnabledThisFrame || use14MHz;
+		const ATColorParams& params = mActiveColorParams;
+		const bool outputCorrection = (params.mGammaCorrect != 1.0f) || params.mColorMatchingMode != ATColorMatchingMode::None;
+
 		mbPALThisFrame = mbPALMode;
 		mbOverscanPALExtendedThisFrame = mbPALThisFrame && mbOverscanPALExtended;
 		mb14MHzThisFrame = use14MHz;
 		mbInterlaceEnabledThisFrame = mbInterlaceEnabled;
-		mbScanlinesEnabledThisFrame = mbScanlinesEnabled && !mbInterlaceEnabled;
-		mbPostProcessThisFrame = (mArtifactMode || mbBlendMode || mbScanlinesEnabledThisFrame) && !mpVBXE;
 
-		const bool useArtifacting = mArtifactMode != kArtifactNone;
-		const bool usePalArtifacting = mArtifactMode == kArtifactPAL || mArtifactMode == kArtifactPALHi || ((mArtifactMode == kArtifactAuto || mArtifactMode == kArtifactAutoHi) && mbPALThisFrame);
-		const bool useHighArtifacting = mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi || mArtifactMode == kArtifactAutoHi;
+		// Soft scanlines only support noninterlaced operation. Accel scanlines support both.
+		mbSoftScanlinesEnabledThisFrame = preferSoftFX && mbScanlinesEnabled && !mbInterlaceEnabled;
+		const bool useAccelScanlines = !preferSoftFX && mbScanlinesEnabled;
 
-		if (mbPostProcessThisFrame) {
-			mPreArtifactFrame.h = mbOverscanPALExtendedThisFrame ? 312 : 262;
+		mbPostProcessThisFrame = (useArtifacting || mbBlendMode || mbSoftScanlinesEnabledThisFrame) && !mpVBXE;
+		mbIncludeHBlankThisFrame = mOverscanMode == kOverscanFull || mAnalysisMode || mbForcedBorder;
+		
+		const auto& ap = mpArtifactingEngine->GetArtifactingParams();
+		bool useDistortion = canAccelFX && ap.mDistortionViewAngleX > 0;
+		bool useBloom = canAccelFX && ap.mbEnableBloom;
+		mbScreenFXEnabledThisFrame = (!preferSoftFX && (useAccelScanlines || (rgb32 && outputCorrection) || useAccelPALBlending)) || useDistortion || useBloom;
 
-			mpArtifactingEngine->BeginFrame(usePalArtifacting, useArtifacting, useHighArtifacting, mbBlendMode);
-		} else if (mpVBXE && (mArtifactMode == kArtifactPAL || mbBlendMode)) {
-			mpArtifactingEngine->BeginFrame(usePalArtifacting, useArtifacting, useHighArtifacting, mbBlendMode);
+		// needed for mRawFrame below even if no postprocessing
+		mPreArtifactFrame.h = mbOverscanPALExtendedThisFrame ? 312 : 262;
+
+		if (mbPostProcessThisFrame || (mpVBXE && (usePalArtifacting || mbBlendMode))) {
+			mpArtifactingEngine->BeginFrame(usePalArtifacting, useArtifacting, useHighArtifacting, mbBlendModeLastFrame, mbBlendMode, mbScreenFXEnabledThisFrame);
 		}
 
-		int format = mArtifactMode || mbBlendMode || mbScanlinesEnabledThisFrame || use14MHz ? nsVDPixmap::kPixFormat_XRGB8888 : nsVDPixmap::kPixFormat_Pal8;
+		int format = rgb32 ? nsVDPixmap::kPixFormat_XRGB8888 : nsVDPixmap::kPixFormat_Pal8;
 
-		int width = 456;
+		// compute size of full frame buffer, including overscan
+		int frameWidth = 456;
 		if (use14MHz)
-			width *= 2;
+			frameWidth *= 2;
 
-		int height = mbOverscanPALExtendedThisFrame ? 312 : 262;
+		int frameHeight = mbOverscanPALExtendedThisFrame ? 312 : 262;
 		
-		if (mbInterlaceEnabledThisFrame || mbScanlinesEnabledThisFrame)
-			height *= 2;
+		const bool dualFieldFrame = mbInterlaceEnabledThisFrame || mbSoftScanlinesEnabledThisFrame;
+		if (dualFieldFrame)
+			frameHeight *= 2;
 
 		// check if we need to reinitialize the frame bitmap
-		if (fb->mBuffer.format != format || fb->mBuffer.w != width || fb->mBuffer.h != height) {
+		if (fb->mBuffer.format != format || fb->mBuffer.w != frameWidth || fb->mBuffer.h != frameHeight) {
 			VDPixmapLayout layout;
-			VDPixmapCreateLinearLayout(layout, format, width, height, 16);
+			VDPixmapCreateLinearLayout(layout, format, frameWidth, frameHeight, 16);
 
 			// Add a little extra width on the end so we can go over slightly with MASKMOVDQU on SSE2
 			// routines.
@@ -1205,120 +1451,133 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 			memset(fb->mBuffer.base(), 0, fb->mBuffer.size());
 		}
 
+		fb->mbDualFieldFrame = dualFieldFrame;
 		fb->mPixmap = fb->mBuffer;
-		fb->mPixmap.palette = mPalette;
+		fb->mPixmap.palette = useAccelPALBlending ? mSignedPalette : mPalette;
+		fb->mpPalette = mPalette;
 
-		mPreArtifactFrameVisible = mPreArtifactFrame;
-		mPreArtifactFrameVisibleY1 = 0;
-		mPreArtifactFrameVisibleY2 = mPreArtifactFrame.h;
+		mRawFrame = mPreArtifactFrame;
 
-		OverscanMode omode = mOverscanMode;
-		VerticalOverscanMode vomode = DeriveVerticalOverscanMode();
+		if (!mbPostProcessThisFrame) {
+			mRawFrame.data = fb->mBuffer.data;
+			mRawFrame.pitch = fb->mBuffer.pitch;
 
-		if (mbForcedBorder || mAnalysisMode) {
-			omode = kOverscanFull;
-			vomode = kVerticalOverscan_Full;
+			if (dualFieldFrame) {
+				mRawFrame.pitch *= 2;
+
+				if (mbInterlaceEnabledThisFrame && mbFieldPolarity)
+					mRawFrame.data = (char *)mRawFrame.data + fb->mBuffer.pitch;
+			}
 		}
 
-		if (omode != kOverscanFull || vomode != kVerticalOverscan_Full) {
-			int scanx1;
-			int scanx2;
-			int scany1;
-			int scany2;
+		// get visible area in color clocks
+		vdrect32 scanArea = GetFrameScanArea();
 
-			switch(omode) {
-				case kOverscanFull:
-					scanx1 = 0*2;
-					scanx2 = 228*2;
-					break;
+		// In PAL extended mode, the top of the frame extends above scan 0 by our
+		// numbering, so we must rebias the scan window here. The rendering code
+		// similarly compensates by 16 scans.
+		if (scanArea.top < 0) {
+			scanArea.bottom -= scanArea.top;
+			scanArea.top = 0;
+		}
 
-				case kOverscanExtended:
-					scanx1 = 34*2;
-					scanx2 = 222*2;
-					break;
+		// convert view area to hires pixels (320 res), our standard output image res.
+		vdrect32 frameViewRect = scanArea;
 
-				case kOverscanNormal:
-					scanx1 = 44*2;
-					scanx2 = 212*2;
-					break;
+		frameViewRect.left *= 2;
+		frameViewRect.right *= 2;
 
-				case kOverscanOSScreen:
-					scanx1 = 48*2;
-					scanx2 = 208*2;
-					break;
+		// double left/right if we're generating at double hires (14MHz instead of 7MHz)
+		if (use14MHz) {
+			frameViewRect.left *= 2;
+			frameViewRect.right *= 2;
+		}
+
+		// convert the frame view rect to image view rect, which is the same except if the
+		// image contains two fields (interlace or soft scanlines, but NOT accel scanlines)
+		vdrect32 imageViewRect = frameViewRect;
+		if (dualFieldFrame) {
+			imageViewRect.top *= 2;
+			imageViewRect.bottom *= 2;
+		}
+
+		// set pixmap on view area over framebuffer
+		fb->mPixmap.w = imageViewRect.width();
+		fb->mPixmap.h = imageViewRect.height();
+
+		fb->mPixmap.data = (char *)fb->mPixmap.data + imageViewRect.left * (rgb32 ? 4 : 1) + fb->mPixmap.pitch * imageViewRect.top;
+
+		// set up hardware screen FX
+		if (mbScreenFXEnabledThisFrame) {
+			fb->mpScreenFX = &fb->mScreenFX;
+
+			fb->mScreenFX = {};
+			fb->mScreenFX.mScanlineIntensity = useAccelScanlines ? mpArtifactingEngine->GetArtifactingParams().mScanlineIntensity : 0.0f;
+			fb->mScreenFX.mPALBlendingOffset = useAccelPALBlending ? dualFieldFrame ? -2.0f : -1.0f : 0.0f;
+
+			// Set color correction matrix and gamma. For 32-bit, we can and do want to hardware accelerate
+			// this lookup if possible. If we're using a raw 8-bit frame, the color correction and gamma
+			// correction is already baked into the palette for free and we should not apply it again.
+			if (rgb32) {
+				memcpy(fb->mScreenFX.mColorCorrectionMatrix, mColorMatchingMatrix, sizeof fb->mScreenFX.mColorCorrectionMatrix);
+				fb->mScreenFX.mGamma = params.mGammaCorrect;
+			} else {
+				memset(fb->mScreenFX.mColorCorrectionMatrix, 0, sizeof fb->mScreenFX.mColorCorrectionMatrix);
+				fb->mScreenFX.mGamma = 1.0f;
 			}
 
-			switch(vomode) {
-				case kVerticalOverscan_Full:
-					scany1 = 0;
-					scany2 = 262;
-					break;
+			fb->mScreenFX.mDistortionX = ap.mDistortionViewAngleX;
+			fb->mScreenFX.mDistortionYRatio = ap.mDistortionYRatio;
 
-				case kVerticalOverscan_Extended:
-					scany1 = 8;
-					scany2 = 248;
-					break;
+			if (ap.mbEnableBloom) {
+				fb->mScreenFX.mBloomThreshold = ap.mBloomThreshold;
+				fb->mScreenFX.mBloomRadius = use14MHz ? ap.mBloomRadius * 2.0f : ap.mBloomRadius;
+				fb->mScreenFX.mBloomDirectIntensity = ap.mBloomDirectIntensity;
+				fb->mScreenFX.mBloomIndirectIntensity = ap.mBloomIndirectIntensity;
 
-				case kVerticalOverscan_Normal:
-					if (mbPALMode) {
-						scany1 = 8;
-						scany2 = 248;
-					} else {
-						scany1 = 16;
-						scany2 = 240;
-					}
-					break;
-
-				case kVerticalOverscan_OSScreen:
-					scany1 = 32;
-					scany2 = 224;
-					break;
-			}
-
-			if (mbOverscanPALExtendedThisFrame) {
-				if (vomode == kVerticalOverscan_Full) {
-					scany1 = 0;
-					scany2 = 312;
-				} else {
-					scany1 = 0;
-					scany2 = 288;
+				if (ap.mbBloomScanlineCompensation && fb->mScreenFX.mScanlineIntensity) {
+					const float i1 = 1.0f;
+					const float i2 = fb->mScreenFX.mScanlineIntensity;
+					const float i3 = 0.5f * (i1 + i2);
+					fb->mScreenFX.mBloomDirectIntensity /= i3*i3;
+					fb->mScreenFX.mBloomIndirectIntensity /= i3*i3;
 				}
+			} else {
+				fb->mScreenFX.mBloomThreshold = 0;
+				fb->mScreenFX.mBloomRadius = 0;
+				fb->mScreenFX.mBloomDirectIntensity = 0;
+				fb->mScreenFX.mBloomIndirectIntensity = 0;
+			}
+		} else {
+			fb->mpScreenFX = nullptr;
+		}
+
+		mPreArtifactFrameVisibleY1 = frameViewRect.top;
+		mPreArtifactFrameVisibleY2 = frameViewRect.bottom;
+
+		fb->mViewX1 = imageViewRect.left;
+		fb->mViewY1 = imageViewRect.top;
+		fb->mbIncludeHBlank = mbIncludeHBlankThisFrame;
+
+		// copy over previous field
+		if (mbInterlaceEnabledThisFrame) {
+			VDPixmap dstField(VDPixmapExtractField(mpFrame->mPixmap, !mbFieldPolarity));
+
+			if (mpLastFrame &&
+				mpLastFrame->mPixmap.w == mpFrame->mPixmap.w &&
+				mpLastFrame->mPixmap.h == mpFrame->mPixmap.h &&
+				mpLastFrame->mPixmap.format == mpFrame->mPixmap.format &&
+				mbFieldPolarity != mbLastFieldPolarity) {
+				VDPixmap srcField(VDPixmapExtractField(mpLastFrame->mPixmap, !mbFieldPolarity));
+
+				VDPixmapBlt(dstField, srcField);
+			} else {
+				VDPixmap srcField(VDPixmapExtractField(mpFrame->mPixmap, mbFieldPolarity));
+				
+				VDPixmapBlt(dstField, srcField);
 			}
 
-			ptrdiff_t rawoffset = scanx1;
-			ptrdiff_t offset = rawoffset;
-
-			if (use14MHz) {
-				// We're generating pixels at 2x rate, in 32-bit -> 8x normal.
-				offset *= 8;
-			} else if (mbPostProcessThisFrame) {
-				// We're generating pixels at 1x rate, in 32-bit -> 4x normal.
-				offset *= 4;
-			}
-
-			ptrdiff_t scanPitch = fb->mPixmap.pitch;
-
-			if (mbInterlaceEnabledThisFrame || mbScanlinesEnabledThisFrame)
-				scanPitch *= 2;
-
-			fb->mPixmap.data = (char *)fb->mPixmap.data + offset + scanPitch * scany1;
-			fb->mPixmap.w = scanx2 - scanx1;
-			fb->mPixmap.h = scany2 - scany1;
-
-			mPreArtifactFrameVisibleY1 = scany1;
-			mPreArtifactFrameVisibleY2 = scany2;
-
-			if (use14MHz) {
-				fb->mPixmap.w *= 2;
-				rawoffset *= 2;
-			}
-
-			mPreArtifactFrameVisible.data = (char *)mPreArtifactFrameVisible.data + rawoffset + mPreArtifactFrameVisibleY1*mPreArtifactFrameVisible.pitch;
-			mPreArtifactFrameVisible.w = fb->mPixmap.w;
-			mPreArtifactFrameVisible.h = fb->mPixmap.h;
-
-			if (mbInterlaceEnabledThisFrame || mbScanlinesEnabledThisFrame)
-				fb->mPixmap.h *= 2;
+			mbLastFieldPolarity = mbFieldPolarity;
 		}
 	}
 
@@ -1362,12 +1621,7 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 		ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 
 		int yw = y;
-		int h = fb->mBuffer.h;
-
-		if (mbPostProcessThisFrame)
-			h = mPreArtifactFrame.h;
-		else if (mbInterlaceEnabledThisFrame || mbScanlinesEnabledThisFrame)
-			h >>= 1;
+		int h = mRawFrame.h;
 
 		if (mbOverscanPALExtendedThisFrame) {
 			// What we do here is wrap the last 16 lines back up to the top of
@@ -1380,17 +1634,17 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 				yw += 16;
 		}
 
-		if (yw < h) {
-			if (mbPostProcessThisFrame)
-				mpDst = &mPreArtifactFrameBuffer[yw * 464];
-			else if (mbInterlaceEnabledThisFrame)
-				mpDst = (uint8 *)fb->mBuffer.data + yw * fb->mBuffer.pitch*2 + (mbFieldPolarity ? fb->mBuffer.pitch : 0);
-			else if (mbScanlinesEnabledThisFrame) 
-				mpDst = (uint8 *)fb->mBuffer.data + yw * fb->mBuffer.pitch*2;
-			else
-				mpDst = (uint8 *)fb->mBuffer.data + yw * fb->mBuffer.pitch;
-		} else {
-			mpDst = NULL;
+		if (yw < h)
+			mpDst = (uint8 *)mRawFrame.data + mRawFrame.pitch * yw;
+
+		if (y == 248 && !mRawFrameCallbacks.IsEmpty()) {
+			VDPixmap px(mRawFrame);
+
+			px.w = 376;
+			px.h = 240;
+			px.data = (char *)px.data + px.pitch * 8;
+
+			mRawFrameCallbacks.NotifyAll([&](const ATGTIARawFrameFn *fn) { (*fn)(px); });
 		}
 	}
 
@@ -1555,6 +1809,9 @@ void ATGTIAEmulator::UpdatePlayfield320(uint32 x, uint8 byte) {
 void ATGTIAEmulator::UpdatePlayfield320(uint32 x, const uint8 *src, uint32 n) {
 	VDASSERT(x < 228);
 
+#if VD_CPU_X86 || VD_CPU_X64
+	atasm_update_playfield_320_sse2(mMergeBuffer, mAnticData, src, x, n);
+#else
 	memset(&mMergeBuffer[x], PF2, n*2);
 	
 	uint8 *VDRESTRICT dst = &mAnticData[x];
@@ -1564,6 +1821,7 @@ void ATGTIAEmulator::UpdatePlayfield320(uint32 x, const uint8 *src, uint32 n) {
 		dst[1] = (byte >> 0) & 3;
 		dst += 2;
 	} while(--n);
+#endif
 }
 
 namespace {
@@ -1988,30 +2246,12 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 
 		ApplyArtifacting(true);
 
-		mpDisplay->SetSourcePersistent(true, mpFrame->mPixmap);
+		// frame is incomplete and has some past data, so just suppress all lores optimizations
+		std::fill(std::begin(fb->mbScanlineHasHires), std::end(fb->mbScanlineHasHires), true);
+
+		mpDisplay->SetSourcePersistent(true, mpFrame->mPixmap, true, mpFrame->mpScreenFX, mpFrame->mpScreenFXEngine);
 	} else {
 		ApplyArtifacting(false);
-
-		// copy over previous field
-		if (mbInterlaceEnabledThisFrame) {
-			VDPixmap dstField(VDPixmapExtractField(mpFrame->mPixmap, !mbFieldPolarity));
-
-			if (mpLastFrame &&
-				mpLastFrame->mPixmap.w == mpFrame->mPixmap.w &&
-				mpLastFrame->mPixmap.h == mpFrame->mPixmap.h &&
-				mpLastFrame->mPixmap.format == mpFrame->mPixmap.format &&
-				mbFieldPolarity != mbLastFieldPolarity) {
-				VDPixmap srcField(VDPixmapExtractField(mpLastFrame->mPixmap, !mbFieldPolarity));
-
-				VDPixmapBlt(dstField, srcField);
-			} else {
-				VDPixmap srcField(VDPixmapExtractField(mpFrame->mPixmap, mbFieldPolarity));
-				
-				VDPixmapBlt(dstField, srcField);
-			}
-
-			mbLastFieldPolarity = mbFieldPolarity;
-		}
 
 		if (mpVideoTaps) {
 			for(auto *p : *mpVideoTaps)
@@ -2019,22 +2259,55 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 		}
 
 		if (mbTurbo)
-			mpFrame->mFlags |= IVDVideoDisplay::kDoNotWait;
+			fb->mFlags |= IVDVideoDisplay::kDoNotWait;
 		else
-			mpFrame->mFlags &= ~IVDVideoDisplay::kDoNotWait;
+			fb->mFlags &= ~IVDVideoDisplay::kDoNotWait;
 
-		mpDisplay->PostBuffer(mpFrame);
+		std::fill(std::begin(fb->mbScanlineHasHires), std::end(fb->mbScanlineHasHires), false);
 
-		mpLastFrame = mpFrame;
+		sint32 dsty1 = 0;
+		sint32 dsty2 = mPreArtifactFrameVisibleY2 - mPreArtifactFrameVisibleY1;
+		const sint32 vstart = mbOverscanPALExtendedThisFrame ? 24 : 8;
+		sint32 srcy1 = (sint32)mPreArtifactFrameVisibleY1 - vstart;
+		sint32 srcy2 = (sint32)mPreArtifactFrameVisibleY2 - vstart;
+
+		if (dsty1 < 0) {
+			srcy1 -= dsty1;
+			dsty1 = 0;
+		}
+
+		if (srcy1 < 0) {
+			dsty1 -= srcy1;
+			srcy1 = 0;
+		}
+
+		if (srcy2 > 240) {
+			dsty2 -= (240 - srcy2);
+			srcy2 = 240;
+		}
+
+		if (dsty2 > (sint32)vdcountof(fb->mbScanlineHasHires)) {
+			sint32 offset = dsty2 - (sint32)vdcountof(fb->mbScanlineHasHires);
+			dsty2 = (sint32)vdcountof(fb->mbScanlineHasHires);
+			srcy2 -= offset;
+		}
+
+		if (dsty2 > dsty1)
+			std::copy(mbScanlinesWithHiRes + srcy1, mbScanlinesWithHiRes + srcy2, fb->mbScanlineHasHires + dsty1);
+
+		mpDisplay->PostBuffer(fb);
+
+		mpLastFrame = fb;
+		mbBlendModeLastFrame = mbBlendMode;
 
 		mpFrame = NULL;
 	}
 }
 
 void ATGTIAEmulator::RecomputePalette() {
-	uint32 *dst = mPalette;
+	mActiveColorParams = mColorSettings.mbUsePALParams && mbPALMode ? mColorSettings.mPALParams : mColorSettings.mNTSCParams;
 
-	const ATColorParams& params = mbPALMode && mColorSettings.mbUsePALParams ? mColorSettings.mPALParams : mColorSettings.mNTSCParams;
+	const ATColorParams& params = mActiveColorParams;
 	const bool palQuirks = params.mbUsePALQuirks;
 	float angle = (params.mHueStart + (palQuirks ? -33.0f : 0.0f)) * (nsVDMath::kfTwoPi / 360.0f);
 	float angleStep = params.mHueRange * (nsVDMath::kfTwoPi / (360.0f * 15.0f));
@@ -2044,9 +2317,42 @@ void ATGTIAEmulator::RecomputePalette() {
 
 	ATComputeLumaRamp(params.mLumaRampMode, lumaRamp);
 
-	vdfloat2 co_r { 0.956f, 0.620f };
+	// I/Q -> RGB coefficients
+	//
+	// There are a ton of matrices posted on the Internet that all vary in
+	// small amounts due to roundoff. SMPTE 170M-2004 gives the best full derivation
+	// of all the equations. Here's the gist:
+	//
+	// - Y has two definitions:
+	//	 Y = 0.30R + 0.59G + 0.11B (NTSC)
+	//   Y = 0.299R + 0.587G + 0.114B (SMPTE 170M-2004)
+	//   SMPTE 170M-2004 Annex A indicates that the NTSC specification is
+	//   rounded off from the original NTSC derivation.
+	// - Also per SMPTE 170M-2004, R-Y and B-Y are scaled by 0.877283... and
+	//   0.492111... to place yellow and cyan 75% bars at 100 IRE. This
+	//   gives V = 0.877283(R-Y) and U=0.492111(B-Y).
+	// - I-Q is rotated 33deg from V-U (*not* U-V).
+	//
+	// Final Scilab derivation:
+	//
+	// R=[1 0 0]; G=[0 1 0]; B=[0 0 1];
+	// Y=0.299*R+0.587*G+0.114*B;
+	// U=0.492111*(B-Y); V=0.877283*(R-Y);
+	// cs=cosd(33); sn=sind(33);
+	// I=V*cs-U*sn; Q=U*cs+V*sn;
+	// inv([Y;I;Q])
+	//
+	// One benefit of using the precise values is that the angles make sense: B-Y
+	// and R-Y are at 123 and 33 degrees in I-Q space, respectively, with exactly
+	// 90 degrees between them.
+	//
+	// The angle and gain of each of these vectors are adjustable. This is equivalent
+	// to arbitrarily setting all six elements of the matrix by polar/cartesian
+	// equivalence.
+	//
+	vdfloat2 co_r { 0.956f, 0.621f };
 	vdfloat2 co_g { -0.272f, -0.647f };
-	vdfloat2 co_b { -1.108f, 1.705f };
+	vdfloat2 co_b { -1.107f, 1.704f };
 
 	co_r = vdfloat2x2::rotation(params.mRedShift * (nsVDMath::kfPi / 180.0f)) * co_r * params.mRedScale;
 	co_g = vdfloat2x2::rotation(params.mGrnShift * (nsVDMath::kfPi / 180.0f)) * co_g * params.mGrnScale;
@@ -2100,6 +2406,8 @@ void ATGTIAEmulator::RecomputePalette() {
 
 	const float nativeGamma = 2.2f;
 
+	uint32 *dst = mPalette;
+	uint32 *dst2 = mSignedPalette;
 	for(int hue=0; hue<16; ++hue) {
 		float i = 0;
 		float q = 0;
@@ -2185,14 +2493,35 @@ void ATGTIAEmulator::RecomputePalette() {
 			if (b > 0.0f)
 				b = powf(b, gamma);
 
+			r *= params.mIntensityScale;
+			g *= params.mIntensityScale;
+			b *= params.mIntensityScale;
+
 			*dst++	= (VDClampedRoundFixedToUint8Fast((float)r) << 16)
 					+ (VDClampedRoundFixedToUint8Fast((float)g) <<  8)
 					+ (VDClampedRoundFixedToUint8Fast((float)b)      );
+
+			float r2 = r * 127.0f / 255.0f + 64.0f / 255.0f;
+			float g2 = g * 127.0f / 255.0f + 64.0f / 255.0f;
+			float b2 = b * 127.0f / 255.0f + 64.0f / 255.0f;
+
+			*dst2++	= (VDClampedRoundFixedToUint8Fast((float)r2) << 16)
+					+ (VDClampedRoundFixedToUint8Fast((float)g2) <<  8)
+					+ (VDClampedRoundFixedToUint8Fast((float)b2)      );
 		}
 	}
 
 	if (mpVBXE)
 		mpVBXE->SetDefaultPalette(mPalette);
+
+	if (useMatrix) {
+		vdfloat3x3 mx2 = mx;//.transpose();
+
+		static_assert(sizeof(mColorMatchingMatrix) == sizeof(mx2));
+		memcpy(mColorMatchingMatrix, &mx2, sizeof mColorMatchingMatrix);
+	} else {
+		memset(mColorMatchingMatrix, 0, sizeof mColorMatchingMatrix);
+	}
 
 	mpArtifactingEngine->SetColorParams(params, useMatrix ? &mx : nullptr);
 }
@@ -2224,7 +2553,7 @@ uint8 ATGTIAEmulator::ReadByte(uint8 reg) {
 		case 0x1E:
 			return 0x0F;
 		case 0x1F:		// $D01F CONSOL
-			return (~mSwitchOutput & mSwitchInput & mForcedSwitchInput) & 15;
+			return ReadConsoleSwitches();
 	}
 
 	Sync();	
@@ -2407,9 +2736,9 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 
 void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 	if (mpVBXE) {
-		const bool doBlending = mArtifactMode == kArtifactPAL || mbBlendMode;
+		const bool doBlending = mArtifactMode == kArtifactPAL || (mArtifactMode == kArtifactAuto && mbPALThisFrame) || mbBlendMode;
 
-		if (doBlending || mbScanlinesEnabledThisFrame) {
+		if (doBlending || mbSoftScanlinesEnabledThisFrame) {
 			ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 			char *dstrow = (char *)fb->mBuffer.data;
 			ptrdiff_t dstpitch = fb->mBuffer.pitch;
@@ -2421,16 +2750,16 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 
 				dstpitch *= 2;
 				h >>= 1;
-			} else if (mbScanlinesEnabledThisFrame)
+			} else if (mbSoftScanlinesEnabledThisFrame)
 				h >>= 1;
 
 			for(uint32 row=0; row<h; ++row) {
 				uint32 *dst = (uint32 *)dstrow;
 
 				if (doBlending)
-					mpArtifactingEngine->Artifact32(row, dst, 912, immediate);
+					mpArtifactingEngine->Artifact32(row, dst, 912, immediate, mbIncludeHBlankThisFrame);
 
-				if (mbScanlinesEnabledThisFrame) {
+				if (mbSoftScanlinesEnabledThisFrame) {
 					if (row)
 						mpArtifactingEngine->InterpolateScanlines((uint32 *)(dstrow - dstpitch), (const uint32 *)(dstrow - 2*dstpitch), dst, 912);
 
@@ -2440,7 +2769,7 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 				dstrow += dstpitch;
 			}
 
-			if (mbScanlinesEnabledThisFrame) {
+			if (mbSoftScanlinesEnabledThisFrame) {
 				mpArtifactingEngine->InterpolateScanlines(
 					(uint32 *)(dstrow - dstpitch),
 					(const uint32 *)(dstrow - 2*dstpitch),
@@ -2475,7 +2804,7 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 	if (y1)
 		--y1;
 
-	if (mbScanlinesEnabledThisFrame)
+	if (mbSoftScanlinesEnabledThisFrame)
 		dstrow += dstpitch * 2 * y1;
 	else
 		dstrow += dstpitch * y1;
@@ -2493,9 +2822,9 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 
 		uint32 relativeRow = row - vstart;
 
-		mpArtifactingEngine->Artifact8(row, dst, src, relativeRow < 240 && mbScanlinesWithHiRes[relativeRow], immediate);
+		mpArtifactingEngine->Artifact8(row, dst, src, relativeRow < 240 && mbScanlinesWithHiRes[relativeRow], immediate, mbIncludeHBlankThisFrame);
 
-		if (mbScanlinesEnabledThisFrame) {
+		if (mbSoftScanlinesEnabledThisFrame) {
 			if (row > y1)
 				mpArtifactingEngine->InterpolateScanlines((uint32 *)(dstrow - dstpitch), (const uint32 *)(dstrow - 2*dstpitch), dst, w);
 
@@ -2506,7 +2835,7 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 		dstrow += dstpitch;
 	}
 
-	if (mbScanlinesEnabledThisFrame) {
+	if (mbSoftScanlinesEnabledThisFrame) {
 		mpArtifactingEngine->InterpolateScanlines(
 			(uint32 *)(dstrow - dstpitch),
 			(const uint32 *)(dstrow - 2*dstpitch),
@@ -2791,6 +3120,7 @@ ATGTIAEmulator::VerticalOverscanMode ATGTIAEmulator::DeriveVerticalOverscanMode(
 
 		default:
 		case kOverscanNormal:
+		case kOverscanWidescreen:
 			return kVerticalOverscan_Normal;
 
 		case kOverscanOSScreen:

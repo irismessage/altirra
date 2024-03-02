@@ -46,14 +46,16 @@
 #include <vd2/Kasumi/text.h>
 #include <vd2/Kasumi/region.h>
 
-#include <vd2/VDDisplay/direct3d.h>
 #include <displaydrvd3d9.h>
+#include <vd2/VDDisplay/direct3d.h>
 #include <vd2/VDDisplay/compositor.h>
+#include <vd2/VDDisplay/display.h>
 #include <vd2/VDDisplay/displaydrv.h>
 #include <vd2/VDDisplay/logging.h>
 #include <vd2/VDDisplay/renderer.h>
 #include <vd2/VDDisplay/textrenderer.h>
 #include <vd2/VDDisplay/internal/customshaderd3d9.h>
+#include <vd2/VDDisplay/internal/screenfx.h>
 
 namespace nsVDDisplay {
 	#include "displayd3d9_shader.inl"
@@ -1396,6 +1398,13 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const nsVDDi
 		float pixelsharpness[4];	// (pixel sharpness)		X factor, Y factor, ?, ?
 	};
 
+	VDASSERT(ctx.mOutputW);
+	VDASSERT(ctx.mOutputH);
+	VDASSERT(ctx.mSourceTexW);
+	VDASSERT(ctx.mSourceTexH);
+	VDASSERT(ctx.mSourceW);
+	VDASSERT(ctx.mSourceH);
+
 	StdParamData data;
 
 	data.vpsize[0] = (float)ctx.mOutputW;
@@ -1534,11 +1543,13 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const nsVDDi
 			if (SUCCEEDED(hr))
 				hr = dev->SetSamplerState(texb.mStage, D3DSAMP_ADDRESSV, texb.mbWrapV ? D3DTADDRESS_WRAP : D3DTADDRESS_CLAMP);
 			
-			if (SUCCEEDED(hr))
-				hr = dev->SetSamplerState(texb.mStage, D3DSAMP_MINFILTER, texb.mbBilinear ? D3DTEXF_LINEAR : D3DTEXF_POINT);
+			const bool bilinear = texb.mbBilinear || (texb.mbAutoBilinear && ctx.mbAutoBilinear);
 
 			if (SUCCEEDED(hr))
-				hr = dev->SetSamplerState(texb.mStage, D3DSAMP_MAGFILTER, texb.mbBilinear ? D3DTEXF_LINEAR : D3DTEXF_POINT);
+				hr = dev->SetSamplerState(texb.mStage, D3DSAMP_MINFILTER, bilinear ? D3DTEXF_LINEAR : D3DTEXF_POINT);
+
+			if (SUCCEEDED(hr))
+				hr = dev->SetSamplerState(texb.mStage, D3DSAMP_MAGFILTER, bilinear ? D3DTEXF_LINEAR : D3DTEXF_POINT);
 
 			if (SUCCEEDED(hr))
 				hr = dev->SetSamplerState(texb.mStage, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
@@ -1641,10 +1652,10 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const nsVDDi
 		const float ustep = 1.0f / (float)(int)ctx.mSourceTexW * ctx.mDefaultUVScaleCorrectionX;
 		const float vstep = 1.0f / (float)(int)ctx.mSourceTexH * ctx.mDefaultUVScaleCorrectionY;
 		const float voffset = (pi.mbClipPosition ? ctx.mFieldOffset * vstep * -0.25f : 0.0f);
-		const float u0 = ctx.mSourceArea.left   * ustep;
-		const float v0 = ctx.mSourceArea.top    * vstep + voffset;
-		const float u1 = ctx.mSourceArea.right  * ustep;
-		const float v1 = ctx.mSourceArea.bottom * vstep + voffset;
+		float u0 = ctx.mSourceArea.left   * ustep;
+		float v0 = ctx.mSourceArea.top    * vstep + voffset;
+		float u1 = ctx.mSourceArea.right  * ustep;
+		float v1 = ctx.mSourceArea.bottom * vstep + voffset;
 
 		const float invVpW = 1.f / (float)vp.Width;
 		const float invVpH = 1.f / (float)vp.Height;
@@ -1656,12 +1667,31 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const nsVDDi
 		const float x1 = pi.mbClipPosition ? x0 + ctx.mOutputW * xstep : 1.f - invVpW;
 		const float y1 = pi.mbClipPosition ? y0 + ctx.mOutputH * ystep : -1.f + invVpH;
 
+		float u2 = 0;
+		float u3 = 1;
+		float v2 = 0;
+		float v3 = 1;
+
+		if (ctx.mbUseUV0Scale) {
+			u0 *= ctx.mUV0Scale.x;
+			v0 *= ctx.mUV0Scale.y;
+			u1 *= ctx.mUV0Scale.x;
+			v1 *= ctx.mUV0Scale.y;
+		}
+
+		if (ctx.mbUseUV1Area) {
+			u2 = ctx.mUV1Area.left;
+			v2 = ctx.mUV1Area.top;
+			u3 = ctx.mUV1Area.right;
+			v3 = ctx.mUV1Area.bottom;
+		}
+
 		if (Vertex *pvx = mpManager->LockVertices(4)) {
 			vd_seh_guard_try {
-				pvx[0].SetFF2(x0, y0, 0xFFFFFFFF, u0, v0, 0, 0);
-				pvx[1].SetFF2(x1, y0, 0xFFFFFFFF, u1, v0, 1, 0);
-				pvx[2].SetFF2(x0, y1, 0xFFFFFFFF, u0, v1, 0, 1);
-				pvx[3].SetFF2(x1, y1, 0xFFFFFFFF, u1, v1, 1, 1);
+				pvx[0].SetFF2(x0, y0, 0xFFFFFFFF, u0, v0, u2, v2);
+				pvx[1].SetFF2(x1, y0, 0xFFFFFFFF, u1, v0, u3, v2);
+				pvx[2].SetFF2(x0, y1, 0xFFFFFFFF, u0, v1, u2, v3);
+				pvx[3].SetFF2(x1, y1, 0xFFFFFFFF, u1, v1, u3, v3);
 			} vd_seh_guard_except {
 				validDraw = false;
 			}
@@ -1711,7 +1741,7 @@ public:
 	void Shutdown();
 
 	void SetBufferCount(uint32 buffers);
-	bool Update(const VDPixmap& source, int fieldMask);
+	bool Update(const VDPixmap& source);
 
 protected:
 	bool Lock(IDirect3DTexture9 *tex, IDirect3DTexture9 *upload, D3DLOCKED_RECT *lr);
@@ -2098,7 +2128,7 @@ void VDVideoUploadContextD3D9::SetBufferCount(uint32 buffers) {
 	}
 }
 
-bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
+bool VDVideoUploadContextD3D9::Update(const VDPixmap& source) {
 	using namespace nsVDDisplay;
 
 	if (mpD3DConversionTextures.size() > 1)
@@ -2157,14 +2187,6 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
 
 	VDPixmap dst(mTexFmt);
 	VDPixmap src(source);
-
-	if (fieldMask == 1) {
-		dst = VDPixmapExtractField(mTexFmt, false);
-		src = VDPixmapExtractField(source, false);
-	} else if (fieldMask == 2) {
-		dst = VDPixmapExtractField(mTexFmt, true);
-		src = VDPixmapExtractField(source, true);
-	}
 
 	if (mUploadMode == kUploadModeDirect16) {
 		VDMemcpyRect(dst.data, dst.pitch, src.data, src.pitch, src.w * 2, src.h);
@@ -2289,7 +2311,7 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
 				success = false;
 
 			if (success) {
-				VDVideoDisplayDX9Manager::EffectContext ctx;
+				VDVideoDisplayDX9Manager::EffectContext ctx {};
 
 				ctx.mpSourceTexture1 = mpD3DImageTextures[0];
 				ctx.mpSourceTexture2 = mpD3DImageTexture2a;
@@ -2593,15 +2615,18 @@ public:
 	~VDVideoDisplayMinidriverDX9();
 
 protected:
+	bool PreInit(HWND hwnd, HMONITOR hmonitor) override;
 	bool Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info) override;
 	void Shutdown() override;
 
 	bool ModifySource(const VDVideoDisplaySourceInfo& info) override;
 
 	bool IsValid() override;
+	bool IsScreenFXSupported() const override { return mbScreenFXSupported; }
 	bool IsFramePending() override { return mbSwapChainPresentPending; }
 	void SetFilterMode(FilterMode mode) override;
 	void SetFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh, bool use16bit) override;
+	bool SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX) override;
 
 	bool Tick(int id) override;
 	void Poll() override;
@@ -2657,6 +2682,40 @@ protected:
 	float				mInterpFilterFactorX = 0;
 	float				mInterpFilterFactorY = 0;
 
+	vdrefptr<IDirect3DTexture9> mpD3DScanlineMaskTexture;
+	uint32 mCachedScanlineSrcH = 0;
+	uint32 mCachedScanlineDstH = 0;
+	float mCachedScanlineNormH = 0;
+	float mCachedScanlineIntensity = 0;
+
+	vdrefptr<IDirect3DTexture9> mpD3DGammaRampTexture;
+	float mCachedGamma = 0;
+	bool mbCachedGammaAdobeRgb = false;
+	bool mbCachedGammaHasInputConversion = false;
+
+	vdrefptr<IDirect3DTexture9> mpD3DBloomPrescale1RTT;
+	vdrefptr<IDirect3DTexture9> mpD3DBloomPrescale2RTT;
+	vdrefptr<IDirect3DTexture9> mpD3DBloomBlur1RTT;
+	vdrefptr<IDirect3DTexture9> mpD3DBloomBlur2RTT;
+	uint32 mCachedBloomInputTexW = 0;
+	uint32 mCachedBloomInputTexH = 0;
+	uint32 mCachedBloomPrescaleW = 0;
+	uint32 mCachedBloomPrescaleH = 0;
+	uint32 mCachedBloomPrescaleTexW = 0;
+	uint32 mCachedBloomPrescaleTexH = 0;
+	uint32 mCachedBloomBlurW = 0;
+	uint32 mCachedBloomBlurH = 0;
+	uint32 mCachedBloomBlurTexW = 0;
+	uint32 mCachedBloomBlurTexH = 0;
+	uint32 mCachedBloomOutputW = 0;
+	uint32 mCachedBloomOutputH = 0;
+
+	vdrefptr<IDirect3DTexture9> mpD3DArtifactingRTT;
+	uint32 mCachedArtifactingW = 0;
+	uint32 mCachedArtifactingH = 0;
+	uint32 mCachedArtifactingTexW = 0;
+	uint32 mCachedArtifactingTexH = 0;
+
 	vdrefptr<VDVideoUploadContextD3D9>	mpUploadContext;
 	vdrefptr<IVDFontRendererD3D9>	mpFontRenderer;
 	vdrefptr<IVDDisplayRendererD3D9>	mpRenderer;
@@ -2685,7 +2744,11 @@ protected:
 	bool				mbCubicUsingHighPrecision = false;
 	bool				mbCubicTempSurfacesInitialized = false;
 	bool				mbBoxlinearCapable11 = false;
+	bool				mbScreenFXSupported = false;
 	const bool			mbUseD3D9Ex;
+
+	bool mbUseScreenFX = false;
+	VDVideoDisplayScreenFXInfo mScreenFXInfo {};
 
 	FilterMode			mPreferredFilter = kFilterAnySuitable;
 	float				mSyncDelta = 0;
@@ -2713,15 +2776,15 @@ VDVideoDisplayMinidriverDX9::VDVideoDisplayMinidriverDX9(bool clipToMonitor, boo
 }
 
 VDVideoDisplayMinidriverDX9::~VDVideoDisplayMinidriverDX9() {
+	Shutdown();
 }
 
-bool VDVideoDisplayMinidriverDX9::Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info) {
+bool VDVideoDisplayMinidriverDX9::PreInit(HWND hwnd, HMONITOR hmonitor) {
 	VDASSERT(!mpManager);
-	mhwnd = hwnd;
-	mSource = info;
 
-	// attempt to initialize D3D9
+	mhwnd = hwnd;
 	mbFullScreenSet = false;
+
 	mpManager = VDInitDirect3D9(this, hmonitor, mbUseD3D9Ex);
 	if (!mpManager) {
 		Shutdown();
@@ -2733,6 +2796,21 @@ bool VDVideoDisplayMinidriverDX9::Init(HWND hwnd, HMONITOR hmonitor, const VDVid
 		return false;
 	}
 
+	mbScreenFXSupported = false;
+
+	if (mpVideoManager->IsPS20Enabled()) {
+		mbScreenFXSupported = true;
+	}
+
+	return true;
+}
+
+bool VDVideoDisplayMinidriverDX9::Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info) {
+	VDASSERT(mpVideoManager);
+
+	mSource = info;
+
+	// attempt to initialize D3D9
 	if (mbFullScreen && !mbFullScreenSet) {
 		mbFullScreenSet = true;
 		mpManager->AdjustFullScreen(true, mFullScreenWidth, mFullScreenHeight, mFullScreenRefreshRate, mbFullScreen16Bit, mhwnd);
@@ -2788,6 +2866,8 @@ void VDVideoDisplayMinidriverDX9::LoadCustomEffect(const wchar_t *path) {
 }
 
 void VDVideoDisplayMinidriverDX9::OnPreDeviceReset() {
+	vdsaferelease <<= mpD3DBloomPrescale2RTT, mpD3DBloomBlur1RTT, mpD3DBloomBlur2RTT;
+
 	ShutdownBicubic();
 	ShutdownBicubicPS2Filters();
 	ShutdownBoxlinearPS11Filters();
@@ -3125,6 +3205,11 @@ void VDVideoDisplayMinidriverDX9::ShutdownBoxlinearPS11Filters() {
 }
 
 void VDVideoDisplayMinidriverDX9::Shutdown() {
+	vdsaferelease <<= mpD3DGammaRampTexture;
+	vdsaferelease <<= mpD3DScanlineMaskTexture;
+	vdsaferelease <<= mpD3DBloomPrescale1RTT, mpD3DBloomPrescale2RTT, mpD3DBloomBlur1RTT, mpD3DBloomBlur2RTT;
+	vdsaferelease <<= mpD3DArtifactingRTT;
+
 	mpCustomPipeline.reset();
 
 	mpUploadContext = NULL;
@@ -3226,6 +3311,58 @@ void VDVideoDisplayMinidriverDX9::SetFullScreen(bool fs, uint32 w, uint32 h, uin
 	}
 }
 
+bool VDVideoDisplayMinidriverDX9::SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX) {
+	if (screenFX) {
+		if (!mbScreenFXSupported)
+			return false;
+
+		mbUseScreenFX = true;
+		mScreenFXInfo = *screenFX;
+
+		const bool useInputConversion = (mScreenFXInfo.mColorCorrectionMatrix[0][0] != 0.0f);
+		if (!mpD3DGammaRampTexture
+			|| mCachedGamma != mScreenFXInfo.mGamma
+			|| mbCachedGammaAdobeRgb != mScreenFXInfo.mbColorCorrectAdobeRGB
+			|| mbCachedGammaHasInputConversion != useInputConversion)
+		{
+			mCachedGamma = mScreenFXInfo.mGamma;
+			mbCachedGammaAdobeRgb = mScreenFXInfo.mbColorCorrectAdobeRGB;
+			mbCachedGammaHasInputConversion = useInputConversion;
+
+			vdrefptr<IVDD3D9InitTexture> initTex;
+			if (!mpManager->CreateInitTexture(256, 1, 1, D3DFMT_A8R8G8B8, ~initTex))
+				return false;
+
+			VDD3D9LockInfo lockInfo;
+			if (!initTex->Lock(0, lockInfo))
+				return false;
+
+			VDDisplayCreateGammaRamp((uint32 *)lockInfo.mpData, 256, useInputConversion, mScreenFXInfo.mbColorCorrectAdobeRGB, mScreenFXInfo.mGamma);
+
+			initTex->Unlock(0);
+
+			vdrefptr<IVDD3D9Texture> tex;
+			if (!mpManager->CreateTexture(initTex, ~tex))
+				return false;
+
+			mpD3DGammaRampTexture = tex->GetD3DTexture();
+		}
+	} else {
+		mbUseScreenFX = false;
+		vdsaferelease <<= mpD3DGammaRampTexture, mpD3DScanlineMaskTexture;
+	}
+
+	if (!mbUseScreenFX || mScreenFXInfo.mBloomRadius == 0.0f) {
+		vdsaferelease <<= mpD3DBloomPrescale2RTT, mpD3DBloomBlur1RTT, mpD3DBloomBlur2RTT;
+	}
+
+	if (!mbUseScreenFX || mScreenFXInfo.mPALBlendingOffset == 0.0f) {
+		vdsaferelease <<= mpD3DArtifactingRTT;
+	}
+
+	return true;
+}
+
 bool VDVideoDisplayMinidriverDX9::Tick(int id) {
 	return true;
 }
@@ -3252,22 +3389,7 @@ bool VDVideoDisplayMinidriverDX9::Update(UpdateMode mode) {
 	if (!mpManager->CheckDevice())
 		return false;
 
-	int fieldMask = 3;
-
-	switch(mode & kModeFieldMask) {
-		case kModeEvenField:
-			fieldMask = 1;
-			break;
-
-		case kModeOddField:
-			fieldMask = 2;
-			break;
-
-		case kModeAllFields:
-			break;
-	}
-
-	if (!mpUploadContext->Update(mSource.pixmap, fieldMask))
+	if (!mpUploadContext->Update(mSource.pixmap))
 		return false;
 
 	mbSwapChainImageValid = false;
@@ -3372,6 +3494,10 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 
 	// bicubic modes cannot clip
 	if (rClient.right != rClippedClient.right || rClient.bottom != rClippedClient.bottom)
+		mode = kFilterBilinear;
+
+	// must force bilinear if screen effects are enabled
+	if (mode == kFilterBicubic && mbUseScreenFX)
 		mode = kFilterBilinear;
 
 	if (mode != kFilterBicubic && mbCubicInitialized)
@@ -3600,7 +3726,7 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 					return false;
 			}
 
-			VDVideoDisplayDX9Manager::EffectContext ctx;
+			VDVideoDisplayDX9Manager::EffectContext ctx {};
 
 			ctx.mpSourceTexture1 = srcTex;
 			ctx.mpSourceTexture2 = NULL;
@@ -3647,11 +3773,6 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 			ctx.mPixelSharpnessY = mPixelSharpnessY;
 			ctx.mbHighPrecision = mbHighPrecision;
 
-			if (updateMode & kModeBobEven)
-				ctx.mFieldOffset = -1.0f;
-			else if (updateMode & kModeBobOdd)
-				ctx.mFieldOffset = +1.0f;
-
 			if (mbCubicInitialized &&
 				(uint32)rClient.right <= dispMode.Width &&
 				(uint32)rClient.bottom <= dispMode.Height &&
@@ -3685,38 +3806,566 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 						break;
 					}
 				}
-			} else {
-				if (mbHighPrecision && mpVideoManager->Is16FEnabled()) {
-					if (mPreferredFilter == kFilterPoint)
-						bSuccess = mpVideoManager->RunEffect(ctx, g_technique_point_2_0, pRTMain);
-					else
-						bSuccess = mpVideoManager->RunEffect(ctx, g_technique_bilinear_2_0, pRTMain);
-				} else {
-					if (mPreferredFilter == kFilterPoint) {
-						mpManager->SetSwapChainActive(mpSwapChain);
-						bSuccess = mpVideoManager->BlitFixedFunction(ctx, pRTMain, false);
-					} else if ((mPixelSharpnessX > 1 || mPixelSharpnessY > 1) && mpVideoManager->IsPS20Enabled())
-						bSuccess = mpVideoManager->RunEffect(ctx, g_technique_boxlinear_2_0, pRTMain);
-					else if ((mPixelSharpnessX > 1 || mPixelSharpnessY > 1) && mbBoxlinearCapable11) {
-						if (!InitBoxlinearPS11Filters(ctx.mViewportW, ctx.mViewportH, mPixelSharpnessX, mPixelSharpnessY))
-							mbBoxlinearCapable11 = false;
-						else {
-							ctx.mpInterpFilter = mpD3DInterpFilterTexture;
-							ctx.mInterpTexW = mInterpFilterTexSizeW;
-							ctx.mInterpTexH = mInterpFilterTexSizeH;
-						}
+			} else if (mbUseScreenFX) {
+				bSuccess = true;
 
-						if (ctx.mpInterpFilter)
-							bSuccess = mpVideoManager->RunEffect(ctx, g_technique_boxlinear_1_1, pRTMain);
-						else {
-							mpManager->SetSwapChainActive(mpSwapChain);
-							bSuccess = mpVideoManager->BlitFixedFunction(ctx, pRTMain, true);
+				if (mScreenFXInfo.mPALBlendingOffset != 0) {
+					// rebuild PAL artifacting texture if necessary
+					uint32 srcw = ctx.mSourceW;
+					uint32 srch = ctx.mSourceH;
+					uint32 texw = ctx.mSourceW;
+					uint32 texh = ctx.mSourceH;
+
+					// can't take nonpow2conditional due to dependent read in subsequent passes
+					if (!mpManager->AdjustTextureSize(texw, texh)) {
+						bSuccess = false;
+					}
+
+					if (bSuccess && mpD3DArtifactingRTT && (mCachedArtifactingTexW != texw || mCachedArtifactingTexH != texh)) {
+						vdsaferelease <<= mpD3DArtifactingRTT;
+					}
+
+					if (bSuccess && !mpD3DArtifactingRTT) {
+						hr = mpD3DDevice->CreateTexture(texw, texh, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, ~mpD3DArtifactingRTT, nullptr);
+						bSuccess = SUCCEEDED(hr);
+						if (bSuccess) {
+							mCachedArtifactingTexW = texw;
+							mCachedArtifactingTexH = texh;
+						}
+					}
+
+					if (mpD3DArtifactingRTT) {
+						if (mCachedArtifactingW != srcw || mCachedArtifactingH != srch) {
+							mCachedArtifactingW = srcw;
+							mCachedArtifactingH = srch;
+
+							mpManager->ClearRenderTarget(mpD3DArtifactingRTT);
+						}
+					}
+
+					if (bSuccess) {
+						vdrefptr<IDirect3DSurface9> palRTSurface;
+						hr = mpD3DArtifactingRTT->GetSurfaceLevel(0, ~palRTSurface);
+						bSuccess = SUCCEEDED(hr);
+
+						if (bSuccess) {
+							auto ctx2 = ctx;
+							ctx2.mOutputX = 0;
+							ctx2.mOutputY = 0;
+							ctx2.mOutputW = ctx.mSourceW;
+							ctx2.mOutputH = ctx.mSourceH;
+							ctx2.mViewportX = 0;
+							ctx2.mViewportY = 0;
+							ctx2.mViewportW = ctx2.mSourceW;
+							ctx2.mViewportH = ctx2.mSourceH;
+							ctx2.mbUseUV1Area = true;
+							ctx2.mUV1Area.set(
+								0.0f,
+								0.0f,
+								(float)ctx2.mSourceW / (float)ctx2.mSourceTexW,
+								(float)ctx2.mSourceH / (float)ctx2.mSourceTexH
+							);
+
+							ctx2.mUV1Area.translate(0.0f, (float)mScreenFXInfo.mPALBlendingOffset / (float)ctx2.mSourceTexH);
+
+							bSuccess = mpVideoManager->RunEffect(ctx2, g_technique_screenfx_palartifacting, palRTSurface);
+
+							ctx.mpSourceTexture1 = mpD3DArtifactingRTT;
+							ctx.mSourceTexW = mCachedArtifactingTexW;
+							ctx.mSourceTexH = mCachedArtifactingTexH;
+						}
+					}
+				}
+
+				// rebuild the scanline texture if necessary
+				if (mScreenFXInfo.mScanlineIntensity > 0 && (!mpD3DScanlineMaskTexture
+					|| mCachedScanlineSrcH != ctx.mSourceH
+					|| mCachedScanlineDstH != ctx.mOutputH
+					|| mCachedScanlineIntensity != mScreenFXInfo.mScanlineIntensity))
+				{
+					vdsaferelease <<= mpD3DScanlineMaskTexture;
+
+					int texw = 1;
+					int texh = ctx.mOutputH;
+
+					mpManager->AdjustTextureSize(texw, texh, true);
+
+					vdrefptr<IVDD3D9InitTexture> initTex;
+					if (mpManager->CreateInitTexture(1, texh, 1, D3DFMT_A8R8G8B8, ~initTex)) {
+						VDD3D9LockInfo lockInfo;
+						if (initTex->Lock(0, lockInfo)) {
+							VDDisplayCreateScanlineMaskTexture((uint32 *)lockInfo.mpData, lockInfo.mPitch, ctx.mSourceH, ctx.mOutputH, texh, mScreenFXInfo.mScanlineIntensity);
+							initTex->Unlock(0);
+
+							vdrefptr<IVDD3D9Texture> tex;
+							if (mpManager->CreateTexture(initTex, ~tex)) {
+								mpD3DScanlineMaskTexture = tex->GetD3DTexture();
+
+								mCachedScanlineSrcH = ctx.mSourceH;
+								mCachedScanlineDstH = ctx.mOutputH;
+								mCachedScanlineNormH = (float)ctx.mOutputH / (float)texh;
+								mCachedScanlineIntensity = mScreenFXInfo.mScanlineIntensity;
+							} else {
+								bSuccess = false;
+							}
+						} else {
+							bSuccess = false;
 						}
 					} else {
-						mpManager->SetSwapChainActive(mpSwapChain);
+						bSuccess = false;
+					}
+				}
 
+				const TechniqueInfo *kTechniques[2][2][2][3] = {
+					{
+						{
+							{
+								&g_technique_screenfx_ptlinear_noscanlines_linear,
+								&g_technique_screenfx_ptlinear_noscanlines_gamma,
+								&g_technique_screenfx_ptlinear_noscanlines_cc
+							},
+							{
+								&g_technique_screenfx_ptlinear_scanlines_linear,
+								&g_technique_screenfx_ptlinear_scanlines_gamma,
+								&g_technique_screenfx_ptlinear_scanlines_cc
+							},
+						},
+						{
+							{
+								&g_technique_screenfx_sharp_noscanlines_linear,
+								&g_technique_screenfx_sharp_noscanlines_gamma,
+								&g_technique_screenfx_sharp_noscanlines_cc
+							},
+							{
+								&g_technique_screenfx_sharp_scanlines_linear,
+								&g_technique_screenfx_sharp_scanlines_gamma,
+								&g_technique_screenfx_sharp_scanlines_cc
+							},
+						},
+					},
+					{
+						{
+							{
+								&g_technique_screenfx_distort_ptlinear_noscanlines_linear,
+								&g_technique_screenfx_distort_ptlinear_noscanlines_gamma,
+								&g_technique_screenfx_distort_ptlinear_noscanlines_cc
+							},
+							{
+								&g_technique_screenfx_distort_ptlinear_scanlines_linear,
+								&g_technique_screenfx_distort_ptlinear_scanlines_gamma,
+								&g_technique_screenfx_distort_ptlinear_scanlines_cc
+							},
+						},
+						{
+							{
+								&g_technique_screenfx_distort_sharp_noscanlines_linear,
+								&g_technique_screenfx_distort_sharp_noscanlines_gamma,
+								&g_technique_screenfx_distort_sharp_noscanlines_cc
+							},
+							{
+								&g_technique_screenfx_distort_sharp_scanlines_linear,
+								&g_technique_screenfx_distort_sharp_scanlines_gamma,
+								&g_technique_screenfx_distort_sharp_scanlines_cc
+							},
+						},
+					},
+				};
+
+				const bool useDistortion = mScreenFXInfo.mDistortionX > 0;
+				const bool useSharpBilinear = mPixelSharpnessX > 1 || mPixelSharpnessY > 1;
+				const bool useScanlines = mScreenFXInfo.mScanlineIntensity > 0.0f;
+				const bool useGammaCorrection = mScreenFXInfo.mGamma != 1.0f;
+				const bool useColorCorrection = mScreenFXInfo.mColorCorrectionMatrix[0][0] != 0.0f;
+
+				struct VSConstants {
+					float mScanlineInfo[4];
+					float mDistortionInfo[4];
+				} vsConstants {};
+
+				vsConstants.mScanlineInfo[0] = mCachedScanlineNormH;
+				vsConstants.mDistortionInfo[0] = 1.0f;
+				vsConstants.mDistortionInfo[1] = useDistortion ? -0.5f : 0.0f;
+
+				struct PSConstants {
+					float mSharpnessInfo[4];
+					float mDistortionScales[4];
+					float mImageUVSize[4];
+					float mColorCorrectMatrix[3][4];
+				} psConstants {};
+
+				psConstants.mSharpnessInfo[0] = mPixelSharpnessX;
+				psConstants.mSharpnessInfo[1] = mPixelSharpnessY;
+				psConstants.mSharpnessInfo[2] = 1.0f / desc.Height;
+				psConstants.mSharpnessInfo[3] = 1.0f / desc.Width;
+	
+				VDDisplayDistortionMapping distortionMapping;
+				distortionMapping.Init(mScreenFXInfo.mDistortionX, mScreenFXInfo.mDistortionYRatio, (float)ctx.mOutputW / (float)ctx.mOutputH);
+
+				psConstants.mDistortionScales[0] = distortionMapping.mScaleX;
+				psConstants.mDistortionScales[1] = distortionMapping.mScaleY;
+				psConstants.mDistortionScales[2] = distortionMapping.mSqRadius;
+
+				psConstants.mImageUVSize[0] = useSharpBilinear ? (float)ctx.mSourceW : (float)ctx.mSourceW / (float)ctx.mSourceTexW;
+				psConstants.mImageUVSize[1] = useSharpBilinear ? (float)ctx.mSourceH : (float)ctx.mSourceH / (float)ctx.mSourceTexH;
+				psConstants.mImageUVSize[2] = useScanlines ? useSharpBilinear ? 0.25f : 0.25f / (float)ctx.mSourceTexH : 0.0f;
+				psConstants.mImageUVSize[3] = mCachedScanlineNormH;
+				
+				// need to transpose matrix to column major storage
+				psConstants.mColorCorrectMatrix[0][0] = mScreenFXInfo.mColorCorrectionMatrix[0][0];
+				psConstants.mColorCorrectMatrix[0][1] = mScreenFXInfo.mColorCorrectionMatrix[1][0];
+				psConstants.mColorCorrectMatrix[0][2] = mScreenFXInfo.mColorCorrectionMatrix[2][0];
+				psConstants.mColorCorrectMatrix[1][0] = mScreenFXInfo.mColorCorrectionMatrix[0][1];
+				psConstants.mColorCorrectMatrix[1][1] = mScreenFXInfo.mColorCorrectionMatrix[1][1];
+				psConstants.mColorCorrectMatrix[1][2] = mScreenFXInfo.mColorCorrectionMatrix[2][1];
+				psConstants.mColorCorrectMatrix[2][0] = mScreenFXInfo.mColorCorrectionMatrix[0][2];
+				psConstants.mColorCorrectMatrix[2][1] = mScreenFXInfo.mColorCorrectionMatrix[1][2];
+				psConstants.mColorCorrectMatrix[2][2] = mScreenFXInfo.mColorCorrectionMatrix[2][2];
+
+				mpD3DDevice->SetVertexShaderConstantF(16, (const float *)&vsConstants, sizeof(vsConstants)/16);
+				mpD3DDevice->SetPixelShaderConstantF(16, (const float *)&psConstants, sizeof(psConstants)/16);
+
+				ctx.mbAutoBilinear = (mPreferredFilter != kFilterPoint);
+				ctx.mpSourceTexture2 = mpD3DGammaRampTexture;
+				ctx.mpSourceTexture3 = mpD3DScanlineMaskTexture;
+
+				if (useScanlines) 
+					ctx.mSourceArea.translate(0.0f, 0.25f);
+
+				if (useSharpBilinear) {
+					ctx.mbUseUV0Scale = true;
+					ctx.mUV0Scale = vdfloat2{(float)ctx.mSourceTexW, (float)ctx.mSourceTexH};
+				}
+
+				const TechniqueInfo& technique = *kTechniques[useDistortion][useSharpBilinear][useScanlines][useColorCorrection ? 2 : useGammaCorrection ? 1 : 0];
+
+				if (mScreenFXInfo.mBloomRadius <= 0) {
+					bSuccess = mpVideoManager->RunEffect(ctx, technique, pRTMain);
+				} else {
+					float blurRadius = mScreenFXInfo.mBloomRadius * (float)ctx.mOutputW / (float)ctx.mSourceW;
+					uint32 factor1 = 1;
+					uint32 factor2 = 1;
+					float prescaleOffset = 0.0f;
+					bool prescale2x = false;
+
+					if (blurRadius > 56) {
+						prescaleOffset = 1.0f;
+						factor1 = 16;
+						factor2 = 4;
+						prescale2x = true;
+					} else if (blurRadius > 28) {
+						prescaleOffset = 1.0f;
+						factor1 = 8;
+						factor2 = 4;
+						prescale2x = true;
+					} else if (blurRadius > 14) {
+						factor1 = 4;
+						factor2 = 4;
+						prescaleOffset = 1.0f;
+					} else if (blurRadius > 7) {
+						factor1 = 2;
+						factor2 = 2;
+						prescaleOffset = 0.5f;
+					} else {
+						factor1 = 1;
+						factor2 = 1;
+						prescaleOffset = 0.0f;
+					}
+
+					uint32 blurW = std::max<uint32>((ctx.mOutputW + factor1 - 1)/factor1, 1);
+					uint32 blurH = std::max<uint32>((ctx.mOutputH + factor1 - 1)/factor1, 1);
+					uint32 prescaleW = blurW * (factor1 / factor2);
+					uint32 prescaleH = blurH * (factor1 / factor2);
+
+					uint32 inputTexW = ctx.mOutputW;
+					uint32 inputTexH = ctx.mOutputH;
+					uint32 prescaleTexW = prescale2x ? prescaleW : 0;
+					uint32 prescaleTexH = prescale2x ? prescaleH : 0;
+					uint32 blurTexW = blurW;
+					uint32 blurTexH = blurH;
+
+					bSuccess = true;
+
+					if (!mpManager->AdjustTextureSize(inputTexW, inputTexH, true)
+						|| (prescaleTexW && !mpManager->AdjustTextureSize(prescaleTexW, prescaleTexH, true))
+						|| !mpManager->AdjustTextureSize(blurTexW, blurTexH, true))
+					{
+						bSuccess = false;
+					}
+
+					bool needClear = false;
+					if (bSuccess) {
+						if (mCachedBloomOutputW != ctx.mOutputW
+							|| mCachedBloomOutputH != ctx.mOutputH
+							|| mCachedBloomPrescaleW != prescaleW
+							|| mCachedBloomPrescaleH != prescaleH
+							|| mCachedBloomBlurW != blurW
+							|| mCachedBloomBlurH != blurH)
+						{
+							mCachedBloomOutputW = ctx.mOutputW;
+							mCachedBloomOutputH = ctx.mOutputH;
+							mCachedBloomPrescaleW = prescaleW;
+							mCachedBloomPrescaleH = prescaleH;
+							mCachedBloomBlurW = blurW;
+							mCachedBloomBlurH = blurH;
+
+							needClear = true;
+						}
+					}
+
+					if (mCachedBloomInputTexW != inputTexW || mCachedBloomInputTexH != inputTexH) {
+						vdsaferelease <<= mpD3DBloomPrescale1RTT;
+						mCachedBloomInputTexW = inputTexW;
+						mCachedBloomInputTexH = inputTexH;
+					}
+
+					if (mCachedBloomPrescaleTexW != prescaleTexW || mCachedBloomPrescaleTexH != prescaleTexH) {
+						vdsaferelease <<= mpD3DBloomPrescale2RTT;
+
+						mCachedBloomPrescaleTexW = prescaleTexW;
+						mCachedBloomPrescaleTexH = prescaleTexH;
+					}
+
+					if (mCachedBloomBlurTexW != blurTexW || mCachedBloomBlurTexH != blurTexH) {
+						vdsaferelease <<= mpD3DBloomBlur1RTT;
+						vdsaferelease <<= mpD3DBloomBlur2RTT;
+
+						mCachedBloomBlurTexW = blurTexW;
+						mCachedBloomBlurTexH = blurTexH;
+					}
+
+					if (bSuccess && !mpD3DBloomPrescale1RTT) {
+						hr = mpD3DDevice->CreateTexture(inputTexW, inputTexH, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, ~mpD3DBloomPrescale1RTT, nullptr);
+						if (FAILED(hr))
+							bSuccess = false;
+
+						needClear = true;
+					}
+
+					if (bSuccess && prescaleTexW && !mpD3DBloomPrescale2RTT) {
+						hr = mpD3DDevice->CreateTexture(prescaleTexW, prescaleTexH, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, ~mpD3DBloomPrescale2RTT, nullptr);
+						if (FAILED(hr))
+							bSuccess = false;
+
+						needClear = true;
+					}
+
+					if (bSuccess && !mpD3DBloomBlur1RTT) {
+						hr = mpD3DDevice->CreateTexture(blurTexW, blurTexH, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, ~mpD3DBloomBlur1RTT, nullptr);
+						if (FAILED(hr))
+							bSuccess = false;
+
+						needClear = true;
+					}
+
+					if (bSuccess && !mpD3DBloomBlur2RTT) {
+						hr = mpD3DDevice->CreateTexture(blurTexW, blurTexH, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, ~mpD3DBloomBlur2RTT, nullptr);
+						if (FAILED(hr))
+							bSuccess = false;
+
+						needClear = true;
+					}
+
+					VDASSERT(bSuccess);
+
+					if (needClear) {
+						if (mpD3DBloomPrescale1RTT)
+							mpManager->ClearRenderTarget(mpD3DBloomPrescale1RTT);
+
+						if (mpD3DBloomPrescale2RTT)
+							mpManager->ClearRenderTarget(mpD3DBloomPrescale2RTT);
+
+						if (mpD3DBloomBlur1RTT)
+							mpManager->ClearRenderTarget(mpD3DBloomBlur1RTT);
+
+						if (mpD3DBloomBlur2RTT)
+							mpManager->ClearRenderTarget(mpD3DBloomBlur2RTT);
+					}
+
+					struct VSConstants {
+						float mViewport[4];
+						float mUVOffset[4];
+						float mBlurOffsets1[4];
+						float mBlurOffsets2[4];
+					} vsConstants1 {}, vsConstants2 {}, vsConstants3 {};
+
+					vsConstants1.mUVOffset[0] = prescaleOffset / (float)mCachedBloomInputTexW;
+					vsConstants1.mUVOffset[1] = prescaleOffset / (float)mCachedBloomInputTexH;
+
+					if (mCachedBloomPrescaleTexW) {
+						vsConstants2.mUVOffset[0] = prescaleOffset / (float)mCachedBloomPrescaleTexW;
+						vsConstants2.mUVOffset[1] = prescaleOffset / (float)mCachedBloomPrescaleTexH;
+					} else {
+						vsConstants2.mUVOffset[0] = vsConstants1.mUVOffset[0];
+						vsConstants2.mUVOffset[1] = vsConstants1.mUVOffset[1];
+					}
+
+					const float mainBlurRadius = blurRadius / (float)factor1;
+					const float blurHeightScale = 1.5f / std::min<float>(7.0f, mainBlurRadius);
+
+					const float wf = expf(-7.5f * (1.5f / 7.0f));
+					const float w0 = std::max<float>(0, expf(-7.0f * blurHeightScale) - wf);
+					const float w1 = std::max<float>(0, expf(-6.0f * blurHeightScale) - wf);
+					const float w2 = std::max<float>(0, expf(-5.0f * blurHeightScale) - wf);
+					const float w3 = std::max<float>(0, expf(-4.0f * blurHeightScale) - wf);
+					const float w4 = std::max<float>(0, expf(-3.0f * blurHeightScale) - wf);
+					const float w5 = std::max<float>(0, expf(-2.0f * blurHeightScale) - wf);
+					const float w6 = std::max<float>(0, expf(-1.0f * blurHeightScale) - wf);
+
+					const float wscale = 1.0f / (w6 + 2*(w5+w4+w3+w2+w1));
+
+					const float blurUStep = 1.0f / (float)blurTexW;
+					const float blurVStep = 1.0f / (float)blurTexH;
+					const float filterOffset0 = 1.0f + w4 / std::max<float>(w4 + w5, 1e-10f);
+					const float filterOffset1 = 3.0f + w2 / std::max<float>(w2 + w3, 1e-10f);
+					const float filterOffset2 = 5.0f + w0 / std::max<float>(w0 + w1, 1e-10f);
+
+					vsConstants2.mBlurOffsets1[0] = filterOffset0 * blurUStep;
+					vsConstants2.mBlurOffsets2[0] = filterOffset1 * blurUStep;
+					vsConstants2.mBlurOffsets2[2] = filterOffset2 * blurUStep;
+
+					vsConstants3.mBlurOffsets1[1] = filterOffset0 * blurVStep;
+					vsConstants3.mBlurOffsets2[1] = filterOffset1 * blurVStep;
+					vsConstants3.mBlurOffsets2[3] = filterOffset2 * blurVStep;
+
+					struct PSConstants {
+						float mWeights[4];
+						float mThresholds[4];
+						float mScales[4];
+					} psConstants {};
+
+					psConstants.mWeights[0] = w6 * wscale;
+					psConstants.mWeights[1] = (w5+w4) * wscale;
+					psConstants.mWeights[2] = (w3+w2) * wscale;
+					psConstants.mWeights[3] = (w1+w0) * wscale;
+
+					psConstants.mThresholds[0] = 1.0f + mScreenFXInfo.mBloomThreshold;
+					psConstants.mThresholds[1] = -mScreenFXInfo.mBloomThreshold;
+					psConstants.mScales[0] = mScreenFXInfo.mBloomDirectIntensity;
+					psConstants.mScales[1] = mScreenFXInfo.mBloomIndirectIntensity;
+
+					// input render
+					auto ctx2 = ctx;
+					ctx2.mViewportX = 0;
+					ctx2.mViewportY = 0;
+					ctx2.mOutputX = 0;
+					ctx2.mOutputY = 0;
+
+					if (bSuccess) {
+						vdrefptr<IDirect3DSurface9> prescaleSurface;
+						hr = mpD3DBloomPrescale1RTT->GetSurfaceLevel(0, ~prescaleSurface);
+						bSuccess = SUCCEEDED(hr) && mpVideoManager->RunEffect(ctx2, technique, prescaleSurface);
+					}
+
+					ctx2.mbUseUV0Scale = false;
+
+					// prescale passes
+					if (bSuccess) {
+						mpD3DDevice->SetPixelShaderConstantF(16, (const float *)&psConstants, sizeof(psConstants)/16);
+
+						ctx2.mpSourceTexture1 = mpD3DBloomPrescale1RTT;
+						ctx2.mSourceTexW = mCachedBloomInputTexW;
+						ctx2.mSourceTexH = mCachedBloomInputTexH;
+						ctx2.mSourceArea = vdrect32f(0, 0, mCachedBloomPrescaleW * factor2, mCachedBloomPrescaleH * factor2);
+
+						if (prescale2x) {
+							mpD3DDevice->SetVertexShaderConstantF(16, (const float *)&vsConstants1, sizeof(vsConstants1)/16);
+
+							ctx2.mOutputW = ctx2.mViewportW = prescaleW;
+							ctx2.mOutputH = ctx2.mViewportH = prescaleH;
+
+							vdrefptr<IDirect3DSurface9> prescale2Surface;
+							hr = mpD3DBloomPrescale2RTT->GetSurfaceLevel(0, ~prescale2Surface);
+							bSuccess = SUCCEEDED(hr) && mpVideoManager->RunEffect(ctx2, g_technique_screenfx_bloom_prescale, prescale2Surface);
+
+							ctx2.mpSourceTexture1 = mpD3DBloomPrescale2RTT;
+							ctx2.mSourceTexW = mCachedBloomPrescaleTexW;
+							ctx2.mSourceTexH = mCachedBloomPrescaleTexH;
+							ctx2.mSourceArea = vdrect32f(0, 0, mCachedBloomPrescaleW, mCachedBloomPrescaleH);
+						}
+
+						if (bSuccess) {
+							mpD3DDevice->SetVertexShaderConstantF(16, (const float *)&vsConstants2, sizeof(vsConstants2)/16);
+
+							ctx2.mOutputW = ctx2.mViewportW = blurW;
+							ctx2.mOutputH = ctx2.mViewportH = blurH;
+							vdrefptr<IDirect3DSurface9> blurSurface;
+							hr = mpD3DBloomBlur1RTT->GetSurfaceLevel(0, ~blurSurface);
+							bSuccess = SUCCEEDED(hr) && mpVideoManager->RunEffect(ctx2, prescale2x ? g_technique_screenfx_bloom_prescale2 : g_technique_screenfx_bloom_prescale, blurSurface);
+						}
+					}
+
+					// horizontal blur pass
+					if (bSuccess) {
+						ctx2.mpSourceTexture1 = mpD3DBloomBlur1RTT;
+						ctx2.mSourceTexW = mCachedBloomBlurTexW;
+						ctx2.mSourceTexH = mCachedBloomBlurTexH;
+						ctx2.mSourceArea = vdrect32f(0, 0, mCachedBloomBlurW, mCachedBloomBlurH);
+
+						vdrefptr<IDirect3DSurface9> blur2Surface;
+						hr = mpD3DBloomBlur2RTT->GetSurfaceLevel(0, ~blur2Surface);
+						bSuccess = SUCCEEDED(hr) && mpVideoManager->RunEffect(ctx2, g_technique_screenfx_bloom_blur, blur2Surface);
+					}
+
+					// vertical blur pass
+					if (bSuccess) {
+						ctx2.mpSourceTexture1 = mpD3DBloomBlur2RTT;
+						
+						mpD3DDevice->SetVertexShaderConstantF(16, (const float *)&vsConstants3, sizeof(vsConstants3)/16);
+
+						vdrefptr<IDirect3DSurface9> blurSurface;
+						hr = mpD3DBloomBlur1RTT->GetSurfaceLevel(0, ~blurSurface);
+						bSuccess = SUCCEEDED(hr) && mpVideoManager->RunEffect(ctx2, g_technique_screenfx_bloom_blur, blurSurface);
+					}
+
+					// final pass
+					if (bSuccess) {
+						ctx.mpSourceTexture1 = mpD3DBloomBlur1RTT;
+						ctx.mpSourceTexture2 = mpD3DBloomPrescale1RTT;
+						ctx.mSourceTexW = mCachedBloomInputTexW;
+						ctx.mSourceTexH = mCachedBloomInputTexH;
+						ctx.mSourceArea = vdrect32f(0, 0, mCachedBloomOutputW, mCachedBloomOutputH);
+						ctx.mbUseUV0Scale = false;
+						ctx.mbUseUV1Area = true;
+						ctx.mUV1Area = vdrect32f(0.0f, 0.0f,
+							(float)ctx.mOutputW / ((float)factor1 * (float)blurTexW),
+							(float)ctx.mOutputH / ((float)factor1 * (float)blurTexH));
+
+						bSuccess = mpVideoManager->RunEffect(ctx, g_technique_screenfx_bloom_final, pRTMain);
+					}
+
+					VDASSERT(bSuccess);
+
+				}
+			} else if (mbHighPrecision && mpVideoManager->Is16FEnabled()) {
+				if (mPreferredFilter == kFilterPoint)
+					bSuccess = mpVideoManager->RunEffect(ctx, g_technique_point_2_0, pRTMain);
+				else
+					bSuccess = mpVideoManager->RunEffect(ctx, g_technique_bilinear_2_0, pRTMain);
+			} else {
+				if (mPreferredFilter == kFilterPoint) {
+					mpManager->SetSwapChainActive(mpSwapChain);
+					bSuccess = mpVideoManager->BlitFixedFunction(ctx, pRTMain, false);
+				} else if ((mPixelSharpnessX > 1 || mPixelSharpnessY > 1) && mpVideoManager->IsPS20Enabled())
+					bSuccess = mpVideoManager->RunEffect(ctx, g_technique_boxlinear_2_0, pRTMain);
+				else if ((mPixelSharpnessX > 1 || mPixelSharpnessY > 1) && mbBoxlinearCapable11) {
+					if (!InitBoxlinearPS11Filters(ctx.mViewportW, ctx.mViewportH, mPixelSharpnessX, mPixelSharpnessY))
+						mbBoxlinearCapable11 = false;
+					else {
+						ctx.mpInterpFilter = mpD3DInterpFilterTexture;
+						ctx.mInterpTexW = mInterpFilterTexSizeW;
+						ctx.mInterpTexH = mInterpFilterTexSizeH;
+					}
+
+					if (ctx.mpInterpFilter)
+						bSuccess = mpVideoManager->RunEffect(ctx, g_technique_boxlinear_1_1, pRTMain);
+					else {
+						mpManager->SetSwapChainActive(mpSwapChain);
 						bSuccess = mpVideoManager->BlitFixedFunction(ctx, pRTMain, true);
 					}
+				} else {
+					mpManager->SetSwapChainActive(mpSwapChain);
+
+					bSuccess = mpVideoManager->BlitFixedFunction(ctx, pRTMain, true);
 				}
 			}
 		}

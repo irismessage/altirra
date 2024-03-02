@@ -161,6 +161,9 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		L"Internal devices",
 		"internal",
 		{
+			{ "warpos", L"APE Warp+ OS 32-in-1",
+				L"Internal upgrade allowing for soft-switching between 32 different OS ROMs in an XL/XE system."
+			},
 			{ "covox", L"Covox",
 				L"Provides a simple DAC for 8-bit digital sound."
 			},
@@ -976,8 +979,10 @@ void ATUIControllerDevices::CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef p
 	nodeObject->mNode = devnode;
 
 	if (IATDeviceFirmware *fw = vdpoly_cast<IATDeviceFirmware *>(dev)) {
-		if (!fw->IsUsableFirmwareLoaded()) {
-			auto node = mTreeView.AddItem(devnode, mTreeView.kNodeLast, L"Missing firmware for device");
+		ATDeviceFirmwareStatus status = fw->GetFirmwareStatus();
+
+		if (status != ATDeviceFirmwareStatus::OK) {
+			auto node = mTreeView.AddItem(devnode, mTreeView.kNodeLast, status == ATDeviceFirmwareStatus::Invalid ? L"Current device firmware failed validation checks and may not work" : L"Missing firmware for device");
 			mTreeView.SetNodeImage(node, 1);
 		}
 	}

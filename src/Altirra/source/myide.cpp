@@ -333,8 +333,8 @@ void ATMyIDEEmulator::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 	}
 }
 
-bool ATMyIDEEmulator::IsUsableFirmwareLoaded() const {
-	return !mbVersion2 || mbFirmwareUsable;
+ATDeviceFirmwareStatus ATMyIDEEmulator::GetFirmwareStatus() const {
+	return !mbVersion2 || mbFirmwareUsable ? ATDeviceFirmwareStatus::OK : ATDeviceFirmwareStatus::Missing;
 }
 
 IATDeviceBus *ATMyIDEEmulator::GetDeviceBus(uint32 index) {
@@ -343,6 +343,10 @@ IATDeviceBus *ATMyIDEEmulator::GetDeviceBus(uint32 index) {
 
 const wchar_t *ATMyIDEEmulator::GetBusName() const {
 	return L"IDE/CompactFlash Bus";
+}
+
+const char *ATMyIDEEmulator::GetBusTag() const {
+	return "idebus";
 }
 
 const char *ATMyIDEEmulator::GetSupportedType(uint32 index) {

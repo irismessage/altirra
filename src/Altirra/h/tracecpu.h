@@ -74,7 +74,7 @@ private:
 
 	double mTailBlockTime = 0;
 	uint32 mTailOffset = 0;
-	uint8 mNextUnpackSlot = 0;
+	uint8 mLRUClock = 0;
 	uint32 mEventCount = 0;
 	uint64 mTraceSize = 0;
 
@@ -85,6 +85,7 @@ private:
 	uint32 mSubCycles = 0;
 	VDStringW mName;
 
+	uint32 mPseudoLRU[kUnpackedSlots] = {};
 	uint32 mUnpackedBlockIds[kUnpackedSlots] = {};
 	ATCPUHistoryEntry mUnpackedBlocks[kUnpackedSlots][kBlockSize] = {};
 	ATCPUHistoryEntry mTailBlock[kBlockSize] = {};

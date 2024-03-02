@@ -15,6 +15,9 @@ class VDDisplayImageView;
 struct ATUIKeyEvent;
 struct ATUICharEvent;
 struct ATUITriggerBinding;
+enum class ATUIDragEffect : uint32;
+enum class ATUIDragModifiers : uint32;
+class IATUIDragDropObject;
 
 enum ATUIThemeFont {
 	kATUIThemeFont_Default,
@@ -152,6 +155,11 @@ public:
 
 	void OnCaptureLost();
 
+	ATUIDragEffect OnDragEnter(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj);
+	ATUIDragEffect OnDragOver(sint32 x, sint32 y, ATUIDragModifiers modifiers);
+	void OnDragLeave();
+	ATUIDragEffect OnDragDrop(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj);
+
 	IVDDisplayFont *GetThemeFont(ATUIThemeFont themeFont) const { return mpThemeFonts[themeFont]; }
 	ATUIStockImage& GetStockImage(ATUIStockImageIdx stockImage) const { return *mpStockImages[stockImage]; }
 
@@ -197,6 +205,9 @@ protected:
 
 	bool mbForeground;
 	bool mbInvalidated;
+
+	ATUIWidget *mpDropTargetWindow = nullptr;
+	IATUIDragDropObject *mpDropObject = nullptr;
 
 	float mThemeScale;
 

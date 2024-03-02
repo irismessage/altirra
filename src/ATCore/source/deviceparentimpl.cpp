@@ -33,7 +33,7 @@ ATDeviceBusSingleChild::~ATDeviceBusSingleChild() {
 	VDASSERT(!mpChildDevice);
 }
 
-void ATDeviceBusSingleChild::Init(IATDeviceParent *parent, uint32 busIndex, uint32 iid, const char *supportedType, const wchar_t *name) {
+void ATDeviceBusSingleChild::Init(IATDeviceParent *parent, uint32 busIndex, uint32 iid, const char *supportedType, const wchar_t *name, const char *tag) {
 	VDASSERT(!mpChildDevice);
 
 	mpParent = parent;
@@ -41,6 +41,7 @@ void ATDeviceBusSingleChild::Init(IATDeviceParent *parent, uint32 busIndex, uint
 	mIID = iid;
 	mpSupportedType = supportedType;
 	mpName = name;
+	mpTag = tag;
 }
 
 void ATDeviceBusSingleChild::Shutdown() {
@@ -64,6 +65,10 @@ void ATDeviceBusSingleChild::SetOnDetach(vdfunction<void()> fn) {
 
 const wchar_t *ATDeviceBusSingleChild::GetBusName() const {
 	return mpName;
+}
+
+const char *ATDeviceBusSingleChild::GetBusTag() const {
+	return mpTag;
 }
 
 const char *ATDeviceBusSingleChild::GetSupportedType(uint32 index) {
@@ -105,8 +110,9 @@ void ATDeviceBusSingleChild::RemoveChildDevice(IATDevice *dev) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-void ATDeviceParentSingleChild::Init(uint32 iid, const char *supportedType, const wchar_t *name) {
-	mBus.Init(this, 0, iid, supportedType, name);
+void ATDeviceParentSingleChild::Init(uint32 iid, const char *supportedType, const wchar_t *name, const char *tag, IVDUnknown *owner) {
+	mpOwner = owner;
+	mBus.Init(this, 0, iid, supportedType, name, tag);
 }
 
 void ATDeviceParentSingleChild::Shutdown() {
@@ -119,6 +125,10 @@ void ATDeviceParentSingleChild::SetOnAttach(vdfunction<void()> fn) {
 
 void ATDeviceParentSingleChild::SetOnDetach(vdfunction<void()> fn) {
 	mBus.SetOnDetach(std::move(fn));
+}
+
+void *ATDeviceParentSingleChild::AsInterface(uint32 iid) {
+	return mpOwner->AsInterface(iid);
 }
 
 IATDeviceBus *ATDeviceParentSingleChild::GetDeviceBus(uint32 index) {

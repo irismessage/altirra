@@ -30,7 +30,7 @@ namespace {
 	// 80us timeout for multiple sector erase (AMD)
 	const uint32 kAMDSectorEraseTimeoutCycles = 143;
 
-	// 80us timeout for multiple sector erase (AMD)
+	// 80us timeout for multiple sector erase (BMI)
 	const uint32 kBRIGHTSectorEraseTimeoutCycles = 143;
 
 	// 50us timeout for multiple sector erase (Amic)
@@ -71,6 +71,7 @@ void ATFlashEmulator::Init(void *mem, ATFlashType type, ATScheduler *sch) {
 		case kATFlashType_Am29F016D:
 		case kATFlashType_Am29F032B:
 		case kATFlashType_M29F010B:
+		case kATFlashType_HY29F040A:
 			mbA11Unlock = true;
 			break;
 
@@ -89,6 +90,7 @@ void ATFlashEmulator::Init(void *mem, ATFlashType type, ATScheduler *sch) {
 		case kATFlashType_Am29F010:
 		case kATFlashType_Am29F010B:
 		case kATFlashType_M29F010B:
+		case kATFlashType_HY29F040A:
 			mSectorEraseTimeoutCycles = kSectorEraseTimeoutCycles50us;
 			break;
 
@@ -321,11 +323,15 @@ bool ATFlashEmulator::DebugReadByte(uint32 address, uint8& data) const {
 							break;
 
 						case kATFlashType_BM29F040:
-							data = 0xAD;	// XX00 Manufacturer ID: BRIGHT
+							data = 0xAD;	// XX00 Manufacturer ID: Bright Microelectronics Inc. (same as Hyundai)
 							break;
 
 						case kATFlashType_M29F010B:
 							data = 0x20;
+							break;
+
+						case kATFlashType_HY29F040A:
+							data = 0xAD;	// XX00 Manufacturer ID: Hynix (Hyundai)
 							break;
 					}
 					break;
@@ -374,6 +380,10 @@ bool ATFlashEmulator::DebugReadByte(uint32 address, uint8& data) const {
 
 						case kATFlashType_M29F010B:
 							data = 0x20;
+							break;
+
+						case kATFlashType_HY29F040A:
+							data = 0xA4;
 							break;
 					}
 					break;
@@ -443,6 +453,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 				case kATFlashType_Am29F016D:
 				case kATFlashType_Am29F032B:
 				case kATFlashType_M29F010B:
+				case kATFlashType_HY29F040A:
 					if ((address & 0x7FF) == 0x555 && value == 0xAA)
 						mCommandPhase = 1;
 					break;
@@ -613,6 +624,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 					case kATFlashType_SST39SF040:
 					case kATFlashType_A29040:
 					case kATFlashType_BM29F040:
+					case kATFlashType_HY29F040A:
 						memset(mpMemory, 0xFF, 0x80000);
 						break;
 
@@ -655,6 +667,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 					case kATFlashType_Am29F040B:
 					case kATFlashType_A29040:
 					case kATFlashType_BM29F040:
+					case kATFlashType_HY29F040A:
 						address &= 0x70000;
 						memset(mpMemory + address, 0xFF, 0x10000);
 						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFFF);
@@ -831,6 +844,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 					case kATFlashType_Am29F040B:
 					case kATFlashType_A29040:
 					case kATFlashType_BM29F040:
+					case kATFlashType_HY29F040A:
 						address &= 0x70000;
 						memset(mpMemory + address, 0xFF, 0x10000);
 						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFFF);

@@ -129,6 +129,7 @@ static const struct ATCartDetectInfo {
 {	kATCartridgeMode_MegaCart_256K,				kType800,	kSize256K,	kWrsNone,	kBankDataSw,	kInit16K,	kHeaderFirst16K_PreferAll16K,	},
 {	kATCartridgeMode_MegaCart_512K,				kType800,	kSize512K,	kWrsNone,	kBankDataSw,	kInit16K,	kHeaderFirst16K_PreferAll16K,	},
 {	kATCartridgeMode_MegaCart_1M,				kType800,	kSize1M,	kWrsNone,	kBankDataSw,	kInit16K,	kHeaderFirst16K_PreferAll16K,	},
+{	kATCartridgeMode_MegaCart_2M,				kType800,	kSize2M,	kWrsNone,	kBankDataSw,	kInit16K,	kHeaderFirst16K_PreferAll16K,	},
 {	kATCartridgeMode_BountyBob800,				kType800,	kSize40K,	kWrsNone,	kBankOther,		kInit16K,	kHeaderLast16B,					},
 {	kATCartridgeMode_OSS_034M,					kType800,	kSize16K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderLast16B,					},
 {	kATCartridgeMode_OSS_M091,					kType800,	kSize16K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst4K,					},
@@ -164,7 +165,6 @@ static const struct ATCartDetectInfo {
 															kSize512K |
 															kSize1M,	kWrsNone,	kBankDataSw,	kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_MegaCart_512K_3,			kType800,	kSize512K,	kWrsNone,	kBankDataSw,	kInit8K,	kHeaderFirst8K,					},
-{	kATCartridgeMode_MegaCart_2M_3,				kType800,	kSize2M,	kWrsNone,	kBankDataSw,	kInit8K,	kHeaderLast16B,					},
 {	kATCartridgeMode_MegaCart_4M_3,				kType800,	kSize4M,	kWrsNone,	kBankDataSw,	kInit8K,	kHeaderLast16B,					},
 {	kATCartridgeMode_MicroCalc,					kType800,	kSize32K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_MegaMax_2M,				kType800,	kSize2M,	kWrsNone,	kBankAny,		kInit16K,	kHeaderFirst16K_PreferAll16K,	},

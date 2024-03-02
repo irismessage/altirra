@@ -28,7 +28,7 @@ const char *ATAddressGetSpacePrefix(uint32 addr) {
 		"rom:",		// ROM
 		"cart:",	// Cartridge
 		"",
-		"",
+		"t:",
 		"",
 		"",
 		"",
@@ -52,7 +52,7 @@ uint32 ATAddressGetSpaceSize(uint32 addr) {
 		0x10000,	// RAM
 		0x10000,	// ROM
 		0x10000000,	// Cartridge
-		0,
+		0x1000000,	// Cartridge (banked)
 		0,
 		0,
 		0,

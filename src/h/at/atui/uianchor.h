@@ -10,5 +10,6 @@ public:
 };
 
 void ATUICreateTranslationAnchor(float fractionX, float fractionY, IATUIAnchor **anchor);
+void ATUICreateProportionAnchor(const vdrect32f& area, IATUIAnchor **anchor);
 
 #endif

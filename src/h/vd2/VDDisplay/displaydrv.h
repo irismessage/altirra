@@ -26,6 +26,7 @@
 class VDStringA;
 class IVDDisplayCompositor;
 class IVDDisplayCompositionEngine;
+struct VDVideoDisplayScreenFXInfo;
 
 class IVDVideoDisplayMinidriverCallback {
 public:
@@ -47,11 +48,8 @@ struct VDVideoDisplaySourceInfo {
 	VDPixmap	pixmap;
 	int			bpp;
 	int			bpr;
-	void		*pSharedObject;
-	ptrdiff_t	sharedOffset;
 	bool		bAllowConversion;
 	bool		bPersistent;
-	bool		bInterlaced;
 	bool		use16bit;
 	IVDVideoDisplayMinidriverCallback *mpCB;
 };
@@ -60,14 +58,7 @@ class VDINTERFACE IVDVideoDisplayMinidriver {
 public:
 	enum UpdateMode : uint32 {
 		kModeNone		= 0x00000000,
-		kModeEvenField	= 0x00000001,
-		kModeOddField	= 0x00000002,
-		kModeAllFields	= 0x00000003,
-		kModeFieldMask	= 0x00000003,
 		kModeVSync		= 0x00000004,
-		kModeFirstField	= 0x00000008,
-		kModeBobEven	= 0x00000100,
-		kModeBobOdd		= 0x00000200,
 		kModeDoNotWait	= 0x00000800,
 		kModeAll		= 0x00000f0f
 	};
@@ -82,6 +73,7 @@ public:
 
 	virtual ~IVDVideoDisplayMinidriver() {}
 
+	virtual bool PreInit(HWND hwnd, HMONITOR hmonitor) = 0;
 	virtual bool Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info) = 0;
 	virtual void Shutdown() = 0;
 
@@ -89,6 +81,7 @@ public:
 
 	virtual bool IsValid() = 0;
 	virtual bool IsFramePending() = 0;
+	virtual bool IsScreenFXSupported() const = 0;
 	virtual void SetFilterMode(FilterMode mode) = 0;
 	virtual void SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh, bool use16bit) = 0;
 	virtual void SetDisplayDebugInfo(bool enable) = 0;
@@ -96,6 +89,7 @@ public:
 	virtual void SetHighPrecision(bool enable) = 0;
 	virtual void SetDestRect(const vdrect32 *r, uint32 color) = 0;
 	virtual void SetPixelSharpness(float xfactor, float yfactor) = 0;
+	virtual bool SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX) = 0;
 	virtual void SetCompositor(IVDDisplayCompositor *compositor) = 0;
 
 	virtual bool Tick(int id) = 0;
@@ -122,7 +116,10 @@ public:
 	VDVideoDisplayMinidriver();
 	~VDVideoDisplayMinidriver();
 
-	virtual bool IsFramePending();
+	bool PreInit(HWND hwnd, HMONITOR hmonitor) override;
+
+	virtual bool IsFramePending() override;
+	virtual bool IsScreenFXSupported() const override;
 	virtual void SetFilterMode(FilterMode mode);
 	virtual void SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh, bool use16bit);
 	virtual void SetDisplayDebugInfo(bool enable);
@@ -130,6 +127,7 @@ public:
 	virtual void SetHighPrecision(bool enable);
 	virtual void SetDestRect(const vdrect32 *r, uint32 color);
 	virtual void SetPixelSharpness(float xfactor, float yfactor);
+	virtual bool SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX);
 	virtual void SetCompositor(IVDDisplayCompositor *compositor);
 
 	virtual bool Tick(int id);

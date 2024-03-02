@@ -176,6 +176,7 @@ public:
 	bool IsDiskSectorCounterEnabled() const { return mbDiskSectorCounterEnabled; }
 	bool IsCassetteSIOPatchEnabled() const { return mbCassetteSIOPatchEnabled; }
 	bool IsCassetteAutoBootEnabled() const { return mbCassetteAutoBootEnabled; }
+	bool IsCassetteAutoBasicBootEnabled() const { return mbCassetteAutoBasicBootEnabled; }
 	bool IsCassetteAutoRewindEnabled() const;
 	bool IsCassetteRandomizedStartEnabled() const { return mbCassetteRandomizedStartEnabled; }
 	bool IsFPPatchEnabled() const { return mbFPPatchEnabled; }
@@ -266,6 +267,7 @@ public:
 	void SetDiskSectorCounterEnabled(bool enable);
 	void SetCassetteSIOPatchEnabled(bool enable);
 	void SetCassetteAutoBootEnabled(bool enable);
+	void SetCassetteAutoBasicBootEnabled(bool enable);
 	void SetCassetteAutoRewindEnabled(bool enable);
 	void SetCassetteRandomizedStartEnabled(bool enable);
 	void SetFPPatchEnabled(bool enable);
@@ -389,6 +391,7 @@ public:
 	bool IsKernelROMLocation(uint16 address) const;
 
 	uint32 ComputeKernelChecksum() const;
+	uint32 ComputeKernelCRC32() const;
 
 	uint32 GetConfigChangeCounter() const { return mConfigChangeCounter; }
 
@@ -405,6 +408,7 @@ public:
 
 private:
 	void InternalColdReset(bool computerOnly);
+	void InternalWarmReset(bool enableHeldButtons);
 
 	void LoadProgram(const wchar_t *path, IATBlobImage *image, bool basic);
 
@@ -451,11 +455,16 @@ private:
 
 	void ReinitHookPage();
 	void SetupPendingHeldButtons();
+	void ResetAutoHeldButtons();
+	void SetupAutoHeldButtonHook();
 	void SetupAutoHeldButtons();
 
 	void InitDevice(IVDUnknown& dev);
 
 	void ResetMemoryBuffer(void *dst, size_t len, uint32 seed);
+
+	void InitCassetteAutoBasicBoot();
+	bool SupportsInternalBasic() const;
 
 	bool mbRunning;
 	bool mbRunSingleCycle = false;
@@ -473,6 +482,8 @@ private:
 	bool mbDiskSectorCounterEnabled;
 	bool mbCassetteSIOPatchEnabled;
 	bool mbCassetteAutoBootEnabled;
+	bool mbCassetteAutoBasicBootEnabled = false;
+	bool mbCassetteAutoBootUseBasic = false;
 	bool mbCassetteRandomizedStartEnabled;
 	bool mbFPPatchEnabled;
 	bool mbBASICEnabled;
@@ -503,6 +514,7 @@ private:
 	uint64			mKernelId;
 	uint64			mActualKernelId;
 	uint32			mActualKernelFlags;
+	uint32			mKernelFlagsMask = 0;
 	uint64			mBasicId;
 	uint64			mActualBasicId;
 	ATHardwareMode	mHardwareMode;

@@ -44,6 +44,9 @@ struct ATUIAudioStatus {
 
 class IATUIRenderer : public IVDRefCount, public IATDeviceIndicatorManager {
 public:
+	virtual bool IsVisible() const = 0;
+	virtual void SetVisible(bool visible) = 0;
+
 	virtual void SetCyclesPerSecond(double rate) = 0;
 
 	virtual void SetLedStatus(uint8 ledMask) = 0;

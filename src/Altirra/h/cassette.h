@@ -22,6 +22,7 @@
 	#pragma once
 #endif
 
+#include <optional>
 #include <at/atcore/audiosource.h>
 #include <at/atcore/enumparse.h>
 #include <at/atcore/deferredevent.h>
@@ -38,7 +39,7 @@ class IATCassetteImage;
 struct ATTraceContext;
 class ATTraceChannelTape;
 
-enum ATCassetteTurboMode {
+enum ATCassetteTurboMode : uint8 {
 	kATCassetteTurboMode_None,
 	kATCassetteTurboMode_CommandControl,
 	kATCassetteTurboMode_ProceedSense,
@@ -48,12 +49,21 @@ enum ATCassetteTurboMode {
 
 AT_DECLARE_ENUM_TABLE(ATCassetteTurboMode);
 
-enum ATCassettePolarityMode {
+enum ATCassettePolarityMode : uint8 {
 	kATCassettePolarityMode_Normal,
 	kATCassettePolarityMode_Inverted
 };
 
 AT_DECLARE_ENUM_TABLE(ATCassettePolarityMode);
+
+enum class ATCassetteDirectSenseMode : uint8 {
+	Normal,
+	LowSpeed,
+	HighSpeed,
+	MaxSpeed
+};
+
+AT_DECLARE_ENUM_TABLE(ATCassetteDirectSenseMode);
 
 class ATCassetteEmulator final
 	: public IATSchedulerCallback
@@ -102,6 +112,9 @@ public:
 	void SetRandomizedStartEnabled(bool enable);
 	void SetAutoRewindEnabled(bool enable) { mbAutoRewind = enable; }
 
+	ATCassetteDirectSenseMode GetDirectSenseMode() const { return mDirectSenseMode; }
+	void SetDirectSenseMode(ATCassetteDirectSenseMode mode);
+
 	bool IsFSKDecodingEnabled() const { return mbFSKDecoderEnabled; }
 
 	ATCassetteTurboMode GetTurboMode() const { return mTurboMode; }
@@ -125,6 +138,9 @@ public:
 	uint8 ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemory *mpMem);
 	uint8 WriteBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemory *mpMem);
 
+	std::optional<bool> AutodetectBasicNeeded();
+
+public:
 	void OnScheduledEvent(uint32 id) override;
 
 public:
@@ -172,6 +188,7 @@ private:
 	void UpdateRecordingPosition();
 
 	void UpdateTraceState();
+	void UpdateDirectSenseParameters();
 
 	uint32	mAudioPosition = 0;
 	uint32	mAudioLength = 0;
@@ -200,6 +217,10 @@ private:
 	uint8	mDataByte = 0;
 	uint8	mThresholdZeroBit = 0;
 	uint8	mThresholdOneBit = 0;
+
+	ATCassetteDirectSenseMode mDirectSenseMode {};
+	uint8	mDirectSenseWindow = 0;
+	uint8	mDirectSenseThreshold = 0;
 
 	bool	mbDataBitEdge = false;		// True if we are waiting for the edge of a data bit, false if we are sampling.
 	int		mDataBitCounter = 0;
@@ -244,6 +265,9 @@ private:
 	ATTraceChannelTape *mpTraceChannelTurbo = nullptr;
 	bool mbTraceMotorRunning = false;
 	bool mbTraceRecord = false;
+
+	// Slightly weird optional trinary (we may have cached that we don't know....)
+	std::optional<std::optional<bool>> mNeedBasic;
 };
 
 #endif

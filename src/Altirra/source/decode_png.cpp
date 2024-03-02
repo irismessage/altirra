@@ -199,7 +199,8 @@ PNGDecodeError VDImageDecoderPNG::Decode(const void *src0, uint32 size) {
 	unsigned char pal[768];
 
 	// decode chunks
-	VDCRCChecker checker;
+	VDCRCTable table(VDCRCTable::kCRC32);
+	VDCRCChecker checker(table);
 
 	while(src < src_end) {
 		if (src_end-src < 12)
@@ -213,7 +214,7 @@ PNGDecodeError VDImageDecoderPNG::Decode(const void *src0, uint32 size) {
 		uint32 crc = PNGDecodeNetwork32(src + length + 8);
 
 		// verify the crc
-		checker.Init(VDCRCChecker::kCRC32);
+		checker.Init();
 		checker.Process(src + 4, length + 4);
 		if (checker.CRC() != crc)
 			return kPNGDecodeChecksumFailed;

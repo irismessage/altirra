@@ -419,6 +419,12 @@ handled:
 
 	mpCPU->SetP((mpCPU->GetP() & ~AT6502::kFlagC) + carry);
 
+	// Set A=0. SIOV sets this on the way out as part of clearing CRITIC.
+	mpCPU->SetA(0);
+
+	// Set X to typical return value for determinism.
+	mpCPU->SetX(0xFE);
+
 	mpCPU->Ldy(status);
 
 	return true;
@@ -1217,7 +1223,7 @@ void ATSIOManager::ExecuteNextStep() {
 				break;
 
 			default:
-				VDASSERT("Unknown step in step queue.");
+				VDFAIL("Unknown step in step queue.");
 				break;
 		}
 	}

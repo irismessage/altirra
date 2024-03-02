@@ -325,6 +325,9 @@
     <None Include="source\Shared\cio816.s">
       <Filter>Source Files\Shared</Filter>
     </None>
+    <None Include="source\Shared\version.inc">
+      <Filter>Source Files\Shared</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\Placeholders\noblackbox.s">

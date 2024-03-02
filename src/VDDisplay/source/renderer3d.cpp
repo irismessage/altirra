@@ -201,7 +201,7 @@ bool VDDisplayRenderer3D::Init(IVDTContext& ctx) {
 		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, rbswap ? g_VDDispFPView_RenderBlitStencilRBSwap : g_VDDispFPView_RenderBlitStencil, &mpFPBlitStencil) ||
 		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, rbswap ? g_VDDispFPView_RenderBlitColorRBSwap : g_VDDispFPView_RenderBlitColor, &mpFPBlitColor) ||
 		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, rbswap ? g_VDDispFPView_RenderBlitColor2RBSwap : g_VDDispFPView_RenderBlitColor2, &mpFPBlitColor2) ||
-		!ctx.CreateVertexBuffer(65536, true, NULL, &mpVB) ||
+		!ctx.CreateVertexBuffer(kVBSize, true, NULL, &mpVB) ||
 		!ctx.CreateIndexBuffer(256 * 6, false, false, indices, &mpIB) ||
 		!ctx.CreateSamplerState(ssdesc, &mpSS) ||
 		!ctx.CreateSamplerState(ssdesc2, &mpSSPoint) ||
@@ -368,6 +368,49 @@ void VDDisplayRenderer3D::AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, 
 	};
 
 	AddQuads(v, 1, true);
+}
+
+void VDDisplayRenderer3D::AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint32 alphaColor) {
+	if (!numPts)
+		return;
+	
+	alphaColor = VDRotateRightU32(VDSwizzleU32(alphaColor), 8);
+
+	// Even batch counts are easier as then we don't have to worry about flipping polarity.
+	constexpr uint32 maxBatchPts = (kVBSize / sizeof(FillVertex)) & ~1;
+
+	vdblock<FillVertex> vertices(numPts);
+	for(uint32 i=0; i<numPts; ++i) {
+		vertices[i] = FillVertex { pts[i].x, pts[i].y, alphaColor };
+	}
+
+	const FillVertex *src = vertices.data();
+	while(numPts >= 3) {
+		const uint32 numBatchPts = std::min(numPts, maxBatchPts);
+		uint32 vtxbytes = sizeof(FillVertex) * numBatchPts;
+
+		if (kVBSize - mVBOffset < vtxbytes)
+			mVBOffset = 0;
+
+		if (mpVB->Load(mVBOffset, vtxbytes, src)) {
+			mpContext->SetBlendState(mpBS);
+			mpContext->SetVertexFormat(mpVFFill);
+			mpContext->SetVertexProgram(mpVPFill);
+			mpContext->SetFragmentProgram(mpFPFill);
+			mpContext->SetVertexStream(0, mpVB, mVBOffset, sizeof(FillVertex));
+			mpContext->DrawPrimitive(kVDTPT_TriangleStrip, 0, numBatchPts - 2);
+
+			mVBOffset += vtxbytes;
+		}
+
+		// if we reached the end, we're done
+		if (numBatchPts >= numPts)
+			break;
+
+		// overlap last two points to maintain tristrip continuity
+		src += numBatchPts - 2;
+		numPts -= numBatchPts - 2;
+	}
 }
 
 void VDDisplayRenderer3D::Blt(sint32 x, sint32 y, VDDisplayImageView& imageView) {
@@ -687,7 +730,7 @@ void VDDisplayRenderer3D::EndSubRender() {
 void VDDisplayRenderer3D::AddLines(const FillVertex *p, uint32 n, bool alpha) {
 	uint32 vtxbytes = sizeof(FillVertex) * n * 2;
 
-	if (65536 - mVBOffset < vtxbytes)
+	if (kVBSize - mVBOffset < vtxbytes)
 		mVBOffset = 0;
 
 	if (mpVB->Load(mVBOffset, vtxbytes, p)) {
@@ -705,7 +748,7 @@ void VDDisplayRenderer3D::AddLines(const FillVertex *p, uint32 n, bool alpha) {
 void VDDisplayRenderer3D::AddLineStrip(const FillVertex *p, uint32 n, bool alpha) {
 	uint32 vtxbytes = sizeof(FillVertex) * (n + 1);
 
-	if (65536 - mVBOffset < vtxbytes)
+	if (kVBSize - mVBOffset < vtxbytes)
 		mVBOffset = 0;
 
 	if (mpVB->Load(mVBOffset, vtxbytes, p)) {
@@ -723,7 +766,7 @@ void VDDisplayRenderer3D::AddLineStrip(const FillVertex *p, uint32 n, bool alpha
 void VDDisplayRenderer3D::AddQuads(const FillVertex *p, uint32 n, bool alpha) {
 	uint32 vtxbytes = sizeof(FillVertex) * n * 4;
 
-	if (65536 - mVBOffset < vtxbytes)
+	if (kVBSize - mVBOffset < vtxbytes)
 		mVBOffset = 0;
 
 	if (mpVB->Load(mVBOffset, vtxbytes, p)) {
@@ -741,7 +784,7 @@ void VDDisplayRenderer3D::AddQuads(const FillVertex *p, uint32 n, bool alpha) {
 void VDDisplayRenderer3D::AddQuads(const BlitVertex *p, uint32 n, BltMode bltMode) {
 	uint32 vtxbytes = sizeof(BlitVertex) * n * 4;
 
-	if (65536 - mVBOffset < vtxbytes)
+	if (kVBSize - mVBOffset < vtxbytes)
 		mVBOffset = 0;
 
 	if (mpVB->Load(mVBOffset, vtxbytes, p)) {

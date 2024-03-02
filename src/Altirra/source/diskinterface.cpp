@@ -36,7 +36,8 @@ void ATDiskInterface::SwapSettings(ATDiskInterface& other) {
 	if (&other == this)
 		return;
 
-	NotifyStateSuspend();
+	this->NotifyStateSuspend();
+	other.NotifyStateSuspend();
 
 	const auto timingA = this->mbAccurateSectorTiming;
 	const auto timingB = other.mbAccurateSectorTiming;
@@ -81,7 +82,8 @@ void ATDiskInterface::SwapSettings(ATDiskInterface& other) {
 	this->CheckForModifiedChange();
 	other.CheckForModifiedChange();
 
-	NotifyStateResume(false);
+	this->NotifyStateResume(false);
+	other.NotifyStateResume(false);
 }
 
 void ATDiskInterface::Init(uint32 index, IATUIRenderer *uirenderer) {
@@ -169,7 +171,7 @@ void ATDiskInterface::SetWriteMode(ATMediaWriteMode mode) {
 }
 
 void ATDiskInterface::Flush() {
-	Flush(false);
+	Flush(false, false);
 }
 
 bool ATDiskInterface::CanRevert() const {
@@ -266,7 +268,7 @@ void ATDiskInterface::LoadDisk(const wchar_t *path, const wchar_t *imageName, IA
 }
 
 void ATDiskInterface::SaveDisk() {
-	Flush(true);
+	Flush(true, true);
 }
 
 void ATDiskInterface::SaveDiskAs(const wchar_t *s, ATDiskImageFormat format) {
@@ -470,7 +472,7 @@ void ATDiskInterface::SetShowLEDReadout(sint32 ledDisplay) {
 	mpUIRenderer->SetDiskLEDState(mIndex, ledDisplay);
 }
 
-void ATDiskInterface::Flush(bool ignoreAutoFlush) {
+void ATDiskInterface::Flush(bool ignoreAutoFlush, bool rethrowErrors) {
 	// stop the auto-flush timer if it is running
 	if (mFlushTimeStart) {
 		mFlushTimeStart = 0;
@@ -485,6 +487,7 @@ void ATDiskInterface::Flush(bool ignoreAutoFlush) {
 		SetWriteMode((ATMediaWriteMode)(mWriteMode & ~kATMediaWriteMode_AutoFlush));
 
 		SetFlushError(true);
+		throw MyError("The current disk image cannot be updated.");
 	} else {
 		try {
 			if (!mpDiskImage->Flush())
@@ -497,6 +500,9 @@ void ATDiskInterface::Flush(bool ignoreAutoFlush) {
 
 			// set flush error indicator
 			SetFlushError(true);
+
+			if (rethrowErrors)
+				throw;
 		}
 	}
 
@@ -527,7 +533,7 @@ void ATDiskInterface::OnFlushTimerFire() {
 
 	mFlushTimer.Stop();
 
-	Flush(false);
+	Flush(false, false);
 }
 
 void ATDiskInterface::SetFlushError(bool error) {
@@ -559,6 +565,9 @@ void ATDiskInterface::NotifyStateResume(bool notify) {
 			NotifyStateChange();
 	} else {
 		mStateChangeSuspendCount -= 2;
+
+		if (notify)
+			mStateChangeSuspendCount |= 1;
 	}
 }
 

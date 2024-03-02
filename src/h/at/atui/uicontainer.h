@@ -18,15 +18,17 @@ public:
 	void InvalidateLayout();
 	void UpdateLayout();
 
-	virtual ATUIWidget *HitTest(vdpoint32 pt);
+	ATUIWidget *HitTest(vdpoint32 pt) override;
 
-	virtual void OnDestroy();
-	virtual void OnSize();
+	void OnDestroy() override;
+	void OnSize() override;
 
-	virtual void OnSetFocus();
+	void OnSetFocus() override;
+
+	ATUIWidget *DragHitTest(vdpoint32 pt) override;
 
 protected:
-	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
+	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) override;
 
 	bool mbLayoutInvalid;
 	bool mbDescendantLayoutInvalid;

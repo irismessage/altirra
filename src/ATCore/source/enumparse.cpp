@@ -45,3 +45,43 @@ ATEnumParseResult<uint32> ATParseEnum(const ATEnumLookupTable& table, const VDSt
 
 	return { false, table.mDefaultValue };
 }
+
+ATEnumParseResult<uint32> ATParseEnum(const ATEnumLookupTable& table, const VDStringSpanW& str) {
+	uint32 hash = 2166136261U;
+
+	for(const wchar_t c : str) {
+		if (c != (unsigned char)c)
+			return { false, table.mDefaultValue };
+
+		hash = hash * 16777619U;
+		hash ^= (unsigned char)c & 0xDFU;
+	}
+
+	const auto strl = str.size();
+	for(size_t i=0; i<table.mTableEntries; ++i) {
+		const auto& ent = table.mpTable[i];
+
+		if (ent.mHash == hash) {
+			bool match = true;
+
+			for(size_t i = 0; i < strl; ++i) {
+				// str[i] is OK to truncate as we've confirmed above that it's byte-safe
+				unsigned char c = (unsigned char)str[i];
+				unsigned char x = c ^ (unsigned char)ent.mpName[i];
+
+				if ((unsigned char)((c & 0xDF) - 0x41) < 26)
+					x &= 0xDF;
+
+				if (x) {
+					match = false;
+					break;
+				}
+			}
+
+			if (match && !ent.mpName[strl])
+				return { true, ent.mValue };
+		}
+	}
+
+	return { false, table.mDefaultValue };
+}

@@ -9,8 +9,8 @@
 
 .proc Blackboard
 	;print banner
-	mva		#<banner icbal
-	mva		#>banner icbah
+	mva		#<blackboard_banner icbal
+	mva		#>blackboard_banner icbah
 	sta		icbll
 	ldx		#0
 	stx		icblh
@@ -22,8 +22,13 @@ echoloop:
 	stx		icbll
 	lda		#CIOCmdGetChars
 	bne		echoloop
-
-banner:
-	dta		'Altirra BIOS - memo pad',$9B
-
 .endp
+
+.if *>$e480 && *<$e4c0
+	;anchor version for emulator purposes
+	org		$e4a6
+.endif
+blackboard_banner:
+	dta		'AltirraOS '
+	_KERNELSTR_VERSION
+	dta		' memo pad',$9B

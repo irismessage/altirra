@@ -38,6 +38,8 @@ public:
 	void SetFourChannels(bool ch4) { mbFourCh = ch4; }
 	void SetAddressRange(uint32 lo, uint32 hi, bool passWrites);
 
+	void SetEnabled(bool enable);
+
 	void Init(ATMemoryManager *memMan, ATScheduler *sch, IATAudioMixer *mixer);
 	void Shutdown();
 
@@ -75,6 +77,7 @@ protected:
 	uint32	mOutputLevel = 0;
 	bool	mbUnbalanced = false;
 	bool	mbUnbalancedSticky = false;
+	bool	mbEnabled = true;
 
 	uint32	mAddrLo = 0xD600;
 	uint32	mAddrHi = 0xD6FF;

@@ -116,4 +116,14 @@ void ATSettingsSetBootstrapProfileMode(bool bootstrap);
 void ATSettingsScheduleReset();
 bool ATSettingsIsResetPending();
 
+void ATSettingsSetInPortableMode(bool portable);
+bool ATSettingsIsInPortableMode();
+
+void ATSettingsScheduleMigration();
+bool ATSettingsIsMigrationScheduled();
+
+VDStringW ATSettingsGetDefaultPortablePath();
+
+void ATSettingsMigrate();
+
 #endif

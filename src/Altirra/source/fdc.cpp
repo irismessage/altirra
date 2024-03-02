@@ -255,13 +255,14 @@ uint8 ATFDCEmulator::DebugReadByte(uint8 address) const {
 				if (ModifyWriteProtect(mbWriteProtectOverride || (mpDiskImage && !mpDiskInterface->IsDiskWritable())))
 					v |= 0x40;
 
-				v &= 0xDF;
 				if (mType == kType_1770 || mType == kType_1772) {
 					// spin up completed (type I, 1770/1772 only)
-					if (mState != kState_DispatchCommand)
-						v |= 0x20;
+					//
+					// we must NOT keep updating this bit -- force interrupt needs to be able
+					// to clear it in idle state for the XF551 to report correct status
 				} else {
 					// head loaded (type I, 1771/179X/279X)
+					v &= 0xDF;
 					if (mbHeadLoaded)
 						v |= 0x20;
 				}
@@ -339,6 +340,24 @@ void ATFDCEmulator::WriteByte(uint8 address, uint8 value) {
 				// yes -- only force interrupt is accepted
 				if ((value & 0xF0) != 0xD0)
 					break;
+
+				g_ATLCFDCCommandFI("Force Interrupt issued -- interrupting command\n");
+
+				// if DRQ is pending, force lost data -- the XF551 is very fast at doing a force
+				// interrupt after reading the last byte, but on actual hardware it isn't enough
+				// to prevent lost data even though it writes the FI command is under a FM byte's
+				// time
+				if (mState == kState_ReadSector_TransferByte) {
+					// set DRQ
+					if (!mbDataReadPending) {
+						mbDataReadPending = true;
+
+						mpFnDrqChange(true);
+					}
+
+					// force lost data and DRQ
+					mRegStatus |= 0x06;
+				}
 
 				// abort existing command
 				AbortCommand();
@@ -427,8 +446,13 @@ void ATFDCEmulator::UpdateIndexPulse() {
 		case kState_ReadSector_TransferFirstByte:
 		case kState_ReadSector_TransferFirstByteNever:
 			if (mActiveOpIndexMarks >= 5) {
-				g_ATLCFDC("Timing out read sector/address command -- sector not found after 5 revs\n");
-				mActiveSectorStatus = 0x10;
+				UpdateRotationalPosition();
+				g_ATLCFDC("Timing out read sector/address command -- sector not found after 5 revs (pos=%.2f)\n", (mRotations % 100) + (float)mRotPos / (float)mCyclesPerRotation);
+
+				// We need to preserve address CRC errors in the Never case.
+				if (mState == kState_ReadSector_TransferFirstByte)
+					mActiveSectorStatus = 0x10;
+
 				SetTransition(kState_ReadSector_TransferComplete, 1);
 			}
 			break;
@@ -484,12 +508,28 @@ void ATFDCEmulator::AbortCommand() {
 		mWriteTrackBuffer.clear();
 	}
 
+	// If we were in the middle of writing a sector, do partial write now. This is needed by
+	// the Happy 810 copier, which interrupts a 4K sector write to force a CRC error.
+	if (mState == kState_WriteSector_TransferByte) {
+		// force data CRC error
+		mActivePhysSectorStatus &= ~0x08;
+
+		if (mpDiskImage && mActivePhysSector < mpDiskImage->GetPhysicalSectorCount() && mpDiskInterface->IsDiskWritable()) {
+			try {
+				mpDiskInterface->OnDiskModified();
+				mpDiskImage->WritePhysicalSector(mActivePhysSector, mTransferBuffer, mTransferIndex, mActivePhysSectorStatus);
+			} catch(...) {
+				// mark write fault
+				mRegStatus |= 0x20;
+			}
+		} else {
+			// mark write fault
+			mRegStatus |= 0x20;
+		}
+	}
+
 	mState = kState_Idle;
 	mpScheduler->UnsetEvent(mpStateEvent);
-
-	mbDataReadPending = false;
-	mbDataWritePending = false;
-	mpFnDrqChange(false);
 }
 
 void ATFDCEmulator::RunStateMachine() {
@@ -534,45 +574,59 @@ void ATFDCEmulator::RunStateMachine() {
 			}
 
 			mIdleIndexPulses = 0;
-			mRegStatus &= 0x80;
-			mRegStatus |= 0x01;
 
-			// change status type immediately
-			mbRegStatusTypeI = (mRegCommand < 0x80) || (mRegCommand & 0xF0) == 0xD0;
+				mRegStatus &= 0x80;
+				mRegStatus |= 0x01;
 
-			// spin up motor (1770/1772)
-			if ((mRegCommand & 0xF0) != 0xD0 && (mType == kType_1770 || mType == kType_1772)) {
-				ClearMotorIdleTimer();
+				// clear DRQ if it is set (needed to prevent DRQ leaking from previous cmd)
+				if (mbDataReadPending || mbDataWritePending) {
+					mbDataReadPending = false;
+					mbDataWritePending = false;
+					mpFnDrqChange(false);
+				}
+			if ((mRegCommand & 0xF0) == 0xD0) {
+				// change status type immediately
+				mbRegStatusTypeI = true;
+				mRegStatus |= 0x01;
+			} else {
 
-				if (!mbMotorEnabled) {
-					mbMotorEnabled = true;
-					mpFnMotorChange(true);
+				// change status type immediately
+				mbRegStatusTypeI = (mRegCommand < 0x80);
 
-					if (!(mRegCommand & 8)) {
-						SetTransition(kState_DispatchCommand, mCyclesPerRotation * 6);
-						break;
+				// spin up motor (1770/1772)
+				if (mType == kType_1770 || mType == kType_1772) {
+					ClearMotorIdleTimer();
+
+					if (!mbMotorEnabled) {
+						mbMotorEnabled = true;
+						mpFnMotorChange(true);
+
+						if (!(mRegCommand & 8)) {
+							SetTransition(kState_DispatchCommand, mCyclesPerRotation * 6);
+							break;
+						}
 					}
 				}
-			}
 
-			// load head (179X/279X)
-			if (mType == kType_279X && (mRegCommand & 0xF0) != 0xD0) {
-				bool headLoadState = false;
+				// load head (179X/279X)
+				if (mType == kType_279X) {
+					bool headLoadState = false;
 
-				if (mRegCommand < 0x80) {
-					// Type I commands load head if h (bit 3) is set.
-					if (mRegCommand & 0x08)
+					if (mRegCommand < 0x80) {
+						// Type I commands load head if h (bit 3) is set.
+						if (mRegCommand & 0x08)
+							headLoadState = true;
+					} else {
+						// Type II/III commands load the head with an optional 15ms delay
+						// depending on the E bit (bit 2).
 						headLoadState = true;
-				} else {
-					// Type II/III commands load the head with an optional 15ms delay
-					// depending on the E bit (bit 2).
-					headLoadState = true;
-				}
+					}
 
-				if (mbHeadLoaded != headLoadState) {
-					mbHeadLoaded = headLoadState;
+					if (mbHeadLoaded != headLoadState) {
+						mbHeadLoaded = headLoadState;
 
-					mpFnHeadLoadChange(headLoadState);
+						mpFnHeadLoadChange(headLoadState);
+					}
 				}
 			}
 
@@ -581,6 +635,12 @@ void ATFDCEmulator::RunStateMachine() {
 
 		case kState_DispatchCommand:
 			mActiveOpIndexMarks = 0;
+
+			if (mType == kType_1770 || mType == kType_1772) {
+				// spin up completed (type I, 1770/1772 only)
+				if (mRegCommand < 0x80)
+					mRegStatus |= 0x20;
+			}
 
 			switch(mRegCommand & 0xF0) {
 				case 0x00: SetTransition(kState_Restore, 1); break;
@@ -603,8 +663,9 @@ void ATFDCEmulator::RunStateMachine() {
 			break;
 
 		case kState_EndCommand:
+			// We must NOT clear DRQ here for the XF551 to properly report the DRQ bit.
 
-			mRegStatus &= 0x7C;		// clear BUSY, DRQ, and NOT READY
+			mRegStatus &= 0x7E;		// clear BUSY and NOT READY
 
 			if (!mbDiskReady)
 				mRegStatus |= 0x80;
@@ -614,13 +675,6 @@ void ATFDCEmulator::RunStateMachine() {
 			mWriteTrackBuffer.clear();
 
 			mState = kState_Idle;
-
-			if (mbDataReadPending || mbDataWritePending) {
-				mbDataReadPending = false;
-				mbDataWritePending = false;
-
-				mpFnDrqChange(false);
-			}
 
 			// Set INTRQ.
 			//
@@ -834,7 +888,8 @@ void ATFDCEmulator::RunStateMachine() {
 							if (mbMFM != psi.mbMFM)
 								continue;
 
-							if ((psi.mFDCStatus & 0x18) == 0x10)
+							// skip missing sectors and sectors with address CRC errors
+							if (!(psi.mFDCStatus & 0x10))
 								continue;
 
 							float distance = psi.mRotPos - posf;
@@ -849,7 +904,7 @@ void ATFDCEmulator::RunStateMachine() {
 								// handled in the 810 emulation code).
 								mActiveSectorStatus = ~psi.mFDCStatus;
 								bestWeakDataOffset = psi.mWeakDataOffset;
-								bestSectorSize = psi.mSize;
+								bestSectorSize = psi.mPhysicalSize;
 								bestVSec = vsec;
 								bestVSecCount = vsi.mNumPhysSectors;
 								bestPSecOffset = i;
@@ -926,7 +981,7 @@ void ATFDCEmulator::RunStateMachine() {
 								, bestRotPos
 								, (float)mRotPos / (float)mCyclesPerRotation
 								,  bestWeakDataOffset >= 0 ? " (w/weak bits)"
-									: (mActiveSectorStatus & 0x02) ? " (w/long sector)"		// must use DRQ as lost data differs between drives
+									: (mActiveSectorStatus & 0x04) ? " (w/long sector)"		// must use lost data as DRQ differs between drives
 									: (mActiveSectorStatus & 0x08) ? " (w/CRC error)"
 									: (mActiveSectorStatus & 0x10) ? " (w/missing sector)"
 									: (mActiveSectorStatus & 0x20) ? " (w/deleted sector)"
@@ -998,12 +1053,12 @@ void ATFDCEmulator::RunStateMachine() {
 							// handled in the 810 emulation code).
 							mActiveSectorStatus = ~psi.mFDCStatus;
 							bestWeakDataOffset = psi.mWeakDataOffset;
-							mTransferLength = std::min<uint32>(psi.mSize, vdcountof(mTransferBuffer));
+							mTransferLength = std::min<uint32>(psi.mPhysicalSize, vdcountof(mTransferBuffer));
 						}
 					}
 
 					// check for a long sector not actually stored in the image
-					if ((mActiveSectorStatus & 0x02) && mTransferLength < 256)
+					if ((mActiveSectorStatus & 0x04) && mTransferLength < 256)
 						mTransferLength = 256;
 
 					memset(mTransferBuffer, 0xFF, mTransferLength);
@@ -1046,7 +1101,7 @@ void ATFDCEmulator::RunStateMachine() {
 						mpDiskInterface->SetShowActivity(true, vsec);
 
 					if (g_ATLCDisk.IsEnabled()) {
-						g_ATLCDisk("Reading vsec=%3d (%d/%d) (trk=%d), psec=%3d, rot=%5.2f >>[%4.2f]>> %.2f%s.\n"
+						g_ATLCDisk("Reading vsec=%3d (%d/%d) (trk=%d), psec=%3d, rot=%5.2f >>[%4.2f]>> %.2f.%s%s%s%s%s\n"
 								, vsec
 								, (uint32)bestPhysSec - vsi.mStartPhysSector + 1
 								, vsi.mNumPhysSectors
@@ -1055,12 +1110,12 @@ void ATFDCEmulator::RunStateMachine() {
 								, (float)mRotPos / (float)mCyclesPerRotation + (mRotations % 100)
 								, bestDistance
 								, bestRotPos
-								,  bestWeakDataOffset >= 0 ? " (w/weak bits)"
-									: (mActiveSectorStatus & 0x02) ? " (w/long sector)"		// must use DRQ as lost data differs between drives
-									: (mActiveSectorStatus & 0x08) ? " (w/CRC error)"
-									: (mActiveSectorStatus & 0x10) ? " (w/missing sector)"
-									: (mActiveSectorStatus & 0x20) ? " (w/deleted sector)"
-									: ""
+								,  bestWeakDataOffset >= 0 ? " (weak)" : ""
+								, (mActiveSectorStatus & 0x04) ? " (long)" : ""		// must use lost data as DRQ differs between drives
+								, ((mActiveSectorStatus & 0x18) == 0x18) ? " (address CRC error)" : ""
+								, (mActiveSectorStatus & 0x08) ? " (data CRC error)" : ""
+								, ((mActiveSectorStatus & 0x10) == 0x10) ? " (missing sector)" : ""
+								, (mActiveSectorStatus & 0x20) ? " (deleted sector)" : ""
 								);
 					}
 				}
@@ -1080,6 +1135,17 @@ void ATFDCEmulator::RunStateMachine() {
 			break;
 
 		case kState_ReadSector_TransferFirstByte:
+			// Immediately transfer record type bit into status register, as this will get
+			// updated as soon as the DAM is processed, and needs to stick if the read sector
+			// command is interrupted. Otherwise, the XF551 fails to report the deleted DAM
+			// for a deleted + CRC sector.
+			if (mType == kType_1771)
+				mRegStatus = (mRegStatus & ~0x60) + (mActiveSectorStatus & 0x20)*3;
+			else
+				mRegStatus = (mRegStatus & ~0x20) + (mActiveSectorStatus & 0x20);
+
+			[[fallthrough]];
+
 		case kState_ReadSector_TransferByte:
 			// check for lost data
 			if (mbDataReadPending)
@@ -1105,15 +1171,17 @@ void ATFDCEmulator::RunStateMachine() {
 			// Update status based on sector read:
 			//
 			//	bit 7 (not ready)			drop - recomputed
-			//	bit 6 (record type)			drop - recomputed
-			//	bit 5 (record type)			replicate to bit 5/6
+			//	bit 6 (record type)			drop - replicated from bit 5 (1771) or cleared (others)
+			//	bit 5 (record type)			replicate to bit 5/6 (1771 only)
 			//	bit 4 (record not found)	keep
 			//	bit 3 (CRC error)			keep
 			//	bit 2 (lost data)			drop - driven by sequencer
 			//	bit 1 (DRQ)					drop - driven by sequencer
 			//	bit 0 (busy)				drop - driven by sequencer
 			mRegStatus = (mRegStatus & ~0x78) + (mActiveSectorStatus & 0x38);
-			mRegStatus += (mRegStatus & 0x20) * 2;
+
+			if (mType == kType_1771)
+				mRegStatus += (mRegStatus & 0x20) * 2;
 
 			// If this is a Read Address command, we need to copy the track address
 			// into the sector register, per the WDC manual.
@@ -1153,6 +1221,7 @@ void ATFDCEmulator::RunStateMachine() {
 			uint32 delay = mCyclesPerRotation * 2;
 
 			mActiveSectorStatus = 0x10;
+			mActivePhysSectorStatus = 0xFF;
 
 			if (mpDiskImage && mRegSector > 0 && mRegSector <= mDiskGeometry.mSectorsPerTrack && mbMotorRunning && !(mPhysHalfTrack & 1)) {
 				uint32 vsec = GetSelectedVSec(mRegSector);
@@ -1191,19 +1260,34 @@ void ATFDCEmulator::RunStateMachine() {
 							// handled in the 810 emulation code).
 							mActiveSectorStatus = ~psi.mFDCStatus;
 							bestWeakDataOffset = psi.mWeakDataOffset;
-							mTransferLength = std::min<uint32>(psi.mSize, vdcountof(mTransferBuffer));
+							mTransferLength = std::min<uint32>(psi.mPhysicalSize, vdcountof(mTransferBuffer));
 						}
 					}
 
 					mActivePhysSector = bestPhysSec;
 
 					// check for a long sector not actually stored in the image
-					if ((mActiveSectorStatus & 0x02) && mTransferLength < 256)
+					if ((mActiveSectorStatus & 0x04) && mTransferLength < 256)
 						mTransferLength = 256;
 
 					// check for a boot sector on a double density disk
 					if (mTransferLength == 128 && vsec <= mDiskGeometry.mBootSectorCount && mDiskGeometry.mbMFM && mDiskGeometry.mSectorSize > 128)
 						mTransferLength = 256;
+
+					// check for non-standard sector size mode being used
+					if (mType == kType_1771) {
+						if (!(mRegCommand & 0x08)) {
+							// force a CRC error on the written sector
+							mActivePhysSectorStatus &= ~0x08;
+
+							mTransferLength = 4096;
+						}
+					}
+
+					// copy written data mark (we only use LSB as diskimage uses 1050 rules)
+					if (mRegCommand & 0x01) {
+						mActivePhysSectorStatus &= ~0x20;
+					}
 
 					if (mbUseAccurateTiming) {
 						// Compute rotational delay. It takes about 26 raw bytes in the standard 810
@@ -1225,17 +1309,17 @@ void ATFDCEmulator::RunStateMachine() {
 						mpDiskInterface->SetShowActivity(true, vsec);
 
 					if (g_ATLCDisk.IsEnabled()) {
-						g_ATLCDisk("Writing vsec=%3d (%d/%d) (trk=%d), psec=%3d, rot=%.2f >> %.2f >> %.2f%s.\n"
+						g_ATLCDisk("Writing vsec=%3d (%d/%d) (trk=%d), psec=%3d, rot=%.2f >> [+%.2f] >> %.2f%s.\n"
 								, vsec
 								, (uint32)bestPhysSec - vsi.mStartPhysSector + 1
 								, vsi.mNumPhysSectors
 								, (vsec - 1) / mDiskGeometry.mSectorsPerTrack
 								, (uint32)bestPhysSec
-								, (float)mRotPos / (float)mCyclesPerRotation
+								, posf
+								, bestDistance
 								, bestRotPos
-								, (float)mRotPos / (float)mCyclesPerRotation
 								,  bestWeakDataOffset >= 0 ? " (w/weak bits)"
-									: (mActiveSectorStatus & 0x02) ? " (w/long sector)"		// must use DRQ as lost data differs between drives
+									: (mActiveSectorStatus & 0x04) ? " (w/long sector)"		// must use DRQ as lost data differs between drives
 									: (mActiveSectorStatus & 0x08) ? " (w/CRC error)"
 									: (mActiveSectorStatus & 0x10) ? " (w/missing sector)"
 									: (mActiveSectorStatus & 0x20) ? " (w/deleted sector)"
@@ -1307,7 +1391,7 @@ void ATFDCEmulator::RunStateMachine() {
 				if (mpDiskImage && mActivePhysSector < mpDiskImage->GetPhysicalSectorCount() && mpDiskInterface->IsDiskWritable()) {
 					try {
 						mpDiskInterface->OnDiskModified();
-						mpDiskImage->WritePhysicalSector(mActivePhysSector, mTransferBuffer, mTransferLength);
+						mpDiskImage->WritePhysicalSector(mActivePhysSector, mTransferBuffer, mTransferLength, mActivePhysSectorStatus);
 					} catch(...) {
 						// mark write fault
 						mRegStatus |= 0x20;
@@ -1338,6 +1422,13 @@ void ATFDCEmulator::RunStateMachine() {
 			break;
 
 		case kState_ForceInterrupt:
+			// The XF551 needs the motor spin-up bit cleared and the motor on bit set for a
+			// idle force interrupt to report status properly. This means, incidentally, that
+			// the XF551 doesn't ever report deleted record or record not found!
+
+			mRegStatus |= 0x10;
+			mRegStatus &= ~0xDF;
+
 			SetTransition(kState_EndCommand, 16);
 			break;
 	}
@@ -1719,7 +1810,8 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 				psi.mOffset = parsedSector.mStart;
 				psi.mRotPos = ((float)mRotPos - validLen + (float)parsedSector.mStart * mCyclesPerByte) / (float)mCyclesPerRotation;
 				psi.mRotPos -= floorf(psi.mRotPos);
-				psi.mSize = parsedSector.mLen;
+				psi.mPhysicalSize = parsedSector.mLen;
+				psi.mImageSize = parsedSector.mLen;
 				psi.mWeakDataOffset = -1;
 				psi.mbMFM = mbMFM;
 

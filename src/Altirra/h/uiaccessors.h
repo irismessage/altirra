@@ -68,6 +68,9 @@ void ATSetFullscreen(bool);
 bool ATUIGetDisplayPadIndicators();
 void ATUISetDisplayPadIndicators(bool enabled);
 
+bool ATUIGetDisplayIndicators();
+void ATUISetDisplayIndicators(bool enabled);
+
 bool ATUICanManipulateWindows();
 
 bool ATUIIsMouseCaptured();
@@ -118,6 +121,8 @@ VDGUIHandle ATUIGetNewPopupOwner();
 bool ATUIGetAppActive();
 void ATUISetAppActive(bool active);
 
+void ATUIExit(bool forceNoConfirm);
+
 void ATUISetWindowCaptionTemplate(const char *s);
 const char *ATUIGetWindowCaptionTemplate();
 
@@ -126,5 +131,7 @@ bool ATUIGetDeviceButtonDepressed(uint32 idx);
 void ATUIActivateDeviceButton(uint32 idx, bool state);
 
 ATUICommandManager& ATUIGetCommandManager();
+
+void ATUIBootImage(const wchar_t *path);
 
 #endif	// f_AT_UIACCESSORS_H

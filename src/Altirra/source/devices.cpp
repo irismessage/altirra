@@ -83,6 +83,7 @@ extern const ATDeviceDefinition g_ATDeviceDefVBXE;
 extern const ATDeviceDefinition g_ATDeviceDefXELCF;
 extern const ATDeviceDefinition g_ATDeviceDefXELCF3;
 extern const ATDeviceDefinition g_ATDeviceDefRapidus;
+extern const ATDeviceDefinition g_ATDeviceDefWarpOS;
 
 void ATRegisterDevices(ATDeviceManager& dm) {
 	static const ATDeviceDefinition *const kDeviceDefs[]={
@@ -147,6 +148,7 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefXELCF,
 		&g_ATDeviceDefXELCF3,
 		&g_ATDeviceDefRapidus,
+		&g_ATDeviceDefWarpOS,
 	};
 
 	for(const ATDeviceDefinition *def : kDeviceDefs)

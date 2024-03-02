@@ -33,6 +33,7 @@
 struct VDPixmap;
 struct VDUIAccelerator;
 class VDFunctionThunkInfo;
+struct ITextDocument;
 
 class VDUIProxyControl : public vdlist_node, public ATUINativeWindowProxy {
 public:
@@ -587,15 +588,32 @@ public:
 	void SetBackgroundColor(uint32 c);
 	void SetReadOnlyBackground();
 	void SetPlainTextMode();
+	void DisableCaret();
+	void DisableSelectOnFocus();
 
 	void SetOnTextChanged(vdfunction<void()> fn);
+	void SetOnLinkSelected(vdfunction<bool(const wchar_t *)> fn);
 
 	void UpdateMargins(sint32 xpad, sint32 ypad);
 
+public:
+	void Attach(VDZHWND hwnd) override;
+	void Detach() override;
+
 private:
-	VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
+	VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) override;
+	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) override;
+	static VDZLRESULT VDZCALLBACK StaticOnSubclassProc(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam, VDZUINT_PTR uIdSubclass, VDZDWORD_PTR dwRefData);
+	VDZLRESULT OnSubclassProc(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
+
+	void UpdateLinkEnableStatus();
+	void InitSubclass();
 
 	vdfunction<void()> mpOnTextChanged;
+	vdfunction<bool(const wchar_t *)> mpOnLinkSelected;
+	ITextDocument *mpTextDoc = nullptr;
+	bool mSubclassed = false;
+	bool mCaretDisabled = false;
 };
 
 /////////////////////////////////////////////////////////////////////////////
@@ -658,6 +676,21 @@ private:
 	VDZHIMAGELIST mImageList = nullptr;
 	uint32 mImageWidth = 0;
 	uint32 mImageHeight = 0;
+};
+
+/////////////////////////////////////////////////////////////////////////////
+
+class VDUIProxySysLinkControl final : public VDUIProxyControl {
+public:
+	VDUIProxySysLinkControl();
+	~VDUIProxySysLinkControl();
+
+	void SetOnClicked(vdfunction<void()> fn);
+
+private:
+	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) override;
+
+	vdfunction<void()> mpOnClicked;
 };
 
 #endif

@@ -688,6 +688,9 @@ bool ATAudioOutput::ReinitAudio(ATAudioApi api) {
 	nsVDWinFormats::WaveFormatExPCM wfex { mSamplingRate, 2, 16 };
 	bool success = mpAudioOut->Init(kBufferSize * 4, 30, (const tWAVEFORMATEX *)&wfex, NULL);
 
+	if (!success)
+		mpAudioOut->GoSilent();
+
 	if (!mpAudioOut->Start())
 		success = false;
 

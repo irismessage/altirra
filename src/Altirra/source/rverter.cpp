@@ -149,7 +149,7 @@ void ATDeviceRVerter::Init() {
 	if (mpDeviceSerial)
 		mpDeviceSerial->SetTerminalState(mTerminalState);
 
-	mDeviceParent.Init(IATDeviceSerial::kTypeID, "serial", L"Serial Port");
+	mDeviceParent.Init(IATDeviceSerial::kTypeID, "serial", L"Serial Port", "serial", this);
 	mDeviceParent.SetOnAttach([this] { SetSerialDevice(mDeviceParent.GetChild<IATDeviceSerial>()); });
 	mDeviceParent.SetOnDetach([this] { SetSerialDevice(nullptr); });
 }

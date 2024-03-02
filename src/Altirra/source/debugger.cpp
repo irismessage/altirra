@@ -32,8 +32,11 @@
 #include <at/atcore/devicemanager.h>
 #include <at/atcore/sioutils.h>
 #include <at/atcpu/execstate.h>
+#include <at/atdebugger/argparse.h>
 #include <at/atdebugger/target.h>
 #include <at/atio/cassetteimage.h>
+#include <at/atcore/enumparseimpl.h>
+#include <at/atcore/vfs.h>
 #include <at/atnativeui/uiframe.h>
 #include "console.h"
 #include "cpu.h"
@@ -67,6 +70,7 @@
 #include "decmath.h"
 #include "profiler.h"
 #include "fdc.h"
+#include "versioninfo.h"
 #include <at/atemulation/riot.h>
 #include <at/atemulation/ctc.h>
 
@@ -78,9 +82,21 @@ void ATCreateDebuggerCmdAssemble(uint32 address, IATDebuggerActiveCommand **);
 void ATConsoleExecuteCommand(const char *s, bool echo = true);
 void ATDebuggerInitCommands();
 
-namespace {
-	class ATDebuggerCmdParser;
-}
+///////////////////////////////////////////////////////////////////////////////
+
+AT_DEFINE_ENUM_TABLE_BEGIN(ATDebuggerSymbolLoadMode)
+	{ ATDebuggerSymbolLoadMode::Default, "default" },	
+	{ ATDebuggerSymbolLoadMode::Disabled, "disabled" },
+	{ ATDebuggerSymbolLoadMode::Deferred, "deferred" },
+	{ ATDebuggerSymbolLoadMode::Enabled, "enabled" },
+AT_DEFINE_ENUM_TABLE_END(ATDebuggerSymbolLoadMode, ATDebuggerSymbolLoadMode::Default)
+
+AT_DEFINE_ENUM_TABLE_BEGIN(ATDebuggerScriptAutoLoadMode)
+	{ ATDebuggerScriptAutoLoadMode::Default, "default" },	
+	{ ATDebuggerScriptAutoLoadMode::Disabled, "disabled" },
+	{ ATDebuggerScriptAutoLoadMode::AskToLoad, "asktoload" },
+	{ ATDebuggerScriptAutoLoadMode::Enabled, "enabled" },
+AT_DEFINE_ENUM_TABLE_END(ATDebuggerScriptAutoLoadMode, ATDebuggerScriptAutoLoadMode::Default)
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -229,12 +245,20 @@ public:
 	bool Init();
 	void Shutdown();
 
-	void Detach();
+	bool IsEnabled() const override { return mbEnabled; }
+	void SetEnabled(bool enabled) override;
+
+	ATDebuggerScriptAutoLoadMode GetScriptAutoLoadMode() const override;
+	void SetScriptAutoLoadMode(ATDebuggerScriptAutoLoadMode mode) override;
+	void SetScriptAutoLoadConfirmFn(vdfunction<bool()> fn) override { mpScriptAutoLoadConfirmFn = std::move(fn); }
+
+	void ShowBannerOnce() override;
 
 	bool Tick();
 
 	void SetSourceMode(ATDebugSrcMode sourceMode);
 	void Break();
+	void Stop();
 	void Run(ATDebugSrcMode sourceMode);
 	void RunTraced();
 	void RunToScanline(int scan);
@@ -314,8 +338,14 @@ public:
 	void RemoveClient(IATDebuggerClient *client);
 	void RequestClientUpdate(IATDebuggerClient *client);
 
-	uint32 LoadSymbols(const wchar_t *fileName, bool processDirectives, const uint32 *targetIdOverride = nullptr);
+	ATDebuggerSymbolLoadMode GetSymbolLoadMode(bool whenEnabled) const override;
+	void SetSymbolLoadMode(bool whenEnabled, ATDebuggerSymbolLoadMode mode) override;
+
+	bool IsSymbolLoadingEnabled() const override;
+	uint32 LoadSymbols(const wchar_t *fileName, bool processDirectives, const uint32 *targetIdOverride = nullptr, bool loadImmediately = false);
 	void UnloadSymbols(uint32 moduleId);
+	void LoadDeferredSymbols(uint32 moduleId);
+	void LoadAllDeferredSymbols();
 	void ClearSymbolDirectives(uint32 moduleId);
 	void ProcessSymbolDirectives(uint32 id);
 
@@ -323,6 +353,7 @@ public:
 	sint32 ResolveSymbol(const char *s, bool allowGlobal = false, bool allowShortBase = true, bool allowNakedHex = true);
 	uint32 ResolveSymbolThrow(const char *s, bool allowGlobal = false, bool allowShortBase = true);
 	void EnumModuleSymbols(uint32 moduleId, ATCallbackHandler1<void, const ATSymbolInfo&> callback) const;
+	void EnumSourceFiles(const vdfunction<void(const wchar_t *, uint32)>& fn) const;
 
 	uint32 AddCustomModule(uint32 targetId, const char *name, const char *shortname);
 	uint32 GetCustomModuleIdByShortName(const char *name);
@@ -334,6 +365,7 @@ public:
 	VDStringA GetAddressText(uint32 globalAddr, bool useHexSpecifier, bool addSymbolInfo = false);
 
 	sint32 EvaluateThrow(const char *s);
+	std::pair<bool, sint32> Evaluate(ATDebugExpNode *expr);
 
 	ATDebugExpEvalContext GetEvalContext() const;
 	ATDebugExpEvalContext GetEvalContextForTarget(uint32 targetIndex) const;
@@ -341,6 +373,7 @@ public:
 	void GetDirtyStorage(vdfastvector<ATDebuggerStorageId>& ids) const;
 
 	void QueueBatchFile(const wchar_t *s);
+	void QueueAutoLoadBatchFile(const wchar_t *s);
 
 	bool InvokeCommand(const char *name, ATDebuggerCmdParser& parser) const;
 	void AddCommand(const char *name, void (*pfn)(ATDebuggerCmdParser&));
@@ -403,6 +436,8 @@ public:
 
 	uint32 GetContinuationAddress() const { return mContinuationAddress; }
 	void SetContinuationAddress(uint32 addr) { mContinuationAddress = addr; }
+
+	void DefineCommands(const ATDebuggerCmdDef *defs, size_t numDefs) override;
 
 	bool IsCommandAliasPresent(const char *alias) const;
 	bool MatchCommandAlias(const char *alias, const char *const *argv, int argc, vdfastvector<char>& tempstr, vdfastvector<const char *>& argptrs) const;
@@ -504,12 +539,14 @@ public:
 
 protected:
 	struct Module {
-		uint32	mId;
-		uint32	mTargetId;
-		uint32	mBase;
-		uint32	mSize;
-		bool	mbDirty;
-		vdrefptr<IATSymbolStore>	mpSymbols;
+		uint32	mId = 0;
+		uint32	mTargetId = 0;
+		uint32	mBase = 0;
+		uint32	mSize = 0;
+		bool	mbDirty = false;
+		bool	mbDeferredLoad = false;
+		bool	mbDirectivesProcessed = false;
+		vdrefptr<IATSymbolStore> mpSymbols;
 		VDStringA	mShortName;
 		VDStringA	mName;
 		VDStringW	mPath;
@@ -518,6 +555,8 @@ protected:
 	
 	struct UserBP;
 
+	void UpdateSymbolLoadMode();
+	void LoadDeferredSymbols(Module& module);
 	void ResolveDeferredBreakpoints();
 	void ClearAllBreakpoints(bool notify);
 	void UpdateClientSystemState(IATDebuggerClient *client = NULL);
@@ -561,6 +600,13 @@ protected:
 	bool	mbClientUpdatePending;
 	bool	mbClientLastRunState;
 	bool	mbSymbolUpdatePending;
+	bool	mbEnabled;
+	bool	mbBannerDisplayed = false;
+	bool	mbSymbolLoadingEnabled = true;
+	bool	mbDeferredSymbolLoadingEnabled = false;
+
+	ATDebuggerSymbolLoadMode mSymbolLoadModes[2] {};
+	ATDebuggerScriptAutoLoadMode mScriptAutoLoadMode = ATDebuggerScriptAutoLoadMode::AskToLoad;
 
 	VDStringA	mRepeatCommand;
 	uint32	mContinuationAddress;
@@ -657,6 +703,7 @@ protected:
 	IATDebugTarget *mpCurrentTarget;
 	uint32 mCurrentTargetIndex;
 	vdfastvector<IATDebugTarget *> mDebugTargets;
+	vdfunction<bool()> mpScriptAutoLoadConfirmFn;
 };
 
 ATDebugger g_debugger;
@@ -687,8 +734,9 @@ ATDebugger::ATDebugger()
 	, mClientsBusy(0)
 	, mbClientsChanged(false)
 	, mpBkptManager(NULL)
-
 {
+	SetSymbolLoadMode(false, ATDebuggerSymbolLoadMode::Default);
+	SetSymbolLoadMode(true, ATDebuggerSymbolLoadMode::Default);
 	SetPromptDefault();
 
 	for(auto& watch : mWatches)
@@ -761,13 +809,67 @@ void ATDebugger::Shutdown() {
 	}
 }
 
-void ATDebugger::Detach() {
-	TerminateActiveCommands();
+void ATDebugger::SetEnabled(bool enabled) {
+	mbEnabled = enabled;
+	UpdateSymbolLoadMode();
 
-	InterruptRun(true);
+	if (!enabled) {
+		TerminateActiveCommands();
 
-	ClearAllBreakpoints();
-	UpdateClientSystemState();
+		InterruptRun(true);
+
+		ClearAllBreakpoints();
+		UpdateClientSystemState();
+	}
+}
+
+ATDebuggerScriptAutoLoadMode ATDebugger::GetScriptAutoLoadMode() const {
+	return mScriptAutoLoadMode;
+}
+
+void ATDebugger::SetScriptAutoLoadMode(ATDebuggerScriptAutoLoadMode mode) {
+	if (mode == ATDebuggerScriptAutoLoadMode::Default)
+		mode = ATDebuggerScriptAutoLoadMode::AskToLoad;
+
+	mScriptAutoLoadMode = mode;
+}
+
+void ATDebugger::ShowBannerOnce() {
+	if (mbBannerDisplayed)
+		return;
+
+	mbBannerDisplayed = true;
+
+	ATConsoleWrite("Altirra Debugger " AT_VERSION "\n");
+	ATConsoleWrite("\n");
+
+	if (!mbSymbolLoadingEnabled)
+		ATConsoleWrite("Automatic symbol and debug script loading is disabled.\n");
+	else if (mbDeferredSymbolLoadingEnabled) {
+		ATConsoleWrite(
+			"Automatic symbol loading is deferred. Symbol files will be detected when images are\n"
+			"loaded but not loaded until requested.\n");
+	} else
+		ATConsoleWrite("Automatic symbol loading is enabled.\n");
+
+	for(const Module& module : mModules) {
+		if (module.mbDeferredLoad) {
+			ATConsoleWrite(
+				"\n"
+				"Some symbol files are in deferred load status. Use lm to query module symbol status\n"
+				"and .loadsym or .reload to load deferred symbol files. Symbol load modes can be\n"
+				"changed in Configure System.\n"
+			);
+			break;
+		}
+	}
+
+	ATConsoleWrite(
+		"\n"
+		"Use .help for a list of commands and .help <cmdname> for help on a specific command.\n"
+		"_______\n"
+		"\n"
+	);
 }
 
 void ATDebugger::SetSourceMode(ATDebugSrcMode sourceMode) {
@@ -798,16 +900,7 @@ bool ATDebugger::Tick() {
 				acmd->Release();
 				mActiveCommands.pop_back();
 
-				if (mActiveCommands.empty())
-					SetPromptDefault();
-				else {
-					acmd = mActiveCommands.back();
-
-					if (acmd->IsBusy())
-						SetPrompt("BUSY");
-					else
-						SetPrompt(acmd->GetPrompt());
-				}
+				UpdatePrompt();
 			}
 
 			return true;
@@ -893,6 +986,27 @@ void ATDebugger::Break() {
 
 	TerminateActiveCommands();
 	mCommandQueue.clear();
+
+	UpdatePrompt();
+}
+
+void ATDebugger::Stop() {
+	if (!g_sim.IsRunning())
+		return;
+
+	g_sim.Suspend();
+
+	mRunState = kRunState_Stopped;
+
+	ATCPUExecState execState;
+	mpCurrentTarget->GetExecState(execState);
+
+	if (mpCurrentTarget->GetDisasmMode() == kATDebugDisasmMode_Z80)
+		mFramePC = execState.mZ80.mPC;
+	else
+		mFramePC = execState.m6502.mPC;
+
+	mbClientUpdatePending = true;
 }
 
 void ATDebugger::Run(ATDebugSrcMode sourceMode) {
@@ -2448,12 +2562,44 @@ bool ATDebugger::GetWatchInfo(int idx, ATDebuggerWatchInfo& winfo) {
 }
 
 void ATDebugger::ListModules() {
-	Modules::iterator it(mModules.begin()), itEnd(mModules.end());
 	int index = 1;
-	for(; it!=itEnd; ++it, ++index) {
-		const Module& mod = *it;
 
-		ATConsolePrintf("%3d) ~%u | %04x-%04x  %-16s  %-20s %s%s\n", mod.mId, mod.mTargetId, mod.mBase, mod.mBase + mod.mSize - 1, mod.mpSymbols ? "(symbols loaded)" : "(no symbols)", mod.mShortName.c_str(), mod.mName.c_str(), mod.mbDirty ? "*" : "");
+	vdfastvector<const Module *> modules(mModules.size());
+	std::transform(mModules.begin(), mModules.end(), modules.begin(), [](const Module& x) { return &x; });
+
+	std::sort(modules.begin(), modules.end(),
+		[](const Module *x, const Module *y) {
+			return x->mId < y->mId;
+		}
+	);
+
+	VDStringA s;
+	for(const Module *pMod : modules) {
+		const Module& mod = *pMod;
+
+		if (mod.mbDeferredLoad) {
+			ATConsolePrintf("%3d) ~%u | (symbol load deferred)           %-20s %s%s\n"
+				, mod.mId
+				, mod.mTargetId
+				, mod.mShortName.c_str()
+				, mod.mName.c_str()
+				, mod.mbDirty ? "*" : "");
+		} else {
+			s.sprintf("%04X-%04X"
+				, mod.mBase
+				, mod.mBase + mod.mSize - 1);
+
+			ATConsolePrintf("%3d) ~%u | %-13s  %-16s  %-20s %s%s\n"
+				, mod.mId
+				, mod.mTargetId
+				, s.c_str()
+				, mod.mpSymbols ? "(symbols loaded)" : "(no symbols)"
+				, mod.mShortName.c_str()
+				, mod.mName.c_str()
+				, mod.mbDirty ? "*" : "");
+		}
+
+		++index;
 	}
 }
 
@@ -2473,6 +2619,8 @@ void ATDebugger::ReloadModules() {
 			}
 
 			ClearSymbolDirectives(mod.mId);
+			mod.mbDeferredLoad = false;
+			mod.mbDirectivesProcessed = false;
 			mod.mpSymbols = symStore;
 			ProcessSymbolDirectives(mod.mId);
 			ATConsolePrintf("Reloaded symbols: %ls\n", mod.mPath.c_str());
@@ -2678,14 +2826,6 @@ void ATDebugger::GetModuleIds(vdfastvector<uint32>& ids) const {
 }
 
 uint32 ATDebugger::AddModule(uint32 targetId, uint32 base, uint32 size, IATSymbolStore *symbolStore, const char *name, const wchar_t *path) {
-	Modules::const_iterator it(mModules.begin()), itEnd(mModules.end());
-	for(; it!=itEnd; ++it) {
-		const Module& mod = *it;
-
-		if (mod.mTargetId == targetId &&  mod.mBase == base && mod.mSize == size && mod.mpSymbols == symbolStore)
-			return mod.mId;
-	}
-
 	Module newmod;
 	newmod.mId = mNextModuleId++;
 	newmod.mTargetId = targetId;
@@ -2760,11 +2900,32 @@ void ATDebugger::RequestClientUpdate(IATDebuggerClient *client) {
 	UpdateClientSystemState(client);
 }
 
-uint32 ATDebugger::LoadSymbols(const wchar_t *fileName, bool processDirectives, const uint32 *targetIdOverride) {
+ATDebuggerSymbolLoadMode ATDebugger::GetSymbolLoadMode(bool whenEnabled) const {
+	return mSymbolLoadModes[whenEnabled ? 1 : 0];
+}
+
+void ATDebugger::SetSymbolLoadMode(bool whenEnabled, ATDebuggerSymbolLoadMode mode) {
+	if (mode == ATDebuggerSymbolLoadMode::Default)
+		mode = whenEnabled ? ATDebuggerSymbolLoadMode::Enabled : ATDebuggerSymbolLoadMode::Deferred;
+
+	auto& activeMode = mSymbolLoadModes[whenEnabled ? 1 : 0];
+
+	if (activeMode != mode) {
+		activeMode = mode;
+
+		UpdateSymbolLoadMode();
+	}
+}
+
+bool ATDebugger::IsSymbolLoadingEnabled() const {
+	return mbSymbolLoadingEnabled;
+}
+
+uint32 ATDebugger::LoadSymbols(const wchar_t *path, bool processDirectives, const uint32 *targetIdOverride, bool loadImmediately) {
 	vdrefptr<IATSymbolStore> symStore;
 	const uint32 targetId = targetIdOverride ? *targetIdOverride : mCurrentTargetIndex;
 
-	if (!wcscmp(fileName, L"kernel")) {
+	if (!wcscmp(path, L"kernel")) {
 		UnloadSymbols(kModuleId_KernelROM);
 
 		mModules.push_back(Module());
@@ -2777,11 +2938,12 @@ uint32 ATDebugger::LoadSymbols(const wchar_t *fileName, bool processDirectives, 
 		kernmod.mShortName = "kernel";
 		kernmod.mName = "Kernel ROM";
 		kernmod.mbDirty = false;
+		kernmod.mbDirectivesProcessed = true;
 
 		return kModuleId_KernelROM;
 	}
 
-	if (!wcscmp(fileName, L"kerneldb")) {
+	if (!wcscmp(path, L"kerneldb")) {
 		UnloadSymbols(kModuleId_KernelDB);
 
 		mModules.push_back(Module());
@@ -2800,11 +2962,12 @@ uint32 ATDebugger::LoadSymbols(const wchar_t *fileName, bool processDirectives, 
 		varmod.mBase = varmod.mpSymbols->GetDefaultBase();
 		varmod.mSize = varmod.mpSymbols->GetDefaultSize();
 		varmod.mbDirty = false;
+		varmod.mbDirectivesProcessed = true;
 
 		return kModuleId_KernelDB;
 	}
 
-	if (!wcscmp(fileName, L"hardware")) {
+	if (!wcscmp(path, L"hardware")) {
 		UnloadSymbols(kModuleId_Hardware);
 		mModules.insert(mModules.begin(), Module());
 		Module& hwmod = mModules.front();
@@ -2823,18 +2986,38 @@ uint32 ATDebugger::LoadSymbols(const wchar_t *fileName, bool processDirectives, 
 		hwmod.mBase = hwmod.mpSymbols->GetDefaultBase();
 		hwmod.mSize = hwmod.mpSymbols->GetDefaultSize();
 		hwmod.mbDirty = false;
+		hwmod.mbDirectivesProcessed = true;
 
 		return kModuleId_Hardware;
 	}
 
-	ATLoadSymbols(fileName, ~symStore);
+	const wchar_t *fullPath = path;
+	VDStringW fullPathStr;
+	if (ATVFSIsFilePath(path)) {
+		fullPathStr = VDGetFullPath(path);
+		fullPath = fullPathStr.c_str();
+	}
 
-	uint32 moduleId = AddModule(targetId, symStore->GetDefaultBase(), symStore->GetDefaultSize(), symStore, VDTextWToA(fileName).c_str(), VDGetFullPath(fileName).c_str());
+	uint32 moduleId;
 
-	if (moduleId && processDirectives)
-		ProcessSymbolDirectives(moduleId);
+	if (loadImmediately || !mbDeferredSymbolLoadingEnabled) {
+		ATLoadSymbols(path, ~symStore);
 
-	ResolveDeferredBreakpoints();
+		moduleId = AddModule(targetId, symStore->GetDefaultBase(), symStore->GetDefaultSize(), symStore, VDTextWToA(path).c_str(), fullPath);
+
+		if (processDirectives)
+			ProcessSymbolDirectives(moduleId);
+	
+		ResolveDeferredBreakpoints();
+	} else {
+		vdrefptr<ATVFSFileView> view;
+		ATVFSOpenFileView(fullPath, false, ~view);
+
+		moduleId = AddModule(targetId, 0, 0, symStore, VDTextWToA(path).c_str(), fullPath);
+
+		GetModuleById(moduleId)->mbDeferredLoad = true;
+	}
+	
 	return moduleId;
 }
 
@@ -2856,6 +3039,70 @@ void ATDebugger::UnloadSymbols(uint32 moduleId) {
 	}
 }
 
+void ATDebugger::LoadDeferredSymbols(uint32 moduleId) {
+	Module *module = GetModuleById(moduleId);
+	if (!module)
+		return;
+
+	if (!module->mbDeferredLoad)
+		return;
+
+	LoadDeferredSymbols(*module);
+	ResolveDeferredBreakpoints();
+	NotifyEvent(kATDebugEvent_SymbolsChanged);
+}
+
+void ATDebugger::LoadAllDeferredSymbols() {
+	vdfastvector<uint32> loadedModIds;
+
+	for(Module& module : mModules) {
+		if (!module.mbDeferredLoad)
+			continue;
+
+		try {
+			LoadDeferredSymbols(module);
+			ATConsolePrintf("Loaded: %ls\n", module.mPath.c_str());
+
+			loadedModIds.push_back(module.mId);
+		} catch(const MyError& e) {
+			ATConsolePrintf("Failed: %ls (%s)\n", module.mPath.c_str(), e.c_str());
+		}
+	}
+
+	if (!loadedModIds.empty()) {
+		// Process symbol directives for newly loaded modules. This must be a second pass
+		// as there may be links between symbols loaded together.
+		for(uint32 id : loadedModIds)
+			ProcessSymbolDirectives(id);
+
+		// Try to re-resolve any deferred breakpoints now that we have more symbols.
+		ResolveDeferredBreakpoints();
+		NotifyEvent(kATDebugEvent_SymbolsChanged);
+	}
+}
+
+void ATDebugger::UpdateSymbolLoadMode() {
+	ATDebuggerSymbolLoadMode mode = mSymbolLoadModes[mbEnabled ? 1 : 0];
+
+	VDASSERT(mode != ATDebuggerSymbolLoadMode::Default);
+
+	mbSymbolLoadingEnabled = (mode != ATDebuggerSymbolLoadMode::Disabled);
+	mbDeferredSymbolLoadingEnabled = (mode == ATDebuggerSymbolLoadMode::Deferred);
+}
+
+void ATDebugger::LoadDeferredSymbols(Module& module) {
+	if (!module.mbDeferredLoad)
+		return;
+
+	module.mbDeferredLoad = false;
+
+	ATLoadSymbols(module.mPath.c_str(), ~module.mpSymbols);
+
+	module.mBase = module.mpSymbols->GetDefaultBase();
+	module.mSize = module.mpSymbols->GetDefaultSize();
+	module.mbDirectivesProcessed = false;
+}
+
 void ATDebugger::ClearSymbolDirectives(uint32 moduleId) {
 	// scan all breakpoints and clear those from this module
 	uint32 n = (uint32)mUserBPs.size();
@@ -2872,6 +3119,11 @@ void ATDebugger::ProcessSymbolDirectives(uint32 id) {
 	Module *mod = GetModuleById(id);
 	if (!mod)
 		return;
+
+	if (mod->mbDirectivesProcessed)
+		return;
+
+	mod->mbDirectivesProcessed = true;
 
 	if (!mod->mpSymbols)
 		return;
@@ -3069,14 +3321,17 @@ sint32 ATDebugger::ResolveSymbol(const char *s, bool allowGlobal, bool allowShor
 				if (mod.mTargetId != mCurrentTargetIndex)
 					continue;
 
+				if (!mod.mpSymbols)
+					continue;
+
 				// check the module name if it is present
 				if (modnamelen && (mod.mShortName.size() != modnamelen || mod.mShortName.comparei(VDStringSpanA(s, s + modnamelen))))
 					continue;
 
 				sint32 offset = mod.mpSymbols->LookupSymbol(symname);
 
-				if (offset >= 0)
-					return 0xffffff & (mod.mBase + offset);
+				if (offset != -1)
+					return mod.mBase + offset;
 			}
 		}
 	}
@@ -3144,6 +3399,27 @@ void ATDebugger::EnumModuleSymbols(uint32 moduleId, ATCallbackHandler1<void, con
 	}
 }
 
+void ATDebugger::EnumSourceFiles(const vdfunction<void(const wchar_t *, uint32)>& fn) const {
+	for(const Module& mod : mModules) {
+		if (!mod.mpSymbols)
+			continue;
+
+		IATSymbolStore& symstore = *mod.mpSymbols;
+		vdfastvector<ATSourceLineInfo> lines;
+		for(uint32 i=1; i<0x10000; ++i) {
+			const wchar_t *s = symstore.GetFileName((uint16)i);
+
+			if (!s)
+				break;
+
+			lines.clear();
+			symstore.GetLines(i, lines);
+
+			fn(s, (uint32)lines.size());
+		}
+	}
+}
+
 uint32 ATDebugger::AddCustomModule(uint32 targetId, const char *name, const char *shortname) {
 	uint32 existingId = GetCustomModuleIdByShortName(shortname);
 	if (existingId)
@@ -3166,6 +3442,7 @@ uint32 ATDebugger::AddCustomModule(uint32 targetId, const char *name, const char
 
 	mod.mpSymbols = p;
 	mod.mbDirty = false;
+	mod.mbDirectivesProcessed = true;
 
 	return mod.mId;
 }
@@ -3270,6 +3547,7 @@ void ATDebugger::LoadCustomSymbols(const wchar_t *filename) {
 	mod.mSize = css->GetDefaultSize();
 	mod.mpSymbols = css;
 	mod.mbDirty = false;
+	mod.mbDirectivesProcessed = true;
 
 	ATConsolePrintf("%d symbol(s) loaded.\n", css->GetSymbolCount());
 
@@ -3331,6 +3609,9 @@ VDStringA ATDebugger::GetAddressText(uint32 globalAddr, bool useHexSpecifier, bo
 		case kATAddressSpace_PORTB:
 			s.sprintf("%s%02X'%04X", prefix, (globalAddr >> 16) & 0xff, globalAddr & 0xffff);
 			break;
+		case kATAddressSpace_CB:
+			s.sprintf("t:%s%02X'%04X", prefix, (globalAddr >> 16) & 0xff, globalAddr & 0xffff);
+			break;
 	}
 
 	if (addSymbolInfo) {
@@ -3359,6 +3640,14 @@ sint32 ATDebugger::EvaluateThrow(const char *s) {
 		throw MyError("Cannot evaluate '%s' in this context.", s);
 
 	return v;
+}
+
+std::pair<bool, sint32> ATDebugger::Evaluate(ATDebugExpNode *expr) {
+	sint32 v;
+	if (!expr->Evaluate(v, GetEvalContext()))
+		return { false, 0 };
+
+	return { true, v };
 }
 
 ATDebugExpEvalContext ATDebugger::GetEvalContext() const {
@@ -3430,13 +3719,65 @@ void ATDebugger::QueueBatchFile(const wchar_t *path) {
 	std::deque<VDStringA> commands;
 
 	while(const char *s = tif.GetNextLine()) {
-		commands.push_back(VDStringA());
-		commands.back() = s;
+		while(isspace((unsigned char)*s))
+			++s;
+
+		if (!*s)
+			continue;
+
+		if (*s == '#')
+			continue;
+
+		commands.emplace_back(s);
 	}
 
 	while(!commands.empty()) {
 		QueueCommandFront(commands.back().c_str(), false);
 		commands.pop_back();
+	}
+}
+
+void ATDebugger::QueueAutoLoadBatchFile(const wchar_t *path) {
+	if (!mbSymbolLoadingEnabled)
+		return;
+
+	if (mScriptAutoLoadMode == ATDebuggerScriptAutoLoadMode::Disabled)
+		return;
+
+	// don't load from non-file VFS paths
+	if (!ATVFSIsFilePath(path))
+		return;
+
+	// silently fail if file doesn't exist
+	if (!VDDoesPathExist(path))
+		return;
+	
+	if (mScriptAutoLoadMode == ATDebuggerScriptAutoLoadMode::AskToLoad) {
+		if (mpScriptAutoLoadConfirmFn && !mpScriptAutoLoadConfirmFn())
+			return;
+	}
+
+	LoadAllDeferredSymbols();
+
+	try {
+		if (g_sim.IsRunning()) {
+			// give the debugger script a chance to run
+			g_sim.Suspend();
+			QueueCommandFront("`g -n", false);
+		}
+
+		QueueBatchFile(path);
+
+		ATConsolePrintf("Loaded debugger script %ls\n", path);
+	} catch(const MyError&) {
+		// ignore
+	}
+}
+
+void ATDebugger::DefineCommands(const ATDebuggerCmdDef *defs, size_t numDefs) {
+	while(numDefs--) {
+		AddCommand(defs->mpName, defs->mpFunction);
+		++defs;
 	}
 }
 
@@ -4698,874 +5039,270 @@ void ATDebugger::InterruptRun(bool leaveRunning) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-namespace {
-	class ATDebuggerCmdSwitch {
-	public:
-		ATDebuggerCmdSwitch(const char *name, bool defaultState)
-			: mpName(name)
-			, mbState(defaultState)
-		{
-		}
-
-		operator bool() const { return mbState; }
-
-	protected:
-		friend class ATDebuggerCmdParser;
-
-		const char *mpName;
-		bool mbState;
-	};
-
-	class ATDebuggerCmdSwitchStrArg {
-	public:
-		ATDebuggerCmdSwitchStrArg(const char *name)
-			: mpName(name)
-			, mbValid(false)
-		{
-		}
-
-		bool IsValid() const { return mbValid; }
-		const char *GetValue() const { return mValue.c_str(); }
-
-	protected:
-		friend class ATDebuggerCmdParser;
-
-		const char *mpName;
-		bool mbValid;
-		VDStringA mValue;
-	};
-
-	class ATDebuggerCmdSwitchNumArg {
-	public:
-		ATDebuggerCmdSwitchNumArg(const char *name, sint32 minVal, sint32 maxVal, sint32 defaultValue = 0)
-			: mpName(name)
-			, mValue(defaultValue)
-			, mMinVal(minVal)
-			, mMaxVal(maxVal)
-			, mbValid(false)
-		{
-		}
-
-		bool IsValid() const { return mbValid; }
-		sint32 GetValue() const { return mValue; }
-
-	protected:
-		friend class ATDebuggerCmdParser;
-
-		const char *mpName;
-		sint32 mValue;
-		sint32 mMinVal;
-		sint32 mMaxVal;
-		bool mbValid;
-	};
-
-	class ATDebuggerCmdSwitchExprNumArg {
-	public:
-		ATDebuggerCmdSwitchExprNumArg(const char *name, sint32 minVal, sint32 maxVal, sint32 defaultValue = 0)
-			: mpName(name)
-			, mValue(defaultValue)
-			, mMinVal(minVal)
-			, mMaxVal(maxVal)
-			, mbValid(false)
-		{
-		}
-
-		bool IsValid() const { return mbValid; }
-		sint32 GetValue() const { return mValue; }
-
-	protected:
-		friend class ATDebuggerCmdParser;
-
-		const char *mpName;
-		sint32 mValue;
-		sint32 mMinVal;
-		sint32 mMaxVal;
-		bool mbValid;
-	};
-
-	class ATDebuggerCmdBool{
-	public:
-		ATDebuggerCmdBool(bool required, bool defaultValue = false)
-			: mbRequired(required)
-			, mbValid(false)
-			, mbValue(defaultValue)
-		{
-		}
-
-		bool IsValid() const { return mbValid; }
-		operator bool() const { return mbValue; }
-
-	protected:
-		friend class ATDebuggerCmdParser;
-
-		bool mbRequired;
-		bool mbValid;
-		bool mbValue;
-	};
-
-	class ATDebuggerCmdNumber{
-	public:
-		ATDebuggerCmdNumber(bool required, sint32 minVal, sint32 maxVal, sint32 defaultValue = 0)
-			: mbRequired(required)
-			, mbValid(false)
-			, mValue(defaultValue)
-			, mMinVal(minVal)
-			, mMaxVal(maxVal)
-		{
-		}
-
-		bool IsValid() const { return mbValid; }
-		sint32 GetValue() const { return mValue; }
-
-	protected:
-		friend class ATDebuggerCmdParser;
-
-		bool mbRequired;
-		bool mbValid;
-		sint32 mValue;
-		sint32 mMinVal;
-		sint32 mMaxVal;
-	};
-
-	class ATDebuggerCmdAddress {
-	public:
-		ATDebuggerCmdAddress(bool general, bool required, bool allowStar = false)
-			: mAddress(0)
-			, mbGeneral(general)
-			, mbRequired(required)
-			, mbAllowStar(allowStar)
-			, mbStar(false)
-			, mbValid(false)
-		{
-		}
-
-		bool IsValid() const { return mbValid; }
-		bool IsStar() const { return mbStar; }
-
-		operator uint32() const { return mAddress; }
-
-	protected:
-		friend class ATDebuggerCmdParser;
-
-		uint32 mAddress;
-		bool mbGeneral;
-		bool mbRequired;
-		bool mbAllowStar;
-		bool mbStar;
-		bool mbValid;
-	};
-
-	class ATDebuggerCmdExprAddr;
-
-	class ATDebuggerCmdLength {
-	public:
-		ATDebuggerCmdLength(uint32 defaultLen, bool required, ATDebuggerCmdExprAddr *anchor)
-			: mLength(defaultLen)
-			, mbRequired(required)
-			, mbValid(false)
-			, mpAnchor(anchor)
-		{
-		}
-
-		bool IsValid() const { return mbValid; }
-
-		operator uint32() const { return mLength; }
-
-	protected:
-		friend class ATDebuggerCmdParser;
-
-		uint32 mLength;
-		bool mbRequired;
-		bool mbValid;
-		ATDebuggerCmdExprAddr *mpAnchor;
-	};
-
-	class ATDebuggerCmdName {
-	public:
-		ATDebuggerCmdName(bool required)
-			: mbValid(false)
-			, mbRequired(required)
-		{
-		}
-
-		bool IsValid() const { return mbValid; }
-
-		const VDStringA& operator*() const { return mName; }
-		const VDStringA *operator->() const { return &mName; }
-
-	protected:
-		friend class ATDebuggerCmdParser;
-
-		VDStringA mName;
-		bool mbRequired;
-		bool mbValid;
-	};
-
-	class ATDebuggerCmdPath {
-	public:
-		ATDebuggerCmdPath(bool required)
-			: mbValid(false)
-			, mbRequired(required)
-		{
-		}
-
-		bool IsValid() const { return mbValid; }
-
-		const VDStringA *operator->() const { return &mPath; }
-
-	protected:
-		friend class ATDebuggerCmdParser;
-
-		VDStringA mPath;
-		bool mbRequired;
-		bool mbValid;
-	};
-
-	class ATDebuggerCmdString {
-	public:
-		ATDebuggerCmdString(bool required)
-			: mbValid(false)
-			, mbRequired(required)
-		{
-		}
-
-		bool IsValid() const { return mbValid; }
-
-		const VDStringA& operator*() const { return mName; }
-		const VDStringA *operator->() const { return &mName; }
-
-	protected:
-		friend class ATDebuggerCmdParser;
-
-		VDStringA mName;
-		bool mbRequired;
-		bool mbValid;
-	};
-
-	class ATDebuggerCmdQuotedString {
-	public:
-		ATDebuggerCmdQuotedString(bool required)
-			: mbValid(false)
-			, mbRequired(required)
-		{
-		}
-
-		bool IsValid() const { return mbValid; }
-
-		const VDStringA& GetValue() const { return mName; }
-		const VDStringA *operator->() const { return &mName; }
-		
-	protected:
-		friend class ATDebuggerCmdParser;
-
-		VDStringA mName;
-		bool mbRequired;
-		bool mbValid;
-	};
-
-	class ATDebuggerCmdExpr {
-	public:
-		ATDebuggerCmdExpr(bool required)
-			: mbRequired(required)
-			, mpExpr(NULL)
-		{
-		}
-
-		ATDebugExpNode *DetachValue() { return mpExpr.release(); }
-		ATDebugExpNode *GetValue() const { return mpExpr; }
-
-	protected:
-		friend class ATDebuggerCmdParser;
-
-		bool mbRequired;
-		vdautoptr<ATDebugExpNode> mpExpr;
-	};
-
-	class ATDebuggerCmdExprNum {
-	public:
-		ATDebuggerCmdExprNum(bool required, bool hex = true, sint32 minVal = -0x7FFFFFFF-1, sint32 maxVal = 0x7FFFFFFF, sint32 defaultValue = 0, bool allowStar = false)
-			: mbRequired(required)
-			, mbValid(false)
-			, mbAllowStar(allowStar)
-			, mbStar(false)
-			, mbHexDefault(hex)
-			, mValue(defaultValue)
-			, mMinVal(minVal)
-			, mMaxVal(maxVal)
-		{
-		}
-
-		bool IsValid() const { return mbValid; }
-		bool IsStar() const { return mbStar; }
-		sint32 GetValue() const { return mValue; }
-
-	protected:
-		friend class ATDebuggerCmdParser;
-
-		bool mbRequired;
-		bool mbValid;
-		bool mbStar;
-		bool mbAllowStar;
-		bool mbHexDefault;
-		sint32 mValue;
-		sint32 mMinVal;
-		sint32 mMaxVal;
-	};
-
-	class ATDebuggerCmdExprAddr {
-	public:
-		ATDebuggerCmdExprAddr(bool general, bool required, bool allowStar = false, uint32 defaultValue = 0)
-			: mbRequired(required)
-			, mbAllowStar(allowStar)
-			, mbValid(false)
-			, mbStar(false)
-			, mValue(defaultValue)
-		{
-		}
-
-		bool IsValid() const { return mbValid; }
-		bool IsStar() const { return mbStar; }
-		uint32 GetValue() const { return mValue; }
-
-	protected:
-		friend class ATDebuggerCmdParser;
-
-		bool mbRequired;
-		bool mbAllowStar;
-		bool mbValid;
-		bool mbStar;
-		uint32 mValue;
-	};
-
-	class ATDebuggerCmdParser {
-	public:
-		ATDebuggerCmdParser(int argc, const char *const *argv);
-
-		bool IsEmpty() const { return mArgs.empty(); }
-
-		const char *const *GetArguments() const { return mArgs.data(); }
-		size_t GetArgumentCount() const { return mArgs.size(); }
-
-		const char *GetNextArgument();
-
-		ATDebuggerCmdParser& operator>>(ATDebuggerCmdSwitch& sw);
-		ATDebuggerCmdParser& operator>>(ATDebuggerCmdSwitchStrArg& sw);
-		ATDebuggerCmdParser& operator>>(ATDebuggerCmdSwitchNumArg& sw);
-		ATDebuggerCmdParser& operator>>(ATDebuggerCmdSwitchExprNumArg& sw);
-		ATDebuggerCmdParser& operator>>(ATDebuggerCmdBool& bo);
-		ATDebuggerCmdParser& operator>>(ATDebuggerCmdNumber& nu);
-		ATDebuggerCmdParser& operator>>(ATDebuggerCmdAddress& ad);
-		ATDebuggerCmdParser& operator>>(ATDebuggerCmdLength& ln);
-		ATDebuggerCmdParser& operator>>(ATDebuggerCmdName& nm);
-		ATDebuggerCmdParser& operator>>(ATDebuggerCmdPath& nm);
-		ATDebuggerCmdParser& operator>>(ATDebuggerCmdString& nm);
-		ATDebuggerCmdParser& operator>>(ATDebuggerCmdQuotedString& nm);
-		ATDebuggerCmdParser& operator>>(ATDebuggerCmdExpr& nu);
-		ATDebuggerCmdParser& operator>>(ATDebuggerCmdExprNum& nu);
-		ATDebuggerCmdParser& operator>>(ATDebuggerCmdExprAddr& nu);
-		ATDebuggerCmdParser& operator>>(int);
-
-		template<class T>
-		ATDebuggerCmdParser& operator,(T& dst) {
-			operator>>(dst);
-			return *this;
-		}
-
-	protected:
-		typedef vdfastvector<const char *> Args;
-
-		Args mArgs;
-	};
-
-	ATDebuggerCmdParser::ATDebuggerCmdParser(int argc, const char *const *argv)
-		: mArgs(argv, argv + argc)
-	{
-	}
-
-	const char *ATDebuggerCmdParser::GetNextArgument() {
-		if (mArgs.empty())
-			return nullptr;
-
-		const char *s = mArgs.front();
-		mArgs.erase(mArgs.begin());
-
-		return s;
-	}
-
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdSwitch& sw) {
-		for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
-			const char *s = *it;
-
-			if (s[0] == '-' && !strcmp(s + 1, sw.mpName)) {
-				sw.mbState = true;
-				mArgs.erase(it);
-				break;
-			}
-		}
-
-		return *this;
-	}
-
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdSwitchStrArg& sw) {
-		size_t nameLen = strlen(sw.mpName);
-
-		for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
-			const char *s = *it;
-
-			if (s[0] != '-')
-				continue;
-
-			if (strncmp(s + 1, sw.mpName, nameLen))
-				continue;
-
-			s += nameLen + 1;
-			if (*s == ':')
-				++s;
-			else if (*s)
-				continue;
-			else {
-				it = mArgs.erase(it);
-
-				if (it == mArgs.end())
-					throw MyError("Switch -%s requires an argument.", sw.mpName);
-
-				s = *it;
-			}
-
+ATDebuggerCmdParser::ATDebuggerCmdParser(int argc, const char *const *argv)
+	: mArgs(argv, argv + argc)
+{
+}
+
+const char *ATDebuggerCmdParser::GetNextArgument() {
+	if (mArgs.empty())
+		return nullptr;
+
+	const char *s = mArgs.front();
+	mArgs.erase(mArgs.begin());
+
+	return s;
+}
+
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdSwitch& sw) {
+	for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
+		const char *s = *it;
+
+		if (s[0] == '-' && !strcmp(s + 1, sw.mpName)) {
+			sw.mbState = true;
 			mArgs.erase(it);
-
-			const char *t = s + strlen(s);
-
-			// strip quotes
-			if (*s == '"')
-				++s;
-
-			if (t != s && t[-1] == '"')
-				--t;
-
-			sw.mbValid = true;
-			sw.mValue.assign(s, t);
 			break;
 		}
-
-		return *this;
-	}
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdSwitchNumArg& sw) {
-		size_t nameLen = strlen(sw.mpName);
-
-		for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
-			const char *s = *it;
-
-			if (s[0] != '-')
-				continue;
-
-			if (strncmp(s + 1, sw.mpName, nameLen))
-				continue;
-
-			s += nameLen + 1;
-			if (*s == ':')
-				++s;
-			else if (*s)
-				continue;
-			else {
-				it = mArgs.erase(it);
-
-				if (it == mArgs.end())
-					throw MyError("Switch -%s requires a numeric argument.", sw.mpName);
-
-				s = *it;
-			}
-
-			mArgs.erase(it);
-
-			char *end = (char *)s;
-			long v = strtol(s, &end, 10);
-
-			if (*end)
-				throw MyError("Invalid numeric switch argument: -%s:%s", sw.mpName, s);
-
-			if (v < sw.mMinVal || v > sw.mMaxVal)
-				throw MyError("Numeric switch argument out of range: -%s:%d", sw.mpName, v);
-
-			sw.mbValid = true;
-			sw.mValue = v;
-			break;
-		}
-
-		return *this;
 	}
 
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdSwitchExprNumArg& sw) {
-		size_t nameLen = strlen(sw.mpName);
+	return *this;
+}
 
-		for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
-			const char *s = *it;
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdSwitchStrArg& sw) {
+	size_t nameLen = strlen(sw.mpName);
 
-			if (s[0] != '-')
-				continue;
+	for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
+		const char *s = *it;
 
-			if (strncmp(s + 1, sw.mpName, nameLen))
-				continue;
+		if (s[0] != '-')
+			continue;
 
-			s += nameLen + 1;
-			if (*s == ':')
-				++s;
-			else if (*s)
-				continue;
-			else {
-				it = mArgs.erase(it);
+		if (strncmp(s + 1, sw.mpName, nameLen))
+			continue;
 
-				if (it == mArgs.end())
-					throw MyError("Switch -%s requires a numeric argument.", sw.mpName);
+		s += nameLen + 1;
+		if (*s == ':')
+			++s;
+		else if (*s)
+			continue;
+		else {
+			it = mArgs.erase(it);
 
-				s = *it;
-			}
+			if (it == mArgs.end())
+				throw MyError("Switch -%s requires an argument.", sw.mpName);
 
-			mArgs.erase(it);
-
-			vdautoptr<ATDebugExpNode> node;
-			try {
-				node = ATDebuggerParseExpression(s, ATGetDebuggerSymbolLookup(), ATGetDebugger()->GetExprOpts());
-			} catch(const ATDebuggerExprParseException& ex) {
-				throw MyError("Unable to parse expression '%s': %s\n", s, ex.c_str());
-			}
-
-			sint32 v;
-			if (!node->Evaluate(v, g_debugger.GetEvalContext()))
-				throw MyError("Cannot evaluate '%s' in this context.", s);
-
-			if (v < sw.mMinVal || v > sw.mMaxVal)
-				throw MyError("Numeric switch argument out of range: -%s:%d", sw.mpName, v);
-
-			sw.mbValid = true;
-			sw.mValue = v;
-			break;
+			s = *it;
 		}
 
-		return *this;
-	}
+		mArgs.erase(it);
 
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdBool& bo) {
-		if (mArgs.empty()) {
-			if (bo.mbRequired)
-				throw MyError("Missing boolean argument.");
+		const char *t = s + strlen(s);
 
-			return *this;
-		}
-
-		const VDStringSpanA s(mArgs.front());
-		mArgs.erase(mArgs.begin());
-
-		bo.mbValid = true;
-
-		if (s == "on" || s == "true")
-			bo.mbValue = true;
-		else if (s == "off" || s == "false")
-			bo.mbValue = false;
-
-		return *this;
-	}
-
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdNumber& nu) {
-		if (mArgs.empty()) {
-			if (nu.mbRequired)
-				throw MyError("Missing numeric argument.");
-
-			return *this;
-		}
-
-		const char *s = mArgs.front();
-		mArgs.erase(mArgs.begin());
-
-		const char *t = s;
-		char *end = (char *)s;
-
-		int base = 10;
-		if (*t == '$') {
-			++t;
-			base = 16;
-		}
-
-		long v = strtol(t, &end, base);
-
-		if (*end)
-			throw MyError("Invalid numeric argument: %s", s);
-
-		if (v < nu.mMinVal || v > nu.mMaxVal)
-			throw MyError("Numeric argument out of range: %d", v);
-
-		nu.mbValid = true;
-		nu.mValue = v;
-
-		return *this;
-	}
-
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdAddress& ad) {
-		for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
-			const char *s = *it;
-
-			if (s[0] != '-') {
-				if (s[0] == '*' && !s[1] && ad.mbAllowStar) {
-					ad.mbStar = true;
-					ad.mbValid = true;
-				} else {
-					ad.mAddress = g_debugger.ResolveSymbolThrow(s, ad.mbGeneral);
-					ad.mbValid = true;
-				}
-
-				mArgs.erase(it);
-				return *this;
-			}
-		}
-
-		if (ad.mbRequired)
-			throw MyError("Address parameter required.");
-
-		return *this;
-	}
-
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdLength& ln) {
-		VDStringA quoteStripBuf;
-
-		for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
-			const char *s = *it;
-			bool quoted = false;
-
-			if (s[0] == '"') {
-				quoted = true;
-				++s;
-			}
-
-			if (s[0] == 'L' || s[0] == 'l') {
-				++s;
-
-				if (quoted) {
-					size_t len = strlen(s);
-
-					if (len && s[len - 1] == '"') {
-						quoteStripBuf.assign(s, s + len - 1);
-						s = quoteStripBuf.c_str();
-					}
-				}
-
-				bool end_addr = false;
-
-				if (*s == '>') {
-					++s;
-
-					if (!ln.mpAnchor || !ln.mpAnchor->mbValid || ln.mpAnchor->mbStar)
-						throw MyError("Address end syntax cannot be used in this context.");
-
-					end_addr = true;
-				}
-
-				sint32 v;
-				vdautoptr<ATDebugExpNode> node;
-				try {
-					node = ATDebuggerParseExpression(s, ATGetDebuggerSymbolLookup(), ATGetDebugger()->GetExprOpts());
-				} catch(const ATDebuggerExprParseException& ex) {
-					throw MyError("Unable to parse expression '%s': %s\n", s, ex.c_str());
-				}
-
-				if (!node->Evaluate(v, g_debugger.GetEvalContext()))
-					throw MyError("Cannot evaluate '%s' in this context.", s);
-
-				if (end_addr) {
-					if (v < 0 || (uint32)v < ln.mpAnchor->mValue)
-						throw MyError("End address is prior to start address.");
-
-					ln.mLength = v - ln.mpAnchor->mValue + 1;
-				} else {
-					if (v < 0)
-						throw MyError("Invalid length: %s", s);
-
-					ln.mLength = (uint32)v;
-				}
-
-				ln.mbValid = true;
-
-				mArgs.erase(it);
-				return *this;
-			}
-		}
-
-		if (ln.mbRequired)
-			throw MyError("Length parameter required.");
-
-		return *this;
-	}
-
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdName& nm) {
-		for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
-			const char *s = *it;
-
-			if (s[0] != '-') {
-				nm.mName = s;
-				nm.mbValid = true;
-
-				mArgs.erase(it);
-				return *this;
-			}
-		}
-
-		if (nm.mbRequired)
-			throw MyError("Name parameter required.");
-
-		return *this;
-	}
-
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdPath& nm) {
-		for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
-			const char *s = *it;
-
-			bool quoted = false;
-			if (s[0] == '"') {
-				quoted = true;
-				++s;
-			}
-
-			const char *t = s + strlen(s);
-
-			if (quoted && t != s && t[-1] == '"')
-				--t;
-
-			nm.mPath.assign(s, t);
-			nm.mbValid = true;
-
-			mArgs.erase(it);
-			return *this;
-		}
-
-		if (nm.mbRequired)
-			throw MyError("Path parameter required.");
-
-		return *this;
-	}
-
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdString& nm) {
-		for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
-			const char *s = *it;
-
-			if (s[0] == '-')
-				continue;
-
-			if (!strcmp(s, "@ts")) {
-				nm.mName = g_debugger.GetTempString();
-			} else if (s[0] == '"') {
-				++s;
-				const char *t = s + strlen(s);
-
-				if (t != s && t[-1] == '"')
-					--t;
-
-				nm.mName.assign(s, t);
-			} else {
-				nm.mName = s;
-			}
-
-			nm.mbValid = true;
-			mArgs.erase(it);
-			return *this;
-		}
-
-		if (nm.mbRequired)
-			throw MyError("String parameter required.");
-
-		return *this;
-	}
-
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdQuotedString& nm) {
-		for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
-			const char *s = *it;
-
-			if (!strcmp(s, "@ts")) {
-				nm.mName = g_debugger.GetTempString();
-				nm.mbValid = true;
-
-				mArgs.erase(it);
-				return *this;
-			} else if (s[0] == '"') {
-				++s;
-				const char *t = s + strlen(s);
-
-				if (t != s && t[-1] == '"')
-					--t;
-
-				nm.mName.assign(s, t);
-				nm.mbValid = true;
-
-				mArgs.erase(it);
-				return *this;
-			}
-		}
-
-		if (nm.mbRequired)
-			throw MyError("Quoted string parameter required.");
-
-		return *this;
-	}
-
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdExpr& xp) {
-		if (mArgs.empty()) {
-			if (xp.mbRequired)
-				throw MyError("Missing expression argument.");
-
-			return *this;
-		}
-
-		const char *s = mArgs.front();
-		mArgs.erase(mArgs.begin());
-
-		VDStringA quoteStripBuf;
-
-		if (*s == '"') {
+		// strip quotes
+		if (*s == '"')
 			++s;
 
-			size_t len = strlen(s);
+		if (t != s && t[-1] == '"')
+			--t;
 
-			if (len && s[len - 1] == '"') {
-				quoteStripBuf.assign(s, s + len - 1);
-				s = quoteStripBuf.c_str();
-			}
+		sw.mbValid = true;
+		sw.mValue.assign(s, t);
+		break;
+	}
+
+	return *this;
+}
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdSwitchNumArg& sw) {
+	size_t nameLen = strlen(sw.mpName);
+
+	for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
+		const char *s = *it;
+
+		if (s[0] != '-')
+			continue;
+
+		if (strncmp(s + 1, sw.mpName, nameLen))
+			continue;
+
+		s += nameLen + 1;
+		if (*s == ':')
+			++s;
+		else if (*s)
+			continue;
+		else {
+			it = mArgs.erase(it);
+
+			if (it == mArgs.end())
+				throw MyError("Switch -%s requires a numeric argument.", sw.mpName);
+
+			s = *it;
 		}
 
+		mArgs.erase(it);
+
+		char *end = (char *)s;
+		long v = strtol(s, &end, 10);
+
+		if (*end)
+			throw MyError("Invalid numeric switch argument: -%s:%s", sw.mpName, s);
+
+		if (v < sw.mMinVal || v > sw.mMaxVal)
+			throw MyError("Numeric switch argument out of range: -%s:%d", sw.mpName, v);
+
+		sw.mbValid = true;
+		sw.mValue = v;
+		break;
+	}
+
+	return *this;
+}
+
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdSwitchExprNumArg& sw) {
+	size_t nameLen = strlen(sw.mpName);
+
+	for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
+		const char *s = *it;
+
+		if (s[0] != '-')
+			continue;
+
+		if (strncmp(s + 1, sw.mpName, nameLen))
+			continue;
+
+		s += nameLen + 1;
+		if (*s == ':')
+			++s;
+		else if (*s)
+			continue;
+		else {
+			it = mArgs.erase(it);
+
+			if (it == mArgs.end())
+				throw MyError("Switch -%s requires a numeric argument.", sw.mpName);
+
+			s = *it;
+		}
+
+		mArgs.erase(it);
+
+		vdautoptr<ATDebugExpNode> node;
 		try {
-			xp.mpExpr = ATDebuggerParseExpression(s, ATGetDebuggerSymbolLookup(), ATGetDebugger()->GetExprOpts());
+			ATDebugExpEvalContext immContext = ATGetDebugger()->GetEvalContext();
+			node = ATDebuggerParseExpression(s, ATGetDebuggerSymbolLookup(), ATGetDebugger()->GetExprOpts(), &immContext);
 		} catch(const ATDebuggerExprParseException& ex) {
 			throw MyError("Unable to parse expression '%s': %s\n", s, ex.c_str());
 		}
 
+		sint32 v;
+		if (!node->Evaluate(v, g_debugger.GetEvalContext()))
+			throw MyError("Cannot evaluate '%s' in this context.", s);
+
+		if (v < sw.mMinVal || v > sw.mMaxVal)
+			throw MyError("Numeric switch argument out of range: -%s:%d", sw.mpName, v);
+
+		sw.mbValid = true;
+		sw.mValue = v;
+		break;
+	}
+
+	return *this;
+}
+
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdBool& bo) {
+	if (mArgs.empty()) {
+		if (bo.mbRequired)
+			throw MyError("Missing boolean argument.");
+
 		return *this;
 	}
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdExprNum& nu) {
-		if (mArgs.empty()) {
-			if (nu.mbRequired)
-				throw MyError("Missing numeric argument.");
 
+	const VDStringSpanA s(mArgs.front());
+	mArgs.erase(mArgs.begin());
+
+	bo.mbValid = true;
+
+	if (s == "on" || s == "true")
+		bo.mbValue = true;
+	else if (s == "off" || s == "false")
+		bo.mbValue = false;
+
+	return *this;
+}
+
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdNumber& nu) {
+	if (mArgs.empty()) {
+		if (nu.mbRequired)
+			throw MyError("Missing numeric argument.");
+
+		return *this;
+	}
+
+	const char *s = mArgs.front();
+	mArgs.erase(mArgs.begin());
+
+	const char *t = s;
+	char *end = (char *)s;
+
+	int base = 10;
+	if (*t == '$') {
+		++t;
+		base = 16;
+	}
+
+	long v = strtol(t, &end, base);
+
+	if (*end)
+		throw MyError("Invalid numeric argument: %s", s);
+
+	if (v < nu.mMinVal || v > nu.mMaxVal)
+		throw MyError("Numeric argument out of range: %d", v);
+
+	nu.mbValid = true;
+	nu.mValue = v;
+
+	return *this;
+}
+
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdAddress& ad) {
+	for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
+		const char *s = *it;
+
+		if (s[0] != '-') {
+			if (s[0] == '*' && !s[1] && ad.mbAllowStar) {
+				ad.mbStar = true;
+				ad.mbValid = true;
+			} else {
+				ad.mAddress = g_debugger.ResolveSymbolThrow(s, ad.mbGeneral);
+				ad.mbValid = true;
+			}
+
+			mArgs.erase(it);
 			return *this;
 		}
+	}
 
-		const char *s = mArgs.front();
-		mArgs.erase(mArgs.begin());
+	if (ad.mbRequired)
+		throw MyError("Address parameter required.");
 
-		if (nu.mbAllowStar && s[0] == '*' && !s[1]) {
-			nu.mbValid = true;
-			nu.mbStar = true;
-			nu.mValue = 0;
-			return *this;
+	return *this;
+}
+
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdLength& ln) {
+	VDStringA quoteStripBuf;
+
+	for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
+		const char *s = *it;
+		bool quoted = false;
+
+		if (s[0] == '"') {
+			quoted = true;
+			++s;
 		}
 
-		VDStringA quoteStripBuf;
-		sint32 v;
+		if (s[0] == 'L' || s[0] == 'l') {
+			++s;
 
-		char dummy;
-		long lval;
-		if (1 == sscanf(s, nu.mbHexDefault ? "%lx%c" : "%ld%c", &lval, &dummy)) {
-			v = lval;
-		} else {
-			if (*s == '"') {
-				++s;
-
+			if (quoted) {
 				size_t len = strlen(s);
 
 				if (len && s[len - 1] == '"') {
@@ -5574,51 +5311,225 @@ namespace {
 				}
 			}
 
+			bool end_addr = false;
+
+			if (*s == '>') {
+				++s;
+
+				if (!ln.mpAnchor || !ln.mpAnchor->mbValid || ln.mpAnchor->mbStar)
+					throw MyError("Address end syntax cannot be used in this context.");
+
+				end_addr = true;
+			}
+
+			sint32 v;
 			vdautoptr<ATDebugExpNode> node;
 			try {
-				// The decimal/hex option here needs to override the expression default.
-				ATDebuggerExprParseOpts opts(ATGetDebugger()->GetExprOpts());
-
-				opts.mbAllowUntaggedHex &= nu.mbHexDefault;
-
-				node = ATDebuggerParseExpression(s, ATGetDebuggerSymbolLookup(), opts);
+				node = ATDebuggerParseExpression(s, ATGetDebuggerSymbolLookup(), ATGetDebugger()->GetExprOpts());
 			} catch(const ATDebuggerExprParseException& ex) {
 				throw MyError("Unable to parse expression '%s': %s\n", s, ex.c_str());
 			}
 
 			if (!node->Evaluate(v, g_debugger.GetEvalContext()))
 				throw MyError("Cannot evaluate '%s' in this context.", s);
+
+			if (end_addr) {
+				if (v < 0 || (uint32)v < ln.mpAnchor->mValue)
+					throw MyError("End address is prior to start address.");
+
+				ln.mLength = v - ln.mpAnchor->mValue + 1;
+			} else {
+				if (v < 0)
+					throw MyError("Invalid length: %s", s);
+
+				ln.mLength = (uint32)v;
+			}
+
+			ln.mbValid = true;
+
+			mArgs.erase(it);
+			return *this;
+		}
+	}
+
+	if (ln.mbRequired)
+		throw MyError("Length parameter required.");
+
+	return *this;
+}
+
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdName& nm) {
+	for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
+		const char *s = *it;
+
+		if (s[0] != '-') {
+			nm.mName = s;
+			nm.mbValid = true;
+
+			mArgs.erase(it);
+			return *this;
+		}
+	}
+
+	if (nm.mbRequired)
+		throw MyError("Name parameter required.");
+
+	return *this;
+}
+
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdPath& nm) {
+	for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
+		const char *s = *it;
+
+		bool quoted = false;
+		if (s[0] == '"') {
+			quoted = true;
+			++s;
 		}
 
-		if (v < nu.mMinVal || v > nu.mMaxVal)
-			throw MyError("Numeric argument out of range: %d", v);
+		const char *t = s + strlen(s);
 
-		nu.mbValid = true;
-		nu.mValue = v;
+		if (quoted && t != s && t[-1] == '"')
+			--t;
+
+		nm.mPath.assign(s, t);
+		nm.mbValid = true;
+
+		mArgs.erase(it);
+		return *this;
+	}
+
+	if (nm.mbRequired)
+		throw MyError("Path parameter required.");
+
+	return *this;
+}
+
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdString& nm) {
+	for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
+		const char *s = *it;
+
+		if (s[0] == '-')
+			continue;
+
+		if (!strcmp(s, "@ts")) {
+			nm.mName = g_debugger.GetTempString();
+		} else if (s[0] == '"') {
+			++s;
+			const char *t = s + strlen(s);
+
+			if (t != s && t[-1] == '"')
+				--t;
+
+			nm.mName.assign(s, t);
+		} else {
+			nm.mName = s;
+		}
+
+		nm.mbValid = true;
+		mArgs.erase(it);
+		return *this;
+	}
+
+	if (nm.mbRequired)
+		throw MyError("String parameter required.");
+
+	return *this;
+}
+
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdQuotedString& nm) {
+	for(Args::iterator it(mArgs.begin()), itEnd(mArgs.end()); it != itEnd; ++it) {
+		const char *s = *it;
+
+		if (!strcmp(s, "@ts")) {
+			nm.mName = g_debugger.GetTempString();
+			nm.mbValid = true;
+
+			mArgs.erase(it);
+			return *this;
+		} else if (s[0] == '"') {
+			++s;
+			const char *t = s + strlen(s);
+
+			if (t != s && t[-1] == '"')
+				--t;
+
+			nm.mName.assign(s, t);
+			nm.mbValid = true;
+
+			mArgs.erase(it);
+			return *this;
+		}
+	}
+
+	if (nm.mbRequired)
+		throw MyError("Quoted string parameter required.");
+
+	return *this;
+}
+
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdExpr& xp) {
+	if (mArgs.empty()) {
+		if (xp.mbRequired)
+			throw MyError("Missing expression argument.");
 
 		return *this;
 	}
 
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdExprAddr& nu) {
-		if (mArgs.empty()) {
-			if (nu.mbRequired)
-				throw MyError("Missing numeric argument.");
+	const char *s = mArgs.front();
+	mArgs.erase(mArgs.begin());
 
-			return *this;
+	VDStringA quoteStripBuf;
+
+	if (*s == '"') {
+		++s;
+
+		size_t len = strlen(s);
+
+		if (len && s[len - 1] == '"') {
+			quoteStripBuf.assign(s, s + len - 1);
+			s = quoteStripBuf.c_str();
 		}
+	}
 
-		const char *s = mArgs.front();
-		mArgs.erase(mArgs.begin());
+	try {
+		ATDebugExpEvalContext immContext = ATGetDebugger()->GetEvalContext();
+		xp.mpExpr = ATDebuggerParseExpression(s, ATGetDebuggerSymbolLookup(), ATGetDebugger()->GetExprOpts(), &immContext);
+	} catch(const ATDebuggerExprParseException& ex) {
+		throw MyError("Unable to parse expression '%s': %s\n", s, ex.c_str());
+	}
 
-		if (s[0] == '*' && !s[1] && nu.mbAllowStar) {
-			nu.mbStar = true;
-			nu.mbValid = true;
-			return *this;
-		}
+	return *this;
+}
 
-		VDStringA quoteStripBuf;
-		sint32 v;
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdExprNum& nu) {
+	if (mArgs.empty()) {
+		if (nu.mbRequired)
+			throw MyError("Missing numeric argument.");
 
+		return *this;
+	}
+
+	const char *s = mArgs.front();
+	mArgs.erase(mArgs.begin());
+
+	nu.mOriginalText = s;
+
+	if (nu.mbAllowStar && s[0] == '*' && !s[1]) {
+		nu.mbValid = true;
+		nu.mbStar = true;
+		nu.mValue = 0;
+		return *this;
+	}
+
+	VDStringA quoteStripBuf;
+	sint32 v;
+
+	char dummy;
+	long lval;
+	if (1 == sscanf(s, nu.mbHexDefault ? "%lx%c" : "%ld%c", &lval, &dummy)) {
+		v = lval;
+	} else {
 		if (*s == '"') {
 			++s;
 
@@ -5632,26 +5543,81 @@ namespace {
 
 		vdautoptr<ATDebugExpNode> node;
 		try {
-			node = ATDebuggerParseExpression(s, ATGetDebuggerSymbolLookup(), ATGetDebugger()->GetExprOpts());
+			// The decimal/hex option here needs to override the expression default.
+			ATDebuggerExprParseOpts opts(ATGetDebugger()->GetExprOpts());
+
+			opts.mbAllowUntaggedHex &= nu.mbHexDefault;
+
+			node = ATDebuggerParseExpression(s, ATGetDebuggerSymbolLookup(), opts);
 		} catch(const ATDebuggerExprParseException& ex) {
 			throw MyError("Unable to parse expression '%s': %s\n", s, ex.c_str());
 		}
 
 		if (!node->Evaluate(v, g_debugger.GetEvalContext()))
 			throw MyError("Cannot evaluate '%s' in this context.", s);
+	}
 
+	if (v < nu.mMinVal || v > nu.mMaxVal)
+		throw MyError("Numeric argument out of range: %d", v);
+
+	nu.mbValid = true;
+	nu.mValue = v;
+
+	return *this;
+}
+
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdExprAddr& nu) {
+	if (mArgs.empty()) {
+		if (nu.mbRequired)
+			throw MyError("Missing numeric argument.");
+
+		return *this;
+	}
+
+	const char *s = mArgs.front();
+	mArgs.erase(mArgs.begin());
+
+	if (s[0] == '*' && !s[1] && nu.mbAllowStar) {
+		nu.mbStar = true;
 		nu.mbValid = true;
-		nu.mValue = v;
-
 		return *this;
 	}
 
-	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(int) {
-		if (!mArgs.empty())
-			throw MyError("Extraneous argument: %s", mArgs.front());
+	VDStringA quoteStripBuf;
+	sint32 v;
 
-		return *this;
+	if (*s == '"') {
+		++s;
+
+		size_t len = strlen(s);
+
+		if (len && s[len - 1] == '"') {
+			quoteStripBuf.assign(s, s + len - 1);
+			s = quoteStripBuf.c_str();
+		}
 	}
+
+	vdautoptr<ATDebugExpNode> node;
+	try {
+		node = ATDebuggerParseExpression(s, ATGetDebuggerSymbolLookup(), ATGetDebugger()->GetExprOpts());
+	} catch(const ATDebuggerExprParseException& ex) {
+		throw MyError("Unable to parse expression '%s': %s\n", s, ex.c_str());
+	}
+
+	if (!node->Evaluate(v, g_debugger.GetEvalContext()))
+		throw MyError("Cannot evaluate '%s' in this context.", s);
+
+	nu.mbValid = true;
+	nu.mValue = v;
+
+	return *this;
+}
+
+ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(int) {
+	if (!mArgs.empty())
+		throw MyError("Extraneous argument: %s", mArgs.front());
+
+	return *this;
 }
 
 void ATDebuggerSerializeArgv(VDStringA& dst, const ATDebuggerCmdParser& parser) {
@@ -5947,13 +5913,13 @@ void ATConsoleCmdBreakptTrace(ATDebuggerCmdParser& parser) {
 				ATConsolePrintf("Tracepoint %s set at `%s:%u` ($%04X)\n", g_debugger.GetBreakpointName(useridx).c_str(), filename.c_str(), line, bpinfo.mAddress);
 		}
 	} else {
-		const uint32 addr = (uint32)g_debugger.EvaluateThrow(s) & 0xFFFFFF;
+		const uint32 addr = (uint32)g_debugger.EvaluateThrow(s);
 		const uint32 sysidx = bpm->SetAtPC(g_debugger.GetTargetIndex(), addr);
 		useridx = g_debugger.RegisterSystemBreakpoint(sysidx, NULL, tracecmd.c_str(), true);
 		g_debugger.RegisterUserBreakpoint(useridx, groupNameArg.GetValue());
 
 		if (!quietArg)
-			ATConsolePrintf("Tracepoint %s set at $%04X.\n", g_debugger.GetBreakpointName(useridx).c_str(), addr);
+			ATConsolePrintf("Tracepoint %s set at %s.\n", g_debugger.GetBreakpointName(useridx).c_str(), g_debugger.GetAddressText(addr, true, true).c_str());
 	}
 
 	if (clearOnResetArg)
@@ -6365,7 +6331,8 @@ void ATConsoleCmdBreakptExpr(ATDebuggerCmdParser& parser) {
 	vdautoptr<ATDebugExpNode> node;
 	
 	try {
-		node = ATDebuggerParseExpression(s.c_str(), &g_debugger, ATGetDebugger()->GetExprOpts());
+		ATDebugExpEvalContext immContext = g_debugger.GetEvalContext();
+		node = ATDebuggerParseExpression(s.c_str(), &g_debugger, ATGetDebugger()->GetExprOpts(), &immContext);
 	} catch(ATDebuggerExprParseException& ex) {
 		ATConsolePrintf("Unable to parse expression: %s\n", ex.c_str());
 		return;
@@ -7073,17 +7040,17 @@ void ATConsoleCmdListModules(ATDebuggerCmdParser& parser) {
 }
 
 void ATConsoleCmdListNearestSymbol(ATDebuggerCmdParser& parser) {
-	ATDebuggerCmdExprAddr addrArg(false, true);
+	ATDebuggerCmdExprAddr addrArg(true, true);
 
 	parser >> addrArg >> 0;
 
 	sint32 v = addrArg.GetValue();
-	if (v < 0) {
+	if (!addrArg.IsValid()) {
 		ATConsolePrintf("Unable to resolve symbol.\n");
 		return;
 	}
 
-	uint32 addr = (uint32)v & 0xFFFFFF;
+	uint32 addr = (uint32)v;
 
 	ATDebuggerSymbol sym;
 	if (g_debugger.LookupSymbol(addr, kATSymbol_Any, sym)) {
@@ -7094,12 +7061,12 @@ void ATConsoleCmdListNearestSymbol(ATDebuggerCmdParser& parser) {
 		if (g_debugger.LookupLine(addr, false, moduleId, lineInfo) &&
 			g_debugger.GetSourceFilePath(moduleId, lineInfo.mFileId, sourceFile))
 		{
-			ATConsolePrintf("%04X = %s + %d [%ls:%d]\n", addr, sym.mSymbol.mpName, (int)addr - (int)sym.mSymbol.mOffset, sourceFile.c_str(), lineInfo.mLine);
+			ATConsolePrintf("%s = %s + %d [%ls:%d]\n", g_debugger.GetAddressText(addr, false).c_str(), sym.mSymbol.mpName, (int)addr - (int)sym.mSymbol.mOffset, sourceFile.c_str(), lineInfo.mLine);
 		} else {
-			ATConsolePrintf("%04X = %s + %d\n", addr, sym.mSymbol.mpName, (int)addr - (int)sym.mSymbol.mOffset);
+			ATConsolePrintf("%s = %s + %d\n", g_debugger.GetAddressText(addr, false).c_str(), sym.mSymbol.mpName, (int)addr - (int)sym.mSymbol.mOffset);
 		}
 	} else {
-		ATConsolePrintf("No symbol found for address: %04X\n", addr);
+		ATConsolePrintf("No symbol found for address: %s\n", g_debugger.GetAddressText(addr, false).c_str());
 	}
 }
 
@@ -8623,7 +8590,7 @@ void ATConsoleCmdRapidus(ATDebuggerCmdParser& parser) {
 void ATConsoleCmdReadMem(ATDebuggerCmdParser& parser) {
 	ATDebuggerCmdExprAddr addressArg(true, true);
 	ATDebuggerCmdLength lengthArg(1, false, &addressArg);
-	ATDebuggerCmdName filename(true);
+	ATDebuggerCmdPath filename(true);
 	parser >> filename >> addressArg >> lengthArg >> 0;
 
 	uint32 addr = addressArg.GetValue();
@@ -8675,7 +8642,7 @@ void ATConsoleCmdReadMem(ATDebuggerCmdParser& parser) {
 void ATConsoleCmdWriteMem(ATDebuggerCmdParser& parser) {
 	ATDebuggerCmdExprAddr addressArg(true, true);
 	ATDebuggerCmdLength lengthArg(1, true, &addressArg);
-	ATDebuggerCmdName filename(true);
+	ATDebuggerCmdPath filename(true);
 	parser >> filename >> addressArg >> lengthArg >> 0;
 
 	uint32 addr = addressArg.GetValue();
@@ -8723,10 +8690,12 @@ void ATConsoleCmdLoadSymbols(ATDebuggerCmdParser& parser) {
 	parser >> pathArg >> 0;
 
 	if (pathArg.IsValid()) {
-		uint32 idx = ATGetDebugger()->LoadSymbols(VDTextAToW(pathArg->c_str()).c_str());
+		uint32 idx = ATGetDebugger()->LoadSymbols(VDTextAToW(pathArg->c_str()).c_str(), true, nullptr, true);
 
 		if (idx)
 			ATConsolePrintf("Loaded symbol file %s.\n", pathArg->c_str());
+	} else {
+		ATGetDebugger()->LoadAllDeferredSymbols();
 	}
 }
 
@@ -9150,10 +9119,11 @@ void ATConsoleCmdDiskTrack(ATDebuggerCmdParser& parser) {
 		return;
 	}
 
+	ATDebuggerCmdSwitchNumArg diskNoArg("d", 1, 15, 1);
 	ATDebuggerCmdExprNum trackArg(true, false, 0, 65535);
-	parser >> trackArg >> 0;
+	parser >> diskNoArg >> trackArg >> 0;
 
-	ATDiskInterface& diskIf = g_sim.GetDiskInterface(0);
+	ATDiskInterface& diskIf = g_sim.GetDiskInterface(diskNoArg.GetValue() - 1);
 	uint32 track = (uint32)trackArg.GetValue();
 
 	ATConsolePrintf("Track %d\n", track);
@@ -9185,7 +9155,13 @@ void ATConsoleCmdDiskTrack(ATDebuggerCmdParser& parser) {
 	for(; it != itEnd; ++it) {
 		const SecInfo& si = *it;
 
-		ATConsolePrintf("%4d/%d   %5.3f  $%02X\n", si.mVirtSec, si.mPhantomIndex, si.mInfo.mRotPos, si.mInfo.mFDCStatus);
+		ATConsolePrintf("%4d/%d   %5.3f  $%02X  %s%s%s%s%s\n", si.mVirtSec, si.mPhantomIndex + 1, si.mInfo.mRotPos, si.mInfo.mFDCStatus
+			, (si.mInfo.mFDCStatus & 0x18) == 0x10 ? " data-crc" : ""
+			, (si.mInfo.mFDCStatus & 0x18) == 0x00 ? " address-crc" : ""
+			, (si.mInfo.mFDCStatus & 0x18) == 0x08 ? " missing" : ""
+			, (si.mInfo.mFDCStatus & 0x04) == 0x00 ? " long" : ""
+			, (si.mInfo.mFDCStatus & 0x20) == 0x00 ? " deleted" : ""
+		);
 	}
 }
 
@@ -9205,36 +9181,50 @@ void ATConsoleCmdDiskDumpSec(ATDebuggerCmdParser& parser) {
 	if (!sector || sector > image->GetVirtualSectorCount())
 		throw MyError("Invalid sector for disk image: %u.", sector);
 
-	uint8 buf[8192];
-	uint32 len = image->ReadVirtualSector(sector - 1, buf, 8192);
+	ATDiskVirtualSectorInfo vsi;
+	image->GetVirtualSectorInfo(sector - 1, vsi);
 
-	ATConsolePrintf("Sector %d / $%X (%u bytes):\n", sector, sector, len);
+	if (!vsi.mNumPhysSectors) {
+		ATConsolePrintf("No physical sectors for virtual sector %d / $%X.\n", sector, sector);
+		return;
+	}
 
-	VDStringA line;
-	for(uint32 i=0; i<len; i+=16) {
-		line.sprintf("%03X:", i);
+	for(uint32 pn = 0; pn < vsi.mNumPhysSectors; ++pn) {
+		ATDiskPhysicalSectorInfo psi;
+		image->GetPhysicalSectorInfo(vsi.mStartPhysSector + pn, psi);
+		uint32 len = psi.mPhysicalSize;
+			
+		uint8 buf[8192];
+		image->ReadPhysicalSector(vsi.mStartPhysSector + pn, buf, 8192);
 
-		uint32 count = std::min<uint32>(len - i, 16);
-		for(uint32 j=0; j<count; ++j)
-			line.append_sprintf("%c%02X", j==8 ? '-' : ' ', buf[i+j]);
+		ATConsolePrintf("Sector %d / $%X (%u bytes) #%d:\n", sector, sector, len, pn + 1);
 
-		line.resize(4 + 3*16 + 1, ' ');
-		line += '|';
+		VDStringA line;
+		for(uint32 i=0; i<len; i+=16) {
+			line.sprintf("%03X:", i);
 
-		for(uint32 j=0; j<count; ++j) {
-			uint8 c = buf[i+j];
+			uint32 count = std::min<uint32>(len - i, 16);
+			for(uint32 j=0; j<count; ++j)
+				line.append_sprintf("%c%02X", j==8 ? '-' : ' ', buf[i+j]);
 
-			if (c < 0x20 || c >= 0x7F)
-				c = '.';
+			line.resize(4 + 3*16 + 1, ' ');
+			line += '|';
 
-			line += (char)c;
+			for(uint32 j=0; j<count; ++j) {
+				uint8 c = buf[i+j];
+
+				if (c < 0x20 || c >= 0x7F)
+					c = '.';
+
+				line += (char)c;
+			}
+
+			line.resize(4 + 3*16 + 2 + 16, ' ');
+			line += '|';
+			line += '\n';
+
+			ATConsoleWrite(line.c_str());
 		}
-
-		line.resize(4 + 3*16 + 2 + 16, ' ');
-		line += '|';
-		line += '\n';
-
-		ATConsoleWrite(line.c_str());
 	}
 }
 
@@ -9546,7 +9536,7 @@ void ATConsoleCmdBasicDumpLine(ATDebuggerCmdParser& parser) {
 				if (tokenArg) {
 					line += '\n';
 					ATConsoleWrite(line.c_str());
-					line.sprintf("$%04X:    $%02X $%02X   ", (addr + offset - 1) & 0xFFFF, statementOffset, statementToken);
+					line.sprintf("$%04X:    $%02X $%02X   ", (addr + offset - 2) & 0xFFFF, statementOffset, statementToken);
 				}
 
 				static const char* const kStatements[]={
@@ -9757,16 +9747,24 @@ void ATConsoleCmdBasicDumpLine(ATDebuggerCmdParser& parser) {
 						line += ">>";
 
 					const uint8 token = target->DebugReadByte(addr + offset++);
+					uint8 token2 = 0;
 
 					if (token == 0x16) {
 						line.append_sprintf(" {end $%04X}", (addr + offset) & 0xffff);
 						goto line_end;
 					}
 
+					if (tbxl && !token)
+						token2 = target->DebugReadByte(addr + offset++);
+
 					if (tokenArg) {
 						line += '\n';
 						ATConsoleWrite(line.c_str());
-						line.sprintf("$%04X:      $%02X        ", (addr + offset - 1) & 0xFFFF, token);
+
+						if (tbxl && !token)
+							line.sprintf("$%04X:      $%02X $%02X    ", (addr + offset - 2) & 0xFFFF, token, token2);
+						else
+							line.sprintf("$%04X:      $%02X        ", (addr + offset - 1) & 0xFFFF, token);
 					}
 
 					if (token == 0x14) {
@@ -9786,7 +9784,7 @@ void ATConsoleCmdBasicDumpLine(ATDebuggerCmdParser& parser) {
 							for(int i=0; i<6; ++i)
 								buf[i] = target->DebugReadByte(addr + offset++);
 
-							line.append_sprintf("%g", ATReadDecFloatAsBinary(buf));
+							line.append_sprintf("%G", ATReadDecFloatAsBinary(buf));
 							break;
 
 						case 0x0F:
@@ -9879,7 +9877,7 @@ void ATConsoleCmdBasicDumpLine(ATDebuggerCmdParser& parser) {
 						case 0x56:	line += tbxl ? "&" : "%"; break;
 						case 0x57:	line += "!"; break;
 						case 0x58:	line += tbxl ? "INSTR" : "&"; break;
-						case 0x59:	line += tbxl ? "INKEY#" : ";"; break;
+						case 0x59:	line += tbxl ? "INKEY$" : ";"; break;
 						case 0x5A:	line += tbxl ? " EXOR " : "BUMP("; break;
 						case 0x5B:	line += tbxl ? "HEX$" : "FIND("; break;
 						case 0x5C:	line += tbxl ? "DEC" : "HEX$"; break;
@@ -9921,7 +9919,7 @@ invalid:
 									if (token)
 										vidx = token - 0x80;
 									else
-										vidx = 0x80 + target->DebugReadByte(addr + offset++);
+										vidx = 0x80 + token2;
 
 									while(vidx-- > 0) {
 										while(vaddr < vvtp && !(target->DebugReadByte(vaddr++) & 0x80))
@@ -9979,7 +9977,12 @@ line_end:
 }
 
 void ATConsoleCmdBasicDumpStack(ATDebuggerCmdParser& parser) {
-	parser >> 0;
+	ATDebuggerCmdSwitch tbxlArg("t", false);
+	ATDebuggerCmdSwitch addrArg("a", false);
+	parser >> tbxlArg >> addrArg >> 0;
+
+	const bool tbxl = tbxlArg;
+	const bool absAddr = addrArg;
 
 	const uint32 runstk = g_sim.DebugReadWord(0x8E);
 	const uint32 memtop2 = g_sim.DebugReadWord(0x90);
@@ -9997,22 +10000,62 @@ void ATConsoleCmdBasicDumpStack(ATDebuggerCmdParser& parser) {
 		for(int i=0; i<4; ++i)
 			lineref[i] = g_sim.DebugReadByte(sp + i);
 
-		if (lineref[0] < 0x80)
-			ATConsolePrintf("$%04X  RETURN to line %u offset %u\n", sp, VDReadUnalignedLEU16(lineref+1), lineref[3]);
-		else {
-			if (sp - runstk < 12)
-				break;
+		const uint16 lineno = VDReadUnalignedLEU16(lineref+1);
+		if (tbxl) {
+			if (lineref[0]) {
+				const char *type = "?";
 
-			sp -= 12;
+				switch(lineref[0]) {
+					case 0x18: type = "RETURN"; break;
+					case 0x3C: type = "UNTIL"; break;
+					case 0x3E: type = "WEND"; break;
+					case 0x45: type = "LOOP"; break;
+					case 0x50: type = "ENDPROC"; break;
+				}
 
-			uint8 stepdat[12];
-			for(int i=0; i<12; ++i)
-				stepdat[i] = g_sim.DebugReadByte(sp + i);
+				if (absAddr)
+					ATConsolePrintf("$%04X  %s to line %u ($%04X) offset %u\n", sp, type, g_sim.DebugReadWord(lineno), lineno, lineref[3]);
+				else
+					ATConsolePrintf("$%04X  %s to line %u offset %u\n", sp, type, lineno, lineref[3]);
+			} else {
+				if (sp - runstk < 13)
+					break;
 
-			double limit = ATReadDecFloatAsBinary(stepdat);
-			double step = ATReadDecFloatAsBinary(stepdat + 6);
+				sp -= 13;
 
-			ATConsolePrintf("$%04X  FOR V%02X TO %g STEP %g at line %u offset %u\n", sp, lineref[0], limit, step, VDReadUnalignedLEU16(lineref+1), lineref[3]);
+				uint8 stepdat[13];
+				for(int i=0; i<13; ++i)
+					stepdat[i] = g_sim.DebugReadByte(sp + i);
+
+				double limit = ATReadDecFloatAsBinary(stepdat);
+				double step = ATReadDecFloatAsBinary(stepdat + 6);
+
+				if (absAddr)
+					ATConsolePrintf("$%04X  FOR V%02X TO %g STEP %g at line %u ($%04X) offset %u\n", sp, stepdat[12], limit, step, g_sim.DebugReadWord(lineno), lineno, lineref[3]);
+				else
+					ATConsolePrintf("$%04X  FOR V%02X TO %g STEP %g at line %u offset %u\n", sp, stepdat[12], limit, step, lineno, lineref[3]);
+			}
+		} else {
+			if (lineref[0] < 0x80) {
+				if (absAddr)
+					ATConsolePrintf("$%04X  RETURN to line %u ($%04X) offset %u\n", sp, g_sim.DebugReadWord(lineno), lineno, lineref[3]);
+				else
+					ATConsolePrintf("$%04X  RETURN to line %u offset %u\n", sp, lineno, lineref[3]);
+			} else {
+				if (sp - runstk < 12)
+					break;
+
+				sp -= 12;
+
+				uint8 stepdat[12];
+				for(int i=0; i<12; ++i)
+					stepdat[i] = g_sim.DebugReadByte(sp + i);
+
+				double limit = ATReadDecFloatAsBinary(stepdat);
+				double step = ATReadDecFloatAsBinary(stepdat + 6);
+
+				ATConsolePrintf("$%04X  FOR V%02X TO %g STEP %g at line %u offset %u\n", sp, lineref[0], limit, step, VDReadUnalignedLEU16(lineref+1), lineref[3]);
+			}
 		}
 	}
 }
@@ -10068,9 +10111,11 @@ void ATConsoleCmdBasicVars(ATDebuggerCmdParser& parser) {
 
 		if (dat[0] >= 0xC0) {
 			if (dat[0] & 0x02)
-				s.append_sprintf("label -> $%02X", VDReadUnalignedLEU16(dat+2));
+				s.append_sprintf("label -> $%04X", VDReadUnalignedLEU16(dat+2));
+			else if (dat[0] & 0x01)
+				s.append_sprintf("proc -> $%04X", VDReadUnalignedLEU16(dat+2));
 			else
-				s += "label -> not yet resolved";
+				s += "label/proc -> not resolved yet";
 		} else if (dat[0] & 0x80) {
 			if (!(dat[0] & 0x01)) {
 				s += " = undimensioned";
@@ -12660,7 +12705,7 @@ void ATConsoleCmdExamineSymbols(ATDebuggerCmdParser& parser) {
 		struct OnSymbol {
 			void operator()(const ATSymbolInfo& symInfo) {
 				if (!mpNamePat || VDFileWildMatch(mpNamePat, symInfo.mpName))
-					ATConsolePrintf("$%04X  %s!%s\n", symInfo.mOffset, mpModuleName, symInfo.mpName);
+					ATConsolePrintf("%-10s  %s!%s\n", g_debugger.GetAddressText(symInfo.mOffset, true).c_str(), mpModuleName, symInfo.mpName);
 			}
 
 			const char *mpModuleName;
@@ -12787,10 +12832,7 @@ void ATConsoleCmdLogOpen(ATDebuggerCmdParser& parser) {
 }
 
 void ATDebuggerInitCommands() {
-	struct CommandEntry {
-		const char *mpName;
-		void (*mpFunction)(ATDebuggerCmdParser&);
-	} kCommands[]={
+	static constexpr ATDebuggerCmdDef kCommands[]={
 		{ "a",					ATConsoleCmdAssemble },
 		{ "a8",					ATConsoleCmdAliasA8 },
 		{ "ac",					ATConsoleCmdAliasClearAll },
@@ -12959,6 +13001,5 @@ void ATDebuggerInitCommands() {
 		{ ".writemem",			ATConsoleCmdWriteMem },
 	};
 
-	for(size_t i=0; i<vdcountof(kCommands); ++i)
-		g_debugger.AddCommand(kCommands[i].mpName, kCommands[i].mpFunction);
+	ATGetDebugger()->DefineCommands(kCommands, vdcountof(kCommands));
 }

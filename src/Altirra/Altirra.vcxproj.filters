@@ -79,9 +79,6 @@
     <ClCompile Include="source\audiowriter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\autotest.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\aviwriter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -766,6 +763,18 @@
     <ClCompile Include="source\artifacting_neon.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\debuggerautotest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\warpos.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiscreeneffects.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\cmdcassette.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\antic.h">
@@ -787,9 +796,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\audiowriter.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\autotest.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\aviwriter.h">
@@ -1251,6 +1257,12 @@
     <ClInclude Include="h\mediamanager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="h\uidragdrop.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\warpos.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="h\cpumachine.inl">
@@ -1450,12 +1462,17 @@
       <Filter>Resource Files</Filter>
     </None>
     <None Include="..\..\out\release\kernel816.rom" />
-    <None Include="manifest\comctl6_arm64.manifest" />
     <None Include="h\gtiarenderer_neon.inl">
       <Filter>Header Files</Filter>
     </None>
     <None Include="h\gtia_neon.inl">
       <Filter>Header Files</Filter>
+    </None>
+    <None Include="h\antic_sse2.inl">
+      <Filter>Header Files</Filter>
+    </None>
+    <None Include="manifest\comctl6_arm64.manifest">
+      <Filter>Manifest Files</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
@@ -1509,10 +1526,10 @@
       <Filter>Resource Files</Filter>
     </PackResource>
     <PackResource Include="..\..\obj\Release\Kernel\playsap-d-ntsc.xex">
-      <Filter>Resource Files</Filter>
+      <Filter>Autogen Intermediate Files</Filter>
     </PackResource>
     <PackResource Include="..\..\obj\Release\Kernel\playsap-d-pal.xex">
-      <Filter>Resource Files</Filter>
+      <Filter>Autogen Intermediate Files</Filter>
     </PackResource>
   </ItemGroup>
   <ItemGroup>

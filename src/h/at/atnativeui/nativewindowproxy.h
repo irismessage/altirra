@@ -41,6 +41,7 @@ public:
 
 	// Show or hide a window. The window is not activated when shown.
 	bool IsVisible() const;
+	void SetVisible(bool visible);
 	void Show();
 	void Hide();
 

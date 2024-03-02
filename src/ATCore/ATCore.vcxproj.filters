@@ -58,6 +58,9 @@
     <ClCompile Include="source\address.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\bussignal.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\at\atcore\device.h">
@@ -187,6 +190,9 @@
       <Filter>Interface Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\at\atcore\intrin_neon.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\bussignal.h">
       <Filter>Interface Files</Filter>
     </ClInclude>
   </ItemGroup>

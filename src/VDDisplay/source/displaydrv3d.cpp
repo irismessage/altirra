@@ -61,6 +61,7 @@ bool VDDisplayDriver3D::Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplayS
 		return false;
 	}
 
+	VDASSERT(info.pixmap.data);
 	mSource = info;
 	RebuildTree();
 	return true;
@@ -89,6 +90,7 @@ bool VDDisplayDriver3D::ModifySource(const VDVideoDisplaySourceInfo& info) {
 		rebuildTree = true;
 	}
 
+	VDASSERT(info.pixmap.data);
 	mSource = info;
 
 	if (rebuildTree) {
@@ -123,7 +125,8 @@ void VDDisplayDriver3D::SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint3
 
 		vdsaferelease <<= mpSwapChain;
 
-		CreateSwapChain();
+		if (mpContext)
+			CreateSwapChain();
 	}
 }
 
@@ -139,12 +142,51 @@ void VDDisplayDriver3D::SetPixelSharpness(float xfactor, float yfactor) {
 	mbCompositionTreeDirty = true;
 }
 
+bool VDDisplayDriver3D::SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX) {
+	if (screenFX) {
+		if (!mbUseScreenFX) {
+			mbUseScreenFX = true;
+			mbCompositionTreeDirty = true;
+		}
+
+		if (!mbCompositionTreeDirty) {
+			if (mScreenFXInfo.mScanlineIntensity != screenFX->mScanlineIntensity
+				|| mScreenFXInfo.mGamma != screenFX->mGamma
+				|| mScreenFXInfo.mbColorCorrectAdobeRGB != screenFX->mbColorCorrectAdobeRGB
+				|| memcmp(mScreenFXInfo.mColorCorrectionMatrix, screenFX->mColorCorrectionMatrix, sizeof(mScreenFXInfo.mColorCorrectionMatrix))
+				|| mScreenFXInfo.mDistortionX != screenFX->mDistortionX
+				|| mScreenFXInfo.mDistortionYRatio != screenFX->mDistortionYRatio
+				|| mScreenFXInfo.mBloomThreshold != screenFX->mBloomThreshold
+				|| mScreenFXInfo.mBloomRadius != screenFX->mBloomRadius
+				|| mScreenFXInfo.mBloomDirectIntensity != screenFX->mBloomDirectIntensity
+				|| mScreenFXInfo.mBloomIndirectIntensity != screenFX->mBloomIndirectIntensity
+				)
+			{
+				mbCompositionTreeDirty = true;
+			}
+		}
+
+		mScreenFXInfo = *screenFX;
+	} else {
+		if (mbUseScreenFX) {
+			mbUseScreenFX = false;
+			mbCompositionTreeDirty = true;
+		}
+	}
+
+	return true;
+}
+
 bool VDDisplayDriver3D::IsValid() {
 	return true;
 }
 
 bool VDDisplayDriver3D::IsFramePending() {
 	return mbFramePending;
+}
+
+bool VDDisplayDriver3D::IsScreenFXSupported() const {
+	return true;
 }
 
 bool VDDisplayDriver3D::Resize(int w, int h) {
@@ -300,6 +342,17 @@ void VDDisplayDriver3D::DestroyImageNode() {
 	vdsaferelease <<= mpRootNode, mpImageNode, mpImageSourceNode;
 }
 
+bool VDDisplayDriver3D::BufferNode(VDDisplayNode3D *srcNode, uint32 w, uint32 h, VDDisplaySourceNode3D **ppNode) {
+	vdrefptr<VDDisplayBufferSourceNode3D> bufferNode { new VDDisplayBufferSourceNode3D };
+
+
+	if (!bufferNode->Init(*mpContext, mDisplayNodeContext, w, h, srcNode))
+		return false;
+
+	*ppNode = bufferNode.release();
+	return true;
+}
+
 bool VDDisplayDriver3D::RebuildTree() {
 	vdsaferelease <<= mpRootNode;
 
@@ -322,25 +375,43 @@ bool VDDisplayDriver3D::RebuildTree() {
 	}
 
 	if (dstw && dsth) {
+		sint32 dstx2 = dstx;
+		sint32 dsty2 = dsty;
+
+		bool useBloom = mbUseScreenFX && mScreenFXInfo.mBloomIndirectIntensity > 0;
+		if (useBloom) {
+			dstx2 = 0;
+			dsty2 = 0;
+		}
+
+		vdrefptr<VDDisplayNode3D> imgNode(mpImageNode);
+		vdrefptr<VDDisplaySourceNode3D> imgSrcNode(mpImageSourceNode);
+
+		if (mbUseScreenFX && mScreenFXInfo.mPALBlendingOffset != 0) {
+			if (!imgSrcNode) {
+				if (!BufferNode(imgNode, mSource.pixmap.w, mSource.pixmap.h, ~imgSrcNode))
+					return false;
+			}
+
+			vdrefptr<VDDisplayArtifactingNode3D> p(new VDDisplayArtifactingNode3D);
+			if (!p->Init(*mpContext, mDisplayNodeContext, mScreenFXInfo.mPALBlendingOffset, imgSrcNode))
+				return false;
+
+			imgNode = p;
+			imgSrcNode = nullptr;
+		}
+
 		switch(mFilterMode) {
 			case kFilterBicubic:
 				{
-					vdrefptr<VDDisplaySourceNode3D> src(mpImageSourceNode);
-
-					if (!src) {
-						VDDisplayBufferSourceNode3D *bufferNode = new VDDisplayBufferSourceNode3D;
-						bufferNode->AddRef();
-						if (!bufferNode->Init(*mpContext, mDisplayNodeContext, mSource.pixmap.w, mSource.pixmap.h, mpImageNode)) {
-							bufferNode->Release();
+					if (!imgSrcNode) {
+						if (!BufferNode(imgNode, mSource.pixmap.w, mSource.pixmap.h, ~imgSrcNode))
 							return false;
-						}
-
-						src.set(bufferNode);
 					}
 
 					VDDisplayStretchBicubicNode3D *p = new VDDisplayStretchBicubicNode3D;
 					p->AddRef();
-					if (p->Init(*mpContext, mDisplayNodeContext, mSource.pixmap.w, mSource.pixmap.h, dstx, dsty, dstw, dsth, src)) {
+					if (p->Init(*mpContext, mDisplayNodeContext, mSource.pixmap.w, mSource.pixmap.h, dstx2, dsty2, dstw, dsth, imgSrcNode)) {
 						mpRootNode = p;
 						break;
 					}
@@ -352,41 +423,86 @@ bool VDDisplayDriver3D::RebuildTree() {
 			case kFilterPoint:
 			default:
 				{
-					vdrefptr<VDDisplaySourceNode3D> src(mpImageSourceNode);
-
-					if (mpImageNode) {
-						if (mpImageNode->CanStretch()) {
-							mpImageNode->SetBilinear(mFilterMode != kFilterPoint);
-							mpImageNode->SetDestArea(dstx, dsty, dstw, dsth);
-							mpRootNode = mpImageNode;
-							mpRootNode->AddRef();
-							break;
-						}
+					// check if we can take the fast path of having the image node paint directly to the screen
+					if (imgNode && imgNode == mpImageNode && mpImageNode->CanStretch() && !mbUseScreenFX) {
+						mpImageNode->SetBilinear(mFilterMode != kFilterPoint);
+						mpImageNode->SetDestArea(dstx2, dsty2, dstw, dsth);
+						mpRootNode = mpImageNode;
+						mpRootNode->AddRef();
+						break;
 					}
 				
-					if (!src) {
-						VDDisplayBufferSourceNode3D *bufferNode = new VDDisplayBufferSourceNode3D;
-						bufferNode->AddRef();
-						if (!bufferNode->Init(*mpContext, mDisplayNodeContext, mSource.pixmap.w, mSource.pixmap.h, mpImageNode)) {
-							bufferNode->Release();
+					// if we don't already have a buffered source node, explicitly buffer the incoming
+					// image
+					if (!imgSrcNode) {
+						if (!BufferNode(imgNode, mSource.pixmap.w, mSource.pixmap.h, ~imgSrcNode))
+							return false;
+					}
+
+					if (mbUseScreenFX) {
+						vdrefptr<VDDisplayScreenFXNode3D> p(new VDDisplayScreenFXNode3D);
+
+						VDDisplayScreenFXNode3D::Params params {};
+
+						params.mDstX = dstx2;
+						params.mDstY = dsty2;
+						params.mDstW = dstw;
+						params.mDstH = dsth;
+						params.mSharpnessX = mPixelSharpnessX;
+						params.mSharpnessY = mPixelSharpnessY;
+						params.mbLinear = mFilterMode != kFilterPoint;
+						params.mGamma = mScreenFXInfo.mGamma;
+						params.mScanlineIntensity = mScreenFXInfo.mScanlineIntensity;
+						params.mDistortionX = mScreenFXInfo.mDistortionX;
+						params.mDistortionYRatio = mScreenFXInfo.mDistortionYRatio;
+						memcpy(params.mColorCorrectionMatrix, mScreenFXInfo.mColorCorrectionMatrix, sizeof params.mColorCorrectionMatrix);
+
+						if (!p->Init(*mpContext, mDisplayNodeContext, params, imgSrcNode))
+							return false;
+
+						mpRootNode = p.release();
+					} else {
+						VDDisplayBlitNode3D *p = new VDDisplayBlitNode3D;
+						p->AddRef();
+						p->SetDestArea(dstx2, dsty2, dstw, dsth);
+
+						if (!p->Init(*mpContext, mDisplayNodeContext, mSource.pixmap.w, mSource.pixmap.h, mFilterMode != kFilterPoint, mPixelSharpnessX, mPixelSharpnessY, imgSrcNode)) {
+							p->Release();
 							return false;
 						}
 
-						src.set(bufferNode);
+						mpRootNode = p;
 					}
-
-					VDDisplayBlitNode3D *p = new VDDisplayBlitNode3D;
-					p->AddRef();
-					p->SetDestArea(dstx, dsty, dstw, dsth);
-
-					if (!p->Init(*mpContext, mDisplayNodeContext, mSource.pixmap.w, mSource.pixmap.h, mFilterMode != kFilterPoint, mPixelSharpnessX, mPixelSharpnessY, src)) {
-						p->Release();
-						return false;
-					}
-
-					mpRootNode = p;
 				}
 				break;
+		}
+
+		if (useBloom) {
+			vdrefptr<VDDisplaySourceNode3D> bufferedRootNode;
+			if (!BufferNode(mpRootNode, dstw, dsth, ~bufferedRootNode))
+				return false;
+
+			vdrefptr<VDDisplayBloomNode3D> bloomNode(new VDDisplayBloomNode3D);
+
+			VDDisplayBloomNode3D::Params params {};
+
+			params.mDstX = dstx;
+			params.mDstY = dsty;
+			params.mDstW = dstw;
+			params.mDstH = dsth;
+			params.mThreshold = mScreenFXInfo.mBloomThreshold;
+			params.mDirectIntensity = mScreenFXInfo.mBloomDirectIntensity;
+			params.mIndirectIntensity = mScreenFXInfo.mBloomIndirectIntensity;
+
+			// The blur radius is specified in source pixels in the FXInfo, which must be
+			// converted to destination pixels.
+			params.mBlurRadius = mScreenFXInfo.mBloomRadius * (float)dstw / (float)mSource.pixmap.w;
+
+			if (!bloomNode->Init(*mpContext, mDisplayNodeContext, params, bufferedRootNode))
+				return false;
+
+			vdsaferelease <<= mpRootNode;
+			mpRootNode = bloomNode.release();
 		}
 	}
 

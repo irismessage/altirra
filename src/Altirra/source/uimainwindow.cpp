@@ -26,7 +26,6 @@
 #include <at/atnativeui/uiframe.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/media.h>
-#include "autotest.h"
 #include "console.h"
 #include "joystick.h"
 #include "oshelper.h"
@@ -49,6 +48,7 @@ void ATUIRegisterDragDropHandler(VDGUIHandle h);
 void ATUIRevokeDragDropHandler(VDGUIHandle h);
 bool ATUIIsActiveModal();
 void ATUICloseAdjustColorsDialog();
+void ATUICloseAdjustScreenEffectsDialog();
 void ATUISetCommandLine(const wchar_t *s);
 void ATUISaveMainWindowPlacement();
 
@@ -131,6 +131,7 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 			ATUIRevokeDragDropHandler((VDGUIHandle)mhwnd);
 			ATUICloseAdjustColorsDialog();
+			ATUICloseAdjustScreenEffectsDialog();
 
 			PostQuitMessage(0);
 			break;
@@ -297,38 +298,6 @@ void ATMainWindow::OnCopyData(HWND hwndReply, const COPYDATASTRUCT& cds) {
 
 		ATUISetCommandLine(cmdLineStr.c_str());
 		return;
-	}
-
-	if (cds.dwData != 0xA7000000 || !ATGetAutotestEnabled())
-		return;
-
-	vdfastvector<wchar_t> s;
-
-	s.resize(cds.cbData / sizeof(wchar_t) + 1, 0);
-	memcpy(s.data(), cds.lpData, (s.size() - 1) * sizeof(wchar_t));
-
-	uint32 rval = 0;
-	MyError e;
-
-	try {
-		rval = ATExecuteAutotestCommand(s.data(), NULL);
-	} catch(MyError& f) {
-		e.swap(f);
-	}
-
-	if (hwndReply) {
-		VDStringW err(VDTextAToW(e.gets()));
-
-		vdfastvector<char> buf(sizeof(uint32) + sizeof(wchar_t) * err.size());
-		memcpy(buf.data(), &rval, sizeof(uint32));
-		memcpy(buf.data() + sizeof(uint32), err.data(), err.size() * sizeof(wchar_t));
-
-		COPYDATASTRUCT cds2;
-		cds2.dwData = 0xA7000001;
-		cds2.cbData = (DWORD)buf.size();
-		cds2.lpData = buf.data();
-
-		::SendMessage(hwndReply, WM_COPYDATA, (WPARAM)mhwnd, (LPARAM)&cds2);
 	}
 }
 

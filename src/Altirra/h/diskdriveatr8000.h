@@ -85,7 +85,7 @@ public:		// IATDeviceFirmware
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override;
 	bool IsWritableFirmwareDirty(uint32 idx) const override;
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
-	bool IsUsableFirmwareLoaded() const override;
+	ATDeviceFirmwareStatus GetFirmwareStatus() const override;
 
 public:		// IATDeviceDiskDrive
 	void InitDiskDrive(IATDiskDriveManager *ddm) override;

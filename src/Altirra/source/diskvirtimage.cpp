@@ -126,6 +126,7 @@ public:
 
 	bool Flush() override { return true; }
 	virtual uint64 GetImageChecksum() const override { return 0; }
+	virtual std::optional<uint32> GetImageFileCRC() const override { return {}; }
 
 	void SetPath(const wchar_t *path, ATDiskImageFormat format) override;
 	void Save(const wchar_t *path, ATDiskImageFormat format) override;
@@ -139,7 +140,7 @@ public:
 	void GetPhysicalSectorInfo(uint32 index, ATDiskPhysicalSectorInfo& info) const override;
 
 	void ReadPhysicalSector(uint32 index, void *data, uint32 len) override;
-	void WritePhysicalSector(uint32 index, const void *data, uint32 len) override;
+	void WritePhysicalSector(uint32 index, const void *data, uint32 len, uint8 fdcStatus) override;
 
 	uint32 GetVirtualSectorCount() const override;
 	void GetVirtualSectorInfo(uint32 index, ATDiskVirtualSectorInfo& info) const override;
@@ -314,7 +315,8 @@ uint32 ATDiskImageVirtualFolder::GetPhysicalSectorCount() const {
 void ATDiskImageVirtualFolder::GetPhysicalSectorInfo(uint32 index, ATDiskPhysicalSectorInfo& info) const {
 	info.mOffset = 0;
 	info.mDiskOffset = -1;
-	info.mSize = 128;
+	info.mPhysicalSize = 128;
+	info.mImageSize = 128;
 	info.mbDirty = false;
 	info.mbMFM = false;
 	info.mRotPos = mpInterleaveFn(index);
@@ -507,7 +509,7 @@ void ATDiskImageVirtualFolder::ReadPhysicalSector(uint32 index, void *data, uint
 	dst[127] = validLen;
 }
 
-void ATDiskImageVirtualFolder::WritePhysicalSector(uint32 index, const void *data, uint32 len) {
+void ATDiskImageVirtualFolder::WritePhysicalSector(uint32 index, const void *data, uint32 len, uint8 fdcStatus) {
 	throw MyError("Writes are not supported to a virtual disk.");
 }
 

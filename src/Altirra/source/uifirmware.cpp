@@ -123,7 +123,7 @@ protected:
 		const wchar_t *mpName;
 	};
 
-	const TypeEntry *mpSortedTypes[38];
+	const TypeEntry *mpSortedTypes[39];
 	
 	static const TypeEntry kTypeNames[];
 };
@@ -167,6 +167,7 @@ const ATUIDialogEditFirmwareSettings::TypeEntry ATUIDialogEditFirmwareSettings::
 	{ kATFirmwareType_Percom, L"PERCOM Disk Drive Firmware" },
 	{ kATFirmwareType_RapidusFlash, L"Rapidus Flash Firmware" },
 	{ kATFirmwareType_RapidusCorePBI, L"Rapidus Core PBI Firmware" },
+	{ kATFirmwareType_WarpOS, L"APE Warp+ OS 32-in-1 Firmware" },
 };
 
 ATUIDialogEditFirmwareSettings::ATUIDialogEditFirmwareSettings(FirmwareItem& item)
@@ -204,9 +205,7 @@ bool ATUIDialogEditFirmwareSettings::OnLoaded() {
 			vdblock<uint8> buf(size32);
 			f.read(buf.data(), size32);
 
-			VDCRCChecker crcChecker(VDCRCChecker::kCRC32);
-			crcChecker.Process(buf.data(), size32);
-			const uint32 crc32 = crcChecker.CRC();
+			const uint32 crc32 = VDCRCTable::CRC32.CRC(buf.data(), size32);
 
 			SetControlTextF(IDC_CRC32, L"%08X", crc32);
 		}
@@ -415,6 +414,7 @@ void ATUIDialogFirmware::OnDataExchange(bool write) {
 			{ kATFirmwareType_Percom, L"PERCOM Disk Drive Firmware" },
 			{ kATFirmwareType_RapidusFlash, L"Rapidus Flash Firmware" },
 			{ kATFirmwareType_RapidusCorePBI, L"Rapidus Core PBI Firmware" },
+			{ kATFirmwareType_WarpOS, L"APE Warp+ OS 32-in-1 Firmware" },
 		};
 
 		std::fill(mDefaultIds, mDefaultIds + vdcountof(mDefaultIds), 0);

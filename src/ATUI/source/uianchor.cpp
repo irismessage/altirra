@@ -41,3 +41,35 @@ void ATUICreateTranslationAnchor(float fractionX, float fractionY, IATUIAnchor *
 	p->AddRef();
 	*anchor = p;
 }
+
+class ATUIProportionAnchor : public vdrefcounted<IATUIAnchor> {
+public:
+	ATUIProportionAnchor(const vdrect32f& area) : mArea(area) {}
+
+	void *AsInterface(uint32 typeId) override { return NULL; }
+
+	vdrect32 Position(const vdrect32& containerArea, const vdsize32& size) override;
+
+protected:
+	vdrect32f mArea;
+};
+
+vdrect32 ATUIProportionAnchor::Position(const vdrect32& containerArea, const vdsize32& size) {
+	const float w = (float)containerArea.width();
+	const float h = (float)containerArea.height();
+
+	vdrect32 r;
+	r.left = VDRoundToInt32(w * mArea.left);
+	r.top = VDRoundToInt32(h * mArea.top);
+	r.right = VDRoundToInt32(w * mArea.right);
+	r.bottom = VDRoundToInt32(h * mArea.bottom);
+
+	return r;
+}
+
+void ATUICreateProportionAnchor(const vdrect32f& area, IATUIAnchor **anchor) {
+	IATUIAnchor *p = new ATUIProportionAnchor(area);
+
+	p->AddRef();
+	*anchor = p;
+}

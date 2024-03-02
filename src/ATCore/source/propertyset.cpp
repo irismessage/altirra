@@ -160,8 +160,20 @@ bool ATPropertySet::TryGetBool(const char *name, bool& val) const {
 		return false;
 
 	switch(propVal->mType) {
+		case kATPropertyType_Float:
+			val = propVal->mValF != 0;
+			return true;
+
 		case kATPropertyType_Double:
 			val = propVal->mValD != 0;
+			return true;
+
+		case kATPropertyType_Int32:
+			val = propVal->mValI32 != 0;
+			return true;
+
+		case kATPropertyType_Uint32:
+			val = propVal->mValU32 != 0;
 			return true;
 
 		case kATPropertyType_Bool:
@@ -180,6 +192,17 @@ bool ATPropertySet::TryGetInt32(const char *name, sint32& val) const {
 		return false;
 
 	switch(propVal->mType) {
+		case kATPropertyType_Bool:
+			val = propVal->mValBool ? 1 : 0;
+			return true;
+
+		case kATPropertyType_Float:
+			if ((double)propVal->mValF < -0x7FFFFFFF-1 || (double)propVal->mValF > 0x7FFFFFFF)
+				return false;
+
+			val = (sint32)propVal->mValF;
+			return true;
+
 		case kATPropertyType_Double:
 			if (propVal->mValD < -0x7FFFFFFF-1 || propVal->mValD > 0x7FFFFFFF)
 				return false;
@@ -189,6 +212,13 @@ bool ATPropertySet::TryGetInt32(const char *name, sint32& val) const {
 
 		case kATPropertyType_Int32:
 			val = propVal->mValI32;
+			return true;
+
+		case kATPropertyType_Uint32:
+			if (propVal->mValU32 > 0x7FFFFFFF)
+				return false;
+
+			val = (sint32)propVal->mValU32;
 			return true;
 
 		default:
@@ -203,11 +233,29 @@ bool ATPropertySet::TryGetUint32(const char *name, uint32& val) const {
 		return false;
 
 	switch(propVal->mType) {
+		case kATPropertyType_Bool:
+			val = propVal->mValBool ? 1 : 0;
+			return true;
+
+		case kATPropertyType_Float:
+			if (propVal->mValF < 0 || (double)propVal->mValF > 0xFFFFFFFF)
+				return false;
+
+			val = (uint32)propVal->mValF;
+			return true;
+
 		case kATPropertyType_Double:
 			if (propVal->mValD < 0 || propVal->mValD > 0xFFFFFFFF)
 				return false;
 
 			val = (uint32)propVal->mValD;
+			return true;
+
+		case kATPropertyType_Int32:
+			if (propVal->mValI32 < 0)
+				return false;
+
+			val = (uint32)propVal->mValI32;
 			return true;
 
 		case kATPropertyType_Uint32:
@@ -226,6 +274,18 @@ bool ATPropertySet::TryGetFloat(const char *name, float& val) const {
 		return false;
 
 	switch(propVal->mType) {
+		case kATPropertyType_Bool:
+			val = propVal->mValBool ? 1 : 0;
+			return true;
+
+		case kATPropertyType_Int32:
+			val = (float)propVal->mValI32;
+			return true;
+
+		case kATPropertyType_Uint32:
+			val = (float)propVal->mValU32;
+			return true;
+
 		case kATPropertyType_Double:
 			val = (float)propVal->mValD;
 			return true;
@@ -242,11 +302,33 @@ bool ATPropertySet::TryGetFloat(const char *name, float& val) const {
 bool ATPropertySet::TryGetDouble(const char *name, double& val) const {
 	const ATPropertyValue *propVal = GetProperty(name);
 
-	if (!propVal || propVal->mType != kATPropertyType_Double)
+	if (!propVal)
 		return false;
 
-	val = propVal->mValD;
-	return true;
+	switch(propVal->mType) {
+		case kATPropertyType_Bool:
+			val = propVal->mValBool ? 1 : 0;
+			return true;
+
+		case kATPropertyType_Int32:
+			val = propVal->mValI32;
+			return true;
+
+		case kATPropertyType_Uint32:
+			val = propVal->mValU32;
+			return true;
+
+		case kATPropertyType_Float:
+			val = propVal->mValF;
+			return true;
+
+		case kATPropertyType_Double:
+			val = propVal->mValD;
+			return true;
+
+		default:
+			return false;
+	}
 }
 
 bool ATPropertySet::TryGetString(const char *name, const wchar_t *& val) const {

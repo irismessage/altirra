@@ -24,6 +24,7 @@
 #include <vd2/system/vectors.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <at/atcore/enumparse.h>
+#include <at/atcore/notifylist.h>
 
 class IVDVideoDisplay;
 class VDVideoDisplayFrame;
@@ -44,6 +45,8 @@ class IATGTIAVideoTap {
 public:
 	virtual void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd) = 0;
 };
+
+using ATGTIARawFrameFn = vdfunction<void(const VDPixmap& px)>;
 
 class ATFrameTracker;
 class ATArtifactingEngine;
@@ -73,6 +76,7 @@ struct ATColorParams {
 	float mContrast;
 	float mSaturation;
 	float mGammaCorrect;
+	float mIntensityScale;
 	float mArtifactHue;	
 	float mArtifactSat;
 	float mArtifactSharpness;
@@ -85,22 +89,46 @@ struct ATColorParams {
 	bool mbUsePALQuirks;
 	ATLumaRampMode mLumaRampMode;
 	ATColorMatchingMode mColorMatchingMode;
+
+	bool IsSimilar(const ATColorParams& params) const;
+};
+
+struct ATNamedColorParams : public ATColorParams {
+	VDStringA mPresetTag;
 };
 
 struct ATColorSettings {
-	ATColorParams	mNTSCParams;
-	ATColorParams	mPALParams;
+	ATNamedColorParams	mNTSCParams;
+	ATNamedColorParams	mPALParams;
 	bool	mbUsePALParams;
 };
 
 struct ATArtifactingParams {
-	float mNTSCRedAngle;
-	float mNTSCRedMagnitude;
-	float mNTSCGrnAngle;
-	float mNTSCGrnMagnitude;
-	float mNTSCBluAngle;
-	float mNTSCBluMagnitude;
+	// Intensity ratio of darkest point between scanlines to the brightest portion of
+	// scanlines, in gamma space.
+	float mScanlineIntensity;
+
+	// Horizontal view angle in degrees (0-179).
+	float mDistortionViewAngleX;
+
+	// Ratio of vertical distortion to horizontal distortion.
+	float mDistortionYRatio;
+
+	bool mbEnableBloom;
+	bool mbBloomScanlineCompensation;
+	float mBloomThreshold;
+	float mBloomRadius;
+	float mBloomDirectIntensity;
+	float mBloomIndirectIntensity;
+
+	static ATArtifactingParams GetDefault();
 };
+
+uint32 ATGetColorPresetCount();
+const char *ATGetColorPresetTagByIndex(uint32 i);
+sint32 ATGetColorPresetIndexByTag(const char *tags);
+const wchar_t *ATGetColorPresetNameByIndex(uint32 i);
+ATColorParams ATGetColorPresetByIndex(uint32 i);
 
 struct ATGTIARegisterState {
 	uint8	mReg[0x20];
@@ -137,18 +165,19 @@ public:
 	};
 
 	enum OverscanMode {
-		kOverscanNormal,
-		kOverscanExtended,
-		kOverscanFull,
-		kOverscanOSScreen,
+		kOverscanNormal,		// 168cc
+		kOverscanExtended,		// 192cc
+		kOverscanFull,			// 228cc
+		kOverscanOSScreen,		// 160cc
+		kOverscanWidescreen,	// 176cc
 		kOverscanCount
 	};
 	
 	enum VerticalOverscanMode {
 		kVerticalOverscan_Default,
-		kVerticalOverscan_OSScreen,
-		kVerticalOverscan_Normal,
-		kVerticalOverscan_Extended,
+		kVerticalOverscan_OSScreen,		// 192 lines
+		kVerticalOverscan_Normal,		// 224 lines
+		kVerticalOverscan_Extended,		// 240 lines
 		kVerticalOverscan_Full,
 		kVerticalOverscanCount
 	};
@@ -161,8 +190,10 @@ public:
 
 	void ResetColors();
 	void GetPalette(uint32 pal[256]) const;
+	void GetNTSCArtifactColors(uint32 c[2]) const;
 
 	bool IsFrameInProgress() const { return mpFrame != NULL; }
+	bool AreAcceleratedEffectsAvailable() const;
 
 	bool IsVsyncEnabled() const { return mbVsyncEnabled; }
 	void SetVsyncEnabled(bool enabled) { mbVsyncEnabled = enabled; }
@@ -216,7 +247,11 @@ public:
 	bool AreScanlinesEnabled() const { return mbScanlinesEnabled; }
 	void SetScanlinesEnabled(bool enable) { mbScanlinesEnabled = enable; }
 
+	bool GetAccelScreenFXEnabled() const { return mbAccelScreenFX; }
+	void SetAccelScreenFXEnabled(bool enabled) { mbAccelScreenFX = enabled; }
+
 	void SetConsoleSwitch(uint8 c, bool down);
+	uint8 ReadConsoleSwitches() const;
 
 	uint8 GetForcedConsoleSwitches() const { return mForcedSwitchInput; }
 	void SetForcedConsoleSwitches(uint8 c);
@@ -235,6 +270,9 @@ public:
 
 	void AddVideoTap(IATGTIAVideoTap *vtap);
 	void RemoveVideoTap(IATGTIAVideoTap *vtap);
+
+	void AddRawFrameCallback(const ATGTIARawFrameFn *fn);
+	void RemoveRawFrameCallback(const ATGTIARawFrameFn *fn);
 
 	const VDPixmap *GetLastFrameBuffer() const;
 
@@ -370,20 +408,24 @@ protected:
 	ArtifactMode	mArtifactMode;
 	OverscanMode	mOverscanMode;
 	VerticalOverscanMode	mVerticalOverscanMode;
-	bool	mbVsyncEnabled;
-	bool	mbBlendMode;
-	bool	mbFrameCopiedFromPrev;
-	bool	mbOverscanPALExtended;
-	bool	mbOverscanPALExtendedThisFrame;
-	bool	mbPALThisFrame;
-	bool	mbInterlaceEnabled;
-	bool	mbInterlaceEnabledThisFrame;
-	bool	mbScanlinesEnabled;
-	bool	mbScanlinesEnabledThisFrame;
-	bool	mbFieldPolarity;
-	bool	mbLastFieldPolarity;
-	bool	mbPostProcessThisFrame;
-	bool	mb14MHzThisFrame;
+	bool	mbVsyncEnabled = false;
+	bool	mbBlendMode = false;
+	bool	mbBlendModeLastFrame = false;
+	bool	mbFrameCopiedFromPrev = false;
+	bool	mbOverscanPALExtended = false;
+	bool	mbOverscanPALExtendedThisFrame = false;
+	bool	mbPALThisFrame = false;
+	bool	mbInterlaceEnabled = false;
+	bool	mbInterlaceEnabledThisFrame = false;
+	bool	mbScanlinesEnabled = false;
+	bool	mbSoftScanlinesEnabledThisFrame = false;
+	bool	mbIncludeHBlankThisFrame = false;
+	bool	mbFieldPolarity = false;
+	bool	mbLastFieldPolarity = false;
+	bool	mbPostProcessThisFrame = false;
+	bool	mb14MHzThisFrame = false;
+	bool	mbAccelScreenFX = false;
+	bool	mbScreenFXEnabledThisFrame = false;
 
 	ATGTIARegisterState	mState;
 
@@ -414,6 +456,7 @@ protected:
 
 	uint8	*mpDst;
 	vdrefptr<VDVideoDisplayFrame>	mpFrame;
+	VDPixmap	mRawFrame;
 	uint64	mFrameTimestamp;
 	ATFrameTracker *mpFrameTracker;
 	bool	mbMixedRendering;	// GTIA mode with non-hires or pseudo mode E
@@ -424,16 +467,18 @@ protected:
 	bool	mbSECAMMode;
 	bool	mbForcedBorder;
 
-	VDALIGN(16)	uint8	mMergeBuffer[228];
-	VDALIGN(16)	uint8	mAnticData[228];
+	VDALIGN(16)	uint8	mMergeBuffer[228+12];
+	VDALIGN(16)	uint8	mAnticData[228+12];
 	uint32	mPalette[256];
+	uint32	mSignedPalette[256];
 	bool	mbScanlinesWithHiRes[240];
 
+	ATColorParams mActiveColorParams;
 	ATColorSettings mColorSettings;
+	float mColorMatchingMatrix[3][3];
 
 	vdfastvector<uint8, vdaligned_alloc<uint8> > mPreArtifactFrameBuffer;
 	VDPixmap	mPreArtifactFrame;
-	VDPixmap	mPreArtifactFrameVisible;
 	uint32		mPreArtifactFrameVisibleY1;
 	uint32		mPreArtifactFrameVisibleY2;
 
@@ -443,6 +488,8 @@ protected:
 	ATGTIARenderer *mpRenderer;
 	IATUIRenderer *mpUIRenderer;
 	ATVBXEEmulator *mpVBXE;
+
+	ATNotifyList<const ATGTIARawFrameFn *> mRawFrameCallbacks;
 
 	VDLinearAllocator mNodeAllocator;
 };

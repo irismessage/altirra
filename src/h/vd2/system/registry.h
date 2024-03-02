@@ -70,6 +70,7 @@ public:
 	virtual void EnumValuesClose(void *enumerator) = 0;
 };
 
+IVDRegistryProvider *VDGetDefaultRegistryProvider();
 IVDRegistryProvider *VDGetRegistryProvider();
 void VDSetRegistryProvider(IVDRegistryProvider *provider);
 
@@ -118,8 +119,8 @@ private:
 };
 
 class VDRegistryValueIterator {
-	VDRegistryValueIterator(const VDRegistryValueIterator&);
-	VDRegistryValueIterator& operator=(const VDRegistryValueIterator&);
+	VDRegistryValueIterator(const VDRegistryValueIterator&) = delete;
+	VDRegistryValueIterator& operator=(const VDRegistryValueIterator&) = delete;
 public:
 	VDRegistryValueIterator(const VDRegistryKey& key);
 	~VDRegistryValueIterator();
@@ -131,8 +132,8 @@ protected:
 };
 
 class VDRegistryKeyIterator {
-	VDRegistryKeyIterator(const VDRegistryKeyIterator& key);
-	VDRegistryKeyIterator& operator=(const VDRegistryKeyIterator& key);
+	VDRegistryKeyIterator(const VDRegistryKeyIterator& key) = delete;
+	VDRegistryKeyIterator& operator=(const VDRegistryKeyIterator& key) = delete;
 public:
 	VDRegistryKeyIterator(const VDRegistryKey& key);
 	~VDRegistryKeyIterator();
@@ -152,6 +153,9 @@ public:
 	VDRegistryAppKey(const char *pszKey, bool write = true, bool global = false);
 
 	static void setDefaultKey(const char *pszAppName);
+	static const char *getDefaultKey();
 };
+
+void VDRegistryCopy(IVDRegistryProvider& dstProvider, const char *dstPath, IVDRegistryProvider& srcProvider, const char *srcPath);
 
 #endif

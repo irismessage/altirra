@@ -5,6 +5,7 @@
 
 ATUILabel::ATUILabel()
 	: mTextAlign(kAlignLeft)
+	, mTextVAlign(kVAlignTop)
 	, mTextColor(0)
 	, mTextX(0)
 	, mTextY(0)
@@ -48,6 +49,13 @@ void ATUILabel::SetBorderColor(uint32 c) {
 void ATUILabel::SetTextAlign(Align align) {
 	if (mTextAlign != align) {
 		mTextAlign = align;
+		Invalidate();
+	}
+}
+
+void ATUILabel::SetTextVAlign(VAlign valign) {
+	if (mTextVAlign != valign) {
+		mTextVAlign = valign;
 		Invalidate();
 	}
 }
@@ -387,6 +395,11 @@ void ATUILabel::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 	const Line *line = mLines.data();
 	uint32 lineSpanCount = line->mSpanCount;
 
+	sint32 y0 = mTextY;
+
+	if (mTextVAlign)
+		y0 += ((h - mTextSize.h) * (sint32)mTextVAlign + 1) >> 1;
+
 	const wchar_t *const s = mText.c_str();
 	for(auto&& span : mSpans) {
 		while(!lineSpanCount--) {
@@ -399,7 +412,7 @@ void ATUILabel::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 			const sint32 lineX = ((w - line->mWidth - mTextX*2) * (sint32)mTextAlign + 1) >> 1;
 
 			rdr.SetColorRGB(span.mBgColor);
-			rdr.FillRect(lineX + span.mX + mTextX, span.mY + mTextY - line->mAscent, span.mWidth, line->mAscent + line->mDescent);
+			rdr.FillRect(lineX + span.mX + mTextX, span.mY + y0 - line->mAscent, span.mWidth, line->mAscent + line->mDescent);
 		}
 	}
 
@@ -424,7 +437,7 @@ void ATUILabel::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 		if (span.mChars) {
 			tr.SetFont(span.mbBold ? mpBoldFont : mpFont);
 			tr.SetColorRGB(span.mFgColor >= 0 ? (uint32)span.mFgColor : mTextColor);
-			tr.SetPosition(lineX + span.mX + mTextX, span.mY + mTextY);
+			tr.SetPosition(lineX + span.mX + mTextX, span.mY + y0);
 			tr.DrawTextSpan(s + span.mStart, span.mChars);
 		}
 	}

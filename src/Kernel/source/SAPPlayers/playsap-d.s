@@ -19,7 +19,7 @@
 		icl		'hardware.inc'
 		icl		'kerneldb.inc'
 
-		org		$0800
+		org		$0400
 InitMusic:
 		jmp		dummy
 PlayMusic:

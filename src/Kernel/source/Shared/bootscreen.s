@@ -40,6 +40,10 @@ phase	dta		0
 		opt		o+f+
 		
 .proc BootScreen
+		;hit COLDST to force a cold reboot if RESET is pressed
+		lda		#$ff
+		sta		coldst
+
 		jsr		clear_ram
 		
 		;copy down display list
@@ -122,7 +126,7 @@ sprinit:
 		dta		d"AltirraOS"
 		_KERNELSTR_BIOS_NAME_INTERNAL
 		dta		d" "
-		_VERSIONSTR_INTERNAL
+		_KERNELSTR_VERSION_INTERNAL
 		
 		dta		$9b
 
@@ -579,8 +583,14 @@ pfadr = dlist+(*-dlistdata)-2
 		dta		$41,a(dlist)
 dlistdata_end:
 
+;version block for emulator
+		org		$d7f8
+		_KERNELSTR_VERSION
+		dta		0
+
+
 		org		$d7ff
-		dta		$ff
+		dta		0
 
 		opt		l-f-
 		

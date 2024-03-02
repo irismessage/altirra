@@ -6,6 +6,7 @@
     <ClInclude Include="..\h\at\atui\uianchor.h" />
     <ClInclude Include="..\h\at\atui\uicommandmanager.h" />
     <ClInclude Include="..\h\at\atui\uicontainer.h" />
+    <ClInclude Include="..\h\at\atui\uidragdrop.h" />
     <ClInclude Include="..\h\at\atui\uidrawingutils.h" />
     <ClInclude Include="..\h\at\atui\uimanager.h" />
     <ClInclude Include="..\h\at\atui\uimenulist.h" />

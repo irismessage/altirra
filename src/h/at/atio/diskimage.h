@@ -19,6 +19,7 @@
 #ifndef f_AT_ATIO_DISKIMAGE_H
 #define f_AT_ATIO_DISKIMAGE_H
 
+#include <optional>
 #include <vd2/system/function.h>
 #include <vd2/system/refcount.h>
 #include <at/atio/image.h>
@@ -39,7 +40,8 @@ struct ATDiskVirtualSectorInfo {
 struct ATDiskPhysicalSectorInfo {
 	uint32	mOffset;			// offset within memory image
 	sint32	mDiskOffset;		// offset within disk image (for rewriting)
-	uint16	mSize;
+	uint16	mImageSize;			// size within image
+	uint16	mPhysicalSize;		// size on media
 	bool	mbDirty;
 	bool	mbMFM;
 	float	mRotPos;
@@ -148,6 +150,8 @@ public:
 
 	virtual uint64 GetImageChecksum() const = 0;
 
+	virtual std::optional<uint32> GetImageFileCRC() const = 0;
+
 	virtual void SetPath(const wchar_t *path, ATDiskImageFormat format) = 0;
 	virtual void Save(const wchar_t *path, ATDiskImageFormat format) = 0;
 
@@ -160,7 +164,7 @@ public:
 	virtual void GetPhysicalSectorInfo(uint32 index, ATDiskPhysicalSectorInfo& info) const = 0;
 
 	virtual void ReadPhysicalSector(uint32 index, void *data, uint32 len) = 0;
-	virtual void WritePhysicalSector(uint32 index, const void *data, uint32 len) = 0;
+	virtual void WritePhysicalSector(uint32 index, const void *data, uint32 len, uint8 fdcStatus = 0xFF) = 0;
 
 	virtual uint32 GetVirtualSectorCount() const = 0;
 	virtual void GetVirtualSectorInfo(uint32 index, ATDiskVirtualSectorInfo& info) const = 0;

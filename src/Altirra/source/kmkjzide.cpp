@@ -422,8 +422,8 @@ void ATKMKJZIDE::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 		mFlashCtrl.SetDirty(false);
 }
 
-bool ATKMKJZIDE::IsUsableFirmwareLoaded() const {
-	return mbFirmwareUsable;
+ATDeviceFirmwareStatus ATKMKJZIDE::GetFirmwareStatus() const {
+	return mbFirmwareUsable ? ATDeviceFirmwareStatus::OK : ATDeviceFirmwareStatus::Missing;
 }
 
 void ATKMKJZIDE::InitMemMap(ATMemoryManager *memman) {
@@ -517,6 +517,10 @@ uint8 ATKMKJZIDE::ReadPBIStatus(uint8 busData, bool debugOnly) {
 
 const wchar_t *ATKMKJZIDE::GetBusName() const {
 	return L"IDE Bus";
+}
+
+const char *ATKMKJZIDE::GetBusTag() const {
+	return "idebus";
 }
 
 const char *ATKMKJZIDE::GetSupportedType(uint32 index) {

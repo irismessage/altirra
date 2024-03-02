@@ -106,6 +106,7 @@ public:
 	void	SetDataLine(bool newState);
 	void	SetCommandLine(bool newState);
 	void	SetSpeaker(bool newState);
+	void	SetStereoSoftEnable(bool enable);
 
 	void	SetExternalSerialClock(uint32 basetime, uint32 period);
 	uint32	GetSerialCyclesPerBitRecv() const;
@@ -124,6 +125,7 @@ public:
 	void	SetShiftKeyState(bool down, bool immediate);
 	bool	GetControlKeyState() const { return mbControlKeyState; }
 	void	SetControlKeyState(bool down);
+	void	ClearKeyQueue();
 	void	PushKey(uint8 c, bool repeat, bool allowQueue = false, bool flushQueue = true, bool useCooldown = true);
 	uint64	GetRawKeyMask() const;
 	void	PushRawKey(uint8 c, bool immediate);
@@ -216,7 +218,9 @@ protected:
 	void	StartPotScan();
 	void	UpdatePots(uint32 timeSkew);
 
-protected:
+	void	UpdateAddressDecoding();	
+
+private:
 	ATPokeyRenderer *mpRenderer;
 
 	int		mTimerCounters[4];
@@ -242,6 +246,7 @@ protected:
 	bool	mbBreakKeyState;
 	bool	mbBreakKeyLatchedState;
 
+	uint8	mAddressMask;
 	uint8	mIRQEN;
 	uint8	mIRQST;
 	uint8	mAUDF[4];		// $D200/2/4/6: audio frequency, channel 1/2/3/4
@@ -366,6 +371,8 @@ protected:
 	uint8	mPotMasterCounter = 0;
 	uint32	mPotLastTimeFast = 0;
 	uint32	mPotLastTimeSlow = 0;
+
+	bool	mbStereoSoftEnable = true;
 
 	bool	mTraceDirectionSend = false;
 	uint32	mTraceByteIndex = 0;

@@ -33,6 +33,7 @@ struct ATEnumParseResult {
 
 const char *ATEnumToString(const ATEnumLookupTable& table, uint32 value);
 ATEnumParseResult<uint32> ATParseEnum(const ATEnumLookupTable& table, const VDStringSpanA& str);
+ATEnumParseResult<uint32> ATParseEnum(const ATEnumLookupTable& table, const VDStringSpanW& str);
 
 template<typename T>
 ATEnumParseResult<T> ATParseEnum(const VDStringSpanA& str) {

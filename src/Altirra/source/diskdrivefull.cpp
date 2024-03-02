@@ -1294,8 +1294,8 @@ bool ATDeviceDiskDriveFull::IsWritableFirmwareDirty(uint32 idx) const {
 void ATDeviceDiskDriveFull::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 }
 
-bool ATDeviceDiskDriveFull::IsUsableFirmwareLoaded() const {
-	return mbFirmwareUsable;
+ATDeviceFirmwareStatus ATDeviceDiskDriveFull::GetFirmwareStatus() const {
+	return mbFirmwareUsable ? ATDeviceFirmwareStatus::OK : ATDeviceFirmwareStatus::Missing;
 }
 
 void ATDeviceDiskDriveFull::InitDiskDrive(IATDiskDriveManager *ddm) {

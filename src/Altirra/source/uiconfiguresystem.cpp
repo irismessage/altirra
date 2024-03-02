@@ -16,17 +16,23 @@
 
 #include <stdafx.h>
 #include <array>
+#include <vd2/system/filesys.h>
 #include <at/atui/uicommandmanager.h>
+#include <at/atcore/devicemanager.h>
 #include "uiaccessors.h"
 #include "uicaptionupdater.h"
+#include "uidevices.h"
 #include "uifirmwaremenu.h"
 #include "uipageddialog.h"
-#include "uidevices.h"
+#include "uikeyboard.h"
 #include "resource.h"
 #include "constants.h"
+#include "cartridge.h"
+#include "diskinterface.h"
 #include "simulator.h"
 
 extern ATSimulator g_sim;
+extern ATUIKeyboardOptions g_kbdOpts;
 
 extern void ATUISwitchKernel(uint64 id);
 extern void ATUISwitchBasic(uint64 id);
@@ -395,15 +401,562 @@ void ATUIDialogSysConfigPage::CmdTriggerBinding::Write() {
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATUIDialogSysConfigOverview final : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigOverview();
+
+private:
+	bool OnLoaded() override;
+	bool OnLinkActivated(const wchar_t *link);
+	void CopyConfiguration();
+	void RemakeOverview();
+
+	VDUIProxyRichEditControl mResultView;
+	VDUIProxyButtonControl mCopyView;
+
+	VDStringA mRtfBuffer;
+};
+
+ATUIDialogSysConfigOverview::ATUIDialogSysConfigOverview()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_OVERVIEW)
+{
+	mCopyView.SetOnClicked([this] { CopyConfiguration(); });
+
+	mResultView.SetOnLinkSelected([this](const wchar_t *link) { return OnLinkActivated(link); });
+}
+
+bool ATUIDialogSysConfigOverview::OnLoaded() {
+	AddProxy(&mResultView, IDC_RICHEDIT);
+	AddProxy(&mCopyView, IDC_COPY);
+
+	mResultView.SetReadOnlyBackground();
+	mResultView.DisableCaret();
+	mResultView.DisableSelectOnFocus();
+
+	RemakeOverview();
+
+	return true;
+}
+
+bool ATUIDialogSysConfigOverview::OnLinkActivated(const wchar_t *link) {
+	mpParentPagedDialog->SwitchToPage("devices");
+	return true;
+}
+
+void ATUIDialogSysConfigOverview::CopyConfiguration() {
+	mResultView.SelectAll();
+	mResultView.Copy();
+	mResultView.SetCaretPos(0, 0);
+}
+
+void ATUIDialogSysConfigOverview::RemakeOverview() {
+	// This is a hack to prevent the caret from showing up on the rich edit control.
+	Focus();
+
+	mRtfBuffer = R"---({\rtf1\deftab1920{\colortbl;\red0\green0\blue255;})---";
+
+	mRtfBuffer.append("\\pard\\li1920\\fi-1920 ");
+	mResultView.AppendEscapedRTF(mRtfBuffer, L"Base system");
+	mRtfBuffer += "\\tab ";
+
+	const wchar_t *vsname = L"";
+	switch(g_sim.GetVideoStandard()) {
+		case kATVideoStandard_NTSC:			vsname = L"NTSC"; break;
+		case kATVideoStandard_NTSC50:		vsname = L"NTSC50"; break;
+		case kATVideoStandard_PAL:			vsname = L"PAL"; break;
+		case kATVideoStandard_PAL60:		vsname = L"PAL60"; break;
+		case kATVideoStandard_SECAM:		vsname = L"SECAM"; break;
+	}
+
+	mResultView.AppendEscapedRTF(mRtfBuffer, vsname);
+	mResultView.AppendEscapedRTF(mRtfBuffer, L" ");
+
+	const wchar_t *model = L"";
+	ATMemoryMode defaultMemory = kATMemoryMode_64K;
+	switch(g_sim.GetHardwareMode()) {
+		case kATHardwareMode_800:
+			model = L"800";
+			defaultMemory = kATMemoryMode_48K;
+			break;
+
+		case kATHardwareMode_800XL:
+			model = L"800XL";
+			defaultMemory = kATMemoryMode_64K;
+			break;
+
+		case kATHardwareMode_5200:
+			model = L"5200 SuperSystem";
+			defaultMemory = kATMemoryMode_16K;
+			break;
+
+		case kATHardwareMode_XEGS:
+			model = L"XE Game System (XEGS)";
+			defaultMemory = kATMemoryMode_64K;
+			break;
+
+		case kATHardwareMode_1200XL:
+			model = L"1200XL";
+			defaultMemory = kATMemoryMode_64K;
+			break;
+
+		case kATHardwareMode_130XE:	
+			model = L"130XE";
+			defaultMemory = kATMemoryMode_128K;
+			break;
+	}
+
+	mResultView.AppendEscapedRTF(mRtfBuffer, model);
+
+	if (g_sim.GetMemoryMode() != defaultMemory) {
+		const wchar_t *memstr = nullptr;
+
+		switch(g_sim.GetMemoryMode()) {
+			case kATMemoryMode_48K:			memstr = L"48K"; break;
+			case kATMemoryMode_52K:			memstr = L"52K"; break;
+			case kATMemoryMode_64K:			memstr = L"64K"; break;
+			case kATMemoryMode_128K:		memstr = L"128K"; break;
+			case kATMemoryMode_320K:		memstr = L"320K"; break;
+			case kATMemoryMode_576K:		memstr = L"576K"; break;
+			case kATMemoryMode_1088K:		memstr = L"1088K"; break;
+			case kATMemoryMode_16K:			memstr = L"16K"; break;
+			case kATMemoryMode_8K:			memstr = L"8K"; break;
+			case kATMemoryMode_24K:			memstr = L"24K"; break;
+			case kATMemoryMode_32K:			memstr = L"32K"; break;
+			case kATMemoryMode_40K:			memstr = L"40K"; break;
+			case kATMemoryMode_320K_Compy:	memstr = L"320K Compy"; break;
+			case kATMemoryMode_576K_Compy:	memstr = L"576K Compy"; break;
+			case kATMemoryMode_256K:		memstr = L"256K"; break;
+		}
+
+		if (memstr) {
+			mResultView.AppendEscapedRTF(mRtfBuffer, L" (");
+			mResultView.AppendEscapedRTF(mRtfBuffer, memstr);
+			mResultView.AppendEscapedRTF(mRtfBuffer, L")");
+		}
+	}
+
+	mRtfBuffer.append("\\par\\li1920\\fi-1920 ");
+	mResultView.AppendEscapedRTF(mRtfBuffer, L"Additional Devices");
+	mRtfBuffer += "\\tab ";
+
+	vdvector<VDStringW> devices;
+	for(IATDevice *dev : g_sim.GetDeviceManager()->GetDevices(true, true)) {
+		ATDeviceInfo info;
+		dev->GetDeviceInfo(info);
+		devices.emplace_back(info.mpDef->mpName);
+	}
+
+	if (devices.empty()) {
+		mResultView.AppendEscapedRTF(mRtfBuffer, L"None");
+	} else {
+		bool first = true;
+
+		for(const VDStringW& s : devices) {
+			if (first)
+				first = false;
+			else
+				mResultView.AppendEscapedRTF(mRtfBuffer, L", ");
+
+			mResultView.AppendEscapedRTF(mRtfBuffer, s.c_str());
+		}
+	}
+
+	mRtfBuffer.append("\\par\\li1920\\fi-1920 ");
+	mResultView.AppendEscapedRTF(mRtfBuffer, L"OS Firmware");
+
+	mRtfBuffer += "\\tab ";
+
+	ATFirmwareInfo fwInfo;
+	g_sim.GetFirmwareManager()->GetFirmwareInfo(g_sim.GetActualKernelId(), fwInfo);
+
+	VDStringW buf;
+	buf.sprintf(L"%ls [%08X]", fwInfo.mName.c_str(), g_sim.ComputeKernelCRC32());
+	mResultView.AppendEscapedRTF(mRtfBuffer, buf.c_str());
+
+	mRtfBuffer.append("\\par\\li1920\\fi-1920 ");
+	mResultView.AppendEscapedRTF(mRtfBuffer, L"Mounted Images");
+
+	bool firstImage = true;
+	bool foundImage = false;
+	for(int i=0; i<15; ++i) {
+		ATDiskInterface& di = g_sim.GetDiskInterface(i);
+		IATDiskImage *image = di.GetDiskImage();
+
+		if (image) {
+			const wchar_t *s = VDFileSplitPath(di.GetPath());
+
+			buf = L"Disk: ";
+			buf += s;
+
+			const auto crc = image->GetImageFileCRC();
+
+			if (crc.has_value())
+				buf.append_sprintf(L" [%08X]", crc.value());
+
+			if (firstImage) {
+				firstImage = false;
+				mRtfBuffer += "\\tab ";
+			} else
+				mRtfBuffer += "\\line ";
+
+			mResultView.AppendEscapedRTF(mRtfBuffer, buf.c_str());
+			foundImage = true;
+		}
+	}
+
+	for(uint32 i=0; i<2; ++i) {
+		ATCartridgeEmulator *ce = g_sim.GetCartridge(i);
+
+		if (ce) {
+			const wchar_t *path = ce->GetPath();
+
+			if (path) {
+				buf = L"Cartridge: ";
+				buf += VDFileSplitPath(path);
+
+				const auto crc = ce->GetImageFileCRC();
+				if (crc.has_value())
+					buf.append_sprintf(L" [%08X]", crc.value());
+
+				if (firstImage) {
+					firstImage = false;
+					mRtfBuffer += "\\tab ";
+				} else
+					mRtfBuffer += "\\line ";
+
+				mResultView.AppendEscapedRTF(mRtfBuffer, buf.c_str());
+				foundImage = true;
+			}
+		}
+	}
+
+	if (!foundImage) {
+		mRtfBuffer.append("\\tab ");
+		mResultView.AppendEscapedRTF(mRtfBuffer, L"None");
+	}
+
+	bool firmwareIssue = false;
+
+	for(IATDeviceFirmware *fw : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceFirmware>(false, true)) {
+		if (fw->GetFirmwareStatus() != ATDeviceFirmwareStatus::OK) {
+			firmwareIssue = true;
+			break;
+		}
+	}
+
+	if (firmwareIssue) {
+		mRtfBuffer.append("\\par\\par\\li1920\\fi-1920 ");
+		mResultView.AppendEscapedRTF(mRtfBuffer, L"Issues");
+		mRtfBuffer.append("\\tab ");
+		mResultView.AppendEscapedRTF(mRtfBuffer, L"A device has missing or invalid firmware.  ");
+
+		mRtfBuffer += "{\\field {\\*\\fldinst HYPERLINK \"devices\"}";
+
+		// Explicit underline and color override is needed on XP.
+		mRtfBuffer += "{\\fldrslt\\ul\\cf1 ";
+
+		mResultView.AppendEscapedRTF(mRtfBuffer, L"Check devices");
+
+		mRtfBuffer += "}}";
+	}
+
+	mRtfBuffer += "}";
+
+	mResultView.SetTextRTF(mRtfBuffer.c_str());
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogSysConfigAssessment final : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigAssessment();
+
+private:
+	bool OnLoaded() override;
+
+	bool OnLinkActivated(const wchar_t *);
+	void Reassess();
+
+	void AssessForAccuracy();
+	void AssessForCompatibility();
+	void AssessForPerformance();
+
+	void AssessCPU();
+	void AssessFastFP();
+	void AssessStandardPAL();
+	void AssessFirmware();
+	void AssessKeyboard();
+
+	void AddFnEntry(const wchar_t *s, const wchar_t *linkText, vdfunction<void()> fn, const wchar_t *linkText2 = nullptr, vdfunction<void()> fn2 = nullptr);
+	void AddEntry(const wchar_t *s, const wchar_t *linkText, const char *command, const wchar_t *linkText2 = nullptr, const char *command2 = nullptr);
+	bool AddAutoStateEntry(const wchar_t *s, const wchar_t *linkText, const char *command, bool targetState, const wchar_t *linkText2 = nullptr, const char *command2 = nullptr);
+	void ExecuteCommand(const char *s);
+
+	VDUIProxyComboBoxControl mTargetView;
+	VDUIProxyRichEditControl mResultView;
+
+	enum class AssessmentMode : sint8 {
+		None = -1,
+		Compatibility,
+		Accuracy,
+		Performance
+	};
+
+	AssessmentMode mAssessmentMode = AssessmentMode::Compatibility;
+
+	vdvector<vdfunction<void()>> mLinkHandlers;
+	VDStringA mRtfBuffer;
+};
+
+ATUIDialogSysConfigAssessment::ATUIDialogSysConfigAssessment()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_ASSESSMENT)
+{
+	mTargetView.SetOnSelectionChanged([this](int sel) {
+		if (sel >= 0 && sel < 3) {
+			AssessmentMode mode = (AssessmentMode)sel;
+
+			if (mAssessmentMode != mode) {
+				mAssessmentMode = mode;
+
+				Reassess();
+			}
+		}
+	});
+
+	mResultView.SetOnLinkSelected([this](const wchar_t *link) { return OnLinkActivated(link); });
+}
+
+bool ATUIDialogSysConfigAssessment::OnLoaded() {
+	AddProxy(&mTargetView, IDC_TARGET);
+	AddProxy(&mResultView, IDC_RICHEDIT);
+
+	mResultView.SetReadOnlyBackground();
+	mResultView.DisableCaret();
+	mResultView.DisableSelectOnFocus();
+
+	mTargetView.AddItem(L"Compatibility");
+	mTargetView.AddItem(L"Accuracy");
+	mTargetView.AddItem(L"Emulator performance");
+	mTargetView.SetSelection(0);
+
+	mTargetView.Focus();
+	Reassess();
+
+	return true;
+}
+
+bool ATUIDialogSysConfigAssessment::OnLinkActivated(const wchar_t *s) {
+	if (*s) {
+		uint32 index = (uint32)wcstoul(s, nullptr, 10);
+
+		if (index < mLinkHandlers.size()) {
+			const auto fn = mLinkHandlers[index];
+
+			fn();
+		}
+	}
+
+	return true;
+}
+
+void ATUIDialogSysConfigAssessment::Reassess() {
+	mLinkHandlers.clear();
+
+	// This is a hack to prevent the caret from showing up on the rich edit control.
+	mTargetView.Focus();
+
+	mRtfBuffer = R"---({\rtf1{\colortbl;\red0\green0\blue255;})---";
+
+	mRtfBuffer.append("{\\*\\pn\\pnlvlblt\\pnindent0{\\pntxtb\\'B7}}\\fi-240\\li340 ");
+
+	auto baseSize = mRtfBuffer.size();
+
+	switch(mAssessmentMode) {
+		case AssessmentMode::Accuracy:
+			AssessForAccuracy();
+			break;
+
+		case AssessmentMode::Compatibility:
+			AssessForCompatibility();
+			break;
+
+		case AssessmentMode::Performance:
+			AssessForPerformance();
+			break;
+	}
+
+	if (mRtfBuffer.size() == baseSize)
+		mResultView.AppendEscapedRTF(mRtfBuffer, L"No recommendations.");
+
+	mRtfBuffer += "}";
+
+	mResultView.SetTextRTF(mRtfBuffer.c_str());
+}
+
+void ATUIDialogSysConfigAssessment::AssessForAccuracy() {
+	AssessFirmware();
+
+	AddAutoStateEntry(L"Disk accesses are being accelerated by SIO patch.", L"Disable disk SIO patch", "Disk.ToggleSIOPatch", false);
+	AddAutoStateEntry(L"Disk burst I/O is enabled.", L"Turn off", "Disk.ToggleBurstTransfers", false);
+
+	AssessFastFP();
+
+	AssessStandardPAL();
+
+	if (g_sim.GetVideoStandard() == kATVideoStandard_NTSC)
+		AddAutoStateEntry(L"Video standard is set to NTSC (60Hz). Games written for PAL regions will execute faster than intended and may malfunction.", L"Switch to PAL", "Video.StandardPAL", true);
+
+	AssessKeyboard();
+}
+
+void ATUIDialogSysConfigAssessment::AssessForCompatibility() {
+	AssessFirmware();
+	AssessCPU();
+
+	switch(g_sim.GetMemoryMode()) {
+		case kATMemoryMode_8K:
+		case kATMemoryMode_16K:
+		case kATMemoryMode_24K:
+		case kATMemoryMode_32K:
+		case kATMemoryMode_40K:
+			if (!AddAutoStateEntry(L"System memory is below 48K. Most programs need at least 48K to run correctly.", L"Switch to 48K", "System.MemoryMode48K", true))
+				AddAutoStateEntry(L"System memory is below 48K. Most programs need at least 48K to run correctly.", L"Switch to 64K", "System.MemoryMode64K", true);
+			break;
+	}
+
+	AssessFastFP();
+	AddAutoStateEntry(L"Internal BASIC is enabled. Non-BASIC programs often require BASIC to be disabled by holding Option on boot.", L"Disable internal BASIC", "System.ToggleBASIC", false);
+
+	AssessStandardPAL();
+	AssessKeyboard();
+}
+
+void ATUIDialogSysConfigAssessment::AssessForPerformance() {
+	AddAutoStateEntry(L"CPU execution history is enabled. If not needed, turning it off will slightly improve performance.", L"Turn off CPU history", "System.ToggleCPUHistory", false);
+}
+
+void ATUIDialogSysConfigAssessment::AssessFirmware() {
+	if (g_sim.GetActualKernelId() < kATFirmwareId_Custom) {
+		AddFnEntry(L"AltirraOS is being used as the current operating system. This will work with most well-behaved software, but some programs only work with the Atari OS.",
+			L"Check firmware settings",
+			[this] {
+				mpParentPagedDialog->SwitchToPage("firmware");
+			}
+		);
+	}
+}
+
+void ATUIDialogSysConfigAssessment::AssessKeyboard() {
+	if (!g_kbdOpts.mbRawKeys) {
+		AddFnEntry(L"The keyboard mode is set to Cooked. This makes it easier to type text but can cause issues with programs that check for held keys.",
+			L"Switch to Raw Key mode",
+			[this] {
+				ExecuteCommand("Input.KeyboardModeRaw");
+			},
+			L"View keyboard settings",
+			[this] {
+				mpParentPagedDialog->SwitchToPage("keyboard");
+			}
+		);
+	}
+}
+
+void ATUIDialogSysConfigAssessment::AssessCPU() {
+	switch(g_sim.GetCPU().GetCPUMode()) {
+		case kATCPUMode_65C02:
+			AddEntry(L"CPU mode is set to 65C02.", L"Change to 6502", "System.CPUMode6502");
+			break;
+
+		case kATCPUMode_65C816:
+			AddEntry(L"CPU mode is set to 65C816.", L"Change to 6502", "System.CPUMode6502");
+			break;
+	}
+
+	AddAutoStateEntry(L"The Stop on BRK Instruction debugging option is enabled. Occasionally some programs require BRK instructions to run properly.", L"Re-enable normal BRK handling", "System.ToggleCPUStopOnBRK", false);
+}
+
+void ATUIDialogSysConfigAssessment::AssessFastFP() {
+	AddAutoStateEntry(L"Fast floating-point math acceleration is enabled. BASIC programs will execute much faster than normal.", L"Disable fast FP", "System.ToggleFPPatch", false);
+}
+
+void ATUIDialogSysConfigAssessment::AssessStandardPAL() {
+	if (g_sim.GetVideoStandard() == kATVideoStandard_PAL)
+		AddAutoStateEntry(L"Video standard is set to PAL (50Hz). Games written for NTSC regions will execute slower than intended.", L"Switch to NTSC", "Video.StandardNTSC", true);
+}
+
+void ATUIDialogSysConfigAssessment::AddFnEntry(const wchar_t *s, const wchar_t *linkText, vdfunction<void()> fn, const wchar_t *linkText2, vdfunction<void()> fn2) {
+	mResultView.AppendEscapedRTF(mRtfBuffer, s);
+
+	while (linkText) {
+		mRtfBuffer += "  {\\field {\\*\\fldinst HYPERLINK \"";
+		mRtfBuffer.append_sprintf("%u", mLinkHandlers.size());
+
+		// Explicit underline and color override is needed on XP.
+		mRtfBuffer += "\"}{\\fldrslt\\ul\\cf1 ";
+
+		mResultView.AppendEscapedRTF(mRtfBuffer, linkText);
+
+		mRtfBuffer += "}}";
+
+		mLinkHandlers.emplace_back(std::move(fn));
+
+		linkText = linkText2;
+		linkText2 = nullptr;
+
+		fn = std::move(fn2);
+		fn2 = nullptr;
+	}
+
+	mRtfBuffer += "\\par ";
+}
+
+void ATUIDialogSysConfigAssessment::AddEntry(const wchar_t *s, const wchar_t *linkText, const char *command, const wchar_t *linkText2, const char *command2) {
+	AddFnEntry(
+		s,
+		linkText,
+		[cmd = VDStringA(command), this] { ExecuteCommand(cmd.c_str()); },
+		linkText2,
+		linkText2 ? vdfunction<void()>([cmd = VDStringA(command2), this] { ExecuteCommand(cmd.c_str()); }) : nullptr);
+}
+
+bool ATUIDialogSysConfigAssessment::AddAutoStateEntry(const wchar_t *s, const wchar_t *linkText, const char *command, bool targetState, const wchar_t *linkText2, const char *command2) {
+	const ATUICommand *cmd = ATUIGetCommandManager().GetCommand(command);
+
+	if (!cmd) {
+		VDFAIL("Unknown command referenced.");
+		return false;
+	}
+
+	if (!cmd->mpStateFn) {
+		VDFAIL("Cannot use auto-set entry with command that has no check/radio-check.");
+		return false;
+	}
+
+	if (cmd->mpTestFn && !cmd->mpTestFn())
+		return false;
+		
+	ATUICmdState state = cmd->mpStateFn();
+
+	if ((state != kATUICmdState_None) == targetState)
+		return false;
+
+	AddEntry(s, linkText, command, linkText2, command2);
+	return true;
+}
+
+void ATUIDialogSysConfigAssessment::ExecuteCommand(const char *s) {
+	ATUIGetCommandManager().ExecuteCommand(s);
+	Reassess();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 class ATUIDialogSysConfigSystem final : public ATUIDialogSysConfigPage {
 public:
 	ATUIDialogSysConfigSystem();
 
 protected:
 	bool OnLoaded() override;
-
-	void OnSetHardwareType(int idx);
-	void OnSetVideoStandard(int idx);
 
 	VDUIProxyComboBoxControl mHardwareTypeView;
 	VDUIProxyComboBoxControl mVideoStandardView;
@@ -700,6 +1253,11 @@ bool ATUIDialogSysConfigAcceleration::OnLoaded() {
 	BindCheckbox(IDC_SIOBURST_D, "Disk.ToggleBurstTransfers");
 	BindCheckbox(IDC_SIOBURST_OTHER, "Devices.ToggleSIOBurstTransfers");
 	BindCheckbox(IDC_SIOOVERRIDEDETECT, "Disk.ToggleSIOOverrideDetection");
+	BindCheckbox(IDC_CIOPATCH_H, "Devices.ToggleCIOPatchH");
+	BindCheckbox(IDC_CIOPATCH_P, "Devices.ToggleCIOPatchP");
+	BindCheckbox(IDC_CIOPATCH_R, "Devices.ToggleCIOPatchR");
+	BindCheckbox(IDC_CIOPATCH_T, "Devices.ToggleCIOPatchT");
+	BindCheckbox(IDC_CIOBURST, "Devices.ToggleCIOBurstTransfers");
 
 	mSIOAccelBinding.Bind("Devices.SIOAccelModePatch", &mSIOAccelSIOVView);
 	mSIOAccelBinding.Bind("Devices.SIOAccelModePBI", &mSIOAccelPBIView);
@@ -1005,9 +1563,21 @@ protected:
 	};
 
 	CmdComboBinding mTurboTypeBinding { sTurboTypeOptions };
+
+	VDUIProxyComboBoxControl mDirectSenseView;
+
+	static constexpr CmdMapEntry sDirectSenseOptions[] = {
+		{ "Cassette.DirectSenseNormal", L"Normal (~2000 baud)" },
+		{ "Cassette.DirectSenseLowSpeed", L"Low speed (~1000 baud)" },
+		{ "Cassette.DirectSenseHighSpeed", L"High speed (~4000 baud)" },
+		{ "Cassette.DirectSenseMaxSpeed", L"Max speed" },
+	};
+
+	CmdComboBinding mDirectSenseBinding { sDirectSenseOptions };
 };
 
 constexpr ATUIDialogSysConfigCassette::CmdMapEntry ATUIDialogSysConfigCassette::sTurboTypeOptions[];
+constexpr ATUIDialogSysConfigCassette::CmdMapEntry ATUIDialogSysConfigCassette::sDirectSenseOptions[];
 
 ATUIDialogSysConfigCassette::ATUIDialogSysConfigCassette()
 	: ATUIDialogSysConfigPage(IDD_CONFIGURE_CASSETTE)
@@ -1016,6 +1586,7 @@ ATUIDialogSysConfigCassette::ATUIDialogSysConfigCassette()
 
 bool ATUIDialogSysConfigCassette::OnLoaded() {
 	BindCheckbox(IDC_AUTOBOOT, "Cassette.ToggleAutoBoot");
+	BindCheckbox(IDC_AUTOBASICBOOT, "Cassette.ToggleAutoBasicBoot");
 	BindCheckbox(IDC_AUTOREWIND, "Cassette.ToggleAutoRewind");
 	BindCheckbox(IDC_LOADDATAASAUDIO, "Cassette.ToggleLoadDataAsAudio");
 	BindCheckbox(IDC_RANDOMIZESTARTPOS, "Cassette.ToggleRandomizeStartPosition");
@@ -1032,11 +1603,25 @@ bool ATUIDialogSysConfigCassette::OnLoaded() {
 		}
 	);
 
+	AddProxy(&mDirectSenseView, IDC_DIRECTSENSE);
+	mDirectSenseBinding.Bind(&mDirectSenseView);
+	AddAutoReadBinding(&mDirectSenseBinding);
+	mDirectSenseView.SetOnSelectionChanged(
+		[this](int) {
+			mDirectSenseBinding.Write();
+		}
+	);
+
+
 	AddHelpEntry(IDC_AUTOBOOT, L"Auto-boot on startup",
 		L"Automatically hold down the Start button on power-up and press a key to start a binary load off of \
 the cassette tape. This should not be used for a tape that starts with a BASIC program, in which case the \
 BASIC CLOAD command should be used instead."
 );
+
+	AddHelpEntry(IDC_AUTOBASICBOOT, L"Auto-boot BASIC on startup",
+		L"Try to determine if the tape has a BASIC or binary program and toggle BASIC accordingly. This only \
+has an effect when auto-boot is enabled.");
 
 	AddHelpEntry(IDC_AUTOREWIND, L"Auto-rewind on startup",
 		L"Automatically rewind the tape to the beginning when the computer is restarted."
@@ -1059,6 +1644,11 @@ turbo mode and how the turbo encoding is read."
 	AddHelpEntry(IDC_TURBOINVERT, L"Invert turbo data",
 		L"Invert the polarity of turbo data read by the computer. May be needed if the tape image has been recorded \
 with an inverted signal, since some turbo tape loaders are sensitive to the data polarity."
+		);
+
+	AddHelpEntry(IDC_DIRECTSENSE, L"Direct read filter (FSK only)",
+		L"Selects the bandwidth of filter used when reading data bits directly. Lower bandwidth filters limit max baud rate but \
+improve noise immunity. This filter is not used with turbo decoding."
 		);
 
 	OnDataExchange(false);
@@ -1194,6 +1784,8 @@ class ATUIDialogSysConfigFirmware final : public ATUIDialogSysConfigPage {
 public:
 	ATUIDialogSysConfigFirmware();
 
+	const char *GetPageTag() const override { return "firmware"; }
+
 protected:
 	bool OnLoaded() override;
 	void OnDataExchange(bool write) override;
@@ -1318,6 +1910,8 @@ class ATUIDialogSysConfigDevices final : public ATUIDialogSysConfigPage {
 public:
 	ATUIDialogSysConfigDevices();
 
+	const char *GetPageTag() const override { return "devices"; }
+
 protected:
 	bool OnLoaded() override;
 	void OnDataExchange(bool write) override;
@@ -1328,6 +1922,9 @@ protected:
 	VDUIProxyButtonControl mRemoveView;
 	VDUIProxyButtonControl mRemoveAllView;
 	VDUIProxyButtonControl mSettingsView;
+	VDUIProxyButtonControl mFirmwareManagerView;
+
+	CmdTriggerBinding mFirmwareManagerBinding { "System.ROMImagesDialog" };
 
 	ATUIControllerDevices mCtrlDevs;
 };
@@ -1340,6 +1937,15 @@ ATUIDialogSysConfigDevices::ATUIDialogSysConfigDevices()
 	mRemoveView.SetOnClicked([this] { mCtrlDevs.Remove(); });
 	mRemoveAllView.SetOnClicked([this] { mCtrlDevs.RemoveAll(); });
 	mSettingsView.SetOnClicked([this] { mCtrlDevs.Settings(); });
+
+	mFirmwareManagerView.SetOnClicked(
+		[this] {
+			mFirmwareManagerBinding.Write();
+
+			// The set of available firmware may have changed, so refresh the combos.
+			OnDataExchange(false);
+		}
+	);
 }
 
 bool ATUIDialogSysConfigDevices::OnLoaded() {
@@ -1348,12 +1954,16 @@ bool ATUIDialogSysConfigDevices::OnLoaded() {
 	AddProxy(&mRemoveView, IDC_REMOVE);
 	AddProxy(&mRemoveAllView, IDC_REMOVEALL);
 	AddProxy(&mSettingsView, IDC_SETTINGS);
+	AddProxy(&mFirmwareManagerView, IDC_FIRMWAREMANAGER);
+
+	mFirmwareManagerBinding.Bind(&mFirmwareManagerView);
 
 	mResizer.Add(IDC_TREE, mResizer.kMC);
 	mResizer.Add(IDC_ADD, mResizer.kBL);
 	mResizer.Add(IDC_REMOVE, mResizer.kBL);
 	mResizer.Add(IDC_REMOVEALL, mResizer.kBL);
 	mResizer.Add(IDC_SETTINGS, mResizer.kBL);
+	mResizer.Add(IDC_FIRMWAREMANAGER, mResizer.kBL);
 	mResizer.Add(IDOK, mResizer.kBR);
 
 	mCtrlDevs.OnDpiChanged();
@@ -1533,6 +2143,140 @@ involves swapping chips or the motherboard."
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATUIDialogSysConfigDebugger final : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigDebugger();
+
+protected:
+	bool OnLoaded() override;
+
+	VDUIProxyComboBoxControl mSymbolLoadModePreStartView;
+	VDUIProxyComboBoxControl mSymbolLoadModePostStartView;
+	VDUIProxyComboBoxControl mScriptAutoLoadModeView;
+
+	static constexpr CmdMapEntry sPreStartModes[] = {
+		{ "Debug.PreStartSymbolLoadDisabled",	L"Disabled - no automatic symbol load" },
+		{ "Debug.PreStartSymbolLoadDeferred",	L"Deferred - load when manually triggered (default)" },
+		{ "Debug.PreStartSymbolLoadEnabled",	L"Enabled - load symbols along with images" },
+	};
+
+	static constexpr CmdMapEntry sPostStartModes[] = {
+		{ "Debug.PostStartSymbolLoadDisabled",	L"Disabled - no automatic symbol load" },
+		{ "Debug.PostStartSymbolLoadDeferred",	L"Deferred - load when manually triggered" },
+		{ "Debug.PostStartSymbolLoadEnabled",	L"Enabled - load symbols along with images (default)" },
+	};
+
+	static constexpr CmdMapEntry sScriptModes[] = {
+		{ "Debug.ScriptAutoLoadDisabled",	L"Disabled - do not autoload .atdbg files" },
+		{ "Debug.ScriptAutoLoadAskToLoad",	L"Ask to load (default)" },
+		{ "Debug.ScriptAutoLoadEnabled",	L"Enabled - automatically load .atdbg files" },
+	};
+
+	CmdComboBinding mPreStartMapBinding { sPreStartModes };
+	CmdComboBinding mPostStartMapBinding { sPostStartModes };
+	CmdComboBinding mScriptMapBinding { sScriptModes };
+};
+
+ATUIDialogSysConfigDebugger::ATUIDialogSysConfigDebugger()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_DEBUGGER)
+{
+	mSymbolLoadModePreStartView.SetOnSelectionChanged(
+		[this](int idx) {
+			mPreStartMapBinding.Write();
+		}
+	);
+
+	mSymbolLoadModePostStartView.SetOnSelectionChanged(
+		[this](int idx) {
+			mPostStartMapBinding.Write();
+		}
+	);
+
+	mScriptAutoLoadModeView.SetOnSelectionChanged(
+		[this](int idx) {
+			mScriptMapBinding.Write();
+		}
+	);
+}
+
+bool ATUIDialogSysConfigDebugger::OnLoaded() {
+	AddProxy(&mSymbolLoadModePreStartView, IDC_SYMBOLLOAD_PRESTART);
+	AddProxy(&mSymbolLoadModePostStartView, IDC_SYMBOLLOAD_POSTSTART);
+	AddProxy(&mScriptAutoLoadModeView, IDC_SCRIPTAUTOLOAD);
+
+	mPreStartMapBinding.Bind(&mSymbolLoadModePreStartView);
+	mPostStartMapBinding.Bind(&mSymbolLoadModePostStartView);
+	mScriptMapBinding.Bind(&mScriptAutoLoadModeView);
+
+	AddAutoReadBinding(&mPreStartMapBinding);
+	AddAutoReadBinding(&mPostStartMapBinding);
+	AddAutoReadBinding(&mScriptMapBinding);
+
+	AddHelpEntry(IDC_SYMBOLLOAD_PRESTART, L"Pre-start symbol load mode",
+		L"Whether symbols and scripts are loaded for images that are loaded while the debugger is disabled. The default "
+		L"is Deferred, which tracks but does not load symbols until explicitly triggered."
+	);
+
+	AddHelpEntry(IDC_SYMBOLLOAD_POSTSTART, L"Post-start symbol load mode",
+		L"Whether symbols and scripts are loaded for images that are loaded after the debugger is enabled. The default "
+		L"is Enabled, which loads the symbols immediately."
+	);
+
+	AddHelpEntry(IDC_SCRIPTAUTOLOAD, L"Script auto-loading",
+		L"Controls when debugger script (.atdbg) files are auto-loaded when an image is loaded. Note that this only "
+		L"happens if symbol loading is set to Enabled or Deferred."
+	);
+
+	OnDataExchange(false);
+
+	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogSysConfigDisplay final : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigDisplay();
+
+protected:
+	bool OnLoaded() override;
+};
+
+ATUIDialogSysConfigDisplay::ATUIDialogSysConfigDisplay()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_DISPLAY)
+{
+}
+
+bool ATUIDialogSysConfigDisplay::OnLoaded() {
+	auto *indicatorBinding = BindCheckbox(IDC_SHOW_INDICATORS, "View.ToggleIndicators");
+	auto *marginBinding = BindCheckbox(IDC_PAD_INDICATORS, "View.ToggleIndicatorMargin");
+
+	indicatorBinding->GetView().SetOnClicked([=] {
+		indicatorBinding->Write();
+		marginBinding->Read();
+	});
+
+	BindCheckbox(IDC_HWACCEL_SCREENFX, "View.ToggleAccelScreenFX");
+
+	AddHelpEntry(IDC_SHOW_INDICATORS, L"Show indicators",
+		L"Draw on-screen overlays for device status.");
+
+	AddHelpEntry(IDC_PAD_INDICATORS, L"Pad bottom margin to reserve space for indicators",
+		L"Move the display up and reserve space at the bottom of the display for indicators.");
+
+	AddHelpEntry(IDC_HWACCEL_SCREENFX,
+		L"Use hardware acceleration for screen effects",
+		L"Accelerate screen effects like scanlines and color correction with shaders. This requires "
+			L"a shader-capable graphics card and Direct3D 9 or 11 to be enabled in Options."
+	);
+
+	OnDataExchange(false);
+
+	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 class ATUIDialogSysConfigBoot final : public ATUIDialogSysConfigPage {
 public:
 	ATUIDialogSysConfigBoot();
@@ -1595,6 +2339,8 @@ handy to disable auto-unload for some types."
 class ATUIDialogSysConfigKeyboard final : public ATUIDialogSysConfigPage {
 public:
 	ATUIDialogSysConfigKeyboard();
+
+	const char *GetPageTag() const override { return "keyboard"; }
 
 protected:
 	bool OnLoaded() override;
@@ -1718,6 +2464,8 @@ void ATUIDialogSysConfigKeyboard::OnDataExchange(bool write) {
 	if (!write) {
 		mLayoutBinding.Read();
 		mModeBinding.Read();
+		mCopyToCustomBinding.Read();
+		mCustomizeLayoutBinding.Read();
 		mArrowModeBinding.Read();
 		mFunctionKeysBinding.Read();
 		mAllowShiftOnResetBinding.Read();
@@ -1928,6 +2676,8 @@ ATUIDialogConfigureSystem::ATUIDialogConfigureSystem()
 }
 
 void ATUIDialogConfigureSystem::OnPopulatePages() {
+	AddPage(L"Overview", vdmakeunique<ATUIDialogSysConfigOverview>());
+	AddPage(L"Recommendations", vdmakeunique<ATUIDialogSysConfigAssessment>());
 	PushCategory(L"Computer");
 	AddPage(L"System", vdmakeunique<ATUIDialogSysConfigSystem>());
 	AddPage(L"CPU", vdmakeunique<ATUIDialogSysConfigCPU>());
@@ -1948,6 +2698,8 @@ void ATUIDialogConfigureSystem::OnPopulatePages() {
 	AddPage(L"Cassette", vdmakeunique<ATUIDialogSysConfigCassette>());
 	PopCategory();
 	PushCategory(L"Emulator");
+	AddPage(L"Debugger", vdmakeunique<ATUIDialogSysConfigDebugger>());
+	AddPage(L"Display", vdmakeunique<ATUIDialogSysConfigDisplay>());
 	AddPage(L"Ease of use", vdmakeunique<ATUIDialogSysConfigEaseOfUse>());
 	AddPage(L"Window caption", vdmakeunique<ATUIDialogSysConfigCaption>());
 	PopCategory();

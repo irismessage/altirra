@@ -23,6 +23,7 @@
 #include <vd2/system/math.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/system/zip.h>
 #include <at/atcore/checksum.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/media.h>
@@ -33,8 +34,9 @@
 ATLogChannel g_ATLCDiskImage(false, false, "DISKIMAGE", "Disk image load details");
 
 namespace {
-	// The bit cell rate is 1MHz.
-	static const int kBytesPerTrack = 26042;
+	// FM uses 4us bit cells, of which there are clock and data cells.
+	// Each data bit is therefore 8us, and data byte 8*8 = 64us.
+	static const int kBitsPerTrackFM = 26042;
 
 	// Tables for encoding the angular position of each sector. Note that these are
 	// indexed by virtual sector and not physical sector, so they are inverted from
@@ -149,10 +151,11 @@ namespace {
 	};
 
 	struct ATXTrackChunkHeader {
-		enum {
+		enum : uint8 {
 			kTypeSectorData = 0x00,
 			kTypeSectorList = 0x01,
-			kTypeWeakBits = 0x10
+			kTypeWeakBits = 0x10,
+			kTypeExtSectorHeader = 0x11,
 		};
 
 		uint32	mSize;
@@ -188,6 +191,7 @@ public:
 	ATDiskImageFormat GetImageFormat() const override { return mImageFormat; }
 
 	uint64 GetImageChecksum() const override { return mImageChecksum; }
+	std::optional<uint32> GetImageFileCRC() const override { return mImageFileCRC; }
 
 	bool Flush() override;
 
@@ -203,7 +207,7 @@ public:
 	void GetPhysicalSectorInfo(uint32 index, ATDiskPhysicalSectorInfo& info) const override;
 
 	void ReadPhysicalSector(uint32 index, void *data, uint32 len) override;
-	void WritePhysicalSector(uint32 index, const void *data, uint32 len) override;
+	void WritePhysicalSector(uint32 index, const void *data, uint32 len, uint8 fdcStatus = 0xFF) override;
 
 	uint32 GetVirtualSectorCount() const override;
 	void GetVirtualSectorInfo(uint32 index, ATDiskVirtualSectorInfo& info) const override;
@@ -250,6 +254,7 @@ protected:
 	ATDiskTimingMode	mTimingMode = {};
 	ATDiskGeometryInfo	mGeometry = {};
 	uint64	mImageChecksum = 0;
+	std::optional<uint32> mImageFileCRC {};
 
 	VDStringW	mPath;
 
@@ -285,20 +290,22 @@ void ATDiskImage::Init(uint32 sectorCount, uint32 bootSectorCount, uint32 sector
 
 		psi.mOffset		= i < mBootSectorCount ? 128*i : 128*mBootSectorCount + mSectorSize*(i-mBootSectorCount);
 		psi.mDiskOffset= -1;
-		psi.mSize		= i < mBootSectorCount ? 128 : mSectorSize;
+		psi.mImageSize	= i < mBootSectorCount ? 128 : mSectorSize;
+		psi.mPhysicalSize = psi.mImageSize;
 		psi.mbDirty		= true;
 		psi.mbMFM		= mfm;
 		psi.mRotPos		= 0;
 		psi.mFDCStatus	= 0xFF;
 		psi.mWeakDataOffset = -1;
 
-		mImageChecksum += ATComputeZeroBlockChecksum(ATComputeOffsetChecksum(i + 1), psi.mSize);
+		mImageChecksum += ATComputeZeroBlockChecksum(ATComputeOffsetChecksum(i + 1), psi.mImageSize);
 	}
 
 	Reinterleave(kATDiskInterleave_Default);
 
 	mbDirty = true;
 	mbDiskFormatDirty = true;
+	mImageFileCRC.reset();
 
 	mPath = L"(New disk)";
 	mbHasDiskSource = false;
@@ -329,20 +336,22 @@ void ATDiskImage::Init(const ATDiskGeometryInfo& geometry) {
 
 		psi.mOffset		= i < mBootSectorCount ? 128*i : 128*mBootSectorCount + mSectorSize*(i-mBootSectorCount);
 		psi.mDiskOffset= -1;
-		psi.mSize		= i < mBootSectorCount ? 128 : mSectorSize;
+		psi.mImageSize		= i < mBootSectorCount ? 128 : mSectorSize;
+		psi.mPhysicalSize	= psi.mImageSize;
 		psi.mbDirty		= true;
 		psi.mbMFM		= geometry.mbMFM;
 		psi.mRotPos		= 0;
 		psi.mFDCStatus	= 0xFF;
 		psi.mWeakDataOffset = -1;
 
-		mImageChecksum += ATComputeZeroBlockChecksum(ATComputeOffsetChecksum(i + 1), psi.mSize);
+		mImageChecksum += ATComputeZeroBlockChecksum(ATComputeOffsetChecksum(i + 1), psi.mImageSize);
 	}
 
 	Reinterleave(kATDiskInterleave_Default);
 
 	mbDirty = true;
 	mbDiskFormatDirty = true;
+	mImageFileCRC.reset();
 
 	mPath = L"(New disk)";
 	mbHasDiskSource = false;
@@ -359,6 +368,8 @@ void ATDiskImage::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRan
 	sint64 fileSize = stream.Length();
 	const wchar_t *ext = VDFileSplitExt(imagePath);
 
+	mImageFileCRC.reset();
+
 	if (!vdwcsicmp(ext, L".arc")) {
 		LoadARC(stream, origPath);
 	} else if (fileSize <= 65535 * 128 && imagePath && !vdwcsicmp(ext, L".xfd")) {
@@ -371,6 +382,11 @@ void ATDiskImage::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRan
 		sint32 len = VDClampToSint32(stream.Length()) - 16;
 		mImage.resize(len);
 		stream.Read(mImage.data(), len);
+
+		VDCRCChecker crcChecker(VDCRCTable::CRC32);
+		crcChecker.Process(header, 16);
+		crcChecker.Process(mImage.data(), len);
+		mImageFileCRC = crcChecker.CRC();
 
 		mTimingMode = kATDiskTimingMode_Any;
 
@@ -459,14 +475,15 @@ void ATDiskImage::LoadXFD(IVDRandomAccessStream& stream, sint64 fileSize) {
 
 		psi.mOffset		= mSectorSize*i;
 		psi.mDiskOffset= -1;
-		psi.mSize		= mSectorSize;
+		psi.mImageSize		= mSectorSize;
+		psi.mPhysicalSize	= mSectorSize;
 		psi.mFDCStatus	= 0xFF;
 		psi.mRotPos		= 0;
 		psi.mWeakDataOffset = -1;
 		psi.mbDirty		= false;
 		psi.mbMFM		= mfm;
 
-		mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(i + 1), mImage.data() + psi.mOffset, psi.mSize);
+		mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(i + 1), mImage.data() + psi.mOffset, psi.mImageSize);
 	}
 
 	Reinterleave(kATDiskInterleave_Default);
@@ -606,16 +623,17 @@ void ATDiskImage::LoadDCM(IVDRandomAccessStream& stream, uint32 len, const wchar
 			PhysSectorInfo& psi =  mPhysSectors.push_back();
 			psi.mOffset = (uint32)mImage.size();
 			psi.mDiskOffset = -1;
-			psi.mSize = sectorNum <= 3 ? 128 : sectorSize;
+			psi.mImageSize = sectorNum <= 3 ? 128 : sectorSize;
+			psi.mPhysicalSize = psi.mImageSize;
 			psi.mRotPos = 0;
 			psi.mFDCStatus = 0xFF;
 			psi.mWeakDataOffset = -1;
 			psi.mbDirty = false;
 			psi.mbMFM = mfm;
 
-			mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(sectorNum), sectorBuffer, psi.mSize);
+			mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(sectorNum), sectorBuffer, psi.mImageSize);
 
-			mImage.insert(mImage.end(), sectorBuffer, sectorBuffer + psi.mSize);
+			mImage.insert(mImage.end(), sectorBuffer, sectorBuffer + psi.mImageSize);
 
 			// increment sector number if sequential flag is set, else read new sector number
 			if (contentType & 0x80) {
@@ -647,15 +665,16 @@ void ATDiskImage::LoadDCM(IVDRandomAccessStream& stream, uint32 len, const wchar
 			PhysSectorInfo& psi =  mPhysSectors.push_back();
 			psi.mOffset = (uint32)mImage.size();
 			psi.mDiskOffset = -1;
-			psi.mSize = secNum <= 3 ? 128 : mainSectorSize;
+			psi.mImageSize = secNum <= 3 ? 128 : mainSectorSize;
+			psi.mPhysicalSize = psi.mImageSize;
 			psi.mFDCStatus = 0xFF;
 			psi.mWeakDataOffset = -1;
 			psi.mbDirty = false;
 			psi.mbMFM = mfm;
 			psi.mRotPos = 0;
 
-			mImageChecksum += ATComputeZeroBlockChecksum(ATComputeOffsetChecksum(secNum), psi.mSize);
-			mImage.resize(mImage.size() + psi.mSize, 0);
+			mImageChecksum += ATComputeZeroBlockChecksum(ATComputeOffsetChecksum(secNum), psi.mImageSize);
+			mImage.resize(mImage.size() + psi.mImageSize, 0);
 		}
 	}
 
@@ -814,8 +833,9 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 			psi.mFDCStatus = ~sechdr.mFDCStatus | 0xc0;		// purpose of bit 7 is unknown
 			psi.mOffset = (sint32)mImage.size();
 			psi.mDiskOffset = trackBaseOffset + sechdr.mDataOffset;
-			psi.mSize = sechdr.mFDCStatus & 0x10 ? 0 : 128;
-			psi.mRotPos = (float)sechdr.mTimingOffset / (float)kBytesPerTrack;
+			psi.mImageSize = sechdr.mFDCStatus & 0x10 ? 0 : 128;
+			psi.mPhysicalSize = psi.mFDCStatus & 0x04 ? 128 : 256;
+			psi.mRotPos = (float)sechdr.mTimingOffset / (float)kBitsPerTrackFM;
 			psi.mWeakDataOffset = -1;
 			psi.mbDirty = false;
 			psi.mbMFM = isTrackMFM;
@@ -840,12 +860,12 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 				uint32 dataEnd = sechdr.mDataOffset + 128;
 
 				if (sechdr.mDataOffset < sectorDataStart || (dataEnd - sectorDataStart) > sectorDataLen)
-					throw MyError("Invalid protected disk: sector extends outside of sector data region.");
+					throw MyError("Invalid protected disk: track %u, sector %u extends outside of sector data region.", i, sechdr.mIndex);
 
 				const uint8 *srcData = &trackBuf[sechdr.mDataOffset];
 				mImage.insert(mImage.end(), srcData, srcData + 128);
 
-				mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(mVirtSectors.size()), srcData, psi.mSize);
+				mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(mVirtSectors.size()), srcData, psi.mImageSize);
 			}
 		}
 
@@ -859,7 +879,9 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 			ATXTrackChunkHeader ch;
 			memcpy(&ch, &trackBuf[chunkOffset], sizeof ch);
 
-			if (ch.mType == ATXTrackChunkHeader::kTypeWeakBits) {
+			if (ch.mType == ATXTrackChunkHeader::kTypeWeakBits || 
+				ch.mType == ATXTrackChunkHeader::kTypeExtSectorHeader) {
+
 				if (ch.mNum >= trkhdr.mNumSectors)
 					throw MyError("Invalid ATX image: extra track data chunk at %08x has invalid sector number.", (uint32)(trackBaseOffset + chunkOffset));
 
@@ -870,15 +892,24 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 				}
 
 				PhysSectorInfo& psi = psecs[phyIndex].mInfo;
-				uint16 weakOffset = VDFromLE16(ch.mData);
 
-				if (weakOffset < psi.mSize) {
-					psi.mWeakDataOffset = weakOffset;
+				if (ch.mType == ATXTrackChunkHeader::kTypeWeakBits) {
+					uint16 weakOffset = VDFromLE16(ch.mData);
 
-					g_ATLCDiskImage("Sector index %d -> weak offset %d\n"
-						, phyIndex
-						, weakOffset
-						);
+					if (weakOffset < psi.mPhysicalSize) {
+						psi.mWeakDataOffset = weakOffset;
+
+						g_ATLCDiskImage("Sector index %d -> weak offset %d\n"
+							, phyIndex
+							, weakOffset
+							);
+					}
+				} else if (ch.mType == ATXTrackChunkHeader::kTypeExtSectorHeader) {
+					const uint8 secSizeCode = ch.mData & 3;
+
+					if (!(psi.mFDCStatus & 0x04) && secSizeCode >= 2) {
+						psi.mPhysicalSize = 128 << secSizeCode;
+					}
 				}
 			}
 
@@ -975,7 +1006,8 @@ void ATDiskImage::LoadP2(IVDRandomAccessStream& stream, uint32 len, const uint8 
 
 		psi.mOffset		= (128+12)*i+12;
 		psi.mDiskOffset = psi.mOffset + 16;
-		psi.mSize		= 128;
+		psi.mImageSize		= 128;
+		psi.mPhysicalSize	= 128;
 		psi.mFDCStatus	= sectorhdr[1];
 		psi.mRotPos		= 0;
 		psi.mWeakDataOffset = -1;
@@ -983,9 +1015,9 @@ void ATDiskImage::LoadP2(IVDRandomAccessStream& stream, uint32 len, const uint8 
 		psi.mbMFM		= false;
 
 		if (!(psi.mFDCStatus & 0x10)) {
-			psi.mSize = 0;
+			psi.mImageSize = 0;
 		} else {
-			mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(mVirtSectors.size() + 1), &mImage[psi.mDiskOffset], psi.mSize);
+			mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(mVirtSectors.size() + 1), &mImage[psi.mDiskOffset], psi.mImageSize);
 		}
 
 		mVirtSectors.push_back();
@@ -1012,7 +1044,8 @@ void ATDiskImage::LoadP2(IVDRandomAccessStream& stream, uint32 len, const uint8 
 
 				psi.mOffset		= phantomSectorByteOffset+12;
 				psi.mDiskOffset = psi.mOffset + 16;
-				psi.mSize		= 128;
+				psi.mImageSize		= 128;
+				psi.mPhysicalSize	= 128;
 				psi.mFDCStatus	= sectorhdr2[1];
 				psi.mRotPos		= 0;
 				psi.mWeakDataOffset = -1;
@@ -1020,9 +1053,9 @@ void ATDiskImage::LoadP2(IVDRandomAccessStream& stream, uint32 len, const uint8 
 				psi.mbMFM		= false;
 
 				if (!(psi.mFDCStatus & 0x10)) {
-					psi.mSize = 0;
+					psi.mImageSize = 0;
 				} else {
-					mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(mVirtSectors.size()), &mImage[psi.mDiskOffset], psi.mSize);
+					mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(mVirtSectors.size()), &mImage[psi.mDiskOffset], psi.mImageSize);
 				}
 			}
 		}
@@ -1102,7 +1135,8 @@ void ATDiskImage::LoadP3(IVDRandomAccessStream& stream, uint32 len, const uint8 
 
 			psi.mOffset		= phantomSectorByteOffset+12;
 			psi.mDiskOffset = psi.mOffset + 16;
-			psi.mSize		= 128;
+			psi.mImageSize		= 128;
+			psi.mPhysicalSize	= 128;
 			psi.mFDCStatus	= sectorhdr2[1];
 			psi.mRotPos		= 0;
 			psi.mWeakDataOffset = -1;
@@ -1110,9 +1144,9 @@ void ATDiskImage::LoadP3(IVDRandomAccessStream& stream, uint32 len, const uint8 
 			psi.mbMFM		= false;
 
 			if (!(psi.mFDCStatus & 0x10)) {
-				psi.mSize = 0;
+				psi.mImageSize = 0;
 			} else {
-				mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(mVirtSectors.size()), &mImage[psi.mDiskOffset], psi.mSize);
+				mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(mVirtSectors.size()), &mImage[psi.mDiskOffset], psi.mImageSize);
 			}
 		}
 	}
@@ -1214,14 +1248,15 @@ void ATDiskImage::LoadATR(IVDRandomAccessStream& stream, uint32 len, const wchar
 		}
 
 		psi.mDiskOffset = psi.mOffset + 16;
-		psi.mSize		= i < mBootSectorCount ? 128 : mSectorSize;
+		psi.mImageSize		= i < mBootSectorCount ? 128 : mSectorSize;
+		psi.mPhysicalSize	= psi.mImageSize;
 		psi.mFDCStatus	= 0xFF;
 		psi.mRotPos		= interleaveFn(i);
 		psi.mWeakDataOffset = -1;
 		psi.mbDirty		= false;
 		psi.mbMFM		= mGeometry.mbMFM;
 
-		mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(mVirtSectors.size()), &mImage[psi.mOffset], psi.mSize);
+		mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(mVirtSectors.size()), &mImage[psi.mOffset], psi.mImageSize);
 	}
 }
 
@@ -1388,7 +1423,7 @@ bool ATDiskImage::Flush() {
 		// no - write individual sectors
 		for(PhysSectorInfo* psi : dirtySectors) {
 			f.seek(psi->mDiskOffset);
-			f.write(&mImage[psi->mOffset], psi->mSize);
+			f.write(&mImage[psi->mOffset], psi->mImageSize);
 		}
 	} else {
 		// yes - allocate coalescing buffer
@@ -1400,18 +1435,18 @@ bool ATDiskImage::Flush() {
 		while(it != itEnd) {
 			PhysSectorInfo *psi = *it;
 			sint32 writeOffset = psi->mDiskOffset;
-			sint32 writeLen = psi->mSize;
+			sint32 writeLen = psi->mImageSize;
 			
 			f.seek(writeOffset);
 
 			for(;;) {
-				if (wbLevel + psi->mSize > kWriteBufLen) {
+				if (wbLevel + psi->mImageSize > kWriteBufLen) {
 					f.write(writeBuf.data(), wbLevel);
 					wbLevel = 0;
 				}
 
-				memcpy(writeBuf.data() + wbLevel, &mImage[psi->mOffset], psi->mSize);
-				wbLevel += psi->mSize;
+				memcpy(writeBuf.data() + wbLevel, &mImage[psi->mOffset], psi->mImageSize);
+				wbLevel += psi->mImageSize;
 
 				if (++it == itEnd)
 					break;
@@ -1421,7 +1456,7 @@ bool ATDiskImage::Flush() {
 				if (psi->mDiskOffset != writeOffset + writeLen)
 					break;
 
-				writeLen += psi->mSize;
+				writeLen += psi->mImageSize;
 			}
 
 			if (wbLevel) {
@@ -1485,9 +1520,14 @@ void ATDiskImage::Save(const wchar_t *s, ATDiskImageFormat format) {
 			break;
 
 		case kATDiskImageFormat_ATX:
+			if (mSectorSize != 128)
+				throw MyError("Cannot save disk image: disk geometry is not supported.");
+
 			supportPhantoms = true;
 			supportErrors = true;
 			supportWeakSectors = true;
+			supportSectorSize256 = true;
+			supportSectorSizeOther = true;
 			break;
 
 		case kATDiskImageFormat_DCM:
@@ -1530,7 +1570,7 @@ void ATDiskImage::Save(const wchar_t *s, ATDiskImageFormat format) {
 				throw MyError("Cannot save disk image: disk contains weak data sectors.");
 		}
 
-		if (psi.mSize == 256 ? !supportSectorSize256 : (psi.mSize != 128 && !supportSectorSizeOther))
+		if (psi.mPhysicalSize == 256 ? !supportSectorSize256 : (psi.mPhysicalSize != 128 && !supportSectorSizeOther))
 			throw MyError("Cannot save disk image: disk contains an unsupported sector size.");
 	}
 
@@ -1602,15 +1642,24 @@ void ATDiskImage::GetVirtualSectorInfo(uint32 index, ATDiskVirtualSectorInfo& in
 void ATDiskImage::ReadPhysicalSector(uint32 index, void *data, uint32 len) {
 	const PhysSectorInfo& psec = mPhysSectors[index];
 
-	memcpy(data, mImage.data() + psec.mOffset, std::min<uint32>(len, psec.mSize));
+	if (len > psec.mPhysicalSize)
+		len = psec.mPhysicalSize;
+
+	const uint32 copyLen = std::min<uint32>(len, psec.mImageSize);
+	memcpy(data, mImage.data() + psec.mOffset, copyLen);
+
+	if (copyLen < len)
+		memset((char *)data + copyLen, 0, len - copyLen);
 }
 
-void ATDiskImage::WritePhysicalSector(uint32 index, const void *data, uint32 len) {
+void ATDiskImage::WritePhysicalSector(uint32 index, const void *data, uint32 len, uint8 fdcStatus) {
 	PhysSectorInfo& psi = mPhysSectors[index];
 
-	memcpy(mImage.data() + psi.mOffset, data, std::min<uint32>(len, psi.mSize));
+	memcpy(mImage.data() + psi.mOffset, data, std::min<uint32>(len, psi.mImageSize));
 	psi.mbDirty = true;
+	psi.mFDCStatus = fdcStatus;
 	mbDirty = true;
+	mImageFileCRC.reset();
 }
 
 uint32 ATDiskImage::ReadVirtualSector(uint32 index, void *data, uint32 len) {
@@ -1624,11 +1673,16 @@ uint32 ATDiskImage::ReadVirtualSector(uint32 index, void *data, uint32 len) {
 
 	const PhysSectorInfo& psi = mPhysSectors[vsi.mStartPhysSector];
 
-	if (len > psi.mSize)
-		len = psi.mSize;
+	if (len > psi.mPhysicalSize)
+		len = psi.mPhysicalSize;
 
-	if (len)
-		memcpy(data, mImage.data() + psi.mOffset, len);
+	if (len) {
+		const uint32 copyLen = std::min<uint32>(len, psi.mImageSize);
+		memcpy(data, mImage.data() + psi.mOffset, copyLen);
+
+		if (copyLen < len)
+			memset((char *)data + copyLen, 0, len - copyLen);
+	}
 
 	return len;
 }
@@ -1644,12 +1698,13 @@ bool ATDiskImage::WriteVirtualSector(uint32 index, const void *data, uint32 len)
 
 	PhysSectorInfo& psi = mPhysSectors[vsi.mStartPhysSector];
 
-	if (len != psi.mSize)
+	if (len != psi.mImageSize)
 		return false;
 
 	memcpy(mImage.data() + psi.mOffset, data, len);
 	psi.mbDirty = true;
 	mbDirty = true;
+	mImageFileCRC.reset();
 	return true;
 }
 
@@ -1666,6 +1721,7 @@ void ATDiskImage::Resize(uint32 newSectors) {
 		// Mark the image dirty.
 		mbDirty = true;
 		mbDiskFormatDirty = true;
+		mImageFileCRC.reset();
 
 		// Remove the extra virtual sectors.
 		mVirtSectors.resize(newSectors);
@@ -1707,7 +1763,7 @@ void ATDiskImage::Resize(uint32 newSectors) {
 		// Extract spans from all remaining physical sectors.
 		for(uint32 i = 0; i < newPhys; ++i) {
 			const auto& ps = mPhysSectors[i];
-			imageSpans[i] = { ps.mOffset, ps.mOffset + ps.mSize };
+			imageSpans[i] = { ps.mOffset, ps.mOffset + ps.mImageSize };
 		}
 
 		// Sort spans by ascending starting range.
@@ -1775,7 +1831,8 @@ void ATDiskImage::Resize(uint32 newSectors) {
 					ps.mFDCStatus = 0xFF;
 					ps.mOffset = imageOffset + mSectorSize * i;
 					ps.mRotPos = 0;
-					ps.mSize = mSectorSize;
+					ps.mImageSize = mSectorSize;
+					ps.mPhysicalSize = mSectorSize;
 					ps.mWeakDataOffset = -1;
 				}
 		
@@ -1811,6 +1868,7 @@ void ATDiskImage::Resize(uint32 newSectors) {
 				// Mark the disk dirty.
 				mbDirty = true;
 				mbDiskFormatDirty = true;
+				mImageFileCRC.reset();
 			} catch(...) {
 				mPhysSectors.resize(newPhysStart);
 				throw;
@@ -1836,7 +1894,7 @@ void ATDiskImage::FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskV
 			for(uint32 j=0; j<vsi.mNumPhysSectors; ++j) {
 				const auto& psi = psecs[vsi.mStartPhysSector + j];
 
-				totalImageSize += psi.mSize;
+				totalImageSize += psi.mImageSize;
 			}
 
 			totalPhysSecs += vsi.mNumPhysSectors;
@@ -1846,7 +1904,7 @@ void ATDiskImage::FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskV
 			for(uint32 j=0; j<vsi.mNumPhysSectors; ++j) {
 				const auto& psi = mPhysSectors[vsi.mStartPhysSector + j];
 
-				totalImageSize += psi.mSize;
+				totalImageSize += psi.mImageSize;
 			}
 
 			totalPhysSecs += vsi.mNumPhysSectors;
@@ -1894,10 +1952,10 @@ void ATDiskImage::FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskV
 			*dstPhys = *srcPhys;
 			dstPhys->mOffset = 0;
 
-			if (srcPhys->mSize > 0) {
+			if (srcPhys->mImageSize > 0) {
 				dstPhys->mOffset = (uint32)(dstImage - dstImageBase);
-				memcpy(dstImage, srcImageBase + srcPhys->mOffset, srcPhys->mSize);
-				dstImage += srcPhys->mSize;
+				memcpy(dstImage, srcImageBase + srcPhys->mOffset, srcPhys->mImageSize);
+				dstImage += srcPhys->mImageSize;
 			}
 
 			++dstPhys;
@@ -1915,6 +1973,7 @@ void ATDiskImage::FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskV
 
 	mbDirty = true;
 	mbDiskFormatDirty = true;
+	mImageFileCRC.reset();
 
 	// if we overwrote track 0 / sector 1, force the disk geometry MFM flag.
 	if (vsIndexStart == 0 && totalVirtSecs > 0) {
@@ -2031,10 +2090,13 @@ void ATDiskImage::ComputeGeometry() {
 
 void ATDiskImage::SaveATR(VDFile& f, PhysSectors& phySecs) {
 	// compute total sector sizes
-	uint32 totalSize = 0;
-	for(const VirtSectorInfo& vsi : mVirtSectors) {
+	uint32 totalSize = mBootSectorCount * 128;
+	const uint32 numVsecs = (uint32)mVirtSectors.size();
+	for(uint32 vsIndex = mBootSectorCount; vsIndex < numVsecs; ++vsIndex) {
+		const VirtSectorInfo& vsi = mVirtSectors[vsIndex];
+
 		const PhysSectorInfo& psi = phySecs[vsi.mStartPhysSector];
-		totalSize += psi.mSize;
+		totalSize += psi.mImageSize;
 	}
 
 	// create ATR header
@@ -2049,34 +2111,59 @@ void ATDiskImage::SaveATR(VDFile& f, PhysSectors& phySecs) {
 
 	uint32 diskOffset = 16;
 
-	for(const VirtSectorInfo& vsi : mVirtSectors) {
+	vdblock<char> sectorBuffer;
+
+	for(uint32 vsIndex = 0; vsIndex < numVsecs; ++vsIndex) {
+		const VirtSectorInfo& vsi = mVirtSectors[vsIndex];
 		PhysSectorInfo& psi = phySecs[vsi.mStartPhysSector];
 
-		f.write(&mImage[psi.mOffset], psi.mSize);
+		const uint32 writeSize = vsIndex < mBootSectorCount ? 128 : mSectorSize;
+
+		if (psi.mImageSize <= writeSize) {
+			f.write(&mImage[psi.mOffset], psi.mImageSize);
+		} else {
+			sectorBuffer.resize(writeSize);
+
+			const uint32 copyLen = std::min<uint32>(writeSize, psi.mImageSize);
+			if (copyLen)
+				memcpy(sectorBuffer.data(), &mImage[psi.mOffset], copyLen);
+
+			if (copyLen < writeSize)
+				memset(sectorBuffer.data() + copyLen, 0, writeSize - copyLen);
+		}
 
 		psi.mDiskOffset = diskOffset;
-		diskOffset += psi.mSize;
+		diskOffset += psi.mImageSize;
 	}
 }
 
 void ATDiskImage::SaveXFD(VDFile& f, PhysSectors& phySecs) {
 	uint32 diskOffset = 0;
 
+	vdblock<char> sectorBuffer;
+
 	for(const VirtSectorInfo& vsi : mVirtSectors) {
 		PhysSectorInfo& psi = phySecs[vsi.mStartPhysSector];
 
-		f.write(&mImage[psi.mOffset], psi.mSize);
-
 		// If we have a 128 byte boot sector on a double-density disk, we must pad
 		// the sectors to 256 bytes.
-		if (mSectorSize == 256 && psi.mSize < 256) {
-			char zeroes[256] = {};
 
-			f.write(zeroes, 256 - psi.mSize);
-		}
+		if (psi.mImageSize < mSectorSize) {
+			sectorBuffer.resize(mSectorSize);
+
+			const uint32 copyLen = std::min<uint32>(mSectorSize, psi.mImageSize);
+			if (copyLen)
+				memcpy(sectorBuffer.data(), &mImage[psi.mOffset], copyLen);
+
+			if (copyLen < mSectorSize)
+				memset(sectorBuffer.data() + copyLen, 0, mSectorSize - copyLen);
+
+			f.write(sectorBuffer.data(), mSectorSize);
+		} else
+			f.write(&mImage[psi.mOffset], mSectorSize);
 
 		psi.mDiskOffset = diskOffset;
-		diskOffset += psi.mSize;
+		diskOffset += mSectorSize;
 	}
 }
 
@@ -2301,8 +2388,9 @@ void ATDiskImage::SaveDCM(VDFile& f, PhysSectors& phySecs) {
 
 		// copy sector data into sector buffer, since we need to pad 128b
 		// to 256b in DD mode
-		memcpy(nextBuf, &mImage[psi.mOffset], psi.mSize);
-		memset(nextBuf + psi.mSize, 0, sizeof(buf2) - psi.mSize);
+		const uint32 copyLen = std::min<uint32>(mSectorSize, psi.mImageSize);
+		memcpy(nextBuf, &mImage[psi.mOffset], copyLen);
+		memset(nextBuf + copyLen, 0, sizeof(buf2) - copyLen);
 
 		// check for an all zero sector
 		bool allZero = true;
@@ -2565,12 +2653,12 @@ void ATDiskImage::SaveATX(VDFile& f, PhysSectors& phySecs) {
 
 						sechdr.mIndex = i + 1;
 						sechdr.mFDCStatus = ~psi.mFDCStatus & 0x3F;
-						sechdr.mTimingOffset = (uint32)((psi.mRotPos - floorf(psi.mRotPos)) * kBytesPerTrack);
-						if (sechdr.mTimingOffset >= kBytesPerTrack)
-							sechdr.mTimingOffset -= kBytesPerTrack;
+						sechdr.mTimingOffset = (uint32)((psi.mRotPos - floorf(psi.mRotPos)) * kBitsPerTrackFM);
+						if (sechdr.mTimingOffset >= kBitsPerTrackFM)
+							sechdr.mTimingOffset -= kBitsPerTrackFM;
 
 						sechdr.mDataOffset = dataOffset;
-						dataOffset += psi.mSize;
+						dataOffset += psi.mFDCStatus & 0x10 ? 128 : 0;
 
 						if (psi.mWeakDataOffset >= 0) {
 							sechdr.mFDCStatus |= 0x40;
@@ -2581,6 +2669,17 @@ void ATDiskImage::SaveATX(VDFile& f, PhysSectors& phySecs) {
 							xhdr.mType = xhdr.kTypeWeakBits;
 							xhdr.mNum = (uint8)(sechdrs.size() - 1);
 							xhdr.mData = (uint16)psi.mWeakDataOffset;
+						}
+
+						// if the physical sector is larger than 256 bytes, write an extended
+						// sector header entry so the real size is captured
+						if (psi.mPhysicalSize > 256) {
+							ATXTrackChunkHeader& xhdr = xhdrs.push_back();
+
+							xhdr.mSize = sizeof(xhdr);
+							xhdr.mType = xhdr.kTypeExtSectorHeader;
+							xhdr.mNum = (uint8)(sechdrs.size() - 1);
+							xhdr.mData = psi.mPhysicalSize <= 512 ? 2 : 3;							
 						}
 
 						psecs.push_back(&psi);
@@ -2656,8 +2755,17 @@ void ATDiskImage::SaveATX(VDFile& f, PhysSectors& phySecs) {
 
 			psi.mDiskOffset = trackChunkBase + sechdr.mDataOffset;
 
-			if (psi.mSize)
-				f.write(&mImage[psi.mOffset], psi.mSize);
+			if (psi.mFDCStatus & 0x10) {
+				if (psi.mImageSize < 128) {
+					char buf[128] = {0};
+
+					if (psi.mImageSize)
+						memcpy(buf, &mImage[psi.mOffset], psi.mImageSize);
+
+					f.write(buf, 128);
+				} else
+					f.write(&mImage[psi.mOffset], 128);
+			}
 		}
 
 		// write extra sector data

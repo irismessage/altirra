@@ -752,11 +752,11 @@ X_OPCODE_BEGIN(ROL)
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(ROR)
-	{ 0x4A, kModeImp },
-	{ 0x46, kModeZp },
-	{ 0x56, kModeZpX },
-	{ 0x4E, kModeAbs },
-	{ 0x5E, kModeAbsX },
+	{ 0x6A, kModeImp },
+	{ 0x66, kModeZp },
+	{ 0x76, kModeZpX },
+	{ 0x6E, kModeAbs },
+	{ 0x7E, kModeAbsX },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(RTI)

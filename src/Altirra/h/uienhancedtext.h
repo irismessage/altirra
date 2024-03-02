@@ -45,7 +45,7 @@ public:
 	virtual bool OnKeyDown(uint32 keyCode) = 0;
 	virtual bool OnKeyUp(uint32 keyCode) = 0;
 
-	virtual void Paste(const char *s, size_t len) = 0;
+	virtual void Paste(const wchar_t *s, size_t len) = 0;
 
 	virtual void Update(bool forceInvalidate) = 0;
 };

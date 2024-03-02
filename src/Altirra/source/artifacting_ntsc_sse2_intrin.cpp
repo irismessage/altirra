@@ -18,6 +18,156 @@
 
 #include <stdafx.h>
 #include <intrin.h>
+#include "artifacting.h"
+
+#if defined(VD_COMPILER_MSVC) && (defined(VD_CPU_X86) || defined(VD_CPU_X64))
+bool ATArtifactingEngine::ArtifactNTSC_SSE2(uint32 *dst0, const uint8 *src0, uint32 num7MHzPixels) {
+	// The max we support is 456 pixels, the number of 7MHz cycles per scanline.
+	static constexpr uint32_t kMaxPixels = 456;
+
+	if (num7MHzPixels > kMaxPixels) {
+		VDASSERT(false);
+		return false;
+	}
+
+	// For simplicity, we require 8-pixel alignment.
+	if (num7MHzPixels & 7) {
+		VDASSERT(false);
+		return false;
+	}
+
+	alignas(16) union {
+		uint8 b[(kMaxPixels + 15 + 32) & ~15];
+		sint8 sb[(kMaxPixels + 15 + 32) & ~15];
+		__m128i v[(kMaxPixels + 15 + 32) >> 4];
+	} intensity, luma;
+
+	const uint8 *VDRESTRICT src = src0;
+	const __m128i *VDRESTRICT src16 = (const __m128i *)src;
+	const uint32_t n16 = (num7MHzPixels + 15) >> 4;
+	__m128i x0Fb = _mm_set1_epi8(0x0F);
+	for(uint32_t i=0; i<n16; ++i) {
+		intensity.v[i + 1] = _mm_and_si128(src16[i], x0Fb);
+	}
+
+	// splat first valid pixel backward
+	intensity.v[0] = _mm_shuffle_epi32(_mm_shufflelo_epi16(_mm_unpacklo_epi8(intensity.v[1], intensity.v[1]), 0), 0);
+
+	// splat partial last oword if necessary
+	if (num7MHzPixels & 15) {
+		__m128i v = intensity.v[n16];
+
+		*(__m128 *)&intensity.v[n16] = _mm_movelh_ps(_mm_castsi128_ps(v), _mm_castsi128_ps(_mm_shufflelo_epi16(_mm_unpackhi_epi8(v, v), 0)));
+	}
+
+	// splat final value
+	intensity.v[n16+1] = _mm_shuffle_epi32(_mm_shufflehi_epi16(_mm_unpackhi_epi8(intensity.v[n16+1], intensity.v[n16+1]), 0xFF), 0xFF);
+
+	__m128i phaseInvert = _mm_set1_epi16((short)0xFF00);
+	__m128i inv = _mm_cmpeq_epi8(phaseInvert, phaseInvert);
+	__m128i zero = _mm_setzero_si128();
+	__m128i xFEb = _mm_set1_epi8(-2);
+	__m128i hasArtifacting = zero;
+	for(uint32 i=0; i<n16; ++i) {
+		__m128i v0 = intensity.v[i];
+		__m128i v1 = intensity.v[i+1];
+		__m128i v2 = intensity.v[i+2];
+
+		__m128i x0 = _mm_or_si128(_mm_srli_si128(v0, 15), _mm_slli_si128(v1,1));
+		__m128i x1 = v1;
+		__m128i x2 = _mm_or_si128(_mm_srli_si128(v1, 1), _mm_slli_si128(v2,15));
+
+		// compute artifacting strength as deviation from range of neighbors
+		__m128i artifactSignal = _mm_sub_epi8(_mm_subs_epu8(x1, _mm_max_epu8(x0, x2)), _mm_subs_epu8(_mm_min_epu8(x0, x2), x1));
+
+		// negate every other pixel
+		artifactSignal = _mm_sub_epi8(_mm_xor_si128(artifactSignal, phaseInvert), phaseInvert);
+
+		hasArtifacting = _mm_or_si128(hasArtifacting, artifactSignal);
+
+		intensity.v[i] = artifactSignal;
+
+		// compute averaged luma
+		__m128i avg = _mm_avg_epu8(_mm_srli_epi16(_mm_and_si128(_mm_add_epi8(x0, x2), xFEb), 1), x1);
+
+		// compute artifacting mask
+		__m128i noArtifactingMask = _mm_cmpeq_epi8(artifactSignal, zero);
+
+		// select averaged or non-averaged luma based on artifacting presence
+		luma.v[i] = _mm_or_si128(_mm_and_si128(x1, noArtifactingMask), _mm_andnot_si128(noArtifactingMask, avg));
+	}
+
+	// check if there was any artifacting
+	if (_mm_movemask_epi8(_mm_cmpeq_epi8(hasArtifacting, zero)) == 0xFFFF)
+		return false;
+
+	if (mbEnableColorCorrection || mbGammaIdentity || mbBypassOutputCorrection) {
+		{
+			uint32 *VDRESTRICT dst = dst0;
+
+			for(uint32 x=0; x<num7MHzPixels; ++x) {
+				uint8 p = src[x];
+				int art = intensity.sb[x]; 
+
+				if (!art) {
+					*dst++ = mPalette[p];
+				} else {
+					int c = p >> 4;
+			
+					__m128i chroma = _mm_loadu_si64(&mChromaVectors[c][0]);
+					int y = mLumaRamp[luma.b[x]];
+
+					__m128i color = _mm_adds_epi16(chroma, _mm_shufflelo_epi16(_mm_cvtsi32_si128(y), 0));
+
+					color = _mm_adds_epi16(color, _mm_loadl_epi64((const __m128i *)&mArtifactRamp[art + 15]));
+					color = _mm_srai_epi16(color, 6);
+					color = _mm_packus_epi16(color, color);
+
+					*dst++ = _mm_cvtsi128_si32(color);
+				}
+			}
+		}
+
+		if (mbEnableColorCorrection && !mbBypassOutputCorrection)
+			ColorCorrect((uint8 *)dst0, N);
+	} else {
+		const __m128i xFFw = _mm_set1_epi16(255);
+		uint32 *VDRESTRICT dst = dst0;
+
+		for(uint32 x=0; x<num7MHzPixels; ++x) {
+			uint8 p = src[x];
+			int art = intensity.sb[x]; 
+
+			if (!art) {
+				*dst = mPalette[p];
+			} else {
+				int c = p >> 4;
+			
+				__m128i chroma = _mm_loadu_si64(&mChromaVectors[c][0]);
+				int y = mLumaRamp[luma.b[x]];
+
+				__m128i color = _mm_adds_epi16(chroma, _mm_shufflelo_epi16(_mm_cvtsi32_si128(y), 0));
+
+				color = _mm_adds_epi16(color, _mm_loadl_epi64((const __m128i *)&mArtifactRamp[art + 15]));
+				color = _mm_srai_epi16(color, 6);
+				color = _mm_min_epi16(_mm_max_epi16(color, zero), xFFw);
+
+				uint8_t *dst8 = (uint8_t *)dst;
+				
+				dst8[0] = mGammaTable[(unsigned)_mm_extract_epi16(color, 0)];
+				dst8[1] = mGammaTable[(unsigned)_mm_extract_epi16(color, 1)];
+				dst8[2] = mGammaTable[(unsigned)_mm_extract_epi16(color, 2)];
+				dst8[3] = 0;
+			}
+
+			++dst;
+		}
+	}
+
+	return true;
+}
+
+#endif
 
 #if defined(VD_COMPILER_MSVC) && defined(VD_CPU_AMD64)
 

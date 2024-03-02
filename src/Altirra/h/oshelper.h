@@ -18,8 +18,8 @@ bool ATLoadImageResource(uint32 id, VDPixmapBuffer& buf);
 
 void ATFileSetReadOnlyAttribute(const wchar_t *path, bool readOnly);
 
-void ATCopyFrameToClipboard(void *hwnd, const VDPixmap& px);
-void ATSaveFrame(void *hwnd, const VDPixmap& px, const wchar_t *filename);
+void ATCopyFrameToClipboard(const VDPixmap& px);
+void ATSaveFrame(const VDPixmap& px, const wchar_t *filename);
 
 void ATCopyTextToClipboard(void *hwnd, const char *s);
 void ATCopyTextToClipboard(void *hwnd, const wchar_t *s);

@@ -1,3 +1,19 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2008-2018 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #include <stdafx.h>
 #include <at/atui/uicontainer.h>
 #include <at/atui/uimanager.h>
@@ -257,4 +273,32 @@ void ATUIContainer::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 void ATUIContainer::OnSetFocus() {
 	if (!mWidgets.empty())
 		mWidgets.front()->Focus();
+}
+
+ATUIWidget *ATUIContainer::DragHitTest(vdpoint32 pt) {
+	if (!mbVisible || !mArea.contains(pt))
+		return NULL;
+
+	pt.x -= mArea.left;
+	pt.y -= mArea.top;
+
+	if (mClientArea.contains(pt)) {
+		pt.x -= mClientArea.left;
+		pt.y -= mClientArea.top;
+		pt.x += mClientOrigin.x;
+		pt.y += mClientOrigin.y;
+
+		for(Widgets::const_reverse_iterator it(mWidgets.rbegin()), itEnd(mWidgets.rend());
+			it != itEnd;
+			++it)
+		{
+			ATUIWidget *w = *it;
+
+			ATUIWidget *r = w->DragHitTest(pt);
+			if (r)
+				return r;
+		}
+	}
+
+	return mbDropTarget ? this : nullptr;
 }

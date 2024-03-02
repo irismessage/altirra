@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <richedit.h>
 #include <commctrl.h>
+#include <tom.h>
 
 #include <vd2/system/w32assist.h>
 #include <vd2/system/strutil.h>
@@ -14,6 +15,8 @@
 #include <vd2/Kasumi/resample.h>
 #include <vd2/Riza/bitmap.h>
 #include <at/atnativeui/uiproxies.h>
+
+#pragma comment(lib, "oleaut32")
 
 namespace {
 	union AlphaBitmapHeader {
@@ -2228,6 +2231,7 @@ VDUIProxyRichEditControl::VDUIProxyRichEditControl() {
 }
 
 VDUIProxyRichEditControl::~VDUIProxyRichEditControl() {
+	Detach();
 }
 
 void VDUIProxyRichEditControl::AppendEscapedRTF(VDStringA& buf, const wchar_t *text) {
@@ -2334,11 +2338,42 @@ void VDUIProxyRichEditControl::SetPlainTextMode() {
 		SendMessage(mhwnd, EM_SETTEXTMODE, TM_RICHTEXT, 0);
 }
 
+void VDUIProxyRichEditControl::DisableCaret() {
+	if (mCaretDisabled)
+		return;
+
+	mCaretDisabled = true;
+
+	if (mhwnd) {
+		LRESULT mask = SendMessage(mhwnd, EM_GETEVENTMASK, 0, 0);
+		SendMessage(mhwnd, EM_SETEVENTMASK, 0, mask | ENM_SELCHANGE);
+		InitSubclass();
+
+		// check if the window has the focus -- if so, hide the caret
+		// immediately
+		if (::GetFocus() == mhwnd)
+			HideCaret(mhwnd);
+	}
+}
+
+void VDUIProxyRichEditControl::DisableSelectOnFocus() {
+	if (mhwnd)
+		SendMessage(mhwnd, EM_SETOPTIONS, ECOOP_OR, ECO_SAVESEL);
+}
+
 void VDUIProxyRichEditControl::SetOnTextChanged(vdfunction<void()> fn) {
 	mpOnTextChanged = std::move(fn);
 
-	if (mhwnd)
-		SendMessage(mhwnd, EM_SETEVENTMASK, 0, ENM_CHANGE);
+	if (mhwnd) {
+		LRESULT mask = SendMessage(mhwnd, EM_GETEVENTMASK, 0, 0);
+		SendMessage(mhwnd, EM_SETEVENTMASK, 0, mask | ENM_CHANGE);
+	}
+}
+
+void VDUIProxyRichEditControl::SetOnLinkSelected(vdfunction<bool(const wchar_t *)> fn) {
+	mpOnLinkSelected = std::move(fn);
+
+	UpdateLinkEnableStatus();
 }
 
 void VDUIProxyRichEditControl::UpdateMargins(sint32 xpad, sint32 ypad) {
@@ -2350,6 +2385,39 @@ void VDUIProxyRichEditControl::UpdateMargins(sint32 xpad, sint32 ypad) {
 	}
 }
 
+void VDUIProxyRichEditControl::Attach(VDZHWND hwnd) {
+	VDUIProxyControl::Attach(hwnd);
+
+	if (mhwnd && !mpTextDoc) {
+		vdrefptr<IUnknown> pUnk;
+		SendMessage(mhwnd, EM_GETOLEINTERFACE, 0, (LPARAM)~pUnk);
+
+		if (pUnk) {
+			pUnk->QueryInterface<ITextDocument>(&mpTextDoc);
+		}
+	}
+
+	UpdateLinkEnableStatus();
+
+	if (mCaretDisabled)
+		InitSubclass();
+}
+
+void VDUIProxyRichEditControl::Detach() {
+	if (mSubclassed) {
+		mSubclassed = false;
+
+		RemoveWindowSubclass(mhwnd, StaticOnSubclassProc, (UINT_PTR)this);
+	}
+
+	if (mpTextDoc) {
+		mpTextDoc->Release();
+		mpTextDoc = nullptr;
+	}
+
+	VDUIProxyControl::Detach();
+}
+
 VDZLRESULT VDUIProxyRichEditControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
 	if (HIWORD(wParam) == EN_CHANGE) {
 		if (mpOnTextChanged)
@@ -2358,6 +2426,67 @@ VDZLRESULT VDUIProxyRichEditControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM l
 
 	return 0;
 }
+
+VDZLRESULT VDUIProxyRichEditControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
+	const auto& hdr = *(const NMHDR *)lParam;
+
+	if (hdr.code == EN_LINK) {
+		const ENLINK& link = *(const ENLINK *)lParam;
+		if (mpOnLinkSelected && link.msg == WM_LBUTTONDOWN) {
+
+			struct AutoBSTR {
+				BSTR p = nullptr;
+
+				~AutoBSTR() { SysFreeString(p); }
+			};
+
+			vdrefptr<ITextRange> range;
+			AutoBSTR linkText;
+			if (SUCCEEDED(mpTextDoc->Range(link.chrg.cpMin, link.chrg.cpMax, ~range))) {
+				range->GetText(&linkText.p);
+			}
+
+			if (mpOnLinkSelected && mpOnLinkSelected(linkText.p ? linkText.p : L""))
+				return 1;
+		}
+	} else if (hdr.code == EN_SELCHANGE) {
+		if (mCaretDisabled)
+			HideCaret(mhwnd);
+	}
+	return 0;
+}
+
+VDZLRESULT VDZCALLBACK VDUIProxyRichEditControl::StaticOnSubclassProc(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam, VDZUINT_PTR uIdSubclass, VDZDWORD_PTR dwRefData) {
+	return ((VDUIProxyRichEditControl *)uIdSubclass)->OnSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+VDZLRESULT VDUIProxyRichEditControl::OnSubclassProc(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) {
+	if (mCaretDisabled) {
+		if (msg == WM_SETFOCUS) {
+			LRESULT lr = DefSubclassProc(hwnd, msg, wParam, lParam);
+			HideCaret(hwnd);
+			return lr;
+		}
+	}
+
+	return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+void VDUIProxyRichEditControl::UpdateLinkEnableStatus() {
+	if (mhwnd) {
+		LRESULT mask = SendMessage(mhwnd, EM_GETEVENTMASK, 0, 0);
+		SendMessage(mhwnd, EM_SETEVENTMASK, 0, mpOnLinkSelected ? mask | ENM_LINK : mask & ~ENM_LINK);
+	}
+}
+
+void VDUIProxyRichEditControl::InitSubclass() {
+	if (mSubclassed || true)
+		return;
+
+	mSubclassed = true;
+	SetWindowSubclass(mhwnd, StaticOnSubclassProc, (UINT_PTR)this, (DWORD_PTR)nullptr);
+}
+
 
 /////////////////////////////////////////////////////////////////////////////
 
@@ -2601,6 +2730,29 @@ VDZLRESULT VDUIProxyToolbarControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lPa
 			mpOnClicked(tbhdr.iItem);
 
 		return TBDDRET_DEFAULT;
+	}
+
+	return 0;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+VDUIProxySysLinkControl::VDUIProxySysLinkControl() {
+}
+
+VDUIProxySysLinkControl::~VDUIProxySysLinkControl() {
+}
+
+void VDUIProxySysLinkControl::SetOnClicked(vdfunction<void()> fn) {
+	mpOnClicked = std::move(fn);
+}
+
+VDZLRESULT VDUIProxySysLinkControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
+	const NMHDR& hdr = *(const NMHDR *)lParam;
+
+	if (hdr.code == NM_CLICK) {
+		if (mpOnClicked)
+			mpOnClicked();
 	}
 
 	return 0;

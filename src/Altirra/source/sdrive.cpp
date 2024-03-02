@@ -70,7 +70,7 @@ bool ATSDriveEmulator::SetSettings(const ATPropertySet& settings) {
 }
 
 void ATSDriveEmulator::Init() {
-	mDeviceParent.Init(IATBlockDevice::kTypeID, "harddisk", L"SD Card Bus");
+	mDeviceParent.Init(IATBlockDevice::kTypeID, "harddisk", L"SD Card Bus", "sdbus", this);
 	mDeviceParent.SetOnAttach([this] { mpDisk = mDeviceParent.GetChild<IATBlockDevice>(); });
 	mDeviceParent.SetOnDetach([this] { mpDisk = nullptr; });
 }

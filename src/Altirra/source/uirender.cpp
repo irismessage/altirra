@@ -518,6 +518,10 @@ public:
 	int AddRef() { return vdrefcount::AddRef(); }
 	int Release() { return vdrefcount::Release(); }
 
+	bool IsVisible() const;
+	bool SetVisible() const;
+	void SetVisible(bool visible);
+
 	void SetStatusFlags(uint32 flags) { mStatusFlags |= flags; mStickyStatusFlags |= flags; }
 	void ResetStatusFlags(uint32 flags) { mStatusFlags &= ~flags; }
 	void PulseStatusFlags(uint32 flags) { mStickyStatusFlags |= flags; }
@@ -652,6 +656,7 @@ protected:
 	int		mLEDFontCellAscent = 0;
 	vdrefptr<IVDDisplayFont> mpLEDFont;
 
+	vdrefptr<ATUIContainer> mpContainer;
 	vdrefptr<ATUILabel> mpDiskDriveIndicatorLabels[15];
 	vdrefptr<ATUILabel> mpFpsLabel;
 	vdrefptr<ATUILabel> mpStatusMessageLabel;
@@ -704,6 +709,10 @@ ATUIRenderer::ATUIRenderer() {
 
 	for(int i=0; i<8; ++i)
 		mWatchedValueLens[i] = -1;
+
+	mpContainer = new ATUIContainer;
+	mpContainer->SetDockMode(kATUIDockMode_Fill);
+	mpContainer->SetHitTransparent(true);
 
 	for(int i=0; i<15; ++i) {
 		ATUILabel *label = new ATUILabel;
@@ -814,7 +823,7 @@ ATUIRenderer::ATUIRenderer() {
 	mpHoverTip->SetTextColor(0);
 	mpHoverTip->SetFillColor(0xffffe1);
 	mpHoverTip->SetBorderColor(0);
-	mpHoverTip->SetTextOffset(2, 2);
+	mpHoverTip->SetTextOffset(4, 4);
 
 	static const wchar_t *const kHeldButtonLabels[]={
 		L"Start",
@@ -841,6 +850,14 @@ ATUIRenderer::ATUIRenderer() {
 }
 
 ATUIRenderer::~ATUIRenderer() {
+}
+
+bool ATUIRenderer::IsVisible() const {
+	return mpContainer->IsVisible();
+}
+
+void ATUIRenderer::SetVisible(bool visible) {
+	mpContainer->SetVisible(visible);
 }
 
 void ATUIRenderer::SetCyclesPerSecond(double rate) {
@@ -1167,7 +1184,9 @@ void ATUIRenderer::SetPaused(bool paused) {
 
 void ATUIRenderer::SetUIManager(ATUIManager *m) {
 	if (m) {
-		ATUIContainer *c = m->GetMainWindow();
+		m->GetMainWindow()->AddChild(mpContainer);
+
+		ATUIContainer *c = mpContainer;
 
 		for(int i = 14; i >= 0; --i)
 			c->AddChild(mpDiskDriveIndicatorLabels[i]);
@@ -1434,7 +1453,7 @@ void ATUIRenderer::Update() {
 }
 
 sint32 ATUIRenderer::GetIndicatorSafeHeight() const {
-	return mIndicatorSafeHeight;
+	return mpContainer->IsVisible() ? mIndicatorSafeHeight : 0;
 }
 
 void ATUIRenderer::AddIndicatorSafeHeightChangedHandler(const vdfunction<void()> *pfn) {

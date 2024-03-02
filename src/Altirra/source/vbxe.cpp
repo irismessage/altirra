@@ -1162,7 +1162,7 @@ void ATVBXEEmulator::BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const 
 				uint8 ctl = VBXE_FETCH(mXdlAddr++);
 				uint8 pri = VBXE_FETCH(mXdlAddr++);
 
-				mOvWidth = ((ctl & 3) == 3) ? kOvWidth_Wide : (OvWidth)(ctl & 3);
+				mOvWidth = ((ctl & 3) == 3) ? kOvWidth_Narrow : (OvWidth)(ctl & 3);
 				mPfPaletteIndex = ctl >> 6;
 				mOvPaletteIndex = (ctl >> 4) & 3;
 				mpPfPalette = mPalette[mPfPaletteIndex];

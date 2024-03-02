@@ -46,18 +46,23 @@ void ATArtifactBlendExchange_NEON(uint32 *dst, uint32 *blendDst, uint32 n) {
 	}
 }
 
-void ATArtifactBlendScanlines_NEON(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n) {
+void ATArtifactBlendScanlines_NEON(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n, float intensity) {
 	uint8x16_t *VDRESTRICT dst = (uint8x16_t *)dst0;
 	const uint8x16_t *VDRESTRICT src1 = (const uint8x16_t *)src10;
 	const uint8x16_t *VDRESTRICT src2 = (const uint8x16_t *)src20;
 	const uint32 n4 = n >> 2;
 	const uint8x16_t zero = vmovq_n_u8(0);
 
+	const uint16x4_t scale = vdup_lane_u8(vreinterpret_u8_u32(vcvtn_u32_f32(vmov_n_f32(intensity * 128.0f))), 0);
+
 	for(uint32 i=0; i<n4; ++i) {
 		const uint8x16_t prev = *src1++;
 		const uint8x16_t next = *src2++;
 		uint8x16_t r = vrhaddq_u8(prev, next);
 
-		*dst++ = vrshrq_n_u8(r, 2);
+		uint8x8_t rlo = vrshrn_n_u16(vmull_u8(vget_low_u8(r), scale), 7);
+		uint8x8_t rhi = vrshrn_n_u16(vmull_u8(vget_high_u8(r), scale), 7);
+
+		*dst++ = vcombine_u8(rlo, rhi);
 	}
 }

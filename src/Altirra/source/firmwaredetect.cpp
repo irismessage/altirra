@@ -89,7 +89,7 @@ bool ATFirmwareAutodetect(const void *data, uint32 len, ATFirmwareInfo& info, AT
 	if (!ATFirmwareAutodetectCheckSize(len))
 		return false;
 
-	VDCRCChecker crcChecker(VDCRCChecker::kCRC32);
+	VDCRCChecker crcChecker(VDCRCTable::CRC32);
 	crcChecker.Process(data, len);
 	const uint32 crc32 = crcChecker.CRC();
 

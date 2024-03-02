@@ -1,5 +1,93 @@
 Altirra Change Log
 
+Version 3.20: [June 23, 2019]
+   [changes]
+   * Debugging symbols and debugger scripts are no longer automatically loaded by default unless the debugger is active. This can be changed in the Debugger section of Configure System.
+   * AltirraOS is now versioned independently of the main emulator. See changelog in export ROM set output for details.
+   * The direct read filter for cassette tapes has been lowered in bandwidth to reduce load failures on FSK-encoded glitches. The filter bandwidth can now be adjusted in Configure System, Cassette.
+
+   [features added]
+   * Additions: Colormap now supports CTIA systems.
+   * AltirraOS: Minor improvements to text I/O performance.
+   * Cartridge: Flash memory type can now be changed for Maxflash 8mb cartridges.
+   * Cassette: Added option for detecting and automatically switching BASIC when booting tapes based on whether the tape starts with a BASIC or binary program.
+   * Debugger: #comments can now be used in .atdbg files.
+   * Debugger: @(...) within an expression causes that subexpression to be evaluated immediately.
+   * Debugger: .diskdumpsec now dumps phantom sectors for a virtual sector.
+   * Debugger: .disktrack now has an option for drive number.
+   * Debugger: Added support for bank-specific addresses in MaxFlash cartridges using t:$XX'YYYY syntax.
+   * Debugger: Added options for controlling auto-load of symbols and debugger scripts.
+   * Debugger: Added menu option to list source files associated with line debugging information.
+   * Devices: Added emulation of APE Warp+ OS 32-in-1 device.
+   * Disk: Added support for physical sector size chunk in ATX images.
+   * Disk: Fixed XF551 standard emulation mode to force SD format with command $21 when the current mode is enhanced density.
+   * Display: Added new overscan mode for typical widescreen displays.
+   * Display: Added controls for scanline intensity and scaling overall display intensity.
+   * Display: Optimized standard NTSC artifacting algorithm.
+   * Display: Added option to hide all on-screen indicator overlays.
+   * Display: Added color preset for NTSC 800 computer.
+   * Display: Added option to accelerate some screen effects using shaders when Direct3D 11 is enabled.
+   * Firmware: Version numbers are now displayed for the internal OS and BASIC ROM images.
+   * HLE: Program loader now detects and throws an error on an attempt to load an MS-DOS or Windows program into the emulator.
+   * Input: Added Arrow Keys -> Paddle A preset.
+   * Input: Digital sources can now be bound to the Paddle Knob input on paddle controllers to use the paddle lines as switches.
+   * U1MB: Stereo POKEY and Covox control is automatically enabled when Ultimate1MB and stereo/Covox are both enabled.
+   * UI: Added a GUI option in settings for switching between portable and registry mode.
+   * UI: Added visual drop targets for different drag and drop modes, formerly only available via right-drag-drop.
+   * UI: Added overview and recommendation pages to Configure System.
+   * UI: Escaping is now supported for text copy and paste.
+   * UI: Alt+click message help has been extended to also decode common POKE and PEEK addresses.
+
+   [bugs fixed]
+   * AltirraOS: FDIV no longer returns 0 for 0/0.
+   * AltirraOS: AFP(".") properly returns an error instead of 0.
+   * AltirraOS: EXP10() was returning an error instead of underflowing to 0 for some large negative inputs.
+   * AltirraOS: Pressing reset on the boot screen now forces BASIC to do a cold boot.
+   * AltirraOS: Type 3 poll loop is now exited on user break error to fix infinite boot loop with Black Box firmware.
+   * AltirraOS: Corrected ICBLLZ/ICBLHZ values after CIO get commands.
+   * AltirraOS: Pressing Help now sets HELPFG.
+   * ATBasic: Fixed crash when Break is pressed prior to startup banner.
+   * Audio: Fixed crash on system with no sound card.
+   * Cartridge: Manually inserted BASIC cartridges are now persisted across runs of the emulator.
+   * Cartridge: Fixed broken DB 32K mode (CAR type 5).
+   * Cartridge: The!Cart 16K banking modes no longer use the secondary bank write protect flag.
+   * Cartridge: Fixed The!Cart disable mode sometimes leaving bank windows active.
+   * Cartridge: Corrected definition of MegaMax 2M mode (CAR type 61) to support banking on reads.
+   * Cartridge: Corrected definition of 2M megacart mode (CAR type 64).
+   * Cassette: References to tapes mounted directly as .zip files without a direct reference to a file within the zip are now persisted properly across runs.
+   * Debugger: Improved Turbo-Basic XL support in the .basic_vars and .basic_dumpstack commands.
+   * Debugger: Fixed listing directives getting executed twice for carts.
+   * Debugger: Step Over past an interrupt no longer exits the current scope.
+   * Debugger: Mini-assembler no longer emits ROR opcodes as LSR.
+   * Debugger: Fix crash in MADS symbol parser with single-character labels.
+   * Debugger: .readmem and .writemem now accept quoted paths.
+   * Devices: Black Box no longer powers up disabled on startup if exactly DIP switches 1-4 are enabled.
+   * Disk: Full disk emulators now report address CRC errors properly ($E7).
+   * Disk: Improved accuracy of disk errors from XF551 full drive emulation.
+   * Disk: Improved emulation of FDC not ready bit ($80).
+   * Disk: Read Address now returns sectors with data CRC errors.
+   * Disk: The non-standard sector size option of the 1771 is now partially supported.
+   * Disk: Deleted sector marks can now be written by the Write Sector command.
+   * Disk: Interrupted Write Sector commands now affect the disk image.
+   * Disk: Rotate disk command now works with full disk drive emulation.
+   * Disk Explorer: Fixed crash when write flush fails due to another program locking the disk image file.
+   * Display: Fixed a high CPU usage issue with enhanced text display when paused.
+   * HLE: FP acceleration no longer returns 0 for 0/0.
+   * SAP: Lowered SAP type D player from $0800 to $0400 to improve compatibility with files that have a low load address.
+   * Input: Toggling Held Keys On Reset back off no longer queues Ctrl+Shift+A for next reset.
+   * Input: Fixed Shift key state sometimes being incorrect when Shift was pressed/released while holding another key. The emulated Shift key state is now updated on Shift key changes while other keys are held.
+   * Input: The Input State and Console controllers are no longer blocked in 5200 mode.
+   * PerfAnalyzer: Fixed sporadic errors in profiling sub-view when profiling short CPU trace ranges.
+   * Profiler: Fixed a bug causing the function and basic block modes to misattribute some interrupt time to the parent function/block.
+   * Profiler: Fixed broken BASIC line profiling mode.
+   * Save States: Fixed save state errors with 65C816 CPU modes.
+   * Simulator: Fixed crash when single-stepping prior to computer being turned on with disk drive CPU selected.
+   * UI: Fixed CIO acceleration options not being bound correctly in new configure system dialog.
+   * UI: Disk drives dialog no longer appears hidden the first time it is ever used.
+   * UI: Fixed argument parsing error when emulator is launched with argv[0] containing forward slashes.
+   * UI: Fixed incorrect partial switch matching on command line, e.g. "/disk1" being interpreted as "/disk 1".
+   * VBXE: Overlay width setting %%11 now correctly selects narrow width instead of wide width.
+
 Version 3.10: [August 12, 2018]
    [changes]
    * Default keyboard shortcuts have changed. Reset in Tools > Keyboard Shortcuts to use the new bindings.
@@ -134,6 +222,7 @@ Version 3.00: [December 28, 2017]
 
    [bugs fixed]
    * AltirraOS: Fixed polarity of CKEY flag.
+   * AltirraOS: Enforce A=0 on exit from SIOV.
    * ATBasic: Added compatibility workaround for programs that use locations 183 and 184 to read the current DATA line.
    * Cartridge: Fixed error when loading untagged cartridge from drag-and-drop stream source.
    * Cheats: Fixed sorting issues in active list.
@@ -152,6 +241,7 @@ Version 3.00: [December 28, 2017]
    * Display: Improved display recovery when secondary monitors are turned on or off.
    * Display: Added workaround for breaking change in Windows 10 build 1709 that caused D3D9 exclusive fullscreen mode to not render.
    * Display: Fixed some reporting and stability issues in custom D3D9 shader effect system.
+   * HLE: Enforce A=0 on exit from SIOV acceleration.
    * IDE: Serial number field in identify command data is now padded with spaces.
    * PCLink: Directory search operations now return creation time instead of last write time.
    * POKEY: Serial output data is now truncated when the output clock is stopped.

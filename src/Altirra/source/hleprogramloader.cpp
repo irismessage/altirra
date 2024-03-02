@@ -34,6 +34,59 @@
 #include "simeventmanager.h"
 #include "simulator.h"
 
+namespace {
+	bool IsDOSExecutable(const uint8 *buf, uint32 len) {
+		if (len <= 28)
+			return false;
+
+		// Check for MZ signature.
+		if (buf[0] != 'M' || buf[1] != 'Z')
+			return false;
+
+		// Check for last block size being <= 512. This also rules out a false positive as this
+		// requirement ensures that the first four bytes would be an invalid Atari DOS 2 segment.
+		if (VDReadUnalignedLEU16(&buf[2]) > 512)
+			return false;
+
+		return true;
+	}
+
+	bool IsNEExecutable(const uint8 *buf, uint32 len) {
+		VDASSERT(IsDOSExecutable(buf, len));
+
+		if (len < 64)
+			return false;
+
+		// extract NE header offset
+		uint32 neOffset = VDReadUnalignedLEU32(&buf[60]);
+
+		// check if NE header can actually fit at offset
+		if (neOffset > len || len - neOffset < 64)
+			return false;
+
+		// check for NE signature
+		return buf[neOffset] == 'N' && buf[neOffset+1] == 'E';
+	}
+
+	bool IsPEExecutable(const uint8 *buf, uint32 len) {
+		VDASSERT(IsDOSExecutable(buf, len));
+
+		if (len < 64)
+			return false;
+
+		// extract PE header offset
+		uint32 peOffset = VDReadUnalignedLEU32(&buf[60]);
+
+		// check if PE header can actually fit at offset
+		if (peOffset > len || len - peOffset < 64)
+			return false;
+
+		// check for PE signature
+		return buf[peOffset] == 'P' && buf[peOffset+1] == 'E';
+
+	}
+}
+
 const uint8 ATHLEProgramLoader::kHandlerData[]={
 	// text record
 	0x00, 0x11,
@@ -107,6 +160,15 @@ void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IATBlobImage
 	if (len >= 4 && (buf[0] == 0xfe || buf[0] == 0xfa) && buf[1] == 0xff)
 		throw MyError("Program load failed: this program must be loaded under SpartaDOS X.");
 
+	// check if this is a DOS or Windows executable -- we need to be conservative about this to
+	// avoid false positives
+	if (IsDOSExecutable(buf, len)) {
+		if (IsPEExecutable(buf, len) || IsNEExecutable(buf, len))
+			throw MyError("Program load failed: this program is written for Windows.");
+		else
+			throw MyError("Program load failed: this program is written for MS-DOS.");
+	}
+
 	mpSIOMgr->RemoveDevice(this);
 	mbType3PollActive = false;
 	mbType3PollEnabled = false;
@@ -131,7 +193,7 @@ void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IATBlobImage
 
 	IATDebugger *d = ATGetDebugger();
 
-	if (d && symbolHintPath) {
+	if (d && d->IsSymbolLoadingEnabled() && symbolHintPath) {
 		static const wchar_t *const kSymExts[]={
 			L".lst", L".lab", L".lbl", L".dbg"
 		};
@@ -146,15 +208,13 @@ void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IATBlobImage
 			sympath += kSymExts[i];
 
 			try {
-				if (!ATVFSIsFilePath(sympath.c_str()) || VDDoesPathExist(sympath.c_str())) {
-					const uint32 target0 = 0;
-					uint32 moduleId = d->LoadSymbols(sympath.c_str(), false, &target0);
+				const uint32 target0 = 0;
+				uint32 moduleId = d->LoadSymbols(sympath.c_str(), false, &target0);
 
-					if (moduleId) {
-						mProgramModuleIds[i] = moduleId;
+				if (moduleId) {
+					mProgramModuleIds[i] = moduleId;
 
-						ATConsolePrintf("Loaded symbols %ls\n", sympath.c_str());
-					}
+					ATConsolePrintf("Loaded symbols %ls\n", sympath.c_str());
 				}
 			} catch(const MyError&) {
 				// ignore
@@ -171,21 +231,7 @@ void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IATBlobImage
 		sympath.assign(symbolHintPath, symbolHintPathExt);
 		sympath += L".atdbg";
 
-		try {
-			if (VDDoesPathExist(sympath.c_str())) {
-				if (mpSim->IsRunning()) {
-					// give the debugger script a chance to run
-					mpSim->Suspend();
-					d->QueueCommandFront("`g -n", false);
-				}
-
-				d->QueueBatchFile(sympath.c_str());
-
-				ATConsolePrintf("Loaded debugger script %ls\n", sympath.c_str());
-			}
-		} catch(const MyError&) {
-			// ignore
-		}
+		d->QueueAutoLoadBatchFile(sympath.c_str());
 	}
 
 	mbLaunchPending = true;

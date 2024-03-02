@@ -260,7 +260,6 @@
     <ClCompile Include="source\audiorawsource.cpp" />
     <ClCompile Include="source\audiosampleplayer.cpp" />
     <ClCompile Include="source\audiowriter.cpp" />
-    <ClCompile Include="source\autotest.cpp" />
     <ClCompile Include="source\aviwriter.cpp" />
     <ClCompile Include="source\bkptmanager.cpp" />
     <ClCompile Include="source\blackbox.cpp" />
@@ -272,6 +271,7 @@
     <ClCompile Include="source\cheatengine.cpp" />
     <ClCompile Include="source\cmdaudio.cpp" />
     <ClCompile Include="source\cmdcart.cpp" />
+    <ClCompile Include="source\cmdcassette.cpp" />
     <ClCompile Include="source\cmdcpu.cpp" />
     <ClCompile Include="source\cmddebug.cpp" />
     <ClCompile Include="source\cmdinput.cpp" />
@@ -298,6 +298,7 @@
     <ClCompile Include="source\cs8900a.cpp" />
     <ClCompile Include="source\debugdisplay.cpp" />
     <ClCompile Include="source\debugger.cpp" />
+    <ClCompile Include="source\debuggerautotest.cpp" />
     <ClCompile Include="source\debuggerexp.cpp" />
     <ClCompile Include="source\debuggerlog.cpp" />
     <ClCompile Include="source\debugtarget.cpp" />
@@ -434,6 +435,7 @@
     <ClCompile Include="source\uienhancedtext.cpp" />
     <ClCompile Include="source\uihistoryview.cpp" />
     <ClCompile Include="source\uipageddialog.cpp" />
+    <ClCompile Include="source\uiscreeneffects.cpp" />
     <ClCompile Include="source\uitraceviewer.cpp" />
     <ClCompile Include="source\uiexportroms.cpp" />
     <ClCompile Include="source\uifileassoc.cpp" />
@@ -490,6 +492,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="source\warpos.cpp" />
     <ClCompile Include="source\xelcf.cpp" />
     <ClCompile Include="source\xep80.cpp" />
     <ClCompile Include="source\stdafx.cpp">
@@ -513,7 +516,6 @@
     <ClInclude Include="h\audiooutput.h" />
     <ClInclude Include="h\audiosampleplayer.h" />
     <ClInclude Include="h\audiowriter.h" />
-    <ClInclude Include="h\autotest.h" />
     <ClInclude Include="h\aviwriter.h" />
     <ClInclude Include="h\bkptmanager.h" />
     <ClInclude Include="h\blackbox.h" />
@@ -593,12 +595,14 @@
     <ClInclude Include="h\uiconfirm.h" />
     <ClInclude Include="h\uiconfmodem.h" />
     <ClInclude Include="h\uidevices.h" />
+    <ClInclude Include="h\uidragdrop.h" />
     <ClInclude Include="h\uifilefilters.h" />
     <ClInclude Include="h\uifirmwaremenu.h" />
     <ClInclude Include="h\uihistoryview.h" />
     <ClInclude Include="h\uipageddialog.h" />
     <ClInclude Include="h\uisettingswindow.h" />
     <ClInclude Include="h\veronica.h" />
+    <ClInclude Include="h\warpos.h" />
     <ClInclude Include="h\xelcf.h" />
     <ClInclude Include="res\resource.h" />
     <ClInclude Include="..\ATNativeUI\res\resource.h" />
@@ -729,6 +733,7 @@
     <None Include="autogen\xep80_font_internal.inl" />
     <None Include="autogen\xep80_font_intl.inl" />
     <None Include="autogen\xep80_font_normal.inl" />
+    <None Include="h\antic_sse2.inl" />
     <None Include="h\cpumachine.inl" />
     <None Include="..\..\out\release\850handler.bin" />
     <None Include="..\..\out\debug\850handler.bin" />

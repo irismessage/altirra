@@ -37,6 +37,7 @@
 #include <vd2/VDDisplay/display.h>
 #include <vd2/VDDisplay/displaydrv.h>
 #include <vd2/VDDisplay/logging.h>
+#include <vd2/VDDisplay/internal/screenfx.h>
 
 #ifndef WM_TOUCH
 #define WM_TOUCH		0x0240
@@ -96,8 +97,8 @@ protected:
 
 	void SetSourceMessage(const wchar_t *msg) override;
 	void SetSourcePalette(const uint32 *palette, int count);
-	bool SetSource(bool bAutoUpdate, const VDPixmap& src, void *pSharedObject, ptrdiff_t sharedOffset, bool bAllowConversion, bool bInterlaced) override;
-	bool SetSourcePersistent(bool bAutoUpdate, const VDPixmap& src, bool bAllowConversion, bool bInterlaced) override;
+	bool SetSource(bool bAutoUpdate, const VDPixmap& src, bool bAllowConversion) override;
+	bool SetSourcePersistent(bool bAutoUpdate, const VDPixmap& src, bool bAllowConversion, const VDVideoDisplayScreenFXInfo *screenFX, IVDVideoDisplayScreenFXEngine *screenFXEngine) override;
 	void SetSourceSubrect(const vdrect32 *r) override;
 	void SetSourceSolidColor(uint32 color) override;
 	void SetReturnFocus(bool fs) override;
@@ -124,6 +125,11 @@ protected:
 
 	vdrect32 GetMonitorRect() override;
 
+	bool IsScreenFXPreferred() const override { return mbScreenFXSupported; }
+
+	bool MapNormSourcePtToDest(vdfloat2& pt) const override;
+	bool MapNormDestPtToSource(vdfloat2& pt) const override;
+
 	void SetProfileHook(const vdfunction<void(ProfileEvent)>& profileHook) override {
 		mpProfileHook = profileHook;
 
@@ -135,7 +141,7 @@ protected:
 			mpMiniDriver->Poll();
 	}
 
-protected:
+private:
 	void ReleaseActiveFrame() override;
 	void RequestNextFrame() override;
 	void QueuePresent() override;
@@ -143,7 +149,12 @@ protected:
 	void DispatchNextFrame();
 	bool DispatchActiveFrame();
 
-protected:
+private:
+	struct SourceInfoEx final : public VDVideoDisplaySourceInfo {
+		IVDVideoDisplayScreenFXEngine *mpScreenFXEngine = nullptr;
+		const VDVideoDisplayScreenFXInfo *mpScreenFX = nullptr;
+	};
+
 	static LRESULT CALLBACK StaticChildWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	LRESULT ChildWndProc(UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -154,12 +165,11 @@ protected:
 
 	void OnPaint();
 	void SyncSetSourceMessage(const wchar_t *);
-	bool SyncSetSource(bool bAutoUpdate, const VDVideoDisplaySourceInfo& params);
+	bool SyncSetSource(bool bAutoUpdate, const SourceInfoEx& params);
 	void SyncReset();
 	bool SyncInit(bool bAutoRefresh, bool bAllowNonpersistentSource);
 	void SyncInvalidate();
 	void SyncUpdate(int);
-	void SyncCache();
 	void SyncSetFilterMode(FilterMode mode);
 	void SyncSetSolidColor(uint32 color);
 	void OnDisplayChange() override;
@@ -169,13 +179,14 @@ protected:
 	void ShutdownMiniDriver();
 	void RequestUpdate();
 	void VerifyDriverResult(bool result);
+	void UpdateCoordinateMapping();
 	bool CheckForMonitorChange();
 	void CheckAndRespondToMonitorChange();
 	bool IsOnSecondaryMonitor() const;
 
 	static void GetMonitorRect(RECT *r, HMONITOR hmon);
 
-protected:
+private:
 	enum {
 		kReinitDisplayTimerId = 500
 	};
@@ -190,9 +201,14 @@ protected:
 	VDCriticalSection			mMutex;
 	vdlist<VDVideoDisplayFrame>	mPendingFrames;
 	vdlist<VDVideoDisplayFrame>	mIdleFrames;
-	VDVideoDisplayFrame			*mpActiveFrame;
-	VDVideoDisplayFrame			*mpLastFrame;
-	VDVideoDisplaySourceInfo	mSource;
+	VDVideoDisplayFrame			*mpActiveFrame = nullptr;
+	VDVideoDisplayFrame			*mpLastFrame = nullptr;
+	VDVideoDisplaySourceInfo	mSource {};
+	VDVideoDisplaySourceInfo	mSourceEmulatedFX {};
+	VDVideoDisplayScreenFXInfo	mSourceScreenFX {};
+	bool						mbSourceUseScreenFX = false;
+	bool						mbSourceEmulatedFXEnabled = false;
+	IVDVideoDisplayScreenFXEngine *mpSourceScreenFXEngine = nullptr;
 	vdrefptr<IVDDisplayCompositor> mpCompositor;
 
 	IVDVideoDisplayMinidriver *mpMiniDriver;
@@ -222,12 +238,16 @@ protected:
 	uint32		mFullScreenHeight;
 	uint32		mFullScreenRefreshRate;
 	bool		mbDestRectEnabled;
+	bool		mbScreenFXSupported = false;
 	float		mPixelSharpnessX;
 	float		mPixelSharpnessY;
 	vdrect32	mSourceSubrect;
 	vdrect32	mDestRect;
 	uint32		mBackgroundColor;
 	VDStringW	mMessage;
+
+	bool		mbDistortionMappingValid = false;
+	VDDisplayDistortionMapping mDistortionMapping {};
 
 	uint32				mSolidColorBuffer;
 
@@ -441,19 +461,16 @@ void VDVideoDisplayWindow::SetSourcePalette(const uint32 *palette, int count) {
 	memcpy(mSourcePalette, palette, 4*std::min<int>(count, 256));
 }
 
-bool VDVideoDisplayWindow::SetSource(bool bAutoUpdate, const VDPixmap& src, void *pObject, ptrdiff_t offset, bool bAllowConversion, bool bInterlaced) {
+bool VDVideoDisplayWindow::SetSource(bool bAutoUpdate, const VDPixmap& src, bool bAllowConversion) {
 	// We do allow data to be NULL for set-without-load.
 	if (src.data)
 		VDAssertValidPixmap(src);
 
-	VDVideoDisplaySourceInfo params;
+	SourceInfoEx params {};
 
 	params.pixmap			= src;
-	params.pSharedObject	= pObject;
-	params.sharedOffset		= offset;
 	params.bAllowConversion	= bAllowConversion;
-	params.bPersistent		= pObject != 0;
-	params.bInterlaced		= bInterlaced;
+	params.bPersistent		= false;
 	params.use16bit			= mbUse16Bit;
 
 	const VDPixmapFormatInfo& info = VDPixmapGetInfo(src.format);
@@ -465,25 +482,25 @@ bool VDVideoDisplayWindow::SetSource(bool bAutoUpdate, const VDPixmap& src, void
 	return 0 != SendMessage(mhwnd, MYWM_SETSOURCE, bAutoUpdate, (LPARAM)&params);
 }
 
-bool VDVideoDisplayWindow::SetSourcePersistent(bool bAutoUpdate, const VDPixmap& src, bool bAllowConversion, bool bInterlaced) {
+bool VDVideoDisplayWindow::SetSourcePersistent(bool bAutoUpdate, const VDPixmap& src, bool bAllowConversion, const VDVideoDisplayScreenFXInfo *screenFX, IVDVideoDisplayScreenFXEngine *screenFXEngine) {
 	// We do allow data to be NULL for set-without-load.
 	if (src.data)
 		VDAssertValidPixmap(src);
 
-	VDVideoDisplaySourceInfo params;
+	SourceInfoEx params {};
 
 	params.pixmap			= src;
-	params.pSharedObject	= NULL;
-	params.sharedOffset		= 0;
 	params.bAllowConversion	= bAllowConversion;
 	params.bPersistent		= true;
-	params.bInterlaced		= bInterlaced;
 	params.use16bit			= mbUse16Bit;
 
 	const VDPixmapFormatInfo& info = VDPixmapGetInfo(src.format);
 	params.bpp = info.qsize >> info.qhbits;
 	params.bpr = (((src.w-1) >> info.qwbits)+1) * info.qsize;
 	params.mpCB				= this;
+
+	params.mpScreenFX = screenFX;
+	params.mpScreenFXEngine = screenFXEngine;
 
 	return 0 != SendMessage(mhwnd, MYWM_SETSOURCE, bAutoUpdate, (LPARAM)&params);
 }
@@ -563,6 +580,8 @@ void VDVideoDisplayWindow::SetDestRect(const vdrect32 *r, uint32 backgroundColor
 
 	if (mpMiniDriver)
 		mpMiniDriver->SetDestRect(r, backgroundColor);
+
+	UpdateCoordinateMapping();
 }
 
 void VDVideoDisplayWindow::SetPixelSharpness(float xsharpness, float ysharpness) {
@@ -589,8 +608,6 @@ void VDVideoDisplayWindow::SetCompositor(IVDDisplayCompositor *comp) {
 
 void VDVideoDisplayWindow::PostBuffer(VDVideoDisplayFrame *p) {
 	p->AddRef();
-
-	VDASSERT(p->mFlags & IVDVideoDisplay::kAllFields);
 
 	bool wasIdle = false;
 	vdsynchronized(mMutex) {
@@ -704,6 +721,25 @@ vdrect32 VDVideoDisplayWindow::GetMonitorRect() {
 	return vdrect32(r.left, r.top, r.right, r.bottom);
 }
 
+bool VDVideoDisplayWindow::MapNormSourcePtToDest(vdfloat2& pt) const {
+	using namespace nsVDMath;
+
+	if (mbDistortionMappingValid)
+		return mDistortionMapping.MapImageToScreen(pt);
+
+	vdfloat2 pt2 { std::clamp(pt.x, 0.0f, 1.0f), std::clamp(pt.y, 0.0f, 1.0f) };
+	const bool valid = (pt == pt2);
+
+	pt = pt2;
+	return valid;
+}
+
+bool VDVideoDisplayWindow::MapNormDestPtToSource(vdfloat2& pt) const {
+	using namespace nsVDMath;
+
+	return !mbDistortionMappingValid || mDistortionMapping.MapScreenToImage(pt);
+}
+
 void VDVideoDisplayWindow::ReleaseActiveFrame() {
 	VDVideoDisplayFrame *pFrameToDiscard = NULL;
 	VDVideoDisplayFrame *pFrameToDiscard2 = NULL;
@@ -719,15 +755,7 @@ void VDVideoDisplayWindow::ReleaseActiveFrame() {
 				mpLastFrame = NULL;
 			}
 
-			if (mpActiveFrame->mFlags & kAutoFlipFields) {
-				if (mpActiveFrame->mFlags & (kBobEven | kBobOdd))
-					mpActiveFrame->mFlags ^= kBobEven | kBobOdd;
-				else
-					mpActiveFrame->mFlags ^= kEvenFieldOnly | kOddFieldOnly;
-
-				mpActiveFrame->mFlags &= ~(kAutoFlipFields | kFirstField);
-				mPendingFrames.push_front(mpActiveFrame);
-			} else if (mpActiveFrame->mFlags & kDoNotCache) {
+			if (mpActiveFrame->mFlags & kDoNotCache) {
 				pFrameToDiscard2 = mpActiveFrame;
 			} else {
 				mpLastFrame = mpActiveFrame;
@@ -766,30 +794,14 @@ void VDVideoDisplayWindow::DispatchNextFrame() {
 
 bool VDVideoDisplayWindow::DispatchActiveFrame() {
 	if (mpActiveFrame) {
-		VDVideoDisplaySourceInfo params;
+		SourceInfoEx params {};
 
 		params.pixmap			= mpActiveFrame->mPixmap;
 
 		uint32 flags = mpActiveFrame->mFlags;
-		bool interlaced = mpActiveFrame->mbInterlaced;
 
-		if (flags & kBobEven) {
-			params.pixmap = VDPixmapExtractField(params.pixmap, false);
-			interlaced = false;
-		} else if (flags & kBobOdd) {
-			params.pixmap = VDPixmapExtractField(params.pixmap, true);
-			interlaced = false;
-		} else if (flags & kSequentialFields) {
-			params.pixmap = VDPixmapExtractField(params.pixmap, (flags & kOddFieldOnly) != 0);
-			flags &= ~(kSequentialFields | kEvenFieldOnly | kOddFieldOnly);
-			interlaced = false;
-		}
-
-		params.pSharedObject	= NULL;
-		params.sharedOffset		= 0;
 		params.bAllowConversion	= mpActiveFrame->mbAllowConversion;
 		params.bPersistent		= false;
-		params.bInterlaced		= interlaced;
 		params.use16bit			= mbUse16Bit;
 
 		const VDPixmapFormatInfo& info = VDPixmapGetInfo(mpActiveFrame->mPixmap.format);
@@ -797,6 +809,8 @@ bool VDVideoDisplayWindow::DispatchActiveFrame() {
 		params.bpr = (((mpActiveFrame->mPixmap.w-1) >> info.qwbits)+1) * info.qsize;
 
 		params.mpCB				= this;
+		params.mpScreenFX = mpActiveFrame->mpScreenFX;
+		params.mpScreenFXEngine = mpActiveFrame->mpScreenFXEngine;
 
 		if (!SyncSetSource(false, params)) {
 			ReleaseActiveFrame();
@@ -860,6 +874,8 @@ LRESULT VDVideoDisplayWindow::ChildWndProc(UINT msg, WPARAM wParam, LPARAM lPara
 	case WM_SIZE:
 		if (mpMiniDriver)
 			VerifyDriverResult(mpMiniDriver->Resize(LOWORD(lParam), HIWORD(lParam)));
+
+		UpdateCoordinateMapping();
 		break;
 
 	case WM_TIMER:
@@ -900,7 +916,7 @@ void VDVideoDisplayWindow::OnChildPaint() {
 	if (mpMiniDriver) {
 		if (mpMiniDriver->IsValid())
 			bDisplayOK = true;
-		else if (mSource.pixmap.data && mSource.bPersistent && !mpMiniDriver->Update(IVDVideoDisplayMinidriver::kModeAllFields))
+		else if (mSource.pixmap.data && mSource.bPersistent && !mpMiniDriver->Update(IVDVideoDisplayMinidriver::kModeNone))
 			bDisplayOK = true;
 	}
 
@@ -933,7 +949,7 @@ void VDVideoDisplayWindow::OnChildPaint() {
 		GetClientRect(mhwndChild, &r);
 
 		if (mpMiniDriver && mpMiniDriver->IsValid()) {
-			VerifyDriverResult(mpMiniDriver->Paint(hdc, r, IVDVideoDisplayMinidriver::kModeAllFields));
+			VerifyDriverResult(mpMiniDriver->Paint(hdc, r, IVDVideoDisplayMinidriver::kModeNone));
 
 			if (mbMiniDriverClearOtherMonitors && ps.fErase) {
 				// Fill portions of the window on other monitors.
@@ -1002,7 +1018,7 @@ LRESULT VDVideoDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	case MYWM_SETSOURCE:
 		ReleaseActiveFrame();
 		FlushBuffers();
-		return SyncSetSource(wParam != 0, *(const VDVideoDisplaySourceInfo *)lParam);
+		return SyncSetSource(wParam != 0, *(const SourceInfoEx *)lParam);
 	case MYWM_UPDATE:
 		SyncUpdate((FieldMode)wParam);
 		return 0;
@@ -1122,7 +1138,7 @@ void VDVideoDisplayWindow::OnPaint() {
 	if (mpMiniDriver) {
 		if (mpMiniDriver->IsValid())
 			bDisplayOK = true;
-		else if (mSource.pixmap.data && mSource.bPersistent && !mpMiniDriver->Update(IVDVideoDisplayMinidriver::kModeAllFields))
+		else if (mSource.pixmap.data && mSource.bPersistent && !mpMiniDriver->Update(IVDVideoDisplayMinidriver::kModeNone))
 			bDisplayOK = true;
 	}
 
@@ -1154,10 +1170,19 @@ void VDVideoDisplayWindow::OnPaint() {
 	--mInhibitRefresh;
 }
 
-bool VDVideoDisplayWindow::SyncSetSource(bool bAutoUpdate, const VDVideoDisplaySourceInfo& params) {
+bool VDVideoDisplayWindow::SyncSetSource(bool bAutoUpdate, const SourceInfoEx& params) {
 	mCachedImage.clear();
 
 	mSource = params;
+
+	mbSourceUseScreenFX = (params.mpScreenFX != nullptr);
+	if (params.mpScreenFX)
+		mSourceScreenFX = *params.mpScreenFX;
+
+	mpSourceScreenFXEngine = params.mpScreenFXEngine;
+	mSourceEmulatedFX = mSource;
+	mSourceEmulatedFX.pixmap.data = nullptr;
+
 	mMessage.clear();
 
 	if (mpMiniDriver) {
@@ -1167,13 +1192,30 @@ bool VDVideoDisplayWindow::SyncSetSource(bool bAutoUpdate, const VDVideoDisplayS
 			// monitor.
 			if (!mbMiniDriverSecondarySensitive || (!sbEnableMonitorSwitchingDX && !IsOnSecondaryMonitor())) {
 				// Check if the driver can adapt to the current format.
-				if (mpMiniDriver->ModifySource(mSource)) {
+				bool useEmulatedFX = !mpMiniDriver->SetScreenFX(mbSourceUseScreenFX ? &mSourceScreenFX : nullptr);
+
+				if (useEmulatedFX) {
+					mSourceEmulatedFX = mSource;
+					mSourceEmulatedFX.pixmap = mpSourceScreenFXEngine->ApplyScreenFX(mSource.pixmap);
+					const VDPixmapFormatInfo& info = VDPixmapGetInfo(mSourceEmulatedFX.pixmap.format);
+					mSourceEmulatedFX.bpp = info.qsize >> info.qhbits;
+					mSourceEmulatedFX.bpr = (((mSourceEmulatedFX.pixmap.w-1) >> info.qwbits)+1) * info.qsize;
+
+					VDASSERT(mSourceEmulatedFX.pixmap.data);
+				} else {
+					VDASSERT(mSource.pixmap.data);
+				}
+
+				mbSourceEmulatedFXEnabled = useEmulatedFX;
+				UpdateCoordinateMapping();
+
+				if (mpMiniDriver->ModifySource(useEmulatedFX ? mSourceEmulatedFX : mSource)) {
 					mpMiniDriver->SetColorOverride(0);
 
 					mSource.bAllowConversion = true;
 
 					if (bAutoUpdate)
-						SyncUpdate(kAllFields);
+						SyncUpdate(0);
 					return true;
 				}
 			}
@@ -1289,7 +1331,7 @@ bool VDVideoDisplayWindow::SyncInit(bool bAutoRefresh, bool bAllowNonpersistentS
 
 		if (bAutoRefresh) {
 			if (bAllowNonpersistentSource)
-				SyncUpdate(kAllFields);
+				SyncUpdate(0);
 			else
 				RequestUpdate();
 		}
@@ -1360,18 +1402,6 @@ void VDVideoDisplayWindow::SyncUpdate(int mode) {
 	}
 }
 
-void VDVideoDisplayWindow::SyncCache() {
-	if (mSource.pixmap.data && mSource.pixmap.data != mCachedImage.data) {
-		mCachedImage.assign(mSource.pixmap);
-
-		mSource.pixmap		= mCachedImage;
-		mSource.bPersistent	= true;
-	}
-
-	if (mSource.pixmap.data && !mpMiniDriver)
-		SyncInit(true, true);
-}
-
 void VDVideoDisplayWindow::SyncSetFilterMode(FilterMode mode) {
 	if (mFilterMode != mode) {
 		mFilterMode = mode;
@@ -1390,10 +1420,9 @@ void VDVideoDisplayWindow::SyncSetSolidColor(uint32 color) {
 
 	mSolidColorBuffer = color;
 
-	VDVideoDisplaySourceInfo info;
+	SourceInfoEx info {};
 
 	info.bAllowConversion	= true;
-	info.bInterlaced		= false;
 	info.bPersistent		= true;
 	info.bpp				= 4;
 	info.bpr				= 4;
@@ -1404,8 +1433,6 @@ void VDVideoDisplayWindow::SyncSetSolidColor(uint32 color) {
 	info.pixmap.w			= 1;
 	info.pixmap.h			= 1;
 	info.pixmap.pitch		= 0;
-	info.pSharedObject		= NULL;
-	info.sharedOffset		= 0;
 
 	SyncSetSource(false, info);
 
@@ -1492,6 +1519,20 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 
 	GetMonitorRect(&mMonitorRect, mhLastMonitor);
 
+	++mInhibitPaint;
+	++mMinidriverInitLock;
+	const bool preInitSuccess = mpMiniDriver->PreInit(mhwndChild, mhLastMonitor);
+	--mMinidriverInitLock;
+	--mInhibitPaint;
+
+	if (!preInitSuccess) {
+		DestroyWindow(mhwndChild);
+		mhwndChild = NULL;
+		return false;
+	}
+
+	mbScreenFXSupported = mpMiniDriver->IsScreenFXSupported();
+
 	mpMiniDriver->SetFilterMode((IVDVideoDisplayMinidriver::FilterMode)mFilterMode);
 	mpMiniDriver->SetSubrect(mbUseSubrect ? &mSourceSubrect : NULL);
 	mpMiniDriver->SetDisplayDebugInfo(sbEnableDebugInfo);
@@ -1499,6 +1540,25 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 	mpMiniDriver->SetHighPrecision(sbEnableHighPrecision);
 	mpMiniDriver->SetDestRect(mbDestRectEnabled ? &mDestRect : NULL, mBackgroundColor);
 	mpMiniDriver->SetPixelSharpness(mPixelSharpnessX, mPixelSharpnessY);
+
+	VDASSERT(mSource.pixmap.data);
+
+	bool useEmulatedFX = !mpMiniDriver->SetScreenFX(mbSourceUseScreenFX ? &mSourceScreenFX : nullptr);
+	if (useEmulatedFX && !mSourceEmulatedFX.pixmap.data) {
+		mSourceEmulatedFX = mSource;
+		mSourceEmulatedFX.pixmap = mpSourceScreenFXEngine->ApplyScreenFX(mSource.pixmap);
+
+		const VDPixmapFormatInfo& info = VDPixmapGetInfo(mSourceEmulatedFX.pixmap.format);
+		mSourceEmulatedFX.bpp = info.qsize >> info.qhbits;
+		mSourceEmulatedFX.bpr = (((mSourceEmulatedFX.pixmap.w-1) >> info.qwbits)+1) * info.qsize;
+
+		VDASSERT(mSourceEmulatedFX.pixmap.data);
+	}
+
+	mbSourceEmulatedFXEnabled = useEmulatedFX;
+
+	UpdateCoordinateMapping();
+
 	mpMiniDriver->Resize(r.right, r.bottom);
 
 	// The create device hook for PIX for Windows can make COM calls that cause a WM_PAINT to
@@ -1507,7 +1567,7 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 
 	++mInhibitPaint;
 	++mMinidriverInitLock;
-	bool success = mpMiniDriver->Init(mhwndChild, mhLastMonitor, mSource);
+	bool success = mpMiniDriver->Init(mhwndChild, mhLastMonitor, useEmulatedFX ? mSourceEmulatedFX : mSource);
 	--mMinidriverInitLock;
 	--mInhibitPaint;
 
@@ -1550,7 +1610,7 @@ void VDVideoDisplayWindow::RequestUpdate() {
 	} else if (mpCB)
 		mpCB->DisplayRequestUpdate(this);
 	else if (mSource.pixmap.data && mSource.bPersistent) {
-		SyncUpdate(kAllFields);
+		SyncUpdate(0);
 	}
 }
 
@@ -1568,6 +1628,26 @@ void VDVideoDisplayWindow::VerifyDriverResult(bool result) {
 		vdsynchronized(mMutex) {
 			mIdleFrames.splice(mIdleFrames.end(), mPendingFrames);
 		}
+	}
+}
+
+void VDVideoDisplayWindow::UpdateCoordinateMapping() {
+	if (!mbSourceUseScreenFX || mbSourceEmulatedFXEnabled || mSourceScreenFX.mDistortionX == 0.0f) {
+		mbDistortionMappingValid = false;
+	} else {
+		float destAspect = 1;
+
+		if (mbDestRectEnabled) {
+			if (!mDestRect.empty())
+				destAspect = (float)mDestRect.width() / (float)mDestRect.height();
+		} else {
+			RECT r;
+			if (mhwndChild && GetClientRect(mhwndChild, &r) && r.right > 0 && r.bottom > 0)
+				destAspect = (float)r.right / (float)r.bottom;
+		}
+
+		mbDistortionMappingValid = true;
+		mDistortionMapping.Init(mSourceScreenFX.mDistortionX, mSourceScreenFX.mDistortionYRatio, destAspect);
 	}
 }
 

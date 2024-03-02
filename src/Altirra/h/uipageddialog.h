@@ -26,12 +26,15 @@
 #include <at/atnativeui/uiproxies.h>
 
 class VDFunctionThunk;
+class ATUIPagedDialog;
 
 class ATUIDialogPage : public VDDialogFrameW32 {
 public:
 	using VDDialogFrameW32::VDDialogFrameW32;
 
 	virtual ~ATUIDialogPage() = default;
+
+	void SetParentDialog(ATUIPagedDialog *parent) { mpParentPagedDialog = parent; }
 
 	struct HelpEntry {
 		uint32 mId;
@@ -41,17 +44,21 @@ public:
 		VDStringW mText;
 	};
 
-	const HelpEntry *GetHelpEntry(const vdpoint32& pt) const;
+	const HelpEntry *GetHelpEntryByPoint(const vdpoint32& pt) const;
+	const HelpEntry *GetHelpEntryById(uint32 id) const;
 
 	virtual void ExchangeOtherSettings(bool write);
+	virtual const char *GetPageTag() const;
 
 protected:
 	void AddHelpEntry(uint32 id, const wchar_t *label, const wchar_t *s);
-	void LinkHelpEntry(uint32 id, uint32 linkedId);
+	void LinkHelpEntry(uint32 commonHelpId, uint32 linkedId);
 	void ClearHelpEntries();
 
 	typedef vdvector<HelpEntry> HelpEntries;
 	HelpEntries mHelpEntries;
+
+	ATUIPagedDialog *mpParentPagedDialog = nullptr;
 };
 
 class ATUIPagedDialog : public VDDialogFrameW32 {
@@ -62,18 +69,23 @@ public:
 	void SetInitialPage(int index);
 	int GetSelectedPage() const { return mSelectedPage; }
 
+	void SwitchToPage(const char *tag);
+
 protected:
 	enum {
 		kTimerID_Help = 10
 	};
 
+	VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
 	bool OnLoaded() override;
 	void OnDataExchange(bool write) override;
 	void OnDestroy() override;
 	bool OnTimer(uint32 id) override;
 	void OnDpiChanged() override;
 
+	void CheckFocus();
 	void CheckFocus(const vdpoint32& pt);
+	void ShowHelp(const ATUIDialogPage::HelpEntry *he);
 
 	virtual void OnPopulatePages() = 0;
 
@@ -88,14 +100,19 @@ protected:
 	void UninstallMouseHook();
 	VDZLRESULT OnMouseEvent(int code, VDZWPARAM wParam, VDZLPARAM lParam);
 
+	void InstallKeyboardHook();
+	void UninstallKeyboardHook();
+	VDZLRESULT OnKeyboardEvent(int code, VDZWPARAM wParam, VDZLPARAM lParam);
+
 	void OnTreeSelectedItemChanged();
 
 	struct PageTreeItem;
 
 	int mSelectedPage {};
 	int mInitialPage {};
+	uintptr mLastFocus {};
 	uint32 mLastHelpId {};
-	vdrect32 mLastHelpRect { 0, 0, 0, 0 };
+	vdrect32 mLastMouseHelpRect { 0, 0, 0, 0 };
 
 	vdfastvector<ATUIDialogPage *> mPages;
 	vdfastvector<PageTreeItem *> mPageTreeItems;
@@ -103,6 +120,9 @@ protected:
 
 	VDFunctionThunkInfo *mpMouseFuncThunk = nullptr;
 	void *mpMouseHook = nullptr;
+
+	VDFunctionThunkInfo *mpKeyboardFuncThunk = nullptr;
+	void *mpKeyboardHook = nullptr;
 
 	VDUIProxyRichEditControl mHelpView;
 	VDUIProxyListBoxControl mPageListView;

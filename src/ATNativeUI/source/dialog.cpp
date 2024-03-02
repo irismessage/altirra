@@ -19,6 +19,10 @@
 #define WM_DPICHANGED_BEFOREPARENT 0x02E2
 #endif
 
+#ifndef WM_DPICHANGED_AFTERPARENT
+#define WM_DPICHANGED_AFTERPARENT 0x02E3
+#endif
+
 #ifndef WM_GETDPISCALEDSIZE
 #define WM_GETDPISCALEDSIZE 0x02E4
 
@@ -340,6 +344,15 @@ void VDDialogFrameW32::ShowControl(uint32 id, bool visible) {
 		ShowWindow(hwnd, visible ? SW_SHOW : SW_HIDE);
 }
 
+void VDDialogFrameW32::ApplyFontToControl(uint32 id) {
+	if (!mhdlg)
+		return;
+
+	HWND hwndControl = GetDlgItem(mhdlg, id);
+	if (hwndControl)
+		SendMessageW(hwndControl, WM_SETFONT, (WPARAM)mhfont, TRUE);
+}
+
 vdrect32 VDDialogFrameW32::GetControlPos(uint32 id) {
 	if (mhdlg) {
 		HWND hwnd = GetDlgItem(mhdlg, id);
@@ -648,6 +661,17 @@ void VDDialogFrameW32::ShowInfo(const wchar_t *message, const wchar_t *caption) 
 	ShowInfo((VDGUIHandle)mhdlg, message, caption);
 }
 
+void VDDialogFrameW32::ShowInfo2(const wchar_t *message, const wchar_t *title) {
+	ATUIGenericDialogOptions opts;
+	opts.mhParent = (VDGUIHandle)mhdlg;
+	opts.mpMessage = message;
+	opts.mpTitle = title;
+	opts.mIconType = kATUIGenericIconType_Info;
+	opts.mResultMask = kATUIGenericResultMask_OK;
+
+	ATUIShowGenericDialogAutoCenter(opts);
+}
+
 void VDDialogFrameW32::ShowWarning(const wchar_t *message, const wchar_t *caption) {
 	if (!caption)
 		caption = spDefaultCaption;
@@ -664,6 +688,17 @@ void VDDialogFrameW32::ShowError(const wchar_t *message, const wchar_t *caption)
 
 void VDDialogFrameW32::ShowError(const MyError& e) {
 	ShowError(VDTextAToW(e.c_str()).c_str());
+}
+
+void VDDialogFrameW32::ShowError2(const wchar_t *message, const wchar_t *title) {
+	ATUIGenericDialogOptions opts;
+	opts.mhParent = (VDGUIHandle)mhdlg;
+	opts.mpMessage = message;
+	opts.mpTitle = title;
+	opts.mIconType = kATUIGenericIconType_Error;
+	opts.mResultMask = kATUIGenericResultMask_OK;
+
+	ATUIShowGenericDialogAutoCenter(opts);
 }
 
 bool VDDialogFrameW32::Confirm(const wchar_t *message, const wchar_t *caption) {
@@ -985,14 +1020,23 @@ void VDDialogFrameW32::OnPreLoaded() {
 		if ((hdr.style & UDS_AUTOBUDDY) && !vdwcsicmp(className, UPDOWN_CLASSW))
 			alignment |= mResizer.kUpDownAutoBuddy;
 
-		if (!vdwcsicmp(className, MSFTEDIT_CLASS))
-			alignment |= mResizer.kSuppressFontChange;
-
 		SendMessageW(hwnd, WM_SETFONT, (WPARAM)mhfont, TRUE);
 
 		g_pATSetDialogControlDpiChangeBehaviorW32(hwnd,
 			(DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS)(DCDC_DISABLE_FONT_UPDATE | DCDC_DISABLE_RELAYOUT),
 			(DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS)(DCDC_DISABLE_FONT_UPDATE | DCDC_DISABLE_RELAYOUT));
+
+		if (!vdwcsicmp(className, MSFTEDIT_CLASS)) {
+			alignment |= mResizer.kSuppressFontChange;
+
+			// The RichEdit control has problems on Windows 10 1803 with not setting up initial
+			// font scaling properly, only adjusting after a DPI change. We force-feed the control
+			// messages here to work around this.
+			if (VDIsAtLeast10W32()) {
+				SendMessageW(hwnd, WM_DPICHANGED_BEFOREPARENT, 0, 0);
+				SendMessageW(hwnd, WM_DPICHANGED_AFTERPARENT, 0, 0);
+			}
+		}
 
 		// Add the control to tracker. Note that this needs to be the original size, not the current size,
 		// for combo boxes to work.
@@ -1026,6 +1070,14 @@ void VDDialogFrameW32::OnSize() {
 
 bool VDDialogFrameW32::OnClose() {
 	if (!mbIsModal) {
+		// Multi-line edit and rich edit controls within dialogs translate Escape directly to WM_CLOSE
+		// instead of WM_COMMAND(IDCANCEL) as dialogs do. We can't just eat the message as that would
+		// suppress the event, so instead we propagate it upward.
+		if (GetWindowLongPtr(mhdlg, GWL_STYLE) & WS_CHILD) {
+			PostMessage(GetParent(mhdlg), WM_CLOSE, 0, 0);
+			return true;
+		}
+
 		DestroyWindow(mhdlg);
 		return true;
 	}
@@ -1851,10 +1903,10 @@ void VDDialogResizerW32::AddAlias(VDZHWND hwndTarget, VDZHWND hwndSource, uint32
 			}
 
 			ce->mAlignment = e.mAlignment | mergeFlags;
-			ce->mX1 = e.mX1;
-			ce->mY1 = e.mY1;
-			ce->mX2 = e.mX2;
-			ce->mY2 = e.mY2;
+			ce->mX1 = e.mX1 + ((mWidth  * ((e.mAlignment >> 0) & 3)) >> 1) - ((mWidth  * ((ce->mAlignment >> 0) & 3)) >> 1);
+			ce->mY1 = e.mY1 + ((mHeight * ((e.mAlignment >> 4) & 3)) >> 1) - ((mHeight * ((ce->mAlignment >> 4) & 3)) >> 1);
+			ce->mX2 = e.mX2 + ((mWidth  * ((e.mAlignment >> 2) & 3)) >> 1) - ((mWidth  * ((ce->mAlignment >> 2) & 3)) >> 1);
+			ce->mY2 = e.mY2 + ((mHeight * ((e.mAlignment >> 6) & 3)) >> 1) - ((mHeight * ((ce->mAlignment >> 6) & 3)) >> 1);
 			ce->mRefX = e.mRefX;
 			ce->mRefY = e.mRefY;
 

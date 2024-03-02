@@ -71,6 +71,7 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mbControlKeyLatchedState(false)
 	, mbBreakKeyState(false)
 	, mbBreakKeyLatchedState(false)
+	, mAddressMask(0x0f)
 	, mIRQEN(0)
 	, mIRQST(0)
 	, mAUDCTL(0)
@@ -247,6 +248,8 @@ void ATPokeyEmulator::SetSlave(ATPokeyEmulator *slave) {
 		mpSlave->ColdReset();
 
 	mpSlave = slave;
+
+	UpdateAddressDecoding();
 
 	if (mpSlave) {
 		mpSlave->ColdReset();
@@ -496,6 +499,15 @@ void ATPokeyEmulator::SetSpeaker(bool newState) {
 		mbSpeakerActive = true;
 }
 
+void ATPokeyEmulator::SetStereoSoftEnable(bool enable) {
+	if (mbStereoSoftEnable != enable) {
+		mbStereoSoftEnable = enable;
+
+		if (mpSlave)
+			UpdateAddressDecoding();
+	}
+}
+
 void ATPokeyEmulator::SetExternalSerialClock(uint32 basetime, uint32 period) {
 	mSerialExtBaseTime = basetime;
 	mSerialExtPeriod = period;
@@ -550,6 +562,10 @@ void ATPokeyEmulator::SetControlKeyState(bool newState) {
 
 	// Control is on the $00-07 row with the KR2 column
 	UpdateKeyMatrix(0, 0x100, newState ? 0x100 : 0);
+}
+
+void ATPokeyEmulator::ClearKeyQueue() {
+	mKeyQueue.clear();
 }
 
 void ATPokeyEmulator::PushKey(uint8 c, bool repeat, bool allowQueue, bool flushQueue, bool useCooldown) {
@@ -1047,8 +1063,8 @@ void ATPokeyEmulator::SetPotPos(unsigned idx, int pos) {
 	if (pos > 228)
 		pos = 228;
 
-	if (pos < 0)
-		pos = 0;
+	if (pos < 1)
+		pos = 1;
 
 	mPotPositions[idx] = (uint8)pos;
 
@@ -1067,8 +1083,8 @@ void ATPokeyEmulator::SetPotPosHires(unsigned idx, int pos, bool grounded) {
 	if (lopos > 228)
 		lopos = 228;
 
-	if (lopos < 0)
-		lopos = 0;
+	if (lopos < 1)
+		lopos = 1;
 
 	mPotPositions[idx] = (uint8)lopos;
 
@@ -1079,8 +1095,8 @@ void ATPokeyEmulator::SetPotPosHires(unsigned idx, int pos, bool grounded) {
 		if (hipos > 229)
 			hipos = 229;
 
-		if (hipos < 0)
-			hipos = 0;
+		if (hipos < 1)
+			hipos = 1;
 	}
 
 	mPotHiPositions[idx] = (uint8)hipos;
@@ -1966,7 +1982,7 @@ void ATPokeyEmulator::SetupDeferredTimerEventsLinked(int channel, uint32 t0, uin
 }
 
 uint8 ATPokeyEmulator::DebugReadByte(uint8 reg) const {
-	reg &= 0x1f;
+	reg &= mAddressMask;
 
 	switch(reg) {
 		case 0x00:	// $D200 POT0
@@ -2004,7 +2020,7 @@ uint8 ATPokeyEmulator::DebugReadByte(uint8 reg) const {
 }
 
 uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
-	reg &= 0x1f;
+	reg &= mAddressMask;
 
 	switch(reg) {
 		case 0x00:	// $D200 POT0
@@ -2127,18 +2143,14 @@ uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
 			break;
 	}
 
-	if (reg & 0x10) {
-		if (mpSlave)
-			return mpSlave->ReadByte(reg & 0x0f);
-		else
-			return ReadByte(reg & 0x0f);
-	}
+	if (reg & 0x10)
+		return mpSlave->ReadByte(reg & 0x0f);
 
 	return 0xFF;
 }
 
 void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
-	reg &= 0x1f;
+	reg &= mAddressMask;
 
 	mState.mReg[reg] = value;
 
@@ -2553,10 +2565,7 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 
 		default:
 			if (reg & 0x10) {
-				if (mpSlave)
-					mpSlave->WriteByte(reg & 0x0f, value);
-				else
-					WriteByte(reg & 0x0f, value);
+				mpSlave->WriteByte(reg & 0x0f, value);
 			}
 			break;
 	}
@@ -2868,7 +2877,7 @@ void ATPokeyEmulator::FlushAudio(bool pushAudio, uint64 timestamp) {
 
 		mpAudioOut->WriteAudio(
 			mpRenderer->GetOutputBuffer(),
-			mpSlave ? mpSlave->mpRenderer->GetOutputBuffer() : NULL,
+			mpSlave && mbStereoSoftEnable ? mpSlave->mpRenderer->GetOutputBuffer() : NULL,
 			outputSampleCount,
 			pushAudio,
 			startingTimestamp);
@@ -3251,4 +3260,8 @@ void ATPokeyEmulator::UpdatePots(uint32 timeSkew) {
 			}
 		}
 	}
+}
+
+void ATPokeyEmulator::UpdateAddressDecoding() {
+	mAddressMask = mpSlave && mbStereoSoftEnable ? 0x1F : 0x0F;
 }

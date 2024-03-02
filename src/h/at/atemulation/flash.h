@@ -35,7 +35,8 @@ enum ATFlashType {
 	kATFlashType_S29GL512P,	// Spansion 64M x 8-bit, 90nm (byte mode)
 	kATFlashType_S29GL256P,	// Spansion 32M x 8-bit, 90nm (byte mode)
 	kATFlashType_BM29F040,	// BRIGHT 512K x 8-bit
-	kATFlashType_M29F010B 	// STMicroelectronics 128K x 8-bit (then Numonyx, now Micron)
+	kATFlashType_M29F010B, 	// STMicroelectronics 128K x 8-bit (then Numonyx, now Micron)
+	kATFlashType_HY29F040A,	// Hynix HY29F040A 512K x 8-bit
 };
 
 class ATFlashEmulator : public IATSchedulerCallback {

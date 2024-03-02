@@ -536,6 +536,7 @@ private:
 	double mSelectionStartTime = 0;
 	double mSelectionEndTime = -1;
 	uint32 mNotifyRecursionCounter = 0;
+	bool mbGlobalAddressesEnabled = false;
 
 	ATProfileMode mProfileMode = kATProfileMode_Insns;
 
@@ -633,6 +634,7 @@ void ATUITraceViewerCPUProfileView::RemakeView() {
 	{
 		ATCPUProfileBuilder builder;
 		builder.Init(mProfileMode, mProfileCounterModes[0], mProfileCounterModes[1]);
+		builder.SetGlobalAddressesEnabled(mbGlobalAddressesEnabled);
 
 		const auto tsDecoder = g_sim.GetTimestampDecoder();
 
@@ -663,7 +665,7 @@ void ATUITraceViewerCPUProfileView::RemakeView() {
 
 		builder.OpenFrame(cycle, unhaltedCycle, tsDecoder);
 
-		const bool enableGlobalAddrs = mpChannel->GetDisasmMode() == kATDebugDisasmMode_6502;
+		const bool useGlobalAddrs = mpChannel->GetDisasmMode() == kATDebugDisasmMode_6502;
 
 		while(pos < endEventIdx) {
 			uint32 n = mpChannel->ReadHistoryEvents(hents, pos, std::min<uint32>(endEventIdx - pos, (uint32)vdcountof(hents)));
@@ -672,7 +674,7 @@ void ATUITraceViewerCPUProfileView::RemakeView() {
 			
 			pos += n - 1;
 
-			builder.Update(tsDecoder, hents, n - 1, enableGlobalAddrs);
+			builder.Update(tsDecoder, hents, n - 1, useGlobalAddrs);
 		}
 
 		if (pos && mpChannel->ReadHistoryEvents(hents, pos - 1, 1)) {
@@ -753,6 +755,7 @@ void ATUITraceViewerCPUProfileView::OnToolbarClicked(uint32 id) {
 				VDEnableMenuItemByCommandW32(hmenu, ID_FRAMETRIGGER_NONE, false);
 				VDEnableMenuItemByCommandW32(hmenu, ID_FRAMETRIGGER_VBLANK, false);
 				VDEnableMenuItemByCommandW32(hmenu, ID_FRAMETRIGGER_PCADDRESS, false);
+				VDCheckMenuItemByCommandW32(hmenu, ID_MENU_ENABLEGLOBALADDRESSES, mbGlobalAddressesEnabled);
 
 				const uint32 selectedId = mToolbar.ShowDropDownMenu(kToolbarId_Options, GetSubMenu(hmenu, 0));
 
@@ -776,6 +779,11 @@ void ATUITraceViewerCPUProfileView::OnToolbarClicked(uint32 id) {
 						}
 						break;
 					}
+				}
+
+				if (selectedId == ID_MENU_ENABLEGLOBALADDRESSES) {
+					mbGlobalAddressesEnabled = !mbGlobalAddressesEnabled;
+					RemakeView();
 				}
 			}
 			break;

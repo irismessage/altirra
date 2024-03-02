@@ -78,6 +78,7 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeRe
     <None Include="source\Shared\syscall816.s" />
     <None Include="source\Shared\sysdev816.s" />
     <None Include="source\Shared\vbi816.s" />
+    <None Include="source\Shared\version.inc" />
     <None Include="source\softkick.s" />
     <None Include="source\BASIC\main.xasm" />
     <None Include="source\NoKernel\main.xasm" />
@@ -131,12 +132,6 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeRe
     <None Include="Makefile" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\ATCompiler\ATCompiler.vcxproj">
-      <Project>{d2f5c17b-314f-47b9-a4b2-7ae895f7fe33}</Project>
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-    </ProjectReference>
-  </ItemGroup>
-  <ItemGroup>
     <ClCompile Include="source\Placeholders\noblackbox.s" />
   </ItemGroup>
   <ItemGroup>
@@ -145,5 +140,6 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeRe
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
+    <Import Project="..\Build\NMakeLessNoisy.targets" />
   </ImportGroup>
 </Project>

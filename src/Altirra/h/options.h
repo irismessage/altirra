@@ -35,6 +35,7 @@ struct ATOptions {
 	bool mbDisplay3D;
 	bool mbDisplayOpenGL;
 	bool mbDisplay16Bit;
+	bool mbDisplayAccelScreenFX;
 
 	bool mbSingleInstance;
 	bool mbPauseDuringMenu;
@@ -51,6 +52,7 @@ struct ATOptions {
 
 	VDStringA	mSICFlashChip;
 	VDStringA	mU1MBFlashChip;
+	VDStringA	mMaxflash8MbFlashChip;
 
 	ATMediaWriteMode mDefaultWriteMode;
 

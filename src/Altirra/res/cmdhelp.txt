@@ -111,6 +111,9 @@ Usage: Altirra [switches] <disk/cassette/cartridge images...>
   /portable   Create Altirra.ini file and switch to portable mode
   /portablealt:<file>
               Temporarily enable portable mode with alternate INI file
+  /portabletemp
+              Run with in-memory temp registry; do not load or save
+              settings
   /[no]si, /[no]singleinstance
               Force single instance mode (reuse running instance)
   /fullheapdump

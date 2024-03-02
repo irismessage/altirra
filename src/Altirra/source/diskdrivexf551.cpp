@@ -262,8 +262,8 @@ bool ATDeviceDiskDriveXF551::IsWritableFirmwareDirty(uint32 idx) const {
 void ATDeviceDiskDriveXF551::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 }
 
-bool ATDeviceDiskDriveXF551::IsUsableFirmwareLoaded() const {
-	return mbFirmwareUsable;
+ATDeviceFirmwareStatus ATDeviceDiskDriveXF551::GetFirmwareStatus() const {
+	return mbFirmwareUsable ? ATDeviceFirmwareStatus::OK : ATDeviceFirmwareStatus::Missing;
 }
 
 void ATDeviceDiskDriveXF551::InitDiskDrive(IATDiskDriveManager *ddm) {

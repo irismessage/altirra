@@ -160,7 +160,7 @@ public:
 	void SetShowLEDReadout(sint32 ledDisplay = -1);
 
 private:
-	void Flush(bool ignoreAutoFlush);
+	void Flush(bool ignoreAutoFlush, bool rethrowErrors);
 	bool CanFlush(bool ignoreAutoFlush) const;
 	void OnFlushTimerFire();
 	void SetFlushError(bool);

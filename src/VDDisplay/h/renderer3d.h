@@ -64,6 +64,7 @@ public:
 	virtual void MultiFillRect(const vdrect32 *rects, uint32 n);
 
 	virtual void AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, uint32 alphaColor);
+	virtual void AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint32 alphaColor);
 
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView);
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h);
@@ -93,6 +94,8 @@ protected:
 		float u;
 		float v;
 	};
+
+	static constexpr uint32 kVBSize = 65536;
 
 	void AddLines(const FillVertex *p, uint32 n, bool alpha);
 	void AddLineStrip(const FillVertex *p, uint32 n, bool alpha);

@@ -166,6 +166,10 @@ const wchar_t *ATXELCFEmulator::GetBusName() const {
 	return L"IDE/CompactFlash Bus";
 }
 
+const char *ATXELCFEmulator::GetBusTag() const {
+	return "idebus";
+}
+
 const char *ATXELCFEmulator::GetSupportedType(uint32 index) {
 	if (index == 0)
 		return "harddisk";

@@ -124,6 +124,7 @@ protected:
 		kState_BeginCommand,
 		kState_DispatchCommand,
 		kState_EndCommand,
+		kState_EndCommand2,
 		kState_Restore,
 		kState_Restore_Step,
 		kState_Seek,
@@ -193,6 +194,7 @@ protected:
 	uint32 mTransferIndex = 0;
 	uint32 mTransferLength = 0;
 	uint8 mActiveSectorStatus = 0;
+	uint8 mActivePhysSectorStatus = 0;
 	uint32 mActivePhysSector = 0;
 	uint32 mActiveOpIndexMarks = 0;
 
@@ -241,7 +243,7 @@ protected:
 	vdblock<uint8> mWriteTrackBuffer;
 	uint32 mWriteTrackIndex;
 
-	uint8 mTransferBuffer[1024] = {};
+	uint8 mTransferBuffer[4096] = {};
 
 	static constexpr uint32 kMaxBytesPerTrackFM = 3256;
 	static constexpr uint32 kMaxBytesPerTrackMFM = 6512;

@@ -26,6 +26,7 @@ class IATDevice;
 class IATDeviceBus {
 public:
 	virtual const wchar_t *GetBusName() const = 0;
+	virtual const char *GetBusTag() const = 0;
 	virtual const char *GetSupportedType(uint32 index) = 0;
 	virtual void GetChildDevices(vdfastvector<IATDevice *>& devs) = 0;
 	virtual void GetChildDevicePrefix(uint32 index, VDStringW& s) = 0;
@@ -33,7 +34,7 @@ public:
 	virtual void RemoveChildDevice(IATDevice *dev) = 0;
 };
 
-class IATDeviceParent {
+class IATDeviceParent : public IVDUnknown {
 public:
 	enum { kTypeID = 'adpt' };
 

@@ -202,8 +202,8 @@ void ATFileSetReadOnlyAttribute(const wchar_t *path, bool readOnly) {
 		throw MyWin32Error("Unable to change read-only flag on file: %s", GetLastError());
 }
 
-void ATCopyFrameToClipboard(void *hwnd, const VDPixmap& px) {
-	if (::OpenClipboard((HWND)hwnd)) {
+void ATCopyFrameToClipboard(const VDPixmap& px) {
+	if (::OpenClipboard(nullptr)) {
 		if (::EmptyClipboard()) {
 			HANDLE hMem;
 			void *lpvMem;
@@ -234,7 +234,7 @@ void ATCopyFrameToClipboard(void *hwnd, const VDPixmap& px) {
 	}
 }
 
-void ATSaveFrame(void *hwnd, const VDPixmap& px, const wchar_t *filename) {
+void ATSaveFrame(const VDPixmap& px, const wchar_t *filename) {
 	VDPixmapBuffer pxbuf(px.w, px.h, nsVDPixmap::kPixFormat_RGB888);
 
 	VDPixmapBlt(pxbuf, px);

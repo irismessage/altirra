@@ -307,6 +307,7 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeName(int mode) {
 		case kATCartridgeMode_MegaCart_256K:		return L"256K MegaCart";
 		case kATCartridgeMode_MegaCart_512K:		return L"512K MegaCart";
 		case kATCartridgeMode_MegaCart_1M:			return L"1M MegaCart";
+		case kATCartridgeMode_MegaCart_2M:			return L"2M MegaCart";
 		case kATCartridgeMode_Switchable_XEGS_32K:	return L"32K Switchable XEGS";
 		case kATCartridgeMode_Switchable_XEGS_64K:	return L"64K Switchable XEGS";
 		case kATCartridgeMode_Switchable_XEGS_128K:	return L"128K Switchable XEGS";
@@ -344,7 +345,6 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeName(int mode) {
 		case kATCartridgeMode_MegaMax_2M:			return L"MegaMax 2M";
 		case kATCartridgeMode_TheCart_128M:			return L"The!Cart 128M";
 		case kATCartridgeMode_MegaCart_4M_3:		return L"MegaCart 4M (3)";
-		case kATCartridgeMode_MegaCart_2M_3:		return L"MegaCart 2M (3)";
 		case kATCartridgeMode_TheCart_32M:			return L"The!Cart 32M";
 		case kATCartridgeMode_TheCart_64M:			return L"The!Cart 64M";
 		case kATCartridgeMode_BountyBob5200Alt:		return L"Bounty Bob (5200) - Alternate layout";
@@ -401,7 +401,8 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeDesc(int mode) {
 		case kATCartridgeMode_MegaCart_128K:
 		case kATCartridgeMode_MegaCart_256K:
 		case kATCartridgeMode_MegaCart_512K:
-		case kATCartridgeMode_MegaCart_1M:			return L"16K banked by CCTL data (switchable)";
+		case kATCartridgeMode_MegaCart_1M:
+		case kATCartridgeMode_MegaCart_2M:			return L"16K banked by CCTL data (switchable)";
 
 		case kATCartridgeMode_Switchable_XEGS_32K:
 		case kATCartridgeMode_Switchable_XEGS_64K:
@@ -444,8 +445,7 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeDesc(int mode) {
 		case kATCartridgeMode_RightSlot_4K:			return L"4K fixed right slot";
 		case kATCartridgeMode_MegaCart_512K_3:		return L"16K banked by CCTL data (switchable)";
 		case kATCartridgeMode_MegaMax_2M:			return L"16K banked by CCTL address (switchable)";
-		case kATCartridgeMode_MegaCart_4M_3:
-		case kATCartridgeMode_MegaCart_2M_3:		return L"16K banked by CCTL data (switchable)";
+		case kATCartridgeMode_MegaCart_4M_3:		return L"16K banked by CCTL data (switchable)";
 
 		case kATCartridgeMode_TheCart_32M:
 		case kATCartridgeMode_TheCart_64M:

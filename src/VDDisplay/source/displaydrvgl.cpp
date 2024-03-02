@@ -177,6 +177,7 @@ public:
 	void MultiFillRect(const vdrect32 *rects, uint32 n);
 
 	void AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, uint32 alphaColor);
+	void AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint32 alphaColor);
 
 	void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView);
 	void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h);
@@ -372,6 +373,30 @@ void VDDisplayRendererOpenGL::AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32
 	mpGL->glVertex2i(x, y+h);
 	mpGL->glVertex2i(x+w, y+h);
 	mpGL->glVertex2i(x+w, y);
+
+	mpGL->glEnd();
+
+	mpGL->glDisable(GL_BLEND);
+}
+
+void VDDisplayRendererOpenGL::AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint32 alphaColor) {
+	mpGL->glDisable(GL_TEXTURE_2D);
+	mpGL->glEnable(GL_BLEND);
+	mpGL->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	mpGL->glColor4f(
+		(float)((alphaColor >> 16) & 0xff) / 255.0f,
+		(float)((alphaColor >>  8) & 0xff) / 255.0f,
+		(float)((alphaColor >>  0) & 0xff) / 255.0f,
+		(float)((alphaColor >> 24) & 0xff) / 255.0f
+		);
+
+	mpGL->glBegin(GL_TRIANGLE_STRIP);
+
+	while(numPts--) {
+		mpGL->glVertex2f(pts->x, pts->y);
+		++pts;
+	}
 
 	mpGL->glEnd();
 
@@ -1087,7 +1112,7 @@ bool VDVideoDisplayMinidriverOpenGL::ModifySource(const VDVideoDisplaySourceInfo
 	if (!mGL.IsInited())
 		return false;
 
-	if (info.pixmap.w == mSource.pixmap.w && info.pixmap.h == mSource.pixmap.h && info.pixmap.format == mSource.pixmap.format && info.bInterlaced == mSource.bInterlaced) {
+	if (info.pixmap.w == mSource.pixmap.w && info.pixmap.h == mSource.pixmap.h && info.pixmap.format == mSource.pixmap.format) {
 		mSource = info;
 		// OpenGL doesn't allow upside-down texture uploads, so we simply
 		// upload the surface inverted and then reinvert on display.
@@ -1138,29 +1163,7 @@ bool VDVideoDisplayMinidriverOpenGL::Update(UpdateMode mode) {
 		if (mGL.Begin(hdc)) {
 			VDASSERT(mGL.glGetError() == GL_NO_ERROR);
 
-			if (mSource.bInterlaced) {
-				uint32 fieldmode = (mode & kModeFieldMask);
-
-				if (fieldmode == kModeAllFields || fieldmode == kModeEvenField) {
-					VDPixmap evenFieldSrc(mSource.pixmap);
-
-					evenFieldSrc.h = (evenFieldSrc.h+1) >> 1;
-					evenFieldSrc.pitch += evenFieldSrc.pitch;
-
-					Upload(evenFieldSrc, mTexPattern[0]);
-				}
-				if (fieldmode == kModeAllFields || fieldmode == kModeOddField) {
-					VDPixmap oddFieldSrc(mSource.pixmap);
-
-					oddFieldSrc.data = (char *)oddFieldSrc.data + oddFieldSrc.pitch;
-					oddFieldSrc.h = (oddFieldSrc.h+1) >> 1;
-					oddFieldSrc.pitch += oddFieldSrc.pitch;
-
-					Upload(oddFieldSrc, mTexPattern[1]);
-				}
-			} else {
-				Upload(mSource.pixmap, mTexPattern[0]);
-			}
+			Upload(mSource.pixmap, mTexPattern[0]);
 
 			VDASSERT(mGL.glGetError() == GL_NO_ERROR);
 
@@ -1324,12 +1327,7 @@ bool VDVideoDisplayMinidriverOpenGL::OnOpenGLInit() {
 					s = NULL;
 				}
 
-				if (mSource.bInterlaced) {
-					mTexPattern[0].Init(&mGL, mSource.pixmap.w, (mSource.pixmap.h+1)>>1, bPackedPixelsSupported, bEdgeClampSupported);
-					mTexPattern[1].Init(&mGL, mSource.pixmap.w, mSource.pixmap.h>>1, bPackedPixelsSupported, bEdgeClampSupported);
-					mTexPattern[1].ReinitFiltering(&mGL, mPreferredFilter);
-				} else
-					mTexPattern[0].Init(&mGL, mSource.pixmap.w, mSource.pixmap.h, bPackedPixelsSupported, bEdgeClampSupported);
+				mTexPattern[0].Init(&mGL, mSource.pixmap.w, mSource.pixmap.h, bPackedPixelsSupported, bEdgeClampSupported);
 				mTexPattern[0].ReinitFiltering(&mGL, mPreferredFilter);
 
 				VDASSERT(mGL.glGetError() == GL_NO_ERROR);
@@ -1400,14 +1398,7 @@ void VDVideoDisplayMinidriverOpenGL::OnPaint() {
 	if (!hdc)
 		return;
 
-	float bobOffset;
-
-	if (mRefreshMode & kModeBobEven)
-		bobOffset = +1.0f;
-	else if (mRefreshMode & kModeBobOdd)
-		bobOffset = -1.0f;
-	else
-		bobOffset = 0.0f;
+	float bobOffset = 0.0f;
 
 	RECT r;
 	GetClientRect(mhwndOGL, &r);
@@ -1498,50 +1489,7 @@ void VDVideoDisplayMinidriverOpenGL::OnPaint() {
 			mGL.glEnable(GL_DITHER);
 			mGL.glEnable(GL_TEXTURE_2D);
 
-			if (mSource.bInterlaced) {
-				const int dstH = r.bottom;
-
-				mGL.glOrtho(0, r.right, mbVerticalFlip ? 0 : dstH, mbVerticalFlip ? dstH : 0, -1, 1);
-
-				for(int field=0; field<2; ++field) {
-					const VDVideoTextureTilePatternOpenGL::TileInfo& tile = mTexPattern[field].GetTileInfo();
-
-					int		w = tile.mSrcW;
-					int		h = tile.mSrcH;
-					double	iw = tile.mInvU;
-					double	ih = tile.mInvV;
-
-					double	px1 = 0.0;
-					double	py1 = 0.0;
-					double	px2 = w;
-					double	py2 = h;
-
-					double	u1 = iw * px1;
-					double	u2 = iw * px2;
-
-					ih *= mSource.pixmap.h / (double)dstH * 0.5;
-
-					mGL.glBindTexture(GL_TEXTURE_2D, mTexPattern[field].GetTexture());
-
-					int ytop	= VDRoundToInt(ceil((py1*2 + field - 0.5) * (dstH / (double)mSource.pixmap.h) - 0.5));
-					int ybottom	= VDRoundToInt(ceil((py2*2 + field - 0.5) * (dstH / (double)mSource.pixmap.h) - 0.5));
-
-					if ((ytop^field) & 1)
-						++ytop;
-
-					mGL.glBegin(GL_QUADS);
-					mGL.glColor4d(1.0f, 1.0f, 1.0f, 1.0f);
-
-					for(int ydst = ytop; ydst < ybottom; ydst += 2) {
-						mGL.glTexCoord2d(u1, (ydst  -field+0.5)*ih);		mGL.glVertex2d(px1, ydst);
-						mGL.glTexCoord2d(u1, (ydst+1-field+0.5)*ih);		mGL.glVertex2d(px1, ydst+1);
-						mGL.glTexCoord2d(u2, (ydst+1-field+0.5)*ih);		mGL.glVertex2d(px2, ydst+1);
-						mGL.glTexCoord2d(u2, (ydst  -field+0.5)*ih);		mGL.glVertex2d(px2, ydst);
-					}
-
-					mGL.glEnd();
-				}
-			} else {
+			{
 				const VDVideoTextureTilePatternOpenGL::TileInfo& tile = mTexPattern[0].GetTileInfo();
 
 				int		w = tile.mSrcW;

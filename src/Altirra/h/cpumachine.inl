@@ -466,9 +466,30 @@ for(;;) {
 			}
 			break;
 
-		case kStateDSetSV:
-			mP &= ~(kFlagN | kFlagV);
-			mP |= (mData & 0xC0);
+		case kStateDSetSZToX:
+			{
+				uint8 p = mP & ~(kFlagN | kFlagZ);
+
+				p |= (mData & 0x80);	// copy N
+				if (!mData)
+					p |= kFlagZ;
+
+				mP = p;
+				mX = mData;
+			}
+			break;
+
+		case kStateDSetSZToY:
+			{
+				uint8 p = mP & ~(kFlagN | kFlagZ);
+
+				p |= (mData & 0x80);	// copy N
+				if (!mData)
+					p |= kFlagZ;
+
+				mP = p;
+				mY = mData;
+			}
 			break;
 
 		case kStateAddrToPC:
@@ -971,10 +992,12 @@ for(;;) {
 			}
 			break;
 
-		case kStateBit:
+		case kStateBitSetSV:
 			{
+				mP &= ~(kFlagN | kFlagV | kFlagZ);
+				mP |= (mData & 0xC0);
+
 				uint8 result = mData & mA;
-				mP &= ~kFlagZ;
 				if (!result)
 					mP |= kFlagZ;
 			}
@@ -1861,9 +1884,16 @@ for(;;) {
 				mP |= kFlagZ;
 			break;
 
-		case kStateDSetSV16:
-			mP &= ~(kFlagN | kFlagV);
-			mP |= ((uint8)(mData16 >> 8) & 0xC0);
+		case kStateBitSetSV16:
+			{
+				uint32 acc = mA + ((uint32)mAH << 8);
+				uint16 result = mData16 & acc;
+
+				mP &= ~(kFlagN | kFlagV | kFlagZ);
+				mP |= ((uint8)(mData16 >> 8) & 0xC0);
+				if (!result)
+					mP |= kFlagZ;
+			}
 			break;
 
 		case kState816WriteByte:
@@ -2146,17 +2176,6 @@ for(;;) {
 			mData16 >>= 1;
 			if (!mData16)
 				mP |= kFlagZ;
-			break;
-
-		case kStateBit16:
-			{
-				uint32 acc = mA + ((uint32)mAH << 8);
-				uint16 result = mData16 & acc;
-
-				mP &= ~kFlagZ;
-				if (!result)
-					mP |= kFlagZ;
-			}
 			break;
 
 		case kStateTrb16:

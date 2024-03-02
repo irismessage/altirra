@@ -120,6 +120,7 @@ void ATPokeyRenderer::ColdReset() {
 
 	mOutputLevel = 0;
 	mSpeakerLevel = 0;
+	mOutputSampleCount = 0;
 
 	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 	mLastFlushTime = t;
@@ -147,6 +148,7 @@ void ATPokeyRenderer::ColdReset() {
 }
 
 void ATPokeyRenderer::SyncTo(const ATPokeyRenderer& src) {
+	mLastFlushTime = src.mLastFlushTime;
 	mLastOutputSampleTime2 = src.mLastOutputSampleTime2;
 	mLastOutputTime2 = src.mLastOutputTime2;
 	mOutputSampleCount = src.mOutputSampleCount;

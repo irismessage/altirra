@@ -37,52 +37,6 @@ float4 PixelShaderPointBilinear_2_0(float2 t0 : TEXCOORD0, float2 ditherUV : TEX
 	return float4(c, 0) * (254.0f / 255.0f) + tex2D(samp1, ditherUV) / 256.0f;
 };
 
-technique point_2_0 {
-	pass p0 <
-		bool vd_clippos = true;
-	> {
-		VertexShader = compile vs_2_0 VertexShaderPointBilinear_2_0();
-		PixelShader = compile ps_2_0 PixelShaderPointBilinear_2_0();
-
-		MinFilter[0] = Point;
-		MagFilter[0] = Point;
-		MipFilter[0] = Point;
-		AddressU[0] = Clamp;
-		AddressV[0] = Clamp;
-		Texture[0] = <vd_srctexture>;
-
-		MinFilter[1] = Point;
-		MagFilter[1] = Point;
-		MipFilter[1] = Point;
-		AddressU[1] = Wrap;
-		AddressV[1] = Wrap;
-		Texture[1] = <vd_dithertexture>;
-	}
-}
-
-technique bilinear_2_0 {
-	pass p0 <
-		bool vd_clippos = true;
-	> {
-		VertexShader = compile vs_2_0 VertexShaderPointBilinear_2_0();
-		PixelShader = compile ps_2_0 PixelShaderPointBilinear_2_0();
-
-		MinFilter[0] = Linear;
-		MagFilter[0] = Linear;
-		MipFilter[0] = Linear;
-		AddressU[0] = Clamp;
-		AddressV[0] = Clamp;
-		Texture[0] = <vd_srctexture>;
-
-		MinFilter[1] = Point;
-		MagFilter[1] = Point;
-		MipFilter[1] = Point;
-		AddressU[1] = Wrap;
-		AddressV[1] = Wrap;
-		Texture[1] = <vd_dithertexture>;
-	}
-}
-
 ///////////////////////////////////////////////////////////////////////////
 
 void VertexShaderBoxlinear_2_0(VertexInput IN, out float4 oPos : POSITION, out float2 oT0 : TEXCOORD0) {
@@ -98,22 +52,6 @@ float4 PixelShaderBoxlinear_2_0(float2 t0 : TEXCOORD0) : COLOR0 {
 
 	return tex2D(samp0, t0 * vd_texsize.wz);
 };
-
-technique boxlinear_2_0 {
-	pass p0 <
-		bool vd_clippos = true;
-	> {
-		VertexShader = compile vs_2_0 VertexShaderBoxlinear_2_0();
-		PixelShader = compile ps_2_0 PixelShaderBoxlinear_2_0();
-
-		MinFilter[0] = Linear;
-		MagFilter[0] = Linear;
-		MipFilter[0] = Linear;
-		AddressU[0] = Clamp;
-		AddressV[0] = Clamp;
-		Texture[0] = <vd_srctexture>;
-	}
-}
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -185,55 +123,6 @@ float4 PixelShaderBicubic_2_0_B_Dither(VertexOutputBicubic_2_0 IN, float2 dither
 	return float4(c * (254.0f / 255.0f), 0) + tex2D(samp3, ditherUV) / 256.0f;
 }
 
-technique bicubic_2_0 {
-	pass horiz <
-		string vd_target="temp";
-		string vd_viewport="out, src";
-	> {
-		VertexShader = compile vs_2_0 VertexShaderBicubic_2_0_A();
-		PixelShader = compile ps_2_0 PixelShaderBicubic_2_0_A();
-		
-		Texture[0] = <vd_interphtexture>;
-		AddressU[0] = Wrap;
-		AddressV[0] = Clamp;
-		MipFilter[0] = None;
-		MinFilter[0] = Point;
-		MagFilter[0] = Point;
-
-		Texture[1] = <vd_srctexture>;
-		AddressU[1] = Clamp;
-		AddressV[1] = Clamp;
-		MipFilter[1] = None;
-		MinFilter[1] = Point;
-		MagFilter[1] = Point;
-		
-		Texture[2] = <vd_srctexture>;
-		AddressU[2] = Clamp;
-		AddressV[2] = Clamp;
-		MipFilter[2] = None;
-		MinFilter[2] = Linear;
-		MagFilter[2] = Linear;
-	}
-	
-	pass vert <
-		string vd_target="";
-		string vd_viewport="out,out";
-	> {
-		VertexShader = compile vs_2_0 VertexShaderBicubic_2_0_B();
-		PixelShader = compile ps_2_0 PixelShaderBicubic_2_0_B();
-		Texture[0] = <vd_interpvtexture>;
-		Texture[1] = <vd_temptexture>;
-		Texture[2] = <vd_temptexture>;
-		
-		Texture[3] = <vd_dithertexture>;
-		AddressU[3] = Wrap;
-		AddressV[3] = Wrap;
-		MipFilter[3] = None;
-		MinFilter[3] = Point;
-		MagFilter[3] = Point;
-	}
-}
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 //	YCbCr to RGB -- pixel shader 2.0
@@ -277,50 +166,6 @@ float4 PS_YCbCr_to_RGB_2_0_Rec709_FR(float2 uvY : TEXCOORD0, float2 uvC : TEXCOO
 	return PS_YCbCr_to_RGB_2_0(uvY, uvC, COLOR_SPACE_REC709_FR);
 }
 
-technique ycbcr_601_to_rgb_2_0 {
-	pass < string vd_viewport = "unclipped,unclipped"; > {
-		VertexShader = compile vs_2_0 VS_YCbCr_to_RGB_2_0();
-		PixelShader = compile ps_2_0 PS_YCbCr_to_RGB_2_0_Rec601();
-		
-		Sampler[0] = <vd_srcsampler_clamp_point>;
-		Sampler[1] = <vd_src2asampler_clamp_linear>;
-		Sampler[2] = <vd_src2bsampler_clamp_linear>;
-	}
-}
-
-technique ycbcr_709_to_rgb_2_0 {
-	pass < string vd_viewport = "unclipped,unclipped"; > {
-		VertexShader = compile vs_2_0 VS_YCbCr_to_RGB_2_0();
-		PixelShader = compile ps_2_0 PS_YCbCr_to_RGB_2_0_Rec709();
-		
-		Sampler[0] = <vd_srcsampler_clamp_point>;
-		Sampler[1] = <vd_src2asampler_clamp_linear>;
-		Sampler[2] = <vd_src2bsampler_clamp_linear>;
-	}
-}
-
-technique ycbcr_601fr_to_rgb_2_0 {
-	pass < string vd_viewport = "unclipped,unclipped"; > {
-		VertexShader = compile vs_2_0 VS_YCbCr_to_RGB_2_0();
-		PixelShader = compile ps_2_0 PS_YCbCr_to_RGB_2_0_Rec601_FR();
-		
-		Sampler[0] = <vd_srcsampler_clamp_point>;
-		Sampler[1] = <vd_src2asampler_clamp_linear>;
-		Sampler[2] = <vd_src2bsampler_clamp_linear>;
-	}
-}
-
-technique ycbcr_709fr_to_rgb_2_0 {
-	pass < string vd_viewport = "unclipped,unclipped"; > {
-		VertexShader = compile vs_2_0 VS_YCbCr_to_RGB_2_0();
-		PixelShader = compile ps_2_0 PS_YCbCr_to_RGB_2_0_Rec709_FR();
-		
-		Sampler[0] = <vd_srcsampler_clamp_point>;
-		Sampler[1] = <vd_src2asampler_clamp_linear>;
-		Sampler[2] = <vd_src2bsampler_clamp_linear>;
-	}
-}
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 //	Pal8 to RGB -- pixel shader 2.0
@@ -342,25 +187,6 @@ float4 PS_Pal8_to_RGB_2_0(float2 uv : TEXCOORD0) : COLOR0
 	half index = tex2D(samp0, uv).r;
 
 	return tex2D(samp1, half2(index * 255.0h/256.0h + 0.5h/256.0h, 0));
-}
-
-technique pal8_to_rgb_2_0 {
-	pass < string vd_viewport = "unclipped,unclipped"; > {
-		VertexShader = compile vs_2_0 VS_Pal8_to_RGB_2_0();
-		PixelShader = compile ps_2_0 PS_Pal8_to_RGB_2_0();
-		
-		Texture[0] = <vd_srctexture>;
-		AddressU[0] = Clamp;
-		AddressV[0] = Clamp;
-		MinFilter[0] = Point;
-		MagFilter[0] = Point;
-		
-		Texture[1] = <vd_srcpaltexture>;
-		AddressU[1] = Clamp;
-		AddressV[1] = Clamp;
-		MinFilter[1] = Point;
-		MagFilter[1] = Point;
-	}
 }
 
 #endif

@@ -21,14 +21,8 @@
 #include <intrin.h>
 #include <at/atcore/intrin_sse2.h>
 
+#ifdef VD_CPU_X64
 void atasm_update_playfield_160_sse2(void *dst0, const uint8 *src, uint32 n) {
-	// We do unaligned loads from this array, so it's important that we
-	// avoid data cache unit (DCU) split penalties on older CPUs. Minimum
-	// for SSE2 is Pentium 4, so we can assume at least 64 byte cache lines.
-	alignas(64) static const uint64 window_table[6] = {
-		0, 0, (uint64)0 - 1, (uint64)0 - 1, 0, 0
-	};
-
 	alignas(16) static const uint64 lowbit_mask[2] = { 0x0f0f0f0f0f0f0f0f, 0x0f0f0f0f0f0f0f0f };
 
 	// load and preshuffle color table
@@ -41,26 +35,18 @@ void atasm_update_playfield_160_sse2(void *dst0, const uint8 *src, uint32 n) {
 	const uint8 *srcEnd = src + n;
 		
 	// check if we have a starting source offset and remove it
-	uintptr startOffset = (uintptr)src & 15;
+	uint32 startOffset = (uint32)(uintptr)src & 15;
+	uint32 endOffset = (uint32)(uintptr)srcEnd & 15;
 
 	dst -= startOffset * 2;
 	src -= startOffset;
 
 	// check if we have overlapping start and stop masks
 	if (!(((uintptr)src ^ (uintptr)srcEnd) & ~(uintptr)15)) {
-		ptrdiff_t startingMaskOffset = 16 - startOffset;
-		ptrdiff_t endingMaskOffset = 32 - ((uintptr)srcEnd & 15);
+		__m128i mask = _mm_and_si128(ATIntrinGetStartMask_SSE2(startOffset), ATIntrinGetEndMask_SSE2(endOffset));
 
-		__m128i mask1 = _mm_loadl_epi64((const __m128i *)((const uint8 *)window_table + startingMaskOffset));
-		__m128i mask2 = _mm_loadl_epi64((const __m128i *)((const uint8 *)window_table + startingMaskOffset + 8));
-		__m128i mask3 = _mm_loadl_epi64((const __m128i *)((const uint8 *)window_table + endingMaskOffset));
-		__m128i mask4 = _mm_loadl_epi64((const __m128i *)((const uint8 *)window_table + endingMaskOffset + 8));
-
-		mask1 = _mm_and_si128(mask1, mask3);
-		mask2 = _mm_and_si128(mask2, mask4);
-
-		mask1 = _mm_unpacklo_epi8(mask1, mask1);
-		mask2 = _mm_unpacklo_epi8(mask2, mask2);
+		__m128i mask1 = _mm_unpacklo_epi8(mask, mask);
+		__m128i mask2 = _mm_unpackhi_epi8(mask, mask);
 
 		const __m128i anxData = *(const __m128i *)src;
 
@@ -72,13 +58,10 @@ void atasm_update_playfield_160_sse2(void *dst0, const uint8 *src, uint32 n) {
 	} else {
 		// process initial oword
 		if (startOffset) {
-			ptrdiff_t startingMaskOffset = 16 - startOffset;
+			__m128i mask = ATIntrinGetStartMask_SSE2(startOffset);
 
-			__m128i mask1 = _mm_loadl_epi64((const __m128i *)((const uint8 *)window_table + startingMaskOffset));
-			__m128i mask2 = _mm_loadl_epi64((const __m128i *)((const uint8 *)window_table + startingMaskOffset + 8));
-
-			mask1 = _mm_unpacklo_epi8(mask1, mask1);
-			mask2 = _mm_unpacklo_epi8(mask2, mask2);
+			__m128i mask1 = _mm_unpacklo_epi8(mask, mask);
+			__m128i mask2 = _mm_unpackhi_epi8(mask, mask);
 
 			const __m128i anxData = *(const __m128i *)src;
 			src += 16;
@@ -112,13 +95,9 @@ void atasm_update_playfield_160_sse2(void *dst0, const uint8 *src, uint32 n) {
 		// process final oword
 		byteCounter &= 15;
 		if (byteCounter) {
-			ptrdiff_t endingMaskOffset = 32 - byteCounter;
-
-			__m128i mask1 = _mm_loadl_epi64((const __m128i *)((const uint8 *)window_table + endingMaskOffset));
-			__m128i mask2 = _mm_loadl_epi64((const __m128i *)((const uint8 *)window_table + endingMaskOffset + 8));
-
-			mask1 = _mm_unpacklo_epi8(mask1, mask1);
-			mask2 = _mm_unpacklo_epi8(mask2, mask2);
+			__m128i mask = ATIntrinGetEndMask_SSE2(endOffset);
+			__m128i mask1 = _mm_unpacklo_epi8(mask, mask);
+			__m128i mask2 = _mm_unpackhi_epi8(mask, mask);
 
 			const __m128i anxData = *(const __m128i *)src;
 			const __m128i evenColorCodes = _mm_and_si128(_mm_srli_epi32(anxData, 4), pfMask);
@@ -126,6 +105,96 @@ void atasm_update_playfield_160_sse2(void *dst0, const uint8 *src, uint32 n) {
 
 			ATMaskedWrite_SSE2(_mm_unpacklo_epi8(evenColorCodes, oddColorCodes), mask1, dst);
 			ATMaskedWrite_SSE2(_mm_unpackhi_epi8(evenColorCodes, oddColorCodes), mask2, dst+16);
+		}
+	}
+}
+#endif
+
+void atasm_update_playfield_320_sse2(void *dstpri0, void *dsthires0, const uint8 *src0, uint32 x, uint32 n) {
+	if (!n)
+		return;
+
+	// align start pointers
+	uint32 startOffset = (uint32)(uintptr)src0 & 15;
+	uint32 endOffset = (uint32)(uintptr)(src0 + n) & 15;
+	__m128i *VDRESTRICT dstpri16 = (__m128i *)((char *)dstpri0 + x - startOffset * 2);
+	__m128i *VDRESTRICT dsthires16 = (__m128i *)((char *)dsthires0 + x - startOffset * 2);
+	const __m128i *VDRESTRICT src = (const __m128i *)(src0 - startOffset);
+
+	// compute start/end masks
+	const __m128i startMask = ATIntrinGetStartMask_SSE2(startOffset);
+	const __m128i endMask = ATIntrinGetEndMask_SSE2(endOffset);
+
+	// check for overlap
+	const __m128i pf2x16 = _mm_set1_epi8(PF2);
+	const __m128i x03b = _mm_set1_epi8(0x03);
+	if (!(((uintptr)src0 ^ (uintptr)(src0 + n)) & ~(uintptr)15)) {
+		const __m128i startEndMask = _mm_and_si128(startMask, endMask);
+		const __m128i startEndMask1 = _mm_unpacklo_epi8(startEndMask, startEndMask);
+		const __m128i startEndMask2 = _mm_unpackhi_epi8(startEndMask, startEndMask);
+
+		// write PF2 to priority map
+		ATMaskedWrite_SSE2(pf2x16, startEndMask1, dstpri16);
+		ATMaskedWrite_SSE2(pf2x16, startEndMask2, dstpri16 + 1);
+
+		// write data to hires map
+		const __m128i hdat = *src;
+		const __m128i hdatl = _mm_and_si128(_mm_srli_epi16(hdat, 2), x03b);
+		const __m128i hdath = _mm_and_si128(hdat, x03b);
+
+		ATMaskedWrite_SSE2(_mm_unpacklo_epi8(hdatl, hdath), startEndMask1, dsthires16);
+		ATMaskedWrite_SSE2(_mm_unpackhi_epi8(hdatl, hdath), startEndMask2, dsthires16 + 1);
+	} else {
+		uint32 n16 = (n - endOffset + startOffset) >> 4;
+
+		if (startOffset) {
+			ATMaskedWrite_SSE2(pf2x16, _mm_unpacklo_epi8(startMask, startMask), dstpri16);
+			ATMaskedWrite_SSE2(pf2x16, _mm_unpackhi_epi8(startMask, startMask), dstpri16 + 1);
+			dstpri16 += 2;
+			--n16;
+		}
+
+		for(uint32 i=0; i<n16; ++i) {
+			dstpri16[0] = pf2x16;
+			dstpri16[1] = pf2x16;
+			dstpri16 += 2;
+		}
+
+		if (endOffset) {
+			ATMaskedWrite_SSE2(pf2x16, _mm_unpacklo_epi8(endMask, endMask), dstpri16);
+			ATMaskedWrite_SSE2(pf2x16, _mm_unpackhi_epi8(endMask, endMask), dstpri16 + 1);
+		}
+
+		// process initial oword
+		if (startOffset) {
+			const __m128i hdata = *src++;
+			const __m128i hdatl = _mm_and_si128(_mm_srli_epi16(hdata, 2), x03b);
+			const __m128i hdath = _mm_and_si128(hdata, x03b);
+
+			ATMaskedWrite_SSE2(_mm_unpacklo_epi8(hdatl, hdath), _mm_unpacklo_epi8(startMask, startMask), dsthires16);
+			ATMaskedWrite_SSE2(_mm_unpackhi_epi8(hdatl, hdath), _mm_unpackhi_epi8(startMask, startMask), dsthires16+1);
+			dsthires16 += 2;
+		}
+
+		// process main owords
+		for(uint32 i=0; i<n16; ++i) {
+			const __m128i hdata = *src++;
+			const __m128i hdatl = _mm_and_si128(_mm_srli_epi16(hdata, 2), x03b);
+			const __m128i hdath = _mm_and_si128(hdata, x03b);
+
+			dsthires16[0] = _mm_unpacklo_epi8(hdatl, hdath);
+			dsthires16[1] = _mm_unpackhi_epi8(hdatl, hdath);
+			dsthires16 += 2;
+		}
+
+		// process final oword
+		if (endOffset) {
+			const __m128i hdata = *src;
+			const __m128i hdatl = _mm_and_si128(_mm_srli_epi16(hdata, 2), x03b);
+			const __m128i hdath = _mm_and_si128(hdata, x03b);
+
+			ATMaskedWrite_SSE2(_mm_unpacklo_epi8(hdatl, hdath), _mm_unpacklo_epi8(endMask, endMask), dsthires16);
+			ATMaskedWrite_SSE2(_mm_unpackhi_epi8(hdatl, hdath), _mm_unpackhi_epi8(endMask, endMask), dsthires16+1);
 		}
 	}
 }

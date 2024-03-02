@@ -1,3 +1,19 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2008-2018 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #include <stdafx.h>
 #include <vd2/system/math.h>
 #include <vd2/system/time.h>
@@ -6,8 +22,9 @@
 #include <vd2/VDDisplay/font.h>
 #include <vd2/VDDisplay/textrenderer.h>
 #include <vd2/VDDisplay/renderersoft.h>
-#include <at/atui/uimanager.h>
 #include <at/atui/uicontainer.h>
+#include <at/atui/uidragdrop.h>
+#include <at/atui/uimanager.h>
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -74,6 +91,7 @@ void ATUIManager::Init(IATUINativeDisplay *natDisp) {
 void ATUIManager::Shutdown() {
 	VDASSERT(!mDestroyLocks);
 
+	vdsaferelease <<= mpDropObject;
 	vdsafedelete <<= mpStockImages;
 
 	if (mpMainWindow) {
@@ -679,6 +697,88 @@ void ATUIManager::OnCaptureLost() {
 	}
 }
 
+ATUIDragEffect ATUIManager::OnDragEnter(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) {
+	if (mpDropObject != obj) {
+		OnDragLeave();
+
+		IATUIDragDropObject *oldObject = mpDropObject;
+		
+		mpDropObject = obj;
+
+		if (oldObject)
+			oldObject->Release();
+
+		if (obj)
+			obj->AddRef();
+	}
+
+	if (!obj)
+		return ATUIDragEffect::None;
+
+	return OnDragOver(x, y, modifiers);
+}
+
+ATUIDragEffect ATUIManager::OnDragOver(sint32 x, sint32 y, ATUIDragModifiers modifiers) {
+	ATUIWidget *w = mpMainWindow->DragHitTest(vdpoint32(x, y));
+	bool isEnter = false;
+
+	if (mpDropTargetWindow != w) {
+		ATUIWidget *prev = mpDropTargetWindow;
+
+		mpDropTargetWindow = w;
+
+		if (prev)
+			prev->OnDragLeave();
+
+		isEnter = true;
+	}
+	
+	if (!mpDropTargetWindow)
+		return ATUIDragEffect::None;
+
+	vdpoint32 cpt;
+	if (!mpDropTargetWindow->TranslateScreenPtToClientPt(vdpoint32(x, y), cpt))
+		return ATUIDragEffect::None;
+
+	return isEnter ? w->OnDragEnter(cpt.x, cpt.y, modifiers, mpDropObject) : w->OnDragOver(cpt.x, cpt.y, modifiers, mpDropObject);
+}
+
+void ATUIManager::OnDragLeave() {
+	if (mpDropTargetWindow) {
+		ATUIWidget *w = mpDropTargetWindow;
+		mpDropTargetWindow = nullptr;
+
+		w->OnDragLeave();
+	}
+
+	if (mpDropObject) {
+		IATUIDragDropObject *obj = mpDropObject;
+		mpDropObject = nullptr;
+
+		obj->Release();
+	}
+}
+
+ATUIDragEffect ATUIManager::OnDragDrop(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) {
+	OnDragEnter(x, y, modifiers, obj);
+
+	ATUIDragEffect effect = ATUIDragEffect::None;
+	if (mpDropTargetWindow) {
+		vdpoint32 cpt;
+		if (mpDropTargetWindow->TranslateScreenPtToClientPt(vdpoint32(x, y), cpt))
+			effect = mpDropTargetWindow->OnDragDrop(cpt.x, cpt.y, modifiers, obj);
+
+		if (mpDropTargetWindow) {
+			ATUIWidget *w = mpDropTargetWindow;
+			mpDropTargetWindow = nullptr;
+
+			w->OnDragLeave();
+		}
+	}
+
+	return effect;
+}
+
 const wchar_t *ATUIManager::GetCustomEffectPath() const {
 	return mCustomEffectPath.c_str();
 }
@@ -717,6 +817,9 @@ void ATUIManager::Detach(ATUIWidget *w) {
 		w->AddRef();
 		mDestroyList.push_back(w);
 	}
+
+	if (mpDropTargetWindow == w)
+		mpDropTargetWindow = nullptr;
 
 	if (mpActiveWindow == w) {
 		ATUIWidget *newActive = w->GetParentOrOwner();

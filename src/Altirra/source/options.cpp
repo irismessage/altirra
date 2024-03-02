@@ -94,6 +94,7 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "Display: 3D", opts.mbDisplay3D);
 	ATOptionsExchange(key, write, "Display: OpenGL", opts.mbDisplayOpenGL);
 	ATOptionsExchange(key, write, "Display: Use 16-bit surfaces", opts.mbDisplay16Bit);
+	ATOptionsExchange(key, write, "Display: Accelerate screen FX", opts.mbDisplayAccelScreenFX);
 	ATOptionsExchangeEnum(key, write, "Simulator: Error mode", opts.mErrorMode, kATErrorModeCount);
 	ATOptionsExchange(key, write, "Display: Full screen mode width", opts.mFullScreenWidth);
 	ATOptionsExchange(key, write, "Display: Full screen mode height", opts.mFullScreenHeight);
@@ -101,6 +102,7 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "Display: Borderless mode", opts.mbFullScreenBorderless);
 	ATOptionsExchange(key, write, "Flash: SIC! cartridge flash mode", opts.mSICFlashChip);
 	ATOptionsExchange(key, write, "Flash: Ultimate1MB flash mode", opts.mU1MBFlashChip);
+	ATOptionsExchange(key, write, "Flash: Maxflash 8Mb flash mode", opts.mMaxflash8MbFlashChip);
 	ATOptionsExchange(key, write, "UI: Theme scale factor", opts.mThemeScale);
 	ATOptionsExchange(key, write, "UI: Pause during menus", opts.mbPauseDuringMenu);
 	ATOptionsExchange(key, write, "UI: Launch with automatic profile", opts.mbLaunchAutoProfile);

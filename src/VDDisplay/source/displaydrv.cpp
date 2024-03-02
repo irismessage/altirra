@@ -343,7 +343,15 @@ VDVideoDisplayMinidriver::~VDVideoDisplayMinidriver() {
 	vdsaferelease <<= mpCompositor;
 }
 
+bool VDVideoDisplayMinidriver::PreInit(HWND hwnd, HMONITOR hmonitor) {
+	return true;
+}
+
 bool VDVideoDisplayMinidriver::IsFramePending() {
+	return false;
+}
+
+bool VDVideoDisplayMinidriver::IsScreenFXSupported() const {
 	return false;
 }
 
@@ -387,6 +395,10 @@ void VDVideoDisplayMinidriver::SetDestRect(const vdrect32 *r, uint32 color) {
 void VDVideoDisplayMinidriver::SetPixelSharpness(float xfactor, float yfactor) {
 	mPixelSharpnessX = xfactor;
 	mPixelSharpnessY = yfactor;
+}
+
+bool VDVideoDisplayMinidriver::SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX) {
+	return !screenFX;
 }
 
 void VDVideoDisplayMinidriver::SetCompositor(IVDDisplayCompositor *compositor) {
@@ -439,11 +451,10 @@ float VDVideoDisplayMinidriver::GetSyncDelta() const {
 }
 
 void VDVideoDisplayMinidriver::GetFormatString(const VDVideoDisplaySourceInfo& info, VDStringA& s) {
-	s.sprintf("%dx%d (%s)%s"
+	s.sprintf("%dx%d (%s)"
 		, info.pixmap.w
 		, info.pixmap.h
 		, VDPixmapGetInfo(info.pixmap.format).name
-		, info.bInterlaced ? " (interlaced)" : ""
 		);
 }
 

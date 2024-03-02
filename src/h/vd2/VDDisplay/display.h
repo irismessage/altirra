@@ -15,6 +15,32 @@ class IVDDisplayCompositor;
 class VDPixmapBuffer;
 class VDBufferedStream;
 
+struct VDVideoDisplayScreenFXInfo {
+	float mScanlineIntensity;
+	float mGamma;
+
+	float mPALBlendingOffset;
+
+	float mDistortionX;
+	float mDistortionYRatio;
+
+	bool mbColorCorrectAdobeRGB;
+	float mColorCorrectionMatrix[3][3];
+
+	float mBloomThreshold;
+	float mBloomRadius;
+	float mBloomDirectIntensity;
+	float mBloomIndirectIntensity;
+};
+
+class IVDVideoDisplayScreenFXEngine {
+public:
+	// Apply screen FX to an image in software; returns resulting image. The source image buffer must
+	// not be modified, and the engine must keep the result image alive as long as the original submitted
+	// frame.
+	virtual VDPixmap ApplyScreenFX(const VDPixmap& px) = 0;
+};
+
 class VDVideoDisplayFrame : public vdlist_node, public IVDRefCount {
 public:
 	VDVideoDisplayFrame();
@@ -23,10 +49,12 @@ public:
 	virtual int AddRef();
 	virtual int Release();
 
-	VDPixmap	mPixmap;
-	uint32		mFlags;
-	bool		mbInterlaced;
-	bool		mbAllowConversion;
+	VDPixmap	mPixmap {};
+	uint32		mFlags = 0;
+	bool		mbAllowConversion = false;
+
+	IVDVideoDisplayScreenFXEngine *mpScreenFXEngine = nullptr;
+	const VDVideoDisplayScreenFXInfo *mpScreenFX = nullptr;
 
 protected:
 	VDAtomicInt	mRefCount;
@@ -40,20 +68,10 @@ public:
 class VDINTERFACE IVDVideoDisplay {
 public:
 	enum FieldMode {
-		kEvenFieldOnly		= 0x0001,
-		kOddFieldOnly		= 0x0002,
-		kAllFields			= 0x0003,
 		kVSync				= 0x0004,
-		kFirstField			= 0x0008,
-
 		kDoNotCache			= 0x0020,
 		kVisibleOnly		= 0x0040,
-		kAutoFlipFields		= 0x0080,
-		kBobEven			= 0x0100,
-		kBobOdd				= 0x0200,
-		kSequentialFields	= 0x0400,
 		kDoNotWait			= 0x0800,
-
 		kFieldModeMax		= 0xffff,
 	};
 
@@ -67,8 +85,8 @@ public:
 	virtual void Destroy() = 0;
 	virtual void Reset() = 0;
 	virtual void SetSourceMessage(const wchar_t *msg) = 0;
-	virtual bool SetSource(bool bAutoUpdate, const VDPixmap& src, void *pSharedObject = 0, ptrdiff_t sharedOffset = 0, bool bAllowConversion = true, bool bInterlaced = false) = 0;
-	virtual bool SetSourcePersistent(bool bAutoUpdate, const VDPixmap& src, bool bAllowConversion = true, bool bInterlaced = false) = 0;
+	virtual bool SetSource(bool bAutoUpdate, const VDPixmap& src, bool bAllowConversion = true) = 0;
+	virtual bool SetSourcePersistent(bool bAutoUpdate, const VDPixmap& src, bool bAllowConversion = true, const VDVideoDisplayScreenFXInfo *screenFX = nullptr, IVDVideoDisplayScreenFXEngine *screenFXEngine = nullptr) = 0;
 	virtual void SetSourceSubrect(const vdrect32 *r) = 0;
 	virtual void SetSourceSolidColor(uint32 color) = 0;
 
@@ -86,7 +104,7 @@ public:
 	virtual void FlushBuffers() = 0;
 
 	virtual void Invalidate() = 0;
-	virtual void Update(int mode = kAllFields) = 0;
+	virtual void Update(int mode = 0) = 0;
 	virtual void Cache() = 0;
 	virtual void SetCallback(IVDVideoDisplayCallback *p) = 0;
 
@@ -103,6 +121,22 @@ public:
 	virtual float GetSyncDelta() const = 0;
 
 	virtual vdrect32 GetMonitorRect() = 0;
+
+	// Returns true if the current/last minidriver supported screen FX. This is a hint as to
+	// whether hardware or software acceleration should be preferred. Calling code must still
+	// be prepared to fall back to software emulation should the minidriver change to one that
+	// doesn't support screen FX.
+	virtual bool IsScreenFXPreferred() const = 0;
+
+	// Map a normalized source point in [0,1] to the destination size. Returns true if the
+	// point was within the source, false if it was clamped. This is a no-op if distortion is
+	// off.
+	virtual bool MapNormSourcePtToDest(vdfloat2& pt) const = 0;
+
+	// Map a normalized destination point in [0,1] to the destination size. Returns true if the
+	// point was within the source, false if it was clamped. This is a no-op if distortion is
+	// off.
+	virtual bool MapNormDestPtToSource(vdfloat2& pt) const = 0;
 
 	enum ProfileEvent {
 		kProfileEvent_BeginTick,
