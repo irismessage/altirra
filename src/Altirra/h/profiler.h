@@ -28,7 +28,9 @@ class ATCPUEmulatorCallbacks;
 struct ATProfileRecord {
 	uint32 mAddress;
 	uint32 mCalls;
-	uint32 mInsns;
+	uint32 mInsns : 29;
+	uint32 mModeBits : 2;
+	uint32 mEmulationMode : 1;
 	uint32 mCycles;
 	uint32 mUnhaltedCycles;
 };

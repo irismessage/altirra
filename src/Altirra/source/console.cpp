@@ -81,6 +81,9 @@ namespace {
 		L"Lucida Console"
 	};
 
+	int g_monoFontPtSizeTenths = 75;
+	int g_monoFontDpi;
+
 	HFONT	g_monoFont;
 	int		g_monoFontLineHeight;
 	int		g_monoFontCharWidth;
@@ -2652,11 +2655,20 @@ const VDStringA *ATHistoryWindow::GetNodeText(TreeNode *node) {
 						if (tsframe > frameBase)
 							tsframe -= 0x1000;
 
-						mTempLine.sprintf("%d:%3d:%3d | "
-								, tsframe
-								, (hent.mTimestamp >> 8) & 0xfff
-								, hent.mTimestamp & 0xff
-							);
+						if (g_sim.GetCPU().GetSubCycles() > 1) {
+							mTempLine.sprintf("%d:%3d:%3d.%u | "
+									, tsframe
+									, (hent.mTimestamp >> 8) & 0xfff
+									, hent.mTimestamp & 0xff
+									, hent.mSubCycle
+								);
+						} else {
+							mTempLine.sprintf("%d:%3d:%3d | "
+									, tsframe
+									, (hent.mTimestamp >> 8) & 0xfff
+									, hent.mTimestamp & 0xff
+								);
+						}
 						break;
 					}
 
@@ -3464,13 +3476,17 @@ void ATHistoryWindow::InsertNode(TreeNode *parent, TreeNode *insertAfter, TreeNo
 void ATHistoryWindow::RemoveNode(TreeNode *node) {
 	VDASSERT(node);
 
-	TreeNode *successorNode = node;
+	TreeNode *successorNode = NULL;
+	
+	if (!mbInvalidatesBlocked) {
+		successorNode = node;
 
-	while(successorNode) {
-		if (successorNode->mpNextSibling)
-			break;
+		while(successorNode) {
+			if (successorNode->mpNextSibling)
+				break;
 
-		successorNode = successorNode->mpParent;
+			successorNode = successorNode->mpParent;
+		}
 	}
 
 	// adjust heights of parents and siblings
@@ -5449,11 +5465,25 @@ int ATGetConsoleFontLineHeightW32() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-void ATConsoleGetFont(LOGFONTW& font) {
+void ATConsoleGetFont(LOGFONTW& font, int& pointSizeTenths) {
 	font = g_monoFontDesc;
+	pointSizeTenths = g_monoFontPtSizeTenths;
 }
 
-void ATConsoleSetFont(const LOGFONTW& font) {
+void ATConsoleSetFontDpi(UINT dpi) {
+	if (g_monoFontDpi != dpi) {
+		g_monoFontDpi = dpi;
+
+		ATConsoleSetFont(g_monoFontDesc, g_monoFontPtSizeTenths);
+	}
+}
+
+void ATConsoleSetFont(const LOGFONTW& font0, int pointSizeTenths) {
+	LOGFONTW font = font0;
+
+	if (g_monoFontDpi && g_monoFontPtSizeTenths)
+		font.lfHeight = -MulDiv(pointSizeTenths, g_monoFontDpi, 720);
+
 	HFONT newFont = CreateFontIndirectW(&font);
 
 	if (!newFont) {
@@ -5483,6 +5513,7 @@ void ATConsoleSetFont(const LOGFONTW& font) {
 	}
 
 	g_monoFontDesc = font;
+	g_monoFontPtSizeTenths = pointSizeTenths;
 
 	HFONT prevFont = g_monoFont;
 	g_monoFont = newFont;
@@ -5495,6 +5526,7 @@ void ATConsoleSetFont(const LOGFONTW& font) {
 	VDRegistryAppKey key("Settings");
 	key.setString("Console: Font family", font.lfFaceName);
 	key.setInt("Console: Font size", font.lfHeight);
+	key.setInt("Console: Font point size tenths", pointSizeTenths);
 }
 
 namespace {
@@ -5530,14 +5562,28 @@ void ATInitUIPanes() {
 		VDRegistryAppKey key("Settings");
 		VDStringW family;
 		int fontSize;
+		int pointSizeTenths = g_monoFontPtSizeTenths;
+
 		if (key.getString("Console: Font family", family)
 			&& (fontSize = key.getInt("Console: Font size", 0))) {
 
 			consoleFont.lfHeight = fontSize;
 			vdwcslcpy(consoleFont.lfFaceName, family.c_str(), sizeof(consoleFont.lfFaceName)/sizeof(consoleFont.lfFaceName[0]));
+
+			int dpiY = 96;
+			HDC hdc = GetDC(NULL);
+
+			if (hdc) {
+				dpiY = GetDeviceCaps(hdc, LOGPIXELSY);
+				ReleaseDC(NULL, hdc);
+			}
+
+			pointSizeTenths = (abs(consoleFont.lfHeight) * 720 + (dpiY >> 1)) / dpiY;
 		}
 
-		ATConsoleSetFont(consoleFont);
+		pointSizeTenths = key.getInt("Console: Font point size tenths", pointSizeTenths);
+
+		ATConsoleSetFont(consoleFont, pointSizeTenths);
 	}
 
 	g_hmenuSrcContext = LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_SOURCE_CONTEXT_MENU));

@@ -205,6 +205,9 @@ public:
 	void		WaitFence(uint32 id);
 	bool		IsFencePassed(uint32 id);
 
+	void		BeginScope(const wchar_t *name);
+	void		EndScope();
+
 	HRESULT		DrawArrays(D3DPRIMITIVETYPE type, UINT vertStart, UINT primCount);
 	HRESULT		DrawElements(D3DPRIMITIVETYPE type, UINT vertStart, UINT vertCount, UINT idxStart, UINT primCount);
 	HRESULT		Present(const RECT *srcRect, HWND hwndDest, bool vsync, float& syncDelta, VDD3DPresentHistory& history);
@@ -289,6 +292,12 @@ protected:
 	FenceQueue		mFenceFreeList;
 	uint32			mFenceQueueBase;
 	uint32			mFenceQueueHeadIndex;
+
+	typedef int (__stdcall *tpBeginEvent)(D3DCOLOR, LPCWSTR);
+	typedef int (__stdcall *tpEndEvent)();
+
+	tpBeginEvent mpBeginEvent;
+	tpEndEvent mpEndEvent;
 };
 
 VDD3D9Manager *VDInitDirect3D9(VDD3D9Client *pClient, HMONITOR hmonitor, bool use9ex);

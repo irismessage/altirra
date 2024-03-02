@@ -23,6 +23,7 @@
 #include <vd2/VDDisplay/renderer.h>
 
 struct IDirect3DTexture9;
+class IVDVideoDisplayDX9Manager;
 
 class VDINTERFACE IVDFontRendererD3D9 : public IVDRefCount {
 public:
@@ -38,7 +39,7 @@ bool VDCreateFontRendererD3D9(IVDFontRendererD3D9 **);
 
 class VDINTERFACE IVDDisplayRendererD3D9 : public IVDRefCount, public IVDDisplayRenderer {
 public:
-	virtual bool Init(VDD3D9Manager *d3dmgr) = 0;
+	virtual bool Init(VDD3D9Manager *d3dmgr, IVDVideoDisplayDX9Manager *vidmgr) = 0;
 	virtual void Shutdown() = 0;
 
 	virtual bool Begin() = 0;

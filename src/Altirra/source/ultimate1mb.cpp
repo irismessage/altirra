@@ -571,7 +571,8 @@ sint32 ATUltimate1MBEmulator::ReadByteD3xx(void *thisptr0, uint32 addr) {
 			v += 0x40;
 
 		return v;
-	}
+	} else if (addr >= 0xD380)
+		return 0xFF;
 	
 	return -1;
 }

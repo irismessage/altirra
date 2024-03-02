@@ -19,25 +19,80 @@
 #define AT_CPU_READ_BYTE_ADDR16(addr) ((mpMemory->mBusValue) = (mpMemory->ReadByteAddr16((addr))))
 #define AT_CPU_DUMMY_READ_BYTE(addr) ((mpMemory->mBusValue) = (mpMemory->ReadByte((addr))))
 #define AT_CPU_READ_BYTE_HL(addrhi, addrlo) ((mpMemory->mBusValue) = (mpMemory->ReadByte((((uint32)addrhi) << 8) + (addrlo))))
-#define AT_CPU_EXT_READ_BYTE(addr, bank) ((mpMemory->mBusValue) = (mpMemory->ExtReadByte((addr), (bank))))
 #define AT_CPU_DUMMY_EXT_READ_BYTE(addr, bank) ((mpMemory->mBusValue) = (mpMemory->ExtReadByte((addr), (bank))))
 #define AT_CPU_WRITE_BYTE(addr, value) (mpMemory->WriteByte((addr), (mpMemory->mBusValue) = ((value))))
 #define AT_CPU_WRITE_BYTE_HL(addrhi, addrlo, value) (mpMemory->WriteByte(((uint32)(addrhi) << 8) + (addrlo), (mpMemory->mBusValue) = ((value))))
-#define AT_CPU_EXT_WRITE_BYTE(addr, bank, value) (mpMemory->ExtWriteByte((addr), (bank), (mpMemory->mBusValue) = ((value))))
 
 #ifdef AT_CPU_MACHINE_65C816
-	#define INSN_FETCH() AT_CPU_EXT_READ_BYTE(mPC++, mK)
+	#define INSN_FETCH() AT_CPU_EXT_READ_BYTE(mPC, mK); ++mPC
+	#define INSN_FETCH_TO(dest) AT_CPU_EXT_READ_BYTE(mPC, mK); ++mPC; (dest) = readData
+	#define INSN_FETCH_TO_2(dest, slowFlag) AT_CPU_EXT_READ_BYTE_2(mPC, mK, slowFlag); ++mPC; (dest) = readData
 	#define INSN_DUMMY_FETCH_NOINC() AT_CPU_DUMMY_EXT_READ_BYTE(mPC, mK)
 	#define INSN_FETCH_NOINC() AT_CPU_EXT_READ_BYTE(mPC, mK)
 #else
 	uint32 tpc;
 
-	#define INSN_FETCH() ((tpc = mPC), (mPC = (uint16)(tpc + 1)), AT_CPU_READ_BYTE_ADDR16(tpc))
+	#define INSN_FETCH() (void)((tpc = mPC), (mPC = (uint16)(tpc + 1)), (readData = AT_CPU_READ_BYTE_ADDR16(tpc)))
+	#define INSN_FETCH_TO(dest) ((tpc = mPC), (mPC = (uint16)(tpc + 1)), ((dest) = AT_CPU_READ_BYTE_ADDR16(tpc)))
+	#define INSN_FETCH_TO_2(dest, slowFlag) INSN_FETCH_TO(dest)
 	#define INSN_DUMMY_FETCH_NOINC() AT_CPU_DUMMY_READ_BYTE(mPC)
 	#define INSN_FETCH_NOINC() AT_CPU_READ_BYTE(mPC)
 #endif
 
+#ifdef AT_CPU_MACHINE_65C816_HISPEED
+	#define AT_CPU_EXT_READ_BYTE(addr, bank)	\
+		busResult = mpMemory->ExtReadByteAccel((addr), (bank), mSubCycles == mSubCyclesLeft);	\
+		if (busResult < 0) { \
+			if (busResult == -256) { \
+				--mpNextState;\
+				goto wait_slow_cycle;	\
+			}	\
+			mSubCyclesLeft = 1;	\
+		}	\
+		readData = (uint8)busResult
+	
+	#define AT_CPU_EXT_READ_BYTE_2(addr, bank, slowFlag)	\
+		busResult = mpMemory->ExtReadByteAccel((addr), (bank), mSubCycles == mSubCyclesLeft);	\
+		if (busResult < 0) { \
+			slowFlag = true; \
+			if (busResult == -256) { \
+				--mpNextState;\
+				goto wait_slow_cycle;	\
+			}	\
+			mSubCyclesLeft = 1;	\
+		}	\
+		readData = (uint8)busResult
+
+	#define AT_CPU_EXT_WRITE_BYTE(addr, bank, value) \
+		writeData = (value);	\
+		busResult = mpMemory->ExtWriteByteAccel((addr), (bank), writeData, mSubCycles == mSubCyclesLeft);	\
+		if (busResult < 0) { \
+			if (busResult == -256) {	\
+				--mpNextState;	\
+				goto wait_slow_cycle;	\
+			}	\
+			\
+			mSubCyclesLeft = 1;	\
+		}
+
+	#define END_SUB_CYCLE() goto end_sub_cycle;
+#else
+	#define AT_CPU_EXT_READ_BYTE(addr, bank) (void)(readData = (mpMemory->mBusValue) = (mpMemory->ExtReadByte((addr), (bank))))
+	#define AT_CPU_EXT_READ_BYTE_2(addr, bank, slowFlag) AT_CPU_EXT_READ_BYTE(addr, bank)
+	#define AT_CPU_EXT_WRITE_BYTE(addr, bank, value) (mpMemory->ExtWriteByte((addr), (bank), (mpMemory->mBusValue) = ((value))))
+	#define END_SUB_CYCLE() return kATSimEvent_None
+#endif
+
+///////////////////////////////////////////////////////////////////////////
+
 for(;;) {
+#ifdef AT_CPU_MACHINE_65C816_HISPEED
+	sint32 busResult;
+	uint8 writeData;
+#endif
+
+	uint8 readData;
+
 	switch(*mpNextState++) {
 		case kStateNop:
 			break;
@@ -56,8 +111,13 @@ for(;;) {
 
 		case kStateReadOpcodeNoBreak:
 			if (mIntFlags) {
-				if (ProcessInterrupts())
+#ifdef AT_CPU_MACHINE_65C816_HISPEED
+				if (ProcessInterrupts<true>())
 					continue;
+#else
+				if (ProcessInterrupts<false>())
+					continue;
+#endif
 			}
 
 			{
@@ -71,38 +131,46 @@ for(;;) {
 						break;
 
 					if (op)
-						return kATSimEvent_None;
+						END_SUB_CYCLE();
 				}
 			}
 
-			mOpcode = INSN_FETCH();
-			mpNextState = mDecodeHeap + mDecodePtrs[mOpcode];
+			{
+				bool slowFlag = false;
+				INSN_FETCH_TO_2(mOpcode, slowFlag);
+				mpNextState = mDecodeHeap + mDecodePtrs[mOpcode];
 
-			if (mbHistoryOrProfilingEnabled) {
+				if (mbHistoryOrProfilingEnabled) {
 #ifdef AT_CPU_MACHINE_65C816
-				AddHistoryEntry(true);
+#ifdef AT_CPU_MACHINE_65C816_HISPEED
+					AddHistoryEntry<true, true>(slowFlag);
 #else
-				AddHistoryEntry(false);
+					AddHistoryEntry<true, false>(false);
 #endif
+#else
+					AddHistoryEntry<false, false>(false);
+#endif
+				}
 			}
 
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadImm:
-			mData = INSN_FETCH();
-			return kATSimEvent_None;
+			INSN_FETCH_TO(mData);
+			END_SUB_CYCLE();
 
 		case kStateReadAddrL:
-			mAddr = INSN_FETCH();
-			return kATSimEvent_None;
+			INSN_FETCH_TO(mAddr);
+			END_SUB_CYCLE();
 
 		case kStateReadAddrH:
-			mAddr += INSN_FETCH() << 8;
-			return kATSimEvent_None;
+			INSN_FETCH();
+			mAddr += (uint16)readData << 8;
+			END_SUB_CYCLE();
 
 		case kStateRead:
 			mData = AT_CPU_READ_BYTE_ADDR16(mAddr);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadSetSZToA:
 			{
@@ -117,21 +185,23 @@ for(;;) {
 
 				mP = p;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadDummyOpcode:
 			INSN_FETCH_NOINC();
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAddrHX:
-			mAddr += INSN_FETCH() << 8;
+			INSN_FETCH();
+			mAddr += (uint16)readData << 8;
 			mAddr2 = (mAddr & 0xff00) + ((mAddr + mX) & 0x00ff);
 			mAddr = mAddr + mX;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAddrHX_SHY:
 			{
-				uint8 hiByte = INSN_FETCH();
+				uint8 hiByte;
+				INSN_FETCH_TO(hiByte);
 				uint32 lowSum = (uint32)mAddr + mX;
 
 				// compute borked result from page crossing
@@ -145,11 +215,12 @@ for(;;) {
 
 				mAddr = (uint16)(lowSum + ((uint32)hiByte << 8));
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAddrHY_SHA:
 			{
-				uint8 hiByte = INSN_FETCH();
+				uint8 hiByte;
+				INSN_FETCH_TO(hiByte);
 				uint32 lowSum = (uint32)mAddr + mY;
 
 				// compute borked result from page crossing
@@ -163,11 +234,12 @@ for(;;) {
 
 				mAddr = (uint16)(lowSum + ((uint32)hiByte << 8));
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAddrHY_SHX:
 			{
-				uint8 hiByte = INSN_FETCH();
+				uint8 hiByte;
+				INSN_FETCH_TO(hiByte);
 				uint32 lowSum = (uint32)mAddr + mY;
 
 				// compute borked result from page crossing
@@ -181,59 +253,60 @@ for(;;) {
 
 				mAddr = (uint16)(lowSum + ((uint32)hiByte << 8));
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAddrHY:
-			mAddr += INSN_FETCH() << 8;
+			INSN_FETCH();
+			mAddr += (uint16)readData << 8;
 			mAddr2 = (mAddr & 0xff00) + ((mAddr + mY) & 0x00ff);
 			mAddr = mAddr + mY;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAddX:
 			mData = AT_CPU_READ_BYTE_ADDR16(mAddr);
 			mAddr = (uint8)(mAddr + mX);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAddY:
 			mData = AT_CPU_READ_BYTE_ADDR16(mAddr);
 			mAddr = (uint8)(mAddr + mY);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadCarry:
 			mData = AT_CPU_READ_BYTE_ADDR16(mAddr2);
 			if (mAddr == mAddr2)
 				++mpNextState;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadCarryForced:
 			mData = AT_CPU_READ_BYTE_ADDR16(mAddr2);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateWrite:
 			AT_CPU_WRITE_BYTE(mAddr, mData);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateWriteA:
 			AT_CPU_WRITE_BYTE(mAddr, mA);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAbsIndAddr:
 			mAddr = mData + ((uint16)AT_CPU_READ_BYTE(mAddr + 1) << 8);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAbsIndAddrBroken:
 			mAddr = mData + ((uint16)AT_CPU_READ_BYTE((mAddr & 0xff00) + ((mAddr + 1) & 0xff)) << 8);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadIndAddr:
 			mAddr = mData + ((uint16)AT_CPU_READ_BYTE(0xff & (mAddr + 1)) << 8);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadIndYAddr:
 			mAddr = mData + ((uint16)AT_CPU_READ_BYTE(0xff & (mAddr + 1)) << 8);
 			mAddr2 = (mAddr & 0xff00) + ((mAddr + mY) & 0x00ff);
 			mAddr = mAddr + mY;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadIndYAddr_SHA:
 			{
@@ -251,11 +324,11 @@ for(;;) {
 
 				mAddr = (uint16)(lowSum + ((uint32)hiByte << 8));
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateWait:
 			INSN_DUMMY_FETCH_NOINC();
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateAtoD:
 			mData = mA;
@@ -406,40 +479,40 @@ for(;;) {
 
 		case kStatePush:
 			AT_CPU_WRITE_BYTE(0x100 + (uint8)mS--, mData);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePushPCL:
 			AT_CPU_WRITE_BYTE(0x100 + (uint8)mS--, mPC & 0xff);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePushPCH:
 			AT_CPU_WRITE_BYTE(0x100 + (uint8)mS--, mPC >> 8);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePushPCLM1:
 			AT_CPU_WRITE_BYTE(0x100 + (uint8)mS--, (mPC - 1) & 0xff);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePushPCHM1:
 			AT_CPU_WRITE_BYTE(0x100 + (uint8)mS--, (mPC - 1) >> 8);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePop:
 			mData = AT_CPU_READ_BYTE(0x100 + (uint8)++mS);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePopPCL:
 			mPC = AT_CPU_READ_BYTE(0x100 + (uint8)++mS);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePopPCH:
 			mPC += AT_CPU_READ_BYTE(0x100 + (uint8)++mS) << 8;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePopPCHP1:
 			mPC += AT_CPU_READ_BYTE(0x100 + (uint8)++mS) << 8;
 			++mPC;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateAdc:
 			if (mP & kFlagD) {
@@ -633,7 +706,7 @@ for(;;) {
 				mP = p;
 			}
 			INSN_DUMMY_FETCH_NOINC();
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateDec:
 			{
@@ -661,7 +734,7 @@ for(;;) {
 				mP = p;
 			}
 			INSN_DUMMY_FETCH_NOINC();
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateDecC:
 			--mData;
@@ -891,7 +964,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJns:
 			if (mP & kFlagN) {
@@ -907,7 +980,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJc:
 			if (!(mP & kFlagC)) {
@@ -923,7 +996,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJnc:
 			if (mP & kFlagC) {
@@ -939,7 +1012,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJz:
 			if (!(mP & kFlagZ)) {
@@ -955,7 +1028,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJnz:
 			if (mP & kFlagZ) {
@@ -971,7 +1044,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJo:
 			if (!(mP & kFlagV)) {
@@ -987,7 +1060,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJno:
 			if (mP & kFlagV) {
@@ -1003,7 +1076,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		/////////
 		case kStateJsAddToPath:
@@ -1021,7 +1094,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJnsAddToPath:
 			if (mP & kFlagN) {
@@ -1038,7 +1111,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJcAddToPath:
 			if (!(mP & kFlagC)) {
@@ -1055,7 +1128,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJncAddToPath:
 			if (mP & kFlagC) {
@@ -1072,7 +1145,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJzAddToPath:
 			if (!(mP & kFlagZ)) {
@@ -1089,7 +1162,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJnzAddToPath:
 			if (mP & kFlagZ) {
@@ -1106,7 +1179,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJoAddToPath:
 			if (!(mP & kFlagV)) {
@@ -1123,7 +1196,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJnoAddToPath:
 			if (mP & kFlagV) {
@@ -1140,11 +1213,11 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJccFalseRead:
 			AT_CPU_READ_BYTE(mAddr);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateInvokeHLE:
 			if (mpHLE) {
@@ -1164,7 +1237,7 @@ for(;;) {
 		case kStateHLEDelay:
 			if (mHLEDelay) {
 				--mHLEDelay;
-				return kATSimEvent_None;
+				END_SUB_CYCLE();
 			}
 			break;
 
@@ -1177,8 +1250,8 @@ for(;;) {
 			break;
 
 		case kStateReadRel:
-			mRelOffset = INSN_FETCH();
-			return kATSimEvent_None;
+			INSN_FETCH_TO(mRelOffset);
+			END_SUB_CYCLE();
 
 		case kStateJ0:
 			if (mData & (1 << ((mOpcode >> 4) & 7))) {
@@ -1192,7 +1265,7 @@ for(;;) {
 			mAddr += mPC & 0xff;
 			if (mAddr == mPC)
 				++mpNextState;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJ1:
 			if (!(mData & (1 << ((mOpcode >> 4) & 7)))) {
@@ -1206,7 +1279,7 @@ for(;;) {
 			mAddr += mPC & 0xff;
 			if (mAddr == mPC)
 				++mpNextState;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJ0AddToPath:
 			if (mData & (1 << ((mOpcode >> 4) & 7))) {
@@ -1221,7 +1294,7 @@ for(;;) {
 			mInsnFlags[mPC] |= kInsnFlagPathStart;
 			if (mAddr == mPC)
 				++mpNextState;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJ1AddToPath:
 			if (!(mData & (1 << ((mOpcode >> 4) & 7)))) {
@@ -1236,7 +1309,7 @@ for(;;) {
 			mInsnFlags[mPC] |= kInsnFlagPathStart;
 			if (mAddr == mPC)
 				++mpNextState;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateWaitForInterrupt:
 			switch(mIntFlags & (kIntFlag_IRQPending | kIntFlag_IRQActive)) {
@@ -1250,11 +1323,11 @@ for(;;) {
 				mNMIAssertTime -= 3;
 			} else if (!(mIntFlags & kIntFlag_IRQPending))
 				--mpNextState;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateStop:
 			--mpNextState;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJ:
 			INSN_FETCH_NOINC();
@@ -1265,7 +1338,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJAddToPath:
 			INSN_FETCH_NOINC();
@@ -1277,7 +1350,7 @@ for(;;) {
 				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
 				++mpNextState;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateTrb:
 			mP &= ~kFlagZ;
@@ -1447,56 +1520,66 @@ for(;;) {
 
 #ifdef AT_CPU_MACHINE_65C816
 		case kStateReadImmL16:
-			mData16 = INSN_FETCH();
-			return kATSimEvent_None;
+			INSN_FETCH_TO(mData16);
+			END_SUB_CYCLE();
 
 		case kStateReadImmH16:
-			mData16 += (uint32)INSN_FETCH() << 8;
-			return kATSimEvent_None;
+			INSN_FETCH();
+			mData16 += (uint32)readData << 8;
+			END_SUB_CYCLE();
 
 		case kStateReadAddrDp:
-			mAddr = (uint32)INSN_FETCH() + mDP;
+			INSN_FETCH();
+			mAddr = (uint32)readData + mDP;
 			mAddrBank = 0;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAddrDpX:
-			mAddr = (uint32)INSN_FETCH() + mDP + mX + ((uint32)mXH << 8);
+			INSN_FETCH();
+			mAddr = (uint32)readData + mDP + mX + ((uint32)mXH << 8);
 			mAddrBank = 0;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAddrDpXInPage:
-			mAddr = mDP + (uint8)(INSN_FETCH() + mX);
+			INSN_FETCH();
+			mAddr = mDP + (uint8)(readData + mX);
 			mAddrBank = 0;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAddrDpY:
-			mAddr = (uint32)INSN_FETCH() + mDP + mY + ((uint32)mYH << 8);
+			INSN_FETCH();
+			mAddr = (uint32)readData + mDP + mY + ((uint32)mYH << 8);
 			mAddrBank = 0;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAddrDpYInPage:
-			mAddr = mDP + (uint8)(INSN_FETCH() + mY);
+			INSN_FETCH();
+			mAddr = mDP + (uint8)(readData + mY);
 			mAddrBank = 0;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
+
+		case kState816ReadIndAddrDpInPage:
+			mAddr = mData + ((uint16)AT_CPU_READ_BYTE((mAddr & 0xff00) + (0xff & (mAddr + 1))) << 8);
+			END_SUB_CYCLE();
 
 		case kStateReadIndAddrDp:
-			mAddr = mData + ((uint16)AT_CPU_READ_BYTE(mDP + mAddr + 1) << 8);
+			mAddr = mData + ((uint16)AT_CPU_READ_BYTE(mAddr + 1) << 8);
 			mAddrBank = mB;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadIndAddrDpY:
-			mAddr = mData + ((uint16)AT_CPU_READ_BYTE(mDP + mAddr + 1) << 8) + mY + ((uint32)mYH << 8);
+			mAddr = mData + ((uint16)AT_CPU_READ_BYTE(mAddr + 1) << 8) + mY + ((uint32)mYH << 8);
 			mAddrBank = mB;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadIndAddrDpLongH:
-			mData16 = mData + ((uint16)AT_CPU_READ_BYTE(mDP + mAddr + 1) << 8);
-			return kATSimEvent_None;
+			mData16 = mData + ((uint16)AT_CPU_READ_BYTE(mAddr + 1) << 8);
+			END_SUB_CYCLE();
 
 		case kStateReadIndAddrDpLongB:
-			mAddrBank = AT_CPU_READ_BYTE(mDP + mAddr + 2);
+			mAddrBank = AT_CPU_READ_BYTE(mAddr + 2);
 			mAddr = mData16;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAddrAddY:
 			{
@@ -1508,19 +1591,21 @@ for(;;) {
 			break;
 
 		case kState816ReadAddrL:
+			INSN_FETCH_TO(mAddr);
 			mAddrBank = mB;
-			mAddr = INSN_FETCH();
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kState816ReadAddrH:
+			INSN_FETCH();
 			mAddrBank = mB;
-			mAddr = (uint16)(mAddr + ((uint32)INSN_FETCH() << 8));
-			return kATSimEvent_None;
+			mAddr = (uint16)(mAddr + ((uint32)readData << 8));
+			END_SUB_CYCLE();
 
 		case kState816ReadAddrHX:
+			INSN_FETCH();
 			mAddrBank = mB;
-			mAddr = (uint16)(mAddr + ((uint32)INSN_FETCH() << 8) + mX + ((uint32)mXH << 8));
-			return kATSimEvent_None;
+			mAddr = (uint16)(mAddr + ((uint32)readData << 8) + mX + ((uint32)mXH << 8));
+			END_SUB_CYCLE();
 
 		case kState816ReadAddrAbsXSpec:
 			{
@@ -1532,7 +1617,7 @@ for(;;) {
 
 				if (mAddr != mAddr2) {
 					AT_CPU_DUMMY_EXT_READ_BYTE(mAddr2, mAddrBank);
-					return kATSimEvent_None;
+					END_SUB_CYCLE();
 				}
 			}
 			break;
@@ -1546,7 +1631,7 @@ for(;;) {
 				mAddrBank = (uint8)(mAddrBank + (addr32 >> 16));
 
 				AT_CPU_DUMMY_EXT_READ_BYTE(mAddr2, mAddrBank);
-				return kATSimEvent_None;
+				END_SUB_CYCLE();
 			}
 
 		case kState816ReadAddrAbsYSpec:
@@ -1559,7 +1644,7 @@ for(;;) {
 
 				if (mAddr != mAddr2) {
 					AT_CPU_DUMMY_EXT_READ_BYTE(mAddr2, mAddrBank);
-					return kATSimEvent_None;
+					END_SUB_CYCLE();
 				}
 			}
 			break;
@@ -1573,32 +1658,36 @@ for(;;) {
 				mAddrBank = (uint8)(mAddrBank + (addr32 >> 16));
 
 				AT_CPU_DUMMY_EXT_READ_BYTE(mAddr2, mAddrBank);
-				return kATSimEvent_None;
+				END_SUB_CYCLE();
 			}
 
 		case kState816ReadAddrAbsInd:
-			mAddr = (uint16)((uint32)mData + ((uint32)AT_CPU_EXT_READ_BYTE(mAddr+1, mAddrBank) << 8));
-			break;
+			AT_CPU_EXT_READ_BYTE(mAddr+1, mAddrBank);
+			mAddr = (uint16)((uint32)mData + ((uint32)readData << 8));
+			END_SUB_CYCLE();
 
 		case kStateRead816AddrAbsLongL:
-			mData = AT_CPU_EXT_READ_BYTE(mAddr, mAddrBank);
-			return kATSimEvent_None;
+			AT_CPU_EXT_READ_BYTE(mAddr, mAddrBank);
+			mData = readData;
+			END_SUB_CYCLE();
 
 		case kStateRead816AddrAbsLongH:
-			mData16 = mData + ((uint32)AT_CPU_EXT_READ_BYTE(mAddr + 1, mAddrBank) << 8);
-			return kATSimEvent_None;
+			AT_CPU_EXT_READ_BYTE(mAddr + 1, mAddrBank);
+			mData16 = mData + ((uint32)readData << 8);
+			END_SUB_CYCLE();
 
 		case kStateRead816AddrAbsLongB:
-			mAddrBank = AT_CPU_EXT_READ_BYTE(mAddr + 2, mAddrBank);
+			AT_CPU_EXT_READ_BYTE(mAddr + 2, mAddrBank);
+			mAddrBank = readData;
 			mAddr = mData16;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAddrB:
-			mAddrBank = INSN_FETCH();
-			return kATSimEvent_None;
+			INSN_FETCH_TO(mAddrBank);
+			END_SUB_CYCLE();
 
 		case kStateReadAddrBX:
-			mAddrBank = INSN_FETCH();
+			INSN_FETCH_TO(mAddrBank);
 			{
 				uint32 ea = (uint32)mAddr + mX + ((uint32)mXH << 8);
 
@@ -1607,12 +1696,13 @@ for(;;) {
 
 				mAddr = (uint16)ea;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateReadAddrSO:
+			INSN_FETCH();
 			mAddrBank = 0;
-			mAddr = mS + ((uint32)mSH << 8) + INSN_FETCH();
-			return kATSimEvent_None;
+			mAddr = mS + ((uint32)mSH << 8) + readData;
+			END_SUB_CYCLE();
 
 		case kState816ReadAddrSO_AddY:
 			{
@@ -1622,7 +1712,7 @@ for(;;) {
 				mAddr = (uint16)addr32;
 				mAddrBank = (uint8)(mB + (addr32 >> 16));
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateBtoD:
 			mData = mB;
@@ -1695,7 +1785,7 @@ for(;;) {
 
 				// check if are changing DL=0 state, which requires a redecode
 				if (((uint8)mDP == 0) ^ ((uint8)prevDP == 0))
-					RebuildDecodeTables();
+					Update65816DecodeTable();
 			}
 			break;
 
@@ -1714,47 +1804,55 @@ for(;;) {
 
 		case kState816WriteByte:
 			AT_CPU_EXT_WRITE_BYTE(mAddr, mAddrBank, mData);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateWriteL16:
 			AT_CPU_EXT_WRITE_BYTE(mAddr, mAddrBank, (uint8)mData16);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateWriteH16:
 			AT_CPU_EXT_WRITE_BYTE(mAddr + 1, (uint8)((((uint32)mAddr + 1) >> 16) + mAddrBank), (uint8)(mData16 >> 8));
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateWriteH16_DpBank:
-			if (mbEmulationFlag && !(uint8)mDP)
+			if (mbEmulationFlag && !(uint8)mDP) {
 				AT_CPU_EXT_WRITE_BYTE(mAddr & 0xff00 + ((mAddr + 1) & 0xff), mAddrBank, (uint8)(mData16 >> 8));
-			else
+			} else {
 				AT_CPU_EXT_WRITE_BYTE(mAddr + 1, mAddrBank, (uint8)(mData16 >> 8));
+			}
 
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kState816ReadByte:
-			mData = AT_CPU_EXT_READ_BYTE(mAddr, mAddrBank);
-			return kATSimEvent_None;
+			AT_CPU_EXT_READ_BYTE(mAddr, mAddrBank);
+			mData = readData;
+			END_SUB_CYCLE();
 
 		case kState816ReadByte_PBK:
-			mData = AT_CPU_EXT_READ_BYTE(mAddr, mK);
-			return kATSimEvent_None;
+			AT_CPU_EXT_READ_BYTE(mAddr, mK);
+			mData = readData;
+			END_SUB_CYCLE();
 
 		case kStateReadL16:
-			mData16 = AT_CPU_EXT_READ_BYTE(mAddr, mAddrBank);
-			return kATSimEvent_None;
+			AT_CPU_EXT_READ_BYTE(mAddr, mAddrBank);
+			mData16 = readData;
+			END_SUB_CYCLE();
 
 		case kStateReadH16:
-			mData16 += ((uint32)AT_CPU_EXT_READ_BYTE(mAddr + 1, (uint8)((((uint32)mAddr + 1) >> 16) + mAddrBank)) << 8);
-			return kATSimEvent_None;
+			AT_CPU_EXT_READ_BYTE(mAddr + 1, (uint8)((((uint32)mAddr + 1) >> 16) + mAddrBank));
+			mData16 += ((uint32)readData << 8);
+			END_SUB_CYCLE();
 
 		case kStateReadH16_DpBank:
-			if (mbEmulationFlag && !(uint8)mDP)
-				mData16 += ((uint32)AT_CPU_EXT_READ_BYTE((mAddr & 0xff00) + ((mAddr + 1) & 0xff), mAddrBank) << 8);
-			else
-				mData16 += ((uint32)AT_CPU_EXT_READ_BYTE(mAddr + 1, mAddrBank) << 8);
+			if (mbEmulationFlag && !(uint8)mDP) {
+				AT_CPU_EXT_READ_BYTE((mAddr & 0xff00) + ((mAddr + 1) & 0xff), mAddrBank);
+				mData16 += ((uint32)readData << 8);
+			} else {
+				AT_CPU_EXT_READ_BYTE(mAddr + 1, mAddrBank);
+				mData16 += ((uint32)readData << 8);
+			}
 
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateAnd16:
 			mData16 &= (mA + ((uint32)mAH << 8));
@@ -2088,7 +2186,7 @@ for(;;) {
 			AT_CPU_WRITE_BYTE_HL(mSH, mS, mData);
 			if (!mS-- && !mbEmulationFlag)
 				--mSH;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePushL16:
 			AT_CPU_WRITE_BYTE_HL(mSH, mS, (uint8)mData16);
@@ -2097,7 +2195,7 @@ for(;;) {
 
 			if (mbEmulationFlag)
 				mSH = 1;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePushH16:
 			AT_CPU_WRITE_BYTE_HL(mSH, mS, (uint8)(mData16 >> 8));
@@ -2107,43 +2205,43 @@ for(;;) {
 				// is pushed.
 				--mSH;
 			}
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePushPBKNative:
 			AT_CPU_WRITE_BYTE_HL(mSH, mS, mK);
 			if (!mS-- && !mbEmulationFlag)
 				--mSH;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePushPCLNative:
 			AT_CPU_WRITE_BYTE_HL(mSH, mS, mPC & 0xff);
 			if (!mS-- && !mbEmulationFlag)
 				--mSH;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePushPCHNative:
 			AT_CPU_WRITE_BYTE_HL(mSH, mS, mPC >> 8);
 			if (!mS-- && !mbEmulationFlag)
 				--mSH;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePushPCLM1Native:
 			AT_CPU_WRITE_BYTE_HL(mSH, mS, (mPC - 1) & 0xff);
 			if (!mS-- && !mbEmulationFlag)
 				--mSH;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePushPCHM1Native:
 			AT_CPU_WRITE_BYTE_HL(mSH, mS, (mPC - 1) >> 8);
 			if (!mS-- && !mbEmulationFlag)
 				--mSH;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePopNative:
 			if (!++mS && !mbEmulationFlag)
 				++mSH;
 			mData = AT_CPU_READ_BYTE_HL(mSH, mS);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePopL16:
 			if (!++mS) {
@@ -2153,7 +2251,7 @@ for(;;) {
 			}
 
 			mData16 = AT_CPU_READ_BYTE_HL(mSH, mS);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePopH16:
 			if (!++mS)
@@ -2163,31 +2261,31 @@ for(;;) {
 
 			if (mbEmulationFlag)
 				mSH = 1;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePopPCLNative:
 			if (!++mS && !mbEmulationFlag)
 				++mSH;
 			mPC = AT_CPU_READ_BYTE_HL(mSH, mS);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePopPCHNative:
 			if (!++mS && !mbEmulationFlag)
 				++mSH;
 			mPC += (uint32)AT_CPU_READ_BYTE_HL(mSH, mS) << 8;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePopPCHP1Native:
 			if (!++mS && !mbEmulationFlag)
 				++mSH;
 			mPC += ((uint32)AT_CPU_READ_BYTE_HL(mSH, mS) << 8) + 1;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStatePopPBKNative:
 			if (!++mS && !mbEmulationFlag)
 				++mSH;
 			mK = AT_CPU_READ_BYTE_HL(mSH, mS);
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateRep:
 			if (mP & mData & kFlagI)
@@ -2199,7 +2297,7 @@ for(;;) {
 				mP &= ~mData;
 
 			Update65816DecodeTable();
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateSep:
 			if (~mP & mData & kFlagI)
@@ -2211,16 +2309,16 @@ for(;;) {
 				mP |= mData;
 
 			Update65816DecodeTable();
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJ16:
 			mPC += mData16;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kStateJ16AddToPath:
 			mPC += mData16;
 			mInsnFlags[mPC] |= kInsnFlagPathStart;
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kState816_NatCOPVecToPC:
 			mPC = 0xFFE4;
@@ -2257,8 +2355,9 @@ for(;;) {
 			break;
 
 		case kState816_MoveRead:
-			mData = AT_CPU_EXT_READ_BYTE(mX + ((uint32)mXH << 8), mAddrBank);
-			return kATSimEvent_None;
+			AT_CPU_EXT_READ_BYTE(mX + ((uint32)mXH << 8), mAddrBank);
+			mData = readData;
+			END_SUB_CYCLE();
 
 		case kState816_MoveWriteP:
 			mAddr = mY + ((uint32)mYH << 8);
@@ -2278,7 +2377,7 @@ for(;;) {
 			if (mA-- || mAH--)
 					mPC -= 3;
 
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kState816_MoveWriteN:
 			mAddr = mY + ((uint32)mYH << 8);
@@ -2297,7 +2396,7 @@ for(;;) {
 			if (mA-- || mAH--)
 					mPC -= 3;
 
-			return kATSimEvent_None;
+			END_SUB_CYCLE();
 
 		case kState816_Per:
 			mData16 += mPC;
@@ -2316,8 +2415,8 @@ for(;;) {
 			mpHeatMap->ProcessInsn(*this, mOpcode, mAddr, mInsnPC);
 			break;
 
-		case kStateVerifyJump:
-			mpVerifier->VerifyJump(mAddr);
+		case kStateVerifyInsn:
+			mpVerifier->VerifyInsn(*this, mOpcode, mAddr);
 			break;
 
 		case kStateVerifyIRQEntry:
@@ -2326,10 +2425,6 @@ for(;;) {
 
 		case kStateVerifyNMIEntry:
 			mpVerifier->OnNMIEntry();
-			break;
-
-		case kStateVerifyReturn:
-			mpVerifier->OnReturn();
 			break;
 
 #ifdef _DEBUG
@@ -2343,16 +2438,22 @@ for(;;) {
 	}
 }
 
+///////////////////////////////////////////////////////////////////
+
 #undef AT_CPU_READ_BYTE
 #undef AT_CPU_READ_BYTE_ADDR16
 #undef AT_CPU_DUMMY_READ_BYTE
 #undef AT_CPU_READ_BYTE_HL
 #undef AT_CPU_EXT_READ_BYTE
+#undef AT_CPU_EXT_READ_BYTE_2
 #undef AT_CPU_DUMMY_EXT_READ_BYTE
 #undef AT_CPU_WRITE_BYTE
 #undef AT_CPU_WRITE_BYTE_HL
 #undef AT_CPU_EXT_WRITE_BYTE
 
+#undef END_SUB_CYCLE
 #undef INSN_FETCH
+#undef INSN_FETCH_TO
+#undef INSN_FETCH_TO_2
 #undef INSN_FETCH_NOINC
 #undef INSN_DUMMY_FETCH_NOINC

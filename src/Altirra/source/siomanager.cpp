@@ -232,6 +232,17 @@ fastbootignore:
 
 	ATClearPokeyTimersOnDiskIo(kdb);
 
+	// Set CDTMA1 to dummy address (KnownRTS) if it is not already set -- SIO is documented as setting
+	// this on every call. This is required by Ankh, which uses OS timer 1 for a delay but doesn't
+	// bother setting up CDTMV1.
+	if (kdb.CDTMA1 == 0)
+		kdb.CDTMA1 = 0xE4C0;
+
+	// Set checksum sent flag. This is relied on by Apple Panic, which blindly turns on the serial
+	// output complete interrupt after reading sector 404. If this isn't done, the SEROC handler
+	// doesn't clear the interrupt and the CPU gets stuck in an IRQ loop.
+	kdb.CHKSNT = 0xFF;
+
 	// Clear CRITIC.
 	kdb.CRITIC = 0;
 	kdb.STATUS = status;

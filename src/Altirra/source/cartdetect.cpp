@@ -61,6 +61,7 @@ namespace {
 	};
 
 	enum InitRange {
+		kInit2K,
 		kInit4K,
 		kInit8K,
 		kInit8KR,
@@ -88,6 +89,8 @@ static const struct ATCartDetectInfo {
 	InitRange			mInitRange;
 	HeaderType			mHeaderType;
 } kATCartDetectInfo[] = {
+{	kATCartridgeMode_2K,						kType800,	kSize2K,	kWrsNone,	kBankNone,		kInit2K,	kHeaderLast16B,					},
+{	kATCartridgeMode_4K,						kType800,	kSize4K,	kWrsNone,	kBankNone,		kInit4K,	kHeaderLast16B,					},
 {	kATCartridgeMode_8K,						kType800,	kSize2K |
 															kSize4K |
 															kSize8K,	kWrsNone,	kBankNone,		kInit8K,	kHeaderLast16B,					},
@@ -134,6 +137,7 @@ static const struct ATCartDetectInfo {
 {	kATCartridgeMode_Atrax_SDX_128K,			kType800,	kSize128K,	kWrsNone,	kBankAddrEFx,	kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_Atrax_SDX_64K,				kType800,	kSize64K,	kWrsNone,	kBankAddrEx,	kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_TelelinkII,				kType800,	kSize8K,	kWrs256B,	kBankNone,		kInit8K,	kHeaderFirst8K,					},
+{	kATCartridgeMode_RightSlot_4K,				kType800,	kSize4K,	kWrsNone,	kBankNone,		kInit8KR,	kHeaderLast16B,					},
 {	kATCartridgeMode_RightSlot_8K,				kType800,	kSize8K,	kWrsNone,	kBankNone,		kInit8KR,	kHeaderLast16B,					},
 {	kATCartridgeMode_DB_32K,					kType800,	kSize32K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderLast16B,					},
 {	kATCartridgeMode_Atrax_128K,				kType800,	kSize128K,	kWrsNone,	kBankData,		kInit8K,	kHeaderFirst8K,					},
@@ -187,8 +191,8 @@ uint32 ATCartridgeAutodetectMode(const void *data, uint32 size, vdfastvector<int
 	else if (size ==   32768) sizeType = kSize32K;
 	else if (size ==   16384) sizeType = kSize16K;
 	else if (size ==    8192) sizeType = kSize8K;
-	else if (size ==    4096) sizeType = kSize8K;
-	else if (size ==    2048) sizeType = kSize8K;
+	else if (size ==    4096) sizeType = kSize4K;
+	else if (size ==    2048) sizeType = kSize2K;
 	else return 0;
 
 	// Attempt to detect 5200 vs. 800 by POKEY and GTIA accesses.
@@ -321,6 +325,11 @@ uint32 ATCartridgeAutodetectMode(const void *data, uint32 size, vdfastvector<int
 				bool ok = true;
 
 				switch(detInfo.mInitRange) {
+					case kInit2K:
+						if ((hibyte & 0xF8) != 0xB8)
+							ok = false;
+						break;
+
 					case kInit4K:
 						if ((hibyte & 0xF0) != 0xB0)
 							ok = false;

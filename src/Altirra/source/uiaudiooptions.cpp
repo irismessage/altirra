@@ -21,6 +21,7 @@
 #include "resource.h"
 #include "audiooutput.h"
 #include "simulator.h"
+#include "audiosyncmixer.h"
 
 extern ATSimulator g_sim;
 
@@ -33,11 +34,13 @@ protected:
 	bool OnLoaded();
 	void OnDataExchange(bool write);
 	void OnHScroll(uint32 id, int code);
-	void UpdateDecibelLabel();
+	void UpdateVolumeLabel();
+	void UpdateDriveVolumeLabel();
 	void UpdateLatencyLabel();
 	void UpdateExtraBufferLabel();
 
 	int mVolumeTick;
+	int mDriveVolTick;
 	int mLatencyTick;
 	int mExtraBufferTick;
 };
@@ -52,6 +55,7 @@ ATAudioOptionsDialog::~ATAudioOptionsDialog() {
 
 bool ATAudioOptionsDialog::OnLoaded() {
 	TBSetRange(IDC_VOLUME, 0, 200);
+	TBSetRange(IDC_DRIVEVOL, 0, 200);
 	TBSetRange(IDC_LATENCY, 1, 50);
 	TBSetRange(IDC_EXTRABUFFER, 2, 50);
 
@@ -62,9 +66,11 @@ bool ATAudioOptionsDialog::OnLoaded() {
 
 void ATAudioOptionsDialog::OnDataExchange(bool write) {
 	IATAudioOutput *audioOut = g_sim.GetAudioOutput();
+	ATAudioSyncMixer *syncMix = g_sim.GetAudioSyncMixer();
 
 	if (write) {
 		audioOut->SetVolume(powf(10.0f, (mVolumeTick - 200) * 0.01f));
+		syncMix->SetMixLevel(kATAudioMix_Drive, powf(10.0f, (mDriveVolTick - 200) * 0.01f));
 		audioOut->SetLatency(mLatencyTick * 10);
 		audioOut->SetExtraBuffer(mExtraBufferTick * 10);
 		audioOut->SetApi(IsButtonChecked(IDC_API_DIRECTSOUND) ? kATAudioApi_DirectSound : kATAudioApi_WaveOut);
@@ -74,8 +80,11 @@ void ATAudioOptionsDialog::OnDataExchange(bool write) {
 		else
 			audioOut->SetStatusRenderer(NULL);
 	} else {
-		float volume = audioOut->GetVolume();
+		const float volume = audioOut->GetVolume();
 		mVolumeTick = 200 + VDRoundToInt(100.0f * log10(volume));
+
+		const float drivevol = syncMix->GetMixLevel(kATAudioMix_Drive);
+		mDriveVolTick = 200 + VDRoundToInt(100.0f * log10(drivevol));
 		mLatencyTick = (audioOut->GetLatency() + 5) / 10;
 		mExtraBufferTick = (audioOut->GetExtraBuffer() + 5) / 10;
 
@@ -83,9 +92,11 @@ void ATAudioOptionsDialog::OnDataExchange(bool write) {
 		CheckButton(IDC_DEBUG, audioOut->GetStatusRenderer() != NULL);
 
 		TBSetValue(IDC_VOLUME, mVolumeTick);
+		TBSetValue(IDC_DRIVEVOL, mDriveVolTick);
 		TBSetValue(IDC_LATENCY, mLatencyTick);
 		TBSetValue(IDC_EXTRABUFFER, mExtraBufferTick);
-		UpdateDecibelLabel();
+		UpdateVolumeLabel();
+		UpdateDriveVolumeLabel();
 		UpdateLatencyLabel();
 		UpdateExtraBufferLabel();
 	}
@@ -97,7 +108,14 @@ void ATAudioOptionsDialog::OnHScroll(uint32 id, int code) {
 
 		if (tick != mVolumeTick) {
 			mVolumeTick = tick;
-			UpdateDecibelLabel();
+			UpdateVolumeLabel();
+		}
+	} else if (id == IDC_DRIVEVOL) {
+		int tick = TBGetValue(IDC_DRIVEVOL);
+
+		if (tick != mDriveVolTick) {
+			mDriveVolTick = tick;
+			UpdateDriveVolumeLabel();
 		}
 	} else if (id == IDC_LATENCY) {
 		int tick = TBGetValue(IDC_LATENCY);
@@ -116,8 +134,12 @@ void ATAudioOptionsDialog::OnHScroll(uint32 id, int code) {
 	}
 }
 
-void ATAudioOptionsDialog::UpdateDecibelLabel() {
+void ATAudioOptionsDialog::UpdateVolumeLabel() {
 	SetControlTextF(IDC_STATIC_VOLUME, L"%.1fdB", 0.1f * (mVolumeTick - 200));
+}
+
+void ATAudioOptionsDialog::UpdateDriveVolumeLabel() {
+	SetControlTextF(IDC_STATIC_DRIVEVOL, L"%.1fdB", 0.1f * (mDriveVolTick - 200));
 }
 
 void ATAudioOptionsDialog::UpdateLatencyLabel() {

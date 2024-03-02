@@ -80,6 +80,7 @@
 #define IDR_DRAGDROP_MENU               176
 #define IDR_DISK_CONTEXT_MENU           177
 #define IDD_OPTIONS_FLASH               178
+#define IDD_DEBUG_CHOOSE_FONT           179
 #define IDI_DISK                        500
 #define IDI_TAPE                        501
 #define IDI_XEX                         502
@@ -99,8 +100,10 @@
 #define IDC_BROWSE10                    1005
 #define IDC_BROWSE2                     1006
 #define IDC_SECTOR_SIZE_256             1006
+#define IDC_SHADOW_ROM                  1006
 #define IDC_SECTOR_COUNT                1007
 #define IDC_BROWSE5                     1007
+#define IDC_SHADOW_CARTS                1007
 #define IDC_DISKPATH3                   1008
 #define IDC_BOOT_SECTOR_COUNT           1008
 #define IDC_BROWSE3                     1009
@@ -136,13 +139,17 @@
 #define IDC_ADD                         1021
 #define IDC_ERRORMODE_COLDRESET         1021
 #define IDC_MORE4                       1021
+#define IDC_CPUMODEL_65C816_7MHZ        1021
 #define IDC_WRITEMODE3                  1022
 #define IDC_DELETE                      1022
+#define IDC_CPUMODEL_65C816_3MHZ        1022
 #define IDC_SAVEAS1                     1023
 #define IDC_ADD2                        1023
 #define IDC_ADDCONTROLLER               1023
+#define IDC_CPUMODEL_65C816_10MHZ       1023
 #define IDC_SAVEAS2                     1024
 #define IDC_RESET                       1024
+#define IDC_CPUMODEL_65C816_14MHZ       1024
 #define IDC_SAVEAS3                     1025
 #define IDC_CLONE                       1025
 #define IDC_SAVEAS4                     1026
@@ -169,8 +176,11 @@
 #define IDC_BROWSE6                     1033
 #define IDC_STATIC_EXTRABUFFER          1033
 #define IDC_SAVEAS6                     1034
+#define IDC_VOLUME2                     1034
+#define IDC_DRIVEVOL                    1034
 #define IDC_HUESTART                    1035
 #define IDC_WRITEMODE6                  1035
+#define IDC_STATIC_DRIVEVOL             1035
 #define IDC_HUERANGE                    1036
 #define IDC_NEWDISK6                    1036
 #define IDC_MORE6                       1036
@@ -334,7 +344,9 @@
 #define IDC_FLAG_RECURSIVENMI           1149
 #define IDC_FLAG_INTERRUPTREGS          1150
 #define IDC_ALLOW_WRITES                1151
+#define IDC_FLAG_WRAP64K                1151
 #define IDC_ALLOW_WRITES2               1152
+#define IDC_FLAG_ABNORMALDMA            1152
 #define IDC_ARROWKEYMODE                1153
 #define IDC_RATE_HARDWARE               1154
 #define IDC_SPEED_ADJUST                1155
@@ -392,6 +404,13 @@
 #define IDC_SPT                         1206
 #define IDC_STATIC_SPT                  1207
 #define IDC_STATIC_HEADS                1208
+#define IDC_FONT_SEL                    1211
+#define IDC_SIZE_SEL                    1212
+#define IDC_SIZE_LIST                   1213
+#define IDC_STATIC_SAMPLETEXT           1214
+#define IDC_FONT_LIST                   1215
+#define IDC_CHECK1                      1217
+#define IDC_ENCODE_ALL_FRAMES           1217
 #define ID_FILTERMODE_POINT             40023
 #define ID_FILTERMODE_BILINEAR          40024
 #define ID_FILTERMODE_BICUBIC           40025
@@ -460,6 +479,8 @@
 #define ID_CONTEXT_MOUNTFOLDERDOS2      40490
 #define ID_CONTEXT_MOUNTFOLDERSDFS      40491
 #define ID_CONTEXT_SAVEDISK             40492
+#define ID_CONTEXT_EXTRACTBOOTSECTORSFORVIRTUALDOS2DISK 40493
+#define ID_CONTEXT_EXTRACTBOOTSECTORS   40494
 #define ID_INPUT_PORT1_NONE             45000
 #define ID_INPUT_PORT2_NONE             45100
 #define ID_INPUT_PORT3_NONE             45200
@@ -472,9 +493,9 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
-#define _APS_NEXT_RESOURCE_VALUE        179
-#define _APS_NEXT_COMMAND_VALUE         40493
-#define _APS_NEXT_CONTROL_VALUE         1211
+#define _APS_NEXT_RESOURCE_VALUE        181
+#define _APS_NEXT_COMMAND_VALUE         40495
+#define _APS_NEXT_CONTROL_VALUE         1218
 #define _APS_NEXT_SYMED_VALUE           107
 #endif
 #endif

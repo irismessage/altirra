@@ -567,6 +567,11 @@ void ATIDEEmulator::UpdateStatus() {
 							WriteLBA(lba + nsecs - 1);
 
 							BeginReadTransfer(nsecs << 9);
+
+							// ATA-1 7.2.11 specifies that at command completion the Sector Count register
+							// should contain the number of unsuccessful sectors or zero for completion.
+							// Modern CF devices still do this.
+							mRFile.mSectorCount = 0;
 						}
 
 						mActiveCommandState = 0;
@@ -645,6 +650,11 @@ void ATIDEEmulator::UpdateStatus() {
 					ScheduleLazyFlush();
 
 					WriteLBA(mTransferLBA + mTransferSectorCount - 1);
+
+					// ATA-1 7.2.11 specifies that at command completion the Sector Count register
+					// should contain the number of unsuccessful sectors or zero for completion.
+					// Modern CF devices still do this.
+					mRFile.mSectorCount = 0;
 
 					mRFile.mStatus |= kATIDEStatus_BSY;
 					++mActiveCommandState;

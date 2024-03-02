@@ -1,3 +1,4 @@
+#include <vd2/system/math.h>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Kasumi/pixmapops.h>
@@ -637,6 +638,57 @@ void VDDisplayRendererSoft::Blt(sint32 x, sint32 y, VDDisplayImageView& imageVie
 		cachedImage->mSoftBuffer.pitch,
 		w * mBytesPerPixel,
 		h);
+}
+
+void VDDisplayRendererSoft::StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 sw, sint32 sh, const VDDisplayBltOptions& opts) {
+	VDDisplayCachedImageSoft *cachedImage = GetCachedImage(imageView);
+
+	if (!cachedImage)
+		return;
+
+	// check for source clipping
+	if (sw <= 0 || sh <= 0)
+		return;
+
+	if (sx < 0 || sx >= cachedImage->mWidth || sy < 0 || sh >= cachedImage->mHeight)
+		return;
+
+	if (sw > cachedImage->mWidth - sx || sh > cachedImage->mHeight - sy)
+		return;
+
+	// do destination clipping
+	if (dw <= 0 || dh <= 0)
+		return;
+
+	dx += mOffsetX;
+	dy += mOffsetY;
+
+	float factor_x = (float)sw / (float)dw;
+	float factor_y = (float)sh / (float)dh;
+	float fsx1 = (float)sx;
+	float fsy1 = (float)sy;
+	float fsx2 = fsx1 + (float)sw - 1.0f;
+	float fsy2 = fsy1 + (float)sh - 1.0f;
+
+	// do full clipping
+	if (dx < 0) { fsx1 -= factor_x * dx; dw += dx; dx = 0; }
+	if (dy < 0) { fsy1 -= factor_y * dy; dh += dy; dy = 0; }
+
+	if ((dw|dh) < 0)
+		return;
+
+	if (dx + dw > mPrimary.w) { fsx2 += factor_x * (float)(mPrimary.w - (dx + dw)); dw = mPrimary.w - dx; }
+	if (dy + dh > mPrimary.h) { fsy2 += factor_y * (float)(mPrimary.h - (dy + dh)); dh = mPrimary.h - dy; }
+
+	if ((dw|dh) < 0)
+		return;
+
+	sint32 sx1 = VDRoundToInt(fsx1);
+	sint32 sy1 = VDRoundToInt(fsy1);
+	sint32 sx2 = VDRoundToInt(fsx2);
+	sint32 sy2 = VDRoundToInt(fsy2);
+
+	VDPixmapStretchBltNearest(mPrimary, dx, dy, dx + dw, dy + dh, cachedImage->mSoftBuffer, sx1, sy1, sx2 + 1, sy2 + 1);
 }
 
 void VDDisplayRendererSoft::MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode) {

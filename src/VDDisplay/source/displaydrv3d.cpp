@@ -218,7 +218,7 @@ void VDDisplayDriver3D::Refresh(UpdateMode updateMode) {
 		info.mWidth = w;
 		info.mHeight = h;
 
-		mRenderer.Begin(w, h);
+		mRenderer.Begin(w, h, mDisplayNodeContext);
 		mpCompositor->Composite(mRenderer, info);
 		mRenderer.End();
 	}

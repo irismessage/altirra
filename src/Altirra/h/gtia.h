@@ -85,10 +85,9 @@ public:
 	
 	enum AnalysisMode {
 		kAnalyzeNone,
-		kAnalyzeColors,
 		kAnalyzeLayers,
+		kAnalyzeColors,
 		kAnalyzeDList,
-		kAnalyzePM,
 		kAnalyzeCount
 	};
 

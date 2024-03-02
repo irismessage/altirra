@@ -21,6 +21,7 @@
 class ATCPUEmulator;
 class ATCPUEmulatorMemory;
 
+double ATDebugReadDecFloatAsBinary(ATCPUEmulatorMemory& mem, uint16 addr);
 double ATReadDecFloatAsBinary(ATCPUEmulatorMemory& mem, uint16 addr);
 double ATReadDecFloatAsBinary(const uint8 bytes[6]);
 

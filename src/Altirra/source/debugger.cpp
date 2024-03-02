@@ -2691,6 +2691,9 @@ void ATDebugger::OnSimulatorEvent(ATSimulatorEvent ev) {
 		return;
 	}
 
+	if (ev == kATSimEvent_WarmReset)
+		return;
+
 	if (ev == kATSimEvent_ColdReset) {
 		if (mSysBPEEXRun) {
 			mpBkptManager->Clear(mSysBPEEXRun);
@@ -2725,6 +2728,8 @@ void ATDebugger::OnSimulatorEvent(ATSimulatorEvent ev) {
 		}
 		return;
 	} else if (ev == kATSimEvent_EXEInitSegment) {
+		return;
+	} else if (ev == kATSimEvent_AbnormalDMA) {
 		return;
 	} else if (ev == kATSimEvent_EXERunSegment) {
 		if (!mOnExeCmds[1].empty()) {
@@ -3344,6 +3349,23 @@ namespace {
 		bool mbValid;
 	};
 
+	class ATDebuggerCmdExpr {
+	public:
+		ATDebuggerCmdExpr(bool required)
+			: mbRequired(required)
+			, mpExpr(NULL)
+		{
+		}
+
+		ATDebugExpNode *GetValue() const { return mpExpr; }
+
+	protected:
+		friend class ATDebuggerCmdParser;
+
+		bool mbRequired;
+		vdautoptr<ATDebugExpNode> mpExpr;
+	};
+
 	class ATDebuggerCmdExprNum {
 	public:
 		ATDebuggerCmdExprNum(bool required, bool hex = true, sint32 minVal = -0x7FFFFFFF-1, sint32 maxVal = 0x7FFFFFFF, sint32 defaultValue = 0, bool allowStar = false)
@@ -3416,6 +3438,7 @@ namespace {
 		ATDebuggerCmdParser& operator>>(ATDebuggerCmdPath& nm);
 		ATDebuggerCmdParser& operator>>(ATDebuggerCmdString& nm);
 		ATDebuggerCmdParser& operator>>(ATDebuggerCmdQuotedString& nm);
+		ATDebuggerCmdParser& operator>>(ATDebuggerCmdExpr& nu);
 		ATDebuggerCmdParser& operator>>(ATDebuggerCmdExprNum& nu);
 		ATDebuggerCmdParser& operator>>(ATDebuggerCmdExprAddr& nu);
 		ATDebuggerCmdParser& operator>>(int);
@@ -3760,6 +3783,38 @@ namespace {
 		return *this;
 	}
 
+	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdExpr& xp) {
+		if (mArgs.empty()) {
+			if (xp.mbRequired)
+				throw MyError("Missing expression argument.");
+
+			return *this;
+		}
+
+		const char *s = mArgs.front();
+		mArgs.erase(mArgs.begin());
+
+		VDStringA quoteStripBuf;
+
+		if (*s == '"') {
+			++s;
+
+			size_t len = strlen(s);
+
+			if (len && s[len - 1] == '"') {
+				quoteStripBuf.assign(s, s + len - 1);
+				s = quoteStripBuf.c_str();
+			}
+		}
+
+		try {
+			xp.mpExpr = ATDebuggerParseExpression(s, ATGetDebugger(), ATGetDebugger()->GetExprOpts());
+		} catch(const ATDebuggerExprParseException& ex) {
+			throw MyError("Unable to parse expression '%s': %s\n", s, ex.c_str());
+		}
+
+		return *this;
+	}
 	ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdExprNum& nu) {
 		if (mArgs.empty()) {
 			if (nu.mbRequired)
@@ -4332,7 +4387,7 @@ void ATConsoleCmdRegisters(int argc, const char *const *argv) {
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 
 	if (!argc) {
-		cpu.DumpStatus();
+		cpu.DumpStatus(true);
 		return;
 	}
 
@@ -4345,20 +4400,39 @@ void ATConsoleCmdRegisters(int argc, const char *const *argv) {
 
 	VDStringSpanA regName(argv[0]);
 	bool resetContinuationAddr = false;
+	bool is816 = cpu.GetCPUMode() == kATCPUMode_65C816;
+	bool isM16 = !(cpu.GetP() & AT6502::kFlagM);
+	bool isX16 = !(cpu.GetP() & AT6502::kFlagX);
 
 	if (regName == "pc") {
 		g_debugger.SetPC(v);
 		resetContinuationAddr = true;
 	} else if (regName == "x") {
 		cpu.SetX((uint8)v);
+
+		if (isX16)
+			cpu.SetXH((uint8)(v >> 8));
 	} else if (regName == "y") {
 		cpu.SetY((uint8)v);
+
+		if (isX16)
+			cpu.SetYH((uint8)(v >> 8));
 	} else if (regName == "s") {
 		cpu.SetS((uint8)v);
 	} else if (regName == "p") {
 		cpu.SetP((uint8)v);
 	} else if (regName == "a") {
 		cpu.SetA((uint8)v);
+	} else if (regName == "c") {
+		cpu.SetA((uint8)v);
+		if (isM16)
+			cpu.SetAH((uint8)(v >> 8));
+	} else if (regName == "d") {
+		cpu.SetD(v);
+	} else if (regName == "k" || regName == "pbr") {
+		cpu.SetK((uint8)v);
+	} else if (regName == "b" || regName == "dbr") {
+		cpu.SetB((uint8)v);
 	} else if (regName.size() == 3 && regName[0] == 'p' && regName[1] == '.') {
 		uint8 p = cpu.GetP();
 		uint8 mask;
@@ -4607,7 +4681,7 @@ void ATConsoleCmdDumpFloats(int argc, const char *const *argv) {
 			data[i] = g_sim.DebugGlobalReadByte(atype + ((addr + i) & kATAddressOffsetMask));
 		}
 
-		ATConsolePrintf("%s: %02X %02X %02X %02X %02X %02X  %g\n"
+		ATConsolePrintf("%s: %02X %02X %02X %02X %02X %02X  %.10g\n"
 			, g_debugger.GetAddressText(addr, false).c_str()
 			, data[0]
 			, data[1]
@@ -5063,6 +5137,48 @@ void ATConsoleCmdFill(int argc, const char *const *argv) {
 
 		if (++patsrc == patend)
 			patsrc = patstart;
+
+		addroffset = (addroffset + 1) & kATAddressOffsetMask;
+	}
+
+	if (lenarg) {
+		ATConsolePrintf("Filled %s-%s.\n"
+		, g_debugger.GetAddressText(addrarg.GetValue(), false).c_str()
+		, g_debugger.GetAddressText(addrspace + ((addroffset - 1) & kATAddressOffsetMask), false).c_str());
+	}
+}
+
+void ATConsoleCmdFillExp(ATDebuggerCmdParser& parser) {
+	ATDebuggerCmdExprAddr addrarg(true, true);
+	ATDebuggerCmdLength lenarg(0, true, &addrarg);
+	ATDebuggerCmdExpr valexpr(true);
+	
+	parser >> addrarg >> lenarg >> valexpr >> 0;
+
+	ATCPUEmulatorMemory& mem = g_sim.GetCPUMemory();
+	uint32 len = lenarg;
+	uint32 addrspace = addrarg.GetValue() & kATAddressSpaceMask;
+	uint32 addroffset = addrarg.GetValue() & kATAddressOffsetMask;
+
+	ATDebugExpEvalContext ctx = g_debugger.GetEvalContext();
+	ctx.mbAccessValid = true;
+	ctx.mbAccessWriteValid = true;
+	ctx.mAccessValue = 0;
+
+	ATDebugExpNode *xpn = valexpr.GetValue();
+
+	for(uint32 len = lenarg; len; --len) {
+		sint32 v;
+		uint32 addr = addrspace + addroffset;
+
+		ctx.mAccessAddress = addr;
+
+		if (!xpn->Evaluate(v, ctx))
+			throw MyError("Evaluation error at %s.", g_debugger.GetAddressText(addr, true).c_str());
+
+		++ctx.mAccessValue;
+
+		g_sim.DebugGlobalWriteByte(addr, (uint8)v);
 
 		addroffset = (addroffset + 1) & kATAddressOffsetMask;
 	}
@@ -6108,7 +6224,7 @@ void ATConsoleCmdVectors() {
 		ATConsolePrintf("VSEROC  Serial I/O transmit complete  %04X\n", (uint16)kdb5.VSEROC);
 		ATConsolePrintf("VTIMR1  POKEY timer 1                 %04X\n", (uint16)kdb5.VTIMR1);
 		ATConsolePrintf("VTIMR2  POKEY timer 2                 %04X\n", (uint16)kdb5.VTIMR2);
-		ATConsolePrintf("VTIMR4  POKEY timer 4                 %04X\n", (uint16)kdb5.VTIMR2);
+		ATConsolePrintf("VTIMR4  POKEY timer 4                 %04X\n", (uint16)kdb5.VTIMR4);
 	} else {
 		ATConsolePrintf("NMI vectors:\n");
 		ATConsolePrintf("VDSLST  Display list NMI              %04X\n", (uint16)kdb.VDSLST);
@@ -6126,6 +6242,8 @@ void ATConsoleCmdVectors() {
 		ATConsolePrintf("VBREAK  Break instruction             %04X\n", (uint16)kdb.VBREAK);
 		ATConsolePrintf("VTIMR1  POKEY timer 1                 %04X\n", (uint16)kdb.VTIMR1);
 		ATConsolePrintf("VTIMR2  POKEY timer 2                 %04X\n", (uint16)kdb.VTIMR2);
+		ATConsolePrintf("VTIMR4  POKEY timer 4                 %04X\n", (uint16)kdb.VTIMR4);
+		ATConsolePrintf("VPIRQ   PBI device interrupt          %04X\n", (uint16)kdb.VPIRQ);
 	}
 
 	ATConsolePrintf("\n");
@@ -7218,6 +7336,17 @@ void ATConsoleCmdPrintf(int argc, const char *const *argv) {
 							line += padChar;
 						} while(--padWidth);
 					}
+				}
+				break;
+
+			case 'e':	// float (exponential)
+			case 'f':	// float (natural)
+			case 'g':	// float (general)
+				{
+					double d = ATDebugReadDecFloatAsBinary(g_sim.GetCPUMemory(), value);
+					const char format[]={'%', '*', '.', '*', c, 0};
+
+					line.append_sprintf(format, width, precision >= 0 ? precision : 10, d);
 				}
 				break;
 
@@ -8531,9 +8660,15 @@ void ATConsoleExecuteCommand(const char *s, bool echo) {
 	
 	if (!strcmp(cmd, "t")) {
 		ATConsoleCmdTrace();
-	} else if (!strcmp(cmd, "g")) {
+		return;
+	}
+	
+	if (!strcmp(cmd, "g")) {
 		ATConsoleCmdGo(argc-1, argv+1);
-	} else if (!strcmp(cmd, "gt")) {
+		return;
+	}
+	
+	if (!strcmp(cmd, "gt")) {
 		ATConsoleCmdGoTraced();
 	} else if (!strcmp(cmd, "gf")) {
 		ATConsoleCmdGoFrameEnd();
@@ -8625,6 +8760,8 @@ void ATConsoleExecuteCommand(const char *s, bool echo) {
 		ATConsoleCmdEnter(argc-1, argv+1);
 	} else if (!strcmp(cmd, "f")) {
 		ATConsoleCmdFill(argc-1, argv+1);
+	} else if (!strcmp(cmd, "fbx")) {
+		ATConsoleCmdFillExp(parser);
 	} else if (!strcmp(cmd, "m")) {
 		ATConsoleCmdMove(argc-1, argv+1);
 	} else if (!strcmp(cmd, "hma")) {
@@ -8694,6 +8831,8 @@ void ATConsoleExecuteCommand(const char *s, bool echo) {
 		g_sim.GetAntic().DumpDMAPattern();
 	} else if (!strcmp(cmd, ".dmamap")) {
 		g_sim.GetAntic().DumpDMAActivityMap();
+	} else if (!strcmp(cmd, ".dmabuf")) {
+		g_sim.GetAntic().DumpDMALineBuffer();
 	} else if (!strcmp(cmd, ".caslogdata")) {
 		ATConsoleCmdCasLogData(argc-1, argv+1);
 	} else if (!strcmp(cmd, ".pia")) {

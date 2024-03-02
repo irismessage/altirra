@@ -1328,6 +1328,12 @@ void ATRS232Emulator::OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, 
 
 		case 4:		// get byte (requires assist)
 			{
+				if (mem->ReadByte(ATKernelSymbols::BRKKEY) == 0) {
+					cpu->SetA(0);
+					cpu->Ldy(ATCIOSymbols::CIOStatBreak);
+					return;
+				}
+
 				uint8 c;
 				if (!ch.GetByte(c)) {
 					cpu->Push(cpu->GetPC() >> 8);
@@ -1345,6 +1351,12 @@ void ATRS232Emulator::OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, 
 			break;
 
 		case 6:		// put byte
+			if (mem->ReadByte(ATKernelSymbols::BRKKEY) == 0) {
+				cpu->SetA(0);
+				cpu->Ldy(ATCIOSymbols::CIOStatBreak);
+				return;
+			}
+
 			if (!ch.PutByte(cpu->GetA())) {
 				cpu->Push(cpu->GetPC() >> 8);
 				cpu->Push((cpu->GetPC() - 1) & 0xFF);

@@ -31,6 +31,8 @@ public:
 	virtual void UpdateTextDisplay(bool enabled) = 0;
 	virtual void UpdateTextModeFont() = 0;
 	virtual void UpdateFilterMode() = 0;
+
+	virtual void OnHardwareChanged() = 0;
 };
 
 void ATUIRegisterDisplayPane();

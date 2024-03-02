@@ -138,6 +138,22 @@
         </p>
       </desc>
     </compat-tag>
+
+    <compat-tag id="65C816" name="65C816 incompatibility">
+      <desc>
+        <p>
+          Program has compatibility issues with 65C816 CPUs.
+        </p>
+      </desc>
+    </compat-tag>
+
+    <compat-tag id="exphw" name="Expansion hardware incompatibility">
+      <desc>
+        <p>
+          Program has compatibility issues with expansion hardware.
+        </p>
+      </desc>
+    </compat-tag>
   </compat-tags>
 
   <!-- *************************************************** -->
@@ -210,6 +226,12 @@
         <p>
           Some versions require <b>exactly</b> 64K of RAM to work.
         </p>
+        <compat-issue id="exphw">
+          <p>
+            Joystick control will not work if Ultimate1MB hardware is present. This is because BBSB! reads
+            the joystick from a shadow of PORTA at $D3F0, which is blocked by the U1MB hardware.
+          </p>
+        </compat-issue>
       </compat-title>
 
       <compat-title name="Bubble Bobble (demo)">
@@ -279,6 +301,17 @@
         <compat-issue id="disktiming"/>
       </compat-title>
 
+      <compat-title name="Gyruss">
+        <compat-issue id="65C816">
+          <p>
+            Wraps absolute indexed addressing around the 64K address space. This causes the game to
+            malfunction if run on a 65C816 without memory at bank $01, by preventing it from expiring
+            enemy explosions. It runs fine with either 16-bit
+            addressing (bank $00 = bank $01) or with memory in that bank.
+          </p>
+        </compat-issue>
+      </compat-title>
+      
       <compat-title name="His Dark Majesty">
         <compat-issue id="major-bug">
           <p>
@@ -339,6 +372,17 @@
         </compat-issue>
       </compat-title>
 
+      <compat-title name="The Tail of Beta Lyrae">
+        <compat-issue id="diskrw">
+          <p>
+            Rewrites the disk to store a load counter, which is used to gradually reveal more game
+            elements as the game is loaded more times. The game will work if the disk is write
+            protected, but the new game elements will not appear if the counter is not already
+            high enough.
+          </p>
+        </compat-issue>
+      </compat-title>
+      
       <compat-title name="Transylvania">
         <compat-issue id="disktiming"/>
       </compat-title>
@@ -393,6 +437,15 @@
           </p>
         </compat-issue>
       </compat-title>
+
+      <compat-title name="MicroCalc (cartridge)">
+        <compat-issue id="requires-xlos">
+          <p>
+            Jumps directly into SIO at $E959 instead of using the SIOV vector, and so will fail unless
+            the OS-B or XL/XE OS is used.
+          </p>
+        </compat-issue>
+      </compat-title>
     </compat-category>
 
     <!-- *************************************************** -->
@@ -408,6 +461,12 @@
       </compat-title>
 
       <compat-title name="MyDOS">
+        <compat-issue id="65C816">
+          <p>
+            Wraps absolute indexed addressing around the 64K address space, and thus does not work
+            on a 65C816 CPU with 24-bit addressing.
+          </p>
+        </compat-issue>
         <p>
           The Load Binary command in the MyDOS menu uses a MyDOS-specific XIO call to load the binary
           instead of regular CIO read calls. This prevents Load Binary from working with the H: handler

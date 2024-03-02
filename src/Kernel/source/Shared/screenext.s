@@ -39,6 +39,9 @@
 ;
 ; Marks all lines as the start of logical lines.
 ;
+; Exit:
+;	X = 0
+;
 .proc ScreenResetLogicalLineMap
 	ldx		#$ff
 	stx		logmap
@@ -51,6 +54,7 @@
 	lda		lmargn
 	sta		bufstr+1
 	
+	;note - X=0 relied on here by EditorOpen
 	rts
 .endp
 

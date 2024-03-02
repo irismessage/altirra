@@ -64,6 +64,9 @@ not_dli:
 .endp
 
 .proc IntDispatchIRQ
+.if _KERNEL_XLXE
+	cld
+.endif
 	jmp		(vimirq)
 .endp
 

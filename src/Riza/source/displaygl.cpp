@@ -180,6 +180,7 @@ public:
 
 	void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView);
 	void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h);
+	void StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 sw, sint32 sh, const VDDisplayBltOptions& opts);
 	void MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode);
 
 	void PolyLine(const vdpoint32 *points, uint32 numLines);
@@ -446,6 +447,60 @@ void VDDisplayRendererOpenGL::Blt(sint32 x, sint32 y, VDDisplayImageView& imageV
 	mpGL->glTexCoord2f(u1, v1);
 	mpGL->glVertex2i(x + w, y + h);
 	mpGL->glEnd();
+
+	mpGL->glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void VDDisplayRendererOpenGL::StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 sw, sint32 sh, const VDDisplayBltOptions& opts) {
+	VDDisplayCachedImageOpenGL *cachedImage = GetCachedImage(imageView);
+
+	if (!cachedImage)
+		return;
+
+	// reject source clipping
+	if (sx < 0 || sx >= cachedImage->mWidth)
+		return;
+
+	if (sy < 0 || sy >= cachedImage->mHeight)
+		return;
+
+	if (cachedImage->mWidth - sx < sw || cachedImage->mHeight - sy < sh)
+		return;
+
+	if (dw <= 0 || dh <= 0)
+		return;
+
+	const float invsw = 1.0f / (float)cachedImage->mTexWidth;
+	const float invsh = 1.0f / (float)cachedImage->mTexHeight;
+	const float u0 = (float)sx * invsw;
+	const float v0 = (float)(cachedImage->mHeight - sy) * invsh;
+	const float u1 = (float)(sx + sw) * invsw;
+	const float v1 = (float)(cachedImage->mHeight - (sy + sh)) * invsh;
+
+	mpGL->glEnable(GL_TEXTURE_2D);
+	mpGL->glBindTexture(GL_TEXTURE_2D, cachedImage->mTexture);
+
+	if (opts.mFilterMode != VDDisplayBltOptions::kFilterMode_Point) {
+		mpGL->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		mpGL->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	}
+
+	mpGL->glColor4f(1, 1, 1, 1);
+	mpGL->glBegin(GL_TRIANGLE_STRIP);
+	mpGL->glTexCoord2f(u0, v0);
+	mpGL->glVertex2i(dx, dy);
+	mpGL->glTexCoord2f(u0, v1);
+	mpGL->glVertex2i(dx, dy + dh);
+	mpGL->glTexCoord2f(u1, v0);
+	mpGL->glVertex2i(dx + dw, dy);
+	mpGL->glTexCoord2f(u1, v1);
+	mpGL->glVertex2i(dx + dw, dy + dh);
+	mpGL->glEnd();
+
+	if (opts.mFilterMode != VDDisplayBltOptions::kFilterMode_Point) {
+		mpGL->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		mpGL->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	}
 
 	mpGL->glBindTexture(GL_TEXTURE_2D, 0);
 }

@@ -133,7 +133,7 @@ KeyboardSpecial = CIOExitNotSupported
 
 ;==============================================================================
 .proc	KeyboardIRQ
-	;reset screen timer
+	;reset software repeat timer
 	mva		#$30	srtimr
 	
 	;read new key
@@ -155,6 +155,7 @@ debounced:
 
 	;store key
 	sta		ch
+	sta		ch1
 
 	;reset attract
 	mva		#0		atract

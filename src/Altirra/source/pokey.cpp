@@ -268,6 +268,7 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 		ATConsoleTaggedPrintf("POKEY: Receiving byte (c=%02x; %02x %02x)\n", c, mSERIN, mSerialInputShiftRegister);
 
 	mbSerialSimulateInputPort = simulateInputPort;
+	mSerialInputPendingStatus = 0xff;
 
 	if (simulateInputPort) {
 		mSerialSimulateInputBaseTime = ATSCHEDULER_GETTIME(mpScheduler);
@@ -275,26 +276,16 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 		mSerialSimulateInputData = ((uint32)c << 1) + 0x200;
 	}
 
-	// check for overrun
-	if (!(mIRQST & 0x20)) {
-		mSKSTAT &= 0xdf;
-
-		if (mbTraceSIO)
-			ATConsoleTaggedPrintf("POKEY: Serial input overrun detected (c=%02x; %02x %02x)\n", c, mSERIN, mSerialInputShiftRegister);
-
-		mSERIN = mSerialInputShiftRegister;
-	}
-
 	// check for attempted read in synchronous mode
 	if (!(mSKCTL & 0x10)) {
-		// blown read -- trash the byte by faking a dropped bit
-		c = (c & 0x0f) + ((c & 0xe0) >> 1) + 0x80;
-
 		// set the framing error bit
-		mSKSTAT &= 0x7F;
+		mSerialInputPendingStatus &= 0x7F;
 
 		if (mbTraceSIO)
 			ATConsoleTaggedPrintf("POKEY: Trashing byte $%02x and signaling framing error due to asynchronous input mode not being enabled.\n", c);
+
+		// blown read -- trash the byte by faking a dropped bit
+		c = (c & 0x0f) + ((c & 0xe0) >> 1) + 0x80;
 	}
 
 	// check for mismatched baud rate
@@ -305,7 +296,7 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 		if (cyclesPerBit < expectedCPB - margin || cyclesPerBit > expectedCPB + margin) {
 			// blown read -- trash the byte and assert the framing error bit
 			c = 0xFF;
-			mSKSTAT &= 0x7F;
+			mSerialInputPendingStatus &= 0x7F;
 
 			if (mbTraceSIO)
 				ATConsoleTaggedPrintf("POKEY: Signaling framing error due to receive rate mismatch (expected %d cycles/bit, got %d)\n", expectedCPB, cyclesPerBit);
@@ -331,15 +322,14 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 
 	mSerialInputShiftRegister = c;
 	mSerialInputCounter = 19;
-	mSERIN = c;
 
-	if (mbTraceSIO)
-		ATConsoleTaggedPrintf("POKEY: Reasserting serial input IRQ. IRQEN=%02x, IRQST=%02x\n", mIRQEN, mIRQST);
+	// assert serial input busy
+	mSKSTAT &= 0xfd;
 
-	if (mIRQEN & 0x20) {
-		mIRQST &= ~0x20;
-		mpConn->PokeyAssertIRQ(false);
-	}
+	mbSerInDeferredLoad = simulateInputPort && !mSerBurstMode;
+
+	if (!mbSerInDeferredLoad)
+		ProcessReceivedSerialByte();
 }
 
 void ATPokeyEmulator::SetAudioLine2(int v) {
@@ -543,12 +533,18 @@ void ATPokeyEmulator::FireTimer() {
 			--mSerialInputCounter;
 
 			if (!mSerialInputCounter) {
+				// deassert serial input active
+				mSKSTAT |= 0x02;
+
 				mbSerialWaitingForStartBit = true;
 
 				if ((mSKCTL & 0x10) && !mbLinkedTimers34) {
 					mCounter[2] = mAUDFP1[2];
 					SetupTimers(0x04);
 				}
+
+				if (mbSerInDeferredLoad)
+					ProcessReceivedSerialByte();
 			}
 		}
 
@@ -1958,11 +1954,11 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 					mbSerOutValid = false;
 					mbSerShiftValid = false;
 					mbSerialOutputState = false;
-					mSKSTAT |= 0xC0;
 
-					mIRQST |= 0x20;
-					if (mIRQEN & 0x10)
-						mIRQST &= ~0x10;
+					// reset serial input active bit
+					mSKSTAT |= 0x02;
+
+					// assert serial output complete
 					mIRQST &= ~0x08;
 
 					if (!(mIRQEN & ~mIRQST))
@@ -2271,4 +2267,25 @@ void ATPokeyEmulator::TryPushNextKey() {
 	mKeyQueue.pop_front();
 
 	PushKey(c, false, false, false, mbUseKeyCooldownTimer);
+}
+
+void ATPokeyEmulator::ProcessReceivedSerialByte() {
+	if (mbTraceSIO)
+		ATConsoleTaggedPrintf("POKEY: Reasserting serial input IRQ. IRQEN=%02x, IRQST=%02x\n", mIRQEN, mIRQST);
+
+	if (mIRQEN & 0x20) {
+		// check for overrun
+		if (!(mIRQST & 0x20)) {
+			mSKSTAT &= 0xdf;
+
+			if (mbTraceSIO)
+				ATConsoleTaggedPrintf("POKEY: Serial input overrun detected (c=%02x; %02x %02x)\n", mSerialInputShiftRegister, mSERIN, mSerialInputShiftRegister);
+		}
+
+		mIRQST &= ~0x20;
+		mpConn->PokeyAssertIRQ(false);
+	}
+
+	mSERIN = mSerialInputShiftRegister;
+	mSKSTAT &= mSerialInputPendingStatus;
 }

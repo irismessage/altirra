@@ -20,7 +20,7 @@ public:
 
 	virtual void CheckExceptions() = 0;
 
-	virtual void Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, IATUIRenderer *r) = 0;
+	virtual void Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, bool encodeAllFrames, IATUIRenderer *r) = 0;
 	virtual void Shutdown() = 0;
 };
 

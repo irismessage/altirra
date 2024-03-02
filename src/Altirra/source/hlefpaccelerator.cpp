@@ -23,34 +23,61 @@
 #include "cpuhookmanager.h"
 #include "decmath.h"
 
-#define AT_ACCEL_FP_FOR_EACH_ENTRY(macroName)	\
-	macroName(AFP)		\
-	macroName(FASC)		\
-	macroName(IPF)		\
-	macroName(FPI)		\
-	macroName(FADD)		\
-	macroName(FSUB)		\
-	macroName(FMUL)		\
-	macroName(FDIV)		\
-	macroName(LOG)		\
-	macroName(SKPSPC)	\
-	macroName(ISDIGT)	\
-	macroName(NORMALIZE)\
-	macroName(PLYEVL)	\
-	macroName(ZFR0)		\
-	macroName(ZF1)		\
-	macroName(ZFL)		\
-	macroName(LDBUFA)	\
-	macroName(FLD0R)	\
-	macroName(FLD0P)	\
-	macroName(FLD1R)	\
-	macroName(FLD1P)	\
-	macroName(FST0R)	\
-	macroName(FST0P)	\
-	macroName(FMOVE)	\
-	macroName(REDRNG)
+class ATHLEFPAcceleratorBase {
+public:
+	ATHLEFPAcceleratorBase()
+		: mpCPU(NULL)
+	{
+	}
 
-class ATHLEFPAccelerator {
+	ATCPUEmulator *mpCPU;
+
+	typedef void FpAccelFn(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
+
+	template<FpAccelFn& T_Fn>
+	uint8 OnFpHook(uint16) {
+		T_Fn(*mpCPU, *mpCPU->GetMemory());
+		return 0x60;
+	}
+};
+
+static const struct {
+	uint16 mPC;
+	uint8 (ATHLEFPAcceleratorBase::*mpMethod)(uint16);
+} kATHLEFPHookMethods[]={
+
+#define AT_ACCEL_FP_TABLE_ENTRY(name) { ATKernelSymbols::name, &ATHLEFPAcceleratorBase::OnFpHook<ATAccel##name> }
+	AT_ACCEL_FP_TABLE_ENTRY(AFP),
+	AT_ACCEL_FP_TABLE_ENTRY(FASC),
+	AT_ACCEL_FP_TABLE_ENTRY(IPF),
+	AT_ACCEL_FP_TABLE_ENTRY(FPI),
+	AT_ACCEL_FP_TABLE_ENTRY(FADD),
+	AT_ACCEL_FP_TABLE_ENTRY(FSUB),
+	AT_ACCEL_FP_TABLE_ENTRY(FMUL),
+	AT_ACCEL_FP_TABLE_ENTRY(FDIV),
+	AT_ACCEL_FP_TABLE_ENTRY(LOG),
+	AT_ACCEL_FP_TABLE_ENTRY(LOG10),
+	AT_ACCEL_FP_TABLE_ENTRY(SKPSPC),
+	AT_ACCEL_FP_TABLE_ENTRY(ISDIGT),
+	AT_ACCEL_FP_TABLE_ENTRY(NORMALIZE),
+	AT_ACCEL_FP_TABLE_ENTRY(PLYEVL),
+	AT_ACCEL_FP_TABLE_ENTRY(ZFR0),
+	AT_ACCEL_FP_TABLE_ENTRY(ZF1),
+	AT_ACCEL_FP_TABLE_ENTRY(ZFL),
+	AT_ACCEL_FP_TABLE_ENTRY(LDBUFA),
+	AT_ACCEL_FP_TABLE_ENTRY(FLD0R),
+	AT_ACCEL_FP_TABLE_ENTRY(FLD0P),
+	AT_ACCEL_FP_TABLE_ENTRY(FLD1R),
+	AT_ACCEL_FP_TABLE_ENTRY(FLD1P),
+	AT_ACCEL_FP_TABLE_ENTRY(FST0R),
+	AT_ACCEL_FP_TABLE_ENTRY(FST0P),
+	AT_ACCEL_FP_TABLE_ENTRY(FMOVE),
+	AT_ACCEL_FP_TABLE_ENTRY(REDRNG),
+#undef AT_ACCEL_FP_TABLE_ENTRY
+
+};
+
+class ATHLEFPAccelerator : public ATHLEFPAcceleratorBase {
 	ATHLEFPAccelerator(const ATHLEFPAccelerator&);
 	ATHLEFPAccelerator& operator=(const ATHLEFPAccelerator&);
 public:
@@ -63,18 +90,11 @@ public:
 private:
 	void OnHook(uint16 pc);
 
-#define AT_ACCEL_FP_DECLARE_HOOK(name) uint8 OnHook##name(uint16);
-	AT_ACCEL_FP_FOR_EACH_ENTRY(AT_ACCEL_FP_DECLARE_HOOK)
-
-	ATCPUEmulator *mpCPU;
-
-	ATCPUHookNode *mpHookNodes[25];
+	ATCPUHookNode *mpHookNodes[vdcountof(kATHLEFPHookMethods)];
 };
 
-ATHLEFPAccelerator::ATHLEFPAccelerator()
-	: mpCPU(NULL)
-{
-	std::fill(mpHookNodes, mpHookNodes + sizeof(mpHookNodes)/sizeof(mpHookNodes[0]), (ATCPUHookNode *)NULL);
+ATHLEFPAccelerator::ATHLEFPAccelerator() {
+	std::fill(mpHookNodes, mpHookNodes + vdcountof(mpHookNodes), (ATCPUHookNode *)NULL);
 }
 
 ATHLEFPAccelerator::~ATHLEFPAccelerator() {
@@ -84,20 +104,9 @@ ATHLEFPAccelerator::~ATHLEFPAccelerator() {
 void ATHLEFPAccelerator::Init(ATCPUEmulator *cpu) {
 	mpCPU = cpu;
 
-#define AT_ACCEL_FP_TABLE_ENTRY(name) { ATKernelSymbols::name, &ATHLEFPAccelerator::OnHook##name },
-
-	static const struct {
-		uint16 mPC;
-		uint8 (ATHLEFPAccelerator::*mpMethod)(uint16);
-	} kMethods[]={
-		AT_ACCEL_FP_FOR_EACH_ENTRY(AT_ACCEL_FP_TABLE_ENTRY)
-	};
-
-	VDASSERTCT(sizeof(kMethods)/sizeof(kMethods[0]) == sizeof(mpHookNodes)/sizeof(mpHookNodes[0]));
-
 	ATCPUHookManager& hookMgr = *mpCPU->GetHookManager();
-	for(size_t i=0; i<sizeof(mpHookNodes)/sizeof(mpHookNodes[0]); ++i) {
-		hookMgr.SetHookMethod(mpHookNodes[i], kATCPUHookMode_MathPackROMOnly, kMethods[i].mPC, 0, this, kMethods[i].mpMethod);
+	for(size_t i=0; i<vdcountof(mpHookNodes); ++i) {
+		hookMgr.SetHookMethod(mpHookNodes[i], kATCPUHookMode_MathPackROMOnly, kATHLEFPHookMethods[i].mPC, 0, this, kATHLEFPHookMethods[i].mpMethod);
 	}
 }
 
@@ -105,21 +114,13 @@ void ATHLEFPAccelerator::Shutdown() {
 	if (mpCPU) {
 		ATCPUHookManager& hookMgr = *mpCPU->GetHookManager();
 
-		for(size_t i=0; i<sizeof(mpHookNodes)/sizeof(mpHookNodes[0]); ++i) {
+		for(size_t i=0; i<vdcountof(mpHookNodes); ++i) {
 			hookMgr.UnsetHook(mpHookNodes[i]);
 		}
 
 		mpCPU = NULL;
 	}
 }
-
-#define AT_ACCEL_FP_DEFINE_HOOK(name) \
-	uint8 ATHLEFPAccelerator::OnHook##name(uint16) {	\
-		ATAccel##name(*mpCPU, *mpCPU->GetMemory());	\
-		return 0x60;	\
-	}
-
-AT_ACCEL_FP_FOR_EACH_ENTRY(AT_ACCEL_FP_DEFINE_HOOK)
 
 ATHLEFPAccelerator *ATCreateHLEFPAccelerator(ATCPUEmulator *cpu) {
 	vdautoptr<ATHLEFPAccelerator> accel(new ATHLEFPAccelerator);

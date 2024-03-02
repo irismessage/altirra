@@ -483,6 +483,7 @@ void ATRelaunchElevated(VDGUIHandle parent, const wchar_t *params) {
 		execInfo.lpVerb = L"runas";
 		execInfo.lpFile = path.c_str();
 		execInfo.lpParameters = params;
+		execInfo.nShow = SW_SHOWNORMAL;
 
 		if (pShellExecuteExW(&execInfo) && execInfo.hProcess) {
 			for(;;) {

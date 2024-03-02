@@ -28,6 +28,7 @@ public:
 		: VDDialogFrameW32(IDD_VIDEO_RECORDING)
 		, mbPAL(pal)
 		, mbHalfRate(false)
+		, mbEncodeAllFrames(false)
 		, mEncoding(kATVideoEncoding_ZMBV)
 		, mFrameRate(kATVideoRecordingFrameRate_Normal)
 	{}
@@ -35,6 +36,7 @@ public:
 	ATVideoEncoding GetEncoding() const { return mEncoding; }
 	ATVideoRecordingFrameRate GetFrameRate() const { return mFrameRate; }
 	bool GetHalfRate() const { return mbHalfRate; }
+	bool GetEncodeAllFrames() const { return mbEncodeAllFrames; }
 
 protected:
 	bool OnLoaded();
@@ -44,6 +46,7 @@ protected:
 
 	bool mbPAL;
 	bool mbHalfRate;
+	bool mbEncodeAllFrames;
 	ATVideoEncoding mEncoding;
 	ATVideoRecordingFrameRate mFrameRate;
 
@@ -84,16 +87,20 @@ void ATUIDialogVideoRecording::OnDataExchange(bool write) {
 			mFrameRate = kATVideoRecordingFrameRate_Integral;
 
 		mbHalfRate = IsButtonChecked(IDC_HALF_RATE);
+		mbEncodeAllFrames = IsButtonChecked(IDC_ENCODE_ALL_FRAMES);
 
 		key.setInt("Video Recording: Compression Mode", mEncoding);
 		key.setInt("Video Recording: Frame Rate", mFrameRate);
-		key.setInt("Video Recording: Half Rate", mbHalfRate);
+		key.setBool("Video Recording: Half Rate", mbHalfRate);
+		key.setBool("Video Recording: Encode All Frames", mbEncodeAllFrames);
 	} else {
 		mEncoding = (ATVideoEncoding)key.getEnumInt("Video Recording: Compression Mode", kATVideoEncodingCount, kATVideoEncoding_ZMBV);
 		mFrameRate = (ATVideoRecordingFrameRate)key.getEnumInt("Video Recording: FrameRate", kATVideoRecordingFrameRateCount, kATVideoRecordingFrameRate_Normal);
 		mbHalfRate = key.getBool("Video Recording: Half Rate", false);
+		mbEncodeAllFrames = key.getBool("Video Recording: Encode All Frames", mbEncodeAllFrames);
 
 		CheckButton(IDC_HALF_RATE, mbHalfRate);
+		CheckButton(IDC_ENCODE_ALL_FRAMES, mbEncodeAllFrames);
 
 		switch(mEncoding) {
 			case kATVideoEncoding_Raw:
@@ -171,7 +178,7 @@ void ATUIDialogVideoRecording::UpdateFrameRateControls() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-bool ATUIShowDialogVideoEncoding(VDGUIHandle parent, bool hz50, ATVideoEncoding& encoding, ATVideoRecordingFrameRate& frameRate, bool& halfRate) {
+bool ATUIShowDialogVideoEncoding(VDGUIHandle parent, bool hz50, ATVideoEncoding& encoding, ATVideoRecordingFrameRate& frameRate, bool& halfRate, bool& encodeAll) {
 	ATUIDialogVideoRecording dlg(hz50);
 
 	if (!dlg.ShowDialog(parent))
@@ -180,5 +187,6 @@ bool ATUIShowDialogVideoEncoding(VDGUIHandle parent, bool hz50, ATVideoEncoding&
 	encoding = dlg.GetEncoding();
 	frameRate = dlg.GetFrameRate();
 	halfRate = dlg.GetHalfRate();
+	encodeAll = dlg.GetEncodeAllFrames();
 	return true;
 }

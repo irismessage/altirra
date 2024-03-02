@@ -127,22 +127,24 @@ notwrite:
 	sta		pactl
 	
 	;kill audio
-	lda		#0
-	sta		audc1
-	sta		audc2
-	sta		audc4
+	ldy		#0
+	sty		audc1
+	sty		audc2
+	sty		audc4
 	
 	;all done
-	ldy		#1
+	iny
 	rts
 .endp
 
 ;==========================================================================
 .proc CassetteGetByte
-	;check if we can still fetch a byte
-fetchbyte:
+	;check if we have an EOF condition
 	lda		feof			;!! FIRST TWO BYTES CHECKED BY ARCHON
-
+	bne		xit_eof
+	
+fetchbyte:
+	;check if we can still fetch a byte
 	ldx		bptr
 	cpx		blim
 	beq		nobytes
@@ -153,15 +155,6 @@ fetchbyte:
 	rts
 	
 nobytes:
-	;check if we have an EOF condition
-	lda		feof
-	beq		noteof
-
-	;signal EOF
-	ldy		#CIOStatEndOfFile
-	rts
-	
-noteof:
 	;fetch more bytes
 	ldx		#$40
 	ldy		#'R'
@@ -174,28 +167,36 @@ noteof:
 	
 	;found $FE (EOF) - set flag and return EOF
 	sta		feof
-	bne		nobytes
+xit_eof:
+	ldy		#CIOStatEndOfFile
+	rts
 	
 noteofbyte:
 	;reset buffer ptr
 	mvx		#0 bptr
-
-	;check if we have a partial block
-	cmp		#$fa
-	bne		notpartialbyte
 	
-	;set length of partial block and loop back
-	mva		casbuf+130 blim
+	;assume full block first (128 bytes)
+	ldx		#$80
+	
+	;check if it actually is one
+	cmp		#$fc
+	bne		not_full_block
+	
+init_new_block:
+	;reset block length and loop back
+	stx		blim
 	jmp		fetchbyte
 	
-notpartialbyte:
-	;set buffer size to full
-	mvx		#$80 blim
+not_full_block:
+	;check if we have a partial block
+	cmp		#$fa
+	bne		not_partial_block
 	
-	;check if we have a full block and loop back if so
-	cmp		#$fc
-	beq		fetchbyte
+	;set length of partial block and the jump to init+loop
+	ldx		casbuf+130
+	bcs		init_new_block
 	
+not_partial_block:	
 	;uh oh... bad control byte.
 	ldy		#CIOStatFatalDiskIO
 	rts
@@ -289,14 +290,6 @@ rolling_start:
 	mva		#$5f ddevic
 	mva		#1 dunit
 
-	;wait for pre-record write tone or IRG read delay
-	ldx		#2
-	bit		wmode
-	smi:ldx	#4
-	bit		ftype
-	spl:inx
-	jsr		CassetteWait
-
 	;do it
 	jsr		siov
 	
@@ -324,7 +317,11 @@ rolling_stop:
 ;Entry:
 ;	X = delay type
 ;
-.proc CassetteWait
+CassetteWait = CassetteWaitLongShortCheck.normal_entry
+.proc CassetteWaitLongShortCheck
+	bit		ftype
+	spl:inx
+normal_entry:
 	jsr		SIOSetTimeoutVector
 	ldy		wait_table_lo,x
 	lda		wait_table_hi,x
@@ -357,15 +354,12 @@ wait_table_hi:
 ;==========================================================================
 ; Sound a bell using the console speaker (cassette version)
 ;
-; Entry:
-;	Y = duration
-;
 ; Modified:
 ;	A, X, Y
 ;
 .proc CassetteBell
 	ldy		#0
-	lda		#$08
+	tya
 soundloop:
 	ldx		#10
 	pha

@@ -143,12 +143,20 @@ int ATGetCartridgeModeForMapper(int mapper) {
 		case 49: return kATCartridgeMode_Atrax_SDX_128K;
 		case 50: return kATCartridgeMode_Turbosoft_64K;
 		case 51: return kATCartridgeMode_Turbosoft_128K;
+		case 52: return kATCartridgeMode_MicroCalc;
+		case 53: return kATCartridgeMode_RightSlot_8K;
+		case 54: return kATCartridgeMode_SIC;
+		case 55: return kATCartridgeMode_SIC;
+		case 56: return kATCartridgeMode_SIC;
+		case 57: return kATCartridgeMode_2K;
+		case 58: return kATCartridgeMode_4K;
+		case 59: return kATCartridgeMode_RightSlot_4K;
 		default:
 			return kATCartridgeMode_None;
 	}
 }
 
-int ATGetCartridgeMapperForMode(int mode) {
+int ATGetCartridgeMapperForMode(int mode, uint32 size) {
 	switch(mode) {
 		case kATCartridgeMode_8K: return 1;
 		case kATCartridgeMode_16K: return 2;
@@ -201,6 +209,25 @@ int ATGetCartridgeMapperForMode(int mode) {
 		case kATCartridgeMode_Atrax_SDX_128K: return 49;
 		case kATCartridgeMode_Turbosoft_64K: return 50;
 		case kATCartridgeMode_Turbosoft_128K: return 51;
+		case kATCartridgeMode_MicroCalc: return 52;
+
+		case kATCartridgeMode_SIC:
+			if (size > 256*1024)
+				return 56;
+			else if (size > 128*1024)
+				return 55;
+
+			return 54;
+
+		case kATCartridgeMode_2K:
+			return 57;
+
+		case kATCartridgeMode_4K:
+			return 58;
+
+		case kATCartridgeMode_RightSlot_4K:
+			return 59;
+
 		default:
 			return 0;
 	}
@@ -253,10 +280,11 @@ ATCartridgeEmulator::~ATCartridgeEmulator() {
 	Shutdown();
 }
 
-void ATCartridgeEmulator::Init(ATMemoryManager *memman, ATScheduler *sch, int basePri) {
+void ATCartridgeEmulator::Init(ATMemoryManager *memman, ATScheduler *sch, int basePri, bool fastBus) {
 	mpMemMan = memman;
 	mpScheduler = sch;
 	mBasePriority = basePri;
+	mbFastBus = fastBus;
 }
 
 void ATCartridgeEmulator::Shutdown() {
@@ -267,6 +295,15 @@ void ATCartridgeEmulator::Shutdown() {
 
 void ATCartridgeEmulator::SetUIRenderer(IATUIRenderer *r) {
 	mpUIRenderer = r;
+}
+
+void ATCartridgeEmulator::SetFastBus(bool fastBus) {
+	if (mbFastBus == fastBus)
+		return;
+
+	mbFastBus = fastBus;
+
+	UpdateLayerBuses();
 }
 
 bool ATCartridgeEmulator::IsABxxMapped() const {
@@ -751,6 +788,18 @@ bool ATCartridgeEmulator::Load(const wchar_t *origPath, IVDRandomAccessStream& f
 	} else if (mCartMode == kATCartridgeMode_TelelinkII) {
 		mCARTRAM.clear();
 		mCARTRAM.resize(256, 0xFF);
+	} else if (mCartMode == kATCartridgeMode_2K) {
+		// Shift the ROM image so that the bottom 6K is open ($FF) and the image
+		// resides in the top 2K.
+		mCARTROM.resize(8192);
+		memcpy(&mCARTROM[6144], &mCARTROM[0], 2048);
+		memset(&mCARTROM[0], 0xFF, 6144);
+	} else if (mCartMode == kATCartridgeMode_4K || mCartMode == kATCartridgeMode_RightSlot_4K) {
+		// Shift the ROM image so that the bottom 4K is open ($FF) and the image
+		// resides in the top 4K.
+		mCARTROM.resize(8192);
+		memcpy(&mCARTROM[4096], &mCARTROM[0], 4096);
+		memset(&mCARTROM[0], 0xFF, 4096);
 	}
 
 	if (origPath)
@@ -790,7 +839,7 @@ void ATCartridgeEmulator::Save(const wchar_t *fn, bool includeHeader) {
 	int type = 0;
 
 	if (includeHeader) {
-		type = ATGetCartridgeMapperForMode(mCartMode);
+		type = ATGetCartridgeMapperForMode(mCartMode, (uint32)mCARTROM.size());
 
 		if (!type)
 			throw MyError("This cartridge type is not supported in the .CAR file format and must be saved as a raw image.");
@@ -798,9 +847,24 @@ void ATCartridgeEmulator::Save(const wchar_t *fn, bool includeHeader) {
 
 	VDFile f(fn, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
 
-	// write header
 	uint32 size = mCartSize;
+	const uint8 *src = mCARTROM.data();
 
+	// apply adjustment for cartridge types that we pad the ROM image for
+	switch(mCartMode) {
+		case kATCartridgeMode_2K:
+			size = 2048;
+			src += 6144;
+			break;
+
+		case kATCartridgeMode_4K:
+		case kATCartridgeMode_RightSlot_4K:
+			size = 4096;
+			src += 4096;
+			break;
+	}
+
+	// write header
 	if (includeHeader) {
 		char header[16] = { 'C', 'A', 'R', 'T' };
 
@@ -808,14 +872,14 @@ void ATCartridgeEmulator::Save(const wchar_t *fn, bool includeHeader) {
 
 		uint32 checksum = 0;
 		for(uint32 i=0; i<size; ++i)
-			checksum += mCARTROM[i];
+			checksum += src[i];
 
 		VDWriteUnalignedBEU32(header + 8, checksum);
 
 		f.write(header, 16);
 	}
 
-	f.write(mCARTROM.data(), size);
+	f.write(src, size);
 	mbDirty = false;
 }
 
@@ -1591,7 +1655,7 @@ sint32 ATCartridgeEmulator::ReadByte_CCTL_5200_64K_32KBanks(void *thisptr0, uint
 	else if (addr8 >= 0xD0)
 		thisptr->SetCartBank((address >> 2) & 1);
 
-	return thisptr->mCARTROM[address + 0x4000];
+	return thisptr->mCARTROM[address - 0x4000 + (thisptr->mCartBank << 15)];
 }
 
 bool ATCartridgeEmulator::WriteByte_CCTL_5200_64K_32KBanks(void *thisptr0, uint32 address, uint8 value) {
@@ -1790,6 +1854,8 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			spec2Enabled = true;
 			break;
 
+		case kATCartridgeMode_2K:
+		case kATCartridgeMode_4K:
 		case kATCartridgeMode_8K:
 			fixedBase	= 0xA0;
 			fixedSize	= 0x20;
@@ -1800,6 +1866,7 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			fixedSize	= 0x40;
 			break;
 
+		case kATCartridgeMode_RightSlot_4K:
 		case kATCartridgeMode_RightSlot_8K:
 			fixedBase	= 0x80;
 			fixedSize	= 0x20;
@@ -2383,6 +2450,8 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 		mpMemMan->EnableLayer(mpMemLayerControl, kATMemoryAccessMode_CPUWrite, usecctlwrite);
 	}
 
+	UpdateLayerBuses();
+
 	UpdateCartBank();
 
 	if (mpMemLayerVarBank2)
@@ -2616,4 +2685,14 @@ void ATCartridgeEmulator::UpdateCartBank2() {
 			mpMemMan->SetLayerMemory(mpMemLayerVarBank2, cartbase + (mCartBank2 << 8));
 			break;
 	}
+}
+
+void ATCartridgeEmulator::UpdateLayerBuses() {
+	if (mpMemLayerFixedBank1) mpMemMan->SetLayerFastBus(mpMemLayerFixedBank1, mbFastBus);
+	if (mpMemLayerFixedBank2) mpMemMan->SetLayerFastBus(mpMemLayerFixedBank2, mbFastBus);
+	if (mpMemLayerVarBank1	) mpMemMan->SetLayerFastBus(mpMemLayerVarBank1, mbFastBus);
+	if (mpMemLayerVarBank2	) mpMemMan->SetLayerFastBus(mpMemLayerVarBank2, mbFastBus);
+	if (mpMemLayerSpec1		) mpMemMan->SetLayerFastBus(mpMemLayerSpec1, mbFastBus);
+	if (mpMemLayerSpec2		) mpMemMan->SetLayerFastBus(mpMemLayerSpec2, mbFastBus);
+	if (mpMemLayerControl	) mpMemMan->SetLayerFastBus(mpMemLayerControl, mbFastBus);
 }

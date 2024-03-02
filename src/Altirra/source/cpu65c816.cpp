@@ -96,7 +96,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				break;
 
 			case 0x11:
-				Decode65816AddrDpIndY(unalignedDP, index16 || is_write);
+				Decode65816AddrDpIndY(unalignedDP, emu, index16 || is_write);
 				break;
 
 			case 0x12:
@@ -284,8 +284,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;			// 7
 			} else {
 				*mpDstState++ = kState816ReadByte;		// 3
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateTsb;				// 4
-				*mpDstState++ = kStateWait;				//
 				*mpDstState++ = kState816WriteByte;			// 5
 			}
 			break;
@@ -302,8 +305,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateAsl;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -347,8 +353,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;			// 8
 			} else {
 				*mpDstState++ = kState816ReadByte;		// 4
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateTsb;				// 5
-				*mpDstState++ = kStateWait;				//
 				*mpDstState++ = kState816WriteByte;			// 6
 			}
 			break;
@@ -365,8 +374,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateAsl;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -389,8 +401,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;			// 7
 			} else {
 				*mpDstState++ = kState816ReadByte;		// 3
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateTrb;				// 4
-				*mpDstState++ = kStateWait;				//
 				*mpDstState++ = kState816WriteByte;			// 5
 			}
 			break;
@@ -407,8 +422,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateAsl;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -450,8 +468,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;			// 8
 			} else {
 				*mpDstState++ = kState816ReadByte;		// 4
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateTrb;				// 5
-				*mpDstState++ = kStateWait;				//
 				*mpDstState++ = kState816WriteByte;			// 6
 			}
 			break;
@@ -468,8 +489,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateAsl;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -479,7 +503,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			*mpDstState++ = kStateReadAddrH;
 
 			if (mpVerifier)
-				*mpDstState++ = kStateVerifyJump;
+				*mpDstState++ = kStateVerifyInsn;
 
 			*mpDstState++ = kStatePushPCHM1Native;
 			*mpDstState++ = kStatePushPCLM1Native;
@@ -531,8 +555,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateRol;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -598,8 +625,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateRol;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -639,8 +669,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			} else {
 				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateRol;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -698,13 +731,19 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateRol;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
 
 		case 0x40:	// RTI
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyInsn;
+
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStatePopNative;
@@ -747,8 +786,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateLsr;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -790,7 +832,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			*mpDstState++ = kStateReadAddrH;
 
 			if (mpVerifier)
-				*mpDstState++ = kStateVerifyJump;
+				*mpDstState++ = kStateVerifyInsn;
 
 			*mpDstState++ = kStateAddrToPC;
 			break;
@@ -807,8 +849,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateLsr;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -841,8 +886,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateLsr;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -891,8 +939,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateLsr;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -948,8 +999,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateRor;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -1013,8 +1067,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateRor;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -1050,8 +1107,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kState816ReadByte;
 				*mpDstState++ = kStateRor;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -1289,6 +1349,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateDSetSZ;
 				*mpDstState++ = kStateDtoY;
 			}
+			*mpDstState++ = kStateWait;
 			break;
 
 		case 0x9C:	// STZ abs
@@ -1493,6 +1554,19 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateDtoX;
 				*mpDstState++ = kStateWait;
 			}
+			break;
+
+		case 0xBB:	// TYX
+			if (index16) {
+				*mpDstState++ = kStateYtoD16;
+				*mpDstState++ = kStateDSetSZ16;
+				*mpDstState++ = kStateDtoX16;
+			} else {
+				*mpDstState++ = kStateYtoD;
+				*mpDstState++ = kStateDSetSZ;
+				*mpDstState++ = kStateDtoX;
+			}
+			*mpDstState++ = kStateWait;
 			break;
 
 		case 0xBC:	// LDY abs,X
@@ -1764,7 +1838,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			break;
 
 		case 0xE8:	// INX
-			if (mode16) {
+			if (index16) {
 				*mpDstState++ = kStateXtoD16;
 				*mpDstState++ = kStateInc16;
 				*mpDstState++ = kStateDtoX16;
@@ -1958,17 +2032,17 @@ void ATCPUEmulator::Decode65816AddrDpIndX(bool unalignedDP, bool emu) {
 
 	*mpDstState++ = kStateWait;
 	*mpDstState++ = kState816ReadByte;	
-	*mpDstState++ = kStateReadIndAddr;
+	*mpDstState++ = unalignedDP || !emu ? kStateReadIndAddrDp : kState816ReadIndAddrDpInPage;
 }
 
-void ATCPUEmulator::Decode65816AddrDpIndY(bool unalignedDP, bool forceCycle) {
+void ATCPUEmulator::Decode65816AddrDpIndY(bool unalignedDP, bool emu, bool forceCycle) {
 	*mpDstState++ = kStateReadAddrDp;
 	
 	if (unalignedDP)
 		*mpDstState++ = kStateWait;
 
 	*mpDstState++ = kState816ReadByte;	
-	*mpDstState++ = kStateReadIndAddrDp;
+	*mpDstState++ = unalignedDP || !emu ? kStateReadIndAddrDp : kState816ReadIndAddrDpInPage;
 	*mpDstState++ = forceCycle ? kState816ReadAddrAbsYAlways : kState816ReadAddrAbsYSpec;
 }
 

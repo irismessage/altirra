@@ -30,6 +30,22 @@
 #include <vd2/system/vdstdc.h>
 #include <vd2/system/vdstl.h>
 
+bool VDIsAtLeast81W32Check() {
+	OSVERSIONINFOA osinfo = {sizeof(OSVERSIONINFOA)};
+
+	if (!::GetVersionExA(&osinfo))
+		return false;
+
+	return osinfo.dwMajorVersion >= 7 ||
+		(osinfo.dwMajorVersion >= 6 && osinfo.dwMinorVersion >= 3);
+}
+
+bool VDIsAtLeast81W32() {
+	static const bool result = VDIsAtLeast81W32Check();
+
+	return result;
+}
+
 bool VDIsForegroundTaskW32() {
 	HWND hwndFore = GetForegroundWindow();
 

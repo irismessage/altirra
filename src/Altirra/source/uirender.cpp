@@ -18,6 +18,7 @@
 #include "stdafx.h"
 #include <vd2/system/math.h>
 #include <vd2/system/memory.h>
+#include <vd2/system/time.h>
 #include <vd2/system/VDString.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmaputils.h>
@@ -490,7 +491,7 @@ void ATUIAudioDisplay::PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer
 }
 
 ///////////////////////////////////////////////////////////////////////////
-class ATUIRenderer : public vdrefcount, public IATUIRenderer {
+class ATUIRenderer : public vdrefcount, public IATUIRenderer, public IVDTimerCallback {
 public:
 	ATUIRenderer();
 	~ATUIRenderer();
@@ -518,7 +519,10 @@ public:
 
 	void SetModemConnection(const char *str);
 
+	void SetStatusMessage(const wchar_t *s);
+
 	void SetLedStatus(uint8 ledMask);
+	void SetHeldButtonStatus(uint8 consolMask);
 
 	void ClearWatchedValue(int index);
 	void SetWatchedValue(int index, uint32 value, int len);
@@ -536,6 +540,9 @@ public:
 
 	void Relayout(int w, int h);
 	void Update();
+
+public:
+	virtual void TimerCallback();
 
 protected:
 	void InvalidateLayout();
@@ -565,7 +572,8 @@ protected:
 	uint8	mPCLinkWriteCounter;
 	uint8	mFlashWriteCounter;
 
-	VDStringA	mModemConnection;
+	VDStringW	mModemConnection;
+	VDStringW	mStatusMessage;
 
 	uint8	mLedStatus;
 
@@ -592,7 +600,7 @@ protected:
 
 	vdrefptr<ATUILabel> mpDiskDriveIndicatorLabels[15];
 	vdrefptr<ATUILabel> mpFpsLabel;
-	vdrefptr<ATUILabel> mpModemConnectionLabel;
+	vdrefptr<ATUILabel> mpStatusMessageLabel;
 	vdrefptr<ATUILabel> mpWatchLabels[8];
 	vdrefptr<ATUILabel> mpHardDiskDeviceLabel;
 	vdrefptr<ATUILabel> mpRecordingLabel;
@@ -603,12 +611,15 @@ protected:
 	vdrefptr<ATUILabel> mpCassetteLabel;
 	vdrefptr<ATUILabel> mpCassetteTimeLabel;
 	vdrefptr<ATUILabel> mpPausedLabel;
+	vdrefptr<ATUILabel> mpHeldButtonLabels[3];
 	vdrefptr<ATUIAudioStatusDisplay> mpAudioStatusDisplay;
 	vdrefptr<ATUIAudioDisplay> mpAudioDisplay;
 
 	vdrefptr<ATUILabel> mpHoverTip;
 	int mHoverTipX;
 	int mHoverTipY;
+
+	VDLazyTimer mStatusTimer;
 
 	static const uint32 kDiskColors[8][2];
 };
@@ -686,10 +697,9 @@ ATUIRenderer::ATUIRenderer()
 		label->SetTextOffset(2, 1);
 	}
 
-	mpModemConnectionLabel = new ATUILabel;
-	mpModemConnectionLabel->SetVisible(false);
-	mpModemConnectionLabel->SetFillColor(0x1e00ac);
-	mpModemConnectionLabel->SetTextColor(0x8458ff);
+	mpStatusMessageLabel = new ATUILabel;
+	mpStatusMessageLabel->SetVisible(false);
+	mpStatusMessageLabel->SetTextOffset(6, 2);
 
 	mpFpsLabel = new ATUILabel;
 	mpFpsLabel->SetVisible(false);
@@ -758,9 +768,11 @@ ATUIRenderer::ATUIRenderer()
 	mpPausedLabel = new ATUILabel;
 	mpPausedLabel->SetVisible(false);
 	mpPausedLabel->SetFont(mpSysFont);
+	mpPausedLabel->SetTextOffset(4, 2);
 	mpPausedLabel->SetTextColor(0);
-	mpPausedLabel->SetFillColor(0xd4d0c8);
-	mpPausedLabel->SetText(L" Paused ");
+	mpPausedLabel->SetFillColor(0xa4a098);
+	mpPausedLabel->SetBorderColor(0xffffff);
+	mpPausedLabel->SetText(L"Paused");
 
 	mpHoverTip = new ATUILabel;
 	mpHoverTip->SetVisible(false);
@@ -768,6 +780,22 @@ ATUIRenderer::ATUIRenderer()
 	mpHoverTip->SetFillColor(0xffffe1);
 	mpHoverTip->SetBorderColor(0);
 	mpHoverTip->SetTextOffset(2, 2);
+
+	static const wchar_t *const kHeldButtonLabels[]={
+		L"Start",
+		L"Select",
+		L"Option",
+	};
+
+	VDASSERTCT(vdcountof(kHeldButtonLabels) == vdcountof(mpHeldButtonLabels));
+
+	for(size_t i=0; i<vdcountof(mpHeldButtonLabels); ++i) {
+		mpHeldButtonLabels[i] = new ATUILabel;
+		mpHeldButtonLabels[i]->SetVisible(false);
+		mpHeldButtonLabels[i]->SetTextColor(0);
+		mpHeldButtonLabels[i]->SetFillColor(0xd4d080);
+		mpHeldButtonLabels[i]->SetText(kHeldButtonLabels[i]);
+	}
 }
 
 ATUIRenderer::~ATUIRenderer() {
@@ -848,14 +876,45 @@ void ATUIRenderer::SetFlashWriteActivity() {
 	mpFlashWriteLabel->SetVisible(true);
 }
 
+namespace {
+	const uint32 kModemMessageBkColor = 0x1e00ac;
+	const uint32 kModemMessageFgColor = 0x8458ff;
+
+	const uint32 kStatusMessageBkColor = 0x303850;
+	const uint32 kStatusMessageFgColor = 0xffffff;
+}
+
 void ATUIRenderer::SetModemConnection(const char *str) {
-	if (*str) {
-		mpModemConnectionLabel->SetVisible(true);
-		mpModemConnectionLabel->SetText(VDTextAToW(str).c_str());
-		mpModemConnectionLabel->AutoSize();
+	if (str && *str) {
+		mModemConnection = VDTextAToW(str);
+
+		if (mStatusMessage.empty()) {
+			mpStatusMessageLabel->SetVisible(true);
+			mpStatusMessageLabel->SetFillColor(kModemMessageBkColor);
+			mpStatusMessageLabel->SetTextColor(kModemMessageFgColor);
+			mpStatusMessageLabel->SetBorderColor(kModemMessageFgColor);
+			mpStatusMessageLabel->SetText(mModemConnection.c_str());
+			mpStatusMessageLabel->AutoSize();
+		}
 	} else {
-		mpModemConnectionLabel->SetVisible(false);
+		mModemConnection.clear();
+
+		if (mStatusMessage.empty())
+			mpStatusMessageLabel->SetVisible(false);
 	}
+}
+
+void ATUIRenderer::SetStatusMessage(const wchar_t *s) {
+	mStatusMessage = s;
+
+	mStatusTimer.SetOneShot(this, 1500);
+
+	mpStatusMessageLabel->SetVisible(true);
+	mpStatusMessageLabel->SetFillColor(kStatusMessageBkColor);
+	mpStatusMessageLabel->SetTextColor(kStatusMessageFgColor);
+	mpStatusMessageLabel->SetBorderColor(kStatusMessageFgColor);
+	mpStatusMessageLabel->SetText(mStatusMessage.c_str());
+	mpStatusMessageLabel->AutoSize();
 }
 
 void ATUIRenderer::SetRecordingPosition() {
@@ -892,6 +951,11 @@ void ATUIRenderer::SetLedStatus(uint8 ledMask) {
 
 	mpLedLabels[0]->SetVisible((ledMask & 1) != 0);
 	mpLedLabels[1]->SetVisible((ledMask & 2) != 0);
+}
+
+void ATUIRenderer::SetHeldButtonStatus(uint8 consolMask) {
+	for(int i=0; i<(int)vdcountof(mpHeldButtonLabels); ++i)
+		mpHeldButtonLabels[i]->SetVisible((consolMask & (1 << i)) != 0);
 }
 
 void ATUIRenderer::SetCassettePosition(float pos) {
@@ -999,12 +1063,15 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 		for(int i=0; i<2; ++i)
 			c->AddChild(mpLedLabels[i]);
 
+		for(int i=0; i<(int)vdcountof(mpHeldButtonLabels); ++i)
+			c->AddChild(mpHeldButtonLabels[i]);
+
 		c->AddChild(mpHostDeviceLabel);
 		c->AddChild(mpPCLinkLabel);
 		c->AddChild(mpRecordingLabel);
 		c->AddChild(mpHardDiskDeviceLabel);
 		c->AddChild(mpFlashWriteLabel);
-		c->AddChild(mpModemConnectionLabel);
+		c->AddChild(mpStatusMessageLabel);
 
 		for(int i=0; i<8; ++i)
 			c->AddChild(mpWatchLabels[i]);
@@ -1042,7 +1109,7 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 		for(int i=0; i<8; ++i)
 			mpWatchLabels[i]->SetFont(mpSysFont);
 
-		mpModemConnectionLabel->SetFont(mpSysFont);
+		mpStatusMessageLabel->SetFont(mpSysFont);
 		mpFpsLabel->SetFont(mpSysFont);
 		mpAudioStatusDisplay->SetFont(mpSysFont);
 		mpAudioStatusDisplay->AutoSize();
@@ -1056,6 +1123,11 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 		for(int i=0; i<2; ++i) {
 			mpLedLabels[i]->SetFont(mpSysFont);
 			mpLedLabels[i]->AutoSize();
+		}
+
+		for(int i=0; i<(int)vdcountof(mpHeldButtonLabels); ++i) {
+			mpHeldButtonLabels[i]->SetFont(mpSysFont);
+			mpHeldButtonLabels[i]->AutoSize();
 		}
 
 		mpPCLinkLabel->SetFont(mpSysFont);
@@ -1143,11 +1215,15 @@ void ATUIRenderer::Update() {
 		UpdateHostDeviceLabel();
 
 	// draw PCLink indicators (same place as H:)
-	if (mPCLinkReadCounter)
-		--mPCLinkReadCounter;
+	if (mPCLinkReadCounter || mPCLinkWriteCounter) {
+		if (mPCLinkReadCounter)
+			--mPCLinkReadCounter;
 
-	if (mPCLinkWriteCounter)
-		--mPCLinkWriteCounter;
+		if (mPCLinkWriteCounter)
+			--mPCLinkWriteCounter;
+
+		UpdatePCLinkLabel();
+	}
 
 	// draw H: indicators
 	if (mbHardDiskRead || mbHardDiskWrite) {
@@ -1188,8 +1264,23 @@ void ATUIRenderer::Update() {
 		label.AutoSize();
 	}
 
-	// draw audio monitor
+	// update audio monitor
 	mpAudioDisplay->Update();
+}
+
+void ATUIRenderer::TimerCallback() {
+	mStatusMessage.clear();
+
+	if (mModemConnection.empty())
+		mpStatusMessageLabel->SetVisible(false);
+	else {
+		mpStatusMessageLabel->SetVisible(true);
+		mpStatusMessageLabel->SetFillColor(kModemMessageBkColor);
+		mpStatusMessageLabel->SetTextColor(kModemMessageFgColor);
+		mpStatusMessageLabel->SetBorderColor(kModemMessageFgColor);
+		mpStatusMessageLabel->SetText(mModemConnection.c_str());
+		mpStatusMessageLabel->AutoSize();
+	}
 }
 
 void ATUIRenderer::InvalidateLayout() {
@@ -1201,7 +1292,7 @@ void ATUIRenderer::Relayout(int w, int h) {
 	mPrevLayoutHeight = h;
 
 	mpFpsLabel->SetPosition(vdpoint32(w - 10 * mSysFontDigitWidth, 10));
-	mpModemConnectionLabel->SetPosition(vdpoint32(1, h - mSysFontDigitHeight * 2));
+	mpStatusMessageLabel->SetPosition(vdpoint32(1, h - mSysFontDigitHeight * 2 - 4));
 	mpAudioDisplay->SetPosition(vdpoint32(8, h - mpAudioDisplay->GetArea().height() - mSysFontDigitHeight * 4));
 
 	for(int i=0; i<8; ++i) {
@@ -1225,6 +1316,16 @@ void ATUIRenderer::Relayout(int w, int h) {
 
 	mpCassetteLabel->SetPosition(vdpoint32(0, ystats));
 	mpCassetteTimeLabel->SetPosition(vdpoint32(mpCassetteLabel->GetArea().width(), ystats));
+
+	const int ystats2 = ystats - (mSysFontDigitHeight * 5) / 4;
+	int x = w;
+
+	for(int i=(int)vdcountof(mpHeldButtonLabels)-1; i>=0; --i) {
+		ATUILabel& label = *mpHeldButtonLabels[i];
+
+		x -= label.GetArea().width();
+		label.SetPosition(vdpoint32(x, ystats2));
+	}
 
 	mpAudioStatusDisplay->SetPosition(vdpoint32(16, 16));
 

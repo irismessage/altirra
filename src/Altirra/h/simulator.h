@@ -58,6 +58,7 @@ class ATHLEFPAccelerator;
 class ATHLEFastBootHook;
 class IATHLECIOHook;
 class ATAudioSyncMixer;
+class ATXEP80Emulator;
 
 enum ATMemoryMode {
 	kATMemoryMode_48K,
@@ -225,6 +226,7 @@ public:
 	void Init(void *hwnd);
 	void Shutdown();
 
+	void LoadBuiltInROMs();
 	void LoadROMs();
 
 	void AddCallback(IATSimulatorCallback *cb);
@@ -244,6 +246,7 @@ public:
 		return mbPaused;
 	}
 
+	ATSimulatorEventManager *GetEventManager() { return mpSimEventManager; }
 	ATCPUEmulator& GetCPU() { return mCPU; }
 	ATCPUEmulatorMemory& GetCPUMemory() { return *mpMemMan; }
 	ATMemoryManager *GetMemoryManager() { return mpMemMan; }
@@ -259,6 +262,7 @@ public:
 	IATJoystickManager& GetJoystickManager() { return *mpJoysticks; }
 	ATPBIManager& GetPBIManager() const { return *mpPBIManager; }
 	IATPrinterEmulator *GetPrinter() { return mpPrinter; }
+	ATXEP80Emulator *GetXEP80() { return mpXEP80; }
 	ATVBXEEmulator *GetVBXE() { return mpVBXE; }
 	ATSoundBoardEmulator *GetSoundBoard() { return mpSoundBoard; }
 	ATSlightSIDEmulator *GetSlightSID() { return mpSlightSID; }
@@ -267,6 +271,7 @@ public:
 	IATUIRenderer *GetUIRenderer() { return mpUIRenderer; }
 	ATIDEEmulator *GetIDEEmulator() { return mpIDE; }
 	IATAudioOutput *GetAudioOutput() { return mpAudioOutput; }
+	ATAudioSyncMixer *GetAudioSyncMixer() { return mpAudioSyncMixer; }
 	IATRS232Emulator *GetRS232() { return mpRS232; }
 	ATLightPenPort *GetLightPenPort() { return mpLightPen; }
 	IATPCLinkDevice *GetPCLink() { return mpPCLink; }
@@ -331,6 +336,9 @@ public:
 	uint8 GetAxlonMemoryMode() { return mAxlonMemoryBits; }
 	void SetAxlonMemoryMode(uint8 bits);
 
+	sint32 GetHighMemoryBanks() { return mHighMemoryBanks; }
+	void SetHighMemoryBanks(sint32 bits);
+
 	void SetDiskSIOPatchEnabled(bool enable);
 	void SetDiskSIOOverrideDetectEnabled(bool enable);
 	void SetDiskAccurateTimingEnabled(bool enable);
@@ -342,6 +350,7 @@ public:
 	void SetROMAutoReloadEnabled(bool enable);
 	void SetAutoLoadKernelSymbolsEnabled(bool enable);
 	void SetDualPokeysEnabled(bool enable);
+	void SetXEP80Enabled(bool enable);
 	void SetVBXEEnabled(bool enable);
 	void SetVBXESharedMemoryEnabled(bool enable);
 	void SetVBXEAltPageEnabled(bool enable);
@@ -387,6 +396,11 @@ public:
 
 	bool IsVirtualScreenEnabled() const { return mpVirtualScreenHandler != NULL; }
 	void SetVirtualScreenEnabled(bool enable);
+
+	bool GetShadowROMEnabled() const { return mbShadowROM; }
+	void SetShadowROMEnabled(bool enabled) { mbShadowROM = enabled; }
+	bool GetShadowCartridgeEnabled() const { return mbShadowCartridge; }
+	void SetShadowCartridgeEnabled(bool enabled);
 
 	bool IsKernelAvailable(ATKernelMode mode) const;
 
@@ -484,6 +498,8 @@ private:
 	void AnticEndScanline();
 	bool AnticIsNextCPUCycleWrite();
 	uint8 AnticGetCPUHeldCycleValue();
+	void AnticForceNextCPUCycleSlow();
+
 	uint32 GTIAGetXClock();
 	uint32 GTIAGetTimestamp() const;
 	void GTIASetSpeaker(bool newState);
@@ -535,6 +551,8 @@ private:
 	bool mbForcedSelfTest;
 	bool mbCartridgeSwitch;
 	bool mbMapRAM;
+	bool mbShadowROM;
+	bool mbShadowCartridge;
 	ATIDEHardwareMode mIDEHardwareMode;
 	uint32 mSoundBoardMemBase;
 	int mBreakOnScanline;
@@ -581,6 +599,7 @@ private:
 	ATPortController *mpPortBController;
 	ATLightPenPort *mpLightPen;
 	IATPrinterEmulator	*mpPrinter;
+	ATXEP80Emulator *mpXEP80;
 	ATVBXEEmulator *mpVBXE;
 	void *mpVBXEMemory;
 	ATSoundBoardEmulator *mpSoundBoard;
@@ -610,6 +629,7 @@ private:
 	uint8	mHookPageByte;
 
 	uint8	mAxlonMemoryBits;
+	sint32	mHighMemoryBanks;
 
 	const uint8 *mpKernelUpperROM;
 	const uint8 *mpKernelLowerROM;

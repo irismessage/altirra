@@ -470,6 +470,21 @@ bool VDD3D9Manager::Init() {
 		return false;
 	}
 
+	mpBeginEvent = NULL;
+	mpEndEvent = NULL;
+
+	DWORD (__stdcall *pD3DPERF_GetStatus)() = (DWORD (__stdcall *)())GetProcAddress(mhmodDX9, "D3DPERF_GetStatus");
+
+	if (pD3DPERF_GetStatus && pD3DPERF_GetStatus()) {
+		mpBeginEvent = (tpBeginEvent)GetProcAddress(mhmodDX9, "D3DPERF_BeginEvent");
+		mpEndEvent = (tpEndEvent)GetProcAddress(mhmodDX9, "D3DPERF_EndEvent");
+
+		if (!mpBeginEvent || !mpEndEvent) {
+			mpBeginEvent = NULL;
+			mpEndEvent = NULL;
+		}
+	}
+
 	if (mbUseD3D9Ex) {
 		DWORD osver = ::GetVersion();
 
@@ -1327,6 +1342,16 @@ bool VDD3D9Manager::IsFencePassed(uint32 id) {
 	}
 
 	return true;
+}
+
+void VDD3D9Manager::BeginScope(const wchar_t *name) {
+	if (mpBeginEvent)
+		mpBeginEvent(RGB(192, 192, 192), name);
+}
+
+void VDD3D9Manager::EndScope() {
+	if (mpEndEvent)
+		mpEndEvent();
 }
 
 HRESULT VDD3D9Manager::DrawArrays(D3DPRIMITIVETYPE type, UINT vertStart, UINT primCount) {

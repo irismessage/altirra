@@ -18,6 +18,9 @@
 #include "stdafx.h"
 #include "scheduler.h"
 
+#undef VDASSERT
+#define VDASSERT(cond) if(!(cond)) __debugbreak(); else ((void)0)
+
 class ATEvent : public ATEventLink {
 public:
 	IATSchedulerCallback *mpCB;
@@ -146,7 +149,8 @@ void ATScheduler::RemoveEvent(ATEvent *p) {
 	p->mpNext = mpFreeEvents;
 	mpFreeEvents = p;
 
-	if (wasFront)
+	// check if we need to update the next time
+	if (wasFront && p->mNextTime != (mTimeBase + mNextEventCounter))
 		ProcessNextEvent();
 }
 

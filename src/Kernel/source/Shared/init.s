@@ -296,25 +296,25 @@ notRAM:
 
 ;==============================================================================
 .proc InitVectorTable1
-	dta		a(IntExitHandler_None)
-	dta		a(IntExitHandler_A)
-	dta		a(IntExitHandler_A)
-	dta		a(IntExitHandler_A)
-	dta		a(KeyboardIRQ)
-	dta		a(SIOInputReadyHandler)
-	dta		a(SIOOutputReadyHandler)
-	dta		a(SIOOutputCompleteHandler)
-	dta		a(IntExitHandler_A)
-	dta		a(IntExitHandler_A)
-	dta		a(IntExitHandler_A)
-	dta		a(IrqHandler)
+	dta		a(IntExitHandler_None)		;$0200 VDSLST
+	dta		a(IntExitHandler_A)			;$0202 VPRCED
+	dta		a(IntExitHandler_A)			;$0204 VINTER
+	dta		a(IntExitHandler_A)			;$0206 VBREAK
+	dta		a(KeyboardIRQ)				;$0208 VKEYBD
+	dta		a(SIOInputReadyHandler)		;$020A VSERIN
+	dta		a(SIOOutputReadyHandler)	;$020C VSEROR
+	dta		a(SIOOutputCompleteHandler)	;$020E VSEROC
+	dta		a(IntExitHandler_A)			;$0210 VTIMR1
+	dta		a(IntExitHandler_A)			;$0212 VTIMR2
+	dta		a(IntExitHandler_A)			;$0214 VTIMR4
+	dta		a(IrqHandler)				;$0216 VIMIRQ
 end:
 .endp
 
 .proc InitVectorTable2
-	dta		a(VBIStage1)			;vvblki
-	dta		a(VBIExit)				;vvblkd
-	dta		a(0)					;cdtma1
+	dta		a(VBIStage1)				;$0222 VVBLKI
+	dta		a(VBIExit)					;$0224 VVBLKD
+	dta		a(0)						;$0226 CDTMA1
 .endp
 
 ;==============================================================================
@@ -370,6 +370,11 @@ end:
 	jsr		PrinterInit
 .endif
 
+	; 13. initialize device table (HATABS has already been cleared)
+	; NOTE: The R: emulation relies on this being before CIOINV is invoked.
+	ldx		#14
+	mva:rpl	InitHandlerTable,x hatabs,x-
+
 	;jsr	CassetteInit
 	jsr		cioinv
 	jsr		SIOInit
@@ -381,18 +386,20 @@ end:
 	bcc		nocasboot
 	mva		#1 ckey
 nocasboot:
-
-	; 12. enable IRQ interrupts
-	cli
-	
-	; 13. initialize device table (HATABS has already been cleared)
-	ldx		#14
-	mva:rpl	InitHandlerTable,x hatabs,x-
 	
 .if _KERNEL_PBI_SUPPORT
 	jsr		PBIScan
 .endif
 
+	; 12. enable IRQ interrupts
+	;
+	; We do this later than the original OS specification because the PBI scan needs
+	; to happen with IRQs disabled (a PBI device with interrupts may not have been
+	; inited yet) and that PBI scan in turn needs to happen after HATABS has been
+	; set up. There's no harm in initing HATABS with interrupts masked, so we do so.
+	
+	cli
+	
 	; 14. initialize cartridges
 	mva		#0 tstdat
 	lda		$9ffc

@@ -57,13 +57,13 @@ using namespace nsVDFile;
 VDFile::VDFile(const char *pszFileName, uint32 flags)
 	: mhFile(NULL)
 {
-	open_internal(pszFileName, NULL, flags, true);
+	open(pszFileName, flags);
 }
 
 VDFile::VDFile(const wchar_t *pwszFileName, uint32 flags)
 	: mhFile(NULL)
 {
-	open_internal(NULL, pwszFileName, flags, true);
+	open(pwszFileName, flags);
 }
 
 VDFile::VDFile(HANDLE h)
@@ -81,26 +81,41 @@ VDFile::~VDFile() {
 }
 
 void VDFile::open(const char *pszFilename, uint32 flags) {
-	open_internal(pszFilename, NULL, flags, true);
+	uint32 err = open_internal(pszFilename, NULL, flags);
+
+	if (err)
+		throw MyWin32Error("Cannot open file \"%s\":\n%%s", err, pszFilename);
 }
 
 void VDFile::open(const wchar_t *pwszFilename, uint32 flags) {
-	open_internal(NULL, pwszFilename, flags, true);
+	uint32 err = open_internal(NULL, pwszFilename, flags);
+
+	if (err)
+		throw MyWin32Error("Cannot open file \"%ls\":\n%%s", err, pwszFilename);
 }
 
 bool VDFile::openNT(const wchar_t *pwszFilename, uint32 flags) {
-	return open_internal(NULL, pwszFilename, flags, false);
+	return open_internal(NULL, pwszFilename, flags) == 0;
 }
 
-bool VDFile::open_internal(const char *pszFilename, const wchar_t *pwszFilename, uint32 flags, bool throwOnError) {
+bool VDFile::tryOpen(const wchar_t *pwszFilename, uint32 flags) {
+	uint32 err = open_internal(NULL, pwszFilename, flags);
+
+	if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND)
+		return false;
+
+	if (err)
+		throw MyWin32Error("Cannot open file \"%ls\":\n%%s", err, pwszFilename);
+
+	return true;
+}
+
+uint32 VDFile::open_internal(const char *pszFilename, const wchar_t *pwszFilename, uint32 flags) {
 	close();
 
 	mpFilename = _wcsdup(VDFileSplitPath(pszFilename ? VDTextAToW(pszFilename).c_str() : pwszFilename));
-	if (!mpFilename) {
-		if (!throwOnError)
-			return false;
-		throw MyMemoryError();
-	}
+	if (!mpFilename)
+		return ERROR_OUTOFMEMORY;
 
 	// At least one of the read/write flags must be set.
 	VDASSERT(flags & (kRead | kWrite));
@@ -131,7 +146,7 @@ bool VDFile::open_internal(const char *pszFilename, const wchar_t *pwszFilename,
 	case kTruncateExisting:	dwCreationDisposition = TRUNCATE_EXISTING; break;
 	default:
 		VDNEVERHERE;
-		return false;
+		return ERROR_INVALID_PARAMETER;
 	}
 
 	VDASSERT((flags & (kSequential | kRandomAccess)) != (kSequential | kRandomAccess));
@@ -192,14 +207,11 @@ bool VDFile::open_internal(const char *pszFilename, const wchar_t *pwszFilename,
 	if (mhFile == INVALID_HANDLE_VALUE) {
 		mhFile = NULL;
 
-		if (!throwOnError)
-			return false;
-
-		throw MyWin32Error("Cannot open file \"%ls\":\n%%s", err, mpFilename.get());
+		return err;
 	}
 
 	mFilePosition = 0;
-	return true;
+	return 0;
 }
 
 bool VDFile::closeNT() {

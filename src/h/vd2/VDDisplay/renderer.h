@@ -42,6 +42,17 @@ protected:
 	uint32 mUniquenessCounter;
 };
 
+struct VDDisplayBltOptions {
+	enum FilterMode {
+		kFilterMode_Point,
+		kFilterMode_Bilinear
+	};
+
+	FilterMode mFilterMode;
+	float mSharpnessX;
+	float mSharpnessY;
+};
+
 class IVDDisplayRenderer {
 public:
 	virtual const VDDisplayRendererCaps& GetCaps() = 0;
@@ -56,6 +67,8 @@ public:
 
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView) = 0;
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h) = 0;
+
+	virtual void StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 sw, sint32 sh, const VDDisplayBltOptions& opts) = 0;
 
 	enum BltMode {
 		kBltMode_Normal,
@@ -91,6 +104,7 @@ public:
 
 	bool IsDynamic() const { return mbDynamic; }
 	const VDPixmap& GetImage() const { return mPixmap; }
+	void SetImage();
 	void SetImage(const VDPixmap& px, bool dynamic);
 
 	void SetCachedImage(uint32 id, IVDRefUnknown *p);

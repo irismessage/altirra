@@ -69,9 +69,9 @@ void ATCPUProfiler::Start(ATProfileMode mode) {
 			memset(&rmain, 0, sizeof rmain);
 		}
 
-		mSession.mCallGraphRecords[1].mAddress = 0x20000;
-		mSession.mCallGraphRecords[2].mAddress = 0x30000;
-		mSession.mCallGraphRecords[3].mAddress = 0x40000;
+		mSession.mCallGraphRecords[1].mAddress = 0x2000000;
+		mSession.mCallGraphRecords[2].mAddress = 0x3000000;
+		mSession.mCallGraphRecords[3].mAddress = 0x4000000;
 
 		mCurrentContext = 0;
 	}
@@ -167,14 +167,15 @@ void ATCPUProfiler::Update() {
 		const ATCPUHistoryEntry *hentn = &mpCPU->GetHistory(i - 1);
 		uint32 cycles = (uint16)(hentn->mCycle - hentp->mCycle);
 		uint32 unhaltedCycles = (uint16)(hentn->mUnhaltedCycle - hentp->mUnhaltedCycle);
-		uint32 addr = hentp->mPC;
+		uint32 extpc = hentp->mPC + (hentp->mK << 16);
+		uint32 addr = extpc;
 		bool isCall = false;
 
 		if (mProfileMode == kATProfileMode_BasicLines) {
 			addr = lineNo;
 		} else if (mProfileMode == kATProfileMode_Insns) {
 			if (hentp->mP & AT6502::kFlagI)
-				addr += 0x10000;
+				addr += 0x1000000;
 		} else if (mProfileMode == kATProfileMode_Functions) {
 			bool adjustStack = mbAdjustStackNext || hentp->mbIRQ || hentp->mbNMI;
 			mbAdjustStackNext = false;
@@ -190,14 +191,14 @@ void ATCPUProfiler::Update() {
 			}
 
 			if (adjustStack) {
-				uint32 newFrameMode = mCurrentFrameAddress & 0x70000;
+				uint32 newFrameMode = mCurrentFrameAddress & 0x7000000;
 				if (hentp->mbNMI) {
 					if ((hentp->mTimestamp & 0xfff00) < (248 << 8))
-						newFrameMode = 0x30000;
+						newFrameMode = 0x3000000;
 					else
-						newFrameMode = 0x40000;
+						newFrameMode = 0x4000000;
 				} else if (hentp->mbIRQ) {
-					newFrameMode = 0x20000;
+					newFrameMode = 0x2000000;
 				} else if (!(hentp->mP & AT6502::kFlagI)) {
 					newFrameMode = 0;
 				}
@@ -220,10 +221,10 @@ void ATCPUProfiler::Update() {
 					}
 
 					mStackTable[mLastS] = mCurrentFrameAddress;
-					mCurrentFrameAddress = hentp->mPC | newFrameMode;
+					mCurrentFrameAddress = extpc | newFrameMode;
 					isCall = true;
 				} else {
-					mCurrentFrameAddress = hentp->mPC | newFrameMode;
+					mCurrentFrameAddress = extpc | newFrameMode;
 					isCall = true;
 				}
 			}
@@ -247,6 +248,8 @@ void ATCPUProfiler::Update() {
 			hl->mRecord.mCycles = 0;
 			hl->mRecord.mUnhaltedCycles = 0;
 			hl->mRecord.mInsns = 0;
+			hl->mRecord.mModeBits = (hentp->mP >> 4) & 3;
+			hl->mRecord.mEmulationMode = hentp->mbEmulation;
 			hl->mRecord.mCalls = 0;
 			mpHashTable[hc] = hl;
 		}
@@ -329,7 +332,7 @@ void ATCPUProfiler::UpdateCallGraph() {
 				} else if (hentp->mbIRQ)
 					mCurrentContext = 1;
 
-				const uint32 newScope = hentp->mPC;
+				const uint32 newScope = hentp->mPC + (hentp->mK << 16);
 				const uint32 hc = newScope & 0xFF;
 				CallGraphHashLink *hh = mpCGHashTable[hc];
 				CallGraphHashLink *hl = hh;
@@ -361,7 +364,7 @@ void ATCPUProfiler::UpdateCallGraph() {
 		mSession.mCallGraphRecords[mCurrentContext].mCycles += cycles;
 		++mSession.mCallGraphRecords[mCurrentContext].mInsns;
 
-		uint32 addr = hentp->mPC;
+		uint32 addr = hentp->mPC + (hentp->mK << 16);
 		uint32 hc = addr & 0xFF;
 		HashLink *hh = mpHashTable[hc];
 		HashLink *hl = hh;
@@ -379,6 +382,8 @@ void ATCPUProfiler::UpdateCallGraph() {
 			hl->mRecord.mUnhaltedCycles = 0;
 			hl->mRecord.mInsns = 0;
 			hl->mRecord.mCalls = 0;
+			hl->mRecord.mModeBits = (hentp->mP >> 4) & 3;
+			hl->mRecord.mEmulationMode = hentp->mbEmulation;
 			mpHashTable[hc] = hl;
 		}
 

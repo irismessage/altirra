@@ -17,9 +17,12 @@
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 .macro	ckaddr
-.if * != %%1
-.error 'Address mismatch: ',*,' != ',%%1
-.endif
+.if * < %%1
+		.print (%%1-*),' bytes free before ',%%1
+		org		%%1
+.elif * > %%1
+		.error 'Out of space: ',*,' > ',%%1,' (',*-%%1,' bytes over)'
+		.endif
 .endm
 
 ;==========================================================================
@@ -28,19 +31,25 @@
 	org		$d800
 _afp = afp
 .proc afp
-dotflag = _fr2
-xinvert = _fr2+1
-multemp = _fr2+2
-sign = _fr2+3
-digit2 = _fr2+4
+dotflag = fr2
+xinvert = fr2+1
+cix0 = fr2+2
+sign = fr2+3
+digit2 = fr2+4
 
-	;zero fr0
-	jsr		zfr0
+	;skip initial spaces
+	jsr		skpspc
+
+	;init FR0 and one extra mantissa byte
+	lda		#$7f
+	sta		fr0
+	sta		digit2
+	
+	ldx		#fr0+1
+	jsr		zf1
 
 	;clear decimal flag
-	lda		#0
 	sta		dotflag
-	sta		digit2
 	sta		sign
 	
 	;check for sign
@@ -50,26 +59,47 @@ digit2 = _fr2+4
 	beq		isplus
 	cmp		#'-'
 	bne		postsign
-	mva		#$80 sign
+	ror		sign
 isplus:
 	iny
-	sty		cix
 postsign:	
-		
-	lda		#$7f
-	sta		fr0
+	sty		cix0
+
+	;skip leading zeroes
+	lda		#'0'
+	jsr		fp_skipchar
 	
+	;check if next char is a dot, indicating mantissa <1
+	lda		(inbuff),y
+	cmp		#'.'
+	bne		not_tiny
+	iny
+	
+	;set dot flag
+	ror		dotflag
+	
+	;skip zeroes and adjust exponent
+	lda		#'0'
+tiny_denorm_loop:
+	cmp		(inbuff),y
+	bne		tiny_denorm_loop_exit
+	dec		fr0
+	iny
+	bne		tiny_denorm_loop
+tiny_denorm_loop_exit:
+	
+not_tiny:
+
 	;grab digits left of decimal point
 	ldx		#1
 nextdigit:
 	lda		(inbuff),y
+	cmp		#'E'
+	beq		isexp
 	iny
 	cmp		#'.'
 	beq		isdot
-	cmp		#'E'
-	beq		isexp
-	sec
-	sbc		#'0'
+	eor		#'0'
 	cmp		#10
 	bcs		termcheck
 	
@@ -81,7 +111,7 @@ nextdigit:
 	bpl		writehi
 
 	;clear second digit flag
-	ror		digit2
+	dec		digit2
 	
 	;merge in low digit
 	ora		fr0,x
@@ -93,8 +123,7 @@ nextdigit:
 	
 writehi:
 	;set second digit flag
-	sec
-	ror		digit2
+	inc		digit2
 	
 	;shift digit to high nibble and write
 	asl
@@ -102,7 +131,7 @@ writehi:
 	asl
 	asl
 	sta		fr0,x
-	
+
 afterwrite:
 	;adjust digit exponent if we haven't seen a dot yet
 	bit		dotflag
@@ -114,17 +143,20 @@ afterwrite:
 isdot:
 	lda		dotflag
 	bne		termcheck
-	mva		#$ff dotflag
-	jmp		nextdigit
+	
+	;set the dot flag and loop back for more
+	ror		dotflag
+	bne		nextdigit
 
 termcheck:
 	dey
-	cpy		cix
-	beq		err
+	cpy		cix0
+	beq		err_carryset
 term:
 	;stash offset
 	sty		cix
 
+term_rollback_exp:
 	;divide digit exponent by two and merge in sign
 	rol		sign
 	ror		fr0
@@ -136,21 +168,22 @@ term:
 	jsr		fp_shr4
 
 nodigitshift:
-	jsr		fp_normalize
+	jmp		fp_normalize
 
-	clc
+err_carryset:
 	rts
 
-err:
-	sec
-	rts
-	
 isexp:
-	cpy		cix
-	beq		err
+	cpy		cix0
+	beq		err_carryset
+	
+	;save off this point as a fallback in case we don't actually have
+	;exponential notation
+	sty		cix
 
 	;check for sign
 	ldx		#0
+	iny
 	lda		(inbuff),y
 	cmp		#'+'
 	beq		isexpplus
@@ -161,50 +194,47 @@ isexpplus:
 	iny
 postexpsign:
 	stx		xinvert
-	
-	;skip zeroes
-skipexpzero:
+
+	;pull up to two exponent digits
 	lda		(inbuff),y
-	sec
-	sbc		#'0'
-	bne		notexpzero
 	iny
-	bne		skipexpzero
-notexpzero:
+	eor		#'0'
+	
 	;better be a digit
 	cmp		#10
-	bcs		err
+	bcs		term_rollback_exp
 	
 	;stash first digit
 	tax
 	
 	;check for another digit
 	lda		(inbuff),y
-	sec
-	sbc		#'0'
-	bne		notexpzero2
+	eor		#'0'
+	cmp		#10
+	bcs		notexpzero2
 	iny
-	
-	stx		multemp
+
+	adc		fp_mul10,x
 	tax
-	lda		fp_mul10,x
-	clc
-	adc		multemp
 notexpzero2:
+	txa
+	
+	;zero is not a valid exponent
+	beq		term_rollback_exp
+	
+	;check if mantissa is zero -- if so, don't bias
+;	ldx		fr0+1
+;	beq		term
 	
 	;apply sign to exponent
 	eor		xinvert
-	sec
-	sbc		xinvert
+	rol		xinvert
 
 	;bias digit exponent
-	clc
 	adc		fr0
 	sta		fr0
 expterm:
 	jmp		term
-
-.print	'AFP Current address: ',*
 
 .endp
 
@@ -223,112 +253,98 @@ digitshift:
 fp_mul10:
 	dta		0,10,20,30,40,50,60,70,80,90
 	
-.print	'Post-AFP Current address: ',*,' (',$d8e6-*,' bytes free)'
-
 ;==========================================================================
-	org		$d8e6
+		ckaddr $d8e6
 _fasc = fasc
 .proc fasc
-dotcntr = _fr2
-expflg = _fr2+1
-absexp = _fr2+2
-expval = _fr2+3
+dotcntr = fr2
+expflg = fr2+1
+absexp = fr2+2
+expval = fr2+3
 	jsr		ldbufa
 	ldy		#0
 	sty		expval
-	
-	;check if number is negative
-	lda		fr0
-	tax
-	bpl		ispos
-	and		#$7f
-	sta		fr0
-	tax
-	lda		#'-'
-	sta		(inbuff),y
-	iny
-ispos:
 
 	;check if number is zero
-	lda		fr0+1
+	lda		fr0
 	bne		notzero
 	
 	lda		#$b0
 	sta		(inbuff),y
 	rts
-
+	
 notzero:
-	;check if we should go to exponential form (exp >= 10 or <=-3)
+	;check if number is negative
+	bpl		ispos
+	and		#$7f
+	tax
+	lda		#'-'
+	sta		(inbuff),y
+	iny
 	txa
-	sec
-	sbc		#$3f
-	cmp		#6
+ispos:
+
+	;compute digit offset to place dot
+	;  0.001 (10.0E-04) = 3E 10 00 00 00 00 -> -1
+	;   0.01 ( 1.0E-02) = 3F 01 00 00 00 00 -> 1
+	;    0.1 (10.0E-02) = 3F 10 00 00 00 00 -> 1
+	;    1.0 ( 1.0E+00) = 40 01 00 00 00 00 -> 3
+	;   10.0 (10.0E+00) = 40 10 00 00 00 00 -> 3
+	;  100.0 ( 1.0E+02) = 40 01 00 00 00 00 -> 5
+	; 1000.0 (10.0E+02) = 40 10 00 00 00 00 -> 5
+	asl
+	sbc		#124		;!! carry is clear
+
+	;check if we should go to exponential form (exp >= 10 or <=-3)
+	bmi		exp
+	cmp		#12
 	bcc		noexp
 
-	;reset exponent for number printing to 0 and stash exponent
-	adc		#$fe
-	asl
+exp:
+	;compute and stash explicit exponent
+	sec
+	sbc		#2
 	sta		expval
 	
-	;check if mantissa is >10 -- if so, trim off a digit (we always
-	;display 9 digits max)
-	lda		fr0+1
-	cmp		#$10
-	bcc		noexplead
-	jsr		fp_shr4
-	inc		expval
-noexplead:
-	ldx		#$40
-	stx		fr0
+	;reset dot counter
+	lda		#2
 
 noexp:
-	;check if number is less than 1.0
-	txa
-	sec
-	sbc		#$40
-	bcc		istiny
-	
-	;initialize dot counter
-	;
-	;  0.1 = 3F 10 00 00 00 00
-	;  1.0 = 40 01 00 00 00 00
-	; 10.0 = 40 10 00 00 00 00
-	adc		#1
 	sta		dotcntr
-
-	;write out 10 digits by default (start offset 1)
-	ldx		#1-6
 	
-	;check if number begins with a leading zero, and if so, skip high digit
-	lda		fr0+1
-	cmp		#$10
-	bcs		nottiny
-	dec		dotcntr
-	bcc		writelow
-	
-istiny:
-	lda		#'0'
-	sta		(inbuff),y
-	iny
-	sta		dotcntr			;basically disables dot with a too-high value
-	lda		#'.'
-	sta		(inbuff),y
-	iny
-	
+	;set up for 5 mantissa bytes
 	ldx		#-5
 	
-leadzero:
-nottiny:
-
-digitloop:
-	;check for dot before high digit
+	;check if number is less than 1.0 and init dot counter
+	cmp		#2
+	bcs		not_tiny
+	
+	;insert a sixth mantissa byte
+	mva		#0 fr0
+	inc		dotcntr
+	inc		dotcntr
+	dex
+not_tiny:
+	
+	;check if number begins with a leading zero, and if so, skip high digit
+	lda		fr0+6,x
+	cmp		#$10
+	bcs		digitloop
+	lda		#$fe
+	and		expval
+	sta		expval
+	bne		writelow
 	dec		dotcntr
-	bne		nohidot
+	bcc		writelow
+
+	;write out mantissa digits
+digitloop:
+	dec		dotcntr
+	bne		no_hidot
 	lda		#'.'
 	sta		(inbuff),y
 	iny
-	
-nohidot:
+no_hidot:
 
 	;write out high digit
 	lda		fr0+6,x
@@ -340,10 +356,17 @@ nohidot:
 	sta		(inbuff),y
 	iny
 	
+writelow:
 	;write out low digit
+	dec		dotcntr
+	bne		no_lodot
+	lda		#'.'
+	sta		(inbuff),y
+	iny
+no_lodot:
+	
 	lda		fr0+6,x
 	and		#$0f
-writelow:
 	ora		#$30
 	sta		(inbuff),y
 	iny
@@ -351,36 +374,36 @@ writelow:
 	;next digit
 	inx
 	bne		digitloop
-	
-	;check if we should trim off zeroes (exp < $44)
-	lda		fr0
-	cmp		#$44
-	bcs		lzterm
 
+	;skip trim if dot hasn't been written
+	lda		dotcntr
+	bpl		skip_zero_trim	
+	
 	;trim off leading zeroes
+	lda		#'0'
 lzloop:
 	dey
-	lda		(inbuff),y
-	cmp		#'0'
+	cmp		(inbuff),y
 	beq		lzloop
-lzterm:
 
 	;trim off dot
-	cmp		#'.'
-	sne:dey
-
 	lda		(inbuff),y
+	cmp		#'.'
+	bne		no_trailing_dot
+
+skip_zero_trim:
+	dey
+	lda		(inbuff),y
+no_trailing_dot:
 
 	;check if we have an exponent to deal with
 	ldx		expval
 	beq		noexp2
-
-	iny
 	
 	;print an 'E'
 	lda		#'E'
-	sta		(inbuff),y
 	iny
+	sta		(inbuff),y
 	
 	;check for a negative exponent
 	txa
@@ -393,8 +416,8 @@ lzterm:
 exppos:
 	lda		#'+'
 expneg:
-	sta		(inbuff),y
 	iny
+	sta		(inbuff),y
 	
 	;print tens digit, if any
 	txa
@@ -406,50 +429,49 @@ tensloop:
 	bcs		tensloop
 	pha
 	txa
-	sta		(inbuff),y
 	iny
+	sta		(inbuff),y
 	pla
 	adc		#$3a
+	iny
 noexp2:
 	;set high bit on last char
 	ora		#$80
 	sta		(inbuff),y
 	rts
-	
-.print	'FASC Current address: ',*
 .endp
 
 ;==========================================================================
 ; IPF [D9AA]	Convert 16-bit integer at FR0 to FP
 ;
-	org		$d9aa
+; !NOTE! Cannot use FR2/FR3 -- MAC/65 requires that $DE-DF be preserved.
+;
+	ckaddr	$d9aa
 .proc ipf
 	sed
 
-	ldx		#_fr2
-	jsr		zf1
+	ldx		#fr0+2
+	ldy		#4
+	jsr		zfl
 	
 	ldy		#16
+	sty		fr0+6
+	
+	ldx		#fr0+2
+	ldy		#fr0+2
 byteloop:
-	rol		fr0
+	asl		fr0
 	rol		fr0+1
-	ldx		#3
-addloop:
-	lda		_fr2,x
-	adc		_fr2,x
-	sta		_fr2,x
-	dex
-	bne		addloop
-	dey
+	
+	jsr		fp_fastadc3
+	
+	dec		fr0+6
 	bne		byteloop
 	
-	lda		#$42
-	sta		_fr2
+	lda		#$43
+	sta		fr0
 	
-	ldx		#_fr2
-	jsr		fld0r
-	
-	cld
+	cld	
 	jmp		fp_normalize
 	
 .print	'IFP Current address: ',*,' -> $D9D2'
@@ -458,84 +480,102 @@ addloop:
 ;==========================================================================
 ; FPI [D9D2]	Convert FR0 to 16-bit integer at FR0 with rounding
 ;
+; This cannot overwrite FR1. Darg relies on being able to stash a value
+; there across a call to FPI in its startup.
+;
 	org		$d9d2
-.proc fpi
-_acc0 = _fr2
-_acc1 = _fr2+2
+.nowarn .proc fpi
+_acc0 = fr2
+_acc1 = fr2+2
 	
-	;check if number is negative
-	lda		fr0
-	bmi		err
-	
-	;add denormalizing and rounding number
-	ldy		#>drconst
-	ldx		#<drconst
-	jsr		fld1r
-	jsr		fadd
+	;error out if it's guaranteed to be too big or negative (>999999)
+	ldx		fr0
+	cpx		#$43
 	bcs		err
-	lda		fr0
 	
-	;check if number is too big
-	cmp		#$45
-	bcs		err
-
 	;clear temp accum
 	lda		#0
-	sta		_acc0
 	sta		_acc0+1
+	sta		_acc0
+	
+	;zero number if it's guaranteed to be too small (<0.01)
+	cpx		#$3f
+	bcc		too_small
 
-	ldy		#5
+	ldx		#$3f
+	bne		shloop_start
 shloop:
-	;multiply accumulator by 10
-	mva		_acc0+1 _acc1+1
+	;multiply by 10 twice
+	ldy		#2
+mul10_loop:
+	lda		_acc0+1
+	sta		_acc1+1
 	lda		_acc0
 	sta		_acc1
+	
+	;x2
 	asl
 	rol		_acc0+1
 	bcs		err
+
+	;x2 -> x4
 	asl
 	rol		_acc0+1
 	bcs		err
-	clc
+	
+	;+1 -> x5
 	adc		_acc1
 	sta		_acc0
 	lda		_acc0+1
 	adc		_acc1+1
 	bcs		err
-	sta		_acc0+1
+	
+	;x2 -> x10
 	asl		_acc0
-	rol		_acc0+1
+	rol
+	sta		_acc0+1
 	bcs		err
 
-	;extract high digit
-	lda		fr0+1
-	and		#$0f
+	dey
+	bne		mul10_loop
 	
-	;add digit to accumulator
+	;convert BCD digit pair to binary
+	lda		fr0-$3e,x
+	lsr
+	lsr
+	lsr
+	lsr
+	tay
+	lda		fr0-$3e,x
+	and		#$0f
 	clc
+	adc		fp_mul10,y
 	adc		_acc0
 	sta		_acc0
-	scc:inc	_acc0+1
-	
-	;shift BCD number left one digit
-	ldx		#4
-digloop:
-	asl		fr0+3
-	rol		fr0+2
-	rol		fr0+1
-	dex
-	bne		digloop
+	bcc		add2
+	inc		_acc0+1
+	beq		err
+add2:
 	
 	;loop until we've done all digits
-	dey
+	inx
+shloop_start:
+	cpx		fr0
 	bne		shloop
 	
-	mwa		_acc0 fr0
-	clc
-	rts		
+	;move result back to FR0, with rounding
+	ldy		fr0-$3e,x
+	cpy		#$50
+	adc		#0
+	sta		fr0
+	lda		_acc0+1
+	adc		#0
+	sta		fr0+1
 err:
-	sec
 	rts
+
+too_small:
+	jmp		zfr0
 	
 drconst:
 	dta		$42, $90, $00, $00, $50, $00
@@ -547,7 +587,7 @@ drconst:
 ; ZF1 [DA46]	Zero float at (X)
 ; ZFL [DA48]	Zero float at (X) with length Y (UNDOCUMENTED)
 ;
-	org		$da44
+	ckaddr	$da44
 zfr0:
 	ldx		#fr0
 	ckaddr	$da46
@@ -566,15 +606,32 @@ zflloop:
 ;==========================================================================
 ; LDBUFA [DA51]	Set LBUFF to #INBUFF (UNDOCUMENTED)
 ;
-	org		$da51
+		ckaddr	$da51
 ldbufa:
 	mwa		#lbuff inbuff
 	rts
 
 ;==========================================================================
+; FPILL_SHL16 [DA5A] Shift left 16-bit word at $F7:F8 (UNDOCUMENTED)
+;
+; Illegal entry point used by MAC/65 when doing hex conversion.
+;
+; Yes, even the byte ordering is wrong.
+;
+		ckaddr	$da5a
+	
+.nowarn .proc fpill_shl16
+		asl		$f8
+		rol		$f7
+		rts
+.endp
+
+;** 1 byte free**
+
+;==========================================================================
 ; FSUB [DA60]	Subtract FR1 from FR0; FR1 is altered
 ; FADD [DA66]	Add FR1 to FR0; FR1 is altered
-	org		$da60
+		ckaddr	$da60
 fadd = fsub._fadd
 .proc fsub
 
@@ -590,12 +647,17 @@ _diffmode = fr1
 	ckaddr	$da66
 _fadd:
 	;if fr1 is zero, we're done
-	lda		fr1+1
+	lda		fr1
 	beq		xit
 	
 	;if fr0 is zero, swap
-	lda		fr0+1
+	lda		fr0
 	beq		swap
+
+	;clear additional fr0 bytes
+	ldx		#fr0+6
+	ldy		#6
+	jsr		zfl	
 
 	;compute difference in exponents, ignoring sign
 	lda		fr0			;load fr0 sign
@@ -609,62 +671,52 @@ _fadd:
 	
 	;swap FR0 and FR1
 swap:
-	ldx		#5
-swaploop:
-	lda		fr0,x
-	tay
-	lda		fr1,x
-	sta		fr0,x
-	tya
-	sta		fr1,x
-	dex
-	bpl		swaploop
+	jsr		fp_swap
 	
 	;loop back and retry
 	bmi		_fadd
 	
-noswap:
-	;stash difference mode flag
+noswap:	
+	;stash add/sub flag
 	sty		_diffmode
-	
-	;check if we need to denormalize at all
-	beq		nodenorm
-	
+
 	;check if FR1 is too small in magnitude to matter
 	cmp		#6
 	bcs		xit
 
-	;denormalize FR1
-	tay
-denormloop:
-	ldx		#4
-denormloop2:
-	mva		fr1,x fr1+1,x
-	dex
-	bne		denormloop2
-	stx		fr1+1
-	dey
-	bne		denormloop
+	;compute positions for add/subtract	
+	ldy		#fr1+1
+	adc		#fr0+1
+	tax
 	
-nodenorm:
 	;jump to decimal mode and prepare for add/sub loops
 	sed
-	ldx		#5
 
 	;check if we are doing a sum or a difference
 	rol		_diffmode
-	bcs		diff_subloop
+	bcs		do_subtract
 	
+	;set up rounding
+	lda		#$50
+	sta		fr0+6
+		
 	;add FR0 and FR1 mantissas
-sum_addloop:
-	lda		fr0,x
-	adc		fr1,x
-	sta		fr0,x
-	dex
-	bne		sum_addloop
+	jsr		fp_fastadc5
 		
 	;check if we had a carry out
 	bcc		xit
+	
+	;carry it up
+	bcs		sum_carryloop_start
+sum_carryloop:
+	lda		0,x
+	adc		#0
+	sta		0,x
+	bcc		xit
+sum_carryloop_start:
+	dex
+	cpx		#fr0
+	bne		sum_carryloop
 
 	;adjust exponent
 	inc		fr0
@@ -684,28 +736,31 @@ sum_shiftloop:
 	;all done
 	bne		xit
 
+do_subtract:
 	;subtract FR0 and FR1 mantissas
-diff_subloop:
-	lda		fr0,x
-	sbc		fr1,x
-	sta		fr0,x
+	jsr		fp_fastsbc5
+	
+	;propagate borrow up as needed
+	bcs		xit
+	bcc		borrow_loop_start
+borrow_loop:
+	lda		0,x
+	sbc		#1
+	sta		0,x
+	bcs		xit
+borrow_loop_start:
 	dex
-	bne		diff_subloop
-	
-	bcs		diff_noborrow
-	jsr		fp_borrow
-diff_noborrow:
-	
-	;normalize if necessary
-	jsr		fp_normalize
+	cpx		#fr0
+	bne		borrow_loop
 
+no_borrow1:
+	jsr		fp_borrow
 xit:
 	;exit decimal mode
 	cld
 
-	;all done
-	clc
-	rts
+	;normalize if necessary and exit (needed for borrow, as well to check over/underflow)
+	jmp		fp_normalize
 
 .print	'FADD/FSUB Current address: ',*,' -> $DADB (',$dadb-*,' bytes free)'
 
@@ -722,59 +777,77 @@ xit:
 	;FR1 is converted to binary digit pairs into FR2.
 	
 _offset = _fr3+5
-_offset2 = _fr2
+_offset2 = fr2
 
-	lda		fr0+1
+	;if FR0 is zero, we're done
+	lda		fr0
 	beq		xit
-	lda		fr1+1
+	
+	;if FR1 is zero, zero FR0 and exit
+	lda		fr1
 	bne		nonzero
-	clc	
-nonzero:
+	clc
+	jmp		zfr0
 
-	;convert fr0 mantissa to binary
-	jsr		fp_fr0tobin
+nonzero:
+	
+	;move fr0 to fr2
+	ldx		#<fr2
+	ldy		#>fr2
+	jsr		fst0r
 	
 	;compute new exponent and stash
-	lda		fr0
+	lda		fr1
 	clc
-	adc		fr1
-	sec
-	sbc		#$3f
-	sta		fr0
-				
-	;clear accumulator through to exponent byte of fr1
-	ldx		#fr0+1
-	ldy		#12
-	jsr		zfl
-	
-	;set up for 7 bits per digit pair (0-99 in 0-127)
-	ldx		#7
-	stx		_offset
-	sed
-	
+	jsr		fp_adjust_exponent.fmul_entry
+					
 	jsr		fp_fmul_innerloop
 
-	;check if we need to shift up the fr0 mantissa
-	lda		fr0+1
-	bne		xit
-	
-	;drop exponent
-	dec		fr0
-	
-	;shift mantissa bytes
-	ldx		#-5
-shiftloop:
-	lda		fr0+7,x
-	sta		fr0+6,x
-	inx
-	bne		shiftloop
+	jmp		fp_normalize
 xit:
-	cld
 	clc
-oops:
 	rts	
 		
 .print	'FMUL Current address: ',*,' -> $DB28 (', $db28-* ,' bytes free)'
+.endp
+
+.proc fp_adjust_exponent
+fdiv_entry:
+	lda		fr1
+	eor		#$7f
+	sec
+fmul_entry:
+	;stash modified exp1
+	tax
+	
+	;compute new sign
+	eor		fr0
+	and		#$80
+	sta		fr1
+	
+	;merge exponents
+	txa
+	adc		fr0
+	tax
+	eor		fr1
+	
+	;check for underflow/overflow
+	cmp		#128-49
+	bcc		underflow_overflow
+	
+	cmp		#128+49
+	bcs		underflow_overflow
+	
+	;rebias exponent
+	txa
+	sec
+	sbc		#$40
+	rts
+	
+underflow_overflow:
+	pla
+	pla
+	jmp		zfr0
 .endp
 
 ;==========================================================================
@@ -782,20 +855,24 @@ oops:
 ;
 ; 
 ;
-	org		$db28
+		ckaddr		$db28
 .proc fdiv
-_digit = _fptemp0
-_index = _fptemp1
+_digit = _fr3+1
+_index = _fr3+2
 	;check if dividend is zero
-	lda		fr0+1
+	lda		fr0
 	beq		ok
 	
 	;check if divisor is zero
-	lda		fr1+1
+	lda		fr1
 	beq		err
 	
-	ldx		#_fr2
+	ldx		#fr2
 	jsr		zf1
+	
+	;compute new exponent
+	jsr		fp_adjust_exponent.fdiv_entry
+	sta		_fr3
 	
 	jsr		fp_fdiv_init	
 digitloop:
@@ -813,21 +890,16 @@ decloop:
 	ldx		_index
 	lda		_digit
 uploop:
-	adc		_fr2+6,x
-	sta		_fr2+6,x
+	adc		fr2+6,x
+	sta		fr2+6,x
 	lda		#0
 	dex
 	bcs		uploop
 
 	;subtract mantissas
-	ldx		#5
-	sec
-subloop:
-	lda		fr0,x
-	sbc		fr1,x
-	sta		fr0,x
-	dex
-	bpl		subloop
+	ldx		#fr0
+	ldy		#fr1
+	jsr		fp_fastsub6
 	
 	;keep going until we underflow
 	bcs		decloop
@@ -840,21 +912,16 @@ incloop:
 	lda		#0
 	sbc		_digit
 downloop:
-	adc		_fr2+6,x
-	sta		_fr2+6,x
+	adc		fr2+6,x
+	sta		fr2+6,x
 	lda		#$99
 	dex
 	bcc		downloop
 	
 	;add mantissas
-	ldx		#5
-	clc
-addloop:
-	lda		fr0,x
-	adc		fr1,x
-	sta		fr0,x
-	dex
-	bpl		addloop
+	ldx		#fr0
+	ldy		#fr1
+	jsr		fp_fastadd6
 	
 	;keep going until we overflow
 	bcc		incloop	
@@ -877,11 +944,15 @@ nextdigit:
 	bne		digitloop
 	
 	;move back to fr0
-	ldx		#_fr2
-	jsr		fld0r
-
-	;normalize
-	jsr		fp_normalize
+	ldx		#fr2-1
+	ldy		_fr3
+	lda		fr2
+	bne		no_normstep
+	inx
+	dey
+no_normstep:
+	sty		0,x
+	jsr		fld0r_zp
 
 	cld
 ok:
@@ -896,10 +967,11 @@ err:
 
 ;==========================================================================
 ; SKPSPC [DBA1]	Increment CIX while INBUFF[CIX] is a space
-	org		$dba1
+		ckaddr	$dba1
 skpspc:
-	ldy		cix
 	lda		#' '
+	ldy		cix
+fp_skipchar:
 skpspc_loop:
 	cmp		(inbuff),y
 	bne		skpspc_xit
@@ -911,7 +983,7 @@ skpspc_xit:
 
 ;==========================================================================
 ; ISDIGT [DBAF]	Check if INBUFF[CIX] is a digit (UNDOCUMENTED)
-	org		$dbaf
+		ckaddr	$dbaf
 isdigt = _isdigt
 .proc _isdigt
 	ldy		cix
@@ -922,44 +994,50 @@ isdigt = _isdigt
 	rts
 .endp
 
-.print	'ISDIGT Current address: ',*
-
 ;==========================================================================
-
-.proc fp_fr0tobin
+.proc fp_swap
 	ldx		#5
-binloop:
+swaploop:
 	lda		fr0,x
-	lsr
-	lsr
-	lsr
-	lsr
-	tay
-	lda		fr0,x
-	and		#$0f
-	clc
-	adc		fp_mul10,y
-	sta		_fr2,x
+	ldy		fr1,x
+	sta		fr1,x
+	sty		fr0,x
 	dex
-	bne		binloop
+	bpl		swaploop
 	rts
 .endp
 
 ;==========================================================================
 ; NORMALIZE [DC00]	Normalize FR0 (UNDOCUMENTED)
-	org		$dc00
+		ckaddr	$dc00
 fp_normalize = normalize
 normalize .proc
 	ldy		#5
 normloop:
-	lda		fr0+1
-	bne		xit
+	lda		fr0
+	and		#$7f
+	beq		underflow2
+	
+	ldx		fr0+1
+	beq		need_norm
+
+	;Okay, we're done normalizing... check if the exponent is in bounds.
+	;It needs to be within +/-48 to be valid. If the exponent is <-49,
+	;we set it to zero; otherwise, we mark overflow.
+	
+	cmp		#64-49
+	bcc		underflow
+	cmp		#64+49
+	rts
+	
+need_norm:
 	dec		fr0
-	ldx		#-4
+	ldx		#-5
 normloop2:
-	mva		fr0+6,x fr0+5,x
+	mva		fr0+7,x fr0+6,x
 	inx
 	bne		normloop2
+	stx		fr0+6
 	dey
 	bne		normloop
 	
@@ -967,8 +1045,16 @@ normloop2:
 	;is critical since Atari Basic depends on the exponent being zero for
 	;a zero result.
 	sty		fr0
+	sty		fr0+1
 xit:
+	clc
 	rts
+	
+underflow2:
+	clc
+underflow:
+	jmp		zfr0
+	
 .endp
 
 ;==========================================================================
@@ -989,15 +1075,7 @@ bitloop:
 	rts
 .endp
 
-.proc fp_fdiv_init
-	;compute new exponent
-	lda		fr0
-	sec
-	sbc		fr1
-	clc
-	adc		#$40
-	sta		_fr2
-		
+.proc fp_fdiv_init		
 	ldx		#0
 	stx		fr0
 	stx		fr1
@@ -1006,7 +1084,7 @@ bitloop:
 	stx		fdiv._digit
 	sed
 	sec
-	lda		#1-6
+	lda		#0-6
 	sta		fdiv._index
 	rts
 .endp
@@ -1054,7 +1132,23 @@ diff_borrow:
 ;--------------------------------------------------------------------------
 .proc fp_fmul_innerloop
 _offset = _fr3+5
-_offset2 = _fr2
+_offset2 = fr2
+	sta		fr0
+	inc		fr0
+
+	;clear accumulator through to exponent byte of fr1
+	ldx		#fr0+1
+	ldy		#12
+	jsr		zfl
+
+	;set up for 7 bits per digit pair (0-99 in 0-127)
+	ldx		#7
+	stx		_offset
+	sed
+
+	;set rounding byte, assuming renormalize needed (fr0+2 through fr0+6)
+	lda		#$50
+	sta		fr0+7
 
 	;begin outer loop -- this is where we process one _bit_ out of each
 	;multiplier byte in FR2's mantissa (note that this is inverted in that
@@ -1063,31 +1157,34 @@ offloop:
 
 	;begin inner loop -- here we process the same bit in each multiplier
 	;byte, going from byte 5 down to byte 1
-	ldx		#5
+	ldx		#fr0+5
 offloop2:
 	;shift a bit out of fr1 mantissa
-	lsr		_fr2,x
+	lsr		fr2-fr0,x
+	lda		fr2-fr0,x
+	and		#8
+	beq		no_half_carry
+	ldy		fr2-fr0,x
+	dey
+	dey
+	dey
+	sty		fr2-fr0,x
+no_half_carry:
 	bcc		noadd
 			
 	;add fr1 to fr0 at offset
 	stx		_offset2
-	ldy		#5
-	clc
-addloop:
-	lda		fr1,y
-	adc		fr0+5,x
-	sta		fr0+5,x
-	dex
-	dey
-	bpl		addloop
+	
+	ldy		#fr1
+	jsr		fp_fastadd6
 	
 	;check if we have a carry out to the upper bytes
 	bcc		no_carry
 carryloop:
-	lda		fr0+5,x
-	adc		#0
-	sta		fr0+5,x
 	dex
+	lda		0,x
+	adc		#0
+	sta		0,x
 	bcs		carryloop
 no_carry:
 
@@ -1097,23 +1194,89 @@ no_carry:
 noadd:
 	;go back for next byte
 	dex
+	cpx		#fr0
 	bne		offloop2
 
 	;double fr1
-	ldx		#5
+	ldx		#fr1
+	ldy		#fr1
 	clc
-doublefr1:
-	lda		fr1,x
-	adc		fr1,x
-	sta		fr1,x
-	dex
-	bpl		doublefr1
+	jsr		fp_fastadd6
 
 	;loop back until all mantissa bytes finished
 	dec		_offset
 	bne		offloop
+	
+	;check if no renormalize is needed, and if so, re-add new rounding
+	lda		fr0+1
+	beq		renorm_needed
 
+	lda		#$50
+	ldx		#6
+round_loop:
+	adc		fr0,x
+	sta		fr0,x
+	dex
+	lda		#0
+	bcs		round_loop
+
+renorm_needed:
 	;all done
+	cld
+	rts
+.endp
+
+;==========================================================================
+fp_fastadc5 = fp_fastadd6.adc5_entry
+fp_fastadc3 = fp_fastadd6.adc3_entry
+.proc fp_fastadd6
+	clc
+	lda		5,x
+	adc		5,y
+	sta		5,x
+adc5_entry:
+	lda		4,x
+	adc		4,y
+	sta		4,x
+	lda		3,x
+	adc		3,y
+	sta		3,x
+adc3_entry:
+	lda		2,x
+	adc		2,y
+	sta		2,x
+	lda		1,x
+	adc		1,y
+	sta		1,x
+	lda		0,x
+	adc		0,y
+	sta		0,x
+	rts
+.endp
+
+;==========================================================================
+fp_fastsbc5 = fp_fastsub6.sbc5_entry
+.proc fp_fastsub6
+	sec
+	lda		5,x
+	sbc		5,y
+	sta		5,x
+sbc5_entry:
+	lda		4,x
+	sbc		4,y
+	sta		4,x
+	lda		3,x
+	sbc		3,y
+	sta		3,x
+	lda		2,x
+	sbc		2,y
+	sta		2,x
+	lda		1,x
+	sbc		1,y
+	sta		1,x
+	lda		0,x
+	sbc		0,y
+	sta		0,x
 	rts
 .endp
 
@@ -1122,12 +1285,12 @@ doublefr1:
 ;==========================================================================
 ; PLYEVL [DD40]	Eval polynomial at (X:Y) with A coefficients using FR0
 ;
-	org		$dd40
+		ckaddr	$dd40
 .proc plyevl
 	;stash arguments
-	stx		_flptr2
-	sty		_flptr2+1
-	sta		_fpcount
+	stx		fptr2
+	sty		fptr2+1
+	sta		_fpcocnt
 	
 	;copy FR0 -> PLYARG
 	ldx		#<plyarg
@@ -1151,20 +1314,20 @@ loop:
 
 loop0:	
 	;load next coefficient and increment coptr
-	lda		_flptr2
+	lda		fptr2
 	tax
 	clc
 	adc		#6
-	sta		_flptr2
-	ldy		_flptr2+1
-	scc:inc	_flptr2+1
+	sta		fptr2
+	ldy		fptr2+1
+	scc:inc	fptr2+1
 	jsr		fld1r
 
 	;add coefficient to acc
 	jsr		fadd
 	bcs		xit
 
-	dec		_fpcount
+	dec		_fpcocnt
 	bne		loop
 xit:
 	rts
@@ -1176,7 +1339,9 @@ xit:
 ; FLD0R [DD89]	Load FR0 from (X:Y)
 ; FLD0P [DD8D]	Load FR0 from (FLPTR)
 ;
-	org		$dd89
+	org		$dd87
+fld0r_zp:
+	ldy		#0
 fld0r:
 	stx		flptr
 	sty		flptr+1
@@ -1209,8 +1374,8 @@ fld1ploop:
 	rts
 
 ;==========================================================================
-; FST0R [DD98]	Store FR0 to (X:Y)
-; FST0P [DD9C]	Store FR0 to (FLPTR)
+; FST0R [DDA7]	Store FR0 to (X:Y)
+; FST0P [DDAB]	Store FR0 to (FLPTR)
 ;
 	org		$dda7
 fst0r:
@@ -1260,39 +1425,55 @@ _exp10:
 	sta		_fptemp1
 	eor		fr0
 	sta		fr0
-	
-	;compute floor(x)
-	ldx		#_fr3
+
 	ldy		#0
-	jsr		fst0r
-	jsr		fpi
-	bcs		err2
-		
-	;check for exponent being too big
+	
+	;check for |exp| >= 100 which would guarantee over/underflow
+	sec
+	sbc		#$40
+	bcc		abs_ok
+	bne		abs_too_big
+	
+	;|exp|>=1, so split it into integer/fraction
 	lda		fr0+1
-	bne		err
+	lsr
+	lsr
+	lsr
+	lsr
+	tax
+	lda		fr0+1
+	and		#$0f
+	ora		fp_mul10,x
+	tay
+
+	dec		fr0
+	ldx		#<-4
+frac_loop:
+	lda		fr0+6,x
+	sta		fr0+5,x
+	inx
+	bne		frac_loop
+	stx		fr0+5
+	beq		abs_ok
 	
-	lda		fr0
-	cmp		#196
-	bcs		err
-	
-	;stash integer exponent
-	sta		_fptemp0
-	
-	;compute y = x - floor(x)
-	jsr		ipf
-	jsr		fmove
-	ldx		#_fr3
-	ldy		#0
-	jsr		fld0r
-	jsr		fsub
-	
+abs_too_big:
+	;okay, the |x| is too big... check if the original was negative.
+	;if so, zero and exit, otherwise error.
+	lda		_fptemp1
+	beq		err2
+	clc
+	jmp		zfr0
+		
+abs_ok:
+	;stash integer portion of exponent
+	sty		_fptemp0
+		
 	;compute approximation z = 10^y
 	ldx		#<coeff
 	ldy		#>coeff
 	lda		#10
 	jsr		plyevl
-
+	
 	;tweak exponent
 	lsr		_fptemp0
 	
@@ -1302,7 +1483,7 @@ _exp10:
 	ldy		#>ten
 	jsr		fld1r
 	jsr		fmul
-	bcs		err2
+	bcs		abs_too_big
 even:
 
 	;bias exponent
@@ -1320,8 +1501,8 @@ even:
 	ldx		#<fp_one
 	ldy		#>fp_one
 	jsr		fld0r
-	jsr		fdiv
-	rts
+	jmp		fdiv
+
 err:
 	sec
 err2:
@@ -1332,48 +1513,50 @@ log10_e .fl 0.43429448190325182765112891891661
 ten:
 	.fl		10
 
-coeff:		;Maclaurin series for 10^-x, 10 coefficients
-	.fl		0.0050139288
-	.fl		0.0195976946
-	.fl		0.0680893651
-	.fl		0.2069958487
-	.fl		0.5393829292
-	.fl		1.1712551489
-	.fl		2.0346785923
-	.fl		2.6509490552
-	.fl		2.3025850930
-	.fl		1.0000000000
-
+coeff:		;Maclaurin series for 10^x, 10 coefficients
+	.fl		0.016339722042
+	.fl		-0.009236016545
+	.fl		0.1050976426
+	.fl		0.1793116355
+	.fl		0.5519673808
+	.fl		1.16781028
+	.fl		2.03521631
+	.fl		2.65090666
+	.fl		2.30258638
+	.fl		1
+             
 .print	'EXP10 Current address: ',*,' -> $DE95 (', $DE95-* ,' bytes free)'
 .endp	
 
 ;==========================================================================
-; REDRNG [DE95]	Reduce range via y = (x-1)/(x+1) (undocumented)
+; REDRNG [DE95]	Reduce range via y = (x-C)/(x+C) (undocumented)
+;
+; X:Y = pointer to C argument
 ;
 	org		$de95
 redrng = _redrng
 .proc _redrng
-	ldx		#<_fr2
-	ldy		#>_fr2
-	jsr		fst0r
-	ldx		#<fp_one
-	ldy		#>fp_one
+	stx		fptr2
+	sty		fptr2+1
 	jsr		fld1r
+	ldx		#<fpscr
+	ldy		#>fpscr
+	jsr		fst0r
 	jsr		fadd
 	bcs		fail
-	ldx		#<_fr3
-	ldy		#>_fr3
+	ldx		#<plyarg
+	ldy		#>plyarg
 	jsr		fst0r
-	ldx		#<_fr2
-	ldy		#>_fr2
+	ldx		#<fpscr
+	ldy		#>fpscr
 	jsr		fld0r
-	ldx		#<fp_one
-	ldy		#>fp_one
+	ldx		fptr2
+	ldy		fptr2+1
 	jsr		fld1r
 	jsr		fsub
 	bcs		fail
-	ldx		#<_fr3
-	ldy		#>_fr3
+	ldx		#<plyarg
+	ldy		#>plyarg
 	jsr		fld1r
 	jsr		fdiv
 fail:
@@ -1393,43 +1576,70 @@ log10 = log._log10
 	ckaddr	$ded1
 _log10:
 	sec
-	rol		_fptemp1
+	ror		_fptemp1
 entry:
 	;throw error on negative number
 	lda		fr0
 	bmi		err		
 	
-	;stash exponentx2 and reset
+	;stash exponentx2 - 128
 	asl
+	eor		#$80
 	sta		_fptemp0
-	lda		#$3f
-	sta		fr0
 	
-	;check if we can pull out another power of 10
+	;raise error if argument is zero
 	lda		fr0+1
 	beq		err
+
+	;reset exponent so we are in 1 <= z < 100
+	ldx		#$40
+	stx		fr0
 	
-	cmp		#10
-	bcs		noextra
+	;split into three ranges based on mantissa:
+	;  1/sqrt(10) <= x < 1:            [31, 99] divide by 100
+	;  sqrt(10)/100 <= x < 1/sqrt(10): [ 3, 30] divide by 10
+	;  0 < x < sqrt(10)/100:           [ 1,  2] leave as-is
 	
-	;shift left one digit
+	cmp		#$03
+	bcc		post_range_adjust
+	cmp		#$31
+	bcc		mid_range
+
+	;increase result by 1 (equivalent to *10 input)
 	inc		_fptemp0
-	ldy		#4
-shloop:
-	ldx		#5
-shloop2:
-	rol		fr0,x
-	dex
-	bne		shloop2
-	dey
-	bne		shloop
+	bne		adjust_exponent
 	
-noextra:
-	;subtract one
+mid_range:
+	;multiply by 10
+	ldx		#<exp.ten
+	ldy		#>exp.ten
+	jsr		fld1r
+	jsr		fmul
+	bcs		err
+
+adjust_exponent:
+	;increase result by 1 (equivalent to *10 input)
+	inc		_fptemp0
+	
+	;divide fraction by 100
+	dec		fr0
+	
+post_range_adjust:
+	;at this point, we have 1 <= z < 10; apply y = (z-1)/(z+1) transform
+	;so we can use a faster converging series... this reduces y to
+	;0 <= y < 0.81
 	ldx		#<fp_one
 	ldy		#>fp_one
-	jsr		fld1r
-	jsr		fsub
+	jsr		redrng
+	
+	;stash y so we can later multiply it back in
+	ldx		#<fpscr
+	ldy		#>fpscr
+	jsr		fst0r
+	
+	;square the value so we compute a series on y^2n
+	jsr		fmove
+	jsr		fmul
 	
 	;do polynomial expansion
 	ldx		#<coeff
@@ -1438,19 +1648,32 @@ noextra:
 	jsr		plyevl
 	bcs		err2
 	
+	;multiply back in so we have series on y^(2n+1)
+	ldx		#<fpscr
+	ldy		#>fpscr
+	jsr		fld1r
+	jsr		fmul
+	
 	;stash
 	jsr		fmove
 	
-	;convert exponent back to float
-	lda		_fptemp0
-	sta		fr0
+	;convert exponent adjustment back to float (signed)
 	lda		#0
 	sta		fr0+1
+	ldx		_fptemp0
+	bpl		expadj_positive
+	sec
+	sbc		_fptemp0
+	tax
+expadj_positive:
+	stx		fr0
 	jsr		ipf
 	
-	;merge
+	;merge (cannot fail)
+	asl		fr0
+	asl		_fptemp0
+	ror		fr0
 	jsr		fadd
-	bcs		err2
 	
 	;scale if doing log
 	bit		_fptemp1
@@ -1459,12 +1682,11 @@ noextra:
 	ldx		#<ln10
 	ldy		#>ln10
 	jsr		fld1r
-	jsr		fmul
-	
-xit2:
-	rts
+	jmp		fmul
+
 err:
 	sec
+xit2:
 err2:
 	rts
 		
@@ -1477,18 +1699,18 @@ ln10:
 half:
 	.fl		0.5
 	
-coeff:		;Maclaurin expansion for log10(1+x)
-	.fl		0.0394813165
-	.fl		-0.0434294482
-	.fl		0.0482549424
-	.fl		-0.0542868102
-	.fl		0.0620420688
-	.fl		-0.0723824137
-	.fl		0.0868588964
-	.fl		-0.1085736205
-	.fl		0.1447648273
-	.fl		-128
-
+coeff:		;Maclaurin series expansion for log10((z-1)/(z+1))
+	.fl		0.0457152086	;0.0457152086213949218618
+	.fl		0.0510934685	;0.0510934684592060928132
+	.fl		0.0579059309	;0.0579059309204335709298
+	.fl		0.0668145357	;0.0668145356774233617481
+	.fl		0.0789626331	;0.0789626330733185083366
+	.fl		0.0965098849	;0.0965098848673892756311
+	.fl		0.1240841377	;0.1240841376866433642956
+	.fl		0.1737177928	;0.1737177927613007266672
+	.fl		0.2895296546	;0.2895296546021678407712
+	.fl		0.8685889638	;0.8685889638065035223136
+ 
 .print 'LOG10 Current address: ',*
 .endp
 

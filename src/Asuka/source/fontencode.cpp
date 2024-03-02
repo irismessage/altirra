@@ -24,6 +24,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/math.h>
+#include <vd2/system/strutil.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vector>
 #include <algorithm>
@@ -37,6 +38,18 @@ void VDNORETURN help_fontencode() {
 void tool_fontencode(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches) {
 	if (args.size() < 10)
 		help_fontencode();
+
+	bool rawmode = false;
+
+	for(vdfastvector<const char *>::const_iterator it = switches.begin(), itEnd = switches.end();
+		it != itEnd;
+		++it)
+	{
+		const char *sw = *it;
+
+		if (!vdstricmp(sw, "raw"))
+			rawmode = true;
+	}
 
 	const int cellWidth = atoi(args[1]);
 	const int cellHeight = atoi(args[2]);
@@ -114,16 +127,19 @@ void tool_fontencode(const vdfastvector<const char *>& args, const vdfastvector<
 		int y = (cellHeight + 1) * cy;
 
 		uint8 *dst = chardata.data();
-		bool empty = true;
+		bool empty = !rawmode;
 		int x1 = 0;
 		int x2 = cellWidth;
 
 		const uint8 *srct = (const uint8 *)&pixels[bmWidth * (bmHeight - 1 - y) + x];
-		while(x2 > x1 && srct[4 * (x2 - 1)] > 192 && srct[4 * (x2 - 1) + 2] < 192)
-			--x2;
 
-		while(x1 < x2 && srct[4 * x1] > 192 && srct[4 * x1 + 2] < 192)
-			++x1;
+		if (!rawmode) {
+			while(x2 > x1 && srct[4 * (x2 - 1)] > 192 && srct[4 * (x2 - 1) + 2] < 192)
+				--x2;
+
+			while(x1 < x2 && srct[4 * x1] > 192 && srct[4 * x1 + 2] < 192)
+				++x1;
+		}
 
 		int cw = x2 - x1;
 
@@ -168,72 +184,104 @@ void tool_fontencode(const vdfastvector<const char *>& args, const vdfastvector<
 	}
 
 	fprintf(f, "// Created by Asuka from %s.  DO NOT EDIT!\n\n", VDFileSplitPath(args[0]));
-	fprintf(f, "const uint8 %s_FontData[]={\n", args[9]);
 
-	int datalen = outheap.size();
-	for(int i=0; i<datalen; i+=8) {
-		uint8 byte	= (outheap[i+0] & 0x80)
-					+ (outheap[i+1] & 0x40)
-					+ (outheap[i+2] & 0x20)
-					+ (outheap[i+3] & 0x10)
-					+ (outheap[i+4] & 0x08)
-					+ (outheap[i+5] & 0x04)
-					+ (outheap[i+6] & 0x02)
-					+ (outheap[i+7] & 0x01);
+	if (rawmode) {
+		fprintf(f, "const uint8 %s[]={\n", args[9]);
 
-		if (!(i & 127))
-			fputc('\t', f);
+		int datalen = outheap.size();
+		for(int i=0; i<datalen; i+=8) {
+			uint8 byte	= (outheap[i+0] & 0x80)
+						+ (outheap[i+1] & 0x40)
+						+ (outheap[i+2] & 0x20)
+						+ (outheap[i+3] & 0x10)
+						+ (outheap[i+4] & 0x08)
+						+ (outheap[i+5] & 0x04)
+						+ (outheap[i+6] & 0x02)
+						+ (outheap[i+7] & 0x01);
 
-		fprintf(f, "0x%02x,", byte);
+			if (!(i & 127))
+				fputc('\t', f);
 
-		if ((i & 127) == 120)
+			fprintf(f, "0x%02x,", byte);
+
+			if ((i & 127) == 120)
+				fputc('\n', f);
+		}
+
+		if (datalen & 127)
 			fputc('\n', f);
-	}
 
-	if (datalen & 127)
-		fputc('\n', f);
+		fprintf(f, "};\n\n");
 
-	fprintf(f, "};\n\n");
+		printf("Asuka: %d bytes.\n", (int)(datalen >> 3));
+	} else {
+		fprintf(f, "const uint8 %s_FontData[]={\n", args[9]);
 
-	if (bigfont)
-		fprintf(f, "const uint32 %s_PosData[]={\n", args[9]);
-	else
-		fprintf(f, "const uint16 %s_PosData[]={\n", args[9]);
+		int datalen = outheap.size();
+		for(int i=0; i<datalen; i+=8) {
+			uint8 byte	= (outheap[i+0] & 0x80)
+						+ (outheap[i+1] & 0x40)
+						+ (outheap[i+2] & 0x20)
+						+ (outheap[i+3] & 0x10)
+						+ (outheap[i+4] & 0x08)
+						+ (outheap[i+5] & 0x04)
+						+ (outheap[i+6] & 0x02)
+						+ (outheap[i+7] & 0x01);
 
-	int poscount = posdata.size();
-	for(int i=0; i<poscount; ++i) {
-		if (!(i & 15))
-			fputc('\t', f);
+			if (!(i & 127))
+				fputc('\t', f);
+
+			fprintf(f, "0x%02x,", byte);
+
+			if ((i & 127) == 120)
+				fputc('\n', f);
+		}
+
+		if (datalen & 127)
+			fputc('\n', f);
+
+		fprintf(f, "};\n\n");
 
 		if (bigfont)
-			fprintf(f, "0x%08x,", posdata[i]);
+			fprintf(f, "const uint32 %s_PosData[]={\n", args[9]);
 		else
-			fprintf(f, "0x%04x,", posdata[i]);
+			fprintf(f, "const uint16 %s_PosData[]={\n", args[9]);
 
-		if ((i & 15) == 15)
+		int poscount = posdata.size();
+		for(int i=0; i<poscount; ++i) {
+			if (!(i & 15))
+				fputc('\t', f);
+
+			if (bigfont)
+				fprintf(f, "0x%08x,", posdata[i]);
+			else
+				fprintf(f, "0x%04x,", posdata[i]);
+
+			if ((i & 15) == 15)
+				fputc('\n', f);
+		}
+
+		if (poscount & 15)
 			fputc('\n', f);
+
+		fprintf(f, "};\n\n");
+
+		// top-level data structure
+		fprintf(f, "const VDBitmapFontInfo %s_FontInfo={\n", args[9]);
+		fprintf(f, "\t%s_FontData,\n", args[9]);
+		if (bigfont) {
+			fprintf(f, "\tNULL,\n", args[9]);
+			fprintf(f, "\t%s_PosData,\n", args[9]);
+		} else {
+			fprintf(f, "\t%s_PosData,\n", args[9]);
+			fprintf(f, "\tNULL,\n");
+		}
+		fprintf(f, "\t%d, %d,\n", startChar, endChar);
+		fprintf(f, "\t%d, %d,\n", cellWidth, cellHeight);
+		fprintf(f, "\t%d, %d,\n", cellAscent, cellAdvance);
+		fprintf(f, "\t%d,\n", lineGap);
+		fprintf(f, "};\n");
+
+		printf("Asuka: %d bytes.\n", (int)((datalen >> 3) + (bigfont ? posdata.size() << 2 : posdata.size() << 1)));
 	}
-
-	if (poscount & 15)
-		fputc('\n', f);
-
-	fprintf(f, "};\n\n");
-
-	// top-level data structure
-	fprintf(f, "const VDBitmapFontInfo %s_FontInfo={\n", args[9]);
-	fprintf(f, "\t%s_FontData,\n", args[9]);
-	if (bigfont) {
-		fprintf(f, "\tNULL,\n", args[9]);
-		fprintf(f, "\t%s_PosData,\n", args[9]);
-	} else {
-		fprintf(f, "\t%s_PosData,\n", args[9]);
-		fprintf(f, "\tNULL,\n");
-	}
-	fprintf(f, "\t%d, %d,\n", startChar, endChar);
-	fprintf(f, "\t%d, %d,\n", cellWidth, cellHeight);
-	fprintf(f, "\t%d, %d,\n", cellAscent, cellAdvance);
-	fprintf(f, "\t%d,\n", lineGap);
-	fprintf(f, "};\n");
-
-	printf("Asuka: %d bytes.\n", (int)((datalen >> 3) + (bigfont ? posdata.size() << 2 : posdata.size() << 1)));
 }

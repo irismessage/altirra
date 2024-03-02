@@ -1568,6 +1568,7 @@ void TextEditor::RecalcFontMetrics() {
 
 			RestoreDC(hdc, state);
 		}
+		ReleaseDC(mhwnd, hdc);
 	}
 
 	mScrollVertMargin = mFontHeight * 2;

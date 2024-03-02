@@ -230,6 +230,12 @@ keytable:
 ;
 .proc	nmi
 		bit		nmist
+		
+		;This is pretty useless, but the stock 5200 OS does it, and it
+		;affects DLI timing -- in particular, it can cause DLIs ported
+		;from the 400/800 OS to fail.
+		sta		nmires
+		
 		spl:jmp	(vdslst)
 		jmp		(vvblki)
 .endp

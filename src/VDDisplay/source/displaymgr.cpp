@@ -111,6 +111,8 @@ VDVideoDisplayManager::~VDVideoDisplayManager() {
 }
 
 bool VDVideoDisplayManager::Init() {
+	mbAppActive = !mbBackgroundFallbackEnabled || VDIsForegroundTaskW32();
+
 	if (!mbMultithreaded) {
 		if (!RegisterWindowClass()) {
 			Shutdown();

@@ -2228,7 +2228,7 @@ bool ATDiskEmulator::TurnOnMotor() {
 			mpActivity->OnDiskMotorChange(mUnit + 1, true);
 
 		if (!mRotationSoundId && mbDriveSoundsEnabled)
-			mRotationSoundId = mpAudioSyncMixer->AddLoopingSound(0, g_diskspin, sizeof(g_diskspin)/sizeof(g_diskspin[0]), 0.05f);
+			mRotationSoundId = mpAudioSyncMixer->AddLoopingSound(kATAudioMix_Drive, 0, g_diskspin, sizeof(g_diskspin)/sizeof(g_diskspin[0]), 0.05f);
 	}
 
 	mpSlowScheduler->SetEvent(48041, this, kATDiskEventMotorOff, mpMotorOffEvent);
@@ -2244,23 +2244,23 @@ void ATDiskEmulator::PlaySeekSound(uint32 stepDelay, uint32 tracksToStep) {
 
 	if (mbSeekHalfTracks) {
 		for(uint32 i=0; i<tracksToStep*2; ++i) {
-			mpAudioSyncMixer->AddSound(stepDelay, g_disksample2, 1778/2, v);
+			mpAudioSyncMixer->AddSound(kATAudioMix_Drive, stepDelay, g_disksample2, 1778/2, v);
 
 			stepDelay += mCyclesPerTrackStep / 2;
 		}
 	} else {
 		if (mEmuMode == kATDiskEmulationMode_810) {
 			for(uint32 i=0; i<tracksToStep; ++i) {
-				mpAudioSyncMixer->AddSound(stepDelay, g_disksample, 3868/2, v * (0.3f + 0.7f * sinf(i * nsVDMath::kfPi * 0.5f)));
+				mpAudioSyncMixer->AddSound(kATAudioMix_Drive, stepDelay, g_disksample, 3868/2, v * (0.3f + 0.7f * sinf(i * nsVDMath::kfPi * 0.5f)));
 
 				stepDelay += mCyclesPerTrackStep;
 			}
 		} else {
 			for(uint32 i=0; i<tracksToStep; i += 2) {
 				if (i + 2 > tracksToStep)
-					mpAudioSyncMixer->AddSound(stepDelay, g_disksample2, 1778/4, v * 2.0f);
+					mpAudioSyncMixer->AddSound(kATAudioMix_Drive, stepDelay, g_disksample2, 1778/4, v * 2.0f);
 				else
-					mpAudioSyncMixer->AddSound(stepDelay, g_disksample2, 1778/2, v * 2.0f);
+					mpAudioSyncMixer->AddSound(kATAudioMix_Drive, stepDelay, g_disksample2, 1778/2, v * 2.0f);
 
 				stepDelay += mCyclesPerTrackStep * 2;
 			}

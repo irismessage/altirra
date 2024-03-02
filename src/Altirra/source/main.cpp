@@ -121,7 +121,7 @@ bool ATUIShowDialogKeyboardOptions(VDGUIHandle hParent, ATUIKeyboardOptions& opt
 void ATUIShowDialogSetFileAssociations(VDGUIHandle parent, bool allowElevation);
 void ATUIShowDialogRemoveFileAssociations(VDGUIHandle parent, bool allowElevation);
 void ATUIShowDialogSpeedOptions(VDGUIHandle parent);
-bool ATUIShowDialogVideoEncoding(VDGUIHandle parent, bool hz50, ATVideoEncoding& encoding, ATVideoRecordingFrameRate& frameRate, bool& halfRate);
+bool ATUIShowDialogVideoEncoding(VDGUIHandle parent, bool hz50, ATVideoEncoding& encoding, ATVideoRecordingFrameRate& frameRate, bool& halfRate, bool& encodeAll);
 
 void ATUIRegisterDragDropHandler(VDGUIHandle h);
 void ATUIRevokeDragDropHandler(VDGUIHandle h);
@@ -138,6 +138,7 @@ void ATUIInitManager();
 void ATUIShutdownManager();
 void ATUIFlushDisplay();
 bool ATUIIsActiveModal();
+void ATUISetXEPViewEnabled(bool enabled);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -192,6 +193,8 @@ bool g_pauseInactive = true;
 bool g_winActive = true;
 bool g_showFps = false;
 bool g_autotestEnabled = false;
+bool g_xepViewEnabled = false;
+bool g_xepViewAutoswitchingEnabled = false;
 
 ATUIKeyboardOptions g_kbdOpts;
 
@@ -942,12 +945,60 @@ void ATSetFullscreen(bool fs) {
 
 void OnCommandAnticVisualizationNext() {
 	ATAnticEmulator& antic = g_sim.GetAntic();
-	antic.SetAnalysisMode((ATAnticEmulator::AnalysisMode)(((int)antic.GetAnalysisMode() + 1) % ATAnticEmulator::kAnalyzeModeCount));
+
+	ATAnticEmulator::AnalysisMode mode = (ATAnticEmulator::AnalysisMode)(((int)antic.GetAnalysisMode() + 1) % ATAnticEmulator::kAnalyzeModeCount);
+	antic.SetAnalysisMode(mode);
+
+	IATUIRenderer *uir = g_sim.GetUIRenderer();
+
+	if (uir) {
+		switch(mode) {
+			case ATAnticEmulator::kAnalyzeOff:
+				uir->SetStatusMessage(L"DMA analysis disabled");
+				break;
+
+			case ATAnticEmulator::kAnalyzeDMATiming:
+				uir->SetStatusMessage(L"DMA analysis enabled");
+				break;
+		}
+	}
 }
 
 void OnCommandGTIAVisualizationNext() {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
-	gtia.SetAnalysisMode((ATGTIAEmulator::AnalysisMode)(((int)gtia.GetAnalysisMode() + 1) % ATGTIAEmulator::kAnalyzeCount));
+
+	ATGTIAEmulator::AnalysisMode mode = (ATGTIAEmulator::AnalysisMode)(((int)gtia.GetAnalysisMode() + 1) % ATGTIAEmulator::kAnalyzeCount);
+	gtia.SetAnalysisMode(mode);
+
+	IATUIRenderer *uir = g_sim.GetUIRenderer();
+
+	if (uir) {
+		switch(mode) {
+			case ATGTIAEmulator::kAnalyzeNone:
+				uir->SetStatusMessage(L"Display analysis disabled");
+				break;
+
+			case ATGTIAEmulator::kAnalyzeColors:
+				uir->SetStatusMessage(L"Color analysis");
+				break;
+
+			case ATGTIAEmulator::kAnalyzeLayers:
+				uir->SetStatusMessage(L"Layer analysis");
+				break;
+
+			case ATGTIAEmulator::kAnalyzeDList:
+				uir->SetStatusMessage(L"Display list analysis");
+				break;
+		}
+	}
+}
+
+void OnCommandVideoToggleXEP80View() {
+	ATUISetXEPViewEnabled(!g_xepViewEnabled);
+}
+
+void OnCommandVideoToggleXEP80ViewAutoswitching() {
+	g_xepViewAutoswitchingEnabled = !g_xepViewAutoswitchingEnabled;
 }
 
 void OnCommandVideoEnhancedTextFontDialog() {
@@ -1022,6 +1073,7 @@ void ResizeDisplay() {
 void StopAudioRecording() {
 	if (g_pAudioWriter) {
 		g_sim.GetAudioOutput()->SetAudioTap(NULL);
+		g_pAudioWriter->Finalize();
 		g_pAudioWriter = NULL;
 	}
 }
@@ -1316,7 +1368,8 @@ void OnCommandSaveFirmwareU1MB() {
 }
 
 void OnCommandExit() {
-	PostQuitMessage(0);
+	if (g_hwnd)
+		::SendMessage(g_hwnd, WM_CLOSE, 0, 0);
 }
 
 void OnCommandCassetteLoad() {
@@ -1678,6 +1731,14 @@ void OnCommandSystemAxlonMemoryMode() {
 	}
 }
 
+template<sint32 T_Banks>
+void OnCommandSystemHighMemBanks() {
+	if (g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C816 && g_sim.GetHighMemoryBanks() != T_Banks) {
+		g_sim.SetHighMemoryBanks(T_Banks);
+		g_sim.ColdReset();
+	}
+}
+
 void OnCommandSystemToggleMapRAM() {
 	g_sim.SetMapRAMEnabled(!g_sim.IsMapRAMEnabled());
 }
@@ -1777,6 +1838,16 @@ void OnCommandVideoToggleScanlines() {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
 	gtia.SetScanlinesEnabled(!gtia.AreScanlinesEnabled());
+}
+
+void OnCommandVideoToggleXEP80() {
+	g_sim.SetXEP80Enabled(!g_sim.GetXEP80());
+	g_sim.ColdReset();
+
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (pane)
+		pane->OnHardwareChanged();
+
 }
 
 void OnCommandVideoToggleVBXE() {
@@ -1954,7 +2025,18 @@ void OnCommandRecordRawAudio() {
 		VDStringW s(VDGetSaveFileName('raud', (VDGUIHandle)g_hwnd, L"Record raw audio", L"Raw 32-bit float data\0*.pcm\0", L"pcm"));
 
 		if (!s.empty()) {
-			g_pAudioWriter = new ATAudioWriter(s.c_str());
+			g_pAudioWriter = new ATAudioWriter(s.c_str(), true, g_sim.IsDualPokeysEnabled(), g_sim.GetVideoStandard() != kATVideoStandard_NTSC, g_sim.GetUIRenderer());
+			g_sim.GetAudioOutput()->SetAudioTap(g_pAudioWriter);
+		}
+	}
+}
+
+void OnCommandRecordAudio() {
+	if (!g_pAudioWriter && !g_pVideoWriter) {
+		VDStringW s(VDGetSaveFileName('raud', (VDGUIHandle)g_hwnd, L"Record audio", L"Wave audio (*.wav)\0*.wav\0", L"wav"));
+
+		if (!s.empty()) {
+			g_pAudioWriter = new ATAudioWriter(s.c_str(), false, g_sim.IsDualPokeysEnabled(), g_sim.GetVideoStandard() != kATVideoStandard_NTSC, g_sim.GetUIRenderer());
 			g_sim.GetAudioOutput()->SetAudioTap(g_pAudioWriter);
 		}
 	}
@@ -1970,7 +2052,8 @@ void OnCommandRecordVideo() {
 			ATVideoEncoding encoding;
 			ATVideoRecordingFrameRate frameRateOption;
 			bool halfRate;
-			if (ATUIShowDialogVideoEncoding((VDGUIHandle)g_hwnd, hz50, encoding, frameRateOption, halfRate)) {
+			bool encodeAll;
+			if (ATUIShowDialogVideoEncoding((VDGUIHandle)g_hwnd, hz50, encoding, frameRateOption, halfRate, encodeAll)) {
 				try {
 					ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
@@ -2010,7 +2093,7 @@ void OnCommandRecordVideo() {
 							break;
 					}
 
-					g_pVideoWriter->Init(s.c_str(), encoding, w, h, frameRate, rgb32 ? NULL : palette, samplingRate, g_sim.IsDualPokeysEnabled(), hz50 ? 1773447.0f : 1789772.5f, halfRate, g_sim.GetUIRenderer());
+					g_pVideoWriter->Init(s.c_str(), encoding, w, h, frameRate, rgb32 ? NULL : palette, samplingRate, g_sim.IsDualPokeysEnabled(), hz50 ? 1773447.0f : 1789772.5f, halfRate, encodeAll, g_sim.GetUIRenderer());
 
 					g_sim.GetAudioOutput()->SetAudioTap(g_pVideoWriter);
 					gtia.SetVideoTap(g_pVideoWriter);
@@ -2230,6 +2313,18 @@ namespace {
 		return g_sim.GetCovox() != NULL;
 	}
 
+	bool IsXEP80Enabled() {
+		return g_sim.GetXEP80() != NULL;
+	}
+
+	bool IsXEP80ViewEnabled() {
+		return g_xepViewEnabled;
+	}
+
+	bool IsXEP80ViewAutoswitchingEnabled() {
+		return g_xepViewAutoswitchingEnabled;
+	}
+
 	bool IsVBXEEnabled() {
 		return g_sim.GetVBXE() != NULL;
 	}
@@ -2261,6 +2356,15 @@ namespace {
 	template<uint8 T_BankBits>
 	bool AxlonMemoryModeIs() {
 		return g_sim.GetAxlonMemoryMode() == T_BankBits;
+	}
+
+	bool Is65C816() {
+		return g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C816;
+	}
+
+	template<sint32 T_Banks>
+	bool HighMemBanksIs() {
+		return g_sim.GetHighMemoryBanks() == T_Banks;
 	}
 
 	template<ATVideoStandard T_Standard>
@@ -2396,8 +2500,12 @@ namespace {
 		return g_pAudioWriter != NULL || g_pVideoWriter != NULL;
 	}
 
+	bool IsRecordingRawAudio() {
+		return g_pAudioWriter != NULL && g_pAudioWriter->IsRecordingRaw();
+	}
+
 	bool IsRecordingAudio() {
-		return g_pAudioWriter != NULL;
+		return g_pAudioWriter != NULL && !g_pAudioWriter->IsRecordingRaw();
 	}
 
 	bool IsRecordingVideo() {
@@ -2549,6 +2657,9 @@ namespace {
 		{ "View.NextANTICVisMode", OnCommandAnticVisualizationNext },
 		{ "View.NextGTIAVisMode", OnCommandGTIAVisualizationNext },
 
+		{ "View.ToggleXEP80View", OnCommandVideoToggleXEP80View, IsXEP80Enabled, CheckedIf<IsXEP80ViewEnabled> },
+		{ "View.ToggleXEP80ViewAutoswitching", OnCommandVideoToggleXEP80ViewAutoswitching, IsXEP80Enabled, CheckedIf<IsXEP80ViewAutoswitchingEnabled> },
+
 		{ "Pane.Display", OnCommandPane<kATUIPaneId_Display> },
 		{ "Pane.PrinterOutput", OnCommandPane<kATUIPaneId_PrinterOutput> },
 		{ "Pane.Console", OnCommandPane<kATUIPaneId_Console>, IsDebuggerEnabled },
@@ -2635,6 +2746,13 @@ namespace {
 		{ "System.AxlonMemory2048K", OnCommandSystemAxlonMemoryMode<7>, IsNot5200, RadioCheckedIf<AxlonMemoryModeIs<7> > },
 		{ "System.AxlonMemory4096K", OnCommandSystemAxlonMemoryMode<8>, IsNot5200, RadioCheckedIf<AxlonMemoryModeIs<8> > },
 
+		{ "System.HighMemoryNA", OnCommandSystemHighMemBanks<-1>, Is65C816, RadioCheckedIf<HighMemBanksIs<-1> > },
+		{ "System.HighMemoryNone", OnCommandSystemHighMemBanks<0>, Is65C816, RadioCheckedIf<HighMemBanksIs<0> > },
+		{ "System.HighMemory64K", OnCommandSystemHighMemBanks<1>, Is65C816, RadioCheckedIf<HighMemBanksIs<1> > },
+		{ "System.HighMemory192K", OnCommandSystemHighMemBanks<3>, Is65C816, RadioCheckedIf<HighMemBanksIs<3> > },
+		{ "System.HighMemory960K", OnCommandSystemHighMemBanks<15>, Is65C816, RadioCheckedIf<HighMemBanksIs<15> > },
+		{ "System.HighMemory4032K", OnCommandSystemHighMemBanks<63>, Is65C816, RadioCheckedIf<HighMemBanksIs<63> > },
+
 		{ "System.ToggleMapRAM", OnCommandSystemToggleMapRAM, NULL, CheckedIf<SimTest<&ATSimulator::IsMapRAMEnabled> > },
 		{ "System.ToggleUltimate1MB", OnCommandSystemToggleUltimate1MB, NULL, CheckedIf<SimTest<&ATSimulator::IsUltimate1MBEnabled> > },
 		{ "System.ToggleMemoryRandomization", OnCommandSystemToggleMemoryRandomization, NULL, CheckedIf<SimTest<&ATSimulator::IsRandomFillEnabled> > },
@@ -2665,6 +2783,7 @@ namespace {
 		{ "Video.ToggleFrameBlending", OnCommandVideoToggleFrameBlending, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsBlendModeEnabled> > },
 		{ "Video.ToggleInterlace", OnCommandVideoToggleInterlace, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsInterlaceEnabled> > },
 		{ "Video.ToggleScanlines", OnCommandVideoToggleScanlines, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::AreScanlinesEnabled> > },
+		{ "Video.ToggleXEP80", OnCommandVideoToggleXEP80, NULL, CheckedIf<IsXEP80Enabled> },
 		{ "Video.ToggleVBXE", OnCommandVideoToggleVBXE, NULL, CheckedIf<IsVBXEEnabled> },
 		{ "Video.ToggleVBXESharedMemory", OnCommandVideoToggleVBXESharedMemory, NULL, CheckedIf<SimTest<&ATSimulator::IsVBXESharedMemoryEnabled> > },
 		{ "Video.ToggleVBXEAltPage", OnCommandVideoToggleVBXEAltPage, And<IsVBXEEnabled, Not<SimTest<&ATSimulator::IsUltimate1MBEnabled> > >, CheckedIf<SimTest<&ATSimulator::IsVBXEAltPageEnabled> > },
@@ -2705,7 +2824,8 @@ namespace {
 		{ "Input.LightPenDialog", OnCommandInputLightPenDialog },
 
 		{ "Record.Stop", OnCommandRecordStop, IsRecording },
-		{ "Record.RawAudio", OnCommandRecordRawAudio, Not<IsRecording>, CheckedIf<IsRecordingAudio> },
+		{ "Record.RawAudio", OnCommandRecordRawAudio, Not<IsRecording>, CheckedIf<IsRecordingRawAudio> },
+		{ "Record.Audio", OnCommandRecordAudio, Not<IsRecording>, CheckedIf<IsRecordingAudio> },
 		{ "Record.Video", OnCommandRecordVideo, Not<IsRecording>, CheckedIf<IsRecordingVideo> },
 
 		{ "Cheat.ToggleDisablePMCollisions", OnCommandCheatTogglePMCollisions, NULL, CheckedIf<Not<GTIATest<&ATGTIAEmulator::ArePMCollisionsEnabled> > > },
@@ -2794,6 +2914,10 @@ protected:
 	LRESULT WndProc2(UINT msg, WPARAM wParam, LPARAM lParam);
 
 	void OnCopyData(HWND hwndReply, const COPYDATASTRUCT& cds);
+
+	virtual void UpdateMonitorDpi(unsigned dpiY) {
+		ATConsoleSetFontDpi(dpiY);
+	}
 };
 
 ATMainWindow::ATMainWindow() {
@@ -3289,6 +3413,21 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.SetAxlonMemoryMode(7);
 			if (!vdwcsicmp(arg, L"4096K"))
 				g_sim.SetAxlonMemoryMode(7);
+		}
+
+		if (cmdLine.FindAndRemoveSwitch(L"highbanks", arg)) {
+			if (!vdwcsicmp(arg, L"na"))
+				g_sim.SetHighMemoryBanks(-1);
+			else if (!vdwcsicmp(arg, L"0"))
+				g_sim.SetHighMemoryBanks(0);
+			else if (!vdwcsicmp(arg, L"1"))
+				g_sim.SetHighMemoryBanks(1);
+			else if (!vdwcsicmp(arg, L"3"))
+				g_sim.SetHighMemoryBanks(3);
+			else if (!vdwcsicmp(arg, L"15"))
+				g_sim.SetHighMemoryBanks(15);
+			else if (!vdwcsicmp(arg, L"63"))
+				g_sim.SetHighMemoryBanks(63);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"artifact", arg)) {
@@ -3978,6 +4117,8 @@ void LoadSettings(bool useHardwareBaseline) {
 		g_sim.SetSlightSIDEnabled(key.getBool("SlightSID: Enabled", g_sim.GetSlightSID() != NULL));
 		g_sim.SetCovoxEnabled(key.getBool("Covox: Enabled", g_sim.GetCovox() != NULL));
 
+		g_sim.SetXEP80Enabled(key.getBool("XEP80: Enabled", g_sim.GetXEP80() != NULL));
+
 		g_enhancedText = key.getInt("Video: Enhanced text mode", 0);
 		if (g_enhancedText > 2)
 			g_enhancedText = 2;
@@ -4013,6 +4154,7 @@ void LoadSettings(bool useHardwareBaseline) {
 		}
 
 		g_sim.SetAxlonMemoryMode(key.getInt("Memory: Axlon size", g_sim.GetAxlonMemoryMode()));
+		g_sim.SetHighMemoryBanks(key.getInt("Memory: High banks", g_sim.GetHighMemoryBanks()));
 		g_sim.SetMapRAMEnabled(key.getBool("Memory: MapRAM", g_sim.IsMapRAMEnabled()));
 		g_sim.SetUltimate1MBEnabled(key.getBool("Memory: Ultimate1MB", g_sim.IsUltimate1MBEnabled()));
 		g_sim.SetRandomFillEnabled(key.getBool("Memory: Randomize on start", g_sim.IsRandomFillEnabled()));
@@ -4074,7 +4216,14 @@ void LoadSettings(bool useHardwareBaseline) {
 	cpu.SetPathfindingEnabled(key.getBool("CPU: Pathfinding enabled", cpu.IsPathfindingEnabled()));
 	cpu.SetStopOnBRK(key.getBool("CPU: Stop on BRK", cpu.GetStopOnBRK()));
 	cpu.SetNMIBlockingEnabled(key.getBool("CPU: Allow NMI blocking", cpu.IsNMIBlockingEnabled()));
-	cpu.SetCPUMode((ATCPUMode)key.getEnumInt("CPU: Chip type", kATCPUModeCount, cpu.GetCPUMode()));
+	cpu.SetIllegalInsnsEnabled(key.getBool("CPU: Allow illegal instructions", cpu.AreIllegalInsnsEnabled()));
+
+	g_sim.SetShadowROMEnabled(key.getBool("CPU: Shadow ROMs", g_sim.GetShadowROMEnabled()));
+	g_sim.SetShadowCartridgeEnabled(key.getBool("CPU: Shadow cartridges", g_sim.GetShadowCartridgeEnabled()));
+
+	ATCPUMode cpuMode = (ATCPUMode)key.getEnumInt("CPU: Chip type", kATCPUModeCount, cpu.GetCPUMode());
+	uint32 cpuMultiplier = key.getInt("CPU: Clock multiplier", cpu.GetSubCycles());
+	cpu.SetCPUMode(cpuMode, cpuMultiplier);
 
 	IATHostDeviceEmulator *hd = g_sim.GetHostDevice();
 	if (hd) {
@@ -4117,6 +4266,9 @@ void LoadSettings(bool useHardwareBaseline) {
 	g_showFps = key.getBool("View: Show FPS", g_showFps);
 	g_winCaptionUpdater.SetShowFps(g_showFps);
 	gtia.SetVsyncEnabled(key.getBool("View: Vertical sync", gtia.IsVsyncEnabled()));
+
+	g_xepViewEnabled = key.getBool("View: 80-column view enabled", g_xepViewEnabled);
+	g_xepViewAutoswitchingEnabled = key.getBool("View: 80-column view autoswitching enabled", g_xepViewAutoswitchingEnabled);
 
 	ATLightPenPort *lpp = g_sim.GetLightPenPort();
 	lpp->SetAdjust(key.getInt("Light Pen: Adjust X", lpp->GetAdjustX()), key.getInt("Light Pen: Adjust Y", lpp->GetAdjustY()));
@@ -4162,6 +4314,7 @@ void SaveSettings() {
 	key.setBool("Pause when inactive", g_pauseInactive);
 
 	key.setInt("Memory: Axlon size", g_sim.GetAxlonMemoryMode());
+	key.setInt("Memory: High banks", g_sim.GetHighMemoryBanks());
 	key.setBool("Memory: MapRAM", g_sim.IsMapRAMEnabled());
 	key.setBool("Memory: Ultimate1MB", g_sim.IsUltimate1MBEnabled());
 	key.setBool("Memory: Randomize on start", g_sim.IsRandomFillEnabled());
@@ -4221,13 +4374,19 @@ void SaveSettings() {
 
 	key.setBool("SlightSID: Enabled", g_sim.GetSlightSID() != NULL);
 	key.setBool("Covox: Enabled", g_sim.GetCovox() != NULL);
+	key.setBool("XEP80: Enabled", g_sim.GetXEP80() != NULL);
 
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 	key.setBool("CPU: History enabled", cpu.IsHistoryEnabled());
 	key.setBool("CPU: Pathfinding enabled", cpu.IsPathfindingEnabled());
 	key.setBool("CPU: Stop on BRK", cpu.GetStopOnBRK());
 	key.setBool("CPU: Allow NMI blocking", cpu.IsNMIBlockingEnabled());
+	key.setBool("CPU: Allow illegal instructions", cpu.AreIllegalInsnsEnabled());
 	key.setInt("CPU: Chip type", cpu.GetCPUMode());
+	key.setInt("CPU: Clock multiplier", cpu.GetSubCycles());
+
+	key.setBool("CPU: Shadow ROMs", g_sim.GetShadowROMEnabled());
+	key.setBool("CPU: Shadow cartridges", g_sim.GetShadowCartridgeEnabled());
 
 	IATHostDeviceEmulator *hd = g_sim.GetHostDevice();
 	if (hd) {
@@ -4265,6 +4424,8 @@ void SaveSettings() {
 
 	key.setBool("View: Show FPS", g_showFps);
 	key.setBool("View: Vertical sync", gtia.IsVsyncEnabled());
+	key.setBool("View: 80-column view enabled", g_xepViewEnabled);
+	key.setBool("View: 80-column view autoswitching enabled", g_xepViewAutoswitchingEnabled);
 
 	key.setBool("Printer: Enabled", g_sim.IsPrinterEnabled());
 	key.setBool("Misc: R-Time 8 Enabled", g_sim.IsRTime8Enabled());

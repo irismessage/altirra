@@ -177,7 +177,7 @@
         d         u            Disassemble (unassemble)
         f * * *.. f * L>* *..  Fill memory
         m * [*]   db * [L>*]   Memory list (display bytes)
-        s * *.. s * [L>*]..    Search memory
+        s * *..   s * [L>*]..  Search memory
         sum * *   .sum * L>*   Compute memory sum
         bpc       bp           Set PC breakpoint
         history   h            Show CPU history
@@ -481,7 +481,25 @@
       f 2000 L400 8d <serout >serout
       f $01:0000 L10000 0
     
-    See also: e (enter)
+    See also: e (enter), fbx (fill bytes with expression)
+
++ fbx  Fill bytes with expression
+
+    Fills a block of memory by evaluating an expression for each location.
+    
+      fbx <xaddress> L<length> <expression>
+      
+    The expression is evaluated once for each byte in the range and its low
+    byte is used to set the value of that location. The VALUE expression
+    token evaluates to the current zero-based index in the range (0-255 only)
+    and the WRITE expression token gives the current extended address.
+    
+    Examples:
+      fbx 8000 L1000 value
+      fbx 8000 L1000 <write
+      fbx 8000 L1000 "(value-value%80) + (value%40)*2 + (value%80)/40"
+      
+    See also: f (fill)
 
 + g    Go
 
@@ -702,8 +720,6 @@
     
       p.n    Negative (sign) flag
       p.v    Overflow flag
-      p.m    Accumulator size flag (65C816 mode only)
-      p.x    Index size flag (65C816 mode only)
       p.d    Decimal mode flag
       p.i    Interrupt mask flag
       p.z    Zero flag
@@ -711,6 +727,15 @@
       
     The break flag cannot be modified as it does not exist in the P register,
     only in the image of P pushed on the stack during interrupt entry.
+    
+    In 65C816 mode, the following additional registers are available:
+    
+      c      16-bit accumulator (B:A)
+      d      Direct page register
+      b/dbr  Data bank register
+      k/pbr  Program bank register
+      p.m    Accumulator size flag
+      p.x    Index size flag
 
 + s    Search memory
 
@@ -966,6 +991,14 @@
     that changes the playfield width can change the DMA pattern.
     
     See also: .dmamap (show ANTIC DMA activity map)
+
++ .dmabuf      Show ANTIC DMA line buffer
+
+    Displays the contents of the internal line buffer within ANTIC.
+    
+      .dmabuf
+      
+    See also: .dma (show current ANTIC DMA pattern)
 
 + .dmamap      Show ANTIC DMA activity map
 
@@ -1243,14 +1276,20 @@
     
       %b       Binary number
       %c       ASCII character (only 20-7E; others produce '.')
-      %d, %i   Signed decimal
+      %d       Signed decimal
+      %e       Decimal float by address, exponential notation
+      %f       Decimal float by address, floating-point notation
+      %g       Decimal float by address, general notation
+      %i       Signed decimal (equivalent to %d)
       %u       Unsigned decimal
       %x       Hexadecimal (lowercase)
       %X       Hexadecimal (uppercase)
       %y       Symbol address
 
     Unlike the C function printf(), .printf always prints a newline
-    after the formatted string.
+    after the formatted string. Also, note that %e/%f/%g require
+    the address of a decimal float and not the value of a binary
+    float.
     
     Example:
       .printf "Display list vector: $%04x" dw(vdslst)

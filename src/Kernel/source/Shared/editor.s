@@ -18,16 +18,18 @@
 
 ;==========================================================================
 .proc	EditorLineLengthTab
-	dta		0, 40, 80, 120
+	dta		120, 80, 40, 0
 .endp
 
 ;==========================================================================
 .proc	EditorOpen
-	lda		#0
-	sta		dspflg
-	sta		escflg
 	jsr		ScreenResetLogicalLineMap
-	jmp		ScreenOpen
+	stx		dspflg		;!! relies on X=0 from ScreenResetLogicalLineMap
+	stx		escflg
+	
+	;we must force mode 0 here -- ACTION calls this with $0C in AUX2 and
+	;expects mode 0 to be set
+	jmp		ScreenOpenMode0
 .endp
 
 ;==========================================================================
@@ -443,7 +445,6 @@ special_tab:
 	jsr		EditorGetLogicalColumn
 	tay
 	txa
-	eor		#$ff
 	sec
 	adc		rowcrs
 	sta		rowcrs
@@ -1027,24 +1028,22 @@ found:
 ;
 ; Exit:
 ;	A = column
-;	X = row index (0-2)
+;	X = inverted row index (0-2 => $ff-$fd)
 ;
 .proc	EditorGetLogicalColumn
 	;get starting row of logical line
 	lda		rowcrs
 	jsr		EditorPhysToLogicalRow
 	
-	;subtract off current row and negate
+	;subtract off current row
 	clc
 	sbc		rowcrs
-	eor		#$ff
 	tax
 	
-	;multiply difference by 40
-	lda		EditorLineLengthTab,x
+	;multiply negated difference by 40
+	lda		EditorLineLengthTab-$fc,x
 	
 	;add in physical column
-	clc
 	adc		colcrs
 	rts
 .endp

@@ -46,7 +46,11 @@ ATCPUEmulator::ATCPUEmulator()
 	mDebugFlags = 0;
 	mpNextState = NULL;
 	mCPUMode = kATCPUMode_6502;
+	mSubCycles = 1;
+	mSubCyclesLeft = 1;
+	mbForceNextCycleSlow = false;
 	mCPUSubMode = kATCPUSubMode_6502;
+	mAdvanceMode = kATCPUAdvanceMode_6502;
 
 	memset(mInsnFlags, 0, sizeof mInsnFlags);
 
@@ -61,7 +65,7 @@ ATCPUEmulator::ATCPUEmulator()
 
 	RebuildDecodeTables();
 
-	VDASSERTCT(kStateStandard_Count <= kStateVerifyJump);
+	VDASSERTCT(kStateStandard_Count <= kStateUpdateHeatMap);
 	VDASSERTCT(kStateCount < 256);
 }
 
@@ -112,6 +116,7 @@ void ATCPUEmulator::WarmReset() {
 	mStates[1] = kStateReadAddrH;
 	mStates[2] = kStateAddrToPC;
 	mStates[3] = kStateReadOpcode;
+	mbEmulationFlag = true;
 
 	// 65C816 initialization
 	if (mCPUMode == kATCPUMode_65C816) {
@@ -125,8 +130,8 @@ void ATCPUEmulator::WarmReset() {
 		// Set MXIE. Clear D. NVZC are preserved.
 		mP = (mP & (kFlagN | kFlagV | kFlagZ | kFlagC)) | (kFlagM | kFlagX | kFlagI);
 
-		mbEmulationFlag = true;
-
+		// force reinit
+		mDecodeTableMode816 = 0xFF;
 		Update65816DecodeTable();
 	}
 
@@ -249,6 +254,41 @@ void ATCPUEmulator::SetP(uint8 p) {
 	mP = p;
 }
 
+void ATCPUEmulator::SetAH(uint8 a) {
+	if (!(mP & AT6502::kFlagM))
+		mAH = a;
+}
+
+void ATCPUEmulator::SetXH(uint8 x) {
+	if (!(mP & AT6502::kFlagX))
+		mXH = x;
+}
+
+void ATCPUEmulator::SetYH(uint8 y) {
+	if (!(mP & AT6502::kFlagX))
+		mYH = y;
+}
+
+void ATCPUEmulator::SetSH(uint8 s) {
+	if (!mbEmulationFlag)
+		mSH = s;
+}
+
+void ATCPUEmulator::SetD(uint16 dp) {
+	if (mCPUMode == kATCPUMode_65C816)
+		mDP = dp;
+}
+
+void ATCPUEmulator::SetK(uint8 k) {
+	if (mCPUMode == kATCPUMode_65C816)
+		mK = k;
+}
+
+void ATCPUEmulator::SetB(uint8 b) {
+	if (mCPUMode == kATCPUMode_65C816)
+		mB = b;
+}
+
 void ATCPUEmulator::SetHook(uint16 pc, bool enable) {
 	if (enable)
 		mInsnFlags[pc] |= kInsnFlagHook;
@@ -275,11 +315,20 @@ uint8 ATCPUEmulator::GetHeldCycleValue() {
 		return mpMemory->ReadByte(mPC);
 }
 
-void ATCPUEmulator::SetCPUMode(ATCPUMode mode) {
-	if (mCPUMode == mode)
+void ATCPUEmulator::SetCPUMode(ATCPUMode mode, uint32 subCycles) {
+	if (subCycles < 1 || mode != kATCPUMode_65C816)
+		subCycles = 1;
+
+	if (subCycles > 8)
+		subCycles = 8;
+
+	if (mCPUMode == mode && mSubCycles == subCycles)
 		return;
 
 	mCPUMode = mode;
+	mSubCycles = subCycles;
+	mSubCyclesLeft = subCycles;
+	mbForceNextCycleSlow = false;
 
 	// ensure sane 65C816 state
 	mbEmulationFlag = true;
@@ -295,12 +344,15 @@ void ATCPUEmulator::SetCPUMode(ATCPUMode mode) {
 	switch(mode) {
 		case kATCPUMode_65C816:
 			mCPUSubMode = kATCPUSubMode_65C816_Emulation;
+			mAdvanceMode = subCycles > 1 ? kATCPUAdvanceMode_65816HiSpeed : kATCPUAdvanceMode_65816;
 			break;
 		case kATCPUMode_65C02:
 			mCPUSubMode = kATCPUSubMode_65C02;
+			mAdvanceMode = kATCPUAdvanceMode_6502;
 			break;
 		case kATCPUMode_6502:
 			mCPUSubMode = kATCPUSubMode_6502;
+			mAdvanceMode = kATCPUAdvanceMode_6502;
 			break;
 	}
 
@@ -426,12 +478,10 @@ bool ATCPUEmulator::IsInPath(uint16 addr) const {
 	return 0 != (mInsnFlags[addr] & (kInsnFlagPathStart | kInsnFlagPathExecuted));
 }
 
-void ATCPUEmulator::DumpStatus() {
+void ATCPUEmulator::DumpStatus(bool extended) {
 	if (mCPUMode == kATCPUMode_65C816) {
 		if (mbEmulationFlag) {
-			ATConsoleTaggedPrintf("PC=%02X:%04X A=%02X:%02X X=%02X Y=%02X S=%02X P=%02X (%c%c%c%c%c%c)  "
-				, mK
-				, mInsnPC
+			ATConsoleTaggedPrintf("A=%02X:%02X X=%02X Y=%02X S=%02X P=%02X (%c%c%c%c%c%c)  "
 				, mAH
 				, mA
 				, mX
@@ -447,11 +497,9 @@ void ATCPUEmulator::DumpStatus() {
 				);
 		} else {
 			if (!(mP & kFlagX)) {
-				ATConsoleTaggedPrintf("PC=%02X:%04X A=%02X%s%02X X=%02X%02X Y=%02X%02X S=%02X%02X P=%02X (%c%c%c %c%c%c%c)  "
-					, mK
-					, mInsnPC
+				ATConsoleTaggedPrintf("%c=%02X%02X X=%02X%02X Y=%02X%02X S=%02X%02X P=%02X (%c%c%c %c%c%c%c)  "
+					, (mP & kFlagM) ? 'A' : 'C'
 					, mAH
-					, (mP & kFlagM) ? ":" : ""
 					, mA
 					, mXH
 					, mX
@@ -469,11 +517,9 @@ void ATCPUEmulator::DumpStatus() {
 					, mP & 0x01 ? 'C' : ' '
 					);
 			} else {
-				ATConsoleTaggedPrintf("PC=%02X:%04X A=%02X%s%02X X=%02X Y=%02X S=%02X%02X P=%02X (%c%c%cX%c%c%c%c)  "
-					, mK
-					, mInsnPC
+				ATConsoleTaggedPrintf("%c=%02X%02X X=--%02X Y=--%02X S=%02X%02X P=%02X (%c%c%cX%c%c%c%c)  "
+					, (mP & kFlagM) ? 'A' : 'C'
 					, mAH
-					, (mP & kFlagM) ? ":" : ""
 					, mA
 					, mX
 					, mY
@@ -491,8 +537,7 @@ void ATCPUEmulator::DumpStatus() {
 			}
 		}
 	} else {
-		ATConsoleTaggedPrintf("PC=%04X A=%02X X=%02X Y=%02X S=%02X P=%02X (%c%c%c%c%c%c)  "
-			, mInsnPC
+		ATConsoleTaggedPrintf("A=%02X X=%02X Y=%02X S=%02X P=%02X (%c%c%c%c%c%c)  "
 			, mA
 			, mX
 			, mY
@@ -507,7 +552,10 @@ void ATCPUEmulator::DumpStatus() {
 			);
 	}
 
-	ATDisassembleInsn(mInsnPC);
+	ATDisassembleInsn(mInsnPC, mK);
+
+	if (extended && mCPUMode == kATCPUMode_65C816)
+		ATConsolePrintf("              B=%02X D=%04X\n", mB, mDP);
 }
 
 void ATCPUEmulator::BeginLoadState(ATSaveStateReader& reader) {
@@ -666,9 +714,12 @@ void ATCPUEmulator::AssertNMI() {
 }
 
 int ATCPUEmulator::Advance() {
-	if (mCPUMode == kATCPUMode_65C816)
-		return Advance65816();
-	else
+	if (mCPUMode == kATCPUMode_65C816) {
+		if (mSubCycles > 1)
+			return Advance65816HiSpeed(false);
+		else
+			return Advance65816();
+	} else
 		return Advance6502();
 }
 
@@ -680,6 +731,37 @@ int ATCPUEmulator::Advance65816() {
 #define AT_CPU_MACHINE_65C816
 	#include "cpumachine.inl"
 #undef AT_CPU_MACHINE_65C816
+}
+
+int ATCPUEmulator::Advance65816HiSpeed(bool dma) {
+	if (dma) {
+		if (!--mSubCyclesLeft) {
+			mSubCyclesLeft = mSubCycles;
+			return kATSimEvent_None;
+		}
+	}
+
+	for(;;) {
+		#define AT_CPU_MACHINE_65C816
+		#define AT_CPU_MACHINE_65C816_HISPEED
+		#include "cpumachine.inl"
+		#undef AT_CPU_MACHINE_65C816_HISPEED
+		#undef AT_CPU_MACHINE_65C816
+
+end_sub_cycle:
+		if (!--mSubCyclesLeft) {
+wait_slow_cycle:
+			if (mbForceNextCycleSlow) {
+				mbForceNextCycleSlow = false;
+				mSubCyclesLeft = 1;
+			} else {
+				mSubCyclesLeft = mSubCycles;
+			}
+			break;
+		}
+	}
+
+	return kATSimEvent_None;
 }
 
 uint8 ATCPUEmulator::ProcessDebugging() {
@@ -724,11 +806,12 @@ uint8 ATCPUEmulator::ProcessDebugging() {
 	return 0;
 }
 
+template<bool T_Accel>
 bool ATCPUEmulator::ProcessInterrupts() {
 	if (mIntFlags & kIntFlag_NMIPending) {
 		uint32 t = mpCallbacks->CPUGetUnhaltedCycle();
 
-		if (t - mNMIAssertTime >= (t == mNMIIgnoreUnhaltedCycle ? 3U : 2U)) {
+		if (T_Accel || t - mNMIAssertTime >= (t == mNMIIgnoreUnhaltedCycle ? 3U : 2U)) {
 			if (mbTrace)
 				ATConsoleWrite("CPU: Jumping to NMI vector\n");
 
@@ -742,7 +825,7 @@ bool ATCPUEmulator::ProcessInterrupts() {
 
 	if (mIntFlags & kIntFlag_IRQReleasePending) {
 		mIntFlags &= ~kIntFlag_IRQReleasePending;
-	} else if ((mIntFlags & (kIntFlag_IRQActive | kIntFlag_IRQPending)) && (!(mP & kFlagI) || mIFlagSetCycle == mpCallbacks->CPUGetUnhaltedCycle() - 1)) {
+	} else if ((mIntFlags & (kIntFlag_IRQActive | kIntFlag_IRQPending)) && (!(mP & kFlagI) || (!T_Accel && mIFlagSetCycle == mpCallbacks->CPUGetUnhaltedCycle() - 1))) {
 		if (mNMIIgnoreUnhaltedCycle == mIRQAssertTime + 1) {
 			++mIRQAssertTime;
 		} else {
@@ -755,7 +838,7 @@ bool ATCPUEmulator::ProcessInterrupts() {
 
 			// If an IRQ is pending, check if it was just acknowledged this cycle. If so,
 			// bypass it as it's too late to interrupt this instruction.
-			if ((mIntFlags & kIntFlag_IRQPending) && (mpCallbacks->CPUGetUnhaltedCycle() - mIRQAcknowledgeTime > 0)) {
+			if ((mIntFlags & kIntFlag_IRQPending) && (!T_Accel || mpCallbacks->CPUGetUnhaltedCycle() - mIRQAcknowledgeTime > 0)) {
 				if (mbTrace)
 					ATConsoleWrite("CPU: Jumping to IRQ vector\n");
 
@@ -782,7 +865,8 @@ uint8 ATCPUEmulator::ProcessHook() {
 	return op;
 }
 
-void ATCPUEmulator::AddHistoryEntry(bool is816) {
+template<bool is816, bool hispeed>
+void ATCPUEmulator::AddHistoryEntry(bool slowFlag) {
 	HistoryEntry& he = mHistory[mHistoryIndex++ & 131071];
 
 	he.mCycle = (uint16)mpCallbacks->CPUGetCycle();
@@ -795,7 +879,9 @@ void ATCPUEmulator::AddHistoryEntry(bool is816) {
 	he.mA = mA;
 	he.mX = mX;
 	he.mY = mY;
+
 	he.mOpcode[0] = mOpcode;
+
 	if (is816) {
 		he.mOpcode[1] = mpMemory->DebugExtReadByte(mPC, mK);
 		he.mOpcode[2] = mpMemory->DebugExtReadByte(mPC+1, mK);
@@ -805,16 +891,35 @@ void ATCPUEmulator::AddHistoryEntry(bool is816) {
 		he.mOpcode[2] = mpMemory->DebugReadByte(mPC+1);
 		he.mOpcode[3] = mpMemory->DebugReadByte(mPC+2);
 	}
+
 	he.mbIRQ = mbMarkHistoryIRQ;
 	he.mbNMI = mbMarkHistoryNMI;
-	he.mbEmulation = mbEmulationFlag;
-	he.mSH = mSH;
-	he.mAH = mAH;
-	he.mXH = mXH;
-	he.mYH = mYH;
-	he.mB = mB;
-	he.mK = mK;
-	he.mD = mDP;
+
+	if (is816) {
+		if (hispeed && !slowFlag)
+			he.mSubCycle = mSubCycles - mSubCyclesLeft;
+		else
+			he.mSubCycle = 0;
+
+		he.mbEmulation = mbEmulationFlag;
+		he.mSH = mSH;
+		he.mAH = mAH;
+		he.mXH = mXH;
+		he.mYH = mYH;
+		he.mB = mB;
+		he.mK = mK;
+		he.mD = mDP;
+	} else {
+		he.mbEmulation = true;
+		he.mSubCycle = 0;
+		he.mSH = 1;
+		he.mAH = 0;
+		he.mXH = 0;
+		he.mYH = 0;
+		he.mB = 0;
+		he.mK = 0;
+		he.mD = 0;
+	}
 
 	mbMarkHistoryIRQ = false;
 	mbMarkHistoryNMI = false;
@@ -854,23 +959,30 @@ void ATCPUEmulator::Update65816DecodeTable() {
 	if (!mbEmulationFlag)
 		subMode = (ATCPUSubMode)(kATCPUSubMode_65C816_NativeM16X16 + ((mP >> 4) & 3));
 
-	if (subMode == mCPUSubMode)
-		return;
+	if (mCPUSubMode != subMode) {
+		mCPUSubMode = subMode;
 
-	mCPUSubMode = subMode;
-
-	if (mbEmulationFlag) {
-		mSH = 0x01;
-		mXH = 0;
-		mYH = 0;
-	} else {
-		if (mP & kFlagX) {
+		if (mbEmulationFlag) {
+			mSH = 0x01;
 			mXH = 0;
 			mYH = 0;
+		} else {
+			if (mP & kFlagX) {
+				mXH = 0;
+				mYH = 0;
+			}
 		}
 	}
 
-	RebuildDecodeTables();
+	uint8 decMode = (uint8)(subMode + ((mDP & 0xff) ? 5 : 0) - kATCPUSubMode_65C816_Emulation);
+
+	if (mDecodeTableMode816 != decMode) {
+		mDecodeTableMode816 = decMode;
+		memcpy(mDecodePtrs, mDecodePtrs816[decMode], sizeof mDecodePtrs);
+
+		mpDecodePtrNMI = mDecodeHeap + mDecodePtrs816[decMode][256];
+		mpDecodePtrIRQ = mDecodeHeap + mDecodePtrs816[decMode][257];
+	}
 }
 
 void ATCPUEmulator::RebuildDecodeTables() {
@@ -887,6 +999,25 @@ void ATCPUEmulator::RebuildDecodeTables() {
 		mpNextState = mStates;
 	}
 
+	switch(mCPUMode) {
+		case kATCPUMode_6502:
+			RebuildDecodeTables6502(false);
+			break;
+
+		case kATCPUMode_65C02:
+			RebuildDecodeTables6502(true);
+			break;
+
+		case kATCPUMode_65C816:
+			RebuildDecodeTables65816();
+			Update65816DecodeTable();
+			break;
+	}
+
+	VDASSERT(mpDstState <= mDecodeHeap + sizeof mDecodeHeap / sizeof mDecodeHeap[0]);
+}
+
+void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
 	const bool unalignedDP = (mDP & 0xff) != 0;
 	const bool emulationMode = mbEmulationFlag;
 	const bool mode16 = !mbEmulationFlag && !(mP & kFlagM);
@@ -901,24 +1032,14 @@ void ATCPUEmulator::RebuildDecodeTables() {
 
 		uint8 c = (uint8)i;
 
-		switch(mCPUMode) {
-			case kATCPUMode_6502:
-				if (!Decode6502(c)) {
-					if (!mbIllegalInsnsEnabled || !Decode6502Ill(c))
-						*mpDstState++ = kStateBreakOnUnsupportedOpcode;
-				}
-				break;
-
-			case kATCPUMode_65C02:
-				if (!Decode65C02(c) && !Decode6502(c))
+		if (cmos) {
+			if (!Decode65C02(c) && !Decode6502(c))
+				*mpDstState++ = kStateBreakOnUnsupportedOpcode;
+		} else {
+			if (!Decode6502(c)) {
+				if (!mbIllegalInsnsEnabled || !Decode6502Ill(c))
 					*mpDstState++ = kStateBreakOnUnsupportedOpcode;
-
-				break;
-
-			case kATCPUMode_65C816:
-				if (!Decode65C816(c, unalignedDP, emulationMode, mode16, index16))
-					*mpDstState++ = kStateBreakOnUnsupportedOpcode;
-				break;
+			}
 		}
 
 		if (mpHeatMap)
@@ -927,9 +1048,106 @@ void ATCPUEmulator::RebuildDecodeTables() {
 		*mpDstState++ = kStateReadOpcode;
 	}
 
-	if (mCPUMode == kATCPUMode_65C816) {
+	// predecode NMI sequence
+	mpDecodePtrNMI = mpDstState;
+	*mpDstState++ = kStateReadDummyOpcode;
+	*mpDstState++ = kStateReadDummyOpcode;
+	*mpDstState++ = kStatePushPCH;
+	*mpDstState++ = kStatePushPCL;
+	*mpDstState++ = kStatePtoD_B0;
+	*mpDstState++ = kStatePush;
+
+	if (mpVerifier)
+		*mpDstState++ = kStateVerifyNMIEntry;
+
+	*mpDstState++ = kStateSEI;
+	*mpDstState++ = kStateNMIVecToPC;
+	*mpDstState++ = kStateReadAddrL;
+	*mpDstState++ = kStateReadAddrH;
+	*mpDstState++ = kStateAddrToPC;
+
+	if (mbPathfindingEnabled)
+		*mpDstState++ = kStateAddAsPathStart;
+
+	*mpDstState++ = kStateReadOpcode;
+
+	// predecode IRQ sequence
+	mpDecodePtrIRQ = mpDstState;
+	*mpDstState++ = kStateReadDummyOpcode;
+	*mpDstState++ = kStateReadDummyOpcode;
+	*mpDstState++ = kStatePushPCH;
+	*mpDstState++ = kStatePushPCL;
+	*mpDstState++ = kStatePtoD_B0;
+	*mpDstState++ = kStatePush;
+
+	if (mpVerifier)
+		*mpDstState++ = kStateVerifyIRQEntry;
+
+	*mpDstState++ = kStateSEI;
+
+	if (mCPUMode == kATCPUMode_6502 && mbAllowBlockedNMIs)
+		*mpDstState++ = kStateIRQVecToPCBlockNMIs;
+	else
+		*mpDstState++ = kStateIRQVecToPC;
+
+	*mpDstState++ = kStateReadAddrL;
+	*mpDstState++ = kStateDelayInterrupts;
+	*mpDstState++ = kStateReadAddrH;
+	*mpDstState++ = kStateAddrToPC;
+
+	if (mbPathfindingEnabled)
+		*mpDstState++ = kStateAddAsPathStart;
+
+	*mpDstState++ = kStateReadOpcode;
+}
+
+void ATCPUEmulator::RebuildDecodeTables65816() {
+	mpDstState = mDecodeHeap;
+
+	static const struct ModeInfo {
+		bool mbUnalignedDP;
+		bool mbEmulationMode;
+		bool mbMode16;
+		bool mbIndex16;
+	} kModeInfo[10]={
+		{ false, true,  false, false },
+		{ false, false, true,  true  },
+		{ false, false, true,  false },
+		{ false, false, false, true  },
+		{ false, false, false, false },
+
+		{ true,  true,  false, false },
+		{ true,  false, true,  true  },
+		{ true,  false, true,  false },
+		{ true,  false, false, true  },
+		{ true,  false, false, false },
+	};
+
+	for(int i=0; i<10; ++i) {
+		const bool unalignedDP = kModeInfo[i].mbUnalignedDP;
+		const bool emulationMode = kModeInfo[i].mbEmulationMode;
+		const bool mode16 = kModeInfo[i].mbMode16;
+		const bool index16 = kModeInfo[i].mbIndex16;
+
+		for(int j=0; j<256; ++j) {
+			mDecodePtrs816[i][j] = mpDstState - mDecodeHeap;
+
+			if (mbPathfindingEnabled)
+				*mpDstState++ = kStateAddToPath;
+
+			uint8 c = (uint8)j;
+
+			if (!Decode65C816(c, unalignedDP, emulationMode, mode16, index16))
+				*mpDstState++ = kStateBreakOnUnsupportedOpcode;
+
+			if (mpHeatMap)
+				*mpDstState++ = kStateUpdateHeatMap;
+
+			*mpDstState++ = kStateReadOpcode;
+		}
+
 		// predecode NMI sequence
-		mpDecodePtrNMI = mpDstState;
+		mDecodePtrs816[i][256] = mpDstState - mDecodeHeap;
 		*mpDstState++ = kStateReadDummyOpcode;
 		*mpDstState++ = kStateReadDummyOpcode;
 
@@ -966,7 +1184,7 @@ void ATCPUEmulator::RebuildDecodeTables() {
 		*mpDstState++ = kStateReadOpcode;
 
 		// predecode IRQ sequence
-		mpDecodePtrIRQ = mpDstState;
+		mDecodePtrs816[i][257] = mpDstState - mDecodeHeap;
 		*mpDstState++ = kStateReadDummyOpcode;
 		*mpDstState++ = kStateReadDummyOpcode;
 
@@ -1001,61 +1219,7 @@ void ATCPUEmulator::RebuildDecodeTables() {
 			*mpDstState++ = kStateAddAsPathStart;
 
 		*mpDstState++ = kStateReadOpcode;
-	} else {
-		// predecode NMI sequence
-		mpDecodePtrNMI = mpDstState;
-		*mpDstState++ = kStateReadDummyOpcode;
-		*mpDstState++ = kStateReadDummyOpcode;
-		*mpDstState++ = kStatePushPCH;
-		*mpDstState++ = kStatePushPCL;
-		*mpDstState++ = kStatePtoD_B0;
-		*mpDstState++ = kStatePush;
-
-		if (mpVerifier)
-			*mpDstState++ = kStateVerifyNMIEntry;
-
-		*mpDstState++ = kStateSEI;
-		*mpDstState++ = kStateNMIVecToPC;
-		*mpDstState++ = kStateReadAddrL;
-		*mpDstState++ = kStateReadAddrH;
-		*mpDstState++ = kStateAddrToPC;
-
-		if (mbPathfindingEnabled)
-			*mpDstState++ = kStateAddAsPathStart;
-
-		*mpDstState++ = kStateReadOpcode;
-
-		// predecode IRQ sequence
-		mpDecodePtrIRQ = mpDstState;
-		*mpDstState++ = kStateReadDummyOpcode;
-		*mpDstState++ = kStateReadDummyOpcode;
-		*mpDstState++ = kStatePushPCH;
-		*mpDstState++ = kStatePushPCL;
-		*mpDstState++ = kStatePtoD_B0;
-		*mpDstState++ = kStatePush;
-
-		if (mpVerifier)
-			*mpDstState++ = kStateVerifyIRQEntry;
-
-		*mpDstState++ = kStateSEI;
-
-		if (mCPUMode == kATCPUMode_6502 && mbAllowBlockedNMIs)
-			*mpDstState++ = kStateIRQVecToPCBlockNMIs;
-		else
-			*mpDstState++ = kStateIRQVecToPC;
-
-		*mpDstState++ = kStateReadAddrL;
-		*mpDstState++ = kStateDelayInterrupts;
-		*mpDstState++ = kStateReadAddrH;
-		*mpDstState++ = kStateAddrToPC;
-
-		if (mbPathfindingEnabled)
-			*mpDstState++ = kStateAddAsPathStart;
-
-		*mpDstState++ = kStateReadOpcode;
 	}
-
-	VDASSERT(mpDstState <= mDecodeHeap + sizeof mDecodeHeap / sizeof mDecodeHeap[0]);
 }
 
 void ATCPUEmulator::DecodeReadZp() {

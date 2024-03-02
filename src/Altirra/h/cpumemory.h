@@ -28,10 +28,12 @@ class VDINTERFACE ATCPUEmulatorMemory {
 public:
 	virtual uint8 CPUReadByte(uint32 address) = 0;
 	virtual uint8 CPUExtReadByte(uint16 address, uint8 bank) = 0;
+	virtual sint32 CPUExtReadByteAccel(uint16 address, uint8 bank, bool chipOK) = 0;
 	virtual uint8 CPUDebugReadByte(uint16 address) = 0;
 	virtual uint8 CPUDebugExtReadByte(uint16 address, uint8 bank) = 0;
 	virtual void CPUWriteByte(uint16 address, uint8 value) = 0;
 	virtual void CPUExtWriteByte(uint16 address, uint8 bank, uint8 value) = 0;
+	virtual sint32 CPUExtWriteByteAccel(uint16 address, uint8 bank, uint8 value, bool chipOK) = 0;
 
 	uint8	mBusValue;
 	const uintptr *mpCPUReadPageMap;
@@ -77,6 +79,11 @@ public:
 		return ATCPUMEMISSPECIAL(readPage) ? CPUExtReadByte(address, bank) : *(const uint8 *)(readPage + address);
 	}
 	
+	sint32 ExtReadByteAccel(uint16 address, uint8 bank, bool chipOK) {
+		uintptr readPage = mpCPUReadBankMap[bank][address >> 8];
+		return ATCPUMEMISSPECIAL(readPage) ? CPUExtReadByteAccel(address, bank, chipOK) : *(const uint8 *)(readPage + address);
+	}
+
 	void WriteByte(uint16 address, uint8 value) {
 		uintptr writePage = mpCPUWritePageMap[address >> 8];
 		if (!ATCPUMEMISSPECIAL(writePage))
@@ -92,6 +99,16 @@ public:
 			*(uint8 *)(writePage + address) = value;
 		else
 			CPUExtWriteByte(address, bank, value);
+	}
+
+	sint32 ExtWriteByteAccel(uint16 address, uint8 bank, uint8 value, bool chipOK) {
+		uintptr writePage = mpCPUWriteBankMap[bank][address >> 8];
+
+		if (!ATCPUMEMISSPECIAL(writePage)) {
+			*(uint8 *)(writePage + address) = value;
+			return 0;
+		} else
+			return CPUExtWriteByteAccel(address, bank, value, chipOK);
 	}
 };
 

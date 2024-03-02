@@ -52,6 +52,26 @@
 #define UISF_HIDEACCEL                  0x2
 #endif
 
+// Requires Windows Vista
+#if WINVER < 0x0600
+	typedef enum DEVICE_SCALE_FACTOR {
+		SCALE_100_PERCENT = 100,
+		SCALE_140_PERCENT = 140,
+		SCALE_180_PERCENT = 180
+	} DEVICE_SCALE_FACTOR;
+#endif
+
+// Requires Windows 8.1
+#ifndef WM_DPICHANGED
+#define WM_DPICHANGED 0x02E0
+
+	typedef enum MONITOR_DPI_TYPE {
+		MDT_EFFECTIVE_DPI = 0,
+		MDT_ANGULAR_DPI = 1,
+		MDT_RAW_DPI = 2
+	} MONITOR_DPI_TYPE;
+#endif
+
 #pragma comment(lib, "msimg32")
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -534,6 +554,17 @@ void ATContainerDockingPane::Clear() {
 	Release();
 }
 
+void ATContainerDockingPane::InvalidateLayoutAll() {
+	InvalidateLayout();
+
+	Children::const_iterator it(mChildren.begin()), itEnd(mChildren.end());
+	for(; it != itEnd; ++it) {
+		ATContainerDockingPane *pane = *it;
+
+		pane->InvalidateLayout();
+	}
+}
+
 void ATContainerDockingPane::InvalidateLayout() {
 	mbLayoutInvalid = true;
 
@@ -985,11 +1016,23 @@ void ATContainerDockingPane::NotifyFontsUpdated() {
 }
 
 void ATContainerDockingPane::RecalcFrame() {
+	RecalcFrameInternal();
+
+	InvalidateLayoutAll();
+
+	ATContainerResizer resizer;
+	UpdateLayout(resizer);
+	resizer.Flush();
+}
+
+void ATContainerDockingPane::RecalcFrameInternal() {
+	InvalidateLayout();
+
 	Children::const_iterator it(mChildren.begin()), itEnd(mChildren.end());
 	for(; it!=itEnd; ++it) {
 		ATContainerDockingPane *child = *it;
 
-		child->RecalcFrame();
+		child->RecalcFrameInternal();
 	}
 
 	for(FrameWindows::const_iterator itFrame(mContent.begin()), itFrameEnd(mContent.end());
@@ -1381,9 +1424,11 @@ ATContainerWindow::ATContainerWindow()
 	, mpFullScreenFrame(NULL)
 	, mpModalFrame(NULL)
 	, mbBlockActiveUpdates(false)
+	, mCaptionHeight(0)
 	, mhfontCaption(NULL)
 	, mhfontCaptionSymbol(NULL)
 	, mLayoutSuspendCount(0)
+	, mMonitorDpi(96)
 {
 	if (mpDockingPane) {
 		mpDockingPane->AddRef();
@@ -1626,10 +1671,8 @@ ATContainerDockingPane *ATContainerWindow::DockFrame(ATFrameWindow *frame) {
 		}
 	}
 
-	if (frame) {
-		frame->SetContainer(this);
+	if (frame)
 		frame->RecalcFrame();
-	}
 
 	ATContainerDockingPane *newPane = mpDragPaneTarget->Dock(frame, mDragPaneTargetCode);
 
@@ -1644,7 +1687,6 @@ void ATContainerWindow::AddUndockedFrame(ATFrameWindow *frame) {
 
 	mUndockedFrames.push_back(frame);
 	frame->AddRef();
-	frame->SetContainer(this);
 }
 
 void ATContainerWindow::UndockFrame(ATFrameWindow *frame, bool visible, bool destroy) {
@@ -1844,12 +1886,28 @@ LRESULT ATContainerWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				}
 			}
 			break;
+
+		case WM_DPICHANGED:
+			{
+				const RECT& r = *(const RECT *)lParam;
+
+				SetWindowPos(mhwnd, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+				RedrawWindow(mhwnd, NULL, NULL, RDW_INVALIDATE);
+
+				UpdateMonitorDpi();
+				RecreateSystemObjects();
+
+				if (mpDockingPane)
+					mpDockingPane->RecalcFrame();
+			}
+			return 0;
 	}
 
 	return VDShaderEditorBaseWindow::WndProc(msg, wParam, lParam);
 }
 
 bool ATContainerWindow::OnCreate() {
+	UpdateMonitorDpi();
 	RecreateSystemObjects();
 	OnSize();
 	return true;
@@ -1944,10 +2002,32 @@ bool ATContainerWindow::OnActivate(UINT code, bool minimized, HWND hwnd) {
 void ATContainerWindow::RecreateSystemObjects() {
 	DestroySystemObjects();
 
-	NONCLIENTMETRICS ncm = {sizeof(NONCLIENTMETRICS)};
+	int scaleFactor = 100;
+
+	if (mMonitorDpi) {
+		HDC hdc = GetDC(mhwnd);
+
+		if (hdc) {
+			int dpiY = GetDeviceCaps(hdc, LOGPIXELSY);
+			ReleaseDC(mhwnd, hdc);
+
+			scaleFactor = MulDiv(100, mMonitorDpi, dpiY);
+		}
+	}
+
+	NONCLIENTMETRICS ncm = {
+#if WINVER >= 0x0600
+		offsetof(NONCLIENTMETRICS, iPaddedBorderWidth)
+#else
+		sizeof(NONCLIENTMETRICS)
+#endif
+	};
 
 	SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &ncm, FALSE);
 
+	ncm.lfSmCaptionFont.lfHeight = MulDiv(ncm.lfSmCaptionFont.lfHeight, scaleFactor, 100);
+
+	mCaptionHeight = MulDiv(ncm.iSmCaptionHeight, scaleFactor, 100);
 	mhfontCaption = CreateFontIndirect(&ncm.lfSmCaptionFont);
 
 	LOGFONT lf = ncm.lfSmCaptionFont;
@@ -1972,9 +2052,50 @@ void ATContainerWindow::DestroySystemObjects() {
 	}
 }
 
+void ATContainerWindow::UpdateMonitorDpi() {
+	if (VDIsAtLeast81W32()) {
+		HMONITOR hmon = MonitorFromWindow(mhwnd, MONITOR_DEFAULTTONEAREST);
+
+		if (hmon) {
+			UINT dpiX = 0;
+			UINT dpiY = 0;
+
+			HMODULE hmodShCore = VDLoadSystemLibraryW32("shcore");
+			if (hmodShCore) {
+				typedef HRESULT (WINAPI *tpGetDpiForMonitor)(HMONITOR, MONITOR_DPI_TYPE, UINT *, UINT *);
+				tpGetDpiForMonitor pGetDpiForMonitor = (tpGetDpiForMonitor)GetProcAddress(hmodShCore, "GetDpiForMonitor");
+
+				if (pGetDpiForMonitor) {
+					HRESULT hr = pGetDpiForMonitor(hmon, MDT_EFFECTIVE_DPI, &dpiX, &dpiY);
+					if (SUCCEEDED(hr) && dpiY) {
+						mMonitorDpi = dpiY;
+						UpdateMonitorDpi(dpiY);
+					}
+				}
+
+				FreeLibrary(hmodShCore);
+			}
+
+		}
+	} else {
+		HDC hdc = GetDC(mhwnd);
+
+		if (hdc) {
+			int dpiY = GetDeviceCaps(hdc, LOGPIXELSY);
+			ReleaseDC(mhwnd, hdc);
+
+			mMonitorDpi = dpiY;
+			UpdateMonitorDpi(dpiY);
+		}
+	}
+}
+
+void ATContainerWindow::UpdateMonitorDpi(unsigned dpiY) {
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
-ATFrameWindow::ATFrameWindow()
+ATFrameWindow::ATFrameWindow(ATContainerWindow *container)
 	: mbDragging(false)
 	, mbFullScreen(false)
 	, mbActiveCaption(false)
@@ -1982,7 +2103,7 @@ ATFrameWindow::ATFrameWindow()
 	, mbCloseTracking(false)
 	, mFrameMode(kFrameModeUndocked)
 	, mpDockingPane(NULL)
-	, mpContainer(NULL)
+	, mpContainer(container)
 {
 }
 
@@ -2090,7 +2211,13 @@ bool ATFrameWindow::GetIdealSize(vdsize32& sz) {
 		sz.w = r.right - r.left;
 		sz.h = r.bottom - r.top;
 	} else if (mFrameMode != kFrameModeNone) {
-		NONCLIENTMETRICS ncm = {sizeof(NONCLIENTMETRICS)};
+		NONCLIENTMETRICS ncm = {
+#if WINVER >= 0x0600
+			offsetof(NONCLIENTMETRICS, iPaddedBorderWidth)
+#else
+			sizeof(NONCLIENTMETRICS)
+#endif
+		};
 		SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &ncm, FALSE);
 
 		if (mFrameMode == kFrameModeFull)
@@ -2104,10 +2231,8 @@ bool ATFrameWindow::GetIdealSize(vdsize32& sz) {
 }
 
 void ATFrameWindow::RecalcFrame() {
-	if (mhwnd) {
+	if (mhwnd)
 		SetWindowPos(mhwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-		OnSize();
-	}
 }
 
 void ATFrameWindow::Relayout(int w, int h) {
@@ -2117,12 +2242,8 @@ void ATFrameWindow::Relayout(int w, int h) {
 		RECT r = {0, 0, w, h};
 
 		if (mFrameMode != kFrameModeNone) {
-			if (mFrameMode == kFrameModeFull) {
-				NONCLIENTMETRICS ncm = {sizeof(NONCLIENTMETRICS)};
-				SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &ncm, FALSE);
-
-				r.top += ncm.iSmCaptionHeight;
-			}
+			if (mFrameMode == kFrameModeFull)
+				r.top += mpContainer->GetCaptionHeight();
 
 			if (r.top > r.bottom)
 				r.top = r.bottom;
@@ -2345,11 +2466,7 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					if (r.bottom < r.top)
 						r.bottom = r.top;
 				} else if (mFrameMode == kFrameModeFull) {
-					NONCLIENTMETRICS ncm = {sizeof(NONCLIENTMETRICS)};
-
-					SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &ncm, FALSE);
-
-					const int h = ncm.iSmCaptionHeight;
+					const int h = mpContainer->GetCaptionHeight();
 
 					mCaptionRect.set(0, 0, r.right, h);
 
@@ -2456,15 +2573,12 @@ void ATFrameWindow::PaintCaption(HRGN clipRegion) {
 		rc.bottom = mClientRect.bottom + ye;
 		DrawEdge(hdc, &rc, EDGE_SUNKEN, BF_RECT);
 	} else {
-		NONCLIENTMETRICS ncm = {sizeof(NONCLIENTMETRICS)};
-
-		SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &ncm, FALSE);
 		RECT r;
 		GetWindowRect(mhwnd, &r);
 		int x = r.left;
 		int y = r.top;
 		r.right -= r.left;
-		r.bottom = ncm.iSmCaptionHeight;
+		r.bottom = mpContainer->GetCaptionHeight();
 		r.top = 0;
 		r.left = 0;
 
@@ -2742,7 +2856,7 @@ void ATActivateUIPane(uint32 id, bool giveFocus, bool visible, uint32 relid, int
 				return;
 		}
 
-		vdrefptr<ATFrameWindow> frame(new ATFrameWindow);
+		vdrefptr<ATFrameWindow> frame(new ATFrameWindow(g_pMainWindow));
 		frame->Create(pane->GetUIPaneName(), CW_USEDEFAULT, CW_USEDEFAULT, 300, 200, (VDGUIHandle)g_pMainWindow->GetHandleW32());
 
 		bool paneDocked = false;

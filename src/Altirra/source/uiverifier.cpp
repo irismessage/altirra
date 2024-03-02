@@ -37,6 +37,8 @@ const uint32 ATUIVerifierDialog::kVerifierFlags[][2] = {
 	{ kATVerifierFlag_UndocumentedKernelEntry, IDC_FLAG_UNDOCOSENTRY },
 	{ kATVerifierFlag_RecursiveNMI, IDC_FLAG_RECURSIVENMI },
 	{ kATVerifierFlag_InterruptRegs, IDC_FLAG_INTERRUPTREGS },
+	{ kATVerifierFlag_64KWrap, IDC_FLAG_WRAP64K },
+	{ kATVerifierFlag_AbnormalDMA, IDC_FLAG_ABNORMALDMA },
 };
 
 ATUIVerifierDialog::ATUIVerifierDialog(ATSimulator& sim)

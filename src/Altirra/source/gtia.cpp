@@ -168,6 +168,7 @@ uint8 ATGTIAEmulator::SpriteState::Generate(uint32 ticks, uint8 mask, uint8 *dst
 		}
 
 		++dst;
+		++hires;
 
 		state = stateTransitions[state];
 		shifter += shifter & kSpriteShiftMasks[state];
@@ -1665,7 +1666,15 @@ void ATGTIAEmulator::RenderActivityMap(const uint8 *src) {
 
 	ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 	uint8 *dst = (uint8 *)fb->mBuffer.data;
-	for(int y=0; y<262; ++y) {
+
+	// if PAL extended is enabled, there are 16 lines wrapped from the bottom to the top
+	// of the framebuffer that we must skip and loop back to
+	if (mbOverscanPALExtendedThisFrame)
+		dst += 16 * fb->mBuffer.pitch;
+
+	int h = this->mbPALThisFrame ? 312 : 262;
+
+	for(int y=0; y<h; ++y) {
 		uint8 *dst2 = dst;
 
 		for(int x=0; x<114; ++x) {
@@ -1676,8 +1685,12 @@ void ATGTIAEmulator::RenderActivityMap(const uint8 *src) {
 			dst2[3] = (dst2[3] & 0xf0) + ((dst2[3] & 0xf) >> 1) + add;
 			dst2 += 4;
 		}
+
 		src += 114;
 		dst += fb->mBuffer.pitch;
+
+		if (y == 312 - 16 - 1)
+			dst = (uint8 *)fb->mBuffer.data;
 	}
 }
 
@@ -2279,7 +2292,9 @@ void ATGTIAEmulator::UpdateRegisters(const RegisterChange *rc, int count) {
 				{
 					uint8 mask = 0x0F;
 
-					if (!(mY & 1))
+					// We get called after ANTIC has bumped the scanline but before GTIA knows about it,
+					// so mY is actually one off.
+					if (mY & 1)
 						mask = ~mVDELAY;
 
 					if (mask & 0x01)

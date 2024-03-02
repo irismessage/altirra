@@ -62,7 +62,11 @@ public:
 
 	virtual void SetModemConnection(const char *str) = 0;
 
+	virtual void SetStatusMessage(const wchar_t *s) = 0;
+
 	virtual void SetLedStatus(uint8 ledMask) = 0;
+	
+	virtual void SetHeldButtonStatus(uint8 consolMask) = 0;
 
 	virtual void ClearWatchedValue(int index) = 0;
 	virtual void SetWatchedValue(int index, uint32 value, int len) = 0;

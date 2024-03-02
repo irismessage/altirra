@@ -129,6 +129,7 @@ public:
 
 	void	Clear();
 
+	void	InvalidateLayoutAll();
 	void	InvalidateLayout();
 	void	UpdateLayout(ATContainerResizer& resizer);
 	void	Relayout(ATContainerResizer& resizer);
@@ -181,6 +182,7 @@ public:
 	void	OnTabChange(HWND hwndSender);
 
 protected:
+	void	RecalcFrameInternal();
 	void	RepositionContent(ATContainerResizer& resizer);
 	void	RemoveEmptyNode();
 
@@ -233,6 +235,7 @@ public:
 	ATFrameWindow *GetActiveFrame() const { return mpActiveFrame; }
 	ATFrameWindow *GetModalFrame() const { return mpModalFrame; }
 
+	int GetCaptionHeight() const { return mCaptionHeight; }
 	HFONT GetCaptionFont() const { return mhfontCaption; }
 	HFONT GetCaptionSymbolFont() const { return mhfontCaptionSymbol; }
 
@@ -283,6 +286,9 @@ protected:
 	void RecreateSystemObjects();
 	void DestroySystemObjects();
 
+	void UpdateMonitorDpi();
+	virtual void UpdateMonitorDpi(unsigned dpiY);
+
 	ATContainerDockingPane *mpDockingPane;
 	ATContainerDockingPane *mpDragPaneTarget;
 	ATFrameWindow *mpActiveFrame;
@@ -290,8 +296,11 @@ protected:
 	ATFrameWindow *mpModalFrame;
 	int mDragPaneTargetCode;
 	bool mbBlockActiveUpdates;
+	int mCaptionHeight;
 	HFONT mhfontCaption;
 	HFONT mhfontCaptionSymbol;
+
+	int mMonitorDpi;
 
 	uint32 mLayoutSuspendCount;
 
@@ -310,14 +319,13 @@ public:
 		kFrameModeFull
 	};
 
-	ATFrameWindow();
+	ATFrameWindow(ATContainerWindow *container);
 	~ATFrameWindow();
 
 	static ATFrameWindow *GetFrameWindow(HWND hwnd);
 
 	void *AsInterface(uint32 iid);
 
-	void SetContainer(ATContainerWindow *container) { mpContainer = container; }
 	ATContainerWindow *GetContainer() const { return mpContainer; }
 
 	void SetPane(ATContainerDockingPane *pane) { mpDockingPane = pane; }
@@ -368,7 +376,7 @@ protected:
 	vdrect32	mClientRect;
 	vdrect32	mCloseRect;
 	ATContainerDockingPane *mpDockingPane;
-	ATContainerWindow *mpContainer;
+	ATContainerWindow *const mpContainer;
 	vdrefptr<ATContainerWindow> mpDragContainer;
 
 	VDStringW	mTitle;

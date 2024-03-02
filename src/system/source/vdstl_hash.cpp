@@ -25,6 +25,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/hash.h>
+#include <vd2/system/strutil.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/vdstl_hash.h>
 
@@ -60,6 +61,10 @@ size_t vdstringhashi::operator()(const wchar_t *s) const {
 	return VDHashString32I(s);
 }
 
+bool vdstringpred::operator()(const char *s, const char *t) const {
+	return !strcmp(s, t);
+}
+
 bool vdstringpred::operator()(const VDStringA& s, const VDStringA& t) const {
 	return s == t;
 }
@@ -70,6 +75,10 @@ bool vdstringpred::operator()(const VDStringA& s, const VDStringSpanA& t) const 
 
 bool vdstringpred::operator()(const VDStringA& s, const char *t) const {
 	return s == t;
+}
+
+bool vdstringpred::operator()(const wchar_t *s, const wchar_t *t) const {
+	return !wcscmp(s, t);
 }
 
 bool vdstringpred::operator()(const VDStringW& s, const VDStringW& t) const {
@@ -84,6 +93,10 @@ bool vdstringpred::operator()(const VDStringW& s, const wchar_t *t) const {
 	return s == t;
 }
 
+bool vdstringpredi::operator()(const char *s, const char *t) const {
+	return !vdstricmp(s, t);
+}
+
 bool vdstringpredi::operator()(const VDStringA& s, const VDStringA& t) const {
 	return s.comparei(t) == 0;
 }
@@ -94,6 +107,10 @@ bool vdstringpredi::operator()(const VDStringA& s, const VDStringSpanA& t) const
 
 bool vdstringpredi::operator()(const VDStringA& s, const char *t) const {
 	return s.comparei(t) == 0;
+}
+
+bool vdstringpredi::operator()(const wchar_t *s, const wchar_t *t) const {
+	return !vdwcsicmp(s, t);
 }
 
 bool vdstringpredi::operator()(const VDStringW& s, const VDStringW& t) const {

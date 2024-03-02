@@ -18,6 +18,8 @@
 #ifndef f_AT_VERIFIER_H
 #define f_AT_VERIFIER_H
 
+#include "simeventmanager.h"
+
 class ATCPUEmulator;
 class ATCPUEmulatorMemory;
 class ATSimulator;
@@ -25,17 +27,20 @@ class ATSimulator;
 enum {
 	kATVerifierFlag_UndocumentedKernelEntry = 0x01,
 	kATVerifierFlag_RecursiveNMI = 0x02,
-	kATVerifierFlag_InterruptRegs = 0x04
+	kATVerifierFlag_InterruptRegs = 0x04,
+	kATVerifierFlag_64KWrap = 0x08,
+	kATVerifierFlag_AbnormalDMA = 0x10
 };
 
-class ATCPUVerifier {
+class ATCPUVerifier : public IATSimulatorCallback {
 	ATCPUVerifier(const ATCPUVerifier&);
 	ATCPUVerifier& operator=(const ATCPUVerifier&);
 public:
 	ATCPUVerifier();
 	~ATCPUVerifier();
 
-	void Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATSimulator *sim);
+	void Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATSimulator *sim, ATSimulatorEventManager *simevmgr);
+	void Shutdown();
 
 	uint32 GetFlags() const { return mFlags; }
 	void SetFlags(uint32 flags);
@@ -50,12 +55,16 @@ public:
 	void OnIRQEntry();
 	void OnNMIEntry();
 	void OnReturn();
-	void VerifyJump(uint16 target);
+	void VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 target);
+
+public:
+	virtual void OnSimulatorEvent(ATSimulatorEvent ev);
 
 protected:
 	ATCPUEmulator *mpCPU;
 	ATCPUEmulatorMemory *mpMemory;
 	ATSimulator *mpSimulator;
+	ATSimulatorEventManager *mpSimEventMgr;
 
 	uint32	mFlags;
 

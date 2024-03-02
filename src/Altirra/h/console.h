@@ -27,8 +27,9 @@ void ATConsoleTaggedPrintf(const char *format, ...);
 
 ///////////////////////////////////////////////////////////////////////////
 
-void ATConsoleGetFont(struct tagLOGFONTW& font);
-void ATConsoleSetFont(const struct tagLOGFONTW& font);
+void ATConsoleGetFont(struct tagLOGFONTW& font, int& pointSizeTenths);
+void ATConsoleSetFont(const struct tagLOGFONTW& font, int pointSizeTenths);
+void ATConsoleSetFontDpi(unsigned dpi);
 
 void ATShowConsole();
 void ATOpenConsole();

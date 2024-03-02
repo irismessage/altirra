@@ -1,6 +1,68 @@
 Altirra Change Log
 
-Version 2.30:
+Version 2.40 [November 1, 2013]:
+   [features added]
+   * 65C816: Optimized mode switches.
+   * Audio: Added drive sound volume level option.
+   * Cartridge: Added support for .CAR types 53-59 (2K, 4K, right-as-left 8K, right slot 4K, 128-512K SIC!).
+   * CPU: Preliminary support for accelerated 65C816 operation.
+   * Debugger: Added .dmabuf command.
+   * Debugger: Added %%e, %%f, and %%g formats to .printf command.
+   * Debugger: Verifier can now detect 64K address space index wrapping and abnormal DMA conditions.
+   * Debugger: Added fbx (fill bytes with expression) command.
+   * Debugger: r (register) command now allows access to 65C816 registers.
+   * Disk: Added "Extract Boot Sectors" command to disk dialog for use with bootable virtual disks.
+   * LLE: Added PBI device interrupt support.
+   * MMU: High (65C816) memory can now be adjusted from 0KB-4032KB.
+   * Profiler: Added 65C816 support.
+   * Recorder: Added .WAV file audio recording.
+   * Recorder: Added option for encoding duplicate frames as full frames.
+   * UI: Added on-screen indicators for console buttons held on startup.
+   * UI: Added on-screen indication for some view mode changes.
+   * UI: Added support for per-monitor DPI scaling in Windows 8.1.
+   * UI: Added custom debug font dialog for half point sizes.
+   * UI: File > Exit now confirms if there are modified images.
+   * XEP80: Initial support.
+   
+   [bugs fixed]
+   * 5200: Floating data bus is now enabled in 5200 mode.
+   * 65C816: Fixed cycle timing for JMP (abs) instruction.
+   * 65C816: Fixed cycle timing for TXY instruction.
+   * 65C816: Fixed TYX instruction.
+   * 65C816: INX was checking M bit instead of X bit.
+   * 65C816: Read/modify/write instructions now do read/write/write in emulation mode.
+   * 65C816: Fixed (dp), (dp,X), and (dp,Y) behavior with DP!=0.
+   * ANTIC: Disabling playfield DMA after playfield start now reads bus data into the line buffer.
+   * ANTIC: Abnormal playfield DMA is now emulated.
+   * ANTIC: Improved precision of CHACTL changes.
+   * Cartridge: Fixed $BFxx reading with 5200 64K cartridge type.
+   * CPU: Illegal instruction option now saves correctly.
+   * Debugger: Display float (df) command displays all ten significant digits.
+   * Debugger: Fixed LLE kernel ROM auto-reload and symbol load option.
+   * Debugger: UI panels are now more consistent with debugger commands in numeric base handling.
+   * Debugger: Fixed incorrect disassembly on step when running from high banks.
+   * GTIA: Fixed bug with VDELAY on missiles.
+   * GTIA: Fixed regression with hires player-playfield collisions (since 2.30).
+   * LLE: Fixes and optimizations to math pack.
+   * LLE: Decimal flag is now cleared before dispatching IRQs.
+   * LLE: Fixed BRK handler to handle stack wrapping.
+   * LLE: 5200 BIOS now strobes NMIRES for DLIs.
+   * LLE: Fixed CIOINV timing so that emulated CIO hooks work.
+   * LLE: Corrected K: debounce logic and E: AUX2 open handling (fixes Action! with LLE firmware).
+   * HLE: Fixes to math pack acceleration.
+   * HLE: Added partial fix for CDTMA1 during accelerated disk reads (fixes Ankh with SIO patch enabled).
+   * IDE: Fixed value of Sector Count register after READ SECTOR and WRITE SECTOR commands.
+   * MMU: Fixed aliasing of high memory banks.
+   * POKEY: SKSTAT bit 1 is now emulated.
+   * Printer: Emulated P: device now supports the PUT CHARS command with len=0.
+   * Serial: Emulated R: device supports break interrupts.
+   * UI: Fixed GDI handle leak in text editor.
+   * UI: Added workaround for set file associations dialog not appearing on Windows 8.
+   * UI: Fixed ANTIC DMA visualization mode with extended PAL height.
+   * UI: Fixed PCLink indicator not updating.
+   * U1MB: Fixed PIA read decoding to only respond to $D300-D37F (unfixes Bounty Bob Strikes Back!).
+
+Version 2.30 [May 14, 2013]:
    [features added]
    * Cartridge: SIC! cartridges can now be switched between Am29F040B and SST39SF040 flash chip emulation in Options.
    * Debugger: History pane supports horizontal scrolling and hiding S/P registers.

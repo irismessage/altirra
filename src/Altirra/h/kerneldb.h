@@ -248,6 +248,7 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::SDLSTL> SDLSTL;
 		ATByteAdapter<ATKernelSymbols::SDLSTH> SDLSTH;
 		ATByteAdapter<ATKernelSymbols::SSKCTL> SSKCTL;
+		ATWordAdapter<ATKernelSymbols::VPIRQ > VPIRQ ;
 		ATByteAdapter<ATKernelSymbols::COLDST> COLDST;
 		ATByteAdapter<ATKernelSymbols::GPRIOR> GPRIOR;
 		ATByteAdapter<ATKernelSymbols::JVECK > JVECK ;

@@ -36,11 +36,13 @@ enum ATSimulatorEvent {
 	kATSimEvent_ScanlineBreakpoint,
 	kATSimEvent_VerifierFailure,
 	kATSimEvent_ColdReset,
+	kATSimEvent_WarmReset,
 	kATSimEvent_FrameTick,
 	kATSimEvent_EXELoad,
 	kATSimEvent_EXEInitSegment,
 	kATSimEvent_EXERunSegment,
-	kATSimEvent_StateLoaded
+	kATSimEvent_StateLoaded,
+	kATSimEvent_AbnormalDMA
 };
 
 class IATSimulatorCallback {

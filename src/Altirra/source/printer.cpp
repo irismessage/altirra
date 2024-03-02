@@ -185,10 +185,16 @@ void ATPrinterEmulator::DoPutRecord(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem
 
 void ATPrinterEmulator::DoPutChars(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, uint8 iocb) {
 	ATKernelDatabase kdb(mem);
-	uint16 addr = kdb.ICBAL[iocb].r16();
 	uint16 len = kdb.ICBLL[iocb].r16();
 	uint8 buf[256];
+	
+	if (len == 0) {
+		buf[0] = cpu->GetA();
+		Write(buf, 1);
+		return;
+	}
 
+	uint16 addr = kdb.ICBAL[iocb].r16();
 	while(len) {
 		uint32 tc = len > 256 ? 256 : len;
 

@@ -275,8 +275,10 @@ ScreenPixelWidthsLo = ScreenWidths + 1
 ;	- ADRESS: temporary addressing
 ;
 ScreenOpen = ScreenOpenGr0.use_iocb
+ScreenOpenMode0 = ScreenOpenGr0.use_mode0
 .proc	ScreenOpenGr0
 	mva		#12 icax1z
+use_mode0:
 	mva		#0 icax2z
 use_iocb:
 	;shut off ANTIC playfield and instruction DMA
@@ -1559,8 +1561,8 @@ swap_loop:
 	bpl		swap_loop
 	
 	;invert swap flag
-	lda		swpflg
-	eor		#$ff
+	txa
+	eor		swpflg
 	sta		swpflg
 	
 already_there:

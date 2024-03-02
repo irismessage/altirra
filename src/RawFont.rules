@@ -1,0 +1,91 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<VisualStudioToolFile
+	Name="Font Compiler"
+	Version="8.00"
+	>
+	<Rules>
+		<CustomBuildRule
+			Name="CompileRawFont"
+			DisplayName="Compile Raw Font"
+			CommandLine="&quot;$(ATBuildToolPath)\asuka.exe&quot; fontencode &quot;$(InputPath)&quot; [CellWidth] [CellHeight] [GridColumns] [GridRows] [Ascent] [Advance] [LineGap] &quot;[OutputPath]&quot; [SymbolName] [RawFont]"
+			Outputs="[OutputPath]"
+			FileExtensions="*.bmp-font"
+			>
+			<Properties>
+				<IntegerProperty
+					Name="CellWidth"
+					DisplayName="Cell width"
+					Category="Font Metrics"
+					Description="Maximum width of character cell, in pixels."
+					Switch="[value]"
+					DefaultValue="8"
+				/>
+				<IntegerProperty
+					Name="CellHeight"
+					DisplayName="Cell height"
+					Category="Font Metrics"
+					Description="Character cell height, in pixels."
+					Switch="[value]"
+					DefaultValue="8"
+				/>
+				<IntegerProperty
+					Name="GridColumns"
+					DisplayName="Grid columns"
+					Category="Image Layout"
+					Description="Number of cells across in the grid."
+					Switch="[value]"
+				/>
+				<IntegerProperty
+					Name="GridRows"
+					DisplayName="Grid rows"
+					Category="Image Layout"
+					Description="Number of cell rows in the layout grid."
+					Switch="[value]"
+				/>
+				<IntegerProperty
+					Name="Ascent"
+					DisplayName="Ascent"
+					Category="Font Metrics"
+					Description="Number of pixels from baseline to top of character cell."
+					Switch="[value]"
+				/>
+				<IntegerProperty
+					Name="Advance"
+					DisplayName="Advance"
+					Category="Font Metrics"
+					Description="Number of pixels to advance horizontally per character."
+					Switch="[value]"
+				/>
+				<StringProperty
+					Name="SymbolName"
+					DisplayName="Symbol name"
+					Category="Output"
+					Description="Name of symbol to use for emitted data."
+					Switch="[value]"
+				/>
+				<StringProperty
+					Name="OutputPath"
+					DisplayName="Output path"
+					Category="Output"
+					Description="Output path for emitted file."
+					Switch="[value]"
+					DefaultValue="$(ProjectDir)h\$(InputName).inl"
+				/>
+				<IntegerProperty
+					Name="LineGap"
+					DisplayName="Line gap"
+					Category="Font Metrics"
+					Description="Vertical distance in pixels between character cells on adjacent rows."
+					Switch="[value]"
+				/>
+				<BooleanProperty
+					Name="RawFont"
+					DisplayName="Raw font"
+					Category="Output"
+					Description="If set, only raw character data is encoded."
+					Switch="/raw"
+				/>
+			</Properties>
+		</CustomBuildRule>
+	</Rules>
+</VisualStudioToolFile>

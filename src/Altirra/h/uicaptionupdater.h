@@ -57,6 +57,8 @@ protected:
 	bool			mbForceUpdate;
 	bool			mbLastDebugging;
 	bool			mbLastShowFPS;
+	ATCPUMode		mLastCPUMode;
+	uint32			mLastCPUSubCycles;
 };
 
 #endif	// f_AT_UICAPTIONUPDATER_H

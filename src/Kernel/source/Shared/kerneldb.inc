@@ -120,19 +120,26 @@ holdch	= $007c			;temporary key hold area prior to shift/control lock logic
 countr	= $007e			;Screen Editor: line length
 		; $007f
 fr0		= $00d4			;FP: Accumulator 0
-_fr3	= $00da			;FP: Accumulator 4
+_fr3	= $00da			;FP: Accumulator 3 (officially FRE)
 fr1		= $00e0			;FP: Accumulator 1
-_fr2	= $00e6			;FP: Accumulator 2
-_fpres2	= $00ef			;BASIC: Used in sqr() routine -- must not be touched by FP code
-_fpres	= $00f0			;BASIC: Used in sin() routine -- must not be touched by FP code
+fr2		= $00e6			;FP: Accumulator 2
+_fpcocnt= $00ec			;FP: temporary storage - polynomial coefficient counter
+_fptemp0= $00ed			;FP: temporary storage - transcendental temporary (officially EEXP)
+_fptemp1= $00ee			;FP: temporary storage - transcendental temporary (officially NSIGN)
+;esign	  $00ef			;BASIC: Used in sqr() routine -- must not be touched by FP elementary functions
+;fchrflg  $00f0			;BASIC: Used in sin() routine -- must not be touched by any FP functions
 cix		= $00f2			;FP: Character index
 inbuff	= $00f3			;FP: ASCII conversion buffer
 		; $00f4
-_fpcount= $00f5
-_fptemp0= $00f6
-_fptemp1= $00f7
+		; $00f5			;FP: temporary storage -- also temporarily used by BASIC power routine
+		; $00f6			;FP: temporary storage
+		; $00f7			;FP: temporary storage -- also temporarily used by BASIC power routine
+		; $00f8			;FP: temporary storage
+		; $00f9			;FP: temporary storage
+		; $00fa			;FP: temporary storage
+degflg	= $00fb			;FP: degree/radian flag (0=radians, 6=degrees)
 flptr	= $00fc			;FP: pointer for floating-point loads and stores
-_flptr2	= $00fe
+fptr2	= $00fe			;FP: pointer for polynomial evaluation
 
 vdslst	= $0200			;display list interrupt vector
 vprced	= $0202			;serial bus proceed interrupt vector
@@ -168,7 +175,7 @@ lcount	= $0233			;Relocating loader: (XL/XE)
 lpenh	= $0234			;light pen horizontal pos
 lpenv	= $0235			;light pen vertical pos
 brkky	= $0236			;break key interrupt vector (OS B+ only)
-reladr	= $0238			;Relocating loader: temp address (XL/XE)
+vpirq	= $0238			;PBI device interrupt vector (XL/XE)
 		; $0239
 cdevic	= $023a			;SIO: command frame device ID
 ccomnd	= $023b			;SIO: command frame command ID
@@ -184,6 +191,9 @@ reclen	= $0245			;Relocating loader: record length (XL/XE)
 dsktim	= $0246			;Disk Handler: Disk operation timeout
 pdvmsk	= $0247			;PBI device mask (XL/XE)
 shpdvs	= $0248			;PBI device selection register shadow ($D1FF) (XL/XE)
+pdmsk	= $0249			;PBI device interrupt mask (XL/XE)
+reladr	= $024a			;Relocating loader: temp address (XL/XE)
+		; $024b
 fine	= $026e			;fine scrolling flag (XL/XE)
 gprior	= $026f			;shadow for PRIOR ($D01B)
 paddl0	= $0270			;shadow for POT0 ($D200)
@@ -330,5 +340,6 @@ chlink	= $03fb			;XL/XE: Relocated loader chain
 casbuf	= $03fd			;Cassette buffer (03FD-047F)
 lbuff	= $0580			;
 plyarg	= $05e0			;FP: Polynomial evaluation temp register
+fpscr	= $05e6			;FP: Temp evaluation register (used by LOG/LOG10)
 
 .endif

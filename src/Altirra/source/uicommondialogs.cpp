@@ -48,7 +48,7 @@ public:
 		mbox->AutoSize();
 
 		vdrefptr<IATUIAnchor> anchor;
-		ATUICreateTranslationAnchor(mbox->GetArea().size(), 0.5f, 0.5f, ~anchor);
+		ATUICreateTranslationAnchor(0.5f, 0.5f, ~anchor);
 		mbox->SetAnchor(anchor);
 
 		mbox->ShowModal();

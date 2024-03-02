@@ -24,6 +24,12 @@ VDDisplayImageView::VDDisplayImageView()
 VDDisplayImageView::~VDDisplayImageView() {
 }
 
+void VDDisplayImageView::SetImage() {
+	VDPixmap px = {};
+
+	SetImage(px, false);
+}
+
 void VDDisplayImageView::SetImage(const VDPixmap& px, bool dynamic) {
 	for(size_t i=0; i<vdcountof(mCaches); ++i) {
 		mCaches[i].mId = 0;

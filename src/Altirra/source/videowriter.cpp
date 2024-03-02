@@ -24,7 +24,7 @@ class IATVideoEncoder {
 public:
 	virtual ~IATVideoEncoder() {}
 
-	virtual void Compress(const VDPixmap& px, bool intra) = 0;
+	virtual void Compress(const VDPixmap& px, bool intra, bool encodeAll) = 0;
 
 	virtual uint32 GetEncodedLength() const = 0;
 	virtual const void *GetEncodedData() const = 0;
@@ -35,7 +35,7 @@ public:
 class ATVideoEncoderRaw : public IATVideoEncoder {
 public:
 	ATVideoEncoderRaw(uint32 w, uint32 h, int format);
-	void Compress(const VDPixmap& px, bool intra);
+	void Compress(const VDPixmap& px, bool intra, bool encodeAll);
 
 	uint32 GetEncodedLength() const { return mEncodedLength; }
 	const void *GetEncodedData() const { return mBuffer.data(); }
@@ -55,7 +55,7 @@ ATVideoEncoderRaw::ATVideoEncoderRaw(uint32 w, uint32 h, int format) {
 	mBufferRef.resize(size);
 }
 
-void ATVideoEncoderRaw::Compress(const VDPixmap& px, bool intra) {
+void ATVideoEncoderRaw::Compress(const VDPixmap& px, bool intra, bool encodeAll) {
 	mBufferRef.swap(mBuffer);
 
 	VDPixmap pxbuf = VDPixmapFromLayout(mLayout, mBuffer.data());
@@ -63,7 +63,7 @@ void ATVideoEncoderRaw::Compress(const VDPixmap& px, bool intra) {
 
 	VDPixmapBlt(pxbuf, px);
 
-	if (!intra) {
+	if (!intra && !encodeAll) {
 		const uint8 *src = (const uint8 *)pxbuf.data;
 		const uint8 *ref = (const uint8 *)pxref.data;
 		const uint32 w = pxbuf.w;
@@ -90,14 +90,15 @@ void ATVideoEncoderRaw::Compress(const VDPixmap& px, bool intra) {
 class ATVideoEncoderRLE : public IATVideoEncoder {
 public:
 	ATVideoEncoderRLE(uint32 w, uint32 h);
-	void Compress(const VDPixmap& px, bool intra);
-	void CompressIntra8();
-	void CompressInter8();
+	void Compress(const VDPixmap& px, bool intra, bool encodeAll);
 
 	uint32 GetEncodedLength() const { return mEncodedLength; }
 	const void *GetEncodedData() const { return mPackBuffer.data(); }
 
 protected:
+	void CompressIntra8();
+	void CompressInter8(bool encodeAll);
+
 	uint32 mWidth;
 	uint32 mHeight;
 	uint32 mEncodedLength;
@@ -119,14 +120,14 @@ ATVideoEncoderRLE::ATVideoEncoderRLE(uint32 w, uint32 h) {
 	mBufferRef.init(layout);
 }
 
-void ATVideoEncoderRLE::Compress(const VDPixmap& px, bool intra) {
+void ATVideoEncoderRLE::Compress(const VDPixmap& px, bool intra, bool encodeAll) {
 	mBuffer.swap(mBufferRef);
 	VDPixmapBlt(mBuffer, px);
 
 	if (intra)
 		CompressIntra8();
 	else
-		CompressInter8();
+		CompressInter8(encodeAll);
 }
 
 void ATVideoEncoderRLE::CompressIntra8() {
@@ -227,7 +228,7 @@ void ATVideoEncoderRLE::CompressIntra8() {
 	mEncodedLength = dst - dst0;
 }
 
-void ATVideoEncoderRLE::CompressInter8() {
+void ATVideoEncoderRLE::CompressInter8(bool encodeAll) {
 	uint8 *dst0 = mPackBuffer.data();
 	uint8 *dst = dst0;
 
@@ -371,7 +372,7 @@ void ATVideoEncoderRLE::CompressInter8() {
 		ref -= mBufferRef.pitch;
 	}
 
-	if (dst != dst0) {
+	if (dst != dst0 || encodeAll) {
 		// write EOF
 		*dst++ = 0;
 		*dst++ = 1;
@@ -1415,14 +1416,15 @@ namespace {
 class ATVideoEncoderZMBV : public IATVideoEncoder {
 public:
 	ATVideoEncoderZMBV(uint32 w, uint32 h, bool rgb32);
-	void Compress(const VDPixmap& px, bool intra);
-	void CompressIntra8(const VDPixmap& px);
-	void CompressInter8();
+	void Compress(const VDPixmap& px, bool intra, bool encodeAll);
 
 	uint32 GetEncodedLength() const { return mEncodedLength; }
 	const void *GetEncodedData() const { return mPackBuffer.data(); }
 
 protected:
+	void CompressIntra8(const VDPixmap& px);
+	void CompressInter8(bool encodeAll);
+
 	uint32 mWidth;
 	uint32 mHeight;
 	bool mbRgb32;
@@ -1492,7 +1494,7 @@ ATVideoEncoderZMBV::ATVideoEncoderZMBV(uint32 w, uint32 h, bool rgb32) {
 	mVecBufferPrev.resize(blkw * (blkh + 1) + 1, v0);
 }
 
-void ATVideoEncoderZMBV::Compress(const VDPixmap& px, bool intra) {
+void ATVideoEncoderZMBV::Compress(const VDPixmap& px, bool intra, bool encodeAll) {
 	mBuffer.swap(mBufferRef);
 	mVecBuffer.swap(mVecBufferPrev);
 
@@ -1516,7 +1518,7 @@ void ATVideoEncoderZMBV::Compress(const VDPixmap& px, bool intra) {
 	if (intra)
 		CompressIntra8(px);
 	else
-		CompressInter8();
+		CompressInter8(encodeAll);
 }
 
 void ATVideoEncoderZMBV::CompressIntra8(const VDPixmap& px) {
@@ -1831,7 +1833,7 @@ namespace {
 	}
 }
 
-void ATVideoEncoderZMBV::CompressInter8() {
+void ATVideoEncoderZMBV::CompressInter8(bool encodeAll) {
 	uint8 *dst0 = mPackBuffer.data();
 	uint8 *dst = dst0;
 
@@ -1985,7 +1987,7 @@ void ATVideoEncoderZMBV::CompressInter8() {
 		ref += mLayout.pitch * 16;
 	}
 
-	if (!delta) {
+	if (!delta && !encodeAll) {
 		mEncodedLength = 0;
 		return;
 	}
@@ -2010,7 +2012,7 @@ public:
 
 	void CheckExceptions();
 
-	void Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, IATUIRenderer *r);
+	void Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, bool encodeAllFrames, IATUIRenderer *r);
 	void Shutdown();
 
 	void WriteFrame(const VDPixmap& px, uint32 timestamp);
@@ -2024,6 +2026,7 @@ protected:
 	bool mbStereo;
 	bool mbHalfRate;
 	bool mbErrorState;
+	bool mbEncodeAllFrames;
 
 	bool	mbVideoTimestampSet;
 	bool	mbAudioPreskipSet;
@@ -2073,7 +2076,7 @@ void ATVideoWriter::CheckExceptions() {
 	}
 }
 
-void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, IATUIRenderer *r) {
+void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, bool encodeAllFrames, IATUIRenderer *r) {
 	if (!palette && venc == kATVideoEncoding_RLE)
 		throw MyError("RLE encoding is not available as the current emulator video settings require 24-bit video.");
 
@@ -2081,6 +2084,7 @@ void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w
 	mbStereo = stereo;
 	mbHalfRate = halfRate;
 	mbErrorState = false;
+	mbEncodeAllFrames = encodeAllFrames;
 	mbVideoTimestampSet = false;
 	mbAudioPreskipSet = false;
 	mFrameRate = frameRate.asDouble();
@@ -2284,7 +2288,7 @@ void ATVideoWriter::WriteFrame(const VDPixmap& px, uint32 timestamp) {
 
 		--mKeyCounter;
 
-		mpVideoEncoder->Compress(px, intra);
+		mpVideoEncoder->Compress(px, intra, mbEncodeAllFrames);
 
 		uint32 len = mpVideoEncoder->GetEncodedLength();
 		mVideoStream->write(len && intra ? IVDMediaOutputStream::kFlagKeyFrame : 0, mpVideoEncoder->GetEncodedData(), len, 1);

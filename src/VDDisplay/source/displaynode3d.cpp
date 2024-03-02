@@ -154,6 +154,36 @@ VDDisplaySourceNode3D::~VDDisplaySourceNode3D() {
 
 ///////////////////////////////////////////////////////////////////////////
 
+VDDisplayTextureSourceNode3D::VDDisplayTextureSourceNode3D()
+	: mpImageTex(NULL)
+{
+}
+
+VDDisplayTextureSourceNode3D::~VDDisplayTextureSourceNode3D() {
+	Shutdown();
+}
+
+bool VDDisplayTextureSourceNode3D::Init(IVDTTexture2D *tex, const VDDisplaySourceTexMapping& mapping) {
+	mpImageTex = tex;
+	mpImageTex->AddRef();
+	mMapping = mapping;
+	return true;
+}
+
+void VDDisplayTextureSourceNode3D::Shutdown() {
+	vdsaferelease <<= mpImageTex;
+}
+
+VDDisplaySourceTexMapping VDDisplayTextureSourceNode3D::GetTextureMapping() const {
+	return mMapping;
+}
+
+IVDTTexture2D *VDDisplayTextureSourceNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx) {
+	return mpImageTex;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 VDDisplayImageSourceNode3D::VDDisplayImageSourceNode3D()
 	: mpImageTex(NULL)
 {
@@ -1254,6 +1284,10 @@ VDDisplayStretchBicubicNode3D::VDDisplayStretchBicubicNode3D()
 
 VDDisplayStretchBicubicNode3D::~VDDisplayStretchBicubicNode3D() {
 	Shutdown();
+}
+
+const vdrect32 VDDisplayStretchBicubicNode3D::GetDestArea() const {
+	return vdrect32(mDstX, mDstY, mDstW, mDstH);
 }
 
 bool VDDisplayStretchBicubicNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, uint32 srcw, uint32 srch, sint32 dstx, sint32 dsty, uint32 dstw, uint32 dsth, VDDisplaySourceNode3D *src) {

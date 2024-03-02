@@ -44,6 +44,8 @@ inline bool VDIsAtLeastVistaW32() {
 	return (sint32)(::GetVersion() & 0x800000FF) >= 6;
 }
 
+bool VDIsAtLeast81W32();
+
 // useful constants missing from the Platform SDK
 
 enum {

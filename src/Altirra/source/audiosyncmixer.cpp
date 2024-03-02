@@ -31,6 +31,7 @@ struct ATAudioSyncMixer::SoundPred {
 ATAudioSyncMixer::ATAudioSyncMixer()
 	: mNextSoundId(1)
 {
+	mMixLevels[kATAudioMix_Drive] = 0.8f;
 }
 
 ATAudioSyncMixer::~ATAudioSyncMixer() {
@@ -44,7 +45,15 @@ void ATAudioSyncMixer::Shutdown() {
 	mpScheduler = NULL;
 }
 
-uint32 ATAudioSyncMixer::AddSound(uint32 delay, const sint16 *sample, uint32 len, float volume) {
+float ATAudioSyncMixer::GetMixLevel(ATAudioMix mix) const {
+	return mMixLevels[mix];
+}
+
+void ATAudioSyncMixer::SetMixLevel(ATAudioMix mix, float level) {
+	mMixLevels[mix] = level;
+}
+
+uint32 ATAudioSyncMixer::AddSound(ATAudioMix mix, uint32 delay, const sint16 *sample, uint32 len, float volume) {
 	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler) + delay;
 
 	if (mFreeSounds.empty())
@@ -60,7 +69,7 @@ uint32 ATAudioSyncMixer::AddSound(uint32 delay, const sint16 *sample, uint32 len
 	s->mLoopPeriod = kATCyclesPerSyncSample * len;
 	s->mEndTime = t + s->mLoopPeriod;
 	s->mLength = len;
-	s->mVolume = volume * (60.0f * 28.0f / 32767.0f);
+	s->mVolume = volume * (60.0f * 28.0f / 32767.0f) * mMixLevels[mix];
 	s->mpSample = sample;
 	s->mbEndValid = true;
 
@@ -68,7 +77,7 @@ uint32 ATAudioSyncMixer::AddSound(uint32 delay, const sint16 *sample, uint32 len
 	return s->mId;
 }
 
-uint32 ATAudioSyncMixer::AddLoopingSound(uint32 delay, const sint16 *sample, uint32 len, float volume) {
+uint32 ATAudioSyncMixer::AddLoopingSound(ATAudioMix mix, uint32 delay, const sint16 *sample, uint32 len, float volume) {
 	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler) + delay;
 
 	if (mFreeSounds.empty())
@@ -84,7 +93,7 @@ uint32 ATAudioSyncMixer::AddLoopingSound(uint32 delay, const sint16 *sample, uin
 	s->mLoopPeriod = kATCyclesPerSyncSample * len;
 	s->mEndTime = t + s->mLoopPeriod;
 	s->mLength = len;
-	s->mVolume = volume * (60.0f * 28.0f / 32767.0f);
+	s->mVolume = volume * (60.0f * 28.0f / 32767.0f) * mMixLevels[mix];
 	s->mpSample = sample;
 	s->mbEndValid = false;
 

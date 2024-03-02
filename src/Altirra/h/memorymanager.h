@@ -62,14 +62,21 @@ class ATMemoryManager : public ATCPUEmulatorMemory {
 	ATMemoryManager(const ATMemoryManager&);
 	ATMemoryManager& operator=(const ATMemoryManager&);
 public:
+	enum { kChipReadNeedsDelay = -256 };
+
 	ATMemoryManager();
 	~ATMemoryManager();
 
 	const uintptr *GetAnticMemoryMap() const { return mAnticReadPageMap; }
+	uint8 *GetHighMemory() { return mHighMemory.data(); }
+	uint32 GetHighMemorySize() const { return (uint32)mHighMemory.size(); }
 
-	void Init(const void *highMemory, uint32 highMemoryBanks);
+	void Init();
+
+	void SetHighMemoryBanks(int32 banks);
 
 	void SetFloatingDataBus(bool floating) { mbFloatingDataBus = floating; }
+	void SetFastBusEnabled(bool enabled);
 
 	void DumpStatus();
 
@@ -82,21 +89,28 @@ public:
 	void SetLayerMemory(ATMemoryLayer *layer, const uint8 *base, uint32 pageOffset, uint32 pages, uint32 addrMask = 0xFFFFFFFFU, int readOnly = -1);
 	void SetLayerName(ATMemoryLayer *layer, const char *name);
 
+	// Controls whether a memory layer exists on the chip RAM or fast RAM bus
+	// (accelerated 65C816 mode only). The default is chip.
+	void SetLayerFastBus(ATMemoryLayer *layer, bool fast);
+
 	uint8 AnticReadByte(uint32 address);
 	uint8 DebugAnticReadByte(uint16 address);
 	void DebugAnticReadMemory(void *dst, uint16 address, uint32 len);
 	uint8 CPUReadByte(uint32 address);
 	uint8 CPUExtReadByte(uint16 address, uint8 bank);
+	sint32 CPUExtReadByteAccel(uint16 address, uint8 bank, bool chipOK);
 	uint8 CPUDebugReadByte(uint16 address);
 	uint8 CPUDebugExtReadByte(uint16 address, uint8 bank);
 	void CPUWriteByte(uint16 address, uint8 value);
 	void CPUExtWriteByte(uint16 address, uint8 bank, uint8 value);
+	sint32 CPUExtWriteByteAccel(uint16 address, uint8 bank, uint8 value, bool chipOK);
 
 protected:
 	struct MemoryLayer : public ATMemoryLayer {
-		int mPriority;
+		sint16 mPriority;
 		bool mbEnabled[3];
 		bool mbReadOnly;
+		bool mbFastBus;
 		const uint8 *mpBase;
 		uint32 mAddrMask;
 		uint32 mPageOffset;
@@ -112,7 +126,7 @@ protected:
 	};
 
 	struct MemoryNode {
-		ATMemoryReadHandler mpDebugReadHandler;
+		MemoryLayer *mpLayer;
 
 		union {
 			ATMemoryReadHandler mpReadHandler;
@@ -129,17 +143,22 @@ protected:
 
 	static sint32 DummyReadHandler(void *thisptr, uint32 addr);
 	static bool DummyWriteHandler(void *thisptr, uint32 addr, uint8 value);
+	static sint32 ChipReadHandler(void *thisptr, uint32 addr);
+	static bool ChipWriteHandler(void *thisptr, uint32 addr, uint8 value);
 
 	typedef vdfastvector<MemoryLayer *> Layers;
 	Layers mLayers;
 	Layers mLayerTempList;
 
 	bool	mbFloatingDataBus;
+	bool	mbFastBusEnabled;
 
 	bool	mbSimple_4000_7FFF[3];
 
 	MemoryNode *mpFreeNodes;
 	VDLinearAllocator mAllocator;
+
+	vdblock<uint8> mHighMemory;
 
 	VDALIGN(32) uintptr mCPUReadPageMap[256];
 	uintptr mCPUWritePageMap[256];
@@ -148,13 +167,14 @@ protected:
 	const uintptr	*mReadBankTable[256];
 	uintptr			*mWriteBankTable[256];
 
-	uintptr			mHighMemoryPageTable[256];
-
 	uintptr			mDummyReadPageTable[256];
 	uintptr			mDummyWritePageTable[256];
 
 	MemoryNode		mDummyReadNode;
 	MemoryNode		mDummyWriteNode;
+	MemoryLayer		mDummyLayer;
+
+	uintptr			mHighMemoryPageTables[256][256];	// 256K!
 };
 
 #endif	// f_AT_MEMORYMANAGER_H

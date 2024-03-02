@@ -106,6 +106,25 @@ public:
 };
 
 ///////////////////////////////////////////////////////////////////////////
+// VDDisplayTextureSourceNode3D
+//
+class VDDisplayTextureSourceNode3D : public VDDisplaySourceNode3D {
+public:
+	VDDisplayTextureSourceNode3D();
+	~VDDisplayTextureSourceNode3D();
+
+	bool Init(IVDTTexture2D *tex, const VDDisplaySourceTexMapping& mapping);
+	void Shutdown();
+
+	VDDisplaySourceTexMapping GetTextureMapping() const;
+	IVDTTexture2D *Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx);
+
+private:
+	IVDTTexture2D *mpImageTex;
+	VDDisplaySourceTexMapping mMapping;
+};
+
+///////////////////////////////////////////////////////////////////////////
 // VDDisplayImageSourceNode3D
 //
 // Image source nodes provide static or animated images through a texture.
@@ -292,6 +311,8 @@ class VDDisplayStretchBicubicNode3D : public VDDisplayNode3D {
 public:
 	VDDisplayStretchBicubicNode3D();
 	~VDDisplayStretchBicubicNode3D();
+
+	const vdrect32 GetDestArea() const;
 
 	bool Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, uint32 srcw, uint32 srch, sint32 dstx, sint32 dsty, uint32 dstw, uint32 dsth, VDDisplaySourceNode3D *child);
 	void Shutdown();

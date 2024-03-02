@@ -11,6 +11,10 @@
 #include "uirender.h"
 #include "uivideodisplaywindow.h"
 #include "uionscreenkeyboard.h"
+#include "uitypes.h"
+#include "uilabel.h"
+#include "uianchor.h"
+#include "xep80.h"
 
 extern ATSimulator g_sim;
 
@@ -21,8 +25,31 @@ extern bool g_mouseClipped;
 extern bool g_mouseCaptured;
 extern bool g_mouseAutoCapture;
 extern ATUIKeyboardOptions g_kbdOpts;
+extern bool g_xepViewEnabled;
+extern bool g_xepViewAutoswitchingEnabled;
+extern ATDisplayStretchMode g_displayStretchMode;
+extern ATDisplayFilterMode g_dispFilterMode;
+extern int g_dispFilterSharpness;
 
 void ProcessKey(char c, bool repeat, bool allowQueue, bool useCooldown);
+
+void ATUISetXEPViewEnabled(bool enabled) {
+	if (g_xepViewEnabled == enabled)
+		return;
+
+	g_xepViewEnabled = enabled;
+
+	if (g_sim.GetXEP80()) {
+		IATUIRenderer *uir = g_sim.GetUIRenderer();
+
+		if (uir) {
+			if (enabled)
+				uir->SetStatusMessage(L"XEP80 View");
+			else
+				uir->SetStatusMessage(L"Normal View");
+		}
+	}
+}
 
 ATUIVideoDisplayWindow::ATUIVideoDisplayWindow()
 	: mLastVkeyPressed(0)
@@ -37,6 +64,12 @@ ATUIVideoDisplayWindow::ATUIVideoDisplayWindow()
 	, mbHoverTipActive(false)
 	, mpEnhTextEngine(NULL)
 	, mpOSK(NULL)
+	, mpSEM(NULL)
+	, mpXEP(NULL)
+	, mXEPChangeCount(0)
+	, mXEPLayoutChangeCount(0)
+	, mXEPDataReceivedCount(0)
+	, mpUILabelBadSignal(NULL)
 	, mAllowContextMenuEvent()
 	, mDisplayContextMenuEvent()
 {
@@ -45,6 +78,21 @@ ATUIVideoDisplayWindow::ATUIVideoDisplayWindow()
 }
 
 ATUIVideoDisplayWindow::~ATUIVideoDisplayWindow() {
+	Shutdown();
+}
+
+bool ATUIVideoDisplayWindow::Init(ATSimulatorEventManager& sem) {
+	mpSEM = &sem;
+	mpSEM->AddCallback(this);
+
+	return true;
+}
+
+void ATUIVideoDisplayWindow::Shutdown() {
+	if (mpSEM) {
+		mpSEM->RemoveCallback(this);
+		mpSEM = NULL;
+	}
 }
 
 void ATUIVideoDisplayWindow::ToggleCaptureMouse() {
@@ -83,38 +131,76 @@ void ATUIVideoDisplayWindow::Copy() {
 	if (mDragPreviewSpans.empty())
 		return;
 
-	ATAnticEmulator& antic = g_sim.GetAntic();
-	const ATAnticEmulator::DLHistoryEntry *dlhist = antic.GetDLHistory();
+	if (g_xepViewEnabled && mpXEP) {
+		uint8 data[80];
 
-	char data[48];
+		VDStringA s;
 
-	VDStringA s;
+		for(TextSpans::const_iterator it(mDragPreviewSpans.begin()), itEnd(mDragPreviewSpans.end());
+			it != itEnd;
+			++it)
+		{
+			const TextSpan& ts = *it;
+			int actual = mpXEP->ReadRawText(data, ts.mX, ts.mY, 80);
 
-	for(TextSpans::const_iterator it(mDragPreviewSpans.begin()), itEnd(mDragPreviewSpans.end());
-		it != itEnd;
-		++it)
-	{
-		const TextSpan& ts = *it;
+			if (!actual)
+				continue;
 
-		int actual = ReadText(data, ts.mY, ts.mCharX, ts.mCharWidth);
+			for(int i=0; i<actual; ++i) {
+				data[i] &= 0x7f;
 
-		if (!actual)
-			continue;
+				if ((uint32)(data[i] - 0x20) >= 0x7d)
+					data[i] = ' ';
+			}
 
-		int base = 0;
-		while(base < actual && data[base] == ' ')
-			++base;
+			int base = 0;
+			while(base < actual && data[base] == ' ')
+				++base;
 
-		while(actual > base && data[actual - 1] == ' ')
-			--actual;
+			while(actual > base && data[actual - 1] == ' ')
+				--actual;
 
-		s.append(data + base, data + actual);
+			s.append((const char *)data + base, (const char *)data + actual);
 
-		if (&*it != &mDragPreviewSpans.back())
-			s += "\r\n";
+			if (&*it != &mDragPreviewSpans.back())
+				s += "\r\n";
+		}
+
+		mpManager->GetClipboard()->CopyText(s.c_str());
+	} else {
+		ATAnticEmulator& antic = g_sim.GetAntic();
+		const ATAnticEmulator::DLHistoryEntry *dlhist = antic.GetDLHistory();
+
+		char data[48];
+
+		VDStringA s;
+
+		for(TextSpans::const_iterator it(mDragPreviewSpans.begin()), itEnd(mDragPreviewSpans.end());
+			it != itEnd;
+			++it)
+		{
+			const TextSpan& ts = *it;
+
+			int actual = ReadText(data, ts.mY, ts.mCharX, ts.mCharWidth);
+
+			if (!actual)
+				continue;
+
+			int base = 0;
+			while(base < actual && data[base] == ' ')
+				++base;
+
+			while(actual > base && data[actual - 1] == ' ')
+				--actual;
+
+			s.append(data + base, data + actual);
+
+			if (&*it != &mDragPreviewSpans.back())
+				s += "\r\n";
+		}
+
+		mpManager->GetClipboard()->CopyText(s.c_str());
 	}
-
-	mpManager->GetClipboard()->CopyText(s.c_str());
 }
 
 void ATUIVideoDisplayWindow::SetDisplayRect(const vdrect32& r) {
@@ -137,6 +223,48 @@ void ATUIVideoDisplayWindow::AddXorRect(int x1, int y1, int x2, int y2) {
 	xr.mY2 = y2;
 
 	Invalidate();
+}
+
+void ATUIVideoDisplayWindow::SetXEP(ATXEP80Emulator *xep) {
+	mpXEP = xep;
+
+	if (xep) {
+		// do force a change event next frame
+		mXEPChangeCount = xep->GetFrameChangeCount() - 1;
+		mXEPLayoutChangeCount = xep->GetFrameLayoutChangeCount() - 1;
+
+		// _don't_ force a data received event next frame
+		mXEPDataReceivedCount = xep->GetDataReceivedCount();
+	} else {
+		mXEPImageView.SetImage();
+	}
+}
+
+void ATUIVideoDisplayWindow::OnSimulatorEvent(ATSimulatorEvent ev) {
+	switch(ev) {
+		case kATSimEvent_ColdReset:
+		case kATSimEvent_WarmReset:
+			if (mpXEP) {
+				if (g_xepViewAutoswitchingEnabled)
+					ATUISetXEPViewEnabled(false);
+
+				mXEPDataReceivedCount = mpXEP->GetDataReceivedCount();
+			}
+			break;
+
+		case kATSimEvent_FrameTick:
+			if (mpXEP) {
+				uint32 c = mpXEP->GetDataReceivedCount();
+
+				if (mXEPDataReceivedCount != c) {
+					mXEPDataReceivedCount = c;
+
+					if (g_xepViewAutoswitchingEnabled && !g_xepViewEnabled)
+						ATUISetXEPViewEnabled(true);
+				}
+			}
+			break;
+	}
 }
 
 void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dblclk) {
@@ -195,10 +323,20 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 	// LMB.
 
 	if (vk == kATUIVK_LButton) {
-		mbDragActive = MapPixelToBeamPosition(x, y, mDragAnchorX, mDragAnchorY, true)
-			&& GetModeLineYPos(mDragAnchorY, true) >= 0;
+		if (g_xepViewEnabled && mpXEP) {
+			mbDragActive = GetXEP80Area().contains(vdpoint32(x, y));
+
+			if (mbDragActive) {
+				mDragAnchorX = x;
+				mDragAnchorY = y;
+			}
+		} else {
+			mbDragActive = MapPixelToBeamPosition(x, y, mDragAnchorX, mDragAnchorY, true)
+				&& GetModeLineYPos(mDragAnchorY, true) >= 0;
+		}
 
 		if (mbDragActive) {
+			ClearDragPreview();
 			SetCursorImage(kATUICursorImage_IBeam);
 			CaptureCursor();
 		}
@@ -288,163 +426,216 @@ void ATUIVideoDisplayWindow::OnMouseLeave() {
 		g_sim.GetUIRenderer()->SetHoverTip(0, 0, NULL);
 }
 
-void ATUIVideoDisplayWindow::OnMouseHover(sint32 x, sint32 y) {
-	if (g_mouseCaptured)
-		return;
+namespace {
+	VDStringW GetMessageForError(char *data) {
+		// trim and null-terminate the string
+		char *s = data;
 
-	if (mpManager->IsKeyDown(kATUIVK_Shift)) {
-		// don't process if we're in query mode
-		if (!g_sim.IsRunning() && ATIsDebugConsoleActive())
-			return;
+		while(*s == ' ')
+			++s;
 
-		// tooltip request -- let's try to grab text
-		int xc;
-		int yc;
+		char *t = s + strlen(s);
 
-		bool valid = false;
+		while(t != s && t[-1] == ' ')
+			--t;
 
-		if (MapPixelToBeamPosition(x, y, xc, yc, false)) {
-			// attempt to copy out text
-			int ymode = GetModeLineYPos(yc, true);
+		*t = 0;
 
-			if (ymode >= 0) {
-				char data[49];
+		// convert to uppercase
+		for(char *s2 = s; *s2; ++s2)
+			*s2 = toupper((unsigned char)*s2);
 
-				int actual = ReadText(data, ymode, 0, 48);
+		// look for an error
+		t = strstr(s, "ERROR");
+		VDStringW msg;
+		if (t) {
+			// skip ERROR string
+			t += 5;
 
-				// trim and null-terminate the string
-				char *s = data;
+			// skip blanks
+			while(*t == ' ')
+				++t;
 
-				while(*s == ' ')
-					++s;
+			// look for an optional dash or pound
+			if (*t == '#' || *t == '-') {
+				++t;
 
-				char *t = s + strlen(s);
+				// skip more blanks
+				while(*t == ' ')
+					++t;
+			}
 
-				while(t != s && t[-1] == ' ')
-					--t;
+			// look for a digit
+			if ((unsigned char)(*t - '0') < 10) {
+				int errCode = atoi(t);
 
-				*t = 0;
+				if (errCode >= 2 && errCode <= 255) {
+					msg.sprintf(L"<b>Error %u</b>\n", errCode);
 
-				// convert to uppercase
-				for(char *s2 = s; *s2; ++s2)
-					*s2 = toupper((unsigned char)*s2);
+					switch(errCode) {
+						case 2: msg += L"<b>Atari BASIC:</b> Out of memory"; break;
+						case 3: msg += L"<b>Atari BASIC:</b> Value error"; break;
+						case 4: msg += L"<b>Atari BASIC:</b> Too many variables"; break;
+						case 5: msg += L"<b>Atari BASIC:</b> String length error"; break;
+						case 6: msg += L"<b>Atari BASIC:</b> Out of data"; break;
+						case 7: msg += L"<b>Atari BASIC:</b> Number &gt;32767"; break;
+						case 8: msg += L"<b>Atari BASIC:</b> Input statement error"; break;
+						case 9: msg += L"<b>Atari BASIC:</b> DIM error"; break;
+						case 10: msg += L"<b>Atari BASIC:</b> Argument stack overflow"; break;
+						case 11: msg += L"<b>Atari BASIC:</b> Floating point overflow/underflow"; break;
+						case 12: msg += L"<b>Atari BASIC:</b> Line not found"; break;
+						case 13: msg += L"<b>Atari BASIC:</b> No matching FOR statement"; break;
+						case 14: msg += L"<b>Atari BASIC:</b> Line too long"; break;
+						case 15: msg += L"<b>Atari BASIC:</b> GOSUB or FOR line deleted"; break;
+						case 16: msg += L"<b>Atari BASIC:</b> RETURN error"; break;
+						case 17: msg += L"<b>Atari BASIC:</b> Garbage error"; break;
+						case 18: msg += L"<b>Atari BASIC:</b> Invalid string character"; break;
+						case 19: msg += L"<b>Atari BASIC:</b> LOAD program too long"; break;
+						case 20: msg += L"<b>Atari BASIC:</b> Device number error"; break;
+						case 21: msg += L"<b>Atari BASIC:</b> LOAD file error"; break;
 
-				// look for an error
-				t = strstr(s, "ERROR");
+						case 128: msg += L"<b>CIO:</b> User break abort"; break;
+						case 129: msg += L"<b>CIO:</b> IOCB in use"; break;
+						case 130: msg += L"<b>CIO:</b> Unknown device"; break;
+						case 131: msg += L"<b>CIO:</b> IOCB write only"; break;
+						case 132: msg += L"<b>CIO:</b> Invalid command"; break;
+						case 133: msg += L"<b>CIO:</b> IOCB not open"; break;
+						case 134: msg += L"<b>CIO:</b> Invalid IOCB"; break;
+						case 135: msg += L"<b>CIO:</b> IOCB read only"; break;
+						case 136: msg += L"<b>CIO:</b> End of file"; break;
+						case 137: msg += L"<b>CIO:</b> Truncated record"; break;
+						case 138: msg += L"<b>CIO/SIO:</b> Timeout"; break;
+						case 139: msg += L"<b>CIO/SIO:</b> Device NAK"; break;
+						case 140: msg += L"<b>CIO/SIO:</b> Bad frame"; break;
+						case 142: msg += L"<b>CIO/SIO:</b> Serial input overrun"; break;
+						case 143: msg += L"<b>CIO/SIO:</b> Checksum error"; break;
+						case 144: msg += L"<b>CIO/SIO:</b> Device error or write protected disk"; break;
+						case 145: msg += L"<b>CIO:</b> Bad screen mode"; break;
+						case 146: msg += L"<b>CIO:</b> Not supported"; break;
+						case 147: msg += L"<b>CIO:</b> Out of memory"; break;
 
-				VDStringW msg;
-				if (t) {
-					// skip ERROR string
-					t += 5;
-
-					// skip blanks
-					while(*t == ' ')
-						++t;
-
-					// look for an optional dash or pound
-					if (*t == '#' || *t == '-') {
-						++t;
-
-						// skip more blanks
-						while(*t == ' ')
-							++t;
+						case 160: msg += L"<b>DOS:</b> Invalid drive number"; break;
+						case 161: msg += L"<b>DOS:</b> Too many open files"; break;
+						case 162: msg += L"<b>DOS:</b> Disk full"; break;
+						case 163: msg += L"<b>DOS:</b> Fatal disk I/O error"; break;
+						case 164: msg += L"<b>DOS:</b> File number mismatch"; break;
+						case 165: msg += L"<b>DOS:</b> File name error"; break;
+						case 166: msg += L"<b>DOS:</b> POINT data length error"; break;
+						case 167: msg += L"<b>DOS:</b> File locked"; break;
+						case 168: msg += L"<b>DOS:</b> Command invalid"; break;
+						case 169: msg += L"<b>DOS:</b> Directory full"; break;
+						case 170: msg += L"<b>DOS:</b> File not found"; break;
+						case 171: msg += L"<b>DOS:</b> Invalid POINT"; break;
 					}
-
-					// look for a digit
-					if ((unsigned char)(*t - '0') < 10) {
-						int errCode = atoi(t);
-
-						if (errCode >= 2 && errCode <= 255) {
-							msg.sprintf(L"<b>Error %u</b>\n", errCode);
-
-							switch(errCode) {
-								case 2: msg += L"<b>Atari BASIC:</b> Out of memory"; break;
-								case 3: msg += L"<b>Atari BASIC:</b> Value error"; break;
-								case 4: msg += L"<b>Atari BASIC:</b> Too many variables"; break;
-								case 5: msg += L"<b>Atari BASIC:</b> String length error"; break;
-								case 6: msg += L"<b>Atari BASIC:</b> Out of data"; break;
-								case 7: msg += L"<b>Atari BASIC:</b> Number &gt;32767"; break;
-								case 8: msg += L"<b>Atari BASIC:</b> Input statement error"; break;
-								case 9: msg += L"<b>Atari BASIC:</b> DIM error"; break;
-								case 10: msg += L"<b>Atari BASIC:</b> Argument stack overflow"; break;
-								case 11: msg += L"<b>Atari BASIC:</b> Floating point overflow/underflow"; break;
-								case 12: msg += L"<b>Atari BASIC:</b> Line not found"; break;
-								case 13: msg += L"<b>Atari BASIC:</b> No matching FOR statement"; break;
-								case 14: msg += L"<b>Atari BASIC:</b> Line too long"; break;
-								case 15: msg += L"<b>Atari BASIC:</b> GOSUB or FOR line deleted"; break;
-								case 16: msg += L"<b>Atari BASIC:</b> RETURN error"; break;
-								case 17: msg += L"<b>Atari BASIC:</b> Garbage error"; break;
-								case 18: msg += L"<b>Atari BASIC:</b> Invalid string character"; break;
-								case 19: msg += L"<b>Atari BASIC:</b> LOAD program too long"; break;
-								case 20: msg += L"<b>Atari BASIC:</b> Device number error"; break;
-								case 21: msg += L"<b>Atari BASIC:</b> LOAD file error"; break;
-
-								case 128: msg += L"<b>CIO:</b> User break abort"; break;
-								case 129: msg += L"<b>CIO:</b> IOCB in use"; break;
-								case 130: msg += L"<b>CIO:</b> Unknown device"; break;
-								case 131: msg += L"<b>CIO:</b> IOCB write only"; break;
-								case 132: msg += L"<b>CIO:</b> Invalid command"; break;
-								case 133: msg += L"<b>CIO:</b> IOCB not open"; break;
-								case 134: msg += L"<b>CIO:</b> Invalid IOCB"; break;
-								case 135: msg += L"<b>CIO:</b> IOCB read only"; break;
-								case 136: msg += L"<b>CIO:</b> End of file"; break;
-								case 137: msg += L"<b>CIO:</b> Truncated record"; break;
-								case 138: msg += L"<b>CIO/SIO:</b> Timeout"; break;
-								case 139: msg += L"<b>CIO/SIO:</b> Device NAK"; break;
-								case 140: msg += L"<b>CIO/SIO:</b> Bad frame"; break;
-								case 142: msg += L"<b>CIO/SIO:</b> Serial input overrun"; break;
-								case 143: msg += L"<b>CIO/SIO:</b> Checksum error"; break;
-								case 144: msg += L"<b>CIO/SIO:</b> Device error or write protected disk"; break;
-								case 145: msg += L"<b>CIO:</b> Bad screen mode"; break;
-								case 146: msg += L"<b>CIO:</b> Not supported"; break;
-								case 147: msg += L"<b>CIO:</b> Out of memory"; break;
-
-								case 160: msg += L"<b>DOS:</b> Invalid drive number"; break;
-								case 161: msg += L"<b>DOS:</b> Too many open files"; break;
-								case 162: msg += L"<b>DOS:</b> Disk full"; break;
-								case 163: msg += L"<b>DOS:</b> Fatal disk I/O error"; break;
-								case 164: msg += L"<b>DOS:</b> File number mismatch"; break;
-								case 165: msg += L"<b>DOS:</b> File name error"; break;
-								case 166: msg += L"<b>DOS:</b> POINT data length error"; break;
-								case 167: msg += L"<b>DOS:</b> File locked"; break;
-								case 168: msg += L"<b>DOS:</b> Command invalid"; break;
-								case 169: msg += L"<b>DOS:</b> Directory full"; break;
-								case 170: msg += L"<b>DOS:</b> File not found"; break;
-								case 171: msg += L"<b>DOS:</b> Invalid POINT"; break;
-							}
-						}
-					}
-				}
-
-				if (msg.empty() && *s)
-					msg = L"There is no help for this message.\nHover over an SIO, CIO, BASIC, or DOS error message for help.";
-
-				if (!msg.empty()) {
-					int xp1, xp2, yp1, yp2;
-					MapBeamPositionToPixel(0, ymode, xp1, yp1);
-
-					ATAnticEmulator& antic = g_sim.GetAntic();
-					const ATAnticEmulator::DLHistoryEntry *dlhist = antic.GetDLHistory();
-					while(++ymode < 248 && !dlhist[ymode].mbValid)
-						;
-
-					MapBeamPositionToPixel(228, ymode, xp2, yp2);
-
-					mHoverTipArea.set(xp1, yp1, xp2, yp2);
-
-					g_sim.GetUIRenderer()->SetHoverTip(x, y, msg.c_str());
-					mbHoverTipActive = true;
-					valid = true;
 				}
 			}
 		}
 
-		if (!valid) {
-			g_sim.GetUIRenderer()->SetHoverTip(x, y, NULL);
-			mbHoverTipActive = false;
-		}
-	} else {
+		if (msg.empty() && *s)
+			msg = L"There is no help for this message.\nHover over an SIO, CIO, BASIC, or DOS error message for help.";
+
+		return msg;
+	}
+}
+
+void ATUIVideoDisplayWindow::OnMouseHover(sint32 x, sint32 y) {
+	if (g_mouseCaptured)
+		return;
+
+	if (!mpManager->IsKeyDown(kATUIVK_Shift)) {
 		SetCursorImage(kATUICursorImage_Hidden);
+		return;
+	}
+
+	// don't process if we're in query mode
+	if (!g_sim.IsRunning() && ATIsDebugConsoleActive())
+		return;
+
+	// tooltip request -- let's try to grab text
+	int xc;
+	int yc;
+
+	bool valid = false;
+
+	if (g_xepViewEnabled && mpXEP) {
+		const vdrect32& rBlit = GetXEP80Area();
+		const vdrect32& rDisp = mpXEP->GetDisplayArea();
+
+		if (rBlit.contains(vdpoint32(x, y)) && !rDisp.empty()) {
+			int dx = VDRoundToInt((float)x * (float)rDisp.width() / (float)rBlit.width());
+			int dy = VDRoundToInt((float)y * (float)rDisp.height() / (float)rBlit.height());
+
+			const vdpoint32 caretPos = mpXEP->PixelToCaretPos(vdpoint32(dx, dy));
+
+			uint8 buf[81];
+			int actual = mpXEP->ReadRawText(buf, 0, caretPos.y, 80);
+
+			char text[81];
+			for(int i=0; i<actual; ++i) {
+				uint8 c = buf[i] & 0x7f;
+
+				if ((uint8)(c - 0x20) > 0x5f)
+					c = 0x20;
+
+				text[i] = (char)c;
+			}
+
+			text[actual] = 0;
+
+			const VDStringW& msg = GetMessageForError(text);
+
+			if (!msg.empty()) {
+				const vdrect32& lineRect = mpXEP->CharToPixelRect(vdrect32(0, caretPos.y, mpXEP->GetTextDisplayInfo().mColumns, caretPos.y + 1));
+
+				float scaleX = (float)rBlit.width() / (float)rDisp.width();
+				float scaleY = (float)rBlit.height() / (float)rDisp.height();
+
+				mHoverTipArea.set(
+					VDRoundToInt(lineRect.left * scaleX + rBlit.left),
+					VDRoundToInt(lineRect.top * scaleY + rBlit.top),
+					VDRoundToInt(lineRect.right * scaleX + rBlit.left),
+					VDRoundToInt(lineRect.bottom * scaleY + rBlit.top));
+
+				g_sim.GetUIRenderer()->SetHoverTip(x, y, msg.c_str());
+				mbHoverTipActive = true;
+				valid = true;
+			}
+		}
+	} else if (MapPixelToBeamPosition(x, y, xc, yc, false)) {
+		// attempt to copy out text
+		int ymode = GetModeLineYPos(yc, true);
+
+		if (ymode >= 0) {
+			char data[49];
+
+			int actual = ReadText(data, ymode, 0, 48);
+			data[actual] = 0;
+
+			const VDStringW& msg = GetMessageForError(data);
+
+			if (!msg.empty()) {
+				int xp1, xp2, yp1, yp2;
+				MapBeamPositionToPixel(0, ymode, xp1, yp1);
+
+				ATAnticEmulator& antic = g_sim.GetAntic();
+				const ATAnticEmulator::DLHistoryEntry *dlhist = antic.GetDLHistory();
+				while(++ymode < 248 && !dlhist[ymode].mbValid)
+					;
+
+				MapBeamPositionToPixel(228, ymode, xp2, yp2);
+
+				mHoverTipArea.set(xp1, yp1, xp2, yp2);
+
+				g_sim.GetUIRenderer()->SetHoverTip(x, y, msg.c_str());
+				mbHoverTipActive = true;
+				valid = true;
+			}
+		}
+	}
+
+	if (!valid) {
+		g_sim.GetUIRenderer()->SetHoverTip(x, y, NULL);
+		mbHoverTipActive = false;
 	}
 }
 
@@ -573,11 +764,27 @@ void ATUIVideoDisplayWindow::OnCreate() {
 
 	BindAction(kATUIVK_UIOption, kActionOpenOSK);
 	BindAction(kATUIVK_UIReject, kActionCloseOSK);
+
+	mpUILabelBadSignal = new ATUILabel;
+	mpUILabelBadSignal->AddRef();
+	mpUILabelBadSignal->SetVisible(true);
+	mpUILabelBadSignal->SetFont(mpManager->GetThemeFont(kATUIThemeFont_Default));
+	mpUILabelBadSignal->SetBorderColor(0xFFFFFFFF);
+	mpUILabelBadSignal->SetFillColor(0xFF204050);
+	mpUILabelBadSignal->SetTextColor(0xFFFFFFFF);
+	mpUILabelBadSignal->SetTextOffset(8, 8);
+
+	vdrefptr<IATUIAnchor> anchor;
+	ATUICreateTranslationAnchor(0.5f, 0.5f, ~anchor);
+	mpUILabelBadSignal->SetAnchor(anchor);
+
+	AddChild(mpUILabelBadSignal);
 }
 
 void ATUIVideoDisplayWindow::OnDestroy() {
 	UnbindAllActions();
 
+	vdsaferelease <<= mpUILabelBadSignal;
 	vdsaferelease <<= mpOSK;
 
 	ATUIContainer::OnDestroy();
@@ -613,6 +820,72 @@ void ATUIVideoDisplayWindow::OnCaptureLost() {
 }
 
 void ATUIVideoDisplayWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
+	if (g_xepViewEnabled && mpXEP) {
+		mpXEP->UpdateFrame();
+
+		uint32 lcc = mpXEP->GetFrameLayoutChangeCount();
+		if (mXEPLayoutChangeCount != lcc) {
+			mXEPLayoutChangeCount = lcc;
+			mXEPImageView.SetImage(mpXEP->GetFrameBuffer(), true);
+		}
+
+		uint32 cc = mpXEP->GetFrameChangeCount();
+		if (cc != mXEPChangeCount) {
+			mXEPChangeCount = cc;
+			mXEPImageView.Invalidate();
+		}
+
+		if (!mpXEP->IsVideoSignalValid()) {
+			rdr.SetColorRGB(0);
+			rdr.FillRect(0, 0, w, h);
+
+			mpUILabelBadSignal->SetVisible(true);
+			mpUILabelBadSignal->SetTextAlign(ATUILabel::kAlignCenter);
+			mpUILabelBadSignal->SetTextF(L"Unsupported video mode\n%.3fKHz, %.1fHz", mpXEP->GetVideoHorzRate() / 1000.0f, mpXEP->GetVideoVertRate());
+			mpUILabelBadSignal->AutoSize();
+			mpUILabelBadSignal->SetArea(mpUILabelBadSignal->GetAnchor()->Position(vdrect32(0, 0, w, h), mpUILabelBadSignal->GetArea().size()));
+		} else {
+			const vdrect32& dst = GetXEP80Area();
+
+			if (dst.left > 0 || dst.top > 0 || dst.right < w || dst.bottom < h) {
+				rdr.SetColorRGB(0);
+				rdr.FillRect(0, 0, w, h);
+			}
+
+			mpUILabelBadSignal->SetVisible(false);
+
+			VDDisplayBltOptions opts = {};
+
+			switch(g_dispFilterMode) {
+				case kATDisplayFilterMode_Point:
+					opts.mFilterMode = VDDisplayBltOptions::kFilterMode_Point;
+					break;
+
+				case kATDisplayFilterMode_Bilinear:
+					opts.mFilterMode = VDDisplayBltOptions::kFilterMode_Bilinear;
+					break;
+
+				case kATDisplayFilterMode_SharpBilinear:
+					opts.mFilterMode = VDDisplayBltOptions::kFilterMode_Bilinear;
+
+					{
+						static const float kFactors[5] = { 1.259f, 1.587f, 2.0f, 2.520f, 3.175f };
+
+						const float factor = kFactors[std::max(0, std::min(4, g_dispFilterSharpness + 2))];
+
+						opts.mSharpnessX = std::max(1.0f, factor / 2.0f);
+						opts.mSharpnessY = std::max(1.0f, factor);
+					}
+					break;
+			}
+
+			const vdrect32& src = mpXEP->GetDisplayArea();
+
+			rdr.StretchBlt(dst.left, dst.top, dst.width(), dst.height(), mXEPImageView, src.left, src.top, src.width(), src.height(), opts);
+		}
+	} else
+		mpUILabelBadSignal->SetVisible(false);
+
 	ATUIContainer::Paint(rdr, w, h);
 
 	if (rdr.GetCaps().mbSupportsAlphaBlending) {
@@ -809,8 +1082,15 @@ void ATUIVideoDisplayWindow::ProcessVirtKey(int vkey, uint8 keycode, bool repeat
 }
 
 uint32 ATUIVideoDisplayWindow::ComputeCursorImage(const vdpoint32& pt) const {
-	int xs, ys;
-	bool validBeamPosition = (MapPixelToBeamPosition(pt.x, pt.y, xs, ys, false) && GetModeLineYPos(ys, true) >= 0);
+	bool validBeamPosition;
+	
+	if (g_xepViewEnabled && mpXEP) {
+		validBeamPosition = GetXEP80Area().contains(pt);
+	} else {
+		int xs, ys;
+		validBeamPosition = (MapPixelToBeamPosition(pt.x, pt.y, xs, ys, false) && GetModeLineYPos(ys, true) >= 0);
+	}
+
 	bool cursorSet = false;
 
 	if (!g_mouseCaptured && validBeamPosition && mpManager->IsKeyDown(kATUIVK_Shift))
@@ -884,6 +1164,50 @@ void ATUIVideoDisplayWindow::UpdateMousePosition(int x, int y) {
 	im->SetMouseBeamPos(VDRoundToInt(xn), VDRoundToInt(yn));
 }
 
+const vdrect32 ATUIVideoDisplayWindow::GetXEP80Area() const {
+	if (!mpXEP)
+		return vdrect32(0, 0, 0, 0);
+
+	const vdrect32& r = mpXEP->GetDisplayArea();
+	const sint32 w = mArea.width();
+	const sint32 h = mArea.height();
+	sint32 dw = w;
+	sint32 dh = h;
+
+	if (g_displayStretchMode != kATDisplayStretchMode_Unconstrained) {
+		double par = 0.5;
+		
+		switch(g_displayStretchMode) {
+			case kATDisplayStretchMode_SquarePixels:
+			case kATDisplayStretchMode_Integral:
+				break;
+
+			default:
+				par = mpXEP->GetPixelAspectRatio();
+				break;
+		}
+
+		const double fitw = (double)r.width() * par;
+		const double fith = (double)r.height();
+		double scale = std::min<double>(w / fitw, h / fith);
+
+		switch(g_displayStretchMode) {
+			case kATDisplayStretchMode_Integral:
+			case kATDisplayStretchMode_IntegralPreserveAspectRatio:
+				if (scale > 1.0)
+					scale = floor(scale);
+				break;
+		}
+
+		dw = VDRoundToInt32(fitw * scale);
+		dh = VDRoundToInt32(fith * scale);
+	}
+
+	const int dx = (w - dw) >> 1;
+	const int dy = (h - dh) >> 1;
+	return vdrect32(dx, dy, dx + dw, dy + dh);
+}
+
 bool ATUIVideoDisplayWindow::MapPixelToBeamPosition(int x, int y, float& hcyc, float& vcyc, bool clamp) const {
 	if (!clamp && !mDisplayRect.contains(vdpoint32(x, y)))
 		return false;
@@ -933,6 +1257,59 @@ void ATUIVideoDisplayWindow::MapBeamPositionToPixel(int xc, int yc, int& x, int&
 }
 
 void ATUIVideoDisplayWindow::UpdateDragPreview(int x, int y) {
+	if (mpXEP && g_xepViewEnabled)
+		UpdateDragPreviewXEP80(x, y);
+	else
+		UpdateDragPreviewAntic(x, y);
+}
+
+void ATUIVideoDisplayWindow::UpdateDragPreviewXEP80(int x, int y) {
+	const ATXEP80TextDisplayInfo& tdi = mpXEP->GetTextDisplayInfo();
+	if (!tdi.mRows || !tdi.mColumns)
+		return;
+
+	const vdrect32& drawArea = GetXEP80Area();
+	if (drawArea.empty())
+		return;
+
+	const vdrect32& dispArea = mpXEP->GetDisplayArea();
+	if (dispArea.empty())
+		return;
+
+	const int xepx1 = VDFloorToInt(((float)(mDragAnchorX - drawArea.left) + 0.5f) * (float)dispArea.width() / (float)drawArea.width());
+	const int xepy1 = VDFloorToInt(((float)(mDragAnchorY - drawArea.top) + 0.5f) * (float)dispArea.height() / (float)drawArea.height());
+	const int xepx2 = VDFloorToInt(((float)(x - drawArea.left) + 0.5f) * (float)dispArea.width() / (float)drawArea.width());
+	const int xepy2 = VDFloorToInt(((float)(y - drawArea.top) + 0.5f) * (float)dispArea.height() / (float)drawArea.height());
+
+	vdpoint32 caretPos1 = mpXEP->PixelToCaretPos(vdpoint32(xepx1, xepy1));
+	vdpoint32 caretPos2 = mpXEP->PixelToCaretPos(vdpoint32(xepx2, xepy2));
+
+	mDragPreviewSpans.clear();
+
+	if (caretPos1.y == caretPos2.y) {
+		if (caretPos1.x == caretPos2.x)
+			return;
+
+		if (caretPos1.x > caretPos2.x)
+			std::swap(caretPos1, caretPos2);
+	} else if (caretPos1.y > caretPos2.y)
+		std::swap(caretPos1, caretPos2);
+
+	for(int cy = caretPos1.y; cy <= caretPos2.y; ++cy) {
+		TextSpan& ts = mDragPreviewSpans.push_back();
+
+		ts.mX = (cy == caretPos1.y) ? caretPos1.x : 0;
+		ts.mY = cy;
+		ts.mWidth = ((cy == caretPos2.y) ? caretPos2.x : 80) - ts.mX;
+		ts.mHeight = 1;
+		ts.mCharX = ts.mX;
+		ts.mCharWidth = ts.mWidth;
+	}
+
+	UpdateDragPreviewRects();
+}
+
+void ATUIVideoDisplayWindow::UpdateDragPreviewAntic(int x, int y) {
 	int xc2, yc2;
 
 	if (!MapPixelToBeamPosition(x, y, xc2, yc2, true)) {
@@ -1040,29 +1417,51 @@ void ATUIVideoDisplayWindow::UpdateDragPreview(int x, int y) {
 }
 
 void ATUIVideoDisplayWindow::UpdateDragPreviewRects() {
-	ATGTIAEmulator& gtia = g_sim.GetGTIA();
-	const vdrect32 scanArea(gtia.GetFrameScanArea());
-
-	float scaleX = (float)mDisplayRect.width() / (float)scanArea.width();
-	float scaleY = (float)mDisplayRect.height() / (float)scanArea.height();
-
 	ClearXorRects();
 
-	TextSpans::const_iterator it(mDragPreviewSpans.begin()), itEnd(mDragPreviewSpans.end());
-	
-	for(; it != itEnd; ++it) {
-		const TextSpan& ts = *it;
+	if (g_xepViewEnabled && mpXEP) {
+		const vdrect32& drawArea = GetXEP80Area();
+		const vdrect32& dispArea = mpXEP->GetDisplayArea();
+		
+		if (!dispArea.empty()) {
+			const float scaleX = (float)drawArea.width() / (float)dispArea.width();
+			const float scaleY = (float)drawArea.height() / (float)dispArea.height();
 
-		int hiX1 = ts.mX - scanArea.left;
-		int hiY1 = ts.mY - scanArea.top;
-		int hiX2 = hiX1 + ts.mWidth;
-		int hiY2 = hiY1 + ts.mHeight;
+			TextSpans::const_iterator it(mDragPreviewSpans.begin()), itEnd(mDragPreviewSpans.end());	
+			for(; it != itEnd; ++it) {
+				const TextSpan& ts = *it;
+				const vdrect32& spanArea = mpXEP->CharToPixelRect(vdrect32(ts.mX, ts.mY, ts.mX + ts.mWidth, ts.mY + 1));
 
-		AddXorRect(
-			VDRoundToInt(hiX1 * scaleX) + mDisplayRect.left,
-			VDRoundToInt(hiY1 * scaleY) + mDisplayRect.top,
-			VDRoundToInt(hiX2 * scaleX) + mDisplayRect.left,
-			VDRoundToInt(hiY2 * scaleY) + mDisplayRect.top);
+				AddXorRect(
+					VDRoundToInt(spanArea.left   * scaleX) + drawArea.left,
+					VDRoundToInt(spanArea.top    * scaleY) + drawArea.top,
+					VDRoundToInt(spanArea.right  * scaleX) + drawArea.left,
+					VDRoundToInt(spanArea.bottom * scaleY) + drawArea.top);
+			}
+		}
+	} else {
+		ATGTIAEmulator& gtia = g_sim.GetGTIA();
+		const vdrect32 scanArea(gtia.GetFrameScanArea());
+
+		float scaleX = (float)mDisplayRect.width() / (float)scanArea.width();
+		float scaleY = (float)mDisplayRect.height() / (float)scanArea.height();
+
+		TextSpans::const_iterator it(mDragPreviewSpans.begin()), itEnd(mDragPreviewSpans.end());
+		
+		for(; it != itEnd; ++it) {
+			const TextSpan& ts = *it;
+
+			int hiX1 = ts.mX - scanArea.left;
+			int hiY1 = ts.mY - scanArea.top;
+			int hiX2 = hiX1 + ts.mWidth;
+			int hiY2 = hiY1 + ts.mHeight;
+
+			AddXorRect(
+				VDRoundToInt(hiX1 * scaleX) + mDisplayRect.left,
+				VDRoundToInt(hiY1 * scaleY) + mDisplayRect.top,
+				VDRoundToInt(hiX2 * scaleX) + mDisplayRect.left,
+				VDRoundToInt(hiY2 * scaleY) + mDisplayRect.top);
+		}
 	}
 }
 

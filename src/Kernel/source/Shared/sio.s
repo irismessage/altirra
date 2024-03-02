@@ -650,6 +650,10 @@ isread:
 
 ;==============================================================================
 .proc SIOCassetteWriteFrame
+	;wait for pre-record write tone or IRG read delay
+	ldx		#2
+	jsr		CassetteWaitLongShortCheck
+
 	;set up to transmit
 	jsr		SIOSendEnable
 	
@@ -665,6 +669,10 @@ isread:
 
 ;==============================================================================
 .proc SIOCassetteReadFrame
+	;wait for pre-record write tone or IRG read delay
+	ldx		#4
+	jsr		CassetteWaitLongShortCheck
+
 	;set to 600 baud, turn on async read to shut off annoying tone
 	mva		#$cc audf3
 	mva		#$05 audf4

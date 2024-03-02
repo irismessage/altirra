@@ -20,26 +20,39 @@
 #include "console.h"
 #include "verifier.h"
 #include "simulator.h"
+#include "simeventmanager.h"
 #include "ksyms.h"
 
 ATCPUVerifier::ATCPUVerifier()
 	: mpCPU(NULL)
 	, mpMemory(NULL)
 	, mpSimulator(NULL)
+	, mpSimEventMgr(NULL)
 	, mFlags(0)
 {
 }
 
 ATCPUVerifier::~ATCPUVerifier() {
+	Shutdown();
 }
 
-void ATCPUVerifier::Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATSimulator *sim) {
+void ATCPUVerifier::Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATSimulator *sim, ATSimulatorEventManager *simevmgr) {
 	mpCPU = cpu;
 	mpMemory = mem;
 	mpSimulator = sim;
+	mpSimEventMgr = simevmgr;
+
+	mpSimEventMgr->AddCallback(this);
 
 	OnReset();
 	ResetAllowedTargets();
+}
+
+void ATCPUVerifier::Shutdown() {
+	if (mpSimEventMgr) {
+		mpSimEventMgr->RemoveCallback(this);
+		mpSimEventMgr = NULL;
+	}
 }
 
 void ATCPUVerifier::SetFlags(uint32 flags) {
@@ -185,66 +198,143 @@ void ATCPUVerifier::OnNMIEntry() {
 		ATConsolePrintf("VERIFIER: Recursive NMI handler execution detected.\n");
 		ATConsolePrintf("          PC: %04X\n", mpCPU->GetPC());
 		ATConsolePrintf("\n");
-		mpSimulator->NotifyEvent(kATSimEvent_VerifierFailure);
+		mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
 	} else {
 		mNMIStackLevel = mpCPU->GetS();
 		mbInNMIRoutine = true;
 	}
 }
 
-void ATCPUVerifier::OnReturn() {
-	if (mFlags & kATVerifierFlag_InterruptRegs) {
-		StackRegState& rs = mStackRegState[mpCPU->GetS()];
-		uint8 a = mpCPU->GetA();
-		uint8 x = mpCPU->GetX();
-		uint8 y = mpCPU->GetY();
+void ATCPUVerifier::VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 target) {
+	switch(opcode) {
+		case 0x20:	// JSR abs
+		case 0x4C:	// JMP abs
+			if (mFlags & kATVerifierFlag_UndocumentedKernelEntry) {
+				uint16 pc = mpCPU->GetInsnPC();
 
-		if (rs.mbActive) {
-			rs.mbActive = false;
+				// we only care if the target is in kernel ROM space
+				if (!mpSimulator->IsKernelROMLocation(target))
+					return;
 
-			if (rs.mA != a || rs.mX != x || rs.mY != y) {
+				// ignore jumps from kernel ROM
+				if (mpSimulator->IsKernelROMLocation(pc))
+					return;
+
+				// check for an allowed target
+				if (std::binary_search(mAllowedTargets.begin(), mAllowedTargets.end(), target))
+					return;
+
+				// trip a verifier failure
 				ATConsolePrintf("\n");
-				ATConsolePrintf("VERIFIER: Register mismatch between interrupt handler entry and exit.\n");
-				ATConsolePrintf("          Entry: PC=%04x  A=%02x X=%02x Y=%02x\n", rs.mPC, rs.mA, rs.mX, rs.mY);
-				ATConsolePrintf("          Exit:  PC=%04x  A=%02x X=%02x Y=%02x\n", mpCPU->GetInsnPC(), a, x, y);
-				mpSimulator->NotifyEvent(kATSimEvent_VerifierFailure);
-				return;
+				ATConsolePrintf("VERIFIER: Invalid jump into kernel ROM space detected.\n");
+				ATConsolePrintf("          PC: %04X   Fault address: %04X\n", pc, target);
+				ATConsolePrintf("\n");
+				mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
 			}
-		}
-	}
+			break;
 
-	if (mFlags & kATVerifierFlag_RecursiveNMI) {
-		if (mbInNMIRoutine) {
-			uint8 s = mpCPU->GetS();
+		case 0x40:	// RTI
+			if (mFlags & kATVerifierFlag_InterruptRegs) {
+				StackRegState& rs = mStackRegState[mpCPU->GetS()];
+				uint8 a = mpCPU->GetA();
+				uint8 x = mpCPU->GetX();
+				uint8 y = mpCPU->GetY();
 
-			if ((uint8)(s - mNMIStackLevel) < 8)
-				mbInNMIRoutine = false;
-		}
+				if (rs.mbActive) {
+					rs.mbActive = false;
+
+					if (rs.mA != a || rs.mX != x || rs.mY != y) {
+						ATConsolePrintf("\n");
+						ATConsolePrintf("VERIFIER: Register mismatch between interrupt handler entry and exit.\n");
+						ATConsolePrintf("          Entry: PC=%04x  A=%02x X=%02x Y=%02x\n", rs.mPC, rs.mA, rs.mX, rs.mY);
+						ATConsolePrintf("          Exit:  PC=%04x  A=%02x X=%02x Y=%02x\n", mpCPU->GetInsnPC(), a, x, y);
+						mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
+						return;
+					}
+				}
+			}
+
+			if (mFlags & kATVerifierFlag_RecursiveNMI) {
+				if (mbInNMIRoutine) {
+					uint8 s = mpCPU->GetS();
+
+					if ((uint8)(s - mNMIStackLevel) < 8)
+						mbInNMIRoutine = false;
+				}
+			}
+			break;
+
+		case 0x1D:	// ORA abs,X
+		case 0x1E:	// ASL abs,X
+		case 0x3D:	// AND abs,X
+		case 0x3E:	// ROL abs,X
+		case 0x5D:	// EOR abs,X
+		case 0x5E:	// LSR abs,X
+		case 0x7D:	// ADC abs,X
+		case 0x7E:	// ROR abs,X
+		case 0x9D:	// STA abs,X
+		case 0xBC:	// LDY abs,X
+		case 0xBD:	// LDA abs,X
+		case 0xDD:	// CMP abs,X
+		case 0xDE:	// DEC abs,X
+		case 0xFD:	// SBC abs,X
+		case 0xFE:	// INC abs,X
+			if (mFlags & kATVerifierFlag_64KWrap) {
+				if (target < mpCPU->GetX()) {
+					ATConsolePrintf("\n");
+					ATConsolePrintf("VERIFIER: 64K address space wrap detected on abs,X indexing mode.\n");
+					ATConsolePrintf("          PC=%04x  X=%02x  Target=%04x\n", mpCPU->GetInsnPC(), mpCPU->GetX(), target);
+					mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
+					return;
+				}
+			}
+			break;
+
+		case 0x19:	// ORA abs,Y
+		case 0x39:	// AND abs,Y
+		case 0x59:	// EOR abs,Y
+		case 0x79:	// ADC abs,Y
+		case 0x99:	// STA abs,Y
+		case 0xB9:	// LDA abs,Y
+		case 0xBE:	// LDX abs,Y
+		case 0xD9:	// CMP abs,Y
+		case 0xF9:	// SBC abs,Y
+			if (mFlags & kATVerifierFlag_64KWrap) {
+				if (target < mpCPU->GetY()) {
+					ATConsolePrintf("\n");
+					ATConsolePrintf("VERIFIER: 64K address space wrap detected on abs,Y indexing mode.\n");
+					ATConsolePrintf("          PC=%04x  Y=%02x  Target=%04x\n", mpCPU->GetInsnPC(), mpCPU->GetY(), target);
+					mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
+					return;
+				}
+			}
+			break;
+
+		case 0x11:	// ORA (zp),Y
+		case 0x31:	// AND (zp),Y
+		case 0x51:	// EOR (zp),Y
+		case 0x71:	// ADC (zp),Y
+		case 0x91:	// STA (zp),Y
+		case 0xB1:	// LDA (zp),Y
+		case 0xD1:	// CMP (zp),Yn
+		case 0xF1:	// SBC (zp),Y
+			if (mFlags & kATVerifierFlag_64KWrap) {
+				if (target < mpCPU->GetY()) {
+					ATConsolePrintf("\n");
+					ATConsolePrintf("VERIFIER: 64K address space wrap detected on (zp),Y indexing mode.\n");
+					ATConsolePrintf("          PC=%04x  Y=%02x  Target=%04x\n", mpCPU->GetInsnPC(), mpCPU->GetY(), target);
+					mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
+					return;
+				}
+			}
+			break;
 	}
 }
 
-void ATCPUVerifier::VerifyJump(uint16 addr) {
-	if (!(mFlags & kATVerifierFlag_UndocumentedKernelEntry))
-		return;
-
-	uint16 pc = mpCPU->GetInsnPC();
-
-	// we only care if the target is in kernel ROM space
-	if (!mpSimulator->IsKernelROMLocation(addr))
-		return;
-
-	// ignore jumps from kernel ROM
-	if (mpSimulator->IsKernelROMLocation(pc))
-		return;
-
-	// check for an allowed target
-	if (std::binary_search(mAllowedTargets.begin(), mAllowedTargets.end(), addr))
-		return;
-
-	// trip a verifier failure
-	ATConsolePrintf("\n");
-	ATConsolePrintf("VERIFIER: Invalid jump into kernel ROM space detected.\n");
-	ATConsolePrintf("          PC: %04X   Fault address: %04X\n", pc, addr);
-	ATConsolePrintf("\n");
-	mpSimulator->NotifyEvent(kATSimEvent_VerifierFailure);
+void ATCPUVerifier::OnSimulatorEvent(ATSimulatorEvent ev) {
+	if (ev == kATSimEvent_AbnormalDMA && (mFlags & kATVerifierFlag_AbnormalDMA)) {
+		ATConsolePrintf("\n");
+		ATConsolePrintf("VERIFIER: Abnormal playfield DMA detected.\n");
+		mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
+	}
 }

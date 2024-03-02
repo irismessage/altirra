@@ -95,7 +95,7 @@ ATUIProfilerSourceTextView::ATUIProfilerSourceTextView(const ATProfileSession& p
 	for(Records::iterator it(mRecords.begin()), itEnd(mRecords.end()); it != itEnd; ++it) {
 		ATProfileRecord& r = *it;
 
-		r.mAddress &= 0xffff;
+		r.mAddress &= 0xffffff;
 	}
 
 	// sort records
@@ -139,7 +139,7 @@ void ATUIProfilerSourceTextView::Destroy() {
 }
 
 void ATUIProfilerSourceTextView::SetTargetAddress(uint32 addr) {
-	addr &= 0xffff;
+	addr &= 0xffffff;
 
 	if (mTargetAddress == addr)
 		return;
@@ -271,6 +271,9 @@ void ATUIProfilerSourceTextView::OnPaint() {
 
 	std::advance(itLines, std::min<int>(mLines.size(), kScrollMarginLines));
 
+	ATCPUHistoryEntry hent;
+	ATDisassembleCaptureRegisterContext(hent);
+
 	int y1 = 0;
 	while(y1 < ps.rcPaint.bottom && itLines != itLinesEnd) {
 		const int y2 = y1 + mLineHeight;
@@ -280,8 +283,14 @@ void ATUIProfilerSourceTextView::OnPaint() {
 			// render counts
 			Records::const_iterator it(std::lower_bound(mRecords.begin(), mRecords.end(), addr, RecordSort()));
 
+			hent.mbEmulation = true;
+			hent.mP = 0xFF;
+
 			if (it != mRecords.end() && it->mAddress == addr) {
 				const ATProfileRecord& r = *it;
+
+				hent.mP = (hent.mP & 0xCF) + (r.mModeBits << 4);
+				hent.mbEmulation = r.mEmulationMode != 0;
 
 				SetTextAlign(hdc, TA_RIGHT | TA_TOP);
 
@@ -308,7 +317,10 @@ void ATUIProfilerSourceTextView::OnPaint() {
 
 			// render line
 			mBuffer = " ";
-			ATDisassembleInsn(mBuffer, addr, false);
+
+			ATDisassembleCaptureInsnContext((uint16)addr, (uint8)(addr >> 16), hent);
+
+			ATDisassembleInsn(mBuffer, hent, false, false, true, true, true);
 
 			SetTextAlign(hdc, TA_LEFT | TA_TOP);
 			ExtTextOutA(hdc, mColumnWidths[4], y1, 0, NULL, mBuffer.data(), mBuffer.size(), NULL);
@@ -401,27 +413,35 @@ void ATUIProfilerSourceTextView::ScrollLines(int delta) {
 
 void ATUIProfilerSourceTextView::RemakeView() {
 	uint32 linesAbove = (mLinesVisible >> 1) + kScrollMarginLines;
+	uint32 bank = mTargetAddress & 0xff0000;
 	uint32 nextAddr = (mTargetAddress - linesAbove*3) & 0xffff;
 	uint32 stepAddr = nextAddr;
 
 	mLines.clear();
 
 	// compute lines prior to target address
-	while(stepAddr != mTargetAddress) {
+	while(stepAddr + bank != mTargetAddress) {
 		if (nextAddr != stepAddr) {
-			Records::const_iterator it(std::lower_bound(mRecords.begin(), mRecords.end(), stepAddr, RecordSort()));
+			Records::const_iterator it(std::lower_bound(mRecords.begin(), mRecords.end(), bank+stepAddr, RecordSort()));
 
-			if (it == mRecords.end() || it->mAddress != stepAddr) {
+			if (it == mRecords.end() || it->mAddress != bank + stepAddr) {
 				++stepAddr;
 				stepAddr &= 0xffff;
 				continue;
 			}
 		}
 
-		nextAddr += ATGetOpcodeLength(g_sim.DebugReadByte(nextAddr));
+		const Records::const_iterator it2 = std::lower_bound(mRecords.begin(), mRecords.end(), bank+nextAddr, RecordSort());
+		const uint8 opcode = g_sim.DebugGlobalReadByte(bank + nextAddr);
+
+		if (it2 != mRecords.end() && it2->mAddress == bank + nextAddr)
+			nextAddr += ATGetOpcodeLength(opcode, it2->mModeBits << 4, it2->mEmulationMode != 0);
+		else
+			nextAddr += ATGetOpcodeLength(opcode);
+
 		nextAddr &= 0xffff;
 
-		mLines.push_back(stepAddr);
+		mLines.push_back(bank + stepAddr);
 
 		++stepAddr;
 		stepAddr &= 0xffff;
@@ -438,19 +458,26 @@ void ATUIProfilerSourceTextView::RemakeView() {
 	// fill out remaining lines
 	while(n < mLinesVisible + kScrollMarginLines*2) {
 		if (nextAddr != stepAddr) {
-			Records::const_iterator it(std::lower_bound(mRecords.begin(), mRecords.end(), stepAddr, RecordSort()));
+			Records::const_iterator it(std::lower_bound(mRecords.begin(), mRecords.end(), bank+stepAddr, RecordSort()));
 
-			if (it == mRecords.end() || it->mAddress != stepAddr) {
+			if (it == mRecords.end() || it->mAddress != bank + stepAddr) {
 				++stepAddr;
 				stepAddr &= 0xffff;
 				continue;
 			}
 		}
 
-		nextAddr += ATGetOpcodeLength(g_sim.DebugReadByte(nextAddr));
+		const Records::const_iterator it2 = std::lower_bound(mRecords.begin(), mRecords.end(), bank+nextAddr, RecordSort());
+		const uint8 opcode = g_sim.DebugGlobalReadByte(bank + nextAddr);
+
+		if (it2 != mRecords.end() && it2->mAddress == bank + nextAddr)
+			nextAddr += ATGetOpcodeLength(opcode, it2->mModeBits << 4, it2->mEmulationMode != 0);
+		else
+			nextAddr += ATGetOpcodeLength(opcode);
+
 		nextAddr &= 0xffff;
 
-		mLines.push_back(stepAddr);
+		mLines.push_back(bank + stepAddr);
 		++n;
 		++stepAddr;
 		stepAddr &= 0xffff;
@@ -715,11 +742,11 @@ protected:
 
 				switch(j) {
 					case 0:
-						diff = (((int)(r.mAddress & 0x70000) - (int)(s.mAddress & 0x70000)) ^ inv) - inv;
+						diff = (((int)(r.mAddress & 0x7000000) - (int)(s.mAddress & 0x7000000)) ^ inv) - inv;
 						break;
 
 					case 1:
-						diff = (((int)(r.mAddress & 0xFFFF) - (int)(s.mAddress & 0xFFFF)) ^ inv) - inv;
+						diff = (((int)(r.mAddress & 0xFFFFFF) - (int)(s.mAddress & 0xFFFFFF)) ^ inv) - inv;
 						break;
 
 					case 2:
@@ -1242,20 +1269,20 @@ void ATUIProfilerPane::VLGetText(int item, int subItem, VDStringW& s) const {
 
 	switch(subItem) {
 		case 0:
-			switch(record.mAddress & 0x70000) {
-				case 0x40000:
+			switch(record.mAddress & 0x7000000) {
+				case 0x4000000:
 					s = L"VBI";
 					break;
 
-				case 0x30000:
+				case 0x3000000:
 					s = L"DLI";
 					break;
 
-				case 0x20000:
+				case 0x2000000:
 					s = L"IRQ";
 					break;
 
-				case 0x10000:
+				case 0x1000000:
 					s = L"Interrupt";
 					break;
 
@@ -1267,10 +1294,12 @@ void ATUIProfilerPane::VLGetText(int item, int subItem, VDStringW& s) const {
 
 		case 1:
 			{
-				uint32 addr = record.mAddress & 0xFFFF;
+				uint32 addr = record.mAddress & 0xFFFFFF;
 
 				if (mProfileMode == kATProfileMode_BasicLines) {
 					s.sprintf(L"%u", addr);
+				} else if (addr >= 0x10000) {
+					s.sprintf(L"%02X:%04X", addr >> 16, addr & 0xffff);
 				} else {
 					ATSymbol sym;
 					if (ATGetDebuggerSymbolLookup()->LookupSymbol(addr, kATSymbol_Execute, sym) && sym.mOffset == addr)
@@ -1334,12 +1363,17 @@ void ATUIProfilerPane::VTGetText(int item, VDStringW& s) const {
 
 		default:
 			{
-				sint32 addr = cgr.mAddress & 0xffff;
-				s.sprintf(L"%04X", addr);
+				sint32 addr = cgr.mAddress & 0xffffff;
 
-				ATSymbol sym;
-				if (ATGetDebuggerSymbolLookup()->LookupSymbol(addr, kATSymbol_Execute, sym) && sym.mOffset == addr)
-					s.append_sprintf(L" (%hs)", sym.mpName);
+				if (addr >= 0x10000) {
+					s.sprintf(L"%02X:%04X", addr >> 16, addr & 0xffff);
+				} else {
+					s.sprintf(L"%04X", addr);
+
+					ATSymbol sym;
+					if (ATGetDebuggerSymbolLookup()->LookupSymbol(addr, kATSymbol_Execute, sym) && sym.mOffset == addr)
+						s.append_sprintf(L" (%hs)", sym.mpName);
+				}
 
 				s.append_sprintf(L" [x%u]", cgr.mCalls);
 			}

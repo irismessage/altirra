@@ -162,6 +162,7 @@ namespace AT6502States {
 		kStateReadAddrDpXInPage,		// Read direct page offset to address register and add X16 (no page wrap)
 		kStateReadAddrDpY,				// Read direct page offset to address register and add Y16
 		kStateReadAddrDpYInPage,		// Read direct page offset to address register and add Y16 (no page wrap)
+		kState816ReadIndAddrDpInPage,	// Read high byte of indirect address from direct page, wrapping within page
 		kStateReadIndAddrDp,			// Read high byte of indirect address from direct page
 		kStateReadIndAddrDpY,			// Read high byte of indirect address from direct page and add Y16
 		kStateReadIndAddrDpLongH,		// Read high byte of indirect long address from direct page
@@ -264,10 +265,9 @@ namespace AT6502States {
 		kStateStandard_Count,
 
 		kStateUpdateHeatMap		= 0xF7,
-		kStateVerifyJump		= 0xF8,
+		kStateVerifyInsn		= 0xF8,
 		kStateVerifyNMIEntry,
 		kStateVerifyIRQEntry,
-		kStateVerifyReturn,
 
 		kStateCount
 	};

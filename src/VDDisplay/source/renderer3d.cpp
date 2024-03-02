@@ -36,6 +36,8 @@ void *VDDisplayCachedImage3D::AsInterface(uint32 iid) {
 }
 
 bool VDDisplayCachedImage3D::Init(IVDTContext& ctx, void *owner, const VDDisplayImageView& imageView) {
+	mpHiBltNode.clear();
+
 	const VDPixmap& px = imageView.GetImage();
 	uint32 w = px.w;
 	uint32 h = px.h;
@@ -66,6 +68,7 @@ bool VDDisplayCachedImage3D::Init(IVDTContext& ctx, void *owner, const VDDisplay
 void VDDisplayCachedImage3D::Shutdown() {
 	mpTexture.clear();
 	mpOwner = NULL;
+	mpHiBltNode.clear();
 }
 
 void VDDisplayCachedImage3D::Update(const VDDisplayImageView& imageView) {
@@ -118,6 +121,7 @@ VDDisplayRenderer3D::VDDisplayRenderer3D()
 	, mpBSStencil(NULL)
 	, mpBSColor(NULL)
 	, mpRS(NULL)
+	, mpDCtx(NULL)
 {
 }
 
@@ -160,6 +164,12 @@ bool VDDisplayRenderer3D::Init(IVDTContext& ctx) {
 	ssdesc.mAddressW = kVDTAddr_Clamp;
 	ssdesc.mFilterMode = kVDTFilt_BilinearMip;
 
+	VDTSamplerStateDesc ssdesc2 = {};
+	ssdesc2.mAddressU = kVDTAddr_Clamp;
+	ssdesc2.mAddressV = kVDTAddr_Clamp;
+	ssdesc2.mAddressW = kVDTAddr_Clamp;
+	ssdesc2.mFilterMode = kVDTFilt_Point;
+
 	VDTBlendStateDesc bsdesc = {};
 	bsdesc.mbEnable = true;
 	bsdesc.mSrc = kVDTBlend_SrcAlpha;
@@ -193,6 +203,7 @@ bool VDDisplayRenderer3D::Init(IVDTContext& ctx) {
 		!ctx.CreateVertexBuffer(65536, true, NULL, &mpVB) ||
 		!ctx.CreateIndexBuffer(256 * 6, false, false, indices, &mpIB) ||
 		!ctx.CreateSamplerState(ssdesc, &mpSS) ||
+		!ctx.CreateSamplerState(ssdesc2, &mpSSPoint) ||
 		!ctx.CreateBlendState(bsdesc, &mpBS) ||
 		!ctx.CreateBlendState(bssdesc, &mpBSStencil) ||
 		!ctx.CreateBlendState(bscdesc, &mpBSColor) ||
@@ -225,6 +236,7 @@ void VDDisplayRenderer3D::Shutdown() {
 		mpBSColor,
 		mpBSStencil,
 		mpBS,
+		mpSSPoint,
 		mpSS,
 		mpIB,
 		mpVB,
@@ -240,25 +252,12 @@ void VDDisplayRenderer3D::Shutdown() {
 		mpVPFill;
 }
 
-void VDDisplayRenderer3D::Begin(int w, int h) {
-	float iw = 1.0f / (float)w;
-	float ih = 1.0f / (float)h;
-
-	const float trans2d[4]={
-		2.0f * iw,
-		-2.0f * ih,
-		-1.0f,
-		1.0f
-	};
-
+void VDDisplayRenderer3D::Begin(int w, int h, VDDisplayNodeContext3D& dctx) {
 	mWidth = w;
 	mHeight = h;
+	mpDCtx = &dctx;
 
-	mpContext->SetVertexProgramConstF(1, 1, trans2d);
-	mpContext->SetIndexStream(mpIB);
-	mpContext->SetBlendState(mpBS);
-	mpContext->SetSamplerStates(0, 1, &mpSS);
-	mpContext->SetRasterizerState(mpRS);
+	ApplyBaselineState();
 
 	VDTViewport vp;
 	vp.mX = 0;
@@ -279,6 +278,8 @@ void VDDisplayRenderer3D::End() {
 	mpContext->SetIndexStream(NULL);
 	mpContext->SetRasterizerState(NULL);
 	mpContext->SetBlendState(NULL);
+
+	mpDCtx = NULL;
 }
 
 const VDDisplayRendererCaps& VDDisplayRenderer3D::GetCaps() {
@@ -398,6 +399,95 @@ void VDDisplayRenderer3D::Blt(sint32 x, sint32 y, VDDisplayImageView& imageView,
 	const float v0 = (float)sy * invtexh;
 	const float u1 = u0 + (float)w * invtexw;
 	const float v1 = v0 + (float)h * invtexh;
+
+	const BlitVertex v[4] = {
+		{ x0, y0, 0xFFFFFFFFU, u0, v0 },
+		{ x0, y1, 0xFFFFFFFFU, u0, v1 },
+		{ x1, y0, 0xFFFFFFFFU, u1, v0 },
+		{ x1, y1, 0xFFFFFFFFU, u1, v1 },
+	};
+
+	AddQuads(v, 1, kBltMode_Normal);
+}
+
+void VDDisplayRenderer3D::StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 sw, sint32 sh, const VDDisplayBltOptions& opts) {
+	if (dw <= 0 || dh <= 0)
+		return;
+
+	if (sw <= 0 || sh <= 0)
+		return;
+
+	VDDisplayCachedImage3D *cachedImage = GetCachedImage(imageView);
+
+	if (!cachedImage)
+		return;
+
+	if (sx < 0 || sy < 0 || sx >= cachedImage->mWidth || sy >= cachedImage->mHeight)
+		return;
+
+	if (cachedImage->mWidth - sx < sw || cachedImage->mHeight - sy < sh)
+		return;
+
+	const float invtexw = 1.0f / (float)cachedImage->mTexWidth;
+	const float invtexh = 1.0f / (float)cachedImage->mTexHeight;
+
+	// check if we need to create or reinit a hi-blt node
+	if (opts.mFilterMode == VDDisplayBltOptions::kFilterMode_Bilinear && opts.mSharpnessX > 0) {
+		const vdrect32 srcRect(sx, sy, sx + sw, sy + sh);
+
+		float sharpX = opts.mSharpnessX;
+		float sharpY = opts.mSharpnessY;
+
+		if (sharpX <= 0) {
+			sharpX = 1.0f;
+			sharpY = 1.0f;
+		}
+
+		if (!cachedImage->mpHiBltNode || cachedImage->mHiBltSrcRect != srcRect || cachedImage->mHiBltSharpnessX != sharpX || cachedImage->mHiBltSharpnessY != sharpY)
+			cachedImage->mpHiBltNode = NULL;
+
+		if (!cachedImage->mpHiBltNode) {
+			cachedImage->mHiBltSharpnessX = sharpX;
+			cachedImage->mHiBltSharpnessY = sharpY;
+			cachedImage->mHiBltSrcRect = srcRect;
+
+			// create source node
+			vdrefptr<VDDisplayTextureSourceNode3D> src(new VDDisplayTextureSourceNode3D);
+			VDDisplaySourceTexMapping mapping = {};
+
+			mapping.Init(cachedImage->mWidth, cachedImage->mHeight, cachedImage->mTexWidth, cachedImage->mTexHeight, mpContext->IsFormatSupportedTexture2D(kVDTF_B8G8R8A8));
+
+			if (src->Init(cachedImage->mpTexture, mapping)) {
+				// create blit node
+				vdrefptr<VDDisplayBlitNode3D> blitNode(new VDDisplayBlitNode3D);
+				blitNode->SetDestArea(dx, dy, dw, dh);
+
+				if (blitNode->Init(*mpContext, *mpDCtx, cachedImage->mWidth, cachedImage->mHeight, true, sharpX, sharpY, src)) {
+					cachedImage->mpHiBltNode.swap(blitNode);
+				}
+			}
+		}
+
+		if (cachedImage->mpHiBltNode) {
+			cachedImage->mpHiBltNode->SetDestArea(dx, dy, dw, dh);
+			cachedImage->mpHiBltNode->Draw(*mpContext, *mpDCtx);
+			ApplyBaselineState();
+			return;
+		}
+	}
+
+	IVDTTexture *tex = cachedImage->mpTexture;
+	mpContext->SetTextures(0, 1, &tex);
+	mpContext->SetSamplerStates(0, 1, opts.mFilterMode == VDDisplayBltOptions::kFilterMode_Bilinear ? &mpSS : &mpSSPoint);
+
+	const float x0 = (float)(dx + mOffsetX);
+	const float y0 = (float)(dy + mOffsetY);
+	const float x1 = x0 + (float)dw;
+	const float y1 = y0 + (float)dh;
+	const float u0 = (float)sx * invtexw;
+	const float v0 = (float)sy * invtexh;
+	const float u1 = u0 + (float)sw * invtexw;
+	const float v1 = v0 + (float)sh * invtexh;
 
 	const BlitVertex v[4] = {
 		{ x0, y0, 0xFFFFFFFFU, u0, v0 },
@@ -716,4 +806,22 @@ VDDisplayCachedImage3D *VDDisplayRenderer3D::GetCachedImage(VDDisplayImageView& 
 	}
 
 	return cachedImage;
+}
+
+void VDDisplayRenderer3D::ApplyBaselineState() {
+	float iw = 1.0f / (float)mWidth;
+	float ih = 1.0f / (float)mHeight;
+
+	const float trans2d[4]={
+		2.0f * iw,
+		-2.0f * ih,
+		-1.0f,
+		1.0f
+	};
+
+	mpContext->SetVertexProgramConstF(1, 1, trans2d);
+	mpContext->SetIndexStream(mpIB);
+	mpContext->SetBlendState(mpBS);
+	mpContext->SetSamplerStates(0, 1, &mpSS);
+	mpContext->SetRasterizerState(mpRS);
 }

@@ -120,18 +120,24 @@ struct vdstringhashi {
 };
 
 struct vdstringpred {
+	bool operator()(const char *s, const char *t) const;
 	bool operator()(const VDStringA& s, const VDStringA& t) const;
 	bool operator()(const VDStringA& s, const VDStringSpanA& t) const;
 	bool operator()(const VDStringA& s, const char *t) const;
+
+	bool operator()(const wchar_t *s, const wchar_t *t) const;
 	bool operator()(const VDStringW& s, const VDStringW& t) const;
 	bool operator()(const VDStringW& s, const VDStringSpanW& t) const;
 	bool operator()(const VDStringW& s, const wchar_t *t) const;
 };
 
 struct vdstringpredi {
+	bool operator()(const char *s, const char *t) const;
 	bool operator()(const VDStringA& s, const VDStringA& t) const;
 	bool operator()(const VDStringA& s, const VDStringSpanA& t) const;
 	bool operator()(const VDStringA& s, const char *t) const;
+
+	bool operator()(const wchar_t *s, const wchar_t *t) const;
 	bool operator()(const VDStringW& s, const VDStringW& t) const;
 	bool operator()(const VDStringW& s, const VDStringSpanW& t) const;
 	bool operator()(const VDStringW& s, const wchar_t *t) const;

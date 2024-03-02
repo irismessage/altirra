@@ -146,7 +146,7 @@ public:
 	virtual void UnloadSymbols(uint32 moduleId) = 0;
 	virtual void ProcessSymbolDirectives(uint32 id) = 0;
 
-	virtual sint32 ResolveSymbol(const char *s, bool allowGlobal = false, bool allowShortBase = false) = 0;
+	virtual sint32 ResolveSymbol(const char *s, bool allowGlobal = false, bool allowShortBase = true) = 0;
 
 	virtual void AddCustomSymbol(uint32 address, uint32 len, const char *name, uint32 rwxmode, uint32 moduleId = 0) = 0;
 	virtual void RemoveCustomSymbol(uint32 address) = 0;

@@ -97,6 +97,7 @@ public:
 	void	open(const wchar_t *pwszFileName, uint32 flags = nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting);
 
 	bool	openNT(const wchar_t *pwszFileName, uint32 flags = nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting);
+	bool	tryOpen(const wchar_t *pwszFileName, uint32 flags = nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting);
 
 	bool	closeNT();
 	void	close();
@@ -145,7 +146,7 @@ public:
 	static void FreeUnbuffer(void *p);
 
 protected:
-	bool	open_internal(const char *pszFilename, const wchar_t *pwszFilename, uint32 flags, bool throwOnError);
+	uint32 open_internal(const char *pszFilename, const wchar_t *pwszFilename, uint32 flags);
 };
 
 ///////////////////////////////////////////////////////////////////////////

@@ -61,6 +61,12 @@ enum ATCPUSubMode {
 	kATCPUSubModeCount
 };
 
+enum ATCPUAdvanceMode {
+	kATCPUAdvanceMode_6502,
+	kATCPUAdvanceMode_65816,
+	kATCPUAdvanceMode_65816HiSpeed
+};
+
 namespace AT6502 {
 	enum {
 		kFlagN = 0x80,
@@ -94,6 +100,7 @@ struct ATCPUHistoryEntry {
 	bool	mbIRQ : 1;
 	bool	mbNMI : 1;
 	bool	mbEmulation : 1;
+	uint8	mSubCycle : 5;
 	uint8	mOpcode[4];
 	uint8	mSH;
 	uint8	mAH;
@@ -130,6 +137,11 @@ public:
 	bool	IsNextCycleWrite() const;
 	uint8	GetHeldCycleValue();
 
+	void	ForceNextCycleSlow() {
+		mSubCyclesLeft = 1;
+		mbForceNextCycleSlow = true;
+	}
+
 	bool	GetEmulationFlag() const { return mbEmulationFlag; }
 	uint16	GetInsnPC() const { return mInsnPC; }
 	uint16	GetPC() const { return mPC; }
@@ -146,6 +158,13 @@ public:
 	void	SetX(uint8 x) { mX = x; }
 	void	SetY(uint8 y) { mY = y; }
 	void	SetS(uint8 s) { mS = s; }
+	void	SetAH(uint8 a);
+	void	SetXH(uint8 x);
+	void	SetYH(uint8 y);
+	void	SetSH(uint8 s);
+	void	SetD(uint16 dp);
+	void	SetK(uint8 k);
+	void	SetB(uint8 b);
 
 	uint8	GetAH() const { return mAH; }
 	uint8	GetXH() const { return mXH; }
@@ -195,9 +214,11 @@ public:
 	void	SetRTSBreak() { mSBrk = 0x100; mDebugFlags &= ~kDebugFlag_SBrk; }
 	void	SetRTSBreak(uint8 sp) { mSBrk = sp; mDebugFlags |= kDebugFlag_SBrk; }
 
-	void	SetCPUMode(ATCPUMode mode);
+	void	SetCPUMode(ATCPUMode mode, uint32 subCycles);
 	ATCPUMode GetCPUMode() const { return mCPUMode; }
+	uint32 GetSubCycles() const { return mSubCycles; }
 	ATCPUSubMode GetCPUSubMode() const { return mCPUSubMode; }
+	ATCPUAdvanceMode GetAdvanceMode() const { return mAdvanceMode; }
 
 	bool	IsHistoryEnabled() const { return mbHistoryEnabled; }
 	void	SetHistoryEnabled(bool enable);
@@ -239,7 +260,7 @@ public:
 	int GetHistoryLength() const { return 131072; }
 	uint32	GetHistoryCounter() const { return mHistoryIndex; }
 
-	void	DumpStatus();
+	void	DumpStatus(bool extended = false);
 
 	void	BeginLoadState(ATSaveStateReader& reader);
 	void	LoadState6502(ATSaveStateReader& reader);
@@ -268,16 +289,24 @@ public:
 	int		Advance();
 	int		Advance6502();
 	int		Advance65816();
+	int		Advance65816HiSpeed(bool dma);
 
 protected:
 	__declspec(noinline) uint8 ProcessDebugging();
 	__declspec(noinline) uint8 ProcessHook();
+
+	template<bool T_Accel>
 	bool	ProcessInterrupts();
-	void	AddHistoryEntry(bool is816);
+
+	template<bool is816, bool subCycles>
+	void	AddHistoryEntry(bool slowFlag);
+
 	void	UpdatePendingIRQState();
 	void	RedecodeInsnWithoutBreak();
 	void	Update65816DecodeTable();
 	void	RebuildDecodeTables();
+	void	RebuildDecodeTables6502(bool cmos);
+	void	RebuildDecodeTables65816();
 	bool	Decode6502(uint8 opcode);
 	bool	Decode6502Ill(uint8 opcode);
 	bool	Decode65C02(uint8 opcode);
@@ -298,7 +327,7 @@ protected:
 	void	Decode65816AddrDpY(bool unalignedDP, bool emu);
 	void	Decode65816AddrDpInd(bool unalignedDP);
 	void	Decode65816AddrDpIndX(bool unalignedDP, bool emu);
-	void	Decode65816AddrDpIndY(bool unalignedDP, bool forceCycle);
+	void	Decode65816AddrDpIndY(bool unalignedDP, bool emu, bool forceCycle);
 	void	Decode65816AddrDpLongInd(bool unalignedDP);
 	void	Decode65816AddrDpLongIndY(bool unalignedDP);
 	void	Decode65816AddrAbs();
@@ -366,6 +395,8 @@ protected:
 	ATCPUStepCallback mpStepCallback;
 	void	*mpStepCallbackData;
 
+	uint32	mSubCyclesLeft;
+	bool	mbForceNextCycleSlow;
 	bool	mbUnusedCycle;
 	bool	mbEmulationFlag;
 	uint32	mNMIIgnoreUnhaltedCycle;
@@ -374,7 +405,10 @@ protected:
 	uint32	mIRQAcknowledgeTime;
 	uint32	mSBrk;				// must also affect mDebugFlags
 	ATCPUMode	mCPUMode;
+	uint32	mSubCycles;
 	ATCPUSubMode	mCPUSubMode;
+	uint8	mDecodeTableMode816;
+	ATCPUAdvanceMode	mAdvanceMode;
 
 	ATCPUEmulatorMemory	*mpMemory;
 	ATCPUHookManager *mpHookMgr;
@@ -410,8 +444,9 @@ protected:
 
 	const uint8 *mpDecodePtrIRQ;
 	const uint8 *mpDecodePtrNMI;
-	uint16 mDecodePtrs[256];
-	uint8	mDecodeHeap[4096];
+	uint16	mDecodePtrs[256];
+	uint16	mDecodePtrs816[10][258];
+	uint8	mDecodeHeap[0x5000];
 	uint8	mInsnFlags[65536];
 
 	typedef ATCPUHistoryEntry HistoryEntry;

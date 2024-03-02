@@ -452,6 +452,7 @@ void ATDisassembleCaptureRegisterContext(ATCPUHistoryEntry& hent) {
 	hent.mD = cpu.GetD();
 	hent.mS = cpu.GetS();
 	hent.mSH = cpu.GetSH();
+	hent.mB = cpu.GetB();
 	hent.mK = cpu.GetK();
 	hent.mbEmulation = cpu.GetEmulationFlag();
 }
@@ -500,7 +501,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 	const ATCPUEmulator& cpu = g_sim.GetCPU();
 	ATCPUSubMode subMode;
 
-	uint8 pbk = hent.mK;
+	uint8 pbk = 0;
 	uint8 dbk = hent.mB;
 	uint32 dbkbase = (uint32)hent.mB << 16;
 	uint32 d = hent.mD;
@@ -520,6 +521,8 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 			break;
 
 		case kATCPUMode_65C816:
+			pbk = hent.mK;
+
 			if (hent.mbEmulation) {
 				subMode = kATCPUSubMode_65C816_Emulation;
 			} else {
@@ -587,11 +590,15 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 	if (showLabels) {
 		VDStringA tempLabel;
 
-		const char *label = ATGetSymbolName(addr, false);
+		const char *label = NULL;
+		
+		if (!pbk) {
+			label = ATGetSymbolName(addr, false);
 
-		if (!label && cpu.IsPathfindingEnabled() && cpu.IsPathStart(addr)) {
-			tempLabel.sprintf("L%04X", addr);
-			label = tempLabel.c_str();
+			if (!label && cpu.IsPathfindingEnabled() && cpu.IsPathStart(addr)) {
+				tempLabel.sprintf("L%04X", addr);
+				label = tempLabel.c_str();
+			}
 		}
 
 		line.append_sprintf("%-7s ", label ? label : "");
@@ -752,7 +759,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 				if (decodeRefsHistory)
 					ea = hent.mEA;
 				else
-					ea = g_sim.DebugReadByte((uint8)(base + x)) + 256*g_sim.DebugReadByte((uint8)(base + x + 1));
+					ea = g_sim.DebugReadByte((uint8)(base + x)) + 256*g_sim.DebugReadByte((uint8)(base + ((x + 1) & dpmask)));
 
 				ea16 = true;
 				break;
@@ -763,7 +770,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 				if (decodeRefsHistory)
 					ea = hent.mEA;
 				else
-					ea = g_sim.DebugReadByte(base) + 256*g_sim.DebugReadByte((base+1) & 0xff) + y;
+					ea = g_sim.DebugReadByte(d + base) + 256*g_sim.DebugReadByte(d + ((base + 1) & dpmask)) + y;
 
 				ea16 = true;
 				break;
@@ -774,7 +781,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 				if (decodeRefsHistory)
 					ea = hent.mEA;
 				else
-					ea = g_sim.DebugReadByte(base) + 256*g_sim.DebugReadByte((base+1) & 0xff);
+					ea = g_sim.DebugReadByte(d + base) + 256*g_sim.DebugReadByte(d + ((base+1) & dpmask));
 
 				ea16 = true;
 				break;
@@ -834,8 +841,17 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 
 				if (decodeRefsHistory)
 					ea = hent.mEA;
-				else
-					ea = g_sim.DebugRead24(byte1) + y;
+				else {
+					uint16 dpaddr = d + byte1;
+
+					if (dpaddr > 0xfffd) {
+						ea = (uint32)g_sim.DebugReadByte(dpaddr++);
+						ea = (uint32)g_sim.DebugReadByte(dpaddr++) << 8;
+						ea = (uint32)g_sim.DebugReadByte(dpaddr) << 16;
+					} else {
+						ea = g_sim.DebugRead24(dpaddr);
+					}
+				}
 				break;
 
 			case kModeDpIndLongY:
@@ -843,8 +859,19 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 
 				if (decodeRefsHistory)
 					ea = hent.mEA;
-				else
-					ea = g_sim.DebugRead24(byte1) + y;
+				else {
+					uint16 dpaddr = d + byte1;
+
+					if (dpaddr > 0xfffd) {
+						ea = (uint32)g_sim.DebugReadByte(dpaddr++);
+						ea = (uint32)g_sim.DebugReadByte(dpaddr++) << 8;
+						ea = (uint32)g_sim.DebugReadByte(dpaddr) << 16;
+					} else {
+						ea = g_sim.DebugRead24(dpaddr);
+					}
+
+					ea += y;
+				}
 				break;
 		}
 
@@ -1054,6 +1081,24 @@ uint16 ATDisassembleGetFirstAnchor(uint16 addr, uint16 target) {
 int ATGetOpcodeLength(uint8 opcode) {
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 	ATCPUSubMode subMode = cpu.GetCPUSubMode();
+	const uint8 (*const tbl)[2] = kModeTbl[subMode];
+
+	return kBytesPerModeTables[subMode][tbl[opcode][0]];
+}
+
+int ATGetOpcodeLength(uint8 opcode, uint8 p, bool emuMode) {
+	ATCPUEmulator& cpu = g_sim.GetCPU();
+
+	ATCPUSubMode subMode;
+
+	if (cpu.GetCPUMode() != kATCPUMode_65C816) {
+		subMode = cpu.GetCPUSubMode();
+	} else {
+		subMode = kATCPUSubMode_65C816_Emulation;
+		if (!emuMode)
+			subMode = (ATCPUSubMode)(kATCPUSubMode_65C816_NativeM16X16 + ((p >> 4) & 3));
+	}
+
 	const uint8 (*const tbl)[2] = kModeTbl[subMode];
 
 	return kBytesPerModeTables[subMode][tbl[opcode][0]];

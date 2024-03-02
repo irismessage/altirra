@@ -72,6 +72,8 @@
 		&Next Mode				{View.NextANTICVisMode}
 	&Vertical Sync				{View.ToggleVSync}
 	Show FPS					{View.ToggleFPS}
+	&XEP-80 View				{View.ToggleXEP80View}
+	&Auto-switch XEP-80 View	{View.ToggleXEP80ViewAutoswitching}
 	---
 	&Display					{Pane.Display}
 	&Printer Output				{Pane.PrinterOutput}
@@ -146,6 +148,13 @@
 			1024K (64 banks)		{System.AxlonMemory1024K}
 			2048K (128 banks)		{System.AxlonMemory2048K}
 			4096K (256 banks)		{System.AxlonMemory4096K}
+		High Memory
+			None (16-bit addressing)	{System.HighMemoryNA}
+			None (24-bit addressing)	{System.HighMemoryNone}
+			64K (bank $01)			{System.HighMemory64K}
+			192K (banks $01-$03)	{System.HighMemory192K}
+			1MB (banks $01-$0F)		{System.HighMemory960K}
+			4MB (banks $01-$3F)		{System.HighMemory4032K}
 		---
 		MapRAM						{System.ToggleMapRAM}
 		Ultimate1MB					{System.ToggleUltimate1MB}
@@ -226,6 +235,8 @@
 		Enabled							{Audio.ToggleSlightSid}
 	Covox
 		Enabled							{Audio.ToggleCovox}
+	XEP80
+		Enabled							{Video.ToggleXEP80}
 
 Input
 	Capture Mouse						{Input.CaptureMouse}
@@ -291,9 +302,10 @@ Input
 	&Verifier...						{Debug.VerifierDialog}
 
 &Record
-	&Record Raw Audio...				{Record.RawAudio}
-	&Record Video...					{Record.Video}
-	Stop Recording						{Record.Stop}
+	Record &Raw Audio...				{Record.RawAudio}
+	Record &Audio...					{Record.Audio}
+	Record &Video...					{Record.Video}
+	&Stop Recording						{Record.Stop}
 	
 &Tools
 	&Disk Explorer...					{Tools.DiskExplorer}

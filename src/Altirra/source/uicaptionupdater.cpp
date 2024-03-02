@@ -34,6 +34,8 @@ ATUIWindowCaptionUpdater::ATUIWindowCaptionUpdater()
 	, mbLastSoundBoardState(false)
 	, mbLastU1MBState(false)
 	, mbLastDebugging(false)
+	, mLastCPUMode(kATCPUModeCount)
+	, mLastCPUSubCycles(0)
 	, mbForceUpdate(false)
 {
 	mBasePrefix = AT_FULL_VERSION_STR;
@@ -135,6 +137,17 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 	bool debugging = ATIsDebugConsoleActive();
 	if (mbLastDebugging != debugging) {
 		mbLastDebugging = debugging;
+		change = true;
+	}
+
+	ATCPUEmulator& cpu = mpSim->GetCPU();
+	ATCPUMode cpuMode = cpu.GetCPUMode();
+	uint32 cpuSubCycles = cpu.GetSubCycles();
+
+	if (mLastCPUMode != cpuMode || mLastCPUSubCycles != cpuSubCycles) {
+		mLastCPUMode = cpuMode;
+		mLastCPUSubCycles = cpuSubCycles;
+
 		change = true;
 	}
 
@@ -263,10 +276,25 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 	}
 
 	if (vbxe)
-		mPrefix += L"-VBXE";
+		mPrefix += L"+VBXE";
 
 	if (sb)
-		mPrefix += L"-SB";
+		mPrefix += L"+SB";
+
+	switch(cpuMode) {
+		case kATCPUMode_65C02:
+			mPrefix += L"+C02";
+			break;
+
+		case kATCPUMode_65C816:
+			mPrefix += L"+816";
+			if (cpuSubCycles > 1)
+				mPrefix.append_sprintf(L"[%ux]", cpuSubCycles);
+			break;
+
+		default:
+			break;
+	}
 
 	mPrefix += L" / ";
 

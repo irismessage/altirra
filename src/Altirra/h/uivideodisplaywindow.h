@@ -4,11 +4,15 @@
 #include "uiwidget.h"
 #include "uicontainer.h"
 #include "callback.h"
+#include "simeventmanager.h"
 
 class IATUIEnhancedTextEngine;
+class ATUILabel;
 class ATUIOnScreenKeyboard;
+class ATXEP80Emulator;
+class ATSimulatorEventManager;
 
-class ATUIVideoDisplayWindow : public ATUIContainer {
+class ATUIVideoDisplayWindow : public ATUIContainer, public IATSimulatorCallback {
 public:
 	enum {
 		kActionOpenOSK = kActionCustom,
@@ -17,6 +21,9 @@ public:
 
 	ATUIVideoDisplayWindow();
 	~ATUIVideoDisplayWindow();
+
+	bool Init(ATSimulatorEventManager& sem);
+	void Shutdown();
 
 	void Copy();
 
@@ -31,10 +38,14 @@ public:
 	void ClearXorRects();
 	void AddXorRect(int x1, int y1, int x2, int y2);
 
+	void SetXEP(ATXEP80Emulator *xep);
 	void SetEnhancedTextEngine(IATUIEnhancedTextEngine *p) { mpEnhTextEngine = p; }
 
 	ATCallbackHandler0<void>& OnAllowContextMenuEvent() { return mAllowContextMenuEvent; }
 	ATCallbackHandler1<void, const vdpoint32&>& OnDisplayContextMenuEvent() { return mDisplayContextMenuEvent; }
+
+public:
+	virtual void OnSimulatorEvent(ATSimulatorEvent ev);
 
 protected:
 	virtual void OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dblclk);
@@ -67,10 +78,13 @@ protected:
 
 	uint32 ComputeCursorImage(const vdpoint32& pt) const;
 	void UpdateMousePosition(int x, int y);
+	const vdrect32 GetXEP80Area() const;
 	bool MapPixelToBeamPosition(int x, int y, float& hcyc, float& vcyc, bool clamp) const;
 	bool MapPixelToBeamPosition(int x, int y, int& xc, int& yc, bool clamp) const;
 	void MapBeamPositionToPixel(int xc, int yc, int& x, int& y) const;
 	void UpdateDragPreview(int x, int y);
+	void UpdateDragPreviewXEP80(int x, int y);
+	void UpdateDragPreviewAntic(int x, int y);
 	void UpdateDragPreviewRects();
 	void ClearDragPreview();
 	int GetModeLineYPos(int ys, bool checkValidCopyText) const;
@@ -116,6 +130,15 @@ protected:
 
 	IATUIEnhancedTextEngine *mpEnhTextEngine;
 	ATUIOnScreenKeyboard *mpOSK;
+
+	ATSimulatorEventManager *mpSEM;
+	ATXEP80Emulator *mpXEP;
+	VDDisplayImageView mXEPImageView;
+	uint32 mXEPChangeCount;
+	uint32 mXEPLayoutChangeCount;
+	uint32 mXEPDataReceivedCount;
+
+	ATUILabel *mpUILabelBadSignal;
 
 	ATCallbackHandler0<void> mAllowContextMenuEvent;
 	ATCallbackHandler1<void, const vdpoint32&> mDisplayContextMenuEvent;

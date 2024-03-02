@@ -22,6 +22,21 @@
 #include "console.h"
 #include "savestate.h"
 #include "scheduler.h"
+#include "simeventmanager.h"
+
+namespace {
+	const uint8 kModeToFetchRate[16]={
+	//  0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+		0, 0, 3, 3, 3, 3, 2, 2, 1, 1, 2, 2, 2, 3, 3, 3
+	};
+
+	const uint8 kClockPattern[4][8]={
+		{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },	// rate 0: no fetching
+		{ 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 },	// rate 1: every 8 cycles
+		{ 0x11, 0x22, 0x44, 0x88, 0x11, 0x22, 0x44, 0x88 },	// rate 2: every 4 cycles
+		{ 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA },	// rate 3: every 2 cycles
+	};
+}
 
 enum {
 	kATAnticEvent_UpdateRegisters = 1,
@@ -37,6 +52,7 @@ ATAnticEmulator::ATAnticEmulator()
 	, mpRegisterUpdateEvent(NULL)
 	, mRegisterUpdateHeadIdx(0)
 	, mpEventWSYNC(NULL)
+	, mpSimEventMgr(NULL)
 {
 	SetPALMode(false);
 }
@@ -44,10 +60,11 @@ ATAnticEmulator::ATAnticEmulator()
 ATAnticEmulator::~ATAnticEmulator() {
 }
 
-void ATAnticEmulator::Init(ATAnticEmulatorConnections *mem, ATGTIAEmulator *gtia, ATScheduler *sch) {
+void ATAnticEmulator::Init(ATAnticEmulatorConnections *mem, ATGTIAEmulator *gtia, ATScheduler *sch, ATSimulatorEventManager *simevmgr) {
 	mpConn = mem;
 	mpGTIA = gtia;
 	mpScheduler = sch;
+	mpSimEventMgr = simevmgr;
 
 	memset(mActivityMap, 0, sizeof mActivityMap);
 }
@@ -59,11 +76,8 @@ void ATAnticEmulator::SetPALMode(bool pal) {
 }
 
 void ATAnticEmulator::ColdReset() {
-	++mFrame;
-	mX = 0;
-	mY = 0;
-
-	mPFDMAPtr = 0;
+	mPFRowDMAPtrBase = 0;
+	mPFRowDMAPtrOffset = 0;
 	mDLControlPrev = 0;
 	mDLControl = 0;
 	mRowCounter = 0;
@@ -71,9 +85,6 @@ void ATAnticEmulator::ColdReset() {
 	mbDLActive = false;
 	mbPFDMAEnabled = false;
 	mbPFDMAActive = false;
-	mbWSYNCActive = false;
-	mWSYNCPending = 0;
-	mDMACTL = 0;
 	mCHACTL = 0;
 	mDLIST = 0;
 	mHSCROL = 0;
@@ -84,8 +95,6 @@ void ATAnticEmulator::ColdReset() {
 	mCharBaseAddr64 = 0;
 	mCharInvert = 0;
 	mCharBlink = 0xff;
-	mNMIEN = 0;
-	mNMIST = 0x1F;
 	mVCOUNT = 0;
 	mPFWidth = kPFDisabled;
 	mPFWidthShift = 0;
@@ -94,26 +103,53 @@ void ATAnticEmulator::ColdReset() {
 	mGTIAHSyncOffset = 110;
 	mbInBuggedVBlank = false;
 	mbPhantomPMDMA = false;
+	mAbnormalDMAPattern = 0;
+	mEndingDMAPattern = 0;
+	mAbnormalDecodePattern = 0;
 
-	UpdatePlayfieldTiming();
-
-	mRegisterUpdates.clear();
-	mRegisterUpdateHeadIdx = 0;
-
-	if (mpRegisterUpdateEvent) {
-		mpScheduler->RemoveEvent(mpRegisterUpdateEvent);
-		mpRegisterUpdateEvent = NULL;
-	}
-
-	mpScheduler->UnsetEvent(mpEventWSYNC);
-}
-
-void ATAnticEmulator::WarmReset() {
-	mNMIEN = 0;
 	mNMIST = 0x1F;
 	mWSYNCPending = 0;
 	mbWSYNCActive = false;
+
+	WarmReset();
+}
+
+void ATAnticEmulator::WarmReset() {
+	// What is reset by a warm reset:
+	//
+	// - Vertical counter
+	// - Horizontal counter
+	// - Refresh address (which we don't care about, as it isn't visible)
+	// - DMACTL
+	// - DMA clock
+	// - NMIEN
+	//
+	// Notable items that are NOT reset:
+	// - WSYNC
+	// - HSCROL
+	// - VSCROL
+	// - PMBASE
+	// - CHBASE
+	// - PENH
+	// - PENV
+	// - CHACTL
+	// - DLISTL/H
+	// - Memory scan counter
+	// - NMIST
+
+	++mFrame;
+	mX = 0;
+	mY = 0;
+
+	mDMACTL = 0;
+	mNMIEN = 0;
 	mbDLExtraLoadsPending = false;
+	mAbnormalDMAPattern = 0;
+	mEndingDMAPattern = 0;
+	mAbnormalDecodePattern = 0;
+
+	UpdatePlayfieldTiming();
+	UpdateDMAPattern();
 
 	mRegisterUpdates.clear();
 	mRegisterUpdateHeadIdx = 0;
@@ -124,6 +160,12 @@ void ATAnticEmulator::WarmReset() {
 	}
 
 	mpScheduler->UnsetEvent(mpEventWSYNC);
+
+	mpPFDataWrite = mPFDataBuffer;
+	mpPFDataRead = mPFDataBuffer;
+	mpPFCharFetchPtr = mPFCharBuffer;
+	mPFDecodeOffset = 0;
+	mPFDecodeCharOffset = 0;
 }
 
 void ATAnticEmulator::RequestNMI() {
@@ -150,410 +192,482 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 
 		if (!(fetchModeX0 & 0x80))
 			return fetchModeX0;
-
-		goto x_0;
 	}
 
-	if (mX == 0) {		// missile DMA
-x_0:
-		if ((mDMACTL & 0x0C) && (uint32)(mY - 8) < 240) {	// player DMA also forces missile DMA (Run For the Money requires this).
-			if (mDMACTL & 0x10) {
-				uint8 byte = mpConn->AnticReadByte(((mPMBASE & 0xf8) << 8) + 0x0300 + mY);
-				busActive = true;
-				mpGTIA->UpdateMissile((mY & 1) != 0, byte);
-			} else {
-				// DMA occurs every scanline even in half-height mode.
-				uint8 byte = mpConn->AnticReadByte(((mPMBASE & 0xfc) << 8) + 0x0180 + (mY >> 1));
-				busActive = true;
-				mpGTIA->UpdateMissile((mY & 1) != 0, byte);
+	// Check if we are in the special DMA region.
+	if (mX < 8) {
+		// Check for abnormal DMA (bit 5); this means we have abnormal DMA going on during
+		// cycles 0-7 and need to compute a composite address mask in case ANTIC tries to
+		// do more than one DMA cycle at a time. When this happens, the address that is
+		// fetched is the AND of all requested addresses. Note that this happens *even if
+		// playfield DMA is supressed by DMACTL*.
+		uint32 addressMask = 0xFFFF;
+
+		const uint8 dmaPat = mDMAPattern[mX];
+		if ((dmaPat & 0x06) && mX) {
+			// bitmap graphic or character name fetch
+			if (dmaPat & 0x02)
+				addressMask &= mPFRowDMAPtrBase + (mPFRowDMAPtrOffset & 0x0fff);
+
+			// character data fetch
+			if (dmaPat & 0x04) {
+				const uint8 c = (uint8)mpPFDataRead >= 48 ? 0xFF : *mpPFDataRead;
+				addressMask &= mPFCharFetchPtr + ((uint32)(c & mPFCharMask) << 3);
 			}
 		}
 
-		mbDLDMAEnabledInTime = (mDMACTL & 0x20) != 0;
-		mDLISTLatch = mDLIST;
-	} else if (mX == 1) {
-		mbPFDMAEnabled = false;
-		mbPFDMAActive = false;
-		mPFDMALastCheckX = 0;
-		mPFDMALatchedStart = 0;
-		mPFDMALatchedEnd = 0;
-		mPFDMALatchedVEnd = 0;
-		mPFDisplayStart = 110;
-		mPFDisplayEnd = 110;
-		mDLHistory[mY].mbValid = false;
-
-		// Display start is at scanline 8.
-		if (mY == 8) {
-			mbDLActive = true;
-			mRowCounter = 0;
-			mRowCount = 1;
-			mbRowStopUseVScroll = false;
-			mbRowAdvance = false;
-
-			// Note that we MUST NOT clear mDLControlPrev here. If the display list extends all
-			// the way to scan line 248, ANTIC still remembers the status of the vertical scroll
-			// bit.
-			mDLControl = mDLControlPrev;
-		}
-
-		// compute stop line
-		uint32 rowStop = mbRowStopUseVScroll ? mLatchedVScroll : ((mRowCount - 1) & 15);
-
-		if (mRowCounter != rowStop) {
-			mRowCounter = (mRowCounter + 1) & 15;
-
-			mbPFDMAActive = true;
-
-			// Most mode lines only load on scan 0, but jumps are an exception.
-			if ((mDLControl & 15) != 1)
-				mbDLExtraLoadsPending = false;
-		} else {
-			mRowCounter = 0;
-			
-			if (mbDLActive) {
-				mbDLExtraLoadsPending = false;
-				mDLControlPrev = mDLControl;
-
-				DLHistoryEntry& ent = mDLHistory[mY];
-				ent.mDLAddress = mDLISTLatch;
-				ent.mPFAddress = mPFDMAPtr;
-				ent.mHVScroll = mHSCROL + (mVSCROL << 4);
-				ent.mDMACTL = mDMACTL;
-				ent.mCHBASE = mCHBASE >> 1;
-				ent.mbValid = true;
-
-				if (mbDLDMAEnabledInTime) {
-					mDLControl = mpConn->AnticReadByte(mDLISTLatch);
-
+		if (mX == 0) {		// missile DMA
+			if ((mDMACTL & 0x0C) && (uint32)(mY - 8) < 240) {	// player DMA also forces missile DMA (Run For the Money requires this).
+				if (mDMACTL & 0x10) {
+					uint8 byte = mpConn->AnticReadByte(addressMask & (((mPMBASE & 0xf8) << 8) + 0x0300 + mY));
 					busActive = true;
-					mDLIST = (mDLIST & 0xFC00) + ((mDLIST + 1) & 0x03FF);
-
-					if (mbPhantomPMDMA) {
-						mbPhantomPMDMAActive = true;
-
-						mpGTIA->UpdateMissile((mY & 1) != 0, mDLControl);
-					}
+					mpGTIA->UpdateMissile((mY & 1) != 0, byte);
+				} else {
+					// DMA occurs every scanline even in half-height mode.
+					uint8 byte = mpConn->AnticReadByte(addressMask & (((mPMBASE & 0xfc) << 8) + 0x0180 + (mY >> 1)));
+					busActive = true;
+					mpGTIA->UpdateMissile((mY & 1) != 0, byte);
 				}
+			}
 
-				ent.mControl = mDLControl;
+			mbDLDMAEnabledInTime = (mDMACTL & 0x20) != 0;
+			mDLISTLatch = mDLIST;
+		} else if (mX == 1) {
+			mbPFDMAEnabled = false;
+			mbPFDMAActive = false;
+			mPFDMALastCheckX = 0;
+			mPFDMALatchedStart = 0;
+			mPFDMALatchedEnd = 0;
+			mPFDMALatchedVEnd = 0;
+			mPFDisplayStart = 110;
+			mPFDisplayEnd = 110;
+			mDLHistory[mY].mbValid = false;
 
-				uint8 mode = mDLControl & 0x0f;
-				if (mode == 1 || (mode >= 2 && (mDLControl & 0x40)))
-					mbDLExtraLoadsPending = true;
-
+			// Display start is at scanline 8.
+			if (mY == 8) {
+				mbDLActive = true;
 				mRowCounter = 0;
-				mPFPushCycleMask = 0;
-				mPFWidthShift = 0;
-
-				mPFPushMode = k160;
-				mPFHiresMode = false;
-
-				switch(mode) {
-				case 0:
-					mRowCount = ((mDLControl >> 4) & 7) + 1;
-					mPFPushMode = kBlank;
-					break;
-				case 1:
-					mRowCount = 1;
-					mPFPushMode = kBlank;
-					break;
-				case 2:						// IR mode 2: 40x8 characters, 2 colors/1 lum
-					mRowCount = 8;
-					mPFPushCycleMask = 1;	// 320 pixels normal
-					mPFPushMode = k320;
-					mPFWidthShift = 2;
-					mPFHiresMode = true;
-					break;
-				case 3:						// IR mode 3: 40x10 characters, 2 colors/1 lum
-					mRowCount = 10;
-					mPFPushCycleMask = 1;	// 320 pixels normal
-					mPFPushMode = k320;
-					mPFWidthShift = 2;
-					mPFHiresMode = true;
-					break;
-				case 4:						// IR mode 4: 40x8 characters, 5 colors
-					mRowCount = 8;
-					mPFPushCycleMask = 1;	// 160 pixels normal
-					mPFWidthShift = 2;
-					break;
-				case 5:						// IR mode 5: 40x16 characters, 5 colors
-					mRowCount = 16;
-					mPFPushCycleMask = 1;	// 160 pixels normal
-					mPFWidthShift = 2;
-					break;
-				case 6:						// IR mode 6: 20x8 characters, 5 colors
-					mRowCount = 8;
-					mPFPushCycleMask = 3;	// 160 pixels normal
-					mPFWidthShift = 1;
-					break;
-				case 7:						// IR mode 7: 20x16 characters, 5 colors
-					mRowCount = 16;
-					mPFPushCycleMask = 3;	// 160 pixels normal
-					mPFWidthShift = 1;
-					break;
-				case 8:						// IR mode 8: 40x8 graphics, 4 colors
-					mRowCount = 8;
-					mPFPushCycleMask = 7;	// 40 pixels normal
-					mPFWidthShift = 0;
-					break;
-				case 9:						// IR mode 9: 80x4 graphics, 2 colors
-					mRowCount = 4;
-					mPFPushCycleMask = 7;	// 40 pixels normal
-					mPFWidthShift = 0;
-					break;
-				case 10:					// IR mode A: 80x4 graphics, 4 colors
-					mRowCount = 4;
-					mPFPushCycleMask = 3;	// 80 pixels normal
-					mPFWidthShift = 1;
-					break;
-				case 11:					// IR mode B: 160x2 graphics, 2 colors
-					mRowCount = 2;
-					mPFPushCycleMask = 3;	// 80 pixels normal
-					mPFWidthShift = 1;
-					break;
-				case 12:					// IR mode C: 160x1 graphics, 2 colors
-					mRowCount = 1;
-					mPFPushCycleMask = 3;	// 160 pixels normal
-					mPFWidthShift = 1;
-					break;
-				case 13:					// IR mode D: 160x2 graphics, 4 colors
-					mRowCount = 2;
-					mPFPushCycleMask = 1;	// 160 pixels normal
-					mPFWidthShift = 2;
-					break;
-				case 14:					// IR mode E: 160x1 graphics, 4 colors
-					mRowCount = 1;
-					mPFPushCycleMask = 1;	// 160 pixels normal
-					mPFWidthShift = 2;
-					break;
-				case 15:					// IR mode F: 320x1 graphics, 2 colors/1 lum
-					mRowCount = 1;
-					mPFPushCycleMask = 1;	// 320 pixels normal
-					mPFPushMode = k320;
-					mPFWidthShift = 2;
-					mPFHiresMode = true;
-					break;
-				}
-
-				// check for vertical scrolling
-				uint8 scrollPrev = mDLControlPrev;
-				uint8 scrollCur = mDLControl;
-				if ((scrollPrev & 15) < 2)
-					scrollPrev = 0;
-				if ((scrollCur & 15) < 2)
-					scrollCur = 0;
-
+				mRowCount = 1;
 				mbRowStopUseVScroll = false;
-				if ((scrollCur ^ scrollPrev) & 0x20) {
-					if (scrollCur & 0x20)
-						mRowCounter = mVSCROL;
-					else
-						mbRowStopUseVScroll = true;
-				}
+				mbRowAdvance = false;
 
-				// check for horizontal scrolling
-				mbHScrollEnabled = false;
-				if (mode != 1 && (scrollCur & 0x10))
-					mbHScrollEnabled = true;
+				// Note that we MUST NOT clear mDLControlPrev here. If the display list extends all
+				// the way to scan line 248, ANTIC still remembers the status of the vertical scroll
+				// bit.
+				mDLControl = mDLControlPrev;
+			}
 
-				mbPFDMAEnabled = true;
+			// compute stop line
+			uint32 rowStop = mbRowStopUseVScroll ? mLatchedVScroll : ((mRowCount - 1) & 15);
+
+			if (mRowCounter != rowStop) {
+				mRowCounter = (mRowCounter + 1) & 15;
+
 				mbPFDMAActive = true;
-			}
-		}
-	} else if (mX >= 2 && mX <= 5) {		// player DMA
-		if ((mDMACTL & 0x08) && (uint32)(mY - 8) < 240) {
-			uint32 index = mX - 2;
-			uint8 byte;
-			if (mDMACTL & 0x10) {
-				byte = mpConn->AnticReadByte(((mPMBASE & 0xf8) << 8) + 0x400 + (0x0100 * index) + mY);
-			} else {
-				// DMA occurs every scanline even in half-height mode.
-				byte = mpConn->AnticReadByte(((mPMBASE & 0xfc) << 8) + 0x200 + (0x0080 * index) + (mY >> 1));
-			}
 
-			mpGTIA->UpdatePlayer((mY & 1) != 0, index, byte);
-			busActive = true;
-		} else if (mbPhantomPMDMAActive && mX > 3) {
-			// We need to read the result of the _previous_ cycle due to the CPU executing after us.
-			mpGTIA->UpdatePlayer((mY & 1) != 0, mX - 4, *mpConn->mpAnticBusData);
-		}
-	} else if (mX == 6) {		// address DMA (low)
-		if (mbPhantomPMDMAActive)
-			mpGTIA->UpdatePlayer((mY & 1) != 0, 2, *mpConn->mpAnticBusData);
-
-		if (mbDLExtraLoadsPending && (mDMACTL & 0x20)) {
-			mDLNext = mpConn->AnticReadByte(mDLIST);
-			busActive = true;
-			mDLIST = (mDLIST & 0xFC00) + ((mDLIST + 1) & 0x03FF);
-		}
-			mLatchedVScroll2 = mVSCROL;
-	} else if (mX == 7) {		// address DMA (high) + NMIST change
-		if (mbPhantomPMDMAActive)
-			mpGTIA->UpdatePlayer((mY & 1) != 0, 3, *mpConn->mpAnticBusData);
-
-		if (mbDLExtraLoadsPending && (mDMACTL & 0x20)) {
-			uint8 b = mpConn->AnticReadByte(mDLIST);
-			busActive = true;
-			mDLIST = (mDLIST & 0xFC00) + ((mDLIST + 1) & 0x03FF);
-
-			uint16 addr = mDLNext + ((uint16)b << 8);
-			if ((mDLControl & 0x0f) == 1) {
-				mDLIST = addr;
-
-				if (mDLControl & 0x40) {
-					mbDLActive = false;
-
-					// We only clear this for the JVB instruction, because it's left on for the jump
-					// instruction -- if it is stretched by vertical scrolling, ANTIC will continue
-					// to fetch display list addresses for each scan line!
+				// Most mode lines only load on scan 0, but jumps are an exception.
+				if ((mDLControl & 15) != 1)
 					mbDLExtraLoadsPending = false;
+			} else {
+				mRowCounter = 0;
+				
+				if (mbDLActive) {
+					mbDLExtraLoadsPending = false;
+					mDLControlPrev = mDLControl;
 
-					// We have to preserve the DLI bit here, because Race In Space does a DLI on
-					// the waitvbl command!
-					mDLControl &= ~0x4f;
-					mRowCount = 1;
+					DLHistoryEntry& ent = mDLHistory[mY];
+					ent.mDLAddress = mDLISTLatch;
+					ent.mPFAddress = mPFRowDMAPtrBase + mPFRowDMAPtrOffset;
+					ent.mHVScroll = mHSCROL + (mVSCROL << 4);
+					ent.mDMACTL = mDMACTL;
+					ent.mCHBASE = mCHBASE >> 1;
+					ent.mbValid = true;
+
+					if (mbDLDMAEnabledInTime) {
+						mDLControl = mpConn->AnticReadByte(mDLISTLatch & addressMask);
+
+						busActive = true;
+						mDLIST = (mDLIST & 0xFC00) + ((mDLIST + 1) & 0x03FF);
+
+						if (mbPhantomPMDMA) {
+							mbPhantomPMDMAActive = true;
+
+							mpGTIA->UpdateMissile((mY & 1) != 0, mDLControl);
+						}
+					}
+
+					ent.mControl = mDLControl;
+
+					uint8 mode = mDLControl & 0x0f;
+					if (mode == 1 || (mode >= 2 && (mDLControl & 0x40)))
+						mbDLExtraLoadsPending = true;
+
+					mRowCounter = 0;
+					mPFPushCycleMask = 0;
+					mPFWidthShift = 0;
+
+					mPFPushMode = k160;
+					mPFHiresMode = false;
+
+					switch(mode) {
+					case 0:
+						mRowCount = ((mDLControl >> 4) & 7) + 1;
+						mPFPushMode = kBlank;
+						break;
+					case 1:
+						mRowCount = 1;
+						mPFPushMode = kBlank;
+						break;
+					case 2:						// IR mode 2: 40x8 characters, 2 colors/1 lum
+						mRowCount = 8;
+						mPFPushCycleMask = 1;	// 320 pixels normal
+						mPFPushMode = k320;
+						mPFWidthShift = 2;
+						mPFHiresMode = true;
+						break;
+					case 3:						// IR mode 3: 40x10 characters, 2 colors/1 lum
+						mRowCount = 10;
+						mPFPushCycleMask = 1;	// 320 pixels normal
+						mPFPushMode = k320;
+						mPFWidthShift = 2;
+						mPFHiresMode = true;
+						break;
+					case 4:						// IR mode 4: 40x8 characters, 5 colors
+						mRowCount = 8;
+						mPFPushCycleMask = 1;	// 160 pixels normal
+						mPFWidthShift = 2;
+						break;
+					case 5:						// IR mode 5: 40x16 characters, 5 colors
+						mRowCount = 16;
+						mPFPushCycleMask = 1;	// 160 pixels normal
+						mPFWidthShift = 2;
+						break;
+					case 6:						// IR mode 6: 20x8 characters, 5 colors
+						mRowCount = 8;
+						mPFPushCycleMask = 3;	// 160 pixels normal
+						mPFWidthShift = 1;
+						break;
+					case 7:						// IR mode 7: 20x16 characters, 5 colors
+						mRowCount = 16;
+						mPFPushCycleMask = 3;	// 160 pixels normal
+						mPFWidthShift = 1;
+						break;
+					case 8:						// IR mode 8: 40x8 graphics, 4 colors
+						mRowCount = 8;
+						mPFPushCycleMask = 7;	// 40 pixels normal
+						mPFWidthShift = 0;
+						break;
+					case 9:						// IR mode 9: 80x4 graphics, 2 colors
+						mRowCount = 4;
+						mPFPushCycleMask = 7;	// 40 pixels normal
+						mPFWidthShift = 0;
+						break;
+					case 10:					// IR mode A: 80x4 graphics, 4 colors
+						mRowCount = 4;
+						mPFPushCycleMask = 3;	// 80 pixels normal
+						mPFWidthShift = 1;
+						break;
+					case 11:					// IR mode B: 160x2 graphics, 2 colors
+						mRowCount = 2;
+						mPFPushCycleMask = 3;	// 80 pixels normal
+						mPFWidthShift = 1;
+						break;
+					case 12:					// IR mode C: 160x1 graphics, 2 colors
+						mRowCount = 1;
+						mPFPushCycleMask = 3;	// 160 pixels normal
+						mPFWidthShift = 1;
+						break;
+					case 13:					// IR mode D: 160x2 graphics, 4 colors
+						mRowCount = 2;
+						mPFPushCycleMask = 1;	// 160 pixels normal
+						mPFWidthShift = 2;
+						break;
+					case 14:					// IR mode E: 160x1 graphics, 4 colors
+						mRowCount = 1;
+						mPFPushCycleMask = 1;	// 160 pixels normal
+						mPFWidthShift = 2;
+						break;
+					case 15:					// IR mode F: 320x1 graphics, 2 colors/1 lum
+						mRowCount = 1;
+						mPFPushCycleMask = 1;	// 320 pixels normal
+						mPFPushMode = k320;
+						mPFWidthShift = 2;
+						mPFHiresMode = true;
+						break;
+					}
+
+					// Check for changes in abnormal DMA pattern.
+					if (mode < 2) {
+						// On a blank line -- IR modes 0 and 1 -- the DMA clock is unconditionally cleared, ending
+						// any abnormal DMA condition.
+						mAbnormalDMAPattern = 0;
+					} else {
+						// At this point we change the length of the DMA clock depending on the fetch rate
+						// required for the new mode. Two fun things can happen here:
+						//
+						// 1) Modes using the slowest fetch rate -- IR modes 8 and 9 -- can capture latent clock
+						//    bits. We use the mEndingDMAPattern field to do this.
+						//
+						// 2) Modes using the medium and fast fetch rates will alter any existing abnormal DMA
+						//    fetch pattern. This may add or remove effective bits from the pattern.
+						//
+						switch(kModeToFetchRate[mode]) {
+							case 1:
+								mAbnormalDMAPattern |= mEndingDMAPattern;
+								break;
+
+							case 2:
+								mAbnormalDMAPattern = (mAbnormalDMAPattern & 15) * 0x11;
+								break;
+
+							case 3:
+								mAbnormalDMAPattern = (mAbnormalDMAPattern & 3) * 0x55;
+								break;
+						}
+					}
+
+					// check for vertical scrolling
+					uint8 scrollPrev = mDLControlPrev;
+					uint8 scrollCur = mDLControl;
+					if ((scrollPrev & 15) < 2)
+						scrollPrev = 0;
+					if ((scrollCur & 15) < 2)
+						scrollCur = 0;
+
+					mbRowStopUseVScroll = false;
+					if ((scrollCur ^ scrollPrev) & 0x20) {
+						if (scrollCur & 0x20)
+							mRowCounter = mVSCROL;
+						else
+							mbRowStopUseVScroll = true;
+					}
+
+					// check for horizontal scrolling
+					mbHScrollEnabled = false;
+					if (mode != 1 && (scrollCur & 0x10))
+						mbHScrollEnabled = true;
+
+					mbPFDMAEnabled = true;
+					mbPFDMAActive = true;
 				}
-			} else {
-				// correct display list history with new address
-				DLHistoryEntry& ent = mDLHistory[mY];
-				ent.mPFAddress = addr;
-
-				mPFDMAPtr = addr;
-				mbDLExtraLoadsPending = false;
 			}
-		}
 
-		mPFRowDMAPtrBase = mPFDMAPtr & 0xf000;
-		mPFRowDMAPtrOffset = mPFDMAPtr & 0x0fff;
-		mEarlyNMIEN = mNMIEN;
+			mPFHScrollDMAOffset = 0;
+			mbHScrollDelay = false;
 
-		// Note that we set these regardless of NMIEN bits. We also use a separate variable
-		// from NMIST as NMIRES does NOT affect pending NMIs.
-		mPendingNMIs = 0;
-
-		if (mY == 248) {
-			mPendingNMIs = 0x40;
-			mNMIST |= 0x40;
-			mNMIST &= ~0x80;
-
-			// Note that we need to preserve the vertical scroll bit here to handle oversize DLs
-			// properly.
-			mDLControlPrev = mDLControl;
-			mDLControl &= 0x20;
-
-			memset(mPFDataBuffer, 0, sizeof mPFDataBuffer);
-		} else {
-			uint32 rowStop = mbRowStopUseVScroll ? mLatchedVScroll2 : ((mRowCount - 1) & 15);
-
-			if ((mDLControl & 0x80) && mRowCounter == rowStop) {
-				mPendingNMIs = 0x80;
-				mNMIST &= ~0x40;
-				mNMIST |= 0x80;
+			if (mbHScrollEnabled) {
+				mPFHScrollDMAOffset = (mHSCROL & 14) >> 1;
+				mbHScrollDelay = (mHSCROL & 1) != 0;
 			}
-		}
 
-	} else if (mX == 8) {
-		mEarlyNMIEN2 = mNMIEN;
-		mbLateNMI = false;
+			UpdateCurrentCharRow();
+			UpdatePlayfieldTiming();
 
-		uint8 cumulativeNMIEN = mPendingNMIs & mEarlyNMIEN;
-		uint8 cumulativeNMIENLate = mPendingNMIs & mEarlyNMIEN2 & ~mEarlyNMIEN;
+			mAbnormalDecodeShifter = 0;
+		} else if (mX >= 2 && mX <= 5) {		// player DMA
+			if ((mDMACTL & 0x08) && (uint32)(mY - 8) < 240) {
+				uint32 index = mX - 2;
+				uint8 byte;
+				if (mDMACTL & 0x10) {
+					byte = mpConn->AnticReadByte(addressMask & (((mPMBASE & 0xf8) << 8) + 0x400 + (0x0100 * index) + mY));
+				} else {
+					// DMA occurs every scanline even in half-height mode.
+					byte = mpConn->AnticReadByte(addressMask & (((mPMBASE & 0xfc) << 8) + 0x200 + (0x0080 * index) + (mY >> 1)));
+				}
 
-		if (cumulativeNMIEN) {
-			mpConn->AnticAssertNMI();
-		} else if (cumulativeNMIENLate) {
-			mbLateNMI = true;
-		}
-	} else if (mX == 9) {
-		if (mbLateNMI)
-			mpConn->AnticAssertNMI();
-	} else if (mX == 10) {
-
-		mPFHScrollDMAOffset = 0;
-		mbHScrollDelay = false;
-
-		if (mbHScrollEnabled) {
-			mPFHScrollDMAOffset = (mHSCROL & 14) >> 1;
-			mbHScrollDelay = (mHSCROL & 1) != 0;
-		}
-
-		UpdateCurrentCharRow();
-		UpdatePlayfieldTiming();
-
-		if (((unsigned)(mDLControl & 15) - 2) < 6)
-			memset(mPFCharBuffer, 0, sizeof mPFCharBuffer);
-
-		memset(mPFDecodeBuffer, 0x00, sizeof mPFDecodeBuffer);
-
-		if ((unsigned)(mY - 8) >= 240) {
-			if (mPFPushMode != k320 || !(mDMACTL & 3)) {
-				mpGTIA->SetVBLANK(ATGTIAEmulator::kVBlankModeOn);
-			} else {
-				mpGTIA->SetVBLANK(ATGTIAEmulator::kVBlankModeBugged);
-
-				memset(mPFDecodeBuffer, 0x0a, sizeof mPFDecodeBuffer);
+				mpGTIA->UpdatePlayer((mY & 1) != 0, index, byte);
+				busActive = true;
+			} else if (mbPhantomPMDMAActive && mX > 3) {
+				// We need to read the result of the _previous_ cycle due to the CPU executing after us.
+				mpGTIA->UpdatePlayer((mY & 1) != 0, mX - 4, *mpConn->mpAnticBusData);
 			}
+		} else if (mX == 6) {		// address DMA (low)
+			if (mbPhantomPMDMAActive)
+				mpGTIA->UpdatePlayer((mY & 1) != 0, 2, *mpConn->mpAnticBusData);
+
+			if (mbDLExtraLoadsPending && (mDMACTL & 0x20)) {
+				mDLNext = mpConn->AnticReadByte(mDLIST & addressMask);
+				busActive = true;
+				mDLIST = (mDLIST & 0xFC00) + ((mDLIST + 1) & 0x03FF);
+			}
+				mLatchedVScroll2 = mVSCROL;
+		} else if (mX == 7) {		// address DMA (high) + NMIST change
+			if (mbPhantomPMDMAActive)
+				mpGTIA->UpdatePlayer((mY & 1) != 0, 3, *mpConn->mpAnticBusData);
+
+			if (mbDLExtraLoadsPending && (mDMACTL & 0x20)) {
+				uint8 b = mpConn->AnticReadByte(mDLIST & addressMask);
+				busActive = true;
+				mDLIST = (mDLIST & 0xFC00) + ((mDLIST + 1) & 0x03FF);
+
+				uint16 addr = mDLNext + ((uint16)b << 8);
+				if ((mDLControl & 0x0f) == 1) {
+					mDLIST = addr;
+
+					if (mDLControl & 0x40) {
+						mbDLActive = false;
+
+						// We only clear this for the JVB instruction, because it's left on for the jump
+						// instruction -- if it is stretched by vertical scrolling, ANTIC will continue
+						// to fetch display list addresses for each scan line!
+						mbDLExtraLoadsPending = false;
+
+						// We have to preserve the DLI bit here, because Race In Space does a DLI on
+						// the waitvbl command!
+						mDLControl &= ~0x4f;
+						mRowCount = 1;
+					}
+				} else {
+					// correct display list history with new address
+					DLHistoryEntry& ent = mDLHistory[mY];
+					ent.mPFAddress = addr;
+
+					mPFRowDMAPtrBase = addr & 0xf000;
+					mPFRowDMAPtrOffset = addr & 0x0fff;
+					mbDLExtraLoadsPending = false;
+				}
+			}
+
+			mEarlyNMIEN = mNMIEN;
+
+			// Note that we set these regardless of NMIEN bits. We also use a separate variable
+			// from NMIST as NMIRES does NOT affect pending NMIs.
+			mPendingNMIs = 0;
 
 			if (mY == 248) {
-				if (mPFPushMode == k320) {
-					mbInBuggedVBlank = true;
-					mVSyncShiftTime = 0;
-				} else {
-					mbInBuggedVBlank = false;
+				mPendingNMIs = 0x40;
+				mNMIST |= 0x40;
+				mNMIST &= ~0x80;
+
+				// Note that we need to preserve the vertical scroll bit here to handle oversize DLs
+				// properly.
+				mDLControlPrev = mDLControl;
+				mDLControl &= 0x20;
+
+				memset(mPFDataBuffer, 0, sizeof mPFDataBuffer);
+			} else {
+				uint32 rowStop = mbRowStopUseVScroll ? mLatchedVScroll2 : ((mRowCount - 1) & 15);
+
+				if ((mDLControl & 0x80) && mRowCounter == rowStop) {
+					mPendingNMIs = 0x80;
+					mNMIST &= ~0x40;
+					mNMIST |= 0x80;
 				}
 			}
-		} else {
-			mpGTIA->SetVBLANK(ATGTIAEmulator::kVBlankModeOff);
-			mbInBuggedVBlank = false;
+			mpPFDataWrite = mPFDataBuffer;
+			mpPFDataRead = mPFDataBuffer;
+			mpPFCharFetchPtr = mPFCharBuffer;
+			mPFDecodeOffset = 0;
+			mPFDecodeCharOffset = 0;
 		}
 
-		if (mY == 248)
-			mGTIAHSyncOffset = 110;
+		// Check again if phantom DMA is active. If so, and we did a DMA fetch already, we flip
+		// on the phantom bit so the actual fetch uses the already latched data. Otherwise, we
+		// let the normal path fetch.
+		if ((dmaPat & 0x20) && busActive)
+			busActive |= 0x10;
 
-		mPFDecodeCounter = 0;
-		mPFDisplayCounter = 0;
-		mPFDMALastCheckX = 0;
-	} else if (mX == 16) {
-		mpGTIA->BeginScanline(mY, mPFPushMode == k320);
-		mbPFRendered = false;
-	} else if (mX == 105) {
-		mbWSYNCActive = false;
-	} else if (mX == 109) {
-		mLatchedVScroll = mVSCROL;
-	} else if (mX == 111) {
-		// Step row counter. We do this instead of using the incrementally stepped value, because there
-		// may be DMA cycles blocked after this point.
-
-		if (mPFDMAEnd < 127 && mbPFDMAEnabled) {
-			LatchPlayfieldEdges();
-
-			if (mPFDMALatchedStart) {
-				// The baseline width in bytes is 8 for narrow, 10 for normal, and 12 for wide. However,
-				// it is possible to get into weird cases where the playfield starts and ends with
-				// different widths.
-				uint32 bytes = ((mPFDMALatchedVEnd ? mPFDMALatchedVEnd : mPFDMAVEndWide) - mPFDMALatchedStart) >> (3 - mPFWidthShift);
-
-				mPFDMAPtr = (mPFDMAPtr & 0xf000) + ((mPFDMAPtr + bytes) & 0xfff);
+		if (mAnalysisMode) {
+			switch(mAnalysisMode) {
+			case kAnalyzeDMATiming:
+				if (busActive)
+					mActivityMap[mY][mX] |= 1;
+				break;
 			}
 		}
 
-		mVCOUNT = (mY + 1 >= mScanlineLimit) ? 0 : (mY + 1) >> 1;
-	}
+		return busActive | (dmaPat & 0x3f);
+	} else {
+		if (mX == 8) {
+			mEarlyNMIEN2 = mNMIEN;
+			mbLateNMI = false;
 
-	if (mAnalysisMode) {
-		switch(mAnalysisMode) {
-		case kAnalyzeDMATiming:
-			if (busActive)
-				mActivityMap[mY][mX] |= 1;
-			break;
-		case kAnalyzeDLDMAEnabled:
-			if (mDMACTL & 0x20)
-				mActivityMap[mY][mX] |= 1;
-			break;
+			uint8 cumulativeNMIEN = mPendingNMIs & mEarlyNMIEN;
+			uint8 cumulativeNMIENLate = mPendingNMIs & mEarlyNMIEN2 & ~mEarlyNMIEN;
+
+			if (cumulativeNMIEN) {
+				mpConn->AnticAssertNMI();
+			} else if (cumulativeNMIENLate) {
+				mbLateNMI = true;
+			}
+		} else if (mX == 9) {
+			if (mbLateNMI)
+				mpConn->AnticAssertNMI();
+		} else if (mX == 10) {
+			if (((unsigned)(mDLControl & 15) - 2) < 6)
+				memset(mPFCharBuffer, 0, sizeof mPFCharBuffer);
+
+			memset(mPFDecodeBuffer, 0x00, sizeof mPFDecodeBuffer);
+
+			if ((unsigned)(mY - 8) >= 240) {
+				if (mPFPushMode != k320 || !(mDMACTL & 3)) {
+					mpGTIA->SetVBLANK(ATGTIAEmulator::kVBlankModeOn);
+				} else {
+					mpGTIA->SetVBLANK(ATGTIAEmulator::kVBlankModeBugged);
+
+					memset(mPFDecodeBuffer, 0x0a, sizeof mPFDecodeBuffer);
+				}
+
+				if (mY == 248) {
+					if (mPFPushMode == k320) {
+						mbInBuggedVBlank = true;
+						mVSyncShiftTime = 0;
+					} else {
+						mbInBuggedVBlank = false;
+					}
+				}
+			} else {
+				mpGTIA->SetVBLANK(ATGTIAEmulator::kVBlankModeOff);
+				mbInBuggedVBlank = false;
+			}
+
+			if (mY == 248)
+				mGTIAHSyncOffset = 110;
+
+			mPFDecodeCounter = 1;
+			mPFDisplayCounter = 0;
+			mPFDMALastCheckX = 0;
+		} else if (mX == 16) {
+			mpGTIA->BeginScanline(mY, mPFPushMode == k320);
+			mbPFRendered = false;
+		} else if (mX == 105) {
+			mbWSYNCActive = false;
+		} else if (mX == 109) {
+			mLatchedVScroll = mVSCROL;
+		} else if (mX == 111) {
+			mVCOUNT = (mY + 1 >= mScanlineLimit) ? 0 : (mY + 1) >> 1;
+		} else if (mX == 112) {
+			// Check if we have hit the end of the mode line. We need to detect this now in case
+			// abnormal DMA is active so that playfield DMA can be re-enabled for cycles 0-7
+			// of the next scan line. In particular, this needs to be able to hit the display
+			// list instruction fetch.
+			uint32 rowStop = mbRowStopUseVScroll ? mLatchedVScroll : ((mRowCount - 1) & 15);
+			if (mRowCounter == rowStop) {
+				bool recomp = !mbPFDMAEnabled;
+
+				mbPFDMAEnabled = true;
+
+				if (recomp) {
+					// HACK: We need to compute this pointer based on DMA cycles that didn't
+					// occur...
+					mpPFDataWrite = mPFDataBuffer + 48;
+
+					UpdateDMAPattern();
+				}
+			}	
 		}
-	}
 
-	return busActive | (mDMAPattern[mX] & 0x7f);
+		if (mAnalysisMode) {
+			switch(mAnalysisMode) {
+			case kAnalyzeDMATiming:
+				if (busActive)
+					mActivityMap[mY][mX] |= 1;
+				break;
+			}
+		}
+
+		return busActive | (mDMAPattern[mX] & 0x3f);
+	}
 }
 
 void ATAnticEmulator::AdvanceScanline() {
@@ -584,12 +698,79 @@ void ATAnticEmulator::AdvanceScanline() {
 		// Don't allow jumps to continue into vertical blank; needed because Spindizzy
 		// wraps a dlist with jump instructions.
 		mbDLExtraLoadsPending = false;
+
+		// The DMA clock is unconditionally cleared during VBLANK, ending any abnormal DMA condition.
+		mAbnormalDMAPattern = 0;
+	} else {
+		// Update abnormal DMA pattern.
+		const int mode = mDLControl & 15;
+
+		if (mode >= 2) {
+			int dmaStart = mPFDMALatchedStart ? mPFDMALatchedStart : mPFDMAStart;
+			int dmaVEnd = mPFDMALatchedVEnd ? mPFDMALatchedVEnd : mPFDMAVEnd;
+
+			if (mode >= 8) {
+				dmaStart -= 2;
+				dmaVEnd -= 2;
+			}
+
+			const int fetchRate = kModeToFetchRate[mode];
+
+			// Check for if we need to track the ending DMA pattern. This is true whenever a character name
+			// fetch cycle would occur on cycle 107+ is potentially a situation where latent DMA clock bits
+			// can be captured by a switch to a slower DMA rate. For simplicity we just use the last cycle
+			// before the virtual end. We thus end up making a mask in mEndingDMAPattern as follows:
+			//
+			//  D7  D6  D5  D4  D3  D2  D1  D0
+			// (0) (0) (0) 108 107 (0) (0) (0)
+			//
+			// This is then used by the IR mode switching code on cycle 1 to determine whether to activate
+			// abnormal DMA. Note that IR modes 8 and 9 are the only modes that can exhibit this effect and
+			// those modes cannot normally themselves cause DMA cycles late enough to trigger the problem.
+			// IR modes 6, 7, A, B, and C use medium fetch rate and can trigger this bug via HSCROL 14-15;
+			// modes 2, 3, 4, 5, D, E, and F use fast fetch rate and cause it for HSCROL 12-15.
+			//
+			mEndingDMAPattern = 0;
+
+			if (mPFDMAVEnd > mPFDMAStart && fetchRate) {
+				const int dangerOffset = dmaVEnd - (16 >> fetchRate) - 109;
+
+				if (dangerOffset >= 0)
+					mEndingDMAPattern = (kClockPattern[fetchRate][7] >> (4 - dangerOffset)) & 0x38;
+			}
+
+			// Update abnormal DMA pattern.
+			const uint8 origPattern = mAbnormalDMAPattern;
+			mAbnormalDMAPattern |= kClockPattern[fetchRate][dmaStart & 7];
+			mAbnormalDMAPattern &= ~kClockPattern[fetchRate][dmaVEnd & 7];
+
+			// Rotate the abnormal DMA pattern, due to 114 cycles not being divisible by 8.
+			mAbnormalDMAPattern = (uint8)((mAbnormalDMAPattern << 6) + (mAbnormalDMAPattern >> 2));
+
+			if (origPattern | mAbnormalDMAPattern) {
+
+				// Grr... we're going to immediately have a new DMA cycle with a shifted abnormal DMA pattern,
+				// so we need to recompute the DMA pattern now.
+				UpdateDMAPattern();
+			}
+		}
 	}
 
 	mpConn->AnticEndScanline();
 
 	mbPhantomPMDMA = (mDMACTL & 0x2C) == 0x20 && (uint32)(mY - 8) < 240;
 	mbPhantomPMDMAActive = false;
+
+	mpPFDataWrite = mPFDataBuffer;
+	mpPFDataRead = mPFDataBuffer;
+	mpPFCharFetchPtr = mPFCharBuffer;
+	mPFDecodeOffset = 0;
+	mPFDecodeCharOffset = 0;
+
+	if (mAbnormalDMAPattern) {
+		if (mpSimEventMgr)
+			mpSimEventMgr->NotifyEvent(kATSimEvent_AbnormalDMA);
+	}
 }
 
 void ATAnticEmulator::SyncWithGTIA(int offset) {
@@ -718,13 +899,123 @@ void ATAnticEmulator::Decode(int offset) {
 		0x0000, 0x0100, 0x1000, 0x1100, 0x0001, 0x0101, 0x1001, 0x1101, 0x0010, 0x0110, 0x1010, 0x1110, 0x0011, 0x0111, 0x1011, 0x1111,
 	};
 
+	static const uint8 kExpandModeAb8[4]={ 0x00, 0x11, 0x22, 0x44 };
+	static const uint8 kExpandModeAbB[4]={ 0x00, 0x01, 0x10, 0x11 };
+
+	static const uint8 kBits[16]={
+		0x01,
+		0x02,
+		0x04,
+		0x08,
+		0x10,
+		0x20,
+		0x40,
+		0x80,
+		0x01,
+		0x02,
+		0x04,
+		0x08,
+		0x10,
+		0x20,
+		0x40,
+		0x80,
+	};
+
 	int x = mPFDecodeCounter;
+	const uint8 mode = mDLControl & 15;
 
-	if (x < (int)mPFDMAStart) {
-		if (mPFDMAEnd <= mPFDMAStart)
-			return;
+	if (mAbnormalDMAPattern) {
+		if (x < (int)mPFDMAStart) {
+			if (mPFDMAEnd <= mPFDMAStart)
+				return;
 
-		x = mPFDMAStart;
+			int xlim = (int)mPFDMAStart > limit ? limit : (int)mPFDMAStart;
+			switch(mode) {
+				case 8:	// 40x4: shift two bits every four color clocks
+				case 9:	// 80x2: shift one bit every two color clocks
+					// shift two bits every two machine cycles (four color clocks)
+					for(; x < xlim; ++x) {
+						const int x2 = x + 6;
+						const int bit = x2 & 7;
+
+						if (mAbnormalDMAPattern & (0x55 << (x2 & 1)))
+							mAbnormalDecodeShifter = (mAbnormalDecodeShifter << 2);
+
+						if (mAbnormalDMAPattern & kBits[bit])
+							mAbnormalDecodeShifter |= (mPFDecodeOffset & 48) == 48 ? 0xFF : mPFDataBuffer[mPFDecodeOffset];
+
+						if (x + 2 >= (int)mPFDMAStart ? mAbnormalDecodePattern & kBits[(x + 2 - mPFDMAStart) & 7] : mAbnormalDMAPattern & kBits[bit+2]) {
+							if (x >= 5) {
+								if (++mPFDecodeOffset >= 63)
+									mPFDecodeOffset = 0;
+							}
+						}
+					}
+					break;
+
+				case 6:		// 20x8: shift two bits every two color clocks
+				case 7:		// 20x8: shift two bits every two color clocks
+				case 10:	// 80x2: shift two bits every two color clocks
+				case 11:	// 160x1: shift one bit every color clock
+				case 12:	// 160x1: shift one bit every color clock
+					// shift two bits every machine cycle
+					for(; x < xlim; ++x) {
+						const int x2 = x + 6;
+						const int bit = x2 & 7;
+
+						mAbnormalDecodeShifter <<= 2;
+
+						if (mAbnormalDMAPattern & kBits[bit])
+							mAbnormalDecodeShifter |= (mPFDecodeOffset & 48) == 48 ? 0xFF : mPFDataBuffer[mPFDecodeOffset];
+
+						if (x + 2 >= (int)mPFDMAStart ? mAbnormalDecodePattern & kBits[(x + 2 - mPFDMAStart) & 7] : mAbnormalDMAPattern & kBits[bit+2]) {
+							if (x >= 5) {
+								if (++mPFDecodeOffset >= 63)
+									mPFDecodeOffset = 0;
+							}
+						}
+					}
+					break;
+
+				case 2:		// 40x8: shift two bits every color clock
+				case 3:		// 40x8: shift two bits every color clock
+				case 4:		// 40x8: shift two bits every color clock
+				case 5:		// 40x8: shift two bits every color clock
+				case 13:	// 160x2: shift two bits every color clock
+				case 14:	// 160x2: shift two bits every color clock
+				case 15:	// 320x1: shift two bits every color clock
+					// shift four bits every machine cycle (two bits every color clock)
+					for(; x < xlim; ++x) {
+						const int x2 = x + 6;
+						const int bit = x2 & 7;
+
+						mAbnormalDecodeShifter <<= 4;
+
+						if (mAbnormalDMAPattern & kBits[bit])
+							mAbnormalDecodeShifter |= (mPFDecodeOffset & 48) == 48 ? 0xFF : mPFDataBuffer[mPFDecodeOffset];
+
+						if (x + 2 >= (int)mPFDMAStart ? mAbnormalDecodePattern & kBits[(x + 2 - mPFDMAStart) & 7] : mAbnormalDMAPattern & kBits[bit+2]) {
+							if (x >= 5) {
+								if (++mPFDecodeOffset >= 63)
+									mPFDecodeOffset = 0;
+							}
+						}
+					}
+					break;
+			}
+
+			if (xlim == mPFDMAStart)
+				mPFDecodeOffset = (mPFDecodeOffset + 62) % 63;
+
+			mPFDecodeCounter = xlim;
+		}
+	} else {
+		if (x < (int)mPFDMAStart) {
+			if (mPFDMAEnd <= mPFDMAStart)
+				return;
+
+			x = mPFDMAStart;
+		}
 	}
 
 	if (x >= limit)
@@ -732,7 +1023,7 @@ void ATAnticEmulator::Decode(int offset) {
 
 	int xoffset = x - mPFDMAStart;
 
-	switch(mDLControl & 15) {
+	switch(mode) {
 		case 2:
 		case 3:
 		case 4:
@@ -769,140 +1060,404 @@ void ATAnticEmulator::Decode(int offset) {
 	else
 		dst += 6;
 
-	switch(mDLControl & 15) {
-		case 2:		// 40 column text, 1.5 colors, 8 scanlines
-			for(; x < limit; x += 2) {
-				uint8 c = *src++;
-				uint8 d = *chdata++;
+	if (!mAbnormalDecodePattern) {
+		switch(mode) {
+			case 2:		// 40 column text, 1.5 colors, 8 scanlines
+				for(; x < limit; x += 2) {
+					uint8 c = *src++;
+					uint8 d = *chdata++;
 
-				uint8 himask = (c & 128) ? 0xff : 0;
-				uint8 inv = himask & mCharInvert;
+					uint8 himask = (c & 128) ? 0xff : 0;
+					uint8 inv = himask & mCharInvert;
 
-				d &= (~himask | mCharBlink);
-				d ^= inv;
-				
-				dst[0] = d >> 4;
-				dst[1] = d & 15;
-				dst += 2;
-			}
-			break;
+					d &= (~himask | mCharBlink);
+					d ^= inv;
+					
+					dst[0] = d >> 4;
+					dst[1] = d & 15;
+					dst += 2;
+				}
+				break;
 
-		case 3:		// 40 column text, 1.5 colors, 10 scanlines
-			for(; x < limit; ++x) {
-				uint8 c = *src++;
-				uint8 d = *chdata++;
+			case 3:		// 40 column text, 1.5 colors, 10 scanlines
+				for(; x < limit; ++x) {
+					uint8 c = *src++;
+					uint8 d = *chdata++;
 
-				uint8 himask = (c & 128) ? 0xff : 0;
-				uint8 inv = himask & mCharInvert;
-				uint8 mask = mRowCounter >= 2 ? 0xff : 0x00;
+					uint8 himask = (c & 128) ? 0xff : 0;
+					uint8 inv = himask & mCharInvert;
+					uint8 mask = mRowCounter >= 2 ? 0xff : 0x00;
 
-				if ((mRowCounter & 6) == 0) {
-					if ((c & 0x60) != 0x60)
-						mask ^= 0xff;
+					if ((mRowCounter & 6) == 0) {
+						if ((c & 0x60) != 0x60)
+							mask ^= 0xff;
+					}
+
+					d &= (~himask | mCharBlink);
+
+					d = inv ^ (mask & d); 
+					
+					dst[0] = d >> 4;
+					dst[1] = d & 15;
+					dst += 2;
+				}
+				break;
+
+			case 4:		// 40 column text, 5 colors, 8 scanlines
+			case 5:		// 40 column text, 5 colors, 16 scanlines
+				for(; x < limit; x += 2) {
+					uint8 c = *src++;
+					uint8 d = *chdata++;
+
+					if (c >= 128) {
+						dst[1] = kExpand160Alt[d & 15];
+						dst[0] = kExpand160Alt[d >> 4];
+					} else {
+						dst[1] = kExpand160[d & 15];
+						dst[0] = kExpand160[d >> 4];
+					}
+
+					dst += 2;
+				}
+				break;
+
+			case 6:		// 20 column text, 5 colors, 8 scanlines
+			case 7:		// 20 column text, 5 colors, 16 scanlines
+				for(; x < limit; x += 4) {
+					uint8 c = *src++;
+					uint8 d = *chdata++;
+
+					const uint16 *tbl = kExpandMode6[c >> 6];
+					*(uint16 *)(dst+0) = tbl[d >> 4];
+					*(uint16 *)(dst+2) = tbl[d & 15];
+					dst += 4;
+				}
+				break;
+
+			case 8:
+				for(; x < limit; x += 8) {
+					uint8 c = *src++;
+
+					*(uint32 *)(dst + 0) = kExpandMode8[c >> 4];
+					*(uint32 *)(dst + 4) = kExpandMode8[c & 15];
+					dst += 8;
+				}
+				break;
+
+			case 9:
+				for(; x < limit; x += 8) {
+					uint8 c = *src++;
+
+					*(uint32 *)(dst + 0) = kExpandMode9[c >> 4];
+					*(uint32 *)(dst + 4) = kExpandMode9[c & 15];
+					dst += 8;
+				}
+				break;
+
+			case 10:
+				for(; x < limit; x += 4) {
+					uint8 c = *src++;
+
+					*(uint16 *)(dst+0) = kExpandModeA[c >> 4];
+					*(uint16 *)(dst+2) = kExpandModeA[c & 15];
+					dst += 4;
+				}
+				break;
+
+			case 11:
+			case 12:
+				for(; x < limit; x += 4) {
+					uint8 c = *src++;
+
+					*(uint16 *)(dst+0) = kExpandModeB[c >> 4];
+					*(uint16 *)(dst+2) = kExpandModeB[c & 15];
+					dst += 4;
+				}
+				break;
+
+			case 13:
+			case 14:
+				for(; x < limit; x += 2) {
+					uint8 c = *src++;
+
+					dst[0] = kExpand160[c >> 4];
+					dst[1] = kExpand160[c & 15];
+					dst += 2;
+				}
+				break;
+
+			case 15:
+				for(; x < limit; x += 2) {
+					uint8 c = *src++;
+
+					dst[0] = c >> 4;
+					dst[1] = c & 15;
+					dst += 2;
+				}
+				break;
+		}
+	} else {
+		uint8 decodePattern2 = mAbnormalDecodePattern & ~kClockPattern[kModeToFetchRate[mode]][0];
+
+		switch(mode) {
+			case 2:		// 40 column text, 1.5 colors, 8 scanlines
+				for(; x < limit; ++x) {
+					const int x2 = x - mPFDMAStart;
+					const int bit = x2 & 7;
+
+					mAbnormalDecodeShifter <<= 4;
+
+					if (mAbnormalDecodePattern & kBits[bit]) {
+						uint8 c = 0xFF;
+
+						if (mPFDecodeOffset < 48) {
+							c = mPFDataBuffer[mPFDecodeOffset];
+							mPFDecodeAbCharInv = (uint8)((sint8)c >> 7) & mCharInvert;
+						}
+
+						uint8 d = mPFCharBuffer[mPFDecodeCharOffset++];
+
+						uint8 himask = (c & 128) ? 0xff : 0;
+						uint8 inv = himask & mCharInvert;
+
+						d &= (~himask | mCharBlink);
+
+						mAbnormalDecodeShifter |= d;
+					}
+
+					if ((x + 2 >= (int)mPFDMAVEnd ? decodePattern2 : mAbnormalDecodePattern) & kBits[bit+2]) {
+						if (++mPFDecodeOffset >= 63)
+							mPFDecodeOffset = 0;
+					}
+
+					*dst++ = (mAbnormalDecodeShifter ^ mPFDecodeAbCharInv) >> 4;
 				}
 
-				d &= (~himask | mCharBlink);
+				break;
 
-				d = inv ^ (mask & d); 
-				
-				dst[0] = d >> 4;
-				dst[1] = d & 15;
-				dst += 2;
-			}
-			break;
+			case 3:		// 40 column text, 1.5 colors, 10 scanlines
+				for(; x < limit; ++x) {
+					const int x2 = x - mPFDMAStart;
+					const int bit = x2 & 7;
 
-		case 4:		// 40 column text, 5 colors, 8 scanlines
-		case 5:		// 40 column text, 5 colors, 16 scanlines
-			for(; x < limit; x += 2) {
-				uint8 c = *src++;
-				uint8 d = *chdata++;
+					mAbnormalDecodeShifter <<= 4;
 
-				if (c >= 128) {
-					dst[1] = kExpand160Alt[d & 15];
-					dst[0] = kExpand160Alt[d >> 4];
-				} else {
-					dst[1] = kExpand160[d & 15];
-					dst[0] = kExpand160[d >> 4];
+					if (mAbnormalDecodePattern & kBits[bit]) {
+						uint8 c = 0xFF;
+
+						if (mPFDecodeOffset < 48) {
+							c = mPFDataBuffer[mPFDecodeOffset];
+							mPFDecodeAbCharInv = (uint8)((sint8)c >> 7) & mCharInvert;
+						}
+
+						uint8 d = mPFCharBuffer[mPFDecodeCharOffset++];
+
+						uint8 himask = (c & 128) ? 0xff : 0;
+						uint8 mask = mRowCounter >= 2 ? 0xff : 0x00;
+
+						if ((mRowCounter & 6) == 0) {
+							if ((c & 0x60) != 0x60)
+								mask ^= 0xff;
+						}
+
+						d &= (~himask | mCharBlink);
+						d &= mask;
+
+						mAbnormalDecodeShifter |= d;
+					}
+
+					if ((x + 2 >= (int)mPFDMAVEnd ? decodePattern2 : mAbnormalDecodePattern) & kBits[bit+2]) {
+						if (++mPFDecodeOffset >= 63)
+							mPFDecodeOffset = 0;
+					}
+
+					*dst++ = (mAbnormalDecodeShifter ^ mPFDecodeAbCharInv) >> 4;
 				}
+				break;
 
-				dst += 2;
-			}
-			break;
+			case 4:		// 40 column text, 5 colors, 8 scanlines
+			case 5:		// 40 column text, 5 colors, 16 scanlines
+				for(; x < limit; ++x) {
+					const int x2 = x - mPFDMAStart;
+					const int bit = x2 & 7;
 
-		case 6:		// 20 column text, 5 colors, 8 scanlines
-		case 7:		// 20 column text, 5 colors, 16 scanlines
-			for(; x < limit; x += 4) {
-				uint8 c = *src++;
-				uint8 d = *chdata++;
+					mAbnormalDecodeShifter <<= 4;
 
-				const uint16 *tbl = kExpandMode6[c >> 6];
-				*(uint16 *)(dst+0) = tbl[d >> 4];
-				*(uint16 *)(dst+2) = tbl[d & 15];
-				dst += 4;
-			}
-			break;
+					if (mAbnormalDecodePattern & kBits[bit]) {
+						uint8 c = 0xFF;
 
-		case 8:
-			for(; x < limit; x += 8) {
-				uint8 c = *src++;
+						if (mPFDecodeOffset < 48) {
+							c = mPFDataBuffer[mPFDecodeOffset];
+							mPFDecodeAbCharInv = (uint8)((sint8)c >> 7) & mCharInvert;
+						}
 
-				*(uint32 *)(dst + 0) = kExpandMode8[c >> 4];
-				*(uint32 *)(dst + 4) = kExpandMode8[c & 15];
-				dst += 8;
-			}
-			break;
+						uint8 d = mPFCharBuffer[mPFDecodeCharOffset++];
 
-		case 9:
-			for(; x < limit; x += 8) {
-				uint8 c = *src++;
+						mAbnormalDecodeShifter |= d;
+					}
 
-				*(uint32 *)(dst + 0) = kExpandMode9[c >> 4];
-				*(uint32 *)(dst + 4) = kExpandMode9[c & 15];
-				dst += 8;
-			}
-			break;
+					if ((x + 2 >= (int)mPFDMAVEnd ? decodePattern2 : mAbnormalDecodePattern) & kBits[bit+2]) {
+						if (++mPFDecodeOffset >= 63)
+							mPFDecodeOffset = 0;
+					}
 
-		case 10:
-			for(; x < limit; x += 4) {
-				uint8 c = *src++;
+					*dst++ = (mPFDecodeAbCharInv ? kExpand160Alt : kExpand160)[mAbnormalDecodeShifter >> 4];
+				}
+				break;
 
-				*(uint16 *)(dst+0) = kExpandModeA[c >> 4];
-				*(uint16 *)(dst+2) = kExpandModeA[c & 15];
-				dst += 4;
-			}
-			break;
+			case 6:		// 20 column text, 5 colors, 8 scanlines
+			case 7:		// 20 column text, 5 colors, 16 scanlines
+				for(; x < limit; ++x) {
+					const int x2 = x - mPFDMAStart;
+					const int bit = x2 & 7;
 
-		case 11:
-		case 12:
-			for(; x < limit; x += 4) {
-				uint8 c = *src++;
+					mAbnormalDecodeShifter <<= 2;
 
-				*(uint16 *)(dst+0) = kExpandModeB[c >> 4];
-				*(uint16 *)(dst+2) = kExpandModeB[c & 15];
-				dst += 4;
-			}
-			break;
+					if (mAbnormalDecodePattern & kBits[bit]) {
+						uint8 c = 0xFF;
 
-		case 13:
-		case 14:
-			for(; x < limit; x += 2) {
-				uint8 c = *src++;
+						if (mPFDecodeOffset < 48) {
+							c = mPFDataBuffer[mPFDecodeOffset];
+							mPFDecodeAbCharInv = (uint8)(c >> 6);
+						}
 
-				dst[0] = kExpand160[c >> 4];
-				dst[1] = kExpand160[c & 15];
-				dst += 2;
-			}
-			break;
+						uint8 d = mPFCharBuffer[mPFDecodeCharOffset++];
 
-		case 15:
-			for(; x < limit; x += 2) {
-				uint8 c = *src++;
+						mAbnormalDecodeShifter |= d;
+					}
 
-				dst[0] = c >> 4;
-				dst[1] = c & 15;
-				dst += 2;
-			}
-			break;
+					if ((x + 2 >= (int)mPFDMAVEnd ? decodePattern2 : mAbnormalDecodePattern) & kBits[bit+2]) {
+						if (++mPFDecodeOffset >= 63)
+							mPFDecodeOffset = 0;
+					}
+
+					*dst++ = (uint8)kExpandMode6[mPFDecodeAbCharInv][mAbnormalDecodeShifter >> 4];
+				}
+				break;
+
+			case 8:
+				// Mode 8 shifts two bits every four color clocks, or every two machine cycles.
+				for(; x < limit; ++x) {
+					const int x2 = x - mPFDMAStart;
+					const int bit = x2 & 7;
+
+					if (mAbnormalDecodePattern & (0x55 << (x2 & 1)))
+						mAbnormalDecodeShifter = (mAbnormalDecodeShifter << 2);
+
+					if (mAbnormalDecodePattern & kBits[bit]) {
+						mAbnormalDecodeShifter |= (mPFDecodeOffset & 48) == 48 ? 0xFF : mPFDataBuffer[mPFDecodeOffset];
+					}
+
+					if ((x + 2 >= (int)mPFDMAVEnd ? decodePattern2 : mAbnormalDecodePattern) & kBits[bit+2]) {
+						if (++mPFDecodeOffset >= 63)
+							mPFDecodeOffset = 0;
+					}
+
+					*dst++ = kExpandModeAb8[mAbnormalDecodeShifter >> 6];
+				}
+				break;
+
+			case 9:	// 80x2
+				// Mode 9 shifts one bit every two color clocks, or one bit every machine cycle.
+				for(; x < limit; ++x) {
+					const int x2 = x - mPFDMAStart;
+					const int bit = x2 & 7;
+
+					mAbnormalDecodeShifter += mAbnormalDecodeShifter;
+
+					if (mAbnormalDecodePattern & kBits[bit])
+						mAbnormalDecodeShifter |= (mPFDecodeOffset & 48) == 48 ? 0xFF : mPFDataBuffer[mPFDecodeOffset];
+
+					if ((x + 2 >= (int)mPFDMAVEnd ? decodePattern2 : mAbnormalDecodePattern) & kBits[bit+2]) {
+						if (++mPFDecodeOffset >= 63)
+							mPFDecodeOffset = 0;
+					}
+
+					*dst++ = kExpandModeAb8[mAbnormalDecodeShifter >> 7];
+				}
+				break;
+
+			case 10:	// 80x4
+				// Mode A shifts two bits every two color clocks, or two bits every machine cycle.
+				for(; x < limit; ++x) {
+					const int x2 = x - mPFDMAStart;
+					const int bit = x2 & 7;
+
+					mAbnormalDecodeShifter <<= 2;
+
+					if (mAbnormalDecodePattern & kBits[bit])
+						mAbnormalDecodeShifter |= (mPFDecodeOffset & 48) == 48 ? 0xFF : mPFDataBuffer[mPFDecodeOffset];
+
+					if ((x + 2 >= (int)mPFDMAVEnd ? decodePattern2 : mAbnormalDecodePattern) & kBits[bit+2]) {
+						if (++mPFDecodeOffset >= 63)
+							mPFDecodeOffset = 0;
+					}
+
+					*dst++ = kExpandModeAb8[mAbnormalDecodeShifter >> 6];
+				}
+				break;
+
+			case 11:	// 160x2
+			case 12:
+				// Modes B and C shift one bit every color clock, or two bits every machine cycle.
+				for(; x < limit; ++x) {
+					const int x2 = x - mPFDMAStart;
+					const int bit = x2 & 7;
+
+					mAbnormalDecodeShifter <<= 2;
+
+					if (mAbnormalDecodePattern & kBits[bit])
+						mAbnormalDecodeShifter |= (mPFDecodeOffset & 48) == 48 ? 0xFF : mPFDataBuffer[mPFDecodeOffset];
+
+					if ((x + 2 >= (int)mPFDMAVEnd ? decodePattern2 : mAbnormalDecodePattern) & kBits[bit+2]) {
+						if (++mPFDecodeOffset >= 63)
+							mPFDecodeOffset = 0;
+					}
+
+					*dst++ = kExpandModeAbB[mAbnormalDecodeShifter >> 6];
+				}
+				break;
+
+			case 13:	// 160x4
+			case 14:
+				// Modes D and E shift two bits every color clock, or four bits every machine cycle.
+				for(; x < limit; ++x) {
+					const int x2 = x - mPFDMAStart;
+					const int bit = x2 & 7;
+
+					mAbnormalDecodeShifter <<= 4;
+
+					if (mAbnormalDecodePattern & kBits[bit])
+						mAbnormalDecodeShifter |= (mPFDecodeOffset & 48) == 48 ? 0xFF : mPFDataBuffer[mPFDecodeOffset];
+
+					if ((x + 2 >= (int)mPFDMAVEnd ? decodePattern2 : mAbnormalDecodePattern) & kBits[bit+2]) {
+						if (++mPFDecodeOffset >= 63)
+							mPFDecodeOffset = 0;
+					}
+
+					*dst++ = kExpand160[mAbnormalDecodeShifter >> 4];
+				}
+				break;
+
+			case 15:	// 320x1.5
+				for(; x < limit; ++x) {
+					const int x2 = x - mPFDMAStart;
+					const int bit = x2 & 7;
+
+					mAbnormalDecodeShifter <<= 4;
+
+					if (mAbnormalDecodePattern & kBits[bit])
+						mAbnormalDecodeShifter |= (mPFDecodeOffset & 48) == 48 ? 0xFF : mPFDataBuffer[mPFDecodeOffset];
+
+					if ((x + 2 >= (int)mPFDMAVEnd ? decodePattern2 : mAbnormalDecodePattern) & kBits[bit+2]) {
+						if (++mPFDecodeOffset >= 63)
+							mPFDecodeOffset = 0;
+					}
+
+					*dst++ = mAbnormalDecodeShifter >> 4;
+				}
+				break;
+		}
 	}
 
 	mPFDecodeCounter = x;
@@ -962,6 +1517,7 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 
 				SyncWithGTIA(0);
 				mDMACTL = value;
+
 				switch(mDMACTL & 3) {
 				case 0:
 					mPFWidth = kPFDisabled;
@@ -982,10 +1538,15 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 			break;
 
 		case 0x01:
-			SyncWithGTIA(0);
-			mCHACTL = value;
-			mCharInvert = (mCHACTL & 0x02) ? 0xFF : 0x00;
-			mCharBlink = (mCHACTL & 0x01) ? 0x00 : 0xFF;
+			value &= 0x07;
+
+			if (mCHACTL != value) {
+				SyncWithGTIA(0);
+				mCHACTL = value;
+				mCharInvert = (mCHACTL & 0x02) ? 0xFF : 0x00;
+				mCharBlink = (mCHACTL & 0x01) ? 0x00 : 0xFF;
+				UpdateCurrentCharRow();
+			}
 			break;
 
 		case 0x02:
@@ -1031,7 +1592,7 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 			break;
 
 		case 0x07:
-			mPMBASE = value;
+			mPMBASE = value & 0xFC;
 			break;
 
 		case 0x09:	// $D409 CHBASE
@@ -1044,11 +1605,13 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 
 				if (!mpEventWSYNC)
 					mpScheduler->SetEvent(1, this, kATAnticEvent_WSYNC, mpEventWSYNC);
+
+				mpConn->AnticForceNextCPUCycleSlow();
 			}
 			break;
 
 		case 0x0E:
-			mNMIEN = value;
+			mNMIEN = value & 0xC0;
 			break;
 
 		case 0x0F:	// NMIRES
@@ -1102,6 +1665,21 @@ void ATAnticEmulator::DumpStatus() {
 	ATConsolePrintf("PENH/V = %02x %02x\n", mPENH, mPENV);
 }
 
+void ATAnticEmulator::DumpDMALineBuffer() {
+	VDStringA s;
+	for(int i=0; i<48; i+=16) {
+		s.sprintf("%02X:", i);
+
+		for(int j=0; j<16; ++j) {
+			s.append_sprintf(" %02X", mPFDataBuffer[i+j]);
+		}
+
+		s += '\n';
+
+		ATConsoleWrite(s.c_str());
+	}
+}
+
 void ATAnticEmulator::DumpDMAPattern() {
 	char buf[116];
 	buf[114] = '\n';
@@ -1125,46 +1703,65 @@ void ATAnticEmulator::DumpDMAPattern() {
 	for(int i=0; i<114; ++i) {
 		buf[i] = '.';
 
-		switch(mDMAPattern[i] & 0x7f) {
-			case 1:
-				buf[i] = 'R';
-				break;
-			case 3:
-			case 5:
-			case 7:
-				buf[i] = 'F';
-				break;
-			case 9:
-			case 11:
-				buf[i] = 'C';
-				break;
-			case 18:
-			case 20:
-			case 22:
-			case 24:
-			case 26:
-				buf[i-1] = 'V';
-				break;
+		uint8 dma = mDMAPattern[i];
+
+		if (dma & 8) {
+			switch(dma & 7) {
+				case 3:
+					buf[i] = 'f';
+					break;
+
+				case 5:
+					buf[i] = 'c';
+					break;
+
+				default:
+					buf[i] = '#';
+					break;
+			}
+		} else if (dma & 16)
+			buf[i] = 'V';
+		else if (dma & 1) {
+			switch(dma & 15) {
+				case 1:
+					buf[i] = 'R';
+					break;
+				case 3:
+					buf[i] = 'F';
+					break;
+				case 5:
+					buf[i] = 'C';
+					break;
+			}
 		}
 	}
 
 	if (mDMACTL & 0x0C) {
-		buf[0] = 'M';
+		if (mDMAPattern[0] & 0x01)
+			buf[0] = '#';
+		else
+			buf[0] = 'M';
 
 		if (mDMACTL & 0x08) {
-			buf[2] = 'P';
-			buf[3] = 'P';
-			buf[4] = 'P';
-			buf[5] = 'P';
+			for(int i=2; i<6; ++i) {
+				if (mDMAPattern[i] & 1)
+					buf[i] = '#';
+				else
+					buf[i] = 'P';
+			}
 		}
 	}
 
-	if (mDMACTL & 0x20)
-		buf[1] = 'D';
+	if (mDMACTL & 0x20) {
+		if (mDMAPattern[1] & 0x01)
+			buf[1] = '#';
+		else
+			buf[1] = 'D';
+	}
 
 	ATConsoleWrite(buf);
-	ATConsoleWrite("\n");
-	ATConsoleWrite("Legend: (M)issile (P)layer (D)isplayList (R)efresh Play(F)ield (C)haracter (V)irtual\n");
+	ATConsolePrintf("%*c\n", mX+1, '^');
+	ATConsoleWrite("Legend: (M)issile (P)layer (D)isplayList (R)efresh Play(F)ield (C)haracter (V)irtual (cf#)Abnormal\n");
 	ATConsoleWrite("\n");
 }
 
@@ -1209,7 +1806,10 @@ void ATAnticEmulator::ExchangeState(T& io) {
 	io != mbDLDMAEnabledInTime;
 	io != mPFDisplayCounter;
 	io != mPFDecodeCounter;
+	io != mPFDecodeOffset;
+	io != mPFDecodeCharOffset;
 	io != mPFDMALastCheckX;
+	io != mPFDecodeAbCharInv;
 	io != mbPFDMAEnabled;
 	io != mbPFDMAActive;
 	io != mbWSYNCActive;
@@ -1226,10 +1826,13 @@ void ATAnticEmulator::ExchangeState(T& io) {
 	io != mLatchedVScroll;
 	io != mLatchedVScroll2;
 
-	io != mPFDMAPtr;
 	io != mPFRowDMAPtrBase;
 	io != mPFRowDMAPtrOffset;
 	io != mPFPushCycleMask;
+	io != mAbnormalDMAPattern;
+	io != mEndingDMAPattern;
+	io != mAbnormalDecodePattern;
+	io != mAbnormalDecodeShifter;
 
 	io != mPFCharFetchPtr;
 
@@ -1270,29 +1873,31 @@ void ATAnticEmulator::ExchangeState(T& io) {
 }
 
 void ATAnticEmulator::BeginLoadState(ATSaveStateReader& reader) {
+	mpPFDataRead = mPFDataBuffer;
+	mpPFDataWrite = mPFDataBuffer;
+	mpPFCharFetchPtr = mPFCharBuffer;
+	mPFDecodeOffset = 0;
+	mPFDecodeCharOffset = 0;
+
 	reader.RegisterHandlerMethod(kATSaveStateSection_Arch, VDMAKEFOURCC('A', 'N', 'T', 'C'), this, &ATAnticEmulator::LoadStateArch);
 	reader.RegisterHandlerMethod(kATSaveStateSection_Private, VDMAKEFOURCC('A', 'N', 'T', 'C'), this, &ATAnticEmulator::LoadStatePrivate);
 	reader.RegisterHandlerMethod(kATSaveStateSection_End, 0, this, &ATAnticEmulator::EndLoadState);
 }
 
 void ATAnticEmulator::LoadStateArch(ATSaveStateReader& reader) {
-	mDMACTL	= reader.ReadUint8();
-	mCHACTL	= reader.ReadUint8();
+	mDMACTL	= reader.ReadUint8() & 0x3F;
+	mCHACTL	= reader.ReadUint8() & 0x07;
 	mDLIST	= reader.ReadUint16();
-	mHSCROL	= reader.ReadUint8();
-	mVSCROL	= reader.ReadUint8();
-	mPMBASE	= reader.ReadUint8();
-	mCHBASE	= reader.ReadUint8();
-	mNMIEN	= reader.ReadUint8();
-	mNMIST	= reader.ReadUint8();
+	mHSCROL	= reader.ReadUint8() & 0x0F;
+	mVSCROL	= reader.ReadUint8() & 0x0F;
+	mPMBASE	= reader.ReadUint8() & 0xFC;
+	mCHBASE	= reader.ReadUint8() & 0xFE;
+	mNMIEN	= reader.ReadUint8() & 0xC0;
+	mNMIST	= reader.ReadUint8() | 0x1F;
 }
 
 void ATAnticEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
 	ExchangeState(reader);
-
-	mpPFCharFetchPtr = mPFCharBuffer;
-	if (mPFDMAStart < 127)
-		mpPFCharFetchPtr -= mPFDMAStart;
 
 	if (mpRegisterUpdateEvent) {
 		mpScheduler->RemoveEvent(mpRegisterUpdateEvent);
@@ -1320,6 +1925,17 @@ void ATAnticEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
 		ru.mReg = reader.ReadUint8();
 		ru.mValue = reader.ReadUint8();
 	}
+
+	const uint8 dataReadOffset = reader.ReadUint8();
+	const uint8 dataWriteOffset = reader.ReadUint8();
+	const uint8 charWriteOffset = reader.ReadUint8();
+
+	if (dataReadOffset > mX || dataWriteOffset > mX || charWriteOffset > mX)
+		throw ATInvalidSaveStateException();
+
+	mpPFDataRead = mPFDataBuffer + dataReadOffset;
+	mpPFDataWrite = mPFDataBuffer + dataWriteOffset;
+	mpPFCharFetchPtr = mPFCharBuffer + charWriteOffset;
 }
 
 void ATAnticEmulator::EndLoadState(ATSaveStateReader& reader) {
@@ -1350,7 +1966,11 @@ void ATAnticEmulator::EndLoadState(ATSaveStateReader& reader) {
 	mPFDMAPatternCacheKey = 0xFFFFFFFF;
 
 	UpdateCurrentCharRow();
-	UpdatePlayfieldDataPointers();
+
+	mpPFDataWrite = mPFDataBuffer;
+	mpPFDataRead = mPFDataBuffer;
+	mpPFCharFetchPtr = mPFCharBuffer;
+
 	UpdateDMAPattern();
 
 	ExecuteQueuedUpdates();
@@ -1380,7 +2000,7 @@ void ATAnticEmulator::SaveStatePrivate(ATSaveStateWriter& writer) {
 	ExchangeState(writer);
 
 	uint32 i = mRegisterUpdateHeadIdx;
-	uint32 n = mRegisterUpdates.size();
+	uint32 n = (uint32)mRegisterUpdates.size();
 	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 	writer.WriteUint32(n - i);
 	for(; i<n; ++i) {
@@ -1390,6 +2010,11 @@ void ATAnticEmulator::SaveStatePrivate(ATSaveStateWriter& writer) {
 		writer.WriteUint8(ru.mReg);
 		writer.WriteUint8(ru.mValue);
 	}
+
+	writer.WriteUint8((uint8)(mpPFDataRead - mPFDataBuffer));
+	writer.WriteUint8((uint8)(mpPFDataWrite - mPFDataBuffer));
+	writer.WriteUint8((uint8)(mpPFCharFetchPtr - mPFCharBuffer));
+
 	writer.EndChunk();
 }
 
@@ -1410,7 +2035,13 @@ void ATAnticEmulator::UpdateDMAPattern() {
 	int dmaEnd = mPFDMAEnd;
 	int dmaVEnd = mPFDMAVEnd;
 	uint8 mode = mDLControl & 15;
-	uint32 key = (dmaStart << 16) + (dmaVEnd << 8) + mode + (mbPFDMAActive ? 0x8000 : 0x0000) + (mbPFDMAEnabled ? 0x4000 : 0x0000);
+	uint32 key = (dmaStart << 16)
+		+ (dmaVEnd << 8)
+		+ mode
+		+ (mbPFDMAActive ? 0x80 : 0x00)
+		+ (mbPFDMAEnabled ? 0x40 : 0x00)
+		+ (mPFWidth != kPFDisabled ? 0x20 : 0x00)
+		+ (mAbnormalDMAPattern << 24);
 
 	if (key != mPFDMAPatternCacheKey) {
 		mPFDMAPatternCacheKey = key;
@@ -1422,22 +2053,22 @@ void ATAnticEmulator::UpdateDMAPattern() {
 			case 3:
 			case 4:
 			case 5:
-				textFetchMode = 9;
+				textFetchMode = 5;
 				graphicFetchMode = 3;
 				break;
 			case 6:
 			case 7:
-				textFetchMode = 11;
-				graphicFetchMode = 5;
+				textFetchMode = 5;
+				graphicFetchMode = 3;
 				break;
 			case 8:
 			case 9:
-				graphicFetchMode = 7;
+				graphicFetchMode = 3;
 				break;
 			case 10:
 			case 11:
 			case 12:
-				graphicFetchMode = 5;
+				graphicFetchMode = 3;
 				break;
 			case 13:
 			case 14:
@@ -1449,7 +2080,22 @@ void ATAnticEmulator::UpdateDMAPattern() {
 		memset(mDMAPattern, 0, sizeof(mDMAPattern));
 
 		// Playfield DMA
+		// =============
 		//
+		// The DMA clock is started and stopped on exactly one cycle, based on the current
+		// playfield width and horizontal scroll settings. This clock can drive up to three
+		// different kinds of cycles:
+		//
+		// - Character name fetch is the earliest DMA cycle that can be triggered off the
+		//   clock.
+		//
+		// - Bitmap data fetches occur two cycles later than where the character name
+		//   fetch would be.
+		//
+		// - Character data fetch occur three cycles later than the character name fetch.
+		//
+		// DMA pattern timing
+		// ==================
 		// Modes 2-5: Every 2 from 10/18/26.
 		// Modes 6-7: Every 4 from 10/18/26.
 		// Modes 8-9: Every 8 from 12/20/28.
@@ -1457,21 +2103,138 @@ void ATAnticEmulator::UpdateDMAPattern() {
 		// Modes D-F: Every 2 from 12/20/28.
 		//
 		// DMA is delayed by one clock for every 2 in HSCROL.
+		//
+		// If playfield DMA is disabled in the middle of the scanline, all cycles become
+		// virtual.
+		//
+		// Playfield DMA is blocked from occurring in cycles 105-113. In this region, the
+		// DMA requests will occur, loads will happen into line buffer RAM and both the memory
+		// scan counter and line counter will increment, but no actual DMA cycles will occur.
+		// This means that data on the bus will be loaded into the line buffer. It is normal
+		// for these cycles to occur within HBLANK at wide fetch width and in fact they are
+		// required to maintain the normal 12/24/48 byte pitch.
+		//
+		//
+		// Abnormal DMA
+		// ============
+		// Usually, the start cycle injects a single bit into the clock, and the stop cycle
+		// removes that bit. However, misaligning the stop and start with HSCROL will prevent
+		// that from happening and cause what we call abnormal DMA, with extra bits flying
+		// around the clock. We can both add bits by missing the stop, or subtract bits where
+		// the errant bits line up with the current DMA pattern for the line.
+		//
+		// Note that the different types of cycles are not embedded within the DMA clock. The
+		// DMA clock normally only has one bit flying around, and the various types of DMA
+		// cycles are driven by the current mode and row.
+		//
+		// In Altirra, the current state of the DMA clock is only computed on a per-scanline
+		// basis and it's the job of this function to compute the delta according to the
+		// current playfield start and stop positions. This is then modified at the beginning
+		// of the next scanline according to the next mode line, which can lead to a different
+		// mode of entering abnormal DMA where latent bits in the clock are recaptured by a
+		// slowly clock mode. That is handled elsewhere.
 
 		int cycleStep = mPFPushCycleMask + 1;
 
+		if (!mbPFDMAEnabled)
+			graphicFetchMode = 0;
+
+		if (dmaStart >= dmaVEnd)
+			textFetchMode = graphicFetchMode = 0;
+
+		mAbnormalDecodePattern = 0;
+
+		if (mAbnormalDMAPattern) {
+			uint8 clock = mAbnormalDMAPattern;
+
+			if (mode >= 8)
+				clock = (uint8)((clock << 2) + (clock >> 6));
+
+			const uint8 preStartClock = clock;
+
+			int dmaStartOffset = dmaStart & 7;
+			clock |= kClockPattern[kModeToFetchRate[mode]][dmaStartOffset];
+
+			if (dmaStartOffset)
+				clock = (clock >> dmaStartOffset) + (clock << (8 - dmaStartOffset));
+
+			mAbnormalDecodePattern = clock;
+
+			if (graphicFetchMode)
+				graphicFetchMode |= 8;
+
+			if (textFetchMode)
+				textFetchMode |= 8;
+		}
+
+		if (mPFWidth == kPFDisabled) {
+			if (graphicFetchMode) {
+				graphicFetchMode |= 0x10;
+				graphicFetchMode &= ~1;
+			}
+
+			if (textFetchMode) {
+				textFetchMode |= 0x10;
+				textFetchMode &= ~1;
+			}
+		}
+
 		if (mbPFDMAActive) {
-			if (mbPFDMAEnabled) {
-				int x = mPFDMAStart;
+			// There are five phases for both sections below:
+			//
+			// 1) Write DMA cycles for the bits already flying around the DMA clock prior to
+			//    playfield start.
+			//
+			// 2) Set bits in the DMA clock at playfield start.
+			//
+			// 3) Write DMA cycles from playfield start to playfield stop.
+			//
+			// 4) Clear bits in the DMA clock at playfield stop.
+			//
+			// 5) Write DMA cycles from playfield stop to the end of the scanline.
+			//
+			// Sections 1) and 5) only occur with abnormal DMA. Note that we must maintain
+			// the clocks separately for the two paths due to the different timings. In
+			// hardware the clock always stops and starts at the same times and the different
+			// DMA requests are delayed; here we maintain separate delayed clocks instead.
+			//
+			if (graphicFetchMode) {
+				uint8 clock = mAbnormalDMAPattern;
+				int x = 0;
+				
+				if (clock) {
+					if (mode >= 8)
+						clock = (uint8)((clock << 2) + (clock >> 6));
 
-				for(; x<(int)mPFDMAEnd; x += cycleStep)
-					mDMAPattern[x] = graphicFetchMode;
+					graphicFetchMode |= 8;
 
-				for(; x<(int)mPFDMAVEnd; x += cycleStep) {
-					if (x >= 113)
+					for(; x<dmaStart; ++x) {
+						if (clock & (1 << (x & 7)))
+							mDMAPattern[x] = graphicFetchMode;
+					}
+				}
+
+				x = dmaStart;
+
+				clock |= kClockPattern[kModeToFetchRate[mode]][dmaStart & 7];
+
+				for(; x<dmaVEnd; ++x) {
+					if (x > 114)
 						break;
 
-					mDMAPattern[x + 1] = graphicFetchMode + 15;
+					if (clock & (1 << (x & 7)))
+						mDMAPattern[x] = graphicFetchMode;
+				}
+
+				clock &= ~kClockPattern[kModeToFetchRate[mode]][dmaVEnd & 7];
+
+				if (clock) {
+					graphicFetchMode |= 8;
+
+					for(; x<=114; ++x) {
+						if (clock & (1 << (x & 7)))
+							mDMAPattern[x] = graphicFetchMode;
+					}
 				}
 			}
 
@@ -1483,23 +2246,59 @@ void ATAnticEmulator::UpdateDMAPattern() {
 			// The character fetch always occurs 3 clocks after the playfield fetch.
 
 			if (textFetchMode) {
-				int textFetchDMAVEnd = mPFDMAEnd + 3;
-				int textFetchDMAEnd = textFetchDMAVEnd;
-				if (textFetchDMAEnd > 106)
-					textFetchDMAEnd = 106;
+				const int textFetchDMAVStart = mPFDMAStart + 3;
+				const int textFetchDMAVEnd = mPFDMAVEnd + 3;
 
-				int x=mPFDMAStart + 3;
+				uint8 clock = mAbnormalDMAPattern;
+				clock = (uint8)((clock << 3) + (clock >> 5));
+				int x = 0;
 
-				for(; x<textFetchDMAEnd; x += cycleStep)
-					mDMAPattern[x] = textFetchMode;
+				if (clock) {
+					textFetchMode |= 8;
 
-				for(; x<textFetchDMAVEnd; x += cycleStep) {
-					if (x >= 113)
+					for(; x<textFetchDMAVStart; ++x) {
+						if (clock & (1 << (x & 7)))
+							mDMAPattern[x] |= textFetchMode;
+					}
+				}
+
+				x = textFetchDMAVStart;
+
+				clock |= kClockPattern[kModeToFetchRate[mode]][textFetchDMAVStart & 7];
+
+				for(; x<textFetchDMAVEnd; ++x) {
+					if (x > 114)
 						break;
 
-					mDMAPattern[x + 1] = textFetchMode + 15;
+					if (clock & (1 << (x & 7)))
+						mDMAPattern[x] |= textFetchMode;
+				}
+
+				clock &= ~kClockPattern[kModeToFetchRate[mode]][textFetchDMAVEnd & 7];
+
+				if (clock) {
+					textFetchMode |= 8;
+
+					for(; x<=114; ++x) {
+						if (clock & (1 << (x & 7)))
+							mDMAPattern[x] |= textFetchMode;
+					}
 				}
 			}
+
+			// Check for DMA cycles intruding into the horizontal blank region at the end of the
+			// scanline (106-113); these must be turned into virtual cycles BEFORE we start
+			// plopping down refresh cycles. Note that we do NOT do this for cycles 0-9 as
+			// playfield DMA can actually happen there in abnormal cases and it conflicts with
+			// special DMA cycles (!).
+			for(int x=106; x<=114; ++x) {
+				if (mDMAPattern[x])
+					mDMAPattern[x] = (mDMAPattern[x] & 0xfe) | 0x10;
+			}
+
+			// Cycle 0 cannot be a DMA cycle, either.
+			if (mDMAPattern[0])
+				mDMAPattern[0] = (mDMAPattern[0] & 0xfe) | 0x10;
 		}
 
 		// Memory refresh
@@ -1517,14 +2316,25 @@ void ATAnticEmulator::UpdateDMAPattern() {
 			r = x;
 
 			while(r < 107) {
-				if (!mDMAPattern[r++]) {
-					mDMAPattern[r-1] = 1;
+				if (!(mDMAPattern[r++] & 1)) {
+					++mDMAPattern[r-1];
 					break;
 				}
 			}
 		}
 
 		// Mark off special cycles.
+
+		mDMAPattern[0] |= mDMAPattern[114];
+
+		for(int i=1; i<7; ++i) {
+			if (mDMAPattern[i] & 7) {
+				mDMAPattern[i] |= 0x28;
+				mDMAPattern[i] &= ~0x10;
+			}
+		}
+
+		VDASSERT(!(mDMAPattern[0] & 1));
 
 		mDMAPattern[  0] |= 0x80;	// Missile DMA
 		mDMAPattern[  1] |= 0x80;	// Display list DMA
@@ -1541,6 +2351,7 @@ void ATAnticEmulator::UpdateDMAPattern() {
 		mDMAPattern[105] |= 0x80;	// WSYNC end
 		mDMAPattern[109] |= 0x80;
 		mDMAPattern[111] |= 0x80;
+		mDMAPattern[112] |= 0x80;
 		mDMAPattern[114] = 0x80;
 	}
 
@@ -1561,8 +2372,11 @@ void ATAnticEmulator::LatchPlayfieldEdges() {
 		}
 
 		if ((uint32)((mPFDMAEnd - offset) - mPFDMALastCheckX) <= cycleRange) {
-			mPFDMALatchedVEnd = mPFDMAVEnd;
 			mPFDMALatchedEnd = mPFDMAEnd;
+		}
+
+		if ((uint32)((mPFDMAVEnd - offset) - mPFDMALastCheckX) <= cycleRange) {
+			mPFDMALatchedVEnd = mPFDMAVEnd;
 		}
 	}
 
@@ -1621,10 +2435,9 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 	if (pfActive && mX < mPFDisplayStart || mX >= mPFDisplayEnd)
 		mGTIAHSyncOffset = mX;
 
-	mPFDMAStart = 127;
-	mPFDMAEnd = 127;
-
-	mpPFCharFetchPtr = mPFCharBuffer;
+	mPFDMAStart = 114;
+	mPFDMAEnd = 114;
+	mPFDMAVEnd = 114;
 
 	uint8 mode = mDLControl & 15;
 
@@ -1650,24 +2463,17 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 
 		mPFDMAStart += mPFHScrollDMAOffset;
 		mPFDMAEnd += mPFHScrollDMAOffset;
+		mPFDMAVEnd = mPFDMAEnd;
+		mPFDMAVEndWide += mPFHScrollDMAOffset;
 
-		if (mPFFetchWidth) {
-			if (mPFDMALatchedStart)
-				mPFDMAStart = mPFDMALatchedStart;
+		if (mPFDMALatchedStart)
+			mPFDMAStart = mPFDMALatchedStart;
 
-			if (mPFDMALatchedEnd)
-				mPFDMAEnd = mPFDMALatchedEnd;
+		if (mPFDMALatchedEnd)
+			mPFDMAEnd = mPFDMALatchedEnd;
 
-			if (mPFDMALatchedVEnd)
-				mPFDMAVEnd = mPFDMALatchedVEnd;
-		}
-
-		if (mPFDMAStart < 127) {
-			if (mode >= 6)
-				mpPFCharFetchPtr = mPFCharBuffer - ((mPFDMAStart + 3) >> 2);
-			else
-				mpPFCharFetchPtr = mPFCharBuffer - ((mPFDMAStart + 3) >> 1);
-		}
+		if (mPFDMALatchedVEnd)
+			mPFDMAVEnd = mPFDMALatchedVEnd;		// FIXME: THIS IS A NOP DUE TO BELOW
 
 		// Timing in the plasma section of RayOfHope is very critical... it expects to
 		// be able to change the DLI pointer between WSYNC and the next DLI.
@@ -1676,12 +2482,9 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 		// cycle 105. Playfield DMA is terminated past that point.
 		//
 
-		mPFDMAVEnd = mPFDMAEnd;
 		if (mPFDMAEnd > 106)
 			mPFDMAEnd = 106;
 	}
-
-	UpdatePlayfieldDataPointers();
 
 	// Check whether playfield DMA should be active. Playfield DMA should be active if it
 	// is enabled and if we have already seen or will see the DMA start. Otherwise, either
@@ -1692,38 +2495,6 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 	mbPFDMAActive = mPFDMALatchedStart || mX <= std::max<uint32>(10, mPFDMAStart - (mode < 8 ? 2 : 4));
 
 	UpdateDMAPattern();
-}
-
-void ATAnticEmulator::UpdatePlayfieldDataPointers() {
-	int offset = mPFDMAStart;
-
-	switch(mDLControl & 15) {
-		case 2:
-		case 3:
-		case 4:
-		case 5:
-		case 13:
-		case 14:
-		case 15:
-			mpPFDataWrite = mPFDataBuffer - (offset >> 1);
-			mpPFDataRead = mPFDataBuffer - ((offset + 3) >> 1);
-			break;
-
-		case 6:
-		case 7:
-		case 10:
-		case 11:
-		case 12:
-			mpPFDataWrite = mPFDataBuffer - (offset >> 2);
-			mpPFDataRead = mPFDataBuffer - ((offset + 3) >> 2);
-			break;
-
-		case 8:
-		case 9:
-			mpPFDataWrite = mPFDataBuffer - (offset >> 3);
-			mpPFDataRead = mPFDataBuffer - ((offset + 3) >> 3);
-			break;
-	}
 }
 
 void ATAnticEmulator::OnScheduledEvent(uint32 id) {
@@ -1764,7 +2535,7 @@ void ATAnticEmulator::QueueRegisterUpdate(uint32 delay, uint8 reg, uint8 value) 
 	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 
 	uint32 i = mRegisterUpdateHeadIdx;
-	uint32 n = mRegisterUpdates.size();
+	uint32 n = (uint32)mRegisterUpdates.size();
 	uint32 j = n;
 
 	while(j > i) {
@@ -1792,7 +2563,7 @@ void ATAnticEmulator::QueueRegisterUpdate(uint32 delay, uint8 reg, uint8 value) 
 
 void ATAnticEmulator::ExecuteQueuedUpdates() {
 	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	uint32 n = mRegisterUpdates.size();
+	uint32 n = (uint32)mRegisterUpdates.size();
 
 	while(mRegisterUpdateHeadIdx < n) {
 		const QueuedRegisterUpdate& ru = mRegisterUpdates[mRegisterUpdateHeadIdx];

@@ -70,10 +70,15 @@
 ;	  routine, but by the PBI device init code.
 ;
 .proc PBIScan
-		mva		#$01 shpdvs
+		;set up interrupt handler
+		mwa		#PBIHandleIRQ vpirq
+
+		;begin scan
+		lda		#$01
 loop:
 		;select next device
-		mva		shpdvs $d1ff
+		sta		shpdvs
+		sta		$d1ff
 		
 		;check ID bytes
 		ldy		$d803
@@ -89,12 +94,53 @@ loop:
 invalid:
 
 		;next device
-		asl		shpdvs
+		lda		shpdvs
+		asl
 		bne		loop
 		
 		;deselect last device
-		mva		#0 $d1ff
+		sta		shpdvs
+		sta		$d1ff
 		rts
+.endp
+
+;==========================================================================
+; Entry:
+;	A, X saved on stack
+;	A = active PBI IRQ mask ($D1FF AND PDVMSK)
+;
+; Exit:
+;	A, X restored
+;	Interrupt exit
+;
+.proc	PBIHandleIRQ
+		;isolate lowest bit (ID of highest priority device)
+		sta		jveck
+		eor		#$ff
+		clc
+		adc		#1
+		and		jveck
+
+		;save off the current device mask and select interrupting device
+		ldx		shpdvs
+		sta		shpdvs
+		sta		$d1ff		
+		txa
+		pha
+		
+		;call through interrupt vector
+		jsr		$d808
+		
+		;restore previously (un)selected device
+		pla
+		sta		shpdvs
+		sta		$d1ff
+		
+		;restore X, A and exit
+		pla
+		tax
+		pla
+		rti
 .endp
 
 ;==========================================================================
@@ -181,7 +227,9 @@ loop:
 		bit		pdvmsk
 		beq		loop
 		
-		;select the device
+		;select the device -- note that the write to SHPDVS *MUST* come
+		;first, in case a PBI IRQ happens, since we do *NOT* have IRQs
+		;masked here!
 		sta		shpdvs
 		sta		$d1ff
 		

@@ -18,6 +18,7 @@
 #include "stdafx.h"
 #include <windows.h>
 #include <vd2/system/error.h>
+#include <vd2/system/file.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
 #include <at/atui/dialog.h>
@@ -595,6 +596,39 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 								} catch(const MyError& e) {
 									e.post(mhdlg, "Mount error");
 								}
+							}
+						}
+						break;
+
+					case ID_CONTEXT_EXTRACTBOOTSECTORS:
+						if (disk.IsDiskLoaded()) {
+							IATDiskImage *image = disk.GetDiskImage();
+
+							try {
+								if (image->GetBootSectorCount() != 3) {
+									throw MyError("The currently mounted disk image does not have standard DOS boot sectors.");
+								} else {
+									VDSetLastLoadSaveFileName('bsec', L"$dosboot.bin");
+									VDStringW s(VDGetSaveFileName(
+											'bsec',
+											(VDGUIHandle)mhdlg,
+											L"Save boot sectors",
+											L"Virtual disk boot sectors file\0$dosboot.bin\0All files\0*.*\0",
+											L"bin"));
+
+									if (!s.empty()) {
+										uint8 sec[384] = {0};
+
+										for(int i=0; i<3; ++i)
+											image->ReadPhysicalSector(i, &sec[i*128], 128);
+
+										VDFile f(s.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
+
+										f.write(sec, sizeof sec);
+									}
+								}
+							} catch(const MyError& e) {
+								e.post(mhdlg, "Extract error");
 							}
 						}
 						break;

@@ -93,6 +93,9 @@ enum ATCartridgeMode {
 	kATCartridgeMode_Megacart_1M_2,			// Hardware by Bernd for ABBUC JHV 2009
 	kATCartridgeMode_5200_64K_32KBanks,		// Used by M.U.L.E. 64K conversion
 	kATCartridgeMode_MicroCalc,
+	kATCartridgeMode_2K,
+	kATCartridgeMode_4K,
+	kATCartridgeMode_RightSlot_4K,
 	kATCartridgeModeCount
 };
 
@@ -124,11 +127,13 @@ public:
 	ATCartridgeEmulator();
 	~ATCartridgeEmulator();
 
-	void Init(ATMemoryManager *memman, ATScheduler *sch, int basePriority);
+	void Init(ATMemoryManager *memman, ATScheduler *sch, int basePriority, bool fastBus);
 	void Shutdown();
 
 	void SetUIRenderer(IATUIRenderer *r);
 	void SetCallbacks(IATCartridgeCallbacks *cb) { mpCB = cb; }
+
+	void SetFastBus(bool fastBus);
 
 	int GetCartBank() const { return mCartBank; }
 	bool IsABxxMapped() const;
@@ -250,6 +255,7 @@ protected:
 	void SetCartBank2(int bank);
 	void UpdateCartBank();
 	void UpdateCartBank2();
+	void UpdateLayerBuses();
 
 	ATCartridgeMode mCartMode;
 	int	mCartBank;
@@ -259,6 +265,7 @@ protected:
 	int mBasePriority;
 	int mCommandPhase;
 	bool mbDirty;
+	bool mbFastBus;
 	IATUIRenderer *mpUIRenderer;
 	IATCartridgeCallbacks *mpCB;
 	ATMemoryManager *mpMemMan;
@@ -291,7 +298,7 @@ protected:
 };
 
 int ATGetCartridgeModeForMapper(int mapper);
-int ATGetCartridgeMapperForMode(int mode);
+int ATGetCartridgeMapperForMode(int mode, uint32 size);
 bool ATIsCartridgeModeHWCompatible(ATCartridgeMode cartmode, int hwmode);
 
 #endif	// f_AT_CARTRIDGE_H

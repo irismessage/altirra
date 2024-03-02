@@ -9,6 +9,6 @@ public:
 	virtual vdrect32 Position(const vdrect32& containerArea, const vdsize32& size) = 0;
 };
 
-void ATUICreateTranslationAnchor(const vdsize32& size, float fractionX, float fractionY, IATUIAnchor **anchor);
+void ATUICreateTranslationAnchor(float fractionX, float fractionY, IATUIAnchor **anchor);
 
 #endif

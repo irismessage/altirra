@@ -40,7 +40,10 @@ CIOExitNotSupported = CIOExitSuccess.exit_not_supported
 ;	Y = duration
 ;
 ; Modified:
-;	A, X
+;	X
+;
+; Preserved:
+;	A
 ;
 .proc Bell
 	pha

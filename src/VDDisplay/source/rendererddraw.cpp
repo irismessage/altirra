@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <ddraw.h>
+#include <vd2/system/math.h>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Kasumi/pixmapops.h>
@@ -458,6 +459,75 @@ void VDDisplayRendererDirectDraw::Blt(sint32 x, sint32 y, VDDisplayImageView& im
 
 	RECT rDest = { dst.left, dst.top, dst.right, dst.bottom };
 	RECT rSrc = { sx, sy, sx + w, sy + h };
+	mpddsComposition->Blt(&rDest, cachedImage->mpSurface, &rSrc, DDBLT_ASYNC | DDBLT_WAIT, NULL);
+}
+
+void VDDisplayRendererDirectDraw::StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 sw, sint32 sh, const VDDisplayBltOptions& opts) {
+	VDDisplayCachedImageDirectDraw *cachedImage = GetCachedImage(imageView, false);
+
+	if (!cachedImage)
+		return;
+
+	dx += mOffsetX;
+	dy += mOffsetY;
+
+	// do full clipping
+	if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0)
+		return;
+
+	// bail if there is source clipping
+	if ((sx | sy) < 0)
+		return;
+
+	if (sx >= cachedImage->mWidth || cachedImage->mWidth - sx < sw)
+		return;
+
+	if (sy >= cachedImage->mHeight || cachedImage->mHeight - sy < sh)
+		return;
+
+	// clip destination rect
+	const float factor_x = (float)sw / (float)dw;
+	const float factor_y = (float)sh / (float)dh;
+	float fsx1 = (float)sx;
+	float fsy1 = (float)sy;
+	float fsx2 = fsx1 + (float)sw;
+	float fsy2 = fsy1 + (float)sh;
+
+	vdrect32 dst(dx, dy, dx + dw, dy + dh);
+
+	if (dst.left < mClipRect.left) {
+		fsx1 += factor_x * (float)(mClipRect.left - dst.left);
+		dst.left = mClipRect.left;
+	}
+
+	if (dst.top < mClipRect.top) {
+		fsy1 += factor_y * (float)(mClipRect.top - dst.top);
+		dst.top = mClipRect.top;
+	}
+
+	if (dst.right > mClipRect.right) {
+		fsx2 += factor_x * (float)(mClipRect.right - dst.right);
+		dst.right = mClipRect.right;
+	}
+
+	if (dst.bottom > mClipRect.bottom) {
+		fsy2 += factor_y * (float)(mClipRect.bottom - dst.top);
+		dst.bottom = mClipRect.bottom;
+	}
+
+	// bail if we've dest-clipped out
+	if (dst.empty())
+		return;
+
+	UnlockPrimary();
+
+	RECT rDest = { dst.left, dst.top, dst.right, dst.bottom };
+	RECT rSrc = {
+		VDFloorToInt(fsx1),
+		VDFloorToInt(fsy1),
+		VDCeilToInt(fsx2),
+		VDCeilToInt(fsy2)
+	};
 	mpddsComposition->Blt(&rDest, cachedImage->mpSurface, &rSrc, DDBLT_ASYNC | DDBLT_WAIT, NULL);
 }
 

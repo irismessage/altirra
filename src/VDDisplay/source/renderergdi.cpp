@@ -279,6 +279,34 @@ void VDDisplayRendererGDI::Blt(sint32 x, sint32 y, VDDisplayImageView& imageView
 	BitBlt(mhdc, x, y, w, h, cachedImage->mhdc, sx, sy, SRCCOPY);
 }
 
+void VDDisplayRendererGDI::StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 sw, sint32 sh, const VDDisplayBltOptions& opts) {
+	VDDisplayCachedImageGDI *cachedImage = GetCachedImage(imageView);
+
+	if (!cachedImage)
+		return;
+
+	dx += mOffsetX;
+	dy += mOffsetY;
+
+	// do source clipping
+	if (sx < 0 || sx >= cachedImage->mWidth)
+		return;
+
+	if (sy < 0 || sy >= cachedImage->mHeight)
+		return;
+
+	if (cachedImage->mWidth - sx < sw || cachedImage->mHeight - sy < sh)
+		return;
+
+	if (sw <= 0 || sh <= 0)
+		return;
+
+	if (dw <= 0 || dh <= 0)
+		return;
+
+	::StretchBlt(mhdc, dx, dy, dw, dh, cachedImage->mhdc, sx, sy, sw, sh, SRCCOPY);
+}
+
 void VDDisplayRendererGDI::MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode) {
 	if (!n)
 		return;

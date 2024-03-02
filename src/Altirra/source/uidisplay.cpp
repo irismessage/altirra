@@ -290,6 +290,7 @@ void ATUIInitManager() {
 
 	g_pATVideoDisplayWindow = new ATUIVideoDisplayWindow;
 	g_pATVideoDisplayWindow->AddRef();
+	g_pATVideoDisplayWindow->Init(*g_sim.GetEventManager());
 	g_ATUIManager.GetMainWindow()->AddChild(g_pATVideoDisplayWindow);
 	g_pATVideoDisplayWindow->SetDockMode(kATUIDockMode_Fill);
 
@@ -356,6 +357,14 @@ public:
 
 	void OnSize();
 	void UpdateFilterMode();
+
+	bool IsXEPViewEnabled();
+	void SetXEPViewEnabled(bool enabled);
+
+	bool IsXEPViewAutoswitchEnabled();
+	void SetXEPViewAutoswitchEnabled(bool enabled);
+
+	void OnHardwareChanged();
 
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
@@ -768,6 +777,7 @@ bool ATDisplayPane::OnCreate() {
 	mpMenuBar->OnActivatedEvent() = ATBINDCALLBACK(this, &ATDisplayPane::OnMenuActivated);
 	mpMenuBar->OnItemSelected() = ATBINDCALLBACK(this, &ATDisplayPane::OnMenuItemSelected);
 
+	g_pATVideoDisplayWindow->SetXEP(g_sim.GetXEP80());
 
 #if 0
 	ATUIMessageBox *osk = new ATUIMessageBox;
@@ -788,6 +798,7 @@ bool ATDisplayPane::OnCreate() {
 	g_pATVideoDisplayWindow->OnAllowContextMenuEvent() = ATBINDCALLBACK(this, &ATDisplayPane::OnAllowContextMenu);
 	g_pATVideoDisplayWindow->OnDisplayContextMenuEvent() = ATBINDCALLBACK(this, &ATDisplayPane::OnDisplayContextMenu);
 
+	OnHardwareChanged();
 	return true;
 }
 
@@ -803,8 +814,12 @@ void ATDisplayPane::OnDestroy() {
 		mpMenuBar.clear();
 	}
 
+	if (g_pATVideoDisplayWindow)
+		g_pATVideoDisplayWindow->SetXEP(NULL);
+
 	if (mpEnhTextEngine) {
-		g_pATVideoDisplayWindow->SetEnhancedTextEngine(NULL);
+		if (g_pATVideoDisplayWindow)
+			g_pATVideoDisplayWindow->SetEnhancedTextEngine(NULL);
 
 		mpEnhTextEngine->Shutdown();
 		mpEnhTextEngine = NULL;
@@ -1054,6 +1069,11 @@ void ATDisplayPane::UpdateFilterMode() {
 			mpDisplay->SetPixelSharpness(1.0f, 1.0f);
 			break;
 	}
+}
+
+void ATDisplayPane::OnHardwareChanged() {
+	if (g_pATVideoDisplayWindow)
+		g_pATVideoDisplayWindow->SetXEP(g_sim.GetXEP80());
 }
 
 void ATDisplayPane::SetHaveMouse() {

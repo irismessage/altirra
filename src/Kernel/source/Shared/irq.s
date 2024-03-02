@@ -16,130 +16,186 @@
 ;	along with this program; if not, write to the Free Software
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-.proc IRQHandler
+;==========================================================================
+; _KERNEL_FAST_IRQ
+;
+; If set, expands the IRQ module slightly to save 12 cycles when ack'ing
+; POKEY IRQs. This is still faster than the stock XL/XE OS. If cleared,
+; an additional subroutine call is used to reduce code size.
+;
+.ifndef _KERNEL_FAST_IRQ
+	_KERNEL_FAST_IRQ = 0
+.endif
+
+;==========================================================================
+.if _KERNEL_FAST_IRQ
+_ACK_IRQ .macro
+	sta		irqen
+	lda		pokmsk
+	sta		irqen
+.endm
+.else
+_ACK_IRQ .macro
+	jsr		IrqAcknowledge
+.endm
+.endif
+
+;==========================================================================
+; The canonical IRQ priority order for the XL/XE is:
+;	- Serial input ready ($20)
+;	- PBI devices
+;	- Serial output ready ($10)
+;	- Serial output complete ($08)
+;	- Timer 1 ($01)
+;	- Timer 2 ($02)
+;	- Timer 4 ($04)
+;	- Keyboard ($80)
+;	- Break ($40)
+;	- PIA proceed
+;	- PIA interrupt
+;	- BRK instruction
+;
+IRQHandler = _IRQHandler._entry
+.proc _IRQHandler
+.if _KERNEL_PBI_SUPPORT
+check_pbi:
+	;check if a device interrupt is active
+	and		$d1ff
+	beq		no_pbi_interrupt
+
+	;save X
+	sta		jveck
+	txa
 	pha
 	
-	;check for serial output ready IRQ
-	lda		#$10
-	bit		irqst
-	bne		NotSerOutReady
-	lda		pokmsk
-	and		#$ef
-	sta		irqen
-	ora		#$10
-	sta		irqen
-	jmp		(vseror)
-NotSerOutReady:
+	;jump through PBI interrupt vector
+	lda		jveck
+	jmp		(vpirq)
+.endif
 
+dispatch_serout:
+	lda		#$ef
+	_ACK_IRQ
+	jmp		(vseror)
+
+check_seroc:
+	bit		irqst
+	bne		not_seroc
+dispatch_seroc:
+	jmp		(vseroc)
+
+dispatch_timer1:
+	lda		#$fe
+	_ACK_IRQ
+	jmp		(vtimr1)
+
+dispatch_timer2:
+	lda		#$fd
+	_ACK_IRQ
+	jmp		(vtimr2)
+
+dispatch_timer4:
+	lda		#$fb
+	_ACK_IRQ
+	jmp		(vtimr4)
+
+_entry:
+	pha
+	
 	;check for serial input ready IRQ
 	lda		#$20
 	bit		irqst
-	bne		NotSerInReady
-	lda		pokmsk
-	and		#$df
+	bne		not_serin
+	lda		#$df
 	sta		irqen
-	ora		#$20
+	lda		pokmsk
 	sta		irqen
 	jmp		(vserin)
-NotSerInReady:
+not_serin:
 
-	txa
-	pha
+	.if _KERNEL_PBI_SUPPORT
+	;check for PBI devices requiring interrupt handling
+	lda		pdmsk
+	bne		check_pbi
+no_pbi_interrupt:
+	.endif
 
-	;check for remaining pokey irqs
-	ldx		#4
-PokeyIntLoop:
-	lda		irqtab,x
+	;check for serial output ready IRQ
+	lda		#$10
 	bit		irqst
-	bne		NotInt
-
-	eor		#$ff
-	and		pokmsk
-	sta		irqen
-	lda		pokmsk
-	sta		irqen
-
-	lda		vectab,x
-	tax
-	mva		$0200,x jveck
-	mva		$0201,x jveck+1
-	pla
-	tax
-	jmp		(jveck)
-
-NotInt:
-	dex
-	bpl		PokeyIntLoop
+	beq		dispatch_serout
 
 	;check for serial output complete (not a latch, so must mask)
-	lda		#$08
-	and		pokmsk
-	beq		NotSerOutComplete
+	lsr
+	bit		pokmsk
+	bne		check_seroc
+not_seroc:
+
+	lda		irqst
+	lsr
+	bcc		dispatch_timer1
+	lsr
+	bcc		dispatch_timer2
+	lsr
+	bcc		dispatch_timer4
 	bit		irqst
-	bne		NotSerOutComplete
-	
-	pla
-	tax
-	jmp		(vseroc)
-	
-NotSerOutComplete:
+	bvc		dispatch_keyboard
+	bpl		dispatch_break
+
 	;check for serial bus proceed line
 	bit		pactl
-	bpl		NotSerBusProceed
-
-	;clear serial bus proceed interrupt
-	lda		porta
-
-	;jump to vector
-	pla
-	tax
-	jmp		(vprced)
-	
-NotSerBusProceed:
+	bmi		dispatch_pia_irqa
 
 	;check for serial bus interrupt line
 	bit		pbctl
-	bpl		NotSerBusInterrupt
-	
-	;clear serial bus interrupt interrupt
-	lda		portb
-	
-	;jmp to vector
-	pla
-	tax
-	jmp		(vinter)
-	
-NotSerBusInterrupt:
+	bmi		dispatch_pia_irqb
 
 	;check for break instruction
-	tsx
-	lda		$0103,x
-	and		#$20
-	beq		NotBrkInstruction
-
+	;
+	;we used to use TSX here, but this takes too many insns to
+	;handle stack wrapping properly
 	pla
-	tax
+	sta		jveck
+	pla
+	pha
+	and		#$10
+	bne		not_brk
+	lda		jveck
+	pha
 	jmp		(vbreak)
-
-NotBrkInstruction:
-	pla
-	tax
-	pla
+not_brk:
+	lda		jveck
 	rti
-
-irqtab:
-	dta		$80		;break key
-	dta		$40		;keyboard key
-	dta		$04		;pokey timer 4
-	dta		$02		;pokey timer 2
-	dta		$01		;pokey timer 1
-	dta		$08		;serial out complete
 	
-vectab:
-	dta		<brkky
-	dta		<vkeybd
-	dta		<vtimr4
-	dta		<vtimr2
-	dta		<vtimr1
+
+dispatch_keyboard:
+	lda		#$bf
+	_ACK_IRQ
+	jmp		(vkeybd)
+
+dispatch_break:
+	lda		#$7f
+	_ACK_IRQ
+	jmp		(brkky)
+
+dispatch_pia_irqa:
+	;clear serial bus proceed interrupt
+	lda		porta
+	jmp		(vprced)
+
+dispatch_pia_irqb:
+	;clear serial bus interrupt interrupt
+	lda		portb
+	jmp		(vinter)
 		
 .endp
+
+;==========================================================================
+.if !_KERNEL_FAST_IRQ
+.proc IrqAcknowledge
+	sta		irqen
+	lda		pokmsk
+	sta		irqen
+	rts
+.endp
+.endif

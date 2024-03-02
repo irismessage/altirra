@@ -47,15 +47,47 @@ void ATUICPUOptionsDialog::OnDataExchange(bool write) {
 		cpuem.SetNMIBlockingEnabled(IsButtonChecked(IDC_ALLOWNMIBLOCKING));
 
 		ATCPUMode cpuMode = kATCPUMode_6502;
-		if (IsButtonChecked(IDC_CPUMODEL_65C816))
+		uint32 subCycles = 1;
+
+		if (IsButtonChecked(IDC_CPUMODEL_65C816_14MHZ)) {
+			cpuMode = kATCPUMode_65C816;
+			subCycles = 8;
+		} else if (IsButtonChecked(IDC_CPUMODEL_65C816_10MHZ)) {
+			cpuMode = kATCPUMode_65C816;
+			subCycles = 6;
+		} else if (IsButtonChecked(IDC_CPUMODEL_65C816_7MHZ)) {
+			cpuMode = kATCPUMode_65C816;
+			subCycles = 4;
+		} else if (IsButtonChecked(IDC_CPUMODEL_65C816_3MHZ)) {
+			cpuMode = kATCPUMode_65C816;
+			subCycles = 2;
+		} else if (IsButtonChecked(IDC_CPUMODEL_65C816))
 			cpuMode = kATCPUMode_65C816;
 		else if (IsButtonChecked(IDC_CPUMODEL_65C02))
 			cpuMode = kATCPUMode_65C02;
 
-		if (cpuem.GetCPUMode() != cpuMode) {
-			cpuem.SetCPUMode(cpuMode);
-			g_sim.ColdReset();
+		bool reset = false;
+
+		if (cpuem.GetCPUMode() != cpuMode || cpuem.GetSubCycles() != subCycles) {
+			cpuem.SetCPUMode(cpuMode, subCycles);
+			reset = true;
 		}
+
+		bool shadowROM = IsButtonChecked(IDC_SHADOW_ROM);
+		bool shadowCarts = IsButtonChecked(IDC_SHADOW_CARTS);
+
+		if (g_sim.GetShadowROMEnabled() != shadowROM) {
+			g_sim.SetShadowROMEnabled(shadowROM);
+			reset = true;
+		}
+
+		if (g_sim.GetShadowCartridgeEnabled() != shadowCarts) {
+			g_sim.SetShadowCartridgeEnabled(shadowCarts);
+			reset = true;
+		}
+
+		if (reset)
+			g_sim.ColdReset();
 	} else {
 		ATCPUEmulator& cpuem = g_sim.GetCPU();
 
@@ -64,6 +96,8 @@ void ATUICPUOptionsDialog::OnDataExchange(bool write) {
 		CheckButton(IDC_ENABLE_ILLEGALS, cpuem.AreIllegalInsnsEnabled());
 		CheckButton(IDC_STOP_ON_BRK, cpuem.GetStopOnBRK());
 		CheckButton(IDC_ALLOWNMIBLOCKING, cpuem.IsNMIBlockingEnabled());
+		CheckButton(IDC_SHADOW_ROM, g_sim.GetShadowROMEnabled());
+		CheckButton(IDC_SHADOW_CARTS, g_sim.GetShadowCartridgeEnabled());
 
 		switch(cpuem.GetCPUMode()) {
 			case kATCPUMode_6502:
@@ -73,7 +107,20 @@ void ATUICPUOptionsDialog::OnDataExchange(bool write) {
 				CheckButton(IDC_CPUMODEL_65C02, true);
 				break;
 			case kATCPUMode_65C816:
-				CheckButton(IDC_CPUMODEL_65C816, true);
+				{
+					uint32 subCycles = cpuem.GetSubCycles();
+
+					if (subCycles >= 8)
+						CheckButton(IDC_CPUMODEL_65C816_14MHZ, true);
+					else if (subCycles >= 6)
+						CheckButton(IDC_CPUMODEL_65C816_10MHZ, true);
+					else if (subCycles >= 4)
+						CheckButton(IDC_CPUMODEL_65C816_7MHZ, true);
+					else if (subCycles >= 2)
+						CheckButton(IDC_CPUMODEL_65C816_3MHZ, true);
+					else
+						CheckButton(IDC_CPUMODEL_65C816, true);
+				}
 				break;
 		}
 	}

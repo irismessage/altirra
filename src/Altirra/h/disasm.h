@@ -30,6 +30,7 @@ void ATDisassembleRange(FILE *f, uint16 addr1, uint16 addr2);
 uint16 ATDisassembleGetFirstAnchor(uint16 addr, uint16 target);
 
 int ATGetOpcodeLength(uint8 opcode);
+int ATGetOpcodeLength(uint8 opcode, uint8 p, bool emuMode);
 bool ATIsValidOpcode(uint8 opcode);
 
 #endif

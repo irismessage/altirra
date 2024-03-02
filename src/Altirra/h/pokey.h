@@ -194,6 +194,7 @@ protected:
 	void	UpdateMixTable();
 
 	void	TryPushNextKey();
+	void	ProcessReceivedSerialByte();
 
 protected:
 	void	SetLast64KHzTime(uint32 t) { mLast64KHzTime = t; }
@@ -258,6 +259,7 @@ protected:
 	uint8	mSerialOutputShiftRegister;
 	uint8	mSerialInputCounter;
 	uint8	mSerialOutputCounter;
+	uint8	mSerialInputPendingStatus;
 	bool	mbSerOutValid;
 	bool	mbSerShiftValid;
 	bool	mbSerialOutputState;
@@ -265,6 +267,7 @@ protected:
 	bool	mbSerialRateChanged;
 	bool	mbSerialWaitingForStartBit;
 	bool	mbSerInBurstPending;
+	bool	mbSerInDeferredLoad;
 
 	uint32	mSerialSimulateInputBaseTime;
 	uint32	mSerialSimulateInputCyclesPerBit;

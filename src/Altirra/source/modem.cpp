@@ -153,7 +153,11 @@ void ATModemEmulator::Shutdown() {
 		mpScheduler = NULL;
 	}
 
-	mpUIRenderer = NULL;
+	if (mpUIRenderer) {
+		mpUIRenderer->SetModemConnection(NULL);
+		mpUIRenderer = NULL;
+	}
+
 	mbInited = false;
 }
 

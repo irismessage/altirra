@@ -32,6 +32,7 @@
 
 using namespace nsVDWinFormats;
 
+ATDebuggerLogChannel g_ATLCCas(true, false, "CAS", "Cassette I/O");
 ATDebuggerLogChannel g_ATLCCasData(false, true, "CASDATA", "Cassette data");
 ATDebuggerLogChannel g_ATLCCasDirectData(false, true, "CASDRDATA", "Cassette direct data");
 
@@ -312,7 +313,7 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemo
 
 					mSIOPhase = 0;
 					idealBaudRate = kDataFrequency * 19.0f / (float)bitDelta;
-					VDDEBUG("CAS: Sync mark found. Computed baud rate = %.2f baud\n", idealBaudRate);
+					//VDDEBUG("CAS: Sync mark found. Computed baud rate = %.2f baud\n", idealBaudRate);
 
 					mpMem->WriteByte(bufadr++, 0x55);
 					mpMem->WriteByte(bufadr++, 0x55);
@@ -341,7 +342,7 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemo
 			g_ATLCCasData("CASDATA: Receiving byte: %02x (accelerated) (pos=%.3fs)\n", mDataByte, (float)mPosition / (float)kDataFrequency);
 
 			if (mbLogData)
-				ATConsolePrintf("CAS: Reading block[%02x] = %02x (pos = %.3fs)\n", offset, mDataByte, (float)mPosition / (float)kDataFrequency);
+				g_ATLCCas("Reading block[%02x] = %02x (pos = %.3fs)\n", offset, mDataByte, (float)mPosition / (float)kDataFrequency);
 
 			mpMem->WriteByte(bufadr++, mDataByte);
 			sum += mDataByte;
@@ -357,8 +358,8 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemo
 			if (actualChecksum != readChecksum) {
 				status = 0x8F;		// checksum error
 
-				ATConsolePrintf("CAS: Checksum error encountered (got %02x, expected %02x).\n", readChecksum, actualChecksum);
-				ATConsolePrintf("CAS: Sector sync pos: %.3f s | End pos: %.3f s | Baud rate: %.2f baud | Framing errors: %d (first at %.02f)\n"
+				g_ATLCCas("Checksum error encountered (got %02x, expected %02x).\n", readChecksum, actualChecksum);
+				g_ATLCCas("Sector sync pos: %.3f s | End pos: %.3f s | Baud rate: %.2f baud | Framing errors: %d (first at %.02f)\n"
 					, (float)syncStart / (float)kDataFrequency
 					, (float)mPosition / (float)kDataFrequency
 					, idealBaudRate
@@ -374,7 +375,7 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemo
 	// resync audio position
 	SeekAudio(VDRoundToInt((float)mPosition * (kAudioFrequency / kDataFrequency)));
 
-	ATConsolePrintf("CAS: Completed read with status %02x; control=%02x, position=%.2fs (cycle %u), baud=%.2fs\n", status, mpMem->ReadByte(bufadr - len + 2), mPosition / kDataFrequency, mPosition, idealBaudRate);
+	g_ATLCCas("Completed read with status %02x to buffer $%04X; control=%02x, position=%.2fs (cycle %u), baud=%.2fs\n", status, bufadr, mpMem->ReadByte(bufadr - len + 2), mPosition / kDataFrequency, mPosition, idealBaudRate);
 
 	// check if short inter-record gaps (IRGs) are enabled
 	uint8 daux2 = mpMem->ReadByte(0x030B);

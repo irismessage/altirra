@@ -339,7 +339,7 @@ void ATUILabel::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 			lineSpanCount = line->mSpanCount;
 		}
 
-		sint32 lineX = ((w - line->mWidth) * (sint32)mTextAlign + 1) >> 1;
+		sint32 lineX = ((w - line->mWidth - mTextX*2) * (sint32)mTextAlign + 1) >> 1;
 
 		if (span.mChars) {
 			tr.SetFont(span.mbBold ? mpBoldFont : mpFont);

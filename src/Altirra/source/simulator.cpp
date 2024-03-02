@@ -73,6 +73,7 @@
 #include "hleciohook.h"
 #include "hleutils.h"
 #include "versioninfo.h"
+#include "xep80.h"
 
 namespace {
 	const char kSaveStateVersion[] = "Altirra save state V1";
@@ -197,6 +198,8 @@ void ATSimulator::PrivateData::PIAChangeBanking(void *thisPtr, uint32 output) {
 ATSimulator::ATSimulator()
 	: mbRunning(false)
 	, mbPaused(false)
+	, mbShadowROM(true)
+	, mbShadowCartridge(false)
 	, mpPrivateData(new PrivateData(*this))
 	, mbROMAutoReloadEnabled(false)
 	, mbAutoLoadKernelSymbols(false)
@@ -241,6 +244,7 @@ ATSimulator::ATSimulator()
 	, mpPortBController(new ATPortController)
 	, mpLightPen(new ATLightPenPort)
 	, mpPrinter(NULL)
+	, mpXEP80(NULL)
 	, mpVBXE(NULL)
 	, mpVBXEMemory(NULL)
 	, mpSoundBoard(NULL)
@@ -262,6 +266,7 @@ ATSimulator::ATSimulator()
 	, mpHLEFastBootHook(NULL)
 	, mpHLECIOHook(NULL)
 	, mAxlonMemoryBits(0)
+	, mHighMemoryBanks(0)
 {
 	mpAnticBusData = &mpMemMan->mBusValue;
 
@@ -276,7 +281,7 @@ ATSimulator::ATSimulator()
 
 	ATCreateUIRenderer(&mpUIRenderer);
 
-	mpMemMan->Init(mMemory + 0x110000, 3);
+	mpMemMan->Init();
 	mpHLEKernel->Init(mCPU, *mpMemMan);
 	
 	mMemoryMode = kATMemoryMode_320K;
@@ -294,7 +299,7 @@ ATSimulator::ATSimulator()
 	mPIA.Init(&mIRQController);
 
 	mGTIA.Init(this);
-	mAntic.Init(this, &mGTIA, &mScheduler);
+	mAntic.Init(this, &mGTIA, &mScheduler, mpSimEventManager);
 
 	mpSIOManager->Init(&mCPU, this);
 	mpHLECIOHook = ATCreateHLECIOHook(&mCPU, this);
@@ -380,6 +385,8 @@ ATSimulator::ATSimulator()
 	mROMImagePaths[kATROMImage_5200] = L"atari5200.rom";
 	mROMImagePaths[kATROMImage_Basic] = L"ataribas.rom";
 	mROMImagePaths[kATROMImage_KMKJZIDE] = L"hdbios.rom";
+
+	LoadBuiltInROMs();
 }
 
 ATSimulator::~ATSimulator() {
@@ -442,6 +449,12 @@ void ATSimulator::Shutdown() {
 	if (mpVBXEMemory) {
 		VDAlignedFree(mpVBXEMemory);
 		mpVBXEMemory = NULL;
+	}
+
+	if (mpXEP80) {
+		mpXEP80->Shutdown();
+		delete mpXEP80;
+		mpXEP80 = NULL;
 	}
 
 	if (mpCovox) {
@@ -594,6 +607,13 @@ void ATSimulator::Shutdown() {
 	delete mpPrivateData; mpPrivateData = NULL;
 }
 
+void ATSimulator::LoadBuiltInROMs() {
+	ATLoadKernelResource(IDR_KERNEL, mLLEOSBKernelROM, 0, 10240);
+	ATLoadKernelResource(IDR_KERNELXL, mLLEXLKernelROM, 0, 16384);
+	ATLoadKernelResource(IDR_HLEKERNEL, mHLEKernelROM, 0, 16384);
+	ATLoadKernelResource(IDR_5200KERNEL, m5200LLEKernelROM, 0, 2048);
+}
+
 void ATSimulator::LoadROMs() {
 	VDStringW ppath(VDGetProgramPath());
 	VDStringW path;
@@ -612,12 +632,8 @@ void ATSimulator::LoadROMs() {
 		mOtherKernelROM,
 		mBASICROM,
 		m5200KernelROM,
-		mLLEOSBKernelROM,
-		mHLEKernelROM,
-		m5200LLEKernelROM,
 		mGameROM,
 		m1200XLKernelROM,
-		mLLEXLKernelROM,
 	};
 
 	static const struct ROMImageDesc {
@@ -633,12 +649,8 @@ void ATSimulator::LoadROMs() {
 		{ kATROMImage_Other,	IDR_NOKERNEL, 0, 16384 },
 		{ kATROMImage_Basic,	IDR_BASIC, 0, 8192 },
 		{ kATROMImage_5200,		IDR_5200KERNEL, 0, 2048 },
-		{ -1, IDR_KERNEL, 0, 10240 },
-		{ -1, IDR_HLEKERNEL, 0, 16384 },
-		{ -1, IDR_5200KERNEL, 0, 2048 },
 		{ kATROMImage_Game,		IDR_NOGAME, 0, 8192 },
 		{ kATROMImage_1200XL,	IDR_NOKERNEL, 0, 16384 },
-		{ -1, IDR_KERNELXL, 0, 16384 },
 	};
 
 	for(size_t i=0; i<sizeof(kROMImageDescs)/sizeof(kROMImageDescs[0]); ++i) {
@@ -651,10 +663,9 @@ void ATSimulator::LoadROMs() {
 
 			if (*relPath) {
 				path = VDFileResolvePath(ppath.c_str(), relPath);
-				if (VDDoesPathExist(path.c_str())) {
-					try {
-						VDFile f;
-						f.open(path.c_str());
+				try {
+					VDFile f;
+					if (f.openNT(path.c_str())) {
 						f.read(arrays[i], desc.mSize);
 						f.close();
 
@@ -670,14 +681,29 @@ void ATSimulator::LoadROMs() {
 							mbHaveXEGSKernel = true;
 						else if (desc.mImageId == kATROMImage_5200)
 							mbHave5200Kernel = true;
-					} catch(const MyError&) {
 					}
+				} catch(const MyError&) {
 				}
 			}
 		}
 
 		if (!success)
 			ATLoadKernelResource(desc.mResId, arrays[i], desc.mResOffset, desc.mSize);
+	}
+
+	// If ROM reload is enabled, attempt to reload the built-in kernels.
+	if (mbROMAutoReloadEnabled) {
+		VDFile f;
+		
+		if (f.openNT(VDFileResolvePath(ppath.c_str(), L"kernel.rom").c_str())) {
+			f.readData(mLLEOSBKernelROM, sizeof mLLEOSBKernelROM);
+			f.closeNT();
+		}
+
+		if (f.openNT(VDFileResolvePath(ppath.c_str(), L"kernelxl.rom").c_str())) {
+			f.readData(mLLEXLKernelROM, sizeof mLLEXLKernelROM);
+			f.closeNT();
+		}
 	}
 
 	UpdateKernel();
@@ -734,13 +760,14 @@ void ATSimulator::SetVerifierEnabled(bool enabled) {
 			return;
 
 		mpVerifier = new ATCPUVerifier;
-		mpVerifier->Init(&mCPU, mpMemMan, this);
+		mpVerifier->Init(&mCPU, mpMemMan, this, mpSimEventManager);
 		mCPU.SetVerifier(mpVerifier);
 	} else {
 		if (!mpVerifier)
 			return;
 
 		mCPU.SetVerifier(NULL);
+		mpVerifier->Shutdown();
 		delete mpVerifier;
 		mpVerifier = NULL;
 	}
@@ -813,7 +840,7 @@ void ATSimulator::SetHardwareMode(ATHardwareMode mode) {
 	if (mpVBXE)
 		mpVBXE->Set5200Mode(is5200);
 
-	mpMemMan->SetFloatingDataBus(mode == kATHardwareMode_130XE || mode == kATHardwareMode_800);
+	mpMemMan->SetFloatingDataBus(mode == kATHardwareMode_130XE || mode == kATHardwareMode_800 || mode == kATHardwareMode_5200);
 
 	mpLightPen->SetIgnorePort34(mode == kATHardwareMode_800XL || mode == kATHardwareMode_1200XL || mode == kATHardwareMode_XEGS || mode == kATHardwareMode_130XE);
 
@@ -831,6 +858,19 @@ void ATSimulator::SetAxlonMemoryMode(uint8 bits) {
 		mAxlonMemoryBits = bits;
 		mpMMU->SetAxlonMemory(bits);
 	}
+}
+
+void ATSimulator::SetHighMemoryBanks(sint32 banks) {
+	if (banks < -1)
+		banks = -1;
+	else if (banks > 255)
+		banks = 255;
+
+	if (mHighMemoryBanks == banks)
+		return;
+
+	mHighMemoryBanks = banks;
+	mpMemMan->SetHighMemoryBanks(banks);
 }
 
 void ATSimulator::SetDiskSIOPatchEnabled(bool enable) {
@@ -906,6 +946,21 @@ void ATSimulator::SetDualPokeysEnabled(bool enable) {
 		mbDualPokeys = enable;
 
 		mPokey.SetSlave(enable ? &mPokey2 : NULL);
+	}
+}
+
+void ATSimulator::SetXEP80Enabled(bool enable) {
+	if (enable) {
+		if (!mpXEP80) {
+			mpXEP80 = new ATXEP80Emulator;
+			mpXEP80->Init(&mScheduler, &mPIA);
+		}
+	} else {
+		if (mpXEP80) {
+			mpXEP80->Shutdown();
+			delete mpXEP80;
+			mpXEP80 = NULL;
+		}
 	}
 }
 
@@ -1216,6 +1271,18 @@ void ATSimulator::SetVirtualScreenEnabled(bool enable) {
 	}
 }
 
+void ATSimulator::SetShadowCartridgeEnabled(bool enabled) {
+	if (mbShadowCartridge == enabled)
+		return;
+
+	mbShadowCartridge = enabled;
+
+	for(int i=0; i<2; ++i) {
+		if (mpCartridge[i])
+			mpCartridge[i]->SetFastBus(enabled);
+	}
+}
+
 bool ATSimulator::IsKernelAvailable(ATKernelMode mode) const {
 	switch(mode) {
 		case kATKernelMode_OSB:
@@ -1300,11 +1367,15 @@ void ATSimulator::ColdReset() {
 
 		if (mpVBXEMemory)
 			NoiseFill((uint8 *)mpVBXEMemory, 0x80000, 0x9B274CA3);
+
+		NoiseFill(mpMemMan->GetHighMemory(), mpMemMan->GetHighMemorySize(), 0x324CBA17);
 	} else {
 		memset(mMemory, 0, sizeof mMemory);
 
 		if (mpVBXEMemory)
 			memset(mpVBXEMemory, 0, 0x80000);
+
+		memset(mpMemMan->GetHighMemory(), 0, mpMemMan->GetHighMemorySize());
 	}
 
 	// initialize hook pages
@@ -1366,6 +1437,9 @@ void ATSimulator::ColdReset() {
 		if (mpCartridge[i])
 			mpCartridge[i]->ColdReset();
 	}
+
+	if (mpXEP80)
+		mpXEP80->ColdReset();
 
 	if (mpVBXE)
 		mpVBXE->ColdReset();
@@ -1444,6 +1518,7 @@ void ATSimulator::ColdReset() {
 	}
 
 	mGTIA.SetForcedConsoleSwitches(consoleSwitches);
+	mpUIRenderer->SetHeldButtonStatus(~consoleSwitches);
 
 	if (mpHLEFastBootHook) {
 		ATDestroyHLEFastBootHook(mpHLEFastBootHook);
@@ -1519,6 +1594,8 @@ void ATSimulator::WarmReset() {
 		mDiskDrives[i].ClearAccessedFlag();
 
 	mpHLECIOHook->WarmReset();
+
+	NotifyEvent(kATSimEvent_WarmReset);
 }
 
 void ATSimulator::Resume() {
@@ -2013,7 +2090,7 @@ bool ATSimulator::LoadCartridge(uint32 unit, const wchar_t *origPath, const wcha
 	// UpdateXLCartridgeLine().
 	mpCartridge[unit] = new ATCartridgeEmulator;
 	try {
-		mpCartridge[unit]->Init(mpMemMan, &mScheduler, unit ? kATMemoryPri_Cartridge2 : kATMemoryPri_Cartridge1);
+		mpCartridge[unit]->Init(mpMemMan, &mScheduler, unit ? kATMemoryPri_Cartridge2 : kATMemoryPri_Cartridge1, mbShadowCartridge);
 		mpCartridge[unit]->SetCallbacks(mpPrivateData);
 
 		if (!mpCartridge[unit]->Load(origPath, stream, loadCtx)) {
@@ -2068,7 +2145,7 @@ void ATSimulator::LoadCartridge5200Default() {
 	UnloadCartridge(0);
 
 	mpCartridge[0] = new ATCartridgeEmulator;
-	mpCartridge[0]->Init(mpMemMan, &mScheduler, kATMemoryPri_Cartridge1);
+	mpCartridge[0]->Init(mpMemMan, &mScheduler, kATMemoryPri_Cartridge1, mbShadowCartridge);
 	mpCartridge[0]->SetCallbacks(mpPrivateData);
 	mpCartridge[0]->SetUIRenderer(mpUIRenderer);
 	mpCartridge[0]->Load5200Default();
@@ -2078,7 +2155,7 @@ void ATSimulator::LoadNewCartridge(int mode) {
 	UnloadCartridge(0);
 
 	mpCartridge[0] = new ATCartridgeEmulator;
-	mpCartridge[0]->Init(mpMemMan, &mScheduler, kATMemoryPri_Cartridge1);
+	mpCartridge[0]->Init(mpMemMan, &mScheduler, kATMemoryPri_Cartridge1, mbShadowCartridge);
 	mpCartridge[0]->SetCallbacks(mpPrivateData);
 	mpCartridge[0]->SetUIRenderer(mpUIRenderer);
 	mpCartridge[0]->LoadNewCartridge((ATCartridgeMode)mode);
@@ -2089,7 +2166,7 @@ void ATSimulator::LoadCartridgeBASIC() {
 
 	ATCartridgeEmulator *cart = new ATCartridgeEmulator;
 	mpCartridge[0] = cart;
-	cart->Init(mpMemMan, &mScheduler, kATMemoryPri_Cartridge1);
+	cart->Init(mpMemMan, &mScheduler, kATMemoryPri_Cartridge1, mbShadowCartridge);
 	cart->SetCallbacks(mpPrivateData);
 	cart->SetUIRenderer(mpUIRenderer);
 
@@ -2182,10 +2259,12 @@ ATSimulator::AdvanceResult ATSimulator::AdvanceUntilInstructionBoundary() {
 			}
 
 			ATSCHEDULER_ADVANCE(&mScheduler);
-			uint8 busbusy = mAntic.Advance();
+			uint8 fetchMode = mAntic.PreAdvance();
 
-			if (!busbusy)
+			if (!((fetchMode | mAntic.GetWSYNCFlag()) & 1))
 				cpuEvent = (ATSimulatorEvent)mCPU.Advance();
+
+			mAntic.PostAdvance(fetchMode);
 
 			if (!(cpuEvent | mPendingEvent))
 				continue;
@@ -2232,28 +2311,51 @@ ATSimulator::AdvanceResult ATSimulator::Advance(bool dropFrame) {
 
 			int cycles = 114 - x;
 			if (cycles > 0) {
-				if (mCPU.GetCPUMode() == kATCPUMode_65C816) {
+				switch(mCPU.GetAdvanceMode()) {
+				case kATCPUAdvanceMode_65816HiSpeed:
 					while(cycles--) {
 						ATSCHEDULER_ADVANCE(&mScheduler);
-						uint8 busbusy = mAntic.Advance();
+						uint8 fetchMode = mAntic.PreAdvance();
 
-						if (!busbusy)
-							cpuEvent = (ATSimulatorEvent)mCPU.Advance65816();
+						if (!mAntic.GetWSYNCFlag())
+							cpuEvent = (ATSimulatorEvent)mCPU.Advance65816HiSpeed((fetchMode & 1) != 0);
+
+						mAntic.PostAdvance(fetchMode);
 
 						if (cpuEvent | mPendingEvent)
 							goto handle_event;
 					}
-				} else {
+					break;
+
+				case kATCPUAdvanceMode_65816:
 					while(cycles--) {
 						ATSCHEDULER_ADVANCE(&mScheduler);
-						uint8 busbusy = mAntic.Advance();
+						uint8 fetchMode = mAntic.PreAdvance();
 
-						if (!busbusy)
-							cpuEvent = (ATSimulatorEvent)mCPU.Advance6502();
+						if (!((fetchMode | mAntic.GetWSYNCFlag()) & 1))
+							cpuEvent = (ATSimulatorEvent)mCPU.Advance65816();
 
-					if (cpuEvent | mPendingEvent)
+						mAntic.PostAdvance(fetchMode);
+
+						if (cpuEvent | mPendingEvent)
 							goto handle_event;
 					}
+					break;
+
+				case kATCPUAdvanceMode_6502:
+					while(cycles--) {
+						ATSCHEDULER_ADVANCE(&mScheduler);
+						uint8 fetchMode = mAntic.PreAdvance();
+
+						if (!((fetchMode | mAntic.GetWSYNCFlag()) & 1))
+							cpuEvent = (ATSimulatorEvent)mCPU.Advance6502();
+
+						mAntic.PostAdvance(fetchMode);
+
+						if (cpuEvent | mPendingEvent)
+							goto handle_event;
+					}
+					break;
 				}
 			}
 		}
@@ -2743,6 +2845,7 @@ void ATSimulator::LoadStateMachineDesc(ATSaveStateReader& reader) {
 
 	mStartupDelay = 0;
 	mGTIA.SetForcedConsoleSwitches(0xF);
+	mpUIRenderer->SetHeldButtonStatus(0);
 }
 
 void ATSimulator::LoadStateRefs(ATSaveStateReader& reader, ATStateLoadContext& ctx) {
@@ -3015,8 +3118,11 @@ void ATSimulator::UpdateBanking(uint8 currBank) {
 		if (mStartupDelay && !(currBank & 0x80)) {
 			uint8 forcedSwitches = mGTIA.GetForcedConsoleSwitches();
 
-			if (!(forcedSwitches & 4))
-				mGTIA.SetForcedConsoleSwitches(forcedSwitches | 4);
+			if (!(forcedSwitches & 4)) {
+				forcedSwitches |= 4;
+				mGTIA.SetForcedConsoleSwitches(forcedSwitches);
+				mpUIRenderer->SetHeldButtonStatus(~forcedSwitches);
+			}
 		}
 
 		mpMMU->SetBankRegister(currBank);
@@ -3029,18 +3135,18 @@ void ATSimulator::UpdateKernel() {
 	if (mode == kATKernelMode_Default) {
 		switch(mHardwareMode) {
 			case kATHardwareMode_800:
-				mode = mbHaveOSBKernel ? kATKernelMode_OSB : kATKernelMode_HLE;
+				mode = mbHaveOSBKernel ? kATKernelMode_OSB : kATKernelMode_LLE_OSB;
 				break;
 			case kATHardwareMode_800XL:
 			case kATHardwareMode_130XE:
-				mode = mbHaveXLKernel ? kATKernelMode_XL : kATKernelMode_HLE;
+				mode = mbHaveXLKernel ? kATKernelMode_XL : kATKernelMode_LLE_XL;
 				break;
 			case kATHardwareMode_1200XL:
-				mode = mbHave1200XLKernel ? kATKernelMode_1200XL : kATKernelMode_HLE;
+				mode = mbHave1200XLKernel ? kATKernelMode_1200XL : kATKernelMode_LLE_XL;
 				break;
 			case kATHardwareMode_XEGS:
 				mode = mbHaveXEGSKernel ? kATKernelMode_XEGS :
-					mbHaveXLKernel ? kATKernelMode_XL : kATKernelMode_HLE;
+					mbHaveXLKernel ? kATKernelMode_XL : kATKernelMode_LLE_XL;
 				break;
 			case kATHardwareMode_5200:
 				mode = mbHave5200Kernel ? kATKernelMode_5200 : kATKernelMode_5200_LLE;
@@ -3101,12 +3207,20 @@ void ATSimulator::UpdateKernel() {
 
 			if (mbAutoLoadKernelSymbols) {
 				const VDStringW& symbolPath = VDMakePath(VDGetProgramPath().c_str(), L"kernel.lst");
-				if (VDDoesPathExist(symbolPath.c_str()))
+				if (VDDoesPathExist(symbolPath.c_str())) {
 					mKernelSymbolsModuleIds[0] = deb->LoadSymbols(symbolPath.c_str());
 
+					if (mKernelSymbolsModuleIds[0])
+						ATConsolePrintf("Loaded kernel symbol file %ls.\n", symbolPath.c_str());
+				}
+
 				const VDStringW& symbolPath2 = VDMakePath(VDGetProgramPath().c_str(), L"kernel.lab");
-				if (VDDoesPathExist(symbolPath2.c_str()))
+				if (VDDoesPathExist(symbolPath2.c_str())) {
 					mKernelSymbolsModuleIds[1] = deb->LoadSymbols(symbolPath2.c_str());
+
+					if (mKernelSymbolsModuleIds[1])
+						ATConsolePrintf("Loaded kernel symbol file %ls.\n", symbolPath2.c_str());
+				}
 			}
 			break;
 		case kATKernelMode_LLE_XL:
@@ -3116,12 +3230,20 @@ void ATSimulator::UpdateKernel() {
 
 			if (mbAutoLoadKernelSymbols) {
 				const VDStringW& symbolPath = VDMakePath(VDGetProgramPath().c_str(), L"kernelxl.lst");
-				if (VDDoesPathExist(symbolPath.c_str()))
+				if (VDDoesPathExist(symbolPath.c_str())) {
 					mKernelSymbolsModuleIds[0] = deb->LoadSymbols(symbolPath.c_str());
 
+					if (mKernelSymbolsModuleIds[0])
+						ATConsolePrintf("Loaded kernel symbol file %ls.\n", symbolPath.c_str());
+				}
+
 				const VDStringW& symbolPath2 = VDMakePath(VDGetProgramPath().c_str(), L"kernelxl.lab");
-				if (VDDoesPathExist(symbolPath2.c_str()))
+				if (VDDoesPathExist(symbolPath2.c_str())) {
 					mKernelSymbolsModuleIds[1] = deb->LoadSymbols(symbolPath2.c_str());
+
+					if (mKernelSymbolsModuleIds[1])
+						ATConsolePrintf("Loaded kernel symbol file %ls.\n", symbolPath2.c_str());
+				}
 			}
 			break;
 		case kATKernelMode_5200:
@@ -3251,6 +3373,8 @@ namespace {
 void ATSimulator::InitMemoryMap() {
 	ShutdownMemoryMap();
 
+	mpMemMan->SetFastBusEnabled(mCPU.GetSubCycles() > 1);
+
 	// create main RAM layer
 	uint32 loMemPages = 0;
 	uint32 hiMemPages = 0;
@@ -3296,22 +3420,26 @@ void ATSimulator::InitMemoryMap() {
 
 	mpMemLayerLoRAM = mpMemMan->CreateLayer(kATMemoryPri_BaseRAM, mMemory, 0, loMemPages, false);
 	mpMemMan->SetLayerName(mpMemLayerLoRAM, "Low RAM");
+	mpMemMan->SetLayerFastBus(mpMemLayerLoRAM, true);
 	mpMemMan->EnableLayer(mpMemLayerLoRAM, true);
 
 	if (hiMemPages) {
 		mpMemLayerHiRAM = mpMemMan->CreateLayer(kATMemoryPri_BaseRAM, mMemory + 0xD800, 0xD8, hiMemPages, false);
 		mpMemMan->SetLayerName(mpMemLayerHiRAM, "High RAM");
+		mpMemMan->SetLayerFastBus(mpMemLayerHiRAM, true);
 		mpMemMan->EnableLayer(mpMemLayerHiRAM, true);
 	}
 
 	// create extended RAM layer
 	mpMemLayerExtendedRAM = mpMemMan->CreateLayer(kATMemoryPri_ExtRAM, mMemory, 0x40, 16 * 4, false);
 	mpMemMan->SetLayerName(mpMemLayerExtendedRAM, "Extended RAM");
+	mpMemMan->SetLayerFastBus(mpMemLayerExtendedRAM, true);
 
 	// create kernel ROM layer(s)
 	if (mpKernelSelfTestROM) {
 		mpMemLayerSelfTestROM = mpMemMan->CreateLayer(kATMemoryPri_ROM, mpKernelSelfTestROM, 0x50, 0x08, true);
 		mpMemMan->SetLayerName(mpMemLayerSelfTestROM, "Self-test ROM");
+		mpMemMan->SetLayerFastBus(mpMemLayerSelfTestROM, mbShadowROM);
 	}
 
 	if (mpKernelLowerROM)
@@ -3326,22 +3454,26 @@ void ATSimulator::InitMemoryMap() {
 
 	if (mpMemLayerLowerKernelROM) {
 		mpMemMan->SetLayerName(mpMemLayerLowerKernelROM, "Lower kernel ROM");
+		mpMemMan->SetLayerFastBus(mpMemLayerLowerKernelROM, mbShadowROM);
 		mpMemMan->EnableLayer(mpMemLayerLowerKernelROM, true);
 	}
 
 	if (mpMemLayerUpperKernelROM) {
 		mpMemMan->SetLayerName(mpMemLayerUpperKernelROM, "Upper kernel ROM");
+		mpMemMan->SetLayerFastBus(mpMemLayerUpperKernelROM, mbShadowROM);
 		mpMemMan->EnableLayer(mpMemLayerUpperKernelROM, true);
 	}
 
 	// create BASIC ROM layer
 	mpMemLayerBASICROM = mpMemMan->CreateLayer(kATMemoryPri_ROM, mBASICROM, 0xA0, 0x20, true);
 	mpMemMan->SetLayerName(mpMemLayerBASICROM, "BASIC ROM");
+	mpMemMan->SetLayerFastBus(mpMemLayerBASICROM, mbShadowROM);
 
 	// create game ROM layer
 	if (mHardwareMode == kATHardwareMode_XEGS) {
 		mpMemLayerGameROM = mpMemMan->CreateLayer(kATMemoryPri_ROM, mGameROM, 0xA0, 0x20, true);
 		mpMemMan->SetLayerName(mpMemLayerGameROM, "Game ROM");
+		mpMemMan->SetLayerFastBus(mpMemLayerGameROM, mbShadowROM);
 	}
 
 	// create hardware layers
@@ -3521,6 +3653,9 @@ void ATSimulator::AnticEndFrame() {
 
 	mGTIA.UpdateScreen(false, false);
 
+	if (mpXEP80)
+		mpXEP80->Tick(mGTIA.IsPALMode() ? 6 : 5);
+
 	if (mbBreakOnFrameEnd) {
 		mbBreakOnFrameEnd = false;
 		PostInterruptingEvent(kATSimEvent_EndOfFrame);
@@ -3535,6 +3670,7 @@ void ATSimulator::AnticEndFrame() {
 	if (mStartupDelay && mAntic.IsPlayfieldDMAEnabled()) {
 		if (!--mStartupDelay) {
 			mGTIA.SetForcedConsoleSwitches(0x0F);
+			mpUIRenderer->SetHeldButtonStatus(0);
 
 			if (mpCassette->IsLoaded() && mbCassetteAutoBootEnabled && !mbCassetteSIOPatchEnabled) {
 				// push a space into the keyboard routine
@@ -3566,6 +3702,10 @@ bool ATSimulator::AnticIsNextCPUCycleWrite() {
 
 uint8 ATSimulator::AnticGetCPUHeldCycleValue() {
 	return mCPU.GetHeldCycleValue();
+}
+
+void ATSimulator::AnticForceNextCPUCycleSlow() {
+	mCPU.ForceNextCycleSlow();
 }
 
 uint32 ATSimulator::GTIAGetXClock() {

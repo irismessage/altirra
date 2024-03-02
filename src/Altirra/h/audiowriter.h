@@ -22,22 +22,58 @@
 #include <vd2/system/file.h>
 #include "audiooutput.h"
 
+class IATUIRenderer;
+
+class ATAudioWriterFilter {
+public:
+	ATAudioWriterFilter(bool pal);
+
+	size_t Process(const float *src, size_t n);
+	const sint16 *Extract() {
+		mOutputLevel = 0;
+		return mOutputBuffer;
+	}
+
+	uint32 GetOutputLevel() const { return mOutputLevel; }
+
+protected:
+	uint32 mSourceLevel;
+	uint32 mOutputLevel;
+	uint64 mAccum64;
+	uint64 mInc64;
+
+	VDALIGN(16) sint16 mSourceBuffer[4096];
+	VDALIGN(16) sint16 mOutputBuffer[4096];
+};
+
 class ATAudioWriter : public IATAudioTap {
 	ATAudioWriter(const ATAudioWriter&);
 	ATAudioWriter& operator=(const ATAudioWriter&);
 public:
-	ATAudioWriter(const wchar_t *filename);
+	ATAudioWriter(const wchar_t *filename, bool rawMode, bool stereo, bool pal, IATUIRenderer *r);
 	~ATAudioWriter();
 
+	bool IsRecordingRaw() const { return mbRawMode; }
+
 	void CheckExceptions();
+
+	void Finalize();
 	void WriteRawAudio(const float *left, const float *right, uint32 count, uint32 timestamp);
 	
 protected:
 	void WriteInterleaved(const float *left, const float *right, uint32 count);
 
 	bool mbErrorState;
+	bool mbRawMode;
 	VDFile mFile;
 	MyError mError;
+
+	IATUIRenderer	*mpUIRenderer;
+	uint64 mTotalInputSamples;
+	float mInvSampleRate;
+
+	ATAudioWriterFilter mLeftFilter;
+	ATAudioWriterFilter mRightFilter;
 };
 
 #endif	// f_AT_AUDIOWRITER_H
