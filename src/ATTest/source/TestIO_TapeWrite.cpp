@@ -61,7 +61,6 @@ AT_DEFINE_TEST(IO_TapeWrite) {
 	constexpr uint32 kByteLen600 = (uint32)(kATCassetteDataSampleRate / 60.0f + 0.5f);
 	AT_TEST_ASSERT(writeCursor.mPosition >= kByteLen600 + 49 && writeCursor.mPosition <= kByteLen600 + 51);
 	AT_TEST_ASSERT(tape->GetDataLength() == writeCursor.mPosition);
-	constexpr uint32 kApproxExpectedBitSum600 = kByteLen600 / 2 + 50;
 	bitSum = tape->GetBitSum(0, 50, false); AT_TEST_ASSERT(bitSum == 50);
 	bitSum = tape->GetBitSum(50, writeCursor.mPosition - 50, false); AT_TEST_ASSERT(bitSum >= kByteLen600 / 2 - 2 && bitSum <= kByteLen600 / 2 + 2);
 

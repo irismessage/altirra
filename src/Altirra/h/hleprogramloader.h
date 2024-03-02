@@ -78,10 +78,16 @@ protected:
 	bool		mbRandomizeLaunchDelay = false;
 	bool		mbRandomizeMemoryOnLoad = false;
 	bool		mbLaunchPending = false;
-	uint32		mProgramModuleIds[4] = {};
+	uint32		mProgramModuleIds[5] = {};
 
 	static const uint8 kHandlerData[];
-	static const uint8 kBootSector[];
+
+	struct DiskSector {
+		uint16 mSector;
+		std::initializer_list<uint8> mHeader;
+		std::initializer_list<uint8> mFooter;
+	};
+	static const DiskSector kDiskSectors[];
 };
 
 #endif	// f_AT_HLEPROGRAMLOADER_H

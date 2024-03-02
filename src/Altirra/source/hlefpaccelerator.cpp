@@ -17,8 +17,8 @@
 
 #include <stdafx.h>
 #include <vd2/system/vdalloc.h>
+#include <at/atcore/ksyms.h>
 #include "hlefpaccelerator.h"
-#include "ksyms.h"
 #include "cpu.h"
 #include "cpuhookmanager.h"
 #include "decmath.h"

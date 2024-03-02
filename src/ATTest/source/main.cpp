@@ -5,6 +5,7 @@
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/VDString.h>
+#include <vd2/system/strutil.h>
 #include <vd2/system/text.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/bitmath.h>
@@ -30,7 +31,7 @@ extern void ATTestInitBlobHandler();
 
 namespace {
 	struct TestInfo {
-		TestFn		mpTestFn;
+		ATTestFn	mpTestFn;
 		const char	*mpName;
 		bool		mbAutoRun;
 	};
@@ -43,7 +44,7 @@ namespace {
 	}
 }
 
-void AddTest(TestFn f, const char *name, bool autoRun) {
+void ATTestAddTest(ATTestFn f, const char *name, bool autoRun) {
 	TestInfo ti;
 	ti.mpTestFn = f;
 	ti.mpName = name;
@@ -51,11 +52,28 @@ void AddTest(TestFn f, const char *name, bool autoRun) {
 	GetTests().push_back(ti);
 }
 
-void help() {
+void ATTestHelp() {
 	wprintf(L"\n");
+	wprintf(L"Usage: AltirraTest [options] tests... | all");
+	wprintf(L"\n");
+	wprintf(L"Options:\n");
+	wprintf(L"    /allexts   Run tests with all possible CPU extension subsets\n");
+	wprintf(L"    /big       Run tests on big cores (ARM64 only)\n");
+	wprintf(L"    /little    Run tests on LITTLE cores (ARM64 only)\n");
+	wprintf(L"    /v         Enable verbose test output\n");
+	wprintf(L"\n");
+
 	wprintf(L"Available tests:\n");
 
-	for(const TestInfo& ent : GetTests()) {
+	auto tests = GetTests();
+
+	std::sort(tests.begin(), tests.end(),
+		[](const TestInfo& x, const TestInfo& y) {
+			return vdstricmp(x.mpName, y.mpName) < 0;
+		}
+	);
+
+	for(const TestInfo& ent : tests) {
 
 		wprintf(L"\t%hs%s\n", ent.mpName, ent.mbAutoRun ? L"" : L"*");
 	}
@@ -78,7 +96,7 @@ int ATTestMain(int argc, wchar_t **argv) {
 	_CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
 
 	wprintf(L"Altirra test harness utility for " BUILD L"\n");
-	wprintf(L"Copyright (C) 2016-2020 Avery Lee. Licensed under GNU General Public License, version 2\n\n");
+	wprintf(L"Copyright (C) 2016-2022 Avery Lee. Licensed under GNU General Public License, version 2 or later\n\n");
 
 	ATTestInitBlobHandler();
 
@@ -89,12 +107,24 @@ int ATTestMain(int argc, wchar_t **argv) {
 	bool useLittleCores = false;
 #endif
 
+	bool testAllCpuExts = false;
+
 	if (argc <= 1) {
-		help();
+		ATTestHelp();
 		exit(0);
 	} else {
 		for(int i=1; i<argc; ++i) {
 			const wchar_t *test = argv[i];
+
+			if (!wcscmp(test, L"/v")) {
+				g_ATTestTracingEnabled = true;
+				continue;
+			}
+
+			if (!wcscmp(test, L"/allexts")) {
+				testAllCpuExts = true;
+				continue;
+			}
 
 #ifdef VD_CPU_ARM64
 			if (!wcscmp(test, L"/big")) {
@@ -108,6 +138,11 @@ int ATTestMain(int argc, wchar_t **argv) {
 			}
 #endif
 
+			if (test[0] == L'/') {
+				wprintf(L"Unknown switch: %ls\n", test);
+				exit(5);
+			}
+
 			if (!_wcsicmp(test, L"all")) {
 				for(const TestInfo& ent : GetTests()) {
 					if (ent.mbAutoRun)
@@ -117,14 +152,14 @@ int ATTestMain(int argc, wchar_t **argv) {
 			}
 
 			for(const TestInfo& ent : GetTests()) {
-				if (!_wcsicmp(VDTextAToW(ent.mpName).c_str(), test)) {
+				if (!vdwcsicmp(VDTextAToW(ent.mpName).c_str(), test)) {
 					selectedTests.push_back(ent);
 					goto next;
 				}
 			}
 
 			wprintf(L"\nUnknown test: %ls\n", test);
-			help();
+			ATTestHelp();
 			exit(5);
 next:
 			;
@@ -210,19 +245,29 @@ next:
 	long exts = CPUCheckForExtensions();
 	int failedTests = 0;
 
-	CPUEnableExtensions(exts);
+	for(;;) {
+		CPUEnableExtensions(exts);
 
-	for(Tests::const_iterator it(selectedTests.begin()), itEnd(selectedTests.end()); it!=itEnd; ++it) {
-		const Tests::value_type& ent = *it;
+		if (testAllCpuExts)
+			wprintf(L"\n=== Setting CPU extensions: %08X ===\n\n", exts);
 
-		wprintf(L"Running test: %hs\n", ent.mpName);
+		for(Tests::const_iterator it(selectedTests.begin()), itEnd(selectedTests.end()); it!=itEnd; ++it) {
+			const Tests::value_type& ent = *it;
 
-		try {
-			ent.mpTestFn();
-		} catch(const AssertionException& e) {
-			wprintf(L"    TEST FAILED: %hs\n", e.gets());
-			++failedTests;
+			wprintf(L"Running test: %hs\n", ent.mpName);
+
+			try {
+				ent.mpTestFn();
+			} catch(const AssertionException& e) {
+				wprintf(L"    TEST FAILED: %hs\n", e.gets());
+				++failedTests;
+			}
 		}
+
+		if (!exts || !testAllCpuExts)
+			break;
+
+		exts &= ~(1 << VDFindHighestSetBitFast(exts));
 	}
 
 	printf("Tests complete. Failures: %u\n", failedTests);

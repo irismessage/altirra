@@ -20,7 +20,7 @@
 #include <vd2/system/registry.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/deviceindicators.h>
-#include <at/atcore/deviceport.h>
+#include <at/atcore/devicepia.h>
 #include <at/atcore/logging.h>
 #include "firmwaremanager.h"
 #include "memorymanager.h"
@@ -59,13 +59,16 @@ void ATRapidusDevice::GetDeviceInfo(ATDeviceInfo& info) {
 }
 
 void ATRapidusDevice::Init() {
-	mpPortMgr = GetService<IATDevicePortManager>();
-	mPortOutput = mpPortMgr->AllocOutput([](void *data, uint32 outputState) { ((ATRapidusDevice *)data)->UpdateSRAMWindows(0xE); }, this, IATDevicePortManager::kMask_PB0 | IATDevicePortManager::kMask_PB1 | IATDevicePortManager::kMask_PB7);
+	mpPIA = GetService<IATDevicePIA>();
+	mPIAOutput = mpPIA->AllocOutput([](void *data, uint32 outputState) { ((ATRapidusDevice *)data)->UpdateSRAMWindows(0xE); }, this, IATDevicePIA::kMask_PB0 | IATDevicePIA::kMask_PB1 | IATDevicePIA::kMask_PB7);
 
 	ReloadFirmware();
 	mFlashEmu.Init(mFlash, kATFlashType_SST39SF040, mpScheduler);
 
-	LoadNVRAM();
+	mEEPROMStorage.Init(*GetService<IATDeviceStorageManager>(),
+		[this](IATDeviceStorageManager&) { LoadNVRAM(); },
+		[this](IATDeviceStorageManager&) { SaveNVRAM(); }
+	);
 
 	static constexpr struct SRAMWindow {
 		uint32 mPageStart;
@@ -219,11 +222,10 @@ void ATRapidusDevice::Init() {
 
 void ATRapidusDevice::Shutdown() {
 	mFlashEmu.Shutdown();
+	mEEPROMStorage.Shutdown();
 
 	if (mpScheduler) {
 		mpScheduler = nullptr;
-
-		SaveNVRAM();
 	}
 
 	if (mpPBIManager) {
@@ -257,11 +259,11 @@ void ATRapidusDevice::Shutdown() {
 
 	mpFwMgr = nullptr;
 
-	if (mpPortMgr) {
-		mpPortMgr->FreeOutput(mPortOutput);
-		mPortOutput = -1;
+	if (mpPIA) {
+		mpPIA->FreeOutput(mPIAOutput);
+		mPIAOutput = -1;
 
-		mpPortMgr = nullptr;
+		mpPIA = nullptr;
 	}
 }
 
@@ -903,9 +905,9 @@ void ATRapidusDevice::UpdateSRAMWindows(uint8 windowMask) {
 
 	// window 1 ($4000-7FFF)
 	if (windowMask & 0x02) {
-		const uint32 portState = mpPortMgr->GetOutputState();
-		const bool xramEnabled = !(portState & IATDevicePortManager::kMask_PB4);
-		const bool selfTestEnabled = (portState & (IATDevicePortManager::kMask_PB0 | IATDevicePortManager::kMask_PB7)) == IATDevicePortManager::kMask_PB0;
+		const uint32 portState = mpPIA->GetOutputState();
+		const bool xramEnabled = !(portState & IATDevicePIA::kMask_PB4);
+		const bool selfTestEnabled = (portState & (IATDevicePIA::kMask_PB0 | IATDevicePIA::kMask_PB7)) == IATDevicePIA::kMask_PB0;
 		const bool window1Enabled = !(effectiveMCR & 2) && !xramEnabled;
 
 		if (selfTestEnabled)
@@ -921,10 +923,10 @@ void ATRapidusDevice::UpdateSRAMWindows(uint8 windowMask) {
 
 	// window 2 ($8000-BFFF)
 	if (windowMask & 0x04) {
-		const uint32 portState = mpPortMgr->GetOutputState();
+		const uint32 portState = mpPIA->GetOutputState();
 		const bool window2Enabled = !(effectiveMCR & 4);
 
-		if (!(portState & IATDevicePortManager::kMask_PB1))
+		if (!(portState & IATDevicePIA::kMask_PB1))
 			mpMemMan->SetLayerMaskRange(mpLayerBank0RAM[3], 0x80, 0x20);
 		else
 			mpMemMan->ClearLayerMaskRange(mpLayerBank0RAM[3]);
@@ -935,7 +937,7 @@ void ATRapidusDevice::UpdateSRAMWindows(uint8 windowMask) {
 
 	// $C000-FFFF window (can be fragmented by hardware $D000-D7FF window)
 	if (windowMask & 0x08) {
-		const bool osEnabled = (mpPortMgr->GetOutputState() & IATDevicePortManager::kMask_PB0) != 0;
+		const bool osEnabled = (mpPIA->GetOutputState() & IATDevicePIA::kMask_PB0) != 0;
 
 		if ((effectiveMCR & 0x08) || osEnabled) {
 			mpMemMan->EnableLayer(mpLayerBank0RAM[4], kATMemoryAccessMode_ARW, false);
@@ -998,17 +1000,13 @@ void ATRapidusDevice::UpdateHardwareProtect() {
 }
 
 void ATRapidusDevice::LoadNVRAM() {
-	VDRegistryAppKey key("Nonvolatile RAM");
-
 	memset(mEEPROM, 0, sizeof mEEPROM);
 
-	key.getBinary("Rapidus EEPROM", (char *)mEEPROM, sizeof(mEEPROM));
+	GetService<IATDeviceStorageManager>()->LoadNVRAM("Rapidus EEPROM", mEEPROM, sizeof(mEEPROM));
 }
 
 void ATRapidusDevice::SaveNVRAM() {
-	VDRegistryAppKey key("Nonvolatile RAM");
-
-	key.setBinary("Rapidus EEPROM", (const char *)mEEPROM, sizeof(mEEPROM));
+	GetService<IATDeviceStorageManager>()->SaveNVRAM("Rapidus EEPROM", mEEPROM, sizeof(mEEPROM));
 }
 
 

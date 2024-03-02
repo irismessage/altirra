@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2009-2021 Avery Lee
+//	Copyright (C) 2009-2022 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -30,14 +30,19 @@
 extern const VDTDataView g_VDDispVPView_RenderFillLinear(g_VDDispVP_RenderFillLinear);
 extern const VDTDataView g_VDDispVPView_RenderFillGamma(g_VDDispVP_RenderFillGamma);
 extern const VDTDataView g_VDDispVPView_RenderBlitLinear(g_VDDispVP_RenderBlitLinear);
+extern const VDTDataView g_VDDispVPView_RenderBlitLinearColor(g_VDDispVP_RenderBlitLinearColor);
+extern const VDTDataView g_VDDispVPView_RenderBlitLinearColor2(g_VDDispVP_RenderBlitLinearColor2);
 extern const VDTDataView g_VDDispVPView_RenderBlitGamma(g_VDDispVP_RenderBlitGamma);
 extern const VDTDataView g_VDDispFPView_RenderFill(g_VDDispFP_RenderFill);
+extern const VDTDataView g_VDDispFPView_RenderFillLinearToGamma(g_VDDispFP_RenderFillLinearToGamma);
 extern const VDTDataView g_VDDispFPView_RenderBlit(g_VDDispFP_RenderBlit);
 extern const VDTDataView g_VDDispFPView_RenderBlitLinear(g_VDDispFP_RenderBlitLinear);
+extern const VDTDataView g_VDDispFPView_RenderBlitLinearToGamma(g_VDDispFP_RenderBlitLinearToGamma);
 extern const VDTDataView g_VDDispFPView_RenderBlitDirect(g_VDDispFP_RenderBlitDirect);
 extern const VDTDataView g_VDDispFPView_RenderBlitStencil(g_VDDispFP_RenderBlitStencil);
 extern const VDTDataView g_VDDispFPView_RenderBlitColor(g_VDDispFP_RenderBlitColor);
 extern const VDTDataView g_VDDispFPView_RenderBlitColor2(g_VDDispFP_RenderBlitColor2);
+extern const VDTDataView g_VDDispFPView_RenderBlitColorLinear(g_VDDispFP_RenderBlitColorLinear);
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -967,7 +972,6 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 	constexpr VDTFormat bgraFormat = kVDTF_B8G8R8A8;
 
 	float chromaOffsetU = 0.0f;
-	float chromaOffsetV = 0.0f;
 
 	switch(format) {
 		case nsVDPixmap::kPixFormat_RGB565:
@@ -1174,31 +1178,15 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 		case nsVDPixmap::kPixFormat_YUV444_Planar:
 		case nsVDPixmap::kPixFormat_YUV422_Planar:
 		case nsVDPixmap::kPixFormat_YUV420_Planar:
-		case nsVDPixmap::kPixFormat_YUV411_Planar:
-		case nsVDPixmap::kPixFormat_YUV410_Planar:
 		case nsVDPixmap::kPixFormat_YUV444_Planar_709:
 		case nsVDPixmap::kPixFormat_YUV422_Planar_709:
 		case nsVDPixmap::kPixFormat_YUV420_Planar_709:
-		case nsVDPixmap::kPixFormat_YUV411_Planar_709:
-		case nsVDPixmap::kPixFormat_YUV410_Planar_709:
 		case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
 		case nsVDPixmap::kPixFormat_YUV422_Planar_FR:
 		case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
-		case nsVDPixmap::kPixFormat_YUV411_Planar_FR:
-		case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
 		case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
 		case nsVDPixmap::kPixFormat_YUV422_Planar_709_FR:
 		case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
-		case nsVDPixmap::kPixFormat_YUV411_Planar_709_FR:
-		case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
-		case nsVDPixmap::kPixFormat_YUV420it_Planar:
-		case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
-		case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
-		case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
-		case nsVDPixmap::kPixFormat_YUV420ib_Planar:
-		case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
-		case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
-		case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
 			if (ctx.IsFormatSupportedTexture2D(kVDTF_R8)) {
 				const VDPixmapFormatInfo& formatInfo = VDPixmapGetInfo(format);
 
@@ -1227,29 +1215,9 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 				chromaOffsetU = (chromaScaleH - 1) / (chromaScaleH * 2.0f * (float)w2);
 
 				switch(format) {
-					case nsVDPixmap::kPixFormat_YUV420it_Planar:
-					case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
-					case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
-					case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
-						chromaOffsetV = 0.125f;
-						break;
-
-					case nsVDPixmap::kPixFormat_YUV420ib_Planar:
-					case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
-					case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
-					case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
-						chromaOffsetV = -0.125f;
-						break;
-				}
-
-				switch(format) {
 					case nsVDPixmap::kPixFormat_YUV444_Planar:
 					case nsVDPixmap::kPixFormat_YUV422_Planar:
 					case nsVDPixmap::kPixFormat_YUV420_Planar:
-					case nsVDPixmap::kPixFormat_YUV411_Planar:
-					case nsVDPixmap::kPixFormat_YUV410_Planar:
-					case nsVDPixmap::kPixFormat_YUV420it_Planar:
-					case nsVDPixmap::kPixFormat_YUV420ib_Planar:
 						if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispFP_BlitYCbCr_601_LR), &mpFP)) {
 							Shutdown();
 							return false;
@@ -1259,10 +1227,6 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 					case nsVDPixmap::kPixFormat_YUV444_Planar_709:
 					case nsVDPixmap::kPixFormat_YUV422_Planar_709:
 					case nsVDPixmap::kPixFormat_YUV420_Planar_709:
-					case nsVDPixmap::kPixFormat_YUV411_Planar_709:
-					case nsVDPixmap::kPixFormat_YUV410_Planar_709:
-					case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
-					case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
 						if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispFP_BlitYCbCr_709_LR), &mpFP)) {
 							Shutdown();
 							return false;
@@ -1272,10 +1236,6 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 					case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
 					case nsVDPixmap::kPixFormat_YUV422_Planar_FR:
 					case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
-					case nsVDPixmap::kPixFormat_YUV411_Planar_FR:
-					case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
-					case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
-					case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
 						if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispFP_BlitYCbCr_601_FR), &mpFP)) {
 							Shutdown();
 							return false;
@@ -1285,10 +1245,6 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 					case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
 					case nsVDPixmap::kPixFormat_YUV422_Planar_709_FR:
 					case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
-					case nsVDPixmap::kPixFormat_YUV411_Planar_709_FR:
-					case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
-					case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
-					case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
 						if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispFP_BlitYCbCr_709_FR), &mpFP)) {
 							Shutdown();
 							return false;
@@ -1964,7 +1920,6 @@ bool VDDisplayScreenFXNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dct
 
 	const bool sharpBilinear = mParams.mbLinear && (mParams.mSharpnessX != 1.0f || mParams.mSharpnessY != 1.0f);
 	const bool scanlines = (mParams.mScanlineIntensity > 0);
-	const bool doDistortion = (mParams.mDistortionX > 0);
 
 	if (!mpVB) {
 		float u0 = 0.0f;
@@ -2307,9 +2262,6 @@ bool VDDisplayArtifactingNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& 
 	}
 
 	mMapping = source->GetTextureMapping();
-
-	const uint32 w = mMapping.mWidth;
-	const uint32 h = mMapping.mHeight;
 
 	if (!mpVB) {
 		const float u0 = 0.0f;

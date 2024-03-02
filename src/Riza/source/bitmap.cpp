@@ -12,9 +12,12 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #include <vd2/Riza/bitmap.h>
 #include <vd2/Kasumi/pixmap.h>
@@ -103,15 +106,9 @@ int VDBitmapFormatToPixmapFormat(const VDAVIBitmapInfoHeader& hdr, int& variant)
 		variant = 3;
 		return kPixFormat_YUV420_Planar;
 
-	case VDMAKEFOURCC('Y', 'V', 'U', '9'):
-		return kPixFormat_YUV410_Planar;
-
 	case VDMAKEFOURCC('Y', '8', ' ', ' '):
 	case VDMAKEFOURCC('Y', '8', '0', '0'):
 		return kPixFormat_Y8;
-
-	case VDMAKEFOURCC('v', '2', '1', '0'):
-		return kPixFormat_YUV422_V210;
 
 	case VDMAKEFOURCC('H', 'D', 'Y', 'C'):
 		return kPixFormat_YUV422_UYVY_709;
@@ -232,12 +229,6 @@ bool VDMakeBitmapFormatFromPixmapFormat(vdstructex<VDAVIBitmapInfoHeader>& dst, 
 				format = kPixFormat_YUV420_Planar;
 				break;
 
-			case kPixFormat_YUV410_Planar_FR:
-			case kPixFormat_YUV410_Planar_709:
-			case kPixFormat_YUV410_Planar_709_FR:
-				format = kPixFormat_YUV410_Planar;
-				break;
-
 			case kPixFormat_Y8_FR:
 				format = kPixFormat_Y8;
 				break;
@@ -308,11 +299,6 @@ bool VDMakeBitmapFormatFromPixmapFormat(vdstructex<VDAVIBitmapInfoHeader>& dst, 
 		dst->biBitCount		= 12;
 		dst->biSizeImage	= w*h + ((w+1)>>1)*((h+1)>>1)*2;
 		break;
-	case kPixFormat_YUV410_Planar:
-		dst->biCompression	= VDMAKEFOURCC('Y', 'V', 'U', '9');
-		dst->biBitCount		= 9;
-		dst->biSizeImage	= ((w+2)>>2) * ((h+2)>>2) * 18;
-		break;
 	case kPixFormat_Y8:
 		switch(variant) {
 		case 2:
@@ -325,11 +311,6 @@ bool VDMakeBitmapFormatFromPixmapFormat(vdstructex<VDAVIBitmapInfoHeader>& dst, 
 		}
 		dst->biBitCount		= 8;
 		dst->biSizeImage	= ((w+3) & ~3) * h;
-		break;
-	case kPixFormat_YUV422_V210:
-		dst->biCompression	= VDMAKEFOURCC('v', '2', '1', '0');
-		dst->biBitCount		= 20;
-		dst->biSizeImage	= ((w + 23) / 24) * 64 * h;
 		break;
 	case kPixFormat_YUV422_UYVY_709:
 		dst->biCompression	= VDMAKEFOURCC('H', 'D', 'Y', 'C');
@@ -407,13 +388,6 @@ uint32 VDMakeBitmapCompatiblePixmapLayout(VDPixmapLayout& layout, sint32 w, sint
 			std::swap(layout.data2, layout.data3);
 			std::swap(layout.pitch2, layout.pitch3);
 		}
-		break;
-	case kPixFormat_YUV410_Planar:
-	case kPixFormat_YUV410_Planar_FR:
-	case kPixFormat_YUV410_Planar_709:
-	case kPixFormat_YUV410_Planar_709_FR:
-		std::swap(layout.data2, layout.data3);
-		std::swap(layout.pitch2, layout.pitch3);
 		break;
 	}
 

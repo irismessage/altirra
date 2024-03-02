@@ -1,4 +1,7 @@
-		section	.rdata, rdata
+		.686
+		.mmx
+		.model	flat
+		.const
 
 x07b		dq		00707070707070707h
 x0200w		dq		00200020002000200h
@@ -19,25 +22,24 @@ r_mask_565	dq		0f800f800f800f800h
 g_mask_565	dq		007e007e007e007e0h
 b_mask_565	dq		0001f001f001f001fh
 
-%macro prologue 1
+prologue macro argn
 			push	ebx
 			push	esi
 			push	edi
 			push	ebp
-			;.fpo	(0,%1,4,4,1,0)
-%endmacro
+			;.fpo	(0,argn,4,4,1,0)
+endm
 
-%macro epilogue 0
+epilogue macro
 			pop		ebp
 			pop		edi
 			pop		esi
 			pop		ebx
-%endmacro
+endm
 
-		section	.text
+		.code
 
-	global	_vdasm_pixblt_RGB565_to_XRGB1555_MMX
-_vdasm_pixblt_RGB565_to_XRGB1555_MMX:
+_vdasm_pixblt_RGB565_to_XRGB1555_MMX proc
 		prologue	6
 
 		mov		ebp, [esp+20+16]
@@ -53,12 +55,12 @@ _vdasm_pixblt_RGB565_to_XRGB1555_MMX:
 		movq	mm5, [x001fw]
 		movq	mm4, [xffc0w]
 
-.yloop:
+yloop:
 		mov		ebp, [esp+20+16]
 		add		ebp, 6
-		jbe		.odd
+		jbe		odd
 
-.xloop:
+xloop:
 		movq	mm0, [ecx+ebp]
 		movq	mm1, mm5
 		pand	mm1, mm0
@@ -67,12 +69,12 @@ _vdasm_pixblt_RGB565_to_XRGB1555_MMX:
 		paddw	mm0, mm1
 		movq	[edx+ebp], mm0
 		add		ebp, 8
-		jnc		.xloop
+		jnc		xloop
 
 		sub		ebp, 6
-		jz		.noodd
-.odd:
-		movzx	eax, word [ecx+ebp+6]
+		jz		noodd
+odd:
+		movzx	eax, word ptr [ecx+ebp+6]
 		mov		ebx, 0001f001fh
 		and		ebx, eax
 		and		eax, 0ffc0ffc0h
@@ -80,19 +82,19 @@ _vdasm_pixblt_RGB565_to_XRGB1555_MMX:
 		add		eax, ebx
 		mov		[edx+ebp+6], ax
 		add		ebp, 2
-		jnz		.odd
-.noodd:
+		jnz		odd
+noodd:
 		add		ecx, [esp+16+16]
 		add		edx, [esp+8+16]
 		dec		edi
-		jne		.yloop
+		jne		yloop
 
 		emms
 		epilogue
 		ret
+_vdasm_pixblt_RGB565_to_XRGB1555_MMX endp
 
-	global	_vdasm_pixblt_XRGB8888_to_XRGB1555_MMX
-_vdasm_pixblt_XRGB8888_to_XRGB1555_MMX:
+_vdasm_pixblt_XRGB8888_to_XRGB1555_MMX proc
 		prologue	6
 
 		mov		ebp, [esp+20+16]
@@ -109,10 +111,10 @@ _vdasm_pixblt_XRGB8888_to_XRGB1555_MMX:
 		movq		mm6,[rb_mask5]
 		movq		mm7,[g_mask5]
 
-.yloop:
+yloop:
 		mov			ebp, [esp+20+16]
 		add			ebp, 14
-		jbe			.odd
+		jbe			odd
 
 		;This code uses the "pmaddwd" trick for 32->16 conversions from Intel's MMX
 		;Application Notes.
@@ -128,10 +130,10 @@ _vdasm_pixblt_XRGB8888_to_XRGB1555_MMX:
 		pmaddwd		mm1,mm5
 		pand		mm2,mm7
 		pand		mm3,mm7
-		jmp			.xloopstart
+		jmp			xloopstart
 
 		align 16
-.xloop:
+xloop:
 		movq		mm0,[ecx+ebp*2]		;allocate 0	(01234)
 		por			mm4,mm2				;free 2		(01 34)
 
@@ -156,7 +158,7 @@ _vdasm_pixblt_XRGB8888_to_XRGB1555_MMX:
 		movq		[edx+ebp-8],mm4		;free 4		(0123 )
 		pand		mm3,mm7
 
-.xloopstart:
+xloopstart:
 		movq		mm4,[ecx+ebp*2+16]	;allocate 4	(01234)
 		por			mm0,mm2				;free 2		(01 34)
 
@@ -182,7 +184,7 @@ _vdasm_pixblt_XRGB8888_to_XRGB1555_MMX:
 		pand		mm2,mm7
 
 		pand		mm1,mm7
-		jnc			.xloop
+		jnc			xloop
 
 		por			mm4,mm2				;free 2		(01 34)
 		por			mm3,mm1				;free 3		(01 34)
@@ -191,10 +193,10 @@ _vdasm_pixblt_XRGB8888_to_XRGB1555_MMX:
 		packssdw	mm4,mm3				;free 3		(012 4)
 		movq		[edx+ebp-8],mm4		;free 4		(0123 )
 
-.odd:
+odd:
 		sub			ebp, 14
-		jz			.noodd
-.oddloop:
+		jz			noodd
+oddloop:
 		mov			eax, [ecx+ebp*2+28]
 		mov			ebx, 00f80000h
 		mov			esi, eax
@@ -208,19 +210,19 @@ _vdasm_pixblt_XRGB8888_to_XRGB1555_MMX:
 		add			eax, esi
 		mov			[edx+ebp+14], ax
 		add			ebp, 2
-		jnz			.oddloop
-.noodd:
+		jnz			oddloop
+noodd:
 		add		ecx, [esp+16+16]
 		add		edx, [esp+8+16]
 		dec		edi
-		jne		.yloop
+		jne		yloop
 
 		emms
 		epilogue
 		ret
+_vdasm_pixblt_XRGB8888_to_XRGB1555_MMX endp
 
-	global	_vdasm_pixblt_XRGB1555_to_RGB565_MMX
-_vdasm_pixblt_XRGB1555_to_RGB565_MMX:
+_vdasm_pixblt_XRGB1555_to_RGB565_MMX proc
 		prologue	6
 
 		mov		ebp, [esp+20+16]
@@ -236,12 +238,12 @@ _vdasm_pixblt_XRGB1555_to_RGB565_MMX:
 		movq	mm5, [x0200w]
 		movq	mm4, [xffe0w]
 
-.yloop:
+yloop:
 		mov		ebp, [esp+20+16]
 		add		ebp, 6
-		jbe		.odd
+		jbe		odd
 
-.xloop:
+xloop:
 		movq	mm0, [ecx+ebp]
 		movq	mm1, mm4
 		movq	mm2, mm0
@@ -252,13 +254,13 @@ _vdasm_pixblt_XRGB1555_to_RGB565_MMX:
 		paddw	mm0, mm1
 		movq	[edx+ebp], mm0
 		add		ebp, 8
-		jnc		.xloop
+		jnc		xloop
 
-.odd:
+odd:
 		sub		ebp, 6
-		jz		.noodd
-.oddloop:
-		movzx	eax, word [ecx+ebp+6]
+		jz		noodd
+oddloop:
+		movzx	eax, word ptr [ecx+ebp+6]
 		mov		ebx, 02000200h
 		mov		esi, eax
 		and		ebx, eax
@@ -268,20 +270,19 @@ _vdasm_pixblt_XRGB1555_to_RGB565_MMX:
 		add		eax, ebx
 		mov		[edx+ebp+6], ax
 		add		ebp, 2
-		jnz		.oddloop
-.noodd:
+		jnz		oddloop
+noodd:
 		add		ecx, [esp+16+16]
 		add		edx, [esp+8+16]
 		dec		edi
-		jne		.yloop
+		jne		yloop
 
 		emms
 		epilogue
 		ret
+_vdasm_pixblt_XRGB1555_to_RGB565_MMX endp
 
-
-	global	_vdasm_pixblt_XRGB8888_to_RGB565_MMX
-_vdasm_pixblt_XRGB8888_to_RGB565_MMX:
+_vdasm_pixblt_XRGB8888_to_RGB565_MMX proc
 		prologue	6
 
 		mov		ebp, [esp+20+16]
@@ -298,10 +299,10 @@ _vdasm_pixblt_XRGB8888_to_RGB565_MMX:
 		movq		mm6,[rb_mask5]
 		movq		mm7,[g_mask6]
 
-.yloop:
+yloop:
 		mov			ebp, [esp+20+16]
 		add			ebp, 14
-		jbe			.odd
+		jbe			odd
 
 		;This code uses the "pmaddwd" trick for 32->16 conversions from Intel's MMX
 		;Application Notes.
@@ -317,10 +318,10 @@ _vdasm_pixblt_XRGB8888_to_RGB565_MMX:
 		pmaddwd		mm1,mm5
 		pand		mm2,mm7
 		pand		mm3,mm7
-		jmp			.xloopstart
+		jmp			xloopstart
 
 		align 16
-.xloop:
+xloop:
 		movq		mm0,[ecx+ebp*2]		;allocate 0	(01234)
 		por			mm4,mm2				;free 2		(01 34)
 
@@ -348,7 +349,7 @@ _vdasm_pixblt_XRGB8888_to_RGB565_MMX:
 		movq		[edx+ebp-8],mm4		;free 4		(0123 )
 		pand		mm3,mm7
 
-.xloopstart:
+xloopstart:
 		movq		mm4,[ecx+ebp*2+16]	;allocate 4	(01234)
 		por			mm0,mm2				;free 2		(01 34)
 
@@ -377,7 +378,7 @@ _vdasm_pixblt_XRGB8888_to_RGB565_MMX:
 		pand		mm2,mm7
 
 		pand		mm1,mm7
-		jnc			.xloop
+		jnc			xloop
 
 		por			mm4,mm2				;free 2		(01 34)
 		por			mm3,mm1				;free 3		(01 34)
@@ -388,10 +389,10 @@ _vdasm_pixblt_XRGB8888_to_RGB565_MMX:
 		packssdw	mm4,mm3				;free 3		(012 4)
 		movq		[edx+ebp-8],mm4		;free 4		(0123 )
 
-.odd:
+odd:
 		sub			ebp, 14
-		jz			.noodd
-.oddloop:
+		jz			noodd
+oddloop:
 		mov			eax, [ecx+ebp*2+28]
 		mov			ebx, 00f80000h
 		mov			esi, eax
@@ -405,19 +406,19 @@ _vdasm_pixblt_XRGB8888_to_RGB565_MMX:
 		add			eax, esi
 		mov			[edx+ebp+14], ax
 		add			ebp, 2
-		jnz			.oddloop
-.noodd:
+		jnz			oddloop
+noodd:
 		add		ecx, [esp+16+16]
 		add		edx, [esp+8+16]
 		dec		edi
-		jne		.yloop
+		jne		yloop
 
 		emms
 		epilogue
 		ret
+_vdasm_pixblt_XRGB8888_to_RGB565_MMX endp
 
-	global	_vdasm_pixblt_XRGB8888_to_RGB888_MMX
-_vdasm_pixblt_XRGB8888_to_RGB888_MMX:
+_vdasm_pixblt_XRGB8888_to_RGB888_MMX proc
 		prologue	6
 
 		mov			esi,[esp+12+16]
@@ -439,11 +440,11 @@ _vdasm_pixblt_XRGB8888_to_RGB888_MMX:
 		mov			edx,[esp+24+16]
 		mov			eax,[esp+16+16]
 		mov			ebx,[esp+ 8+16]
-.yloop:
+yloop:
 		mov			ecx,ebp
 		shr			ecx,3
-		jz			.checkodd
-.xloop:
+		jz			checkodd
+xloop:
 		movq		mm0,[esi]		;mm0 = a1r1g1b1a0r0g0b0
 		movq		mm1,mm6
 		
@@ -504,14 +505,14 @@ _vdasm_pixblt_XRGB8888_to_RGB888_MMX:
 		movq		[edi+16],mm4	;mm3
 
 		lea			edi,[edi+24]
-		jne			.xloop
+		jne			xloop
 	
-.checkodd:
+checkodd:
 		mov			ecx,ebp
 		and			ecx,7
-		jz			.noodd
+		jz			noodd
 		movd		mm0,eax
-.oddloop:
+oddloop:
 		mov			eax,[esi]
 		add			esi,4
 		mov			[edi],ax
@@ -519,22 +520,22 @@ _vdasm_pixblt_XRGB8888_to_RGB888_MMX:
 		mov			[edi+2],al
 		add			edi,3
 		sub			ecx,1
-		jnz			.oddloop
+		jnz			oddloop
 		movd		eax,mm0
-.noodd:
+noodd:
 		add			esi,eax
 		add			edi,ebx
 
 		sub			edx,1
-		jne			.yloop
+		jne			yloop
 
 		emms
 
 		epilogue
 		ret
+_vdasm_pixblt_XRGB8888_to_RGB888_MMX endp
 
-	global	_vdasm_pixblt_XRGB1555_to_XRGB8888_MMX
-_vdasm_pixblt_XRGB1555_to_XRGB8888_MMX:
+_vdasm_pixblt_XRGB1555_to_XRGB8888_MMX proc
 		prologue	6
 
 		mov		ebp, [esp+20+16]
@@ -551,12 +552,12 @@ _vdasm_pixblt_XRGB1555_to_XRGB8888_MMX:
 		movq	mm6, [g_mask_555]
 		movq	mm7, [b_mask_555]
 
-.yloop:
+yloop:
 		mov		ebp, [esp+20+16]
 		add		ebp, 6
-		jbe		.odd
+		jbe		odd
 
-.xloop:
+xloop:
 		movq		mm0, [ecx+ebp]
 		movq		mm1, mm6
 		movq		mm2, mm7
@@ -579,12 +580,12 @@ _vdasm_pixblt_XRGB1555_to_XRGB8888_MMX:
 		movq	[edx+ebp*2], mm0
 		movq	[edx+ebp*2+8], mm2
 		add		ebp, 8
-		jnc		.xloop
-.odd:
+		jnc		xloop
+odd:
 		sub		ebp, 6
-		jz		.noodd
-.oddloop:
-		movzx	eax, word [ecx+ebp+6]
+		jz		noodd
+oddloop:
+		movzx	eax, word ptr [ecx+ebp+6]
 		mov		ebx, 03e0h
 		mov		esi, 001fh
 		and		ebx, eax
@@ -601,20 +602,19 @@ _vdasm_pixblt_XRGB1555_to_XRGB8888_MMX:
 		add		eax, ebx
 		mov		[edx+ebp*2+12], eax
 		add		ebp, 2
-		jnz		.oddloop
-.noodd:
+		jnz		oddloop
+noodd:
 		add		ecx, [esp+16+16]
 		add		edx, [esp+8+16]
 		dec		edi
-		jne		.yloop
+		jne		yloop
 
 		emms
 		epilogue
 		ret
+_vdasm_pixblt_XRGB1555_to_XRGB8888_MMX endp
 
-
-	global	_vdasm_pixblt_RGB565_to_XRGB8888_MMX
-_vdasm_pixblt_RGB565_to_XRGB8888_MMX:
+_vdasm_pixblt_RGB565_to_XRGB8888_MMX proc
 		prologue	6
 
 		mov		ebp, [esp+20+16]
@@ -631,12 +631,12 @@ _vdasm_pixblt_RGB565_to_XRGB8888_MMX:
 		movq	mm6, [g_mask_565]
 		movq	mm7, [b_mask_565]
 
-.yloop:
+yloop:
 		mov		ebp, [esp+20+16]
 		add		ebp, 6
-		jbe		.odd
+		jbe		odd
 
-.xloop:
+xloop:
 		movq		mm0, [ecx+ebp]
 		movq		mm1, mm6
 		movq		mm2, mm7
@@ -658,14 +658,14 @@ _vdasm_pixblt_RGB565_to_XRGB8888_MMX:
 		movq	[edx+ebp*2], mm0
 		movq	[edx+ebp*2+8], mm2
 		add		ebp, 8
-		jnc		.xloop
+		jnc		xloop
 
-.odd:
+odd:
 		sub		ebp, 6
-		jz		.noodd
+		jz		noodd
 		push	edi
-.oddloop:
-		movzx	eax, word [ecx+ebp+6]
+oddloop:
+		movzx	eax, word ptr [ecx+ebp+6]
 		mov		ebx, 0000f800h
 		and		ebx, eax
 		mov		esi, eax
@@ -686,21 +686,20 @@ _vdasm_pixblt_RGB565_to_XRGB8888_MMX:
 		add		eax, esi
 		mov		[edx+ebp*2+12], eax
 		add		ebp, 2
-		jnz		.oddloop
+		jnz		oddloop
 		pop		edi
-.noodd:
+noodd:
 		add		ecx, [esp+16+16]
 		add		edx, [esp+8+16]
 		dec		edi
-		jne		.yloop
+		jne		yloop
 
 		emms
 		epilogue
 		ret
+_vdasm_pixblt_RGB565_to_XRGB8888_MMX endp
 
-
-	global	_vdasm_pixblt_RGB888_to_XRGB8888_MMX
-_vdasm_pixblt_RGB888_to_XRGB8888_MMX:
+_vdasm_pixblt_RGB888_to_XRGB8888_MMX proc
 		prologue	6
 
 		mov		esi,[esp+12+16]
@@ -724,11 +723,11 @@ _vdasm_pixblt_RGB888_to_XRGB8888_MMX:
 		;edi	destination
 		;ebp	horizontal count
 	
-.yloop:
+yloop:
 		mov	ebp,ebx
 		shr	ebp,3
-		jz	.checkodd
-.xloop:
+		jz	checkodd
+xloop:
 		movq		mm0,[esi]		;mm0: g2b2r1g1b1r0g0b0
 		movq		mm1,mm0			;
 		
@@ -775,14 +774,14 @@ _vdasm_pixblt_RGB888_to_XRGB8888_MMX:
 			
 		add			edi,32
 		sub			ebp,1
-		jne			.xloop
+		jne			xloop
 
-.checkodd:
+checkodd:
 		mov			ebp,ebx
 		and			ebp,7
-		jz			.noodd
+		jz			noodd
 		movd		mm7,eax
-.oddloop:
+oddloop:
 		mov			ax,[esi]
 		mov			[edi],ax
 		mov			al,[esi+2]
@@ -790,17 +789,18 @@ _vdasm_pixblt_RGB888_to_XRGB8888_MMX:
 		add			esi,3
 		add			edi,4
 		sub			ebp,1
-		jne			.oddloop
+		jne			oddloop
 		
 		movd		eax,mm7
-.noodd:
+noodd:
 		add			esi,ecx
 		add			edi,eax
 
 		sub			edx,1
-		jne			.yloop
+		jne			yloop
 		emms
 		epilogue
 		ret
+_vdasm_pixblt_RGB888_to_XRGB8888_MMX endp
 
 		end

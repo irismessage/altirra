@@ -293,8 +293,11 @@ void ATBlockDeviceVFAT32::ReadSectors(void *data, uint32 lba, uint32 n) {
 							mFile.seek(byteOffset);
 						}
 
-						if (512 == mFile.readData(sector, 512))
-							mActiveFilePos = byteOffset + 512;
+						auto actual = mFile.readData(sector, 512);
+						if (actual >= 0)
+							mActiveFilePos = byteOffset + actual;
+						else
+							mActiveFilePos = -1;
 					}
 				} catch(const MyError&) {
 				}

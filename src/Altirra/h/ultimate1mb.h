@@ -21,11 +21,12 @@
 #include <at/atcore/bussignal.h>
 #include <at/atcore/devicecart.h>
 #include <at/atcore/devicepbi.h>
+#include <at/atcore/devicestorageimpl.h>
 #include <at/atcore/devicesystemcontrol.h>
 #include <at/atemulation/flash.h>
-#include "pbi.h"
 #include <at/atemulation/rtcds1305.h>
 #include "callback.h"
+#include "pbi.h"
 
 class ATMMUEmulator;
 class ATPBIManager;
@@ -56,7 +57,8 @@ public:
 		ATMemoryManager *memman,
 		IATUIRenderer *uir,
 		ATScheduler *sched,
-		ATCPUHookManager *hookmgr
+		ATCPUHookManager *hookmgr,
+		IATDeviceManager *devicemgr
 		);
 	void Shutdown();
 
@@ -165,6 +167,7 @@ protected:
 	IATUIRenderer *mpUIRenderer = nullptr;
 	ATCPUHookManager *mpHookMgr = nullptr;
 	IATSystemController *mpSystemController = nullptr;
+	IATDeviceManager *mpDeviceMgr = nullptr;
 
 	IATDeviceCartridgePort *mpCartridgePort = nullptr;
 	uint32 mCartId = 0;
@@ -199,6 +202,8 @@ protected:
 	
 	ATBusSignalOutput	mStereoEnableOutput;
 	ATBusSignalOutput	mCovoxEnableOutput;
+
+	ATDeviceVirtualStorage mRTCStorage;
 
 	VDALIGN(4) uint8 mFirmware[0x80000];
 };

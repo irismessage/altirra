@@ -551,6 +551,8 @@ for(;;) {
 			if (mIntFlags & kIntFlag_NMIPending) {
 				mPC = 0xFFFA;
 				mIntFlags &= ~kIntFlag_NMIPending;
+				mbMarkHistoryNMI = true;
+				mbMarkHistoryIRQ = false;
 			} else
 				mPC = 0xFFFE;
 			mP |= kFlagI;
@@ -558,9 +560,11 @@ for(;;) {
 			break;
 
 		case kStateNMIOrIRQVecToPCBlockable:
-			if (mbNMIForced)
+			if (mbNMIForced) {
 				mPC = 0xFFFA;
-			else
+				mbMarkHistoryNMI = true;
+				mbMarkHistoryIRQ = false;
+			} else
 				mPC = 0xFFFE;
 			mP |= kFlagI;
 			mIntFlags &= ~kIntFlag_IRQSetPending;

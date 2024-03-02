@@ -120,6 +120,8 @@ struct ATUIThemeColors {
 	uint32 mButtonFg;
 
 	uint32 mFocusedBg;
+
+	uint32 mFocusedRect;
 };
 
 const ATUIThemeColors& ATUIGetThemeColors();

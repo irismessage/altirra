@@ -65,7 +65,6 @@ DECLARE_YUV(Y8, YUYV);
 DECLARE_YUV(UYVY, Y8);
 DECLARE_YUV(YUYV, Y8);
 DECLARE_YUV(UYVY, YUYV);
-DECLARE_YUV_PLANAR(YUV411, YV12);
 
 DECLARE_YUV(UYVY, XRGB1555);
 DECLARE_YUV(UYVY, RGB565);
@@ -94,11 +93,6 @@ DECLARE_YUV_PLANAR(YV12, XRGB1555);
 DECLARE_YUV_PLANAR(YV12, RGB565);
 DECLARE_YUV_PLANAR(YV12, RGB888);
 DECLARE_YUV_PLANAR(YV12, XRGB8888);
-
-DECLARE_YUV_PLANAR(YUV411, XRGB1555);
-DECLARE_YUV_PLANAR(YUV411, RGB565);
-DECLARE_YUV_PLANAR(YUV411, RGB888);
-DECLARE_YUV_PLANAR(YUV411, XRGB8888);
 
 extern void VDCDECL VDPixmapBlt_YUVPlanar_decode_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
 extern void VDCDECL VDPixmapBlt_YUVPlanar_encode_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
@@ -129,11 +123,8 @@ void VDPixmapInitBlittersReference(VDPixmapBlitterTable& table) {
 		kPixFormat_YUV422_Planar,
 		kPixFormat_YUV422_Planar_16F,
 		kPixFormat_YUV420_Planar,
-		kPixFormat_YUV411_Planar,
-		kPixFormat_YUV410_Planar,
 		kPixFormat_YUV422_Planar_Centered,
 		kPixFormat_YUV420_Planar_Centered,
-		kPixFormat_YUV422_V210,
 		kPixFormat_YUV422_UYVY_709,
 		kPixFormat_YUV420_NV12,
 		kPixFormat_Y8_FR,
@@ -141,34 +132,16 @@ void VDPixmapInitBlittersReference(VDPixmapBlitterTable& table) {
 		kPixFormat_YUV444_Planar_709,
 		kPixFormat_YUV422_Planar_709,
 		kPixFormat_YUV420_Planar_709,
-		kPixFormat_YUV411_Planar_709,
-		kPixFormat_YUV410_Planar_709,
 		kPixFormat_YUV422_UYVY_FR,
 		kPixFormat_YUV422_YUYV_FR,
 		kPixFormat_YUV444_Planar_FR,
 		kPixFormat_YUV422_Planar_FR,
 		kPixFormat_YUV420_Planar_FR,
-		kPixFormat_YUV411_Planar_FR,
-		kPixFormat_YUV410_Planar_FR,
 		kPixFormat_YUV422_UYVY_709_FR,
 		kPixFormat_YUV422_YUYV_709_FR,
 		kPixFormat_YUV444_Planar_709_FR,
 		kPixFormat_YUV422_Planar_709_FR,
-		kPixFormat_YUV420_Planar_709_FR,
-		kPixFormat_YUV411_Planar_709_FR,
-		kPixFormat_YUV410_Planar_709_FR,
-		kPixFormat_YUV420i_Planar,
-		kPixFormat_YUV420i_Planar_FR,
-		kPixFormat_YUV420i_Planar_709,
-		kPixFormat_YUV420i_Planar_709_FR,
-		kPixFormat_YUV420it_Planar,
-		kPixFormat_YUV420it_Planar_FR,
-		kPixFormat_YUV420it_Planar_709,
-		kPixFormat_YUV420it_Planar_709_FR,
-		kPixFormat_YUV420ib_Planar,
-		kPixFormat_YUV420ib_Planar_FR,
-		kPixFormat_YUV420ib_Planar_709,
-		kPixFormat_YUV420ib_Planar_709_FR;
+		kPixFormat_YUV420_Planar_709_FR;
 
 	uberblitDstFormats =
 		kPixFormat_XRGB1555,
@@ -183,11 +156,8 @@ void VDPixmapInitBlittersReference(VDPixmapBlitterTable& table) {
 		kPixFormat_YUV422_Planar,
 		kPixFormat_YUV422_Planar_16F,
 		kPixFormat_YUV420_Planar,
-		kPixFormat_YUV411_Planar,
-		kPixFormat_YUV410_Planar,
 		kPixFormat_YUV422_Planar_Centered,
 		kPixFormat_YUV420_Planar_Centered,
-		kPixFormat_YUV422_V210,
 		kPixFormat_YUV422_UYVY_709,
 		kPixFormat_YUV420_NV12,
 		kPixFormat_Y8_FR,
@@ -195,34 +165,16 @@ void VDPixmapInitBlittersReference(VDPixmapBlitterTable& table) {
 		kPixFormat_YUV444_Planar_709,
 		kPixFormat_YUV422_Planar_709,
 		kPixFormat_YUV420_Planar_709,
-		kPixFormat_YUV411_Planar_709,
-		kPixFormat_YUV410_Planar_709,
 		kPixFormat_YUV422_UYVY_FR,
 		kPixFormat_YUV422_YUYV_FR,
 		kPixFormat_YUV444_Planar_FR,
 		kPixFormat_YUV422_Planar_FR,
 		kPixFormat_YUV420_Planar_FR,
-		kPixFormat_YUV411_Planar_FR,
-		kPixFormat_YUV410_Planar_FR,
 		kPixFormat_YUV422_UYVY_709_FR,
 		kPixFormat_YUV422_YUYV_709_FR,
 		kPixFormat_YUV444_Planar_709_FR,
 		kPixFormat_YUV422_Planar_709_FR,
-		kPixFormat_YUV420_Planar_709_FR,
-		kPixFormat_YUV411_Planar_709_FR,
-		kPixFormat_YUV410_Planar_709_FR,
-		kPixFormat_YUV420i_Planar,
-		kPixFormat_YUV420i_Planar_FR,
-		kPixFormat_YUV420i_Planar_709,
-		kPixFormat_YUV420i_Planar_709_FR,
-		kPixFormat_YUV420it_Planar,
-		kPixFormat_YUV420it_Planar_FR,
-		kPixFormat_YUV420it_Planar_709,
-		kPixFormat_YUV420it_Planar_709_FR,
-		kPixFormat_YUV420ib_Planar,
-		kPixFormat_YUV420ib_Planar_FR,
-		kPixFormat_YUV420ib_Planar_709,
-		kPixFormat_YUV420ib_Planar_709_FR;
+		kPixFormat_YUV420_Planar_709_FR;
 
 	table.AddBlitter(uberblitSrcFormats, uberblitDstFormats, VDPixmapBlt_UberblitAdapter);
 
@@ -292,8 +244,6 @@ void VDPixmapInitBlittersReference(VDPixmapBlitterTable& table) {
 	table.AddBlitter(kPixFormat_RGB888,		kPixFormat_Y8,			VDPixmapBlitterChunkyAdapter<VDPixmapBlt_RGB888_to_Y8_reference>);
 	table.AddBlitter(kPixFormat_XRGB8888,	kPixFormat_Y8,			VDPixmapBlitterChunkyAdapter<VDPixmapBlt_XRGB8888_to_Y8_reference>);
 
-	table.AddBlitter(kPixFormat_YUV411_Planar, kPixFormat_YUV420_Planar, VDPixmapBlt_YUV411_to_YV12_reference);
-
 	table.AddBlitter(kPixFormat_YUV422_UYVY, kPixFormat_YUV422_YUYV, VDPixmapBlitterChunkyAdapter<VDPixmapBlt_UYVY_to_YUYV_reference>);
 	table.AddBlitter(kPixFormat_YUV422_YUYV, kPixFormat_YUV422_UYVY, VDPixmapBlitterChunkyAdapter<VDPixmapBlt_UYVY_to_YUYV_reference>);		// not an error -- same routine
 
@@ -305,8 +255,6 @@ void VDPixmapInitBlittersReference(VDPixmapBlitterTable& table) {
 	srcFormats = kPixFormat_YUV444_Planar,
 				kPixFormat_YUV422_Planar,
 				kPixFormat_YUV420_Planar,
-				kPixFormat_YUV411_Planar,
-				kPixFormat_YUV410_Planar,
 				kPixFormat_YUV422_Planar_Centered,
 				kPixFormat_YUV420_Planar_Centered;
 
@@ -316,15 +264,15 @@ void VDPixmapInitBlittersReference(VDPixmapBlitterTable& table) {
 
 	//////////////////////////////////////////////////////////
 
-	dstFormats = kPixFormat_YUV444_Planar, kPixFormat_YUV422_Planar, kPixFormat_YUV420_Planar, kPixFormat_YUV411_Planar, kPixFormat_YUV410_Planar, kPixFormat_YUV422_Planar_Centered, kPixFormat_YUV420_Planar_Centered;
+	dstFormats = kPixFormat_YUV444_Planar, kPixFormat_YUV422_Planar, kPixFormat_YUV420_Planar, kPixFormat_YUV422_Planar_Centered, kPixFormat_YUV420_Planar_Centered;
 	srcFormats = kPixFormat_XRGB1555, kPixFormat_RGB565, kPixFormat_RGB888, kPixFormat_XRGB8888, kPixFormat_YUV422_UYVY, kPixFormat_YUV422_YUYV;
 
 	table.AddBlitter(srcFormats, dstFormats, VDPixmapBlt_YUVPlanar_encode_reference);
 
 	//////////////////////////////////////////////////////////
 
-	srcFormats = kPixFormat_YUV444_Planar, kPixFormat_YUV422_Planar, kPixFormat_YUV420_Planar, kPixFormat_YUV411_Planar, kPixFormat_YUV410_Planar, kPixFormat_Y8, kPixFormat_YUV422_Planar_Centered, kPixFormat_YUV420_Planar_Centered;
-	dstFormats = kPixFormat_YUV444_Planar, kPixFormat_YUV422_Planar, kPixFormat_YUV420_Planar, kPixFormat_YUV411_Planar, kPixFormat_YUV410_Planar, kPixFormat_Y8, kPixFormat_YUV422_Planar_Centered, kPixFormat_YUV420_Planar_Centered;
+	srcFormats = kPixFormat_YUV444_Planar, kPixFormat_YUV422_Planar, kPixFormat_YUV420_Planar, kPixFormat_Y8, kPixFormat_YUV422_Planar_Centered, kPixFormat_YUV420_Planar_Centered;
+	dstFormats = kPixFormat_YUV444_Planar, kPixFormat_YUV422_Planar, kPixFormat_YUV420_Planar, kPixFormat_Y8, kPixFormat_YUV422_Planar_Centered, kPixFormat_YUV420_Planar_Centered;
 
 	table.AddBlitter(srcFormats, dstFormats, VDPixmapBlt_YUVPlanar_convert_reference);
 }

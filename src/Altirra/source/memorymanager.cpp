@@ -62,6 +62,7 @@ ATMemoryManager::ATMemoryManager() {
 	mDummyWriteNode.mLayerOrForward = (uintptr)&mDummyLayer;
 	mDummyWriteNode.mpWriteHandler = DummyWriteHandler;
 	mDummyWriteNode.mNext = 1;
+	mDummyWriteNode.mpThis = this;
 
 	mpCPUReadBankMap = &mReadBankTable;
 	mpCPUWriteBankMap = &mWriteBankTable;

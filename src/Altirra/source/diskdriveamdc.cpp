@@ -83,7 +83,7 @@ ATDeviceDiskDriveAMDC::ATDeviceDiskDriveAMDC() {
 	);
 
 	mTargetHistoryProxy.Init(mCoProc);
-	InitTargetControl(mTargetHistoryProxy, 1000000.0, kATDebugDisasmMode_6809, &mBreakpointsImpl);
+	InitTargetControl(mTargetHistoryProxy, 1000000.0, kATDebugDisasmMode_6809, &mBreakpointsImpl, this);
 
 	mFirmwareControl.Init(mROM, sizeof mROM, kATFirmwareType_AMDC);
 

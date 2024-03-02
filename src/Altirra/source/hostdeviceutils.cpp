@@ -42,7 +42,7 @@ bool ATHostDeviceIsDevice(const wchar_t *s) {
 	return false;
 }
 
-void ATHostDeviceEncodeName(char xlName[13], const wchar_t *hostName, bool useLongNameEncoding) {
+void ATHostDeviceEncodeName(VDStringA& xlName, const wchar_t *hostName, bool useLongNameEncoding, bool useLongNames) {
 	const VDStringA& name8 = VDTextWToU8(hostName, -1);
 	const char *name = name8.c_str();
 	char xlExt[4];
@@ -50,10 +50,13 @@ void ATHostDeviceEncodeName(char xlName[13], const wchar_t *hostName, bool useLo
 	if (name[0] == L'$' || name[0] == L'!')
 		++name;
 
-	const char *ext = strrchr(name, '.');
+	const char *ext = useLongNames ? nullptr : strrchr(name, '.');
 
 	if (!ext)
 		ext = name + strlen(name);
+
+	const int maxNameLen = useLongNames ? 64 : 8;
+	const int maxNamePrefixLen = maxNameLen - 3;
 
 	int xlNameLen = 0;
 	int xlExtLen = 0;
@@ -63,16 +66,17 @@ void ATHostDeviceEncodeName(char xlName[13], const wchar_t *hostName, bool useLo
 	for(const char *s = name; s != ext; ++s) {
 		char c = *s;
 
-		if ((uint8)(c - 'a') < 26)
+		if (!useLongNames && (uint8)(c - 'a') < 26)
 			c &= 0xdf;
 
-		if (ATHostDeviceIsValidPathCharWide(c)) {
-			if (xlNameLen >= 5)
+		if (useLongNames ? ATHostDeviceIsValidPathCharWideLFN(c) : ATHostDeviceIsValidPathCharWide(c)) {
+			if (xlNameLen >= maxNamePrefixLen)
 				hash32 = (hash32 ^ (uint8)c) * 16777619;
 
-			if (xlNameLen < 8)
-				xlName[xlNameLen++] = (char)c;
-			else
+			if (xlNameLen < maxNameLen) {
+				xlName.push_back((char)c);
+				++xlNameLen;
+			} else
 				encode = true;
 		} else {
 			hash32 = (hash32 ^ (uint8)c) * 16777619;
@@ -97,21 +101,24 @@ void ATHostDeviceEncodeName(char xlName[13], const wchar_t *hostName, bool useLo
 		}
 	}
 
+	xlExt[xlExtLen] = 0;
+
 	if (encode && useLongNameEncoding) {
-		if (xlNameLen > 5)
-			xlNameLen = 5;
+		if (xlNameLen > maxNamePrefixLen)
+			xlName.resize(maxNamePrefixLen);
 
 		uint32 hash10 = hash32 ^ (hash32 >> 10) ^ (hash32 >> 20) ^ (hash32 >> 30);
 
 		int x = (hash10 >> 5) & 31;
 		int y = hash10 & 31;
 
-		xlName[xlNameLen++] = '_';
-		xlName[xlNameLen++] = x >= 10 ? 'A' + (x - 10) : '0' + x;
-		xlName[xlNameLen++] = y >= 10 ? 'A' + (y - 10) : '0' + y;
+		xlName.push_back('_');
+		xlName.push_back(x >= 10 ? 'A' + (x - 10) : '0' + x);
+		xlName.push_back(y >= 10 ? 'A' + (y - 10) : '0' + y);
 	}
 
-	xlName[xlNameLen++] = '.';
-	memcpy(xlName + xlNameLen, xlExt, xlExtLen);
-	xlName[xlNameLen + xlExtLen] = 0;
+	if (!useLongNames) {
+		xlName.push_back('.');
+		xlName += xlExt;
+	}
 }

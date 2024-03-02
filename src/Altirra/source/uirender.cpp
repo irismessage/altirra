@@ -23,7 +23,6 @@
 #include <vd2/system/VDString.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmaputils.h>
-#include <vd2/Kasumi/text.h>
 #include <vd2/Kasumi/resample.h>
 #include <vd2/VDDisplay/compositor.h>
 #include <vd2/VDDisplay/renderer.h>
@@ -134,11 +133,11 @@ private:
 };
 
 void ATUIOverlayCustomization::Init() {
-	mLoadCallback = [this](ATSettingsCategory categoryMask, VDRegistryKey& key) {
+	mLoadCallback = [this](uint32 profileId, ATSettingsCategory categoryMask, VDRegistryKey& key) {
 		LoadSettings(categoryMask, key);
 	};
 
-	mSaveCallback = [this](ATSettingsCategory categoryMask, VDRegistryKey& key) {
+	mSaveCallback = [this](uint32 profileId, ATSettingsCategory categoryMask, VDRegistryKey& key) {
 		SaveSettings(categoryMask, key);
 	};
 
@@ -1738,6 +1737,9 @@ public:
 
 	void SetFpsIndicator(float fps);
 
+	void SetMessage(StatusPriority priority, const wchar_t *msg);
+	void ClearMessage(StatusPriority priority);
+
 	void SetHoverTip(int px, int py, const wchar_t *text);
 
 	void SetPaused(bool paused);
@@ -1768,6 +1770,8 @@ protected:
 	void UpdateHoverTipPos();
 	void RemakeLEDFont();
 
+	void UpdateStatusMessage();
+
 	double	mCyclesPerSecond = 1;
 
 	uint32	mStatusFlags = 0;
@@ -1794,8 +1798,8 @@ protected:
 	uint8	mPCLinkWriteCounter = 0;
 	uint8	mFlashWriteCounter = 0;
 
-	VDStringW	mModemConnection;
-	VDStringW	mStatusMessage;
+	VDStringW	mMessages[(int)StatusPriority::Max + 1];
+	int mMessageLevel = -1;
 
 	uint8	mLedStatus = 0;
 
@@ -2171,48 +2175,21 @@ void ATUIRenderer::SetFlashWriteActivity() {
 }
 
 namespace {
-	const uint32 kModemMessageBkColor = 0x1e00ac;
-	const uint32 kModemMessageFgColor = 0x8458ff;
-
-	const uint32 kStatusMessageBkColor = 0x303850;
-	const uint32 kStatusMessageFgColor = 0xffffff;
-
 	const uint32 kErrorMessageBkColor = 0x4a0500;
 	const uint32 kErrorMessageFgColor = 0xffc080;
 }
 
 void ATUIRenderer::SetModemConnection(const char *str) {
-	if (str && *str) {
-		mModemConnection = VDTextAToW(str);
-
-		if (mStatusMessage.empty()) {
-			mpStatusMessageLabel->SetVisible(true);
-			mpStatusMessageLabel->SetFillColor(kModemMessageBkColor);
-			mpStatusMessageLabel->SetTextColor(kModemMessageFgColor);
-			mpStatusMessageLabel->SetBorderColor(kModemMessageFgColor);
-			mpStatusMessageLabel->SetText(mModemConnection.c_str());
-		}
-	} else {
-		mModemConnection.clear();
-
-		if (mStatusMessage.empty())
-			mpStatusMessageLabel->SetVisible(false);
-	}
+	if (str && *str)
+		SetMessage(StatusPriority::Modem, VDTextAToW(str).c_str());
+	else
+		ClearMessage(StatusPriority::Modem);
 }
 
 void ATUIRenderer::SetStatusMessage(const wchar_t *s) {
-	mStatusMessage = s;
-
 	mStatusTimer.SetOneShot(this, 1500);
 
-	mpStatusMessageLabel->SetVisible(true);
-	mpStatusMessageLabel->SetFillColor(kStatusMessageBkColor);
-	mpStatusMessageLabel->SetTextColor(kStatusMessageFgColor);
-	mpStatusMessageLabel->SetBorderColor(kStatusMessageFgColor);
-	mpStatusMessageLabel->SetText(mStatusMessage.c_str());
-
-	mpContainer->UpdateLayout();
-	RelayoutErrors();
+	SetMessage(StatusPriority::Status, s);
 }
 
 void ATUIRenderer::ReportError(const wchar_t *s) {
@@ -2491,6 +2468,27 @@ void ATUIRenderer::SetFpsIndicator(float fps) {
 			mpFpsLabel->SetVisible(true);
 			mpFpsLabel->SetTextF(L"%.3f fps", fps);
 		}
+	}
+}
+
+void ATUIRenderer::SetMessage(StatusPriority priority, const wchar_t *msg) {
+	if (!msg || !*msg)
+		ClearMessage(priority);
+
+	mMessages[(int)priority] = msg;
+
+	if (mMessageLevel <= (int)priority)
+		UpdateStatusMessage();
+}
+
+void ATUIRenderer::ClearMessage(StatusPriority priority) {
+	int priIndex = (int)priority;
+
+	if (!mMessages[priIndex].empty()) {
+		mMessages[priIndex].clear();
+
+		if (mMessageLevel == priIndex)
+			UpdateStatusMessage();
 	}
 }
 
@@ -2841,17 +2839,7 @@ void ATUIRenderer::BeginCustomization() {
 }
 
 void ATUIRenderer::TimerCallback() {
-	mStatusMessage.clear();
-
-	if (mModemConnection.empty())
-		mpStatusMessageLabel->SetVisible(false);
-	else {
-		mpStatusMessageLabel->SetVisible(true);
-		mpStatusMessageLabel->SetFillColor(kModemMessageBkColor);
-		mpStatusMessageLabel->SetTextColor(kModemMessageFgColor);
-		mpStatusMessageLabel->SetBorderColor(kModemMessageFgColor);
-		mpStatusMessageLabel->SetText(mModemConnection.c_str());
-	}
+	ClearMessage(StatusPriority::Status);
 }
 
 void ATUIRenderer::InvalidateLayout() {
@@ -3124,4 +3112,39 @@ void ATUIRenderer::RemakeLEDFont() {
 	metrics.mAscent = mLEDFontCellAscent - descent;
 	metrics.mDescent = descent;
 	VDCreateDisplayBitmapFont(metrics, 128, chars, glyphInfos.data(), *p, 0, p, ~mpLEDFont);
+}
+
+void ATUIRenderer::UpdateStatusMessage() {
+	static constexpr struct {
+		uint32 mBkColor;
+		uint32 mFgColor;
+	} kMessageStyles[] {
+		{ 0x303850, 0xFFFFFF },		// status
+		{ 0x1E00AC, 0x8458FF },		// modem
+		{ 0x0020AC, 0xFFFFFF },		// prompt
+	};
+
+	static_assert(vdcountof(kMessageStyles) == (int)StatusPriority::Max + 1);
+
+	mMessageLevel = (int)StatusPriority::Max;
+
+	while(mMessageLevel >= 0) {
+		if (!mMessages[mMessageLevel].empty()) {
+			mpStatusMessageLabel->SetVisible(true);
+			mpStatusMessageLabel->SetFillColor(kMessageStyles[mMessageLevel].mBkColor);
+			mpStatusMessageLabel->SetTextColor(kMessageStyles[mMessageLevel].mFgColor);
+			mpStatusMessageLabel->SetBorderColor(kMessageStyles[mMessageLevel].mFgColor);
+			mpStatusMessageLabel->SetText(mMessages[mMessageLevel].c_str());
+
+			mpContainer->UpdateLayout();
+			RelayoutErrors();
+			return;
+		}
+
+		--mMessageLevel;
+	}
+
+	mpStatusMessageLabel->SetVisible(false);
+	mpContainer->UpdateLayout();
+	RelayoutErrors();
 }

@@ -141,13 +141,13 @@ void ATUITapeViewControl::SetDrawMode(DrawMode drawMode) {
 	}
 }
 
-ATUITapeViewControl::Encoding ATUITapeViewControl::GetAnalysisEncoding() const {
-	return mAnalysisEncoding;
+ATUITapeViewControl::Decoder ATUITapeViewControl::GetAnalysisDecoder() const {
+	return mAnalysisDecoder;
 }
 
-void ATUITapeViewControl::SetAnalysisEncoding(Encoding encoding) {
-	if (mAnalysisEncoding != encoding) {
-		mAnalysisEncoding = encoding;
+void ATUITapeViewControl::SetAnalysisDecoder(Decoder encoding) {
+	if (mAnalysisDecoder != encoding) {
+		mAnalysisDecoder = encoding;
 
 		if (mFnOnAnalysisEncodingChanged)
 			mFnOnAnalysisEncodingChanged();
@@ -260,6 +260,24 @@ void ATUITapeViewControl::SetSelection(uint32 startSample, uint32 endSample) {
 	mSelSortedEndSample = sortedEndSample;
 
 	mFnOnSelectionChanged();
+}
+
+void ATUITapeViewControl::EnsureSelectionVisible() {
+	if (mbSelectionValid)
+		EnsureRangeVisible(mSelSortedStartSample, mSelSortedEndSample);
+}
+
+void ATUITapeViewControl::EnsureRangeVisible(uint32 startSample, uint32 endSample) {
+	if (startSample > endSample)
+		return;
+
+	uint32 viewSampleL = ClientXToSampleEdge(0, true);
+	uint32 viewSampleR = ClientXToSampleEdge(mWidth, true);
+
+	if (viewSampleL >= endSample || viewSampleR <= startSample) {
+		const sint64 centerSample = startSample + ((endSample - startSample + 1) >> 1);
+		SetScrollX(mZoom < 0 ? centerSample >> -mZoom : centerSample << mZoom);
+	}
 }
 
 void ATUITapeViewControl::Insert() {
@@ -390,8 +408,8 @@ void ATUITapeViewControl::ConvertToStdBlock() {
 		}
 
 		// write standard block
-		for(const uint8 v : vdvector_view(dblocks.mByteData.data() + dblock.mStartByte, dblock.mByteCount))
-			mpImage->WriteStdData(writeCursor, v, dblock.mBaudRate, false);
+		for(const auto& byteInfo : vdvector_view(dblocks.mByteData.data() + dblock.mStartByte, dblock.mByteCount))
+			mpImage->WriteStdData(writeCursor, byteInfo.mData, dblock.mBaudRate, false);
 
 		// if we stopped short of the original block, clear to that point
 		if (writeCursor.mPosition < dblock.mSampleEnd)
@@ -424,6 +442,8 @@ void ATUITapeViewControl::ConvertToRawBlock() {
 			while(pulseLen > 0xFFFF) {
 				rleData.push_back(0xFFFF);
 				rleData.push_back(0);
+
+				pulseLen -= 0xFFFF;
 			}
 
 			rleData.push_back(pulseLen);
@@ -462,39 +482,103 @@ void ATUITapeViewControl::ExtractSelectionAsCFile(vdfastvector<uint8>& data) con
 
 	int blockNo = 1;
 	for(const DecodedBlock& dblock : dblocks.mBlocks) {
-		const uint8 *blockData = dblocks.mByteData.data() + dblock.mStartByte;
-		const bool *errors = dblocks.mByteFramingErrors.data() + dblock.mStartByte;
+		const DecodedByte *byteInfo = dblocks.mByteData.data() + dblock.mStartByte;
 
 		if (dblock.mByteCount >= 3) {
-			if (blockData[0] != 0x55 || blockData[1] != 0x55)
+			if (byteInfo[0].mData != 0x55 || byteInfo[1].mData != 0x55)
 				throw MyError("Sync error on block #%d", blockNo);
 		}
 
 		if (dblock.mByteCount < 132)
 			throw MyError("Block #%d is too short", blockNo);
 
-		if (std::find(errors, errors + dblock.mByteCount, true) != errors + dblock.mByteCount)
+		if (std::find_if(byteInfo, byteInfo + dblock.mByteCount,
+			[](const DecodedByte& info) {
+				return (info.mFlags & DecodedByteFlags::FramingError) != DecodedByteFlags::None;
+			}) != byteInfo + dblock.mByteCount)
 			throw MyError("Block #%d has a framing error.", blockNo);
 
 		uint32 blockLen = 128;
-		if (blockData[2] == 0xFE)
+		if (byteInfo[2].mData == 0xFE)
 			break;
-		else if (blockData[2] == 0xFA) {
-			blockLen = blockData[130];
+		else if (byteInfo[2].mData == 0xFA) {
+			blockLen = byteInfo[130].mData;
 
 			if (blockLen >= 128)
 				throw MyError("Block #%d has invalid length for a partial block.", blockNo);
-		} else if (blockData[2] != 0xFC)
+		} else if (byteInfo[2].mData != 0xFC)
 			throw MyError("Block #%d has unrecognized control byte.", blockNo);
 
-		uint8 chksum = ATComputeSIOChecksum(blockData, 131);
-		if (chksum != blockData[131])
+		uint32 chksum32 = 0;
+		for(int i=0; i<131; ++i)
+			chksum32 += byteInfo[i].mData;
+
+		uint8 chksum = chksum32 ? (chksum32 - 1) % 255 + 1 : 0;
+		if (chksum != byteInfo[131].mData)
 			throw MyError("Block #%d has a checksum error.", blockNo);
 
-		data.insert(data.end(), blockData + 3, blockData + 3 + blockLen);
+		data.resize(data.size() + blockLen);
+
+		for(uint32 i=0; i<blockLen; ++i)
+			(data.end() - blockLen)[i] = byteInfo[3 + i].mData;
 
 		++blockNo;
 	}
+}
+
+bool ATUITapeViewControl::HasDecodedData() const {
+	return !mAnalysisChannels[0].mDecodedBlocks.mBlocks.empty();
+}
+
+void ATUITapeViewControl::CopyDecodedData() const {
+	if (!HasDecodedData())
+		return;
+
+	const auto& ch = mAnalysisChannels[0];
+	const auto& dblocks = ch.mDecodedBlocks;
+	uint32 start = dblocks.mByteData.front().mStartSample;
+	uint32 end = dblocks.mByteData.back().mStartSample;
+
+	if (HasNonEmptySelection()) {
+		start = mSelSortedStartSample;
+		end = mSelSortedEndSample;
+	}
+
+	auto itByteStart = std::upper_bound(dblocks.mByteData.begin(), dblocks.mByteData.end(), start, DecodedByteStartPred());
+	if (itByteStart != dblocks.mByteData.begin())
+		--itByteStart;
+
+	auto itByteEnd = std::upper_bound(itByteStart, dblocks.mByteData.end(), end, DecodedByteStartPred());
+
+	uint32 byteStartIndex = (uint32)(itByteStart - dblocks.mByteData.begin());
+	uint32 byteEndIndex = (uint32)(itByteEnd - dblocks.mByteData.begin());
+
+	auto itBlockStart = std::lower_bound(dblocks.mBlocks.begin(), dblocks.mBlocks.end(), byteStartIndex,
+		[](const DecodedBlock& dblock, uint32 byteIndex) {
+			return dblock.mSampleEnd < byteIndex;
+		}
+	);
+
+	auto itBlockEnd = std::lower_bound(itBlockStart, dblocks.mBlocks.end(), byteEndIndex,
+		[](const DecodedBlock& dblock, uint32 byteIndex) {
+			return dblock.mSampleStart >= byteIndex;
+		}
+	);
+
+	VDStringA s;
+
+	for(auto itBlock = itBlockStart; itBlock != itBlockEnd; ++itBlock) {
+		const DecodedBlock& dblock = *itBlock;
+
+		uint32 byteStart = std::max<uint32>(byteStartIndex, dblock.mStartByte);
+		uint32 byteEnd = std::min<uint32>(byteEndIndex, dblock.mStartByte + dblock.mByteCount);
+
+		for(uint32 i = byteStart; i < byteEnd; ++i) {
+			s.append_sprintf(&" %02x"[s.empty() ? 1 : 0], dblocks.mByteData[i].mData);
+		}
+	}
+
+	ATCopyTextToClipboard(mhdlg, s.c_str());
 }
 
 bool ATUITapeViewControl::CanUndo() const {
@@ -721,6 +805,13 @@ void ATUITapeViewControl::OnMouseDownL(sint32 x, sint32 y) {
 				break;
 
 			case DrawMode::Select:
+				// if Shift is held down, keep the anchor of an existing selection, if there
+				// is one
+				if (GetKeyState(VK_SHIFT) < 0 && HasSelection()) {
+					SetSelection(mSelStartSample, ClientXToSampleEdge(x, true));
+					break;
+				}
+				[[fallthrough]];
 			case DrawMode::Insert:
 			case DrawMode::Analyze:
 				{
@@ -730,8 +821,14 @@ void ATUITapeViewControl::OnMouseDownL(sint32 x, sint32 y) {
 				break;
 
 			case DrawMode::Draw:
+				ClearSelection();
 				mbDrawValid = true;
-				mbDrawPolarity = y < (mHeight >> 1);
+
+				if (mbShowWaveform && mpImage->GetWaveformLength() > 0)
+					mbDrawPolarity = y < (mHeight * 3)/4;
+				else
+					mbDrawPolarity = y < (mHeight >> 1);
+
 				mDrawStartSample = mDrawEndSample = ClientXToSample(x);
 				Invalidate();
 				break;
@@ -758,7 +855,7 @@ void ATUITapeViewControl::OnMouseUpL(sint32 x, sint32 y) {
 
 							const uint32 deckPos = PreModify();
 
-							PushUndo(start, end-start, end-start, UndoSelectionMode::None);
+							PushUndo(start, end-start, end-start, UndoSelectionMode::SelectionIsRange);
 
 							mpImage->WritePulse(cursor, mbDrawPolarity, end - start, false, !mbShowTurboData);
 
@@ -1067,7 +1164,6 @@ void ATUITapeViewControl::OnPaint() {
 				// draw data
 				if (mZoom < 0) {
 					uint32 range = 1 << -mZoom;
-					const float scale = 2.0f / (float)range;
 
 					sint32 blitx = x;
 					sint32 bliti = 0;
@@ -1189,25 +1285,23 @@ void ATUITapeViewControl::PaintAnalysisChannel(IVDDisplayRendererGDI *r, const A
 
 	VDStringW s;
 	for(const DecodedBlock& dblock : vdvector_view(itBlockStart, (size_t)(itBlockEnd - itBlockStart))) {
-		const auto itByteStartAll = ch.mDecodedBlocks.mByteStartSamples.begin() + dblock.mStartByte;
+		const auto itByteStartAll = ch.mDecodedBlocks.mByteData.begin() + dblock.mStartByte;
 		const auto itByteEndAll = itByteStartAll + dblock.mByteCount;
-		auto itByteStart = std::upper_bound(itByteStartAll, itByteEndAll, posStart);
-		auto itByteEnd = std::upper_bound(itByteStart, itByteEndAll, posEnd);
+		auto itByteStart = std::upper_bound(itByteStartAll, itByteEndAll, posStart, DecodedByteStartPred());
+		auto itByteEnd = std::upper_bound(itByteStart, itByteEndAll, posEnd, DecodedByteStartPred());
 
 		if (itByteStart != itByteStartAll)
 			--itByteStart;
 
 		uint32 numBytes = itByteEnd - itByteStart;
-		sint64 xbstart = SampleToClientXRaw(itByteStart[0]);
-		ptrdiff_t byteDataOffset = itByteStart - ch.mDecodedBlocks.mByteStartSamples.begin();
-		const uint8 *dataBytes = ch.mDecodedBlocks.mByteData.data() + byteDataOffset;
-		const bool *statuses = ch.mDecodedBlocks.mByteFramingErrors.data() + byteDataOffset;
-		const float samplesPerBit = dblock.mSamplesPerBit;
+		sint64 xbstart = SampleToClientXRaw(itByteStart[0].mStartSample);
+		ptrdiff_t byteDataOffset = itByteStart - ch.mDecodedBlocks.mByteData.begin();
+		const DecodedByte *dataBytes = ch.mDecodedBlocks.mByteData.data() + byteDataOffset;
 		const sint32 checksumPos = dblock.mChecksumPos ? (sint32)dblock.mChecksumPos - (sint32)(itByteStart - itByteStartAll) : -1;
 		const sint32 validFramePos = dblock.mbValidFrame ? checksumPos : -1;
 
 		for(uint32 i = 0; i < numBytes; ++i) {
-			const uint32 byteEnd = itByteStart[i+1];
+			const uint32 byteEnd = itByteStart[i+1].mStartSample;
 			const sint64 xbend = SampleToClientXRaw(byteEnd);
 
 			if (xbstart >= x1 && xbstart < x2) {
@@ -1216,30 +1310,38 @@ void ATUITapeViewControl::PaintAnalysisChannel(IVDDisplayRendererGDI *r, const A
 			}
 
 			// see if we should draw bit sample markers
-			if (xbend - xbstart > 20 && samplesPerBit) {
-				r->SetColorRGB(0x606060);
+			if (xbend - xbstart > 20) {
+				const int suspiciousBit = dblock.mSuspiciousBit && ((dataBytes[i].mData & (1 << (dblock.mSuspiciousBit - 1))) != 0) == dblock.mbSuspiciousBitPolarity ? dblock.mSuspiciousBit : -1;
 
+				uint32 bitPos = itByteStart[i].mStartSample;
 				for(int j=0; j<10; ++j) {
-					uint32 bitSamplePos = itByteStart[i] + (uint32)(samplesPerBit * ((float)j + 0.5f) + 0.5f);
+					uint32 bitSamplePos = bitPos + itByteStart[i].mBitSampleOffsets[j];
 
 					if (bitSamplePos < byteEnd) {
 						const sint64 bitSampleX = SampleToClientXRaw(bitSamplePos);
 
-						if (bitSampleX >= x1 && bitSampleX < x2)
+						if (bitSampleX >= x1 && bitSampleX < x2) {
+							r->SetColorRGB(j == suspiciousBit ? 0x9944FF : 0x606060);
 							r->FillRect((sint32)bitSampleX, ya1, 1, yah2);
+						}
 					}
 				}
 			}
 
 			sint64 xbspace = xbend - xbstart;
 			if (xbspace) {
-				if (xbspace > mAnalysisTextMinWidth) {
-					s.sprintf(L"%02X", dataBytes[i]);
+				const DecodedByteFlags byteFlags = dataBytes[i].mFlags;
+				const bool hasFramingError = (byteFlags & DecodedByteFlags::FramingError) != DecodedByteFlags::None;
+				const bool hasValidChecksum = (sint32)i <= validFramePos;
+				const bool isChecksum = (sint32)i == checksumPos;
 
-					r->SetTextColorRGB(statuses[i] ? 0xFF4040 : (sint32)i < validFramePos || (sint32)i == checksumPos ? 0x80FFE0 : 0xE0E0E0);
+				if (xbspace > mAnalysisTextMinWidth) {
+					s.sprintf(L"%02X", dataBytes[i].mData);
+
+					r->SetTextColorRGB(hasFramingError ? 0xFF4040 : hasValidChecksum ? 0x80FFE0 : isChecksum ? 0x9944FF : 0xE0E0E0);
 					r->DrawTextSpan((sint32)(xbstart + ((xbend - xbstart) >> 1)), ya1, s.c_str(), 2);
 				} else {
-					r->SetColorRGB(statuses[i] ? 0xDF6060 : (sint32)i < validFramePos || (sint32)i == checksumPos ? 0x80DFC8 : 0x808080);
+					r->SetColorRGB(hasFramingError ? 0xDF6060 : hasValidChecksum ? 0x80DFC8 : isChecksum ? 0x9944FF : 0x808080);
 					r->FillRect(xbstart + 1, ya1 + 1, xbspace, yah - 2);
 				}
 			}
@@ -1664,16 +1766,19 @@ void ATUITapeViewControl::ExecuteUndoRedo(UndoEntry& ue) {
 
 		case UndoSelectionMode::SelectionIsRange:
 			SetSelection(ue.mStart, ue.mStart + ue.mLength);
+			EnsureSelectionVisible();
 			break;
 
 		case UndoSelectionMode::SelectionToEnd:
 			ue.mSelectionMode = UndoSelectionMode::EndToSelection;
 			SetSelection(ue.mStart + ue.mLength, ue.mStart + ue.mLength);
+			EnsureSelectionVisible();
 			break;
 
 		case UndoSelectionMode::EndToSelection:
 			ue.mSelectionMode = UndoSelectionMode::SelectionToEnd;
 			SetSelection(ue.mStart, ue.mStart + ue.mLength);
+			EnsureSelectionVisible();
 			break;
 	}
 
@@ -1691,12 +1796,16 @@ void ATUITapeViewControl::Analyze(uint32 start, uint32 end) {
 
 	ch0.mDecodedBlocks.Clear();
 
-	switch(mAnalysisEncoding) {
-		case Encoding::FSK:
+	switch(mAnalysisDecoder) {
+		case Decoder::FSK_Sync:
 			DecodeFSK(start, end, false, ch0.mDecodedBlocks);
 			break;
 
-		case Encoding::T2000:
+		case Decoder::FSK_PLL:
+			DecodeFSK2(start, end, false, ch0.mDecodedBlocks);
+			break;
+
+		case Decoder::T2000:
 			DecodeT2000(start, end, ch0.mDecodedBlocks);
 			break;
 	}
@@ -1705,6 +1814,81 @@ void ATUITapeViewControl::Analyze(uint32 start, uint32 end) {
 	ch0.mSampleEnd = end;
 
 	InvalidateRange(start, end, 0, 1);
+}
+
+void ATUITapeViewControl::ReAnalyze() {
+	AnalysisChannel& ch0 = mAnalysisChannels[0];
+
+	if (ch0.mSampleEnd > ch0.mSampleStart)
+		Analyze(ch0.mSampleStart, ch0.mSampleEnd);
+}
+
+void ATUITapeViewControl::Filter(FilterMode filterMode) {
+	if (!HasNonEmptySelection())
+		return;
+
+	uint32 window = 32;
+	uint32 threshold = 12;
+
+	switch(filterMode) {
+		case FilterMode::FSKDirectSample2000Baud:
+			window = 16;
+			threshold = 6;
+			break;
+
+		case FilterMode::FSKDirectSample1000Baud:
+			window = 32;
+			threshold = 12;
+			break;
+	}
+
+	ATTapeSlidingWindowCursor cursor {};
+	cursor.mWindow = window;
+	cursor.mOffset = window/2;
+	cursor.mThresholdLo = threshold;
+	cursor.mThresholdHi = window - threshold;
+	cursor.mbFSKBypass = false;
+	cursor.Reset();
+
+	uint32 deckPos = PreModify();
+
+	const uint32 start = mSelSortedStartSample;
+	const uint32 end = mSelSortedEndSample;
+	const uint32 len = end - start;
+	PushUndo(start, len, len, UndoSelectionMode::SelectionIsRange);
+
+	// read out all pulses -- do this before we modify the tape so as
+	// to not mix writes into the sampling
+	vdfastvector<uint32> pulses;
+	bool polarity = true;
+
+	// the hysteresis introduces a slight amount of delay, so advance the sampling by
+	// the expected delay to compensate
+	uint32 pos = start + (window / 2 - threshold + 1);
+
+	while(pos < end) {
+		auto next = cursor.FindNext(*mpImage, pos, !polarity, end - 1);
+
+		pulses.push_back(next.mPos - pos);
+
+		polarity = !polarity;
+		pos = next.mPos;
+	}
+
+	// write the new pulses back to the tape
+	ATCassetteWriteCursor writeCursor;
+	writeCursor.mPosition = mSelSortedStartSample;
+
+	polarity = true;
+	for(uint32 pulseWidth : pulses) {
+		mpImage->WritePulse(writeCursor, polarity, pulseWidth, false, true);
+
+		polarity = !polarity;
+	}
+
+	PostModify(deckPos);
+
+	ClearSelection();
 }
 
 void ATUITapeViewControl::OnByteDecoded(uint32 startPos, uint32 endPos, uint8 data, bool framingError, uint32 cyclesPerHalfBit) {
@@ -1726,26 +1910,30 @@ void ATUITapeViewControl::OnByteDecoded(uint32 startPos, uint32 endPos, uint8 da
 	float samplesPerBit = (float)cyclesPerHalfBit * 2.0f / kATCassetteCyclesPerDataSample;
 
 	DecodedBlocks& dblocks = ch1.mDecodedBlocks;
-	if (dblocks.mBlocks.empty() || startPos - ch1.mSampleEnd > (uint32)(kATCassetteDataSampleRate / 20) || fabs(samplesPerBit - dblocks.mBlocks.back().mSamplesPerBit) > 0.1f) {
+	if (dblocks.mBlocks.empty() || startPos - ch1.mSampleEnd > (uint32)(kATCassetteDataSampleRate / 20)) {
 		auto& newdblock = dblocks.mBlocks.emplace_back(DecodedBlock());
 
 		newdblock.mSampleStart = startPos;
+		newdblock.mSampleEnd = startPos;
 		newdblock.mByteCount = 0;
 		newdblock.mChecksumPos = 0;
-		newdblock.mSamplesPerBit = samplesPerBit;
 
 		// (samples/sec) / (samples/bit) = (bits/sec)
-		newdblock.mBaudRate = kATCassetteDataSampleRate / newdblock.mSamplesPerBit;
+		newdblock.mBaudRate = kATCassetteDataSampleRate / samplesPerBit;
 
-		newdblock.mStartByte = (uint32)dblocks.mByteStartSamples.size();
+		newdblock.mStartByte = (uint32)dblocks.mByteData.size();
 		newdblock.mbValidFrame = false;
+		newdblock.mSuspiciousBit = 0;
+		newdblock.mbSuspiciousBitPolarity = false;
 
-		dblocks.mByteStartSamples.push_back(startPos);
-		dblocks.mByteData.push_back(0);
-		dblocks.mByteFramingErrors.push_back(false);
+		DecodedByte& dbyte = dblocks.mByteData.emplace_back();
+		dbyte.mStartSample = startPos;
+		dbyte.mData = 0;
+		dbyte.mFlags = DecodedByteFlags::None;
 
 		mSIOMonChecksum = 0;
 		mSIOMonFramingErrors = 0;
+		mSIOMonChecksumPos = kInvalidChecksumPos;
 	}
 
 	if (framingError)
@@ -1753,12 +1941,36 @@ void ATUITapeViewControl::OnByteDecoded(uint32 startPos, uint32 endPos, uint8 da
 
 	DecodedBlock& dblock = dblocks.mBlocks.back();
 
-	if (dblock.mByteCount >= 131 && mSIOMonChecksum == data) {
+	// We may not always get the sync bytes since the baud rate is not guaranteed to be
+	// set up, so try to autodetect the number of sync bytes we actually got.
+
+	if (dblock.mByteCount == 2) {
+		const DecodedByte *dbytes = &dblocks.mByteData[dblock.mStartByte];
+		
+		if (dbytes[0].mData == 0xFA || dbytes[0].mData == 0xFC || dbytes[0].mData == 0xFE) {
+			mSIOMonChecksumPos = 129;
+			mSIOMonChecksum = (mSIOMonChecksum + 0xAA - 1) % 255 + 1;
+		} else if (dbytes[1].mData == 0xFA || dbytes[1].mData == 0xFC || dbytes[1].mData == 0xFE) {
+			mSIOMonChecksumPos = 130;
+			mSIOMonChecksum = (mSIOMonChecksum + 0x55 - 1) % 255 + 1;
+		} else
+			mSIOMonChecksumPos = 131;
+	}
+
+	if (dblock.mByteCount >= mSIOMonChecksumPos && mSIOMonChecksum == data) {
 		if (!dblock.mbValidFrame || !mSIOMonFramingErrors)
 			dblock.mChecksumPos = dblock.mByteCount;
 
-		if (!mSIOMonFramingErrors)
+		if (!mSIOMonFramingErrors) {
 			dblock.mbValidFrame = true;
+			dblock.mSuspiciousBit = 0;
+			InvalidateRangeDeferred(dblock.mSampleStart, dblock.mSampleEnd);
+		}
+	}
+
+	if (dblock.mByteCount == mSIOMonChecksumPos && !dblock.mbValidFrame) {
+		if (TryIdentifySuspiciousBit(dblocks, dblock, 131 - mSIOMonChecksumPos, mSIOMonChecksumPos, data))
+			InvalidateRangeDeferred(dblock.mSampleStart, dblock.mSampleEnd);
 	}
 
 	const uint32 sum = (uint32)mSIOMonChecksum + data;
@@ -1767,15 +1979,30 @@ void ATUITapeViewControl::OnByteDecoded(uint32 startPos, uint32 endPos, uint8 da
 	++dblock.mByteCount;
 	dblock.mSampleEnd = endPos;
 
-	dblocks.mByteData.back() = data;
-	dblocks.mByteData.push_back(0);
+	DecodedByte& dbyte = dblocks.mByteData.back();
 
-	dblocks.mByteFramingErrors.back() = framingError;
-	dblocks.mByteFramingErrors.push_back(false);
+	dbyte.mData = data;
 
-	if (dblocks.mByteStartSamples.back() < startPos)
-		dblocks.mByteStartSamples.back() = startPos;
-	dblocks.mByteStartSamples.push_back(endPos);
+	if (framingError)
+		dbyte.mFlags |= DecodedByteFlags::FramingError;
+
+	if (dbyte.mStartSample < startPos)
+		dbyte.mStartSample = startPos;
+
+	uint32 bitPos = startPos;
+	uint32 bitPosFrac = (kATCassetteCyclesPerDataSample >> 1) + cyclesPerHalfBit;
+
+	for(int i=0; i<10; ++i) {
+		bitPos += bitPosFrac / kATCassetteCyclesPerDataSample;
+		bitPosFrac %= kATCassetteCyclesPerDataSample;
+
+		dbyte.mBitSampleOffsets[i] = bitPos - startPos;
+
+		bitPosFrac += 2*cyclesPerHalfBit;
+	}
+	
+	dblocks.mByteData.emplace_back();
+	dblocks.mByteData.back().mStartSample = endPos;
 
 	InvalidateRangeDeferred(ch1.mSampleEnd, endPos);
 	ch1.mSampleEnd = endPos;
@@ -1792,66 +2019,87 @@ void ATUITapeViewControl::DecodeFSK(uint32 start, uint32 end, bool stopOnFraming
 	uint32 pos = start;
 
 	while(pos < end) {
-		const auto firstStartBitInfo = mpImage->FindNextBit(pos, end, false, mbShowTurboData);
-		if (firstStartBitInfo.mBit)
-			break;
+		ATTapeSlidingWindowCursor cursor = mpCasEmu->GetFSKSampleCursor();
+		cursor.mbFSKBypass = mbShowTurboData;
 
-		uint32 blockStart = firstStartBitInfo.mPos;
-		uint32 blockEnd = end;
-		uint32 blockDataEnd = end;
+		// Poll for 19 sync bits within the allowed baud rates.
+		//
+		// States:
+		//  0		looking for mark
+		//  1		looking for space (leading edge of start bit)
+		//  2		measure sync byte 1 start bit
+		//  3-10	measure sync byte 1 data bits 0-7
+		// 11		measure sync byte 1 stop bit
+		// 12		measure sync byte 2 start bit
+		// 13-20	measure sync byte 2 data bits 0-7
+		//
+		uint32 syncState = 0;
+		uint32 syncStart = pos;
 
-		// profile bit widths until next gap or end to get a rough estimate of bit period
-		uint32 pos2 = blockStart;
-		bool nextPolarity = true;
-		uint32 numTalliedBits = 0;
-		uint32 bitPeriodSum = 0;
-		while(pos2 < end) {
-			const auto nextBitInfo = mpImage->FindNextBit(pos2, end - 1, nextPolarity, mbShowTurboData);
-
-			if (nextBitInfo.mPos - pos2 > kMaxBitLen * 10) {
-				blockEnd = nextBitInfo.mPos;
-				blockDataEnd = pos2;
+		while(syncState < 21) {
+			// find next transition
+			const auto nextSyncInfo = cursor.FindNext(*mpImage, pos, (syncState & 1) == 0, end - 1);
+			if (nextSyncInfo.mPos >= end) {
+				pos = end;
 				break;
 			}
 
-			uint32 dt = nextBitInfo.mPos - pos2;
-			if (dt && dt >= kMinBitLen && dt <= kMaxBitLen) {
-				++numTalliedBits;
-				bitPeriodSum += dt;
+			uint32 syncBitLen = nextSyncInfo.mPos - pos;
+
+			if (syncState >= 2 && (syncBitLen < kMinBitLen || syncBitLen > kMaxBitLen)) {
+				// If we got a long mark tone while looking for space, that's OK; proceed
+				// into state 2. However, if we got a long space tone while looking for
+				// mark, that's not OK and we should look for the next space.
+				if (syncBitLen < kMinBitLen)
+					syncState = (syncState + 1) & 1;
+				else
+					syncState = (syncState & 1) + 1;
+
+				syncStart = pos;
+			} else {
+				if (syncState == 2)
+					syncStart = pos;
+
+				++syncState;
 			}
 
-			nextPolarity = !nextPolarity;
-			pos2 = nextBitInfo.mPos;
+			pos = nextSyncInfo.mPos;
 		}
 
-		if (!numTalliedBits)
+		if (pos >= end)
 			break;
 
 		// compute approximate average bit length
-		float bitPeriodF = (float)bitPeriodSum / (float)numTalliedBits;
+		float bitPeriodF = (float)(pos - syncStart) / 19.0f;
 		uint32 bitPeriod = (uint32)VDRoundToInt(bitPeriodF);
+
+		ATTapeSlidingWindowCursor bitCursor = mpCasEmu->GetFSKBitCursor(bitPeriod >> 1);
+		bitCursor.mbFSKBypass = mbShowTurboData;
 
 		// restart and start parsing out bits
 		DecodedBlock& dblock = output.mBlocks.emplace_back();
-		dblock.mSampleStart = blockStart;
-		dblock.mSampleEnd = blockEnd;
+		dblock.mSampleStart = syncStart;
+		dblock.mSampleEnd = syncStart;
 		dblock.mStartByte = (uint32)output.mByteData.size();
 		dblock.mByteCount = 0;
 		dblock.mChecksumPos = 0;
 		dblock.mBaudRate = 0;
+		dblock.mSuspiciousBit = 0;
+		dblock.mbSuspiciousBitPolarity = false;
 
-		pos2 = blockStart;
+		uint32 pos2 = syncStart;
 
+		uint32 blockTimeout = bitPeriod * 20;
 		bool blockEndedEarly = false;
 		uint32 posLastByteEnd = pos2;
-		while(pos2 < blockEnd) {
-			const auto startBitInfo = mpImage->FindNextBit(pos2, blockEnd, false, mbShowTurboData);
+		while(pos2 < end) {
+			const auto startBitInfo = bitCursor.FindNext(*mpImage, pos2, false, end - 1);
 
-			if (startBitInfo.mPos >= blockEnd)
+			if (startBitInfo.mPos - pos2 > blockTimeout)
 				break;
 
 			// check that we have enough room to fit a full byte
-			if (blockEnd - pos2 < bitPeriod * 10) {
+			if (startBitInfo.mPos >= end || end - pos2 < bitPeriod * 10) {
 				blockEndedEarly = true;
 				break;
 			}
@@ -1860,7 +2108,7 @@ void ATUITapeViewControl::DecodeFSK(uint32 start, uint32 end, bool stopOnFraming
 			uint32 startBitPos = startBitInfo.mPos + (bitPeriod >> 1);
 
 			// sample start bit and verify that it's real
-			if (mpImage->GetBit(startBitPos, mbShowTurboData)) {
+			if (bitCursor.GetBit(*mpImage, startBitPos)) {
 				// not real -- skip it
 				pos2 = startBitPos;
 				posLastByteEnd = startBitPos;
@@ -1868,27 +2116,39 @@ void ATUITapeViewControl::DecodeFSK(uint32 start, uint32 end, bool stopOnFraming
 			}
 
 			// sample data bits
+			uint32 dataBitPos[8];
 			uint8 v = 0;
-			for(int i=0; i<8; ++i)
-				v = (v >> 1) + (mpImage->GetBit(startBitPos + (i + 1) * bitPeriod, mbShowTurboData) ? 0x80 : 0);
+			for(int i=0; i<8; ++i) {
+				dataBitPos[i] = startBitPos + (i + 1) * bitPeriod;
+				v = (v >> 1) + (bitCursor.GetBit(*mpImage, dataBitPos[i]) ? 0x80 : 0);
+			}
 
 			// sample stop bit and check for framing error
-			pos2 = startBitPos + 9 * bitPeriod;
+			uint32 stopBitPos = startBitPos + 9 * bitPeriod;
+			pos2 = stopBitPos;
 			posLastByteEnd = startBitInfo.mPos + 10 * bitPeriod;
 
-			if (!mpImage->GetBit(pos2, mbShowTurboData)) {
+			DecodedByteFlags flags = DecodedByteFlags::None;
+			if (!bitCursor.GetBit(*mpImage, pos2)) {
 				if (stopOnFramingError) {
 					blockEndedEarly = true;
 					break;
 				}
 
-				output.mByteFramingErrors.push_back(true);
-				pos2 = posLastByteEnd;
-			} else
-				output.mByteFramingErrors.push_back(false);
+				flags = DecodedByteFlags::FramingError;
+				pos2 = stopBitPos;
+			}
 
-			output.mByteStartSamples.push_back(startBitInfo.mPos);
-			output.mByteData.push_back(v);
+			DecodedByte& dbyte = output.mByteData.emplace_back();
+			dbyte.mFlags = flags;
+			dbyte.mStartSample = startBitInfo.mPos;
+			dbyte.mData = v;
+			dbyte.mBitSampleOffsets[0] = (uint16)(startBitPos - startBitInfo.mPos);
+
+			for(int i=0; i<8; ++i)
+				dbyte.mBitSampleOffsets[i+1] = (uint16)(dataBitPos[i] - startBitInfo.mPos);
+
+			dbyte.mBitSampleOffsets[9] = (uint16)(stopBitPos - startBitInfo.mPos);
 		}
 
 		if (output.mByteData.size() == dblock.mStartByte) {
@@ -1901,21 +2161,23 @@ void ATUITapeViewControl::DecodeFSK(uint32 start, uint32 end, bool stopOnFraming
 		// see if we can spot the checksum for a standard record (128+4 bytes),
 		// or a longer record with the same framing
 		if (dblock.mByteCount >= 132) {
-			const uint8 *data = output.mByteData.begin() + dblock.mStartByte;
-			const bool *frerrs = output.mByteFramingErrors.begin() + dblock.mStartByte;
+			const DecodedByte *data = output.mByteData.begin() + dblock.mStartByte;
 			uint32 sum = 0;
 
 			for(uint32 i = 0; i < 131; ++i)
-				sum += data[i];
+				sum += data[i].mData;
 
 			uint8 chk = sum ? (sum - 1) % 255 + 1 : 0;
-			bool framingOK = std::find(frerrs, frerrs + 131, true) == frerrs + 131;
+			bool framingOK = std::find_if(data, data + 131,
+				[](const DecodedByte& byteInfo) {
+					return (byteInfo.mFlags & DecodedByteFlags::FramingError) != DecodedByteFlags::None;
+				}) == data + 131;
 
 			for(uint32 i = 131; i < dblock.mByteCount; ++i) {
-				if (frerrs[i])
+				if ((data[i].mFlags & DecodedByteFlags::FramingError) != DecodedByteFlags::None)
 					framingOK = false;
 
-				const uint8 c = data[i];
+				const uint8 c = data[i].mData;
 
 				if (chk == c) {
 					if (framingOK || !dblock.mbValidFrame)
@@ -1925,15 +2187,20 @@ void ATUITapeViewControl::DecodeFSK(uint32 start, uint32 end, bool stopOnFraming
 						dblock.mbValidFrame = true;
 				}
 
-				sum = (uint32)chk + data[i];
+				sum = (uint32)chk + data[i].mData;
 				chk = (uint8)(sum + (sum >> 8));
 			}
+
+			if (!dblock.mbValidFrame)
+				TryIdentifySuspiciousBit(output, dblock, 0, 131, data[131].mData);
 		}
 
 		// push a dummy byte to delimit the last byte
-		output.mByteStartSamples.push_back(std::min(posLastByteEnd, blockEnd));
-		output.mByteData.push_back(0);
-		output.mByteFramingErrors.push_back(false);
+		pos = std::min(posLastByteEnd, end);
+		dblock.mSampleEnd = pos;
+		
+		DecodedByte& dbyte = output.mByteData.emplace_back();
+		dbyte.mStartSample = pos;
 
 		// compute ideal baud rate based on estimated bit period
 		const uint32 baudRateBitPeriod = (uint32)VDRoundToInt(kATCassetteDataSampleRate / bitPeriodF);
@@ -1941,20 +2208,19 @@ void ATUITapeViewControl::DecodeFSK(uint32 start, uint32 end, bool stopOnFraming
 		// compute ideal baud rate based on the sample range
 		const uint32 numBytes = dblock.mByteCount;
 		const uint32 numBits = 10 * numBytes;
-		const uint32 baudRateSampleRange = VDRoundToInt(kATCassetteDataSampleRate * (float)numBits / (float)(blockDataEnd - blockStart));
+		const uint32 baudRateSampleRange = VDRoundToInt(kATCassetteDataSampleRate * (float)numBits / (float)(dblock.mSampleEnd - dblock.mSampleStart));
 
 		// use the min the two
 		uint32 baudRate = std::min(baudRateBitPeriod, baudRateSampleRange);
 
-		dblock.mSamplesPerBit = bitPeriodF;
 		dblock.mBaudRate = baudRate;
 
 		// if the rounded baud rate causes us to go over, decrement it to fit
 		ATCassetteWriteCursor writeCursor;
-		writeCursor.mPosition = blockStart;
+		writeCursor.mPosition = syncStart;
 		for(int i=0; i<5; ++i) {
 			uint32 neededSamples = mpImage->EstimateWriteStdData(writeCursor, numBytes, baudRate);
-			if (neededSamples <= blockEnd - blockStart)
+			if (neededSamples <= pos - syncStart)
 				break;
 
 			--baudRate;
@@ -1963,8 +2229,215 @@ void ATUITapeViewControl::DecodeFSK(uint32 start, uint32 end, bool stopOnFraming
 
 		if (blockEndedEarly)
 			break;
+	}
+}
 
-		pos = blockEnd;
+void ATUITapeViewControl::DecodeFSK2(uint32 start, uint32 end, bool stopOnFramingError, DecodedBlocks& output) const {
+	// capture range is 450-900 baud
+	static constexpr uint32 kMinBitLen = (uint32)(kATCassetteDataSampleRate / 900.0f + 0.5f);
+	static constexpr uint32 kMaxBitLen = (uint32)(kATCassetteDataSampleRate / 450.0f + 0.5f);
+
+	if (start >= end)
+		return;
+
+	uint32 pos = start;
+
+	static constexpr uint32 kStdBitLenX256 = (uint32)(kATCassetteDataSampleRate * 256.0f / 600.0f + 0.5f);
+	static constexpr uint32 kStdByteLen = (uint32)(kATCassetteDataSampleRate * 10.0f / 600.0f + 0.5f);
+	uint32 bitWidthX256 = kStdBitLenX256;
+
+	sint32 bitError = 0;
+	ATTapeSlidingWindowCursor cursor = mpCasEmu->GetFSKSampleCursor();
+	cursor.mbFSKBypass = mbShowTurboData;
+
+	while(pos < end) {
+		bool blockEndedEarly = false;
+		DecodedBlock *dblock = nullptr;
+		uint32 lastByteEnd = pos;
+
+		while(pos < end) {
+			// find start transition
+			const auto nextSyncInfo = cursor.FindNext(*mpImage, pos, false, end - 1);
+			if (nextSyncInfo.mPos >= end) {
+				pos = end;
+				break;
+			}
+
+			// if we're beyond a byte's worth, reset the rate and close the last block if one was open
+			if (nextSyncInfo.mPos - lastByteEnd > kStdByteLen) {
+				bitWidthX256 = kStdBitLenX256;
+				pos = nextSyncInfo.mPos;
+				break;
+			}
+
+			// sample start bit and check if it is still low
+			uint32 bitSamplePos[10];
+
+			const uint32 startBitPos = nextSyncInfo.mPos;
+			pos = startBitPos + (bitWidthX256 >> 9);
+
+			if (pos >= end)
+				break;
+
+			bitSamplePos[0] = pos;
+			bool startBit = cursor.GetBit(*mpImage, pos);
+			if (startBit)
+				continue;
+
+			// read out 8 data bits and stop bit
+			uint32 accumX256 = 128;
+			uint32 shifter = 0;
+			bool lastBit = false;
+
+			for(int i=0; i<9; ++i) {
+				accumX256 += bitWidthX256;
+				uint32 next = pos + (accumX256 >> 8);
+				if (next >= end) {
+					pos = next;
+					break;
+				}
+
+				bitSamplePos[i+1] = next;
+				accumX256 &= 0xFF;
+				const auto sumAndNextInfo = cursor.GetBitSumAndNext(*mpImage, pos, next);
+
+				if (lastBit != sumAndNextInfo.mNextBit) {
+					lastBit = sumAndNextInfo.mNextBit;
+
+					uint32 bitLen = next - pos;
+					uint32 bitLenLo = (bitLen * 3 + 4) / 8;
+					uint32 bitLenHi = (bitLen * 5 + 4) / 8;
+					uint32 edgeSum = lastBit ? bitLen - sumAndNextInfo.mSum : sumAndNextInfo.mSum;
+
+					if (edgeSum < bitLenLo) {
+						if (bitError > 0)
+							bitError = 0;
+						else if (bitError > -10)
+							--bitError;
+
+						if (bitError <= -3) {
+							bitWidthX256 += 10 * (bitError + 2);
+							--pos;
+						}
+					} else if (edgeSum > bitLenHi) {
+						if (bitError < 0)
+							bitError = 0;
+						else if (bitError < 10)
+							++bitError;
+
+						if (bitError >= 3) {
+							bitWidthX256 += 10 * (bitError - 2);
+							++pos;
+						}
+					} else
+						bitError = 0;
+				}
+
+				shifter >>= 1;
+				if (sumAndNextInfo.mNextBit)
+					shifter += 0x100;
+
+				pos = next;
+				lastByteEnd = pos;
+			}
+
+			if (stopOnFramingError && !(shifter & 0x100)) {
+				blockEndedEarly = true;
+				break;
+			}
+
+			// open block if we don't already have one
+			if (!dblock) {
+				dblock = &output.mBlocks.emplace_back();
+				dblock->mSampleStart = startBitPos;
+				dblock->mSampleEnd = startBitPos;
+				dblock->mStartByte = (uint32)output.mByteData.size();
+				dblock->mByteCount = 0;
+				dblock->mChecksumPos = 0;
+				dblock->mBaudRate = 0;
+				dblock->mSuspiciousBit = 0;
+				dblock->mbSuspiciousBitPolarity = false;
+			}
+
+			DecodedByte& dbyte = output.mByteData.emplace_back();
+			dbyte.mData = (uint8)shifter;
+			dbyte.mFlags = shifter & 0x100 ? DecodedByteFlags::None : DecodedByteFlags::FramingError;
+			dbyte.mStartSample = nextSyncInfo.mPos;
+
+			for(int i=0; i<10; ++i)
+				dbyte.mBitSampleOffsets[i] = (uint16)(bitSamplePos[i] - dbyte.mStartSample);
+
+			++dblock->mByteCount;
+		}
+
+		if (!dblock)
+			continue;
+
+		// close current block
+		dblock->mSampleEnd = std::min(lastByteEnd + ((bitWidthX256 + 256) >> 9), pos);
+
+		// push a dummy byte to delimit the last byte
+		output.mByteData.emplace_back();
+		output.mByteData.back().mStartSample = dblock->mSampleEnd;
+
+		// see if we can spot the checksum for a standard record (128+4 bytes),
+		// or a longer record with the same framing
+		if (dblock->mByteCount >= 132) {
+			const DecodedByte *data = output.mByteData.begin() + dblock->mStartByte;
+			uint32 sum = 0;
+
+			for(uint32 i = 0; i < 131; ++i)
+				sum += data[i].mData;
+
+			uint8 chk = sum ? (sum - 1) % 255 + 1 : 0;
+			bool framingOK = std::find_if(data, data + 131,
+				[](const DecodedByte& dbyte) {
+					return (dbyte.mFlags & DecodedByteFlags::FramingError) != DecodedByteFlags::None;
+				}) == data + 131;
+
+			for(uint32 i = 131; i < dblock->mByteCount; ++i) {
+				if ((data[i].mFlags & DecodedByteFlags::FramingError) != DecodedByteFlags::None)
+					framingOK = false;
+
+				const uint8 c = data[i].mData;
+
+				if (chk == c) {
+					if (framingOK || !dblock->mbValidFrame)
+						dblock->mChecksumPos = i;
+
+					if (framingOK)
+						dblock->mbValidFrame = true;
+				}
+
+				sum = (uint32)chk + data[i].mData;
+				chk = (uint8)(sum + (sum >> 8));
+			}
+
+			if (!dblock->mbValidFrame)
+				TryIdentifySuspiciousBit(output, *dblock, 0, 131, data[131].mData);
+		}
+
+		// compute ideal baud rate based on the sample range
+		const uint32 numBytes = dblock->mByteCount;
+		const uint32 numBits = 10 * numBytes;
+		uint32 baudRate = VDRoundToInt(kATCassetteDataSampleRate * (float)numBits / (float)(dblock->mSampleEnd - dblock->mSampleStart));
+
+		// if the rounded baud rate causes us to go over, decrement it to fit
+		ATCassetteWriteCursor writeCursor;
+		writeCursor.mPosition = dblock->mSampleStart;
+		for(int i=0; i<5; ++i) {
+			uint32 neededSamples = mpImage->EstimateWriteStdData(writeCursor, numBytes, baudRate);
+			if (neededSamples <= pos - dblock->mSampleStart)
+				break;
+
+			--baudRate;
+			VDASSERT(i != 4);
+		}
+		
+		dblock->mBaudRate = baudRate;
+
+		if (blockEndedEarly)
+			break;
 	}
 }
 
@@ -2084,14 +2557,16 @@ void ATUITapeViewControl::DecodeT2000(uint32 start, uint32 end, DecodedBlocks& o
 					auto& dblock = output.mBlocks.emplace_back();
 					dblock.mSampleStart = byteStart;
 					dblock.mSampleEnd = pos;
-					dblock.mSamplesPerBit = 0;
 					dblock.mBaudRate = 0;
 					dblock.mStartByte = 0;
 					dblock.mByteCount = 0;
 					dblock.mChecksumPos = 0;
 					dblock.mbValidFrame = false;
+					dblock.mSuspiciousBit = 0;
+					dblock.mbSuspiciousBitPolarity = false;
 
-					output.mByteStartSamples.push_back(byteStart);
+					output.mByteData.emplace_back();
+					output.mByteData.back().mStartSample = byteStart;
 				}
 
 				auto& dblock2 = output.mBlocks.back();
@@ -2099,8 +2574,10 @@ void ATUITapeViewControl::DecodeT2000(uint32 start, uint32 end, DecodedBlocks& o
 				dblock2.mSampleEnd = pos;
 				++dblock2.mByteCount;
 
-				output.mByteStartSamples.push_back(pos);
-				output.mByteData.push_back(c);
+				output.mByteData.back().mData = c;
+
+				output.mByteData.emplace_back();
+				output.mByteData.back().mStartSample = pos;
 
 				state = State::Data0a;
 				break;
@@ -2111,20 +2588,52 @@ void ATUITapeViewControl::DecodeT2000(uint32 start, uint32 end, DecodedBlocks& o
 	if (!output.mBlocks.empty()) {
 		auto& dblock = output.mBlocks.back();
 
-		uint8 chk = output.mByteData[0];
+		uint8 chk = output.mByteData[0].mData;
 		uint32 n = dblock.mByteCount;
 		for(uint32 i = 1; i < n; ++i) {
-			chk ^= output.mByteData[i];
+			chk ^= output.mByteData[i].mData;
 
 			if (chk == 0) {
 				dblock.mChecksumPos = i;
 				dblock.mbValidFrame = true;
 			}
 		}
-
-		output.mByteData.push_back(0);
-		output.mByteFramingErrors.resize(output.mByteData.size(), false);
 	}
+}
+
+bool ATUITapeViewControl::TryIdentifySuspiciousBit(const DecodedBlocks& dblocks, DecodedBlock& dblock, uint32 forcedSyncBytes, uint32 checksumPos, uint8 receivedSum) {
+	if (dblock.mByteCount < checksumPos)
+		return false;
+
+	// See if we could identify a single bit error.
+	//
+	// Because the SIO checksum is a simple 1's complement sum, it is not possible to
+	// determine the bit position. What we can do instead is identify which bit is
+	// probably bad.
+	uint32 computedSum32 = forcedSyncBytes * 0x55;
+
+	for(uint32 i = 0; i < checksumPos; ++i)
+		computedSum32 += dblocks.mByteData[dblock.mStartByte + i].mData;
+
+	const uint8 computedSum = computedSum32 ? (uint8)((computedSum32 - 1) % 255 + 1) : 0xFF;
+
+	for(int bitPos = 0; bitPos < 8; ++bitPos) {
+		uint8 bit = 1 << bitPos;
+
+		if (computedSum == (255 - receivedSum >= bit ? receivedSum + bit : receivedSum + bit - 255)) {
+			dblock.mSuspiciousBit = (uint8)(bitPos + 1);
+			dblock.mbSuspiciousBitPolarity = true;
+			dblock.mChecksumPos = 131;
+			return true;
+		} else if (computedSum == (receivedSum > bit ? receivedSum - bit : receivedSum + 255 - bit)) {
+			dblock.mSuspiciousBit = (uint8)(bitPos + 1);
+			dblock.mbSuspiciousBitPolarity = false;
+			dblock.mChecksumPos = 131;
+			return true;
+		}
+	}
+
+	return false;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2174,6 +2683,7 @@ bool ATUITapeEditorDialog::OnLoaded() {
 	mToolbar.AddDropdownButton(kCmdId_ModeAnalyze, -1, L"Analyze");
 	mToolbar.AddSeparator();
 	mToolbar.AddButton(kCmdId_Delete, -1, L"Delete");
+	mToolbar.AddDropdownButton(kCmdId_Filter, -1, L"Filter");
 
 	mpTapeView->SetImage(g_sim.GetCassette().GetImage());
 	mpTapeView->SetCassetteEmulator(&g_sim.GetCassette());
@@ -2251,6 +2761,10 @@ bool ATUITapeEditorDialog::OnCommand(uint32 id, uint32 extcode) {
 			Copy();
 			return true;
 
+		case ID_EDIT_COPYDECODEDDATA:
+			CopyDecodedData();
+			return true;
+
 		case ID_EDIT_PASTE:
 			Paste();
 			return true;
@@ -2265,6 +2779,10 @@ bool ATUITapeEditorDialog::OnCommand(uint32 id, uint32 extcode) {
 
 		case ID_EDIT_REDO:
 			Redo();
+			return true;
+
+		case ID_EDIT_REPEATLASTANALYSIS:
+			mpTapeView->ReAnalyze();
 			return true;
 
 		case ID_EDIT_CONVERTTOSTANDARDBLOCK:
@@ -2306,12 +2824,12 @@ void ATUITapeEditorDialog::OnInitMenu(VDZHMENU hmenu) {
 	const bool hasImage = mpTapeView->GetImage() != nullptr;
 
 	const bool hasNonEmptySelection = hasImage && mpTapeView->HasNonEmptySelection();
-	const bool hasSelection = hasImage && mpTapeView->HasSelection();
 
 	VDEnableMenuItemByCommandW32(hmenu, ID_EDIT_UNDO, hasImage && mpTapeView->CanUndo());
 	VDEnableMenuItemByCommandW32(hmenu, ID_EDIT_REDO, hasImage && mpTapeView->CanRedo());
 	VDEnableMenuItemByCommandW32(hmenu, ID_EDIT_CUT, hasNonEmptySelection);
 	VDEnableMenuItemByCommandW32(hmenu, ID_EDIT_COPY, hasNonEmptySelection);
+	VDEnableMenuItemByCommandW32(hmenu, ID_EDIT_COPYDECODEDDATA, mpTapeView->HasDecodedData());
 	VDEnableMenuItemByCommandW32(hmenu, ID_EDIT_PASTE, hasImage && mpTapeView->HasClip());
 	VDEnableMenuItemByCommandW32(hmenu, ID_EDIT_DELETE, hasNonEmptySelection);
 	VDEnableMenuItemByCommandW32(hmenu, ID_DATA_EXTRACTCFILE, hasNonEmptySelection);
@@ -2320,11 +2838,13 @@ void ATUITapeEditorDialog::OnInitMenu(VDZHMENU hmenu) {
 	VDEnableMenuItemByCommandW32(hmenu, ID_FILE_SAVEASWAV, hasImage);
 
 	VDCheckMenuItemByCommandW32(hmenu, ID_VIEW_SHOWWAVEFORM, mpTapeView->GetShowWaveform());
+	VDCheckMenuItemByCommandW32(hmenu, ID_MONITOR_CAPTURESIO, mpTapeView->GetSIOMonitorEnabled());
 	VDCheckMenuItemByCommandW32(hmenu, ID_OPTIONS_STOREWAVEFORM, mpTapeView->GetStoreWaveformOnLoad());
 
 	const bool showTurbo = mpTapeView->GetShowTurboData();
-	VDEnableMenuItemByCommandW32(hmenu, ID_EDIT_CONVERTTOSTANDARDBLOCK, !showTurbo);
-	VDEnableMenuItemByCommandW32(hmenu, ID_EDIT_CONVERTTORAWBLOCK, !showTurbo);
+	VDEnableMenuItemByCommandW32(hmenu, ID_EDIT_CONVERTTOSTANDARDBLOCK, !showTurbo && hasNonEmptySelection);
+	VDEnableMenuItemByCommandW32(hmenu, ID_EDIT_CONVERTTORAWBLOCK, !showTurbo && hasNonEmptySelection);
+	
 	VDCheckRadioMenuItemByCommandW32(hmenu, ID_VIEW_FSKDATA, !showTurbo);
 	VDCheckRadioMenuItemByCommandW32(hmenu, ID_VIEW_TURBODATA, showTurbo);
 }
@@ -2364,7 +2884,8 @@ void ATUITapeEditorDialog::OnToolbarCommand(uint32 id) {
 			case kCmdId_ModeAnalyze:
 				{
 					static constexpr const wchar_t *kAnalyzeModes[] = {
-						L"FSK",
+						L"FSK (using sync)",
+						L"FSK (using PLL)",
 						L"T2000",
 						nullptr
 					};
@@ -2373,13 +2894,28 @@ void ATUITapeEditorDialog::OnToolbarCommand(uint32 id) {
 
 					if (index >= 0) {
 						mpTapeView->SetDrawMode(ATUITapeViewControl::DrawMode::Analyze);
-						mpTapeView->SetAnalysisEncoding((ATUITapeViewControl::Encoding)index);
+						mpTapeView->SetAnalysisDecoder((ATUITapeViewControl::Decoder)index);
 					}
 				};
 				break;
 
 			case kCmdId_Delete:
 				mpTapeView->Delete();
+				break;
+
+			case kCmdId_Filter:
+				{
+					static constexpr const wchar_t *kReconditionModes[] = {
+						L"FSK direct sample (~2000 baud)",
+						L"FSK direct sample (~1000 baud)",
+						nullptr
+					};
+
+					sint32 index = mToolbar.ShowDropDownMenu(kCmdId_Filter, kReconditionModes);
+
+					if (index >= 0)
+						mpTapeView->Filter((ATUITapeViewControl::FilterMode)index);
+				};
 				break;
 		}
 	} catch(const MyError& e) {
@@ -2439,7 +2975,7 @@ void ATUITapeEditorDialog::Load(const wchar_t *path) {
 
 	ATCassetteLoadContext ctx;
 	ctx.mTurboDecodeAlgorithm = cas.GetTurboDecodeAlgorithm();
-	ctx.mbStoreWaveform = true;
+	ctx.mbStoreWaveform = mpTapeView->GetStoreWaveformOnLoad();
 
 	vdrefptr<IATCassetteImage> image;
 	ATLoadCassetteImage(view->GetStream(), nullptr, ctx, ~image);
@@ -2453,6 +2989,16 @@ void ATUITapeEditorDialog::SaveAsCAS() {
 
 	if (!image)
 		return;
+
+	// scan the image to see if it has any trimmed standard blocks -- if so, issue warning
+	if (image->HasCASIncompatibleStdBlocks()) {
+		if (!Confirm2("SaveCASIncompatibleStdBlocks",
+			L"The current tape image contains standard data blocks that have been trimmed or split. These will be saved as FSK blocks instead, which will only work with programs that support raw FSK pulse data. Save anyway?",
+			L"Standard blocks will be converted"))
+		{
+			return;
+		}
+	}
 
 	const VDStringW& path = VDGetSaveFileName('cass', (VDGUIHandle)mhdlg, L"Save cassette tape", g_ATUIFileFilter_SaveTape, L"cas");
 	if (!path.empty()) {
@@ -2487,6 +3033,10 @@ void ATUITapeEditorDialog::Cut() {
 
 void ATUITapeEditorDialog::Copy() {
 	mpTapeView->Copy();
+}
+
+void ATUITapeEditorDialog::CopyDecodedData() {
+	mpTapeView->CopyDecodedData();
 }
 
 void ATUITapeEditorDialog::Paste() {
@@ -2578,14 +3128,18 @@ void ATUITapeEditorDialog::UpdateModeButtons() {
 }
 
 void ATUITapeEditorDialog::UpdateAnalyzeModeButton() {
-	const auto analysisEnc = mpTapeView->GetAnalysisEncoding();
+	const auto analysisEnc = mpTapeView->GetAnalysisDecoder();
 
 	switch(analysisEnc) {
-		case ATUITapeViewControl::Encoding::FSK:
-			mToolbar.SetItemText(kCmdId_ModeAnalyze, L"Analyze (FSK)");
+		case ATUITapeViewControl::Decoder::FSK_Sync:
+			mToolbar.SetItemText(kCmdId_ModeAnalyze, L"Analyze (FSK using sync)");
 			break;
 
-		case ATUITapeViewControl::Encoding::T2000:
+		case ATUITapeViewControl::Decoder::FSK_PLL:
+			mToolbar.SetItemText(kCmdId_ModeAnalyze, L"Analyze (FSK using PLL)");
+			break;
+
+		case ATUITapeViewControl::Decoder::T2000:
 			mToolbar.SetItemText(kCmdId_ModeAnalyze, L"Analyze (T2000)");
 			break;
 	}

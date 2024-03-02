@@ -32,12 +32,12 @@ void VDPixmapInitBlittersReference(VDPixmapBlitterTable& table);
 #define DECLARE_YUV_REV(x, y) void VDPixmapBlt_##x##_to_##y##_reference(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h)
 #define DECLARE_YUV_PLANAR(x, y) extern void VDPixmapBlt_##x##_to_##y##_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
 
-									DECLARE_RGB_ASM(RGB565,	  XRGB1555);	DECLARE_RGB_ASM_MMX(RGB565,   XRGB1555);
-									DECLARE_RGB_ASM(RGB888,   XRGB1555);
-									DECLARE_RGB_ASM(XRGB8888, XRGB1555);	DECLARE_RGB_ASM_MMX(XRGB8888, XRGB1555);
-									DECLARE_RGB_ASM(XRGB1555, RGB565);		DECLARE_RGB_ASM_MMX(XRGB1555, RGB565);
-									DECLARE_RGB_ASM(RGB888,   RGB565);
-									DECLARE_RGB_ASM(XRGB8888, RGB565);		DECLARE_RGB_ASM_MMX(XRGB8888, RGB565);
+									DECLARE_RGB(RGB565,	  XRGB1555);		DECLARE_RGB_ASM_MMX(RGB565,   XRGB1555);
+									DECLARE_RGB(RGB888,   XRGB1555);
+									DECLARE_RGB(XRGB8888, XRGB1555);		DECLARE_RGB_ASM_MMX(XRGB8888, XRGB1555);
+									DECLARE_RGB(XRGB1555, RGB565);			DECLARE_RGB_ASM_MMX(XRGB1555, RGB565);
+									DECLARE_RGB(RGB888,   RGB565);
+									DECLARE_RGB(XRGB8888, RGB565);			DECLARE_RGB_ASM_MMX(XRGB8888, RGB565);
 DECLARE_RGB(XRGB1555, RGB888);
 DECLARE_RGB(RGB565,   RGB888);
 									DECLARE_RGB_ASM(XRGB8888, RGB888);		DECLARE_RGB_ASM_MMX(XRGB8888, RGB888);
@@ -69,7 +69,6 @@ DECLARE_YUV(Y8, YUYV);
 DECLARE_YUV(UYVY, Y8);
 DECLARE_YUV(YUYV, Y8);
 DECLARE_YUV(UYVY, YUYV);
-DECLARE_YUV_PLANAR(YUV411, YV12);
 
 DECLARE_YUV(UYVY, XRGB1555);
 DECLARE_YUV(UYVY, RGB565);
@@ -99,11 +98,6 @@ DECLARE_YUV_PLANAR(YV12, RGB565);
 DECLARE_YUV_PLANAR(YV12, RGB888);
 DECLARE_YUV_PLANAR(YV12, XRGB8888);
 
-DECLARE_YUV_PLANAR(YUV411, XRGB1555);
-DECLARE_YUV_PLANAR(YUV411, RGB565);
-DECLARE_YUV_PLANAR(YUV411, RGB888);
-DECLARE_YUV_PLANAR(YUV411, XRGB8888);
-
 extern void VDCDECL VDPixmapBlt_YUVPlanar_decode_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
 extern void VDCDECL VDPixmapBlt_YUVPlanar_encode_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
 extern void VDCDECL VDPixmapBlt_YUVPlanar_convert_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
@@ -112,17 +106,6 @@ using namespace nsVDPixmap;
 
 void VDPixmapInitBlittersX86(VDPixmapBlitterTable& table) {
 	VDPixmapInitBlittersReference(table);
-
-	table.AddBlitter(kPixFormat_XRGB1555,	kPixFormat_RGB565,		VDPixmapBlitterChunkyAdapter<vdasm_pixblt_XRGB1555_to_RGB565>);
-	table.AddBlitter(kPixFormat_XRGB1555,	kPixFormat_XRGB8888,	VDPixmapBlitterChunkyAdapter<vdasm_pixblt_XRGB1555_to_XRGB8888>);
-	table.AddBlitter(kPixFormat_RGB565,		kPixFormat_XRGB1555,	VDPixmapBlitterChunkyAdapter<vdasm_pixblt_RGB565_to_XRGB1555>);
-	table.AddBlitter(kPixFormat_RGB565,		kPixFormat_XRGB8888,	VDPixmapBlitterChunkyAdapter<vdasm_pixblt_RGB565_to_XRGB8888>);
-	table.AddBlitter(kPixFormat_RGB888,		kPixFormat_XRGB1555,	VDPixmapBlitterChunkyAdapter<vdasm_pixblt_RGB888_to_XRGB1555>);
-	table.AddBlitter(kPixFormat_RGB888,		kPixFormat_RGB565,		VDPixmapBlitterChunkyAdapter<vdasm_pixblt_RGB888_to_RGB565>);
-	table.AddBlitter(kPixFormat_RGB888,		kPixFormat_XRGB8888,	VDPixmapBlitterChunkyAdapter<vdasm_pixblt_RGB888_to_XRGB8888>);
-	table.AddBlitter(kPixFormat_XRGB8888,	kPixFormat_XRGB1555,	VDPixmapBlitterChunkyAdapter<vdasm_pixblt_XRGB8888_to_XRGB1555>);
-	table.AddBlitter(kPixFormat_XRGB8888,	kPixFormat_RGB565,		VDPixmapBlitterChunkyAdapter<vdasm_pixblt_XRGB8888_to_RGB565>);
-	table.AddBlitter(kPixFormat_XRGB8888,	kPixFormat_RGB888,		VDPixmapBlitterChunkyAdapter<vdasm_pixblt_XRGB8888_to_RGB888>);
 }
 
 tpVDPixBltTable VDGetPixBltTableX86ScalarInternal() {

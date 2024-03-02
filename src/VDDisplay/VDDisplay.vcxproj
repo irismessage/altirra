@@ -42,6 +42,7 @@
     <ClCompile Include="source\fontgdi.cpp" />
     <ClCompile Include="source\logging.cpp" />
     <ClCompile Include="source\minid3dx.cpp" />
+    <ClCompile Include="source\options.cpp" />
     <ClCompile Include="source\rendercache.cpp" />
     <ClCompile Include="source\renderer.cpp" />
     <ClCompile Include="source\renderer3d.cpp" />
@@ -68,6 +69,7 @@
     <ClInclude Include="h\vd2\VDDisplay\internal\fontbitmap.h" />
     <ClInclude Include="h\vd2\VDDisplay\internal\fontgdi.h" />
     <ClInclude Include="h\renderer3d.h" />
+    <ClInclude Include="h\vd2\VDDisplay\internal\options.h" />
     <ClInclude Include="h\vd2\VDDisplay\internal\renderergdi.h" />
     <ClInclude Include="h\stdafx.h" />
     <ClInclude Include="..\h\vd2\VDDisplay\compositor.h" />

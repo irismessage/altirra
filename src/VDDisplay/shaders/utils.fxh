@@ -82,4 +82,8 @@ float3 SrgbToLinear(float3 c) {
 	return c < 0.04045f ? c / 12.92f : pow((c + 0.055f) / 1.055f, 2.4f);
 }
 
+float3 LinearToSrgb(float3 c) {
+	return c < 0.0031308f ? c * 12.92f : 1.055f * pow(c, 1.0f / 2.4f) - 0.055f;
+}
+
 #endif

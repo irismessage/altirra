@@ -25,15 +25,17 @@ uint32 g_ATOptionsSaveSuspended;
 ATOptions::ATOptions()
 	: mbDirty(false)
 	, mbDisplayD3D9(true)
-	, mbDisplay3D(false)
+	, mbDisplay3D(true)
 	, mbDisplay16Bit(false)
+	, mbDisplayAccelScreenFX(true)
+	, mbDisplayCustomRefresh(false)
 	, mbSingleInstance(false)
 	, mbPauseDuringMenu(false)
 	, mbLaunchAutoProfile(true)
 	, mThemeScale(100)
 	, mbDarkTheme(false)
 	, mErrorMode(kATErrorMode_Dialog)
-	, mbFullScreenBorderless(false)
+	, mbFullScreenBorderless(true)
 	, mFullScreenWidth(0)
 	, mFullScreenHeight(0)
 	, mFullScreenRefreshRate(0)
@@ -95,6 +97,7 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "Display: 3D", opts.mbDisplay3D);
 	ATOptionsExchange(key, write, "Display: Use 16-bit surfaces", opts.mbDisplay16Bit);
 	ATOptionsExchange(key, write, "Display: Accelerate screen FX", opts.mbDisplayAccelScreenFX);
+	ATOptionsExchange(key, write, "Display: Use seamless custom refresh rate", opts.mbDisplayCustomRefresh);
 	ATOptionsExchangeEnum(key, write, "Simulator: Error mode", opts.mErrorMode, kATErrorModeCount);
 	ATOptionsExchange(key, write, "Display: Full screen mode width", opts.mFullScreenWidth);
 	ATOptionsExchange(key, write, "Display: Full screen mode height", opts.mFullScreenHeight);

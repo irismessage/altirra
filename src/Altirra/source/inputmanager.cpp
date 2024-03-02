@@ -105,6 +105,7 @@ bool ATInputMap::UsesPhysicalPort(int portIdx) const {
 			case kATInputControllerType_5200Trackball:
 			case kATInputControllerType_Driving:
 			case kATInputControllerType_Keyboard:
+			case kATInputControllerType_LightGun:
 				if (c.mIndex == portIdx)
 					return true;
 				break;
@@ -268,11 +269,7 @@ void ATInputMap::Save(VDRegistryKey& key, const char *name) {
 ///////////////////////////////////////////////////////////////////////
 
 ATInputManager::ATInputManager()
-	: mpSlowScheduler(NULL)
-	, mpFastScheduler(NULL)
-	, mpLightPen(NULL)
-	, mAllocatedUnits(0)
-	, mpCB(NULL)
+	: mAllocatedUnits(0)
 	, m5200ControllerIndex(0)
 	, mb5200PotsEnabled(true)
 	, mb5200Mode(false)
@@ -281,9 +278,6 @@ ATInputManager::ATInputManager()
 	, mbMouseActiveTarget(false)
 	, mMouseAvgIndex(0)
 {
-	mpPorts[0] = NULL;
-	mpPorts[1] = NULL;
-
 	std::fill(mMouseAvgQueue, mMouseAvgQueue + sizeof(mMouseAvgQueue)/sizeof(mMouseAvgQueue[0]), 0x20002000);
 	std::fill(mpUnitNameSources, mpUnitNameSources + vdcountof(mpUnitNameSources), (IATInputUnitNameSource *)NULL);
 }
@@ -291,12 +285,12 @@ ATInputManager::ATInputManager()
 ATInputManager::~ATInputManager() {
 }
 
-void ATInputManager::Init(ATScheduler *fastSched, ATScheduler *slowSched, ATPortController *porta, ATPortController *portb, ATLightPenPort *lightPen) {
+void ATInputManager::Init(ATScheduler *fastSched, ATScheduler *slowSched, ATPokeyEmulator& pokey, IATDevicePortManager& portMgr, ATLightPenPort *lightPen) {
+	mpPokey = &pokey;
 	mpLightPen = lightPen;
 	mpSlowScheduler = slowSched;
 	mpFastScheduler = fastSched;
-	mpPorts[0] = porta;
-	mpPorts[1] = portb;
+	mpPortMgr = &portMgr;
 }
 
 void ATInputManager::Shutdown() {
@@ -346,6 +340,9 @@ void ATInputManager::ResetToDefaults() {
 				case kATInputControllerType_AmigaMouse:
 				case kATInputControllerType_Keypad:
 				case kATInputControllerType_Trackball_CX80_V1:
+				case kATInputControllerType_Driving:
+				case kATInputControllerType_Keyboard:
+				case kATInputControllerType_LightGun:
 					if (mb5200Mode)
 						goto reject;
 					break;
@@ -367,10 +364,14 @@ void ATInputManager::Select5200Controller(int index, bool potsEnabled) {
 }
 
 void ATInputManager::SelectMultiJoy(int multiIndex) {
-	if (multiIndex < 0)
-		mpPorts[0]->SetMultiMask(0xFF);
-	else
-		mpPorts[0]->SetMultiMask(1 << multiIndex);
+	const uint8 mask = multiIndex < 0 ? 0xFF : 1 << multiIndex;
+	
+	if (mMultiMask != mask) {
+		mMultiMask = mask;
+
+		for(const ControllerInfo& ci : mInputControllers)
+			ci.mpInputController->SelectMultiJoy(mask);
+	}
 }
 
 void ATInputManager::Update5200Controller() {
@@ -900,9 +901,15 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 		L"# Key",
 	};
 
+	static const wchar_t *const kLightGunButtons[]={
+		L"Gun trigger",
+		nullptr,
+		L"On-screen",
+	};
+
 	static const wchar_t *const kLightPenButtons[]={
-		L"Gun trigger / inverted pen switch",
-		L"Secondary button",
+		L"Pen tip switch",
+		nullptr,
 		L"On-screen",
 	};
 
@@ -947,8 +954,19 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 
 				case kATInputControllerType_LightPen:
 					if (index < sizeof(kLightPenButtons)/sizeof(kLightPenButtons[0])) {
-						name = kLightPenButtons[index];
-						return;
+						if (kLightPenButtons[index]) {
+							name = kLightPenButtons[index];
+							return;
+						}
+					}
+					break;
+
+				case kATInputControllerType_LightGun:
+					if (index < sizeof(kLightGunButtons)/sizeof(kLightGunButtons[0])) {
+						if (kLightGunButtons[index]) {
+							name = kLightGunButtons[index];
+							return;
+						}
 					}
 					break;
 
@@ -1115,6 +1133,7 @@ bool ATInputManager::IsAnalogTrigger(uint32 code, ATInputControllerType type) co
 
 	switch(type) {
 		case kATInputControllerType_LightPen:
+		case kATInputControllerType_LightGun:
 			switch(code) {
 				case kATInputTrigger_Up:
 				case kATInputTrigger_Down:
@@ -1458,11 +1477,6 @@ void ATInputManager::RebuildMappings() {
 	mbMouseAbsMode = false;
 	mbMouseMapped = false;
 	mbMouseActiveTarget = false;
-
-	for(int i=0; i<2; ++i) {
-		if (mpPorts[i])
-			mpPorts[i]->ResetPotPositions();
-	}
 	
 	uint32 triggerCount = 0;
 
@@ -1514,9 +1528,9 @@ void ATInputManager::RebuildMappings() {
 							ATJoystickController *joy = new ATJoystickController;
 
 							if (c.mIndex >= 4)
-								joy->Attach(mpPorts[0], false, c.mIndex - 4);
+								joy->Attach(*mpPortMgr, 0, c.mIndex - 4);
 							else
-								joy->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0, -1);
+								joy->Attach(*mpPortMgr, c.mIndex, -1);
 
 							pic = joy;
 						}
@@ -1528,7 +1542,7 @@ void ATInputManager::RebuildMappings() {
 							ATMouseController *mouse = new ATMouseController(c.mType == kATInputControllerType_AmigaMouse);
 
 							mouse->Init(mpSlowScheduler);
-							mouse->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0);
+							mouse->Attach(*mpPortMgr, c.mIndex);
 
 							pic = mouse;
 						}
@@ -1539,7 +1553,7 @@ void ATInputManager::RebuildMappings() {
 							ATPaddleController *paddle = new ATPaddleController;
 
 							paddle->SetHalf((c.mIndex & 1) != 0);
-							paddle->Attach(mpPorts[c.mIndex >> 2], (c.mIndex & 2) != 0);
+							paddle->Attach(*mpPortMgr, c.mIndex >> 1);
 
 							pic = paddle;
 						}
@@ -1548,7 +1562,7 @@ void ATInputManager::RebuildMappings() {
 					case kATInputControllerType_Console:
 						{
 							ATConsoleController *console = new ATConsoleController(this);
-							console->Attach(mpPorts[0], false);
+							console->Attach(*mpPortMgr, 0);
 							pic = console;
 						}
 						break;
@@ -1556,8 +1570,8 @@ void ATInputManager::RebuildMappings() {
 					case kATInputControllerType_5200Controller:
 					case kATInputControllerType_5200Trackball:
 						if (c.mIndex < 4) {
-							AT5200ControllerController *ctrl = new AT5200ControllerController(c.mIndex, c.mType == kATInputControllerType_5200Trackball);
-							ctrl->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0);
+							AT5200ControllerController *ctrl = new AT5200ControllerController(c.mIndex, c.mType == kATInputControllerType_5200Trackball, *mpPokey);
+							ctrl->Attach(*mpPortMgr, c.mIndex);
 							pic = ctrl;
 						}
 						break;
@@ -1569,12 +1583,12 @@ void ATInputManager::RebuildMappings() {
 						}
 						break;
 
-					case kATInputControllerType_LightPen:
+					case kATInputControllerType_LightGun:
 						if (c.mIndex < 4) {
-							ATLightPenController *lp = new ATLightPenController;
+							ATLightPenController *lp = new ATLightPenController(ATLightPenController::Type::LightGun);
 
 							lp->Init(mpFastScheduler, mpLightPen);
-							lp->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0);
+							lp->Attach(*mpPortMgr, c.mIndex);
 
 							pic = lp;
 						}
@@ -1584,7 +1598,7 @@ void ATInputManager::RebuildMappings() {
 						if (c.mIndex < 4) {
 							ATTabletController *tc = new ATTabletController(228, true);
 
-							tc->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0);
+							tc->Attach(*mpPortMgr, c.mIndex);
 
 							pic = tc;
 						}
@@ -1594,7 +1608,7 @@ void ATInputManager::RebuildMappings() {
 						if (c.mIndex < 4) {
 							ATTabletController *tc = new ATTabletController(0, false);
 
-							tc->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0);
+							tc->Attach(*mpPortMgr, c.mIndex);
 
 							pic = tc;
 						}
@@ -1604,7 +1618,7 @@ void ATInputManager::RebuildMappings() {
 						if (c.mIndex < 4) {
 							ATKeypadController *kpc = new ATKeypadController;
 
-							kpc->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0);
+							kpc->Attach(*mpPortMgr, c.mIndex);
 
 							pic = kpc;
 						}
@@ -1615,7 +1629,7 @@ void ATInputManager::RebuildMappings() {
 							ATTrackballController *trakball = new ATTrackballController;
 
 							trakball->Init(mpSlowScheduler);
-							trakball->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0);
+							trakball->Attach(*mpPortMgr, c.mIndex);
 
 							pic = trakball;
 						}
@@ -1626,9 +1640,9 @@ void ATInputManager::RebuildMappings() {
 							ATDrivingController *drv = new ATDrivingController;
 
 							if (c.mIndex >= 4)
-								drv->Attach(mpPorts[0], false, c.mIndex - 4);
+								drv->Attach(*mpPortMgr, 0, c.mIndex - 4);
 							else
-								drv->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0, -1);
+								drv->Attach(*mpPortMgr, c.mIndex, -1);
 
 							pic = drv;
 						}
@@ -1638,13 +1652,26 @@ void ATInputManager::RebuildMappings() {
 						if (c.mIndex < 4) {
 							ATKeyboardController *kbc = new ATKeyboardController;
 
-							kbc->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0, -1);
+							kbc->Attach(*mpPortMgr, c.mIndex, -1);
 							pic = kbc;
+						}
+						break;
+
+					case kATInputControllerType_LightPen:
+						if (c.mIndex < 4) {
+							ATLightPenController *lp = new ATLightPenController(ATLightPenController::Type::LightPen);
+
+							lp->Init(mpFastScheduler, mpLightPen);
+							lp->Attach(*mpPortMgr, c.mIndex);
+
+							pic = lp;
 						}
 						break;
 				}
 
 				if (pic) {
+					pic->SelectMultiJoy(mMultiMask);
+
 					controllerMap.insert(ControllerMap::value_type(code, (int)mInputControllers.size()));
 					controllerTable[i] = (int)mInputControllers.size();
 
@@ -2301,7 +2328,7 @@ const ATInputManager::PresetMapDef ATInputManager::kPresetMapDefs[] = {
 	{
 		false, false, L"Mouse -> Light Gun (XG-1)", -1,
 		{
-			{ kATInputControllerType_LightPen, 0 },
+			{ kATInputControllerType_LightGun, 0 },
 		},
 		{
 			{ kATInputCode_MouseBeamX,		0, kATInputTrigger_Axis0 },
@@ -2318,8 +2345,7 @@ const ATInputManager::PresetMapDef ATInputManager::kPresetMapDefs[] = {
 		{
 			{ kATInputCode_MouseBeamX,		0, kATInputTrigger_Axis0 },
 			{ kATInputCode_MouseBeamY,		0, kATInputTrigger_Axis0+1 },
-			{ kATInputCode_MouseLMB,		0, kATInputTrigger_Button0 | kATInputTriggerMode_Inverted },
-			{ kATInputCode_MouseRMB,		0, kATInputTrigger_Button0+1 },
+			{ kATInputCode_MouseLMB,		0, kATInputTrigger_Button0 },
 			{ kATInputCode_None,			0, kATInputTrigger_Button0+2 | kATInputTriggerMode_Inverted },
 		}
 	},

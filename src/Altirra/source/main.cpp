@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2009-2021 Avery Lee
+//	Copyright (C) 2009-2022 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -11,9 +11,8 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
 #include <windows.h>
@@ -27,6 +26,7 @@
 #include <ole2.h>
 #include <uxtheme.h>
 #include <winsock2.h>
+#include <dwmapi.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/filesys.h>
@@ -74,6 +74,7 @@
 #include <at/atnativeui/progress.h>
 #include <at/atnativeui/theme.h>
 #include <at/atnativeui/uiframe.h>
+#include <at/atnativeui/uipane.h>
 #include <at/atcore/device.h>
 #include <at/atcore/propertyset.h>
 #include <at/atdebugger/target.h>
@@ -130,7 +131,37 @@
 #include "directorywatcher.h"
 
 #include "firmwaremanager.h"
-#include <at/atcore/devicemanager.h>
+#include "devicemanager.h"
+#include "startuplogger.h"
+
+#include <sdkddkver.h>
+
+// Wine64 5.7 on macOS has a critical problem with its ABI emulation where it
+// can't properly emulate TEB access through the GS: selector due to macOS
+// already using it for pthread local storage. It tries to work around this
+// by hijacking the slots as gs:[30h] and gs:[58h] for the self and thread-
+// local-storage pointers. Unfortunately, this runs afoul of code in the UCRT
+// that directly accesses gs:[60h] to get to the PEB for Windows Runtime
+// support... so, despite us not caring about UWP, we're screwed by this
+// compatibility issue. The result is a null pointer crash in
+// _beginthreadex(), typically when we try to spin up the display manager.
+//
+// Ultimately, this is a really bad bug that Wine64 needs to fix. It is
+// rumored to be fixed in Crossover 20 betas, but in the meantime, while we
+// don't *offically* support Wine or macOS, we have some users with that
+// configuration anyway.
+//
+// In the Windows 10.0.22621.0 SDK, this has been fixed by the UCRT now
+// using NtCurrentTeb() instead of reading gs:[60h] directly. The check below
+// is to ensure that we are using at least 10.0.22621.0.
+//
+// More info:
+//	https://bugs.winehq.org/show_bug.cgi?id=49802
+//	https://developercommunity.visualstudio.com/t/64-bit-EXEs-built-with-VS2019-crash-unde/1248753
+//
+#ifndef NTDDI_WIN10_NI
+#error Windows 11 SDK 10.0.22621.0 or higher is required.
+#endif
 
 #pragma comment(lib, "comctl32")
 #pragma comment(lib, "shlwapi")
@@ -139,6 +170,10 @@
 #pragma comment(lib, "ole32")
 #pragma comment(lib, "comdlg32")
 #pragma comment(lib, "advapi32")
+#pragma comment(lib, "dwmapi")
+
+void ATUIInitControlStylesW32();
+void ATUIShutdownControlStylesW32();
 
 void ATUITriggerButtonDown(uint32 vk);
 void ATUITriggerButtonUp(uint32 vk);
@@ -173,6 +208,7 @@ void ATUISaveRegistry(const wchar_t *fnpath);
 void ATUIMigrateSettings();
 
 void ATRegisterDevices(ATDeviceManager& dm);
+void ATRegisterDeviceXCmds(ATDeviceManager& dm);
 
 void ATInitEmuErrorHandler(VDGUIHandle h, ATSimulator *sim);
 void ATShutdownEmuErrorHandler();
@@ -213,14 +249,62 @@ void LoadBaselineSettings();
 void ATUICreateMainWindow(ATContainerWindow **);
 void ATUILinkMainWindowToSimulator(ATContainerWindow& w);
 void ATUIUnlinkMainWindowFromSimulator();
+void ATUIResetDisplay();
 
 ///////////////////////////////////////////////////////////////////////////////
 
 ATConfigVarBool g_ATCVEngineUseWaitableTimer("engine.use_waitable_timer", true);
+ATConfigVarBool g_ATCVEngineUseWaitableTimerHighRes("engine.use_waitable_timer_high_res", true);
+ATConfigVarFloat g_ATCVEngineSlowmoScale("engine.slowmo_scale", 0.5);
 ATConfigVarInt32 g_ATCVEngineTurboFPSDivisor("engine.turbo_fps_divisor", 16);
-ATConfigVarBool g_ATCVEngineAllowDisplayLibraryOverrides = ATConfigVarBool("engine.allow_display_library_overrides", false,
+ATConfigVarBool g_ATCVEngineAllowDisplayLibraryOverrides("engine.allow_display_library_overrides", false,
 	[] {
 		VDDSetLibraryOverridesEnabled(g_ATCVEngineAllowDisplayLibraryOverrides);
+	}
+);
+
+ATConfigVarBool g_ATCVDisplayShowDebugInfo("display.show_debug_info", false,
+	[] {
+		VDVideoDisplaySetDebugInfoEnabled(g_ATCVDisplayShowDebugInfo);
+	}
+);
+
+ATConfigVarBool g_ATCVDisplayDXFlipMode("display.dx.use_flip", true,
+	[] {
+		VDVideoDisplaySetDXFlipModeEnabled(g_ATCVDisplayDXFlipMode);
+		ATUIResetDisplay();
+	}
+);
+
+ATConfigVarBool g_ATCVDisplayDXFlipDiscard("display.dx.use_flip_discard", true,
+	[] {
+		VDVideoDisplaySetDXFlipDiscardEnabled(g_ATCVDisplayDXFlipDiscard);
+		ATUIResetDisplay();
+	}
+);
+
+ATConfigVarBool g_ATCVDisplayDXWaitableObject("display.dx.use_waitable_object", true,
+	[] {
+		VDVideoDisplaySetDXWaitableObjectEnabled(g_ATCVDisplayDXWaitableObject);
+		ATUIResetDisplay();
+	}
+);
+
+ATConfigVarBool g_ATCVDisplayDXDoNotWait("display.dx.use_do_not_wait", true,
+	[] {
+		VDVideoDisplaySetDXDoNotWaitEnabled(g_ATCVDisplayDXDoNotWait);
+		ATUIResetDisplay();
+	}
+);
+
+ATConfigVarFloat g_ATCVDisplayVSyncAdaptivePScale("display.vsync_adaptive.p_scale", 0.04f);
+ATConfigVarFloat g_ATCVDisplayVSyncAdaptiveTargetOffset("display.vsync_adaptive.target_offset", 8.0f);
+ATConfigVarFloat g_ATCVDisplayVSyncAdaptivePAdapt("display.vsync_adaptive.p_adapt", 0.15f);
+ATConfigVarFloat g_ATCVDisplayVSyncAdaptivePClamp("display.vsync_adaptive.p_clamp", 2.0f);
+
+ATConfigVarFloat g_ATCVAudioGTIAVolumeOverride("audio.speaker_vol_override", -1.0f,
+	[] {
+		g_sim.GetPokey().SetSpeakerVolumeOverride(g_ATCVAudioGTIAVolumeOverride);
 	}
 );
 
@@ -269,6 +353,7 @@ ATUIKeyboardOptions g_kbdOpts = {
 };
 
 ATDisplayFilterMode g_dispFilterMode = kATDisplayFilterMode_SharpBilinear;
+float g_dispCustomRefreshRate;
 int g_dispFilterSharpness = +1;
 int g_enhancedText = 0;
 LOGFONTW g_enhancedTextFont;
@@ -336,15 +421,24 @@ void ATUIExit(bool forceNoConfirm) {
 		::SendMessage(g_hwnd, WM_CLOSE, 0, 0);
 }
 
+void ATUIResetDisplay() {
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (pane)
+		pane->ResetDisplay();
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 ATFrameRateMode g_frameRateMode = kATFrameRateMode_Hardware;
+bool	g_frameRateVSyncAdaptive = false;
 float	g_speedModifier;
 uint8	g_speedFlags;
 sint64	g_frameTicks;
 uint32	g_frameSubTicks;
 sint64	g_frameErrorBound;
 sint64	g_frameTimeout;
+float	g_frameRefreshPeriod;
+float	g_frameCorrectionFactor;
 
 void ATUIUpdateSpeedTiming() {
 	// NTSC: 1.7897725MHz master clock, 262 scanlines of 114 clocks each
@@ -362,31 +456,69 @@ void ATUIUpdateSpeedTiming() {
 		{ 1.0 / 60.0000, 1.0 / 50.0000, 1.0 / 50.0 },
 	};
 
-	const bool hz50 = (g_sim.GetVideoStandard() != kATVideoStandard_NTSC) && (g_sim.GetVideoStandard() != kATVideoStandard_PAL60);
-	const bool isSECAM = (g_sim.GetVideoStandard() == kATVideoStandard_SECAM);
+	const auto vstd = g_sim.GetVideoStandard();
+	const bool hz50 = vstd != kATVideoStandard_NTSC && vstd != kATVideoStandard_PAL60;
+	const bool isSECAM = vstd == kATVideoStandard_SECAM;
 	const int tableIndex = isSECAM ? 2 : hz50 ? 1 : 0;
 	double rawSecondsPerFrame = kPeriods[g_frameRateMode][tableIndex];
-	
+
+	float customRefreshRate = g_ATOptions.mbDisplayCustomRefresh ? (float)(1.0 / rawSecondsPerFrame) : 0.0f;
+
+	if (g_dispCustomRefreshRate != customRefreshRate) {
+		g_dispCustomRefreshRate = customRefreshRate;
+
+		IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+		if (pane)
+			pane->UpdateCustomRefreshRate();
+	}
+
 	const double cyclesPerSecond = kMasterClocks[tableIndex] * kPeriods[0][tableIndex] / rawSecondsPerFrame;
 
 	double rate = 1.0;
 	
 	if (!g_sim.IsTurboModeEnabled()) {
-		rate = g_speedModifier + 1.0;
+		rate = std::max<double>(0, g_speedModifier + 1.0);
 		if (g_speedFlags & (kATUISpeedFlags_Slow | kATUISpeedFlags_SlowPulse))
-			rate *= 0.5;
+			rate *= g_ATCVEngineSlowmoScale;
 	}
 
-	g_sim.GetAudioOutput()->SetCyclesPerSecond(cyclesPerSecond, 1.0 / rate);
+	rate = std::clamp<double>(rate, 0.01, 100.0);
+
+	IATAudioOutput *audioOutput = g_sim.GetAudioOutput();
+	if (audioOutput)
+		audioOutput->SetCyclesPerSecond(cyclesPerSecond, 1.0 / rate);
+
 	double secondsPerFrame = rawSecondsPerFrame / rate;
 
 	double secondTime = VDGetPreciseTicksPerSecond();
-	double frameTimeF = secondTime * secondsPerFrame;
+	double frameTimeF;
+
+	if (g_frameRateVSyncAdaptive && g_frameRefreshPeriod > 0 && g_frameRefreshPeriod > secondsPerFrame * 0.98f && g_frameRefreshPeriod < secondsPerFrame * 1.02f)
+		frameTimeF = secondTime * ((g_frameRefreshPeriod ? g_frameRefreshPeriod : secondsPerFrame) + g_frameCorrectionFactor);
+	else
+		frameTimeF = secondTime * secondsPerFrame;
 
 	g_frameTicks = VDFloorToInt64(frameTimeF);
 	g_frameSubTicks = VDRoundToInt32((frameTimeF - g_frameTicks) * 65536.0);
 	g_frameErrorBound = std::max<sint64>(2 * g_frameTicks, VDRoundToInt64(secondTime * 0.1f));
 	g_frameTimeout = std::max<sint64>(5 * g_frameTicks, VDGetPreciseTicksPerSecondI());
+}
+
+void ATUIAdaptSpeedTiming(const VDDVSyncStatus& vss) {
+	if (!g_frameRateVSyncAdaptive)
+		return;
+
+	g_frameRefreshPeriod = vss.mRefreshRate > 0 ? 1.0f / vss.mRefreshRate : 0;
+
+	if (vss.mOffset >= 0) {
+		float error = vss.mOffset - g_ATCVDisplayVSyncAdaptiveTargetOffset / 1000.0f;
+		float clamp = g_ATCVDisplayVSyncAdaptivePClamp / 1000.0f;
+
+		g_frameCorrectionFactor -= g_ATCVDisplayVSyncAdaptivePAdapt * (g_frameCorrectionFactor - std::clamp<float>(error * g_ATCVDisplayVSyncAdaptivePScale, -clamp, clamp));
+	} else
+		g_frameCorrectionFactor = 0;
+
+	ATUIUpdateSpeedTiming();
 }
 
 ATFrameRateMode ATUIGetFrameRateMode() {
@@ -396,6 +528,23 @@ ATFrameRateMode ATUIGetFrameRateMode() {
 void ATUISetFrameRateMode(ATFrameRateMode mode) {
 	if (g_frameRateMode != mode) {
 		g_frameRateMode = mode;
+
+		g_frameRefreshPeriod = 0;
+		g_frameCorrectionFactor = 0;
+
+		ATUIUpdateSpeedTiming();
+	}
+}
+
+bool ATUIGetFrameRateVSyncAdaptive() {
+	return g_frameRateVSyncAdaptive;
+}
+
+void ATUISetFrameRateVSyncAdaptive(bool enable) {
+	if (g_frameRateVSyncAdaptive != enable) {
+		g_frameRateVSyncAdaptive = enable;
+
+		g_sim.GetGTIA().SetVsyncAdaptiveEnabled(enable);
 
 		ATUIUpdateSpeedTiming();
 	}
@@ -1355,7 +1504,7 @@ void ATSetFullscreen(bool fs) {
 	ATFrameWindow *frame = NULL;
 
 	if (dispPane) {
-		HWND parent = ::GetParent(dispPane->GetHandleW32());
+		HWND parent = ::GetParent(dispPane->AsNativeWindow().GetHandleW32());
 
 		if (parent) {
 			frame = ATFrameWindow::GetFrameWindow(parent);
@@ -1368,6 +1517,8 @@ void ATSetFullscreen(bool fs) {
 	if (fs == g_fullscreen)
 		return;
 
+	g_pMainWindow->SuspendLayout();
+
 	bool displayFS = fs && !g_ATOptions.mbFullScreenBorderless;
 
 	ATUISetNativeDialogMode(!displayFS);
@@ -1377,6 +1528,11 @@ void ATSetFullscreen(bool fs) {
 		frame->SetFullScreen(fs);
 
 	g_fullscreenDisplay = displayFS;
+
+	// Disable animations during the transition. This particularly avoids an ugly bounce due to the
+	// Win7 restore workaround.
+	const BOOL forceDisabledTrue = TRUE;
+	DwmSetWindowAttribute(g_hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &forceDisabledTrue, sizeof forceDisabledTrue);
 
 	DWORD style = GetWindowLong(g_hwnd, GWL_STYLE);
 	if (fs) {
@@ -1459,6 +1615,11 @@ void ATSetFullscreen(bool fs) {
 	}
 
 	g_winCaptionUpdater->SetFullScreen(g_fullscreen);
+
+	const BOOL forceDisabledFalse = FALSE;
+	DwmSetWindowAttribute(g_hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &forceDisabledFalse, sizeof forceDisabledFalse);
+
+	g_pMainWindow->ResumeLayout();
 }
 
 bool ATUICanManipulateWindows() {
@@ -1748,7 +1909,25 @@ void Paste(const wchar_t *s, size_t len, bool useCooldown) {
 				break;
 
 			default:
-				if (!ATUIGetDefaultScanCodeForCharacter(c, scancode))
+				if (ATUIGetDefaultScanCodeForCharacter(c, scancode)) {
+					// For control characters $1B-1F and $7B-7F, we need to inject an
+					// ESC as these characters are intended to be visible. They've
+					// already been converted to scancode, however, which we must
+					// match by here.
+					switch(scancode) {
+						case 0x1C:	// escape
+						case 0x8E:	// up arrow
+						case 0x8F:	// down arrow
+						case 0x86:	// left arrow
+						case 0x87:	// right arrow
+						case 0x82:	// spade
+						case 0x76:	// curved arrow up-left
+						case 0x34:	// tall left arrow
+						case 0x2C:	// tall right arrow
+							pokey.PushKey(0x1C /*esc*/, false, true, false, useCooldown);
+							break;
+					}
+				} else
 					scancode = kInvalidScancode;
 
 				break;
@@ -2040,13 +2219,25 @@ void OnCommandEditSaveFrameTrueAspect() {
 void OnCommandEditCopyText() {
 	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
 	if (pane)
-		pane->Copy(false);
+		pane->Copy(ATTextCopyMode::ASCII);
 }
 
 void OnCommandEditCopyEscapedText() {
 	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
 	if (pane)
-		pane->Copy(true);
+		pane->Copy(ATTextCopyMode::Escaped);
+}
+
+void OnCommandEditCopyHex() {
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (pane)
+		pane->Copy(ATTextCopyMode::Hex);
+}
+
+void OnCommandEditCopyUnicode() {
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (pane)
+		pane->Copy(ATTextCopyMode::Unicode);
 }
 
 void OnCommandEditPasteText() {
@@ -2567,7 +2758,6 @@ void OnCommandRecordVideo() {
 		int py = 2;
 		gtia.GetPixelAspectMultiple(px, py);
 
-		const bool pal = g_sim.GetVideoStandard() != kATVideoStandard_NTSC && g_sim.GetVideoStandard() != kATVideoStandard_PAL60;
 		double par = 1.0f;
 		
 		if (aspectRatioMode != ATVideoRecordingAspectRatioMode::None) {
@@ -3598,11 +3788,30 @@ int RunMainLoop2(HWND hwnd) {
 
 	int rcode = 0;
 	bool lastIsRunning = false;
+	bool waitingForFrameReady = false;
 
 	HANDLE hTimer = nullptr;
 
-	if (g_ATCVEngineUseWaitableTimer)
-		hTimer = CreateWaitableTimer(nullptr, FALSE, nullptr);
+	if (g_ATCVEngineUseWaitableTimer) {
+		if (g_ATCVEngineUseWaitableTimerHighRes) {
+			// This requires at least Windows 10 1803 (RS4) or later.
+			if (VDIsAtLeast10_1803W32())
+				hTimer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+		}
+
+		if (!hTimer)
+			hTimer = CreateWaitableTimer(nullptr, FALSE, nullptr);
+	}
+
+	g_sim.SetOnAdvanceUnblocked(
+		[&] {
+			if (waitingForFrameReady) {
+				waitingForFrameReady = false;
+
+				PostThreadMessage(GetCurrentThreadId(), WM_NULL, 0, 0);
+			}
+		}
+	);
 
 	g_pATIdle = [&](bool modalLoop) -> bool {
 		if (modalLoop && g_ATOptions.mbPauseDuringMenu)
@@ -3631,6 +3840,7 @@ int RunMainLoop2(HWND hwnd) {
 			lastIsRunning = isRunning;
 		}
 
+		const bool turbo = g_sim.IsTurboModeEnabled();
 		if (isRunning && (g_winActive || !g_pauseInactive)) {
 			uint64 curTime;
 			bool curTimeValid = false;
@@ -3640,6 +3850,9 @@ int RunMainLoop2(HWND hwnd) {
 			uint32 frame = antic.GetPresentedFrameCounter();
 			if (frame != lastFrame) {
 				CheckRecordingExceptions();
+
+				if (g_pDisplay)
+					ATUIAdaptSpeedTiming(g_pDisplay->GetVSyncStatus());
 
 				IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
 				if (pane)
@@ -3693,7 +3906,7 @@ int RunMainLoop2(HWND hwnd) {
 					error = -g_frameTicks;
 
 				nextFrameTimeValid = false;
-				if (g_sim.IsTurboModeEnabled())
+				if (turbo)
 					error = 0;
 				else if (error < 0) {
 					nextFrameTimeValid = true;
@@ -3712,7 +3925,7 @@ int RunMainLoop2(HWND hwnd) {
 			}
 
 			bool dropFrame = g_sim.IsTurboModeEnabled() && (lastFrame % std::clamp<uint32>(g_ATCVEngineTurboFPSDivisor, 1, 100)) != 0;
-			if (nextFrameTimeValid) {
+			if (!turbo && nextFrameTimeValid) {
 				if (hTimer) {
 					ATProfileBeginRegion(kATProfileRegion_Idle);
 					bool timerElapsed = ::MsgWaitForMultipleObjects(1, &hTimer, FALSE, INFINITE, QS_ALLINPUT) == WAIT_OBJECT_0;
@@ -3740,9 +3953,6 @@ int RunMainLoop2(HWND hwnd) {
 						if (msToDelay <= 0) {
 							// sub-1ms delay not possible, so just render frame
 							nextFrameTimeValid = false;
-						} else if (g_sim.IsTurboModeEnabled()) {
-							// turbo mode, render frame but allow frame drop
-							dropFrame = true;
 						} else {
 							// delay to next frame
 							ATProfileBeginRegion(kATProfileRegion_Idle);
@@ -3767,8 +3977,10 @@ int RunMainLoop2(HWND hwnd) {
 				updateScreenPending = false;
 
 				if (ar == ATSimulator::kAdvanceResult_WaitingForFrame) {
+					waitingForFrameReady = true;
+
 					ATProfileBeginRegion(kATProfileRegion_IdleFrameDelay);
-					::MsgWaitForMultipleObjects(0, NULL, FALSE, 1, QS_ALLINPUT);
+					::MsgWaitForMultipleObjects(0, NULL, FALSE, INFINITE, QS_ALLINPUT);
 					ATProfileEndRegion(kATProfileRegion_IdleFrameDelay);
 				}
 			}
@@ -3819,6 +4031,10 @@ int RunMainLoop2(HWND hwnd) {
 
 	}
 
+	g_sim.SetOnAdvanceUnblocked(nullptr);
+
+	g_pATIdle = nullptr;
+
 	if (hTimer)
 		CloseHandle(hTimer);
 
@@ -3841,7 +4057,7 @@ int RunMainLoop(HWND hwnd) {
 	return rc;
 }
 
-int RunInstance(int nCmdShow, class ATStartupLogger&, ATSettingsCategory categoriesToIgnore);
+int RunInstance(int nCmdShow, ATSettingsCategory categoriesToIgnore);
 
 void ATUISetCommandLine(const wchar_t *s) {
 	g_ATCmdLine.Init(s);
@@ -4066,398 +4282,8 @@ void ATInitRand() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATStartupLogger {
-public:
-	~ATStartupLogger() {
-		sCrashLogger = nullptr;
-		sHookLogger = nullptr;
-	}
-
-	void Init(const wchar_t *channels) {
-		mbEnabled = true;
-
-		// attach to parent console if we can, otherwise allocate a new one
-		if (!AttachConsole(ATTACH_PARENT_PROCESS))
-			AllocConsole();
-
-		DWORD actual;
-		WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), "\r\n", 2, &actual, nullptr);
-
-		mStartTick = VDGetPreciseTick();
-		mLastMsgTick = mStartTick;
-
-		ATSetExceptionPreFilter(ExceptionPreFilter);
-
-		sCrashLogger = this;
-
-		OSVERSIONINFOW osinfo { sizeof(OSVERSIONINFOW) };
-#pragma warning(push)
-#pragma warning(disable:4996)
-		if (GetVersionExW(&osinfo)) {
-#pragma warning(pop)
-			VDStringA s;
-			s.sprintf("Windows %u.%u.%u"
-				, osinfo.dwMajorVersion
-				, osinfo.dwMinorVersion
-				, osinfo.dwBuildNumber
-			);
-
-			Log(s.c_str());
-		}
-
-		if (channels && *channels) {
-			VDStringRefW s(channels);
-			VDStringA channelName;
-
-			for(;;) {
-				VDStringRefW token;
-				bool last = !s.split(L',', token);
-
-				if (last)
-					token = s;
-
-				bool found = false;
-				if (token.comparei(L"hostwinmsg") == 0) {
-					// special case -- hook message loop and log window messages
-					if (!sHookLogger) {
-						sHookLogger = this;
-						sMsgHook = SetWindowsHookExW(WH_CALLWNDPROC, LogWindowMessage, VDGetLocalModuleHandleW32(), GetCurrentThreadId());
-						sMsgHookRet = SetWindowsHookExW(WH_CALLWNDPROCRET, LogWindowMessageRet, VDGetLocalModuleHandleW32(), GetCurrentThreadId());
-					}
-
-					found = true;
-				} else if (token.comparei(L"time") == 0) {
-					mbShowTimeDeltas = true;
-					found = true;
-				} else {
-					for(ATLogChannel *p = ATLogGetFirstChannel();
-						p;
-						p = ATLogGetNextChannel(p))
-					{
-						if (token.comparei(VDTextU8ToW(VDStringSpanA(p->GetName()))) == 0) {
-							p->SetEnabled(true);
-							found = true;
-							break;
-						}
-					}
-				}
-
-				if (!found)
-					Log("Warning: A log channel specified in /startuplog was not found.");
-
-				if (last)
-					break;
-			}
-		}
-	}
-
-	bool IsEnabled() const {
-		return mbEnabled;
-	}
-
-	void Log(const char *msg) {
-		Log(VDStringSpanA(msg));
-	}
-
-	void Log(VDStringSpanA msg) {
-		if (mbEnabled) {
-			DWORD actual;
-			HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
-			char buf[32];
-
-			const uint64 t = VDGetPreciseTick();
-			const double scale = VDGetPreciseSecondsPerTick();
-			snprintf(buf, 32, "[%6.3f] ", (double)(t - mStartTick) * scale);
-			buf[31] = 0;
-
-			WriteFile(h, buf, (DWORD)strlen(buf), &actual, nullptr);
-
-			if (mbShowTimeDeltas) {
-				snprintf(buf, 32, "[%+6.3f] ", (double)(t - mLastMsgTick) * scale);
-				buf[31] = 0;
-
-				WriteFile(h, buf, (DWORD)strlen(buf), &actual, nullptr);
-
-				mLastMsgTick = t;
-			}
-
-			WriteFile(h, msg.data(), (DWORD)msg.size(), &actual, nullptr);
-			WriteFile(h, "\r\n", 2, &actual, nullptr);
-		}
-	}
-
-	static LRESULT CALLBACK LogWindowMessage(int code, WPARAM localSendFlag, LPARAM msgInfo) {
-		if (sHookLogger) {
-			CWPSTRUCT& cwp = *(CWPSTRUCT *)msgInfo;
-
-			VDStringA s;
-
-#if VD_PTR_SIZE > 4
-			s.sprintf("HOSTWINMSG: %c %08X %08X %016llX %016llX", localSendFlag ? L'S' : L'P',
-				(unsigned)(uintptr)cwp.hwnd,
-				(unsigned)cwp.message,
-				(unsigned long long)cwp.wParam,
-				(unsigned long long)cwp.lParam);
-#else
-			s.sprintf("HOSTWINMSG: %c %08X %08X %08X %08X", localSendFlag ? L'S' : L'P',
-				(unsigned)cwp.hwnd,
-				(unsigned)cwp.message,
-				(unsigned)cwp.wParam,
-				(unsigned)cwp.lParam);
-#endif
-
-			sHookLogger->Log(s);
-		}
-
-		return CallNextHookEx(sMsgHook, code, localSendFlag, msgInfo);
-	}
-
-	static LRESULT CALLBACK LogWindowMessageRet(int code, WPARAM localSendFlag, LPARAM msgInfo) {
-		if (sHookLogger) {
-			CWPRETSTRUCT& cwp = *(CWPRETSTRUCT *)msgInfo;
-
-			VDStringA s;
-
-#if VD_PTR_SIZE > 4
-			s.sprintf("HOSTWINMSG: R %08X %08X %016llX %016llX -> %016llX",
-				(unsigned)(uintptr)cwp.hwnd,
-				(unsigned)cwp.message,
-				(unsigned long long)cwp.wParam,
-				(unsigned long long)cwp.lParam,
-				(unsigned long long)cwp.lResult
-			);
-#else
-			s.sprintf("HOSTWINMSG: R %08X %08X %08X %08X -> %08X",
-				(unsigned)cwp.hwnd,
-				(unsigned)cwp.message,
-				(unsigned)cwp.wParam,
-				(unsigned)cwp.lParam,
-				(unsigned)cwp.lResult
-			);
-#endif
-
-			sHookLogger->Log(s);
-		}
-
-		return CallNextHookEx(sMsgHookRet, code, localSendFlag, msgInfo);
-	}
-
-	static void ExceptionPreFilter(DWORD code, const EXCEPTION_POINTERS *exptrs) {
-		// kill window message hook logging, we do not want to log any messages that
-		// might arrive due to the message box
-		sHookLogger = nullptr;
-
-		HMODULE hmod = VDGetLocalModuleHandleW32();
-		VDStringA s;
-
-#ifdef VD_CPU_X86
-		s.sprintf("CRASH: Code: %08X  PC: %08X  ExeBase: %08X", code, exptrs->ContextRecord->Eip, (unsigned)hmod);
-#elif defined(VD_CPU_AMD64)
-		s.sprintf("CRASH: Code: %08X  PC: %08X`%08X  ExeBase: %08X`%08X"
-			, code
-			, (unsigned)(exptrs->ContextRecord->Rip >> 32)
-			, (unsigned)exptrs->ContextRecord->Rip
-			, (unsigned)((uintptr)hmod >> 32)
-			, (unsigned)(uintptr)hmod
-		);
-#elif defined(VD_CPU_ARM64)
-		s.sprintf("CRASH: Code: %08X  PC: %08X`%08X  ExeBase: %08X`%08X"
-			, code
-			, (unsigned)(exptrs->ContextRecord->Pc >> 32)
-			, (unsigned)exptrs->ContextRecord->Pc
-			, (unsigned)((uintptr)hmod >> 32)
-			, (unsigned)(uintptr)hmod
-		);
-#else
-	#error Platform not supported
-#endif
-
-		sCrashLogger->Log(s);
-
-#if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
-		MEMORY_BASIC_INFORMATION mbi {};
-		if (VirtualQuery(hmod, &mbi, sizeof mbi)) {
-			// try to determine extent
-			uintptr extent = 0;
-			while(mbi.AllocationBase == hmod && mbi.RegionSize > 0) {
-				extent += mbi.RegionSize;
-
-				if (!VirtualQuery((char *)hmod + extent, &mbi, sizeof mbi))
-					break;
-
-				// we shouldn't be this big, if we are then something's wrong
-				if ((extent | mbi.RegionSize) >= 0x10000000)
-					break;
-			}
-
-#ifdef VD_CPU_X86
-			const uintptr *sp = (const uintptr *)exptrs->ContextRecord->Esp;
-#elif defined(VD_CPU_AMD64)
-			const uintptr *sp = (const uintptr *)exptrs->ContextRecord->Rsp;
-#endif
-
-			int n = 0;
-			for(int i=0; i<500; ++i) {
-				bool valid = true;
-
-				// can't mix EH types in the same function, so...
-				uintptr v = [p = &sp[i], &valid]() -> uintptr {
-					__try {
-						return *p;
-					} __except(EXCEPTION_EXECUTE_HANDLER) {
-						valid = false;
-						return 0;
-					}
-				}();
-
-				if (!valid)
-					break;
-
-				// check if stack entry is within EXE range
-				uintptr offset = v - (uintptr)hmod;
-				if (offset < extent) {
-					// check if stack entry is in executable code
-					if (VirtualQuery((LPCVOID)v, &mbi, sizeof mbi) && (mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))) {
-						s.sprintf("CRASH: [%2d] exe+%08X", n, (unsigned)offset);
-						sCrashLogger->Log(s);
-
-						if (++n >= 30)
-							break;
-					}
-				}
-			}
-		}
-#endif
-	}
-
-	static ATStartupLogger *sCrashLogger;
-	static ATStartupLogger *sHookLogger;
-	static HHOOK sMsgHook;
-	static HHOOK sMsgHookRet;
-
-	bool mbEnabled = false;
-	bool mbShowTimeDeltas = false;
-	uint64 mStartTick = 0;
-	uint64 mLastMsgTick = 0;
-};
-
-ATStartupLogger *ATStartupLogger::sCrashLogger;
-ATStartupLogger *ATStartupLogger::sHookLogger;
-HHOOK ATStartupLogger::sMsgHook;
-HHOOK ATStartupLogger::sMsgHookRet;
-
 #ifdef ATNRELEASE
 extern int ATTestMain();
-#endif
-
-#ifdef VD_CPU_X64
-
-extern "C" {
-	void __cdecl __acrt_get_process_end_policy();
-	void __cdecl __acrt_get_begin_thread_init_policy();
-}
-
-VDNOINLINE void ATEnableWin64MacOSWorkaround(ATStartupLogger& logger) {
-	// Wine64 5.7 on macOS has a critical problem with its ABI emulation where it
-	// can't properly emulate TEB access through the GS: selector due to macOS
-	// already using it for pthread local storage. It tries to work around this
-	// by hijacking the slots as gs:[30h] and gs:[58h] for the self and thread-
-	// local-storage pointers. Unfortunately, this runs afoul of code in the UCRT
-	// that directly accesses gs:[60h] to get to the PEB for Windows Runtime
-	// support... so, despite us not caring about UWP, we're screwed by this
-	// compatibility issue. The result is a null pointer crash in
-	// _beginthreadex(), typically when we try to spin up the display manager.
-	//
-	// Ultimately, this is a really bad bug that Wine64 needs to fix. It is
-	// rumored to be fixed in Crossover 20 betas, but in the meantime, while we
-	// don't *offically* support Wine or macOS, we have some users that are kind
-	// of stuck.
-	//
-	// To hack around it, we first check whether the environment has this problem
-	// by checking whether the direct TEB access returns the same PEB pointer as
-	// going through the TEB->Self pointer. This is a safe access because even
-	// Wine64 on macOS does set up a proper TEB/PEB. This check will pass under
-	// Windows or any environment where Wine64 can set up proper GS: addressing,
-	// such as Linux. If that check fails, then we scan the code segments around
-	// the pertinent UCRT functions for this offending instruction:
-	//
-	//		mov rax, qword ptr gs:[60h]
-	//
-	// ...and replace it with a call that effectively does NtCurrentTeb()->Peb instead:
-	//
-	//		call read_peb_indirect
-	//
-	//	read_peb_indirect:
-	//		mov rax, qword ptr gs:[30h]
-	//		mov rax, qword ptr [rax+60h]
-	//		ret
-	//
-	// As this is super ugly nasty hackery, currently this is opt-in only via
-	// the /macwine64hack switch or if Wine is detected by NTDLL export.
-	//
-	// More info:
-	//	https://bugs.winehq.org/show_bug.cgi?id=49802
-	//	https://developercommunity.visualstudio.com/t/64-bit-EXEs-built-with-VS2019-crash-unde/1248753
-
-	const auto readPebIndirect = []() -> unsigned long long {
-		unsigned long long tebSelf = __readgsqword(0x30);
-		unsigned long long pebIndirect = *(const unsigned long long *)(tebSelf + 0x60);
-
-		return pebIndirect;
-	};
-	
-	logger.Log("Wine64 on macOS hack enabled -- checking GS: access to TEB.");
-
-	unsigned long long pebDirect = __readgsqword(0x60);
-
-	if (pebDirect == readPebIndirect()) {
-		logger.Log("GS segment register points to proper TEB, no hack required.");
-	} else {
-		logger.Log("GS segment register points to bogus TEB, patching UCRT code.");
-
-		char *routines[2] {
-			(char *)__acrt_get_begin_thread_init_policy,
-			(char *)__acrt_get_process_end_policy
-		};
-
-		static const uint8 kBadCodeSequence[] = {
-			// mov rax,qword ptr gs:[60h]
-			0x65, 0x48, 0x8B, 0x04, 0x25, 0x60, 0x00, 0x00, 0x00
-		};
-
-		for (char *p : routines) {
-			for (int i=0; i<256; ++i) {
-				if (!memcmp(p + i, kBadCodeSequence, vdcountof(kBadCodeSequence))) {
-					// We got a hit. Encode a CALL rel32 instruction to the corrective thunk
-					// and patch it into the code segment.
-
-					uint8 fixSequence[] = {
-						// CALL rel32
-						0xE8, 0x00, 0x00, 0x00, 0x00,
-
-						// NOP dword ptr [rax]
-						0x0F, 0x1F, 0x40, 0x00
-					};
-
-					static_assert(vdcountof(kBadCodeSequence) == vdcountof(fixSequence));
-
-					uint32 offset = (uint32)((uint64)(unsigned long long (*)())readPebIndirect - (uint64)(p + i + 5));
-					memcpy(&fixSequence[1], &offset, 4);
-
-					// patch the code segment
-					DWORD dwOldProtect = 0;
-					if (VirtualProtect(p + i, vdcountof(kBadCodeSequence), PAGE_EXECUTE_READWRITE, &dwOldProtect)) {
-						memcpy(p + i, fixSequence, vdcountof(fixSequence));
-
-						DWORD dwOldProtect2 = 0;
-						VirtualProtect(p + i, vdcountof(kBadCodeSequence), dwOldProtect, &dwOldProtect2);
-					}
-					break;
-				}
-			}
-		}
-	}
-}
 #endif
 
 int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
@@ -4474,8 +4300,6 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 		return ATTestMain();
 #endif
 
-	ATStartupLogger startupLogger;
-
 	ATSaveRegisterTypes();
 	ATInitSaveStateDeserializer();
 
@@ -4489,26 +4313,9 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 
 	const wchar_t *token = nullptr;
 	if (g_ATCmdLine.FindAndRemoveSwitch(L"startuplog", token)) {
-		startupLogger.Init(token);
-		startupLogger.Log("Startup logging enabled.");
+		ATStartupLogInit(token);
+		ATStartupLog("Startup logging enabled.");
 	}
-
-#ifdef VD_CPU_X64
-	if (!g_ATCmdLine.FindAndRemoveSwitch(L"nomacwine64hack")) {
-		bool doTebCheck = g_ATCmdLine.FindAndRemoveSwitch(L"macwine64hack");
-
-		if (!doTebCheck) {
-			const HMODULE hmodNtdll = GetModuleHandleW(L"ntdll");
-			if (hmodNtdll && GetProcAddress(hmodNtdll, "wine_get_version")) {
-				startupLogger.Log("Wine detected -- checking TEB for Wine bug 49802.");
-				doTebCheck = true;
-			}
-		}
-
-		if (doTebCheck)
-			ATEnableWin64MacOSWorkaround(startupLogger);
-	}
-#endif
 
 	if (g_ATCmdLine.FindAndRemoveSwitch(L"fullheapdump"))
 		ATExceptionFilterSetFullHeapDump(true);
@@ -4517,7 +4324,7 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 
 	VDInitThunkAllocator();
 
-	startupLogger.Log("Initializing OLE.");
+	ATStartupLog("Initializing OLE.");
 	OleInitialize(NULL);
 
 	ATInitRand();
@@ -4526,11 +4333,27 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 	InitCommonControls();
 	BufferedPaintInit();
 
-	startupLogger.Log("Initializing themes");
+	ATStartupLog("Initializing themes");
 	ATUIInitThemes();
+	ATUIInitControlStylesW32();
+
+	extern void ATUITemporarilyMountVHDImageImplW32(VDZHWND hwnd, const wchar_t *path, bool readOnly);
 
 	int rval = 0;
-	if (g_ATCmdLine.FindAndRemoveSwitch(L"showfileassocdlg", token)) {
+
+	bool mountRO = g_ATCmdLine.FindAndRemoveSwitch(L"mountvhdro", token);
+	bool mountRW = !mountRO && g_ATCmdLine.FindAndRemoveSwitch(L"mountvhdrw", token);
+
+	if (mountRO || mountRW) {
+		const wchar_t *parentWinToken = nullptr;
+		g_ATCmdLine.FindAndRemoveSwitch(L"parentwindow", parentWinToken);
+
+		VDGUIHandle h = nullptr;
+		if (parentWinToken)
+			h = (VDGUIHandle)wcstoull(parentWinToken, nullptr, 0);
+
+		ATUITemporarilyMountVHDImageImplW32((VDZHWND)h, token, mountRO);
+	} else if (g_ATCmdLine.FindAndRemoveSwitch(L"showfileassocdlg", token)) {
 		// We don't _really_ need to do this as Win64 kernel handles are documented as
 		// being 32-bit significant, but it's cheap.
 		unsigned long long hwndParent;
@@ -4562,13 +4385,13 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 				extern void ATUIShowDialogAdvancedConfiguration(VDGUIHandle h);
 				ATUIShowDialogAdvancedConfiguration(nullptr);
 			} else {
-				startupLogger.Log("Loading config var overrides");
+				ATStartupLog("Loading config var overrides");
 				ATLoadConfigVars();
 
-				startupLogger.Log("Loading options");
+				ATStartupLog("Loading options");
 				ATOptionsLoad();
 
-				startupLogger.Log("Loading settings");
+				ATStartupLog("Loading settings");
 				LoadSettingsEarly();
 
 				ATInitDisplayOptions();
@@ -4597,25 +4420,29 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 					if (g_ATCmdLine.FindAndRemoveSwitch(L"lockd3d"))
 						g_d3d9Lock.Lock();
 
-					startupLogger.Log("Running instance");
-					rval = RunInstance(nCmdShow, startupLogger, categoriesToIgnore);
+					ATStartupLog("Running instance");
+					rval = RunInstance(nCmdShow, categoriesToIgnore);
 				}
 			}
 
-			startupLogger.Log("Shutting down registry");
+			ATStartupLog("Shutting down registry");
 			ATShutdownRegistry();
 		}
 	}
 
+	ATStartupLog("Shutting down UI");
 	BufferedPaintUnInit();
+	ATUIShutdownControlStylesW32();
 
-	startupLogger.Log("Shutting down OLE");
+	ATStartupLog("Shutting down OLE");
 	OleUninitialize();
 
-	startupLogger.Log("Shutting down thunk allocator");
+	ATStartupLog("Shutting down thunk allocator");
 	VDShutdownThunkAllocator();
 
-	startupLogger.Log("Exiting (end of log).");
+	ATStartupLog("Exiting (end of log).");
+	ATStartupLogShutdown();
+
 	return rval;
 }
 
@@ -4635,8 +4462,8 @@ private:
 	HMODULE mhmod = nullptr;
 };
 
-int RunInstance(int nCmdShow, ATStartupLogger& startupLogger, ATSettingsCategory categoriesToIgnore) {
-	startupLogger.Log("Preloading DLLs");
+int RunInstance(int nCmdShow, ATSettingsCategory categoriesToIgnore) {
+	ATStartupLog("Preloading DLLs");
 	ATSystemLibraryLockW32 lockd3d9("d3d9");
 	ATSystemLibraryLockW32 lockd3d11("d3d11");
 	ATSystemLibraryLockW32 lockdxgi("dxgi");
@@ -4644,22 +4471,22 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger, ATSettingsCategory
 
 	g_hInst = VDGetLocalModuleHandleW32();
 
-	startupLogger.Log("Registering controls");
+	ATStartupLog("Registering controls");
 	VDRegisterVideoDisplayControl();
 	VDUIRegisterHotKeyExControl();
 	ATUINativeWindow::Register();
 	
-	startupLogger.Log("Initializing frame system");
+	ATStartupLog("Initializing frame system");
 	ATInitUIFrameSystem();
 
-	startupLogger.Log("Initializing commands and accelerators");
+	ATStartupLog("Initializing commands and accelerators");
 	ATUIInitCommandMappings(g_ATUICommandMgr);
 	ATUIInitDefaultAccelTables();
 	
 	VDDialogFrameW32::SetDefaultCaption(L"Altirra");
 	ATUISetDefaultGenericDialogCaption(L"Altirra");
 
-	startupLogger.Log("Applying options");
+	ATStartupLog("Applying options");
 
 	struct local {
 		static void DisplayUpdateFn(ATOptions& opts, const ATOptions *prevOpts, void *) {
@@ -4674,9 +4501,7 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger, ATSettingsCategory
 			VDVideoDisplaySetFeatures(true, false, false, opts.mbDisplayD3D9, false, false);
 			VDVideoDisplaySet3DEnabled(opts.mbDisplay3D);
 
-			IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
-			if (pane)
-				pane->ResetDisplay();
+			ATUIResetDisplay();
 		}
 	};
 
@@ -4684,6 +4509,13 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger, ATSettingsCategory
 	ATOptionsAddUpdateCallback(true,
 		[](ATOptions& opts, const ATOptions *prevOpts, void *) {
 			g_sim.GetGTIA().SetAccelScreenFXEnabled(opts.mbDisplayAccelScreenFX);
+		}
+	);
+
+	ATOptionsAddUpdateCallback(true,
+		[](ATOptions& opts, const ATOptions *prevOpts, void *) {
+			if (!prevOpts || opts.mbDisplayCustomRefresh != prevOpts->mbDisplayCustomRefresh)
+				ATUIUpdateSpeedTiming();
 		}
 	);
 
@@ -4699,7 +4531,6 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger, ATSettingsCategory
 		}
 	);
 
-	VDVideoDisplaySetDebugInfoEnabled(g_ATCmdLine.FindAndRemoveSwitch(L"displaydebug"));
 	VDVideoDisplaySetMonitorSwitchingDXEnabled(true);
 	VDVideoDisplaySetSecondaryDXEnabled(true);
 	VDVideoDisplaySetD3D9ExEnabled(false);
@@ -4707,31 +4538,31 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger, ATSettingsCategory
 
 	VDDispSetLogHook([](const char *s) { g_ATLCHostDisp("%s\n", s); });
 
-	startupLogger.Log("Initializing filespec system");
+	ATStartupLog("Initializing filespec system");
 	VDInitFilespecSystem();
 	VDLoadFilespecSystemData();
 
-	startupLogger.Log("Initializing UI panes");
+	ATStartupLog("Initializing UI panes");
 	ATInitUIPanes();
 
-	startupLogger.Log("Initializing logging");
+	ATStartupLog("Initializing logging");
 	ATInitDebuggerLogging(
-		startupLogger.IsEnabled()
-			? vdfunction<void(const char *)>([&startupLogger](const char *msg) {
+		ATStartupLogIsInited()
+			? vdfunction<void(const char *)>([](const char *msg) {
 					VDStringRefA msg2(msg);
 
-					startupLogger.Log(msg2.trim_end("\r\n"));
+					ATStartupLog(msg2.trim_end("\r\n"));
 				})
 			: nullptr
 	);
 
-	startupLogger.Log("Initializing native UI");
+	ATStartupLog("Initializing native UI");
 	ATInitProfilerUI();
 	ATUIRegisterDisplayPane();
 	ATUIInitVirtualKeyMap(g_kbdOpts);
 	ATUILoadAccelTables();
 
-	startupLogger.Log("Creating main window");
+	ATStartupLog("Creating main window");
 	WNDCLASS wc = {};
 	wc.lpszClassName = _T("AltirraMainWindow");
 	ATOM atom = ATContainerWindow::RegisterCustom(wc);
@@ -4742,7 +4573,7 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger, ATSettingsCategory
 	ATUIInitProgressDialog();
 	ATUIPushProgressParent((VDGUIHandle)hwnd);
 
-	startupLogger.Log("Restoring main window");
+	ATStartupLog("Restoring main window");
 	ATUIRestoreWindowPlacement(hwnd, "Main window", nCmdShow);
 
 	if (!(GetWindowLong(hwnd, GWL_STYLE) & WS_VISIBLE))
@@ -4755,62 +4586,63 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger, ATSettingsCategory
 	// attempt to bring up a modem (which LoadSettings or a command prompt can do).
 	bool wsaInited = false;
 
-	startupLogger.Log("Initializing WinSock");
+	ATStartupLog("Initializing WinSock");
 
 	WSADATA wsa;
 	if (!WSAStartup(MAKEWORD(2, 0), &wsa))
 		wsaInited = true;
 
 	// bring up simulator
-	startupLogger.Log("Initializing simulator");
+	ATStartupLog("Initializing simulator");
 	g_sim.Init();
 	g_sim.SetRandomSeed(rand() ^ (rand() << 15));
 
 	ATUISetDispatcher(g_sim.GetDeviceManager()->GetService<IATAsyncDispatcher>());
 	ATUILinkMainWindowToSimulator(*g_pMainWindow);
 
-	startupLogger.Log("Initializing game controllers");
+	ATStartupLog("Initializing game controllers");
 	ATInitJoysticks();
 
 	g_sim.GetInputManager()->SetConsoleCallback(&g_inputConsoleCallback);
 	g_winCaptionUpdater->InitMonitoring(&g_sim);
 	g_winCaptionUpdater->SetTemplate(g_winCaptionTemplate.c_str());
 	ATRegisterDevices(*g_sim.GetDeviceManager());
+	ATRegisterDeviceXCmds(*g_sim.GetDeviceManager());
 
 	// initialize menus (requires simulator)
-	startupLogger.Log("Initializing firmware menus");
+	ATStartupLog("Initializing firmware menus");
 	ATUIInitFirmwareMenuCallbacks(g_sim.GetFirmwareManager());
 
-	startupLogger.Log("Initializing profile menus");
+	ATStartupLog("Initializing profile menus");
 	ATUIInitProfileMenuCallbacks();
 
-	startupLogger.Log("Initializing video output menu");
+	ATStartupLog("Initializing video output menu");
 	ATUIInitVideoOutputMenuCallback(*g_sim.GetDeviceManager()->GetService<IATDeviceVideoManager>());
 
-	startupLogger.Log("Loading menu");
+	ATStartupLog("Loading menu");
 	try {
 		ATUILoadMenu();
 	} catch(const MyError& e) {
 		e.post(hwnd, "Altirra Error");
 	}
 
-	startupLogger.Log("Initializing port menus");
+	ATStartupLog("Initializing port menus");
 	ATInitPortMenus(g_sim.GetInputManager());
 
 	// bring up debugger
-	startupLogger.Log("Initializing debugger");
+	ATStartupLog("Initializing debugger");
 	ATInitDebugger();
 
 	// init compatibility database
-	startupLogger.Log("Initializing compatibility system");
+	ATStartupLog("Initializing compatibility system");
 	ATCompatInit();
 
 	// initialize runtime UI (requires simulator)
-	startupLogger.Log("Initializing display UI");
+	ATStartupLog("Initializing display UI");
 	ATUIInitManager();
 
 	// load available profile set
-	startupLogger.Log("Loading profiles");
+	ATStartupLog("Loading profiles");
 	if (ATLoadDefaultProfiles())
 		ATUIRebuildDynamicMenu(kATUIDynamicMenu_Profile);
 
@@ -4845,7 +4677,7 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger, ATSettingsCategory
 		}
 	}
 
-	startupLogger.Log("Loading current profile");
+	ATStartupLog("Loading current profile");
 	if (profileToLoad != kATProfileId_Invalid && ATSettingsIsValidProfile(profileToLoad))
 		ATSettingsLoadProfile(profileToLoad, settingsToLoad);
 	else
@@ -4860,11 +4692,11 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger, ATSettingsCategory
 	if (useHardwareBaseline)
 		LoadBaselineSettings();
 	
-	startupLogger.Log("Initializing native audio");
+	ATStartupLog("Initializing native audio");
 
 	g_sim.GetAudioOutput()->InitNativeAudio();
 	
-	startupLogger.Log("Loading ROMs");
+	ATStartupLog("Loading ROMs");
 
 	try {
 		g_sim.LoadROMs();
@@ -4872,14 +4704,14 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger, ATSettingsCategory
 		e.post(hwnd, "Altirra Error");
 	}
 
-	startupLogger.Log("Saving options");
+	ATStartupLog("Saving options");
 	ATOptionsSave();
 
-	startupLogger.Log("Starting emulation");
+	ATStartupLog("Starting emulation");
 	g_sim.Resume();
 	ATInitEmuErrorHandler((VDGUIHandle)g_hwnd, &g_sim);
 
-	startupLogger.Log("Restoring pane layout");
+	ATStartupLog("Restoring pane layout");
 
 	if (!ATRestorePaneLayout(NULL))
 		ATActivateUIPane(kATUIPaneId_Display, true);
@@ -4887,50 +4719,50 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger, ATSettingsCategory
 	if (ATGetUIPane(kATUIPaneId_Display))
 		ATActivateUIPane(kATUIPaneId_Display, true);
 
-	startupLogger.Log("Initiating cold reset");
+	ATStartupLog("Initiating cold reset");
 	g_sim.ColdReset();
 
 	// we can't go full screen until the display panes have been created
 	if (!g_ATCmdLine.FindAndRemoveSwitch(L"w")) {
-		startupLogger.Log("Initializing full screen mode");
+		ATStartupLog("Initializing full screen mode");
 		ATLoadSettings(kATSettingsCategory_FullScreen);
 	}
 
-	startupLogger.Log("Running main loop");
+	ATStartupLog("Running main loop");
 	int returnCode = RunMainLoop(hwnd);
 
-	startupLogger.Log("Saving settings");
+	ATStartupLog("Saving settings");
 	ATSaveSettings(ATSettingsCategory(kATSettingsCategory_All & ~kATSettingsCategory_FullScreen));
 
-	startupLogger.Log("Exiting fullscreen mode");
+	ATStartupLog("Exiting fullscreen mode");
 	ATSetFullscreen(false);
 
-	startupLogger.Log("Stopping recording");
+	ATStartupLog("Stopping recording");
 	StopRecording();
 
-	startupLogger.Log("Shutting down filespec system");
+	ATStartupLog("Shutting down filespec system");
 	VDSaveFilespecSystemData();
 
-	startupLogger.Log("Shutting down compat system");
+	ATStartupLog("Shutting down compat system");
 	ATCompatShutdown();
 
-	startupLogger.Log("Shutting down UI");
+	ATStartupLog("Shutting down UI");
 	ATUIShutdownManager();
 
-	startupLogger.Log("Shutting down debugger");
+	ATStartupLog("Shutting down debugger");
 	ATShutdownEmuErrorHandler();
 	ATShutdownDebugger();
 	ATConsoleCloseLogFileNT();
 
-	startupLogger.Log("Shutting down game controllers");
+	ATStartupLog("Shutting down game controllers");
 	ATShutdownJoysticks();
 
-	startupLogger.Log("Shutting down simulator");
+	ATStartupLog("Shutting down simulator");
 	ATUISetDispatcher(nullptr);
 	ATUIUnlinkMainWindowFromSimulator();
 	g_sim.Shutdown();
 
-	startupLogger.Log("Shutting down native UI");
+	ATStartupLog("Shutting down native UI");
 	g_d3d9Lock.Unlock();
 
 	ATUIShutdownProgressDialog();
@@ -4951,7 +4783,7 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger, ATSettingsCategory
 	ATUIShutdownThemes();
 
 	if (wsaInited) {
-		startupLogger.Log("Shutting down WinSock");
+		ATStartupLog("Shutting down WinSock");
 		WSACleanup();
 	}
 

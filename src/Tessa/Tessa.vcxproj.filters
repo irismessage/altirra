@@ -5,9 +5,6 @@
       <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
       <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
     </Filter>
-    <Filter Include="Source Files\D3D9">
-      <UniqueIdentifier>{957f1907-4e62-4719-973f-f626be2333a0}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Source Files\D3D11">
       <UniqueIdentifier>{8de10e90-21bc-4d66-86b5-f9d3a7626721}</UniqueIdentifier>
     </Filter>
@@ -25,9 +22,6 @@
       <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
       <Extensions>h;hpp;hxx;hm;inl;inc;xsd</Extensions>
     </Filter>
-    <Filter Include="Header Files\D3D9">
-      <UniqueIdentifier>{df656b17-4d9a-4ba5-8f81-f225f7552eba}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Header Files\D3D11">
       <UniqueIdentifier>{0991deaa-7101-4b83-accc-6e1070a07253}</UniqueIdentifier>
     </Filter>
@@ -42,12 +36,6 @@
     <ClCompile Include="source\Program.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\D3D9\Context_D3D9.cpp">
-      <Filter>Source Files\D3D9</Filter>
-    </ClCompile>
-    <ClCompile Include="source\D3D9\FenceManager_D3D9.cpp">
-      <Filter>Source Files\D3D9</Filter>
-    </ClCompile>
     <ClCompile Include="source\D3D11\Context_D3D11.cpp">
       <Filter>Source Files\D3D11</Filter>
     </ClCompile>
@@ -58,6 +46,9 @@
       <Filter>Precompiled Header Files</Filter>
     </ClCompile>
     <ClCompile Include="source\Config.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\Options.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -77,12 +68,6 @@
     <ClInclude Include="h\Program.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\D3D9\Context_D3D9.h">
-      <Filter>Header Files\D3D9</Filter>
-    </ClInclude>
-    <ClInclude Include="h\D3D9\FenceManager_D3D9.h">
-      <Filter>Header Files\D3D9</Filter>
-    </ClInclude>
     <ClInclude Include="h\D3D11\Context_D3D11.h">
       <Filter>Header Files\D3D11</Filter>
     </ClInclude>
@@ -90,6 +75,9 @@
       <Filter>Header Files\D3D11</Filter>
     </ClInclude>
     <ClInclude Include="..\h\vd2\Tessa\Config.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\vd2\Tessa\Options.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
   </ItemGroup>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+	<channel>
+		<title>Altirra update feed (release channel)</title>
+		<link>https://www.virtualdub.org/altirra.html</link>
+		<description>Automatic update notifications for release versions of the Altirra emulator.</description>
+		<item>
+			<title>Altirra 4.01 (4.1.200.15442; win7; sse2)</title>
+			<description>
+				<ul>
+                    <li>Updated to Altirra BASIC 1.58 and AltirraOS 3.33.</li>
+                    <li>Fixed a crash in FLAC decoder and added workaround for D3D11 crash in Intel graphics driver.</li>
+                    <li>Fixed handling of raw FSK blocks in .CAS images.</li>
+                    <li>Improved compatibility of 850 R: handler bootstrap.</li>
+                    <li>Improved timing of XF551 high speed disk operation.</li>
+                    <li>Fixed LOADEXE.XEX on the Additions disk.</li>
+                    <li>Fixed atfs:// paths accessing the wrong files on a DOS 2 image.</li>
+				</ul>
+			</description>
+   			<link>https://www.virtualdub.org/altirra.html</link>
+			<pubDate>
+				now
+			</pubDate>
+			<category>release</category>
+		</item>
+	</channel>
+</rss>

@@ -1,5 +1,6 @@
 #include <stdafx.h>
 #include <windows.h>
+#include <windowsx.h>
 #include <richedit.h>
 #include <commctrl.h>
 #include <tom.h>
@@ -163,6 +164,10 @@ VDZLRESULT VDUIProxyControl::On_WM_VSCROLL(VDZWPARAM wParam, VDZLPARAM lParam) {
 	return 0;
 }
 
+bool VDUIProxyControl::On_WM_CONTEXTMENU(VDZWPARAM wParam, VDZLPARAM lParam) {
+	return false;
+}
+
 void VDUIProxyControl::OnFontChanged() {
 }
 
@@ -227,6 +232,15 @@ bool VDUIProxyMessageDispatcherW32::TryDispatch(VDZUINT msg, VDZWPARAM wParam, V
 	if (msg == WM_VSCROLL)
 		return TryDispatch_WM_VSCROLL(wParam, lParam, result);
 
+	if (msg == WM_CONTEXTMENU) {
+		if (TryDispatch_WM_CONTEXTMENU(wParam, lParam)) {
+			result = 0;
+			return true;
+		}
+
+		return false;
+	}
+
 	if (msg == WM_DESTROY)
 		RemoveAllControls(true);
 
@@ -278,6 +292,17 @@ bool VDUIProxyMessageDispatcherW32::TryDispatch_WM_VSCROLL(VDZWPARAM wParam, VDZ
 
 	result = control->On_WM_VSCROLL(wParam, lParam);
 	return true;
+}
+
+bool VDUIProxyMessageDispatcherW32::TryDispatch_WM_CONTEXTMENU(VDZWPARAM wParam, VDZLPARAM lParam) {
+	if (!wParam)
+		return false;
+
+	VDUIProxyControl *control = GetControl((HWND)wParam);
+	if (!control)
+		return false;
+
+	return control->On_WM_CONTEXTMENU(wParam, lParam);
 }
 
 VDZLRESULT VDUIProxyMessageDispatcherW32::Dispatch_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
@@ -486,6 +511,10 @@ bool VDUIProxyListView::AreItemCheckboxesEnabled() const {
 
 void VDUIProxyListView::SetItemCheckboxesEnabled(bool enabled) {
 	ListView_SetExtendedListViewStyleEx(mhwnd, LVS_EX_CHECKBOXES, enabled ? LVS_EX_CHECKBOXES : 0);
+}
+
+void VDUIProxyListView::SetActivateOnEnterEnabled(bool enabled) {
+	mbActivateOnEnter = true;
 }
 
 void VDUIProxyListView::EnsureItemVisible(int index) {
@@ -726,6 +755,10 @@ void VDUIProxyListView::SetOnItemDoubleClicked(vdfunction<void(int)> fn) {
 	mpOnItemDoubleClicked = std::move(fn);
 }
 
+void VDUIProxyListView::SetOnItemContextMenu(vdfunction<void(ContextMenuEvent&)> fn) {
+	mpOnItemContextMenu = std::move(fn);
+}
+
 void VDUIProxyListView::SetOnItemCustomStyle(vdfunction<bool(IVDUIListViewVirtualItem&, sint32&, bool&)> fn) {
 	mpOnItemCustomStyle = std::move(fn);
 }
@@ -898,6 +931,25 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 			}
 			return 0;
 
+		case LVN_KEYDOWN:
+			if (mbActivateOnEnter) {
+				const NMLVKEYDOWN& keyDown = *(const NMLVKEYDOWN *)hdr;
+
+				if (keyDown.wVKey == VK_RETURN) {
+					const int index = GetSelectedIndex();
+
+					if (index >= 0) {
+						mEventItemDoubleClicked.Raise(this, index);
+
+						if (mpOnItemDoubleClicked)
+							mpOnItemDoubleClicked(index);
+					}
+				}
+
+				return 0;
+			}
+			break;
+
 		case NM_RCLICK:
 			{
 				const NMITEMACTIVATE *nmia = (const NMITEMACTIVATE *)hdr;
@@ -909,9 +961,16 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 				ClientToScreen(mhwnd, &pt);
 				event.mX = pt.x;
 				event.mY = pt.y;
+				event.mbHandled = false;
 				mEventItemContextMenu.Raise(this, event);
+
+				if (mpOnItemContextMenu)
+					mpOnItemContextMenu(event);
+
+				if (event.mbHandled)
+					return TRUE;
 			}
-			return 0;
+			return FALSE;
 
 		case NM_DBLCLK:
 			{
@@ -1832,6 +1891,34 @@ VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddIndexedItem(NodeR
 	return (NodeRef)hti;
 }
 
+VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::GetChildNode(NodeRef ref) const {
+	if (mhwnd)
+		return (NodeRef)TreeView_GetChild(mhwnd, (HTREEITEM)ref);
+	else
+		return kNodeNull;
+}
+
+VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::GetParentNode(NodeRef ref) const {
+	if (mhwnd)
+		return (NodeRef)TreeView_GetParent(mhwnd, (HTREEITEM)ref);
+	else
+		return kNodeNull;
+}
+
+VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::GetPrevNode(NodeRef ref) const {
+	if (mhwnd)
+		return (NodeRef)TreeView_GetPrevSibling(mhwnd, (HTREEITEM)ref);
+	else
+		return kNodeNull;
+}
+
+VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::GetNextNode(NodeRef ref) const {
+	if (mhwnd)
+		return (NodeRef)TreeView_GetNextSibling(mhwnd, (HTREEITEM)ref);
+	else
+		return kNodeNull;
+}
+
 void VDUIProxyTreeViewControl::MakeNodeVisible(NodeRef node) {
 	if (mhwnd) {
 		TreeView_EnsureVisible(mhwnd, (HTREEITEM)node);
@@ -1839,7 +1926,7 @@ void VDUIProxyTreeViewControl::MakeNodeVisible(NodeRef node) {
 }
 
 void VDUIProxyTreeViewControl::SelectNode(NodeRef node) {
-	if (mhwnd) {
+	if (mhwnd && IsValidNodeRef(node)) {
 		TreeView_SelectItem(mhwnd, (HTREEITEM)node);
 	}
 }
@@ -2060,6 +2147,10 @@ void VDUIProxyTreeViewControl::SetDropTargetHighlight(NodeRef item) {
 	if (mhwnd) {
 		TreeView_SelectDropTarget(mhwnd, item);
 	}
+}
+
+void VDUIProxyTreeViewControl::SetOnContextMenu(vdfunction<bool(const ContextMenuEvent& event)> fn) {
+	mpOnContextMenu = std::move(fn);
 }
 
 void VDUIProxyTreeViewControl::Attach(VDZHWND hwnd) {
@@ -2411,6 +2502,60 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 	return 0;
 }
 
+bool VDUIProxyTreeViewControl::On_WM_CONTEXTMENU(VDZWPARAM wParam, VDZLPARAM lParam) {
+	if (mpOnContextMenu) {
+		POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		POINT ptc = pt;
+		ScreenToClient(mhwnd, &ptc);
+
+		TVHITTESTINFO hti {};
+
+		if (pt.x == -1 && pt.y == -1) {
+			hti.hItem = TreeView_GetSelection(mhwnd);
+		} else {
+			hti.pt = ptc;
+
+			TreeView_HitTest(mhwnd, &hti);
+		}
+
+		if (hti.hItem) {
+			TVITEMEX tvi {};
+			tvi.mask = TVIF_PARAM;
+			tvi.hItem = hti.hItem;
+
+			TreeView_GetItem(mhwnd, &tvi);
+
+			ContextMenuEvent event {};
+
+			event.mNode = (NodeRef)hti.hItem;
+
+			if (mbIndexedMode)
+				event.mItemId = (uint32)tvi.lParam;
+			else
+				event.mpItem = (IVDUITreeViewVirtualItem *)tvi.lParam;
+
+			if (pt.x == -1 && pt.y == -1) {
+				auto size = GetClientSize();
+
+				ptc.x = size.w >> 1;
+				ptc.y = size.h >> 1;
+
+				pt = ptc;
+				ClientToScreen(mhwnd, &pt);
+			}
+
+			event.mScreenPos.x = pt.x;
+			event.mScreenPos.y = pt.y;
+
+			TreeView_SelectItem(mhwnd, hti.hItem);
+
+			return mpOnContextMenu(event);
+		}
+	}
+
+	return false;
+}
+
 void VDUIProxyTreeViewControl::OnFontChanged() {
 	DeleteFonts();
 }
@@ -2438,6 +2583,19 @@ void VDUIProxyTreeViewControl::DeleteFonts() {
 		::DeleteObject(mhfontBold);
 		mhfontBold = NULL;
 		mbCreatedBoldFont = false;
+	}
+}
+
+bool VDUIProxyTreeViewControl::IsValidNodeRef(NodeRef node) const {
+	switch(node) {
+		case kNodeNull:
+		case kNodeFirst:
+		case kNodeLast:
+		case kNodeRoot:
+			return false;
+
+		default:
+			return true;
 	}
 }
 
@@ -2470,9 +2628,19 @@ void VDUIProxyEditControl::SetText(const wchar_t *s) {
 		::SetWindowText(mhwnd, s);
 }
 
+void VDUIProxyEditControl::SetReadOnly(bool ro) {
+	if (mhwnd)
+		::SendMessage(mhwnd, EM_SETREADONLY, ro ? TRUE : FALSE, FALSE);
+}
+
 void VDUIProxyEditControl::SelectAll() {
 	if (mhwnd)
 		::SendMessage(mhwnd, EM_SETSEL, 0, -1);
+}
+
+void VDUIProxyEditControl::DeselectAll() {
+	if (mhwnd)
+		::SendMessage(mhwnd, EM_SETSEL, -1, -1);
 }
 
 void VDUIProxyEditControl::SetOnTextChanged(vdfunction<void(VDUIProxyEditControl *)> fn) {

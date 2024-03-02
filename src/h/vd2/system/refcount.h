@@ -197,8 +197,8 @@ public:
 		src.ptr = nullptr;
 	}
 
-	template<class U, typename = typename std::enable_if<true, decltype(static_cast<T&&>(std::declval<U>()))>>
-	vdnothrow explicit vdrefptr(vdrefptr<U>&& src) vdnoexcept
+	template<class U> requires std::is_convertible_v<T *, U *> || std::is_convertible_v<U *, T *>
+	vdnothrow explicit(!std::is_convertible_v<U *, T *>) vdrefptr(vdrefptr<U>&& src) vdnoexcept
 		: ptr(static_cast<T *>(src.release()))
 	{
 	}
@@ -222,12 +222,23 @@ public:
 
 	/// Assigns a new object to a smart pointer. Any old object is released
 	/// and the new object is addrefed.
-	inline self_type& operator=(const vdrefptr& src) {
+	self_type& operator=(const vdrefptr& src) {
 		if (src.ptr)
 			src.ptr->AddRef();
 		if (ptr)
 			ptr->Release();
 		ptr = src.ptr;
+		return *this;
+	}
+
+	template<typename U> requires std::is_convertible_v<U *, T *>
+	self_type& operator=(const vdrefptr<U>& src) {
+		U *srcptr = src.get();
+		if (srcptr)
+			srcptr->AddRef();
+		if (ptr)
+			ptr->Release();
+		ptr = srcptr;
 		return *this;
 	}
 
@@ -239,6 +250,16 @@ public:
 		ptr = src.ptr;
 		src.ptr = nullptr;
 
+		return *this;
+	}
+
+	template<typename U> requires std::is_convertible_v<U *, T *>
+	self_type& operator=(vdrefptr<U>&& src) {
+		T *p = ptr;
+		if (p)
+			p->Release();
+
+		ptr = src.release();
 		return *this;
 	}
 

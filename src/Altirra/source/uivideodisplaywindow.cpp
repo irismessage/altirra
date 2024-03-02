@@ -24,16 +24,20 @@
 #include <vd2/Kasumi/resample.h>
 #include <vd2/VDDisplay/font.h>
 #include <at/ataudio/pokey.h>
+#include <at/atcore/configvar.h>
 #include <at/atcore/device.h>
 #include <at/atcore/devicevideo.h>
+#include <at/atdebugger/symbols.h>
 #include "console.h"
 #include "debugger.h"
+#include "errordecode.h"
 #include "inputmanager.h"
 #include "oshelper.h"
 #include "simulator.h"
-#include "symbols.h"
 #include "uiaccessors.h"
 #include "uicaptionupdater.h"
+#include "uidisplay.h"
+#include "uidisplaytool.h"
 #include "uidragdrop.h"
 #include "uienhancedtext.h"
 #include "uikeyboard.h"
@@ -43,6 +47,7 @@
 #include "uionscreenkeyboard.h"
 #include "uisettingswindow.h"
 #include "uitypes.h"
+#include "uicalibrationscreen.h"
 #include <at/atuicontrols/uilabel.h>
 #include <at/atui/uianchor.h>
 #include <at/atui/uidragdrop.h>
@@ -70,6 +75,8 @@ void OnCommandEditPasteText();
 
 VDStringA g_ATCurrentAltViewName;
 bool g_ATCurrentAltViewIsXEP;
+
+ATConfigVarBool g_ATCVUIShowVSyncAdaptiveGraph("ui.show_vsync_adaptive_graph", false);
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -265,6 +272,10 @@ void ATUIVideoDisplayWindow::CaptureMouse() {
 	}
 }
 
+void ATUIVideoDisplayWindow::RecalibrateLightPen() {
+	AddTool(*new ATUIDisplayToolRecalibrateLightPen);
+}
+
 void ATUIVideoDisplayWindow::OpenOSK() {
 	if (!mpOSK) {
 		CloseSidePanel();
@@ -332,26 +343,144 @@ void ATUIVideoDisplayWindow::EndEnhTextSizeIndicator() {
 	}
 }
 
-void ATUIVideoDisplayWindow::Copy(bool enableEscaping) {
+void ATUIVideoDisplayWindow::Copy(ATTextCopyMode copyMode) {
 	if (mDragPreviewSpans.empty())
 		return;
 
+	static constexpr wchar_t kIntlLowTab[] {
+		0x00E1,		// $00: latin small letter A with acute
+		0x00F9,		// $01: latin small letter U with grave
+		0x00D1,		// $02: latin capital letter N with tilde
+		0x00C9,		// $03: latin capital letter E with acute
+		0x00E7,		// $04: latin small letter C with cedilla
+		0x00F4,		// $05: latin small letter O with circumflex
+		0x00F2,		// $06: latin small letter O with grave
+		0x00EC,		// $07: latin small letter I with grave
+		0x00A3,		// $08: pound sign
+		0x00EF,		// $09: latin small letter I with diaeresis
+		0x00FC,		// $0A: latin small letter U with diaeresis
+		0x00E4,		// $0B: latin small letter A with diaeresis
+		0x00D6,		// $0C: latin capital letter O with diaeresis
+		0x00FA,		// $0D: latin small letter U with acute
+		0x00F3,		// $0E: latin small letter O with acute
+		0x00F6,		// $0F: latin small letter O with diaeresis
+		0x00DC,		// $10: latin capital letter U with diaeresis
+		0x00E2,		// $11: latin small letter A with circumflex
+		0x00FB,		// $12: latin small letter U with circumflex
+		0x00EE,		// $13: latin small letter I with circumflex
+		0x00E9,		// $14: latin small letter E with acute
+		0x00E8,		// $15: latin small letter E with grave
+		0x00F1,		// $16: latin small letter N with tilde
+		0x00EA,		// $17: latin small letter E with circumflex
+		0x00E5,		// $18: latin small letter A with ring above
+		0x00E0,		// $19: latin small letter A with grave
+		0x00C5,		// $1A: latin capital letter A with ring above
+	};
+	static_assert(vdcountof(kIntlLowTab) == 27);
+
+	static constexpr uint16 kUnicodeLowTable[]={
+		0x2665,	// heart
+		0x251C,	// vertical tee right
+		0x2595,	// vertical bar right
+		0x2518,	// top-left elbow
+		0x2524,	// vertical tee left
+		0x2510,	// bottom-left elbow
+		0x2571,	// forward diagonal
+		0x2572,	// backwards diagonal
+		0x25E2,	// lower right filled triangle
+		0x2597,	// lower right quadrant
+		0x25E3,	// lower left filled triangle
+		0x259D,	// quadrant upper right
+		0x2598,	// quadrant upper left
+		0x2594,	// top quarter
+		0x2582,	// bottom quarter
+		0x2596,	// lower left quadrant
+					
+		0x2663,	// club
+		0x250C,	// lower-right elbow
+		0x2500,	// horizontal bar
+		0x253C,	// four-way
+		0x2022,	// filled circle
+		0x2584,	// lower half
+		0x258E,	// left quarter
+		0x252C,	// horizontal tee down
+		0x2534,	// horizontal tee up
+		0x258C,	// left side
+		0x2514,	// top-right elbow
+		0x241B,	// escape
+		0x2191,	// up arrow
+		0x2193,	// down arrow
+		0x2190,	// left arrow
+		0x2192,	// right arrow
+	};
+
+	static constexpr uint16 kUnicodeHighTable[]={
+		0x2660,	// spade
+		'|',	// vertical bar (leave this alone so as to not invite font issues)
+		0x21B0,	// curved arrow up-left
+		0x25C0,	// tall left arrow
+		0x25B6,	// tall right arrow
+	};
+
+	struct ATASCIIDecodeTabs {
+		uint16 v[2][128];
+
+		constexpr ATASCIIDecodeTabs() : v{} {
+			// basic
+			for(int i=0; i<32; ++i)
+				v[0][i] = 0x20;
+
+			for(int i=32; i<125; ++i)
+				v[0][i] = (uint8)i;
+
+			for(int i=125; i<128; ++i)
+				v[0][i] = 0x20;
+
+			for(int i=0; i<128; ++i)
+				v[1][i] = v[0][i];
+
+			for(int i=0; i<27; ++i)
+				v[1][i] = kIntlLowTab[i];
+
+			for(int i=27; i<32; ++i)
+				v[1][i] = kUnicodeLowTable[i];
+
+			for(int i=0; i<32; ++i)
+				v[0][i] = kUnicodeLowTable[i];
+
+			v[0][0x60] = 0x2666;	// U+2666 black diamond suit
+
+			for(int i=0; i<5; ++i) {
+				v[0][0x7B + i] = kUnicodeHighTable[i];
+				v[1][0x7B + i] = kUnicodeHighTable[i];
+			}
+
+			v[1][96] = 0xA1;	// $60: inverted exclamation mark
+			v[1][123] = 0xC4;	// $7B: latin capital letter A with diaeresis
+		}
+	};
+
+	static constexpr ATASCIIDecodeTabs kDecodeTabs;
+
 	uint8 data[80];
-	VDStringA s;
+	VDStringW s;
 
 	for(const TextSpan& ts : mDragPreviewSpans) {
 		int actual;
+		bool intl = false;
 
 		if (mpAltVideoOutput && !mpAltVideoOutput->GetVideoInfo().mbSignalPassThrough) {
 			actual = mpAltVideoOutput->ReadRawText(data, ts.mX, ts.mY, 80);
 		} else {
-			actual = ReadText(data, ts.mY, ts.mCharX, ts.mCharWidth);
+			actual = ReadText(data, ts.mY, ts.mCharX, ts.mCharWidth, intl);
 		}
 
 		if (!actual)
 			continue;
+	
+		const auto& decodeTab = kDecodeTabs.v[intl];
 
-		if (enableEscaping) {
+		if (copyMode == ATTextCopyMode::Escaped) {
 			uint8 inv = 0;
 			bool started = false;
 
@@ -368,77 +497,83 @@ void ATUIVideoDisplayWindow::Copy(bool enableEscaping) {
 				if ((c ^ inv) & 0x80) {
 					inv ^= 0x80;
 
-					s.append("{inv}");
+					s.append(L"{inv}");
 				}
 
 				c &= 0x7F;
 
-				if (c == 0x00) {
-					s.append("{^},");
-				} else if (c >= 0x01 && c < 0x1B) {
-					s.append("{^}");
+				const uint16 wc = decodeTab[c];
+
+				if (wc < 0x100)
+					s += (wchar_t)wc;
+				else if (c == 0x00)
+					s.append(L"{^},");
+				else if (c >= 0x01 && c < 0x1B) {
+					s.append(L"{^}");
 					s += (char)('a' + (c - 0x01));
 				} else if (c == 0x1B) {
-					s.append("{esc}{esc}");
+					s.append(L"{esc}{esc}");
 				} else if (c == 0x1C) {
 					if (inv)
-						s.append("{esc}{+delete}");
+						s.append(L"{esc}{+delete}");
 					else
-						s.append("{esc}{up}");
+						s.append(L"{esc}{up}");
 				} else if (c == 0x1D) {
 					if (inv)
-						s.append("{esc}{+insert}");
+						s.append(L"{esc}{+insert}");
 					else
-						s.append("{esc}{down}");
+						s.append(L"{esc}{down}");
 				} else if (c == 0x1E) {
 					if (inv)
-						s.append("{esc}{^tab}");
+						s.append(L"{esc}{^tab}");
 					else
-						s.append("{esc}{left}");
+						s.append(L"{esc}{left}");
 				} else if (c == 0x1F) {
 					if (inv)
-						s.append("{esc}{+tab}");
+						s.append(L"{esc}{+tab}");
 					else
-						s.append("{esc}{right}");
-				} else if (c >= 0x20 && c < 0x60) {
-					s += (char)c;
+						s.append(L"{esc}{right}");
 				} else if (c == 0x60) {
-					s.append("{^}.");
+					s.append(L"{^}.");
 				} else if (c >= 0x61 && c < 0x7B) {
 					s += (char)c;
 				} else if (c == 0x7B) {
-					s.append("{^};");
-				} else if (c == 0x7C) {
-					s += (char)c;
+					s.append(L"{^};");
 				} else if (c == 0x7D) {
 					if (inv)
-						s.append("{esc}{^}2");
+						s.append(L"{esc}{^}2");
 					else
-						s.append("{esc}{clear}");
+						s.append(L"{esc}{clear}");
 				} else if (c == 0x7E) {
 					if (inv)
-						s.append("{esc}{del}");
+						s.append(L"{esc}{del}");
 					else
-						s.append("{esc}{back}");
+						s.append(L"{esc}{back}");
 				} else if (c == 0x7F) {
 					if (inv)
-						s.append("{esc}{ins}");
+						s.append(L"{esc}{ins}");
 					else
-						s.append("{esc}{tab}");
+						s.append(L"{esc}{tab}");
 				}
 			}
 
-			while(!s.empty() && s.back() == ' ')
+			while(!s.empty() && s.back() == L' ')
 				s.pop_back();
 
 			if (inv)
-				s.append("{inv}");
-		} else {
-			for(int i=0; i<actual; ++i) {
-				data[i] &= 0x7f;
+				s.append(L"{inv}");
+		} else if (copyMode == ATTextCopyMode::Hex) {
+			for(int i=0; i<actual; ++i)
+				s.append_sprintf(L"%02X ", data[i]);
 
-				if ((uint8)(data[i] - 0x20) >= 0x7d)
-					data[i] = ' ';
+			if (actual)
+				s.pop_back();
+		} else {
+			if (copyMode != ATTextCopyMode::Unicode) {
+				for(int i=0; i<actual; ++i) {
+					uint16 wc = decodeTab[data[i] & 0x7f];
+					data[i] = wc < 0x100 ? (uint8)wc : 0x20;
+				}
 			}
 
 			int base = 0;
@@ -448,10 +583,16 @@ void ATUIVideoDisplayWindow::Copy(bool enableEscaping) {
 			while(actual > base && data[actual - 1] == 0x20)
 				--actual;
 
-			s.append((const char *)data + base, (const char *)data + actual);
+			if (copyMode == ATTextCopyMode::Unicode) {
+				for(int i = base; i < actual; ++i)
+					s += (wchar_t)decodeTab[data[i] & 0x7f];
+			} else {
+				for(int i = base; i < actual; ++i)
+					s += (wchar_t)data[i];
+			}
 		}
 
-		s += "\r\n";
+		s += L"\r\n";
 	}
 
 	if (s.size() > 2) {
@@ -523,7 +664,8 @@ bool ATUIVideoDisplayWindow::CopyFrameImage(bool trueAspect, VDPixmapBuffer& buf
 		if (trueAspect) {
 			vdautoptr<IVDPixmapResampler> r(VDCreatePixmapResampler());
 
-			r->SetFilters(IVDPixmapResampler::kFilterLinear, IVDPixmapResampler::kFilterLinear, false);
+			r->SetFilters(IVDPixmapResampler::kFilterSharpLinear, IVDPixmapResampler::kFilterSharpLinear, false);
+			r->SetSharpnessFactors(sqrt((float)dw / (float)sw), sqrtf((float)dh / (float)sh));
 
 			const vdrect32f dstRect {
 				(float)((iw - dw) * 0.5),
@@ -619,6 +761,32 @@ void ATUIVideoDisplayWindow::SetEnhancedTextEngine(IATUIEnhancedTextEngine *p) {
 	UpdateAltDisplay();
 }
 
+void ATUIVideoDisplayWindow::AddTool(ATUIDisplayTool& tool) {
+	mTools.erase(std::remove(mTools.begin(), mTools.end(), nullptr), mTools.end());
+
+	if (tool.IsMainTool()) {
+		if (!mTools.empty() && mTools.front()->IsMainTool())
+			RemoveTool(*mTools.front());
+
+		mTools.insert(mTools.begin(), vdrefptr(&tool));
+	} else {
+		mTools.emplace_back(&tool);
+	}
+
+	tool.InitTool(*mpManager, *this);
+}
+
+void ATUIVideoDisplayWindow::RemoveTool(ATUIDisplayTool& tool) {
+	if (mpActiveTool == &tool)
+		mpActiveTool = nullptr;
+
+	tool.ShutdownTool();
+
+	auto it = std::find(mTools.begin(), mTools.end(), &tool);
+	if (it != mTools.end())
+		*it = nullptr;
+}
+
 void ATUIVideoDisplayWindow::InvalidateTextOutput() {
 	Invalidate();
 }
@@ -699,6 +867,11 @@ namespace {
 			if (*t == '#' || *t == '-') {
 				++t;
 
+				if (t[-1] == '-') {
+					while(*t == '-')
+						++t;
+				}
+
 				// skip more blanks
 				while(*t == ' ')
 					++t;
@@ -709,68 +882,13 @@ namespace {
 				int errCode = atoi(t);
 
 				if (errCode >= 2 && errCode <= 255) {
-					msg.sprintf(L"<b>Error %u</b>\n", errCode);
+					msg.sprintf(L"<b>Error %u</b>", errCode);
 
-					switch(errCode) {
-						case 2: msg += L"<b>Atari BASIC:</b> Out of memory"; break;
-						case 3: msg += L"<b>Atari BASIC:</b> Value error"; break;
-						case 4: msg += L"<b>Atari BASIC:</b> Too many variables"; break;
-						case 5: msg += L"<b>Atari BASIC:</b> String length error"; break;
-						case 6: msg += L"<b>Atari BASIC:</b> Out of data"; break;
-						case 7: msg += L"<b>Atari BASIC:</b> Number &gt;32767"; break;
-						case 8: msg += L"<b>Atari BASIC:</b> Input statement error"; break;
-						case 9: msg += L"<b>Atari BASIC:</b> DIM error"; break;
-						case 10: msg += L"<b>Atari BASIC:</b> Argument stack overflow"; break;
-						case 11: msg += L"<b>Atari BASIC:</b> Floating point overflow/underflow"; break;
-						case 12: msg += L"<b>Atari BASIC:</b> Line not found"; break;
-						case 13: msg += L"<b>Atari BASIC:</b> No matching FOR statement"; break;
-						case 14: msg += L"<b>Atari BASIC:</b> Line too long"; break;
-						case 15: msg += L"<b>Atari BASIC:</b> GOSUB or FOR line deleted"; break;
-						case 16: msg += L"<b>Atari BASIC:</b> RETURN error"; break;
-						case 17: msg += L"<b>Atari BASIC:</b> Garbage error"; break;
-						case 18: msg += L"<b>Atari BASIC:</b> Invalid string character"; break;
-						case 19: msg += L"<b>Atari BASIC:</b> LOAD program too long"; break;
-						case 20: msg += L"<b>Atari BASIC:</b> Device number error"; break;
-						case 21: msg += L"<b>Atari BASIC:</b> LOAD file error"; break;
-
-						case 128: msg += L"<b>CIO:</b> User break abort"; break;
-						case 129: msg += L"<b>CIO:</b> IOCB in use"; break;
-						case 130: msg += L"<b>CIO:</b> Unknown device"; break;
-						case 131: msg += L"<b>CIO:</b> IOCB write only"; break;
-						case 132: msg += L"<b>CIO:</b> Invalid command"; break;
-						case 133: msg += L"<b>CIO:</b> IOCB not open"; break;
-						case 134: msg += L"<b>CIO:</b> Invalid IOCB"; break;
-						case 135: msg += L"<b>CIO:</b> IOCB read only"; break;
-						case 136: msg += L"<b>CIO:</b> End of file"; break;
-						case 137: msg += L"<b>CIO:</b> Truncated record"; break;
-						case 138: msg += L"<b>CIO/SIO:</b> Timeout"; break;
-						case 139: msg += L"<b>CIO/SIO:</b> Device NAK"; break;
-						case 140: msg += L"<b>CIO/SIO:</b> Bad frame"; break;
-						case 142: msg += L"<b>CIO/SIO:</b> Serial input overrun"; break;
-						case 143: msg += L"<b>CIO/SIO:</b> Checksum error"; break;
-						case 144: msg += L"<b>CIO/SIO:</b> Device error or write protected disk"; break;
-						case 145: msg += L"<b>CIO:</b> Bad screen mode"; break;
-						case 146: msg += L"<b>CIO:</b> Not supported"; break;
-						case 147: msg += L"<b>CIO:</b> Out of memory"; break;
-
-						case 160: msg += L"<b>DOS:</b> Invalid drive number"; break;
-						case 161: msg += L"<b>DOS:</b> Too many open files"; break;
-						case 162: msg += L"<b>DOS:</b> Disk full"; break;
-						case 163: msg += L"<b>DOS:</b> Fatal disk I/O error"; break;
-						case 164: msg += L"<b>DOS:</b> File number mismatch"; break;
-						case 165: msg += L"<b>DOS:</b> File name error"; break;
-						case 166: msg += L"<b>DOS:</b> POINT data length error"; break;
-						case 167: msg += L"<b>DOS:</b> File locked"; break;
-						case 168: msg += L"<b>DOS:</b> Command invalid"; break;
-						case 169: msg += L"<b>DOS:</b> Directory full"; break;
-						case 170: msg += L"<b>DOS:</b> File not found"; break;
-						case 171: msg += L"<b>DOS:</b> Invalid POINT"; break;
-
-						case 173: msg += L"<b>DOS 3:</b> Bad sectors at format time"; break;
-						case 174: msg += L"<b>DOS 3:</b> Duplicate filename"; break;
-						case 175: msg += L"<b>DOS 3:</b> Bad load file"; break;
-						case 176: msg += L"<b>DOS 3:</b> Incompatible format"; break;
-						case 177: msg += L"<b>DOS 3:</b> Disk structure damaged"; break;
+					for(const ATDecodedError& de : ATDecodeError((uint8)errCode)) {
+						msg += L"\n<b>";
+						msg += de.mpClass;
+						msg += L":</b> ";
+						msg += de.mpMessage;
 					}
 				}
 			}
@@ -831,6 +949,27 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 	if (mpOSK) {
 		CloseOSK();
 		return;
+	}
+
+	if (mpActiveTool) {
+		if (vk == kATUIVK_LButton) {
+			if (vdrefptr(mpActiveTool)->OnMouseDownL(x, y))
+				return;
+		}
+	}
+
+	for(const auto& tool : mTools) {
+		if (tool) {
+			if (tool->HasPriorityOverInputManager()) {
+				if (vdrefptr(tool)->OnMouseDownL(x, y) && tool) {
+					mpActiveTool = tool;
+					return;
+				}
+			}
+
+			if (tool->IsMainTool())
+				break;
+		}
 	}
 
 	// If the mouse is mapped, it gets first crack at inputs unless Alt is down.
@@ -901,6 +1040,18 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 	// LMB.
 
 	if (vk == kATUIVK_LButton) {
+		for(const auto& tool : mTools) {
+			if (tool) {
+				if (!tool->HasPriorityOverInputManager() && vdrefptr(tool)->OnMouseDownL(x, y) && tool) {
+					mpActiveTool = tool;
+					return;
+				}
+
+				if (tool->IsMainTool())
+					break;
+			}
+		}
+
 		if (alt) {
 			// tooltip request -- let's try to grab text
 			int xc;
@@ -982,8 +1133,9 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 
 				if (ymode >= 0) {
 					uint8 data[49];
+					bool intl;
 
-					int actual = ReadText(data, ymode, 0, 48);
+					int actual = ReadText(data, ymode, 0, 48, intl);
 					data[actual] = 0;
 
 					char cdata[49];
@@ -1050,6 +1202,11 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 
 void ATUIVideoDisplayWindow::OnMouseUp(sint32 x, sint32 y, uint32 vk) {
 	if (vk == kATUIVK_LButton) {
+		if (mpActiveTool) {
+			vdrefptr(mpActiveTool)->OnMouseUpL(x, y);
+			mpActiveTool = nullptr;
+		}
+
 		ClearCoordinateIndicator();
 		ClearHoverTip();
 
@@ -1130,6 +1287,11 @@ void ATUIVideoDisplayWindow::OnMouseMove(sint32 x, sint32 y) {
 		mbMouseHidden = false;
 	}
 
+	if (mpActiveTool) {
+		vdrefptr(mpActiveTool)->OnMouseMove(x, y);
+		return;
+	}
+
 	// If we have already entered a selection drag, it has highest priority.
 	if (mbDragActive) {
 		SetCursorImage(kATUICursorImage_IBeam);
@@ -1194,6 +1356,13 @@ bool ATUIVideoDisplayWindow::OnContextMenu(const vdpoint32 *pt) {
 }
 
 bool ATUIVideoDisplayWindow::OnKeyDown(const ATUIKeyEvent& event) {
+	if (!mTools.empty() && mTools.front() && mTools.front()->IsMainTool()) {
+		if (event.mVirtKey == kATUIVK_Escape || event.mVirtKey == kATUIVK_UIReject) {
+			RemoveTool(*mTools.front());
+			return true;
+		}
+	}
+
 	// Right-Alt kills capture.
 	if (event.mExtendedVirtKey == kATUIVK_RAlt && g_mouseCaptured) {
 		ReleaseMouse();
@@ -1355,6 +1524,12 @@ void ATUIVideoDisplayWindow::OnCreate() {
 	mpUILabelBadSignal->SetPlacement(vdrect32f(0.5f, 0.5f, 0.5f, 0.5f), vdpoint32(0, 0), vdfloat2{0.5f, 0.5f});
 
 	AddChild(mpUILabelBadSignal);
+
+#if 0
+	vdrefptr cs(new ATUICalibrationScreen);
+	AddChild(cs);
+	cs->SetPlacementFill();
+#endif
 }
 
 void ATUIVideoDisplayWindow::OnDestroy() {
@@ -1603,6 +1778,54 @@ void ATUIVideoDisplayWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) 
 				pts[0].clear();
 				pts[1].clear();
 			}
+		}
+	}
+
+	if (g_ATCVUIShowVSyncAdaptiveGraph) {
+		extern float g_frameRefreshPeriod;
+		extern float g_frameCorrectionFactor;
+
+		if (rdr.PushViewport(vdrect32(10, 500, 510, 800), 10, 500)) {
+			rdr.SetColorRGB(0x40404040);
+			rdr.AlphaFillRect(0, 0, 500, 1, 0x40404040);
+			rdr.AlphaFillRect(0, 299, 500, 1, 0x40404040);
+			rdr.AlphaFillRect(1, 150, 498, 1, 0x80404040);
+			rdr.AlphaFillRect(0, 1, 1, 298, 0x40404040);
+			rdr.AlphaFillRect(499, 1, 1, 298, 0x40404040);
+
+			static uint64 sLastTick = 0;
+
+			const uint64 t = VDGetPreciseTick();
+
+			float frameTime = (float)(sint64)(t - sLastTick) * (float)VDGetPreciseSecondsPerTick();
+			sLastTick = t;
+
+			struct VSyncHistory {
+				vdfloat2 mHistory[3][500] {};
+			};
+		
+			static vdautoptr<VSyncHistory> sHistoryStorage(new VSyncHistory);
+
+			static vdfloat2 (&sHistory)[3][500] = sHistoryStorage->mHistory;
+			for(int i=0; i<3; ++i) {
+				for(int j=0; j<499; ++j) {
+					sHistory[i][j].x = (float)j;
+					sHistory[i][j].y = sHistory[i][j+1].y;
+				}
+
+				sHistory[i][499].x = 499.0f;
+
+				if (i == 2)
+					sHistory[i][499].y = 150.0f - frameTime / 0.033f * 150.0f;
+				else if (i)
+					sHistory[i][499].y = 150.0f - g_frameCorrectionFactor / 0.002f * 150.0f;
+				else
+					sHistory[i][499].y = 150.0f - g_frameRefreshPeriod / 0.033f * 150.0f;
+
+				rdr.SetColorRGB(i == 2 ? 0x4080FF : i ? 0x00FF00 : 0xFF0000);
+				rdr.PolyLineF(sHistory[i], 499, true);
+			}
+			rdr.PopViewport();
 		}
 	}
 
@@ -2457,10 +2680,12 @@ std::pair<int, int> ATUIVideoDisplayWindow::GetModeLineXYPos(int xcc, int ys, bo
 /// mode line, not a supported text mode line). The returned buffer is _not_
 /// null terminated.
 ///
-int ATUIVideoDisplayWindow::ReadText(uint8 *dst, int yc, int startChar, int numChars) const {
+int ATUIVideoDisplayWindow::ReadText(uint8 *dst, int yc, int startChar, int numChars, bool& intl) const {
 	ATAnticEmulator& antic = g_sim.GetAntic();
 	const ATAnticEmulator::DLHistoryEntry *dlhist = antic.GetDLHistory();
 	const ATAnticEmulator::DLHistoryEntry& dle = dlhist[yc];
+
+	intl = false;
 
 	// check that mode line is valid
 	if (!dle.mbValid)
@@ -2511,6 +2736,9 @@ int ATUIVideoDisplayWindow::ReadText(uint8 *dst, int yc, int startChar, int numC
 
 	uint8 mask = (dle.mControl & 4) ? 0x3f : 0xff;
 	uint8 xorval = (dle.mControl & 4) && (dle.mCHBASE & 1) ? 0x40 : 0x00;
+
+	if (!(dle.mControl & 4) && dle.mCHBASE == (0xCC >> 1))
+		intl = true;
 
 	for(int i=0; i<numChars; ++i) {
 		uint8 c = data[i];

@@ -19,7 +19,8 @@
 #define f_AT_PIA_H
 
 #include <vd2/system/function.h>
-#include <at/atcore/deviceport.h>
+#include <vd2/system/vdstl.h>
+#include <at/atcore/devicepia.h>
 
 class ATScheduler;
 class ATSaveStateReader;
@@ -51,11 +52,16 @@ struct ATPIAFloatingInputs {
 	uint64	mFloatTimers[8];
 };
 
-class ATPIAEmulator final : public IATDevicePortManager {
+class ATPIAEmulator final : public IATDevicePIA {
+	friend class ATTest_Emu_PIA;
+
+	ATPIAEmulator(const ATPIAEmulator&) = delete;
+	ATPIAEmulator& operator=(const ATPIAEmulator&) = delete;
 public:
 	enum : uint32 { kTypeID = 'PIA ' };
 
 	ATPIAEmulator();
+	~ATPIAEmulator();
 
 	uint8 GetPortAOutput() const { return (uint8)mOutput; }
 	uint8 GetPortBOutput() const { return (uint8)(mOutput >> 8); }
@@ -64,8 +70,11 @@ public:
 	void FreeInput(int index) override;
 	void SetInput(int index, uint32 rval) override;
 
+	uint32 RegisterDynamicInput(bool portb, vdfunction<uint8()> fn);
+	void UnregisterDynamicInput(bool portb, uint32 token);
+
 	uint32 GetOutputState() const override { return mOutput; }
-	int AllocOutput(ATPortOutputFn fn, void *ptr, uint32 changeMask) override;
+	int AllocOutput(ATPIAOutputFn fn, void *ptr, uint32 changeMask) override;
 	void ModifyOutputMask(int index, uint32 changeMask);
 	void FreeOutput(int index) override;
 
@@ -109,10 +118,31 @@ public:
 	void LoadState(IATObjectState& state);
 	void PostLoadState();
 
-protected:
+private:
+	struct CountedMask32 {
+		struct Impl;
+
+		alignas(16) uint8 mCounts[32] {};
+
+		void AddZeroBits(uint32 mask);
+		void RemoveZeroBits(uint32 mask);
+
+		uint32 ReadZeroMask() const;
+	};
+
+	struct OutputEntry {
+		uint32 mChangeMask = 0;
+		ATPIAOutputFn mpFn = nullptr;
+		void *mpData = nullptr;
+	};
+
+	uint32& GetInput(unsigned slot);
+	OutputEntry& GetOutput(unsigned slot);
+
 	void UpdateCA2();
 	void UpdateCB2();
 	void UpdateOutput();
+	void RecomputeOutputReportMask();
 	bool SetPortBDirection(uint8 value);
 
 	void NegateIRQs(uint32 mask);
@@ -125,15 +155,22 @@ protected:
 	void UpdateTraceCRB();
 	void UpdateTraceInputA();
 
+	uint8 ReadDynamicInputs(bool portb) const;
+
 	ATScheduler *mpScheduler;
 	ATPIAFloatingInputs *mpFloatingInputs;
 	vdfunction<void(uint32, bool)> mpIRQHandler;
+
+	CountedMask32 mInputState;
 
 	uint32	mInput;
 	uint32	mOutput;
 
 	uint32	mPortOutput;
 	uint32	mPortDirection;
+
+	bool	mbHasDynamicAInputs = false;
+	bool	mbHasDynamicBInputs = false;
 
 	uint8	mPORTACTL;
 	uint8	mPORTBCTL;
@@ -151,17 +188,17 @@ protected:
 	};
 
 	uint32	mOutputReportMask;
-	uint16	mOutputAllocBitmap;
-	uint8	mInputAllocBitmap;
-	uint16	mInputs[4];
+	uint32	mInputAllocBitmap[8] {};
+	uint32	mIntInputs[8];
+	uint32	*mpExtInputs = nullptr;
 
-	struct OutputEntry {
-		uint32 mChangeMask;
-		ATPortOutputFn mpFn;
-		void *mpData;
-	};
+	OutputEntry mIntOutputs[4];
+	vdfastvector<OutputEntry> mExtOutputs;
+	uint32 mOutputNextAllocIndex = 0;
 
-	OutputEntry mOutputs[12];
+	vdvector<vdfunction<uint8()>> mDynamicInputs[2];
+	vdfastvector<uint32> mDynamicInputTokens[2];
+	uint32 mDynamicTokenCounter = 0;
 
 	uint32 mTraceIRQState = 0;
 	ATTraceContext *mpTraceContext = nullptr;

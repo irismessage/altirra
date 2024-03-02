@@ -1,18 +1,21 @@
-		section	.rdata, rdata, align=16
+		.686
+		.mmx
+		.xmm
+		.model		flat
+		.const
 
 xfefefefefefefefe	dq	0fefefefefefefefeh
 xe0e0e0e0e0e0e0e0	dq	0e0e0e0e0e0e0e0e0h
 x0002000200020002	dq	00002000200020002h
 
-		section	.text
+		.code
 
 ;==============================================================================
-		global _vdasm_horiz_expand2x_coaligned_ISSE
-_vdasm_horiz_expand2x_coaligned_ISSE:
+_vdasm_horiz_expand2x_coaligned_ISSE proc
 		mov			ecx, [esp+8]
 		mov			edx, [esp+4]
 		mov			eax, [esp+12]
-.xloop:
+xloop:
 		movq		mm0, [ecx]
 		movq		mm1, mm0
 		pavgb		mm0, [ecx+1]
@@ -26,12 +29,12 @@ _vdasm_horiz_expand2x_coaligned_ISSE:
 		add			ecx, 8
 
 		sub			eax, 16
-		jne			.xloop
+		jne			xloop
 		ret
+_vdasm_horiz_expand2x_coaligned_ISSE endp
 
 ;==============================================================================
-		global	_vdasm_vert_average_13_ISSE
-_vdasm_vert_average_13_ISSE:
+_vdasm_vert_average_13_ISSE proc
 		push	ebx
 		mov		ebx, [esp+12+4]
 		mov		ecx, [esp+8+4]
@@ -44,7 +47,7 @@ _vdasm_vert_average_13_ISSE:
 		neg		eax
 
 		pcmpeqb	mm7, mm7
-.xloop:
+xloop:
 		movq	mm0, [ebx+eax]
 		movq	mm1, [ecx+eax]
 		movq	mm2, mm0
@@ -70,14 +73,14 @@ _vdasm_vert_average_13_ISSE:
 
 		movq	[edx+eax+8], mm3
 		add		eax, 16
-		jne		.xloop
+		jne		xloop
 
 		pop		ebx
 		ret
+_vdasm_vert_average_13_ISSE endp
 
 ;==============================================================================
-		global	_vdasm_vert_average_17_ISSE
-_vdasm_vert_average_17_ISSE:
+_vdasm_vert_average_17_ISSE proc
 		push	ebx
 		mov		ebx, [esp+12+4]
 		mov		ecx, [esp+8+4]
@@ -93,7 +96,7 @@ _vdasm_vert_average_17_ISSE:
 		;  = pavgb(~pavgb(pavgb(~a, ~b), ~a), a)
 		
 		pcmpeqb		mm7, mm7
-.xloop:
+xloop:
 		movq		mm0, [ecx+eax]
 		movq		mm1, [ebx+eax]
 		movq		mm2, mm0
@@ -106,14 +109,14 @@ _vdasm_vert_average_17_ISSE:
 		movq		[edx+eax], mm1
 		
 		add		eax, 8
-		jne		.xloop
+		jne		xloop
 
 		pop		ebx
 		ret
+_vdasm_vert_average_17_ISSE endp
 
 ;==============================================================================
-		global	_vdasm_vert_average_35_ISSE
-_vdasm_vert_average_35_ISSE:
+_vdasm_vert_average_35_ISSE proc
 		push	ebx
 		mov		ebx, [esp+12+4]
 		mov		ecx, [esp+8+4]
@@ -129,7 +132,7 @@ _vdasm_vert_average_35_ISSE:
 		;  = pavgb(~pavgb(pavgb(~a, ~b), ~b), a)
 		
 		pcmpeqb		mm7, mm7
-.xloop:
+xloop:
 		movq		mm0, [ecx+eax]
 		movq		mm1, [ebx+eax]
 		movq		mm2, mm0
@@ -142,22 +145,22 @@ _vdasm_vert_average_35_ISSE:
 		movq		[edx+eax], mm0
 		
 		add		eax, 8
-		jne		.xloop
+		jne		xloop
 
 		pop		ebx
 		ret
+_vdasm_vert_average_35_ISSE endp
 
 ;==============================================================================
-		global	_vdasm_horiz_expand4x_coaligned_MMX
-_vdasm_horiz_expand4x_coaligned_MMX:
+_vdasm_horiz_expand4x_coaligned_MMX proc
 		mov			edx, [esp+4]
 		mov			ecx, [esp+8]
 		mov			eax, [esp+12]
-		movq		mm6, qword [x0002000200020002]
+		movq		mm6, qword ptr [x0002000200020002]
 		pxor		mm7, mm7
-.xloop:
-		movd		mm0, [ecx]
-		movd		mm1, [ecx+1]
+xloop:
+		movd		mm0, dword ptr [ecx]
+		movd		mm1, dword ptr [ecx+1]
 		add			ecx, 4
 		punpcklbw	mm0, mm7
 		punpcklbw	mm1, mm7
@@ -174,7 +177,7 @@ _vdasm_horiz_expand4x_coaligned_MMX:
 		paddw		mm1, mm0
 		paddw		mm2, mm0
 		paddw		mm3, mm0
-		movd		mm0, [ecx-4]
+		movd		mm0, dword ptr [ecx-4]
 		packuswb	mm1, mm1
 		packuswb	mm2, mm2
 		packuswb	mm3, mm3
@@ -188,6 +191,9 @@ _vdasm_horiz_expand4x_coaligned_MMX:
 		movq		[edx+8], mm1
 		add			edx, 16
 		sub			eax, 1
-		jne			.xloop
+		jne			xloop
 		
 		ret
+_vdasm_horiz_expand4x_coaligned_MMX endp
+
+		end

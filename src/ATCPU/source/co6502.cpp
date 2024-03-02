@@ -12,9 +12,12 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
@@ -533,7 +536,6 @@ uint32 ATCoProc6502::CreateTrace(uint16 pc) {
 		ClearTraceCache();
 	}
 
-	const uint16 pc0 = pc;
 	uint8 *dst0 = mpTraceCache->GetWritePointer();
 	uint8 *dst = dst0;
 	uint8 *ex0 = mpTraceCache->GetExceptionWritePointer();

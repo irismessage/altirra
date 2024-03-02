@@ -11,9 +11,12 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #ifndef AT_POKEY_H
 #define AT_POKEY_H
@@ -63,6 +66,7 @@ public:
 	virtual void PokeyResetSerialInput() = 0;
 	virtual void PokeyBeginCassetteData(uint8 skctl) = 0;
 	virtual bool PokeyWriteCassetteData(uint8 c, uint32 cyclesPerBit) = 0;
+	virtual void PokeyChangeForceBreak(bool enabled) = 0;
 };
 
 class IATPokeyTraceOutput {
@@ -134,6 +138,9 @@ public:
 	void	SetSpeaker(bool newState);
 	void	SetStereoSoftEnable(bool enable);
 
+	bool	IsStereoAsMonoEnabled() const { return mbStereoAsMono; }
+	void	SetStereoAsMonoEnabled(bool enable);
+
 	void	SetExternalSerialClock(uint32 basetime, uint32 period);
 	uint32	GetSerialCyclesPerBitRecv() const;
 	uint32	GetSerialInputResetCounter() const { return mSerialInputResetCounter; }
@@ -146,6 +153,13 @@ public:
 
 	bool	IsNonlinearMixingEnabled() const { return mbNonlinearMixingEnabled; }
 	void	SetNonlinearMixingEnabled(bool enable);
+
+	bool	IsSpeakerFilterEnabled() const;
+	bool	IsSpeakerFilterSupported() const;
+	void	SetSpeakerFilterEnabled(bool enable);
+	void	SetSpeakerFilterSupported(bool enable);
+
+	void	SetSpeakerVolumeOverride(float vol);
 
 	bool	IsSerialNoiseEnabled() const { return mbSerialNoiseEnabled; }
 	void	SetSerialNoiseEnabled(bool enable) { mbSerialNoiseEnabled = enable; }
@@ -194,8 +208,9 @@ public:
 	void	SetTraceOutput(IATPokeyTraceOutput *output);
 
 	uint32	GetCyclesToTimerFire(uint32 ch) const;
+	bool	IsSerialForceBreakEnabled() const;
 
-protected:
+private:
 	void	OnScheduledEvent(uint32 id) override;
 
 	void	PostFrameUpdate(uint32 t);
@@ -252,8 +267,17 @@ protected:
 	void	UpdatePots(uint32 timeSkew);
 
 	void	UpdateAddressDecoding();	
+	void	NotifyForceBreak();
 
-private:
+	template<unsigned T_Ch>
+	int GetAUDFP1(uint32 t) const;
+
+	template<unsigned T_Ch>
+	int GetAUDFP1() const;
+
+	template<unsigned T_Ch>
+	void SetAUDFP1(int period);
+
 	ATPokeyRenderer *mpRenderer;
 
 	int		mTimerCounters[4];
@@ -305,7 +329,9 @@ private:
 	ATPokeyRegisterState mState;
 
 	// countdown timer values
-	int		mAUDFP1[4];		// AUDF values, plus 1 (we use these everywhere)
+	int		mAUDFP1A[4] {};		// AUDF values, plus 1 (we use these everywhere)
+	int		mAUDFP1B[4] {};
+	uint32	mAUDFP1Time[4] {};
 	int		mCounter[4];
 	int		mCounterBorrow[4];
 	uint32	mTimerPeriod[4];
@@ -324,6 +350,7 @@ private:
 	uint8	mSerialInputPendingStatus;
 	bool	mbSerOutValid;
 	bool	mbSerShiftValid;
+	bool	mbSerClockPhase = false;		// Internal serial clock phase. false = init state
 	bool	mbSerialOutputState;
 	bool	mbSpeakerActive;
 	bool	mbSerialRateChanged;
@@ -363,6 +390,7 @@ private:
 	ATEvent	*mpKeyboardScanEvent;
 	ATEvent	*mpAudioEvent;
 	ATEvent	*mpResetTimersEvent;
+	ATEvent	*mpResetTimers2Event;
 	ATEvent *mpEventSerialInput;
 	ATEvent *mpEventSerialOutput;
 	ATEvent *mpEventResetTwoTones1 = nullptr;
@@ -409,6 +437,11 @@ private:
 
 	bool	mbAllowImmediatePotUpdate = false;
 	bool	mbStereoSoftEnable = true;
+	bool	mbStereoAsMono = false;
+
+	float	mSpeakerVolOverride = -1.0f;
+	bool	mbSpeakerFilterEnabled = false;
+	bool	mbSpeakerFilterSupported = false;
 
 	bool	mTraceDirectionSend = false;
 	uint32	mTraceByteIndex = 0;

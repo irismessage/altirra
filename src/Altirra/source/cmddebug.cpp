@@ -29,6 +29,7 @@ extern ATSimulator g_sim;
 
 void ATUIShowDialogDebugFont(VDGUIHandle hParent);
 void ATUIShowDialogVerifier(VDGUIHandle h, ATSimulator& sim);
+void ATUIShowDialogNewBreakpoint();
 
 void OnCommandDebuggerOpenSourceFile() {
 	VDStringW fn(VDGetLoadFileName('src ', ATUIGetNewPopupOwner(), L"Load source file", L"All files (*.*)\0*.*\0", NULL));
@@ -139,6 +140,10 @@ void OnCommandDebugStepOver() {
 	}
 }
 
+void OnCommandDebugNewBreakpoint() {
+	ATUIShowDialogNewBreakpoint();
+}
+
 void OnCommandDebugToggleBreakpoint() {
 	IATUIDebuggerPane *dbgp = ATUIGetActivePaneAs<IATUIDebuggerPane>();
 
@@ -235,6 +240,7 @@ namespace ATCommands {
 		{ "Debug.StepInto", OnCommandDebugStepInto, IsNotRunning },
 		{ "Debug.StepOut", OnCommandDebugStepOut, IsNotRunning },
 		{ "Debug.StepOver", OnCommandDebugStepOver, IsNotRunning },
+		{ "Debug.NewBreakpoint", OnCommandDebugNewBreakpoint, IsDebuggerEnabled },
 		{ "Debug.ToggleBreakpoint", OnCommandDebugToggleBreakpoint, IsDebuggerEnabled },
 		{ "Debug.VerifierDialog", OnCommandDebugVerifierDialog, nullptr, [] { return ToChecked(g_sim.IsVerifierEnabled()); } },
 		{ "Debug.ShowTraceViewer", OnCommandDebugShowTraceViewer },

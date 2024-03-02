@@ -35,152 +35,207 @@ static vdfastvector<uint32> g_ATCustomKeyMap;
 VDAccelTableDefinition g_ATUIDefaultAccelTables[kATUIAccelContextCount];
 VDAccelTableDefinition g_ATUIAccelTables[kATUIAccelContextCount];
 
+static constexpr uint8 kATUIDefaultCharToScanCodeMappings[][2] {
+	{ 'l', 0x00 },
+	{ 'L', 0x40 },
+
+	{ 'j', 0x01 },
+	{ 'J', 0x41 },
+
+	{ ';', 0x02 },
+	{ ':', 0x42 },
+
+	{ 'k', 0x05 },
+	{ 'K', 0x45 },
+
+	{ '+', 0x06 },
+	{ '\\', 0x46 },
+
+	{ '*', 0x07 },
+	{ '^', 0x47 },
+
+	{ 'o', 0x08 },
+	{ 'O', 0x48 },
+
+	{ 'p', 0x0A },
+	{ 'P', 0x4A },
+
+	{ 'u', 0x0B },
+	{ 'U', 0x4B },
+
+	{ 'i', 0x0D },
+	{ 'I', 0x4D },
+
+	{ '-', 0x0E },
+	{ '_', 0x4E },
+
+	{ '=', 0x0F },
+	{ '|', 0x4F },
+
+	{ 'v', 0x10 },
+	{ 'V', 0x50 },
+
+	{ 'c', 0x12 },
+	{ 'C', 0x52 },
+
+	{ 'b', 0x15 },
+	{ 'B', 0x55 },
+
+	{ 'x', 0x16 },
+	{ 'X', 0x56 },
+
+	{ 'z', 0x17 },
+	{ 'Z', 0x57 },
+
+	{ '4', 0x18 },
+	{ '$', 0x58 },
+
+	{ '3', 0x1A },
+	{ '#', 0x5A },
+
+	{ '6', 0x1B },
+	{ '&', 0x5B },
+
+	{ '5', 0x1D },
+	{ '%', 0x5D },
+
+	{ '2', 0x1E },
+	{ '"', 0x5E },
+
+	{ '1', 0x1F },
+	{ '!', 0x5F },
+
+	{ ',', 0x20 },
+	{ '[', 0x60 },
+
+	{ ' ', 0x21 },
+
+	{ '.', 0x22 },
+	{ ']', 0x62 },
+
+	{ 'n', 0x23 },
+	{ 'N', 0x63 },
+
+	{ 'm', 0x25 },
+	{ 'M', 0x65 },
+
+	{ '/', 0x26 },
+	{ '?', 0x66 },
+
+	{ 'r', 0x28 },
+	{ 'R', 0x68 },
+
+	{ 'e', 0x2A },
+	{ 'E', 0x6A },
+
+	{ 'y', 0x2B },
+	{ 'Y', 0x6B },
+
+	{ 't', 0x2D },
+	{ 'T', 0x6D },
+
+	{ 'w', 0x2E },
+	{ 'W', 0x6E },
+
+	{ 'q', 0x2F },
+	{ 'Q', 0x6F },
+
+	{ '9', 0x30 },
+	{ '(', 0x70 },
+
+	{ '0', 0x32 },
+	{ ')', 0x72 },
+
+	{ '7', 0x33 },
+	{ '\'', 0x73 },
+
+	{ '8', 0x35 },
+	{ '@', 0x75 },
+
+	{ '<', 0x36 },
+	{ '>', 0x37 },
+
+	{ 'f', 0x38 },
+	{ 'F', 0x78 },
+
+	{ 'h', 0x39 },
+	{ 'H', 0x79 },
+
+	{ 'd', 0x3A },
+	{ 'D', 0x7A },
+
+	{ 'g', 0x3D },
+	{ 'G', 0x7D },
+
+	{ 's', 0x3E },
+	{ 'S', 0x7E },
+
+	{ 'a', 0x3F },
+	{ 'A', 0x7F },
+
+	{ '`', 0x27 },
+	{ '~', 0x67 },
+
+	{ 0x00E1, 0xA0 },	// $00: latin small letter A with acute
+	{ 0x00F9, 0xBF },	// $01: latin small letter U with grave
+	{ 0x00D1, 0x95 },	// $02: latin capital letter N with tilde
+	{ 0x00C9, 0x92 },	// $03: latin capital letter E with acute
+	{ 0x00E7, 0xBA },	// $04: latin small letter C with cedilla
+	{ 0x00F4, 0xAA },	// $05: latin small letter O with circumflex
+	{ 0x00F2, 0xB8 },	// $06: latin small letter O with grave
+	{ 0x00EC, 0xBD },	// $07: latin small letter I with grave
+	{ 0x00A3, 0xB9 },	// $08: pound sign
+	{ 0x00EF, 0x8D },	// $09: latin small letter I with diaeresis
+	{ 0x00FC, 0x81 },	// $0A: latin small letter U with diaeresis
+	{ 0x00E4, 0x85 },	// $0B: latin small letter A with diaeresis
+	{ 0x00D6, 0x80 },	// $0C: latin capital letter O with diaeresis
+	{ 0x00FA, 0xA5 },	// $0D: latin small letter U with acute
+	{ 0x00F3, 0xA3 },	// $0E: latin small letter O with acute
+	{ 0x00F6, 0x88 },	// $0F: latin small letter O with diaeresis
+	{ 0x00DC, 0x8A },	// $10: latin capital letter U with diaeresis
+	{ 0x00E2, 0xAF },	// $11: latin small letter A with circumflex
+	{ 0x00FB, 0xA8 },	// $12: latin small letter U with circumflex
+	{ 0x00EE, 0xBE },	// $13: latin small letter I with circumflex
+	{ 0x00E9, 0xAD },	// $14: latin small letter E with acute
+	{ 0x00E8, 0x8B },	// $15: latin small letter E with grave
+	{ 0x00F1, 0x90 },	// $16: latin small letter N with tilde
+	{ 0x00EA, 0xAE },	// $17: latin small letter E with circumflex
+	{ 0x00E5, 0x96 },	// $18: latin small letter A with ring above
+	{ 0x00E0, 0xAB },	// $19: latin small letter A with grave
+	{ 0x00C5, 0x97 },	// $1A: latin capital letter A with ring above
+
+	{ 0x00A1, 0xA2 },	// $60: inverted exclamation mark
+	{ 0x00C4, 0x82 },	// $7B: latin capital letter A with diaeresis
+};
+
+struct ATUIDefaultCharMappings {
+	// This is a unicode -> scancode mapping, but as it turns out, all of
+	// the mappings we have are <U+0100.
+	uint8 mCharToScanCode[256];
+	uint32 mCharKeyMappings[vdcountof(kATUIDefaultCharToScanCodeMappings)];
+
+	static constexpr uint8 kInvalidScanCode = 0xFF;
+
+	constexpr ATUIDefaultCharMappings()
+		: mCharToScanCode{}
+		, mCharKeyMappings{}
+	{
+		for(auto& v : mCharToScanCode)
+			v = kInvalidScanCode;
+
+		for(size_t i = 0; i < vdcountof(kATUIDefaultCharToScanCodeMappings); ++i) {
+			const auto& mapping = kATUIDefaultCharToScanCodeMappings[i];
+
+			mCharToScanCode[mapping[0]] = mapping[1];
+			mCharKeyMappings[i] = ((uint32)mapping[0] << 9) + mapping[1] + kATUIKeyboardMappingModifier_Cooked;
+		}
+	}
+};
+
+constexpr ATUIDefaultCharMappings kATUIDefaultCharMappings;
+
 void ATUIAddDefaultCharMappings(vdfastvector<uint32>& dst) {
-	static const uint32 kDefaultCharMappings[]={
-#define ATCHAR_MAPPING(ch, sc) (((uint32)(uint8)(ch) << 9) + (uint32)(sc) + kATUIKeyboardMappingModifier_Cooked)
-		ATCHAR_MAPPING((uint8)'l', 0x00 ),
-		ATCHAR_MAPPING((uint8)'L', 0x40 ),
-
-		ATCHAR_MAPPING((uint8)'j', 0x01 ),
-		ATCHAR_MAPPING((uint8)'J', 0x41 ),
-
-		ATCHAR_MAPPING((uint8)';', 0x02 ),
-		ATCHAR_MAPPING((uint8)':', 0x42 ),
-
-		ATCHAR_MAPPING((uint8)'k', 0x05 ),
-		ATCHAR_MAPPING((uint8)'K', 0x45 ),
-
-		ATCHAR_MAPPING((uint8)'+', 0x06 ),
-		ATCHAR_MAPPING((uint8)'\\', 0x46 ),
-
-		ATCHAR_MAPPING((uint8)'*', 0x07 ),
-		ATCHAR_MAPPING((uint8)'^', 0x47 ),
-
-		ATCHAR_MAPPING((uint8)'o', 0x08 ),
-		ATCHAR_MAPPING((uint8)'O', 0x48 ),
-
-		ATCHAR_MAPPING((uint8)'p', 0x0A ),
-		ATCHAR_MAPPING((uint8)'P', 0x4A ),
-
-		ATCHAR_MAPPING((uint8)'u', 0x0B ),
-		ATCHAR_MAPPING((uint8)'U', 0x4B ),
-
-		ATCHAR_MAPPING((uint8)'i', 0x0D ),
-		ATCHAR_MAPPING((uint8)'I', 0x4D ),
-
-		ATCHAR_MAPPING((uint8)'-', 0x0E ),
-		ATCHAR_MAPPING((uint8)'_', 0x4E ),
-
-		ATCHAR_MAPPING((uint8)'=', 0x0F ),
-		ATCHAR_MAPPING((uint8)'|', 0x4F ),
-
-		ATCHAR_MAPPING((uint8)'v', 0x10 ),
-		ATCHAR_MAPPING((uint8)'V', 0x50 ),
-
-		ATCHAR_MAPPING((uint8)'c', 0x12 ),
-		ATCHAR_MAPPING((uint8)'C', 0x52 ),
-
-		ATCHAR_MAPPING((uint8)'b', 0x15 ),
-		ATCHAR_MAPPING((uint8)'B', 0x55 ),
-
-		ATCHAR_MAPPING((uint8)'x', 0x16 ),
-		ATCHAR_MAPPING((uint8)'X', 0x56 ),
-
-		ATCHAR_MAPPING((uint8)'z', 0x17 ),
-		ATCHAR_MAPPING((uint8)'Z', 0x57 ),
-
-		ATCHAR_MAPPING((uint8)'4', 0x18 ),
-		ATCHAR_MAPPING((uint8)'$', 0x58 ),
-
-		ATCHAR_MAPPING((uint8)'3', 0x1A ),
-		ATCHAR_MAPPING((uint8)'#', 0x5A ),
-
-		ATCHAR_MAPPING((uint8)'6', 0x1B ),
-		ATCHAR_MAPPING((uint8)'&', 0x5B ),
-
-		ATCHAR_MAPPING((uint8)'5', 0x1D ),
-		ATCHAR_MAPPING((uint8)'%', 0x5D ),
-
-		ATCHAR_MAPPING((uint8)'2', 0x1E ),
-		ATCHAR_MAPPING((uint8)'"', 0x5E ),
-
-		ATCHAR_MAPPING((uint8)'1', 0x1F ),
-		ATCHAR_MAPPING((uint8)'!', 0x5F ),
-
-		ATCHAR_MAPPING((uint8)',', 0x20 ),
-		ATCHAR_MAPPING((uint8)'[', 0x60 ),
-
-		ATCHAR_MAPPING((uint8)' ', 0x21 ),
-
-		ATCHAR_MAPPING((uint8)'.', 0x22 ),
-		ATCHAR_MAPPING((uint8)']', 0x62 ),
-
-		ATCHAR_MAPPING((uint8)'n', 0x23 ),
-		ATCHAR_MAPPING((uint8)'N', 0x63 ),
-
-		ATCHAR_MAPPING((uint8)'m', 0x25 ),
-		ATCHAR_MAPPING((uint8)'M', 0x65 ),
-
-		ATCHAR_MAPPING((uint8)'/', 0x26 ),
-		ATCHAR_MAPPING((uint8)'?', 0x66 ),
-
-		ATCHAR_MAPPING((uint8)'r', 0x28 ),
-		ATCHAR_MAPPING((uint8)'R', 0x68 ),
-
-		ATCHAR_MAPPING((uint8)'e', 0x2A ),
-		ATCHAR_MAPPING((uint8)'E', 0x6A ),
-
-		ATCHAR_MAPPING((uint8)'y', 0x2B ),
-		ATCHAR_MAPPING((uint8)'Y', 0x6B ),
-
-		ATCHAR_MAPPING((uint8)'t', 0x2D ),
-		ATCHAR_MAPPING((uint8)'T', 0x6D ),
-
-		ATCHAR_MAPPING((uint8)'w', 0x2E ),
-		ATCHAR_MAPPING((uint8)'W', 0x6E ),
-
-		ATCHAR_MAPPING((uint8)'q', 0x2F ),
-		ATCHAR_MAPPING((uint8)'Q', 0x6F ),
-
-		ATCHAR_MAPPING((uint8)'9', 0x30 ),
-		ATCHAR_MAPPING((uint8)'(', 0x70 ),
-
-		ATCHAR_MAPPING((uint8)'0', 0x32 ),
-		ATCHAR_MAPPING((uint8)')', 0x72 ),
-
-		ATCHAR_MAPPING((uint8)'7', 0x33 ),
-		ATCHAR_MAPPING((uint8)'\'', 0x73 ),
-
-		ATCHAR_MAPPING((uint8)'8', 0x35 ),
-		ATCHAR_MAPPING((uint8)'@', 0x75 ),
-
-		ATCHAR_MAPPING((uint8)'<', 0x36 ),
-		ATCHAR_MAPPING((uint8)'>', 0x37 ),
-
-		ATCHAR_MAPPING((uint8)'f', 0x38 ),
-		ATCHAR_MAPPING((uint8)'F', 0x78 ),
-
-		ATCHAR_MAPPING((uint8)'h', 0x39 ),
-		ATCHAR_MAPPING((uint8)'H', 0x79 ),
-
-		ATCHAR_MAPPING((uint8)'d', 0x3A ),
-		ATCHAR_MAPPING((uint8)'D', 0x7A ),
-
-		ATCHAR_MAPPING((uint8)'g', 0x3D ),
-		ATCHAR_MAPPING((uint8)'G', 0x7D ),
-
-		ATCHAR_MAPPING((uint8)'s', 0x3E ),
-		ATCHAR_MAPPING((uint8)'S', 0x7E ),
-
-		ATCHAR_MAPPING((uint8)'a', 0x3F ),
-		ATCHAR_MAPPING((uint8)'A', 0x7F ),
-
-		ATCHAR_MAPPING((uint8)'`', 0x27 ),
-		ATCHAR_MAPPING((uint8)'~', 0x67 ),
-#undef ATCHAR_MAPPING
-	};
-
-	dst.insert(dst.end(), std::begin(kDefaultCharMappings), std::end(kDefaultCharMappings));
+	dst.insert(dst.end(), std::begin(kATUIDefaultCharMappings.mCharKeyMappings), std::end(kATUIDefaultCharMappings.mCharKeyMappings));
 }
 
 const vdfastvector<uint32>& ATUIGetCurrentKeyMap() {
@@ -202,149 +257,58 @@ bool ATUIGetScanCodeForCharacter32(uint32 c32, uint32& ch) {
 	return c32 < 0x10000 && ATUIGetScanCodeForKeyInput(ATUIPackKeyboardMapping(0, c32, kATUIKeyboardMappingModifier_Cooked), ch);
 }
 
-bool ATUIGetDefaultScanCodeForCharacter(char c, uint8& ch) {
-	switch(c) {
-#define ATCHAR_CASE(chval, sc) case chval: ch = sc; return true;
-		ATCHAR_CASE('l', 0x00 )
-		ATCHAR_CASE('L', 0x40 )
+bool ATUIGetDefaultScanCodeForCharacter(uint32 c32, uint8& ch) {
+	if (c32 < 0x100) {
+		const uint8 scanCode = kATUIDefaultCharMappings.mCharToScanCode[c32];
 
-		ATCHAR_CASE('j', 0x01 )
-		ATCHAR_CASE('J', 0x41 )
+		if (scanCode != kATUIDefaultCharMappings.kInvalidScanCode) {
+			ch = scanCode;
+			return true;
+		}
+	}
 
-		ATCHAR_CASE(';', 0x02 )
-		ATCHAR_CASE(':', 0x42 )
+	// try to map some Unicode characters as well
+	switch(c32) {
+		case 0x2665: ch = 0xA0; return true;	// Ctrl+,  heart
+		case 0x251C: ch = 0xBF; return true;	// Ctrl+A  vertical tee right
+		case 0x2595: ch = 0x95; return true;	// Ctrl+B  vertical bar right
+		case 0x2518: ch = 0x92; return true;	// Ctrl+C  top-left elbow
+		case 0x2524: ch = 0xBA; return true;	// Ctrl+D  vertical tee left
+		case 0x2510: ch = 0xAA; return true;	// Ctrl+E  bottom-left elbow
+		case 0x2571: ch = 0xB8; return true;	// Ctrl+F  forward diagonal
+		case 0x2572: ch = 0xBD; return true;	// Ctrl+G  backwards diagonal
+		case 0x25E2: ch = 0xB9; return true;	// Ctrl+H  lower right filled triangle
+		case 0x2597: ch = 0x8D; return true;	// Ctrl+I  lower right quadrant
+		case 0x25E3: ch = 0x81; return true;	// Ctrl+J  lower left filled triangle
+		case 0x259D: ch = 0x85; return true;	// Ctrl+K  quadrant upper right
+		case 0x2598: ch = 0x80; return true;	// Ctrl+L  quadrant upper left
+		case 0x2594: ch = 0xA5; return true;	// Ctrl+M  top quarter
+		case 0x2582: ch = 0xA3; return true;	// Ctrl+N  bottom quarter
+		case 0x2596: ch = 0x88; return true;	// Ctrl+O  lower left quadrant
 
-		ATCHAR_CASE('k', 0x05 )
-		ATCHAR_CASE('K', 0x45 )
+		case 0x2663: ch = 0x8A; return true;	// Ctrl+P  club
+		case 0x250C: ch = 0xAF; return true;	// Ctrl+Q  lower-right elbow
+		case 0x2500: ch = 0xA8; return true;	// Ctrl+R  horizontal bar
+		case 0x253C: ch = 0xBE; return true;	// Ctrl+S  four-way
+		case 0x2022: ch = 0xAD; return true;	// Ctrl+T  filled circle
+		case 0x2584: ch = 0x8B; return true;	// Ctrl+U  lower half
+		case 0x258E: ch = 0x90; return true;	// Ctrl+V  left quarter
+		case 0x252C: ch = 0xAE; return true;	// Ctrl+W  horizontal tee down
+		case 0x2534: ch = 0x96; return true;	// Ctrl+X  horizontal tee up
+		case 0x258C: ch = 0xAB; return true;	// Ctrl+Y  left side
+		case 0x2514: ch = 0x97; return true;	// Ctrl+Z  top-right elbow
+		case 0x241B: ch = 0x1C; return true;	// Esc     escape
+		case 0x2191: ch = 0x8E; return true;	// up arrow
+		case 0x2193: ch = 0x8F; return true;	// down arrow
+		case 0x2190: ch = 0x86; return true;	// left arrow
+		case 0x2192: ch = 0x87; return true;	// right arrow
 
-		ATCHAR_CASE('+', 0x06 )
-		ATCHAR_CASE('\\', 0x46 )
+		case 0x2666: ch = 0x61; return true;	// Ctrl+.  black diamond suit
 
-		ATCHAR_CASE('*', 0x07 )
-		ATCHAR_CASE('^', 0x47 )
-
-		ATCHAR_CASE('o', 0x08 )
-		ATCHAR_CASE('O', 0x48 )
-
-		ATCHAR_CASE('p', 0x0A )
-		ATCHAR_CASE('P', 0x4A )
-
-		ATCHAR_CASE('u', 0x0B )
-		ATCHAR_CASE('U', 0x4B )
-
-		ATCHAR_CASE('i', 0x0D )
-		ATCHAR_CASE('I', 0x4D )
-
-		ATCHAR_CASE('-', 0x0E )
-		ATCHAR_CASE('_', 0x4E )
-
-		ATCHAR_CASE('=', 0x0F )
-		ATCHAR_CASE('|', 0x4F )
-
-		ATCHAR_CASE('v', 0x10 )
-		ATCHAR_CASE('V', 0x50 )
-
-		ATCHAR_CASE('c', 0x12 )
-		ATCHAR_CASE('C', 0x52 )
-
-		ATCHAR_CASE('b', 0x15 )
-		ATCHAR_CASE('B', 0x55 )
-
-		ATCHAR_CASE('x', 0x16 )
-		ATCHAR_CASE('X', 0x56 )
-
-		ATCHAR_CASE('z', 0x17 )
-		ATCHAR_CASE('Z', 0x57 )
-
-		ATCHAR_CASE('4', 0x18 )
-		ATCHAR_CASE('$', 0x58 )
-
-		ATCHAR_CASE('3', 0x1A )
-		ATCHAR_CASE('#', 0x5A )
-
-		ATCHAR_CASE('6', 0x1B )
-		ATCHAR_CASE('&', 0x5B )
-
-		ATCHAR_CASE('5', 0x1D )
-		ATCHAR_CASE('%', 0x5D )
-
-		ATCHAR_CASE('2', 0x1E )
-		ATCHAR_CASE('"', 0x5E )
-
-		ATCHAR_CASE('1', 0x1F )
-		ATCHAR_CASE('!', 0x5F )
-
-		ATCHAR_CASE(',', 0x20 )
-		ATCHAR_CASE('[', 0x60 )
-
-		ATCHAR_CASE(' ', 0x21 )
-
-		ATCHAR_CASE('.', 0x22 )
-		ATCHAR_CASE(']', 0x62 )
-
-		ATCHAR_CASE('n', 0x23 )
-		ATCHAR_CASE('N', 0x63 )
-
-		ATCHAR_CASE('m', 0x25 )
-		ATCHAR_CASE('M', 0x65 )
-
-		ATCHAR_CASE('/', 0x26 )
-		ATCHAR_CASE('?', 0x66 )
-
-		ATCHAR_CASE('r', 0x28 )
-		ATCHAR_CASE('R', 0x68 )
-
-		ATCHAR_CASE('e', 0x2A )
-		ATCHAR_CASE('E', 0x6A )
-
-		ATCHAR_CASE('y', 0x2B )
-		ATCHAR_CASE('Y', 0x6B )
-
-		ATCHAR_CASE('t', 0x2D )
-		ATCHAR_CASE('T', 0x6D )
-
-		ATCHAR_CASE('w', 0x2E )
-		ATCHAR_CASE('W', 0x6E )
-
-		ATCHAR_CASE('q', 0x2F )
-		ATCHAR_CASE('Q', 0x6F )
-
-		ATCHAR_CASE('9', 0x30 )
-		ATCHAR_CASE('(', 0x70 )
-
-		ATCHAR_CASE('0', 0x32 )
-		ATCHAR_CASE(')', 0x72 )
-
-		ATCHAR_CASE('7', 0x33 )
-		ATCHAR_CASE('\'', 0x73 )
-
-		ATCHAR_CASE('8', 0x35 )
-		ATCHAR_CASE('@', 0x75 )
-
-		ATCHAR_CASE('<', 0x36 )
-		ATCHAR_CASE('>', 0x37 )
-
-		ATCHAR_CASE('f', 0x38 )
-		ATCHAR_CASE('F', 0x78 )
-
-		ATCHAR_CASE('h', 0x39 )
-		ATCHAR_CASE('H', 0x79 )
-
-		ATCHAR_CASE('d', 0x3A )
-		ATCHAR_CASE('D', 0x7A )
-
-		ATCHAR_CASE('g', 0x3D )
-		ATCHAR_CASE('G', 0x7D )
-
-		ATCHAR_CASE('s', 0x3E )
-		ATCHAR_CASE('S', 0x7E )
-
-		ATCHAR_CASE('a', 0x3F )
-		ATCHAR_CASE('A', 0x7F )
-
-		ATCHAR_CASE('`', 0x27 )
-		ATCHAR_CASE('~', 0x67 )
-#undef ATCHAR_CASE
+		case 0x2660: ch = 0x82; return true;	// Ctrl+;  spade
+		case 0x21B0: ch = 0x76; return true;	// Clear   curved arrow up-left
+		case 0x25C0: ch = 0x34; return true;	// Back    tall left arrow
+		case 0x25B6: ch = 0x2C; return true;	// Tab     tall right arrow
 	}
 
 	return false;
@@ -459,6 +423,8 @@ static const uint32 g_ATDefaultVKeyMap[]={
 	VKEYMAP_C_SALL('9', 0x30),
 
 	VKEYMAP_CSALL(VK_CAPITAL, 0x3C),
+
+	VKEYMAP('0',	kCtrl + kShift + kAlt,	0xF2),	// Ctrl+Shift+Alt+0 (workaround for Windows 10+ stealing this key)
 };
 
 static const uint32 g_ATRawVKeyMap[]={
@@ -523,6 +489,8 @@ static const uint32 g_ATRawVKeyMap[]={
 	VKEYMAP_CSALL('G', 0x3D),
 	VKEYMAP_CSALL('S', 0x3E),
 	VKEYMAP_CSALL('A', 0x3F),
+
+	VKEYMAP('0',	kCtrl + kShift + kAlt,	0xF2),	// Ctrl+Shift+Alt+0 (workaround for Windows 10+ stealing this key)
 };
 
 static const uint32 g_ATDefaultVKeyMapCommonSSO[]={
@@ -1016,6 +984,7 @@ namespace {
 	const VDAccelTableEntry kATDefaultAccelTableDebugger[]={
 		{ "Debug.Run", 0, { VK_F5, 0 } },
 		{ "Debug.ToggleBreakpoint", 0, { VK_F9, 0 } },
+		{ "Debug.NewBreakpoint", 0, { 'B', CTRL } },
 	};
 }
 

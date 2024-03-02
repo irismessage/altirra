@@ -20,6 +20,7 @@
 #include <at/atcore/audiomixer.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/devicepia.h>
 #include <at/atcore/devicesystemcontrol.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
@@ -27,17 +28,12 @@
 #include "memorymanager.h"
 #include "console.h"
 
-namespace {
-	// 1/128 for mapping unsigned 8-bit PCM to [-1, 1] (well, almost)
-	// 1/2 for two source channels summed on each output channel
-	// 1/28 for crude box filtering to mix rate
-	const float kOutputScale = 1.0f / 128.0f / 2.0f / 28.0f;
-
-	// Two channels, for the full 28 ticks per sample, at a value of 0x80.
-	const float kOutputBias = -128.0f * 2.0f * 28.0f;
-}
-
 ATCovoxEmulator::ATCovoxEmulator() {
+	mpEdgeBufferL = new ATSyncAudioEdgeBuffer;
+	mpEdgeBufferL->mpDebugLabel = "Covox L";
+
+	mpEdgeBufferR = new ATSyncAudioEdgeBuffer;
+	mpEdgeBufferR->mpDebugLabel = "Covox R";
 }
 
 ATCovoxEmulator::~ATCovoxEmulator() {
@@ -95,8 +91,6 @@ void ATCovoxEmulator::Shutdown() {
 }
 
 void ATCovoxEmulator::ColdReset() {
-	mLastUpdate = ATSCHEDULER_GETTIME(mpScheduler);
-
 	for(int i=0; i<4; ++i)
 		mVolume[i] = 0x80;
 
@@ -104,13 +98,9 @@ void ATCovoxEmulator::ColdReset() {
 }
 
 void ATCovoxEmulator::WarmReset() {
-	memset(mAccumBufferLeft, 0, sizeof mAccumBufferLeft);
-	memset(mAccumBufferRight, 0, sizeof mAccumBufferRight);
+	mpEdgeBufferL->mEdges.clear();
+	mpEdgeBufferR->mEdges.clear();
 
-	mOutputCount = 0;
-	mOutputLevel = 0;
-	mOutputAccumLeft = kOutputBias;
-	mOutputAccumRight = kOutputBias;
 	mbUnbalanced = false;
 	mbUnbalancedSticky = false;
 }
@@ -127,13 +117,19 @@ void ATCovoxEmulator::DumpStatus(ATConsoleOutput& output) {
 void ATCovoxEmulator::WriteControl(uint8 addr, uint8 value) {
 	addr &= 3;
 
-	const uint8 prevValue = mVolume[addr];
-	if (prevValue == value)
+	const int delta = value - mVolume[addr];
+	if (delta == 0)
 		return;
 
-	Flush();
-
 	mVolume[addr] = value;
+
+	ATSyncAudioEdgeBuffer& edgeBuffer = (addr == 1 || addr == 2) ? *mpEdgeBufferR : *mpEdgeBufferL;
+
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+	if (edgeBuffer.mEdges.empty() || edgeBuffer.mEdges.back().mTime != t)
+		edgeBuffer.mEdges.push_back(ATSyncAudioEdge { .mTime = t, .mDeltaValue = (float)delta });
+	else
+		edgeBuffer.mEdges.back().mDeltaValue += (float)delta;
 
 	mbUnbalanced = mVolume[0] + mVolume[3] != mVolume[1] + mVolume[2];
 
@@ -142,125 +138,54 @@ void ATCovoxEmulator::WriteControl(uint8 addr, uint8 value) {
 }
 
 void ATCovoxEmulator::WriteMono(uint8 value) {
-	if (mVolume[0] != value ||
-		mVolume[1] != value ||
-		mVolume[2] != value ||
-		mVolume[3] != value)
-	{
-		Flush();
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+
+	const int deltaL = value*2 - (mVolume[0] + mVolume[3]);
+	if (deltaL != 0) {
+		if (mpEdgeBufferL->mEdges.empty() || mpEdgeBufferL->mEdges.back().mTime != t)
+			mpEdgeBufferL->mEdges.push_back(ATSyncAudioEdge { .mTime = t, .mDeltaValue = (float)deltaL });
+		else
+			mpEdgeBufferL->mEdges.back().mDeltaValue += (float)deltaL;
 
 		mVolume[0] = value;
+		mVolume[3] = value;
+	}
+
+	const int deltaR = value*2 - (mVolume[1] + mVolume[2]);
+	if (deltaR != 0) {
+		if (mpEdgeBufferR->mEdges.empty() || mpEdgeBufferR->mEdges.back().mTime != t)
+			mpEdgeBufferR->mEdges.push_back(ATSyncAudioEdge { .mTime = t, .mDeltaValue = (float)deltaR });
+		else
+			mpEdgeBufferR->mEdges.back().mDeltaValue += (float)deltaR;
+
 		mVolume[1] = value;
 		mVolume[2] = value;
-		mVolume[3] = value;
-		mbUnbalanced = false;
-	}
-}
-
-void ATCovoxEmulator::Run(int cycles) {
-	float vl = (float)(mVolume[0] + mVolume[3]);
-	float vr = (float)(mVolume[1] + mVolume[2]);
-
-	if (mOutputCount) {
-		int tc = (int)(28 - mOutputCount);
-
-		if (tc > cycles)
-			tc = cycles;
-
-		cycles -= tc;
-
-		mOutputAccumLeft += vl * tc;
-		mOutputAccumRight += vr * tc;
-		mOutputCount += tc;
-
-		if (mOutputCount < 28)
-			return;
-
-		if (mOutputLevel < kAccumBufferSize) {
-			mAccumBufferLeft[mOutputLevel] = mOutputAccumLeft;
-			mAccumBufferRight[mOutputLevel] = mOutputAccumRight;
-			++mOutputLevel;
-		}
-
-		mOutputAccumLeft = kOutputBias;
-		mOutputAccumRight = kOutputBias;
-		mOutputCount = 0;
 	}
 
-	while(cycles >= 28) {
-		if (mOutputLevel >= kAccumBufferSize) {
-			cycles %= 28;
-			break;
-		}
-
-		mAccumBufferLeft[mOutputLevel] = vl * 28 + kOutputBias;
-		mAccumBufferRight[mOutputLevel] = vr * 28 + kOutputBias;
-		++mOutputLevel;
-		cycles -= 28;
-	}
-
-	mOutputAccumLeft = kOutputBias;
-	mOutputAccumRight = kOutputBias;
-	mOutputCount = 0;
-
-	if (cycles) {
-		mOutputAccumLeft += vl * cycles;
-		mOutputAccumRight += vr * cycles;
-		mOutputCount = cycles;
-	}
+	mbUnbalanced = false;
 }
 
 void ATCovoxEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
-	float *const dstLeft = mixInfo.mpLeft;
-	float *const dstRightOpt = mixInfo.mpRight;
-	const uint32 n = mixInfo.mCount;
+	auto& edgePlayer = mpAudioMixer->GetEdgePlayer();
 
-	Flush();
+	// 1/128 for mapping unsigned 8-bit PCM to [-1, 1] (well, almost)
+	// 1/2 for two source channels summed on each output channel
+	const float kOutputScale = 1.0f / 128.0f / 2.0f;
+	if (mbUnbalancedSticky) {
+		edgePlayer.AddEdgeBuffer(mpEdgeBufferR);
 
-	VDASSERT(n <= kAccumBufferSize);
-
-	// if we don't have enough samples, pad out; eventually we'll catch up enough
-	if (mOutputLevel < n) {
-		memset(mAccumBufferLeft + mOutputLevel, 0, sizeof(mAccumBufferLeft[0]) * (n - mOutputLevel));
-		memset(mAccumBufferRight + mOutputLevel, 0, sizeof(mAccumBufferRight[0]) * (n - mOutputLevel));
-
-		mOutputLevel = n;
+		mpEdgeBufferL->mLeftVolume = kOutputScale;
+		mpEdgeBufferL->mRightVolume = 0;
+		mpEdgeBufferR->mLeftVolume = 0;
+		mpEdgeBufferR->mRightVolume = kOutputScale;
+	} else {
+		mpEdgeBufferL->mLeftVolume = kOutputScale;
+		mpEdgeBufferL->mRightVolume = kOutputScale;
 	}
 
-	if (mbEnabled) {
-		float volume = mixInfo.mpMixLevels[kATAudioMix_Covox] * kOutputScale;
+	edgePlayer.AddEdgeBuffer(mpEdgeBufferL);
 
-		if (dstRightOpt) {
-			for(uint32 i=0; i<n; ++i) {
-				dstLeft[i] += mAccumBufferLeft[i] * volume;
-				dstRightOpt[i] += mAccumBufferRight[i] * volume;
-			}
-		} else {
-			volume *= 0.5f;
-
-			for(uint32 i=0; i<n; ++i)
-				dstLeft[i] += (mAccumBufferLeft[i] + mAccumBufferRight[i]) * volume;
-		}
-	}
-
-	// shift down accumulation buffers
-	uint32 samplesLeft = mOutputLevel - n;
-
-	if (samplesLeft) {
-		memmove(mAccumBufferLeft, mAccumBufferLeft + n, samplesLeft * sizeof(mAccumBufferLeft[0]));
-		memmove(mAccumBufferRight, mAccumBufferRight + n, samplesLeft * sizeof(mAccumBufferRight[0]));
-	}
-
-	mOutputLevel = samplesLeft;
 	mbUnbalancedSticky = mbUnbalanced;
-}
-
-void ATCovoxEmulator::Flush() {
-	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	uint32 dt = t - mLastUpdate;
-	mLastUpdate = t;
-
-	Run(dt);
 }
 
 void ATCovoxEmulator::InitMapping() {
@@ -491,4 +416,90 @@ void ATDeviceCovox::InitCovoxControl(IATCovoxController& controller) {
 
 void ATDeviceCovox::OnCovoxEnabled(bool enabled) {
 	mCovox.SetEnabled(enabled);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDeviceSimCovox final : public VDAlignedObject<16>
+					, public ATDevice
+					, public IATDeviceDiagnostics
+{
+public:
+	virtual void *AsInterface(uint32 id) override;
+
+	virtual void GetDeviceInfo(ATDeviceInfo& info) override;
+	virtual void ColdReset() override;
+	virtual void Init() override;
+	virtual void Shutdown() override;
+
+public:	// IATDeviceDiagnostics
+	virtual void DumpStatus(ATConsoleOutput& output) override;
+
+private:
+	void UpdateFromPIAOutput();
+
+	IATDevicePIA *mpPIA = nullptr;
+	int mPIAOutput = -1;
+
+	ATCovoxEmulator mCovox;
+};
+
+void ATCreateDeviceSimCovox(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceSimCovox> p(new ATDeviceSimCovox);
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefSimCovox = { "simcovox", nullptr, L"SimCovox", ATCreateDeviceSimCovox };
+
+void *ATDeviceSimCovox::AsInterface(uint32 id) {
+	switch(id) {
+		case IATDeviceDiagnostics::kTypeID:
+			return static_cast<IATDeviceDiagnostics *>(this);
+
+		default:
+			return ATDevice::AsInterface(id);
+	}
+}
+
+void ATDeviceSimCovox::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mpDef = &g_ATDeviceDefSimCovox;
+}
+
+void ATDeviceSimCovox::ColdReset() {
+	mCovox.ColdReset();
+}
+
+void ATDeviceSimCovox::Init() {
+	mCovox.Init(nullptr, GetService<IATDeviceSchedulingService>()->GetMachineScheduler(), GetService<IATAudioMixer>());
+
+	if (!mpPIA) {
+		mpPIA = GetService<IATDevicePIA>();
+		mPIAOutput = mpPIA->AllocOutput(
+			[](void *data, uint32 outputState) {
+				((ATDeviceSimCovox *)data)->UpdateFromPIAOutput();
+			},
+			this,
+			0xFF
+		);
+
+		UpdateFromPIAOutput();
+	}
+}
+
+void ATDeviceSimCovox::Shutdown() {
+	if (mpPIA) {
+		mpPIA->FreeOutput(mPIAOutput);
+		mpPIA = nullptr;
+	}
+
+	mCovox.Shutdown();
+}
+
+void ATDeviceSimCovox::DumpStatus(ATConsoleOutput& output) {
+	mCovox.DumpStatus(output);
+}
+
+void ATDeviceSimCovox::UpdateFromPIAOutput() {
+	mCovox.WriteMono(mpPIA->GetOutputState() & 0xFF);
 }

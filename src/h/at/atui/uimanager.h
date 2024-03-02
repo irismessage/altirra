@@ -17,6 +17,7 @@ struct ATUICharEvent;
 struct ATUITriggerBinding;
 enum class ATUIDragEffect : uint32;
 enum class ATUIDragModifiers : uint32;
+enum class ATUITimerHandle : uint32;
 class IATUIDragDropObject;
 
 enum ATUIThemeFont {
@@ -66,7 +67,7 @@ struct ATUITouchInput {
 
 class IATUIClipboard {
 public:
-	virtual void CopyText(const char *s) = 0;
+	virtual void CopyText(const wchar_t *s) = 0;
 };
 
 class IATUINativeDisplay {
@@ -81,6 +82,8 @@ public:
 	virtual void EndModal(void *cookie) = 0;
 	virtual bool IsKeyDown(uint32 vk) = 0;
 	virtual IATUIClipboard *GetClipboard() = 0;
+
+	virtual void SetTimer(float delay) = 0;
 };
 
 class ATUIManager final : public IVDDisplayCompositor {
@@ -116,6 +119,8 @@ public:
 
 	float GetThemeScaleFactor() const { return mThemeScale; }
 	void SetThemeScaleFactor(float scale);
+
+	vdsize32 ScaleThemeSize(const vdfloat2& size) const;
 
 	void SetActiveWindow(ATUIWidget *w);
 	void CaptureCursor(ATUIWidget *w, bool motionMode = false, bool constrainPosition = false);
@@ -160,6 +165,8 @@ public:
 	void OnDragLeave();
 	ATUIDragEffect OnDragDrop(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj);
 
+	void OnTimer();
+
 	IVDDisplayFont *GetThemeFont(ATUIThemeFont themeFont) const { return mpThemeFonts[themeFont]; }
 	ATUIStockImage& GetStockImage(ATUIStockImageIdx stockImage) const { return *mpStockImages[stockImage]; }
 
@@ -173,6 +180,9 @@ public:
 	void Detach(ATUIWidget *w);
 	void Invalidate(ATUIWidget *w);
 	void UpdateCursorImage(ATUIWidget *w);
+
+	ATUITimerHandle StartTimer(ATUIWidget& w, float initialDelay, float period, vdfunction<void()> fn);
+	void StopTimer(ATUITimerHandle h);
 
 public:
 	void AttachCompositor(IVDDisplayCompositionEngine&) override;
@@ -192,6 +202,9 @@ protected:
 
 	void RepeatAction(ActiveAction& action);
 	void ReinitTheme();
+
+	uint64 AdjustTimerTick(uint64 tick) const;
+	void UpdateNativeTimer(uint64 t, uint64 nextTick);
 
 	IATUINativeDisplay *mpNativeDisplay;
 	ATUIContainer *mpMainWindow;
@@ -250,6 +263,29 @@ protected:
 
 	bool mbPendingCustomEffectPath = false;
 	VDStringW mCustomEffectPath;
+
+	struct TimerHeapEntry {
+		ATUITimerHandle mTimerHandle;
+		uint64 mNextTick;
+	};
+
+	struct TimerHeapCompare {
+		bool operator()(const TimerHeapEntry& a, const TimerHeapEntry& b) const {
+			return a.mNextTick > b.mNextTick;
+		}
+	};
+
+	vdfastvector<TimerHeapEntry> mTimerHeap;
+
+	struct TimerEntry {
+		vdfunction<void()> mCallback;
+		uint64 mTickPeriod;
+		uint32 mInstanceId;
+		ATUITimerHandle mTimerHandle;
+	};
+
+	vdfastvector<TimerEntry> mTimerEntries;
+	vdfastvector<uint32> mFreeTimerIndices;
 };
 
 #endif

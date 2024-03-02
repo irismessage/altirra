@@ -324,43 +324,121 @@ public:
 
 	bool Restore() { return true; }
 
+	void SetPresentCallback(IVDTAsyncPresent *callback) override;
+
 	void GetDesc(VDTSwapChainDesc& desc) override;
 	IVDTSurface *GetBackBuffer() override;
 
 	bool ResizeBuffers(uint32 width, uint32 height) override;
 
-	bool CheckOcclusion();
+	bool CheckOcclusion() override;
+
+	void SetCustomRefreshRate(float hz, float hzmin, float hzmax) override;
+	float GetEffectiveCustomRefreshRate() const override;
+
+	VDTSwapChainCompositionStatus GetLastCompositionStatus() const override;
+	uint32 GetQueuedFrames() override;
 
 	void Present() override;
 
-	void PresentVSync(void *monitor, IVDTAsyncPresent *callback) override;
-	void PresentVSyncComplete() override;
+	void PresentVSync(void *monitor, bool adaptive) override;
+	void PresentVSyncRestart() override;
+	bool PresentVSyncComplete() override;
 	void PresentVSyncAbort() override;
 
 protected:
 	friend class VDTContextD3D11;
 
+	enum class VSyncRequest : uint32 {
+		None,
+		WaitForEvent,		// wait for DXGI 1.3+ waitable latency event and invoke callback
+		WaitForEventSync,	// wait for DXGI 1.3+ waitable latency event and assert signal for sync Present()
+		WaitForVSync,		// wait for vsync + composition safe delay and invoke callback
+		WaitForTime			// wait for deadline and invoke callback
+	};
+	
+	void PresentVSyncQueueRequest(VSyncRequest request, uint64 deadline);
+
+	void UpdateCompositionStatus(DXGI_FRAME_PRESENTATION_MODE dxgiPresentationMode);
+
 	void ThreadRun();
 
-	IDXGISwapChain *mpSwapChain;
-	IDXGISwapChain1 *mpSwapChain1;
+	IDXGISwapChain *mpSwapChain = nullptr;
+	IDXGISwapChain1 *mpSwapChain1 = nullptr;
+	IDXGISwapChainMedia *mpSwapChainMedia = nullptr;
 
-	VDTTexture2DD3D11 *mpTexture;
+	VDTTexture2DD3D11 *mpTexture = nullptr;
 	bool	mbAllowTearing = false;
 	bool	mbWasOccluded = false;
+	bool	mbUsingFlip = false;				// true if we are using FLIP_SEQUENTIAL or FLIP_DISCARD
+	bool	mbUsingDoNotWait = false;			// true if we can use DXGI_PRESENT_DO_NOT_WAIT
+	bool	mbUsingFrameStatistics = false;		// true if DXGI can give us frame statistics (requires flip or exclusive fullscreen)
+	bool	mbUsingComposition = false;			// true if DWM is compositing
+	bool	mbUsingCustomDuration = false;
+	float	mEffectiveCustomRate = 0;
 
 	VDTSwapChainDesc mDesc;
 
+	IVDTAsyncPresent *mpVSyncCallback = nullptr;
+
+	bool	mbVSyncStatsValid = false;
+	uint64	mVSyncTickBase = 0;
+	double	mVSyncPeriod = 0;
+	uint64	mVSyncWaitStartTime = 0;
+	uint64	mVSyncRetryStartTime = 0;
+	uint64	mVSyncMinNextTime = 0;
+
 	VDSemaphore mVSyncPollPendingSema;
-	bool	mbVSyncPending;
+	bool	mbVSyncPending = false;				// true if PresentVSync() has been called and not completed/cancelled
 	VDCriticalSection mVSyncMutex;
-	IVDTAsyncPresent *mpVSyncCallback;
-	void	*mhVSyncMonitor;
-	bool	mbVSyncPollPending;
-	bool	mbVSyncExit;
-	uint32	mAdapterLuidLo;
-	uint32	mAdapterLuidHi;
-	HANDLE	mWaitHandle;
+	void	*mhVSyncMonitor = nullptr;
+	bool	mbVSyncPollPending = false;
+	bool	mbVSyncPollAdaptive = false;
+
+	VSyncRequest mVSyncRequest = VSyncRequest::None;
+	uint64	mVSyncRequestTime = 0;
+
+	bool	mbVSyncIsWaiting = false;
+	bool	mbVSyncExit = false;
+	float	mVSyncCompositionWaitTime = 0;		// seconds added by vsync thread to wait for composition safe period
+	uint32	mAdapterLuidLo = 0;
+	uint32	mAdapterLuidHi = 0;
+	HANDLE	mWaitHandle = nullptr;
+	bool	mbWaitReady = false;
+	VDTAsyncPresentStatus mLastPresentStatus {};
+
+	VDSignal	mWaitSignal;
+
+	uint64	mLastPresentTick = 0;
+	VDTSwapChainCompositionStatus mLastCompositionStatus {};
+
+	uint32	mPresentFences[4] {};
+
+	// See the PresentVsync...() code for how these are used to interpret
+	// DXGI present statistics.
+
+	struct PresentEvent {
+		uint64 mSubmitQpcTime;	// QPC time of present
+		uint32 mPresentCount;	// DXGI present counter at present
+	};
+
+	struct SyncEvent {
+		uint64 mSyncQpcTime;	// QPC of synchronization point
+		uint32 mRefreshCount;	// Refresh counter of synchronizaiton point
+	};
+
+	// FIFO of present statistics, indexed by LSBs of DXGI present counter value.
+	// This needs to be at least as long as the total present delay to the display
+	// to ensure that when we get present statistics that we still have the QPC
+	// time of the last presented frame.
+	PresentEvent mPresentHistory[8] {};
+
+	// FIFO of sync points from DXGI. This gives a set of sample points that can
+	// be used to interpolate or extrapolate refresh intervals. It is not guaranteed
+	// that any particular refresh is in the sample list.
+	SyncEvent mSyncHistory[4] {};
+	uint8 mSyncHistoryIndex = 0;	// next sync history entry
+	uint8 mSyncHistoryLen = 0;		// number of valid sync history entries
 };
 
 ///////////////////////////////////////////////////////////////////////////////

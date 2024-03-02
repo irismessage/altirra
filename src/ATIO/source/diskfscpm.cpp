@@ -128,7 +128,7 @@ protected:
 	bool IsValidFileName(const char *filename) const;
 	void RecomputeBlockBitmap();
 
-	IATDiskImage *mpImage {};
+	vdrefptr<IATDiskImage> mpImage;
 	bool mbDirty {};
 	bool mbReadOnly {};
 	bool mbBlockOverlapDetected {};

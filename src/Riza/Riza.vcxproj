@@ -11,9 +11,7 @@
     <ConfigurationType>StaticLibrary</ConfigurationType>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <ImportGroup Label="ExtensionSettings">
-    <Import Project="..\Build\YASM.props" />
-  </ImportGroup>
+  <ImportGroup Label="ExtensionSettings" />
   <ImportGroup Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
     <Import Project="..\Build\Altirra.props" />
@@ -73,28 +71,16 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="source\audioout.cpp" />
-    <ClCompile Include="source\audiooutwasapi.cpp" />
-    <ClCompile Include="source\audiooutxa2.cpp" />
     <ClCompile Include="source\bitmap.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\h\vd2\Riza\audioout.h" />
     <ClInclude Include="..\h\vd2\Riza\avi.h" />
     <ClInclude Include="..\h\vd2\Riza\bitmap.h" />
     <ClInclude Include="h\stdafx.h" />
   </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\Asuka\Asuka.vcxproj">
-      <Project>{6aa99a18-196f-4334-a3de-d9eea62cd5e9}</Project>
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-    </ProjectReference>
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <ImportGroup Label="ExtensionTargets">
-    <Import Project="..\Build\YASM.targets" />
-  </ImportGroup>
+  <ImportGroup Label="ExtensionTargets" />
 </Project>

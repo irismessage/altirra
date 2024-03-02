@@ -52,7 +52,9 @@ private:
 		BitReader(ATAudioReaderFLAC& parent) : mParent(&parent) {}
 
 		VDFORCEINLINE uint32 GetBits(uint32 n);
+		VDFORCEINLINE uint32 GetBitsLong(uint32 n);
 		VDFORCEINLINE sint32 GetBitsSigned(uint32 n);
+		VDFORCEINLINE sint32 GetBitsSignedLong(uint32 n);
 
 		template<bool T_HaveLzcnt>
 		VDFORCEINLINE uint32 GetUnaryValue();
@@ -77,6 +79,9 @@ private:
 
 	template<int Order>
 	void ReconstructLPC(sint32 *y, uint32 n, const sint32 *lpcCoeffs, int qlpShift);
+
+	template<int Order>
+	void ReconstructLPC_Wide(sint32 *y, uint32 n, const sint32 *lpcCoeffs, int qlpShift);
 
 	template<int Order>
 	void ReconstructLPC_Narrow_SSE2(sint32 *y, uint32 n, const sint32 *lpcCoeffs, int qlpShift);

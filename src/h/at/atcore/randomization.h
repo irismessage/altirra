@@ -13,6 +13,10 @@
 //
 //	You should have received a copy of the GNU General Public License along
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #ifndef f_AT_ATCORE_RANDOMIZATION_H
 #define f_AT_ATCORE_RANDOMIZATION_H
@@ -41,6 +45,7 @@ struct ATRandomizationSeeds {
 	uint32 mPIAFloatingInputs;
 	uint32 mDiskStartPos;
 	uint32 mCassetteStartPos;
+	uint32 mProgramMemory;
 };
 
 inline uint32 ATRandomizeAdvanceFast(uint32& seed) {

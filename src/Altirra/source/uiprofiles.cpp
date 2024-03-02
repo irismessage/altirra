@@ -39,6 +39,7 @@ namespace {
 		L"Full screen",
 		L"Audio",
 		L"Boot",
+		L"Device NVRAM",
 	};
 
 	const wchar_t *const kCategoryDescs[]={
@@ -58,8 +59,10 @@ namespace {
 		L"Includes the windowed / full screen state.",
 		L"Includes audio settings.",
 		L"Includes settings related to the Boot Image command.",
+		L"Includes device non-volatile memory (NVRAM / EEPROM)",
 	};
 		
+	static_assert((1U << vdcountof(kCategoryNames)) - 1 == kATSettingsCategory_AllCategories);
 	static_assert(vdcountof(kCategoryNames) == vdcountof(kCategoryDescs), "Category arrays out of sync");
 }
 

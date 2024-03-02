@@ -73,13 +73,58 @@ class IVDTRasterizerState: public IVDTResource {
 class IVDTSamplerState: public IVDTResource {
 };
 
-class IVDTAsyncPresent {
-public:
-	virtual void QueuePresent() = 0;
+struct VDTAsyncPresentStatus {
+	// Time from present to first vertical sync where the frame is eligible to be presented.
+	// This will most often be within a single frame, but may be more if queuing is detected.
+	// This value is used for targeting with adaptive vsync.
+	float mVSyncOffset = 0;
+
+	// Time from when PresentVSync() is called to when the Present() actually finishes. This
+	// includes wait time in the vsync code and blocking time in Present() itself. It represents
+	// latency in the display path to API Present().
+	float mPresentWaitTime = 0;
+
+	// Estimate of delay due to backing up the present queue. May either be a measure of
+	// blocking time in Present() or the wait time to Present(), depending on the exact
+	// presentation mode used. The general idea is that a frame should be dropped when
+	// this exceeds a threshold for a prolonged period of time, in order to reduce
+	// latency.
+	float mPresentQueueTime = 0;
+
+	// Time from present to first vertical sync where the frame actually begins to be displayed.
+	// This is used purely for latency purposes; it includes composition time outside of the
+	// application's control or visibility, and so the caller cannot use this for adaptive
+	// timing purposes (the min floor for this value is not determinable).
+	float mLastPresentDelay = 0;
+
+	// Time spent in the present/swap API call. This should be minimal in most circumstances.
+	// If it grows comparable to frame time, it means that the swap chain is full without
+	// the display code being able to detect it, which is bad.
+	float mLastPresentCallTime = 0;
+
+	// Number of frames known to be queued in the swap chain, not counting the front buffer.
+	// This is 0 in best case scenarios.
+	uint32 mLastPresentFramesQueued = 0;
+
+	// Reference point for correlating display present counts against QPC/precise times.
+	// This represents _a_ reference point, not necessarily the latest presented frame.
+	uint64 mSyncTick = 0;
+	uint32 mSyncCount = 0;
+
+	// Refresh rate in Hz if available (>0). Can vary slightly due to real-time estimation.
+	float mRefreshRate = 0;
 };
 
-class IVDTSwapChain: public IVDTResource {
+class IVDTAsyncPresent {
 public:
+	virtual void QueuePresent(bool restarted) = 0;
+	virtual void OnPresentCompleted(const VDTAsyncPresentStatus& status) = 0;
+};
+
+class IVDTSwapChain : public IVDTResource {
+public:
+	virtual void SetPresentCallback(IVDTAsyncPresent *callback) = 0;
+
 	virtual void GetDesc(VDTSwapChainDesc& desc) = 0;
 	virtual IVDTSurface *GetBackBuffer() = 0;
 
@@ -89,10 +134,17 @@ public:
 	// indicate that rendering can be skipped; otherwise, returns false. May return a
 	// conservative result (typically based on the last present).
 	virtual bool CheckOcclusion() = 0;
+	virtual uint32 GetQueuedFrames() = 0;
+
+	virtual void SetCustomRefreshRate(float hz, float hzmin, float hzmax) = 0;
+	virtual float GetEffectiveCustomRefreshRate() const = 0;
+
+	virtual VDTSwapChainCompositionStatus GetLastCompositionStatus() const = 0;
 
 	virtual void Present() = 0;
-	virtual void PresentVSync(void *monitor, IVDTAsyncPresent *callback) = 0;
-	virtual void PresentVSyncComplete() = 0;
+	virtual void PresentVSync(void *monitor, bool adaptive) = 0;
+	virtual void PresentVSyncRestart() = 0;
+	virtual bool PresentVSyncComplete() = 0;
 	virtual void PresentVSyncAbort() = 0;
 };
 

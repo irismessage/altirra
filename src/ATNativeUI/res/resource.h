@@ -21,6 +21,8 @@
 #define IDC_KEYUP                       1013
 #define IDC_DISABLE                     1013
 #define IDC_GENERIC_TEXT                1014
+#define IDC_ADD2                        1014
+#define IDC_NEXTKEY                     1014
 #define IDC_GENERIC_ICON                1015
 #define IDC_GENERIC_TEXT2               1016
 #define IDC_GENERIC_TITLE               1016

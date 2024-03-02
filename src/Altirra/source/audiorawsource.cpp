@@ -62,7 +62,6 @@ bool ATAudioRawSource::RequiresStereoMixingNow() const {
 void ATAudioRawSource::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 	const uint32 baseTime = mixInfo.mStartTime;
 	const uint32 timeSpan = mixInfo.mCount * 28;
-	const uint32 numSamples = mixInfo.mCount;
 	const float volume = mixInfo.mpMixLevels[kATAudioMix_Other];
 
 	// change all samples before the start time to coincide on the start, so they

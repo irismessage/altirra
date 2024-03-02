@@ -101,11 +101,6 @@ void ATCRTCEmulator::Advance(float dt) {
 }
 
 ATCRTCEmulator::DisplayInfo ATCRTCEmulator::GetDisplayInfo() const {
-	const int horizTotal = (int)mReg[0] + 1;
-	const int vertTotal = (int)mReg[4] + 1;
-	const int vertTotalAdjust = (int)mReg[5];
-	const int charHeight = (int)mReg[9] + 1;
-
 	DisplayInfo di {};
 	di.mBaseAddr = GetBaseAddr();
 	di.mRows = mReg[6];

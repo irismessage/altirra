@@ -127,7 +127,7 @@ public:
 	void	extendValid(sint64 pos);
 	static bool enableExtendValid();
 
-	sint64	size();
+	sint64	size() const;
 	void	read(void *buffer, long length);
 	long	readData(void *buffer, long length);
 	void	write(const void *buffer, long length);
@@ -136,15 +136,15 @@ public:
 	void	seek(sint64 newPos, nsVDFile::eSeekMode mode = nsVDFile::kSeekStart);
 	bool	skipNT(sint64 delta);
 	void	skip(sint64 delta);
-	sint64	tell();
+	sint64	tell() const;
 
 	bool	flushNT();
 	void	flush();
 
-	bool	isOpen();
-	VDFileHandle	getRawHandle();
+	bool	isOpen() const;
+	VDFileHandle	getRawHandle() const;
 
-	uint32	getAttributes();
+	uint32	getAttributes() const;
 
 	const wchar_t *getFilenameForError() const { return mpFilename; }
 

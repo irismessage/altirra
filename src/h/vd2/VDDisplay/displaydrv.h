@@ -22,11 +22,13 @@
 #include <windows.h>
 #include <vd2/system/vectors.h>
 #include <vd2/Kasumi/pixmap.h>
+#include <vd2/VDDisplay/display.h>
 
 class VDStringA;
 class IVDDisplayCompositor;
 class IVDDisplayCompositionEngine;
 struct VDVideoDisplayScreenFXInfo;
+struct VDDVSyncStatus;
 
 enum class VDDHDRAvailability : uint8;
 
@@ -63,10 +65,10 @@ struct VDVideoDisplaySourceInfo {
 class VDINTERFACE IVDVideoDisplayMinidriver {
 public:
 	enum UpdateMode : uint32 {
-		kModeNone		= 0x00000000,
-		kModeVSync		= 0x00000004,
-		kModeDoNotWait	= 0x00000800,
-		kModeAll		= 0x00000f0f
+		kModeNone			= 0,
+		kModeVSync			= IVDVideoDisplay::kVSync,
+		kModeVSyncAdaptive	= IVDVideoDisplay::kVSyncAdaptive,
+		kModeDoNotWait		= IVDVideoDisplay::kDoNotWait,
 	};
 
 	enum FilterMode {
@@ -77,7 +79,7 @@ public:
 		kFilterModeCount
 	};
 
-	virtual ~IVDVideoDisplayMinidriver() {}
+	virtual ~IVDVideoDisplayMinidriver() = default;
 
 	virtual bool PreInit(HWND hwnd, HMONITOR hmonitor) = 0;
 	virtual bool Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info) = 0;
@@ -91,6 +93,8 @@ public:
 	virtual VDDHDRAvailability IsHDRCapable() const = 0;
 	virtual void SetFilterMode(FilterMode mode) = 0;
 	virtual void SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh, bool use16bit) = 0;
+	virtual void SetDesiredCustomRefreshRate(float hz, float hzmin, float hzmax) = 0;
+	
 	virtual void SetDisplayDebugInfo(bool enable) = 0;
 	virtual void SetColorOverride(uint32 color) = 0;
 	virtual void SetHighPrecision(bool enable) = 0;
@@ -113,6 +117,7 @@ public:
 	virtual bool SetSubrect(const vdrect32 *r) = 0;
 	virtual void SetLogicalPalette(const uint8 *pLogicalPalette) = 0;
 
+	virtual VDDVSyncStatus GetVSyncStatus() const = 0;
 	virtual bool AreVSyncTicksNeeded() const = 0;
 
 	virtual float GetSyncDelta() const = 0;
@@ -132,6 +137,7 @@ public:
 	virtual VDDHDRAvailability IsHDRCapable() const override;
 	virtual void SetFilterMode(FilterMode mode) override;
 	virtual void SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh, bool use16bit) override;
+	virtual void SetDesiredCustomRefreshRate(float hz, float hzmin, float hzmax) override;
 	virtual void SetDisplayDebugInfo(bool enable) override;
 	virtual void SetColorOverride(uint32 color) override;
 	virtual void SetHighPrecision(bool enable) override;
@@ -151,6 +157,7 @@ public:
 	virtual bool SetSubrect(const vdrect32 *r) override;
 	virtual void SetLogicalPalette(const uint8 *pLogicalPalette) override;
 
+	virtual VDDVSyncStatus GetVSyncStatus() const override;
 	virtual bool AreVSyncTicksNeeded() const override { return true; }
 	virtual float GetSyncDelta() const override;
 

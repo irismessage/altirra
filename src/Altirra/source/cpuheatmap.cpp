@@ -676,7 +676,6 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 			TRAP_LOAD(mMemory[addr]);
 			mMemAccess[addr] |= kAccessRead | kAccessWrite;
 			{
-				const uint8 oldPValid = mPValid;
 				const uint8 oldMemValid = mMemValid[addr];
 
 				mPValid &= 0x7C;
@@ -734,7 +733,6 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 			TRAP_LOAD(mMemory[addr]);
 			mMemAccess[addr] |= kAccessRead | kAccessWrite;
 			{
-				const uint8 oldPValid = mPValid;
 				const uint8 oldMemValid = mMemValid[addr];
 
 				mPValid &= 0xFC;

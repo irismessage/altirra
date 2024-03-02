@@ -19,9 +19,11 @@
 #define f_AT_INPUTCONTROLLER_H
 
 #include <vd2/system/vdstl.h>
+#include <at/atcore/notifylist.h>
 #include <at/atcore/scheduler.h>
 
-class ATGTIAEmulator;
+class IATDevicePortManager;
+class IATDeviceControllerPort;
 class ATPokeyEmulator;
 class ATInputManager;
 class ATAnticEmulator;
@@ -113,94 +115,62 @@ enum ATInputTrigger : uint32 {
 
 ///////////////////////////////////////////////////////////////////////////
 
+enum class ATLightPenNoiseMode : uint8 {
+	None,
+	Low,
+	High
+};
+
+AT_DECLARE_ENUM_TABLE(ATLightPenNoiseMode);
+
 class ATLightPenPort {
 public:
+	static const int kHorizOffset;
+
 	ATLightPenPort();
 
 	void Init(ATAnticEmulator *antic);
 
-	void SetAdjust(int x, int y) {
-		mAdjustX = x;
-		mAdjustY = y;
-	}
-
-	int GetAdjustX() const { return mAdjustX; }
-	int GetAdjustY() const { return mAdjustY; }
-
-	void SetIgnorePort34(bool ignore);
-	void SetColorClockPhase(bool odd);
-	void SetPortTriggerState(int index, bool state);
-
-protected:
-	ATAnticEmulator *mpAntic;
-	uint8 mTriggerState;
-	uint8 mTriggerStateMask;
-	int mAdjustX;
-	int mAdjustY;
-	bool mbOddPhase;
-};
-
-///////////////////////////////////////////////////////////////////////////
-
-class ATPortController {
-public:
-	ATPortController();
-	~ATPortController();
-
-	void Init(ATGTIAEmulator *gtia, ATPokeyEmulator *pokey, ATPIAEmulator *pia, ATLightPenPort *lightPen, int index);
-	void Shutdown();
-
-	void SetMultiMask(uint8 mask);
-
-	ATGTIAEmulator& GetGTIA() const { return *mpGTIA; }
-	ATPokeyEmulator& GetPokey() const { return *mpPokey; }
-	uint8 GetPortValue() const { return mPortValue; }
-
-	int AllocatePortInput(bool port2, int multiIndex);
-	void FreePortInput(int index);
-
-	void SetPortInput(int index, uint32 portBits);
-	void ResetPotPositions();
-	void SetPotPosition(int offset, uint8 pos);
-	void SetPotHiPosition(int offset, int hipos, bool grounded = false);
-
-	int AllocatePortOutput(ATPortInputController *target, uint8 mask);
-	void SetPortOutputMask(int index, uint8 mask);
-	void FreePortOutput(int index);
-	uint8 GetPortOutputState() const;
-
-	void ReapplyTriggers();
-
-protected:
-	void UpdatePortValue();
-	void UpdatePortOutputRegistration();
-
-	static void OnPortOutputUpdated(void *data, uint32 outputState);
-
-	int mPIAInputIndex;
-	int mPIAOutputIndex;
-	uint8 mPortValue;
-	bool mbTrigger1;
-	bool mbTrigger2;
-	uint32 mMultiMask;
-
-	ATGTIAEmulator *mpGTIA;
-	ATPokeyEmulator *mpPokey;
-	ATPIAEmulator *mpPIA;
-
-	ATLightPenPort *mpLightPen;
-	int mTriggerIndex;
-
-	typedef vdfastvector<uint32> PortInputs;
-	PortInputs mPortInputs;
-
-	struct PortOutput {
-		ATPortInputController *mpTarget;
-		uint8 mMask;
+	struct LPAdjustOffset {
+		sint32 x, y;
 	};
 
-	typedef vdfastvector<PortOutput> PortOutputs;
-	PortOutputs mPortOutputs;
+	void SetAdjust(bool pen, const LPAdjustOffset& offset) {
+		mAdjust[pen] = offset;
+	}
+
+	LPAdjustOffset GetAdjust(bool pen) const { return mAdjust[pen]; }
+
+	bool GetImmediateUpdateEnabled() const;
+	void SetImmediateUpdateEnabled(bool enable);
+
+	ATLightPenNoiseMode GetNoiseMode() const;
+	void SetNoiseMode(ATLightPenNoiseMode mode);
+
+	void ApplyCorrection(int dx, int dy);
+	void TriggerCorrection(bool phase, int x, int y);
+
+	void SetIgnorePort34(bool ignore);
+	void SetPosition(bool pen, int x, int y);
+	void SetPortTriggerState(int index, bool state);
+
+	ATNotifyList<const vdfunction<void(bool, int, int)> *>& OnTriggerCorrectionEvent() {
+		return mTriggerCorrectionEvent;
+	}
+
+protected:
+	void SetAnticPenPosition(int x, int y);
+
+	ATAnticEmulator *mpAntic = nullptr;
+	uint8 mTriggerState = 0;
+	uint8 mTriggerStateMask = 0x03;
+	LPAdjustOffset mAdjust[2] {};
+	bool mbLastWasPen = false;
+	bool mbOddPhase = false;
+	bool mbImmediateUpdate = false;
+	ATLightPenNoiseMode mNoiseMode = ATLightPenNoiseMode::None;
+
+	ATNotifyList<const vdfunction<void(bool, int, int)> *> mTriggerCorrectionEvent;
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -214,13 +184,14 @@ public:
 	ATPortInputController();
 	virtual ~ATPortInputController();
 
-	void Attach(ATPortController *pc, bool port2, int multiIndex = -1);
+	void Attach(IATDevicePortManager& portMgr, int portIndex, int multiIndex = -1);
 	void Detach();
 
 	virtual void Tick() {}
 
 	virtual bool IsActive() const { return true; }
 
+	void SelectMultiJoy(uint8 mask);
 	virtual bool Select5200Controller(int index, bool potsEnabled) { return false; }
 	virtual void SetDigitalTrigger(uint32 trigger, bool state) {}
 
@@ -234,21 +205,20 @@ public:
 
 protected:
 	void SetPortOutput(uint32 portBits);
+	void ResetPotPositions();
 	void SetPotPosition(bool second, uint8 pos);
 	void SetPotHiPosition(bool second, int pos, bool grounded = false);
 	void SetOutputMonitorMask(uint8 mask);
-	void UpdateOutput(uint8 state);
+	void UpdateOutput();
 
 	virtual void OnAttach() {}
 	virtual void OnDetach() {}
 	virtual void OnPortOutputChanged(uint8 outputState) {}
 
-	ATPortController *mpPortController;
-	int mPortInputIndex;
-	bool mbPort2;
-	uint8 mPortOutputMask;
-	uint8 mPortOutputState;
-	int mPortOutputIndex;
+	vdrefptr<IATDeviceControllerPort> mpControllerPort;
+	uint8 mPortOutputState {};
+
+	uint8 mMultiMask {};
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -462,7 +432,7 @@ class AT5200ControllerController final : public ATPortInputController {
 	AT5200ControllerController(const AT5200ControllerController&) = delete;
 	AT5200ControllerController& operator=(const AT5200ControllerController&) = delete;
 public:
-	AT5200ControllerController(int index, bool trackball);
+	AT5200ControllerController(int index, bool trackball, ATPokeyEmulator& pokey);
 	~AT5200ControllerController();
 
 	virtual bool Select5200Controller(int index, bool potsEnabled);
@@ -479,6 +449,7 @@ protected:
 	void SetPot(int index, int pos, bool enableJitter);
 	void UpdatePot(int index);
 
+	ATPokeyEmulator *mpPokey = nullptr;
 	bool mbActive;
 	bool mbPotsEnabled;
 	bool mbTrackball;
@@ -505,32 +476,40 @@ class ATLightPenController final : public ATPortInputController, public IATSched
 	ATLightPenController(const ATLightPenController&) = delete;
 	ATLightPenController& operator=(const ATLightPenController&) = delete;
 public:
-	ATLightPenController();
+	enum class Type : uint8 {
+		LightGun,
+		LightPen
+	};
+
+	ATLightPenController(Type type);
 	~ATLightPenController();
 
 	void Init(ATScheduler *fastScheduler, ATLightPenPort *lpp);
 
-	virtual bool IsActive() const { return mbPenDown; }
+	bool IsActive() const override { return mbPenDown; }
 
-	virtual void SetDigitalTrigger(uint32 trigger, bool state);
-	virtual void ApplyImpulse(uint32 trigger, int ds);
-	virtual void ApplyAnalogInput(uint32 trigger, int ds);
-	virtual void Tick();
+	void SetDigitalTrigger(uint32 trigger, bool state) override;
+	void ApplyImpulse(uint32 trigger, int ds) override;
+	void ApplyAnalogInput(uint32 trigger, int ds) override;
+	void Tick() override;
 
 protected:
-	virtual void OnScheduledEvent(uint32 id);
-	virtual void OnAttach();
-	virtual void OnDetach();
+	void OnScheduledEvent(uint32 id) override;
+	void OnAttach() override;
+	void OnDetach() override;
 
-	uint32	mPortBits;
-	sint32	mPosX;
-	sint32	mPosY;
-	bool	mbPenDown;
-	bool	mbOddPhase;
+	void GetBeamPos(int& x, int& y, ATLightPenNoiseMode noiseMode) const;
 
-	ATEvent *mpLPEvent;
-	ATScheduler *mpScheduler;
-	ATLightPenPort *mpLightPen;
+	Type	mType {};
+	uint32	mPortBits {};
+	sint32	mPosX {};
+	sint32	mPosY {};
+	bool	mbPenDown {};
+
+	ATEvent *mpLPAssertEvent = nullptr;
+	ATEvent *mpLPDeassertEvent = nullptr;
+	ATScheduler *mpScheduler = nullptr;
+	ATLightPenPort *mpLightPen = nullptr;
 };
 
 ///////////////////////////////////////////////////////////////////////////

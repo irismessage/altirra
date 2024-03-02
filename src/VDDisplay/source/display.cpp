@@ -108,6 +108,7 @@ protected:
 	void SetUse16Bit(bool enable) override;
 	void SetHDREnabled(bool enable) override;
 	void SetFullScreen(bool fs, uint32 width, uint32 height, uint32 refresh) override;
+	void SetCustomDesiredRefreshRate(float hz, float hzmin, float hzmax) override;
 	void SetDestRect(const vdrect32 *r, uint32 backgroundColor) override;
 	void SetPixelSharpness(float xsharpness, float ysharpness) override;
 	void SetCompositor(IVDDisplayCompositor *comp) override;
@@ -122,10 +123,15 @@ protected:
 	void Reset() override;
 	void Cache() override;
 	void SetCallback(IVDVideoDisplayCallback *pcb) override;
+	void SetOnFrameStatusUpdated(vdfunction<void(int /*frames*/)> fn) override;
 	void SetAccelerationMode(AccelerationMode mode) override;
 	FilterMode GetFilterMode() override;
 	void SetFilterMode(FilterMode mode) override;
 	float GetSyncDelta() const override { return mSyncDelta; }
+
+	int GetQueuedFrames() const override;
+	bool IsFramePending() const override;
+	VDDVSyncStatus GetVSyncStatus() const override;
 
 	vdrect32 GetMonitorRect() override;
 
@@ -182,8 +188,9 @@ private:
 	void SyncSetFilterMode(FilterMode mode);
 	void SyncSetSolidColor(uint32 color);
 	void OnDisplayChange() override;
-	void OnForegroundChange(bool bForeground) override;
-	void OnRealizePalette() override;
+	void OnForegroundChange(bool foreground) override;
+	void OnRealizePalette(bool foreground) override;
+	void OnGlobalSettingsChanged() override;
 	bool InitMiniDriver();
 	void ShutdownMiniDriver();
 	void RequestUpdate();
@@ -194,6 +201,8 @@ private:
 	bool IsOnSecondaryMonitor() const;
 
 	static void GetMonitorRect(RECT *r, HMONITOR hmon);
+
+	void UpdateSDRBrightness();
 
 private:
 	enum {
@@ -227,6 +236,8 @@ private:
 	UINT	mReinitDisplayTimer;
 
 	IVDVideoDisplayCallback		*mpCB;
+	vdfunction<void(int /*frames*/)> mpOnFrameStatusUpdated;
+
 	int		mInhibitRefresh;
 
 	/// Locks out normal WM_PAINT processing on the child window if non-zero.
@@ -263,11 +274,17 @@ private:
 	uint32		mSolidColorBuffer;
 	float		mSDRBrightness = 80.0f;
 
+	float		mCustomRefreshRate = 0;
+	float		mCustomRefreshRateMin = 0;
+	float		mCustomRefreshRateMax = 0;
+
 	vdfunction<void(ProfileEvent)> mpProfileHook;
 	vdfunction<void(const VDPixmap *)> mpCaptureFn;
 
 	VDPixmapBuffer		mCachedImage;
 	VDPixmapBuffer		mCaptureBuffer;
+
+	VDDVSyncStatus	mVSyncStatus;
 
 	uint32	mSourcePalette[256];
 
@@ -289,6 +306,9 @@ private:
 	static constexpr UINT MYWM_SETUSE16BIT			= WM_USER + 0x10D;
 	static constexpr UINT MYWM_FRAMECAPTURED		= WM_USER + 0x10F;
 	static constexpr UINT MYWM_REQUESTCAPTURE		= WM_USER + 0x110;
+	static constexpr UINT MYWM_SETCUSTOMREFRESH		= WM_USER + 0x111;
+	static constexpr UINT MYWM_GETQUEUEDFRAMES		= WM_USER + 0x112;
+	static constexpr UINT MYWM_ISFRAMEPENDING		= WM_USER + 0x113;
 
 public:
 	static bool		sbEnableDX;
@@ -322,14 +342,16 @@ bool VDVideoDisplayWindow::sbEnableTS3D = false;
 ///////////////////////////////////////////////////////////////////////////
 
 void VDVideoDisplaySetDebugInfoEnabled(bool enable) {
-	VDVideoDisplayWindow::sbEnableDebugInfo = enable;
+	if (VDVideoDisplayWindow::sbEnableDebugInfo != enable) {
+		VDVideoDisplayWindow::sbEnableDebugInfo = enable;
+
+		if (g_pVDVideoDisplayManager)
+			g_pVDVideoDisplayManager->NotifyGlobalSettingsChanged();
+	}
 }
 
 void VDVideoDisplaySetBackgroundFallbackEnabled(bool enable) {
 	VDVideoDisplayWindow::sbEnableBackgroundFallback = enable;
-
-	if (g_pVDVideoDisplayManager)
-		g_pVDVideoDisplayManager->SetBackgroundFallbackEnabled(enable);
 }
 
 void VDVideoDisplaySetSecondaryDXEnabled(bool enable) {
@@ -589,6 +611,12 @@ void VDVideoDisplayWindow::SetFullScreen(bool fs, uint32 w, uint32 h, uint32 ref
 		DispatchActiveFrame();
 }
 
+void VDVideoDisplayWindow::SetCustomDesiredRefreshRate(float hz, float hzmin, float hzmax) {
+	const float args[3] = { hz, hzmin, hzmax };
+
+	SendMessage(mhwnd, MYWM_SETCUSTOMREFRESH, 0, (LPARAM)args);
+}
+
 void VDVideoDisplayWindow::SetDestRect(const vdrect32 *r, uint32 backgroundColor) {
 	mbDestRectEnabled = false;
 
@@ -632,7 +660,7 @@ void VDVideoDisplayWindow::SetSDRBrightness(float nits) {
 		mSDRBrightness = nits;
 
 		if (mpMiniDriver) {
-			mpMiniDriver->SetSDRBrightness(nits);
+			UpdateSDRBrightness();
 
 			Invalidate();
 		}
@@ -735,6 +763,10 @@ void VDVideoDisplayWindow::SetCallback(IVDVideoDisplayCallback *pCB) {
 	mpCB = pCB;
 }
 
+void VDVideoDisplayWindow::SetOnFrameStatusUpdated(vdfunction<void(int /*frames*/)> fn) {
+	mpOnFrameStatusUpdated = std::move(fn);
+}
+
 void VDVideoDisplayWindow::SetAccelerationMode(AccelerationMode mode) {
 	mAccelMode = mode;
 }
@@ -745,6 +777,18 @@ IVDVideoDisplay::FilterMode VDVideoDisplayWindow::GetFilterMode() {
 
 void VDVideoDisplayWindow::SetFilterMode(FilterMode mode) {
 	SendMessage(mhwnd, MYWM_SETFILTERMODE, 0, (LPARAM)mode);
+}
+
+int VDVideoDisplayWindow::GetQueuedFrames() const {
+	return (int)SendMessage(mhwnd, MYWM_GETQUEUEDFRAMES, 0, 0);
+}
+
+bool VDVideoDisplayWindow::IsFramePending() const {
+	return 0 != SendMessage(mhwnd, MYWM_ISFRAMEPENDING, 0, 0);
+}
+
+VDDVSyncStatus VDVideoDisplayWindow::GetVSyncStatus() const {
+	return mVSyncStatus;
 }
 
 vdrect32 VDVideoDisplayWindow::GetMonitorRect() {
@@ -1027,7 +1071,7 @@ void VDVideoDisplayWindow::OnChildPaint() {
 
 	--mInhibitRefresh;
 
-	if (mpMiniDriver && mpMiniDriver->IsFramePending())
+	if (mpMiniDriver && !mpMiniDriver->IsFramePending())
 		RequestNextFrame();
 }
 
@@ -1097,12 +1141,19 @@ LRESULT VDVideoDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	case MYWM_PROCESSNEXTFRAME:
 		if (!mpMiniDriver || !mpMiniDriver->IsFramePending()) {
 			bool newframe;
+			int framesQueued;
+
 			vdsynchronized(mMutex) {
 				newframe = !mpActiveFrame;
+
+				framesQueued = mPendingFrames.size() + (newframe ? 1 : 0);
 			}
 
 			if (newframe)
 				DispatchNextFrame();
+
+			if (mpOnFrameStatusUpdated)
+				mpOnFrameStatusUpdated(framesQueued);
 		}
 
 		return 0;
@@ -1118,8 +1169,15 @@ LRESULT VDVideoDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		return 0;
 
 	case MYWM_QUEUEPRESENT:
-		if (mpMiniDriver)
+		if (mpMiniDriver) {
+			if (mpProfileHook)
+				mpProfileHook(kProfileEvent_BeginTick);
+
 			mpMiniDriver->PresentQueued();
+
+			if (mpProfileHook)
+				mpProfileHook(kProfileEvent_EndTick);
+		}
 
 		SendMessage(mhwnd, MYWM_PROCESSNEXTFRAME, 0, 0);
 		return 0;
@@ -1174,6 +1232,27 @@ LRESULT VDVideoDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		if (mpMiniDriver)
 			mpMiniDriver->RequestCapture();
 		return 0;
+
+	case MYWM_SETCUSTOMREFRESH:
+		{
+			const float *args = (const float *)lParam;
+
+			if (mCustomRefreshRate != args[0] || mCustomRefreshRateMin != args[1] || mCustomRefreshRateMax != args[2]) {
+				mCustomRefreshRate = args[0];
+				mCustomRefreshRateMin = args[1];
+				mCustomRefreshRateMax = args[2];
+
+				if (mpMiniDriver)
+					mpMiniDriver->SetDesiredCustomRefreshRate(mCustomRefreshRate, mCustomRefreshRateMin, mCustomRefreshRateMax);
+			}
+		}
+		return 0;
+
+	case MYWM_GETQUEUEDFRAMES:
+		return mPendingFrames.size() + (mpMiniDriver && mpMiniDriver->IsFramePending() ? 1 : 0);
+
+	case MYWM_ISFRAMEPENDING:
+		return mpMiniDriver && mpMiniDriver->IsFramePending();
 
 	case WM_SIZE:
 		if (mhwndChild)
@@ -1257,8 +1336,12 @@ bool VDVideoDisplayWindow::SyncSetSource(bool bAutoUpdate, const SourceInfoEx& p
 	mSource = params;
 
 	mbSourceUseScreenFX = (params.mpScreenFX != nullptr);
-	if (params.mpScreenFX)
+	if (params.mpScreenFX) {
 		mSourceScreenFX = *params.mpScreenFX;
+
+		if (mSourceScreenFX.mHDRIntensity < 0)
+			mSourceScreenFX.mHDRIntensity = mpManager->GetSystemSDRBrightness(mhLastMonitor) / 80.0f;
+	}
 
 	mpSourceScreenFXEngine = params.mpScreenFXEngine;
 	mSourceEmulatedFX = mSource;
@@ -1428,22 +1511,6 @@ void VDVideoDisplayWindow::SyncUpdate(int mode) {
 
 		mpMiniDriver->SetColorOverride(0);
 
-		if (mode & kVisibleOnly) {
-			bool bVisible = true;
-
-			if (HDC hdc = GetDCEx(mhwnd, NULL, 0)) {
-				RECT r;
-				GetClientRect(mhwnd, &r);
-				bVisible = 0 != RectVisible(hdc, &r);
-				ReleaseDC(mhwnd, hdc);
-			}
-
-			mode = (FieldMode)(mode & ~kVisibleOnly);
-
-			if (!bVisible)
-				return;
-		}
-
 		mSyncDelta = 0.0f;
 
 		bool success = mpMiniDriver->Update((IVDVideoDisplayMinidriver::UpdateMode)mode);
@@ -1465,6 +1532,8 @@ void VDVideoDisplayWindow::SyncUpdate(int mode) {
 				mIdleFrames.splice(mIdleFrames.back(), mPendingFrames);
 			}
 		}
+
+		mVSyncStatus = mpMiniDriver->GetVSyncStatus();
 	}
 }
 
@@ -1542,29 +1611,36 @@ void VDVideoDisplayWindow::OnDisplayChange() {
 	}
 }
 
-void VDVideoDisplayWindow::OnForegroundChange(bool bForeground) {
+void VDVideoDisplayWindow::OnForegroundChange(bool foreground) {
 	if (mAccelMode != kAccelAlways)
 		SyncReset();
 
-	OnRealizePalette();
+	OnRealizePalette(foreground);
+	UpdateSDRBrightness();
 }
 
-void VDVideoDisplayWindow::OnRealizePalette() {
+void VDVideoDisplayWindow::OnRealizePalette(bool foreground) {
 	if (HDC hdc = GetDC(mhwnd)) {
 		HPALETTE newPal = GetPalette();
-		HPALETTE pal = SelectPalette(hdc, newPal, FALSE);
+		HPALETTE pal = SelectPalette(hdc, newPal, !foreground);
 		if (!mhOldPalette)
 			mhOldPalette = pal;
 		RealizePalette(hdc);
 		RemapPalette();
+		ReleaseDC(mhwnd, hdc);
 
 		if (mpMiniDriver) {
 			mpMiniDriver->SetLogicalPalette(GetLogicalPalette());
-			RequestUpdate();
-		}
 
-		ReleaseDC(mhwnd, hdc);
+			if (!mpMiniDriver->IsFramePending())
+				RequestUpdate();
+		}
 	}
+}
+
+void VDVideoDisplayWindow::OnGlobalSettingsChanged() {
+	if (mpMiniDriver)
+		mpMiniDriver->SetDisplayDebugInfo(sbEnableDebugInfo);
 }
 
 bool VDVideoDisplayWindow::InitMiniDriver() {
@@ -1603,11 +1679,12 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 	mpMiniDriver->SetFilterMode((IVDVideoDisplayMinidriver::FilterMode)mFilterMode);
 	mpMiniDriver->SetSubrect(mbUseSubrect ? &mSourceSubrect : NULL);
 	mpMiniDriver->SetDisplayDebugInfo(sbEnableDebugInfo);
+	mpMiniDriver->SetDesiredCustomRefreshRate(mCustomRefreshRate, mCustomRefreshRateMin, mCustomRefreshRateMax);
 	mpMiniDriver->SetFullScreen(mbFullScreen, mFullScreenWidth, mFullScreenHeight, mFullScreenRefreshRate, mbUse16Bit);
 	mpMiniDriver->SetHighPrecision(sbEnableHighPrecision);
 	mpMiniDriver->SetDestRect(mbDestRectEnabled ? &mDestRect : NULL, mBackgroundColor);
 	mpMiniDriver->SetPixelSharpness(mPixelSharpnessX, mPixelSharpnessY);
-	mpMiniDriver->SetSDRBrightness(mSDRBrightness);
+	UpdateSDRBrightness();
 
 	VDASSERT(mSource.pixmap.data);
 
@@ -1646,6 +1723,9 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 	}
 	
 	mHDRAvailability = mpMiniDriver->IsHDRCapable();
+
+	if (mHDRAvailability == VDDHDRAvailability::NotEnabledOnDisplay && !mpManager->IsMonitorHDRCapable(mhLastMonitor))
+		mHDRAvailability = VDDHDRAvailability::NoDisplaySupport;
 
 	// Must be done after Init().
 	mpMiniDriver->SetCompositor(mpCompositor);
@@ -1806,13 +1886,17 @@ void VDVideoDisplayWindow::GetMonitorRect(RECT *r, HMONITOR hmon) {
 	r->bottom = GetSystemMetrics(SM_CYSCREEN);
 }
 
+void VDVideoDisplayWindow::UpdateSDRBrightness() {
+	if (mpMiniDriver)
+		mpMiniDriver->SetSDRBrightness(mSDRBrightness < 0 ? mpManager->GetSystemSDRBrightness(mhLastMonitor) : mSDRBrightness);
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 VDVideoDisplayManager *VDGetVideoDisplayManager() {
 	if (!g_pVDVideoDisplayManager) {
 		g_pVDVideoDisplayManager = new VDVideoDisplayManager;
 		g_pVDVideoDisplayManager->Init();
-		g_pVDVideoDisplayManager->SetBackgroundFallbackEnabled(VDVideoDisplayWindow::sbEnableBackgroundFallback);
 	}
 
 	return g_pVDVideoDisplayManager;

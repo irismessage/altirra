@@ -36,7 +36,7 @@ extern const ATDeviceDefinition g_ATDeviceDefBlockDevTemporaryWriteFilter = {
 };
 
 ATBlockDeviceTemporaryWriteFilter::ATBlockDeviceTemporaryWriteFilter() {
-	mDevParent.Init(IATBlockDevice::kTypeID, "harddisk", L"Read-only source", "source", static_cast<ATDevice *>(this));
+	mDevParent.Init(IATBlockDevice::kTypeID, "harddisk", L"Read-only base disk", "source", static_cast<ATDevice *>(this));
 
 	mDevParent.SetOnAttach([this] {
 		mpBlockDevice = mDevParent.GetChild<IATBlockDevice>();
@@ -74,7 +74,7 @@ void ATBlockDeviceTemporaryWriteFilter::GetDeviceInfo(ATDeviceInfo& info) {
 
 void ATBlockDeviceTemporaryWriteFilter::GetSettingsBlurb(VDStringW& buf) {
 	unsigned n = (unsigned)mBlockLookup.size();
-	buf.sprintf(L"%u dirty sector%s", n, n == 1 ? L"s" : L"");
+	buf.sprintf(L"%u dirty sector%s", n, n != 1 ? L"s" : L"");
 }
 
 bool ATBlockDeviceTemporaryWriteFilter::IsReadOnly() const {

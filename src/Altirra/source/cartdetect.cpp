@@ -17,10 +17,10 @@
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <at/atcore/ksyms.h>
 #include <at/atdebugger/target.h>
 #include "cartridge.h"
 #include "disasm.h"
-#include "ksyms.h"
 
 namespace {
 	enum SystemType {
@@ -187,6 +187,8 @@ static constexpr struct ATCartDetectInfo {
 {	kATCartridgeMode_aDawliah_32K,				kType800,	kSize32K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					ATCartDetectFlags::DontRecommend },
 {	kATCartridgeMode_aDawliah_64K,				kType800,	kSize64K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					ATCartDetectFlags::DontRecommend },
 {	kATCartridgeMode_JRC_64K_RAM,				kType800,	kSize64K,	kWrsNone,	kBankData,		kInit8K,	kHeaderLast16B,					ATCartDetectFlags::DontRecommend },
+
+{	kATCartridgeMode_SICPlus,					kType800,	kSize1M,	kWrsNone,	kBankData,		kInit8K,	kHeaderFirst16K_PreferAll16K,	},
 
 // 5200 carts
 //

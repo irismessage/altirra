@@ -85,6 +85,8 @@ enum ATCartridgeMode : uint32 {
 	kATCartridgeMode_MaxFlash_1024K_Bank0,
 	kATCartridgeMode_MegaCart_1M_2,			// Hardware by Bernd for ABBUC JHV 2009
 	kATCartridgeMode_5200_64K_32KBanks,		// Used by M.U.L.E. 64K conversion
+	kATCartridgeMode_5200_128K_32KBanks,
+	kATCartridgeMode_5200_256K_32KBanks,
 	kATCartridgeMode_5200_512K_32KBanks,
 	kATCartridgeMode_MicroCalc,
 	kATCartridgeMode_2K,
@@ -102,6 +104,15 @@ enum ATCartridgeMode : uint32 {
 	kATCartridgeMode_aDawliah_32K,			// (type 69)
 	kATCartridgeMode_aDawliah_64K,			// (type 70)
 	kATCartridgeMode_JRC_64K_RAM,			// (unofficial type 160 used by AVGCart)
+	kATCartridgeMode_XEMulticart_8K,		// XE Multicart by Idorobots (Kajetan Rzepecki)
+	kATCartridgeMode_XEMulticart_16K,
+	kATCartridgeMode_XEMulticart_32K,
+	kATCartridgeMode_XEMulticart_64K,
+	kATCartridgeMode_XEMulticart_128K,
+	kATCartridgeMode_XEMulticart_256K,
+	kATCartridgeMode_XEMulticart_512K,
+	kATCartridgeMode_XEMulticart_1M,
+	kATCartridgeMode_SICPlus,
 	kATCartridgeModeCount
 };
 

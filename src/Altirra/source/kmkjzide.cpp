@@ -40,6 +40,7 @@
 #include <vd2/system/int128.h>
 #include <at/atcore/blockdevice.h>
 #include <at/atcore/consoleoutput.h>
+#include <at/atcore/devicestorage.h>
 #include <at/atcore/propertyset.h>
 #include "kmkjzide.h"
 #include "memorymanager.h"
@@ -65,13 +66,9 @@ ATKMKJZIDE::ATKMKJZIDE(bool version2)
 	memset(mFlash, 0xFF, sizeof mFlash);
 	memset(mSDX, 0xFF, sizeof mSDX);
 	mRTC.Init();
-
-	LoadNVRAM();
 }
 
 ATKMKJZIDE::~ATKMKJZIDE() {
-	SaveNVRAM();
-
 	Shutdown();
 }
 
@@ -176,10 +173,17 @@ void ATKMKJZIDE::Init() {
 	for(size_t i=0; i<2; ++i)
 		mIDE[i].Init(mpScheduler, mpUIRenderer, !mpBlockDevices[i ^ 1], i > 0);
 
+	mRTCStorage.Init(*GetService<IATDeviceStorageManager>(),
+		[this](IATDeviceStorageManager&) { LoadNVRAM(); },
+		[this](IATDeviceStorageManager&) { SaveNVRAM(); }
+	);
+
 	ReloadFirmware();
 }
 
 void ATKMKJZIDE::Shutdown() {
+	mRTCStorage.Shutdown();
+
 	if (mpCartPort) {
 		mpCartPort->RemoveCartridge(mCartId, this);
 		mpCartPort = nullptr;
@@ -298,12 +302,10 @@ void ATKMKJZIDE::WarmReset() {
 }
 
 void ATKMKJZIDE::LoadNVRAM() {
-	VDRegistryAppKey key("Nonvolatile RAM");
-
 	ATRTCV3021Emulator::NVState state;
 	memset(state.mData, 0xFF, sizeof state.mData);
 
-	if (key.getBinary("IDEPlus clock", (char *)state.mData, (int)sizeof state.mData))
+	if (GetService<IATDeviceStorageManager>()->LoadNVRAM("IDEPlus clock", state.mData, sizeof state.mData))
 		mRTC.Load(state);
 }
 
@@ -313,7 +315,7 @@ void ATKMKJZIDE::SaveNVRAM() {
 	ATRTCV3021Emulator::NVState state {};
 	mRTC.Save(state, mbNVRAMGuard);
 
-	key.setBinary("IDEPlus clock", (const char *)state.mData, (int)sizeof state.mData);
+	GetService<IATDeviceStorageManager>()->SaveNVRAM("IDEPlus clock", state.mData, sizeof state.mData);
 }
 
 void ATKMKJZIDE::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {

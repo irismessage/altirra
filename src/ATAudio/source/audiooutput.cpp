@@ -13,16 +13,21 @@
 //
 //	You should have received a copy of the GNU General Public License along
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #include <stdafx.h>
+#include <windows.h>
+#include <mmreg.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/time.h>
-#include <vd2/Riza/audioout.h>
 #include <at/atcore/audiosource.h>
 #include <at/atcore/configvar.h>
-#include <at/atio/wav.h>
 #include <at/ataudio/audiofilters.h>
+#include <at/ataudio/audioout.h>
 #include <at/ataudio/audiooutput.h>
 
 ATConfigVarBool g_ATCVAudioResampleInterpFilter("audio.resample.interp_filter", true);
@@ -105,8 +110,14 @@ void ATSyncAudioEdgePlayer::RenderEdges(float *dstLeft, float *dstRight, uint32 
 			if (buf->mLeftVolume != 0)
 				RenderEdgeBuffer(dstLeft, nullptr, n, timestamp, buf->mEdges.data(), buf->mEdges.size(), buf->mLeftVolume);
 
-			if (buf->mRightVolume != 0)
-				RenderEdgeBuffer(dstRight, nullptr, n, timestamp, buf->mEdges.data(), buf->mEdges.size(), buf->mRightVolume);
+			if (buf->mRightVolume != 0) {
+				if (dstRight) {
+					RenderEdgeBuffer(dstRight, nullptr, n, timestamp, buf->mEdges.data(), buf->mEdges.size(), buf->mRightVolume);
+				} else {
+					VDFAIL("Stereo edge buffer submitted without stereo being active.");
+					RenderEdgeBuffer(dstLeft, nullptr, n, timestamp, buf->mEdges.data(), buf->mEdges.size(), buf->mRightVolume);
+				}
+			}
 		}
 
 		buf->mEdges.clear();
@@ -170,7 +181,6 @@ void ATSyncAudioEdgePlayer::RenderEdgeBuffer2(float *dstLeft, float *dstRight, u
 	// and one sample short. These extra samples get premixed into the tail, which is then carried forward
 	// to the next frame.
 	const uint32 timeWindow = (n+2) * 28;
-	const uint32 timestampEnd = timestamp + timeWindow;
 
 	while(numEdges--) {
 		const uint32 cycleOffset = src->mTime - timestamp;
@@ -207,7 +217,7 @@ public:
 	ATAudioOutput();
 	virtual ~ATAudioOutput() override;
 
-	void Init(IATSyncAudioSamplePlayer *samplePlayer) override;
+	void Init(IATSyncAudioSamplePlayer *samplePlayer, IATSyncAudioSamplePlayer *edgeSamplePlayer) override;
 	void InitNativeAudio() override;
 
 	ATAudioApi GetApi() override;
@@ -252,14 +262,15 @@ public:
 	void WriteAudio(
 		const float *left,
 		const float *right,
-		uint32 count, bool pushAudio, uint64 timestamp) override;
+		uint32 count, bool pushAudio, bool pushStereoAsMono, uint64 timestamp) override;
 
 public:
 	IATSyncAudioSamplePlayer& GetSamplePlayer() override { return *mpSamplePlayer; }
+	IATSyncAudioSamplePlayer& GetEdgeSamplePlayer() override { return *mpEdgeSamplePlayer; }
 	IATSyncAudioEdgePlayer& GetEdgePlayer() override { return *mpEdgePlayer; }
 
 protected:
-	void InternalWriteAudio(const float *left, const float *right, uint32 count, bool pushAudio, uint64 timestamp);
+	void InternalWriteAudio(const float *left, const float *right, uint32 count, bool pushAudio, bool pushStereoAsMono, uint64 timestamp);
 	void RecomputeBuffering();
 	void RecomputeResamplingRate();
 	void ReinitAudio();
@@ -325,6 +336,7 @@ protected:
 	vdautoptr<IVDAudioOutput>	mpAudioOut;
 	IATAudioTap *mpAudioTap = nullptr;
 	IATSyncAudioSamplePlayer *mpSamplePlayer = nullptr;
+	IATSyncAudioSamplePlayer *mpEdgeSamplePlayer = nullptr;
 	vdautoptr<ATSyncAudioEdgePlayer> mpEdgePlayer;
 	float mPrevDCLevels[2] {};
 
@@ -359,10 +371,15 @@ ATAudioOutput::ATAudioOutput() {
 ATAudioOutput::~ATAudioOutput() {
 }
 
-void ATAudioOutput::Init(IATSyncAudioSamplePlayer *samplePlayer) {
+void ATAudioOutput::Init(IATSyncAudioSamplePlayer *samplePlayer, IATSyncAudioSamplePlayer *edgeSamplePlayer) {
 	memset(mSourceBuffer, 0, sizeof mSourceBuffer);
 
 	mpSamplePlayer = samplePlayer;
+	mpEdgeSamplePlayer = edgeSamplePlayer;
+
+	if (mpSamplePlayer)
+		AddSyncAudioSource(&mpSamplePlayer->AsSource());
+	// edge sample player is special cased
 
 	mbFilterStereo = false;
 	mFilterMonoSamples = 0;
@@ -515,6 +532,7 @@ void ATAudioOutput::WriteAudio(
 	const float *right,
 	uint32 count,
 	bool pushAudio,
+	bool pushStereoAsMono,
 	uint64 timestamp)
 {
 	if (!count)
@@ -527,7 +545,7 @@ void ATAudioOutput::WriteAudio(
 		if (tc > count)
 			tc = count;
 
-		InternalWriteAudio(left, right, tc, pushAudio, timestamp);
+		InternalWriteAudio(left, right, tc, pushAudio, pushStereoAsMono, timestamp);
 
 		// exit if we can't write anything -- we only do this after a call to
 		// InternalWriteAudio() as we need to try to push existing buffered
@@ -551,6 +569,7 @@ void ATAudioOutput::InternalWriteAudio(
 	const float *right,
 	uint32 count,
 	bool pushAudio,
+	bool pushStereoAsMono,
 	uint64 timestamp)
 {
 	VDASSERT(count > 0);
@@ -580,13 +599,23 @@ void ATAudioOutput::InternalWriteAudio(
 		float *const dstLeft = &mSourceBuffer[0][mBufferLevel];
 		float *const dstRight = mbFilterStereo ? &mSourceBuffer[1][mBufferLevel] : nullptr;
 
-		memcpy(dstLeft + kPreFilterOffset, left, sizeof(float) * count);
+		if (mbFilterStereo && pushStereoAsMono && right) {
+			float *VDRESTRICT mixDstLeft = dstLeft + kPreFilterOffset;
+			float *VDRESTRICT mixDstRight = dstRight + kPreFilterOffset;
+			const float *VDRESTRICT mixSrcLeft = left;
+			const float *VDRESTRICT mixSrcRight = right;
 
-		if (mbFilterStereo) {
-			if (right)
-				memcpy(dstRight + kPreFilterOffset, right, sizeof(float) * count);
-			else
-				memcpy(dstRight + kPreFilterOffset, left, sizeof(float) * count);
+			for(size_t i=0; i<count; ++i)
+				mixDstLeft[i] = mixDstRight[i] = (mixSrcLeft[i] + mixSrcRight[i]) * 0.5f;
+		} else {
+			memcpy(dstLeft + kPreFilterOffset, left, sizeof(float) * count);
+
+			if (mbFilterStereo) {
+				if (right)
+					memcpy(dstRight + kPreFilterOffset, right, sizeof(float) * count);
+				else
+					memcpy(dstRight + kPreFilterOffset, left, sizeof(float) * count);
+			}
 		}
 
 
@@ -657,10 +686,16 @@ void ATAudioOutput::InternalWriteAudio(
 		}
 
 		// render edges
+		mixInfo.mpLeft = &mSourceBuffer[0][prefilterPos];
+		mixInfo.mpRight = nullptr;
+
 		if (nch > 1)
-			mpEdgePlayer->RenderEdges(&mSourceBuffer[0][prefilterPos], &mSourceBuffer[1][prefilterPos], count, (uint32)timestamp);
-		else
-			mpEdgePlayer->RenderEdges(&mSourceBuffer[0][prefilterPos], nullptr, count, (uint32)timestamp);
+			mixInfo.mpRight = &mSourceBuffer[1][prefilterPos];
+
+		mpEdgePlayer->RenderEdges(mixInfo.mpLeft, mixInfo.mpRight, count, (uint32)timestamp);
+
+		if (mpEdgeSamplePlayer)
+			mpEdgeSamplePlayer->AsSource().WriteAudio(mixInfo);
 
 		// filter channels
 		for(int ch=0; ch<nch; ++ch) {
@@ -895,7 +930,15 @@ bool ATAudioOutput::ReinitAudio(ATAudioApi api) {
 	else
 		mSamplingRate = preferredSamplingRate;
 
-	nsVDWinFormats::WaveFormatExPCM wfex { mSamplingRate, 2, 16 };
+	WAVEFORMATEX wfex {};
+	wfex.wFormatTag			= WAVE_FORMAT_PCM;
+	wfex.nChannels			= 2;
+	wfex.nSamplesPerSec		= mSamplingRate;
+	wfex.wBitsPerSample		= 16;
+	wfex.nBlockAlign		= 4;
+	wfex.nAvgBytesPerSec	= mSamplingRate * 4;
+	wfex.cbSize				= 0;
+
 	bool success = mpAudioOut->Init(kBufferSize * 4, 30, (const tWAVEFORMATEX *)&wfex, NULL);
 
 	if (!success)

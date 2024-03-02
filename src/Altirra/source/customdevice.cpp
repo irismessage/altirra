@@ -22,6 +22,7 @@
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <at/atcore/asyncdispatcher.h>
+#include <at/atcore/deviceport.h>
 #include <at/atcore/devicevideo.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/propertyset.h>
@@ -910,13 +911,6 @@ void ATDeviceCustom::ColdReset() {
 				mpIndicators->ReportError(L"No connection to device server. Custom device may not function properly.");
 			}
 		}
-	}
-
-	// reapply controller port state in case hardware mode has changed and we need to
-	// set ports that were previously disabled (3/4)
-	for(auto *port : mpControllerPorts) {
-		if (port)
-			port->Reapply();
 	}
 }
 
@@ -2446,6 +2440,20 @@ bool ATDeviceCustom::OnDefineMemoryLayer(ATVMCompiler& compiler, const char *nam
 	if (ml.mbAutoPBI)
 		pri = kATMemoryPri_PBI;
 
+	// check for priority overload
+	if (const ATVMDataValue *priorityRef = mlMembers.Optional("priority")) {
+		const char *priorityStr = ParseRequiredString(*priorityRef);
+
+		if (!strcmp(priorityStr, "pbi"))
+			pri = kATMemoryPri_PBI;
+		else if (!strcmp(priorityStr, "extsel"))
+			pri = kATMemoryPri_Extsel;
+		else if (!strcmp(priorityStr, "hwoverlay"))
+			pri = kATMemoryPri_HardwareOverlay;
+		else
+			throw ATVMCompileError(*priorityRef, "Unsupported memory layer priority mode");
+	}
+
 	// see if we have a fixed mapping or control mapping
 	const ATVMDataValue *fixedMappingNode = mlMembers.Optional("fixed_mapping");
 
@@ -2746,7 +2754,7 @@ bool ATDeviceCustom::OnDefineMemoryLayer(ATVMCompiler& compiler, const char *nam
 		ml.mEnabledModes = memoryLayerMode;
 		mpMemMan->SetLayerModes(ml.mpPhysLayer, (ATMemoryAccessMode)memoryLayerMode);
 	} else
-		throw ATVMCompileError(*initializers, "Memory layer type not specified.");
+		throw ATVMCompileError(*initializers, "Memory layer must have a 'control' or 'segment' member.");
 
 	if (const ATVMDataValue *cartModeRef = mlMembers.Optional("cart_mode")) {
 		const VDStringSpanA cartMode(ParseRequiredString(*cartModeRef));
@@ -2948,8 +2956,7 @@ bool ATDeviceCustom::OnDefineControllerPort(ATVMCompiler& compiler, const char *
 	if (!mpCompiler->DefineObjectVariable(name, cport))
 		return false;
 
-	cport->mpPortController = portIndex & 2 ? g_sim.GetPortControllerB() : g_sim.GetPortControllerA();
-	cport->mbPort2 = (portIndex & 1) != 0;
+	GetService<IATDevicePortManager>()->AllocControllerPort(portIndex, ~cport->mpControllerPort);
 	cport->Init();
 	return true;
 }
@@ -3852,124 +3859,39 @@ void ATDeviceCustom::Console::VMCallPushBreak() {
 ///////////////////////////////////////////////////////////////////////////
 
 void ATDeviceCustom::ControllerPort::Init() {
-	if (mPortInput < 0) {
-		mPortInput = mpPortController->AllocatePortInput(mbPort2, -1);
-
-		mInputMask = 0;
-
-		mPotA = 229;
-		mPotB = 229;
-	}
 }
 
 void ATDeviceCustom::ControllerPort::Shutdown() {
-	if (mPortInput >= 0) {
-		ResetPotPositions();
-		mbPaddleASet = false;
-		mbPaddleBSet = false;
-
-		mpPortController->FreePortInput(mPortInput);
-		mPortInput = -1;
-	}
+	mpControllerPort = nullptr;
 }
 
 void ATDeviceCustom::ControllerPort::Enable() {
-	if (!mbEnabled) {
-		mbEnabled = true;
-
-		Reapply();
-	}
+	mpControllerPort->SetEnabled(true);
 }
 
 void ATDeviceCustom::ControllerPort::Disable() {
-	if (mbEnabled) {
-		mbEnabled = false;
-
-		Reapply();
-	}
-}
-
-void ATDeviceCustom::ControllerPort::Reapply() {
-	if (mPortInput < 0)
-		return;
-
-	if (mbEnabled) {
-		mpPortController->SetPortInput(mPortInput, mInputMask);
-
-		if (mbPaddleASet)
-			mpPortController->SetPotPosition(mbPort2 ? 2 : 0, mPotA);
-
-		if (mbPaddleBSet)
-			mpPortController->SetPotPosition(mbPort2 ? 3 : 1, mPotB);
-	} else {
-		mpPortController->SetPortInput(mPortInput, 0);
-		ResetPotPositions();
-	}
+	mpControllerPort->SetEnabled(false);
 }
 
 void ATDeviceCustom::ControllerPort::ResetPotPositions() {
-	if (mbPaddleASet)
-		mpPortController->SetPotPosition(mbPort2 ? 2 : 0, 229);
-
-	if (mbPaddleBSet)
-		mpPortController->SetPotPosition(mbPort2 ? 3 : 1, 229);
+	mpControllerPort->ResetPotPosition(false);
+	mpControllerPort->ResetPotPosition(true);
 }
 
 void ATDeviceCustom::ControllerPort::VMCallSetPaddleA(sint32 pos) {
-	mbPaddleASet = true;
-
-	if (pos >= 228)
-		pos = 228;
-	else if (pos < 1)
-		pos = 1;
-
-	if (mPotA != pos) {
-		mPotA = pos;
-
-		mpPortController->SetPotPosition(mbPort2 ? 2 : 0, mPotA);
-	}
+	mpControllerPort->SetPotPosition(false, pos);
 }
 
 void ATDeviceCustom::ControllerPort::VMCallSetPaddleB(sint32 pos) {
-	mbPaddleBSet = true;
-
-	if (pos >= 228)
-		pos = 228;
-	else if (pos < 1)
-		pos = 1;
-
-	if (mPotB != pos) {
-		mPotB = pos;
-
-		mpPortController->SetPotPosition(mbPort2 ? 3 : 1, mPotB);
-	}
+	mpControllerPort->SetPotPosition(true, pos);
 }
 
 void ATDeviceCustom::ControllerPort::VMCallSetTrigger(sint32 asserted) {
-	uint32 newMask = mInputMask;
-
-	if (asserted)
-		newMask |= 0x100;
-	else
-		newMask &= ~UINT32_C(0x100);
-
-	if (mInputMask != newMask) {
-		mInputMask = newMask;
-
-		if (mbEnabled)
-			mpPortController->SetPortInput(mPortInput, mInputMask);
-	}
+	mpControllerPort->SetTriggerDown(asserted);
 }
 
 void ATDeviceCustom::ControllerPort::VMCallSetDirs(sint32 mask) {
-	uint32 newMask = mInputMask ^ ((mask ^ mInputMask) & 15);
-
-	if (mInputMask != newMask) {
-		mInputMask = newMask;
-
-		if (mbEnabled)
-			mpPortController->SetPortInput(mPortInput, mInputMask);
-	}
+	mpControllerPort->SetDirInput(mask & 15);
 }
 
 ///////////////////////////////////////////////////////////////////////////

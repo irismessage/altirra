@@ -13,6 +13,10 @@
 //
 //	You should have received a copy of the GNU General Public License along
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #include <stdafx.h>
 
@@ -33,10 +37,10 @@ void ATChecksumUpdateSHA256_NEON(ATChecksumStateSHA256& VDRESTRICT state, const 
 	const char* VDRESTRICT src2 = (const char*)src;
 
 	while(numBlocks--) {
-		uint32x4_t v0 = vreinterpretq_u8_u32(vrev32q_u8(vld1q_u8_ex(src2     , 1)));
-		uint32x4_t v1 = vreinterpretq_u8_u32(vrev32q_u8(vld1q_u8_ex(src2 + 16, 1)));
-		uint32x4_t v2 = vreinterpretq_u8_u32(vrev32q_u8(vld1q_u8_ex(src2 + 32, 1)));
-		uint32x4_t v3 = vreinterpretq_u8_u32(vrev32q_u8(vld1q_u8_ex(src2 + 48, 1)));
+		uint32x4_t v0 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(src2     )));
+		uint32x4_t v1 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(src2 + 16)));
+		uint32x4_t v2 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(src2 + 32)));
+		uint32x4_t v3 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(src2 + 48)));
 
 		vst1q_u32(&W[ 0], vaddq_u32(v0, vld1q_u32(&K[ 0])));
 		vst1q_u32(&W[ 4], vaddq_u32(v1, vld1q_u32(&K[ 4])));
@@ -60,13 +64,19 @@ void ATChecksumUpdateSHA256_NEON(ATChecksumStateSHA256& VDRESTRICT state, const 
 			uint32x4_t vt = vaddq_u32(vaddq_u32(back16, back7), back15);
 
 			// compute low two words of ((W[i-2] >>> 17) ^ (W[i-2] >>> 19) ^ (W[i-2] >> 10))
-			uint64x2_t back2lo = vreinterpretq_u32_u64(vzip2q_u32(v3, v3));
-			uint32x4_t v4lo = veorq_u32(vreinterpretq_u64_u32(veorq_u64(vshrq_n_u64(back2lo, 17), vshrq_n_u64(back2lo, 19))), vshrq_n_u32(back2lo, 10));
+			uint64x2_t back2lo = vreinterpretq_u64_u32(vzip2q_u32(v3, v3));
+			uint32x4_t v4lo = veorq_u32(
+				vreinterpretq_u32_u64(veorq_u64(vshrq_n_u64(back2lo, 17), vshrq_n_u64(back2lo, 19))),
+				vshrq_n_u32(vreinterpretq_u32_u64(back2lo), 10)
+			);
 			v4lo = vaddq_u32(vuzp1q_u32(v4lo, v4lo), vt);
 
 			// compute high two words of ((W[i-2] >>> 17) ^ (W[i-2] >>> 19) ^ (W[i-2] >> 10))
-			uint64x2_t back2hi = vreinterpretq_u32_u64(vzip1q_u32(v4lo, v4lo));
-			uint32x4_t v4hi = veorq_u32(vreinterpretq_u64_u32(veorq_u64(vshrq_n_u64(back2hi, 17), vshrq_n_u64(back2hi, 19))), vshrq_n_u32(back2hi, 10));
+			uint64x2_t back2hi = vreinterpretq_u64_u32(vzip1q_u32(v4lo, v4lo));
+			uint32x4_t v4hi = veorq_u32(
+				vreinterpretq_u32_u64(veorq_u64(vshrq_n_u64(back2hi, 17), vshrq_n_u64(back2hi, 19))),
+				vshrq_n_u32(vreinterpretq_u32_u64(back2hi), 10)
+			);
 			v4hi = vaddq_u32(vuzp1q_u32(v4hi, v4hi), vt);
 
 			uint32x4_t v4 = vcombine_u32(vget_low_u32(v4lo), vget_high_u32(v4hi));
@@ -230,14 +240,14 @@ void ATChecksumUpdateSHA256_Crypto(ATChecksumStateSHA256& VDRESTRICT state, cons
 		uint32x4_t tmp;
 		uint32x4_t w;
 
-		uint32x4_t v0 = vreinterpretq_u8_u32(vrev32q_u8(vld1q_u8_ex(src2     , 1)));
+		uint32x4_t v0 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(src2     )));
 
-		uint32x4_t v1 = vreinterpretq_u8_u32(vrev32q_u8(vld1q_u8_ex(src2 + 16, 1)));
+		uint32x4_t v1 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(src2 + 16)));
 
-		uint32x4_t v2 = vreinterpretq_u8_u32(vrev32q_u8(vld1q_u8_ex(src2 + 32, 1)));
+		uint32x4_t v2 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(src2 + 32)));
 		DO_ROUND(vaddq_u32(v0, k0));
 
-		uint32x4_t v3 = vreinterpretq_u8_u32(vrev32q_u8(vld1q_u8_ex(src2 + 48, 1)));
+		uint32x4_t v3 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(src2 + 48)));
 		DO_ROUND(vaddq_u32(v1, k1));
 
 		uint32x4_t v4  = vsha256su1q_u32(vsha256su0q_u32(v0, v1), v2, v3);

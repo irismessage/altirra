@@ -200,8 +200,8 @@ constexpr void ATDiskProfile::Init(ATDiskEmulationMode mode) {
 	setVal(mbSupportedCmdGetHighSpeedIndex,		false,		true,		true,		false,		false,		false,		true,		true,		true,		false,		false,		false		);
 	setVal(mHighSpeedIndex,						16,			8,			0,			0,			0,			0,			10,			9,			10,			6,			16,			0			);
 
-	setCyc(mCyclesPerSIOByte,					530us,		530us,		530us,		530us,		540us,		549us,		534us,		525us,		540us,		520us,		522us,		559.3us		);
-	setCyc(mCyclesPerSIOBit,					52us,		52us,		52us,		52us,		53us,		51us,		53us,		52us,		53us,		52us,		52.2us,		52.3us		);
+	setCyc(mCyclesPerSIOByte,					530us,		530us,		530us,		530us,		530us,		549us,		534us,		525us,		524us,		520us,		522us,		559.3us		);
+	setCyc(mCyclesPerSIOBit,					52us,		52us,		52us,		52us,		52us,		51us,		53us,		52us,		51us,		52us,		52.2us,		52.3us		);
 
 	setCyc(mCyclesPerSIOByteHighSpeed,			252us,		173.6us,	78.2us,		0us,		220us,		0us,		220us,		214us,		220us,		151us,		252us,		290.8us		);
 	setCycF(mCyclesPerSIOBitHighSpeedF,			25.2us,		17.4us,		7.8us,		0us,		19us,		0us,		19us,		18us,		19us,		14us,		25.2us,		26us		);
@@ -211,7 +211,7 @@ constexpr void ATDiskProfile::Init(ATDiskEmulationMode mode) {
 	// 1050: 20.12ms step rate (two half steps at ~18012 cycles, +/- 1 scanline)
 	// Indus GT: 20ms step rate.
 	// XF551: 6ms step rate.
-	setCyc(mCyclesPerTrackStep,					5.3ms,		5.3ms,		3.0ms,		5.3ms,		5.3ms,		20.12ms,	20.12ms,	8ms,		20.12ms,	20.12ms,	6ms,		20ms		);
+	setCyc(mCyclesPerTrackStep,					5.3ms,		5.3ms,		3.0ms,		5.3ms,		5.3ms,		20.12ms,	20.12ms,	8.6ms,		20.12ms,	20.12ms,	6ms,		20ms		);
 
 	int rpm;
 	setVal(rpm,									288,		288,		288,		288,		288,		288,		288,		288,		288,		288,		300,		288			);
@@ -259,6 +259,22 @@ constexpr void ATDiskProfile::Init(ATDiskEmulationMode mode) {
 	setVal(mbRetryMode1050,						false,		false,		false,		false,		false,		true,		true,		true,		true,		true,		true,		true		);
 	setVal(mbReverseOnForwardSeeks,				false,		false,		false,		false,		false,		true,		true,		true,		true,		true,		true,		false		);
 	setVal(mbWaitForLongSectors,				false,		false,		false,		false,		false,		true,		true,		true,		true,		true,		true,		true		);
+
+	switch(mode) {
+		case kATDiskEmulationMode_Happy810:
+		case kATDiskEmulationMode_Speedy1050:
+			mbBufferTrackReads = true;
+			break;
+
+		case kATDiskEmulationMode_Happy1050:
+			mbBufferTrackReads = true;
+			mbBufferTrackReadErrors = true;
+			mbBufferSector1 = true;
+			break;
+
+		default:
+			break;
+	}
 }
 
 constexpr void ATDiskProfile::Finalize() {

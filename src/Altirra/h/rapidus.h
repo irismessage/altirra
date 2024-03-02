@@ -20,11 +20,12 @@
 
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicepbi.h>
+#include <at/atcore/devicestorageimpl.h>
 #include <at/atcore/devicesystemcontrol.h>
 #include <at/atemulation/flash.h>
 
 class ATMemoryLayer;
-class IATDevicePortManager;
+class IATDevicePIA;
 
 class ATRapidusDevice final
 	: public ATDevice
@@ -143,8 +144,8 @@ private:
 	IATDeviceIndicatorManager *mpIndicatorMgr = nullptr;
 	ATFirmwareManager *mpFwMgr = nullptr;
 	IATSystemController *mpSystemController = nullptr;
-	IATDevicePortManager *mpPortMgr = nullptr;
-	int mPortOutput = -1;
+	IATDevicePIA *mpPIA = nullptr;
+	int mPIAOutput = -1;
 
 	bool mbPBIDeviceActive = false;
 	bool mbFirmwareUsable = false;
@@ -185,6 +186,8 @@ private:
 	ATMemoryLayer *mpLayerLoRegisters = nullptr;			// $00:D1xx
 	ATMemoryLayer *mpLayerHiRegisters = nullptr;			// $FF:0000-FF:FFFF read/write
 	ATMemoryLayer *mpLayerHardwareMirror = nullptr;			// $FF:D000-FF:D7FF read/write
+
+	ATDeviceVirtualStorage mEEPROMStorage;
 
 	// borrowed memory layers
 	ATFlashEmulator mFlashEmu;

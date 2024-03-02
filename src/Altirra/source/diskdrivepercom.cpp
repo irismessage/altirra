@@ -81,7 +81,7 @@ ATDeviceDiskDrivePercom::ATDeviceDiskDrivePercom(HardwareType hardwareType)
 	);
 
 	mTargetHistoryProxy.Init(mCoProc);
-	InitTargetControl(mTargetHistoryProxy, 1000000.0, kATDebugDisasmMode_6809, &mBreakpointsImpl);
+	InitTargetControl(mTargetHistoryProxy, 1000000.0, kATDebugDisasmMode_6809, &mBreakpointsImpl, this);
 
 	const uint32 firmwareSize = (hardwareType == HardwareType::AT88SPD ? 4096 : 2048);
 

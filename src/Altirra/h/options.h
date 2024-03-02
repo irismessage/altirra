@@ -34,6 +34,7 @@ struct ATOptions {
 	bool mbDisplay3D;
 	bool mbDisplay16Bit;
 	bool mbDisplayAccelScreenFX;
+	bool mbDisplayCustomRefresh;
 
 	bool mbSingleInstance;
 	bool mbPauseDuringMenu;

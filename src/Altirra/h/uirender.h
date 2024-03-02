@@ -68,6 +68,17 @@ public:
 
 	virtual void SetFpsIndicator(float fps) = 0;
 
+	enum class StatusPriority : int {
+		Status,
+		Modem,
+		Prompt,
+
+		Max = Prompt
+	};
+
+	virtual void SetMessage(StatusPriority priority, const wchar_t *msg) = 0;
+	virtual void ClearMessage(StatusPriority priority) = 0;
+
 	virtual void SetHoverTip(int px, int py, const wchar_t *text) = 0;
 
 	virtual void SetPaused(bool paused) = 0;

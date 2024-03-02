@@ -125,7 +125,9 @@ void ATNetSockVxlanTunnel::ReceiveFrame(const ATEthernetPacket& packet, ATEthern
 
 LRESULT ATNetSockVxlanTunnel::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 	if (msg == MYWM_SOCKET) {
+		[[maybe_unused]]
 		const SOCKET sock = (SOCKET)wParam;
+
 		const UINT event = LOWORD(lParam);
 
 		VDASSERT(sock == mTunnelSocket);

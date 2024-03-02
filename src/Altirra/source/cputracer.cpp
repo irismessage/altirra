@@ -133,6 +133,8 @@ void ATCPUTracer::Init(ATCPUEmulator *cpu, ATScheduler *scheduler, ATScheduler *
 	Reschedule();
 
 	std::fill(std::begin(mStackTable), std::end(mStackTable), StackEntry { -1, 0 } );
+
+	mpTraceChannelHistory->BeginEvents();
 }
 
 void ATCPUTracer::Shutdown() {
@@ -140,6 +142,11 @@ void ATCPUTracer::Shutdown() {
 		Update();
 		mpCPU->SetTracingEnabled(false);
 		mpCPU = nullptr;
+	}
+	
+	if (mpTraceChannelHistory) {
+		mpTraceChannelHistory->EndEvents();
+		mpTraceChannelHistory = nullptr;
 	}
 
 	for(ATTraceChannelSimple *&ch : mpTraceChannels)

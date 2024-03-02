@@ -13,6 +13,10 @@
 //
 //	You should have received a copy of the GNU General Public License along
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #include <stdafx.h>
 #include <vd2/system/cpuaccel.h>
@@ -24,23 +28,6 @@
 #elif defined(VD_CPU_ARM64)
 #include <arm64_neon.h>
 #endif
-
-ATFastMathScope::ATFastMathScope() {
-#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
-	mPrevValue = _mm_getcsr();
-
-	// Turn on flush-to-zero (FTZ) to help with IIR filters.
-	// Denormals-as-zero (DAZ) requires additional checking for old P4s,
-	// and we don't really need it, though it won't hurt if it is already on.
-	_mm_setcsr(mPrevValue | _MM_FLUSH_ZERO_ON);
-#endif
-}
-
-ATFastMathScope::~ATFastMathScope() {
-#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
-	_mm_setcsr(mPrevValue);
-#endif
-}
 
 alignas(16) constexpr sint16 g_ATAudioResamplingKernel[32][8] = {
 	{+0x0000,+0x0000,+0x0000,+0x4000,+0x0000,+0x0000,+0x0000,+0x0000 },
@@ -338,7 +325,7 @@ uint64 ATFilterResampleMonoToStereo16_NEON(sint16 *d, const float *s, uint32 cou
 		float32x2_t y2 = vmov_n_f32(vaddvq_f32(y1));
 
 		int32x2_t z0 = vcvtn_s32_f32(y2);
-		int16x4_t z1 = vqmovn_s32(vcombine_f32(z0, z0));
+		int16x4_t z1 = vqmovn_s32(vcombine_s32(z0, z0));
 
 		if constexpr (T_DoubleToStereo) {
 			vst1_lane_s32((int32_t *)d, vreinterpret_s32_s16(z1), 0);
@@ -537,8 +524,6 @@ void ATFilterComputeSymmetricFIR_8_32F_Scalar(float *dst, size_t n, const float 
 				+ (dst[ 2] + dst[12]) * k5
 				+ (dst[ 1] + dst[13]) * k6
 				+ (dst[ 0] + dst[14]) * k7;
-
-		++dst;
 
 		*dst++ = v;
 	} while(--n);

@@ -3,6 +3,7 @@
   <Import Project="../Build/ProjectConfigurations.props" />
   <ItemGroup>
     <ClCompile Include="source\blockdevwritefilter.cpp" />
+    <ClCompile Include="source\computereyes.cpp" />
     <ClCompile Include="source\corvus.cpp" />
     <ClCompile Include="source\devices.cpp" />
     <ClCompile Include="source\diskdrive.cpp" />
@@ -17,14 +18,17 @@
     </ClCompile>
     <ClCompile Include="source\testdevicesiohs.cpp" />
     <ClCompile Include="source\testdevicesiopoll.cpp" />
+    <ClCompile Include="source\videogenerator.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\at\atdevices\devices.h" />
     <ClInclude Include="..\h\at\atdevices\modemsound.h" />
     <ClInclude Include="h\at\atdevices\blockdevwritefilter.h" />
+    <ClInclude Include="h\at\atdevices\computereyes.h" />
     <ClInclude Include="h\at\atdevices\corvus.h" />
     <ClInclude Include="h\at\atdevices\dongle.h" />
     <ClInclude Include="h\at\atdevices\parfilewriter.h" />
+    <ClInclude Include="h\at\atdevices\videogenerator.h" />
     <ClInclude Include="h\diskdrive.h" />
     <ClInclude Include="h\exeloader.h" />
     <ClInclude Include="h\stdafx.h" />

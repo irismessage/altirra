@@ -17,8 +17,10 @@
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <vd2/system/file.h>
 #include <vd2/system/registry.h>
 #include <vd2/system/w32assist.h>
+#include <vd2/Dita/services.h>
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Kasumi/resample.h>
@@ -34,6 +36,7 @@
 #include <commctrl.h>
 #include "cassette.h"
 #include "console.h"
+#include "debugger.h"
 #include "oshelper.h"
 #include "resource.h"
 #include "simulator.h"
@@ -41,6 +44,7 @@
 #include "tracecpu.h"
 #include "tracetape.h"
 #include "tracevideo.h"
+#include "uicommondialogs.h"
 #include "uihistoryview.h"
 #include "profiler.h"
 #include "profilerui.h"
@@ -1898,9 +1902,17 @@ void ATUITraceViewerTimescaleView::OnDpiChanged() {
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATUITraceViewer;
+
+class IATUITraceViewerHost {
+public:
+	virtual void SetTraceViewer(ATUITraceViewer *viewer) = 0;
+};
+
 class ATUITraceViewer final : public VDDialogFrameW32, public IATUITraceViewer {
 public:
-	ATUITraceViewer(ATTraceCollection *collection);
+	ATUITraceViewer(ATTraceCollection *collection, IATUITraceViewerHost& host);
+	~ATUITraceViewer();
 
 	double GetViewEndTime() const;
 	double GetViewCenterTime() const;
@@ -1909,6 +1921,9 @@ public:
 	void StopTracing();
 	void ZoomIn();
 	void ZoomOut();
+
+	bool CanExport() const;
+	void ExportToChromeTrace(const wchar_t *path) const;
 
 	void SetCollection(ATTraceCollection *collection);
 
@@ -1970,6 +1985,8 @@ private:
 
 	HWND mhwndHScrollbar = nullptr;
 
+	IATUITraceViewerHost& mHost;
+
 	vdrefptr<ATTraceCollection> mpCollection;
 	ATTraceSettings mSettings {};
 
@@ -1984,8 +2001,9 @@ private:
 	vdfunction<void()> mThemeChangedFn;
 };
 
-ATUITraceViewer::ATUITraceViewer(ATTraceCollection *collection)
+ATUITraceViewer::ATUITraceViewer(ATTraceCollection *collection, IATUITraceViewerHost& host)
 	: VDDialogFrameW32(IDD_TRACEVIEWER)
+	, mHost(host)
 	, mpCollection(collection)
 	, mTimescaleView(mContext)
 	, mChannelView(mContext)
@@ -1993,6 +2011,7 @@ ATUITraceViewer::ATUITraceViewer(ATTraceCollection *collection)
 	, mCPUHistoryView(mContext)
 	, mCPUProfileView(mContext)
 {
+	mHost.SetTraceViewer(this);
 	mContext.mpParent = this;
 
 	ATTraceLoadDefaults(mSettings);
@@ -2001,6 +2020,10 @@ ATUITraceViewer::ATUITraceViewer(ATTraceCollection *collection)
 	mToolbar.SetOnClicked([this](uint32 id) { OnToolbarClicked(id); });
 
 	mThemeChangedFn = [this] { Invalidate(); };
+}
+
+ATUITraceViewer::~ATUITraceViewer() {
+	mHost.SetTraceViewer(nullptr);
 }
 
 double ATUITraceViewer::GetViewEndTime() const {
@@ -2032,6 +2055,301 @@ void ATUITraceViewer::ZoomIn() {
 
 void ATUITraceViewer::ZoomOut() {
 	ZoomDeltaSteps(GetViewCenterTime(), -1);
+}
+
+bool ATUITraceViewer::CanExport() const {
+	return mpCollection && mpCollection->GetGroupByType(kATTraceGroupType_CPUHistory) != nullptr;
+}
+
+void ATUITraceViewer::ExportToChromeTrace(const wchar_t *path) const {
+	if (!CanExport())
+		return;
+
+	ATTraceGroup *cpuTraceGroup = mpCollection->GetGroupByType(kATTraceGroupType_CPUHistory);
+	if (!cpuTraceGroup)
+		return;
+
+	VDFileStream fileOutput(path, nsVDFile::kWrite | nsVDFile::kCreateAlways | nsVDFile::kDenyRead | nsVDFile::kSequential);
+	VDTextOutputStream textOutput(&fileOutput);
+
+	textOutput.PutLine("{\n");
+
+	ATTraceChannelCPUHistory& cpuTrace = *vdpoly_cast<ATTraceChannelCPUHistory *>(cpuTraceGroup->GetChannel(0));
+
+	textOutput.PutLine("\"traceEvents\": [");
+
+	// emit meta events for the CPU history trace (PID 1)
+	static constexpr struct ThreadInfo {
+		int mThreadId;
+		const char *mpName;
+	} kThreads[] = {
+		{ kATProfileContext_Main, "Main" },
+		{ kATProfileContext_IRQ, "IRQ" },
+		{ kATProfileContext_VBI, "VBI" },
+		{ kATProfileContext_DLI, "DLI" },
+	};
+
+	textOutput.PutLine(R"--({"pid":1,"tid":0,"ph":"M","name":"process_name","args":{"name":"CPU (calls)"}})--");
+	textOutput.PutLine(R"--(,{"pid":1,"tid":0,"ph":"M","name":"process_sort_index","args":{"sort_index":1}})--");
+
+	for(int i=0; i<std::ssize(kThreads); ++i) {
+		const ThreadInfo& ti = kThreads[i];
+
+		textOutput.FormatLine(R"--(,{"pid":1,"tid":%d,"ph":"M","name":"thread_name","args":{"name":"%s"}})--"
+			, ti.mThreadId
+			, ti.mpName
+		);
+
+		textOutput.FormatLine(R"--(,{"pid":1,"tid":%d,"ph":"M","name":"thread_sort_index","args":{"sort_index":%d}})--"
+			, ti.mThreadId
+			, i
+		);
+	}
+
+	// if we have a frame channel, throw it into the counters under PID 0
+	if (ATTraceGroup *frameTraceGroup = mpCollection->GetGroupByType(kATTraceGroupType_Frames)) {
+		IATTraceChannel *frameTraceChannel = frameTraceGroup->GetChannel(0);
+
+		textOutput.PutLine(R"--(,{"pid":0,"tid":10,"ph":"C","name":"Frames","ts":0,"args":{"value":0}})--");
+		textOutput.PutLine(R"--(,{"pid":0,"tid":0,"ph":"M","name":"process_sort_index","args":{"sort_index":0}})--");
+
+		int nextValue = 1;
+		frameTraceChannel->StartIteration(0, frameTraceChannel->GetDuration(), 0);
+		ATTraceEvent frameEvent;
+		while(frameTraceChannel->GetNextEvent(frameEvent)) {
+			textOutput.FormatLine(R"--(,{"pid":0,"tid":10,"ph":"C","name":"Frames","ts":%.2f,"args":{"value":%d}})--"
+				, frameEvent.mEventStop * 1000000.0
+				, nextValue
+			);
+
+			nextValue ^= 1;
+		}
+	}
+
+	// iterate over all normal trace channels and throw them into the general pool under PID 2+ before we do the CPU history
+	// trace
+	unsigned pid = 2;
+	for(size_t groupIdx = 0, groupCount = mpCollection->GetGroupCount(); groupIdx < groupCount; ++groupIdx) {
+		ATTraceGroup *traceGroup = mpCollection->GetGroup(groupIdx);
+
+		if (traceGroup->GetType() != kATTraceGroupType_Normal)
+			continue;
+
+		unsigned tid = 0;	
+		for(size_t channelIdx = 0, channelCount = traceGroup->GetChannelCount(); channelIdx < channelCount; ++channelIdx) {
+			IATTraceChannel *channel = traceGroup->GetChannel(channelIdx);
+
+			channel->StartIteration(0, channel->GetDuration(), 0);
+
+			ATTraceEvent ev;
+			if (channel->GetNextEvent(ev)) {
+				VDStringA prefix;
+				prefix.sprintf(R"--(,{"pid":%d,"tid":%d,)--", pid, tid);
+
+				if (tid == 0) {
+					textOutput.FormatLine(R"--(,{"pid":%d,"tid":0,"ph":"M","name":"process_name","args":{"name":"%s"}})--", pid, VDTextWToU8(VDStringSpanW(traceGroup->GetName())).c_str());
+					textOutput.FormatLine(R"--(,{"pid":%d,"tid":0,"ph":"M","name":"process_sort_index","args":{"sort_index":%d}})--", pid, pid);
+				}
+
+				textOutput.FormatLine(R"--(%s"ph":"M","name":"thread_name","args":{"name":"%s"}})--", prefix.c_str(), VDTextWToU8(VDStringSpanW(channel->GetName())).c_str());
+				textOutput.FormatLine(R"--(%s"ph":"M","name":"thread_sort_index","args":{"sort_index":"%u"}})--", prefix.c_str(), tid);
+
+				do {
+					textOutput.FormatLine(R"--(%s"ph":"B","ts":%.2f,"name":"%s"})--", prefix.c_str(), ev.mEventStart * 1000000.0, VDTextWToU8(VDStringSpanW(ev.mpName)).c_str());
+					textOutput.FormatLine(R"--(%s"ph":"E","ts":%.2f})--", prefix.c_str(), ev.mEventStop * 1000000.0);
+				} while(channel->GetNextEvent(ev));
+
+				++tid;
+			}
+		}
+
+		if (tid)
+			++pid;
+	}
+
+	const auto tsDecoder = g_sim.GetTimestampDecoder();
+
+	uint32 startEventIdx = 0;
+	uint32 endEventIdx = cpuTrace.GetEventCount();
+
+	const ATCPUHistoryEntry *hents[256];
+	uint32 pos = startEventIdx;
+	uint32 baseCycle = cpuTrace.GetHistoryBaseCycle();
+
+	bool adjustStack = false;
+	bool init = true;
+	uint8 lastS = 0;
+
+	double cyclesToTimestamp = cpuTrace.GetSecondsPerTick() * 1000000.0;
+	uint8 shadowStack[256] {};
+
+	static constexpr unsigned kCallStackLimit = 32;
+	uint32 callStack[kCallStackLimit];
+	uint8 callStackTid[kCallStackLimit];
+	unsigned callStackHeight = 0;
+
+	struct CallFrameHash {
+		size_t operator()(const std::pair<uint32, uint32>& v) const {
+			return v.first + ((size_t)v.second << 16) + ((size_t)v.second >> 16);
+		}
+	};
+
+	vdfastvector<std::pair<uint32, uint32>> callFrameTable;
+	vdhashmap<std::pair<uint32, uint32>, uint32, CallFrameHash> callFrameLookup;
+
+	int tid = kATProfileContext_Main;
+	int nextTid = tid;
+	bool firstEvent = true;
+	while(pos < endEventIdx) {
+		uint32 n = cpuTrace.ReadHistoryEvents(hents, pos, std::min<uint32>(endEventIdx - pos, (uint32)vdcountof(hents)));
+		if (!n)
+			break;
+
+		if (init) {
+			init = false;
+
+			lastS = hents[0]->mS;
+		}
+			
+		for(uint32 i=0; i<n; ++i) {
+			const ATCPUHistoryEntry& he = *hents[i];
+
+			if (he.mbIRQ != he.mbNMI) {
+				adjustStack = true;
+
+				if (he.mbNMI) {
+					if (tsDecoder.IsInterruptPositionVBI(he.mCycle))
+						nextTid = kATProfileContext_VBI;
+					else
+						nextTid = kATProfileContext_DLI;
+				} else {
+					nextTid = kATProfileContext_IRQ;
+				}
+			}
+
+			if (adjustStack) {
+				sint8 sdir = (sint8)(he.mS - lastS);
+				bool needOpen = false;
+
+				unsigned popToHeight = callStackHeight;
+
+				if (sdir > 0) {
+					// stack pointer has gone up (pop), scan the shadow stack upward and arrange for closes as needed
+					while(lastS != he.mS) {
+						uint8 stackLevel = shadowStack[lastS];
+
+						if (stackLevel) {
+							shadowStack[lastS] = 0;
+
+							if (popToHeight >= stackLevel)
+								popToHeight = stackLevel - 1;
+						}
+
+						++lastS;
+					}
+				}
+				else if (sdir < 0) {
+					// stack pointer has gone down (push); clear the shadow stack downward and arrange for an open
+					while(lastS != he.mS)
+						shadowStack[--lastS] = 0;
+
+					needOpen = true;
+				}
+
+				// Check if we are changing the thread ID, but aren't already scheduling an open. This can happen
+				// with back-to-back interrupts.
+				if (!needOpen && nextTid != tid) {
+					// if there is a call frame at the current stack level, close it
+					if (popToHeight && shadowStack[lastS]) {
+						--popToHeight;
+						shadowStack[lastS] = 0;
+					}
+
+					// request an open
+					needOpen = true;
+				}
+
+				while(callStackHeight > popToHeight) {
+					textOutput.FormatLine(R"--(,{"pid":1,"tid": %d,"ph":"E","ts":%.2f})--", tid, (double)(he.mCycle - baseCycle) * cyclesToTimestamp);
+
+					--callStackHeight;
+					tid = callStackTid[callStackHeight];
+				}
+
+				if (needOpen && callStackHeight < kCallStackLimit) {
+					uint32 extpc = he.mPC + (he.mK << 16);
+			
+					const unsigned parentFrameId = callStackHeight ? callStack[callStackHeight - 1] : 0;
+
+					auto r = callFrameLookup.insert(std::pair<uint32, uint32>(parentFrameId, extpc));
+
+					if (r.second) {
+						callFrameTable.emplace_back(parentFrameId, extpc);
+						r.first->second = (uint32)callFrameLookup.size();
+					}
+
+					const unsigned frameId = r.first->second;
+					callStack[callStackHeight] = frameId;
+					callStackTid[callStackHeight] = tid;
+					++callStackHeight;
+					shadowStack[lastS] = callStackHeight;
+
+					tid = nextTid;
+
+					const double ts = (double)(he.mCycle - baseCycle) * cyclesToTimestamp;
+					if (firstEvent) {
+						firstEvent = false;
+
+						// Chrome tries to be helpful by resetting the trace origin to the first event, but we really don't
+						// want that to happen.
+
+						if (ts > 0) {
+							textOutput.FormatLine(R"--(,{"pid":1,"tid": %d,"ph":"B","name":"preroll","ts":0})--", tid);
+							textOutput.FormatLine(R"--(,{"pid":1,"tid": %d,"ph":"E","name":"preroll","ts":%.2f})--", tid, ts);
+						}
+					}
+
+					textOutput.FormatLine(R"--(,{"pid":1,"tid":%d,"ph":"B","name":"%s","sf":%u,"ts": %.2f})--", tid, ATGetDebugger()->GetAddressText(extpc, false, true).c_str(), frameId, ts);
+				}
+
+				adjustStack = false;
+			}
+
+			switch(he.mOpcode[0]) {
+				case 0x20:		// JSR
+				case 0x60:		// RTS
+				case 0x40:		// RTI
+				case 0x6C:		// JMP (abs)
+					adjustStack = true;
+
+					nextTid = tid;
+					if (!(he.mP & AT6502::kFlagI))
+						nextTid = kATProfileContext_Main;
+					break;
+			}
+		}
+
+		pos += n;
+	}
+
+	textOutput.PutLine("],");
+	textOutput.PutLine("\"stackFrames\": {");
+
+	const size_t numFrames = callFrameTable.size();
+	for(size_t i=0; i<numFrames; ++i) {
+		const auto [parentFrameId, extpc] = callFrameTable[i];
+
+		if (parentFrameId)
+			textOutput.FormatLine(R"--("%u":{"category":"pc","name":"%s","parent":%u}%s)--", i+1, ATGetDebugger()->GetAddressText(extpc, false, true).c_str(), parentFrameId, (i != numFrames-1) ? "," : "");
+		else
+			textOutput.FormatLine(R"--("%u":{"category":"pc","name":"%s"}%s)--", i+1, ATGetDebugger()->GetAddressText(extpc, false, true).c_str(), (i != numFrames-1) ? "," : "");
+	}
+
+	textOutput.PutLine("}");
+	textOutput.PutLine("}");
+
+	textOutput.Flush();
+	fileOutput.close();
 }
 
 void ATUITraceViewer::SetCollection(ATTraceCollection *collection) {
@@ -2429,7 +2747,6 @@ void ATUITraceViewer::UpdateChannels() {
 	const sint32 channelHeight = mContext.mEventFontMetrics.tmHeight + (8 * mContext.mDpi + 48) / 96;
 	const sint32 videoChannelHeight = (100 * mContext.mDpi + 48) / 96;
 	const sint32 tapeChannelHeight = videoChannelHeight >> 1;
-	const sint32 groupHeight = mContext.mChannelFontMetrics.tmHeight * 2 + (10 * mContext.mDpi + 48) / 96;
 
 	for (auto *group : mContext.mGroups) {
 		sint32 groupY = 0;
@@ -2584,8 +2901,83 @@ void ATUITraceViewer::OpenProfile() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIPerformanceAnalyzerContainerWindow : public ATContainerWindow {
+class ATUIPerformanceAnalyzerContainerWindow : public ATContainerWindow, public IATUITraceViewerHost {
+public:
+	void SetTraceViewer(ATUITraceViewer *viewer) override;
+
+private:
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
+
+	bool OnCreate() override;
+	void OnDestroy() override;
+	void OnInitMenu(HMENU hmenu);
+	bool OnCommand(UINT cmd);
+
+private:
+	ATUITraceViewer *mpTraceViewer = nullptr;
+	HMENU mhmenu = nullptr;
 };
+
+void ATUIPerformanceAnalyzerContainerWindow::SetTraceViewer(ATUITraceViewer *viewer) {
+	mpTraceViewer = viewer;
+}
+
+LRESULT ATUIPerformanceAnalyzerContainerWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+	switch(msg) {
+		case WM_INITMENU:
+			OnInitMenu((HMENU)wParam);
+			return 0;
+
+		case WM_COMMAND:
+			if (OnCommand((UINT)wParam))
+				return 0;
+			break;
+	}
+
+	return ATContainerWindow::WndProc(msg, wParam, lParam);
+}
+
+bool ATUIPerformanceAnalyzerContainerWindow::OnCreate() {
+	if (!mhmenu) {
+		mhmenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_PERFANALYZER_MENU));
+
+		if (mhmenu)
+			SetMenu(mhwnd, mhmenu);
+	}
+
+	return ATContainerWindow::OnCreate();
+}
+	
+void ATUIPerformanceAnalyzerContainerWindow::OnDestroy() {
+	if (mhmenu) {
+		SetMenu(mhwnd, nullptr);
+		DestroyMenu(mhmenu);
+		mhmenu = nullptr;
+	}
+}
+
+void ATUIPerformanceAnalyzerContainerWindow::OnInitMenu(HMENU hmenu) {
+	VDEnableMenuItemByCommandW32(hmenu, ID_EXPORT_CHROMETRACE, mpTraceViewer && mpTraceViewer->CanExport());
+}
+
+bool ATUIPerformanceAnalyzerContainerWindow::OnCommand(UINT cmd) {
+	try {
+		switch(cmd) {
+			case ID_EXPORT_CHROMETRACE:
+				if (mpTraceViewer) {
+					const VDStringW& path = VDGetSaveFileName(VDMAKEFOURCC('c', 't', 'r', 'c'), (VDGUIHandle)mhwnd, L"Export Chrome Trace Format", L"Chrome Trace (*.json)\0*.json\0", L"json");
+
+					if (!path.empty())
+						mpTraceViewer->ExportToChromeTrace(path.c_str());
+				}
+				return true;
+		}
+	} catch(const MyError& e) {
+		ATUIShowError((VDGUIHandle)mhdlg, e);
+	}
+
+	return false;
+}
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -2601,7 +2993,7 @@ void ATUIOpenTraceViewer(VDGUIHandle h, ATTraceCollection *collection) {
 
 		container->DockFrame(frame, kATContainerDockCenter);
 
-		ATUITraceViewer *p = new ATUITraceViewer(collection);
+		ATUITraceViewer *p = new ATUITraceViewer(collection, *container);
 		if (p->Create((VDGUIHandle)frame->GetHandleW32())) {
 			RECT r;
 			if (GetClientRect(frame->GetHandleW32(), &r)) {

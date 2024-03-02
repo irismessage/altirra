@@ -31,6 +31,7 @@ public:
 public:
 	const char *GetName() override;
 	ATDebugDisasmMode GetDisasmMode() override;
+	float GetDisplayCPUClock() const override;
 
 	void GetExecState(ATCPUExecState& state) override;
 	void SetExecState(const ATCPUExecState& state) override;

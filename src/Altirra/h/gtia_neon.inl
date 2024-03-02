@@ -29,7 +29,7 @@ void atasm_update_playfield_160_neon(void *dst0, const uint8 *src, uint32 n) {
 	};
 
 	// load and preshuffle color table
-	const uint8x16_t pfMask = vmovq_n_u16(0x0f0f);
+	const uint8x16_t pfMask = vmovq_n_u8(0x0f);
 
 	if (!n)
 		return;

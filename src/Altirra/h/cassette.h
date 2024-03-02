@@ -37,18 +37,20 @@ class ATCPUEmulatorMemory;
 class IVDRandomAccessStream;
 class IATAudioMixer;
 class IATCassetteImage;
+class IATDevicePortManager;
 struct ATTraceContext;
 class ATTraceChannelTape;
 
 enum class ATCassetteTurboDecodeAlgorithm : uint8;
 
 enum ATCassetteTurboMode : uint8 {
-	kATCassetteTurboMode_None,
-	kATCassetteTurboMode_CommandControl,
-	kATCassetteTurboMode_ProceedSense,
-	kATCassetteTurboMode_InterruptSense,
-	kATCassetteTurboMode_KSOTurbo2000,
-	kATCassetteTurboMode_Always
+	kATCassetteTurboMode_None,					// FSK only; turbo never enabled
+	kATCassetteTurboMode_CommandControl,		// SIO command asserted enables turbo
+	kATCassetteTurboMode_ProceedSense,			// Turbo is always enabled in parallel, sensed by SIO proceed
+	kATCassetteTurboMode_InterruptSense,		// Turbo is always enabled in parallel, sensed by SIO interrupt
+	kATCassetteTurboMode_KSOTurbo2000,			// Turbo is always enabled in parallel, sensed by joystick port
+	kATCassetteTurboMode_DataControl,			// SIO data output low enables turbo
+	kATCassetteTurboMode_Always					// Turbo always enabled
 };
 
 AT_DECLARE_ENUM_TABLE(ATCassetteTurboMode);
@@ -156,10 +158,13 @@ public:
 	uint32 OnPreModifyTape();
 	void OnPostModifyTape(uint32 newPos);
 
-	uint8 ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemory *mpMem);
+	uint8 ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemory *mpMem, float timeoutSeconds);
 	uint8 WriteBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemory *mpMem);
 
 	std::optional<bool> AutodetectBasicNeeded();
+	
+	ATTapeSlidingWindowCursor GetFSKSampleCursor() const;
+	ATTapeSlidingWindowCursor GetFSKBitCursor(uint32 samplesPerHalfBit) const;
 
 public:
 	void OnScheduledEvent(uint32 id) override;
@@ -178,6 +183,7 @@ public:
 	void PokeyResetSerialInput() override;
 	void PokeyBeginCassetteData(uint8 skctl) override;
 	bool PokeyWriteCassetteData(uint8 c, uint32 cyclesPerBit) override;
+	void PokeyChangeForceBreak(bool enabled) override;
 
 public:
 	bool RequiresStereoMixingNow() const override { return false; }
@@ -196,34 +202,8 @@ private:
 	void UpdateInvertData();
 	void UpdateFSKDecoderEnabled();
 
-	struct SampleCursor {
-		uint32 mNextTransition;		// sample position of next transition; 0 = uninitialized
-		bool mCurrentValue;			// current decoded bit, valid until next transition
-		bool mNextValue;			// next decoded bit (at next transition)
-
-		void Reset() { mNextTransition = 0; }
-	};
-
-	struct SlidingWindowCursor {
-		SampleCursor mHeadCursor;	// cursor for sample at window end (first sample after window)
-		SampleCursor mTailCursor;	// cursor for sample at window start (first sample within window)
-		uint32 mNextCount;			// 1-bit sum within window at next transition
-		uint32 mNextTransition;		// sample position of next transition (0 = uninitialized)
-		bool mCurrentValue;			// current decoded bit, valid until next transition
-		bool mbFSKBypass;			// true if FSK decoder should be bypassed (turbo enabled)
-		uint32 mThresholdLo;		// current sample switches to 0 when count < lo
-		uint32 mThresholdHi;		// current sample switches to 1 when count > hi
-		uint32 mWindow;				// number of samples in window
-		uint32 mOffset;				// offset from start of window to center sample
-
-		void Reset() {
-			mHeadCursor.Reset();
-			mTailCursor.Reset();
-			mNextTransition = 0;
-		}
-
-		void Update(IATCassetteImage& image, uint32 pos);
-	};
+	using SampleCursor = ATTapeSampleCursor;
+	using SlidingWindowCursor = ATTapeSlidingWindowCursor;
 
 	void ResetCursors();
 	void UpdateDirectSense(sint32 posOffset);
@@ -245,6 +225,7 @@ private:
 	void UpdateRecordingPosition();
 
 	void UpdateTraceState();
+	void UpdateTracePosition();
 	void UpdateDirectSenseParameters();
 	void ScheduleNextPortTransition();
 
@@ -272,8 +253,9 @@ private:
 	bool	mbInvertData = false;
 	bool	mbInvertTurboData = false;
 	bool	mbFSKDecoderEnabled = true;
-	bool	mbFSKDecoderRequested = true;
-	bool	mbFSKControlEnabled = false;
+	bool	mbCommandAsserted = true;
+	bool	mbFSKControlByCommandEnabled = false;
+	bool	mbFSKControlByDataEnabled = false;
 	int		mSIOPhase = 0;
 	uint8	mDataByte = 0;
 	uint8	mThresholdZeroBit = 0;
@@ -329,8 +311,8 @@ private:
 	ATCassetteTurboDecodeAlgorithm mTurboDecodeAlgorithm {};
 
 	struct AudioEvent {
-		uint32	mStartTime;
-		uint32	mStopTime;
+		uint64	mStartTime64;
+		uint64	mStopTime64;
 		uint32	mPosition;
 	};
 

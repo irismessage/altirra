@@ -350,6 +350,10 @@ void ATUIPagedDialog::SetInitialPage(int index) {
 	mInitialPage = index;
 }
 
+void ATUIPagedDialog::SetInitialPageByName(const char *tag) {
+	mInitialPageName = tag;
+}
+
 void ATUIPagedDialog::SwitchToPage(const char *tag) {
 	int index = 0;
 	for(ATUIDialogPage *page : mPages) {
@@ -416,6 +420,18 @@ bool ATUIPagedDialog::OnLoaded() {
 	OnPopulatePages();
 
 	OnDataExchange(false);
+
+	if (!mInitialPageName.empty()) {
+		int idx = 0;
+		for(ATUIDialogPage *page : mPages) {
+			if (mInitialPageName == page->GetPageTag()) {
+				mInitialPage = idx;
+				break;
+			}
+
+			++idx;
+		}
+	}
 
 	SelectPage(mInitialPage);
 

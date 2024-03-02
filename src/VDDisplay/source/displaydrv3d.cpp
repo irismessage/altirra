@@ -18,8 +18,10 @@
 
 
 #include <stdafx.h>
+#include <numeric>
 #include <vd2/system/binary.h>
 #include <vd2/system/bitmath.h>
+#include <vd2/system/time.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmapops.h>
@@ -32,8 +34,6 @@
 
 #include <vd2/Kasumi/resample.h>
 
-bool VDTCreateContextD3D9(IVDTContext **ppctx);
-bool VDTCreateContextD3D9(int width, int height, int refresh, bool fullscreen, bool vsync, void *hwnd, IVDTContext **ppctx);
 bool VDTCreateContextD3D11(IVDTContext **ppctx);
 bool VDTCreateContextD3D11(int width, int height, int refresh, bool fullscreen, bool vsync, void *hwnd, IVDTContext **ppctx);
 
@@ -65,9 +65,17 @@ bool VDDisplayDriver3D::Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplayS
 	mhwnd = hwnd;
 	mhMonitor = hmonitor;
 
-//	if (!VDTCreateContextD3D9(&mpContext))
 	if (!VDTCreateContextD3D11(&mpContext))
 		return false;
+
+	const auto& caps = mpContext->GetDeviceCaps();
+	VDDispLogF("Direct3D display driver initialized using adapter: %ls", caps.mDeviceDescription.c_str());
+	VDDispLogF("Caps: maxtex %dx%d (%s), minprec(%s)"
+		, caps.mMaxTextureWidth
+		, caps.mMaxTextureHeight
+		, caps.mbNonPow2 ? "nonpow2" : caps.mbNonPow2Conditional ? "nonpow2-cond" : "pow2"
+		, caps.mbMinPrecisionPS ? caps.mbMinPrecisionNonPS ? "all" : "ps" : caps.mbMinPrecisionNonPS ? "non-ps" : "none"
+	);
 
 	if (!mDisplayNodeContext.Init(*mpContext, mbRenderLinear)) {
 		Shutdown();
@@ -94,7 +102,8 @@ void VDDisplayDriver3D::Shutdown() {
 
 	vdsaferelease <<= mpRootNode,
 		mpSwapChain,
-		mpContext;
+		mpContext,
+		mpDebugFont;
 
 	mhwnd = NULL;
 }
@@ -149,6 +158,14 @@ void VDDisplayDriver3D::SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint3
 		if (mpContext)
 			CreateSwapChain();
 	}
+}
+
+void VDDisplayDriver3D::SetDesiredCustomRefreshRate(float hz, float hzmin, float hzmax) {
+	mCustomRefreshRate = hz;
+	mCustomRefreshRateMin = hzmin;
+	mCustomRefreshRateMax = hzmax;
+
+	ApplyCustomRefreshRate();
 }
 
 void VDDisplayDriver3D::SetDestRect(const vdrect32 *r, uint32 color) {
@@ -219,7 +236,7 @@ VDDHDRAvailability VDDisplayDriver3D::IsHDRCapable() const {
 
 	bool systemSupport = false;
 	if (!mpContext->IsMonitorHDREnabled(mhMonitor, systemSupport))
-		return systemSupport ? VDDHDRAvailability::NoDisplaySupport : VDDHDRAvailability::NoSystemSupport;
+		return systemSupport ? VDDHDRAvailability::NotEnabledOnDisplay : VDDHDRAvailability::NoSystemSupport;
 
 	return VDDHDRAvailability::Available;
 }
@@ -313,11 +330,123 @@ void VDDisplayDriver3D::Refresh(UpdateMode updateMode) {
 
 	mDisplayNodeContext.ApplyRenderView(renderView);
 
-	if (mpCompositor) {
-		VDTAutoScope scope(*mpContext, "Compositor");
+	if (mpCompositor || mbDisplayDebugInfo) {
 
 		mRenderer.Begin(w, h, mDisplayNodeContext, mbHDR);
-		mpCompositor->Composite(mRenderer, compInfo);
+
+		if (mpCompositor) {
+			VDTAutoScope scope(*mpContext, "Compositor");
+			mpCompositor->Composite(mRenderer, compInfo);
+		}
+
+		if (mbDisplayDebugInfo) {
+			VDDisplayTextRenderer *tr = mRenderer.GetTextRenderer();
+
+			tr->Begin();
+
+			if (!mpDebugFont)
+				VDCreateDisplaySystemFont(20, false, "Arial", &mpDebugFont);
+
+			tr->SetFont(mpDebugFont);
+			tr->SetAlignment(tr->kAlignLeft, tr->kVertAlignTop);
+			tr->SetColorRGB(0xFFFFFF);
+
+			VDStringW s;
+			s.sprintf(L"Direct3D 11 - %ls", mpContext->GetDeviceCaps().mDeviceDescription.c_str());
+			tr->DrawTextLine(10, 10, s.c_str());
+
+			VDTSwapChainDesc desc;
+			mpSwapChain->GetDesc(desc);
+			s.sprintf(L"Swap chain: %dx%d %hs%hs", desc.mWidth, desc.mHeight, desc.mbWindowed ? "windowed" : "exclusive fullscreen", mbHDR ? " (HDR)" : "");
+
+			switch(mpSwapChain->GetLastCompositionStatus()) {
+				case VDTSwapChainCompositionStatus::Unknown:
+					break;
+
+				case VDTSwapChainCompositionStatus::ComposedCopy:
+					s += L" [Composed: Copy]";
+					break;
+
+				case VDTSwapChainCompositionStatus::ComposedFlip:
+					s += L" [Composed: Flip]";
+					break;
+
+				case VDTSwapChainCompositionStatus::Overlay:
+					s += L" [Hardware: Independent Flip]";
+					break;
+			}
+
+			tr->DrawTextLine(10, 30, s.c_str());
+			
+			float frameTime = 0;
+
+			if (mTimingLogLength >= 5) {
+				const auto& tail = mTimingLog[(mTimingIndex + std::size(mTimingLog) - mTimingLogLength) % std::size(mTimingLog)];
+				const auto& head = mTimingLog[(mTimingIndex + std::size(mTimingLog) - 1) % std::size(mTimingLog)];
+
+				if (head.mSyncCount && tail.mSyncCount && head.mSyncCount != tail.mSyncCount) {
+					frameTime = (double)(head.mSyncTick - tail.mSyncTick) * VDGetPreciseSecondsPerTick() / (double)(head.mSyncCount - tail.mSyncCount);
+				}
+			}
+
+			int y = 70;
+
+			s.sprintf(L"VSync offset: [%5.2f, %5.2f, %5.2f]ms  %s(%5.4f ms/frame | %7.4f Hz)"
+				, mTimingMin.mVSyncOffset * 1000.0f
+				, mTimingAverage.mVSyncOffset * 1000.0f
+				, mTimingMax.mVSyncOffset * 1000.0f
+				, mbFrameVSyncAdaptive ? L"adaptive " : L""
+				, frameTime * 1000.0f
+				, frameTime != 0 ? 1.0f / frameTime : 0
+			);
+			tr->DrawTextLine(10, y, s.c_str());
+			y += 20;
+
+			s.sprintf(L"Present wait time: [%5.2f, %5.2f, %5.2f]ms"
+				, mTimingMin.mPresentWaitTime * 1000.0f
+				, mTimingAverage.mPresentWaitTime * 1000.0f
+				, mTimingMax.mPresentWaitTime * 1000.0f
+			);
+			tr->DrawTextLine(10, y, s.c_str());
+			y += 20;
+
+			s.sprintf(L"Present latency: [%5.2f, %5.2f, %5.2f]ms"
+				, mTimingMin.mLastPresentDelay * 1000.0f
+				, mTimingAverage.mLastPresentDelay * 1000.0f
+				, mTimingMax.mLastPresentDelay * 1000.0f
+			);
+
+			tr->DrawTextLine(10, y, s.c_str());
+			y += 20;
+
+			s.sprintf(L"Last present call time: [%5.2f, %5.2f, %5.2f]ms"
+				, mTimingMin.mLastPresentCallTime * 1000.0f
+				, mTimingAverage.mLastPresentCallTime * 1000.0f
+				, mTimingMax.mLastPresentCallTime * 1000.0f
+			);
+			tr->DrawTextLine(10, y, s.c_str());
+			y += 20;
+
+			s.sprintf(L"Last present frames queued: [%4.1f, %4.1f, %4.1f]"
+				, mTimingMin.mLastPresentFramesQueued
+				, mTimingAverage.mLastPresentFramesQueued
+				, mTimingMax.mLastPresentFramesQueued
+			);
+			tr->DrawTextLine(10, y, s.c_str());
+			y += 20;
+
+			const float ecRefresh = mpSwapChain->GetEffectiveCustomRefreshRate();
+			if (ecRefresh > 0) {
+				s.sprintf(L"Custom refresh rate requested: %.2f Hz", ecRefresh);
+				tr->DrawTextLine(10, y, s.c_str());
+			} else if (mCustomRefreshRate > 0) {
+				tr->DrawTextLine(10, y, L"Custom refresh rate: Not available");
+			}
+			y += 20;
+
+			tr->End();
+		}
+
 		mRenderer.End();
 	}
 
@@ -350,12 +479,22 @@ void VDDisplayDriver3D::Refresh(UpdateMode updateMode) {
 			mSource.mpCB->OnFrameCaptured(nullptr);
 	}
 
+	mbFrameVSync = false;
+
 	if (updateMode & kModeVSync) {
 		mbFramePending = true;
-		mpSwapChain->PresentVSync(mhMonitor, this);
+		mbFrameVSync = true;
+		mbFrameVSyncAdaptive = (updateMode & kModeVSyncAdaptive) != 0;
+
+		mpSwapChain->PresentVSync(mhMonitor, mbFrameVSyncAdaptive);
 	} else {
+		mVSyncStatus = {};
+
 		mbFramePending = false;
 		mpSwapChain->Present();
+
+		mTimingLog[mTimingIndex] = TimingEntry{};
+		AdvanceTimingLog();
 	}
 }
 
@@ -365,15 +504,44 @@ bool VDDisplayDriver3D::Paint(HDC hdc, const RECT& rClient, UpdateMode lastUpdat
 }
 
 void VDDisplayDriver3D::PresentQueued() {
-	if (mpSwapChain)
-		mpSwapChain->PresentVSyncComplete();
-
-	mbFramePending = false;
+	if (mpSwapChain) {
+		if (!mpSwapChain->PresentVSyncComplete())
+			return;
+	}
 }
 
-void VDDisplayDriver3D::QueuePresent() {
+void VDDisplayDriver3D::QueuePresent(bool restarted) {
 	if (mSource.mpCB)
 		mSource.mpCB->QueuePresent();
+}
+
+void VDDisplayDriver3D::OnPresentCompleted(const VDTAsyncPresentStatus& status) {
+	mTimingLog[mTimingIndex] = TimingEntry {
+		.mVSyncOffset = status.mVSyncOffset,
+		.mPresentWaitTime = status.mPresentWaitTime,
+		.mLastPresentDelay = status.mLastPresentDelay,
+		.mLastPresentCallTime = status.mLastPresentCallTime,
+		.mLastPresentFramesQueued = (float)status.mLastPresentFramesQueued,
+		.mSyncTick = status.mSyncTick,
+		.mSyncCount = status.mSyncCount
+	};
+	
+	AdvanceTimingLog();
+
+	mbFramePending = false;
+
+	const auto& tail = mTimingLog[(mTimingIndex + std::size(mTimingLog) - mTimingLogLength) % std::size(mTimingLog)];
+	const auto& head = mTimingLog[(mTimingIndex + std::size(mTimingLog) - 1) % std::size(mTimingLog)];
+
+	mVSyncStatus.mOffset = status.mVSyncOffset;
+	mVSyncStatus.mPresentQueueTime = status.mPresentQueueTime;
+
+	if (head.mSyncCount && tail.mSyncCount && head.mSyncCount != tail.mSyncCount && head.mSyncTick != tail.mSyncTick) {
+		mVSyncStatus.mRefreshRate = (float)((double)(sint32)(head.mSyncCount - tail.mSyncCount) / ((double)(sint64)(head.mSyncTick - tail.mSyncTick) * VDGetPreciseSecondsPerTick()));
+	} else if (status.mRefreshRate > 0)
+		mVSyncStatus.mRefreshRate = status.mRefreshRate;
+	else
+		mVSyncStatus.mRefreshRate = -1.0f;
 }
 
 bool VDDisplayDriver3D::CreateSwapChain() {
@@ -394,6 +562,15 @@ bool VDDisplayDriver3D::CreateSwapChain() {
 		VDDispLogF("Swap chain creation FAILED. Parameters: %ux%u, sRGB=%d, HDR=%d", swapDesc.mWidth, swapDesc.mHeight, swapDesc.mbSRGB, swapDesc.mbHDR);
 		return false;
 	}
+
+	mpSwapChain->SetPresentCallback(this);
+
+	ApplyCustomRefreshRate();
+
+	// clear timing history
+	std::fill(std::begin(mTimingLog), std::end(mTimingLog), TimingEntry{});
+	mTimingIndex = 0;
+	mTimingLogLength = 0;
 
 	return true;
 }
@@ -623,6 +800,32 @@ bool VDDisplayDriver3D::RebuildTree() {
 	}
 
 	return true;
+}
+
+void VDDisplayDriver3D::AdvanceTimingLog() {
+	if (mTimingLogLength < std::size(mTimingLog) && mTimingLog[mTimingIndex].mSyncCount)
+		++mTimingLogLength;
+
+	if (++mTimingIndex >= std::size(mTimingLog)) {
+		mTimingIndex = 0;
+
+		mTimingAverage = mTimingLog[0];
+		mTimingMin = mTimingLog[0];
+		mTimingMax = mTimingLog[0];
+
+		for(int i=1; i<std::ssize(mTimingLog); ++i) {
+			mTimingAverage += mTimingLog[i];
+			mTimingMin.AccumulateMin(mTimingLog[i]);
+			mTimingMax.AccumulateMax(mTimingLog[i]);
+		}
+
+		mTimingAverage *= 1.0f / (float)std::ssize(mTimingLog);
+	}
+}
+
+void VDDisplayDriver3D::ApplyCustomRefreshRate() {
+	if (mpSwapChain)
+		mpSwapChain->SetCustomRefreshRate(mCustomRefreshRate, mCustomRefreshRateMin, mCustomRefreshRateMax);
 }
 
 ///////////////////////////////////////////////////////////////////////////

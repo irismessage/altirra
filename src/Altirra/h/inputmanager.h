@@ -24,7 +24,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/refcount.h>
 
-class ATPortController;
+class ATPokeyEmulator;
 class ATPortInputController;
 class ATJoystickController;
 class ATMouseController;
@@ -33,6 +33,7 @@ class IATJoystickManager;
 class ATScheduler;
 class VDRegistryKey;
 class ATLightPenPort;
+class IATDevicePortManager;
 
 class IATInputConsoleCallback {
 public:
@@ -212,7 +213,7 @@ enum ATInputControllerType {
 	kATInputControllerType_Console,
 	kATInputControllerType_5200Controller,
 	kATInputControllerType_InputState,
-	kATInputControllerType_LightPen,
+	kATInputControllerType_LightGun,
 	kATInputControllerType_Tablet,
 	kATInputControllerType_KoalaPad,
 	kATInputControllerType_AmigaMouse,
@@ -220,7 +221,8 @@ enum ATInputControllerType {
 	kATInputControllerType_Trackball_CX80_V1,
 	kATInputControllerType_5200Trackball,
 	kATInputControllerType_Driving,
-	kATInputControllerType_Keyboard
+	kATInputControllerType_Keyboard,
+	kATInputControllerType_LightPen
 };
 
 struct atfixedhash_basenode {
@@ -445,7 +447,7 @@ public:
 	ATInputManager();
 	~ATInputManager();
 
-	void Init(ATScheduler *fastScheduler, ATScheduler *slowScheduler, ATPortController *porta, ATPortController *portb, ATLightPenPort *lightPen);
+	void Init(ATScheduler *fastScheduler, ATScheduler *slowScheduler, ATPokeyEmulator& pokey, IATDevicePortManager& portMgr, ATLightPenPort *lightPen);
 	void Shutdown();
 
 	bool Is5200Mode() const { return mb5200Mode; }
@@ -525,11 +527,12 @@ protected:
 	void InitPresetMaps();
 	bool IsTriggerRestricted(const Trigger& trigger) const;
 
-	ATScheduler *mpSlowScheduler;
-	ATScheduler *mpFastScheduler;
-	ATLightPenPort *mpLightPen;
-	ATPortController *mpPorts[2];
-	IATInputConsoleCallback *mpCB;
+	ATScheduler *mpSlowScheduler = nullptr;
+	ATScheduler *mpFastScheduler = nullptr;
+	ATPokeyEmulator *mpPokey = nullptr;
+	ATLightPenPort *mpLightPen = nullptr;
+	IATDevicePortManager *mpPortMgr = nullptr;
+	IATInputConsoleCallback *mpCB = nullptr;
 	bool mbRestrictedMode;
 	int m5200ControllerIndex;
 	bool mb5200PotsEnabled;
@@ -540,6 +543,8 @@ protected:
 
 	uint32 mMouseAvgQueue[4];
 	int mMouseAvgIndex;
+
+	uint8 mMultiMask = 0xFF;
 
 	typedef atfixedhash<int, uint32, 64> Buttons;
 	Buttons mButtons;

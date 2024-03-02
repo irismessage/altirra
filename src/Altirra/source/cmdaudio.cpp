@@ -16,8 +16,10 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
-#include <at/atcore/devicemanager.h>
+#include <at/atui/uicommandmanager.h>
 #include <at/ataudio/audiooutput.h>
+#include "cmdhelpers.h"
+#include "devicemanager.h"
 #include "simulator.h"
 #include "uiaccessors.h"
 
@@ -54,6 +56,12 @@ void OnCommandAudioToggleNonlinearMixing() {
 	pokey.SetNonlinearMixingEnabled(!pokey.IsNonlinearMixingEnabled());
 }
 
+void OnCommandAudioToggleSpeakerFilter() {
+	ATPokeyEmulator& pokey = g_sim.GetPokey();
+
+	pokey.SetSpeakerFilterEnabled(!pokey.IsSpeakerFilterEnabled());
+}
+
 void OnCommandAudioToggleSerialNoise() {
 	ATPokeyEmulator& pokey = g_sim.GetPokey();
 
@@ -80,4 +88,24 @@ void OnCommandAudioToggleCovox() {
 	auto& dm = *g_sim.GetDeviceManager();
 
 	dm.ToggleDevice("covox");
+}
+
+namespace ATCommands {	
+	static constexpr ATUICommand kATCommandsAudio[] = {
+		{ "Audio.ToggleStereoAsMono"
+			, [] {
+				ATPokeyEmulator& pokey = g_sim.GetPokey();
+
+				pokey.SetStereoAsMonoEnabled(!pokey.IsStereoAsMonoEnabled());
+			}
+			, nullptr
+			, [] { return ToChecked(g_sim.GetPokey().IsStereoAsMonoEnabled()); }
+		},
+	};
+}
+
+void ATUIInitCommandMappingsAudio(ATUICommandManager& cmdMgr) {
+	using namespace ATCommands;
+
+	cmdMgr.RegisterCommands(kATCommandsAudio, vdcountof(kATCommandsAudio));
 }

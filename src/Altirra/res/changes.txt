@@ -1,5 +1,114 @@
 Altirra Change Log
 
+Version 4.10:
+   [changes]
+   * Display: Direct3D 11 and borderless mode are now enabled by default for new installs.
+   * Input: Light pens and light guns have been split for 4.10+. Input presets may need to be updated and offsets readjusted.
+   * UI: ANTIC/GTIA visualization options have been moved to the Debug menu.
+
+   [features added]
+   * Audio: Added option downmixing stereo POKEY output to mono.
+   * Audio: Added 800 console speaker acoustics simulation.
+   * Cartridge: Added support for CAR types 71-75 (5200 Super Cart, bank 0 init version of MaxFlash 8Mbit).
+   * Cartridge: Added support for the XE Multicart.
+   * Cartridge: Added support for SIC+.
+   * Cassette: Added config variable to manually tweak balance between mark/space bit detectors.
+   * Cassette: Added support for PWM encoded turbo data in CAS files.
+   * Cassette: Added support for SIO data out controlled turbo (Turbo Blizzard).
+   * Custom Devices: The priority of memory layers can now be customized.
+   * Debugger: Memory locations can now be edited in the Memory pane.
+   * Debugger: Memory pane now has an option to display 8bpp graphics.
+   * Debugger: Randomize Memory on EXE Load option now logs when randomization occurs and uses the global randomization seed.
+   * Debugger: .loadobj and .loadmem now take VFS paths.
+   * Debugger: Added .error command to decode various error codes.
+   * Debugger: Added Breakpoints pane and Ctrl+B as a shortcut for a new breakpoint.
+   * Debugger: Added initial support for DWARF5 debugging information from LLVM-MOS .elf files.
+   * Debugger: Disassembly window now supports address expressions and mixed source/disassembly view.
+   * Devices: Improved selection behavior when adding or removing devices.
+   * Devices: NVRAM can now be isolated per profile and follows the temporary profile state.
+   * Devices: Added SimCovox support.
+   * Devices: Added shortcut command to temporarily mount VHD images in Windows to access FAT32 partitions.
+   * Devices: APT partitions on hard disks can now be opened in Disk Explorer.
+   * Disk: Added emulation of buffered track reads for Happy 1050 and Speedy 1050 devices in standard emulation mode.
+   * Disk: 810/1050 full drive emulations now warn on attempts to use double-sided disks that can't be read in those drives.
+   * Display: SDR/HDR balance in HDR mode can now use the system-wide SDR intensity setting.
+   * Display: Added support for DXGI 1.3 seamless custom refresh rate support on integrated display panels.
+   * Display: Reduced buffered frame latency in display paths.
+   * Display: Added adaptive speed option to lock to refresh rate for reduced latency.
+   * Firmware: Added detection of several XF551 firmware ROMs.
+   * HDevice: Added full long filename mode.
+   * HLE: Program loader now simulates SDFS disk in Disk Boot mode to auto-trigger EXE load under SDX.
+   * Input: Extended immediate pots option to allow support immediate light pen/gun inputs.
+   * Input: Added interactive tool to recalibrate light pen/gun offset.
+   * Input: Improved accuracy of light pen/gun trigger pulse timing.
+   * Input: Added an option for light pen/gun noise.
+   * PerfAnalyzer: Added support for exporting to Chrome tracing format.
+   * Tape Editor: Bit position is now marked purple if a single bit flip is identified that would fix a bad checksum in a standard block.
+   * UI: The Check for Updates dialog now has a link to the internal RSS feed used to deliver the new update info.
+   * UI: Added support for copying and pasting characters from the interactional character set.
+   * UI: Keyboard shortcut dialog now has better support for binding Alt+keys and is more keyboard accessible.
+   * UI: Added dark mode support for checkboxes and radio buttons.
+   * UI: Alt+click decode can now decode MyDOS error messages.
+   * UI: Paste can now paste visible control characters from Unicode.
+   * UI: Improved clarity of screenshots captured with true aspect ratio by changing image filter.
+
+   [bugs fixed]
+   * Additions: Fixed BRK instruction in LOADEXE.COM.
+   * AltirraOS: Improved compatibility of TIMFLG usage and initial register values on tape boot.
+   * Cartridge: Fixed banking issues with SIC! during flashing and when loading save states.
+   * Cassette: Accelerated C: loads now handle block reads with timeouts longer than 30 seconds.
+   * Cassette: Accelerated C: loads now set TIMFLG.
+   * Cassette: Fixed FLAC decoder errors with some files.
+   * Custom Devices: Blocked ++/-- increment operators to avoid confusion (they were parsed as pairs of unary operators, which was usually not intended).
+   * Debugger: Fixed memory window horizontal scrollbar not updating after some changes.
+   * Debugger: Fixed long pauses or broken history listings when toggling the collapse options in the History window.
+   * Debugger: Fixed .printf command outputting a garbled character with %d/i format.
+   * Debugger: Improved load speed of source windows.
+   * Debugger: Fixed symbol-related crash when opening source windows with deferred symbol loads.
+   * Debugger: Fixed Step Out/Into commands not using source mode in an undocked source window.
+   * Debugger: Fast boot hook now marks memory as preset to avoid tripping false uninitialized memory errors when heat map trapping is enabled.
+   * Debugger: Source window was keeping stale source line data when reloading symbols.
+   * Debugger: Fixed ##BANK annotations in MADS listings not being parsed properly with decimal bank numbers.
+   * Debugger: Fixed bug where memory access breakpoints would stop working after clearing other access breakpoints at the same address.
+   * Devices: Fixed SD card multiple-block write command.
+   * Devices: Fixed SD card state not being reset on SD power toggle.
+   * Devices: Fixed bug with virtual FAT16/FAT32 hard drives returning bad sector data when re-reading final partial data sectors of a file.
+   * Disk: Fixed too short timeout for Record Not Found (RNF) errors.
+   * Disk: Improved sound of recalibrations in 810-based standard emulation modes.
+   * Disk: Retuned receive rates for Happy 810 and Happy 1050 standard emulation modes.
+   * Disk: Fixed idle motor-off timeout occurring too quickly after long commands with retries.
+   * Disk: XF551 full emulator now supports IN A,BUS instruction used by some modified firmware.
+   * Disk Explorer: Fix incorrect Unicode mappings for control characters in viewer.
+   * Display: Reduced frame jitter in D3D11 windowed mode on Windows 8.1+.
+   * Display: Fixed monochrome modes with VBXE or high artifacting.
+   * Display: Fixed low quality text rendering in D3D11 mode after a change in HDR mode.
+   * Display: Fixed crash when forced out of D3D11 exclusive full screen mode by OS due to an overlapping window.
+   * HDevice: Fixed append mode not working for files on H6-H9:.
+   * Input: Fixed vertical offset on light pen/gun position in PAL.
+   * Input: Add Ctrl+Shift+Alt+0 as an alias for Ctrl+Shift+0 to work around Windows stealing this key for a keyboard layout switching shortcut.
+   * PerfAnalyzer: Tape channels now show proper jumps when accelerated loads occur.
+   * PerfAnalyzer: Fixed NMI showing as IRQ when NMI preempts IRQ.
+   * PCLink: Directory enumerations now report if a directory is the root or a subdirectory.
+   * PCLink: Improved path compatibility with standard SpartaDOS X path parser.
+   * POKEY: Fixed glitches in low linked timer 3 audio output when updating linked timer 3+4 state.
+   * POKEY: Improved accuracy of serial port clock timing.
+   * POKEY: Serial output bit state is no longer reset by initialization mode.
+   * POKEY: Improved accuracy of timer reloads.
+   * Profiler: Fixed negative unhalted cycle counts showing up around STA WSYNC instructions.
+   * SaveStates: Fixed bug where sprite engine could get desynced after loading a save state.
+   * Tape Editor: Fixed draw tool using wrong threshold for bit polarity with waveform display enabled.
+   * Tape Editor: Fixed SIO capture option not showing enable state on menu.
+   * Tape Editor: Captured accelerated C: loads now show sync bytes.
+   * Tape Editor: Block checksum status is more reliably shown during live SIO data capture.
+   * Tape Editor: Fixed extraneous bit data being added when saving a new CAS file after editing.
+   * UI: Reduced glitches when toggling the debugger or full screen mode.
+   * UI: /startuplog can now exclude log channels with '-' and ignores Ctrl+C.
+   * UI: Removed delay when switching from very slow speed (1%) to t.
+   * UI: Progress dialogs are now suppressed in exclusive full screen mode to avoid popping out of full screen when loading tapes.
+   * UI: Fixed non-native file browser not working with UNC paths.
+   * UI: Fixed focus glitching when selecting a docked tab with an undocked pane selected.
+   * UI: Fixed an issue where Unicode text would sometimes be read out of the clipboard as ANSI text.
+
 Version 4.01:
    [bugs fixed]
    * Additions: Fixed LOADEXE.XEX using old $FD device SIO code for the program loader instead of $7D.
@@ -7,6 +116,7 @@ Version 4.01:
    * AltirraOS: Fixed a cursor position checking bug with split screen Gr.0 (fixes the BASIC game House of Usher).
    * AltirraOS: Fixed compatibility issue with KEYDEL handling (fixes cursor movement in BrushupV40).
    * ATBasic: IOCB#7 is now automatically closed on I/O errors to avoid SAVE files being kept open for write.
+   * Cassette: Accelerated C: loads now properly leave tape running after block load.
    * Cassette: Fixed FLAC decoder crash with some block sizes.
    * Cassette: Fixed regression with FSK blocks in CAS files being read as turbo pulses instead of FSK pulses.
    * Disk: Retuned XF551 high-speed C/E to data frame delay.

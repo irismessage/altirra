@@ -163,7 +163,7 @@ protected:
 	void ExtendMotorTimeoutBy(uint32 additionalDelay);
 	void ExtendMotorTimeoutTo(uint32 delay);
 	void SetMotorEvent();
-	void PlaySeekSound(uint32 initialDelay, uint32 trackCount);
+	void PlaySeekSound(uint32 initialDelay, uint32 trackCount, bool bumpHead = false, uint32 bumpStartingTrack = 0);
 
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
 	ATScheduler *mpScheduler = nullptr;
@@ -172,6 +172,7 @@ protected:
 
 	ATEvent		*mpMotorOffEvent = nullptr;
 	uint32	mMotorOffTime = 0;
+	bool	mbMotorOffTimeSuspended = false;
 
 	uint32	mLastRotationUpdateCycle = 0;
 	uint32	mLastAccelTimeSkew = 0;
@@ -184,16 +185,22 @@ protected:
 	uint8	mActiveCommand = 0;
 	bool	mbActiveCommandHighSpeed = false;
 	bool	mbActiveCommandWait = false;
+	bool	mbActiveCommandBufferingEnabled = false;			// true if read/write command serviced from memory buffer
+	bool	mbActiveCommandBufferingWriteTrackDelay = false;	// true if read/write command incurs delay to flush write buffer
+	bool	mbActiveCommandBufferingReadTrackDelay = false;		// true if read/write command incurs delay to reload read buffer
+	bool	mbActiveCommandBufferingReadError = false;			// true if read/write command will encounter a sector with an error
 	uint32	mActiveCommandState = 0;
 	uint32	mActiveCommandSector = 0;
 	sint32	mActiveCommandPhysSector = 0;
 	float	mActiveCommandStartRotPos = 0;
 	uint32	mActiveCommandStartTime = 0;
+	uint32	mLastReadSector = 0;
 	uint8	mCustomCodeState = 0;
 	uint32	mPhantomSectorCounter = 0;
 	uint32	mRotationalCounter = 0;
 	uint32	mRotations = 0;
 	uint32	mCurrentTrack = 0;
+	sint32	mBufferedTrack = -1;
 	uint32	mSectorsPerTrack = 0;
 	uint32	mTrackCount = 0;
 	uint32	mSideCount = 0;
@@ -202,6 +209,10 @@ protected:
 
 	bool	mbFormatEnabled = false;
 	bool	mbWriteEnabled = false;
+
+	// True if track buffering is enabled in drive state; only pertinent if the
+	// drive type supports track buffering.
+	bool	mbTrackBufferingEnabled = false;
 
 	bool	mbCommandValid = false;
 	bool	mbCommandFrameHighSpeed = false;

@@ -1,6 +1,7 @@
 #include <stdafx.h>
 #include <vd2/VDDisplay/textrenderer.h>
 #include <at/atuicontrols/uibutton.h>
+#include <at/atnativeui/theme.h>
 #include <at/atui/uimanager.h>
 #include <at/atui/uidrawingutils.h>
 
@@ -17,8 +18,12 @@ ATUIButton::ATUIButton()
 	, mActivatedEvent()
 	, mPressedEvent()
 {
+	const auto& tc = ATUIGetThemeColors();
+	mTextColor = tc.mButtonFg;
+	mTextColorDisabled = tc.mDisabledFg;
+
 	SetTouchMode(kATUITouchMode_Immediate);
-	SetFillColor(0xD4D0C8);
+	UpdateFillColor();
 	BindAction(kATUIVK_Space, kActionActivate);
 	BindAction(kATUIVK_Return, kActionActivate);
 }
@@ -66,6 +71,7 @@ void ATUIButton::SetDepressed(bool depressed) {
 	if (mbDepressed != depressed) {
 		mbDepressed = depressed;
 
+		UpdateFillColor();
 		Invalidate();
 
 		if (depressed) {
@@ -86,7 +92,7 @@ void ATUIButton::SetFrameEnabled(bool enabled) {
 	if (mbFrameEnabled != enabled) {
 		mbFrameEnabled = enabled;
 
-		SetAlphaFillColor(enabled ? 0xFFD4D0C8 : 0);
+		UpdateFillColor();
 
 		Relayout();
 		Invalidate();
@@ -174,14 +180,14 @@ void ATUIButton::OnEnableChanged() {
 
 void ATUIButton::OnSetFocus() {
 	if (mbFrameEnabled) {
-		SetFillColor(0xA0C0FF);
+		UpdateFillColor();
 		Invalidate();
 	}
 }
 
 void ATUIButton::OnKillFocus() {
 	if (mbFrameEnabled) {
-		SetFillColor(0xD4D0C8);
+		UpdateFillColor();
 		Invalidate();
 	}
 }
@@ -269,4 +275,12 @@ void ATUIButton::Relayout() {
 
 		Invalidate();
 	}
+}
+
+void ATUIButton::UpdateFillColor() {
+	const auto& tc = ATUIGetThemeColors();
+	if (mbFrameEnabled)
+		SetFillColor(mbDepressed ? tc.mButtonPushedBg : HasFocus() ? tc.mFocusedBg : tc.mButtonBg);
+	else
+		SetAlphaFillColor(0);
 }

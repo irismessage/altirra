@@ -63,7 +63,7 @@ protected:
 	static void WriteFileName(DirEnt& de, const char *filename);
 	static bool IsValidFileName(const char *filename);
 
-	IATDiskImage *mpImage;
+	vdrefptr<IATDiskImage> mpImage;
 	bool mbDirty;
 	bool mbReadOnly;
 	bool mbStrictNames = true;

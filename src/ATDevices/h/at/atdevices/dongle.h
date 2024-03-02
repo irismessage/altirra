@@ -23,10 +23,10 @@
 #include <at/atcore/deviceimpl.h>
 
 class ATPropertySet;
+class IATDevicePortManager;
 
 class ATDeviceDongle final
 	: public ATDevice
-	, public IATDevicePortInput
 {
 	ATDeviceDongle(const ATDeviceDongle&) = delete;
 	ATDeviceDongle& operator=(const ATDeviceDongle&) = delete;
@@ -34,8 +34,6 @@ class ATDeviceDongle final
 public:
 	ATDeviceDongle();
 	~ATDeviceDongle();
-	
-	void *AsInterface(uint32 iid) override;
 
 public:
 	void GetDeviceInfo(ATDeviceInfo& info) override;
@@ -44,19 +42,13 @@ public:
 	void Init() override;
 	void Shutdown() override;
 
-public:	// IATDevicePortInput
-	void InitPortInput(IATDevicePortManager *portmgr) override;
-
 private:
-	void OnPortOutputChanged(uint32 outputState);
-	void ReinitPortOutput();
+	void ReinitPort();
 	void UpdatePortOutput();
 
 	IATDevicePortManager *mpPortManager = nullptr;
-	int mPortInput = -1;
-	int mPortOutput = -1;
-	uint32 mLastPortState = 0;
-	uint8 mPortShift = 0;
+	vdrefptr<IATDeviceControllerPort> mpPort;
+	uint8 mPortIndex = 0;
 
 	uint8 mResponseTable[16] = {};
 };

@@ -134,8 +134,8 @@
 						<Size>mElementCount</Size>
 						<Loop>
 							<Break Condition="bucket >= mpBucketEnd" />
-							<Exec>++bucket</Exec>
 							<Exec>node = *bucket</Exec>
+							<Exec>++bucket</Exec>
 							<Loop>
 								<Break Condition="!node" />
 								<Item>((vdhashtable_node&lt;$T1&gt; *)node)->mData</Item>
@@ -147,10 +147,10 @@
 			</Synthetic>
 			<Synthetic Name="Buckets">
 				<Expand>
-					<ArrayItems>
+					<IndexListItems>
 						<Size>mBucketCount</Size>
-						<ValuePointer>mpBucketStart</ValuePointer>
-					</ArrayItems>
+						<ValueNode><![CDATA[static_cast<vdhashtable_node<$T1 > *>(mpBucketStart[$i])]]></ValueNode>
+					</IndexListItems>
 				</Expand>
 			</Synthetic>
 		</Expand>
@@ -358,10 +358,10 @@
 	</Type>
 	
 	<Type Name="ATCPUHistoryEntry">
-		<DisplayString>A={(short)mA,Xb} X={(short)mX,Xb} Y={(short)mY,Xb} S={(short)mS,Xb} | {mPC,Xb}: {(unsigned short)(mOpcode[0]*256+mOpcode[1]),Xb}{(unsigned short)(mOpcode[2]*256+mOpcode[3]),Xb}</DisplayString>
+		<DisplayString>A={mA,nvoXb} X={mX,nvoXb} Y={mY,nvoXb} S={mS,nvoXb} | {mPC,Xb}: {mOpcode[0],nvoXb} {mOpcode[1],nvoXb} {mOpcode[2],nvoXb} {mOpcode[3],nvoXb}</DisplayString>
 		<Expand>
 			<Synthetic Name="Opcode">
-				<DisplayString>{(unsigned short)(mOpcode[0]*256+mOpcode[1]),Xb}{(unsigned short)(mOpcode[2]*256+mOpcode[3]),Xb}</DisplayString>
+				<DisplayString>{mOpcode[0],nvoXb}{mOpcode[1],nvoXb}{mOpcode[2],nvoXb}{mOpcode[3],nvoXb}</DisplayString>
 				<Expand>
 					<ArrayItems>
 						<Size>4</Size>
@@ -369,11 +369,11 @@
 					</ArrayItems>
 				</Expand>
 			</Synthetic>
-			<Item Name="A">mA,Xb</Item>
-			<Item Name="X">mX,Xb</Item>
-			<Item Name="Y">mY,Xb</Item>
-			<Item Name="S">mS,Xb</Item>
-			<Item Name="P">mP,Xb</Item>
+			<Item Name="A">mA,nvoXb</Item>
+			<Item Name="X">mX,nvoXb</Item>
+			<Item Name="Y">mY,nvoXb</Item>
+			<Item Name="S">mS,nvoXb</Item>
+			<Item Name="P">mP,nvoXb</Item>
 		</Expand>
 	</Type>
   

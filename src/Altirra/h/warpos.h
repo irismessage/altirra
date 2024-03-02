@@ -18,18 +18,18 @@
 #define f_AT_WARPOS_H
 
 #include <at/atcore/deviceimpl.h>
-#include <at/atcore/deviceport.h>
+#include <at/atcore/devicestorageimpl.h>
 #include <at/atcore/devicesystemcontrol.h>
 
 class ATMemoryLayer;
 class ATEvent;
+class IATDevicePIA;
 
 class ATWarpOSDevice final
 	: public ATDevice
 	, public IATDeviceScheduling
 	, public IATDeviceFirmware
 	, public IATDeviceSystemControl
-	, public IATDevicePortInput
 	, public IATSchedulerCallback
 {
 	ATWarpOSDevice(const ATWarpOSDevice&) = delete;
@@ -68,9 +68,6 @@ public:		// IATDeviceSystemControl
 		const void *kernelROM) override;
 	void OnU1MBConfigPreLocked(bool inPreLockState) override;
 
-public:		// IATDevicePortInput
-	void InitPortInput(IATDevicePortManager *portmgr) override;
-	
 public:		// IATScheduledEvent
 	void OnScheduledEvent(uint32 id) override;
 
@@ -84,7 +81,7 @@ private:
 	ATScheduler *mpScheduler = nullptr;
 	ATFirmwareManager *mpFwMgr = nullptr;
 	IATSystemController *mpSystemController = nullptr;
-	IATDevicePortManager *mpPortManager = nullptr;
+	IATDevicePIA *mpPortManager = nullptr;
 	sint32 mPortInputIndex = -1;
 	sint32 mPortOutputIndex = -1;
 	ATEvent *mpEvent = nullptr;
@@ -106,6 +103,8 @@ private:
 	};
 
 	State mState = State::ShiftCommand1;
+
+	ATDeviceVirtualStorage mNVStorage;
 
 	alignas(2) uint8 mFlash[512 * 1024] {};					// 512KB
 };

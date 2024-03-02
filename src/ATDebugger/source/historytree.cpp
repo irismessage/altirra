@@ -545,7 +545,6 @@ uint32 ATHistoryTree::SearchNodes(ATHTNode *node, const vdfunction<uint32(const 
 		if (!visibleLines) {
 			const bool isInsnNode = (child->mNodeType == kATHTNodeType_Insn);
 			const uint32 lineCount = isInsnNode ? child->mInsn.mCount : 1;
-			const uint32 startOffset = isInsnNode ? child->mInsn.mOffset : 0;
 
 			// Reset the visible state to unfiltered before running through the filter again.
 			child->mVisibleLines = lineCount;

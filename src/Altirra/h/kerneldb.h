@@ -1,9 +1,9 @@
 #ifndef AT_KERNELDB_H
 #define AT_KERNELDB_H
 
+#include <at/atcore/ksyms.h>
 #include "cpu.h"
 #include "cpumemory.h"
-#include "ksyms.h"
 
 struct ATMemoryAdapter {
 	ATCPUEmulatorMemory *mpMem;
@@ -302,6 +302,7 @@ struct ATKernelDatabase {
 		ATWordAdapter<ATKernelSymbols::DAUX1 > DAUX1_DAUX2;
 		ATWordAdapter<ATKernelSymbols::TIMER1> TIMER1;
 		ATWordAdapter<ATKernelSymbols::TIMER2> TIMER2;
+		ATByteAdapter<ATKernelSymbols::TIMFLG> TIMFLG;
 		ATByteAdapter<ATKernelSymbols::HATABS> HATABS;
 		ATByteAdapter<ATKernelSymbols::ICHID > ICHID;
 		ATByteAdapter<ATKernelSymbols::ICDNO > ICDNO;

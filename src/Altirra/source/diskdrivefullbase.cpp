@@ -594,15 +594,31 @@ ATDiskDriveDebugTargetControl::~ATDiskDriveDebugTargetControl() {
 	VDASSERT(!mpScheduler);
 }
 
-void ATDiskDriveDebugTargetControl::InitTargetControl(IATDiskDriveDebugTargetProxy& proxy, double timestampFrequency, ATDebugDisasmMode disasmMode, ATDebugTargetBreakpointsBase *bpImpl) {
+void ATDiskDriveDebugTargetControl::InitTargetControl(IATDiskDriveDebugTargetProxy& proxy, double timestampFrequency, ATDebugDisasmMode disasmMode, ATDebugTargetBreakpointsBase *bpImpl, IATDevice *parentDevice) {
 	mpProxy = &proxy;
 	mTimestampFrequency = timestampFrequency;
+	mDisplayFrequency = timestampFrequency;
 	mpBreakpointsImpl = bpImpl;
 	mDisasmMode = disasmMode;
 
 	const auto rwmaps = proxy.GetReadWriteMaps();
 	mpReadMap = rwmaps.first;
 	mpWriteMap = rwmaps.second;
+
+	mDisplayName = "Disk Drive CPU";
+
+	if (parentDevice) {
+		ATDeviceInfo devInfo;
+		parentDevice->GetDeviceInfo(devInfo);
+
+		mDisplayName.append(" (");
+		mDisplayName.append(VDTextWToA(devInfo.mpDef->mpName).c_str());
+		mDisplayName.append(")");
+	}
+}
+
+void ATDiskDriveDebugTargetControl::ApplyDisplayCPUClockMultiplier(double f) {
+	mDisplayFrequency *= f;
 }
 
 void ATDiskDriveDebugTargetControl::ResetTargetControl() {
@@ -710,11 +726,15 @@ IATDebugTarget *ATDiskDriveDebugTargetControl::GetDebugTarget(uint32 index) {
 }
 
 const char *ATDiskDriveDebugTargetControl::GetName() {
-	return "Disk Drive CPU";
+	return mDisplayName.c_str();
 }
 
 ATDebugDisasmMode ATDiskDriveDebugTargetControl::GetDisasmMode() {
 	return mDisasmMode;
+}
+
+float ATDiskDriveDebugTargetControl::GetDisplayCPUClock() const {
+	return mDisplayFrequency;
 }
 
 sint32 ATDiskDriveDebugTargetControl::GetTimeSkew() {

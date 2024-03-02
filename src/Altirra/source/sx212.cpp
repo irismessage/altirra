@@ -23,6 +23,7 @@
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/devicesioimpl.h>
+#include <at/atcore/ksyms.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
 #include "pia.h"
@@ -30,7 +31,6 @@
 #include "cpumemory.h"
 #include "uirender.h"
 #include "rs232.h"
-#include "ksyms.h"
 #include "modem.h"
 #include "debuggerlog.h"
 

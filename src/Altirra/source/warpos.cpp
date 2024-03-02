@@ -16,7 +16,7 @@
 
 #include "stdafx.h"
 #include <vd2/system/binary.h>
-#include <vd2/system/registry.h>
+#include <at/atcore/devicepia.h>
 #include <at/atcore/scheduler.h>
 #include "firmwaremanager.h"
 #include "warpos.h"
@@ -39,7 +39,6 @@ void *ATWarpOSDevice::AsInterface(uint32 iid) {
 		case IATDeviceScheduling::kTypeID: return static_cast<IATDeviceScheduling *>(this);
 		case IATDeviceFirmware::kTypeID: return static_cast<IATDeviceFirmware *>(this);
 		case IATDeviceSystemControl::kTypeID: return static_cast<IATDeviceSystemControl *>(this);
-		case IATDevicePortInput::kTypeID: return static_cast<IATDevicePortInput *>(this);
 	}
 
 	return ATDevice::AsInterface(iid);
@@ -50,13 +49,27 @@ void ATWarpOSDevice::GetDeviceInfo(ATDeviceInfo& info) {
 }
 
 void ATWarpOSDevice::Init() {
+	mpPortManager = GetService<IATDevicePIA>();
+	mPortInputIndex = mpPortManager->AllocInput();
+	mPortOutputIndex = mpPortManager->AllocOutput(
+		[](void *self, uint32 state) { ((ATWarpOSDevice *)self)->OnPortOutput(state); },
+		this,
+		0x8000
+	);
+
 	ReloadFirmware();
-	LoadNVRAM();
+
+	mNVStorage.Init(*GetService<IATDeviceStorageManager>(),
+		[this](IATDeviceStorageManager&) { LoadNVRAM(); },
+		[this](IATDeviceStorageManager&) { SaveNVRAM(); }
+	);
 
 	UpdateKernelROM();
 }
 
 void ATWarpOSDevice::Shutdown() {
+	mNVStorage.Shutdown();
+
 	if (mpPortManager) {
 		mpPortManager->FreeInput(mPortInputIndex);
 		mpPortManager->FreeOutput(mPortOutputIndex);
@@ -147,16 +160,6 @@ void ATWarpOSDevice::SetROMLayers(
 }
 
 void ATWarpOSDevice::OnU1MBConfigPreLocked(bool inPreLockState) {
-}
-
-void ATWarpOSDevice::InitPortInput(IATDevicePortManager *portmgr) {
-	mpPortManager = portmgr;
-	mPortInputIndex = portmgr->AllocInput();
-	mPortOutputIndex = portmgr->AllocOutput(
-		[](void *self, uint32 state) { ((ATWarpOSDevice *)self)->OnPortOutput(state); },
-		this,
-		0x8000
-	);
 }
 
 void ATWarpOSDevice::OnScheduledEvent(uint32 id) {
@@ -290,9 +293,11 @@ void ATWarpOSDevice::UpdateKernelROM() {
 }
 
 void ATWarpOSDevice::LoadNVRAM() {
-	VDRegistryAppKey key("Nonvolatile RAM", false);
-
-	mCurrentSetting = key.getInt("Warp+ OS Selection", mCurrentSetting);
+	sint32 newSetting = 0;
+	if (GetService<IATDeviceStorageManager>()->LoadNVRAMInt("Warp+ OS Selection", newSetting))
+		mCurrentSetting = (uint8)newSetting;
+	else
+		mCurrentSetting = 0;
 
 	// ensure sanity
 	if (mCurrentSetting > 31)
@@ -300,9 +305,7 @@ void ATWarpOSDevice::LoadNVRAM() {
 }
 
 void ATWarpOSDevice::SaveNVRAM() {
-	VDRegistryAppKey key("Nonvolatile RAM");
-
-	key.setInt("Warp+ OS Selection", mCurrentSetting);
+	GetService<IATDeviceStorageManager>()->SaveNVRAMInt("Warp+ OS Selection", mCurrentSetting);
 }
 
 ///////////////////////////////////////////////////////////////////////////

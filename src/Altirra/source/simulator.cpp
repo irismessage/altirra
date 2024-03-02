@@ -18,6 +18,7 @@
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/bitmath.h>
+#include <vd2/system/cpuaccel.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
@@ -30,15 +31,16 @@
 #include <at/atcore/address.h>
 #include <at/atcore/asyncdispatcherimpl.h>
 #include <at/atcore/bussignal.h>
+#include <at/atcore/cio.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/constants.h>
 #include <at/atcore/device.h>
 #include <at/atcore/devicecio.h>
 #include <at/atcore/devicediskdrive.h>
-#include <at/atcore/devicemanager.h>
 #include <at/atcore/deviceprinter.h>
 #include <at/atcore/devicevideo.h>
 #include <at/atcore/deviceu1mb.h>
+#include <at/atcore/ksyms.h>
 #include <at/atcore/media.h>
 #include <at/atcore/memoryutils.h>
 #include <at/atcore/propertyset.h>
@@ -55,10 +57,10 @@
 #include "cassette.h"
 #include "console.h"
 #include "joystick.h"
-#include "ksyms.h"
 #include "kerneldb.h"
 #include "debugger.h"
 #include "debuggerlog.h"
+#include "devicemanager.h"
 #include "disk.h"
 #include "oshelper.h"
 #include "savestate.h"
@@ -68,7 +70,6 @@
 #include "resource.h"
 #include "inputcontroller.h"
 #include "inputmanager.h"
-#include "cio.h"
 #include "vbxe.h"
 #include "profiler.h"
 #include "verifier.h"
@@ -103,6 +104,8 @@
 #include "videomanager.h"
 #include "pokeysavecompat.h"
 #include "pokeytrace.h"
+#include "portmanager.h"
+#include "settings.h"
 
 namespace {
 	const char kSaveStateVersion[] = "Altirra save state V1";
@@ -239,10 +242,14 @@ class ATSimulator::PrivateData final
 	, public IATDiskDriveManager
 	, public IATSystemController
 	, public IATCovoxController
+	, public IATDeviceSchedulingService
 	, public IATDeviceChangeCallback
 {
+	PrivateData(const PrivateData&) = delete;
+	PrivateData& operator=(const PrivateData&) = delete;
 public:
 	PrivateData(ATSimulator& parent);
+	~PrivateData();
 
 	ATCPUTimestampDecoder GetTimestampDecoder() const override {
 		return mParent.GetTimestampDecoder();
@@ -268,6 +275,10 @@ public:		// IATCovoxController
 	bool IsCovoxEnabled() const override { return mCovoxEnableSignal.OrDefaultTrue(); }
 	ATNotifyList<const vdfunction<void(bool)> *>& GetCovoxEnableNotifyList() override { return mCovoxEnableChangedNotifyList; }
 
+public:		// IATDeviceSchedulingService
+	ATScheduler *GetMachineScheduler() const override;
+	ATScheduler *GetSlowScheduler() const override;
+
 public:
 	void OnDeviceAdded(uint32 iid, IATDevice *dev, void *iface) override;
 	void OnDeviceRemoving(uint32 iid, IATDevice *dev, void *iface) override;
@@ -276,10 +287,15 @@ public:
 public:
 	void OnRemovingDeviceInterface(IATDeviceSystemControl& syscon);
 
+	void OnLoadSettings(uint32 profileId, ATSettingsCategory category, VDRegistryKey& key);
+	void OnSaveSettings(uint32 profileId, ATSettingsCategory category, VDRegistryKey& key);
+
 	static void PIAChangeCommandLine(void *thisPtr, uint32 output);
 	static void PIAChangeMotorLine(void *thisPtr, uint32 output);
 	static void PIAChangeMultiJoy(void *thisPtr, uint32 output);
 	static void PIAChangeBanking(void *thisPtr, uint32 output);
+
+	void ApplyHardwareState();
 
 	ATSimulator& mParent;
 	vdautoptr<ATTraceContext> mpTraceContext;
@@ -319,6 +335,8 @@ public:
 
 	vdblock<uint8> mHighMemory;
 
+	ATPortManager mPortManager;
+
 	ATBusSignal mStereoEnableSignal;
 	ATBusSignal mCovoxEnableSignal;
 	ATNotifyList<const vdfunction<void(bool)> *> mCovoxEnableChangedNotifyList;
@@ -326,6 +344,9 @@ public:
 	ATDiskInterface *mpDiskInterfaces[15] = {};
 
 	vdautoptr<ATPokeyTracer> mpPokeyTracer;
+
+	ATSettingsLoadSaveCallback mpSettingsLoadFn;
+	ATSettingsLoadSaveCallback mpSettingsSaveFn;
 };
 
 ATSimulator::PrivateData::PrivateData(ATSimulator& parent)
@@ -359,6 +380,18 @@ ATSimulator::PrivateData::PrivateData(ATSimulator& parent)
 	);
 
 	mpVideoManager = new ATVideoManager;
+
+	mpSettingsLoadFn = [this](uint32 profileId, ATSettingsCategory category, VDRegistryKey& key) { OnLoadSettings(profileId, category, key); };
+	mpSettingsSaveFn = [this](uint32 profileId, ATSettingsCategory category, VDRegistryKey& key) { OnSaveSettings(profileId, category, key); };
+	ATSettingsRegisterLoadCallback(&mpSettingsLoadFn);
+	ATSettingsRegisterSaveCallback(&mpSettingsSaveFn);
+}
+
+ATSimulator::PrivateData::~PrivateData() {
+	mPortManager.Shutdown();
+
+	ATSettingsUnregisterLoadCallback(&mpSettingsLoadFn);
+	ATSettingsUnregisterSaveCallback(&mpSettingsSaveFn);
 }
 
 void ATSimulator::PrivateData::ResetCPU() {
@@ -432,6 +465,14 @@ void ATSimulator::PrivateData::OnU1MBConfigPreLocked(bool inPreLockState) {
 
 uint8 ATSimulator::PrivateData::ReadConsoleButtons() const {
 	return mParent.mGTIA.ReadConsoleSwitches() & 7;
+}
+
+ATScheduler *ATSimulator::PrivateData::GetMachineScheduler() const {
+	return mParent.GetScheduler();
+}
+
+ATScheduler *ATSimulator::PrivateData::GetSlowScheduler() const {
+	return mParent.GetSlowScheduler();
 }
 
 void ATSimulator::PrivateData::OnDeviceAdded(uint32 iid, IATDevice *dev, void *iface) {
@@ -532,6 +573,31 @@ void ATSimulator::PrivateData::OnDeviceRemoved(uint32 iid, IATDevice *dev, void 
 		}
 	}
 }
+
+void ATSimulator::PrivateData::OnLoadSettings(uint32 profileId, ATSettingsCategory category, VDRegistryKey& key) {
+	if (category & kATSettingsCategory_NVRAM) {
+		if (profileId) {
+			VDRegistryKey subKey(key, "Nonvolatile RAM");
+			mParent.mpDeviceManager->LoadSettings(subKey);
+		} else {
+			VDRegistryAppKey globalKey("Nonvolatile RAM");
+			mParent.mpDeviceManager->LoadSettings(globalKey);
+		}
+	}
+}
+
+void ATSimulator::PrivateData::OnSaveSettings(uint32 profileId, ATSettingsCategory category, VDRegistryKey& key) {
+	if (category & kATSettingsCategory_NVRAM) {
+		if (profileId) {
+			VDRegistryKey subKey(key, "Nonvolatile RAM", true);
+			mParent.mpDeviceManager->SaveSettings(subKey);
+		} else {
+			VDRegistryAppKey globalKey("Nonvolatile RAM", true);
+			mParent.mpDeviceManager->SaveSettings(globalKey);
+		}
+	}
+}
+
 void ATSimulator::PrivateData::PIAChangeCommandLine(void *thisPtr, uint32 output) {
 	ATSimulator& sim = *(ATSimulator *)thisPtr;
 
@@ -561,6 +627,15 @@ void ATSimulator::PrivateData::PIAChangeBanking(void *thisPtr, uint32 output) {
 	sim.UpdateBanking(sim.GetBankRegister());
 }
 
+void ATSimulator::PrivateData::ApplyHardwareState() {
+	auto mode = mParent.mHardwareMode;
+
+	mPortManager.SetPorts34Enabled(mode != kATHardwareMode_800XL && mode != kATHardwareMode_1200XL && mode != kATHardwareMode_XEGS && mode != kATHardwareMode_130XE);
+	mPortManager.ReapplyTriggers();
+
+	mParent.mPokey.SetSpeakerFilterSupported(mode == kATHardwareMode_800);
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 ATSimulator::ATSimulator()
@@ -579,7 +654,6 @@ ATSimulator::ATSimulator()
 	, mPokey(false)
 	, mPokey2(true)
 	, mpAudioOutput(NULL)
-	, mpAudioSamplePlayer(NULL)
 	, mpPokeyTables(nullptr)
 	, mpAudioMonitors()
 	, mpCassette(NULL)
@@ -604,8 +678,6 @@ ATSimulator::ATSimulator()
 	, mpMemLayerPIA(NULL)
 	, mpMemLayerIoBusFloat(nullptr)
 	, mpInputManager(nullptr)
-	, mpPortAController(nullptr)
-	, mpPortBController(nullptr)
 	, mpLightPen(nullptr)
 	, mpPrinterOutput(nullptr)
 	, mpVBXE(NULL)
@@ -644,8 +716,6 @@ void ATSimulator::Init() {
 	mpSimEventManager = new ATSimulatorEventManager;
 	mpPokeyTables = new ATPokeyTables;
 	mpInputManager = new ATInputManager;
-	mpPortAController = new ATPortController;
-	mpPortBController = new ATPortController;
 	mpLightPen = new ATLightPenPort;
 	mpSIOManager = new ATSIOManager;
 	mpFirmwareManager = new ATFirmwareManager;
@@ -662,7 +732,9 @@ void ATSimulator::Init() {
 	mpDeviceManager->RegisterService<IATAsyncDispatcher>(&mpPrivateData->mAsyncDispatcher);
 	mpDeviceManager->RegisterService<IATDeviceVideoManager>(mpPrivateData->mpVideoManager);
 	mpDeviceManager->RegisterService<ATIRQController>(&mpPrivateData->mIRQController);
-	mpDeviceManager->RegisterService<IATDevicePortManager>(&mPIA);
+	mpDeviceManager->RegisterService<IATDevicePIA>(&mPIA);
+	mpDeviceManager->RegisterService<IATDevicePortManager>(&mpPrivateData->mPortManager);
+	mpDeviceManager->RegisterService<IATDeviceSchedulingService>(mpPrivateData);
 
 	mpAnticBusData = &mpMemMan->mBusValue;
 
@@ -714,12 +786,19 @@ void ATSimulator::Init() {
 
 	mpLightPen->Init(&mAntic);
 
-	mpAudioSamplePlayer = new ATAudioSamplePlayer;
+	mpAudioSamplePool = new ATAudioSamplePool;
+	mpAudioSamplePool->Init();
+
+	mpAudioSamplePlayer = new ATAudioSamplePlayer(*mpAudioSamplePool);
 	mpAudioSamplePlayer->Init(&mScheduler);
 
+	mpAudioEdgeSamplePlayer = new ATAudioSamplePlayer(*mpAudioSamplePool);
+	mpAudioEdgeSamplePlayer->Init(&mScheduler);
+
 	mpAudioOutput = ATCreateAudioOutput();
-	mpAudioOutput->Init(mpAudioSamplePlayer);
-	mpAudioOutput->AsMixer().AddSyncAudioSource(mpAudioSamplePlayer);
+	mpAudioOutput->Init(mpAudioSamplePlayer, mpAudioEdgeSamplePlayer);
+	
+	mpDeviceManager->RegisterService<IATAudioMixer>(&mpAudioOutput->AsMixer());
 
 	mPokey.Init(this, &mScheduler, mpAudioOutput, mpPokeyTables);
 	mPokey2.Init(&g_pokeyDummyConnection, &mScheduler, NULL, mpPokeyTables);
@@ -733,16 +812,16 @@ void ATSimulator::Init() {
 		}
 	);
 
+	mpPrivateData->mPortManager.Init(mPIA, mGTIA, mPokey, mAntic, *mpLightPen);
+	mpPrivateData->ApplyHardwareState();
+
 	mPIA.AllocOutput(PrivateData::PIAChangeMotorLine, this, kATPIAOutput_CA2);
 	mPIA.AllocOutput(PrivateData::PIAChangeCommandLine, this, kATPIAOutput_CB2);
 	mPIA.AllocOutput(PrivateData::PIAChangeMultiJoy, this, 0x70);			// port A control lines
 	mPIA.AllocOutput(PrivateData::PIAChangeBanking, this, 0xFF00);			// port B control lines
 
-	mpPortAController->Init(&mGTIA, &mPokey, &mPIA, mpLightPen, 0);
-	mpPortBController->Init(&mGTIA, &mPokey, &mPIA, mpLightPen, 2);
-
 	mpCassette = new ATCassetteEmulator;
-	mpCassette->Init(&mPokey, &mScheduler, &mSlowScheduler, &mpAudioOutput->AsMixer(), &mpPrivateData->mDeferredEventManager, mpSIOManager, &mPIA);
+	mpCassette->Init(&mPokey, &mScheduler, &mSlowScheduler, &mpAudioOutput->AsMixer(), &mpPrivateData->mDeferredEventManager, mpSIOManager, &mpPrivateData->mPortManager);
 	mpCassette->SetRandomizedStartEnabled(false);
 	mPokey.SetCassette(mpCassette);
 
@@ -802,7 +881,7 @@ void ATSimulator::Init() {
 
 	mpAnticReadPageMap = mpMemMan->GetAnticMemoryMap();
 
-	mpInputManager->Init(&mScheduler, &mSlowScheduler, mpPortAController, mpPortBController, mpLightPen);
+	mpInputManager->Init(&mScheduler, &mSlowScheduler, mPokey, mpPrivateData->mPortManager, mpLightPen);
 }
 
 void ATSimulator::Shutdown() {
@@ -889,16 +968,27 @@ void ATSimulator::Shutdown() {
 		mpCassette = NULL;
 	}
 
+	if (mpAudioOutput) {
+		delete mpAudioOutput;
+		mpAudioOutput = NULL;
+	}
+
 	if (mpAudioSamplePlayer) {
-		mpAudioOutput->AsMixer().RemoveSyncAudioSource(mpAudioSamplePlayer);
 		mpAudioSamplePlayer->Shutdown();
 		delete mpAudioSamplePlayer;
 		mpAudioSamplePlayer = nullptr;
 	}
 
-	if (mpAudioOutput) {
-		delete mpAudioOutput;
-		mpAudioOutput = NULL;
+	if (mpAudioEdgeSamplePlayer) {
+		mpAudioEdgeSamplePlayer->Shutdown();
+		delete mpAudioEdgeSamplePlayer;
+		mpAudioEdgeSamplePlayer = nullptr;
+	}
+
+	if (mpAudioSamplePool) {
+		mpAudioSamplePool->Shutdown();
+		delete mpAudioSamplePool;
+		mpAudioSamplePool = nullptr;
 	}
 
 	mGTIA.SetUIRenderer(NULL);
@@ -925,8 +1015,6 @@ void ATSimulator::Shutdown() {
 
 	delete mpJoysticks; mpJoysticks = NULL;
 	delete mpInputManager; mpInputManager = NULL;
-	delete mpPortAController; mpPortAController = NULL;
-	delete mpPortBController; mpPortBController = NULL;
 	delete mpLightPen; mpLightPen = NULL;
 	delete mpCheatEngine; mpCheatEngine = NULL;
 	delete mpPokeyTables; mpPokeyTables = NULL;
@@ -1239,6 +1327,8 @@ void ATSimulator::ApplyVideoStandard() {
 
 	mGTIA.SetPALMode(mVideoStandard != kATVideoStandard_NTSC && mVideoStandard != kATVideoStandard_NTSC50);
 	mGTIA.SetSECAMMode(mVideoStandard == kATVideoStandard_SECAM);
+
+	mpSIOManager->SetFrameTime(is50Hz ? 312*114 : 262*114);
 }
 
 void ATSimulator::SetMemoryMode(ATMemoryMode mode) {
@@ -1295,7 +1385,10 @@ void ATSimulator::SetHardwareMode(ATHardwareMode mode) {
 
 	mpInputManager->Set5200Mode(is5200);
 
+	mpPrivateData->ApplyHardwareState();
+
 	UpdateXLCartridgeLine();
+	UpdateKeyboardPresentLine();
 	
 	UpdateKernel(false);
 	InitMemoryMap();
@@ -1535,7 +1628,7 @@ void ATSimulator::SetUltimate1MBEnabled(bool enable) {
 
 		mpUltimate1MB = new ATUltimate1MBEmulator;
 		InitDevice(*mpUltimate1MB);
-		mpUltimate1MB->Init(mMemory, mpMMU, mpPBIManager, mpMemMan, mpUIRenderer, &mScheduler, mpCPUHookManager);
+		mpUltimate1MB->Init(mMemory, mpMMU, mpPBIManager, mpMemMan, mpUIRenderer, &mScheduler, mpCPUHookManager, mpDeviceManager);
 		mpUltimate1MB->SetVBXEPageCallback(ATBINDCALLBACK(this, &ATSimulator::UpdateVBXEPage));
 		mpUltimate1MB->SetSBPageCallback(ATBINDCALLBACK(this, &ATSimulator::UpdateSoundBoardPage));
 
@@ -1860,6 +1953,10 @@ void ATSimulator::ColdResetComputerOnly() {
 }
 
 void ATSimulator::InternalColdReset(bool computerOnly) {
+	// Ensure that everything is reset for the current video standard (avoids having to do this
+	// ad-hoc as systems are brought up).
+	ApplyVideoStandard();
+
 	if (mpPrivateData->mLockedRandomSeed) {
 		mpPrivateData->mRandomSeed = mpPrivateData->mLockedRandomSeed;
 	} else
@@ -1956,12 +2053,9 @@ void ATSimulator::InternalColdReset(bool computerOnly) {
 	// reset POT positions now so custom devices can have a crack
 	const bool supportsPort34 = (mHardwareMode != kATHardwareMode_800XL && mHardwareMode != kATHardwareMode_1200XL && mHardwareMode != kATHardwareMode_XEGS && mHardwareMode != kATHardwareMode_130XE);
 	if (supportsPort34) {
-		mPokey.SetPotPos(4, 228);
+		mpPrivateData->mPortManager.SetPotOverride(4, false);
 	} else {
 		// POT 4 is the forced self-test line.
-		mPokey.SetPotPos(5, 228);
-		mPokey.SetPotPos(6, 228);
-		mPokey.SetPotPos(7, 228);
 
 		// We need to force this in case the MMU was previously in 800 mode. The PIA may be
 		// out of sync with the MMU and won't send an update until a change actually occurs.
@@ -1970,10 +2064,10 @@ void ATSimulator::InternalColdReset(bool computerOnly) {
 	}
 
 	if (mHardwareMode == kATHardwareMode_800 || mHardwareMode == kATHardwareMode_5200)
-		mGTIA.SetControllerTrigger(3, false);
+		mpPrivateData->mPortManager.SetTriggerOverride(3, false);
 
 	if (mHardwareMode != kATHardwareMode_XEGS)
-		mGTIA.SetControllerTrigger(2, false);
+		mpPrivateData->mPortManager.SetTriggerOverride(2, false);
 
 	if (computerOnly) {
 		for(IATDevice *dev : mpDeviceManager->GetDevices(false, false))
@@ -1984,9 +2078,6 @@ void ATSimulator::InternalColdReset(bool computerOnly) {
 			dev->PeripheralColdReset();
 		}
 	}
-
-	mpPortAController->ReapplyTriggers();
-	mpPortBController->ReapplyTriggers();
 
 	// check if we need a hook page - done after device reset so devices can reconfigure
 	// themselves on cold reset
@@ -2879,7 +2970,6 @@ ATSimulator::AdvanceResult ATSimulator::AdvanceUntilInstructionBoundary() {
 
 			if (!x && mAntic.GetBeamY() == 248) {
 				mGTIA.BeginFrame(248, true, false);
-				BeginFrame();
 			}
 
 			ATSCHEDULER_ADVANCE(&mScheduler);
@@ -2932,8 +3022,6 @@ ATSimulator::AdvanceResult ATSimulator::Advance(bool dropFrame) {
 			if (!x && mAntic.GetBeamY() == 248) {
 				if (!mGTIA.BeginFrame(248, false, dropFrame))
 					return kAdvanceResult_WaitingForFrame;
-
-				BeginFrame();
 			}
 
 			int cycles = 114 - x;
@@ -2974,8 +3062,6 @@ restart_cpu:
 			if (!x && mAntic.GetBeamY() == 248) {
 				if (!mGTIA.BeginFrame(248, false, dropFrame))
 					return kAdvanceResult_WaitingForFrame;
-
-				BeginFrame();
 			}
 
 			int cycles = 114 - x;
@@ -3047,6 +3133,10 @@ handle_event:
 		NotifyEvent(ev);
 
 	return mbRunning ? kAdvanceResult_Running : kAdvanceResult_Stopped;
+}
+
+void ATSimulator::SetOnAdvanceUnblocked(vdfunction<void()> fn) {
+	mGTIA.SetOnRetryFrame(fn);
 }
 
 uint32 ATSimulator::GetCpuCycleCounter() const {
@@ -4064,13 +4154,13 @@ void ATSimulator::UpdateXLCartridgeLine() {
 		// because for some bizarre reason it jumps through WARMSV!
 		const bool rd5 = mpPrivateData->mCartPort.IsLeftMapped();
 
-		mGTIA.SetControllerTrigger(3, !rd5);
+		mpPrivateData->mPortManager.SetTriggerOverride(3, !rd5);
 	}
 }
 
 void ATSimulator::UpdateKeyboardPresentLine() {
 	if (mHardwareMode == kATHardwareMode_XEGS)
-		mGTIA.SetControllerTrigger(2, !mbKeyboardPresent);
+		mpPrivateData->mPortManager.SetTriggerOverride(2, !mbKeyboardPresent);
 }
 
 void ATSimulator::UpdateForcedSelfTestLine() {
@@ -4079,7 +4169,7 @@ void ATSimulator::UpdateForcedSelfTestLine() {
 		case kATHardwareMode_1200XL:
 		case kATHardwareMode_XEGS:
 		case kATHardwareMode_130XE:
-			mPokey.SetPotPos(4, mbForcedSelfTest ? 0 : 229);
+			mpPrivateData->mPortManager.SetPotOverride(4, mbForcedSelfTest);
 			break;
 	}
 }
@@ -4826,6 +4916,10 @@ void ATSimulator::AnticAssertNMI_RES() {
 }
 
 void ATSimulator::AnticEndFrame() {
+	// Make sure we are not entering heavy vectorized code in a bad state, particularly
+	// AVX dirty upper registers.
+	VDCPUCleanupExtensions();
+
 	mPokey.AdvanceFrame(mGTIA.IsFrameInProgress(), mScheduler.GetTick64());
 
 	if (mAntic.GetAnalysisMode()) {
@@ -4980,6 +5074,13 @@ void ATSimulator::AnticForceNextCPUCycleSlow() {
 void ATSimulator::AnticOnVBlank() {
 	if (mpJoysticks)
 		mpJoysticks->Poll();
+
+	const bool palTick = (mVideoStandard != kATVideoStandard_NTSC && mVideoStandard != kATVideoStandard_PAL60);
+	const float dt = palTick ? 1.0f / 50.0f : 1.0f / 60.0f;
+	mpInputManager->Poll(dt);
+
+	if (mpCassette)
+		mpCassette->SetNextVerticalBlankTime(mScheduler.GetTick64() + mAntic.GetScanlineCount() * 114);
 }
 
 uint32 ATSimulator::GTIAGetXClock() {
@@ -5053,15 +5154,6 @@ bool ATSimulator::PokeyIsKeyPushOK(uint8 c, bool cooldownExpired) const {
 	}
 
 	return true;
-}
-
-void ATSimulator::BeginFrame() {
-	const bool palTick = (mVideoStandard != kATVideoStandard_NTSC && mVideoStandard != kATVideoStandard_PAL60);
-	const float dt = palTick ? 1.0f / 50.0f : 1.0f / 60.0f;
-	mpInputManager->Poll(dt);
-
-	if (mpCassette)
-		mpCassette->SetNextVerticalBlankTime(mScheduler.GetTick64() + mAntic.GetScanlineCount() * 114);
 }
 
 void ATSimulator::ReinitHookPage() {
@@ -5207,9 +5299,6 @@ void ATSimulator::InitDevice(IVDUnknown& dev) {
 
 	if (auto devaudio = vdpoly_cast<IATDeviceAudioOutput *>(&dev))
 		devaudio->InitAudioOutput(&GetAudioOutput()->AsMixer());
-
-	if (auto devportinput = vdpoly_cast<IATDevicePortInput *>(&dev))
-		devportinput->InitPortInput(&GetPIA());
 
 	if (auto devsio = vdpoly_cast<IATDeviceSIO *>(&dev))
 		devsio->InitSIO(GetDeviceSIOManager());

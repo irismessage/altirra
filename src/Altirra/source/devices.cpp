@@ -17,10 +17,11 @@
 
 #include <stdafx.h>
 #include <at/atcore/device.h>
-#include <at/atcore/devicemanager.h>
 #include <at/atdevices/devices.h>
+#include "devicemanager.h"
 
 void ATRegisterDeviceConfigurers(ATDeviceManager& dm);
+
 
 extern const ATDeviceDefinition g_ATDeviceDefModem;
 extern const ATDeviceDefinition g_ATDeviceDefBlackBox;
@@ -97,6 +98,10 @@ extern const ATDeviceDefinition g_ATDeviceDefBlockDevVSDFS;
 extern const ATDeviceDefinition g_ATDeviceDefBlockDevTemporaryWriteFilter;
 extern const ATDeviceDefinition g_ATDeviceDef1090;
 extern const ATDeviceDefinition g_ATDeviceDefBit3FullView;
+extern const ATDeviceDefinition g_ATDeviceDefComputerEyes;
+extern const ATDeviceDefinition g_ATDeviceDefVideoGenerator;
+extern const ATDeviceDefinition g_ATDeviceDefVideoStillImage;
+extern const ATDeviceDefinition g_ATDeviceDefSimCovox;
 
 void ATRegisterDevices(ATDeviceManager& dm) {
 	static constexpr const ATDeviceDefinition *kDeviceDefs[]={
@@ -174,13 +179,26 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefBlockDevVSDFS,
 		&g_ATDeviceDefBlockDevTemporaryWriteFilter,
 		&g_ATDeviceDef1090,
-		&g_ATDeviceDefBit3FullView
+		&g_ATDeviceDefBit3FullView,
+		&g_ATDeviceDefComputerEyes,
+		&g_ATDeviceDefVideoGenerator,
+		&g_ATDeviceDefVideoStillImage,
+		&g_ATDeviceDefSimCovox
 	};
 
 	for(const ATDeviceDefinition *def : kDeviceDefs)
 		dm.AddDeviceDefinition(def);
 
-	ATRegisterDeviceLibrary(dm);
+	for(const ATDeviceDefinition *def : kATDeviceLibraryDefs)
+		dm.AddDeviceDefinition(def);
 
 	ATRegisterDeviceConfigurers(dm);
+}
+
+void ATRegisterDeviceXCmds(ATDeviceManager& dm) {
+	void ATDeviceInitXCmdMountVHD(ATDeviceManager& dm);
+	void ATDeviceInitXCmdExploreDisk(ATDeviceManager& dm);
+
+	ATDeviceInitXCmdMountVHD(dm);
+	ATDeviceInitXCmdExploreDisk(dm);
 }

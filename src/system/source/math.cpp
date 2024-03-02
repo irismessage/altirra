@@ -29,6 +29,10 @@
 #include <vd2/system/int128.h>
 
 #if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+#include <immintrin.h>
+#endif
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
 int VDRoundToInt(float x) {
 	return (int)_mm_cvtss_si32(_mm_set_ss(x));
 }
@@ -130,7 +134,15 @@ invalid:
 			ret		16
 		}
 	}
-#elif !defined(VD_CPU_AMD64)
+#elif defined(VD_CPU_AMD64)
+	sint64 VDFractionScale64(uint64 a, uint32 b, uint32 c, uint32& remainder) {
+		unsigned __int64 hi = 0;
+		unsigned __int64 lo = _umul128(a, b, &hi);
+		unsigned __int64 r = 0;
+
+		return _udiv128(hi, lo, c, &r);
+	}
+#else
 	sint64 VDFractionScale64(uint64 a, uint32 b, uint32 c, uint32& remainder) {
 		uint32 a0 = (uint32)a;
 		uint32 a1 = (uint32)(a >> 32);
@@ -216,6 +228,23 @@ bool VDVerifyFiniteFloats(const float *p0, uint32 n) {
 	}
 
 	return true;
+}
+
+VDFastMathScope::VDFastMathScope() {
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+	mPrevValue = _mm_getcsr();
+
+	// Turn on flush-to-zero (FTZ) to help with IIR filters.
+	// Denormals-as-zero (DAZ) requires additional checking for old P4s,
+	// and we don't really need it, though it won't hurt if it is already on.
+	_mm_setcsr(mPrevValue | _MM_FLUSH_ZERO_ON);
+#endif
+}
+
+VDFastMathScope::~VDFastMathScope() {
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+	_mm_setcsr(mPrevValue);
+#endif
 }
 
 ///////////////////////////////////////////////////////////////////////////

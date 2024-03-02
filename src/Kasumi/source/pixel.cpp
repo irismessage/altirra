@@ -149,34 +149,6 @@ uint32 VDPixmapSample(const VDPixmap& px, sint32 x, sint32 y) {
 						false, false);
 		}
 
-	case nsVDPixmap::kPixFormat_YUV411_Planar:
-		{
-			sint32 u = (x << 6) + 128;
-			sint32 v = (y << 8);
-			uint32 w2 = px.w >> 2;
-			uint32 h2 = px.h;
-
-			return VDConvertYCbCrToRGB(
-						VDPixmapSample8(px.data, px.pitch, x, y),
-						VDPixmapInterpolateSample8(px.data2, px.pitch2, w2, h2, u, v),
-						VDPixmapInterpolateSample8(px.data3, px.pitch3, w2, h2, u, v),
-						false, false);
-		}
-
-	case nsVDPixmap::kPixFormat_YUV410_Planar:
-		{
-			sint32 u = (x << 6) + 128;
-			sint32 v = (y << 6);
-			uint32 w2 = px.w >> 2;
-			uint32 h2 = px.h >> 2;
-
-			return VDConvertYCbCrToRGB(
-						VDPixmapSample8(px.data, px.pitch, x, y),
-						VDPixmapInterpolateSample8(px.data2, px.pitch2, w2, h2, u, v),
-						VDPixmapInterpolateSample8(px.data3, px.pitch3, w2, h2, u, v),
-						false, false);
-		}
-
 	default:
 		return VDPixmapInterpolateSampleRGB24(px, (x << 8) + 128, (y << 8) + 128);
 	}
@@ -475,96 +447,6 @@ namespace {
 
 		return ConvertYCC72ToRGB24_709_FR(y, cb, cr);
 	}
-
-	template<uint32 (*ConvFn)(sint32, sint32, sint32)>
-	uint32 InterpPlanarYCC888_420i(const VDPixmap& px, sint32 x1, sint32 y1) {
-		sint32 y  = VDPixmapInterpolateSample8To24(px.data, px.pitch, px.w, px.h, x1, y1);
-		sint32 cb;
-		sint32 cr;
-
-		const uint8 *src2 = (const uint8 *)px.data2;
-		const uint8 *src3 = (const uint8 *)px.data3;
-		const ptrdiff_t pitch2 = px.pitch2 + px.pitch2;
-		const ptrdiff_t pitch3 = px.pitch3 + px.pitch3;
-		const uint32 w23 = (px.w + 1) >> 1;
-		const uint32 h23 = (px.h + 1) >> 1;
-		const sint32 xc = (x1 >> 1) + 64;
-		sint32 yc = (y1 >> 1) + 64;
-
-		if (y1 & 1) {
-			yc -= 256;
-			cb = VDPixmapInterpolateSample8To24(src2, pitch2, w23, h23 >> 1, xc, yc);
-			cr = VDPixmapInterpolateSample8To24(src3, pitch3, w23, h23 >> 1, xc, yc);
-		} else {
-			cb = VDPixmapInterpolateSample8To24(src2 + px.pitch2, pitch2, w23, (h23 + 1) >> 1, xc, yc);
-			cr = VDPixmapInterpolateSample8To24(src3 + px.pitch3, pitch3, w23, (h23 + 1) >> 1, xc, yc);
-		}
-
-		return ConvFn(y, cb, cr);
-	}
-
-	uint32 SampleV210_Y(const void *src, ptrdiff_t srcpitch, sint32 x, sint32 y, uint32 w, uint32 h) {
-		if (x < 0)
-			x = 0;
-		if ((uint32)x >= w)
-			x = w - 1;
-		if (y < 0)
-			y = 0;
-		if ((uint32)y >= h)
-			y = h - 1;
-
-		const uint32 *p = (const uint32 *)((const char *)src + srcpitch*y) + (x / 6)*4;
-
-		switch((uint32)x % 6) {
-			default:
-			case 0:	return (p[0] >> 10) & 0x3ff;
-			case 1:	return (p[1] >>  0) & 0x3ff;
-			case 2:	return (p[1] >> 20) & 0x3ff;
-			case 3:	return (p[2] >> 10) & 0x3ff;
-			case 4:	return (p[3] >>  0) & 0x3ff;
-			case 5:	return (p[3] >> 20) & 0x3ff;
-		}
-	}
-
-	uint32 SampleV210_Cb(const void *src, ptrdiff_t srcpitch, sint32 x, sint32 y, uint32 w, uint32 h) {
-		if (x < 0)
-			x = 0;
-		if ((uint32)x >= w)
-			x = w - 1;
-		if (y < 0)
-			y = 0;
-		if ((uint32)y >= h)
-			y = h - 1;
-
-		const uint32 *p = (const uint32 *)((const char *)src + srcpitch*y) + (x / 3)*4;
-
-		switch((uint32)x % 3) {
-			default:
-			case 0:	return (p[0] >>  0) & 0x3ff;
-			case 1:	return (p[1] >> 10) & 0x3ff;
-			case 2:	return (p[2] >> 20) & 0x3ff;
-		}
-	}
-
-	uint32 SampleV210_Cr(const void *src, ptrdiff_t srcpitch, sint32 x, sint32 y, uint32 w, uint32 h) {
-		if (x < 0)
-			x = 0;
-		if ((uint32)x >= w)
-			x = w - 1;
-		if (y < 0)
-			y = 0;
-		if ((uint32)y >= h)
-			y = h - 1;
-
-		const uint32 *p = (const uint32 *)((const char *)src + srcpitch*y) + (x / 3)*4;
-
-		switch((uint32)x % 3) {
-			default:
-			case 0:	return (p[0] >> 20) & 0x3ff;
-			case 1:	return (p[2] >>  0) & 0x3ff;
-			case 2:	return (p[3] >> 10) & 0x3ff;
-		}
-	}
 }
 
 uint32 VDPixmapInterpolateSampleRGB24(const VDPixmap& px, sint32 x_256, sint32 y_256) {
@@ -670,20 +552,8 @@ uint32 VDPixmapInterpolateSampleRGB24(const VDPixmap& px, sint32 x_256, sint32 y
 		case nsVDPixmap::kPixFormat_YUV422_Planar:
 			return InterpPlanarYCC888(px, x_256, y_256, (x_256 >> 1) + 64, y_256, (px.w + 1) >> 1, px.h);
 
-		case nsVDPixmap::kPixFormat_YUV411_Planar:
-			return InterpPlanarYCC888(px, x_256, y_256, (x_256 >> 2) + 96, y_256, (px.w + 3) >> 2, px.h);
-
 		case nsVDPixmap::kPixFormat_YUV420_Planar:
 			return InterpPlanarYCC888(px, x_256, y_256, (x_256 >> 1) + 64, y_256 >> 1, (px.w + 1) >> 1, (px.h + 1) >> 1);
-
-		case nsVDPixmap::kPixFormat_YUV420it_Planar:
-			return InterpPlanarYCC888(px, x_256, y_256, (x_256 >> 1) + 64, (y_256 >> 1) + 32, (px.w + 1) >> 1, (px.h + 1) >> 1);
-
-		case nsVDPixmap::kPixFormat_YUV420ib_Planar:
-			return InterpPlanarYCC888(px, x_256, y_256, (x_256 >> 1) + 64, (y_256 >> 1) - 32, (px.w + 1) >> 1, (px.h + 1) >> 1);
-
-		case nsVDPixmap::kPixFormat_YUV410_Planar:
-			return InterpPlanarYCC888(px, x_256, y_256, (x_256 >> 2) + 96, y_256 >> 2, (px.w + 3) >> 2, (px.h + 3) >> 2);
 
 		case nsVDPixmap::kPixFormat_YUV420_Planar_Centered:
 			return InterpPlanarYCC888(px, x_256, y_256, x_256 >> 1, y_256 >> 1, (px.w + 1) >> 1, (px.h + 1) >> 1);
@@ -697,20 +567,8 @@ uint32 VDPixmapInterpolateSampleRGB24(const VDPixmap& px, sint32 x_256, sint32 y
 		case nsVDPixmap::kPixFormat_YUV422_Planar_709:
 			return InterpPlanarYCC888_709(px, x_256, y_256, (x_256 >> 1) + 64, y_256, (px.w + 1) >> 1, px.h);
 
-		case nsVDPixmap::kPixFormat_YUV411_Planar_709:
-			return InterpPlanarYCC888_709(px, x_256, y_256, (x_256 >> 2) + 96, y_256, (px.w + 3) >> 2, px.h);
-
 		case nsVDPixmap::kPixFormat_YUV420_Planar_709:
 			return InterpPlanarYCC888_709(px, x_256, y_256, (x_256 >> 1) + 64, y_256 >> 1, (px.w + 1) >> 1, (px.h + 1) >> 1);
-
-		case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
-			return InterpPlanarYCC888_709(px, x_256, y_256, (x_256 >> 1) + 64, (y_256 >> 1) + 32, (px.w + 1) >> 1, (px.h + 1) >> 1);
-
-		case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
-			return InterpPlanarYCC888_709(px, x_256, y_256, (x_256 >> 1) + 64, (y_256 >> 1) - 32, (px.w + 1) >> 1, (px.h + 1) >> 1);
-
-		case nsVDPixmap::kPixFormat_YUV410_Planar_709:
-			return InterpPlanarYCC888_709(px, x_256, y_256, (x_256 >> 2) + 96, y_256 >> 2, (px.w + 3) >> 2, (px.h + 3) >> 2);
 
 		case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
 			return InterpPlanarYCC888_FR(px, x_256, y_256, x_256, y_256, px.w, px.h);
@@ -718,20 +576,8 @@ uint32 VDPixmapInterpolateSampleRGB24(const VDPixmap& px, sint32 x_256, sint32 y
 		case nsVDPixmap::kPixFormat_YUV422_Planar_FR:
 			return InterpPlanarYCC888_FR(px, x_256, y_256, (x_256 >> 1) + 64, y_256, (px.w + 1) >> 1, px.h);
 
-		case nsVDPixmap::kPixFormat_YUV411_Planar_FR:
-			return InterpPlanarYCC888_FR(px, x_256, y_256, (x_256 >> 2) + 96, y_256, (px.w + 3) >> 2, px.h);
-
 		case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
 			return InterpPlanarYCC888_FR(px, x_256, y_256, (x_256 >> 1) + 64, y_256 >> 1, (px.w + 1) >> 1, (px.h + 1) >> 1);
-
-		case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
-			return InterpPlanarYCC888_FR(px, x_256, y_256, (x_256 >> 1) + 64, (y_256 >> 1) + 32, (px.w + 1) >> 1, (px.h + 1) >> 1);
-
-		case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
-			return InterpPlanarYCC888_FR(px, x_256, y_256, (x_256 >> 1) + 64, (y_256 >> 1) - 32, (px.w + 1) >> 1, (px.h + 1) >> 1);
-
-		case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
-			return InterpPlanarYCC888_FR(px, x_256, y_256, (x_256 >> 2) + 96, y_256 >> 2, (px.w + 3) >> 2, (px.h + 3) >> 2);
 
 		case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
 			return InterpPlanarYCC888_709_FR(px, x_256, y_256, x_256, y_256, px.w, px.h);
@@ -739,32 +585,8 @@ uint32 VDPixmapInterpolateSampleRGB24(const VDPixmap& px, sint32 x_256, sint32 y
 		case nsVDPixmap::kPixFormat_YUV422_Planar_709_FR:
 			return InterpPlanarYCC888_709_FR(px, x_256, y_256, (x_256 >> 1) + 64, y_256, (px.w + 1) >> 1, px.h);
 
-		case nsVDPixmap::kPixFormat_YUV411_Planar_709_FR:
-			return InterpPlanarYCC888_709_FR(px, x_256, y_256, (x_256 >> 2) + 96, y_256, (px.w + 3) >> 2, px.h);
-
 		case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
 			return InterpPlanarYCC888_709_FR(px, x_256, y_256, (x_256 >> 1) + 64, y_256 >> 1, (px.w + 1) >> 1, (px.h + 1) >> 1);
-
-		case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
-			return InterpPlanarYCC888_709_FR(px, x_256, y_256, (x_256 >> 1) + 64, (y_256 >> 1) + 32, (px.w + 1) >> 1, (px.h + 1) >> 1);
-
-		case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
-			return InterpPlanarYCC888_709_FR(px, x_256, y_256, (x_256 >> 1) + 64, (y_256 >> 1) - 32, (px.w + 1) >> 1, (px.h + 1) >> 1);
-
-		case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
-			return InterpPlanarYCC888_709_FR(px, x_256, y_256, (x_256 >> 2) + 96, y_256 >> 2, (px.w + 3) >> 2, (px.h + 3) >> 2);
-
-		case nsVDPixmap::kPixFormat_YUV420i_Planar:
-			return InterpPlanarYCC888_420i<ConvertYCC72ToRGB24       >(px, x_256, y_256);
-
-		case nsVDPixmap::kPixFormat_YUV420i_Planar_FR:
-			return InterpPlanarYCC888_420i<ConvertYCC72ToRGB24_FR    >(px, x_256, y_256);
-
-		case nsVDPixmap::kPixFormat_YUV420i_Planar_709:
-			return InterpPlanarYCC888_420i<ConvertYCC72ToRGB24_709   >(px, x_256, y_256);
-
-		case nsVDPixmap::kPixFormat_YUV420i_Planar_709_FR:
-			return InterpPlanarYCC888_420i<ConvertYCC72ToRGB24_709_FR>(px, x_256, y_256);
 
 		case nsVDPixmap::kPixFormat_YUV422_Planar_16F:
 			{
@@ -778,82 +600,6 @@ uint32 VDPixmapInterpolateSampleRGB24(const VDPixmap& px, sint32 x_256, sint32 y
 
 				return (ir << 16) + (ig << 8) + ib;
 			}
-
-		case nsVDPixmap::kPixFormat_YUV422_V210:
-			{
-				sint32 luma_x = x_256 - 128;
-				sint32 luma_y = y_256 - 128;
-
-				if (luma_x < 0)
-					luma_x = 0;
-
-				if (luma_y < 0)
-					luma_y = 0;
-
-				if (luma_x > (sint32)((px.w - 1) << 8))
-					luma_x = (sint32)((px.w - 1) << 8);
-
-				if (luma_y > (sint32)((px.h - 1) << 8))
-					luma_y = (sint32)((px.h - 1) << 8);
-
-				sint32 luma_ix = luma_x >> 8;
-				sint32 luma_iy = luma_y >> 8;
-				float luma_fx = (float)(luma_x & 255) * (1.0f / 255.0f);
-				float luma_fy = (float)(luma_y & 255) * (1.0f / 255.0f);
-
-				float y0 = SampleV210_Y(px.data, px.pitch, luma_ix+0, luma_iy+0, px.w, px.h) * (1.0f / 1023.0f);
-				float y1 = SampleV210_Y(px.data, px.pitch, luma_ix+1, luma_iy+0, px.w, px.h) * (1.0f / 1023.0f);
-				float y2 = SampleV210_Y(px.data, px.pitch, luma_ix+0, luma_iy+1, px.w, px.h) * (1.0f / 1023.0f);
-				float y3 = SampleV210_Y(px.data, px.pitch, luma_ix+1, luma_iy+1, px.w, px.h) * (1.0f / 1023.0f);
-				float yt = y0 + (y1 - y0)*luma_fx;
-				float yb = y2 + (y3 - y2)*luma_fx;
-				float yr = yt + (yb - yt)*luma_fy;
-
-				uint32 chroma_w = (px.w + 1) >> 1;
-				uint32 chroma_h = px.h;
-				sint32 chroma_x = x_256 >> 1;
-				sint32 chroma_y = y_256 - 128;
-
-				if (chroma_x < 0)
-					chroma_x = 0;
-
-				if (chroma_y < 0)
-					chroma_y = 0;
-
-				if (chroma_x > (sint32)((chroma_w - 1) << 8))
-					chroma_x = (sint32)((chroma_w - 1) << 8);
-
-				if (chroma_y > (sint32)((chroma_h - 1) << 8))
-					chroma_y = (sint32)((chroma_h - 1) << 8);
-
-				sint32 chroma_ix = chroma_x >> 8;
-				sint32 chroma_iy = chroma_y >> 8;
-				float chroma_fx = (float)(chroma_x & 255) * (1.0f / 255.0f);
-				float chroma_fy = (float)(chroma_y & 255) * (1.0f / 255.0f);
-
-				float cb0 = SampleV210_Cb(px.data, px.pitch, chroma_ix+0, chroma_iy+0, chroma_w, chroma_h) * (1.0f / 1023.0f);
-				float cb1 = SampleV210_Cb(px.data, px.pitch, chroma_ix+1, chroma_iy+0, chroma_w, chroma_h) * (1.0f / 1023.0f);
-				float cb2 = SampleV210_Cb(px.data, px.pitch, chroma_ix+0, chroma_iy+1, chroma_w, chroma_h) * (1.0f / 1023.0f);
-				float cb3 = SampleV210_Cb(px.data, px.pitch, chroma_ix+1, chroma_iy+1, chroma_w, chroma_h) * (1.0f / 1023.0f);
-				float cbt = cb0 + (cb1 - cb0)*chroma_fx;
-				float cbb = cb2 + (cb3 - cb2)*chroma_fx;
-				float cbr = cbt + (cbb - cbt)*chroma_fy;
-
-				float cr0 = SampleV210_Cr(px.data, px.pitch, chroma_ix+0, chroma_iy+0, chroma_w, chroma_h) * (1.0f / 1023.0f);
-				float cr1 = SampleV210_Cr(px.data, px.pitch, chroma_ix+1, chroma_iy+0, chroma_w, chroma_h) * (1.0f / 1023.0f);
-				float cr2 = SampleV210_Cr(px.data, px.pitch, chroma_ix+0, chroma_iy+1, chroma_w, chroma_h) * (1.0f / 1023.0f);
-				float cr3 = SampleV210_Cr(px.data, px.pitch, chroma_ix+1, chroma_iy+1, chroma_w, chroma_h) * (1.0f / 1023.0f);
-				float crt = cr0 + (cr1 - cr0)*chroma_fx;
-				float crb = cr2 + (cr3 - cr2)*chroma_fx;
-				float crr = crt + (crb - crt)*chroma_fy;
-
-				uint32 ir = VDClampedRoundFixedToUint8Fast(1.1643836f*yr + 1.5960268f*crr - (222.92157f / 255.0f));
-				uint32 ig = VDClampedRoundFixedToUint8Fast(1.1643836f*yr - 0.3917623f*cbr - 0.8129676f*crr + (135.57529f / 255.0f));
-				uint32 ib = VDClampedRoundFixedToUint8Fast(1.1643836f*yr + 2.0172321f*cbr - (276.83585f / 255.0f));
-
-				return (ir << 16) + (ig << 8) + ib;
-			}
-			break;
 
 		default:
 			return 0;

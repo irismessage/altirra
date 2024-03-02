@@ -236,8 +236,6 @@ namespace {
 	}
 
 	LayoutSpecs LayoutStack::MeasureInternal(const vdsize32& r) {
-		const sint32 n = (sint32)mChildren.size();
-
 		mSpecs = {};
 
 		vdsize32 r2 = r;
@@ -726,9 +724,6 @@ bool ATGenericDialogW32::OnLoaded() {
 
 	RECT rMargins {};
 	AdjustWindowRectEx(&rMargins, dwStyle, FALSE, dwExStyle);
-
-	const int marginsX = rMargins.right - rMargins.left;
-	const int marginsY = rMargins.bottom - rMargins.top;
 
 	RECT rWorkArea {};
 	SystemParametersInfo(SPI_GETWORKAREA, 0, &rWorkArea, FALSE);

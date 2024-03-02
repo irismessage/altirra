@@ -34,6 +34,7 @@ class IVDUIHotKeyExControl : public IVDRefUnknown {
 public:
 	enum { kTypeID = 'uihk' };
 
+	virtual void CaptureAnyNextKey() = 0;
 	virtual void SetCookedMode(bool enable) = 0;
 
 	virtual void GetAccelerator(VDUIAccelerator& accel) = 0;

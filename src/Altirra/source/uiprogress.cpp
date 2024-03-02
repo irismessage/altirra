@@ -24,6 +24,7 @@
 #include <at/atnativeui/progress.h>
 #include "resource.h"
 #include "uiaccessors.h"
+#include "uicommondialogs.h"
 #include "uiprogress.h"
 
 ///////////////////////////////////////////////////////////////////////////
@@ -428,9 +429,11 @@ ATUIProgressHandler::ATUIProgressHandler() {
 
 void ATUIProgressHandler::Begin(uint32 total, const wchar_t *status, const wchar_t *desc) {
 	if (!mNestingCount++) {
-		mpDialog = new_nothrow ATUIProgressDialogW32;
-		if (mpDialog) {
-			mpDialog->Init(desc, status, total, ATUIGetNewPopupOwner());
+		if (ATUIGetNativeDialogMode()) {
+			mpDialog = new_nothrow ATUIProgressDialogW32;
+			if (mpDialog) {
+				mpDialog->Init(desc, status, total, ATUIGetNewPopupOwner());
+			}
 		}
 	}
 }

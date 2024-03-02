@@ -256,6 +256,10 @@ ATDebugDisasmMode ATVeronicaEmulator::GetDisasmMode() {
 	return kATDebugDisasmMode_65C816;
 }
 
+float ATVeronicaEmulator::GetDisplayCPUClock() const {
+	return GetTimestampFrequency();
+}
+
 void ATVeronicaEmulator::GetExecState(ATCPUExecState& state) {
 	mCoProc.GetExecState(state);
 }

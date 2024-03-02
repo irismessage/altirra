@@ -19,6 +19,7 @@
 #include <stdafx.h>
 #include <tchar.h>
 #include <vd2/Dita/accel.h>
+#include <vd2/system/color.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/system/VDString.h>
@@ -32,6 +33,8 @@ public:
 	~VDUIHotKeyExControlW32();
 
 	void *AsInterface(uint32 iid);
+
+	void CaptureAnyNextKey();
 
 	void SetCookedMode(bool enabled);
 
@@ -52,13 +55,23 @@ protected:
 	void UpdateCaretPosition();
 	void UpdateText();
 
+	void ClearAnyKeyCapture(bool eatNextChar, bool eatNextKeyUp);
+
+	void EnableMessageHook();
+	void DisableMessageHook();
+	static LRESULT CALLBACK SuppressSysCharHook(int code, WPARAM wParam, LPARAM lParam);
+
 	const HWND mhwnd;
-	HFONT mhfont;
-	int mFontHeight;
+	HFONT mhfont {};
+	int mFontHeight {};
+	HHOOK mhHook = nullptr;
 
 	bool mbEatNextInjectedCaps = false;
 	bool mbTurnOffCaps = false;
 	bool mbCookedMode = false;
+	bool mbAllKeysEnabled = false;
+	bool mbAllKeysEatNextKeyUp = false;
+	bool mbAllKeysEatNextChar = false;
 
 	VDUIAccelerator	mAccel;
 	uint32		mCurrentMods;
@@ -106,6 +119,21 @@ void *VDUIHotKeyExControlW32::AsInterface(uint32 iid) {
 	return NULL;
 }
 
+void VDUIHotKeyExControlW32::CaptureAnyNextKey() {
+	if (!mbAllKeysEnabled) {
+		mbAllKeysEnabled = true;
+		mbAllKeysEatNextKeyUp = false;
+		mbAllKeysEatNextChar = false;
+
+		InvalidateRect(mhwnd, nullptr, TRUE);
+
+		SetFocus(mhwnd);
+
+		if (GetFocus() == mhwnd)
+			EnableMessageHook();
+	}
+}
+
 void VDUIHotKeyExControlW32::SetCookedMode(bool enable) {
 	mbCookedMode = enable;
 }
@@ -138,6 +166,7 @@ LRESULT CALLBACK VDUIHotKeyExControlW32::StaticWndProc(HWND hwnd, UINT msg, WPAR
 		pThis->AddRef();
 		SetWindowLongPtr(hwnd, 0, (LONG_PTR)pThis);
 	} else if (msg == WM_NCDESTROY) {
+		pThis->DisableMessageHook();
 		pThis->Release();
 		return DefWindowProc(hwnd, msg, wParam, lParam);
 	}
@@ -152,8 +181,30 @@ LRESULT VDUIHotKeyExControlW32::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) 
 			break;
 
 		case WM_GETDLGCODE:
-			if (lParam)
+			if (lParam) {
+				const MSG *msg = (const MSG *)lParam;
+
+				if (!mbAllKeysEnabled) {
+					// don't eat Tab and Shift+Tab if we aren't capturing all keys
+					switch(msg->message) {
+						case WM_CHAR:
+							if (!mbAllKeysEatNextChar && msg->wParam == 0x09)
+								return 0;
+							break;
+
+						case WM_KEYDOWN:
+							if (msg->wParam == VK_TAB)
+								return 0;
+
+							break;
+
+						default:
+							break;
+					}
+				}
+
 				return DLGC_WANTMESSAGE;
+			}
 
 			return DLGC_WANTALLKEYS;
 
@@ -181,16 +232,30 @@ LRESULT VDUIHotKeyExControlW32::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) 
 			CreateCaret(mhwnd, NULL, 0, mFontHeight);
 			UpdateCaretPosition();
 			ShowCaret(mhwnd);
+
+			if (mbAllKeysEnabled)
+				EnableMessageHook();
 			break;
 
 		case WM_KILLFOCUS:
 			mCurrentMods &= ~(VDUIAccelerator::kModCtrl | VDUIAccelerator::kModShift | VDUIAccelerator::kModAlt);
+			ClearAnyKeyCapture(false, false);
 
 			HideCaret(mhwnd);
 			DestroyCaret();
+			DisableMessageHook();
 			break;
 
+		case WM_SYSCHAR:
+			if (!mbAllKeysEnabled && !mbAllKeysEatNextChar)
+				break;
+			[[fallthrough]];
 		case WM_CHAR:
+			if (mbAllKeysEatNextChar) {
+				mbAllKeysEatNextChar = false;
+				return 0;
+			}
+
 			if (!mbCookedMode)
 				break;
 
@@ -202,15 +267,23 @@ LRESULT VDUIHotKeyExControlW32::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) 
 				mAccel.mVirtKey = (uint32)wParam;
 				mAccel.mModifiers = mCurrentMods;
 
+				ClearAnyKeyCapture(false, true);
+
 				UpdateText();
 				UpdateCaretPosition();
 
 				mEventOnChange.Raise(this, mAccel);
 			}
-			break;
+			return 0;
 
-		case WM_KEYDOWN:
 		case WM_SYSKEYDOWN:
+			if (!mbAllKeysEnabled)
+				break;
+			[[fallthrough]];
+		case WM_KEYDOWN:
+			mbAllKeysEatNextKeyUp = false;
+			mbAllKeysEatNextChar = false;
+
 			if (mbCookedMode)
 				break;
 
@@ -241,6 +314,8 @@ LRESULT VDUIHotKeyExControlW32::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) 
 
 				if (lParam & (1 << 24))
 					mAccel.mModifiers |= VDUIAccelerator::kModExtended;
+
+				ClearAnyKeyCapture(true, true);
 			}
 
 			mAccel.mModifiers |= mCurrentMods;
@@ -252,7 +327,15 @@ LRESULT VDUIHotKeyExControlW32::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) 
 			return 0;
 
 		case WM_SYSKEYUP:
+			if (!mbAllKeysEnabled && !mbAllKeysEatNextKeyUp)
+				break;
+			[[fallthrough]];
 		case WM_KEYUP:
+			if (mbAllKeysEatNextKeyUp) {
+				mbAllKeysEatNextKeyUp = false;
+				return 0;
+			}
+
 			if (mbCookedMode)
 				break;
 
@@ -299,7 +382,18 @@ void VDUIHotKeyExControlW32::OnPaint() {
 			VDVERIFY(DrawEdge(hdc, &r, EDGE_SUNKEN, BF_ADJUST | BF_RECT));
 		}
 
-		VDVERIFY(FillRect(hdc, &r, (HBRUSH)(COLOR_WINDOW + 1)));
+		uint32 bkColor = GetSysColor(COLOR_WINDOW);
+
+		if (mbAllKeysEnabled) {
+			const uint32 bkColor2 = GetSysColor(COLOR_HIGHLIGHT);
+
+			bkColor = (bkColor | bkColor2) - (((bkColor ^ bkColor2) & 0xFEFEFE) >> 1);
+
+			SetDCBrushColor(hdc, bkColor);
+			VDVERIFY(FillRect(hdc, &r, (HBRUSH)GetStockObject(DC_BRUSH)));
+		} else {
+			VDVERIFY(FillRect(hdc, &r, (HBRUSH)(COLOR_WINDOW + 1)));
+		}
 
 		int cx = GetSystemMetrics(SM_CXEDGE);
 		int cy = GetSystemMetrics(SM_CYEDGE);
@@ -309,8 +403,9 @@ void VDUIHotKeyExControlW32::OnPaint() {
 		r.right -= cx;
 		r.bottom -= cy;
 
-		if (r.right > r.left && r.bottom > r.top) {
-			SetBkColor(hdc, GetSysColor(COLOR_WINDOW));
+		if (r.right > r.left && r.bottom > r.top) {			
+			SetBkColor(hdc, bkColor);
+
 			SetTextColor(hdc, GetSysColor(COLOR_BTNTEXT));
 			SetTextAlign(hdc, TA_TOP | TA_LEFT);
 
@@ -382,4 +477,53 @@ void VDUIHotKeyExControlW32::UpdateText() {
 
 	InvalidateRect(mhwnd, NULL, TRUE);
 	UpdateCaretPosition();
+}
+
+void VDUIHotKeyExControlW32::ClearAnyKeyCapture(bool eatNextChar, bool eatNextKeyUp) {
+	if (mbAllKeysEnabled) {
+		mbAllKeysEnabled = false;
+
+		// Since we activate on a WM_KEYDOWN or WM_CHAR, there is potentially
+		// a WM_KEYUP and/or WM_CHAR to arrive. In particular, we really want
+		// to eat the WM_CHAR for a Tab, since otherwise it can cause the
+		// dialog code to beep.
+		mbAllKeysEatNextKeyUp = eatNextChar;
+		mbAllKeysEatNextChar = eatNextKeyUp;
+
+		InvalidateRect(mhwnd, nullptr, TRUE);
+	} else {
+		mbAllKeysEatNextKeyUp = false;
+		mbAllKeysEatNextChar = false;
+	}
+}
+
+void VDUIHotKeyExControlW32::EnableMessageHook() {
+	if (!mhHook)
+		mhHook = SetWindowsHookEx(WH_MSGFILTER, SuppressSysCharHook, nullptr, GetCurrentThreadId());
+}
+
+void VDUIHotKeyExControlW32::DisableMessageHook() {
+	if (mhHook) {
+		UnhookWindowsHookEx(mhHook);
+		mhHook = nullptr;
+	}
+}
+
+LRESULT CALLBACK VDUIHotKeyExControlW32::SuppressSysCharHook(int code, WPARAM wParam, LPARAM lParam) {
+	if (code == MSGF_DIALOGBOX) {
+		const MSG *msg = (const MSG *)lParam;
+
+		// This is a workaround for annoying behavior in IsDialogMessage() as
+		// implicitly called by DialogBox(): it issues a WM_GETDLGCODE message
+		// to the target window, and then happily ignores it and processes
+		// WM_SYSCHAR for Alt+keys anyway, which then activates shortcuts.
+		// To fix this problem, we install this message hook while capturing
+		// all keys and eat the WM_SYSCHAR messages via the dialog message hook
+		// before IsDialogMessage() can see it.
+		if (msg->message == WM_SYSCHAR) {
+			return TRUE;
+		}
+	}
+
+	return CallNextHookEx(nullptr, code, wParam, lParam);
 }

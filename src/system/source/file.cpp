@@ -384,7 +384,7 @@ void VDFile::skip(sint64 delta) {
 		seek(delta, kSeekCur);
 }
 
-sint64 VDFile::size() {
+sint64 VDFile::size() const {
 	union {
 		uint64 siz;
 		DWORD l[2];
@@ -400,7 +400,7 @@ sint64 VDFile::size() {
 	return (sint64)u.siz;
 }
 
-sint64 VDFile::tell() {
+sint64 VDFile::tell() const {
 	return mFilePosition;
 }
 
@@ -413,15 +413,15 @@ void VDFile::flush() {
 		throw MyWin32Error("Cannot flush file \"%ls\": %%s", GetLastError(), mpFilename.get());
 }
 
-bool VDFile::isOpen() {
+bool VDFile::isOpen() const {
 	return mhFile != 0;
 }
 
-VDFileHandle VDFile::getRawHandle() {
+VDFileHandle VDFile::getRawHandle() const {
 	return mhFile;
 }
 
-uint32 VDFile::getAttributes() {
+uint32 VDFile::getAttributes() const {
 	if (!mhFile)
 		return 0;
 

@@ -32,21 +32,14 @@ struct vdint128;
 struct vduint128;
 
 #ifdef _M_AMD64
-	extern "C" __int64 _mul128(__int64 x, __int64 y, __int64 *hiresult);
-	extern "C" unsigned __int64 _umul128(unsigned __int64 x, unsigned __int64 y, unsigned __int64 *hiresult);
 	extern "C" unsigned __int64 __shiftleft128(unsigned __int64 low, unsigned __int64 high, unsigned char shift);
 	extern "C" unsigned __int64 __shiftright128(unsigned __int64 low, unsigned __int64 high, unsigned char shift);
 
-	#pragma intrinsic(_mul128)
-	#pragma intrinsic(_umul128)
 	#pragma intrinsic(__shiftleft128)
 	#pragma intrinsic(__shiftright128)
 
-	extern "C" {
-		void VDCDECL vdasm_uint128_add(uint64 dst[2], const uint64 x[2], const uint64 y[2]);
-		void VDCDECL vdasm_uint128_sub(uint64 dst[2], const uint64 x[2], const uint64 y[2]);
-		void VDCDECL vdasm_uint128_mul(uint64 dst[2], const uint64 x[2], const uint64 y[2]);
-	}
+	void vdasm_uint128_add(uint64 dst[2], const uint64 x[2], const uint64 y[2]);
+	void vdasm_uint128_sub(uint64 dst[2], const uint64 x[2], const uint64 y[2]);
 #else
 	extern "C" {
 		void __cdecl vdasm_uint128_add(uint64 dst[2], const uint64 x[2], const uint64 y[2]);

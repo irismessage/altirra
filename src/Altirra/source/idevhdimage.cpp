@@ -168,6 +168,7 @@ int ATIDEVHDImage::Release() {
 void *ATIDEVHDImage::AsInterface(uint32 iid) {
 	switch(iid) {
 		case IATBlockDevice::kTypeID: return static_cast<IATBlockDevice *>(this);
+		case IATBlockDeviceDirectAccess::kTypeID: return static_cast<IATBlockDeviceDirectAccess *>(this);
 		default:
 			return ATDevice::AsInterface(iid);
 	}
@@ -607,6 +608,10 @@ void ATIDEVHDImage::InitNew(const wchar_t *path, uint8 heads, uint8 spt, uint32 
 	mFooterLocation = mFile.tell();
 
 	InitCommon();
+}
+
+VDStringW ATIDEVHDImage::GetVHDDirectAccessPath() const {
+	return mAbsPath;
 }
 
 void ATIDEVHDImage::InitCommon() {

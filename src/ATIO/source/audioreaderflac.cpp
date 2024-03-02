@@ -33,8 +33,11 @@
 	uint16 ATFLACUpdateCRC16_PCMUL(uint16 crc16, const void *buf, size_t n);
 	void ATFLACReconstructLPC_Narrow_SSE2(sint32 *y, uint32 n, const sint32 *lpcCoeffs, int qlpShift, int order);
 	void ATFLACReconstructLPC_Narrow_SSSE3(sint32 *y, uint32 n, const sint32 *lpcCoeffs, int qlpShift, int order);
+	void ATFLACReconstructLPC_Medium_SSSE3(sint32 *y, uint32 n, const sint32 *lpcCoeffs, int qlpShift, int order);
 #elif VD_CPU_ARM64
 	void ATFLACReconstructLPC_Narrow_NEON(sint32 *y, uint32 n, const sint32 *lpcCoeffs, int qlpShift, int order);
+	void ATFLACReconstructLPC_Medium_NEON(sint32 *y, uint32 n, const sint32 *lpcCoeffs, int qlpShift, int order);
+	void ATFLACReconstructLPC_Wide_NEON(sint32 *y, uint32 n, const sint32 *lpcCoeffs, int qlpShift, int order);
 	uint16 ATFLACUpdateCRC16_Crypto(uint16 crc16, const void *buf, size_t n);
 #endif
 
@@ -139,6 +142,24 @@ VDFORCEINLINE uint32 ATAudioReaderFLAC::BitReader::GetBits(uint32 n) {
 	return v >> (32 - n);
 }
 
+VDFORCEINLINE uint32 ATAudioReaderFLAC::BitReader::GetBitsLong(uint32 n) {
+	if (mBitPos + (sint32)n > 0)
+		[[unlikely]] Refill();
+
+	// VS2022 generates terrible x86 code for a 64-bit variable shift because it
+	// doesn't realize that x&7 < 32, so force a shld instruction.
+
+#ifdef VD_CPU_X86
+	uint64 v = (uint64)__ll_lshift(VDSwizzleU64(*(const uint64_t *)(mpSrcEnd + (mBitPos >> 3))), mBitPos & 7);
+#else
+	uint64 v = (uint64)(VDSwizzleU64(*(const uint64_t *)(mpSrcEnd + (mBitPos >> 3))) << (mBitPos & 7));
+#endif
+
+	mBitPos += n;
+
+	return (uint32)(v >> (64 - n));
+}
+
 VDFORCEINLINE sint32 ATAudioReaderFLAC::BitReader::GetBitsSigned(uint32 n) {
 	if (mBitPos + (sint32)n > 0)
 		[[unlikely]] Refill();
@@ -147,6 +168,21 @@ VDFORCEINLINE sint32 ATAudioReaderFLAC::BitReader::GetBitsSigned(uint32 n) {
 	mBitPos += n;
 
 	return v >> (32 - n);
+}
+
+VDFORCEINLINE sint32 ATAudioReaderFLAC::BitReader::GetBitsSignedLong(uint32 n) {
+	if (mBitPos + (sint32)n > 0)
+		[[unlikely]] Refill();
+
+#ifdef VD_CPU_X86
+	sint64 v = __ll_lshift(VDSwizzleU64(*(const uint64_t *)(mpSrcEnd + (mBitPos >> 3))), mBitPos & 7);
+#else
+	sint64 v = (sint64)(VDSwizzleU64(*(const uint64_t *)(mpSrcEnd + (mBitPos >> 3))) << (mBitPos & 7));
+#endif
+
+	mBitPos += n;
+
+	return (sint32)(v >> (64 - n));
 }
 
 template<bool T_HaveLzcnt>
@@ -184,6 +220,9 @@ VDFORCEINLINE uint32 ATAudioReaderFLAC::BitReader::GetUnaryValue() {
 			if (bitAccum)
 				break;
 
+			count += n * 8;
+			mBitPos += n * 8;
+
 			Refill();
 		}
 	}
@@ -201,7 +240,7 @@ VDFORCEINLINE uint32 ATAudioReaderFLAC::BitReader::GetUnaryValue() {
 		_BitScanReverse(&oneBitPos, bitAccum);
 
 #if VD_CPU_ARM64
-		// This is more optimal for x64, as the compiler doesn't realize
+		// This is more optimal for ARM64, as the compiler doesn't realize
 		// that bitAccum != 0 ==> _BSR() can't return 32, so we need to use
 		// 32-x to get a clean CLZ instruction out.
 		accumZeroes = 31 - oneBitPos;
@@ -321,8 +360,8 @@ void ATAudioReaderFLAC::ParseHeader() {
 		uint8 header[4];
 		Read(header, 4);
 
-		const uint8_t type = header[0] & 0x7F;
-		const uint16_t len = ((uint32)header[1] << 16) + ((uint32)header[2] << 8) + header[3];
+		const uint8 type = header[0] & 0x7F;
+		const uint32 len = ((uint32)header[1] << 16) + ((uint32)header[2] << 8) + header[3];
 
 		switch(type) {
 			case 0:
@@ -441,8 +480,13 @@ bool ATAudioReaderFLAC::ParseFrame() {
 			break;
 	}
 
-	if (blockSize < 16)
-		throw ATFLACDecodeException("An invalid block size was found in a frame header.");
+	// The FLAC specification says that the minimum block size is 16, but neglects to
+	// mention that this does NOT apply to the last block. Thus, we must allow short
+	// blocks here and validate each sub block against its prediction method to make
+	// sure we don't have a block shorter than the prediction delay.
+	//
+	//if (blockSize < 16)
+	//	throw ATFLACDecodeException("An invalid block size was found in a frame header.");
 
 	// decode sample rate
 	constexpr uint32 kSampleRateStreamInfo = (uint32)-1;
@@ -461,19 +505,19 @@ bool ATAudioReaderFLAC::ParseFrame() {
 
 		case kSampleRateKHz:
 			Read(hdst, 1);
-			sampleRate = *hdst * 1000 + 1000;
+			sampleRate = *hdst * 1000;
 			++hdst;
 			break;
 
 		case kSampleRateHz:
 			Read(hdst, 2);
-			sampleRate = ((uint32)hdst[0] << 8) + hdst[1] + 1;
+			sampleRate = ((uint32)hdst[0] << 8) + hdst[1];
 			hdst += 2;
 			break;
 
 		case kSampleRateDHz:
 			Read(hdst, 2);
-			sampleRate = (((uint32)hdst[0] << 8) + hdst[1] + 1) * 10;
+			sampleRate = (((uint32)hdst[0] << 8) + hdst[1]) * 10;
 			hdst += 2;
 			break;
 	}
@@ -535,7 +579,7 @@ bool ATAudioReaderFLAC::ParseFrame() {
 
 	mCurBlockPos = 0;
 	mCurBlockSize = blockSize;
-	mBlocks.resize(blockSize * channels);
+	mBlocks.resize(blockSize * channels + 3);		// extra padding for vector load over
 
 	// Transition from byte reading to bit reading. We need to establish the 64-bit zero tail
 	// for GetUnaryValue().
@@ -626,17 +670,25 @@ void ATAudioReaderFLAC::ParseSubFrame(BitReader& __restrict bitReader, std::span
 
 	uint32 wastedBits = 0;
 	
-	while(bitReader.GetBits(1))
-		++wastedBits;
+	if (bitReader.GetBits(1)) {
+		do {
+			++wastedBits;
+		} while(!bitReader.GetBits(1));
+	}
+
+	if (frameBitsPerSample <= wastedBits)
+		throw ATFLACDecodeException("An invalid wasted bit count was encountered.");
+
+	const uint32 encodedBitsPerSample = frameBitsPerSample - wastedBits;
 
 	if (subFrameType == 0)
-		ParseConstantSubFrame(bitReader, buffer, frameBitsPerSample);
+		ParseConstantSubFrame(bitReader, buffer, encodedBitsPerSample);
 	else if (subFrameType == 1)
-		ParseVerbatimSubFrame(bitReader, buffer, frameBitsPerSample);
+		ParseVerbatimSubFrame(bitReader, buffer, encodedBitsPerSample);
 	else if (subFrameType < 32)
-		ParseFixedSubFrame(bitReader, buffer, frameBitsPerSample, subFrameType - 8);
+		ParseFixedSubFrame(bitReader, buffer, encodedBitsPerSample, subFrameType - 8);
 	else
-		ParseLPCSubFrame(bitReader, buffer, frameBitsPerSample, subFrameType - 31);
+		ParseLPCSubFrame(bitReader, buffer, encodedBitsPerSample, subFrameType - 31);
 
 	if (wastedBits) {
 		for(sint32& v : buffer)
@@ -782,64 +834,115 @@ void ATAudioReaderFLAC::ParseLPCSubFrame(BitReader& __restrict bitReader, std::s
 		// 32x32 -> 32 multiplies. There is a catch, though -- intermediate sums might,
 		// so we need to ensure that we don't trip UB via a signed overflow. Fortunately,
 		// we can convince the compiler to generate a 32-bit IMUL for 64x32 -> 32.
-		if (order <= 16) {
 #if VD_CPU_X86 || VD_CPU_X64
+		if (order <= 16) {
 			// order-1 is not worth vectorizing
 			if (frameBitsPerSample <= 16 && order > 1) {
 				if (CPUGetEnabledExtensions() & CPUF_SUPPORTS_SSSE3)
 					ATFLACReconstructLPC_Narrow_SSSE3(y, n, lpcCoeffs, qlpShift, order);
 				else
 					ATFLACReconstructLPC_Narrow_SSE2(y, n, lpcCoeffs, qlpShift, order);
-			} else
-#elif VD_CPU_ARM64
-			if (frameBitsPerSample <= 16 && order > 1) {
-				ATFLACReconstructLPC_Narrow_NEON(y, n, lpcCoeffs, qlpShift, order);
-			} else
-#endif
-			{
-				switch(order) {
-					case  1: ReconstructLPC< 1>(y, n, lpcCoeffs, qlpShift); break;
-					case  2: ReconstructLPC< 2>(y, n, lpcCoeffs, qlpShift); break;
-					case  3: ReconstructLPC< 3>(y, n, lpcCoeffs, qlpShift); break;
-					case  4: ReconstructLPC< 4>(y, n, lpcCoeffs, qlpShift); break;
-					case  5: ReconstructLPC< 5>(y, n, lpcCoeffs, qlpShift); break;
-					case  6: ReconstructLPC< 6>(y, n, lpcCoeffs, qlpShift); break;
-					case  7: ReconstructLPC< 7>(y, n, lpcCoeffs, qlpShift); break;
-					case  8: ReconstructLPC< 8>(y, n, lpcCoeffs, qlpShift); break;
-					case  9: ReconstructLPC< 9>(y, n, lpcCoeffs, qlpShift); break;
-					case 10: ReconstructLPC<10>(y, n, lpcCoeffs, qlpShift); break;
-					case 11: ReconstructLPC<11>(y, n, lpcCoeffs, qlpShift); break;
-					case 12: ReconstructLPC<12>(y, n, lpcCoeffs, qlpShift); break;
-					case 13: ReconstructLPC<13>(y, n, lpcCoeffs, qlpShift); break;
-					case 14: ReconstructLPC<14>(y, n, lpcCoeffs, qlpShift); break;
-					case 15: ReconstructLPC<15>(y, n, lpcCoeffs, qlpShift); break;
-					case 16: ReconstructLPC<16>(y, n, lpcCoeffs, qlpShift); break;
-				}
-			}
-		} else {
-			for(size_t i = 0; i < n; ++i) {
-				uint32 pred = (uint32)((sint64)y[0] * lpcCoeffs[0]);
 
-				for(size_t j = 1; j < order; ++j)
-					pred += (uint32)((sint64)y[j] * lpcCoeffs[j]);
-
-				y[order] += (sint32)pred >> qlpShift;
-
-				++y;
+				return;
 			}
 		}
+#elif VD_CPU_ARM64
+		if (frameBitsPerSample <= 16 && order > 1 && order <= 16) {
+			ATFLACReconstructLPC_Narrow_NEON(y, n, lpcCoeffs, qlpShift, order);
+			return;
+		}
+
+		if (order > 1) {
+			ATFLACReconstructLPC_Medium_NEON(y, n, lpcCoeffs, qlpShift, order);
+			return;
+		}
+#endif
+
+		switch(order) {
+			case  1: ReconstructLPC< 1>(y, n, lpcCoeffs, qlpShift); break;
+			case  2: ReconstructLPC< 2>(y, n, lpcCoeffs, qlpShift); break;
+			case  3: ReconstructLPC< 3>(y, n, lpcCoeffs, qlpShift); break;
+			case  4: ReconstructLPC< 4>(y, n, lpcCoeffs, qlpShift); break;
+			case  5: ReconstructLPC< 5>(y, n, lpcCoeffs, qlpShift); break;
+			case  6: ReconstructLPC< 6>(y, n, lpcCoeffs, qlpShift); break;
+			case  7: ReconstructLPC< 7>(y, n, lpcCoeffs, qlpShift); break;
+			case  8: ReconstructLPC< 8>(y, n, lpcCoeffs, qlpShift); break;
+			case  9: ReconstructLPC< 9>(y, n, lpcCoeffs, qlpShift); break;
+			case 10: ReconstructLPC<10>(y, n, lpcCoeffs, qlpShift); break;
+			case 11: ReconstructLPC<11>(y, n, lpcCoeffs, qlpShift); break;
+			case 12: ReconstructLPC<12>(y, n, lpcCoeffs, qlpShift); break;
+			case 13: ReconstructLPC<13>(y, n, lpcCoeffs, qlpShift); break;
+			case 14: ReconstructLPC<14>(y, n, lpcCoeffs, qlpShift); break;
+			case 15: ReconstructLPC<15>(y, n, lpcCoeffs, qlpShift); break;
+			case 16: ReconstructLPC<16>(y, n, lpcCoeffs, qlpShift); break;
+			case 17: ReconstructLPC<17>(y, n, lpcCoeffs, qlpShift); break;
+			case 18: ReconstructLPC<18>(y, n, lpcCoeffs, qlpShift); break;
+			case 19: ReconstructLPC<19>(y, n, lpcCoeffs, qlpShift); break;
+			case 20: ReconstructLPC<20>(y, n, lpcCoeffs, qlpShift); break;
+			case 21: ReconstructLPC<21>(y, n, lpcCoeffs, qlpShift); break;
+			case 22: ReconstructLPC<22>(y, n, lpcCoeffs, qlpShift); break;
+			case 23: ReconstructLPC<23>(y, n, lpcCoeffs, qlpShift); break;
+			case 24: ReconstructLPC<24>(y, n, lpcCoeffs, qlpShift); break;
+			case 25: ReconstructLPC<25>(y, n, lpcCoeffs, qlpShift); break;
+			case 26: ReconstructLPC<26>(y, n, lpcCoeffs, qlpShift); break;
+			case 27: ReconstructLPC<27>(y, n, lpcCoeffs, qlpShift); break;
+			case 28: ReconstructLPC<28>(y, n, lpcCoeffs, qlpShift); break;
+			case 29: ReconstructLPC<29>(y, n, lpcCoeffs, qlpShift); break;
+			case 30: ReconstructLPC<30>(y, n, lpcCoeffs, qlpShift); break;
+			case 31: ReconstructLPC<31>(y, n, lpcCoeffs, qlpShift); break;
+			case 32: ReconstructLPC<32>(y, n, lpcCoeffs, qlpShift); break;
+		}
 	} else {
-		// Final dot product can exceed 32-bit before right shifting, so we must use
-		// 32x32 -> 64 multiplies.
-		for(size_t i = 0; i < n; ++i) {
-			sint64 pred = (sint64)y[0] * lpcCoeffs[0];
+#if VD_CPU_X86 || VD_CPU_X64
+		// order-1 is not worth vectorizing
+		if (frameBitsPerSample <= 24 && order > 1 && order <= 16) {
+			if (coeffAbsSum <= (UINT32_C(1) << 19)) {
+				if (CPUGetEnabledExtensions() & CPUF_SUPPORTS_SSSE3) {
+					ATFLACReconstructLPC_Medium_SSSE3(y, n, lpcCoeffs, qlpShift, order);
+					return;
+				}
+			}
+		}
+#elif VD_CPU_ARM64
+		if (order > 1) {
+			ATFLACReconstructLPC_Wide_NEON(y, n, lpcCoeffs, qlpShift, order);
+			return;
+		}
+#endif
 
-			for(size_t j = 1; j < order; ++j)
-				pred += (sint64)y[j] * lpcCoeffs[j];
-
-			y[order] += (sint32)(pred >> qlpShift);
-
-			++y;
+		switch(order) {
+			case  1: ReconstructLPC_Wide< 1>(y, n, lpcCoeffs, qlpShift); break;
+			case  2: ReconstructLPC_Wide< 2>(y, n, lpcCoeffs, qlpShift); break;
+			case  3: ReconstructLPC_Wide< 3>(y, n, lpcCoeffs, qlpShift); break;
+			case  4: ReconstructLPC_Wide< 4>(y, n, lpcCoeffs, qlpShift); break;
+			case  5: ReconstructLPC_Wide< 5>(y, n, lpcCoeffs, qlpShift); break;
+			case  6: ReconstructLPC_Wide< 6>(y, n, lpcCoeffs, qlpShift); break;
+			case  7: ReconstructLPC_Wide< 7>(y, n, lpcCoeffs, qlpShift); break;
+			case  8: ReconstructLPC_Wide< 8>(y, n, lpcCoeffs, qlpShift); break;
+			case  9: ReconstructLPC_Wide< 9>(y, n, lpcCoeffs, qlpShift); break;
+			case 10: ReconstructLPC_Wide<10>(y, n, lpcCoeffs, qlpShift); break;
+			case 11: ReconstructLPC_Wide<11>(y, n, lpcCoeffs, qlpShift); break;
+			case 12: ReconstructLPC_Wide<12>(y, n, lpcCoeffs, qlpShift); break;
+			case 13: ReconstructLPC_Wide<13>(y, n, lpcCoeffs, qlpShift); break;
+			case 14: ReconstructLPC_Wide<14>(y, n, lpcCoeffs, qlpShift); break;
+			case 15: ReconstructLPC_Wide<15>(y, n, lpcCoeffs, qlpShift); break;
+			case 16: ReconstructLPC_Wide<16>(y, n, lpcCoeffs, qlpShift); break;
+			case 17: ReconstructLPC_Wide<17>(y, n, lpcCoeffs, qlpShift); break;
+			case 18: ReconstructLPC_Wide<18>(y, n, lpcCoeffs, qlpShift); break;
+			case 19: ReconstructLPC_Wide<19>(y, n, lpcCoeffs, qlpShift); break;
+			case 20: ReconstructLPC_Wide<20>(y, n, lpcCoeffs, qlpShift); break;
+			case 21: ReconstructLPC_Wide<21>(y, n, lpcCoeffs, qlpShift); break;
+			case 22: ReconstructLPC_Wide<22>(y, n, lpcCoeffs, qlpShift); break;
+			case 23: ReconstructLPC_Wide<23>(y, n, lpcCoeffs, qlpShift); break;
+			case 24: ReconstructLPC_Wide<24>(y, n, lpcCoeffs, qlpShift); break;
+			case 25: ReconstructLPC_Wide<25>(y, n, lpcCoeffs, qlpShift); break;
+			case 26: ReconstructLPC_Wide<26>(y, n, lpcCoeffs, qlpShift); break;
+			case 27: ReconstructLPC_Wide<27>(y, n, lpcCoeffs, qlpShift); break;
+			case 28: ReconstructLPC_Wide<28>(y, n, lpcCoeffs, qlpShift); break;
+			case 29: ReconstructLPC_Wide<29>(y, n, lpcCoeffs, qlpShift); break;
+			case 30: ReconstructLPC_Wide<30>(y, n, lpcCoeffs, qlpShift); break;
+			case 31: ReconstructLPC_Wide<31>(y, n, lpcCoeffs, qlpShift); break;
+			case 32: ReconstructLPC_Wide<32>(y, n, lpcCoeffs, qlpShift); break;
 		}
 	}
 }
@@ -853,6 +956,20 @@ void ATAudioReaderFLAC::ReconstructLPC(sint32 *__restrict y, uint32 n, const sin
 			pred += (uint32)((sint64)y[j] * lpcCoeffs[j]);
 
 		y[Order] += (sint32)pred >> qlpShift;
+
+		++y;
+	}
+}
+
+template<int Order>
+void ATAudioReaderFLAC::ReconstructLPC_Wide(sint32 *__restrict y, uint32 n, const sint32 *__restrict lpcCoeffs, int qlpShift) {
+	for(uint32 i = 0; i < n; ++i) {
+		sint64 pred = (sint64)y[0] * lpcCoeffs[0];
+
+		for(uint32 j = 1; j < Order; ++j)
+			pred += (sint64)y[j] * lpcCoeffs[j];
+
+		y[Order] += (sint32)(pred >> qlpShift);
 
 		++y;
 	}
@@ -884,7 +1001,10 @@ void ATAudioReaderFLAC::ParseResiduals(BitReader& __restrict bitReader0, std::sp
 			// decode raw samples
 			uint32 bitsPerSample = bitReader.GetBits(5);
 
-			if (bitsPerSample) {
+			if (bitsPerSample > 24) {
+				for(sint32& v : partition)
+					v = bitReader.GetBitsSignedLong(bitsPerSample);
+			} else if (bitsPerSample) {
 				for(sint32& v : partition)
 					v = bitReader.GetBitsSigned(bitsPerSample);
 			} else {
@@ -898,17 +1018,32 @@ void ATAudioReaderFLAC::ParseResiduals(BitReader& __restrict bitReader0, std::sp
 				auto bitReader2 = bitReader;
 				uint32 literalBits = riceParam;
 
-				for(uint32 j = 0; j < curPartitionSize; ++j) {
-					sint32 enc = bitReader2.GetUnaryValue<haveLzcnt>() << literalBits;
+				if (literalBits > 24) {
+					for(uint32 j = 0; j < curPartitionSize; ++j) {
+						sint32 enc = bitReader2.GetUnaryValue<haveLzcnt>() << (literalBits - 1);
 
-					if (literalBits)
-						enc += bitReader2.GetBits(literalBits);
+						// we have to be careful here as the raw magnitude may be 32 bit
+						uint32 lit = bitReader2.GetBitsLong(literalBits);
+						sint32 v = enc + (sint32)(lit >> 1);
 
-					sint32 v = enc >> 1;
-					if (enc & 1)
-						v = -v - 1;
+						if (lit & 1)
+							v = -v - 1;
+		
+						*p++ = v;
+					}
+				} else {
+					for(uint32 j = 0; j < curPartitionSize; ++j) {
+						sint32 enc = bitReader2.GetUnaryValue<haveLzcnt>() << literalBits;
 
-					*p++ = v;
+						if (literalBits)
+							enc += bitReader2.GetBits(literalBits);
+
+						sint32 v = enc >> 1;
+						if (enc & 1)
+							v = -v - 1;
+
+						*p++ = v;
+					}
 				}
 
 				bitReader = bitReader2;
@@ -932,6 +1067,21 @@ void ATAudioReaderFLAC::ParseResiduals(BitReader& __restrict bitReader0, std::sp
 					case 13: decode(std::integral_constant<uint32, 13>(), haveLzcnt); break;
 					case 14: decode(std::integral_constant<uint32, 14>(), haveLzcnt); break;
 					case 15: decode(std::integral_constant<uint32, 15>(), haveLzcnt); break;
+					case 16: decode(std::integral_constant<uint32, 16>(), haveLzcnt); break;
+					case 17: decode(std::integral_constant<uint32, 17>(), haveLzcnt); break;
+					case 18: decode(std::integral_constant<uint32, 18>(), haveLzcnt); break;
+					case 19: decode(std::integral_constant<uint32, 19>(), haveLzcnt); break;
+					case 20: decode(std::integral_constant<uint32, 20>(), haveLzcnt); break;
+					case 21: decode(std::integral_constant<uint32, 21>(), haveLzcnt); break;
+					case 22: decode(std::integral_constant<uint32, 22>(), haveLzcnt); break;
+					case 23: decode(std::integral_constant<uint32, 23>(), haveLzcnt); break;
+					case 24: decode(std::integral_constant<uint32, 24>(), haveLzcnt); break;
+					case 25: decode(std::integral_constant<uint32, 25>(), haveLzcnt); break;
+					case 26: decode(std::integral_constant<uint32, 26>(), haveLzcnt); break;
+					case 27: decode(std::integral_constant<uint32, 27>(), haveLzcnt); break;
+					case 28: decode(std::integral_constant<uint32, 28>(), haveLzcnt); break;
+					case 29: decode(std::integral_constant<uint32, 29>(), haveLzcnt); break;
+					case 30: decode(std::integral_constant<uint32, 30>(), haveLzcnt); break;
 					default:
 						decode(riceParam, haveLzcnt);
 						break;
@@ -1006,12 +1156,13 @@ ATAudioReaderFLAC::BitPos ATAudioReaderFLAC::Refill(BitPos bitPos) {
 		// by the bit reader at the end of the frame due to unused readahead bits.
 		uint32 tailLen = std::min<uint32>(mPos, 16);
 		uint32 tailPos = mPos - tailLen;
-		memmove(mBuf + 16 - tailLen, mBuf + tailPos, tailLen);
 
 		if (mbCRC16Enabled && mCRC16BasePos < tailPos) {
 			UpdateCRC16(mBuf + mCRC16BasePos, tailPos - mCRC16BasePos);
 			mCRC16BasePos = 16 - tailLen;
 		}
+
+		memmove(mBuf + 16 - tailLen, mBuf + tailPos, tailLen);
 
 		mBasePos += mPos - 16;
 		mPos = 16;

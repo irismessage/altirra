@@ -102,9 +102,7 @@ bool VDPixmapResampler::Init(const vdrect32f& dstrect0, uint32 dw, uint32 dh, in
 			srcformat != nsVDPixmap::kPixFormat_YUV444_Planar_709 &&
 			srcformat != nsVDPixmap::kPixFormat_YUV444_Planar_709_FR &&
 			srcformat != nsVDPixmap::kPixFormat_YUV422_Planar &&
-			srcformat != nsVDPixmap::kPixFormat_YUV420_Planar &&
-			srcformat != nsVDPixmap::kPixFormat_YUV411_Planar &&
-			srcformat != nsVDPixmap::kPixFormat_YUV410_Planar
+			srcformat != nsVDPixmap::kPixFormat_YUV420_Planar
 			))
 		return false;
 
@@ -193,12 +191,6 @@ bool VDPixmapResampler::Init(const vdrect32f& dstrect0, uint32 dw, uint32 dh, in
 			srcrect2.translate(0.25f, 0.0f);
 			dstrect2.translate(0.25f, 0.0f);
 			break;
-		case nsVDPixmap::kPixFormat_YUV411_Planar:
-			srcrect2.translate(0.375f, 0.0f);
-			dstrect2.translate(0.375f, 0.0f);
-			break;
-		case nsVDPixmap::kPixFormat_YUV410_Planar:
-			break;
 		default:
 			VDASSERT(false);
 		}
@@ -231,8 +223,6 @@ bool VDPixmapResampler::Init(const vdrect32f& dstrect0, uint32 dw, uint32 dh, in
 		case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
 		case nsVDPixmap::kPixFormat_YUV422_Planar:
 		case nsVDPixmap::kPixFormat_YUV420_Planar:
-		case nsVDPixmap::kPixFormat_YUV411_Planar:
-		case nsVDPixmap::kPixFormat_YUV410_Planar:
 			gen.ldsrc(0, 0, 0, 0, sw, sh, kVDPixType_8, sw);
 			ApplyFilters(gen, mDstRectPlane0.width(), mDstRectPlane0.height(), xoffset, yoffset, xfactor, yfactor);
 
@@ -279,8 +269,6 @@ void VDPixmapResampler::Process(const VDPixmap& dst, const VDPixmap& src) {
 		case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
 		case nsVDPixmap::kPixFormat_YUV422_Planar:
 		case nsVDPixmap::kPixFormat_YUV420_Planar:
-		case nsVDPixmap::kPixFormat_YUV411_Planar:
-		case nsVDPixmap::kPixFormat_YUV410_Planar:
 			// blit primary plane
 			mpBlitter->Blit(dst, &mDstRectPlane0, src);
 

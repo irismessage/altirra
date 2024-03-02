@@ -23,6 +23,7 @@
 #include "options.h"
 #include "cmdhelpers.h"
 #include "simulator.h"
+#include "uicalibrationscreen.h"
 #include "uirender.h"
 #include "uimenu.h"
 
@@ -177,6 +178,10 @@ void OnCommandViewCustomizeHud() {
 	g_sim.GetUIRenderer()->BeginCustomization();
 }
 
+void OnCommandViewCalibrate() {
+	ATUICalibrationScreen::ShowDialog();
+}
+
 void OnCommandViewVideoOutputNormal() {
 	ATUISetAltViewEnabled(false);
 }
@@ -192,6 +197,7 @@ namespace ATCommands {
 		{ "View.ToggleTargetPointer", OnCommandViewToggleTargetPointer, nullptr, [] { return ToChecked(!ATUIGetTargetPointerVisible()); } },
 		{ "View.ToggleAutoHideMenu", [] { ATUISetMenuAutoHideEnabled(!ATUIIsMenuAutoHideEnabled()); }, nullptr, [] { return ToChecked(ATUIIsMenuAutoHideEnabled()); } },
 		{ "View.CustomizeHUD", OnCommandViewCustomizeHud },
+		{ "View.Calibrate", OnCommandViewCalibrate },
 
 		{ "View.VideoOutputNormal", OnCommandViewVideoOutputNormal, nullptr, [] { return ToRadio(!ATUIGetAltViewEnabled()); } },
 		{ "View.VideoOutputPrev", ATUISelectPrevAltOutput, ATUIIsAltOutputAvailable },

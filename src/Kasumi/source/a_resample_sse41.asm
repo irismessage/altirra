@@ -1,12 +1,14 @@
-		segment	.rdata, align=16
+		.686
+		.xmm
+		.model		flat
+		.const
 
 round		dq		0000000000002000h
 colround	dq		0000200000002000h
 
-		segment	.text
+		.code
 		
-		global		_vdasm_resize_table_row_8_k8_4x_SSE41
-_vdasm_resize_table_row_8_k8_4x_SSE41:
+_vdasm_resize_table_row_8_k8_4x_SSE41 proc
 		push		ebp
 		push		edi
 		push		esi
@@ -18,7 +20,7 @@ _vdasm_resize_table_row_8_k8_4x_SSE41:
 		mov			ebp, [esp +  4 + 16]		;ebp = dst
 		mov			esi, [esp + 12 + 16]		;esi = width
 		mov			edi, [esp + 16 + 16]		;edi = kernel
-.yloop:
+yloop:
 		;eax = temp
 		;ebx = temp
 		;ecx = temp
@@ -52,20 +54,20 @@ _vdasm_resize_table_row_8_k8_4x_SSE41:
 		psrad		xmm0, 14
 		packssdw	xmm0, xmm0
 		packuswb	xmm0, xmm0
-		movd		[ebp], xmm0
+		movd		dword ptr [ebp], xmm0
 
 		add			ebp, 4
 		sub			esi, 1
-		jne			.yloop
+		jne			yloop
 
 		pop			ebx
 		pop			esi
 		pop			edi
 		pop			ebp
 		ret
+_vdasm_resize_table_row_8_k8_4x_SSE41 endp
 
-		global		_vdasm_resize_table_row_8_k16_4x_SSE41
-_vdasm_resize_table_row_8_k16_4x_SSE41:
+_vdasm_resize_table_row_8_k16_4x_SSE41 proc
 		push		ebp
 		push		edi
 		push		esi
@@ -77,7 +79,7 @@ _vdasm_resize_table_row_8_k16_4x_SSE41:
 		mov			ebp, [esp +  4 + 16]		;ebp = dst
 		mov			esi, [esp + 12 + 16]		;esi = width
 		mov			edi, [esp + 16 + 16]		;edi = kernel
-.yloop:
+yloop:
 		;eax = temp
 		;ebx = temp
 		;ecx = temp
@@ -123,20 +125,20 @@ _vdasm_resize_table_row_8_k16_4x_SSE41:
 		psrad		xmm0, 14
 		packssdw	xmm0, xmm0
 		packuswb	xmm0, xmm0
-		movd		[ebp], xmm0
+		movd		dword ptr [ebp], xmm0
 
 		add			ebp, 4
 		sub			esi, 1
-		jne			.yloop
+		jne			yloop
 
 		pop			ebx
 		pop			esi
 		pop			edi
 		pop			ebp
 		ret
+_vdasm_resize_table_row_8_k16_4x_SSE41 endp
 
-		global		_vdasm_resize_table_row_8_SSE41
-_vdasm_resize_table_row_8_SSE41:
+_vdasm_resize_table_row_8_SSE41 proc
 		push		ebp
 		push		edi
 		push		esi
@@ -149,7 +151,7 @@ _vdasm_resize_table_row_8_SSE41:
 		mov			ebx, [esp +  8 + 16]		;ebx = src
 		mov			ebp, [esp + 12 + 16]		;ebp = width
 		mov			edx, [esp + 16 + 16]		;edx = kernel
-.yloop:
+yloop:
 		;eax = temp
 		;ebx = source base address
 		;ecx = (temp) source
@@ -164,14 +166,14 @@ _vdasm_resize_table_row_8_SSE41:
 		mov			esi, [esp + 20 + 16]		;esi = kernel width
 
 		movq		xmm2, xmm6
-.xloop:
+xloop:
 		pmovzxbw	xmm0, [ecx]
 		add			ecx, 8
 		pmaddwd		xmm0, [edx]
 		paddd		xmm2, xmm0
 		add			edx, 16
 		sub			esi, 8
-		jne			.xloop
+		jne			xloop
 
 		phaddd		xmm2, xmm2
 		phaddd		xmm2, xmm2
@@ -182,17 +184,16 @@ _vdasm_resize_table_row_8_SSE41:
 		mov			[edi], al
 		add			edi, 1
 		sub			ebp, 1
-		jne			.yloop
+		jne			yloop
 
 		pop			ebx
 		pop			esi
 		pop			edi
 		pop			ebp
 		ret
-		
+_vdasm_resize_table_row_8_SSE41 endp
 
-		global		_vdasm_resize_table_col_8_k2_SSE41
-_vdasm_resize_table_col_8_k2_SSE41:
+_vdasm_resize_table_col_8_k2_SSE41 proc
 		push		ebp
 		push		edi
 		push		esi
@@ -205,7 +206,7 @@ _vdasm_resize_table_col_8_k2_SSE41:
 		mov			edi, [esp + 16 + 16]		;edi = kernel
 		mov			ebp, [esp + 12 + 16]		;ebp = width
 
-		movq		xmm7, [edi]
+		movq		xmm7, qword ptr [edi]
 		pshufd		xmm7, xmm7, 0
 
 		mov			edx, [esp +  8 + 16]		;ebx = srcs
@@ -215,7 +216,7 @@ _vdasm_resize_table_col_8_k2_SSE41:
 		add			ebx, ebp
 		neg			ebp
 		
-.yloop:
+yloop:
 		;eax = row0
 		;ebx = row1
 		;ecx =
@@ -224,8 +225,8 @@ _vdasm_resize_table_col_8_k2_SSE41:
 		;esi = dest
 		;ebp = width counter
 
-		movd		xmm0, [eax+ebp]
-		movd		xmm2, [ebx+ebp]
+		movd		xmm0, dword ptr [eax+ebp]
+		movd		xmm2, dword ptr [ebx+ebp]
 		punpcklbw	xmm0, xmm2
 		pmovzxbw	xmm0, xmm0
 		pmaddwd		xmm0, xmm7
@@ -235,19 +236,19 @@ _vdasm_resize_table_col_8_k2_SSE41:
 		psrad		xmm0, 14
 		packssdw	xmm0, xmm0
 		packuswb	xmm0, xmm0
-		movd		[esi], xmm0
+		movd		dword ptr [esi], xmm0
 		add			esi, 4
 		add			ebp, 4
-		jnz			.yloop
+		jnz			yloop
 
 		pop			ebx
 		pop			esi
 		pop			edi
 		pop			ebp
 		ret
+_vdasm_resize_table_col_8_k2_SSE41 endp
 
-		global		_vdasm_resize_table_col_8_k4_SSE41
-_vdasm_resize_table_col_8_k4_SSE41:
+_vdasm_resize_table_col_8_k4_SSE41 proc
 		push		ebp
 		push		edi
 		push		esi
@@ -276,8 +277,8 @@ _vdasm_resize_table_col_8_k4_SSE41:
 		lea			esi, [esi+ebp-4]
 		neg			ebp
 		add			ebp,4
-		jz			.odd
-.yloop:
+		jz			odd
+yloop:
 		;eax = row0
 		;ebx = row1
 		;ecx = row2
@@ -286,20 +287,20 @@ _vdasm_resize_table_col_8_k4_SSE41:
 		;esi = dest
 		;ebp = width counter
 
-		movd		xmm0, [eax+ebp]
-		movd		xmm1, [ebx+ebp]
+		movd		xmm0, dword ptr [eax+ebp]
+		movd		xmm1, dword ptr [ebx+ebp]
 		punpcklbw	xmm0, xmm1
 
-		movd		xmm1, [ecx+ebp]
-		movd		xmm2, [edx+ebp]
+		movd		xmm1, dword ptr [ecx+ebp]
+		movd		xmm2, dword ptr [edx+ebp]
 		punpcklbw	xmm1, xmm2
 
-		movd		xmm2, [eax+ebp+4]
-		movd		xmm3, [ebx+ebp+4]
+		movd		xmm2, dword ptr [eax+ebp+4]
+		movd		xmm3, dword ptr [ebx+ebp+4]
 		punpcklbw	xmm2, xmm3
 		
-		movd		xmm3, [ecx+ebp+4]
-		movd		xmm4, [edx+ebp+4]
+		movd		xmm3, dword ptr [ecx+ebp+4]
+		movd		xmm4, dword ptr [edx+ebp+4]
 		punpcklbw	xmm3, xmm4
 		
 		pmovzxbw	xmm0, xmm0
@@ -325,16 +326,16 @@ _vdasm_resize_table_col_8_k4_SSE41:
 		
 		packssdw	xmm0, xmm2
 		packuswb	xmm0, xmm0
-		movq		[esi+ebp], xmm0
+		movq		qword ptr [esi+ebp], xmm0
 		add			ebp, 8
-		js			.yloop
-		jnz			.noodd
+		js			yloop
+		jnz			noodd
 
-.odd:
-		movd		xmm0, [eax]
-		movd		xmm1, [ebx]
-		movd		xmm2, [ecx]
-		movd		xmm3, [edx]
+odd:
+		movd		xmm0, dword ptr [eax]
+		movd		xmm1, dword ptr [ebx]
+		movd		xmm2, dword ptr [ecx]
+		movd		xmm3, dword ptr [edx]
 		punpcklbw	xmm0, xmm1
 		punpcklbw	xmm2, xmm3
 		pmovzxbw	xmm0, xmm0
@@ -346,13 +347,14 @@ _vdasm_resize_table_col_8_k4_SSE41:
 		psrad		xmm0, 14
 		packssdw	xmm0, xmm0
 		packuswb	xmm0, xmm0
-		movd		[esi], xmm0
-.noodd:
+		movd		dword ptr [esi], xmm0
+noodd:
 
 		pop			ebx
 		pop			esi
 		pop			edi
 		pop			ebp
 		ret
+_vdasm_resize_table_col_8_k4_SSE41 endp
 
 		end

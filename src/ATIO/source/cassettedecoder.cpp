@@ -24,6 +24,7 @@
 #include <at/atio/cassetteimage.h>		// for constants
 
 ATConfigVarFloat g_ATCVTapeDecodeDirectHPFCutoff("tape.decode.slope.hpf_cutoff", 5327.0f);
+ATConfigVarFloat g_ATCVTapeDecodeFSKMarkGain("tape.decode.fsk.mark_gain", 1.0f);
 
 #pragma runtime_checks("", off)
 #pragma optimize("gt", on)
@@ -33,10 +34,10 @@ ATCassetteDecoderFSK::ATCassetteDecoderFSK() {
 }
 
 void ATCassetteDecoderFSK::Reset() {
-	mAcc0R = 0;
-	mAcc0I = 0;
-	mAcc1R = 0;
-	mAcc1I = 0;
+	mAcc.m0R = 0;
+	mAcc.m0I = 0;
+	mAcc.m1R = 0;
+	mAcc.m1I = 0;
 	mIndex = 0;
 	memset(mHistory, 0, sizeof mHistory);
 }
@@ -61,7 +62,7 @@ void ATCassetteDecoderFSK::Process(const sint16 *samples, uint32 n, uint32 *bitf
 	};
 
 	static constexpr struct RotTab {
-		sint16 vec[32][4] = {};
+		alignas(16) sint16 vec[24][4] = {};
 
 		static constexpr sint16 intround16(float v) {
 			return v < 0 ? (sint16)(v - 0.5f) : (sint16)(v + 0.5f);
@@ -77,8 +78,46 @@ void ATCassetteDecoderFSK::Process(const sint16 *samples, uint32 n, uint32 *bitf
 		}
 	} kRotTab;
 
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+	static constexpr struct RotTabSSE2 {
+		alignas(16) __m128i vec[24] {};
+
+		constexpr RotTabSSE2() {
+			for(int i=0; i<24; ++i) {
+				for(int j=0; j<4; ++j) {
+					vec[i].m128i_i16[j*2+0] =  kRotTab.vec[i][j];
+					vec[i].m128i_i16[j*2+1] = -kRotTab.vec[i][j];
+				}
+			}
+		}
+	} kRotTabSSE2;
+#endif
+
+#if defined(VD_CPU_ARM64)
+	static constexpr struct RotTabNEON {
+		sint16 vec[24][4] {};
+
+		constexpr RotTabNEON() {
+			for(int i=0; i<24; ++i) {
+				// permute from (r0, i0, r1, i1) to (r0, r1, i0, i1) order
+				vec[i][0] = kRotTab.vec[i][0];
+				vec[i][1] = kRotTab.vec[i][2];
+				vec[i][2] = kRotTab.vec[i][1];
+				vec[i][3] = kRotTab.vec[i][3];
+			}
+		}
+	} kRotTabNEON;
+#endif
+
 	uint32 bitaccum = 0;
 	uint32 bitcounter = 32 - bitoffset;
+	const float markGain = g_ATCVTapeDecodeFSKMarkGain;
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+	__m128i acc01 = _mm_loadu_si128((const __m128i *)&mAcc + 0);
+#elif defined(VD_CPU_ARM64)
+	int32x4_t acc01 = vld1q_s32(&mAcc.m0R);
+#endif
 
 	do {
 		// update history window
@@ -117,22 +156,61 @@ void ATCassetteDecoderFSK::Process(const sint16 *samples, uint32 n, uint32 *bitf
 		if (mIndex == 24)
 			mIndex = 0;
 
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+		// advance sliding window
+		const sint32 x0 = mHistory[hpos1];
+		const __m128i x01 = _mm_shuffle_epi32(_mm_insert_epi16(_mm_insert_epi16(_mm_setzero_si128(), (uint16)x1, 0), (uint16)x0, 1), 0);
+
+		mHistory[hpos1] = x1;
+
+		acc01 = _mm_add_epi32(acc01, _mm_madd_epi16(x01, kRotTabSSE2.vec[hpos1]));
+
+		// compute mark/space magnitudes
+		__m128 resp = _mm_cvtepi32_ps(acc01);
+		resp = _mm_mul_ps(resp, resp);
+		resp = _mm_add_ps(resp, _mm_shuffle_ps(resp, resp, 0b0'10'11'00'01));
+
+		const float zero = _mm_cvtss_f32(resp);
+		const float one = _mm_cvtss_f32(_mm_movehl_ps(resp, resp)) * markGain;
+#elif defined(VD_CPU_ARM64)
+		// advance sliding window
+		const sint32 x0 = mHistory[hpos1];
+		mHistory[hpos1] = x1;
+
+		int16x4_t rot = vld1_s16(kRotTabNEON.vec[hpos1]);
+		acc01 = vmlal_n_s16(acc01, rot, x1);
+		acc01 = vmlsl_n_s16(acc01, rot, x0);
+
+		// compute mark/space magnitudes
+		float32x4_t resp = vcvtq_f32_s32(acc01);
+		float32x2_t respR = vget_low_f32(resp);
+		float32x2_t respI = vget_high_f32(resp);
+
+		float32x2_t zeroOne = vmla_f32(vmul_f32(respR, respR), respI, respI);
+
+		const float zero = vget_lane_f32(zeroOne, 0);
+		const float one = vget_lane_f32(zeroOne, 1) * markGain;
+#else
 		const sint32 x0 = mHistory[hpos1];
 		mHistory[hpos1] = x1;
 
 		const sint32 y = x1 - x0;
 
-		mAcc0R += kRotTab.vec[mIndex][0] * y;
-		mAcc0I += kRotTab.vec[mIndex][1] * y;
-		mAcc1R += kRotTab.vec[mIndex][2] * y;
-		mAcc1I += kRotTab.vec[mIndex][3] * y;
+		// sliding update for frequency bins 2-5
+		mAcc.m0R += kRotTab.vec[hpos1][0] * y;
+		mAcc.m0I += kRotTab.vec[hpos1][1] * y;
+		mAcc.m1R += kRotTab.vec[hpos1][2] * y;
+		mAcc.m1I += kRotTab.vec[hpos1][3] * y;
 
-		const float acc0r = (float)mAcc0R;
-		const float acc0i = (float)mAcc0I;
-		const float acc1r = (float)mAcc1R;
-		const float acc1i = (float)mAcc1I;
-		const float zero = acc0r * acc0r + acc0i * acc0i;
-		const float one = acc1r * acc1r + acc1i * acc1i;
+		// convert frequency bin responses to float
+		const float acc0r = (float)mAcc.m0R;
+		const float acc0i = (float)mAcc.m0I;
+		const float acc1r = (float)mAcc.m1R;
+		const float acc1i = (float)mAcc.m1I;
+
+		const float zero = acc0r*acc0r + acc0i*acc0i;
+		const float one = (acc1r*acc1r + acc1i*acc1i) * markGain;
+#endif
 
 		if (T_DoAnalysis) {
 			adest[0] = (float)mHistory[hpos1 >= 12 ? hpos1 - 12 : hpos1 + 12] * (1.0f / 32767.0f);
@@ -155,6 +233,12 @@ void ATCassetteDecoderFSK::Process(const sint16 *samples, uint32 n, uint32 *bitf
 
 	if (bitcounter < 32)
 		*bitfield++ |= bitaccum << bitcounter;
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+	_mm_storeu_si128((__m128i *)&mAcc + 0, acc01);
+#elif defined(VD_CPU_ARM64)
+	vst1q_s32(&mAcc.m0R, acc01);
+#endif
 }
 
 template void ATCassetteDecoderFSK::Process<false>(const sint16 *samples, uint32 n, uint32 *bitfield, uint32 bitoffset, float *adest);

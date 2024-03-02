@@ -22,7 +22,7 @@
 #include <arm64_neon.h>
 
 void ATArtifactNTSCAccum_NEON(void *rout, const void *table, const void *src, uint32 count) {
-	int16x8_t acc0 = vmovq_n_u8(0);
+	int16x8_t acc0 = vmovq_n_s16(0);
 	int16x8_t acc1 = acc0;
 	int16x8_t acc2 = acc0;
 	int16x8_t fast_impulse0;
@@ -105,7 +105,7 @@ fast_path:
 		acc1 = vaddq_s16(acc1, fast_impulse1);
 
 		acc0 = vshrq_n_s16(acc0, 4);
-		vst1_s16(dst, vqmovun_s16(acc0));
+		vst1_u8(dst, vqmovun_s16(acc0));
 		dst += 8;
 
 		acc0 = acc1;

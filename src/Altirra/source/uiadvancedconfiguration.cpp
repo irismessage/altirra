@@ -40,6 +40,7 @@ private:
 
 	VDUIProxyEditControl mVarNameView;
 	VDUIProxyEditControl mVarValueView;
+	VDUIProxyButtonControl mVarBoolView;
 	VDUIProxyButtonControl mResetView;
 };
 
@@ -65,12 +66,18 @@ bool ATUIDialogEditVariable::OnLoaded() {
 
 	AddProxy(&mVarNameView, IDC_NAME);
 	AddProxy(&mVarValueView, IDC_VALUE);
+	AddProxy(&mVarBoolView, IDC_BOOLOPT);
 	AddProxy(&mResetView, IDC_RESET);
 
 	mVarNameView.SetCaption(VDTextAToW(mConfigVar.mpVarName).c_str());
 	OnDataExchange(false);
-	mVarValueView.Focus();
-	mVarValueView.SelectAll();
+
+	if (mConfigVar.GetVarType() == ATConfigVarType::Bool) {
+		mVarBoolView.Focus();
+	} else {
+		mVarValueView.Focus();
+		mVarValueView.SelectAll();
+	}
 	
 	return true;
 }
@@ -94,11 +101,23 @@ bool ATUIDialogEditVariable::PreNCDestroy() {
 }
 
 void ATUIDialogEditVariable::OnDataExchange(bool write) {
-	if (write) {
-		if (!mConfigVar.FromString(VDTextWToA(mVarValueView.GetCaption()).c_str()))
-			FailValidation(mVarValueView.GetWindowId());
+	if (mConfigVar.GetVarType() == ATConfigVarType::Bool) {
+		if (write) {
+			static_cast<ATConfigVarBool&>(mConfigVar) = mVarBoolView.GetChecked();
+		} else {
+			mVarValueView.SetVisible(false);
+			mVarBoolView.SetVisible(true);
+			mVarBoolView.SetChecked(static_cast<ATConfigVarBool&>(mConfigVar));
+		}
 	} else {
-		mVarValueView.SetCaption(VDTextAToW(mConfigVar.ToString()).c_str());
+		if (write) {
+			if (!mConfigVar.FromString(VDTextWToA(mVarValueView.GetCaption()).c_str()))
+				FailValidation(mVarValueView.GetWindowId());
+		} else {
+			mVarBoolView.SetVisible(false);
+			mVarValueView.SetVisible(true);
+			mVarValueView.SetCaption(VDTextAToW(mConfigVar.ToString()).c_str());
+		}
 	}
 }
 

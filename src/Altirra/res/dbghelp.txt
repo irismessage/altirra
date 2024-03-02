@@ -1250,6 +1250,8 @@
     Any symbols added to the manual symbol table can be used for address
     specification and decoding as any other symbol.
 
++ .afx_dumpfilt  Dump artifacting engine filters
+
 + .antic       Display ANTIC status
 + .bank        Show memory bank state
 

@@ -174,6 +174,10 @@ namespace nsVDMath {
 		return a.x*b.x + a.y*b.y + a.z*b.z + a.w*b.w;
 	}
 
+	VDFORCEINLINE constexpr vdfloat2 rot(const vdfloat2& a) {
+		return vdfloat2{a.y, -a.x};
+	}
+
 	VDFORCEINLINE constexpr vdfloat3 cross(const vdfloat3& a, const vdfloat3& b) {
 		const vdfloat3 r = {a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x};
 		return r;

@@ -30,6 +30,7 @@
 #include <at/atnativeui/theme.h>
 #include <at/atnativeui/theme_win32.h>
 #include <at/atnativeui/uiframe.h>
+#include <at/atnativeui/uipanewindow.h>
 #include <at/atnativeui/uiproxies.h>
 #include "console.h"
 #include "resource.h"
@@ -1719,7 +1720,7 @@ private:
 	void OnColumnClicked(VDUIProxyListView *lv, int column);
 	void OnItemDoubleClicked(VDUIProxyListView *lv, int item);
 	void OnItemSelectionChanged(VDUIProxyListView *lv, int item);
-	void OnItemContextMenu(VDUIProxyListView *lv, VDUIProxyListView::ContextMenuEvent event);
+	void OnItemContextMenu(VDUIProxyListView *lv, VDUIProxyListView::ContextMenuEvent& event);
 	void OnTreeItemDoubleClicked(VDUIProxyTreeViewControl *tv, bool *handled);
 
 	void RemakeView();
@@ -1830,7 +1831,12 @@ LRESULT ATUIProfileView::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			if (mListView.IsVisible()) {
 				POINT pt { 0, 0 };
 				ClientToScreen(mListView.GetHandle(), &pt);
-				OnItemContextMenu(&mListView, {0, pt.x, pt.y});
+				VDUIProxyListView::ContextMenuEvent event{};
+				event.mIndex = 0;
+				event.mX = pt.x;
+				event.mY = pt.y;
+				event.mbHandled = false;
+				OnItemContextMenu(&mListView, event);
 			}
 			break;
 
@@ -2019,7 +2025,7 @@ void ATUIProfileView::OnItemSelectionChanged(VDUIProxyListView *lv, int item) {
 		);
 }
 
-void ATUIProfileView::OnItemContextMenu(VDUIProxyListView *lv, VDUIProxyListView::ContextMenuEvent event) {
+void ATUIProfileView::OnItemContextMenu(VDUIProxyListView *lv, VDUIProxyListView::ContextMenuEvent& event) {
 	HMENU hmenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_PROFILE_LIST_CONTEXT_MENU));
 	if (!hmenu)
 		return;
@@ -2033,6 +2039,8 @@ void ATUIProfileView::OnItemContextMenu(VDUIProxyListView *lv, VDUIProxyListView
 			CopyAsCsv();
 			break;
 	}
+
+	event.mbHandled = true;
 }
 
 void ATUIProfileView::OnTreeItemDoubleClicked(VDUIProxyTreeViewControl *tv, bool *handled) {
@@ -2076,6 +2084,7 @@ void ATUIProfileView::RemakeView() {
 	}
 
 	mListColumnNames.clear();
+	mListColumnNames.emplace_back(L"Thread");
 
 	if (!mpSession) {
 		::ShowWindow(mhwndList, SW_HIDE);
@@ -2153,10 +2162,13 @@ void ATUIProfileView::RemakeView() {
 			mListColumnNames.emplace_back(VDStringW(kCounterModeColumnNames[cm - 1]) + L"%");
 		}
 
-		int nc = 1;
+		int nc = 0;
 
 		for (const auto& name : mListColumnNames) {
-			mListView.InsertColumn(nc, name.c_str(), 0, nc > 1);
+			// column 0 is implicit and not removed/readded in this process
+			if (nc)
+				mListView.InsertColumn(nc, name.c_str(), 0, nc > 1);
+
 			++nc;
 		}
 
@@ -2224,7 +2236,7 @@ void ATUIProfileView::CopyAsCsv() {
 		if (id) {
 			for(uint32 j = 0; j < numColumns; ++j) {
 				cellText.clear();
-				mListSource.GetText(i, j, cellText);
+				mListSource.GetText(id, j, cellText);
 
 				appendQuoted(cellText.c_str());
 			}
@@ -2248,7 +2260,7 @@ vdvector_view<const uint32> ATUIGetProfilerCounterModeMenuIds() {
 	return kATUIProfilerCounterModeMenuIds;
 }
 
-class ATUIProfilerPane final : public ATUIPane {
+class ATUIProfilerPane final : public ATUIPaneWindow {
 public:
 	ATUIProfilerPane();
 	~ATUIProfilerPane();
@@ -2300,7 +2312,7 @@ protected:
 };
 
 ATUIProfilerPane::ATUIProfilerPane()
-	: ATUIPane(kATUIPaneId_Profiler, L"Profile View")
+	: ATUIPaneWindow(kATUIPaneId_Profiler, L"Profile View")
 	, mhwndToolbar(NULL)
 	, mhmenuMode(NULL)
 	, mhPropFont(nullptr)
@@ -2354,7 +2366,7 @@ LRESULT ATUIProfilerPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			return result;
 	}
 
-	return ATUIPane::WndProc(msg, wParam, lParam);
+	return ATUIPaneWindow::WndProc(msg, wParam, lParam);
 }
 
 bool ATUIProfilerPane::OnCreate() {
@@ -2384,7 +2396,7 @@ bool ATUIProfilerPane::OnCreate() {
 	UpdateRunButtonEnables();
 	RemakeView();
 
-	return ATUIPane::OnCreate();
+	return ATUIPaneWindow::OnCreate();
 }
 
 void ATUIProfilerPane::OnDestroy() {
@@ -2415,7 +2427,7 @@ void ATUIProfilerPane::OnDestroy() {
 		mhPropFont = nullptr;
 	}
 
-	ATUIPane::OnDestroy();
+	ATUIPaneWindow::OnDestroy();
 }
 
 void ATUIProfilerPane::OnSize() {

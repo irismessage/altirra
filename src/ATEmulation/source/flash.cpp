@@ -37,6 +37,7 @@ namespace {
 	const uint32 kAmicSectorEraseTimeoutCycles = 89;
 
 	const uint32 kSectorEraseTimeoutCycles50us = 89;
+	const uint32 kSectorEraseTimeoutCycles30us = 54;
 }
 
 ATFlashEmulator::ATFlashEmulator()
@@ -72,6 +73,7 @@ void ATFlashEmulator::Init(void *mem, ATFlashType type, ATScheduler *sch) {
 		case kATFlashType_Am29F032B:
 		case kATFlashType_M29F010B:
 		case kATFlashType_HY29F040A:
+		case kATFlashType_MX29F040:
 			mbA11Unlock = true;
 			break;
 
@@ -105,6 +107,10 @@ void ATFlashEmulator::Init(void *mem, ATFlashType type, ATScheduler *sch) {
 
 		case kATFlashType_BM29F040:
 			mSectorEraseTimeoutCycles = kBRIGHTSectorEraseTimeoutCycles;
+			break;
+
+		case kATFlashType_MX29F040:
+			mSectorEraseTimeoutCycles = kSectorEraseTimeoutCycles30us;
 			break;
 
 		default:
@@ -343,6 +349,7 @@ bool ATFlashEmulator::DebugReadByte(uint32 address, uint8& data) const {
 							break;
 
 						case kATFlashType_MX29LV640DT:
+						case kATFlashType_MX29F040:
 							data = 0xC2;	// XX00 Manufacturer ID: Macronix
 							break;
 					}
@@ -408,6 +415,10 @@ bool ATFlashEmulator::DebugReadByte(uint32 address, uint8& data) const {
 
 						case kATFlashType_MX29LV640DT:
 							data = 0xC2;
+							break;
+
+						case kATFlashType_MX29F040:
+							data = 0xA4;
 							break;
 					}
 					break;
@@ -500,6 +511,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 				case kATFlashType_Am29F032B:
 				case kATFlashType_M29F010B:
 				case kATFlashType_HY29F040A:
+				case kATFlashType_MX29F040:
 					if ((address & 0x7FF) == 0x555 && value == 0xAA)
 						mCommandPhase = 1;
 					break;
@@ -675,6 +687,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 					case kATFlashType_A29040:
 					case kATFlashType_BM29F040:
 					case kATFlashType_HY29F040A:
+					case kATFlashType_MX29F040:
 						memset(mpMemory, 0xFF, 0x80000);		// 512K (4Mbit)
 						break;
 
@@ -960,6 +973,7 @@ void ATFlashEmulator::SectorErase(uint32 address) {
 		case kATFlashType_A29040:
 		case kATFlashType_BM29F040:
 		case kATFlashType_HY29F040A:
+		case kATFlashType_MX29F040:
 			address &= 0x70000;
 			memset(mpMemory + address, 0xFF, 0x10000);
 			g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFFF);

@@ -26,6 +26,7 @@
 #include <ole2.h>
 #include <windows.h>
 #include <richedit.h>
+#include <commoncontrols.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/event.h>
@@ -39,12 +40,15 @@
 #include <vd2/Dita/services.h>
 #include "oshelper.h"
 #include "resource.h"
+#include <at/atcore/blockdevice.h>
 #include <at/atio/diskimage.h>
 #include <at/atio/diskfs.h>
+#include <at/atio/partitiondiskview.h>
+#include <at/atio/partitiontable.h>
 #include <at/atnativeui/dialog.h>
-#include <at/atnativeui/dragdrop.h>
 #include <at/atnativeui/genericdialog.h>
 #include <at/atnativeui/uiproxies.h>
+#include "uidiskexplorer_win32.h"
 #include "uifilefilters.h"
 #include "disk.h"
 #include "simulator.h"
@@ -298,11 +302,13 @@ void ATUIFileViewer::ReloadFile() {
 					0x25E2,	// lower right filled triangle
 					0x2597,	// lower right quadrant
 					0x25E3,	// lower left filled triangle
-					0x2580,	// top half
+					0x259D,	// quadrant upper right
+					0x2598,	// quadrant upper left
 					0x2594,	// top quarter
 					0x2582,	// bottom quarter
 					0x2596,	// lower left quadrant
-					0x2660,	// club
+					
+					0x2663,	// club
 					0x250C,	// lower-right elbow
 					0x2500,	// horizontal bar
 					0x253C,	// four-way
@@ -318,17 +324,18 @@ void ATUIFileViewer::ReloadFile() {
 					0x2193,	// down arrow
 					0x2190,	// left arrow
 					0x2192,	// right arrow
-					0x2666,	// diamond
 				};
 
 				rtf.append_sprintf("\\u%u?", kLowTable[c]);
+			} else if (c == 0x60) {
+				rtf += "\\u9830?"; // U+2666 black diamond suit
 			} else if (c >= 0x7B) {
 				static const uint16 kHighTable[]={
-					0x2663,	// club
+					0x2660,	// spade
 					'|',	// vertical bar (leave this alone so as to not invite font issues)
 					0x21B0,	// curved arrow up-left
-					0x25C4,	// left wide arrow
-					0x25BA,	// right wide arrow
+					0x25C0,	// left arrow
+					0x25B6,	// right arrow
 				};
 				
 				rtf.append_sprintf("\\u%u?", kHighTable[c - 0x7B]);
@@ -378,333 +385,19 @@ public:
 	bool mbIsCreate;
 	bool mbDateValid;
 	VDExpandedDate mDate;
-
-	void InitFrom(const ATDiskFSEntryInfo& einfo) {
-		mFileName = VDTextAToW(einfo.mFileName);
-		mSectors = einfo.mSectors;
-		mBytes = einfo.mBytes;
-		mFileKey = einfo.mKey;
-		mbIsDirectory = einfo.mbIsDirectory;
-		mbIsCreate = false;
-		mbDateValid = einfo.mbDateValid;
-		mDate = einfo.mDate;
-	}
 };
-
-namespace {
-	class IATDropTargetNotify {
-	public:
-		virtual ATDiskFSKey GetDropTargetParentKey() const = 0;
-		virtual void OnFSModified() = 0;
-		virtual void WriteFile(const char *filename, const void *data, uint32 len, const VDDate& creationTime) = 0;
-	};
-
-	class DropTarget final : public ATUIDropTargetBaseW32 {
-	public:
-		DropTarget(HWND hwnd, IATDropTargetNotify *notify);
-
-		void SetFS(IATDiskFS *fs) { mpFS = fs; }
-
-		HRESULT STDMETHODCALLTYPE DragEnter(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) override;
-		HRESULT STDMETHODCALLTYPE DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) override;
-		HRESULT STDMETHODCALLTYPE Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) override;
-
-	private:
-		void OnDragLeave() override;
-
-		void WriteFromStorageMedium(STGMEDIUM *medium, const char *filename, uint32 len, const FILETIME& creationTime);
-
-		HWND mhwnd = nullptr;
-
-		IATDiskFS *mpFS = nullptr;
-		IATDropTargetNotify *mpNotify = nullptr;
-		vdrefptr<IDataObject> mpDataObject;
-		vdrefptr<IDropTargetHelper> mpDropTargetHelper;
-	};
-
-	DropTarget::DropTarget(HWND hwnd, IATDropTargetNotify *notify)
-		: mhwnd(hwnd)
-		, mpNotify(notify)
-	{
-	}
-
-	HRESULT STDMETHODCALLTYPE DropTarget::DragEnter(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
-		mDropEffect = DROPEFFECT_NONE;
-
-		if (!(GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED) && mpFS && !mpFS->IsReadOnly()) {
-			const auto& formats = ATUIInitDragDropFormatsW32();
-
-			FORMATETC etc {};
-			etc.cfFormat = CF_HDROP;
-			etc.dwAspect = DVASPECT_CONTENT;
-			etc.lindex = -1;
-			etc.ptd = NULL;
-			etc.tymed = TYMED_HGLOBAL;
-
-			HRESULT hr = pDataObj->QueryGetData(&etc);
-
-			if (hr != S_OK) {
-				etc.cfFormat = formats.mDescriptorW;
-				hr = pDataObj->QueryGetData(&etc);
-
-				if (hr != S_OK) {
-					etc.cfFormat = formats.mDescriptorA;
-					hr = pDataObj->QueryGetData(&etc);
-				}
-			}
-
-			if (hr == S_OK) {
-				mDropEffect = DROPEFFECT_COPY;
-				mpDataObject = pDataObj;
-
-				CoCreateInstance(CLSID_DragDropHelper, nullptr, CLSCTX_INPROC, IID_IDropTargetHelper, (void **)~mpDropTargetHelper);
-
-				if (mpDropTargetHelper) {
-					POINT pt2 = { pt.x, pt.y };
-					mpDropTargetHelper->DragEnter(mhwnd, pDataObj, &pt2, mDropEffect);
-				}
-			}
-		}
-
-		*pdwEffect = mDropEffect;
-		return S_OK;
-	}
-
-	HRESULT STDMETHODCALLTYPE DropTarget::DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
-		if (mpDataObject)
-			ATUISetDropDescriptionW32(mpDataObject, (DROPIMAGETYPE)mDropEffect, L"Copy to disk image", nullptr);
-
-		*pdwEffect = mDropEffect;
-
-		if (mpDropTargetHelper) {
-			POINT pt2 = { pt.x, pt.y };
-			mpDropTargetHelper->DragOver(&pt2, mDropEffect);
-		}
-
-		return S_OK;
-	}
-
-	HRESULT STDMETHODCALLTYPE DropTarget::Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
-		mpDataObject = nullptr;
-
-		if (mpDropTargetHelper) {
-			POINT pt2 = { pt.x, pt.y };
-			mpDropTargetHelper->Drop(pDataObj, &pt2, mDropEffect);
-			mpDropTargetHelper = nullptr;
-		}
-
-		if (GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED)
-			return S_OK;
-		
-		if (!mpFS || mpFS->IsReadOnly())
-			return S_OK;
-
-		const auto& formats = ATUIInitDragDropFormatsW32();
-
-		// pull filenames
-		vdautoptr2<FILEGROUPDESCRIPTOR> descriptors;
-
-		FORMATETC etc;
-		etc.cfFormat = formats.mDescriptorA;
-		etc.dwAspect = DVASPECT_CONTENT;
-		etc.lindex = -1;
-		etc.ptd = NULL;
-		etc.tymed = TYMED_HGLOBAL;
-
-		STGMEDIUM medium;
-		medium.tymed = TYMED_HGLOBAL;
-		medium.hGlobal = NULL;
-		medium.pUnkForRelease = NULL;
-		HRESULT hr = pDataObj->GetData(&etc, &medium);
-
-		if (SUCCEEDED(hr)) {
-			FILEGROUPDESCRIPTORA *descriptors = (FILEGROUPDESCRIPTORA *)GlobalLock(medium.hGlobal);
-
-			if (descriptors) {
-				// read out the files, one at a time
-				for(uint32 i = 0; i < descriptors->cItems; ++i) {
-					const FILEDESCRIPTORA& fd = descriptors->fgd[i];
-					uint64 len64 = fd.nFileSizeLow + ((uint64)fd.nFileSizeHigh << 32);
-
-					if (len64 > 0x4000000)
-						continue;
-
-					etc.cfFormat = formats.mContents;
-					etc.dwAspect = DVASPECT_CONTENT;
-					etc.lindex = i;
-					etc.ptd = NULL;
-					etc.tymed = TYMED_HGLOBAL | TYMED_ISTREAM;
-
-					STGMEDIUM medium2;
-					medium2.tymed = TYMED_HGLOBAL;
-					medium2.hGlobal = NULL;
-					medium2.pUnkForRelease = NULL;
-					hr = pDataObj->GetData(&etc, &medium2);
-
-					if (SUCCEEDED(hr)) {
-						try {
-							WriteFromStorageMedium(&medium2, fd.cFileName, (uint32)len64, fd.ftCreationTime);
-						} catch(const MyError& e) {
-							e.post(mhwnd, "Altirra Error");
-							break;
-						}
-
-						ReleaseStgMedium(&medium2);
-					}
-				}
-
-				GlobalUnlock(medium.hGlobal);
-			}
-
-			ReleaseStgMedium(&medium);
-		} else {
-			etc.cfFormat = formats.mDescriptorW;
-			hr = pDataObj->GetData(&etc, &medium);
-
-			if (SUCCEEDED(hr)) {
-				FILEGROUPDESCRIPTORW *descriptors = (FILEGROUPDESCRIPTORW *)GlobalLock(medium.hGlobal);
-
-				if (descriptors) {
-					// read out the files, one at a time
-					for(uint32 i = 0; i < descriptors->cItems; ++i) {
-						const FILEDESCRIPTORW& fd = descriptors->fgd[i];
-						uint64 len64 = fd.nFileSizeLow + ((uint64)fd.nFileSizeHigh << 32);
-
-						if (len64 > 0x4000000)
-							continue;
-
-						etc.cfFormat = formats.mContents;
-						etc.dwAspect = DVASPECT_CONTENT;
-						etc.lindex = i;
-						etc.ptd = NULL;
-						etc.tymed = TYMED_HGLOBAL | TYMED_ISTREAM;
-
-						STGMEDIUM medium2;
-						medium2.tymed = TYMED_HGLOBAL;
-						medium2.hGlobal = NULL;
-						medium2.pUnkForRelease = NULL;
-						hr = pDataObj->GetData(&etc, &medium2);
-
-						if (SUCCEEDED(hr)) {
-							try {
-								WriteFromStorageMedium(&medium2, VDTextWToA(fd.cFileName).c_str(), (uint32)len64, fd.dwFlags & FD_CREATETIME ? fd.ftCreationTime : FILETIME {});
-							} catch(const MyError& e) {
-								e.post(mhwnd, "Altirra Error");
-								break;
-							}
-
-							ReleaseStgMedium(&medium2);
-						}
-					}
-
-					GlobalUnlock(medium.hGlobal);
-				}
-
-				ReleaseStgMedium(&medium);
-			} else {
-				etc.cfFormat = CF_HDROP;
-				hr = pDataObj->GetData(&etc, &medium);
-
-				if (FAILED(hr))
-					return hr;
-
-				HDROP hdrop = (HDROP)medium.hGlobal;
-
-				UINT count = DragQueryFileW(hdrop, 0xFFFFFFFF, NULL, 0);
-
-				vdfastvector<wchar_t> buf;
-				for(UINT i = 0; i < count; ++i) {
-					UINT len = DragQueryFileW(hdrop, i, NULL, 0);
-
-					buf.clear();
-					buf.resize(len+1, 0);
-
-					if (DragQueryFileW(hdrop, i, buf.data(), len+1)) {
-						VDFile f(buf.data());
-
-						sint64 len = f.size();
-
-						try {
-							if (len < 0x400000) {
-								uint32 len32 = (uint32)len;
-
-								vdfastvector<uint8> databuf(len32);
-								f.read(databuf.data(), len32);
-
-								const wchar_t *fn = VDFileSplitPath(buf.data());
-								const VDStringA fn8(VDTextWToA(fn));
-
-								mpNotify->WriteFile(fn8.c_str(), databuf.data(), len32, f.getCreationTime());
-							}
-						} catch(const MyError& e) {
-							e.post(mhwnd, "Altirra Error");
-							break;
-						}
-					}
-				}
-
-				ReleaseStgMedium(&medium);
-			}
-		}
-
-		mpNotify->OnFSModified();
-		return S_OK;
-	}
-
-	void DropTarget::OnDragLeave() {
-		if (mpDropTargetHelper) {
-			mpDropTargetHelper->DragLeave();
-			mpDropTargetHelper = nullptr;
-		}
-
-		ATUISetDropDescriptionW32(mpDataObject, DROPIMAGE_INVALID, nullptr, nullptr);
-		
-		mpDataObject = nullptr;
-	}
-
-	void DropTarget::WriteFromStorageMedium(STGMEDIUM *medium, const char *filename, uint32 len32, const FILETIME& creationTime) {
-		vdrefptr<IStream> stream;
-		if (medium->tymed == TYMED_HGLOBAL) {
-			CreateStreamOnHGlobal(medium->hGlobal, FALSE, ~stream);
-		} else {
-			stream = medium->pstm;
-		}
-
-		if (!stream)
-			return;
-
-		vdfastvector<uint8> buf;
-
-		LARGE_INTEGER dist;
-		dist.QuadPart = 0;
-		HRESULT hr = stream->Seek(dist, STREAM_SEEK_SET, NULL);
-
-		if (SUCCEEDED(hr)) {
-			buf.resize(len32);
-
-			ULONG actual = 0;
-			if (len32 > 0)
-				hr = stream->Read(buf.data(), len32, &actual);
-			else
-				hr = S_OK;
-
-			if (SUCCEEDED(hr)) {
-				const uint64 ticks = creationTime.dwLowDateTime + ((uint64)creationTime.dwHighDateTime << 32);
-				mpNotify->WriteFile(filename, buf.data(), actual, VDDate { ticks });
-			}
-		}
-
-		stream.clear();
-	}
-
-}
 
 class ATUIDialogDiskExplorer final : public VDResizableDialogFrameW32, public IATDropTargetNotify {
 public:
-	ATUIDialogDiskExplorer(IATDiskImage *image = NULL, const wchar_t *imageName = NULL, bool writeEnabled = true, bool autoFlush = true, ATDiskInterface *di = nullptr);
+	ATUIDialogDiskExplorer(IATDiskImage *image = NULL, const wchar_t *imageName = NULL, bool writeEnabled = true, bool autoFlush = true, ATDiskInterface *di = nullptr, IATBlockDevice *dev = nullptr);
 	~ATUIDialogDiskExplorer();
 
 protected:
+	class ListEntry;
+	class FileListEntry;
+	struct FileListEntrySort;
+	class PartitionListEntry;
+
 	bool OnLoaded();
 	void OnDestroy();
 	bool OnErase(VDZHDC hdc);
@@ -712,56 +405,55 @@ protected:
 	bool OnCommand(uint32 id, uint32 extcode);
 
 	void OnItemBeginDrag(VDUIProxyListView *sender, int item);
-	void OnItemContextMenu(VDUIProxyListView *sender, const VDUIProxyListView::ContextMenuEvent& event);
+	void OnItemContextMenu(VDUIProxyListView *sender, VDUIProxyListView::ContextMenuEvent& event);
 	void OnItemLabelChanged(VDUIProxyListView *sender, VDUIProxyListView::LabelChangedEvent *event);
 	void OnItemDoubleClick(VDUIProxyListView *sender, int item);
+
+	void OpenPartition(const PartitionListEntry& ple);
+
+	ListEntry *GetListEntry(int idx);
+	FileListEntry *GetFileListEntry(int idx);
+	PartitionListEntry *GetPartitionListEntry(int idx);
 
 	virtual ATDiskFSKey GetDropTargetParentKey() const { return mCurrentDirKey; }
 	void OnFSModified();
 
+	void MountFS(ATDiskInterface *diskInterface, IATDiskImage& image, vdautoptr<IATDiskFS> fs, const wchar_t *fsDescription, bool write, bool autoflush);
+	void ValidateForWrites();
 	void RefreshList();
+	void RefreshListFromPartitions();
+	void RefreshListFromFileSystem();
 	void RefreshFsInfo();
 	void WriteFile(const char *filename, const void *data, uint32 len, const VDDate& creationTime);
 
 	LRESULT ListViewSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-	class FileListEntry : public vdrefcounted<IVDUIListViewVirtualItem>, public ATUIDiskExplorerFileEntry {
-	public:
-		void GetText(int subItem, VDStringW& s) const;
-	};
+	HMENU	mhMenuItemContext = nullptr;
 
-	struct FileListEntrySort {
-		bool operator()(const FileListEntry *x, const FileListEntry *y) const {
-			if (x->mbIsDirectory != y->mbIsDirectory)
-				return x->mbIsDirectory;
-
-			return x->mFileName.comparei(y->mFileName) < 0;
-		}
-	};
-
-	HMENU	mhMenuItemContext;
-
-	uint32	mIconFile;
-	uint32	mIconFolder;
+	uint32	mIconFile = 0;
+	uint32	mIconFolder = 0;
+	uint32	mIconPartition = 0;
 	ATDiskFSKey	mCurrentDirKey;
-	bool	mbWriteEnabled;
-	bool	mbAutoFlush;
+	bool	mbWriteEnabled = false;
+	bool	mbAutoFlush = false;
 	bool	mbAdjustFilenames = true;
 	bool	mbStrictFilenames = true;
 
-	IATDiskImage *mpImage;
+	IATDiskImage *mpImage = nullptr;
 	vdrefptr<IATDiskImage> mpImageAlloc;
-	const wchar_t *mpImageName;
+	const wchar_t *mpImageName = nullptr;
 	ATDiskInterface *mpDiskInterface = nullptr;
+	IATBlockDevice *mpBlockDevice = nullptr;
 
 	vdautoptr<IATDiskFS> mpFS;
 	VDUIProxyListView mList;
+	VDUIProxyEditControl mFileNameView;
 
-	vdrefptr<DropTarget> mpDropTarget;
+	vdrefptr<IATUIDiskExplorerDropTargetW32> mpDropTarget;
 
-	HWND	mhwndList;
-	VDFunctionThunkInfo *mpListViewThunk;
-	WNDPROC mListViewWndProc;
+	HWND	mhwndList = nullptr;
+	VDFunctionThunkInfo *mpListViewThunk = nullptr;
+	WNDPROC mListViewWndProc = nullptr;
 
 	VDDelegate mDelBeginDrag;
 	VDDelegate mDelBeginRDrag;
@@ -769,6 +461,51 @@ protected:
 	VDDelegate mDelLabelChanged;
 	VDDelegate mDelDoubleClick;
 };
+
+class ATUIDialogDiskExplorer::ListEntry : public vdrefcounted<IVDUIListViewVirtualItem>, public IVDUnknown {
+};
+
+class ATUIDialogDiskExplorer::FileListEntry : public ListEntry, public ATUIDiskExplorerFileEntry {
+public:
+	static constexpr uint32 kTypeID = "ATUIDialogDiskExplorer::FileListEntry"_vdtypeid;
+
+	void *AsInterface(uint32 iid) override { return iid == kTypeID ? this : nullptr; }
+
+	void InitFrom(const ATDiskFSEntryInfo& einfo);
+
+	void GetText(int subItem, VDStringW& s) const;
+};
+
+class ATUIDialogDiskExplorer::PartitionListEntry : public ListEntry, public ATPartitionInfo {
+public:
+	static constexpr uint32 kTypeID = "ATUIDialogDiskExplorer::PartitionListEntry"_vdtypeid;
+
+	void *AsInterface(uint32 iid) override { return iid == kTypeID ? this : nullptr; }
+
+	void InitFrom(const ATPartitionInfo& pi);
+
+	void GetText(int subItem, VDStringW& s) const;
+};
+
+struct ATUIDialogDiskExplorer::FileListEntrySort {
+	bool operator()(const FileListEntry *x, const FileListEntry *y) const {
+		if (x->mbIsDirectory != y->mbIsDirectory)
+			return x->mbIsDirectory;
+
+		return x->mFileName.comparei(y->mFileName) < 0;
+	}
+};
+
+void ATUIDialogDiskExplorer::FileListEntry::InitFrom(const ATDiskFSEntryInfo& einfo) {
+	mFileName = VDTextAToW(einfo.mFileName);
+	mSectors = einfo.mSectors;
+	mBytes = einfo.mBytes;
+	mFileKey = einfo.mKey;
+	mbIsDirectory = einfo.mbIsDirectory;
+	mbIsCreate = false;
+	mbDateValid = einfo.mbDateValid;
+	mDate = einfo.mDate;
+}
 
 void ATUIDialogDiskExplorer::FileListEntry::GetText(int subItem, VDStringW& s) const {
 	if (subItem && mFileKey == ATDiskFSKey::None)
@@ -802,7 +539,30 @@ void ATUIDialogDiskExplorer::FileListEntry::GetText(int subItem, VDStringW& s) c
 	}
 }
 
-ATUIDialogDiskExplorer::ATUIDialogDiskExplorer(IATDiskImage *image, const wchar_t *imageName, bool writeEnabled, bool autoFlush, ATDiskInterface *di)
+void ATUIDialogDiskExplorer::PartitionListEntry::InitFrom(const ATPartitionInfo& pi) {
+	static_cast<ATPartitionInfo&>(*this) = pi;
+}
+
+void ATUIDialogDiskExplorer::PartitionListEntry::GetText(int subItem, VDStringW& s) const {
+	switch(subItem) {
+		case 0:
+			s = mName;
+			break;
+
+		case 1:
+			s.sprintf(L"%u", mBlockCount);
+			break;
+
+		case 2:
+			s.sprintf(L"%u", mSectorCount * mSectorSize);
+			break;
+
+		case 3:
+			break;
+	}
+}
+
+ATUIDialogDiskExplorer::ATUIDialogDiskExplorer(IATDiskImage *image, const wchar_t *imageName, bool writeEnabled, bool autoFlush, ATDiskInterface *di, IATBlockDevice *dev)
 	: VDResizableDialogFrameW32(IDD_DISK_EXPLORER)
 	, mhMenuItemContext(NULL)
 	, mbWriteEnabled(writeEnabled)
@@ -810,12 +570,13 @@ ATUIDialogDiskExplorer::ATUIDialogDiskExplorer(IATDiskImage *image, const wchar_
 	, mpImage(image)
 	, mpImageName(imageName)
 	, mpDiskInterface(di)
+	, mpBlockDevice(dev)
 	, mhwndList(NULL)
 	, mpListViewThunk(NULL)
 {
 	mList.OnItemBeginDrag() += mDelBeginDrag.Bind(this, &ATUIDialogDiskExplorer::OnItemBeginDrag);
 	mList.OnItemBeginRDrag() += mDelBeginRDrag.Bind(this, &ATUIDialogDiskExplorer::OnItemBeginDrag);
-	mList.OnItemContextMenu() += mDelContextMenu(this, &ATUIDialogDiskExplorer::OnItemContextMenu);
+	mList.OnItemContextMenu() += mDelContextMenu.Bind(this, &ATUIDialogDiskExplorer::OnItemContextMenu);
 	mList.OnItemLabelChanged() += mDelLabelChanged.Bind(this, &ATUIDialogDiskExplorer::OnItemLabelChanged);
 	mList.OnItemDoubleClicked() += mDelDoubleClick.Bind(this, &ATUIDialogDiskExplorer::OnItemDoubleClick);
 }
@@ -851,7 +612,9 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 	}
 
 	AddProxy(&mList, IDC_DISK_CONTENTS);
+	AddProxy(&mFileNameView, IDC_FILENAME);
 
+	mList.SetActivateOnEnterEnabled(true);
 	mList.SetFullRowSelectEnabled(true);
 	mList.InsertColumn(0, L"Filename", 0);
 	mList.InsertColumn(1, L"Sectors", 0);
@@ -860,25 +623,34 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 
 	mhMenuItemContext = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_DISK_EXPLORER_CONTEXT_MENU));
 
-	mpDropTarget = new DropTarget(mhdlg, this);
-	RegisterDragDrop(mList.GetHandle(), mpDropTarget);
+	ATUICreateDiskExplorerDropTargetW32(mhdlg, this, ~mpDropTarget);
+	RegisterDragDrop(mList.GetHandle(), mpDropTarget->AsDropTarget());
 
-	SHFILEINFOW infoFile = {0};
-	SHFILEINFOW infoFolder = {0};
+	if (SHSTOCKICONINFO ssii = {sizeof(SHSTOCKICONINFO)};
+		SUCCEEDED(SHGetStockIconInfo(SIID_DOCNOASSOC, SHGSI_SYSICONINDEX | SHGSI_SMALLICON, &ssii)))
+	{
+		mIconFile = ssii.iSysImageIndex;
+	}
 
-	SHGetFileInfoW(L"foo.bin", FILE_ATTRIBUTE_NORMAL, &infoFile, sizeof(infoFile), SHGFI_SMALLICON | SHGFI_SYSICONINDEX | SHGFI_USEFILEATTRIBUTES);
-	HIMAGELIST hil = (HIMAGELIST)SHGetFileInfoW(L"foo.bin", FILE_ATTRIBUTE_DIRECTORY, &infoFolder, sizeof(infoFolder), SHGFI_SMALLICON | SHGFI_SYSICONINDEX | SHGFI_USEFILEATTRIBUTES);
+	if (SHSTOCKICONINFO ssii = {sizeof(SHSTOCKICONINFO)};
+		SUCCEEDED(SHGetStockIconInfo(SIID_FOLDER, SHGSI_SYSICONINDEX | SHGSI_SMALLICON, &ssii)))
+	{
+		mIconFolder = ssii.iSysImageIndex;
+	}
 
-	mIconFile = infoFile.iIcon;
-	mIconFolder = infoFolder.iIcon;
+	if (SHSTOCKICONINFO ssii = {sizeof(SHSTOCKICONINFO)};
+		SUCCEEDED(SHGetStockIconInfo(SIID_DRIVEFIXED, SHGSI_SYSICONINDEX | SHGSI_SMALLICON, &ssii)))
+	{
+		mIconPartition = ssii.iSysImageIndex;
+	}
 
-	ListView_SetImageList(mList.GetHandle(), hil, LVSIL_SMALL);
+	HIMAGELIST hil = nullptr;
+	if (SUCCEEDED(SHGetImageList(SHIL_SMALL, IID_IImageList, (void **)&hil)))
+		ListView_SetImageList(mList.GetHandle(), hil, LVSIL_SMALL);
 
-	if (mpImageName) {
+	if (mpImage) {
 		try {
-			SetControlText(IDC_FILENAME, mpImageName);
-			SendDlgItemMessage(mhdlg, IDC_FILENAME, EM_SETREADONLY, TRUE, FALSE);
-			SendDlgItemMessage(mhdlg, IDC_FILENAME, EM_SETSEL, -1, -1);
+			mFileNameView.SetReadOnly(true);
 			EnableControl(IDC_BROWSE, false);
 
 			vdautoptr<IATDiskFS> fs(ATDiskMountImage(mpImage, !mbWriteEnabled));
@@ -886,36 +658,9 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 			if (!fs)
 				throw MyError("Unable to detect the file system on the disk image.");
 
-			mpFS.from(fs);
-			mpFS->SetStrictNameChecking(mbStrictFilenames);
-			mpDropTarget->SetFS(mpFS);
+			auto image = std::move(mpImage);
 
-			mCurrentDirKey = ATDiskFSKey::None;
-
-			if (mbWriteEnabled) {
-				if (mpFS->IsReadOnly()) {
-					ShowWarning(L"This disk format is only supported in read-only mode.", L"Altirra Warning");
-				} else {
-					ATDiskFSValidationReport validationReport;
-					if (!mpFS->Validate(validationReport)) {
-						// Check if we had a serious error for which we should block writes.
-						if (!validationReport.IsSerious() && validationReport.mbBitmapIncorrectLostSectorsOnly) {
-							ShowWarning(L"The allocation bitmap on this disk is incorrect: some sectors are marked allocated when they are actually free.");
-						} else {
-							mpFS->SetReadOnly(true);
-
-							ShowWarning(
-								validationReport.mbBrokenFiles || validationReport.mbOpenWriteFiles
-									? L"The file system on this disk is damaged and has been mounted as read-only to prevent further damage."
-									: L"The allocation bitmap on this disk is incorrect. The disk has been mounted read-only as a precaution to prevent further damage.",
-								L"Altirra Warning");
-						}
-					}
-				}
-			}
-
-			// must be after the above to indicate r/o filesystem
-			RefreshList();
+			MountFS(mpDiskInterface, *image, std::move(fs), mpImageName, mbWriteEnabled, mbAutoFlush);
 
 			SetFocusToControl(IDC_DISK_CONTENTS);
 		} catch(const MyError& e) {
@@ -923,6 +668,16 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 			End(false);
 			return true;
 		}
+	} else if (mpBlockDevice) {
+		mFileNameView.SetText(mpImageName);
+		mFileNameView.DeselectAll();
+		mFileNameView.SetReadOnly(true);
+
+		EnableControl(IDC_BROWSE, false);
+
+		RefreshList();
+
+		SetFocusToControl(IDC_DISK_CONTENTS);
 	} else {
 		SetFocusToControl(IDC_BROWSE);
 	}
@@ -1060,38 +815,14 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 			if (!fs)
 				throw MyError("Unable to detect the file system on the disk image.");
 
-			fs->SetStrictNameChecking(mbStrictFilenames);
-
-			mpImageAlloc = std::move(image);
-			mpImage = mpImageAlloc;
-			mbAutoFlush = mountedImageAutoFlush;
-			mpDiskInterface = diskInterface;
-
-			mpFS.from(fs);
-			mpDropTarget->SetFS(mpFS);
-
-			mCurrentDirKey = ATDiskFSKey::None;
-
 			VDStringW displayedPath(fn);
 			if (usingMountedImage)
 				displayedPath += L" (mounted)";
-			SetControlText(IDC_FILENAME, displayedPath.c_str());
 
-			RefreshList();
+			if (mountedImageWritable && !(VDFileGetAttributes(fn.c_str()) & kVDFileAttr_ReadOnly))
+				mountedImageWritable = false;
 
-			if (mpImage && mpImage->IsUpdatable() && mpFS->IsReadOnly()) {
-				ShowWarning(L"This disk format is only supported in read-only mode.", L"Altirra Warning");
-			} else {
-				ATDiskFSValidationReport validationReport;
-				if (!mpFS->Validate(validationReport)) {
-					mpFS->SetReadOnly(true);
-
-					ShowWarning(L"The file system on this disk is damaged and has been mounted as read-only to prevent further damage.", L"Altirra Warning");
-				} else if (VDFileGetAttributes(fn.c_str()) & kVDFileAttr_ReadOnly) {
-					mpFS->SetReadOnly(true);
-					RefreshFsInfo();
-				}
-			}
+			MountFS(diskInterface, *image, std::move(fs), displayedPath.c_str(), mountedImageWritable, mountedImageAutoFlush);
 		}
 		return true;
 	} else if (id == ID_DISKEXP_RENAME) {
@@ -1108,7 +839,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 				it != itEnd;
 				++it)
 			{
-				FileListEntry *fle = static_cast<FileListEntry *>(mList.GetVirtualItem(*it));
+				FileListEntry *fle = GetFileListEntry(*it);
 
 				if (fle && fle->mFileKey != ATDiskFSKey::None) {
 					try {
@@ -1146,7 +877,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 
 		if (!indices.empty()) {
 			const int index = indices.front();
-			FileListEntry *fle = static_cast<FileListEntry *>(mList.GetVirtualItem(index));
+			FileListEntry *fle = GetFileListEntry(index);
 
 			if (fle) {
 				if (fle->mbIsDirectory) {
@@ -1222,7 +953,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 
 		if (!indices.empty()) {
 			const int index = indices.front();
-			FileListEntry *fle = static_cast<FileListEntry *>(mList.GetVirtualItem(index));
+			FileListEntry *fle = GetFileListEntry(index);
 
 			if (fle && !fle->mbIsDirectory) {
 				vdfastvector<uint8> buf;
@@ -1269,6 +1000,107 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 				}
 			}
 		}
+	} else if (id == ID_PARTITION_OPEN) {
+		PartitionListEntry *ple = GetPartitionListEntry(mList.GetSelectedIndex());
+
+		if (ple)
+			OpenPartition(*ple);
+	} else if (id == ID_PARTITION_IMPORT) {
+		PartitionListEntry *ple = GetPartitionListEntry(mList.GetSelectedIndex());
+		if (!ple)
+			return true;
+
+		vdrefptr<ATPartitionDiskView> pdview { new ATPartitionDiskView(*mpBlockDevice, *ple) };
+		if (!pdview->IsUpdatable())
+			throw MyError("Cannot import disk image as partition is read-only.");
+
+		const VDStringW& s = VDGetLoadFileName('disk', (VDGUIHandle)mhdlg, L"Import disk image to partition",
+			g_ATUIFileFilter_Disk, nullptr);
+
+		if (!s.empty()) {
+			vdrefptr<IATDiskImage> image;
+
+			{
+				VDFileStream fstream(s.c_str());
+				ATImageLoadContext ctx;
+				ctx.mLoadType = kATImageType_Disk;
+
+				vdrefptr<IATImage> image0;
+				ATImageLoadAuto(s.c_str(), s.c_str(), fstream, &ctx, nullptr, nullptr, ~image0);
+
+				image = vdpoly_cast<IATDiskImage *>(image0);
+			}
+
+			const uint32 partSectorCount = pdview->GetVirtualSectorCount();
+			const uint32 partSectorSize = pdview->GetSectorSize();
+			const uint32 imageSectorCount = image->GetVirtualSectorCount();
+			const uint32 imageSectorSize = image->GetSectorSize();
+
+			if (imageSectorCount != partSectorCount ||
+				imageSectorSize != partSectorSize)
+			{
+				VDStringW msg;
+				msg.sprintf(
+					L"Partition and image geometries do not match.\n"
+					L"\n"
+					L"Partition: %u sectors of %u bytes\n"
+					L"Image: %u sectors of %u bytes",
+					partSectorCount,
+					partSectorSize,
+					imageSectorCount,
+					imageSectorSize);
+
+				ShowError2(msg.c_str(), L"Cannot import disk image");
+				return true;
+			}
+
+			uint8 secbuf[512];
+
+			for(uint32 i=0; i<partSectorCount; ++i) {
+				uint32 len = pdview->GetSectorSize(i);
+				uint32 actual = image->ReadVirtualSector(i, secbuf, len);
+
+				if (actual < len)
+					memset(&secbuf[actual], 0, len - actual);
+
+				pdview->WriteVirtualSector(i, secbuf, len);
+			}
+		}
+
+		return true;
+	} else if (id == ID_PARTITION_EXPORT) {
+		PartitionListEntry *ple = GetPartitionListEntry(mList.GetSelectedIndex());
+
+		if (ple) {
+			VDStringW s(VDGetSaveFileName(
+					'disk',
+					(VDGUIHandle)mhdlg,
+					L"Export partition to disk image",
+					L"Atari disk image (*.atr)\0*.atr\0"
+						L"All files\0*.*\0",
+					L"atr"));
+
+			if (!s.empty()) {
+				vdrefptr<ATPartitionDiskView> pdview { new ATPartitionDiskView(*mpBlockDevice, *ple) };
+				vdrefptr<IATDiskImage> newImage;
+
+				ATCreateDiskImage(pdview->GetGeometry(), ~newImage);
+
+				uint8 secbuf[512];
+				const uint32 n = pdview->GetVirtualSectorCount();
+
+				for(uint32 i=0; i<n; ++i) {
+					const uint32 sz = pdview->GetSectorSize(i);
+
+					pdview->ReadVirtualSector(i, secbuf, sz);
+					newImage->WriteVirtualSector(i, secbuf, sz);
+				}
+
+				newImage->Save(s.c_str(), kATDiskImageFormat_ATR);
+			}
+		}
+
+		return true;
 	} else if (id == ID_NAMECHECKING_STRICT) {
 		mbStrictFilenames = true;
 
@@ -1287,539 +1119,9 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 	return false;
 }
 
-namespace {
-	template<class... Interfaces>
-	class ATCOMBaseW32 : public Interfaces... {
-	public:
-		virtual ~ATCOMBaseW32() = default;
-
-		ULONG STDMETHODCALLTYPE AddRef() override final;
-		ULONG STDMETHODCALLTYPE Release() override final;
-
-	protected:
-		VDAtomicInt mRefCount{0};
-	};
-
-	template<class... Interfaces>
-	ULONG STDMETHODCALLTYPE ATCOMBaseW32<Interfaces...>::AddRef() {
-		return ++mRefCount;
-	}
-
-	template<class... Interfaces>
-	ULONG STDMETHODCALLTYPE ATCOMBaseW32<Interfaces...>::Release() {
-		DWORD rc = --mRefCount;
-
-		if (!rc)
-			delete this;
-
-		return rc;
-	}
-
-	template<class Base, class... Interfaces>
-	class ATCOMQIW32 : public Base {
-	public:
-		HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObj) override;
-	};
-
-	template<typename Base, class... Interfaces>
-	HRESULT STDMETHODCALLTYPE ATCOMQIW32<Base, Interfaces...>::QueryInterface(REFIID riid, void **ppvObj) {
-		if ((... || (riid == __uuidof(Interfaces) ? (*ppvObj = static_cast<Interfaces *>(this)), true : false))) {
-			this->AddRef();
-			return S_OK;
-		}
-
-		*ppvObj = nullptr;
-		return E_NOINTERFACE;
-	}
-
-	class GenericDropSource final : public ATCOMQIW32<ATCOMBaseW32<IDropSource>, IDropSource, IUnknown> {
-	public:
-		HRESULT STDMETHODCALLTYPE QueryContinueDrag(BOOL fEscapePressed, DWORD grfKeyState) override;
-		HRESULT STDMETHODCALLTYPE GiveFeedback(DWORD dwEffect) override;
-	};
-
-	HRESULT STDMETHODCALLTYPE GenericDropSource::QueryContinueDrag(BOOL fEscapePressed, DWORD grfKeyState) {
-		if (fEscapePressed)
-			return DRAGDROP_S_CANCEL;
-
-		if (!(grfKeyState & (MK_LBUTTON | MK_RBUTTON)))
-			return DRAGDROP_S_DROP;
-
-		return S_OK;
-	}
-
-	HRESULT STDMETHODCALLTYPE GenericDropSource::GiveFeedback(DWORD dwEffect) {
-		return DRAGDROP_S_USEDEFAULTCURSORS;
-	}
-
-	class DataObjectFormatEnumerator : public ATCOMQIW32<ATCOMBaseW32<IEnumFORMATETC>, IEnumFORMATETC, IUnknown> {
-	public:
-		DataObjectFormatEnumerator();
-
-        HRESULT STDMETHODCALLTYPE Next(ULONG celt, FORMATETC *rgelt, ULONG *pceltFetched);
-        HRESULT STDMETHODCALLTYPE Skip(ULONG celt);
-        HRESULT STDMETHODCALLTYPE Reset();
-        HRESULT STDMETHODCALLTYPE Clone(IEnumFORMATETC **ppenum);
-
-	private:
-		ULONG mPos;
-	};
-
-	DataObjectFormatEnumerator::DataObjectFormatEnumerator()
-		: mPos(0)
-	{
-	}
-
-	HRESULT STDMETHODCALLTYPE DataObjectFormatEnumerator::Next(ULONG celt, FORMATETC *rgelt, ULONG *pceltFetched) {
-		const auto& formats = ATUIInitDragDropFormatsW32();
-
-		ULONG fetched = 0;
-
-		memset(rgelt, 0, sizeof(rgelt[0])*celt);
-
-		while(celt && mPos < 3) {
-			switch(mPos) {
-				case 0:
-					rgelt->cfFormat = formats.mDescriptorA;
-					rgelt->dwAspect = DVASPECT_CONTENT;
-					rgelt->lindex = -1;
-					rgelt->ptd = NULL;
-					rgelt->tymed = TYMED_HGLOBAL;
-					break;
-
-				case 1:
-					rgelt->cfFormat = formats.mDescriptorW;
-					rgelt->dwAspect = DVASPECT_CONTENT;
-					rgelt->lindex = -1;
-					rgelt->ptd = NULL;
-					rgelt->tymed = TYMED_HGLOBAL;
-					break;
-
-				default:
-					// confirmed against shell data object: we should not report this per lindex (file)
-					rgelt->cfFormat = formats.mContents;
-					rgelt->dwAspect = DVASPECT_CONTENT;
-					rgelt->lindex = -1;
-					rgelt->ptd = NULL;
-					rgelt->tymed = TYMED_ISTREAM;
-					break;
-			}
-
-			++rgelt;
-			--celt;
-			++mPos;
-			++fetched;
-		}
-
-		if (pceltFetched)
-			*pceltFetched = fetched;
-
-		return celt ? S_FALSE : S_OK;
-	}
-
-	HRESULT STDMETHODCALLTYPE DataObjectFormatEnumerator::Skip(ULONG celt) {
-		if (!celt)
-			return S_OK;
-
-		if (mPos >= 3 || 3 - mPos < celt) {
-			mPos = 3;
-			return S_FALSE;
-		}
-
-		mPos += celt;
-		return S_OK;
-	}
-
-	HRESULT STDMETHODCALLTYPE DataObjectFormatEnumerator::Reset() {
-		mPos = 0;
-		return S_OK;
-	}
-
-	HRESULT STDMETHODCALLTYPE DataObjectFormatEnumerator::Clone(IEnumFORMATETC **ppenum) {
-		DataObjectFormatEnumerator *clone = new_nothrow DataObjectFormatEnumerator;
-		*ppenum = clone;
-
-		if (!clone)
-			return E_OUTOFMEMORY;
-
-		clone->mPos = mPos;
-		clone->AddRef();
-		return S_OK;
-	}
-
-	class DataObject : public ATCOMQIW32<ATCOMBaseW32<IDataObject>, IDataObject, IUnknown> {
-	public:
-		DataObject(IATDiskFS *fs);
-		~DataObject();
-
-		void AddFile(const ATUIDiskExplorerFileEntry *fle);
-
-		HRESULT STDMETHODCALLTYPE GetData(FORMATETC *pformatetcIn, STGMEDIUM *pmedium);
-		HRESULT STDMETHODCALLTYPE GetDataHere(FORMATETC *pformatetc, STGMEDIUM *pmedium);
-		HRESULT STDMETHODCALLTYPE QueryGetData(FORMATETC *pformatetc);
-		HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC *pformatectIn, FORMATETC *pformatetcOut);
-		HRESULT STDMETHODCALLTYPE SetData(FORMATETC *pformatetc, STGMEDIUM *pmedium, BOOL fRelease);
-		HRESULT STDMETHODCALLTYPE EnumFormatEtc(DWORD dwDirection, IEnumFORMATETC **ppenumFormatEtc);
-		HRESULT STDMETHODCALLTYPE DAdvise(FORMATETC *pformatetc, DWORD advf, IAdviseSink *pAdvSink, DWORD *pdwConnection);
-		HRESULT STDMETHODCALLTYPE DUnadvise(DWORD dwConnection);
-		HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA **ppenumAdvise);
-
-	protected:
-		void GenerateFileDescriptors(FILEGROUPDESCRIPTORA *group);
-		void GenerateFileDescriptors(FILEGROUPDESCRIPTORW *group);
-
-		IATDiskFS *mpFS;
-
-		vdfastvector<const ATUIDiskExplorerFileEntry *> mFiles;
-
-		vdrefptr<IDataObject> mpShellDataObj;
-	};
-
-	DataObject::DataObject(IATDiskFS *fs)
-		: mpFS(fs)
-	{
-	}
-
-	DataObject::~DataObject() {
-	}
-
-	void DataObject::AddFile(const ATUIDiskExplorerFileEntry *fle) {
-		mFiles.push_back(fle);
-	}
-
-	HRESULT STDMETHODCALLTYPE DataObject::GetData(FORMATETC *pformatetcIn, STGMEDIUM *pmedium) {
-		HRESULT hr = QueryGetData(pformatetcIn);
-
-		if (FAILED(hr))
-			return hr;
-
-		const auto& formats = ATUIInitDragDropFormatsW32();
-
-		if (pformatetcIn->cfFormat == formats.mDescriptorA) {
-			HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, sizeof(FILEGROUPDESCRIPTORA) + sizeof(FILEDESCRIPTORA) * (mFiles.size() - 1));
-
-			if (!hMem)
-				return STG_E_MEDIUMFULL;
-
-			void *p = GlobalLock(hMem);
-			if (!p) {
-				GlobalFree(hMem);
-				return STG_E_MEDIUMFULL;
-			}
-
-			GenerateFileDescriptors((FILEGROUPDESCRIPTORA *)p);
-
-			GlobalUnlock(hMem);
-
-			pmedium->tymed = TYMED_HGLOBAL;
-			pmedium->hGlobal = hMem;
-			pmedium->pUnkForRelease = NULL;
-		} else if (pformatetcIn->cfFormat == formats.mDescriptorW) {
-			HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, sizeof(FILEGROUPDESCRIPTORW) + sizeof(FILEDESCRIPTORW) * (mFiles.size() - 1));
-
-			if (!hMem)
-				return STG_E_MEDIUMFULL;
-
-			void *p = GlobalLock(hMem);
-			if (!p) {
-				GlobalFree(hMem);
-				return STG_E_MEDIUMFULL;
-			}
-
-			GenerateFileDescriptors((FILEGROUPDESCRIPTORW *)p);
-
-			GlobalUnlock(hMem);
-
-			pmedium->tymed = TYMED_HGLOBAL;
-			pmedium->hGlobal = hMem;
-			pmedium->pUnkForRelease = NULL;
-		} else if (pformatetcIn->cfFormat == formats.mContents) {
-			vdrefptr<IStream> stream;
-			hr = CreateStreamOnHGlobal(NULL, TRUE, ~stream);
-			if (FAILED(hr))
-				return STG_E_MEDIUMFULL;
-
-			const ATUIDiskExplorerFileEntry *fle = mFiles[pformatetcIn->lindex];
-
-			vdfastvector<uint8> buf;
-
-			pmedium->tymed = TYMED_ISTREAM;
-			pmedium->pstm = NULL;
-			pmedium->pUnkForRelease = NULL;
-
-			try {
-				mpFS->ReadFile(fle->mFileKey, buf);
-			} catch(const ATDiskFSException& ex) {
-				switch(ex.GetErrorCode()) {
-					case kATDiskFSError_CorruptedFileSystem:
-						return HRESULT_FROM_WIN32(ERROR_DISK_CORRUPT);
-
-					case kATDiskFSError_DecompressionError:
-						return HRESULT_FROM_WIN32(ERROR_FILE_CORRUPT);
-
-					case kATDiskFSError_CRCError:
-						return HRESULT_FROM_WIN32(ERROR_CRC);
-				}
-
-				return STG_E_READFAULT;
-			} catch(const MyError&) {
-				return STG_E_READFAULT;
-			}
-
-			stream->Write(buf.data(), (ULONG)buf.size(), NULL);
-
-			// Required for Directory Opus to work.
-			LARGE_INTEGER lizero = {0};
-			stream->Seek(lizero, STREAM_SEEK_SET, NULL);
-
-			pmedium->pstm = stream.release();
-		} else {
-			// if we have a shell data object, delegate to it
-			if (mpShellDataObj)
-				return mpShellDataObj->GetData(pformatetcIn, pmedium);
-
-			return DV_E_FORMATETC;
-		}
-
-		return S_OK;
-	}
-
-	HRESULT STDMETHODCALLTYPE DataObject::GetDataHere(FORMATETC *pformatetc, STGMEDIUM *pmedium) {
-		HRESULT hr = QueryGetData(pformatetc);
-
-		if (FAILED(hr))
-			return hr;
-		
-		const auto& formats = ATUIInitDragDropFormatsW32();
-
-		if (pformatetc->cfFormat == formats.mDescriptorA) {
-			SIZE_T bytesNeeded = sizeof(FILEGROUPDESCRIPTORA) + sizeof(FILEDESCRIPTORA)*(mFiles.size() - 1);
-
-			if (pmedium->tymed != TYMED_HGLOBAL)
-				return DV_E_TYMED;
-
-			if (GlobalSize(pmedium->hGlobal) < bytesNeeded)
-				return STG_E_MEDIUMFULL;
-
-			void *p = GlobalLock(pmedium->hGlobal);
-			if (!p)
-				return STG_E_MEDIUMFULL;
-
-			GenerateFileDescriptors((FILEGROUPDESCRIPTORA *)p);
-
-			GlobalUnlock(pmedium->hGlobal);
-		} else if (pformatetc->cfFormat == formats.mDescriptorW) {
-			SIZE_T bytesNeeded = sizeof(FILEGROUPDESCRIPTORW) + sizeof(FILEDESCRIPTORW)*(mFiles.size() - 1);
-
-			if (pmedium->tymed != TYMED_HGLOBAL)
-				return DV_E_TYMED;
-
-			if (GlobalSize(pmedium->hGlobal) < bytesNeeded)
-				return STG_E_MEDIUMFULL;
-
-			void *p = GlobalLock(pmedium->hGlobal);
-			if (!p)
-				return STG_E_MEDIUMFULL;
-
-			GenerateFileDescriptors((FILEGROUPDESCRIPTORW *)p);
-
-			GlobalUnlock(pmedium->hGlobal);
-		} else if (pformatetc->cfFormat == formats.mContents) {
-			vdrefptr<IStream> streamAlloc;
-			IStream *stream;
-
-			const ATUIDiskExplorerFileEntry *fle = mFiles[pformatetc->lindex];
-
-			if (pmedium->tymed == TYMED_HGLOBAL) {
-				if (GlobalSize(pmedium->hGlobal) < fle->mBytes)
-					return STG_E_MEDIUMFULL;
-
-				hr = CreateStreamOnHGlobal(pmedium->hGlobal, FALSE, ~streamAlloc);
-				if (FAILED(hr))
-					return STG_E_MEDIUMFULL;
-
-				stream = streamAlloc;
-			} else if (pmedium->tymed == TYMED_ISTREAM) {
-				stream = pmedium->pstm;
-			} else
-				return DV_E_TYMED;
-
-			vdfastvector<uint8> buf;
-
-			try {
-				mpFS->ReadFile(fle->mFileKey, buf);
-			} catch(const ATDiskFSException& ex) {
-				switch(ex.GetErrorCode()) {
-					case kATDiskFSError_CorruptedFileSystem:
-						return HRESULT_FROM_WIN32(ERROR_DISK_CORRUPT);
-
-					case kATDiskFSError_DecompressionError:
-						return HRESULT_FROM_WIN32(ERROR_FILE_CORRUPT);
-
-					case kATDiskFSError_CRCError:
-						return HRESULT_FROM_WIN32(ERROR_CRC);
-				}
-
-				return STG_E_READFAULT;
-			} catch(const MyError&) {
-				return STG_E_READFAULT;
-			}
-
-			stream->Write(buf.data(), (ULONG)buf.size(), NULL);
-		} else {
-			// if we have a shell data object, delegate to it
-			if (mpShellDataObj)
-				return mpShellDataObj->GetDataHere(pformatetc, pmedium);
-
-			return DV_E_FORMATETC;
-		}
-
-		return S_OK;
-	}
-
-	HRESULT STDMETHODCALLTYPE DataObject::QueryGetData(FORMATETC *pformatetc) {
-		const auto& formats = ATUIInitDragDropFormatsW32();
-
-		if (pformatetc->cfFormat == formats.mContents) {
-			if ((uint32)pformatetc->lindex >= mFiles.size())
-				return DV_E_LINDEX;
-
-			if (!(pformatetc->tymed & (TYMED_ISTREAM | TYMED_HGLOBAL)))
-				return DV_E_TYMED;
-		} else if (pformatetc->cfFormat == formats.mDescriptorA || pformatetc->cfFormat == formats.mDescriptorW) {
-			if (pformatetc->lindex != -1)
-				return DV_E_LINDEX;
-
-			if (!(pformatetc->tymed & TYMED_HGLOBAL))
-				return DV_E_TYMED;
-		} else {
-			if (mpShellDataObj)
-				return mpShellDataObj->QueryGetData(pformatetc);
-
-			return DV_E_CLIPFORMAT;
-		}
-
-		if (pformatetc->dwAspect != DVASPECT_CONTENT)
-			return DV_E_DVASPECT;
-
-		return S_OK;
-	}
-
-	HRESULT STDMETHODCALLTYPE DataObject::GetCanonicalFormatEtc(FORMATETC *pformatetcIn, FORMATETC *pformatetcOut) {
-		*pformatetcOut = *pformatetcIn;
-		pformatetcOut->ptd = NULL;
-
-		return DATA_S_SAMEFORMATETC;
-	}
-
-	HRESULT STDMETHODCALLTYPE DataObject::SetData(FORMATETC *pformatetc, STGMEDIUM *pmedium, BOOL fRelease) {
-		// If we're on at least Windows Vista, create and delegate to a shell data object
-		// so we can store data types needed for rich drag and drop reporting to work
-		// (DROPDESCRIPTION and DragWindow).
-
-		if (!mpShellDataObj) {
-			if (!VDIsAtLeastVistaW32())
-				return E_FAIL;
-
-			// SHCreateDataObject() is not available on XP
-			typedef HRESULT (__stdcall *tpSHCreateDataObject)(PCIDLIST_ABSOLUTE, UINT, PCUITEMID_CHILD_ARRAY, IDataObject *, REFIID, void **);
-			static const auto pSHCreateDataObject = (tpSHCreateDataObject)GetProcAddress(GetModuleHandle(_T("shell32")), "SHCreateDataObject");
-
-			HRESULT hr = pSHCreateDataObject(nullptr, 0, nullptr, nullptr, IID_IDataObject, (void **)~mpShellDataObj);
-			if (FAILED(hr))
-				return hr;
-		}
-
-		return mpShellDataObj->SetData(pformatetc, pmedium, fRelease);
-	}
-
-	HRESULT STDMETHODCALLTYPE DataObject::EnumFormatEtc(DWORD dwDirection, IEnumFORMATETC **ppenumFormatEtc) {
-		if (dwDirection != DATADIR_GET) {
-			*ppenumFormatEtc = NULL;
-			return E_NOTIMPL;
-		}
-
-		// The Windows SDK DragDropVisuals sample doesn't delegate to the shell object for
-		// EnumFormatEtc()... hmm. Well, at least that makes our life easier.
-		*ppenumFormatEtc = new_nothrow DataObjectFormatEnumerator;
-		if (!*ppenumFormatEtc)
-			return E_OUTOFMEMORY;
-
-		(*ppenumFormatEtc)->AddRef();
-		return S_OK;
-	}
-
-	HRESULT STDMETHODCALLTYPE DataObject::DAdvise(FORMATETC *pformatetc, DWORD advf, IAdviseSink *pAdvSink, DWORD *pdwConnection) {
-		return OLE_E_ADVISENOTSUPPORTED;
-	}
-
-	HRESULT STDMETHODCALLTYPE DataObject::DUnadvise(DWORD dwConnection) {
-		return OLE_E_ADVISENOTSUPPORTED;
-	}
-
-	HRESULT STDMETHODCALLTYPE DataObject::EnumDAdvise(IEnumSTATDATA **ppenumAdvise) {
-		return OLE_E_ADVISENOTSUPPORTED;
-	}
-
-	void DataObject::GenerateFileDescriptors(FILEGROUPDESCRIPTORA *group) {
-		uint32 n = (uint32)mFiles.size();
-		group->cItems = (DWORD)n;
-
-		for(uint32 i=0; i<n; ++i) {
-			const ATUIDiskExplorerFileEntry *fle = mFiles[i];
-			FILEDESCRIPTORA *fd = &group->fgd[i];
-
-			memset(fd, 0, sizeof *fd);
-			
-			fd->dwFlags = FD_FILESIZE | FD_ATTRIBUTES;
-			fd->nFileSizeLow = fle->mBytes;
-			fd->nFileSizeHigh = 0;
-			fd->dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
-
-			if (fle->mbDateValid) {
-				const VDDate creationDate = VDDateFromLocalDate(fle->mDate);
-
-				fd->ftCreationTime.dwLowDateTime = (uint32)creationDate.mTicks;
-				fd->ftCreationTime.dwHighDateTime = (uint32)(creationDate.mTicks >> 32);
-				fd->ftLastWriteTime = fd->ftCreationTime;
-				fd->dwFlags |= FD_CREATETIME | FD_WRITESTIME;
-			}
-
-			vdstrlcpy(fd->cFileName, VDTextWToA(fle->mFileName).c_str(), MAX_PATH);
-		}
-	}
-
-	void DataObject::GenerateFileDescriptors(FILEGROUPDESCRIPTORW *group) {
-		uint32 n = (uint32)mFiles.size();
-		group->cItems = (DWORD)n;
-
-		for(uint32 i=0; i<n; ++i) {
-			const ATUIDiskExplorerFileEntry *fle = mFiles[i];
-			FILEDESCRIPTORW *fd = &group->fgd[i];
-
-			memset(fd, 0, sizeof *fd);
-			
-			fd->dwFlags = FD_FILESIZE | FD_ATTRIBUTES;
-			fd->nFileSizeLow = fle->mBytes;
-			fd->nFileSizeHigh = 0;
-			fd->dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
-
-			if (fle->mbDateValid) {
-				const VDDate creationDate = VDDateFromLocalDate(fle->mDate);
-
-				fd->ftCreationTime.dwLowDateTime = (uint32)creationDate.mTicks;
-				fd->ftCreationTime.dwHighDateTime = (uint32)(creationDate.mTicks >> 32);
-				fd->ftLastWriteTime = fd->ftCreationTime;
-				fd->dwFlags |= FD_CREATETIME | FD_WRITESTIME;
-			}
-
-			vdwcslcpy(fd->cFileName, fle->mFileName.c_str(), MAX_PATH);
-		}
-	}
-}
-
 void ATUIDialogDiskExplorer::OnItemBeginDrag(VDUIProxyListView *sender, int item) {
-	vdrefptr<DataObject> dataObject(new DataObject(mpFS));
+	vdrefptr<IATUIDiskExplorerDataObjectW32> dataObject;
+	ATUICreateDiskExplorerDataObjectW32(mpFS, ~dataObject);
 
 	vdfastvector<int> indices;
 	mList.GetSelectedIndices(indices);
@@ -1828,97 +1130,101 @@ void ATUIDialogDiskExplorer::OnItemBeginDrag(VDUIProxyListView *sender, int item
 		it != itEnd;
 		++it)
 	{
-		FileListEntry *fle = static_cast<FileListEntry *>(mList.GetVirtualItem(*it));
+		FileListEntry *fle = GetFileListEntry(*it);
 
-		if (fle->mFileKey != ATDiskFSKey::None)
-			dataObject->AddFile(fle);
+		if (fle && fle->mFileKey != ATDiskFSKey::None)
+			dataObject->AddFile(fle->mFileKey, fle->mBytes, fle->mbDateValid ? &fle->mDate : nullptr, fle->mFileName.c_str());
 	}
 
 	DWORD srcEffects = 0;
 
-	if (VDIsAtLeastVistaW32()) {
-		SHSTOCKICONINFO ssii = {sizeof(SHSTOCKICONINFO)};
+	SHSTOCKICONINFO ssii = {sizeof(SHSTOCKICONINFO)};
 
-		typedef HRESULT (__stdcall *tpSHGetStockIconInfo)(SHSTOCKICONID, UINT, SHSTOCKICONINFO*);
-		tpSHGetStockIconInfo pSHGetStockIconInfo = (tpSHGetStockIconInfo)GetProcAddress(GetModuleHandle(_T("shell32")), "SHGetStockIconInfo");
+	SHGetStockIconInfo(SIID_DOCNOASSOC, SHGSI_ICON | SHGSI_LARGEICON, &ssii);
 
-		pSHGetStockIconInfo(SIID_DOCNOASSOC, SHGSI_ICON | SHGSI_LARGEICON, &ssii);
+	if (ssii.hIcon) {
+		ICONINFO ii {};
+		BITMAP bm {};
+		if (GetIconInfo(ssii.hIcon, &ii)) {
+			if (GetObject(ii.hbmColor, sizeof(BITMAP), &bm)) {
+				vdrefptr<IDragSourceHelper> dragSourceHelper;
+				HRESULT hr = CoCreateInstance(CLSID_DragDropHelper, nullptr, CLSCTX_INPROC, IID_IDragSourceHelper, (void **)~dragSourceHelper);
 
-		if (ssii.hIcon) {
-			ICONINFO ii {};
-			BITMAP bm {};
-			if (GetIconInfo(ssii.hIcon, &ii)) {
-				if (GetObject(ii.hbmColor, sizeof(BITMAP), &bm)) {
-					vdrefptr<IDragSourceHelper> dragSourceHelper;
-					HRESULT hr = CoCreateInstance(CLSID_DragDropHelper, nullptr, CLSCTX_INPROC, IID_IDragSourceHelper, (void **)~dragSourceHelper);
+				if (SUCCEEDED(hr)) {
+					vdrefptr<IDragSourceHelper2> dragSourceHelper2;
 
-					if (SUCCEEDED(hr)) {
-						vdrefptr<IDragSourceHelper2> dragSourceHelper2;
+					hr = dragSourceHelper->QueryInterface(IID_IDragSourceHelper2, (void **)~dragSourceHelper2);
+					if (SUCCEEDED(hr))
+						dragSourceHelper2->SetFlags(DSH_ALLOWDROPDESCRIPTIONTEXT);
 
-						hr = dragSourceHelper->QueryInterface(IID_IDragSourceHelper2, (void **)~dragSourceHelper2);
-						if (SUCCEEDED(hr))
-							dragSourceHelper2->SetFlags(DSH_ALLOWDROPDESCRIPTIONTEXT);
-
-						SHDRAGIMAGE shdi {};
-						shdi.sizeDragImage = SIZE { bm.bmWidth, bm.bmHeight };
-						shdi.ptOffset = POINT { (LONG)ii.xHotspot, (LONG)ii.yHotspot };
-						shdi.hbmpDragImage = ii.hbmColor;
-						dragSourceHelper->InitializeFromBitmap(&shdi, dataObject);
-					}
+					SHDRAGIMAGE shdi {};
+					shdi.sizeDragImage = SIZE { bm.bmWidth, bm.bmHeight };
+					shdi.ptOffset = POINT { (LONG)ii.xHotspot, (LONG)ii.yHotspot };
+					shdi.hbmpDragImage = ii.hbmColor;
+					dragSourceHelper->InitializeFromBitmap(&shdi, dataObject->AsDataObject());
 				}
-
-				if (ii.hbmColor)
-					DeleteObject(ii.hbmColor);
-
-				if (ii.hbmMask)
-					DeleteObject(ii.hbmMask);
 			}
 
-			DestroyIcon(ssii.hIcon);
+			if (ii.hbmColor)
+				DeleteObject(ii.hbmColor);
+
+			if (ii.hbmMask)
+				DeleteObject(ii.hbmMask);
 		}
 
-		SHDoDragDrop(nullptr, dataObject, nullptr, DROPEFFECT_COPY, &srcEffects);
-	} else {
-		vdrefptr<IDropSource> dropSource(new GenericDropSource);
-		DoDragDrop(dataObject, dropSource, DROPEFFECT_COPY | DROPEFFECT_MOVE, &srcEffects);
+		DestroyIcon(ssii.hIcon);
 	}
+
+	SHDoDragDrop(nullptr, dataObject->AsDataObject(), nullptr, DROPEFFECT_COPY, &srcEffects);
 }
 
-void ATUIDialogDiskExplorer::OnItemContextMenu(VDUIProxyListView *sender, const VDUIProxyListView::ContextMenuEvent& event) {
+void ATUIDialogDiskExplorer::OnItemContextMenu(VDUIProxyListView *sender, VDUIProxyListView::ContextMenuEvent& event) {
 	if (!mhMenuItemContext)
 		return;
 
-	if (!mpFS)
-		return;
+	if (mpFS) {
+		HMENU hmenu = GetSubMenu(mhMenuItemContext, 0);
 
-	const int idx = mList.GetSelectedIndex();
-	const bool writable = !mpFS->IsReadOnly();
-	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_VIEW, idx >= 0);
-	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_RENAME, idx >= 0 && writable);
-	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_DELETE, idx >= 0 && writable);
-	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_NEWFOLDER, writable);
-	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_IMPORTFILE, writable);
-	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_IMPORTTEXT, writable);
+		const int idx = mList.GetSelectedIndex();
+		const bool writable = !mpFS->IsReadOnly();
+		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_VIEW, idx >= 0);
+		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_RENAME, idx >= 0 && writable);
+		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_DELETE, idx >= 0 && writable);
+		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_NEWFOLDER, writable);
+		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_IMPORTFILE, writable);
+		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_IMPORTTEXT, writable);
 
-	bool fileSelected = false;
+		bool fileSelected = false;
 
-	if (idx >= 0) {
-		FileListEntry *fle = static_cast<FileListEntry *>(mList.GetVirtualItem(idx));
+		if (idx >= 0) {
+			FileListEntry *fle = GetFileListEntry(idx);
 
-		if (fle && !fle->mbIsDirectory)
-			fileSelected = true;
-	}
+			if (fle && !fle->mbIsDirectory)
+				fileSelected = true;
+		}
 
-	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_EXPORTFILE, fileSelected);
-	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_EXPORTTEXT, fileSelected);
+		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_EXPORTFILE, fileSelected);
+		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_EXPORTTEXT, fileSelected);
 
-	TrackPopupMenu(GetSubMenu(mhMenuItemContext, 0), TPM_LEFTALIGN | TPM_TOPALIGN, event.mX, event.mY, 0, mhdlg, NULL);
+		TrackPopupMenu(hmenu, TPM_LEFTALIGN | TPM_TOPALIGN, event.mX, event.mY, 0, mhdlg, NULL);
+	} else if (mpBlockDevice) {
+		PartitionListEntry *ple = GetPartitionListEntry(mList.GetSelectedIndex());
+
+		if (ple) {
+			HMENU hmenu = GetSubMenu(mhMenuItemContext, 1);
+
+			const bool writable = !mpBlockDevice->IsReadOnly() && !ple->mbWriteProtected;
+			VDEnableMenuItemByCommandW32(hmenu, ID_PARTITION_IMPORT, writable);
+
+			TrackPopupMenu(hmenu, TPM_LEFTALIGN | TPM_TOPALIGN, event.mX, event.mY, 0, mhdlg, NULL);
+		}
+	} 
 }
 
 void ATUIDialogDiskExplorer::OnItemLabelChanged(VDUIProxyListView *sender, VDUIProxyListView::LabelChangedEvent *event) {
 	int idx = event->mIndex;
 
-	FileListEntry *fle = static_cast<FileListEntry *>(mList.GetVirtualItem(idx));
+	FileListEntry *fle = GetFileListEntry(idx);
 	if (!fle)
 		return;
 
@@ -1967,19 +1273,58 @@ void ATUIDialogDiskExplorer::OnItemLabelChanged(VDUIProxyListView *sender, VDUIP
 }
 
 void ATUIDialogDiskExplorer::OnItemDoubleClick(VDUIProxyListView *sender, int item) {
-	FileListEntry *fle = static_cast<FileListEntry *>(mList.GetVirtualItem(item));
-	if (!fle)
+	ListEntry *le = GetListEntry(item);
+	if (!le)
 		return;
+	
+	try {
+		if (FileListEntry *fle = vdpoly_cast<FileListEntry *>(le)) {
+			if (!fle->mbIsDirectory)
+				return;
 
-	if (!fle->mbIsDirectory)
-		return;
+			if (fle->mFileKey != ATDiskFSKey::None)
+				mCurrentDirKey = fle->mFileKey;
+			else if (mCurrentDirKey != ATDiskFSKey::None)
+				mCurrentDirKey = mpFS->GetParentDirectory(mCurrentDirKey);
+			else if (mpBlockDevice) {
+				mpDropTarget->SetFS(nullptr);
+				mpFS = nullptr;
+				mpImage = nullptr;
+				mFileNameView.SetText(mpImageName);
+			}
 
-	if (fle->mFileKey != ATDiskFSKey::None)
-		mCurrentDirKey = fle->mFileKey;
-	else
-		mCurrentDirKey = mpFS->GetParentDirectory(mCurrentDirKey);
+			RefreshList();
+		} else if (PartitionListEntry *ple = vdpoly_cast<PartitionListEntry *>(le)) {
+			OpenPartition(*ple);
+		}
+	} catch(const MyError& e) {
+		ShowError(e);
+	}
+}
 
-	RefreshList();
+void ATUIDialogDiskExplorer::OpenPartition(const PartitionListEntry& ple) {
+	vdrefptr<ATPartitionDiskView> pdview { new ATPartitionDiskView(*mpBlockDevice, ple) };
+	vdautoptr<IATDiskFS> fs(ATDiskMountImage(pdview, !pdview->IsUpdatable()));
+
+	if (!fs)
+		throw MyError("Unable to detect the file system on the disk image.");
+
+	MountFS(nullptr, *pdview, std::move(fs), ple.mName.c_str(), false, false);
+}
+
+ATUIDialogDiskExplorer::ListEntry *ATUIDialogDiskExplorer::GetListEntry(int idx) {
+	if (idx < 0)
+		return nullptr;
+
+	return static_cast<ListEntry *>(mList.GetVirtualItem(idx));
+}
+
+ATUIDialogDiskExplorer::FileListEntry *ATUIDialogDiskExplorer::GetFileListEntry(int idx) {
+	return vdpoly_cast<FileListEntry *>(GetListEntry(idx));
+}
+
+ATUIDialogDiskExplorer::PartitionListEntry *ATUIDialogDiskExplorer::GetPartitionListEntry(int idx) {
+	return vdpoly_cast<PartitionListEntry *>(GetListEntry(idx));
 }
 
 void ATUIDialogDiskExplorer::OnFSModified() {
@@ -1998,13 +1343,86 @@ void ATUIDialogDiskExplorer::OnFSModified() {
 	RefreshList();
 }
 
+void ATUIDialogDiskExplorer::MountFS(ATDiskInterface *diskInterface, IATDiskImage& image, vdautoptr<IATDiskFS> fs, const wchar_t *fsDescription, bool write, bool autoFlush) {
+	mpDropTarget->SetFS(nullptr);
+
+	mpImage = &image;
+	mpFS = std::move(fs);
+
+	mpFS->SetStrictNameChecking(mbStrictFilenames);
+
+	mbWriteEnabled = write;
+	mbAutoFlush = autoFlush;
+	mpDiskInterface = diskInterface;
+
+	mpDropTarget->SetFS(mpFS);
+
+	mCurrentDirKey = ATDiskFSKey::None;
+
+	mFileNameView.SetText(fsDescription);
+
+	if (write) {
+		if (mpImage && mpImage->IsUpdatable() && mpFS->IsReadOnly()) {
+			ShowWarning(L"This disk format is only supported in read-only mode.", L"Altirra Warning");
+		} else {
+			ValidateForWrites();
+		}
+	}
+
+	// must be after above to show read only state properly in UI
+	RefreshList();
+}
+
+void ATUIDialogDiskExplorer::ValidateForWrites() {
+	ATDiskFSValidationReport validationReport;
+	if (!mpFS->Validate(validationReport)) {
+		// Check if we had a serious error for which we should block writes.
+		if (!validationReport.IsSerious() && validationReport.mbBitmapIncorrectLostSectorsOnly) {
+			ShowWarning(L"The allocation bitmap on this disk is incorrect: some sectors are marked allocated when they are actually free.");
+		} else {
+			mpFS->SetReadOnly(true);
+
+			ShowWarning(
+				validationReport.mbBrokenFiles || validationReport.mbOpenWriteFiles
+					? L"The file system on this disk is damaged and has been mounted as read-only to prevent further damage."
+					: L"The allocation bitmap on this disk is incorrect. The disk has been mounted read-only as a precaution to prevent further damage.",
+				L"Altirra Warning");
+		}
+	}
+}
+
 void ATUIDialogDiskExplorer::RefreshList() {
+	mList.SetRedraw(false);
 	mList.Clear();
 
-	if (!mpFS)
-		return;
+	if (mpFS)
+		RefreshListFromFileSystem();
+	else if (mpBlockDevice)
+		RefreshListFromPartitions();
 
-	if (mCurrentDirKey != ATDiskFSKey::None) {
+	mList.AutoSizeColumns();
+	mList.SetRedraw(true);
+}
+
+void ATUIDialogDiskExplorer::RefreshListFromPartitions() {
+	vdvector<ATPartitionInfo> partitions;
+	ATDecodePartitionTable(*mpBlockDevice, partitions);
+
+	for(const ATPartitionInfo& pi : partitions) {
+		vdrefptr<PartitionListEntry> fle(new PartitionListEntry);
+
+		fle->InitFrom(pi);
+
+		int item = mList.InsertVirtualItem(-1, fle);
+		if (item >= 0)
+			mList.SetItemImage(item, mIconPartition);
+	}
+
+	SetControlText(IDC_STATUS, L"Mounted block device.");
+}
+
+void ATUIDialogDiskExplorer::RefreshListFromFileSystem() {
+	if (mCurrentDirKey != ATDiskFSKey::None || mpBlockDevice) {
 		vdrefptr<FileListEntry> fle(new FileListEntry);
 
 		fle->mFileName = L"..";
@@ -2031,7 +1449,8 @@ void ATUIDialogDiskExplorer::RefreshList() {
 
 				fle->InitFrom(einfo);
 
-				fles.push_back(fle.release());
+				fles.emplace_back();
+				fles.back() = fle.release();
 			} while(mpFS->FindNext(searchKey, einfo));
 
 			mpFS->FindEnd(searchKey);
@@ -2055,8 +1474,6 @@ void ATUIDialogDiskExplorer::RefreshList() {
 	}
 
 	VDReleaseObjects(fles);
-
-	mList.AutoSizeColumns();
 
 	RefreshFsInfo();
 }
@@ -2195,7 +1612,18 @@ LRESULT ATUIDialogDiskExplorer::ListViewSubclassProc(HWND hwnd, UINT msg, WPARAM
 	if (msg == WM_MOUSEACTIVATE)
 		return MA_NOACTIVATE;
 
-	return CallWindowProc(mListViewWndProc, hwnd, msg, wParam, lParam);
+	LRESULT lr = CallWindowProc(mListViewWndProc, hwnd, msg, wParam, lParam);
+
+	if (msg == WM_GETDLGCODE && lParam) {
+		const MSG& inputMsg = *(const MSG *)lParam;
+
+		if (inputMsg.message == WM_KEYDOWN || inputMsg.message == WM_KEYUP) {
+			if (inputMsg.wParam == VK_RETURN)
+				lr |= DLGC_WANTMESSAGE;
+		}
+	}
+
+	return lr;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2208,6 +1636,12 @@ void ATUIShowDialogDiskExplorer(VDGUIHandle h) {
 
 void ATUIShowDialogDiskExplorer(VDGUIHandle h, IATDiskImage *image, const wchar_t *imageName, bool writeEnabled, bool autoFlush, ATDiskInterface *di) {
 	ATUIDialogDiskExplorer dlg(image, imageName, writeEnabled, autoFlush, di);
+
+	dlg.ShowDialog(h);
+}
+
+void ATUIShowDialogDiskExplorer(VDGUIHandle h, IATBlockDevice *dev, const wchar_t *devName) {
+	ATUIDialogDiskExplorer dlg(nullptr, devName, !dev->IsReadOnly(), true, nullptr, dev);
 
 	dlg.ShowDialog(h);
 }

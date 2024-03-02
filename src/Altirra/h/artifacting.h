@@ -26,6 +26,8 @@ namespace nsVDVecMath {
 	struct vdfloat32x3;
 }
 
+class ATConsoleOutput;
+
 class ATPaletteCorrector {
 public:
 	uint32 CorrectSingleColor(uint32 c, bool colorCorrectionEnabled, bool signedEncoding) const;
@@ -44,6 +46,8 @@ public:
 	void SetArtifactingParams(const ATArtifactingParams& params);
 
 	void GetNTSCArtifactColors(uint32 c[2]) const;
+
+	void DumpHighArtifactingFilters(ATConsoleOutput& output);
 
 	enum {
 		N = 456,
@@ -86,8 +90,8 @@ private:
 	void ColorCorrect(uint8 *VDRESTRICT dst8, uint32 n) const;
 
 	void RecomputeActiveTables(bool signedOutput);
-	void RecomputeNTSCTables(const ATColorParams& params, bool signedOutput);
-	void RecomputePALTables(const ATColorParams& params, bool signedOutput);
+	void RecomputeNTSCTables(ATConsoleOutput *debugOut);
+	void RecomputePALTables(ATConsoleOutput *debugOut);
 
 	bool mbPAL;
 	bool mbHighNTSCTablesInited = false;

@@ -19,11 +19,11 @@
 #include <vd2/system/binary.h>
 #include <at/atcore/address.h>
 #include <at/atcpu/execstate.h>
+#include <at/atdebugger/symbols.h>
 #include <at/atdebugger/target.h>
 #include "simulator.h"
 #include "console.h"
 #include "debugger.h"
-#include "symbols.h"
 #include "disasm.h"
 
 extern ATSimulator g_sim;

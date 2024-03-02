@@ -28,8 +28,9 @@
 
 template<int Order>
 void ATFLACReconstructLPC_Narrow_SSE2_Impl(sint32 *__restrict y, uint32 n, const sint32 *__restrict lpcCoeffs, int qlpShift) {
-	__m128i pipe0, pipe1;
-	__m128i coeff0, coeff1;
+	__m128i pipe0, coeff0;
+	[[maybe_unused]] __m128i pipe1;
+	[[maybe_unused]] __m128i coeff1;
 	
 	// load warm-up samples and coefficients and pack to s16
 	const auto loadPack = [](const void *p) {
@@ -113,8 +114,10 @@ void ATFLACReconstructLPC_Narrow_SSE2_Impl(sint32 *__restrict y, uint32 n, const
 
 template<int Order>
 void ATFLACReconstructLPC_Narrow_SSSE3_Impl(sint32 *__restrict y, uint32 n, const sint32 *__restrict lpcCoeffs, int qlpShift) {
-	__m128i pipe0, pipe1;
-	__m128i coeff0, coeff1;
+	__m128i pipe0;
+	__m128i coeff0;
+	[[maybe_unused]] __m128i pipe1;
+	[[maybe_unused]] __m128i coeff1;
 	
 	// load warm-up samples and coefficients and pack to s16
 	const auto loadPack = [](const void *p) {
@@ -196,6 +199,114 @@ void ATFLACReconstructLPC_Narrow_SSSE3_Impl(sint32 *__restrict y, uint32 n, cons
 	}
 }
 
+template<int Order>
+void ATFLACReconstructLPC_Medium_SSSE3_Impl(sint32 *__restrict y, uint32 n, const sint32 *__restrict lpcCoeffs, int qlpShift) {
+	__m128i pipel0;
+	__m128i pipeh0;
+	__m128i coeff0;
+	[[maybe_unused]] __m128i pipel1;
+	[[maybe_unused]] __m128i pipeh1;
+	[[maybe_unused]] __m128i coeff1;
+	
+	__m128i x0FFFd = _mm_set1_epi32(0x00000FFF);
+
+	// load warm-up samples and coefficients and pack to s16
+	const auto loadPack = [](const void *p) {
+		const __m128i *pv = (const __m128i *)p;
+
+		return _mm_packs_epi32(pv[0], pv[1]);
+	};
+
+	__m128i t0 = _mm_loadu_si128((const __m128i *)(y + 0));
+	__m128i t1 = _mm_loadu_si128((const __m128i *)(y + 4));
+	pipel0 = _mm_packs_epi32(_mm_and_si128(t0, x0FFFd), _mm_and_si128(t1, x0FFFd));
+	pipeh0 = _mm_packs_epi32(_mm_srai_epi32(t0, 12), _mm_srai_epi32(t1, 12));
+	coeff0 = loadPack(lpcCoeffs);
+
+	if constexpr (Order > 8) {
+		__m128i t2 = _mm_loadu_si128((const __m128i *)(y + 8));
+		__m128i t3 = _mm_loadu_si128((const __m128i *)(y + 12));
+		pipel1 = _mm_packs_epi32(_mm_and_si128(t2, x0FFFd), _mm_and_si128(t3, x0FFFd));
+		pipeh1 = _mm_packs_epi32(_mm_srai_epi32(t2, 12), _mm_srai_epi32(t3, 12));
+		coeff1 = loadPack(lpcCoeffs + 8);
+	}
+
+	// left align the pipeline and coefficients to make insertion at the tail easier; we don't
+	// care about beyond the head since it will be multiplied by 0s we're shifting into coeff0
+	constexpr int offset = ((16 - Order) & 7) * 2;
+	if constexpr (offset != 0) {
+		if constexpr (Order > 8) {
+			pipel1 = _mm_or_si128(_mm_slli_si128(pipel1, offset), _mm_srli_si128(pipel0, 16 - offset));
+			pipeh1 = _mm_or_si128(_mm_slli_si128(pipeh1, offset), _mm_srli_si128(pipeh0, 16 - offset));
+			coeff1 = _mm_or_si128(_mm_slli_si128(coeff1, offset), _mm_srli_si128(coeff0, 16 - offset));
+		}
+
+		pipel0 = _mm_slli_si128(pipel0, offset);
+		pipeh0 = _mm_slli_si128(pipeh0, offset);
+		coeff0 = _mm_slli_si128(coeff0, offset);
+	}
+
+	__m128i vshift = _mm_cvtsi32_si128(qlpShift);
+
+	// run the pipeline -- note that we must specifically NOT using saturating adds here,
+	// as we can rely on temporary overflows getting corrected back into range for the final
+	// sum pre-shift
+	for(uint32 i = 0; i < n; ++i) {
+		// pair-wise madds, 0-7
+		__m128i predvl = _mm_madd_epi16(pipel0, coeff0);
+		__m128i predvh = _mm_madd_epi16(pipeh0, coeff0);
+
+		// pair-wise madds, 8-15
+		if constexpr (Order > 8) {
+			predvl = _mm_add_epi32(predvl, _mm_madd_epi16(pipel1, coeff1));
+			predvh = _mm_add_epi32(predvh, _mm_madd_epi16(pipeh1, coeff1));
+		}
+
+		// horizontal add
+		__m128 tmpl = _mm_castsi128_ps(predvl);
+		__m128 tmph = _mm_castsi128_ps(predvh);
+
+		if constexpr (Order > 4) {
+			predvl = _mm_add_epi32(predvl, _mm_castps_si128(_mm_movehl_ps(tmpl, tmpl)));
+			predvh = _mm_add_epi32(predvh, _mm_castps_si128(_mm_movehl_ps(tmph, tmph)));
+		} else {
+			predvl = _mm_castps_si128(_mm_movehl_ps(tmpl, tmpl));
+			predvh = _mm_castps_si128(_mm_movehl_ps(tmph, tmph));
+		}
+
+		if constexpr (Order > 2) {
+			predvl = _mm_add_epi32(predvl, _mm_slli_epi64(predvl, 32));
+			predvh = _mm_add_epi32(predvh, _mm_slli_epi64(predvh, 32));
+		}
+
+		// merge high-low
+		__m128i predv = _mm_add_epi64(_mm_slli_epi64(_mm_srai_epi64(predvh, 32), 12), _mm_srai_epi64(predvl, 32));
+
+		// apply quantization shift
+		predv = _mm_sra_epi64(predv, vshift);
+
+		// add residual
+		__m128i v = _mm_add_epi32(predv, _mm_cvtsi32_si128(y[Order]));
+
+		// write new sample
+		y[Order] = _mm_cvtsi128_si32(v);
+		++y;
+
+		// shift and insert into pipeline
+		__m128i vl = _mm_and_si128(v, x0FFFd);
+		__m128i vh = _mm_srai_epi32(v, 12);
+		if constexpr (Order > 8) {
+			pipel0 = _mm_alignr_epi8(pipel1, pipel0, 2);
+			pipeh0 = _mm_alignr_epi8(pipeh1, pipeh0, 2);
+			pipel1 = _mm_alignr_epi8(vl, pipel1, 2);
+			pipeh1 = _mm_alignr_epi8(vh, pipeh1, 2);
+		} else {
+			pipel0 = _mm_alignr_epi8(vl, pipel0, 2);
+			pipeh0 = _mm_alignr_epi8(vh, pipeh0, 2);
+		}
+	}
+}
+
 void ATFLACReconstructLPC_Narrow_SSE2(sint32 *y, uint32 n, const sint32 *lpcCoeffs, int qlpShift, int order) {
 	switch(order) {
 		case  2: ATFLACReconstructLPC_Narrow_SSE2_Impl< 2>(y, n, lpcCoeffs, qlpShift); break;
@@ -233,6 +344,26 @@ void ATFLACReconstructLPC_Narrow_SSSE3(sint32 *y, uint32 n, const sint32 *lpcCoe
 		case 14: ATFLACReconstructLPC_Narrow_SSSE3_Impl<14>(y, n, lpcCoeffs, qlpShift); break;
 		case 15: ATFLACReconstructLPC_Narrow_SSSE3_Impl<15>(y, n, lpcCoeffs, qlpShift); break;
 		case 16: ATFLACReconstructLPC_Narrow_SSSE3_Impl<16>(y, n, lpcCoeffs, qlpShift); break;
+	}
+}
+
+void ATFLACReconstructLPC_Medium_SSSE3(sint32 *y, uint32 n, const sint32 *lpcCoeffs, int qlpShift, int order) {
+	switch(order) {
+		case  2: ATFLACReconstructLPC_Medium_SSSE3_Impl< 2>(y, n, lpcCoeffs, qlpShift); break;
+		case  3: ATFLACReconstructLPC_Medium_SSSE3_Impl< 3>(y, n, lpcCoeffs, qlpShift); break;
+		case  4: ATFLACReconstructLPC_Medium_SSSE3_Impl< 4>(y, n, lpcCoeffs, qlpShift); break;
+		case  5: ATFLACReconstructLPC_Medium_SSSE3_Impl< 5>(y, n, lpcCoeffs, qlpShift); break;
+		case  6: ATFLACReconstructLPC_Medium_SSSE3_Impl< 6>(y, n, lpcCoeffs, qlpShift); break;
+		case  7: ATFLACReconstructLPC_Medium_SSSE3_Impl< 7>(y, n, lpcCoeffs, qlpShift); break;
+		case  8: ATFLACReconstructLPC_Medium_SSSE3_Impl< 8>(y, n, lpcCoeffs, qlpShift); break;
+		case  9: ATFLACReconstructLPC_Medium_SSSE3_Impl< 9>(y, n, lpcCoeffs, qlpShift); break;
+		case 10: ATFLACReconstructLPC_Medium_SSSE3_Impl<10>(y, n, lpcCoeffs, qlpShift); break;
+		case 11: ATFLACReconstructLPC_Medium_SSSE3_Impl<11>(y, n, lpcCoeffs, qlpShift); break;
+		case 12: ATFLACReconstructLPC_Medium_SSSE3_Impl<12>(y, n, lpcCoeffs, qlpShift); break;
+		case 13: ATFLACReconstructLPC_Medium_SSSE3_Impl<13>(y, n, lpcCoeffs, qlpShift); break;
+		case 14: ATFLACReconstructLPC_Medium_SSSE3_Impl<14>(y, n, lpcCoeffs, qlpShift); break;
+		case 15: ATFLACReconstructLPC_Medium_SSSE3_Impl<15>(y, n, lpcCoeffs, qlpShift); break;
+		case 16: ATFLACReconstructLPC_Medium_SSSE3_Impl<16>(y, n, lpcCoeffs, qlpShift); break;
 	}
 }
 

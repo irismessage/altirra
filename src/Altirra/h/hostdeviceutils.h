@@ -29,9 +29,17 @@ inline bool ATHostDeviceIsValidPathChar(uint8 c) {
 }
 
 inline bool ATHostDeviceIsValidPathCharWide(wchar_t c) {
-	return c == '_' || (uint32)(c - '0') < 10 || (uint32)(c - 'A') < 26;
+	return c == L'_' || (uint32)(c - L'0') < 10 || (uint32)(c - 'A') < 26;
 }
 
-void ATHostDeviceEncodeName(char encodedName[13], const wchar_t *hostName, bool useLongNameEncoding);
+inline bool ATHostDeviceIsValidPathCharLFN(uint8 c) {
+	return c >= 0x20 && c < 0x7C;
+}
+
+inline bool ATHostDeviceIsValidPathCharWideLFN(wchar_t c) {
+	return c >= 0x20 && c < 0x7C;
+}
+
+void ATHostDeviceEncodeName(VDStringA& encodedName, const wchar_t *hostName, bool useLongNameEncoding, bool useLongNames);
 
 #endif

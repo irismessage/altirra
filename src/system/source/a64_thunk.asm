@@ -1,39 +1,38 @@
-	segment	.text
+		.code
 		
-		global	VDMethodToFunctionThunk64
-proc_frame	VDMethodToFunctionThunk64
+VDMethodToFunctionThunk64	proc frame
 		;prolog
 		db			48h				;emit REX prefix -- first instruction must be two bytes for hot patching
 		push		rbp
-		[pushreg	rbp]
+		.pushreg	rbp
 		
 		mov			rbp, rsp		;create stack pointer
-		[setframe	rbp, 0]
+		.setframe	rbp, 0
 		
 		mov			[rbp+16], rcx	;save arg1
-		[savereg	rcx, 0]
+		.savereg	rcx, 0
 		
 		mov			[rbp+24], rdx	;save arg2
-		[savereg	rcx, 8]
+		.savereg	rcx, 8
 
 		mov			[rbp+32], r8	;save arg3
-		[savereg	rcx, 16]
+		.savereg	rcx, 16
 
 		mov			[rbp+40], r9	;save arg4
-		[savereg	rcx, 24]
+		.savereg	rcx, 24
 		
-		[endprolog]
+		.endprolog
 				
 		;re-copy arguments 4 and up
 		mov			ecx, [rax+24]
 		or			ecx, ecx
-		jz			.argsdone
+		jz			argsdone
 		lea			rdx, [rcx+32]
-.argsloop:
-		push		qword [rsp+rdx]
+argsloop:
+		push		qword ptr [rsp+rdx]
 		sub			ecx, 8
-		jnz			.argsloop
-.argsdone:
+		jnz			argsloop
+argsdone:
 		
 		;load 'this' pointer
 		mov			rcx, [rax+16]
@@ -47,12 +46,12 @@ proc_frame	VDMethodToFunctionThunk64
 		sub			rsp, 32
 		
 		;call function
-		call		qword [rax+8]
+		call		qword ptr [rax+8]
 		
 		;epilog
 		lea			rsp, [rbp]		;pop off stack frame and any additional arg space
 		pop			rbp				;restore base pointer
 		ret							;all done
-endproc_frame
+VDMethodToFunctionThunk64	endp
 
 		end

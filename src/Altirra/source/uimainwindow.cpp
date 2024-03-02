@@ -48,6 +48,7 @@ extern ATLogChannel g_ATLCHostDisp;
 
 void ATUIRegisterDragDropHandler(VDGUIHandle h);
 void ATUIRevokeDragDropHandler(VDGUIHandle h);
+bool ATUICloseActiveModals();
 bool ATUIIsActiveModal();
 void ATUICloseAdjustColorsDialog();
 void ATUICloseAdjustScreenEffectsDialog();
@@ -97,6 +98,7 @@ private:
 	sint32 mMenuHeight = 0;
 
 	static inline constexpr UINT ATWM_SUBCLASS_CUSTOMIZE_MENU_ITEM = ATWM_SUBCLASS_PRIVATE + 1;
+	static inline constexpr UINT ATWM_SUBCLASS_ACTIVATE_APP = ATWM_SUBCLASS_PRIVATE + 2;
 };
 
 ATMainWindow::ATMainWindow() {
@@ -150,7 +152,7 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 			return 0;
 
 		case WM_CLOSE:
-			if (ATUIIsActiveModal()) {
+			if (!ATUICloseActiveModals()) {
 				MessageBeep(MB_ICONASTERISK);
 				return 0;
 			}
@@ -182,6 +184,19 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 
 		case WM_ACTIVATEAPP:
+			// DXGI does something really dangerous and triggers a SetForegroundWindow(GetDesktopWindow())
+			// call if it detects that an exclusive full screen swap chain has become occluded. This
+			// causes WM_ACTIVATEAPP to be sent to the app from within the Present() call, which does
+			// really bad things if the app tries to exit full screen mode in response. Thus, we need to
+			// defer the response so we don't hose the display code by recursion.
+			//
+			// The culprit triggering this? WinAmp, as usual. Current versions try to get out of the way,
+			// but not always quick enough.
+			
+			PostMessage(mhwnd, ATWM_SUBCLASS_ACTIVATE_APP, wParam, lParam);
+			break;
+
+		case ATWM_SUBCLASS_ACTIVATE_APP:
 			OnActivateApp(wParam);
 			break;
 

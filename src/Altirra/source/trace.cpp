@@ -107,6 +107,15 @@ ATTraceGroup *ATTraceCollection::GetGroup(size_t index) const {
 	return mGroups[index];
 }
 
+ATTraceGroup *ATTraceCollection::GetGroupByType(ATTraceGroupType groupType) const {
+	for(ATTraceGroup *group : mGroups) {
+		if (group->GetType() == groupType)
+			return group;
+	}
+
+	return nullptr;
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 ATTraceChannelTickBased::ATTraceChannelTickBased(uint64 tickOffset, double tickScale, const wchar_t *name)

@@ -36,7 +36,6 @@
     <ClCompile Include="source\filecreator.cpp" />
     <ClCompile Include="source\fontencode.cpp" />
     <ClCompile Include="source\fontextract.cpp" />
-    <ClCompile Include="source\fontrender.cpp" />
     <ClCompile Include="source\fxc10.cpp" />
     <ClCompile Include="source\hash.cpp" />
     <ClCompile Include="source\main.cpp" />

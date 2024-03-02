@@ -80,6 +80,9 @@ uint32 ATCassetteImageBlock::AccumulateAudio(float *&dst, uint32& posSample, uin
 ///////////////////////////////////////////////////////////////////////////////
 
 void ATCassetteImageBlockRawData::AddFSKPulseSamples(bool polarity, uint32 samples) {
+	if (!samples)
+		return;
+
 	if (~mDataLength < samples)
 		throw MyError("Tape too long (exceeds 2^32 samples)");
 
@@ -142,13 +145,21 @@ void ATCassetteImageBlockRawData::AddDirectPulseSamples(bool polarity, uint32 sa
 	mDataLength += samples;
 }
 
-void ATCassetteImageBlockRawData::ExtractPulses(vdfastvector<uint32>& pulses, bool bypassFSK) const {
+void ATCassetteImageBlockRawData::ExtractPulses(vdfastvector<uint32>& pulses, uint32 sampleOffset, uint32 maxSamples, bool bypassFSK) const {
 	bool lastPolarity = false;
 	uint32 pulseLen = 0;
 
-	const uint32 n = mDataLength;
-	const uint32 *bitfield = bypassFSK ? mDataRaw.data() : mDataFSK.data();
-	for(uint32 i=0; i<n; ++i) {
+	uint32 n = mDataLength;
+	if (sampleOffset >= n)
+		return;
+
+	maxSamples = std::min<uint32>(maxSamples, n - sampleOffset);
+	if (!maxSamples)
+		return;
+
+	const uint32 *VDRESTRICT bitfield = bypassFSK ? mDataRaw.data() : mDataFSK.data();
+	const uint32 sampleLimit = sampleOffset + maxSamples;
+	for(uint32 i=sampleOffset; i<sampleLimit; ++i) {
 		const bool polarity = ((bitfield[i >> 5] << (i & 31)) & 0x80000000) != 0;
 
 		if (lastPolarity != polarity) {

@@ -19,10 +19,10 @@
 #include <vd2/system/binary.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/vdstl.h>
+#include <at/atcore/cio.h>
 #include "cpu.h"
 #include "cpumemory.h"
 #include "kerneldb.h"
-#include "cio.h"
 #include "virtualscreen.h"
 
 class ATVirtualScreenHandler final : public IATVirtualScreenHandler {
@@ -265,7 +265,7 @@ void ATVirtualScreenHandler::OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory
 			mbWaitingForInput = false;
 			WriteParams(*mem);
 			cpu->SetA(mActiveInputLine[mInputIndex++]);
-			cpu->Ldy(ATCIOSymbols::CIOStatSuccess);
+			cpu->Ldy(kATCIOStat_Success);
 			break;
 
 		case 6:		// put byte
@@ -282,7 +282,7 @@ void ATVirtualScreenHandler::OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory
 				return;
 			} else if (!mem->ReadByte(ATKernelSymbols::BRKKEY)) {
 				mem->WriteByte(ATKernelSymbols::BRKKEY, 0x80);
-				cpu->Ldy(ATCIOSymbols::CIOStatBreak);
+				cpu->Ldy(kATCIOStat_Break);
 				mbWaitingForInput = false;
 				break;
 			} else {
@@ -300,17 +300,17 @@ void ATVirtualScreenHandler::OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory
 				
 				WriteParams(*mem);
 
-				cpu->Ldy(ATCIOSymbols::CIOStatSuccess);
+				cpu->Ldy(kATCIOStat_Success);
 				mbWaitingForInput = false;
 			}
 			break;
 
 		case 8:		// get status
-			cpu->Ldy(ATCIOSymbols::CIOStatSuccess);
+			cpu->Ldy(kATCIOStat_Success);
 			break;
 
 		case 10:	// special
-			cpu->Ldy(ATCIOSymbols::CIOStatSuccess);
+			cpu->Ldy(kATCIOStat_Success);
 			break;
 	}
 }

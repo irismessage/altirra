@@ -97,12 +97,10 @@ public:
 	uint32	GetBeamY() const { return mY; }
 	uint32	GetHALTCycleCount() const { return mHALTCycles; }
 	uint32	GetHaltedCycleCount() const {
-		uint32 cyc = mHALTCycles + mRDYCycleOffset;
-
-		if (mWSYNCPending)
-			cyc += (mX >= 105 ? mX - 105 - 114 : mX - 105);
-
-		return cyc;
+		if (mbWSYNCActive)
+			return mWSYNCCycleOffset + mX;
+		else
+			return mHALTCycles + mRDYCycleOffset;
 	}
 
 	AnalysisMode	GetAnalysisMode() const { return mAnalysisMode; }
@@ -220,6 +218,7 @@ private:
 	uint32	mScanlineMax = 0;
 	uint32	mVSyncStart = 0;
 	uint32	mRDYCycleOffset = 0;
+	uint32	mWSYNCCycleOffset = 0;
 
 	bool	mbDLExtraLoadsPending = false;
 	bool	mbDLActive = false;

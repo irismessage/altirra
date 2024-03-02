@@ -18,7 +18,6 @@
 #include <vd2/system/math.h>
 #include <vd2/system/time.h>
 #include <vd2/system/vdalloc.h>
-#include <vd2/Kasumi/triblt.h>
 #include <vd2/VDDisplay/font.h>
 #include <vd2/VDDisplay/textrenderer.h>
 #include <vd2/VDDisplay/renderersoft.h>
@@ -205,6 +204,12 @@ void ATUIManager::SetThemeScaleFactor(float scale) {
 		mThemeScale = scale;
 		ReinitTheme();
 	}
+}
+
+vdsize32 ATUIManager::ScaleThemeSize(const vdfloat2& size) const {
+	vdint2 isize = nsVDMath::intround(size * mThemeScale);
+
+	return vdsize32(isize.x, isize.y);
 }
 
 void ATUIManager::SetActiveWindow(ATUIWidget *w) {
@@ -784,6 +789,60 @@ ATUIDragEffect ATUIManager::OnDragDrop(sint32 x, sint32 y, ATUIDragModifiers mod
 	return effect;
 }
 
+void ATUIManager::OnTimer() {
+	if (mTimerHeap.empty())
+		return;
+
+	const uint64 t = VDGetPreciseTick();
+	const uint64 tr = VDGetPreciseTicksPerSecondI();
+	const uint64 threshold = t + tr / 300;
+
+	do {
+		const auto& the = mTimerHeap.front();
+		const uint64 nextTick = the.mNextTick;
+		const ATUITimerHandle th = the.mTimerHandle;
+
+		const uint32 timerIndex = (uint32)th & 0xFFFF;
+		const TimerEntry *te = nullptr;
+		bool valid = false;
+		if (timerIndex < mTimerEntries.size()) {
+			te = &mTimerEntries[timerIndex];
+			if (te->mTimerHandle == th) {
+				ATUIWidget *w = GetWindowByInstance(te->mInstanceId);
+				if (w) {
+					if (nextTick > threshold) {
+						UpdateNativeTimer(t, nextTick);
+						break;
+					}
+
+					valid = true;
+				} else {
+					StopTimer(th);
+				}
+			}
+		}
+
+		std::pop_heap(mTimerHeap.begin(), mTimerHeap.end(), TimerHeapCompare());
+		mTimerHeap.pop_back();
+
+		if (valid) {
+			if (te->mTickPeriod > 0) {
+				auto& the2 = mTimerHeap.emplace_back();
+				the2.mTimerHandle = th;
+
+				uint64 tickOffset = (std::max<uint64>(threshold + 1, nextTick) - nextTick) + te->mTickPeriod - 1;
+
+				the2.mNextTick = AdjustTimerTick(nextTick + tickOffset - tickOffset % te->mTickPeriod);
+
+				std::push_heap(mTimerHeap.begin(), mTimerHeap.end(), TimerHeapCompare());
+			} else
+				StopTimer(th);
+
+			te->mCallback();
+		}
+	} while(!mTimerHeap.empty());
+}
+
 const wchar_t *ATUIManager::GetCustomEffectPath() const {
 	return mCustomEffectPath.c_str();
 }
@@ -887,6 +946,75 @@ void ATUIManager::Invalidate(ATUIWidget *w) {
 void ATUIManager::UpdateCursorImage(ATUIWidget *w) {
 	if (w->IsSameOrAncestorOf(mpCursorWindow))
 		UpdateCursorImage();
+}
+
+ATUITimerHandle ATUIManager::StartTimer(ATUIWidget& w, float initialDelay, float period, vdfunction<void()> fn) {
+	if (!w.GetManager()) {
+		VDFAIL("Cannot start a timer on a detached window.");
+		return {};
+	}
+
+	// add a new timer entry if one isn't free
+	if (mFreeTimerIndices.empty()) {
+		uint32 newTimerIndex = (uint32)mTimerEntries.size();
+		mFreeTimerIndices.push_back(newTimerIndex);
+
+		auto& newte = mTimerEntries.emplace_back();
+		newte.mTimerHandle = ATUITimerHandle(0x00010000 + newTimerIndex);
+	}
+
+	const uint32 timerIndex = mFreeTimerIndices.back() & 0xFFFF;
+	auto& te = mTimerEntries[timerIndex];
+	mFreeTimerIndices.pop_back();
+
+	VDASSERT(((uint32)te.mTimerHandle & 0xFFFF) == timerIndex);
+
+	te.mCallback = std::move(fn);
+	te.mInstanceId = w.GetInstanceId();
+	te.mTickPeriod = period > 0 ? VDRoundToInt64((double)period * VDGetPreciseTicksPerSecond()) : 0;
+
+	const uint64 t = VDGetPreciseTick();
+	uint64 oldNextTick = mTimerHeap.empty() ? 0 : mTimerHeap.front().mNextTick;
+	uint64 nextTick = AdjustTimerTick(t + VDRoundToInt64(std::max<float>(0, initialDelay) * VDGetPreciseTicksPerSecond()));
+
+	auto& the = mTimerHeap.emplace_back();
+	the.mTimerHandle = te.mTimerHandle;
+	the.mNextTick = nextTick;
+
+	std::push_heap(mTimerHeap.begin(), mTimerHeap.end(), TimerHeapCompare());
+
+	if (oldNextTick != nextTick && mpNativeDisplay)
+		UpdateNativeTimer(t, nextTick);
+
+	return te.mTimerHandle;
+}
+
+void ATUIManager::StopTimer(ATUITimerHandle h) {
+	uint32 timerId = (uint32)h;
+
+	// it is OK to stop the null handle
+	if (!timerId)
+		return;
+
+	// check if the timer index is valid
+	uint32 timerIndex = timerId & 0xFFFF;
+	if (timerIndex >= mTimerEntries.size())
+		return;
+
+	TimerEntry& te = mTimerEntries[timerIndex];
+
+	// check if this timer handle is outdated for the index
+	if (te.mTimerHandle != h)
+		return;
+
+	// clear the timer
+	te.mCallback = nullptr;
+	te.mInstanceId = 0;
+
+	// bump the timer handle to invalidate this one
+	te.mTimerHandle = ATUITimerHandle((uint32)te.mTimerHandle + 0x10000U);
+
+	mFreeTimerIndices.push_back(timerIndex);
 }
 
 void ATUIManager::AttachCompositor(IVDDisplayCompositionEngine& dce) {
@@ -1072,4 +1200,13 @@ void ATUIManager::ReinitTheme() {
 
 	if (mpMainWindow)
 		mpMainWindow->InvalidateLayout(nullptr);
+}
+
+uint64 ATUIManager::AdjustTimerTick(uint64 tick) const {
+	// quantize ticks to coalesce timers to 10ms intervals
+	return tick - tick % (VDGetPreciseTicksPerSecondI() / 100);
+}
+
+void ATUIManager::UpdateNativeTimer(uint64 t, uint64 nextTick) {
+	mpNativeDisplay->SetTimer((float)((double)(nextTick - t) * VDGetPreciseSecondsPerTick()));
 }

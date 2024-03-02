@@ -16,69 +16,49 @@
 ;	along with this program; if not, write to the Free Software
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 ;
-
-	default	rel
-
-	segment	.rdata, align=16
+	.const
 
 	align 16
 roundval		dq	0000200000002000h, 0000200000002000h
 
 
-	segment	.text
+	.code
 
+VDSAVEXMM128 macro	startreg, endreg
+	local _count, _stkoffset, _reg
+	_count		= endreg + 1 - startreg
+	_stkoffset	= 0
+	_reg		= startreg
 
-%macro VDSAVE 1-*
+	sub rsp, _count*16+8
+	.allocstack _count*16
 
-	%rep	%0
-		%rotate -1
-		push		%1
-		[pushreg	%1]
-	%endrep
+	rept _count
+		_xmmreg catstr <xmm>,%_reg
+		movdqa	xmmword ptr [rsp+_stkoffset], _xmmreg
+		.savexmm128 _xmmreg, _stkoffset
+	
+		_stkoffset	= _stkoffset + 16
+		_reg		= _reg + 1
+	endm
+endm
 
-%endmacro
+VDRESTOREXMM128	macro startreg, endreg
+	local _count, _stkoffset, _reg
+	_count		= endreg + 1 - startreg
+	_stkoffset	= _count*16
+	_reg		= endreg
 
-%macro VDRESTORE 1-*
+	rept _count
+		_stkoffset = _stkoffset-16
+		_xmmreg catstr <xmm>,%_reg
+		movdqa _xmmreg, xmmword ptr [rsp+_stkoffset]
+	
+		_reg = _reg-1
+	endm
 
-	%rep	%0
-		pop			%1
-
-		%rotate 1
-	%endrep
-
-%endmacro
-
-%macro VDSAVEXMM128	2
-%assign	%%count		%2 + 1 - %1
-%assign %%stkoffset	0
-%assign %%reg		%1
-
-	sub rsp, %%count*16+8
-	[allocstack %%count*16]
-
-	%rep %%count
-		movdqa	oword [rsp+%%stkoffset], xmm %+ %%reg
-		[savexmm128 xmm %+ %%reg, %%stkoffset]
-
-		%assign	%%stkoffset	%%stkoffset + 16
-		%assign %%reg		%%reg + 1
-	%endrep
-%endmacro
-
-%macro VDRESTOREXMM128	2
-%assign	%%count		%2+1-%1
-%assign	%%stkoffset	%%count*16
-%assign	%%reg		%2
-
-	%rep	%%count
-		%assign %%stkoffset %%stkoffset-16
-		movdqa xmm %+ %%reg, oword [rsp+%%stkoffset]
-
-		%assign %%reg %%reg-1
-	%endrep
-
-	add rsp, %%count*16+8
-%endmacro
+	add rsp, _count*16+8
+endm
 
 ;-------------------------------------------------------------------------
 ;
@@ -91,32 +71,38 @@ roundval		dq	0000200000002000h, 0000200000002000h
 ;		long accum,			// [rsp+48]
 ;		long frac);			// [rsp+56]
 ;
-	global vdasm_resize_table_row_SSE2
-proc_frame vdasm_resize_table_row_SSE2
+vdasm_resize_table_row_SSE2 proc frame
+	push		r15
+	push		r14
+	push		r13
+	push		r12
+	push		rbp
+	push		rdi
+	push		rsi
+	push		rbx
 
-	VDSAVE			rbx, rsi, rdi, rbp, r12, r13, r14, r15
 	VDSAVEXMM128	6, 15
-end_prolog
+	.endprolog
 
-	.parms equ rsp+168+64
+	parms equ rsp+168+64
 
-	mov			r10d, dword [.parms+40]
+	mov			r10d, dword ptr [parms+40]
 	shl			r10, 2
 	add			rcx, r10
 	neg			r10
 	shl			r9d, 2					;filter_width <<= 2
 
-	movaps		xmm6, oword [roundval]
+	movaps		xmm6, xmmword ptr [roundval]
 	pxor		xmm5, xmm5
 	mov			rsi, rdx
 	shr			rsi, 2
 
-	mov			edi, [.parms+48]
+	mov			edi, [parms+48]
 	mov			eax, edi
 	shl			edi, 16
 	sar			rax, 16
 	add			rsi, rax
-	mov			ebp, [.parms+56]
+	mov			ebp, [parms+56]
 	movsxd		r11, ebp
 	shl			ebp, 16
 	sar			r11, 16
@@ -140,29 +126,29 @@ end_prolog
 	;r15
 
 	cmp			r9d, 8
-	jz			.accel_2coeff
+	jz			accel_2coeff
 	cmp			r9d, 16
-	jz			.accel_4coeff
+	jz			accel_4coeff
 	cmp			r9d, 24
-	jz			.accel_6coeff
+	jz			accel_6coeff
 
 	test		r9d, 8
-	jz			.pixelloop_even_pairs
+	jz			pixelloop_even_pairs
 	cmp			r9d, 8
-	jnz			.pixelloop_odd_pairs
+	jnz			pixelloop_odd_pairs
 
-.pixelloop_single_pairs:
+pixelloop_single_pairs:
 	mov			eax, edi
 	shr			eax, 24
 	imul		eax, r9d
 	
 	lea			rdx, [rsi*4]
 
-	movd		xmm0, dword [rdx]			;xmm0 = p0
-	movd		xmm1, dword [rdx+4]		;xmm1 = p1
+	movd		xmm0, dword ptr [rdx]			;xmm0 = p0
+	movd		xmm1, dword ptr [rdx+4]		;xmm1 = p1
 	punpcklbw	xmm0, xmm1
 	punpcklbw	xmm0, xmm5
-	movq		xmm1, qword [r8+rax]
+	movq		xmm1, qword ptr [r8+rax]
 	pshufd		xmm1, xmm1, 01000100b
 	pmaddwd		xmm0, xmm1
 	
@@ -176,12 +162,12 @@ end_prolog
 	add			edi, ebp
 	adc			rsi, r11
 
-	movd		dword [rcx+r10], xmm4
+	movd		dword ptr [rcx+r10], xmm4
 	add			r10, 4
-	jnz			.pixelloop_single_pairs
-	jmp			.xit
+	jnz			pixelloop_single_pairs
+	jmp			xit
 
-.pixelloop_odd_pairs:
+pixelloop_odd_pairs:
 	movdqa		xmm4, xmm6
 
 	mov			eax, edi
@@ -191,18 +177,18 @@ end_prolog
 
 	lea			rdx, [rsi*4]
 	lea			rax, [r9-8]
-.coeffloop_odd_pairs:
-	movd		xmm0, dword [rdx]			;xmm0 = p0
-	movd		xmm1, dword [rdx+4]		;xmm1 = p1
-	movd		xmm2, dword [rdx+8]		;xmm2 = p2
-	movd		xmm3, dword [rdx+12]		;xmm3 = p3
+coeffloop_odd_pairs:
+	movd		xmm0, dword ptr [rdx]			;xmm0 = p0
+	movd		xmm1, dword ptr [rdx+4]		;xmm1 = p1
+	movd		xmm2, dword ptr [rdx+8]		;xmm2 = p2
+	movd		xmm3, dword ptr [rdx+12]		;xmm3 = p3
 	add			rdx, 16
 	punpcklbw	xmm0, xmm1
 	punpcklbw	xmm2, xmm3
 	punpcklbw	xmm0, xmm5
 	punpcklbw	xmm2, xmm5
-	movq		xmm1, qword [rbx]
-	movq		xmm3, qword [rbx+8]
+	movq		xmm1, qword ptr [rbx]
+	movq		xmm3, qword ptr [rbx+8]
 	add			rbx, 16
 	pshufd		xmm1, xmm1, 01000100b
 	pshufd		xmm3, xmm3, 01000100b
@@ -211,13 +197,13 @@ end_prolog
 	paddd		xmm0, xmm2
 	paddd		xmm4, xmm0
 	sub			eax, 16
-	jnz			.coeffloop_odd_pairs
+	jnz			coeffloop_odd_pairs
 
-	movd		xmm0, dword [rdx]			;xmm0 = p0
-	movd		xmm1, dword [rdx+4]		;xmm1 = p1
+	movd		xmm0, dword ptr [rdx]			;xmm0 = p0
+	movd		xmm1, dword ptr [rdx+4]		;xmm1 = p1
 	punpcklbw	xmm0, xmm1
 	punpcklbw	xmm0, xmm5
-	movq		xmm1, qword [rbx]
+	movq		xmm1, qword ptr [rbx]
 	pshufd		xmm1, xmm1, 01000100b
 	pmaddwd		xmm0, xmm1
 	paddd		xmm4, xmm0
@@ -229,12 +215,12 @@ end_prolog
 	add			edi, ebp
 	adc			rsi, r11
 
-	movd		dword [rcx+r10], xmm4
+	movd		dword ptr [rcx+r10], xmm4
 	add			r10, 4
-	jnz			.pixelloop_odd_pairs
-	jmp			.xit
+	jnz			pixelloop_odd_pairs
+	jmp			xit
 
-.pixelloop_even_pairs:
+pixelloop_even_pairs:
 	movdqa		xmm4, xmm6
 
 	mov			eax, edi
@@ -244,18 +230,18 @@ end_prolog
 
 	lea			rdx, [rsi*4]
 	mov			eax, r9d
-.coeffloop_even_pairs:
-	movd		xmm0, dword [rdx]			;xmm0 = p0
-	movd		xmm1, dword [rdx+4]		;xmm1 = p1
-	movd		xmm2, dword [rdx+8]		;xmm2 = p2
-	movd		xmm3, dword [rdx+12]		;xmm3 = p3
+coeffloop_even_pairs:
+	movd		xmm0, dword ptr [rdx]			;xmm0 = p0
+	movd		xmm1, dword ptr [rdx+4]		;xmm1 = p1
+	movd		xmm2, dword ptr [rdx+8]		;xmm2 = p2
+	movd		xmm3, dword ptr [rdx+12]		;xmm3 = p3
 	add			rdx, 16
 	punpcklbw	xmm0, xmm1
 	punpcklbw	xmm2, xmm3
 	punpcklbw	xmm0, xmm5
 	punpcklbw	xmm2, xmm5
-	movq		xmm1, qword [rbx]
-	movq		xmm3, qword [rbx+8]
+	movq		xmm1, qword ptr [rbx]
+	movq		xmm3, qword ptr [rbx+8]
 	add			rbx, 16
 	pshufd		xmm1, xmm1, 01000100b
 	pshufd		xmm3, xmm3, 01000100b
@@ -264,7 +250,7 @@ end_prolog
 	paddd		xmm0, xmm2
 	paddd		xmm4, xmm0
 	sub			eax, 16
-	jnz			.coeffloop_even_pairs
+	jnz			coeffloop_even_pairs
 
 	psrad		xmm4, 14
 	packssdw	xmm4, xmm4
@@ -273,17 +259,24 @@ end_prolog
 	add			edi, ebp
 	adc			rsi, r11
 
-	movd		dword [rcx+r10], xmm4
+	movd		dword ptr [rcx+r10], xmm4
 	add			r10, 4
-	jnz			.pixelloop_even_pairs
+	jnz			pixelloop_even_pairs
 
-.xit:
+xit:
 	VDRESTOREXMM128	6, 15
-	VDRESTORE	rbx, rsi, rdi, rbp, r12, r13, r14, r15
+	pop			rbx
+	pop			rsi
+	pop			rdi
+	pop			rbp
+	pop			r12
+	pop			r13
+	pop			r14
+	pop			r15
 	ret
 
-.accel_2coeff:
-.pixelloop_2coeff:
+accel_2coeff:
+pixelloop_2coeff:
 	pxor		xmm5, xmm5
 	movdqa		xmm4, xmm6
 
@@ -292,11 +285,11 @@ end_prolog
 	and			eax, edi
 	shr			eax, 21
 
-	movd		xmm0, dword [rdx]			;xmm0 = p0
-	movd		xmm1, dword [rdx+4]			;xmm1 = p1
+	movd		xmm0, dword ptr [rdx]			;xmm0 = p0
+	movd		xmm1, dword ptr [rdx+4]			;xmm1 = p1
 	punpcklbw	xmm0, xmm1
 	punpcklbw	xmm0, xmm5
-	movq		xmm1, qword [r8+rax]
+	movq		xmm1, qword ptr [r8+rax]
 	pshufd		xmm1, xmm1, 01000100b
 	pmaddwd		xmm0, xmm1
 	paddd		xmm4, xmm0
@@ -308,13 +301,13 @@ end_prolog
 	add			edi, ebp
 	adc			rsi, r11
 
-	movd		dword [rcx+r10], xmm4
+	movd		dword ptr [rcx+r10], xmm4
 	add			r10, 4
-	jnz			.pixelloop_2coeff
-	jmp			.xit
+	jnz			pixelloop_2coeff
+	jmp			xit
 
-.accel_4coeff:
-.pixelloop_4coeff:
+accel_4coeff:
+pixelloop_4coeff:
 	pxor		xmm5, xmm5
 	movdqa		xmm4, xmm6
 
@@ -324,16 +317,16 @@ end_prolog
 	shr			eax, 20
 	lea			rbx, [r8+rax]
 
-	movd		xmm0, dword [rdx]			;xmm0 = p0
-	movd		xmm1, dword [rdx+4]		;xmm1 = p1
-	movd		xmm2, dword [rdx+8]		;xmm2 = p2
-	movd		xmm3, dword [rdx+12]		;xmm3 = p3
+	movd		xmm0, dword ptr [rdx]			;xmm0 = p0
+	movd		xmm1, dword ptr [rdx+4]		;xmm1 = p1
+	movd		xmm2, dword ptr [rdx+8]		;xmm2 = p2
+	movd		xmm3, dword ptr [rdx+12]		;xmm3 = p3
 	punpcklbw	xmm0, xmm1
 	punpcklbw	xmm2, xmm3
 	punpcklbw	xmm0, xmm5
 	punpcklbw	xmm2, xmm5
-	movq		xmm1, qword [rbx]
-	movq		xmm3, qword [rbx+8]
+	movq		xmm1, qword ptr [rbx]
+	movq		xmm3, qword ptr [rbx+8]
 	pshufd		xmm1, xmm1, 01000100b
 	pshufd		xmm3, xmm3, 01000100b
 	pmaddwd		xmm0, xmm1
@@ -348,13 +341,13 @@ end_prolog
 	add			edi, ebp
 	adc			rsi, r11
 
-	movd		dword [rcx+r10], xmm4
+	movd		dword ptr [rcx+r10], xmm4
 	add			r10, 4
-	jnz			.pixelloop_4coeff
-	jmp			.xit
+	jnz			pixelloop_4coeff
+	jmp			xit
 
-.accel_6coeff:
-.pixelloop_6coeff:
+accel_6coeff:
+pixelloop_6coeff:
 	pxor		xmm5, xmm5
 	movdqa		xmm4, xmm6
 
@@ -364,21 +357,21 @@ end_prolog
 	lea			rax, [rax+rax*2]
 	lea			rbx, [r8+rax*8]
 
-	movd		xmm0, dword [rdx]			;xmm0 = p0
-	movd		xmm1, dword [rdx+4]		;xmm1 = p1
-	movd		xmm2, dword [rdx+8]		;xmm2 = p2
-	movd		xmm3, dword [rdx+12]		;xmm3 = p3
-	movd		xmm8, dword [rdx+16]		;xmm6 = p4
-	movd		xmm9, dword [rdx+20]		;xmm7 = p5
+	movd		xmm0, dword ptr [rdx]			;xmm0 = p0
+	movd		xmm1, dword ptr [rdx+4]		;xmm1 = p1
+	movd		xmm2, dword ptr [rdx+8]		;xmm2 = p2
+	movd		xmm3, dword ptr [rdx+12]		;xmm3 = p3
+	movd		xmm8, dword ptr [rdx+16]		;xmm6 = p4
+	movd		xmm9, dword ptr [rdx+20]		;xmm7 = p5
 	punpcklbw	xmm0, xmm1
 	punpcklbw	xmm2, xmm3
 	punpcklbw	xmm8, xmm9
 	punpcklbw	xmm0, xmm5
 	punpcklbw	xmm2, xmm5
 	punpcklbw	xmm8, xmm5
-	movq		xmm1, qword [rbx]
-	movq		xmm3, qword [rbx+8]
-	movq		xmm9, qword [rbx+16]
+	movq		xmm1, qword ptr [rbx]
+	movq		xmm3, qword ptr [rbx+8]
+	movq		xmm9, qword ptr [rbx+16]
 	pshufd		xmm1, xmm1, 01000100b
 	pshufd		xmm3, xmm3, 01000100b
 	pshufd		xmm9, xmm9, 01000100b
@@ -396,11 +389,11 @@ end_prolog
 	add			edi, ebp
 	adc			rsi, r11
 
-	movd		dword [rcx+r10], xmm4
+	movd		dword ptr [rcx+r10], xmm4
 	add			r10, 4
-	jnz			.pixelloop_6coeff
-	jmp			.xit
-endproc_frame
+	jnz			pixelloop_6coeff
+	jmp			xit
+vdasm_resize_table_row_SSE2 endp
 
 
 ;--------------------------------------------------------------------------
@@ -413,48 +406,55 @@ endproc_frame
 ;		PixDim w,			// [rsp+40] -> r10d
 ;		);
 ;
-	global	vdasm_resize_table_col_SSE2
-proc_frame	vdasm_resize_table_col_SSE2
-	VDSAVE			rbx, rsi, rdi, rbp, r12, r13, r14, r15
+
+vdasm_resize_table_col_SSE2 proc frame
+	push		r15
+	push		r14
+	push		r13
+	push		r12
+	push		rbp
+	push		rdi
+	push		rsi
+	push		rbx
 	VDSAVEXMM128	6, 15
-end_prolog
+	.endprolog
 
-	.parms equ rsp+168+64
+	parms equ rsp+168+64
 
-	mov			r10d, [.parms+40]			;r10d = w
+	mov			r10d, [parms+40]			;r10d = w
 
 	pxor		xmm5, xmm5
-	movdqa		xmm4, oword [roundval]
+	movdqa		xmm4, xmmword ptr [roundval]
 	xor			rbx, rbx					;rbx = source offset
 
 	cmp			r9d, 2
-	jz			.accel_2coeff
+	jz			accel_2coeff
 	cmp			r9d, 4
-	jz			.accel_4coeff
+	jz			accel_4coeff
 	cmp			r9d, 6
-	jz			.accel_6coeff
+	jz			accel_6coeff
 
 	shr			r9d, 1						;r9d = filter pair count
 
-.pixelloop:
+pixelloop:
 	mov			rax, rdx					;rax = row pointer table
 	mov			rdi, r8						;rdi = filter
 	mov			r11d, r9d					;r11d = filter width counter
 	movdqa		xmm2, xmm4
-.coeffloop:
+coeffloop:
 	mov			rsi, [rax]
 
-	movd		xmm0, dword [rsi+rbx]
+	movd		xmm0, dword ptr [rsi+rbx]
 
 	mov			rsi, [rax+8]
 	add			rax, 16
 
-	movd		xmm1, dword [rsi+rbx]
+	movd		xmm1, dword ptr [rsi+rbx]
 	punpcklbw	xmm0, xmm1
 
 	punpcklbw	xmm0, xmm5
 
-	movq		xmm1, qword [rdi]
+	movq		xmm1, qword ptr [rdi]
 	pshufd		xmm1, xmm1, 01000100b
 
 	pmaddwd		xmm0, xmm1
@@ -464,34 +464,41 @@ end_prolog
 	add			rdi,8
 
 	sub			r11d,1
-	jne			.coeffloop
+	jne			coeffloop
 
 	psrad		xmm2,14
 	packssdw	xmm2,xmm2
 	add			rbx,4
 	packuswb	xmm2,xmm2
 
-	movd		dword [rcx],xmm2
+	movd		dword ptr [rcx],xmm2
 	add			rcx,4
 	sub			r10d,1
-	jne			.pixelloop
+	jne			pixelloop
 
-.xit:
+xit:
 	VDRESTOREXMM128	6, 15
-	VDRESTORE	rbx, rsi, rdi, rbp, r12, r13, r14, r15
+	pop			rbx
+	pop			rsi
+	pop			rdi
+	pop			rbp
+	pop			r12
+	pop			r13
+	pop			r14
+	pop			r15
 	ret
 
-.accel_2coeff:
+accel_2coeff:
 	mov			r12, [rdx]
 	mov			r13, [rdx+8]
-	movq		xmm8, qword [r8]
+	movq		xmm8, qword ptr [r8]
 	punpcklqdq	xmm8, xmm8
 
 	sub			r10d, 1
-	jc			.oddpixel_2coeff
-.pixelloop_2coeff:
-	movq		xmm0, qword [r12+rbx]
-	movq		xmm1, qword [r13+rbx]
+	jc			oddpixel_2coeff
+pixelloop_2coeff:
+	movq		xmm0, qword ptr [r12+rbx]
+	movq		xmm1, qword ptr [r13+rbx]
 
 	punpcklbw	xmm0, xmm1
 
@@ -511,15 +518,15 @@ end_prolog
 	packssdw	xmm0, xmm1
 	packuswb	xmm0, xmm0
 
-	movq		qword [rcx], xmm0
+	movq		qword ptr [rcx], xmm0
 	add			rcx, 8
 	add			rbx, 8
 	sub			r10d, 2
-	ja			.pixelloop_2coeff
-	jnz			.xit
-.oddpixel_2coeff:
-	movd		xmm0, dword [r12+rbx]
-	movd		xmm1, dword [r13+rbx]
+	ja			pixelloop_2coeff
+	jnz			xit
+oddpixel_2coeff:
+	movd		xmm0, dword ptr [r12+rbx]
+	movd		xmm1, dword ptr [r13+rbx]
 
 	punpcklbw	xmm0, xmm1
 	punpcklbw	xmm0, xmm5
@@ -532,27 +539,27 @@ end_prolog
 	packssdw	xmm0, xmm0
 	packuswb	xmm0, xmm0
 
-	movd		dword [rcx], xmm0
+	movd		dword ptr [rcx], xmm0
 
-	jmp			.xit
+	jmp			xit
 
-.accel_4coeff:
+accel_4coeff:
 	mov			r12, [rdx]
 	mov			r13, [rdx+8]
 	mov			r14, [rdx+16]
 	mov			r15, [rdx+24]
-	movq		xmm8, qword [r8]
+	movq		xmm8, qword ptr [r8]
 	punpcklqdq	xmm8, xmm8
-	movq		xmm9, qword [r8+8]
+	movq		xmm9, qword ptr [r8+8]
 	punpcklqdq	xmm9, xmm9
 
 	sub			r10d, 1
-	jc			.oddpixel_4coeff
-.pixelloop_4coeff:
-	movq		xmm0, qword [r12+rbx]
-	movq		xmm1, qword [r13+rbx]
-	movq		xmm2, qword [r14+rbx]
-	movq		xmm3, qword [r15+rbx]
+	jc			oddpixel_4coeff
+pixelloop_4coeff:
+	movq		xmm0, qword ptr [r12+rbx]
+	movq		xmm1, qword ptr [r13+rbx]
+	movq		xmm2, qword ptr [r14+rbx]
+	movq		xmm3, qword ptr [r15+rbx]
 
 	punpcklbw	xmm0, xmm1
 	punpcklbw	xmm2, xmm3
@@ -580,17 +587,17 @@ end_prolog
 	packssdw	xmm0, xmm1
 	packuswb	xmm0, xmm0
 
-	movq		qword [rcx], xmm0
+	movq		qword ptr [rcx], xmm0
 	add			rcx, 8
 	add			rbx, 8
 	sub			r10d, 2
-	ja			.pixelloop_4coeff
-	jnz			.xit
-.oddpixel_4coeff:
-	movd		xmm0, dword [r12+rbx]
-	movd		xmm1, dword [r13+rbx]
-	movd		xmm2, dword [r14+rbx]
-	movd		xmm3, dword [r15+rbx]
+	ja			pixelloop_4coeff
+	jnz			xit
+oddpixel_4coeff:
+	movd		xmm0, dword ptr [r12+rbx]
+	movd		xmm1, dword ptr [r13+rbx]
+	movd		xmm2, dword ptr [r14+rbx]
+	movd		xmm3, dword ptr [r15+rbx]
 
 	punpcklbw	xmm0, xmm1
 	punpcklbw	xmm2, xmm3
@@ -607,33 +614,33 @@ end_prolog
 	packssdw	xmm0, xmm0
 	packuswb	xmm0, xmm0
 
-	movd		dword [rcx], xmm0
+	movd		dword ptr [rcx], xmm0
 
-	jmp			.xit
+	jmp			xit
 
-.accel_6coeff:
+accel_6coeff:
 	mov			r12, [rdx]
 	mov			r13, [rdx+8]
 	mov			r14, [rdx+16]
 	mov			r15, [rdx+24]
 	mov			rsi, [rdx+32]
 	mov			rdx, [rdx+40]
-	movq		xmm10, qword [r8]
+	movq		xmm10, qword ptr [r8]
 	punpcklqdq	xmm10, xmm10
-	movq		xmm11, qword [r8+8]
+	movq		xmm11, qword ptr [r8+8]
 	punpcklqdq	xmm11, xmm11
-	movq		xmm12, qword [r8+16]
+	movq		xmm12, qword ptr [r8+16]
 	punpcklqdq	xmm12, xmm12
 
 	sub			r10d, 1
-	jc			.oddpixel_6coeff
-.pixelloop_6coeff:
-	movq		xmm0, qword [r12+rbx]
-	movq		xmm1, qword [r13+rbx]
-	movq		xmm2, qword [r14+rbx]
-	movq		xmm3, qword [r15+rbx]
-	movq		xmm8, qword [rsi+rbx]
-	movq		xmm9, qword [rdx+rbx]
+	jc			oddpixel_6coeff
+pixelloop_6coeff:
+	movq		xmm0, qword ptr [r12+rbx]
+	movq		xmm1, qword ptr [r13+rbx]
+	movq		xmm2, qword ptr [r14+rbx]
+	movq		xmm3, qword ptr [r15+rbx]
+	movq		xmm8, qword ptr [rsi+rbx]
+	movq		xmm9, qword ptr [rdx+rbx]
 
 	punpcklbw	xmm0, xmm1
 	punpcklbw	xmm2, xmm3
@@ -669,19 +676,19 @@ end_prolog
 	packssdw	xmm0, xmm1
 	packuswb	xmm0, xmm0
 
-	movq		qword [rcx], xmm0
+	movq		qword ptr [rcx], xmm0
 	add			rcx, 8
 	add			rbx, 8
 	sub			r10d, 2
-	ja			.pixelloop_6coeff
-	jnz			.xit
-.oddpixel_6coeff:
-	movd		xmm0, dword [r12+rbx]
-	movd		xmm1, dword [r13+rbx]
-	movd		xmm2, dword [r14+rbx]
-	movd		xmm3, dword [r15+rbx]
-	movd		xmm8, dword [rsi+rbx]
-	movd		xmm9, dword [rdx+rbx]
+	ja			pixelloop_6coeff
+	jnz			xit
+oddpixel_6coeff:
+	movd		xmm0, dword ptr [r12+rbx]
+	movd		xmm1, dword ptr [r13+rbx]
+	movd		xmm2, dword ptr [r14+rbx]
+	movd		xmm3, dword ptr [r15+rbx]
+	movd		xmm8, dword ptr [rsi+rbx]
+	movd		xmm9, dword ptr [rdx+rbx]
 
 	punpcklbw	xmm0, xmm1
 	punpcklbw	xmm2, xmm3
@@ -702,9 +709,9 @@ end_prolog
 	packssdw	xmm0, xmm0
 	packuswb	xmm0, xmm0
 
-	movd		dword [rcx], xmm0
+	movd		dword ptr [rcx], xmm0
 
-	jmp			.xit
-endproc_frame
+	jmp			xit
+vdasm_resize_table_col_SSE2 endp
 
 	end

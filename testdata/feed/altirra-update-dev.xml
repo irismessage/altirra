@@ -2,20 +2,16 @@
 <rss version="2.0">
 	<channel>
 		<title>Altirra update feed (test channel)</title>
-		<link>https://atariage.com/forums/topic/308053-altirra-390-released/</link>
-		<description>Automatic update notifications for test versions of the Altirra emulator.</description>
+		<link>https://forums.atariage.com/topic/327133-altirra-400-released/</link>
+		<description>Automatic update notifications for test versions of the Altirra emulator, used by the Check for Updates feature in the program.</description>
 		<item>
-			<title>Altirra 4.00-test39 (4.0.138.15238; win7; sse2)</title>
+			<title>Altirra 4.10-test25 (4.10.125.15651; win7; sse2)</title>
 			<description>
 				<ul>
-					<li>Added 1050 rev. E to firmware detect list.</li>
-					<li>Fixed lack of word wrap in update dialog.</li>
-					<li>Audio monitor now dims channels that have been toggled off.</li>
-					<li>Fixed extraneous audio pulses in two-tone mode when timer underflow occurred on the same cycle as the timer 1+2 resync. </li>
-					<li>Added .vbxe_pal debugger command.</li>
+<li>Fixes stale line number information in source windows when reloading symbols</li>
 				</ul>
 			</description>
-   			<link>https://atariage.com/forums/topic/308053-altirra-390-released/?do=findComment&amp;comment=4891498</link>
+   			<link>https://forums.atariage.com/topic/327133-altirra-400-released/?do=findComment&amp;comment=5158862</link>
 			<pubDate>
 				now
 			</pubDate>

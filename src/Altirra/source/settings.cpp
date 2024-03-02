@@ -25,7 +25,6 @@
 #include <vd2/system/registry.h>
 #include <vd2/system/time.h>
 #include <at/ataudio/audiooutput.h>
-#include <at/atcore/devicemanager.h>
 #include <at/atcore/media.h>
 #include <at/atio/cassetteimage.h>
 #include <at/atio/image.h>
@@ -34,6 +33,7 @@
 #include "cartridge.h"
 #include "cassette.h"
 #include "debugger.h"
+#include "devicemanager.h"
 #include "disk.h"
 #include "firmwaremanager.h"
 #include "ide.h"
@@ -90,7 +90,10 @@ namespace {
 		L"fullscreen",
 		L"sound",
 		L"boot",
+		L"devicenvram"
 	};
+
+	static_assert((1U << vdcountof(kCategoryTagNames)) - 1 == kATSettingsCategory_AllCategories);
 }
 
 VDStringW ATSettingsCategoryMaskToTagString(ATSettingsCategory mask) {
@@ -482,6 +485,9 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 		key.setString("ScreenFX: SDR intensity", s.c_str());
 		s.sprintf("%g", aparams.mHDRIntensity);
 		key.setString("ScreenFX: HDR intensity", s.c_str());
+
+		key.setBool("ScreenFX: Use system SDR intensity", aparams.mbUseSystemSDR);
+		key.setBool("ScreenFX: Use system SDR intensity as HDR", aparams.mbUseSystemSDRAsHDR);
 	} else {
 		g_sim.SetDiskSectorCounterEnabled(key.getBool("Disk: Sector counter enabled", g_sim.IsDiskSectorCounterEnabled()));
 
@@ -525,6 +531,9 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 
 		if (key.getString("ScreenFX: HDR intensity", s))
 			aparams.mHDRIntensity = std::clamp((float)strtod(s.c_str(), nullptr), 1.0f, 10000.0f);
+		
+		aparams.mbUseSystemSDR = key.getBool("ScreenFX: Use system SDR intensity", false);
+		aparams.mbUseSystemSDRAsHDR = key.getBool("ScreenFX: Use system SDR intensity as HDR", false);
 
 		gtia.SetArtifactingParams(aparams);
 	}
@@ -534,10 +543,12 @@ void ATSettingsExchangeSpeed(bool write, VDRegistryKey& key) {
 	if (write) {
 		key.setInt("Speed: Frame rate modifier", VDRoundToInt((ATUIGetSpeedModifier() + 1.0f) * 100.0f));
 		key.setInt("Speed: Frame rate mode", ATUIGetFrameRateMode());
+		key.setInt("Speed: VSync adaptive", ATUIGetFrameRateVSyncAdaptive());
 		key.setBool("Turbo mode", ATUIGetTurbo());
 	} else {
 		ATUISetSpeedModifier(key.getInt("Speed: Frame rate modifier", VDRoundToInt((ATUIGetSpeedModifier() + 1.0f) * 100.0f)) / 100.0f - 1.0f);
 		ATUISetFrameRateMode((ATFrameRateMode)key.getEnumInt("Speed: Frame rate mode", kATFrameRateModeCount, ATUIGetFrameRateMode()));
+		ATUISetFrameRateVSyncAdaptive(key.getBool("Speed: VSync adaptive", false));
 		ATUISetTurbo(key.getBool("Turbo mode", ATUIGetTurbo()));
 	}
 }
@@ -550,11 +561,22 @@ void ATSettingsExchangeInput(bool write, VDRegistryKey& key) {
 
 	// light pen
 	ATLightPenPort *lpp = g_sim.GetLightPenPort();
+	const auto [gunX, gunY] = lpp->GetAdjust(false);
+	const auto [penX, penY] = lpp->GetAdjust(true);
 	if (write) {
-		key.setInt("Light Pen: Adjust X", lpp->GetAdjustX());
-		key.setInt("Light Pen: Adjust Y", lpp->GetAdjustY());
+		key.setInt("Light Gun: Adjust X 2", gunX);
+		key.setInt("Light Gun: Adjust Y 2", gunY);
+		key.setInt("Light Pen: Adjust X 2", penX);
+		key.setInt("Light Pen: Adjust Y 2", penY);
+
+		key.setString("Light Pen: Noise Mode", ATEnumToString(lpp->GetNoiseMode()));
 	} else {
-		lpp->SetAdjust(key.getInt("Light Pen: Adjust X", lpp->GetAdjustX()), key.getInt("Light Pen: Adjust Y", lpp->GetAdjustY()));
+		lpp->SetAdjust(false, {key.getInt("Light Gun: Adjust X 2", gunX), key.getInt("Light Gun: Adjust Y 2", gunY)});
+		lpp->SetAdjust(true,  {key.getInt("Light Pen: Adjust X 2", penX), key.getInt("Light Pen: Adjust Y 2", penY)});
+
+		VDStringA noiseMode;
+		key.getString("Light Pen: Noise Mode", noiseMode);
+		lpp->SetNoiseMode(ATParseEnum<ATLightPenNoiseMode>(noiseMode).mValue);
 	}
 
 	// keyboard
@@ -631,7 +653,10 @@ void ATSettingsExchangeInput(bool write, VDRegistryKey& key) {
 	// pots
 	ATSettingsExchangeBool(write, key, "Input: Allow immediate pot updates"
 		, [] { return g_sim.GetPokey().IsImmediatePotUpdateEnabled(); }
-		, [](bool enable) { g_sim.GetPokey().SetImmediatePotUpdateEnabled(enable); }
+		, [](bool enable) {
+			g_sim.GetPokey().SetImmediatePotUpdateEnabled(enable);
+			g_sim.GetLightPenPort()->SetImmediateUpdateEnabled(enable);
+		}
 	);
 }
 
@@ -1024,6 +1049,7 @@ void ATSettingsExchangeSound(bool write, VDRegistryKey& key) {
 		key.setBool("Audio: Scope enabled", g_sim.IsAudioScopeEnabled());
 
 		key.setBool("Audio: Non-linear mixing", pokey.IsNonlinearMixingEnabled());
+		key.setBool("Audio: Speaker filter enabled", pokey.IsSpeakerFilterEnabled());
 		key.setBool("Audio: Serial noise enabled", pokey.IsSerialNoiseEnabled());
 
 		key.setBool("Cassette: Load data as audio", g_sim.GetCassette().IsLoadDataAsAudioEnabled());
@@ -1049,6 +1075,7 @@ void ATSettingsExchangeSound(bool write, VDRegistryKey& key) {
 		g_sim.SetAudioScopeEnabled(key.getBool("Audio: Scope enabled", false));
 
 		pokey.SetNonlinearMixingEnabled(key.getBool("Audio: Non-linear mixing", pokey.IsNonlinearMixingEnabled()));
+		pokey.SetSpeakerFilterEnabled(key.getBool("Audio: Speaker filter enabled", false));
 		pokey.SetSerialNoiseEnabled(key.getBool("Audio: Serial noise enabled", true));
 
 		g_sim.GetCassette().SetLoadDataAsAudioEnable(key.getBool("Cassette: Load data as audio", g_sim.GetCassette().IsLoadDataAsAudioEnabled()));
@@ -1573,13 +1600,13 @@ void ATExchangeSettings(bool write, ATSettingsCategory mask) {
 		if (write) {
 			g_ATSettingsSaveCallbacks.NotifyAll(
 				[&](const ATSettingsLoadSaveCallback *cb) {
-					(*cb)((ATSettingsCategory)profileMask.second, key);
+					(*cb)(profileId, (ATSettingsCategory)profileMask.second, key);
 				}
 			);
 		} else {
 			g_ATSettingsLoadCallbacks.NotifyAll(
 				[&](const ATSettingsLoadSaveCallback *cb) {
-					(*cb)((ATSettingsCategory)profileMask.second, key);
+					(*cb)(profileId, (ATSettingsCategory)profileMask.second, key);
 				}
 			);
 		}

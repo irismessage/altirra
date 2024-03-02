@@ -46,7 +46,7 @@ struct ATUIKeyboardOptions {
 	LayoutMode mLayoutMode;
 };
 
-bool ATUIGetDefaultScanCodeForCharacter(char c, uint8& ch);
+bool ATUIGetDefaultScanCodeForCharacter(uint32 c32, uint8& ch);
 bool ATUIGetScanCodeForCharacter32(uint32 c32, uint32& ch);
 void ATUIInitVirtualKeyMap(const ATUIKeyboardOptions& options);
 bool ATUIGetScanCodeForVirtualKey(uint32 virtKey, bool alt, bool ctrl, bool shift, bool extended, uint32& scanCode);

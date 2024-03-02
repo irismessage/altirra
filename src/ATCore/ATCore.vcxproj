@@ -22,9 +22,11 @@
     <ClInclude Include="..\h\at\atcore\deviceindicators.h" />
     <ClInclude Include="..\h\at\atcore\devicecio.h" />
     <ClInclude Include="..\h\at\atcore\deviceimpl.h" />
-    <ClInclude Include="..\h\at\atcore\devicemanager.h" />
     <ClInclude Include="..\h\at\atcore\bussignal.h" />
+    <ClInclude Include="..\h\at\atcore\devicepia.h" />
     <ClInclude Include="..\h\at\atcore\devicesavestate.h" />
+    <ClInclude Include="..\h\at\atcore\devicestorage.h" />
+    <ClInclude Include="..\h\at\atcore\devicestorageimpl.h" />
     <ClInclude Include="..\h\at\atcore\devicesystemcontrol.h" />
     <ClInclude Include="..\h\at\atcore\deviceparent.h" />
     <ClInclude Include="..\h\at\atcore\deviceparentimpl.h" />
@@ -36,10 +38,13 @@
     <ClInclude Include="..\h\at\atcore\devicesioimpl.h" />
     <ClInclude Include="..\h\at\atcore\deviceu1mb.h" />
     <ClInclude Include="..\h\at\atcore\devicevideo.h" />
+    <ClInclude Include="..\h\at\atcore\devicevideosource.h" />
     <ClInclude Include="..\h\at\atcore\enumparse.h" />
     <ClInclude Include="..\h\at\atcore\enumparseimpl.h" />
+    <ClInclude Include="..\h\at\atcore\fft.h" />
     <ClInclude Include="..\h\at\atcore\intrin_neon.h" />
     <ClInclude Include="..\h\at\atcore\intrin_sse2.h" />
+    <ClInclude Include="..\h\at\atcore\ksyms.h" />
     <ClInclude Include="..\h\at\atcore\logging.h" />
     <ClInclude Include="..\h\at\atcore\md5.h" />
     <ClInclude Include="..\h\at\atcore\media.h" />
@@ -75,9 +80,29 @@
     <ClCompile Include="source\decmath.cpp" />
     <ClCompile Include="source\deferredevent.cpp" />
     <ClCompile Include="source\deviceimpl.cpp" />
-    <ClCompile Include="source\devicemanager.cpp" />
     <ClCompile Include="source\deviceparentimpl.cpp" />
+    <ClCompile Include="source\devicestorageimpl.cpp" />
     <ClCompile Include="source\enumparse.cpp" />
+    <ClCompile Include="source\fft.cpp" />
+    <ClCompile Include="source\fft_neon.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='NoBuild|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Analysis|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='NoBuild|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="source\fft_scalar.cpp" />
+    <ClCompile Include="source\fft_sse2.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='NoBuild|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Analysis|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="source\logging.cpp" />
     <ClCompile Include="source\md5.cpp" />
     <ClCompile Include="source\memoryutils.cpp" />

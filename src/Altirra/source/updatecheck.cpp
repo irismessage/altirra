@@ -27,6 +27,12 @@ ATConfigVarBool g_ATCVUpdateUseLocalTestUrl("update.use_local_test_url", false);
 
 ////////////////////////////////////////////////////////////////////////////////
 
+VDStringW ATUpdateGetFeedUrl() {
+	return VDStringW(g_ATCVUpdateUseLocalTestUrl ? AT_UPDATE_CHECK_URL_LOCAL : AT_UPDATE_CHECK_URL);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 class ATUpdateChecker {
 public:
 	ATUpdateChecker(IATAsyncDispatcher& dispatcher);
@@ -53,7 +59,7 @@ ATUpdateChecker::ATUpdateChecker(IATAsyncDispatcher& dispatcher)
 }
 
 void ATUpdateChecker::Init() {
-	ATAsyncDownloadUrl(g_ATCVUpdateUseLocalTestUrl ? AT_UPDATE_CHECK_URL_LOCAL : AT_UPDATE_CHECK_URL, AT_HTTP_USER_AGENT, 4 * 1024 * 1024,
+	ATAsyncDownloadUrl(ATUpdateGetFeedUrl().c_str(), AT_HTTP_USER_AGENT, 4 * 1024 * 1024,
 		[this](const void *data, size_t len) {
 			if (data)
 				mData.assign((const char *)data, (const char *)data + len);

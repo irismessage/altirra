@@ -341,7 +341,8 @@ class ATDiskDriveDebugTargetControl
 public:
 	~ATDiskDriveDebugTargetControl();
 
-	void InitTargetControl(IATDiskDriveDebugTargetProxy& proxy, double timestampFrequency, ATDebugDisasmMode disasmMode, ATDebugTargetBreakpointsBase *bpImpl);
+	void InitTargetControl(IATDiskDriveDebugTargetProxy& proxy, double timestampFrequency, ATDebugDisasmMode disasmMode, ATDebugTargetBreakpointsBase *bpImpl, IATDevice *parentDevice);
+	void ApplyDisplayCPUClockMultiplier(double f);
 	
 	void ResetTargetControl();
 	void ShutdownTargetControl();
@@ -373,6 +374,7 @@ public:	// IATDeviceDebugTarget
 public:	// IATDebugTarget
 	const char *GetName() override final;
 	ATDebugDisasmMode GetDisasmMode() override;
+	float GetDisplayCPUClock() const override;
 	sint32 GetTimeSkew() override;
 
 	void GetExecState(ATCPUExecState& state) override;
@@ -427,6 +429,8 @@ private:
 	uint32 mHistorySize = 0;
 	uint32 mHistoryMask = 0;
 	double mTimestampFrequency = 0;
+	double mDisplayFrequency = 0;
+	VDStringA mDisplayName;
 	IATDiskDriveDebugTargetProxy *mpProxy = nullptr;
 
 	vdfastvector<ATCPUHistoryEntry> mHistory;

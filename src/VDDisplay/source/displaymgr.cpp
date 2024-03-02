@@ -18,6 +18,7 @@
 
 #include <windows.h>
 #include <mmsystem.h>
+#include <vd2/system/hash.h>
 #include <vd2/system/w32assist.h>
 #include "displaymgr.h"
 
@@ -102,7 +103,6 @@ VDVideoDisplayManager::VDVideoDisplayManager()
 	, mhwnd(NULL)
 	, mbMultithreaded(false)
 	, mbAppActive(false)
-	, mbBackgroundFallbackEnabled(true)
 	, mThreadID(0)
 	, mOutstandingTicks(0)
 {
@@ -113,7 +113,7 @@ VDVideoDisplayManager::~VDVideoDisplayManager() {
 }
 
 bool VDVideoDisplayManager::Init() {
-	mbAppActive = !mbBackgroundFallbackEnabled || VDIsForegroundTaskW32();
+	mbAppActive = VDIsForegroundTaskW32();
 
 	if (!mbMultithreaded) {
 		if (!RegisterWindowClass()) {
@@ -165,11 +165,6 @@ void VDVideoDisplayManager::Shutdown() {
 
 void VDVideoDisplayManager::SetProfileHook(const vdfunction<void(IVDVideoDisplay::ProfileEvent)>& profileHook) {
 	mpProfileHook = profileHook;
-}
-
-void VDVideoDisplayManager::SetBackgroundFallbackEnabled(bool enabled) {
-	if (mhwnd)
-		PostMessage(mhwnd, WM_USER+101, enabled, 0);
 }
 
 void VDVideoDisplayManager::RemoteCall(void (*function)(void *), void *data) {
@@ -260,6 +255,119 @@ void VDVideoDisplayManager::ModifyTicksEnabled(bool enabled) {
 			if (!mbMultithreaded && mTickTimerId) {
 				KillTimer(mhwnd, mTickTimerId);
 				mTickTimerId = 0;
+			}
+		}
+	}
+}
+
+void VDVideoDisplayManager::NotifyGlobalSettingsChanged() {
+	for(VDVideoDisplayClient *p : mClients)
+		p->OnGlobalSettingsChanged();
+}
+
+float VDVideoDisplayManager::GetSystemSDRBrightness(HMONITOR monitor) {
+	return GetMonitorHDRInfo(monitor).mSDRLevel;
+}
+
+bool VDVideoDisplayManager::IsMonitorHDRCapable(HMONITOR monitor) {
+	return GetMonitorHDRInfo(monitor).mbHDRCapable;
+}
+
+const VDVideoDisplayManager::MonitorHDRInfo& VDVideoDisplayManager::GetMonitorHDRInfo(HMONITOR monitor) {
+	auto it = std::find_if(mMonitorHDRInfoCache.begin(), mMonitorHDRInfoCache.end(),
+		[=](const MonitorHDRInfoByHandle& info) { return info.mhMonitor == monitor; });
+
+	if (it != mMonitorHDRInfoCache.end())
+		return it->mInfo;
+
+	UpdateDisplayInfoCache();
+
+	MONITORINFOEXW info {};
+	info.cbSize = sizeof(MONITORINFOEXW);
+	
+	auto& monent = mMonitorHDRInfoCache.push_back();
+	monent.mhMonitor = monitor;
+
+	if (GetMonitorInfoW(monitor, &info)) {
+		uint32 pathHash = VDHashString32I(info.szDevice);
+
+		for(const MonitorHDRInfoByPath& mipath : mMonitorHDRInfoCacheDC) {
+			if (mipath.mPathHash == pathHash) {
+				monent.mInfo = mipath.mInfo;
+				break;
+			}
+		}
+	}
+
+	return monent.mInfo;
+}
+
+void VDVideoDisplayManager::UpdateDisplayInfoCache() {
+	if (!mbMonitorHDRInfoCacheDCValid) {
+		mbMonitorHDRInfoCacheDCValid = true;
+
+		vdfastvector<DISPLAYCONFIG_PATH_INFO> paths;
+		vdfastvector<DISPLAYCONFIG_MODE_INFO> modes;
+		UINT32 numPaths = 0;
+		UINT32 numModes = 0;
+
+		for(int tries = 0; tries < 100; ++tries) {
+			if (ERROR_SUCCESS != GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &numPaths, &numModes))
+				break;
+
+			paths.resize(numPaths);
+			modes.resize(numModes);
+
+			auto result = QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &numPaths, paths.data(), &numModes, modes.data(), nullptr);
+			if (result == ERROR_SUCCESS) {
+				paths.resize(numPaths);
+				modes.resize(numModes);
+				break;
+			}
+
+			if (result != ERROR_INSUFFICIENT_BUFFER) {
+				paths.clear();
+				modes.clear();
+				break;
+			}
+		}
+
+		for(const DISPLAYCONFIG_PATH_INFO& path : paths) {
+			DISPLAYCONFIG_SOURCE_DEVICE_NAME devname {};
+			devname.header.adapterId = path.sourceInfo.adapterId;
+			devname.header.id = path.sourceInfo.id;
+			devname.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+			devname.header.size = sizeof(DISPLAYCONFIG_SOURCE_DEVICE_NAME);
+
+			if (ERROR_SUCCESS != DisplayConfigGetDeviceInfo(&devname.header))
+				continue;
+
+			const uint32 hash = VDHashString32I(devname.viewGdiDeviceName);
+
+			auto& ent = mMonitorHDRInfoCacheDC.push_back();
+			ent.mPathHash = hash;
+
+			DISPLAYCONFIG_SDR_WHITE_LEVEL devlevel {};
+			devlevel.header.adapterId = path.targetInfo.adapterId;
+			devlevel.header.id = path.targetInfo.id;
+			devlevel.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
+			devlevel.header.size = sizeof(DISPLAYCONFIG_SDR_WHITE_LEVEL);
+			
+			if (ERROR_SUCCESS == DisplayConfigGetDeviceInfo(&devlevel.header)) {
+				// The returned white level is in units of 80/1000 nits, or 0.001x the
+				// scRGB framebuffer value.
+				ent.mInfo.mSDRLevel = (float)devlevel.SDRWhiteLevel / 1000.0f * 80;
+			}
+
+			DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO getinfo {};
+			getinfo.header.adapterId = path.targetInfo.adapterId;
+			getinfo.header.id = path.targetInfo.id;
+			getinfo.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
+			getinfo.header.size = sizeof(DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO);
+
+			if (ERROR_SUCCESS == DisplayConfigGetDeviceInfo(&getinfo.header)) {
+				ent.mInfo.mbHDRCapable = getinfo.advancedColorSupported;
+				ent.mInfo.mbHDREnabled = getinfo.advancedColorEnabled;
 			}
 		}
 	}
@@ -555,10 +663,7 @@ void VDVideoDisplayManager::DestroyDitheringPalette() {
 }
 
 void VDVideoDisplayManager::CheckForegroundState() {
-	bool appActive = true;
-	
-	if (mbBackgroundFallbackEnabled)
-		appActive = VDIsForegroundTaskW32();
+	bool appActive = VDIsForegroundTaskW32();
 
 	if (mbAppActive != appActive) {
 		mbAppActive = appActive;
@@ -591,6 +696,10 @@ LRESULT CALLBACK VDVideoDisplayManager::WndProc(HWND hwnd, UINT msg, WPARAM wPar
 			break;
 
 		case WM_ACTIVATEAPP:
+			mMonitorHDRInfoCache.clear();
+			mMonitorHDRInfoCacheDC.clear();
+			mbMonitorHDRInfoCacheDCValid = false;
+
 			CheckForegroundState();
 			break;
 
@@ -641,7 +750,7 @@ LRESULT CALLBACK VDVideoDisplayManager::WndProc(HWND hwnd, UINT msg, WPARAM wPar
 						VDVideoDisplayClient *p = *it;
 
 						if (!p->mbRequiresFullScreen)
-							p->OnRealizePalette();
+							p->OnRealizePalette(mbAppActive);
 					}
 				}
 			}
@@ -653,18 +762,6 @@ LRESULT CALLBACK VDVideoDisplayManager::WndProc(HWND hwnd, UINT msg, WPARAM wPar
 					VDVideoDisplayClient *p = *it;
 
 					p->OnForegroundChange(mbAppActive);
-				}
-			}
-			break;
-
-		case WM_USER+101:
-			{
-				bool enabled = wParam != 0;
-
-				if (mbBackgroundFallbackEnabled != enabled) {
-					mbBackgroundFallbackEnabled = enabled;
-
-					CheckForegroundState();
 				}
 			}
 			break;

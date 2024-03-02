@@ -201,9 +201,6 @@ inline uint8 VDClampedRoundFixedToUint8Fast(float x) {
 #if VD_CPU_X86
 	sint64 __stdcall VDFractionScale64(uint64 a, uint32 b, uint32 c, uint32& remainder);
 	uint64 __stdcall VDUMulDiv64x32(uint64 a, uint32 b, uint32 c);
-#elif VD_CPU_X64
-	extern "C" sint64 VDCDECL VDFractionScale64(uint64 a, uint64 b, uint64 c, uint32& remainder);
-	extern "C" uint64 VDCDECL VDUMulDiv64x32(uint64 a, uint32 b, uint32 c);
 #else
 	sint64 VDFractionScale64(uint64 a, uint32 b, uint32 c, uint32& remainder);
 	uint64 VDUMulDiv64x32(uint64 a, uint32 b, uint32 c);
@@ -214,5 +211,14 @@ sint64 VDMulDiv64(sint64 a, sint64 b, sint64 c);
 ///////////////////////////////////////////////////////////////////////////
 
 bool VDVerifyFiniteFloats(const float *p, uint32 n);
+
+class VDFastMathScope {
+public:
+	VDFastMathScope();
+	~VDFastMathScope();
+
+private:
+	unsigned mPrevValue;
+};
 
 #endif

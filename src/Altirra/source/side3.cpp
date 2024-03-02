@@ -23,6 +23,7 @@
 #include <vd2/system/registry.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/crc.h>
+#include <at/atcore/devicestorage.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/wraptime.h>
 #include "debuggerlog.h"
@@ -50,12 +51,9 @@ ATSIDE3Emulator::ATSIDE3Emulator() {
 	memset(mFlash, 0xFF, sizeof mFlash);
 
 	mRTC.Init();
-
-	LoadNVRAM();
 }
 
 ATSIDE3Emulator::~ATSIDE3Emulator() {
-	SaveNVRAM();
 }
 
 void *ATSIDE3Emulator::AsInterface(uint32 id) {
@@ -93,6 +91,11 @@ bool ATSIDE3Emulator::SetSettings(const ATPropertySet& settings) {
 }
 
 void ATSIDE3Emulator::Init() {
+	mRTCStorage.Init(*GetService<IATDeviceStorageManager>(),
+		[this](IATDeviceStorageManager&) { LoadNVRAM(); },
+		[this](IATDeviceStorageManager&) { SaveNVRAM(); }
+	);
+
 	ReloadFirmware();
 
 	mFlashCtrl.Init(mFlash, kATFlashType_MX29LV640DT, mpScheduler);
@@ -220,6 +223,8 @@ void ATSIDE3Emulator::Shutdown() {
 	}
 
 	mpMemMan = NULL;
+
+	mRTCStorage.Shutdown();
 }
 
 void ATSIDE3Emulator::SetSDXEnabled(bool enable) {
@@ -329,21 +334,17 @@ void ATSIDE3Emulator::ColdReset() {
 }
 
 void ATSIDE3Emulator::LoadNVRAM() {
-	VDRegistryAppKey key("Nonvolatile RAM");
-
 	ATRTCMCP7951XEmulator::NVState state {};
 
-	if (key.getBinary("SIDE 3 clock", (char *)&state, sizeof state))
+	if (GetService<IATDeviceStorageManager>()->LoadNVRAM("SIDE 3 clock", &state, sizeof state))
 		mRTC.Load(state);
 }
 
 void ATSIDE3Emulator::SaveNVRAM() {
-	VDRegistryAppKey key("Nonvolatile RAM");
-
 	ATRTCMCP7951XEmulator::NVState state;
 	mRTC.Save(state);
 
-	key.setBinary("SIDE 3 clock", (const char *)&state, sizeof state);
+	GetService<IATDeviceStorageManager>()->SaveNVRAM("SIDE 3 clock", &state, sizeof state);
 }
 
 void ATSIDE3Emulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
@@ -897,8 +898,10 @@ bool ATSIDE3Emulator::OnWriteByte(uint32 addr, uint8 value) {
 						// register, even if nothing has changed and SD power is off.
 						mSDCRC7 = 0;
 
-						if (delta & 0x20)
+						if (delta & 0x20) {
 							UpdateLEDGreen();
+							ResetSD();
+						}
 					}
 					break;
 
@@ -1439,7 +1442,6 @@ void ATSIDE3Emulator::UpdateWindowA() {
 				break;
 		}
 
-		const bool readOnly = (mBankRAMWriteProtect & 1) != 0;
 		splitBanks = (mEmuControl & kEC_Mode) == 2 && (mEmuFeature & kEF_BountyBob);
 
 		if (splitBanks) {
@@ -2010,8 +2012,10 @@ uint8 ATSIDE3Emulator::TransferSD(uint8 v) {
 
 		case SDActiveCommandMode::WriteMultiple:
 			if (mSDSendIndex == 0) {
-				if (v == 0xFE)
+				if (v == 0xFC)
 					mSDSendIndex = 1;
+				else if (v == 0xFD)
+					mSDActiveCommandMode = SDActiveCommandMode::None;
 			} else if (mSDSendIndex > 0) {
 				mSendBuffer[mSDSendIndex++ - 1] = v;
 

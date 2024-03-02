@@ -192,7 +192,7 @@ ATDeviceDiskDrive815::ATDeviceDiskDrive815()
 
 	mTargetProxy.mpDriveScheduler = &mDriveScheduler;
 	mTargetProxy.Init(mCoProc);
-	InitTargetControl(mTargetProxy, clockRate.asDouble(), kATDebugDisasmMode_6502, &mBreakpointsImpl);
+	InitTargetControl(mTargetProxy, clockRate.asDouble(), kATDebugDisasmMode_6502, &mBreakpointsImpl, this);
 
 	mSerialCmdQueue.SetOnDriveCommandStateChanged(
 		[this](bool asserted) {
@@ -1329,7 +1329,6 @@ void ATDeviceDiskDrive815::UpdateSSDAReceiveFIFO() {
 
 	// convert cycle offset to a bit cell offset (2us @ 2MHz = 8 drive cycles)
 	const uint32 deltaBits = deltaCycles >> 2;
-	const uint32 deltaSubBitCycles = deltaCycles & 3;
 
 	// advance head position to the current position
 	mHeadPositionLastDriveCycle += deltaBits << 2;
@@ -1354,8 +1353,6 @@ void ATDeviceDiskDrive815::UpdateSSDAReceiveFIFO() {
 		uint16 v = (uint16)(VDReadUnalignedBEU32(&mTrackData[bitPos >> 3]) >> (16 - (bitPos & 7)));
 		if (++bitPos >= kTrackBitLen)
 			bitPos -= kTrackBitLen;
-
-		const uint16 ov = v;
 
 		if (mReceiveClockState >= 2) {
 			// collect the data bits only

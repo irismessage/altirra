@@ -2155,122 +2155,7 @@ void ATDiskImage::Reinterleave(ATDiskInterleave interleave) {
 void ATDiskImage::ComputeGeometry() {
 	uint32 sectorCount = (uint32)mVirtSectors.size();
 
-	mGeometry.mTrackCount = 1;
-	mGeometry.mSideCount = 1;
-	mGeometry.mbMFM = (mGeometry.mSectorSize > 128);
-	mGeometry.mbHighDensity = false;
-	mGeometry.mSectorsPerTrack = sectorCount;
-	mGeometry.mBootSectorCount = mBootSectorCount;
-	mGeometry.mSectorSize = mSectorSize;
-	mGeometry.mTotalSectorCount = sectorCount;
-
-	if (mGeometry.mBootSectorCount > 0) {
-		if (mGeometry.mSectorSize == 128) {
-			switch(mGeometry.mTotalSectorCount) {
-				default:
-					if (mGeometry.mTotalSectorCount > 720)
-						break;
-
-					// fall through
-				case 720:		// 5.25" single density: 40 tracks, 26 sectors per track
-					mGeometry.mSectorsPerTrack = 18;
-					mGeometry.mSideCount = 1;
-					break;
-
-				case 1440:		// 5.25" single density: 40/80 tracks, double sided, 26 sectors per track
-				case 2880:
-					mGeometry.mSectorsPerTrack = 18;
-					mGeometry.mSideCount = 2;
-					break;
-
-				case 1040:		// 5.25" enhanced density: 40 tracks, 26 sectors per track
-					mGeometry.mSectorsPerTrack = 26;
-					mGeometry.mSideCount = 1;
-					mGeometry.mbMFM = true;		// special case for enhanced density
-					break;
-
-				case 2002:		// 8" 77 tracks, single sided, 26 sectors per track
-					mGeometry.mSectorsPerTrack = 26;
-					mGeometry.mSideCount = 1;
-					mGeometry.mbHighDensity = true;
-					break;
-
-				case 4004:		// 8" 77 tracks, double sided, 26 sectors per track
-					mGeometry.mSectorsPerTrack = 26;
-					mGeometry.mSideCount = 2;
-					mGeometry.mbHighDensity = true;
-					break;
-			}
-		} else if (mGeometry.mSectorSize == 256) {
-			mGeometry.mbMFM = true;
-
-			switch(mGeometry.mTotalSectorCount) {
-				case 720:		// 5.25" double density: 40 tracks, 18 sectors per track
-					mGeometry.mSectorsPerTrack = 18;
-					mGeometry.mSideCount = 1;
-					break;
-
-				case 1440:		// 5.25" double density: 40/80 tracks, double sided, 18 sectors per track
-				case 2880:
-					mGeometry.mSectorsPerTrack = 18;
-					mGeometry.mSideCount = 2;
-					break;
-
-				case 2002:		// 8" 77 tracks, single sided, 26 sectors per track
-					mGeometry.mSectorsPerTrack = 26;
-					mGeometry.mSideCount = 1;
-					mGeometry.mbHighDensity = true;
-					break;
-
-				case 4004:		// 8" 77 tracks, double sided, 26 sectors per track
-					mGeometry.mSectorsPerTrack = 26;
-					mGeometry.mSideCount = 2;
-					mGeometry.mbHighDensity = true;
-					break;
-
-				default:
-					break;
-			}
-		}
-	} else if (mGeometry.mSectorSize == 512) {
-		mGeometry.mbMFM = true;
-
-		// Specific PC geometries we want to support:
-		//
-		//  320		5.25" 8 sectors/track, 40 tracks (160K)
-		//  360		5.25" 9 sectors/track, 40 tracks (180K)
-		//  720		5.25" 9 sectors/track, 40 tracks double-sided (360K)
-		// 1440		3.5" 9 sectors/track, 80 tracks double-sided (720K)
-		// 2400		5.25" 15 sectors/track, 80 tracks double-sided high density (1.2M)
-		// 2880		3.5" 18 sectors/track, 80 tracks double-sided high density (1.2M)
-
-		if (mGeometry.mTotalSectorCount <= 2880) {
-			if (mGeometry.mTotalSectorCount <= 320)
-				mGeometry.mSectorsPerTrack = 8;
-			else if (mGeometry.mTotalSectorCount <= 360)
-				mGeometry.mSectorsPerTrack = 9;
-			else {
-				mGeometry.mSideCount = 2;
-					
-				if (mGeometry.mTotalSectorCount <= 1440)
-					mGeometry.mSectorsPerTrack = 9;
-				else {
-					mGeometry.mbHighDensity = true;
-
-					if (mGeometry.mTotalSectorCount <= 2400)
-						mGeometry.mSectorsPerTrack = 15;
-					else
-						mGeometry.mSectorsPerTrack = 18;
-				}
-			}
-		}
-	}
-
-	if (mGeometry.mSectorsPerTrack > 0)
-		mGeometry.mTrackCount = (mGeometry.mTotalSectorCount + mGeometry.mSectorsPerTrack - 1) / mGeometry.mSectorsPerTrack;
-
-	if (mGeometry.mSideCount > 1)
-		mGeometry.mTrackCount = (mGeometry.mTrackCount + 1) >> 1;
+	mGeometry = ATDiskCreateDefaultGeometry(sectorCount, mSectorSize, mBootSectorCount);
 }
 
 void ATDiskImage::SaveATR(IVDRandomAccessStream& fs, PhysSectors& phySecs) {
@@ -3141,6 +3026,129 @@ ATDiskInterleave ATDiskGetDefaultInterleave(const ATDiskGeometryInfo& info) {
 	}
 }
 
+ATDiskGeometryInfo ATDiskCreateDefaultGeometry(uint32 sectorCount, uint32 sectorSize, uint32 bootSectorCount) {
+	ATDiskGeometryInfo geom {};
+
+	geom.mTrackCount = 1;
+	geom.mSideCount = 1;
+	geom.mbMFM = (sectorSize > 128);
+	geom.mbHighDensity = false;
+	geom.mSectorsPerTrack = sectorCount;
+	geom.mBootSectorCount = bootSectorCount;
+	geom.mSectorSize = sectorSize;
+	geom.mTotalSectorCount = sectorCount;
+
+	if (geom.mBootSectorCount > 0) {
+		if (geom.mSectorSize == 128) {
+			switch(geom.mTotalSectorCount) {
+				default:
+					if (geom.mTotalSectorCount > 720)
+						break;
+
+					// fall through
+				case 720:		// 5.25" single density: 40 tracks, 26 sectors per track
+					geom.mSectorsPerTrack = 18;
+					geom.mSideCount = 1;
+					break;
+
+				case 1440:		// 5.25" single density: 40/80 tracks, double sided, 26 sectors per track
+				case 2880:
+					geom.mSectorsPerTrack = 18;
+					geom.mSideCount = 2;
+					break;
+
+				case 1040:		// 5.25" enhanced density: 40 tracks, 26 sectors per track
+					geom.mSectorsPerTrack = 26;
+					geom.mSideCount = 1;
+					geom.mbMFM = true;		// special case for enhanced density
+					break;
+
+				case 2002:		// 8" 77 tracks, single sided, 26 sectors per track
+					geom.mSectorsPerTrack = 26;
+					geom.mSideCount = 1;
+					geom.mbHighDensity = true;
+					break;
+
+				case 4004:		// 8" 77 tracks, double sided, 26 sectors per track
+					geom.mSectorsPerTrack = 26;
+					geom.mSideCount = 2;
+					geom.mbHighDensity = true;
+					break;
+			}
+		} else if (geom.mSectorSize == 256) {
+			geom.mbMFM = true;
+
+			switch(geom.mTotalSectorCount) {
+				case 720:		// 5.25" double density: 40 tracks, 18 sectors per track
+					geom.mSectorsPerTrack = 18;
+					geom.mSideCount = 1;
+					break;
+
+				case 1440:		// 5.25" double density: 40/80 tracks, double sided, 18 sectors per track
+				case 2880:
+					geom.mSectorsPerTrack = 18;
+					geom.mSideCount = 2;
+					break;
+
+				case 2002:		// 8" 77 tracks, single sided, 26 sectors per track
+					geom.mSectorsPerTrack = 26;
+					geom.mSideCount = 1;
+					geom.mbHighDensity = true;
+					break;
+
+				case 4004:		// 8" 77 tracks, double sided, 26 sectors per track
+					geom.mSectorsPerTrack = 26;
+					geom.mSideCount = 2;
+					geom.mbHighDensity = true;
+					break;
+
+				default:
+					break;
+			}
+		}
+	} else if (geom.mSectorSize == 512) {
+		geom.mbMFM = true;
+
+		// Specific PC geometries we want to support:
+		//
+		//  320		5.25" 8 sectors/track, 40 tracks (160K)
+		//  360		5.25" 9 sectors/track, 40 tracks (180K)
+		//  720		5.25" 9 sectors/track, 40 tracks double-sided (360K)
+		// 1440		3.5" 9 sectors/track, 80 tracks double-sided (720K)
+		// 2400		5.25" 15 sectors/track, 80 tracks double-sided high density (1.2M)
+		// 2880		3.5" 18 sectors/track, 80 tracks double-sided high density (1.2M)
+
+		if (geom.mTotalSectorCount <= 2880) {
+			if (geom.mTotalSectorCount <= 320)
+				geom.mSectorsPerTrack = 8;
+			else if (geom.mTotalSectorCount <= 360)
+				geom.mSectorsPerTrack = 9;
+			else {
+				geom.mSideCount = 2;
+					
+				if (geom.mTotalSectorCount <= 1440)
+					geom.mSectorsPerTrack = 9;
+				else {
+					geom.mbHighDensity = true;
+
+					if (geom.mTotalSectorCount <= 2400)
+						geom.mSectorsPerTrack = 15;
+					else
+						geom.mSectorsPerTrack = 18;
+				}
+			}
+		}
+	}
+
+	if (geom.mSectorsPerTrack > 0)
+		geom.mTrackCount = (geom.mTotalSectorCount + geom.mSectorsPerTrack - 1) / geom.mSectorsPerTrack;
+
+	if (geom.mSideCount > 1)
+		geom.mTrackCount = (geom.mTrackCount + 1) >> 1;
+
+	return geom;
+}
+
 vdfunction<float(uint32)> ATDiskGetInterleaveFn(ATDiskInterleave interleave, const ATDiskGeometryInfo& info) {
 	// 810/1050/XF551 sector spacing: 11.072ms
 	static constexpr float kTurnsPerSectorSD = 11.072f / (60000.0f / 288.0f);
@@ -3200,4 +3208,12 @@ vdfunction<float(uint32)> ATDiskGetInterleaveFn(ATDiskInterleave interleave, con
 		case kATDiskInterleave_DD26_23_1:
 			return [](uint32 secIdx) { return (float)kTrackInterleaveDD26_23_1[secIdx % 26] * kTurnsPerSectorDD26; };
 	}
+}
+
+void ATThrowDiskReadOnlyException() {
+	throw MyError("Disk image is read-only.");
+}
+
+void ATThrowDiskUnsupportedOperation() {
+	throw MyError("Operation is not supported on this disk.");
 }

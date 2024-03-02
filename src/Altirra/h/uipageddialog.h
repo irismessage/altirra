@@ -130,6 +130,7 @@ public:
 	~ATUIPagedDialog();
 
 	void SetInitialPage(int index);
+	void SetInitialPageByName(const char *tag);
 	int GetSelectedPage() const { return mSelectedPage; }
 
 	void SwitchToPage(const char *tag);
@@ -158,6 +159,7 @@ protected:
 
 	int mSelectedPage {};
 	int mInitialPage {};
+	VDStringA mInitialPageName;
 
 	vdfastvector<ATUIDialogPage *> mPages;
 	vdfastvector<PageTreeItem *> mPageTreeItems;

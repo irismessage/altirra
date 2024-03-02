@@ -20,9 +20,9 @@
 
 #include <vd2/system/function.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/system/registry.h>
 
 class VDStringW;
-class VDRegistryKey;
 
 enum ATSettingsCategory : uint32 {
 	kATSettingsCategory_None			= 0x00000000,
@@ -42,8 +42,9 @@ enum ATSettingsCategory : uint32 {
 	kATSettingsCategory_FullScreen		= 0x00002000,
 	kATSettingsCategory_Sound			= 0x00004000,
 	kATSettingsCategory_Boot			= 0x00008000,
+	kATSettingsCategory_NVRAM			= 0x00010000,
 
-	kATSettingsCategory_AllCategories	= 0x0000FFFF,
+	kATSettingsCategory_AllCategories	= 0x0001FFFF,
 
 	kATSettingsCategory_Baseline =
 		kATSettingsCategory_Hardware |
@@ -77,7 +78,7 @@ void ATSetDefaultProfileId(ATDefaultProfile profile, uint32 profileId);
 void ATLoadSettings(ATSettingsCategory categories);
 void ATSaveSettings(ATSettingsCategory categories);
 
-typedef vdfunction<void(ATSettingsCategory, VDRegistryKey&)> ATSettingsLoadSaveCallback;
+typedef vdfunction<void(uint32, ATSettingsCategory, VDRegistryKey&)> ATSettingsLoadSaveCallback;
 void ATSettingsRegisterLoadCallback(const ATSettingsLoadSaveCallback *fn);
 void ATSettingsUnregisterLoadCallback(const ATSettingsLoadSaveCallback *fn);
 void ATSettingsRegisterSaveCallback(const ATSettingsLoadSaveCallback *fn);

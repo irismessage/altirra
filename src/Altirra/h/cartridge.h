@@ -117,9 +117,15 @@ protected:
 	static sint32 ReadByte_BB800_2(void *thisptr0, uint32 address);
 	static bool WriteByte_BB800_1(void *thisptr0, uint32 address, uint8 value);
 	static bool WriteByte_BB800_2(void *thisptr0, uint32 address, uint8 value);
+
 	static sint32 DebugReadByte_SIC(void *thisptr0, uint32 address);
 	static sint32 ReadByte_SIC(void *thisptr0, uint32 address);
 	static bool WriteByte_SIC(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 DebugReadByte_SICPlus(void *thisptr0, uint32 address);
+	static sint32 ReadByte_SICPlus(void *thisptr0, uint32 address);
+	static bool WriteByte_SICPlus(void *thisptr0, uint32 address, uint8 value);
+
 	static sint32 DebugReadByte_TheCart(void *thisptr0, uint32 address);
 	static sint32 ReadByte_TheCart(void *thisptr0, uint32 address);
 	static bool WriteByte_TheCart(void *thisptr0, uint32 address, uint8 value);
@@ -179,6 +185,9 @@ protected:
 	static sint32 ReadByte_CCTL_SIC(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_SIC(void *thisptr0, uint32 address, uint8 value);
 
+	static sint32 ReadByte_CCTL_SICPlus(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_SICPlus(void *thisptr0, uint32 address, uint8 value);
+
 	static sint32 ReadByte_CCTL_TheCart(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_TheCart(void *thisptr0, uint32 address, uint8 value);
 
@@ -209,9 +218,6 @@ protected:
 	static sint32 ReadByte_CCTL_Turbosoft_128K(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_Turbosoft_128K(void *thisptr0, uint32 address, uint8 value);
 
-	static sint32 ReadByte_CCTL_5200_64K_32KBanks(void *thisptr0, uint32 address);
-	static bool WriteByte_CCTL_5200_64K_32KBanks(void *thisptr0, uint32 address, uint8 value);
-
 	static sint32 ReadByte_CCTL_5200_512K_32KBanks(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_5200_512K_32KBanks(void *thisptr0, uint32 address, uint8 value);
 
@@ -229,6 +235,8 @@ protected:
 
 	static sint32 ReadByte_CCTL_JRC_64K_RAM(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_JRC_64K_RAM(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_CCTL_XEMulticart(void *thisptr0, uint32 address);
 
 	void InitFromImage();
 	void InitMemoryLayers();

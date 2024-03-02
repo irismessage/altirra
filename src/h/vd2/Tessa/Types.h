@@ -2,6 +2,7 @@
 #define f_VD2_TESSA_TYPES_H
 
 #include <vd2/system/vdtypes.h>
+#include <vd2/system/VDString.h>
 
 enum VDTProgramFormat {
 	kVDTPF_MultiTarget,
@@ -163,6 +164,13 @@ struct VDTSwapChainDesc {
 	uint32 mRefreshRateDenominator;
 };
 
+enum class VDTSwapChainCompositionStatus : uint8 {
+	Unknown,
+	ComposedCopy,
+	ComposedFlip,
+	Overlay
+};
+
 enum VDTUsage {
 	kVDTUsage_Default,
 	kVDTUsage_Render
@@ -191,10 +199,13 @@ public:
 };
 
 struct VDTDeviceCaps {
-	bool	mbNonPow2;
-	bool	mbNonPow2Conditional;
-	uint32	mMaxTextureWidth;
-	uint32	mMaxTextureHeight;
+	VDStringW	mDeviceDescription;
+	bool	mbNonPow2 = false;
+	bool	mbNonPow2Conditional = false;
+	uint32	mMaxTextureWidth = 0;
+	uint32	mMaxTextureHeight = 0;
+	bool	mbMinPrecisionPS = false;
+	bool	mbMinPrecisionNonPS = false;
 };
 
 #endif	// f_VD2_TESSA_TYPES_H

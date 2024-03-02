@@ -115,6 +115,8 @@ private:
 		kTokRightShift,
 		kTokLogicalAnd,
 		kTokLogicalOr,
+		kTokIncrement,
+		kTokDecrement,
 		kTokIf,
 		kTokReturn,
 		kTokVoid,

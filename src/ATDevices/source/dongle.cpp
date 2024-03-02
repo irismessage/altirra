@@ -38,20 +38,12 @@ ATDeviceDongle::ATDeviceDongle() {
 ATDeviceDongle::~ATDeviceDongle() {
 }
 
-void *ATDeviceDongle::AsInterface(uint32 iid) {
-	switch(iid) {
-		case IATDevicePortInput::kTypeID: return static_cast<IATDevicePortInput *>(this);
-	}
-
-	return ATDevice::AsInterface(iid);
-}
-
 void ATDeviceDongle::GetDeviceInfo(ATDeviceInfo& info) {
 	info.mpDef = &g_ATDeviceDefDongle;
 }
 
 void ATDeviceDongle::GetSettings(ATPropertySet& pset) {
-	pset.SetUint32("port", mPortShift >> 2);
+	pset.SetUint32("port", mPortIndex);
 	
 	wchar_t mappingStr[17] = {};
 
@@ -64,19 +56,14 @@ void ATDeviceDongle::GetSettings(ATPropertySet& pset) {
 
 bool ATDeviceDongle::SetSettings(const ATPropertySet& pset) {
 	uint32 port = pset.GetUint32("port");
-	uint32 portShift = 0;
 
-	if (port < 4)
-		portShift = port * 4;
+	if (port >= 4)
+		port = 0;
 
-	if (mPortShift != portShift) {
-		mPortShift = portShift;
+	if (mPortIndex != port) {
+		mPortIndex = port;
 
-		if (mpPortManager) {
-			mpPortManager->SetInput(mPortInput, UINT32_C(0xFFFFFFFF));
-
-			ReinitPortOutput();
-		}
+		ReinitPort();
 	}
 
 	memset(mResponseTable, 0x0F, sizeof mResponseTable);
@@ -101,56 +88,24 @@ bool ATDeviceDongle::SetSettings(const ATPropertySet& pset) {
 }
 
 void ATDeviceDongle::Init() {
-	UpdatePortOutput();
+	mpPortManager = GetService<IATDevicePortManager>();
+
+	ReinitPort();
 }
 
 void ATDeviceDongle::Shutdown() {
+	mpPort = nullptr;
+	mpPortManager = nullptr;
+}
+
+void ATDeviceDongle::ReinitPort() {
 	if (mpPortManager) {
-		mpPortManager->FreeInput(mPortInput);
-		mpPortManager->FreeOutput(mPortOutput);
-
-		mpPortManager = nullptr;
+		mpPortManager->AllocControllerPort(mPortIndex, ~mpPort);
+		mpPort->SetOnDirOutputChanged(15, [this] { UpdatePortOutput(); }, true);
 	}
-}
-
-void ATDeviceDongle::InitPortInput(IATDevicePortManager *portMgr) {
-	mpPortManager = portMgr;
-
-	mPortInput = mpPortManager->AllocInput();
-
-	ReinitPortOutput();
-
-	mLastPortState = mpPortManager->GetOutputState();
-}
-
-void ATDeviceDongle::OnPortOutputChanged(uint32 outputState) {
-	outputState = (outputState >> mPortShift) & 15;
-
-	if (mLastPortState != outputState) {
-		mLastPortState = outputState;
-
-		UpdatePortOutput();
-	}
-}
-
-void ATDeviceDongle::ReinitPortOutput() {
-	if (mPortOutput >= 0)
-		mpPortManager->FreeOutput(mPortOutput);
-
-	mPortOutput = mpPortManager->AllocOutput(
-		[](void *pThis, uint32 outputState) {
-			((ATDeviceDongle *)pThis)->OnPortOutputChanged(outputState);
-		},
-		this,
-		15 << mPortShift);
-
-	UpdatePortOutput();
 }
 
 void ATDeviceDongle::UpdatePortOutput() {
-	if (mpPortManager) {
-		const uint32 outputState = (mpPortManager->GetOutputState() >> mPortShift) & 15;
-
-		mpPortManager->SetInput(mPortInput, ~(uint32)0 ^ ((mResponseTable[outputState] ^ 15) << mPortShift));
-	}
+	if (mpPort)
+		mpPort->SetDirInput(mResponseTable[mpPort->GetCurrentDirOutput() & 15]);
 }

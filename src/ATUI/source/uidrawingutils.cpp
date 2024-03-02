@@ -1,5 +1,6 @@
 #include <stdafx.h>
 #include <at/atui/uidrawingutils.h>
+#include <at/atnativeui/theme.h>
 
 void ATUIDrawBevel(IVDDisplayRenderer& rdr, const vdrect32& r, uint32 tlColor, uint32 brColor) {
 	vdpoint32 pts[5] = {
@@ -21,6 +22,8 @@ void ATUIDrawThin3DRect(IVDDisplayRenderer& rdr, const vdrect32& r, bool depress
 }
 
 void ATUIDraw3DRect(IVDDisplayRenderer& rdr, const vdrect32& r, bool depressed) {
-	ATUIDrawBevel(rdr, r, depressed ? 0x404040 : 0xD4D0C8, depressed ? 0xD4D0C8 : 0x404040);
-	ATUIDrawBevel(rdr, vdrect32(r.left+1, r.top+1, r.right-1, r.bottom-1), depressed ? 0x404040 : 0xFFFFFF, depressed ? 0xFFFFFF : 0x404040);
+	const auto& tc = ATUIGetThemeColors();
+
+	ATUIDrawBevel(rdr, r, depressed ? tc.mHardNegEdge : tc.mHardPosEdge, depressed ? tc.mHardPosEdge : tc.mHardNegEdge);
+	ATUIDrawBevel(rdr, vdrect32(r.left+1, r.top+1, r.right-1, r.bottom-1), depressed ? tc.mSoftNegEdge : tc.mSoftPosEdge, depressed ? tc.mSoftPosEdge : tc.mSoftNegEdge);
 }

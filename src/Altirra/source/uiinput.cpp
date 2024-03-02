@@ -375,15 +375,14 @@ const ATUIDialogCreateInputMap::ControllerTypeInfo ATUIDialogCreateInputMap::kCo
 			{ VirtualInput::Stick_Right,		kATInputTrigger_Right },
 			{ VirtualInput::Stick_Up,			kATInputTrigger_Up },
 			{ VirtualInput::Stick_Down,			kATInputTrigger_Down },
-			{ VirtualInput::Button_0,			kATInputTrigger_Button0 | kATInputTriggerMode_Inverted },
-			{ VirtualInput::Button_1,			kATInputTrigger_Button0+1 },
+			{ VirtualInput::Button_0,			kATInputTrigger_Button0 },
 		},
 		.mExtraMappings = {
 			{ kATInputCode_None,			0, kATInputTrigger_Button0+2 | kATInputTriggerMode_Inverted },
 		},
 	},
 	{
-		.mType = kATInputControllerType_LightPen,
+		.mType = kATInputControllerType_LightGun,
 		.mpName = L"Light Gun (XG-1)",
 		.mIndex = 1,
 		.mbHasAbsoluteRelative = true,
@@ -1206,7 +1205,7 @@ protected:
 	static const uint32 kTargetCodes5200Controller[];
 	static const uint32 kTargetCodesConsole[];
 	static const uint32 kTargetCodesInputState[];
-	static const uint32 kTargetCodesLightPen[];
+	static const uint32 kTargetCodesLightPenGun[];
 	static const uint32 kTargetCodesTablet[];
 	static const uint32 kTargetCodesKeypad[];
 	static const uint32 kTargetCodesTrackballCX80V1[];
@@ -1475,7 +1474,7 @@ const uint32 ATUIDialogEditInputMapping::kTargetCodesInputState[] = {
 	kATInputTrigger_Flag0+1
 };
 
-const uint32 ATUIDialogEditInputMapping::kTargetCodesLightPen[] = {
+const uint32 ATUIDialogEditInputMapping::kTargetCodesLightPenGun[] = {
 	kATInputTrigger_Axis0,
 	kATInputTrigger_Axis0+1,
 	kATInputTrigger_Left,
@@ -1483,7 +1482,6 @@ const uint32 ATUIDialogEditInputMapping::kTargetCodesLightPen[] = {
 	kATInputTrigger_Up,
 	kATInputTrigger_Down,
 	kATInputTrigger_Button0,
-	kATInputTrigger_Button0+1,
 	kATInputTrigger_Button0+2,
 };
 
@@ -1624,7 +1622,8 @@ const vdspan<const uint32> ATUIDialogEditInputMapping::GetTargetCodes(ATInputCon
 			return vdspan<const uint32>(kTargetCodesInputState);
 
 		case kATInputControllerType_LightPen:
-			return vdspan<const uint32>(kTargetCodesLightPen);
+		case kATInputControllerType_LightGun:
+			return vdspan<const uint32>(kTargetCodesLightPenGun);
 
 		case kATInputControllerType_Tablet:
 		case kATInputControllerType_KoalaPad:
@@ -1997,8 +1996,8 @@ void ATUIDialogInputMapControllerItem::GetText(VDStringW& s) const {
 			s = L"Input State";
 			break;
 
-		case kATInputControllerType_LightPen:
-			s = L"Light Pen/Gun";
+		case kATInputControllerType_LightGun:
+			s.sprintf(L"Light Gun (XG-1) (port %d)", mControllerUnit + 1);
 			break;
 
 		case kATInputControllerType_Tablet:
@@ -2027,6 +2026,10 @@ void ATUIDialogInputMapControllerItem::GetText(VDStringW& s) const {
 
 		case kATInputControllerType_Keyboard:
 			s.sprintf(L"Keyboard Controller (port %d)", mControllerUnit + 1);
+			break;
+
+		case kATInputControllerType_LightPen:
+			s.sprintf(L"Light Pen (CX-70/CX-75) (port %d)", mControllerUnit + 1);
 			break;
 	}
 

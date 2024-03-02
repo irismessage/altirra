@@ -42,13 +42,16 @@ public:
 	ATUIDialogHostDevice(ATPropertySet& pset);
 	~ATUIDialogHostDevice();
 
-	void OnDataExchange(bool write);
-	bool OnCommand(uint32 id, uint32 extcode);
+	bool OnLoaded() override;
+	void OnDataExchange(bool write) override;
+	bool OnCommand(uint32 id, uint32 extcode) override;
 	void Update(int id);
 
 protected:
 	ATPropertySet& mProps;
 	uint32 mInhibitUpdateLocks;
+
+	VDUIProxyComboBoxControl mLFNModeView;
 };
 
 ATUIDialogHostDevice::ATUIDialogHostDevice(ATPropertySet& props)
@@ -61,12 +64,26 @@ ATUIDialogHostDevice::ATUIDialogHostDevice(ATPropertySet& props)
 ATUIDialogHostDevice::~ATUIDialogHostDevice() {
 }
 
+bool ATUIDialogHostDevice::OnLoaded() {
+	AddProxy(&mLFNModeView, IDC_LFNMODE);
+
+	mLFNModeView.AddItem(L"8.3 only, truncate long names");
+	mLFNModeView.AddItem(L"8.3 only, encode long names");
+	mLFNModeView.AddItem(L"Use long file names");
+
+	return VDDialogFrameW32::OnLoaded();
+}
+
 void ATUIDialogHostDevice::OnDataExchange(bool write) {
 	if (!write) {
 		CheckButton(IDC_READONLY, mProps.GetBool("readonly", true));
-		CheckButton(IDC_ENCODELONGNAMES, mProps.GetBool("encodelfn", true));
 		CheckButton(IDC_LOWERCASENAMES, mProps.GetBool("lowercase", true));
 		CheckButton(IDC_INSTALLASDISK, mProps.GetBool("fakedisk", false));
+
+		const bool encodeLFN = mProps.GetBool("encodelfn", true);
+		const bool enableLFN = mProps.GetBool("longfilenames", false);
+
+		mLFNModeView.SetSelection(enableLFN ? 2 : encodeLFN ? 1 : 0);
 
 		for(int i=0; i<4; ++i)
 			SetControlText(kPathIds[i], mProps.GetString(VDStringA().sprintf("path%d", i+1).c_str(), L""));
@@ -76,14 +93,15 @@ void ATUIDialogHostDevice::OnDataExchange(bool write) {
 		if (!IsButtonChecked(IDC_READONLY))
 			mProps.SetBool("readonly", false);
 
-		if (!IsButtonChecked(IDC_ENCODELONGNAMES))
-			mProps.SetBool("encodelfn", false);
-
 		if (!IsButtonChecked(IDC_LOWERCASENAMES))
 			mProps.SetBool("lowercase", false);
 
 		if (IsButtonChecked(IDC_INSTALLASDISK))
 			mProps.SetBool("fakedisk", true);
+
+		int lfnMode = mLFNModeView.GetSelection();
+		mProps.SetBool("encodelfn", lfnMode >= 1);
+		mProps.SetBool("longfilenames", lfnMode >= 2);
 
 		VDStringW path;
 

@@ -19,7 +19,7 @@
 #include <vd2/system/error.h>
 #include <vd2/Dita/services.h>
 #include <at/atcore/device.h>
-#include <at/atcore/devicemanager.h>
+#include "devicemanager.h"
 #include "cartridge.h"
 #include "simulator.h"
 #include "uiaccessors.h"
@@ -137,7 +137,7 @@ void OnCommandSaveCartridge() {
 
 	VDStringW fn(VDGetSaveFileName('cart', ATUIGetNewPopupOwner(), L"Save cartridge",
 		L"Cartridge image with header (*.car)\0*.car\0"
-		L"Raw cartridge image (*.bin)\0*.bin\0",
+		L"Raw cartridge image (*.bin,*.rom)\0*.bin;*.rom\0",
 
 		L"car", opts, optval));
 

@@ -35,10 +35,13 @@ enum ATDebugDisasmMode : uint8 {
 	kATDebugDisasmMode_6809
 };
 
+const wchar_t *ATDebugGetDisasmModeDisplayName(ATDebugDisasmMode mode);
+
 class IATDebugTarget : public IVDUnknown {
 public:
 	virtual const char *GetName() = 0;
 	virtual ATDebugDisasmMode GetDisasmMode() = 0;
+	virtual float GetDisplayCPUClock() const = 0;
 
 	virtual void GetExecState(ATCPUExecState& state) = 0;
 	virtual void SetExecState(const ATCPUExecState& state) = 0;

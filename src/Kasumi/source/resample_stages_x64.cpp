@@ -72,13 +72,6 @@ VDResamplerSeparableTableRowStage8SSE2::VDResamplerSeparableTableRowStage8SSE2(c
 void VDResamplerSeparableTableRowStage8SSE2::Init(const VDResamplerAxis& axis, uint32 srcw) {
 	mSrcWidth = srcw;
 
-	if (axis.dx_dualclip) {
-		// We don't need the row kernels in the dual clip case as the engine will call the
-		// standard Process() instead. This is only for the case where the source is narrower
-		// than the filter kernel, which is not worth optimizing.
-		return;
-	}
-
 	const uint32 ksize = (int)mFilterBank.size() >> 8;
 	const uint32 kquads = (ksize + 3) >> 2;
 	const uint32 ksize4 = kquads * 4;
@@ -86,7 +79,8 @@ void VDResamplerSeparableTableRowStage8SSE2::Init(const VDResamplerAxis& axis, u
 	if (srcw < ksize4)
 		mTempBuffer.resize(ksize4, 0);
 	
-	mRowFilters.resize((kquads * 4 + 4) * axis.dx);
+	const sint32 dstw = axis.dx_preclip + axis.dx_active + axis.dx_postclip + axis.dx_dualclip;
+	mRowFilters.resize((kquads * 4 + 4) * dstw);
 
 	sint16 *rowFilter = mRowFilters.data();
 	memset(rowFilter, 0, mRowFilters.size() * sizeof(mRowFilters[0]));
@@ -116,7 +110,7 @@ void VDResamplerSeparableTableRowStage8SSE2::Init(const VDResamplerAxis& axis, u
 
 	if (ksize == 2) {
 		if (mbUseFastLerp) {
-			uint32 fastGroups = axis.dx >> 3;
+			uint32 fastGroups = dstw >> 3;
 
 			mFastLerpOffsets.resize(fastGroups);
 
@@ -166,7 +160,7 @@ void VDResamplerSeparableTableRowStage8SSE2::Init(const VDResamplerAxis& axis, u
 
 			xstart = fastGroups << 3;
 		} else {
-			uint32 fastGroups = axis.dx >> 2;
+			uint32 fastGroups = dstw >> 2;
 
 			for(uint32 i = 0; i < fastGroups; ++i) {
 				for(uint32 j = 0; j < 4; ++j) {
@@ -206,7 +200,7 @@ void VDResamplerSeparableTableRowStage8SSE2::Init(const VDResamplerAxis& axis, u
 		}
 	}
 
-	for(sint32 x = xstart; x < axis.dx; ++x) {
+	for(sint32 x = xstart; x < dstw; ++x) {
 		sint32 u = axis.u + axis.dudx * x;
 		sint32 rawSrcOffset = u >> 16;
 		sint32 srcOffset = rawSrcOffset;

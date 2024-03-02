@@ -33,6 +33,10 @@ class ATSimulatorEventManager;
 class IATDeviceVideoOutput;
 class IATDeviceVideoManager;
 
+class ATUIDisplayTool;
+
+enum class ATTextCopyMode : uint8;
+
 class ATUIVideoDisplayWindow final : public ATUIContainer, public IATUIEnhancedTextOutput {
 public:
 	enum {
@@ -47,7 +51,7 @@ public:
 	bool Init(ATSimulatorEventManager& sem, IATDeviceVideoManager& videoMgr);
 	void Shutdown();
 
-	void Copy(bool enableEscaping);
+	void Copy(ATTextCopyMode copyMode);
 	bool CopyFrameImage(bool trueAspect, VDPixmapBuffer& buf);
 	void CopySaveFrame(bool saveFrame, bool trueAspect, const wchar_t *path = nullptr);
 
@@ -56,6 +60,8 @@ public:
 	void ToggleCaptureMouse();
 	void ReleaseMouse();
 	void CaptureMouse();
+
+	void RecalibrateLightPen();
 
 	void OpenOSK();
 	void CloseOSK();
@@ -80,6 +86,9 @@ public:
 	void SetOnAllowContextMenu(const vdfunction<void()>& fn) { mpOnAllowContextMenu = fn; }
 	void SetOnDisplayContextMenu(const vdfunction<void(const vdpoint32&)>& fn) { mpOnDisplayContextMenu = fn; }
 	void SetOnOSKChange(const vdfunction<void()>& fn) { mpOnOSKChange = fn; }
+
+	void AddTool(ATUIDisplayTool& tool);
+	void RemoveTool(ATUIDisplayTool& tool);
 
 public:
 	void InvalidateTextOutput() override;
@@ -141,7 +150,7 @@ public:
 	bool IsAltOutputAvailable(const char *name) const;
 	VDStringW GetCurrentOutputName() const;
 
-protected:
+private:
 	bool ProcessKeyDown(const ATUIKeyEvent& event, bool enableKeyInput);
 	bool ProcessKeyUp(const ATUIKeyEvent& event, bool enableKeyInput);
 	void ProcessVirtKey(uint32 vkey, uint32 scancode, uint32 keycode, bool repeat);
@@ -165,7 +174,7 @@ protected:
 	void ClearDragPreview();
 	int GetModeLineYPos(int ys, bool checkValidCopyText) const;
 	std::pair<int, int> GetModeLineXYPos(int xcc, int ys, bool checkValidCopyText) const;
-	int ReadText(uint8 *dst, int yc, int startChar, int numChars) const;
+	int ReadText(uint8 *dst, int yc, int startChar, int numChars, bool& intl) const;
 	void ClearCoordinateIndicator();
 	void SetCoordinateIndicator(int x, int y);
 
@@ -243,6 +252,9 @@ protected:
 
 	ATUILabel *mpUILabelBadSignal = nullptr;
 	ATUILabel *mpUILabelEnhTextSize = nullptr;
+
+	vdvector<vdrefptr<ATUIDisplayTool>> mTools;
+	ATUIDisplayTool *mpActiveTool = nullptr;
 
 	vdfunction<void()> mpOnAllowContextMenu;
 	vdfunction<void(const vdpoint32&)> mpOnDisplayContextMenu;

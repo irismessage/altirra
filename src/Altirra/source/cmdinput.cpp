@@ -19,6 +19,7 @@
 #include <at/ataudio/pokey.h>
 #include "cmdhelpers.h"
 #include "simulator.h"
+#include "inputcontroller.h"
 #include "uiaccessors.h"
 #include "uikeyboard.h"
 
@@ -145,10 +146,16 @@ namespace ATCommands {
 			, [] { return ToChecked(ATUIGetRawInputEnabled()); }
 		},
 		{ "Input.ToggleImmediatePotUpdate"
-			, [] { g_sim.GetPokey().SetImmediatePotUpdateEnabled(!g_sim.GetPokey().IsImmediatePotUpdateEnabled()); }
+			, [] {
+				const bool enable = !g_sim.GetPokey().IsImmediatePotUpdateEnabled();
+				g_sim.GetPokey().SetImmediatePotUpdateEnabled(enable);
+				g_sim.GetLightPenPort()->SetImmediateUpdateEnabled(enable);
+			}
 			, nullptr
 			, [] { return ToChecked(g_sim.GetPokey().IsImmediatePotUpdateEnabled()); }
 		},
+
+		{ "Input.RecalibrateLightPen", ATUIRecalibrateLightPen },
 	};
 }
 

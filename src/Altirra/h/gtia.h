@@ -18,6 +18,7 @@
 #ifndef AT_GTIA_H
 #define AT_GTIA_H
 
+#include <vd2/system/function.h>
 #include <vd2/system/linearalloc.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/vdstl.h>
@@ -30,6 +31,7 @@ class IVDVideoDisplay;
 class VDVideoDisplayFrame;
 class IATUIRenderer;
 class VDPixmapBuffer;
+class ATConsoleOutput;
 
 class IATGTIAEmulatorConnections {
 public:
@@ -127,6 +129,8 @@ struct ATArtifactingParams {
 	bool mbEnableHDR;
 	float mSDRIntensity;
 	float mHDRIntensity;
+	bool mbUseSystemSDR;
+	bool mbUseSystemSDRAsHDR;
 
 	static ATArtifactingParams GetDefault();
 };
@@ -270,6 +274,7 @@ public:
 		NoMinidriverSupport,
 		NoSystemSupport,
 		NoHardwareSupport,
+		NotEnabledOnDisplay,
 		NoDisplaySupport,
 		AccelNotEnabled,
 		Available,
@@ -279,6 +284,8 @@ public:
 
 	bool IsVsyncEnabled() const { return mbVsyncEnabled; }
 	void SetVsyncEnabled(bool enabled) { mbVsyncEnabled = enabled; }
+
+	void SetVsyncAdaptiveEnabled(bool enabled) { mbVsyncAdaptiveEnabled = enabled; }
 
 	AnalysisMode GetAnalysisMode() const { return mAnalysisMode; }
 	void SetAnalysisMode(AnalysisMode mode);
@@ -386,6 +393,7 @@ public:
 	void PostLoadState();
 
 	void GetRegisterState(ATGTIARegisterState& state) const;
+	void DumpHighArtifactingFilters(ATConsoleOutput& output);
 
 	enum VBlankMode {
 		kVBlankModeOff,
@@ -395,6 +403,7 @@ public:
 
 	void SetFieldPolarity(bool polarity);
 	void SetVBLANK(VBlankMode vblMode);
+	void SetOnRetryFrame(vdfunction<void()> fn);
 	bool BeginFrame(uint32 y, bool force, bool drop);
 	void BeginScanline(int y, bool hires);
 	void EndScanline(uint8 dlControl, bool pfRendered);
@@ -501,6 +510,8 @@ protected:
 	OverscanMode	mOverscanMode;
 	VerticalOverscanMode	mVerticalOverscanMode;
 	bool	mbVsyncEnabled = false;
+	bool	mbVsyncAdaptiveEnabled = false;
+	sint32	mDisplayLagCounter = 0;
 	ATMonitorMode	mMonitorMode = ATMonitorMode::Color;
 	bool	mbBlendMode = false;
 	bool	mbBlendModeLastFrame = false;
@@ -576,6 +587,9 @@ protected:
 	ATGTIARenderer *mpRenderer;
 	IATUIRenderer *mpUIRenderer;
 	ATVBXEEmulator *mpVBXE;
+
+	vdfunction<void()> mpOnRetryFrame;
+	bool mbWaitingForFrame = false;
 
 	ATNotifyList<const ATGTIARawFrameFn *> mRawFrameCallbacks;
 

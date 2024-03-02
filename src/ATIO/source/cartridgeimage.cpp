@@ -416,6 +416,11 @@ bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, 
 
 		if (size32 == 0x20000 || size32 == 0x40000)
 			memcpy(p + 0x40000, p, 0x40000);
+	} else if (mCartMode == kATCartridgeMode_SICPlus) {
+		uint8 *p = mCARTROM.data();
+
+		if (size32 == 0x80000)
+			memcpy(p + 0x80000, p, 0x80000);
 	} else if (mCartMode == kATCartridgeMode_Atrax_SDX_64K) {
 		uint8 *p = mCARTROM.data();
 

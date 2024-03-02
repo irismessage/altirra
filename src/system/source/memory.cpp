@@ -390,22 +390,13 @@ void VDMemset32Rect(void *dst, ptrdiff_t pitch, uint32 value, size_t w, size_t h
 }
 
 #if defined(_WIN32) && defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC)
-	extern "C" void __cdecl VDFastMemcpyPartialScalarAligned8(void *dst, const void *src, size_t bytes);
-	extern "C" void __cdecl VDFastMemcpyPartialMMX(void *dst, const void *src, size_t bytes);
 	extern "C" void __cdecl VDFastMemcpyPartialMMX2(void *dst, const void *src, size_t bytes);
 
 	void __cdecl VDFastMemcpyPartialScalar(void *dst, const void *src, size_t bytes) {
-		if (!(((int)dst | (int)src | bytes) & 7))
-			VDFastMemcpyPartialScalarAligned8(dst, src, bytes);
-		else
-			memcpy(dst, src, bytes);
+		memcpy(dst, src, bytes);
 	}
 
 	void __cdecl VDFastMemcpyFinishScalar() {
-	}
-
-	void __cdecl VDFastMemcpyFinishMMX() {
-		_mm_empty();
 	}
 
 	void __cdecl VDFastMemcpyFinishMMX2() {
@@ -423,14 +414,6 @@ void VDMemset32Rect(void *dst, ptrdiff_t pitch, uint32 value, size_t w, size_t h
 			VDFastMemcpyPartial = VDFastMemcpyPartialMMX2;
 			VDFastMemcpyFinish	= VDFastMemcpyFinishMMX2;
 			VDSwapMemory		= VDSwapMemorySSE;
-		} else if (exts & CPUF_SUPPORTS_INTEGER_SSE) {
-			VDFastMemcpyPartial = VDFastMemcpyPartialMMX2;
-			VDFastMemcpyFinish	= VDFastMemcpyFinishMMX2;
-			VDSwapMemory		= VDSwapMemoryScalar;
-		} else if (exts & CPUF_SUPPORTS_MMX) {
-			VDFastMemcpyPartial = VDFastMemcpyPartialMMX;
-			VDFastMemcpyFinish	= VDFastMemcpyFinishMMX;
-			VDSwapMemory		= VDSwapMemoryScalar;
 		} else {
 			VDFastMemcpyPartial = VDFastMemcpyPartialScalar;
 			VDFastMemcpyFinish	= VDFastMemcpyFinishScalar;

@@ -13,6 +13,10 @@
 //
 //	You should have received a copy of the GNU General Public License along
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #include <stdafx.h>
 #include <vd2/system/bitmath.h>
@@ -192,6 +196,20 @@ void ATConfigVarT<T_Type, T_Val>::Unset() {
 	}
 }
 
+template<ATConfigVarType T_Type, typename T_Val>
+void ATConfigVarT<T_Type, T_Val>::operator=(const T_Val& val) {
+	if (!mbOverridden || mValue != val) {
+		mbOverridden = true;
+
+		if (mValue != val) {
+			mValue = val;
+			NotifyChanged();
+		}
+
+		SaveValue();
+	}
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 bool ATConfigVarBool::FromPersistence(ATConfigVariableRegKey& k) {
@@ -213,27 +231,21 @@ bool ATConfigVarBool::FromString(const char *s) {
 	if (sp.comparei("true") == 0 || sp == "1")
 		val = true;
 	else if (sp.comparei("false") == 0 || sp == "0")
-		val= false;
+		val = false;
 	else
 		return false;
 
-	if (!mbOverridden || mValue != val) {
-		mbOverridden = true;
-		ATConfigVariableRegKey k(true);
-		k.setInt(mpVarName, val ? 1 : 0);
-	}
-
-	if (mValue != val) {
-		mValue = val;
-
-		NotifyChanged();
-	}
-
+	*this = val;
 	return true;
 }
 
 VDStringA ATConfigVarBool::ToString() const {
 	return VDStringA(mValue ? "true" : "false");
+}
+
+void ATConfigVarBool::SaveValue() const {
+	ATConfigVariableRegKey k(true);
+	k.setInt(mpVarName, mValue ? 1 : 0);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -254,17 +266,7 @@ bool ATConfigVarInt32::FromString(const char *s) {
 	char dummy;
 
 	if (sscanf(s, "%d %c", &val, &dummy) == 1) {
-		if (!mbOverridden || mValue != val) {
-			mbOverridden = true;
-			ATConfigVariableRegKey k(true);
-			k.setInt(mpVarName, val);
-		}
-
-		if (mValue != val) {
-			mValue = val;
-
-			NotifyChanged();
-		}
+		*this = val;
 
 		return true;
 	} else {
@@ -277,6 +279,11 @@ VDStringA ATConfigVarInt32::ToString() const {
 
 	s.sprintf("%d", mValue);
 	return s;
+}
+
+void ATConfigVarInt32::SaveValue() const {
+	ATConfigVariableRegKey k(true);
+	k.setInt(mpVarName, mValue);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -297,17 +304,7 @@ bool ATConfigVarFloat::FromString(const char *s) {
 	char dummy;
 
 	if (sscanf(s, "%g %c", &val, &dummy) == 1 && isfinite(val)) {
-		if (!mbOverridden || mValue != val) {
-			mbOverridden = true;
-			ATConfigVariableRegKey k(true);
-			k.setInt(mpVarName, VDGetFloatAsInt(val));
-		}
-
-		if (mValue != val) {
-			mValue = val;
-
-			NotifyChanged();
-		}
+		*this = val;
 
 		return true;
 	} else {
@@ -320,6 +317,11 @@ VDStringA ATConfigVarFloat::ToString() const {
 
 	s.sprintf("%g", mValue);
 	return s;
+}
+
+void ATConfigVarFloat::SaveValue() const {
+	ATConfigVariableRegKey k(true);
+	k.setInt(mpVarName, VDGetFloatAsInt(mValue));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -346,17 +348,7 @@ bool ATConfigVarRGBColor::FromString(const char *s) {
 		if (len == 4)
 			newValue = (val & 0xF) * 0x11 + (val & 0xF0)*0x110 + (val & 0xF00) * 0x1100;
 
-		if (!mbOverridden || mValue != newValue) {
-			mbOverridden = true;
-			ATConfigVariableRegKey k(true);
-			k.setInt(mpVarName, val);
-		}
-
-		if (mValue != newValue) {
-			mValue = newValue;
-
-			NotifyChanged();
-		}
+		*this = newValue;
 
 		return true;
 	} else {
@@ -369,6 +361,11 @@ VDStringA ATConfigVarRGBColor::ToString() const {
 
 	s.sprintf("#%06X", mValue);
 	return s;
+}
+
+void ATConfigVarRGBColor::SaveValue() const {
+	ATConfigVariableRegKey k(true);
+	k.setInt(mpVarName, mValue);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

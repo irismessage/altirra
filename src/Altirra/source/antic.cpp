@@ -639,6 +639,9 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 
 			uint8 cumulativeNMIEN = mPendingNMIs & mEarlyNMIEN;
 			uint8 cumulativeNMIENLate = mPendingNMIs & mEarlyNMIEN2 & ~mEarlyNMIEN;
+			
+			if (mY == 248)
+				mpConn->AnticOnVBlank();
 
 			if (cumulativeNMIEN) {
 				if (mY == 248)
@@ -690,7 +693,11 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 			mpGTIA->BeginScanline(mY, mPFPushMode == k320);
 			mbPFRendered = false;
 		} else if (mX == 105) {
-			mbWSYNCActive = false;
+			if (mbWSYNCActive) {
+				mbWSYNCActive = false;
+
+				mRDYCycleOffset = mWSYNCCycleOffset + mX - mHALTCycles;
+			}
 		} else if (mX == 112) {
 			// Check if we have hit the end of the mode line. We need to detect this now in case
 			// abnormal DMA is active so that playfield DMA can be re-enabled for cycles 0-7
@@ -731,8 +738,10 @@ void ATAnticEmulator::AdvanceScanline() {
 
 	mX = 0;
 
-	if (mbWSYNCActive)
+	if (mbWSYNCActive) {
 		*mpConn->mpAnticBusData = mWSYNCHoldValue;
+		mWSYNCCycleOffset += 114;
+	}
 
 	if (++mY >= mScanlineLimit) {
 		AdvanceFrame();
@@ -740,7 +749,6 @@ void ATAnticEmulator::AdvanceScanline() {
 		if (mY == 248) {
 			++mPresentedFrame;
 			mpConn->AnticEndFrame();
-			mpConn->AnticOnVBlank();
 		}
 
 		mbDLActive = false;		// needed because The Empire Strikes Back has a 259-line display list (!)
@@ -2119,6 +2127,11 @@ void ATAnticEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
 		}
 	}
 
+	// Adjust WSYNC cycle counting. The only thing we really care about across
+	// a state load is that the cycle counts stay monotonic.
+	if (mbWSYNCActive)
+		mWSYNCCycleOffset = mHALTCycles + mRDYCycleOffset - mX;
+
 	uint32 updateCount = reader.ReadUint32();
 	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 	while(updateCount--) {
@@ -3049,7 +3062,8 @@ void ATAnticEmulator::OnScheduledEvent(uint32 id) {
 			else {
 				mbWSYNCActive = true;
 
-				mRDYCycleOffset += (mX >= 105 ? 105 - mX + 114 : 105 - mX);
+				// +1 because we haven't incremented X yet
+				mWSYNCCycleOffset = mHALTCycles + mRDYCycleOffset - (mX + 1);
 
 				// We're relying on the fact that with the standard setup, the only cycles
 				// that can follow the last write cycle is an instruction fetch -- the next

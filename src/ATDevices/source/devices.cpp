@@ -17,7 +17,7 @@
 
 #include <stdafx.h>
 #include <at/atcore/device.h>
-#include <at/atcore/devicemanager.h>
+#include <at/atdevices/devices.h>
 
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive;
 extern const ATDeviceDefinition g_ATDeviceDefExeLoader;
@@ -25,13 +25,10 @@ extern const ATDeviceDefinition g_ATDeviceDefCorvus;
 extern const ATDeviceDefinition g_ATDeviceDefLoopback;
 extern const ATDeviceDefinition g_ATDeviceDefParallelFileWriter;
 
-void ATRegisterDeviceLibrary(ATDeviceManager& dm) {
-	for(const auto *def : {
-		&g_ATDeviceDefDiskDrive,
-		&g_ATDeviceDefExeLoader,
-		&g_ATDeviceDefCorvus,
-		&g_ATDeviceDefLoopback,
-		&g_ATDeviceDefParallelFileWriter
-	})
-		dm.AddDeviceDefinition(def);
-}
+const std::initializer_list<const ATDeviceDefinition *> kATDeviceLibraryDefs {
+	&g_ATDeviceDefDiskDrive,
+	&g_ATDeviceDefExeLoader,
+	&g_ATDeviceDefCorvus,
+	&g_ATDeviceDefLoopback,
+	&g_ATDeviceDefParallelFileWriter
+};

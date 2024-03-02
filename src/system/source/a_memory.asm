@@ -23,56 +23,13 @@
 ;	3.	This notice may not be removed or altered from any source
 ;		distribution.
 
-		segment	.text
+		.686
+		.model	flat
+		.mmx
+		.xmm
+		.code
 
-	global	_VDFastMemcpyPartialScalarAligned8
-_VDFastMemcpyPartialScalarAligned8:
-		mov		eax, [esp+12]
-		mov		edx, [esp+4]
-		mov		ecx, [esp+8]
-		add		ecx, eax
-		add		edx, eax
-		neg		eax
-		jz		.nobytes
-		add		eax, 8
-		jz		.doodd
-		jmp		short .xloop
-		align	16
-.xloop:
-		fild	qword [ecx+eax-8]
-		fild	qword [ecx+eax]
-		fxch
-		fistp	qword [edx+eax-8]
-		fistp	qword [edx+eax]
-		add		eax,16
-		jnc		.xloop
-		jnz		.nobytes
-.doodd:
-		fild	qword [ecx-8]
-		fistp	qword [edx-8]
-.nobytes:
-		ret
-
-	global	_VDFastMemcpyPartialMMX
-_VDFastMemcpyPartialMMX:
-		push	edi
-		push	esi
-
-		mov		edi, [esp+4+8]
-		mov		esi, [esp+8+8]
-		mov		ecx, [esp+12+8]
-		mov		edx, ecx
-		shr		ecx, 2
-		and		edx, 3
-		rep		movsd
-		mov		ecx, edx
-		rep		movsb
-		pop		esi
-		pop		edi
-		ret
-
-	global	_VDFastMemcpyPartialMMX2
-_VDFastMemcpyPartialMMX2:
+_VDFastMemcpyPartialMMX2 proc
 		push	ebp
 		push	edi
 		push	esi
@@ -83,8 +40,8 @@ _VDFastMemcpyPartialMMX2:
 		mov		eax, [esp+12+16]
 		neg		eax
 		add		eax, 63
-		jbe		.skipblastloop
-.blastloop:
+		jbe		skipblastloop
+blastloop:
 		movq	mm0, [edx]
 		movq	mm1, [edx+8]
 		movq	mm2, [edx+16]
@@ -104,32 +61,32 @@ _VDFastMemcpyPartialMMX2:
 		add		ebx, 64
 		add		edx, 64
 		add		eax, 64
-		jnc		.blastloop
-.skipblastloop:
+		jnc		blastloop
+skipblastloop:
 		sub		eax, 63-7
-		jns		.noextras
-.quadloop:
+		jns		noextras
+quadloop:
 		movq	mm0, [edx]
 		movntq	[ebx], mm0
 		add		edx, 8
 		add		ebx, 8
 		add		eax, 8
-		jnc		.quadloop
-.noextras:
+		jnc		quadloop
+noextras:
 		sub		eax, 7
-		jz		.nooddballs
+		jz		nooddballs
 		mov		ecx, eax
 		neg		ecx
 		mov		esi, edx
 		mov		edi, ebx
 		rep		movsb
-.nooddballs:
+nooddballs:
 		pop		ebx
 		pop		esi
 		pop		edi
 		pop		ebp
 		ret
-
+_VDFastMemcpyPartialMMX2 endp
 
 		end
 

@@ -16,10 +16,12 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
-#include <at/atcore/devicemanager.h>
 #include <at/atcore/propertyset.h>
 #include <at/atnativeui/uiframe.h>
+#include <at/atnativeui/uipane.h>
+#include "cmdhelpers.h"
 #include "console.h"
+#include "devicemanager.h"
 #include "firmwaremanager.h"
 #include "simulator.h"
 #include "uiaccessors.h"
@@ -46,7 +48,6 @@ void ATUIResizeDisplay();
 
 extern ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
-extern ATFrameRateMode g_frameRateMode;
 
 void OnCommandSystemTogglePause() {
 	if (g_sim.IsRunning())
@@ -240,6 +241,10 @@ void OnCommandSystemSpeedInteger() {
 	ATUISetFrameRateMode(kATFrameRateMode_Integral);
 }
 
+void OnCommandSystemSpeedToggleVSyncAdaptive() {
+	ATUISetFrameRateVSyncAdaptive(!ATUIGetFrameRateVSyncAdaptive());
+}
+
 void OnCommandVideoToggleCTIA() {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
@@ -381,4 +386,19 @@ void OnCommandSystemEditProfilesDialog() {
 
 void OnCommandConfigureSystem() {
 	ATUIShowDialogConfigureSystem(ATUIGetNewPopupOwner());
+}
+
+void ATUIInitCommandMappingsSystem(ATUICommandManager& cmdMgr) {
+	using namespace ATCommands;
+
+	static constexpr struct ATUICommand kCommands[]={
+		{ "System.TogglePause", OnCommandSystemTogglePause },
+		{ "System.WarmReset", OnCommandSystemWarmReset },
+		{ "System.ColdReset", OnCommandSystemColdReset },
+		{ "System.ColdResetComputerOnly", OnCommandSystemColdResetComputerOnly },
+
+		{ "System.ToggleVSyncAdaptiveSpeed", OnCommandSystemSpeedToggleVSyncAdaptive, nullptr, [] { return ToChecked(ATUIGetFrameRateVSyncAdaptive()); } },
+	};
+
+	cmdMgr.RegisterCommands(kCommands, vdcountof(kCommands));
 }

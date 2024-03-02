@@ -21,6 +21,8 @@
 class VDStringA;
 
 class IATDebugTarget;
+struct ATCPUHistoryEntry;
+struct ATCPUExecState;
 
 enum ATCPUMode : uint8;
 enum ATCPUSubMode : uint8;

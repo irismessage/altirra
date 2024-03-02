@@ -26,7 +26,8 @@ class ATDeviceManager;
 
 class ATUIControllerDevices final {
 public:
-	ATUIControllerDevices(VDDialogFrameW32& parent, ATDeviceManager& devMgr, VDUIProxyTreeViewControl& treeView, VDUIProxyButtonControl& settingsView, VDUIProxyButtonControl& removeView);
+	ATUIControllerDevices(VDDialogFrameW32& parent, ATDeviceManager& devMgr, VDUIProxyTreeViewControl& treeView, VDUIProxyButtonControl& settingsView, VDUIProxyButtonControl& removeView,
+		VDUIProxyButtonControl& moreView);
 
 	void OnDataExchange(bool write);
 	void OnDpiChanged();
@@ -34,6 +35,7 @@ public:
 	void Remove();
 	void RemoveAll();
 	void Settings();
+	void More();
 	void CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef parentNode, IATDevice *dev, const wchar_t *prefix);
 	void SaveSettings(const char *configTag, const ATPropertySet& props);
 
@@ -41,6 +43,9 @@ private:
 	void OnItemSelectionChanged(VDUIProxyTreeViewControl *sender, int idx);
 	void OnItemDoubleClicked(VDUIProxyTreeViewControl *sender, bool *handled);
 	void OnItemGetDisplayAttributes(VDUIProxyTreeViewControl *sender, VDUIProxyTreeViewControl::GetDispAttrEvent *event);
+	bool OnContextMenu(const VDUIProxyTreeViewControl::ContextMenuEvent& event);
+
+	bool DisplayMore(const VDUIProxyTreeViewControl::ContextMenuEvent& event, bool fromButton);
 
 	void UpdateIcons();
 
@@ -49,6 +54,7 @@ private:
 	VDUIProxyTreeViewControl& mTreeView;
 	VDUIProxyButtonControl& mSettingsView;
 	VDUIProxyButtonControl& mRemoveView;
+	VDUIProxyButtonControl& mMoreView;
 
 	struct DeviceNode;
 

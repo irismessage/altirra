@@ -21,6 +21,7 @@
 #include <at/atcore/devicecart.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceparentimpl.h>
+#include <at/atcore/devicestorageimpl.h>
 #include <at/atemulation/flash.h>
 #include <at/atemulation/rtcmcp7951x.h>
 
@@ -323,6 +324,7 @@ protected:
 
 	ATFlashEmulator	mFlashCtrl;
 	ATRTCMCP7951XEmulator mRTC;
+	ATDeviceVirtualStorage mRTCStorage;
 
 	uint8	mSendBuffer[520];
 	uint8	mResponseBuffer[520];

@@ -1,6 +1,23 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2021 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #include <stdafx.h>
 #include "oshelper.h"
 #include <windows.h>
+#include <wincodec.h>
 #include <shellapi.h>
 #include <shlwapi.h>
 #include <shlobj_core.h>
@@ -18,6 +35,7 @@
 #include <at/atnativeui/theme.h>
 #include "decode_png.h"
 #include "encode_png.h"
+#include "common_png.h"
 
 const void *ATLockResource(uint32 id, size_t& size) {
 	HMODULE hmod = VDGetLocalModuleHandleW32();
@@ -235,6 +253,77 @@ void ATCopyFrameToClipboard(const VDPixmap& px) {
 		}
 		::CloseClipboard();
 	}
+}
+
+void ATLoadFrame(VDPixmapBuffer& px, const wchar_t *filename) {
+	VDFile f(filename);
+
+	sint64 size = f.size();
+	if (size > 256*1024*1024)
+		throw MyError("File is too large to load.");
+
+	vdblock<unsigned char> buf((uint32)size);
+	f.read(buf.data(), (long)size);
+	f.close();
+
+	ATLoadFrameFromMemory(px, buf.data(), size);
+}
+
+void ATLoadFrameFromMemory(VDPixmapBuffer& px, const void *mem, size_t len) {
+	uint8 buf8[4];
+	memcpy(buf8, mem, 4);
+
+	GUID containerFormat;
+
+	if (len >= 4 && buf8[0] == 0xFF && buf8[1] == 0xD8 && buf8[2] == 0xFF && (buf8[3] & 0xF0) == 0xE0) {
+		containerFormat = GUID_ContainerFormatJpeg;
+	} else if (len >= 8 && !memcmp(mem, nsVDPNG::kPNGSignature, 8)){
+		containerFormat = GUID_ContainerFormatPng;
+	} else
+		throw MyError("Unsupported image format.");
+
+	vdrefptr<IWICImagingFactory> factory;
+	vdrefptr<IWICStream> stream;
+	vdrefptr<IWICBitmapDecoder> decoder;
+
+	if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_ALL, __uuidof(IWICImagingFactory), (void **)~factory))
+		|| FAILED(factory->CreateStream(~stream))
+		|| FAILED(stream->InitializeFromMemory((BYTE *)mem, (DWORD)len))
+		|| FAILED(factory->CreateDecoder(containerFormat, &GUID_VendorMicrosoft, ~decoder))
+	) {
+		throw MyError("Unable to initialize Windows Imaging.");
+	}
+
+	HRESULT hr = decoder->Initialize(stream, WICDecodeMetadataCacheOnDemand);
+	if (SUCCEEDED(hr)) {
+		vdrefptr<IWICBitmapFrameDecode> frameDecode;
+		hr = decoder->GetFrame(0, ~frameDecode);
+
+		if (SUCCEEDED(hr)) {
+			vdrefptr<IWICFormatConverter> formatConverter;
+
+			hr = factory->CreateFormatConverter(~formatConverter);
+			if (SUCCEEDED(hr)) {
+				hr = formatConverter->Initialize(frameDecode, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.5, WICBitmapPaletteTypeMedianCut);
+
+				if (SUCCEEDED(hr)) {
+					UINT w = 0, h = 0;
+					hr = formatConverter->GetSize(&w, &h);
+
+					if (SUCCEEDED(hr) && w && h) {
+						px.init(w, h, nsVDPixmap::kPixFormat_XRGB8888);
+
+						hr = formatConverter->CopyPixels(nullptr, px.pitch, px.pitch * px.h, (BYTE *)px.data);
+						if (SUCCEEDED(hr)) {
+							return;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	throw MyError("Unable to decode image.");
 }
 
 void ATSaveFrame(const VDPixmap& px, const wchar_t *filename) {
@@ -529,4 +618,72 @@ void ATShowFileInSystemExplorer(const wchar_t *filename) {
 		SHOpenFolderAndSelectItems(pidl, 0, nullptr, 0);
 		ILFree(pidl);
 	}
+}
+
+void ATRelaunchElevated(VDGUIHandle parent, const wchar_t *params) {
+	const VDStringW path = VDGetProgramFilePath();
+
+	SHELLEXECUTEINFOW execInfo = {sizeof(SHELLEXECUTEINFOW)};
+	execInfo.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_UNICODE | SEE_MASK_WAITFORINPUTIDLE;
+	execInfo.hwnd = (HWND)parent;
+	execInfo.lpVerb = L"runas";
+	execInfo.lpFile = path.c_str();
+	execInfo.lpParameters = params;
+	execInfo.nShow = SW_SHOWNORMAL;
+
+	if (ShellExecuteExW(&execInfo) && execInfo.hProcess) {
+		for(;;) {
+			DWORD r = MsgWaitForMultipleObjects(1, &execInfo.hProcess, FALSE, INFINITE, QS_ALLINPUT);
+
+			if (r == WAIT_OBJECT_0 + 1) {
+				MSG msg;
+				while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+					if (CallMsgFilter(&msg, 0))
+						continue;
+
+					TranslateMessage(&msg);
+					DispatchMessage(&msg);
+				}
+			} else
+				break;
+		}
+
+		CloseHandle(execInfo.hProcess);
+	}
+}
+
+void ATRelaunchElevatedWithEscapedArgs(VDGUIHandle parent, vdspan<const wchar_t *> args) {
+	VDStringW argStr;
+
+	for(const wchar_t *s : args) {
+		if (!argStr.empty())
+			argStr += L' ';
+
+		bool needsEscaping = false;
+		if (*s != '/') {
+			for(const wchar_t *t = s; *t; ++t) {
+				if (*t == '\\' || *t == '/' || *t == '"') {
+					needsEscaping = true;
+					break;
+				}
+			}
+		}
+
+		if (needsEscaping) {
+			argStr += L'"';
+
+			for(const wchar_t *t = s; *t; ++t) {
+				if (*t == '\\' || *t == '"')
+					argStr += L'\\';
+
+				argStr += *t;
+			}
+
+			argStr += L'"';
+		} else {
+			argStr += s;
+		}
+	}
+
+	ATRelaunchElevated(parent, argStr.c_str());
 }

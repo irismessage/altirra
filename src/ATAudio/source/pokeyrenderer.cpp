@@ -11,9 +11,12 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 //=========================================================================
 // POKEY renderer
@@ -76,6 +79,7 @@
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/bitmath.h>
+#include <at/atcore/configvar.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/scheduler.h>
 #include <at/atcore/wraptime.h>
@@ -85,6 +89,8 @@
 #include <at/ataudio/pokeytables.h>
 
 ATLogChannel g_ATLCPokeyTEv(false, false, "POKEYTEV", "POKEY timer events (high traffic)");
+
+ATConfigVarFloat g_ATCVAudioConsoleSpeakerVolume("audio.console_speaker_volume", 0.15f);
 
 namespace {
 	constexpr uint32 kAudioDelay = 2;
@@ -130,11 +136,18 @@ ATPokeyRenderer::ATPokeyRenderer()
 }
 
 ATPokeyRenderer::~ATPokeyRenderer() {
+	vdsaferelease <<= mpEdgeConvPlayer, mpSoundGroup;
 }
 
-void ATPokeyRenderer::Init(ATScheduler *sch, ATPokeyTables *tables) {
+void ATPokeyRenderer::Init(ATScheduler *sch, ATPokeyTables *tables, IATSyncAudioSamplePlayer *edgeSamplePlayer) {
 	mpScheduler = sch;
 	mpTables = tables;
+	mpEdgeSamplePlayer = edgeSamplePlayer;
+	if (mpEdgeSamplePlayer) {
+		mpSoundGroup = mpEdgeSamplePlayer->CreateGroup(ATAudioGroupDesc()).release();
+
+		mpEdgeConvPlayer = mpEdgeSamplePlayer->CreateConvolutionPlayer(kATAudioSampleId_SpeakerStep).release();
+	}
 
 	mSerialPulse = 0.12f;
 
@@ -259,6 +272,10 @@ void ATPokeyRenderer::SetFiltersEnabled(bool enable) {
 		mHighPassAccum = 0;
 }
 
+void ATPokeyRenderer::SetSpeakerFilterEnabled(bool enable) {
+	mbSpeakerFilterEnabled = enable;
+}
+
 void ATPokeyRenderer::SetInitMode(bool init) {
 	if (init == mbInitMode)
 		return;
@@ -274,16 +291,30 @@ bool ATPokeyRenderer::SetSpeaker(bool newState) {
 
 	mbSpeakerState = newState;
 
-	// The XL/XE speaker is about as loud peak-to-peak as a channel at volume 6.
-	// However, it is added in later in the output circuitry and has different
-	// audio characteristics, so we must treat it separately.
-	float delta = mpTables->mSpeakerLevel;
-
-	if (newState)
-		delta = -delta;
-
 	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	mpEdgeBuffer->mEdges.push_back(ATSyncAudioEdge { t, delta });
+
+	if (mbSpeakerFilterEnabled) {
+		float delta = g_ATCVAudioConsoleSpeakerVolume;
+
+		if (newState)
+			delta = -delta;
+
+		if (mpEdgeConvPlayer)
+			mpEdgeConvPlayer->Play(t, delta * g_ATCVAudioConsoleSpeakerVolume);
+		else if (mpEdgeSamplePlayer)
+			mpEdgeSamplePlayer->AddSound(*mpSoundGroup, 0, kATAudioSampleId_SpeakerStep, delta * g_ATCVAudioConsoleSpeakerVolume);
+	} else {
+		// The XL/XE speaker is about as loud peak-to-peak as a channel at volume 6.
+		// However, it is added in later in the output circuitry and has different
+		// audio characteristics, so we must treat it separately.
+		float delta = mpTables->mSpeakerLevel;
+
+		if (newState)
+			delta = -delta;
+
+		mpEdgeBuffer->mEdges.push_back(ATSyncAudioEdge { t, delta });
+	}
+
 	return true;
 }
 
@@ -463,9 +494,14 @@ void ATPokeyRenderer::LoadState(const ATSaveStatePokeyRenderer& state) {
 
 	// Careful -- we save the polynomial counters in simulation time, but we
 	// have to roll them back to where sound generation currently is.
+	//
+	// We need to add back in the compat offsets here (see SaveState below).
 
-	mPolyState.mPoly4Counter  = (state.mPoly4Offset  +     15 - (t - mPolyState.mLastPoly4Time) % 15) % 15;
-	mPolyState.mPoly5Counter  = (state.mPoly5Offset  +     31 - (t - mPolyState.mLastPoly5Time) % 31) % 31;
+	static constexpr uint32 kPoly4CompatOffset = 3;
+	static constexpr uint32 kPoly5CompatOffset = 4;
+
+	mPolyState.mPoly4Counter  = (state.mPoly4Offset  +     15 - (t - mPolyState.mLastPoly4Time) % 15 + kPoly4CompatOffset) % 15;
+	mPolyState.mPoly5Counter  = (state.mPoly5Offset  +     31 - (t - mPolyState.mLastPoly5Time) % 31 + kPoly5CompatOffset) % 31;
 	mPolyState.mPoly9Counter  = (state.mPoly9Offset  +    511 - (t - mPolyState.mLastPoly9Time) % 511) % 511;
 	mPolyState.mPoly17Counter = (state.mPoly17Offset + 131071 - (t - mPolyState.mLastPoly17Time) % 131071) % 131071;
 
@@ -480,10 +516,25 @@ ATSaveStatePokeyRenderer ATPokeyRenderer::SaveState() const {
 	// Careful -- we can't update polynomial counters here like we do in the
 	// main POKEY module. That's because the polynomial counters have to be
 	// advanced by sound rendering and not by the simulation.
+	//
+	// In 4.10, the polynomial tables were redefined so that the poly4 and
+	// poly5 generators run in the same direction as the poly9 and poly17
+	// generators are in hardware, removing an awkward offset between the
+	// poly4/5 tables and poly9/17 tables. This had no effect on the sound
+	// generation as we have to maintain separate offsets for each poly
+	// generator anyway, but it made a mess of the initial offsets. The
+	// reformulation resulted in the initial poly4 and poly5 counters being
+	// adjusted by +3 and +4.
+	//
+	// For compatibility, we subtract that offset off here, and re-add it
+	// on load.
 
-	state.mPoly4Offset = (mPolyState.mPoly4Counter  + (mPolyState.mInitMask & (t - mPolyState.mLastPoly4Time))) % 15;
-	state.mPoly5Offset = (mPolyState.mPoly5Counter  + (mPolyState.mInitMask & (t - mPolyState.mLastPoly5Time))) % 31;
-	state.mPoly9Offset = (mPolyState.mPoly9Counter  + (mPolyState.mInitMask & (t - mPolyState.mLastPoly9Time))) % 511;
+	static constexpr uint32 kPoly4CompatOffset = 15 - 3;
+	static constexpr uint32 kPoly5CompatOffset = 31 - 4;
+
+	state.mPoly4Offset  = (mPolyState.mPoly4Counter  + (mPolyState.mInitMask & (t - mPolyState.mLastPoly4Time )) + kPoly4CompatOffset) % 15;
+	state.mPoly5Offset  = (mPolyState.mPoly5Counter  + (mPolyState.mInitMask & (t - mPolyState.mLastPoly5Time )) + kPoly5CompatOffset) % 31;
+	state.mPoly9Offset  = (mPolyState.mPoly9Counter  + (mPolyState.mInitMask & (t - mPolyState.mLastPoly9Time ))) % 511;
 	state.mPoly17Offset = (mPolyState.mPoly17Counter + (mPolyState.mInitMask & (t - mPolyState.mLastPoly17Time))) % 131071;
 	state.mOutputFlipFlops = mNoiseFlipFlops + (mChannelOutputMask & 0x30);
 
@@ -548,11 +599,23 @@ void ATPokeyRenderer::ProcessChangeEvents(uint32 t) {
 				mPolyState.mInitMask = ce.mValue ? 0 : UINT32_C(0xFFFFFFFF);
 
 				// These offsets are specifically set so that the audio output patterns
-				// are correctly timed.
-				mPolyState.mPoly4Counter = 8 - kAudioDelay;
-				mPolyState.mPoly5Counter = 22 - kAudioDelay;
-				mPolyState.mPoly9Counter = 507 - kAudioDelay;
-				mPolyState.mPoly17Counter = 131067 - kAudioDelay;
+				// are correctly timed. Sources of offsets:
+				//
+				// - The channel processing code uses offsets 3,2,1,0 for CH1-4 instead
+				//   of 0,-1,-2,-3 to avoid having to modulo wrap, requiring a fixed -3
+				//   offset here.
+				//
+				// - The poly table generation is about one bit too fast.
+				//
+				// - Poly5 is sampled a cycle earlier than poly4/9/17, due to its
+				//   different action in the audio pipeline.
+				//
+				// - All of these are of course modulo the period (15/63/511/131071).
+
+				mPolyState.mPoly4Counter = 15 - 4 - kAudioDelay;
+				mPolyState.mPoly5Counter = 31 - 5 - kAudioDelay;
+				mPolyState.mPoly9Counter = 511 - 4 - kAudioDelay;
+				mPolyState.mPoly17Counter = 131071 - 4 - kAudioDelay;
 				mPolyState.mLastPoly17Time = t;
 				mPolyState.mLastPoly9Time = t;
 				mPolyState.mLastPoly5Time = t;

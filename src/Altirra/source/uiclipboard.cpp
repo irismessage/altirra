@@ -30,12 +30,21 @@ bool ATUIClipGetText(VDStringA& s8, VDStringW& s16, bool& use16) {
 		bool unicodePreferred = false;
 
 		UINT format = 0;
-		while(format = EnumClipboardFormats(format)) {
-			if (format == CF_UNICODETEXT) {
+		UINT nextFormat = 0;
+		for(;;) {
+			nextFormat = EnumClipboardFormats(nextFormat);
+			if (!nextFormat)
+				break;
+
+			if (nextFormat == CF_UNICODETEXT) {
+				format = CF_UNICODETEXT;
 				unicodePreferred = true;
 				break;
-			} else if (format == CF_TEXT || format == CF_OEMTEXT)
-				break;
+			} else if (nextFormat == CF_TEXT || nextFormat == CF_OEMTEXT) {
+				format = nextFormat;
+				
+				// don't break -- we need to keep checking for unicode
+			}
 		}
 
 		if (unicodePreferred) {

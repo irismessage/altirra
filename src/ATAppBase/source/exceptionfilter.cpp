@@ -119,17 +119,32 @@ int ATExceptionFilter(DWORD code, EXCEPTION_POINTERS *exp) {
 		? L"A minidump file called AltirraCrash.mdmp has been written for diagnostic purposes."
 		: L"(Could not write AltirraCrash.mdmp!)";
 
-	wsprintf(buf, L"A fatal error has occurred in the emulator. %ls\n"
-		L"\n"
 #ifdef VD_CPU_X86
-		L"Exception code: %08X  PC: %08X", writeResult, code, exp->ContextRecord->Eip);
+	const uintptr pc = exp->ContextRecord->Eip;
 #elif defined(VD_CPU_AMD64)
-		L"Exception code: %08X  PC: %08X`%08X", writeResult, code, (uint32)(exp->ContextRecord->Rip >> 32), (uint32)exp->ContextRecord->Rip);
+	const uintptr pc = exp->ContextRecord->Rip;
 #elif defined(VD_CPU_ARM64)
-		L"Exception code: %08X  PC: %08X`%08X", writeResult, code, (uint32)(exp->ContextRecord->Pc >> 32), (uint32)exp->ContextRecord->Pc);
+	const uintptr pc = exp->ContextRecord->Pc;
 #else
 	#error Platform not supported
 #endif
+
+
+	wsprintf(buf, L"A fatal error has occurred in the emulator. %ls\n"
+		L"\n"
+#ifdef VD_CPU_X86
+		L"Exception code: %08X  PC: %08X", writeResult, code, pc);
+#else
+		L"Exception code: %08X  PC: %08X`%08X", writeResult, code, (uint32)(pc >> 32), (uint32)pc);
+#endif
+
+	HMODULE hmod = VDGetLocalModuleHandleW32();
+	MEMORY_BASIC_INFORMATION memInfo {};
+	if (VirtualQuery((LPCVOID)pc, &memInfo, sizeof memInfo)) {
+		if ((uintptr)memInfo.AllocationBase == (uintptr)hmod) {
+			wsprintf(buf + wcslen(buf), L" (ExeBase+%08X)", pc - (uintptr)hmod);
+		}
+	}
 
 	MessageBoxW(g_hwnd, buf, L"Altirra Program Failure", MB_OK | MB_ICONERROR);
 

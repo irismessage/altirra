@@ -53,7 +53,7 @@ class VDDelegate;
 struct VDDelegateNode {
 	VDDelegateNode *mpNext, *mpPrev;
 
-	void (*mpCallback)(void *src, const void *info, VDDelegateNode&);
+	void (*mpCallback)(void *src, void *info, VDDelegateNode&);
 	void *mpObj;
 
 #ifdef _MSC_VER
@@ -76,7 +76,7 @@ protected:
 
 	void Add(VDDelegate&);
 	void Remove(VDDelegate&);
-	void Raise(void *src, const void *info);
+	void Raise(void *src, void *info);
 
 	VDDelegateNode mAnchor;
 };
@@ -89,25 +89,22 @@ public:
 
 template<class T, class Source, class ArgType>
 struct VDDelegateAdapterS {
-	typedef void (T::*T_Fn)(Source *, const ArgType&);
-	typedef void (T::*T_Fn2)(Source *, ArgType);
+	template<typename T_Fn>
+	static void Init(VDDelegateNode& dst, T_Fn fn) requires std::is_reference_v<ArgType> {
+		dst.mpCallback = [](void *src, void *info, VDDelegateNode& del) {
+			return (((T *)del.mpObj)->*reinterpret_cast<T_Fn>(del.mpFnS))(static_cast<Source *>(src), std::forward<ArgType>(*static_cast<std::remove_reference_t<ArgType >*>(info)));
+		};
 
-	static void Init(VDDelegateNode& dst, T_Fn fn) {
-		dst.mpCallback = Fn;
 		dst.mpFnS = reinterpret_cast<void(VDDelegateHolderS::*)()>(fn);
 	}
 
-	static void Init(VDDelegateNode& dst, T_Fn2 fn) {
-		dst.mpCallback = Fn2;
+	template<typename T_Fn>
+	static void Init(VDDelegateNode& dst, T_Fn fn) requires !std::is_reference_v<ArgType> {
+		dst.mpCallback = [](void *src, void *info, VDDelegateNode& del) {
+			return (((T *)del.mpObj)->*reinterpret_cast<T_Fn>(del.mpFnS))(static_cast<Source *>(src), *static_cast<const ArgType *>(info));
+		};
+
 		dst.mpFnS = reinterpret_cast<void(VDDelegateHolderS::*)()>(fn);
-	}
-
-	static void Fn(void *src, const void *info, VDDelegateNode& del) {
-		return (((T *)del.mpObj)->*reinterpret_cast<T_Fn>(del.mpFnS))(static_cast<Source *>(src), *static_cast<const ArgType *>(info));
-	}
-
-	static void Fn2(void *src, const void *info, VDDelegateNode& del) {
-		return (((T *)del.mpObj)->*reinterpret_cast<T_Fn2>(del.mpFnS))(static_cast<Source *>(src), *static_cast<const ArgType *>(info));
 	}
 };
 
@@ -123,25 +120,22 @@ public:
 #ifdef _MSC_VER
 template<class T, class Source, class ArgType>
 struct VDDelegateAdapterM {
-	typedef void (T::*T_Fn)(Source *, const ArgType&);
-	typedef void (T::*T_Fn2)(Source *, ArgType);
+	template<typename T_Fn>
+	static void Init(VDDelegateNode& dst, T_Fn fn) requires std::is_reference_v<ArgType> {
+		dst.mpCallback = [](void *src, void *info, VDDelegateNode& del) {
+			return (((T *)del.mpObj)->*reinterpret_cast<T_Fn>(del.mpFnM))(static_cast<Source *>(src), std::forward<ArgType>(*static_cast<std::remove_reference_t<ArgType >*>(info)));
+		};
 
-	static void Init(VDDelegateNode& dst, T_Fn fn) {
-		dst.mpCallback = Fn;
 		dst.mpFnM = reinterpret_cast<void(VDDelegateHolderM::*)()>(fn);
 	}
 
-	static void Init(VDDelegateNode& dst, T_Fn2 fn) {
-		dst.mpCallback = Fn2;
+	template<typename T_Fn>
+	static void Init(VDDelegateNode& dst, T_Fn fn) requires !std::is_reference_v<ArgType> {
+		dst.mpCallback = [](void *src, void *info, VDDelegateNode& del) {
+			return (((T *)del.mpObj)->*reinterpret_cast<T_Fn>(del.mpFnM))(static_cast<Source *>(src), *static_cast<const ArgType *>(info));
+		};
+
 		dst.mpFnM = reinterpret_cast<void(VDDelegateHolderM::*)()>(fn);
-	}
-
-	static void Fn(void *src, const void *info, VDDelegateNode& del) {
-		return (((T *)del.mpObj)->*reinterpret_cast<T_Fn>(del.mpFnM))(static_cast<Source *>(src), *static_cast<const ArgType *>(info));
-	}
-
-	static void Fn2(void *src, const void *info, VDDelegateNode& del) {
-		return (((T *)del.mpObj)->*reinterpret_cast<T_Fn2>(del.mpFnM))(static_cast<Source *>(src), *static_cast<const ArgType *>(info));
 	}
 };
 
@@ -194,8 +188,12 @@ public:
 		Remove(del);
 	}
 
-	void Raise(Source *src, const ArgType& args) {
-		VDEventBase::Raise(src, &args);
+	void Raise(Source *src, ArgType args) requires std::is_reference_v<ArgType> {
+		VDEventBase::Raise(src, (void *)&args);
+	}
+
+	void Raise(Source *src, const ArgType& args) requires !std::is_reference_v<ArgType> {
+		VDEventBase::Raise(src, (void *)&args);
 	}
 };
 

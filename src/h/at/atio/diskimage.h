@@ -207,8 +207,11 @@ void ATDiskConvertGeometryToPERCOM(uint8 percom[12], const ATDiskGeometryInfo& g
 void ATDiskConvertPERCOMToGeometry(ATDiskGeometryInfo& geom, const uint8 percom[12]);
 
 ATDiskInterleave ATDiskGetDefaultInterleave(const ATDiskGeometryInfo& info);
+ATDiskGeometryInfo ATDiskCreateDefaultGeometry(uint32 sectorCount, uint32 sectorSize, uint32 bootSectorCount);
 
 vdfunction<float(uint32)> ATDiskGetInterleaveFn(ATDiskInterleave interleave, const ATDiskGeometryInfo& info);
 
+[[noreturn]] void ATThrowDiskReadOnlyException();
+[[noreturn]] void ATThrowDiskUnsupportedOperation();
 
 #endif	// f_AT_ATIO_DISKIMAGE_H

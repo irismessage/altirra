@@ -38,29 +38,46 @@ ATUIDialogLightPen::ATUIDialogLightPen(ATLightPenPort *lpp)
 }
 
 bool ATUIDialogLightPen::OnLoaded() {
-	UDSetRange(IDC_HSPIN, -64, 64);
-	UDSetRange(IDC_VSPIN, 64, -64);
+	UDSetRange(IDC_GUN_HSPIN, -64, 64);
+	UDSetRange(IDC_GUN_VSPIN, 64, -64);
+	UDSetRange(IDC_PEN_HSPIN, -64, 64);
+	UDSetRange(IDC_PEN_VSPIN, 64, -64);
+
+	CBAddString(IDC_NOISE_MODE, L"None");
+	CBAddString(IDC_NOISE_MODE, L"Low (CX-75 + 800)");
+	CBAddString(IDC_NOISE_MODE, L"High (CX-75 + XL/XE)");
+
 	OnDataExchange(false);
 	SetFocusToControl(IDC_HVALUE);
 	return true;
 }
 
 void ATUIDialogLightPen::OnDataExchange(bool write) {
-	sint32 x, y;
-
 	if (write) {
-		x = GetControlValueSint32(IDC_HVALUE);
-		y = GetControlValueSint32(IDC_VVALUE);
+		const sint32 gunX = GetControlValueSint32(IDC_GUN_HVALUE);
+		const sint32 gunY = GetControlValueSint32(IDC_GUN_VVALUE);
+		const sint32 penX = GetControlValueSint32(IDC_PEN_HVALUE);
+		const sint32 penY = GetControlValueSint32(IDC_PEN_VVALUE);
 
 		if (!mbValidationFailed) {
-			mpLPP->SetAdjust(x, y);
+			mpLPP->SetAdjust(false, { gunX, gunY });
+			mpLPP->SetAdjust(true, { penX, penY });
+		}
+
+		int noiseModeIndex = CBGetSelectedIndex(IDC_NOISE_MODE);
+		if (ATIsValidEnumValue<ATLightPenNoiseMode>(noiseModeIndex)) {
+			mpLPP->SetNoiseMode((ATLightPenNoiseMode)noiseModeIndex);
 		}
 	} else {
-		x = mpLPP->GetAdjustX();
-		y = mpLPP->GetAdjustY();
+		const auto [gunX, gunY] = mpLPP->GetAdjust(false);
+		const auto [penX, penY] = mpLPP->GetAdjust(true);
 
-		SetControlTextF(IDC_HVALUE, L"%d", x);
-		SetControlTextF(IDC_VVALUE, L"%d", y);
+		SetControlTextF(IDC_GUN_HVALUE, L"%d", gunX);
+		SetControlTextF(IDC_GUN_VVALUE, L"%d", gunY);
+		SetControlTextF(IDC_PEN_HVALUE, L"%d", penX);
+		SetControlTextF(IDC_PEN_VVALUE, L"%d", penY);
+
+		CBSetSelectedIndex(IDC_NOISE_MODE, (int)mpLPP->GetNoiseMode());
 	}
 }
 

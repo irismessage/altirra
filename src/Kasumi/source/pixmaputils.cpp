@@ -40,12 +40,9 @@ extern const VDPixmapFormatInfo g_vdPixmapFormats[] = {
 	/* YUV444_Planar */				{ "YUV444",		false, 1, 1,  0,  0,  1, 2, 0, 0, 1,   0 },
 	/* YUV422_Planar */				{ "YUV422",		false, 1, 1,  0,  0,  1, 2, 1, 0, 1,   0 },
 	/* YUV420_Planar */				{ "YUV420",		false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
-	/* YUV411_Planar */				{ "YUV411",		false, 1, 1,  0,  0,  1, 2, 2, 0, 1,   0 },
-	/* YUV410_Planar */				{ "YUV410",		false, 1, 1,  0,  0,  1, 2, 2, 2, 1,   0 },
 	/* YUV422_Planar_Centered */	{ "YUV422C",	false, 1, 1,  0,  0,  1, 2, 1, 0, 1,   0 },
 	/* YUV420_Planar_Centered */	{ "YUV420C",	false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
 	/* YUV422_Planar_16F */			{ "YUV422_16F",	false, 1, 1,  0,  0,  2, 2, 1, 0, 2,   0 },
-	/* V210 */						{ "v210",		 true,24, 1,  2,  0, 64, 0, 0, 0, 1,   0 },
 	/* YUV422_UYVY_709 */			{ "UYVY-709",	 true, 2, 1,  1,  0,  4, 0, 0, 0, 0,   0 },
 	/* NV12 */						{ "NV12",		false, 1, 1,  0,  0,  1, 1, 1, 1, 2,   0 },
 	/* Y8-FR */						{ "I8",			false, 1, 1,  1,  0,  1, 0, 0, 0, 0,   0 },
@@ -53,34 +50,16 @@ extern const VDPixmapFormatInfo g_vdPixmapFormats[] = {
 	/* YUV444_Planar_709 */			{ "YUV444-709",	false, 1, 1,  0,  0,  1, 2, 0, 0, 1,   0 },
 	/* YUV422_Planar_709 */			{ "YUV422-709",	false, 1, 1,  0,  0,  1, 2, 1, 0, 1,   0 },
 	/* YUV420_Planar_709 */			{ "YUV420-709",	false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
-	/* YUV411_Planar_709 */			{ "YUV411-709",	false, 1, 1,  0,  0,  1, 2, 2, 0, 1,   0 },
-	/* YUV410_Planar_709 */			{ "YUV410-709",	false, 1, 1,  0,  0,  1, 2, 2, 2, 1,   0 },
 	/* YUV422_UYVY_FR */			{ "UYVY-FR",	 true, 2, 1,  1,  0,  4, 0, 0, 0, 0,   0 },
 	/* YUV422_YUYV_FR */			{ "YUYV-FR",	 true, 2, 1,  1,  0,  4, 0, 0, 0, 0,   0 },
 	/* YUV444_Planar_FR */			{ "YUV444-FR",	false, 1, 1,  0,  0,  1, 2, 0, 0, 1,   0 },
 	/* YUV422_Planar_FR */			{ "YUV422-FR",	false, 1, 1,  0,  0,  1, 2, 1, 0, 1,   0 },
 	/* YUV420_Planar_FR */			{ "YUV420-FR",	false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
-	/* YUV411_Planar_FR */			{ "YUV411-FR",	false, 1, 1,  0,  0,  1, 2, 2, 0, 1,   0 },
-	/* YUV410_Planar_FR */			{ "YUV410-FR",	false, 1, 1,  0,  0,  1, 2, 2, 2, 1,   0 },
 	/* YUV422_UYVY_FR_709 */		{ "UYVY-709-FR",	 true, 2, 1,  1,  0,  4, 0, 0, 0, 0,   0 },
 	/* YUV422_YUYV_FR_709 */		{ "YUYV-709-FR",	 true, 2, 1,  1,  0,  4, 0, 0, 0, 0,   0 },
 	/* YUV444_Planar_FR_709 */		{ "YUV444-709-FR",	false, 1, 1,  0,  0,  1, 2, 0, 0, 1,   0 },
 	/* YUV422_Planar_FR_709 */		{ "YUV422-709-FR",	false, 1, 1,  0,  0,  1, 2, 1, 0, 1,   0 },
 	/* YUV420_Planar_FR_709 */		{ "YUV420-709-FR",	false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
-	/* YUV411_Planar_FR_709 */		{ "YUV411-709-FR",	false, 1, 1,  0,  0,  1, 2, 2, 0, 1,   0 },
-	/* YUV410_Planar_FR_709 */		{ "YUV410-709-FR",	false, 1, 1,  0,  0,  1, 2, 2, 2, 1,   0 },
-	/* YUV420i_Planar */			{ "YUV420i",		false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
-	/* YUV420i_Planar_FR */			{ "YUV420i-FR",		false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
-	/* YUV420i_Planar_709 */		{ "YUV420i-709",	false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
-	/* YUV420i_Planar_709_FR */		{ "YUV420i-709-FR",	false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
-	/* YUV420it_Planar */			{ "YUV420it",		false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
-	/* YUV420it_Planar_FR */		{ "YUV420it-FR",	false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
-	/* YUV420it_Planar_709 */		{ "YUV420it-709",	false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
-	/* YUV420it_Planar_709_FR */	{ "YUV420it-709-FR",false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
-	/* YUV420ib_Planar */			{ "YUV420ib",		false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
-	/* YUV420ib_Planar_FR */		{ "YUV420ib-FR",	false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
-	/* YUV420ib_Planar_709 */		{ "YUV420ib-709",	false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
-	/* YUV420ib_Planar_709_FR */	{ "YUV420ib-709-FR",false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
 	/* ARGB32 */					{ "ARGB8888",	false, 1, 1,  0,  0,  4, 0, 0, 0, 0,   0 },
 };
 
@@ -333,46 +312,11 @@ VDPixmap VDPixmapExtractField(const VDPixmap& src, bool field2) {
 			if (info.qh == 1)
 				vdptrstep(px.data, px.pitch);
 
-			if (!info.auxhbits ||
-				src.format == nsVDPixmap::kPixFormat_YUV420i_Planar ||
-				src.format == nsVDPixmap::kPixFormat_YUV420i_Planar_FR ||
-				src.format == nsVDPixmap::kPixFormat_YUV420i_Planar_709 ||
-				src.format == nsVDPixmap::kPixFormat_YUV420i_Planar_709_FR) {
-
+			if (!info.auxhbits) {
 				vdptrstep(px.data2, px.pitch2);
 				vdptrstep(px.data3, px.pitch3);
 			}
 		}
-	}
-
-	switch(src.format) {
-		case nsVDPixmap::kPixFormat_YUV420i_Planar:
-			if (field2)
-				px.format = nsVDPixmap::kPixFormat_YUV420ib_Planar;
-			else
-				px.format = nsVDPixmap::kPixFormat_YUV420it_Planar;
-			break;
-
-		case nsVDPixmap::kPixFormat_YUV420i_Planar_FR:
-			if (field2)
-				px.format = nsVDPixmap::kPixFormat_YUV420ib_Planar_FR;
-			else
-				px.format = nsVDPixmap::kPixFormat_YUV420it_Planar_FR;
-			break;
-
-		case nsVDPixmap::kPixFormat_YUV420i_Planar_709:
-			if (field2)
-				px.format = nsVDPixmap::kPixFormat_YUV420ib_Planar_709;
-			else
-				px.format = nsVDPixmap::kPixFormat_YUV420it_Planar_709;
-			break;
-
-		case nsVDPixmap::kPixFormat_YUV420i_Planar_709_FR:
-			if (field2)
-				px.format = nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR;
-			else
-				px.format = nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR;
-			break;
 	}
 
 	px.h >>= 1;

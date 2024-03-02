@@ -20,6 +20,7 @@
 
 #include <vd2/system/memory.h>
 #include <at/atcore/audiosource.h>
+#include <at/atcore/audiomixer.h>
 
 class ATScheduler;
 class ATMemoryManager;
@@ -51,8 +52,6 @@ public:
 	void WriteControl(uint8 addr, uint8 value);
 	void WriteMono(uint8 value);
 
-	void Run(int cycles);
-
 public:
 	bool RequiresStereoMixingNow() const override { return mbUnbalancedSticky; }
 	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
@@ -71,10 +70,6 @@ protected:
 
 	uint8	mVolume[4] = {};
 
-	float	mOutputAccumLeft = 0;
-	float	mOutputAccumRight = 0;
-	uint32	mOutputCount = 0;
-	uint32	mOutputLevel = 0;
 	bool	mbUnbalanced = false;
 	bool	mbUnbalancedSticky = false;
 	bool	mbEnabled = true;
@@ -84,14 +79,8 @@ protected:
 	bool	mbFourCh = false;
 	bool	mbPassWrites = true;
 
-	uint32	mLastUpdate = 0;
-
-	enum {
-		kAccumBufferSize = 1536
-	};
-
-	VDALIGN(16) float mAccumBufferLeft[kAccumBufferSize];
-	VDALIGN(16) float mAccumBufferRight[kAccumBufferSize];
+	vdrefptr<ATSyncAudioEdgeBuffer> mpEdgeBufferL;
+	vdrefptr<ATSyncAudioEdgeBuffer> mpEdgeBufferR;
 };
 
 #endif

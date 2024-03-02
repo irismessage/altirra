@@ -29,7 +29,6 @@
 #include "hostdevice.h"
 #include "virtualscreen.h"
 #include "kerneldb.h"
-#include "cio.h"
 #include "hleciohook.h"
 
 class ATHLECIOHook final : public IATHLECIOHook, public IATDeviceCIOManager {
@@ -1070,11 +1069,11 @@ uint8 ATHLECIOHook::OnHookCIOV(uint16 pc) {
 			const uint8 cmd = kdb.ICCMD[iocbIdx];
 
 			switch(cmd) {
-				case ATCIOSymbols::CIOCmdOpen:
+				case kATCIOCmd_Open:
 					vs->OnCIOVector(mpCPU, mem, 0);
 					break;
 
-				case ATCIOSymbols::CIOCmdClose:
+				case kATCIOCmd_Close:
 					vs->OnCIOVector(mpCPU, mem, 2);
 					break;
 			}

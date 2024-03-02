@@ -20,6 +20,7 @@
 #include <vd2/system/binary.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceparentimpl.h>
+#include <at/atcore/deviceport.h>
 #include <at/atcore/deviceprinter.h>
 #include <at/atcore/devicevideo.h>
 #include <at/atcore/propertyset.h>
@@ -2297,7 +2298,6 @@ void ATXEP80Emulator::UpdatePIAInput() {
 
 class ATDeviceXEP80 : public ATDevice
 					, public IATDeviceScheduling
-					, public IATDevicePortInput
 					, public IATDeviceVideoOutput
 					, public IATDeviceDiagnostics
 					, public IATDevicePrinterPort
@@ -2318,9 +2318,6 @@ public:
 
 public:	// IATDeviceScheduling
 	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
-
-public:
-	virtual void InitPortInput(IATDevicePortManager *pia) override;
 
 public:	// IATDeviceVideoOutput
 	const char *GetName() const override;
@@ -2388,9 +2385,6 @@ void *ATDeviceXEP80::AsInterface(uint32 id) {
 		case IATDeviceDiagnostics::kTypeID:
 			return static_cast<IATDeviceDiagnostics *>(this);
 
-		case IATDevicePortInput::kTypeID:
-			return static_cast<IATDevicePortInput *>(this);
-
 		case IATDevicePrinterPort::kTypeID:
 			return static_cast<IATDevicePrinterPort *>(this);
 
@@ -2431,6 +2425,8 @@ void ATDeviceXEP80::ColdReset() {
 }
 
 void ATDeviceXEP80::Init() {
+	mpPIA = GetService<IATDevicePortManager>();
+
 	mParallelBus.Init(this, 0, IATPrinterOutput::kTypeID, "parallel", L"Parallel Printer Port", "parport");
 
 	mXEP80.SetPortIndex(mPortIndex);
@@ -2452,10 +2448,6 @@ void ATDeviceXEP80::Shutdown() {
 
 void ATDeviceXEP80::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 	mpScheduler = sch;
-}
-
-void ATDeviceXEP80::InitPortInput(IATDevicePortManager *pia) {
-	mpPIA = pia;
 }
 
 const char *ATDeviceXEP80::GetName() const {

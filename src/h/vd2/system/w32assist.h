@@ -49,6 +49,7 @@ bool VDIsAtLeast7W32();
 bool VDIsAtLeast8W32();
 bool VDIsAtLeast81W32();
 bool VDIsAtLeast10W32();
+bool VDIsAtLeast10_1803W32();
 
 // Requires Windows 8.1
 #ifndef WM_DPICHANGED

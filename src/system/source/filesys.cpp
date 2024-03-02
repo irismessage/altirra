@@ -458,6 +458,10 @@ VDParsedPath::VDParsedPath(const wchar_t *path)
 VDStringW VDParsedPath::ToString() const {
 	VDStringW s(mRoot);
 
+	// If we have a UNC path root with something after it, we must ensure a separator.
+	if (!mbIsRelative && !s.empty() && !VDIsPathSeparator(s.back()) && !mComponents.empty())
+		s += L'\\';
+
 	bool first = true;
 	for(Components::const_iterator it(mComponents.begin()), itEnd(mComponents.end()); it != itEnd; ++it) {
 		if (!first)

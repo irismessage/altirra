@@ -22,6 +22,7 @@
 #include <vd2/system/math.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/strutil.h>
+#include <at/atcore/cio.h>
 #include <at/atcore/deviceindicators.h>
 #include <at/atcore/media.h>
 #include <at/atcore/randomization.h>
@@ -37,7 +38,6 @@
 #include "simulator.h"
 #include "debuggerlog.h"
 #include "audiosampleplayer.h"
-#include "cio.h"
 #include "trace.h"
 #include "uirender.h"
 
@@ -56,10 +56,10 @@ namespace {
 	// use the real index pulse; they fake it with the RIOT.
 	//
 	// 810: ~522ms
-	// 1050: ~236ms
+	// 1050: ~235.5ms x 2 rotations
 	//
-	static constexpr int kCyclesPerFakeRot_810		= (kCyclesPerSecond * 522 + 5000) / 10000;
-	static constexpr int kCyclesPerFakeRot_1050		= (kCyclesPerSecond * 236 + 5000) / 10000;
+	static constexpr int kCyclesPerFakeRot_810		= (kCyclesPerSecond * 522 + 500) / 1000;
+	static constexpr int kCyclesPerFakeRot_1050		= (kCyclesPerSecond * 471 + 500) / 1000;
 
 	static constexpr int kCyclesPerSIOByte_Happy_Native_Fast = 564;			// 315 cycles/byte @ 1MHz
 	static constexpr int kCyclesPerSIOBit_Happy_Native_Fast = 47;		// Native high speed (26 cycles/bit @ 1MHz)
@@ -75,6 +75,7 @@ namespace {
 	//	810: ~2568 cycles @ 500KHz = 9192 cycles
 	//	1050: ~270 cycles @ 1MHz = 483 cycles
 	//
+	static constexpr uint32 kCyclesPostReadDelay_Buffered = 400;
 	static constexpr uint32 kCyclesPostReadDelay_Fast = 1000;
 	static constexpr uint32 kCyclesPostReadDelay_810 = 9192;
 	static constexpr uint32 kCyclesPostReadDelay_1050 = 483;
@@ -201,6 +202,10 @@ void ATDiskEmulator::Reset() {
 	else
 		mCurrentTrack = 0;
 
+	mBufferedTrack = -1;
+	mLastReadSector = 0;
+	mbTrackBufferingEnabled = true;
+
 	for(ExtVirtSectors::iterator it(mExtVirtSectors.begin()), itEnd(mExtVirtSectors.end()); it!=itEnd; ++it) {
 		ExtVirtSector& vsi = *it;
 
@@ -292,8 +297,14 @@ public:
 		rw.Transfer("active_command_state", &mActiveCommandState);
 		rw.Transfer("active_command_sector", &mActiveCommandSector);
 		rw.Transfer("active_command_timer", &mActiveCommandTimer);
+		rw.Transfer("active_command_buffered", &mActiveCommandTimer);
+		rw.Transfer("active_command_buffered_read_track", &mbActiveCommandReadTrack);
+		rw.Transfer("active_command_buffered_read_error", &mbActiveCommandReadError);
+		rw.Transfer("active_command_buffered_write_track", &mbActiveCommandWriteTrack);
 		rw.Transfer("rotational_pos", &mRotationalPos);
 		rw.Transfer("current_track", &mCurrentTrack);
+		rw.Transfer("buffered_track", &mBufferedTrack);
+		rw.Transfer("last_read_sector", &mLastReadSector);
 		rw.Transfer("active_command", &mpActiveCommand);
 
 		if constexpr (rw.IsReader) {
@@ -313,8 +324,14 @@ public:
 	uint8 mActiveCommandId = 0;
 	uint32 mActiveCommandState = 0;
 	uint16 mActiveCommandSector = 0;
+	bool mbActiveCommandBuffered = false;
+	bool mbActiveCommandReadTrack = false;
+	bool mbActiveCommandReadError = false;
+	bool mbActiveCommandWriteTrack = false;
 	float mRotationalPos = 0;
 	uint32 mCurrentTrack = 0;
+	sint32 mBufferedTrack = 0;
+	uint16 mLastReadSector = 0;
 
 	vdrefptr<IATObjectState> mpActiveCommand;
 };
@@ -339,8 +356,14 @@ void ATDiskEmulator::SaveState(IATObjectState **pp) const {
 	state->mActiveCommandId = mActiveCommand;
 	state->mActiveCommandState = mActiveCommandState;
 	state->mActiveCommandSector = mActiveCommandSector;
+	state->mbActiveCommandBuffered = mbActiveCommandBufferingEnabled;
+	state->mbActiveCommandReadTrack = mbActiveCommandBufferingReadTrackDelay;
+	state->mbActiveCommandReadError = mbActiveCommandBufferingReadError;
+	state->mbActiveCommandWriteTrack = mbActiveCommandBufferingWriteTrackDelay;
 
 	state->mCurrentTrack = mCurrentTrack;
+	state->mBufferedTrack = mBufferedTrack;
+	state->mLastReadSector = mLastReadSector;
 
 	mpSIOMgr->SaveActiveCommandState(this, ~state->mpActiveCommand);
 
@@ -371,7 +394,13 @@ void ATDiskEmulator::LoadState(const IATObjectState& state0) {
 	mActiveCommand = state.mActiveCommandId;
 	mActiveCommandState = state.mActiveCommandState;
 	mActiveCommandSector = state.mActiveCommandSector;
+	mbActiveCommandBufferingEnabled = state.mbActiveCommandBuffered;
+	mbActiveCommandBufferingReadTrackDelay = state.mbActiveCommandReadTrack;
+	mbActiveCommandBufferingReadError = state.mbActiveCommandReadError;
+	mbActiveCommandBufferingWriteTrackDelay = state.mbActiveCommandWriteTrack;
 	mCurrentTrack = state.mCurrentTrack;
+	mBufferedTrack = state.mBufferedTrack;
+	mLastReadSector = state.mLastReadSector;
 
 	if (mActiveCommand)
 		mActiveCommandStartTime = t - state.mActiveCommandTimer;
@@ -390,7 +419,7 @@ void ATDiskEmulator::OnScheduledEvent(uint32 id) {
 		// once the command ends the timer will be readjusted.
 
 		const uint32 t = mpScheduler->GetTick();
-		if (mActiveCommand) {
+		if (mbMotorOffTimeSuspended) {
 			mpSlowScheduler->SetEvent(16, this, kATDiskEventMotorOff, mpMotorOffEvent);
 		} else if (ATWrapTime{t} >= mMotorOffTime)
 			TurnOffMotor();
@@ -469,6 +498,14 @@ IATDeviceSIO::CmdResponse ATDiskEmulator::OnSerialBeginCommand(const ATDeviceSIO
 	mbActiveCommandHighSpeed = highSpeed;
 	mActiveCommandState = 0;
 	mbActiveCommandWait = false;
+
+	mbActiveCommandBufferingEnabled = false;
+	mbActiveCommandBufferingWriteTrackDelay = false;
+	mbActiveCommandBufferingReadTrackDelay = false;
+	mbActiveCommandBufferingReadError = false;
+
+	mbMotorOffTimeSuspended = true;
+
 	mpSIOMgr->BeginCommand();
 
 	// reject all high speed commands if not XF551 or generic
@@ -575,6 +612,8 @@ void ATDiskEmulator::OnSerialAbortCommand() {
 
 		AbortCommand();
 	}
+
+	mbMotorOffTimeSuspended = false;
 }
 
 void ATDiskEmulator::OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) {
@@ -613,6 +652,8 @@ void ATDiskEmulator::OnSerialFence(uint32 id) {
 				);
 			}
 		}
+
+		mbMotorOffTimeSuspended = false;
 	} else {
 		mActiveCommandState = id;
 		mbActiveCommandWait = false;
@@ -850,6 +891,7 @@ void ATDiskEmulator::EndCommand() {
 
 void ATDiskEmulator::AbortCommand() {
 	mActiveCommand = 0;
+	mbMotorOffTimeSuspended = false;
 }
 
 uint32 ATDiskEmulator::GetUpdatedRotationalCounter() const {
@@ -1033,47 +1075,103 @@ bool ATDiskEmulator::ProcessCommandReadWriteCommon(bool isWrite) {
 	const uint32 sector = mActiveCommandSector;
 
 	switch(mActiveCommandState) {
-		case 10:
-			// turn on the motor if needed
-			if (TurnOnMotor())
-				WarpOrDelay(7159090/8);
+		case 10: {
+			uint32 opDelay = 0;
 
-			// delay until FDC command issued
-			WarpOrDelay(kCyclesFDCCommandDelay);
-			Wait(11);
-			break;
-
-		case 11: {
 			// check if we need to seek (spt=0 may be true if we lost the disk)
 			uint32 track = mSectorsPerTrack ? (sector - 1) / mSectorsPerTrack : 0;
 			int trackDelta = (int)track - (int)mCurrentTrack;
 			uint32 tracksToStep = (uint32)abs(trackDelta);
 
-			mCurrentTrack = track;
+			if (mpProfile->mbBufferTrackReads && mbTrackBufferingEnabled) {
+				if (!isWrite) {
+					mbActiveCommandBufferingEnabled = true;
 
-			uint32 opDelay = 0;
-			if (tracksToStep) {
-				// The 1050 drive does an extra pair of half steps after a forward seek, one forward
-				// and one backward. This ensures that tracks are always read or written after the
-				// head has seeked backwards. The 810 does not do this.
-				if (trackDelta > 0 && mpProfile->mbReverseOnForwardSeeks) {
-					PlaySeekSound(opDelay, tracksToStep + 1);
-					opDelay += (tracksToStep + 1) * mpProfile->mCyclesPerTrackStep;
-				} else {
-					PlaySeekSound(opDelay, tracksToStep);
-					opDelay += tracksToStep * mpProfile->mCyclesPerTrackStep;
+					// The Happy 1050 will only force a re-read of a buffered track on request for
+					// a sector with an error if that request is a re-read of the last requested
+					// sector. Otherwise, it will just return a buffered read error.
+					if (mLastReadSector != sector && mpProfile->mbBufferTrackReadErrors) {
+						mLastReadSector = sector;
+					} else {
+						IATDiskImage *image = mpDiskInterface->GetDiskImage();
+						ATDiskVirtualSectorInfo vsi {};
+						if (image)
+							image->GetVirtualSectorInfo(sector - 1, vsi);
+
+						if (!vsi.mNumPhysSectors)
+							mbActiveCommandBufferingReadError = true;
+						else {
+							ATDiskPhysicalSectorInfo psi {};
+							bool anyGood = false;
+
+							for(uint32 i = 0; i < vsi.mNumPhysSectors; ++i) {
+								image->GetPhysicalSectorInfo(vsi.mStartPhysSector + i, psi);
+
+								if (psi.mFDCStatus == 0xFF) {
+									anyGood = true;
+									break;
+								}
+							}
+
+							if (!anyGood)
+								mbActiveCommandBufferingReadError = true;
+						}
+					}
+
+					if (!mbActiveCommandBufferingReadError && sector == 1 && mpProfile->mbBufferSector1) {
+						// sector 1 is read-buffered on this firmware, don't need to
+						// check or populate track read buffer
+					} else if (mBufferedTrack != (sint32)track) {
+						mBufferedTrack = (sint32)track;
+						mbActiveCommandBufferingReadTrackDelay = true;
+
+						g_ATLCDisk("Buffering track %d.\n", mBufferedTrack);
+					}
 				}
-
-				opDelay += mpProfile->mCyclesForHeadSettle;
 			}
+
+			// add command delay until FDC command issued
+			opDelay += kCyclesFDCCommandDelay;
+
+			// check if mech activity needed
+			if (!mbActiveCommandBufferingEnabled || mbActiveCommandBufferingReadTrackDelay || mbActiveCommandBufferingReadError || mbActiveCommandBufferingWriteTrackDelay) {
+				// we need to read or write a track -- turn on the motor and set up
+				// for seek
+				if (TurnOnMotor())
+					opDelay += 7159090/8;
+
+				mCurrentTrack = track;
+
+				// emulate seek
+				if (tracksToStep) {
+					// The 1050 drive does an extra pair of half steps after a forward seek, one forward
+					// and one backward. This ensures that tracks are always read or written after the
+					// head has seeked backwards. The 810 does not do this.
+					if (trackDelta > 0 && mpProfile->mbReverseOnForwardSeeks) {
+						PlaySeekSound(opDelay, tracksToStep + 1);
+						opDelay += (tracksToStep + 1) * mpProfile->mCyclesPerTrackStep;
+					} else {
+						PlaySeekSound(opDelay, tracksToStep);
+						opDelay += tracksToStep * mpProfile->mCyclesPerTrackStep;
+					}
+
+					opDelay += mpProfile->mCyclesForHeadSettle;
+				}
+			}
+
 
 			WarpOrDelay(opDelay);
 			Wait(13);
 			break;
 		}
 
-		case 13:
-		case 14:
+		case 11:
+			// This is a vestigial state that was merged into state 10.
+			mActiveCommandState = 13;
+			[[fallthrough]];
+
+		case 13:	// initial state
+		case 14:	// retry states....
 		case 15:
 		case 16: {
 			UpdateRotationalCounter();
@@ -1226,11 +1324,30 @@ bool ATDiskEmulator::ProcessCommandReadWriteCommon(bool isWrite) {
 				mTransferCompleteRotPos = mRotationalCounter;
 			}
 
+			uint32 secondByteDelay = 0;
+
+			// if buffering is enabled, there is no additional rotational delay to access the
+			// sector, but there may be a rotational delay to flush/read the track
+			if (mbActiveCommandBufferingEnabled) {
+				// modify the delays if we are actually doing a buffered read; skip it if the track
+				// is buffered and we've hit read errors on a firmware that doesn't buffer read errors
+				const bool firstAttempt = (mActiveCommandState == 13);
+				if ((firstAttempt && mbActiveCommandBufferingReadTrackDelay)
+					|| mpProfile->mbBufferTrackReadErrors
+					|| !mbActiveCommandBufferingReadError)
+				{
+					mTransferCompleteRotPos = mRotationalCounter;
+
+					if (mbActiveCommandBufferingReadTrackDelay || mbActiveCommandBufferingReadError) {
+						if (mFDCStatus != 0xFF)
+							secondByteDelay += mActiveCommandState == 13 ? (7159090*1)/4 : (7159090*5)/4;
+						else
+							secondByteDelay += mpProfile->mCyclesPerDiskRotation;
+					}
+				}
+			}
 
 			const bool missingSector = !(mFDCStatus & 0x10);
-
-			// compute seek time
-			uint32 secondByteDelay = 0;
 
 			// If we have the sector, add rotational delay from the post seek position to the
 			// sector's position; otherwise, add two revs for the FDC's attempt to find it.
@@ -1262,26 +1379,28 @@ bool ATDiskEmulator::ProcessCommandReadWriteCommon(bool isWrite) {
 
 				// Compute the restep/recalibration delay.
 				if (missingSector) {
-					// Missing sector -- we'll be recalibrating.
+					// Missing sector -- we'll be recalibrating (once after 1 retry (1050 or 2 retries (810)).
 					//
 					// The 1050 has a track 0 sensor, so it only does the necessary number of steps
 					// when recalibrating. The 810, on the other hand, doesn't have one and just
 					// steps back 43 tracks.
-					const uint32 restoreSteps = mpProfile->mbRetryMode1050 ? mCurrentTrack : 43;
-					const uint32 seekTime1 = restoreSteps ? restoreSteps * mpProfile->mCyclesPerTrackStep + mpProfile->mCyclesForHeadSettle : 0;
+					if (mpProfile->mbRetryMode1050 || mActiveCommandState == 15) {
+						const uint32 restoreSteps = mpProfile->mbRetryMode1050 ? mCurrentTrack : 43;
+						const uint32 seekTime1 = restoreSteps ? restoreSteps * mpProfile->mCyclesPerTrackStep + mpProfile->mCyclesForHeadSettle : 0;
 
-					if (restoreSteps) {
-						PlaySeekSound(secondByteDelay, restoreSteps);
-						secondByteDelay += seekTime1;
-					}
+						if (restoreSteps) {
+							PlaySeekSound(secondByteDelay, restoreSteps, true, mCurrentTrack);
+							secondByteDelay += seekTime1;
+						}
 
-					// compute time to seek back -- no rotational delay to get back to sector, it
-					// doesn't exist (sectors don't magically reappear in our model).
-					if (mCurrentTrack) {
-						const uint32 tracksToStep = mpProfile->mbReverseOnForwardSeeks ? mCurrentTrack+1 : mCurrentTrack;
+						// compute time to seek back -- no rotational delay to get back to sector, it
+						// doesn't exist (sectors don't magically reappear in our model).
+						if (mCurrentTrack) {
+							const uint32 tracksToStep = mpProfile->mbReverseOnForwardSeeks ? mCurrentTrack+1 : mCurrentTrack;
 
-						PlaySeekSound(secondByteDelay, tracksToStep);
-						secondByteDelay += tracksToStep * mpProfile->mCyclesPerTrackStep + mpProfile->mCyclesForHeadSettle;
+							PlaySeekSound(secondByteDelay, tracksToStep);
+							secondByteDelay += tracksToStep * mpProfile->mCyclesPerTrackStep + mpProfile->mCyclesForHeadSettle;
+						}
 					}
 
 					// ...and do another fake rotation.
@@ -1445,13 +1564,15 @@ void ATDiskEmulator::ProcessCommandRead() {
 			// Add time to read sector and compute checksum.
 			//
 			// sector read: ~130 bytes at 125Kbits/sec = ~8.3ms = ~14891 cycles
+			const bool bufferedRead = mpProfile->mbBufferTrackReads;
 			const uint32 waitLength = mpProfile->mbWaitForLongSectors ? psi.mPhysicalSize : transferLength;
-			const uint32 sectorReadDelay = ((mbMFM ? 7445 : 14891) * waitLength + 64) / 128;
+			const uint32 sectorReadDelay = bufferedRead ? 0 : ((mbMFM ? 7445 : 14891) * waitLength + 64) / 128;
 
 			// FDC reset and checksum: ~2568 cycles @ 500KHz = 9192 cycles
-			const uint32 postReadDelay = mbMFM ? kCyclesPostReadDelay_1050 : kCyclesPostReadDelay_810;
+			const uint32 postReadMinDelay = bufferedRead ? kCyclesPostReadDelay_Buffered : kCyclesPostReadDelay_Fast;
+			const uint32 postReadDelay = bufferedRead ? postReadMinDelay : mbMFM ? kCyclesPostReadDelay_1050 : kCyclesPostReadDelay_810;
 
-			WarpOrDelay(sectorReadDelay + postReadDelay, kCyclesPostReadDelay_Fast);
+			WarpOrDelay(sectorReadDelay + postReadDelay, postReadMinDelay);
 
 			// check for missing sector
 			// note: must send ACK (41) + ERROR (45) -- BeachHead expects to get DERROR from SIO
@@ -1548,6 +1669,7 @@ void ATDiskEmulator::ProcessCommandWrite() {
 	switch(mActiveCommandState) {
 		case 0: {
 			mLastSector = mActiveCommandSector;
+			mBufferedTrack = -1;
 
 			mpDiskInterface->CheckSectorBreakpoint(mActiveCommandSector);
 
@@ -1792,6 +1914,20 @@ void ATDiskEmulator::ProcessCommandHappy() {
 		return ProcessUnsupportedCommand();
 
 	BeginTransferACKCmd();
+
+	// AUX1 >= $04 reconfigures the drive; AUX1 is the change mask, AUX2 contains
+	// new mode bits.
+	const uint8 aux1 = mActiveCommandSector & 0xFF;
+	const uint8 aux2 = mActiveCommandSector >> 8;
+
+	if (aux1 >= 0x04) {
+		// $80 turns on unhappy mode (disable all extended functions)
+		// $40 disables track buffering
+		if ((aux1 & aux2) & 0x60)
+			mbTrackBufferingEnabled = false;
+		else
+			mbTrackBufferingEnabled = true;
+	}
 
 	WarpOrDelay(450, 450);
 
@@ -2554,7 +2690,7 @@ void ATDiskEmulator::SetMotorEvent() {
 	mpSlowScheduler->SetEvent(std::max<uint32>(1, (mMotorOffTime - t + 113) / 114), this, kATDiskEventMotorOff, mpMotorOffEvent);
 }
 
-void ATDiskEmulator::PlaySeekSound(uint32 stepDelay, uint32 tracksToStep) {
+void ATDiskEmulator::PlaySeekSound(uint32 stepDelay, uint32 tracksToStep, bool bumpHead, uint32 bumpStartingTrack) {
 	if (!mbDriveSoundsEnabled)
 		return;
 
@@ -2574,6 +2710,8 @@ void ATDiskEmulator::PlaySeekSound(uint32 stepDelay, uint32 tracksToStep) {
 			stepDelay += mpProfile->mCyclesPerTrackStep;
 		}
 	} else {
+		int stepPhase = 0;
+
 		switch(mEmuMode) {
 		case kATDiskEmulationMode_810:
 		case kATDiskEmulationMode_Happy810:
@@ -2581,7 +2719,11 @@ void ATDiskEmulator::PlaySeekSound(uint32 stepDelay, uint32 tracksToStep) {
 		case kATDiskEmulationMode_Generic57600:
 		case kATDiskEmulationMode_FastestPossible:
 			for(uint32 i=0; i<tracksToStep; ++i) {
-				mpAudioSyncMixer->AddSound(*mpStepSoundGroup, stepDelay, kATAudioSampleId_DiskStep1, 0.3f + 0.7f * sinf(i * nsVDMath::kfPi * 0.5f));
+				// When the head bumps, the head only ends up moving on two adjacent phases out
+				// of the total four. Note that we need to increase the step phase only when steps
+				// actually occur for bumping the head to sound correct.
+				if (!bumpHead || bumpStartingTrack > i || ((i - bumpStartingTrack) & 2))
+					mpAudioSyncMixer->AddSound(*mpStepSoundGroup, stepDelay, kATAudioSampleId_DiskStep1, 0.3f + 0.7f * sinf(stepPhase++ * nsVDMath::kfPi * 0.5f));
 
 				stepDelay += mpProfile->mCyclesPerTrackStep;
 			}

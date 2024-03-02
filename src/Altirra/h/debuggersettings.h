@@ -99,6 +99,7 @@ extern ATDebuggerSetting<bool> g_ATDbgSettingShowLabels;
 extern ATDebuggerSetting<bool> g_ATDbgSettingShowLabelNamespaces;
 extern ATDebuggerSetting<bool> g_ATDbgSettingShowProcedureBreaks;
 extern ATDebuggerSetting<bool> g_ATDbgSettingShowCallPreviews;
+extern ATDebuggerSetting<bool> g_ATDbgSettingShowSourceInDisasm;
 extern ATDebuggerSetting<bool> g_ATDbgSettingCollapseLoops;
 extern ATDebuggerSetting<bool> g_ATDbgSettingCollapseCalls;
 extern ATDebuggerSetting<bool> g_ATDbgSettingCollapseInterrupts;

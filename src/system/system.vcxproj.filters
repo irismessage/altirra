@@ -373,25 +373,14 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <YASM Include="source\a_memory.asm">
+    <MASM Include="source\a64_thunk.asm">
+      <Filter>Assembly Files %28AMD64%29</Filter>
+    </MASM>
+    <MASM Include="source\a_thunk.asm">
       <Filter>Assembly Files %28x86%29</Filter>
-    </YASM>
-    <YASM Include="source\a_thunk.asm">
+    </MASM>
+    <MASM Include="source\a_memory.asm">
       <Filter>Assembly Files %28x86%29</Filter>
-    </YASM>
-    <YASM Include="source\a64_fraction.asm">
-      <Filter>Assembly Files %28AMD64%29</Filter>
-    </YASM>
-    <YASM Include="source\a64_int128.asm">
-      <Filter>Assembly Files %28AMD64%29</Filter>
-    </YASM>
-    <YASM Include="source\a64_thunk.asm">
-      <Filter>Assembly Files %28AMD64%29</Filter>
-    </YASM>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="..\h\vd2\system\win32\vs2013x64crashfix.inl">
-      <Filter>Header Files\win32</Filter>
-    </None>
+    </MASM>
   </ItemGroup>
 </Project>

@@ -11,9 +11,12 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #ifndef f_AT_AUDIOOUTPUT_H
 #define f_AT_AUDIOOUTPUT_H
@@ -59,9 +62,9 @@ struct ATUIAudioStatus {
 
 class IATAudioOutput {
 public:
-	virtual ~IATAudioOutput() {}
+	virtual ~IATAudioOutput() = default;
 
-	virtual void Init(IATSyncAudioSamplePlayer *samplePlayer) = 0;
+	virtual void Init(IATSyncAudioSamplePlayer *samplePlayer, IATSyncAudioSamplePlayer *edgeSamplePlayer) = 0;
 
 	// Create the native audio device. This must be done before writing audio. This is a separate call
 	// to allow the audio engine to be pre-configured and only init the native audio once afterward, since
@@ -102,7 +105,7 @@ public:
 	virtual void WriteAudio(
 		const float *left,
 		const float *right,
-		uint32 count, bool pushAudio, uint64 timestamp) = 0;
+		uint32 count, bool pushAudio, bool pushStereoAsAudio, uint64 timestamp) = 0;
 };
 
 IATAudioOutput *ATCreateAudioOutput();

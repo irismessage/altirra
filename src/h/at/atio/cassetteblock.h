@@ -142,7 +142,7 @@ public:
 	void AddDirectPulseSamples(bool polarity, uint32 samples);
 
 	// Extract pairs of 0/1 pulse lengths.
-	void ExtractPulses(vdfastvector<uint32>& pulses, bool bypassFSK) const;
+	void ExtractPulses(vdfastvector<uint32>& pulses, uint32 sampleOffset, uint32 maxSamples, bool bypassFSK) const;
 
 	bool GetBit(uint32 pos, bool bypassFSK) const override;
 	uint32 GetBitSum(uint32 pos, uint32 n, bool bypassFSK) const override;

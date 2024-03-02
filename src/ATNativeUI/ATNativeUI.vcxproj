@@ -25,6 +25,7 @@
   <ItemGroup>
     <ClCompile Include="source\acceleditdialog.cpp" />
     <ClCompile Include="source\canvas_win32.cpp" />
+    <ClCompile Include="source\controlstyles.cpp" />
     <ClCompile Include="source\dialog.cpp" />
     <ClCompile Include="source\dragdrop.cpp" />
     <ClCompile Include="source\genericdialog.cpp" />
@@ -37,6 +38,8 @@
     <ClCompile Include="source\uinativewindow.cpp" />
     <ClCompile Include="source\progress.cpp" />
     <ClCompile Include="source\nativewindowproxy.cpp" />
+    <ClCompile Include="source\uipane.cpp" />
+    <ClCompile Include="source\uipanedialog.cpp" />
     <ClCompile Include="source\uiproxies.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
@@ -44,6 +47,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\at\atnativeui\canvas_win32.h" />
+    <ClInclude Include="..\h\at\atnativeui\controlstyles.h" />
     <ClInclude Include="..\h\at\atnativeui\dragdrop.h" />
     <ClInclude Include="..\h\at\atnativeui\genericdialog.h" />
     <ClInclude Include="..\h\at\atnativeui\messagedispatcher.h" />
@@ -52,9 +56,12 @@
     <ClInclude Include="..\h\at\atnativeui\theme.h" />
     <ClInclude Include="..\h\at\atnativeui\theme_win32.h" />
     <ClInclude Include="..\h\at\atnativeui\uiframe.h" />
+    <ClInclude Include="..\h\at\atnativeui\uipane.h" />
     <ClInclude Include="..\h\at\atnativeui\uinativewindow.h" />
     <ClInclude Include="..\h\at\atnativeui\progress.h" />
     <ClInclude Include="..\h\at\atnativeui\nativewindowproxy.h" />
+    <ClInclude Include="..\h\at\atnativeui\uipanedialog.h" />
+    <ClInclude Include="..\h\at\atnativeui\uipanewindow.h" />
     <ClInclude Include="res\resource.h" />
     <ClInclude Include="h\stdafx.h" />
     <ClInclude Include="..\h\at\atnativeui\acceleditdialog.h" />

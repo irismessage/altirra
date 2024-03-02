@@ -104,12 +104,128 @@ const uint8 ATHLEProgramLoader::kHandlerData[]={
 	0x0B, 0x00, 0x00, 0x00
 };
 
-const uint8 ATHLEProgramLoader::kBootSector[]={
-	0x00,				// flags
-	0x01,				// boot sector count
-	0x00, 0x07,			// load address
-	0xC0, 0xE4,			// init address (KnownRTS)
-	0x4C, 0xFF, 0x01,	// initiate launch process
+const ATHLEProgramLoader::DiskSector ATHLEProgramLoader::kDiskSectors[] {
+	{ 1, {		// boot sector 1
+			0x00,				// 0700: flags
+			0x03,				// 0701: boot sector count
+			0x00, 0x30,			// 0702: load address
+			0x40, 0x07,			// 0704: init address
+			0x4C, 0x80, 0x30,	// 0706: initiate launch process
+			0x6A, 0x01,			// 0709: root directory sector map (362)
+			0xD0, 0x02,			// 070B: total sector count (720)
+			0xC2, 0x02,			// 070D: free sector count (706)
+			0x01,				// 070F: bitmap sector count (1)
+			0x04, 0x00,			// 0710: bitmap start sector (4)
+			0x05, 0x00,			// 0712: next free data sector low (5)
+			0x05, 0x00,			// 0714: next free directory sector low (5)
+			'B', 'O', 'O', 'T', ' ', ' ', ' ', ' ',
+								// 0716: volume name
+			0x28,				// 071E: track count (1)
+			0x80,				// 071F: sector count (128)
+			0x21,				// 0720: filesystem version (2.1)
+			0x80, 0x00,			// 0721: sector size (128)
+			0x3E, 0x00,			// 0723: sector references per sector map (62)
+			0x01,				// 0725: physical sectors per logical sector (1)
+			0x00,				// 0726: volume sequence number
+			0xA6,				// 0727: volume random ID
+			0x00, 0x00,			// 0728: boot file starting sector
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00,				// 072A
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00,	0x00, 0x00,	// 0730
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00,	0x00, 0x00,	// 0738
+			0x4C, 0xFF, 0x01	// 0740: JMP $01FF (initiate launch)
+	}},
+	{ 2, {		// boot sector 2
+			0x4C, 0xFF, 0x01	// 3080: JMP $01FF (initiate launch)
+	}},
+	{ 4, {		// SDFS VTOC
+			0x07, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x3F, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0x80,
+	}},
+	{ 360, {	// DOS 2 VTOC
+			0x02,				// version
+			0xC5, 0x02,			// total allocatable sectors
+			0xC3, 0x02,			// currently free sectors
+			0x07, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x3F, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+	}},
+	{ 361, {	// DOS 2 directory
+			0x42, 0x01, 0x00, 0x04, 0x01,
+			'S', 'D', 'F', 'S', ' ', ' ', ' ', ' ', 'D', 'A', 'T',
+
+			0x42, 0x01, 0x00, 0x71, 0x01,
+			'A', 'U', 'T', 'O', 'R', 'U', 'N', ' ', 'S', 'Y' ,'S',
+	}},
+	{ 362, {	// SDFS root directory sector map
+			0x00, 0x00,
+			0x00, 0x00,
+			0x6B, 0x01,			// root directory sector (363)
+	}},
+	{ 363, {	// SDFS root directory
+			0x28, 0x00, 0x00, 0x5C, 0x00, 0x00, 'M', 'A', 'I', 'N', ' ', ' ', ' ', ' ', ' ', ' ', ' ', 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x08, 0x6D, 0x01, 0x0C, 0x00, 0x00, 'A', 'U', 'T', 'O', 'E', 'X', 'E', 'C', 'B', 'A', 'T', 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x08, 0x6F, 0x01, 0x2C, 0x00, 0x00, 'A', 'U', 'T', 'O', 'R', 'U', 'N', ' ', 'S', 'Y', 'S', 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x08, 0x70, 0x01, 0x80, 0x01, 0x00, 'D', 'O', 'S', 'D', 'I', 'R', ' ', ' ', 'D', 'A', 'T', 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	}},
+	{ 365, {	// SDFS AUTOEXEC.BAT sector map
+			0x00, 0x00,
+			0x00, 0x00,
+			0x6E, 0x01,			// AUTOEXEC.BAT sector (366)
+	}},
+	{ 366, {	// SDFS AUTOEXEC.BAT
+			'A', 'U', 'T', 'O', 'R', 'U', 'N', '.', 'S', 'Y', 'S', 0x9B
+	}},
+	{ 367, {	// SDFS AUTORUN.SYS sector map
+			0x00, 0x00,
+			0x00, 0x00,
+			0x71, 0x01,			// AUTOEXEC.BAT sector (369)
+	}},
+	{ 368, {	// SDFS DOSDIR.DAT sector map
+			0x00, 0x00,
+			0x00, 0x00,
+			0x68, 0x01,			// DOS VTOC sector (360)
+			0x69, 0x01,			// DOS directory sector (361)
+			0x6C, 0x01,			// DOS directory sector (364)
+	}},
+	{ 369, {	// AUTORUN.SYS (same as LOADEXE.XEX from Additions)
+			0xFF, 0xFF,
+			0x00, 0x22,
+			0x1F, 0x22,
+			0xA2, 0x0B,			// 2200: LDX #11
+			0xBD, 0x13, 0x22,	// 2202: LDA $2211,X
+			0x9D, 0x00, 0x03,	// 2205: STA DDEVIC,X
+			0xCA,				// 2208: DEX
+			0x10, 0xF7,			// 2209: BPL $2202
+			0x20, 0x59, 0xE4,	// 220B: JSR SIOV
+			0x30, 0x0F,			// 220E: BMI $221F 
+			0x4C, 0x23, 0x22,	// 2210: JMP $2223
+			0x7D,				// 2213: DDEVICE
+			0x01,				// 2214: DUNIT
+			0x26,				// 2215: DCOMND = $26
+			0x40,				// 2216: DSTATS = $40 (read)
+			0x13, 0x22,			// 2217: DBUFLO/HI = $2213
+			0x03, 0x00,			// 2219: DTIMLO = $03
+			0x80, 0x00,			// 221B: DBYTLO/HI = $0080
+			0x00, 0x00,			// 221D: DAUX1/2 = 0
+			0x60,				// 221F: RTS
+			0xE0, 0x02, 0xE1, 0x02, 0x00, 0x22
+		},
+		{ 0x04, 0x00, 0x2C }
+	},
 };
 
 ATHLEProgramLoader::ATHLEProgramLoader() {
@@ -198,16 +314,21 @@ void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IATBlobImage
 
 	if (d && d->IsSymbolLoadingEnabled() && symbolHintPath) {
 		static const wchar_t *const kSymExts[]={
-			L".lst", L".lab", L".lbl", L".dbg"
+			L".lst", L".lab", L".lbl", L".dbg", L".elf"
 		};
 
-		VDASSERTCT(sizeof(kSymExts)/sizeof(kSymExts[0]) == sizeof(mProgramModuleIds)/sizeof(mProgramModuleIds[0]));
+		VDASSERTCT(vdcountof(kSymExts) == vdcountof(mProgramModuleIds));
 
 		const wchar_t *symbolHintPathExt = VDFileSplitExt(symbolHintPath);
 
 		VDStringW sympath;
-		for(int i=0; i<sizeof(mProgramModuleIds)/sizeof(mProgramModuleIds[0]); ++i) {
-			sympath.assign(symbolHintPath, symbolHintPathExt);
+		for(int i=0; i<vdcountof(mProgramModuleIds); ++i) {
+			// .elf is special, just add it on instead of replacing extension
+			if (i == vdcountof(mProgramModuleIds)-1)
+				sympath = symbolHintPath;
+			else
+				sympath.assign(symbolHintPath, symbolHintPathExt);
+
 			sympath += kSymExts[i];
 
 			try {
@@ -225,9 +346,9 @@ void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IATBlobImage
 		}
 
 		// process directives AFTER all symbols have been loaded
-		for(int i=0; i<sizeof(mProgramModuleIds)/sizeof(mProgramModuleIds[0]); ++i) {
-			if (mProgramModuleIds[i])
-				d->ProcessSymbolDirectives(mProgramModuleIds[i]);
+		for(const auto& moduleId : mProgramModuleIds) {
+			if (moduleId)
+				d->ProcessSymbolDirectives(moduleId);
 		}
 
 		// load debugger script
@@ -289,9 +410,19 @@ ATHLEProgramLoader::CmdResponse ATHLEProgramLoader::OnSerialBeginCommand(const A
 			// send back sector
 			memset(buf, 0, sizeof buf);
 
-			if (sector == 1) {
-				static_assert(sizeof(kBootSector) <= sizeof(buf));
-				memcpy(buf, kBootSector, sizeof kBootSector);
+			auto it = std::lower_bound(std::begin(kDiskSectors), std::end(kDiskSectors), sector,
+				[](const DiskSector& ds, uint32 sec) {
+					return ds.mSector < sec;
+				}
+			);
+
+			if (it != std::end(kDiskSectors) && it->mSector == sector) {
+				const size_t headerLen = std::min<size_t>(it->mHeader.size(), sizeof buf);
+				memcpy(buf, it->mHeader.begin(), headerLen);
+
+				const size_t footerLen = std::min<size_t>(it->mFooter.size(), sizeof buf);
+				if (footerLen)
+					memcpy(buf + (sizeof(buf) - footerLen), it->mFooter.begin(), footerLen);
 			}
 
 			mpSIOMgr->BeginCommand();
@@ -366,7 +497,9 @@ uint8 ATHLEProgramLoader::StartLoad() {
 		const uint16 memlo = kdb.MEMLO;
 		const uint16 memtop = kdb.MEMTOP;
 
-		uint32 seed = mpSim->RandomizeRawMemory(0x80, 0x80, 0x73b1b086);
+		ATConsolePrintf("EXE: Randomizing $80-FF and %04X-%04X as the randomize-on-load option is enabled\n", memlo, (memtop - 1) & 0xFFFF);
+
+		uint32 seed = mpSim->RandomizeRawMemory(0x80, 0x80, ATRandomizeAdvanceFast(g_ATRandomizationSeeds.mProgramMemory));
 		if (memlo < memtop)
 			mpSim->RandomizeRawMemory(memlo, (uint32)(memtop - memlo) + 1, seed);
 	}

@@ -24,6 +24,7 @@
 #include <at/atcore/enumparse.h>
 
 class IVDRandomAccessStream;
+class IATCassetteImage;
 
 // Cassette internal storage is defined in terms of NTSC cycle timings.
 //
@@ -96,6 +97,56 @@ struct ATCassetteWriteCursor {
 	uint32 mCachedBlockIndex = 0;
 };
 
+struct ATTapeSampleCursor {
+	uint32 mNextTransition {};	// sample position of next transition; 0 = uninitialized
+	bool mCurrentValue {};		// current decoded bit, valid until next transition
+	bool mNextValue {};			// next decoded bit (at next transition)
+
+	void Reset() { mNextTransition = 0; }
+};
+
+struct ATTapeBitSumNextInfo {
+	uint32 mSum;				// number of 1 bits within range
+	bool mNextBit;				// polarity of next bit after range
+};
+
+struct ATTapeNextBitInfo {
+	uint32 mPos;
+	bool mBit;
+};
+
+struct ATTapeSlidingWindowCursor {
+	ATTapeSampleCursor mHeadCursor;	// cursor for sample at window end (first sample after window)
+	ATTapeSampleCursor mTailCursor;	// cursor for sample at window start (first sample within window)
+	uint32 mNextCount {};			// 1-bit sum within window at next transition
+	uint32 mNextTransition {};		// sample position of next transition (0 = uninitialized)
+	bool mCurrentValue {};			// current decoded bit, valid until next transition
+	bool mbFSKBypass {};			// true if FSK decoder should be bypassed (turbo enabled)
+	uint32 mThresholdLo {};			// current sample switches to 0 when count < lo
+	uint32 mThresholdHi {};			// current sample switches to 1 when count > hi
+	uint32 mWindow {};				// number of samples in window
+	uint32 mOffset {};				// offset from start of window to center sample
+
+#ifdef _DEBUG
+	uint32 mCurrentPos {};
+#endif
+
+	void Reset() {
+		mHeadCursor.Reset();
+		mTailCursor.Reset();
+		mNextTransition = 0;
+
+#ifdef _DEBUG
+		mCurrentPos = 0;
+#endif
+	}
+
+	void Update(IATCassetteImage& image, uint32 pos);
+	bool GetBit(IATCassetteImage& image, uint32 pos);
+	ATTapeBitSumNextInfo GetBitSumAndNext(IATCassetteImage& image, uint32 pos, uint32 end);
+	ATTapeNextBitInfo FindNext(IATCassetteImage& image, uint32 pos, bool polarity, uint32 limit = ~(uint32)0);
+};
+
 class IATTapeImageClip : public IVDRefCount {
 public:
 	virtual uint32 GetLength() const = 0;
@@ -131,10 +182,7 @@ public:
 
 	virtual uint32 GetBitSum(uint32 pos, uint32 period, bool bypassFSK) const = 0;
 
-	struct NextBitInfo {
-		uint32 mPos;
-		bool mBit;
-	};
+	using NextBitInfo = ATTapeNextBitInfo;
 
 	virtual NextBitInfo FindNextBit(uint32 pos, uint32 limit, bool level, bool bypassFSK) const = 0;
 
@@ -221,6 +269,10 @@ public:
 	};
 
 	virtual MinMax ReadWaveformMinMax(uint32 pos, uint32 len, bool direct) const = 0;
+
+	// Returns true if there are any standard data blocks that must be converted
+	// to FSK blocks when saving to CAS, due to trimming.
+	virtual bool HasCASIncompatibleStdBlocks() const = 0;
 };
 
 void ATCreateNewCassetteImage(IATCassetteImage **ppImage);

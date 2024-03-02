@@ -22,6 +22,7 @@
 #include <vd2/system/hash.h>
 #include <vd2/system/int128.h>
 #include <at/atcore/consoleoutput.h>
+#include <at/atcore/devicestorage.h>
 #include "ultimate1mb.h"
 #include "mmu.h"
 #include "pbi.h"
@@ -78,8 +79,9 @@ void ATUltimate1MBEmulator::Init(
 		ATMemoryManager *memman,
 		IATUIRenderer *uir,
 		ATScheduler *sched,
-		ATCPUHookManager *hookmgr
-		)
+		ATCPUHookManager *hookmgr,
+		IATDeviceManager *devicemgr
+	)
 {
 	mpMemory = (uint8 *)memory;
 	mpMMU = mmu;
@@ -87,9 +89,14 @@ void ATUltimate1MBEmulator::Init(
 	mpPBIManager = pbi;
 	mpMemMan = memman;
 	mpHookMgr = hookmgr;
+	mpDeviceMgr = devicemgr;
 
 	mClockEmu.Init();
-	LoadNVRAM();
+
+	mRTCStorage.Init(*mpDeviceMgr->GetService<IATDeviceStorageManager>(),
+		[this](IATDeviceStorageManager&) { LoadNVRAM(); },
+		[this](IATDeviceStorageManager&) { SaveNVRAM(); }
+	);
 
 	if (g_ATOptions.mU1MBFlashChip == "BM29F040")
 		mFlashEmu.Init(mFirmware, kATFlashType_BM29F040, sched);
@@ -210,10 +217,9 @@ void ATUltimate1MBEmulator::Shutdown() {
 		}
 
 		mpMemMan = nullptr;
-
-		// Not really related to the memory manager, but a convenient hook.
-		SaveNVRAM();
 	}
+
+	mRTCStorage.Shutdown();
 
 	if (mpPBIManager) {
 		if (mCurrentPBIID >= 0) {
@@ -243,6 +249,7 @@ void ATUltimate1MBEmulator::Shutdown() {
 
 	mpMemory = nullptr;
 	mpHookMgr = nullptr;
+	mpDeviceMgr = nullptr;
 
 	mFlashEmu.Shutdown();
 }
@@ -372,24 +379,20 @@ void ATUltimate1MBEmulator::WarmReset() {
 }
 
 void ATUltimate1MBEmulator::LoadNVRAM() {
-	VDRegistryAppKey key("Nonvolatile RAM");
-
 	uint8 buf[0x72];
 	memset(buf, 0, sizeof buf);
 
-	if (key.getBinary("Ultimate1MB clock", (char *)buf, 0x72))
+	if (mpDeviceMgr->GetService<IATDeviceStorageManager>()->LoadNVRAM("Ultimate1MB clock", buf, 0x72))
 		mClockEmu.Load(buf);
 }
 
 void ATUltimate1MBEmulator::SaveNVRAM() {
-	VDRegistryAppKey key("Nonvolatile RAM");
-
 	uint8 buf[0x72];
 	memset(buf, 0, sizeof buf);
 
 	mClockEmu.Save(buf);
 
-	key.setBinary("Ultimate1MB clock", (const char *)buf, 0x72);
+	mpDeviceMgr->GetService<IATDeviceStorageManager>()->SaveNVRAM("Ultimate1MB clock", buf, 0x72);
 }
 
 void ATUltimate1MBEmulator::DumpStatus(ATConsoleOutput& output) {

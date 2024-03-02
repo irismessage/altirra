@@ -86,8 +86,12 @@ ATDeviceDiskDriveXF551::ATDeviceDiskDriveXF551()
 
 	mCoProc.SetProgramBanks(mROM[0], mROM[1]);
 
-	InitTargetControl(mTargetProxy, 8333333.0 / 15.0, kATDebugDisasmMode_8048, &mBreakpointsImpl);
-
+	// The 8048 runs T-states at 8.333MHz with 15 T-states per machine cycle,
+	// with the majority of instructions only 1 or 2 machine cycles. To keep
+	// accounting simple we run the drive coprocessor clock at 8.333MHz / 15,
+	// but need to report 8.333MHz as the displayed clock speed.
+	InitTargetControl(mTargetProxy, 8333333.0 / 15.0, kATDebugDisasmMode_8048, &mBreakpointsImpl, this);
+	ApplyDisplayCPUClockMultiplier(15.0);
 	
 	mSerialCmdQueue.SetOnDriveCommandStateChanged(
 		[this](bool bit) {
@@ -577,7 +581,6 @@ void ATDeviceDiskDriveXF551::UpdateDiskStatus() {
 
 void ATDeviceDiskDriveXF551::UpdateWriteProtectStatus() {
 	const bool wpoverride = (mDiskChangeState & 1) != 0;
-	const bool wpsense = mpDiskInterface->GetDiskImage() && !mpDiskInterface->IsDiskWritable();
 
 	mFDC.SetWriteProtectOverride(wpoverride);
 }

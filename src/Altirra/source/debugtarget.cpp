@@ -49,6 +49,10 @@ ATDebugDisasmMode ATDebuggerDefaultTarget::GetDisasmMode() {
 	}
 }
 
+float ATDebuggerDefaultTarget::GetDisplayCPUClock() const {
+	return GetTimestampFrequency();
+}
+
 void ATDebuggerDefaultTarget::GetExecState(ATCPUExecState& state) {
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 	ATCPUExecState6502& state6502 = state.m6502;

@@ -42,11 +42,8 @@ uint32 VDPixmapGetFormatTokenFromFormat(int format) {
 	case kPixFormat_YUV422_Planar:	return kVDPixType_8_8_8 | kVDPixSamp_422 | kVDPixSpace_YCC_601;
 	case kPixFormat_YUV422_Planar_16F:	return kVDPixType_16F_16F_16F_LE | kVDPixSamp_422 | kVDPixSpace_YCC_601;
 	case kPixFormat_YUV420_Planar:	return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2 | kVDPixSpace_YCC_601;
-	case kPixFormat_YUV411_Planar:	return kVDPixType_8_8_8 | kVDPixSamp_411 | kVDPixSpace_YCC_601;
-	case kPixFormat_YUV410_Planar:	return kVDPixType_8_8_8 | kVDPixSamp_410 | kVDPixSpace_YCC_601;
 	case kPixFormat_YUV422_Planar_Centered:	return kVDPixType_8_8_8 | kVDPixSamp_422_JPEG | kVDPixSpace_YCC_601;
 	case kPixFormat_YUV420_Planar_Centered:	return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG1 | kVDPixSpace_YCC_601;
-	case kPixFormat_YUV422_V210:	return kVDPixType_V210 | kVDPixSamp_422 | kVDPixSpace_YCC_601;
 	case kPixFormat_YUV422_UYVY_709:	return kVDPixType_B8G8_R8G8 | kVDPixSamp_422 | kVDPixSpace_YCC_709;
 	case kPixFormat_YUV420_NV12:	return kVDPixType_8_B8R8 | kVDPixSamp_420_MPEG2 | kVDPixSpace_YCC_601;
 	case kPixFormat_Y8_FR:				return kVDPixType_8 | kVDPixSamp_444 | kVDPixSpace_Y_601_FR;
@@ -54,34 +51,16 @@ uint32 VDPixmapGetFormatTokenFromFormat(int format) {
 	case kPixFormat_YUV444_Planar_709:	return kVDPixType_8_8_8 | kVDPixSamp_444 | kVDPixSpace_YCC_709;
 	case kPixFormat_YUV422_Planar_709:	return kVDPixType_8_8_8 | kVDPixSamp_422 | kVDPixSpace_YCC_709;
 	case kPixFormat_YUV420_Planar_709:	return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2 | kVDPixSpace_YCC_709;
-	case kPixFormat_YUV411_Planar_709:	return kVDPixType_8_8_8 | kVDPixSamp_411 | kVDPixSpace_YCC_709;
-	case kPixFormat_YUV410_Planar_709:	return kVDPixType_8_8_8 | kVDPixSamp_410 | kVDPixSpace_YCC_709;
 	case kPixFormat_YUV422_UYVY_FR:		return kVDPixType_B8G8_R8G8 | kVDPixSamp_422 | kVDPixSpace_YCC_601_FR;
 	case kPixFormat_YUV422_YUYV_FR:		return kVDPixType_G8B8_G8R8 | kVDPixSamp_422 | kVDPixSpace_YCC_601_FR;
 	case kPixFormat_YUV444_Planar_FR:	return kVDPixType_8_8_8 | kVDPixSamp_444 | kVDPixSpace_YCC_601_FR;
 	case kPixFormat_YUV422_Planar_FR:	return kVDPixType_8_8_8 | kVDPixSamp_422 | kVDPixSpace_YCC_601_FR;
 	case kPixFormat_YUV420_Planar_FR:	return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2 | kVDPixSpace_YCC_601_FR;
-	case kPixFormat_YUV411_Planar_FR:	return kVDPixType_8_8_8 | kVDPixSamp_411 | kVDPixSpace_YCC_601_FR;
-	case kPixFormat_YUV410_Planar_FR:	return kVDPixType_8_8_8 | kVDPixSamp_410 | kVDPixSpace_YCC_601_FR;
 	case kPixFormat_YUV422_UYVY_709_FR:	return kVDPixType_B8G8_R8G8 | kVDPixSamp_422 | kVDPixSpace_YCC_709_FR;
 	case kPixFormat_YUV422_YUYV_709_FR:	return kVDPixType_G8B8_G8R8 | kVDPixSamp_422 | kVDPixSpace_YCC_709_FR;
 	case kPixFormat_YUV444_Planar_709_FR:	return kVDPixType_8_8_8 | kVDPixSamp_444 | kVDPixSpace_YCC_709_FR;
 	case kPixFormat_YUV422_Planar_709_FR:	return kVDPixType_8_8_8 | kVDPixSamp_422 | kVDPixSpace_YCC_709_FR;
 	case kPixFormat_YUV420_Planar_709_FR:	return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2 | kVDPixSpace_YCC_709_FR;
-	case kPixFormat_YUV411_Planar_709_FR:	return kVDPixType_8_8_8 | kVDPixSamp_411 | kVDPixSpace_YCC_709_FR;
-	case kPixFormat_YUV410_Planar_709_FR:	return kVDPixType_8_8_8 | kVDPixSamp_410 | kVDPixSpace_YCC_709_FR;
-	case kPixFormat_YUV420i_Planar:			return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2INT | kVDPixSpace_YCC_601;
-	case kPixFormat_YUV420i_Planar_FR:		return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2INT | kVDPixSpace_YCC_601_FR;
-	case kPixFormat_YUV420i_Planar_709:		return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2INT | kVDPixSpace_YCC_709;
-	case kPixFormat_YUV420i_Planar_709_FR:	return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2INT | kVDPixSpace_YCC_709_FR;
-	case kPixFormat_YUV420it_Planar:		return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2INT1 | kVDPixSpace_YCC_601;
-	case kPixFormat_YUV420it_Planar_FR:		return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2INT1 | kVDPixSpace_YCC_601_FR;
-	case kPixFormat_YUV420it_Planar_709:	return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2INT1 | kVDPixSpace_YCC_709;
-	case kPixFormat_YUV420it_Planar_709_FR:	return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2INT1 | kVDPixSpace_YCC_709_FR;
-	case kPixFormat_YUV420ib_Planar:		return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2INT2 | kVDPixSpace_YCC_601;
-	case kPixFormat_YUV420ib_Planar_FR:		return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2INT2 | kVDPixSpace_YCC_601_FR;
-	case kPixFormat_YUV420ib_Planar_709:	return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2INT2 | kVDPixSpace_YCC_709;
-	case kPixFormat_YUV420ib_Planar_709_FR:	return kVDPixType_8_8_8 | kVDPixSamp_420_MPEG2INT2 | kVDPixSpace_YCC_709_FR;
 	default:
 		VDASSERT(false);
 		return 0;
@@ -127,7 +106,6 @@ namespace {
 			case kVDPixType_32Fx4_LE:
 			case kVDPixType_B8G8_R8G8:
 			case kVDPixType_G8B8_G8R8:
-			case kVDPixType_V210:
 			case kVDPixType_8_B8R8:
 			case kVDPixType_B8R8:
 			default:
@@ -478,7 +456,6 @@ namespace {
 							srcToken = (srcToken & ~(kVDPixType_Mask | kVDPixSamp_Mask)) | kVDPixType_8_8_8 | kVDPixSamp_422;
 							break;
 						case kVDPixType_16F_16F_16F_LE:
-						case kVDPixType_V210:
 							targetType = kVDPixType_32F_32F_32F_LE;
 							goto type_reconvert;
 						case kVDPixType_32F_32F_32F_LE:
@@ -603,43 +580,6 @@ namespace {
 							gen.swap(1);
 							srcToken = (srcToken & ~kVDPixType_Mask) | kVDPixType_32F_32F_32F_LE;
 							break;
-
-						case kVDPixType_B8G8_R8G8:
-						case kVDPixType_G8B8_G8R8:
-						case kVDPixType_8_B8R8:
-							targetType = kVDPixType_8_8_8;
-							goto type_reconvert;
-
-						case kVDPixType_V210:
-							gen.conv_V210_to_32F();
-							srcToken = (srcToken & ~kVDPixType_Mask) | kVDPixType_32F_32F_32F_LE;
-							break;
-
-						default:
-							VDASSERT(false);
-					}
-					break;
-
-				case kVDPixType_V210:
-					switch(srcType) {
-						case kVDPixType_32F_32F_32F_LE:
-							if ((srcToken & kVDPixSamp_Mask) != kVDPixSamp_422)
-								srcToken = BlitterConvertSampling(gen, srcToken, kVDPixSamp_422, w, h);
-
-							gen.conv_32F_to_V210();
-							srcToken = (srcToken & ~kVDPixType_Mask) | kVDPixType_V210;
-							break;
-
-						case kVDPixType_16F_16F_16F_LE:
-							targetType = kVDPixType_32F_32F_32F_LE;
-							goto type_reconvert;
-
-						case kVDPixType_8_8_8:
-							if ((srcToken & kVDPixSamp_Mask) != kVDPixSamp_422)
-								srcToken = BlitterConvertSampling(gen, srcToken, kVDPixSamp_422, w, h);
-
-							targetType = kVDPixType_32F_32F_32F_LE;
-							goto type_reconvert;
 
 						case kVDPixType_B8G8_R8G8:
 						case kVDPixType_G8B8_G8R8:
@@ -807,10 +747,6 @@ IVDPixmapBlitter *VDPixmapCreateBlitter(const VDPixmapLayout& dst, const VDPixma
 		}
 		break;
 
-	case kVDPixType_V210:
-		gen.ldsrc(0, 0, 0, 0, w, h, srcToken, ((w + 5) / 6) * 4);
-		break;
-
 	case kVDPixType_8_B8R8:
 		{
 			uint32 ytoken = (srcToken & ~kVDPixType_Mask) | kVDPixType_8;
@@ -864,11 +800,6 @@ IVDPixmapBlitter *VDPixmapCreateBlitter(const VDPixmapLayout& dst, const VDPixma
 			gen.swap(1);
 			gen.extract_8in16(0, (w + 1) >> 1, (h + 1) >> 1);
 			srcToken = (srcToken & ~kVDPixType_Mask) | kVDPixType_8_8_8;
-			break;
-
-		case kVDPixType_V210:
-			gen.conv_V210_to_32F();
-			srcToken = (srcToken & ~kVDPixType_Mask) | kVDPixType_32F_32F_32F_LE;
 			break;
 		}
 

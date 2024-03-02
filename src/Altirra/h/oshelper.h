@@ -19,6 +19,8 @@ bool ATLoadImageResource(uint32 id, VDPixmapBuffer& buf);
 void ATFileSetReadOnlyAttribute(const wchar_t *path, bool readOnly);
 
 void ATCopyFrameToClipboard(const VDPixmap& px);
+void ATLoadFrame(VDPixmapBuffer& px, const wchar_t *filename);
+void ATLoadFrameFromMemory(VDPixmapBuffer& px, const void *mem, size_t len);
 void ATSaveFrame(const VDPixmap& px, const wchar_t *filename);
 
 void ATCopyTextToClipboard(void *hwnd, const char *s);
@@ -40,5 +42,8 @@ bool ATIsUserAdministrator();
 void ATGenerateGuid(uint8 guid[16]);
 
 void ATShowFileInSystemExplorer(const wchar_t *filename);
+
+void ATRelaunchElevated(VDGUIHandle parent, const wchar_t *params);
+void ATRelaunchElevatedWithEscapedArgs(VDGUIHandle parent, vdspan<const wchar_t *> args);
 
 #endif

@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <at/atcore/cio.h>
 #include <at/atcore/enumparseimpl.h>
 #include <at/atcore/snapshotimpl.h>
 #include "siomanager.h"
@@ -393,9 +394,15 @@ fastbootignore:
 
 		ATCassetteEmulator& cassette = mpSim->GetCassette();
 
-		// Check if a read or write is requested
-		if (req.mMode == 0x40) {
-			status = cassette.ReadBlock(req.mAddress, req.mLength, mpMemory);
+		// Check if a read or write is requested.
+		// 
+		// Atomia issues a read with DSTATS=$01, so this needs to only check bit 7 -- cassette ops
+		// don't support requests without a data frame.
+
+		if (!(req.mMode & 0x80)) {
+			// DTIMOT=0 effectively disables the timeout. This is relied on by Bang! Bank!, which has a block exceeding four
+			// minutes.
+			status = cassette.ReadBlock(req.mAddress, req.mLength, mpMemory, !req.mTimeout ? -1.0f : (float)((uint32)req.mTimeout * 64 * (double)mCyclesPerFrame * mpScheduler->GetRate().AsInverseDouble()));
 
 			mpUIRenderer->PulseStatusFlags(1 << 16);
 
@@ -445,6 +452,12 @@ handled:
 
 	kdb.STATUS = status;
 	kdb.DSTATS = status;
+
+	// Set or clear TIMFLG depending on whether there was a timeout. Some Polish tape versions of
+	// Boulder Dash require this due to a load stage that relies on TIMFLG from the last successful
+	// read. Per the OS Manual, the flag is set to $01 initially and then cleared by the VBI
+	// on a timeout.
+	kdb.TIMFLG = (status == kATCIOStat_Timeout) ? 0 : 1;
 	
 	// Set carry depending on last status. Micropainter depends on the state of the carry flag
 	// after issuing a call to DSKINV, which in turn leaves the carry flag set from the call to
@@ -1131,6 +1144,10 @@ void ATSIOManager::SaveActiveCommandState(const IATDeviceSIO *device, IATObjectS
 		state->mStepDelay = mpScheduler->GetTicksToEvent(mpDelayEvent);
 
 	*ppState = state.release();
+}
+
+void ATSIOManager::SetFrameTime(uint32 cyclesPerFrame) {
+	mCyclesPerFrame = cyclesPerFrame;
 }
 
 void ATSIOManager::SetReadyState(bool ready) {

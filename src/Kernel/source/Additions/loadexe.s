@@ -28,7 +28,7 @@ memlo_ok:
 		bmi		fail
 
 		;jump to CIO initialization function within absolute block
-		jmp		load_buffer+14
+		jmp		load_buffer+16
 .endp
 
 load_buffer:

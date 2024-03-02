@@ -45,7 +45,6 @@ void tool_fxc10(const vdfastvector<const char *>& args, const vdfastvector<const
 void tool_makearray(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_fontextract(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_fontencode(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
-void tool_fontrender(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_filecreate(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_maketables(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_checkimports(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
@@ -90,8 +89,6 @@ int VDCDECL main(int argc, char **argv) {
 			tool_fontextract(args, switches);
 		} else if (!_stricmp(s, "fontencode")) {
 			tool_fontencode(args, switches);
-		} else if (!_stricmp(s, "fontrender")) {
-			tool_fontrender(args, switches);
 		} else if (!_stricmp(s, "filecreate")) {
 			tool_filecreate(args, switches);
 		} else if (!_stricmp(s, "maketables")) {

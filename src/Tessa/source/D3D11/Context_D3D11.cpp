@@ -1,7 +1,26 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2022 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #include <stdafx.h>
 #define D3D11_NO_HELPERS
 #define INITGUID
 #include <guiddef.h>
+#include <windows.h>
+#include <synchapi.h>
+#include <dwmapi.h>
 
 #include <dxgi1_3.h>
 #include <dxgi1_5.h>
@@ -10,10 +29,13 @@
 #include <d3d11.h>
 #include <d3d11_1.h>
 #include <vd2/system/bitmath.h>
+#include <vd2/system/strutil.h>
+#include <vd2/system/time.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Tessa/Config.h>
 #include <vd2/Tessa/Context.h>
 #include <vd2/Tessa/Format.h>
+#include <vd2/Tessa/Options.h>
 #include "D3D11/Context_D3D11.h"
 #include "D3D11/FenceManager_D3D11.h"
 #include "Program.h"
@@ -1330,8 +1352,6 @@ bool VDTSamplerStateD3D11::Restore() {
 
 VDTSwapChainD3D11::VDTSwapChainD3D11()
 	: VDThread("VSync Thread (D3D11)")
-	, mpSwapChain(NULL)
-	, mpSwapChain1(NULL)
 	, mpTexture(NULL)
 	, mVSyncPollPendingSema(0)
 	, mbVSyncPending(false)
@@ -1428,7 +1448,13 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 	scdesc.SampleDesc.Count = 1;
 	scdesc.SampleDesc.Quality = 0;
 	scdesc.BufferUsage = DXGI_USAGE_BACK_BUFFER | DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    scdesc.BufferCount = 2;
+
+	// This is counter-intuitive, but three buffers are required for DXGI_PRESENT_RESTART to work:
+	// one for the front buffer, one for the queued buffer, and one for the buffer being presented.
+	// If there are only two buffers, there is never an undisplayed queued frame for DXGI to drop,
+	// and we can't reduce latency.
+    scdesc.BufferCount = 3;
+
     scdesc.OutputWindow = (HWND)mDesc.mhWindow;
     scdesc.Windowed = TRUE;
 
@@ -1436,23 +1462,15 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 	// Note that Windows 7 with the Platform Update does NOT support this, so just checking
 	// for DXGI 1.2 is not sufficient.
 	
-	bool usingFlipPresentation = false;
-	if (VDIsAtLeast10W32()) {
+	mbUsingFlip = false;
+	if (VDIsAtLeast10W32() && VDTInternalOptions::sbEnableDXFlipDiscard) {
 		scdesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 
-		usingFlipPresentation = true;
-
-		// We need triple buffering to be able to cancel a flip in progress -- one to
-		// display, a second to be queued, and a third to draw into and cancel the second.
-		scdesc.BufferCount = 3;
-	} else if (VDIsAtLeast8W32() && desc.mbWindowed) {
+		mbUsingFlip = true;
+	} else if (VDIsAtLeast8W32() && desc.mbWindowed && VDTInternalOptions::sbEnableDXFlipMode) {
 		scdesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
 
-		usingFlipPresentation = true;
-
-		// We need triple buffering to be able to cancel a flip in progress -- one to
-		// display, a second to be queued, and a third to draw into and cancel the second.
-		scdesc.BufferCount = 3;
+		mbUsingFlip = true;
 	} else if (!desc.mbWindowed)
 		scdesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 	else
@@ -1461,7 +1479,7 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 	scdesc.Flags = mDesc.mbWindowed ? 0 : DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
 	mbAllowTearing = false;
 
-	if (mDesc.mbWindowed && usingFlipPresentation) {
+	if (mDesc.mbWindowed && mbUsingFlip) {
 		vdrefptr<IDXGIFactory5> factory5;
 		if (SUCCEEDED(parent->GetDXGIFactory()->QueryInterface(IID_IDXGIFactory5, (void **)~factory5))) {
 			BOOL allowTearing = FALSE;
@@ -1476,7 +1494,7 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 	bool haveDXGI13 = false;
 	if (!desc.mbWindowed) {
 		scdesc.OutputWindow = ::GetAncestor(scdesc.OutputWindow, GA_ROOT);
-	} else if (mDesc.mbWindowed && usingFlipPresentation) {
+	} else if (mDesc.mbWindowed && mbUsingFlip && VDTInternalOptions::sbEnableDXWaitableObject) {
 		// See if we have at least DXGI 1.3 and can use waitable objects for vsync. Note that
 		// this can only be used in windowed mode.
 		vdrefptr<IDXGIFactory3> factory3;
@@ -1493,6 +1511,10 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 	}
 
 	mpSwapChain->QueryInterface(IID_IDXGISwapChain1, (void **)&mpSwapChain1);
+	mpSwapChain->QueryInterface(IID_IDXGISwapChainMedia, (void **)&mpSwapChainMedia);
+
+	// we need at least DXGI 1.2 and Windows 8 for DXGI_PRESENT_DO_NOT_WAIT
+	mbUsingDoNotWait = mpSwapChain1 && (VDIsAtLeast8W32() && VDTInternalOptions::sbEnableDXDoNotWait);
 
 	// we need DXGI 1.4 for HDR
 	if (desc.mbHDR) {
@@ -1520,8 +1542,11 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 			vdrefptr<IDXGISwapChain2> swapChain2;
 
 			if (SUCCEEDED(mpSwapChain->QueryInterface(IID_IDXGISwapChain2, (void **)~swapChain2))) {
+				swapChain2->SetMaximumFrameLatency(2);
+
 				// Note that this returns a new handle each time that must be closed.
 				mWaitHandle = swapChain2->GetFrameLatencyWaitableObject();
+				WaitForSingleObject(mWaitHandle, INFINITE);
 			}
 		}
 	} else {
@@ -1543,6 +1568,59 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 			return false;
 		}
 	}
+
+	// look up the actual display mode now through DisplayConfig
+	vdfastvector<DISPLAYCONFIG_PATH_INFO> paths;
+	vdfastvector<DISPLAYCONFIG_MODE_INFO> modes;
+	UINT32 numPaths = 0;
+	UINT32 numModes = 0;
+
+	for(int tries = 0; tries < 10; ++tries) {
+		if (ERROR_SUCCESS != GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &numPaths, &numModes))
+			break;
+
+		paths.resize(numPaths);
+		modes.resize(numModes);
+
+		auto result = QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &numPaths, paths.data(), &numModes, modes.data(), nullptr);
+		if (result == ERROR_SUCCESS) {
+			paths.resize(numPaths);
+			modes.resize(numModes);
+			break;
+		}
+
+		if (result != ERROR_INSUFFICIENT_BUFFER) {
+			paths.clear();
+			modes.clear();
+			break;
+		}
+	}
+
+	for(const DISPLAYCONFIG_PATH_INFO& path : paths) {
+		if (path.targetInfo.adapterId.LowPart == mAdapterLuidLo && path.targetInfo.adapterId.HighPart == mAdapterLuidHi) {
+			const DISPLAYCONFIG_RATIONAL& refreshRate = path.targetInfo.refreshRate;
+			if (refreshRate.Denominator) {
+				mVSyncPeriod = (float)refreshRate.Denominator / (float)refreshRate.Numerator * (float)VDGetPreciseTicksPerSecond();
+			}
+			break;
+		}
+	}
+
+	// frame statistics are available if either we are in exclusive full screen or using a flip chain
+	mbUsingFrameStatistics = !mDesc.mbWindowed || mbUsingFlip;
+
+	// check if we actually have frame statistics, or if we're just going to get E_NOTIMPL (e.g. Wine)
+	if (mbUsingFrameStatistics) {
+		DXGI_FRAME_STATISTICS stats {};
+		hr = mpSwapChain->GetFrameStatistics(&stats);
+
+		if (FAILED(hr) && hr != DXGI_ERROR_FRAME_STATISTICS_DISJOINT)
+			mbUsingFrameStatistics = false;
+	}
+
+	BOOL dwmEnabled = FALSE;
+	DwmIsCompositionEnabled(&dwmEnabled);
+	mbUsingComposition = (dwmEnabled != FALSE);
 
 	vdrefptr<ID3D11Texture2D> d3dtex;
 	hr = mpSwapChain->GetBuffer(0, IID_ID3D11Texture2D, (void **)~d3dtex);
@@ -1577,7 +1655,12 @@ void VDTSwapChainD3D11::Shutdown() {
 		mWaitHandle = nullptr;
 	}
 
-	vdsaferelease <<= mpTexture;
+	if (mpTexture) {
+		static_cast<VDTContextD3D11 *>(mpParent)->UnsetRenderTarget(GetBackBuffer());
+		vdsaferelease <<= mpTexture;
+	}
+
+	vdsaferelease <<= mpSwapChainMedia;
 	vdsaferelease <<= mpSwapChain1;
 	
 	if (mpSwapChain) {
@@ -1590,6 +1673,10 @@ void VDTSwapChainD3D11::Shutdown() {
 	}
 
 	VDTResourceD3D11::Shutdown();
+}
+
+void VDTSwapChainD3D11::SetPresentCallback(IVDTAsyncPresent *callback) {
+	mpVSyncCallback = callback;
 }
 
 void VDTSwapChainD3D11::GetDesc(VDTSwapChainDesc& desc) {
@@ -1658,28 +1745,325 @@ bool VDTSwapChainD3D11::CheckOcclusion() {
 #endif
 }
 
+uint32 VDTSwapChainD3D11::GetQueuedFrames() {
+	VDTContextD3D11 *parent = static_cast<VDTContextD3D11 *>(mpParent);
+	uint32 delay = 0;
+
+	for(uint32 i = 0; i < vdcountof(mPresentFences); ++i) {
+		if (!parent->CheckFence(mPresentFences[i])) {
+			delay = (uint32)vdcountof(mPresentFences) - i;
+			break;
+		}
+	}
+
+	return delay;
+}
+
+void VDTSwapChainD3D11::SetCustomRefreshRate(float hz, float hzmin, float hzmax) {
+	mbUsingCustomDuration = false;
+
+	if (hz < 15.0f || hz > 240.0f)
+		return;
+
+	if (hz < hzmin || hz > hzmax)
+		return;
+
+	if (mpSwapChainMedia) {
+		const UINT desiredPeriod = (UINT)(0.5f + 10'000'000 / hz);
+		UINT closestLower = 0;
+		UINT closestUpper = 0;
+
+		HRESULT hr = mpSwapChainMedia->CheckPresentDurationSupport(desiredPeriod, &closestLower, &closestUpper);
+		if (SUCCEEDED(hr) && (closestLower > 0 || closestUpper > 0)) {
+			const UINT minPeriod = (UINT)(0.5f + 10'000'000.0f / hzmax);
+			const UINT maxPeriod = (UINT)(0.5f + 10'000'000.0f / hzmin);
+
+			UINT period = 0;
+			
+			if (closestLower > 0 && closestLower >= minPeriod && closestLower <= maxPeriod)
+				period = closestLower;
+
+			if (closestUpper > 0 && closestUpper >= minPeriod && closestUpper <= maxPeriod) {
+				if (period == 0 || abs((sint32)(period - desiredPeriod)) >= abs((sint32)(closestUpper - desiredPeriod)))
+					period = closestUpper;
+			}
+
+			if (period) {
+				hr = mpSwapChainMedia->SetPresentDuration(period);
+				if (SUCCEEDED(hr)) {
+					mbUsingCustomDuration = true;
+
+					// Unfortunately, GetMediaFrameStatistics() seems to often return
+					// ApprovedPresentDuration = 0 even when the custom duration is in effect,
+					// so we can't rely on it.
+					mEffectiveCustomRate = 10'000'000.0f / (float)period;
+				}
+			}
+		}
+	}
+}
+
+float VDTSwapChainD3D11::GetEffectiveCustomRefreshRate() const {
+	return mbUsingCustomDuration ? mEffectiveCustomRate : 0;
+}
+
+VDTSwapChainCompositionStatus VDTSwapChainD3D11::GetLastCompositionStatus() const {
+	return mLastCompositionStatus;
+}
+
 void VDTSwapChainD3D11::Present() {
 	if (!mpSwapChain)
 		return;
 
+	mLastCompositionStatus = VDTSwapChainCompositionStatus::Unknown;
+
+	if (mpSwapChainMedia && (!mDesc.mbWindowed || mbUsingFlip)) {
+		DXGI_FRAME_STATISTICS_MEDIA statsMedia {};
+			
+		if (SUCCEEDED(mpSwapChainMedia->GetFrameStatisticsMedia(&statsMedia)))
+			UpdateCompositionStatus(statsMedia.CompositionMode);
+	}
+
+	const uint64 t = VDGetPreciseTick();
+
+	// If we are using waitable handles, we must wait for a ready to render signal, or
+	// we will end up injecting an extra count into the semaphore that will fark our
+	// ability to track queue length.
+	if (mWaitHandle) {
+		bool threadConflict = false;
+		bool waitReady = false;
+
+		vdsynchronized(mVSyncMutex) {
+			mVSyncRequest = VSyncRequest::None;
+
+			if (mbWaitReady) {
+				mbWaitReady = false;
+				waitReady = true;
+			} else if (mbVSyncIsWaiting) {
+				threadConflict = true;
+				mVSyncRequest = VSyncRequest::WaitForEventSync;
+			}
+		}
+
+		if (!waitReady) {
+			if (threadConflict) {
+				for(;;) {
+					vdsynchronized(mVSyncMutex) {
+						if (mbWaitReady) {
+							mbWaitReady = false;
+
+							waitReady = true;
+						} else {
+							mVSyncRequest = VSyncRequest::WaitForEventSync;
+						}
+					}
+
+					if (waitReady)
+						break;
+
+					mWaitSignal.wait();
+				}
+			} else {
+				WaitForSingleObject(mWaitHandle, INFINITE);
+			}
+		}
+	}
+
 	// If the swap chain is in flip mode, it'll unbind the render target, so we need to
 	// sync that state.
 	static_cast<VDTContextD3D11 *>(mpParent)->SetRenderTarget(0, nullptr, false);
-
 	HRESULT hr = mpSwapChain->Present(0, mbAllowTearing ? DXGI_PRESENT_ALLOW_TEARING : 0);
 	mbWasOccluded = (hr == DXGI_STATUS_OCCLUDED);
 
-	mbVSyncPending = false;
+	UINT pcount;
+	if (SUCCEEDED(mpSwapChain->GetLastPresentCount(&pcount))) {
+		mPresentHistory[pcount & (std::size(mPresentHistory) - 1)] = PresentEvent { t, pcount };
+	}
+
+	if (mbVSyncPending)
+		mbVSyncPending = false;
 }
 
-void VDTSwapChainD3D11::PresentVSync(void *monitor, IVDTAsyncPresent *callback) {
+void VDTSwapChainD3D11::PresentVSync(void *monitor, bool adaptive) {	
+	const uint64 t = VDGetPreciseTick();
+	bool waitActive = false;
+	bool waitReady = false;
+
+	mVSyncWaitStartTime = t;
+	mVSyncRetryStartTime = 0;
+
+	mVSyncMutex.Lock();
+	mhVSyncMonitor = monitor;
+
+	mbVSyncPollAdaptive = adaptive;
+	mVSyncCompositionWaitTime = 0;
+
+	waitActive = mbVSyncIsWaiting;
+
+	if (mbWaitReady)
+		waitReady = true;
+
+	mVSyncMutex.Unlock();
+
+	// Cases we need to handle:
+	//
+	// 1. DXGI 1.3+ flip with waitable handle (windowed / borderless only)
+	//
+	//    Strategy: Semaphore wait and Present(1)
+	//
+	//    This is the best case. In this case, we can tell when each frame retires from the
+	//    present queue, and by eating a count on the semaphore we can limit the delay to
+	//    one frame. Thus, we can simply check if the semaphore indicates a free queue slot,
+	//    and present immediately if so. Otherwise, a wait is queued on the handle through
+	//    the worker thread, and we defer the present until then. Present interval 1 allows
+	//    frames to be queued and lets us know via the semaphore if we're starting to back
+	//    up and need to drop frames.
+	//
+	//    A complication occurs if the worker thread is already waiting on the semaphore due
+	//    to a previous unfinished call, in which case it's unsafe to also wait on the semaphore
+	//    here. If the WaitReady flag is set, we've already successfully gotten a count and
+	//    can immediately present. Otherwise, we need to wait for the worker thread to finish
+	//    and have it issue the callback.
+	//
+	//    Note that it is absolutely critical that every Present() be paired with a semaphore
+	//    wait in order to keep counts on the semaphore correct. This includes non-vsync
+	//    presents, which we do with interval 0 to try to avoid blocking excessively.
+	//
+	// 2. DXGI 1.2+ flip in windowed / borderless mode with DO_NOT_WAIT
+	//
+	//    Strategy: Predict vblank times, Present(0), retry on DXGI_STATUS_WAS_STILL_DRAWING
+	//
+	//    In this case, we don't have a waitable handle, but we can still detect when the
+	//    queue is full by using DXGI_PRESENT_DO_NOT_WAIT. When this trips with WAS_STILL_DRAWING,
+	//    we use the worker thread to do a short timed wait to clear the vblank so we can retry
+	//    without blocking the main thread.
+	//
+	//    Note that we do not attempt to wait for the vblank, as this can result in dropped
+	//    frames due to tight timing resulting in accidentally waiting for the _next_ vblank.
+	//
+	//    Additionally, because we have frame statistics available, we can also estimate when
+	//    the vblank times are, and try to schedule Presents() to avoid overfilling the frame
+	//    queue. This reduces the chances of us filling the frame queue and stalling in
+	//    Present(). Most of this time, this is successful and we can Present() at interval 0
+	//    without stalling and without excessive frame queuing. At most, we may over-queue
+	//    by about 0.3 frames or so when we deliberately hop the vblank to avoid jittering
+	//    around the time that the DWM compositor grabs frames.
+	//
+	// 3. DXGI 1.2+ in exclusive full screen mode, with DXGI_PRESENT_DO_NOT_WAIT
+	//
+	//    Strategy: Predict vblank times, Present(1), and retry on DXGI_STATUS_WAS_STILL_DRAWING
+	//
+	//    We don't have a waitable handle available here due to exclusive full screen mode, but
+	//    we can use the same strategy as for windowed mode due to frame statistics being
+	//    available.
+	//
+	//    This is a little less effective than windowed mode, as we can't use present interval 0
+	//    to queue frames -- doing so causes tearing even if we are using FLIP_DISCARD and
+	//    haven't passed DXGI_PRESENT_ALLOW_TEARING. Thus, there's more risk in this case that
+	//    we fill up the queue and hit WAS_STILL_DRAWING.
+	//
+	// 4. DXGI 1.1 in exclusive full screen mode, without DXGI_PRESENT_DO_NOT_WAIT
+	//
+	//    Strategy: Predict vblank times, Present(1), and drop frames when Present() starts
+	//              to continuously stall
+	//
+	//    In this case, we have very few options; we have no waitable event and can't request
+	//    a DO_NOT_WAIT present, but we do have frame statistics. In that case, we can use the
+	//    frame statistics to predict the vblank times and use that to schedule our presents.
+	//    When there is a free queue slot, the present will go through quickly; when the queue
+	//    backs up, Present() will begin to block and the main thread will need to drop a frame.
+	//
+	// 5. DXGI 1.1 non-flip in windowed / borderless mode without DO_NOT_WAIT
+	//
+	//    Strategy: Wait for vblank and Present(0)
+	//
+	//    In this case, we need to use present interval 0. Unfortunately we don't have frames
+	//    statistics available which makes this tricky. We do have WaitForVblank(), which would
+	//    allow creating a clock, but there is a problem: on Windows 7, calling it blocks
+	//    Present() on any other threads during its execution. Thus, the only safe way to use
+	//    it is as part of the main present path.
+	//
+	//    We check whether DWM composition is enabled, and use the worker thread to defer
+	//    Present() to either vblank or shortly after vblank. When the DWM is enabled, we need
+	//    to delay a bit after vblank to ensure that the DWM is consistent about which frame
+	//    it picks up, or else the result is a jittery mess as the DWM randomly picks up
+	//    frame-1 or frame. This unfortunately incurs about 1.7-2.7 frames of total latency
+	//    depending on whether the DWM is presenting 1 or 2 frames ahead.
+
+
+	const auto getVSyncHazard = [this](uint64 t) -> uint64 {
+		if (!mbVSyncStatsValid)
+			return 0;
+
+		double offset = (double)(t - mVSyncTickBase);
+		offset -= round(offset / mVSyncPeriod) * mVSyncPeriod;
+
+		const double threshold = std::min<double>(VDGetPreciseTicksPerSecond() * 0.005f, mVSyncPeriod / 6);
+
+		if (fabs(offset) > threshold)
+			return 0;
+
+		return threshold - offset;
+	};
+
+	bool presentImmediate = waitReady;
+
+	if (mWaitHandle) {
+		if (waitReady)
+			presentImmediate = true;
+		else if (!waitActive && WAIT_OBJECT_0 == WaitForSingleObject(mWaitHandle, 0)) {
+			mVSyncMutex.Lock();
+			mbWaitReady = true;
+			mVSyncMutex.Unlock();
+			presentImmediate = true;
+		} else
+			return PresentVSyncQueueRequest(VSyncRequest::WaitForEvent, 0);
+	} else if (!mbUsingFrameStatistics) {
+		return PresentVSyncQueueRequest(VSyncRequest::WaitForVSync, 0);
+	} else {
+		if (!mbVSyncStatsValid) {
+			presentImmediate = true;
+		} else {
+			if (t < mVSyncMinNextTime)
+				return PresentVSyncQueueRequest(VSyncRequest::WaitForTime, mVSyncMinNextTime);
+
+			// check if we are in the danger zone
+			double offset = (double)(t - mVSyncTickBase);
+			offset -= round(offset / mVSyncPeriod) * mVSyncPeriod;
+
+			const double threshold = std::min<double>(VDGetPreciseTicksPerSecond() * 0.002f, mVSyncPeriod / 8);
+
+			if (fabs(offset) > threshold)
+				presentImmediate = true;
+			else
+				return PresentVSyncQueueRequest(VSyncRequest::WaitForTime, t + (uint64)(threshold - offset));
+		}
+	}
+
+	if (presentImmediate) {
+		mbVSyncPending = true;
+		PresentVSyncComplete();
+	} else
+		PresentVSyncRestart();
+}
+
+void VDTSwapChainD3D11::PresentVSyncRestart() {
+	if (mWaitHandle)
+		PresentVSyncQueueRequest(VSyncRequest::WaitForEvent, 0);
+	else
+		PresentVSyncQueueRequest(VSyncRequest::WaitForVSync, 0);
+}
+
+void VDTSwapChainD3D11::PresentVSyncQueueRequest(VSyncRequest request, uint64 deadline) {
 	mVSyncMutex.Lock();
 	mbVSyncExit = false;
-	mhVSyncMonitor = monitor;
+	mVSyncRequest = request;
+	mVSyncRequestTime = deadline;
+
+	++mLastPresentStatus.mLastPresentFramesQueued;
 
 	bool needPost = !mbVSyncPollPending;
 	mbVSyncPollPending = true;
-	mpVSyncCallback = callback;
 	mVSyncMutex.Unlock();
 
 	if (needPost)
@@ -1691,42 +2075,290 @@ void VDTSwapChainD3D11::PresentVSync(void *monitor, IVDTAsyncPresent *callback) 
 	mbVSyncPending = true;
 }
 
-void VDTSwapChainD3D11::PresentVSyncComplete() {
+bool VDTSwapChainD3D11::PresentVSyncComplete() {
 	if (!mbVSyncPending)
-		return;
+		return true;
 
 	mbVSyncPending = false;
 
 	if (!mpSwapChain)
-		return;
+		return true;
 
-	HRESULT hr {};
-	if (mDesc.mbWindowed) {
-		// We seem to need Present1() here in order for an interval of 0 to actually
-		// skip frames in flip model. Otherwise, eventually the chain gets filled
-		// and lag results.
-		if (mpSwapChain1) {
-			DXGI_PRESENT_PARAMETERS parms = { 0 };
-			hr = mpSwapChain1->Present1(0, 0, &parms);
-		} else
-			hr = mpSwapChain->Present(0, 0);
+	float lpDelay = 0;
+	uint64 syncTick = 0;
+	uint32 syncCount = 0;
+	uint32 presentId = 0;
+
+	mLastPresentTick = VDGetPreciseTick();
+
+	const UINT useDurationFlag = mbUsingCustomDuration ? DXGI_PRESENT_USE_DURATION : 0;
+	const UINT useRestartFlag = !mDesc.mbWindowed || mbUsingFlip ? DXGI_PRESENT_RESTART : 0;
+	const UINT presentFlags = useRestartFlag | useDurationFlag;
+
+	// If we're using flip, we can use interval 0 to queue a vsynced frame while cancelling
+	// another frame already in the queue. If we're using blit, we can't do this as 0 would
+	// just mean immediate instead. Note that this only works in windowed mode; flip discard
+	// in exclusive fullscreen still tears with interval 0.
+	UINT presentInterval = 1;
+
+	if (!mWaitHandle && mDesc.mbWindowed && (mbUsingFlip || !mbUsingFrameStatistics))
+		presentInterval = 0;
+
+	HRESULT presentResult {};
+
+	// We seem to need Present1() here in order for an interval of 0 to actually
+	// skip frames in flip model. Otherwise, eventually the chain gets filled
+	// and lag results.
+	if (mpSwapChain1) {
+		DXGI_PRESENT_PARAMETERS parms = { 0 };
+
+		// If we are in exclusive fullscreen mode, we must use a flip interval of 1 even if flip
+		// is enabled, or tearing results.
+		const UINT doNotWaitFlag = mbUsingDoNotWait ? DXGI_PRESENT_DO_NOT_WAIT : 0;
+
+		presentResult = mpSwapChain1->Present1(presentInterval, presentFlags | doNotWaitFlag, &parms);
+		if (presentResult == DXGI_ERROR_WAS_STILL_DRAWING) {
+			if (!mVSyncRetryStartTime)
+				mVSyncRetryStartTime = mLastPresentTick;
+
+			PresentVSyncQueueRequest(VSyncRequest::WaitForTime, mLastPresentTick + VDGetPreciseTicksPerSecondI() / 400);
+			return false;
+		}
 	} else
-		hr = mpSwapChain->Present(1, 0);
+		presentResult = mpSwapChain->Present(presentInterval, presentFlags);
+
+	UINT pcount;
+	if (SUCCEEDED(mpSwapChain->GetLastPresentCount(&pcount))) {
+		mPresentHistory[pcount & (std::size(mPresentHistory) - 1)] = PresentEvent { mVSyncWaitStartTime, pcount };
+	}
+
+	const uint64 postPresentTick = VDGetPreciseTick();
+	float presentCallTime = (float)((double)(postPresentTick - mLastPresentTick) * VDGetPreciseSecondsPerTick());
+
+	float vsyncOffset = -1.0f;
+	
+	mLastCompositionStatus = VDTSwapChainCompositionStatus::Unknown;
+
+	if (mbUsingFrameStatistics) {
+		DXGI_FRAME_STATISTICS stats {};
+		bool statsValid = false;
+
+		// If we have media statistics, use those to save a call; it returns a superset.
+		if (mpSwapChainMedia) {
+			DXGI_FRAME_STATISTICS_MEDIA statsMedia {};
+			if (SUCCEEDED(mpSwapChainMedia->GetFrameStatisticsMedia(&statsMedia))) {
+				stats.PresentCount			= statsMedia.PresentCount;
+				stats.PresentRefreshCount	= statsMedia.PresentRefreshCount;
+				stats.SyncRefreshCount		= statsMedia.SyncRefreshCount;
+				stats.SyncQPCTime			= statsMedia.SyncQPCTime;
+				stats.SyncGPUTime			= statsMedia.SyncGPUTime;
+
+				UpdateCompositionStatus(statsMedia.CompositionMode);
+				statsValid = true;
+			}
+		} else {
+			if (SUCCEEDED(mpSwapChain->GetFrameStatistics(&stats)))
+				statsValid = true;
+		}
+
+		if (statsValid) {
+			// The docs for DXGI_FRAME_STATISTICS are pretty bad. The docs for the analogous
+			// D3DPRESENTSTATS in D3D9Ex are a bit better, but the best docs are for
+			// D3DKMT_PRESENT_STATS. Putting it all together:
+			//
+			// - PresentCount indicates the last present operation that has retired. It
+			//   roughly increments for each present, but may also increment for other
+			//   calls such as IDirect3DDevice9::SetDialogBoxMode() -- thus the warning
+			//   about this not being the Present() count in the DXGI version.
+			//
+			// - PresentRefreshCount indicates the vblank counter value for the last
+			//   retired present. It also increments for each frame, but the comments
+			//   for DWM_TIMING_INFO notes that DXGI may miss vblank interrupts.
+			//
+			// - SyncRefreshCount and SyncQPCTime indicate a sample relating a VBI time
+			//   to QueryPerformanceCounter (QPC) time. This is NOT necessarily either the
+			//   last vblank time or the vblank corresponding to PresentCount/PresentRefreshCount,
+			//   which is why the DWM calls it "_a_ vblank time".
+			//
+			// - Samples are not guaranteed to be provided for all refreshes, it may be 2+
+			//   refreshes between samples.
+			//
+			// Note that when DWM composition is involved, these timings include delays from
+			// the DWM. They indicate when the image has finally been displayed on the output,
+			// but CANNOT indicate when the DWM has consumed a frame from the flip queue.
+			//
+			// Taking this all together, to get useful latency info out of all of this, we need to:
+			//
+			// - Maintain a history to translate from PresentCount values to the QPC time
+			//   that we submitted the frame.
+			//
+			// - Maintain a queue of SyncRefreshCount/SyncQPCTime pairs to estimate the
+			//   relation between refresh number and QPC time.
+
+			// shift sync history
+			auto& lastSyncEvent = mSyncHistory[(mSyncHistoryIndex - 1) & (std::ssize(mSyncHistory) - 1)];
+
+			if (lastSyncEvent.mRefreshCount != stats.SyncRefreshCount) {
+				mSyncHistory[mSyncHistoryIndex & ((int)std::ssize(mSyncHistory) - 1)] = SyncEvent { (uint64)stats.SyncQPCTime.QuadPart, stats.SyncRefreshCount };
+				++mSyncHistoryIndex;
+
+				if (mSyncHistoryLen < std::size(mSyncHistory))
+					++mSyncHistoryLen;
+			}
+
+			// try to find present ID for the last present that has hit the display
+			const PresentEvent& pe = mPresentHistory[stats.PresentCount & (std::size(mPresentHistory) - 1)];
+
+			if (pe.mPresentCount == stats.PresentCount && mSyncHistoryLen >= std::size(mSyncHistory)) {
+				// compute linear regression: y = a + bx (=>) b = Cov(X,Y)/Var(X), a = Avg(Y) - b * Avg(X)
+				uint32 x0 = mSyncHistory[0].mRefreshCount;
+				uint64 y0 = mSyncHistory[0].mSyncQpcTime;
+				double xs = 0;
+				double xxs = 0;
+				double ys = 0;
+				double yys = 0;
+				double xys = 0;
+				for(int i=1; i<std::ssize(mSyncHistory); ++i) {
+					double x = (double)(sint32)(mSyncHistory[i].mRefreshCount - x0);
+					double y = (double)(sint64)(mSyncHistory[i].mSyncQpcTime - y0);
+
+					xs += x;
+					xxs += x*x;
+					ys += y;
+					yys += y*y;
+					xys += x*y;
+				}
+
+				const double invN = 1.0f / (double)std::ssize(mSyncHistory);
+				const double invN2 = invN * invN;
+
+				double var = xs*xs*invN2 - xxs*invN;
+
+				if (fabs(var) > 0.0001f) {
+					double cov = xs*ys*invN2 - xys*invN;
+
+					if (fabs(cov) > fabs(var)) {
+						double b = cov / var;
+						double a = ys*invN - b*xs*invN;
+
+						// convert refresh count to QPC time
+						uint64 presentQpcTime = mSyncHistory[0].mSyncQpcTime + (uint64)(sint64)(a + b * (sint32)(stats.PresentRefreshCount - mSyncHistory[0].mRefreshCount));
+
+						lpDelay = (float)(sint64)(presentQpcTime - pe.mSubmitQpcTime) * (float)VDGetPreciseSecondsPerTick();
+
+						vsyncOffset = fmod((double)(sint64)(presentQpcTime - mLastPresentTick), b);
+						if (vsyncOffset < 0)
+							vsyncOffset += b;
+
+						vsyncOffset *= (float)VDGetPreciseSecondsPerTick();
+
+						mbVSyncStatsValid = true;
+						mVSyncTickBase = mSyncHistory[0].mSyncQpcTime + (uint64)VDRoundToInt64(a);
+						mVSyncPeriod = b;
+					}
+				}
+			}
+
+			syncTick = stats.SyncQPCTime.QuadPart;
+			syncCount = stats.SyncRefreshCount;
+			presentId = stats.PresentCount;
+		}
+	}
+
+	uint32 framesQueued = GetQueuedFrames();
+
+	if (mbVSyncStatsValid) {
+		double offset = (double)(postPresentTick - mVSyncTickBase);
+		offset -= round(offset / mVSyncPeriod) * mVSyncPeriod;
+
+		const double threshold = std::min<double>(VDGetPreciseTicksPerSecond() * 0.002f, mVSyncPeriod / 8);
+
+		mVSyncMinNextTime = postPresentTick + (sint64)llrint(threshold - offset + (offset > 0 ? mVSyncPeriod : 0));
+	}
+
+	mVSyncMutex.Lock();
+	mbWaitReady = false;
+
+	auto status = mLastPresentStatus;
+	float compositionWaitTime = mVSyncCompositionWaitTime;
+	mVSyncMutex.Unlock();
+
+	status.mPresentWaitTime = (float)((double)(postPresentTick - mVSyncWaitStartTime) * VDGetPreciseSecondsPerTick());
+	status.mLastPresentDelay = lpDelay;
+	status.mSyncTick = syncTick;
+	status.mSyncCount = syncCount;
+	status.mLastPresentCallTime = presentCallTime;
+	status.mLastPresentFramesQueued = framesQueued;
+
+	// The present queue time is used by the calling code to determine if excessive latency
+	// has built up in the frame queue that should be alleviated by dropping a frame. If we
+	// have frame statistics and a wait handle, then we have an accurate view of both the
+	// vsync and the frame queue latency, and can return the wait time regardless of the
+	// actual Present() call time (which should be negligible). Otherwise, we need to return
+	// only blocking time in Present(), or equivalent if we are using DO_NOT_WAIT.
+	//
+	// What must NOT happen is returning the same value here and for vsync offset. This would
+	// cause the frame dropping code to overreact as it would trigger in the range that we
+	// need for a stable vsync offset target (~0.5 frame).
+	//
+	if (vsyncOffset >= 0) {
+		status.mVSyncOffset = vsyncOffset;
+		status.mPresentQueueTime = status.mPresentWaitTime;
+	} else {
+		if (mVSyncRetryStartTime)
+			status.mPresentQueueTime = (float)((double)(postPresentTick - mVSyncRetryStartTime) * VDGetPreciseSecondsPerTick());
+		else
+			status.mPresentQueueTime = status.mLastPresentCallTime;
+	
+		// Without frame statistics, we can still estimate the present-to-vblank offset by
+		// the time delay to WaitForVblank() -- but we must make sure not to include the
+		// extra sleep done to clear the DWM composition time.
+		status.mVSyncOffset = std::max<float>(0, status.mPresentWaitTime - compositionWaitTime);
+	}
+
+	if (mVSyncPeriod > 0)
+		status.mRefreshRate = (float)VDGetPreciseTicksPerSecond() / mVSyncPeriod;
+	else
+		status.mRefreshRate = -1.0f;
+
+	mpVSyncCallback->OnPresentCompleted(status);
+
+	VDTContextD3D11& ctx = static_cast<VDTContextD3D11&>(*mpParent);
+	std::copy(std::begin(mPresentFences) + 1, std::end(mPresentFences), std::begin(mPresentFences));
+	std::end(mPresentFences)[-1] = ctx.InsertFence();
 
 	// If the swap chain is in flip mode, it'll unbind the render target, so we need to
 	// sync that state.
-	static_cast<VDTContextD3D11 *>(mpParent)->SetRenderTarget(0, nullptr, false);
+	ctx.SetRenderTarget(0, nullptr, false);
 
-	mbWasOccluded = (hr == DXGI_STATUS_OCCLUDED);
+	mbWasOccluded = (presentResult == DXGI_STATUS_OCCLUDED);
+
+	return true;
 }
 
 void VDTSwapChainD3D11::PresentVSyncAbort() {
 	mbVSyncPending = false;
 
 	mVSyncMutex.Lock();
-	mhVSyncMonitor = NULL;
-	mpVSyncCallback = NULL;
+	mVSyncRequest = VSyncRequest::None;
 	mVSyncMutex.Unlock();
+}
+
+void VDTSwapChainD3D11::UpdateCompositionStatus(DXGI_FRAME_PRESENTATION_MODE dxgiPresentationMode) {
+	switch(dxgiPresentationMode) {
+		case DXGI_FRAME_PRESENTATION_MODE_COMPOSED:
+			mLastCompositionStatus = mbUsingFlip ? VDTSwapChainCompositionStatus::ComposedFlip : VDTSwapChainCompositionStatus::ComposedCopy;
+			break;
+
+		case DXGI_FRAME_PRESENTATION_MODE_OVERLAY:
+			mLastCompositionStatus = VDTSwapChainCompositionStatus::Overlay;
+			break;
+
+		case DXGI_FRAME_PRESENTATION_MODE_NONE:
+		case DXGI_FRAME_PRESENTATION_MODE_COMPOSITION_FAILURE:
+			mLastCompositionStatus = VDTSwapChainCompositionStatus::Unknown;
+			break;
+	}
 }
 
 void VDTSwapChainD3D11::ThreadRun() {
@@ -1773,75 +2405,158 @@ void VDTSwapChainD3D11::ThreadRun() {
 		}
 	}
 
-	HMONITOR hmonPrev = NULL;
-
 	if (pAdapter)
 		pAdapter->EnumOutputs(0, ~pOutput);
 
+	HMONITOR hmonPrev = nullptr;
+	bool triedWaitableTimer = false;
+	HANDLE hWaitTimer = nullptr;
+
 	for(;;) {
+		// wait for something to do
 		mVSyncPollPendingSema.Wait();
 
+		bool pollAdaptive = false;
+
 		mVSyncMutex.Lock();
-		if (mbVSyncPollPending)
-			mbVSyncPollPending = false;
+		pollAdaptive = mbVSyncPollAdaptive;
 
 		if (mbVSyncExit) {
 			mVSyncMutex.Unlock();
 			break;
 		}
 
-		if (!mpVSyncCallback) {
+		VSyncRequest request = mVSyncRequest;
+		uint64 requestTime = mVSyncRequestTime;
+		HMONITOR hmon = (HMONITOR)mhVSyncMonitor;
+
+		if (request == VSyncRequest::None) {
+			mbVSyncPollPending = false;
 			mVSyncMutex.Unlock();
 			continue;
 		}
 
-		HMONITOR hmon = (HMONITOR)mhVSyncMonitor;
+		bool waitNeeded = !mbWaitReady;
+
+		if (waitNeeded && request == VSyncRequest::WaitForEvent)
+			mbVSyncIsWaiting = true;
+		else
+			mbVSyncIsWaiting = false;
+
 		mVSyncMutex.Unlock();
 
-		if (hmon != hmonPrev && pAdapter) {
-			UINT outputIdx = 0;
-
-			for(;;) {
-				hr = pAdapter->EnumOutputs(outputIdx++, ~pOutput);
-
-				if (FAILED(hr))
-					break;
-
-				DXGI_OUTPUT_DESC outputDesc;
-				hr = pOutput->GetDesc(&outputDesc);
-
-				if (SUCCEEDED(hr) && outputDesc.Monitor == hmon)
-					break;
-			}
-
-			hmonPrev = hmon;
-		}
-
-		if (mWaitHandle) {
+		bool waitCompleted = false;
+		if (request == VSyncRequest::WaitForEvent || request == VSyncRequest::WaitForEventSync) {
 			// On Windows 8.1 Update 1, the waitable object that is returned is actually
-			// a semaphore. We really only care about the last present, so bad things will
-			// happen latency-wise if an extra count gets in there. Therefore, after a
-			// successful wait, we do another zero-timeout wait to clear any extra counts
-			// on the semaphore.
-			if (WAIT_OBJECT_0 == ::WaitForSingleObject(mWaitHandle, 30)) {
-				::WaitForSingleObject(mWaitHandle, 0);
-			}
-		} else if (pOutput) {
-			pOutput->WaitForVBlank();
+			// a semaphore which is posted for every completed present. Thus, bad things will
+			// happen latency-wise if an extra count gets in there. It is critical
+			// that every successful present follow one successful wait.
+			if (waitNeeded) {
+				if (!mWaitHandle || WAIT_OBJECT_0 != ::WaitForSingleObject(mWaitHandle, INFINITE)) {
+					// wait failed - make sure to sleep so we don't spin
+					::Sleep(10);
+				}
 
-			// Delay a bit so that we don't race the DWM on the blit.
-			::Sleep(5);
+				waitCompleted = true;
+			}
+		} else if (request == VSyncRequest::WaitForTime) {
+			uint64 now = VDGetPreciseTick();
+			sint64 delay = requestTime - now;
+
+			if (delay > 0) {
+				if (!triedWaitableTimer) {
+					triedWaitableTimer = true;
+
+					// This requires at least Windows 10 1803 (RS4) or later.
+					if (VDIsAtLeast10_1803W32())
+						hWaitTimer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+
+					if (!hWaitTimer)
+						hWaitTimer = CreateWaitableTimer(nullptr, false, nullptr);
+				}
+
+				// make sure we never wait for more than 20ms, just to be safe
+				uint64 clampedDelay = std::min<uint64>((uint64)delay, VDGetPreciseTicksPerSecond() * 0.020f);
+
+				if (hWaitTimer) {
+					uint32 clampedDelay100Ns = (uint32)((clampedDelay * 10000 - 1) / VDGetPreciseTicksPerSecondI() + 1);
+
+					LARGE_INTEGER delay {};
+					delay.QuadPart = -(LONGLONG)clampedDelay100Ns;
+					if (SetWaitableTimer(hWaitTimer, &delay, 0, nullptr, nullptr, false))
+						WaitForSingleObject(hWaitTimer, INFINITE);
+				} else {
+					uint32 clampedDelayMs = (uint32)((clampedDelay * 1000 - 1) / VDGetPreciseTicksPerSecondI() + 1);
+
+					::Sleep(clampedDelayMs);
+				}
+			}
+		} else if (request == VSyncRequest::WaitForVSync) {
+			if (hmon && hmon != hmonPrev && pAdapter) {
+				UINT outputIdx = 0;
+
+				for(;;) {
+					hr = pAdapter->EnumOutputs(outputIdx++, ~pOutput);
+
+					if (FAILED(hr))
+						break;
+
+					DXGI_OUTPUT_DESC outputDesc;
+					hr = pOutput->GetDesc(&outputDesc);
+
+					if (SUCCEEDED(hr) && outputDesc.Monitor == hmon)
+						break;
+				}
+
+				hmonPrev = hmon;
+			}
+
+			if (pOutput) {
+				// It is really important that we only call this while the main thread is waiting
+				// to Present(). On Windows 7, it takes a shared mutex that causes Present()
+				// to block while another thread is in WaitForVBlank(), which prevents us from having
+				// a separate thread use it for a clock. D3DKMTWaitForVerticalBlank() is essentially
+				// identical and has the same blocking problem.
+				pOutput->WaitForVBlank();
+
+				if (mbUsingComposition) {
+					// Delay a bit so that we don't race the DWM on the blit. The issue is that the DWM
+					// composites at the start of vblank, so if we try to also Present() around that same
+					// time, it's a crapshoot whether the frame makes it into the DWM's render pass in
+					// time and the result is some rather ugly jitter.
+					::Sleep(5);
+					mVSyncCompositionWaitTime = 0.005f;
+				}
+			} else {
+				// No output, we'd better just do fake vsync.
+				::Sleep(30);
+			}
 		} else {
-			// No output, we'd better just do fake vsync.
-			::Sleep(10);
+			::Sleep(5);
 		}
 
 		mVSyncMutex.Lock();
-		if (mpVSyncCallback) {
-			mpVSyncCallback->QueuePresent();
-			mpVSyncCallback = NULL;
+		mbVSyncIsWaiting = false;
+		mbVSyncPollPending = false;
+		
+		if (waitCompleted)
+			mbWaitReady = true;
+
+		if (mVSyncRequest != VSyncRequest::None) {
+			if (mVSyncRequest == VSyncRequest::WaitForEventSync)
+				mWaitSignal.signal();
+			else
+				mpVSyncCallback->QueuePresent(false);
+
+			mVSyncRequest = VSyncRequest::None;
 		}
+
 		mVSyncMutex.Unlock();
+	}
+
+	if (hWaitTimer) {
+		CloseHandle(hWaitTimer);
+		hWaitTimer = nullptr;
 	}
 }
 
@@ -1913,11 +2628,28 @@ void *VDTContextD3D11::AsInterface(uint32 iid) {
 bool VDTContextD3D11::Init(ID3D11Device *dev, ID3D11DeviceContext *devctx, IDXGIAdapter1 *adapter, IDXGIFactory *factory, VDD3D11Holder *pD3DHolder) {
 	mpData = new PrivateData;
 
+	// Force max frame latency on the device to 1 frame only. This is required to avoid
+	// stacking frames in the present queue in full screen mode, as fences are NOT able
+	// to detect buffers pending present. When using a waitable object in windowed
+	// mode, we have to set this on the swap chain instead.
+	vdrefptr<IDXGIDevice1> dev1;
+	dev->QueryInterface(IID_IDXGIDevice1, (void **)~dev1);
+	if (dev1) {
+		// TODO: This causes stuttering when present is near vblank in exclusive fullscreen,
+		// even though there is no stalling in Present().
+		dev1->SetMaximumFrameLatency(1);
+	}
+
 	if (SUCCEEDED(devctx->QueryInterface(__uuidof(ID3DUserDefinedAnnotation), (void **)&mpD3DAnnotation))) {
 		// check if we actually have profiling enabled
 		if (!mpD3DAnnotation->GetStatus())
 			vdsaferelease <<= mpD3DAnnotation;
 	}
+
+	DXGI_ADAPTER_DESC adapterDesc {};
+	adapter->GetDesc(&adapterDesc);
+
+	mCaps.mDeviceDescription = adapterDesc.Description;
 
 	switch(dev->GetFeatureLevel()) {
 		case D3D_FEATURE_LEVEL_11_0:
@@ -1952,11 +2684,17 @@ bool VDTContextD3D11::Init(ID3D11Device *dev, ID3D11DeviceContext *devctx, IDXGI
 			break;
 	}
 
+	mCaps.mbMinPrecisionPS = false;
+	mCaps.mbMinPrecisionNonPS = false;
+
 	if (VDIsAtLeast8W32()) {
 		D3D11_FEATURE_DATA_SHADER_MIN_PRECISION_SUPPORT support {};
 		if (SUCCEEDED(dev->CheckFeatureSupport(D3D11_FEATURE_SHADER_MIN_PRECISION_SUPPORT, &support, sizeof support))) {
 			mpData->mbMinPrecisionSupportedPS = (support.PixelShaderMinPrecision > 0);
 			mpData->mbMinPrecisionSupportedOther = (support.AllOtherShaderStagesMinPrecision> 0);
+
+			mCaps.mbMinPrecisionPS = mpData->mbMinPrecisionSupportedPS;
+			mCaps.mbMinPrecisionNonPS = mpData->mbMinPrecisionSupportedOther;
 		}
 	}
 

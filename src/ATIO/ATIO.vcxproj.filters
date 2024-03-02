@@ -99,6 +99,12 @@
     <ClCompile Include="source\audioreaderflac_arm64.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\partitiontable.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\partitiondiskview.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\stdafx.h">
@@ -163,6 +169,12 @@
     </ClInclude>
     <ClInclude Include="h\at\atio\audioreaderflac.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atio\partitiontable.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atio\partitiondiskview.h">
+      <Filter>Interface Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

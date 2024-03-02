@@ -33,10 +33,12 @@ public:
 	void Process(const sint16 *samples, uint32 n, uint32 *bitfield, uint32 bitoffset, float *adest);
 
 protected:
-	sint32 mAcc0R;
-	sint32 mAcc0I;
-	sint32 mAcc1R;
-	sint32 mAcc1I;
+	struct Acc {
+		sint32 m0R;
+		sint32 m0I;
+		sint32 m1R;
+		sint32 m1I;
+	} mAcc;
 	uint32 mIndex;
 	sint16 mHistory[24];
 };

@@ -24,7 +24,7 @@
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
-#include <vd2/Kasumi/triblt.h>
+#include <at/atcore/configvar.h>
 #include <at/atcore/profile.h>
 #include <at/atcore/enumparseimpl.h>
 #include <at/atcore/serialization.h>
@@ -77,6 +77,11 @@ extern "C" void VDCDECL atasm_update_playfield_160_sse2(
 
 ///////////////////////////////////////////////////////////////////////////
 
+ATConfigVarInt32 g_ATCVDisplayDropCountThreshold("display.drop_count_threshold", 20);
+ATConfigVarFloat g_ATCVDisplayDropLagThreshold("display.drop_lag_threshold", 0.007f);
+
+///////////////////////////////////////////////////////////////////////////
+
 bool ATColorParams::IsSimilar(const ATColorParams& other) const {
 	const auto IsSimilar = [](float x, float y) { return fabsf(x - y) < 1e-5f; };
 
@@ -112,6 +117,8 @@ ATArtifactingParams ATArtifactingParams::GetDefault() {
 	params.mBloomIndirectIntensity = 0.10f;
 	params.mSDRIntensity = 200.0f;
 	params.mHDRIntensity = 350.0f;
+	params.mbUseSystemSDR = false;
+	params.mbUseSystemSDRAsHDR = false;
 
 	return params;
 }
@@ -703,6 +710,8 @@ ATGTIAEmulator::ATGTIAEmulator()
 }
 
 ATGTIAEmulator::~ATGTIAEmulator() {
+	SetVideoOutput(nullptr);
+
 	mpLastFrame = NULL;
 
 	if (mpFrameTracker) {
@@ -848,6 +857,9 @@ ATGTIAEmulator::HDRAvailability ATGTIAEmulator::IsHDRRenderingAvailable() const 
 
 		case VDDHDRAvailability::NoHardwareSupport:
 			return HDRAvailability::NoHardwareSupport;
+
+		case VDDHDRAvailability::NotEnabledOnDisplay:
+			return HDRAvailability::NotEnabledOnDisplay;
 
 		case VDDHDRAvailability::NoDisplaySupport:
 			return HDRAvailability::NoDisplaySupport;
@@ -1047,12 +1059,31 @@ void ATGTIAEmulator::SetPFCollisionsEnabled(bool enable) {
 }
 
 void ATGTIAEmulator::SetVideoOutput(IVDVideoDisplay *pDisplay) {
+	if (mpDisplay == pDisplay)
+		return;
+
+	if (mpDisplay)
+		mpDisplay->SetOnFrameStatusUpdated(nullptr);
+
 	mpDisplay = pDisplay;
 
-	if (!pDisplay) {
+	if (mpDisplay) {
+		mpDisplay->SetOnFrameStatusUpdated(
+			[this](int framesQueued) {
+				if (framesQueued == 0 && mbWaitingForFrame) {
+					mbWaitingForFrame = false;
+
+					if (mpOnRetryFrame)
+						mpOnRetryFrame();
+				}
+			}
+		);
+	} else {
 		mpFrame = NULL;
 		mpDst = NULL;
 	}
+
+	mbWaitingForFrame = false;
 }
 
 void ATGTIAEmulator::SetCTIAMode(bool enabled) {
@@ -1565,6 +1596,7 @@ void ATGTIAEmulator::LoadState(const IATObjectState& state) {
 		size_t len = gistate.mRegisterChanges.size();
 		size_t numChanges = len / 3;
 		mRegisterChanges.resize(numChanges);
+		mRCCount = numChanges;
 
 		for(size_t i = 0, j = 0; i < numChanges; ++i, j += 3) {
 			RegisterChange& rc = mRegisterChanges[i];
@@ -1643,12 +1675,20 @@ void ATGTIAEmulator::GetRegisterState(ATGTIARegisterState& state) const {
 	state.mReg[0x1F] = mSwitchOutput;
 }
 
+void ATGTIAEmulator::DumpHighArtifactingFilters(ATConsoleOutput& output) {
+	mpArtifactingEngine->DumpHighArtifactingFilters(output);
+}
+
 void ATGTIAEmulator::SetFieldPolarity(bool polarity) {
 	mbFieldPolarity = polarity;
 }
 
 void ATGTIAEmulator::SetVBLANK(VBlankMode vblMode) {
 	mVBlankMode = vblMode;
+}
+
+void ATGTIAEmulator::SetOnRetryFrame(vdfunction<void()> fn) {
+	mpOnRetryFrame = fn;
 }
 
 bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
@@ -1658,32 +1698,64 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 	if (!mpDisplay)
 		return true;
 
-	if (!mVideoTaps.IsEmpty())
-		drop = false;
+	// check if we have a video tap, which means that we must always generate
+	// a frame even if we aren't displaying it
+	const bool alwaysNeedFrame = !mVideoTaps.IsEmpty();
 
-	if (!drop && !mpDisplay->RevokeBuffer(false, ~mpFrame)) {
-		if (mpFrameTracker->mActiveFrames < 3) {
-			ATFrameBuffer *fb = new ATFrameBuffer(mpFrameTracker, *mpArtifactingEngine);
-			mpFrame = fb;
+	// grab a frame if we are not being asked to drop it
+	if (mpDisplay->GetVSyncStatus().mPresentQueueTime > g_ATCVDisplayDropLagThreshold) {
+		++mDisplayLagCounter;
 
-			fb->mPixmap.format = 0;
-			fb->mbAllowConversion = true;
-			fb->mFlags = 0;
-		} else if ((!mVideoTaps.IsEmpty() || !mbTurbo) && !force) {
-			if (!mpDisplay->RevokeBuffer(true, ~mpFrame))
-				return false;
+		if (mDisplayLagCounter > g_ATCVDisplayDropCountThreshold) {
+			mDisplayLagCounter = 0;
+			if (!alwaysNeedFrame)
+				drop = true;
+		}
+	} else
+		mDisplayLagCounter = 0;
+
+	if (!drop || alwaysNeedFrame) {
+		const bool isFramePending = mpDisplay->GetQueuedFrames() > 1;
+
+		if (isFramePending || !mpDisplay->RevokeBuffer(false, ~mpFrame)) {
+			if ((!isFramePending || mbTurbo) && mpFrameTracker->mActiveFrames < 3) {
+				// create a new frame
+				ATFrameBuffer *fb = new ATFrameBuffer(mpFrameTracker, *mpArtifactingEngine);
+				mpFrame = fb;
+
+				fb->mPixmap.format = 0;
+				fb->mbAllowConversion = true;
+				fb->mFlags = 0;
+			} else if (alwaysNeedFrame || (!mbTurbo && !isFramePending)) {
+				// try to recycle a frame
+				if (!mpDisplay->RevokeBuffer(true, ~mpFrame)) {
+					// we can't get a free framebuffer -- block if we are allowed to
+					if (!force) {
+						mbWaitingForFrame = true;
+						return false;
+					}
+				}
+
+				// proceed with frame without generating/rendering it
+			}
 		}
 	}
+	
+	mbWaitingForFrame = false;
 
 	mRawFrame.data = nullptr;
 
 	if (mpFrame) {
 		ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 
-		if (mbVsyncEnabled)
+		fb->mFlags &= ~(IVDVideoDisplay::kVSync | IVDVideoDisplay::kVSyncAdaptive);
+
+		if (mbVsyncEnabled) {
 			fb->mFlags |= IVDVideoDisplay::kVSync;
-		else
-			fb->mFlags &= ~IVDVideoDisplay::kVSync;
+
+			if (mbVsyncAdaptiveEnabled)
+				fb->mFlags |= IVDVideoDisplay::kVSyncAdaptive;
+		}
 
 		mbFrameCopiedFromPrev = false;
 
@@ -1785,7 +1857,7 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 			fb->mScreenFX.mScanlineIntensity = mFrameProperties.mbAccelScanlines ? mpArtifactingEngine->GetArtifactingParams().mScanlineIntensity : 0.0f;
 			fb->mScreenFX.mPALBlendingOffset = mFrameProperties.mbAccelPalArtifacting ? dualFieldFrame ? -2.0f : -1.0f : 0.0f;
 			fb->mScreenFX.mbSignedRGBEncoding = mFrameProperties.mbOutputExtendedRange;
-			fb->mScreenFX.mHDRIntensity = ap.mHDRIntensity / 80.0f;
+			fb->mScreenFX.mHDRIntensity = ap.mbUseSystemSDRAsHDR ? -1.0f : ap.mHDRIntensity / 80.0f;
 
 			// Set color correction matrix and gamma. For 32-bit, we can and do want to hardware accelerate
 			// this lookup if possible. If we're using a raw 8-bit frame, the color correction and gamma
@@ -1951,6 +2023,8 @@ void ATGTIAEmulator::EndScanline(uint8 dlControl, bool pfrendered) {
 		mRCCount -= mRCIndex;
 		mRCIndex = 0;
 	}
+
+	VDASSERT(mRCCount == mRegisterChanges.size());
 
 	for(int i=mRCIndex; i<mRCCount; ++i) {
 		mRegisterChanges[i].mPos -= 228;
@@ -2677,8 +2751,9 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 
 		ATProfileBeginRegion(kATProfileRegion_DisplayPresent);
 
+		const auto& ap = mpArtifactingEngine->GetArtifactingParams();
 		mpDisplay->SetHDREnabled(mFrameProperties.mbOutputHDR);
-		mpDisplay->SetSDRBrightness(mpArtifactingEngine->GetArtifactingParams().mSDRIntensity);
+		mpDisplay->SetSDRBrightness(ap.mbUseSystemSDR ? -1.0f : ap.mSDRIntensity);
 		mpDisplay->PostBuffer(fb);
 
 		ATProfileEndRegion(kATProfileRegion_DisplayPresent);
@@ -2701,15 +2776,6 @@ void ATGTIAEmulator::RecomputePalette() {
 	memcpy(mPalette, gen.mPalette, sizeof mPalette);
 	memcpy(mSignedPalette, gen.mSignedPalette, sizeof mSignedPalette);
 
-	if (mpVBXE) {
-		// For VBXE, we need to push the uncorrected palette since it has to do the correction
-		// on its side in order to handle RGB values written into palette registers. We also
-		// inject Y into the alpha channel for use by the artifacting engine, since this makes
-		// it substantially faster to do PAL chroma blending.
-
-		mpVBXE->SetDefaultPalette(gen.mUncorrectedPalette, mpArtifactingEngine);
-	}
-
 	const bool useMatrix = gen.mColorMatchingMatrix.has_value();
 	vdfloat3x3 mx;
 
@@ -2723,6 +2789,15 @@ void ATGTIAEmulator::RecomputePalette() {
 	}
 
 	mpArtifactingEngine->SetColorParams(mActiveColorParams, useMatrix ? &mx : nullptr, gen.mTintColor.has_value() ? &gen.mTintColor.value() : nullptr);
+
+	if (mpVBXE) {
+		// For VBXE, we need to push the uncorrected palette since it has to do the correction
+		// on its side in order to handle RGB values written into palette registers. We also
+		// inject Y into the alpha channel for use by the artifacting engine, since this makes
+		// it substantially faster to do PAL chroma blending.
+
+		mpVBXE->SetDefaultPalette(gen.mUncorrectedPalette, mpArtifactingEngine);
+	}
 }
 
 uint8 ATGTIAEmulator::ReadByte(uint8 reg) {

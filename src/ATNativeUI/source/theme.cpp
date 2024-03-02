@@ -145,6 +145,7 @@ void ATUIUpdateThemeColors() {
 		tc.mButtonFg		= tc.mStaticFg;
 
 		tc.mFocusedBg		= 0x505050;
+		tc.mFocusedRect		= 0x808080;
 	} else {
 		tc.mActiveCaptionText	= VDSwizzleU32(GetSysColor(COLOR_CAPTIONTEXT)) >> 8;
 		tc.mInactiveCaptionText	= VDSwizzleU32(GetSysColor(COLOR_INACTIVECAPTIONTEXT)) >> 8;

@@ -18,10 +18,10 @@
 #include <stdafx.h>
 #include <vd2/system/VDString.h>
 #include <at/atcore/decmath.h>
+#include <at/atcore/ksyms.h>
 #include "decmath.h"
 #include "cpu.h"
 #include "cpumemory.h"
-#include "ksyms.h"
 #include "console.h"
 #include "debuggerlog.h"
 

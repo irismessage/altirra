@@ -52,6 +52,10 @@ public:
 		return T((mPackedColor & 0xfcfcfc) >> 2);
 	}
 
+	static T Average(const T& x, const T& y) {
+		return T((x.mPackedColor | y.mPackedColor) - (((x.mPackedColor ^ y.mPackedColor) & 0xfefefe) >> 1));
+	}
+
 protected:
 	uint32 mPackedColor;
 };

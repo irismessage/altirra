@@ -75,7 +75,7 @@ struct ATVHDDynamicDiskHeader {
 	uint8	mReserved2[256];
 };
 
-class ATIDEVHDImage final : public IATBlockDevice, public ATDevice {
+class ATIDEVHDImage final : public IATBlockDevice, public IATBlockDeviceDirectAccess, public ATDevice {
 	ATIDEVHDImage(const ATIDEVHDImage&) = delete;
 	ATIDEVHDImage& operator=(const ATIDEVHDImage&) = delete;
 public:
@@ -114,6 +114,9 @@ public:
 
 	void ReadSectors(void *data, uint32 lba, uint32 n) override;
 	void WriteSectors(const void *data, uint32 lba, uint32 n) override;
+
+public:
+	VDStringW GetVHDDirectAccessPath() const override;
 
 private:
 	void InitCommon();

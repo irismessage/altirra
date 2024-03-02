@@ -32,8 +32,10 @@ public:
 
 	ATDebugDisasmMode GetDisasmMode() const { return mDisasmMode; }
 	uint32 GetSubCycles() const { return mSubCycles; }
-
+	
+	void BeginEvents();
 	void AddEvent(uint64 tick, const ATCPUHistoryEntry& he);
+	void EndEvents();
 
 	void *AsInterface(uint32 iid) override;
 
@@ -51,10 +53,18 @@ public:
 	uint64 GetTraceSize() const { return mTraceSize; }
 	uint32 GetEventCount() const { return mEventCount; }
 
+	// Return the start time of the trace, in history cycle counter time. This is used
+	// to rebias the mCycle value of history entries to compute trace time offset. It is
+	// not necessarily the time of the first insn entry as that may start after the
+	// trace starts by a few cycles.
+	uint32 GetHistoryBaseCycle() const { return (uint32)mTickOffset; }
+
 private:
 	static constexpr uint32 kBlockSizeBits = 6;
 	static constexpr uint32 kBlockSize = 1 << kBlockSizeBits;
 	static constexpr uint32 kUnpackedSlots = 8;
+
+	struct StaticProfiling;
 
 	struct Event {
 		double mTime;

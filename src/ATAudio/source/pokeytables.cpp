@@ -11,9 +11,12 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #include <stdafx.h>
 #include <at/ataudio/pokeytables.h>
@@ -21,18 +24,19 @@
 ATPokeyTables::ATPokeyTables() {
 	// The 4-bit and 5-bit polynomial counters are of the XNOR variety, which means
 	// that the all-1s case causes a lockup. The INIT mode shifts zeroes into the
-	// register.
+	// register. Bits are tapped off for the audio circuits at the far end of the
+	// register, right before the feedback XNOR.
 
 	uint32 poly4 = 0;
 	for(int i=0; i<131071; ++i) {
-		poly4 = (poly4+poly4) + (~((poly4 >> 2) ^ (poly4 >> 3)) & 1);
+		poly4 = (poly4 >> 1) + (~((poly4 << 2) ^ (poly4 << 3)) & 8);
 
 		mPolyBuffer[i] = (poly4 & 1) << 3;
 	}
 
 	uint32 poly5 = 0;
 	for(int i=0; i<131071; ++i) {
-		poly5 = (poly5+poly5) + (~((poly5 >> 2) ^ (poly5 >> 4)) & 1);
+		poly5 = (poly5 >> 1) + (~((poly5 << 2) ^ (poly5 << 4)) & 16);
 
 		mPolyBuffer[i] |= (poly5 & 1) << 2;
 	}

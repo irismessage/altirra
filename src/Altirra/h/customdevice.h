@@ -31,9 +31,9 @@ class ATMemoryLayer;
 class ATMemoryManager;
 class IATDeviceCustomNetworkEngine;
 class ATVMCompiler;
-class ATPortController;
 class IATAsyncDispatcher;
 class VDDisplayRendererSoft;
+class IATDeviceControllerPort;
 
 class ATDeviceCustom final
 	: public ATDevice
@@ -474,15 +474,7 @@ private:
 	public:
 		static const ATVMObjectClass kVMObjectClass;
 
-		ATPortController *mpPortController = nullptr;
-		bool mbPort2 = false;
-		bool mbEnabled = false;
-		bool mbPaddleASet = false;
-		bool mbPaddleBSet = false;
-		uint32 mInputMask = ~UINT32_C(0);
-		int mPortInput = -1;
-		sint32 mPotA = 228;
-		sint32 mPotB = 228;
+		vdrefptr<IATDeviceControllerPort> mpControllerPort;
 
 		void Init();
 		void Shutdown();
@@ -490,7 +482,6 @@ private:
 		void Enable();
 		void Disable();
 
-		void Reapply();
 		void ResetPotPositions();
 
 		void VMCallSetPaddleA(sint32 pos);

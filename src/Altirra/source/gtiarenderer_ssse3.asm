@@ -1,18 +1,23 @@
-		section		.rdata
+		.686
+		.xmm
+		.model		flat
+
+_RDATA	segment read align(64) ALIAS(".rdata") 'CONST'
 		align		64
-window_table:
+window_table equ $
 		dq			0, 0, -1, -1, 0, 0
-color_table_preshuffle:
+color_table_preshuffle equ $
 		db			08h, 04h, 05h, 05h, 06h, 06h, 06h, 06h
 		db			07h, 07h, 07h, 07h, 07h, 07h, 07h, 07h
-hires_splat_pf1:
+hires_splat_pf1 equ $
 		dq			0505050505050505h,0505050505050505h
-hires_mask_1:
+hires_mask_1 equ $
 		dq			0f000f000f000f00h,0f000f000f000f00h
-hires_mask_2:
+hires_mask_2 equ $
 		dq			0f0f00000f0f0000h,0f0f00000f0f0000h
+_RDATA	ends
 
-		section		.code
+		.code
 
 ;==========================================================================
 ;
@@ -22,8 +27,7 @@ hires_mask_2:
 ;	uint32 n,
 ;	const uint8 *color_table
 ;
-		global		_atasm_gtia_render_lores_fast_ssse3
-_atasm_gtia_render_lores_fast_ssse3:
+_atasm_gtia_render_lores_fast_ssse3 proc
 		push		ebp
 		push		edi
 		push		esi
@@ -33,12 +37,12 @@ _atasm_gtia_render_lores_fast_ssse3:
 		mov			ecx, [esp+8+16]
 		mov			edi, [esp+4+16]
 		movdqa		xmm2, [eax]
-		pshufb		xmm2, oword [color_table_preshuffle]
+		pshufb		xmm2, xmmword ptr [color_table_preshuffle]
 
 		;check if n==0
 		mov			edx, [esp+12+16]
 		or			edx, edx
-		jz			.xit
+		jz			xit
 
 		;compute srcEnd = src + n
 		mov			ebx, ecx
@@ -58,22 +62,22 @@ _atasm_gtia_render_lores_fast_ssse3:
 		mov			esi, ebx
 		xor			esi, [esp+8+16]
 		and			esi, 0fffffff0h
-		jz			.dosingle
+		jz			dosingle
 
 		;process start section
 		or			edx, edx
-		jz			.xstart
+		jz			xstart
 
 		xor			edx, 15
 		inc			edx
-		call		.domask
+		call		domask
 		
-.xstart:
+xstart:
 		mov			eax, ebx
 		sub			eax, ecx
 		sub			eax, 16
-		js			.endcheck
-.xloop:
+		js			endcheck
+xloop:
 		movdqa		xmm0, [ecx]
 		add			ecx, 16
 		movdqa		xmm1, xmm2
@@ -85,40 +89,39 @@ _atasm_gtia_render_lores_fast_ssse3:
 		movdqa		[edi+16], xmm1
 		add			edi, 32
 		sub			eax, 16
-		jns			.xloop
-.endcheck:
+		jns			xloop
+endcheck:
 		and			eax, 15
-		jz			.xit
+		jz			xit
 		
 		mov			edx, 32
 		sub			edx, eax
-		call		.domask
+		call		domask
 		
-.xit:
-		sfence
+xit:
 		pop			ebx
 		pop			esi
 		pop			edi
 		pop			ebp
 		ret
 
-.dosingle:
+dosingle:
 		xor			edx, 15
 		and			ebx, 15
 		xor			ebx, 15
-		movq		xmm4, qword [window_table+edx+1]
-		movq		xmm5, qword [window_table+edx+9]
-		movq		xmm0, qword [window_table+ebx+17]
-		movq		xmm1, qword [window_table+ebx+25]
+		movq		xmm4, qword ptr [window_table+edx+1]
+		movq		xmm5, qword ptr [window_table+edx+9]
+		movq		xmm0, qword ptr [window_table+ebx+17]
+		movq		xmm1, qword ptr [window_table+ebx+25]
 		pand		xmm4, xmm0
 		pand		xmm5, xmm1
-		call		.domask2
-		jmp			short .xit
+		call		domask2
+		jmp			short xit
 
-.domask:
-		movq		xmm4, qword [window_table+edx]
-		movq		xmm5, qword [window_table+edx+8]
-.domask2:
+domask:
+		movq		xmm4, qword ptr [window_table+edx]
+		movq		xmm5, qword ptr [window_table+edx+8]
+domask2:
 		punpcklbw	xmm4, xmm4
 		punpcklbw	xmm5, xmm5
 		movdqa		xmm0, [ecx]
@@ -140,6 +143,7 @@ _atasm_gtia_render_lores_fast_ssse3:
 		movdqa		[edi+16], xmm1
 		add			edi, 32
 		ret
+_atasm_gtia_render_lores_fast_ssse3 endp
 
 ;==========================================================================
 ;
@@ -150,8 +154,7 @@ _atasm_gtia_render_lores_fast_ssse3:
 ;	uint32 n,
 ;	const uint8 *color_table
 ;
-		global		_atasm_gtia_render_mode8_fast_ssse3
-_atasm_gtia_render_mode8_fast_ssse3:
+_atasm_gtia_render_mode8_fast_ssse3 proc
 		push		ebp
 		push		edi
 		push		esi
@@ -163,23 +166,23 @@ _atasm_gtia_render_mode8_fast_ssse3:
 		mov			edi, [esp+4+16]
 		movdqa		xmm0, [eax]
 		movdqa		xmm4, xmm0
-		pshufb		xmm0, oword [color_table_preshuffle]
-		pshufb		xmm4, oword [hires_splat_pf1]
+		pshufb		xmm0, xmmword ptr [color_table_preshuffle]
+		pshufb		xmm4, xmmword ptr [hires_splat_pf1]
 		movdqa		xmm5, xmm4
 		movdqa		xmm1, xmm0
-		movdqa		xmm2, [hires_mask_2]
-		movdqa		xmm3, [hires_mask_1]
+		movdqa		xmm2, xmmword ptr [hires_mask_2]
+		movdqa		xmm3, xmmword ptr [hires_mask_1]
 		pandn		xmm2, xmm0
 		pandn		xmm3, xmm1
-		pand		xmm4, [hires_mask_2]
-		pand		xmm5, [hires_mask_1]
+		pand		xmm4, xmmword ptr [hires_mask_2]
+		pand		xmm5, xmmword ptr [hires_mask_1]
 		por			xmm2, xmm4
 		por			xmm3, xmm5
 
 		;check if n==0
 		mov			edx, [esp+16+16]
 		or			edx, edx
-		jz			.xit
+		jz			xit
 
 		;compute srcEnd = src + n
 		mov			ebx, ecx
@@ -200,22 +203,22 @@ _atasm_gtia_render_mode8_fast_ssse3:
 		mov			esi, ebx
 		xor			esi, [esp+8+16]
 		and			esi, 0fffffff0h
-		jz			.dosingle
+		jz			dosingle
 
 		;process start section
 		or			edx, edx
-		jz			.xstart
+		jz			xstart
 
 		xor			edx, 15
 		inc			edx
-		call		.domask
+		call		domask
 		
-.xstart:
+xstart:
 		mov			eax, ebx
 		sub			eax, ecx
 		sub			eax, 16
-		js			.endcheck
-.xloop:
+		js			endcheck
+xloop:
 		movdqa		xmm0, xmm2
 		movdqa		xmm1, xmm3
 		movdqa		xmm6, [ecx]
@@ -231,40 +234,39 @@ _atasm_gtia_render_mode8_fast_ssse3:
 		movdqa		[edi+16], xmm7
 		add			edi, 32
 		sub			eax, 16
-		jns			.xloop
-.endcheck:
+		jns			xloop
+endcheck:
 		and			eax, 15
-		jz			.xit
+		jz			xit
 		
 		mov			edx, 32
 		sub			edx, eax
-		call		.domask
+		call		domask
 		
-.xit:
-		sfence
+xit:
 		pop			ebx
 		pop			esi
 		pop			edi
 		pop			ebp
 		ret
 
-.dosingle:
+dosingle:
 		xor			edx, 15
 		and			ebx, 15
 		xor			ebx, 15
-		movq		xmm4, qword [window_table+edx+1]
-		movq		xmm5, qword [window_table+edx+9]
-		movq		xmm0, qword [window_table+ebx+17]
-		movq		xmm1, qword [window_table+ebx+25]
+		movq		xmm4, qword ptr [window_table+edx+1]
+		movq		xmm5, qword ptr [window_table+edx+9]
+		movq		xmm0, qword ptr [window_table+ebx+17]
+		movq		xmm1, qword ptr [window_table+ebx+25]
 		pand		xmm4, xmm0
 		pand		xmm5, xmm1
-		call		.domask2
-		jmp			short .xit
+		call		domask2
+		jmp			short xit
 
-.domask:
-		movq		xmm4, qword [window_table+edx]
-		movq		xmm5, qword [window_table+edx+8]
-.domask2:
+domask:
+		movq		xmm4, qword ptr [window_table+edx]
+		movq		xmm5, qword ptr [window_table+edx+8]
+domask2:
 		punpcklbw	xmm4, xmm4
 		punpcklbw	xmm5, xmm5
 		movdqa		xmm0, xmm2
@@ -290,5 +292,6 @@ _atasm_gtia_render_mode8_fast_ssse3:
 		movdqa		[edi+16], xmm7
 		add			edi, 32
 		ret
+_atasm_gtia_render_mode8_fast_ssse3 endp
 
 		end

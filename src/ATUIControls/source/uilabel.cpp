@@ -11,7 +11,6 @@ ATUILabel::ATUILabel()
 	, mTextY(0)
 	, mBorderColor(-1)
 	, mTextSize(0, 0)
-	, mbReflowPending(false)
 	, mMinTextSize(-1, -1)
 {
 	SetFillColor(0xD4D0C8);
@@ -22,9 +21,7 @@ void ATUILabel::SetFont(IVDDisplayFont *font) {
 		mpFont = font;
 		mMinTextSize.w = -1;
 
-		mbReflowPending = true;
-		Invalidate();
-		InvalidateMeasure();
+		InvalidateForTextChange();
 	}
 }
 
@@ -32,9 +29,7 @@ void ATUILabel::SetBoldFont(IVDDisplayFont *font) {
 	if (mpBoldFont != font) {
 		mpBoldFont = font;
 
-		mbReflowPending = true;
-		Invalidate();
-		InvalidateMeasure();
+		InvalidateForTextChange();
 	}
 }
 
@@ -84,6 +79,14 @@ void ATUILabel::SetTextOffset(sint32 x, sint32 y) {
 	}
 }
 
+void ATUILabel::SetWordWrapEnabled(bool enabled) {
+	if (mbWordWrapEnabled != enabled) {
+		mbWordWrapEnabled = enabled;
+
+		InvalidateForTextChange();
+	}
+}
+
 void ATUILabel::SetText(const wchar_t *s) {
 	if (mText == s && !mSpans.empty())
 		return;
@@ -113,9 +116,7 @@ void ATUILabel::SetText(const wchar_t *s) {
 		t = breakpt + 1;
 	}
 
-	mbReflowPending = true;
-	Invalidate();
-	InvalidateMeasure();
+	InvalidateForTextChange();
 }
 
 void ATUILabel::SetTextF(const wchar_t *format, ...) {
@@ -312,8 +313,7 @@ void ATUILabel::SetHTMLText(const wchar_t *s) {
 		++mLines.back().mSpanCount;
 	}
 
-	mbReflowPending = true;
-	Invalidate();
+	InvalidateForTextChange();
 }
 
 void ATUILabel::SetMinSizeText(const wchar_t *s) {
@@ -331,9 +331,7 @@ void ATUILabel::Clear() {
 		mSpans.clear();
 		mLines.clear();
 
-		mbReflowPending = true;
-		Invalidate();
-		InvalidateMeasure();
+		InvalidateForTextChange();
 	}
 }
 
@@ -357,9 +355,7 @@ void ATUILabel::AppendFormattedText(uint32 color, const wchar_t *s) {
 
 	mText.append(s);
 
-	mbReflowPending = true;
-	Invalidate();
-	InvalidateMeasure();
+	InvalidateForTextChange();
 }
 
 void ATUILabel::AppendFormattedTextF(uint32 color, const wchar_t *format, ...) {
@@ -377,8 +373,7 @@ void ATUILabel::AutoSize(int x, int y) {
 	if (!mpFont)
 		return;
 
-	if (mbReflowPending)
-		Reflow();
+	Reflow(kUnlimitedSize);
 
 	vdrect32 r = ComputeWindowSize(vdrect32(0, 0, mTextSize.w + mTextX * 2, mTextSize.h + mTextY * 2));
 
@@ -391,8 +386,7 @@ void ATUILabel::OnCreate() {
 }
 
 ATUIWidgetMetrics ATUILabel::OnMeasure() {
-	if (mbReflowPending)
-		Reflow();
+	Reflow(kUnlimitedSize);
 
 	vdrect32 r = ComputeWindowSize(vdrect32(0, 0, mTextSize.w + mTextX * 2, mTextSize.h + mTextY * 2));
 
@@ -412,8 +406,7 @@ ATUIWidgetMetrics ATUILabel::OnMeasure() {
 }
 
 void ATUILabel::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
-	if (mbReflowPending)
-		Reflow();
+	Reflow(w);
 
 	if (mBorderColor >= 0) {
 		rdr.SetColorRGB((uint32)mBorderColor);
@@ -432,28 +425,28 @@ void ATUILabel::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 	if (mLines.empty())
 		return;
 
-	const Line *line = mLines.data();
-	uint32 lineSpanCount = line->mSpanCount;
-
 	sint32 y0 = mTextY;
 
 	if (mTextVAlign)
 		y0 += ((h - mTextSize.h) * (sint32)mTextVAlign + 1) >> 1;
 
 	const wchar_t *const s = mText.c_str();
-	for(auto&& span : mSpans) {
-		while(!lineSpanCount--) {
-			++line;
+	const auto *spans = mRenderSpans.data();
 
-			lineSpanCount = line->mSpanCount;
+	sint32 y = y0;
+	for(const RenderLine& rl : mRenderLines) {
+		const sint32 lineX = ((w - rl.mWidth - mTextX*2) * (sint32)mTextAlign + 1) >> 1;
+
+		for(uint32 i=0; i<rl.mSpanCount; ++i) {
+			const Span& span = *spans++;
+
+			if (span.mChars && span.mBgColor >= 0) {
+				rdr.SetColorRGB(span.mBgColor);
+				rdr.FillRect(lineX + span.mX + mTextX, y, rl.mWidth, rl.mAscent + rl.mDescent);
+			}
 		}
 
-		if (span.mChars && span.mBgColor >= 0) {
-			const sint32 lineX = ((w - line->mWidth - mTextX*2) * (sint32)mTextAlign + 1) >> 1;
-
-			rdr.SetColorRGB(span.mBgColor);
-			rdr.FillRect(lineX + span.mX + mTextX, span.mY + y0 - line->mAscent, span.mWidth, line->mAscent + line->mDescent);
-		}
+		y += rl.mAscent + rl.mDescent;
 	}
 
 	VDDisplayTextRenderer& tr = *rdr.GetTextRenderer();
@@ -462,29 +455,41 @@ void ATUILabel::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 	tr.SetColorRGB(mTextColor);
 	tr.SetAlignment(VDDisplayTextRenderer::kAlignLeft, VDDisplayTextRenderer::kVertAlignBaseline);
 
-	line = mLines.data();
-	lineSpanCount = line->mSpanCount;
+	spans = mRenderSpans.data();
+	y = y0;
+	for(const RenderLine& rl : mRenderLines) {
+		sint32 lineX = ((w - rl.mWidth - mTextX*2) * (sint32)mTextAlign + 1) >> 1;
 
-	for(auto&& span : mSpans) {
-		while(!lineSpanCount--) {
-			++line;
+		y += rl.mAscent;
 
-			lineSpanCount = line->mSpanCount;
-		}
+		for(uint32 i=0; i<rl.mSpanCount; ++i) {
+			const Span& span = *spans++;
 
-		sint32 lineX = ((w - line->mWidth - mTextX*2) * (sint32)mTextAlign + 1) >> 1;
-
-		if (span.mChars) {
 			tr.SetFont(span.mbBold ? mpBoldFont : mpFont);
 			tr.SetColorRGB(span.mFgColor >= 0 ? (uint32)span.mFgColor : mTextColor);
-			tr.SetPosition(lineX + span.mX + mTextX, span.mY + y0);
+			tr.SetPosition(lineX + span.mX + mTextX, y);
 			tr.DrawTextSpan(s + span.mStart, span.mChars);
 		}
+
+		y += rl.mDescent;
 	}
 }
 
-void ATUILabel::Reflow() {
-	mbReflowPending = false;
+void ATUILabel::InvalidateForTextChange() {
+	Invalidate();
+	InvalidateMeasure();
+
+	mReflowLastWidth = -1;
+}
+
+void ATUILabel::Reflow(sint32 w) {
+	if (!mbWordWrapEnabled)
+		w = kUnlimitedSize;
+
+	if (mReflowLastWidth == w)
+		return;
+
+	mReflowLastWidth = w;
 
 	const wchar_t *const s = mText.c_str();
 
@@ -494,51 +499,111 @@ void ATUILabel::Reflow() {
 	mTextSize.w = 0;
 	mTextSize.h = 0;
 
-	for(vdfastvector<Line>::iterator itLine = mLines.begin(), itLineEnd = mLines.end();
-		itLine != itLineEnd;
-		++itLine)
-	{
-		Line& line = *itLine;
+	mRenderLines.clear();
+	mRenderSpans.clear();
+
+	for(const Line& line : mLines) {
 		sint32 x = 0;
 		sint32 ascent = 0;
 		sint32 descent = 0;
 
-		for(uint32 i=0; i<line.mSpanCount; ++i) {
-			Span& span = spans[i];
+		RenderLine *rl = &mRenderLines.emplace_back();
+
+		for(const Span& span : vdspan(spans, spans + line.mSpanCount)) {
 			IVDDisplayFont *font = (span.mbBold ? mpBoldFont : mpFont);
 
-			span.mX = x;
+			uint32 offset = span.mStart;
+			uint32 limit = offset + span.mChars;
 
-			if (font) {
+			// special case for empty span, needs to still set line height
+			if (offset >= limit) {
+				if (font) {
+					vdrect32 cellBounds(0, 0, 1, 1);
+					vdpoint32 nextPos(1, 0);
+
+					glyphPlacements.clear();
+					font->ShapeText(L"", 0, glyphPlacements, &cellBounds, NULL, &nextPos);
+
+					ascent = std::max<sint32>(ascent, -cellBounds.top);
+					descent = std::max<sint32>(descent, cellBounds.bottom);
+				}
+				continue;
+			}
+
+			while(offset < limit) {
+				uint32 charBreakPos = 0;
+
+				if (w == kUnlimitedSize)
+					charBreakPos = limit;
+				else if (w > x && font) {
+					font->FitString(s + offset, limit - offset, w - x, &charBreakPos);
+					charBreakPos += offset;
+				}
+
+				uint32 wordBreakPos = limit;
+				if (charBreakPos < wordBreakPos) {
+					for(uint32 i = charBreakPos; i > offset; --i) {
+						if (s[i - 1] == ' ') {
+							wordBreakPos = i - 1;
+							break;
+						}
+					}
+
+					if (wordBreakPos > charBreakPos) {
+						while(wordBreakPos < limit && s[wordBreakPos] != ' ')
+							++wordBreakPos;
+					}
+				}
+
 				glyphPlacements.clear();
 
-				vdrect32 cellBounds;
-				vdpoint32 nextPos;
-
-				font->ShapeText(s + span.mStart, span.mChars, glyphPlacements, &cellBounds, NULL, &nextPos);
+				vdrect32 cellBounds(0, 0, 1, 1);
+				vdpoint32 nextPos(1, 0);
+				if (font)
+					font->ShapeText(s + offset, wordBreakPos - offset, glyphPlacements, &cellBounds, NULL, &nextPos);
 
 				ascent = std::max<sint32>(ascent, -cellBounds.top);
 				descent = std::max<sint32>(descent, cellBounds.bottom);
 
+				Span& rs = mRenderSpans.emplace_back();
+				rs = span;
+				rs.mStart = offset;
+				rs.mChars = wordBreakPos - offset;
+				rs.mX = x;
+				rs.mWidth = nextPos.x;
+				
 				x += nextPos.x;
+
+				++rl->mSpanCount;
+
+				offset = wordBreakPos;
+
+				while(offset < limit && s[offset] == ' ')
+					++offset;
+
+				if (offset < limit) {
+					rl->mAscent = ascent;
+					rl->mDescent = descent;
+					rl->mWidth = x;
+
+					mTextSize.w = std::max<sint32>(mTextSize.w, x);
+					mTextSize.h += ascent + descent;
+
+					rl = &mRenderLines.emplace_back();
+					x = 0;
+					ascent = 0;
+					descent = 0;
+				}
 			}
-
-			span.mWidth = x - span.mX;
 		}
 
-		for(uint32 i=0; i<line.mSpanCount; ++i) {
-			Span& span = spans[i];
+		spans += line.mSpanCount;
 
-			span.mY = mTextSize.h + ascent;
-		}
-
-		line.mAscent = ascent;
-		line.mDescent = descent;
-		line.mWidth = x;
+		rl->mAscent = ascent;
+		rl->mDescent = descent;
+		rl->mWidth = x;
 
 		mTextSize.w = std::max<sint32>(mTextSize.w, x);
 		mTextSize.h += ascent + descent;
-
-		spans += line.mSpanCount;
 	}
 }

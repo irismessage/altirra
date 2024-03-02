@@ -37,22 +37,9 @@ VDPixmapPathRasterizer::VDPixmapPathRasterizer()
 	ClearScanBuffer();
 }
 
-VDPixmapPathRasterizer::VDPixmapPathRasterizer(const VDPixmapPathRasterizer&)
-	: mpEdgeBlocks(NULL)
-	, mpFreeEdgeBlocks(NULL)
-	, mEdgeBlockIdx(kEdgeBlockMax)
-	, mpScanBuffer(NULL)
-{
-	ClearScanBuffer();
-}
-
 VDPixmapPathRasterizer::~VDPixmapPathRasterizer() {
 	Clear();
 	FreeEdgeLists();
-}
-
-VDPixmapPathRasterizer& VDPixmapPathRasterizer::operator=(const VDPixmapPathRasterizer&) {
-	return *this;
 }
 
 void VDPixmapPathRasterizer::Clear() {
@@ -60,7 +47,7 @@ void VDPixmapPathRasterizer::Clear() {
 	ClearScanBuffer();
 }
 
-void VDPixmapPathRasterizer::QuadraticBezier(const vdint2 *pts) {
+void VDPixmapPathRasterizer::QuadraticBezierX(const vdint2 *pts) {
 	int x0 = pts[0].x;
 	int x1 = pts[1].x;
 	int x2 = pts[2].x;
@@ -134,13 +121,13 @@ void VDPixmapPathRasterizer::QuadraticBezier(const vdint2 *pts) {
 		int xi = (int)((uint64)ax0 >> 32);
 		int yi = (int)((uint64)ay0 >> 32);
 
-		FastLine(lastx, lasty, xi, yi);
+		FastLineX(lastx, lasty, xi, yi);
 		lastx = xi;
 		lasty = yi;
 	} while(--h);
 }
 
-void VDPixmapPathRasterizer::CubicBezier(const vdint2 *pts) {
+void VDPixmapPathRasterizer::CubicBezierX(const vdint2 *pts) {
 	int x0 = pts[0].x;
 	int x1 = pts[1].x;
 	int x2 = pts[2].x;
@@ -219,17 +206,37 @@ void VDPixmapPathRasterizer::CubicBezier(const vdint2 *pts) {
 		int xi = (int)((uint64)ax0 >> 32);
 		int yi = (int)((uint64)ay0 >> 32);
 
-		FastLine(lastx, lasty, xi, yi);
+		FastLineX(lastx, lasty, xi, yi);
 		lastx = xi;
 		lasty = yi;
 	} while(--h);
 }
 
-void VDPixmapPathRasterizer::Line(const vdint2& pt1, const vdint2& pt2) {
-	FastLine(pt1.x, pt1.y, pt2.x, pt2.y);
+void VDPixmapPathRasterizer::CubicBezierF(const vdfloat2 pts[4]) {
+	vdint2 ptx[4] {
+		vdint2{VDRoundToInt(pts[0].x * 8.0f), VDRoundToInt(pts[0].y * 8.0f)},
+		vdint2{VDRoundToInt(pts[1].x * 8.0f), VDRoundToInt(pts[1].y * 8.0f)},
+		vdint2{VDRoundToInt(pts[2].x * 8.0f), VDRoundToInt(pts[2].y * 8.0f)},
+		vdint2{VDRoundToInt(pts[3].x * 8.0f), VDRoundToInt(pts[3].y * 8.0f)},
+	};
+
+	CubicBezierX(ptx);
 }
 
-void VDPixmapPathRasterizer::FastLine(int x0, int y0, int x1, int y1) {
+void VDPixmapPathRasterizer::LineX(const vdint2& pt1, const vdint2& pt2) {
+	FastLineX(pt1.x, pt1.y, pt2.x, pt2.y);
+}
+
+void VDPixmapPathRasterizer::LineF(const vdfloat2& pt1, const vdfloat2& pt2) {
+	FastLineX(
+		VDRoundToInt(pt1.x * 8.0f),
+		VDRoundToInt(pt1.y * 8.0f),
+		VDRoundToInt(pt2.x * 8.0f),
+		VDRoundToInt(pt2.y * 8.0f)
+	);
+}
+
+void VDPixmapPathRasterizer::FastLineX(int x0, int y0, int x1, int y1) {
 	int flag = 1;
 
 	if (y1 == y0)
@@ -260,7 +267,10 @@ void VDPixmapPathRasterizer::FastLine(int x0, int y0, int x1, int y1) {
 			ReallocateScanBuffer(iy0, iy1);
 			VDASSERT(iy0 >= mScanYMin && iy1 <= mScanYMax);
 		}
+		
+		VDASSERT(iy0 >= mScanYMin && iy1 <= mScanYMax);
 
+		const auto ymin = mScanYMin;
 		while(iy0 < iy1) {
 			int ix = (xacc+32767)>>16;
 
@@ -276,10 +286,9 @@ void VDPixmapPathRasterizer::FastLine(int x0, int y0, int x1, int y1) {
 
 				mEdgeBlockIdx = 0;
 			}
-
+			
 			Edge& e = mpEdgeBlocks->edges[mEdgeBlockIdx];
-			Scan& s = mpScanBufferBiased[iy0];
-			VDASSERT(iy0 >= mScanYMin && iy0 < mScanYMax);
+			Scan& s = mpScanBuffer[iy0 - ymin];
 			++mEdgeBlockIdx;
 
 			e.posandflag = ix*2+flag;
@@ -291,6 +300,133 @@ void VDPixmapPathRasterizer::FastLine(int x0, int y0, int x1, int y1) {
 			xacc += invslope;
 		}
 	}
+}
+
+void VDPixmapPathRasterizer::RectangleX(const vdint2& p1, const vdint2& p2, bool cw) {
+	if (cw) {
+		FastLineX(p1.x, p1.y, p2.x, p1.y);
+		FastLineX(p2.x, p1.y, p2.x, p2.y);
+		FastLineX(p2.x, p2.y, p1.x, p2.y);
+		FastLineX(p1.x, p2.y, p1.x, p1.y);
+	} else {
+		FastLineX(p1.x, p1.y, p1.x, p2.y);
+		FastLineX(p1.x, p2.y, p2.x, p2.y);
+		FastLineX(p2.x, p2.y, p2.x, p1.y);
+		FastLineX(p2.x, p1.y, p1.x, p1.y);
+	}
+}
+
+void VDPixmapPathRasterizer::RectangleF(const vdfloat2& p1, const vdfloat2& p2, bool cw) {
+	const int x1 = VDRoundToInt(p1.x * 8.0f);
+	const int y1 = VDRoundToInt(p1.y * 8.0f);
+	const int x2 = VDRoundToInt(p2.x * 8.0f);
+	const int y2 = VDRoundToInt(p2.y * 8.0f);
+
+	if (cw) {
+		FastLineX(x1, y1, x2, y1);
+		FastLineX(x2, y1, x2, y2);
+		FastLineX(x2, y2, x1, y2);
+		FastLineX(x1, y2, x1, y1);
+	} else {
+		FastLineX(x1, y1, x1, y2);
+		FastLineX(x1, y2, x2, y2);
+		FastLineX(x2, y2, x2, y1);
+		FastLineX(x2, y1, x1, y1);
+	}
+}
+
+void VDPixmapPathRasterizer::CircleF(const vdfloat2& center, float r, bool cw) {
+	// 4/3*(sqrt(2)-1)
+	const float r2 = r * 0.5522847498307933984022516322796f;
+
+	const float cx = center.x;
+	const float cy = center.y;
+	vdfloat2 pts[] {
+		vdfloat2{ cx + r, cy },
+		vdfloat2{ cx + r, cy - r2 },
+		vdfloat2{ cx + r2, cy - r },
+		vdfloat2{ cx, cy - r },
+		vdfloat2{ cx - r2, cy - r },
+		vdfloat2{ cx - r, cy - r2 },
+		vdfloat2{ cx - r, cy },
+		vdfloat2{ cx - r, cy + r2 },
+		vdfloat2{ cx - r2, cy + r },
+		vdfloat2{ cx, cy + r },
+		vdfloat2{ cx + r2, cy + r },
+		vdfloat2{ cx + r, cy + r2 },
+		vdfloat2{ cx + r, cy },
+	};
+
+	if (cw)
+		std::reverse(std::begin(pts), std::end(pts));
+
+	CubicBezierF(pts + 0);
+	CubicBezierF(pts + 3);
+	CubicBezierF(pts + 6);
+	CubicBezierF(pts + 9);
+}
+
+void VDPixmapPathRasterizer::StrokeF(const vdfloat2 *pts, size_t n, float thickness) {
+	using namespace nsVDMath;
+
+	if (!n)
+		return;
+
+	vdfastvector<vdfloat2> filteredPts;
+	filteredPts.reserve(n);
+
+	if (n > 1) {
+		vdfloat2 lastPt = pts[n-1];
+		for(vdfloat2 pt : vdspan<const vdfloat2>(pts, n)) {
+			if ((pt - lastPt).lensq() > 1e-5f)
+				filteredPts.push_back(pt);
+
+			lastPt = pt;
+		}
+	} else
+		filteredPts.push_back(*pts);
+
+	if (filteredPts.size() == 1) {
+		RectangleF(filteredPts.front() - vdfloat2{thickness, thickness}, filteredPts.front() + vdfloat2{thickness, thickness}, false);
+		return;
+	}
+
+	const float halfThick = thickness * 0.5f;
+	vdfloat2 pt0 = filteredPts[0];
+	vdfloat2 pt1 = filteredPts[1];
+	vdfloat2 n01 = rot(normalize(pt1 - pt0));
+
+	vdfloat2 h0 = pt0 - n01 * halfThick;
+	vdfloat2 l0 = pt0 + n01 * halfThick;
+
+	LineF(l0, h0);
+
+	for(vdfloat2 pt2 : vdspan<vdfloat2>(filteredPts.begin()+2, filteredPts.end())) {
+		vdfloat2 n12 = rot(normalize(pt2 - pt1));
+
+		vdfloat2 h1a = pt1 - n01*halfThick;
+		vdfloat2 l1a = pt1 + n01*halfThick;
+		vdfloat2 h1b = pt1 - n12*halfThick;
+		vdfloat2 l1b = pt1 + n12*halfThick;
+
+		LineF(h0, h1a);
+		LineF(h1a, h1b);
+		LineF(l1b, l1a);
+		LineF(l1a, l0);
+
+		h0 = h1b;
+		l0 = l1b;
+		
+		pt1 = pt2;
+		n01 = n12;
+	}
+
+	vdfloat2 h2 = pt1 - n01*halfThick;
+	vdfloat2 l2 = pt1 + n01*halfThick;
+
+	LineF(h0, h2);
+	LineF(h2, l2);
+	LineF(l2, l0);
 }
 
 void VDPixmapPathRasterizer::ScanConvert(VDPixmapRegion& region) {
@@ -308,7 +444,7 @@ void VDPixmapPathRasterizer::ScanConvert(VDPixmapRegion& region) {
 	int ymax = INT_MIN;
 
 	for(int y=mScanYMin; y<mScanYMax; ++y) {
-		uint32 flipcount = mpScanBufferBiased[y].count;
+		uint32 flipcount = mpScanBuffer[y - mScanYMin].count;
 
 		if (!flipcount)
 			continue;
@@ -320,7 +456,7 @@ void VDPixmapPathRasterizer::ScanConvert(VDPixmapRegion& region) {
 		// Detangle scanline into edge heap.
 		int *heap0 = heap.data();
 		int *heap1 = heap0;
-		for(const Edge *ptr = mpScanBufferBiased[y].chain; ptr; ptr = ptr->next)
+		for(const Edge *ptr = mpScanBuffer[y - mScanYMin].chain; ptr; ptr = ptr->next)
 			*heap1++ = ptr->posandflag;
 
 		VDASSERT(heap1 - heap0 == flipcount);
@@ -434,7 +570,7 @@ void VDPixmapPathRasterizer::FreeEdgeLists() {
 
 void VDPixmapPathRasterizer::ClearScanBuffer() {
 	delete[] mpScanBuffer;
-	mpScanBuffer = mpScanBufferBiased = NULL;
+	mpScanBuffer = nullptr;
 	mScanYMin = 0;
 	mScanYMax = 0;
 }
@@ -468,31 +604,26 @@ void VDPixmapPathRasterizer::ReallocateScanBuffer(int ymin, int ymax) {
 
 	// reallocate scan buffer
 	Scan *pNewBuffer = new Scan[ymax - ymin];
-	Scan *pNewBufferBiased = pNewBuffer - ymin;
 
 	if (mpScanBuffer) {
-		memcpy(pNewBufferBiased + mScanYMin, mpScanBufferBiased + mScanYMin, (mScanYMax - mScanYMin) * sizeof(Scan));
+		memcpy(pNewBuffer + (mScanYMin - ymin), mpScanBuffer, (mScanYMax - mScanYMin) * sizeof(Scan));
 		delete[] mpScanBuffer;
 
 		// zero new areas of scan buffer
 		for(int y=ymin; y<mScanYMin; ++y) {
-			pNewBufferBiased[y].chain = NULL;
-			pNewBufferBiased[y].count = 0;
+			pNewBuffer[y - ymin] = Scan();
 		}
 
 		for(int y=mScanYMax; y<ymax; ++y) {
-			pNewBufferBiased[y].chain = NULL;
-			pNewBufferBiased[y].count = 0;
+			pNewBuffer[y - ymin] = Scan();
 		}
 	} else {
 		for(int y=ymin; y<ymax; ++y) {
-			pNewBufferBiased[y].chain = NULL;
-			pNewBufferBiased[y].count = 0;
+			pNewBuffer[y - ymin] = Scan();
 		}
 	}
 
 	mpScanBuffer = pNewBuffer;
-	mpScanBufferBiased = pNewBufferBiased;
 	mScanYMin = ymin;
 	mScanYMax = ymax;
 }
@@ -1016,10 +1147,6 @@ bool VDPixmapFillRegionAntialiased8x(const VDPixmap& dst, const VDPixmapRegion& 
 	case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
 	case nsVDPixmap::kPixFormat_YUV420_Planar_709:
 	case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
-	case nsVDPixmap::kPixFormat_YUV410_Planar:
-	case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
-	case nsVDPixmap::kPixFormat_YUV410_Planar_709:
-	case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
 		{
 			VDPixmap pxY;
 			VDPixmap pxCb;
@@ -1050,17 +1177,6 @@ bool VDPixmapFillRegionAntialiased8x(const VDPixmap& dst, const VDPixmapRegion& 
 			VDPixmapFillRegionAntialiased8x(pxY, region, x, y, colorY);
 
 			switch(dst.format) {
-			case nsVDPixmap::kPixFormat_YUV410_Planar:
-			case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
-			case nsVDPixmap::kPixFormat_YUV410_Planar_709:
-			case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
-				pxCr.w = pxCb.w = dst.w >> 2;
-				pxCr.h = pxCb.h = dst.h >> 2;
-				x >>= 2;
-				y >>= 2;
-				VDPixmapFillRegionAntialiased_32x_32x(pxCb, region, x, y, colorCb);
-				VDPixmapFillRegionAntialiased_32x_32x(pxCr, region, x, y, colorCr);
-				return true;
 			case nsVDPixmap::kPixFormat_YUV420_Planar:
 			case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
 			case nsVDPixmap::kPixFormat_YUV420_Planar_709:
@@ -1354,4 +1470,65 @@ void VDPixmapConvolveRegion(VDPixmapRegion& dst, const VDPixmapRegion& r1, const
 		temp.mSpans.swap(dst.mSpans);
 		VDPixmapConvolveRegion(dst, temp, r1, (p1 & 0xffff) - 0x8000, (p2 & 0xffff) - 0x8000, (p1 >> 16) - 0x8000);
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////
+
+void VDPixmapResolve4x_SSE2(void *dst, ptrdiff_t dstpitch, const void *src, ptrdiff_t srcpitch, uint32 w, uint32 h);
+void VDPixmapResolve4x_NEON(void *dst, ptrdiff_t dstpitch, const void *src, ptrdiff_t srcpitch, uint32 w, uint32 h);
+
+void VDPixmapResolve4x_Scalar(void *dst, ptrdiff_t dstpitch, const void *src, ptrdiff_t srcpitch, uint32 w, uint32 h) {
+	do {
+		uint8 *__restrict dst2 = (uint8 *)dst;
+		const uint8 *__restrict src2 = (const uint8 *)src;
+
+		for(uint32 x = 0; x < w; ++x) {
+			sint32 sumb = 0;
+			sint32 sumg = 0;
+			sint32 sumr = 0;
+			sint32 suma = 0;
+
+			const uint8 *__restrict src3 = src2;
+			for(int y2 = 0; y2 < 4; ++y2) {
+				sumb += src3[0]*src3[0] + src3[4]*src3[4] + src3[ 8]*src3[ 8] + src3[12]*src3[12];
+				sumg += src3[1]*src3[1] + src3[5]*src3[5] + src3[ 9]*src3[ 9] + src3[13]*src3[13];
+				sumr += src3[2]*src3[2] + src3[6]*src3[6] + src3[10]*src3[10] + src3[14]*src3[14];
+				suma += src3[3]*src3[3] + src3[7]*src3[7] + src3[11]*src3[11] + src3[15]*src3[15];
+
+				src3 += srcpitch;
+			}
+
+			float b = sqrtf((float)sumb * (1.0f / 16.0f));
+			float g = sqrtf((float)sumg * (1.0f / 16.0f));
+			float r = sqrtf((float)sumr * (1.0f / 16.0f));
+			float a = (float)suma * (1.0f / 16.0f);
+
+			dst2[0] = (uint8)(b + 0.5f);
+			dst2[1] = (uint8)(g + 0.5f);
+			dst2[2] = (uint8)(r + 0.5f);
+			dst2[3] = (uint8)(a + 0.5f);
+
+			dst2 += 4;
+			src2 += 16;
+		}
+
+		dst = (char *)dst + dstpitch;
+		src = (const char *)src + srcpitch * 4;
+	} while(--h);
+}
+
+void VDPixmapResolve4x(VDPixmap& dst, const VDPixmap& src4x) {
+	sint32 w = std::min<sint32>(dst.w, src4x.w >> 2);
+	sint32 h = std::min<sint32>(dst.h, src4x.h >> 2);
+
+	if (w <= 0 || h <= 0)
+		return;
+
+#if VD_CPU_X86 || VD_CPU_X64
+	VDPixmapResolve4x_SSE2(dst.data, dst.pitch, src4x.data, src4x.pitch, w, h);
+#elif VD_CPU_ARM64
+	VDPixmapResolve4x_NEON(dst.data, dst.pitch, src4x.data, src4x.pitch, w, h);
+#else
+	VDPixmapResolve4x_Scalar(dst.data, dst.pitch, src4x.data, src4x.pitch, w, h);
+#endif
 }

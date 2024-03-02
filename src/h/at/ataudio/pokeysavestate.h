@@ -13,6 +13,10 @@
 //
 //	You should have received a copy of the GNU General Public License along
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #ifndef f_AT_POKEYSAVESTATE_H
 #define f_AT_POKEYSAVESTATE_H
@@ -50,6 +54,8 @@ public:
 	uint8 mSerOutShiftRegister = 0;
 	bool mbSerOutValid = false;
 	bool mbSerOutShiftValid = false;
+
+	bool mbSerClockPhase = false;
 
 	uint32 mTraceByteIndex = 0;
 

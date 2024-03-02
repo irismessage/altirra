@@ -59,6 +59,7 @@
 #include <vd2/system/math.h>
 #include <vd2/system/vecmath.h>
 #include <vd2/system/vectors.h>
+#include <at/atcore/consoleoutput.h>
 #include "artifacting.h"
 #include "artifacting_filters.h"
 #include "gtia.h"
@@ -499,6 +500,15 @@ void ATArtifactingEngine::GetNTSCArtifactColors(uint32 c[2]) const {
 
 }
 
+void ATArtifactingEngine::DumpHighArtifactingFilters(ATConsoleOutput& output) {
+	if (mbHighPALTablesInited)
+		RecomputePALTables(&output);
+	else if (mbHighNTSCTablesInited)
+		RecomputeNTSCTables(&output);
+	else
+		output <<= "High artifacting tables not initialized.";
+}
+
 void ATArtifactingEngine::SuspendFrame() {
 	mbSavedPAL = mbPAL;
 	mbSavedChromaArtifacts = mbChromaArtifacts;
@@ -540,10 +550,10 @@ void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chroma
 	if (chromaArtifactHi) {
 		if (pal) {
 			if (!mbHighPALTablesInited || mbHighTablesSigned != extendedRangeOutput)
-				RecomputePALTables(mColorParams, extendedRangeOutput);
+				RecomputePALTables(nullptr);
 		} else {
 			if (!mbHighNTSCTablesInited || mbHighTablesSigned != extendedRangeOutput)
-				RecomputeNTSCTables(mColorParams, extendedRangeOutput);
+				RecomputeNTSCTables(nullptr);
 		}
 	}
 
@@ -1481,7 +1491,10 @@ void ATArtifactingEngine::RecomputeActiveTables(bool signedOutput) {
 	}
 }
 
-void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params, bool signedOutput) {
+void ATArtifactingEngine::RecomputeNTSCTables(ATConsoleOutput *debugOut) {
+	const ATColorParams& params = mColorParams;
+	const bool signedOutput = mbExpandedRangeOutput;
+
 	mbHighNTSCTablesInited = true;
 	mbHighPALTablesInited = false;
 	mbHighTablesSigned = signedOutput;
@@ -1600,10 +1613,10 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params, bool 
 
 			const float sensitivityFactor = 0.50f;
 			for(int j=0; j<6; ++j) {
-				vdfloat3 c = (t[7+j] * (chromaSignalAmplitude * sensitivityFactor)) * mTintColor;
+				vdfloat3 c = (t[6+j] * (chromaSignalAmplitude * sensitivityFactor)) * mTintColor;
 
-				rgbtab[0][7+j] = -c;
-				rgbtab[1][7+j] = c;
+				rgbtab[0][6+j] = -c;
+				rgbtab[1][6+j] = c;
 			}
 		} else {
 			float ytab[22] = {0};
@@ -1681,6 +1694,37 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params, bool 
 
 			for(int j=0; j<22; ++j)
 				chroma_to_rgb[i+1][k][j] = rgbtab[k][j];
+		}
+	}
+
+	if (debugOut) {
+		using namespace nsVDMath;
+		VDStringA s;
+
+		for(int channel = 0; channel < 3; ++channel) {
+			vdfloat3 channelSelect(channel == 0, channel == 1, channel == 2);
+
+			for(int phase = 0; phase < 2; ++phase) {
+				for(int hue = 0; hue < 16; ++hue) {
+					s.sprintf("chroma_%d_%c%X", phase, "rgb"[channel], hue);
+					for(int offset = 0; offset < 24; ++offset)
+						s.append_sprintf(", %6.3f", dot(chroma_to_rgb[hue][phase][offset], channelSelect));
+
+					*debugOut <<= s.c_str();
+				}
+			}
+
+			for(int hue = 0; hue < 16; ++hue) {
+				s.sprintf("chroma_%c%X  ", "rgb"[channel], hue);
+				for(int offset = 0; offset < 24; ++offset) {
+					const auto c0 = chroma_to_rgb[hue][0][offset];
+					const auto c1 = offset < 22 ? chroma_to_rgb[hue][1][offset + 2] : vdfloat3{};
+
+					s.append_sprintf(", %6.3f", dot(c0 + c1, channelSelect));
+				}
+
+				*debugOut <<= s.c_str();
+			}
 		}
 	}
 
@@ -1847,8 +1891,14 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params, bool 
 					for(int i=0; i<16; ++i) {
 						const int j0 = (i-k)*2+0;
 						const int j1 = (i-k)*2+1;
-						vdfloat3 pal_to_rgb0 = (j0 >= 0 && j0 < 24 ? c_waves[0][j0] + c_waves[1][j0] + y_waves[0][j0] : vdfloat3{}) * encodingScale + e0[i];
-						vdfloat3 pal_to_rgb1 = (j1 >= 0 && j1 < 24 ? c_waves[0][j1] + c_waves[1][j1] + y_waves[0][j1] : vdfloat3{}) * encodingScale + e1[i];
+						vdfloat3 pal_to_rgb0 = (j0 >= 0 && j0 < 24 ? c_waves[0][j0] + y_waves[0][j0] : vdfloat3{});
+						vdfloat3 pal_to_rgb1 = (j1 >= 0 && j1 < 24 ? c_waves[0][j1] + y_waves[0][j1] : vdfloat3{});
+
+						if (j0 >= 2 && j0 < 26) pal_to_rgb0 += c_waves[1][j0-2];
+						if (j1 >= 2 && j1 < 26) pal_to_rgb1 += c_waves[1][j1-2];
+
+						pal_to_rgb0 = pal_to_rgb0 * encodingScale + e0[i];
+						pal_to_rgb1 = pal_to_rgb1 * encodingScale + e1[i];
 
 						const int r0 = VDRoundToInt32(pal_to_rgb0.x);
 						const int g0 = VDRoundToInt32(pal_to_rgb0.y);
@@ -1939,7 +1989,10 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params, bool 
 	}
 }
 
-void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params, bool signedOutput) {
+void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
+	const ATColorParams& params = mColorParams;
+	const bool signedOutput = mbExpandedRangeOutput;
+
 	mbHighNTSCTablesInited = false;
 	mbHighPALTablesInited = true;
 	mbHighTablesSigned = signedOutput;
@@ -1970,8 +2023,6 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params, bool s
 
 	// UV<->RGB chroma coefficients.
 	const float co_vr = 1.1402509f;
-	const float co_vg = -0.5808092f;
-	const float co_ug = -0.3947314f;
 	const float co_ub = 2.0325203f;
 
 	float utab[2][16];

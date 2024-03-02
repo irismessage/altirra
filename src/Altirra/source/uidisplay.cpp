@@ -24,7 +24,6 @@
 #include <vd2/system/win32/touch.h>
 #include <vd2/VDDisplay/display.h>
 #include <at/atcore/configvar.h>
-#include <at/atcore/devicemanager.h>
 #include <at/atcore/devicevideo.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/profile.h>
@@ -36,7 +35,9 @@
 #include <at/atuicontrols/uilistview.h>
 #include <at/atnativeui/messageloop.h>
 #include <at/atnativeui/uiframe.h>
+#include <at/atnativeui/uipanewindow.h>
 #include "console.h"
+#include "devicemanager.h"
 #include "inputmanager.h"
 #include "oshelper.h"
 #include "simulator.h"
@@ -118,6 +119,7 @@ extern bool g_ATAutoFrameFlipping;
 extern LOGFONTW g_enhancedTextFont;
 
 extern ATDisplayFilterMode g_dispFilterMode;
+extern float g_dispCustomRefreshRate;
 extern int g_dispFilterSharpness;
 
 extern ATDisplayStretchMode g_displayStretchMode;
@@ -128,6 +130,10 @@ ATLogChannel g_ATLCHostUI(false, false, "HOSTUI", "Host UI debug output");
 ATConfigVarBool g_ATCVUIShowNativeProfiler("ui.show_native_profiler", false, ATUIUpdateNativeProfiler);
 
 ATUIManager g_ATUIManager;
+
+ATUIManager& ATUIGetManager() {
+	return g_ATUIManager;
+}
 
 void OnCommandEditPasteText();
 
@@ -149,6 +155,11 @@ void ATUIOpenOnScreenKeyboard() {
 void ATUIToggleHoldKeys() {
 	if (g_pATVideoDisplayWindow)
 		g_pATVideoDisplayWindow->ToggleHoldKeys();
+}
+
+void ATUIRecalibrateLightPen() {
+	if (g_pATVideoDisplayWindow)
+		g_pATVideoDisplayWindow->RecalibrateLightPen();
 }
 
 bool ATUIGetDisplayPadIndicators() {
@@ -251,6 +262,11 @@ public:
 	{
 	}
 
+	~ATUINativeDisplay() {
+		if (mTimerId)
+			::KillTimer(nullptr, mTimerId);
+	}
+
 	virtual void Invalidate() {
 		if (!g_pDisplay)
 			return;
@@ -316,6 +332,8 @@ public:
 	}
 
 	virtual void *BeginModal() {
+		ATActivateUIPane(kATUIPaneId_Display, true);
+
 		ATUIStepDoModalWindow *step = new ATUIStepDoModalWindow;
 		step->AddRef();
 
@@ -357,8 +375,15 @@ public:
 		return this;
 	}
 
+	void SetTimer(float delay) override {
+		if (mTimerId)
+			::KillTimer(nullptr, mTimerId);
+
+		mTimerId = ::SetTimer(nullptr, 0, VDRoundToInt(delay * 1000.0f), StaticOnTimer);
+	}
+
 public:
-	virtual void CopyText(const char *s) {
+	virtual void CopyText(const wchar_t *s) {
 		if (mhwnd)
 			ATCopyTextToClipboard(mhwnd, s);
 	}
@@ -479,6 +504,8 @@ public:
 	void SetFullScreen(bool enabled);
 
 private:
+	static void CALLBACK StaticOnTimer(HWND, UINT, UINT_PTR, DWORD);
+
 	void UpdateCursorConstraint(bool& state, bool newValue);
 	bool ShouldConstrainCursor() const;
 	void BeginConstrainingCursor();
@@ -503,6 +530,7 @@ private:
 	bool mbFullScreen = false;
 	HCURSOR	mhcurTarget = nullptr;
 	HCURSOR	mhcurTargetOff = nullptr;
+	UINT_PTR mTimerId = 0;
 } g_ATUINativeDisplay;
 
 void ATUINativeDisplay::SetConstrainCursorByFullScreen(bool enabled) {
@@ -515,6 +543,15 @@ void ATUINativeDisplay::SetMouseConstraintEnabled(bool enabled) {
 
 void ATUINativeDisplay::SetFullScreen(bool enabled) {
 	UpdateCursorConstraint(mbFullScreen, enabled);
+}
+
+void CALLBACK ATUINativeDisplay::StaticOnTimer(HWND, UINT, UINT_PTR, DWORD) {
+	if (g_ATUINativeDisplay.mTimerId) {
+		::KillTimer(nullptr, g_ATUINativeDisplay.mTimerId);
+		g_ATUINativeDisplay.mTimerId = 0;
+	}
+
+	g_ATUIManager.OnTimer();
 }
 
 void ATUINativeDisplay::UpdateCursorConstraint(bool& state, bool newValue) {
@@ -691,11 +728,23 @@ void ATUIFlushDisplay() {
 	}
 }
 
+bool ATUICloseActiveModals() {
+	for(;;) {
+		auto *w = g_ATUIManager.GetModalWindow();
+
+		if (!w)
+			return true;
+
+		if (w->Close() != ATUICloseResult::Success)
+			return false;
+	}
+}
+
 bool ATUIIsActiveModal() {
 	return g_ATUIManager.GetModalWindow() != NULL;
 }
 
-class ATDisplayPane final : public ATUIPane, public IATDisplayPane {
+class ATDisplayPane final : public ATUIPaneWindow, public IATDisplayPane {
 public:
 	ATDisplayPane();
 	~ATDisplayPane();
@@ -707,7 +756,7 @@ public:
 	void ResetDisplay();
 
 	bool IsTextSelected() const { return g_pATVideoDisplayWindow->IsTextSelected(); }
-	void Copy(bool enableEscaping);
+	void Copy(ATTextCopyMode copyMode);
 	void CopyFrame(bool trueAspect);
 	bool CopyFrameImage(bool trueAspect, VDPixmapBuffer& buf);
 	void SaveFrame(bool trueAspect, const wchar_t *path = nullptr);
@@ -716,6 +765,7 @@ public:
 
 	void OnSize();
 	void UpdateFilterMode();
+	void UpdateCustomRefreshRate();
 	void RequestRenderedFrame(vdfunction<void(const VDPixmap *)> fn) override;
 
 protected:
@@ -788,7 +838,7 @@ protected:
 };
 
 ATDisplayPane::ATDisplayPane()
-	: ATUIPane(kATUIPaneId_Display, L"Display")
+	: ATUIPaneWindow(kATUIPaneId_Display, L"Display")
 	, mhmenuContext(LoadMenu(NULL, MAKEINTRESOURCE(IDR_DISPLAY_CONTEXT_MENU)))
 {
 	SetTouchMode(kATUITouchMode_Dynamic);
@@ -1222,7 +1272,7 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			return 0;
 
 		case WM_COPY:
-			Copy(false);
+			Copy(ATTextCopyMode::ASCII);
 			return 0;
 
 		case WM_PASTE:
@@ -1356,7 +1406,7 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 	}
 
-	return ATUIPane::WndProc(msg, wParam, lParam);
+	return ATUIPaneWindow::WndProc(msg, wParam, lParam);
 }
 
 ATUITouchMode ATDisplayPane::GetTouchModeAtPoint(const vdpoint32& pt) const {
@@ -1364,7 +1414,7 @@ ATUITouchMode ATDisplayPane::GetTouchModeAtPoint(const vdpoint32& pt) const {
 }
 
 bool ATDisplayPane::OnCreate() {
-	if (!ATUIPane::OnCreate())
+	if (!ATUIPaneWindow::OnCreate())
 		return false;
 
 	g_ATLCHostUI("Creating display window");
@@ -1382,7 +1432,8 @@ bool ATDisplayPane::OnCreate() {
 	mpDisplay->SetTouchEnabled(true);
 	mpDisplay->SetUse16Bit(g_ATOptions.mbDisplay16Bit);
 	UpdateFilterMode();
-	mpDisplay->SetAccelerationMode(IVDVideoDisplay::kAccelResetInForeground);
+	UpdateCustomRefreshRate();
+	mpDisplay->SetAccelerationMode(IVDVideoDisplay::kAccelAlways);
 	mpDisplay->SetCompositor(&g_ATUIManager);
 
 	g_ATLCHostUI("Pushing initial frame");
@@ -1491,13 +1542,12 @@ void ATDisplayPane::OnDestroy() {
 		mhwndDisplay = NULL;
 	}
 
-	ATUIPane::OnDestroy();
+	ATUIPaneWindow::OnDestroy();
 }
 
 void ATDisplayPane::OnMouseMove(WPARAM wParam, LPARAM lParam) {
 	const int x = (short)LOWORD(lParam);
 	const int y = (short)HIWORD(lParam);
-	const bool hadMouse = mbHaveMouse;
 
 	SetHaveMouse();
 
@@ -1608,8 +1658,8 @@ void ATDisplayPane::ResetDisplay() {
 	}
 }
 
-void ATDisplayPane::Copy(bool enableEscaping) {
-	g_pATVideoDisplayWindow->Copy(enableEscaping);
+void ATDisplayPane::Copy(ATTextCopyMode copyMode) {
+	g_pATVideoDisplayWindow->Copy(copyMode);
 }
 
 void ATDisplayPane::CopyFrame(bool trueAspect) {
@@ -1697,6 +1747,11 @@ void ATDisplayPane::UpdateFilterMode() {
 			mpDisplay->SetPixelSharpness(1.0f, 1.0f);
 			break;
 	}
+}
+
+void ATDisplayPane::UpdateCustomRefreshRate() {
+	if (mpDisplay)
+		mpDisplay->SetCustomDesiredRefreshRate(g_dispCustomRefreshRate, g_dispCustomRefreshRate * 0.99f, g_dispCustomRefreshRate * 1.03f);
 }
 
 void ATDisplayPane::RequestRenderedFrame(vdfunction<void(const VDPixmap *)> fn) {
@@ -1823,7 +1878,19 @@ void ATDisplayPane::OnDisplayContextMenu(const vdpoint32& pt) {
 		UINT cmd = (UINT)TrackPopupMenu(hmenuPopup, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RETURNCMD, pt2.x, pt2.y, 0, GetAncestor(mhwnd, GA_ROOTOWNER), NULL);
 		switch(cmd) {
 			case ID_DISPLAYCONTEXTMENU_COPY:
-				Copy(false);
+				Copy(ATTextCopyMode::ASCII);
+				break;
+
+			case ID_DISPLAYCONTEXTMENU_COPYESCAPEDTEXT:
+				Copy(ATTextCopyMode::Escaped);
+				break;
+
+			case ID_DISPLAYCONTEXTMENU_COPYHEX:
+				Copy(ATTextCopyMode::Hex);
+				break;
+
+			case ID_DISPLAYCONTEXTMENU_COPYUNICODE:
+				Copy(ATTextCopyMode::Unicode);
 				break;
 
 			case ID_DISPLAYCONTEXTMENU_PASTE:

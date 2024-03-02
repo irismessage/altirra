@@ -17,33 +17,33 @@
 
 #include <stdafx.h>
 #include <windows.h>
-#include "cio.h"
+#include <at/atcore/cio.h>
 
 uint8 ATTranslateWin32ErrorToSIOError(uint32 err) {
 	switch(err) {
 		case ERROR_FILE_NOT_FOUND:
-			return ATCIOSymbols::CIOStatFileNotFound;
+			return kATCIOStat_FileNotFound;
 
 		case ERROR_PATH_NOT_FOUND:
-			return ATCIOSymbols::CIOStatPathNotFound;
+			return kATCIOStat_PathNotFound;
 
 		case ERROR_FILE_EXISTS:
 		case ERROR_ALREADY_EXISTS:
-			return ATCIOSymbols::CIOStatFileExists;
+			return kATCIOStat_FileExists;
 
 		case ERROR_DISK_FULL:
-			return ATCIOSymbols::CIOStatDiskFull;
+			return kATCIOStat_DiskFull;
 
 		case ERROR_DIR_NOT_EMPTY:
-			return ATCIOSymbols::CIOStatDirNotEmpty;
+			return kATCIOStat_DirNotEmpty;
 
 		case ERROR_ACCESS_DENIED:
-			return ATCIOSymbols::CIOStatAccessDenied;
+			return kATCIOStat_AccessDenied;
 
 		case ERROR_SHARING_VIOLATION:
-			return ATCIOSymbols::CIOStatFileLocked;
+			return kATCIOStat_FileLocked;
 
 		default:
-			return ATCIOSymbols::CIOStatSystemError;
+			return kATCIOStat_SystemError;
 	}
 }

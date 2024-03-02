@@ -17,10 +17,11 @@
 
 #include <stdafx.h>
 #include <vd2/system/vdalloc.h>
+#include <at/atcore/ksyms.h>
 #include "cpu.h"
+#include "cpuheatmap.h"
 #include "cpumemory.h"
 #include "cpuhookmanager.h"
-#include "ksyms.h"
 
 class ATHLEFastBootHook {
 public:
@@ -168,6 +169,9 @@ uint8 ATHLEFastBootHook::OnHookMemCheck(uint16) {
 	bool success = true;
 
 	addr += mpCPU->GetY();
+
+	const uint32 startAddr = addr;
+
 	for(uint32 i=mpCPU->GetY(); i<256; ++i) {
 		mem.WriteByte(addr, 0xFF);
 		if (mem.ReadByte(addr) != 0xFF)
@@ -182,6 +186,11 @@ uint8 ATHLEFastBootHook::OnHookMemCheck(uint16) {
 
 	if (!success)
 		mem.WriteByte(0x01, mem.ReadByte(0x01) >> 1);
+
+	// let the heat map know this is valid memory
+	if (ATCPUHeatMap *heatMap = mpCPU->GetHeatMap()) {
+		heatMap->PresetMemoryRange(startAddr, addr - startAddr);
+	}
 
 	mpCPU->SetY(0);
 	mpCPU->SetA(0);

@@ -1,16 +1,21 @@
-		segment	.text
+		.686
+		.mmx
+		.xmm
+		.model	flat
+		.code
 
-		struc	scaleinfo
-.dst		resd	1
-.src		resd	1
-.xaccum		resd	1
-.xfracinc	resd	1
-.xintinc	resd	1
-.count		resd	1
-		endstruc
+		assume	fs:nothing
 
-		global	_vdasm_resize_point32
-_vdasm_resize_point32:
+scaleinfo struct
+dst			dd	?
+src			dd	?
+xaccum		dd	?
+xfracinc	dd	?
+xintinc		dd	?
+count		dd	?
+scaleinfo ends
+
+_vdasm_resize_point32 proc
 		push	ebp
 		push	edi
 		push	esi
@@ -24,22 +29,22 @@ _vdasm_resize_point32:
 		mov		esi, [eax+scaleinfo.xintinc]
 		mov		edi, [eax+scaleinfo.dst]
 		mov		ebp, [eax+scaleinfo.count]
-.xloop:
+xloop:
 		mov		eax,[edx*4]
 		add		ebx,ecx
 		adc		edx,esi
 		mov		[edi+ebp],eax
 		add		ebp,4
-		jne		.xloop
+		jne		xloop
 
 		pop		ebx
 		pop		esi
 		pop		edi
 		pop		ebp
 		ret
+_vdasm_resize_point32 endp
 
-		global	_vdasm_resize_point32_MMX
-_vdasm_resize_point32_MMX:
+_vdasm_resize_point32_MMX proc
 		push	ebp
 		push	edi
 		push	esi
@@ -48,8 +53,8 @@ _vdasm_resize_point32_MMX:
 		mov		eax, [esp+4+16]
 
 		push	0
-		push	dword [fs:0]
-		mov		dword [fs:0], esp
+		push	dword ptr fs:[0]
+		mov		fs:dword ptr [0], esp
 
 		mov		ebx, [eax+scaleinfo.xaccum]
 		mov		esp, [eax+scaleinfo.xfracinc]
@@ -66,9 +71,9 @@ _vdasm_resize_point32_MMX:
 		adc		esi, esi
 
 		add		ebp, 4
-		jz		.odd
-.dualloop:
-		movd		mm0, dword [ecx*4]
+		jz		odd
+dualloop:
+		movd		mm0, dword ptr [ecx*4]
 		punpckldq	mm0,[edx*4]
 		add		eax,esp
 		adc		ecx,esi
@@ -77,13 +82,13 @@ _vdasm_resize_point32_MMX:
 		movq	[edi+ebp-4],mm0
 
 		add		ebp,8
-		jnc		.dualloop
-		jnz		.noodd
-.odd:
+		jnc		dualloop
+		jnz		noodd
+odd:
 		mov		eax, [ecx*4]
 		mov		[edi-4], eax
-.noodd:
-		mov		esp, dword [fs:0]
+noodd:
+		mov		esp, fs:dword ptr [0]
 		pop		eax
 		pop		eax
 
@@ -92,5 +97,6 @@ _vdasm_resize_point32_MMX:
 		pop		edi
 		pop		ebp
 		ret
+_vdasm_resize_point32_MMX endp
 
 		end

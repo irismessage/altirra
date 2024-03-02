@@ -442,7 +442,7 @@ ATDeviceDiskDriveATR8000::ATDeviceDiskDriveATR8000() {
 	mpSerialPort = new SerialPort;
 
 	mTargetProxy.Init(mCoProc);
-	InitTargetControl(mTargetProxy, 4000000.0, kATDebugDisasmMode_Z80, &mBreakpointsImpl);
+	InitTargetControl(mTargetProxy, 4000000.0, kATDebugDisasmMode_Z80, &mBreakpointsImpl, this);
 
 	// lower min transmission speed to ~200 baud
 	mSerialXmitQueue.SetMaxCyclesPerBit(8900);

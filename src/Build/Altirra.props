@@ -35,7 +35,6 @@
     <ATObjPath>$(VDObjPath)</ATObjPath>
     <ATOutPath>$(VDOutputPath)</ATOutPath>
     <ATMadsPath>mads.exe</ATMadsPath>
-    <ATYasmPath>yasm.exe</ATYasmPath>
     <XPDeprecationWarning>False</XPDeprecationWarning>
 
     <!-- Set to True to enable the Undefined Behavior Sanitizer (Clang only) -->
@@ -43,6 +42,10 @@
 
     <!-- Set to True to enable the Undefined Behavior Sanitizer (Clang only; MSVC's version barfs on static CRT right now) -->
     <ATEnableAsan>False</ATEnableAsan>
+    
+    <!-- Set to True to enable Control Flow Guard. This isn't recommended for release due to performance and compatibility issues,
+         but it does work. -->
+    <ATEnableCFG>False</ATEnableCFG>
   </PropertyGroup>
   <ItemGroup>
     <BuildMacro Include="ATBuildToolPath">
@@ -58,7 +61,11 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>h;$([MSBuild]::MakeRelative($(ProjectDir),$(MSBuildThisFileDirectory)..\h));autogen;res;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <AdditionalOptions>%(AdditionalOptions) /Zc:inline /Zc:externConstexpr /permissive-</AdditionalOptions>
+      
+      <!--
+        warning as error C4834: discarding return value of function with 'nodiscard' attribute
+      -->
+      <AdditionalOptions>%(AdditionalOptions) /Zc:inline /Zc:externConstexpr /permissive- /we4834</AdditionalOptions>
       <AdditionalOptions Condition="'$(Configuration)'!='Debug'">%(AdditionalOptions) /Zo</AdditionalOptions>
       <AdditionalOptions Condition="'$(Configuration)'=='Analysis'">%(AdditionalOptions) /analyze:rulesetdirectory "$(VSInstallDir)Team Tools\Static Analysis Tools\Rule Sets" /analyze:ruleset "$(MSBuildThisFileDirectory)Altirra.ruleset"</AdditionalOptions>
 
@@ -137,6 +144,8 @@
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <WarningLevel>Level4</WarningLevel>
       <SupportJustMyCode>false</SupportJustMyCode>
+
+      <AdditionalOptions Condition="$(ATEnableCFG)">%(AdditionalOptions) /guard:cf</AdditionalOptions>
     </ClCompile>
     <Lib>
       <SuppressStartupBanner>true</SuppressStartupBanner>
@@ -148,7 +157,7 @@
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <TargetMachine Condition="'$(Platform)'=='Win32'">MachineX86</TargetMachine>
-      <TargetMachine Condition="'$(Platform)'=='x86'">MachineX64</TargetMachine>
+      <TargetMachine Condition="'$(Platform)'=='x86'">MachineX86</TargetMachine>
       <TargetMachine Condition="'$(Platform)'=='x64'">MachineX64</TargetMachine>
       <TargetMachine Condition="'$(Platform)'=='ARM64'">MachineARM64</TargetMachine>
       <OptimizeReferences Condition="'$(Configuration)'!='Debug'">true</OptimizeReferences>
@@ -161,12 +170,21 @@
         is not driving the link.
       -->
       <AdditionalDependencies Condition="'$(PlatformToolset)'=='llvm'">%(AdditionalDependencies);$(LLVMInstallDir)lib\clang\9.0.0\lib\windows\clang_rt.builtins-x86_64.lib</AdditionalDependencies>
+      
+      <AdditionalOptions Condition="$(ATEnableCFG)">%(AdditionalOptions) /guard:cf</AdditionalOptions>
     </Link>
     <ResourceCompile>
       <PreprocessorDefinitions Condition="'$(Configuration)'!='Debug'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Configuration)'=='Debug'">_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Platform)'=='Win32'">ATRES_X86;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Platform)'=='x86'">ATRES_X86;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Platform)'=='x64'">ATRES_X64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Platform)'=='ARM64'">ATRES_ARM64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Culture>0x0409</Culture>
     </ResourceCompile>
+    <MASM>
+      <UseSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">true</UseSafeExceptionHandlers>
+    </MASM>
   </ItemDefinitionGroup>
   <PropertyGroup Condition="$(ATUseOutputPaths)">
     <IntDir>$(ATObjPath)\</IntDir>

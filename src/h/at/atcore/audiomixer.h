@@ -12,9 +12,12 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 //=========================================================================
 // Synchronous audio mixer output
@@ -34,6 +37,7 @@
 
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/refcount.h>
+#include <vd2/system/unknown.h>
 #include <vd2/system/vdstl.h>
 
 class IATSyncAudioSource;
@@ -57,7 +61,8 @@ enum ATAudioSampleId : uint32 {
 	kATAudioSampleId_DiskStep1,
 	kATAudioSampleId_DiskStep2,
 	kATAudioSampleId_DiskStep2H,
-	kATAudioSampleId_DiskStep3
+	kATAudioSampleId_DiskStep3,
+	kATAudioSampleId_SpeakerStep
 };
 
 enum class ATSoundId : uint32 {
@@ -66,10 +71,13 @@ enum class ATSoundId : uint32 {
 
 class IATAudioMixer {
 public:
+	static constexpr uint32 kTypeID = "IATAudioMixer"_vdtypeid;
+
 	virtual void AddSyncAudioSource(IATSyncAudioSource *src) = 0;
 	virtual void RemoveSyncAudioSource(IATSyncAudioSource *src) = 0;
 
 	virtual IATSyncAudioSamplePlayer& GetSamplePlayer() = 0;
+	virtual IATSyncAudioSamplePlayer& GetEdgeSamplePlayer() = 0;
 	virtual IATSyncAudioEdgePlayer& GetEdgePlayer() = 0;
 };
 
@@ -102,13 +110,47 @@ public:
 	virtual void StopAllSounds() = 0;
 };
 
+// Convolution player
+//
+// The convolution player is a special subclass of the regular sample player that
+// mixes copies of a single sound by FFT convolution instead of regular sample mixing.
+// It is significantly faster when hundreds of instances of the same sound sample
+// are played in the same audio frame.
+//
+// Considerations:
+//
+// - There is a cost of 1 2K FFT per audio frame per convolution player that has
+//   impulses, and another FFT for the output when any impulses are present. Thus,
+//   convolution players are slower until around dozens of sounds are played
+//   per frame. However, convolution players have a very low cost per sound, and
+//   there is no cost for convolution players that do not currently have impulses.
+//
+// - Each convolution player can only handle one sample. (Convolution players will
+//   be shared if allocated for stock samples.)
+//
+// - Sounds are limited to 2560 samples.
+//
+// - Convolution players can be used both on the normal and edge sample players.
+//   Edge convolution players are useful for convolving samples with square waves.
+//
+// - Convolution players currently only support samples played within the current
+//   audio frame. They cannot be used to play sounds more than one frame in the
+//   future.
+//
+// - Sounds cannot be stopped on a convolution player. Once a sound has started,
+//   it must play to completion.
+//
+class IATSyncAudioConvolutionPlayer : public IVDRefCount {
+public:
+	virtual void Play(uint32 t, float volume) = 0;
+};
+
 class IATSyncAudioSamplePlayer {
 public:
+	virtual IATSyncAudioSource& AsSource() = 0;
+
 	virtual ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, ATAudioSampleId sampleId, float volume) = 0;
 	virtual ATSoundId AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, ATAudioSampleId sampleId, float volume) = 0;
-
-	virtual ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, const sint16 *sample, uint32 len, float volume) = 0;
-	virtual ATSoundId AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, const sint16 *sample, uint32 len, float volume) = 0;
 
 	virtual ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, uint32 len, float volume) = 0;
 	virtual ATSoundId AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, float volume) = 0;
@@ -129,6 +171,9 @@ public:
 	// sound is stopped immediately. Otherwise, the sound will be truncated
 	// to the given time.
 	virtual void StopSound(ATSoundId id, uint64 time) = 0;
+
+	virtual vdrefptr<IATSyncAudioConvolutionPlayer> CreateConvolutionPlayer(ATAudioSampleId sampleId) = 0;
+	virtual vdrefptr<IATSyncAudioConvolutionPlayer> CreateConvolutionPlayer(const sint16 *sample, uint32 len) = 0;
 };
 
 struct ATSyncAudioEdge {

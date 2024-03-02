@@ -25,6 +25,7 @@
 
 #include <stdafx.h>
 #include <math.h>
+#include <intrin.h>
 
 #include <vd2/system/bitmath.h>
 #include <vd2/system/int128.h>
@@ -378,7 +379,16 @@
 		}
 	}
 
-#elif !defined(VD_CPU_AMD64)
+#elif defined(VD_CPU_AMD64)
+
+	void vdasm_uint128_add(uint64 dst[2], const uint64 x[2], const uint64 y[2]) {
+		_addcarry_u64(_addcarry_u64(0, x[0], y[0], &dst[0]), x[1], y[1], &dst[1]);
+	}
+
+	void vdasm_uint128_sub(uint64 dst[2], const uint64 x[2], const uint64 y[2]) {
+		_subborrow_u64(_subborrow_u64(0, x[0], y[0], &dst[0]), x[1], y[1], &dst[1]);
+	}
+#else
 
 	// These aren't really assembly routines, but we define them so we aren't asm dependent.
 

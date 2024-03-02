@@ -364,7 +364,6 @@ ATDeviceCorvus::~ATDeviceCorvus() {
 
 void *ATDeviceCorvus::AsInterface(uint32 iid) {
 	switch(iid) {
-		case IATDevicePortInput::kTypeID: return static_cast<IATDevicePortInput *>(this);
 		case IATDeviceScheduling::kTypeID: return static_cast<IATDeviceScheduling *>(this);
 		case IATDeviceIndicators::kTypeID: return static_cast<IATDeviceIndicators *>(this);
 		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(&mDeviceParent);
@@ -401,6 +400,15 @@ bool ATDeviceCorvus::SetSettings(const ATPropertySet& pset) {
 }
 
 void ATDeviceCorvus::Init() {
+	mpPortManager = GetService<IATDevicePortManager>();
+
+	mPortInput = mpPortManager->AllocInput();
+
+	ReinitPortOutput();
+
+	mLastPortState = mpPortManager->GetOutputState();
+
+
 	mDeviceParent.Init(IATBlockDevice::kTypeID, "harddisk", L"Hard disk bus", "hdbus", this);
 	mDeviceParent.SetOnAttach([this] { mCorvusEmu.SetAttachedDevice(mDeviceParent.GetChild<IATBlockDevice>()); });
 	mDeviceParent.SetOnDetach([this] { mCorvusEmu.SetAttachedDevice(nullptr); });
@@ -426,16 +434,6 @@ void ATDeviceCorvus::ColdReset() {
 
 void ATDeviceCorvus::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 	mpScheduler = sch;
-}
-
-void ATDeviceCorvus::InitPortInput(IATDevicePortManager *portMgr) {
-	mpPortManager = portMgr;
-
-	mPortInput = mpPortManager->AllocInput();
-
-	ReinitPortOutput();
-
-	mLastPortState = mpPortManager->GetOutputState();
 }
 
 void ATDeviceCorvus::InitIndicators(IATDeviceIndicatorManager *indmgr) {

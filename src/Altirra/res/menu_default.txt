@@ -50,6 +50,7 @@
 		Empty 1M (8Mbit) MaxFlash cartridge (older - bank 127)			{Cart.AttachMaxFlash8MB}
 		Empty 1M (8Mbit) MaxFlash cartridge (newer - bank 0)			{Cart.AttachMaxFlash8MBBank0}
 		Empty SIC! flash cartridge									{Cart.AttachSIC}
+		Empty SIC+ flash cartridge									{Cart.AttachSICPlus}
 		Empty 512K MegaCart flash cartridge							{Cart.AttachMegaCart512K}
 		Empty 4MB MegaCart flash cartridge							{Cart.AttachMegaCart4MB}
 		Empty The!Cart 32MB flash cartridge							{Cart.AttachTheCart32MB}
@@ -108,10 +109,6 @@
 			&Full (With Blanking)	{View.VerticalOverrideFull}
 		&Extended PAL Height	{View.TogglePALExtended}
 		&Indicator Margin		{View.ToggleIndicatorMargin}
-	&GTIA Visualization
-		&Next Mode				{View.NextGTIAVisMode}
-	&ANTIC Visualization
-		&Next Mode				{View.NextANTICVisMode}
 	&Vertical Sync				{View.ToggleVSync}
 	Show FPS					{View.ToggleFPS}
 	Video O&utputs
@@ -123,6 +120,7 @@
 	Adjust Colors...			{Video.AdjustColorsDialog}
 	Adjust Screen Effects...	{Video.AdjustScreenEffectsDialog}
 	Customize HUD...			{View.CustomizeHUD}
+	Calibrate...				{View.Calibrate}
 	---
 	&Display					{Pane.Display}
 	&Printer Output				{Pane.PrinterOutput}
@@ -131,8 +129,11 @@
 	Copy Frame to Clipboard (True Aspect)		{Edit.CopyFrameTrueAspect}
 	Save Frame...				{Edit.SaveFrame}
 	Save Frame (True Aspect)...	{Edit.SaveFrameTrueAspect}
-	Copy Text					{Edit.CopyText}
-	Copy Escaped Text			{Edit.CopyEscapedText}
+	Copy
+		Copy &Text					{Edit.CopyText}
+		Copy &Escaped Text			{Edit.CopyEscapedText}
+		Copy &Hex					{Edit.CopyHex}
+		Copy &Unicode				{Edit.CopyUnicode}
 	Paste Text					{Edit.PasteText}
 
 S&ystem
@@ -183,13 +184,14 @@ S&ystem
 
 &Input
 	Input Mappings...					{Input.InputMappingsDialog}
-	Input Setup...					{Input.InputSetupDialog}
+	Input Setup...						{Input.InputSetupDialog}
 	Cycle &Quick Maps					{Input.CycleQuickMaps}
 	---
 	Capture Mouse						{Input.CaptureMouse}
 	Auto-capture Mouse					{Input.ToggleAutoCaptureMouse}
 	---
 	Light Pen/Gun...					{Input.LightPenDialog}
+	Recalibrate Light Pen/Gun			{Input.RecalibrateLightPen}
 	---
 	Port &1								{$port1}
 		&None							{$port1none}
@@ -226,7 +228,13 @@ Debu&g
 			Watch &2					{Pane.Watch2}
 			Watch &3					{Pane.Watch3}
 			Watch &4					{Pane.Watch4}			
+		&Breakpoints					{Pane.Breakpoints}
+		&Targets						{Pane.Targets}
 		Debug Display					{Pane.DebugDisplay}
+
+	Visualization
+		Cycle GTIA Visualization				{View.NextGTIAVisMode}
+		Cycle ANTIC Visualization				{View.NextANTICVisMode}
 		
 	Options
 		Auto-Reload ROMs on Cold Reset	{Debug.ToggleAutoReloadRoms}

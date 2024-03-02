@@ -33,19 +33,35 @@ public:
 	vdrect32	mBounds;
 };
 
+// Path rasterizer
+//
+// Integer coordinates are in 13.3 signed fixed point, while floating point coordinates
+// are in pixels. Pixel centers are at half integers (+4 fixed or +0.5 float).
+//
+// The path rasterizer is winding order agnostic since it uses a nonzero rule. Paths
+// must be closed, however, or they will leak.
+//
 class VDPixmapPathRasterizer {
+	VDPixmapPathRasterizer(const VDPixmapPathRasterizer&) = delete;
+	VDPixmapPathRasterizer& operator=(const VDPixmapPathRasterizer&) = delete;
 public:
 	VDPixmapPathRasterizer();
-	VDPixmapPathRasterizer(const VDPixmapPathRasterizer&);	// no-op
 	~VDPixmapPathRasterizer();
 
-	VDPixmapPathRasterizer& operator=(const VDPixmapPathRasterizer&);	// no-op
-
 	void Clear();
-	void QuadraticBezier(const vdint2 pts[4]);
-	void CubicBezier(const vdint2 pts[4]);
-	void Line(const vdint2& pt1, const vdint2& pt2);
-	void FastLine(int x0, int y0, int x1, int y1);
+	void QuadraticBezierX(const vdint2 pts[3]);
+	void CubicBezierX(const vdint2 pts[4]);
+	void CubicBezierF(const vdfloat2 pts[4]);
+	void LineX(const vdint2& pt1, const vdint2& pt2);
+	void LineF(const vdfloat2& pt1, const vdfloat2& pt2);
+	void FastLineX(int x0, int y0, int x1, int y1);
+
+	void RectangleX(const vdint2& p1, const vdint2& p2, bool cw);
+	void RectangleF(const vdfloat2& p1, const vdfloat2& p2, bool cw);
+
+	void CircleF(const vdfloat2& center, float r, bool cw);
+
+	void StrokeF(const vdfloat2 *pts, size_t n, float thickness);
 
 	void ScanConvert(VDPixmapRegion& region);
 
@@ -78,7 +94,6 @@ protected:
 	EdgeBlock *mpFreeEdgeBlocks;
 	int mEdgeBlockIdx;
 	Scan *mpScanBuffer;
-	Scan *mpScanBufferBiased;
 	int mScanYMin;
 	int mScanYMax;
 };
@@ -88,5 +103,9 @@ bool VDPixmapFillRegionAntialiased8x(const VDPixmap& dst, const VDPixmapRegion& 
 
 void VDPixmapCreateRoundRegion(VDPixmapRegion& dst, float r);
 void VDPixmapConvolveRegion(VDPixmapRegion& dst, const VDPixmapRegion& r1, const VDPixmapRegion& r2);
+
+// Resolve a 4x render to 1x using a box filter with gamma correction, specifically intended
+// for antialiased path rendering.
+void VDPixmapResolve4x(VDPixmap& dst, const VDPixmap& src4x);
 
 #endif

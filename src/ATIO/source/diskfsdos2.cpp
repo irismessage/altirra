@@ -97,7 +97,7 @@ protected:
 	void LoadDirectory(ATDiskFSKey key);
 	void LoadDirectoryByStart(uint32 startSector);
 
-	IATDiskImage *mpImage;
+	vdrefptr<IATDiskImage> mpImage;
 	bool mbDirty;
 	bool mbReadOnly;
 	bool mbStrictNames = true;

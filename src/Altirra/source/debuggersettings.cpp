@@ -153,6 +153,7 @@ ATDebuggerSetting<bool> g_ATDbgSettingShowLabels					("Debugger: Show labels", t
 ATDebuggerSetting<bool> g_ATDbgSettingShowLabelNamespaces			("Debugger: Show label namespaces", true);
 ATDebuggerSetting<bool> g_ATDbgSettingShowProcedureBreaks			("Debugger: Show procedure breaks", true);
 ATDebuggerSetting<bool> g_ATDbgSettingShowCallPreviews				("Debugger: Show call previews", true);
+ATDebuggerSetting<bool> g_ATDbgSettingShowSourceInDisasm			("Debugger: Show source in disasm", false);
 ATDebuggerSetting<bool> g_ATDbgSettingCollapseLoops					("Debugger: Collapse loops", true);
 ATDebuggerSetting<bool> g_ATDbgSettingCollapseCalls					("Debugger: Collapse calls", true);
 ATDebuggerSetting<bool> g_ATDbgSettingCollapseInterrupts			("Debugger: Collapse interrupts", true);

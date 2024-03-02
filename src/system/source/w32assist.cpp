@@ -42,6 +42,13 @@ bool VDTestOSVersionW32(uint8 major, uint8 minor) {
 	return 0 != VerifyVersionInfo(&vervals, VER_MAJORVERSION | VER_MINORVERSION, cond);
 }
 
+bool VDTestOSBuildW32(uint32 build) {
+	OSVERSIONINFOEX vervals {};
+	vervals.dwBuildNumber = build;
+	ULONGLONG cond = 0;
+	VER_SET_CONDITION(cond, VER_BUILDNUMBER, VER_GREATER_EQUAL);
+	return 0 != VerifyVersionInfo(&vervals, VER_BUILDNUMBER, cond);
+}
 
 bool VDIsAtLeast7W32() {
 	static const bool result = VDTestOSVersionW32(6,1);
@@ -63,6 +70,14 @@ bool VDIsAtLeast81W32() {
 
 bool VDIsAtLeast10W32() {
 	static const bool result = VDTestOSVersionW32(10,0);
+
+	return result;
+}
+
+bool VDIsAtLeast10_1803W32() {
+	// We need to use two separate tests here as VerifyVersionInfo() only
+	// special cases major > minor > service, otherwise it does an AND.
+	static const bool result = VDTestOSVersionW32(10,0) && VDTestOSBuildW32(17134);
 
 	return result;
 }

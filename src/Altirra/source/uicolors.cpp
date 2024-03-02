@@ -17,7 +17,6 @@
 
 #include <stdafx.h>
 #include <windows.h>
-#include <wincodec.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/color.h>
 #include <vd2/system/error.h>
@@ -1336,57 +1335,9 @@ void ATUIColorImageReferenceWindow::OnCommandLoad() {
 			mpImageView->SetImage(px2);
 			mpImageView->SetCornerPoints(vdfloat2 { 0.5f / 16.0f, 0.5f / 16.0f }, vdfloat2 { 15.5f / 16.0f, 15.5f / 16.0f });
 		} else if (size >= 4 && buf[0] == 0xFF && buf[1] == 0xD8 && buf[2] == 0xFF && (buf[3] & 0xF0) == 0xE0) {
-			bool succeeded = false;
-
-			vdrefptr<IWICImagingFactory> factory;
-			HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_ALL, __uuidof(IWICImagingFactory), (void **)~factory);
-			if (SUCCEEDED(hr)) {
-				vdrefptr<IWICStream> stream;
-				hr = factory->CreateStream(~stream);
-				if (SUCCEEDED(hr)) {
-					hr = stream->InitializeFromMemory((BYTE *)buf.data(), (uint32)size);
-					if (SUCCEEDED(hr)) {
-						vdrefptr<IWICBitmapDecoder> decoder;
-
-						hr = factory->CreateDecoder(GUID_ContainerFormatJpeg, &GUID_VendorMicrosoft, ~decoder);
-						if (SUCCEEDED(hr)) {
-							hr = decoder->Initialize(stream, WICDecodeMetadataCacheOnDemand);
-
-							if (SUCCEEDED(hr)) {
-								vdrefptr<IWICBitmapFrameDecode> frameDecode;
-								hr = decoder->GetFrame(0, ~frameDecode);
-
-								if (SUCCEEDED(hr)) {
-									vdrefptr<IWICFormatConverter> formatConverter;
-
-									hr = factory->CreateFormatConverter(~formatConverter);
-									if (SUCCEEDED(hr)) {
-										hr = formatConverter->Initialize(frameDecode, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.5, WICBitmapPaletteTypeMedianCut);
-
-										if (SUCCEEDED(hr)) {
-											UINT w = 0, h = 0;
-											hr = formatConverter->GetSize(&w, &h);
-
-											if (SUCCEEDED(hr) && w && h) {
-												VDPixmapBuffer pxbuf(w, h, nsVDPixmap::kPixFormat_XRGB8888);
-
-												hr = formatConverter->CopyPixels(nullptr, pxbuf.pitch, pxbuf.pitch * pxbuf.h, (BYTE *)pxbuf.data);
-												if (SUCCEEDED(hr)) {
-													mpImageView->SetImage(pxbuf);
-													succeeded = true;
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-
-			if (!succeeded)
-				throw MyError("Unable to decode JPEG file.");
+			VDPixmapBuffer pxbuf;
+			ATLoadFrameFromMemory(pxbuf, buf.data(), size);
+			mpImageView->SetImage(pxbuf);
 		} else if (size >= 8 && !memcmp(buf.data(), nsVDPNG::kPNGSignature, 8)){
 			vdautoptr decoder(VDCreateImageDecoderPNG());
 			if (kPNGDecodeOK == decoder->Decode(buf.data(), (uint32)buf.size())) {

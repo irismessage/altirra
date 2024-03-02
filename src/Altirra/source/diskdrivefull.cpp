@@ -172,7 +172,7 @@ ATDeviceDiskDriveFull::ATDeviceDiskDriveFull(bool is1050, DeviceType deviceType)
 
 	mTargetProxy.mpDriveScheduler = &mDriveScheduler;
 	mTargetProxy.Init(mCoProc);
-	InitTargetControl(mTargetProxy, clockRate.asDouble(), deviceType == kDeviceType_Speedy1050 ? kATDebugDisasmMode_65C02 : kATDebugDisasmMode_6502, &mBreakpointsImpl);
+	InitTargetControl(mTargetProxy, clockRate.asDouble(), deviceType == kDeviceType_Speedy1050 ? kATDebugDisasmMode_65C02 : kATDebugDisasmMode_6502, &mBreakpointsImpl, this);
 }
 
 ATDeviceDiskDriveFull::~ATDeviceDiskDriveFull() {
@@ -1267,10 +1267,13 @@ bool ATDeviceDiskDriveFull::IsImageSupported(const IATDiskImage& image) const {
 	if (geo.mSectorSize > 256)
 		return false;
 
-	if (geo.mSectorsPerTrack > 26)
+	if (geo.mSectorsPerTrack > (geo.mSectorSize > 128 ? 18U : 26U))
 		return false;
 
-	if (geo.mTrackCount > 80)
+	if (geo.mTrackCount > 40)
+		return false;
+
+	if (geo.mSideCount > 1)
 		return false;
 
 	return true;

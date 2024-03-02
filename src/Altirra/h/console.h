@@ -34,8 +34,11 @@ void ATConsoleTaggedPrintf(const char *format, ...);
 ///////////////////////////////////////////////////////////////////////////
 
 void ATConsoleGetFont(struct tagLOGFONTW& font, int& pointSizeTenths);
+void ATConsoleGetCharMetrics(int& charWidth, int& lineHeight);
 void ATConsoleSetFont(const struct tagLOGFONTW& font, int pointSizeTenths);
 void ATConsoleSetFontDpi(unsigned dpi);
+
+bool ATConsoleShowSource(uint32 addr);
 
 void ATShowConsole();
 void ATOpenConsole();
@@ -49,6 +52,10 @@ public:
 
 	virtual void FocusOnLine(int line) = 0;
 	virtual void ActivateLine(int line) = 0;
+
+	// Read lines from the source window by 0-based index. Returns the line
+	// if found, with \n appended to the end.
+	virtual VDStringA ReadLine(int lineIndex) = 0;
 };
 
 IATSourceWindow *ATGetSourceWindow(const wchar_t *s);
@@ -97,6 +104,33 @@ public:
 	virtual bool OnPaneCommand(ATUIPaneCommandId id) = 0;
 };
 
+class IATUIDebuggerDisassemblyPane {
+public:
+	static constexpr auto kTypeID = "IATUIDebuggerDisassemblyPane"_vdtypeid;
+
+	virtual void SetPosition(uint32 addr) = 0;
+};
+
+class IATUIDebuggerWatchPane {
+public:
+	static constexpr uint32 kTypeID = "IATUIDebuggerWatchPane"_vdtypeid;
+
+	virtual void AddWatch(const char *expr) = 0;
+};
+
+class IATUIDebuggerHistoryPane {
+public:
+	static constexpr uint32 kTypeID = "IATUIDebuggerHistoryPane"_vdtypeid;
+
+	virtual bool JumpToCycle(uint32 cycle) = 0;
+};
+
+class IATUIDebuggerConsoleWindow {
+public:
+	virtual void Write(const char *s) = 0;
+	virtual void ShowEnd() = 0;
+};
+
 bool ATRestorePaneLayout(const char *name);
 void ATSavePaneLayout(const char *name);
 void ATLoadDefaultPaneLayout();
@@ -113,6 +147,8 @@ enum {
 	kATUIPaneId_PrinterOutput,
 	kATUIPaneId_Profiler,
 	kATUIPaneId_DebugDisplay,
+	kATUIPaneId_Breakpoints,
+	kATUIPaneId_Targets,
 
 	kATUIPaneId_IndexMask = 0xFF,
 	kATUIPaneId_MemoryN = 0x100,
@@ -128,6 +164,8 @@ int ATGetConsoleFontLineHeightW32();
 
 VDZHFONT ATConsoleGetPropFontW32();
 int ATConsoleGetPropFontLineHeightW32();
+
+VDZHMENU ATUIGetSourceContextMenuW32();
 
 void ATConsoleAddFontNotification(const vdfunction<void()> *callback);
 void ATConsoleRemoveFontNotification(const vdfunction<void()> *callback);

@@ -50,6 +50,7 @@ protected:
 	void SetHeld(bool held);
 	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
 	void Relayout();
+	void UpdateFillColor();
 
 	sint32 mStockImageIdx;
 	bool mbDepressed;

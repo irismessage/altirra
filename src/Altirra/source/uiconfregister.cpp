@@ -16,7 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
-#include <at/atcore/devicemanager.h>
+#include "devicemanager.h"
 
 bool ATUIConfDevHardDisk(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevBlackBox(VDGUIHandle hParent, ATPropertySet& props);
@@ -50,6 +50,8 @@ bool ATUIConfDevCustom(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevHDVirtFAT32(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevSIDE3(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevParFileWriter(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevComputerEyes(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevVideoStillImage(VDGUIHandle hParent, ATPropertySet& props);
 
 void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("harddisk", ATUIConfDevHardDisk);
@@ -85,6 +87,8 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("hdvirtsdfs", ATUIConfDevHDVirtFAT32);
 	dev.AddDeviceConfigurer("side3", ATUIConfDevSIDE3);
 	dev.AddDeviceConfigurer("parfilewriter", ATUIConfDevParFileWriter);
+	dev.AddDeviceConfigurer("computereyes", ATUIConfDevComputerEyes);
+	dev.AddDeviceConfigurer("videostillimage", ATUIConfDevVideoStillImage);
 
 	static const char *const kDiskDriveFullTypes[]={
 		"diskdrive810",

@@ -404,29 +404,6 @@ void VDCDECL VDPixmapBlt_YUVPlanar_encode_reference(const VDPixmap& dstbm, const
 		h2 = (h+1) >> 1;
 		w2 = (w2+1) >> 1;
 		break;
-
-	case nsVDPixmap::kPixFormat_YUV411_Planar:
-		if (halfchroma) {
-			chroma_srcw = (chroma_srcw + 1) >> 1;
-			hfunc = horiz_compress2x_coaligned;
-		} else
-			hfunc = horiz_compress4x_coaligned;
-		w2 = (w2+1) >> 2;
-		break;
-
-	case nsVDPixmap::kPixFormat_YUV410_Planar:
-		if (halfchroma) {
-			chroma_srcw = (chroma_srcw + 1) >> 1;
-			hfunc = horiz_compress2x_coaligned;
-		} else
-			hfunc = horiz_compress4x_coaligned;
-		vfunc = vert_compress4x_centered;
-		winsize = 8;
-		winposnext = 5;
-		winstep = 4;
-		h2 = (h+3) >> 2;
-		w2 = (w2+3) >> 2;
-		break;
 	}
 
 #ifdef _M_IX86

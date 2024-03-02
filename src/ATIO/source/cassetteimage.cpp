@@ -56,7 +56,7 @@ AT_DEFINE_ENUM_TABLE_END(ATCassetteTurboDecodeAlgorithm, ATCassetteTurboDecodeAl
 ///////////////////////////////////////////////////////////////////////////
 
 namespace {
-	extern "C" VDALIGN(16) const sint16 kernel[32][8] = {
+	VDALIGN(16) const sint16 kernel[33][8] = {
 		{+0x0000,+0x0000,+0x0000,+0x4000,+0x0000,+0x0000,+0x0000,+0x0000 },
 		{-0x000a,+0x0052,-0x0179,+0x3fe2,+0x019f,-0x005b,+0x000c,+0x0000 },
 		{-0x0013,+0x009c,-0x02cc,+0x3f86,+0x0362,-0x00c0,+0x001a,+0x0000 },
@@ -89,33 +89,45 @@ namespace {
 		{+0x0000,+0x002b,-0x012c,+0x054a,+0x3eef,-0x03f9,+0x00dc,-0x001a },
 		{+0x0000,+0x001a,-0x00c0,+0x0362,+0x3f86,-0x02cc,+0x009c,-0x0013 },
 		{+0x0000,+0x000c,-0x005b,+0x019f,+0x3fe2,-0x0179,+0x0052,-0x000a },
+
+		{+0x0000,+0x0000,+0x0000,+0x0000,+0x4000,+0x0000,+0x0000,+0x0000 },
 	};
 
 	uint64 resample16x2_scalar(sint16 *d, const sint16 *s, uint32 count, uint64 accum, sint64 inc) {
 		do {
 			const sint16 *s2 = s + (uint32)(accum >> 32)*2;
-			const sint16 *f = kernel[(uint32)accum >> 27];
+			const sint16 (*f)[8] = &kernel[(uint32)accum >> 27];
 
+			sint32 frac = ((uint32)accum >> 12) & 0x7FFF;
 			accum += inc;
 
-			sint32 l= (sint32)s2[ 0]*(sint32)f[0]
-					+ (sint32)s2[ 2]*(sint32)f[1]
-					+ (sint32)s2[ 4]*(sint32)f[2]
-					+ (sint32)s2[ 6]*(sint32)f[3]
-					+ (sint32)s2[ 8]*(sint32)f[4]
-					+ (sint32)s2[10]*(sint32)f[5]
-					+ (sint32)s2[12]*(sint32)f[6]
-					+ (sint32)s2[14]*(sint32)f[7]
+			sint32 f0 = (sint32)f[0][0] + ((((sint32)f[1][0] - (sint32)f[0][0])*frac) >> 15);
+			sint32 f1 = (sint32)f[0][1] + ((((sint32)f[1][1] - (sint32)f[0][1])*frac) >> 15);
+			sint32 f2 = (sint32)f[0][2] + ((((sint32)f[1][2] - (sint32)f[0][2])*frac) >> 15);
+			sint32 f3 = (sint32)f[0][3] + ((((sint32)f[1][3] - (sint32)f[0][3])*frac) >> 15);
+			sint32 f4 = (sint32)f[0][4] + ((((sint32)f[1][4] - (sint32)f[0][4])*frac) >> 15);
+			sint32 f5 = (sint32)f[0][5] + ((((sint32)f[1][5] - (sint32)f[0][5])*frac) >> 15);
+			sint32 f6 = (sint32)f[0][6] + ((((sint32)f[1][6] - (sint32)f[0][6])*frac) >> 15);
+			sint32 f7 = (sint32)f[0][7] + ((((sint32)f[1][7] - (sint32)f[0][7])*frac) >> 15);
+
+			sint32 l= (sint32)s2[ 0]*f0
+					+ (sint32)s2[ 2]*f1
+					+ (sint32)s2[ 4]*f2
+					+ (sint32)s2[ 6]*f3
+					+ (sint32)s2[ 8]*f4
+					+ (sint32)s2[10]*f5
+					+ (sint32)s2[12]*f6
+					+ (sint32)s2[14]*f7
 					+ 0x20002000;
 
-			sint32 r= (sint32)s2[ 1]*(sint32)f[0]
-					+ (sint32)s2[ 3]*(sint32)f[1]
-					+ (sint32)s2[ 5]*(sint32)f[2]
-					+ (sint32)s2[ 7]*(sint32)f[3]
-					+ (sint32)s2[ 9]*(sint32)f[4]
-					+ (sint32)s2[11]*(sint32)f[5]
-					+ (sint32)s2[13]*(sint32)f[6]
-					+ (sint32)s2[15]*(sint32)f[7]
+			sint32 r= (sint32)s2[ 1]*f0
+					+ (sint32)s2[ 3]*f1
+					+ (sint32)s2[ 5]*f2
+					+ (sint32)s2[ 7]*f3
+					+ (sint32)s2[ 9]*f4
+					+ (sint32)s2[11]*f5
+					+ (sint32)s2[13]*f6
+					+ (sint32)s2[15]*f7
 					+ 0x20002000;
 
 			l >>= 14;
@@ -139,14 +151,19 @@ namespace {
 		__m128i round = _mm_set1_epi32(0x2000);
 
 		do {
-			const sint16 *s2 = s + (uint32)(accum >> 32)*2;
-			const sint16 *f = kernel[(uint32)accum >> 27];
-			const __m128i coeff16 = *(const __m128i *)f;
+			const __m128i *VDRESTRICT s2 = (const __m128i *)(s + (uint32)(accum >> 32)*2);
+			const __m128i *VDRESTRICT f = (const __m128i *)kernel[(uint32)accum >> 27];
+
+			__m128i frac = _mm_shufflelo_epi16(_mm_cvtsi32_si128((accum >> 12) & 0x7FFF), 0);
+			__m128i c0 = f[0];
+			__m128i c1 = f[1];
+			__m128i cdiff = _mm_mulhi_epi16(_mm_sub_epi16(f[1], f[0]), _mm_shuffle_epi32(frac, 0));
+			__m128i coeff16 = _mm_add_epi16(f[0], _mm_add_epi16(cdiff, cdiff));
 
 			accum += inc;
 
-			__m128i x0 = _mm_loadu_si128((__m128i *)s2);
-			__m128i x1 = _mm_loadu_si128((__m128i *)s2 + 1);
+			__m128i x0 = _mm_loadu_si128(s2);
+			__m128i x1 = _mm_loadu_si128(s2 + 1);
 
 			__m128i y0 = _mm_shufflehi_epi16(_mm_shufflelo_epi16(x0, 0xd8), 0xd8);
 			__m128i y1 = _mm_shufflehi_epi16(_mm_shufflelo_epi16(x1, 0xd8), 0xd8);
@@ -171,20 +188,25 @@ namespace {
 #if VD_CPU_ARM64
 	uint64 resample16x2_NEON(sint16 *d, const sint16 *s, uint32 count, uint64 accum, sint64 inc) {
 		do {
-			const sint16 *s2 = s + (uint32)(accum >> 32)*2;
-			const sint16 *f = kernel[(uint32)accum >> 27];
-			const int16x8_t coeff16 = vld1q_s16(f);
+			const sint16 *VDRESTRICT s2 = s + (uint32)(accum >> 32)*2;
+			const sint16 (*VDRESTRICT f)[8] = &kernel[(uint32)accum >> 27];
+			const int16x8_t c0 = vld1q_s16(f[0]);
+			const int16x8_t c1 = vld1q_s16(f[1]);
 
+			uint32 frac = ((uint32)accum >> 12) & 0x7FFF;
 			accum += inc;
+
+			// vqrdmlahq_s16() would be perfect here, but unfortunately it requires ARMv8.1.
+			int16x8_t coeff16 = vaddq_s16(c0, vqrdmulhq_s16(vsubq_s16(c1, c0), vmovq_n_s16(frac)));
 
 			const int16x8x2_t x = vld2q_s16(s2 + 0);
 
-			int32x4_t z0 = vmlal_high_s16(vmull_s16(vget_low_f32(x.val[0]), vget_low_f32(coeff16)), x.val[0], coeff16);
-			int32x4_t z1 = vmlal_high_s16(vmull_s16(vget_low_f32(x.val[1]), vget_low_f32(coeff16)), x.val[1], coeff16);
+			int32x4_t z0 = vmlal_high_s16(vmull_s16(vget_low_s16(x.val[0]), vget_low_s16(coeff16)), x.val[0], coeff16);
+			int32x4_t z1 = vmlal_high_s16(vmull_s16(vget_low_s16(x.val[1]), vget_low_s16(coeff16)), x.val[1], coeff16);
 
 			int16x4x2_t a;
-			a.val[0] = vrshr_n_s32(vmov_n_s32(vaddvq_s32(z0)), 14);
-			a.val[1] = vrshr_n_s32(vmov_n_s32(vaddvq_s32(z1)), 14);
+			a.val[0] = vrshrn_n_s32(vmovq_n_s32(vaddvq_s32(z0)), 14);
+			a.val[1] = vrshrn_n_s32(vmovq_n_s32(vaddvq_s32(z1)), 14);
 
 			vst2_lane_s16(d, a, 0);
 			d += 2;
@@ -294,6 +316,179 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////
 
+void ATTapeSlidingWindowCursor::Update(IATCassetteImage& image, uint32 pos) {
+	// Approximate limit to prevent forward searches from being too expensive within a single
+	// tick, i.e. suddenly scan 40 seconds of FSK-encoded tape. This doesn't need to be precise.
+	static constexpr uint32 kSearchLimit = 10000;
+
+	const auto getExtBitSum = [](IATCassetteImage& image, uint32 pos, uint32 offset, uint32 window, bool bypassFSK) -> uint32 {
+		uint32 preroll = 0;
+
+		if (pos < offset) {
+			preroll = offset - pos;
+			pos = offset;
+		}
+
+		return preroll + image.GetBitSum(pos - offset, window - preroll, bypassFSK);
+	};
+
+	VDASSERT(pos >= mCurrentPos);
+
+	while (pos >= mNextTransition) {
+		// check if we need to initialize state after a seek
+		if (!mNextTransition) {
+			const uint32 headOffset = mWindow - mOffset;
+
+			// initialize head cursor
+			mHeadCursor.mCurrentValue = image.GetBit(pos + headOffset, mbFSKBypass);
+
+			const auto nextHead = image.FindNextBit(pos + headOffset + 1, pos + kSearchLimit, !mHeadCursor.mCurrentValue, mbFSKBypass);
+			VDASSERT(nextHead.mPos >= headOffset);
+			mHeadCursor.mNextTransition = nextHead.mPos - headOffset;
+			mHeadCursor.mNextValue = nextHead.mBit;
+
+			// initialize tail cursor -- this may be before the start, in which case we must assume it is mark tone
+			mTailCursor.mCurrentValue = pos < mOffset || image.GetBit(pos - mOffset, mbFSKBypass);
+
+			const auto nextTail = image.FindNextBit(std::max(pos, mOffset) - mOffset, pos + kSearchLimit, !mTailCursor.mCurrentValue, mbFSKBypass);
+			mTailCursor.mNextTransition = nextTail.mPos + mOffset;
+			mTailCursor.mNextValue = nextTail.mBit;
+
+			// initialize decoding state -- just use a simple threshold to start
+			mNextCount = getExtBitSum(image, pos, mOffset, mWindow, mbFSKBypass);
+			mCurrentValue = mNextCount >= (mWindow >> 1);
+			mNextTransition = pos;
+
+			VDASSERT(mHeadCursor.mNextTransition >= pos);
+			VDASSERT(mTailCursor.mNextTransition >= pos);
+		}
+
+		// assert that sum is still correct
+		[[maybe_unused]] uint32 chk;
+		VDASSERT(((chk = getExtBitSum(image, mNextTransition, mOffset, mWindow, mbFSKBypass)), mNextCount == chk));
+
+		// flip decoded bit state if we crossed one of the thresholds
+		if (mNextCount < mThresholdLo)
+			mCurrentValue = false;
+		else if (mNextCount > mThresholdHi)
+			mCurrentValue = true;
+
+		// update next cursor if it has hit a transition
+		if (mNextTransition == mHeadCursor.mNextTransition) {
+			mHeadCursor.mCurrentValue = mHeadCursor.mNextValue;
+			VDASSERT(image.GetBit(mNextTransition + mWindow - mOffset, mbFSKBypass) == mHeadCursor.mCurrentValue);
+
+			const auto nextHead = image.FindNextBit(mNextTransition + mWindow - mOffset + 1, mNextTransition + kSearchLimit, !mHeadCursor.mCurrentValue, mbFSKBypass);
+			VDASSERT(nextHead.mPos >= mWindow - mOffset);
+			mHeadCursor.mNextTransition = nextHead.mPos - mWindow + mOffset;
+			mHeadCursor.mNextValue = nextHead.mBit;
+
+			VDASSERT(image.GetBit(nextHead.mPos, mbFSKBypass) == mHeadCursor.mNextValue);
+		} else {
+			VDASSERT(mNextTransition < mHeadCursor.mNextTransition);
+		}
+
+		// update tail cursor if it has hit a transition
+		if (mNextTransition == mTailCursor.mNextTransition) {
+			mTailCursor.mCurrentValue = mTailCursor.mNextValue;
+			VDASSERT(image.GetBit(mNextTransition - mOffset, mbFSKBypass) == mTailCursor.mCurrentValue);
+
+			const auto nextTail = image.FindNextBit(mNextTransition - mOffset + 1, mNextTransition + kSearchLimit, !mTailCursor.mCurrentValue, mbFSKBypass);
+			mTailCursor.mNextTransition = nextTail.mPos + mOffset;
+
+			// clamp to avoid rolling around if we got +inf
+			if (mTailCursor.mNextTransition < nextTail.mPos)
+				mTailCursor.mNextTransition = ~UINT32_C(0);
+
+			mTailCursor.mNextValue = nextTail.mBit;
+
+			VDASSERT(image.GetBit(nextTail.mPos, mbFSKBypass) == mTailCursor.mNextValue);
+		} else {
+			VDASSERT(mNextTransition < mTailCursor.mNextTransition);
+		}
+
+		// compute current slope and how far we can project until either the head or tail changes polarity
+		const sint32 slope = (mHeadCursor.mCurrentValue ? 1 : 0) - (mTailCursor.mCurrentValue ? 1 : 0);
+		uint32 dist = std::min(mHeadCursor.mNextTransition, mTailCursor.mNextTransition) - mNextTransition;
+
+		// check if the current projection would cross a threshold and truncate it
+		// if so
+		if (mCurrentValue) {
+			if (slope < 0 && mNextCount >= mThresholdLo)
+				dist = std::min(dist, mNextCount - mThresholdLo + 1);
+		} else {
+			if (slope > 0 && mNextCount <= mThresholdHi)
+				dist = std::min(dist, mThresholdHi - mNextCount + 1);
+		}
+
+		// project forward to next transition point
+		VDASSERT(dist <= ~mNextTransition);
+		mNextTransition += dist;
+
+		mNextCount += (uint32)slope * dist;
+		VDASSERT(mNextCount <= mWindow);
+
+		// assert that sum is correct after transition
+		[[maybe_unused]] uint32 chk2;
+		VDASSERT(((chk2 = getExtBitSum(image, mNextTransition, mOffset, mWindow, mbFSKBypass)) == mNextCount));
+	}
+
+	[[maybe_unused]] uint32 chk3;
+	VDASSERT(((chk3 = getExtBitSum(image, pos, mOffset, mWindow, mbFSKBypass)), (mCurrentValue ? chk3 >= mThresholdLo : chk3 <= mThresholdHi)));
+
+#if _DEBUG
+	mCurrentPos = pos;
+#endif
+}
+
+bool ATTapeSlidingWindowCursor::GetBit(IATCassetteImage& image, uint32 pos) {
+	Update(image, pos);
+
+	return mCurrentValue;
+}
+
+ATTapeBitSumNextInfo ATTapeSlidingWindowCursor::GetBitSumAndNext(IATCassetteImage& image, uint32 pos, uint32 end) {
+	VDASSERT(pos <= end);
+	Update(image, pos);
+
+	if (pos >= end)
+		return ATTapeBitSumNextInfo { 0, mCurrentValue };
+
+	uint32 sum = 0;
+	for(;;) {
+		if (mNextTransition >= end) {
+			if (mCurrentValue)
+				sum += end - pos;
+
+			Update(image, end);
+			return ATTapeBitSumNextInfo { sum, mCurrentValue };
+		}
+
+		if (mCurrentValue)
+			sum += mNextTransition - pos;
+
+		pos = mNextTransition;
+		Update(image, pos);
+	}
+}
+
+ATTapeNextBitInfo ATTapeSlidingWindowCursor::FindNext(IATCassetteImage& image, uint32 pos, bool polarity, uint32 limit) {
+	VDASSERT(pos <= limit);
+
+	for(;;) {
+		Update(image, pos);
+
+		if (mCurrentValue == polarity)
+			return ATTapeNextBitInfo { pos, polarity };
+
+		pos = mNextTransition;
+		if (pos > limit)
+			return ATTapeNextBitInfo { limit + 1, mCurrentValue };
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 class ATTapeImageClip final : public vdrefcounted<IATTapeImageClip> {
 	ATTapeImageClip(const ATTapeImageClip&) = delete;
 	ATTapeImageClip& operator=(const ATTapeImageClip&) = delete;
@@ -352,6 +547,8 @@ public:
 	uint32 GetWaveformLength() const override;
 	uint32 ReadWaveform(uint8 *dst, uint32 pos, uint32 len, bool direct) const override;
 	MinMax ReadWaveformMinMax(uint32 pos, uint32 len, bool direct) const override;
+
+	bool HasCASIncompatibleStdBlocks() const override;
 
 	void InitNew();
 	void Load(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, const ATCassetteLoadContext& ctx);
@@ -477,14 +674,13 @@ bool ATCassetteImage::GetBit(uint32 pos, bool bypassFSK) const {
 
 ATCassetteImage::NextBitInfo ATCassetteImage::FindNextBit(uint32 pos, uint32 limit, bool level, bool bypassFSK) const {
 	if (pos >= mDataTrack.mLength)
-		return { UINT32_C(0) - 1, true };
+		return { level ? pos : UINT32_C(0) - 1, true };
 
 	int idx = mDataTrack.FindSpan(pos);
 	const auto *p = &mDataTrack.mSpans[idx];
 	if (!p->mpImageBlock)
-		return { UINT32_C(0) - 1, true };
+		return { level ? pos : UINT32_C(0) - 1, true };
 
-	const uint32 levelValue = level ? 1 : 0;
 	uint32 offset = pos - p->mStart;
 	for(const auto *p = &mDataTrack.mSpans[idx]; p->mpImageBlock; ++p) {
 		uint32 sectionEnd = p[1].mStart;
@@ -515,7 +711,7 @@ ATCassetteImage::NextBitInfo ATCassetteImage::FindNextBit(uint32 pos, uint32 lim
 	}
 
 	// after end of tape is all mark bits
-	return { UINT32_C(0) - 1, true };
+	return { level ? mDataTrack.mLength : UINT32_C(0) - 1, true };
 }
 
 ATCassetteImage::TransitionInfo ATCassetteImage::GetTransitionInfo(uint32 pos, uint32 n0, bool bypassFSK) const {
@@ -657,9 +853,6 @@ void ATCassetteImage::AccumulateAudio(float *&dst, uint32& posSample, uint32& po
 	const auto& track = mbAudioCreated ? mAudioTrack : mDataTrack;
 	const SortedBlock *p = &track.mSpans[track.FindSpan(posSample)];
 	
-	const uint32 posSample0 = posSample;
-	const uint32 posCycle0 = posCycle;
-
 	VDASSERT(posSample >= p->mStart);
 	VDASSERT(!p->mpImageBlock || posSample <= p[1].mStart);
 
@@ -881,6 +1074,21 @@ ATCassetteImage::MinMax ATCassetteImage::ReadWaveformMinMax(uint32 pos, uint32 l
 	return MinMax{mn, mx};
 }
 
+bool ATCassetteImage::HasCASIncompatibleStdBlocks() const {
+	for(const auto& span : mDataTrack.mSpans) {
+		if (span.mpImageBlock && span.mBlockType == kATCassetteImageBlockType_Std) {
+			if (span.mOffset)
+				return true;
+
+			auto& std = static_cast<ATCassetteImageDataBlockStd&>(*span.mpImageBlock);
+			if ((&span)[1].mStart - span.mStart != std.GetDataSampleCount())
+				return true;
+		}
+	}
+
+	return false;
+}
+
 void ATCassetteImage::InitNew() {
 	mDataTrack.Clear();
 	mAudioTrack.Clear();
@@ -922,150 +1130,273 @@ void ATCassetteImage::SaveCAS(IVDRandomAccessStream& file) {
 	ws.Write(&fujiSize, 4);
 
 	// iterate down the blocks
-	uint32 pos = 0;
 	uint32 lastBaudRate = 0;
 
 	vdfastvector<uint32> pulses32;
 	vdfastvector<uint16> pulses16;
 
+	const auto coalescePulses = [](vdfastvector<uint32>& pulses) {
+		if (pulses.empty())
+			return;
+
+		// Run over the pulse array and coalesce pulses: any time we have a zero value, we can add
+		// the value after the zero the one before it, and then delete the zero and the following
+		// value. This is transitive -- if we encounter [A 0 B 0 C] we want [A+B+C].
+		auto dst = pulses.begin() + 1;
+		auto end = pulses.end();
+		auto src = dst;
+		auto last = end - 1;
+
+		while(src < last) {
+			if (src[0] == 0) {
+				dst[-1] += src[1];
+				src += 2;
+			} else {
+				*dst++ = *src++;
+			}
+		}
+
+		// if we still have a non-zero value left, add it
+		if (src != end && *src)
+			*dst++ = *src;
+
+		// trim the array
+		pulses.erase(dst, pulses.end());
+
+		// check if we have all zeroes -- clear the pulse array if so, otherwise return as-is.
+		for(const uint32 v : pulses) {
+			if (v)
+				return;
+		}
+
+		pulses.clear();
+	};
+
+	const auto convertGapSamplesToMs = [](uint32& gapSamples) -> uint32 {
+		uint32 gapMS = VDRoundToInt32((double)gapSamples * (1000.0 / kATCassetteDataSampleRate));
+
+		// Check if we have too many milliseconds, and if so, decrement by one. We don't
+		// just truncate in the calculation, as we can get a value that is a teensy bit
+		// below an integer, but where the difference to the next integer is less than
+		// half a sample. In that case we're OK with rounding up.
+		uint64 encodedGapSamples;
+		for(;;) {
+			encodedGapSamples = (uint64)VDRoundToInt64((double)gapMS * (kATCassetteDataSampleRate / 1000.0));
+
+			if (encodedGapSamples <= gapSamples)
+				break;
+
+			--gapMS;
+		}
+
+		// Decrement the count in the pulse table by the amount we're about to encode
+		// in the gap.
+		gapSamples -= (uint32)encodedGapSamples;
+
+		return gapMS;
+	};
+
+	const auto flushPulses = [&] {
+		// merge leading pulses; we don't really need to do this for writing the pulses, but it
+		// makes identifying the gap much easier
+		coalescePulses(pulses32);
+
+		// set up header
+		uint8 header[8] = {
+			(uint8)'f',
+			(uint8)'s',
+			(uint8)'k',
+			(uint8)' ',
+			0,
+			0,
+			0xFF,		// 64K-1 milliseconds for overflow headers
+			0xFF,
+		};
+
+		// If the pulse list starts with a mark tone, try to fold it into the gap calculation.
+		uint32 gapMS = 0;
+
+		if (pulses32.size() >= 2 && pulses32[0] == 0) {
+			uint32& gapSamples = pulses32[1];
+
+			if (gapSamples)
+				gapMS = convertGapSamplesToMs(gapSamples);
+
+			// if the gap is longer than 64K-1 milliseconds, we must write out multiple empty
+			// chunks to pad it
+			while(gapMS > 65535) {
+				ws.Write(header, 8);
+				gapMS -= 65535;
+			}
+		}
+
+		// Resample pulse widths from data sample rate to 100us and convert pulses to 16-bit.
+		// The first pulse width is for a 0 bit, which ExtractPulses() has guaranteed; however, this
+		// also means that the first pulse width may *be* 0. Since our data sample rate is now
+		// also higher than 10KHz, we have to deal with the possibility of a runt pulse.
+		pulses16.clear();
+		pulses16.reserve(pulses32.size());
+
+		uint32 pulsePosSrcRate = 0;
+		uint32 pulsePosDstRate = 0;
+		bool canAppend = true;
+
+		pulses16.push_back(0);
+		for(uint32 pulseLen : pulses32) {
+			// compute absolute time of next transition at source rate
+			pulsePosSrcRate += pulseLen;
+
+			// convert transition time to destination rate
+			const uint32 pulsePosDstRate2 = (uint32)(0.5 + (double)pulsePosSrcRate * (10000.0 / (double)kATCassetteDataSampleRate));
+
+			// compute length of pulse in destination rate from last edge
+			VDASSERT(pulsePosDstRate2 >= pulsePosDstRate);
+			uint32 pulseLenDstRate = pulsePosDstRate2 - pulsePosDstRate;
+			pulsePosDstRate = pulsePosDstRate2;
+
+			// If we can append to the previous sample because it's the same polarity, do so
+			// up to the limit of 0xFFFF counts.
+			if (canAppend && pulseLenDstRate > 0) {
+				uint32 maxAppend = 0xFFFF - pulses16.back();
+				if (maxAppend > pulseLenDstRate)
+					maxAppend = pulseLenDstRate;
+
+				pulseLenDstRate -= maxAppend;
+				pulses16.back() += maxAppend;
+			}
+
+			// If we still have counts left, write out samples. There is a complication if
+			// we have a period of 0xFFFF samples or more, because we must write out zero
+			// periods of the opposite polarity. If our period is *exactly* a multiple of
+			// 0xFFFF, we must refrain from writing out two zeroes in a row; instead, we
+			// only write one and set the can-append flag.
+			if (pulseLenDstRate > 0) {
+				if (canAppend) {
+					// Last sample was from the same polarity, so we must write a zero in
+					// between. (This can only happen if we'd already pushed some counts
+					// into that sample and hit the 0xFFFF limit.)
+					pulses16.push_back(0);
+					canAppend = false;
+				}
+
+				while(pulseLenDstRate > 0xFFFF) {
+					pulseLenDstRate -= 0xFFFF;
+
+					pulses16.push_back(0xFFFF);
+					pulses16.push_back(0);
+				}
+
+				if (pulseLenDstRate > 0) {
+					pulses16.push_back((uint16)pulseLenDstRate);
+
+					// Next sample will be of different polarity, so it cannot append (already
+					// cleared above).
+				} else {
+					canAppend = true;
+				}
+			} else {
+				canAppend = !canAppend;
+			}
+		}
+
+		while(!pulses16.empty() && pulses16.back() == 0)
+			pulses16.pop_back();
+
+		// stream out the pulses
+		const uint16 *pulseSrc = pulses16.data();
+		uint32 pulsesLeft = (uint32)pulses16.size();
+
+		while(pulsesLeft) {
+			// We can write a maximum of 65535 bytes, or 32767 pulses. However,
+			// that's annoying because it repeats the 0 bit pulse, so we only
+			// write 32766 pulses instead.
+			uint32 pulsesToWrite = std::min<uint32>(pulsesLeft, 0x7FFE);
+
+			VDWriteUnalignedLEU16(header + 4, pulsesToWrite * 2);
+			VDWriteUnalignedLEU16(header + 6, gapMS);
+
+			ws.Write(header, 8);
+			ws.Write(pulseSrc, pulsesToWrite * 2);
+
+			pulseSrc += pulsesToWrite;
+			pulsesLeft -= pulsesToWrite;
+			gapMS = 0;
+		}
+
+		pulses32.clear();
+	};
+
 	for(const SortedBlock& blk : mDataTrack.mSpans) {
 		if (!blk.mpImageBlock)
+			continue;
+
+		const uint32 spanStart = blk.mStart;
+		const uint32 spanOffset = blk.mOffset;
+		const uint32 spanLen = (&blk)[1].mStart - spanStart;
+
+		if (!spanLen)
 			continue;
 
 		switch(blk.mpImageBlock->GetBlockType()) {
 			case kATCassetteImageBlockType_Blank:
 			case kATCassetteImageBlockType_RawAudio:
-				// skip these block types
+				// add mark tone for these block types
+				if (!(pulses32.size() & 1))
+					pulses32.push_back(0);
+
+				pulses32.push_back(spanLen);
 				break;
 
 			case kATCassetteImageBlockType_FSK:
 				{
 					const auto& fsk = *static_cast<ATCassetteImageBlockRawData *>(blk.mpImageBlock);
-					uint32 gapMS = 0;
-
-					if (blk.mStart > pos)
-						gapMS = VDRoundToInt32((double)(blk.mStart - pos) * 1000.0 / kATCassetteDataSampleRate);
-
-					uint8 header[8] = {
-						(uint8)'f',
-						(uint8)'s',
-						(uint8)'k',
-						(uint8)' ',
-						0,
-						0,
-						0xFF,
-						0xFF,
-					};
-
-					while(gapMS > 65535) {
-						ws.Write(header, 8);
-						gapMS -= 65535;
-					}
 
 					// convert raw data to pulse widths
-					pulses32.clear();
-					fsk.ExtractPulses(pulses32, false);
-
-					// Resample pulse widths from data sample rate to 100us and convert pulses to 16-bit.
-					// The first pulse width is for 0, which ExtractPulses() has guaranteed; however, this
-					// also means that the first pulse width may *be* 0. Since our data sample rate is now
-					// also higher than 10KHz, we have to deal with the possibility of a runt pulse.
-					pulses16.clear();
-					pulses16.reserve(pulses32.size());
-
-					uint32 pulsePosSrcRate = 0;
-					uint32 pulsePosDstRate = 0;
-					bool canAppend = true;
-
-					pulses16.push_back(0);
-					for(uint32 pulseLen : pulses32) {
-						// compute absolute time of next transition at source rate
-						pulsePosSrcRate += pulseLen;
-
-						// convert transition time to destination rate
-						const uint32 pulsePosDstRate2 = (uint32)(0.5 + (double)pulsePosSrcRate * (10000.0 / (double)kATCassetteDataSampleRate));
-
-						// compute length of pulse in destination rate from last edge
-						VDASSERT(pulsePosDstRate2 >= pulsePosDstRate);
-						uint32 pulseLenDstRate = pulsePosDstRate2 - pulsePosDstRate;
-						pulsePosDstRate = pulsePosDstRate2;
-
-						// If we can append to the previous sample because it's the same polarity, do so
-						// up to the limit of 0xFFFF counts.
-						if (canAppend && pulseLenDstRate > 0) {
-							uint32 maxAppend = 0xFFFF - pulses16.back();
-							if (maxAppend > pulseLenDstRate)
-								maxAppend = pulseLenDstRate;
-
-							pulseLenDstRate -= maxAppend;
-							pulses16.back() += maxAppend;
-						}
-
-						// If we still have counts left, write out samples. There is a complication if
-						// we have a period of 0xFFFF samples or more, because we must write out zero
-						// periods of the opposite polarity. If our period is *exactly* a multiple of
-						// 0xFFFF, we must refrain from writing out two zeroes in a row; instead, we
-						// only write one and set the can-append flag.
-						if (pulseLenDstRate > 0) {
-							if (canAppend) {
-								// Last sample was from the same polarity, so we must write a zero in
-								// between. (This can only happen if we'd already pushed some counts
-								// into that sample and hit the 0xFFFF limit.)
-								pulses16.push_back(0);
-								canAppend = false;
-							}
-
-							while(pulseLenDstRate > 0xFFFF) {
-								pulseLenDstRate -= 0xFFFF;
-
-								pulses16.push_back(0xFFFF);
-								pulses16.push_back(0);
-							}
-
-							if (pulseLenDstRate > 0) {
-								pulses16.push_back((uint16)pulseLenDstRate);
-
-								// Next sample will be of different polarity, so it cannot append (already
-								// cleared above).
-							} else {
-								canAppend = true;
-							}
-						} else {
-							canAppend = !canAppend;
-						}
-					}
-
-					while(!pulses16.empty() && pulses16.back() == 0)
-						pulses16.pop_back();
-
-					// stream out the pulses
-					const uint16 *pulseSrc = pulses16.data();
-					uint32 pulsesLeft = (uint32)pulses16.size();
-
-					while(pulsesLeft) {
-						// We can write a maximum of 65535 bytes, or 32767 pulses. However,
-						// that's annoying because it repeats the 0 bit pulse, so we only
-						// write 32766 pulses instead.
-						uint32 pulsesToWrite = std::min<uint32>(pulsesLeft, 0x7FFE);
-
-						VDWriteUnalignedLEU16(header + 4, pulsesToWrite * 2);
-						VDWriteUnalignedLEU16(header + 6, gapMS);
-
-						ws.Write(header, 8);
-						ws.Write(pulseSrc, pulsesToWrite * 2);
-
-						pulseSrc += pulsesToWrite;
-						pulsesLeft -= pulsesToWrite;
-						gapMS = 0;
-					}
-
-					pos = blk.mStart + fsk.GetDataSampleCount();
+					fsk.ExtractPulses(pulses32, spanOffset, spanLen, false);
 				}
 				break;
 
 			case kATCassetteImageBlockType_Std:
 				{
 					const auto& std = *static_cast<ATCassetteImageDataBlockStd *>(blk.mpImageBlock);
+					
+					// check if this block is trimmed -- if so, we can't write it out as a standard block and
+					// must instead convert it to FSK
+					uint64 blockSampleLen64 = std.GetDataSampleCount64();
+
+					if (spanOffset || spanLen < blockSampleLen64) {
+						const uint32 spanEndOffset = spanOffset + (uint32)std::min<uint64>(spanLen, blockSampleLen64 - spanOffset);
+						bool nextPolarity = (pulses32.size() & 1) != 0;
+
+						for(uint32 scanPos = spanOffset; scanPos < spanEndOffset; ) {
+							auto scanResult = std.FindBit(scanPos, spanEndOffset, nextPolarity, false);
+
+							// note that we must add 0 if we get it to maintain parity in the pulse array
+							pulses32.push_back(std::min<uint32>(scanResult.mPos, spanEndOffset) - scanPos);
+
+							scanPos = scanResult.mPos;
+							nextPolarity = !nextPolarity;
+						}
+						break;
+					}
+
+					// coalesce the pulses we've got so we can identify a gap
+					coalescePulses(pulses32);
+
+					// check if there is mark tone at the end of the pulse train, and if so, convert as much of
+					// it as we can to milliseconds to stick in the more standard data header
+					uint32 gapMS = 0;
+					if (pulses32.size() >= 2 && !(pulses32.size() & 1)) {
+						gapMS = convertGapSamplesToMs(pulses32.back());
+
+						while(!pulses32.empty() && !pulses32.back())
+							pulses32.pop_back();
+					}
+
+					// if we still have pulses queued, flush them now
+					flushPulses();
+
+					// check if we have a change in baud rate and emit it if needed
 					const uint32 baudRate = std.GetBaudRate();
 
 					if (lastBaudRate != baudRate) {
@@ -1083,11 +1414,7 @@ void ATCassetteImage::SaveCAS(IVDRandomAccessStream& file) {
 						ws.Write(baudRateHeader, 8);
 					}
 
-					uint32 gapMS = 0;
-
-					if (blk.mStart > pos)
-						gapMS = VDRoundToInt32((double)(blk.mStart - pos) * 1000.0 / kATCassetteDataSampleRate);
-
+					// emit empty data blocks as needed if the gap is long
 					uint8 header[8] = {
 						(uint8)'d',
 						(uint8)'a',
@@ -1104,6 +1431,7 @@ void ATCassetteImage::SaveCAS(IVDRandomAccessStream& file) {
 						ws.Write(header, 8);
 					}
 
+					// emit data blocks as needed for all of the data that we have
 					uint32 dataLen = std.GetDataLen();
 					const uint8 *data = std.GetData();
 
@@ -1121,12 +1449,13 @@ void ATCassetteImage::SaveCAS(IVDRandomAccessStream& file) {
 
 						gapMS = 0;
 					}
-
-					pos = blk.mStart + std.GetDataSampleCount();
 				}
 				break;
 		}
 	}
+
+	// flush out any remaining FSK data that we have
+	flushPulses();
 
 	ws.Flush();
 }
@@ -1545,8 +1874,11 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 
 				bitfieldOffset = (bitfieldOffset + samplesToProcess) & 31;
 
+				pAudioBlock->mAudio.resize(pAudioBlock->mAudio.size() + samplesToProcess);
+
+				uint8 *VDRESTRICT audioDst = pAudioBlock->mAudio.end() - samplesToProcess;
 				for(uint32 i = 0; i < samplesToProcess; ++i) {
-					pAudioBlock->mAudio.push_back((outputBuffer[outputBufferIdx + i][0] >> 8) + 0x80);
+					audioDst[i] = (outputBuffer[(size_t)outputBufferIdx + i][0] >> 8) + 0x80;
 				}
 			}
 		}
@@ -1699,7 +2031,10 @@ namespace {
 }
 
 void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
-	uint32 baudRate = 600;
+	uint32 fskBaudRate = 600;
+	uint32 pwmSampleRate = 2000;
+	bool pwmBitOrderMSBFirst = false;
+	bool pwmBitFallingEdge = false;
 
 	ChecksumStream cs(file0);
 
@@ -1708,11 +2043,19 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 
 	ATCassetteWriteCursor cursor;
 
-	auto addGap = [&,this](float seconds) {
-		const uint32 samples = (uint32)(kATCassetteDataSampleRate * seconds);
+	auto addGap = [&,this](float seconds, bool fsk) {
+		const uint32 samples = (uint32)(0.5f + kATCassetteDataSampleRate * seconds);
 
-		if (!mDataTrack.WriteBlankData(cursor, samples, false))
-			throw ATCassetteTooLongException();
+		if (fsk) {
+			if (!mDataTrack.WriteBlankData(cursor, samples, false))
+				throw ATCassetteTooLongException();
+		} else {
+			ATTapePieceTable::Pulse pulse {};
+			pulse.mbPolarity = true;
+			pulse.mSamples = samples;
+			if (!mDataTrack.WritePulses(cursor, &pulse, 1, samples, false, false))
+				throw ATCassetteTooLongException();
+		}
 	};
 
 	// enforce at least a 10 second mark tone at beginning of tape
@@ -1735,6 +2078,16 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 		if (cs.ReadData(&hdr, 8) != 8)
 			break;
 
+		// check that header ID is printable chars
+		if ((hdr.id & 0x80808080)
+			|| !(hdr.id & 0xE0000000)
+			|| !(hdr.id & 0x00E00000)
+			|| !(hdr.id & 0x0000E000)
+			|| !(hdr.id & 0x000000E0))
+		{
+			throw MyError("The cassette image contains an invalid chunk at offset %lld.", cs.Pos() - 8);
+		}
+
 		uint32 len = VDFromLE16(hdr.len);
 
 		switch(hdr.id) {
@@ -1742,12 +2095,41 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 				break;
 
 			case VDMAKEFOURCC('b', 'a', 'u', 'd'):
-				baudRate = hdr.aux1 + ((uint32)hdr.aux2 << 8);
+				fskBaudRate = hdr.aux1 + ((uint32)hdr.aux2 << 8);
 
-				if (!baudRate)
-					throw MyError("The cassette image contains an invalid baud rate in the data block at offset %lld.", cs.Pos() - 8);
+				if (!fskBaudRate)
+					throw MyError("The cassette image contains an invalid FSK baud rate in the data block at offset %lld.", cs.Pos() - 8);
 
 				break;
+
+			case VDMAKEFOURCC('p', 'w', 'm', 's'):{
+				if (len != 2)
+					throw MyError("The cassette image contains an invalid PWMS chunk at offset %lld.", cs.Pos() - 8);
+
+				char buf[2];
+				cs.Read(buf, 2);
+
+				pwmSampleRate = VDReadUnalignedLEU16(buf);
+				if (!pwmSampleRate)
+					throw MyError("The cassette image contains an invalid PWM sample rate at offset %lld.", cs.Pos() - 10);
+
+				switch(hdr.aux1 & 0x03) {
+					case 1:
+						pwmBitFallingEdge = false;
+						break;
+
+					case 2:
+						pwmBitFallingEdge = true;
+						break;
+
+					default:
+						throw MyError("The cassette image contains an invalid PWM pulse type at offset %lld.", cs.Pos() - 10);
+				}
+
+				pwmBitOrderMSBFirst = (hdr.aux1 & 4) != 0;
+				len = 0;
+				break;
+			}
 
 			case VDMAKEFOURCC('d', 'a', 't', 'a'):{
 				// encode inter-record gap
@@ -1758,10 +2140,10 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 					int mins = (int)(pos / 60.0f);
 					float secs = pos - (float)mins * 60.0f;
 
-					g_ATLCCasImage("Data block @ %3d:%06.3f: %ums gap, %u data bytes @ %u baud\n", mins, secs, gapms, len, baudRate);
+					g_ATLCCasImage("Data block @ %3d:%06.3f: %ums gap, %u data bytes @ %u baud\n", mins, secs, gapms, len, fskBaudRate);
 				}
 
-				addGap(std::max<float>(minGap, (float)gapms / 1000.0f));
+				addGap(std::max<float>(minGap, (float)gapms / 1000.0f), true);
 				minGap = 0;
 
 				// encode data bytes
@@ -1769,7 +2151,7 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 					while(len > 0) {
 						auto [p, tc] = cs.LockRead(len);
 
-						if (!mDataTrack.WriteStdData(cursor, (const uint8 *)p, tc, baudRate, false))
+						if (!mDataTrack.WriteStdData(cursor, (const uint8 *)p, tc, fskBaudRate, false))
 							throw ATCassetteTooLongException();
 
 						len -= tc;
@@ -1778,19 +2160,22 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 				break;
 			}
 
-			case VDMAKEFOURCC('f', 's', 'k', ' '):{
+			case VDMAKEFOURCC('f', 's', 'k', ' '):
+			case VDMAKEFOURCC('p', 'w', 'm', 'l'):{
+				const bool isPWM = (hdr.id == VDMAKEFOURCC('p', 'w', 'm', 'l'));
+
 				// length must be even or chunk is malformed
 				if (len & 1)
-					throw MyError("Broken FSK chunk found at offset %lld.", cs.Pos() - 8);
+					throw MyError("Broken %s chunk found at offset %lld.", isPWM ? "PWM" : "FSK", cs.Pos() - 8);
 
 				const sint32 gapms = hdr.aux1 + ((uint32)hdr.aux2 << 8);
 
 				// Don't use mingap for FSK -- we can't be sure that the early blocks are actual data instead of
 				// noise, and we put more trust whoever decoded it when FSK is used.
-				addGap((float)gapms / 1000.0f);
+				addGap((float)gapms / 1000.0f, !isPWM);
 				minGap = 0;
 
-				// encode FSK bits
+				// encode pulses
 				if (len > 0) {
 					// FSK blocks can easily exceed the data limit even within a single block, so we
 					// monitor the length on the fly. Note that we might already have gone over a little
@@ -1799,34 +2184,52 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 					uint32 numSamples = 0;
 
 					vdblock<uint16> pulseWidths(numPulses);
-					vdblock<ATTapePieceTable::Pulse> fskPulses(numPulses);
+					vdfastvector<ATTapePieceTable::Pulse> pulses;
+					pulses.reserve(numPulses);
 
 					cs.Read(pulseWidths.data(), numPulses * 2);
 
-					bool polarity = false;
+					const double durationToSamples = isPWM 
+						? kATCassetteDataSampleRateD * 0x1p32 / (double)pwmSampleRate
+						: kATCassetteDataSampleRateD * 0x1p32 / 10000.0;
+
+					bool polarity = isPWM ? pwmBitFallingEdge : false;
 					for(uint32 i = 0; i < numPulses; ++i) {
-						const uint32 duration10us = VDFromLE16(pulseWidths[i]);
+						const uint32 duration = VDFromLE16(pulseWidths[i]);
 
 						// convert duration to samples (with error accumulation)
 						// note: we are intentionally using unsigned negative numbers here to do rounding!
-						const uint64 samplesF32 = subSampleAccum + (uint64)((double)duration10us * ((double)kATCassetteDataSampleRate * 4294967296.0 / 10000.0));
+						const uint64 samplesF32 = subSampleAccum + (uint64)((double)duration * durationToSamples);
 						const uint32 pulseSamples = samplesF32 < UINT64_C(0x8000000000000000) ? (uint32)((samplesF32 + UINT64_C(0x80000000)) >> 32) : 0;
 						subSampleAccum = samplesF32 - ((uint64)pulseSamples << 32);
 
-						fskPulses[i] = ATTapePieceTable::Pulse { polarity, pulseSamples };
+						if (pulseSamples) {
+							if (!pulses.empty() && pulses.back().mbPolarity == polarity)
+								pulses.back().mSamples += pulseSamples;
+							else
+								pulses.emplace_back(ATTapePieceTable::Pulse { polarity, pulseSamples });
+						}
+
 						polarity = !polarity;
 						numSamples += pulseSamples;
 					}
 
-					if (!mDataTrack.WritePulses(cursor, fskPulses.data(), numPulses, numSamples, false, true))
-						throw ATCassetteTooLongException();
+					// if the FSK chunk consists solely of mark tone, write blank tape
+					if (!isPWM && pulses.size() == 1 && pulses[0].mbPolarity) {
+						if (!mDataTrack.WriteBlankData(cursor, pulses[0].mSamples, false))
+							throw ATCassetteTooLongException();
+					} else {
+						if (!mDataTrack.WritePulses(cursor, pulses.data(), numPulses, numSamples, false, !isPWM))
+							throw ATCassetteTooLongException();
+					}
 
 					if (g_ATLCCasImage.IsEnabled()) {
 						float pos = (float)mDataTrack.mLength / (float)kATCassetteDataSampleRate;
 						int mins = (int)(pos / 60.0f);
 						float secs = pos - (float)mins * 60.0f;
 
-						g_ATLCCasImage("FSK block @ %3d:%06.3f: %ums gap, %u transition%s (%.1f ms)\n"
+						g_ATLCCasImage("%s block @ %3d:%06.3f: %ums gap, %u transition%s (%.1f ms)\n"
+							, isPWM ? "PWM" : "FSK"
 							, mins
 							, secs
 							, gapms
@@ -1842,12 +2245,107 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 			}
 
 			case VDMAKEFOURCC('p', 'w', 'm', 'c'):{
+				if (len % 3)
+					throw MyError("Broken PWM sequence chunk found at offset %lld.", cs.Pos() - 8);
+
+				const sint32 gapms = hdr.aux1 + ((uint32)hdr.aux2 << 8);
+			
+				if (gapms)
+					addGap((float)gapms / 1000.0f, false);
+
+				vdblock<uint8> srcPulses(len);
+				vdfastvector<ATTapePieceTable::Pulse> newPulses;
+				cs.Read(srcPulses.data(), len);
+
+				const float halfBitFactor = kATCassetteDataSampleRate / (float)pwmSampleRate * 0.5f;
+
+				float t0 = 0;
+				uint32 samples = 0;
+				for(uint32 i = 0, n = len / 3; i < n; ++i) {
+					uint8 pulseLen = srcPulses[i*3];
+					uint32 pulseCount = VDReadUnalignedLEU16(&srcPulses[i*3+1]);
+
+					while(pulseCount--) {
+						float t1 = t0 + halfBitFactor * pulseLen;
+						float t2 = t1 + halfBitFactor * pulseLen;
+
+						sint32 it1 = VDRoundToInt32(t1);
+						sint32 it2 = VDRoundToInt32(t2);
+
+						newPulses.emplace_back(ATTapePieceTable::Pulse { pwmBitFallingEdge, (uint32)it1 });
+						newPulses.emplace_back(ATTapePieceTable::Pulse { !pwmBitFallingEdge, (uint32)(it2 - it1) });
+
+						t0 = t2 - (float)it2;
+						samples += (uint32)it2;
+					}
+
+					if (newPulses.size() >= 4096) {
+						if (!mDataTrack.WritePulses(cursor, newPulses.data(), (uint32)newPulses.size(), samples, false, false))
+							throw ATCassetteTooLongException();
+
+						newPulses.clear();
+						samples = 0;
+					}
+				}
+
+				if (!mDataTrack.WritePulses(cursor, newPulses.data(), (uint32)newPulses.size(), samples, false, false))
+					throw ATCassetteTooLongException();
+
+				len = 0;
 				break;
 			}
 
-			case VDMAKEFOURCC('p', 'w', 'm', 'd'):
-			case VDMAKEFOURCC('p', 'w', 'm', 'l'):
-				throw MyError("Cannot load tape: turbo encoded (PWM) data exists in image.");
+			case VDMAKEFOURCC('p', 'w', 'm', 'd'):{
+				if (!hdr.aux1 || !hdr.aux2)
+					throw MyError("Broken PWM data chunk found at offset %lld.", cs.Pos() - 8);
+
+				vdblock<uint8> data(len);
+				cs.Read(data.data(), len);
+
+				vdblock<ATTapePieceTable::Pulse> pulses(len * 16);
+
+				const float halfBitFactor = kATCassetteDataSampleRate / (float)pwmSampleRate * 0.5f;
+
+				const float halfPulseLengths[2] {
+					(float)hdr.aux1 * halfBitFactor,
+					(float)hdr.aux2 * halfBitFactor
+				};
+
+				float t0 = 0;
+				uint32 samples = 0;
+				ATTapePieceTable::Pulse *dst = pulses.data();
+				for(uint8 c : data) {
+
+					for(int i=0; i<8; ++i) {
+						bool bit;
+
+						if (pwmBitOrderMSBFirst) {
+							bit = (c & 0x80) != 0;
+							c <<= 1;
+						} else {
+							bit = (c & 0x01) != 0;
+							c >>= 1;
+						}
+
+						float t1 = t0 + halfPulseLengths[bit ? 1 : 0];
+						float t2 = t1 + halfPulseLengths[bit ? 1 : 0];
+						sint32 it1 = VDRoundToInt32(t1);
+						sint32 it2 = VDRoundToInt32(t2);
+						t0 = t2 - (float)it2;
+						samples += (uint32)it2;
+
+						dst[0] = ATTapePieceTable::Pulse { pwmBitFallingEdge, (uint32)it1 };
+						dst[1] = ATTapePieceTable::Pulse { !pwmBitFallingEdge, (uint32)(it2 - it1) };
+						dst += 2;
+					}
+				}
+
+				if (!mDataTrack.WritePulses(cursor, pulses.data(), (uint32)pulses.size(), samples, false, false))
+					throw ATCassetteTooLongException();
+
+				len = 0;
+				break;
+			}
 		}
 
 		// we need to do a null read through the buffer to ensure that the checksum
@@ -1856,7 +2354,7 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 	}
 
 	// add two second footer
-	addGap(2.0f);
+	addGap(2.0f, true);
 
 	InvalidatePeakMaps();
 	UpdatePeakMaps();

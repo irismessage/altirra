@@ -19,6 +19,8 @@
 #include <crtdbg.h>
 #include <intrin.h>
 
+#ifdef _DEBUG
+
 #if VD_PTR_SIZE > 4
 	extern "C" char __ImageBase;
 	#define ENCODED_RETURN_ADDRESS ((int)((uintptr_t)_ReturnAddress() - (uintptr_t)&__ImageBase))
@@ -29,10 +31,13 @@
 void *VDCDECL operator new(size_t bytes) {
 	static const char fname[]="return address";
 
-	return _malloc_dbg(bytes, _NORMAL_BLOCK, fname, ENCODED_RETURN_ADDRESS);
+	void *p = _malloc_dbg(bytes, _NORMAL_BLOCK, fname, ENCODED_RETURN_ADDRESS);
+	if (!p)
+		throw std::bad_alloc();
+	return p;
 }
 
-void *VDCDECL operator new(size_t bytes, const std::nothrow_t&) throw() {
+void *VDCDECL operator new(size_t bytes, const std::nothrow_t&) noexcept {
 	static const char fname[]="return address";
 
 	return _malloc_dbg(bytes, _NORMAL_BLOCK, fname, ENCODED_RETURN_ADDRESS);
@@ -41,11 +46,50 @@ void *VDCDECL operator new(size_t bytes, const std::nothrow_t&) throw() {
 void *VDCDECL operator new[](size_t bytes) {
 	static const char fname[]="return address";
 
-	return _malloc_dbg(bytes, _NORMAL_BLOCK, fname, ENCODED_RETURN_ADDRESS);
+	void *p = _malloc_dbg(bytes, _NORMAL_BLOCK, fname, ENCODED_RETURN_ADDRESS);
+	if (!p)
+		throw std::bad_alloc();
+	return p;
 }
 
-void *VDCDECL operator new[](size_t bytes, const std::nothrow_t&) throw() {
+void *VDCDECL operator new[](size_t bytes, const std::nothrow_t&) noexcept {
 	static const char fname[]="return address";
 
 	return _malloc_dbg(bytes, _NORMAL_BLOCK, fname, ENCODED_RETURN_ADDRESS);
 }
+
+//
+// C++17 aligned allocation
+//
+
+void *VDCDECL operator new(size_t bytes, std::align_val_t al) {
+	static const char fname[]="return address";
+
+	void *p = _aligned_malloc_dbg(bytes, (size_t)al, fname, ENCODED_RETURN_ADDRESS);
+	if (!p)
+		throw std::bad_alloc();
+	return p;
+}
+
+void *VDCDECL operator new(size_t bytes, std::align_val_t al, const std::nothrow_t&) noexcept {
+	static const char fname[]="return address";
+
+	return _aligned_malloc_dbg(bytes, (size_t)al, fname, ENCODED_RETURN_ADDRESS);
+}
+
+void *VDCDECL operator new[](size_t bytes, std::align_val_t al) {
+	static const char fname[]="return address";
+
+	void *p = _aligned_malloc_dbg(bytes, (size_t)al, fname, ENCODED_RETURN_ADDRESS);
+	if (!p)
+		throw std::bad_alloc();
+	return p;
+}
+
+void *VDCDECL operator new[](size_t bytes, std::align_val_t al, const std::nothrow_t&) noexcept {
+	static const char fname[]="return address";
+
+	return _aligned_malloc_dbg(bytes, (size_t)al, fname, ENCODED_RETURN_ADDRESS);
+}
+
+#endif

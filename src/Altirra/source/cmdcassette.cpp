@@ -122,6 +122,10 @@ void OnCommandCassetteTurboModeCommandControl() {
 	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_CommandControl);
 }
 
+void OnCommandCassetteTurboModeDataControl() {
+	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_DataControl);
+}
+
 void OnCommandCassetteTurboModeProceedSense() {
 	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_ProceedSense);
 }
@@ -238,6 +242,7 @@ namespace ATCommands {
 		{ "Cassette.TurboModeNone", OnCommandCassetteTurboModeNone, nullptr, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_None>> },
 		{ "Cassette.TurboModeAlways", OnCommandCassetteTurboModeAlways, nullptr, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_Always>> },
 		{ "Cassette.TurboModeCommandControl", OnCommandCassetteTurboModeCommandControl, nullptr, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_CommandControl>> },
+		{ "Cassette.TurboModeDataControl", OnCommandCassetteTurboModeDataControl, nullptr, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_DataControl>> },
 		{ "Cassette.TurboModeProceedSense", OnCommandCassetteTurboModeProceedSense, nullptr, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_ProceedSense>> },
 		{ "Cassette.TurboModeInterruptSense", OnCommandCassetteTurboModeInterruptSense, nullptr, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_InterruptSense>> },
 		{ "Cassette.TurboModeKSOTurbo2000", OnCommandCassetteTurboModeKSOTurbo2000, nullptr, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_KSOTurbo2000>> },

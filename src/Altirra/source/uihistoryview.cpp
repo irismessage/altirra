@@ -1174,7 +1174,6 @@ void ATUIHistoryView::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 			uint32 lineCount = std::min<uint32>(node->mVisibleLines, itemEnd - pos);
 			uint32 lineIndex = pos < itemStart ? itemStart - pos : 0;
 			const bool nodeSelected = (mSelectedLine.mpNode == node);
-			const bool isFiltered = (lineCount > 1 && node->mbFiltered);
 			const int x = mItemHeight * level - mScrollX;
 			int y = (pos + lineIndex) * mItemHeight + mHeaderHeight - mScrollY;
 			uint32 insnOffset = node->mInsn.mOffset;
@@ -2047,6 +2046,7 @@ void ATUIHistoryView::Reset() {
 
 	mInsnPosStart = 0;
 	mInsnPosEnd = 0;
+	mInsnBuffer.clear();
 }
 
 void ATUIHistoryView::ReloadOpcodes() {
@@ -2065,8 +2065,10 @@ void ATUIHistoryView::UpdateOpcodes(uint32 historyStart, uint32 historyEnd) {
 	mHistoryTree.Verify();
 #endif
 
-	if (mInsnBuffer.empty())
+	if (mInsnBuffer.empty()) {
 		mInsnPosStart = historyStart;
+		mInsnPosEnd = historyStart;
+	}
 
 	const ATHistoryTranslateInsnFn translateFn = ATHistoryGetTranslateInsnFn(mDisasmMode);
 
@@ -2091,6 +2093,7 @@ void ATUIHistoryView::UpdateOpcodes(uint32 historyStart, uint32 historyEnd) {
 			Reset();
 			dist = l;
 			mInsnPosEnd = c - l;
+			mInsnPosStart = mInsnPosEnd;
 		}
 
 		if (mbSearchActive) {

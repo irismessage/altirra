@@ -77,6 +77,7 @@ public:
 	void ColdReset();
 	void WarmReset();
 
+	void SetFrameTime(uint32 cyclesPerFrame);
 	void SetReadyState(bool ready);
 
 	void PreLoadState();
@@ -235,6 +236,8 @@ private:
 	uint8	mActiveDeviceId = 0;
 
 	uint32	mAccessedDisks = 0;
+
+	uint32	mCyclesPerFrame = 1;
 
 	bool	mbLoadingState = false;
 

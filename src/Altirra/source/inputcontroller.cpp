@@ -18,10 +18,11 @@
 #include <stdafx.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/math.h>
+#include <at/atcore/deviceport.h>
+#include <at/atcore/enumparseimpl.h>
 #include <at/atcore/scheduler.h>
 #include "inputcontroller.h"
 #include "inputmanager.h"
-#include "gtia.h"
 #include <at/ataudio/pokey.h>
 #include "antic.h"
 #include "pia.h"
@@ -30,26 +31,67 @@ class ATAnticEmulator;
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATLightPenPort::ATLightPenPort()
-	: mpAntic(NULL)
-	, mTriggerStateMask(0x03)
-	, mTriggerState(0)
-	, mAdjustX(0)
-	, mAdjustY(0)
-	, mbOddPhase(false)
-{
+AT_DEFINE_ENUM_TABLE_BEGIN(ATLightPenNoiseMode)
+	{ ATLightPenNoiseMode::None, "none" },
+	{ ATLightPenNoiseMode::Low, "low" },
+	{ ATLightPenNoiseMode::High, "high" },
+AT_DEFINE_ENUM_TABLE_END(ATLightPenNoiseMode, ATLightPenNoiseMode::None)
+
+// This accounts for the discrepancy between the emulator's ANTIC counters
+// and the real ANTIC counters, as well as delays in the light pen latch.
+constexpr int ATLightPenPort::kHorizOffset = 12;
+
+ATLightPenPort::ATLightPenPort() {
 }
 
 void ATLightPenPort::Init(ATAnticEmulator *antic) {
 	mpAntic = antic;
 }
 
+bool ATLightPenPort::GetImmediateUpdateEnabled() const {
+	return mbImmediateUpdate;
+}
+
+void ATLightPenPort::SetImmediateUpdateEnabled(bool enable) {
+	mbImmediateUpdate = enable;
+}
+
+ATLightPenNoiseMode ATLightPenPort::GetNoiseMode() const {
+	return mNoiseMode;
+}
+
+void ATLightPenPort::SetNoiseMode(ATLightPenNoiseMode mode) {
+	mNoiseMode = mode;
+}
+
+void ATLightPenPort::ApplyCorrection(int dx, int dy) {
+	auto& adjust = mAdjust[mbLastWasPen];
+
+	adjust.x += dx;
+	adjust.y += dy;
+
+	if (adjust.x < -114)
+		adjust.x += 228 * ((adjust.x - 57) / 228);
+	else
+		adjust.x -= 228 * ((adjust.x + 57) / 228);
+}
+
+void ATLightPenPort::TriggerCorrection(bool phase, int x, int y) {
+	mTriggerCorrectionEvent.InvokeAll(phase, x, y);
+}
+
 void ATLightPenPort::SetIgnorePort34(bool ignore) {
 	mTriggerStateMask = ignore ? 0x01 : 0x03;
 }
 
-void ATLightPenPort::SetColorClockPhase(bool odd) {
-	mbOddPhase = odd;
+void ATLightPenPort::SetPosition(bool pen, int x, int y) {
+	mbLastWasPen = pen;
+
+	if (mbImmediateUpdate) {
+		SetAnticPenPosition(x, y);
+	}
+
+	mbOddPhase = (x & 1) != 0;
 }
 
 void ATLightPenPort::SetPortTriggerState(int index, bool state) {
@@ -65,352 +107,89 @@ void ATLightPenPort::SetPortTriggerState(int index, bool state) {
 
 	mTriggerState = newState;
 
-	if ((newState & mTriggerStateMask) && mpAntic)
-		mpAntic->SetLightPenPosition(mbOddPhase);
+	if ((newState & mTriggerStateMask) && mpAntic && !mbImmediateUpdate) {
+		SetAnticPenPosition(mpAntic->GetBeamX() * 2 + kHorizOffset + (mbOddPhase ? 1 : 0), mpAntic->GetBeamY());
+	}
+}
+
+void ATLightPenPort::SetAnticPenPosition(int x, int y) {
+	int yn = (int)mpAntic->GetScanlineCount();
+
+	int xc = x;
+	int yc = y;
+
+	yc += xc / 228;
+	xc %= 228;
+
+	if (xc < 0) {
+		xc += 228;
+		--yc;
+	}
+
+	yc %= yn;
+		
+	if (yc < 0)
+		yc += yn;
+
+	mpAntic->SetLightPenPosition(xc, yc);
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATPortController::ATPortController()
-	: mPIAInputIndex(-1)
-	, mPIAOutputIndex(-1)
-	, mPortValue(0xFF)
-	, mbTrigger1(false)
-	, mbTrigger2(false)
-	, mMultiMask(0x0F000000)
-	, mpGTIA(NULL)
-	, mpPokey(NULL)
-	, mpPIA(NULL)
-	, mTriggerIndex(0)
-	, mpLightPen(NULL)
-{
-}
-
-ATPortController::~ATPortController() {
-	Shutdown();
-}
-
-void ATPortController::Init(ATGTIAEmulator *gtia, ATPokeyEmulator *pokey, ATPIAEmulator *pia, ATLightPenPort *lightPen, int index) {
-	VDASSERT(index == 0 || index == 2);
-
-	mpGTIA = gtia;
-	mpPokey = pokey;
-	mpPIA = pia;
-	mTriggerIndex = index;
-	mpLightPen = lightPen;
-
-	mPIAInputIndex = mpPIA->AllocInput();
-}
-
-void ATPortController::Shutdown() {
-	if (mpPIA) {
-		mpPIA->FreeInput(mPIAInputIndex);
-
-		if (mPIAOutputIndex >= 0) {
-			mpPIA->FreeOutput(mPIAOutputIndex);
-			mPIAOutputIndex = -1;
-		}
-
-		mpPIA = NULL;
-	}
-}
-
-void ATPortController::SetMultiMask(uint8 mask) {
-	mMultiMask = (uint32)mask << 22;
-
-	UpdatePortValue();
-}
-
-int ATPortController::AllocatePortInput(bool port2, int multiIndex) {
-	PortInputs::iterator it(std::find(mPortInputs.begin(), mPortInputs.end(), 0));
-	int index = (int)(it - mPortInputs.begin());
-
-	uint32 v = port2 ? 0xC0000000 : 0x80000000;
-
-	if (multiIndex >= 0)
-		v |= 0x00400000 << multiIndex;
-	else
-		v |= 0x3FC00000;
-
-	if (it != mPortInputs.end())
-		*it = v;
-	else
-		mPortInputs.push_back(v);
-
-	return index;
-}
-
-void ATPortController::FreePortInput(int index) {
-	if ((uint32)index >= mPortInputs.size()) {
-		VDASSERT(false);
-		return;
-	}
-
-	uint32 oldVal = mPortInputs[index];
-	if (oldVal) {
-		mPortInputs[index] = 0;
-		UpdatePortValue();
-	}
-
-	while(!mPortInputs.empty() && mPortInputs.back() == 0)
-		mPortInputs.pop_back();
-}
-
-void ATPortController::SetPortInput(int index, uint32 portBits) {
-	uint32 oldVal = mPortInputs[index];
-	if (oldVal != portBits) {
-		mPortInputs[index] = (oldVal & 0xffc00000) + portBits;
-		UpdatePortValue();
-	}
-}
-
-void ATPortController::ResetPotPositions() {
-	mpPokey->SetPotPos(mTriggerIndex * 2 + 0, 229);
-	mpPokey->SetPotPos(mTriggerIndex * 2 + 1, 229);
-}
-
-void ATPortController::SetPotPosition(int offset, uint8 pos) {
-	mpPokey->SetPotPos(mTriggerIndex * 2 + offset, pos);
-}
-
-void ATPortController::SetPotHiPosition(int offset, int hipos, bool grounded) {
-	mpPokey->SetPotPosHires(mTriggerIndex * 2 + offset, hipos, grounded);
-}
-
-int ATPortController::AllocatePortOutput(ATPortInputController *target, uint8 mask) {
-	auto it = std::find_if(mPortOutputs.begin(), mPortOutputs.end(),
-		[](const PortOutput& portOutput) { return !portOutput.mpTarget; });
-
-	int index = (int)(it - mPortOutputs.begin());
-
-	const PortOutput newPortOutput = { target, mask };
-	if (it != mPortOutputs.end())
-		*it = newPortOutput;
-	else
-		mPortOutputs.push_back(newPortOutput);
-
-	UpdatePortOutputRegistration();
-	return index;
-}
-
-void ATPortController::SetPortOutputMask(int index, uint8 mask) {
-	if (index < 0)
-		return;
-
-	if ((unsigned)index >= mPortOutputs.size()) {
-		VDASSERT(false);
-		return;
-	}
-
-	auto& portOutput = mPortOutputs[index];
-	if (!portOutput.mpTarget) {
-		VDASSERT(false);
-		return;
-	}
-
-	if (portOutput.mMask != mask) {
-		portOutput.mMask = mask;
-
-		UpdatePortOutputRegistration();
-	}
-}
-
-void ATPortController::FreePortOutput(int index) {
-	if ((unsigned)index >= mPortOutputs.size()) {
-		VDASSERT(false);
-		return;
-	}
-
-	auto& portOutput = mPortOutputs[index];
-	VDASSERT(portOutput.mpTarget);
-
-	portOutput.mpTarget = nullptr;
-	portOutput.mMask = 0;
-
-	while(!mPortOutputs.empty() && !mPortOutputs.back().mpTarget)
-		mPortOutputs.pop_back();
-
-	UpdatePortOutputRegistration();
-}
-
-uint8 ATPortController::GetPortOutputState() const {
-	const uint32 state = mpPIA->GetOutputState();
-
-	return mTriggerIndex ? (uint8)(state >> 8) : (uint8)state;
-}
-
-void ATPortController::ReapplyTriggers() {
-	mpGTIA->SetControllerTrigger(mTriggerIndex + 0, mbTrigger1);
-	mpGTIA->SetControllerTrigger(mTriggerIndex + 1, mbTrigger2);
-}
-
-void ATPortController::UpdatePortValue() {
-	PortInputs::const_iterator it(mPortInputs.begin()), itEnd(mPortInputs.end());
-	
-	uint32 portval = 0;
-	while(it != itEnd) {
-		uint32 pv = *it++;
-
-		if (!(pv & mMultiMask))
-			continue;
-
-		if (pv & 0x40000000)
-			pv <<= 4;
-
-		portval |= pv;
-	}
-
-	if (portval & 0x1100) {
-		mpLightPen->SetPortTriggerState(mTriggerIndex, true);
-	} else {
-		mpLightPen->SetPortTriggerState(mTriggerIndex, false);
-	}
-
-	mPortValue = ~(uint8)portval;
-
-	if (mTriggerIndex)
-		mpPIA->SetInput(mPIAInputIndex, ((uint32)mPortValue << 8) | 0xFF);
-	else
-		mpPIA->SetInput(mPIAInputIndex, (uint32)mPortValue | 0xFF00);
-
-	bool trigger1 = (portval & 0x100) != 0;
-	bool trigger2 = (portval & 0x1000) != 0;
-
-	if (mbTrigger1 != trigger1) {
-		mbTrigger1 = trigger1;
-
-		mpGTIA->SetControllerTrigger(mTriggerIndex + 0, trigger1);
-	}
-
-	if (mbTrigger2 != trigger2) {
-		mbTrigger2 = trigger2;
-
-		mpGTIA->SetControllerTrigger(mTriggerIndex + 1, trigger2);
-	}
-}
-
-void ATPortController::UpdatePortOutputRegistration() {
-	uint8 totalMask = 0;
-
-	for(const auto& output : mPortOutputs)
-		totalMask |= output.mMask;
-
-	if (totalMask) {
-		uint32 piaChangeMask = totalMask;
-
-		if (mTriggerIndex)
-			piaChangeMask <<= 8;
-
-		if (mPIAOutputIndex < 0)
-			mPIAOutputIndex = mpPIA->AllocOutput(OnPortOutputUpdated, this, piaChangeMask);
-		else
-			mpPIA->ModifyOutputMask(mPIAOutputIndex, piaChangeMask);
-	} else {
-		if (mPIAOutputIndex >= 0) {
-			mpPIA->FreeOutput(mPIAOutputIndex);
-			mPIAOutputIndex = -1;
-		}
-	}
-}
-
-void ATPortController::OnPortOutputUpdated(void *data, uint32 outputState) {
-	auto *const thisPtr = (ATPortController *)data;
-
-	const uint8 portState = thisPtr->mTriggerIndex ? (uint8)(outputState >> 8) : (uint8)outputState;
-
-	for(const auto& output : thisPtr->mPortOutputs) {
-		if (output.mpTarget)
-			output.mpTarget->UpdateOutput(portState);
-	}
-}
-
-///////////////////////////////////////////////////////////////////////////
-
-ATPortInputController::ATPortInputController()
-	: mpPortController(NULL)
-{
+ATPortInputController::ATPortInputController() {
 }
 
 ATPortInputController::~ATPortInputController() {
 	Detach();
 }
 
-void ATPortInputController::Attach(ATPortController *pc, bool port2, int multiIndex) {
-	mpPortController = pc;
-	mPortInputIndex = pc->AllocatePortInput(port2, multiIndex);
-	mPortOutputIndex = -1;
-	mPortOutputMask = 0;
-	mbPort2 = port2;
+void ATPortInputController::Attach(IATDevicePortManager& portMgr, int portIndex, int multiIndex) {
+	portMgr.AllocControllerPort(portIndex, ~mpControllerPort);
+
+	mMultiMask = multiIndex < 0 ? 0 : 1 << multiIndex;
+
+	mpControllerPort->SetOnDirOutputChanged(0, [this] { UpdateOutput(); }, false);
 
 	OnAttach();
 }
 
 void ATPortInputController::Detach() {
-	if (mpPortController) {
+	if (mpControllerPort) {
 		OnDetach();
-
-		mpPortController->FreePortInput(mPortInputIndex);
-
-		if (mPortOutputIndex >= 0) {
-			mpPortController->FreePortOutput(mPortOutputIndex);
-			mPortOutputIndex = -1;
-		}
-
-		mpPortController = NULL;
+		mpControllerPort = nullptr;
 	}
+}
+
+void ATPortInputController::SelectMultiJoy(uint8 mask) {
+	if (mMultiMask)
+		mpControllerPort->SetEnabled((mMultiMask & mask) != 0);
 }
 
 void ATPortInputController::SetPortOutput(uint32 portBits) {
-	if (mpPortController)
-		mpPortController->SetPortInput(mPortInputIndex, portBits);
+	mpControllerPort->SetDirInput((uint8)(~portBits & 15));
+	mpControllerPort->SetTriggerDown((portBits & 0x100) != 0);
+}
+
+void ATPortInputController::ResetPotPositions() {
+	mpControllerPort->ResetPotPosition(false);
+	mpControllerPort->ResetPotPosition(true);
 }
 
 void ATPortInputController::SetPotPosition(bool second, uint8 pos) {
-	if (mpPortController)
-		mpPortController->SetPotPosition((mbPort2 ? 2 : 0) + (second ? 1 : 0), pos);
+	mpControllerPort->SetPotPosition(second, pos);
 }
 
 void ATPortInputController::SetPotHiPosition(bool second, int pos, bool grounded) {
-	if (mpPortController)
-		mpPortController->SetPotHiPosition((mbPort2 ? 2 : 0) + (second ? 1 : 0), pos, grounded);
+	mpControllerPort->SetPotHiresPosition(second, pos, grounded);
 }
 
 void ATPortInputController::SetOutputMonitorMask(uint8 mask) {
-	mask &= 0x0F;
-
-	if (mPortOutputMask != mask) {
-		mPortOutputMask = mask;
-
-		if (mbPort2)
-			mask <<= 4;
-
-		if (mask) {
-			if (mPortOutputIndex < 0)
-				mPortOutputIndex = mpPortController->AllocatePortOutput(this, mask);
-			else
-				mpPortController->SetPortOutputMask(mPortOutputIndex, mask);
-
-			mPortOutputState = mpPortController->GetPortOutputState();
-		} else {
-			if (mPortOutputIndex >= 0) {
-				mpPortController->FreePortOutput(mPortOutputIndex);
-				mPortOutputIndex = -1;
-			}
-		}
-	}
+	mpControllerPort->SetDirOutputMask(mask);
 }
 
-void ATPortInputController::UpdateOutput(uint8 state) {
-	if (mbPort2)
-		state >>= 4;
-
-	state &= 0x0F;
-
-	if (mPortOutputState != state) {
-		mPortOutputState = state;
-
-		OnPortOutputChanged(state);
-	}
+void ATPortInputController::UpdateOutput() {
+	mPortOutputState = mpControllerPort->GetCurrentDirOutput();
+	OnPortOutputChanged(mPortOutputState);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -597,7 +376,7 @@ void ATMouseController::OnAttach() {
 }
 
 void ATMouseController::OnDetach() {
-	mpPortController->ResetPotPositions();
+	ResetPotPositions();
 
 	if (mpScheduler) {
 		mpScheduler->UnsetEvent(mpUpdateXEvent);
@@ -1126,8 +905,9 @@ void ATInputStateController::SetDigitalTrigger(uint32 trigger, bool state) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-AT5200ControllerController::AT5200ControllerController(int index, bool trackball)
-	: mbActive(false)
+AT5200ControllerController::AT5200ControllerController(int index, bool trackball, ATPokeyEmulator& pokey)
+	: mpPokey(&pokey)
+	, mbActive(false)
 	, mbPotsEnabled(false)
 	, mbTrackball(trackball)
 	, mIndex(index)
@@ -1151,15 +931,14 @@ bool AT5200ControllerController::Select5200Controller(int index, bool potsEnable
 	if (active != mbActive) {
 		mbActive = active;
 
-		ATPokeyEmulator& pokey = mpPortController->GetPokey();
 		if (active) {
-			pokey.SetKeyMatrix(mbKeyMatrix);
+			mpPokey->SetKeyMatrix(mbKeyMatrix);
 			UpdateTopButtonState();
 		} else {
-			pokey.SetShiftKeyState(false, false);
-			pokey.SetControlKeyState(false);
-			pokey.SetBreakKeyState(false, false);
-			pokey.SetKeyMatrix(nullptr);
+			mpPokey->SetShiftKeyState(false, false);
+			mpPokey->SetControlKeyState(false);
+			mpPokey->SetBreakKeyState(false, false);
+			mpPokey->SetKeyMatrix(nullptr);
 		}
 
 	}
@@ -1167,10 +946,8 @@ bool AT5200ControllerController::Select5200Controller(int index, bool potsEnable
 	if (mbPotsEnabled != potsEnabled) {
 		mbPotsEnabled = potsEnabled;
 
-		if (mpPortController) {
-			UpdatePot(0);
-			UpdatePot(1);
-		}
+		UpdatePot(0);
+		UpdatePot(1);
 	}
 
 	return active;
@@ -1401,7 +1178,7 @@ void AT5200ControllerController::OnAttach() {
 }
 
 void AT5200ControllerController::OnDetach() {
-	mpPortController->ResetPotPositions();
+	ResetPotPositions();
 }
 
 void AT5200ControllerController::SetKeyState(uint8 index, bool state) {
@@ -1414,7 +1191,7 @@ void AT5200ControllerController::SetKeyState(uint8 index, bool state) {
 		mbKeyMatrix[index+0x21] = state;
 
 		if (mbActive)
-			mpPortController->GetPokey().SetKeyMatrix(mbKeyMatrix);
+			mpPokey->SetKeyMatrix(mbKeyMatrix);
 	}
 }
 
@@ -1422,10 +1199,9 @@ void AT5200ControllerController::UpdateTopButtonState() {
 	if (!mbActive)
 		return;
 
-	ATPokeyEmulator& pokey = mpPortController->GetPokey();
-	pokey.SetShiftKeyState(mbTopButton, false);
-	pokey.SetControlKeyState(mbTopButton);
-	pokey.SetBreakKeyState(mbTopButton, false);
+	mpPokey->SetShiftKeyState(mbTopButton, false);
+	mpPokey->SetControlKeyState(mbTopButton);
+	mpPokey->SetBreakKeyState(mbTopButton, false);
 }
 
 void AT5200ControllerController::SetPot(int index, int pos, bool forceJitter) {
@@ -1482,14 +1258,8 @@ void AT5200ControllerController::UpdatePot(int index) {
 
 //////////////////////////////////////////////////////////////////////////
 
-ATLightPenController::ATLightPenController()
-	: mPortBits(0)
-	, mpScheduler(NULL)
-	, mpLightPen(NULL)
-	, mpLPEvent(NULL)
-	, mPosX(0)
-	, mPosY(0)
-	, mbPenDown(false)
+ATLightPenController::ATLightPenController(Type type)
+	: mType(type)
 {
 }
 
@@ -1503,11 +1273,16 @@ void ATLightPenController::Init(ATScheduler *fastScheduler, ATLightPenPort *lpp)
 
 void ATLightPenController::SetDigitalTrigger(uint32 trigger, bool state) {
 	uint32 mask = 0;
+	bool recordCalibrationReference = false;
 
 	switch(trigger) {
 		case kATInputTrigger_Button0:
 			mask = 0x01;
-			state = !state;
+
+			if (mType == Type::LightGun)
+				state = !state;
+
+			recordCalibrationReference = true;
 			break;
 
 		case kATInputTrigger_Button0+1:
@@ -1515,11 +1290,11 @@ void ATLightPenController::SetDigitalTrigger(uint32 trigger, bool state) {
 			break;
 
 		case kATInputTrigger_Button0+2:
-			mbPenDown = state;
+			if (mbPenDown != state) {
+				mbPenDown = state;
 
-			if (mpLPEvent) {
-				mpScheduler->RemoveEvent(mpLPEvent);
-				mpLPEvent = NULL;
+				mpScheduler->UnsetEvent(mpLPAssertEvent);
+				mpScheduler->UnsetEvent(mpLPDeassertEvent);
 			}
 			break;
 
@@ -1532,6 +1307,13 @@ void ATLightPenController::SetDigitalTrigger(uint32 trigger, bool state) {
 	if ((mPortBits ^ bit) & mask) {
 		mPortBits ^= mask;
 		SetPortOutput(mPortBits);
+
+		if (recordCalibrationReference) {
+			int x, y;
+			GetBeamPos(x, y, ATLightPenNoiseMode::None);
+
+			mpLightPen->TriggerCorrection(state, x, y);
+		}
 	}
 }
 
@@ -1587,39 +1369,123 @@ void ATLightPenController::Tick() {
 	// X range is [17, 111].
 	// Y range is [4, 123].
 
-	int x = (mPosX*94 + 0x808000) >> 16;
-	int y = (mPosY*188 + 0x808000) >> 16;
+	if (mbPenDown) {
+		int x, y;
 
-	uint32 delay = 114 * (y + mpLightPen->GetAdjustY()) + ((x >> 1) + mpLightPen->GetAdjustX()) + 21 + 228;
+		GetBeamPos(x, y, mpLightPen->GetNoiseMode());
 
-	mbOddPhase = (x & 1) != 0;
+		const auto [adjX, adjY] = mpLightPen->GetAdjust(mType == Type::LightPen);
+		x += adjX;
+		y += adjY;
 
-	if (mbPenDown)
-		mpScheduler->SetEvent(delay, this, 1, mpLPEvent);
+		mpLightPen->SetPosition(mType == Type::LightPen, x, y);
+
+		if (mpLightPen->GetImmediateUpdateEnabled()) {
+			// AtariGraphics needs to see the trigger down when the PENH/V
+			// registers change in order to detect which port is being used
+			// for the light pen.
+			if (!(mPortBits & 0x100)) {
+				mPortBits |= 0x100;
+				SetPortOutput(mPortBits);
+			}
+
+			return;
+		} else {
+			// Because we are called after the ANTIC emulator's X increment has
+			// occurred, there is a 1 cycle correction we need to apply.
+
+			uint32 delay = mpControllerPort->GetCyclesToBeamPosition((x >> 1) + 1 - ATLightPenPort::kHorizOffset, y);
+
+			if (delay < 1)
+				delay = 1;
+
+			mpScheduler->SetEvent((uint32)delay, this, 1, mpLPAssertEvent);
+		}
+	}
 
 	if (mPortBits & 0x100) {
 		mPortBits &= ~0x100;
 		SetPortOutput(mPortBits);
 	}
+
+	mpScheduler->UnsetEvent(mpLPDeassertEvent);
 }
 
 void ATLightPenController::OnScheduledEvent(uint32 id) {
-	if (!(mPortBits & 0x100)) {
-		mPortBits |= 0x100;
-		mpLightPen->SetColorClockPhase(mbOddPhase);
-		SetPortOutput(mPortBits);
+	if (id == 1) {
+		mpLPAssertEvent = nullptr;
+
+		if (!(mPortBits & 0x100)) {
+			mPortBits |= 0x100;
+			SetPortOutput(mPortBits);
+		}
+
+		// Measured CX-75 light pulse width is about 32-35 color clocks.
+		mpScheduler->SetEvent(17, this, 2, mpLPDeassertEvent);
+	} else {
+		mpLPDeassertEvent = nullptr;
+
+		if (mPortBits & 0x100) {
+			mPortBits &= ~0x100;
+			SetPortOutput(mPortBits);
+		}
 	}
-	
-	mpLPEvent = NULL;
 }
 
 void ATLightPenController::OnAttach() {
 }
 
 void ATLightPenController::OnDetach() {
-	if (mpLPEvent) {
-		mpScheduler->RemoveEvent(mpLPEvent);
-		mpLPEvent = NULL;
+	if (mpScheduler) {
+		mpScheduler->UnsetEvent(mpLPAssertEvent);
+		mpScheduler->UnsetEvent(mpLPDeassertEvent);
+	}
+}
+
+void ATLightPenController::GetBeamPos(int& x, int& y, ATLightPenNoiseMode noiseMode) const {
+	const sint32 hiX = mPosX*94;
+	const sint32 hiY = mPosY*188;
+
+	x = (hiX + 0x808000) >> 16;
+	y = (hiY + 0x808000) >> 16;
+
+	if (mType == Type::LightGun) {
+		// This is based on the average expected offset by some light gun
+		// based XEGS games. There are a few sources of offsets:
+		//
+		//	- The internal horizontal counter latched into PENH starts at
+		//	  ~7 when missile DMA occurs.
+		//	- Internal delays from ANTIC and GTIA processing to video out.
+		//	- Delays within TV processing.
+		//	- Delays in latching H/V counters into PENH/V.
+		//	- Area of pickup for the light sensor.
+
+		x += 57;
+		y += 2;
+	} else {
+		// This is based on actual measurements of a CX-75 with a 1702
+		// monitor. A pixel at the center (hardware hpos/vpos=$80) gives
+		// PENH=~$96-9C and PENV=$40.
+
+		x += 34;
+		y += 1;
+	}
+	
+	// This is a hand-wavy algorithm to emulate some position-dependent horizontal
+	// noise that appears to be related to phosphors.
+	switch(noiseMode) {
+		case ATLightPenNoiseMode::None:
+			break;
+
+		case ATLightPenNoiseMode::Low:
+			if (hiY & 0x1000)
+				x += (hiY & 0xFFFF) / 0x8000;
+			break;
+
+		case ATLightPenNoiseMode::High:
+			if (hiY & 0x1000)
+				x += (hiY & 0xFFFF) / 0x3333;
+			break;
 	}
 }
 
@@ -1702,7 +1568,7 @@ void ATKeypadController::OnAttach() {
 }
 
 void ATKeypadController::OnDetach() {
-	mpPortController->ResetPotPositions();
+	ResetPotPositions();
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1737,7 +1603,7 @@ void ATKeyboardController::OnAttach() {
 }
 
 void ATKeyboardController::OnDetach() {
-	mpPortController->ResetPotPositions();
+	ResetPotPositions();
 }
 
 void ATKeyboardController::OnPortOutputChanged(uint8 outputState) {

@@ -278,10 +278,63 @@
 
     // for cartridge-enabled layers (optional)
     cart_mode: ...
+
+    // for PBI-enabled layers (optional)
+    auto_pbi: ...
+
+    // optional
+    priority: "..."
   };]]></pre>
   <p>
-    A memory layer must either be "segment" or "control" type, but not both.
+    A memory layer must either be "segment" or "control" type, but not both. A
+    layer defined with <tt>segment</tt> is a direct mapped layer suitable for
+    plain memory mapping, while a layer defined with <tt>control</tt> is a binding
+    controlled layer more suitable for hardware registers or complex memory
+    mappings.
   </p>
+  <p>
+    name (required): The name of the memory layer, as it appears in the
+    debugger's <tt>.map</tt> command. This name is only shown in the debugger
+    and need not be unique, though recommended.
+  </p>
+  <p>
+    address (required): The 16-bit base address of the memory layer's access
+    window. This determines the base address of the memory layer as seen by
+    the 6502 or ANTIC. This must be aligned to a page boundary, e.g. <tt>$4000</tt>
+    or <tt>$D100</tt>.
+  </p>
+  <p>
+    size (required): The size of the memory layer access window, in bytes.
+    This must be a multiple of 256 for page alignment, and the resulting address
+    region must fit within the 64K address space. Note that this is the size
+    of the access window and not the backing memory, which may be much bigger
+    than the backing memory to support bank switching.
+  </p>
+  <p>
+    cart-mode (optional): Enables automatic cartridge behavior for this
+    memory layer. See <i>cartridge-enabled layers</i> below for more info.
+  </p>
+  <p>
+    auto_pbi (optional): Enables automatic Parallel Bus Interface (PBI) behavior
+    for this memory layer. See <i>PBI-enabled layers</i> below for more info.
+  </p>
+  <p>
+    priority (optional): Sets the relative priority of this layer to resolve
+    conflicts when this memory layer overlaps with another memory layer. The
+    prioritization is as follows:
+  </p>
+  <ul>
+    <li>(Highest priority)</li>
+    <li class="highlighted">Custom memory layers marked as <tt>priority: "hwoverlay"</tt></li>
+    <li>Base hardware registers</li>
+    <li class="highlighted">Custom memory layers marked as <tt>auto_pbi</tt> or <tt>priority: "pbi"</tt></li>
+    <li class="highlighted">Default priority for custom memory layers (cartridge)</li>
+    <li>OS, BASIC, and Self-Test ROM</li>
+    <li class="highlighted">Custom memory layers marked as <tt>priority: "extsel"</tt></li>
+    <li>Extended RAM (PORTB / 130XE)</li>
+    <li>Base 64K RAM</li>
+    <li>(Lowest priority)</li>
+  </ul>
   <h3>Direct mapped layers</h3>
   <p>
     A <i>direct mapped layer</i> is a layer that is directly mapped to segment
@@ -2055,6 +2108,13 @@
   };]]></pre>
   <h2>Changes</h2>
   <dl>
+    <dt>v0.5</dt>
+    <dd>
+      <ul>
+        <li>Added <tt>priority</tt> member to memory layers.</li>
+      </ul>
+    </dd>
+    
     <dt>v0.4</dt>
     <dd>
       <ul>

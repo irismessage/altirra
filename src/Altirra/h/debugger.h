@@ -27,14 +27,15 @@
 #include <vd2/system/vdstl.h>
 #include <at/atcore/enumparse.h>
 #include <at/atcpu/execstate.h>
+#include <at/atdebugger/symbols.h>
 #include <at/atdebugger/target.h>
-#include "symbols.h"
 
 struct ATSymbol;
 struct ATSourceLineInfo;
 struct ATDebuggerExprParseOpts;
 struct ATDebugExpEvalContext;
 class ATDebugExpNode;
+class ATBreakpointManager;
 class IATDebugger;
 class IATDebuggerClient;
 class IATDebugTarget;
@@ -43,7 +44,9 @@ class ATDebuggerCmdParser;
 enum ATDebugEvent {
 	kATDebugEvent_BreakpointsChanged,
 	kATDebugEvent_SymbolsChanged,
-	kATDebugEvent_MemoryChanged
+	kATDebugEvent_MemoryChanged,
+	kATDebugEvent_CurrentTargetChanged,
+	kATDebugEvent_TargetsChanged
 };
 
 enum ATDebugSrcMode {
@@ -120,17 +123,20 @@ struct ATDebuggerWatchInfo {
 };
 
 struct ATDebuggerBreakpointInfo {
-	uint32	mTargetIndex;
-	sint32	mNumber;
-	sint32	mAddress;
-	uint32	mLength;
-	bool	mbBreakOnPC;
-	bool	mbBreakOnRead;
-	bool	mbBreakOnWrite;
-	bool	mbBreakOnInsn;
-	bool	mbDeferred;
-	bool	mbClearOnReset;
-	bool	mbOneShot;
+	uint32	mTargetIndex = 0;
+	sint32	mNumber = -1;
+	sint32	mAddress = 0;
+	uint32	mLength = 0;
+	bool	mbBreakOnPC = false;
+	bool	mbBreakOnRead = false;
+	bool	mbBreakOnWrite = false;
+	bool	mbBreakOnInsn = false;
+	bool	mbDeferred = false;
+	bool	mbClearOnReset = false;
+	bool	mbOneShot = false;
+	bool	mbContinueExecution = false;
+	ATDebugExpNode *mpCondition = nullptr;
+	const char *mpCommand = nullptr;
 };
 
 class IATDebuggerActiveCommand : public IVDRefCount {
@@ -190,13 +196,30 @@ public:
 	virtual void Run(ATDebugSrcMode sourceMode) = 0;
 	virtual void RunTraced() = 0;
 
+	// Breakpoints
+	//
+	// All user-accessible breakpoints are identified by a zero-based user breakpoint index. This is
+	// _not_ necessarily the same as the user-visible breakpoint ID, which is of the form [group-tag.]number.
+	// Each user breakpoint is associated with an underlying system breakpoint, which has its own separate
+	// index value. However, not all system breakpoints have user indices as they may be internal to the
+	// debugging engine.
+	//
+	// All breakpoint indices are numbers are stable -- deleting a breakpoint will not renumber any other
+	// existing breakpoints.
+	//
 	virtual bool IsDeferredBreakpointSet(const char *fn, uint32 line) = 0;
+	virtual bool ClearUserBreakpoint(uint32 useridx, bool notify) = 0;
 	virtual void ClearAllBreakpoints() = 0;
 	virtual bool IsBreakpointAtPC(uint32 addr) const = 0;
 	virtual void ToggleBreakpoint(uint32 addr) = 0;
 	virtual void ToggleAccessBreakpoint(uint32 addr, bool write) = 0;
 	virtual void ToggleSourceBreakpoint(const char *fn, uint32 line) = 0;
+	virtual uint32 SetBreakpoint(sint32 useridx, const ATDebuggerBreakpointInfo& bpInfo) = 0;
 	virtual uint32 SetSourceBreakpoint(const char *fn, uint32 line, ATDebugExpNode *condexp, const char *command, bool continueExecution = false) = 0;
+	virtual vdvector<VDStringA> GetBreakpointGroups() const = 0;
+	virtual bool GetBreakpointInfo(uint32 useridx, ATDebuggerBreakpointInfo& info) const = 0;
+	virtual void GetBreakpointList(vdfastvector<uint32>& bps, const char *group = nullptr) const = 0;
+	virtual ATDebugExpNode *GetBreakpointCondition(uint32 useridx) const = 0;
 
 	virtual int AddWatch(uint32 address, int length) = 0;
 	virtual int AddWatchExpr(ATDebugExpNode *expr, ATDebuggerWatchMode mode) = 0;
@@ -240,6 +263,7 @@ public:
 	virtual void ProcessSymbolDirectives(uint32 id) = 0;
 
 	virtual sint32 ResolveSymbol(const char *s, bool allowGlobal = false, bool allowShortBase = true, bool allowNakedHex = true) = 0;
+	virtual uint32 ResolveSymbolThrow(const char *s, bool allowGlobal = false, bool allowShortBase = true) = 0;
 	virtual void EnumSourceFiles(const vdfunction<void(const wchar_t *, uint32)>& fn) const = 0;
 
 	virtual void AddCustomSymbol(uint32 address, uint32 len, const char *name, uint32 rwxmode, uint32 moduleId = 0) = 0;

@@ -25,6 +25,7 @@ struct VDDisplayRendererCaps {
 	bool mbSupportsColorBlt2;			// Color2 mode blits are supported (subpixel AA with slightly better gamma correction)
 	bool mbSupportsPolyLineF;			// PolyLineF() is supported for better precision line points
 	bool mbSupportsPolyLineFAA;			// PolyLineF(antialiasing = true) is supported (ignored otherwise)
+	bool mbSupportsHDR;					// Framebuffer is HDR and HDR drawing commands are fully supported
 };
 
 class VDDisplaySubRenderCache {
@@ -76,6 +77,9 @@ public:
 	virtual void AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, uint32 alphaColor) = 0;
 	virtual void AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint32 alphaColor) = 0;
 
+	virtual void FillTriStripHDR(const vdfloat2 *pts, const vdfloat4 *colors, uint32 numPts, bool alphaBlend) {}
+	virtual void FillTriStripHDR(const vdfloat2 *pts, const vdfloat4 *colors, const vdfloat2 *uv, uint32 numPts, bool alphaBlend, bool filter, VDDisplayImageView& brush) {}
+
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView) = 0;
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h) = 0;
 
@@ -108,6 +112,7 @@ public:
 	virtual void PolyLine(const vdpoint32 *points, uint32 numLines) = 0;
 	virtual void PolyLineF(const vdfloat2 *points, uint32 numLines, bool antialiased) = 0;
 
+	[[nodiscard]]
 	virtual bool PushViewport(const vdrect32& r, sint32 x, sint32 y) = 0;
 	virtual void PopViewport() = 0;
 

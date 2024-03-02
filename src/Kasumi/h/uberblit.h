@@ -27,7 +27,7 @@ enum VDPixmapFormatToken {
 	kVDPixType_8_8_8		= 0x00000010,
 	kVDPixType_B8G8_R8G8	= 0x00000011,		// UYVY
 	kVDPixType_G8B8_G8R8	= 0x00000012,		// YUYV
-	kVDPixType_V210			= 0x00000013,		// v210 (4:2:2 10 bit)
+//	kVDPixType_V210			= 0x00000013,		// v210 (4:2:2 10 bit)
 	kVDPixType_8_B8R8		= 0x00000014,		// NV12
 	kVDPixType_B8R8			= 0x00000015,
 	kVDPixType_Mask			= 0x0000003F,
@@ -36,13 +36,13 @@ enum VDPixmapFormatToken {
 	kVDPixSamp_422			= 0x00000080,
 	kVDPixSamp_422_JPEG		= 0x000000C0,
 	kVDPixSamp_420_MPEG2	= 0x00000100,
-	kVDPixSamp_420_MPEG2INT	= 0x00000140,
-	kVDPixSamp_420_MPEG2INT1= 0x00000180,		// MPEG-2 interlaced, top field
-	kVDPixSamp_420_MPEG2INT2= 0x000001C0,		// MPEG-2 interlaced, bottom field
+//	kVDPixSamp_420_MPEG2INT	= 0x00000140,
+//	kVDPixSamp_420_MPEG2INT1= 0x00000180,		// MPEG-2 interlaced, top field
+//	kVDPixSamp_420_MPEG2INT2= 0x000001C0,		// MPEG-2 interlaced, bottom field
 	kVDPixSamp_420_MPEG1	= 0x00000200,
 	kVDPixSamp_420_DVPAL	= 0x00000240,
-	kVDPixSamp_411			= 0x00000280,
-	kVDPixSamp_410			= 0x000002C0,
+//	kVDPixSamp_411			= 0x00000280,
+//	kVDPixSamp_410			= 0x000002C0,
 	kVDPixSamp_Mask			= 0x00000FC0,
 	kVDPixSamp_Bits			= 6,
 

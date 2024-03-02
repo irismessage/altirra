@@ -32,8 +32,6 @@
     <ClCompile Include="source\Context.cpp" />
     <ClCompile Include="source\Format.cpp" />
     <ClCompile Include="source\Program.cpp" />
-    <ClCompile Include="source\D3D9\Context_D3D9.cpp" />
-    <ClCompile Include="source\D3D9\FenceManager_D3D9.cpp" />
     <ClCompile Include="source\D3D11\Context_D3D11.cpp" />
     <ClCompile Include="source\D3D11\FenceManager_D3D11.cpp" />
     <ClCompile Include="source\stdafx.cpp">
@@ -42,15 +40,15 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\vd2\Tessa\Config.h" />
+    <ClInclude Include="..\h\vd2\Tessa\Options.h" />
     <ClInclude Include="h\stdafx.h" />
     <ClInclude Include="..\h\vd2\Tessa\Context.h" />
     <ClInclude Include="..\h\vd2\Tessa\Format.h" />
     <ClInclude Include="..\h\vd2\Tessa\Types.h" />
     <ClInclude Include="h\Program.h" />
-    <ClInclude Include="h\D3D9\Context_D3D9.h" />
-    <ClInclude Include="h\D3D9\FenceManager_D3D9.h" />
     <ClInclude Include="h\D3D11\Context_D3D11.h" />
     <ClInclude Include="h\D3D11\FenceManager_D3D11.h" />
+    <ClCompile Include="source\Options.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

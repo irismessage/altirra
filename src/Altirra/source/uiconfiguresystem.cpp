@@ -19,7 +19,6 @@
 #include <vd2/system/filesys.h>
 #include <at/atui/uicommandmanager.h>
 #include <at/atnativeui/theme.h>
-#include <at/atcore/devicemanager.h>
 #include "uiaccessors.h"
 #include "uicaptionupdater.h"
 #include "uidevices.h"
@@ -29,6 +28,7 @@
 #include "resource.h"
 #include "constants.h"
 #include "cartridge.h"
+#include "devicemanager.h"
 #include "diskinterface.h"
 #include "simulator.h"
 #include "options.h"
@@ -296,16 +296,15 @@ void ATUIDialogSysConfigPage::CmdRadioBinding::Read() {
 		if (!cmd)
 			continue;
 
-		if (!cmd->mpTestFn || cmd->mpTestFn()) {
+		if (!cmd->mpTestFn || cmd->mpTestFn())
 			entry.mpControl->SetEnabled(true);
-
-			if (cmd->mpStateFn && cmd->mpStateFn() != kATUICmdState_None)
-				entry.mpControl->SetChecked(true);
-			else
-				entry.mpControl->SetChecked(false);
-		} else {
+		else
 			entry.mpControl->SetEnabled(false);
-		}
+
+		if (cmd->mpStateFn && cmd->mpStateFn() != kATUICmdState_None)
+			entry.mpControl->SetChecked(true);
+		else
+			entry.mpControl->SetChecked(false);
 	}
 }
 
@@ -343,12 +342,11 @@ void ATUIDialogSysConfigPage::CmdBoolBinding::Read() {
 	bool checked = false;
 	bool enabled = false;
 
-	if (!cmd->mpTestFn || cmd->mpTestFn()) {
+	if (!cmd->mpTestFn || cmd->mpTestFn())
 		enabled = true;
 
-		if (cmd->mpStateFn && cmd->mpStateFn() != kATUICmdState_None)
-			checked = true;	
-	}
+	if (cmd->mpStateFn && cmd->mpStateFn() != kATUICmdState_None)
+		checked = true;	
 
 	mpControl->SetEnabled(enabled);
 	mpControl->SetChecked(checked);
@@ -567,7 +565,7 @@ void ATUIDialogSysConfigOverview::RemakeOverview() {
 	}
 
 	mRtfBuffer.append("\\par\\li1920\\fi-1920 ");
-	mResultView.AppendEscapedRTF(mRtfBuffer, L"Additional Devices");
+	mResultView.AppendEscapedRTF(mRtfBuffer, L"Additional devices");
 	mRtfBuffer += "\\tab ";
 
 	vdvector<VDStringW> devices;
@@ -593,7 +591,7 @@ void ATUIDialogSysConfigOverview::RemakeOverview() {
 	}
 
 	mRtfBuffer.append("\\par\\li1920\\fi-1920 ");
-	mResultView.AppendEscapedRTF(mRtfBuffer, L"OS Firmware");
+	mResultView.AppendEscapedRTF(mRtfBuffer, L"OS firmware");
 
 	mRtfBuffer += "\\tab ";
 
@@ -605,7 +603,7 @@ void ATUIDialogSysConfigOverview::RemakeOverview() {
 	mResultView.AppendEscapedRTF(mRtfBuffer, buf.c_str());
 
 	mRtfBuffer.append("\\par\\li1920\\fi-1920 ");
-	mResultView.AppendEscapedRTF(mRtfBuffer, L"Mounted Images");
+	mResultView.AppendEscapedRTF(mRtfBuffer, L"Mounted images");
 
 	bool firstImage = true;
 	bool foundImage = false;
@@ -665,6 +663,27 @@ void ATUIDialogSysConfigOverview::RemakeOverview() {
 		mRtfBuffer.append("\\tab ");
 		mResultView.AppendEscapedRTF(mRtfBuffer, L"None");
 	}
+
+	bool haveDebuggingOption = false;
+
+	const auto addDebuggingOption = [&](const wchar_t *text) {
+		if (!haveDebuggingOption) {
+			haveDebuggingOption = true;
+
+			mRtfBuffer.append("\\par\\par\\li1920\\fi-1920 ");
+			mResultView.AppendEscapedRTF(mRtfBuffer, L"Debugging");
+			mRtfBuffer.append("\\tab ");
+		} else
+			mRtfBuffer.append("\\line ");
+
+		mResultView.AppendEscapedRTF(mRtfBuffer, text);
+	};
+
+	if (g_sim.GetMemoryClearMode() != kATMemoryClearMode_DRAM1)
+		addDebuggingOption(L"Memory randomization changed");
+
+	if (g_sim.IsRandomFillEXEEnabled())
+		addDebuggingOption(L"Randomize memory on EXE start");
 
 	bool firmwareIssue = false;
 
@@ -1575,8 +1594,16 @@ bool ATUIDialogSysConfigAudio::OnLoaded() {
 	AddProxy(&mHostAudioView, IDC_HOSTAUDIOOPTIONS);
 	mHostAudioBinding.Bind(&mHostAudioView);
 
-	BindCheckbox(IDC_STEREO, "Audio.ToggleStereo");
+	auto *stereoBinding = BindCheckbox(IDC_STEREO, "Audio.ToggleStereo");
+	auto *stereoAsMonoBinding = BindCheckbox(IDC_STEREOASMONO, "Audio.ToggleStereoAsMono");
+
+	stereoBinding->GetView().SetOnClicked([=] {
+		stereoBinding->Write();
+		stereoAsMonoBinding->Read();
+	});
+
 	BindCheckbox(IDC_NONLINEARMIXING, "Audio.ToggleNonlinearMixing");
+	BindCheckbox(IDC_SPEAKERFILTER, "Audio.ToggleSpeakerFilter");
 	BindCheckbox(IDC_SERIALNOISE, "Audio.ToggleSerialNoise");
 	BindCheckbox(IDC_AUDIOMONITOR, "Audio.ToggleMonitor");
 	BindCheckbox(IDC_AUDIOSCOPE, "Audio.ToggleScope");
@@ -1596,7 +1623,11 @@ bool ATUIDialogSysConfigAudio::OnLoaded() {
 
 	AddHelpEntry(IDC_STEREO, L"Stereo",
 		L"Enable emulation of two POKEYs, controlling the left and right channels independently."
-);
+		);
+
+	AddHelpEntry(IDC_STEREOASMONO, L"Downmix stereo to mono",
+		L"Downmix stereo audio from dual POKEYs down to mono output."
+		);
 
 	AddHelpEntry(IDC_NONLINEARMIXING, L"Non-linear mixing",
 		L"Emulate analog behavior where audio signal output is compressed at high volume levels. This improves \
@@ -1606,6 +1637,10 @@ reproduction accuracy of some sound effects."
 	AddHelpEntry(IDC_SERIALNOISE, L"Serial noise",
 		L"Enable audio noise when serial transfers occur. This \
 emulates quiet high-pitched noise heard during disk loads when normal beep-beep load audio is turned off."
+		);
+
+	AddHelpEntry(IDC_SPEAKERFILTER, L"Simulate console speaker",
+		L"Simulate the acoustics of the console speaker built into the 800. (This is inactive for XL/XE models.)"
 		);
 
 	AddHelpEntry(IDC_AUDIOMONITOR, L"Audio monitor",
@@ -1645,6 +1680,7 @@ protected:
 		{ "Cassette.TurboModeNone", L"Disabled" },
 		{ "Cassette.TurboModeAlways", L"Always on" },
 		{ "Cassette.TurboModeCommandControl", L"SIO command (Turbo 2000)" },
+		{ "Cassette.TurboModeDataControl", L"SIO data out (Turbo Blizzard)" },
 		{ "Cassette.TurboModeProceedSense", L"SIO proceed (Turbo 6000)" },
 		{ "Cassette.TurboModeInterruptSense", L"SIO interrupt (Rambit Turbo Tape)" },
 		{ "Cassette.TurboModeKSOTurbo2000", L"Joystick port 2 (KSO Turbo 2000)" },
@@ -1765,7 +1801,7 @@ improve noise immunity. This filter is not used with turbo decoding."
 	AddHelpEntry(IDC_TURBODECODER, L"Turbo decoder",
 		L"Decoding algorithm to apply when decoding turbo data. High-pass filtering reduces phase shifts from noise reduction \
 in audio-oriented tape players. This only takes effect when a raw tape in WAV or FLAC format is loaded. Balance modes \
-correct pulse duty cycles (recommended for KSO Turbo 2000)."
+correct pulse duty cycles (recommended for KSO Turbo 2000). The tape must be reloaded for changes to take effect."
 		);
 
 	AddHelpEntry(IDC_VBIAVOIDANCE, L"Avoid OS C: random VBI-related errors",
@@ -1783,6 +1819,8 @@ that causes ~0.3% of C: block reads to fail. This adds a small amount of jitter 
 class ATUIDialogSysConfigCPU final : public ATUIDialogSysConfigPage {
 public:
 	ATUIDialogSysConfigCPU();
+
+	const char *GetPageTag() const override { return "cpu"; }
 
 protected:
 	bool OnLoaded() override;
@@ -2045,6 +2083,7 @@ protected:
 	VDUIProxyButtonControl mRemoveAllView;
 	VDUIProxyButtonControl mSettingsView;
 	VDUIProxyButtonControl mFirmwareManagerView;
+	VDUIProxyButtonControl mMoreView;
 
 	CmdTriggerBinding mFirmwareManagerBinding { "System.ROMImagesDialog" };
 
@@ -2053,7 +2092,7 @@ protected:
 
 ATUIDialogSysConfigDevices::ATUIDialogSysConfigDevices()
 	: ATUIDialogSysConfigPage(IDD_CONFIGURE_DEVICES)
-	, mCtrlDevs(*this, *g_sim.GetDeviceManager(), mTreeView, mSettingsView, mRemoveView)
+	, mCtrlDevs(*this, *g_sim.GetDeviceManager(), mTreeView, mSettingsView, mRemoveView, mMoreView)
 {
 	mAddView.SetOnClicked([this] { mCtrlDevs.Add(); });
 	mRemoveView.SetOnClicked([this] { mCtrlDevs.Remove(); });
@@ -2068,6 +2107,8 @@ ATUIDialogSysConfigDevices::ATUIDialogSysConfigDevices()
 			OnDataExchange(false);
 		}
 	);
+
+	mMoreView.SetOnClicked([this] { mCtrlDevs.More(); });
 }
 
 bool ATUIDialogSysConfigDevices::OnLoaded() {
@@ -2077,6 +2118,7 @@ bool ATUIDialogSysConfigDevices::OnLoaded() {
 	AddProxy(&mRemoveAllView, IDC_REMOVEALL);
 	AddProxy(&mSettingsView, IDC_SETTINGS);
 	AddProxy(&mFirmwareManagerView, IDC_FIRMWAREMANAGER);
+	AddProxy(&mMoreView, IDC_MORE);
 
 	mFirmwareManagerBinding.Bind(&mFirmwareManagerView);
 
@@ -2086,6 +2128,7 @@ bool ATUIDialogSysConfigDevices::OnLoaded() {
 	mResizer.Add(IDC_REMOVEALL, mResizer.kBL);
 	mResizer.Add(IDC_SETTINGS, mResizer.kBL);
 	mResizer.Add(IDC_FIRMWAREMANAGER, mResizer.kBL);
+	mResizer.Add(IDC_MORE, mResizer.kBL);
 	mResizer.Add(IDOK, mResizer.kBR);
 
 	mCtrlDevs.OnDpiChanged();
@@ -2108,6 +2151,8 @@ void ATUIDialogSysConfigDevices::OnDpiChanged() {
 class ATUIDialogSysConfigSpeed final : public ATUIDialogSysConfigPage {
 public:
 	ATUIDialogSysConfigSpeed();
+	
+	const char *GetPageTag() const override { return "speed"; }
 
 protected:
 	bool OnLoaded() override;
@@ -2153,6 +2198,8 @@ bool ATUIDialogSysConfigSpeed::OnLoaded() {
 	mWarpSpeedBinding.Bind(&mWarpSpeedView);
 	mAutoPauseBinding.Bind(&mAutoPauseView);
 
+	BindCheckbox(IDC_LOCKTOREFRESH, "System.ToggleVSyncAdaptiveSpeed");
+
 	AddHelpEntry(IDC_RATE_HARDWARE, L"Base frame rate",
 		L"Select the baseline rate at which the emulator runs. \"Match hardware\" uses the accurate speed of the \
 original hardware, but can result in occasional stuttering due to being slightly non-standard. \"Broadcast\" and \
@@ -2174,6 +2221,12 @@ real time."
 
 	AddHelpEntry(IDC_PAUSEWHENINACTIVE, L"Pause when emulator window is inactive",
 		L"Automatically pause the emulation when another application becomes active.");
+
+	AddHelpEntry(IDC_LOCKTOREFRESH, L"Lock to refresh",
+		L"Lock emulation speed to refresh rate when the two are very close (within 0.5Hz). This reduces latency and \
+hitching."
+	);
+
 
 	OnDataExchange(false);
 
@@ -2198,6 +2251,8 @@ void ATUIDialogSysConfigSpeed::OnDataExchange(bool write) {
 		mFrameRateModeBinding.Read();
 		mWarpSpeedBinding.Read();
 		mAutoPauseBinding.Read();
+
+		AutoReadBindings();
 	}
 }
 
@@ -2375,6 +2430,8 @@ bool ATUIDialogSysConfigDebugger::OnLoaded() {
 class ATUIDialogSysConfigDisplay final : public ATUIDialogSysConfigPage {
 public:
 	ATUIDialogSysConfigDisplay();
+	
+	const char *GetPageTag() const override { return "display"; }
 
 protected:
 	bool OnLoaded() override;
@@ -2978,8 +3035,8 @@ bool ATUIDialogSysConfigInput::OnLoaded() {
 	AddHelpEntry(IDC_USERAWINPUT, L"Use Raw Input API for relative mouse input",
 L"Use the Raw Input API in Windows to track relative mouse movements instead of WM_MOUSEMOVE. Can bypass acceleration for better control, but may have compatibility issues with some setups.");
 
-	AddHelpEntry(IDC_IMMEDIATEPOTS, L"Use immediate potentiometer update",
-L"Allow the POT0-7 registers to update late after a pot scan. This slightly reduces accuracy but can reduce paddle latency.");
+	AddHelpEntry(IDC_IMMEDIATEPOTS, L"Use immediate analog update",
+L"Allow the POT0-7 and LPENH/V registers to update immediately instead of waiting for the next pot/display scan. This slightly reduces accuracy but can reduce paddle latency.");
 
 	OnDataExchange(false);
 
@@ -3064,21 +3121,21 @@ void ATUIShowDialogConfigureSystem(VDGUIHandle hParent) {
 void ATUIShowCPUOptionsDialog(VDGUIHandle h) {
 	ATUIDialogConfigureSystem dlg;
 	
-	dlg.SetInitialPage(1);
+	dlg.SetInitialPageByName("cpu");
 	dlg.ShowDialog(h);
 }
 
 void ATUIShowDialogDevices(VDGUIHandle hParent) {
 	ATUIDialogConfigureSystem dlg;
 
-	dlg.SetInitialPage(2);
+	dlg.SetInitialPageByName("devices");
 	dlg.ShowDialog(hParent);
 }
 
 void ATUIShowDialogSpeedOptions(VDGUIHandle hParent) {
 	ATUIDialogConfigureSystem dlg;
 
-	dlg.SetInitialPage(3);
+	dlg.SetInitialPageByName("speed");
 	dlg.ShowDialog(hParent);
 }
 
@@ -3086,7 +3143,14 @@ struct ATUIKeyboardOptions;
 bool ATUIShowDialogKeyboardOptions(VDGUIHandle hParent, ATUIKeyboardOptions& opts) {
 	ATUIDialogConfigureSystem dlg;
 
-	dlg.SetInitialPage(13);
+	dlg.SetInitialPageByName("keyboard");
 	dlg.ShowDialog(hParent);
 	return false;
+}
+
+void ATUIShowDialogConfigureSystemDisplay(VDGUIHandle hParent) {
+	ATUIDialogConfigureSystem dlg;
+
+	dlg.SetInitialPageByName("display");
+	dlg.ShowDialog(hParent);
 }

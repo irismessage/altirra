@@ -31,6 +31,7 @@ class ATUIManager;
 
 enum class ATUIDragModifiers : uint32;
 enum class ATUIDragEffect : uint32;
+enum class ATUITimerHandle : uint32;
 
 // Currently these need to match the Win32 definitions.
 enum ATUIVirtKey {
@@ -113,6 +114,12 @@ enum ATUIFrameMode {
 	kATUIFrameModeCount
 };
 
+enum class ATUICloseResult : int {
+	Success,	// Window was closed.
+	Handled,	// Window may or may not be closed, but is being handled by the window (e.g. confirmation).
+	Failed		// Windows was not closed, but this was not reported to the user.
+};
+
 struct ATUIKeyEvent {
 	uint32 mVirtKey;
 	uint32 mExtendedVirtKey;
@@ -164,6 +171,10 @@ public:
 
 	ATUIWidget();
 	~ATUIWidget();
+
+	// Try to do a friendly close of the window. This may be refused or delayed depending on the
+	// implementation. By default, this forwards to Destroy() and returns success.
+	virtual ATUICloseResult Close();
 
 	void Destroy();
 	void Focus();
@@ -323,6 +334,9 @@ public:
 	void BindAction(const ATUITriggerBinding& binding);
 	void BindAction(uint32 vk, uint32 action, uint32 mod = 0, uint32 instanceid = 0);
 	const ATUITriggerBinding *FindAction(uint32 vk, uint32 extvk, uint32 mods) const;
+
+	ATUITimerHandle StartTimer(float initialDelay, float period, vdfunction<void()> fn);
+	void StopTimer(ATUITimerHandle h);
 
 	virtual ATUITouchMode GetTouchModeAtPoint(const vdpoint32& pt) const;
 	virtual void OnMouseRelativeMove(sint32 x, sint32 y);

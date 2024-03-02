@@ -11,9 +11,12 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #ifndef f_AT_ATCORE_DEVICE_H
 #define f_AT_ATCORE_DEVICE_H
@@ -35,7 +38,6 @@ class IATAudioMixer;
 class ATConsoleOutput;
 class ATPIAEmulator;
 class IATDeviceCartridge;
-class IATDevicePortManager;
 class IATDeviceIndicatorManager;
 struct ATTraceContext;
 class IATDeviceManager;
@@ -112,6 +114,14 @@ public:
 	virtual void InitIRQSource(ATIRQController *irqc) = 0;
 };
 
+class IATDeviceSchedulingService {
+public:
+	static const uint32 kTypeID = "IATDeviceSchedulingService"_vdtypeid;
+
+	virtual ATScheduler *GetMachineScheduler() const = 0;
+	virtual ATScheduler *GetSlowScheduler() const = 0;
+};
+
 class IATDeviceScheduling {
 public:
 	enum { kTypeID = 'adsc' };
@@ -176,13 +186,6 @@ public:
 	enum { kTypeID = 'addd' };
 
 	virtual void DumpStatus(ATConsoleOutput& output) = 0;
-};
-
-class IATDevicePortInput {
-public:
-	enum { kTypeID = 'adpi' };
-
-	virtual void InitPortInput(IATDevicePortManager *portmgr) = 0;
 };
 
 class IATDevice : public IVDRefUnknown {

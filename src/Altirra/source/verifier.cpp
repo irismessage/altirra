@@ -16,12 +16,12 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <at/atcore/ksyms.h>
 #include "cpu.h"
 #include "console.h"
 #include "verifier.h"
 #include "simulator.h"
 #include "simeventmanager.h"
-#include "ksyms.h"
 
 ATCPUVerifier::ATCPUVerifier() {
 }

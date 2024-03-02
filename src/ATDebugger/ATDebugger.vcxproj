@@ -4,11 +4,15 @@
   <ItemGroup>
     <ClCompile Include="source\breakpointsimpl.cpp" />
     <ClCompile Include="source\debugdevice.cpp" />
+    <ClCompile Include="source\defsymbols.cpp" />
     <ClCompile Include="source\historytree.cpp" />
     <ClCompile Include="source\historytreebuilder.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="source\symbolio.cpp" />
+    <ClCompile Include="source\symbols.cpp" />
+    <ClCompile Include="source\target.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\at\atdebugger\argparse.h" />
@@ -17,8 +21,10 @@
     <ClInclude Include="..\h\at\atdebugger\expression.h" />
     <ClInclude Include="..\h\at\atdebugger\historytree.h" />
     <ClInclude Include="..\h\at\atdebugger\historytreebuilder.h" />
+    <ClInclude Include="..\h\at\atdebugger\symbols.h" />
     <ClInclude Include="..\h\at\atdebugger\target.h" />
     <ClInclude Include="h\at\atdebugger\internal\debugdevice.h" />
+    <ClInclude Include="h\at\atdebugger\internal\symstore.h" />
     <ClInclude Include="h\stdafx.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">

@@ -1,3 +1,19 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2022 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/bitmath.h>
@@ -7,14 +23,19 @@
 extern const VDTDataView g_VDDispVPView_RenderFillLinear;
 extern const VDTDataView g_VDDispVPView_RenderFillGamma;
 extern const VDTDataView g_VDDispVPView_RenderBlitLinear;
+extern const VDTDataView g_VDDispVPView_RenderBlitLinearColor;
+extern const VDTDataView g_VDDispVPView_RenderBlitLinearColor2;
 extern const VDTDataView g_VDDispVPView_RenderBlitGamma;
 extern const VDTDataView g_VDDispFPView_RenderFill;
+extern const VDTDataView g_VDDispFPView_RenderFillLinearToGamma;
 extern const VDTDataView g_VDDispFPView_RenderBlit;
 extern const VDTDataView g_VDDispFPView_RenderBlitDirect;
 extern const VDTDataView g_VDDispFPView_RenderBlitLinear;
+extern const VDTDataView g_VDDispFPView_RenderBlitLinearToGamma;
 extern const VDTDataView g_VDDispFPView_RenderBlitStencil;
 extern const VDTDataView g_VDDispFPView_RenderBlitColor;
 extern const VDTDataView g_VDDispFPView_RenderBlitColor2;
+extern const VDTDataView g_VDDispFPView_RenderBlitColorLinear;
 
 VDDisplayCachedImage3D::VDDisplayCachedImage3D() {
 	mListNodePrev = NULL;
@@ -57,6 +78,7 @@ bool VDDisplayCachedImage3D::Init(IVDTContext& ctx, void *owner, bool linear, co
 	mTexWidth = w;
 	mTexHeight = h;
 	mpOwner = owner;
+	mbLinear = linear;
 	mUniquenessCounter = imageView.GetUniquenessCounter() - 2;
 
 	Update(imageView);
@@ -77,8 +99,6 @@ void VDDisplayCachedImage3D::Update(const VDDisplayImageView& imageView) {
 	if (mpTexture) {
 		const VDPixmap& px = imageView.GetImage();
 
-		const uint32 numRects = imageView.GetDirtyListSize();
-
 		VDTLockData2D lockData;
 		if (mpTexture->Lock(0, NULL, true, lockData)) {
 			VDPixmap dst = {};
@@ -98,6 +118,15 @@ void VDDisplayCachedImage3D::Update(const VDDisplayImageView& imageView) {
 ///////////////////////////////////////////////////////////////////////////
 
 VDDisplayRenderer3D::VDDisplayRenderer3D() {
+	static constexpr VDDisplayRendererCaps kCaps={
+		true,
+		true,
+		true,
+		true,
+		false
+	};
+
+	mCaps = kCaps;
 }
 
 bool VDDisplayRenderer3D::Init(IVDTContext& ctx) {
@@ -106,17 +135,30 @@ bool VDDisplayRenderer3D::Init(IVDTContext& ctx) {
 	if (!ctx.CreateVertexProgram(kVDTPF_MultiTarget, g_VDDispVPView_RenderFillLinear, &mpVPFillLinear) ||
 		!ctx.CreateVertexProgram(kVDTPF_MultiTarget, g_VDDispVPView_RenderFillGamma, &mpVPFillGamma) ||
 		!ctx.CreateVertexProgram(kVDTPF_MultiTarget, g_VDDispVPView_RenderBlitLinear, &mpVPBlitLinear) ||
+		!ctx.CreateVertexProgram(kVDTPF_MultiTarget, g_VDDispVPView_RenderBlitLinearColor, &mpVPBlitLinearColor) ||
+		!ctx.CreateVertexProgram(kVDTPF_MultiTarget, g_VDDispVPView_RenderBlitLinearColor2, &mpVPBlitLinearColor2) ||
 		!ctx.CreateVertexProgram(kVDTPF_MultiTarget, g_VDDispVPView_RenderBlitGamma, &mpVPBlitGamma)) {
 		Shutdown();
 		return false;
 	}
 
-	static const VDTVertexElement kFillVertexFormat[]={
+	static constexpr VDTVertexElement kFillVertexFormat[]={
 		{ offsetof(FillVertex, x), kVDTET_Float2, kVDTEU_Position, 0 },
 		{ offsetof(FillVertex, c), kVDTET_UByte4N, kVDTEU_Color, 0 },
 	};
 
-	static const VDTVertexElement kBlitVertexFormat[]={
+	static constexpr VDTVertexElement kFillFVertexFormat[]={
+		{ offsetof(FillVertexF, x), kVDTET_Float2, kVDTEU_Position, 0 },
+		{ offsetof(FillVertexF, r), kVDTET_Float4, kVDTEU_Color, 0 },
+	};
+
+	static constexpr VDTVertexElement kFillFTVertexFormat[]={
+		{ offsetof(FillVertexFT, x), kVDTET_Float2, kVDTEU_Position, 0 },
+		{ offsetof(FillVertexFT, r), kVDTET_Float4, kVDTEU_Color, 0 },
+		{ offsetof(FillVertexFT, u), kVDTET_Float2, kVDTEU_TexCoord, 0 },
+	};
+
+	static constexpr VDTVertexElement kBlitVertexFormat[]={
 		{ offsetof(BlitVertex, x), kVDTET_Float2, kVDTEU_Position, 0 },
 		{ offsetof(BlitVertex, c), kVDTET_UByte4N, kVDTEU_Color, 0 },
 		{ offsetof(BlitVertex, u), kVDTET_Float2, kVDTEU_TexCoord, 0 },
@@ -145,6 +187,18 @@ bool VDDisplayRenderer3D::Init(IVDTContext& ctx) {
 	ssdesc2.mAddressW = kVDTAddr_Clamp;
 	ssdesc2.mFilterMode = kVDTFilt_Point;
 
+	VDTSamplerStateDesc ssdesc3 = {};
+	ssdesc3.mAddressU = kVDTAddr_Wrap;
+	ssdesc3.mAddressV = kVDTAddr_Wrap;
+	ssdesc3.mAddressW = kVDTAddr_Wrap;
+	ssdesc3.mFilterMode = kVDTFilt_BilinearMip;
+
+	VDTSamplerStateDesc ssdesc4 = {};
+	ssdesc4.mAddressU = kVDTAddr_Wrap;
+	ssdesc4.mAddressV = kVDTAddr_Wrap;
+	ssdesc4.mAddressW = kVDTAddr_Wrap;
+	ssdesc4.mFilterMode = kVDTFilt_Point;
+
 	VDTBlendStateDesc bsdesc = {};
 	bsdesc.mbEnable = true;
 	bsdesc.mSrc = kVDTBlend_SrcAlpha;
@@ -168,18 +222,25 @@ bool VDDisplayRenderer3D::Init(IVDTContext& ctx) {
 	rsdesc.mCullMode = kVDTCull_None;
 
 	if (!ctx.CreateVertexFormat(kFillVertexFormat, 2, mpVPFillLinear, &mpVFFill) ||
+		!ctx.CreateVertexFormat(kFillFVertexFormat, 2, mpVPFillLinear, &mpVFFillF) ||
+		!ctx.CreateVertexFormat(kFillFTVertexFormat, 3, mpVPBlitLinear, &mpVFFillFT) ||
 		!ctx.CreateVertexFormat(kBlitVertexFormat, 3, mpVPBlitLinear, &mpVFBlit) ||
 		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderFill, &mpFPFill) ||
+		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderFillLinearToGamma, &mpFPFillLinearToGamma) ||
 		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderBlit, &mpFPBlit) ||
 		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderBlitLinear, &mpFPBlitLinear) ||
+		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderBlitLinearToGamma, &mpFPBlitLinearToGamma) ||
 		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderBlitDirect, &mpFPBlitDirect) ||
 		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderBlitStencil, &mpFPBlitStencil) ||
 		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderBlitColor, &mpFPBlitColor) ||
 		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderBlitColor2, &mpFPBlitColor2) ||
+		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderBlitColorLinear, &mpFPBlitColorLinear) ||
 		!ctx.CreateVertexBuffer(kVBSize, true, NULL, &mpVB) ||
 		!ctx.CreateIndexBuffer(256 * 6, false, false, indices, &mpIB) ||
 		!ctx.CreateSamplerState(ssdesc, &mpSS) ||
 		!ctx.CreateSamplerState(ssdesc2, &mpSSPoint) ||
+		!ctx.CreateSamplerState(ssdesc3, &mpSSWrap) ||
+		!ctx.CreateSamplerState(ssdesc4, &mpSSPointWrap) ||
 		!ctx.CreateBlendState(bsdesc, &mpBS) ||
 		!ctx.CreateBlendState(bssdesc, &mpBSStencil) ||
 		!ctx.CreateBlendState(bscdesc, &mpBSColor) ||
@@ -212,19 +273,28 @@ void VDDisplayRenderer3D::Shutdown() {
 		mpBSColor,
 		mpBSStencil,
 		mpBS,
+		mpSSPointWrap,
+		mpSSWrap,
 		mpSSPoint,
 		mpSS,
 		mpIB,
 		mpVB,
 		mpFPBlitColor,
 		mpFPBlitColor2,
+		mpFPBlitColorLinear,
 		mpFPBlitStencil,
 		mpFPBlitDirect,
+		mpFPBlitLinearToGamma,
 		mpFPBlitLinear,
 		mpFPBlit,
 		mpFPFill,
+		mpFPFillLinearToGamma,
 		mpVFBlit,
 		mpVFFill,
+		mpVFFillF,
+		mpVFFillFT,
+		mpVPBlitLinearColor,
+		mpVPBlitLinearColor2,
 		mpVPBlitLinear,
 		mpVPBlitGamma,
 		mpVPFillLinear,
@@ -236,6 +306,8 @@ void VDDisplayRenderer3D::Begin(int w, int h, VDDisplayNodeContext3D& dctx, bool
 	mHeight = h;
 	mpDCtx = &dctx;
 	mbRenderLinear = renderLinear;
+
+	mCaps.mbSupportsHDR = renderLinear;
 
 	ApplyBaselineState();
 
@@ -276,15 +348,7 @@ void VDDisplayRenderer3D::End() {
 }
 
 const VDDisplayRendererCaps& VDDisplayRenderer3D::GetCaps() {
-	static constexpr VDDisplayRendererCaps kCaps={
-		true,
-		true,
-		true,
-		true,
-		false
-	};
-
-	return kCaps;
+	return mCaps;
 }
 
 void VDDisplayRenderer3D::SetColorRGB(uint32 color) {
@@ -394,6 +458,102 @@ void VDDisplayRenderer3D::AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint
 			mpContext->SetVertexProgram(mbRenderLinear ? mpVPFillLinear : mpVPFillGamma);
 			mpContext->SetFragmentProgram(mpFPFill);
 			mpContext->SetVertexStream(0, mpVB, mVBOffset, sizeof(FillVertex));
+			mpContext->DrawPrimitive(kVDTPT_TriangleStrip, 0, numBatchPts - 2);
+
+			mVBOffset += vtxbytes;
+		}
+
+		// if we reached the end, we're done
+		if (numBatchPts >= numPts)
+			break;
+
+		// overlap last two points to maintain tristrip continuity
+		src += numBatchPts - 2;
+		numPts -= numBatchPts - 2;
+	}
+}
+
+void VDDisplayRenderer3D::FillTriStripHDR(const vdfloat2 *pts, const vdfloat4 *colors, uint32 numPts, bool alphaBlend) {
+	if (!numPts)
+		return;
+	
+	// Even batch counts are easier as then we don't have to worry about flipping polarity.
+	constexpr uint32 maxBatchPts = (kVBSize / sizeof(FillVertexF)) & ~1;
+	const float offsetX = (float)mOffsetX;
+	const float offsetY = (float)mOffsetY;
+
+	vdblock<FillVertexF> vertices(numPts);
+	for(uint32 i=0; i<numPts; ++i) {
+		vertices[i] = FillVertexF { pts[i].x + offsetX, pts[i].y + offsetY, colors[i].x, colors[i].y, colors[i].z, colors[i].w };
+	}
+
+	const FillVertexF *src = vertices.data();
+	while(numPts >= 3) {
+		const uint32 numBatchPts = std::min(numPts, maxBatchPts);
+		uint32 vtxbytes = sizeof(FillVertexF) * numBatchPts;
+
+		if (kVBSize - mVBOffset < vtxbytes)
+			mVBOffset = 0;
+
+		if (mpVB->Load(mVBOffset, vtxbytes, src)) {
+			mpContext->SetBlendState(alphaBlend ? mpBS : nullptr);
+			mpContext->SetVertexFormat(mpVFFillF);
+			mpContext->SetVertexProgram(mpVPFillGamma);
+			mpContext->SetFragmentProgram(mbRenderLinear ? mpFPFill : mpFPFillLinearToGamma);
+			mpContext->SetVertexStream(0, mpVB, mVBOffset, sizeof(FillVertexF));
+			mpContext->DrawPrimitive(kVDTPT_TriangleStrip, 0, numBatchPts - 2);
+
+			mVBOffset += vtxbytes;
+		}
+
+		// if we reached the end, we're done
+		if (numBatchPts >= numPts)
+			break;
+
+		// overlap last two points to maintain tristrip continuity
+		src += numBatchPts - 2;
+		numPts -= numBatchPts - 2;
+	}
+}
+
+void VDDisplayRenderer3D::FillTriStripHDR(const vdfloat2 *pts, const vdfloat4 *colors, const vdfloat2 *uv, uint32 numPts, bool alphaBlend, bool filter, VDDisplayImageView& brush) {
+	if (!numPts)
+		return;
+	
+	VDDisplayCachedImage3D *cachedImage = GetCachedImage(brush);
+
+	if (!cachedImage)
+		return;
+
+	// Even batch counts are easier as then we don't have to worry about flipping polarity.
+	constexpr uint32 maxBatchPts = (kVBSize / sizeof(FillVertexF)) & ~1;
+	const float offsetX = (float)mOffsetX;
+	const float offsetY = (float)mOffsetY;
+
+	vdblock<FillVertexFT> vertices(numPts);
+	for(uint32 i=0; i<numPts; ++i) {
+		vertices[i] = FillVertexFT { pts[i].x + offsetX, pts[i].y + offsetY, colors[i].x, colors[i].y, colors[i].z, colors[i].w, uv[i].x, uv[i].y };
+	}
+
+	const FillVertexFT *src = vertices.data();
+	while(numPts >= 3) {
+		const uint32 numBatchPts = std::min(numPts, maxBatchPts);
+		uint32 vtxbytes = sizeof(FillVertexFT) * numBatchPts;
+
+		if (kVBSize - mVBOffset < vtxbytes)
+			mVBOffset = 0;
+
+		if (mpVB->Load(mVBOffset, vtxbytes, src)) {
+			mpContext->SetBlendState(alphaBlend ? mpBS : nullptr);
+			mpContext->SetVertexFormat(mpVFFillFT);
+			mpContext->SetVertexProgram(mpVPBlitGamma);
+			mpContext->SetFragmentProgram(mbRenderLinear ? mpFPBlitLinear : mpFPBlitLinearToGamma);
+			mpContext->SetSamplerStates(0, 1, filter ? &mpSSWrap : &mpSSPointWrap);
+
+			IVDTTexture *tex = cachedImage->mpTexture;
+			mpContext->SetTextures(0, 1, &tex);
+
+			mpContext->SetVertexStream(0, mpVB, mVBOffset, sizeof(FillVertexFT));
 			mpContext->DrawPrimitive(kVDTPT_TriangleStrip, 0, numBatchPts - 2);
 
 			mVBOffset += vtxbytes;
@@ -703,7 +863,7 @@ bool VDDisplayRenderer3D::PushViewport(const vdrect32& r, sint32 x, sint32 y) {
 		scissor.bottom = mClipRect.bottom;
 
 	if (scissor.empty())
-		return NULL;
+		return false;
 
 	Viewport& vp = mViewportStack.push_back();
 	vp.mOffsetX = mOffsetX;
@@ -813,7 +973,7 @@ void VDDisplayRenderer3D::AddQuads(const BlitVertex *p, uint32 n, BltMode bltMod
 
 	if (mpVB->Load(mVBOffset, vtxbytes, p)) {
 		mpContext->SetVertexFormat(mpVFBlit);
-		mpContext->SetVertexProgram(mbRenderLinear ? mpVPBlitLinear : mpVPBlitGamma);
+		mpContext->SetVertexProgram(mbRenderLinear ? bltMode == kBltMode_Color2 ? mpVPBlitLinearColor2 :  bltMode == kBltMode_Color ? mpVPBlitLinearColor : mpVPBlitLinear : mpVPBlitGamma);
 		mpContext->SetVertexStream(0, mpVB, mVBOffset, sizeof(BlitVertex));
 
 		switch(bltMode) {
@@ -833,7 +993,7 @@ void VDDisplayRenderer3D::AddQuads(const BlitVertex *p, uint32 n, BltMode bltMod
 				break;
 
 			case kBltMode_Color2:
-				mpContext->SetFragmentProgram(mpFPBlitColor2);
+				mpContext->SetFragmentProgram(mbRenderLinear ? mpFPBlitColorLinear : mpFPBlitColor2);
 				mpContext->SetBlendState(mpBSColor);
 				break;
 		}
@@ -847,7 +1007,7 @@ void VDDisplayRenderer3D::AddQuads(const BlitVertex *p, uint32 n, BltMode bltMod
 VDDisplayCachedImage3D *VDDisplayRenderer3D::GetCachedImage(VDDisplayImageView& imageView) {
 	VDDisplayCachedImage3D *cachedImage = static_cast<VDDisplayCachedImage3D *>(imageView.GetCachedImage(VDDisplayCachedImage3D::kTypeID));
 
-	if (cachedImage && cachedImage->mpOwner != this)
+	if (cachedImage && (cachedImage->mpOwner != this || cachedImage->mbLinear != mbRenderLinear))
 		cachedImage = NULL;
 
 	if (!cachedImage) {

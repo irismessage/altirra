@@ -23,6 +23,13 @@
 struct VDPixmap;
 class VDPixmapBuffer;
 
+enum class ATTextCopyMode : uint8 {
+	ASCII,
+	Escaped,
+	Hex,
+	Unicode
+};
+
 class IATDisplayPane {
 public:
 	enum { kTypeID = 'atdp' };
@@ -32,7 +39,7 @@ public:
 	virtual void OnSize() = 0;
 	virtual void ResetDisplay() = 0;
 	virtual bool IsTextSelected() const = 0;
-	virtual void Copy(bool enableEscaping) = 0;
+	virtual void Copy(ATTextCopyMode copyMode) = 0;
 	virtual void CopyFrame(bool trueAspect) = 0;
 	virtual bool CopyFrameImage(bool trueAspect, VDPixmapBuffer& buf) = 0;
 	virtual void SaveFrame(bool trueAspect, const wchar_t *path = nullptr) = 0;
@@ -40,6 +47,7 @@ public:
 	virtual void UpdateTextDisplay(bool enabled) = 0;
 	virtual void UpdateTextModeFont() = 0;
 	virtual void UpdateFilterMode() = 0;
+	virtual void UpdateCustomRefreshRate() = 0;
 	virtual void RequestRenderedFrame(vdfunction<void(const VDPixmap *)> fn) = 0;
 };
 

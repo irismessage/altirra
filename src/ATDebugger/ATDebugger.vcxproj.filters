@@ -28,6 +28,12 @@
     <ClInclude Include="h\at\atdebugger\internal\debugdevice.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\h\at\atdebugger\symbols.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\at\atdebugger\internal\symstore.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Header Files">
@@ -59,6 +65,18 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\debugdevice.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\target.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\symbols.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\defsymbols.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\symbolio.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

@@ -33,6 +33,8 @@ public:
 	void SetTextColor(uint32 c);
 	void SetTextOffset(sint32 x, sint32 y);
 
+	void SetWordWrapEnabled(bool enabled);
+
 	void SetText(const wchar_t *s);
 	void SetTextF(const wchar_t *format, ...);
 
@@ -52,7 +54,10 @@ protected:
 	ATUIWidgetMetrics OnMeasure() override;
 	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) override;
 
-	void Reflow();
+	void InvalidateForTextChange();
+	void Reflow(sint32 w);
+
+	static constexpr sint32 kUnlimitedSize = 0x1FFFFFFF;
 
 	vdrefptr<IVDDisplayFont> mpFont;
 	vdrefptr<IVDDisplayFont> mpBoldFont;
@@ -65,7 +70,8 @@ protected:
 	sint32 mTextY;
 	sint32 mBorderColor;
 	vdsize32 mTextSize;
-	bool mbReflowPending;
+	sint32 mReflowLastWidth = -1;
+	bool mbWordWrapEnabled = false;
 
 	VDStringW mMinSizeText;
 	vdsize32 mMinTextSize;
@@ -73,7 +79,6 @@ protected:
 	struct Span {
 		sint32 mX;
 		sint32 mWidth;
-		sint32 mY;
 		sint32 mFgColor;
 		sint32 mBgColor;
 		uint32 mStart;
@@ -85,12 +90,19 @@ protected:
 
 	struct Line {
 		uint32 mSpanCount;
-		uint32 mAscent;
-		uint32 mDescent;
-		sint32 mWidth;
 	};
 
 	vdfastvector<Line> mLines;
+
+	struct RenderLine {
+		uint32 mSpanCount = 0;
+		uint32 mAscent = 0;
+		uint32 mDescent = 0;
+		sint32 mWidth = 0;
+	};
+
+	vdfastvector<RenderLine> mRenderLines;
+	vdfastvector<Span> mRenderSpans;
 };
 
 #endif

@@ -271,6 +271,8 @@ void ATColorPaletteGenerator::Generate(const ATColorParams& params, ATMonitorMod
 					} else {
 						rgb = y*tintColor;
 					}
+
+					rgb0 = rgb;
 				} else if (useMatrix) {
 					rgb = max(rgb, vdfloat32x3::zero());
 					rgb = pow(rgb, nativeGamma);

@@ -52,6 +52,7 @@ public:
 	void Sort(const IATUIListViewSorter& item);
 
 	IATUIListViewVirtualItem *GetSelectedVirtualItem();
+	sint32 GetSelectedItem() const { return mSelectedIndex; }
 	void SetSelectedItem(sint32 idx);
 	void EnsureSelectedItemVisible(bool fullyVisible);
 

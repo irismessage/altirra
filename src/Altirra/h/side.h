@@ -163,6 +163,7 @@ protected:
 
 	ATFlashEmulator	mFlashCtrl;
 	ATRTCDS1305Emulator mRTC;
+	ATDeviceVirtualStorage mRTCStorage;
 	ATIDEEmulator mIDE;
 
 	VDALIGN(4) uint8	mFlash[0x80000];

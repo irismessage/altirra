@@ -1073,7 +1073,7 @@ bool ATVMCompiler::ParseLoopStatement(bool& hasReturn) {
 }
 
 bool ATVMCompiler::ParseDoWhileStatement() {
-	const auto breakLabel = BeginLoop();
+	BeginLoop();
 
 	const uint32 branchAnchor = (uint32)mByteCodeBuffer.size();
 
@@ -1676,6 +1676,9 @@ bool ATVMCompiler::ParseMultiplicativeExpression(TypeInfo& returnType) {
 
 bool ATVMCompiler::ParseUnaryExpression(TypeInfo& returnType) {
 	uint32 tok = Token();
+	if (tok == kTokIncrement || tok == kTokDecrement)
+		return ReportError("Preincrement/decrement operators not supported");
+
 	if (tok != '+' && tok != '-' && tok != '~' && tok != '!') {
 		Push(tok);
 		return ParsePostfixExpression(returnType);
@@ -1704,6 +1707,9 @@ bool ATVMCompiler::ParsePostfixExpression(TypeInfo& returnType) {
 		return false;
 
 	uint32 tok = Token();
+
+	if (tok == kTokIncrement || tok == kTokDecrement)
+		return ReportError("Postincrement/decrement operators not supported");
 
 	if (tok != '.') {
 		Push(tok);
@@ -2209,6 +2215,16 @@ uint32 ATVMCompiler::Token() {
 			if (d == '&') {
 				++mpSrc;
 				return kTokLogicalAnd;
+			}
+		} else if (c == '+') {
+			if (d == '+') {
+				++mpSrc;
+				return kTokIncrement;
+			}
+		} else if (c == '-') {
+			if (d == '-') {
+				++mpSrc;
+				return kTokDecrement;
 			}
 		}
 	}

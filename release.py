@@ -1,7 +1,7 @@
 #! python3
 
 # Altirra build script
-# Copyright (C) Avery Lee 2014-2022
+# Copyright (C) Avery Lee 2014-2023
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,13 +20,15 @@ import sys
 import subprocess
 import re
 import os
+import glob
 import time
 import zipfile
 import shutil
 import marshal
+import itertools
 
-EXPECTED_MSVC_VERSION = '19.29.30140'
-EXPECTED_MSVC_VERSION_DESC = 'Visual Studio 2019 v16.11.10'
+EXPECTED_MSVC_VERSION = '19.34.31937'
+EXPECTED_MSVC_VERSION_DESC = 'Visual Studio 2022 v17.4.3'
 
 DIAGNOSTIC_PATTERN = re.compile(r'(?:[0-9]+\>|)(?:[a-zA-Z0-9:\\/.]* *\([0-9,]+\).*(?:warning|error)|.*fatal error LNK[0-9]+:).*', re.I)
 
@@ -41,8 +43,10 @@ class Options():
     enable_build = True
     enable_arm64 = False
     enable_checkimports = True
+    enable_liccheck = False
     enable_package = True
     enable_packopt = True
+    build_rmt = False
     override_changelist = None
 
 opts = Options()
@@ -422,14 +426,52 @@ def do_checkimports(bin_path:str, dllinfo_path:str) -> None:
 
     log.log('Import check succeeded for: {}'.format(os.path.basename(bin_path)))
 
+def check_licenses():
+    source_exts = [ 'cpp', 'h', 'inl' ]
+    rmt_projects = [
+        'AltirraRMTC6502',
+        'AltirraRMTPOKEY',
+        'ATAudio',
+        'ATCore',
+        'ATCPU'
+    ]
+
+    paths = set()
+
+    for project in rmt_projects:
+        project_paths = set()
+
+        for ext in source_exts:
+            project_paths.update(set(glob.glob('src/{}/**/*.{}'.format(project, ext), recursive=True)))
+
+        if not project_paths:
+            raise BuildException('No source paths found for project: ' + project)
+
+        paths.update(project_paths)
+
+    for path in sorted(paths):
+        with open(path, 'r') as f:
+            lines = ''.join(itertools.islice(f, 30))
+
+        # check for zlib
+        if 'Permission is granted to anyone to use this software for any purpose' in lines:
+            continue
+
+        if 'GNU General Public License' not in lines:
+            raise BuildException('Missing GPL license: ' + path)
+        elif 'COPYING.RMT' not in lines:
+            raise BuildException('Missing GPL exception for RMT: ' + path)        
+
+    log.log('{} source files license-checked'.format(len(paths)))
+
 def banner() -> None:
     global opts
 
     if opts.enable_banner:
         opts.enable_banner = False
 
-        print("Altirra Build Release Utility Version 4.00")
-        print("Copyright (C) Avery Lee 2014-2021. Licensed under GNU General Public License, v2 or later")
+        print("Altirra Build Release Utility Version 4.10")
+        print("Copyright (C) Avery Lee 2014-2023. Licensed under GNU General Public License, v2 or later")
         print()
 
 def usage_error(*args) -> None:
@@ -445,6 +487,16 @@ def usage_exit() -> None:
 
     print("""Usage: release.py [options] <version-id>
 
+Version IDs are expected to be in the form <major>.<minor> for release builds, and
+<major>.<minor>-test<num> for test builds. Any other version ID format will create
+a one-off build with a generic version number.
+
+Default behavior:
+    - Perforce (P4) server is queried for head changelist number
+    - Release x86 and x64 are rebuilt clean, ARM64 is skipped
+    - Help file is rebuilt
+    - Binary and source archives are created
+
 Options:
     /inc            Build incrementally
     /packonly       Pack only, do not build
@@ -453,12 +505,16 @@ Options:
     /checkvc        Only do VC++ version check
     /importsonly    Only do DLL imports check
     /changelist     Override P4 changelist number
-    /arm64          Enable ARM64 build""")
+    /arm64          Enable ARM64 build
+    /liconly        Only check source code licenses
+    /v              Show verbose output
+    /rmt            Build Raster Music Tracker (RMT) plugins only""")
 
     sys.exit(5)
 
 def main() -> None:
     global opts
+    global DIAGNOSTIC_PATTERN
 
     swchars = '/-'
 
@@ -483,6 +539,7 @@ def main() -> None:
                     opts.enable_package = False
                 elif swname == 'packonly':
                     opts.enable_clean = False
+                    opts.enable_vccheck = False
                     opts.enable_build = False
                     opts.enable_checkimports = False
                 elif swname == 'nopackopt':
@@ -490,19 +547,32 @@ def main() -> None:
                 elif swname == 'anyvc':
                     opts.enable_vccheck = False
                 elif swname == 'checkvc':
+                    opts.enable_liccheck = False
                     opts.enable_clean = False
                     opts.enable_build = False
                     opts.enable_checkimports = False
                     opts.enable_package = False
                     opts.enable_vccheck = True
                 elif swname == 'importsonly':
+                    opts.enable_liccheck = False
                     opts.enable_clean = False
+                    opts.enable_vccheck = False
                     opts.enable_build = False
                     opts.enable_checkimports = True
                     opts.enable_package = False
+                elif swname == 'liconly':
+                    opts.enable_liccheck = True
+                    opts.enable_clean = False
                     opts.enable_vccheck = False
+                    opts.enable_build = False
+                    opts.enable_checkimports = False
+                    opts.enable_package = False
                 elif swname == 'arm64':
                     opts.enable_arm64 = True
+                elif swname == 'rmt':
+                    opts.build_rmt = True
+                elif swname == 'v':
+                    DIAGNOSTIC_PATTERN = re.compile(r'.*', re.I)
                 elif swname == 'nologo':
                     opts.enable_banner = False
                 elif swname == 'changelist':
@@ -523,7 +593,9 @@ def main() -> None:
             usage_exit();
 
     try:
-        if opts.enable_build:
+        log.log('Prechecking needed programs')
+
+        if opts.enable_build or opts.enable_vccheck:
             if not precheck_program('devenv.com'):
                 raise BuildException('Unable to find Visual C++ IDE (devenv.com) in current path.')
 
@@ -532,110 +604,125 @@ def main() -> None:
                 if not precheck_program('advzip.exe'):
                     raise BuildException('Unable to find AdvanceCOMP (advzip.exe) in current path.')
 
+        if opts.enable_build and opts.override_changelist is None:
+            if not precheck_program('p4.exe'):
+                raise BuildException('Unable to find Perforce command-line utility (p4.exe) in current path. Use /changelist if P4 is not being used for source control.')
+
+        if opts.enable_vccheck:
+            vs_ver = get_vs_version()
+
+            if vs_ver != EXPECTED_MSVC_VERSION:
+                log.log('Error: Unexpected version of Visual C/C++ compiler.')
+                log.log()
+                log.log(' Expected: {} ({})', EXPECTED_MSVC_VERSION, EXPECTED_MSVC_VERSION_DESC)
+                log.log(' Detected: {}', vs_ver)
+                log.log()
+                log.log('If this is expected, use the /anyvc switch to override the version check.')
+                sys.exit(20)
+
+            log.log('Using Visual C/C++ {}', vs_ver)
+
         if opts.enable_build:
-            if opts.enable_vccheck:
-                vs_ver = get_vs_version()
-
-                if vs_ver != EXPECTED_MSVC_VERSION:
-                    log.log('Error: Unexpected version of Visual C/C++ compiler.')
-                    log.log()
-                    log.log(' Expected: {} ({})', EXPECTED_MSVC_VERSION, EXPECTED_MSVC_VERSION_DESC)
-                    log.log(' Detected: {}', vs_ver)
-                    log.log()
-                    log.log('If this is expected, use the /anyvc switch to override the version check.')
-                    sys.exit(20)
-
-                log.log('Using Visual C/C++ {}', vs_ver)
-
-            try_remove(os.path.join('publish', 'build-x86.log'))
-            try_remove(os.path.join('publish', 'build-x64.log'))
-            try_remove(os.path.join('publish', 'build-arm64.log'))
-            try_remove(os.path.join('publish', 'build-help.log'))
+            if opts.build_rmt:
+                try_remove(os.path.join('publish', 'build-x86.log'))
+                try_remove(os.path.join('publish', 'build-x64.log'))
+                try_remove(os.path.join('publish', 'build-arm64.log'))
+                try_remove(os.path.join('publish', 'build-help.log'))
+            else:
+                try_remove(os.path.join('publish', 'build-rmt-x86.log'))
 
             if opts.enable_clean:
-                log.log('Cleaning x86')
-                invoke_vs('src\\Altirra.sln', '/Clean', 'Release|Win32')
+                if opts.build_rmt:
+                    log.log('Cleaning x86')
+                    invoke_vs('src\\AltirraRMT.sln', '/Clean', 'Release|x86')
+                else:
+                    log.log('Cleaning x86')
+                    invoke_vs('src\\Altirra.sln', '/Clean', 'Release|Win32')
 
-                log.log('Cleaning x64')
-                invoke_vs('src\\Altirra.sln', '/Clean', 'Release|x64')
-
-                if opts.enable_arm64:
-                    log.log('Cleaning ARM64')
+                    log.log('Cleaning x64')
                     invoke_vs('src\\Altirra.sln', '/Clean', 'Release|x64')
+
+                    if opts.enable_arm64:
+                        log.log('Cleaning ARM64')
+                        invoke_vs('src\\Altirra.sln', '/Clean', 'Release|x64')
             else:
                 log.log('Skipping clean due to /inc')
 
-            if opts.override_changelist is not None:
-                change_counter = opts.override_changelist
-                log.log('Overriding changelist counter to {}', change_counter)
+            if opts.build_rmt:
+                version_file = None
+                atversionrc_file = None
             else:
-                log.log('Querying Perforce changelist number')
+                if opts.override_changelist is not None:
+                    change_counter = opts.override_changelist
+                    log.log('Overriding changelist counter to {}', change_counter)
+                else:
+                    log.log('Querying Perforce changelist number')
 
-                change_counter = int(query_p4('counter', 'change')[b'value'].decode('utf-8'))
+                    change_counter = int(query_p4('counter', 'change')[b'value'].decode('utf-8'))
 
-            # Compute version number.
-            #
-            # x.yy.z.w => x.yy comes from main version
-            #            z is 101-199 for test releases, 200 for final release
-            #            w is changelist number
+                # Compute version number.
+                #
+                # x.yy.z.w => x.yy comes from main version
+                #            z is 101-199 for test releases, 200 for final release
+                #            w is changelist number
 
-            version_match = re.fullmatch(r'([0-9]+)\.([0-9]{2})(?:-test([0-9]+))?(.*)', opts.version_id)
+                version_match = re.fullmatch(r'([0-9]+)\.([0-9]{2})(?:-test([0-9]+))?(.*)', opts.version_id)
 
-            version_major = 0
-            version_minor = 0
-            version_branch = 0
-            version_changelist = change_counter
-            is_prerelease = False
-            is_special = False
+                version_major = 0
+                version_minor = 0
+                version_branch = 0
+                version_changelist = change_counter
+                is_prerelease = False
+                is_special = False
 
-            if version_match:
-                version_major = int(version_match.group(1))
-                version_minor = int(version_match.group(2))
+                if version_match:
+                    version_major = int(version_match.group(1))
+                    version_minor = int(version_match.group(2))
 
-                test_number = version_match.group(3)
-                if test_number:
-                    version_branch = int(test_number) + 100
-                    is_prerelease = True
-                    version_type = "test"
-                elif not version_match.group(4):
-                    version_branch = 200
-                    version_type = "release"
+                    test_number = version_match.group(3)
+                    if test_number:
+                        version_branch = int(test_number) + 100
+                        is_prerelease = True
+                        version_type = "test"
+                    elif not version_match.group(4):
+                        version_branch = 200
+                        version_type = "release"
+                    else:
+                        is_special = True
+                        version_type = "special"
                 else:
                     is_special = True
                     version_type = "special"
-            else:
-                is_special = True
-                version_type = "special"
 
-            string_version = '{}.{:02}.{}.{}'.format(version_major, version_minor, version_branch, version_changelist)
-            numeric_version = '{},{},{},{}'.format(version_major, version_minor, version_branch, version_changelist)
+                string_version = '{}.{:02}.{}.{}'.format(version_major, version_minor, version_branch, version_changelist)
+                numeric_version = '{},{},{},{}'.format(version_major, version_minor, version_branch, version_changelist)
 
-            log.log('Stamping build as version {} ({})', string_version, version_type)
+                log.log('Stamping build as version {} ({})', string_version, version_type)
 
-            os.makedirs(os.path.join('src', 'Altirra', 'autobuild'), exist_ok = True)
+                os.makedirs(os.path.join('src', 'Altirra', 'autobuild'), exist_ok = True)
 
-            version_file = os.path.join('src', 'Altirra', 'autobuild', 'version.h')
-            with open(version_file, 'w') as f:
-                f.write('#ifndef f_AT_VERSION_H\n')
-                f.write('#define f_AT_VERSION_H\n')
-                f.write('#define AT_VERSION "{}"\n'.format(opts.version_id))
+                version_file = os.path.join('src', 'Altirra', 'autobuild', 'version.h')
+                with open(version_file, 'w') as f:
+                    f.write('#ifndef f_AT_VERSION_H\n')
+                    f.write('#define f_AT_VERSION_H\n')
+                    f.write('#define AT_VERSION "{}"\n'.format(opts.version_id))
 
-                if is_prerelease or is_special:
-                    f.write('#define AT_VERSION_PRERELEASE 1\n')
+                    if is_prerelease or is_special:
+                        f.write('#define AT_VERSION_PRERELEASE 1\n')
 
-                f.write('#define AT_VERSION_COMPARE_VALUE (UINT64_C(0x{:04X}{:04X}{:04X}{:04X}))\n'.format(
-                    version_major,
-                    version_minor,
-                    version_branch,
-                    version_changelist)
-                )
+                    f.write('#define AT_VERSION_COMPARE_VALUE (UINT64_C(0x{:04X}{:04X}{:04X}{:04X}))\n'.format(
+                        version_major,
+                        version_minor,
+                        version_branch,
+                        version_changelist)
+                    )
 
-                f.write('#endif\n')
-                f.close()
+                    f.write('#endif\n')
+                    f.close()
 
-            atversionrc_file = os.path.join('src', 'Altirra', 'autobuild', 'atversionrc.h')
-            with open(atversionrc_file, 'w') as f:
-                f.write("""#ifndef f_AT_ATVERSIONRC_H
+                atversionrc_file = os.path.join('src', 'Altirra', 'autobuild', 'atversionrc.h')
+                with open(atversionrc_file, 'w') as f:
+                    f.write("""#ifndef f_AT_ATVERSIONRC_H
 #define f_AT_ATVERSIONRC_H
 
 #define AT_WIN_VERSIONBLOCK_FILEVERSION {numeric_version}
@@ -649,21 +736,28 @@ def main() -> None:
             try:
                 build_switch = '/Rebuild' if opts.enable_clean else '/Build'
 
-                log.log('Building x86')
-                invoke_vs('src\\Altirra.sln', build_switch, 'Release|Win32', '/Out', 'publish\\build-x86.log')
+                if opts.build_rmt:
+                    log.log('Building x86')
+                    invoke_vs('src\\AltirraRMT.sln', build_switch, 'Release|x86', '/Out', 'publish\\build-rmt-x86.log')
+                else:
+                    log.log('Building x86')
+                    invoke_vs('src\\Altirra.sln', build_switch, 'Release|Win32', '/Out', 'publish\\build-x86.log')
 
-                log.log('Building x64')
-                invoke_vs('src\\Altirra.sln', build_switch, 'Release|x64', '/Out', 'publish\\build-x64.log')
+                    log.log('Building x64')
+                    invoke_vs('src\\Altirra.sln', build_switch, 'Release|x64', '/Out', 'publish\\build-x64.log')
 
-                if opts.enable_arm64:
-                    log.log('Building ARM64')
-                    invoke_vs('src\\Altirra.sln', build_switch, 'Release|ARM64', '/Out', 'publish\\build-arm64.log')
+                    if opts.enable_arm64:
+                        log.log('Building ARM64')
+                        invoke_vs('src\\Altirra.sln', build_switch, 'Release|ARM64', '/Out', 'publish\\build-arm64.log')
 
-                log.log('Building help file')
-                invoke_vs('src\\ATHelpFile.sln', build_switch, 'Release', '/Out', 'publish\\build-help.log')
+                    log.log('Building help file')
+                    invoke_vs('src\\ATHelpFile.sln', build_switch, 'Release', '/Out', 'publish\\build-help.log')
             finally:
-                os.remove(version_file)
-                os.remove(atversionrc_file)
+                if version_file is not None:
+                    os.remove(version_file)
+
+                if atversionrc_file is not None:
+                    os.remove(atversionrc_file)
         else:
             log.log('Skipping build due to /packonly')
 
@@ -672,6 +766,11 @@ def main() -> None:
 
             do_checkimports(os.path.normpath('out/Release/Altirra.exe'), os.path.normpath('scripts/dllinfo/win7x64_x86.exports'))
             do_checkimports(os.path.normpath('out/ReleaseAMD64/Altirra64.exe'), os.path.normpath('scripts/dllinfo/win7x64_x64.exports'))
+
+        if opts.enable_liccheck:
+            log.log('Checking source code licenses')
+
+            check_licenses()
 
         if opts.enable_package:
             log.log('Packaging source')
@@ -723,61 +822,107 @@ def main() -> None:
 
             src_patterns = []
 
-            for dir in ['assets', 'scripts', 'src', 'testdata']:
-                src_patterns.extend([dir + '/**/' + pat for pat in src_filename_patterns])
+            if opts.build_rmt:
+                for dir in [
+                    'src/Build',
+                    'src/ATAudio',
+                    'src/ATCore',
+                    'src/ATCPU',
+                    'src/AltirraRMTC6502',
+                    'src/AltirraRMTPOKEY',
+                    'src/h/at/ataudio',
+                    'src/h/at/atcore',
+                    'src/h/at/atcpu',
+                    'src/h/vd2/system',
+                    'src/system',
+                ]:
+                    src_patterns.extend([dir + '/**/' + pat for pat in src_filename_patterns])
 
-            src_patterns.extend([
-                'Copying',
-                'release.py',
-                'src/.editorconfig',
-                'src/BUILD-HOWTO.html',
-                'src/Kasumi/data/Tuffy.*',
-                'src/Kernel/source/shared/atarifont.bin',
-                'src/Kernel/source/shared/atariifont.bin',
-                'src/ATHelpFile/source/*.xml',
-                'src/ATHelpFile/source/*.xsl',
-                'src/ATHelpFile/source/*.css',
-                'src/ATHelpFile/source/*.hhp',
-                'src/ATHelpFile/source/*.hhw',
-                'src/ATHelpFile/source/*.hhc',
-                'src/Altirra/res/altirraexticons.res',
-                'localconfig/example/*.props',
-                'dist/**',
-                'testdata/**'
-            ])
+                src_patterns.extend([
+                    'Copying',
+                    'Copying.RMT',
+                    'release.py',
+                    'src/.editorconfig',
+                    'src/AltirraRMT.sln',
+                    'src/BUILD-HOWTO.html',
+                    'localconfig/example/*.props'
+                ])
 
-            do_package(os.path.join('publish', 'Altirra-{}-src.7z'.format(opts.version_id)),
-                src_patterns
-            )
+                do_package(os.path.join('publish', 'AltirraRMT-{}-src.7z'.format(opts.version_id)),
+                    src_patterns
+                )
 
-            bin_common_patterns = [
-                'Copying',
-                ('out/Helpfile/Altirra.chm', 'Altirra.chm'),
-                ('out/Release/Additions.atr', 'Additions.atr')
-            ]
+                bin_common_patterns = [
+                    'Copying',
+                    'Copying.RMT'
+                ]
 
-            do_package(os.path.join('publish', 'Altirra-{}.zip'.format(opts.version_id)),
-                [
-                    ('out/Release/Altirra.exe', 'Altirra.exe'),
-                    ('out/ReleaseAMD64/Altirra64.exe', 'Altirra64.exe'),
-                    ('dist/**', '**')
-                ] + bin_common_patterns
-            )
-
-            if opts.enable_arm64:
-                do_package(os.path.join('publish', 'Altirra-{}-ARM64.zip'.format(opts.version_id)),
+                do_package(os.path.join('publish', 'AltirraRMT-{}.zip'.format(opts.version_id)),
                     [
-                        ('out/releasearm64/AltirraARM64.exe', 'AltirraARM64.exe'),
+                        ('out/Release/sa_c6502.dll', 'sa_c6502.dll'),
+                        ('out/Release/sa_pokey.dll', 'sa_pokey.dll')
+                    ] + bin_common_patterns
+                )
+            else:
+                for dir in ['assets', 'scripts', 'src', 'testdata']:
+                    src_patterns.extend([dir + '/**/' + pat for pat in src_filename_patterns])
+
+                src_patterns.extend([
+                    'Copying',
+                    'Copying.RMT',
+                    'release.py',
+                    'src/.editorconfig',
+                    'src/BUILD-HOWTO.html',
+                    'src/Kernel/source/shared/atarifont.bin',
+                    'src/Kernel/source/shared/atariifont.bin',
+                    'src/ATHelpFile/source/*.xml',
+                    'src/ATHelpFile/source/*.xsl',
+                    'src/ATHelpFile/source/*.css',
+                    'src/ATHelpFile/source/*.hhp',
+                    'src/ATHelpFile/source/*.hhw',
+                    'src/ATHelpFile/source/*.hhc',
+                    'src/Altirra/res/altirraexticons.res',
+                    'localconfig/example/*.props',
+                    'dist/**',
+                    'testdata/**'
+                ])
+
+                do_package(os.path.join('publish', 'Altirra-{}-src.7z'.format(opts.version_id)),
+                    src_patterns
+                )
+
+                bin_common_patterns = [
+                    'Copying',
+                    ('out/Helpfile/Altirra.chm', 'Altirra.chm'),
+                    ('out/Release/Additions.atr', 'Additions.atr')
+                ]
+
+                do_package(os.path.join('publish', 'Altirra-{}.zip'.format(opts.version_id)),
+                    [
+                        ('out/Release/Altirra.exe', 'Altirra.exe'),
+                        ('out/ReleaseAMD64/Altirra64.exe', 'Altirra64.exe'),
+                        ('dist/**', '**')
                     ] + bin_common_patterns
                 )
 
+                if opts.enable_arm64:
+                    do_package(os.path.join('publish', 'Altirra-{}-ARM64.zip'.format(opts.version_id)),
+                        [
+                            ('out/releasearm64/AltirraARM64.exe', 'AltirraARM64.exe'),
+                        ] + bin_common_patterns
+                    )
+
             log.log('Copying symbols')
 
-            shutil.copyfile(os.path.join('out', 'Release', 'Altirra.pdb'), os.path.join('publish', 'Altirra-{}.pdb'.format(opts.version_id)))
-            shutil.copyfile(os.path.join('out', 'ReleaseAMD64', 'Altirra64.pdb'), os.path.join('publish', 'Altirra64-{}.pdb'.format(opts.version_id)))
+            if opts.build_rmt:
+                shutil.copyfile(os.path.join('out', 'Release', 'sa_c6502.pdb'), os.path.join('publish', 'sa_c6502-{}.pdb'.format(opts.version_id)))
+                shutil.copyfile(os.path.join('out', 'Release', 'sa_pokey.pdb'), os.path.join('publish', 'sa_pokey-{}.pdb'.format(opts.version_id)))
+            else:
+                shutil.copyfile(os.path.join('out', 'Release', 'Altirra.pdb'), os.path.join('publish', 'Altirra-{}.pdb'.format(opts.version_id)))
+                shutil.copyfile(os.path.join('out', 'ReleaseAMD64', 'Altirra64.pdb'), os.path.join('publish', 'Altirra64-{}.pdb'.format(opts.version_id)))
 
-            if opts.enable_arm64:
-                shutil.copyfile(os.path.join('out', 'ReleaseARM64', 'AltirraARM64.pdb'), os.path.join('publish', 'AltirraARM64-{}.pdb'.format(opts.version_id)))
+                if opts.enable_arm64:
+                    shutil.copyfile(os.path.join('out', 'ReleaseARM64', 'AltirraARM64.pdb'), os.path.join('publish', 'AltirraARM64-{}.pdb'.format(opts.version_id)))
 
         log.log('Build succeeded')
     except BuildException as e:

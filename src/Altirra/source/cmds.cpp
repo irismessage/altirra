@@ -19,12 +19,12 @@
 #include <vd2/system/unknown.h>
 #include <at/ataudio/audiooutput.h>
 #include <at/atcore/device.h>
-#include <at/atcore/devicemanager.h>
 #include "firmwaremanager.h"
 #include "cassette.h"
 #include "console.h"
 #include "cmdhelpers.h"
 #include "debugger.h"
+#include "devicemanager.h"
 #include "disk.h"
 #include "simulator.h"
 #include "uiaccessors.h"
@@ -41,11 +41,13 @@ extern bool g_xepViewEnabled;
 extern bool g_xepViewAutoswitchingEnabled;
 extern bool g_showFps;
 
+void ATUIInitCommandMappingsAudio(ATUICommandManager& cmdMgr);
 void ATUIInitCommandMappingsInput(ATUICommandManager& cmdMgr);
 void ATUIInitCommandMappingsView(ATUICommandManager& cmdMgr);
 void ATUIInitCommandMappingsDebug(ATUICommandManager& cmdMgr);
 void ATUIInitCommandMappingsCassette(ATUICommandManager& cmdMgr);
 void ATUIInitCommandMappingsOption(ATUICommandManager& cmdMgr);
+void ATUIInitCommandMappingsSystem(ATUICommandManager& cmdMgr);
 
 void OnCommandOpenImage();
 void OnCommandBootImage();
@@ -147,11 +149,9 @@ void OnCommandEditSaveFrame();
 void OnCommandEditSaveFrameTrueAspect();
 void OnCommandEditCopyText();
 void OnCommandEditCopyEscapedText();
+void OnCommandEditCopyHex();
+void OnCommandEditCopyUnicode();
 void OnCommandEditPasteText();
-void OnCommandSystemWarmReset();
-void OnCommandSystemColdReset();
-void OnCommandSystemColdResetComputerOnly();
-void OnCommandSystemTogglePause();
 void OnCommandSystemTogglePauseWhenInactive();
 void OnCommandSystemToggleSlowMotion();
 void OnCommandSystemToggleWarpSpeed();
@@ -250,6 +250,7 @@ void OnCommandAudioToggleScope();
 void OnCommandAudioToggleMute();
 void OnCommandAudioOptionsDialog();
 void OnCommandAudioToggleNonlinearMixing();
+void OnCommandAudioToggleSpeakerFilter();
 void OnCommandAudioToggleSerialNoise();
 void OnCommandAudioToggleChannel(int channel);
 void OnCommandAudioToggleSecondaryChannel(int channel);
@@ -649,6 +650,7 @@ namespace ATCommands {
 		{ "Cart.AttachMaxFlash8MB",			[]() { OnCommandAttachNewCartridge(kATCartridgeMode_MaxFlash_1024K); }, NULL },
 		{ "Cart.AttachMaxFlash8MBBank0",	[]() { OnCommandAttachNewCartridge(kATCartridgeMode_MaxFlash_1024K_Bank0); }, NULL },
 		{ "Cart.AttachSIC",					[]() { OnCommandAttachNewCartridge(kATCartridgeMode_SIC); }, NULL },
+		{ "Cart.AttachSICPlus",				[]() { OnCommandAttachNewCartridge(kATCartridgeMode_SICPlus); }, NULL },
 		{ "Cart.AttachMegaCart512K",		[]() { OnCommandAttachNewCartridge(kATCartridgeMode_MegaCart_512K_3); }, NULL },
 		{ "Cart.AttachMegaCart4MB",			[]() { OnCommandAttachNewCartridge(kATCartridgeMode_MegaCart_4M_3); }, NULL },
 		{ "Cart.AttachTheCart32MB",			[]() { OnCommandAttachNewCartridge(kATCartridgeMode_TheCart_32M); }, NULL },
@@ -730,6 +732,8 @@ namespace ATCommands {
 		{ "Pane.Watch4",			[]() { OnCommandPane(kATUIPaneId_WatchN + 3); },	IsDebuggerEnabled },
 		{ "Pane.DebugDisplay",		[]() { OnCommandPane(kATUIPaneId_DebugDisplay); },	IsDebuggerEnabled },
 		{ "Pane.ProfileView",		[]() { OnCommandPane(kATUIPaneId_Profiler); },		IsDebuggerEnabled },
+		{ "Pane.Breakpoints",		[]() { OnCommandPane(kATUIPaneId_Breakpoints); },	IsDebuggerEnabled },
+		{ "Pane.Targets",			[]() { OnCommandPane(kATUIPaneId_Targets); },	IsDebuggerEnabled },
 
 		{ "Edit.CopyFrame", OnCommandEditCopyFrame, IsVideoFrameAvailable },
 		{ "Edit.CopyFrameTrueAspect", OnCommandEditCopyFrameTrueAspect, IsVideoFrameAvailable },
@@ -737,13 +741,10 @@ namespace ATCommands {
 		{ "Edit.SaveFrameTrueAspect", OnCommandEditSaveFrameTrueAspect, IsVideoFrameAvailable },
 		{ "Edit.CopyText", OnCommandEditCopyText, IsCopyTextAvailable },
 		{ "Edit.CopyEscapedText", OnCommandEditCopyEscapedText, IsCopyTextAvailable },
+		{ "Edit.CopyHex", OnCommandEditCopyHex, IsCopyTextAvailable },
+		{ "Edit.CopyUnicode", OnCommandEditCopyUnicode, IsCopyTextAvailable },
 		{ "Edit.PasteText", OnCommandEditPasteText, ATUIClipIsTextAvailable },
 
-		{ "System.WarmReset", OnCommandSystemWarmReset },
-		{ "System.ColdReset", OnCommandSystemColdReset },
-		{ "System.ColdResetComputerOnly", OnCommandSystemColdResetComputerOnly },
-
-		{ "System.TogglePause", OnCommandSystemTogglePause },
 		{ "System.TogglePauseWhenInactive", OnCommandSystemTogglePauseWhenInactive, NULL, CheckedIf<ATUIGetPauseWhenInactive> },
 		{ "System.ToggleSlowMotion", OnCommandSystemToggleSlowMotion, NULL, CheckedIf<IsSlowMotion> },
 		{ "System.ToggleWarpSpeed", OnCommandSystemToggleWarpSpeed, NULL, CheckedIf<IsWarpSpeed> },
@@ -1088,6 +1089,7 @@ namespace ATCommands {
 		{ "Audio.ToggleMute", OnCommandAudioToggleMute, NULL, CheckedIf<IsAudioMuted> },
 		{ "Audio.OptionsDialog", OnCommandAudioOptionsDialog },
 		{ "Audio.ToggleNonlinearMixing", OnCommandAudioToggleNonlinearMixing, NULL, CheckedIf<PokeyTest<&ATPokeyEmulator::IsNonlinearMixingEnabled> > },
+		{ "Audio.ToggleSpeakerFilter", OnCommandAudioToggleSpeakerFilter, [] { return g_sim.GetPokey().IsSpeakerFilterSupported(); }, CheckedIf<PokeyTest<&ATPokeyEmulator::IsSpeakerFilterEnabled> > },
 		{ "Audio.ToggleSerialNoise", OnCommandAudioToggleSerialNoise, NULL, CheckedIf<PokeyTest<&ATPokeyEmulator::IsSerialNoiseEnabled> > },
 		{ "Audio.ToggleChannel1", []() { OnCommandAudioToggleChannel(0); }, NULL, CheckedIf<PokeyChannelEnabled<0> > },
 		{ "Audio.ToggleChannel2", []() { OnCommandAudioToggleChannel(1); }, NULL, CheckedIf<PokeyChannelEnabled<1> > },
@@ -1154,9 +1156,11 @@ void ATUIInitCommandMappings(ATUICommandManager& cmdMgr) {
 
 	cmdMgr.RegisterCommands(kATCommands, vdcountof(kATCommands));
 
+	ATUIInitCommandMappingsAudio(cmdMgr);
 	ATUIInitCommandMappingsInput(cmdMgr);
 	ATUIInitCommandMappingsView(cmdMgr);
 	ATUIInitCommandMappingsDebug(cmdMgr);
 	ATUIInitCommandMappingsCassette(cmdMgr);
 	ATUIInitCommandMappingsOption(cmdMgr);
+	ATUIInitCommandMappingsSystem(cmdMgr);
 }

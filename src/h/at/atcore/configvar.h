@@ -13,6 +13,10 @@
 //
 //	You should have received a copy of the GNU General Public License along
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #ifndef f_AT_ATCORE_CONFIGVAR_H
 #define f_AT_ATCORE_CONFIGVAR_H
@@ -60,6 +64,8 @@ public:
 	ATConfigVarType GetVarType() const override;
 	void Unset();
 
+	void operator=(const T_Val& val);
+
 	operator T_Val() const & { return mValue; }
 
 	// Config vars should never be temporaries. If they are, something is extremely
@@ -67,6 +73,8 @@ public:
 	operator T_Val() const && = delete;
 
 protected:
+	virtual void SaveValue() const = 0;
+
 	T_Val mValue;
 	T_Val mDefaultValue;
 };
@@ -74,37 +82,45 @@ protected:
 class ATConfigVarBool final : public ATConfigVarT<ATConfigVarType::Bool, bool> {
 public:
 	using ATConfigVarT::ATConfigVarT;
+	using ATConfigVarT::operator=;
 
 	bool FromPersistence(ATConfigVariableRegKey& k) override;
 	bool FromString(const char *s) override;
 	VDStringA ToString() const override;
+	void SaveValue() const override;
 };
 
 class ATConfigVarInt32 final : public ATConfigVarT<ATConfigVarType::Int32, sint32> {
 public:
 	using ATConfigVarT::ATConfigVarT;
+	using ATConfigVarT::operator=;
 
 	bool FromPersistence(ATConfigVariableRegKey& k) override;
 	bool FromString(const char *s) override;
 	VDStringA ToString() const override;
+	void SaveValue() const override;
 };
 
 class ATConfigVarFloat final : public ATConfigVarT<ATConfigVarType::Float, float> {
 public:
 	using ATConfigVarT::ATConfigVarT;
+	using ATConfigVarT::operator=;
 
 	bool FromPersistence(ATConfigVariableRegKey& k) override;
 	bool FromString(const char *s) override;
 	VDStringA ToString() const override;
+	void SaveValue() const override;
 };
 
 class ATConfigVarRGBColor final : public ATConfigVarT<ATConfigVarType::RGBColor, uint32> {
 public:
 	using ATConfigVarT::ATConfigVarT;
+	using ATConfigVarT::operator=;
 
 	bool FromPersistence(ATConfigVariableRegKey& k) override;
 	bool FromString(const char *s) override;
 	VDStringA ToString() const override;
+	void SaveValue() const override;
 };
 
 void ATGetConfigVars(ATConfigVar **& p, size_t& n);

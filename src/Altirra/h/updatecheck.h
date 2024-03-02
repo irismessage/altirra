@@ -19,6 +19,7 @@
 
 class IATAsyncDispatcher;
 struct ATUpdateFeedInfo;
+class VDStringW;
 
 void ATUpdateSetBackgroundCheckEnabled(bool enable);
 
@@ -26,5 +27,6 @@ using ATUpdateInfoCallback = vdfunction<void(const ATUpdateFeedInfo *)>;
 
 void ATUpdateInit(IATAsyncDispatcher& dispatcher, ATUpdateInfoCallback fn);
 void ATUpdateShutdown();
+VDStringW ATUpdateGetFeedUrl();
 
 #endif

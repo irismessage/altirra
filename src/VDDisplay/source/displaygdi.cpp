@@ -136,29 +136,8 @@ bool VDVideoDisplayMinidriverGDI::Init(HWND hwnd, HMONITOR hmonitor, const VDVid
 	case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
 	case nsVDPixmap::kPixFormat_YUV420_Planar_709:
 	case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
-	case nsVDPixmap::kPixFormat_YUV420i_Planar:
-	case nsVDPixmap::kPixFormat_YUV420i_Planar_FR:
-	case nsVDPixmap::kPixFormat_YUV420i_Planar_709:
-	case nsVDPixmap::kPixFormat_YUV420i_Planar_709_FR:
-	case nsVDPixmap::kPixFormat_YUV420it_Planar:
-	case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
-	case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
-	case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
-	case nsVDPixmap::kPixFormat_YUV420ib_Planar:
-	case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
-	case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
-	case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
-	case nsVDPixmap::kPixFormat_YUV411_Planar:
-	case nsVDPixmap::kPixFormat_YUV411_Planar_FR:
-	case nsVDPixmap::kPixFormat_YUV411_Planar_709:
-	case nsVDPixmap::kPixFormat_YUV411_Planar_709_FR:
-	case nsVDPixmap::kPixFormat_YUV410_Planar:
-	case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
-	case nsVDPixmap::kPixFormat_YUV410_Planar_709:
-	case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
 	case nsVDPixmap::kPixFormat_Y8:
 	case nsVDPixmap::kPixFormat_Y8_FR:
-	case nsVDPixmap::kPixFormat_YUV422_V210:
 	case nsVDPixmap::kPixFormat_YUV420_NV12:
 		if (!info.bAllowConversion)
 	default:
@@ -263,29 +242,8 @@ bool VDVideoDisplayMinidriverGDI::Init(HWND hwnd, HMONITOR hmonitor, const VDVid
 				case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
 				case nsVDPixmap::kPixFormat_YUV420_Planar_709:
 				case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
-				case nsVDPixmap::kPixFormat_YUV420i_Planar:
-				case nsVDPixmap::kPixFormat_YUV420i_Planar_FR:
-				case nsVDPixmap::kPixFormat_YUV420i_Planar_709:
-				case nsVDPixmap::kPixFormat_YUV420i_Planar_709_FR:
-				case nsVDPixmap::kPixFormat_YUV420it_Planar:
-				case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
-				case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
-				case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
-				case nsVDPixmap::kPixFormat_YUV420ib_Planar:
-				case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
-				case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
-				case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
-				case nsVDPixmap::kPixFormat_YUV411_Planar:
-				case nsVDPixmap::kPixFormat_YUV411_Planar_FR:
-				case nsVDPixmap::kPixFormat_YUV411_Planar_709:
-				case nsVDPixmap::kPixFormat_YUV411_Planar_709_FR:
-				case nsVDPixmap::kPixFormat_YUV410_Planar:
-				case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
-				case nsVDPixmap::kPixFormat_YUV410_Planar_709:
-				case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
 				case nsVDPixmap::kPixFormat_Y8:
 				case nsVDPixmap::kPixFormat_Y8_FR:
-				case nsVDPixmap::kPixFormat_YUV422_V210:
 				case nsVDPixmap::kPixFormat_YUV422_UYVY_709:
 				case nsVDPixmap::kPixFormat_YUV420_NV12:
 				case nsVDPixmap::kPixFormat_RGB565:
@@ -372,53 +330,8 @@ bool VDVideoDisplayMinidriverGDI::ModifySource(const VDVideoDisplaySourceInfo& i
 
 	const int prevFormat = mSource.pixmap.format;
 	const int nextFormat = info.pixmap.format;
-	if (prevFormat != nextFormat) {
-		// Check for compatible formats.
-		switch(prevFormat) {
-			case nsVDPixmap::kPixFormat_YUV420it_Planar:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar)
-					break;
-				return false;
-
-			case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar_FR)
-					break;
-				return false;
-
-			case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar_709)
-					break;
-				return false;
-
-			case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR)
-					break;
-				return false;
-
-			case nsVDPixmap::kPixFormat_YUV420ib_Planar:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar)
-					break;
-				return false;
-
-			case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar_FR)
-					break;
-				return false;
-
-			case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar_709)
-					break;
-				return false;
-
-			case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR)
-					break;
-				return false;
-
-			default:
-				return false;
-		}
-	}
+	if (prevFormat != nextFormat)
+		return false;
 
 	mSource = info;
 	return true;

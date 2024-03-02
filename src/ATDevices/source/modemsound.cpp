@@ -148,7 +148,6 @@ void ATSoundSourceModemDataV22::MixAudio(float *dst, uint32 len, float volume, u
 
 	// compute phase offsets
 	const double invMixingRate2PI = nsVDMath::krTwoPi / (double)mixingRate;
-	const double offsetSeconds2PI = (double)offset * invMixingRate2PI;
 
 	// compute initial vectors and phase shifts per sample
 	const float shiftR = cosf(mPitch * (float)invMixingRate2PI);
@@ -218,7 +217,6 @@ void ATSoundSourceModemData::MixAudio(float *dst, uint32 len, float volume, uint
 
 	// compute phase offsets
 	const double invMixingRate2PI = nsVDMath::krTwoPi / (double)mixingRate;
-	const double offsetSeconds2PI = (double)offset * invMixingRate2PI;
 
 	// compute initial vectors and phase shifts per sample
 	const float shiftR = cosf(pitch * (float)invMixingRate2PI);

@@ -365,6 +365,9 @@ void VDVideoDisplayMinidriver::SetFilterMode(FilterMode mode) {
 void VDVideoDisplayMinidriver::SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh, bool use16bit) {
 }
 
+void VDVideoDisplayMinidriver::SetDesiredCustomRefreshRate(float hz, float hzmin, float hzmax) {
+}
+
 void VDVideoDisplayMinidriver::SetDisplayDebugInfo(bool enable) {
 	mbDisplayDebugInfo = enable;
 }
@@ -456,6 +459,10 @@ bool VDVideoDisplayMinidriver::SetSubrect(const vdrect32 *r) {
 }
 
 void VDVideoDisplayMinidriver::SetLogicalPalette(const uint8 *pLogicalPalette) {
+}
+
+VDDVSyncStatus VDVideoDisplayMinidriver::GetVSyncStatus() const {
+	return {};
 }
 
 float VDVideoDisplayMinidriver::GetSyncDelta() const {

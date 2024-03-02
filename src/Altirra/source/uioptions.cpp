@@ -252,21 +252,28 @@ class ATUIDialogOptionsPageDisplay final : public ATUIDialogOptionsPage {
 public:
 	ATUIDialogOptionsPageDisplay(ATOptions& opts);
 
-protected:
+private:
 	bool OnLoaded() override;
 	void OnDataExchange(bool write) override;
 	bool OnCommand(uint32 id, uint32 extcode) override;
+	void UpdateEnables();
+
+	VDUIProxyButtonControl mD3D11View;
 };
 
 ATUIDialogOptionsPageDisplay::ATUIDialogOptionsPageDisplay(ATOptions& opts)
 	: ATUIDialogOptionsPage(IDD_OPTIONS_DISPLAY, opts)
 {
+	mD3D11View.SetOnClicked([this] { UpdateEnables(); });
 }
 
 bool ATUIDialogOptionsPageDisplay::OnLoaded() {
+	AddProxy(&mD3D11View, IDC_GRAPHICS_3D);
+
 	AddHelpEntry(IDC_GRAPHICS_D3D9, L"Direct3D 9", L"Enable Direct3D 9 support. This is the best general option for speed and quality, and also enables the filtering options.");
 	AddHelpEntry(IDC_GRAPHICS_3D, L"Direct3D 11", L"Enable Direct3D 11 support. On Windows 8.1 and later, D3D11 can give better performance and power efficiency.");
 	AddHelpEntry(IDC_16BIT, L"Use 16-bit surfaces", L"Use 16-bit surfaces for faster speed on low-end graphics cards. May reduce visual quality.");
+	AddHelpEntry(IDC_SEAMLESSCUSTOMREFRESH, L"Use seamless custom refresh", L"Attempt to switch to custom refresh rate for fullscreen (requires D3D11, Windows 8.1+ and integrated screen).");
 	AddHelpEntry(IDC_FSMODE_BORDERLESS, L"Full screen mode: Borderless mode", L"Use a full-screen borderless window without switching to exclusive full screen mode.");
 	AddHelpEntry(IDC_FSMODE_DESKTOP, L"Full screen mode: Match desktop", L"Uses the desktop resolution for full screen mode. This avoids a mode switch.");
 	AddHelpEntry(IDC_FSMODE_CUSTOM, L"Full screen mode: Custom", L"Use a specific video mode for full screen mode. Zero for refresh rate allows any rate.");
@@ -282,6 +289,7 @@ void ATUIDialogOptionsPageDisplay::OnDataExchange(bool write) {
 	ExchangeControlValueBoolCheckbox(write, IDC_GRAPHICS_D3D9, mOptions.mbDisplayD3D9);
 	ExchangeControlValueBoolCheckbox(write, IDC_GRAPHICS_3D, mOptions.mbDisplay3D);
 	ExchangeControlValueBoolCheckbox(write, IDC_16BIT, mOptions.mbDisplay16Bit);
+	ExchangeControlValueBoolCheckbox(write, IDC_SEAMLESSCUSTOMREFRESH, mOptions.mbDisplayCustomRefresh);
 
 	if (write) {
 		mOptions.mFullScreenWidth = 0;
@@ -323,6 +331,8 @@ void ATUIDialogOptionsPageDisplay::OnDataExchange(bool write) {
 			SetControlText(IDC_FSMODE_HEIGHT, L"");
 			SetControlText(IDC_FSMODE_REFRESH, L"");
 		}
+
+		UpdateEnables();
 	}
 }
 
@@ -349,6 +359,10 @@ bool ATUIDialogOptionsPageDisplay::OnCommand(uint32 id, uint32 extcode) {
 	}
 
 	return false;
+}
+
+void ATUIDialogOptionsPageDisplay::UpdateEnables() {
+	EnableControl(IDC_SEAMLESSCUSTOMREFRESH, mD3D11View.GetChecked());
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -569,6 +583,7 @@ bool ATUIDialogOptionsPageFlash::OnLoaded() {
 
 	CBAddString(IDC_SIC_FLASH, L"Am29F040B (64K sectors)");
 	CBAddString(IDC_SIC_FLASH, L"SSF39SF040 (4K sectors)");
+	CBAddString(IDC_SIC_FLASH, L"MX29F040 (64K sectors)");
 
 	CBAddString(IDC_MAXFLASH8MB_FLASH, L"Am29F040B (64K sectors)");
 	CBAddString(IDC_MAXFLASH8MB_FLASH, L"BM29F040 (64K sectors)");
@@ -586,7 +601,8 @@ bool ATUIDialogOptionsPageFlash::OnLoaded() {
 void ATUIDialogOptionsPageFlash::OnDataExchange(bool write) {
 	static const char *const kSICFlashChips[]={
 		"Am29F040B",
-		"SST39SF040"
+		"SST39SF040",
+		"MX29F040"
 	};
 
 	static const char *const kMaxflash8MbFlashChips[]={

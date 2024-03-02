@@ -39,6 +39,7 @@ enum ATFlashType : uint8 {
 	kATFlashType_HY29F040A,	// Hynix HY29F040A 512K x 8-bit
 	kATFlashType_M29W800DT,	// Numonyx 1M x 8-bit, top device
 	kATFlashType_MX29LV640DT,// Macronyx 1M x 8-bit, top device
+	kATFlashType_MX29F040,	// Macronyx 512K x 8-bit
 };
 
 class ATFlashEmulator : public IATSchedulerCallback {

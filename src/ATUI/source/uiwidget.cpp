@@ -59,7 +59,16 @@ ATUIWidget::~ATUIWidget() {
 	vdsaferelease <<= mpAnchor;
 }
 
+ATUICloseResult ATUIWidget::Close() {
+	Destroy();
+
+	return ATUICloseResult::Success;
+}
+
 void ATUIWidget::Destroy() {
+	if (mpManager && mpManager->GetModalWindow() == this)
+		mpManager->EndModal();
+
 	if (mpParent)
 		mpParent->RemoveChild(this);
 }
@@ -501,6 +510,20 @@ const ATUITriggerBinding *ATUIWidget::FindAction(uint32 vk, uint32 extvk, uint32
 	}
 
 	return NULL;
+}
+
+ATUITimerHandle ATUIWidget::StartTimer(float initialDelay, float period, vdfunction<void()> fn) {
+	if (!mpManager) {
+		VDFAIL("Cannot start timer on an unattached widget.");
+		return ATUITimerHandle();
+	}
+
+	return mpManager->StartTimer(*this, initialDelay, period, std::move(fn));
+}
+
+void ATUIWidget::StopTimer(ATUITimerHandle h) {
+	if (mpManager)
+		mpManager->StopTimer(h);
 }
 
 ATUITouchMode ATUIWidget::GetTouchModeAtPoint(const vdpoint32& pt) const {

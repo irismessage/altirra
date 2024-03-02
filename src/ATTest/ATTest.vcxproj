@@ -12,11 +12,17 @@
     <ClCompile Include="source\TestCore_MD5.cpp" />
     <ClCompile Include="source\TestCore_VFS.cpp" />
     <ClCompile Include="source\TestDebugger_HistoryTree.cpp" />
+    <ClCompile Include="source\TestDebugger_SymbolIO.cpp" />
+    <ClCompile Include="source\TestEmu_PCLink.cpp" />
     <ClCompile Include="source\TestEmu_PokeyTimers.cpp" />
     <ClCompile Include="source\TestIO_DiskImage.cpp" />
     <ClCompile Include="source\TestIO_FLAC.cpp" />
     <ClCompile Include="source\TestIO_TapeWrite.cpp" />
     <ClCompile Include="source\TestIO_VirtFAT32.cpp" />
+    <ClCompile Include="source\TestKasumi_Pixmap.cpp" />
+    <ClCompile Include="source\TestKasumi_Resampler.cpp" />
+    <ClCompile Include="source\TestKasumi_Uberblit.cpp" />
+    <ClCompile Include="source\TestSystem_Filesys.cpp" />
     <ClCompile Include="source\TestSystem_Function.cpp" />
     <ClCompile Include="source\TestSystem_Int128.cpp" />
     <ClCompile Include="source\TestSystem_Math.cpp" />
@@ -25,19 +31,22 @@
     <ClCompile Include="source\utils.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\h\at\attest\test.h" />
     <ClInclude Include="h\blob.h" />
     <ClInclude Include="h\stdafx.h" />
     <ClInclude Include="h\test.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{53B0A660-AACE-4EEE-8B88-C040CAA3C407}</ProjectGuid>
-    <Keyword>Win32Proj</Keyword>
+    <Keyword Condition="'$(Configuration)'=='NoBuild'">UtilityProj</Keyword>
+    <Keyword Condition="'$(Configuration)'!='NoBuild'">Win32Proj</Keyword>
     <RootNamespace>ATTest</RootNamespace>
   </PropertyGroup>
   <Import Project="..\Build\PlatformSetup.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration">
-    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <ConfigurationType Condition="'$(Configuration)'=='NoBuild'">Utility</ConfigurationType>
+    <ConfigurationType Condition="'$(Configuration)'!='NoBuild'">StaticLibrary</ConfigurationType>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">

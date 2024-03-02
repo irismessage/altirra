@@ -47,18 +47,19 @@ public:
 	void Update(const VDDisplayImageView& imageView);
 
 public:
-	void *mpOwner;
+	void *mpOwner {};
 	vdrefptr<IVDTTexture2D> mpTexture;
-	sint32	mWidth;
-	sint32	mHeight;
-	sint32	mTexWidth;
-	sint32	mTexHeight;
-	uint32	mUniquenessCounter;
+	sint32	mWidth {};
+	sint32	mHeight {};
+	sint32	mTexWidth {};
+	sint32	mTexHeight {};
+	uint32	mUniquenessCounter {};
+	bool mbLinear {};
 
 	vdrefptr<VDDisplayBlitNode3D> mpHiBltNode;
-	float	mHiBltSharpnessX;
-	float	mHiBltSharpnessY;
-	vdrect32 mHiBltSrcRect;
+	float	mHiBltSharpnessX {};
+	float	mHiBltSharpnessY {};
+	vdrect32 mHiBltSrcRect {};
 };
 
 class VDDisplayRenderer3D final : public IVDDisplayRenderer {
@@ -82,6 +83,9 @@ public:
 	virtual void AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, uint32 alphaColor);
 	virtual void AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint32 alphaColor);
 
+	void FillTriStripHDR(const vdfloat2 *pts, const vdfloat4 *colors, uint32 numPts, bool alphaBlend) override;
+	void FillTriStripHDR(const vdfloat2 *pts, const vdfloat4 *colors, const vdfloat2 *uv, uint32 numPts, bool alphaBlend, bool filter, VDDisplayImageView& brush) override;
+
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView);
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h);
 	virtual void StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 sw, sint32 sh, const VDDisplayBltOptions& opts);
@@ -102,6 +106,26 @@ protected:
 		float x;
 		float y;
 		uint32 c;
+	};
+
+	struct FillVertexF {
+		float x;
+		float y;
+		float r;
+		float g;
+		float b;
+		float a;
+	};
+
+	struct FillVertexFT {
+		float x;
+		float y;
+		float r;
+		float g;
+		float b;
+		float a;
+		float u;
+		float v;
 	};
 
 	struct BlitVertex {
@@ -137,20 +161,29 @@ protected:
 	IVDTVertexProgram *mpVPFillLinear {};
 	IVDTVertexProgram *mpVPFillGamma {};
 	IVDTVertexProgram *mpVPBlitLinear {};
+	IVDTVertexProgram *mpVPBlitLinearColor {};
+	IVDTVertexProgram *mpVPBlitLinearColor2 {};
 	IVDTVertexProgram *mpVPBlitGamma {};
 	IVDTVertexFormat *mpVFFill {};
+	IVDTVertexFormat *mpVFFillF {};
+	IVDTVertexFormat *mpVFFillFT {};
 	IVDTVertexFormat *mpVFBlit {};
 	IVDTFragmentProgram *mpFPFill {};
+	IVDTFragmentProgram *mpFPFillLinearToGamma {};
 	IVDTFragmentProgram *mpFPBlit {};
+	IVDTFragmentProgram *mpFPBlitLinearToGamma {};
 	IVDTFragmentProgram *mpFPBlitLinear {};
 	IVDTFragmentProgram *mpFPBlitDirect {};
 	IVDTFragmentProgram *mpFPBlitStencil {};
 	IVDTFragmentProgram *mpFPBlitColor {};
 	IVDTFragmentProgram *mpFPBlitColor2 {};
+	IVDTFragmentProgram *mpFPBlitColorLinear {};
 	IVDTVertexBuffer *mpVB {};
 	IVDTIndexBuffer *mpIB {};
 	IVDTSamplerState *mpSS {};
 	IVDTSamplerState *mpSSPoint {};
+	IVDTSamplerState *mpSSWrap {};
+	IVDTSamplerState *mpSSPointWrap {};
 	IVDTBlendState *mpBS {};
 	IVDTBlendState *mpBSStencil {};
 	IVDTBlendState *mpBSColor {};
@@ -174,6 +207,8 @@ protected:
 	};
 
 	vdfastvector<Viewport> mViewportStack;
+
+	VDDisplayRendererCaps mCaps;
 
 	VDDisplayTextRenderer mTextRenderer;
 };

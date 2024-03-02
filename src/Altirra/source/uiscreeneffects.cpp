@@ -26,9 +26,12 @@
 #include <at/atnativeui/messageloop.h>
 #include "resource.h"
 #include "gtia.h"
+#include "oshelper.h"
 #include "simulator.h"
 
 extern ATSimulator g_sim;
+
+void ATUIShowDialogConfigureSystemDisplay(VDGUIHandle hParent);
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -49,12 +52,19 @@ private:
 	void OnBloomEnableChanged();
 	void OnBloomScanlineCompensationChanged();
 	void OnHDREnableChanged();
+	void OnUseSystemIntensitySDRChanged();
+	void OnUseSystemIntensityHDRChanged();
 
 	ATGTIAEmulator::HDRAvailability mLastHDRAvailability = ATGTIAEmulator::HDRAvailability::Available;
 	VDUIProxyButtonControl mBloomEnableView;
 	VDUIProxyButtonControl mBloomScanlineCompensationView;
 	VDUIProxyButtonControl mHDREnableView;
+	VDUIProxyButtonControl mUseSystemIntensitySDRView;
+	VDUIProxyButtonControl mUseSystemIntensityHDRView;
 	VDUIProxyButtonControl mResetToDefaultsView;
+	VDUIProxySysLinkControl mHDRWarningView;
+
+	bool mbLinkToWindowsSettings = false;
 };
 
 ATAdjustScreenEffectsDialog *g_pATAdjustScreenEffectsDialog;
@@ -74,8 +84,27 @@ ATAdjustScreenEffectsDialog::ATAdjustScreenEffectsDialog()
 		[this] { OnHDREnableChanged(); }
 	);
 
+	mUseSystemIntensitySDRView.SetOnClicked(
+		[this] { OnUseSystemIntensitySDRChanged(); }
+	);
+
+	mUseSystemIntensityHDRView.SetOnClicked(
+		[this] { OnUseSystemIntensityHDRChanged(); }
+	);
+
 	mResetToDefaultsView.SetOnClicked(
 		[this] { ResetToDefaults(); }
+	);
+
+	mHDRWarningView.SetOnClicked(
+		[this] {
+			if (mbLinkToWindowsSettings)
+				ATLaunchURL(L"ms-settings:display");
+			else {
+				ATUIShowDialogConfigureSystemDisplay((VDGUIHandle)mhdlg);
+				UpdateEnables();
+			}
+		}
 	);
 }
 
@@ -90,7 +119,10 @@ bool ATAdjustScreenEffectsDialog::OnLoaded() {
 	AddProxy(&mBloomEnableView, IDC_ENABLE_BLOOM);
 	AddProxy(&mBloomScanlineCompensationView, IDC_SCANLINECOMPENSATION);
 	AddProxy(&mHDREnableView, IDC_ENABLEHDR);
+	AddProxy(&mUseSystemIntensitySDRView, IDC_USESYSTEMSDR);
+	AddProxy(&mUseSystemIntensityHDRView, IDC_USESYSTEMHDR);
 	AddProxy(&mResetToDefaultsView, IDC_RESET);
+	AddProxy(&mHDRWarningView, IDC_HDRWARNING);
 
 	TBSetRange(IDC_SCANLINE_INTENSITY, 1, 7);
 	TBSetRange(IDC_DISTORTION_X, 0, 180);
@@ -123,6 +155,8 @@ void ATAdjustScreenEffectsDialog::OnDataExchange(bool write) {
 		mBloomEnableView.SetChecked(params.mbEnableBloom);
 		mBloomScanlineCompensationView.SetChecked(params.mbBloomScanlineCompensation);
 		mHDREnableView.SetChecked(params.mbEnableHDR);
+		mUseSystemIntensitySDRView.SetChecked(params.mbUseSystemSDR);
+		mUseSystemIntensityHDRView.SetChecked(params.mbUseSystemSDRAsHDR);
 
 		TBSetValue(IDC_SCANLINE_INTENSITY, VDRoundToInt(params.mScanlineIntensity * 8.0f));
 		TBSetValue(IDC_DISTORTION_X, VDRoundToInt(params.mDistortionViewAngleX));
@@ -271,23 +305,30 @@ void ATAdjustScreenEffectsDialog::UpdateEnables() {
 
 		switch(hdrAvailability) {
 			case ATGTIAEmulator::HDRAvailability::NoMinidriverSupport:
-				SetControlText(IDC_HDRWARNING, L"HDR display is not available with the currently selected graphics API. DirectX 11 is required for HDR support.");
+				mHDRWarningView.SetCaption(L"HDR display is not available with the currently selected graphics API. DirectX 11 is required for HDR support.");
 				break;
 
 			case ATGTIAEmulator::HDRAvailability::NoSystemSupport:
-				SetControlText(IDC_HDRWARNING, L"HDR display is not available with the current operating system. DXGI 1.6 (Windows 10 1703+) is required for HDR support.");
+				mHDRWarningView.SetCaption(L"HDR display is not available with the current operating system. DXGI 1.6 (Windows 10 1703+) is required for HDR support.");
 				break;
 
 			case ATGTIAEmulator::HDRAvailability::NoHardwareSupport:
-				SetControlText(IDC_HDRWARNING, L"HDR display is not available with the current graphics driver.");
+				mHDRWarningView.SetCaption(L"HDR display is not available with the current graphics driver.");
+				break;
+
+			case ATGTIAEmulator::HDRAvailability::NotEnabledOnDisplay:
+				mHDRWarningView.SetCaption(L"HDR is supported but not enabled on the current display. HDR must be enabled in Windows display settings. <a>Open Windows Settings</a>");
+				mbLinkToWindowsSettings = true;
 				break;
 
 			case ATGTIAEmulator::HDRAvailability::NoDisplaySupport:
-				SetControlText(IDC_HDRWARNING, L"HDR is not available with the current display. HDR must be supported and enabled in Windows display settings.");
+				mHDRWarningView.SetCaption(L"HDR is not available with the current display. HDR must be supported and enabled in Windows display settings. <a>Open Windows Settings</a>");
+				mbLinkToWindowsSettings = true;
 				break;
 
 			case ATGTIAEmulator::HDRAvailability::AccelNotEnabled:
-				SetControlText(IDC_HDRWARNING, L"HDR display is not available because hardware accelerated display effects are not enabled in Configure System, Display.");
+				mHDRWarningView.SetCaption(L"HDR display is not available because hardware accelerated display effects are not enabled in Configure System, Display. <a>Open Configure System</a>");
+				mbLinkToWindowsSettings = false;
 				break;
 
 			case ATGTIAEmulator::HDRAvailability::Available:
@@ -335,12 +376,20 @@ void ATAdjustScreenEffectsDialog::UpdateEnables() {
 	ShowControl(IDC_SDRBRIGHTNESS_VALUE, hwHdrSupport);
 	ShowControl(IDC_HDRBRIGHTNESS_VALUE, hwHdrSupport);
 
-	EnableControl(IDC_STATIC_SDRBRIGHTNESS, hdrEnabled);
-	EnableControl(IDC_STATIC_HDRBRIGHTNESS, hdrEnabled);
-	EnableControl(IDC_SDRBRIGHTNESS, hdrEnabled);
-	EnableControl(IDC_HDRBRIGHTNESS, hdrEnabled);
-	EnableControl(IDC_SDRBRIGHTNESS_VALUE, hdrEnabled);
-	EnableControl(IDC_HDRBRIGHTNESS_VALUE, hdrEnabled);
+	const bool sdrManual = !mUseSystemIntensitySDRView.GetChecked();
+	const bool hdrManual = !mUseSystemIntensityHDRView.GetChecked();
+	mUseSystemIntensitySDRView.SetVisible(hwHdrSupport);
+	mUseSystemIntensitySDRView.SetEnabled(hdrEnabled);
+	mUseSystemIntensityHDRView.SetVisible(hwHdrSupport);
+	mUseSystemIntensityHDRView.SetEnabled(hdrEnabled);
+
+	EnableControl(IDC_STATIC_SDRBRIGHTNESS,	hdrEnabled && sdrManual);
+	EnableControl(IDC_SDRBRIGHTNESS,		hdrEnabled && sdrManual);
+	EnableControl(IDC_SDRBRIGHTNESS_VALUE,	hdrEnabled && sdrManual);
+	EnableControl(IDC_STATIC_HDRBRIGHTNESS,	hdrEnabled && hdrManual);
+	EnableControl(IDC_HDRBRIGHTNESS,		hdrEnabled && hdrManual);
+	EnableControl(IDC_HDRBRIGHTNESS_VALUE,	hdrEnabled && hdrManual);
+
 }
 
 void ATAdjustScreenEffectsDialog::ResetToDefaults() {
@@ -387,6 +436,32 @@ void ATAdjustScreenEffectsDialog::OnHDREnableChanged() {
 
 		gtia.SetArtifactingParams(params);
 
+		UpdateEnables();
+	}
+}
+
+void ATAdjustScreenEffectsDialog::OnUseSystemIntensitySDRChanged() {
+	auto& gtia = g_sim.GetGTIA();
+	auto params = gtia.GetArtifactingParams();
+	bool enable = mUseSystemIntensitySDRView.GetChecked();
+
+	if (params.mbUseSystemSDR != enable) {
+		params.mbUseSystemSDR = enable;
+
+		gtia.SetArtifactingParams(params);
+		UpdateEnables();
+	}
+}
+
+void ATAdjustScreenEffectsDialog::OnUseSystemIntensityHDRChanged() {
+	auto& gtia = g_sim.GetGTIA();
+	auto params = gtia.GetArtifactingParams();
+	bool enable = mUseSystemIntensityHDRView.GetChecked();
+
+	if (params.mbUseSystemSDRAsHDR != enable) {
+		params.mbUseSystemSDRAsHDR = enable;
+
+		gtia.SetArtifactingParams(params);
 		UpdateEnables();
 	}
 }

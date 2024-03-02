@@ -130,4 +130,24 @@ Usage: Altirra [switches] <disk/cassette/cartridge images...>
   /[no]macwin64hack
               Enable or disable workaround for crash due to broken GS: selector
 
+                   -- Virtual File System (VFS) paths --
+
+  path\file.ext
+              Plain file path (OS convention)
+
+  file://path/file.ext
+              Plain file path (URL convention)
+
+  gz://file.ext.gz
+              Auto-decompress gzip-compressed file
+
+  zip://file.zip!inner-path/file.ext
+              Auto-extract from within Zip archive
+
+  atfs://image.ext!innerfil.ext
+              Access file within Atari file system
+
+  All URL forms except plain file paths use URL encoding (%20). URL forms can
+  be nested, e.g.: atfs://zip://dos.zip!dos.atr!autorun.sys
+
 (end)

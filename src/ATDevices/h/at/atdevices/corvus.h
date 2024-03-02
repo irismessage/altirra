@@ -109,7 +109,6 @@ private:
 class ATDeviceCorvus final
 	: public ATDevice
 	, public IATDeviceScheduling
-	, public IATDevicePortInput
 	, public IATDeviceIndicators
 {
 	ATDeviceCorvus(const ATDeviceCorvus&) = delete;
@@ -131,9 +130,6 @@ public:
 
 public:	// IATDeviceScheduling
 	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
-
-public:	// IATDevicePortInput
-	void InitPortInput(IATDevicePortManager *portmgr) override;
 
 public:	// IATDeviceIndicators
 	void InitIndicators(IATDeviceIndicatorManager *indmgr) override;

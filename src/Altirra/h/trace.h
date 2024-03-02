@@ -116,6 +116,7 @@ public:
 
 	size_t GetGroupCount() const;
 	ATTraceGroup *GetGroup(size_t index) const;
+	ATTraceGroup *GetGroupByType(ATTraceGroupType groupType) const;
 
 private:
 	vdfastvector<ATTraceGroup *> mGroups;

@@ -50,6 +50,7 @@ public:
 	virtual VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
 	virtual VDZLRESULT On_WM_HSCROLL(VDZWPARAM wParam, VDZLPARAM lParam);
 	virtual VDZLRESULT On_WM_VSCROLL(VDZWPARAM wParam, VDZLPARAM lParam);
+	virtual bool On_WM_CONTEXTMENU(VDZWPARAM wParam, VDZLPARAM lParam);
 
 	virtual void OnFontChanged();
 
@@ -71,6 +72,7 @@ public:
 	bool TryDispatch_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result);
 	bool TryDispatch_WM_HSCROLL(VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result);
 	bool TryDispatch_WM_VSCROLL(VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result);
+	bool TryDispatch_WM_CONTEXTMENU(VDZWPARAM wParam, VDZLPARAM lParam);
 	VDZLRESULT Dispatch_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
 	VDZLRESULT Dispatch_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
 	void DispatchFontChanged();
@@ -128,10 +130,18 @@ public:
 	void SetGridLinesEnabled(bool enabled);
 	bool AreItemCheckboxesEnabled() const;
 	void SetItemCheckboxesEnabled(bool enabled);
+	void SetActivateOnEnterEnabled(bool enabled);
+
 	void EnsureItemVisible(int index);
 	int GetVisibleTopIndex();
 	void SetVisibleTopIndex(int index);
 	IVDUIListViewVirtualItem *GetSelectedVirtualItem() const;
+
+	template<typename T>
+	T *GetSelectedVirtualItemAs() const {
+		return static_cast<T *>(GetSelectedVirtualItem());
+	}
+
 	IVDUIListViewVirtualItem *GetVirtualItem(int index) const;
 	uint32 GetItemId(int index) const;
 	void InsertColumn(int index, const wchar_t *label, int width, bool rightAligned = false);
@@ -173,9 +183,12 @@ public:
 		int mIndex;
 		int mX;
 		int mY;
+		bool mbHandled;
 	};
 
-	VDEvent<VDUIProxyListView, ContextMenuEvent>& OnItemContextMenu() {
+	void SetOnItemContextMenu(vdfunction<void(ContextMenuEvent&)> fn);
+
+	VDEvent<VDUIProxyListView, ContextMenuEvent&>& OnItemContextMenu() {
 		return mEventItemContextMenu;
 	}
 
@@ -225,6 +238,7 @@ protected:
 	int			mChangeNotificationLocks = 0;
 	int			mNextTextIndex = 0;
 	bool		mbIndexedMode = false;
+	bool		mbActivateOnEnter = false;
 	IVDUIListViewIndexedProvider *mpIndexedProvider = nullptr;
 	VDStringW	mTextW[3];
 	VDStringA	mTextA[3];
@@ -238,7 +252,8 @@ protected:
 	vdfunction<void(int)> mpOnItemDoubleClicked;
 	VDEvent<VDUIProxyListView, int> mEventItemCheckedChanged;
 	VDEvent<VDUIProxyListView, CheckedChangingEvent *> mEventItemCheckedChanging;
-	VDEvent<VDUIProxyListView, ContextMenuEvent> mEventItemContextMenu;
+	vdfunction<void(ContextMenuEvent&)> mpOnItemContextMenu;
+	VDEvent<VDUIProxyListView, ContextMenuEvent&> mEventItemContextMenu;
 	VDEvent<VDUIProxyListView, LabelChangedEvent *> mEventItemLabelEdited;
 	VDEvent<VDUIProxyListView, int> mEventItemBeginDrag;
 	VDEvent<VDUIProxyListView, int> mEventItemBeginRDrag;
@@ -445,6 +460,7 @@ class VDUIProxyTreeViewControl final : public VDUIProxyControl {
 public:
 	typedef uintptr NodeRef;
 
+	static constexpr NodeRef kNodeNull = (NodeRef)(uintptr)nullptr;
 	static const NodeRef kNodeRoot;
 	static const NodeRef kNodeFirst;
 	static const NodeRef kNodeLast;
@@ -471,6 +487,11 @@ public:
 	NodeRef AddItem(NodeRef parent, NodeRef insertAfter, const wchar_t *label);
 	NodeRef AddVirtualItem(NodeRef parent, NodeRef insertAfter, IVDUITreeViewVirtualItem *item);
 	NodeRef AddIndexedItem(NodeRef parent, NodeRef insertAfter, uint32 id);
+
+	NodeRef GetChildNode(NodeRef ref) const;
+	NodeRef GetParentNode(NodeRef ref) const;
+	NodeRef GetPrevNode(NodeRef ref) const;
+	NodeRef GetNextNode(NodeRef ref) const;
 
 	void MakeNodeVisible(NodeRef node);
 	void SelectNode(NodeRef node);
@@ -558,14 +579,29 @@ public:
 	NodeRef FindDropTarget() const;
 	void SetDropTargetHighlight(NodeRef item);
 
+	struct ContextMenuEvent {
+		NodeRef mNode;
+		
+		union {
+			IVDUITreeViewVirtualItem *mpItem;
+			uint32 mItemId;
+		};
+
+		vdpoint32 mScreenPos;
+	};
+
+	void SetOnContextMenu(vdfunction<bool(const ContextMenuEvent& event)> fn);
+
 protected:
 	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) override;
+	bool On_WM_CONTEXTMENU(VDZWPARAM wParam, VDZLPARAM lParam) override;
 	void OnFontChanged() override;
 
 	VDZLRESULT FixLabelEditWndProcA(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
 	VDZLRESULT FixLabelEditWndProcW(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
 
 	void DeleteFonts();
+	bool IsValidNodeRef(NodeRef node) const;
 
 	int			mNextTextIndex;
 	VDStringW mTextW[3];
@@ -586,6 +622,7 @@ protected:
 	VDEvent<VDUIProxyTreeViewControl, GetDispAttrEvent *> mEventItemGetDisplayAttributes;
 	vdfunction<void()> mpOnItemSelectionChanged;
 	vdfunction<void(const BeginDragEvent& event)> mpOnBeginDrag;
+	vdfunction<bool(const ContextMenuEvent& event)> mpOnContextMenu;
 
 	VDZHIMAGELIST mImageList = nullptr;
 	uint32 mImageWidth = 0;
@@ -602,7 +639,10 @@ public:
 	VDStringW GetText() const;
 	void SetText(const wchar_t *s);
 
+	void SetReadOnly(bool ro);
+
 	void SelectAll();
+	void DeselectAll();
 
 	void SetOnTextChanged(vdfunction<void(VDUIProxyEditControl *)> fn);
 

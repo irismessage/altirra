@@ -20,11 +20,129 @@
 #include <vd2/system/bitmath.h>
 #include <at/atcore/scheduler.h>
 #include <at/atcore/snapshotimpl.h>
+#include <at/attest/test.h>
 #include "pia.h"
 #include "irqcontroller.h"
 #include "console.h"
 #include "savestate.h"
 #include "trace.h"
+
+///////////////////////////////////////////////////////////////////////////////
+
+#if VD_CPU_X86 || VD_CPU_X64
+	struct ATPIAEmulator::CountedMask32::Impl {
+		struct BitMasks {
+			__m128i v0;
+			__m128i v1;
+		};
+
+		static BitMasks ExpandMask(uint32 mask) {
+			__m128i v = _mm_cvtsi32_si128(mask);
+
+			v = _mm_unpacklo_epi8(v, v);
+			v = _mm_unpacklo_epi8(v, v);
+
+			__m128i v0 = _mm_shuffle_epi32(v, 0x50);
+			__m128i v1 = _mm_shuffle_epi32(v, 0xFA);
+
+			__m128i vbitmask  = _mm_set_epi8(-128, 64, 32, 16, 8, 4, 2, 1, -128, 64, 32, 16, 8, 4, 2, 1);
+			v0 = _mm_and_si128(v0, vbitmask);
+			v1 = _mm_and_si128(v1, vbitmask);
+
+			__m128i vzero = _mm_setzero_si128();
+			return BitMasks {
+				_mm_cmpeq_epi8(v0, vzero),
+				_mm_cmpeq_epi8(v1, vzero)
+			};
+		}
+	};
+
+	void ATPIAEmulator::CountedMask32::AddZeroBits(uint32 mask) {
+		const Impl::BitMasks bitMasks = Impl::ExpandMask(mask);
+
+		_mm_store_si128((__m128i *)mCounts + 0, _mm_sub_epi8(_mm_load_si128((const __m128i *)mCounts + 0), bitMasks.v0));
+		_mm_store_si128((__m128i *)mCounts + 1, _mm_sub_epi8(_mm_load_si128((const __m128i *)mCounts + 1), bitMasks.v1));
+	}
+
+	void ATPIAEmulator::CountedMask32::RemoveZeroBits(uint32 mask) {
+		const Impl::BitMasks bitMasks = Impl::ExpandMask(mask);
+
+		_mm_store_si128((__m128i *)mCounts + 0, _mm_add_epi8(_mm_load_si128((const __m128i *)mCounts + 0), bitMasks.v0));
+		_mm_store_si128((__m128i *)mCounts + 1, _mm_add_epi8(_mm_load_si128((const __m128i *)mCounts + 1), bitMasks.v1));
+	}
+
+	uint32 ATPIAEmulator::CountedMask32::ReadZeroMask() const {
+		const __m128i vzero = _mm_setzero_si128();
+		const uint32 mask1 = _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_load_si128((const __m128i *)mCounts + 0), vzero));
+		const uint32 mask2 = _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_load_si128((const __m128i *)mCounts + 1), vzero));
+
+		return mask1 + (mask2 << 16);
+	}
+#elif VD_CPU_ARM64
+	struct ATPIAEmulator::CountedMask32::Impl {
+		static uint8x16x2_t ExpandMask(uint32 mask) {
+			static constexpr uint8 kBitMask[16] { 1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128 };
+			uint8x16_t vbmask = vld1q_u8(kBitMask);
+			uint8x8_t v = vreinterpret_u8_u32(vmov_n_u32(mask));
+
+			uint8x16x2_t r;
+			r.val[0] = vceqq_u8(vandq_u8(vcombine_u8(vdup_lane_u8(v, 0), vdup_lane_u8(v, 1)), vbmask), vmovq_n_u8(0));
+			r.val[1] = vceqq_u8(vandq_u8(vcombine_u8(vdup_lane_u8(v, 2), vdup_lane_u8(v, 3)), vbmask), vmovq_n_u8(0));
+			return r;
+		}
+	};
+
+	void ATPIAEmulator::CountedMask32::AddZeroBits(uint32 mask) {
+		const uint8x16x2_t vmasks = Impl::ExpandMask(mask);
+		vst1q_u8(mCounts +  0, vsubq_u8(vld1q_u8(mCounts +  0), vmasks.val[0]));
+		vst1q_u8(mCounts + 16, vsubq_u8(vld1q_u8(mCounts + 16), vmasks.val[1]));
+	}
+
+	void ATPIAEmulator::CountedMask32::RemoveZeroBits(uint32 mask) {
+		const uint8x16x2_t vmasks = Impl::ExpandMask(mask);
+		vst1q_u8(mCounts +  0, vaddq_u8(vld1q_u8(mCounts +  0), vmasks.val[0]));
+		vst1q_u8(mCounts + 16, vaddq_u8(vld1q_u8(mCounts + 16), vmasks.val[1]));
+	}
+
+	uint32 ATPIAEmulator::CountedMask32::ReadZeroMask() const {
+		static constexpr uint8 kBitMask[8] { 1, 2, 4, 8, 16, 32, 64, 128 };
+		uint8x8_t vbmask = vld1_u8(kBitMask);
+
+		uint32 m0 = vaddv_u8(vand_u8(vceq_u8(vld1_u8(mCounts +  0), vmov_n_u8(0)), vbmask));
+		uint32 m1 = vaddv_u8(vand_u8(vceq_u8(vld1_u8(mCounts +  8), vmov_n_u8(0)), vbmask));
+		uint32 m2 = vaddv_u8(vand_u8(vceq_u8(vld1_u8(mCounts + 16), vmov_n_u8(0)), vbmask));
+		uint32 m3 = vaddv_u8(vand_u8(vceq_u8(vld1_u8(mCounts + 24), vmov_n_u8(0)), vbmask));
+
+		return m0 + (m1 << 8) + (m2 << 16) + (m3 << 24);
+	}
+#else
+	void ATPIAEmulator::CountedMask32::AddZeroBits(uint32 mask) {
+		for(int i=0; i<32; ++i) {
+			if (!(mask & (1 << i)))
+				++mCounts[i];
+		}
+	}
+
+	void ATPIAEmulator::CountedMask32::RemoveZeroBits(uint32 mask) {
+		for(int i=0; i<32; ++i) {
+			if (!(mask & (1 << i)))
+				--mCounts[i];
+		}
+	}
+
+	uint32 ATPIAEmulator::CountedMask32::ReadZeroMask() const {
+		uint32 v = 0;
+
+		for(int i=0; i<32; ++i) {
+			if (!mCounts[i])
+				v += (1 << i);
+		}
+
+		return v;
+	}
+#endif
+
+///////////////////////////////////////////////////////////////////////////////
 
 ATPIAEmulator::ATPIAEmulator()
 	: mpScheduler(nullptr)
@@ -42,35 +160,46 @@ ATPIAEmulator::ATPIAEmulator()
 	, mbCB1(true)
 	, mPIACB2(kPIACS_Floating)
 	, mOutputReportMask(0)
-	, mOutputAllocBitmap(0)
-	, mInputAllocBitmap(0)
+	, mInputAllocBitmap{0}
+	, mIntOutputs{}
 {
-	for(int i=0; i<4; ++i)
-		mInputs[i] = 0xFFFF;
+	// reserve last input so we only allow 255 inputs
+	mInputAllocBitmap[7] = UINT32_C(0x80000000);
+}
 
-	memset(mOutputs, 0, sizeof mOutputs);
+ATPIAEmulator::~ATPIAEmulator() {
+	delete[] mpExtInputs;
 }
 
 int ATPIAEmulator::AllocInput() {
-	if (mInputAllocBitmap == 15) {
-		VDASSERT(!"PIA inputs exhausted.");
-		return -1;
+	for(unsigned i=0; i<8; ++i) {
+		if (mInputAllocBitmap[i] != UINT32_C(0xFFFFFFFF)) {
+			unsigned subIdx = VDFindLowestSetBitFast(~mInputAllocBitmap[i]);
+			unsigned idx = (i << 5) + subIdx;
+
+			mInputAllocBitmap[i] |= (1 << subIdx);
+
+			if (idx >= vdcountof(mIntInputs) && !mpExtInputs)
+				mpExtInputs = new uint32[256 - vdcountof(mIntInputs)];
+
+			GetInput(idx) = UINT16_C(0x3FFFF);
+			return idx;
+		}
 	}
 
-	int idx = VDFindLowestSetBitFast(~mInputAllocBitmap);
-
-	mInputAllocBitmap |= (1 << idx);
-	return idx;
+	VDASSERT(!"PIA inputs exhausted.");
+	return -1;
 }
 
 void ATPIAEmulator::FreeInput(int index) {
 	if (index >= 0) {
-		const uint32 allocBit = UINT32_C(1) << index;
+		const uint32 allocField = (unsigned)index >> 5;
+		const uint32 allocBit = UINT32_C(1) << (index & 31);
 
-		VDASSERT(mInputAllocBitmap & allocBit);
+		VDASSERT(mInputAllocBitmap[allocField] & allocBit);
 
-		if (mInputAllocBitmap & allocBit) {
-			mInputAllocBitmap &= ~allocBit;
+		if (mInputAllocBitmap[allocField] & allocBit) {
+			mInputAllocBitmap[allocField] &= ~allocBit;
 
 			SetInput(index, ~UINT32_C(0));
 		}
@@ -78,12 +207,21 @@ void ATPIAEmulator::FreeInput(int index) {
 }
 
 void ATPIAEmulator::SetInput(int index, uint32 rval) {
-	VDASSERT(index < 4);
+	VDASSERT(index < 255);
 
-	if (index >= 0 && rval != mInputs[index]) {
-		mInputs[index] = rval;
+	if (index < 0)
+		return;
 
-		uint32 v = mInputs[0] & mInputs[1] & mInputs[2] & mInputs[3];
+	rval &= 0x3FFFF;
+
+	uint32& inputSlot = GetInput(index);
+	if (rval != inputSlot) {
+		mInputState.RemoveZeroBits(inputSlot);
+		mInputState.AddZeroBits(rval);
+
+		inputSlot = rval;
+
+		uint32 v = mInputState.ReadZeroMask();
 
 		if (mInput != v) {
 			const uint32 delta = mInput ^ v;
@@ -98,50 +236,119 @@ void ATPIAEmulator::SetInput(int index, uint32 rval) {
 	}
 }
 
-int ATPIAEmulator::AllocOutput(ATPortOutputFn fn, void *ptr, uint32 changeMask) {
-	if (mOutputAllocBitmap == (1U << vdcountof(mOutputs))) {
-		VDASSERT(!"PIA outputs exhausted.");
-		return -1;
+uint32 ATPIAEmulator::RegisterDynamicInput(bool portb, vdfunction<uint8()> fn) {
+	auto& fns = mDynamicInputs[portb];
+	auto& tokens = mDynamicInputTokens[portb];
+	
+	uint32 token;
+	
+	for(;;) {
+		token = ++mDynamicTokenCounter;
+
+		if (!token)
+			continue;
+
+		if (std::find(tokens.begin(), tokens.end(), token) == tokens.end())
+			break;
 	}
 
-	int idx = VDFindLowestSetBitFast(~mOutputAllocBitmap);
+	fns.emplace_back(std::move(fn));
+	tokens.push_back(token);
 
-	mOutputAllocBitmap |= (1 << idx);
+	if (portb)
+		mbHasDynamicBInputs = true;
+	else
+		mbHasDynamicAInputs = true;
 
-	OutputEntry& output = mOutputs[idx];
-	output.mChangeMask = changeMask;
+	return token;
+}
+
+void ATPIAEmulator::UnregisterDynamicInput(bool portb, uint32 token) {
+	if (!token)
+		return;
+
+	auto& tokens = mDynamicInputTokens[portb];
+
+	auto it = std::find(tokens.begin(), tokens.end(), token);
+	if (it != tokens.end()) {
+		const ptrdiff_t pos = it - tokens.begin();
+
+		*it = tokens.back();
+		tokens.pop_back();
+
+		auto& fns = mDynamicInputs[portb];
+		auto it2 = fns.begin() + pos;
+		
+		if (&*it2 != &fns.back())
+			*it2 = std::move(mDynamicInputs->back());
+
+		fns.pop_back();
+
+		if (fns.empty()) {
+			if (portb)
+				mbHasDynamicBInputs = false;
+			else
+				mbHasDynamicAInputs = false;
+		}
+	} else {
+		VDFAIL("Invalid dynamic token.");
+	}
+}
+
+int ATPIAEmulator::AllocOutput(ATPIAOutputFn fn, void *ptr, uint32 changeMask) {
+	const uint32 numOutputSlots = vdcountof(mIntOutputs) + (uint32)mExtOutputs.size();
+
+	while(mOutputNextAllocIndex < numOutputSlots) {
+		if (!GetOutput(mOutputNextAllocIndex).mChangeMask)
+			break;
+
+		++mOutputNextAllocIndex;
+	}
+
+	if (mOutputNextAllocIndex >= numOutputSlots)
+		mExtOutputs.emplace_back(OutputEntry{});
+
+	const uint32 outputSlot = mOutputNextAllocIndex;
+	
+	changeMask &= 0x3FFFF;
+
+	OutputEntry& output = GetOutput(outputSlot);
+	output.mChangeMask = changeMask | UINT32_C(0x80000000);
 	output.mpFn = fn;
 	output.mpData = ptr;
 
 	mOutputReportMask |= changeMask;
 
-	return idx;
+	return (int)outputSlot;
 }
 
 void ATPIAEmulator::ModifyOutputMask(int index, uint32 changeMask) {
 	if (index < 0)
 		return;
 
-	VDASSERT(mOutputAllocBitmap & (1 << index));
+	auto& output = GetOutput((unsigned)index);
+	VDASSERT(output.mChangeMask);
 
-	if (mOutputs[index].mChangeMask != changeMask) {
-		mOutputs[index].mChangeMask = changeMask;
+	changeMask = (changeMask & 0x3FFFF) | UINT32_C(0x80000000);
 
-		mOutputReportMask = 0;
-		for(const auto& output : mOutputs)
-			mOutputReportMask |= output.mChangeMask;
+	if (output.mChangeMask != changeMask) {
+		output.mChangeMask = changeMask;
+
+		RecomputeOutputReportMask();
 	}
 }
 
 void ATPIAEmulator::FreeOutput(int index) {
 	if (index >= 0) {
-		mOutputAllocBitmap &= ~(1 << index);
+		if (mOutputNextAllocIndex > (unsigned)index)
+			mOutputNextAllocIndex = (unsigned)index;
 
-		mOutputs[index].mChangeMask = 0;
+		GetOutput((unsigned)index).mChangeMask = 0;
 
-		mOutputReportMask = 0;
-		for(const auto& output : mOutputs)
-			mOutputReportMask |= output.mChangeMask;
+		while(!mExtOutputs.empty() && !mExtOutputs.back().mChangeMask)
+			mExtOutputs.pop_back();
+
+		RecomputeOutputReportMask();
 	}
 }
 
@@ -297,7 +504,7 @@ uint8 ATPIAEmulator::DebugReadByte(uint8 addr) const {
 	default:
 		// Port A reads the actual state of the output lines.
 		return mPORTACTL & 0x04
-			? (uint8)(mInput & (mOutput | ~mPortDirection))
+			? (uint8)(mInput & (mOutput | ~mPortDirection) & (mbHasDynamicAInputs ? ReadDynamicInputs(false) : 0xFF))
 			: (uint8)mPortDirection;
 
 	case 0x01:
@@ -308,6 +515,9 @@ uint8 ATPIAEmulator::DebugReadByte(uint8 addr) const {
 		// Port B reads output bits instead of input bits for those selected as output. No ANDing with input.
 		{
 			uint8 pb = (uint8)((((mInput ^ mOutput) & mPortDirection) ^ mInput) >> 8);
+
+			if (mbHasDynamicBInputs)
+				pb &= ReadDynamicInputs(true);
 
 			// If we have floating bits, roll them in.
 			if (mpFloatingInputs) {
@@ -636,6 +846,14 @@ void ATPIAEmulator::PostLoadState() {
 		memset(mpFloatingInputs->mFloatTimers, 0, sizeof mpFloatingInputs->mFloatTimers);
 }
 
+uint32& ATPIAEmulator::GetInput(unsigned slot) {
+	return slot < vdcountof(mIntInputs) ? mIntInputs[slot] : mpExtInputs[slot - vdcountof(mIntInputs)];
+}
+
+ATPIAEmulator::OutputEntry& ATPIAEmulator::GetOutput(unsigned slot) {
+	return slot < vdcountof(mIntOutputs) ? mIntOutputs[slot] : mExtOutputs[slot - vdcountof(mIntOutputs)];
+}
+
 void ATPIAEmulator::UpdateCA2() {
 	// bits 3-5:
 	//	0xx		input (passively pulled high)
@@ -682,11 +900,28 @@ void ATPIAEmulator::UpdateOutput() {
 	mOutput = newOutput;
 
 	if (delta & mOutputReportMask) {
-		for(const OutputEntry& output : mOutputs) {
+		for(const OutputEntry& output : mIntOutputs) {
+			if (output.mChangeMask & delta)
+				output.mpFn(output.mpData, mOutput);
+		}
+
+		for(const OutputEntry& output : mExtOutputs) {
 			if (output.mChangeMask & delta)
 				output.mpFn(output.mpData, mOutput);
 		}
 	}
+}
+
+void ATPIAEmulator::RecomputeOutputReportMask() {
+	mOutputReportMask = 0;
+
+	for(const auto& output : mIntOutputs)
+		mOutputReportMask |= output.mChangeMask;
+
+	for(const auto& output : mExtOutputs)
+		mOutputReportMask |= output.mChangeMask;
+
+	mOutputReportMask &= 0x3FFFF;
 }
 
 bool ATPIAEmulator::SetPortBDirection(uint8 value) {
@@ -796,3 +1031,41 @@ void ATPIAEmulator::UpdateTraceInputA() {
 	mpTraceInputA->TruncateLastEvent(t);
 	mpTraceInputA->AddOpenTickEventF(t, kATTraceColor_Default, L"%02X", mInput & 0xFF);
 }
+
+uint8 ATPIAEmulator::ReadDynamicInputs(bool portb) const {
+	const auto& fns = mDynamicInputs[portb];
+
+	uint8 v = 0xFF;
+
+	for (const auto& fn : fns)
+		v &= fn();
+
+	return v;
+}
+
+#ifdef AT_TESTS_ENABLED
+	AT_DEFINE_TEST(Emu_PIA) {
+		ATPIAEmulator::CountedMask32 cm;
+
+		AT_TEST_ASSERT(cm.ReadZeroMask() == 0xFFFFFFFF);
+		for(int i=0; i<32; ++i) {
+			uint32 mask = 1 << i;
+			cm.AddZeroBits(~mask);
+
+			uint32 r = cm.ReadZeroMask();
+			AT_TEST_ASSERTF(r == ~mask, "Failed with mask %08X -> %08X", mask, ~r);
+
+			cm.RemoveZeroBits(~mask);
+			r = cm.ReadZeroMask();
+			AT_TEST_ASSERTF(r == UINT32_C(0xFFFFFFFF), "Failed with mask %08X -> %08X", mask, ~r);
+		}
+
+		cm.AddZeroBits(0xFFFFFEFE);
+		cm.AddZeroBits(0xFFFFFFFE);
+		AT_TEST_ASSERT(cm.ReadZeroMask() == 0xFFFFFEFE);
+		cm.RemoveZeroBits(0xFFFFFEFE);
+		AT_TEST_ASSERT(cm.ReadZeroMask() == 0xFFFFFFFE);
+
+		return 0;
+	}
+#endif

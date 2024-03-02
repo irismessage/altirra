@@ -32,6 +32,7 @@
 #include <at/atui/constants.h>
 #include <at/atnativeui/theme.h>
 #include <at/atnativeui/uiframe.h>
+#include <at/atnativeui/uipane.h>
 
 #ifdef NTDDI_WIN10_RS3
 #include <shellscalingapi.h>
@@ -589,7 +590,7 @@ ATContainerDockingPane::~ATContainerDockingPane() {
 	}
 }
 
-void ATContainerDockingPane::SetArea(ATContainerResizer& resizer, const vdrect32& area, bool parentContainsFullScreen) {
+void ATContainerDockingPane::SetArea(ATContainerResizer *resizer, const vdrect32& area, bool parentContainsFullScreen) {
 	bool fullScreenLayout = mbFullScreen || parentContainsFullScreen;
 
 	if (mArea == area && mbFullScreenLayout == fullScreenLayout)
@@ -603,7 +604,10 @@ void ATContainerDockingPane::SetArea(ATContainerResizer& resizer, const vdrect32
 	mArea = area;
 	mbFullScreenLayout = fullScreenLayout;
 
-	Relayout(resizer);
+	if (resizer)
+		Relayout(*resizer);
+	else
+		InvalidateLayout();
 }
 
 void ATContainerDockingPane::Clear() {
@@ -682,22 +686,24 @@ void ATContainerDockingPane::Relayout(ATContainerResizer& resizer) {
 
 		::ShowWindow(hwndSplitter, mbFullScreenLayout ? SW_HIDE : SW_SHOWNOACTIVATE);
 
-		switch(mDockCode) {
-			case kATContainerDockLeft:
-				resizer.LayoutWindow(hwndSplitter, mArea.right, mArea.top, mpParent->GetSplitterWidth(), mArea.height(), true);
-				break;
+		if (!mbFullScreenLayout) {
+			switch(mDockCode) {
+				case kATContainerDockLeft:
+					resizer.LayoutWindow(hwndSplitter, mArea.right, mArea.top, mpParent->GetSplitterWidth(), mArea.height(), true);
+					break;
 
-			case kATContainerDockRight:
-				resizer.LayoutWindow(hwndSplitter, mArea.left - mpParent->GetSplitterWidth(), mArea.top, mpParent->GetSplitterWidth(), mArea.height(), true);
-				break;
+				case kATContainerDockRight:
+					resizer.LayoutWindow(hwndSplitter, mArea.left - mpParent->GetSplitterWidth(), mArea.top, mpParent->GetSplitterWidth(), mArea.height(), true);
+					break;
 
-			case kATContainerDockTop:
-				resizer.LayoutWindow(hwndSplitter, mArea.left, mArea.bottom, mArea.width(), mpParent->GetSplitterHeight(), true);
-				break;
+				case kATContainerDockTop:
+					resizer.LayoutWindow(hwndSplitter, mArea.left, mArea.bottom, mArea.width(), mpParent->GetSplitterHeight(), true);
+					break;
 
-			case kATContainerDockBottom:
-				resizer.LayoutWindow(hwndSplitter, mArea.left, mArea.top - mpParent->GetSplitterHeight(), mArea.width(), mpParent->GetSplitterHeight(), true);
-				break;
+				case kATContainerDockBottom:
+					resizer.LayoutWindow(hwndSplitter, mArea.left, mArea.top - mpParent->GetSplitterHeight(), mArea.width(), mpParent->GetSplitterHeight(), true);
+					break;
+			}
 		}
 	}
 
@@ -752,7 +758,7 @@ void ATContainerDockingPane::Relayout(ATContainerResizer& resizer) {
 			}
 		}
 
-		pane->SetArea(resizer, rPane, mbFullScreenLayout);
+		pane->SetArea(&resizer, rPane, mbFullScreenLayout);
 
 		if (pane->mbLayoutInvalid)
 			pane->Relayout(resizer);
@@ -1170,8 +1176,11 @@ void ATContainerDockingPane::SetVisibleFrame(ATFrameWindow *frame) {
 	sint32 idx = (sint32)(it - mContent.begin());
 
 	if (mVisibleFrameIndex != idx) {
-		mContent[mVisibleFrameIndex]->SetVisible(false);
-		mContent[idx]->SetVisible(true);
+		if (!mpParent || !mpParent->IsLayoutSuspended()) {
+			mContent[mVisibleFrameIndex]->SetVisible(false);
+			mContent[idx]->SetVisible(true);
+		}
+
 		mVisibleFrameIndex = idx;
 
 		if (mhwndTabControl)
@@ -1891,6 +1900,12 @@ ATContainerDockingPane *ATContainerWindow::DockFrame(ATFrameWindow *frame) {
 				mpActiveFrame = frame;
 			}
 
+			// if we're in layout suspended mode, hide the window now so it doesn't
+			// redraw synchronously on the SetParent() call before we can do layout
+			// -- this avoids an ugly glitch on the display pane
+			if (IsLayoutSuspended())
+				frame->SetVisible(false);
+
 			if (!mpDragPaneTarget->GetParentPane() && mDragPaneTargetCode == kATContainerDockCenter)
 				frame->SetFrameMode(mpDragPaneTarget->GetContentCount() == 0 && !ATFrameWindow::kRootContentHasEdge ? ATFrameWindow::kFrameModeNone : ATFrameWindow::kFrameModeEdge);
 			else
@@ -1972,7 +1987,7 @@ void ATContainerWindow::UndockFrame(ATFrameWindow *frame, bool visible, bool des
 			HWND hwndOwner = GetWindow(mhwnd, GW_OWNER);
 			SetParent(hwndFrame, hwndOwner);
 
-			style &= ~WS_CHILD;
+			style &= ~(WS_CHILD | WS_VISIBLE);
 			style |= WS_OVERLAPPEDWINDOW;
 			SetWindowLong(hwndFrame, GWL_STYLE, style);
 
@@ -2010,6 +2025,8 @@ void ATContainerWindow::SetFullScreenFrame(ATFrameWindow *frame) {
 	if (mpFullScreenFrame == frame)
 		return;
 
+	SuspendLayout();
+
 	if (mpFullScreenFrame)
 		mpFullScreenFrame->SetFullScreen(false);
 
@@ -2025,9 +2042,7 @@ void ATContainerWindow::SetFullScreenFrame(ATFrameWindow *frame) {
 			::SetFocus(hwndFocus);
 	}
 
-	ATContainerResizer resizer;
-	mpDockingPane->Relayout(resizer);
-	resizer.Flush();
+	ResumeLayout();
 }
 
 void ATContainerWindow::SetModalFrame(ATFrameWindow *frame) {
@@ -2072,6 +2087,9 @@ void ATContainerWindow::NotifyFrameActivated(ATFrameWindow *frame) {
 }
 
 void ATContainerWindow::NotifyUndockedFrameDestroyed(ATFrameWindow *frame) {
+	if (mpActiveFrame == frame)
+		mpActiveFrame = nullptr;
+
 	UndockedFrames::iterator it = std::find(mUndockedFrames.begin(), mUndockedFrames.end(), frame);
 	if (it != mUndockedFrames.end()) {
 		mUndockedFrames.erase(it);
@@ -2212,9 +2230,13 @@ void ATContainerWindow::OnSize() {
 		r.bottom += dy;
 	}
 	
-	ATContainerResizer resizer;
-	mpDockingPane->SetArea(resizer, vdrect32(r.left, r.top, r.right, r.bottom), false);
-	resizer.Flush();
+	if (mLayoutSuspendCount) {
+		mpDockingPane->SetArea(nullptr, vdrect32(r.left, r.top, r.right, r.bottom), false);
+	} else {
+		ATContainerResizer resizer;
+		mpDockingPane->SetArea(&resizer, vdrect32(r.left, r.top, r.right, r.bottom), false);
+		resizer.Flush();
+	}
 }
 
 void ATContainerWindow::NotifyDockedFrameDestroyed(ATFrameWindow *frame) {
@@ -2246,7 +2268,7 @@ void ATContainerWindow::NotifyDockedFrameDestroyed(ATFrameWindow *frame) {
 }
 
 void ATContainerWindow::OnSetFocus(HWND hwndOldFocus) {
-	if (mpActiveFrame) {
+	if (mpActiveFrame && mpActiveFrame->IsDocked()) {
 		VDASSERT(mpActiveFrame->GetContainer() == this);
 
 		NotifyFrameActivated(mpActiveFrame);
@@ -2277,9 +2299,11 @@ bool ATContainerWindow::OnActivate(UINT code, bool minimized, HWND hwnd) {
 
 			NotifyFrameActivated(mpActiveFrame);
 
-			HWND hwndActiveFrame = mpActiveFrame->GetHandleW32();
-			if (hwndActiveFrame)
-				SetFocus(hwndActiveFrame);
+			if (hwnd == mhwnd) {
+				HWND hwndActiveFrame = mpActiveFrame->GetHandleW32();
+				if (hwndActiveFrame)
+					SetFocus(hwndActiveFrame);
+			}
 		}
 	}
 
@@ -2691,6 +2715,13 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			}
 			break;
 
+		case WM_ACTIVATE:
+			if (LOWORD(wParam) != WA_INACTIVE && !IsDocked()) {
+				if (mpContainer)
+					mpContainer->NotifyFrameActivated(this);
+			}
+			break;
+
 		case WM_PARENTNOTIFY:
 			if (LOWORD(wParam) == WM_CREATE)
 				PostMessage(mhwnd, WM_USER+100, 0, 0);
@@ -3056,6 +3087,13 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			}
 			break;
 
+		case WM_SHOWWINDOW:
+			// if our visibility is changing, propagate it to children so they can optimize
+			// their updates
+			if (HWND hwndChild = GetWindow(mhwnd, GW_CHILD))
+				ShowWindow(hwndChild, wParam ? SW_SHOWNOACTIVATE : SW_HIDE);
+			break;
+
 		case ATWM_INHERIT_DPICHANGED:
 			if (mFrameMode == kFrameModeUndocked) {
 				HWND hwndChild = GetWindow(mhwnd, GW_CHILD);
@@ -3407,7 +3445,7 @@ ATUIPane *ATGetUIPaneByFrame(ATFrameWindow *frame) {
 	ActivePanes::const_iterator it(g_activePanes.begin()), itEnd(g_activePanes.end());
 	for(; it != itEnd; ++it) {
 		ATUIPane *pane = it->second;
-		HWND hwndPane = pane->GetHandleW32();
+		HWND hwndPane = pane->AsNativeWindow().GetHandleW32();
 
 		if (!hwndPane)
 			continue;
@@ -3447,7 +3485,7 @@ void ATActivateUIPane(uint32 id, bool giveFocus, bool visible, uint32 relid, int
 			ATUIPane *relpane = ATGetUIPane(relid);
 
 			if (relpane) {
-				HWND hwndPane = relpane->GetHandleW32();
+				HWND hwndPane = relpane->AsNativeWindow().GetHandleW32();
 
 				if (hwndPane) {
 					HWND hwndParent = GetParent(hwndPane);
@@ -3484,7 +3522,7 @@ void ATActivateUIPane(uint32 id, bool giveFocus, bool visible, uint32 relid, int
 	}
 
 	if (giveFocus) {
-		HWND hwndPane = pane->GetHandleW32();
+		HWND hwndPane = pane->AsNativeWindow().GetHandleW32();
 		HWND hwndPaneParent = GetParent(hwndPane);
 		SetFocus(hwndPane);
 
@@ -3503,7 +3541,7 @@ void ATCloseUIPane(uint32 id) {
 	ATUIPane *pane = ATGetUIPane(id);
 
 	if (pane) {
-		HWND hwndPane = pane->GetHandleW32();
+		HWND hwndPane = pane->AsNativeWindow().GetHandleW32();
 		HWND hwndPaneParent = GetParent(hwndPane);
 		SetFocus(hwndPane);
 
@@ -3543,113 +3581,4 @@ uint32 ATUIGetActivePaneId() {
 	ATUIPane *pane = ATUIGetActivePane();
 
 	return pane ? pane->GetUIPaneId() : 0;
-}
-
-///////////////////////////////////////////////////////////////////////////
-
-ATUIPane::ATUIPane(uint32 paneId, const wchar_t *name)
-	: mpName(name)
-	, mPaneId(paneId)
-	, mDefaultWindowStyles(WS_CHILD|WS_CLIPCHILDREN)
-	, mPreferredDockCode(-1)
-	, mpFrameWindow(nullptr)
-{
-}
-
-ATUIPane::~ATUIPane() {
-}
-
-void *ATUIPane::AsInterface(uint32 iid) {
-	if (iid == kTypeID)
-		return this;
-
-	return ATUINativeWindow::AsInterface(iid);
-}
-
-bool ATUIPane::Create(ATFrameWindow *frame) {
-	mpFrameWindow = frame;
-
-	HWND hwnd = CreateWindow((LPCTSTR)(uintptr_t)sWndClass, _T(""), mDefaultWindowStyles & ~WS_VISIBLE, 0, 0, 0, 0, frame->GetHandleW32(), (HMENU)100, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
-
-	if (!hwnd) {
-		mpFrameWindow = nullptr;
-		return false;
-	}
-
-	::ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-	return true;
-}
-
-void ATUIPane::SetName(const wchar_t *name) {
-	mpName = name;
-}
-
-LRESULT ATUIPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
-	switch(msg) {
-		case WM_CREATE:
-			if (!OnCreate())
-				return -1;
-			break;
-
-		case WM_DESTROY:
-			OnDestroy();
-			break;
-
-		case WM_SIZE:
-			OnSize();
-			break;
-
-		case WM_SETFOCUS:
-			OnSetFocus();
-			return 0;
-
-		case WM_COMMAND:
-			if (OnCommand(LOWORD(wParam), HIWORD(wParam)))
-				return 0;
-			break;
-
-		case ATWM_FONTSUPDATED:
-			OnFontsUpdated();
-			break;
-
-		case ATWM_THEMEUPDATED:
-			OnFontsUpdated();
-			break;
-	}
-
-	return ATUINativeWindow::WndProc(msg, wParam, lParam);
-}
-
-bool ATUIPane::OnCreate() {
-	RegisterUIPane();
-	OnSize();
-	return true;
-}
-
-void ATUIPane::OnDestroy() {
-	UnregisterUIPane();
-}
-
-void ATUIPane::OnSize() {
-}
-
-void ATUIPane::OnSetFocus() {
-}
-
-void ATUIPane::OnFontsUpdated() {
-}
-
-void ATUIPane::OnThemeUpdated() {
-}
-
-bool ATUIPane::OnCommand(uint32 id, uint32 extcode) {
-	return false;
-}
-
-void ATUIPane::RegisterUIPane() {
-	ATRegisterActiveUIPane(mPaneId, this);
-}
-
-void ATUIPane::UnregisterUIPane() {
-	ATUnregisterActiveUIPane(mPaneId, this);
 }

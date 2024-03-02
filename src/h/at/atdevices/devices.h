@@ -19,8 +19,8 @@
 #ifndef f_AT_ATDEVICES_DEVICES_H
 #define f_AT_ATDEVICES_DEVICES_H
 
-class ATDeviceManager;
+struct ATDeviceDefinition;
 
-void ATRegisterDeviceLibrary(ATDeviceManager& dm);
+extern const std::initializer_list<const ATDeviceDefinition *> kATDeviceLibraryDefs;
 
 #endif

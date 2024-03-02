@@ -47,7 +47,8 @@ public:
 	virtual void OnTick() {}
 	virtual void OnDisplayChange() {}
 	virtual void OnForegroundChange(bool foreground) {}
-	virtual void OnRealizePalette() {}
+	virtual void OnRealizePalette(bool foreground) {}
+	virtual void OnGlobalSettingsChanged() {}
 
 protected:
 	friend class VDVideoDisplayManager;
@@ -72,8 +73,6 @@ public:
 
 	void	SetProfileHook(const vdfunction<void(IVDVideoDisplay::ProfileEvent)>& profileHook);
 
-	void	SetBackgroundFallbackEnabled(bool enabled);
-
 	void	RemoteCall(void (*function)(void *), void *data);
 
 	void	AddClient(VDVideoDisplayClient *pClient);
@@ -82,11 +81,21 @@ public:
 	void	ReaffirmPreciseMode();
 	void	ModifyTicksEnabled(bool enabled);
 
+	void	NotifyGlobalSettingsChanged();
+
 	void RemapPalette();
 	HPALETTE	GetPalette() const { return mhPalette; }
 	const uint8 *GetLogicalPalette() const { return mLogicalPalette; }
 
-protected:
+	float	GetSystemSDRBrightness(HMONITOR monitor);
+	bool	IsMonitorHDRCapable(HMONITOR monitor);
+
+private:
+	struct MonitorHDRInfo;
+
+	const MonitorHDRInfo& GetMonitorHDRInfo(HMONITOR monitor);
+	void	UpdateDisplayInfoCache();
+
 	void	ThreadRun();
 	void	ThreadRunFullRemote();
 	void	ThreadRunTimerOnly();
@@ -109,7 +118,6 @@ protected:
 	static LRESULT CALLBACK StaticWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-protected:
 	enum {
 		kTimerID_ForegroundPoll	= 10,
 		kTimerID_Tick			= 11
@@ -128,7 +136,6 @@ protected:
 
 	bool		mbMultithreaded;
 	bool		mbAppActive;
-	bool		mbBackgroundFallbackEnabled;
 
 	typedef vdlist<VDVideoDisplayClient> Clients;
 	Clients		mClients;
@@ -149,6 +156,27 @@ protected:
 	RemoteCalls	mRemoteCalls;
 
 	vdfunction<void(IVDVideoDisplay::ProfileEvent)> mpProfileHook;
+
+	struct MonitorHDRInfo {
+		float mSDRLevel = 200;
+		bool mbHDREnabled = false;
+		bool mbHDRCapable = false;
+	};
+
+	struct MonitorHDRInfoByHandle {
+		HMONITOR mhMonitor = nullptr;
+		MonitorHDRInfo mInfo;
+	};
+
+	vdfastvector<MonitorHDRInfoByHandle> mMonitorHDRInfoCache;
+
+	struct MonitorHDRInfoByPath {
+		uint32 mPathHash = 0;
+		MonitorHDRInfo mInfo;
+	};
+
+	vdfastvector<MonitorHDRInfoByPath> mMonitorHDRInfoCacheDC;
+	bool mbMonitorHDRInfoCacheDCValid = false;
 
 	uint8	mLogicalPalette[256];
 };

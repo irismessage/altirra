@@ -3,6 +3,7 @@
 #include <vd2/VDDisplay/textrenderer.h>
 #include <at/atuicontrols/uitextedit.h>
 #include <at/atui/uimanager.h>
+#include <at/atnativeui/theme.h>
 
 ATUITextEdit::ATUITextEdit()
 	: mScrollX(0)
@@ -19,7 +20,13 @@ ATUITextEdit::ATUITextEdit()
 	, mbCaretOn(false)
 	, mReturnPressedEvent()
 {
-	SetFillColor(0xFFFFFF);
+	const auto& tc = ATUIGetThemeColors();
+
+	mTextColor = tc.mContentFg;
+	mHighlightBackgroundColor = tc.mHighlightedBg;
+	mHighlightTextColor = tc.mHighlightedFg;
+
+	SetFillColor(tc.mContentBg);
 	SetCursorImage(kATUICursorImage_IBeam);
 }
 

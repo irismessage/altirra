@@ -1163,7 +1163,7 @@ void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh
 
 	mPresentParms.Windowed = !newState;
 	mPresentParms.SwapEffect = newState ? D3DSWAPEFFECT_DISCARD : D3DSWAPEFFECT_COPY;
-	mPresentParms.BackBufferCount = newState ? 3 : 1;
+	mPresentParms.BackBufferCount = newState ? 2 : 1;
 	mPresentParms.PresentationInterval = newState ? D3DPRESENT_INTERVAL_ONE : D3DPRESENT_INTERVAL_IMMEDIATE;
 
 	// Windows 10 build 1709 introduces an undocumented breaking change via its "fullscreen optimizations"

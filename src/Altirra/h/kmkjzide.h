@@ -23,6 +23,7 @@
 #include <at/atcore/deviceindicators.h>
 #include <at/atcore/deviceparentimpl.h>
 #include <at/atcore/devicepbi.h>
+#include <at/atcore/devicestorageimpl.h>
 #include "pbi.h"
 #include "ide.h"
 #include <at/atemulation/flash.h>
@@ -208,6 +209,7 @@ protected:
 	ATFlashEmulator	mSDXCtrl;
 
 	ATRTCV3021Emulator mRTC;
+	ATDeviceVirtualStorage mRTCStorage;
 	ATIDEEmulator mIDE[2];
 
 	ATCovoxEmulator mCovox;

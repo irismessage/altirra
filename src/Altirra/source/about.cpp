@@ -41,6 +41,7 @@ namespace {
 				while(s != stringEnd && *s != '%')
 					++s;
 
+				[[maybe_unused]]
 				const ptrdiff_t len = s - varbase;
 
 				VDASSERT(len == 0);

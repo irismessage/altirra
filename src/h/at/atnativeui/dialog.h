@@ -111,6 +111,7 @@ public:
 	void Add(uint32 id, uint32 alignment);
 	void Add(VDZHWND hwndControl, uint32 alignment);
 	void Add(VDZHWND hwnd, sint32 x, sint32 y, sint32 w, sint32 h, uint32 alignment);
+	void AddWithOffsets(VDZHWND hwnd, sint32 x1, sint32 y1, sint32 x2, sint32 y2, uint32 alignment, bool dlus, bool repositionNow);
 	void AddAlias(VDZHWND hwndTarget, VDZHWND hwndSource, uint32 mergeFlags);
 	void Remove(VDZHWND hwnd);
 
@@ -148,9 +149,20 @@ private:
 	Controls mControls;
 };
 
+class VDMenuItemInitializer {
+public:
+	VDMenuItemInitializer(VDZHMENU hmenu, VDZUINT pos) : mhmenu(hmenu), mPos(pos) {}
+
+	void SetEnabled(bool enable); 
+
+private:
+	VDZHMENU mhmenu;
+	VDZUINT mPos;
+};
+
 class VDDialogFrameW32 : public ATUINativeWindowProxy {
 public:
-	virtual ~VDDialogFrameW32() = default;
+	virtual ~VDDialogFrameW32();
 
 	bool IsCreated() const { return mhdlg != NULL; }
 
@@ -158,6 +170,8 @@ public:
 	bool	Create(VDDialogFrameW32 *parent);
 
 	void Sync(bool writeToDataStore);
+
+	vdsize32 GetTemplateSizeDLUs() const;
 
 	using ATUINativeWindowProxy::SetArea;
 	using ATUINativeWindowProxy::SetCaption;
@@ -188,6 +202,21 @@ public:
 	void ShowError2(const MyError&, const wchar_t *title = nullptr);
 	bool Confirm(const wchar_t *message, const wchar_t *caption = nullptr);
 	bool Confirm2(const char *ignoreTag, const wchar_t *message, const wchar_t *title = nullptr);
+	
+	int ActivatePopupMenu(int x, int y, const wchar_t *const *items);
+
+	struct PopupMenuItem {
+		VDStringW mDisplayName;
+		bool mbElevationRequired = false;
+		bool mbDisabled = false;
+	};
+
+	int ActivatePopupMenu(int x, int y, vdspan<PopupMenuItem> items);
+
+	int ActivateMenuButton(uint32 id, const wchar_t *const *items);
+	int ActivateMenuButton(uint32 id, vdspan<PopupMenuItem> items);
+
+	void ActivateCommandPopupMenu(int x, int y, uint32 menuID, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer);
 
 protected:
 	VDDialogFrameW32(uint32 dlgid);
@@ -244,9 +273,6 @@ protected:
 
 	void SetPeriodicTimer(uint32 id, uint32 msperiod);
 
-	int ActivateMenuButton(uint32 id, const wchar_t *const *items);
-	int ActivatePopupMenu(int x, int y, const wchar_t *const *items);
-
 	// listbox
 	void LBClear(uint32 id);
 	sint32 LBGetSelectedIndex(uint32 id);
@@ -273,6 +299,8 @@ protected:
 	bool PostCall(vdfunction<void()>&& call);
 
 protected:
+	struct ButtonInfo;
+
 	virtual VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
 	virtual void OnDataExchange(bool write);
 	virtual void OnPreLoaded();
@@ -304,8 +332,12 @@ protected:
 	virtual void OnSetFont(VDZHFONT hfont);
 	virtual void OnDpiChanging(uint16 newDpiX, uint16 newDpiY, const vdrect32 *suggestedRect);
 	virtual void OnDpiChanged();
-	virtual uint32 OnButtonCustomDraw(VDZLPARAM lParam);
+	virtual uint32 OnButtonCustomDraw(VDZLPARAM lParam, ButtonInfo& buttonInfo);
 	virtual bool PreNCDestroy();
+
+	// Very last call at end of lifetime; intended for delete/release. No default.
+	virtual void PostNCDestroy();
+
 	virtual bool ShouldSetDialogIcon() const;
 	virtual sint32 GetBackgroundColor() const;
 
@@ -315,6 +347,7 @@ protected:
 	void LoadAcceleratorTable(uint32 id);
 	sint32 GetDpiScaledMetric(int index);
 	vdsize32 ComputeTemplatePixelSize() const;
+	vdsize32 DLUsToPixelSize(const vdsize32& dluSize) const;
 
 	bool	mbValidationFailed;
 	bool	mbIsModal;
@@ -333,6 +366,8 @@ protected:
 	VDZHACCEL	mAccel = nullptr;
 
 private:
+	struct DynamicPopupMenu;
+
 	void ExecutePostedCalls();
 	void SetDialogIcon();
 	VDZHFONT CreateNewFont(int dpiOverride = 0) const;
@@ -340,6 +375,8 @@ private:
 	void RecomputeDialogUnits();
 	vdsize32 ComputeTemplatePixelSize(const DialogUnits& dialogUnits, uint32 dpi) const;
 	void AdjustSize(int& width, int& height, const vdsize32& templatePixelSize, const DialogUnits& dialogUnits) const;
+	void ResetControlCachesForDpiChange();
+	void ClearControlCaches();
 	sintptr DoCreate(VDZHWND parent, bool modal);
 
 	static VDZINT_PTR VDZCALLBACK StaticDlgProc(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
@@ -371,7 +408,29 @@ protected:
 	VDUIProxyMessageDispatcherW32 mMsgDispatcher;
 	VDDialogResizerW32 mResizer;
 
-	vdfastvector<uint32> mButtonIDs;
+	enum class ButtonType {
+		Button,
+		Checkbox,
+		Radio
+	};
+
+	struct ButtonInfo {
+		uint32 mId;
+		class IATUICheckboxStyleW32 *mpStyle;
+		ButtonType mType;
+		int mIconWidth;
+		int mIconHeight;
+
+		bool operator==(const ButtonInfo& other) const {
+			return mId == other.mId;
+		}
+
+		bool operator<(const ButtonInfo& other) const {
+			return mId < other.mId;
+		}
+	};
+
+	vdfastvector<ButtonInfo> mButtons;
 };
 
 class VDResizableDialogFrameW32 : public VDDialogFrameW32 {

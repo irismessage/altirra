@@ -33,9 +33,6 @@
     <ClCompile Include="source\fontextract.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\fontrender.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\fxc10.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

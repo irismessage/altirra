@@ -11,13 +11,17 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #ifndef f_AT_ATCORE_ENUMPARSE_H
 #define f_AT_ATCORE_ENUMPARSE_H
 
+#include <type_traits>
 #include <vd2/system/vdtypes.h>
 
 class VDStringSpanA;
@@ -45,6 +49,13 @@ ATEnumParseResult<T> ATParseEnum(const VDStringSpanA& str) {
 template<typename T>
 const char *ATEnumToString(T value) {
 	return ATEnumToString(ATGetEnumLookupTable<T>(), (uint32)value);
+}
+
+template<typename T, typename U> requires std::is_enum_v<T> && (std::is_integral_v<U> || std::is_same_v<T, U>)
+bool ATIsValidEnumValue(U value) {
+	std::underlying_type_t<T> v2 = value;
+
+	return (value == v2) && ATEnumToString(ATGetEnumLookupTable<T>(), (uint32)value);
 }
 
 #define AT_DECLARE_ENUM_TABLE(enumName) template<> const ATEnumLookupTable& ATGetEnumLookupTable<enumName>()

@@ -28,10 +28,10 @@
 #include <at/atcore/device.h>
 #include <at/atcore/devicediskdrive.h>
 #include <at/atcore/deviceparent.h>
-#include <at/atcore/devicemanager.h>
 #include <at/atcore/propertyset.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/theme.h>
+#include "devicemanager.h"
 #include "diskinterface.h"
 #include "oshelper.h"
 #include "resource.h"
@@ -207,6 +207,9 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		L"Controller port devices",
 		"joyport",
 		{
+			{ "computereyes", L"ComputerEyes Video Acquisition System",
+				L"Video capture device by Digital Vision, Inc. connecting to joystick ports 1 and 2."
+			},
 			{ "corvus", L"Corvus Disk Interface",
 				L"External hard drive connected to controller ports 3 and 4 of a 400/800. Additional handler software "
 					L"is required to access the disk (not included)."
@@ -215,6 +218,9 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 				L"Small device attached to joystick port used to lock software operation to physical posesssion "
 					L"of the dongle device. This form implements a simple mapping function where up to three bits output "
 					L"by the computer produce up to four bits of output from the dongle."
+			},
+			{ "simcovox", L"SimCovox",
+				L"A joystick based Covox device made by Jakub Husak, plugging into ports 1 and 2.\n\nhttps://github.com/jhusak/atari8_simcovox_arduino_mega328p"
 			},
 			{ "xep80", L"XEP80",
 				L"External 80-column video output that attaches to the joystick port and drives a separate display. "
@@ -487,6 +493,18 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		}
 	},
 	{
+		L"Video source devices",
+		"videosource",
+		{
+			{ "videogenerator", L"Video generator",
+				L"Generates a static image frame for a composite video input."
+			},
+			{ "videostillimage", L"Video still image",
+				L"Generates a still image frame for a composite video input from an image file."
+			}
+		}
+	},
+	{
 		L"Other devices",
 		"other",
 		{
@@ -691,7 +709,7 @@ struct ATUIControllerDevices::DeviceNode final : public vdrefcounted<IVDUITreeVi
 		}
 	}
 
-	IATDevice *mpDev = nullptr;
+	vdrefptr<IATDevice> mpDev;
 	IATDeviceParent *mpDevParent = nullptr;
 	uint32 mBusIndex = 0;
 	IATDeviceBus *mpDevBus = nullptr;
@@ -702,16 +720,19 @@ struct ATUIControllerDevices::DeviceNode final : public vdrefcounted<IVDUITreeVi
 	DeviceNode *mpParent = nullptr;
 };
 
-ATUIControllerDevices::ATUIControllerDevices(VDDialogFrameW32& parent, ATDeviceManager& devMgr, VDUIProxyTreeViewControl& treeView, VDUIProxyButtonControl& settingsView, VDUIProxyButtonControl& removeView)
+ATUIControllerDevices::ATUIControllerDevices(VDDialogFrameW32& parent, ATDeviceManager& devMgr, VDUIProxyTreeViewControl& treeView, VDUIProxyButtonControl& settingsView, VDUIProxyButtonControl& removeView,
+	VDUIProxyButtonControl& moreView)
 	: mParent(parent)
 	, mDevMgr(devMgr)
 	, mTreeView(treeView)
 	, mSettingsView(settingsView)
 	, mRemoveView(removeView)
+	, mMoreView(moreView)
 {
 	mTreeView.OnItemSelectionChanged() += mDelSelectionChanged.Bind(this, &ATUIControllerDevices::OnItemSelectionChanged);
 	mTreeView.OnItemDoubleClicked() += mDelDoubleClicked.Bind(this, &ATUIControllerDevices::OnItemDoubleClicked);
 	mTreeView.OnItemGetDisplayAttributes() += mDelGetDisplayAttributes.Bind(this, &ATUIControllerDevices::OnItemGetDisplayAttributes);
+	mTreeView.SetOnContextMenu([this](const auto& event) -> bool { return OnContextMenu(event); });
 }
 
 void ATUIControllerDevices::OnDataExchange(bool write) {
@@ -833,8 +854,9 @@ void ATUIControllerDevices::Add() {
 					return;
 			}
 
+			vdrefptr<IATDevice> dev;
 			try {
-				IATDevice *dev = mDevMgr.AddDevice(def, props, devParent != nullptr || devBus != nullptr, false);
+				dev = mDevMgr.AddDevice(def, props, devParent != nullptr || devBus != nullptr, false);
 
 				try {
 					if (devBus)
@@ -866,6 +888,20 @@ void ATUIControllerDevices::Add() {
 				ATUIConfirmResetComplete();
 
 			OnDataExchange(false);
+
+			VDUIProxyTreeViewControl::NodeRef itemToSelect = VDUIProxyTreeViewControl::kNodeRoot;
+
+			mTreeView.EnumChildrenRecursive(VDUIProxyTreeViewControl::kNodeRoot,
+				[p = dev.get(), &itemToSelect](IVDUITreeViewVirtualItem *item) {
+					DeviceNode *node = static_cast<DeviceNode *>(item);
+
+					if (node->mpDev == p)
+						itemToSelect = node->mNode;
+				}
+			);
+
+			if (itemToSelect != VDUIProxyTreeViewControl::kNodeRoot)
+				mTreeView.SelectNode(itemToSelect);
 		}
 	}
 }
@@ -934,8 +970,14 @@ void ATUIControllerDevices::Remove() {
 	p->mpDev = nullptr;
 
 	IATDeviceParent *parent = dev->GetParent();
-	if (parent)
-		parent->GetDeviceBus(dev->GetParentBusIndex())->RemoveChildDevice(dev);
+	uint32 parentBusIndex = 0;
+
+	if (parent) {
+		parentBusIndex = dev->GetParentBusIndex();
+		parent->GetDeviceBus(parentBusIndex)->RemoveChildDevice(dev);
+	}
+
+	vdrefptr<IATDevice> parentDevice(vdpoly_cast<IATDevice *>(parent));
 
 	mDevMgr.RemoveDevice(dev);
 
@@ -950,6 +992,24 @@ void ATUIControllerDevices::Remove() {
 		ATUIConfirmResetComplete();
 
 	OnDataExchange(false);
+
+	VDUIProxyTreeViewControl::NodeRef itemToSelect = VDUIProxyTreeViewControl::kNodeRoot;
+	if (parent) {
+		mTreeView.EnumChildrenRecursive(VDUIProxyTreeViewControl::kNodeRoot,
+			[parent, parentBusIndex, &itemToSelect](IVDUITreeViewVirtualItem *item) {
+				DeviceNode *node = static_cast<DeviceNode *>(item);
+
+				if (node->mpDevParent == parent && node->mBusIndex == parentBusIndex)
+					itemToSelect = node->mNode;
+			}
+		);
+	}
+
+	if (itemToSelect == VDUIProxyTreeViewControl::kNodeRoot)
+		itemToSelect = mTreeView.GetChildNode(itemToSelect);
+
+	if (itemToSelect != VDUIProxyTreeViewControl::kNodeRoot)
+		mTreeView.SelectNode(itemToSelect);
 }
 
 void ATUIControllerDevices::RemoveAll() {
@@ -1066,6 +1126,15 @@ void ATUIControllerDevices::Settings() {
 	}
 }
 
+void ATUIControllerDevices::More() {
+	VDUIProxyTreeViewControl::ContextMenuEvent event {};
+	event.mpItem = mTreeView.GetSelectedVirtualItem();
+
+	if (event.mpItem) {
+		DisplayMore(event, true);
+	}
+}
+
 void ATUIControllerDevices::CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef parentNode, IATDevice *dev, const wchar_t *prefix) {
 	auto nodeObject = vdmakerefptr(new DeviceNode(dev, prefix));
 	auto devnode = mTreeView.AddVirtualItem(parentNode, mTreeView.kNodeLast, nodeObject);
@@ -1132,6 +1201,8 @@ void ATUIControllerDevices::CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef p
 			auto busNode = vdmakerefptr(new DeviceNode(devParent, busIndex));
 			auto busTreeNode = mTreeView.AddVirtualItem(devnode, mTreeView.kNodeLast, busNode);
 
+			busNode->mNode = busTreeNode;
+
 			vdfastvector<IATDevice *> childDevs;
 
 			bus->GetChildDevices(childDevs);
@@ -1177,6 +1248,7 @@ void ATUIControllerDevices::OnItemSelectionChanged(VDUIProxyTreeViewControl *sen
 
 	mSettingsView.SetEnabled(enabled);
 	mRemoveView.SetEnabled(node != nullptr && node->mpDev);
+	mMoreView.SetEnabled(node != nullptr && node->mpDev);
 }
 
 void ATUIControllerDevices::OnItemDoubleClicked(VDUIProxyTreeViewControl *sender, bool *handled) {
@@ -1190,6 +1262,79 @@ void ATUIControllerDevices::OnItemGetDisplayAttributes(VDUIProxyTreeViewControl 
 
 	if (node && node->mpParent)
 		event->mbIsMuted = true;
+}
+
+bool ATUIControllerDevices::OnContextMenu(const VDUIProxyTreeViewControl::ContextMenuEvent& event) {
+	return DisplayMore(event, false);
+}
+
+bool ATUIControllerDevices::DisplayMore(const VDUIProxyTreeViewControl::ContextMenuEvent& event, bool fromButton) {
+	vdvector<VDDialogFrameW32::PopupMenuItem> items;
+
+	DeviceNode *node = static_cast<DeviceNode *>(event.mpItem);
+	vdfastvector<IATDeviceXCmd *> xcmds;
+	vdfastvector<int> xcmdOrder;
+
+	if (node && node->mpDev) {
+		xcmds = mDevMgr.GetExtendedCommandsForDevice(*node->mpDev);
+
+		auto n = xcmds.size();
+
+		xcmdOrder.resize(n);
+		for(size_t i=0; i<n; ++i)
+			xcmdOrder[i] = i;
+
+		vdvector<ATDeviceXCmdInfo> xcmdInfos;
+		xcmdInfos.reserve(n);
+
+		for(IATDeviceXCmd *xcmd : xcmds)
+			xcmdInfos.emplace_back(xcmd->GetInfo());
+
+		std::sort(xcmdOrder.begin(), xcmdOrder.end(),
+			[&xcmdInfos](int i, int j) {
+				return xcmdInfos[i].mDisplayName.comparei(xcmdInfos[j].mDisplayName) < 0;
+			}
+		);
+
+		for(int index : xcmdOrder) {
+			const auto& xcmdInfo = xcmdInfos[index];
+
+			items.emplace_back();
+			auto& menuItem = items.back();
+
+			menuItem.mDisplayName = xcmdInfo.mDisplayName;
+			menuItem.mbElevationRequired = xcmdInfo.mbRequiresElevation;
+		}
+	}
+
+	if (items.empty()) {
+		items.emplace_back();
+
+		auto& noItem = items.back();
+		noItem.mDisplayName = L"No commands available";
+		noItem.mbDisabled = true;
+	}
+
+	int index;
+	
+	if (fromButton)
+		index = mParent.ActivateMenuButton(mMoreView.GetWindowId(), vdspan(items.begin(), items.end()));
+	else
+		index = mParent.ActivatePopupMenu(event.mScreenPos.x, event.mScreenPos.y, vdspan(items.begin(), items.end()));
+
+	if ((unsigned)index < xcmdOrder.size()) {
+		try {
+			xcmds[xcmdOrder[index]]->Invoke(mDevMgr, *node->mpDev);
+		} catch(const MyError& e) {
+			mParent.ShowError(e);
+		}
+
+		OnDataExchange(false);
+
+		return true;
+	}
+
+	return false;
 }
 
 void ATUIControllerDevices::UpdateIcons() {

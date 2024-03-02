@@ -20,10 +20,10 @@
 #include <at/atcore/devicevideo.h>
 #include <windows.h>
 #include "uienhancedtext.h"
+#include <at/atcore/ksyms.h>
 #include <at/atui/uiwidget.h>
 #include "antic.h"
 #include "gtia.h"
-#include "ksyms.h"
 #include "simulator.h"
 #include "virtualscreen.h"
 

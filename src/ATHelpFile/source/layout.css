@@ -109,6 +109,11 @@ dl.scripting-ref dt {
 	font-weight: normal;
 	font-family: Lucida Console, monospace;
 	margin-top: 1.5em;
+	color: #730;
+}
+
+body.dark dl.scripting-ref dt {
+	color: #a97;
 }
 
 dd {

@@ -1,3 +1,19 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2022 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #include <stdafx.h>
 
 #include <windows.h>
@@ -220,6 +236,7 @@ bool VDDialogEditAccelerators::OnLoaded() {
 	mResizer.Add(IDC_HOTKEY, VDDialogResizerW32::kBC | VDDialogResizerW32::kAvoidFlicker);
 	mResizer.Add(IDC_CONTEXT, VDDialogResizerW32::kBL | VDDialogResizerW32::kAvoidFlicker);
 	mResizer.Add(IDC_KEYUP, VDDialogResizerW32::kBL);
+	mResizer.Add(IDC_NEXTKEY, VDDialogResizerW32::kBL);
 
 	AddProxy(&mListViewBoundCommands, IDC_BOUNDCOMMANDS);
 	AddProxy(&mComboContext, IDC_CONTEXT);
@@ -279,6 +296,9 @@ bool VDDialogEditAccelerators::OnCommand(uint32 id, uint32 extcode) {
 
 			if (mpHotKeyControl) {
 				mpHotKeyControl->GetAccelerator(accel);
+
+				if (accel.mVirtKey == 0 && accel.mModifiers == 0)
+					return 0;
 
 				// Look for a conflicting command.
 				for(BoundCommands::iterator it(mBoundCommands.begin()), itEnd(mBoundCommands.end()); it != itEnd; ++it) {
@@ -360,6 +380,10 @@ bool VDDialogEditAccelerators::OnCommand(uint32 id, uint32 extcode) {
 		if (IDOK == MessageBoxW(mhdlg, L"Really reset?", g_wszWarning, MB_OKCANCEL | MB_ICONEXCLAMATION))
 			LoadTables(mpBoundCommandsDefaults);
 
+		return true;
+	} else if (id == IDC_NEXTKEY) {
+		if (mpHotKeyControl)
+			mpHotKeyControl->CaptureAnyNextKey();
 		return true;
 	}
 
@@ -506,6 +530,11 @@ void VDDialogEditAccelerators::OnItemSelectionChanged(VDUIProxyListView *source,
 }
 
 void VDDialogEditAccelerators::OnHotKeyChanged(IVDUIHotKeyExControl *source, const VDUIAccelerator& accel) {
+	if (accel.mVirtKey || accel.mModifiers)
+		EnableControl(IDC_ADD, true);
+	else
+		EnableControl(IDC_ADD, false);
+
 	BoundCommands::const_iterator it(mBoundCommands.begin()), itEnd(mBoundCommands.end());
 	int index = 0;
 

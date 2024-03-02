@@ -451,8 +451,9 @@ reject_match:
 			mRepeatSumAccum += repeatData;
 			mRepeatData[repeatIndex] = repeatData;
 			mRepeatData[repeatIndex + kRepeatWindowSize] = repeatData;
-			++mRepeatHead;
 		}
+
+		++mRepeatHead;
 	}
 }
 

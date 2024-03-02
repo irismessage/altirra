@@ -176,13 +176,18 @@ long CPUGetAvailableExtensions() {
 }
 
 void VDCPUCleanupExtensions() {
-#if defined(VD_CPU_X86)
-	if (ISSE_enabled)
-		_mm_sfence();
+#if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
+	#if defined(VD_CPU_X86)
+		if (ISSE_enabled)
+			_mm_sfence();
 
-	if (MMX_enabled)
-		_mm_empty();
-#elif defined(VD_CPU_AMD64)
-	_mm_sfence();
+		if (MMX_enabled)
+			_mm_empty();
+	#elif defined(VD_CPU_AMD64)
+		_mm_sfence();
+	#endif
+
+	if (g_lCPUExtensionsEnabled & CPUF_SUPPORTS_AVX)
+		_mm256_zeroupper();
 #endif
 }

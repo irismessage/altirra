@@ -44,7 +44,7 @@ ATUIDialogDeviceParFileWriter::ATUIDialogDeviceParFileWriter(ATPropertySet& prop
 }
 
 bool ATUIDialogDeviceParFileWriter::OnLoaded() {
-	ATUIEnableEditControlAutoComplete(GetControl(IDC_IDE_IMAGEPATH));
+	ATUIEnableEditControlAutoComplete(GetControl(IDC_PATH));
 
 	return VDDialogFrameW32::OnLoaded();
 }

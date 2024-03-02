@@ -22,6 +22,11 @@ if __name__ == '__main__':
         os.path.join(os.path.dirname(__file__), '../../obj/feed/altirra-update-dev.xml')
     )
 
+    makefeed.cook_feed(
+        os.path.join(os.path.dirname(__file__), 'altirra-update-release.xml'),
+        os.path.join(os.path.dirname(__file__), '../../obj/feed/altirra-update-release.xml')
+    )
+
     subprocess.run(
         [
             os.path.join(os.path.dirname(__file__), '../../out/Release/asuka'),
@@ -29,6 +34,16 @@ if __name__ == '__main__':
             'AltirraUpdate',
             os.path.join(os.path.dirname(__file__), '../../obj/feed/altirra-update-dev.xml'),
             os.path.join(os.path.dirname(__file__), '../../out/feed/altirra-update-dev.xml')
+        ]
+    )
+
+    subprocess.run(
+        [
+            os.path.join(os.path.dirname(__file__), '../../out/Release/asuka'),
+            'signxml',
+            'AltirraUpdate',
+            os.path.join(os.path.dirname(__file__), '../../obj/feed/altirra-update-release.xml'),
+            os.path.join(os.path.dirname(__file__), '../../out/feed/altirra-update-release.xml')
         ]
     )
 

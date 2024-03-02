@@ -11,9 +11,12 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #ifndef f_AT_POKEYRENDERER_H
 #define f_AT_POKEYRENDERER_H
@@ -25,6 +28,7 @@ class ATScheduler;
 struct ATPokeyTables;
 struct ATPokeyAudioState;
 class IATSyncAudioEdgePlayer;
+class IATSyncAudioSamplePlayer;
 struct ATPokeyAudioLog;
 struct ATSaveStatePokeyRenderer;
 
@@ -35,7 +39,7 @@ public:
 	ATPokeyRenderer();
 	~ATPokeyRenderer();
 
-	void Init(ATScheduler *sch, ATPokeyTables *tables);
+	void Init(ATScheduler *sch, ATPokeyTables *tables, IATSyncAudioSamplePlayer *edgeSamplePlayer);
 	void ColdReset();
 
 	void SyncTo(const ATPokeyRenderer& src);
@@ -50,6 +54,9 @@ public:
 	void RestartAudioLog(bool initial = false);
 
 	void SetFiltersEnabled(bool enable);
+
+	void SetSpeakerFilterEnabled(bool enable);
+
 	void SetInitMode(bool init);
 	bool SetSpeaker(bool state);
 	void SetAudioLine2(int v);
@@ -127,6 +134,7 @@ protected:
 	int		mExternalInput;
 
 	bool	mbSpeakerState;
+	bool	mbSpeakerFilterEnabled = false;
 
 	// Noise/tone flip-flop state for all four channels. This is the version updated by the
 	// FireTimer() routines; change events are then produced to update the analogous bits 0-3
@@ -249,6 +257,9 @@ protected:
 	float mSerialPulse = 0;
 
 	vdrefptr<ATSyncAudioEdgeBuffer> mpEdgeBuffer;
+	IATSyncAudioSamplePlayer *mpEdgeSamplePlayer = nullptr;
+	IATSyncAudioConvolutionPlayer *mpEdgeConvPlayer = nullptr;
+	IATAudioSoundGroup *mpSoundGroup = nullptr;
 
 	enum : uint32 {
 		// 1271 samples is the max (35568 cycles/frame / 28 cycles/sample + 1). We add a little bit here

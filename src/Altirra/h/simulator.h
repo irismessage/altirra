@@ -42,6 +42,7 @@ class ATHLEProgramLoader;
 class IATHLEFPAccelerator;
 class ATHLEFastBootHook;
 class IATHLECIOHook;
+class ATAudioSamplePool;
 class ATAudioSamplePlayer;
 class ATFirmwareManager;
 class ATDeviceManager;
@@ -65,7 +66,6 @@ class ATSaveStateReader;
 class ATCassetteEmulator;
 class IATJoystickManager;
 class ATCartridgeEmulator;
-class ATPortController;
 class ATInputManager;
 class ATVBXEEmulator;
 class ATCPUProfiler;
@@ -159,9 +159,6 @@ public:
 
 	IATPrinterOutput *GetPrinterOutput() { return mpPrinterOutput; }
 	void SetPrinterDefaultOutput(IATPrinterOutput *p);
-
-	ATPortController *GetPortControllerA() { return mpPortAController; }
-	ATPortController *GetPortControllerB() { return mpPortBController; }
 
 	bool IsTurboModeEnabled() const { return mbTurbo; }
 	bool IsFrameSkipEnabled() const { return mbFrameSkip; }
@@ -394,6 +391,7 @@ public:
 
 	AdvanceResult AdvanceUntilInstructionBoundary();
 	AdvanceResult Advance(bool dropFrame);
+	void SetOnAdvanceUnblocked(vdfunction<void()> fn);
 
 	uint32 GetCpuCycleCounter() const;
 	uint32 GetTimestamp() const;
@@ -481,8 +479,6 @@ private:
 	void PokeyBreak() override;
 	bool PokeyIsInInterrupt() const override;
 	bool PokeyIsKeyPushOK(uint8 c, bool cooldownExpired) const override;
-
-	void BeginFrame();
 
 	void ReinitHookPage();
 	void SetupPendingHeldButtons();
@@ -577,7 +573,9 @@ private:
 	ATPokeyEmulator	mPokey;
 	ATPokeyEmulator	mPokey2;
 	IATAudioOutput	*mpAudioOutput;
-	ATAudioSamplePlayer *mpAudioSamplePlayer;
+	ATAudioSamplePool *mpAudioSamplePool = nullptr;
+	ATAudioSamplePlayer *mpAudioSamplePlayer = nullptr;
+	ATAudioSamplePlayer *mpAudioEdgeSamplePlayer = nullptr;
 	ATPokeyTables	*mpPokeyTables;
 	ATScheduler		mScheduler;
 	ATScheduler		mSlowScheduler;
@@ -587,8 +585,6 @@ private:
 	IATJoystickManager	*mpJoysticks;
 	ATCartridgeEmulator	*mpCartridge[2];
 	ATInputManager	*mpInputManager;
-	ATPortController *mpPortAController;
-	ATPortController *mpPortBController;
 	ATLightPenPort *mpLightPen;
 	IATPrinterOutput *mpPrinterOutput;
 	ATVBXEEmulator *mpVBXE;

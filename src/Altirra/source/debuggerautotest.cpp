@@ -18,13 +18,13 @@
 #include <vd2/system/vdalloc.h>
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
-#include <at/atcore/devicemanager.h>
 #include <at/atcore/deviceparent.h>
 #include <at/atcore/propertyset.h>
 #include <at/atdebugger/argparse.h>
 #include <at/atui/uicommandmanager.h>
 #include "console.h"
 #include "debugger.h"
+#include "devicemanager.h"
 #include "options.h"
 #include "simulator.h"
 #include "uiaccessors.h"

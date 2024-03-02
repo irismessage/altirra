@@ -66,6 +66,10 @@ struct ATDiskProfile {
 	bool	mbReverseOnForwardSeeks = false;
 	bool	mbWaitForLongSectors = false;
 
+	bool	mbBufferTrackReads = false;
+	bool	mbBufferTrackReadErrors = false;
+	bool	mbBufferSector1 = false;
+
 	ATDiskProfile() = default;
 
 	constexpr ATDiskProfile(ATDiskEmulationMode mode);

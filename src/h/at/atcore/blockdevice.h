@@ -12,9 +12,12 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #ifndef f_AT_ATCORE_BLOCKDEVICE_H
 #define f_AT_ATCORE_BLOCKDEVICE_H
@@ -41,6 +44,13 @@ public:
 
 	virtual void ReadSectors(void *data, uint32 lba, uint32 n) = 0;
 	virtual void WriteSectors(const void *data, uint32 lba, uint32 n) = 0;
+};
+
+class IATBlockDeviceDirectAccess : public IVDRefUnknown {
+public:
+	static constexpr uint32 kTypeID = "IATBlockDeviceDirectAccess"_vdtypeid;
+
+	virtual VDStringW GetVHDDirectAccessPath() const = 0;
 };
 
 #endif

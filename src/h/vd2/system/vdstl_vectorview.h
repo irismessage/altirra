@@ -54,7 +54,7 @@ public:
 	}
 
 	template<typename U>
-	constexpr vdvector_view(const U& v)
+	constexpr vdvector_view(const U& v) requires std::assignable_from<T*&, decltype(std::data(v))>
 		: mpBegin(std::data(v))
 		, mSize(std::size(v))
 	{

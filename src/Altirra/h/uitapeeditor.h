@@ -37,9 +37,15 @@ public:
 		Analyze
 	};
 
-	enum class Encoding : uint8 {
-		FSK,
+	enum class Decoder : uint8 {
+		FSK_Sync,
+		FSK_PLL,
 		T2000,
+	};
+
+	enum class FilterMode : uint8 {
+		FSKDirectSample2000Baud,
+		FSKDirectSample1000Baud
 	};
 
 	ATUITapeViewControl();
@@ -62,8 +68,8 @@ public:
 	DrawMode GetDrawMode() const { return mDrawMode; }
 	void SetDrawMode(DrawMode drawMode);
 
-	Encoding GetAnalysisEncoding() const;
-	void SetAnalysisEncoding(Encoding encoding);
+	Decoder GetAnalysisDecoder() const;
+	void SetAnalysisDecoder(Decoder encoding);
 
 	bool GetSIOMonitorEnabled() const;
 	void SetSIOMonitorEnabled(bool enabled);
@@ -85,8 +91,13 @@ public:
 	void ClearSelection();
 	void SetSelection(uint32 startSample, uint32 endSample);
 
+	void EnsureSelectionVisible();
+	void EnsureRangeVisible(uint32 startSample, uint32 endSample);
+
 	void Insert();
 	void Delete();
+	void ReAnalyze();
+	void Filter(FilterMode filterMode);
 
 	bool HasClip() const;
 	void Cut();
@@ -95,6 +106,9 @@ public:
 	void ConvertToStdBlock();
 	void ConvertToRawBlock();
 	void ExtractSelectionAsCFile(vdfastvector<uint8>& data) const;
+
+	bool HasDecodedData() const;
+	void CopyDecodedData() const;
 
 	bool CanUndo() const;
 	bool CanRedo() const;
@@ -173,35 +187,61 @@ private:
 	void ExecuteUndoRedo(UndoEntry& ue);
 
 	void Analyze(uint32 start, uint32 end);
+
 	void OnByteDecoded(uint32 startPos, uint32 endPos, uint8 data, bool framingError, uint32 cyclesPerHalfBit);
 
 	struct DecodedBlock {
-		uint32 mSampleStart;
-		uint32 mSampleEnd;
-		float mSamplesPerBit;
-		float mBaudRate;
-		uint32 mStartByte;
-		uint32 mByteCount;
-		uint32 mChecksumPos;
-		bool mbValidFrame;
+		uint32 mSampleStart {};
+		uint32 mSampleEnd {};
+		float mBaudRate {};
+		uint32 mStartByte {};
+		uint32 mByteCount {};
+		uint32 mChecksumPos {};
+		bool mbValidFrame {};
+		uint8 mSuspiciousBit {};
+		bool mbSuspiciousBitPolarity {};
+	};
+
+	enum class DecodedByteFlags : uint8 {
+		None = 0x00,
+		FramingError = 0x01
+	};
+
+	friend DecodedByteFlags operator&(DecodedByteFlags x, DecodedByteFlags y) { return (DecodedByteFlags)((uint8)x & (uint8)y); }
+	friend DecodedByteFlags operator|(DecodedByteFlags x, DecodedByteFlags y) { return (DecodedByteFlags)((uint8)x | (uint8)y); }
+	friend DecodedByteFlags& operator|=(DecodedByteFlags& x, DecodedByteFlags y) { x = (DecodedByteFlags)((uint8)x | (uint8)y); return x; }
+
+	struct DecodedByte {
+		uint32 mStartSample {};
+		uint16 mBitSampleOffsets[10] {};
+		uint8 mData {};
+		DecodedByteFlags mFlags {};
+	};
+
+	struct DecodedByteStartPred {
+		bool operator()(const DecodedByte& dbyte, uint32 start) const {
+			return dbyte.mStartSample < start;
+		}
+
+		bool operator()(uint32 start, const DecodedByte& dbyte) const {
+			return start < dbyte.mStartSample;
+		}
 	};
 
 	struct DecodedBlocks {
 		vdfastvector<DecodedBlock> mBlocks;
-		vdfastvector<uint8> mByteData;
-		vdfastvector<bool> mByteFramingErrors;
-		vdfastvector<uint32> mByteStartSamples;
+		vdfastvector<DecodedByte> mByteData;
 
 		void Clear() {
 			mBlocks.clear();
 			mByteData.clear();
-			mByteFramingErrors.clear();
-			mByteStartSamples.clear();
 		}
 	};
 
 	void DecodeFSK(uint32 start, uint32 end, bool stopOnFramingError, DecodedBlocks& output) const;
+	void DecodeFSK2(uint32 start, uint32 end, bool stopOnFramingError, DecodedBlocks& output) const;
 	void DecodeT2000(uint32 start, uint32 end, DecodedBlocks& output) const;
+	static bool TryIdentifySuspiciousBit(const DecodedBlocks& dblocks, DecodedBlock& dblock, uint32 forcedSyncBytes, uint32 checksumPos, uint8 receivedSum);
 
 	vdrefptr<IATCassetteImage> mpImage;
 	uint32 mTapeChangedLock = 0;
@@ -226,7 +266,7 @@ private:
 
 	DrawMode mDrawMode = DrawMode::Scroll;
 	DrawMode mActiveDragMode = DrawMode::Scroll;
-	Encoding mAnalysisEncoding = Encoding::FSK;
+	Decoder mAnalysisDecoder = Decoder::FSK_Sync;
 
 	bool mbDragging = false;
 	sint32 mDragOriginX = 0;
@@ -240,7 +280,7 @@ private:
 	bool mbTimeMarkerShowMS = false;
 
 	bool mbShowTurboData = false;
-	bool mbShowWaveform = false;
+	bool mbShowWaveform = true;
 	bool mbStoreWaveformOnLoad = false;
 
 	bool mbSelectionValid = false;
@@ -262,6 +302,9 @@ private:
 
 	bool mbSIOMonitorEnabled = false;
 	uint8 mSIOMonChecksum = 0;
+
+	static constexpr uint32 kInvalidChecksumPos = ~UINT32_C(0);
+	uint32 mSIOMonChecksumPos = kInvalidChecksumPos;
 	uint32 mSIOMonFramingErrors = 0;
 
 	vdfunction<void()> mFnOnDrawModeChanged;
@@ -317,6 +360,7 @@ private:
 	void SaveAsWAV();
 	void Cut();
 	void Copy();
+	void CopyDecodedData();
 	void Paste();
 	void Delete();
 	void Undo();
@@ -333,7 +377,8 @@ private:
 		kCmdId_ModeDraw,
 		kCmdId_ModeInsert,
 		kCmdId_ModeAnalyze,
-		kCmdId_Delete
+		kCmdId_Delete,
+		kCmdId_Filter
 	};
 
 	void DeferUpdateModeButtons();

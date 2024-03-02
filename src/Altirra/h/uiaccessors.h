@@ -30,6 +30,7 @@ enum ATDisplayFilterMode : uint32;
 enum ATDisplayStretchMode : uint32;
 enum ATFrameRateMode : uint32;
 class ATUICommandManager;
+class ATUIManager;
 class IATAsyncDispatcher;
 
 const char *ATUIGetCurrentAltOutputName();
@@ -61,6 +62,7 @@ void ATUISwitchMemoryMode(VDGUIHandle h, ATMemoryMode mode);
 bool ATUIGetDriveSoundsEnabled();
 void ATUISetDriveSoundsEnabled(bool enabled);
 
+void ATUIRecalibrateLightPen();
 void ATUIOpenOnScreenKeyboard();
 void ATUIToggleHoldKeys();
 
@@ -119,6 +121,9 @@ void ATUISetPauseWhenInactive(bool enabled);
 ATFrameRateMode ATUIGetFrameRateMode();
 void ATUISetFrameRateMode(ATFrameRateMode mode);
 
+bool ATUIGetFrameRateVSyncAdaptive();
+void ATUISetFrameRateVSyncAdaptive(bool enable);
+
 float ATUIGetSpeedModifier();
 void ATUISetSpeedModifier(float modifier);
 
@@ -141,6 +146,8 @@ enum ATUIEnhancedTextMode {
 
 ATUIEnhancedTextMode ATUIGetEnhancedTextMode();
 void ATUISetEnhancedTextMode(ATUIEnhancedTextMode mode);
+
+ATUIManager& ATUIGetManager();
 
 VDGUIHandle ATUIGetMainWindow();
 VDGUIHandle ATUIGetNewPopupOwner();

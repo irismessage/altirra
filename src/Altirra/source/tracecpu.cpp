@@ -21,6 +21,113 @@
 #include <vd2/system/math.h>
 #include "tracecpu.h"
 
+#define AT_PROFILE_CPUTRACE 0
+
+struct ATTraceChannelCPUHistory::StaticProfiling {
+#if AT_PROFILE_CPUTRACE
+	static inline uint32 sMaskChangeCount[64] {};
+	static inline uint32 sBlockCount = 0;
+#endif
+
+	static void Start();
+	static void AddBlock();
+	static void AddFirst(uint32 mask);
+	static void Add(uint32 mask);
+	static void Stop();
+};
+
+void ATTraceChannelCPUHistory::StaticProfiling::Start() {
+#if AT_PROFILE_CPUTRACE
+	for(auto& v : sMaskChangeCount)
+		v = 0;
+	
+	sBlockCount = 0;
+#endif
+}
+
+void ATTraceChannelCPUHistory::StaticProfiling::AddBlock() {
+#if AT_PROFILE_CPUTRACE
+	++sBlockCount;
+#endif
+}
+
+void ATTraceChannelCPUHistory::StaticProfiling::AddFirst(uint32 mask) {
+#if AT_PROFILE_CPUTRACE
+	for(int i=0; i<32; ++i) {
+		if (mask & (1 << i))
+			++sMaskChangeCount[i];
+	}
+#endif
+}
+
+void ATTraceChannelCPUHistory::StaticProfiling::Add(uint32 mask) {
+#if AT_PROFILE_CPUTRACE
+	for(int i=0; i<32; ++i) {
+		if (mask & (1 << i))
+			++sMaskChangeCount[i + 32];
+	}
+#endif
+}
+
+void ATTraceChannelCPUHistory::StaticProfiling::Stop() {
+#if AT_PROFILE_CPUTRACE
+	static constexpr const char *kDesc[] = {
+		"cycle",
+		"cycle",
+		"cycle",
+		"cycle",
+		"unhalted cycle",
+		"unhalted cycle",
+		"unhalted cycle",
+		"unhalted cycle",
+		"EA",
+		"EA",
+		"EA",
+		"EA",
+		"A",
+		"X",
+		"Y",
+		"S",
+		"PC",
+		"PC",
+		"P",
+		"flags",
+		"insn",
+		"insn",
+		"insn",
+		"insn",
+		"global PC base",
+		"global PC base",
+		"global PC base",
+		"global PC base",
+		"-",
+		"-",
+		"-",
+		"-",
+	};
+
+	static_assert(std::size(kDesc) == 32);
+
+	if (!sBlockCount)
+		return;
+
+	VDDEBUG2("=== CPUTrace profiling results ===\n");
+
+	for(int i=0; i<32; ++i) {
+		VDDEBUG2("%2d: %11u (%6.2f%%) | %11u (%6.2f%%) | %s\n"
+			, i
+			, sMaskChangeCount[i]
+			, (float)sMaskChangeCount[i] / (float)sBlockCount * 100.0f
+			, sMaskChangeCount[i + 32]
+			, (float)sMaskChangeCount[i + 32] / ((float)sBlockCount * (float)(kBlockSize - 1)) * 100.0f
+			, kDesc[i]
+		);
+	}
+
+	VDDEBUG2("=== end ===\n");
+#endif
+}
+
 ATTraceChannelCPUHistory::ATTraceChannelCPUHistory(uint64 tickOffset, double tickScale, const wchar_t *name, ATDebugDisasmMode disasmMode, uint32 subCycles, ATTraceMemoryTracker *memTracker) {
 	mTickOffset = tickOffset;
 	mTickScale = tickScale;
@@ -35,6 +142,10 @@ ATTraceChannelCPUHistory::ATTraceChannelCPUHistory(uint64 tickOffset, double tic
 		mPseudoLRU[i] = i;
 }
 
+void ATTraceChannelCPUHistory::BeginEvents() {
+	StaticProfiling::Start();
+}
+
 void ATTraceChannelCPUHistory::AddEvent(uint64 tick, const ATCPUHistoryEntry& he) {
 	if (mTailOffset >= kBlockSize) {
 		mTailOffset = 0;
@@ -47,6 +158,10 @@ void ATTraceChannelCPUHistory::AddEvent(uint64 tick, const ATCPUHistoryEntry& he
 
 	mTailBlock[mTailOffset++] = he;
 	++mEventCount;
+}
+
+void ATTraceChannelCPUHistory::EndEvents() {
+	StaticProfiling::Stop();
 }
 
 void *ATTraceChannelCPUHistory::AsInterface(uint32 iid) {
@@ -289,9 +404,14 @@ void ATTraceChannelCPUHistory::PackBlock() {
 				eaPred[2] = checkBuffer[10];
 			}
 
-			//VDDEBUG2("%08X (%d) %02X\n", deltaMask, VDCountBits(deltaMask), src[20]);
-
 			src += 32;
+	
+#if AT_PROFILE_CPUTRACE
+			if (i)
+				StaticProfiling::Add(deltaMask);
+			else
+				StaticProfiling::AddFirst(deltaMask);
+#endif
 
 			memcpy(maskPtr, &deltaMask, 4);
 		}
@@ -302,7 +422,9 @@ void ATTraceChannelCPUHistory::PackBlock() {
 		
 		sizeDelta = packedSize;
 
-		//VDDEBUG2("Packed instruction block: %u -> %u (%.0f%%)\n", sizeof(mTailBlock), packedSize, 100.0f * (1.0f - (float)packedSize / (float)sizeof(mTailBlock)));
+#if AT_PROFILE_CPUTRACE
+		StaticProfiling::AddBlock();
+#endif
 	} else {
 		p = mBlockAllocator.Allocate(sizeof(mTailBlock));
 		memcpy(p, mTailBlock, sizeof mTailBlock);

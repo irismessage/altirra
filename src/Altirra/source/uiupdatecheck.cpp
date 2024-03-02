@@ -35,6 +35,7 @@ private:
 	void OnUpdateCheckCompleted(const ATUpdateFeedInfo *feedInfo);
 
 	VDUIProxyRichEditControl mInfoBox;
+	VDUIProxySysLinkControl mRSSFeedLink;
 };
 
 ATUIDialogCheckForUpdates::ATUIDialogCheckForUpdates()
@@ -46,13 +47,23 @@ ATUIDialogCheckForUpdates::ATUIDialogCheckForUpdates()
 			return true;
 		}
 	);
+
+	mRSSFeedLink.SetOnClicked(
+		[this] {
+			ATCopyTextToClipboard(mhdlg, ATUpdateGetFeedUrl().c_str());
+
+			ShowInfo2(L"The update check URL has been copied to the clipboard. Although this is only intended for the Check for Updates feature, you can paste it into any RSS 2.0 compatible feed reader.", L"Copied to clipboard");
+		}
+	);
 }
 
 bool ATUIDialogCheckForUpdates::OnLoaded() {
 	AddProxy(&mInfoBox, IDC_INFO);
+	AddProxy(&mRSSFeedLink, IDC_RSS_FEED);
 
 	mResizer.Add(IDOK, mResizer.kBR);
 	mResizer.Add(IDC_INFO, mResizer.kMC);
+	mResizer.Add(IDC_RSS_FEED, mResizer.kBL);
 
 	if (!ATUIIsDarkThemeActive())
 		mInfoBox.SetReadOnlyBackground();

@@ -34,25 +34,6 @@
 #include <at/atnativeui/uiproxies.h>
 #include "oshelper.h"
 
-#ifndef SEE_MASK_WAITFORINPUTIDLE
-#define SEE_MASK_WAITFORINPUTIDLE  0x02000000
-#endif
-
-#ifndef __IApplicationAssociationRegistrationUI_INTERFACE_DEFINED__
-#define __IApplicationAssociationRegistrationUI_INTERFACE_DEFINED__
-
-typedef struct IApplicationAssociationRegistrationUI IApplicationAssociationRegistrationUI;
-
-struct IApplicationAssociationRegistrationUI : public IUnknown
-{
-	virtual HRESULT STDMETHODCALLTYPE LaunchAdvancedAssociationUI(LPCWSTR pszAppRegistryName) = 0;
-};
-
-DEFINE_GUID(IID_IApplicationAssociationRegistrationUI, 0x1f76a169, 0xf994, 0x40ac, 0x8f, 0xc8, 0x09, 0x59, 0xe8, 0x87, 0x47, 0x10);
-DEFINE_GUID(CLSID_ApplicationAssociationRegistrationUI, 0x1968106d, 0xf3b5, 0x44cf, 0x89, 0x0e, 0x11, 0x6f, 0xcb, 0x9e, 0xce, 0xf1);
-
-#endif
-
 ///////////////////////////////////////////////////////////////////////////
 
 namespace {
@@ -523,38 +504,6 @@ void ATUIShowDialogFileAssociationsVista(bool userOnly) {
 }
 
 ///////////////////////////////////////////////////////////////////////////
-
-void ATRelaunchElevated(VDGUIHandle parent, const wchar_t *params) {
-	const VDStringW path = VDGetProgramFilePath();
-
-	SHELLEXECUTEINFOW execInfo = {sizeof(SHELLEXECUTEINFOW)};
-	execInfo.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_UNICODE | SEE_MASK_WAITFORINPUTIDLE;
-	execInfo.hwnd = (HWND)parent;
-	execInfo.lpVerb = L"runas";
-	execInfo.lpFile = path.c_str();
-	execInfo.lpParameters = params;
-	execInfo.nShow = SW_SHOWNORMAL;
-
-	if (ShellExecuteExW(&execInfo) && execInfo.hProcess) {
-		for(;;) {
-			DWORD r = MsgWaitForMultipleObjects(1, &execInfo.hProcess, FALSE, INFINITE, QS_ALLINPUT);
-
-			if (r == WAIT_OBJECT_0 + 1) {
-				MSG msg;
-				while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-					if (CallMsgFilter(&msg, 0))
-						continue;
-
-					TranslateMessage(&msg);
-					DispatchMessage(&msg);
-				}
-			} else
-				break;
-		}
-
-		CloseHandle(execInfo.hProcess);
-	}
-}
 
 void ATUIShowDialogSetFileAssociations(VDGUIHandle parent, bool allowElevation, bool userOnly) {
 	if (!userOnly && !ATIsUserAdministrator() && allowElevation) {

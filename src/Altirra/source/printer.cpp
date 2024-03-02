@@ -28,9 +28,6 @@
 #include <at/atcore/devicesio.h>
 #include "kerneldb.h"
 #include "oshelper.h"
-#include "cio.h"
-
-using namespace ATCIOSymbols;
 
 class ATDevicePrinter final : public ATDevice, public IATDevicePrinterPort, public IATDeviceCIO, public IATDeviceSIO, public IATDeviceParent {
 	ATDevicePrinter(const ATDevicePrinter&) = delete;

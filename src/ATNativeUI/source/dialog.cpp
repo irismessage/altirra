@@ -1,14 +1,32 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2022 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #include <stdafx.h>
 #include <windows.h>
 #include <commctrl.h>
 #include <richedit.h>
 #include <shellapi.h>
 #include <uxtheme.h>
+#include <vsstyle.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/w32assist.h>
+#include <at/atnativeui/controlstyles.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/genericdialog.h>
 #include <at/atnativeui/progress.h>
@@ -17,32 +35,6 @@
 #include <at/atnativeui/uiframe.h>
 
 ///////////////////////////////////////////////////////////////////////////////
-
-#ifndef WM_DPICHANGED_BEFOREPARENT
-#define WM_DPICHANGED_BEFOREPARENT 0x02E2
-#endif
-
-#ifndef WM_DPICHANGED_AFTERPARENT
-#define WM_DPICHANGED_AFTERPARENT 0x02E3
-#endif
-
-#ifndef WM_GETDPISCALEDSIZE
-#define WM_GETDPISCALEDSIZE 0x02E4
-
-typedef enum _DIALOG_DPI_CHANGE_BEHAVIORS { 
-	DDC_DEFAULT = 0,
-	DDC_DISABLE_ALL = 1,
-	DDC_DISABLE_RESIZE = 2,
-	DDC_DISABLE_CONTROL_RELAYOUT = 3
-} DIALOG_DPI_CHANGE_BEHAVIORS;
-
-typedef enum _DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS {
-	DCDC_DEFAULT = 0,
-	DCDC_DISABLE_FONT_UPDATE = 1,
-	DCDC_DISABLE_RELAYOUT = 2
-} DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS;
-
-#endif
 
 typedef BOOL (WINAPI *tpSetDialogDpiChangeBehavior)(HWND hDlg, DIALOG_DPI_CHANGE_BEHAVIORS mask, DIALOG_DPI_CHANGE_BEHAVIORS values);
 BOOL WINAPI ATSetDialogDpiChangeBehaviorDetectW32(HWND hDlg, DIALOG_DPI_CHANGE_BEHAVIORS mask, DIALOG_DPI_CHANGE_BEHAVIORS values);
@@ -142,6 +134,12 @@ bool VDUIDropFileListW32::GetFileName(int index, VDStringW& fileName) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+void VDMenuItemInitializer::SetEnabled(bool enable) {
+	EnableMenuItem(mhmenu, mPos, enable ? MF_BYPOSITION|MF_ENABLED : MF_BYPOSITION|MF_GRAYED);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
 const wchar_t *VDDialogFrameW32::spDefaultCaption = L"";
 
 VDDialogFrameW32::VDDialogFrameW32(uint32 dlgid)
@@ -160,6 +158,10 @@ VDDialogFrameW32::VDDialogFrameW32(uint32 dlgid)
 	, mbResizableHeight(false)
 	, mpDialogResourceName(MAKEINTRESOURCEW(dlgid))
 {
+}
+
+VDDialogFrameW32::~VDDialogFrameW32() {
+	ClearControlCaches();
 }
 
 bool VDDialogFrameW32::Create(VDGUIHandle parent) {
@@ -188,6 +190,10 @@ sintptr VDDialogFrameW32::ShowDialog(VDDialogFrameW32 *parent) {
 void VDDialogFrameW32::Sync(bool write) {
 	if (mhdlg)
 		OnDataExchange(write);
+}
+
+vdsize32 VDDialogFrameW32::GetTemplateSizeDLUs() const {
+	return vdsize32(mTemplateWidthDLUs, mTemplateHeightDLUs);
 }
 
 void VDDialogFrameW32::SetSize(const vdsize32& sz, bool repositionSafe) {
@@ -706,14 +712,28 @@ void VDDialogFrameW32::ShowWarning(const wchar_t *message, const wchar_t *captio
 	if (!caption)
 		caption = spDefaultCaption;
 
-	::MessageBoxW(mhdlg, message, caption, MB_OK | MB_ICONWARNING);
+	ATUIGenericDialogOptions opts;
+	opts.mhParent = (VDGUIHandle)mhdlg;
+	opts.mpMessage = message;
+	opts.mpCaption = caption;
+	opts.mIconType = kATUIGenericIconType_Warning;
+	opts.mResultMask = kATUIGenericResultMask_OK;
+
+	ATUIShowGenericDialogAutoCenter(opts);
 }
 
 void VDDialogFrameW32::ShowError(const wchar_t *message, const wchar_t *caption) {
 	if (!caption)
 		caption = spDefaultCaption;
 
-	::MessageBoxW(mhdlg, message, caption, MB_OK | MB_ICONERROR);
+	ATUIGenericDialogOptions opts;
+	opts.mhParent = (VDGUIHandle)mhdlg;
+	opts.mpMessage = message;
+	opts.mpCaption = caption;
+	opts.mIconType = kATUIGenericIconType_Error;
+	opts.mResultMask = kATUIGenericResultMask_OK;
+
+	ATUIShowGenericDialogAutoCenter(opts);
 }
 
 void VDDialogFrameW32::ShowError(const MyError& e) {
@@ -756,6 +776,87 @@ void VDDialogFrameW32::SetDefaultCaption(const wchar_t *caption) {
 	spDefaultCaption = caption;
 }
 
+struct VDDialogFrameW32::DynamicPopupMenu {
+	DynamicPopupMenu(const wchar_t *const *items);
+	DynamicPopupMenu(vdspan<PopupMenuItem> items);
+	~DynamicPopupMenu();
+
+	HMENU mhmenu = nullptr;
+	HBITMAP mhbmElevation = nullptr;
+	UINT mCommandIdEnd = 0;
+	
+	static constexpr UINT kCmdBase = 100;
+};
+
+VDDialogFrameW32::DynamicPopupMenu::DynamicPopupMenu(const wchar_t *const *items) {
+	mhmenu = CreatePopupMenu();
+	if (!mhmenu)
+		return;
+
+	UINT commandId = kCmdBase;
+	while(const wchar_t *s = *items++) {
+		if (!wcscmp(s, L"---"))
+			VDAppendMenuSeparatorW32(mhmenu);
+		else
+			VDAppendMenuW32(mhmenu, MF_ENABLED, commandId, s);
+
+		++commandId;
+	}
+
+	mCommandIdEnd = commandId;
+}
+
+VDDialogFrameW32::DynamicPopupMenu::DynamicPopupMenu(vdspan<PopupMenuItem> items) {
+	mhmenu = CreatePopupMenu();
+
+	if (!mhmenu)
+		return;
+
+	UINT commandId = kCmdBase;
+	HBITMAP hbmElevation = nullptr;
+	for(const PopupMenuItem& item : items) {
+		VDAppendMenuW32(mhmenu, item.mbDisabled ? MF_DISABLED : MF_ENABLED, commandId++, item.mDisplayName.c_str());
+
+		if (item.mbElevationRequired) {
+			SHSTOCKICONINFO ssii {};
+			ssii.cbSize = sizeof(SHSTOCKICONINFO);
+
+			HRESULT hr = SHGetStockIconInfo(SIID_SHIELD, SHGSI_ICON | SHGSI_SMALLICON, &ssii);
+			if (SUCCEEDED(hr) && ssii.hIcon) {
+				ICONINFOEX iie {};
+				iie.cbSize = sizeof(ICONINFOEX);
+				if (GetIconInfoEx(ssii.hIcon, &iie)) {
+					// we need to clone the icon for the alpha to work; this is imperfect as it thresholds,
+					// but it's better than a black background
+					hbmElevation = (HBITMAP)CopyImage(iie.hbmColor, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+
+					if (iie.hbmColor) {
+						VDVERIFY(DeleteObject(iie.hbmColor));
+					}
+
+					if (iie.hbmMask) {
+						VDVERIFY(DeleteObject(iie.hbmMask));
+					}
+				}
+
+				DestroyIcon(ssii.hIcon);
+			}
+
+			SetMenuItemBitmaps(mhmenu, commandId - (kCmdBase + 1), MF_BYPOSITION, hbmElevation, nullptr);
+		}
+	}
+
+	mCommandIdEnd = commandId;
+}
+
+VDDialogFrameW32::DynamicPopupMenu::~DynamicPopupMenu() {
+	if (mhmenu)
+		DestroyMenu(mhmenu);
+
+	if (mhbmElevation)
+		DeleteObject(mhbmElevation);
+}
+
 int VDDialogFrameW32::ActivateMenuButton(uint32 id, const wchar_t *const *items) {
 	if (!mhdlg)
 		return -1;
@@ -768,29 +869,42 @@ int VDDialogFrameW32::ActivateMenuButton(uint32 id, const wchar_t *const *items)
 	if (!GetWindowRect(hwndItem, &r))
 		return -1;
 
-	HMENU hmenu = CreatePopupMenu();
-
-	if (!hmenu)
+	DynamicPopupMenu dpMenu(items);
+	if (!dpMenu.mhmenu)
 		return -1;
-
-	UINT commandId = 100;
-	while(const wchar_t *s = *items++) {
-		if (!wcscmp(s, L"---"))
-			VDAppendMenuSeparatorW32(hmenu);
-		else
-			VDAppendMenuW32(hmenu, MF_ENABLED, commandId, s);
-
-		++commandId;
-	}
 
 	TPMPARAMS params = { sizeof(TPMPARAMS) };
 	params.rcExclude = r;
-	UINT selectedId = (UINT)TrackPopupMenuEx(hmenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL | TPM_NONOTIFY | TPM_RETURNCMD, r.left, r.bottom, mhdlg, &params);
+	UINT selectedId = (UINT)TrackPopupMenuEx(dpMenu.mhmenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL | TPM_NONOTIFY | TPM_RETURNCMD, r.left, r.bottom, mhdlg, &params);
 
-	DestroyMenu(hmenu);
+	if (selectedId >= dpMenu.kCmdBase && selectedId < dpMenu.mCommandIdEnd)
+		return selectedId - dpMenu.kCmdBase;
+	else
+		return -1;
+}
 
-	if (selectedId >= 100 && selectedId < commandId)
-		return selectedId - 100;
+int VDDialogFrameW32::ActivateMenuButton(uint32 id, vdspan<PopupMenuItem> items) {
+	if (!mhdlg)
+		return -1;
+
+	HWND hwndItem = GetDlgItem(mhdlg, id);
+	if (!hwndItem)
+		return -1;
+
+	RECT r;
+	if (!GetWindowRect(hwndItem, &r))
+		return -1;
+
+	DynamicPopupMenu dpMenu(items);
+	if (!dpMenu.mhmenu)
+		return -1;
+
+	TPMPARAMS params = { sizeof(TPMPARAMS) };
+	params.rcExclude = r;
+	UINT selectedId = (UINT)TrackPopupMenuEx(dpMenu.mhmenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL | TPM_NONOTIFY | TPM_RETURNCMD, r.left, r.bottom, mhdlg, &params);
+
+	if (selectedId >= dpMenu.kCmdBase && selectedId < dpMenu.mCommandIdEnd)
+		return selectedId - dpMenu.kCmdBase;
 	else
 		return -1;
 }
@@ -799,23 +913,63 @@ int VDDialogFrameW32::ActivatePopupMenu(int x, int y, const wchar_t *const *item
 	if (!mhdlg)
 		return -1;
 
-	HMENU hmenu = CreatePopupMenu();
-
-	if (!hmenu)
+	DynamicPopupMenu dpMenu(items);
+	if (!dpMenu.mhmenu)
 		return -1;
 
-	UINT commandId = 100;
-	while(const wchar_t *s = *items++)
-		VDAppendMenuW32(hmenu, MF_ENABLED, commandId++, s);
+	UINT selectedId = (UINT)TrackPopupMenuEx(dpMenu.mhmenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL | TPM_NONOTIFY | TPM_RETURNCMD, x, y, mhdlg, NULL);
 
-	UINT selectedId = (UINT)TrackPopupMenuEx(hmenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL | TPM_NONOTIFY | TPM_RETURNCMD, x, y, mhdlg, NULL);
-
-	DestroyMenu(hmenu);
-
-	if (selectedId >= 100 && selectedId < commandId)
-		return selectedId - 100;
+	if (selectedId >= dpMenu.kCmdBase && selectedId < dpMenu.mCommandIdEnd)
+		return selectedId - dpMenu.kCmdBase;
 	else
 		return -1;
+}
+
+int VDDialogFrameW32::ActivatePopupMenu(int x, int y, vdspan<PopupMenuItem> items) {
+	if (!mhdlg)
+		return -1;
+
+	DynamicPopupMenu dpMenu(items);
+	if (!dpMenu.mhmenu)
+		return -1;
+
+	UINT selectedId = (UINT)TrackPopupMenuEx(dpMenu.mhmenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL | TPM_NONOTIFY | TPM_RETURNCMD, x, y, mhdlg, NULL);
+
+	if (selectedId >= dpMenu.kCmdBase && selectedId < dpMenu.mCommandIdEnd)
+		return selectedId - dpMenu.kCmdBase;
+	else
+		return -1;
+}
+
+void VDDialogFrameW32::ActivateCommandPopupMenu(int x, int y, uint32 menuID, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer) {
+	HMENU hmenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(menuID));
+	if (hmenu) {
+		HMENU hSubMenu = GetSubMenu(hmenu, 0);
+
+		if (hSubMenu) {
+			auto initMenu = [&](HMENU hInitMenu, auto& self) -> void {
+				const int numItems = GetMenuItemCount(hInitMenu);
+
+				for(int i=0; i<numItems; ++i) {
+					MENUITEMINFO mii {};
+					mii.cbSize = sizeof mii;
+					mii.fMask = MIIM_ID | MIIM_FTYPE | MIIM_SUBMENU;
+					if (GetMenuItemInfo(hInitMenu, i, TRUE, &mii)) {
+						if (mii.hSubMenu)
+							self(mii.hSubMenu, self);
+						else if (!(mii.fType & MFT_SEPARATOR)) {
+							VDMenuItemInitializer itemIniter(hInitMenu, i);
+							initer(mii.wID, itemIniter);
+						}
+					}
+				}
+			};
+
+			initMenu(hSubMenu, initMenu);
+
+			(void)TrackPopupMenuEx(hSubMenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL, x, y, mhdlg, nullptr);
+		}
+	}
 }
 
 void VDDialogFrameW32::LBClear(uint32 id) {
@@ -967,11 +1121,9 @@ void VDDialogFrameW32::OnPreLoaded() {
 
 	mResizer.Init(mhdlg);
 	mResizer.SetRefUnits(mDialogUnits.mWidth4, mDialogUnits.mHeight8);
-	mButtonIDs.clear();
+	ClearControlCaches();
 
 	// Instantiate controls
-	const bool darkMode = ATUIIsDarkThemeActive();
-
 	const char *src = mpTemplateControls;
 	uint32 defId = 0;
 
@@ -997,17 +1149,35 @@ void VDDialogFrameW32::OnPreLoaded() {
 				return;
 			}
 
-			if (token == 0x80)
-				mButtonIDs.push_back(hdr.id);
+			if (token == 0x80) {
+				switch(hdr.style & BS_TYPEMASK) {
+					case BS_PUSHBUTTON:
+					case BS_DEFPUSHBUTTON:
+						mButtons.emplace_back(hdr.id, nullptr, ButtonType::Button);
+						break;
+
+					case BS_CHECKBOX:
+					case BS_AUTOCHECKBOX:
+					case BS_3STATE:
+					case BS_AUTO3STATE:
+						mButtons.emplace_back(hdr.id, nullptr, hdr.style & BS_PUSHLIKE ? ButtonType::Button : ButtonType::Checkbox);
+						break;
+
+					case BS_RADIOBUTTON:
+					case BS_AUTORADIOBUTTON:
+						mButtons.emplace_back(hdr.id, nullptr, ButtonType::Radio);
+						break;
+
+					case BS_GROUPBOX:
+						disableTheming = true;
+						break;
+
+					default:
+						break;
+				}
+			}
 
 			className = kBuiltinClasses[token - 0x80];
-
-			// disable theming for checkboxes if dark mode is enabled, as we need it for
-			// the button to actually pay attention to color change requests
-			if (darkMode && token == 0x80) {
-				if ((hdr.style & (BS_CHECKBOX | BS_RADIOBUTTON)) || (hdr.style & BS_AUTORADIOBUTTON) == BS_AUTORADIOBUTTON)
-					disableTheming = true;
-			}
 		} else {
 			className = (const WCHAR *)src;
 
@@ -1104,7 +1274,7 @@ void VDDialogFrameW32::OnPreLoaded() {
 		mResizer.Add(hwnd, x, y, cx, cy, alignment);
 	}
 
-	std::sort(mButtonIDs.begin(), mButtonIDs.end());
+	std::sort(mButtons.begin(), mButtons.end());
 
 	if (defId)
 		SendMessageW(mhdlg, DM_SETDEFID, defId, 0);
@@ -1117,7 +1287,14 @@ bool VDDialogFrameW32::OnLoaded() {
 
 bool VDDialogFrameW32::OnOK() {
 	BeginValidation();
-	OnDataExchange(true);
+
+	try {
+		OnDataExchange(true);
+	} catch(const MyError& e) {
+		ShowError(e);
+		return true;
+	}
+
 	return !EndValidation();
 }
 
@@ -1253,6 +1430,7 @@ void VDDialogFrameW32::OnDpiChanging(uint16 newDpiX, uint16 newDpiY, const vdrec
 			SetWindowPos(mhdlg, nullptr, x, y, newWidth, newHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 		}
 
+		ResetControlCachesForDpiChange();
 		OnDpiChanged();
 	}
 }
@@ -1260,12 +1438,116 @@ void VDDialogFrameW32::OnDpiChanging(uint16 newDpiX, uint16 newDpiY, const vdrec
 void VDDialogFrameW32::OnDpiChanged() {
 }
 
-uint32 VDDialogFrameW32::OnButtonCustomDraw(VDZLPARAM lParam) {
+uint32 VDDialogFrameW32::OnButtonCustomDraw(VDZLPARAM lParam, ButtonInfo& buttonInfo) {
 	NMCUSTOMDRAW& hdr = *(NMCUSTOMDRAW *)lParam;
+	const LONG_PTR style = GetWindowLongPtr(hdr.hdr.hwndFrom, GWL_STYLE);
+
+	if (buttonInfo.mType != ButtonType::Button && buttonInfo.mIconWidth <= 0) {
+		if (buttonInfo.mIconWidth < 0)
+			return CDRF_DODEFAULT;
+
+		buttonInfo.mIconWidth = -1;
+
+		HTHEME htheme = GetWindowTheme(hdr.hdr.hwndFrom);
+		HTHEME htheme2 = nullptr;
+
+		// radio buttons don't have theme data, weirdly
+		if (!htheme2)
+			htheme = htheme2 = OpenThemeData(hdr.hdr.hwndFrom, L"BUTTON");
+
+		if (htheme) {
+			SIZE sz;
+			RECT r = hdr.rc;
+
+			if (buttonInfo.mType == ButtonType::Radio)
+				GetThemePartSize(htheme, hdr.hdc, BP_RADIOBUTTON, CBS_UNCHECKEDNORMAL, &r, TS_TRUE, &sz);
+			else
+				GetThemePartSize(htheme, hdr.hdc, BP_CHECKBOX, CBS_UNCHECKEDNORMAL, &r, TS_TRUE, &sz);
+
+			if (sz.cx > 0 && sz.cy > 0) {
+				buttonInfo.mIconWidth = sz.cx;
+				buttonInfo.mIconHeight = sz.cy;
+			}
+		}
+
+		if (htheme2)
+			CloseThemeData(htheme2);
+	}
 
 	if (hdr.dwDrawStage == CDDS_PREERASE) {
-		return CDRF_NOTIFYPOSTERASE;
+		if (buttonInfo.mType == ButtonType::Button)
+			return CDRF_NOTIFYPOSTERASE;
+
+		int savedDC = SaveDC(hdr.hdc);
+		if (savedDC) {
+			const ATUIThemeColors& tc = ATUIGetThemeColors();
+			RECT r = hdr.rc;
+
+			const UINT checkedState = SendMessage(hdr.hdr.hwndFrom, BM_GETCHECK, 0, 0);
+			const bool showPrefix = (hdr.uItemState & CDIS_SHOWKEYBOARDCUES) != 0;
+			const bool checked = checkedState == BST_CHECKED;	// CDIS_CHECKED does not work
+			const bool indeterminate = checkedState == BST_INDETERMINATE;
+			const bool disabled = (hdr.uItemState & CDIS_DISABLED) != 0;
+			const bool focused = (hdr.uItemState & CDIS_FOCUS) != 0;
+			const bool pushed = (hdr.uItemState & CDIS_SELECTED) != 0;
+			const bool highlighted = (hdr.uItemState & CDIS_HOT) != 0;
+
+			RECT rCheck { 0, 0, buttonInfo.mIconWidth, buttonInfo.mIconHeight };
+
+			if (!(style & BS_MULTILINE)) {
+				rCheck.top += (r.bottom - rCheck.bottom) >> 1;
+				rCheck.bottom += rCheck.top;
+			}
+
+			int cw = buttonInfo.mIconWidth;
+			int ch = buttonInfo.mIconHeight;
+
+			const bool isRadio = (buttonInfo.mType == ButtonType::Radio);
+
+			if (!buttonInfo.mpStyle)
+				buttonInfo.mpStyle = ATUIGetCheckboxStyleW32(hdr.hdc, cw, ch).release();
+
+			if (buttonInfo.mpStyle)
+				buttonInfo.mpStyle->Draw(hdr.hdc, rCheck.left, rCheck.top, isRadio, disabled, pushed, highlighted, checked, indeterminate);
+
+			// Reference for this slightly odd way of determing the gap: https://stackoverflow.com/a/59376905
+			INT zeroWidth = 0;
+			GetCharWidth32W(hdr.hdc, L'0', L'0', &zeroWidth);
+
+			RECT rLabel = r;
+			rLabel.left = buttonInfo.mIconWidth + zeroWidth / 2;
+
+			VDStringW label = VDGetWindowTextW32(hdr.hdr.hwndFrom);
+
+			SetBkColor(hdr.hdc, VDSwizzleU32(tc.mStaticBg) >> 8);
+			SetBkMode(hdr.hdc, OPAQUE);
+			ExtTextOutW(hdr.hdc, 0, 0, ETO_OPAQUE | ETO_IGNORELANGUAGE, &rLabel, L"", 0, nullptr);
+
+			SetTextColor(hdr.hdc, VDSwizzleU32(disabled ? tc.mDisabledFg : tc.mStaticFg) >> 8);
+			SetBkMode(hdr.hdc, TRANSPARENT);
+
+			const UINT baseFormat = DT_LEFT | DT_VCENTER | (style & BS_MULTILINE ? DT_WORDBREAK : DT_SINGLELINE) | (showPrefix ? 0 : DT_HIDEPREFIX);
+			if (focused) {
+				RECT rText = rLabel;
+				DrawTextW(hdr.hdc, label.c_str(), (int)label.size(), &rText, DT_CALCRECT | baseFormat);
+
+				SelectObject(hdr.hdc, GetStockObject(DC_PEN));
+				SetDCPenColor(hdr.hdc, VDSwizzleU32(tc.mFocusedRect) >> 8);
+				SelectObject(hdr.hdc, GetStockObject(NULL_BRUSH));
+
+				Rectangle(hdr.hdc, rText.left - 1, rText.top, rText.right + 1, rText.bottom);
+			}
+
+			DrawTextW(hdr.hdc, label.c_str(), (int)label.size(), &rLabel, baseFormat);
+
+			RestoreDC(hdr.hdc, savedDC);
+		}
+
+		return CDRF_SKIPDEFAULT;
 	} else if (hdr.dwDrawStage == CDDS_PREPAINT) {
+		if (buttonInfo.mType != ButtonType::Button)
+			return CDRF_SKIPDEFAULT;
+
 		int savedDC = SaveDC(hdr.hdc);
 		if (savedDC) {
 			const ATUIThemeColors& tc = ATUIGetThemeColors();
@@ -1309,7 +1591,7 @@ uint32 VDDialogFrameW32::OnButtonCustomDraw(VDZLPARAM lParam) {
 			BUTTON_IMAGELIST imgList {};
 			int imgWidth = 0;
 			int imgHeight = 0;
-			if (!(GetWindowLongPtr(hdr.hdr.hwndFrom, GWL_STYLE) & (BS_ICON | BS_BITMAP)) && Button_GetImageList(hdr.hdr.hwndFrom, &imgList) && imgList.himl && ImageList_GetIconSize(imgList.himl, &imgWidth, &imgHeight)) {
+			if (!(style & (BS_ICON | BS_BITMAP)) && Button_GetImageList(hdr.hdr.hwndFrom, &imgList) && imgList.himl && ImageList_GetIconSize(imgList.himl, &imgWidth, &imgHeight)) {
 				// We must intercept this case first as BM_GETIMAGE returns bogus handles -- this
 				// is used implicitly when BCM_SETSHIELD is called. The style check is necessary as
 				// otherwise the button returns an image list anyway (#$&).
@@ -1363,6 +1645,9 @@ uint32 VDDialogFrameW32::OnButtonCustomDraw(VDZLPARAM lParam) {
 
 bool VDDialogFrameW32::PreNCDestroy() {
 	return false;
+}
+
+void VDDialogFrameW32::PostNCDestroy() {
 }
 
 bool VDDialogFrameW32::ShouldSetDialogIcon() const {
@@ -1461,6 +1746,10 @@ VDDialogFrameW32::DialogUnits VDDialogFrameW32::ComputeDialogUnits(VDZHFONT hFon
 
 void VDDialogFrameW32::RecomputeDialogUnits() {
 	mDialogUnits = ComputeDialogUnits(mhfont);
+}
+
+vdsize32 VDDialogFrameW32::DLUsToPixelSize(const vdsize32& dluSize) const {
+	return vdsize32(MulDiv(dluSize.w, mDialogUnits.mWidth4, 4), MulDiv(dluSize.h, mDialogUnits.mHeight8, 8));
 }
 
 vdsize32 VDDialogFrameW32::ComputeTemplatePixelSize() const {
@@ -1582,6 +1871,24 @@ sintptr VDDialogFrameW32::DoCreate(VDZHWND parent, bool modal) {
 	}
 }
 
+void VDDialogFrameW32::ResetControlCachesForDpiChange() {
+	// clear cached button info
+	for(ButtonInfo& bi : mButtons) {
+		vdsaferelease <<= bi.mpStyle;
+		bi.mIconWidth = 0;
+		bi.mIconHeight = 0;
+	}
+}
+
+void VDDialogFrameW32::ClearControlCaches() {
+	while(!mButtons.empty()) {
+		if (auto *p = mButtons.back().mpStyle)
+			p->Release();
+
+		mButtons.pop_back();
+	}
+}
+
 VDZINT_PTR VDZCALLBACK VDDialogFrameW32::StaticDlgProc(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) {
 	VDDialogFrameW32 *pThis = (VDDialogFrameW32 *)GetWindowLongPtr(hwnd, DWLP_USER);
 
@@ -1610,6 +1917,8 @@ VDZINT_PTR VDZCALLBACK VDDialogFrameW32::StaticDlgProc(VDZHWND hwnd, VDZUINT msg
 
 			if (deleteMe)
 				delete pThis;
+			else
+				pThis->PostNCDestroy();
 
 			pThis = NULL;
 			return FALSE;
@@ -1726,10 +2035,17 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			return TRUE;
 
 		case WM_NOTIFY:
-			if (NMHDR& hdr = *(NMHDR *)lParam; ATUIIsDarkThemeActive() && hdr.code == NM_CUSTOMDRAW && std::binary_search(mButtonIDs.begin(), mButtonIDs.end(), hdr.idFrom))
-				SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, OnButtonCustomDraw(lParam));
-			else
-				SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, mMsgDispatcher.Dispatch_WM_NOTIFY(wParam, lParam));
+			if (NMHDR& hdr = *(NMHDR *)lParam; ATUIIsDarkThemeActive() && hdr.code == NM_CUSTOMDRAW) {
+				ButtonInfo bi = {(uint32)hdr.idFrom};
+				auto it = std::lower_bound(mButtons.begin(), mButtons.end(), bi);
+
+				if (it != mButtons.end() && *it == bi) {
+					SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, OnButtonCustomDraw(lParam, *it));
+					return TRUE;
+				}
+			}
+
+			SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, mMsgDispatcher.Dispatch_WM_NOTIFY(wParam, lParam));
 			return TRUE;
 
 		case WM_CLOSE:
@@ -1823,7 +2139,9 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			break;
 
 		case WM_CONTEXTMENU:
-			{
+			if (mMsgDispatcher.TryDispatch_WM_CONTEXTMENU(wParam, lParam)) {
+				return 0;
+			} else {
 				uint32 id = 0;
 
 				if (wParam)
@@ -1854,6 +2172,7 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 					const int refY = mDialogUnits.mHeight8;
 					mResizer.Relayout(&refX, &refY);
 
+					ResetControlCachesForDpiChange();
 					OnDpiChanged();
 				}
 			}
@@ -2100,6 +2419,29 @@ void VDDialogResizerW32::Add(VDZHWND hwndControl, sint32 x, sint32 y, sint32 w, 
 	ce->mRefY		= mRefY;
 	ce->mhwnd		= hwndControl;
 	ce->mAlignment	= alignment;
+}
+
+void VDDialogResizerW32::AddWithOffsets(VDZHWND hwnd, sint32 x1, sint32 y1, sint32 x2, sint32 y2, uint32 alignment, bool dlus, bool repositionNow) {
+	ControlEntry *ce = &mControls.push_back();
+	ce->mX1			= x1;
+	ce->mY1			= y1;
+	ce->mX2			= x2;
+	ce->mY2			= y2;
+	ce->mRefX		= dlus ? 4 : mRefX;
+	ce->mRefY		= dlus ? 8 : mRefY;
+	ce->mhwnd		= hwnd;
+	ce->mAlignment	= alignment;
+
+	if (repositionNow) {
+		int x1;
+		int y1;
+		int w;
+		int h;
+		uint32 flags;
+		ComputeLayout(*ce, ComputeAnchors(), x1, y1, w, h, flags, true);
+
+		SetWindowPos(ce->mhwnd, nullptr, x1, y1, w, h, flags);
+	}
 }
 
 void VDDialogResizerW32::AddAlias(VDZHWND hwndTarget, VDZHWND hwndSource, uint32 mergeFlags) {

@@ -21,6 +21,7 @@
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/vdstl_vectorview.h>
+#include <at/atcore/cio.h>
 #include <at/atio/blobimage.h>
 #include "hlebasicloader.h"
 #include "hleutils.h"
@@ -31,7 +32,6 @@
 #include "debugger.h"
 #include "simeventmanager.h"
 #include "simulator.h"
-#include "cio.h"
 
 ATHLEBasicLoader::ATHLEBasicLoader() {
 }
@@ -108,20 +108,20 @@ uint8 ATHLEBasicLoader::OnCIOV(uint16) {
 	const uint8 cmd = mem->ReadByte(ATKernelSymbols::ICCMD + iocb);
 	if (mProgramIOCB && iocb == mProgramIOCB) {
 		switch(cmd) {
-			case ATCIOSymbols::CIOCmdOpen:
-				mpCPU->Ldy(ATCIOSymbols::CIOStatIOCBInUse);
+			case kATCIOCmd_Open:
+				mpCPU->Ldy(kATCIOStat_IOCBInUse);
 				return 0x60;
 
-			case ATCIOSymbols::CIOCmdClose:
+			case kATCIOCmd_Close:
 				mProgramIOCB = 0;
 				mem->WriteByte(ATKernelSymbols::ICHID + iocb, 0xFF);
-				mpCPU->Ldy(ATCIOSymbols::CIOStatSuccess);
+				mpCPU->Ldy(kATCIOStat_Success);
 				mpCPUHookMgr->UnsetHook(mpLaunchHook);
 				return 0x60;
 
-			case ATCIOSymbols::CIOCmdGetChars:
+			case kATCIOCmd_GetChars:
 				if (mProgramIndex >= mpImage->GetSize()) {
-					mpCPU->Ldy(ATCIOSymbols::CIOStatEndOfFile);
+					mpCPU->Ldy(kATCIOStat_EndOfFile);
 				} else {
 					uint32 maxRead = (uint32)(mpImage->GetSize() - mProgramIndex);
 					uint32 addr = mem->ReadByte(ATKernelSymbols::ICBAL + iocb) + 256*mem->ReadByte(ATKernelSymbols::ICBAH + iocb);
@@ -140,32 +140,32 @@ uint8 ATHLEBasicLoader::OnCIOV(uint16) {
 					mem->WriteByte(ATKernelSymbols::ICBLL + iocb, (uint8)len);
 					mem->WriteByte(ATKernelSymbols::ICBLH + iocb, (uint8)(len >> 8));
 
-					mpCPU->Ldy(trunc ? ATCIOSymbols::CIOStatTruncRecord : ATCIOSymbols::CIOStatSuccess);
+					mpCPU->Ldy(trunc ? kATCIOStat_TruncRecord : kATCIOStat_Success);
 				}
 				return 0x60;
 		
-			case ATCIOSymbols::CIOCmdPutChars:
-				mpCPU->Ldy(ATCIOSymbols::CIOStatReadOnly);
+			case kATCIOCmd_PutChars:
+				mpCPU->Ldy(kATCIOStat_ReadOnly);
 				return 0x60;
 
 			default:
-				mpCPU->Ldy(ATCIOSymbols::CIOStatNotSupported);
+				mpCPU->Ldy(kATCIOStat_NotSupported);
 				return 0x60;
 		}
-	} else if (mpImage && cmd == ATCIOSymbols::CIOCmdOpen) {
+	} else if (mpImage && cmd == kATCIOCmd_Open) {
 		uint16 lineAddr = mem->ReadByte(ATKernelSymbols::ICBAL + iocb) + 256*mem->ReadByte(ATKernelSymbols::ICBAH + iocb);
 
 		if (mem->ReadByte(lineAddr) != '*')
 			return 0;
 
 		if ((mem->ReadByte(ATKernelSymbols::ICAX1 + iocb) & 0x0c) != 0x04) {
-			mpCPU->Ldy(ATCIOSymbols::CIOStatReadOnly);
+			mpCPU->Ldy(kATCIOStat_ReadOnly);
 			return 0x60;
 		}
 
 		mProgramIOCB = iocb;
 		mProgramIndex = 0;
-		mpCPU->Ldy(ATCIOSymbols::CIOStatSuccess);
+		mpCPU->Ldy(kATCIOStat_Success);
 		return 0x60;
 	}
 
@@ -173,7 +173,7 @@ uint8 ATHLEBasicLoader::OnCIOV(uint16) {
 	if (iocb != 0)
 		return 0;
 
-	if (cmd != ATCIOSymbols::CIOCmdGetRecord)
+	if (cmd != kATCIOCmd_GetRecord)
 		return 0;
 
 	// write command line
@@ -220,7 +220,7 @@ uint8 ATHLEBasicLoader::OnCIOV(uint16) {
 
 	kdb.ICBLL_ICBLH = lineLen;
 
-	uint8 status = lineLen < cmdlineLen ? ATCIOSymbols::CIOStatTruncRecord : ATCIOSymbols::CIOStatSuccess;
+	uint8 status = lineLen < cmdlineLen ? kATCIOStat_TruncRecord : kATCIOStat_Success;
 	kdb.STATUS = status;
 
 	mpCPU->Ldy(status);

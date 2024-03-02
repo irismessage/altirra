@@ -2,6 +2,7 @@
 #include <vd2/system/math.h>
 #include <vd2/system/strutil.h>
 #include <vd2/VDDisplay/textrenderer.h>
+#include <at/atnativeui/theme.h>
 #include <at/atui/uimanager.h>
 #include <at/atuicontrols/uilistview.h>
 #include <at/atuicontrols/uislider.h>
@@ -21,7 +22,13 @@ ATUIListView::ATUIListView()
 {
 	mbFastClip = false;
 
-	SetFillColor(0xFFFFFF);
+	const auto& tc = ATUIGetThemeColors();
+	SetFillColor(tc.mContentBg);
+
+	mTextColor = tc.mContentFg;
+	mHighlightBackgroundColor = tc.mHighlightedBg;
+	mHighlightTextColor = tc.mHighlightedFg;
+
 	SetCursorImage(kATUICursorImage_Arrow);
 
 	BindAction(kATUIVK_Up, kActionMoveUp);

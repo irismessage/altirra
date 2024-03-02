@@ -69,7 +69,7 @@ struct ATKnownFirmware {
 	{ 0x739bab74,  4096, kATFirmwareType_ATR8000, L"ATR8000 firmware ver 3.02" },
 	{ 0xd125caad,  4096, kATFirmwareType_IndusGT, L"Indus GT firmware ver. 1.1" },
 	{ 0xd8504b4a,  4096, kATFirmwareType_IndusGT, L"Indus GT firmware ver. 1.2" },
-	{ 0x605b7153,  4096, kATFirmwareType_USDoubler, L"US Doubler firmware" },
+	{ 0x605b7153,  4096, kATFirmwareType_USDoubler, L"US Doubler firmware rev. L" },
 	{ 0x0126A511,  2048, kATFirmwareType_810Turbo, L"810 Turbo firmware V1.2" },
 	{ 0x5A396459,  2048, kATFirmwareType_Percom, L"Percom RFD V1.00" },
 	{ 0xE2D4A05C,  2048, kATFirmwareType_Percom, L"Percom RFD V1.10" },
@@ -90,7 +90,12 @@ struct ATKnownFirmware {
 	{ 0X738C6AC1,  2048, kATFirmwareType_Bit3Charset, L"Bit 3 Full-View 80 charset" },
 
 	// overdump (only has 2K of unique data)
-	{ 0xA4534CEA,  4096, kATFirmwareType_Bit3Charset, L"Bit 3 Full-View 80 charset" },
+	{ 0xA4534CEA,  4096, kATFirmwareType_Bit3Charset, L"Bit 3 Full-View 80 charset (4K overdump)" },
+
+	{ 0xFC02766B,  8192, kATFirmwareType_XF551, L"XF551 rev. 7.4" },
+	{ 0x38B97AE3,  8192, kATFirmwareType_XF551, L"XF551 rev. 7.7" },
+	{ 0x37DDA8B1,  4096, kATFirmwareType_XF551, L"XF551 rev. 7.7 (w/broken density hack)" },
+	{ 0x0E117428,  8192, kATFirmwareType_XF551, L"XF551 rev. 7.7 (modified for 720K 3.5\")" },
 };
 
 bool ATFirmwareAutodetectCheckSize(uint64 fileSize) {

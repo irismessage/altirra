@@ -36,6 +36,26 @@ struct VDVideoDisplayScreenFXInfo {
 	float mBloomIndirectIntensity;
 };
 
+struct VDDVSyncStatus {
+	// Measured vsync wait offset in terms of seconds to the next vsync. Negative value
+	// means not available. When using adaptive vsync, the caller is expected to adapt
+	// timing to get this within a stable offset ahead of the vsync, without blowing
+	// over to the next vsync.
+	float	mOffset = -1.0f;
+
+	// Estimate of delay due to backing up the present queue. May either be a measure of
+	// blocking time in Present() or the wait time to Present(), depending on the exact
+	// presentation mode used. The general idea is that a frame should be dropped when
+	// this exceeds a threshold for a prolonged period of time, in order to reduce
+	// latency.
+	float	mPresentQueueTime = 0.0f;
+
+	// Measured refresh rate, in Hz; -1 if not available. Generally accurate to three
+	// significant figures with some noise in the fourth digit. If real-time refresh rate
+	// is not available, this may be the refresh rate from the current display mode.
+	float	mRefreshRate = -1.0f;
+};
+
 class IVDVideoDisplayScreenFXEngine {
 public:
 	// Apply screen FX to an image in software; returns resulting image. The source image buffer must
@@ -48,6 +68,7 @@ enum class VDDHDRAvailability : uint8 {
 	NoMinidriverSupport,
 	NoSystemSupport,
 	NoHardwareSupport,
+	NotEnabledOnDisplay,
 	NoDisplaySupport,
 	Available
 };
@@ -78,12 +99,19 @@ public:
 
 class VDINTERFACE IVDVideoDisplay {
 public:
-	enum FieldMode {
+	enum FieldMode : uint32 {
+		// Present synchronized to vertical sync to avoid tearing.
 		kVSync				= 0x0004,
+
+		// Present synchronized to vertical sync, but do not enforce timing offset relative to vsync. Used when
+		// the client is instead adaptively locking to the desired offset. Only effective if kVSync is set.
+		kVSyncAdaptive		= 0x0008,
+
+		// Do not store the current frame for refresh purposes.
 		kDoNotCache			= 0x0020,
-		kVisibleOnly		= 0x0040,
+
+		// If the present operation would block, drop the frame instead of waiting for the present.
 		kDoNotWait			= 0x0800,
-		kFieldModeMax		= 0xffff,
 	};
 
 	enum FilterMode {
@@ -107,6 +135,7 @@ public:
 	virtual void SetHDREnabled(bool hdr) = 0;
 
 	virtual void SetFullScreen(bool fs, uint32 width = 0, uint32 height = 0, uint32 refresh = 0) = 0;
+	virtual void SetCustomDesiredRefreshRate(float hz, float hzmin, float hzmax) = 0;
 	virtual void SetDestRect(const vdrect32 *r, uint32 backgroundColor) = 0;
 	virtual void SetPixelSharpness(float xfactor, float yfactor) = 0;
 	virtual void SetCompositor(IVDDisplayCompositor *compositor) = 0;
@@ -120,6 +149,7 @@ public:
 	virtual void Update(int mode = 0) = 0;
 	virtual void Cache() = 0;
 	virtual void SetCallback(IVDVideoDisplayCallback *p) = 0;
+	virtual void SetOnFrameStatusUpdated(vdfunction<void(int /*frames*/)> fn) = 0;
 
 	enum AccelerationMode {
 		kAccelOnlyInForeground,
@@ -132,6 +162,10 @@ public:
 	virtual FilterMode GetFilterMode() = 0;
 	virtual void SetFilterMode(FilterMode) = 0;
 	virtual float GetSyncDelta() const = 0;
+
+	virtual int GetQueuedFrames() const = 0;
+	virtual bool IsFramePending() const = 0;
+	virtual VDDVSyncStatus GetVSyncStatus() const = 0;
 
 	virtual vdrect32 GetMonitorRect() = 0;
 
@@ -172,6 +206,10 @@ void VDVideoDisplaySetBackgroundFallbackEnabled(bool enable);
 void VDVideoDisplaySetSecondaryDXEnabled(bool enable);
 void VDVideoDisplaySetMonitorSwitchingDXEnabled(bool enable);
 void VDVideoDisplaySetTermServ3DEnabled(bool enable);
+void VDVideoDisplaySetDXFlipModeEnabled(bool enable);
+void VDVideoDisplaySetDXFlipDiscardEnabled(bool enable);
+void VDVideoDisplaySetDXWaitableObjectEnabled(bool enable);
+void VDVideoDisplaySetDXDoNotWaitEnabled(bool enable);
 
 IVDVideoDisplay *VDGetIVideoDisplay(VDGUIHandle hwnd);
 bool VDRegisterVideoDisplayControl();

@@ -407,19 +407,33 @@ bool ATBreakpointManager::Clear(uint32 id) {
 
 			indices.erase(itIndex);
 
-			// recompute attributes for address
-			uint8 attr = 0;
-			for(itIndex = indices.begin(); itIndex != indices.end(); ++itIndex) {
-				const BreakpointEntry& be = mBreakpoints[*itIndex - 1];
+			// recompute attributes for address -- note that we have to check all banks due to 64K
+			// aliasing in attribute map
+			uint8 bpAttrs = 0;
 
-				if (be.mType & kBPT_Read)
-					attr |= kAttribReadBkpt;
+			for(uint32 bank = 0; bank < 256; ++bank) {
+				const auto itBankBPs = mAccessBreakpoints.find((address & 0xFFFF) + (bank << 16));
 
-				if (be.mType & kBPT_Write)
-					attr |= kAttribWriteBkpt;
+				if (itBankBPs != mAccessBreakpoints.end()) {
+					for(auto bpIndex : itBankBPs->second) {
+						const BreakpointEntry& be = mBreakpoints[bpIndex - 1];
+
+						bpAttrs |= be.mType;
+					}
+				}
 			}
 
-			mAttrib[address & 0xFFFF] = (mAttrib[address & 0xFFFF] & ~(kBPT_Read | kBPT_Write)) + attr;
+			// convert breakpoint attributes to address attributes
+			uint8 addrAttr = 0;
+
+			if (bpAttrs & kBPT_Read)
+				addrAttr |= kAttribReadBkpt;
+
+			if (bpAttrs & kBPT_Write)
+				addrAttr |= kAttribWriteBkpt;
+
+			// update address attributes
+			mAttrib[address & 0xFFFF] = (mAttrib[address & 0xFFFF] & ~(kAttribReadBkpt | kAttribWriteBkpt)) + addrAttr;
 		}
 	}
 
@@ -535,6 +549,7 @@ void ATBreakpointManager::RegisterAccessPage(uint32 address, bool read, bool wri
 		layer.mRefCountRead = 0;
 		layer.mRefCountWrite = 0;
 		layer.mpMemLayer = mpMemMgr->CreateLayer(kATMemoryPri_AccessBP, handlers, address >> 8, 1);
+		mpMemMgr->SetLayerName(layer.mpMemLayer, "Memory access breakpoint");
 	}
 
 	if (read) {

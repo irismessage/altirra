@@ -228,6 +228,8 @@ public:
 
 	void	SetProfiler(ATCPUProfiler *profiler);
 	void	SetVerifier(ATCPUVerifier *verifier);
+
+	ATCPUHeatMap *GetHeatMap() const { return mpHeatMap; }
 	void	SetHeatMap(ATCPUHeatMap *heatmap);
 
 	bool	AreIllegalInsnsEnabled() const { return mbIllegalInsnsEnabled; }

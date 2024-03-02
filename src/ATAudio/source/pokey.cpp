@@ -11,15 +11,19 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//	As a special exception, this library can also be redistributed and/or
+//	modified under an alternate license. See COPYING.RMT in the same source
+//	archive for details.
 
 #include <stdafx.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/serialization.h>
 #include <at/atcore/snapshotimpl.h>
+#include <at/atcore/wraptime.h>
 #include <at/ataudio/audiofilters.h>
 #include <at/ataudio/audiooutput.h>
 #include <at/ataudio/pokey.h>
@@ -59,6 +63,7 @@ namespace {
 		kATPokeyEventResetTwoTones2,
 
 		kATPokeyEventResetTimers,
+		kATPokeyEventResetTimers2,
 		kATPokeyEventSerialOutput,
 		kATPokeyEventSerialInput,
 	};
@@ -128,6 +133,7 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mpKeyboardScanEvent(NULL)
 	, mpKeyboardIRQEvent(NULL)
 	, mpResetTimersEvent(NULL)
+	, mpResetTimers2Event(NULL)
 	, mpEventSerialInput(NULL)
 	, mpEventSerialOutput(NULL)
 	, mpScheduler(NULL)
@@ -151,7 +157,7 @@ void ATPokeyEmulator::Init(IATPokeyEmulatorConnections *mem, ATScheduler *sched,
 	mpTables = tables;
 	UpdateMixTable();
 
-	mpRenderer->Init(sched, tables);
+	mpRenderer->Init(sched, tables, output ? &output->AsMixer().GetEdgeSamplePlayer() : nullptr);
 	mpRenderer->StartBlock();
 
 	VDASSERT(!mpKeyboardScanEvent);
@@ -193,7 +199,9 @@ void ATPokeyEmulator::ColdReset() {
 	for(int i=0; i<4; ++i) {
 		mCounter[i] = 1;
 		mCounterBorrow[i] = 0;
-		mAUDFP1[i] = 1;
+		mAUDFP1A[i] = 1;
+		mAUDFP1B[i] = 1;
+		mAUDFP1Time[i] = 0;
 		mbDeferredTimerEvents[i] = false;
 
 		mpScheduler->UnsetEvent(mpTimerBorrowEvents[i]);
@@ -208,6 +216,7 @@ void ATPokeyEmulator::ColdReset() {
 	mpScheduler->UnsetEvent(mpKeyboardScanEvent);
 	mpScheduler->UnsetEvent(mpKeyboardIRQEvent);
 	mpScheduler->UnsetEvent(mpResetTimersEvent);
+	mpScheduler->UnsetEvent(mpResetTimers2Event);
 	mpScheduler->UnsetEvent(mpEventSerialOutput);
 	mpScheduler->UnsetEvent(mpEventSerialInput);
 	mpScheduler->UnsetEvent(mpEventResetTwoTones1);
@@ -225,6 +234,7 @@ void ATPokeyEmulator::ColdReset() {
 	mSerialInputCounter = 0;
 	mbSerOutValid = false;
 	mbSerShiftValid = false;
+	mbSerClockPhase = false;
 	mbSerialOutputState = false;
 	mbSerialWaitingForStartBit = true;
 	mbSerInBurstPendingIRQ1 = false;
@@ -255,6 +265,7 @@ void ATPokeyEmulator::ColdReset() {
 		mpSlave->ColdReset();
 
 	NegateIrq(false);
+	NotifyForceBreak();
 }
 
 void ATPokeyEmulator::SetSlave(ATPokeyEmulator *slave) {
@@ -295,6 +306,8 @@ void ATPokeyEmulator::SetSlave(ATPokeyEmulator *slave) {
 void ATPokeyEmulator::SetCassette(IATPokeyCassetteDevice *dev) {
 	mpCassette = dev;
 	mbSerialRateChanged = true;
+
+	NotifyForceBreak();
 }
 
 void ATPokeyEmulator::SetAudioLog(ATPokeyAudioLog *log) {
@@ -439,8 +452,9 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 		UpdateTimerCounter<2>();
 		UpdateTimerCounter<3>();
 
-		mCounter[2] = mAUDFP1[2];
-		mCounter[3] = mAUDFP1[3];
+		const uint32 t = mpScheduler->GetTick();
+		mCounter[2] = GetAUDFP1<2>(t);
+		mCounter[3] = GetAUDFP1<3>(t);
 
 		mbSerialWaitingForStartBit = false;
 		SetupTimers(0x0c);
@@ -523,6 +537,10 @@ void ATPokeyEmulator::SetStereoSoftEnable(bool enable) {
 	}
 }
 
+void ATPokeyEmulator::SetStereoAsMonoEnabled(bool enable) {
+	mbStereoAsMono = enable;
+}
+
 void ATPokeyEmulator::SetExternalSerialClock(uint32 basetime, uint32 period) {
 	mSerialExtBaseTime = basetime;
 	mSerialExtPeriod = period;
@@ -561,6 +579,39 @@ void ATPokeyEmulator::SetNonlinearMixingEnabled(bool enable) {
 
 		if (mpAudioOut)
 			mpAudioOut->SetFiltersEnabled(enable);
+	}
+}
+
+bool ATPokeyEmulator::IsSpeakerFilterEnabled() const {
+	return mbSpeakerFilterEnabled;
+}
+
+bool ATPokeyEmulator::IsSpeakerFilterSupported() const {
+	return mbSpeakerFilterSupported;
+}
+
+void ATPokeyEmulator::SetSpeakerFilterEnabled(bool enable) {
+	if (mbSpeakerFilterEnabled != enable) {
+		mbSpeakerFilterEnabled = enable;
+
+		if (mbSpeakerFilterSupported)
+			mpRenderer->SetSpeakerFilterEnabled(enable);
+	}
+}
+
+void ATPokeyEmulator::SetSpeakerFilterSupported(bool enable) {
+	if (mbSpeakerFilterSupported != enable) {
+		mbSpeakerFilterSupported = enable;
+
+		if (mbSpeakerFilterEnabled)
+			mpRenderer->SetSpeakerFilterEnabled(enable);
+	}
+}
+
+void ATPokeyEmulator::SetSpeakerVolumeOverride(float vol) {
+	if (mSpeakerVolOverride != vol) {
+		mSpeakerVolOverride = vol;
+		UpdateMixTable();
 	}
 }
 
@@ -789,8 +840,10 @@ void ATPokeyEmulator::FireTimer() {
 			mpScheduler->SetEvent(2, this, kATPokeyEventResetTwoTones2, mpEventResetTwoTones2);
 		}
 
-		if (mSerialOutputCounter) {
-			if ((mSKCTL & 0x60) == 0x60)
+		if ((mSKCTL & 0x60) == 0x60) {
+			mbSerClockPhase = !mbSerClockPhase;
+
+			if (mbSerClockPhase && mSerialOutputCounter)
 				mpScheduler->SetEvent(2, this, kATPokeyEventSerialOutput, mpEventSerialOutput);
 		}
 	}
@@ -805,13 +858,15 @@ void ATPokeyEmulator::FireTimer() {
 		if (mSKCTL & 0x30)
 			OnSerialInputTick();
 
-		if (mSerialOutputCounter) {
-			switch(mSKCTL & 0x60) {
-				case 0x20:
-				case 0x40:
+		switch(mSKCTL & 0x60) {
+			case 0x20:
+			case 0x40:
+				mbSerClockPhase = !mbSerClockPhase;
+
+				if (mbSerClockPhase && mSerialOutputCounter)
 					mpScheduler->SetEvent(2, this, kATPokeyEventSerialOutput, mpEventSerialOutput);
-					break;
-			}
+
+				break;
 		}
 	}
 }
@@ -874,7 +929,7 @@ void ATPokeyEmulator::OnSerialInputTick() {
 		mbSerialWaitingForStartBit = true;
 
 		if ((mSKCTL & 0x10) && !mbLinkedTimers34) {
-			mCounter[2] = mAUDFP1[2];
+			mCounter[2] = GetAUDFP1<2>();
 			SetupTimers(0x04);
 		}
 
@@ -889,21 +944,16 @@ void ATPokeyEmulator::OnSerialInputTick() {
 void ATPokeyEmulator::OnSerialOutputTick() {
 	--mSerialOutputCounter;
 
-	// We've already transmitted the start bit (low), so we need to do data bits and then
-	// stop bit (high).
-	mbSerialOutputState = mSerialOutputCounter ? (mSerialOutputShiftRegister & (1 << (9 - (mSerialOutputCounter >> 1)))) != 0 : true;
-
 	if (!mSerialOutputCounter) {
 		FlushSerialOutput();
 
 		if (mbSerOutValid) {
-			mSerialOutputCounter = 20;
+			mSerialOutputCounter = 10;
 			mSerialOutputStartTime = mpScheduler->GetTick64();
 
 			if (mSerOutBurstDeadline && ATSCHEDULER_GETTIME(mpScheduler) - mSerOutBurstDeadline >= uint32(0x80000000))
 				mSerialOutputCounter = 1;
 
-			mbSerialOutputState = true;
 			mSerialOutputShiftRegister = mSEROUT;
 			mbSerOutValid = false;
 			mbSerShiftValid = true;
@@ -924,6 +974,10 @@ void ATPokeyEmulator::OnSerialOutputTick() {
 		else
 			NegateIrq(false);
 	}
+
+	// Update serial output line. The bit order is start bit (0), then data bits LSB to MSB,
+	// then stop bit (1).
+	mbSerialOutputState = mSerialOutputCounter ? (mSerialOutputShiftRegister & (1 << (9 - mSerialOutputCounter))) != 0 : true;
 
 	// check if we must reset the tick for external clock
 	if (mSerialOutputCounter && !(mSKCTL & 0x60)) {
@@ -995,7 +1049,7 @@ void ATPokeyEmulator::FlushSerialOutput() {
 
 	// check if we got out the start bit; if not, no byte would be noticed by
 	// receivers
-	if (mSerialOutputCounter >= 18)
+	if (mSerialOutputCounter >= 9)
 		return;
 
 	uint32 cyclesPerBit;
@@ -1043,7 +1097,7 @@ void ATPokeyEmulator::FlushSerialOutput() {
 	if (mSerialOutputCounter) {
 		// Byte may have been truncated -- adjust it and the stop bit. Transmission
 		// is LSB first, so stomp from MSBs down.
-		uint8 truncationMask = 0xFF << ((18 - originalCounter) >> 1);
+		uint8 truncationMask = 0xFF << (9 - originalCounter);
 
 		c &= truncationMask;
 
@@ -1083,7 +1137,11 @@ void ATPokeyEmulator::SetPotPos(unsigned idx, int pos) {
 
 void ATPokeyEmulator::SetPotPosHires(unsigned idx, int pos, bool grounded) {
 	uint8 lopos = (uint8)std::clamp(pos >> 16, 1, 228);
-	uint8 hipos = grounded ? 255 : (uint8)std::clamp((pos * 114) >> 16, 1, 229);
+
+	// use overflow-safe clamping
+	//
+	// unsafe: uint8 hipos = grounded ? 255 : (uint8)std::clamp((pos * 114) >> 16, 1, 229);
+	uint8 hipos = grounded ? 255 : (uint8)((std::clamp(pos, 575, 131647) * 114) >> 16);
 
 	if (mPotPositions[idx] == lopos && mPotHiPositions[idx] == hipos)
 		return;
@@ -1203,6 +1261,17 @@ void ATPokeyEmulator::PostFrameUpdate(uint32 t) {
 			extsince += mSerialExtPeriod - 1;
 			mSerialExtBaseTime += extsince - extsince % mSerialExtPeriod;
 		}
+	}
+
+	// Catch up double-buffered frame periods
+	static constexpr uint32 kMaxPeriodLag = 8192*1024;
+
+	const uint32 minEffectiveTime = t - kMaxPeriodLag;
+	for(int i=0; i<4; ++i) {
+		// note that the effective time may be slightly in the future, so we
+		// must use a (wrapped) signed comparison here
+		if (ATWrapTime{mAUDFP1Time[i]} < minEffectiveTime)
+			mAUDFP1Time[i] = minEffectiveTime;
 	}
 }
 
@@ -1365,7 +1434,7 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 
 			mCounterBorrow[0] = 0;
 			if (!mbLinkedTimers12) {
-				mCounter[0] = mAUDFP1[0];
+				mCounter[0] = GetAUDFP1<0>();
 			} else {
 				// If we are operating at 1.79MHz, three cycles have already elapsed from the underflow to
 				// when the borrow goes through.
@@ -1390,9 +1459,9 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 			}
 
 			mCounterBorrow[1] = 0;
-			mCounter[1] = mAUDFP1[1];
+			mCounter[1] = GetAUDFP1<1>();
 			if (mbLinkedTimers12) {
-				mCounter[0] = mAUDFP1[0];
+				mCounter[0] = GetAUDFP1<0>();
 				mCounterBorrow[0] = 0;
 				SetupTimers(0x03);
 			} else
@@ -1405,7 +1474,7 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 
 			mCounterBorrow[2] = 0;
 			if (!mbLinkedTimers34) {
-				mCounter[2] = mAUDFP1[2];
+				mCounter[2] = GetAUDFP1<2>();
 			} else {
 				// If we are operating at 1.79MHz, three cycles have already elapsed from the underflow to
 				// when the borrow goes through.
@@ -1423,10 +1492,10 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 			mpTimerBorrowEvents[3] = NULL;
 			FireTimer<3>();
 
-			mCounter[3] = mAUDFP1[3];
+			mCounter[3] = GetAUDFP1<3>();
 			mCounterBorrow[3] = 0;
 			if (mbLinkedTimers34) {
-				mCounter[2] = mAUDFP1[2];
+				mCounter[2] = GetAUDFP1<2>();
 				mCounterBorrow[2] = 0;
 				SetupTimers(0x0C);
 			} else
@@ -1437,8 +1506,8 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 			mpEventResetTwoTones1 = nullptr;
 
 			// resync timers 1 and 2
-			mCounter[0] = mAUDFP1[0];
-			mCounter[1] = mAUDFP1[1];
+			mCounter[0] = GetAUDFP1<0>();
+			mCounter[1] = GetAUDFP1<1>();
 			mCounterBorrow[0] = 0;
 			mCounterBorrow[1] = 0;
 			SetupTimers(0x03);
@@ -1448,30 +1517,45 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 			mpEventResetTwoTones2 = nullptr;
 
 			// resync timers 1 and 2
-			mCounter[0] = mAUDFP1[0];
-			mCounter[1] = mAUDFP1[1];
+			mCounter[0] = GetAUDFP1<0>();
+			mCounter[1] = GetAUDFP1<1>();
 			mCounterBorrow[0] = 0;
 			mCounterBorrow[1] = 0;
 			SetupTimers(0x03);
 			break;
 
 		case kATPokeyEventResetTimers:
-			mpResetTimersEvent = NULL;
-			mCounter[0] = mAUDFP1[0];
-			mCounter[1] = mAUDFP1[1];
-			mCounter[2] = mAUDFP1[2];
-			mCounter[3] = mAUDFP1[3];
-
-			mpRenderer->ResetTimers();
+			mpResetTimersEvent = nullptr;
 
 			for(int i=0; i<4; ++i) {
 				mCounterBorrow[i] = 0;
 
+				// If the timer is coincident or one cycle away, don't reset it.
 				if (mpTimerBorrowEvents[i]) {
-					mpScheduler->RemoveEvent(mpTimerBorrowEvents[i]);
-					mpTimerBorrowEvents[i] = NULL;
+					uint32 dt = mpScheduler->GetTicksToEvent(mpTimerBorrowEvents[i]);
+
+					if (dt == 1) {
+						mpScheduler->RemoveEvent(mpTimerBorrowEvents[i]);
+						mpTimerBorrowEvents[i] = NULL;
+					}
 				}
 			}
+
+			mpScheduler->SetEvent(1, this, kATPokeyEventResetTimers2, mpResetTimers2Event);
+			break;
+
+		case kATPokeyEventResetTimers2:
+			mpResetTimers2Event = nullptr;
+
+			{
+				const uint32 t = mpScheduler->GetTick();
+				mCounter[0] = GetAUDFP1<0>(t);
+				mCounter[1] = GetAUDFP1<1>(t);
+				mCounter[2] = GetAUDFP1<2>(t);
+				mCounter[3] = GetAUDFP1<3>(t);
+			}
+
+			mpRenderer->ResetTimers();
 
 			SetupTimers(0x0f);
 			break;
@@ -1505,7 +1589,11 @@ void ATPokeyEmulator::RecomputeTimerPeriod() {
 		constexpr int loChannel = channel & ~1;
 		const bool fastLinkedTimer = (channel == 1) ? mbFastTimer1 : (channel == 3) ? mbFastTimer3 : false;
 
-		period = ((uint32)mAUDF[channel] << 8) + mAUDFP1[loChannel];
+		// Note: It is important in this function that we always use the eventual
+		// period -- we deliberately don't use GetAUDFP1<> as we want the period
+		// that the timer will eventually settle into, not what it will use on
+		// the next cycle.
+		period = ((uint32)mAUDF[channel] << 8) + mAUDFP1B[loChannel];
 
 		if (fastLinkedTimer) {
 			period += 6;
@@ -1514,7 +1602,7 @@ void ATPokeyEmulator::RecomputeTimerPeriod() {
 		else
 			period *= 28;
 	} else {
-		period = mAUDFP1[channel];
+		period = mAUDFP1B[channel];
 
 		if (fastTimer)
 			period += 3;
@@ -1782,10 +1870,19 @@ void ATPokeyEmulator::SetupTimers(uint8 channels) {
 
 				mpTimerBorrowEvents[0] = mpScheduler->AddEvent(ticks, this, kATPokeyEventTimer1Borrow);
 			} else if (mbLinkedTimers12) {
-				const uint32 loTime = t + ticks;
-				const uint32 hiTime = loTime + 3 + mTimerFullPeriod[0] * (mCounter[1] - 1);
+				uint32 loTime = t + ticks;
+				uint32 hiTime;
 
-				ATLOGPOKEYTI("Timer 1 - passive linked tick in %u cycles\n", ticks);
+				if (mCounterBorrow[1]) {
+					hiTime = t + mCounterBorrow[1];
+
+					if (ATWrapTime{hiTime} < loTime)
+						hiTime += mTimerPeriod[1];
+				} else {
+					hiTime = loTime + 3 + mTimerFullPeriod[0] * (mCounter[1] - 1);
+				}
+
+				ATLOGPOKEYTI("Timer 1 - passive linked tick in %u cycles, hi-tick in %u cycles (full period %u, period %u, hi-period %u)\n", ticks, hiTime - t, mTimerFullPeriod[0], mTimerPeriod[0], mTimerPeriod[1]);
 				SetupDeferredTimerEventsLinked(0, loTime, mTimerFullPeriod[0], hiTime, mTimerPeriod[1], mTimerPeriod[0] - 3);
 			} else {
 				ATLOGPOKEYTI("Timer 1 - passive tick in %u cycles\n", ticks);
@@ -1947,10 +2044,19 @@ void ATPokeyEmulator::SetupTimers(uint8 channels) {
 				if (!mbAllowDeferredTimer[2])
 					mpTimerBorrowEvents[2] = mpScheduler->AddEvent(ticks, this, kATPokeyEventTimer3Borrow);
 				else if (mbLinkedTimers34) {
-					const uint32 loTime = t + ticks;
-					const uint32 hiTime = loTime + 3 + mTimerFullPeriod[1] * (mCounter[3] - 1);
+				uint32 loTime = t + ticks;
+				uint32 hiTime;
 
-					SetupDeferredTimerEventsLinked(2, loTime, mTimerFullPeriod[1], hiTime, mTimerPeriod[3], mTimerPeriod[2]);
+				if (mCounterBorrow[3]) {
+					hiTime = t + mCounterBorrow[3];
+
+					if (ATWrapTime{hiTime} < loTime)
+						hiTime += mTimerPeriod[3];
+				} else {
+					hiTime = loTime + 3 + mTimerFullPeriod[1] * (mCounter[3] - 1);
+				}
+
+					SetupDeferredTimerEventsLinked(2, loTime, mTimerFullPeriod[1], hiTime, mTimerPeriod[3], mTimerPeriod[2] - 3);
 				} else
 					SetupDeferredTimerEvents(2, t + ticks, mTimerPeriod[2]);
 			}
@@ -2264,7 +2370,8 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 		case 0x00:	// $D200 AUDF1
 			if (mAUDF[0] != value) {
 				mAUDF[0] = value;
-				mAUDFP1[0] = (int)value + 1;
+
+				SetAUDFP1<0>((int)value + 1);
 
 				RecomputeTimerPeriod<0>();
 				
@@ -2290,7 +2397,8 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 		case 0x02:	// $D202 AUDF2
 			if (mAUDF[1] != value) {
 				mAUDF[1] = value;
-				mAUDFP1[1] = (int)value + 1;
+
+				SetAUDFP1<1>((int)value + 1);
 
 				RecomputeTimerPeriod<1>();
 
@@ -2314,7 +2422,8 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 		case 0x04:	// $D204 AUDF3
 			if (mAUDF[2] != value) {
 				mAUDF[2] = value;
-				mAUDFP1[2] = (int)value + 1;
+
+				SetAUDFP1<2>((int)value + 1);
 
 				RecomputeTimerPeriod<2>();
 
@@ -2341,7 +2450,8 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 		case 0x06:	// $D206 AUDF4
 			if (mAUDF[3] != value) {
 				mAUDF[3] = value;
-				mAUDFP1[3] = (int)value + 1;
+
+				SetAUDFP1<3>((int)value + 1);
 
 				RecomputeTimerPeriod<3>();
 
@@ -2405,7 +2515,7 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 			}
 			break;
 		case 0x09:	// $D209 STIMER
-			mpScheduler->SetEvent(4, this, kATPokeyEventResetTimers, mpResetTimersEvent);
+			mpScheduler->SetEvent(3, this, kATPokeyEventResetTimers, mpResetTimersEvent);
 			break;
 		case 0x0A:	// $D20A SKRES
 			mSKSTAT |= 0xe0;
@@ -2432,15 +2542,17 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 					// yup -- start external clock
 					uint32 delay = (ATSCHEDULER_GETTIME(mpScheduler) + 2) - mSerialExtBaseTime;
 
-					if (delay >= 0x80000000) {
-						delay = (0 - delay) % mSerialExtPeriod;
+					uint32 bitPeriod = mSerialExtPeriod * 2;
 
-						delay = mSerialExtPeriod - delay;
+					if (delay >= 0x80000000) {
+						delay = (0 - delay) % bitPeriod;
+
+						delay = bitPeriod - delay;
 					} else {
-						delay %= mSerialExtPeriod;
+						delay %= bitPeriod;
 
 						if (!delay)
-							delay = mSerialExtPeriod;
+							delay = bitPeriod;
 					}
 
 					mpScheduler->SetEvent(delay, this, kATPokeyEventSerialOutput, mpEventSerialOutput);
@@ -2532,8 +2644,8 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 
 				if (!(mSKCTL & 0x10) && (value & 0x10) && mbSerialWaitingForStartBit) {
 					// Restart timers 3 and 4 immediately.
-					mCounter[2] = mAUDFP1[2];
-					mCounter[3] = mAUDFP1[3];
+					mCounter[2] = GetAUDFP1<2>();
+					mCounter[3] = GetAUDFP1<3>();
 				}
 
 				const uint8 delta = value ^ mSKCTL;
@@ -2550,8 +2662,13 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 				}
 
 				// force serial rate re-evaluation if any clocking mode bits have changed
-				if (delta & 0x70)
+				if (delta & 0x70) {
 					mbSerialRateChanged = true;
+
+					// 000 clocking mode also resets internal serial clock phase flip-flop
+					if (!(value & 0x70))
+						mbSerClockPhase = false;
+				}
 
 				bool prvInit = (mSKCTL & 3) == 0;
 				bool newInit = (value & 3) == 0;
@@ -2590,13 +2707,21 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 
 					mpRenderer->SetInitMode(newInit);
 
+					// Init mode effects on the serial subsystem:
+					//
+					// - resets input and output state machines
+					// - resets the input shift register (the data is moot, but this also acts
+					//   as the bit counter)
+					// - does NOT reset the output shift register; it stops shifting but the
+					//   output state is preserved, which is important for two-tone mode
+					// - does NOT reset SERIN or SEROUT
+					//
 					mSerialInputShiftRegister = 0;
 					mSerialOutputShiftRegister = 0;
 					mSerialOutputCounter = 0;
 					mSerialInputCounter = 0;
 					mbSerOutValid = false;
 					mbSerShiftValid = false;
-					mbSerialOutputState = false;
 
 					// reset burst state
 					mbSerInBurstPendingData = false;
@@ -2680,6 +2805,9 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 				// check if serial timer is stopped and terminate output byte if needed
 				if (!IsSerialOutputClockRunning())
 					FlushSerialOutput();
+
+				if (delta & 0x80)
+					NotifyForceBreak();
 			}
 			break;
 
@@ -2752,9 +2880,11 @@ void ATPokeyEmulator::SaveState(IATObjectState **pp) {
 
 	obj2->mSerOutEventTime = mpEventSerialOutput ? mpScheduler->GetTicksToEvent(mpEventSerialOutput) : 0;
 	obj2->mSerOutShiftRegister = mSerialOutputShiftRegister;
-	obj2->mSerOutCounter = mSerialOutputCounter;
+	obj2->mSerOutCounter = mSerialOutputCounter ? (mSerialOutputCounter << 1) - (mbSerClockPhase ? 0 : 1) : 0;
 	obj2->mbSerOutValid = mbSerOutValid;
 	obj2->mbSerOutShiftValid = mbSerShiftValid;
+
+	obj2->mbSerClockPhase = mbSerClockPhase;
 
 	obj2->mTraceByteIndex = mTraceByteIndex;
 
@@ -2805,6 +2935,7 @@ void ATPokeyEmulator::LoadState(const IATObjectState& state) {
 	mSerialOutputCounter = 0;
 	mSerialInputShiftRegister = 0;
 	mSerialOutputShiftRegister = 0;
+	mbSerClockPhase = false;
 
 	mpScheduler->UnsetEvent(mpEventResetTwoTones1);
 	mpScheduler->UnsetEvent(mpEventResetTwoTones2);
@@ -2838,9 +2969,11 @@ void ATPokeyEmulator::LoadState(const IATObjectState& state) {
 			mpScheduler->SetEvent(pistate.mSerOutEventTime, this, kATPokeyEventSerialOutput, mpEventSerialOutput);
 
 		mSerialOutputShiftRegister = pistate.mSerOutShiftRegister;
-		mSerialOutputCounter = pistate.mSerOutCounter;
+		mSerialOutputCounter = std::min<uint8>((pistate.mSerOutCounter + 1) >> 1, 20);
 		mbSerOutValid = pistate.mbSerOutValid;
 		mbSerShiftValid = pistate.mbSerOutShiftValid;
+
+		mbSerClockPhase = pistate.mbSerClockPhase;
 
 		if (pistate.mTwoToneResetCounters[0])
 			mpScheduler->SetEvent(pistate.mTwoToneResetCounters[0], this, kATPokeyEventResetTwoTones1, mpEventResetTwoTones1);
@@ -2877,7 +3010,8 @@ void ATPokeyEmulator::PostLoadState() {
 	mpRenderer->SetInitMode((mSKCTL & 3) == 0);
 	mpRenderer->SetAUDCTL(mAUDCTL);
 	for(int i=0; i<4; ++i) {
-		mAUDFP1[i] = mAUDF[i] + 1;
+		mAUDFP1A[i] = mAUDF[i] + 1;
+		mAUDFP1B[i] = mAUDF[i] + 1;
 		mpRenderer->SetAUDCx(i, mAUDC[i]);
 	}
 
@@ -2909,6 +3043,8 @@ void ATPokeyEmulator::PostLoadState() {
 
 	if (mpSlave)
 		mpSlave->PostLoadState();
+
+	NotifyForceBreak();
 }
 
 void ATPokeyEmulator::GetRegisterState(ATPokeyRegisterState& state) const {
@@ -3027,7 +3163,7 @@ void ATPokeyEmulator::DumpStatus(ATConsoleOutput& out, bool isSlave) {
 }
 
 void ATPokeyEmulator::FlushAudio(bool pushAudio, uint64 timestamp) {
-	ATFastMathScope fastMathScope;
+	VDFastMathScope fastMathScope;
 
 	IATSyncAudioEdgePlayer *edgePlayer = mpAudioOut ? &mpAudioOut->AsMixer().GetEdgePlayer() : nullptr;
 	const auto endBlockResult = mpRenderer->EndBlock(edgePlayer);
@@ -3052,6 +3188,7 @@ void ATPokeyEmulator::FlushAudio(bool pushAudio, uint64 timestamp) {
 			mpSlave && mbStereoSoftEnable ? mpSlave->mpRenderer->GetOutputBuffer() : NULL,
 			endBlockResult.mSamples,
 			pushAudio,
+			mbStereoAsMono,
 			t64);
 	}
 
@@ -3079,8 +3216,15 @@ uint32 ATPokeyEmulator::GetCyclesToTimerFire(uint32 ch) const {
 		return mDeferredTimerPeriods[ch] - (t - mDeferredTimerStarts[ch]) % mDeferredTimerPeriods[ch];
 }
 
+bool ATPokeyEmulator::IsSerialForceBreakEnabled() const {
+	return (mSKCTL & 0x80) != 0;
+}
+
 void ATPokeyEmulator::UpdateMixTable() {
 	static constexpr float kHalfCycleAccumulationFactor = 1.0f;
+
+	if (!mpTables || mbIsSlave)
+		return;
 
 	if (mbNonlinearMixingEnabled) {
 		// Approximate measured voltage drops from individual POKEY volume bits, normalized so that
@@ -3167,9 +3311,8 @@ void ATPokeyEmulator::UpdateMixTable() {
 	// The XL/XE speaker is about as loud peak-to-peak as a channel at volume 6.
 	// However, it is added in later in the output circuitry and has different
 	// audio characteristics, so we must treat it separately. We do need to
-	// translate volume level 6 to a mix table index, but as it turns out,
-	// volume level 6 maps to mix index 6 (bit0 x 1 + bit1 x 1).
-	mpTables->mSpeakerLevel = mpTables->mMixTable[6];
+	// translate volume level 6 to a mix table index.
+	mpTables->mSpeakerLevel = mSpeakerVolOverride >= 0 ? mSpeakerVolOverride : mpTables->mMixTable[30];
 }
 
 void ATPokeyEmulator::UpdateKeyMatrix(int index, uint16 mask, uint16 state) {
@@ -3482,4 +3625,40 @@ void ATPokeyEmulator::UpdatePots(uint32 timeSkew) {
 
 void ATPokeyEmulator::UpdateAddressDecoding() {
 	mAddressMask = mpSlave && mbStereoSoftEnable ? 0x1F : 0x0F;
+}
+
+void ATPokeyEmulator::NotifyForceBreak() {
+	if (mpCassette)
+		mpCassette->PokeyChangeForceBreak(IsSerialForceBreakEnabled());
+}
+
+template<unsigned T_Ch>
+int ATPokeyEmulator::GetAUDFP1(uint32 t) const {
+	static_assert(T_Ch < 4);
+
+	return (uint32_t)(t - mAUDFP1Time[T_Ch]) < UINT32_C(0x80000000) ? mAUDFP1B[T_Ch] : mAUDFP1A[T_Ch];
+}
+
+template<unsigned T_Ch>
+int ATPokeyEmulator::GetAUDFP1() const {
+	static_assert(T_Ch < 4);
+
+	return GetAUDFP1<T_Ch>(mpScheduler->GetTick());
+}
+
+template<unsigned T_Ch>
+void ATPokeyEmulator::SetAUDFP1(int period) {
+	const uint32 t = mpScheduler->GetTick();
+
+	// We fire the borrow events one cycle after where the reload
+	// of the timer occurs. This means that a write to AUDF1 only
+	// takes effect three cycles later.
+	const uint32 effectiveTime = t + 2;
+
+	if (mAUDFP1Time[T_Ch] != effectiveTime) {
+		mAUDFP1A[T_Ch] = mAUDFP1B[T_Ch];
+		mAUDFP1Time[T_Ch] = effectiveTime;
+	}
+
+	mAUDFP1B[T_Ch] = period;
 }

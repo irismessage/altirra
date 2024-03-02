@@ -54,7 +54,7 @@ ATDeviceDiskDriveIndusGT::ATDeviceDiskDriveIndusGT() {
 	);
 
 	mTargetProxy.Init(mCoProc);
-	InitTargetControl(mTargetProxy, 4000000.0, kATDebugDisasmMode_Z80, &mBreakpointsImpl);
+	InitTargetControl(mTargetProxy, 4000000.0, kATDebugDisasmMode_Z80, &mBreakpointsImpl, this);
 
 	mFirmwareControl.Init(mROM, sizeof mROM, kATFirmwareType_IndusGT);
 }
@@ -617,7 +617,6 @@ void ATDeviceDiskDriveIndusGT::OnWriteControl(uint8 val) {
 	if (mActiveStepperPhases == phases)
 		return;
 
-	const uint8 phaseDelta = phases ^ mActiveStepperPhases;
 	mActiveStepperPhases = phases;
 
 	static const sint8 kOffsetTables[16]={

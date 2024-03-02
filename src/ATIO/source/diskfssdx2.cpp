@@ -99,7 +99,7 @@ protected:
 	static void WriteFileName(uint8 fn[11], const char *filename);
 	static bool IsValidFileName(const char *filename);
 
-	IATDiskImage *mpImage;
+	vdrefptr<IATDiskImage> mpImage;
 	uint32	mBitmapStartSector;
 	int		mBitmapSectorShift;
 	uint32	mTotalSectors;

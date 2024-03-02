@@ -20,6 +20,7 @@
 #include <vd2/system/hash.h>
 #include <vd2/system/int128.h>
 #include <vd2/system/registry.h>
+#include <at/atcore/devicestorageimpl.h>
 #include "side.h"
 #include "memorymanager.h"
 #include "ide.h"
@@ -43,12 +44,9 @@ ATSIDEEmulator::ATSIDEEmulator(bool v2)
 	memset(mFlash, 0xFF, sizeof mFlash);
 
 	mRTC.Init();
-
-	LoadNVRAM();
 }
 
 ATSIDEEmulator::~ATSIDEEmulator() {
-	SaveNVRAM();
 }
 
 void *ATSIDEEmulator::AsInterface(uint32 id) {
@@ -111,9 +109,15 @@ void ATSIDEEmulator::Init() {
 	mpMemMan->SetLayerName(mpMemLayerCartControl2, "SIDE flash control (right cart window)");
 
 	mIDE.Init(mpScheduler, mpUIRenderer);
+
+	mRTCStorage.Init(*GetService<IATDeviceStorageManager>(),
+		[this](IATDeviceStorageManager&) { LoadNVRAM(); },
+		[this](IATDeviceStorageManager&) { SaveNVRAM(); }
+	);
 }
 
 void ATSIDEEmulator::Shutdown() {
+	mRTCStorage.Shutdown();
 	mFlashCtrl.Shutdown();
 	mIDE.Shutdown();
 
@@ -194,24 +198,20 @@ void ATSIDEEmulator::ColdReset() {
 }
 
 void ATSIDEEmulator::LoadNVRAM() {
-	VDRegistryAppKey key("Nonvolatile RAM");
-
 	uint8 buf[0x72];
 	memset(buf, 0, sizeof buf);
 
-	if (key.getBinary("SIDE clock", (char *)buf, 0x72))
+	if (GetService<IATDeviceStorageManager>()->LoadNVRAM("SIDE clock", buf, 0x72))
 		mRTC.Load(buf);
 }
 
 void ATSIDEEmulator::SaveNVRAM() {
-	VDRegistryAppKey key("Nonvolatile RAM");
-
 	uint8 buf[0x72];
 	memset(buf, 0, sizeof buf);
 
 	mRTC.Save(buf);
 
-	key.setBinary("SIDE clock", (const char *)buf, 0x72);
+	GetService<IATDeviceStorageManager>()->SaveNVRAM("SIDE clock", buf, 0x72);
 }
 
 void ATSIDEEmulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {

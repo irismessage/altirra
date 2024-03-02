@@ -29,22 +29,45 @@ struct ATAudioSampleDesc {
 	float mBaseVolume;
 };
 
+struct ATAudioSound;
+class ATAudioSoundGroup;
+class ATAudioConvolutionOutput;
+class ATAudioConvolutionPlayer;
+
+class ATAudioSamplePool {
+public:
+	void Init();
+	void Shutdown();
+
+	const ATAudioSampleDesc *GetSample(ATAudioSampleId sampleId) const;
+	ATAudioSound *AllocateSound();
+	void FreeSound(ATAudioSound *sound);
+
+private:
+	vdfastvector<ATAudioSound *> mFreeSounds;
+	VDLinearAllocator mAllocator;
+
+	ATAudioSampleDesc mSamples[6];
+};
+
 class ATAudioSamplePlayer final : public IATSyncAudioSource, public IATSyncAudioSamplePlayer {
 	ATAudioSamplePlayer(const ATAudioSamplePlayer&) = delete;
 	ATAudioSamplePlayer& operator=(const ATAudioSamplePlayer&) = delete;
 public:
-	ATAudioSamplePlayer();
+	ATAudioSamplePlayer(ATAudioSamplePool& pool);
 	~ATAudioSamplePlayer();
 
 	void Init(ATScheduler *sch);
 	void Shutdown();
 
 public:
+	IATSyncAudioSource& AsSource() { return *this; }
+
 	ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, ATAudioSampleId sampleId, float volume) override;
 	ATSoundId AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, ATAudioSampleId sampleId, float volume) override;
 
-	ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, const sint16 *sample, uint32 len, float volume) override;
-	ATSoundId AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, const sint16 *sample, uint32 len, float volume) override;
+	ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, const sint16 *sample, uint32 len, float volume);
+	ATSoundId AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, const sint16 *sample, uint32 len, float volume);
 
 	ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, uint32 len, float volume) override;
 	ATSoundId AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, float volume) override;
@@ -55,21 +78,28 @@ public:
 	void StopSound(ATSoundId id) override;
 	void StopSound(ATSoundId id, uint64 time) override;
 
+	vdrefptr<IATSyncAudioConvolutionPlayer> CreateConvolutionPlayer(ATAudioSampleId sampleId);
+	vdrefptr<IATSyncAudioConvolutionPlayer> CreateConvolutionPlayer(const sint16 *sample, uint32 len);
+
 public:
 	bool RequiresStereoMixingNow() const override { return false; }
 	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 
 private:
-	class SoundGroup;
-	struct Sound;
+	using SoundGroup = ATAudioSoundGroup;
+	using Sound = ATAudioSound;
+	friend ATAudioSoundGroup;
+	friend ATAudioConvolutionPlayer;
 
 	ATSoundId StartSound(Sound *s, IATAudioSoundGroup& soundGroup, uint64 startTime);
-	void FreeSound(Sound *s);
 	void CleanupGroup(SoundGroup& group);
 	void StopGroupSounds(SoundGroup& group);
 
-	ATScheduler *mpScheduler;
-	uint32 mNextSoundId;
+	void RemoveConvolutionPlayer(ATAudioConvolutionPlayer& cplayer);
+
+	ATScheduler *mpScheduler = nullptr;
+	uint32 mNextSoundId = 1;
+	uint32 mBaseTime = 0;
 
 	typedef vdfastvector<Sound *> Sounds;
 	Sounds mSounds;
@@ -77,9 +107,10 @@ private:
 
 	vdlist<SoundGroup> mGroups;
 
-	ATAudioSampleDesc mSamples[5];
+	vdautoptr<ATAudioConvolutionOutput> mpConvoOutput;
+	vdfastvector<ATAudioConvolutionPlayer *> mConvoPlayers;
 
-	VDLinearAllocator mAllocator;
+	ATAudioSamplePool& mPool;
 };
 
 #endif	// f_AT_AUDIOSYNCMIXER_H

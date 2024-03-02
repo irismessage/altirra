@@ -298,9 +298,6 @@
     <ClCompile Include="source\soundboard.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\symbols.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\textdom.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -534,9 +531,6 @@
     </ClCompile>
     <ClCompile Include="source\uiconfsoundboard.cpp">
       <Filter>Source Files - Device Configuration UI</Filter>
-    </ClCompile>
-    <ClCompile Include="source\vs2013x64crashfix.cpp">
-      <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\artifacting_ntsc_sse2_intrin.cpp">
       <Filter>Source Files</Filter>
@@ -871,6 +865,87 @@
     <ClCompile Include="source\pokeysavecompat.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\portmanager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\devicemanager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidisplaytool.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevcomputereyes.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\videostillimage.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevvideostillimage.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfgeneric.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uicalibrationscreen.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\startuplogger.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\errordecode.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\devxcmdmountvhd.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\devxcmdmountvhd_win32.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidbgpane.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidbgdisasm.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidbgmemory.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidbgsource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidbgconsole.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidbgdebugdisplay.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidbghistory.cpp">
+      <Filter>Header Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidbgwatch.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidbgregisters.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidbgcallstack.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidbgprinteroutput.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidbgbreakpoints.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidbgtargets.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidiskexplorer_win32.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\devxcmdexploredisk.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\antic.h">
@@ -904,9 +979,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\cheatengine.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\cio.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\common_png.h">
@@ -1035,9 +1107,6 @@
     <ClInclude Include="h\kmkjzide.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\ksyms.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="h\memorymanager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -1099,9 +1168,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\soundboard.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\symbols.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\textdom.h">
@@ -1410,6 +1476,72 @@
     <ClInclude Include="h\pokeysavecompat.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="h\portmanager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\devicemanager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidisplaytool.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\videostillimage.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uiconfgeneric.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uicalibrationscreen.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\startuplogger.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\errordecode.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidbgpane.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidbgdisasm.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidbgmemory.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidbgsource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidbgconsole.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidbgdebugdisplay.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidbghistory.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidbgwatch.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidbgregisters.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidbgcallstack.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidbgprinteroutput.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidbgbreakpoints.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidbgtargets.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidiskexplorer_win32.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="h\cpumachine.inl">
@@ -1604,11 +1736,9 @@
     <None Include="res\compatdb.atcpengine">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="..\..\obj\Release\Kernel\rapidflash.lzrom" />
     <None Include="..\..\out\Release\rapidpbi16.bin">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="..\..\out\release\kernel816.rom" />
     <None Include="h\gtiarenderer_neon.inl">
       <Filter>Header Files</Filter>
     </None>
@@ -1620,6 +1750,15 @@
     </None>
     <None Include="manifest\comctl6_arm64.manifest">
       <Filter>Manifest Files</Filter>
+    </None>
+    <None Include="res\speaker-click.pcm">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="..\..\out\release\kernel816.rom">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="..\..\obj\Release\Kernel\rapidflash.lzrom">
+      <Filter>Resource Files</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
@@ -1653,14 +1792,6 @@
     <CompileRawFont Include="data\xep80_font_normal.bmp">
       <Filter>Data Files</Filter>
     </CompileRawFont>
-  </ItemGroup>
-  <ItemGroup>
-    <YASM Include="source\gtiarenderer_ssse3.asm">
-      <Filter>Assembly Files</Filter>
-    </YASM>
-    <YASM Include="source\gtia_sse2.asm">
-      <Filter>Assembly Files</Filter>
-    </YASM>
   </ItemGroup>
   <ItemGroup>
     <PackResource Include="..\..\obj\Release\Kernel\playsap-b.xex">
@@ -1700,5 +1831,13 @@
     <Text Include="res\cmdhelp.txt">
       <Filter>Resource Files</Filter>
     </Text>
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="source\gtia_sse2.asm">
+      <Filter>Assembly Files</Filter>
+    </MASM>
+    <MASM Include="source\gtiarenderer_ssse3.asm">
+      <Filter>Assembly Files</Filter>
+    </MASM>
   </ItemGroup>
 </Project>
