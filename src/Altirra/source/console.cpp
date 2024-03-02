@@ -22,10 +22,12 @@
 #include <richedit.h>
 #include <malloc.h>
 #include <stdio.h>
+#include <map>
 #include <hash_map>
 #include <vd2/Dita/services.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
+#include <vd2/system/filesys.h>
 #include <vd2/system/filewatcher.h>
 #include <vd2/system/thread.h>
 #include <vd2/system/thunk.h>
@@ -73,6 +75,7 @@ public:
 	~ATDisassemblyWindow();
 
 	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
+	void OnDebuggerEvent(ATDebugEvent eventId);
 
 	void OnTextEditorUpdated();
 	void RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *colorization);
@@ -89,11 +92,13 @@ protected:
 	void OnDestroy();
 	void OnSize();
 	void OnSetFocus();
+	bool OnCommand(UINT cmd);
 	void RemakeView(uint16 focusAddr);
 
 	vdrefptr<IVDTextEditor> mpTextEditor;
 	HWND	mhwndTextEditor;
 	HWND	mhwndAddress;
+	HMENU	mhmenu;
 
 	uint32	mViewStart;
 	uint32	mViewLength;
@@ -101,6 +106,7 @@ protected:
 	uint32	mPCAddr;
 	int		mFramePCLine;
 	uint32	mFramePCAddr;
+	ATCPUSubMode	mLastSubMode;
 	
 	ATDebuggerSystemState mLastState;
 
@@ -109,12 +115,16 @@ protected:
 
 ATDisassemblyWindow::ATDisassemblyWindow()
 	: ATUIPane(kATUIPaneId_Disassembly, "Disassembly")
+	, mhwndTextEditor(NULL)
+	, mhwndAddress(NULL)
+	, mhmenu(LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_DISASM_CONTEXT_MENU)))
 	, mViewStart(0)
 	, mViewLength(0)
 	, mPCLine(-1)
 	, mPCAddr(0)
 	, mFramePCLine(-1)
 	, mFramePCAddr(0)
+	, mLastSubMode(kATCPUSubMode_6502)
 {
 	mPreferredDockCode = kATContainerDockRight;
 
@@ -125,6 +135,8 @@ ATDisassemblyWindow::ATDisassemblyWindow()
 }
 
 ATDisassemblyWindow::~ATDisassemblyWindow() {
+	if (mhmenu)
+		::DestroyMenu(mhmenu);
 }
 
 LRESULT ATDisassemblyWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -153,6 +165,11 @@ LRESULT ATDisassemblyWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				}
 			}
 			break;
+
+		case WM_COMMAND:
+			if (OnCommand(LOWORD(wParam)))
+				return true;
+			break;
 	}
 
 	return ATUIPane::WndProc(msg, wParam, lParam);
@@ -167,7 +184,7 @@ bool ATDisassemblyWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lPa
 					ATGetDebugger()->Break();
 				}
 			} else if (wParam == VK_F5) {
-				ATGetDebugger()->Run();
+				ATGetDebugger()->Run(kATDebugSrcMode_Disasm);
 			} else if (wParam == VK_F8) {
 				ATGetDebugger()->Break();
 			} else if (wParam == VK_F9) {
@@ -177,13 +194,13 @@ bool ATDisassemblyWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lPa
 					ATGetDebugger()->ToggleBreakpoint(mAddressesByLine[line]);
 				return true;
 			} else if (wParam == VK_F10) {
-				ATGetDebugger()->StepOver();
+				ATGetDebugger()->StepOver(kATDebugSrcMode_Disasm);
 				return true;
 			} else if (wParam == VK_F11) {
 				if (GetKeyState(VK_SHIFT) < 0)
-					ATGetDebugger()->StepOut();
+					ATGetDebugger()->StepOut(kATDebugSrcMode_Disasm);
 				else
-					ATGetDebugger()->StepInto();
+					ATGetDebugger()->StepInto(kATDebugSrcMode_Disasm);
 				return true;
 			}
 			break;
@@ -196,6 +213,24 @@ bool ATDisassemblyWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lPa
 				case VK_F10:
 				case VK_F11:
 					return true;
+			}
+			break;
+
+		case WM_CONTEXTMENU:
+			{
+				int x = GET_X_LPARAM(lParam);
+				int y = GET_Y_LPARAM(lParam);
+
+				if (x >= 0 && y >= 0) {
+					POINT pt = {x, y};
+
+					if (ScreenToClient(mhwndTextEditor, &pt)) {
+						mpTextEditor->SetCursorPixelPos(pt.x, pt.y);
+						TrackPopupMenu(GetSubMenu(mhmenu, 0), TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
+					}
+				} else {
+					TrackPopupMenu(GetSubMenu(mhmenu, 0), TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
+				}
 			}
 			break;
 	}
@@ -247,6 +282,64 @@ void ATDisassemblyWindow::OnSetFocus() {
 	::SetFocus(mhwndTextEditor);
 }
 
+bool ATDisassemblyWindow::OnCommand(UINT cmd) {
+	switch(cmd) {
+		case ID_CONTEXT_GOTOSOURCE:
+			{
+				int line = mpTextEditor->GetCursorLine();
+				bool error = true;
+
+				if ((uint32)line < mAddressesByLine.size()) {
+					uint16 addr = mAddressesByLine[line];
+
+					uint32 moduleId;
+					ATSourceLineInfo lineInfo;
+					IATDebuggerSymbolLookup *lookup = ATGetDebuggerSymbolLookup();
+					if (lookup->LookupLine(addr, moduleId, lineInfo)) {
+						VDStringW path;
+						if (lookup->GetSourceFilePath(moduleId, lineInfo.mFileId, path) && lineInfo.mLine) {
+							IATSourceWindow *w = ATOpenSourceWindow(path.c_str());
+							if (w) {
+								w->FocusOnLine(lineInfo.mLine - 1);
+
+								error = false;
+							}
+						}
+					}
+				}
+				
+				if (error)
+					MessageBox(mhwnd, "There is no source line associated with that location.", "Altirra Error", MB_ICONERROR | MB_OK);
+			}
+			break;
+		case ID_CONTEXT_SHOWNEXTSTATEMENT:
+			RemakeView(g_sim.GetCPU().GetInsnPC());
+			break;
+		case ID_CONTEXT_SETNEXTSTATEMENT:
+			{
+				int line = mpTextEditor->GetCursorLine();
+
+				if ((uint32)line < mAddressesByLine.size())
+					ATGetDebugger()->SetPC(mAddressesByLine[line]);
+				else
+					MessageBeep(MB_ICONEXCLAMATION);
+			}
+			break;
+		case ID_CONTEXT_TOGGLEBREAKPOINT:
+			{
+				int line = mpTextEditor->GetCursorLine();
+
+				if ((uint32)line < mAddressesByLine.size())
+					ATGetDebugger()->ToggleBreakpoint(mAddressesByLine[line]);
+				else
+					MessageBeep(MB_ICONEXCLAMATION);
+			}
+			break;
+	}
+
+	return false;
+}
+
 void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 	uint16 pc = mViewStart;
 	char buf[256];
@@ -271,10 +364,18 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 		++line;
 
 		mAddressesByLine.push_back(pc);
-		pc = ATDisassembleInsn(buf, pc, false);
+		uint16 newpc = ATDisassembleInsn(buf, pc, false);
+
+		// don't allow disassembly to skip the desired PC
+		if (newpc > focusAddr && pc < focusAddr)
+			newpc = focusAddr;
+
+		pc = newpc;
 
 		mpTextEditor->Append(buf);
 	}
+
+	mLastSubMode = g_sim.GetCPU().GetCPUSubMode();
 
 	if (focusLine >= 0) {
 		mpTextEditor->CenterViewOnLine(focusLine);
@@ -303,7 +404,7 @@ void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemStat
 		mFramePCAddr = (uint32)-1;
 	}
 
-	if (changed && state.mFramePC - mViewStart >= mViewLength) {
+	if (changed && ((state.mFramePC - mViewStart) >= mViewLength || g_sim.GetCPU().GetCPUSubMode() != mLastSubMode)) {
 		SetPosition(state.mFramePC);
 	} else {
 		const int n = mAddressesByLine.size();
@@ -334,6 +435,11 @@ void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemStat
 
 		mpTextEditor->RecolorAll();
 	}
+}
+
+void ATDisassemblyWindow::OnDebuggerEvent(ATDebugEvent eventId) {
+	if (eventId == kATDebugEvent_BreakpointsChanged)
+		mpTextEditor->RecolorAll();
 }
 
 void ATDisassemblyWindow::OnTextEditorUpdated() {
@@ -373,6 +479,7 @@ public:
 	~ATRegistersWindow();
 
 	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
+	void OnDebuggerEvent(ATDebugEvent eventId) {}
 
 protected:
 	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
@@ -438,21 +545,64 @@ void ATRegistersWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState&
 	bool is65C816 = g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C816;
 
 	if (is65C816) {
+		if (state.mbEmulation)
+			mState += "Emulation\r\n";
+		else {
+			mState.append_sprintf("Native (M%d X%d)\r\n"
+				, state.mP & AT6502::kFlagM ? 8 : 16
+				, state.mP & AT6502::kFlagX ? 8 : 16
+				);
+		}
+
 		mState.append_sprintf("PC = %02X:%04X (%04X)\r\n", state.mK, state.mInsnPC, state.mPC);
-		mState.append_sprintf("A = %02X%02X\r\n", state.mAH, state.mA);
-		mState.append_sprintf("X = %02X%02X\r\n", state.mXH, state.mX);
-		mState.append_sprintf("Y = %02X%02X\r\n", state.mYH, state.mY);
-		mState.append_sprintf("S = %02X%02X\r\n", state.mSH, state.mS);
+
+		if (state.mbEmulation || (state.mP & AT6502::kFlagM)) {
+			mState.append_sprintf("A = %02X\r\n", state.mA);
+			mState.append_sprintf("B = %02X\r\n", state.mAH);
+		} else
+			mState.append_sprintf("A = %02X%02X\r\n", state.mAH, state.mA);
+
+		if (state.mbEmulation || (state.mP & AT6502::kFlagX)) {
+			mState.append_sprintf("X = %02X\r\n", state.mXH, state.mX);
+			mState.append_sprintf("Y = %02X\r\n", state.mYH, state.mY);
+		} else {
+			mState.append_sprintf("X = %02X%02X\r\n", state.mXH, state.mX);
+			mState.append_sprintf("Y = %02X%02X\r\n", state.mYH, state.mY);
+		}
+
+		if (state.mbEmulation)
+			mState.append_sprintf("S = %02X\r\n", state.mS);
+		else
+			mState.append_sprintf("S = %02X%02X\r\n", state.mSH, state.mS);
+
 		mState.append_sprintf("P = %02X\r\n", state.mP);
-		mState.append_sprintf("    %c%c1%c%c%c%c%c\r\n"
-			, state.mP & 0x80 ? 'N' : '-'
-			, state.mP & 0x40 ? 'V' : '-'
-			, state.mP & 0x10 ? 'B' : '-'
-			, state.mP & 0x08 ? 'D' : '-'
-			, state.mP & 0x04 ? 'I' : '-'
-			, state.mP & 0x02 ? 'Z' : '-'
-			, state.mP & 0x01 ? 'C' : '-'
-			);
+
+		if (state.mbEmulation) {
+			mState.append_sprintf("    %c%c1%c%c%c%c%c\r\n"
+				, state.mP & 0x80 ? 'N' : '-'
+				, state.mP & 0x40 ? 'V' : '-'
+				, state.mP & 0x10 ? 'B' : '-'
+				, state.mP & 0x08 ? 'D' : '-'
+				, state.mP & 0x04 ? 'I' : '-'
+				, state.mP & 0x02 ? 'Z' : '-'
+				, state.mP & 0x01 ? 'C' : '-'
+				);
+		} else {
+			mState.append_sprintf("    %c%c%c%c%c%c%c%c\r\n"
+				, state.mP & 0x80 ? 'N' : '-'
+				, state.mP & 0x40 ? 'V' : '-'
+				, state.mP & 0x20 ? 'M' : '-'
+				, state.mP & 0x10 ? 'X' : '-'
+				, state.mP & 0x08 ? 'D' : '-'
+				, state.mP & 0x04 ? 'I' : '-'
+				, state.mP & 0x02 ? 'Z' : '-'
+				, state.mP & 0x01 ? 'C' : '-'
+				);
+		}
+
+		mState.append_sprintf("E = %d\r\n", state.mbEmulation);
+		mState.append_sprintf("D = %04X\r\n", state.mD);
+		mState.append_sprintf("B = %02X\r\n", state.mB);
 	} else {
 		mState.append_sprintf("PC = %04X (%04X)\r\n", state.mInsnPC, state.mPC);
 		mState.append_sprintf("A = %02X\r\n", state.mA);
@@ -482,6 +632,7 @@ public:
 	~ATCallStackWindow();
 
 	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
+	void OnDebuggerEvent(ATDebugEvent eventId) {}
 
 protected:
 	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
@@ -583,12 +734,16 @@ void ATCallStackWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState&
 
 ///////////////////////////////////////////////////////////////////////////
 
+typedef vdfastvector<IATSourceWindow *> SourceWindows;
+SourceWindows g_sourceWindows;
+
 class ATSourceWindow : public VDShaderEditorBaseWindow
 					 , public IATSimulatorCallback
 					 , public IATDebuggerClient
 					 , public IVDTextEditorCallback
 					 , public IVDTextEditorColorizer
 					 , public IVDFileWatcherCallback
+					 , public IATSourceWindow
 {
 public:
 	ATSourceWindow();
@@ -597,6 +752,10 @@ public:
 	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
 
 	void LoadFile(const wchar_t *s);
+
+	const wchar_t *GetPath() const {
+		return mPath.c_str();
+	}
 
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
@@ -611,16 +770,22 @@ protected:
 
 	void OnSimulatorEvent(ATSimulatorEvent ev);
 	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
+	void OnDebuggerEvent(ATDebugEvent eventId);
+	int GetLineForAddress(uint32 addr);
 	bool OnFileUpdated(const wchar_t *path);
 
-	void	HighlightLine(int line);
+	void	ActivateLine(int line);
+	void	FocusOnLine(int line);
+	void	SetPCLine(int line);
+	void	SetFramePCLine(int line);
 
 	sint32	GetCurrentLineAddress() const;
 
 	uint32	mModuleId;
 	uint16	mFileId;
 
-	int		mHighlightedLine;
+	int		mPCLine;
+	int		mFramePCLine;
 
 	vdrefptr<IVDTextEditor>	mpTextEditor;
 	HWND	mhwndTextEditor;
@@ -631,11 +796,15 @@ protected:
 	AddressLookup	mAddressToLineLookup;
 	AddressLookup	mLineToAddressLookup;
 
+	typedef std::map<uint32, int> LooseAddressLookup;
+	LooseAddressLookup	mAddressToLineLooseLookup;
+
 	VDFileWatcher	mFileWatcher;
 };
 
 ATSourceWindow::ATSourceWindow()
-	: mHighlightedLine(-1)
+	: mPCLine(-1)
+	, mFramePCLine(-1)
 	, mhAccel(LoadAccelerators(g_hInst, MAKEINTRESOURCE(IDR_DEBUGGER_ACCEL)))
 {
 }
@@ -671,7 +840,7 @@ void ATSourceWindow::LoadFile(const wchar_t *s) {
 				&& space0 == ' '
 				&& space1 == ' '
 				&& space2 == ' '
-				&& space3 == ' ')
+				&& (space3 == ' ' || space3 == '\t'))
 			{
 				valid = true;
 			} else if (8 == sscanf(line, "%6x%c%c%c%c%c%2x%c", &address, &space0, &space1, &dummy, &space2, &space3, &op, &space4)
@@ -679,7 +848,7 @@ void ATSourceWindow::LoadFile(const wchar_t *s) {
 				&& space1 == ' '
 				&& space2 == ' '
 				&& space3 == ' '
-				&& space4 == ' '
+				&& (space4 == ' ' || space4 == '\t')
 				&& isdigit((unsigned char)dummy))
 			{
 				valid = true;
@@ -722,8 +891,17 @@ void ATSourceWindow::LoadFile(const wchar_t *s) {
 		mFileId = 0;
 	}
 
+	mAddressToLineLooseLookup.clear();
+
+	for(AddressLookup::const_iterator it(mAddressToLineLookup.begin()), itEnd(mAddressToLineLookup.end()); it != itEnd; ++it) {
+		mAddressToLineLooseLookup.insert(*it);
+	}
+
 	mPath = s;
 	mFileWatcher.Init(s, this);
+
+	VDSetWindowTextW32(mhwnd, VDFileSplitPath(s));
+	ATGetDebugger()->RequestClientUpdate(this);
 }
 
 LRESULT ATSourceWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -767,13 +945,22 @@ LRESULT ATSourceWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			{
 				int x = GET_X_LPARAM(lParam);
 				int y = GET_Y_LPARAM(lParam);
-				POINT pt = {x, y};
 
-				if (ScreenToClient(mhwndTextEditor, &pt)) {
-					mpTextEditor->SetCursorPixelPos(pt.x, pt.y);
+				if (x >= 0 && y >= 0) {
+					POINT pt = {x, y};
+
+					if (ScreenToClient(mhwndTextEditor, &pt)) {
+						mpTextEditor->SetCursorPixelPos(pt.x, pt.y);
+						TrackPopupMenu(GetSubMenu(g_hmenuSrcContext, 0), TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
+					}
+				} else {
 					TrackPopupMenu(GetSubMenu(g_hmenuSrcContext, 0), TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
 				}
 			}
+			return 0;
+
+		case WM_SETFOCUS:
+			::SetFocus(mhwndTextEditor);
 			return 0;
 	}
 
@@ -794,10 +981,16 @@ bool ATSourceWindow::OnCreate() {
 	OnSize();
 	ATGetDebugger()->AddClient(this);
 	g_sim.AddCallback(this);
+
+	g_sourceWindows.push_back(this);
 	return true;
 }
 
 void ATSourceWindow::OnDestroy() {
+	SourceWindows::iterator it(std::find(g_sourceWindows.begin(), g_sourceWindows.end(), this));
+	if (it != g_sourceWindows.end())
+		g_sourceWindows.erase(it);
+
 	mFileWatcher.Shutdown();
 
 	g_sim.RemoveCallback(this);
@@ -817,9 +1010,10 @@ bool ATSourceWindow::OnCommand(UINT cmd) {
 			ATGetDebugger()->Break();
 			return true;
 		case ID_DEBUG_RUN:
-			ATGetDebugger()->Run();
+			ATGetDebugger()->Run(kATDebugSrcMode_Source);
 			return true;
 		case ID_DEBUG_TOGGLEBREAKPOINT:
+		case ID_CONTEXT_TOGGLEBREAKPOINT:
 			{
 				int line = mpTextEditor->GetCursorLine();
 
@@ -831,13 +1025,13 @@ bool ATSourceWindow::OnCommand(UINT cmd) {
 			}
 			return true;
 		case ID_DEBUG_STEPINTO:
-			ATGetDebugger()->StepInto();
+			ATGetDebugger()->StepInto(kATDebugSrcMode_Source);
 			return true;
 		case ID_DEBUG_STEPOVER:
-			ATGetDebugger()->StepOver();
+			ATGetDebugger()->StepOver(kATDebugSrcMode_Source);
 			return true;
 		case ID_DEBUG_STEPOUT:
-			ATGetDebugger()->StepOut();
+			ATGetDebugger()->StepOut(kATDebugSrcMode_Source);
 			return true;
 
 		case ID_CONTEXT_GOTODISASSEMBLY:
@@ -871,20 +1065,28 @@ void ATSourceWindow::OnTextEditorUpdated() {
 }
 
 void ATSourceWindow::RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *cl) {
-	if (line == mHighlightedLine) {
-		cl->AddTextColorPoint(0, 0x000000, 0xFFFF80);
-		return;
-	}
+	int next = 0;
 
 	AddressLookup::const_iterator it(mLineToAddressLookup.find(line));
 	if (it != mLineToAddressLookup.end()) {
 		uint32 addr = it->second;
 
 		if (g_sim.GetCPU().IsBreakpointSet(addr)) {
-			cl->AddTextColorPoint(0, 0x000000, 0xE0F0FF);
-			return;
+			cl->AddTextColorPoint(next, 0x000000, 0xFF8080);
+			next += 4;
 		}
 	}
+
+	if (line == mPCLine) {
+		cl->AddTextColorPoint(next, 0x000000, 0xFFFF80);
+		return;
+	} else if (line == mFramePCLine) {
+		cl->AddTextColorPoint(next, 0x000000, 0x80FF80);
+		return;
+	}
+
+	if (next > 0)
+		return;
 
 	for(int i=0; i<length; ++i) {
 		char c = text[i];
@@ -930,17 +1132,39 @@ void ATSourceWindow::OnSimulatorEvent(ATSimulatorEvent ev) {
 }
 
 void ATSourceWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
-	uint16 pc = g_sim.GetCPU().GetInsnPC();
+	int pcline = -1;
+	int frameline = -1;
 
-	AddressLookup::const_iterator it(mAddressToLineLookup.find(pc));
-	if (it != mAddressToLineLookup.end()) {
-		uint32 line = it->second;
-
-		mpTextEditor->SetCursorPos(line, 0);
-		HighlightLine(line);
-	} else {
-		HighlightLine(-1);
+	if (!state.mbRunning) {
+		pcline = GetLineForAddress(state.mInsnPC);
+		frameline = GetLineForAddress(state.mFramePC);
 	}
+
+	if (pcline >= 0)
+		mpTextEditor->SetCursorPos(pcline, 0);
+
+	SetPCLine(pcline);
+
+	if (frameline >= 0)
+		mpTextEditor->SetCursorPos(frameline, 0);
+
+	SetFramePCLine(frameline);
+}
+
+void ATSourceWindow::OnDebuggerEvent(ATDebugEvent eventId) {
+	mpTextEditor->RecolorAll();
+}
+
+int ATSourceWindow::GetLineForAddress(uint32 addr) {
+	LooseAddressLookup::const_iterator it(mAddressToLineLooseLookup.upper_bound(addr));
+	if (it != mAddressToLineLooseLookup.begin()) {
+		--it;
+
+		if (addr - (uint32)it->first < 16)
+			return it->second;
+	}
+
+	return -1;
 }
 
 bool ATSourceWindow::OnFileUpdated(const wchar_t *path) {
@@ -950,12 +1174,37 @@ bool ATSourceWindow::OnFileUpdated(const wchar_t *path) {
 	return true;
 }
 
-void ATSourceWindow::HighlightLine(int line) {
-	if (line == mHighlightedLine)
+void ATSourceWindow::ActivateLine(int line) {
+	mpTextEditor->SetCursorPos(line, 0);
+
+	::SetActiveWindow(mhwnd);
+	::SetFocus(mhwndTextEditor);
+}
+
+void ATSourceWindow::FocusOnLine(int line) {
+	mpTextEditor->CenterViewOnLine(line);
+	mpTextEditor->SetCursorPos(line, 0);
+
+	::SetActiveWindow(mhwnd);
+	::SetFocus(mhwndTextEditor);
+}
+
+void ATSourceWindow::SetPCLine(int line) {
+	if (line == mPCLine)
 		return;
 
-	int oldLine = mHighlightedLine;
-	mHighlightedLine = line;
+	int oldLine = mPCLine;
+	mPCLine = line;
+	mpTextEditor->RecolorLine(oldLine);
+	mpTextEditor->RecolorLine(line);
+}
+
+void ATSourceWindow::SetFramePCLine(int line) {
+	if (line == mFramePCLine)
+		return;
+
+	int oldLine = mFramePCLine;
+	mFramePCLine = line;
 	mpTextEditor->RecolorLine(oldLine);
 	mpTextEditor->RecolorLine(line);
 }
@@ -971,7 +1220,26 @@ sint32 ATSourceWindow::GetCurrentLineAddress() const {
 	return it->second;
 }
 
-void ATLoadSourceFile(const wchar_t *s) {
+IATSourceWindow *ATGetSourceWindow(const wchar_t *s) {
+	SourceWindows::const_iterator it(g_sourceWindows.begin()), itEnd(g_sourceWindows.end());
+
+	for(; it != itEnd; ++it) {
+		IATSourceWindow *w = *it;
+
+		const wchar_t *t = w->GetPath();
+
+		if (VDFileIsPathEqual(s, t))
+			return w;
+	}
+
+	return NULL;
+}
+
+IATSourceWindow *ATOpenSourceWindow(const wchar_t *s) {
+	IATSourceWindow *w = ATGetSourceWindow(s);
+	if (w)
+		return w;
+
 	vdrefptr<ATSourceWindow> srcwin(new ATSourceWindow);
 
 	HWND hwndSrcWin = (HWND)srcwin->Create(WS_EX_NOPARENTNOTIFY, WS_OVERLAPPEDWINDOW|WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, (VDGUIHandle)g_hwnd, 0);
@@ -983,7 +1251,11 @@ void ATLoadSourceFile(const wchar_t *s) {
 			DestroyWindow(hwndSrcWin);
 			e.post(g_hwnd, "Altirra error");
 		}
+
+		return srcwin;
 	}
+
+	return NULL;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1040,6 +1312,7 @@ protected:
 	void FreeNodes(TreeNode *);
 
 	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
+	void OnDebuggerEvent(ATDebugEvent eventId) {}
 
 	HWND mhwndHeader;
 	RECT mContentRect;
@@ -1516,26 +1789,46 @@ void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 			if (s->empty()) {
 				const ATCPUHistoryEntry& hent = node->mHEnt;
 
-				if (is65C816) {
-					mTempLine.sprintf("%d:%3d:%3d | A=%02X%02X X=%02X%02X Y=%02X%02X P=%02X S=%02X%02X | "
+				mTempLine.sprintf("%d:%3d:%3d | "
 						, hent.mTimestamp >> 20
 						, (hent.mTimestamp >> 8) & 0xfff
 						, hent.mTimestamp & 0xff
-						, hent.mAH
-						, hent.mA
-						, hent.mXH
-						, hent.mX
-						, hent.mYH
-						, hent.mY
+					);
+
+				if (is65C816 && !hent.mbEmulation) {
+					if (hent.mP & AT6502::kFlagM) {
+						mTempLine.append_sprintf("B=%02X A=%02X"
+							, hent.mAH
+							, hent.mA
+							);
+					} else {
+						mTempLine.append_sprintf("A=%02X%02X"
+							, hent.mAH
+							, hent.mA
+							);
+					}
+
+					if (hent.mP & AT6502::kFlagX) {
+						mTempLine.append_sprintf(" X=%02X Y=%02X"
+							, hent.mX
+							, hent.mY
+							);
+					} else {
+						mTempLine.append_sprintf(" X=%02X%02X Y=%02X%02X"
+							, hent.mXH
+							, hent.mX
+							, hent.mYH
+							, hent.mY
+							);
+					}
+
+					mTempLine.append_sprintf(" P=%02X S=%02X%02X"
 						, hent.mP
 						, hent.mSH
 						, hent.mS
 						);
 				} else {
-					mTempLine.sprintf("%d:%3d:%3d | A=%02X X=%02X Y=%02X P=%02X S=%02X | "
-						, hent.mTimestamp >> 20
-						, (hent.mTimestamp >> 8) & 0xfff
-						, hent.mTimestamp & 0xff
+					mTempLine.append_sprintf("A=%02X X=%02X Y=%02X P=%02X S=%02X"
 						, hent.mA
 						, hent.mX
 						, hent.mY
@@ -1543,7 +1836,9 @@ void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 						, hent.mS);
 				}
 
-				ATDisassembleInsn(mTempLine, hent.mPC, false);
+				mTempLine += " | ";
+
+				ATDisassembleInsn(mTempLine, hent, false);
 
 				s = &mTempLine;
 			}
@@ -1912,27 +2207,29 @@ void ATHistoryWindow::UpdateOpcodes() {
 			mStackLevels[hent.mS] = parent;
 		}
 
-		switch(hent.mOpcode) {
-			case 0x08:	// PHP
+		// Note that there is a serious problem here in that we are only tracking an 8-bit
+		// stack, when the stack is 16-bit in 65C816 native mode.
+		switch(hent.mOpcode[0]) {
 			case 0x48:	// PHA
-				mStackLevels[hent.mS - 1] = parent;
+			case 0x08:	// PHP
+				mStackLevels[(uint8)(hent.mS - 1)] = parent;
 				break;
 
 			case 0x6A:	// PHY
 			case 0xDA:	// PHX
 				if (is65C02 || is65C816)
-					mStackLevels[hent.mS - 1] = parent;
+					mStackLevels[(uint8)(hent.mS - 1)] = parent;
 				break;
 
 			case 0x8B:	// PHB
 			case 0x4B:	// PHK
 				if (is65C816)
-					mStackLevels[hent.mS - 1] = parent;
+					mStackLevels[(uint8)(hent.mS - 1)] = parent;
 				break;
 
 			case 0x0B:	// PHD
 				if (is65C816)
-					mStackLevels[hent.mS - 2] = parent;
+					mStackLevels[(uint8)(hent.mS - 2)] = parent;
 				break;
 		}
 
@@ -2239,15 +2536,15 @@ LRESULT ATConsoleWindow::CommandEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, 
 			return 0;
 		} else if (wParam == VK_F11) {
 			if (GetKeyState(VK_SHIFT) < 0)
-				ATGetDebugger()->StepOut();
+				ATGetDebugger()->StepOut(kATDebugSrcMode_Disasm);
 			else
-				ATGetDebugger()->StepInto();
+				ATGetDebugger()->StepInto(kATDebugSrcMode_Disasm);
 			return 0;
 		} else if (wParam == VK_F10) {
-			ATGetDebugger()->StepOver();
+			ATGetDebugger()->StepOver(kATDebugSrcMode_Disasm);
 			return 0;
 		} else if (wParam == VK_F5) {
-			ATGetDebugger()->Run();
+			ATGetDebugger()->Run(kATDebugSrcMode_Disasm);
 			return 0;
 		} else if (wParam == VK_ESCAPE) {
 			ATActivateUIPane(kATUIPaneId_Display, true);
@@ -2282,7 +2579,12 @@ LRESULT ATConsoleWindow::CommandEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, 
 				if (GetWindowText(mhwndEdit, buf, len+1)) {
 					mLastCommand = buf;
 					SetWindowText(mhwndEdit, "");
-					ATConsoleExecuteCommand(buf);
+
+					try {
+						ATConsoleExecuteCommand(buf);
+					} catch(const MyError& e) {
+						ATConsolePrintf("%s\n", e.gets());
+					}
 				}
 			}
 			return true;
@@ -2303,6 +2605,7 @@ public:
 	~ATMemoryWindow();
 
 	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
+	void OnDebuggerEvent(ATDebugEvent eventId);
 
 	void SetPosition(uint16 addr);
 
@@ -2388,17 +2691,17 @@ bool ATMemoryWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam, 
 					ATGetDebugger()->Break();
 				}
 			} else if (wParam == VK_F5) {
-				ATGetDebugger()->Run();
+				ATGetDebugger()->Run(kATDebugSrcMode_Same);
 			} else if (wParam == VK_F8) {
 				ATGetDebugger()->Break();
 			} else if (wParam == VK_F10) {
-				ATGetDebugger()->StepOver();
+				ATGetDebugger()->StepOver(kATDebugSrcMode_Same);
 				return true;
 			} else if (wParam == VK_F11) {
 				if (GetKeyState(VK_SHIFT) < 0)
-					ATGetDebugger()->StepOut();
+					ATGetDebugger()->StepOut(kATDebugSrcMode_Same);
 				else
-					ATGetDebugger()->StepInto();
+					ATGetDebugger()->StepInto(kATDebugSrcMode_Same);
 				return true;
 			}
 			break;
@@ -2599,6 +2902,9 @@ void ATMemoryWindow::RemakeView(uint16 focusAddr) {
 
 void ATMemoryWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
 	RemakeView(mViewStart);
+}
+
+void ATMemoryWindow::OnDebuggerEvent(ATDebugEvent eventId) {
 }
 
 void ATMemoryWindow::SetPosition(uint16 addr) {

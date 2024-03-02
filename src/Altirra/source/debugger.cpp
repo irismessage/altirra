@@ -18,6 +18,7 @@
 #include "stdafx.h"
 #include <list>
 #include <vd2/system/filesys.h>
+#include <vd2/system/error.h>
 #include "console.h"
 #include "cpu.h"
 #include "simulator.h"
@@ -42,19 +43,22 @@ public:
 	bool Init();
 
 	void Detach();
+	void SetSourceMode(ATDebugSrcMode sourceMode);
 	void Break();
-	void Run();
+	void Run(ATDebugSrcMode sourceMode);
 	void RunTraced();
 	void ClearAllBreakpoints();
 	void ToggleBreakpoint(uint16 addr);
-	void StepInto();
-	void StepOver();
-	void StepOut();
+	void StepInto(ATDebugSrcMode sourceMode);
+	void StepOver(ATDebugSrcMode sourceMode);
+	void StepOut(ATDebugSrcMode sourceMode);
 	void SetPC(uint16 pc);
 	void SetFramePC(uint16 pc);
 	uint32 GetCallStack(ATCallStackFrame *dst, uint32 maxCount);
 	void DumpCallStack();
+
 	void ListModules();
+	void UnloadSymbolsByIndex(uint32 index);
 
 	void DumpCIOParameters();
 
@@ -63,18 +67,25 @@ public:
 	void SetCIOTracingEnabled(bool enabled);
 
 	// symbol handling
-	uint32 AddModule(uint32 base, uint32 size, IATSymbolStore *symbolStore);
+	uint32 AddModule(uint32 base, uint32 size, IATSymbolStore *symbolStore, const char *name);
 	void RemoveModule(uint32 base, uint32 size, IATSymbolStore *symbolStore);
 
 	void AddClient(IATDebuggerClient *client, bool requestUpdate);
 	void RemoveClient(IATDebuggerClient *client);
+	void RequestClientUpdate(IATDebuggerClient *client);
 
 	uint32 LoadSymbols(const wchar_t *fileName);
 	void UnloadSymbols(uint32 moduleId);
 
 	sint32 ResolveSymbol(const char *s);
+	uint32 ResolveSymbolThrow(const char *s);
+
+	void SendRegisterUpdate() {
+		UpdateClientSystemState();
+	}
 
 public:
+	bool GetSourceFilePath(uint32 moduleId, uint16 fileId, VDStringW& path);
 	bool LookupSymbol(uint32 moduleOffset, uint32 flags, ATSymbol& symbol);
 	bool LookupLine(uint32 addr, uint32& moduleId, ATSourceLineInfo& lineInfo);
 	bool LookupFile(const wchar_t *fileName, uint32& moduleId, uint16& fileId);
@@ -85,23 +96,29 @@ public:
 
 protected:
 	void UpdateClientSystemState(IATDebuggerClient *client = NULL);
+	void ActivateSourceWindow();
+	void NotifyEvent(ATDebugEvent eventId);
 
 	struct Module {
 		uint32	mId;
 		uint32	mBase;
 		uint32	mSize;
 		vdrefptr<IATSymbolStore>	mpSymbols;
+		VDStringA	mName;
 	};
 
 	uint32	mNextModuleId;
 	uint16	mFramePC;
 	bool mbTraceCIOCalls;
+	bool mbSourceMode;
 
 	typedef std::list<Module> Modules; 
 	Modules		mModules;
 
 	typedef std::vector<IATDebuggerClient *> Clients;
 	Clients mClients;
+	int mClientsBusy;
+	bool mbClientsChanged;
 };
 
 ATDebugger g_debugger;
@@ -115,8 +132,11 @@ void ATInitDebugger() {
 
 ATDebugger::ATDebugger()
 	: mNextModuleId(1)
-	, mbTraceCIOCalls(false)
 	, mFramePC(0)
+	, mbTraceCIOCalls(false)
+	, mbSourceMode(false)
+	, mClientsBusy(0)
+	, mbClientsChanged(false)
 {
 }
 
@@ -131,18 +151,21 @@ bool ATDebugger::Init() {
 	ATCreateDefaultVariableSymbolStore(~varmod.mpSymbols);
 	varmod.mBase = varmod.mpSymbols->GetDefaultBase();
 	varmod.mSize = varmod.mpSymbols->GetDefaultSize();
+	varmod.mName = "Kernel Database";
 
 	mModules.push_back(Module());
 	Module& kernmod = mModules.back();
 	ATCreateDefaultKernelSymbolStore(~kernmod.mpSymbols);
 	kernmod.mBase = kernmod.mpSymbols->GetDefaultBase();
 	kernmod.mSize = kernmod.mpSymbols->GetDefaultSize();
+	kernmod.mName = "Kernel ROM";
 
 	mModules.push_back(Module());
 	Module& hwmod = mModules.back();
 	ATCreateDefaultHardwareSymbolStore(~hwmod.mpSymbols);
 	hwmod.mBase = hwmod.mpSymbols->GetDefaultBase();
 	hwmod.mSize = hwmod.mpSymbols->GetDefaultSize();
+	hwmod.mName = "Hardware";
 
 	return true;
 }
@@ -157,6 +180,21 @@ void ATDebugger::Detach() {
 	UpdateClientSystemState();
 }
 
+void ATDebugger::SetSourceMode(ATDebugSrcMode sourceMode) {
+	switch(sourceMode) {
+		case kATDebugSrcMode_Disasm:
+			mbSourceMode = false;
+			break;
+
+		case kATDebugSrcMode_Source:
+			mbSourceMode = true;
+			break;
+
+		case kATDebugSrcMode_Same:
+			break;
+	}
+}
+
 void ATDebugger::Break() {
 	if (g_sim.IsRunning()) {
 		g_sim.Suspend();
@@ -169,9 +207,11 @@ void ATDebugger::Break() {
 	}
 }
 
-void ATDebugger::Run() {
+void ATDebugger::Run(ATDebugSrcMode sourceMode) {
 	if (g_sim.IsRunning())
 		return;
+
+	SetSourceMode(sourceMode);
 
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 	cpu.SetStep(false);
@@ -207,9 +247,11 @@ void ATDebugger::ToggleBreakpoint(uint16 addr) {
 	g_sim.NotifyEvent(kATSimEvent_CPUPCBreakpointsUpdated);
 }
 
-void ATDebugger::StepInto() {
+void ATDebugger::StepInto(ATDebugSrcMode sourceMode) {
 	if (g_sim.IsRunning())
 		return;
+
+	SetSourceMode(sourceMode);
 
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 
@@ -219,9 +261,11 @@ void ATDebugger::StepInto() {
 	UpdateClientSystemState();
 }
 
-void ATDebugger::StepOver() {
+void ATDebugger::StepOver(ATDebugSrcMode sourceMode) {
 	if (g_sim.IsRunning())
 		return;
+
+	SetSourceMode(sourceMode);
 
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 
@@ -240,14 +284,16 @@ void ATDebugger::StepOver() {
 	UpdateClientSystemState();
 }
 
-void ATDebugger::StepOut() {
+void ATDebugger::StepOut(ATDebugSrcMode sourceMode) {
 	if (g_sim.IsRunning())
 		return;
+
+	SetSourceMode(sourceMode);
 
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 	uint8 s = cpu.GetS();
 	if (s == 0xFF)
-		return StepInto();
+		return StepInto(sourceMode);
 
 	++s;
 
@@ -270,6 +316,7 @@ void ATDebugger::SetPC(uint16 pc) {
 
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 	cpu.SetPC(pc);
+	mFramePC = pc;
 	UpdateClientSystemState();
 }
 
@@ -412,11 +459,22 @@ void ATDebugger::DumpCallStack() {
 
 void ATDebugger::ListModules() {
 	Modules::iterator it(mModules.begin()), itEnd(mModules.end());
-	for(; it!=itEnd; ++it) {
+	int index = 1;
+	for(; it!=itEnd; ++it, ++index) {
 		const Module& mod = *it;
 
-		ATConsolePrintf("%04x-%04x  %s\n", mod.mBase, mod.mBase + mod.mSize - 1, mod.mpSymbols ? "(symbols loaded)" : "(no symbols)");
+		ATConsolePrintf("%3d) %04x-%04x  %-16s  %s\n", index, mod.mBase, mod.mBase + mod.mSize - 1, mod.mpSymbols ? "(symbols loaded)" : "(no symbols)", mod.mName.c_str());
 	}
+}
+
+void ATDebugger::UnloadSymbolsByIndex(uint32 index) {
+	if (index >= mModules.size())
+		return;
+
+	Modules::iterator it(mModules.begin());
+	std::advance(it, index);
+
+	UnloadSymbols(it->mId);
 }
 
 void ATDebugger::DumpCIOParameters() {
@@ -487,7 +545,7 @@ void ATDebugger::SetCIOTracingEnabled(bool enabled) {
 		cpu.ClearBreakpoint(ATKernelSymbols::CIOV);
 }
 
-uint32 ATDebugger::AddModule(uint32 base, uint32 size, IATSymbolStore *symbolStore) {
+uint32 ATDebugger::AddModule(uint32 base, uint32 size, IATSymbolStore *symbolStore, const char *name) {
 	Modules::const_iterator it(mModules.begin()), itEnd(mModules.end());
 	for(; it!=itEnd; ++it) {
 		const Module& mod = *it;
@@ -501,6 +559,10 @@ uint32 ATDebugger::AddModule(uint32 base, uint32 size, IATSymbolStore *symbolSto
 	newmod.mBase = base;
 	newmod.mSize = size;
 	newmod.mpSymbols = symbolStore;
+
+	if (name)
+		newmod.mName = name;
+
 	mModules.push_back(newmod);
 
 	return newmod.mId;
@@ -531,18 +593,26 @@ void ATDebugger::AddClient(IATDebuggerClient *client, bool requestUpdate) {
 
 void ATDebugger::RemoveClient(IATDebuggerClient *client) {
 	Clients::iterator it(std::find(mClients.begin(), mClients.end(), client));
-
 	if (it != mClients.end()) {
-		*it = mClients.back();
-		mClients.pop_back();
+		if (mClientsBusy) {
+			*it = NULL;
+			mbClientsChanged = true;
+		} else {
+			*it = mClients.back();
+			mClients.pop_back();
+		}
 	}
+}
+
+void ATDebugger::RequestClientUpdate(IATDebuggerClient *client) {
+	UpdateClientSystemState(client);
 }
 
 uint32 ATDebugger::LoadSymbols(const wchar_t *fileName) {
 	vdrefptr<IATSymbolStore> symStore;
 
 	if (ATLoadSymbols(fileName, ~symStore))
-		return g_debugger.AddModule(symStore->GetDefaultBase(), symStore->GetDefaultSize(), symStore);
+		return g_debugger.AddModule(symStore->GetDefaultBase(), symStore->GetDefaultSize(), symStore, VDTextWToA(fileName).c_str());
 
 	return 0;
 }
@@ -580,6 +650,36 @@ sint32 ATDebugger::ResolveSymbol(const char *s) {
 		return -1;
 
 	return result;
+}
+
+uint32 ATDebugger::ResolveSymbolThrow(const char *s) {
+	sint32 v = ResolveSymbol(s);
+
+	if (v < 0)
+		throw MyError("Unable to evaluate: %s", s);
+
+	return (uint32)v;
+}
+
+bool ATDebugger::GetSourceFilePath(uint32 moduleId, uint16 fileId, VDStringW& path) {
+	Modules::const_iterator it(mModules.begin()), itEnd(mModules.end());
+	for(; it!=itEnd; ++it) {
+		const Module& mod = *it;
+
+		if (mod.mId == moduleId) {
+			if (!mod.mpSymbols)
+				return false;
+
+			const wchar_t *s = mod.mpSymbols->GetFileName(fileId);
+			if (!s)
+				return false;
+
+			path = s;
+			return true;
+		}
+	}
+
+	return false;
 }
 
 bool ATDebugger::LookupSymbol(uint32 addr, uint32 flags, ATSymbol& symbol) {
@@ -645,12 +745,15 @@ void ATDebugger::GetLinesForFile(uint32 moduleId, uint16 fileId, vdfastvector<AT
 }
 
 void ATDebugger::OnSimulatorEvent(ATSimulatorEvent ev) {
+	if (ev == kATSimEvent_CPUPCBreakpointsUpdated)
+		NotifyEvent(kATDebugEvent_BreakpointsChanged);
+
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 
 	if (ev == kATSimEvent_CPUPCBreakpoint) {
 		if (mbTraceCIOCalls && cpu.GetPC() == ATKernelSymbols::CIOV) {
 			DumpCIOParameters();
-			Run();
+			Run(kATDebugSrcMode_Same);
 			return;
 		}
 	}
@@ -703,6 +806,9 @@ void ATDebugger::OnSimulatorEvent(ATSimulatorEvent ev) {
 	mFramePC = cpu.GetInsnPC();
 
 	UpdateClientSystemState();
+
+	if (mbSourceMode)
+		ActivateSourceWindow();
 }
 
 void ATDebugger::UpdateClientSystemState(IATDebuggerClient *client) {
@@ -722,12 +828,14 @@ void ATDebugger::UpdateClientSystemState(IATDebuggerClient *client) {
 	sysstate.mSH = cpu.GetSH();
 	sysstate.mB = cpu.GetB();
 	sysstate.mK = cpu.GetK();
+	sysstate.mD = cpu.GetD();
 
 	sysstate.mPCModuleId = 0;
 	sysstate.mPCFileId = 0;
 	sysstate.mPCLine = 0;
 	sysstate.mFramePC = mFramePC;
 	sysstate.mbRunning = g_sim.IsRunning();
+	sysstate.mbEmulation = cpu.GetEmulationFlag();
 
 	if (!sysstate.mbRunning) {
 		ATSourceLineInfo lineInfo;
@@ -749,14 +857,64 @@ void ATDebugger::UpdateClientSystemState(IATDebuggerClient *client) {
 	}
 }
 
+void ATDebugger::ActivateSourceWindow() {
+	uint32 moduleId;
+	ATSourceLineInfo lineInfo;
+	IATDebuggerSymbolLookup *lookup = ATGetDebuggerSymbolLookup();
+	if (lookup->LookupLine(mFramePC, moduleId, lineInfo)) {
+		VDStringW path;
+		if (lookup->GetSourceFilePath(moduleId, lineInfo.mFileId, path) && lineInfo.mLine) {
+			IATSourceWindow *w = ATOpenSourceWindow(path.c_str());
+			if (w) {
+				w->ActivateLine(lineInfo.mLine - 1);
+			}
+		}
+	}
+}
+
+void ATDebugger::NotifyEvent(ATDebugEvent eventId) {
+	VDVERIFY(++mClientsBusy < 100);
+
+	// Note that this list may change on the fly.
+	size_t n = mClients.size();
+	for(uint32 i=0; i<n; ++i) {
+		IATDebuggerClient *cb = mClients[i];
+
+		if (cb)
+			cb->OnDebuggerEvent(eventId);
+	}
+
+	VDVERIFY(--mClientsBusy >= 0);
+
+	if (!mClientsBusy && mbClientsChanged) {
+		Clients::iterator src = mClients.begin();
+		Clients::iterator dst = src;
+		Clients::iterator end = mClients.end();
+
+		for(; src != end; ++src) {
+			IATDebuggerClient *cb = *src;
+
+			if (cb) {
+				*dst = cb;
+				++dst;
+			}
+		}
+
+		if (dst != end)
+			mClients.erase(dst, end);
+
+		mbClientsChanged = false;
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 void ATConsoleCmdTrace() {
-	ATGetDebugger()->StepInto();
+	ATGetDebugger()->StepInto(kATDebugSrcMode_Disasm);
 }
 
 void ATConsoleCmdGo() {
-	ATGetDebugger()->Run();
+	ATGetDebugger()->Run(kATDebugSrcMode_Disasm);
 }
 
 void ATConsoleCmdGoTraced() {
@@ -769,7 +927,7 @@ void ATConsoleCmdGoFrameEnd() {
 }
 
 void ATConsoleCmdGoReturn() {
-	ATGetDebugger()->StepOut();
+	ATGetDebugger()->StepOut(kATDebugSrcMode_Disasm);
 }
 
 void ATConsoleCmdGoScanline(int argc, const char *const *argv) {
@@ -789,7 +947,7 @@ void ATConsoleCmdCallStack() {
 }
 
 void ATConsoleCmdStepOver() {
-	ATGetDebugger()->StepOver();
+	ATGetDebugger()->StepOver(kATDebugSrcMode_Disasm);
 }
 
 void ATConsoleCmdBreakpt(int argc, const char *const *argv) {
@@ -933,13 +1091,25 @@ void ATConsoleCmdRegisters(int argc, const char *const *argv) {
 		return;
 	}
 
-	uint16 v = (uint16)strtoul(argv[1], NULL, 16);
+	uint16 v = (uint16)g_debugger.ResolveSymbolThrow(argv[1]);
 
-	if (!strcmp(argv[0], "pc")) {
-		cpu.SetPC(v);
+	VDStringSpanA regName(argv[0]);
+	if (regName == "pc") {
+		g_debugger.SetPC(v);
+	} else if (regName == "x") {
+		cpu.SetX((uint8)v);
+	} else if (regName == "y") {
+		cpu.SetY((uint8)v);
+	} else if (regName == "s") {
+		cpu.SetS((uint8)v);
+	} else if (regName == "p") {
+		cpu.SetP((uint8)v);
 	} else {
 		ATConsolePrintf("Unknown register '%s'\n", argv[0]);
+		return;
 	}
+
+	g_debugger.SendRegisterUpdate();
 }
 
 void ATConsoleCmdDumpATASCII(int argc, const char *const *argv) {
@@ -983,24 +1153,28 @@ void ATConsoleCmdDumpBytes(int argc, const char *const *argv) {
 
 	uint16 addr = (uint16)v;
 
-	ATConsolePrintf("%04X: %02X %02X %02X %02X %02X %02X %02X %02X-%02X %02X %02X %02X %02X %02X %02X %02X\n"
+	uint8 buf[16];
+	char chbuf[17];
+	for(int i=0; i<16; ++i) {
+		uint8 v = g_sim.DebugReadByte(addr + i);
+		buf[i] = v;
+
+		if ((uint8)(v - 0x20) < 0x5F)
+			chbuf[i] = (char)v;
+		else
+			chbuf[i] = '.';
+	}
+
+	chbuf[16] = 0;
+
+	ATConsolePrintf("%04X: %02X %02X %02X %02X %02X %02X %02X %02X-%02X %02X %02X %02X %02X %02X %02X %02X |%s|\n"
 		, addr
-		, g_sim.DebugReadByte(addr + 0)
-		, g_sim.DebugReadByte(addr + 1)
-		, g_sim.DebugReadByte(addr + 2)
-		, g_sim.DebugReadByte(addr + 3)
-		, g_sim.DebugReadByte(addr + 4)
-		, g_sim.DebugReadByte(addr + 5)
-		, g_sim.DebugReadByte(addr + 6)
-		, g_sim.DebugReadByte(addr + 7)
-		, g_sim.DebugReadByte(addr + 8)
-		, g_sim.DebugReadByte(addr + 9)
-		, g_sim.DebugReadByte(addr + 10)
-		, g_sim.DebugReadByte(addr + 11)
-		, g_sim.DebugReadByte(addr + 12)
-		, g_sim.DebugReadByte(addr + 13)
-		, g_sim.DebugReadByte(addr + 14)
-		, g_sim.DebugReadByte(addr + 15));
+		, buf[ 0], buf[ 1], buf[ 2], buf[ 3]
+		, buf[ 4], buf[ 5], buf[ 6], buf[ 7]
+		, buf[ 8], buf[ 9], buf[10], buf[11]
+		, buf[12], buf[13], buf[14], buf[15]
+		, chbuf
+		);
 }
 
 void ATConsoleCmdDumpWords(int argc, const char *const *argv) {
@@ -1200,7 +1374,6 @@ void ATConsoleCmdDumpHistory(int argc, const char *const *argv) {
 	}
 
 	const ATCPUEmulator& cpu = g_sim.GetCPU();
-	char buf[512];
 	uint16 predictor[4] = {0,0,0,0};
 	int predictLen = 0;
 
@@ -1214,6 +1387,7 @@ void ATConsoleCmdDumpHistory(int argc, const char *const *argv) {
 	uint16 nmi = g_sim.DebugReadWord(0xFFFA);
 	uint16 irq = g_sim.DebugReadWord(0xFFFE);
 
+	VDStringA buf;
 	for(int i=histstart; i >= histend; --i) {
 		const ATCPUHistoryEntry& he = cpu.GetHistory(i);
 		uint16 pc = he.mPC;
@@ -1238,7 +1412,7 @@ void ATConsoleCmdDumpHistory(int argc, const char *const *argv) {
 
 		int y = (he.mTimestamp >> 8) & 0xfff;
 
-		sprintf(buf, "%7d) T=%05d|%3d,%3d A=%02x X=%02x Y=%02x S=%02x P=%02x (%c%c%c%c%c%c%c%c) "
+		buf.sprintf("%7d) T=%05d|%3d,%3d A=%02x X=%02x Y=%02x S=%02x P=%02x (%c%c%c%c%c%c%c%c) "
 			, i
 			, he.mTimestamp >> 20
 			, y
@@ -1254,12 +1428,14 @@ void ATConsoleCmdDumpHistory(int argc, const char *const *argv) {
 			, he.mP & 0x01 ? 'C' : ' '
 			);
 
-		ATDisassembleInsn(buf+strlen(buf), he.mPC, true);
+		ATDisassembleInsn(buf, he, true);
 
-		if (wild && !VDFileWildMatch(wild, buf))
+		if (wild && !VDFileWildMatch(wild, buf.c_str()))
 			continue;
 
-		ATConsoleWrite(buf);
+		buf += '\n';
+
+		ATConsoleWrite(buf.c_str());
 	}
 
 	if (predictLen > 4)
@@ -1307,6 +1483,24 @@ void ATConsoleCmdWriteMem(int argc, const char *const *argv) {
 	fclose(f);
 
 	ATConsolePrintf("Wrote %04X-%04X to %s\n", addr, addr+len-1, argv[0]);
+}
+
+void ATConsoleCmdLoadSymbols(int argc, const char *const *argv) {
+	if (argc > 0) {
+		uint32 idx = ATGetDebugger()->LoadSymbols(VDTextAToW(argv[0]).c_str());
+
+		if (idx)
+			ATConsolePrintf("Loaded symbol file %s.\n", argv[0]);
+	}
+}
+
+void ATConsoleCmdUnloadSymbols(int argc, const char *const *argv) {
+	if (argc != 1)
+		throw MyError("Syntax: .unloadsym index");
+
+	unsigned long index = strtoul(argv[0], NULL, 0);
+
+	g_debugger.UnloadSymbolsByIndex(index);
 }
 
 void ATConsoleCmdAntic() {
@@ -1390,6 +1584,19 @@ void ATConsoleCmdVectors() {
 	ATConsolePrintf("VBREAK  Break instruction             %04X\n", (uint16)kdb.VBREAK);
 	ATConsolePrintf("VTIMR1  POKEY timer 1                 %04X\n", (uint16)kdb.VTIMR1);
 	ATConsolePrintf("VTIMR2  POKEY timer 2                 %04X\n", (uint16)kdb.VTIMR2);
+	ATConsolePrintf("\n");
+
+	if (g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C816) {
+		ATConsolePrintf("Native COP     %04X\n", g_sim.DebugReadWord(0xFFE4));
+		ATConsolePrintf("Native NMI     %04X\n", g_sim.DebugReadWord(0xFFEA));
+		ATConsolePrintf("Native Reset   %04X\n", g_sim.DebugReadWord(0xFFEC));
+		ATConsolePrintf("Native IRQ     %04X\n", g_sim.DebugReadWord(0xFFEE));
+		ATConsolePrintf("COP            %04X\n", g_sim.DebugReadWord(0xFFF4));
+	}
+
+	ATConsolePrintf("NMI            %04X\n", g_sim.DebugReadWord(0xFFFA));
+	ATConsolePrintf("Reset          %04X\n", g_sim.DebugReadWord(0xFFFC));
+	ATConsolePrintf("IRQ            %04X\n", g_sim.DebugReadWord(0xFFFE));
 }
 
 void ATConsoleCmdGTIA() {
@@ -1429,7 +1636,7 @@ void ATConsoleCmdPathDump(int argc, const char *const *argv) {
 		}
 	}
 
-	g_debugger.AddModule(0, 0x10000, pSymbolStore);
+	g_debugger.AddModule(0, 0x10000, pSymbolStore, NULL);
 
 	FILE *f = fopen(argv[0], "w");
 	if (!f) {
@@ -1465,7 +1672,7 @@ void ATConsoleCmdLoadKernelSymbols(int argc, const char *const *argv) {
 		return;
 	}
 
-	g_debugger.AddModule(0xD800, 0x2800, symbols);
+	g_debugger.AddModule(0xD800, 0x2800, symbols, "Kernel");
 	ATConsolePrintf("Kernel symbols loaded: %s\n", argv[0]);
 }
 
@@ -1496,10 +1703,12 @@ void ATConsoleCmdDumpHelp() {
 	ATConsoleWrite(".history     Show CPU history\n");
 	ATConsoleWrite(".gtia        Display GTIA status\n");
 	ATConsoleWrite(".loadksym    Load kernel symbols\n");
+	ATConsoleWrite(".loadsym     Load module symbols\n");
 	ATConsoleWrite(".pokey       Display POKEY status\n");
 	ATConsoleWrite(".restart     Restart emulated system\n");
 	ATConsoleWrite(".tracecio    Toggle CIO call tracing\n");
 	ATConsoleWrite(".traceser    Toggle serial I/O call tracing\n");
+	ATConsoleWrite(".unloadsym   Unload module symbols\n");
 	ATConsoleWrite(".vectors     Display kernel vectors\n");
 	ATConsoleWrite(".writemem    Write memory to disk\n");
 }
@@ -1616,6 +1825,10 @@ void ATConsoleExecuteCommand(char *s) {
 			ATConsoleCmdVectors();
 		} else if (!strcmp(cmd, ".writemem")) {
 			ATConsoleCmdWriteMem(argc-1, argv+1);
+		} else if (!strcmp(cmd, ".loadsym")) {
+			ATConsoleCmdLoadSymbols(argc-1, argv+1);
+		} else if (!strcmp(cmd, ".unloadsym")) {
+			ATConsoleCmdUnloadSymbols(argc-1, argv+1);
 		} else if (!strcmp(cmd, "?")) {
 			ATConsoleCmdDumpHelp();
 		} else {

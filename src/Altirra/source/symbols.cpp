@@ -283,9 +283,9 @@ void ATSymbolStore::GetLines(uint16 matchFileId, vdfastvector<ATSourceLineInfo>&
 }
 
 bool ATSymbolStore::GetLineForOffset(uint32 moduleOffset, ATSourceLineInfo& lineInfo) {
-	LineToOffset::const_iterator it(mLineToOffset.upper_bound(moduleOffset - 1));
+	OffsetToLine::const_iterator it(mOffsetToLine.upper_bound(moduleOffset));
 
-	if (it == mLineToOffset.begin())
+	if (it == mOffsetToLine.begin())
 		return false;
 
 	--it;
@@ -312,6 +312,18 @@ bool ATSymbolStore::GetOffsetForLine(const ATSourceLineInfo& lineInfo, uint32& m
 void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 	uint16 fileid = 0;
 
+	enum {
+		kModeNone,
+		kModeSource,
+		kModeLabels
+	} mode = kModeNone;
+
+	VDStringA label;
+
+	typedef vdfastvector<std::pair<int, int> > LastLines;
+	LastLines lastLines;
+	int nextline = 1;
+
 	while(const char *line = ifile.GetNextLine()) {
 		char space0;
 		int origline;
@@ -324,39 +336,82 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 		int op;
 
 		if (!strncmp(line, "Source: ", 8)) {
+			if (fileid)
+				lastLines.push_back(LastLines::value_type(nextline, fileid));
+
 			fileid = AddFileName(VDTextAToW(line+8).c_str());
+			mode = kModeSource;
+			nextline = 1;
+
 			continue;
+		} else if (!strncmp(line, "Label table:", 12)) {
+			fileid = 0;
+			mode = kModeLabels;
 		}
 
-		bool valid = false;
-		if (7 == sscanf(line, "%c%d %4x%c%c%2x%c", &space0, &origline, &address, &space1, &space2, &op, &space3)
-			&& space0 == ' '
-			&& space1 == ' '
-			&& space2 == ' '
-			&& space3 == ' ')
-		{
-			valid = true;
-		} else if (8 == sscanf(line, "%6x%c%c%c%c%c%2x%c", &address, &space0, &space1, &dummy, &space2, &space3, &op, &space4)
-			&& space0 == ' '
-			&& space1 == ' '
-			&& space2 == ' '
-			&& space3 == ' '
-			&& space4 == ' '
-			&& isdigit((unsigned char)dummy))
-		{
-			valid = true;
-		} else if (6 == sscanf(line, "%6d%c%4x%c%2x%c", &origline, &space0, &address, &space1, &op, &space2)
-			&& space0 == ' '
-			&& space1 == ' '
-			&& (space2 == ' ' || space2 == '\t'))
-		{
-			valid = true;
-		}
+		if (mode == kModeSource) {
+			bool valid = false;
 
-		if (valid) { 
-			uint32 key = ((uint32)fileid << 16) + origline;
-			mOffsetToLine.insert(OffsetToLine::value_type(address, key));
-			mLineToOffset.insert(LineToOffset::value_type(key, address));
+			if (2 == sscanf(line, "%c%5d", &space0, &origline)
+				&& space0 == ' ')
+			{
+				if (fileid && origline > 0) {
+					// check for discontinuous line (mads doesn't re-emit the parent line)
+					if (origline != nextline) {
+						LastLines::const_reverse_iterator it(lastLines.rbegin()), itEnd(lastLines.rend());
+
+						for(; it != itEnd; ++it) {
+							if (it->first == origline && it->second != fileid) {
+								fileid = it->second;
+								break;
+							}
+						}
+					}
+
+					nextline = origline + 1;
+				}
+
+				if (7 == sscanf(line, "%c%5d%c%4x%c%2x%c", &space0, &origline, &space1, &address, &space2, &op, &space3)
+					&& space0 == ' '
+					&& space1 == ' '
+					&& space2 == ' '
+					&& (space3 == ' ' || space3 == '\t'))
+				{
+					if (fileid && origline > 0)
+						AddSourceLine(fileid, origline, address);
+
+					valid = true;
+				}
+			} else if (8 == sscanf(line, "%6x%c%c%c%c%c%2x%c", &address, &space0, &space1, &dummy, &space2, &space3, &op, &space4)
+				&& space0 == ' '
+				&& space1 == ' '
+				&& space2 == ' '
+				&& space3 == ' '
+				&& space4 == ' '
+				&& isdigit((unsigned char)dummy))
+			{
+				valid = true;
+			} else if (6 == sscanf(line, "%6d%c%4x%c%2x%c", &origline, &space0, &address, &space1, &op, &space2)
+				&& space0 == ' '
+				&& space1 == ' '
+				&& (space2 == ' ' || space2 == '\t'))
+			{
+				valid = true;
+			}
+
+			if (valid) { 
+				uint32 key = ((uint32)fileid << 16) + origline;
+				mOffsetToLine.insert(OffsetToLine::value_type(address, key));
+				mLineToOffset.insert(LineToOffset::value_type(key, address));
+			}
+		} else if (mode == kModeLabels) {
+			int pos1;
+			int pos2;
+			if (3 == sscanf(line, "%2x %4x %n%c%*s%n", &op, &address, &pos1, &dummy, &pos2)) {
+				label.assign(line + pos1, line + pos2);
+
+				AddSymbol(address, label.c_str());
+			}
 		}
 	}
 

@@ -204,6 +204,14 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\autotest.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\cartridge.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\cassette.cpp"
 				>
 			</File>
@@ -323,6 +331,14 @@
 			</File>
 			<File
 				RelativePath=".\h\artifacting.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\autotest.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\cartridge.h"
 				>
 			</File>
 			<File

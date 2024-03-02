@@ -75,7 +75,12 @@ ATArtifactingEngine::ATArtifactingEngine() {
 ATArtifactingEngine::~ATArtifactingEngine() {
 }
 
-void ATArtifactingEngine::Artifact(uint32 dst[N], const uint8 src[N]) {
+void ATArtifactingEngine::Artifact(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes) {
+	if (!scanlineHasHiRes) {
+		BlitNoArtifacts(dst, src);
+		return;
+	}
+
 	uint8 luma[N + 4];
 	uint8 luma2[N];
 	sint8 inv[N];
@@ -120,9 +125,7 @@ void ATArtifactingEngine::Artifact(uint32 dst[N], const uint8 src[N]) {
 	}
 
 	if (!artsum) {
-		for(int x=0; x<N; ++x)
-			dst[x] = mPalette[src[x]];
-
+		BlitNoArtifacts(dst, src);
 		return;
 	}
 
@@ -174,3 +177,9 @@ void ATArtifactingEngine::Artifact(uint32 dst[N], const uint8 src[N]) {
 		}
 	}
 }
+
+void ATArtifactingEngine::BlitNoArtifacts(uint32 dst[N], const uint8 src[N]) {
+	for(int x=0; x<N; ++x)
+		dst[x] = mPalette[src[x]];
+}
+

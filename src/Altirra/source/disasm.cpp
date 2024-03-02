@@ -27,60 +27,49 @@ extern ATSimulator g_sim;
 namespace {
 	enum {
 		kModeInvalid,
-		kModeImplied,
-		kModeRel,
-		kModeRel16,
-		kModeImm,
-		kModeImm16,
-		kModeZp,
-		kModeZpX,
-		kModeZpY,
-		kModeAbs,
-		kModeAbsX,
-		kModeAbsY,
-		kModeIndA,
-		kModeIndAL,
-		kModeIndX,
-		kModeIndY,
-		kModeInd,
-		kModeIndAX,
-		kModeBBit,
-		kModeLong,
-		kModeLongX,
-		kModeStack,
-		kModeStackIndY,
-		kModeDpIndLong,
-		kModeDpIndLongY,
-		kModeMove,
+		kModeImplied,		// implied
+		kModeRel,			// beq rel-offset
+		kModeRel16,			// brl rel16-offset
+		kModeImm,			// lda #$00
+		kModeImmMode16,		// lda #$0100
+		kModeImmIndex16,	// ldx #$0100
+		kModeImm16,			// pea #$2000
+		kModeZp,			// lda $00
+		kModeZpX,			// lda $00,x
+		kModeZpY,			// lda $00,y
+		kModeAbs,			// lda $0100
+		kModeAbsX,			// lda $0100,x
+		kModeAbsY,			// lda $0100,y
+		kModeIndA,			// jmp ($0100)
+		kModeIndAL,			// jmp [$0100]
+		kModeIndX,			// lda ($00,x)
+		kModeIndY,			// lda ($00),y
+		kModeInd,			// lda ($00)
+		kModeIndAX,			// jmp ($0100,x)
+		kModeBBit,			// bbr0 $04,rel-offset
+		kModeLong,			// lda $010000
+		kModeLongX,			// lda $010000,x
+		kModeStack,			// lda 1,s
+		kModeStackIndY,		// lda (1,s),y
+		kModeDpIndLong,		// lda [$00]
+		kModeDpIndLongY,	// lda [$00],y
+		kModeMove,			// mvp #$01,#$02
 	};
 
-	static const uint8 kBytesPerMode[]={
-		1,	// inv
-		1,	// imp
-		2,	// rel
-		3,	// rel 16-bit
-		2,	// imm
-		3,	// imm 16-bit
-		2,	// zp
-		2,	// zp,X
-		2,	// zp,Y
-		3,	// abs
-		3,	// abs,X
-		3,	// abs,Y
-		3,	// (abs)
-		3,	// [abs]
-		2,	// (zp,X)
-		2,	// (zp),Y
-		2,	// (zp)
-		3,	// (abs,X)
-		3,	// zp,rel
-		4,	// long
-		4,	// long,X
-		2,	// so,S
-		2,	// (so,S),Y
-		2,	// [dp]
-		2,	// [dp],Y
-		3,	// #ss,#dd
+									//	inv	imp	rel	r16	imm	imM	imX	im6	zp	zpX	zpY	abs	abX	abY	(a)	[a]	(zX	(zY	(z)	(aX	z,r	al	alX	o,S	S)Y	[d]	[dY	#sd
+	static const uint8 kBPM_M8_X8[]={	1,	1,	2,	3,	2,	2,	2,	3,	2,	2,	2,	3,	3,	3,	3,	3,	2,	2,	2,	3,	3,	4,	4,	2,	2,	2,	2,	3	};
+	static const uint8 kBPM_M8_X16[]={	1,	1,	2,	3,	2,	2,	3,	3,	2,	2,	2,	3,	3,	3,	3,	3,	2,	2,	2,	3,	3,	4,	4,	2,	2,	2,	2,	3	};
+	static const uint8 kBPM_M16_X8[]={	1,	1,	2,	3,	2,	3,	2,	3,	2,	2,	2,	3,	3,	3,	3,	3,	2,	2,	2,	3,	3,	4,	4,	2,	2,	2,	2,	3	};
+	static const uint8 kBPM_M16_X16[]={	1,	1,	2,	3,	2,	3,	3,	3,	2,	2,	2,	3,	3,	3,	3,	3,	2,	2,	2,	3,	3,	4,	4,	2,	2,	2,	2,	3	};
+
+	static const uint8 *const kBytesPerModeTables[]={
+		kBPM_M8_X8,		// 6502
+		kBPM_M8_X8,		// 65C02
+		kBPM_M8_X8,		// 65C816 emulation
+		kBPM_M16_X16,	// 65C816 native M=0 X=0
+		kBPM_M16_X8,	// 65C816 native M=0 X=1
+		kBPM_M8_X16,	// 65C816 native M=1 X=0
+		kBPM_M8_X8,		// 65C816 native M=1 X=1
 	};
 
 	enum {
@@ -90,6 +79,7 @@ namespace {
 		kOpcodeAND,
 		kOpcodeASL,
 		kOpcodeASR,
+		kOpcodeATX,
 		kOpcodeBCC,
 		kOpcodeBCS,
 		kOpcodeBEQ,
@@ -97,6 +87,7 @@ namespace {
 		kOpcodeBMI,
 		kOpcodeBNE,
 		kOpcodeBPL,
+		kOpcodeBRK,
 		kOpcodeBVC,
 		kOpcodeBVS,
 		kOpcodeCLC,
@@ -110,6 +101,7 @@ namespace {
 		kOpcodeDEC,
 		kOpcodeDEX,
 		kOpcodeDEY,
+		kOpcodeDOP,
 		kOpcodeEOR,
 		kOpcodeHLE,
 		kOpcodeINC,
@@ -139,6 +131,7 @@ namespace {
 		kOpcodeSEC,
 		kOpcodeSED,
 		kOpcodeSEI,
+		kOpcodeSHY,
 		kOpcodeSLO,
 		kOpcodeSRE,
 		kOpcodeSTA,
@@ -150,6 +143,7 @@ namespace {
 		kOpcodeTXA,
 		kOpcodeTXS,
 		kOpcodeTYA,
+		kOpcodeXAA,
 
 		// 65C02
 		kOpcodeBRA,
@@ -176,6 +170,7 @@ namespace {
 		kOpcodeMVP,
 		kOpcodePEA,
 		kOpcodePEI,
+		kOpcodePER,
 		kOpcodePHB,
 		kOpcodePHD,
 		kOpcodePHK,
@@ -201,6 +196,7 @@ namespace {
 		"AND",
 		"ASL",
 		"ASR",
+		"ATX",
 		"BCC",
 		"BCS",
 		"BEQ",
@@ -208,6 +204,7 @@ namespace {
 		"BMI",
 		"BNE",
 		"BPL",
+		"BRK",
 		"BVC",
 		"BVS",
 		"CLC",
@@ -221,6 +218,7 @@ namespace {
 		"DEC",
 		"DEX",
 		"DEY",
+		"DOP",
 		"EOR",
 		"HLE",
 		"INC",
@@ -250,6 +248,7 @@ namespace {
 		"SEC",
 		"SED",
 		"SEI",
+		"SHY",
 		"SLO",
 		"SRE",
 		"STA",
@@ -261,6 +260,7 @@ namespace {
 		"TXA",
 		"TXS",
 		"TYA",
+		"XAA",
 
 		"BRA",
 		"TSB",
@@ -286,6 +286,7 @@ namespace {
 		"MVP",
 		"PEA",
 		"PEI",
+		"PER",
 		"PHB",
 		"PHD",
 		"PHK",
@@ -309,6 +310,8 @@ namespace {
 	#define Re(op) { kModeRel, kOpcode##op }
 	#define Rl(op) { kModeRel16, kOpcode##op }
 	#define Im(op) { kModeImm, kOpcode##op }
+	#define ImM(op) { kModeImmMode16, kOpcode##op }
+	#define ImX(op) { kModeImmIndex16, kOpcode##op }
 	#define I2(op) { kModeImm16, kOpcode##op }
 	#define Zp(op) { kModeZp, kOpcode##op }
 	#define Zx(op) { kModeZpX, kOpcode##op }
@@ -334,7 +337,7 @@ namespace {
 
 	const uint8 kModeTbl_6502[256][2]={
 		//			   0,       1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
-		/* 00 */	xx(bad), Ix(ORA), xx(bad), Ix(SLO), Zp(NOP), Zp(ORA), Zp(ASL), Zp(SLO), Ip(PHP), Im(ORA), Ip(ASL), Im(ANC), Ab(NOP), Ab(ORA), Ab(ASL), Ab(SLO), 
+		/* 00 */	Im(BRK), Ix(ORA), xx(bad), Ix(SLO), Zp(NOP), Zp(ORA), Zp(ASL), Zp(SLO), Ip(PHP), Im(ORA), Ip(ASL), Im(ANC), Ab(NOP), Ab(ORA), Ab(ASL), Ab(SLO), 
 		/* 10 */	Re(BPL), Iy(ORA), xx(bad), xx(bad), Zx(NOP), Zx(ORA), Zx(ASL), Zx(SLO), Ip(CLC), Ay(ORA), Ip(NOP), xx(bad), Ax(NOP), Ax(ORA), Ax(ASL), Ax(SLO), 
 		/* 20 */	Ab(JSR), Ix(AND), xx(bad), xx(bad), Zp(BIT), Zp(AND), Zp(ROL), xx(bad), Ip(PLP), Im(AND), Ip(ROL), Im(ANC), Ab(BIT), Ab(AND), Ab(ROL), xx(bad), 
 		/* 30 */	Re(BMI), Iy(AND), xx(bad), xx(bad), xx(bad), Zx(AND), Zx(ROL), Zx(RLA), Ip(SEC), Ay(AND), Ip(NOP), xx(bad), Ax(NOP), Ax(AND), Ax(ROL), xx(bad), 
@@ -342,11 +345,11 @@ namespace {
 		/* 50 */	Re(BVC), Iy(EOR), xx(bad), Iy(SRE), Zx(NOP), Zx(EOR), Zx(LSR), Zx(SRE), Ip(CLI), Ay(EOR), Ip(NOP), Ay(SRE), Ax(NOP), Ax(EOR), Ax(LSR), Ax(SRE), 
 		/* 60 */	Ip(RTS), Ix(ADC), xx(bad), xx(bad), xx(bad), Zp(ADC), Zp(ROR), xx(bad), Ip(PLA), Im(ADC), Ip(ROR), xx(bad), Ia(JMP), Ab(ADC), Ab(ROR), xx(bad), 
 		/* 70 */	Re(BVS), Iy(ADC), xx(bad), xx(bad), xx(bad), Zx(ADC), Zx(ROR), xx(bad), Ip(SEI), Ay(ADC), Ip(NOP), xx(bad), Ax(NOP), Ax(ADC), Ax(ROR), xx(bad), 
-		/* 80 */	Im(NOP), Ix(STA), xx(bad), xx(bad), Zp(STY), Zp(STA), Zp(STX), xx(bad), Ip(DEY), Im(STA), Ip(TXA), xx(bad), Ab(STY), Ab(STA), Ab(STX), Ab(SAX), 
-		/* 90 */	Re(BCC), Iy(STA), xx(bad), xx(bad), Zx(STY), Zx(STA), Zy(STX), xx(bad), Ip(TYA), Ay(STA), Ip(TXS), xx(bad), xx(bad), Ax(STA), xx(bad), xx(bad), 
-		/* A0 */	Im(LDY), Ix(LDA), Im(LDX), xx(bad), Zp(LDY), Zp(LDA), Zp(LDX), xx(bad), Ip(TAY), Im(LDA), Ip(TAX), xx(bad), Ab(LDY), Ab(LDA), Ab(LDX), Ab(LAX), 
-		/* B0 */	Re(BCS), Iy(LDA), xx(bad), xx(bad), Zx(LDY), Zx(LDA), Zy(LDX), xx(bad), Ip(CLV), Ay(LDA), Ip(TSX), xx(bad), Ax(LDY), Ax(LDA), Ay(LDX), Ax(LAX), 
-		/* C0 */	Im(CPY), Ix(CMP), xx(bad), Ix(DCP), Zp(CPY), Zp(CMP), Zp(DEC), Zp(DCP), Ip(INY), Im(CMP), Ip(DEX), xx(bad), Ab(CPY), Ab(CMP), Ab(DEC), Ab(DCP), 
+		/* 80 */	Im(NOP), Ix(STA), xx(bad), xx(bad), Zp(STY), Zp(STA), Zp(STX), Zp(SAX), Ip(DEY), Im(STA), Ip(TXA), Im(XAA), Ab(STY), Ab(STA), Ab(STX), Ab(SAX), 
+		/* 90 */	Re(BCC), Iy(STA), xx(bad), xx(bad), Zx(STY), Zx(STA), Zy(STX), xx(bad), Ip(TYA), Ay(STA), Ip(TXS), xx(bad), Ax(SHY), Ax(STA), xx(bad), xx(bad), 
+		/* A0 */	Im(LDY), Ix(LDA), Im(LDX), Ix(LAX), Zp(LDY), Zp(LDA), Zp(LDX), Zp(LAX), Ip(TAY), Im(LDA), Ip(TAX), Im(ATX), Ab(LDY), Ab(LDA), Ab(LDX), Ab(LAX), 
+		/* B0 */	Re(BCS), Iy(LDA), xx(bad), Iy(LAX), Zx(LDY), Zx(LDA), Zy(LDX), Zy(LAX), Ip(CLV), Ay(LDA), Ip(TSX), xx(bad), Ax(LDY), Ax(LDA), Ay(LDX), Ay(LAX), 
+		/* C0 */	Im(CPY), Ix(CMP), Im(DOP), Ix(DCP), Zp(CPY), Zp(CMP), Zp(DEC), Zp(DCP), Ip(INY), Im(CMP), Ip(DEX), xx(bad), Ab(CPY), Ab(CMP), Ab(DEC), Ab(DCP), 
 		/* D0 */	Re(BNE), Iy(CMP), xx(bad), Iy(DCP), xx(bad), Zx(CMP), Zx(DEC), Zx(DCP), Ip(CLD), Ay(CMP), Ip(NOP), Ay(DCP), Ax(NOP), Ax(CMP), Ax(DEC), Ax(DCP), 
 		/* E0 */	Im(CPX), Ix(SBC), xx(bad), Ix(ISB), Zp(CPX), Zp(SBC), Zp(INC), Zp(ISB), Ip(INX), Im(SBC), Ip(NOP), xx(bad), Ab(CPX), Ab(SBC), Ab(INC), Ab(ISB), 
 		/* F0 */	Re(BEQ), Iy(SBC), xx(bad), Iy(ISB), Zx(NOP), Zx(SBC), Zx(INC), Zx(ISB), Ip(SED), Ay(SBC), Ip(NOP), Ay(ISB), Ax(NOP), Ax(SBC), Ax(INC), Ax(ISB),
@@ -354,7 +357,7 @@ namespace {
 
 	const uint8 kModeTbl_65C02[256][2]={
 		//			   0,       1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
-		/* 00 */	xx(bad), Ix(ORA), xx(bad), xx(bad), Zp(TSB), Zp(ORA), Zp(ASL), Zp(RMB), Ip(PHP), Im(ORA), Ip(ASL), xx(bad), Ab(TSB), Ab(ORA), Ab(ASL), Bb(BBR), 
+		/* 00 */	Im(BRK), Ix(ORA), xx(bad), xx(bad), Zp(TSB), Zp(ORA), Zp(ASL), Zp(RMB), Ip(PHP), Im(ORA), Ip(ASL), xx(bad), Ab(TSB), Ab(ORA), Ab(ASL), Bb(BBR), 
 		/* 10 */	Re(BPL), Iy(ORA), Iz(ORA), xx(bad), Zp(TRB), Zx(ORA), Zx(ASL), Zp(RMB), Ip(CLC), Ay(ORA), Ip(INC), xx(bad), Ab(TRB), Ax(ORA), Ax(ASL), Bb(BBR), 
 		/* 20 */	Ab(JSR), Ix(AND), xx(bad), xx(bad), Zp(BIT), Zp(AND), Zp(ROL), Zp(RMB), Ip(PLP), Im(AND), Ip(ROL), xx(bad), Ab(BIT), Ab(AND), Ab(ROL), Bb(BBR), 
 		/* 30 */	Re(BMI), Iy(AND), Iz(AND), xx(bad), Zx(BIT), Zx(AND), Zx(ROL), Zp(RMB), Ip(SEC), Ay(AND), Ip(DEC), xx(bad), Ax(NOP), Ax(AND), Ax(ROL), Bb(BBR), 
@@ -362,7 +365,7 @@ namespace {
 		/* 50 */	Re(BVC), Iy(EOR), Iz(EOR), xx(bad), Zx(NOP), Zx(EOR), Zx(LSR), Zp(RMB), Ip(CLI), Ay(EOR), Ip(PHY), xx(bad), Ax(NOP), Ax(EOR), Ax(LSR), Bb(BBR), 
 		/* 60 */	Ip(RTS), Ix(ADC), xx(bad), xx(bad), Zp(STZ), Zp(ADC), Zp(ROR), Zp(RMB), Ip(PLA), Im(ADC), Ip(ROR), xx(bad), Ia(JMP), Ab(ADC), Ab(ROR), Bb(BBR), 
 		/* 70 */	Re(BVS), Iy(ADC), Iz(ADC), xx(bad), Zx(STZ), Zx(ADC), Zx(ROR), Zp(RMB), Ip(SEI), Ay(ADC), Ip(PLY), xx(bad), It(JMP), Ax(ADC), Ax(ROR), Bb(BBR), 
-		/* 80 */	Re(BRA), Ix(STA), xx(bad), xx(bad), Zp(STY), Zp(STA), Zp(STX), Zp(SMB), Ip(DEY), Im(STA), Ip(TXA), xx(bad), Ab(STY), Ab(STA), Ab(STX), Bb(BBS), 
+		/* 80 */	Re(BRA), Ix(STA), xx(bad), xx(bad), Zp(STY), Zp(STA), Zp(STX), Zp(SMB), Ip(DEY), Im(BIT), Ip(TXA), xx(bad), Ab(STY), Ab(STA), Ab(STX), Bb(BBS), 
 		/* 90 */	Re(BCC), Iy(STA), Iz(STA), xx(bad), Zx(STY), Zx(STA), Zy(STX), Zp(SMB), Ip(TYA), Ay(STA), Ip(TXS), xx(bad), Ab(STZ), Ax(STA), Ax(STZ), Bb(BBS), 
 		/* A0 */	Im(LDY), Ix(LDA), Im(LDX), xx(bad), Zp(LDY), Zp(LDA), Zp(LDX), Zp(SMB), Ip(TAY), Im(LDA), Ip(TAX), xx(bad), Ab(LDY), Ab(LDA), Ab(LDX), Bb(BBS), 
 		/* B0 */	Re(BCS), Iy(LDA), Iz(LDA), xx(bad), Zx(LDY), Zx(LDA), Zy(LDX), Zp(SMB), Ip(CLV), Ay(LDA), Ip(TSX), xx(bad), Ax(LDY), Ax(LDA), Ay(LDX), Bb(BBS), 
@@ -374,28 +377,32 @@ namespace {
 
 	const uint8 kModeTbl_65C816[256][2]={
 		//			   0,       1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
-		/* 00 */	xx(bad), Ix(ORA), Im(COP), Sr(ORA), Zp(TSB), Zp(ORA), Zp(ASL), Xd(ORA), Ip(PHP), Im(ORA), Ip(ASL), Ip(PHD), Ab(TSB), Ab(ORA), Ab(ASL), Lg(ORA), 
+		/* 00 */	Im(BRK), Ix(ORA), Im(COP), Sr(ORA), Zp(TSB), Zp(ORA), Zp(ASL), Xd(ORA), Ip(PHP),ImM(ORA), Ip(ASL), Ip(PHD), Ab(TSB), Ab(ORA), Ab(ASL), Lg(ORA), 
 		/* 10 */	Re(BPL), Iy(ORA), Iz(ORA), Sy(ORA), Zp(TRB), Zx(ORA), Zx(ASL), Xy(ORA), Ip(CLC), Ay(ORA), Ip(INC), Ip(TCS), Ab(TRB), Ax(ORA), Ax(ASL), Lx(ORA), 
-		/* 20 */	Ab(JSR), Ix(AND), Lg(JSL), Sr(AND), Zp(BIT), Zp(AND), Zp(ROL), Xd(AND), Ip(PLP), Im(AND), Ip(ROL), Ip(PLD), Ab(BIT), Ab(AND), Ab(ROL), Lg(AND), 
-		/* 30 */	Re(BMI), Iy(AND), Iz(AND), Sy(AND), Zx(BIT), Zx(AND), Zx(ROL), Xy(AND), Ip(SEC), Ay(AND), Ip(DEC), Ip(TSC), Ax(NOP), Ax(AND), Ax(ROL), Lx(AND), 
-		/* 40 */	Ip(RTI), Ix(EOR), I2(HLE), Sr(EOR), Mv(MVP), Zp(EOR), Zp(LSR), Xd(EOR), Ip(PHA), Im(EOR), Ip(LSR), Ip(PHK), Ab(JMP), Ab(EOR), Ab(LSR), Lg(EOR), 
-		/* 50 */	Re(BVC), Iy(EOR), Iz(EOR), Sy(EOR), Mv(MVN), Zx(EOR), Zx(LSR), Xy(EOR), Ip(CLI), Ay(EOR), Ip(PHY), Ip(TCD), Ax(NOP), Ax(EOR), Ax(LSR), Lx(EOR), 
-		/* 60 */	Ip(RTS), Ix(ADC), xx(bad), Sr(ADC), Zp(STZ), Zp(ADC), Zp(ROR), Xd(ADC), Ip(PLA), Im(ADC), Ip(ROR), Ip(RTL), Ia(JMP), Ab(ADC), Ab(ROR), Lg(ADC), 
+		/* 20 */	Ab(JSR), Ix(AND), Lg(JSL), Sr(AND), Zp(BIT), Zp(AND), Zp(ROL), Xd(AND), Ip(PLP),ImM(AND), Ip(ROL), Ip(PLD), Ab(BIT), Ab(AND), Ab(ROL), Lg(AND), 
+		/* 30 */	Re(BMI), Iy(AND), Iz(AND), Sy(AND), Zx(BIT), Zx(AND), Zx(ROL), Xy(AND), Ip(SEC), Ay(AND), Ip(DEC), Ip(TSC), Ax(BIT), Ax(AND), Ax(ROL), Lx(AND), 
+		/* 40 */	Ip(RTI), Ix(EOR), I2(HLE), Sr(EOR), Mv(MVP), Zp(EOR), Zp(LSR), Xd(EOR), Ip(PHA),ImM(EOR), Ip(LSR), Ip(PHK), Ab(JMP), Ab(EOR), Ab(LSR), Lg(EOR), 
+		/* 50 */	Re(BVC), Iy(EOR), Iz(EOR), Sy(EOR), Mv(MVN), Zx(EOR), Zx(LSR), Xy(EOR), Ip(CLI), Ay(EOR), Ip(PHY), Ip(TCD), Lg(JMP), Ax(EOR), Ax(LSR), Lx(EOR), 
+		/* 60 */	Ip(RTS), Ix(ADC), Rl(PER), Sr(ADC), Zp(STZ), Zp(ADC), Zp(ROR), Xd(ADC), Ip(PLA),ImM(ADC), Ip(ROR), Ip(RTL), Ia(JMP), Ab(ADC), Ab(ROR), Lg(ADC), 
 		/* 70 */	Re(BVS), Iy(ADC), Iz(ADC), Sy(ADC), Zx(STZ), Zx(ADC), Zx(ROR), Xy(ADC), Ip(SEI), Ay(ADC), Ip(PLY), Ip(TDC), It(JMP), Ax(ADC), Ax(ROR), Lx(ADC), 
-		/* 80 */	Re(BRA), Ix(STA), Rl(BRL), Sr(STA), Zp(STY), Zp(STA), Zp(STX), Xd(STA), Ip(DEY), Im(STA), Ip(TXA), Ip(PHB), Ab(STY), Ab(STA), Ab(STX), Lg(STA), 
+		/* 80 */	Re(BRA), Ix(STA), Rl(BRL), Sr(STA), Zp(STY), Zp(STA), Zp(STX), Xd(STA), Ip(DEY),ImM(BIT), Ip(TXA), Ip(PHB), Ab(STY), Ab(STA), Ab(STX), Lg(STA), 
 		/* 90 */	Re(BCC), Iy(STA), Iz(STA), Sy(STA), Zx(STY), Zx(STA), Zy(STX), Xy(STA), Ip(TYA), Ay(STA), Ip(TXS), Ip(TXY), Ab(STZ), Ax(STA), Ax(STZ), Lx(STA), 
-		/* A0 */	Im(LDY), Ix(LDA), Im(LDX), Sr(LDA), Zp(LDY), Zp(LDA), Zp(LDX), Xd(LDA), Ip(TAY), Im(LDA), Ip(TAX), Ip(PLB), Ab(LDY), Ab(LDA), Ab(LDX), Lg(LDA), 
+		/* A0 */   ImX(LDY), Ix(LDA),ImX(LDX), Sr(LDA), Zp(LDY), Zp(LDA), Zp(LDX), Xd(LDA), Ip(TAY),ImM(LDA), Ip(TAX), Ip(PLB), Ab(LDY), Ab(LDA), Ab(LDX), Lg(LDA), 
 		/* B0 */	Re(BCS), Iy(LDA), Iz(LDA), Sy(LDA), Zx(LDY), Zx(LDA), Zy(LDX), Xy(LDA), Ip(CLV), Ay(LDA), Ip(TSX), Ip(TYX), Ax(LDY), Ax(LDA), Ay(LDX), Lx(LDA), 
-		/* C0 */	Im(CPY), Ix(CMP), Im(REP), Sr(CMP), Zp(CPY), Zp(CMP), Zp(DEC), Xd(CMP), Ip(INY), Im(CMP), Ip(DEX), Ip(WAI), Ab(CPY), Ab(CMP), Ab(DEC), Lg(CMP), 
+		/* C0 */   ImX(CPY), Ix(CMP), Im(REP), Sr(CMP), Zp(CPY), Zp(CMP), Zp(DEC), Xd(CMP), Ip(INY),ImM(CMP), Ip(DEX), Ip(WAI), Ab(CPY), Ab(CMP), Ab(DEC), Lg(CMP), 
 		/* D0 */	Re(BNE), Iy(CMP), Iz(CMP), Sy(CMP), Iz(PEI), Zx(CMP), Zx(DEC), Xy(CMP), Ip(CLD), Ay(CMP), Ip(PHX), Ip(STP), Il(JML), Ax(CMP), Ax(DEC), Lx(CMP), 
-		/* E0 */	Im(CPX), Ix(SBC), Im(SEP), Sr(SBC), Zp(CPX), Zp(SBC), Zp(INC), Xd(SBC), Ip(INX), Im(SBC), Ip(NOP), Ip(XBA), Ab(CPX), Ab(SBC), Ab(INC), Lg(SBC), 
+		/* E0 */   ImX(CPX), Ix(SBC), Im(SEP), Sr(SBC), Zp(CPX), Zp(SBC), Zp(INC), Xd(SBC), Ip(INX),ImM(SBC), Ip(NOP), Ip(XBA), Ab(CPX), Ab(SBC), Ab(INC), Lg(SBC), 
 		/* F0 */	Re(BEQ), Iy(SBC), Iz(SBC), Sy(SBC), I2(PEA), Zx(SBC), Zx(INC), Xy(SBC), Ip(SED), Ay(SBC), Ip(PLX), Ip(XCE), It(JSR), Ax(SBC), Ax(INC), Lx(SBC),
 	};
 
-	const uint8 (*kModeTbl[3])[2]={
+	const uint8 (*kModeTbl[8])[2]={
 		kModeTbl_6502,
 		kModeTbl_65C02,
-		kModeTbl_65C816
+		kModeTbl_65C816,
+		kModeTbl_65C816,
+		kModeTbl_65C816,
+		kModeTbl_65C816,
+		kModeTbl_65C816,
 	};
 }
 
@@ -428,15 +435,37 @@ uint16 ATDisassembleInsn(VDStringA& line, uint16 addr, bool decodeReferences) {
 	uint8 byte3 = g_sim.DebugReadByte(addr+3);
 
 	ATCPUEmulator& cpu = g_sim.GetCPU();
-	const uint8 (*const tbl)[2] = kModeTbl[cpu.GetCPUMode()];
+	ATCPUHistoryEntry hent;
+	hent.mOpcode[0] = opcode;
+	hent.mOpcode[1] = byte1;
+	hent.mOpcode[2] = byte2;
+	hent.mOpcode[3] = byte3;
+	hent.mPC = addr;
+	hent.mP = cpu.GetP();
+	hent.mX = cpu.GetX();
+	hent.mY = cpu.GetY();
+	hent.mbEmulation = cpu.GetEmulationFlag();
+
+	return ATDisassembleInsn(line, hent, decodeReferences);
+}
+
+uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool decodeReferences) {
+	const uint8 opcode = hent.mOpcode[0];
+	const uint8 byte1 = hent.mOpcode[1];
+	const uint8 byte2 = hent.mOpcode[2];
+	const uint8 byte3 = hent.mOpcode[3];
+
+	const ATCPUEmulator& cpu = g_sim.GetCPU();
+	ATCPUSubMode subMode = cpu.GetCPUSubMode();
+	const uint8 (*const tbl)[2] = kModeTbl[subMode];
 	uint8 mode = tbl[opcode][0];
 	uint8 opid = tbl[opcode][1];
 	const char *opname = kOpcodes[opid];
 
+	line.append_sprintf("%04X:", hent.mPC);
 
-	line.append_sprintf("%04X:", addr);
+	int opsize = kBytesPerModeTables[subMode][mode];
 
-	int opsize = kBytesPerMode[mode];
 	switch(opsize) {
 		case 1:
 			line.append_sprintf(" %02X      ", opcode);
@@ -452,11 +481,17 @@ uint16 ATDisassembleInsn(VDStringA& line, uint16 addr, bool decodeReferences) {
 			break;
 	}
 
+	const uint16 addr = hent.mPC;
 	const char *label = ATGetSymbolName(addr, false);
 	line.append_sprintf("  %-6s %s", label ? label : "", opname);
 
 	if (mode == kModeImm) {
 		line.append_sprintf(" #$%02X", byte1);
+	} else if (mode == kModeImmMode16 || mode == kModeImmIndex16) {
+		if (opsize == 3)
+			line.append_sprintf(" #$%02X%02X", byte2, byte1);
+		else 
+			line.append_sprintf(" #$%02X", byte1);
 	} else if (mode == kModeImm16) {
 		line.append_sprintf(" #$%02X%02X", byte2, byte1);
 	} else if (mode == kModeMove) {
@@ -732,12 +767,14 @@ void ATDisassembleRange(FILE *f, uint16 addr1, uint16 addr2) {
 
 uint16 ATDisassembleGetFirstAnchor(uint16 addr, uint16 target) {
 	ATCPUEmulator& cpu = g_sim.GetCPU();
-	const uint8 (*const tbl)[2] = kModeTbl[cpu.GetCPUMode()];
+	ATCPUSubMode subMode = cpu.GetCPUSubMode();
+	const uint8 (*const tbl)[2] = kModeTbl[subMode];
+	const uint8 *const modetbl = kBytesPerModeTables[subMode];
 
 	vdfastvector<uint8> results;
 
 	uint16 testbase = addr;
-	for(;;) {
+	for(int i=0; i<4; ++i) {
 		uint16 ip = testbase;
 		for(;;) {
 			if (ip == target)
@@ -750,7 +787,7 @@ uint16 ATDisassembleGetFirstAnchor(uint16 addr, uint16 target) {
 			uint8 opcode = g_sim.DebugReadByte(ip);
 			uint8 mode = tbl[opcode][0];
 
-			uint8 oplen = kBytesPerMode[mode];
+			uint8 oplen = modetbl[mode];
 			if (mode == kModeInvalid || (uint16)(target - ip) < oplen) {
 				if (offset >= results.size())
 					results.resize(offset+1, false);
@@ -771,7 +808,8 @@ uint16 ATDisassembleGetFirstAnchor(uint16 addr, uint16 target) {
 
 int ATGetOpcodeLength(uint8 opcode) {
 	ATCPUEmulator& cpu = g_sim.GetCPU();
-	const uint8 (*const tbl)[2] = kModeTbl[cpu.GetCPUMode()];
+	ATCPUSubMode subMode = cpu.GetCPUSubMode();
+	const uint8 (*const tbl)[2] = kModeTbl[subMode];
 
-	return kBytesPerMode[tbl[opcode][0]];
+	return kBytesPerModeTables[subMode][tbl[opcode][0]];
 }

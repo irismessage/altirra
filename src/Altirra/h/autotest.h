@@ -15,25 +15,14 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#ifndef f_ARTIFACTING_H
-#define f_ARTIFACTING_H
+#ifndef f_AT_AUTOTEST_H
+#define f_AT_AUTOTEST_H
 
-class ATArtifactingEngine {
-	ATArtifactingEngine(const ATArtifactingEngine&);
-	ATArtifactingEngine& operator=(const ATArtifactingEngine&);
+class IATAutotestReplyPort {
 public:
-	ATArtifactingEngine();
-	~ATArtifactingEngine();
-
-	enum { N = 456 };
-
-	void Artifact(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
-
-protected:
-	void BlitNoArtifacts(uint32 dst[N], const uint8 src[N]);
-
-	int mChromaVectors[16][3];
-	uint32 mPalette[256];
+	virtual void Reply(uint32 code) = 0;
 };
 
-#endif	// f_ARTIFACTING_H
+uint32 ATExecuteAutotestCommand(const wchar_t *cmd, IATAutotestReplyPort *replyPort);
+
+#endif

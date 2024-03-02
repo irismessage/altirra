@@ -18,6 +18,7 @@
 #define IDR_ACCELERATOR1                115
 #define IDR_HLEKERNEL                   116
 #define IDR_KERNEL2                     117
+#define IDR_DISASM_CONTEXT_MENU         118
 #define IDC_ENABLE_HISTORY              1001
 #define IDC_ENABLE_PATHS                1002
 #define IDC_DISKPATH1                   1002
@@ -181,6 +182,33 @@
 #define ID_FILE_QUICKLOADSTATE          40134
 #define ID_INPUT_MOUSE                  40135
 #define ID_SYSTEM_PAUSEWHENINACTIVE     40136
+#define ID_CONTEXT_SETNEXTSTATEMENT40137 40137
+#define ID_CONTEXT_SHOWNEXTSTATEMENT    40138
+#define ID_CONTEXT_TOGGLEBREAKPOINT     40139
+#define ID_CONTEXT_GOTOSOURCE           40140
+#define ID_CONTEXT_TOGGLEBREAKPOINT40141 40141
+#define ID_INPUT_PORT1                  40142
+#define ID_INPUT_PORT2                  40143
+#define ID_PORT1_JOYSTICK               40144
+#define ID_PORT1_MOUSE                  40145
+#define ID_PORT2_MOUSE                  40146
+#define ID_PORT2_JOYSTICK               40147
+#define ID_INPUT_SWAPPORTASSIGNMENTS    40148
+#define ID_INPUT_PORT3                  40149
+#define ID_PORT1_NONE                   40150
+#define ID_PORT2_NONE                   40151
+#define ID_VIEW_COPYFRAMETOCLIPBOARD    40152
+#define ID_CHEAT_DISABLEP               40153
+#define ID_CHEAT_DISABLEPLAYFIELDCOLLISIONS 40154
+#define ID_CHEAT_DISABLEPMCOLLISIONS    40155
+#define ID_CHEAT_DISABLEPFCOLLISIONS    40156
+#define ID_FILE_ATTACHSPECIALCARTRIDGE  40157
+#define ID_ATTACHSPECIALCARTRIDGE_SUPERCHARGER3D 40158
+#define ID_PORT1_PADDLES                40159
+#define ID_PORT1_PADDLE                 40160
+#define ID_FILE_OPENIMAGE               40161
+#define ID_CASSETTE_AUTO                40162
+#define ID_CASSETTE_AUTOBOOT            40163
 #define IDC_STATIC                      -1
 
 // Next default values for new objects
@@ -188,8 +216,8 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
-#define _APS_NEXT_RESOURCE_VALUE        118
-#define _APS_NEXT_COMMAND_VALUE         40137
+#define _APS_NEXT_RESOURCE_VALUE        119
+#define _APS_NEXT_COMMAND_VALUE         40164
 #define _APS_NEXT_CONTROL_VALUE         1020
 #define _APS_NEXT_SYMED_VALUE           101
 #endif

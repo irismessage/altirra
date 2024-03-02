@@ -3,6 +3,7 @@
 
 namespace AT6502States {
 	enum ATCPUState {
+		kStateNop,
 		kStateReadOpcode,
 		kStateReadOpcodeNoBreak,
 		kStateReadDummyOpcode,
@@ -14,6 +15,7 @@ namespace AT6502States {
 		kStateReadAddrH,
 		kStateReadAddrHX,
 		kStateReadAddrHY,
+		kStateReadAddrHX_SHY,
 		kStateRead,
 		kStateReadAddX,
 		kStateReadAddY,
@@ -66,6 +68,7 @@ namespace AT6502States {
 		kStateDecC,
 		kStateAnd,
 		kStateAnc,
+		kStateXaa,
 		kStateOr,
 		kStateXor,
 		kStateAsl,
@@ -114,6 +117,8 @@ namespace AT6502States {
 		kStateStop,
 		kStateTrb,
 		kStateTsb,
+		kStateC02_Adc,
+		kStateC02_Sbc,
 
 		// 65C816 states
 		kStateReadImmL16,				// Read 16-bit immediate, low byte
@@ -126,11 +131,13 @@ namespace AT6502States {
 		kStateReadIndAddrDpLongH,		// Read high byte of indirect long address from direct page
 		kStateReadIndAddrDpLongB,		// Read bank byte of indirect long address from direct page
 		kStateReadAddrAddY,				// Add Y16 to address register
-		kStateRead816AddrL,				// Read low byte of absolute address and push data bank
+		kState816ReadAddrL,				// Read low byte of absolute address and push data bank
 		kStateRead816AddrAbsHY,			// Read high byte of absolute address from data bank, add Y16
 		kStateRead816AddrAbsLongL,		// Read low byte of long address from data bank
 		kStateRead816AddrAbsLongH,		// Read high byte of long address from data bank
 		kStateRead816AddrAbsLongB,		// Read bank byte of long address from data bank
+		kState816ReadAddrHX,
+		kState816ReadAddrHY,
 		kStateReadAddrB,				// Read bank byte of long absolute address
 		kStateReadAddrBX,				// Read bank byte of long absolute address and add X16
 		kStateReadAddrSO,				// Read stack offset and compute EA
@@ -171,6 +178,8 @@ namespace AT6502States {
 		kStateAsl16,
 		kStateLsr16,
 		kStateBit16,
+		kStateTrb16,
+		kStateTsb16,
 		kStateCmpX16,
 		kStateCmpY16,
 		kStateXba,
@@ -198,11 +207,13 @@ namespace AT6502States {
 		kState816_EmuCOPVecToPC,
 		kState816_NatNMIVecToPC,
 		kState816_NatIRQVecToPC,
+		kState816_NatBRKVecToPC,
 		kState816_SetI_ClearD,
 		kState816_LongAddrToPC,
 		kState816_MoveRead,
 		kState816_MoveWriteP,
 		kState816_MoveWriteN,
+		kState816_Per,
 
 		kStateCount
 	};

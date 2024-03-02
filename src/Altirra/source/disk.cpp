@@ -21,6 +21,7 @@
 #include <vd2/system/filesys.h>
 #include <vd2/system/math.h>
 #include <vd2/system/binary.h>
+#include <vd2/system/strutil.h>
 #include "disk.h"
 #include "pokey.h"
 #include "console.h"
@@ -54,7 +55,7 @@ namespace {
 
 	// The number of cycles per byte sent over the SIO bus -- approximately
 	// 19200 baud.
-	static const int kCyclesPerSIOByte = 960;		// was 939, but 960 is closer to actual 810 speed
+	static const int kCyclesPerSIOByte = 945;		// was 939, but 945 is closer to actual 810 speed
 
 	// Delay from end of request to end of ACK byte.
 	static const int kCyclesToACKSent = kCyclesPerSIOByte + 1000;
@@ -182,7 +183,7 @@ void ATDiskEmulator::LoadDisk(const wchar_t *s) {
 
 		sint64 fileSize = f.size();
 
-		if (!(fileSize & 127) && fileSize <= 65535 * 128 && !_wcsicmp(VDFileSplitExt(s), L".xfd")) {
+		if (fileSize <= 65535 * 128 && !vdwcsicmp(VDFileSplitExt(s), L".xfd")) {
 			sint32 len = (sint32)fileSize;
 
 			mDiskImage.resize(len);
@@ -471,9 +472,13 @@ void ATDiskEmulator::LoadDisk(const wchar_t *s) {
 						rotationalPosition += rotationalIncrement;
 					}
 				}
-			} else {
-				mBootSectorCount = mDiskImage[1];
+			} else if (header[0] == 0x96 && header[1] == 0x02) {
+				mBootSectorCount = 3;
 				mSectorSize = header[4] + 256*header[5];
+
+				if (mSectorSize > 512)
+					throw MyError("Disk image \"%ls\" uses an unsupported sector size of %u bytes.", VDFileSplitPath(s), mSectorSize);
+
 				mTotalSectorCount = (len - 128*mBootSectorCount) / mSectorSize + mBootSectorCount;
 
 				mPhysSectorInfo.resize(mTotalSectorCount);
@@ -492,6 +497,8 @@ void ATDiskEmulator::LoadDisk(const wchar_t *s) {
 					psi.mFDCStatus	= 0xFF;
 					psi.mRotPos		= mSectorSize >= 256 ? (float)kTrackInterleaveDD[i % 18] / 18.0f : (float)kTrackInterleave18[i % 18] / 18.0f;
 				}
+			} else {
+				throw MyError("Disk image \"%ls\" is corrupt or uses an unsupported format.", VDFileSplitPath(s));
 			}
 		}
 
@@ -609,6 +616,10 @@ namespace {
 
 		return (uint8)checksum;
 	}
+}
+
+uint32 ATDiskEmulator::GetSectorSize(uint16 sector) const {
+	return sector < mBootSectorCount ? 128 : mSectorSize;
 }
 
 uint8 ATDiskEmulator::ReadSector(uint16 bufadr, uint16 len, uint16 sector, ATCPUEmulatorMemory *mpMem) {
@@ -790,25 +801,27 @@ void ATDiskEmulator::OnScheduledEvent(uint32 id) {
 		if (mTransferOffset == 1) {
 			transferDelay = kCyclesToFirstData;
 
-			// compute rotational delay
-			UpdateRotationalCounter();
+			if (true || mbWriteRotationalDelay) {
+				// compute rotational delay
+				UpdateRotationalCounter();
 
-			// add rotational delay
-			uint32 rotationalDelay;
-			if (mRotationalCounter > mRotationalPosition)
-				rotationalDelay = kCyclesPerDiskRotation - mRotationalCounter + mRotationalPosition;
-			else
-				rotationalDelay = mRotationalPosition - mRotationalCounter;
+				// add rotational delay
+				uint32 rotationalDelay;
+				if (mRotationalCounter > mRotationalPosition)
+					rotationalDelay = kCyclesPerDiskRotation - mRotationalCounter + mRotationalPosition;
+				else
+					rotationalDelay = mRotationalPosition - mRotationalCounter;
 
-			// If accurate sector timing is enabled, delay execution until the sector arrives. Otherwise,
-			// warp the disk position.
-			if (mbAccurateSectorTiming) {
-				transferDelay += rotationalDelay;
-			} else {
-				uint32 rotPos = mRotationalCounter + rotationalDelay;
+				// If accurate sector timing is enabled, delay execution until the sector arrives. Otherwise,
+				// warp the disk position.
+				if (mbAccurateSectorTiming) {
+					transferDelay += rotationalDelay;
+				} else {
+					uint32 rotPos = mRotationalCounter + rotationalDelay;
 
-				mRotationalCounter = rotPos % kCyclesPerDiskRotation;
-				mRotations += rotPos / kCyclesPerDiskRotation;
+					mRotationalCounter = rotPos % kCyclesPerDiskRotation;
+					mRotations += rotPos / kCyclesPerDiskRotation;
+				}
 			}
 		}
 
@@ -832,13 +845,13 @@ void ATDiskEmulator::OnScheduledEvent(uint32 id) {
 	} else if (id == kATDiskEventWriteCompleted) {
 		mpOperationEvent = NULL;
 		mSendPacket[0] = 'C';
-		BeginTransfer(1, kCyclesToACKSent);
+		BeginTransfer(1, kCyclesToACKSent, false);
 	} else if (id == kATDiskEventFormatCompleted) {
 		mpOperationEvent = NULL;
 		mSendPacket[0] = 'C';
 		memset(mSendPacket+1, 0xFF, 128);
 		mSendPacket[129] = Checksum(mSendPacket+1, 128);
-		BeginTransfer(130, kCyclesToACKSent);
+		BeginTransfer(130, kCyclesToACKSent, false);
 	} else if (id == kATDiskEventAutoSave) {
 		mpAutoSaveEvent = NULL;
 		try {
@@ -888,8 +901,9 @@ void ATDiskEmulator::PokeyWriteSIO(uint8 c) {
 		mReceivePacket[mTransferOffset++] = c;
 }
 
-void ATDiskEmulator::BeginTransfer(uint32 length, uint32 cyclesToFirstByte) {
+void ATDiskEmulator::BeginTransfer(uint32 length, uint32 cyclesToFirstByte, bool rotationalDelay) {
 	mbWriteMode = true;
+	mbWriteRotationalDelay = rotationalDelay;
 	mTransferOffset = 0;
 	mTransferLength = length;
 
@@ -951,7 +965,7 @@ void ATDiskEmulator::ProcessCommandPacket() {
 			mSendPacket[4] = 0xe0;
 			mSendPacket[5] = 0x00;
 			mSendPacket[6] = Checksum(mSendPacket+2, 4);
-			BeginTransfer(7, 2500);
+			BeginTransfer(7, 2500, false);
 			break;
 
 		case 0x52:	// read
@@ -969,7 +983,7 @@ void ATDiskEmulator::ProcessCommandPacket() {
 					mSendPacket[0] = 0x4E;		// error
 
 					mbLastOpError = true;
-					BeginTransfer(1, kCyclesToACKSent);
+					BeginTransfer(1, kCyclesToACKSent, false);
 					ATConsolePrintf("DISK: Error reading sector %d.\n", sector);
 					break;
 				}
@@ -996,7 +1010,7 @@ void ATDiskEmulator::ProcessCommandPacket() {
 						mSendPacket[1] = 0x45;
 //						memset(mSendPacket+2, 0, 128);
 						mSendPacket[128+2] = Checksum(mSendPacket + 2, 128);
-						BeginTransfer(131, kCyclesToACKSent);
+						BeginTransfer(131, kCyclesToACKSent, true);
 
 						ATConsolePrintf("DISK: Reporting missing sector %d.\n", sector);
 						break;
@@ -1044,7 +1058,7 @@ void ATDiskEmulator::ProcessCommandPacket() {
 					mSendPacket[1] = 0x45;
 //					memset(mSendPacket+2, 0, 128);
 					mSendPacket[128+2] = Checksum(mSendPacket + 2, 128);
-					BeginTransfer(131, kCyclesToACKSent);
+					BeginTransfer(131, kCyclesToACKSent, true);
 					mbLastOpError = true;
 
 					ATConsolePrintf("DISK: Reporting missing sector %d.\n", sector);
@@ -1065,7 +1079,7 @@ void ATDiskEmulator::ProcessCommandPacket() {
 				mSendPacket[psi.mSize+2] = Checksum(mSendPacket + 2, psi.mSize);
 				const uint32 transferLength = psi.mSize + 3;
 
-				BeginTransfer(transferLength, kCyclesToACKSent);
+				BeginTransfer(transferLength, kCyclesToACKSent, true);
 				ATConsolePrintf("DISK: Reading vsec=%3d (%d/%d), psec=%3d, chk=%02x, rot=%.2f >> %.2f%s.\n"
 						, sector
 						, physSector - vsi.mStartPhysSector + 1
@@ -1092,13 +1106,14 @@ void ATDiskEmulator::ProcessCommandPacket() {
 #endif
 		case 0x21:	// format
 			if (!mbWriteEnabled) {
+				ATConsolePrintf("DISK: FORMAT COMMAND RECEIVED. Blocking due to read-only disk!\n");
 				mSendPacket[0] = 'N';
 				mbLastOpError = true;
-				BeginTransfer(1, kCyclesToACKSent);
+				BeginTransfer(1, kCyclesToACKSent, false);
 			} else {
 				mSendPacket[0] = 'A';
 				mbLastOpError = false;
-				BeginTransfer(1, kCyclesToACKSent);
+				BeginTransfer(1, kCyclesToACKSent, false);
 
 				if (mpOperationEvent)
 					mpScheduler->RemoveEvent(mpOperationEvent);
@@ -1122,13 +1137,13 @@ void ATDiskEmulator::ProcessCommandPacket() {
 					mSendPacket[0] = 0x4E;		// error
 
 					mbLastOpError = true;
-					BeginTransfer(1, kCyclesToACKSent);
+					BeginTransfer(1, kCyclesToACKSent, false);
 					ATConsolePrintf("DISK: Error writing sector %d.\n", sector);
 					break;
 				}
 
 				mbLastOpError = false;
-				BeginTransfer(1, kCyclesToACKSent);
+				BeginTransfer(1, kCyclesToACKSent, false);
 
 				// get virtual sector information
 				VirtSectorInfo& vsi = mVirtSectorInfo[sector - 1];
@@ -1142,7 +1157,7 @@ void ATDiskEmulator::ProcessCommandPacket() {
 
 		default:
 			mSendPacket[0] = 0x4E;
-			BeginTransfer(1, kCyclesToACKSent);
+			BeginTransfer(1, kCyclesToACKSent, false);
 			ATConsolePrintf("DISK: Unsupported command %02X\n", mReceivePacket[1]);
 			break;
 
@@ -1201,13 +1216,13 @@ void ATDiskEmulator::ProcessCommandData() {
 			ATConsolePrintf("DISK: Checksum error detected while receiving write data.\n");
 
 			mSendPacket[0] = 'E';
-			BeginTransfer(1, kCyclesToACKSent);
+			BeginTransfer(1, kCyclesToACKSent, false);
 			mActiveCommand = 0;
 			return;
 		}
 
 		mSendPacket[0] = 'A';
-		BeginTransfer(1, kCyclesToACKSent);
+		BeginTransfer(1, kCyclesToACKSent, false);
 	}
 }
 

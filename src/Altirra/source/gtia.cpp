@@ -48,6 +48,9 @@ public:
 };
 
 namespace {
+	const int kPlayerWidths[4]={8,16,8,32};
+	const int kMissileWidths[4]={2,4,2,8};
+
 	const uint8 PF0		= 0x01;
 	const uint8 PF1		= 0x02;
 	const uint8 PF01	= 0x03;
@@ -162,7 +165,9 @@ ATGTIAEmulator::ATGTIAEmulator()
 
 	mpFrameTracker->AddRef();
 
-	mCONSOL = 7;
+	mSwitchOutput = 8;
+	mSwitchInput = 15;
+	mForcedSwitchInput = 15;
 	mPRIOR = 0;
 	mTRIG[0] = 0x01;
 	mTRIG[1] = 0x01;
@@ -175,6 +180,7 @@ ATGTIAEmulator::ATGTIAEmulator()
 	memset(mColorTable, 0, sizeof mColorTable);
 	memset(mPlayerCollFlags, 0, sizeof mPlayerCollFlags);
 	memset(mMissileCollFlags, 0, sizeof mMissileCollFlags);
+	mCollisionMask = 0xFF;
 
 	mPlayerSize[0] = 0;
 	mPlayerSize[1] = 0;
@@ -361,6 +367,8 @@ ATGTIAEmulator::ATGTIAEmulator()
 }
 
 ATGTIAEmulator::~ATGTIAEmulator() {
+	mpLastFrame = NULL;
+
 	if (mpFrameTracker) {
 		mpFrameTracker->Release();
 		mpFrameTracker = NULL;
@@ -393,6 +401,40 @@ void ATGTIAEmulator::AdjustColors(double baseDelta, double rangeDelta) {
 void ATGTIAEmulator::SetAnalysisMode(AnalysisMode mode) {
 	mAnalysisMode = mode;
 	mpColorTable = mode ? kAnalysisColorTable : mColorTable;
+}
+
+bool ATGTIAEmulator::ArePMCollisionsEnabled() const {
+	return (mCollisionMask & 0xf0) != 0;
+}
+
+void ATGTIAEmulator::SetPMCollisionsEnabled(bool enable) {
+	if (enable) {
+		mCollisionMask |= 0xf0;
+	} else {
+		mCollisionMask &= 0x0f;
+
+		for(int i=0; i<4; ++i) {
+			mPlayerCollFlags[i] &= 0x0f;
+			mMissileCollFlags[i] &= 0x0f;
+		}
+	}
+}
+
+bool ATGTIAEmulator::ArePFCollisionsEnabled() const {
+	return (mCollisionMask & 0x0f) != 0;
+}
+
+void ATGTIAEmulator::SetPFCollisionsEnabled(bool enable) {
+	if (enable) {
+		mCollisionMask |= 0x0f;
+	} else {
+		mCollisionMask &= 0xf0;
+
+		for(int i=0; i<4; ++i) {
+			mPlayerCollFlags[i] &= 0xf0;
+			mMissileCollFlags[i] &= 0xf0;
+		}
+	}
 }
 
 void ATGTIAEmulator::SetVideoOutput(IVDVideoDisplay *pDisplay) {
@@ -428,10 +470,18 @@ void ATGTIAEmulator::SetPALMode(bool enabled) {
 }
 
 void ATGTIAEmulator::SetConsoleSwitch(uint8 c, bool set) {
-	mCONSOL &= ~c;
+	mSwitchInput &= ~c;
 
 	if (!set)			// bit is active low
-		mCONSOL |= c;
+		mSwitchInput |= c;
+}
+
+void ATGTIAEmulator::SetForcedConsoleSwitches(uint8 c) {
+	mForcedSwitchInput = c;
+}
+
+const VDPixmap *ATGTIAEmulator::GetLastFrameBuffer() const {
+	return mpLastFrame ? &mpLastFrame->mPixmap : NULL;
 }
 
 void ATGTIAEmulator::DumpStatus() {
@@ -481,12 +531,14 @@ void ATGTIAEmulator::DumpStatus() {
 		, mGRACTL & 0x01 ? ", missile DMA" : ""
 		);
 
-	ATConsolePrintf("CONSOL: %02x%s%s%s%s\n"
-		, mCONSOL
-		, mCONSOL & 0x08 ? ", speaker" : ""
-		, mCONSOL & 0x04 ? ", option" : ""
-		, mCONSOL & 0x02 ? ", select" : ""
-		, mCONSOL & 0x01 ? ", start" : ""
+	uint8 consol = ~(mSwitchInput & mForcedSwitchInput & ~mSwitchOutput);
+	ATConsolePrintf("CONSOL: %02x set <-> %02x input%s%s%s%s\n"
+		, mSwitchOutput
+		, mSwitchInput
+		, mSwitchOutput & 0x08 ? ", speaker" : ""
+		, consol & 0x04 ? ", option" : ""
+		, consol & 0x02 ? ", select" : ""
+		, consol & 0x01 ? ", start" : ""
 		);
 
 	uint8 v;
@@ -567,7 +619,7 @@ void ATGTIAEmulator::LoadState(ATSaveStateReader& reader) {
 	mPRIOR = reader.ReadUint8();
 	mVDELAY = reader.ReadUint8();
 	mGRACTL = reader.ReadUint8();
-	mCONSOL = reader.ReadUint8();
+	mSwitchOutput = reader.ReadUint8();
 
 	mPlayerCollFlags[0] = reader.ReadUint8() & 15;
 	mPlayerCollFlags[1] = reader.ReadUint8() & 15;
@@ -580,7 +632,12 @@ void ATGTIAEmulator::LoadState(ATSaveStateReader& reader) {
 
 	mbHiresMode = reader.ReadBool();
 
-	mpConn->GTIASetSpeaker(0 != (mCONSOL & 8));
+	mpConn->GTIASetSpeaker(0 != (mSwitchOutput & 8));
+
+	for(int i=0; i<4; ++i) {
+		mPlayerWidth[i] = kPlayerWidths[mPlayerSize[i]];
+		mMissileWidth[i] = kMissileWidths[(mMissileSize >> (i+i)) & 3];
+	}
 
 	mColorTable[kColorP0] = mPMColor[0];
 	mColorTable[kColorP1] = mPMColor[1];
@@ -654,7 +711,7 @@ void ATGTIAEmulator::SaveState(ATSaveStateWriter& writer) {
 	writer.WriteUint8(mPRIOR);
 	writer.WriteUint8(mVDELAY);
 	writer.WriteUint8(mGRACTL);
-	writer.WriteUint8(mCONSOL);
+	writer.WriteUint8(mSwitchOutput);
 
 	writer.WriteUint8(mPlayerCollFlags[0]);
 	writer.WriteUint8(mPlayerCollFlags[1]);
@@ -732,6 +789,9 @@ bool ATGTIAEmulator::BeginFrame(bool force) {
 void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 	mbANTICHiresMode = hires;
 	mbHiresMode = hires && !(mPRIOR & 0xc0);
+
+	if ((unsigned)(y - 8) < 240)
+		mbScanlinesWithHiRes[y - 8] = mbHiresMode;
 
 	mpDst = NULL;
 	
@@ -832,12 +892,17 @@ void ATGTIAEmulator::UpdatePlayfield160(uint32 x, uint8 byte) {
 
 	dst[0] = (byte >>  4) & 15;
 	dst[1] = (byte      ) & 15;
+
+	VDASSERT(x < 114);
+
 }
 
 void ATGTIAEmulator::UpdatePlayfield320(uint32 x, uint8 byte) {
 	uint8 *dstx = &mMergeBuffer[x];
 	dstx[0] = PF2;
 	dstx[1] = PF2;
+	
+	VDASSERT(x < 228);
 
 	uint8 *dst = &mAnticData[x];
 	dst[0] = (byte >> 2) & 3;
@@ -1048,7 +1113,7 @@ void ATGTIAEmulator::Sync() {
 					}
 
 					if (flags)
-						mPlayerCollFlags[player] |= flags;
+						mPlayerCollFlags[player] |= flags & mCollisionMask;
 				}
 
 				xst = xend;
@@ -1114,7 +1179,7 @@ void ATGTIAEmulator::Sync() {
 						sint32 mask = Expand(data, mwidx) << (px1 - px);
 						sint32 mask2 = mask;
 						uint8 flags = 0;
-						for(int x=px2-px1; x >= 0; --x) {
+						for(int x=px2-px1; x > 0; --x) {
 							if (mask < 0)
 								flags |= *pldst;
 
@@ -1137,7 +1202,7 @@ void ATGTIAEmulator::Sync() {
 						}
 
 						if (flags)
-							mMissileCollFlags[missile] |= flags;
+							mMissileCollFlags[missile] |= flags & mCollisionMask;
 					}
 
 					xst = xend;
@@ -1156,7 +1221,7 @@ void ATGTIAEmulator::Sync() {
 			uint8 *pldst = mMergeBuffer + px1;
 			uint8 bit = (mPRIOR & 0x10) ? PF3 : P0 << missile;
 			sint32 mask = Expand(data, (mMissileSize >> (2*missile)) & 3) << (px1 - px);
-			for(int x=px2-px1; x >= 0; --x) {
+			for(int x=px2-px1; x > 0; --x) {
 				if (mask < 0)
 					*pldst |= bit;
 
@@ -1195,6 +1260,11 @@ void ATGTIAEmulator::RenderActivityMap(const uint8 *src) {
 	}
 }
 
+#if 0
+	extern float g_arhist[];
+	extern float g_arhist2[];
+#endif
+
 void ATGTIAEmulator::UpdateScreen() {
 	if (!mpFrame)
 		return;
@@ -1218,7 +1288,7 @@ void ATGTIAEmulator::UpdateScreen() {
 		uint32 statusFlags = mStatusFlags | mStickyStatusFlags;
 		mStickyStatusFlags = mStatusFlags;
 
-		static const uint8 chars[4][7][5]={
+		static const uint8 chars[5][7][5]={
 			{
 #define X 0x1F
 				X,X,X,X,X,
@@ -1263,9 +1333,20 @@ void ATGTIAEmulator::UpdateScreen() {
 				X,X,X,X,X,
 #undef X
 			},
+			{
+#define X 0x9F
+				X,X,X,X,X,
+				X,X,0,0,X,
+				X,0,X,X,X,
+				X,0,X,X,X,
+				X,0,X,X,X,
+				X,X,0,0,X,
+				X,X,X,X,X,
+#undef X
+			},
 		};
 
-		for(int i=0; i<4; ++i) {
+		for(int i=0; i<5; ++i) {
 			if (statusFlags & (1 << i)) {
 				VDPixmap pxsrc;
 				pxsrc.data = (void *)chars[i];
@@ -1275,7 +1356,7 @@ void ATGTIAEmulator::UpdateScreen() {
 				pxsrc.w = 5;
 				pxsrc.h = 7;
 
-				VDPixmapBlt(pxdst, pxdst.w - 20 + 5*i, pxdst.h - 7, pxsrc, 0, 0, 5, 7);
+				VDPixmapBlt(pxdst, pxdst.w - 25 + 5*i, pxdst.h - 7, pxsrc, 0, 0, 5, 7);
 			}
 		}
 
@@ -1345,8 +1426,27 @@ void ATGTIAEmulator::UpdateScreen() {
 			VDPixmapTriFill(tmp, vx, 20, kIndices, 30, xf);
 		}
 
+#if 0
+		for(int x=0; x<256; ++x) {
+			int y = VDRoundToInt(pxdst.h * (0.5 - g_arhist[x] / 3200.0));
+
+			if ((unsigned)x < pxdst.w && (unsigned)y < pxdst.h)
+				((uint8 *)pxdst.data)[pxdst.pitch * y + x] = 0x0F;
+		}
+
+		for(int x=0; x<256; ++x) {
+			int y = VDRoundToInt(pxdst.h * (1.0 - g_arhist2[x] / 16384.0));
+
+			if ((unsigned)x < pxdst.w && (unsigned)y < pxdst.h)
+				((uint8 *)pxdst.data)[pxdst.pitch * y + x] = 0x4C;
+		}
+#endif
+
 		ApplyArtifacting();
 		mpDisplay->PostBuffer(mpFrame);
+
+		mpLastFrame = mpFrame;
+
 		mpFrame = NULL;
 	}
 }
@@ -1379,6 +1479,10 @@ void ATGTIAEmulator::RecomputePalette() {
 	}
 }
 
+uint8 ATGTIAEmulator::DebugReadByte(uint8 reg) const {
+	return reg >= 0x10 ? const_cast<ATGTIAEmulator *>(this)->ReadByte(reg) : 0xFF;
+}
+
 uint8 ATGTIAEmulator::ReadByte(uint8 reg) {
 	// fast registers
 	switch(reg) {
@@ -1401,7 +1505,7 @@ uint8 ATGTIAEmulator::ReadByte(uint8 reg) {
 		case 0x1E:
 			return 0x0F;
 		case 0x1F:		// $D01F CONSOL
-			return mCONSOL & 0x07;
+			return (~mSwitchOutput & mSwitchInput & mForcedSwitchInput) & 7;
 	}
 
 	Sync();	
@@ -1450,26 +1554,23 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 	switch(reg) {
 		case 0x1C:
 			mVDELAY = value;
-			break;
+			return;
 
 		case 0x1D:
 			mGRACTL = value;
-			break;
+			return;
 
 		case 0x1F:		// $D01F CONSOL
 			{
-				uint8 newConsol = (mCONSOL & 0xf7) + (value & 0x08);
-				if ((newConsol ^ mCONSOL) & 8)
+				uint8 newConsol = value & 0x0F;
+				if ((newConsol ^ mSwitchOutput) & 8)
 					mpConn->GTIASetSpeaker(0 != (newConsol & 8));
-				mCONSOL = newConsol;
+				mSwitchOutput = newConsol;
 			}
-			break;
+			return;
 	}
 
 	Sync();
-
-	static const int kPlayerWidths[4]={8,16,8,32};
-	static const int kMissileWidths[4]={2,4,2,8};
 
 	switch(reg) {
 		case 0x00:	mPlayerPos[0] = value;			break;
@@ -1660,7 +1761,7 @@ void ATGTIAEmulator::ApplyArtifacting() {
 		uint32 *dst = (uint32 *)dstrow;
 		const uint8 *src = srcrow;
 
-		mpArtifactingEngine->Artifact(dst, src);
+		mpArtifactingEngine->Artifact(dst, src, (unsigned)(row-8) < 240 && mbScanlinesWithHiRes[row - 8]);
 
 		srcrow += srcpitch;
 		dstrow += dstpitch;

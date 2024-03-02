@@ -66,6 +66,7 @@ public:
 	void CreateDisk(uint32 sectorCount, uint32 bootSectorCount, bool dd);
 	void UnloadDisk();
 
+	uint32 GetSectorSize(uint16 sector) const;
 	uint8 ReadSector(uint16 bufadr, uint16 len, uint16 sector, ATCPUEmulatorMemory *mpMem);
 	uint8 WriteSector(uint16 bufadr, uint16 len, uint16 sector, ATCPUEmulatorMemory *mpMem);
 
@@ -80,7 +81,7 @@ public:
 	void PokeySerInReady();
 
 protected:
-	void BeginTransfer(uint32 length, uint32 cyclesToFirstByte);
+	void BeginTransfer(uint32 length, uint32 cyclesToFirstByte, bool useRotationalDelay);
 	void UpdateRotationalCounter();
 	void QueueAutoSave();
 	void SetAutoSaveError(bool error);
@@ -114,6 +115,7 @@ protected:
 	uint32	mSectorsPerTrack;
 
 	bool	mbWriteEnabled;
+	bool	mbWriteRotationalDelay;
 	bool	mbAutoFlush;
 	bool	mbDirty;
 	bool	mbErrorIndicatorPhase;

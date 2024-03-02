@@ -18,7 +18,7 @@
 #include "stdafx.h"
 #include "scheduler.h"
 
-class ATEvent : public vdlist_node {
+class ATEvent : public ATEventLink {
 public:
 	IATSchedulerCallback *mpCB;
 	uint32 mId;
@@ -28,25 +28,35 @@ public:
 ATScheduler::ATScheduler()
 	: mNextEventCounter(-1000)
 	, mTimeBase(1000)
+	, mpFreeEvents(NULL)
 {
+	mActiveEvents.mpNext = mActiveEvents.mpPrev = &mActiveEvents;
 }
 
 ATScheduler::~ATScheduler() {
-	mFreeEvents.splice(mFreeEvents.end(), mActiveEvents);
-
-	while(!mFreeEvents.empty()) {
-		ATEvent *ev = mFreeEvents.back();
-		mFreeEvents.pop_back();
-
-		delete ev;
+	ATEventLink *ev = mpFreeEvents;
+	while(ev) {
+		ATEventLink *next = ev->mpNext;
+		delete static_cast<ATEvent *>(ev);
+		ev = next;
 	}
+	mpFreeEvents = NULL;
+
+	ev = mActiveEvents.mpNext;
+	while(ev != &mActiveEvents) {
+		ATEventLink *next = ev->mpNext;
+		delete static_cast<ATEvent *>(ev);
+		ev = next;
+	}
+
+	mActiveEvents.mpPrev = mActiveEvents.mpNext = &mActiveEvents;
 }
 
 void ATScheduler::ProcessNextEvent() {
 
 	sint32 timeToNext = 100000;
-	while(!mActiveEvents.empty()) {
-		ATEvent *ev = mActiveEvents.front();
+	while(mActiveEvents.mpNext != &mActiveEvents) {
+		ATEvent *ev = static_cast<ATEvent *>(mActiveEvents.mpNext);
 		sint32 timeToNextEvent = ev->mNextTime - (mTimeBase + mNextEventCounter);
 
 		VDASSERT(timeToNextEvent<10000000);
@@ -63,8 +73,11 @@ void ATScheduler::ProcessNextEvent() {
 
 		VDASSERT(id);
 
-		mActiveEvents.erase(ev);
-		mFreeEvents.push_back(ev);
+		mActiveEvents.mpNext = ev->mpNext;
+		mActiveEvents.mpNext->mpPrev = &mActiveEvents;
+
+		ev->mpNext = mpFreeEvents;
+		mpFreeEvents = ev;
 
 		cb->OnScheduledEvent(id);
 	}
@@ -78,14 +91,15 @@ void ATScheduler::ProcessNextEvent() {
 ATEvent *ATScheduler::AddEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id) {
 	VDASSERT(ticks > 0 && ticks < 10000000);
 	VDASSERT(id);
-	if (mFreeEvents.empty()) {
-		ATEvent *p = new ATEvent;
-		mFreeEvents.push_back(p);
-		p->mId = 0;
-	}
 
-	ATEvent *ev = mFreeEvents.back();
-	mFreeEvents.pop_back();
+	ATEvent *ev;
+	if (mpFreeEvents) {
+		ev = static_cast<ATEvent *>(mpFreeEvents);
+		mpFreeEvents = ev->mpNext;
+	} else {
+		ev = new ATEvent;
+		ev->mId = 0;
+	}
 
 	VDASSERT(!ev->mId);
 
@@ -93,35 +107,46 @@ ATEvent *ATScheduler::AddEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id
 	ev->mId = id;
 	ev->mNextTime = mTimeBase + mNextEventCounter + ticks;
 
-	Events::iterator it(mActiveEvents.begin()), itEnd(mActiveEvents.end());
-	for(; it != itEnd; ++it) {
-		if ((ev->mNextTime - mTimeBase) < ((*it)->mNextTime - mTimeBase))
+	ATEventLink *it = mActiveEvents.mpNext;
+	for(; it != &mActiveEvents; it = it->mpNext) {
+		ATEvent *ev2 = static_cast<ATEvent *>(it);
+
+		if ((ev->mNextTime - mTimeBase) < (ev2->mNextTime - mTimeBase))
 			break;
 	}
 
-	if (it == mActiveEvents.begin()) {
+	if (it == mActiveEvents.mpNext) {
 		mTimeBase += mNextEventCounter;
 		mNextEventCounter = -(sint32)ticks;
 		mTimeBase -= mNextEventCounter;
 		VDASSERT((uint32)-mNextEventCounter < 10000000);
 	}
 
-	mActiveEvents.insert(it, ev);
+	ATEventLink *t = it->mpPrev;
+	t->mpNext = ev;
+	ev->mpPrev = t;
+	it->mpPrev = ev;
+	ev->mpNext = it;
 
 	return ev;
 }
 
 void ATScheduler::RemoveEvent(ATEvent *p) {
-	bool wasFront = false;
-	if (!mActiveEvents.empty() && mActiveEvents.front() == p)
-		wasFront = true;
+	bool wasFront = (mActiveEvents.mpNext == p);
 
 	VDASSERT(p->mId);
 
-	mActiveEvents.erase(p);
+	// unlink from active events
+	ATEventLink *prev = p->mpPrev;
+	ATEventLink *next = p->mpNext;
+	prev->mpNext = next;
+	next->mpPrev = prev;
 
 	p->mId = 0;
-	mFreeEvents.push_back(p);
+
+	// free event
+	p->mpNext = mpFreeEvents;
+	mpFreeEvents = p;
 
 	if (wasFront)
 		ProcessNextEvent();

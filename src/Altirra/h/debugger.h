@@ -28,6 +28,16 @@ struct ATSymbol;
 struct ATSourceLineInfo;
 class IATDebuggerClient;
 
+enum ATDebugEvent {
+	kATDebugEvent_BreakpointsChanged
+};
+
+enum ATDebugSrcMode {
+	kATDebugSrcMode_Same,
+	kATDebugSrcMode_Disasm,
+	kATDebugSrcMode_Source
+};
+
 struct ATDebuggerSystemState {
 	uint16	mPC;
 	uint16	mInsnPC;
@@ -42,6 +52,7 @@ struct ATDebuggerSystemState {
 	uint8	mSH;
 	uint8	mK;
 	uint8	mB;
+	uint16	mD;
 
 	uint32	mPCModuleId;
 	uint16	mPCFileId;
@@ -49,6 +60,7 @@ struct ATDebuggerSystemState {
 
 	uint16	mFramePC;
 	bool	mbRunning;
+	bool	mbEmulation;
 };
 
 struct ATCallStackFrame {
@@ -60,14 +72,15 @@ struct ATCallStackFrame {
 class IATDebugger {
 public:
 	virtual void Detach() = 0;
+	virtual void SetSourceMode(ATDebugSrcMode src) = 0;
 	virtual void Break() = 0;
-	virtual void Run() = 0;
+	virtual void Run(ATDebugSrcMode sourceMode) = 0;
 	virtual void RunTraced() = 0;
 	virtual void ClearAllBreakpoints() = 0;
 	virtual void ToggleBreakpoint(uint16 addr) = 0;
-	virtual void StepInto() = 0;
-	virtual void StepOver() = 0;
-	virtual void StepOut() = 0;
+	virtual void StepInto(ATDebugSrcMode sourceMode) = 0;
+	virtual void StepOver(ATDebugSrcMode sourceMode) = 0;
+	virtual void StepOut(ATDebugSrcMode sourceMode) = 0;
 	virtual void SetPC(uint16 pc) = 0;
 	virtual void SetFramePC(uint16 pc) = 0;
 	virtual uint32 GetCallStack(ATCallStackFrame *dst, uint32 maxCount) = 0;
@@ -76,6 +89,7 @@ public:
 
 	virtual void AddClient(IATDebuggerClient *client, bool requestUpdate = false) = 0;
 	virtual void RemoveClient(IATDebuggerClient *client) = 0;
+	virtual void RequestClientUpdate(IATDebuggerClient *client) = 0;
 
 	virtual uint32 LoadSymbols(const wchar_t *fileName) = 0;
 	virtual void UnloadSymbols(uint32 moduleId) = 0;
@@ -85,6 +99,7 @@ public:
 
 class IATDebuggerSymbolLookup {
 public:
+	virtual bool GetSourceFilePath(uint32 moduleId, uint16 fileId, VDStringW& path) = 0;
 	virtual bool LookupSymbol(uint32 addr, uint32 flags, ATSymbol& symbol) = 0;
 	virtual bool LookupLine(uint32 addr, uint32& moduleId, ATSourceLineInfo& lineInfo) = 0;
 	virtual bool LookupFile(const wchar_t *fileName, uint32& moduleId, uint16& fileId) = 0;
@@ -94,6 +109,7 @@ public:
 class IATDebuggerClient {
 public:
 	virtual void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) = 0;
+	virtual void OnDebuggerEvent(ATDebugEvent eventId) = 0;
 };
 
 IATDebugger *ATGetDebugger();

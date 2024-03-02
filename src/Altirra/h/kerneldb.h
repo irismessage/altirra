@@ -64,6 +64,12 @@ public:
 		return ATByteVAdapter(mpMem, kAddress + offset);
 	}
 
+	uint8 operator&=(uint8 mask) {
+		uint8 c = mpMem->ReadByte(kAddress) & mask;
+		mpMem->WriteByte(kAddress, c);
+		return c;
+	}
+
 private:
 	ATCPUEmulatorMemory *mpMem;
 };
@@ -144,6 +150,9 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::BFENHI> BFENHI;
 		ATByteAdapter<ATKernelSymbols::BUFRFL> BUFRFL;
 		ATByteAdapter<ATKernelSymbols::CHKSNT> CHKSNT;
+		ATByteAdapter<ATKernelSymbols::BPTR  > BPTR  ;
+		ATByteAdapter<ATKernelSymbols::FTYPE > FTYPE ;
+		ATByteAdapter<ATKernelSymbols::FEOF  > FEOF  ;
 		ATByteAdapter<ATKernelSymbols::CRITIC> CRITIC;
 		ATByteAdapter<ATKernelSymbols::ATRACT> ATRACT;
 		ATByteAdapter<ATKernelSymbols::DRKMSK> DRKMSK;
@@ -194,7 +203,9 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::SDLSTH> SDLSTH;
 		ATByteAdapter<ATKernelSymbols::COLDST> COLDST;
 		ATByteAdapter<ATKernelSymbols::GPRIOR> GPRIOR;
-		ATByteAdapter<ATKernelSymbols::JVECK > JVECK;
+		ATByteAdapter<ATKernelSymbols::JVECK > JVECK ;
+		ATByteAdapter<ATKernelSymbols::WMODE > WMODE ;
+		ATByteAdapter<ATKernelSymbols::BLIM  > BLIM  ;
 		ATByteAdapter<ATKernelSymbols::TXTROW> TXTROW;
 		ATWordAdapter<ATKernelSymbols::TXTCOL> TXTCOL;
 		ATByteAdapter<ATKernelSymbols::TINDEX> TINDEX;
@@ -235,6 +246,14 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::CONSOL> CONSOL;
 		ATByteAdapter<ATKernelSymbols::IRQST > IRQST ;
 		ATByteAdapter<ATKernelSymbols::IRQEN > IRQEN ;
+
+		// PIAs (D3xx)
+		ATByteAdapter<ATKernelSymbols::PORTA > PORTA ;
+		ATByteAdapter<ATKernelSymbols::PORTB > PORTB ;
+		ATByteAdapter<ATKernelSymbols::PACTL > PACTL ;
+		ATByteAdapter<ATKernelSymbols::PBCTL > PBCTL ;
+
+		// ANTIC (D4xx)
 		ATByteAdapter<ATKernelSymbols::DMACTL> DMACTL;
 		ATByteAdapter<ATKernelSymbols::CHACTL> CHACTL;
 		ATByteAdapter<ATKernelSymbols::DLISTL> DLISTL;

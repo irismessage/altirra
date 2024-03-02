@@ -55,15 +55,6 @@ enum ATKernelMode {
 	kATKernelModeCount
 };
 
-enum ATCartridgeMode {
-	kATCartridgeMode_None,
-	kATCartridgeMode_8K,
-	kATCartridgeMode_16K,
-	kATCartridgeMode_XEGS_32K,
-	kATCartridgeMode_MaxFlash_128K,
-	kATCartridgeMode_MaxFlash_1024K
-};
-
 enum ATSimulatorEvent {
 	kATSimEvent_None,
 	kATSimEvent_CPUSingleStep,
@@ -86,6 +77,7 @@ class ATCassetteEmulator;
 class IATHLEKernel;
 class IATJoystickManager;
 class IATHardDiskEmulator;
+class ATCartridgeEmulator;
 
 class IATSimulatorCallback {
 public:
@@ -132,16 +124,17 @@ public:
 	ATHardwareMode GetHardwareMode() const { return mHardwareMode; }
 	bool IsDiskSIOPatchEnabled() const { return mbDiskSIOPatchEnabled; }
 	bool IsCassetteSIOPatchEnabled() const { return mbCassetteSIOPatchEnabled; }
+	bool IsCassetteAutoBootEnabled() const { return mbCassetteAutoBootEnabled; }
 	bool IsFPPatchEnabled() const { return mbFPPatchEnabled; }
 	bool IsBASICEnabled() const { return mbBASICEnabled; }
 	bool IsROMAutoReloadEnabled() const { return mbROMAutoReloadEnabled; }
 	bool IsAutoLoadKernelSymbolsEnabled() const { return mbAutoLoadKernelSymbols; }
 	bool IsDualPokeysEnabled() const { return mbDualPokeys; }
 
-	uint8	GetBankRegister() const { return mPORTB; }
+	uint8	GetBankRegister() const { return mPORTBIN & (mPORTBOUT | ~mPORTBDDR); }
 	uint32	GetCPUBankBase() const { return mpReadMemoryMap[0x40] - mMemory; }
 	uint32	GetAnticBankBase() const { return mpAnticMemoryMap[0x40] - mMemory; }
-	int		GetCartBank() const { return mCartBank; }
+	int		GetCartBank() const;
 
 	bool IsReadBreakEnabled() const { return mReadBreakAddress < 0x10000; }
 	uint16 GetReadBreakAddress() const { return (uint16)mReadBreakAddress; }
@@ -163,6 +156,7 @@ public:
 	void SetHardwareMode(ATHardwareMode mode);
 	void SetDiskSIOPatchEnabled(bool enable);
 	void SetCassetteSIOPatchEnabled(bool enable);
+	void SetCassetteAutoBootEnabled(bool enable);
 	void SetFPPatchEnabled(bool enable);
 	void SetBASICEnabled(bool enable);
 	void SetROMAutoReloadEnabled(bool enable);
@@ -175,7 +169,12 @@ public:
 	void Suspend();
 
 	void Load(const wchar_t *s);
+	void LoadProgram(const wchar_t *s);
+
+	bool IsCartridgeAttached() const;
+
 	void LoadCartridge(const wchar_t *s);
+	void LoadCartridgeSC3D();
 
 	enum AdvanceResult {
 		kAdvanceResult_Stopped,
@@ -205,8 +204,10 @@ private:
 	void UpdateXLCartridgeLine();
 	void UpdateKernel();
 	void RecomputeMemoryMaps();
+	uint8 ReadPortA() const;
 
 	uint8 CPUReadByte(uint16 address);
+	uint8 CPUDebugReadByte(uint16 address);
 	void CPUWriteByte(uint16 address, uint8 value);
 	uint32 GetTimestamp();
 	uint8 CPUHookHit(uint16 address);
@@ -223,6 +224,11 @@ private:
 	void OnDiskActivity(uint8 drive, bool active);
 	uint8 LoadProgramHook();
 	uint8 LoadProgramHookCont();
+	void UnloadProgramSymbols();
+	void ClearPokeyTimersOnDiskIo();
+
+	void HookCassetteOpenVector();
+	void UnhookCassetteOpenVector();
 
 	bool mbRunning;
 	bool mbBreak;
@@ -232,6 +238,7 @@ private:
 	bool mbPALMode;
 	bool mbDiskSIOPatchEnabled;
 	bool mbCassetteSIOPatchEnabled;
+	bool mbCassetteAutoBootEnabled;
 	bool mbFPPatchEnabled;
 	bool mbBASICEnabled;
 	bool mbROMAutoReloadEnabled;
@@ -239,15 +246,13 @@ private:
 	bool mbDualPokeys;
 	int mBreakOnScanline;
 
-	int	mCartBank;
-	int	mInitialCartBank;
-
+	int		mStartupDelay;
 	bool	mbCIOHandlersEstablished;
+	uint32	mCassetteCIOOpenHandlerHookAddress;
 
 	ATMemoryMode	mMemoryMode;
 	ATKernelMode	mKernelMode;
 	ATHardwareMode	mHardwareMode;
-	ATCartridgeMode	mCartMode;
 	ATSimulatorEvent	mPendingEvent;
 
 	ATCPUEmulator	mCPU;
@@ -260,16 +265,22 @@ private:
 	ATCassetteEmulator	*mpCassette;
 	IATJoystickManager	*mpJoysticks;
 	IATHardDiskEmulator	*mpHardDisk;
+	ATCartridgeEmulator	*mpCartridge;
 
+	uint32	mJoystickControllerData;
 	uint32	mKeyboardControllerData;
+	uint32	mMouseControllerData;
 	int		mMouseDeltaX;
 	int		mMouseFineDeltaX;
 	int		mMouseDeltaY;
 	int		mMouseFineDeltaY;
 
-	uint8	mPORTA;
+	uint8	mPORTAOUT;
+	uint8	mPORTADDR;
 	uint8	mPORTACTL;
-	uint8	mPORTB;
+	uint8	mPORTBIN;
+	uint8	mPORTBOUT;
+	uint8	mPORTBDDR;
 	uint8	mPORTBCTL;
 
 	uint32	mReadBreakAddress;
@@ -291,7 +302,6 @@ private:
 	uint8	mXLKernelROM[0x4000];
 	uint8	mHLEKernelROM[0x4000];
 	uint8	mLLEKernelROM[0x2800];
-	vdfastvector<uint8> mCARTROM;
 	uint8	mBASICROM[0x2000];
 
 	uint8	mMemory[0x110000];
@@ -305,8 +315,13 @@ private:
 
 	vdfastvector<uint8>		mProgramToLoad;
 	ptrdiff_t	mProgramLoadIndex;
+	uint32		mProgramModuleIds[2];
+	uint32		mCartModuleIds[2];
+
 	typedef vdfastvector<IATSimulatorCallback *> Callbacks;
 	Callbacks	mCallbacks;
+	int			mCallbacksBusy;
+	bool		mbCallbacksChanged;
 
 	IATHLEKernel	*mpHLEKernel;
 };

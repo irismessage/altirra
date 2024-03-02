@@ -32,7 +32,16 @@ void ATOpenConsole();
 void ATCloseConsole();
 bool ATIsDebugConsoleActive();
 
-void ATLoadSourceFile(const wchar_t *s);
+class IATSourceWindow {
+public:
+	virtual const wchar_t *GetPath() const = 0;
+
+	virtual void FocusOnLine(int line) = 0;
+	virtual void ActivateLine(int line) = 0;
+};
+
+IATSourceWindow *ATGetSourceWindow(const wchar_t *s);
+IATSourceWindow *ATOpenSourceWindow(const wchar_t *s);
 
 ///////////////////////////////////////////////////////////////////////////
 

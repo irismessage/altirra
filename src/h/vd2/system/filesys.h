@@ -124,6 +124,7 @@ VDStringW VDFileGetRootPath(const wchar_t *partialPath);
 VDStringW VDGetFullPath(const wchar_t *partialPath);
 
 VDStringW VDMakePath(const wchar_t *base, const wchar_t *file);
+bool VDFileIsPathEqual(const wchar_t *path1, const wchar_t *path2);
 void VDFileFixDirPath(VDStringW& path);
 VDStringW VDGetLocalModulePath();
 VDStringW VDGetProgramPath();

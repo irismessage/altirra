@@ -31,6 +31,7 @@ ATCPUEmulator::ATCPUEmulator()
 	mSBrk = 0x100;
 	mpNextState = NULL;
 	mCPUMode = kATCPUMode_6502;
+	mCPUSubMode = kATCPUSubMode_6502;
 
 	memset(mInsnFlags, 0, sizeof mInsnFlags);
 
@@ -40,6 +41,8 @@ ATCPUEmulator::ATCPUEmulator()
 	mbStopOnBRK = false;
 
 	RebuildDecodeTables();
+
+	VDASSERTCT(kStateCount < 256);
 }
 
 ATCPUEmulator::~ATCPUEmulator() {
@@ -68,6 +71,7 @@ void ATCPUEmulator::ColdReset() {
 
 void ATCPUEmulator::WarmReset() {
 	mpNextState = mStates;
+	mbIRQReleasePending = false;
 	mbIRQPending = false;
 	mbNMIPending = false;
 	mbUnusedCycle = false;
@@ -75,7 +79,7 @@ void ATCPUEmulator::WarmReset() {
 	mbMarkHistoryNMI = false;
 	mInsnPC = 0xFFFC;
 	mPC = 0xFFFC;
-	mP = 0x20 | kFlagI;
+	mP = 0x30 | kFlagI;
 	mStates[0] = kStateReadAddrL;
 	mStates[1] = kStateReadAddrH;
 	mStates[2] = kStateAddrToPC;
@@ -133,7 +137,34 @@ sint32 ATCPUEmulator::GetNextBreakpoint(sint32 last) const {
 }
 
 void ATCPUEmulator::SetCPUMode(ATCPUMode mode) {
+	if (mCPUMode == mode)
+		return;
+
 	mCPUMode = mode;
+
+	// ensure sane 65C816 state
+	mbEmulationFlag = true;
+	mP |= 0x30;
+	mSH = 1;
+	mXH = 0;
+	mYH = 0;
+	mAH = 0;
+	mDP = 0;
+	mK = 0;
+	mB = 0;
+
+	switch(mode) {
+		case kATCPUMode_65C816:
+			mCPUSubMode = kATCPUSubMode_65C816_Emulation;
+			break;
+		case kATCPUMode_65C02:
+			mCPUSubMode = kATCPUSubMode_65C02;
+			break;
+		case kATCPUMode_6502:
+			mCPUSubMode = kATCPUSubMode_6502;
+			break;
+	}
+
 	RebuildDecodeTables();
 }
 
@@ -216,7 +247,7 @@ bool ATCPUEmulator::IsInPath(uint16 addr) const {
 void ATCPUEmulator::DumpStatus() {
 	if (mCPUMode == kATCPUMode_65C816) {
 		if (mbEmulationFlag) {
-			ATConsoleTaggedPrintf("PC=%02X:%04X A=%02X:%02X X=%02X Y=%02X S=%02X P=%02X (%c%c%c%c%c%c%c%c)  "
+			ATConsoleTaggedPrintf("PC=%02X:%04X A=%02X:%02X X=%02X Y=%02X S=%02X P=%02X (%c%c%c%c%c%c)  "
 				, mK
 				, mInsnPC
 				, mAH
@@ -227,8 +258,6 @@ void ATCPUEmulator::DumpStatus() {
 				, mP
 				, mP & 0x80 ? 'N' : ' '
 				, mP & 0x40 ? 'V' : ' '
-				, mP & 0x20 ? '1' : ' '
-				, mP & 0x10 ? 'B' : ' '
 				, mP & 0x08 ? 'D' : ' '
 				, mP & 0x04 ? 'I' : ' '
 				, mP & 0x02 ? 'Z' : ' '
@@ -258,7 +287,7 @@ void ATCPUEmulator::DumpStatus() {
 				);
 		}
 	} else {
-		ATConsoleTaggedPrintf("PC=%04X A=%02X X=%02X Y=%02X S=%02X P=%02X (%c%c%c%c%c%c%c%c)  "
+		ATConsoleTaggedPrintf("PC=%04X A=%02X X=%02X Y=%02X S=%02X P=%02X (%c%c%c%c%c%c)  "
 			, mInsnPC
 			, mA
 			, mX
@@ -267,8 +296,6 @@ void ATCPUEmulator::DumpStatus() {
 			, mP
 			, mP & 0x80 ? 'N' : ' '
 			, mP & 0x40 ? 'V' : ' '
-			, mP & 0x20 ? '1' : ' '
-			, mP & 0x10 ? 'B' : ' '
 			, mP & 0x08 ? 'D' : ' '
 			, mP & 0x04 ? 'I' : ' '
 			, mP & 0x02 ? 'Z' : ' '
@@ -346,6 +373,9 @@ int ATCPUEmulator::Advance(bool busLocked) {
 
 	for(;;) {
 		switch(*mpNextState++) {
+			case kStateNop:
+				break;
+
 			case kStateReadOpcode:
 				mInsnPC = mPC;
 
@@ -436,7 +466,9 @@ int ATCPUEmulator::Advance(bool busLocked) {
 					continue;
 				}
 
-				if (mbIRQPending && !(mP & kFlagI)) {
+				if (mbIRQReleasePending)
+					mbIRQReleasePending = false;
+				else if (mbIRQPending && !(mP & kFlagI)) {
 					if (mbTrace)
 						ATConsoleWrite("CPU: Jumping to IRQ vector\n");
 
@@ -458,15 +490,20 @@ int ATCPUEmulator::Advance(bool busLocked) {
 					he.mA = mA;
 					he.mX = mX;
 					he.mY = mY;
-					he.mOpcode = mOpcode;
+					he.mOpcode[0] = mOpcode;
+					he.mOpcode[1] = mpMemory->CPUDebugReadByte(mPC);
+					he.mOpcode[2] = mpMemory->CPUDebugReadByte(mPC+1);
+					he.mOpcode[3] = mpMemory->CPUDebugReadByte(mPC+2);
 					he.mbIRQ = mbMarkHistoryIRQ;
 					he.mbNMI = mbMarkHistoryNMI;
+					he.mbEmulation = mbEmulationFlag;
 					he.mSH = mSH;
 					he.mAH = mAH;
 					he.mXH = mXH;
 					he.mYH = mYH;
 					he.mB = mB;
 					he.mK = mK;
+					he.mD = mDP;
 
 					mbMarkHistoryIRQ = false;
 					mbMarkHistoryNMI = false;
@@ -494,7 +531,6 @@ int ATCPUEmulator::Advance(bool busLocked) {
 				break;
 
 			case kStateBreakOnUnsupportedOpcode:
-				--mPC;
 				mbUnusedCycle = true;
 				return kATSimEvent_CPUIllegalInsn;
 
@@ -514,6 +550,19 @@ int ATCPUEmulator::Advance(bool busLocked) {
 				mAddr += mpMemory->ReadByte(mPC++) << 8;
 				mAddr2 = (mAddr & 0xff00) + ((mAddr + mX) & 0x00ff);
 				mAddr = mAddr + mX;
+				return kATSimEvent_None;
+
+			case kStateReadAddrHX_SHY:
+				{
+					uint8 hiByte = mpMemory->ReadByte(mPC++);
+					mData = mY & (hiByte + 1);
+					mP &= ~(kFlagN | kFlagZ);
+					if (mData & 0x80)
+						mP |= kFlagN;
+					if (!mData)
+						mP |= kFlagZ;
+					mAddr = (uint16)(mAddr + ((uint32)hiByte << 8) + mX);
+				}
 				return kATSimEvent_None;
 
 			case kStateReadAddrHY:
@@ -620,7 +669,10 @@ int ATCPUEmulator::Advance(bool busLocked) {
 				break;
 
 			case kStateDtoP:
-				mP = mData | 0x20;
+				if ((mP & ~mData) & kFlagI)
+					mbIRQReleasePending = true;
+
+				mP = mData | 0x30;
 				break;
 
 			case kStateDSetSZ:
@@ -687,19 +739,31 @@ int ATCPUEmulator::Advance(bool busLocked) {
 
 			case kStateAdc:
 				if (mP & kFlagD) {
+					// BCD
 					uint32 lowResult = (mA & 15) + (mData & 15) + (mP & kFlagC);
 					if (lowResult >= 10)
 						lowResult += 6;
 
+					if (lowResult >= 0x20)
+						lowResult -= 0x10;
+
 					uint32 highResult = (mA & 0xf0) + (mData & 0xf0) + lowResult;
+
+					mP &= ~(kFlagC | kFlagN | kFlagZ | kFlagV);
+
+					mP |= (((highResult ^ mA) & ~(mData ^ mA)) >> 1) & kFlagV;
+
+					if (highResult & 0x80)
+						mP |= kFlagN;
 
 					if (highResult >= 0xA0)
 						highResult += 0x60;
 
-					mP &= ~kFlagC;
-
 					if (highResult >= 0x100)
 						mP |= kFlagC;
+
+					if (!(uint8)(mA + mData))
+						mP |= kFlagZ;
 
 					mA = (uint8)highResult;
 				} else {
@@ -739,7 +803,7 @@ int ATCPUEmulator::Advance(bool busLocked) {
 					if (lowResult < 0x10)
 						lowResult -= 6;
 
-					uint32 highResult = (mA & 0xf0) + (mData & 0xf0) + lowResult;
+					uint32 highResult = (mA & 0xf0) + (mData & 0xf0) + (lowResult & 0x1f);
 
 					if (highResult < 0x100)
 						highResult -= 0x60;
@@ -877,6 +941,15 @@ int ATCPUEmulator::Advance(bool busLocked) {
 					mP |= kFlagZ;
 				break;
 
+			case kStateXaa:
+				mA &= (mData & mX);
+				mP &= ~(kFlagN | kFlagZ);
+				if (mA & 0x80)
+					mP |= kFlagN;
+				if (!mA)
+					mP |= kFlagZ;
+				break;
+
 			case kStateOr:
 				mA |= mData;
 				mP &= ~(kFlagN | kFlagZ);
@@ -958,6 +1031,7 @@ int ATCPUEmulator::Advance(bool busLocked) {
 
 			case kStateCLI:
 				mP &= ~kFlagI;
+				mbIRQReleasePending = true;
 				break;
 
 			case kStateSEC:
@@ -1310,7 +1384,7 @@ int ATCPUEmulator::Advance(bool busLocked) {
 				return kATSimEvent_None;
 
 			case kStateWaitForInterrupt:
-				if (!mbIRQPending)
+				if (!mbIRQPending && !mbNMIPending)
 					--mpNextState;
 				return kATSimEvent_None;
 
@@ -1351,6 +1425,122 @@ int ATCPUEmulator::Advance(bool busLocked) {
 					mP |= kFlagZ;
 
 				mData |= mA;
+				break;
+
+			case kStateC02_Adc:
+				if (mP & kFlagD) {
+					uint32 lowResult = (mA & 15) + (mData & 15) + (mP & kFlagC);
+					if (lowResult >= 10)
+						lowResult += 6;
+
+					if (lowResult >= 0x20)
+						lowResult -= 0x10;
+
+					uint32 highResult = (mA & 0xf0) + (mData & 0xf0) + lowResult;
+
+					mP &= ~(kFlagC | kFlagN | kFlagZ | kFlagV);
+
+					mP |= (((highResult ^ mA) & ~(mData ^ mA)) >> 1) & kFlagV;
+
+					if (highResult >= 0xA0)
+						highResult += 0x60;
+
+					if (highResult >= 0x100)
+						mP |= kFlagC;
+
+					uint8 result = (uint8)highResult;
+
+					if (!result)
+						mP |= kFlagZ;
+
+					if (result & 0x80)
+						mP |= kFlagN;
+
+					mA = result;
+				} else {
+					uint32 carry7 = (mA & 0x7f) + (mData & 0x7f) + (mP & kFlagC);
+					uint32 result = carry7 + (mA & 0x80) + (mData & 0x80);
+
+					mP &= ~(kFlagC | kFlagN | kFlagZ | kFlagV);
+
+					if (result & 0x80)
+						mP |= kFlagN;
+
+					if (result >= 0x100)
+						mP |= kFlagC;
+
+					if (!(result & 0xff))
+						mP |= kFlagZ;
+
+					mP |= ((result >> 2) ^ (carry7 >> 1)) & kFlagV;
+
+					mA = (uint8)result;
+
+					// No extra cycle unless decimal mode is on.
+					++mpNextState;
+				}
+				break;
+
+			case kStateC02_Sbc:
+				if (mP & kFlagD) {
+					// Pole Position needs N set properly here for its passing counter
+					// to stop correctly!
+
+					mData ^= 0xff;
+
+					// Flags set according to binary op
+					uint32 carry7 = (mA & 0x7f) + (mData & 0x7f) + (mP & kFlagC);
+					uint32 result = carry7 + (mA & 0x80) + (mData & 0x80);
+
+					// BCD
+					uint32 lowResult = (mA & 15) + (mData & 15) + (mP & kFlagC);
+					if (lowResult < 0x10)
+						lowResult -= 6;
+
+					uint32 highResult = (mA & 0xf0) + (mData & 0xf0) + (lowResult & 0x1f);
+
+					if (highResult < 0x100)
+						highResult -= 0x60;
+
+					mP &= ~(kFlagC | kFlagN | kFlagZ | kFlagV);
+
+					uint8 bcdresult = (uint8)highResult;
+
+					if (bcdresult & 0x80)
+						mP |= kFlagN;
+
+					if (result >= 0x100)
+						mP |= kFlagC;
+
+					if (!(bcdresult & 0xff))
+						mP |= kFlagZ;
+
+					mP |= ((result >> 2) ^ (carry7 >> 1)) & kFlagV;
+
+					mA = bcdresult;
+				} else {
+					mData ^= 0xff;
+					uint32 carry7 = (mA & 0x7f) + (mData & 0x7f) + (mP & kFlagC);
+					uint32 result = carry7 + (mA & 0x80) + (mData & 0x80);
+
+					mP &= ~(kFlagC | kFlagN | kFlagZ | kFlagV);
+
+					if (result & 0x80)
+						mP |= kFlagN;
+
+					if (result >= 0x100)
+						mP |= kFlagC;
+
+					if (!(result & 0xff))
+						mP |= kFlagZ;
+
+					mP |= ((result >> 2) ^ (carry7 >> 1)) & kFlagV;
+
+					mA = (uint8)result;
+
+					// No extra cycle unless decimal mode is on.
+					++mpNextState;
+				}
 				break;
 
 			////////// 65C816 states
@@ -1397,7 +1587,11 @@ int ATCPUEmulator::Advance(bool busLocked) {
 				mAddr = mData16;
 				return kATSimEvent_None;
 
-			case kStateRead816AddrL:
+			case kStateReadAddrAddY:
+				mAddr += mY + ((uint32)mYH << 8);
+				break;
+
+			case kState816ReadAddrL:
 				mAddrBank = mB;
 				mAddr = mpMemory->ReadByte(mPC++);
 				return kATSimEvent_None;
@@ -1418,6 +1612,18 @@ int ATCPUEmulator::Advance(bool busLocked) {
 			case kStateRead816AddrAbsLongB:
 				mAddrBank = mpMemory->ExtReadByte(mAddr + 2, mAddrBank);
 				mAddr = mData16;
+				return kATSimEvent_None;
+
+			case kState816ReadAddrHX:
+				mAddr += mpMemory->ReadByte(mPC++) << 8;
+				mAddr2 = (mAddr & 0xff00) + ((mAddr + mX) & 0x00ff);
+				mAddr = mAddr + mX + ((uint32)mXH << 8);
+				return kATSimEvent_None;
+
+			case kState816ReadAddrHY:
+				mAddr += mpMemory->ReadByte(mPC++) << 8;
+				mAddr2 = (mAddr & 0xff00) + ((mAddr + mY) & 0x00ff);
+				mAddr = mAddr + mY + ((uint32)mYH << 8);
 				return kATSimEvent_None;
 
 			case kStateReadAddrB:
@@ -1496,6 +1702,8 @@ int ATCPUEmulator::Advance(bool busLocked) {
 				break;
 
 			case kStateDtoPNative:
+				if ((mP & ~mData) & kFlagI)
+					mbIRQReleasePending = true;
 				mP = mData;
 				Update65816DecodeTable();
 				break;
@@ -1566,6 +1774,16 @@ int ATCPUEmulator::Advance(bool busLocked) {
 					mP |= kFlagZ;
 				break;
 
+			case kStateXor16:
+				mA ^= (uint8)mData16;
+				mAH ^= (uint8)(mData16 >> 8);
+				mP &= ~(kFlagN | kFlagZ);
+				if (mAH & 0x80)
+					mP |= kFlagN;
+				if (!(mA | mAH))
+					mP |= kFlagZ;
+				break;
+
 			case kStateAdc16:
 				if (mP & kFlagD) {
 					uint32 lowResult = (mA & 15) + (mData16 & 15) + (mP & kFlagC);
@@ -1585,10 +1803,16 @@ int ATCPUEmulator::Advance(bool busLocked) {
 					if (highResult >= 0xA000)
 						highResult += 0x6000;
 
-					mP &= ~kFlagC;
+					mP &= ~(kFlagC | kFlagN | kFlagZ | kFlagV);
 
 					if (highResult >= 0x10000)
 						mP |= kFlagC;
+
+					if (!(highResult & 0xffff))
+						mP |= kFlagZ;
+
+					if (highResult & 0x8000)
+						mP |= kFlagN;
 
 					mA = (uint8)highResult;
 					mAH = (uint8)(highResult >> 8);
@@ -1621,10 +1845,6 @@ int ATCPUEmulator::Advance(bool busLocked) {
 					uint32 data = (uint32)mData ^ 0xffff;
 					uint32 acc = mA + ((uint32)mAH << 8);
 
-					// Flags set according to binary op
-					uint32 carry15 = (acc & 0x7f) + (data & 0x7fff) + (mP & kFlagC);
-					uint32 result = carry15 + (acc & 0x8000) + (data & 0x8000);
-
 					// BCD
 					uint32 lowResult = (acc & 15) + (data & 15) + (mP & kFlagC);
 					if (lowResult < 0x10)
@@ -1644,16 +1864,14 @@ int ATCPUEmulator::Advance(bool busLocked) {
 
 					mP &= ~(kFlagC | kFlagN | kFlagZ | kFlagV);
 
-					if (result & 0x8000)
+					if (highResult & 0x8000)
 						mP |= kFlagN;
 
-					if (result >= 0x10000)
+					if (highResult >= 0x10000)
 						mP |= kFlagC;
 
-					if (!(result & 0xffff))
+					if (!(highResult & 0xffff))
 						mP |= kFlagZ;
-
-					mP |= ((result >> 10) ^ (carry15 >> 9)) & kFlagV;
 
 					mA = (uint8)highResult;
 					mAH = (uint8)(highResult >> 8);
@@ -1679,6 +1897,25 @@ int ATCPUEmulator::Advance(bool busLocked) {
 
 					mA = (uint8)result;
 					mAH = (uint8)(result >> 8);
+				}
+				break;
+
+			case kStateCmp16:
+				{
+					uint32 acc = ((uint32)mAH << 8) + mA;
+					uint32 d16 = (uint32)mData16 ^ 0xffff;
+					uint32 result = acc + d16 + 1;
+
+					mP &= ~(kFlagC | kFlagN | kFlagZ);
+
+					if (result & 0x8000)
+						mP |= kFlagN;
+
+					if (result >= 0x10000)
+						mP |= kFlagC;
+
+					if (!(result & 0xffff))
+						mP |= kFlagZ;
 				}
 				break;
 
@@ -1714,6 +1951,20 @@ int ATCPUEmulator::Advance(bool busLocked) {
 				}
 				break;
 
+			case kStateRor16:
+				{
+					uint32 result = ((uint32)mData16 >> 1) + ((uint32)(mP & kFlagC) << 15);
+					mP &= ~(kFlagN | kFlagZ | kFlagC);
+					if (mData16 & 1)
+						mP |= kFlagC;
+					mData16 = (uint16)result;
+					if (result & 0x8000)
+						mP |= kFlagN;
+					if (!result)
+						mP |= kFlagZ;
+				}
+				break;
+
 			case kStateAsl16:
 				mP &= ~(kFlagN | kFlagZ | kFlagC);
 				if (mData16 & 0x8000)
@@ -1737,11 +1988,35 @@ int ATCPUEmulator::Advance(bool busLocked) {
 			case kStateBit16:
 				{
 					uint32 acc = mA + ((uint32)mAH << 8);
-					uint8 result = mData16 & acc;
+					uint16 result = mData16 & acc;
 
 					mP &= ~kFlagZ;
 					if (!result)
 						mP |= kFlagZ;
+				}
+				break;
+
+			case kStateTrb16:
+				{
+					uint32 acc = mA + ((uint32)mAH << 8);
+
+					mP &= ~kFlagZ;
+					if (!(mData16 & acc))
+						mP |= kFlagZ;
+
+					mData16 &= ~acc;
+				}
+				break;
+
+			case kStateTsb16:
+				{
+					uint32 acc = mA + ((uint32)mAH << 8);
+
+					mP &= ~kFlagZ;
+					if (!(mData16 & acc))
+						mP |= kFlagZ;
+
+					mData16 |= acc;
 				}
 				break;
 
@@ -1783,7 +2058,7 @@ int ATCPUEmulator::Advance(bool busLocked) {
 
 			case kStateXba:
 				{
-					uint8 t = mA;
+					uint8 t = mAH;
 					mAH = mA;
 					mA = t;
 
@@ -1902,6 +2177,9 @@ int ATCPUEmulator::Advance(bool busLocked) {
 				return kATSimEvent_None;
 
 			case kStateRep:
+				if (mData & kFlagI)
+					mbIRQReleasePending = true;
+
 				if (mbEmulationFlag)
 					mP &= ~(mData & 0xcf);		// m and x are off-limits
 				else
@@ -1930,6 +2208,7 @@ int ATCPUEmulator::Advance(bool busLocked) {
 
 			case kState816_NatCOPVecToPC:
 				mPC = 0xFFE4;
+				mK = 0;
 				break;
 
 			case kState816_EmuCOPVecToPC:
@@ -1938,10 +2217,17 @@ int ATCPUEmulator::Advance(bool busLocked) {
 
 			case kState816_NatNMIVecToPC:
 				mPC = 0xFFEA;
+				mK = 0;
 				break;
 
 			case kState816_NatIRQVecToPC:
 				mPC = 0xFFEE;
+				mK = 0;
+				break;
+
+			case kState816_NatBRKVecToPC:
+				mPC = 0xFFE6;
+				mK = 0;
 				break;
 
 			case kState816_SetI_ClearD:
@@ -1996,6 +2282,11 @@ int ATCPUEmulator::Advance(bool busLocked) {
 						mPC -= 3;
 
 				return kATSimEvent_None;
+
+			case kState816_Per:
+				mData16 += mPC;
+				break;
+
 #ifdef _DEBUG
 			default:
 				VDASSERT(!"Invalid CPU state detected.");
@@ -2011,6 +2302,16 @@ void ATCPUEmulator::RedecodeInsnWithoutBreak() {
 }
 
 void ATCPUEmulator::Update65816DecodeTable() {
+	ATCPUSubMode subMode = kATCPUSubMode_65C816_Emulation;
+
+	if (!mbEmulationFlag)
+		subMode = (ATCPUSubMode)(kATCPUSubMode_65C816_NativeM16X16 + ((mP >> 4) & 3));
+
+	if (subMode == mCPUSubMode)
+		return;
+
+	mCPUSubMode = subMode;
+
 	if (mbEmulationFlag) {
 		mSH = 0x01;
 		mXH = 0;

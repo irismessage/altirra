@@ -137,6 +137,14 @@ notdiag:
 	eor		#$02
 	ora		#$b1
 	sta		portb
+	
+	lda		#$38
+	sta		pbctl
+	lda		#$ff
+	sta		portb		;set port B lines to output
+	lda		#$3c
+	sta		pbctl		;swap back to data register (required for disk version of Numen)
+	
 	; 4. measure memory -> tramsz
 	ldy		#$00
 	sty		a0
@@ -199,6 +207,7 @@ hwclear:
 	mva		tramsz memtop+1
 	mwa		#$0700 memlo
 	
+	jsr		DiskInit
 	jsr		ScreenInit
 	;jsr	DisplayInit
 	jsr		KeyboardInit

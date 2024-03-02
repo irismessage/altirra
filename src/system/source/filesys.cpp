@@ -515,6 +515,49 @@ VDStringW VDMakePath(const wchar_t *base, const wchar_t *file) {
 	return result;
 }
 
+bool VDFileIsPathEqual(const wchar_t *path1, const wchar_t *path2) {
+	// check for UNC paths
+	if (path1[0] == '\\' && path1[1] == '\\' && path1[2] != '\\' &&
+		path2[0] == '\\' && path2[1] == '\\' && path2[2] != '\\')
+	{
+		path1 += 2;
+		path2 += 2;
+	}
+
+	for(;;) {
+		wchar_t c = *path1++;
+		wchar_t d = *path2++;
+
+		if (c == '\\' || c == '/') {
+			c = '/';
+
+			while(*path1 == '\\' || *path1 == '/')
+				++path1;
+
+			if (!*path1)
+				c = 0;
+		} else
+			c = towupper(c);
+
+		if (d == '\\' || d == '/') {
+			d = '/';
+
+			while(*path2 == '\\' || *path2 == '/')
+				++path2;
+
+			if (!*path2)
+				d = 0;
+		} else
+			d = towupper(d);
+
+		if (c != d)
+			return false;
+
+		if (!c)
+			return true;
+	}
+}
+
 void VDFileFixDirPath(VDStringW& path) {
 	if (!path.empty()) {
 		wchar_t c = path[path.size()-1];

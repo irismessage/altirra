@@ -35,6 +35,16 @@ enum ATCPUMode {
 	kATCPUModeCount
 };
 
+enum ATCPUSubMode {
+	kATCPUSubMode_6502,
+	kATCPUSubMode_65C02,
+	kATCPUSubMode_65C816_Emulation,
+	kATCPUSubMode_65C816_NativeM16X16,
+	kATCPUSubMode_65C816_NativeM16X8,
+	kATCPUSubMode_65C816_NativeM8X16,
+	kATCPUSubMode_65C816_NativeM8X8,
+	kATCPUSubModeCount
+};
 
 namespace AT6502 {
 	enum {
@@ -53,6 +63,7 @@ namespace AT6502 {
 class VDINTERFACE ATCPUEmulatorMemory {
 public:
 	virtual uint8 CPUReadByte(uint16 address) = 0;
+	virtual uint8 CPUDebugReadByte(uint16 address) = 0;
 	virtual void CPUWriteByte(uint16 address, uint8 value) = 0;
 	virtual uint32 GetTimestamp() = 0;
 	virtual uint8 CPUHookHit(uint16 address) = 0;
@@ -118,15 +129,17 @@ struct ATCPUHistoryEntry {
 	uint8	mA;
 	uint8	mX;
 	uint8	mY;
-	uint8	mOpcode;
 	bool	mbIRQ;
 	bool	mbNMI;
+	bool	mbEmulation;
+	uint8	mOpcode[4];
 	uint8	mSH;
 	uint8	mAH;
 	uint8	mXH;
 	uint8	mYH;
 	uint8	mB;
 	uint8	mK;
+	uint16	mD;
 };
 
 class ATCPUEmulator {
@@ -149,6 +162,7 @@ public:
 
 	bool	IsInstructionInProgress() const;
 
+	bool	GetEmulationFlag() const { return mbEmulationFlag; }
 	uint16	GetInsnPC() const { return mInsnPC; }
 	uint16	GetPC() const { return mPC; }
 	uint8	GetP() const { return mP; }
@@ -171,6 +185,7 @@ public:
 	uint8	GetSH() const { return mSH; }
 	uint8	GetB() const { return mB; }
 	uint8	GetK() const { return mK; }
+	uint16	GetD() const { return mDP; }
 
 	void	SetFlagC() { mP |= AT6502::kFlagC; }
 	void	ClearFlagC() { mP &= ~AT6502::kFlagC; }
@@ -183,6 +198,7 @@ public:
 
 	void	SetCPUMode(ATCPUMode mode);
 	ATCPUMode GetCPUMode() const { return mCPUMode; }
+	ATCPUSubMode GetCPUSubMode() const { return mCPUSubMode; }
 
 	bool	IsHistoryEnabled() const { return mbHistoryEnabled; }
 	void	SetHistoryEnabled(bool enable);
@@ -290,6 +306,7 @@ protected:
 	uint8	mSH;
 	uint16	mDP;
 
+	bool	mbIRQReleasePending;
 	bool	mbIRQPending;
 	bool	mbNMIPending;
 	bool	mbTrace;
@@ -298,6 +315,7 @@ protected:
 	bool	mbEmulationFlag;
 	uint32	mSBrk;
 	ATCPUMode	mCPUMode;
+	ATCPUSubMode	mCPUSubMode;
 
 	ATCPUEmulatorMemory	*mpMemory;
 	IATCPUHighLevelEmulator	*mpHLE;

@@ -34,6 +34,11 @@ public:
 
 class ATEvent;
 
+struct ATEventLink {
+	ATEventLink *mpNext;
+	ATEventLink *mpPrev;
+};
+
 class ATScheduler {
 public:
 	ATScheduler();
@@ -52,9 +57,8 @@ public:
 	sint32	mTimeBase;
 
 protected:
-	typedef vdlist<ATEvent> Events;
-	Events mActiveEvents;
-	Events mFreeEvents;
+	ATEventLink mActiveEvents;
+	ATEventLink *mpFreeEvents;
 };
 
 #endif

@@ -1,5 +1,73 @@
 Altirra Change Log
 
+Version 1.3 [September 4, 2009]:
+   [features added]
+   * Debugger: Register pane now shows 65C816 state.
+   * Debugger: Added context menu to disassembly pane.
+   * Debugger: *.lst and *.lab symbols are automatically detected and loaded for direct-run EXEs and cartridges.
+   * Debugger: Improved source-level debugging capability.
+   * Debugger: Opcodes are now cached so that they show correctly in the history log even with bank switching.
+   * UI: Filter mode is now saved on exit.
+   * UI: Added command to copy current frame to the clipboard.
+   * UI: Added paddle support.
+   * GTIA: Optimized artifacting code.
+   * GTIA: Added the ability to disable collisions for cheating.
+   * Cartridge: Added support for 64K XEGS and 512K MegaCart cartridge types.
+   * Cartridge: Added support for SuperCharger 3D cartridge.
+   * Cassette: Added support for non-standard baud rates.
+   * Cassette: Added auto-boot option.
+   * Cassette: Device open commands are now accelerated.
+
+   [bugs fixed]
+   * Simulator: More fixes to executable loader.
+   * Simulator: 320K memory mode now banks ANTIC along with the CPU.
+   * Simulator: Joystick and bank switch masking via the PIA data direction register is now supported.
+   * Simulator: Rewrote BASIC handling to use the OPTION switch rather than masking PORTB bit 1.
+   * Simulator: Reset PIA, ANTIC, and CPU on warm reset for XL hardware.
+   * Simulator: Self-test ROM no longer appears if kernel ROM is disabled.
+   * Simulator: Adjusted PAL frame rate.
+   * Simulator: Disk boot flag is now set when loading EXEs to accommodate programs that warm start through DOSINI vector.
+   * Simulator: EXE loader is more tolerant of broken files.
+   * CPU: Fixed many 65C02/65C816 bugs.
+   * CPU: Fixed emulation of NMOS 6502 decimal mode.
+   * CPU: Fixed bugs in undocumented instructions.
+   * CPU: Fixed emulation crash when switching to 65C816 on the fly.
+   * CPU: Fixed handling of break flag.
+   * CPU: Now allow one instruction to pass before taking IRQ interrupt after clearing I flag.
+   * Debugger: Improved handling of 65C816 modes in disassembler.
+   * Debugger: Debug memory reads no longer see $FF in the page where a read memory breakpoint is set.
+   * Debugger: Fixed bugs in symbol parser when loading MADS listings.
+   * Debugger: Fixed line highlighting in source windows.
+   * Debugger: Disassembly recomputes on 65C816 mode changes.
+   * Disk: Fixed bug in loading of ATR files that have non-standard boot sector counts.
+   * Disk: Additional compatibility fixes to DSKINV acceleration.
+   * Disk: Status commands are no longer delayed by the accurate disk timing option.
+   * Disk: Applied slight adjustment to SIO transfer rate.
+   * Disk: POKEY timers are now shut off after SIO/DSKINV acceleration.
+   * Disk: Strengthened disk image format validation and made XFD loading more tolerant.
+   * UI: Fixed bug in CPU mode dialog that prevented selection of 65C02 mode.
+   * UI: Fixed crash when accessing menu with display pane closed.
+   * UI: Keyboard-as-joystick logic no longer allows simultaneous up+down and left+right.
+   * UI: Added support for controlling joystick port 2.
+   * UI: Blocked invalid machine configurations with XL kernel and 800 hardware or less than 64K of memory.
+   * ANTIC: Fixed broken mode 9.
+   * ANTIC: Vertical reflect now works on modes 4-7.
+   * ANTIC: Player/missile DMA no longer occurs during vertical blank.
+   * ANTIC: Fixed behavior of vertical scrolling on blank lines.
+   * ANTIC: Changes in playfield width are now supported later in a scan line.
+   * ANTIC: Moved VCOUNT advance forward by one cycle.
+   * ANTIC: NMIs are now suppressed if enabled too close to trigger point.
+   * ANTIC: NMIs are now delayed by one cycle if enabled exactly on cycle 8.
+   * GTIA: Bogus missile-player collisions were reported if a register change occurred in the middle of a missile.
+   * GTIA: Fixed CONSOL I/O interactions on switch lines.
+   * GTIA: Save states now restore player/missile widths.
+   * HLE: DSKINV now supports double-density disks.
+   * HLE: Improved compatibility of post-init PORTB state.
+   * POKEY: Rewrote resampling filter to better block high frequencies.
+   * POKEY: Fixed 17-bit noise register polynomial and shift direction.
+   * POKEY: Initialization mode (SKCTL[1:0] == 0) now resets the low-speed clocks and polynomial shift registers.
+   * POKEY: Asynchronous serial receive mode no longer suspends channels 3 and 4.
+
 Version 1.2 [July 5, 2009]:
    [features added]
    * Debugger: Added memory pane.

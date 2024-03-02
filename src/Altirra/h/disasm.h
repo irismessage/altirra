@@ -23,6 +23,7 @@ class VDStringA;
 uint16 ATDisassembleInsn(uint16 addr);
 uint16 ATDisassembleInsn(char *buf, uint16 addr, bool decodeReferences);
 uint16 ATDisassembleInsn(VDStringA& buf, uint16 addr, bool decodeReferences);
+uint16 ATDisassembleInsn(VDStringA& buf, const ATCPUHistoryEntry& hent, bool decodeReferences);
 void ATDisassembleRange(FILE *f, uint16 addr1, uint16 addr2);
 uint16 ATDisassembleGetFirstAnchor(uint16 addr, uint16 target);
 

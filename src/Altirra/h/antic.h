@@ -57,6 +57,10 @@ public:
 	AnalysisMode	GetAnalysisMode() const { return mAnalysisMode; }
 	void			SetAnalysisMode(AnalysisMode mode) { mAnalysisMode = mode; }
 
+	bool	IsVBIEnabled() const {
+		return (mNMIEN & 0x40) != 0;
+	}
+
 	void	SetPALMode(bool pal);
 
 	struct DLHistoryEntry {
@@ -74,6 +78,7 @@ public:
 	void Init(IATAnticEmulatorConnections *conn, ATGTIAEmulator *gtia);
 	void ColdReset();
 	void WarmReset();
+	void RequestNMI();
 	bool Advance();
 	void SyncWithGTIA(int offset);
 	void Decode(int offset);
@@ -94,6 +99,7 @@ protected:
 	void	AdvanceScanline();
 	void	UpdateDMAPattern(int dmaStart, int dmaEnd, uint8 mode);
 	void	UpdateCurrentCharRow();
+	void	UpdatePlayfieldTiming();
 
 	uint32	mX;
 	uint32	mY;
@@ -111,6 +117,9 @@ protected:
 	bool	mbHScrollDelay;
 	bool	mbRowStopUseVScroll;
 	bool	mbRowAdvance;
+	bool	mbLateNMI;
+	uint8	mEarlyNMIEN;
+	uint8	mEarlyNMIEN2;
 	uint32	mRowCounter;
 	uint32	mRowCount;
 	uint32	mLatchedVScroll;		// latched VSCROL at cycle 109 from previous scanline -- used to detect end of vs region

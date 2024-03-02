@@ -46,7 +46,7 @@ protected:
 
 class ATCPUEmulatorMemory;
 
-class ATCassetteEmulator : public IATSchedulerCallback {
+class ATCassetteEmulator : public IATSchedulerCallback, public IATPokeyCassetteDevice {
 public:
 	ATCassetteEmulator();
 	~ATCassetteEmulator();
@@ -57,6 +57,7 @@ public:
 	void ColdReset();
 
 	bool IsLoaded() const { return mLength || mAudioLength; }
+	bool IsMotorRunning() const { return mpPlayEvent != NULL; }
 
 	void Load(const wchar_t *fn);
 
@@ -66,12 +67,27 @@ public:
 	void Play();
 	void RewindToStart();
 
+	void SkipForward(float seconds);
+
 	uint8 ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemory *mpMem);
 
 	void OnScheduledEvent(uint32 id);
 
 protected:
+	void PokeyChangeSerialRate(uint32 divisor);
+	void PokeyResetSerialInput();
+
+protected:
 	void UpdateMotorState();
+
+	enum BitResult {
+		kBR_NoOutput,
+		kBR_ByteReceived,
+		kBR_FramingError
+	};
+
+	BitResult ProcessBit();
+
 	void ParseWAVE(VDFile& file);
 	void ParseCAS(VDFile& file);
 
@@ -79,13 +95,20 @@ protected:
 	uint32	mAudioLength;
 	uint32	mPosition;
 	uint32	mLength;
-	uint32	mTargetCycle;
 
 	bool	mbMotorEnable;
 	bool	mbPlayEnable;
+	bool	mbDataLineState;
 	bool	mbOutputBit;
 	int		mSIOPhase;
 	uint8	mDataByte;
+	uint8	mThresholdZeroBit;
+	uint8	mThresholdOneBit;
+
+	bool	mbDataBitEdge;		// True if we are waiting for the edge of a data bit, false if we are sampling.
+	int		mDataBitCounter;
+	int		mDataBitHalfPeriod;
+	uint32	mAveragingPeriod;
 
 	ATEvent *mpPlayEvent;
 	ATEvent *mpAudioEvent;
@@ -93,7 +116,7 @@ protected:
 	ATPokeyEmulator *mpPokey;
 	ATScheduler *mpScheduler;
 
-	typedef vdfastvector<uint32> Bitstream;
+	typedef vdfastvector<uint8> Bitstream;
 	Bitstream	mBitstream;
 
 	typedef vdfastvector<uint8> AudioStream;

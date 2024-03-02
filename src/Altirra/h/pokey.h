@@ -47,6 +47,25 @@ public:
 	virtual void PokeySerInReady() = 0;
 };
 
+class IATPokeyCassetteDevice {
+public:
+	virtual void PokeyChangeSerialRate(uint32 divisor) = 0;
+	virtual void PokeyResetSerialInput() = 0;
+};
+
+struct ATAudioFilter {
+	float	mHiPassAccum;
+	float	mLoPassPrev1;
+	float	mLoPassPrev2;
+	float	mLoPassPrev3;
+	float	mLoPassPrev4;
+
+	ATAudioFilter();
+
+	void Filter(float * VDRESTRICT dst, const float * VDRESTRICT src, uint32 count, float loCoeff, float hiCoeff);
+};
+
+
 class ATPokeyEmulator : public IATSchedulerCallback {
 public:
 	ATPokeyEmulator(bool isSlave);
@@ -56,7 +75,9 @@ public:
 	void	ColdReset();
 
 	void	SetSlave(ATPokeyEmulator *slave);
+	void	SetCassette(IATPokeyCassetteDevice *dev);
 
+	void	SetPal(bool pal) { mbPal = pal; }
 	void	SetTurbo(bool enable) { mbTurbo = enable; }
 
 	bool	IsTraceSIOEnabled() const { return mbTraceSIO; }
@@ -74,6 +95,17 @@ public:
 	void	PushKey(uint8 c, bool repeat);
 	void	PushBreak();
 
+	int	GetPotPos(unsigned idx) const { return mPOT[idx]; }
+	void	SetPotPos(unsigned idx, int pos) {
+		if (pos > 228)
+			pos = 228;
+
+		if (pos < 0)
+			pos = 0;
+
+		mPOT[idx] = (uint8)pos;
+	}
+
 	void	AdvanceScanLine();
 	void	AdvanceFrame();
 
@@ -90,7 +122,7 @@ protected:
 	void	DoFullTick();
 	void	OnScheduledEvent(uint32 id);
 
-	void	GenerateSample(uint32 t);
+	void	GenerateSample(uint32 pos, uint32 t);
 	void	UpdatePolynomialCounters();
 	void	FireTimers(uint8 activeChannels);
 	void	UpdateOutput();
@@ -100,20 +132,33 @@ protected:
 
 	void	DumpStatus(bool isSlave);
 
+	void	ResamplerReset();
+	void	ResamplerShift();
+	void	ResamplerSetRate(float rate);
+
 protected:
 	void	SetLast64KHzTime(uint32 t) { mLast64KHzTime = t; }
+	void	SetLast15KHzTime(uint32 t) { mLast15KHzTime = t; }
 
 protected:
 	int		mAccum;
-	float	mLoPassAccum;
-	float	mHiPassAccum;
 	int		mSampleCounter;
 	int		mOutputLevel;
 	int		mLastOutputTime;
 	int		mExternalInput;
 
+	bool	mbResampleWaitForLatencyDrain;
+	uint64	mResampleAccum;
+	uint64	mResampleRate;
+	float	mResampleRateF;
+	uint32	mResampleSamplesFiltered;
+	uint32	mResampleSamplesPresent;
+	uint32	mResampleSamplesNeeded;
+	int		mResampleRestabilizeCounter;
+
+	ATAudioFilter	mFilter;
+
 	int		mTicksAccumulated;
-	int		mDstIndex;
 
 	int		mTimerCounters[4];
 
@@ -122,6 +167,7 @@ protected:
 	bool	mHighPassFF[2];
 
 	bool	mbCommandLineState;
+	bool	mbPal;
 	bool	mbTurbo;
 	bool	mbTraceSIO;
 
@@ -166,6 +212,8 @@ protected:
 	bool	mbSerOutValid;
 	bool	mbSerialOutputState;
 	bool	mbSpeakerState;
+	bool	mbSerialRateChanged;
+	bool	mbSerialStartBitActive;
 
 	// AUDCTL breakout
 	bool	mbFastTimer1;
@@ -177,15 +225,16 @@ protected:
 	uint32	mLast15KHzTime;
 	uint32	mLast64KHzTime;
 	uint32	mAudioRate;
-	uint32	mAudioSpaceLast;
 	float	mAudioDampedError;
 
 	uint8	mPOT[8];
 	uint8	mALLPOT;
 	uint32	mPotScanStartTime;
 
-	ATEvent *mpPotScanEvent;
+	ATEvent *mpPotScanEvent[8];
 	ATEvent	*mp64KHzEvent;
+	ATEvent	*mp15KHzEvent;
+	ATEvent	*mpStartBitEvent;
 	ATEvent	*mpTimerEvents[4];
 	ATScheduler *mpScheduler;
 
@@ -198,16 +247,19 @@ protected:
 	typedef vdfastvector<IATPokeySIODevice *> Devices;
 	Devices	mDevices;
 
+	IATPokeyCassetteDevice *mpCassette;
+
 	enum {
-		kSamplesPerBlock = 256,
+		kSamplesPerBlock = 128,
 		kBlockSize = kSamplesPerBlock * 4,
-		kBlockCount = 16,
+		kBlockCount = 32,
 		kBufferSize = kBlockSize * kBlockCount,
-		kLatency = 2048 * 4
-		//kLatency = 1536
+		kLatency = 2048 * 4,
+		kRawBlockSize = kSamplesPerBlock * 16
 	};
 
-	float	mRawOutputBuffer[kBlockSize];
+	float	mRawOutputBuffer[kRawBlockSize];
+	float	mFilteredOutputBuffer[kRawBlockSize];
 	sint16	mOutputBuffer[kBlockSize];
 	bool	mPoly4Buffer[15];
 	bool	mPoly5Buffer[31];

@@ -768,10 +768,10 @@ template<class T> VDTINLINE typename vdspan<T>::iterator				vdspan<T>::begin() {
 template<class T> VDTINLINE typename vdspan<T>::const_iterator		vdspan<T>::begin() const { return mpBegin; }
 template<class T> VDTINLINE typename vdspan<T>::iterator				vdspan<T>::end() { return mpEnd; }
 template<class T> VDTINLINE typename vdspan<T>::const_iterator		vdspan<T>::end() const { return mpEnd; }
-template<class T> VDTINLINE typename vdspan<T>::reverse_iterator		vdspan<T>::rbegin() { return reverse_iterator(mpBegin); }
-template<class T> VDTINLINE typename vdspan<T>::const_reverse_iterator vdspan<T>::rbegin() const { return const_reverse_iterator(mpBegin); }
-template<class T> VDTINLINE typename vdspan<T>::reverse_iterator		vdspan<T>::rend() { return reverse_iterator(mpEnd); }
-template<class T> VDTINLINE typename vdspan<T>::const_reverse_iterator vdspan<T>::rend() const { return const_reverse_iterator(mpEnd); }
+template<class T> VDTINLINE typename vdspan<T>::reverse_iterator		vdspan<T>::rbegin() { return reverse_iterator(mpEnd); }
+template<class T> VDTINLINE typename vdspan<T>::const_reverse_iterator vdspan<T>::rbegin() const { return const_reverse_iterator(mpEnd); }
+template<class T> VDTINLINE typename vdspan<T>::reverse_iterator		vdspan<T>::rend() { return reverse_iterator(mpBegin); }
+template<class T> VDTINLINE typename vdspan<T>::const_reverse_iterator vdspan<T>::rend() const { return const_reverse_iterator(mpBegin); }
 template<class T> VDTINLINE typename vdspan<T>::reference			vdspan<T>::front() { return *mpBegin; }
 template<class T> VDTINLINE typename vdspan<T>::const_reference		vdspan<T>::front() const { return *mpBegin; }
 template<class T> VDTINLINE typename vdspan<T>::reference			vdspan<T>::back() { VDASSERT(mpBegin != mpEnd); return mpEnd[-1]; }

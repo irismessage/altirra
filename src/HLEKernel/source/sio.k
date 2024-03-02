@@ -26,6 +26,9 @@ SIOErrorDeviceDone	= $90
 
 .proc SIOInit
 	mwa		#SIOCountdown1Handler	cdtma1
+
+	;turn off POKEY init mode so polynomial counters and audio run
+	mva		#3 skctl
 	rts
 .endp
 

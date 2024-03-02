@@ -17,6 +17,8 @@
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 .proc DiskInit
+	;set disk sector size to 128 bytes
+	mwa		#$80	dsctln
 	rts
 .endp
 
@@ -36,7 +38,7 @@
 	jmp		siov
 	
 notStatus:
-	mwa		#$80	dbytlo
+	mwa		dsctln	dbytlo
 	mva		#$40	dstats
 	jmp		siov
 .endp

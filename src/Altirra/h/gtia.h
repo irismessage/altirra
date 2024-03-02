@@ -60,6 +60,13 @@ public:
 
 	void SetForcedBorder(bool forcedBorder) { mbForcedBorder = forcedBorder; }
 	void SetFrameSkip(bool turbo) { mbTurbo = turbo; }
+
+	bool ArePMCollisionsEnabled() const;
+	void SetPMCollisionsEnabled(bool enable);
+
+	bool ArePFCollisionsEnabled() const;
+	void SetPFCollisionsEnabled(bool enable);
+
 	void SetVideoOutput(IVDVideoDisplay *pDisplay);
 	void SetStatusFlags(uint32 flags) { mStatusFlags |= flags; mStickyStatusFlags |= flags; }
 	void ResetStatusFlags(uint32 flags) { mStatusFlags &= ~flags; }
@@ -74,9 +81,12 @@ public:
 	void SetArtifactingEnabled(bool enabled) { mArtifactMode = enabled; }
 
 	void SetConsoleSwitch(uint8 c, bool down);
+	void SetForcedConsoleSwitches(uint8 c);
 	void SetControllerTrigger(int index, bool state) { mTRIG[index] = state ? 0x00 : 0x01; }
 
 	bool IsVideoDelayed() const { return mbVideoDelayed; }
+
+	const VDPixmap *GetLastFrameBuffer() const;
 
 	void DumpStatus();
 
@@ -97,6 +107,7 @@ public:
 	void UpdateScreen();
 	void RecomputePalette();
 
+	uint8 DebugReadByte(uint8 reg) const;
 	uint8 ReadByte(uint8 reg);
 	void WriteByte(uint8 reg, uint8 value);
 
@@ -143,13 +154,16 @@ protected:
 								// bit 2: latch trigger inputs
 								// bit 1: enable players
 								// bit 0: enable missiles
-	uint8	mCONSOL;			// $D01F
+	uint8	mSwitchOutput;		// $D01F (CONSOL) output from GTIA
 								// bit 3: speaker output
+	uint8	mSwitchInput;		// $D01F (CONSOL) input to GTIA
+	uint8	mForcedSwitchInput;
 
 	uint8	mTRIG[4];
 
 	uint8	mPlayerCollFlags[4];
 	uint8	mMissileCollFlags[4];
+	uint8	mCollisionMask;
 
 	uint8	*mpDst;
 	vdrefptr<VDVideoDisplayFrame>	mpFrame;
@@ -175,6 +189,7 @@ protected:
 	uint8	mAnticData[228];
 	uint8	mPriorityTables[32][256];
 	uint32	mPalette[256];
+	bool	mbScanlinesWithHiRes[240];
 
 	double	mPaletteColorBase;
 	double	mPaletteColorRange;
@@ -184,6 +199,7 @@ protected:
 	VDPixmap	mPreArtifactFrameVisible;
 
 	ATArtifactingEngine	*mpArtifactingEngine;
+	vdrefptr<VDVideoDisplayFrame> mpLastFrame;
 };
 
 #endif

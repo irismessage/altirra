@@ -28,6 +28,8 @@
 
 #include <vd2/system/vdstl.h>
 
+class VDStringSpanW;
+
 class VDCommandLineIterator {
 	friend class VDCommandLine;
 public:
@@ -47,6 +49,7 @@ public:
 
 	uint32 GetCount() const;
 	const wchar_t *operator[](int index) const;
+	const VDStringSpanW operator()(int index) const;
 
 	bool GetNextArgument(VDCommandLineIterator& index, const wchar_t *& token, bool& isSwitch) const;
 	bool GetNextNonSwitchArgument(VDCommandLineIterator& index, const wchar_t *& token) const;

@@ -211,6 +211,8 @@ color1	= $02c5			;shadow for COLPF1 ($D017)
 color2	= $02c6			;shadow for COLPF2 ($D018)
 color3	= $02c7			;shadow for COLPF3 ($D019)
 color4	= $02c8			;shadow for COLBK ($D01A)
+dsctln	= $02d5			;disk sector length (1200XL and newer only)
+		; $02d6
 memtop	= $02e5			;highest location for programs and data
 memlo	= $02e7			;base of application memory
 dvstat	= $02ea			;DISK: Status request buffer area (4 bytes)

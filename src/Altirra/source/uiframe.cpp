@@ -1339,8 +1339,12 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 		case WM_CHILDACTIVATE:
 		case WM_MOUSEACTIVATE:
-			if (ATContainerWindow *cont = ATContainerWindow::GetContainerWindow(GetAncestor(mhwnd, GA_ROOTOWNER)))
+			if (ATContainerWindow *cont = ATContainerWindow::GetContainerWindow(GetAncestor(mhwnd, GA_ROOTOWNER))) {
 				cont->NotifyFrameActivated(this);
+
+				if (msg == WM_MOUSEACTIVATE)
+					::SetFocus(mhwnd);
+			}
 			break;
 
 		case WM_SETFOCUS:

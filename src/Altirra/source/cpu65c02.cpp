@@ -37,9 +37,58 @@ bool ATCPUEmulator::Decode65C02(uint8 opcode) {
 			*mpDstState++ = kStateXor;
 			break;
 
+		case 0x61:	// ADC (zp,X)
+			DecodeReadIndX();
+			*mpDstState++ = kStateC02_Adc;
+			*mpDstState++ = kStateWait;
+			break;
+
+		case 0x65:	// ADC zp
+			DecodeReadZp();
+			*mpDstState++ = kStateC02_Adc;
+			*mpDstState++ = kStateWait;
+			break;
+
+		case 0x69:	// ADC imm
+			*mpDstState++ = kStateReadImm;
+			*mpDstState++ = kStateC02_Adc;
+			*mpDstState++ = kStateWait;
+			break;
+
+		case 0x6D:	// ADC abs
+			DecodeReadAbs();
+			*mpDstState++ = kStateC02_Adc;
+			*mpDstState++ = kStateWait;
+			break;
+
+		case 0x71:	// ADC (zp),Y
+			DecodeReadIndY();
+			*mpDstState++ = kStateC02_Adc;
+			*mpDstState++ = kStateWait;
+			break;
+
 		case 0x72:	// ADC (zp)
 			DecodeReadInd();
-			*mpDstState++ = kStateAdc;
+			*mpDstState++ = kStateC02_Adc;
+			*mpDstState++ = kStateWait;
+			break;
+
+		case 0x75:	// ADC zp,X
+			DecodeReadZpX();
+			*mpDstState++ = kStateC02_Adc;
+			*mpDstState++ = kStateWait;
+			break;
+
+		case 0x79:	// ADC abs,Y
+			DecodeReadAbsY();
+			*mpDstState++ = kStateC02_Adc;
+			*mpDstState++ = kStateWait;
+			break;
+
+		case 0x7D:	// ADC abs,X
+			DecodeReadAbsX();
+			*mpDstState++ = kStateC02_Adc;
+			*mpDstState++ = kStateWait;
 			break;
 
 		case 0x92:	// STA (zp)
@@ -59,9 +108,46 @@ bool ATCPUEmulator::Decode65C02(uint8 opcode) {
 			*mpDstState++ = kStateCmp;
 			break;
 
+		case 0xE1:	// SBC (zp,X)
+			DecodeReadIndX();
+			*mpDstState++ = kStateC02_Sbc;
+			*mpDstState++ = kStateWait;
+			break;
+
+		case 0xE5:	// SBC zp
+			DecodeReadZp();
+			*mpDstState++ = kStateC02_Sbc;
+			*mpDstState++ = kStateWait;
+			break;
+
+		case 0xE9:	// SBC imm
+			*mpDstState++ = kStateReadImm;
+			*mpDstState++ = kStateC02_Sbc;
+			*mpDstState++ = kStateWait;
+			break;
+
+		case 0xED:	// SBC abs
+			DecodeReadAbs();
+			*mpDstState++ = kStateC02_Sbc;
+			*mpDstState++ = kStateWait;
+			break;
+
+		case 0xF1:	// SBC (zp),Y
+			DecodeReadIndY();
+			*mpDstState++ = kStateC02_Sbc;
+			*mpDstState++ = kStateWait;
+			break;
+
 		case 0xF2:	// SBC (zp)
 			DecodeReadInd();
-			*mpDstState++ = kStateSbc;
+			*mpDstState++ = kStateC02_Sbc;
+			*mpDstState++ = kStateWait;
+			break;
+
+		case 0xF5:	// SBC zp,X
+			DecodeReadZpX();
+			*mpDstState++ = kStateC02_Sbc;
+			*mpDstState++ = kStateWait;
 			break;
 
 		// TRB/TSB

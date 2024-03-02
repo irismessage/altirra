@@ -39,6 +39,8 @@
 #include "Dialog.h"
 #include "savestate.h"
 #include "resource.h"
+#include "oshelper.h"
+#include "autotest.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -71,11 +73,14 @@ HMENU g_hMenu;
 ATSimulator g_sim;
 
 bool g_fullscreen = false;
-bool g_controller = true;
+int g_keyboardInput = true;
 bool g_mouse = false;
+bool g_paddles = false;
+int g_paddlePos = 0;
 bool g_mouseCaptured = false;
 bool g_pauseInactive = true;
 bool g_winActive = true;
+IVDVideoDisplay::FilterMode g_dispFilterMode = IVDVideoDisplay::kFilterBilinear;
 
 ATSaveStateWriter::Storage g_quickSave;
 
@@ -203,7 +208,7 @@ INT_PTR CALLBACK CPUOptionsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lP
 
 					if (IsDlgButtonChecked(hdlg, IDC_CPUMODEL_65C816))
 						cpuem.SetCPUMode(kATCPUMode_65C816);
-					else if (IsDlgButtonChecked(hdlg, IDC_CPUMODEL_65C816))
+					else if (IsDlgButtonChecked(hdlg, IDC_CPUMODEL_65C02))
 						cpuem.SetCPUMode(kATCPUMode_65C02);
 					else
 						cpuem.SetCPUMode(kATCPUMode_6502);
@@ -500,13 +505,30 @@ ATAboutDialog::~ATAboutDialog() {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+
+namespace {
+	uint32 g_controllerData;
+
+	void UpdateController(uint32 mask, uint32 value) {
+		g_controllerData ^= (g_controllerData ^ value) & mask;
+
+		// remove simultaneous up/down and left/right
+		uint32 blockBits = ((g_controllerData & (g_controllerData >> 1)) & 0x55) * 3;
+
+		g_sim.SetKeyboardControlData(0xFF, g_controllerData & ~blockBits);
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
 void OnCommandOpen() {
-	VDStringW fn(VDGetLoadFileName('disk', (VDGUIHandle)g_hwnd, L"Load disk or program image",
-		L"All supported types\0*.atr;*.xfd;*.pro;*.atx;*.xex;*.obx\0"
+	VDStringW fn(VDGetLoadFileName('load', (VDGUIHandle)g_hwnd, L"Load disk, cassette, cartridge, or program image",
+		L"All supported types\0*.atr;*.xfd;*.pro;*.atx;*.xex;*.obx;*.rom;*.bin;*.cas;*.wav\0"
 		L"Atari program (*.xex,*.obx)\0*.xex;*.obx\0"
 		L"Atari disk image (*.atr,*.xfd)\0*.atr;*.xfd\0"
 		L"Protected disk image (*.pro)\0*.pro\0"
 		L"VAPI disk image (*.atx)\0*.atx\0"
+		L"Cartridge (*.rom,*.bin)\0*.rom;*.bin\0"
+		L"Cassette tape (*.cas,*.wav)\0*.cas;*.wav\0"
 		L"All files\0*.*\0",
 		L"atr"
 		));
@@ -568,20 +590,25 @@ void OnCommandToggleFullScreen() {
 }
 
 void OnCommandFilterModeNext() {
+	if (!g_pDisplay)
+		return;
+
 	switch(g_pDisplay->GetFilterMode()) {
 		case IVDVideoDisplay::kFilterPoint:
-			g_pDisplay->SetFilterMode(IVDVideoDisplay::kFilterBilinear);
+			g_dispFilterMode = IVDVideoDisplay::kFilterBilinear;
 			break;
 		case IVDVideoDisplay::kFilterBilinear:
-			g_pDisplay->SetFilterMode(IVDVideoDisplay::kFilterBicubic);
+			g_dispFilterMode = IVDVideoDisplay::kFilterBicubic;
 			break;
 		case IVDVideoDisplay::kFilterBicubic:
-			g_pDisplay->SetFilterMode(IVDVideoDisplay::kFilterAnySuitable);
+			g_dispFilterMode = IVDVideoDisplay::kFilterAnySuitable;
 			break;
 		case IVDVideoDisplay::kFilterAnySuitable:
-			g_pDisplay->SetFilterMode(IVDVideoDisplay::kFilterPoint);
+			g_dispFilterMode = IVDVideoDisplay::kFilterPoint;
 			break;
 	}
+
+	g_pDisplay->SetFilterMode(g_dispFilterMode);
 }
 
 void OnCommandAnticVisualizationNext() {
@@ -596,7 +623,7 @@ void OnCommandGTIAVisualizationNext() {
 
 bool OnCommand(UINT id) {
 	switch(id) {
-		case ID_FILE_OPENDISK:
+		case ID_FILE_OPENIMAGE:
 			OnCommandOpen();
 			return true;
 
@@ -631,8 +658,8 @@ bool OnCommand(UINT id) {
 		case ID_FILE_ATTACHCARTRIDGE:
 			{
 				VDStringW fn(VDGetLoadFileName('cart', (VDGUIHandle)g_hwnd, L"Load cartridge",
-					L"All supported types\0*.bin;*.car\0"
-					L"Cartridge image (*.bin,*.car)\0*.bin;*.car\0"
+					L"All supported types\0*.bin;*.car;*.rom\0"
+					L"Cartridge image (*.bin,*.car,*.rom)\0*.bin;*.car;*.rom\0"
 					L"All files\0*.*\0",
 
 					L"bin"));
@@ -650,6 +677,11 @@ bool OnCommand(UINT id) {
 
 		case ID_FILE_DETACHCARTRIDGE:
 			g_sim.LoadCartridge(NULL);
+			g_sim.ColdReset();
+			return true;
+
+		case ID_ATTACHSPECIALCARTRIDGE_SUPERCHARGER3D:
+			g_sim.LoadCartridgeSC3D();
 			g_sim.ColdReset();
 			return true;
 
@@ -675,12 +707,16 @@ bool OnCommand(UINT id) {
 			g_sim.SetCassetteSIOPatchEnabled(!g_sim.IsCassetteSIOPatchEnabled());
 			return true;
 
+		case ID_CASSETTE_AUTOBOOT:
+			g_sim.SetCassetteAutoBootEnabled(!g_sim.IsCassetteAutoBootEnabled());
+			return true;
+
 		case ID_DEBUG_OPENSOURCE:
 			{
 				VDStringW fn(VDGetLoadFileName('src ', (VDGUIHandle)g_hwnd, L"Load source file", L"All files (*.*)\0*.*\0", NULL));
 
 				if (!fn.empty()) {
-					ATLoadSourceFile(fn.c_str());
+					ATOpenSourceWindow(fn.c_str());
 				}
 			}
 			return true;
@@ -690,19 +726,27 @@ bool OnCommand(UINT id) {
 			return true;
 
 		case ID_FILTERMODE_POINT:
-			g_pDisplay->SetFilterMode(IVDVideoDisplay::kFilterPoint);
+			g_dispFilterMode = IVDVideoDisplay::kFilterPoint;
+			if (g_pDisplay)
+				g_pDisplay->SetFilterMode(IVDVideoDisplay::kFilterPoint);
 			return true;
 
 		case ID_FILTERMODE_BILINEAR:
-			g_pDisplay->SetFilterMode(IVDVideoDisplay::kFilterBilinear);
+			g_dispFilterMode = IVDVideoDisplay::kFilterBilinear;
+			if (g_pDisplay)
+				g_pDisplay->SetFilterMode(IVDVideoDisplay::kFilterBilinear);
 			return true;
 
 		case ID_FILTERMODE_BICUBIC:
-			g_pDisplay->SetFilterMode(IVDVideoDisplay::kFilterBicubic);
+			g_dispFilterMode = IVDVideoDisplay::kFilterBicubic;
+			if (g_pDisplay)
+				g_pDisplay->SetFilterMode(IVDVideoDisplay::kFilterBicubic);
 			return true;
 
 		case ID_FILTERMODE_ANYSUITABLE:
-			g_pDisplay->SetFilterMode(IVDVideoDisplay::kFilterAnySuitable);
+			g_dispFilterMode = IVDVideoDisplay::kFilterAnySuitable;
+			if (g_pDisplay)
+				g_pDisplay->SetFilterMode(IVDVideoDisplay::kFilterAnySuitable);
 			return true;
 
 		case ID_VIEW_FULLSCREEN:
@@ -744,6 +788,15 @@ bool OnCommand(UINT id) {
 				ATActivateUIPane(kATUIPaneId_Memory, true);
 			return true;
 
+		case ID_VIEW_COPYFRAMETOCLIPBOARD:
+			{
+				const VDPixmap *frame = g_sim.GetGTIA().GetLastFrameBuffer();
+
+				if (frame)
+					ATCopyFrameToClipboard(g_hwnd, *frame);
+			}
+			return true;
+
 		case ID_ANTICVISUALIZATION_NEXTMODE:
 			OnCommandAnticVisualizationNext();
 			return true;
@@ -754,6 +807,8 @@ bool OnCommand(UINT id) {
 
 		case ID_HARDWARE_800:
 			g_sim.SetHardwareMode(kATHardwareMode_800);
+			if (g_sim.GetKernelMode() == kATKernelMode_XL)
+				g_sim.SetKernelMode(kATKernelMode_OSB);
 			g_sim.ColdReset();
 			return true;
 
@@ -774,6 +829,17 @@ bool OnCommand(UINT id) {
 
 		case ID_FIRMWARE_800XL:
 			g_sim.SetKernelMode(kATKernelMode_XL);
+
+			if (g_sim.GetHardwareMode() == kATHardwareMode_800)
+				g_sim.SetHardwareMode(kATHardwareMode_800XL);
+
+			switch(g_sim.GetMemoryMode()) {
+				case kATMemoryMode_48K:
+				case kATMemoryMode_52K:
+					g_sim.SetMemoryMode(kATMemoryMode_64K);
+					break;
+			}
+
 			g_sim.ColdReset();
 			return true;
 
@@ -793,11 +859,19 @@ bool OnCommand(UINT id) {
 
 		case ID_MEMORYSIZE_48K:
 			g_sim.SetMemoryMode(kATMemoryMode_48K);
+			if (g_sim.GetKernelMode() == kATKernelMode_XL)
+				g_sim.SetKernelMode(kATKernelMode_OSB);
+			if (g_sim.GetHardwareMode() == kATHardwareMode_800XL)
+				g_sim.SetHardwareMode(kATHardwareMode_800);
 			g_sim.ColdReset();
 			return true;
 
 		case ID_MEMORYSIZE_52K:
 			g_sim.SetMemoryMode(kATMemoryMode_52K);
+			if (g_sim.GetKernelMode() == kATKernelMode_XL)
+				g_sim.SetKernelMode(kATKernelMode_OSB);
+			if (g_sim.GetHardwareMode() == kATHardwareMode_800XL)
+				g_sim.SetHardwareMode(kATHardwareMode_800);
 			g_sim.ColdReset();
 			return true;
 
@@ -910,16 +984,81 @@ bool OnCommand(UINT id) {
 			g_sim.SetDualPokeysEnabled(!g_sim.IsDualPokeysEnabled());
 			return true;
 
-		case ID_INPUT_JOYSTICK:
-			g_controller = !g_controller;
+		case ID_PORT1_NONE:
+			if (g_keyboardInput == 1)
+				g_keyboardInput = 0;
 			return true;
 
-		case ID_INPUT_MOUSE:
-			g_mouse = !g_mouse;
-			if (!g_mouse) {
+		case ID_PORT1_JOYSTICK:
+			g_keyboardInput = 1;
+			if (g_mouse && g_paddles)
+				g_mouse = false;
+			return true;
+
+		case ID_PORT1_PADDLE:
+			if (g_mouse && !g_paddles) {
+				g_paddles = true;
+				g_sim.ResetMouse();
+				g_sim.GetGTIA().SetControllerTrigger(1, false);
+			} else {
+				g_mouse = true;
+				g_paddles = true;
+
+				if (g_keyboardInput == 1)
+					g_keyboardInput = 0;
+			}
+			return true;
+
+		case ID_PORT2_NONE:
+			if (g_keyboardInput == 2)
+				g_keyboardInput = 0;
+
+			if (g_mouse) {
+				g_sim.ResetMouse();
+				g_sim.GetGTIA().SetControllerTrigger(1, false);
+				g_mouse = false;
+			}
+			return true;
+
+		case ID_PORT2_JOYSTICK:
+			g_keyboardInput = 2;
+			if (g_mouse && !g_paddles)
+				g_mouse = false;
+			return true;
+
+		case ID_PORT2_MOUSE:
+			if (g_mouse && g_paddles) {
+				g_paddles = false;
+			} else {
+				g_mouse = !g_mouse;
+				if (g_mouse) {
+					g_paddles = false;
+					if (g_keyboardInput == 2)
+						g_keyboardInput = 0;
+				} else {
+					g_sim.ResetMouse();
+					g_sim.GetGTIA().SetControllerTrigger(1, false);
+				}
+			}
+			return true;
+
+		case ID_INPUT_SWAPPORTASSIGNMENTS:
+			if (g_mouse) {
+				g_mouse = false;
 				g_sim.ResetMouse();
 				g_sim.GetGTIA().SetControllerTrigger(1, false);
 			}
+
+			if (g_keyboardInput)
+				g_keyboardInput ^= 3;
+			return true;
+
+		case ID_CHEAT_DISABLEPMCOLLISIONS:
+			g_sim.GetGTIA().SetPMCollisionsEnabled(!g_sim.GetGTIA().ArePMCollisionsEnabled());
+			return true;
+
+		case ID_CHEAT_DISABLEPFCOLLISIONS:
+			g_sim.GetGTIA().SetPFCollisionsEnabled(!g_sim.GetGTIA().ArePFCollisionsEnabled());
 			return true;
 
 		case ID_DEBUG_AUTORELOADROMS:
@@ -941,7 +1080,7 @@ bool OnCommand(UINT id) {
 			return true;
 
 		case ID_DEBUG_RUN:
-			ATGetDebugger()->Run();
+			ATGetDebugger()->Run(kATDebugSrcMode_Same);
 			return true;
 
 		case ID_DEBUG_BREAK:
@@ -950,15 +1089,15 @@ bool OnCommand(UINT id) {
 			return true;
 
 		case ID_DEBUG_STEPINTO:
-			ATGetDebugger()->StepInto();
+			ATGetDebugger()->StepInto(kATDebugSrcMode_Same);
 			return true;
 
 		case ID_DEBUG_STEPOUT:
-			ATGetDebugger()->StepOut();
+			ATGetDebugger()->StepOut(kATDebugSrcMode_Same);
 			return true;
 
 		case ID_DEBUG_STEPOVER:
-			ATGetDebugger()->StepOver();
+			ATGetDebugger()->StepOver(kATDebugSrcMode_Same);
 			return true;
 
 		case ID_HELP_ABOUT:
@@ -973,20 +1112,26 @@ bool OnCommand(UINT id) {
 }
 
 void OnInitMenu(HMENU hmenu) {
+	VDEnableMenuItemByCommandW32(hmenu, ID_FILE_DETACHCARTRIDGE, g_sim.IsCartridgeAttached());
+
 	VDCheckMenuItemByCommandW32(hmenu, ID_SYSTEM_PAL, g_sim.IsPALMode());
 
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 	VDCheckMenuItemByCommandW32(hmenu, ID_SYSTEM_ARTIFACTING, gtia.IsArtifactingEnabled());
 	VDCheckMenuItemByCommandW32(hmenu, ID_SYSTEM_WARPSPEED, g_sim.IsTurboModeEnabled());
 	VDCheckMenuItemByCommandW32(hmenu, ID_SYSTEM_PAUSEWHENINACTIVE, g_pauseInactive);
-	VDCheckMenuItemByCommandW32(hmenu, ID_INPUT_JOYSTICK, g_controller);
-	VDCheckMenuItemByCommandW32(hmenu, ID_INPUT_MOUSE, g_mouse);
+	VDCheckMenuItemByCommandW32(hmenu, ID_PORT1_JOYSTICK, g_keyboardInput == 1);
+	VDCheckMenuItemByCommandW32(hmenu, ID_PORT1_PADDLE, g_mouse && g_paddles);
+	VDCheckMenuItemByCommandW32(hmenu, ID_PORT2_JOYSTICK, g_keyboardInput == 2);
+	VDCheckMenuItemByCommandW32(hmenu, ID_PORT2_MOUSE, g_mouse && !g_paddles);
 
-	IVDVideoDisplay::FilterMode filterMode = g_pDisplay->GetFilterMode();
-	VDCheckRadioMenuItemByCommandW32(hmenu, ID_FILTERMODE_POINT, filterMode == IVDVideoDisplay::kFilterPoint);
-	VDCheckRadioMenuItemByCommandW32(hmenu, ID_FILTERMODE_BILINEAR, filterMode == IVDVideoDisplay::kFilterBilinear);
-	VDCheckRadioMenuItemByCommandW32(hmenu, ID_FILTERMODE_BICUBIC, filterMode == IVDVideoDisplay::kFilterBicubic);
-	VDCheckRadioMenuItemByCommandW32(hmenu, ID_FILTERMODE_ANYSUITABLE, filterMode == IVDVideoDisplay::kFilterAnySuitable);
+	if (g_pDisplay) {
+		IVDVideoDisplay::FilterMode filterMode = g_pDisplay->GetFilterMode();
+		VDCheckRadioMenuItemByCommandW32(hmenu, ID_FILTERMODE_POINT, filterMode == IVDVideoDisplay::kFilterPoint);
+		VDCheckRadioMenuItemByCommandW32(hmenu, ID_FILTERMODE_BILINEAR, filterMode == IVDVideoDisplay::kFilterBilinear);
+		VDCheckRadioMenuItemByCommandW32(hmenu, ID_FILTERMODE_BICUBIC, filterMode == IVDVideoDisplay::kFilterBicubic);
+		VDCheckRadioMenuItemByCommandW32(hmenu, ID_FILTERMODE_ANYSUITABLE, filterMode == IVDVideoDisplay::kFilterAnySuitable);
+	}
 
 	ATHardwareMode hardwareMode = g_sim.GetHardwareMode();
 	VDCheckRadioMenuItemByCommandW32(hmenu, ID_HARDWARE_800, hardwareMode == kATHardwareMode_800);
@@ -1012,6 +1157,7 @@ void OnInitMenu(HMENU hmenu) {
 	VDCheckMenuItemByCommandW32(hmenu, ID_SYSTEM_FPPATCH, g_sim.IsFPPatchEnabled());
 
 	VDCheckMenuItemByCommandW32(hmenu, ID_CASSETTE_SIOPATCH, g_sim.IsCassetteSIOPatchEnabled());
+	VDCheckMenuItemByCommandW32(hmenu, ID_CASSETTE_AUTOBOOT, g_sim.IsCassetteAutoBootEnabled());
 
 	VDCheckMenuItemByCommandW32(hmenu, ID_DEBUG_AUTORELOADROMS, g_sim.IsROMAutoReloadEnabled());
 	VDCheckMenuItemByCommandW32(hmenu, ID_DEBUG_AUTOLOADKERNELSYMBOLS, g_sim.IsAutoLoadKernelSymbolsEnabled());
@@ -1023,6 +1169,11 @@ void OnInitMenu(HMENU hmenu) {
 	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_DISASSEMBLY, debuggerEnabled);
 	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_HISTORY, debuggerEnabled);
 	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_REGISTERS, debuggerEnabled);
+
+	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_COPYFRAMETOCLIPBOARD, gtia.GetLastFrameBuffer() != NULL);
+
+	VDCheckMenuItemByCommandW32(hmenu, ID_CHEAT_DISABLEPMCOLLISIONS, !gtia.ArePMCollisionsEnabled());
+	VDCheckMenuItemByCommandW32(hmenu, ID_CHEAT_DISABLEPFCOLLISIONS, !gtia.ArePFCollisionsEnabled());
 
 	const bool running = g_sim.IsRunning();
 	VDEnableMenuItemByCommandW32(hmenu, ID_DEBUG_RUN, !running);
@@ -1075,9 +1226,11 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
 		case VK_F1:
 			if (GetKeyState(VK_SHIFT) < 0) {
-				g_controller = !g_controller;
+				g_keyboardInput = (g_keyboardInput == 1) ? 0 : 1;
 			} else if (GetKeyState(VK_CONTROL) < 0) {
 				OnCommandFilterModeNext();
+			} else if (GetKeyState(VK_MENU) < 0) {
+				OnCommand(ID_INPUT_SWAPPORTASSIGNMENTS);
 			} else {
 				g_sim.SetTurboModeEnabled(true);
 			}
@@ -1137,33 +1290,79 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			return true;
 
 		case VK_UP:
-			if (g_controller)
-				g_sim.SetKeyboardControlData(0x01, 0x01);
-			else
-				g_sim.GetPokey().PushKey(0x8E, false);
+			switch(g_keyboardInput) {
+				case 0:
+					g_sim.GetPokey().PushKey(0x8E, false);
+					break;
+
+				case 1:
+					UpdateController(0x01, 0x01);
+					break;
+
+				case 2:
+					UpdateController(0x10, 0x10);
+					break;
+			}
 			return true;
+
 		case VK_DOWN:
-			if (g_controller)
-				g_sim.SetKeyboardControlData(0x02, 0x02);
-			else
-				g_sim.GetPokey().PushKey(0x8F, false);
+			switch(g_keyboardInput) {
+				case 0:
+					g_sim.GetPokey().PushKey(0x8F, false);
+					break;
+
+				case 1:
+					UpdateController(0x02, 0x02);
+					break;
+
+				case 2:
+					UpdateController(0x20, 0x20);
+					break;
+			}
 			return true;
+
 		case VK_LEFT:
-			if (g_controller)
-				g_sim.SetKeyboardControlData(0x04, 0x04);
-			else
-				g_sim.GetPokey().PushKey(0x86, false);
+			switch(g_keyboardInput) {
+				case 0:
+					g_sim.GetPokey().PushKey(0x86, false);
+					break;
+
+				case 1:
+					UpdateController(0x04, 0x04);
+					break;
+
+				case 2:
+					UpdateController(0x40, 0x40);
+					break;
+			}
 			return true;
+
 		case VK_RIGHT:
-			if (g_controller)
-				g_sim.SetKeyboardControlData(0x08, 0x08);
-			else
-				g_sim.GetPokey().PushKey(0x87, false);
+			switch(g_keyboardInput) {
+				case 0:
+					g_sim.GetPokey().PushKey(0x87, false);
+					break;
+
+				case 1:
+					UpdateController(0x08, 0x08);
+					break;
+
+				case 2:
+					UpdateController(0x80, 0x80);
+					break;
+			}
 			return true;
 
 		case VK_CONTROL:
-			if (g_controller)
-				g_sim.SetKeyboardControlData(0x10000, 0x10000);
+			switch(g_keyboardInput) {
+				case 1:
+					g_sim.SetKeyboardControlData(0x10000, 0x10000);
+					break;
+
+				case 2:
+					g_sim.SetKeyboardControlData(0x20000, 0x20000);
+					break;
+			}
 			return true;
 
 		case VK_CANCEL:
@@ -1175,6 +1374,14 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 				g_sim.GetPokey().PushBreak();
 			}
 			return true;
+
+		case 'C':
+			if (GetKeyState(VK_MENU) < 0) {
+				OnCommand(ID_VIEW_COPYFRAMETOCLIPBOARD);
+				return true;
+			}
+
+			break;
 	}
 
 	return false;
@@ -1208,25 +1415,60 @@ bool OnKeyUp(HWND hwnd, WPARAM wParam) {
 			return true;
 
 		case VK_UP:
-			if (g_controller)
-				g_sim.SetKeyboardControlData(0x01, 0x00);
+			switch(g_keyboardInput) {
+				case 1:
+					UpdateController(0x01, 0x00);
+					break;
+
+				case 2:
+					UpdateController(0x10, 0x00);
+					break;
+			}
 			return true;
 		case VK_DOWN:
-			if (g_controller)
-				g_sim.SetKeyboardControlData(0x02, 0x00);
+			switch(g_keyboardInput) {
+				case 1:
+					UpdateController(0x02, 0x00);
+					break;
+
+				case 2:
+					UpdateController(0x20, 0x00);
+					break;
+			}
 			return true;
 		case VK_LEFT:
-			if (g_controller)
-				g_sim.SetKeyboardControlData(0x04, 0x00);
+			switch(g_keyboardInput) {
+				case 1:
+					UpdateController(0x04, 0x00);
+					break;
+
+				case 2:
+					UpdateController(0x40, 0x00);
+					break;
+			}
 			return true;
 		case VK_RIGHT:
-			if (g_controller)
-				g_sim.SetKeyboardControlData(0x08, 0x00);
+			switch(g_keyboardInput) {
+				case 1:
+					UpdateController(0x08, 0x00);
+					break;
+
+				case 2:
+					UpdateController(0x80, 0x00);
+					break;
+			}
 			return true;
 
 		case VK_CONTROL:
-			if (g_controller)
-				g_sim.SetKeyboardControlData(0x10000, 0);
+			switch(g_keyboardInput) {
+				case 1:
+					g_sim.SetKeyboardControlData(0x10000, 0);
+					break;
+
+				case 2:
+					g_sim.SetKeyboardControlData(0x20000, 0);
+					break;
+			}
 			return true;
 	}
 
@@ -1489,14 +1731,20 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 		case WM_LBUTTONUP:
 			if (::GetCapture() == mhwnd) {
-				g_sim.GetGTIA().SetControllerTrigger(1, false);
+				if (g_paddles)
+					g_sim.SetKeyboardControlData(0x04, 0x04);
+				else
+					g_sim.GetGTIA().SetControllerTrigger(1, false);
 			}
 			break;
 
 		case WM_LBUTTONDOWN:
 		case WM_LBUTTONDBLCLK:
 			if (::GetCapture() == mhwnd) {
-				g_sim.GetGTIA().SetControllerTrigger(1, true);
+				if (g_paddles)
+					g_sim.SetKeyboardControlData(0x04, 0x00);
+				else
+					g_sim.GetGTIA().SetControllerTrigger(1, true);
 			}
 
 			// fall through
@@ -1548,7 +1796,21 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					int dy = y - mLastTrackMouseY;
 
 					if (dx | dy) {
-						g_sim.ApplyMouseDelta(dx, dy);
+						if (g_paddles) {
+							ATPokeyEmulator& pokey = g_sim.GetPokey();
+
+							g_paddlePos -= dx;
+
+							if (g_paddlePos < 0)
+								g_paddlePos = 0;
+
+							if (g_paddlePos > (228 << 3))
+								g_paddlePos = (228 << 3);
+
+							pokey.SetPotPos(0, g_paddlePos >> 3);
+						} else {
+							g_sim.ApplyMouseDelta(dx, dy);
+						}
 
 						WarpCapturedMouse();
 					}
@@ -1578,6 +1840,11 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			}
 			return 0;
 
+		case WM_KILLFOCUS:
+			if (::GetCapture() == mhwnd)
+				::ReleaseCapture();
+			break;
+
 		case WM_CAPTURECHANGED:
 			g_mouseCaptured = false;
 			break;
@@ -1600,7 +1867,7 @@ bool ATDisplayPane::OnCreate() {
 	g_pDisplay = mpDisplay;
 
 	mpDisplay->SetReturnFocus(true);
-	mpDisplay->SetFilterMode(IVDVideoDisplay::kFilterBilinear);
+	mpDisplay->SetFilterMode(g_dispFilterMode);
 	mpDisplay->SetAccelerationMode(IVDVideoDisplay::kAccelResetInForeground);
 	g_sim.GetGTIA().SetVideoOutput(mpDisplay);
 	return true;
@@ -1676,6 +1943,8 @@ public:
 
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+
+	void OnCopyData(HWND hwndReply, const COPYDATASTRUCT& cds);
 };
 
 ATMainWindow::ATMainWindow() {
@@ -1730,12 +1999,56 @@ LRESULT ATMainWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 						return TRUE;
 				}
 				break;
+
+			case WM_COPYDATA:
+				{
+					HWND hwndReply = (HWND)wParam;
+					COPYDATASTRUCT *cds = (COPYDATASTRUCT *)lParam;
+
+					OnCopyData(hwndReply, *cds);
+				}
+				return TRUE;
 		}
 	} __except(ATExceptionFilter(GetExceptionCode(), GetExceptionInformation())) {
 	}
 
 	return ATContainerWindow::WndProc(msg, wParam, lParam);
 }
+
+void ATMainWindow::OnCopyData(HWND hwndReply, const COPYDATASTRUCT& cds) {
+	if (cds.dwData != 0xA7000000 || !cds.cbData || !cds.lpData)
+		return;
+
+	vdfastvector<wchar_t> s;
+
+	s.resize(cds.cbData / sizeof(wchar_t) + 1, 0);
+	memcpy(s.data(), cds.lpData, (s.size() - 1) * sizeof(wchar_t));
+
+	uint32 rval = 0;
+	MyError e;
+
+	try {
+		rval = ATExecuteAutotestCommand(s.data(), NULL);
+	} catch(MyError& f) {
+		e.swap(f);
+	}
+
+	if (hwndReply) {
+		VDStringW err(VDTextAToW(e.gets()));
+
+		vdfastvector<char> buf(sizeof(uint32) + sizeof(wchar_t) * err.size());
+		memcpy(buf.data(), &rval, sizeof(uint32));
+		memcpy(buf.data() + sizeof(uint32), err.data(), err.size() * sizeof(wchar_t));
+
+		COPYDATASTRUCT cds2;
+		cds2.dwData = 0xA7000001;
+		cds2.cbData = buf.size();
+		cds2.lpData = buf.data();
+
+		::SendMessage(hwndReply, WM_COPYDATA, (WPARAM)mhwnd, (LPARAM)&cds2);
+	}
+}
+
 
 class D3D9Lock : public VDD3D9Client {
 public:
@@ -1780,6 +2093,12 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		} else if (cmdLine.FindAndRemoveSwitch(L"nosiopatch")) {
 			g_sim.SetDiskSIOPatchEnabled(false);
 			g_sim.SetCassetteSIOPatchEnabled(false);
+		}
+
+		if (cmdLine.FindAndRemoveSwitch(L"casautoboot")) {
+			g_sim.SetCassetteAutoBootEnabled(true);
+		} else if (cmdLine.FindAndRemoveSwitch(L"nocasautoboot")) {
+			g_sim.SetCassetteAutoBootEnabled(false);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"accuratedisk"))
@@ -1843,12 +2162,13 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 
 		if (cmdLine.FindAndRemoveSwitch(L"?")) {
 			MessageBox(g_hwnd,
-				"Usage: Altirra [switches] <disk image>\n"
+				"Usage: Altirra [switches] <disk/cassette/cartridge image>\n"
 				"\n"
 				"/ntsc - select NTSC timing\n"
 				"/pal - select PAL timing\n"
 				"/[no]burstio - control SIO burst I/O mode\n"
 				"/[no]siopatch - control SIO kernel patch\n"
+				"/[no]casautoboot - control cassette auto-boot\n"
 				"/[no]accuratedisk - control accurate sector timing\n"
 				"/[no]basic - enable/disable BASIC ROM\n"
 				"/kernel:default|osb|xl|lle|hle - select kernel ROM\n"
@@ -1859,8 +2179,10 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		}
 
 		VDCommandLineIterator it;
-		if (cmdLine.GetNextNonSwitchArgument(it, arg))
-			disk.LoadDisk(arg);
+		if (cmdLine.GetNextNonSwitchArgument(it, arg)) {
+			g_sim.Load(arg);
+			g_sim.ColdReset();	// required to set up cassette autoboot
+		}
 	} catch(const MyError& e) {
 		e.post(hwnd, "Altirra error");
 	}
@@ -1878,6 +2200,7 @@ void LoadSettings() {
 	g_pauseInactive = key.getBool("Pause when inactive", g_pauseInactive);
 
 	g_sim.SetCassetteSIOPatchEnabled(key.getBool("Cassette: SIO patch enabled", g_sim.IsCassetteSIOPatchEnabled()));
+	g_sim.SetCassetteAutoBootEnabled(key.getBool("Cassette: Auto-boot enabled", g_sim.IsCassetteAutoBootEnabled()));
 
 	g_sim.SetFPPatchEnabled(key.getBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled()));
 
@@ -1906,6 +2229,10 @@ void LoadSettings() {
 		hd->SetEnabled(key.getBool("Hard disk: Enabled", hd->IsEnabled()));
 		hd->SetReadOnly(key.getBool("Hard disk: Read only", hd->IsReadOnly()));
 	}
+
+	g_dispFilterMode = (IVDVideoDisplay::FilterMode)key.getEnumInt("Display: Filter mode", IVDVideoDisplay::kFilterBicubic + 1, g_dispFilterMode);
+	if (g_pDisplay)
+		g_pDisplay->SetFilterMode(g_dispFilterMode);
 }
 
 void SaveSettings() {
@@ -1922,6 +2249,7 @@ void SaveSettings() {
 	key.setBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled());
 
 	key.setBool("Cassette: SIO patch enabled", g_sim.IsCassetteSIOPatchEnabled());
+	key.setBool("Cassette: Auto-boot enabled", g_sim.IsCassetteAutoBootEnabled());
 
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 	key.setInt("GTIA: Artifacting mode", gtia.IsArtifactingEnabled());
@@ -1945,6 +2273,8 @@ void SaveSettings() {
 		key.setBool("Hard disk: Enabled", hd->IsEnabled());
 		key.setBool("Hard disk: Read only", hd->IsReadOnly());
 	}
+
+	key.setInt("Display: Filter mode", g_dispFilterMode);
 }
 
 class ATUIWindowCaptionUpdater {
@@ -1970,15 +2300,16 @@ void ATUIWindowCaptionUpdater::Update(HWND hwnd, bool running, int ticks, double
 		sprintf(buf, "Altirra - %d (%.3f fps)%s", ticks, fps, g_mouseCaptured ? " (mouse captured - right Alt to release)" : "");
 		SetWindowText(hwnd, buf);
 
-		mbLastCaptured = g_mouseCaptured;
 		mbLastRunning = true;
 	} else {
 		if (mbLastCaptured == g_mouseCaptured && !mbLastRunning)
 			return;
 
 		SetWindowText(hwnd, "Altirra - stopped");
-		mbLastRunning = false;
 	}
+
+	mbLastRunning = running;
+	mbLastCaptured = g_mouseCaptured;
 }
 
 int RunMainLoop(HWND hwnd, VDCommandLine& cmdLine) {
@@ -1993,8 +2324,12 @@ int RunMainLoop(HWND hwnd, VDCommandLine& cmdLine) {
 		LARGE_INTEGER errorBound;
 		sint64 error = 0;
 		QueryPerformanceFrequency(&secondTime);
+
+		// NTSC: 1.7897725MHz master clock, 262 scanlines of 114 clocks each
 		sint64 ntscFrameTime = VDRoundToInt64((double)secondTime.QuadPart / 59.9227);
-		sint64 palFrameTime = VDRoundToInt64((double)secondTime.QuadPart / 50.3197);
+
+		// PAL: 1.773447MHz master clock, 312 scanlines of 114 clocks each
+		sint64 palFrameTime = VDRoundToInt64((double)secondTime.QuadPart / 49.8607);
 		errorBound.QuadPart = palFrameTime * 5;
 		QueryPerformanceCounter(&lastTime);
 
@@ -2064,10 +2399,8 @@ int RunMainLoop(HWND hwnd, VDCommandLine& cmdLine) {
 					sint64 delta = curTime.QuadPart - lastTime.QuadPart;
 
 					error += delta - (g_sim.IsPALMode() ? palFrameTime : ntscFrameTime);
-					if (error > errorBound.QuadPart)
-						error = errorBound.QuadPart;
-					else if (error < -errorBound.QuadPart)
-						error = -errorBound.QuadPart;
+					if (error > errorBound.QuadPart || error < -errorBound.QuadPart)
+						error = 0;
 
 					lastTime = curTime;
 

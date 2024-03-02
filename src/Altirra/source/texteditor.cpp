@@ -476,6 +476,12 @@ void TextEditor::MakeLineVisible(int line) {
 }
 
 void TextEditor::CenterViewOnLine(int line) {
+	if (line >= mDocument.GetParagraphCount())
+		line = mDocument.GetParagraphCount() - 1;
+
+	if (line < 0)
+		line = 0;
+
 	int xp, yp;
 	Iterator it(mDocument, line);
 	PosToPixel(xp, yp, it);
@@ -799,8 +805,12 @@ LRESULT TextEditor::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			mhfont = (HFONT)GetStockObject(SYSTEM_FONT);
 		RecalcFontMetrics();
 		Reflow(true);
-		OnKillFocus();
-		OnSetFocus();
+
+		if (::GetFocus() == mhwnd) {
+			OnKillFocus();
+			OnSetFocus();
+		}
+
 		if (LOWORD(lParam))
 			InvalidateRect(mhwnd, NULL, TRUE);
 		return 0;
@@ -1643,6 +1653,8 @@ Iterator TextEditor::PixelToPos(int px, int py) {
 
 				int index = ln.mStart;
 				int end = index + ln.mLength;
+
+				offset = end;
 
 				while(index < end) {
 					int spanend = end;
