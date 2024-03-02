@@ -2191,8 +2191,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 2,8,0,0
- PRODUCTVERSION 2,8,0,0
+ FILEVERSION 2,8,1,0
+ PRODUCTVERSION 2,8,1,0
  FILEFLAGSMASK 0x17L
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -2209,12 +2209,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "virtualdub.org"
             VALUE "FileDescription", "Altirra 8-bit computer emulator"
-            VALUE "FileVersion", "2.8.0.0"
+            VALUE "FileVersion", "2.8.1.0"
             VALUE "InternalName", "Altirra"
             VALUE "LegalCopyright", "Copyright (C) 2008-2016 Avery Lee, All Rights Reserved."
             VALUE "OriginalFilename", "Altirra.exe"
             VALUE "ProductName", "Altirra"
-            VALUE "ProductVersion", "2.8.0.0"
+            VALUE "ProductVersion", "2.8.1.0"
         END
     END
     BLOCK "VarFileInfo"

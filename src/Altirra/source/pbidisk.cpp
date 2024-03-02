@@ -51,6 +51,13 @@ void ATPBIDiskEmulator::Init() {
 }
 
 void ATPBIDiskEmulator::Shutdown() {
+	if (mpPBIManager) {
+		mpPBIManager->RemoveDevice(this);
+		mpPBIManager = nullptr;
+	}
+
+	mpSIOManager = nullptr;
+
 	if (mpMemLayerFirmware) {
 		mpMemMan->DeleteLayer(mpMemLayerFirmware);
 		mpMemLayerFirmware = nullptr;
@@ -62,21 +69,15 @@ void ATPBIDiskEmulator::Shutdown() {
 	}
 
 	mpMemMan = nullptr;
-
-	if (mpPBIManager) {
-		mpPBIManager->RemoveDevice(this);
-		mpPBIManager = nullptr;
-	}
-
-	mpSIOManager = nullptr;
 }
 
 void ATPBIDiskEmulator::InitMemMap(ATMemoryManager *memmap) {
 	mpMemMan = memmap;
 
-	memcpy(mFirmware, g_ATPBIDiskFirmware, sizeof mFirmware);
+	memcpy(mFirmware, g_ATPBIDiskFirmware, 0x400);
+	memset(mFirmware + 0x400, 0xFF, 0x400);
 
-	mpMemLayerFirmware = mpMemMan->CreateLayer(kATMemoryPri_PBI, mFirmware, 0xD8, 0x04, true);
+	mpMemLayerFirmware = mpMemMan->CreateLayer(kATMemoryPri_PBI, mFirmware, 0xD8, 0x08, true);
 	mpMemMan->SetLayerName(mpMemLayerFirmware, "PBIDisk ROM");
 	mpMemMan->SetLayerFastBus(mpMemLayerFirmware, true);
 
@@ -86,7 +87,7 @@ void ATPBIDiskEmulator::InitMemMap(ATMemoryManager *memmap) {
 		return ((ATPBIDiskEmulator *)thisptr)->OnWriteByte(addr, value);
 	};
 
-	mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_PBI, handlers, 0xDC, 0x04);
+	mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_PBI + 1, handlers, 0xDC, 0x04);
 	mpMemMan->SetLayerName(mpMemLayerControl, "PBIDisk control registers");
 	mpMemMan->SetLayerFastBus(mpMemLayerControl, true);
 }
@@ -110,7 +111,7 @@ void ATPBIDiskEmulator::SelectPBIDevice(bool enable) {
 		mbSelected = enable;
 
 		mpMemMan->EnableLayer(mpMemLayerFirmware, enable);
-		mpMemMan->EnableLayer(mpMemLayerControl, enable);
+		mpMemMan->SetLayerModes(mpMemLayerControl, enable ? kATMemoryAccessMode_W : kATMemoryAccessMode_0);
 	}
 }
 

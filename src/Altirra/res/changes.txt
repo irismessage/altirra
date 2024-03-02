@@ -1,5 +1,11 @@
 Altirra Change Log
-Version 2.80:
+Version 2.81:
+   [bug fixes]
+   * Cartridge: Fixed saving SIDE 1 cartridge images.
+   * Cartridge: Fixed crash with XEGS cartridge types.
+   * HLE: Fixed crash when viewing PBI region in debugger with PBI acceleration disk ROM enabled.
+
+Version 2.80 [September 3, 2016]:
    [changes]
    * Devices: MyIDE and KMK/JZ IDE (IDEPlus) have been moved to the Devices tree.
    * Input: The preset input maps for 5200 mode and the Xbox 360 Controller been changed.

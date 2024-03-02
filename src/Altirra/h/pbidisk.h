@@ -70,7 +70,7 @@ private:
 
 	IATDeviceSIOManager *mpSIOManager = nullptr;
 
-	VDALIGN(2) uint8 mFirmware[0x0400] = {};
+	VDALIGN(2) uint8 mFirmware[0x0800] = {};
 };
 
 #endif

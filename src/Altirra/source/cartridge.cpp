@@ -3454,7 +3454,7 @@ void ATCartridgeEmulator::UpdateLayerMasks() {
 	if (mpMemLayerSpec1		) mpMemMan->SetLayerMaskRange(mpMemLayerSpec1, maskStart, maskLen);
 	if (mpMemLayerSpec2		) mpMemMan->SetLayerMaskRange(mpMemLayerSpec2, maskStart, maskLen);
 
-	if (mpMemLayerControl   ) mpMemMan->EnableLayer(mpMemLayerControl, mbCCTLGate);
+	if (mpMemLayerControl	) mpMemMan->SetLayerMaskRange(mpMemLayerControl, 0, mbCCTLGate ? 0x100 : 0);
 }
 
 void ATCartridgeEmulator::UpdateTheCartBanking() {

@@ -305,11 +305,9 @@ bool ATSIDEEmulator::IsWritableFirmwareDirty(uint32 idx) const {
 }
 
 void ATSIDEEmulator::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
-	if (mbVersion2) {
-		stream.Write(mFlash, sizeof mFlash);
+	stream.Write(mFlash, sizeof mFlash);
 
-		mFlashCtrl.SetDirty(false);
-	}
+	mFlashCtrl.SetDirty(false);
 }
 
 const char *ATSIDEEmulator::GetSupportedType(uint32 index) {
