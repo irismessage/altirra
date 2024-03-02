@@ -288,7 +288,7 @@ expterm:
 .endp
 
 ;==========================================================================
-.proc fp_fmul_carryup
+.proc fp_fmul_carryup			;$0A bytes
 round_loop:
 	adc		fr0,x
 	sta		fr0,x
@@ -300,7 +300,7 @@ dec_entry:
 .endp
 
 ;==========================================================================
-.proc fp_tab_lo_100
+.proc fp_tab_lo_100				;$0A bytes
 	:10 dta <[100*#]
 .endp
 
@@ -806,7 +806,7 @@ sub_loop_entry:
 ;	A = binary value
 ;	Y = modified
 ;
-.proc fp_dectobin
+.proc fp_dectobin			;$09 bytes
 	pha
 	lsr
 	lsr
@@ -1070,16 +1070,16 @@ uploop:
 .endp
 
 ;==========================================================================
-.proc fp_fdiv_complete
-	ldx		#fr2
-	ldy		_fr3
-	lda		fr2+1
-	bne		no_normstep
-	inx
-	dey
-no_normstep:
-	sty		0,x
-	jmp		fld0r_zp
+.proc fp_swap			;$0E bytes
+	ldx		#5
+swaploop:
+	lda		fr0,x
+	ldy		fr1,x
+	sta		fr1,x
+	sty		fr0,x
+	dex
+	bpl		swaploop
+	rts
 .endp
 
 ;==========================================================================
@@ -1415,15 +1415,24 @@ xit:
 .endp
 
 ;==========================================================================
-.proc fp_swap
-	ldx		#5
-swaploop:
+fpconst_log10_e:				;$06 bytes
+	dta		$3F,$43,$42,$94,$48,$19	;0.4342944819[0325182765112891891661]
+
+.proc fp_carry_expup			;$0F bytes
+	;adjust exponent
+	inc		fr0
+
+	;shift down FR0
+	ldx		#4
+sum_shiftloop:
 	lda		fr0,x
-	ldy		fr1,x
-	sta		fr1,x
-	sty		fr0,x
+	sta		fr0+1,x
 	dex
-	bpl		swaploop
+	bne		sum_shiftloop
+	
+	;add a $01 at the top
+	inx
+	stx		fr0+1
 	rts
 .endp
 
@@ -1431,10 +1440,7 @@ swaploop:
 ; FLD0R [DD89]	Load FR0 from (X:Y)
 ; FLD0P [DD8D]	Load FR0 from (FLPTR)
 ;
-	fixadr	$dd87
-fld0r_zp:
-	ldy		#0
-	ckaddr	$dd89
+	fixadr	$dd89
 fld0r:
 	stx		flptr
 	sty		flptr+1
@@ -1600,29 +1606,22 @@ coeff:		;Minimax polynomial for 10^x over 0 <= x < 1
 .endp	
 
 ;==========================================================================
-fpconst_log10_e:
-	dta		$3F,$43,$42,$94,$48,$19	;0.4342944819[0325182765112891891661]
-
-.proc fp_carry_expup
-	;adjust exponent
-	inc		fr0
-
-	;shift down FR0
-	ldx		#4
-sum_shiftloop:
-	lda		fr0,x
-	sta		fr0+1,x
-	dex
-	bne		sum_shiftloop
-	
-	;add a $01 at the top
+.proc fp_fdiv_complete		;$11 bytes (needs to be $18)
+	ldx		#fr2
+	ldy		_fr3
+	lda		fr2+1
+	bne		no_normstep
 	inx
-	stx		fr0+1
+	dey
+no_normstep:
+	sty		fr0
+	ldy		#5
+	mva:rne	5,x- fr0,y- 
 	rts
 .endp
 
 ;==========================================================================
-.proc fp_fmul_fr0_to_binfr2		;$15 bytes
+.proc fp_fmul_fr0_to_binfr2		;$17 bytes
 	ldx		#4
 loop:
 	lda		fr0+1,x

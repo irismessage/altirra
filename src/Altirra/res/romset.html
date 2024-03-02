@@ -134,6 +134,15 @@
 		as part of the memo pad banner.
 	</p>
     <ul class="verhistory">
+    <li>Version 3.33</li>
+    <ul>
+      <li>Improved compatibility with programs that use the KEYDEL counter to detect held keys (fixes menu cursor movement in BrushupV40).</li>
+    </ul>
+    <li>Version 3.32</li>
+    <ul>
+      <li>Fixed math pack compatibility issue with FDIV modifying FLPTR (fixes B-Graph pie chart routine).</li>
+      <li>Fixed a cursor position checking bug with split screen Gr.0 (fixes the BASIC game House of Usher).</li>
+    </ul>
     <li>Version 3.31</li>
     <ul>
       <li>Fixed a lockup in the <tt>E:</tt> device when processing a Delete Char command at column 0 with LMARGN=0.</li>
@@ -266,6 +275,11 @@
 
     <h3>Altirra BASIC</h3>
     <ul class="verhistory">
+      <li>Version 1.58</li>
+      <ul>
+        <li>IOCB#7 is now automatically closed on I/O errors to avoid SAVE files being kept open for write.</li>
+      </ul>
+
       <li>Version 1.57</li>
       <ul>
         <li>Compatibility fix to DRAWTO statement to allow LOCATE statements to work after XIO n,#6,0.</li>

@@ -13,7 +13,7 @@
 
 ;===========================================================================
 .macro _MSG_BANNER
-		dta		c'Altirra 8K BASIC 1.57'
+		dta		c'Altirra 8K BASIC 1.58'
 .endm
 
 ;===========================================================================
@@ -642,7 +642,7 @@ loop2:
 	
 		;read line
 		ldx		iocbexec
-		jsr		IoReadLine
+		jsr		IoReadLineX			;also sets iocbidx for error handling
 		beq		eof
 		
 		;float the stack if it isn't already
@@ -657,7 +657,7 @@ loop2:
 		
 eof:
 		;close IOCB #7
-		jsr		IoCloseX
+		jsr		IoSetupIOCB7		;closes #7 as side effect
 		
 		;restart in immediate mode with IOCB 0
 		jmp		immediateMode

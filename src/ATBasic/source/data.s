@@ -189,7 +189,7 @@ is_comma:
 
 read_line_input:
 		;read line to LBUFF
-		jsr		IoSetupReadLineLDBUFA
+		jsr		IoSetupReadLineLDBUFA_X
 		jsr		ioChecked
 				
 parse_loop:

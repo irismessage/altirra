@@ -38,11 +38,17 @@ void ATFLACReconstructLPC_Narrow_SSE2_Impl(sint32 *__restrict y, uint32 n, const
 		return _mm_packs_epi32(pv[0], pv[1]);
 	};
 
-	pipe0 = loadPack(y);
+	const auto loaduPack = [](const void *p) {
+		const __m128i *pv = (const __m128i *)p;
+
+		return _mm_packs_epi32(_mm_loadu_si128(&pv[0]), _mm_loadu_si128(&pv[1]));
+	};
+
+	pipe0 = loaduPack(y);
 	coeff0 = loadPack(lpcCoeffs);
 
 	if constexpr (Order > 8) {
-		pipe1 = loadPack(y + 8);
+		pipe1 = loaduPack(y + 8);
 		coeff1 = loadPack(lpcCoeffs + 8);
 	}
 
@@ -117,11 +123,17 @@ void ATFLACReconstructLPC_Narrow_SSSE3_Impl(sint32 *__restrict y, uint32 n, cons
 		return _mm_packs_epi32(pv[0], pv[1]);
 	};
 
-	pipe0 = loadPack(y);
+	const auto loaduPack = [](const void *p) {
+		const __m128i *pv = (const __m128i *)p;
+
+		return _mm_packs_epi32(_mm_loadu_si128(&pv[0]), _mm_loadu_si128(&pv[1]));
+	};
+
+	pipe0 = loaduPack(y);
 	coeff0 = loadPack(lpcCoeffs);
 
 	if constexpr (Order > 8) {
-		pipe1 = loadPack(y + 8);
+		pipe1 = loaduPack(y + 8);
 		coeff1 = loadPack(lpcCoeffs + 8);
 	}
 

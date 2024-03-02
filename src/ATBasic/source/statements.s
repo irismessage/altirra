@@ -92,12 +92,12 @@ open_fn:
 		jsr		IoDoOpenWithFilename
 read_loop:
 		ldx		#$70
-		jsr		IoReadLine
+		jsr		IoReadLineX
 		beq		stClose.close_iocb
 		ldx		#0
-		jsr		IoSetupReadLine
+		jsr		IoSetupReadLineLDBUFA_SetIOCBX
 		lda		#CIOCmdPutRecord
-		jsr		IoDoCmdX
+		jsr		IoDoCmd
 		bpl		read_loop			;!! N=0 - error would be trapped
 .endp
 
@@ -374,7 +374,7 @@ bogus:
 		
 setup_vector_io:
 		pha
-		ldx		#$70
+		ldx		iocbidx
 		
 		ldy		#0
 		lda		#<_vectmp
@@ -384,7 +384,7 @@ setup_vector_io:
 		jsr		IoSetupBufferLengthY
 
 		pla
-		jmp		IoDoCmdX
+		jmp		IoDoCmd
 
 setup_main_io:
 		ldx		iocbidx
@@ -552,7 +552,7 @@ relocloop:
 		
 		;issue XIO 37 and exit
 		lda		#37
-		jmp		IoDoCmdX
+		jmp		IoDoCmd
 .endp
 
 
@@ -664,6 +664,7 @@ xit:
 .endp
 
 ;===========================================================================
+; PRINT
 ;
 ; A comma causes movement to the next tab stop, where tab stops are 10
 ; columns apart. These are independent from the E: tab stops. Position
@@ -849,10 +850,7 @@ stQuestionMark = stPrint
 ;
 .proc stLocate
 		jsr		stSetupCommandXY
-		
-		;select IOCB #6
-		stx		iocbidx
-				
+						
 		;do get char and store
 		bne		stGet.get_and_store
 .endp
@@ -956,7 +954,7 @@ loop:
 ;
 .proc stPlot
 		jsr		stSetupCommandXY
-		jmp		IoPutCharDirectX
+		jmp		IoPutCharDirect
 .endp
 
 
@@ -995,7 +993,7 @@ stCp = stDos
 		sta		atachr
 
 		lda		#$11
-		jmp		IoDoCmdX
+		jmp		IoDoCmd
 .endp
 
 ;===========================================================================
@@ -1442,6 +1440,7 @@ stSetupCommandXY = stPosition
 		;preload IOCB #6 and current color for PLOT/DRAWTO
 		lda		grColor
 		ldx		#$60			;!! - exit NZ for unconditional branch in LOCATE
+		stx		iocbidx
 xit:
 		rts
 .endp

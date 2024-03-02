@@ -77,12 +77,12 @@ print_digit:
 
 ;==========================================================================
 .proc IoPutCharAndInc
-		inw		inbuff
-		jmp		putchar
+		inc		inbuff
+		sne:inc	inbuff+1
+		bne		putchar			;! - unconditional
 .endp
 
 ;==========================================================================
-IoPutCharDirectX = putchar.direct_with_x
 IoPutCharDirect = putchar.direct
 
 IoPutNewline:
@@ -97,15 +97,24 @@ IoPutSpace:
 not_tabstop:
 direct:
 		ldx		iocbidx
-direct_with_x:
 		jsr		dispatch
-.def :IoCheckY
 		tya
 
-.def :ioCheck = *
+.def :ioCheck = *				;requires iocbidx
 		bpl		done
-.def :IoThrowErrorY
+
+.def :IoCloseIOCB7AndThrowError
 		sty		errno
+
+		;Check if we were using IOCB#7 and close it if so. It's intentional
+		;that we do this for any I/O error on #7 even if it's from explicit
+		;program usage, for compatibility.
+		lda		iocbidx
+		eor		#$70
+		bne		not_iocb7
+		sta		iocbexec		;clear ENTER
+		jsr		IoClose
+not_iocb7:
 		jmp		errorDispatch
 		
 dispatch:
@@ -122,25 +131,13 @@ done:
 .endp
 
 ;==========================================================================
-.proc IoReadLine
-		jsr		IoSetupReadLineLDBUFA
+.proc IoReadLineX
+		jsr		IoSetupReadLineLDBUFA_SetIOCBX
 		jsr		ciov
 		bpl		putchar.done
 		cpy		#$88
-		bne		IoThrowErrorY
+		bne		IoCloseIOCB7AndThrowError
 		rts
-.endp
-
-;==========================================================================
-ioChecked = IoDoCmd._check_entry2
-IoDoCmdX = IoDoCmd._with_x
-.proc IoDoCmd
-		ldx		iocbidx
-_with_x:
-		sta		iccmd,x
-_check_entry2:
-		jsr		ciov
-		jmp		ioCheck
 .endp
 
 ;==========================================================================
@@ -210,20 +207,19 @@ with_IOCB_X:
 ;	A = AUX1 mode
 ;	Y = Low byte of device name address in constant page
 ;
-; Entry (IoOpenStockDevice):
+; Entry (IoOpenStockDeviceX):
 ;	A = AUX1 mode
 ;	X = IOCB #
 ;	Y = Low byte of device name address in constant page
 ;
-.proc IoOpenCassette
+IoOpenCassette:
 		sec
 		ror		icax2+$70		
 		ldy		#<devname_c
-.def :IoOpenStockDeviceIOCB7 = *
+IoOpenStockDeviceIOCB7:
 		ldx		#$70
-.def :IoOpenStockDeviceX
+IoOpenStockDeviceX:
 		stx		iocbidx
-.def :IoOpenStockDevice
 		sty		stScratch4
 		pha
 		jsr		IoCloseX
@@ -233,8 +229,12 @@ with_IOCB_X:
 		ldy		#>devname_c
 		jsr		IoSetupBufferAddress
 		lda		#CIOCmdOpen
-		bne		IoDoCmdX
-.endp
+IoDoCmd:
+		ldx		iocbidx
+		sta		iccmd,x
+ioChecked:						;iocbidx clean
+		jsr		ciov
+		jmp		ioCheck
 
 ;==========================================================================
 ; Replace the byte after a string with an EOL terminator.
@@ -306,7 +306,9 @@ with_IOCB_X:
 .endp
 
 ;==========================================================================
-IoSetupReadLineLDBUFA:
+IoSetupReadLineLDBUFA_SetIOCBX:
+		stx		iocbidx
+IoSetupReadLineLDBUFA_X:
 		jsr		ldbufa
 .proc IoSetupReadLine
 		;we are using some pretty bad hacks here:

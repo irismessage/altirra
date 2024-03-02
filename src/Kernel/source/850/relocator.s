@@ -158,3 +158,7 @@ get_ptr = *-2
 		opt		l-
 		icl		'850handler-relocs.inc'
 		opt		l+
+
+		_ASSERT	* < $655, "relocator is longer than original 850 relocator"
+
+:($655-*) dta 0

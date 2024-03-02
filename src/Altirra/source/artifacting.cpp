@@ -1657,7 +1657,10 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params, bool 
 			}
 
 			for(int j=0; j<22; ++j) {
-				float fy = ytab[j] * chromaSignalAmplitude;
+				// This is currently disabled because for a while we had a bug where it was
+				// getting cancelled out, and frankly it looks better without it.
+				float fy = 0; //ytab[j] * chromaSignalAmplitude;
+
 				float fi = itab[j];
 				float fq = qtab[j];
 
@@ -1807,18 +1810,24 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params, bool 
 			auto& VDRESTRICT impulseQuadG = m4x.mPalToGQuad[idx];
 			auto& VDRESTRICT impulseQuadB = m4x.mPalToBQuad[idx];
 
-			vdfloat3 e0[12] {}, e1[12] {};
+			vdfloat3 e0[16] {}, e1[16] {};
 
 			for(int k=0; k<4; ++k) {
 				// Try to optimize color quality a bit. The hue can only change at pairs of pixels due to GTIA's design,
 				// so include the chroma signal for both pixels in the first pixel's impulse.
 
 				if (k & 1) {
-					vdfloat3 rs0 {}, rs1{}, rs2{}, rs3{};
-					const float rse = (k == 3 ? 1.0f : 0.0f);
-					for(int i=0; i<12; ++i) {
-						vdfloat3 pal_to_rgb0 = (y_waves[1][i*2+0]) * encodingScale + e0[i] + rs0 * rse;
-						vdfloat3 pal_to_rgb1 = (y_waves[1][i*2+1]) * encodingScale + e1[i] + rs1 * rse;
+					for(int i=0; i<16; ++i) {
+						const int j0 = (i-k)*2+0;
+						const int j1 = (i-k)*2+1;
+
+						vdfloat3 pal_to_rgb0 = (j0 >= 0 && j0 < 24 ? y_waves[1][j0] : vdfloat3{}) * encodingScale + e0[i];
+						vdfloat3 pal_to_rgb1 = (j1 >= 0 && j1 < 24 ? y_waves[1][j1] : vdfloat3{}) * encodingScale + e1[i];
+
+						if (k == 3 && i >= 4) {
+							pal_to_rgb0 += e0[i - 4];
+							pal_to_rgb1 += e1[i - 4];
+						}
 
 						const int r0 = VDRoundToInt32(pal_to_rgb0.x);
 						const int g0 = VDRoundToInt32(pal_to_rgb0.y);
@@ -1827,23 +1836,19 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params, bool 
 						const int g1 = VDRoundToInt32(pal_to_rgb1.y);
 						const int b1 = VDRoundToInt32(pal_to_rgb1.z);
 
-						rs0 = rs2;
-						rs1 = rs3;
-						rs2 = pal_to_rgb0 - vdfloat3{(float)r0, (float)g0, (float)b0};
-						rs3 = pal_to_rgb1 - vdfloat3{(float)r1, (float)g1, (float)b1};
-
 						e0[i] = pal_to_rgb0 - vdfloat3{(float)r0, (float)g0, (float)b0};
 						e1[i] = pal_to_rgb1 - vdfloat3{(float)r1, (float)g1, (float)b1};
 
-
-						impulseR[k][i+k] = (r0 & 0xffff) + ((uint32)r1 << 16);
-						impulseG[k][i+k] = (g0 & 0xffff) + ((uint32)g1 << 16);
-						impulseB[k][i+k] = (b0 & 0xffff) + ((uint32)b1 << 16);
+						impulseR[k][i] = (r0 & 0xffff) + ((uint32)r1 << 16);
+						impulseG[k][i] = (g0 & 0xffff) + ((uint32)g1 << 16);
+						impulseB[k][i] = (b0 & 0xffff) + ((uint32)b1 << 16);
 					}
 				} else {
-					for(int i=0; i<12; ++i) {
-						vdfloat3 pal_to_rgb0 = (c_waves[0][i*2+0] + c_waves[1][i*2+0] + y_waves[0][i*2+0]) * encodingScale + e0[i];
-						vdfloat3 pal_to_rgb1 = (c_waves[0][i*2+1] + c_waves[1][i*2+1] + y_waves[0][i*2+1]) * encodingScale + e1[i];
+					for(int i=0; i<16; ++i) {
+						const int j0 = (i-k)*2+0;
+						const int j1 = (i-k)*2+1;
+						vdfloat3 pal_to_rgb0 = (j0 >= 0 && j0 < 24 ? c_waves[0][j0] + c_waves[1][j0] + y_waves[0][j0] : vdfloat3{}) * encodingScale + e0[i];
+						vdfloat3 pal_to_rgb1 = (j1 >= 0 && j1 < 24 ? c_waves[0][j1] + c_waves[1][j1] + y_waves[0][j1] : vdfloat3{}) * encodingScale + e1[i];
 
 						const int r0 = VDRoundToInt32(pal_to_rgb0.x);
 						const int g0 = VDRoundToInt32(pal_to_rgb0.y);
@@ -1851,53 +1856,51 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params, bool 
 						const int r1 = VDRoundToInt32(pal_to_rgb1.x);
 						const int g1 = VDRoundToInt32(pal_to_rgb1.y);
 						const int b1 = VDRoundToInt32(pal_to_rgb1.z);
-#if 0
-						e0 = e2;
-						e1 = e3;
-						e2 = pal_to_rgb0 - vdfloat3{(float)r0, (float)g0, (float)b0};
-						e3 = pal_to_rgb1 - vdfloat3{(float)r1, (float)g1, (float)b1};
-#else
+
 						e0[i] = pal_to_rgb0 - vdfloat3{(float)r0, (float)g0, (float)b0};
 						e1[i] = pal_to_rgb1 - vdfloat3{(float)r1, (float)g1, (float)b1};
-#endif
 
-						impulseR[k][i+k] = (r0 & 0xffff) + ((uint32)r1 << 16);
-						impulseG[k][i+k] = (g0 & 0xffff) + ((uint32)g1 << 16);
-						impulseB[k][i+k] = (b0 & 0xffff) + ((uint32)b1 << 16);
+						impulseR[k][i] = (r0 & 0xffff) + ((uint32)r1 << 16);
+						impulseG[k][i] = (g0 & 0xffff) + ((uint32)g1 << 16);
+						impulseB[k][i] = (b0 & 0xffff) + ((uint32)b1 << 16);
 					}
 				}
 			}
 
+			const auto twinAdd = [](uint32 x, uint32 y) -> uint32 {
+				return (x & 0x7FFF7FFF) + (y & 0x7FFF7FFF) ^ ((x ^ y) & 0x80008000);
+			};
+
 			const uint32 bias = signedOutput ? 0x0408'0408 : 0x0008'0008;
-			impulseR[0][0] += bias;
-			impulseR[0][1] += bias;
-			impulseR[0][2] += bias;
-			impulseR[0][3] += bias;
-			impulseG[0][0] += bias;
-			impulseG[0][1] += bias;
-			impulseG[0][2] += bias;
-			impulseG[0][3] += bias;
-			impulseB[0][0] += bias;
-			impulseB[0][1] += bias;
-			impulseB[0][2] += bias;
-			impulseB[0][3] += bias;
+			impulseR[0][0] = twinAdd(impulseR[0][0], bias);
+			impulseR[0][1] = twinAdd(impulseR[0][1], bias);
+			impulseR[0][2] = twinAdd(impulseR[0][2], bias);
+			impulseR[0][3] = twinAdd(impulseR[0][3], bias);
+			impulseG[0][0] = twinAdd(impulseG[0][0], bias);
+			impulseG[0][1] = twinAdd(impulseG[0][1], bias);
+			impulseG[0][2] = twinAdd(impulseG[0][2], bias);
+			impulseG[0][3] = twinAdd(impulseG[0][3], bias);
+			impulseB[0][0] = twinAdd(impulseB[0][0], bias);
+			impulseB[0][1] = twinAdd(impulseB[0][1], bias);
+			impulseB[0][2] = twinAdd(impulseB[0][2], bias);
+			impulseB[0][3] = twinAdd(impulseB[0][3], bias);
 
 			for(int i=0; i<16; ++i) {
-				impulseTwinR[0][i] = impulseR[0][i] + impulseR[1][i];
-				impulseTwinG[0][i] = impulseG[0][i] + impulseG[1][i];
-				impulseTwinB[0][i] = impulseB[0][i] + impulseB[1][i];
+				impulseTwinR[0][i] = twinAdd(impulseR[0][i], impulseR[1][i]);
+				impulseTwinG[0][i] = twinAdd(impulseG[0][i], impulseG[1][i]);
+				impulseTwinB[0][i] = twinAdd(impulseB[0][i], impulseB[1][i]);
 			}
 
 			for(int i=0; i<16; ++i) {
-				impulseTwinR[1][i] = impulseR[2][i] + impulseR[3][i];
-				impulseTwinG[1][i] = impulseG[2][i] + impulseG[3][i];
-				impulseTwinB[1][i] = impulseB[2][i] + impulseB[3][i];
+				impulseTwinR[1][i] = twinAdd(impulseR[2][i], impulseR[3][i]);
+				impulseTwinG[1][i] = twinAdd(impulseG[2][i], impulseG[3][i]);
+				impulseTwinB[1][i] = twinAdd(impulseB[2][i], impulseB[3][i]);
 			}
 
 			for(int i=0; i<16; ++i) {
-				impulseQuadR[i] = impulseTwinR[0][i] + impulseTwinR[1][i];
-				impulseQuadG[i] = impulseTwinG[0][i] + impulseTwinG[1][i];
-				impulseQuadB[i] = impulseTwinB[0][i] + impulseTwinB[1][i];
+				impulseQuadR[i] = twinAdd(impulseTwinR[0][i], impulseTwinR[1][i]);
+				impulseQuadG[i] = twinAdd(impulseTwinG[0][i], impulseTwinG[1][i]);
+				impulseQuadB[i] = twinAdd(impulseTwinB[0][i], impulseTwinB[1][i]);
 			}
 		}
 	} else {
@@ -2070,6 +2073,12 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params, bool s
 	const float ycphasec = cosf(ycphase);
 	const float ycphases = sinf(ycphase);
 
+#if VD_CPU_X86 || VD_CPU_X64
+	const auto twinAdd = [](uint32 x, uint32 y) -> uint32 {
+		return (x & 0x7FFF7FFF) + (y & 0x7FFF7FFF) ^ ((x ^ y) & 0x80008000);
+	};
+#endif
+
 	// compute all fused direct and crosstalk encode+decode kernels
 	ATFilterKernel kerny2y[8];
 	ATFilterKernel kernu2y[8];
@@ -2224,7 +2233,7 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params, bool s
 						kerny16[offset] = ((uint32)w1 << 16) + (w0 & 0xffff);
 					}
 
-					kerny16[phase & 3] += signedOutput ? 0x1020'1020 : 0x0020'0020;
+					kerny16[phase & 3] = twinAdd(kerny16[phase & 3], signedOutput ? 0x1020'1020 : 0x0020'0020);
 
 					for(int offset=0; offset<16; ++offset) {
 						float fw0 = p2uw[offset*2+0] * scale + uerror[offset & 7][0];
@@ -2332,13 +2341,13 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params, bool s
 			for(int j=0; j<256; ++j) {
 				for(int k=0; k<4; ++k) {
 					for(int l=0; l<8; ++l)
-						mPal8x.mPalToYTwin[i][j][k][l] = mPal8x.mPalToY[i][j][k*2][l] + mPal8x.mPalToY[i][j][k*2+1][l];
+						mPal8x.mPalToYTwin[i][j][k][l] = twinAdd(mPal8x.mPalToY[i][j][k*2][l], mPal8x.mPalToY[i][j][k*2+1][l]);
 
 					for(int l=0; l<16; ++l)
-						mPal8x.mPalToUTwin[i][j][k][l] = mPal8x.mPalToU[i][j][k*2][l] + mPal8x.mPalToU[i][j][k*2+1][l];
+						mPal8x.mPalToUTwin[i][j][k][l] = twinAdd(mPal8x.mPalToU[i][j][k*2][l], mPal8x.mPalToU[i][j][k*2+1][l]);
 
 					for(int l=0; l<16; ++l)
-						mPal8x.mPalToVTwin[i][j][k][l] = mPal8x.mPalToV[i][j][k*2][l] + mPal8x.mPalToV[i][j][k*2+1][l];
+						mPal8x.mPalToVTwin[i][j][k][l] = twinAdd(mPal8x.mPalToV[i][j][k*2][l], mPal8x.mPalToV[i][j][k*2+1][l]);
 				}
 			}
 		}

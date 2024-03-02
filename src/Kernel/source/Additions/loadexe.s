@@ -33,7 +33,7 @@ memlo_ok:
 
 load_buffer:
 readhandler_cmd:
-		dta		$FD,$01,$26,$40,a(load_buffer),a($0003),a($0080),a($0000)
+		dta		$7D,$01,$26,$40,a(load_buffer),a($0003),a($0080),a($0000)
 
 fail:
 		rts

@@ -737,7 +737,7 @@ ATDiskFSKey ATDiskFSDOS2::LookupEntry(const char *filename) const {
 			break;
 
 		if (!vdstricmp(de.mName, filename))
-			return (ATDiskFSKey)(((uintptr)mDirectoryStart << 6) + (uintptr)(i + 1));
+			return (ATDiskFSKey)(((uintptr)mDirectoryStart << 6) + (uintptr)i);
 	}
 
 	return ATDiskFSKey::None;

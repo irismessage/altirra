@@ -100,12 +100,16 @@ next_statement:
 
 ;===========================================================================
 .proc execStop
-		mvy		#$80 brkkey
+		;for break, issue error 128; we don't need to clear brkkey as
+		;the error handler will do that for us
+		ldy		#$80
 
 		dta		{bit $0100}
 .def :ExecStopInvStructure = *
 		ldy		#28
-		jmp		IoThrowErrorY
+.def :IoThrowErrorY
+		sty		errno
+		jmp		errorDispatch
 .endp
 
 ;===========================================================================

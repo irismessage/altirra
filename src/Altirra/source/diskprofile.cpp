@@ -251,7 +251,9 @@ constexpr void ATDiskProfile::Init(ATDiskEmulationMode mode) {
 	// The 1050 Turbo V3.5 firmware takes 549 cycles @ 1MHz from leading edge of start bit of Complete byte
 	// to leading edge of the first data byte. Subtract off the 140 cycles it takes to send the
 	// C byte and we have a delay of 409 cycles @ 1MHz.
-	setCyc(mCyclesCEToDataFrameHighSpeed,		0us,		73.8us,		73.8us,		0us,		73.8us,		0us,		73.8us,		73.8us,		73.8us,		409us,		0us,		0us			);
+	//
+	// XF551 executes a busy wait loop of 656 cycles @ 0.55MHz between end of C and start of data frame.
+	setCyc(mCyclesCEToDataFrameHighSpeed,		0us,		73.8us,		73.8us,		0us,		73.8us,		0us,		73.8us,		73.8us,		73.8us,		409us,		1180us,		0us			);
 
 	setVal(mbSeekHalfTracks,					false,		false,		false,		false,		false,		true,		true,		true,		true,		true,		false,		true		);
 	setVal(mbRetryMode1050,						false,		false,		false,		false,		false,		true,		true,		true,		true,		true,		true,		true		);

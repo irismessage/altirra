@@ -1,6 +1,20 @@
 Altirra Change Log
 
-Version 4.00:
+Version 4.01:
+   [bugs fixed]
+   * Additions: Fixed LOADEXE.XEX using old $FD device SIO code for the program loader instead of $7D.
+   * AltirraOS: Fixed math pack compatibility issue with FDIV modifying FLPTR (fixes B-Graph pie chart routine).
+   * AltirraOS: Fixed a cursor position checking bug with split screen Gr.0 (fixes the BASIC game House of Usher).
+   * AltirraOS: Fixed compatibility issue with KEYDEL handling (fixes cursor movement in BrushupV40).
+   * ATBasic: IOCB#7 is now automatically closed on I/O errors to avoid SAVE files being kept open for write.
+   * Cassette: Fixed FLAC decoder crash with some block sizes.
+   * Cassette: Fixed regression with FSK blocks in CAS files being read as turbo pulses instead of FSK pulses.
+   * Disk: Retuned XF551 high-speed C/E to data frame delay.
+   * Display: Workaround for D3D11 minimum precision crash on Intel Iris Xe 30.0.101.1069 driver.
+   * Serial: Pad out 850 relocator to match length of original firmware relocator (fixes compatibility with loaders that hardcode the relocator length).
+   * VFS: Fixed wrong file being accessed when using atfs:// paths to access files inside a DOS 2 disk image.
+
+Version 4.00 [November 13, 2021]
    [changes]
    * Display: Dropped support for DirectDraw and OpenGL.
    * Input: Relative mouse binding and 5200 trak-ball speeds have been adjusted for better uniformity. Existing input maps may need to have their speeds adjusted.

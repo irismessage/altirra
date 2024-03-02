@@ -1818,7 +1818,7 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 						numSamples += pulseSamples;
 					}
 
-					if (!mDataTrack.WritePulses(cursor, fskPulses.data(), numPulses, numSamples, false, false))
+					if (!mDataTrack.WritePulses(cursor, fskPulses.data(), numPulses, numSamples, false, true))
 						throw ATCassetteTooLongException();
 
 					if (g_ATLCCasImage.IsEnabled()) {

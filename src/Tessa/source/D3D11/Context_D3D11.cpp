@@ -794,7 +794,7 @@ bool VDTVertexBufferD3D11::Init(VDTContextD3D11 *parent, uint32 size, bool dynam
 	if (!dev)
 		return false;
 
-	D3D11_BUFFER_DESC desc;
+	D3D11_BUFFER_DESC desc {};
     desc.ByteWidth = mByteSize;
 	desc.Usage = mbDynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
 	desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
@@ -888,7 +888,7 @@ bool VDTIndexBufferD3D11::Init(VDTContextD3D11 *parent, uint32 size, bool index3
 	if (!dev)
 		return false;
 
-	D3D11_BUFFER_DESC desc;
+	D3D11_BUFFER_DESC desc {};
     desc.ByteWidth = mByteSize;
 	desc.Usage = mbDynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
 	desc.BindFlags = D3D11_BIND_INDEX_BUFFER;

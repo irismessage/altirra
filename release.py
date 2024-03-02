@@ -1,7 +1,7 @@
 #! python3
 
 # Altirra build script
-# Copyright (C) Avery Lee 2014-2021
+# Copyright (C) Avery Lee 2014-2022
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -25,8 +25,8 @@ import zipfile
 import shutil
 import marshal
 
-EXPECTED_MSVC_VERSION = '19.29.30133'
-EXPECTED_MSVC_VERSION_DESC = 'Visual Studio 2019 v16.11.2'
+EXPECTED_MSVC_VERSION = '19.29.30140'
+EXPECTED_MSVC_VERSION_DESC = 'Visual Studio 2019 v16.11.10'
 
 DIAGNOSTIC_PATTERN = re.compile(r'(?:[0-9]+\>|)(?:[a-zA-Z0-9:\\/.]* *\([0-9,]+\).*(?:warning|error)|.*fatal error LNK[0-9]+:).*', re.I)
 
@@ -479,6 +479,8 @@ def main() -> None:
             try:
                 if swname == 'inc':
                     opts.enable_clean = False
+                elif swname == 'check':
+                    opts.enable_package = False
                 elif swname == 'packonly':
                     opts.enable_clean = False
                     opts.enable_build = False
@@ -598,6 +600,9 @@ def main() -> None:
                 elif not version_match.group(4):
                     version_branch = 200
                     version_type = "release"
+                else:
+                    is_special = True
+                    version_type = "special"
             else:
                 is_special = True
                 version_type = "special"
@@ -606,6 +611,8 @@ def main() -> None:
             numeric_version = '{},{},{},{}'.format(version_major, version_minor, version_branch, version_changelist)
 
             log.log('Stamping build as version {} ({})', string_version, version_type)
+
+            os.makedirs(os.path.join('src', 'Altirra', 'autobuild'), exist_ok = True)
 
             version_file = os.path.join('src', 'Altirra', 'autobuild', 'version.h')
             with open(version_file, 'w') as f:
