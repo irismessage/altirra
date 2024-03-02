@@ -31,6 +31,9 @@
 #endif
 
 #include <limits.h>
+#include <stdexcept>
+#include <memory>
+#include <string.h>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/memory.h>
 

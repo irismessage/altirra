@@ -20,9 +20,11 @@
 #include "resource.h"
 #include "cartridge.h"
 
+uint32 ATCartridgeAutodetectMode(const void *data, uint32 size, vdfastvector<int>& cartModes);
+
 class ATUIDialogCartridgeMapper : public VDDialogFrameW32 {
 public:
-	ATUIDialogCartridgeMapper(uint32 cartSize, bool show2600Warning);
+	ATUIDialogCartridgeMapper(uint32 cartSize, const void *cartData);
 
 	int GetMapper() const { return mMapper; }
 
@@ -30,11 +32,11 @@ protected:
 	bool OnLoaded();
 	void OnDataExchange(bool write);
 
-	static uint32 GetModeSize(int mode);
 	static const wchar_t *GetModeName(int mode);
 
 	int mMapper;
 	uint32 mCartSize;
+	const uint8 *mpCartData;
 	bool mbShow2600Warning;
 	typedef vdfastvector<int> Mappers;
 	Mappers mMappers;
@@ -62,51 +64,49 @@ protected:
 	};
 };
 
-ATUIDialogCartridgeMapper::ATUIDialogCartridgeMapper(uint32 cartSize, bool show2600Warning)
+ATUIDialogCartridgeMapper::ATUIDialogCartridgeMapper(uint32 cartSize, const void *cartData)
 	: VDDialogFrameW32(IDD_CARTRIDGE_MAPPER)
 	, mMapper(0)
 	, mCartSize(cartSize)
-	, mbShow2600Warning(show2600Warning)
+	, mpCartData((const uint8 *)cartData)
 {
+	mbShow2600Warning = false;
+
+	// Check if we see what looks like NMI, RESET, and IRQ handler addresses
+	// in the Fxxx range. That highly likely indicates a 2600 cartridge.
+	if ((cartSize == 2048 || cartSize == 4096) && cartData) {
+		const uint8 *tail = (const uint8 *)cartData + cartSize - 6;
+
+		if (tail[1] >= 0xF0 && tail[3] >= 0xF0 && tail[5] >= 0xF0)
+			mbShow2600Warning = true;
+	}
 }
 
 bool ATUIDialogCartridgeMapper::OnLoaded() {
-	for(int i=1; i<kATCartridgeModeCount; ++i) {
-		bool valid = false;
-
-		if (GetModeSize(i) == mCartSize) {
-			// size matches
-			valid = true;
-		} else if (i == kATCartridgeMode_TelelinkII && mCartSize == 8192 + 256) {
-			// We allow either 8K or 8K + 256 for the Telelink II cart.
-			valid = true;
-		} else if (i == kATCartridgeMode_8K && (mCartSize == 2048 || mCartSize == 4096)) {
-			// We allow 2K and 4K for the regular 8K option.
-			valid = true;
-		} else if (i == kATCartridgeMode_SIC && (mCartSize == 0x20000 || mCartSize == 0x40000)) {
-			// We allow 128K and 256K for SIC!.
-			valid = true;
-		} else if (i == kATCartridgeMode_MaxFlash_1024K_Bank0 && (mCartSize == 0x40000 || mCartSize == 0x80000)) {
-			// We allow 256K and 512K for the new 8Mbit MaxFlash carts.
-			valid = true;
-		} else if (i == kATCartridgeMode_Megacart_1M_2 && (mCartSize == 0x40000 || mCartSize == 0x80000)) {
-			// We allow 256K and 512K for the 1M Megacart.
-			valid = true;
-		}
-
-		if (valid)
-			mMappers.push_back(i);
-	}
+	uint32 recommended = ATCartridgeAutodetectMode(mpCartData, mCartSize, mMappers);
 
 	if (mMappers.empty()) {
 		EnableControl(IDC_LIST, false);
 		LBAddString(IDC_LIST, L"No compatible mappers found.");
 		EnableControl(1 /* IDOK */, false);
 	} else {
-		std::sort(mMappers.begin(), mMappers.end(), MapSorter());
+		std::sort(mMappers.begin(), mMappers.begin() + recommended, MapSorter());
+		std::sort(mMappers.begin() + recommended, mMappers.end(), MapSorter());
 
-		for(Mappers::const_iterator it(mMappers.begin()), itEnd(mMappers.end()); it != itEnd; ++it) {
-			LBAddString(IDC_LIST, GetModeName(*it));
+		VDStringW s;
+		uint32 i = 0;
+		for(Mappers::const_iterator it(mMappers.begin()), itEnd(mMappers.end()); it != itEnd; ++it, ++i) {
+			s.clear();
+
+			if (i < recommended && recommended > 1)
+				s = L"*";
+
+			s += GetModeName(*it);
+
+			if (i < recommended && recommended == 1)
+				s += L" (recommended)";
+
+			LBAddString(IDC_LIST, s.c_str());
 		}
 
 		LBSetSelectedIndex(IDC_LIST, 0);
@@ -132,72 +132,6 @@ void ATUIDialogCartridgeMapper::OnDataExchange(bool write) {
 		mMapper = mMappers[idx];
 	} else {
 		ShowControl(IDC_STATIC_2600WARNING, mbShow2600Warning);
-	}
-}
-
-uint32 ATUIDialogCartridgeMapper::GetModeSize(int mode) {
-	switch(mode) {
-		case kATCartridgeMode_8K:					return 8192;
-		case kATCartridgeMode_16K:					return 16384;
-		case kATCartridgeMode_OSS_034M:				return 16384;
-		case kATCartridgeMode_XEGS_32K:				return 32768;
-		case kATCartridgeMode_XEGS_64K:				return 65536;
-		case kATCartridgeMode_XEGS_128K:			return 131072;
-		case kATCartridgeMode_XEGS_256K:			return 262144;
-		case kATCartridgeMode_XEGS_512K:			return 524288;
-		case kATCartridgeMode_XEGS_1M:				return 1048576;
-		case kATCartridgeMode_OSS_M091:				return 16384;
-		case kATCartridgeMode_BountyBob800:			return 40960;
-		case kATCartridgeMode_BountyBob5200:		return 40960;
-		case kATCartridgeMode_MegaCart_16K:			return 16384;
-		case kATCartridgeMode_MegaCart_32K:			return 32768;
-		case kATCartridgeMode_MegaCart_64K:			return 65536;
-		case kATCartridgeMode_MegaCart_128K:		return 131072;
-		case kATCartridgeMode_MegaCart_256K:		return 262144;
-		case kATCartridgeMode_MegaCart_512K:		return 524288;
-		case kATCartridgeMode_MegaCart_1M:			return 1048576;
-		case kATCartridgeMode_Switchable_XEGS_32K:	return 32768;
-		case kATCartridgeMode_Switchable_XEGS_64K:	return 65536;
-		case kATCartridgeMode_Switchable_XEGS_128K:	return 131072;
-		case kATCartridgeMode_Switchable_XEGS_256K:	return 262144;
-		case kATCartridgeMode_Switchable_XEGS_512K:	return 524288;
-		case kATCartridgeMode_Switchable_XEGS_1M:	return 1048576;
-		case kATCartridgeMode_MaxFlash_128K:		return 131072;
-		case kATCartridgeMode_MaxFlash_128K_MyIDE:	return 131072;
-		case kATCartridgeMode_MaxFlash_1024K:		return 1048576;
-		case kATCartridgeMode_MaxFlash_1024K_Bank0:	return 1048576;
-		case kATCartridgeMode_5200_32K:				return 32768;
-		case kATCartridgeMode_5200_16K_TwoChip:		return 16384;
-		case kATCartridgeMode_5200_16K_OneChip:		return 16384;
-		case kATCartridgeMode_5200_8K:				return 8192;
-		case kATCartridgeMode_5200_4K:				return 4096;
-		case kATCartridgeMode_Corina_1M_EEPROM:		return 1048576 + 8192;
-		case kATCartridgeMode_Corina_512K_SRAM_EEPROM:	return 524288 + 8192;
-		case kATCartridgeMode_SpartaDosX_128K:		return 131072;
-		case kATCartridgeMode_TelelinkII:			return 8192;
-		case kATCartridgeMode_Williams_64K:			return 65536;
-		case kATCartridgeMode_Diamond_64K:			return 65536;
-		case kATCartridgeMode_Express_64K:			return 65536;
-		case kATCartridgeMode_SpartaDosX_64K:		return 65536;
-		case kATCartridgeMode_RightSlot_8K:			return 8192;
-		case kATCartridgeMode_DB_32K:				return 32768;
-		case kATCartridgeMode_Atrax_128K:			return 131072;
-		case kATCartridgeMode_Williams_32K:			return 32768;
-		case kATCartridgeMode_Phoenix_8K:			return 8192;
-		case kATCartridgeMode_Blizzard_4K:			return 4096;
-		case kATCartridgeMode_Blizzard_16K:			return 16384;
-		case kATCartridgeMode_SIC:					return 524288;
-		case kATCartridgeMode_Atrax_SDX_64K:		return 65536;
-		case kATCartridgeMode_Atrax_SDX_128K:		return 131072;
-		case kATCartridgeMode_OSS_043M:				return 16384;
-		case kATCartridgeMode_OSS_8K:				return 8192;
-		case kATCartridgeMode_AST_32K:				return 32768;
-		case kATCartridgeMode_Turbosoft_64K:		return 65536;
-		case kATCartridgeMode_Turbosoft_128K:		return 131072;
-		case kATCartridgeMode_Megacart_1M_2:		return 1048576;
-		case kATCartridgeMode_5200_64K_32KBanks:	return 65536;
-		default:
-			return 0;
 	}
 }
 
@@ -262,13 +196,14 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeName(int mode) {
 		case kATCartridgeMode_MaxFlash_1024K_Bank0:	return L"MaxFlash 1M / 8Mbit - newer (bank 0)";
 		case kATCartridgeMode_Megacart_1M_2:		return L"Megacart 1M (2)";
 		case kATCartridgeMode_5200_64K_32KBanks:	return L"5200 64K cartridge (32K banks)";
+		case kATCartridgeMode_MicroCalc:			return L"MicroCalc 32K";
 		default:
 			return L"";
 	}
 }
 
-int ATUIShowDialogCartridgeMapper(VDGUIHandle h, uint32 cartSize, bool show2600Warning) {
-	ATUIDialogCartridgeMapper mapperdlg(cartSize, show2600Warning);
+int ATUIShowDialogCartridgeMapper(VDGUIHandle h, uint32 cartSize, const void *data) {
+	ATUIDialogCartridgeMapper mapperdlg(cartSize, data);
 
 	return mapperdlg.ShowDialog(h) ? mapperdlg.GetMapper() : -1;
 }

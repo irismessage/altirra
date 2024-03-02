@@ -102,6 +102,11 @@ void ATUISerialPortsDialog::OnDataExchange(bool write) {
 		mConfig.mbDisableThrottling = IsButtonChecked(IDC_DISABLE_THROTTLING);
 		mConfig.mbRequireMatchedDTERate = IsButtonChecked(IDC_REQUIRE_MATCHED_DTE_RATE);
 
+		if (IsButtonChecked(IDC_DEVICE_1030))
+			mConfig.mDeviceMode = kATRS232DeviceMode_1030;
+		else
+			mConfig.mDeviceMode = kATRS232DeviceMode_850;
+
 		if (IsButtonChecked(IDC_SIOLEVEL_NONE))
 			mConfig.m850SIOLevel = kAT850SIOEmulationLevel_None;
 		else if (IsButtonChecked(IDC_SIOLEVEL_STUBLOADER))
@@ -109,6 +114,14 @@ void ATUISerialPortsDialog::OnDataExchange(bool write) {
 
 		int selIdx = mComboConnectSpeed.GetSelection();
 		mConfig.mConnectionSpeed = selIdx >= 0 ? kConnectionSpeeds[selIdx] : 9600;
+
+		VDStringW address;
+		GetControlText(IDC_DIAL_ADDRESS, address);
+		mConfig.mDialAddress = VDTextWToA(address);
+
+		VDStringW service;
+		GetControlText(IDC_DIAL_SERVICE, service);
+		mConfig.mDialService = VDTextWToA(service);
 
 		g_sim.SetRS232Enabled(enabled);
 
@@ -149,8 +162,14 @@ void ATUISerialPortsDialog::OnDataExchange(bool write) {
 
 		CheckButton(IDC_REQUIRE_MATCHED_DTE_RATE, mConfig.mbRequireMatchedDTERate);
 
+		CheckButton(IDC_DEVICE_1030, mConfig.mDeviceMode == kATRS232DeviceMode_1030);
+		CheckButton(IDC_DEVICE_850, mConfig.mDeviceMode == kATRS232DeviceMode_850);
+
 		CheckButton(IDC_SIOLEVEL_NONE, mConfig.m850SIOLevel == kAT850SIOEmulationLevel_None);
 		CheckButton(IDC_SIOLEVEL_STUBLOADER, mConfig.m850SIOLevel == kAT850SIOEmulationLevel_StubLoader);
+
+		SetControlText(IDC_DIAL_ADDRESS, VDTextAToW(mConfig.mDialAddress).c_str());
+		SetControlText(IDC_DIAL_SERVICE, VDTextAToW(mConfig.mDialService).c_str());
 
 		UpdateEnables();
 	}
@@ -191,6 +210,8 @@ void ATUISerialPortsDialog::UpdateEnables() {
 	bool accept = mbAccept;
 	bool telnet = mbTelnet;
 
+	EnableControl(IDC_DEVICE_1030, enabled);
+	EnableControl(IDC_DEVICE_850, enabled);
 	EnableControl(IDC_TELNET, enabled);
 	EnableControl(IDC_TELNET_LFCONVERSION, enabled && telnet);
 	EnableControl(IDC_ALLOW_OUTBOUND, enabled);
@@ -201,7 +222,18 @@ void ATUISerialPortsDialog::UpdateEnables() {
 	EnableControl(IDC_CONNECTION_SPEED, enabled && accept);
 	EnableControl(IDC_EXTENDED_BAUD_RATES, enabled);
 	EnableControl(IDC_REQUIRE_MATCHED_DTE_RATE, enabled);
+	EnableControl(IDC_SIOLEVEL_NONE, enabled);
+	EnableControl(IDC_SIOLEVEL_STUBLOADER, enabled);
+	EnableControl(IDC_DIAL_ADDRESS, enabled);
+	EnableControl(IDC_DIAL_SERVICE, enabled);
+
+	EnableControl(IDC_STATIC_DEVICE, enabled);
+	EnableControl(IDC_STATIC_PROTOCOL, enabled);
+	EnableControl(IDC_STATIC_PERMISSIONS, enabled);
+	EnableControl(IDC_STATIC_BAUDRATE, enabled);
 	EnableControl(IDC_STATIC_SIOLEVEL, enabled);
+	EnableControl(IDC_STATIC_DIAL_ADDRESS, enabled);
+	EnableControl(IDC_STATIC_DIAL_SERVICE, enabled);
 }
 
 void ATUIShowSerialPortsDialog(VDGUIHandle h) {

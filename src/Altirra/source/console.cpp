@@ -23,7 +23,6 @@
 #include <malloc.h>
 #include <stdio.h>
 #include <map>
-#include <hash_map>
 #include <vd2/Dita/services.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
@@ -563,17 +562,15 @@ void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemStat
 		}
 
 		if (changed) {
-			if (mPCLine < 0) {
-				SetPosition(state.mFramePC);
-				return;
-			}
-
-			if (mPCLine >= 0) {
-				mpTextEditor->SetCursorPos(mPCLine, 0);
-				mpTextEditor->MakeLineVisible(mPCLine);
-			} else if (mFramePCLine >= 0) {
+			if (mFramePCLine >= 0) {
 				mpTextEditor->SetCursorPos(mFramePCLine, 0);
 				mpTextEditor->MakeLineVisible(mFramePCLine);
+			} else if (mPCLine >= 0) {
+				mpTextEditor->SetCursorPos(mPCLine, 0);
+				mpTextEditor->MakeLineVisible(mPCLine);
+			} else {
+				SetPosition(state.mFramePC);
+				return;
 			}
 		}
 
@@ -998,7 +995,7 @@ protected:
 	VDStringW	mPath;
 	VDStringW	mPathAlias;
 
-	typedef stdext::hash_map<uint32, uint32> AddressLookup;
+	typedef vdhashmap<uint32, uint32> AddressLookup;
 	AddressLookup	mAddressToLineLookup;
 	AddressLookup	mLineToAddressLookup;
 
@@ -3595,12 +3592,11 @@ bool ATConsoleWindow::OnCreate() {
 	d->OnPromptChanged() += mDelegatePromptChanged.Bind(this, &ATConsoleWindow::OnPromptChanged);
 	d->OnRunStateChanged() += mDelegateRunStateChanged.Bind(this, &ATConsoleWindow::OnRunStateChanged);
 
-	mbRunState = d->IsRunning();
-
 	VDSetWindowTextFW32(mhwndPrompt, L"%hs>", d->GetPrompt());
 
-	mbEditShownDisabled = mbRunState;		// deliberately wrong
-	OnRunStateChanged(NULL, mbRunState);
+	mbEditShownDisabled = false;		// deliberately wrong
+	mbRunState = false;
+	OnRunStateChanged(NULL, d->IsRunning());
 	return true;
 }
 
@@ -3930,8 +3926,10 @@ void ATConsoleWindow::FlushAppendBuffer() {
 		SendMessage(mhwndLog, EM_SETSCROLLPOS, 0, (LPARAM)&pt);
 	}
 
-	SendMessage(mhwndLog, EM_SETSEL, -1, -1);
+	SendMessageW(mhwndLog, EM_SETSEL, -1, -1);
 	SendMessageW(mhwndLog, EM_REPLACESEL, FALSE, (LPARAM)mAppendBuffer.data());
+	SendMessageW(mhwndLog, EM_SETSEL, -1, -1);
+	SendMessageW(mhwndLog, EM_SCROLLCARET, 0, 0);
 
 	mAppendBuffer.clear();
 }
@@ -5410,6 +5408,8 @@ bool ATRestorePaneLayout(const char *name) {
 			hwndActiveFocus = hwndFocus;
 	}
 
+	g_pMainWindow->SuspendLayout();
+
 	// undock and hide all docked panes
 	vdhashmap<uint32, ATFrameWindow *> frames;
 
@@ -5549,6 +5549,8 @@ bool ATRestorePaneLayout(const char *name) {
 				DestroyWindow(hwndFrame);
 		}
 	}
+
+	g_pMainWindow->ResumeLayout();
 
 	return true;
 }

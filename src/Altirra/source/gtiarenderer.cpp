@@ -87,7 +87,7 @@ void ATGTIARenderer::BeginScanline(uint8 *dst, const uint8 *mergeBuffer, const u
 	memset(mpDst, mpColorTable[kColorBAK], 68);
 }
 
-void ATGTIARenderer::RenderScanline(int xend, bool pmgraphics, bool mixed) {
+void ATGTIARenderer::RenderScanline(int xend, bool pfgraphics, bool pmgraphics, bool mixed) {
 	int x1 = mX;
 
 	if (x1 >= xend)

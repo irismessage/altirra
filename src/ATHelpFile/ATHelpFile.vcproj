@@ -99,6 +99,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\host-device.xml"
+				>
+			</File>
+			<File
 				RelativePath=".\source\index.xml"
 				>
 			</File>

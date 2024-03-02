@@ -57,7 +57,7 @@ void ATKMKJZIDE::LoadFirmware(bool sdx, const void *ptr, uint32 len) {
 		memcpy(mSDX, ptr, len);
 		mSDXCtrl.SetDirty(false);
 	} else {
-		uint32 flashSize = mbVersion2 ? sizeof mFlash : 0x600;
+		uint32 flashSize = mbVersion2 ? sizeof mFlash : 0xc00;
 
 		if (len > flashSize)
 			len = flashSize;
@@ -77,7 +77,7 @@ void ATKMKJZIDE::LoadFirmware(bool sdx, const wchar_t *path) {
 		mSDXCtrl.SetDirty(false);
 	} else {
 		flash = mFlash;
-		flashSize = mbVersion2 ? sizeof mFlash : 0x600;
+		flashSize = mbVersion2 ? sizeof mFlash : 0xc00;
 		mFlashCtrl.SetDirty(false);
 	}
 
@@ -97,7 +97,7 @@ void ATKMKJZIDE::SaveFirmware(bool sdx, const wchar_t *path) {
 		flashSize = sizeof mSDX;
 	} else {
 		flash = mFlash;
-		flashSize = mbVersion2 ? sizeof mFlash : 0x600;
+		flashSize = mbVersion2 ? sizeof mFlash : 0xc00;
 	}
 
 	VDFile f;
@@ -206,6 +206,10 @@ void ATKMKJZIDE::Select(bool enable) {
 	mpMemMan->EnableLayer(mpMemLayerFlash, enable);
 	mpMemMan->EnableLayer(mpMemLayerFlashControl, kATMemoryAccessMode_CPUWrite, enable);
 	mpMemMan->EnableLayer(mpMemLayerRAM, enable);
+}
+
+bool ATKMKJZIDE::IsPBIOverlayActive() const {
+	return mbSelected;
 }
 
 void ATKMKJZIDE::ColdReset() {
@@ -398,10 +402,10 @@ bool ATKMKJZIDE::OnControlWrite(void *thisptr0, uint32 addr, uint8 value) {
 
 		case 0xA0:
 			if (!thisptr->mbVersion2) {
-				thisptr->mFlashBankOffset = 0x300 - 0xD800;
+				thisptr->mFlashBankOffset = 0x600 - 0xD800;
 
-				thisptr->mpMemMan->SetLayerMemory(thisptr->mpMemLayerFlash, thisptr->mFlash + 0x300);
-				thisptr->mpMemMan->SetLayerMemory(thisptr->mpMemLayerRAM, thisptr->mRAM + 0x100);
+				thisptr->mpMemMan->SetLayerMemory(thisptr->mpMemLayerFlash, thisptr->mFlash + 0x600);
+				thisptr->mpMemMan->SetLayerMemory(thisptr->mpMemLayerRAM, thisptr->mRAM + 0x200);
 			}
 			return true;
 
@@ -508,10 +512,11 @@ void ATKMKJZIDE::UpdateMemoryLayersFlash() {
 }
 
 void ATKMKJZIDE::UpdateMemoryLayersSDX() {
-	const bool controlRead = mbSDXEnabled && mSDXCtrl.IsControlReadEnabled();
+	const bool sdxEnabled = mbVersion2 && mbSDXEnabled;
+	const bool controlRead = sdxEnabled && mSDXCtrl.IsControlReadEnabled();
 
 	mpMemMan->EnableLayer(mpMemLayerSDXControl, kATMemoryAccessMode_AnticRead, controlRead);
 	mpMemMan->EnableLayer(mpMemLayerSDXControl, kATMemoryAccessMode_CPURead, controlRead);
-	mpMemMan->EnableLayer(mpMemLayerSDXControl, kATMemoryAccessMode_CPUWrite, mbSDXEnabled);
-	mpMemMan->EnableLayer(mpMemLayerSDX, mbSDXEnabled);
+	mpMemMan->EnableLayer(mpMemLayerSDXControl, kATMemoryAccessMode_CPUWrite, sdxEnabled);
+	mpMemMan->EnableLayer(mpMemLayerSDX, sdxEnabled);
 }

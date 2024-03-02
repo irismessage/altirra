@@ -1,0 +1,13 @@
+# Hashes of file build rules.
+b80ac0c1ed3fdabfb09dbc2459aeba8e Dita/CMakeFiles/Dita_gch
+230df429947cf2ce961c91e374f07cb3 Dita/stdafx.h
+5278790db38a34ffdb9d1e8df26a744a Dita/stdafx.h.gch
+395b689e210198f188a210cd91d24966 Dita/stdafx.h.gch/Debug.c++
+f5c7db5dbd05dba6c1676ce4d5ec3005 Kasumi/CMakeFiles/Kasumi_gch
+0dae41d8799bc094f432e23899c6fb6a Kasumi/stdafx.h
+da56bbb953e915e0eb40bbba10cbd6d7 Kasumi/stdafx.h.gch
+8b1ef0f17bbd37b2ce237692b985e38b Kasumi/stdafx.h.gch/Debug.c++
+cea89d1f8737aee6776a46fb76a7abe5 system/CMakeFiles/system_gch
+af045ee7aa9c91500e2c09044a5a62d6 system/stdafx.h
+4ad297eaea2d8696401e1783cec54ca7 system/stdafx.h.gch
+4cade1cd836833efc910ae4c8a57c19d system/stdafx.h.gch/Debug.c++

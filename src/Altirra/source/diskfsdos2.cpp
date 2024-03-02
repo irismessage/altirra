@@ -392,7 +392,7 @@ uintptr ATDiskFSDOS2::LookupFile(uintptr parentKey, const char *filename) {
 		if (!(de.mFlags & DirEnt::kFlagInUse))
 			continue;
 
-		if (!strcmp(de.mName, filename))
+		if (!vdstricmp(de.mName, filename))
 			return (uintptr)(i + 1);
 	}
 
@@ -500,6 +500,9 @@ void ATDiskFSDOS2::WriteFile(uintptr parentKey, const char *filename, const void
 
 	if (!IsValidFileName(filename))
 		throw ATDiskFSException(kATDiskFSError_InvalidFileName);
+
+	if (LookupFile(parentKey, filename))
+		throw ATDiskFSException(kATDiskFSError_FileExists);
 
 	// find an empty directory entry
 	uint32 dirIdx = 0;

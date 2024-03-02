@@ -21,7 +21,7 @@
 
 using namespace ATGTIA;
 
-extern const __declspec(align(16)) uint8 kATAnalysisColorTable[]={
+extern const VDALIGN(16) uint8 kATAnalysisColorTable[]={
 	// players
 	0x1a,
 	0x5a,

@@ -18,18 +18,28 @@
 #ifndef f_AT_RS232_H
 #define f_AT_RS232_H
 
+#include <vd2/system/VDString.h>
+
 class ATCPUEmulator;
 class ATCPUEmulatorMemory;
 class ATScheduler;
 class IATUIRenderer;
 class ATPokeyEmulator;
+class ATPIAEmulator;
 
 enum AT850SIOEmulationLevel {
 	kAT850SIOEmulationLevel_None,
 	kAT850SIOEmulationLevel_StubLoader
 };
 
+enum ATRS232DeviceMode {
+	kATRS232DeviceMode_850,
+	kATRS232DeviceMode_1030,
+	kATRS232DeviceModeCount
+};
+
 struct ATRS232Config {
+	ATRS232DeviceMode mDeviceMode;
 	bool	mbTelnetEmulation;
 	bool	mbTelnetLFConversion;
 	bool	mbAllowOutbound;
@@ -40,9 +50,12 @@ struct ATRS232Config {
 	uint32	mListenPort;
 	uint32	mConnectionSpeed;
 	AT850SIOEmulationLevel	m850SIOLevel;
+	VDStringA	mDialAddress;
+	VDStringA	mDialService;
 
 	ATRS232Config()
-		: mbTelnetEmulation(true)
+		: mDeviceMode(kATRS232DeviceMode_850)
+		, mbTelnetEmulation(true)
 		, mbTelnetLFConversion(true)
 		, mbAllowOutbound(true)
 		, mbRequireMatchedDTERate(false)
@@ -60,7 +73,7 @@ class IATRS232Emulator {
 public:
 	virtual ~IATRS232Emulator() {}
 
-	virtual void Init(ATCPUEmulatorMemory *mem, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir, ATPokeyEmulator *pokey) = 0;
+	virtual void Init(ATCPUEmulatorMemory *mem, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir, ATPokeyEmulator *pokey, ATPIAEmulator *pia) = 0;
 	virtual void Shutdown() = 0;
 
 	virtual void ColdReset() = 0;
@@ -68,6 +81,7 @@ public:
 	virtual void GetConfig(ATRS232Config& config) = 0;
 	virtual void SetConfig(const ATRS232Config& config) = 0;
 
+	virtual uint8 GetCIODeviceName() const = 0;
 	virtual void OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, int offset) = 0;
 };
 
@@ -101,6 +115,12 @@ public:
 	virtual bool Read(uint32 baudRate, uint8& c, bool& framingError) = 0;
 	virtual void Write(uint32 baudRate, uint8 c) = 0;
 	virtual void SetConfig(const ATRS232Config&) = 0;
+
+	virtual void SetToneDialingMode(bool enable) = 0;
+	virtual bool IsToneDialingMode() const = 0;
+	virtual void HangUp() = 0;
+	virtual void Dial(const char *address, const char *service) = 0;
+	virtual void Answer() = 0;
 
 	virtual void FlushOutputBuffer() = 0;
 };

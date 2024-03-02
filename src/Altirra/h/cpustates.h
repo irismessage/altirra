@@ -254,6 +254,7 @@ namespace AT6502States {
 
 		kStateStandard_Count,
 
+		kStateUpdateHeatMap		= 0xF7,
 		kStateVerifyJump		= 0xF8,
 		kStateVerifyNMIEntry,
 		kStateVerifyIRQEntry,

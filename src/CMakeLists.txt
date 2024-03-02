@@ -1,0 +1,6 @@
+cmake_minimum_required (VERSION 2.6)
+add_subdirectory(system)
+add_subdirectory(Dita)
+add_subdirectory(Riza)
+add_subdirectory(Kasumi)
+add_subdirectory(Altirra)

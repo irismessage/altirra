@@ -85,7 +85,7 @@ public:
 	void SetSECAMMode(bool secam) { mbSECAMMode = secam; }
 
 	void BeginScanline(uint8 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires);
-	void RenderScanline(int x2, bool pmgraphics, bool mixed);
+	void RenderScanline(int x2, bool pfgraphics, bool pmgraphics, bool mixed);
 	void EndScanline();
 
 	void AddRegisterChange(uint8 pos, uint8 addr, uint8 value);
@@ -106,6 +106,7 @@ protected:
 	void UpdateRegisters(const RegisterChange *changes, int count);
 	void RenderLores(int x1, int x2);
 	void RenderLoresFast(int x1, int x2);
+	void RenderLoresBlank(int x1, int x2);
 	void RenderMode8(int x1, int x2);
 	void RenderMode8Fast(int x1, int x2);
 	void RenderMode8Transition(int x1);
@@ -141,7 +142,7 @@ protected:
 	typedef vdfastvector<RegisterChange> RegisterChanges;
 	RegisterChanges mRegisterChanges;
 
-	__declspec(align(16)) uint8	mColorTable[24];
+	VDALIGN(16) uint8	mColorTable[24];
 	uint8	mPriorityTables[32][256];
 };
 

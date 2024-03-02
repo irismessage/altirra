@@ -51,6 +51,8 @@ public:
 
 	void GetDeviceInfo(ATPBIDeviceInfo& devInfo) const;
 	void Select(bool enable);
+	
+	bool IsPBIOverlayActive() const;
 
 	void ColdReset();
 	void WarmReset();
@@ -95,9 +97,9 @@ protected:
 
 	ATRTCV3021Emulator mRTC;
 
-	__declspec(align(4)) uint8	mRAM[0x8000];
-	__declspec(align(4)) uint8	mFlash[0x20000];
-	__declspec(align(4)) uint8	mSDX[0x80000];
+	VDALIGN(4) uint8	mRAM[0x8000];
+	VDALIGN(4) uint8	mFlash[0x20000];
+	VDALIGN(4) uint8	mSDX[0x80000];
 };
 
 #endif

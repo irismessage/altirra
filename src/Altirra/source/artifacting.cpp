@@ -247,7 +247,7 @@ void ATArtifactingEngine::Artifact8(uint32 y, uint32 dst[N], const uint8 src[N],
 	}
 }
 
-void ATArtifactingEngine::Artifact32(uint32 y, uint32 dst[N], uint32 width) {
+void ATArtifactingEngine::Artifact32(uint32 y, uint32 *dst, uint32 width) {
 	if (mbPAL)
 		ArtifactPAL32(dst, width);
 
@@ -258,6 +258,18 @@ void ATArtifactingEngine::Artifact32(uint32 y, uint32 dst[N], uint32 width) {
 			memcpy(blendDst, dst, sizeof(uint32)*width);
 		else
 			BlendExchange(dst, blendDst, width);
+	}
+}
+
+void ATArtifactingEngine::InterpolateScanlines(uint32 *dst, const uint32 *src1, const uint32 *src2, uint32 n) {
+	for(uint32 i=0; i<n; ++i) {
+		uint32 prev = src1[i];
+		uint32 next = src2[i];
+		uint32 r = (prev | next) - (((prev ^ next) & 0xfefefe) >> 1);
+
+		r = (r & 0xfcfcfc) >> 2;
+
+		dst[i] = r;
 	}
 }
 
@@ -518,9 +530,9 @@ void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bo
 	// transforming 7MHz input to 14MHz output). However, we hold two elements in each int,
 	// so we actually only need N+10 elements, which we round up to N+16. We need 8-byte
 	// alignment for MMX.
-	__declspec(align(16)) uint32 rout[N+16];
-	__declspec(align(16)) uint32 gout[N+16];
-	__declspec(align(16)) uint32 bout[N+16];
+	VDALIGN(16) uint32 rout[N+16];
+	VDALIGN(16) uint32 gout[N+16];
+	VDALIGN(16) uint32 bout[N+16];
 
 #if defined(VD_COMPILER_MSVC) && defined(VD_CPU_X86)
 	if (SSE2_enabled) {
@@ -585,9 +597,9 @@ void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bo
 
 void ATArtifactingEngine::ArtifactPALHi(uint32 dst[N*2], const uint8 src[N], bool scanlineHasHiRes, bool oddLine) {
 	// encode to YUV
-	__declspec(align(16)) uint32 ybuf[32 + N];
-	__declspec(align(16)) uint32 ubuf[32 + N];
-	__declspec(align(16)) uint32 vbuf[32 + N];
+	VDALIGN(16) uint32 ybuf[32 + N];
+	VDALIGN(16) uint32 ubuf[32 + N];
+	VDALIGN(16) uint32 vbuf[32 + N];
 
 	uint32 *const ulbuf = mPALDelayLineUV[0];
 	uint32 *const vlbuf = mPALDelayLineUV[1];

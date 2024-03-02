@@ -432,6 +432,10 @@ technique ycbcr_to_rgb_1_1 {
 //
 //	Pal8 to RGB -- pixel shader 1.1
 //
+//	Note: Intel 965 Express chipsets are reported to cut corners on precision here, which prevents
+//	this shader from working properly (colors 0 and 1 are indistinguishable). As a workaround, we
+//	use a PS2.0 shader if available.
+//
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void VS_Pal8_to_RGB_1_1(

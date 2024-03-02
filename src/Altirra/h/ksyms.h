@@ -22,10 +22,13 @@ namespace ATKernelSymbols {
 	// page zero
 	enum {
 		CASINI = 0x0002,
+		RAMLO  = 0x0004,
 		TRAMSZ = 0x0006,
 		WARMST = 0x0008,
+		BOOT_  = 0x0009,	// actually BOOT?
 		DOSVEC = 0x000A,
 		DOSINI = 0x000C,
+		APPMHI = 0x000E,
 		POKMSK = 0x0010,
 		BRKKEY = 0x0011,
 		RTCLOK = 0x0012,
@@ -57,7 +60,10 @@ namespace ATKernelSymbols {
 		BPTR   = 0x003D,
 		FTYPE  = 0x003E,
 		FEOF   = 0x003F,
+		SOUNDR = 0x0041,
 		CRITIC = 0x0042,
+		CKEY   = 0x004A,
+		CASSBT = 0x004B,
 		ATRACT = 0x004D,
 		DRKMSK = 0x004E,
 		COLRSH = 0x004F,
@@ -77,8 +83,8 @@ namespace ATKernelSymbols {
 		RAMTOP = 0x006A,
 		BUFCNT = 0x006B,
 		BUFSTR = 0x006C,
+		KEYDEF = 0x0079,	// XL/XE
 		SWPFLG = 0x007B,
-		RAMLO  = 0x0085,
 		FR0	   = 0x00D4,
 		FR1    = 0x00E0,
 		CIX    = 0x00F2,
@@ -116,7 +122,15 @@ namespace ATKernelSymbols {
 		SDLSTL = 0x0230,
 		SDLSTH = 0x0231,
 		SSKCTL = 0x0232,
+		LPENH  = 0x0234,
+		LPENV  = 0x0235,
+		BRKKY  = 0x0236,
+		VPIRQ  = 0x0238,	// XL/XE
 		COLDST = 0x0244,
+		PDVMSK = 0x0247,	// XL/XE
+		SHPDVS = 0x0248,	// XL/XE
+		PDMSK  = 0x0249,	// XL/XE
+		CHSALT = 0x026B,	// XL/XE
 		GPRIOR = 0x026F,
 		PADDL0 = 0x0270,
 		PADDL1 = 0x0271,
@@ -134,6 +148,10 @@ namespace ATKernelSymbols {
 		PTRIG1 = 0x027D,
 		PTRIG2 = 0x027E,
 		PTRIG3 = 0x027F,
+		PTRIG4 = 0x0280,
+		PTRIG5 = 0x0281,
+		PTRIG6 = 0x0282,
+		PTRIG7 = 0x0283,
 		STRIG0 = 0x0284,
 		STRIG1 = 0x0285,
 		STRIG2 = 0x0286,
@@ -147,7 +165,9 @@ namespace ATKernelSymbols {
 		TXTMSC = 0x0294,
 		TXTOLD = 0x0296,
 		ESCFLG = 0x02A2,
+		TABMAP = 0x02A3,
 		LOGMAP = 0x02B2,
+		SHFLOK = 0x02BE,
 		BOTSCR = 0x02BF,
 		PCOLR0 = 0x02C0,
 		PCOLR1 = 0x02C1,
@@ -158,6 +178,14 @@ namespace ATKernelSymbols {
 		COLOR2 = 0x02C6,
 		COLOR3 = 0x02C7,
 		COLOR4 = 0x02C8,
+		DSCTLN = 0x02D5,
+		KRPDEL = 0x02D9,	// XL/XE
+		KEYREP = 0x02DA,	// XL/XE
+		NOCLIK = 0x02DB,	// XL/XE
+		HELPPG = 0x02DC,	// XL/XE
+		DMASAV = 0x02DD,	// XL/XE
+		RUNAD  = 0x02E0,
+		INITAD = 0x02E2,
 		MEMTOP = 0x02E5,
 		MEMLO  = 0x02E7,
 		DVSTAT = 0x02EA,
@@ -195,7 +223,10 @@ namespace ATKernelSymbols {
 		ICPTL  = 0x0346,
 		ICPTH  = 0x0347,
 		ICBLL  = 0x0348,
+		ICBLH  = 0x0349,
 		ICAX1  = 0x034A,
+		BASICF = 0x03F8,	// XL/XE
+		GINTLK = 0x03FA,	// XL/XE
 		CASBUF = 0x03FD,
 		LBUFF  = 0x0580
 	};
@@ -272,6 +303,7 @@ namespace ATKernelSymbols {
 
 	// kernel symbols
 	enum {
+		EDITRV = 0xE400,
 		CASETV = 0xE440,
 		DISKIV = 0xE450,
 		DSKINV = 0xE453,

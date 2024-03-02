@@ -37,6 +37,7 @@ float4 vd_interpvtexsize;
 float4 vd_fieldinfo;
 float2 vd_chromauvscale;
 float2 vd_chromauvoffset;
+float2 vd_pixelsharpness;
 
 texture vd_srctexture;
 texture vd_src2atexture;

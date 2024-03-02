@@ -25,13 +25,18 @@
 #include "simulator.h"
 #include "verifier.h"
 #include "bkptmanager.h"
+#include "cpuhookmanager.h"
+#include "cpuheatmap.h"
 
 using namespace AT6502;
 
 ATCPUEmulator::ATCPUEmulator()
-	: mpHLE(NULL)
+	: mpMemory(NULL)
+	, mpHookMgr(NULL)
+	, mpHLE(NULL)
 	, mpProfiler(NULL)
 	, mpVerifier(NULL)
+	, mpHeatMap(NULL)
 	, mpBkptManager(NULL)
 {
 	mSBrk = 0x100;
@@ -51,6 +56,7 @@ ATCPUEmulator::ATCPUEmulator()
 	mbIllegalInsnsEnabled = true;
 	mbStopOnBRK = false;
 	mbAllowBlockedNMIs = false;
+	mBreakpointCount = 0;
 
 	RebuildDecodeTables();
 
@@ -61,8 +67,9 @@ ATCPUEmulator::ATCPUEmulator()
 ATCPUEmulator::~ATCPUEmulator() {
 }
 
-bool ATCPUEmulator::Init(ATCPUEmulatorMemory *mem, ATCPUEmulatorCallbacks *callbacks) {
+bool ATCPUEmulator::Init(ATCPUEmulatorMemory *mem, ATCPUHookManager *hookmgr, ATCPUEmulatorCallbacks *callbacks) {
 	mpMemory = mem;
+	mpHookMgr = hookmgr;
 	mpCallbacks = callbacks;
 
 	ColdReset();
@@ -329,6 +336,14 @@ void ATCPUEmulator::SetVerifier(ATCPUVerifier *verifier) {
 	}
 }
 
+void ATCPUEmulator::SetHeatMap(ATCPUHeatMap *heatmap) {
+	if (mpHeatMap != heatmap) {
+		mpHeatMap = heatmap;
+
+		RebuildDecodeTables();
+	}
+}
+
 void ATCPUEmulator::SetIllegalInsnsEnabled(bool enable) {
 	if (mbIllegalInsnsEnabled != enable) {
 		mbIllegalInsnsEnabled = enable;
@@ -355,16 +370,28 @@ bool ATCPUEmulator::IsBreakpointSet(uint16 addr) const {
 }
 
 void ATCPUEmulator::SetBreakpoint(uint16 addr) {
-	mInsnFlags[addr] |= kInsnFlagBreakPt;
+	if (!(mInsnFlags[addr] & kInsnFlagBreakPt)) {
+		mInsnFlags[addr] |= kInsnFlagBreakPt;
+
+		if (!mBreakpointCount++)
+			mDebugFlags |= kDebugFlag_BP;
+	}
 }
 
 void ATCPUEmulator::ClearBreakpoint(uint16 addr) {
-	mInsnFlags[addr] &= ~kInsnFlagBreakPt;
+	if (mInsnFlags[addr] & kInsnFlagBreakPt) {
+		mInsnFlags[addr] &= ~kInsnFlagBreakPt;
+
+		if (!--mBreakpointCount)
+			mDebugFlags &= ~kDebugFlag_BP;
+	}
 }
 
 void ATCPUEmulator::ClearAllBreakpoints() {
 	for(uint32 i=0; i<65536; ++i)
 		mInsnFlags[i] &= ~kInsnFlagBreakPt;
+
+	mBreakpointCount = 0;
 }
 
 void ATCPUEmulator::ResetAllPaths() {
@@ -511,6 +538,11 @@ void ATCPUEmulator::Push(uint8 v) {
 	--mS;
 }
 
+void ATCPUEmulator::PushWord(uint16 v) {
+	Push((uint8)(v >> 8));
+	Push((uint8)v);
+}
+
 uint8 ATCPUEmulator::Pop() {
 	return mpMemory->ReadByte(0x100 + (uint8)++mS);
 }
@@ -595,6 +627,17 @@ int ATCPUEmulator::Advance65816WithBusTracking() {
 #undef AT_CPU_RECORD_BUS_ACTIVITY
 
 uint8 ATCPUEmulator::ProcessDebugging() {
+	uint8 iflags = mInsnFlags[mPC];
+
+	if (iflags & kInsnFlagBreakPt) {
+		ATSimulatorEvent event = (ATSimulatorEvent)mpBkptManager->TestPCBreakpoint(mPC);
+		if (event) {
+			mbUnusedCycle = true;
+			RedecodeInsnWithoutBreak();
+			return event;
+		}
+	}
+
 	if (mbStep && (mPC - mStepRegionStart) >= mStepRegionSize) {
 		if (mStepStackLevel >= 0 && (sint8)(mS - mStepStackLevel) <= 0) {
 			// do nothing -- stepping through subroutine
@@ -669,6 +712,18 @@ bool ATCPUEmulator::ProcessInterrupts() {
 	}
 
 	return false;
+}
+
+uint8 ATCPUEmulator::ProcessHook() {
+	uint8 op = mpHookMgr->OnHookHit(mPC);
+
+	if (op && op != 0x4C) {
+		++mPC;
+		mOpcode = op;
+		mpNextState = mDecodeHeap + mDecodePtrs[mOpcode];
+	}
+
+	return op;
 }
 
 void ATCPUEmulator::AddHistoryEntry(bool is816) {
@@ -809,6 +864,9 @@ void ATCPUEmulator::RebuildDecodeTables() {
 					*mpDstState++ = kStateBreakOnUnsupportedOpcode;
 				break;
 		}
+
+		if (mpHeatMap)
+			*mpDstState++ = kStateUpdateHeatMap;
 
 		*mpDstState++ = kStateReadOpcode;
 	}

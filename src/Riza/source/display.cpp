@@ -99,6 +99,7 @@ protected:
 	void SetReturnFocus(bool fs);
 	void SetFullScreen(bool fs, uint32 width, uint32 height, uint32 refresh);
 	void SetDestRect(const vdrect32 *r, uint32 backgroundColor);
+	void SetPixelSharpness(float xsharpness, float ysharpness);
 	void PostBuffer(VDVideoDisplayFrame *);
 	bool RevokeBuffer(bool allowFrameSkip, VDVideoDisplayFrame **ppFrame);
 	void FlushBuffers();
@@ -193,6 +194,8 @@ protected:
 	uint32		mFullScreenHeight;
 	uint32		mFullScreenRefreshRate;
 	bool		mbDestRectEnabled;
+	float		mPixelSharpnessX;
+	float		mPixelSharpnessY;
 	vdrect32	mSourceSubrect;
 	vdrect32	mDestRect;
 	uint32		mBackgroundColor;
@@ -358,6 +361,8 @@ VDVideoDisplayWindow::VDVideoDisplayWindow(HWND hwnd, const CREATESTRUCT& create
 	, mFullScreenRefreshRate(0)
 	, mbDestRectEnabled(false)
 	, mDestRect(0, 0, 0, 0)
+	, mPixelSharpnessX(1.0f)
+	, mPixelSharpnessY(1.0f)
 	, mBackgroundColor(0)
 	, mpActiveFrame(NULL)
 	, mpLastFrame(NULL)
@@ -489,6 +494,14 @@ void VDVideoDisplayWindow::SetDestRect(const vdrect32 *r, uint32 backgroundColor
 
 	if (mpMiniDriver)
 		mpMiniDriver->SetDestRect(r, backgroundColor);
+}
+
+void VDVideoDisplayWindow::SetPixelSharpness(float xsharpness, float ysharpness) {
+	mPixelSharpnessX = xsharpness;
+	mPixelSharpnessY = ysharpness;
+
+	if (mpMiniDriver)
+		mpMiniDriver->SetPixelSharpness(xsharpness, ysharpness);
 }
 
 void VDVideoDisplayWindow::PostBuffer(VDVideoDisplayFrame *p) {
@@ -1281,6 +1294,7 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 	mpMiniDriver->SetFullScreen(mbFullScreen, mFullScreenWidth, mFullScreenHeight, mFullScreenRefreshRate);
 	mpMiniDriver->SetHighPrecision(sbEnableHighPrecision);
 	mpMiniDriver->SetDestRect(mbDestRectEnabled ? &mDestRect : NULL, mBackgroundColor);
+	mpMiniDriver->SetPixelSharpness(mPixelSharpnessX, mPixelSharpnessY);
 	mpMiniDriver->Resize(r.right, r.bottom);
 
 	if (!mpMiniDriver->Init(mhwndChild, mhLastMonitor, mSource)) {

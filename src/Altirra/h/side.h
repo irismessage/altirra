@@ -73,7 +73,7 @@ protected:
 	ATFlashEmulator	mSDXCtrl;
 	ATRTCDS1305Emulator mRTC;
 
-	__declspec(align(4)) uint8	mSDX[0x80000];
+	VDALIGN(4) uint8	mSDX[0x80000];
 };
 
 #endif

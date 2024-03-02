@@ -332,6 +332,8 @@ VDVideoDisplayMinidriver::VDVideoDisplayMinidriver()
 	, mDrawRect(0, 0, 0, 0)
 	, mBackgroundColor(0)
 	, mColorOverride(0)
+	, mPixelSharpnessX(1.0f)
+	, mPixelSharpnessY(1.0f)
 {
 }
 
@@ -374,6 +376,11 @@ void VDVideoDisplayMinidriver::SetDestRect(const vdrect32 *r, uint32 color) {
 
 	mBackgroundColor = color;
 	UpdateDrawRect();
+}
+
+void VDVideoDisplayMinidriver::SetPixelSharpness(float xfactor, float yfactor) {
+	mPixelSharpnessX = xfactor;
+	mPixelSharpnessY = yfactor;
 }
 
 bool VDVideoDisplayMinidriver::Tick(int id) {

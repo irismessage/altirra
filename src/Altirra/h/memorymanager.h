@@ -135,7 +135,7 @@ protected:
 	MemoryNode *mpFreeNodes;
 	VDLinearAllocator mAllocator;
 
-	__declspec(align(32)) uintptr mCPUReadPageMap[256];
+	VDALIGN(32) uintptr mCPUReadPageMap[256];
 	uintptr mCPUWritePageMap[256];
 	uintptr mAnticReadPageMap[256];
 

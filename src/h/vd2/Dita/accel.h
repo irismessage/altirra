@@ -46,8 +46,8 @@ public:
 
 	void Swap(VDAccelTableDefinition& dst);
 
-	void VDAccelTableDefinition::Save(VDRegistryKey& key) const;
-	void VDAccelTableDefinition::Load(VDRegistryKey& key, const VDAccelToCommandEntry *pCommands, uint32 nCommands);
+	void Save(VDRegistryKey& key) const;
+	void Load(VDRegistryKey& key, const VDAccelToCommandEntry *pCommands, uint32 nCommands);
 
 public:
 	typedef vdfastvector<VDAccelTableEntry> Accelerators;

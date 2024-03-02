@@ -22,7 +22,7 @@
 	#pragma warning(disable: 4733)	// warning C4733: Inline asm assigning to 'FS:0' : handler not registered as safe handler
 #endif
 
-#ifdef VD_CPU_X86
+#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC)
 
 void __declspec(naked) __stdcall ATArtifactPALLuma_MMX(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels) {
 	__asm {

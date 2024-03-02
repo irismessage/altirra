@@ -22,6 +22,7 @@
 
 struct VDPixmap;
 class ATAudioMonitor;
+class ATSlightSIDEmulator;
 
 struct ATUIAudioStatus {
 	int mUnderflowCount;
@@ -43,6 +44,8 @@ public:
 
 	virtual void SetStatusCounter(uint32 index, uint32 value) = 0;
 
+	virtual void SetDiskMotorActivity(uint32 index, bool on) = 0;
+
 	virtual void SetHActivity(bool write) = 0;
 	virtual void SetIDEActivity(bool write, uint32 lba) = 0;
 	virtual void SetPCLinkActivity(bool write) = 0;
@@ -57,12 +60,19 @@ public:
 
 	virtual void SetModemConnection(const char *str) = 0;
 
+	virtual void SetLedStatus(uint8 ledMask) = 0;
+
 	virtual void ClearWatchedValue(int index) = 0;
 	virtual void SetWatchedValue(int index, uint32 value, int len) = 0;
 
 	virtual void SetAudioStatus(ATUIAudioStatus *status) = 0;
 
 	virtual void SetAudioMonitor(ATAudioMonitor *monitor) = 0;
+
+	virtual void SetSlightSID(ATSlightSIDEmulator *emu) = 0;
+
+	virtual void ClearXorRects() = 0;
+	virtual void AddXorRect(int x, int y, int w, int h) = 0;
 
 	virtual void Render(const VDPixmap& px, const uint32 *palette) = 0;
 };

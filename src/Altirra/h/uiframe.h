@@ -61,6 +61,7 @@ public:
 
 protected:
 	HDWP mhdwp;
+	vdfastvector<HWND> mWindowsToShow;
 };
 
 class ATContainerSplitterBar : public VDShaderEditorBaseWindow {
@@ -117,7 +118,11 @@ public:
 	void	SetArea(ATContainerResizer& resizer, const vdrect32& area, bool parentContainsFullScreen);
 
 	void	Clear();
+
+	void	InvalidateLayout();
+	void	UpdateLayout(ATContainerResizer& resizer);
 	void	Relayout(ATContainerResizer& resizer);
+
 	bool	GetFrameSizeForContent(vdsize32& sz);
 
 	// Docking panes automatically disappear when they have no content unless they
@@ -137,7 +142,7 @@ public:
 	uint32	GetChildCount() const;
 	ATContainerDockingPane *GetChildPane(uint32 index) const;
 
-	void	SetContent(ATFrameWindow *frame);
+	void	SetContent(ATFrameWindow *frame, bool deferResize);
 	void	Dock(ATContainerDockingPane *pane, int code);
 	bool	Undock(ATFrameWindow *pane);
 
@@ -160,7 +165,7 @@ public:
 	void	RemoveAnyEmptyNodes();
 
 protected:
-	void	RepositionContent();
+	void	RepositionContent(ATContainerResizer& resizer);
 	void	RemoveEmptyNode();
 
 	ATContainerWindow *const mpParent;
@@ -181,6 +186,8 @@ protected:
 	bool		mbFullScreen;
 	bool		mbFullScreenLayout;
 	bool		mbPinned;
+	bool		mbLayoutInvalid;
+	bool		mbDescendantLayoutInvalid;
 };
 
 class ATContainerWindow : public VDShaderEditorBaseWindow {
@@ -210,6 +217,10 @@ public:
 
 	uint32	GetUndockedPaneCount() const;
 	ATFrameWindow *GetUndockedPane(uint32 index) const;
+
+	bool	IsLayoutSuspended() const { return mLayoutSuspendCount > 0; }
+	void	SuspendLayout();
+	void	ResumeLayout();
 
 	void	NotifyFontsUpdated();
 
@@ -253,6 +264,8 @@ protected:
 	HFONT mhfontCaption;
 	HFONT mhfontCaptionSymbol;
 
+	uint32 mLayoutSuspendCount;
+
 	typedef vdfastvector<ATFrameWindow *> UndockedFrames;
 	UndockedFrames mUndockedFrames;
 };
@@ -281,6 +294,7 @@ public:
 
 	bool GetIdealSize(vdsize32& sz);
 	void RecalcFrame();
+	void Relayout(int w, int h);
 
 	VDGUIHandle Create(const wchar_t *title, int x, int y, int cx, int cy, VDGUIHandle parent);
 	VDGUIHandle CreateChild(const wchar_t *title, int x, int y, int cx, int cy, VDGUIHandle parent);

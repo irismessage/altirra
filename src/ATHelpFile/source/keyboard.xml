@@ -56,7 +56,7 @@
         <td>F4</td>
       </tr>
       <tr>
-        <td>System Reset</td>
+        <td>System Reset (Warm Reset)</td>
         <td>F5</td>
       </tr>
       <tr>
@@ -73,19 +73,27 @@
       </tr>
       <tr>
         <td>Shift+&lt; (Clear)</td>
-        <td>Shift+Delete</td>
+        <td>Home</td>
       </tr>
       <tr>
-        <td>Shift+&gt; (Insert)</td>
+        <td>Shift+&gt; (Insert Line)</td>
+        <td>Shift+Insert</td>
+      </tr>
+      <tr>
+        <td>Ctrl+&gt; (Insert Character)</td>
         <td>Insert</td>
       </tr>
       <tr>
-        <td>Shift+Backspace (Delete)</td>
+        <td>Shift+Backspace (Delete Line)</td>
+        <td>Shift+Delete</td>
+      </tr>
+      <tr>
+        <td>Ctrl+Backspace (Delete Character)</td>
         <td>Delete</td>
       </tr>
       <tr>
         <td>Fuji / Invert</td>
-        <td>Page Down</td>
+        <td>End or `</td>
       </tr>
       <tr>
         <td>Ctrl+Esc</td>
@@ -115,8 +123,9 @@
   </div>
   <ul>
     <li>
-      The arrow keys can also be typed on the host as Ctrl+Arrow Key. This allows the keyboard arrow keys to be used
-      while the arrow keys are already mapped to the joystick.
+      The Options / Keyboard... dialog allows configuration of the arrow key handling and can be set to either
+      require or not require use of the Ctrl modifier key. Also, holding the Alt key will allow the arrow keys
+      on the host to issue keyboard input even if those keys are already mapped to an input controller.
     </li>
   </ul>
 
@@ -172,7 +181,7 @@
       </tr>
       <tr>
         <td>F5</td>
-        <td>System Reset</td>
+        <td>System Reset (Warm Reset)</td>
       </tr>
       <tr>
         <td>Shift+F5</td>
@@ -203,19 +212,27 @@
         <td>Break</td>
       </tr>
       <tr>
-        <td>Shift+Delete</td>
+        <td>Home</td>
         <td>Shift+&lt; (Clear)</td>
       </tr>
       <tr>
         <td>Insert</td>
-        <td>Shift+&gt; (Insert)</td>
+        <td>Ctrl+&gt; (Insert Character)</td>
+      </tr>
+      <tr>
+        <td>Shift+Insert</td>
+        <td>Shift+&gt; (Insert Line)</td>
       </tr>
       <tr>
         <td>Delete</td>
-        <td>Shift+Backspace (Delete)</td>
+        <td>Ctrl+Backspace (Delete Character)</td>
       </tr>
       <tr>
-        <td>Page Down</td>
+        <td>Shift+Delete</td>
+        <td>Shift+Backspace (Delete Line)</td>
+      </tr>
+      <tr>
+        <td>End or `</td>
         <td>Fuji / Invert</td>
       </tr>
       <tr>

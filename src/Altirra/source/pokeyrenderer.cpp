@@ -404,94 +404,172 @@ void ATPokeyRenderer::MergeEvents(const Edge *src1, const Edge *src2, Edge *dst)
 
 template<int activeChannel>
 ATPokeyRenderer::FireTimerRoutine ATPokeyRenderer::GetFireTimerRoutine() const {
-	static const FireTimerRoutine kRoutines[2][16]={
-		// Bit 7 controls clock selection and is independent.
-		// Bit 4 controls volume only mode.
+	static const FireTimerRoutine kRoutines[2][2][16]={
+		// What we are trying to do here is minimize the amount of work done
+		// in the FireTimer() routine, in two ways: precompile code paths with
+		// specific functions enabled, and identify when the resultant signal
+		// does not change.
+		//
+		// AUDCx bit 7 controls clock selection and isn't tied to anything else,
+		//             so it always needs to go through.
+		//
+		// AUDCx bit 5 enables pure tone mode. When set, it overrides bit 6.
+		//             Therefore, we map [6:5] = 11 to 01.
+		//
+		// AUDCx bit 6 chooses the 4-bit LFSR or the 9/17-bit LFSR. It is
+		//             overridden in the table as noted above.
+		//
+		// AUDCx bit 4 controls volume only mode. When it is set, we must still
+		//             update the internal flip-flop states, but the volume
+		//             level is locked and can't affect the output.
+		//
+		// We also check the volume on the channel. If it is zero, then the
+		// output also doesn't affect the volume and therefore we can skip the
+		// flush in that case as well.
+		//
+		// High-pass mode throws a wrench into the works. In that case, a pair
+		// of channels are tied together and we have to be careful about what
+		// optimizations are applied. We need to check volumes on both channels,
+		// and the high channel can cause signal changes if the low channel is
+		// un-muted even if the high channel is muted.
+		//
+		// The control value $00 is especially important as it is the init state
+		// used by the OS to silence the audio channels, and thus it should run
+		// quickly. It is annoying to us since it is an LFSR-based mode rather
+		// than volume level.
+
 		{
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x00, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x00, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x40, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x40, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x80, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x80, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0xC0, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0xC0, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false>,
+			{
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x00, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x00, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x40, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x40, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x80, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x80, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xC0, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xC0, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false, false>,
+			},
+			{
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x00, true , false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x00, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, true , false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x40, true , false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x40, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, true , false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x80, true , false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x80, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, true , false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xC0, true , false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xC0, false, false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, true , false>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false, false>,
+			},
 		},
 		{
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x00, true>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x00, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x20, true>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x40, true>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x40, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x20, true>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x80, true>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0x80, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, true>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0xC0, true>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0xC0, false>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, true>,
-			&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false>,
-		}
+			{
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x00, false, true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x00, false, true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false, true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false, true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x40, false, true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x40, false, true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false, true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, false, true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x80, false, true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x80, false, true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false, true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false, true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xC0, false, true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xC0, false, true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false, true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, false, true>,
+			},
+			{
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x00, true , true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x00, true , true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, true , true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, true , true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x40, true , true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x40, true , true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, true , true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x20, true , true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x80, true , true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0x80, true , true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, true , true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, true , true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xC0, true , true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xC0, true , true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, true , true>,
+				&ATPokeyRenderer::FireTimer<activeChannel, 0xA0, true , true>,
+			}
+		},
 	};
 
-	return kRoutines[mChannelVolume[activeChannel] + mChannelVolume[activeChannel ^ 2] != 0][mAUDC[activeChannel] >> 4];
+	const bool highPassEnabled = activeChannel & 1 ? (mAUDCTL & 0x02) != 0 : (mAUDCTL & 0x04) != 0;
+	const bool nonZeroVolume = mChannelVolume[activeChannel] || (highPassEnabled && mChannelVolume[activeChannel & 1]);
+
+	return kRoutines[highPassEnabled][nonZeroVolume][mAUDC[activeChannel] >> 4];
 }
 
-template<int activeChannel, uint8 audcn, bool enableSound>
+template<int activeChannel, uint8 audcn, bool outputAffectsSignal, bool highPassEnabled>
 void ATPokeyRenderer::FireTimer(uint32 t) {
+	bool outputsChanged = false;
+
 	if ((audcn & 0xa0) != 0xa0) {
 		const uint8 polyBit = 8 >> activeChannel;
-
-		uint8 noiseFFClock = true;
 
 		if (!(audcn & 0x80)) {
 			UpdatePoly5Counter(t);
 			uint8 poly5 = mpTables->mPoly5Buffer[mPoly5Counter];
-			noiseFFClock = poly5 & polyBit;
-		}
+			if (!(poly5 & polyBit)) {
+				// This is a bit troublesome. If the high pass filter is enabled, ch1/2
+				// update their high pass flip-flops on every ch3/4 tick regardless of whether
+				// the 5-bit filter is enabled.
+				if (highPassEnabled)
+					goto update_high_pass;
 
-		if (noiseFFClock) {
-			uint8 noiseFFInput = mNoiseFF[activeChannel] ^ 1;
-
-			if (!(audcn & 0x20)) {
-				if (audcn & 0x40) {
-					UpdatePoly4Counter(t);
-					uint8 poly4 = mpTables->mPoly4Buffer[mPoly4Counter];
-					noiseFFInput = (poly4 & polyBit) != 0;
-				} else if (mAUDCTL & 0x80) {
-					UpdatePoly9Counter(t);
-					uint8 poly9 = mpTables->mPoly9Buffer[mPoly9Counter];
-					noiseFFInput = (poly9 & polyBit) != 0;
-				} else {
-					UpdatePoly17Counter(t);
-					uint8 poly17 = mpTables->mPoly17Buffer[mPoly17Counter];
-					noiseFFInput = (poly17 & polyBit) != 0;
-				}
+				return;
 			}
-
-			mNoiseFF[activeChannel] = noiseFFInput;
 		}
+
+		uint8 noiseFFInput = mNoiseFF[activeChannel] ^ 1;
+
+		if (!(audcn & 0x20)) {
+			if (audcn & 0x40) {
+				UpdatePoly4Counter(t);
+				uint8 poly4 = mpTables->mPoly4Buffer[mPoly4Counter];
+				noiseFFInput = (poly4 & polyBit) != 0;
+			} else if (mAUDCTL & 0x80) {
+				UpdatePoly9Counter(t);
+				uint8 poly9 = mpTables->mPoly9Buffer[mPoly9Counter];
+				noiseFFInput = (poly9 & polyBit) != 0;
+			} else {
+				UpdatePoly17Counter(t);
+				uint8 poly17 = mpTables->mPoly17Buffer[mPoly17Counter];
+				noiseFFInput = (poly17 & polyBit) != 0;
+			}
+		}
+
+		mNoiseFF[activeChannel] = noiseFFInput;
 	} else {
 		mNoiseFF[activeChannel] ^= 1;
 	}
 
 	mOutputs[activeChannel] = mNoiseFF[activeChannel];
 
-	bool outputsChanged = false;
-
 	if (activeChannel == 0) {
-		if (mAUDCTL & 0x04)
+		if (highPassEnabled)
 			mOutputs[0] ^= mHighPassFF[0];
 		else
 			mOutputs[0] ^= 0x01;
@@ -499,37 +577,42 @@ void ATPokeyRenderer::FireTimer(uint32 t) {
 
 	// count timer 2
 	if (activeChannel == 1) {
-		if (mAUDCTL & 0x02)
+		if (highPassEnabled)
 			mOutputs[1] ^= mHighPassFF[1];
 		else
 			mOutputs[1] ^= 0x01;
 	}
 
+	if (!highPassEnabled || mChannelVolume[activeChannel])
+		outputsChanged = true;
+
+update_high_pass:
+
 	// count timer 3
-	if (activeChannel == 2) {
+	if (activeChannel == 2 && highPassEnabled) {
 		mHighPassFF[0] = mNoiseFF[0];
-		if (mAUDCTL & 0x04) {
-			mOutputs[0] = mNoiseFF[0] ^ mHighPassFF[0];
+
+		if (mOutputs[0]) {
+			mOutputs[0] = 0;
+
 			if (mChannelVolume[0])
 				outputsChanged = true;
 		}
 	}
 
 	// count timer 4
-	if (activeChannel == 3) {
+	if (activeChannel == 3 && highPassEnabled) {
 		mHighPassFF[1] = mNoiseFF[1];
-		if (mAUDCTL & 0x02) {
-			mOutputs[1] = mNoiseFF[1] ^ mHighPassFF[1];
+
+		if (mOutputs[1]) {
+			mOutputs[1] = 0;
+
 			if (mChannelVolume[1])
 				outputsChanged = true;
 		}
-
 	}
 
-	if (mChannelVolume[activeChannel])
-		outputsChanged = true;
-
-	if (outputsChanged && enableSound)
+	if (outputAffectsSignal && outputsChanged)
 		UpdateOutput(t);
 }
 
@@ -571,11 +654,13 @@ void ATPokeyRenderer::UpdateOutput(uint32 t) {
 	mOutputLevel	= mpTables->mMixTable[vpok] 
 					+ mExternalInput
 					+ (mbSpeakerState ? +24 : 0);		// The XL speaker is approximately 80% as loud as a full volume channel.
-					;
 }
 
 void ATPokeyRenderer::GenerateSamples(uint32 t) {
 	sint32 delta = t - mLastOutputSampleTime;
+
+	if (!delta)
+		return;
 
 	if (delta >= 28) {
 		mLastOutputSampleTime += 28;

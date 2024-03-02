@@ -67,7 +67,7 @@ protected:
 	template<int activeChannel>
 	FireTimerRoutine GetFireTimerRoutine() const;
 
-	template<int activeChannel, uint8 audcn, bool enableSound>
+	template<int activeChannel, uint8 audcn, bool outputAffectsSignal, bool highPassEnabled>
 	void FireTimer(uint32 t);
 
 	void UpdateVolume(int channel);

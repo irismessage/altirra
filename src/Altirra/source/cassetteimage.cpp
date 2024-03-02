@@ -18,6 +18,7 @@
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/bitmath.h>
+#include <vd2/system/cpuaccel.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/math.h>
@@ -26,6 +27,7 @@
 #include "cassetteimage.h"
 #include "uiprogress.h"
 #include "debuggerlog.h"
+#include <emmintrin.h>
 
 using namespace nsVDWinFormats;
 
@@ -87,7 +89,7 @@ namespace {
 		src.Read(dst, count*4);
 	}
 
-	extern "C" __declspec(align(16)) const sint16 kernel[32][8] = {
+	extern "C" VDALIGN(16) const sint16 kernel[32][8] = {
 		{+0x0000,+0x0000,+0x0000,+0x4000,+0x0000,+0x0000,+0x0000,+0x0000 },
 		{-0x000a,+0x0052,-0x0179,+0x3fe2,+0x019f,-0x005b,+0x000c,+0x0000 },
 		{-0x0013,+0x009c,-0x02cc,+0x3f86,+0x0362,-0x00c0,+0x001a,+0x0000 },
@@ -122,14 +124,14 @@ namespace {
 		{+0x0000,+0x000c,-0x005b,+0x019f,+0x3fe2,-0x0179,+0x0052,-0x000a },
 	};
 
-	uint64 resample16x2(sint16 *d, const sint16 *s, uint32 count, uint64 accum, sint64 inc) {
+	uint64 resample16x2_scalar(sint16 *d, const sint16 *s, uint32 count, uint64 accum, sint64 inc) {
 		do {
 			const sint16 *s2 = s + (uint32)(accum >> 32)*2;
 			const sint16 *f = kernel[(uint32)accum >> 27];
 
 			accum += inc;
 
-			uint32 l= (sint32)s2[ 0]*(sint32)f[0]
+			sint32 l= (sint32)s2[ 0]*(sint32)f[0]
 					+ (sint32)s2[ 2]*(sint32)f[1]
 					+ (sint32)s2[ 4]*(sint32)f[2]
 					+ (sint32)s2[ 6]*(sint32)f[3]
@@ -139,7 +141,7 @@ namespace {
 					+ (sint32)s2[14]*(sint32)f[7]
 					+ 0x20002000;
 
-			uint32 r= (sint32)s2[ 1]*(sint32)f[0]
+			sint32 r= (sint32)s2[ 1]*(sint32)f[0]
 					+ (sint32)s2[ 3]*(sint32)f[1]
 					+ (sint32)s2[ 5]*(sint32)f[2]
 					+ (sint32)s2[ 7]*(sint32)f[3]
@@ -152,9 +154,9 @@ namespace {
 			l >>= 14;
 			r >>= 14;
 
-			if (l >= 0x10000)
+			if ((uint32)l >= 0x10000)
 				l = ~l >> 31;
-			if (r >= 0x10000)
+			if ((uint32)r >= 0x10000)
 				r = ~r >> 31;
 
 			d[0] = (sint16)(l - 0x8000);
@@ -163,6 +165,45 @@ namespace {
 		} while(--count);
 
 		return accum;
+	}
+
+	uint64 resample16x2_SSE2(sint16 *d, const sint16 *s, uint32 count, uint64 accum, sint64 inc) {
+		__m128i round = _mm_set1_epi32(0x2000);
+
+		do {
+			const sint16 *s2 = s + (uint32)(accum >> 32)*2;
+			const sint16 *f = kernel[(uint32)accum >> 27];
+			const __m128i coeff16 = *(const __m128i *)f;
+
+			accum += inc;
+
+			__m128i x0 = _mm_loadu_si128((__m128i *)s2);
+			__m128i x1 = _mm_loadu_si128((__m128i *)s2 + 1);
+
+			__m128i y0 = _mm_shufflehi_epi16(_mm_shufflelo_epi16(x0, 0xd8), 0xd8);
+			__m128i y1 = _mm_shufflehi_epi16(_mm_shufflelo_epi16(x1, 0xd8), 0xd8);
+
+			__m128i z0 = _mm_madd_epi16(y0, _mm_shuffle_epi32(coeff16, 0x50));
+			__m128i z1 = _mm_madd_epi16(y1, _mm_shuffle_epi32(coeff16, 0xfa));
+
+			__m128i a = _mm_add_epi32(z0, z1);
+			__m128i b = _mm_add_epi32(a, _mm_shuffle_epi32(a, 0xee));
+			__m128i r = _mm_srai_epi32(_mm_add_epi32(b, round), 14);
+
+			__m128i result = _mm_packs_epi32(r, r);
+
+			*(int *)d = _mm_cvtsi128_si32(result);
+			d += 2;
+		} while(--count);
+
+		return accum;
+	}
+
+	uint64 resample16x2(sint16 *d, const sint16 *s, uint32 count, uint64 accum, sint64 inc) {
+		if (SSE2_enabled)
+			return resample16x2_SSE2(d, s, count, accum, inc);
+		else
+			return resample16x2_scalar(d, s, count, accum, inc);
 	}
 }
 

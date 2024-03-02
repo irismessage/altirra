@@ -57,19 +57,6 @@ for(;;) {
 		case kStateReadOpcode:
 			mInsnPC = mPC;
 
-			{
-				uint8 iflags = mInsnFlags[mPC];
-
-				if (iflags & kInsnFlagBreakPt) {
-					ATSimulatorEvent event = (ATSimulatorEvent)mpBkptManager->TestPCBreakpoint(mPC);
-					if (event) {
-						mbUnusedCycle = true;
-						RedecodeInsnWithoutBreak();
-						return event;
-					}
-				}
-			}
-
 			if (mDebugFlags) {
 				uint8 stat = ProcessDebugging();
 
@@ -89,18 +76,14 @@ for(;;) {
 				uint8 iflags = mInsnFlags[mPC];
 
 				if (iflags & kInsnFlagHook) {
-					uint8 op = mpCallbacks->CPUHookHit(mPC);
+					uint8 op = ProcessHook();
 
 					// if a jump is requested, loop around again
 					if (op == 0x4C)
 						break;
 
-					if (op) {
-						++mPC;
-						mOpcode = op;
-						mpNextState = mDecodeHeap + mDecodePtrs[mOpcode];
+					if (op)
 						return kATSimEvent_None;
-					}
 				}
 			}
 
@@ -2229,6 +2212,10 @@ for(;;) {
 			break;
 #endif
 
+		case kStateUpdateHeatMap:
+			mpHeatMap->ProcessInsn(*this, mOpcode, mAddr, mInsnPC);
+			break;
+
 		case kStateVerifyJump:
 			mpVerifier->VerifyJump(mAddr);
 			break;
@@ -2251,7 +2238,7 @@ for(;;) {
 			break;
 #else
 		default:
-			__assume(false);
+			VDNEVERHERE;
 #endif
 	}
 }

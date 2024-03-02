@@ -330,7 +330,7 @@
 			Filter="cpp;c;cxx;rc;def;r;odl;idl;hpj;bat"
 			>
 			<File
-				RelativePath="..\h\vd2\system\source\bitmath.cpp"
+				RelativePath=".\source\bitmath.cpp"
 				>
 			</File>
 			<File
@@ -542,6 +542,10 @@
 				</FileConfiguration>
 			</File>
 			<File
+				RelativePath=".\source\error_win32.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\event.cpp"
 				>
 			</File>
@@ -624,6 +628,10 @@
 						PreprocessorDefinitions=""
 					/>
 				</FileConfiguration>
+			</File>
+			<File
+				RelativePath=".\source\filestream.cpp"
+				>
 			</File>
 			<File
 				RelativePath="source\filesys.cpp"
@@ -758,7 +766,7 @@
 				</FileConfiguration>
 			</File>
 			<File
-				RelativePath=".\linearalloc.cpp"
+				RelativePath=".\source\linearalloc.cpp"
 				>
 			</File>
 			<File
@@ -1643,6 +1651,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\h\vd2\system\seh.h"
+				>
+			</File>
+			<File
 				RelativePath="..\h\VD2\system\strutil.h"
 				>
 			</File>
@@ -1688,6 +1700,10 @@
 			</File>
 			<File
 				RelativePath="..\h\VD2\system\VDScheduler.h"
+				>
+			</File>
+			<File
+				RelativePath="..\h\vd2\system\vdstdc.h"
 				>
 			</File>
 			<File

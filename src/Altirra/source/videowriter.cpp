@@ -1,6 +1,10 @@
 #include "stdafx.h"
 #include <numeric>
-#include <emmintrin.h>
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
+	#include <emmintrin.h>
+#endif
+
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/error.h>
 #include <vd2/system/fraction.h>
@@ -1572,10 +1576,11 @@ namespace {
 		0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
 	};
 
+#if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
 	int BlockDiff16_8_SSE2(const uint8 *src, const uint8 *ref, ptrdiff_t pitch, uint32 w, uint32 h) {
-		static const __declspec(align(16)) uint32 _m0[4] = { 0x55555555, 0x55555555, 0x55555555, 0x55555555 };
-		static const __declspec(align(16)) uint32 _m1[4] = { 0x33333333, 0x33333333, 0x33333333, 0x33333333 };
-		static const __declspec(align(16)) uint32 _m2[4] = { 0x0f0f0f0f, 0x0f0f0f0f, 0x0f0f0f0f, 0x0f0f0f0f };
+		static const VDALIGN(16) uint32 _m0[4] = { 0x55555555, 0x55555555, 0x55555555, 0x55555555 };
+		static const VDALIGN(16) uint32 _m1[4] = { 0x33333333, 0x33333333, 0x33333333, 0x33333333 };
+		static const VDALIGN(16) uint32 _m2[4] = { 0x0f0f0f0f, 0x0f0f0f0f, 0x0f0f0f0f, 0x0f0f0f0f };
 		__m128i m0 = *(const __m128i *)_m0;
 		__m128i m1 = *(const __m128i *)_m1;
 		__m128i m2 = *(const __m128i *)_m2;
@@ -1605,9 +1610,9 @@ namespace {
 	}
 
 	int BlockDiff16_32_SSE2(const uint8 *src, const uint8 *ref, ptrdiff_t pitch, uint32 w, uint32 h) {
-		static const __declspec(align(16)) uint32 _m0[4] = { 0x55555555, 0x55555555, 0x55555555, 0x55555555 };
-		static const __declspec(align(16)) uint32 _m1[4] = { 0x33333333, 0x33333333, 0x33333333, 0x33333333 };
-		static const __declspec(align(16)) uint32 _m2[4] = { 0x000f0f0f, 0x000f0f0f, 0x000f0f0f, 0x000f0f0f };	// not an error - drop dummy alpha
+		static const VDALIGN(16) uint32 _m0[4] = { 0x55555555, 0x55555555, 0x55555555, 0x55555555 };
+		static const VDALIGN(16) uint32 _m1[4] = { 0x33333333, 0x33333333, 0x33333333, 0x33333333 };
+		static const VDALIGN(16) uint32 _m2[4] = { 0x000f0f0f, 0x000f0f0f, 0x000f0f0f, 0x000f0f0f };	// not an error - drop dummy alpha
 		__m128i m0 = *(const __m128i *)_m0;
 		__m128i m1 = *(const __m128i *)_m1;
 		__m128i m2 = *(const __m128i *)_m2;
@@ -1657,6 +1662,7 @@ namespace {
 
 		return _mm_cvtsi128_si32(err);
 	}
+#endif
 
 	int BlockDiff_8(const uint8 *src, const uint8 *ref, ptrdiff_t pitch, uint32 w, uint32 h) {
 		int err = 0;
@@ -1863,8 +1869,10 @@ void ATVideoEncoderZMBV::CompressInter8() {
 	void (*computeXor)(uint8 *, const uint8 *, const uint8 *, ptrdiff_t, uint32, uint32) = ComputeXor;
 	void (*computeXor16)(uint8 *, const uint8 *, const uint8 *, ptrdiff_t, uint32, uint32) = rgb32 ? ComputeXor16_32 : ComputeXor16_8;
 
+#if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
 	if (SSE2_enabled)
 		blockDiff16 = rgb32 ? BlockDiff16_32_SSE2 : BlockDiff16_8_SSE2;
+#endif
 
 	for(uint32 by = 0; by < bh; ++by) {
 		const uint8 *src2 = src;

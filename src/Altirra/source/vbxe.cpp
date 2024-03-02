@@ -25,6 +25,7 @@
 using namespace ATGTIA;
 
 #define VBXE_FETCH(addr) (mpMemory[(addr) & 0x7FFFF])
+#define VBXE_FETCH_NOWRAP(addr) (mpMemory[(addr)])
 #define VBXE_WRITE(addr, value) ((void)(mpMemory[(addr) & 0x7FFFF] = (value)))
 
 namespace {
@@ -1033,7 +1034,7 @@ void ATVBXEEmulator::BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const 
 	}
 }
 
-void ATVBXEEmulator::RenderScanline(int xend) {
+void ATVBXEEmulator::RenderScanline(int xend, bool pfpmrendered) {
 	int x1 = mX;
 
 	if (x1 >= xend)
@@ -1139,8 +1140,10 @@ void ATVBXEEmulator::RenderScanline(int xend) {
 				case 0x00:
 					if (hiresMode)
 						RenderMode8(x1h, xth);
-					else
+					else if (pfpmrendered)
 						RenderLores(x1h, xth);
+					else
+						RenderLoresBlank(x1h, xth, mbAttrMapEnabled);
 					break;
 
 				case 0x40:
@@ -1434,6 +1437,59 @@ void ATVBXEEmulator::RenderLores(int x1h, int x2h) {
 		dst[0] = dst[1] = mPalette[apx->mCtrl >> 6][d0];
 		priDst[0] = apx->mPriority & i0;
 	}
+}
+
+void ATVBXEEmulator::RenderLoresBlank(int x1h, int x2h, bool attrMapEnabled) {
+	const uint8 *__restrict colorTable = mpColorTable;
+	const uint8 (*__restrict priTable)[2] = mpPriTable;
+
+	uint32 *dst = mpDst + x1h*2;
+	uint8 *priDst = mOvPriDecode + x1h;
+
+	const AttrPixel *apx = &mAttrPixels[x1h];
+
+	const uint8 a0 = priTable[0][0];
+	const uint8 b0 = priTable[0][1];
+	const uint8 c0 = colorTable[b0];
+
+	if (attrMapEnabled) {
+		if (x1h & 1) {
+			uint8 d1 = (&apx->mPFK)[a0] | c0;
+
+			dst[0] = dst[1] = mPalette[apx[1].mCtrl >> 6][d1];
+			++apx;
+			dst += 2;
+			++x1h;
+		}
+
+		int w = (x2h - x1h) >> 1;
+
+		for(int i=0; i<w; ++i) {
+			uint8 d0 = (&apx[0].mPFK)[a0] | c0;
+			uint8 d1 = (&apx[1].mPFK)[a0] | c0;
+
+			dst[0] = dst[1] = mPalette[apx[0].mCtrl >> 6][d0];
+			dst[2] = dst[3] = mPalette[apx[1].mCtrl >> 6][d1];
+			apx += 2;
+			dst += 4;
+		}
+
+		if (x2h & 1) {
+			uint8 d0 = (&apx->mPFK)[a0] | c0;
+
+			dst[0] = dst[1] = mPalette[apx->mCtrl >> 6][d0];
+		}
+	} else {
+		// The attribute map is disabled, so we can assume that all attributes are
+		// the same.
+		const uint32 pixel = mPalette[apx[0].mCtrl >> 6][(&apx[0].mPFK)[a0] | c0];
+
+		int w = (x2h - x1h) * 2;
+		while(w--)
+			*dst++ = pixel;
+	}
+
+	memset(priDst, 0, x2h - x1h);
 }
 
 void ATVBXEEmulator::RenderMode8(int x1h, int x2h) {
@@ -2099,13 +2155,18 @@ void ATVBXEEmulator::RenderOverlay80Text(uint8 *dst, int rx1, int x1, int w) {
 
 	x1 += x1;
 
+	// Character sets are always aligned on a 2K boundary (11 bits), so the character
+	// data fetch never wraps around the memory base.
+	const uint8 *chbase = &mpMemory[mChAddr + mOvTextRow];
+
 	if (mbOvTrans) {
 		uint8 *transDst = &mOvTextTrans[rx1*4];
 
 		do {
-			uint8 ch = VBXE_FETCH(mOvAddr + ((x1 >> 1) & ~1));
-			uint8 attr = VBXE_FETCH(mOvAddr + ((x1 >> 1) & ~1) + 1);
-			uint8 data = VBXE_FETCH(mChAddr + mOvTextRow + ((uint32)ch << 3));
+			const uint32 fetchAddr = (mOvAddr + ((x1 >> 1) & ~1)) & 0x7FFFF;
+			uint8 ch = VBXE_FETCH_NOWRAP(fetchAddr);
+			uint8 attr = VBXE_FETCH_NOWRAP(fetchAddr + 1);
+			uint8 data = chbase[(uint32)ch << 3];
 
 			uint32 baseColor = (uint32)(attr & 0x7f) * 0x01010101;
 			uint32 mask = kExpand4[x1 & 2 ? data & 15 : data >> 4];
@@ -2127,9 +2188,10 @@ void ATVBXEEmulator::RenderOverlay80Text(uint8 *dst, int rx1, int x1, int w) {
 		} while(--w);
 	} else {
 		do {
-			uint8 ch = VBXE_FETCH(mOvAddr + ((x1 >> 1) & ~1));
-			uint8 attr = VBXE_FETCH(mOvAddr + ((x1 >> 1) & ~1) + 1);
-			uint8 data = VBXE_FETCH(mChAddr + mOvTextRow + ((uint32)ch << 3));
+			const uint32 fetchAddr = (mOvAddr + ((x1 >> 1) & ~1)) & 0x7FFFF;
+			uint8 ch = VBXE_FETCH_NOWRAP(fetchAddr);
+			uint8 attr = VBXE_FETCH_NOWRAP(fetchAddr + 1);
+			uint8 data = chbase[(uint32)ch << 3];
 
 			uint32 baseColor = (uint32)(attr & 0x7f) * 0x01010101;
 			uint32 mask = kExpand4[x1 & 2 ? data & 15 : data >> 4];

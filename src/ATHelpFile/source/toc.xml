@@ -18,6 +18,7 @@
     <t name="MyIDE emulation" href="myide.html"/>
     <t name="Serial port emulation" href="serial.html"/>
     <t name="PCLink support" href="pclink.html"/>
+    <t name="Host device" href="host-device.html"/>
   </t>
   <t name="Troubleshooting">
     <t name="General issues" href="troubleshooting.html"/>

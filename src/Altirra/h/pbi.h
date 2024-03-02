@@ -19,6 +19,8 @@ public:
 	virtual void GetDeviceInfo(ATPBIDeviceInfo& devInfo) const = 0;
 	virtual void Select(bool enable) = 0;
 
+	virtual bool IsPBIOverlayActive() const = 0;
+
 	virtual void ColdReset() = 0;
 	virtual void WarmReset() = 0;
 };
@@ -30,6 +32,8 @@ public:
 
 	void Init(ATMemoryManager *memman);
 	void Shutdown();
+
+	bool IsROMOverlayActive() const;
 
 	void AddDevice(IATPBIDevice *dev);
 	void RemoveDevice(IATPBIDevice *dev);

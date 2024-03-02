@@ -49,7 +49,8 @@ const uint32 ATUIDialogROMImages::kPathControlIds[kATROMImageCount] = {
 	IDC_PATH_KMKJZIDE,
 	IDC_PATH_KMKJZIDEV2,
 	IDC_PATH_KMKJZIDEV2_SDX,
-	IDC_PATH_SIDE_SDX
+	IDC_PATH_SIDE_SDX,
+	IDC_PATH_1200XL
 };
 
 ATUIDialogROMImages::ATUIDialogROMImages(ATSimulator& sim)
@@ -89,6 +90,10 @@ bool ATUIDialogROMImages::OnCommand(uint32 id, uint32 extcode) {
 
 		case IDC_BROWSE_XL:
 			Browse(kATROMImage_XL);
+			break;
+
+		case IDC_BROWSE_1200XL:
+			Browse(kATROMImage_1200XL);
 			break;
 
 		case IDC_BROWSE_XEGS:

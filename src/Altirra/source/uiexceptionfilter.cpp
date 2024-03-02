@@ -23,6 +23,8 @@
 
 extern HWND g_hwnd;
 
+bool g_ATDumpWithFullHeap;
+
 int ATExceptionFilter(DWORD code, EXCEPTION_POINTERS *exp) {
 	if (IsDebuggerPresent())
 		return EXCEPTION_CONTINUE_SEARCH;
@@ -73,7 +75,7 @@ int ATExceptionFilter(DWORD code, EXCEPTION_POINTERS *exp) {
 								GetCurrentProcess(),
 								GetCurrentProcessId(),
 								hFile,
-								MiniDumpNormal,
+								g_ATDumpWithFullHeap ? MiniDumpWithFullMemory : MiniDumpNormal,
 								&exInfo,
 								NULL,
 								NULL);
@@ -96,11 +98,23 @@ int ATExceptionFilter(DWORD code, EXCEPTION_POINTERS *exp) {
 		_T("\n")
 #ifdef VD_CPU_X86
 		_T("Exception code: %08x  PC: %08x"), code, exp->ContextRecord->Eip);
-#else
+#elif defined(VD_CPU_AMD64)
 		_T("Exception code: %08x  PC: %08x`%08x"), code, (uint32)(exp->ContextRecord->Rip >> 32), (uint32)exp->ContextRecord->Rip);
+#elif defined(VD_CPU_ARM)
+		_T("Exception code: %08x  PC: %08x"), code, exp->ContextRecord->Pc);
+#else
+	#error Platform not supported
 #endif
 	MessageBox(g_hwnd, buf, _T("Altirra Program Failure"), MB_OK | MB_ICONERROR);
 
 	TerminateProcess(GetCurrentProcess(), code);
 	return 0;
+}
+
+LONG WINAPI ATUnhandledExceptionFilter(EXCEPTION_POINTERS *exp) {
+	return (LONG)ATExceptionFilter(exp->ExceptionRecord->ExceptionCode, exp);
+}
+
+void ATExceptionFilterSetFullHeapDump(bool enabled) {
+	g_ATDumpWithFullHeap = enabled;
 }

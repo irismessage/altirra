@@ -22,6 +22,10 @@
 #include <windows.h>
 #include <gl/gl.h>
 
+#if defined(VD_COMPILER_GCC_MINGW)
+#include <gl/glext.h>
+#endif
+
 #ifndef f_VD2_SYSTEM_VDTYPES_H
 	#include <vd2/system/vdtypes.h>
 #endif

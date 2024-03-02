@@ -52,10 +52,12 @@ void ATUIDialogEditCheat::OnDataExchange(bool write) {
 	if (write) {
 		uint32 addr = GetValue(IDC_ADDRESS);
 		uint32 value = GetValue(IDC_VALUE);
+		bool is16 = IsButtonChecked(IDC_MODE_16BIT);
 
 		if (!mbValidationFailed) {
 			mCheat.mAddress = addr;
 			mCheat.mValue = value;
+			mCheat.mb16Bit = is16;
 		}
 	} else {
 		SetControlTextF(IDC_ADDRESS, L"$%04X", mCheat.mAddress);

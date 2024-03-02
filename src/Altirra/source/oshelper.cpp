@@ -71,6 +71,10 @@ void ATFileSetReadOnlyAttribute(const wchar_t *path, bool readOnly) {
 	if (attrs == INVALID_FILE_ATTRIBUTES)
 		throw MyWin32Error("Unable to change read-only flag on file: %s", GetLastError());
 
+	if (readOnly)
+		attrs |= FILE_ATTRIBUTE_READONLY;
+	else
+		attrs &= ~FILE_ATTRIBUTE_READONLY;
 
 	BOOL success;
 	if (!VDIsWindowsNT())

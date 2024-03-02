@@ -1,0 +1,8 @@
+D:/p4root/Altirra/dev/src/Altirra/CMakeFiles/Altirra.dir
+D:/p4root/Altirra/dev/src/Dita/CMakeFiles/Dita.dir
+D:/p4root/Altirra/dev/src/Dita/CMakeFiles/Dita_gch.dir
+D:/p4root/Altirra/dev/src/Kasumi/CMakeFiles/Kasumi.dir
+D:/p4root/Altirra/dev/src/Kasumi/CMakeFiles/Kasumi_gch.dir
+D:/p4root/Altirra/dev/src/Riza/CMakeFiles/Riza.dir
+D:/p4root/Altirra/dev/src/system/CMakeFiles/system.dir
+D:/p4root/Altirra/dev/src/system/CMakeFiles/system_gch.dir

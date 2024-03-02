@@ -69,6 +69,12 @@
 #define IDD_FILE_ASSOC                  162
 #define IDD_OPTIONS_FILEASSOC           163
 #define IDR_ABOUT                       164
+#define IDD_HDEVICE                     164
+#define IDR_MENU2                       165
+#define IDR_DISPLAY_CONTEXT_MENU        165
+#define IDR_TRACK_STEP                  166
+#define IDR_DISK_SPIN                   167
+#define IDR_TRACK_STEP_2                168
 #define IDI_DISK                        500
 #define IDI_TAPE                        501
 #define IDI_XEX                         502
@@ -80,9 +86,11 @@
 #define IDC_ENABLE_ILLEGALS             1003
 #define IDC_STOP_ON_BRK                 1004
 #define IDC_DISKPATH5                   1004
+#define IDC_BROWSE9                     1004
 #define IDC_DISKPATH2                   1005
 #define IDC_SECTOR_SIZE_128             1005
 #define IDC_ALLOWNMIBLOCKING            1005
+#define IDC_BROWSE10                    1005
 #define IDC_BROWSE2                     1006
 #define IDC_SECTOR_SIZE_256             1006
 #define IDC_SECTOR_COUNT                1007
@@ -256,6 +264,7 @@
 #define IDC_SPEED_SLOW                  1104
 #define IDC_RATE_BROADCAST              1104
 #define IDC_ERRORMODE_DEBUG             1104
+#define IDC_DEVICE_1030                 1104
 #define IDC_STATIC_2600WARNING          1106
 #define IDC_TELNET                      1107
 #define IDC_VSPIN                       1108
@@ -304,6 +313,7 @@
 #define IDC_RESETSHIFT                  1136
 #define IDC_GRAPHICS_DDRAW              1136
 #define IDC_SINGLE_INSTANCE             1136
+#define IDC_ENCODELONGNAMES             1136
 #define IDC_PATH_XL                     1137
 #define IDC_CHANGE_FIRMWARE             1137
 #define IDC_GRAPHICS_D3D9               1137
@@ -345,7 +355,9 @@
 #define IDC_BROWSE_BASIC3               1150
 #define IDC_BROWSE_XEGS                 1150
 #define IDC_ALLOW_WRITES                1151
+#define IDC_PATH_1200XL                 1151
 #define IDC_ALLOW_WRITES2               1152
+#define IDC_BROWSE_1200XL               1152
 #define IDC_ARROWKEYMODE                1153
 #define IDC_RATE_HARDWARE               1154
 #define IDC_SPEED_ADJUST                1155
@@ -374,6 +386,24 @@
 #define IDC_SETFILEASSOC                1179
 #define IDC_REMOVEFILEASSOC             1180
 #define IDC_EDIT1                       1180
+#define IDC_DIAL_ADDRESS                1180
+#define IDC_EMULATION_LEVEL             1181
+#define IDC_DIAL_SERVICE                1181
+#define IDC_DEVICE_850                  1182
+#define IDC_STATIC_BAUDRATE             1183
+#define IDC_STATIC_PERMISSIONS          1184
+#define IDC_STATIC_PROTOCOL             1185
+#define IDC_STATIC_DEVICE               1186
+#define IDC_STATIC_DIAL_ADDRESS         1187
+#define IDC_STATIC_DIAL_SERVICE         1188
+#define IDC_STATIC_HOSTPATH1            1189
+#define IDC_PATH1                       1190
+#define IDC_STATIC_HOSTPATH2            1191
+#define IDC_PATH2                       1192
+#define IDC_STATIC_HOSTPATH3            1193
+#define IDC_PATH3                       1194
+#define IDC_STATIC_HOSTPATH4            1195
+#define IDC_PATH4                       1196
 #define ID_FILE_EXIT                    40001
 #define ID_RUN_COLDRESET                40002
 #define ID_RUN_MAXIMUMSPEED             40003
@@ -772,6 +802,38 @@
 #define ID_HISTORYCONTEXTMENU_SHOWCYCLES 40430
 #define ID_HISTORYCONTEXTMENU_SHOWMICROSECONDS 40431
 #define ID_AUDIO_MUTE                   40432
+#define ID_SYSTEM_SLIGHTSID             40433
+#define ID_SLIGHTSID_ENABLED            40434
+#define ID_SYSTEM_COVOX                 40435
+#define ID_COVOX_ENABLED                40436
+#define ID_STRETCHMODE_INTEGRALPRESERVEASPECTRATIO 40437
+#define ID_VIDEO_SCANLINES              40438
+#define ID_VIEW_COPY                    40440
+#define ID_VIEW_COPYTEXT                40442
+#define ID_DISPLAYCONTEXTMENU_COPY      40445
+#define ID_DISPLAYCONTEXTMENU_PASTE     40446
+#define ID_DISKDRIVE_DRIVESOUNDS        40447
+#define ID_VIDEO_ID                     40448
+#define ID_VIDEO_ENHANCEDTEXTCIO        40449
+#define ID_ATTACHSPECIALCARTRIDGE_BASIC 40450
+#define ID_HARDWARE_1200XL              40451
+#define ID_FIRMWARE_1200XL              40452
+#define ID_CONSOLESWITCHES_FORCESELF    40453
+#define ID_CONSOLESWITCHES_FORCESELFTEST 40454
+#define ID_SYSTEM_HOSTDEVICE            40455
+#define ID_FILTERMODE_SHARPBILINEAR     40456
+#define ID_MEMORYSIZE_MAPRAM            40457
+#define ID_MEMORY_MAPRAM                40458
+#define ID_FILTERMODE_SOFT              40459
+#define ID_FILTERMODE_SOFTER            40460
+#define ID_FILTERMODE_NORMAL            40461
+#define ID_VIEW_FILTERSHARPNESS         40462
+#define ID_FILTERSHARPNESS_SOFTEST      40463
+#define ID_FILTERSHARPNESS_SOFTER       40464
+#define ID_FILTERSHARPNESS_NORMAL       40465
+#define ID_FILTERSHARPNESS_SHARP        40466
+#define ID_FILTERSHARPNESS_SHARPER      40467
+#define ID_FILTERSHARPNESS_SOFT         40468
 #define ID_INPUT_PORT1_NONE             45000
 #define ID_INPUT_PORT2_NONE             45100
 #define ID_INPUT_PORT3_NONE             45200
@@ -784,9 +846,9 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
-#define _APS_NEXT_RESOURCE_VALUE        165
-#define _APS_NEXT_COMMAND_VALUE         40433
-#define _APS_NEXT_CONTROL_VALUE         1181
+#define _APS_NEXT_RESOURCE_VALUE        169
+#define _APS_NEXT_COMMAND_VALUE         40469
+#define _APS_NEXT_CONTROL_VALUE         1191
 #define _APS_NEXT_SYMED_VALUE           106
 #endif
 #endif

@@ -90,6 +90,7 @@ enum ATCartridgeMode {
 	kATCartridgeMode_MaxFlash_1024K_Bank0,
 	kATCartridgeMode_Megacart_1M_2,			// Hardware by Bernd for ABBUC JHV 2009
 	kATCartridgeMode_5200_64K_32KBanks,		// Used by M.U.L.E. 64K conversion
+	kATCartridgeMode_MicroCalc,
 	kATCartridgeModeCount
 };
 
@@ -104,7 +105,8 @@ struct ATCartLoadContext {
 	uint32 mCartSize;
 
 	ATCartLoadStatus mLoadStatus;
-	bool mbMayBe2600;
+
+	vdfastvector<uint8> *mpCaptureBuffer;
 };
 
 class IATCartridgeCallbacks {
@@ -143,7 +145,7 @@ public:
 	void LoadFlash8Mb(bool newer);
 	void LoadFlashSIC();
 	bool Load(const wchar_t *fn, ATCartLoadContext *loadCtx);
-	bool Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, ATCartLoadContext *loadCtx);
+	bool Load(const wchar_t *origPath, IVDRandomAccessStream& stream, ATCartLoadContext *loadCtx);
 	void Unload();
 
 	void Save(const wchar_t *fn, bool includeHeader);
@@ -234,6 +236,9 @@ protected:
 
 	static sint32 ReadByte_CCTL_5200_64K_32KBanks(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_5200_64K_32KBanks(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_CCTL_MicroCalc(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_MicroCalc(void *thisptr0, uint32 address, uint8 value);
 
 	void InitMemoryLayers();
 	void ShutdownMemoryLayers();

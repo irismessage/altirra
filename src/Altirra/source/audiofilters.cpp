@@ -1,10 +1,10 @@
 #include "stdafx.h"
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/math.h>
-#include <intrin.h>
+#include <vd2/system/win32/intrin.h>
 #include "audiofilters.h"
 
-extern "C" __declspec(align(16)) const float gVDCaptureAudioResamplingKernel[32][8] = {
+extern "C" VDALIGN(16) const float gVDCaptureAudioResamplingKernel[32][8] = {
 	{+0x0000,+0x0000,+0x0000,+0x4000,+0x0000,+0x0000,+0x0000,+0x0000 },
 	{-0x000a,+0x0052,-0x0179,+0x3fe2,+0x019f,-0x005b,+0x000c,+0x0000 },
 	{-0x0013,+0x009c,-0x02cc,+0x3f86,+0x0362,-0x00c0,+0x001a,+0x0000 },
@@ -156,6 +156,7 @@ void ATFilterComputeSymmetricFIR_8_32F_Scalar(float *dst, const float *src, size
 	} while(--n);
 }
 
+#if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
 void ATFilterComputeSymmetricFIR_8_32F_SSE(float *dst, const float *src, size_t n, const float *kernel) {
 	__m128 zero = _mm_setzero_ps();
 	__m128 x0 = zero;
@@ -216,8 +217,9 @@ void ATFilterComputeSymmetricFIR_8_32F_SSE(float *dst, const float *src, size_t 
 		_mm_store_ss(dst++, x0);
 	} while(--n);
 }
+#endif
 
-#ifdef VD_CPU_X86
+#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC)
 void __declspec(naked) __cdecl ATFilterComputeSymmetricFIR_8_32F_SSE_asm(float *dst, const float *src, size_t n, const float *kernel) {
 	__asm {
 	mov	edx, esp
@@ -326,7 +328,7 @@ xloop:
 #endif
 
 void ATFilterComputeSymmetricFIR_8_32F(float *dst, const float *src, size_t n, const float *kernel) {
-#ifdef VD_CPU_X86
+#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC)
 	if (SSE_enabled) {
 		ATFilterComputeSymmetricFIR_8_32F_SSE_asm(dst, src, n, kernel);
 		return;

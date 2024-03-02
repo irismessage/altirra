@@ -79,10 +79,14 @@ CIOCmdSpecial		= $0E	;$0E and up is escape
 ;	On entry:
 ;		X = IOCB offset (# x 16)
 ;
-;	Returns
+;	Returns:
 ;		A = depends on operation
 ;		X = IOCB offset (# x 16)
 ;		Y = status (reflected in P)
+;
+;	Notes:
+;		BUFADR must not be touched from CIO. DOS XE relies on this for
+;		temporary storage and breaks if it is modified.
 ;
 .proc CIO
 	;stash IOCB offset (X) and acc (A)
@@ -201,13 +205,13 @@ openOK:
 
 	;copy PUT BYTE vector for Atari Basic
 	ldx		ichidz
-	mwa		hatabs+1,x bufadr
+	mwa		hatabs+1,x icax3z
 	ldy		#6
-	lda		(bufadr),y
+	lda		(icax3z),y
 	ldx		icidno
 	sta		icptl,x
 	iny
-	lda		(bufadr),y
+	lda		(icax3z),y
 	sta		icpth,x
 
 	ldy		#1
@@ -215,11 +219,11 @@ openOK:
 
 invoke:
 	ldx		ichidz
-	mwa		hatabs+1,x bufadr
-	lda		(bufadr),y
+	mwa		hatabs+1,x icax3z
+	lda		(icax3z),y
 	pha
 	dey
-	lda		(bufadr),y
+	lda		(icax3z),y
 	pha
 	ldy		#CIOStatNotSupported
 	ldx		icidno
@@ -285,7 +289,6 @@ cmdGetRecordXit:
 	lda		icblh,x
 	sbc		icblhz
 	sta		icblh,x
-	tya
 	jmp		xit
 	
 cmdGetChars:
@@ -306,11 +309,12 @@ cmdGetCharsLoop:
 	bne		cmdGetCharsLoop
 cmdGetCharsError:
 	jmp		cmdGetRecordXit
+	
 cmdGetCharsSingle:
 	ldy		#5
 	jsr		invoke
 	sta		ciochr
-	jmp		cmdGetRecordXit
+	jmp		xit
 	
 cmdPutRecord:
 	lda		icbllz

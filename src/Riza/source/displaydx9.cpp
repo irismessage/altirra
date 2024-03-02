@@ -33,6 +33,7 @@
 #include <vd2/system/binary.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/math.h>
+#include <vd2/system/seh.h>
 #include <vd2/system/time.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/w32assist.h>
@@ -669,6 +670,9 @@ public:
 		float mChromaOffsetU;
 		float mChromaOffsetV;
 
+		float mPixelSharpnessX;
+		float mPixelSharpnessY;
+
 		bool mbHighPrecision;
 	};
 
@@ -689,6 +693,7 @@ public:
 
 	bool IsD3D9ExEnabled() const { return mbUseD3D9Ex; }
 	bool Is16FEnabled() const { return mbIs16FEnabled; }
+	bool IsPS20Enabled() const { return mbIsPS20Enabled; }
 
 	VDThreadID GetThreadId() const { return mThreadId; }
 	HMONITOR GetMonitor() const { return mhMonitor; }
@@ -724,6 +729,7 @@ protected:
 	int					mCubicRefCount;
 	int					mCubicTempSurfacesRefCount[2];
 	bool				mbIs16FEnabled;
+	bool				mbIsPS20Enabled;
 	bool				mbUseD3D9Ex;
 
 	const VDThreadID	mThreadId;
@@ -790,6 +796,8 @@ VDVideoDisplayDX9Manager::VDVideoDisplayDX9Manager(VDThreadID tid, HMONITOR hmon
 	, mThreadId(tid)
 	, mhMonitor(hmonitor)
 	, mRefCount(0)
+	, mbIs16FEnabled(false)
+	, mbIsPS20Enabled(false)
 	, mbUseD3D9Ex(use9ex)
 {
 	mCubicTempSurfacesRefCount[0] = 0;
@@ -839,6 +847,8 @@ bool VDVideoDisplayDX9Manager::Init() {
 	if (caps.VertexShaderVersion >= D3DVS_VERSION(2, 0) &&
 		caps.PixelShaderVersion >= D3DPS_VERSION(2, 0))
 	{
+		mbIsPS20Enabled = true;
+
 		if (mpManager->CheckResourceFormat(0, D3DRTYPE_TEXTURE, D3DFMT_A16B16G16R16F) &&
 			mpManager->CheckResourceFormat(D3DUSAGE_QUERY_FILTER, D3DRTYPE_TEXTURE, D3DFMT_A16B16G16R16F))
 		{
@@ -1259,6 +1269,7 @@ bool VDVideoDisplayDX9Manager::RunEffect(const EffectContext& ctx, const Techniq
 		float fieldinfo[4];			// (field information)		fieldoffset, -fieldoffset/4, und, und
 		float chromauvscale[4];		// (chroma UV scale)		U scale, V scale, und, und
 		float chromauvoffset[4];	// (chroma UV offset)		U offset, V offset, und, und
+		float pixelsharpness[4];	// (pixel sharpness)		X factor, Y factor, ?, ?
 	};
 
 	static const struct StdParam {
@@ -1283,6 +1294,7 @@ bool VDVideoDisplayDX9Manager::RunEffect(const EffectContext& ctx, const Techniq
 		offsetof(StdParamData, fieldinfo),
 		offsetof(StdParamData, chromauvscale),
 		offsetof(StdParamData, chromauvoffset),
+		offsetof(StdParamData, pixelsharpness),
 	};
 
 	StdParamData data;
@@ -1359,6 +1371,10 @@ bool VDVideoDisplayDX9Manager::RunEffect(const EffectContext& ctx, const Techniq
 	data.chromauvoffset[1] = ctx.mChromaOffsetV;
 	data.chromauvoffset[2] = 0.0f;
 	data.chromauvoffset[3] = 0.0f;
+	data.pixelsharpness[0] = ctx.mPixelSharpnessX;
+	data.pixelsharpness[1] = ctx.mPixelSharpnessY;
+	data.pixelsharpness[2] = 0.0f;
+	data.pixelsharpness[3] = 0.0f;
 
 	uint32 t = VDGetAccurateTick();
 	data.time[0] = (t % 1000) / 1000.0f;
@@ -1634,12 +1650,12 @@ bool VDVideoDisplayDX9Manager::RunEffect(const EffectContext& ctx, const Techniq
 				const float x1 = pi.mbClipPosition ? x0 + ctx.mOutputW * 2.0f * invVpW : 1.f - invVpW;
 				const float y1 = pi.mbClipPosition ? y0 - ctx.mOutputH * 2.0f * invVpH : -1.f + invVpH;
 
-				__try {
+				vd_seh_guard_try {
 					pvx[0].SetFF2(x0, y0, 0xFFFFFFFF, u0, v0, 0, 0);
 					pvx[1].SetFF2(x1, y0, 0xFFFFFFFF, u1, v0, 1, 0);
 					pvx[2].SetFF2(x0, y1, 0xFFFFFFFF, u0, v1, 0, 1);
 					pvx[3].SetFF2(x1, y1, 0xFFFFFFFF, u1, v1, 1, 1);
-				} __except(1) {
+				} vd_seh_guard_except {
 					validDraw = false;
 				}
 
@@ -1662,7 +1678,7 @@ bool VDVideoDisplayDX9Manager::RunEffect(const EffectContext& ctx, const Techniq
 				const float x1 = pi.mbClipPosition ? x0 + ctx.mOutputW * 2.0f * invVpW : 1.f - invVpW;
 				const float y1 = pi.mbClipPosition ? y0 - ctx.mOutputH * 2.0f * invVpH : -1.f + invVpH;
 
-				__try {
+				vd_seh_guard_try {
 					pvx[ 0].SetFF2(x0, y1, 0xFFFFFFFF,  0.0f, 0, 0, 1);
 					pvx[ 1].SetFF2(x0, y0, 0xFFFFFFFF,  0.0f, 0, 0, 0);
 					pvx[ 2].SetFF2(x0, y1, 0xFFFFFFFF, +0.5f, 0, 0, 1);
@@ -1675,7 +1691,7 @@ bool VDVideoDisplayDX9Manager::RunEffect(const EffectContext& ctx, const Techniq
 					pvx[ 9].SetFF2(x1, y0, 0xFFFFFFFF, -0.5f, 0, 1, 0);
 					pvx[10].SetFF2(x1, y1, 0xFFFFFFFF,  0.0f, 0, 1, 1);
 					pvx[11].SetFF2(x1, y0, 0xFFFFFFFF,  0.0f, 0, 1, 0);
-				} __except(1) {
+				} vd_seh_guard_except {
 					validDraw = false;
 				}
 
@@ -1698,7 +1714,7 @@ bool VDVideoDisplayDX9Manager::RunEffect(const EffectContext& ctx, const Techniq
 				const float x1 = pi.mbClipPosition ? x0 + ctx.mOutputW * 2.0f * invVpW : 1.f - invVpW;
 				const float y1 = pi.mbClipPosition ? y0 - ctx.mOutputH * 2.0f * invVpH : -1.f + invVpH;
 
-				__try {
+				vd_seh_guard_try {
 					pvx[ 0].SetFF2(x1, y0, 0xFFFFFFFF, 0,  0.0f, 1, 0);
 					pvx[ 1].SetFF2(x0, y0, 0xFFFFFFFF, 0,  0.0f, 0, 0);
 					pvx[ 2].SetFF2(x1, y0, 0xFFFFFFFF, 0,  0.5f, 1, 0);
@@ -1711,7 +1727,7 @@ bool VDVideoDisplayDX9Manager::RunEffect(const EffectContext& ctx, const Techniq
 					pvx[ 9].SetFF2(x0, y1, 0xFFFFFFFF, 0, -0.5f, 0, 1);
 					pvx[10].SetFF2(x1, y1, 0xFFFFFFFF, 0,  0.0f, 1, 1);
 					pvx[11].SetFF2(x0, y1, 0xFFFFFFFF, 0,  0.0f, 0, 1);
-				} __except(1) {
+				} vd_seh_guard_except {
 					validDraw = false;
 				}
 
@@ -2439,8 +2455,7 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
 		VDVERIFY(Unlock(mpD3DPaletteTexture, mpD3DPaletteTextureUpload));
 	}
 	
-	hr = Lock(mpD3DImageTextures[0], mpD3DImageTexturesUpload[0], &lr);
-	if (FAILED(hr))
+	if (!Lock(mpD3DImageTextures[0], mpD3DImageTexturesUpload[0], &lr))
 		return false;
 
 	mTexFmt.data		= lr.pBits;
@@ -2883,6 +2898,16 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
 							success = false;
 						break;
 
+					case nsVDPixmap::kPixFormat_Pal8:
+						if (mpVideoManager->IsPS20Enabled()) {
+							if (!mpVideoManager->RunEffect(ctx, g_technique_pal8_to_rgb_2_0, rtsurface))
+								success = false;
+						} else {
+							if (!mpVideoManager->RunEffect(ctx, g_technique_pal8_to_rgb_1_1, rtsurface))
+								success = false;
+						}
+						break;
+
 					default:
 						if (mbHighPrecision) {
 							switch(source.format) {
@@ -2928,11 +2953,6 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
 									ctx.mChromaScaleU = 0.25f;
 									ctx.mChromaScaleV = 0.25f;
 									if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_601_to_rgb_2_0, rtsurface))
-										success = false;
-									break;
-
-								case nsVDPixmap::kPixFormat_Pal8:
-									if (!mpVideoManager->RunEffect(ctx, g_technique_pal8_to_rgb_1_1, rtsurface))
 										success = false;
 									break;
 
@@ -2985,11 +3005,6 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
 									ctx.mChromaScaleU = 0.25f;
 									ctx.mChromaScaleV = 0.25f;
 									if (!mpVideoManager->RunEffect(ctx, g_technique_ycbcr_to_rgb_1_1, rtsurface))
-										success = false;
-									break;
-
-								case nsVDPixmap::kPixFormat_Pal8:
-									if (!mpVideoManager->RunEffect(ctx, g_technique_pal8_to_rgb_1_1, rtsurface))
 										success = false;
 									break;
 
@@ -3611,6 +3626,9 @@ void VDVideoDisplayMinidriverDX9::SetFilterMode(FilterMode mode) {
 void VDVideoDisplayMinidriverDX9::SetFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh) {
 	if (mbFullScreen != fs) {
 		mbFullScreen = fs;
+		mFullScreenWidth = w;
+		mFullScreenHeight = h;
+		mFullScreenRefreshRate = refresh;
 
 		if (mpManager) {
 			if (mbFullScreenSet != fs) {
@@ -3924,6 +3942,8 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 			ctx.mChromaScaleV = 1.0f;
 			ctx.mChromaOffsetU = 0.0f;
 			ctx.mChromaOffsetV = 0.0f;
+			ctx.mPixelSharpnessX = mPixelSharpnessX;
+			ctx.mPixelSharpnessY = mPixelSharpnessY;
 			ctx.mbHighPrecision = mbHighPrecision;
 
 			if (updateMode & kModeBobEven)
@@ -3980,6 +4000,8 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 				} else {
 					if (mPreferredFilter == kFilterPoint)
 						bSuccess = mpVideoManager->RunEffect(ctx, g_technique_point, pRTMain);
+					else if ((mPixelSharpnessX > 1 || mPixelSharpnessY > 1) && mpVideoManager->IsPS20Enabled())
+						bSuccess = mpVideoManager->RunEffect(ctx, g_technique_boxlinear_2_0, pRTMain);
 					else
 						bSuccess = mpVideoManager->RunEffect(ctx, g_technique_bilinear, pRTMain);
 				}

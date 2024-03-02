@@ -18,7 +18,7 @@
 #ifndef f_AT_GTIATABLES_H
 #define f_AT_GTIATABLES_H
 
-extern const __declspec(align(16)) uint8 kATAnalysisColorTable[24];
+extern const VDALIGN(16) uint8 kATAnalysisColorTable[24];
 
 void ATInitGTIAPriorityTables(uint8 priorityTables[32][256]);
 

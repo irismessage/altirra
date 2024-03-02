@@ -21,7 +21,6 @@
 #include <vd2/Dita/services.h>
 #include "Dialog.h"
 #include "resource.h"
-#include "harddisk.h"
 #include "ide.h"
 #include "simulator.h"
 #include "oshelper.h"
@@ -36,7 +35,7 @@ VDStringW ATUIShowDialogBrowsePhysicalDisks(VDGUIHandle hParent);
 
 class ATUIDialogHardDisk : public VDDialogFrameW32 {
 public:
-	ATUIDialogHardDisk(IATHardDiskEmulator *hd);
+	ATUIDialogHardDisk();
 	~ATUIDialogHardDisk();
 
 	bool OnLoaded();
@@ -49,13 +48,11 @@ protected:
 	void UpdateCapacity();
 	void UpdateGeometry();
 
-	IATHardDiskEmulator *mpHardDisk;
 	uint32 mInhibitUpdateLocks;
 };
 
-ATUIDialogHardDisk::ATUIDialogHardDisk(IATHardDiskEmulator *hd)
+ATUIDialogHardDisk::ATUIDialogHardDisk()
 	: VDDialogFrameW32(IDD_HARD_DISK)
-	, mpHardDisk(hd)
 	, mInhibitUpdateLocks(0)
 {
 }
@@ -76,11 +73,6 @@ bool ATUIDialogHardDisk::OnLoaded() {
 
 void ATUIDialogHardDisk::OnDataExchange(bool write) {
 	if (!write) {
-		CheckButton(IDC_ENABLE, mpHardDisk->IsEnabled());
-		CheckButton(IDC_READONLY, mpHardDisk->IsReadOnly());
-		CheckButton(IDC_BURSTIO, mpHardDisk->IsBurstIOEnabled());
-		SetControlText(IDC_PATH, mpHardDisk->GetBasePath());
-
 		ATIDEEmulator *ide = g_sim.GetIDEEmulator();
 		CheckButton(IDC_IDE_ENABLE, ide != NULL);
 
@@ -124,18 +116,6 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 		bool enable = IsButtonChecked(IDC_ENABLE);
 		bool reset = false;
 
-		if (mpHardDisk->IsEnabled() != enable) {
-			mpHardDisk->SetEnabled(enable);
-			reset = true;
-		}
-
-		mpHardDisk->SetReadOnly(IsButtonChecked(IDC_READONLY));
-		mpHardDisk->SetBurstIOEnabled(IsButtonChecked(IDC_BURSTIO));
-
-		VDStringW path;
-		GetControlText(IDC_PATH, path);
-		mpHardDisk->SetBasePath(path.c_str());
-
 		ATIDEEmulator *ide = g_sim.GetIDEEmulator();
 		if (IsButtonChecked(IDC_IDE_ENABLE)) {
 			ATIDEHardwareMode hwmode = kATIDEHardwareMode_MyIDE_D5xx;
@@ -151,6 +131,7 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 			const bool write = !IsButtonChecked(IDC_IDEREADONLY);
 			const bool fast = IsButtonChecked(IDC_SPEED_FAST);
 
+			VDStringW path;
 			GetControlText(IDC_IDE_IMAGEPATH, path);
 
 			uint32 cylinders = 0;
@@ -210,14 +191,6 @@ bool ATUIDialogHardDisk::OnCommand(uint32 id, uint32 extcode) {
 	int index = 0;
 
 	switch(id) {
-		case IDC_BROWSE:
-			{
-				VDStringW s(VDGetDirectory('hard', (VDGUIHandle)mhdlg, L"Select base directory"));
-				if (!s.empty())
-					SetControlText(IDC_PATH, s.c_str());
-			}
-			return true;
-
 		case IDC_IDE_IMAGEBROWSE:
 			{
 				int optvals[1]={false};
@@ -259,7 +232,6 @@ bool ATUIDialogHardDisk::OnCommand(uint32 id, uint32 extcode) {
 			}
 			return true;
 
-		case IDC_ENABLE:
 		case IDC_IDE_ENABLE:
 			if (extcode == BN_CLICKED)
 				UpdateEnables();
@@ -282,14 +254,7 @@ bool ATUIDialogHardDisk::OnCommand(uint32 id, uint32 extcode) {
 }
 
 void ATUIDialogHardDisk::UpdateEnables() {
-	bool henable = IsButtonChecked(IDC_ENABLE);
 	bool ideenable = IsButtonChecked(IDC_IDE_ENABLE);
-
-	EnableControl(IDC_STATIC_HOSTPATH, henable);
-	EnableControl(IDC_PATH, henable);
-	EnableControl(IDC_BROWSE, henable);
-	EnableControl(IDC_READONLY, henable);
-	EnableControl(IDC_BURSTIO, henable);
 
 	EnableControl(IDC_STATIC_IDE_IMAGEPATH, ideenable);
 	EnableControl(IDC_IDE_IMAGEPATH, ideenable);
@@ -364,8 +329,8 @@ void ATUIDialogHardDisk::UpdateCapacity() {
 	--mInhibitUpdateLocks;
 }
 
-void ATUIShowHardDiskDialog(VDGUIHandle hParent, IATHardDiskEmulator *hd) {
-	ATUIDialogHardDisk dlg(hd);
+void ATUIShowHardDiskDialog(VDGUIHandle hParent) {
+	ATUIDialogHardDisk dlg;
 
 	dlg.ShowDialog(hParent);
 }

@@ -546,18 +546,18 @@ void ATUIProfilerSourcePane::OnCreate() {
 	HDITEM hdi;
 	hdi.mask = HDI_TEXT | HDI_WIDTH | HDI_FORMAT;
 	hdi.cxy = 50;
-	hdi.pszText = _T("Cycles");
+	hdi.pszText = (LPTSTR)_T("Cycles");
 	hdi.fmt = HDF_LEFT | HDF_STRING;
 	SendMessage(mhwndHeader, HDM_INSERTITEM, 0, (LPARAM)&hdi);
-	hdi.pszText = _T("Insns");
+	hdi.pszText = (LPTSTR)_T("Insns");
 	SendMessage(mhwndHeader, HDM_INSERTITEM, 1, (LPARAM)&hdi);
-	hdi.pszText = _T("CPI");
+	hdi.pszText = (LPTSTR)_T("CPI");
 	SendMessage(mhwndHeader, HDM_INSERTITEM, 2, (LPARAM)&hdi);
-	hdi.pszText = _T("CCPI");
+	hdi.pszText = (LPTSTR)_T("CCPI");
 	SendMessage(mhwndHeader, HDM_INSERTITEM, 3, (LPARAM)&hdi);
-	hdi.pszText = _T("DMA%");
+	hdi.pszText = (LPTSTR)_T("DMA%");
 	SendMessage(mhwndHeader, HDM_INSERTITEM, 4, (LPARAM)&hdi);
-	hdi.pszText = _T("Text");
+	hdi.pszText = (LPTSTR)_T("Text");
 	SendMessage(mhwndHeader, HDM_INSERTITEM, 5, (LPARAM)&hdi);
 
 	mpSourceView = new ATUIProfilerSourceTextView(mSession);

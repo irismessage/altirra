@@ -87,6 +87,42 @@ technique bilinear_2_0 {
 	}
 }
 
+///////////////////////////////////////////////////////////////////////////
+
+void VertexShaderBoxlinear_2_0(VertexInput IN, out float4 oPos : POSITION, out float2 oT0 : TEXCOORD0) {
+	oPos = IN.pos;
+	oT0 = IN.uv2 * vd_texsize.xy;
+}
+
+float4 PixelShaderBoxlinear_2_0(float2 t0 : TEXCOORD0) : COLOR0 {
+	float2 f = floor(t0 + 0.5);
+	float2 d = (f - t0);
+	
+	t0 = f - saturate(d * vd_pixelsharpness + 0.5) + 0.5;
+
+	return tex2D(samp0, t0 * vd_texsize.wz);
+};
+
+technique boxlinear_2_0 {
+	pass p0 <
+		bool vd_clippos = true;
+	> {
+		VertexShader = compile vs_2_0 VertexShaderBoxlinear_2_0();
+		PixelShader = compile ps_2_0 PixelShaderBoxlinear_2_0();
+
+		MinFilter[0] = Linear;
+		MagFilter[0] = Linear;
+		MipFilter[0] = Linear;
+		AddressU[0] = Clamp;
+		AddressV[0] = Clamp;
+		Texture[0] = <vd_srctexture>;
+
+		AlphaBlendEnable = false;
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 struct VertexOutputBicubic_2_0 {
 	float4	pos		: POSITION;
 	float2	uvfilt	: TEXCOORD0;
@@ -702,6 +738,48 @@ technique v210_to_rgb_2_0 {
 		VertexShader = compile vs_2_0 VS_v210_to_RGB_2_0_C(5, -1, 0, 1);
 		PixelShader = compile ps_2_0 PS_v210_to_RGB_2_0_pass5();
 	}	
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//	Pal8 to RGB -- pixel shader 2.0
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void VS_Pal8_to_RGB_2_0(
+	float4 pos : POSITION,
+	float2 uv : TEXCOORD0,
+	out float4 oPos : POSITION,
+	out float2 oT0 : TEXCOORD0)
+{
+	oPos = pos;
+	oT0 = uv;
+}
+
+float4 PS_Pal8_to_RGB_2_0(float2 uv : TEXCOORD0) : COLOR0
+{
+	half index = tex2D(samp0, uv).r;
+
+	return tex2D(samp1, half2(index * 255.0h/256.0h + 0.5h/256.0h, 0));
+}
+
+technique pal8_to_rgb_2_0 {
+	pass < string vd_viewport = "unclipped,unclipped"; > {
+		VertexShader = compile vs_2_0 VS_Pal8_to_RGB_2_0();
+		PixelShader = compile ps_2_0 PS_Pal8_to_RGB_2_0();
+		
+		Texture[0] = <vd_srctexture>;
+		AddressU[0] = Clamp;
+		AddressV[0] = Clamp;
+		MinFilter[0] = Point;
+		MagFilter[0] = Point;
+		
+		Texture[1] = <vd_srcpaltexture>;
+		AddressU[1] = Clamp;
+		AddressV[1] = Clamp;
+		MinFilter[1] = Point;
+		MagFilter[1] = Point;
+	}
 }
 
 #endif

@@ -34,10 +34,6 @@
 #include <math.h>
 #include <limits>
 
-#ifndef VDFORCEINLINE
-	#define VDFORCEINLINE __forceinline
-#endif
-
 ///////////////////////////////////////////////////////////////////////////
 
 bool VDSolveLinearEquation(double *src, int n, ptrdiff_t stride_elements, double *b, double tolerance = 1e-5);

@@ -35,6 +35,7 @@ enum ATDebugExpNodeType {
 	kATDebugExpNodeType_Mul,
 	kATDebugExpNodeType_Div,
 	kATDebugExpNodeType_DerefByte,
+	kATDebugExpNodeType_DerefSignedByte,
 	kATDebugExpNodeType_DerefWord,
 	kATDebugExpNodeType_Invert,
 	kATDebugExpNodeType_Negate,
@@ -55,6 +56,8 @@ struct ATDebugExpEvalContext {
 	ATAnticEmulator *mpAntic;
 
 	bool mbAccessValid;
+	bool mbAccessReadValid;
+	bool mbAccessWriteValid;
 	sint32 mAccessAddress;
 	uint8 mAccessValue;
 };
@@ -82,6 +85,9 @@ public:
 	virtual bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) { return false; }
 
 	virtual bool Optimize(ATDebugExpNode **result) { return false; }
+	virtual bool OptimizeInvert(ATDebugExpNode **result) { return false; }
+
+	virtual bool CanOptimizeInvert() const { return false; }
 
 	virtual void ToString(VDStringA& s) {
 		ToString(s, 0);

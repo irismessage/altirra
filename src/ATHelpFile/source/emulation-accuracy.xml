@@ -48,18 +48,17 @@
   </p>
   <h2>Known issues: CPU</h2>
   <ul>
-    <li>Missed DLIs are not implemented. On real hardware, NMIs from ANTIC are missed by the CPU if BRK or IRQ interrupt processing begins on exactly cycle
-      4 of a scan line where an NMI is supposed to take place.</li>
     <li>
-      Reads from unmapped memory produce a constant value instead of the value on the floating data bus.
+      Missed DLIs are not enabled by default. On real hardware, NMIs from ANTIC are missed by the CPU if BRK or IRQ interrupt processing begins on exactly cycle
+      4 of a scan line where an NMI is supposed to take place. This must be enabled in CPU options in the emulator.
+    </li>
+    <li>
+      Reads from unmapped memory produce a constant value instead of the value on the floating data bus. Either behavior can occur on the real hardware
+      depending on whether the model in question has pull-ups on the data bus.
     </li>
   </ul>
   <h2>Known issues: ANTIC</h2>
   <ul>
-    <li>
-      On real hardware, a horizontally scrolled wide playfield displays two color clocks of garbage along the right border, which can affect P/M collisions.
-      This area is valid or blank in Altirra.
-    </li>
     <li>
       The invert/blink state is not correct on characters when vertical scrolling is used to replay buffered data on a character mode scan line.
     </li>
@@ -70,10 +69,7 @@
   </ul>
   <h2>Known issues: POKEY</h2>
   <ul>
-    <li>Not all serial port modes are implemented.</li>
     <li>The phases of the 15KHz clock may not be correct if initialization mode is toggled off very briefly (less than 7 cycles).</li>
-    <li>The SIO data monitoring bit in SKSTAT only works for cassette transfers, not disk transfers.</li>
-    <li>Keyboard IRQs can happen at any offset, instead of relative to the 15KHz clock.</li>
   </ul>
   <h2>Known issues: PIA</h2>
   <ul>

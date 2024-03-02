@@ -38,6 +38,7 @@ public:
 	void BeginFrame(bool pal, bool chromaArtifact, bool chromaArtifactHi, bool blend);
 	void Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
 	void Artifact32(uint32 y, uint32 *dst, uint32 width);
+	void InterpolateScanlines(uint32 *dst, const uint32 *src1, const uint32 *src2, uint32 n);
 
 protected:
 	void ArtifactPAL8(uint32 dst[N], const uint8 src[N]);
@@ -59,6 +60,7 @@ protected:
 	bool mbChromaArtifactsHi;
 	bool mbBlendActive;
 	bool mbBlendCopy;
+	bool mbScanlineDelayValid;
 
 	int mYScale;
 	int mYBias;
@@ -75,8 +77,10 @@ protected:
 	union {
 		uint8 mPALDelayLine[N];
 		uint8 mPALDelayLine32[N*2*3];	// RGB24 @ 14MHz resolution
-		__declspec(align(16)) uint32 mPALDelayLineUV[2][N];
+		VDALIGN(16) uint32 mPALDelayLineUV[2][N];
 	};
+
+	uint32 mScanlineDelay[N*2];		// RGB32 @ 14MHz resolution
 
 	union {
 		uint32 mPrevFrame7MHz[M][N];
@@ -86,22 +90,22 @@ protected:
 	union {
 		// NTSC high artifacting - scalar/MMX (64-bit)
 		struct {
-			__declspec(align(8)) uint32 mPalToR[256][2][12];
-			__declspec(align(8)) uint32 mPalToG[256][2][12];
-			__declspec(align(8)) uint32 mPalToB[256][2][12];
-			__declspec(align(8)) uint32 mPalToRTwin[256][12];
-			__declspec(align(8)) uint32 mPalToGTwin[256][12];
-			__declspec(align(8)) uint32 mPalToBTwin[256][12];
+			VDALIGN(8) uint32 mPalToR[256][2][12];
+			VDALIGN(8) uint32 mPalToG[256][2][12];
+			VDALIGN(8) uint32 mPalToB[256][2][12];
+			VDALIGN(8) uint32 mPalToRTwin[256][12];
+			VDALIGN(8) uint32 mPalToGTwin[256][12];
+			VDALIGN(8) uint32 mPalToBTwin[256][12];
 		} m2x;
 
 		// NTSC high artifacting - SSE2 (128-bit)
 		struct {
-			__declspec(align(16)) uint32 mPalToR[256][4][16];
-			__declspec(align(16)) uint32 mPalToG[256][4][16];
-			__declspec(align(16)) uint32 mPalToB[256][4][16];
-			__declspec(align(16)) uint32 mPalToRTwin[256][2][16];
-			__declspec(align(16)) uint32 mPalToGTwin[256][2][16];
-			__declspec(align(16)) uint32 mPalToBTwin[256][2][16];
+			VDALIGN(16) uint32 mPalToR[256][4][16];
+			VDALIGN(16) uint32 mPalToG[256][4][16];
+			VDALIGN(16) uint32 mPalToB[256][4][16];
+			VDALIGN(16) uint32 mPalToRTwin[256][2][16];
+			VDALIGN(16) uint32 mPalToGTwin[256][2][16];
+			VDALIGN(16) uint32 mPalToBTwin[256][2][16];
 		} m4x;
 
 		// PAL high artifacting - scalar (32-bit) (448K)

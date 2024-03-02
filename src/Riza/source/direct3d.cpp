@@ -874,7 +874,7 @@ void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh
 		int bestrefresherr = 0;
 		const int targetwidth = w && h ? w : dm.Width;
 		const int targetheight = w && h ? h : dm.Height;
-		const int targetrefresh = w && h ? refresh : dm.RefreshRate;
+		const int targetrefresh = w && h && refresh ? refresh : dm.RefreshRate;
 		
 		for(UINT mode=0; mode<count; ++mode) {
 			HRESULT hr = mpD3D->EnumAdapterModes(mAdapter, D3DFMT_X8R8G8B8, mode, &dm2);
@@ -1131,13 +1131,8 @@ bool VDD3D9Manager::UploadVertices(unsigned vertices, const Vertex *data) {
 	if (!vx)
 		return false;
 
-	bool success = true;
-	__try {
-		memcpy(vx, data, sizeof(Vertex)*vertices);
-	} _except(1) {
-		// still happens with some video drivers on device loss.. #&$*(#$
-		success = false;
-	}
+	// Default pool resources may return a broken lock on device loss on Windows XP.
+	bool success = VDMemcpyGuarded(vx, data, sizeof(Vertex)*vertices);
 
 	UnlockVertices();
 	return success;
@@ -1470,7 +1465,6 @@ HRESULT VDD3D9Manager::PresentFullScreen(bool wait) {
 bool VDD3D9Manager::Is3DCardLame() {
 	REQUIRE(mDevCaps.DeviceType != D3DDEVTYPE_SW, "software device detected");
 	REQUIRECAPS(PrimitiveMiscCaps, D3DPMISCCAPS_CULLNONE, "primitive misc caps check failed");
-	REQUIRECAPS(RasterCaps, D3DPRASTERCAPS_DITHER, "raster caps check failed");
 	REQUIRECAPS(TextureCaps, D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP, "texture caps failed");
 	REQUIRE(!(mDevCaps.TextureCaps & D3DPTEXTURECAPS_SQUAREONLY), "device requires square textures");
 	REQUIRECAPS(TextureFilterCaps, D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR

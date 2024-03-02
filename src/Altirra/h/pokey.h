@@ -105,7 +105,7 @@ public:
 	void	AddSIODevice(IATPokeySIODevice *device);
 	void	RemoveSIODevice(IATPokeySIODevice *device);
 
-	void	ReceiveSIOByte(uint8 byte, uint32 cyclesPerByte, bool simulateInputPort = false);
+	void	ReceiveSIOByte(uint8 byte, uint32 cyclesPerBit, bool simulateInputPort = false);
 
 	void	SetAudioLine2(int v);		// used for audio from motor control line
 	void	SetDataLine(bool newState);

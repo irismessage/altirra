@@ -14,10 +14,14 @@
     
       ? <expression>
       
-    The expression may contain the following elements:
+    The expression may contain the following elements, from highest to lowest
+    precedence:
     
+     Constants
       iii      Integer
       $hhh     Hex integer
+
+     Variables
       pc       PC register
       x        X register
       y        Y register
@@ -27,28 +31,66 @@
       vpos     ANTIC vertical position counter
       address  PC or memory address from current breakpoint
       value    Value written from current access write breakpoint
-      db addr  Read memory byte
+     
+     Grouping
+      (exp)    Subexpression
+      
+     Unary operators
+      db addr  Read memory unsigned byte
+      dsb addr Read memory signed byte
       dw addr  Read memory word
-      +        Add / unary plus
-      -        Subtract / unary minus
+      +        Unary plus
+      -        Unary minus
+      <        Unary low byte (bits 0-7, as unsigned byte)
+      >        Unary high byte (bits 8-15, as unsigned byte)
+      !        Logical negation
+      
+     Multiplicative operators
       *        Multiply
       /        Divide
-      <        Less-than / unary low byte
+      %        Modulus
+      
+     Additive operators
+      +        Add
+      -        Subtract
+      
+     Relational operators
+      <        Less-than
       <=       Less-equal
-      >        Greater-than / unary high byte
+      >        Greater-than
       >=       Greater-equal
       =        Equal
       !=       Not equal
+     
+     Bitwise operators 1
+      &        Bitwise AND
+      
+     Bitwise operators 2
+      |        Bitwise OR
+      ^        Bitwise XOR
+      
+     Logical operators 1
+      and      Logical AND
+      
+     Logical operators 2
+      or       Logical OR
       
     Symbol names may also be used in expressions, but care should be taken
     to distinguish between "symbol", which evaluates to the symbol's address,
     and "db symbol" or "dw symbol", which reads a byte or word at the address.
+    Spaces are not significant except to delimit tokens.
+    
+    All expressions are evaluated with 32-bit signed two's-complement integer
+    arithmetic. Logical operators operate according to C rules, where 0
+    signifies false, a non-zero value is interpreted as true, and true is
+    encoded as 1.
     
     Examples:
     
       vdslst              Address of DLI vector ($0200)
       dw vdslst           DLI routine address
       dw vdslst+2         DLI routine address + 2
+      dw vdslst + 2       DLI routine address + 2
       dw (vdslst+2)       SIO proceed IRQ routine address
 
 + a    Assemble
@@ -68,15 +110,31 @@
     
     Statements may be stacked to share an operand: LDA:RNE VCOUNT
     
-    Some helper macros supported:
+    Pseudoinstruction macros supported:
         MVA src dst -> LDA src / STA dst
         MVX src dst -> LDX src / STX dst
         MVY src dst -> LDY src / STY dst
+        MWA src dst -> Move 16-bit data using LDA/STA
+        MWX src dst -> Move 16-bit data using LDX/STX
+        MWY src dst -> Move 16-bit data using LDY/STY
         Rcc -> Bcc *
         Scc:<insn> -> Bcc next / <insn> / next:
+        Jcc -> branch + jump
         INW/DEW -> INC/DEC / BNE / INC/DEC
+        INL/DEL -> INC/DEC 24-bit "long" value
+        IND/DED -> INC/DEC 32-bit "double-word" value
+        ADD -> CLC+ADC
+        SUB -> SEC+SBC
+        ADB/SBB src1 src2 dst -> Store src1-src2 in dst (8-bit)
+        ADW/SBW src1 src2 dst -> Store src1-src2 in dst (16-bit)
+        CPB/CPW/CPL/CPD src1 src2 -> Compare src1-src2 (8/16/24/32-bit)
+        PHR -> Push A, X, Y
+        PLR -> Pop Y, X, A
+        
+    Supported directives:
+        ORG address            Shift code origin to new address
 
-> a8   Set Atari800-compatible command aliases
++ a8   Set Atari800-compatible command aliases
 
     Sets compatibility aliases for commands from the Atari800 emulator debugger.
     
@@ -87,19 +145,42 @@
         cont      g            Continue (go)
         show      r            Show registers
         stack     k            Show stack
+        setpc *   r pc *       Change PC register
+        seta *    r a *        Change A register
+        setx *    r x *        Change X register
+        sety *    r y *        Change Y register
+        sets *    r s *        Change S register
+        setn [*]  r p.n */1    Set N flag
+        setv [*]  r p.v */1    Set V flag
+        setd [*]  r p.d */1    Set D flag
+        seti [*]  r p.i */1    Set I flag
+        setz [*]  r p.z */1    Set Z flag
+        setc [*]  r p.c */1    Set C flag
+        clrn      r p.n 0      Clear N flag
+        clrv      r p.v 0      Clear V flag
+        clrd      r p.d 0      Clear D flag
+        clri      r p.i 0      Clear I flag
+        clrz      r p.z 0      Clear Z flag
+        clrc      r p.c 0      Clear C flag
         c         e            Change (enter)
         d         u            Disassemble (unassemble)
-        m         db           Memory list (display bytes)
+        f * * *.. f * L>* *..  Fill memory
+        m * [*]   db * [L>*]   Memory list (display bytes)
+        s * *.. s * [L>*]..    Search memory
+        sum * *   .sum * L>*   Compute memory sum
         bpc       bp           Set PC breakpoint
         history   h            Show CPU history
         g         t            Go one insn (trace)
         r         gr           Execute until return
+        b         bl/bc/bp     Breakpoints
         antic     .antic       Display ANTIC status
         gtia      .gtia        Display GTIA status
         pia       .pia         Display PIA status
         pokey     .pokey       Display POKEY status
         dlist     .dumpdlist   Show display list
+        labels    .loadsym     Load symbols
         coldstart .restart     Cold-reset the simulation
+        warmstart .warmreset   Warm-reset the simulation
         help      .help        Display command help
 
 ^ ac, al, as  Manage command aliases
@@ -121,6 +202,52 @@
     
     To access a command that is blocked by an alias, prefix the command name
     with a backtick (`).
+
++ ap   Add command alias pattern
+
+    Adds a command alias pattern for a debugger command.
+    
+        ap "pattern"          (Clear alias pattern)
+        ap "pattern" "alias"  (Set alias pattern)
+        
+    Allows a command alias to be set that matches and transforms arguments.
+    The pattern string matches a command and optional arguments, while the
+    alias string determines the resulting command and arguments.
+    
+    Tokens %0, %1, %2... up through %9 can be used to match and substitute
+    parameters. They must appear as or at the end of an argument in the
+    pattern. The special token %* can also be used to capture and recall
+    a variable number of remainder of arguments (varargs). It can only
+    capture and recall entire parameters.
+    
+    If multiple alias patterns are declared for the same command, they are
+    added and tested in order and the first one to match is used. Therefore,
+    patterns should be added from least to most general.
+    
+    Examples:
+    
+        ap "foo" "bar"
+        
+           Matches the command "foo" with no arguments and executes "bar"
+           in response.
+           
+        ap "foo x" "bar y"
+        
+           Matches the command "foo" with a single argument "x" and executes
+           the command "bar y" in response.
+           
+        ap "foo %1 %2 %*" "bar %1 L>%2 %*"
+        
+           Matches the command "foo" with two or more arguments and executes
+           the command "bar" with the second argument prefixed with L>.
+           
+        ap "foo %1 L%2" "bar %1 %2"
+        
+           Matches the command "foo" with exactly two arguments and the second
+           argument prefixed with L, and executes "bar" with the second
+           argument stripped of its prefix.
+           
+    See also: ac, al, as
 
 + ba   Break on memory access
 
@@ -231,8 +358,13 @@
     access check, and only one read or write access or access range may
     be included.
     
-    If there are no other clauses other than a single PC or access check,
-    the result is the same as the equivalent bp or ba command.
+    The debugger can optimize some conditional expressions for faster
+    evaluation, such as removing redundant logical negation (!) operators
+    and folding constants. An error is reported if the conditional
+    expression is determined to always evaluate to true or false.
+    
+    If the expression reduces to a single PC or access check, the result is
+    the same as the equivalent bp or ba command.
     
     Examples:
     
@@ -271,18 +403,21 @@
 
     Shows the contents of memory with a particular interpretation.
     
-      da <xaddress> [L<length>]   (Display ATASCII string)
-      db <xaddress> [L<length>]   (Display bytes)
-      dd <xaddress> [L<length>]   (Display 32-bit double words)
-      df <xaddress> [L<length>]   (Display decimal float)
-      di <xaddress> [L<length>]   (Display INTERNAL string)
-      dw <xaddress> [L<length>]   (Display 16-bit words)
+      da [<xaddress> [L<length>]]   (Display ATASCII string)
+      db [<xaddress> [L<length>]]   (Display bytes)
+      dd [<xaddress> [L<length>]]   (Display 32-bit double words)
+      df [<xaddress> [L<length>]]   (Display decimal float)
+      di [<xaddress> [L<length>]]   (Display INTERNAL string)
+      dw [<xaddress> [L<length>]]   (Display 16-bit words)
       
     Length specifies the number of elements to display.
     
     The display commands read memory in debug mode and do not trigger side
     effects that would normally be caused by a CPU read, such as clearing
     PIA interrupts or switching cartridge banks.
+    
+    If no address or length is given, memory dumping continues from the
+    end of the last continuable operation.
 
 + e    Enter (alter) data in memory
 
@@ -383,6 +518,73 @@
     The history UI pane contains a more powerful history preprocessor that is
     also able to identify subroutines and is recommended for serious history
     review.
+
++ hma  Show heat map accesses
+
+    Shows read and write accesses to memory.
+    
+      hma [<address> [L<length>]]
+      
+    The requested memory range is broken down into contiguous ranges that
+    have been read and written by the CPU.
+    
+    Note that accelerated accesses from high-level emulation (HLE) and from
+    ANTIC are not shown in the heat map.
+    
+    See also: hmc (clear heat map)
+
++ hmc  Clear heat map
+
+    Clears all tracking data in the heat map.
+    
+      hmc
+      
+    All registers and memory locations are marked as preset.
+    
+    See also: hme (heat map enable)
+
++ hmd  Dump heat map memory status
+
+    Dumps the tracking status of memory locations in the heat map.
+    
+      hmd <address> [L<length>]
+      
+    The status of a memory location may be one of the following:
+    
+      Unknown:       Source of data was not tracked.
+      Preset:        Source was not modified since the last clear.
+      Immediate:     Source is the argument of an immediate-mode insn.
+      Computed:      Source is from computation on the CPU.
+      
+    Data sources are tracked through load/store instructions and through
+    the registers such that the original load source is propagated instead
+    of showing the copy routine itself as the data source.
+
+    See also: hmc (clear heat map), hme (heat map enable)
+
++ hme  Enable or disable heat map
+
+    Enables or disables heat map tracing.
+    
+      hme on                (Enable heat map)
+      hme off               (Disable heat map)
+      
+    The heat map tracks the source of data as it flows through registers and
+    memory, as well as any read or write accesses to memory.
+    
+    See also: hma (show heat map accesses), hmc (heat map clear),
+              hmd (dump heat map memory status),
+              hmr (heat map register status), hmm (heat map memory).
+
++ hmr  Show heat map register status
+
+    Dump CPU register status being tracked by heat map.
+    
+      hmr
+      
+    The sources of the data in the A, X, and Y registers is shown if known.
+    
+    See also: hmc (heat map clear), hme (heat map enable)
 
 + k    Show call stack
 
@@ -505,7 +707,10 @@
 
     Disassemble CPU code at a given address.
     
-      u <address> [L<length>]
+      u [<address> [L<length>]]
+      
+    If no address is given, disassembly continues from the end of the last
+    continuable command.
 
 ^ vta, vtc, vtl, vtr    Verifier target control
 > vta  Verifier target add
@@ -577,6 +782,12 @@
     
       .basic
 
++ .basic_line  Dump BASIC program line
+
+    Lists the statements contained within a BASIC line.
+    
+      .basic_line <address>
+
 + .basic_vars  Dump BASIC variables
 
     Dumps the contents of the Atari BASIC variable name table (VNT).
@@ -593,6 +804,15 @@
 
 + .beam        Show ANTIC scan position
 + .caslogdata  Toggle verbose cassette data read logging
+
++ .ciodevs     Dump Central Input/Output (CIO) device list
+
+    Dumps the list of CIO devices in the HATABS database.
+    
+      .ciodevs
+
++ .covox       Dump Covox sound extension status
+
 + .diskorder   Set forced phantom sector ordering
 
     Overrides default phantom sector ordering with a predefined order.
@@ -638,7 +858,7 @@
     Displays status of the DS1305 real-time clock chip in the SIDE
     interface.
     
-      .side
+      .ds1305
 
 + .dma         Show current ANTIC DMA pattern
 
@@ -651,17 +871,58 @@
     on when certain critical cycles are passed and if any pertinent
     registers are rewritten. For instance, a mid-line write to DMACTL
     that changes the playfield width can change the DMA pattern.
+    
+    See also: .dmamap (show ANTIC DMA activity map)
+
++ .dmamap      Show ANTIC DMA activity map
+
+    Displays the pattern of DMA cycles performed by ANTIC for the current
+    frame.
+    
+      .dmamap
+      
+    ANTIC DMA analysis must be enabled in the View menu for this command to
+    work, as otherwise DMA cycle patterns are not captured.
+    
+    Each line is of the form:
+    
+        8: .*......................~ ~..................... |  10:104
+        
+    The numbers at the end are DMA and non-DMA cycle counts, respectively.
+
+    Unlike the .dma command, the .dmamap command always shows the exact DMA
+    cycle pattern that occurred, complete with any mid-scanline changes.
+    However, it cannot show upcoming DMA cycles like the .dma command can.
+      
+    See also: .dma (show current ANTIC DMA pattern)
 
 + .dumpdlist   Dump ANTIC display list
 
     Disassemble an ANTIC display list stored in memory.
     
-      .dumpdlist [<address>]
+      .dumpdlist [-n] [<address>]
+      
+    Options:
+    
+      -n    Do not collapse groups of identical mode lines.
       
     If no address is supplied, the current ANTIC display list pointer is
     used.
 
 + .dumpdsm     Dump disassembly to file
+
+    Disassemble a range of memory as CPU instructions to a file.
+    
+      .dumpdsm [-c] [-l] [-p] [-n] [-s] [-t] <filename> <addr> L<length>
+      
+    The following options can be specified:
+    
+      -c    Include code bytes.
+      -l    Use lowercase opcode names.
+      -n    Do not decode labels.
+      -p    Include PC address.
+      -s    Separate routines with blank lines after jumps and returns.
+      -t    Use 4 character tabs.
 
 + .dumpsnap    Create bootable snapshot image
 
@@ -798,7 +1059,7 @@
     Flags:
       
       0        Apply zero padding to right-justified string
-      #        Prefix %x strings with 0x and %X strings with 0X
+      #        Prefix %x output with 0x and %X output with 0X
       +        Always display +/- sign on numbers
       <space>  Prefix positive numbers with a space
       -        Left-justify formatted field
@@ -823,13 +1084,18 @@
     Type specifies the field type:
     
       %b       Binary number
+      %c       ASCII character (only 20-7E; others produce '.')
       %d, %i   Signed decimal
       %u       Unsigned decimal
       %x       Hexadecimal (lowercase)
       %X       Hexadecimal (uppercase)
+      %y       Symbol address
 
     Unlike the C function printf(), .printf always prints a newline
     after the formatted string.
+    
+    Example:
+      .printf "Display list vector: $%04x" dw(vdslst)
 
     See also: .echo
 
@@ -866,6 +1132,15 @@
     in scripts.
     
     See also: g (Go)
+
++ .sum         Compute sum of memory range
+
+    Computes the sum of bytes in a memory range.
+    
+      .sum address L<length>
+      
+    All bytes within the memory range are added and both the binary sum
+    and the one's complement (carry wraparound) sum are reported.
 
 + .tape        Display cassette tape deck status
 
@@ -904,6 +1179,7 @@
 + .vbxe_xdl    Display VBXE extended display list (XDL)
 + .vbxe_traceblits    Toggle VBXE blit tracing
 + .vectors     Display kernel vectors
++ .warmreset   Warm reset simulation
 
 + .writemem    Write memory to disk
 
@@ -925,5 +1201,6 @@
 . 
 . Some commands support length syntax:
 .   db siov L100
+.   db 4000 L>5FFF
 .
 . Use .help <command> for detailed help on that command.

@@ -25,8 +25,10 @@
 #include <vd2/system/vdtypes.h>
 
 class ATCPUEmulator;
+class ATCPUHookManager;
 class ATCPUProfiler;
 class ATCPUVerifier;
+class ATCPUHeatMap;
 class ATSaveStateReader;
 class ATSaveStateWriter;
 class ATCPUEmulatorMemory;
@@ -37,7 +39,6 @@ public:
 	virtual uint32 CPUGetTimestamp() = 0;
 	virtual uint32 CPUGetCycle() = 0;
 	virtual uint32 CPUGetUnhaltedCycle() = 0;
-	virtual uint8 CPUHookHit(uint16 address) = 0;
 	virtual uint8 CPURecordBusActivity(uint8 value) = 0;
 };
 
@@ -109,7 +110,10 @@ public:
 	ATCPUEmulator();
 	~ATCPUEmulator();
 
-	bool	Init(ATCPUEmulatorMemory *mem, ATCPUEmulatorCallbacks *callbacks);
+	bool	Init(ATCPUEmulatorMemory *mem, ATCPUHookManager *hookmgr, ATCPUEmulatorCallbacks *callbacks);
+
+	ATCPUEmulatorMemory *GetMemory() const { return mpMemory; }
+	ATCPUHookManager *GetHookManager() const { return mpHookMgr; }
 
 	void	SetHLE(IATCPUHighLevelEmulator *hle);
 	void	SetBreakpointManager(ATBreakpointManager *bkptmanager);
@@ -205,6 +209,7 @@ public:
 
 	void	SetProfiler(ATCPUProfiler *profiler);
 	void	SetVerifier(ATCPUVerifier *verifier);
+	void	SetHeatMap(ATCPUHeatMap *heatmap);
 
 	bool	AreIllegalInsnsEnabled() const { return mbIllegalInsnsEnabled; }
 	void	SetIllegalInsnsEnabled(bool enable);
@@ -241,6 +246,7 @@ public:
 	void	SetHLEDelay(int delay) { mHLEDelay = delay; }
 	void	InjectOpcode(uint8 op);
 	void	Push(uint8 v);
+	void	PushWord(uint16 v);
 	uint8	Pop();
 	void	Jump(uint16 addr);
 	void	Ldy(uint8 v);
@@ -257,7 +263,8 @@ public:
 	int		Advance65816WithBusTracking();
 
 protected:
-	uint8	ProcessDebugging();
+	__declspec(noinline) uint8 ProcessDebugging();
+	__declspec(noinline) uint8 ProcessHook();
 	bool	ProcessInterrupts();
 	void	AddHistoryEntry(bool is816);
 	void	UpdatePendingIRQState();
@@ -338,7 +345,8 @@ protected:
 	enum {
 		kDebugFlag_Step = 0x01,		// mbStep is set
 		kDebugFlag_SBrk = 0x02,		// mSBrk is active
-		kDebugFlag_Trace = 0x04		// mbTrace is set
+		kDebugFlag_Trace = 0x04,	// mbTrace is set
+		kDebugFlag_BP = 0x08		// Breakpoints are set
 	};
 
 	uint8	mDebugFlags;
@@ -360,6 +368,7 @@ protected:
 	ATCPUSubMode	mCPUSubMode;
 
 	ATCPUEmulatorMemory	*mpMemory;
+	ATCPUHookManager *mpHookMgr;
 	ATCPUEmulatorCallbacks	*mpCallbacks;
 	ATBreakpointManager *mpBkptManager;
 	IATCPUHighLevelEmulator	*mpHLE;
@@ -367,6 +376,7 @@ protected:
 
 	ATCPUProfiler	*mpProfiler;
 	ATCPUVerifier	*mpVerifier;
+	ATCPUHeatMap	*mpHeatMap;
 
 	const uint8 *mpNextState;
 	uint8 *mpDstState;
@@ -381,6 +391,8 @@ protected:
 	bool	mbMarkHistoryIRQ;
 	bool	mbMarkHistoryNMI;
 	bool	mbAllowBlockedNMIs;
+
+	uint32	mBreakpointCount;
 
 	enum {
 		kInsnFlagBreakPt		= 0x01,

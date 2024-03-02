@@ -27,7 +27,14 @@ public:
 	virtual void Init(HWND hwnd, ATSimulator *sim) = 0;
 	virtual void Shutdown() = 0;
 
+	virtual bool IsRawInputEnabled() const = 0;
+
 	virtual void SetFont(const LOGFONTW *font) = 0;
+
+	virtual void OnSize(uint32 w, uint32 h) = 0;
+	virtual void OnChar(int ch) = 0;
+	virtual bool OnKeyDown(uint32 keyCode, uint32 modifiers) = 0;
+	virtual bool OnKeyUp(uint32 keyCode, uint32 modifiers) = 0;
 
 	virtual void Update(bool forceInvalidate) = 0;
 	virtual void Paint(HDC hdc) = 0;

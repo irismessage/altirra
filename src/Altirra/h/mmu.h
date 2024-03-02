@@ -39,14 +39,16 @@ public:
 		ATMemoryLayer *upperKernelLayer,
 		ATMemoryLayer *basicLayer,
 		ATMemoryLayer *gameLayer,
+		ATMemoryLayer *hiddenRamLayer,
 		IATHLEKernel *hle);
 	void Shutdown();
+
+	bool IsKernelROMEnabled() const { return (mCurrentBankInfo & kMapInfo_Kernel) != 0; }
 
 	uint32 GetCPUBankBase() const { return mCPUBase; }
 	uint32 GetAnticBankBase() const { return mAnticBase; }
 
 	void SetBankRegister(uint8 bank);
-	void ForceBASIC();
 
 protected:
 	int mHardwareMode;
@@ -59,19 +61,26 @@ protected:
 	ATMemoryLayer *mpLayerUpperKernel;
 	ATMemoryLayer *mpLayerBASIC;
 	ATMemoryLayer *mpLayerGame;
+	ATMemoryLayer *mpLayerHiddenRAM;
 	IATHLEKernel *mpHLE;
 	bool		mbBASICForced;
 
 	uint32		mCPUBase;
 	uint32		mAnticBase;
+	uint32		mCurrentBankInfo;
 
-	// bits 0-11: bank number (shr 14)
+	// bits 0-8: bank number (shr 14) (8MB)
+	// bit 9: Hidden RAM enable
+	// bit 10: Game ROM enable
+	// bit 11: CPU extended RAM enable
 	// bit 12: ANTIC extended RAM enable
-	// bit 13: CPU extended RAM enable
+	// bit 13: Kernel ROM enable
 	// bit 14: BASIC ROM enable
 	// bit 15: Self-test ROM enable
 	enum {
-		kMapInfo_BankMask		= 0x07FF,
+		kMapInfo_BankMask		= 0x01FF,
+		kMapInfo_HiddenRAM		= 0x0200,
+		kMapInfo_Game			= 0x0400,
 		kMapInfo_ExtendedCPU	= 0x0800,
 		kMapInfo_ExtendedANTIC	= 0x1000,
 		kMapInfo_Kernel			= 0x2000,

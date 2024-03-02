@@ -491,7 +491,7 @@ uint16 ATDisassembleInsn(VDStringA& line, uint16 addr, bool decodeReferences) {
 	return ATDisassembleInsn(line, hent, decodeReferences, false, true, true, true);
 }
 
-uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool decodeReferences, bool decodeRefsHistory, bool showPCAddress, bool showCodeBytes, bool showLabels) {
+uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool decodeReferences, bool decodeRefsHistory, bool showPCAddress, bool showCodeBytes, bool showLabels, bool lowercaseOps, bool wideOpcode) {
 	const uint8 opcode = hent.mOpcode[0];
 	const uint8 byte1 = hent.mOpcode[1];
 	const uint8 byte2 = hent.mOpcode[2];
@@ -551,13 +551,12 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 	const uint8 (*const tbl)[2] = kModeTbl[subMode];
 	uint8 mode = tbl[opcode][0];
 	uint8 opid = tbl[opcode][1];
-	const char *opname = kOpcodes[opid];
 
 	if (showPCAddress) {
 		if (cpuMode == kATCPUMode_65C816)
-			line.append_sprintf("%02X:%04X:", hent.mK, hent.mPC);
+			line.append_sprintf("%02X:%04X: ", hent.mK, hent.mPC);
 		else
-			line.append_sprintf("%04X:", hent.mPC);
+			line.append_sprintf("%04X: ", hent.mPC);
 	}
 
 	int opsize = kBytesPerModeTables[subMode][mode];
@@ -565,16 +564,16 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 	if (showCodeBytes) {
 		switch(opsize) {
 			case 1:
-				line.append_sprintf(" %02X      ", opcode);
+				line.append_sprintf("%02X        ", opcode);
 				break;
 			case 2:
-				line.append_sprintf(" %02X %02X   ", opcode, byte1);
+				line.append_sprintf("%02X %02X     ", opcode, byte1);
 				break;
 			case 3:
-				line.append_sprintf(" %02X %02X %02X", opcode, byte1, byte2);
+				line.append_sprintf("%02X %02X %02X  ", opcode, byte1, byte2);
 				break;
 			case 4:
-				line.append_sprintf(" %02X%02X%02X%02X", opcode, byte1, byte2, byte3);
+				line.append_sprintf("%02X%02X%02X%02X  ", opcode, byte1, byte2, byte3);
 				break;
 		}
 	}
@@ -593,10 +592,25 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 			label = tempLabel.c_str();
 		}
 
-		line.append_sprintf("  %-6s %s", label ? label : "", opname);
-	} else {
-		line.append_sprintf(" %s", opname);
+		line.append_sprintf("%-7s ", label ? label : "");
 	}
+
+	const char *opname = kOpcodes[opid];
+	int opnamepad = (wideOpcode ? 7 : 3) - strlen(opname);
+	if (lowercaseOps) {
+		for(;;) {
+			char c = *opname++;
+
+			if (!c)
+				break;
+
+			line += (char)tolower((unsigned char)c);
+		}
+	} else
+		line += opname;
+
+	while(opnamepad-- > 0)
+		line += ' ';
 
 	if (mode == kModeImm) {
 		line.append_sprintf(" #$%02X", byte1);
@@ -1015,4 +1029,12 @@ int ATGetOpcodeLength(uint8 opcode) {
 	const uint8 (*const tbl)[2] = kModeTbl[subMode];
 
 	return kBytesPerModeTables[subMode][tbl[opcode][0]];
+}
+
+bool ATIsValidOpcode(uint8 opcode) {
+	ATCPUEmulator& cpu = g_sim.GetCPU();
+	ATCPUSubMode subMode = cpu.GetCPUSubMode();
+	const uint8 (*const tbl)[2] = kModeTbl[subMode];
+
+	return tbl[opcode][1] != kOpcodebad;
 }

@@ -70,6 +70,7 @@ namespace
 		"vd_fieldinfo",
 		"vd_chromauvscale",
 		"vd_chromauvoffset",
+		"vd_pixelsharpness",
 	};
 }
 

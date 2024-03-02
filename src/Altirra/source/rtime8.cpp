@@ -112,7 +112,7 @@ uint8 ATRTime8Emulator::DebugReadControl(uint8 addr) {
 		case 13:	// timer minutes
 		case 14:	// timer hours
 		case 15:	// control status
-			return mPhase == 1 ? mRAM[mAddress] >> 4 : mRAM[mAddress & 15];
+			return mPhase == 1 ? mRAM[mAddress] >> 4 : mRAM[mAddress] & 15;
 	}
 
 	return mPhase == 1 ? v / 10 : v % 10;

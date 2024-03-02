@@ -28,6 +28,7 @@ uint8 ATTranslateWin32ErrorToSIOError(uint32 err) {
 			return ATCIOSymbols::CIOStatPathNotFound;
 
 		case ERROR_FILE_EXISTS:
+		case ERROR_ALREADY_EXISTS:
 			return ATCIOSymbols::CIOStatFileExists;
 
 		case ERROR_DISK_FULL:

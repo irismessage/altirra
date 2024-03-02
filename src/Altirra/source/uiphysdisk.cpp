@@ -27,7 +27,6 @@
 #include "Dialog.h"
 #include "uiproxies.h"
 #include "resource.h"
-#include "harddisk.h"
 #include "ide.h"
 #include "simulator.h"
 

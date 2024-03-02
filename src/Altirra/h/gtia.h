@@ -20,6 +20,7 @@
 
 #include <vd2/system/refcount.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/system/vectors.h>
 #include <vd2/Kasumi/pixmap.h>
 
 class IVDVideoDisplay;
@@ -126,8 +127,10 @@ public:
 	bool IsOverscanPALExtended() const { return mbOverscanPALExtended; }
 	void SetOverscanPALExtended(bool extended);
 
+	vdrect32 GetFrameScanArea() const;
 	void GetRawFrameFormat(int& w, int& h, bool& rgb32) const;
 	void GetFrameSize(int& w, int& h) const;
+	void GetPixelAspectMultiple(int& x, int& y) const;
 
 	void SetForcedBorder(bool forcedBorder) { mbForcedBorder = forcedBorder; }
 	void SetFrameSkip(bool turbo) { mbTurbo = turbo; }
@@ -155,8 +158,14 @@ public:
 	bool IsInterlaceEnabled() const { return mbInterlaceEnabled; }
 	void SetInterlaceEnabled(bool enable) { mbInterlaceEnabled = enable; }
 
+	bool AreScanlinesEnabled() const { return mbScanlinesEnabled; }
+	void SetScanlinesEnabled(bool enable) { mbScanlinesEnabled = enable; }
+
 	void SetConsoleSwitch(uint8 c, bool down);
+
+	uint8 GetForcedConsoleSwitches() const { return mForcedSwitchInput; }
 	void SetForcedConsoleSwitches(uint8 c);
+	 
 	void SetControllerTrigger(int index, bool state) {
 		uint8 v = state ? 0x00 : 0x01;
 
@@ -198,14 +207,13 @@ public:
 	void SetVBLANK(VBlankMode vblMode);
 	bool BeginFrame(bool force, bool drop);
 	void BeginScanline(int y, bool hires);
-	void EndScanline(uint8 dlControl);
+	void EndScanline(uint8 dlControl, bool pfRendered);
 	void UpdatePlayer(bool odd, int index, uint8 byte);
 	void UpdateMissile(bool odd, uint8 byte);
 	void UpdatePlayfield160(uint32 x, uint8 byte);
 	void UpdatePlayfield160(uint32 x, const uint8 *src, uint32 n);
 	void UpdatePlayfield320(uint32 x, uint8 byte);
 	void UpdatePlayfield320(uint32 x, const uint8 *src, uint32 n);
-	void EndPlayfield();
 	void Sync();
 
 	void RenderActivityMap(const uint8 *src);
@@ -230,11 +238,11 @@ protected:
 	void AddRegisterChange(uint8 pos, uint8 addr, uint8 value);
 	void UpdateRegisters(const RegisterChange *rc, int count);
 	void UpdateSECAMTriggerLatch(int index);
+	void ResetSprites();
 
 	IATGTIAEmulatorConnections *mpConn; 
 	IVDVideoDisplay *mpDisplay;
 	IATGTIAVideoTap *mpVideoTap;
-	uint32	mX;
 	uint32	mY;
 	uint32	mLastSyncX;
 	bool	mbPMRendered;
@@ -251,6 +259,8 @@ protected:
 	bool	mbPALThisFrame;
 	bool	mbInterlaceEnabled;
 	bool	mbInterlaceEnabledThisFrame;
+	bool	mbScanlinesEnabled;
+	bool	mbScanlinesEnabledThisFrame;
 	bool	mbFieldPolarity;
 	bool	mbLastFieldPolarity;
 	bool	mbPostProcessThisFrame;
@@ -263,8 +273,8 @@ protected:
 	uint8	mPlayerWidth[4];
 	uint8	mMissileWidth[4];
 
-	uint32	mPlayerTriggerPos[4];
-	uint32	mMissileTriggerPos[4];
+	sint32	mPlayerTriggerPos[4];
+	sint32	mMissileTriggerPos[4];
 	uint8	mPlayerShiftData[4];
 	uint8	mMissileShiftData[4];
 
@@ -314,8 +324,8 @@ protected:
 	const uint8 *mpPriTable;
 	const uint8 *mpColorTable;
 
-	__declspec(align(16))	uint8	mMergeBuffer[228];
-	__declspec(align(16))	uint8	mAnticData[228];
+	VDALIGN(16)	uint8	mMergeBuffer[228];
+	VDALIGN(16)	uint8	mAnticData[228];
 	uint32	mPalette[256];
 	bool	mbScanlinesWithHiRes[240];
 

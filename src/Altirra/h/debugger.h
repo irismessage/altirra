@@ -98,7 +98,6 @@ public:
 };
 
 struct ATDebuggerOpenEvent {
-	int mInterruptingEvent;
 	bool mbAllowOpen;
 };
 
@@ -156,8 +155,9 @@ public:
 
 	virtual void StartActiveCommand(IATDebuggerActiveCommand *cmd) = 0;
 
-	virtual const char *GetCommandAlias(const char *alias) const = 0;
-	virtual void SetCommandAlias(const char *alias, const char *command) = 0;
+	virtual bool IsCommandAliasPresent(const char *alias) const = 0;
+	virtual const char *GetCommandAlias(const char *alias, const char *args) const = 0;
+	virtual void SetCommandAlias(const char *alias, const char *args, const char *command) = 0;
 	virtual void ListCommandAliases() = 0;
 	virtual void ClearCommandAliases() = 0;
 

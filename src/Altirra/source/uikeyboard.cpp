@@ -197,7 +197,7 @@ namespace {
 
 static uint8 g_ATVKeyMap[256*8];
 
-#define VKEYMAP(vkey, mods, sc) { ((vkey) << 8) + (mods) + (sc) }
+#define VKEYMAP(vkey, mods, sc) (((vkey) << 8) + (mods) + (sc))
 #define VKEYMAP_CSALL(vkey, sc) \
 	VKEYMAP((vkey), 0, (sc)),	\
 	VKEYMAP((vkey), kShift, (sc) + 0x40),	\

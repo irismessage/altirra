@@ -524,7 +524,7 @@ void ATModemDriverTCP::ThreadRun() {
 			if (exit) {
 				freeaddrinfo(results);
 				WorkerShutdown();
-				goto xit;
+				return;
 			}
 
 			if (p->ai_socktype != SOCK_STREAM)
@@ -651,7 +651,8 @@ void ATModemDriverTCP::ThreadRun() {
 
 						if (exit) {
 							mMutex.Unlock();
-							goto xit;
+							WorkerShutdown();
+							return;
 						}
 
 						bool shouldWrite = !mbWritePending && mWriteQueuedBytes;
@@ -746,7 +747,6 @@ void ATModemDriverTCP::ThreadRun() {
 			break;
 	}
 
-xit:
 	WorkerShutdown();
 }
 

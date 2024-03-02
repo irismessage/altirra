@@ -233,7 +233,7 @@ protected:
 
 	static const CommandEntry kCommands[];
 
-#define X_OPCODE_DECL(name) static const ATDebuggerCmdAssemble::OpcodeEntry ATDebuggerCmdAssemble::kOpcodes_##name[];
+#define X_OPCODE_DECL(name) static const ATDebuggerCmdAssemble::OpcodeEntry kOpcodes_##name[];
 	X_OPCODE_DECL(ADC)
 	X_OPCODE_DECL(AND)
 	X_OPCODE_DECL(ASL)

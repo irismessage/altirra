@@ -134,6 +134,9 @@
     causes the program to sometimes jam up endlessly transmitting the "j" character. Disabling
     the keyboard click and then waiting for the output buffer to drain fixes the problem.
   </p>
+  <p>
+    This bug is fixed in Ice-T XE 2.73.
+  </p>
   
   <!-- *************************************************** -->
   

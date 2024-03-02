@@ -65,7 +65,7 @@ public:
 	// GTIA interface
 	void BeginFrame();
 	void BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires);
-	void RenderScanline(int x2);
+	void RenderScanline(int x2, bool pfpmrendered);
 	void EndScanline();
 
 	void AddRegisterChange(uint8 pos, uint8 addr, uint8 value);
@@ -91,6 +91,7 @@ protected:
 	void RenderAttrDefaultPixels(int x1h, int x2h);
 
 	void RenderLores(int x1, int x2);
+	void RenderLoresBlank(int x1, int x2, bool attmap);
 	void RenderMode8(int x1, int x2);
 	void RenderMode9(int x1, int x2);
 	void RenderMode10(int x1, int x2);

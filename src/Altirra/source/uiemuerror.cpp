@@ -24,6 +24,8 @@
 #include "cpu.h"
 #include "options.h"
 
+void ATSetFullscreen(bool enabled);
+
 ///////////////////////////////////////////////////////////////////////////
 
 enum ATErrorAction {
@@ -83,6 +85,7 @@ void ATUIDialogEmuError::OnDataExchange(bool write) {
 		GetControlText(IDC_CHANGE_HARDWARE, s);
 		switch(mpSim->GetHardwareMode()) {
 			case kATHardwareMode_800:
+			case kATHardwareMode_1200XL:
 			case kATHardwareMode_XEGS:
 				s += L"XL/XE";
 				break;
@@ -157,7 +160,7 @@ bool ATUIDialogEmuError::OnOK() {
 	if (IsButtonChecked(IDC_CHANGE_HARDWARE)) {
 		mpSim->SetHardwareMode(mNewHardwareMode);
 
-		if (mNewHardwareMode == kATHardwareMode_800XL || mNewHardwareMode == kATHardwareMode_XEGS) {
+		if (mNewHardwareMode == kATHardwareMode_800XL || mNewHardwareMode == kATHardwareMode_1200XL || mNewHardwareMode == kATHardwareMode_XEGS) {
 			switch(mpSim->GetMemoryMode()) {
 				case kATMemoryMode_8K:
 				case kATMemoryMode_24K:
@@ -271,6 +274,7 @@ void ATEmuErrorHandler::OnDebuggerOpen(IATDebugger *dbg, ATDebuggerOpenEvent *ev
 			return;
 	}
 
+	ATSetFullscreen(false);
 	switch(ATUIShowDialogEmuError(mParent, mpSim)) {
 		case kATErrorAction_Debug:
 			break;

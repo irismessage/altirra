@@ -70,7 +70,6 @@ public:
 		return buf;
 	}
 	bool empty() const { return !buf; }
-	void discard();
 	void swap(MyError& err);
 	void TransferFrom(MyError& err);
 };
@@ -79,11 +78,6 @@ class MyICError : public MyError {
 public:
 	MyICError(const char *s, uint32 icErr);
 	MyICError(uint32 icErr, const char *format, ...);
-};
-
-class MyMMIOError : public MyError {
-public:
-	MyMMIOError(const char *s, uint32 icErr);
 };
 
 class MyAVIError : public MyError {
@@ -105,11 +99,6 @@ public:
 
 protected:
 	const uint32 mWin32Error;
-};
-
-class MyCrashError : public MyError {
-public:
-	MyCrashError(const char *format, uint32 dwExceptionCode);
 };
 
 class MyUserAbortError : public MyError {

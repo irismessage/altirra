@@ -29,6 +29,7 @@
 #include "diskimage.h"
 
 class ATPokeyEmulator;
+class ATAudioSyncMixer;
 
 class ATCPUEmulatorMemory;
 class VDFile;
@@ -37,6 +38,21 @@ class IVDRandomAccessStream;
 class IATDiskActivity {
 public:
 	virtual void OnDiskActivity(uint8 drive, bool active, uint32 sector) = 0;
+	virtual void OnDiskMotorChange(uint8 drive, bool active) = 0;
+};
+
+enum ATDiskEmulationMode {
+	kATDiskEmulationMode_Generic,
+	kATDiskEmulationMode_FastestPossible,
+	kATDiskEmulationMode_810,
+	kATDiskEmulationMode_1050,
+	kATDiskEmulationMode_XF551,
+	kATDiskEmulationMode_USDoubler,
+	kATDiskEmulationMode_Speedy1050,
+	kATDiskEmulationMode_IndusGT,
+	kATDiskEmulationMode_Happy,
+	kATDiskEmulationMode_1050Turbo,
+	kATDiskEmulationModeCount
 };
 
 class ATDiskEmulator : public IATPokeySIODevice, public IATSchedulerCallback {
@@ -44,13 +60,15 @@ public:
 	ATDiskEmulator();
 	~ATDiskEmulator();
 
-	void Init(int unit, IATDiskActivity *act, ATScheduler *sched);
+	void Init(int unit, IATDiskActivity *act, ATScheduler *sched, ATScheduler *slowsched, ATAudioSyncMixer *mixer);
 
 	bool IsEnabled() const { return mbEnabled; }
 	bool IsAccurateSectorTimingEnabled() const { return mbAccurateSectorTiming; }
+	bool AreDriveSoundsEnabled() const { return mbDriveSoundsEnabled; }
 
 	void SetEnabled(bool enabled) { mbEnabled = enabled; }
 	void SetAccurateSectorTimingEnabled(bool enabled) { mbAccurateSectorTiming = enabled; }
+	void SetDriveSoundsEnabled(bool enabled);
 	void SetSectorBreakpoint(int sector) { mSectorBreakpoint = sector; }
 	int GetSectorBreakpoint() const { return mSectorBreakpoint; }
 
@@ -66,6 +84,9 @@ public:
 
 	void ClearAccessedFlag();
 	bool IsAccessed() const { return mbAccessed; }
+
+	void SetEmulationMode(ATDiskEmulationMode mode);
+	ATDiskEmulationMode GetEmulationMode() { return mEmuMode; }
 
 	void Flush();
 	void Reset();
@@ -100,7 +121,12 @@ public:
 
 protected:
 	void InitSectorInfoArrays();
-	void BeginTransfer(uint32 length, uint32 cyclesToFirstByte, bool useRotationalDelay, bool useHighSpeedFirstByte, bool useHighSpeed);
+	void BeginTransferACKCmd();
+	void BeginTransferACK();
+	void BeginTransferComplete();
+	void BeginTransferError();
+	void BeginTransferNAK();
+	void BeginTransfer(uint32 length, uint32 cyclesToFirstByte, uint32 cyclesToSecondByte, bool useHighSpeedFirstByte, bool useHighSpeed);
 	void UpdateRotationalCounter();
 	void QueueAutoSave();
 	void AutoSave();
@@ -109,26 +135,36 @@ protected:
 	void ProcessCommandPacket();
 	void ProcessCommandTransmitCompleted();
 	void ProcessCommandData();
-	void ComputeSectorsPerTrack();
+	void ComputeGeometry();
 	void ComputePERCOMBlock();
+	void ComputeSupportedProfile();
+	bool SetPERCOMData(const uint8 *data);
+	bool TurnOnMotor();
+	void PlaySeekSound(uint32 initialDelay, uint32 trackCount);
 
 	ATPokeyEmulator	*mpPokey;
 	IATDiskActivity *mpActivity;
 	ATScheduler *mpScheduler;
+	ATScheduler *mpSlowScheduler;
+	ATAudioSyncMixer *mpAudioSyncMixer;
 	int		mUnit;
 	VDStringW	mPath;
 
 	ATEvent		*mpTransferEvent;
-	ATEvent		*mpRotationalEvent;
 	ATEvent		*mpOperationEvent;
 	ATEvent		*mpAutoSaveEvent;
 	ATEvent		*mpAutoSaveErrorEvent;
+	ATEvent		*mpMotorOffEvent;
 
+	uint32	mLastRotationUpdateCycle;
 	uint32	mTransferOffset;
 	uint32	mTransferLength;
 	uint32	mTransferRate;
+	uint32	mTransferSecondByteDelay;
 	uint32	mTransferCyclesPerBit;
 	uint32	mTransferCyclesPerBitFirstByte;
+	uint32	mTransferCompleteRotPos;
+	bool	mbTransferAdjustRotation;
 	uint8	mFDCStatus;
 	uint8	mActiveCommand;
 	bool	mbActiveCommandHighSpeed;
@@ -140,9 +176,11 @@ protected:
 	uint32	mRotationalPosition;
 	uint32	mCurrentTrack;
 	uint32	mSectorsPerTrack;
+	uint32	mTrackCount;
+	uint32	mSideCount;
+	bool	mbMFM;
 
 	bool	mbWriteEnabled;
-	bool	mbWriteRotationalDelay;
 	bool	mbWriteHighSpeedFirstByte;
 	bool	mbWriteHighSpeed;
 	bool	mbAutoFlush;
@@ -152,8 +190,11 @@ protected:
 
 	bool	mbWriteMode;
 	bool	mbCommandMode;
+	bool	mbCommandValid;
+	bool	mbCommandFrameHighSpeed;
 	bool	mbEnabled;
 	bool	mbBurstTransfer;
+	bool	mbDriveSoundsEnabled;
 	bool	mbAccurateSectorTiming;
 	bool	mbAccurateSectorPrediction;
 	bool	mbLastOpError;
@@ -164,10 +205,36 @@ protected:
 	int		mSectorBreakpoint;
 	uint32	mLastSector;
 
+	uint32	mRotationSoundId;
+
 	uint8	mPERCOM[12];
 	int		mFormatSectorSize;
 	int		mFormatSectorCount;
 	int		mFormatBootSectorCount;
+
+	ATDiskEmulationMode mEmuMode;
+	bool	mbSupportedCmdHighSpeed;
+	bool	mbSupportedCmdFrameHighSpeed;
+	bool	mbSupportedCmdPERCOM;
+	bool	mbSupportedCmdFormatSkewed;
+	bool	mbSupportedCmdGetHighSpeedIndex;
+	uint8	mHighSpeedIndex;
+	uint8	mHighSpeedCmdFrameRateLo;
+	uint8	mHighSpeedCmdFrameRateHi;
+	uint8	mHighSpeedDataFrameRateLo;
+	uint8	mHighSpeedDataFrameRateHi;
+	uint32	mCyclesPerSIOByte;
+	uint32	mCyclesPerSIOBit;
+	uint32	mCyclesPerSIOByteHighSpeed;
+	uint32	mCyclesPerSIOBitHighSpeed;
+	uint32	mCyclesToACKSent;
+	uint32	mCyclesToFDCCommand;
+	uint32	mCyclesToCompleteAccurate;
+	uint32	mCyclesToCompleteFast;
+	uint32	mCyclesPerDiskRotation;
+	uint32	mCyclesPerTrackStep;
+	uint32	mCyclesForHeadSettle;
+	bool	mbSeekHalfTracks;
 
 	uint8	mSendPacket[528];
 	uint8	mReceivePacket[528];

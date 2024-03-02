@@ -22,14 +22,6 @@
 	#pragma once
 #endif
 
-#ifndef VDFORCEINLINE
-#define VDFORCEINLINE __forceinline
-#endif
-
-#ifndef VDNOINLINE
-#define VDNOINLINE __declspec(noinline)
-#endif
-
 #include <vd2/system/vdtypes.h>
 #include "scheduler.h"
 
@@ -42,7 +34,7 @@ class ATAnticEmulatorConnections {
 public:
 	VDFORCEINLINE uint8 AnticReadByteFast(uint32 address) {
 		uintptr readPage = mpAnticReadPageMap[address >> 8];
-		return (readPage & 1) ? AnticReadByte(address) : *(const uint8 *)(readPage + address);
+		return !(readPage & 1) ? *(const uint8 *)(readPage + address) : AnticReadByte(address);
 	}
 
 	virtual uint8 AnticReadByte(uint32 address) = 0;
@@ -133,6 +125,7 @@ public:
 
 	void DumpStatus();
 	void DumpDMAPattern();
+	void DumpDMAActivityMap();
 
 	void	LoadState(ATSaveStateReader& reader);
 	void	SaveState(ATSaveStateWriter& writer);
@@ -183,6 +176,7 @@ protected:
 	int		mPFDMALastCheckX;
 	bool	mbPFDMAEnabled;
 	bool	mbPFDMAActive;
+	bool	mbPFRendered;			// true if any pixels have been rendered this scanline by the playfield
 	bool	mbWSYNCRelease;
 	uint8	mWSYNCHoldValue;
 	bool	mbHScrollEnabled;
@@ -299,12 +293,12 @@ protected:
 	ATEvent *mpRegisterUpdateEvent;
 	ATEvent *mpEventWSYNC;
 
-	__declspec(align(16)) uint8	mDMAPattern[115 + 13];
+	VDALIGN(16) uint8	mDMAPattern[115 + 13];
 
-	__declspec(align(16)) uint8	mPFDataBuffer[114 + 14];
-	__declspec(align(16)) uint8	mPFCharBuffer[114 + 14];
+	VDALIGN(16) uint8	mPFDataBuffer[114 + 14];
+	VDALIGN(16) uint8	mPFCharBuffer[114 + 14];
 
-	__declspec(align(16)) uint8	mPFDecodeBuffer[228 + 12];
+	VDALIGN(16) uint8	mPFDecodeBuffer[228 + 12];
 
 	DLHistoryEntry	mDLHistory[312];
 	uint8	mActivityMap[312][114];
@@ -323,21 +317,47 @@ VDFORCEINLINE uint8 ATAnticEmulator::Advance() {
 		case 1:
 			break;
 		case 3:
-			mpPFDataWrite[xoff] = mpConn->AnticReadByteFast(mPFRowDMAPtrBase + ((mPFRowDMAPtrOffset++) & 0x0fff));
+			mpPFDataWrite[xoff >> 1] = mpConn->AnticReadByteFast(mPFRowDMAPtrBase + ((mPFRowDMAPtrOffset++) & 0x0fff));
 			break;
 		case 5:
+			mpPFDataWrite[xoff >> 2] = mpConn->AnticReadByteFast(mPFRowDMAPtrBase + ((mPFRowDMAPtrOffset++) & 0x0fff));
+			break;
+		case 7:
+			mpPFDataWrite[xoff >> 3] = mpConn->AnticReadByteFast(mPFRowDMAPtrBase + ((mPFRowDMAPtrOffset++) & 0x0fff));
+			break;
+		case 9:
 			{
-				uint8 c = mpPFDataRead[xoff];
-				mpPFCharFetchPtr[xoff] = mpConn->AnticReadByteFast(mPFCharFetchPtr + ((uint32)(c & mPFCharMask) << 3));
+				uint8 c = mpPFDataRead[xoff >> 1];
+				mpPFCharFetchPtr[xoff >> 1] = mpConn->AnticReadByteFast(mPFCharFetchPtr + ((uint32)(c & mPFCharMask) << 3));
 			}
 			break;
-		case 6:
-			mpPFDataWrite[xoff - 1] = mPhantomDMAData[xoff - 1];
+		case 11:
+			{
+				uint8 c = mpPFDataRead[xoff >> 2];
+				mpPFCharFetchPtr[xoff >> 2] = mpConn->AnticReadByteFast(mPFCharFetchPtr + ((uint32)(c & mPFCharMask) << 3));
+			}
+			break;
+
+		case 18:
+			mpPFDataWrite[(xoff - 1) >> 1] = mPhantomDMAData[xoff - 1];
 			++mPFRowDMAPtrOffset;
 			break;
-		case 8:
-			mpPFCharFetchPtr[xoff - 1] = mPhantomDMAData[xoff - 1];
+		case 20:
+			mpPFDataWrite[(xoff - 1) >> 2] = mPhantomDMAData[xoff - 1];
+			++mPFRowDMAPtrOffset;
 			break;
+		case 22:
+			mpPFDataWrite[(xoff - 1) >> 3] = mPhantomDMAData[xoff - 1];
+			++mPFRowDMAPtrOffset;
+			break;
+
+		case 24:
+			mpPFCharFetchPtr[(xoff - 1) >> 1] = mPhantomDMAData[xoff - 1];
+			break;
+		case 26:
+			mpPFCharFetchPtr[(xoff - 1) >> 2] = mPhantomDMAData[xoff - 1];
+			break;
+
 		default:
 			VDNEVERHERE;
 		}

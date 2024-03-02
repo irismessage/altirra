@@ -1,5 +1,94 @@
 Altirra Change Log
 
+Version 2.10 [August 13, 2012]:
+   [features added]
+   * SlightSID emulation support.
+   * Covox emulation support.
+   * 1200XL emulation support.
+   * BASIC programs can now be booted.
+   * Fast boot option now accelerates timeouts for powered down disk drives.
+   * Disk: Added support for format skewed ($66) command.
+   * Disk: Format commands ($21, $22) now support high-speed operation.
+   * Disk: Added emulation profile modes for various disk drives.
+   * Disk: Reduced ACK-to-complete delay when accurate sector timing is off.
+   * Disk: Added rotation and seek sound emulation.
+   * Disk: Accurate disk timing prediction is now preserved when burst I/O transfers are enabled.
+   * Debugger: Added .sum (sum memory area) command.
+   * Debugger: Added .warmstart command.
+   * Debugger: Added ap (alias pattern) command for adding aliases with patterns.
+   * Debugger: Added additional aliases to a8 command (set Atari800-compatible command aliases).
+   * Debugger: Added alternate L>addr syntax for setting an address range length based on an end address.
+   * Debugger: Added heat map support.
+   * Debugger: Added .basic_dumpline command.
+   * Debugger: Enter now repeats the last command.
+   * Debugger: .dumpdlist command now collapses runs of identical commands.
+   * Debugger: Unassemble and dump commands now support continuation from the last address.
+   * Debugger: Added deref signed byte (dsb) expression operator.
+   * Debugger: Added %%c and %%y formatting specifiers to .printf command.
+   * Debugger: Added .dmamap command to show ANTIC DMA pattern over the course of a frame.
+   * Serial: 1030 Modem support.
+   * Display: Added scanline display mode.
+   * Display: Added integer-multiple version of preserve aspect ratio sizing mode.
+   * Display: Added sharp bilinear filter mode.
+   * Display: Text can now be copied out of ANTIC modes 2, 3, 6, and 7 (GR.0, 1, and 2).
+   * Display: Added CIO intercept based enhanced text mode.
+   * HDevice: Added minimal support for SDX Get Current Directory command ($30).
+   * HDevice: Added support for H6-H9: text translation modes.
+   * HDevice: Implemented rename, get/set/create/remove directory, and get file length commands.
+   * HDevice/PCLink: Fixed lock command not setting read-only flag.
+   * Cartridge: Added MicroCalc 32K cartridge type support.
+   * Cartridge: Added cartridge type autodetection.
+   * UI: Screenshot command now adjusts for interlacing and 14MHz dot clock rendering.
+   * UI: The program is now marked as high DPI aware in the application manifest.
+   * Simulator: Added support for MapRAM MMU modification.
+   
+   [bugs fixed]
+   * Increased paste keyboard timer to reduce dropped keys on line processing delays.
+   * Fixed startup crash on Sandy Bridge CPUs on Windows XP.
+   * Simulator: Inhibit FP math acceleration hooks when PBI ROM overlay is active.
+   * Simulator: BASIC disable Option key hold is now released more quickly to reduce cartridge conflicts.
+   * Debugger: "read" and "write" terms can now appear more than twice in a conditional breakpoint expression.
+   * Debugger: Fixed .tracecio off not working.
+   * Debugger: Fixed execution stopping on TRACE statements.
+   * Debugger: Breakpoint clear (bc) command no longer interprets breakpoint numbers as hex.
+   * Debugger: Fixed console entry window not always disabling properly.
+   * Debugger: .pokey command now reports correct status for secondary POKEY.
+   * Display: Fixed crash on some XP systems on display mode change.
+   * Display: Added workaround for ps1.1 precision issue on Intel graphics cards.
+   * Display: Fixed bicubic scaling in OpenGL mode.
+   * ANTIC: Fixed line buffer addressing to correctly handle aliasing of buffered data to different modes.
+   * POKEY: Fixed glitching in high-pass filtering.
+   * POKEY: Fixed wrong bit in SKSTAT being set for serial input overruns.
+   * POKEY: Fixed asynchronous receive mode not resetting timers 3+4 that are already running.
+   * Disk: Fixed handling of XF551 high-speed sector skew format commands ($A1/$A2).
+   * Disk: Format command now sends back ACK+ERROR+buffer instead of NAK on a read-only disk.
+   * Disk: Adjusted step rate of 810 drive to 5.3ms.
+   * Disk: Fixed forced sector ordering command (.diskorder) for .pro images.
+   * Disk: Step delays were not always reflected correctly in command delay time (only rotational position).
+   * Disk: Fixed inverted write protect bit status.
+   * Disk: Attempted writes to a write protected disk now return errors instead of a NAK.
+   * Disk: Fixed command response when accessing a drive with no disk.
+   * Disk: Fixed error return for unsupported Write PERCOM Block requests.
+   * Disk Explorer: Fixed case sensitivity issue allowing duplicate file creation on DOS 2 file systems.
+   * Input: Fixed bug in keyboard repeat detection code.
+   * Input: Improved Caps Lock key support.
+   * Cartridge: An error is now thrown when attempting to save a cartridge image in .CAR format with an unsupported mapper.
+   * Cartridge: Fixed switchable XEGS cartridge modes.
+   * Display: Fixed display mode matching when /f is specified on the command line.
+   * Display: Improved behavior of interlaced mode when frames are dropped.
+   * CPU: Fixed cycle behavior of ASL/LSR/ROL/ROR abs,X instructions in 65C02 mode.
+   * HLE Kernel: Fixed BUFADR being overwritten by CIO, which broke the DOS XE executable loader.
+   * IDE: Fixed banking in KMK/JZ V1 mode and added 3K ROM support.
+   * IDE: Fixed multiple sector read requests of exactly 32 sectors.
+   * VBXE: Fixed memory not being cleared on cold reset with randomize function disabled.
+   * Serial: Fixed incompatibility with Ice-T XE and the R: handler's STATUS handler.
+   * Misc: Fixed upper 4 bits for some R-Time 8 register reads.
+   * HDevice: Fixed NOTE and POINT commands.
+   * Cheats: Fixed 16-bit option not being tracked properly for manually entered cheats.
+   * GTIA: Sprites are now triggered properly from within horizontal blank.
+   * GTIA: Fixed sprite image overlap result.
+   * Cassette: Loading a new tape didn't press 'play' on the emulated player until the next cold reset.
+
 Version 2.00 [December 24, 2011]:
    [breaking changes]
    * Debugger: The step over command has been changed from s to o.

@@ -75,6 +75,12 @@ public:
 	bool Read(uint32 baudRate, uint8& c, bool& framingError);
 	void Write(uint32 baudRate, uint8 c);
 
+	void SetToneDialingMode(bool enable);
+	bool IsToneDialingMode() const;
+	void HangUp();
+	void Dial(const char *address, const char *service);
+	void Answer();
+
 	void FlushOutputBuffer();
 
 protected:

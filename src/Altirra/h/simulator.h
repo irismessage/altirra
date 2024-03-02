@@ -39,13 +39,22 @@
 #include "disk.h"
 #include "scheduler.h"
 #include "vbxe.h"
+#include "pia.h"
+#include "simeventmanager.h"
 
 struct ATCartLoadContext;
 class ATMemoryManager;
 class ATMMUEmulator;
 class ATPBIManager;
+class ATSIOManager;
 class ATKMKJZIDE;
 class ATSIDEEmulator;
+class ATHLEBasicLoader;
+class ATHLEProgramLoader;
+class ATHLEFPAccelerator;
+class ATHLEFastBootHook;
+class IATHLECIOHook;
+class ATAudioSyncMixer;
 
 enum ATMemoryMode {
 	kATMemoryMode_48K,
@@ -70,6 +79,7 @@ enum ATHardwareMode {
 	kATHardwareMode_800XL,
 	kATHardwareMode_5200,
 	kATHardwareMode_XEGS,
+	kATHardwareMode_1200XL,
 	kATHardwareModeCount
 };
 
@@ -86,6 +96,7 @@ enum ATROMImage {
 	kATROMImage_KMKJZIDEV2,
 	kATROMImage_KMKJZIDEV2_SDX,
 	kATROMImage_SIDE_SDX,
+	kATROMImage_1200XL,
 	kATROMImageCount
 };
 
@@ -100,29 +111,8 @@ enum ATKernelMode {
 	kATKernelMode_5200,
 	kATKernelMode_5200_LLE,
 	kATKernelMode_XEGS,
+	kATKernelMode_1200XL,
 	kATKernelModeCount
-};
-
-enum ATSimulatorEvent {
-	kATSimEvent_None,
-	kATSimEvent_AnonymousInterrupt,
-	kATSimEvent_CPUSingleStep,
-	kATSimEvent_CPUStackBreakpoint,
-	kATSimEvent_CPUPCBreakpoint,
-	kATSimEvent_CPUPCBreakpointsUpdated,
-	kATSimEvent_CPUIllegalInsn,
-	kATSimEvent_CPUNewPath,
-	kATSimEvent_ReadBreakpoint,
-	kATSimEvent_WriteBreakpoint,
-	kATSimEvent_DiskSectorBreakpoint,
-	kATSimEvent_EndOfFrame,
-	kATSimEvent_ScanlineBreakpoint,
-	kATSimEvent_VerifierFailure,
-	kATSimEvent_ColdReset,
-	kATSimEvent_FrameTick,
-	kATSimEvent_EXELoad,
-	kATSimEvent_EXEInitSegment,
-	kATSimEvent_EXERunSegment
 };
 
 enum ATIDEHardwareMode {
@@ -166,16 +156,19 @@ class ATSaveStateWriter;
 class ATCassetteEmulator;
 class IATHLEKernel;
 class IATJoystickManager;
-class IATHardDiskEmulator;
+class IATHostDeviceEmulator;
 class ATCartridgeEmulator;
 class ATPortController;
 class ATInputManager;
 class IATPrinterEmulator;
 class ATVBXEEmulator;
 class ATSoundBoardEmulator;
+class ATSlightSIDEmulator;
+class ATCovoxEmulator;
 class ATRTime8Emulator;
 class ATCPUProfiler;
 class ATCPUVerifier;
+class ATCPUHeatMap;
 class ATIDEEmulator;
 class ATMyIDEEmulator;
 class IATAudioOutput;
@@ -186,18 +179,15 @@ class ATMMUEmulator;
 class ATAudioMonitor;
 class IATPCLinkDevice;
 class IATPBIDevice;
-
-class IATSimulatorCallback {
-public:
-	virtual void OnSimulatorEvent(ATSimulatorEvent ev) = 0;
-};
+class IATVirtualScreenHandler;
 
 enum ATLoadType {
 	kATLoadType_Other,
 	kATLoadType_Cartridge,
 	kATLoadType_Disk,
 	kATLoadType_Tape,
-	kATLoadType_Program
+	kATLoadType_Program,
+	kATLoadType_BasicProgram
 };
 
 struct ATLoadContext {
@@ -213,6 +203,7 @@ struct ATLoadContext {
 
 class ATSimulator : ATCPUEmulatorCallbacks,
 					ATAnticEmulatorConnections,
+					ATPIAEmulator,
 					IATPokeyEmulatorConnections,
 					IATGTIAEmulatorConnections,
 					IATDiskActivity,
@@ -249,12 +240,14 @@ public:
 	ATPokeyEmulator& GetPokey() { return mPokey; }
 	ATDiskEmulator& GetDiskDrive(int index) { return mDiskDrives[index]; }
 	ATCassetteEmulator& GetCassette() { return *mpCassette; }
-	IATHardDiskEmulator *GetHardDisk() { return mpHardDisk; }
+	IATHostDeviceEmulator *GetHostDevice() { return mpHostDevice; }
 	ATInputManager *GetInputManager() { return mpInputManager; }
 	IATJoystickManager& GetJoystickManager() { return *mpJoysticks; }
 	IATPrinterEmulator *GetPrinter() { return mpPrinter; }
 	ATVBXEEmulator *GetVBXE() { return mpVBXE; }
 	ATSoundBoardEmulator *GetSoundBoard() { return mpSoundBoard; }
+	ATSlightSIDEmulator *GetSlightSID() { return mpSlightSID; }
+	ATCovoxEmulator *GetCovox() { return mpCovox; }
 	ATCartridgeEmulator *GetCartridge(uint32 unit) { return mpCartridge[unit]; }
 	IATUIRenderer *GetUIRenderer() { return mpUIRenderer; }
 	ATIDEEmulator *GetIDEEmulator() { return mpIDE; }
@@ -264,6 +257,7 @@ public:
 	IATPCLinkDevice *GetPCLink() { return mpPCLink; }
 	ATKMKJZIDE *GetKMKJZIDE() { return mpKMKJZIDE; }
 	ATSIDEEmulator *GetSIDE() { return mpSIDE; }
+	IATVirtualScreenHandler *GetVirtualScreenHandler() { return mpVirtualScreenHandler; }
 
 	bool IsTurboModeEnabled() const { return mbTurbo; }
 	bool IsFrameSkipEnabled() const { return mbFrameSkip; }
@@ -305,6 +299,10 @@ public:
 	bool IsVerifierEnabled() const { return mpVerifier != NULL; }
 	void SetVerifierEnabled(bool enabled);
 
+	ATCPUHeatMap *GetHeatMap() const { return mpHeatMap; }
+	bool IsHeatMapEnabled() const { return mpHeatMap != NULL; }
+	void SetHeatMapEnabled(bool enabled);
+
 	bool IsRandomFillEnabled() const { return mbRandomFillEnabled; }
 	void SetRandomFillEnabled(bool enabled) { mbRandomFillEnabled = enabled; }
 
@@ -337,6 +335,9 @@ public:
 	void SetSoundBoardMemBase(uint32 membase);
 	uint32 GetSoundBoardMemBase() const;
 
+	void SetSlightSIDEnabled(bool enable);
+	void SetCovoxEnabled(bool enable);
+
 	bool IsRS232Enabled() const;
 	void SetRS232Enabled(bool enable);
 
@@ -349,11 +350,20 @@ public:
 	bool IsKeyboardPresent() const { return mbKeyboardPresent; }
 	void SetKeyboardPresent(bool enable);
 
+	bool IsForcedSelfTest() const { return mbForcedSelfTest; }
+	void SetForcedSelfTest(bool enable);
+
+	bool IsMapRAMEnabled() const { return mbMapRAM; }
+	void SetMapRAMEnabled(bool enable);
+
 	ATCheatEngine *GetCheatEngine() { return mpCheatEngine; }
 	void SetCheatEngineEnabled(bool enable);
 
 	bool IsAudioMonitorEnabled() const { return mpAudioMonitor != NULL; }
 	void SetAudioMonitorEnabled(bool enable);
+
+	bool IsVirtualScreenEnabled() const { return mpVirtualScreenHandler != NULL; }
+	void SetVirtualScreenEnabled(bool enable);
 
 	bool IsKernelAvailable(ATKernelMode mode) const;
 
@@ -371,7 +381,7 @@ public:
 	void UnloadAll();
 	bool Load(const wchar_t *path, bool vrw, bool rw, ATLoadContext *loadCtx);
 	bool Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, bool vrw, bool rw, ATLoadContext *loadCtx);
-	void LoadProgram(const wchar_t *symbolHintPath, IVDRandomAccessStream& stream);
+	void LoadProgram(const wchar_t *symbolHintPath, IVDRandomAccessStream& stream, bool basic);
 
 	bool IsCartridgeAttached(uint32 index) const;
 
@@ -383,6 +393,7 @@ public:
 	void LoadCartridgeFlash1Mb(bool altbank);
 	void LoadCartridgeFlash8Mb(bool newer);
 	void LoadCartridgeFlashSIC();
+	void LoadCartridgeBASIC();
 
 	void LoadIDE(ATIDEHardwareMode mode, bool write, bool fast, uint32 cylinders, uint32 heads, uint32 sectors, const wchar_t *path);
 	void UnloadIDE();
@@ -411,6 +422,8 @@ public:
 
 	bool IsKernelROMLocation(uint16 address) const;
 
+	void PIAAssertProceed();
+	void PIAAssertInterrupt();
 	void DumpPIAState();
 
 	void LoadState(ATSaveStateReader& reader);
@@ -418,6 +431,7 @@ public:
 
 	void UpdateXLCartridgeLine();
 	void UpdateKeyboardPresentLine();
+	void UpdateForcedSelfTestLine();
 
 private:
 	void UpdateKernel();
@@ -436,7 +450,6 @@ private:
 	uint32 CPUGetCycle();
 	uint32 CPUGetUnhaltedCycle();
 	uint32 CPUGetTimestamp();
-	uint8 CPUHookHit(uint16 address);
 	uint8 CPURecordBusActivity(uint8 value);
 	uint8 AnticReadByte(uint32 address);
 	void AnticAssertNMI();
@@ -458,18 +471,16 @@ private:
 	uint32 PokeyGetTimestamp() const;
 
 	void OnDiskActivity(uint8 drive, bool active, uint32 sector);
+	void OnDiskMotorChange(uint8 drive, bool active);
+
 	void VBXEAssertIRQ();
 	void VBXENegateIRQ();
 
-	uint8 LoadProgramHook();
-	uint8 LoadProgramHookCont();
-	void UnloadProgramSymbols();
 	void ClearPokeyTimersOnDiskIo();
 
 	void HookCassetteOpenVector();
 	void UnhookCassetteOpenVector();
 	void UpdatePrinterHook();
-	void UpdateSIOVHook();
 	void UpdateCIOVHook();
 
 	bool mbRunning;
@@ -493,13 +504,13 @@ private:
 	bool mbVBXEUseD7xx;
 	bool mbFastBoot;
 	bool mbKeyboardPresent;
+	bool mbForcedSelfTest;
+	bool mbMapRAM;
 	ATIDEHardwareMode mIDEHardwareMode;
 	uint32 mSoundBoardMemBase;
 	int mBreakOnScanline;
 
 	int		mStartupDelay;
-	bool	mbCIOHandlersEstablished;
-	uint32	mCassetteCIOOpenHandlerHookAddress;
 
 	ATMemoryMode	mMemoryMode;
 	ATKernelMode	mKernelMode;
@@ -514,13 +525,17 @@ private:
 	ATMemoryManager	*mpMemMan;
 	ATMMUEmulator	*mpMMU;
 	ATPBIManager	*mpPBIManager;
+	ATSIOManager	*mpSIOManager;
+	ATCPUHookManager *mpCPUHookManager;
+	ATSimulatorEventManager	*mpSimEventManager;
 
 	ATCPUEmulator	mCPU;
 	ATAnticEmulator	mAntic;
 	ATGTIAEmulator	mGTIA;
-	vdautoptr<IATAudioOutput> mpAudioOutput;
 	ATPokeyEmulator	mPokey;
 	ATPokeyEmulator	mPokey2;
+	IATAudioOutput	*mpAudioOutput;
+	ATAudioSyncMixer *mpAudioSyncMixer;
 	ATPokeyTables	*mpPokeyTables;
 	ATScheduler		mScheduler;
 	ATScheduler		mSlowScheduler;
@@ -530,7 +545,7 @@ private:
 	ATIDEEmulator	*mpIDE;
 	ATMyIDEEmulator	*mpMyIDE;
 	IATJoystickManager	*mpJoysticks;
-	IATHardDiskEmulator	*mpHardDisk;
+	IATHostDeviceEmulator	*mpHostDevice;
 	ATCartridgeEmulator	*mpCartridge[2];
 	ATInputManager	*mpInputManager;
 	ATPortController *mpPortAController;
@@ -540,6 +555,8 @@ private:
 	ATVBXEEmulator *mpVBXE;
 	void *mpVBXEMemory;
 	ATSoundBoardEmulator *mpSoundBoard;
+	ATSlightSIDEmulator *mpSlightSID;
+	ATCovoxEmulator *mpCovox;
 	ATRTime8Emulator *mpRTime8;
 	IATRS232Emulator *mpRS232;
 	ATCheatEngine *mpCheatEngine;
@@ -547,6 +564,13 @@ private:
 	IATPCLinkDevice *mpPCLink;
 	ATKMKJZIDE *mpKMKJZIDE;
 	ATSIDEEmulator *mpSIDE;
+	IATVirtualScreenHandler *mpVirtualScreenHandler;
+
+	ATHLEBasicLoader *mpHLEBasicLoader;
+	ATHLEProgramLoader *mpHLEProgramLoader;
+	ATHLEFPAccelerator *mpHLEFPAccelerator;
+	ATHLEFastBootHook *mpHLEFastBootHook;
+	IATHLECIOHook *mpHLECIOHook;
 
 	uint8	mPORTAOUT;
 	uint8	mPORTADDR;
@@ -565,10 +589,12 @@ private:
 	};
 
 	enum {
-		kIRQSource_POKEY,
-		kIRQSource_VBXE,
-		kIRQSource_PIAA,
-		kIRQSource_PIAB,
+		kIRQSource_POKEY = 0x01,
+		kIRQSource_VBXE = 0x02,
+		kIRQSource_PIAA1 = 0x04,
+		kIRQSource_PIAA2 = 0x08,
+		kIRQSource_PIAB1 = 0x10,
+		kIRQSource_PIAB2 = 0x20
 	};
 
 	uint32	mIRQFlags;
@@ -585,20 +611,12 @@ private:
 	const uint8 *mpKernel5200ROM;
 	uint32	mKernelSymbolsModuleId;
 
-	vdfastvector<uint8>		mProgramToLoad;
-	bool		mbProgramLoadPending;
-	ptrdiff_t	mProgramLoadIndex;
-	uint32		mProgramModuleIds[3];
 	uint32		mCartModuleIds[3];
-
-	typedef vdfastvector<IATSimulatorCallback *> Callbacks;
-	Callbacks	mCallbacks;
-	int			mCallbacksBusy;
-	bool		mbCallbacksChanged;
 
 	IATHLEKernel	*mpHLEKernel;
 	ATCPUProfiler	*mpProfiler;
 	ATCPUVerifier	*mpVerifier;
+	ATCPUHeatMap	*mpHeatMap;
 
 	ATMemoryLayer	*mpMemLayerLoRAM;
 	ATMemoryLayer	*mpMemLayerHiRAM;
@@ -608,6 +626,7 @@ private:
 	ATMemoryLayer	*mpMemLayerBASICROM;
 	ATMemoryLayer	*mpMemLayerSelfTestROM;
 	ATMemoryLayer	*mpMemLayerGameROM;
+	ATMemoryLayer	*mpMemLayerHiddenRAM;
 	ATMemoryLayer	*mpMemLayerANTIC;
 	ATMemoryLayer	*mpMemLayerGTIA;
 	ATMemoryLayer	*mpMemLayerPOKEY;
@@ -621,22 +640,26 @@ private:
 	////////////////////////////////////
 	bool	mbHaveOSBKernel;
 	bool	mbHaveXLKernel;
+	bool	mbHave1200XLKernel;
 	bool	mbHaveXEGSKernel;
 	bool	mbHave5200Kernel;
 
-	__declspec(align(4))	uint8	mOSAKernelROM[0x2800];
-	__declspec(align(4))	uint8	mOSBKernelROM[0x2800];
-	__declspec(align(4))	uint8	mXLKernelROM[0x4000];
-	__declspec(align(4))	uint8	mXEGSKernelROM[0x4000];
-	__declspec(align(4))	uint8	mHLEKernelROM[0x4000];
-	__declspec(align(4))	uint8	mLLEKernelROM[0x2800];
-	__declspec(align(4))	uint8	mBASICROM[0x2000];
-	__declspec(align(4))	uint8	mOtherKernelROM[0x4000];
-	__declspec(align(4))	uint8	m5200KernelROM[0x0800];
-	__declspec(align(4))	uint8	m5200LLEKernelROM[0x0800];
-	__declspec(align(4))	uint8	mGameROM[0x2000];
+	VDALIGN(4)	uint8	mOSAKernelROM[0x2800];
+	VDALIGN(4)	uint8	mOSBKernelROM[0x2800];
+	VDALIGN(4)	uint8	mXLKernelROM[0x4000];
+	VDALIGN(4)	uint8	m1200XLKernelROM[0x4000];
+	VDALIGN(4)	uint8	mXEGSKernelROM[0x4000];
+	VDALIGN(4)	uint8	mHLEKernelROM[0x4000];
+	VDALIGN(4)	uint8	mLLEKernelROM[0x2800];
+	VDALIGN(4)	uint8	mBASICROM[0x2000];
+	VDALIGN(4)	uint8	mOtherKernelROM[0x4000];
+	VDALIGN(4)	uint8	m5200KernelROM[0x0800];
+	VDALIGN(4)	uint8	m5200LLEKernelROM[0x0800];
+	VDALIGN(4)	uint8	mGameROM[0x2000];
 
-	__declspec(align(4))	uint8	mMemory[0x140000];
+	VDALIGN(4)	uint8	mHookROM[0x200];
+
+	VDALIGN(4)	uint8	mMemory[0x140000];
 };
 
 #endif

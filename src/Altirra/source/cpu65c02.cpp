@@ -353,6 +353,183 @@ bool ATCPUEmulator::Decode65C02(uint8 opcode) {
 			*mpDstState++ = kStateTsb;
 			break;
 
+		//================= RMW behavior ==================
+		//
+		// Changes from 6502:
+		// - ALU cycle is a read cycle, not a write cycle
+		// - ASL/ROL/ASL/ROR abs,X take 6 cycles if no page crossing (INC/DEC NOT affected)
+
+		case 0x06:	// ASL zp
+			DecodeReadZp();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateAsl;
+			*mpDstState++ = kStateWrite;
+			break;
+
+		case 0x0E:	// ASL abs
+			DecodeReadAbs();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateAsl;
+			*mpDstState++ = kStateWrite;
+			break;
+
+		case 0x16:	// ASL zp,X
+			DecodeReadZpX();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateAsl;
+			*mpDstState++ = kStateWrite;
+			break;
+
+		case 0x1E:	// ASL abs,X
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateReadAddrHX;		// 3
+			*mpDstState++ = kStateReadCarry;		// 4
+			*mpDstState++ = kStateRead;				// 5
+			*mpDstState++ = kStateRead;				// 6
+			*mpDstState++ = kStateAsl;				//
+			*mpDstState++ = kStateWrite;			// 7
+			break;
+
+		case 0x26:	// ROL zp
+			DecodeReadZp();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateRol;
+			*mpDstState++ = kStateWrite;
+			break;
+
+		case 0x2E:	// ROL abs
+			DecodeReadAbs();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateRol;
+			*mpDstState++ = kStateWrite;
+			break;
+
+		case 0x36:	// ROL zp,X
+			DecodeReadZpX();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateRol;
+			*mpDstState++ = kStateWrite;
+			break;
+		case 0x3E:	// ROL abs,X
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateReadAddrHX;		// 3
+			*mpDstState++ = kStateReadCarry;		// 4
+			*mpDstState++ = kStateRead;				// 5
+			*mpDstState++ = kStateRead;				// 6
+			*mpDstState++ = kStateRol;				//
+			*mpDstState++ = kStateWrite;			// 7
+			break;
+		case 0x46:	// LSR zp
+			DecodeReadZp();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateLsr;
+			*mpDstState++ = kStateWrite;
+			break;
+		case 0x4E:	// LSR abs
+			DecodeReadAbs();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateLsr;
+			*mpDstState++ = kStateWrite;
+			break;
+		case 0x56:	// LSR zp,X
+			DecodeReadZpX();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateLsr;
+			*mpDstState++ = kStateWrite;
+			break;
+		case 0x5E:	// LSR abs,X
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateReadAddrHX;		// 3
+			*mpDstState++ = kStateReadCarry;		// 4
+			*mpDstState++ = kStateRead;				// 5
+			*mpDstState++ = kStateRead;				// 6
+			*mpDstState++ = kStateLsr;				//
+			*mpDstState++ = kStateWrite;			// 7
+			break;
+		case 0x66:	// ROR zp
+			DecodeReadZp();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateRor;
+			*mpDstState++ = kStateWrite;
+			break;
+		case 0x6E:	// ROR abs
+			DecodeReadAbs();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateRor;
+			*mpDstState++ = kStateWrite;
+			break;
+		case 0x76:	// ROR zp,X
+			DecodeReadZpX();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateRor;
+			*mpDstState++ = kStateWrite;
+			break;
+		case 0x7E:	// ROR abs,X
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateReadAddrHX;		// 3
+			*mpDstState++ = kStateReadCarry;		// 4
+			*mpDstState++ = kStateRead;				// 5
+			*mpDstState++ = kStateRead;				// 6
+			*mpDstState++ = kStateRor;				//
+			*mpDstState++ = kStateWrite;			// 7
+			break;
+		case 0xC6:	// DEC zp
+			DecodeReadZp();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateDec;
+			*mpDstState++ = kStateWrite;
+			break;
+		case 0xCE:	// DEC abs
+			DecodeReadAbs();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateDec;
+			*mpDstState++ = kStateWrite;
+			break;
+		case 0xD6:	// DEC zp,X
+			DecodeReadZpX();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateDec;
+			*mpDstState++ = kStateWrite;
+			break;
+		case 0xDE:	// DEC abs,X
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateReadAddrHX;		// 3
+			*mpDstState++ = kStateReadCarryForced;	// 4
+			*mpDstState++ = kStateRead;				// 5
+			*mpDstState++ = kStateRead;				// 6
+			*mpDstState++ = kStateDec;				//
+			*mpDstState++ = kStateWrite;			// 7
+			break;
+		case 0xE6:	// INC zp
+			DecodeReadZp();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateInc;
+			*mpDstState++ = kStateWrite;
+			break;
+		case 0xEE:	// INC abs
+			DecodeReadAbs();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateInc;
+			*mpDstState++ = kStateWrite;
+			break;
+		case 0xF6:	// INC zp,X
+			DecodeReadZpX();
+			*mpDstState++ = kStateRead;
+			*mpDstState++ = kStateInc;
+			*mpDstState++ = kStateWrite;
+			break;
+		case 0xFE:	// INC abs,X
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateReadAddrHX;		// 3
+			*mpDstState++ = kStateReadCarryForced;	// 4
+			*mpDstState++ = kStateRead;				// 5
+			*mpDstState++ = kStateRead;				// 6
+			*mpDstState++ = kStateInc;				//
+			*mpDstState++ = kStateWrite;			// 7
+			break;
+
+		//================= reserved NOPs ========================
+
 		case 0x02:	// Reserved NOP (2 bytes, 2 cycles)
 		case 0x22:
 		//case 0x42:	We use this as an escape.

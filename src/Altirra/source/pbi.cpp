@@ -47,6 +47,10 @@ void ATPBIManager::Shutdown() {
 	mpMemMan = NULL;
 }
 
+bool ATPBIManager::IsROMOverlayActive() const {
+	return mpSelDevice && mpSelDevice->IsPBIOverlayActive();
+}
+
 void ATPBIManager::AddDevice(IATPBIDevice *dev) {
 	mDevices.push_back(dev);
 

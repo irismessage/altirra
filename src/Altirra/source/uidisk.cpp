@@ -229,6 +229,19 @@ bool ATDiskDriveDialog::OnLoaded() {
 		CBAddString(id, L"R/W");
 	}
 
+	CBAddString(IDC_EMULATION_LEVEL, L"Generic emulation (288 RPM)");
+	CBAddString(IDC_EMULATION_LEVEL, L"Fastest possible (288 RPM, 128Kbps high speed)");
+	CBAddString(IDC_EMULATION_LEVEL, L"810 (288 RPM)");
+	CBAddString(IDC_EMULATION_LEVEL, L"1050 (288 RPM)");
+	CBAddString(IDC_EMULATION_LEVEL, L"XF551 (300 RPM, 39Kbps high speed)");
+	CBAddString(IDC_EMULATION_LEVEL, L"US-Doubler (288 RPM, 52Kbps high speed)");
+	CBAddString(IDC_EMULATION_LEVEL, L"Speedy 1050 (288 RPM, 56Kbps high speed)");
+	CBAddString(IDC_EMULATION_LEVEL, L"Indus GT (288 RPM, 68Kbps high speed)");
+	CBAddString(IDC_EMULATION_LEVEL, L"Happy (288 RPM, 52Kbps high speed)");
+	CBAddString(IDC_EMULATION_LEVEL, L"1050 Turbo (288 RPM, 68Kbps high speed)");
+
+	CBSetSelectedIndex(IDC_EMULATION_LEVEL, (sint32)g_sim.GetDiskDrive(0).GetEmulationMode());
+
 	return VDDialogFrameW32::OnLoaded();
 }
 
@@ -273,6 +286,10 @@ void ATDiskDriveDialog::OnDataExchange(bool write) {
 
 			CBSetSelectedIndex(kWriteModeID[i], !disk.IsEnabled() ? 0 : disk.IsWriteEnabled() ? disk.IsAutoFlushEnabled() ? 3 : 2 : 1);
 		}
+	} else {
+		ATDiskEmulationMode mode = (ATDiskEmulationMode)CBGetSelectedIndex(IDC_EMULATION_LEVEL);
+		for(int i=0; i<15; ++i)
+			g_sim.GetDiskDrive(i).SetEmulationMode(mode);
 	}
 }
 
@@ -466,6 +483,12 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 					imageName.sprintf(L"Mounted disk on D%u:", driveIndex + 1);
 
 					ATUIShowDialogDiskExplorer((VDGUIHandle)mhdlg, image, imageName.c_str(), disk.IsWriteEnabled(), disk.IsAutoFlushEnabled());
+
+					// invalidate the path widget in case the disk has been dirtied
+					HWND hwndPathControl = GetControl(kDiskPathID[index]);
+
+					if (hwndPathControl)
+						InvalidateRect(hwndPathControl, NULL, TRUE);
 				}
 			}
 			return true;

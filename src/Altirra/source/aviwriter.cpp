@@ -1029,7 +1029,7 @@ void AVIOutputFile::partialWriteIndexedChunkBegin(int nStream, uint32 flags, uin
 	
 	// Give ourselves ~4K of headroom...
 
-	sint64	maxpoint = (chunkloc + cbBuffer + 1 + 8 + 14 + 2047 + mIndexSize + 4096) & -2048i64;
+	sint64	maxpoint = (chunkloc + cbBuffer + 1 + 8 + 14 + 2047 + mIndexSize + 4096) & -2048ll;
 
 	if (mbLimitTo4GB && maxpoint >= (sint64)0xFFFFFFFF) {		// maximum size on 98 or FAT32: 2^32-1 bytes (NOT 2^32).
 		VDDEBUG("AVIOutputFile: overflow detected!  maxpoint=%I64d\n", maxpoint);

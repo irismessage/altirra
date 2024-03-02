@@ -633,6 +633,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\audiosyncmixer.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\audiowriter.cpp"
 				>
 			</File>
@@ -646,6 +650,10 @@
 			</File>
 			<File
 				RelativePath=".\source\bkptmanager.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\cartdetect.cpp"
 				>
 			</File>
 			<File
@@ -673,6 +681,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\covox.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\cpu.cpp"
 				>
 			</File>
@@ -690,6 +702,14 @@
 			</File>
 			<File
 				RelativePath=".\source\cpu65c816.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\cpuheatmap.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\cpuhookmanager.cpp"
 				>
 			</File>
 			<File
@@ -765,11 +785,35 @@
 				>
 			</File>
 			<File
-				RelativePath=".\source\harddisk.cpp"
+				RelativePath=".\source\hlebasicloader.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\hleciohook.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\hlefastboothook.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\hlefpaccelerator.cpp"
 				>
 			</File>
 			<File
 				RelativePath=".\source\hlekernel.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\hleprogramloader.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\hleutils.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\hostdevice.cpp"
 				>
 			</File>
 			<File
@@ -893,11 +937,23 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\simeventmanager.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\simulator.cpp"
 				>
 			</File>
 			<File
 				RelativePath=".\source\sio.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\siomanager.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\slightsid.cpp"
 				>
 			</File>
 			<File
@@ -989,6 +1045,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uihostdevice.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uiinput.cpp"
 				>
 			</File>
@@ -1072,6 +1132,10 @@
 				RelativePath=".\source\videowriter.cpp"
 				>
 			</File>
+			<File
+				RelativePath=".\source\virtualscreen.cpp"
+				>
+			</File>
 		</Filter>
 		<Filter
 			Name="Header Files"
@@ -1104,6 +1168,10 @@
 			</File>
 			<File
 				RelativePath=".\h\audiosource.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\audiosyncmixer.h"
 				>
 			</File>
 			<File
@@ -1151,7 +1219,19 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\covox.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\cpu.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\cpuheatmap.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\cpuhookmanager.h"
 				>
 			</File>
 			<File
@@ -1227,11 +1307,35 @@
 				>
 			</File>
 			<File
-				RelativePath=".\h\harddisk.h"
+				RelativePath=".\h\hlebasicloader.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\hleciohook.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\hlefastboothook.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\hlefpaccelerator.h"
 				>
 			</File>
 			<File
 				RelativePath=".\h\hlekernel.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\hleprogramloader.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\hleutils.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\hostdevice.h"
 				>
 			</File>
 			<File
@@ -1307,6 +1411,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\pia.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\pokey.h"
 				>
 			</File>
@@ -1359,11 +1467,23 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\simeventmanager.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\simulator.h"
 				>
 			</File>
 			<File
 				RelativePath=".\h\sio.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\siomanager.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\slightsid.h"
 				>
 			</File>
 			<File
@@ -1434,6 +1554,10 @@
 				RelativePath=".\h\videowriter.h"
 				>
 			</File>
+			<File
+				RelativePath=".\h\virtualscreen.h"
+				>
+			</File>
 		</Filter>
 		<Filter
 			Name="Resource Files"
@@ -1501,11 +1625,11 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\release\atdiskloader128.bin"
+				RelativePath="..\..\out\debug\atdiskloader128.bin"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\atdiskloader128.bin"
+				RelativePath="..\..\out\release\atdiskloader128.bin"
 				>
 			</File>
 			<File
@@ -1525,7 +1649,7 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\hlekernel.rom"
+				RelativePath=".\res\DiskSpin.pcm"
 				>
 			</File>
 			<File
@@ -1533,7 +1657,7 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\kernel.rom"
+				RelativePath="..\..\out\debug\hlekernel.rom"
 				>
 			</File>
 			<File
@@ -1541,7 +1665,7 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\Release\nocartridge.rom"
+				RelativePath="..\..\out\debug\kernel.rom"
 				>
 			</File>
 			<File
@@ -1549,7 +1673,15 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\nohdbios.rom"
+				RelativePath="..\..\out\Release\nocartridge.rom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\release\nogame.rom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\debug\nogame.rom"
 				>
 			</File>
 			<File
@@ -1557,11 +1689,15 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\release\nokernel.rom"
+				RelativePath="..\..\out\debug\nohdbios.rom"
 				>
 			</File>
 			<File
 				RelativePath="..\..\out\debug\nokernel.rom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\release\nokernel.rom"
 				>
 			</File>
 			<File
@@ -1582,6 +1718,14 @@
 			</File>
 			<File
 				RelativePath=".\res\target.cur"
+				>
+			</File>
+			<File
+				RelativePath=".\res\TrackStep.pcm"
+				>
+			</File>
+			<File
+				RelativePath=".\res\TrackStep2.pcm"
 				>
 			</File>
 		</Filter>
@@ -2004,14 +2148,6 @@
 				</FileConfiguration>
 			</File>
 		</Filter>
-		<File
-			RelativePath="..\..\out\debug\nogame.rom"
-			>
-		</File>
-		<File
-			RelativePath="..\..\out\release\nogame.rom"
-			>
-		</File>
 	</Files>
 	<Globals>
 	</Globals>

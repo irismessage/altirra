@@ -205,7 +205,7 @@ public:
 protected:
 	void Upload(const VDPixmap& source, VDVideoTextureTilePatternOpenGL& texPattern);
 
-	static ATOM VDVideoDisplayMinidriverOpenGL::Register();
+	static ATOM Register();
 	static LRESULT CALLBACK StaticWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -826,7 +826,7 @@ void VDVideoDisplayMinidriverOpenGL::OnPaint() {
 				if (mode == kFilterBicubic) {
 					float	px1 = 0;
 					float	py1 = 0;
-					float	px2 = (float)r.right;
+					float	px2 = (float)(r.right - r.left);
 					float	py2 = (float)h;
 					float	u1 = 0;
 					float	v1 = 0.25f * ih * bobOffset;
@@ -836,13 +836,13 @@ void VDVideoDisplayMinidriverOpenGL::OnPaint() {
 					float	f2 = r.right / (float)mCubicFilterHTexSize;
 					float	px3 = 0;
 					float	py3 = 0;
-					float	px4 = (float)r.right;
-					float	py4 = (float)r.bottom;
+					float	px4 = (float)(r.right - r.left);
+					float	py4 = (float)(r.bottom - r.top);
 					float	iw2 = 1.0f / mCubicFilterTempTexWidth;
 					float	ih2 = 1.0f / mCubicFilterTempTexHeight;
 					float	u3 = 0;
 					float	v3 = 0;
-					float	u4 = iw2 * (float)r.right;
+					float	u4 = iw2 * (float)(r.right - r.left);
 					float	v4 = ih2 * (float)h;
 					float	f3 = 0.0f;
 					float	f4 = r.bottom / (float)mCubicFilterVTexSize;
@@ -913,7 +913,7 @@ void VDVideoDisplayMinidriverOpenGL::OnPaint() {
 					VDASSERT(mGL.glGetError() == GL_NO_ERROR);
 
 					mGL.glLoadIdentity();
-					mGL.glOrtho(0, r.right, mbVerticalFlip ? 0 : r.bottom, mbVerticalFlip ? r.bottom : 0, -1, 1);
+					mGL.glOrtho(0, r.right - r.left, mbVerticalFlip ? 0 : r.bottom - r.top, mbVerticalFlip ? r.bottom - r.top : 0, -1, 1);
 
 					mGL.glViewport(r.left, vph - r.bottom, r.right - r.left, r.bottom - r.top);
 					mGL.glClear(GL_COLOR_BUFFER_BIT);

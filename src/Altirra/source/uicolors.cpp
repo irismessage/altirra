@@ -163,7 +163,7 @@ bool ATAdjustColorsDialog::OnCommand(uint32 id, uint32 extcode) {
 			UpdateColorImage();
 		}		
 	} else if (id == IDC_EXPORT) {
-		const VDStringW& fn = VDGetSaveFileName('pal ', (VDGUIHandle)mhdlg, L"Export palette", L"Atari800 palette (*.pal)", L"pal");
+		const VDStringW& fn = VDGetSaveFileName('pal ', (VDGUIHandle)mhdlg, L"Export palette", L"Atari800 palette (*.pal)\0*.pal", L"pal");
 
 		if (!fn.empty()) {
 			ExportPalette(fn.c_str());

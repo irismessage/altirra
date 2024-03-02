@@ -22,8 +22,21 @@
 #include "hlekernel.h"
 
 ATMMUEmulator::ATMMUEmulator()
-	: mCPUBase(0)
+	: mHardwareMode(0)
+	, mMemoryMode(0)
+	, mpMemMan(NULL)
+	, mpMemory(NULL)
+	, mpLayerExtRAM(NULL)
+	, mpLayerSelfTest(NULL)
+	, mpLayerLowerKernel(NULL)
+	, mpLayerUpperKernel(NULL)
+	, mpLayerBASIC(NULL)
+	, mpLayerGame(NULL)
+	, mpLayerHiddenRAM(NULL)
+	, mpHLE(NULL)
+	, mCPUBase(0)
 	, mAnticBase(0)
+	, mCurrentBankInfo(0)
 {
 	Shutdown();
 }
@@ -39,6 +52,7 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 						 ATMemoryLayer *upperKernelLayer,
 						 ATMemoryLayer *basicLayer,
 						 ATMemoryLayer *gameLayer,
+						 ATMemoryLayer *hiddenRamLayer,
 						 IATHLEKernel *hle) {
 	mHardwareMode = hwmode;
 	mMemoryMode = memoryMode;
@@ -50,11 +64,11 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 	mpLayerUpperKernel = upperKernelLayer;
 	mpLayerBASIC = basicLayer;
 	mpLayerGame = gameLayer;
+	mpLayerHiddenRAM = hiddenRamLayer;
 	mpHLE = hle;
 
 	mCPUBase = 0;
 	mAnticBase = 0;
-	mbBASICForced = false;
 
 	uint8 extbankmask = 0;
 
@@ -79,6 +93,7 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 	}
 
 	const int kernelBankMask = (mHardwareMode == kATHardwareMode_800XL ||
+		mHardwareMode == kATHardwareMode_1200XL ||
 		mHardwareMode == kATHardwareMode_XEGS) ? 0x00 : 0x01;
 
 	const int cpuBankBit = (extbankmask != 0) ? 0x10 : 0x00;
@@ -117,6 +132,14 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 		case kATMemoryMode_576K_Compy:
 		case kATMemoryMode_1088K:
 			blockExtBasic = true;
+			break;
+	}
+
+	uint8 basicMask = 0x02;
+	switch(mHardwareMode) {
+		case kATHardwareMode_800XL:
+		case kATHardwareMode_XEGS:
+			basicMask = 0;
 			break;
 	}
 
@@ -189,7 +212,7 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 			}
 		}
 
-		if (!(portb & 0x02)) {
+		if (!((portb | basicMask) & 0x02)) {
 			if (!blockExtBasic || (!cpuEnabled && !anticEnabled))
 				encodedBankInfo += kMapInfo_BASIC;
 		}
@@ -197,8 +220,18 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 		if ((portb | kernelBankMask) & 0x01)
 			encodedBankInfo += kMapInfo_Kernel;
 
+		if (mHardwareMode == kATHardwareMode_XEGS && !(encodedBankInfo & kMapInfo_BASIC) && !(portb & 0x40))
+			encodedBankInfo += kMapInfo_Game;
+
+		if (mpLayerHiddenRAM && (portb & 0xb1) == 0x30)
+			encodedBankInfo += kMapInfo_HiddenRAM;
+
 		mBankMap[portb] = encodedBankInfo;
 	}
+
+	// force bank reinit
+	mCurrentBankInfo = ~mBankMap[0xFF];
+	SetBankRegister(0xFF);
 }
 
 void ATMMUEmulator::Shutdown() {
@@ -208,6 +241,8 @@ void ATMMUEmulator::Shutdown() {
 	mpLayerLowerKernel = NULL;
 	mpLayerUpperKernel = NULL;
 	mpLayerBASIC = NULL;
+	mpLayerGame = NULL;
+	mpLayerHiddenRAM = NULL;
 	mpHLE = NULL;
 
 	mCPUBase = 0;
@@ -216,6 +251,12 @@ void ATMMUEmulator::Shutdown() {
 
 void ATMMUEmulator::SetBankRegister(uint8 bank) {
 	const uint32 bankInfo = mBankMap[bank];
+
+	if (mCurrentBankInfo == bankInfo)
+		return;
+
+	mCurrentBankInfo = bankInfo;
+
 	const uint32 bankOffset = ((bankInfo & kMapInfo_BankMask) << 14);
 	uint8 *bankbase = mpMemory + bankOffset;
 
@@ -270,16 +311,12 @@ void ATMMUEmulator::SetBankRegister(uint8 bank) {
 			mpHLE->EnableUpperROM(false);
 	}
 
-	if (mpLayerBASIC && !mbBASICForced) {
+	if (mpLayerBASIC)
 		mpMemMan->EnableLayer(mpLayerBASIC, (bankInfo & kMapInfo_BASIC) != 0);
-	}
 
 	if (mpLayerGame)
-		mpMemMan->EnableLayer(mpLayerGame, !(bank & 0x40));
-}
+		mpMemMan->EnableLayer(mpLayerGame, (bankInfo & kMapInfo_Game) != 0);
 
-void ATMMUEmulator::ForceBASIC() {
-	mbBASICForced = true;
-
-	mpMemMan->EnableLayer(mpLayerBASIC, true);
+	if (mpLayerHiddenRAM)
+		mpMemMan->EnableLayer(mpLayerHiddenRAM, (bankInfo & kMapInfo_HiddenRAM) != 0);
 }

@@ -18,7 +18,6 @@
 #include "stdafx.h"
 #include <windows.h>
 #include <windowsx.h>
-#include <hash_map>
 #include <vd2/system/strutil.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
@@ -32,6 +31,25 @@
 #define WM_THEMECHANGED 0x031A
 #endif
 
+#ifndef UIS_SET
+#define UIS_SET                         1
+#endif
+
+#ifndef UIS_CLEAR
+#define UIS_CLEAR                       2
+#endif
+
+#ifndef UIS_INITIALIZE
+#define UIS_INITIALIZE                  3
+#endif
+
+#ifndef UISF_HIDEFOCUS
+#define UISF_HIDEFOCUS                  0x1
+#endif
+
+#ifndef UISF_HIDEACCEL
+#define UISF_HIDEACCEL                  0x2
+#endif
 
 #pragma comment(lib, "msimg32")
 
@@ -64,6 +82,15 @@ ATContainerResizer::ATContainerResizer()
 }
 
 void ATContainerResizer::LayoutWindow(HWND hwnd, int x, int y, int width, int height) {
+	VDASSERT(hwnd);
+	VDASSERT(IsWindow(hwnd));
+
+	if (!(GetWindowLong(hwnd, GWL_STYLE) & WS_VISIBLE)) {
+		mWindowsToShow.push_back(hwnd);
+		SetWindowPos(hwnd, NULL, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+		return;
+	}
+
 	if (!mhdwp)
 		mhdwp = BeginDeferWindowPos(4);
 
@@ -80,6 +107,9 @@ void ATContainerResizer::LayoutWindow(HWND hwnd, int x, int y, int width, int he
 }
 
 void ATContainerResizer::ResizeWindow(HWND hwnd, int width, int height) {
+	VDASSERT(hwnd);
+	VDASSERT(IsWindow(hwnd));
+
 	if (!mhdwp)
 		mhdwp = BeginDeferWindowPos(4);
 
@@ -90,15 +120,26 @@ void ATContainerResizer::ResizeWindow(HWND hwnd, int width, int height) {
 			mhdwp = hdwp;
 			return;
 		}
+
+		// MSDN says that you should not call EndDeferWindowPos() on a failure, but Internet
+		// lore says that this is necessary to avoid a leak:
+		// http://www.itimdp4.com/dp4kb/a4000035.htm
 	}
 
-	SetWindowPos(hwnd, NULL, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE);
+	VDVERIFY(SetWindowPos(hwnd, NULL, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE));
 }
 
 void ATContainerResizer::Flush() {
 	if (mhdwp) {
-		EndDeferWindowPos(mhdwp);
+		VDVERIFY(EndDeferWindowPos(mhdwp));
 		mhdwp = NULL;
+	}
+
+	while(!mWindowsToShow.empty()) {
+		HWND hwnd = mWindowsToShow.back();
+
+		ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+		mWindowsToShow.pop_back();
 	}
 }
 
@@ -409,12 +450,16 @@ void ATDragHandleWindow::OnPaint() {
 ATContainerDockingPane::ATContainerDockingPane(ATContainerWindow *parent)
 	: mpParent(parent)
 	, mpDockParent(NULL)
+	, mArea(0, 0, 0, 0)
+	, mCenterArea(0, 0, 0, 0)
 	, mDockCode(-1)
 	, mDockFraction(0)
 	, mCenterCount(0)
 	, mbFullScreen(false)
 	, mbFullScreenLayout(false)
 	, mbPinned(false)
+	, mbLayoutInvalid(false)
+	, mbDescendantLayoutInvalid(false)
 {
 }
 
@@ -466,7 +511,36 @@ void ATContainerDockingPane::Clear() {
 	Release();
 }
 
+void ATContainerDockingPane::InvalidateLayout() {
+	mbLayoutInvalid = true;
+
+	for(ATContainerDockingPane *p = mpDockParent; p; p = p->mpDockParent) {
+		if (p->mbDescendantLayoutInvalid)
+			break;
+
+		p->mbDescendantLayoutInvalid = true;
+	}
+}
+
+void ATContainerDockingPane::UpdateLayout(ATContainerResizer& resizer) {
+	if (mbLayoutInvalid) {
+		Relayout(resizer);
+	} else if (mbDescendantLayoutInvalid) {
+		mbDescendantLayoutInvalid = false;
+
+		Children::const_iterator it(mChildren.begin()), itEnd(mChildren.end());
+		for(; it != itEnd; ++it) {
+			ATContainerDockingPane *pane = *it;
+
+			pane->UpdateLayout(resizer);
+		}
+	}
+}
+
 void ATContainerDockingPane::Relayout(ATContainerResizer& resizer) {
+	mbLayoutInvalid = false;
+	mbDescendantLayoutInvalid = false;
+
 	mCenterArea = mArea;
 
 	if (mpSplitter) {
@@ -546,7 +620,7 @@ void ATContainerDockingPane::Relayout(ATContainerResizer& resizer) {
 		pane->SetArea(resizer, rPane, mbFullScreenLayout);
 	}
 
-	RepositionContent();
+	RepositionContent(resizer);
 }
 
 bool ATContainerDockingPane::GetFrameSizeForContent(vdsize32& sz) {
@@ -603,9 +677,13 @@ void ATContainerDockingPane::SetDockFraction(float frac) {
 	mDockFraction = frac;
 
 	if (mpDockParent) {
-		ATContainerResizer resizer;
-		mpDockParent->Relayout(resizer);
-		resizer.Flush();
+		if (mpParent->IsLayoutSuspended())
+			InvalidateLayout();
+		else {
+			ATContainerResizer resizer;
+			mpDockParent->Relayout(resizer);
+			resizer.Flush();
+		}
 	}
 }
 
@@ -648,12 +726,16 @@ ATContainerDockingPane *ATContainerDockingPane::GetChildPane(uint32 index) const
 	return mChildren[index];
 }
 
-void ATContainerDockingPane::SetContent(ATFrameWindow *frame) {
+void ATContainerDockingPane::SetContent(ATFrameWindow *frame, bool deferResize) {
 	VDASSERT(!mpContent);
 	mpContent = frame;
 	frame->SetPane(this);
 
-	RepositionContent();
+	if (!deferResize) {
+		ATContainerResizer resizer;
+		RepositionContent(resizer);
+		resizer.Flush();
+	}
 }
 
 void ATContainerDockingPane::Dock(ATContainerDockingPane *pane, int code) {
@@ -705,9 +787,13 @@ void ATContainerDockingPane::Dock(ATContainerDockingPane *pane, int code) {
 	pane->mpDockParent = this;
 	pane->mDockCode = code;
 
-	ATContainerResizer resizer;
-	Relayout(resizer);
-	resizer.Flush();
+	if (mpParent->IsLayoutSuspended())
+		InvalidateLayout();
+	else {
+		ATContainerResizer resizer;
+		Relayout(resizer);
+		resizer.Flush();
+	}
 
 	pane->CreateSplitter();
 }
@@ -820,6 +906,11 @@ void ATContainerDockingPane::CreateSplitter() {
 		return;
 	}
 
+	if (mpParent->IsLayoutSuspended()) {
+		InvalidateLayout();
+		return;
+	}
+
 	HWND hwndSplitter = mpSplitter->GetHandleW32();
 
 	vdrect32 rSplit(mArea);
@@ -899,7 +990,7 @@ bool ATContainerDockingPane::IsFullScreen() const {
 	return mbFullScreen;
 }
 
-void ATContainerDockingPane::RepositionContent() {
+void ATContainerDockingPane::RepositionContent(ATContainerResizer& resizer) {
 	if (!mpContent)
 		return;
 
@@ -908,8 +999,8 @@ void ATContainerDockingPane::RepositionContent() {
 	if (mbFullScreenLayout && !mpContent->IsFullScreen())
 		ShowWindow(hwndContent, SW_HIDE);
 	else {
-		ShowWindow(hwndContent, SW_SHOWNOACTIVATE);
-		SetWindowPos(hwndContent, NULL, mCenterArea.left, mCenterArea.top, mCenterArea.width(), mCenterArea.height(), SWP_NOZORDER|SWP_NOACTIVATE);
+		resizer.LayoutWindow(hwndContent, mCenterArea.left, mCenterArea.top, mCenterArea.width(), mCenterArea.height());
+		mpContent->Relayout(mCenterArea.width(), mCenterArea.height());
 	}
 }
 
@@ -965,9 +1056,15 @@ void ATContainerDockingPane::RemoveEmptyNode() {
 
 		AddRef();
 		child->RemoveEmptyNode();
-		ATContainerResizer resizer;
-		Relayout(resizer);
-		resizer.Flush();
+
+		if (mpParent->IsLayoutSuspended())
+			InvalidateLayout();
+		else {
+			ATContainerResizer resizer;
+			Relayout(resizer);
+			resizer.Flush();
+		}
+
 		Release();
 		return;
 	}
@@ -1006,6 +1103,7 @@ ATContainerWindow::ATContainerWindow()
 	, mbBlockActiveUpdates(false)
 	, mhfontCaption(NULL)
 	, mhfontCaptionSymbol(NULL)
+	, mLayoutSuspendCount(0)
 {
 	if (mpDockingPane) {
 		mpDockingPane->AddRef();
@@ -1131,6 +1229,22 @@ ATFrameWindow *ATContainerWindow::GetUndockedPane(uint32 index) const {
 	return mUndockedFrames[index];
 }
 
+void ATContainerWindow::SuspendLayout() {
+	++mLayoutSuspendCount;
+}
+
+void ATContainerWindow::ResumeLayout() {
+	VDASSERT(mLayoutSuspendCount);
+
+	if (!--mLayoutSuspendCount) {
+		if (mpDockingPane) {
+			ATContainerResizer resizer;
+			mpDockingPane->UpdateLayout(resizer);
+			resizer.Flush();
+		}
+	}
+}
+
 void ATContainerWindow::NotifyFontsUpdated() {
 	if (mpDockingPane)
 		mpDockingPane->NotifyFontsUpdated();
@@ -1221,7 +1335,7 @@ ATContainerDockingPane *ATContainerWindow::DockFrame(ATFrameWindow *frame) {
 
 	if (frame) {
 		frame->SetContainer(this);
-		newPane->SetContent(frame);
+		newPane->SetContent(frame, true);
 		frame->RecalcFrame();
 	}
 
@@ -1242,6 +1356,8 @@ void ATContainerWindow::AddUndockedFrame(ATFrameWindow *frame) {
 
 void ATContainerWindow::UndockFrame(ATFrameWindow *frame, bool visible) {
 	HWND hwndFrame = frame->GetHandleW32();
+	VDASSERT(hwndFrame);
+
 	UINT style = GetWindowLong(hwndFrame, GWL_STYLE);
 
 	if (mpActiveFrame == frame) {
@@ -1274,7 +1390,8 @@ void ATContainerWindow::UndockFrame(ATFrameWindow *frame, bool visible) {
 		exstyle |= WS_EX_TOOLWINDOW;
 		SetWindowLong(hwndFrame, GWL_EXSTYLE, exstyle);
 
-		SetWindowPos(hwndFrame, NULL, r.left, r.top, 0, 0, SWP_NOSIZE|SWP_FRAMECHANGED|SWP_NOACTIVATE|SWP_NOZORDER|SWP_HIDEWINDOW);
+		SetWindowPos(hwndFrame, NULL, r.left, r.top, 0, 0, SWP_NOSIZE|SWP_FRAMECHANGED|SWP_NOACTIVATE|SWP_NOZORDER|SWP_NOCOPYBITS|SWP_NOOWNERZORDER|SWP_NOREDRAW);
+		RedrawWindow(hwndFrame, NULL, NULL, RDW_FRAME | RDW_INVALIDATE);
 		SendMessage(hwndFrame, WM_CHANGEUISTATE, MAKELONG(UIS_INITIALIZE, UISF_HIDEACCEL|UISF_HIDEFOCUS), 0);
 
 		if (visible)
@@ -1283,7 +1400,8 @@ void ATContainerWindow::UndockFrame(ATFrameWindow *frame, bool visible) {
 		VDASSERT(std::find(mUndockedFrames.begin(), mUndockedFrames.end(), frame) == mUndockedFrames.end());
 		mUndockedFrames.push_back(frame);
 
-		::SetActiveWindow(hwndFrame);
+		if (visible)
+			::SetActiveWindow(hwndFrame);
 	}
 }
 
@@ -1626,6 +1744,32 @@ void ATFrameWindow::RecalcFrame() {
 	}
 }
 
+void ATFrameWindow::Relayout(int w, int h) {
+	HWND hwndChild = GetWindow(mhwnd, GW_CHILD);
+
+	if (hwndChild) {
+		NONCLIENTMETRICS ncm = {sizeof(NONCLIENTMETRICS)};
+
+		SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &ncm, FALSE);
+
+		int bsize = std::min<int>(GetSystemMetrics(SM_CXSMSIZE), GetSystemMetrics(SM_CYSMSIZE));
+
+		RECT r = {0, 0, w, h};
+		r.top += ncm.iSmCaptionHeight;
+		if (r.top > r.bottom)
+			r.top = r.bottom;
+
+		int xe = GetSystemMetrics(SM_CXEDGE);
+		int ye = GetSystemMetrics(SM_CYEDGE);
+		r.left += xe;
+		r.top += ye;
+		r.right -= xe;
+		r.bottom -= ye;
+
+		SetWindowPos(hwndChild, NULL, 0, 0, std::max<int>(0, r.right - r.left), std::max<int>(0, r.bottom - r.top), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+	}
+}
+
 VDGUIHandle ATFrameWindow::Create(const wchar_t *title, int x, int y, int cx, int cy, VDGUIHandle parent) {
 	return (VDGUIHandle)CreateWindowExW(WS_EX_TOOLWINDOW, (LPCWSTR)sWndClass, title, WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
 }
@@ -1828,6 +1972,12 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					r.top += ye;
 					r.right -= xe;
 					r.bottom -= ye;
+
+					if (r.right < r.left)
+						r.right = r.left;
+
+					if (r.bottom < r.top)
+						r.bottom = r.top;
 				}
 
 				mClientRect.set(r.left, r.top, r.right, r.bottom);
@@ -2097,13 +2247,13 @@ void ATFrameWindow::EndDrag(bool success) {
 ///////////////////////////////////////////////////////////////////////////////
 
 namespace {
-	typedef stdext::hash_map<uint32, ATPaneCreator> PaneCreators;
+	typedef vdhashmap<uint32, ATPaneCreator> PaneCreators;
 	PaneCreators g_paneCreatorMap;
 
-	typedef stdext::hash_map<uint32, ATPaneClassCreator> PaneClassCreators;
+	typedef vdhashmap<uint32, ATPaneClassCreator> PaneClassCreators;
 	PaneClassCreators g_paneClassCreatorMap;
 
-	typedef stdext::hash_map<uint32, ATUIPane *> ActivePanes;
+	typedef vdhashmap<uint32, ATUIPane *> ActivePanes;
 	ActivePanes g_activePanes;
 
 	HFONT	g_monoFont;

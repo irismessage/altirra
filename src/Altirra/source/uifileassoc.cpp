@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#define INITGUID
 #include <vd2/system/filesys.h>
 #include <vd2/system/w32assist.h>
 #include <windows.h>
@@ -31,18 +32,18 @@
 #define SEE_MASK_WAITFORINPUTIDLE  0x02000000
 #endif
 
-#ifndef __IApplicationAssociationRegistrationUI_FWD_DEFINED__
-#define __IApplicationAssociationRegistrationUI_FWD_DEFINED__
+#ifndef __IApplicationAssociationRegistrationUI_INTERFACE_DEFINED__
+#define __IApplicationAssociationRegistrationUI_INTERFACE_DEFINED__
 
 typedef struct IApplicationAssociationRegistrationUI IApplicationAssociationRegistrationUI;
 
-struct __declspec(uuid("1f76a169-f994-40ac-8fc8-0959e8874710"))
-IApplicationAssociationRegistrationUI : public IUnknown
+struct IApplicationAssociationRegistrationUI : public IUnknown
 {
 	virtual HRESULT STDMETHODCALLTYPE LaunchAdvancedAssociationUI(LPCWSTR pszAppRegistryName) = 0;
 };
 
-class __declspec(uuid("1968106d-f3b5-44cf-890e-116fcb9ecef1")) ApplicationAssociationRegistrationUI;
+DEFINE_GUID(IID_IApplicationAssociationRegistrationUI, 0x1f76a169, 0xf994, 0x40ac, 0x8f, 0xc8, 0x09, 0x59, 0xe8, 0x87, 0x47, 0x10);
+DEFINE_GUID(CLSID_ApplicationAssociationRegistrationUI, 0x1968106d, 0xf3b5, 0x44cf, 0x89, 0x0e, 0x11, 0x6f, 0xcb, 0x9e, 0xce, 0xf1);
 
 #endif
 
@@ -361,13 +362,13 @@ bool ATUIDialogFileAssociations::OnLoaded() {
 				keyName.sprintf(L".%ls", item->mExt.c_str());
 
 				DWORD len = 0;
-				HRESULT hr = AssocQueryStringW(0, ASSOCSTR_EXECUTABLE, keyName.c_str(), NULL, NULL, &len);
+				HRESULT hr = AssocQueryStringW((ASSOCF)0, ASSOCSTR_EXECUTABLE, keyName.c_str(), NULL, NULL, &len);
 
 				if (hr == S_FALSE) {
 					++len;
 					vdfastvector<WCHAR> assocExePath(len, 0);
 
-					hr = AssocQueryStringW(0, ASSOCSTR_EXECUTABLE, keyName.c_str(), NULL, assocExePath.data(), &len);
+					hr = AssocQueryStringW((ASSOCF)0, ASSOCSTR_EXECUTABLE, keyName.c_str(), NULL, assocExePath.data(), &len);
 
 					if (SUCCEEDED(hr)) {
 						if (VDFileIsPathEqual(assocExePath.data(), exePath.c_str()))
@@ -383,7 +384,8 @@ bool ATUIDialogFileAssociations::OnLoaded() {
 		}
 	}
 
-	mListView.Sort(FileAssocItemSorter());
+	FileAssocItemSorter sorter;
+	mListView.Sort(sorter);
 	mListView.AutoSizeColumns(false);
 	mListView.SetRedraw(true);
 
@@ -456,8 +458,8 @@ void ATUIShowDialogFileAssociationsVista() {
 	for(size_t i=0; i<sizeof(g_ATFileAssociations)/sizeof(g_ATFileAssociations[0]); ++i)
 		ATCreateFileAssociationProgId(i);
 
-	HRESULT hr = CoCreateInstance(__uuidof(ApplicationAssociationRegistrationUI), NULL,
-		CLSCTX_INPROC, __uuidof(IApplicationAssociationRegistrationUI), (void **)&pAARegUI);
+	HRESULT hr = CoCreateInstance(CLSID_ApplicationAssociationRegistrationUI, NULL,
+		CLSCTX_INPROC, IID_IApplicationAssociationRegistrationUI, (void **)&pAARegUI);
 
 	if (FAILED(hr))
 		return;

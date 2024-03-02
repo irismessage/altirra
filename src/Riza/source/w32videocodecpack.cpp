@@ -204,7 +204,7 @@ VDVideoCompressorVCM::~VDVideoCompressorVCM() {
 	if (mbOwnHandle)
 		ICClose(hic);
 
-	delete pConfigData;
+	delete[] (char *)pConfigData;
 	delete pPrevBuffer;
 }
 

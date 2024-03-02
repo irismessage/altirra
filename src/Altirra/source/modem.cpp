@@ -274,6 +274,9 @@ void ATModemEmulator::Write(uint32 baudRate, uint8 c) {
 
 		switch(mCommandState) {
 			case kCommandState_Idle:
+				if (mConfig.mDeviceMode == kATRS232DeviceMode_1030)
+					break;
+
 				if (c == 'a')
 					mCommandState = kCommandState_a;
 				else if (c == 'A')
@@ -341,7 +344,7 @@ void ATModemEmulator::Write(uint32 baudRate, uint8 c) {
 				mTransmitBuffer[mTransmitLength++] = c;
 		}
 	} else {
-		if ((c & 0x7f) == mRegisters.mEscapeChar) {
+		if ((c & 0x7f) == mRegisters.mEscapeChar && mConfig.mDeviceMode != kATRS232DeviceMode_1030) {
 			if (delay >= kGuardTime || mGuardCharCounter) {
 				if (++mGuardCharCounter >= 3)
 					mpScheduler->SetEvent(kGuardTime, this, 1, mpEventEnterCommandMode);
@@ -376,6 +379,59 @@ void ATModemEmulator::Write(uint32 baudRate, uint8 c) {
 		}
 		mMutex.Unlock();
 	}
+}
+
+void ATModemEmulator::SetToneDialingMode(bool enable) {
+	mRegisters.mbToneDialMode = enable;
+}
+
+bool ATModemEmulator::IsToneDialingMode() const {
+	return mRegisters.mbToneDialMode;
+}
+
+void ATModemEmulator::HangUp() {
+	mbSuppressNoCarrier = true;
+
+	TerminateCall();
+	RestoreListeningState();
+}
+
+void ATModemEmulator::Dial(const char *address, const char *service) {
+	TerminateCall();
+
+	mbConnectionFailed = false;
+
+	mAddress = address;
+	mService = service;
+
+	mpDriver = ATCreateModemDriverTCP();
+	mpDriver->SetConfig(mConfig);
+	if (!mpDriver->Init(mAddress.c_str(), mService.c_str(), 0, this)) {
+		SendResponse(kResponseError);
+		RestoreListeningState();
+		return;
+	}
+
+	UpdateUIStatus();
+}
+
+void ATModemEmulator::Answer() {
+	// It's an error if ATA is issued while in online state (Table 9/V.250).
+	if (mConnectionState) {
+		SendResponse(kResponseError);
+		return;
+	}
+	
+	// If we have a connection incoming, then we're already virtually connected
+	// and should "answer" the connection. The connection state switching code
+	// will issue the CONNECT banner.
+	if (mbIncomingConnection) {
+		mbListening = false;
+		return;
+	}
+
+	// No incoming connection, so report NO CARRIER.
+	SendResponse(kResponseNoCarrier);
 }
 
 void ATModemEmulator::FlushOutputBuffer() {
@@ -499,6 +555,8 @@ void ATModemEmulator::Poll() {
 						mConnectionState = kConnectionState_Connected;
 						UpdateControlState();
 					} else if (mLostCarrierDelayCycles && ATSCHEDULER_GETTIME(mpScheduler) - mLostCarrierTime > mLostCarrierDelayCycles) {
+						TerminateCall();
+
 						mConnectionState = kConnectionState_NotConnected;
 
 						UpdateUIStatus();
@@ -675,22 +733,7 @@ void ATModemEmulator::ParseCommand() {
 				break;
 
 			case 'A':	// answer
-				// It's an error if ATA is issued while in online state (Table 9/V.250).
-				if (mConnectionState) {
-					SendResponse(kResponseError);
-					return;
-				}
-				
-				// If we have a connection incoming, then we're already virtually connected
-				// and should "answer" the connection. The connection state switching code
-				// will issue the CONNECT banner.
-				if (mbIncomingConnection) {
-					mbListening = false;
-					return;
-				}
-
-				// No incoming connection, so report NO CARRIER.
-				SendResponse(kResponseNoCarrier);
+				Answer();
 				return;
 
 			case 'B':	// select communication standard (ignored)
@@ -747,24 +790,11 @@ void ATModemEmulator::ParseCommand() {
 
 					const char *servicenameend = s;
 
-					TerminateCall();
-
-					mbConnectionFailed = false;
-
-					mAddress.assign(hostname, hostnameend);
-					mService.assign(servicename, servicenameend);
-
-					mpDriver = ATCreateModemDriverTCP();
-					mpDriver->SetConfig(mConfig);
-					if (!mpDriver->Init(mAddress.c_str(), mService.c_str(), 0, this)) {
-						SendResponse(kResponseError);
-						RestoreListeningState();
-						return;
-					}
-
-					UpdateUIStatus();
+					Dial(VDStringA(hostname, hostnameend).c_str(), VDStringA(servicename, servicenameend).c_str());
+				} else if (!mConfig.mDialAddress.empty() && !mConfig.mDialService.empty()) {
+					Dial(mConfig.mDialAddress.c_str(), mConfig.mDialService.c_str());
 				} else {
-					SendResponse(kResponseError);
+					SendResponse(kResponseNoAnswer);
 					return;
 				}
 				return;
@@ -784,10 +814,7 @@ void ATModemEmulator::ParseCommand() {
 					return;
 				}
 
-				mbSuppressNoCarrier = true;
-
-				TerminateCall();
-				RestoreListeningState();
+				HangUp();
 				break;
 
 			case 'L':	// set speaker volume (ignored)
@@ -997,7 +1024,7 @@ void ATModemEmulator::SendConnectResponse() {
 }
 
 void ATModemEmulator::SendResponse(int response) {
-	if (mRegisters.mbQuietMode)
+	if (mRegisters.mbQuietMode || mConfig.mDeviceMode == kATRS232DeviceMode_1030)
 		return;
 
 	static const char *const kResponses[]={

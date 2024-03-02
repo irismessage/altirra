@@ -89,6 +89,12 @@ public:
 		return c;
 	}
 
+	uint8 operator|=(uint8 mask) {
+		uint8 c = mpMem->ReadByte(kAddress) | mask;
+		mpMem->WriteByte(kAddress, c);
+		return c;
+	}
+
 	ATCPUEmulatorMemory *mpMem;
 };
 
@@ -153,6 +159,7 @@ struct ATKernelDatabase {
 		// page zero
 		ATByteAdapter<ATKernelSymbols::TRAMSZ> TRAMSZ;
 		ATByteAdapter<ATKernelSymbols::WARMST> WARMST;
+		ATByteAdapter<ATKernelSymbols::BOOT_ > BOOT_;
 		ATWordAdapter<ATKernelSymbols::DOSVEC> DOSVEC;
 		ATWordAdapter<ATKernelSymbols::DOSINI> DOSINI;
 		ATByteAdapter<ATKernelSymbols::POKMSK> POKMSK;
@@ -179,6 +186,7 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::CHKSUM> CHKSUM;
 		ATByteAdapter<ATKernelSymbols::BUFRLO> BUFRLO;
 		ATByteAdapter<ATKernelSymbols::BUFRHI> BUFRHI;
+		ATWordAdapter<ATKernelSymbols::BUFRLO> BUFRLO_BUFRHI;
 		ATByteAdapter<ATKernelSymbols::BFENLO> BFENLO;
 		ATByteAdapter<ATKernelSymbols::BFENHI> BFENHI;
 		ATByteAdapter<ATKernelSymbols::BUFRFL> BUFRFL;
@@ -252,6 +260,7 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::TXTOLD> TXTOLD;
 		ATByteAdapter<ATKernelSymbols::ESCFLG> ESCFLG;
 		ATByteAdapter<ATKernelSymbols::LOGMAP> LOGMAP;
+		ATByteAdapter<ATKernelSymbols::SHFLOK> SHFLOK;
 		ATByteAdapter<ATKernelSymbols::BOTSCR> BOTSCR;
 		ATByteAdapter<ATKernelSymbols::PCOLR0> PCOLR0;
 		ATByteAdapter<ATKernelSymbols::PCOLR1> PCOLR1;
@@ -262,8 +271,11 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::COLOR2> COLOR2;
 		ATByteAdapter<ATKernelSymbols::COLOR3> COLOR3;
 		ATByteAdapter<ATKernelSymbols::COLOR4> COLOR4;
+		ATWordAdapter<ATKernelSymbols::DSCTLN> DSCTLN;
+		ATWordAdapter<ATKernelSymbols::RUNAD > RUNAD ;
+		ATWordAdapter<ATKernelSymbols::INITAD> INITAD;
 		ATWordAdapter<ATKernelSymbols::MEMTOP> MEMTOP;
-		ATByteAdapter<ATKernelSymbols::MEMLO > MEMLO;
+		ATWordAdapter<ATKernelSymbols::MEMLO > MEMLO;
 		ATByteAdapter<ATKernelSymbols::CRSINH> CRSINH;
 		ATByteAdapter<ATKernelSymbols::CHACT > CHACT;
 		ATByteAdapter<ATKernelSymbols::CHBAS > CHBAS;
@@ -276,18 +288,25 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::DSTATS> DSTATS;
 		ATByteAdapter<ATKernelSymbols::DBUFLO> DBUFLO;
 		ATByteAdapter<ATKernelSymbols::DBUFHI> DBUFHI;
+		ATWordAdapter<ATKernelSymbols::DBUFLO> DBUFLO_DBUFHI;
 		ATByteAdapter<ATKernelSymbols::DTIMLO> DTIMLO;
 		ATByteAdapter<ATKernelSymbols::DBYTLO> DBYTLO;
 		ATByteAdapter<ATKernelSymbols::DBYTHI> DBYTHI;
+		ATWordAdapter<ATKernelSymbols::DBYTLO> DBYTLO_DBYTHI;
 		ATByteAdapter<ATKernelSymbols::DAUX1 > DAUX1;
 		ATByteAdapter<ATKernelSymbols::DAUX2 > DAUX2;
+		ATWordAdapter<ATKernelSymbols::DAUX1 > DAUX1_DAUX2;
 		ATWordAdapter<ATKernelSymbols::TIMER1> TIMER1;
 		ATWordAdapter<ATKernelSymbols::TIMER2> TIMER2;
 		ATByteAdapter<ATKernelSymbols::HATABS> HATABS;
 		ATByteAdapter<ATKernelSymbols::ICCMD > ICCMD;
 		ATByteAdapter<ATKernelSymbols::ICSTA > ICSTA;
 		ATByteAdapter<ATKernelSymbols::ICBAL > ICBAL;
+		ATByteAdapter<ATKernelSymbols::ICBAH > ICBAH;
+		ATWordAdapter<ATKernelSymbols::ICBAL > ICBAL_ICBAH;
 		ATByteAdapter<ATKernelSymbols::ICBLL > ICBLL;
+		ATByteAdapter<ATKernelSymbols::ICBLH > ICBLH;
+		ATWordAdapter<ATKernelSymbols::ICBLL > ICBLL_ICBLH;
 
 		ATByteAdapter<ATKernelSymbols::COLPM0> COLPM0;
 		ATByteAdapter<ATKernelSymbols::COLPM1> COLPM1;

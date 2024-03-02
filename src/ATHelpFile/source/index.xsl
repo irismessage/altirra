@@ -57,7 +57,7 @@
             <xsl:number level="any" count="h4" from="h3"/>
           </xsl:if>
         </xsl:if>
-        <xsl:text> </xsl:text>
+        <xsl:text xml:space="preserve">. </xsl:text>
         <xsl:apply-templates/>
       </xsl:element>
       <xsl:if test="key('toc-prev', generate-id())">

@@ -361,10 +361,10 @@ void ATCartridgeEmulator::LoadFlashSIC() {
 bool ATCartridgeEmulator::Load(const wchar_t *s, ATCartLoadContext *loadCtx) {
 	VDFileStream f(s);
 
-	return Load(s, s, f, loadCtx);
+	return Load(s, f, loadCtx);
 }
 
-bool ATCartridgeEmulator::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& f, ATCartLoadContext *loadCtx) {
+bool ATCartridgeEmulator::Load(const wchar_t *origPath, IVDRandomAccessStream& f, ATCartLoadContext *loadCtx) {
 	sint64 size = f.Length();
 
 	if (size < 1024 || size > 1048576 + 16 + 8192)
@@ -408,24 +408,13 @@ bool ATCartridgeEmulator::Load(const wchar_t *origPath, const wchar_t *imagePath
 	if (!validHeader) {
 		if (loadCtx && loadCtx->mbReturnOnUnknownMapper) {
 			loadCtx->mLoadStatus = kATCartLoadStatus_UnknownMapper;
-			loadCtx->mbMayBe2600 = false;
 
-			// Check if we see what looks like NMI, RESET, and IRQ handler addresses
-			// in the Fxxx range. That highly likely indicates a 2600 cartridge.
-			if (size32 == 2048 || size32 == 4096) {
-				vdfastvector<uint8> data(size32);
-
-				try {
-					f.Seek(0);
-					f.Read(data.data(), size32);
-
-					const uint8 *tail = data.data() + size32 - 6;
-
-					if (tail[1] >= 0xF0 && tail[3] >= 0xF0 && tail[5] >= 0xF0)
-						loadCtx->mbMayBe2600 = true;
-				} catch(const MyError&) {}
+			// If the cartridge isn't too big, capture it.
+			if (loadCtx->mpCaptureBuffer && size32 <= 1048576 + 8192) {
+				loadCtx->mpCaptureBuffer->resize(size32);
+				f.Seek(0);
+				f.Read(loadCtx->mpCaptureBuffer->data(), size32);
 			}
-
 			return false;
 		}
 
@@ -703,6 +692,11 @@ bool ATCartridgeEmulator::Load(const wchar_t *origPath, const wchar_t *imagePath
 			mInitialCartBank = 0;
 			allocSize = 0x10000;
 			break;
+
+		case kATCartridgeMode_MicroCalc:
+			mInitialCartBank = 0;
+			allocSize = 0x8000;
+			break;
 	}
 
 	mCartBank = mInitialCartBank;
@@ -804,6 +798,15 @@ void ATCartridgeEmulator::Unload() {
 }
 
 void ATCartridgeEmulator::Save(const wchar_t *fn, bool includeHeader) {
+	int type = 0;
+
+	if (includeHeader) {
+		type = ATGetCartridgeMapperForMode(mCartMode);
+
+		if (!type)
+			throw MyError("This cartridge type is not supported in the .CAR file format and must be saved as a raw image.");
+	}
+
 	VDFile f(fn, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
 
 	// write header
@@ -811,8 +814,6 @@ void ATCartridgeEmulator::Save(const wchar_t *fn, bool includeHeader) {
 
 	if (includeHeader) {
 		char header[16] = { 'C', 'A', 'R', 'T' };
-
-		int type = ATGetCartridgeMapperForMode(mCartMode);
 
 		VDWriteUnalignedBEU32(header + 4, type);
 
@@ -1577,6 +1578,26 @@ bool ATCartridgeEmulator::WriteByte_CCTL_5200_64K_32KBanks(void *thisptr0, uint3
 	return true;
 }
 
+namespace {
+	static const sint8 kMicroCalcTab[]={ 0, 1, 2, 3, -1 };
+}
+
+sint32 ATCartridgeEmulator::ReadByte_CCTL_MicroCalc(void *thisptr0, uint32 address) {
+	ATCartridgeEmulator *const thisptr = (ATCartridgeEmulator *)thisptr0;
+
+	thisptr->SetCartBank(kMicroCalcTab[thisptr->mCartBank + 1]);
+
+	return 0xFF;
+}
+
+bool ATCartridgeEmulator::WriteByte_CCTL_MicroCalc(void *thisptr0, uint32 address, uint8 value) {
+	ATCartridgeEmulator *const thisptr = (ATCartridgeEmulator *)thisptr0;
+
+	thisptr->SetCartBank(kMicroCalcTab[thisptr->mCartBank + 1]);
+
+	return true;
+}
+
 void ATCartridgeEmulator::LoadState(ATSaveStateReader& reader) {
 	ExchangeState(reader);
 }
@@ -1809,6 +1830,9 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			fixedBase	= 0xA0;
 			fixedSize	= 0x20;
 			fixedOffset	= 0x006000;
+			usecctl = true;
+			usecctlwrite = true;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x03>;
 			break;
 
 		case kATCartridgeMode_Switchable_XEGS_64K:
@@ -1817,6 +1841,9 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			fixedBase	= 0xA0;
 			fixedSize	= 0x20;
 			fixedOffset	= 0x00E000;
+			usecctl = true;
+			usecctlwrite = true;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x07>;
 			break;
 
 		case kATCartridgeMode_Switchable_XEGS_128K:
@@ -1825,6 +1852,9 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			fixedBase	= 0xA0;
 			fixedSize	= 0x20;
 			fixedOffset	= 0x01E000;
+			usecctl = true;
+			usecctlwrite = true;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x0F>;
 			break;
 
 		case kATCartridgeMode_Switchable_XEGS_256K:
@@ -1833,6 +1863,9 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			fixedBase	= 0xA0;
 			fixedSize	= 0x20;
 			fixedOffset	= 0x03E000;
+			usecctl = true;
+			usecctlwrite = true;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x1F>;
 			break;
 
 		case kATCartridgeMode_Switchable_XEGS_512K:
@@ -1841,6 +1874,9 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			fixedBase	= 0xA0;
 			fixedSize	= 0x20;
 			fixedOffset	= 0x07E000;
+			usecctl = true;
+			usecctlwrite = true;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x3F>;
 			break;
 
 		case kATCartridgeMode_Switchable_XEGS_1M:
@@ -1849,6 +1885,9 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			fixedBase	= 0xA0;
 			fixedSize	= 0x20;
 			fixedOffset	= 0x0FE000;
+			usecctl = true;
+			usecctlwrite = true;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x7F>;
 			break;
 
 		case kATCartridgeMode_DB_32K:
@@ -2216,6 +2255,16 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			spec1hd.mpReadHandler = ReadByte_CCTL_5200_64K_32KBanks;
 			spec1hd.mpWriteHandler = WriteByte_CCTL_5200_64K_32KBanks;
 			break;
+
+		case kATCartridgeMode_MicroCalc:
+			bank1Base	= 0xA0;
+			bank1Size	= 0x20;
+			usecctl = true;
+			usecctlread = true;
+			usecctlwrite = true;
+			cctlhd.mpReadHandler = ReadByte_CCTL_MicroCalc;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_MicroCalc;
+			break;
 	}
 
 	if (fixedSize) {
@@ -2359,6 +2408,15 @@ void ATCartridgeEmulator::UpdateCartBank() {
 			case kATCartridgeMode_MaxFlash_1024K_Bank0:
 				mpMemMan->EnableLayer(mpMemLayerSpec1, false);
 				break;
+
+			case kATCartridgeMode_Switchable_XEGS_32K:
+			case kATCartridgeMode_Switchable_XEGS_64K:
+			case kATCartridgeMode_Switchable_XEGS_128K:
+			case kATCartridgeMode_Switchable_XEGS_256K:
+			case kATCartridgeMode_Switchable_XEGS_512K:
+			case kATCartridgeMode_Switchable_XEGS_1M:
+				mpMemMan->EnableLayer(mpMemLayerFixedBank1, false);
+				break;
 		}
 
 		if (mpMemLayerVarBank1)
@@ -2397,7 +2455,19 @@ void ATCartridgeEmulator::UpdateCartBank() {
 		case kATCartridgeMode_Turbosoft_64K:
 		case kATCartridgeMode_Turbosoft_128K:
 		case kATCartridgeMode_Megacart_1M_2:
+		case kATCartridgeMode_MicroCalc:
 			// 8K banks
+			mpMemMan->SetLayerMemory(mpMemLayerVarBank1, cartbase + (mCartBank << 13));
+			break;
+
+		case kATCartridgeMode_Switchable_XEGS_32K:
+		case kATCartridgeMode_Switchable_XEGS_64K:
+		case kATCartridgeMode_Switchable_XEGS_128K:
+		case kATCartridgeMode_Switchable_XEGS_256K:
+		case kATCartridgeMode_Switchable_XEGS_512K:
+		case kATCartridgeMode_Switchable_XEGS_1M:
+			// 8K banks
+			mpMemMan->EnableLayer(mpMemLayerFixedBank1, true);
 			mpMemMan->SetLayerMemory(mpMemLayerVarBank1, cartbase + (mCartBank << 13));
 			break;
 

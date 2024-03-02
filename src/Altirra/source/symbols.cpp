@@ -899,6 +899,8 @@ void ATSymbolStore::LoadKernelListing(VDTextStream& ifile) {
 		//    3587  F138  A9 00            ZERORM
 
 		const char *s = line;
+		const char *t;
+
 		if (*s++ != ' ') continue;
 		if (*s++ != ' ') continue;
 		if (*s++ != ' ') continue;
@@ -938,7 +940,7 @@ void ATSymbolStore::LoadKernelListing(VDTextStream& ifile) {
 
 		// skip all the way to label
 		s = line + 33;
-		const char *t = s;
+		t = s;
 		while(isalpha((unsigned char)*t))
 			++t;
 
@@ -981,12 +983,16 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 
 	using namespace ATKernelSymbols;
 	symstore->AddSymbol(CASINI, "CASINI", 2);
+	symstore->AddSymbol(RAMLO , "RAMLO" , 2);
+	symstore->AddSymbol(TRAMSZ, "TRAMSZ", 1);
 	symstore->AddSymbol(WARMST, "WARMST", 1);
 	symstore->AddSymbol(DOSVEC, "DOSVEC", 2);
 	symstore->AddSymbol(DOSINI, "DOSINI", 2);
+	symstore->AddSymbol(APPMHI, "APPMHI", 2);
 	symstore->AddSymbol(POKMSK, "POKMSK", 1);
 	symstore->AddSymbol(BRKKEY, "BRKKEY", 1);
 	symstore->AddSymbol(RTCLOK, "RTCLOK", 3);
+	symstore->AddSymbol(BUFADR, "BUFADR", 2);
 	symstore->AddSymbol(ICHIDZ, "ICHIDZ", 1);
 	symstore->AddSymbol(ICDNOZ, "ICDNOZ", 1);
 	symstore->AddSymbol(ICCOMZ, "ICCOMZ", 1);
@@ -1009,7 +1015,10 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbol(BUFRFL, "BUFRFL", 1);
 	symstore->AddSymbol(RECVDN, "RECVDN", 1);
 	symstore->AddSymbol(CHKSNT, "CHKSNT", 1);
+	symstore->AddSymbol(SOUNDR, "SOUNDR", 1);
 	symstore->AddSymbol(CRITIC, "CRITIC", 1);
+	symstore->AddSymbol(CKEY,   "CKEY"  , 1);
+	symstore->AddSymbol(CASSBT, "CASSBT", 1);
 	symstore->AddSymbol(ATRACT, "ATRACT", 1);
 	symstore->AddSymbol(DRKMSK, "DRKMSK", 1);
 	symstore->AddSymbol(COLRSH, "COLRSH", 1);
@@ -1022,13 +1031,16 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbol(LOGCOL, "LOGCOL", 1);
 	symstore->AddSymbol(RAMTOP, "RAMTOP", 1);
 	symstore->AddSymbol(BUFCNT, "BUFCNT", 1);
-	symstore->AddSymbol(BUFADR, "BUFADR", 2);
-	symstore->AddSymbol(RAMLO, "RAMLO", 1);
+	symstore->AddSymbol(BUFSTR, "BUFSTR", 2);
+	symstore->AddSymbol(KEYDEF, "KEYDEF", 2);	// XL/XE
+
 	symstore->AddSymbol(FR0, "FR0", 1);
 	symstore->AddSymbol(FR1, "FR1", 1);
 	symstore->AddSymbol(CIX, "CIX", 1);
+
 	symstore->AddSymbol(INBUFF, "INBUFF", 1);
 	symstore->AddSymbol(FLPTR, "FLPTR", 1);
+
 	symstore->AddSymbol(VDSLST, "VDSLST", 2);
 	symstore->AddSymbol(VPRCED, "VPRCED", 2);
 	symstore->AddSymbol(VINTER, "VINTER", 2);
@@ -1056,7 +1068,16 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbol(SDMCTL, "SDMCTL", 1);
 	symstore->AddSymbol(SDLSTL, "SDLSTL", 1);
 	symstore->AddSymbol(SDLSTH, "SDLSTH", 1);
+	symstore->AddSymbol(SSKCTL, "SSKCTL", 1);
+	symstore->AddSymbol(LPENH , "LPENH" , 1);
+	symstore->AddSymbol(LPENV , "LPENV" , 1);
+	symstore->AddSymbol(BRKKY , "BRKKY" , 2);
+	symstore->AddSymbol(VPIRQ , "VPIRQ" , 2);	// XL/XE
 	symstore->AddSymbol(COLDST, "COLDST", 1);
+	symstore->AddSymbol(PDVMSK, "PDVMSK", 1);
+	symstore->AddSymbol(SHPDVS, "SHPDVS", 1);
+	symstore->AddSymbol(PDMSK , "PDMSK" , 1);	// XL/XE
+	symstore->AddSymbol(CHSALT, "CHSALT", 1);	// XL/XE
 	symstore->AddSymbol(GPRIOR, "GPRIOR", 1);
 	symstore->AddSymbol(PADDL0, "PADDL0", 1);
 	symstore->AddSymbol(PADDL1, "PADDL1", 1);
@@ -1074,11 +1095,24 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbol(PTRIG1, "PTRIG1", 1);
 	symstore->AddSymbol(PTRIG2, "PTRIG2", 1);
 	symstore->AddSymbol(PTRIG3, "PTRIG3", 1);
+	symstore->AddSymbol(PTRIG4, "PTRIG4", 1);
+	symstore->AddSymbol(PTRIG5, "PTRIG5", 1);
+	symstore->AddSymbol(PTRIG6, "PTRIG6", 1);
+	symstore->AddSymbol(PTRIG7, "PTRIG7", 1);
 	symstore->AddSymbol(STRIG0, "STRIG0", 1);
 	symstore->AddSymbol(STRIG1, "STRIG1", 1);
 	symstore->AddSymbol(STRIG2, "STRIG2", 1);
 	symstore->AddSymbol(STRIG3, "STRIG3", 1);
-	symstore->AddSymbol(JVECK, "JVECK", 1);
+	symstore->AddSymbol(JVECK , "JVECK" , 1);
+	symstore->AddSymbol(TXTROW, "TXTROW", 1);
+	symstore->AddSymbol(TXTCOL, "TXTCOL", 2);
+	symstore->AddSymbol(TINDEX, "TINDEX", 1);
+	symstore->AddSymbol(TXTMSC, "TXTMSC", 2);
+	symstore->AddSymbol(TXTOLD, "TXTOLD", 2);
+	symstore->AddSymbol(TABMAP, "TABMAP", 15);
+	symstore->AddSymbol(LOGMAP, "LOGMAP", 4);
+	symstore->AddSymbol(SHFLOK, "SHFLOK", 1);
+	symstore->AddSymbol(BOTSCR, "BOTSCR", 1);
 	symstore->AddSymbol(PCOLR0, "PCOLR0", 1);
 	symstore->AddSymbol(PCOLR1, "PCOLR1", 1);
 	symstore->AddSymbol(PCOLR2, "PCOLR2", 1);
@@ -1088,19 +1122,28 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbol(COLOR2, "COLOR2", 1);
 	symstore->AddSymbol(COLOR3, "COLOR3", 1);
 	symstore->AddSymbol(COLOR4, "COLOR4", 1);
-	symstore->AddSymbol(MEMTOP, "MEMTOP", 1);
-	symstore->AddSymbol(MEMLO, "MEMLO", 1);
+	symstore->AddSymbol(DSCTLN, "DSCTLN", 1);	// XL/XE
+	symstore->AddSymbol(KRPDEL, "KRPDEL", 1);	// XL/XE
+	symstore->AddSymbol(KEYREP, "KEYREP", 1);	// XL/XE
+	symstore->AddSymbol(NOCLIK, "NOCLIK", 1);	// XL/XE
+	symstore->AddSymbol(HELPPG, "HELPPG", 1);	// XL/XE
+	symstore->AddSymbol(DMASAV, "DMASAV", 1);	// XL/XE
+	symstore->AddSymbol(RUNAD , "RUNAD" , 2);
+	symstore->AddSymbol(INITAD, "INITAD", 2);
+	symstore->AddSymbol(MEMTOP, "MEMTOP", 2);
+	symstore->AddSymbol(MEMLO , "MEMLO" , 2);
+	symstore->AddSymbol(DVSTAT, "DVSTAT", 4);
 	symstore->AddSymbol(CRSINH, "CRSINH", 1);
 	symstore->AddSymbol(KEYDEL, "KEYDEL", 1);
-	symstore->AddSymbol(CH1, "CH1", 1);
-	symstore->AddSymbol(CHACT, "CHACT", 1);
-	symstore->AddSymbol(CHBAS, "CHBAS", 1);
+	symstore->AddSymbol(CH1   , "CH1"   , 1);
+	symstore->AddSymbol(CHACT , "CHACT" , 1);
+	symstore->AddSymbol(CHBAS , "CHBAS" , 1);
 	symstore->AddSymbol(ATACHR, "ATACHR", 1);
-	symstore->AddSymbol(CH, "CH", 1);
+	symstore->AddSymbol(CH    , "CH"    , 1);
 	symstore->AddSymbol(FILDAT, "FILDAT", 1);
 	symstore->AddSymbol(DSPFLG, "DSPFLG", 1);
 	symstore->AddSymbol(DDEVIC, "DDEVIC", 1);
-	symstore->AddSymbol(DUNIT, "DUNIT", 1);
+	symstore->AddSymbol(DUNIT , "DUNIT" , 1);
 	symstore->AddSymbol(DCOMND, "DCOMND", 1);
 	symstore->AddSymbol(DSTATS, "DSTATS", 1);
 	symstore->AddSymbol(DBUFLO, "DBUFLO", 1);
@@ -1108,24 +1151,27 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbol(DTIMLO, "DTIMLO", 1);
 	symstore->AddSymbol(DBYTLO, "DBYTLO", 1);
 	symstore->AddSymbol(DBYTHI, "DBYTHI", 1);
-	symstore->AddSymbol(DAUX1, "DAUX1", 1);
-	symstore->AddSymbol(DAUX2, "DAUX2", 1);
+	symstore->AddSymbol(DAUX1 , "DAUX1" , 1);
+	symstore->AddSymbol(DAUX2 , "DAUX2" , 1);
 	symstore->AddSymbol(TIMER1, "TIMER1", 2);
 	symstore->AddSymbol(TIMER2, "TIMER2", 2);
 	symstore->AddSymbol(TIMFLG, "TIMFLG", 1);
 	symstore->AddSymbol(STACKP, "STACKP", 1);
 	symstore->AddSymbol(HATABS, "HATABS", 38);
-	symstore->AddSymbol(ICHID, "ICHID", 1);
-	symstore->AddSymbol(ICDNO, "ICDNO", 1);
-	symstore->AddSymbol(ICCMD, "ICCMD", 1);
-	symstore->AddSymbol(ICSTA, "ICSTA", 1);
-	symstore->AddSymbol(ICBAL, "ICBAL", 1);
-	symstore->AddSymbol(ICBAH, "ICBAH", 1);
-	symstore->AddSymbol(ICPTL, "ICPTL", 1);
-	symstore->AddSymbol(ICPTH, "ICPTH", 1);
-	symstore->AddSymbol(ICBLL, "ICBLL", 1);
-	symstore->AddSymbol(ICAX1, "ICAX1", 1);
-	symstore->AddSymbol(LBUFF, "LBUFF", 128);
+	symstore->AddSymbol(ICHID , "ICHID" , 1);
+	symstore->AddSymbol(ICDNO , "ICDNO" , 1);
+	symstore->AddSymbol(ICCMD , "ICCMD" , 1);
+	symstore->AddSymbol(ICSTA , "ICSTA" , 1);
+	symstore->AddSymbol(ICBAL , "ICBAL" , 1);
+	symstore->AddSymbol(ICBAH , "ICBAH" , 1);
+	symstore->AddSymbol(ICPTL , "ICPTL" , 1);
+	symstore->AddSymbol(ICPTH , "ICPTH" , 1);
+	symstore->AddSymbol(ICBLL , "ICBLL" , 1);
+	symstore->AddSymbol(ICAX1 , "ICAX1" , 1);
+	symstore->AddSymbol(BASICF, "BASICF", 1);
+	symstore->AddSymbol(GINTLK, "GINTLK", 1);
+	symstore->AddSymbol(CASBUF, "CASBUF", 131);
+	symstore->AddSymbol(LBUFF , "LBUFF" , 128);
 
 	*ppStore = symstore.release();
 	return true;

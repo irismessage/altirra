@@ -276,7 +276,7 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 
 	// check for overrun
 	if (!(mIRQST & 0x20)) {
-		mSKSTAT &= 0xbf;
+		mSKSTAT &= 0xdf;
 
 		if (mbTraceSIO)
 			ATConsoleTaggedPrintf("POKEY: Serial input overrun detected (c=%02x; %02x %02x)\n", c, mSERIN, mSerialInputShiftRegister);
@@ -561,9 +561,6 @@ void ATPokeyEmulator::OnSerialOutputTick() {
 		if (mbSerShiftValid) {
 			mbSerShiftValid = false;
 
-			if (mbTraceSIO)
-				ATConsoleTaggedPrintf("POKEY: Transmitted serial byte %02x to SIO bus\n", mSerialOutputShiftRegister);
-
 			uint32 cyclesPerBit;
 		
 			switch(mSKCTL & 0x60) {
@@ -585,6 +582,14 @@ void ATPokeyEmulator::OnSerialOutputTick() {
 			}
 
 			cyclesPerBit += cyclesPerBit;
+
+			if (mbTraceSIO) {
+				ATConsoleTaggedPrintf("POKEY: Transmitted serial byte %02x to SIO bus at %u cycles/bit (%.1f baud)\n"
+					, mSerialOutputShiftRegister
+					, cyclesPerBit
+					, (7159090.0f / 4.0f) / (float)cyclesPerBit
+					);
+			}
 
 			for(Devices::const_iterator it(mDevices.begin()), itEnd(mDevices.end()); it!=itEnd; ++it)
 				(*it)->PokeyWriteSIO(mSerialOutputShiftRegister, mbCommandLineState, cyclesPerBit);
@@ -640,10 +645,10 @@ void ATPokeyEmulator::AdvanceFrame(bool pushAudio) {
 		if (!--mKeyCodeTimer) {
 			mSKSTAT |= 0x04;
 
-			mKeyCooldownTimer = 20;
+			mKeyCooldownTimer = 60;
 		}
 	} else if (mbSpeakerActive) {
-		mKeyCooldownTimer = 20;
+		mKeyCooldownTimer = 60;
 	} else {
 		if (mKeyCooldownTimer)
 			--mKeyCooldownTimer;
@@ -1875,6 +1880,12 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 				UpdateTimerCounter<2>();
 				UpdateTimerCounter<3>();
 
+				if (!(mSKCTL & 0x10) && (value & 0x10) && mbSerialWaitingForStartBit) {
+					// Restart timers 3 and 4 immediately.
+					mCounter[2] = mAUDFP1[2];
+					mCounter[3] = mAUDFP1[3];
+				}
+
 				bool prvInit = (mSKCTL & 3) == 0;
 				bool newInit = (value & 3) == 0;
 
@@ -1956,7 +1967,7 @@ void ATPokeyEmulator::DumpStatus() {
 		ATConsolePrintf("Primary POKEY:\n");
 		DumpStatus(false);
 		ATConsolePrintf("\nSecondary POKEY:\n");
-		DumpStatus(true);
+		mpSlave->DumpStatus(true);
 	} else {
 		DumpStatus(false);
 	}

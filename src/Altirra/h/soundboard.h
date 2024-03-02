@@ -109,9 +109,9 @@ protected:
 		kAccumBufferSize = 1536
 	};
 
-	__declspec(align(16)) sint16 mSampleBuffer[kSampleBufferSize + kSampleBufferOverlap];
-	__declspec(align(16)) float mAccumBufferLeft[kAccumBufferSize];
-	__declspec(align(16)) float mAccumBufferRight[kAccumBufferSize];
+	VDALIGN(16) sint16 mSampleBuffer[kSampleBufferSize + kSampleBufferOverlap];
+	VDALIGN(16) float mAccumBufferLeft[kAccumBufferSize];
+	VDALIGN(16) float mAccumBufferRight[kAccumBufferSize];
 };
 
 #endif	// f_AT_SOUNDBOARD_H

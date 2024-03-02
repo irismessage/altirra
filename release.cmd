@@ -33,7 +33,8 @@ set _abverfile=src\Altirra\autobuild\version.h
 
 if not exist src\Altirra\autobuild md src\Altirra\autobuild
 
-devenv src\Altirra.sln /Clean Release
+devenv src\Altirra.sln /Clean Release^|Win32
+devenv src\Altirra.sln /Clean Release^|x64
 
 echo #ifndef AT_VERSION_H >%_abverfile%
 echo #define AT_VERSION_H >>%_abverfile%
@@ -54,7 +55,13 @@ if errorlevel 1 (
 	goto :cleanup
 )
 
-devenv src\Altirra.sln /Rebuild Release /Out publish\build.log
+devenv src\Altirra.sln /Rebuild Release^|Win32 /Out publish\build.log
+if errorlevel 1 (
+	echo Build failed!
+	goto :cleanup
+)
+
+devenv src\Altirra.sln /Rebuild Release^|x64 /Out publish\build.log
 if errorlevel 1 (
 	echo Build failed!
 	goto :cleanup
@@ -71,7 +78,6 @@ zip -9 -X -r publish\Altirra-!_verid!-src.zip ^
 	src\Kasumi\data\Tuffy.* ^
 	src\Kernel\Makefile ^
 	Copying ^
-	README.html ^
 	-i ^
 	*.vcproj ^
 	*.sln ^
@@ -94,11 +100,11 @@ zip -9 -X -r publish\Altirra-!_verid!-src.zip ^
 	*.ico ^
 	*.cur ^
 	*.manifest ^
-	*.s
+	*.s ^
+	*.pcm
 
 zip -9 -X publish\Altirra-!_verid!-src.zip ^
 	Copying ^
-	README.html ^
 	release.cmd ^
 	src\Kasumi\data\Tuffy.* ^
 	src\Kernel\source\atarifont.bin ^
@@ -110,10 +116,15 @@ zip -9 -X publish\Altirra-!_verid!-src.zip ^
 	src\ATHelpFile\source\*.hhp ^
 	src\ATHelpFile\source\*.hhw ^
 	src\ATHelpFile\source\*.hhc ^
+	src\Altirra\res\altirraexticons.res ^
 	out\debug\kernel.rom ^
 	out\release\kernel.rom
 
-zip -9 -X -j publish\Altirra-!_verid!.zip out\release\Altirra.exe Copying README.html out\Helpfile\Altirra.chm
+zip -9 -X -j publish\Altirra-!_verid!.zip ^
+	out\release\Altirra.exe ^
+	out\releaseamd64\Altirra64.exe ^
+	Copying ^
+	out\Helpfile\Altirra.chm
 copy out\release\Altirra.pdb publish\Altirra-!_verid!.pdb
 
 dir publish
