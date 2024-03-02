@@ -21,10 +21,10 @@
 #include <vd2/system/file.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
-#include <at/atui/dialog.h>
+#include <at/atnativeui/dialog.h>
 #include "resource.h"
 #include "disk.h"
-#include "diskfs.h"
+#include <at/atio/diskfs.h>
 #include "simulator.h"
 #include "uifilefilters.h"
 
@@ -56,24 +56,33 @@ protected:
 	bool OnCommand(uint32 id, uint32 extcode);
 	void UpdateEnables();
 
-	enum Format {
-		kFormatSingle,
-		kFormatMedium,
-		kFormatDouble,
-		kFormatDSDD,
-		kFormatCustom
-	};
-
-	Format	mFormat;
+	int	mFormatTypeIndex;
 	ATDiskFormatFileSystem mDiskFFS;
 	uint32	mSectorCount;
 	uint32	mBootSectorCount;
 	uint32	mSectorSize;
+
+	struct FormatType {
+		uint32 mSectorSize;
+		uint32 mSectorCount;
+		const wchar_t *mpTag;
+	};
+
+	static const FormatType kFormatTypes[];
+};
+
+const ATNewDiskDialog::FormatType ATNewDiskDialog::kFormatTypes[] = {
+	{ 0, 0, L"Custom" },
+	{ 128,  720, L"Single density (720 sectors, 128 bytes/sector)" },
+	{ 128, 1040, L"Medium density (1040 sectors, 128 bytes/sector)" },
+	{ 256,  720, L"Double density (720 sectors, 256 bytes/sector)" },
+	{ 256, 1440, L"Double-sided DD (1440 sectors, 256 bytes/sector)" },
+	{ 256, 2880, L"DSDD 80 tracks (2880 sectors, 256 bytes/sector)" },
 };
 
 ATNewDiskDialog::ATNewDiskDialog()
 	: VDDialogFrameW32(IDD_CREATE_DISK)
-	, mFormat(kFormatSingle)
+	, mFormatTypeIndex(1)
 	, mDiskFFS(kATDiskFFS_None)
 	, mSectorCount(720)
 	, mBootSectorCount(3)
@@ -85,11 +94,8 @@ ATNewDiskDialog::~ATNewDiskDialog() {
 }
 
 bool ATNewDiskDialog::OnLoaded() {
-	CBAddString(IDC_FORMAT, L"Single density (720 sectors, 128 bytes/sector)");
-	CBAddString(IDC_FORMAT, L"Medium density (1040 sectors, 128 bytes/sector)");
-	CBAddString(IDC_FORMAT, L"Double density (720 sectors, 256 bytes/sector)");
-	CBAddString(IDC_FORMAT, L"Double-sided DD (1440 sectors, 256 bytes/sector)");
-	CBAddString(IDC_FORMAT, L"Custom");
+	for(const auto& formatType : kFormatTypes)
+		CBAddString(IDC_FORMAT, formatType.mpTag);
 
 	CBAddString(IDC_FILESYSTEM, L"None (unformatted)");
 	CBAddString(IDC_FILESYSTEM, L"DOS 2.0/2.5");
@@ -172,7 +178,7 @@ void ATNewDiskDialog::OnDataExchange(bool write) {
 		CheckButton(IDC_SECTOR_SIZE_128, mSectorSize == 128);
 		CheckButton(IDC_SECTOR_SIZE_256, mSectorSize == 256);
 		CheckButton(IDC_SECTOR_SIZE_512, mSectorSize == 512);
-		CBSetSelectedIndex(IDC_FORMAT, (int)mFormat);
+		CBSetSelectedIndex(IDC_FORMAT, mFormatTypeIndex);
 		UpdateEnables();
 
 		CBSetSelectedIndex(IDC_FILESYSTEM, mDiskFFS);
@@ -181,40 +187,19 @@ void ATNewDiskDialog::OnDataExchange(bool write) {
 
 bool ATNewDiskDialog::OnCommand(uint32 id, uint32 extcode) {
 	if (id == IDC_FORMAT && extcode == CBN_SELCHANGE) {
-		Format format = (Format)CBGetSelectedIndex(IDC_FORMAT);
+		int formatTypeIndex = CBGetSelectedIndex(IDC_FORMAT);
 
-		if (mFormat != format) {
-			mFormat = format;
+		if (mFormatTypeIndex != formatTypeIndex) {
+			mFormatTypeIndex = formatTypeIndex;
 			UpdateEnables();
 
-			switch(format) {
-				case kFormatSingle:
-					mSectorCount = 720;
-					mBootSectorCount = 3;
-					mSectorSize = 128;
-					OnDataExchange(false);
-					break;
+			if (formatTypeIndex > 0 && formatTypeIndex < (int)vdcountof(kFormatTypes)) {
+				const auto& formatType = kFormatTypes[formatTypeIndex];
 
-				case kFormatMedium:
-					mSectorCount = 1040;
-					mBootSectorCount = 3;
-					mSectorSize = 128;
-					OnDataExchange(false);
-					break;
-
-				case kFormatDouble:
-					mSectorCount = 720;
-					mBootSectorCount = 3;
-					mSectorSize = 256;
-					OnDataExchange(false);
-					break;
-
-				case kFormatDSDD:
-					mSectorCount = 1440;
-					mBootSectorCount = 3;
-					mSectorSize = 256;
-					OnDataExchange(false);
-					break;
+				mSectorCount = formatType.mSectorCount;
+				mSectorSize = formatType.mSectorSize;
+				mBootSectorCount = 3;
+				OnDataExchange(false);
 			}
 		}
 	}
@@ -223,7 +208,7 @@ bool ATNewDiskDialog::OnCommand(uint32 id, uint32 extcode) {
 }
 
 void ATNewDiskDialog::UpdateEnables() {
-	bool custom = (CBGetSelectedIndex(IDC_FORMAT) == kFormatCustom);
+	bool custom = (CBGetSelectedIndex(IDC_FORMAT) == 0);
 
 	EnableControl(IDC_SECTOR_SIZE_128, custom);
 	EnableControl(IDC_SECTOR_SIZE_256, custom);
@@ -251,6 +236,7 @@ protected:
 	
 	bool mbHighDrives;
 	int mSelectedDrive;
+	bool mbSwapMode = false;
 	HBRUSH mDirtyDiskBrush;
 	HBRUSH mVirtualDiskBrush;
 	HBRUSH mVirtualFolderBrush;
@@ -496,8 +482,6 @@ void ATDiskDriveDialog::OnDataExchange(bool write) {
 			else
 				SetControlTextF(kDriveLabelID[i], L"D1&%c:", '0' + (driveIdx - 9));
 
-			CheckDlgButton(mhdlg, kDriveLabelID[i], mSelectedDrive == driveIdx ? BST_PUSHED : 0);
-
 			ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIdx);
 			SetControlText(kDiskPathID[i], disk.GetPath());
 
@@ -600,7 +584,16 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 				mSelectedDrive = -1;
 
 				if (driveIndex != oldDrive) {
-					g_sim.SwapDrives(driveIndex, oldDrive);
+					if (mbSwapMode) {
+						g_sim.SwapDrives(driveIndex, oldDrive);
+					} else {
+						int direction = driveIndex < oldDrive ? -1 : +1;
+
+						for(int i = oldDrive; i != driveIndex; i += direction) {
+							g_sim.SwapDrives(i, i + direction);
+						}
+					}
+
 					OnDataExchange(false);
 				} else {
 					UpdateActionButtons();
@@ -804,6 +797,13 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 
 					case ID_CONTEXT_SWAPWITHANOTHERDRIVE:
 						mSelectedDrive = driveIndex;
+						mbSwapMode = true;
+						UpdateActionButtons();
+						break;
+
+					case ID_CONTEXT_ROTATETOANOTHERDRIVE:
+						mSelectedDrive = driveIndex;
+						mbSwapMode = false;
 						UpdateActionButtons();
 						break;
 				}
@@ -911,10 +911,24 @@ void ATDiskDriveDialog::UpdateActionButtons() {
 
 	// update to:
 	// - right arrow if no swap in progress
-	// - X if swap in progress and this is the originating drive
+	// - X if swap/rotate in progress and this is the originating drive
 	// - <> if swap in progress and other drive
+	// - ^v if rotate in progress and another drive
 	for(int i=0; i<8; ++i) {
-		SetControlText(kMoreIds[i], mSelectedDrive >= 0 ? mSelectedDrive == driveIndex + i ? L"r" : L"v" : L"4");
+		const wchar_t *text = L"4";		// right arrow
+
+		if (mSelectedDrive >= 0) {
+			if (mSelectedDrive == driveIndex + i)
+				text = L"r";		// X
+			else if (mbSwapMode)
+				text = L"v";		// <>
+			else if (mSelectedDrive > driveIndex + i)
+				text = L"5";
+			else
+				text = L"6";
+		}
+
+		SetControlText(kMoreIds[i], text);
 	}
 }
 

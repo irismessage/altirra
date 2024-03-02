@@ -20,6 +20,10 @@
 ; SOFTWARE. 
 
 ;==========================================================================
+
+DEBUG_ECHO_CMDLINE = 0
+
+;==========================================================================
 ; Message base
 ;
 msg_base:
@@ -93,6 +97,14 @@ input_loop:
 		jsr		DupSetupReadLine
 		jsr		ciov
 		bmi		input_loop
+
+.if DEBUG_ECHO_CMDLINE
+		ldx		#0
+		jsr		DupSetupReadLine
+		lda		#CIOCmdPutRecord
+		sta		iccmd
+		jsr		ciov
+.endif
 
 		;scan for an intrinsic command
 		ldx		#0

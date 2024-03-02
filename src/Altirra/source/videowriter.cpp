@@ -137,8 +137,6 @@ void ATVideoEncoderRLE::CompressIntra8() {
 	const uint32 w = mWidth;
 	const uint32 h = mHeight;
 	const uint8 *src = (const uint8 *)mBuffer.data + mBuffer.pitch * (h - 1);
-	const uint32 w1 = w > 1 ? w - 1 : 0;
-	const uint32 w2 = w > 2 ? w - 2 : 0;
 
 	for(uint32 y = 0; y < h; ++y) {
 		uint32 x = 0;
@@ -235,9 +233,6 @@ void ATVideoEncoderRLE::CompressInter8(bool encodeAll) {
 	const uint32 w = mWidth;
 	const uint32 h = mHeight;
 	const uint8 *src = (const uint8 *)mBuffer.data + mBuffer.pitch * (h - 1);
-	const uint32 w1 = w > 1 ? w - 1 : 0;
-	const uint32 w2 = w > 2 ? w - 2 : 0;
-
 	const uint8 *ref = (const uint8 *)mBufferRef.data + mBufferRef.pitch * (h - 1);
 
 	uint32 lastx = 0;

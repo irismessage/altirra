@@ -33,15 +33,12 @@ ATNetSockBridgeHandler::ATNetSockBridgeHandler(ATNetSockWorker *parent, SOCKET s
 	, mSendBase(0)
 	, mSendLimit(0)
 {
+	if (!s2)
+		mbNativeConnected = true;
 }
 
 void ATNetSockBridgeHandler::Shutdown() {
 	AddRef();
-
-	if (mpLocalSocket) {
-		mpLocalSocket->Shutdown();
-		mpLocalSocket = NULL;
-	}
 
 	if (mNativeSocket != INVALID_SOCKET) {
 		mpParent->DeleteConnection(mNativeSocket);
@@ -49,7 +46,18 @@ void ATNetSockBridgeHandler::Shutdown() {
 		mNativeSocket = INVALID_SOCKET;
 	}
 
+	mbNativeConnected = false;
+
+	if (mpLocalSocket) {
+		mpLocalSocket->Shutdown();
+		mpLocalSocket = NULL;
+	}
+
 	Release();
+}
+
+void ATNetSockBridgeHandler::SetLocalSocket(IATSocket *s2) {
+	mpLocalSocket = s2;
 }
 
 void ATNetSockBridgeHandler::OnNativeSocketConnect() {
@@ -67,12 +75,19 @@ void ATNetSockBridgeHandler::OnNativeSocketWriteReady() {
 }
 
 void ATNetSockBridgeHandler::OnNativeSocketClose() {
+	AddRef();
+
 	mbNativeClosed = true;
 
-	mpLocalSocket->Close();
+	TryCopyFromNative();
+
+	if (mRecvLimit == mRecvBase)
+		mpLocalSocket->Close();
 
 	if (mbLocalClosed)
 		Shutdown();
+
+	Release();
 }
 
 void ATNetSockBridgeHandler::OnNativeSocketError() {
@@ -138,14 +153,21 @@ void ATNetSockBridgeHandler::TryCopyToNative() {
 }
 
 void ATNetSockBridgeHandler::TryCopyFromNative() {
-	if (!mbNativeConnected)
+	if (!mbNativeConnected || mbNativeClosed)
 		return;
 
 	for(;;) {
 		if (mRecvBase == mRecvLimit) {
 			int actual = ::recv(mNativeSocket, mRecvBuf, sizeof mRecvBuf, 0);
 
-			if (actual == 0 || actual == SOCKET_ERROR)
+			if (actual == 0) {
+				if (mbNativeClosed)
+					mpLocalSocket->Close();
+
+				break;
+			}
+
+			if (actual == SOCKET_ERROR)		// includes WSAEWOULDBLOCK, which means no data
 				break;
 
 			mRecvBase = 0;
@@ -162,20 +184,16 @@ void ATNetSockBridgeHandler::TryCopyFromNative() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATNetSockWorker::ATNetSockWorker()
-	: mpWndThunk(NULL)
-	, mWndClass(NULL)
-	, mhwnd(NULL)
-	, mpUdpStack(NULL)
-{
+ATNetSockWorker::ATNetSockWorker() {
 }
 
 ATNetSockWorker::~ATNetSockWorker() {
 	Shutdown();
 }
 
-bool ATNetSockWorker::Init(IATNetUdpStack *udp, bool externalAccess) {
+bool ATNetSockWorker::Init(IATNetUdpStack *udp, IATNetTcpStack *tcp, bool externalAccess, uint32 forwardingAddr, uint16 forwardingPort) {
 	mpUdpStack = udp;
+	mpTcpStack = tcp;
 	mbAllowExternalAccess = externalAccess;
 
 	// Bind DNS directly on the gateway, as we have to redirect it to the host's gateway.
@@ -207,11 +225,42 @@ bool ATNetSockWorker::Init(IATNetUdpStack *udp, bool externalAccess) {
 		return false;
 	}
 
+	mForwardingAddr = forwardingAddr;
+	mForwardingPort = forwardingPort;
+
+	if (mForwardingAddr) {
+		// Create the TCP listening socket.
+		SOCKET s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		if (s != INVALID_SOCKET) {
+			::WSAAsyncSelect(s, mhwnd, MYWM_TCP_LISTEN_SOCKET, FD_ACCEPT);
+
+			sockaddr_in sin = {};
+			sin.sin_family = AF_INET;
+			sin.sin_port = htons(mForwardingPort);
+			sin.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
+
+			if (bind(s, (const sockaddr *)&sin, sizeof sin) == 0) {
+				if (listen(s, SOMAXCONN) == 0) {
+					mTcpListeningSocket = s;
+					s = INVALID_SOCKET;
+				}
+			}
+
+			if (s != INVALID_SOCKET)
+				closesocket(s);
+		}
+	}
+
 	return true;
 }
 
 void ATNetSockWorker::Shutdown() {
 	ResetAllConnections();
+
+	if (mTcpListeningSocket != INVALID_SOCKET) {
+		::closesocket(mTcpListeningSocket);
+		mTcpListeningSocket = INVALID_SOCKET;
+	}
 
 	if (mhwnd) {
 		DestroyWindow(mhwnd);
@@ -250,6 +299,11 @@ void ATNetSockWorker::ResetAllConnections() {
 
 	mUdpSocketMap.clear();
 	mUdpSourceMap.clear();
+
+	if (mForwardingAddr) {
+		// Create and bind a UDP socket, and set up forwarding.
+		CreateUdpConnection(mForwardingAddr, mForwardingPort, 0, mForwardingPort, false);
+	}
 }
 
 bool ATNetSockWorker::GetHostAddressForLocalAddress(bool tcp, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, uint32& hostIp, uint16& hostPort) {
@@ -374,6 +428,17 @@ void ATNetSockWorker::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 		}
 	}
 
+	SOCKET sock = CreateUdpConnection(srcIpAddr, srcPort, dstIpAddr, dstPort, redirected);
+
+	sockaddr_in dstAddr = {0};
+	dstAddr.sin_family = AF_INET;
+	dstAddr.sin_port = htons(dstPort);
+	dstAddr.sin_addr.S_un.S_addr = redirectedDstIpAddr;
+
+	::sendto(sock, (const char *)data, dataLen, 0, (const sockaddr *)&dstAddr, sizeof dstAddr);
+}
+
+SOCKET ATNetSockWorker::CreateUdpConnection(uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, bool redirected) {
 	// see if we already have a socket set up for this source address
 	UdpConnection conn = {0};
 	conn.mSrcIpAddr = srcIpAddr;
@@ -391,8 +456,16 @@ void ATNetSockWorker::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 	if (r.second) {
 		// Nope -- establish a new socket.
 		SOCKET s = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-		if (s == INVALID_SOCKET)
-			return;
+		if (s == INVALID_SOCKET) {
+			mUdpSourceMap.erase(r.first);
+			return s;
+		}
+
+		sockaddr_in bindAddr = {0};
+		bindAddr.sin_family = AF_INET;
+		bindAddr.sin_port = !dstIpAddr && dstPort ? htons(dstPort) : htons(0);
+		bindAddr.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
+		bind(s, (const sockaddr *)&bindAddr, sizeof bindAddr);
 
 		::WSAAsyncSelect(s, mhwnd, MYWM_UDP_SOCKET, FD_READ);
 
@@ -401,12 +474,7 @@ void ATNetSockWorker::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 		mUdpSocketMap[s] = conn;
 	}
 
-	sockaddr_in dstAddr = {0};
-	dstAddr.sin_family = AF_INET;
-	dstAddr.sin_port = htons(dstPort);
-	dstAddr.sin_addr.S_un.S_addr = redirectedDstIpAddr;
-
-	::sendto(r.first->second, (const char *)data, dataLen, 0, (const sockaddr *)&dstAddr, sizeof dstAddr);
+	return r.first->second;
 }
 
 void ATNetSockWorker::DeleteConnection(SOCKET s) {
@@ -435,9 +503,6 @@ LRESULT ATNetSockWorker::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 			ATNetSockBridgeHandler *h = it->second;
 
 			switch(event) {
-				case FD_ACCEPT:
-					break;
-
 				case FD_CONNECT:
 					h->OnNativeSocketConnect();
 					break;
@@ -478,6 +543,51 @@ LRESULT ATNetSockWorker::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 		}
 
 		return 0;
+	} else if (msg == MYWM_TCP_LISTEN_SOCKET) {
+		const SOCKET sock = (SOCKET)wParam;
+		const UINT event = LOWORD(lParam);
+
+		VDASSERT(sock == mTcpListeningSocket);
+
+		if (event == FD_ACCEPT) {
+			sockaddr addr = {};
+			int addrlen = sizeof(addr);
+			
+			SOCKET newSocket = accept(sock, &addr, &addrlen);
+
+			if (newSocket != INVALID_SOCKET) {
+				::WSAAsyncSelect(newSocket, mhwnd, MYWM_TCP_SOCKET, FD_CONNECT | FD_READ | FD_WRITE | FD_CLOSE);
+
+				if (addr.sa_family != AF_INET) {
+					closesocket(newSocket);
+					return 0;
+				}
+
+				// hey, we've got a new incoming connection -- bind it to a new NAT connection and attempt
+				// to connect to the forwarding target
+				const sockaddr_in *addr4 = (const sockaddr_in *)&addr;
+				vdrefptr<ATNetSockBridgeHandler> h(new_nothrow ATNetSockBridgeHandler(this, newSocket, nullptr, addr4->sin_addr.S_un.S_addr, ntohs(addr4->sin_port), mForwardingAddr, mForwardingPort));
+				if (!h) {
+					closesocket(newSocket);
+					return 0;
+				}
+
+				vdrefptr<IATSocket> emuSocket;
+				if (!mpTcpStack->Connect(mForwardingAddr, mForwardingPort, h, ~emuSocket)) {
+					closesocket(newSocket);
+					return 0;
+				}
+
+				h->SetLocalSocket(emuSocket);
+
+				mTcpConnections[newSocket] = h;
+				h->AddRef();
+	
+				h->OnNativeSocketConnect();
+			}
+		}
+
+		return 0;
 	}
 
 	return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -496,10 +606,10 @@ void ATNetSockWorker::ProcessUdpDatagram(SOCKET s, uint32 srcIpAddr, uint16 srcP
 
 ///////////////////////////////////////////////////////////////////////////
 
-void ATCreateNetSockWorker(IATNetUdpStack *udp, bool externalAccess, IATNetSockWorker **pp) {
+void ATCreateNetSockWorker(IATNetUdpStack *udp, IATNetTcpStack *tcp, bool externalAccess, uint32 forwardingAddr, uint16 forwardingPort, IATNetSockWorker **pp) {
 	ATNetSockWorker *p = new ATNetSockWorker;
 
-	if (!p->Init(udp, externalAccess)) {
+	if (!p->Init(udp, tcp, externalAccess, forwardingAddr, forwardingPort)) {
 		delete p;
 		throw MyMemoryError();
 	}

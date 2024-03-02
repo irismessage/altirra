@@ -1,6 +1,6 @@
 <?xml version='1.0' standalone='yes'?>
 <?xml-stylesheet type="text/xsl" href="index.xsl" ?>
-<topic title="Introduction">
+<topic title="Frequently Asked Questions (FAQ)">
   <toc/>
 
   <h2>
@@ -63,7 +63,7 @@
   </p>
   <h3>Okay, what about the grinding sound when I don't have a disk set?</h3>
   <p>
-    That's the OS polling for non-disk devices. Just wait a couple of seconds, or enable the "fast boot"
+    That's the XL/XE OS polling for non-disk devices. Just wait a couple of seconds, or enable the "fast boot"
     firmware option.
   </p>
 
@@ -129,15 +129,54 @@
     this: either disable the input map, or hold down Alt when pressing the arrow keys to bypass
     the input map.
   </p>
+  <p>
+    Note that some programs do cursor movement by checking the keys that are used for arrow keys
+    without requiring Control. For these you don't actually want the arrow keys.
+  </p>
+  
+  <h3>Why does pressing Caps Lock turn all characters lowercase, instead of toggling uppercase?</h3>
+  <p>
+    Caps Lock works differently on the Atari than on a PC. On a PC, pressing Caps Lock toggles the
+    caps lock state, switching between forced and unforced capital letters. On the Atari OS-B firmware, pressing
+    the CAPS button switches to default lower case, Shift+CAPS switches to default upper case, and
+    Ctrl+CAPS switches to "control-case." Programs reading the keyboard directly can also handle the
+    CAPS key like any other key. Accordingly, Altirra simulates all of this using the host's Caps Lock key.
+  </p>
   
   <h2>Display</h2>
+  <h3>What are NTSC and PAL?</h3>
+  <p>
+    NTSC and PAL are types of TV signals which are put out by the Atari. NTSC is used in North America,
+    while PAL is used in Europe. Early Ataris were only made for NTSC, while later Ataris were made
+    for both NTSC and PAL. A particular computer was only made for one or the other; there was no
+    way to switch modes in software nor any simply hardware modification to do so either.
+  </p>
+  <p>
+    A lot of software will run on both types of computers, but there are a few big caveats. First,
+    most speed-sensitive software was made for one or the other. Auto-adjust
+    was possible but not common. This is most noticeable with games, where it affects both the
+    action on-screen and the music. Running an NTSC game on PAL makes it run in slow motion (-16% slower)
+    and running a PAL game on NTSC makes it run too fast (+20% faster) or possibly even crash.
+    The solution is to match the type of hardware being emulated to the software being run.
+  </p>
+  <h3>Why is part of the display cut off?</h3>
+  <p>
+    The Atari hardware puts out a bigger display than most TVs normally show, with some of the
+    display hidden behind the frame (bezel). This is called overscan.
+    The OS restricts its display to be mostly visible on a wide variety of TVs, but programs that
+    create custom screens can put out bigger displays that are more easily cut off. The amount of
+    overscan varies by TV.
+  </p>
+  <p>
+    The emulator's default overscan settings can be modified in the View menu to show more or all
+    of the display.
+  </p>
   <h3>Why do the colors seem subdued in PAL programs?</h3>
   <p>
     Some PAL programs (demos) make use of screens that have alternating grayscale and color lines to
-    simulate higher color depth output. These screens make use of the vertical blurring done by PAL
-    TV sets to carry chroma into the grayscale lines. Displaying these screens without that blurring
-    effect results in lost saturation, which fortunately can be recovered by enabling PAL artifacting
-    in the emulator.
+    simulate higher color depth output. This takes advantage of a quirk of PAL TVs to blur the color
+    into the grayscale lines, producing a more colorful display. This can be reproduced in the
+    emulator through the PAL artifacting options.
   </p>
   <h3>How come when I run in VBXE mode, palette changes don't take place immediately and I see color mismatches in programs?</h3>
   <p>
@@ -159,13 +198,15 @@
   <h3>Why is PAL mode a little jittery?</h3>
   <p>
     PAL displays use a 50Hz refresh rate, while computer displays often run at 60Hz or higher.
-    Displaying PAL video on a 60Hz display results in a tiny jerk 10 times a second (60Hz - 50Hz = 10Hz).
-    If you can set your host PC to use a 50Hz display, this effect will mostly go away.
+    Displaying PAL video on a 60Hz display results in a tiny jerk 10 times a second from the difference (60Hz - 50Hz = 10Hz).
+    If you can set your host PC to use a 50Hz display, this effect will mostly go away. NTSC mode
+    shows this too if the refresh rate is 72Hz or higher, but that isn't as common anymore.
   </p>
   <p>
     The reason it doesn't entirely go away is that the Atari actually produces a video signal that
     deviates a little bit from the standards and has a frame rate that's slightly slower than it
-    should be.
+    should be. By default, Altirra matches this rate. This can be changed in Speed Options to
+    run the emulation slightly faster to better match the display refresh rate.
   </p>
 
   <h2>Sound</h2>
@@ -183,6 +224,32 @@
     particularly on Windows Vista and Windows 7.
   </p>
   
+  <h3>Why does the sound stutter when the emulation speed is adjusted?</h3>
+  <p>
+    Altirra runs a synchronous sound emulation, which constrains it to generate sound at accurate speed.
+    Running the emulation at a slower or faster speed, like 80% or 120%, forces it to warp the sound to
+    match. This is a tricky problem known as pitch shifting (time stretching). For simpler sounds it
+    is possible to produce good sound at slower or faster speeds through asynchronous sound emulation,
+    but this is not supported.
+  </p>
+  
+  <h2>Cartridges</h2>
+  <h3>Why doesn't cartridge X work with cartridge Y when both are used together?</h3>
+  <p>
+    There are only a few specific cases where two cartridges works. One is when the first cartridge
+    has a pass-through port. The SpartaDOS X cartridge was the most well-known cartridge with this
+    capability, allowing a cartridge tower to be built. Even then, not all cartridges worked in the pass-through port due to conflicts.
+    The XL/XE computers only had one cartridge port, so without a pass-through the only way to
+    get two cartridges into the computer would have been with a hammer.
+  </p>
+  <p>
+    The 800 computer was unique in that it had two cartridge ports, a left port and a right port.
+    However, almost all cartridges were made for and would only work in the left port, and very
+    few cartridges were made for the right port. The emulator does support having both a left
+    cartridge and a right cartridge in 800 mode, but such working combinations are rare and
+    <i>useful</i> combinations extremely rare.
+  </p>
+  
   <h2>Emulation options</h2>
   <h3>Why can't I choose PAL mode when 5200 hardware mode is selected?</h3>
   <p>
@@ -193,8 +260,23 @@
     The official XL/XE OS is set up so that by default it boots with BASIC enabled, and
     you have to hold down OPTION on boot to turn it off. That's annoying, since a lot of
     the good software doesn't use BASIC and needs OPTION held down, so custom OSes frequently
-    have this swapped around. Unfortunately, Altirra doesn't know which convention the
-    custom OS uses, so you have to flip the option around if the OS works that way.
+    have this swapped around.
+  </p>
+  <p>
+    Unfortunately, Altirra doesn't know which convention the custom OS uses, so you have to
+    flip the option around if the OS works that way. This can be set on the firmware properties
+    in the Firmware Images dialog.
+  </p>
+  <h3>Why is the BASIC option grayed out in 400/800/1200XL mode?</h3>
+  <p>
+    This option corresponds to whether the Option button is held on boot. On most XL/XE machines, this enables or
+    disables the built-in BASIC. The 400, 800, and 1200XL did not have built-in BASIC and required a cartridge to
+    be plugged in instead. THis can be done via File &gt; Attach Special Cartridge.
+  </p>
+  <h3>Why can't I change memory size, firmware, or BASIC while Ultimate1MB is enabled?</h3>
+  <p>
+    The Ultimate1MB hardware takes over all of these functions -- they need to be selected from the U1MB
+    BIOS instead (Help+Reset). To use new OS or BASIC ROMs, they need to be flashed into the U1MB flash image.
   </p>
 
   <h2>Other</h2>

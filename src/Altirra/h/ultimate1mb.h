@@ -115,9 +115,15 @@ protected:
 	void SetSDXEnabled(bool enabled);
 	void SetSDXModuleEnabled(bool enabled);
 	void SetIORAMEnabled(bool enabled);
+	void UpdateFlashShadows();
 
 	static sint32 ReadByteFlash(void *thisptr, uint32 addr);
 	static bool WriteByteFlash(void *thisptr, uint32 addr, uint8 value);
+
+	uint32 GetOSFlashOffset(uint32 addr);
+	static sint32 ReadByteOSFlash(void *thisptr, uint32 addr);
+	static bool WriteByteOSFlash(void *thisptr, uint32 addr, uint8 value);
+
 	static sint32 ReadByteD1xx(void *thisptr, uint32 addr);
 	static bool WriteByteD1xx(void *thisptr, uint32 addr, uint8 value);
 	static sint32 ReadByteD3xx(void *thisptr, uint32 addr);
@@ -132,7 +138,6 @@ protected:
 	sint8 mCurrentPBIID;
 	uint8 mSelectedPBIID;
 	uint8 mColdFlag;
-	bool mbControlEnabled;
 	bool mbControlLocked;
 	bool mbSDXEnabled;
 	bool mbSDXModuleEnabled;
@@ -168,6 +173,12 @@ protected:
 	ATMemoryLayer *mpMemLayerBASICROM;			// $A000-BFFF
 	ATMemoryLayer *mpMemLayerSelfTestROM;		// $5000-57FF
 	ATMemoryLayer *mpMemLayerGameROM;			// $A000-BFFF
+
+	// shadows
+	ATMemoryLayer *mpMemLayerLowerKernelFlash = nullptr;
+	ATMemoryLayer *mpMemLayerUpperKernelFlash = nullptr;
+	ATMemoryLayer *mpMemLayerBASICGameFlash = nullptr;
+	ATMemoryLayer *mpMemLayerSelfTestFlash = nullptr;
 
 	ATFlashEmulator mFlashEmu;
 	ATRTCDS1305Emulator mClockEmu;

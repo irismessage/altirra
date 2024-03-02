@@ -24,13 +24,13 @@
 #include <vd2/system/strutil.h>
 #include <vd2/system/zip.h>
 #include <vd2/Dita/services.h>
-#include <at/atui/dialog.h>
+#include <at/atnativeui/dialog.h>
 #include "resource.h"
 #include "oshelper.h"
 #include "firmwaremanager.h"
 #include "firmwaredetect.h"
 #include "uimenu.h"
-#include "uimenulist.h"
+#include <at/atui/uimenulist.h>
 
 void ATUIScanForFirmware(VDGUIHandle hParent, ATFirmwareManager& fwmgr);
 
@@ -202,9 +202,6 @@ void ATUIDialogEditFirmwareSettings::OnDataExchange(bool write) {
 	} else {
 		SetControlText(IDC_PATH, mItem.mPath.c_str());
 
-		if (mFlagCount)
-			mOptionsView.SetItemChecked(0, (mItem.mFlags & 1) != 0);
-
 		int typeIndex = 0;
 
 		for(size_t i=0; i<vdcountof(mpSortedTypes); ++i) {
@@ -217,6 +214,9 @@ void ATUIDialogEditFirmwareSettings::OnDataExchange(bool write) {
 		mTypeList.SetSelection(typeIndex);
 
 		RedoOptions(mItem.mType);
+
+		if (mFlagCount)
+			mOptionsView.SetItemChecked(0, (mItem.mFlags & 1) != 0);
 	}
 }
 
@@ -389,8 +389,10 @@ void ATUIDialogFirmware::OnDataExchange(bool write) {
 		}
 
 		for(size_t i=0; i<vdcountof(mpCategories); ++i) {
-			if (mpCategories[i])
-				mTreeView.SortChildren(mpCategories[i]->mNode, FirmwareItemComparer());
+			if (mpCategories[i]) {
+				FirmwareItemComparer comparer;
+				mTreeView.SortChildren(mpCategories[i]->mNode, comparer);
+			}
 		}
 
 		mTreeView.SetRedraw(true);
@@ -486,7 +488,9 @@ void ATUIDialogFirmware::Add() {
 			UpdateFirmwareItem(*newItem);
 
 			mTreeView.RefreshNode(newItem->mNode);
-			mTreeView.SortChildren(mpCategories[newItem->mType]->mNode, FirmwareItemComparer());
+
+			FirmwareItemComparer comparer;
+			mTreeView.SortChildren(mpCategories[newItem->mType]->mNode, comparer);
 			mTreeView.MakeNodeVisible(newItem->mNode);
 			mTreeView.SelectNode(newItem->mNode);
 
@@ -527,7 +531,8 @@ void ATUIDialogFirmware::EditSettings() {
 		if (oldType != item->mType) {
 			OnDataExchange(false);
 		} else if (name.comparei(item->mText)) {
-			mTreeView.SortChildren(mpCategories[item->mType]->mNode, FirmwareItemComparer());
+			FirmwareItemComparer comparer;
+			mTreeView.SortChildren(mpCategories[item->mType]->mNode, comparer);
 			mTreeView.MakeNodeVisible(item->mNode);
 			mTreeView.SelectNode(item->mNode);
 		}

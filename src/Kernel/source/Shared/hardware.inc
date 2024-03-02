@@ -17,6 +17,11 @@ sizep1	equ	$d009
 sizep2	equ	$d00a
 sizep3	equ	$d00b
 sizem	equ	$d00c
+grafp0	equ	$d00d
+grafp1	equ	$d00e
+grafp2	equ	$d00f
+grafp3	equ	$d010
+grafm	equ	$d011
 trig0	equ	$d010
 trig1	equ	$d011
 trig2	equ	$d012
@@ -32,6 +37,7 @@ colpf2	equ	$d018
 colpf3	equ	$d019
 colbk	equ	$d01a
 prior	equ	$d01b
+vdelay	equ	$d01c
 gractl	equ	$d01d
 consol	equ	$d01f
 

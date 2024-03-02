@@ -24,7 +24,6 @@
 #include "debuggerlog.h"
 #include "memorymanager.h"
 #include "firmwaremanager.h"
-#include "devicemanager.h"
 #include "irqcontroller.h"
 #include "idedisk.h"
 #include "scsidisk.h"
@@ -36,6 +35,15 @@
 extern ATSimulator g_sim;
 
 extern ATDebuggerLogChannel g_ATLCParPrint;
+
+void ATCreateDeviceMIOEmulator(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATMIOEmulator> p(new ATMIOEmulator);
+	p->SetSettings(pset);
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefMIO = { "mio", "mio", L"MIO", ATCreateDeviceMIOEmulator };
 
 ATMIOEmulator::ATMIOEmulator()
 	: mPBIBANK(0)
@@ -90,8 +98,7 @@ void *ATMIOEmulator::AsInterface(uint32 iid) {
 }
 
 void ATMIOEmulator::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "mio";
-	info.mName = L"MIO";
+	info.mpDef = &g_ATDeviceDefMIO;
 }
 
 void ATMIOEmulator::GetSettings(ATPropertySet& settings) {
@@ -676,17 +683,4 @@ void ATMIOEmulator::SetRAMPAGE(uint32 page) {
 	mRAMPAGE = page;
 
 	mpMemMan->SetLayerMemory(mpMemLayerRAM, mRAM + ((uint32)page << 8));
-}
-
-/////////////////////////////////////////////////////////////////
-
-void ATCreateDeviceMIOEmulator(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATMIOEmulator> p(new ATMIOEmulator);
-	p->SetSettings(pset);
-
-	*dev = p.release();
-}
-
-void ATRegisterDeviceMIO(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("mio", ATCreateDeviceMIOEmulator);
 }

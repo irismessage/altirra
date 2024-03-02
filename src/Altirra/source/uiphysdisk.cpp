@@ -24,8 +24,8 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
-#include <at/atui/dialog.h>
-#include <at/atui/uiproxies.h>
+#include <at/atnativeui/dialog.h>
+#include <at/atnativeui/uiproxies.h>
 #include "resource.h"
 #include "ide.h"
 #include "simulator.h"

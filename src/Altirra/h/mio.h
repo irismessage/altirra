@@ -23,10 +23,10 @@
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceprinter.h>
 #include <at/atcore/deviceserial.h>
+#include <at/atcore/scheduler.h>
 #include "pia.h"
 #include "acia.h"
 #include "scsi.h"
-#include "scheduler.h"
 
 class ATMemoryLayer;
 class ATIRQController;

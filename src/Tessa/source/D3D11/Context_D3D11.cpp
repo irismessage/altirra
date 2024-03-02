@@ -54,6 +54,77 @@ namespace {
 	}
 }
 
+///////////////////////////////////////////////////////////////////////////
+
+typedef struct DXGI_SWAP_CHAIN_DESC1 DXGI_SWAP_CHAIN_DESC1;
+typedef struct DXGI_SWAP_CHAIN_FULLSCREEN_DESC DXGI_SWAP_CHAIN_FULLSCREEN_DESC;
+
+typedef struct DXGI_PRESENT_PARAMETERS {
+	UINT  DirtyRectsCount;
+	RECT  *pDirtyRects;
+	RECT  *pScrollRect;
+	POINT *pScrollOffset;
+} DXGI_PRESENT_PARAMETERS;
+
+typedef struct DXGI_RGBA DXGI_RGBA;
+
+struct __declspec(uuid("790a45f7-0d42-4876-983a-0a55cfe6f4aa")) IDXGISwapChain1 : public IDXGISwapChain {
+    virtual HRESULT STDMETHODCALLTYPE GetDesc1(DXGI_SWAP_CHAIN_DESC1 *pDesc) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetFullscreenDesc(DXGI_SWAP_CHAIN_FULLSCREEN_DESC *pDesc) = 0;
+
+    virtual HRESULT STDMETHODCALLTYPE GetHwnd(HWND *pHwnd) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetCoreWindow(REFIID refiid, void **ppUnk) = 0;
+
+    virtual HRESULT STDMETHODCALLTYPE Present1(UINT SyncInterval, UINT PresentFlags, const DXGI_PRESENT_PARAMETERS* pPresentParameters) = 0;
+    virtual BOOL STDMETHODCALLTYPE IsTemporaryMonoSupported() = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetRestrictToOutput(IDXGIOutput** ppRestrictToOutput) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetBackgroundColor(const DXGI_RGBA* pColor) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetBackgroundColor(DXGI_RGBA* pColor) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetRotation(DXGI_MODE_ROTATION Rotation) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetRotation(DXGI_MODE_ROTATION* pRotation) = 0;
+};
+
+const DXGI_SWAP_CHAIN_FLAG DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT = (DXGI_SWAP_CHAIN_FLAG)64;
+
+struct __declspec(uuid("50c83a1c-e072-4c48-87b0-3630fa36a6d0")) IDXGIFactory2 : public IDXGIFactory1 {
+	virtual BOOL STDMETHODCALLTYPE IsWindowedStereoEnabled() = 0;
+	virtual HRESULT STDMETHODCALLTYPE CreateSwapChainForHwnd(IUnknown *pDevice, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1 *pDesc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *pFullscreenDesc, IDXGIOutput *pRestrictToOutput, IDXGISwapChain1 **ppSwapChain) = 0;
+	virtual HRESULT STDMETHODCALLTYPE CreateSwapChainForCoreWindow(IUnknown *pDevice, IUnknown *pWindow, const DXGI_SWAP_CHAIN_DESC1 *pDesc, IDXGIOutput *pRestrictToOutput, IDXGISwapChain1 **ppSwapChain) = 0;
+	virtual HRESULT STDMETHODCALLTYPE GetSharedResourceAdapterLuid(HANDLE hResource, LUID* pLuid) = 0;
+	virtual HRESULT STDMETHODCALLTYPE RegisterStereoStatusWindow(HWND WindowHandle, UINT wMsg, DWORD *pdwCookie) = 0;
+	virtual HRESULT STDMETHODCALLTYPE RegisterStereoStatusEvent(HANDLE hEvent, DWORD *pdwCookie) = 0;
+	virtual void STDMETHODCALLTYPE UnregisterStereoStatus(DWORD dwCookie) = 0;
+	virtual HRESULT STDMETHODCALLTYPE RegisterOcclusionStatusWindow(HWND WindowHandle, UINT wMsg, DWORD *pdwCookie) = 0;
+	virtual HRESULT STDMETHODCALLTYPE RegisterOcclusionStatusEvent(HANDLE hEvent, DWORD *pdwCookie) = 0;
+	virtual void STDMETHODCALLTYPE UnregisterOcclusionStatus(DWORD dwCookie) = 0;
+	virtual HRESULT STDMETHODCALLTYPE CreateSwapChainForComposition(IUnknown *pDevice, const DXGI_SWAP_CHAIN_DESC1 *pDesc, IDXGIOutput *pRestrictToOutput, IDXGISwapChain1 **ppSwapChain) = 0;
+};
+
+struct __declspec(uuid("25483823-cd46-4c7d-86ca-47aa95b837bd")) IDXGIFactory3 : public IDXGIFactory2 {
+	virtual UINT STDMETHODCALLTYPE GetCreationFlags() = 0;
+};
+
+typedef struct DXGI_MATRIX_3X2_F DXGI_MATRIX_3X2_F;
+
+struct __declspec(uuid("a8be2ac4-199f-4946-b331-79599fb98de7")) IDXGISwapChain2 : public IDXGISwapChain1 {
+	virtual HRESULT STDMETHODCALLTYPE SetSourceSize(UINT Width, UINT Height) = 0;
+	virtual HRESULT STDMETHODCALLTYPE GetSourceSize(UINT *pWidth,UINT *pHeight) = 0;
+	virtual HRESULT STDMETHODCALLTYPE SetMaximumFrameLatency(UINT MaxLatency) = 0;
+	virtual HRESULT STDMETHODCALLTYPE GetMaximumFrameLatency(UINT *pMaxLatency) = 0;
+	virtual HANDLE  STDMETHODCALLTYPE GetFrameLatencyWaitableObject() = 0;
+	virtual HRESULT STDMETHODCALLTYPE SetMatrixTransform(const DXGI_MATRIX_3X2_F *pMatrix) = 0;
+	virtual HRESULT STDMETHODCALLTYPE GetMatrixTransform(DXGI_MATRIX_3X2_F *pMatrix) = 0;
+};
+
+const GUID IID_IDXGIFactory2 = __uuidof(IDXGIFactory2);
+const GUID IID_IDXGIFactory3 = __uuidof(IDXGIFactory3);
+const GUID IID_IDXGISwapChain1 = __uuidof(IDXGISwapChain1);
+const GUID IID_IDXGISwapChain2 = __uuidof(IDXGISwapChain2);
+
+const DXGI_SWAP_EFFECT DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL	= (DXGI_SWAP_EFFECT)3;
+
+///////////////////////////////////////////////////////////////////////////
+
 class VDD3D11Holder : public vdrefcounted<IVDRefUnknown> {
 public:
 	VDD3D11Holder();
@@ -63,9 +134,11 @@ public:
 
 	typedef HRESULT (APIENTRY *CreateDeviceFn)(IDXGIAdapter *pAdapter, D3D_DRIVER_TYPE DriverType, HMODULE Software, UINT Flags, const D3D_FEATURE_LEVEL *pFeatureLevels, UINT FeatureLevels, UINT SDKVersion, ID3D11Device **ppDevice, D3D_FEATURE_LEVEL *pFeatureLevel, ID3D11DeviceContext **ppImmediateContext);
 	typedef HRESULT (APIENTRY *CreateDXGIFactoryFn)(REFIID riid, void **ppFactory);
+	typedef HRESULT (APIENTRY *CreateDXGIFactory2Fn)(UINT flags, REFIID riid, void **ppFactory);
 
 	CreateDeviceFn GetCreateDeviceFn() const { return mpCreateDeviceFn; }
 	CreateDXGIFactoryFn GetCreateDXGIFactoryFn() const { return mpCreateDXGIFactoryFn; }
+	CreateDXGIFactory2Fn GetCreateDXGIFactory2Fn() const { return mpCreateDXGIFactory2Fn; }
 
 	HMODULE GetD3D11() const { return mhmodD3D11; }
 
@@ -76,6 +149,7 @@ protected:
 	HMODULE mhmodDXGI;
 	HMODULE mhmodD3D11;
 	CreateDXGIFactoryFn mpCreateDXGIFactoryFn;
+	CreateDXGIFactory2Fn mpCreateDXGIFactory2Fn;
 	CreateDeviceFn mpCreateDeviceFn;
 };
 
@@ -85,6 +159,7 @@ VDD3D11Holder::VDD3D11Holder()
 	: mhmodDXGI(NULL)
 	, mhmodD3D11(NULL)
 	, mpCreateDXGIFactoryFn(NULL)
+	, mpCreateDXGIFactory2Fn(NULL)
 	, mpCreateDeviceFn(NULL)
 {
 }
@@ -115,6 +190,9 @@ bool VDD3D11Holder::Init() {
 			return false;
 		}
 	}
+	
+	if (!mpCreateDXGIFactory2Fn)
+		mpCreateDXGIFactory2Fn = (CreateDXGIFactory2Fn)GetProcAddress(mhmodDXGI, "CreateDXGIFactory2");
 
 	if (!mhmodD3D11) {
 		mhmodD3D11 = VDLoadSystemLibraryW32("D3D11");
@@ -138,6 +216,8 @@ bool VDD3D11Holder::Init() {
 
 void VDD3D11Holder::Shutdown() {
 	mpCreateDeviceFn = NULL;
+	mpCreateDXGIFactoryFn = nullptr;
+	mpCreateDXGIFactory2Fn = nullptr;
 
 	if (mhmodD3D11) {
 		FreeLibrary(mhmodD3D11);
@@ -326,12 +406,13 @@ bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 height,
 	return SUCCEEDED(hr);
 }
 
-bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, uint32 mipLevel, bool rt) {
+bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, uint32 mipLevel, bool rt, bool onlyMip) {
 	D3D11_TEXTURE2D_DESC desc = {};
 
 	tex->GetDesc(&desc);
 
 	mMipLevel = mipLevel;
+	mbOnlyMip = onlyMip;
 
 	mDesc.mWidth = desc.Width;
 	mDesc.mHeight = desc.Height;
@@ -398,7 +479,11 @@ void VDTSurfaceD3D11::Load(uint32 dx, uint32 dy, const VDTInitData2D& srcData, u
 	VDMemcpyRect((char *)info.pData + info.RowPitch * dy, info.RowPitch, srcData.mpData, srcData.mPitch, bpr, bh);
 
 	devctx->Unmap(mpTextureSys, mMipLevel);
-	devctx->CopySubresourceRegion(mpTexture, mMipLevel, 0, 0, 0, mpTextureSys, mMipLevel, NULL);
+
+	if (mbOnlyMip && w == mDesc.mWidth && h == mDesc.mHeight)
+		devctx->CopyResource(mpTexture, mpTextureSys);
+	else
+		devctx->CopySubresourceRegion(mpTexture, mMipLevel, 0, 0, 0, mpTextureSys, mMipLevel, NULL);
 }
 
 void VDTSurfaceD3D11::Copy(uint32 dx, uint32 dy, IVDTSurface *src0, uint32 sx, uint32 sy, uint32 w, uint32 h) {
@@ -563,7 +648,7 @@ bool VDTTexture2DD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 heigh
 	for(uint32 i=0; i<mipcount; ++i) {
 		vdrefptr<VDTSurfaceD3D11> surf(new VDTSurfaceD3D11);
 
-		surf->Init(parent, mpTexture, mpTextureSys, i, usage == kVDTUsage_Render);
+		surf->Init(parent, mpTexture, mpTextureSys, i, usage == kVDTUsage_Render, mipcount == 1);
 
 		mMipmaps.push_back(surf.release());
 	}
@@ -608,7 +693,7 @@ bool VDTTexture2DD3D11::Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D
 	for(uint32 i=0; i<mMipCount; ++i) {
 		vdrefptr<VDTSurfaceD3D11> surf(new VDTSurfaceD3D11);
 
-		if (!surf->Init(parent, mpTexture, mpTextureSys, i, mUsage == kVDTUsage_Render)) {
+		if (!surf->Init(parent, mpTexture, mpTextureSys, i, mUsage == kVDTUsage_Render, mMipCount == 1)) {
 			Shutdown();
 			return false;
 		}
@@ -1221,6 +1306,7 @@ bool VDTSamplerStateD3D11::Restore() {
 VDTSwapChainD3D11::VDTSwapChainD3D11()
 	: VDThread("VSync Thread (D3D11)")
 	, mpSwapChain(NULL)
+	, mpSwapChain1(NULL)
 	, mpTexture(NULL)
 	, mVSyncPollPendingSema(0)
 	, mbVSyncPending(false)
@@ -1230,6 +1316,7 @@ VDTSwapChainD3D11::VDTSwapChainD3D11()
 	, mbVSyncExit(false)
 	, mAdapterLuidLo(0)
 	, mAdapterLuidHi(0)
+	, mWaitHandle(nullptr)
 {
 }
 
@@ -1242,7 +1329,8 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 
 	// Grab the adapter and attempt to pull the adapter LUID.
 	DXGI_ADAPTER_DESC adapterDesc;
-	if (SUCCEEDED(parent->GetDXGIAdapter()->GetDesc(&adapterDesc))) {
+	IDXGIAdapter *pAdapter = parent->GetDXGIAdapter();
+	if (SUCCEEDED(pAdapter->GetDesc(&adapterDesc))) {
 		mAdapterLuidLo = adapterDesc.AdapterLuid.LowPart;
 		mAdapterLuidHi = adapterDesc.AdapterLuid.HighPart;
 	}
@@ -1254,6 +1342,39 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 		scdesc.BufferDesc.Height = desc.mHeight;
 		scdesc.BufferDesc.RefreshRate.Numerator = desc.mRefreshRateNumerator;
 		scdesc.BufferDesc.RefreshRate.Denominator = desc.mRefreshRateDenominator;
+
+		// Match to actual mode if we are in full screen. This is particularly necessary
+		// if we are trying to hit an exact frame rate like 59.94; it may have been rounded
+		// on the way.
+		if (!desc.mbWindowed) {
+			DXGI_MODE_DESC desiredMode = scdesc.BufferDesc;
+			DXGI_MODE_DESC closestMode;
+			HMONITOR hmon = ::MonitorFromWindow((HWND)mDesc.mhWindow, MONITOR_DEFAULTTONEAREST);
+
+			RECT r;
+			GetClientRect((HWND)mDesc.mhWindow, &r);
+
+			if (hmon) {
+				UINT outputIdx = 0;
+				vdrefptr<IDXGIOutput> pOutput;
+				for(;;) {
+					HRESULT hr = pAdapter->EnumOutputs(outputIdx++, ~pOutput);
+
+					if (FAILED(hr))
+						break;
+
+					DXGI_OUTPUT_DESC outputDesc;
+					hr = pOutput->GetDesc(&outputDesc);
+
+					if (SUCCEEDED(hr) && outputDesc.Monitor == hmon) {
+						if (SUCCEEDED(pOutput->FindClosestMatchingMode(&desiredMode, &closestMode, parent->GetDeviceD3D11())))
+							scdesc.BufferDesc = closestMode;
+
+						break;
+					}
+				}
+			}
+		}
 	} else {
 		scdesc.BufferDesc.Width = ::GetSystemMetrics(SM_CXSCREEN);
 		scdesc.BufferDesc.Height = ::GetSystemMetrics(SM_CYSCREEN);
@@ -1270,21 +1391,76 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
     scdesc.BufferCount = 2;
     scdesc.OutputWindow = (HWND)mDesc.mhWindow;
     scdesc.Windowed = TRUE;
-	scdesc.SwapEffect = DXGI_SWAP_EFFECT_SEQUENTIAL;
+
+	// FLIP_SEQUENTIAL has better performance than SEQUENTIAL, but it requires Windows 8.
+	// Note that Windows 7 with the Platform Update does NOT support this, so just checking
+	// for DXGI 1.2 is not sufficient.
+	
+	if (!desc.mbWindowed)
+		scdesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+	else if (VDIsAtLeast8W32()) {
+		scdesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+
+		// We need triple buffering to be able to cancel a flip in progress -- one to
+		// display, a second to be queued, and a third to draw into and cancel the second.
+		scdesc.BufferCount = 3;
+	} else
+		scdesc.SwapEffect = DXGI_SWAP_EFFECT_SEQUENTIAL;
+
 	scdesc.Flags = mDesc.mbWindowed ? 0 : DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
 
-	if (!desc.mbWindowed)
+	bool haveDXGI13 = false;
+	if (!desc.mbWindowed) {
 		scdesc.OutputWindow = ::GetAncestor(scdesc.OutputWindow, GA_ROOT);
+	} else if (mDesc.mbWindowed && scdesc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL) {
+		// See if we have at least DXGI 1.3 and can use waitable objects for vsync. Note that
+		// this can only be used in windowed mode.
+		vdrefptr<IDXGIFactory3> factory3;
+		if (SUCCEEDED(parent->GetDXGIFactory()->QueryInterface(IID_IDXGIFactory3, (void **)~factory3))) {
+			scdesc.Flags |= DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+			haveDXGI13 = true;
+		}
+	}
 
 	HRESULT hr = parent->GetDXGIFactory()->CreateSwapChain(parent->GetDeviceD3D11(), &scdesc, &mpSwapChain);
 	if (FAILED(hr)) {
 		Shutdown();
 		return false;
 	}
+
+	mpSwapChain->QueryInterface(IID_IDXGISwapChain1, (void **)&mpSwapChain1);
 	
-	if (!mDesc.mbWindowed) {
+	{
+		vdrefptr<IDXGIFactory> pSwapChainFactory;
+
+		hr = mpSwapChain->GetParent(IID_IDXGIFactory, (void **)~pSwapChainFactory);
+		if (SUCCEEDED(hr))
+			pSwapChainFactory->MakeWindowAssociation((HWND)mDesc.mhWindow, DXGI_MWA_NO_WINDOW_CHANGES | DXGI_MWA_NO_ALT_ENTER);
+	}
+
+	if (mDesc.mbWindowed) {
+		if (haveDXGI13) {
+			vdrefptr<IDXGISwapChain2> swapChain2;
+
+			if (SUCCEEDED(mpSwapChain->QueryInterface(IID_IDXGISwapChain2, (void **)~swapChain2))) {
+				// Note that this returns a new handle each time that must be closed.
+				mWaitHandle = swapChain2->GetFrameLatencyWaitableObject();
+			}
+		}
+	} else {
+		VDASSERT(!(scdesc.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT));
 		hr = mpSwapChain->SetFullscreenState(TRUE, NULL);
 
+		if (FAILED(hr)) {
+			Shutdown();
+			return false;
+		}
+
+		// This is needed to avoid a warning from DXGI about full screen inefficiency causing a
+		// stretch... which is odd, because we originally matched the mode above, and are now doing
+		// a ResizeBuffers() with exactly the same parameters. Apparently, DXGI expects you to do
+		// this regardless.
+		hr = mpSwapChain->ResizeBuffers(scdesc.BufferCount, scdesc.BufferDesc.Width, scdesc.BufferDesc.Height, scdesc.BufferDesc.Format, scdesc.Flags);
 		if (FAILED(hr)) {
 			Shutdown();
 			return false;
@@ -1319,10 +1495,19 @@ void VDTSwapChainD3D11::Shutdown() {
 		ThreadWait();
 	}
 
+	if (mWaitHandle) {
+		VDVERIFY(CloseHandle(mWaitHandle));
+		mWaitHandle = nullptr;
+	}
+
 	vdsaferelease <<= mpTexture;
+	vdsaferelease <<= mpSwapChain1;
 	
 	if (mpSwapChain) {
-		mpSwapChain->SetFullscreenState(FALSE, NULL);
+		// The DXGI debug runtime complains if this is called on a swap chain that has a waitable
+		// object, even if full screen mode is being disabled. :p
+		if (!mDesc.mbWindowed)
+			mpSwapChain->SetFullscreenState(FALSE, NULL);
 
 		vdsaferelease <<= mpSwapChain;
 	}
@@ -1384,10 +1569,17 @@ void VDTSwapChainD3D11::Present() {
 	if (!mpSwapChain)
 		return;
 
+	// If the swap chain is in flip mode, it'll unbind the render target, so we need to
+	// sync that state.
+	if (mDesc.mbWindowed)
+		static_cast<VDTContextD3D11 *>(mpParent)->SetRenderTarget(0, nullptr);
+
 	mpSwapChain->Present(0, 0);
 }
 
 void VDTSwapChainD3D11::PresentVSync(void *monitor, IVDTAsyncPresent *callback) {
+	static_cast<VDTContextD3D11 *>(mpParent)->SetRenderTarget(0, nullptr);
+
 	mVSyncMutex.Lock();
 	mbVSyncExit = false;
 	mhVSyncMonitor = monitor;
@@ -1411,9 +1603,21 @@ void VDTSwapChainD3D11::PresentVSyncComplete() {
 		mbVSyncPending = false;
 
 		if (mpSwapChain) {
-			if (mDesc.mbWindowed)
-				mpSwapChain->Present(0, 0);
-			else
+			if (mDesc.mbWindowed) {
+				// We seem to need Present1() here in order for an interval of 0 to actually
+				// skip frames in flip model. Otherwise, eventually the chain gets filled
+				// and lag results.
+				if (mpSwapChain1) {
+					DXGI_PRESENT_PARAMETERS parms = { 0 };
+					mpSwapChain1->Present1(0, 0, &parms);
+				} else
+					mpSwapChain->Present(0, 0);
+
+				// If the swap chain is in flip mode, it'll unbind the render target, so we need to
+				// sync that state.
+				if (mDesc.mbWindowed)
+					static_cast<VDTContextD3D11 *>(mpParent)->SetRenderTarget(0, nullptr);
+			} else
 				mpSwapChain->Present(1, 0);
 		}
 	}
@@ -1499,10 +1703,26 @@ void VDTSwapChainD3D11::ThreadRun() {
 				if (SUCCEEDED(hr) && outputDesc.Monitor == hmon)
 					break;
 			}
+
+			hmonPrev = hmon;
 		}
 
-		if (pOutput)
-			pOutput->WaitForVBlank();
+		if (mWaitHandle) {
+			// On Windows 8.1 Update 1, the waitable object that is returned is actually
+			// a semaphore. We really only care about the last present, so bad things will
+			// happen latency-wise if an extra count gets in there. Therefore, after a
+			// successful wait, we do another zero-timeout wait to clear any extra counts
+			// on the semaphore.
+			if (WAIT_OBJECT_0 == ::WaitForSingleObject(mWaitHandle, 30)) {
+				::WaitForSingleObject(mWaitHandle, 0);
+			}
+		} else {
+			if (pOutput)
+				pOutput->WaitForVBlank();
+
+			// Delay a bit so that we don't race the DWM on the blit.
+			::Sleep(5);
+		}
 
 		mVSyncMutex.Lock();
 		if (mpVSyncCallback) {
@@ -2079,8 +2299,6 @@ void VDTContextD3D11::SetFragmentProgramConstF(uint32 baseIndex, uint32 count, c
 }
 
 void VDTContextD3D11::Clear(VDTClearFlags clearFlags, uint32 color, float depth, uint32 stencil) {
-	DWORD flags = 0;
-
 	if (clearFlags & kVDTClear_Color) {
 		float color32[4];
 
@@ -2178,6 +2396,11 @@ void VDTContextD3D11::Present() {
 		return;
 
 	mpSwapChain->Present();
+
+	// If the swap chain is in flip mode, it'll unbind the render target, so we need to
+	// sync that state.
+	if (mpSwapChain->mDesc.mbWindowed)
+		SetRenderTarget(0, nullptr);
 }
 
 void VDTContextD3D11::BeginScope(uint32 color, const char *message) {
@@ -2265,7 +2488,24 @@ bool VDTCreateContextD3D11(IVDTContext **ppctx) {
 		return false;
 
 	vdrefptr<IDXGIFactory1> factory;
-	HRESULT hr = holder->GetCreateDXGIFactoryFn()(IID_IDXGIFactory1, (void **)~factory);
+	vdrefptr<IDXGIFactory3> factory3;
+
+	HRESULT hr = E_FAIL;
+	if (holder->GetCreateDXGIFactory2Fn()) {
+#ifdef _DEBUG
+		const DWORD flags = 1;	// DXGI_FACTORY_CREATE_DEBUG
+#else
+		const DWORD flags = 0;
+#endif
+
+		hr = holder->GetCreateDXGIFactory2Fn()(flags, IID_IDXGIFactory3, (void **)~factory3);
+
+		if (factory3)
+			factory = factory3;
+	}
+
+	if (!factory)
+		hr = holder->GetCreateDXGIFactoryFn()(IID_IDXGIFactory1, (void **)~factory);
 
 	if (FAILED(hr))
 		return false;

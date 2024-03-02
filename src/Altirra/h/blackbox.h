@@ -21,12 +21,12 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/refcount.h>
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/scheduler.h>
 #include "pia.h"
 #include "via.h"
 #include "acia.h"
 #include "scsi.h"
 #include "rs232.h"
-#include "scheduler.h"
 
 class ATMemoryLayer;
 class ATIRQController;

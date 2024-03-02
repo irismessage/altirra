@@ -1,7 +1,7 @@
 #include "stdafx.h"
 #include <vd2/VDDisplay/textrenderer.h>
 #include "uilabel.h"
-#include "uimanager.h"
+#include <at/atui/uimanager.h>
 
 ATUILabel::ATUILabel()
 	: mTextAlign(kAlignLeft)

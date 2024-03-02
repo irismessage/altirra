@@ -16,10 +16,10 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <at/atcore/scheduler.h>
 #include "pokey.h"
 #include "pokeyrenderer.h"
 #include "pokeytables.h"
-#include "scheduler.h"
 #include "savestate.h"
 
 ATPokeyRenderer::ATPokeyRenderer()
@@ -104,6 +104,14 @@ void ATPokeyRenderer::ColdReset() {
 
 	for(int i=0; i<4; ++i)
 		SetAUDCx(i, 0);
+}
+
+void ATPokeyRenderer::SyncTo(const ATPokeyRenderer& src) {
+	mLastOutputSampleTime = src.mLastOutputSampleTime;
+	mLastOutputTime = src.mLastOutputTime;
+	mOutputSampleCount = src.mOutputSampleCount;
+
+	memset(mRawOutputBuffer, 0, sizeof(mRawOutputBuffer[0]) * mOutputSampleCount);
 }
 
 void ATPokeyRenderer::GetAudioState(ATPokeyAudioState& state) {
@@ -263,8 +271,6 @@ void ATPokeyRenderer::ClearChannelDeferredEvents(int channel, uint32 t) {
 
 uint32 ATPokeyRenderer::EndBlock() {
 	static uint32 lastFlush = 0;
-	uint32 startingSamples = mOutputSampleCount;
-	uint32 startingSampleTime = mLastOutputSampleTime;
 
 	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 
@@ -357,7 +363,7 @@ void ATPokeyRenderer::FlushDeferredEvents(int channel, uint32 t) {
 
 	ChannelEdges& ce = mChannelEdges[channel];
 
-	VDASSERT(ce.empty() || de.mNextTime >= ce.back());
+	VDASSERT(ce.empty() || de.mNextTime - ce.back() < 0x80000000);		// wrap(nextTime >= back) -> nextTime - back >= 0
 
 	if (de.mbLinked) {
 		while((sint32)(de.mNextTime - t) < 0) {

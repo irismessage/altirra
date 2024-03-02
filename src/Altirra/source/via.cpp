@@ -16,8 +16,8 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <at/atcore/scheduler.h>
 #include "via.h"
-#include "scheduler.h"
 
 ATVIA6522Emulator::ATVIA6522Emulator()
 	: mIRB(0)
@@ -387,7 +387,7 @@ void ATVIA6522Emulator::WriteByte(uint8 address, uint8 value) {
 			// check for write-sensitive modes on CA2
 			switch(mPCR & 0x0E) {
 				case 0x00:	// input mode, negative transition
-				case 0x40:	// input mode, positive transition
+				case 0x04:	// input mode, positive transition
 					ClearIF(kIF_CA2);
 					break;
 

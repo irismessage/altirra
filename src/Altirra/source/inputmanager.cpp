@@ -510,6 +510,14 @@ void ATInputManager::ReleaseButtons(uint32 idmin, uint32 idmax) {
 }
 
 void ATInputManager::OnAxisInput(int unit, int axis, sint32 value, sint32 deadifiedValue) {
+	auto spow = [](float f) { return f<0 ? -powf(-f, 1.0f) : +powf(f, 1.0f); };
+
+	float fv = spow((float)value / 65536.0f);
+	float fdv = spow((float)deadifiedValue / 65536.0f);
+
+	value = (int)(65536.0f * fv);
+	deadifiedValue = (int)(65536.0f * fdv);
+
 	ActivateAnalogMappings(axis, value, deadifiedValue);
 	ActivateAnalogMappings(axis | kATInputCode_SpecificUnit | (unit << kATInputCode_UnitShift), value, deadifiedValue);
 }
@@ -940,6 +948,31 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 
 	if (name.empty())
 		name.sprintf(L"Unknown %x", code);
+}
+
+bool ATInputManager::IsAnalogTrigger(uint32 code, ATInputControllerType type) const {
+	const uint32 triggerClass = code & kATInputTrigger_ClassMask;
+
+	switch(type) {
+		case kATInputControllerType_LightPen:
+			switch(code) {
+				case kATInputTrigger_Up:
+				case kATInputTrigger_Down:
+				case kATInputTrigger_Left:
+				case kATInputTrigger_Right:
+					return true;
+			}
+
+			return triggerClass == kATInputTrigger_Axis0;
+
+		case kATInputControllerType_Paddle:
+		case kATInputControllerType_5200Controller:
+		case kATInputControllerType_Tablet:
+		case kATInputControllerType_KoalaPad:
+			return triggerClass == kATInputTrigger_Axis0;
+	}
+
+	return false;
 }
 
 uint32 ATInputManager::GetInputMapCount() const {
@@ -1502,22 +1535,22 @@ void ATInputManager::ActivateAnalogMappings(uint32 id, int ds, int dsdead) {
 			continue;
 		
 		const uint32 id = trigger.mId & kATInputTrigger_Mask;
+		int dstemp = ds;
 
 		switch(trigger.mId & kATInputTriggerMode_Mask) {
 			case kATInputTriggerMode_Inverted:
-				ds = -ds;
+				dstemp = -dstemp;
 				// fall through
 
 			case kATInputTriggerMode_Default:
 			case kATInputTriggerMode_Absolute:
 			default:
-				trigger.mpController->ApplyAnalogInput(id, ds);
+				trigger.mpController->ApplyAnalogInput(id, dstemp);
 				break;
 
 			case kATInputTriggerMode_Relative:
-				dsdead = (dsdead * kSpeedScaleTable[((trigger.mId & kATInputTriggerSpeed_Mask) >> kATInputTriggerSpeed_Shift)] + 0x80) >> 8;
-
-				mapping.mValue = dsdead << 5;
+				mapping.mValue = (dsdead * kSpeedScaleTable[((trigger.mId & kATInputTriggerSpeed_Mask) >> kATInputTriggerSpeed_Shift)] + 0x80) >> 3;
+//				mapping.mAccel = mapping.mValue / 8;
 
 				if (dsdead) {
 					mapping.mDamping = 0x100;

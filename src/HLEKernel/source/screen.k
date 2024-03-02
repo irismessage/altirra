@@ -335,10 +335,6 @@ uint8 ScreenRead2(uint32 x, uint32 y, uint32 mode) {
 	static const uint8 kBytesPerRow[]={
 		40, 20, 20, 10, 10, 20, 20, 40, 40, 40, 40, 40, 40, 40, 40, 40
 	};
-
-	static const uint8 kShiftTable[]={
-		0, 0, 0, 2, 3, 2, 3, 2, 3, 1, 1, 1, 0, 0, 1, 3
-	};
 			
 	uint16 rowAddr = kdb.SAVMSC + y * kBytesPerRow[mode];
 	uint8 mask;
@@ -476,10 +472,6 @@ void ScreenWrite2(uint32 x, uint32 y, uint8 d, uint32 mode) {
 		40, 20, 20, 10, 10, 20, 20, 40, 40, 40, 40, 40, 40, 40, 40, 40
 	};
 
-	static const uint8 kShiftTable[]={
-		0, 0, 0, 2, 3, 2, 3, 2, 3, 1, 1, 1, 0, 0, 1, 3
-	};
-			
 	uint16 rowAddr = kdb.SAVMSC + y * kBytesPerRow[mode];
 	uint8 mask;
 	int shift;
@@ -588,7 +580,6 @@ void ScreenShowCursor() {
 	if (kdb.CRSINH)
 		return;
 
-	int i = kdb.DINDEX & 15;
 	uint16 addr = ScreenComputeCursorAddr();
 	kdb.OLDADR = addr;
 	

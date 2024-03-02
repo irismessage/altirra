@@ -24,7 +24,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/w32assist.h>
 #include <windows.h>
-#include "uinativewindow.h"
+#include <at/atnativeui/uinativewindow.h>
 #include "textdom.h"
 
 using namespace nsVDTextDOM;
@@ -767,8 +767,6 @@ namespace {
 }
 
 void TextEditor::Save(IVDTextEditorStreamOut& streamout) {
-	int dstidx = 0;
-
 	int paraCount = mDocument.GetParagraphCount();
 
 	BufferedWriter writer(streamout);
@@ -1603,8 +1601,6 @@ void TextEditor::Reflow(bool force) {
 			int paraCount = mDocument.GetParagraphCount();
 
 			for(int paraIdx=0; paraIdx<paraCount; ++paraIdx) {
-				const Paragraph& para = *mDocument.GetParagraph(paraIdx);
-
 				mDocument.ReflowPara(paraIdx);
 			}
 

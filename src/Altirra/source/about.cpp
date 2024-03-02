@@ -143,7 +143,6 @@ namespace {
 					"\\fs20 "
 					;
 		static const char listStart[]="{\\*\\pn\\pnlvlblt\\pnindent0{\\pntxtb\\'B7}}\\fi-240\\li540 ";
-		static const char bulletCompat[]="{\\pntext\\f1\\'B7\\tab}";
 
 		append(rtf, header);
 

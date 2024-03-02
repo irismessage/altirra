@@ -26,6 +26,7 @@
 #include "gtia.h"
 #include "pokey.h"
 #include "disk.h"
+#include "options.h"
 #include "uitypes.h"
 #include "uicommondialogs.h"
 #include "uiaccessors.h"
@@ -193,19 +194,6 @@ public:
 		target->AddSetting(bs);
 		bs.release();
 
-		es = new ATUIEnumSetting(
-			L"Burst mode",
-			{
-				{ ATPokeyEmulator::kSerialBurstMode_Disabled, L"Disabled" },
-				{ ATPokeyEmulator::kSerialBurstMode_Standard, L"Standard" },
-				{ ATPokeyEmulator::kSerialBurstMode_Polled, L"Polled" },
-			}
-		);
-		es->SetGetter([]() { return g_sim.GetPokey().GetSerialBurstMode(); });
-		es->SetImmediateSetter([](sint32 v) { g_sim.GetPokey().SetSerialBurstMode((ATPokeyEmulator::SerialBurstMode)v); });
-		target->AddSetting(es);
-		es.release();
-
 		bs = new ATUIBoolSetting(L"Show sector counter");
 		bs->SetGetter([]() { return g_sim.IsDiskSectorCounterEnabled(); });
 		bs->SetImmediateSetter([](bool b) { g_sim.SetDiskSectorCounterEnabled(b); });
@@ -359,6 +347,22 @@ public:
 		target->AddSetting(bs);
 		bs.release();
 
+		es = new ATUIEnumSetting(
+			L"Artifacting",
+			{
+				{ ATGTIAEmulator::kArtifactNone, L"Off" },
+				{ ATGTIAEmulator::kArtifactNTSC, L"NTSC" },
+				{ ATGTIAEmulator::kArtifactNTSCHi, L"NTSC High" },
+				{ ATGTIAEmulator::kArtifactPAL, L"PAL" },
+				{ ATGTIAEmulator::kArtifactPALHi, L"PAL High" },
+			}
+		);
+
+		es->SetGetter([]() { return g_sim.GetGTIA().GetArtifactingMode(); });
+		es->SetImmediateSetter([](sint32 val) { g_sim.GetGTIA().SetArtifactingMode((ATGTIAEmulator::ArtifactMode)val); });
+		target->AddSetting(es);
+		es.release();
+
 		bs = new ATUIBoolSetting(L"XEP-80 view");
 		bs->SetGetter([]() { return ATUIGetXEPViewEnabled(); });
 		bs->SetImmediateSetter([](bool b) { ATUISetXEPViewEnabled(b); });
@@ -477,7 +481,7 @@ public:
 		es.release();
 
 		es = new ATUIEnumSetting(
-			L"Hardware mode",
+			L"Memory config",
 			{
 				{ kATMemoryMode_8K, L"8K" },
 				{ kATMemoryMode_16K, L"16K" },
@@ -522,6 +526,55 @@ public:
 	}
 };
 
+class ATUISettingsScreenUI : public vdrefcounted<IATUISettingsScreen> {
+public:
+	void BuildSettings(ATUISettingsWindow *target) {
+		vdautoptr<ATUIEnumSetting> es;
+		vdautoptr<ATUIBoolSetting> bs;
+
+		target->SetCaption(L"UI");
+
+		es = new ATUIEnumSetting(
+			L"UI scale",
+			{
+				{ 100, L"100%" },
+				{ 125, L"125%" },
+				{ 150, L"150%" },
+				{ 200, L"200%" },
+			}
+		);
+
+		static const sint32 kFactors[]={
+			100,
+			125,
+			150,
+			200
+		};
+
+		es->SetGetter(
+			[]() -> sint32 {
+				return g_ATOptions.mThemeScale;
+			}
+		);
+
+		es->SetSetter(
+			[](sint32 mode) {
+				if (mode >= 100 && mode <= 200) {
+					ATOptions opts(g_ATOptions);
+
+					g_ATOptions.mThemeScale = mode;
+					g_ATOptions.mbDirty = true;
+
+					ATOptionsSave();
+					ATOptionsRunUpdateCallbacks(&opts);
+				}
+			}
+		);
+		target->AddSetting(es);
+		es.release();
+	}
+};
+
 class ATUISettingsScreenMain : public vdrefcounted<IATUISettingsScreen> {
 public:
 	void BuildSettings(ATUISettingsWindow *target) {
@@ -543,6 +596,8 @@ public:
 		);
 		target->AddSetting(as);
 		as.release();
+
+		target->AddSeparator();
 
 		vdautoptr<ATUISubScreenSetting> ss;
 		ss = new ATUISubScreenSetting(L"System...",
@@ -581,6 +636,8 @@ public:
 		target->AddSetting(ss);
 		ss.release();
 
+		target->AddSeparator();
+
 		vdautoptr<ATUIBoolSetting> bs;
 
 		bs = new ATUIBoolSetting(L"Warp speed");
@@ -608,6 +665,17 @@ public:
 		);
 		target->AddSetting(as);
 		as.release();
+
+		target->AddSeparator();
+
+		ss = new ATUISubScreenSetting(L"UI options...",
+			[](IATUISettingsScreen **screen) {
+				*screen = new ATUISettingsScreenUI;
+				(*screen)->AddRef();
+			}
+		);
+		target->AddSetting(ss);
+		ss.release();
 
 		as = new ATUIActionSetting(L"Quit", []() -> bool { OnCommandExit(); return true; });
 		target->AddSetting(as);

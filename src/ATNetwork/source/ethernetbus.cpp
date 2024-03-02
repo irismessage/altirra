@@ -71,7 +71,11 @@ void ATEthernetBus::RemoveClock(uint32 clockid) {
 		if (qp.mPacket.mClockIndex == clockid) {
 			it = mPackets.erase(it);
 
-			mClocks[qp.mPacket.mClockIndex]->RemoveClockEvent(qp.mClockEventId);
+			if (qp.mClockEventId)
+				mClocks[qp.mPacket.mClockIndex]->RemoveClockEvent(qp.mClockEventId);
+
+			mPacketsByTimestamp.erase(qp.mPacket.mTimestamp);
+
 			qp.~QueuedPacket();
 			free((void *)&qp);
 		} else {
@@ -86,12 +90,16 @@ void ATEthernetBus::ClearPendingFrames() {
 		++it)
 	{
 		QueuedPacket *qp = it->second;
-		mClocks[qp->mPacket.mClockIndex]->RemoveClockEvent(qp->mClockEventId);
+
+		if (qp->mClockEventId)
+			mClocks[qp->mPacket.mClockIndex]->RemoveClockEvent(qp->mClockEventId);
+
 		qp->~QueuedPacket();
 		free(qp);
 	}
 
 	mPackets.clear();
+	mPacketsByTimestamp.clear();
 }
 
 void ATEthernetBus::TransmitFrame(uint32 source, const ATEthernetPacket& packet) {
@@ -117,62 +125,88 @@ void ATEthernetBus::TransmitFrame(uint32 source, const ATEthernetPacket& packet)
 	qp->mPacket = packet;
 	qp->mPacket.mTimestamp = mClocks[packet.mClockIndex]->GetTimestamp((sint32)packet.mTimestamp);
 	qp->mPacket.mpData = (const uint8 *)(qp + 1);
+	qp->mClockEventId = 0;
+	qp->mNextPacketId = 0;
 
-	qp->mClockEventId = mClocks[packet.mClockIndex]->AddClockEvent(qp->mPacket.mTimestamp, this, packetId);
-	VDASSERT(qp->mClockEventId);
+	// check if we already have a packet queued on this timestamp; if not, register a timed event,
+	// else add the new packet at the end of the chain
+	auto r = mPacketsByTimestamp.insert({ qp->mPacket.mTimestamp, qp});
+	if (r.second) {
+		qp->mClockEventId = mClocks[packet.mClockIndex]->AddClockEvent(qp->mPacket.mTimestamp, this, packetId);
+		VDASSERT(qp->mClockEventId);
+	} else {
+		QueuedPacket *prev = r.first->second;
+
+		while(prev->mNextPacketId) {
+			auto it = mPackets.find(prev->mNextPacketId);
+			VDASSERT(it != mPackets.end());
+
+			prev = it->second;
+		}
+
+		prev->mNextPacketId = packetId;
+	}
 
 	mPackets[packetId] = qp;
 }
 
 void ATEthernetBus::OnClockEvent(uint32 eventid, uint32 userid) {
-	Packets::iterator it(mPackets.find(userid));
+	do {
+		Packets::iterator it(mPackets.find(userid));
 
-	if (it == mPackets.end()) {
-		VDASSERT(!"Received clock event for unmatched packet ID.");
-		return;
-	}
-
-	QueuedPacket *qp = it->second;
-	mPackets.erase(it);
-
-	union {
-		ATEthernetArpFrameInfo arpInfo;
-		ATIPv4HeaderInfo ipv4Info;
-	} dec;
-
-	ATEthernetFrameDecodedType decType = kATEthernetFrameDecodedType_None;
-	const void *decInfo = NULL;
-
-	if (qp->mPacket.mLength >= 2) {
-		const uint8 *data = qp->mPacket.mpData;
-
-		switch(VDReadUnalignedBEU16(data)) {
-			case kATEthernetFrameType_ARP:
-				if (ATEthernetDecodeArpPacket(dec.arpInfo, data + 2, qp->mPacket.mLength - 2)) {
-					decInfo = &dec.arpInfo;
-					decType = kATEthernetFrameDecodedType_ARP;
-				}
-				break;
-
-			case kATEthernetFrameType_IP:
-				if (ATIPv4DecodeHeader(dec.ipv4Info, data + 2, qp->mPacket.mLength - 2)) {
-					decInfo = &dec.ipv4Info;
-					decType = kATEthernetFrameDecodedType_IPv4;
-				}
-				break;
+		if (it == mPackets.end()) {
+			VDASSERT(!"Received clock event for unmatched packet ID.");
+			return;
 		}
-	}
 
-	for(Endpoints::const_iterator itEP(mEndpoints.begin()), itEPEnd(mEndpoints.end());
-		itEP != itEPEnd;
-		++itEP)
-	{
-		const Endpoint& ep = *itEP;
+		QueuedPacket *qp = it->second;
+		mPackets.erase(it);
 
-		if (ep.mId != qp->mSourceId)
-			ep.mpEndpoint->ReceiveFrame(qp->mPacket, decType, decInfo);
-	}
+		if (qp->mClockEventId) {
+			VDVERIFY(mPacketsByTimestamp.erase(qp->mPacket.mTimestamp) > 0);
+		}
 
-	qp->~QueuedPacket();
-	free(qp);
+		union {
+			ATEthernetArpFrameInfo arpInfo;
+			ATIPv4HeaderInfo ipv4Info;
+		} dec;
+
+		ATEthernetFrameDecodedType decType = kATEthernetFrameDecodedType_None;
+		const void *decInfo = NULL;
+
+		if (qp->mPacket.mLength >= 2) {
+			const uint8 *data = qp->mPacket.mpData;
+
+			switch(VDReadUnalignedBEU16(data)) {
+				case kATEthernetFrameType_ARP:
+					if (ATEthernetDecodeArpPacket(dec.arpInfo, data + 2, qp->mPacket.mLength - 2)) {
+						decInfo = &dec.arpInfo;
+						decType = kATEthernetFrameDecodedType_ARP;
+					}
+					break;
+
+				case kATEthernetFrameType_IP:
+					if (ATIPv4DecodeHeader(dec.ipv4Info, data + 2, qp->mPacket.mLength - 2)) {
+						decInfo = &dec.ipv4Info;
+						decType = kATEthernetFrameDecodedType_IPv4;
+					}
+					break;
+			}
+		}
+
+		for(Endpoints::const_iterator itEP(mEndpoints.begin()), itEPEnd(mEndpoints.end());
+			itEP != itEPEnd;
+			++itEP)
+		{
+			const Endpoint& ep = *itEP;
+
+			if (ep.mId != qp->mSourceId)
+				ep.mpEndpoint->ReceiveFrame(qp->mPacket, decType, decInfo);
+		}
+
+		userid = qp->mNextPacketId;
+
+		qp->~QueuedPacket();
+		free(qp);
+	} while(userid);
 }

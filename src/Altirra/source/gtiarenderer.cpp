@@ -38,6 +38,8 @@ extern "C" void atasm_gtia_render_mode8_fast_ssse3(
 	uint32 n,
 	const uint8 *color_table
 );
+#else
+#include "gtiarenderer_ssse3_intrin.inl"
 #endif
 
 ATGTIARenderer::ATGTIARenderer()
@@ -77,6 +79,7 @@ void ATGTIARenderer::BeginScanline(uint8 *dst, const uint8 *mergeBuffer, const u
 	mpDst = dst;
 	mbHiresMode = hires;
 	mbGTIAEnableTransition = false;
+	mbGTIATransitionFromHiresMode = hires;
 	mX = mbVBlank ? 34 : 0;
 	mpMergeBuffer = mergeBuffer;
 	mpAnticBuffer = anticBuffer;
@@ -111,7 +114,7 @@ void ATGTIARenderer::RenderScanline(int xend, bool pfgraphics, bool pmgraphics, 
 				++rc;
 			} while(++mRCIndex < mRCCount);
 
-			UpdateRegisters(rc0, rc - rc0);
+			UpdateRegisters(rc0, (int)(rc - rc0));
 		}
 
 		if (mbGTIAEnableTransition) {
@@ -120,12 +123,17 @@ void ATGTIARenderer::RenderScanline(int xend, bool pfgraphics, bool pmgraphics, 
 					if ((mPRIOR & 0xc0) == 0x40) {
 						RenderMode9Transition1(x1);
 						mTransitionPhase = 1;
-					} else if ((mPRIOR & 0xc0) == 0x80) {
-						RenderMode8(x1, x1+1);
-						mTransitionPhase = 1;
 					} else {
-						RenderMode8(x1, x1+1);
-						mbGTIAEnableTransition = false;
+						if (mbGTIATransitionFromHiresMode)
+							RenderMode8(x1, x1+1);
+						else
+							RenderLores(x1, x1+1);
+
+						if ((mPRIOR & 0xc0) == 0x80) {
+							mTransitionPhase = 1;
+						} else {
+							mbGTIAEnableTransition = false;
+						}
 					}
 					break;
 
@@ -393,6 +401,8 @@ void ATGTIARenderer::UpdateRegisters(const RegisterChange *rc, int count) {
 			mColorTable[kColorBAK] = value;
 			break;
 		case 0x1B:
+			mbGTIATransitionFromHiresMode = mbHiresMode;
+
 			if ((value & 0xc0) && !(mPRIOR & 0xc0)) {
 				mbGTIAEnableTransition = true;
 				mTransitionPhase = 0;
@@ -465,7 +475,7 @@ void ATGTIARenderer::RenderLoresFast(int x1, int x2) {
 	uint8 *dst = mpDst + x1*2;
 	const uint8 *src = mpMergeBuffer + x1;
 
-#ifdef VD_CPU_X86
+#if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
 	if (CPUGetEnabledExtensions() & CPUF_SUPPORTS_SSSE3) {
 		atasm_gtia_render_lores_fast_ssse3(
 			dst,
@@ -543,13 +553,12 @@ void ATGTIARenderer::RenderMode8(int x1, int x2) {
 
 void ATGTIARenderer::RenderMode8Fast(int x1, int x2) {
 	const uint8 *__restrict colorTable = mpColorTable;
-	const uint8 *__restrict priTable = mpPriTable;
 
 	const uint8 *lumasrc = &mpAnticBuffer[x1];
 	uint8 *dst = mpDst + x1*2;
 	const uint8 *src = mpMergeBuffer + x1;
 
-#ifdef VD_CPU_X86
+#if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
 	if (CPUGetEnabledExtensions() & CPUF_SUPPORTS_SSSE3) {
 		atasm_gtia_render_mode8_fast_ssse3(
 			dst,

@@ -26,102 +26,13 @@
 #include "uirender.h"
 #include "hleutils.h"
 #include "cassette.h"
-#include "pclink.h"
-#include "sio.h"
+#include <at/atcore/sioutils.h>
 
 ATDebuggerLogChannel g_ATLCHookSIOReqs(false, false, "HOOKSIOREQS", "OS SIO hook requests");
 ATDebuggerLogChannel g_ATLCHookSIO(false, false, "HOOKSIO", "OS SIO hook messages");
 ATDebuggerLogChannel g_ATLCSIOCmd(false, false, "SIOCMD", "SIO bus commands");
 ATDebuggerLogChannel g_ATLCSIOAccel(false, false, "SIOACCEL", "SIO command acceleration");
 ATDebuggerLogChannel g_ATLCSIOSteps(false, false, "SIOSTEPS", "SIO command steps");
-
-namespace {
-	const char *DecodeCommand(uint8 device, uint8 command, const uint8 *aux) {
-		if (device >= 0x31 && device <= 0x3F) {		// D:
-			switch(command) {
-				case 0x21:	return "Disk: Format";
-				case 0x22:	return "Disk: Format medium-density";
-				case 0x3F:	return "Disk: Get high-speed index";
-				case 0x4E:	return "Disk: Read PERCOM block";
-				case 0x4F:	return "Disk: Write PERCOM block";
-				case 0x50:	return "Disk: Write sector";
-				case 0x52:	return "Disk: Read sector";
-				case 0x53:	return "Disk: Get status";
-				case 0x57:	return "Disk: Write sector with verify";
-				case 0x66:	return "Disk: Format skewed";
-
-				case 0xA1:	return "Disk: Format with high-speed skew";
-				case 0xA2:	return "Disk: Format medium-density (high speed)";
-				case 0xD0:	return "Disk: Write sector (high speed)";
-				case 0xD2:	return "Disk: Read sector (high speed)";
-				case 0xD3:	return "Disk: Get status (high speed)";
-				case 0xD7:	return "Disk: Write sector with verify (high speed)";
-				case 0xE6:	return "Disk: Format skewed (high speed)";
-
-				default:	return "Disk: ?";
-			}
-		} else if (device >= 0x40 && device <= 0x43) {		// P:
-			switch(command) {
-				case 0x53:	return "Printer: Get status";
-				case 0x57:	return "Printer: Write";
-
-				default:	return "Printer: ?";
-			}
-		} else if (device == 0x45) {		// APE
-			switch(command) {
-				case 0x93:	return "APE: Read clock";
-				default:	return "APE: ?";
-			}
-		} else if (device == 0x46) {		// AspeQt
-			switch(command) {
-				case 0x93:	return "AspeQt: Read clock";
-				default:	return "AspeQt: ?";
-			}
-		} else if (device == 0x4F) {
-			if (command == 0x40) {
-				if (aux[0] == aux[1]) {
-					switch(aux[0]) {
-						case 0x00:	return "Type 3 poll";
-						case 0x4E:	return "Null poll";
-						case 0x4F:	return "Poll reset";
-					}
-				}
-
-				if (aux[1] >= 1 && aux[1] <= 9)
-					return "Type 4 poll";
-			}
-		} else if (device >= 0x50 && device <= 0x53) {		// 850
-			switch(command) {
-				case 0x21:	return "850: Load relocator";
-				case 0x26:	return "850: Load handler";
-				case 0x41:	return "850: Control";
-				case 0x42:	return "850: Configure";
-				case 0x53:	return "850: Get status";
-				case 0x57:	return "850: Write block";
-				case 0x58:	return "850: Stream";
-				default:	return "850: ?";
-			}
-		} else if (device == 0x58) {		// 1030
-			switch(command) {
-				case 0x3C:	return "1030: Get handler";
-				default:	return "1030: ?";
-			}
-		} else if (device == 0x6F) {		// PCLink
-			switch(command) {
-				case 0x3F:	return "PCLink: Get high-speed index";
-				case 0x50:	return "PCLink: Put";
-				case 0x52:	return "PCLink: Read";
-				case 0x53:	return "PCLink: Get status";
-
-				case 0xD0:	return "PCLink: Put (high speed)";
-				case 0xD2:	return "PCLink: Read (high speed)";
-				case 0xD3:	return "PCLink: Get status (high speed)";
-			}
-		}
-
-		return "?";
-	}
-}
 
 class ATSIOManager::RawDeviceListLock {
 public:
@@ -244,13 +155,7 @@ void ATSIOManager::Shutdown() {
 }
 
 void ATSIOManager::ColdReset() {
-	if (mpActiveDevice) {
-		mpActiveDevice->OnSerialAbortCommand();
-		mpActiveDevice = nullptr;
-	}
-
-	mStepQueue.clear();
-	mCurrentStep.mType = kStepType_None;
+	AbortActiveCommand();
 
 	mTransferLevel = 0;
 	mTransferStart = 0;
@@ -260,8 +165,6 @@ void ATSIOManager::ColdReset() {
 	mbCommandState = false;
 	mbMotorState = false;
 	mpActiveDevice = nullptr;
-
-	mpScheduler->UnsetEvent(mpTransferEvent);
 }
 
 void ATSIOManager::ReinitHooks() {
@@ -355,8 +258,7 @@ bool ATSIOManager::TryAccelRequest(const ATSIORequest& req, bool isDSKINV) {
 			}
 
 			if (response != IATDeviceSIO::kCmdResponse_NotHandled) {
-				while(!mStepQueue.empty())
-					ExecuteNextStep();
+				ExecuteNextStep();
 			}
 
 			mpActiveDevice = nullptr;
@@ -536,7 +438,7 @@ handled:
 void ATSIOManager::PokeyAttachDevice(ATPokeyEmulator *pokey) {
 }
 
-void ATSIOManager::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) {
+bool ATSIOManager::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) {
 	if (mTransferIndex < mTransferEnd && !mbTransferSend) {
 		mTransferBuffer[mTransferIndex++] = c;
 
@@ -557,13 +459,7 @@ void ATSIOManager::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) {
 					Delay(1530);
 					SendNAK();
 					ExecuteNextStep();
-					return;
-				} else {
-					Step step = {};
-					step.mType = kStepType_Delay;
-					step.mDelayTicks = 1530;
-
-					mStepQueue.push_front(step);
+					return false;
 				}
 
 				mpActiveDevice->OnSerialReceiveComplete(mCurrentStep.mTransferId, data, transferLen - 1, true);
@@ -584,15 +480,12 @@ void ATSIOManager::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) {
 				rawdev->OnReceiveByte(c, command, cyclesPerBit);
 		}
 	}
+
+	return mbBurstTransfersEnabled;
 }
 
 void ATSIOManager::PokeyBeginCommand() {
-	if (mpActiveDevice) {
-		mpActiveDevice->OnSerialAbortCommand();
-		mpActiveDevice = nullptr;
-	}
-
-	mpScheduler->UnsetEvent(mpTransferEvent);
+	AbortActiveCommand();
 
 	mStepQueue.clear();
 	mCurrentStep.mType = kStepType_None;
@@ -653,7 +546,7 @@ void ATSIOManager::PokeyEndCommand() {
 		mTransferLevel = 0;
 
 		if (g_ATLCSIOCmd.IsEnabled())
-			g_ATLCSIOCmd("Device %02X | Command %02X | %02X %02X (%s)\n", cmd.mDevice, cmd.mCommand, cmd.mAUX[0], cmd.mAUX[1], DecodeCommand(cmd.mDevice, cmd.mCommand, cmd.mAUX));
+			g_ATLCSIOCmd("Device %02X | Command %02X | %02X %02X (%s)\n", cmd.mDevice, cmd.mCommand, cmd.mAUX[0], cmd.mAUX[1], ATDecodeSIOCommand(cmd.mDevice, cmd.mCommand, cmd.mAUX));
 
 		ResetTransferRate();
 
@@ -731,6 +624,10 @@ void ATSIOManager::RemoveDevice(IATDeviceSIO *dev) {
 
 	if (it != mSIODevices.end())
 		mSIODevices.erase(it);
+
+	if (mpActiveDevice == dev) {
+		AbortActiveCommand();
+	}
 }
 
 void ATSIOManager::BeginCommand() {
@@ -807,6 +704,8 @@ void ATSIOManager::SendError() {
 		Step& step = mStepQueue.push_back();
 		step.mType = kStepType_AccelSendError;
 	} else {
+		// SIO protocol requires minimum 250us delay here.
+		Delay(450);
 		SendData("E", 1, false);
 	}
 }
@@ -911,7 +810,7 @@ void ATSIOManager::RemoveRawDevice(IATDeviceRawSIO *dev) {
 }
 
 void ATSIOManager::SendRawByte(uint8 byte, uint32 cyclesPerBit) {
-	mpPokey->ReceiveSIOByte(byte, cyclesPerBit, true);
+	mpPokey->ReceiveSIOByte(byte, cyclesPerBit, true, mbBurstTransfersEnabled);
 }
 
 void ATSIOManager::SetSIOInterrupt(IATDeviceRawSIO *dev, bool state) {
@@ -957,7 +856,7 @@ void ATSIOManager::SetSIOProceed(IATDeviceRawSIO *dev, bool state) {
 void ATSIOManager::SetExternalClock(IATDeviceRawSIO *dev, uint32 initialOffset, uint32 period) {
 	bool updatePOKEY = false;
 
-	VDASSERT(std::find(mSIORawDevices.begin(), mSIORawDevices.end(), dev) != mSIORawDevices.end()
+	VDASSERT(!period || std::find(mSIORawDevices.begin(), mSIORawDevices.end(), dev) != mSIORawDevices.end()
 		|| std::find(mSIORawDevicesNew.begin(), mSIORawDevicesNew.end(), dev) != mSIORawDevicesNew.end());
 
 	auto it = std::find_if(mExternalClocks.begin(), mExternalClocks.end(),
@@ -1020,7 +919,7 @@ void ATSIOManager::OnScheduledEvent(uint32 id) {
 			if (mTransferIndex < mTransferEnd) {
 				uint8 c = mTransferBuffer[mTransferIndex++];
 
-				mpPokey->ReceiveSIOByte(c, mTransferCyclesPerBit, true);
+				mpPokey->ReceiveSIOByte(c, mTransferCyclesPerBit, true, mbBurstTransfersEnabled);
 
 				mpScheduler->SetEvent(mTransferCyclesPerByte, this, kEventId_Send, mpTransferEvent);
 			} else {
@@ -1053,11 +952,21 @@ uint8 ATSIOManager::OnHookDSKINV(uint16 pc) {
 	if (mpCPU->GetP() & AT6502::kFlagI)
 		return 0;
 
+	// Set transfer mode.
+	kdb.DSTATS = (cmd == 0x52) ? 0x40 : 0x80;
+
 	// Set sector size. If we have an XL bios, use DSCTLN, otherwise force 128 bytes.
 	// Since hooks only trigger from ROM, we can check if the lower ROM exists.
-	if (mpSim->IsKernelROMLocation(0xC000))
-		kdb.DBYTLO_DBYTHI = kdb.DSCTLN;
-	else
+	if (mpSim->GetKernelMode() == kATKernelMode_XL) {
+		uint16 seclen = kdb.DSCTLN;
+
+		// punt if sector length isn't 128 or 256 bytes -- this check is needed if
+		// OS-B is running on XL+U1MB
+		if (seclen != 128 && seclen != 256)
+			return 0;
+
+		kdb.DBYTLO_DBYTHI = seclen;
+	} else
 		kdb.DBYTLO_DBYTHI = 0x80;
 
 	// set device and invoke SIOV
@@ -1105,132 +1014,149 @@ uint8 ATSIOManager::OnHookSIOV(uint16 pc) {
 	return TryAccelRequest(req, pc == ATKernelSymbols::DSKINV) ? 0x60 : 0;
 }
 
+void ATSIOManager::AbortActiveCommand() {
+	if (mpActiveDevice) {
+		mpActiveDevice->OnSerialAbortCommand();
+		mpActiveDevice = nullptr;
+	}
+
+	mStepQueue.clear();
+	mCurrentStep.mType = kStepType_None;
+}
+
 void ATSIOManager::ExecuteNextStep() {
-	if (mCurrentStep.mType)
-		return;
+	while(!mCurrentStep.mType && !mStepQueue.empty()) {
+		mCurrentStep = mStepQueue.front();
+		mStepQueue.pop_front();
 
-	mCurrentStep = mStepQueue.front();
-	mStepQueue.pop_front();
+		switch(mCurrentStep.mType) {
+			case kStepType_Send:
+			case kStepType_SendAutoProtocol:
+				if (!mpAccelRequest)
+					g_ATLCSIOSteps("Sending %u bytes (%02X)\n", mCurrentStep.mTransferLength, mTransferBuffer[mTransferIndex]);
 
-	switch(mCurrentStep.mType) {
-		case kStepType_Send:
-		case kStepType_SendAutoProtocol:
-			if (!mpAccelRequest)
-				g_ATLCSIOSteps("Sending %u bytes\n", mCurrentStep.mTransferLength);
+				mbTransferSend = true;
+				mTransferStart = mTransferIndex;
+				mTransferEnd = mTransferStart + mCurrentStep.mTransferLength;
+				VDASSERT(mTransferEnd <= vdcountof(mTransferBuffer));
 
-			mbTransferSend = true;
-			mTransferStart = mTransferIndex;
-			mTransferEnd = mTransferStart + mCurrentStep.mTransferLength;
-			VDASSERT(mTransferEnd <= vdcountof(mTransferBuffer));
+				if (mpAccelRequest) {
+					const uint32 len = mCurrentStep.mTransferLength + (mCurrentStep.mType == kStepType_SendAutoProtocol ? -1 : 0);
+					const uint32 reqLen = (mpAccelRequest->mMode & 0x40) ? mpAccelRequest->mLength : 0;
+					const uint32 minLen = std::min<uint32>(len, reqLen);
+					const uint8 *src = mTransferBuffer + mTransferIndex;
 
-			if (mpAccelRequest) {
-				const uint32 len = mCurrentStep.mTransferLength + (mCurrentStep.mType == kStepType_SendAutoProtocol ? -1 : 0);
-				const uint32 reqLen = (mpAccelRequest->mMode & 0x40) ? mpAccelRequest->mLength : 0;
-				const uint32 minLen = std::min<uint32>(len, reqLen);
-				const uint8 *src = mTransferBuffer + mTransferIndex;
+					for(uint32 i=0; i<minLen; ++i)
+						mpMemory->WriteByte(mAccelBufferAddress + i, src[i]);
 
-				for(uint32 i=0; i<minLen; ++i)
-					mpMemory->WriteByte(mAccelBufferAddress + i, src[i]);
+					uint8 checksum = ATComputeSIOChecksum(src, minLen);
 
-				if (len < reqLen) {
-					// We sent less data than SIO was expecting. This will cause a timeout.
-					*mpAccelStatus = 0x8A;
-				} else if (len > reqLen) {
-					// We sent more data than SIO was expecting. This may cause a checksum
-					// error.
-					if (ATComputeSIOChecksum(src, reqLen) != src[reqLen])
-						*mpAccelStatus = 0x8F;
-				}
+					if (len < reqLen) {
+						// We sent less data than SIO was expecting. This will cause a timeout.
+						*mpAccelStatus = 0x8A;
+					} else if (len > reqLen) {
+						// We sent more data than SIO was expecting. This may cause a checksum
+						// error.
+						if (checksum != src[reqLen])
+							*mpAccelStatus = 0x8F;
+					}
 
-				mTransferIndex = mTransferEnd;
-				mCurrentStep.mType = kStepType_None;
-			} else {
-				OnScheduledEvent(kEventId_Send);
-			}
-			break;
+					mpMemory->WriteByte(ATKernelSymbols::CHKSUM, checksum);
 
-		case kStepType_Receive:
-		case kStepType_ReceiveAutoProtocol:
-			if (!mpAccelRequest)
-				g_ATLCSIOSteps("Receiving %u bytes\n", mCurrentStep.mTransferLength);
+					const uint32 endAddr = mAccelBufferAddress + minLen;
+					mpMemory->WriteByte(ATKernelSymbols::BUFRLO, (uint8)endAddr);
+					mpMemory->WriteByte(ATKernelSymbols::BUFRHI, (uint8)(endAddr >> 8));
 
-			mbTransferSend = false;
-			mbTransferError = false;
-			mTransferStart = mTransferIndex;
-			mTransferEnd = mTransferStart + mCurrentStep.mTransferLength;
-
-			mTransferCyclesPerBitRecvMin = mTransferCyclesPerBit - (mTransferCyclesPerBit + 19)/20;
-			mTransferCyclesPerBitRecvMax = mTransferCyclesPerBit + (mTransferCyclesPerBit + 19)/20;
-
-			if (mpAccelRequest) {
-				const uint32 id = mCurrentStep.mTransferId;
-				const uint32 len = mCurrentStep.mTransferLength + (mCurrentStep.mType == kStepType_ReceiveAutoProtocol ? -1 : 0);
-				const uint32 reqLen = mpAccelRequest->mMode & 0x80 ? mpAccelRequest->mLength : 0;
-				const uint32 minLen = std::min<uint32>(len, reqLen);
-
-				for(uint32 i=0; i<minLen; ++i)
-					mTransferBuffer[mTransferStart + i] = mpMemory->ReadByte(mAccelBufferAddress + i);
-
-				if (reqLen < len) {
-					// SIO provided less data than we were expecting. Hmm. On an 810,
-					// this will hang the drive indefinitely until the expected bytes
-					// are provided. For now, we report a broken checksum to the device.
-					memset(mTransferBuffer + mTransferStart + minLen, 0, len - minLen);
-
-					mpActiveDevice->OnSerialReceiveComplete(id, mTransferBuffer + mTransferStart, len, false);
-				} else if (reqLen > len) {
-					// SIO provided more data than we were expecting. This may cause
-					// a checksum error.
-					const uint8 checksum = mpMemory->ReadByte(mAccelBufferAddress + minLen);
-
-					mpActiveDevice->OnSerialReceiveComplete(id, mTransferBuffer + mTransferStart, len, checksum == ATComputeSIOChecksum(mTransferBuffer + mTransferStart, minLen));
+					mTransferIndex = mTransferEnd;
+					mCurrentStep.mType = kStepType_None;
 				} else {
-					mpActiveDevice->OnSerialReceiveComplete(id, mTransferBuffer + mTransferStart, len, true);
+					OnScheduledEvent(kEventId_Send);
 				}
+				break;
 
-				mTransferIndex = mTransferEnd;
+			case kStepType_Receive:
+			case kStepType_ReceiveAutoProtocol:
+				if (!mpAccelRequest)
+					g_ATLCSIOSteps("Receiving %u bytes\n", mCurrentStep.mTransferLength);
+
+				mbTransferSend = false;
+				mbTransferError = false;
+				mTransferStart = mTransferIndex;
+				mTransferEnd = mTransferStart + mCurrentStep.mTransferLength;
+
+				mTransferCyclesPerBitRecvMin = mTransferCyclesPerBit - (mTransferCyclesPerBit + 19)/20;
+				mTransferCyclesPerBitRecvMax = mTransferCyclesPerBit + (mTransferCyclesPerBit + 19)/20;
+
+				if (mpAccelRequest) {
+					const uint32 id = mCurrentStep.mTransferId;
+					const uint32 len = mCurrentStep.mTransferLength + (mCurrentStep.mType == kStepType_ReceiveAutoProtocol ? -1 : 0);
+					const uint32 reqLen = mpAccelRequest->mMode & 0x80 ? mpAccelRequest->mLength : 0;
+					const uint32 minLen = std::min<uint32>(len, reqLen);
+
+					for(uint32 i=0; i<minLen; ++i)
+						mTransferBuffer[mTransferStart + i] = mpMemory->ReadByte(mAccelBufferAddress + i);
+
+					if (reqLen < len) {
+						// SIO provided less data than we were expecting. Hmm. On an 810,
+						// this will hang the drive indefinitely until the expected bytes
+						// are provided. For now, we report a broken checksum to the device.
+						memset(mTransferBuffer + mTransferStart + minLen, 0, len - minLen);
+
+						mpActiveDevice->OnSerialReceiveComplete(id, mTransferBuffer + mTransferStart, len, false);
+					} else if (reqLen > len) {
+						// SIO provided more data than we were expecting. This may cause
+						// a checksum error.
+						const uint8 checksum = mpMemory->ReadByte(mAccelBufferAddress + minLen);
+
+						mpActiveDevice->OnSerialReceiveComplete(id, mTransferBuffer + mTransferStart, len, checksum == ATComputeSIOChecksum(mTransferBuffer + mTransferStart, minLen));
+					} else {
+						mpActiveDevice->OnSerialReceiveComplete(id, mTransferBuffer + mTransferStart, len, true);
+					}
+
+					mTransferIndex = mTransferEnd;
+					mCurrentStep.mType = kStepType_None;
+				}
+				break;
+
+			case kStepType_SetTransferRate:
+				mTransferCyclesPerBit = mCurrentStep.mTransferCyclesPerBit;
+				mTransferCyclesPerByte = mCurrentStep.mTransferCyclesPerByte;
 				mCurrentStep.mType = kStepType_None;
-			}
-			break;
+				break;
 
-		case kStepType_SetTransferRate:
-			mTransferCyclesPerBit = mCurrentStep.mTransferCyclesPerBit;
-			mTransferCyclesPerByte = mCurrentStep.mTransferCyclesPerByte;
-			mCurrentStep.mType = kStepType_None;
-			break;
+			case kStepType_Delay:
+				g_ATLCSIOSteps("Delaying for %u ticks\n", mCurrentStep.mDelayTicks);
 
-		case kStepType_Delay:
-			g_ATLCSIOSteps("Delaying for %u ticks\n", mCurrentStep.mDelayTicks);
+				VDASSERT(mCurrentStep.mDelayTicks);
+				mpScheduler->SetEvent(mCurrentStep.mDelayTicks, this, kEventId_Delay, mpTransferEvent);
+				break;
 
-			VDASSERT(mCurrentStep.mDelayTicks);
-			mpScheduler->SetEvent(mCurrentStep.mDelayTicks, this, kEventId_Delay, mpTransferEvent);
-			break;
+			case kStepType_Fence:
+				mCurrentStep.mType = kStepType_None;
+				mpActiveDevice->OnSerialFence(mCurrentStep.mFenceId);
+				break;
 
-		case kStepType_Fence:
-			mCurrentStep.mType = kStepType_None;
-			mpActiveDevice->OnSerialFence(mCurrentStep.mFenceId);
-			break;
+			case kStepType_EndCommand:
+				if (!mpAccelRequest)
+					g_ATLCSIOSteps <<= "Ending command\n";
+				mpActiveDevice = nullptr;
+				mCurrentStep.mType = kStepType_None;
+				break;
 
-		case kStepType_EndCommand:
-			if (!mpAccelRequest)
-				g_ATLCSIOSteps <<= "Ending command\n";
-			mpActiveDevice = nullptr;
-			mCurrentStep.mType = kStepType_None;
-			break;
+			case kStepType_AccelSendNAK:
+				*mpAccelStatus = 0x8B;		// NAK error
+				mCurrentStep.mType = kStepType_None;
+				break;
 
-		case kStepType_AccelSendNAK:
-			*mpAccelStatus = 0x8B;		// NAK error
-			mCurrentStep.mType = kStepType_None;
-			break;
+			case kStepType_AccelSendError:
+				*mpAccelStatus = 0x90;		// Device error
+				mCurrentStep.mType = kStepType_None;
+				break;
 
-		case kStepType_AccelSendError:
-			*mpAccelStatus = 0x90;		// Device error
-			mCurrentStep.mType = kStepType_None;
-			break;
-
-		default:
-			VDASSERT("Unknown step in step queue.");
-			break;
+			default:
+				VDASSERT("Unknown step in step queue.");
+				break;
+		}
 	}
 }
 

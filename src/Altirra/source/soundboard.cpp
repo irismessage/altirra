@@ -17,10 +17,136 @@
 
 #include "stdafx.h"
 #include <vd2/system/binary.h>
+#include <at/atcore/deviceimpl.h>
+#include <at/atcore/deviceu1mb.h>
+#include <at/atcore/propertyset.h>
+#include <at/atcore/scheduler.h>
 #include "soundboard.h"
-#include "scheduler.h"
 #include "audiooutput.h"
 #include "memorymanager.h"
+#include "audiosource.h"
+
+class ATSoundBoardEmulator final : public VDAlignedObject<16>
+						, public ATDevice
+						, public IATDeviceAudioOutput
+						, public IATDeviceMemMap
+						, public IATDeviceScheduling
+						, public IATDeviceU1MBControllable
+						, public IATSyncAudioSource
+{
+	ATSoundBoardEmulator(const ATSoundBoardEmulator&) = delete;
+	ATSoundBoardEmulator& operator=(const ATSoundBoardEmulator&) = delete;
+public:
+	ATSoundBoardEmulator();
+	~ATSoundBoardEmulator();
+
+	void *AsInterface(uint32 id) override;
+
+	void SetMemBase(uint32 membase);
+
+public:
+	void InitAudioOutput(IATAudioOutput *output) override;
+
+public:
+	void InitMemMap(ATMemoryManager *memmap) override;
+	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const;
+
+public:
+	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
+
+public:
+	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void GetSettings(ATPropertySet& settings) override;
+	bool SetSettings(const ATPropertySet& settings) override;
+	void Init() override;
+	void Shutdown() override;
+
+	void ColdReset() override;
+	void WarmReset() override;
+
+	void SetU1MBControl(ATU1MBControl control, sint32 value) override;
+
+	uint8 DebugReadControl(uint8 addr) const;
+	uint8 ReadControl(uint8 addr);
+	void WriteControl(uint8 addr, uint8 value);
+
+	void Run(uint32 cycles);
+
+public:
+	bool SupportsStereoMixing() const override { return true; }
+	bool RequiresStereoMixingNow() const override { return true; }
+	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
+
+protected:
+	void Flush();
+	void UpdateControlLayer();
+
+	static sint32 StaticDebugReadD2xxControl(void *thisptr, uint32 addr);
+	static sint32 StaticReadD2xxControl(void *thisptr, uint32 addr);
+	static bool StaticWriteD2xxControl(void *thisptr, uint32 addr, uint8 value);
+
+	static sint32 StaticDebugReadD5xxControl(void *thisptr, uint32 addr);
+	static sint32 StaticReadD5xxControl(void *thisptr, uint32 addr);
+	static bool StaticWriteD5xxControl(void *thisptr, uint32 addr, uint8 value);
+
+	struct Channel {
+		uint32	mPhase;
+		uint32	mAddress;
+		uint32	mLength;
+		uint32	mRepeat;
+		uint32	mFreq;
+		uint8	mVolume;
+		uint8	mPan;
+		uint8	mAttack;
+		uint8	mDecay;
+		uint8	mSustain;
+		uint8	mRelease;
+		uint8	mControl;
+		sint16	mOverlapBuffer[8];
+	};
+
+	uint8	*mpMemory;
+	ATMemoryLayer *mpMemLayerControl;
+	ATScheduler *mpScheduler;
+	ATMemoryManager *mpMemMan;
+	IATAudioOutput *mpAudioOut;
+	uint32	mMemBase;
+	sint32	mMemBaseOverride;
+	uint32	mLoadAddress;
+	Channel	*mpCurChan;
+	uint32	mAccumLevel;
+	uint32	mAccumPhase;
+	uint32	mAccumOffset;
+	uint32	mGeneratedCycles;
+
+	uint32	mLastUpdate;
+	uint32	mCycleAccum;
+
+	uint8	mMultiplierMode;
+	uint8	mMultiplierArg1[2];
+	uint8	mMultiplierArg2[2];
+	uint8	mMultiplierResult[4];
+
+	Channel mChannels[8];
+
+	enum {
+		kSampleBufferSize = 512,
+		kSampleBufferOverlap = 8,
+		kAccumBufferSize = 1536
+	};
+
+	VDALIGN(16) sint16 mSampleBuffer[kSampleBufferSize + kSampleBufferOverlap];
+	VDALIGN(16) float mAccumBufferLeft[kAccumBufferSize];
+	VDALIGN(16) float mAccumBufferRight[kAccumBufferSize];
+};
+
+void ATCreateDeviceSoundBoard(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATSoundBoardEmulator> p(new ATSoundBoardEmulator);
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefSoundBoard = { "soundboard", "soundboard", L"SoundBoard", ATCreateDeviceSoundBoard };
 
 ATSoundBoardEmulator::ATSoundBoardEmulator()
 	: mpMemory(NULL)
@@ -29,11 +155,30 @@ ATSoundBoardEmulator::ATSoundBoardEmulator()
 	, mpMemMan(NULL)
 	, mpAudioOut(NULL)
 	, mMemBase(0xD2C0)
+	, mMemBaseOverride(-1)
 {
 }
 
 ATSoundBoardEmulator::~ATSoundBoardEmulator() {
 	Shutdown();
+}
+
+void *ATSoundBoardEmulator::AsInterface(uint32 id) {
+	switch(id) {
+		case IATDeviceAudioOutput::kTypeID:
+			return static_cast<IATDeviceAudioOutput *>(this);
+
+		case IATDeviceMemMap::kTypeID:
+			return static_cast<IATDeviceMemMap *>(this);
+
+		case IATDeviceScheduling::kTypeID:
+			return static_cast<IATDeviceScheduling *>(this);
+
+		case IATDeviceU1MBControllable::kTypeID:
+			return static_cast<IATDeviceU1MBControllable *>(this);
+	}
+
+	return ATDevice::AsInterface(id);
 }
 
 void ATSoundBoardEmulator::SetMemBase(uint32 membase) {
@@ -46,16 +191,71 @@ void ATSoundBoardEmulator::SetMemBase(uint32 membase) {
 		UpdateControlLayer();
 }
 
-void ATSoundBoardEmulator::Init(ATMemoryManager *memMan, ATScheduler *sch, IATAudioOutput *audioOut) {
-	mpMemory = new uint8[524288];
-	mpMemMan = memMan;
+void ATSoundBoardEmulator::InitAudioOutput(IATAudioOutput *output) {
+	mpAudioOut = output;
+
+	output->AddSyncAudioSource(this);
+}
+
+void ATSoundBoardEmulator::InitMemMap(ATMemoryManager *memmap) {
+	mpMemMan = memmap;
+}
+
+bool ATSoundBoardEmulator::GetMappedRange(uint32 index, uint32& lo, uint32& hi) const {
+	const uint32 membase = mMemBaseOverride >= 0 ? mMemBaseOverride : mMemBase;
+
+	if (index)
+		return false;
+
+	switch(membase) {
+		case 0xD2C0:
+			lo = 0xD2C0;
+			hi = 0xD300;
+			return true;
+
+		case 0xD600:
+			lo = 0xD600;
+			hi = 0xD700;
+			return true;
+
+		case 0xD700:
+			lo = 0xD700;
+			hi = 0xD800;
+			return true;
+	}
+
+	return false;
+}
+
+void ATSoundBoardEmulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 	mpScheduler = sch;
-	mpAudioOut = audioOut;
+}
+
+void ATSoundBoardEmulator::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mpDef = &g_ATDeviceDefSoundBoard;
+}
+
+void ATSoundBoardEmulator::GetSettings(ATPropertySet& settings) {
+	settings.SetUint32("base", mMemBase);
+}
+
+bool ATSoundBoardEmulator::SetSettings(const ATPropertySet& settings) {
+	SetMemBase(settings.GetUint32("base", mMemBase));
+	return true;
+}
+
+void ATSoundBoardEmulator::Init() {
+	mpMemory = new uint8[524288];
 
 	ColdReset();
 }
 
 void ATSoundBoardEmulator::Shutdown() {
+	if (mpAudioOut) {
+		mpAudioOut->RemoveSyncAudioSource(this);
+		mpAudioOut = nullptr;
+	}
+
 	if (mpMemMan) {
 		if (mpMemLayerControl) {
 			mpMemMan->DeleteLayer(mpMemLayerControl);
@@ -102,6 +302,17 @@ void ATSoundBoardEmulator::WarmReset() {
 	mGeneratedCycles = 0;
 	mLastUpdate = ATSCHEDULER_GETTIME(mpScheduler);
 	mCycleAccum = 0;
+}
+
+void ATSoundBoardEmulator::SetU1MBControl(ATU1MBControl control, sint32 value) {
+	if (control == kATU1MBControl_SoundBoardBase) {
+		if (mMemBaseOverride != value) {
+			mMemBaseOverride = value;
+
+			if (mpMemMan)
+				UpdateControlLayer();
+		}
+	}
 }
 
 uint8 ATSoundBoardEmulator::DebugReadControl(uint8 addr) const {
@@ -467,7 +678,9 @@ void ATSoundBoardEmulator::Run(uint32 cycles) {
 	mCycleAccum = cycles;
 }
 
-void ATSoundBoardEmulator::WriteAudio(const float *left, const float *right, uint32 count, bool pushAudio, uint32 timestamp) {
+void ATSoundBoardEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
+	const uint32 count = mixInfo.mCount;
+
 	Flush();
 
 	VDASSERT(count <= kAccumBufferSize);
@@ -480,21 +693,11 @@ void ATSoundBoardEmulator::WriteAudio(const float *left, const float *right, uin
 		mAccumLevel = count;
 	}
 
-	// add POKEY output into output buffers
-	if (right) {
-		for(uint32 i=0; i<count; ++i) {
-			mAccumBufferLeft[i] += left[i];
-			mAccumBufferRight[i] += right[i];
-		}
-	} else {
-		for(uint32 i=0; i<count; ++i) {
-			mAccumBufferLeft[i] += left[i];
-			mAccumBufferRight[i] += left[i];
-		}
+	// add output buffers to output stream
+	for(uint32 i=0; i<count; ++i) {
+		mixInfo.mpLeft[i] += mAccumBufferLeft[i];
+		mixInfo.mpRight[i] += mAccumBufferRight[i];
 	}
-
-	// send mixed audio to output device
-	mpAudioOut->WriteAudio(mAccumBufferLeft, mAccumBufferRight, count, pushAudio, timestamp);
 
 	// shift down accumulation buffers
 	uint32 samplesLeft = mAccumLevel - count;
@@ -524,15 +727,16 @@ void ATSoundBoardEmulator::UpdateControlLayer() {
 		mpMemLayerControl = NULL;
 	}
 
-	if (!mMemBase)
-		return;
+	uint32 membase = mMemBaseOverride >= 0 ? mMemBaseOverride : mMemBase;
 
 	ATMemoryHandlerTable handlers = {};
 	handlers.mpThis = this;
 
-	switch(mMemBase) {
+	switch(membase) {
+		case 0:
+			break;
+
 		case 0xD2C0:
-		default:
 			handlers.mbPassAnticReads = true;
 			handlers.mbPassReads = true;
 			handlers.mbPassWrites = true;
@@ -563,7 +767,8 @@ void ATSoundBoardEmulator::UpdateControlLayer() {
 			break;
 	}
 
-	mpMemMan->EnableLayer(mpMemLayerControl, true);
+	if (mpMemLayerControl)
+		mpMemMan->EnableLayer(mpMemLayerControl, true);
 }
 
 sint32 ATSoundBoardEmulator::StaticDebugReadD2xxControl(void *thisptr, uint32 addr) {

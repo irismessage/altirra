@@ -18,12 +18,11 @@
 #include "stdafx.h"
 #include <at/atcore/propertyset.h>
 #include <at/atcore/deviceserial.h>
+#include <at/atcore/scheduler.h>
 #include "modem.h"
-#include "scheduler.h"
 #include "uirender.h"
 #include "console.h"
 #include "debuggerlog.h"
-#include "devicemanager.h"
 
 ATDebuggerLogChannel g_ATLCModem(false, false, "MODEM", "Modem activity");
 ATDebuggerLogChannel g_ATLCModemTCP(false, false, "MODEMTCP", "Modem TCP/IP activity");
@@ -44,6 +43,17 @@ namespace {
 		kRingOffTime = 7159090 * 4 / 4,
 	};
 }
+
+void ATCreateDeviceModem(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATModemEmulator> p(new ATModemEmulator);
+
+	p->SetSettings(pset);
+
+	*dev = p;
+	(*dev)->AddRef();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefModem = { "modem", "modem", L"Modem", ATCreateDeviceModem };
 
 ATModemRegisters::ATModemRegisters()
 	: mAutoAnswerRings(0)
@@ -126,8 +136,7 @@ void *ATModemEmulator::AsInterface(uint32 iid) {
 }
 
 void ATModemEmulator::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "modem";
-	info.mName = L"Modem";
+	info.mpDef = &g_ATDeviceDefModem;
 }
 
 void ATModemEmulator::GetSettings(ATPropertySet& settings) {
@@ -143,8 +152,8 @@ void ATModemEmulator::GetSettings(ATPropertySet& settings) {
 	if (mConfig.mbTelnetEmulation)
 		settings.SetBool("telnet", true);
 
-	if (mConfig.mbTelnetLFConversion)
-		settings.SetBool("telnetlf", true);
+	if (!mConfig.mbTelnetLFConversion)
+		settings.SetBool("telnetlf", false);
 
 	if (mConfig.mbListenForIPv6)
 		settings.SetBool("ipv6", true);
@@ -385,7 +394,7 @@ bool ATModemEmulator::Read(uint32& baudRate, uint8& c) {
 			mTransmitLength = 0;
 		}
 
-		baudRate = mConfig.mbRequireMatchedDTERate ? mCommandRate : 0;
+		baudRate = mCommandRate;
 		return true;
 	}
 
@@ -414,7 +423,7 @@ bool ATModemEmulator::Read(uint32& baudRate, uint8& c) {
 		}
 	}
 
-	baudRate = mConfig.mbRequireMatchedDTERate ? mConnectRate : 0;
+	baudRate = mConnectRate;
 	return true;
 }
 
@@ -1779,19 +1788,4 @@ void ATModemEmulator::OnEvent(IATModemDriver *sender, ATModemPhase phase, ATMode
 		if (phase <= kATModemPhase_Connecting)
 			mbConnectionFailed = true;
 	}
-}
-
-///////////////////////////////////////////////////////////////////////////
-
-void ATCreateDeviceModem(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATModemEmulator> p(new ATModemEmulator);
-
-	p->SetSettings(pset);
-
-	*dev = p;
-	(*dev)->AddRef();
-}
-
-void ATRegisterDeviceModem(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("modem", ATCreateDeviceModem);
 }

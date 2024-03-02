@@ -145,7 +145,12 @@ void ATAudioSyncMixer::StopSound(uint32 id, uint32 time) {
 	}
 }
 
-void ATAudioSyncMixer::WriteAudio(uint32 startTime, float *dstLeft, float *dstRightOpt, uint32 n) {
+void ATAudioSyncMixer::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
+	uint32 startTime = mixInfo.mStartTime;
+	float *dstLeft = mixInfo.mpLeft;
+	float *dstRightOpt = mixInfo.mpRight;
+	uint32 n = mixInfo.mCount;
+
 	const uint32 endTime = startTime + n*kATCyclesPerSyncSample;
 
 	// process one-shot sounds

@@ -19,8 +19,18 @@
 #include "memorymanager.h"
 #include "console.h"
 
+void ATMemoryManager::MemoryLayer::UpdateEffectiveRange() {
+	mEffectiveStart = std::max(mPageOffset, mMaskRangeStart);
+	mEffectiveEnd = std::min(mPageOffset + mPageCount, mMaskRangeEnd);
+
+	if (mEffectiveEnd < mEffectiveStart)
+		mEffectiveEnd = mEffectiveStart;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 ATMemoryManager::ATMemoryManager()
-	: mpFreeNodes(NULL)
+	: mAllocationCount(0)
 	, mbFloatingDataBus(false)
 	, mbFastBusEnabled(false)
 {
@@ -30,14 +40,16 @@ ATMemoryManager::ATMemoryManager()
 	}
 
 	mDummyLayer.mPriority = -1;
-	mDummyLayer.mbEnabled[kATMemoryAccessMode_AnticRead] = true;
-	mDummyLayer.mbEnabled[kATMemoryAccessMode_CPURead] = true;
-	mDummyLayer.mbEnabled[kATMemoryAccessMode_CPUWrite] = true;
+	mDummyLayer.mFlags = kATMemoryAccessMode_ARW;
 	mDummyLayer.mbReadOnly = false;
 	mDummyLayer.mpBase = NULL;
 	mDummyLayer.mAddrMask = 0xFFFFFFFF;
 	mDummyLayer.mPageOffset = 0;
 	mDummyLayer.mPageCount = 0x100;
+	mDummyLayer.mMaskRangeStart = 0;
+	mDummyLayer.mMaskRangeEnd = 0x100;
+	mDummyLayer.mEffectiveStart = 0;
+	mDummyLayer.mEffectiveEnd = 0x100;
 	mDummyLayer.mHandlers.mbPassReads = false;
 	mDummyLayer.mHandlers.mbPassAnticReads = false;
 	mDummyLayer.mHandlers.mbPassWrites = false;
@@ -47,11 +59,11 @@ ATMemoryManager::ATMemoryManager()
 	mDummyLayer.mHandlers.mpWriteHandler = DummyWriteHandler;
 	mDummyLayer.mpName = "Unconnected";
 
-	mDummyReadNode.mpLayer = &mDummyLayer;
+	mDummyReadNode.mLayerOrForward = (uintptr)&mDummyLayer;
 	mDummyReadNode.mpReadHandler = DummyReadHandler;
 	mDummyReadNode.mNext = 1;
 	mDummyReadNode.mpThis = this;
-	mDummyWriteNode.mpLayer = &mDummyLayer;
+	mDummyWriteNode.mLayerOrForward = (uintptr)&mDummyLayer;
 	mDummyWriteNode.mpWriteHandler = DummyWriteHandler;
 	mDummyWriteNode.mNext = 1;
 
@@ -65,10 +77,6 @@ ATMemoryManager::~ATMemoryManager() {
 }
 
 void ATMemoryManager::Init() {
-	mbSimple_4000_7FFF[kATMemoryAccessMode_AnticRead] = false;
-	mbSimple_4000_7FFF[kATMemoryAccessMode_CPURead] = false;
-	mbSimple_4000_7FFF[kATMemoryAccessMode_CPUWrite] = false;
-
 	for(uint32 i=0; i<256; ++i) {
 		mAnticReadPageMap[i] = (uintptr)&mDummyReadNode + 1;
 		mCPUReadPageMap[i] = (uintptr)&mDummyReadNode + 1;
@@ -104,6 +112,29 @@ void ATMemoryManager::SetHighMemoryBanks(sint32 banks) {
 	}
 }
 
+void ATMemoryManager::SetFloatingIoBus(bool floating) {
+	if (mbFloatingIoBus == floating)
+		return;
+
+	mbFloatingIoBus = floating;
+
+	// Must reinitialize debug read handler for all memory nodes.
+	for(MemoryLayer *layer : mLayers) {
+		if (layer->mpBase) {
+			if (layer->mbIoBus && floating) {
+				layer->mHandlers.mpDebugReadHandler = IoMemoryDebugReadWrapperHandler;
+			} else {
+				layer->mHandlers.mpDebugReadHandler = ChipReadHandler;
+			}
+		}
+	}
+
+	// Must rebuild all nodes now as memory nodes are handled differently in I/O mode.
+	RebuildNodes(&mAnticReadPageMap[0], 0, 256, kATMemoryAccessMode_AnticRead);
+	RebuildNodes(&mCPUReadPageMap[0], 0, 256, kATMemoryAccessMode_CPURead);
+	RebuildNodes(&mCPUWritePageMap[0], 0, 256, kATMemoryAccessMode_CPUWrite);
+}
+
 void ATMemoryManager::SetFastBusEnabled(bool enabled) {
 	if (mbFastBusEnabled == enabled)
 		return;
@@ -120,14 +151,8 @@ void ATMemoryManager::DumpStatus() {
 	for(Layers::const_iterator it(mLayers.begin()), itEnd(mLayers.end()); it != itEnd; ++it) {
 		const MemoryLayer& layer = **it;
 
-		uint32 pageStart = layer.mPageOffset;
-		uint32 pageEnd = layer.mPageOffset + layer.mPageCount;
-
-		if (pageStart < layer.mMaskRangeStart)
-			pageStart = layer.mMaskRangeStart;
-
-		if (pageEnd > layer.mMaskRangeEnd)
-			pageEnd = layer.mMaskRangeEnd;
+		uint32 pageStart = layer.mEffectiveStart;
+		uint32 pageEnd = layer.mEffectiveEnd;
 
 		if (pageStart < pageEnd) {
 			s.sprintf("%06X-%06X", pageStart << 8, (pageEnd << 8) - 1);
@@ -138,9 +163,9 @@ void ATMemoryManager::DumpStatus() {
 		s.append_sprintf(" %2u%s %c%c%c  "
 			, layer.mPriority
 			, mbFastBusEnabled ? layer.mbFastBus ? " fast" : " chip" : ""
-			, layer.mbEnabled[kATMemoryAccessMode_AnticRead] ? 'A' : '-'
-			, layer.mbEnabled[kATMemoryAccessMode_CPURead] ? 'R' : '-'
-			, layer.mbEnabled[kATMemoryAccessMode_CPUWrite] ? layer.mbReadOnly ? 'O' : 'W' : '-'
+			, layer.mFlags & kATMemoryAccessMode_A ? 'A' : '-'
+			, layer.mFlags & kATMemoryAccessMode_R ? 'R' : '-'
+			, layer.mFlags & kATMemoryAccessMode_W ? layer.mbReadOnly ? 'O' : 'W' : '-'
 			);
 
 		if (layer.mpBase) {
@@ -165,18 +190,19 @@ ATMemoryLayer *ATMemoryManager::CreateLayer(int priority, const uint8 *base, uin
 
 	MemoryLayer *layer = new MemoryLayer;
 
+	layer->mpParent = this;
 	layer->mPriority = priority;
-	layer->mbEnabled[0] = false;
-	layer->mbEnabled[1] = false;
-	layer->mbEnabled[2] = false;
+	layer->mFlags = 0;
 	layer->mbReadOnly = readOnly;
 	layer->mbFastBus = false;
+	layer->mbIoBus = false;
 	layer->mpBase = base;
 	layer->mPageOffset = pageOffset;
 	layer->mPageCount = pageCount;
 	layer->mHandlers.mbPassAnticReads = false;
 	layer->mHandlers.mbPassReads = false;
 	layer->mHandlers.mbPassWrites = false;
+	layer->mHandlers.mpThis = this;
 	layer->mHandlers.mpDebugReadHandler = ChipReadHandler;
 	layer->mHandlers.mpReadHandler = ChipReadHandler;
 	layer->mHandlers.mpWriteHandler = ChipWriteHandler;
@@ -185,6 +211,8 @@ ATMemoryLayer *ATMemoryManager::CreateLayer(int priority, const uint8 *base, uin
 	layer->mpName = NULL;
 	layer->mMaskRangeStart = 0x00;
 	layer->mMaskRangeEnd = 0x100;
+	layer->mEffectiveStart = pageOffset;
+	layer->mEffectiveEnd = pageOffset + pageCount;
 
 	mLayers.insert(std::lower_bound(mLayers.begin(), mLayers.end(), layer, MemoryLayerPred()), layer);
 	return layer;
@@ -193,12 +221,12 @@ ATMemoryLayer *ATMemoryManager::CreateLayer(int priority, const uint8 *base, uin
 ATMemoryLayer *ATMemoryManager::CreateLayer(int priority, const ATMemoryHandlerTable& handlers, uint32 pageOffset, uint32 pageCount) {
 	MemoryLayer *layer = new MemoryLayer;
 
+	layer->mpParent = this;
 	layer->mPriority = priority;
-	layer->mbEnabled[0] = false;
-	layer->mbEnabled[1] = false;
-	layer->mbEnabled[2] = false;
+	layer->mFlags = 0;
 	layer->mbReadOnly = false;
 	layer->mbFastBus = false;
+	layer->mbIoBus = false;
 	layer->mpBase = NULL;
 	layer->mPageOffset = pageOffset;
 	layer->mPageCount = pageCount;
@@ -207,6 +235,8 @@ ATMemoryLayer *ATMemoryManager::CreateLayer(int priority, const ATMemoryHandlerT
 	layer->mpName = NULL;
 	layer->mMaskRangeStart = 0x00;
 	layer->mMaskRangeEnd = 0x100;
+	layer->mEffectiveStart = pageOffset;
+	layer->mEffectiveEnd = pageOffset + pageCount;
 
 	mLayers.insert(std::lower_bound(mLayers.begin(), mLayers.end(), layer, MemoryLayerPred()), layer);
 	return layer;
@@ -221,32 +251,38 @@ void ATMemoryManager::DeleteLayer(ATMemoryLayer *layer) {
 }
 
 void ATMemoryManager::EnableLayer(ATMemoryLayer *layer, bool enable) {
-	EnableLayer(layer, kATMemoryAccessMode_AnticRead, enable);
-	EnableLayer(layer, kATMemoryAccessMode_CPURead, enable);
-	EnableLayer(layer, kATMemoryAccessMode_CPUWrite, enable);
+	EnableLayer(layer, kATMemoryAccessMode_ARW, enable);
 }
 
 void ATMemoryManager::EnableLayer(ATMemoryLayer *layer0, ATMemoryAccessMode accessMode, bool enable) {
 	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
+	uint8 flags = layer->mFlags;
 
-	if (layer->mbEnabled[accessMode] == enable)
+	if (enable)
+		flags |= accessMode;
+	else
+		flags &= ~accessMode;
+
+	SetLayerModes(layer, (ATMemoryAccessMode)flags);
+}
+
+void ATMemoryManager::SetLayerModes(ATMemoryLayer *layer0, ATMemoryAccessMode flags) {
+	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
+	const uint8 changeFlags = layer->mFlags ^ flags;
+
+	if (!changeFlags)
 		return;
 
-	layer->mbEnabled[accessMode] = enable;
+	layer->mFlags = flags;
 
-	switch(accessMode) {
-		case kATMemoryAccessMode_AnticRead:
-			RebuildNodes(&mAnticReadPageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_AnticRead);
-			break;
+	if (changeFlags & kATMemoryAccessMode_AnticRead)
+		RebuildNodes(&mAnticReadPageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_AnticRead);
 
-		case kATMemoryAccessMode_CPURead:
-			RebuildNodes(&mCPUReadPageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_CPURead);
-			break;
+	if (changeFlags & kATMemoryAccessMode_CPURead)
+		RebuildNodes(&mCPUReadPageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_CPURead);
 
-		case kATMemoryAccessMode_CPUWrite:
-			RebuildNodes(&mCPUWritePageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_CPUWrite);
-			break;
-	}
+	if (changeFlags & kATMemoryAccessMode_CPUWrite)
+		RebuildNodes(&mCPUWritePageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_CPUWrite);
 }
 
 void ATMemoryManager::SetLayerMemory(ATMemoryLayer *layer0, const uint8 *base) {
@@ -258,25 +294,26 @@ void ATMemoryManager::SetLayerMemory(ATMemoryLayer *layer0, const uint8 *base) {
 		uint32 rewriteOffset = layer->mPageOffset;
 		uint32 rewriteCount = layer->mPageCount;
 
-		if (layer->mbEnabled[kATMemoryAccessMode_AnticRead])
+		if (layer->mFlags & kATMemoryAccessMode_AnticRead)
 			RebuildNodes(&mAnticReadPageMap[rewriteOffset], rewriteOffset, rewriteCount, kATMemoryAccessMode_AnticRead);
 
-		if (layer->mbEnabled[kATMemoryAccessMode_CPURead])
+		if (layer->mFlags & kATMemoryAccessMode_CPURead)
 			RebuildNodes(&mCPUReadPageMap[rewriteOffset], rewriteOffset, rewriteCount, kATMemoryAccessMode_CPURead);
 
-		if (layer->mbEnabled[kATMemoryAccessMode_CPUWrite])
+		if (layer->mFlags & kATMemoryAccessMode_CPUWrite)
 			RebuildNodes(&mCPUWritePageMap[rewriteOffset], rewriteOffset, rewriteCount, kATMemoryAccessMode_CPUWrite);
 	}
 }
 
 void ATMemoryManager::SetLayerMemory(ATMemoryLayer *layer0, const uint8 *base, uint32 pageOffset, uint32 pageCount, uint32 addrMask, int readOnly) {
+	VDASSERT(base);
 	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
 
 	bool ro = (readOnly >= 0) ? readOnly != 0 : layer->mbReadOnly;
 
 	if (base != layer->mpBase || layer->mPageOffset != pageOffset || layer->mPageCount != pageCount || addrMask != layer->mAddrMask || ro != layer->mbReadOnly) {
-		uint32 oldBegin = layer->mPageOffset;
-		uint32 oldEnd = layer->mPageOffset + layer->mPageCount;
+		uint32 oldBegin = layer->mEffectiveStart;
+		uint32 oldEnd = layer->mEffectiveEnd;
 
 		layer->mpBase = base;
 		layer->mAddrMask = addrMask;
@@ -284,19 +321,21 @@ void ATMemoryManager::SetLayerMemory(ATMemoryLayer *layer0, const uint8 *base, u
 		layer->mPageCount = pageCount;
 		layer->mbReadOnly = ro;
 
-		uint32 newBegin = layer->mPageOffset;
-		uint32 newEnd = layer->mPageOffset + layer->mPageCount;
+		layer->UpdateEffectiveRange();
+
+		uint32 newBegin = layer->mEffectiveStart;
+		uint32 newEnd = layer->mEffectiveEnd;
 
 		uint32 rewriteOffset = std::min<uint32>(oldBegin, newBegin);
 		uint32 rewriteCount = std::max<uint32>(oldEnd, newEnd) - rewriteOffset;
 
-		if (layer->mbEnabled[kATMemoryAccessMode_AnticRead])
+		if (layer->mFlags & kATMemoryAccessMode_AnticRead)
 			RebuildNodes(&mAnticReadPageMap[rewriteOffset], rewriteOffset, rewriteCount, kATMemoryAccessMode_AnticRead);
 
-		if (layer->mbEnabled[kATMemoryAccessMode_CPURead])
+		if (layer->mFlags & kATMemoryAccessMode_CPURead)
 			RebuildNodes(&mCPUReadPageMap[rewriteOffset], rewriteOffset, rewriteCount, kATMemoryAccessMode_CPURead);
 
-		if (layer->mbEnabled[kATMemoryAccessMode_CPUWrite])
+		if (layer->mFlags & kATMemoryAccessMode_CPUWrite)
 			RebuildNodes(&mCPUWritePageMap[rewriteOffset], rewriteOffset, rewriteCount, kATMemoryAccessMode_CPUWrite);
 	}
 }
@@ -317,13 +356,13 @@ void ATMemoryManager::SetLayerAddressRange(ATMemoryLayer *layer0, uint32 pageOff
 		uint32 rewriteOffset = std::min<uint32>(oldBegin, newBegin);
 		uint32 rewriteCount = std::max<uint32>(oldEnd, newEnd) - rewriteOffset;
 
-		if (layer->mbEnabled[kATMemoryAccessMode_AnticRead])
+		if (layer->mFlags & kATMemoryAccessMode_AnticRead)
 			RebuildNodes(&mAnticReadPageMap[rewriteOffset], rewriteOffset, rewriteCount, kATMemoryAccessMode_AnticRead);
 
-		if (layer->mbEnabled[kATMemoryAccessMode_CPURead])
+		if (layer->mFlags & kATMemoryAccessMode_CPURead)
 			RebuildNodes(&mCPUReadPageMap[rewriteOffset], rewriteOffset, rewriteCount, kATMemoryAccessMode_CPURead);
 
-		if (layer->mbEnabled[kATMemoryAccessMode_CPUWrite])
+		if (layer->mFlags & kATMemoryAccessMode_CPUWrite)
 			RebuildNodes(&mCPUWritePageMap[rewriteOffset], rewriteOffset, rewriteCount, kATMemoryAccessMode_CPUWrite);
 	}
 }
@@ -341,13 +380,40 @@ void ATMemoryManager::SetLayerFastBus(ATMemoryLayer *layer0, bool fast) {
 		layer->mbFastBus = fast;
 
 		if (layer->mpBase) {
-			const uint32 rewriteOffset = layer->mPageOffset;
-			const uint32 rewriteCount = layer->mPageOffset + layer->mPageCount;
-
 			RebuildNodes(&mCPUReadPageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_CPURead);
 			RebuildNodes(&mCPUWritePageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_CPUWrite);
 		}
 	}
+}
+
+void ATMemoryManager::SetLayerIoBus(ATMemoryLayer *layer0, bool ioBus) {
+	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
+
+	if (layer->mbIoBus == ioBus)
+		return;
+
+	layer->mbIoBus = ioBus;
+
+	// I/O bus setting is ignored if I/O bus is not enabled.
+	if (!mbFloatingIoBus)
+		return;
+
+	if (layer->mpBase) {
+		if (ioBus) {
+			layer->mHandlers.mpDebugReadHandler = IoMemoryDebugReadWrapperHandler;
+		} else {
+			layer->mHandlers.mpDebugReadHandler = ChipReadHandler;
+		}
+	}
+
+	if (layer->mFlags & kATMemoryAccessMode_AnticRead)
+		RebuildNodes(&mAnticReadPageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_AnticRead);
+
+	if (layer->mFlags & kATMemoryAccessMode_CPURead)
+		RebuildNodes(&mCPUReadPageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_CPURead);
+
+	if (layer->mFlags & kATMemoryAccessMode_CPUWrite)
+		RebuildNodes(&mCPUWritePageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_CPUWrite);
 }
 
 void ATMemoryManager::ClearLayerMaskRange(ATMemoryLayer *layer) {
@@ -357,7 +423,10 @@ void ATMemoryManager::ClearLayerMaskRange(ATMemoryLayer *layer) {
 void ATMemoryManager::SetLayerMaskRange(ATMemoryLayer *layer0, uint32 pageStart, uint32 pageCount) {
 	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
 
-	const uint32 pageEnd = pageStart + pageCount;
+	if (pageStart > 0x100)
+		pageStart = 0x100;
+
+	const uint32 pageEnd = std::min<uint32>(pageStart + pageCount, 0x100);
 
 	if (layer->mMaskRangeStart == pageStart &&
 		layer->mMaskRangeEnd == pageEnd)
@@ -380,14 +449,16 @@ void ATMemoryManager::SetLayerMaskRange(ATMemoryLayer *layer0, uint32 pageStart,
 	layer->mMaskRangeStart = pageStart;
 	layer->mMaskRangeEnd = pageEnd;
 
+	layer->UpdateEffectiveRange();
+
 	if (changed) {
-		if (layer->mbEnabled[kATMemoryAccessMode_AnticRead])
+		if (layer->mFlags & kATMemoryAccessMode_AnticRead)
 			RebuildNodes(&mAnticReadPageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_AnticRead);
 
-		if (layer->mbEnabled[kATMemoryAccessMode_CPURead])
+		if (layer->mFlags & kATMemoryAccessMode_CPURead)
 			RebuildNodes(&mCPUReadPageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_CPURead);
 
-		if (layer->mbEnabled[kATMemoryAccessMode_CPUWrite])
+		if (layer->mFlags & kATMemoryAccessMode_CPUWrite)
 			RebuildNodes(&mCPUWritePageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_CPUWrite);
 	}
 }
@@ -425,7 +496,7 @@ uint8 ATMemoryManager::DebugAnticReadByte(uint16 address) {
 	while(ATCPUMEMISSPECIAL(p)) {
 		const MemoryNode& node = *(const MemoryNode *)(p - 1);
 
-		ATMemoryReadHandler handler = node.mpLayer->mHandlers.mpDebugReadHandler;
+		ATMemoryReadHandler handler = ((MemoryLayer *)node.mLayerOrForward)->mHandlers.mpDebugReadHandler;
 		if (handler) {
 			sint32 v = handler(node.mpThis, address);
 			if (v >= 0)
@@ -487,12 +558,16 @@ sint32 ATMemoryManager::CPUExtReadByteAccel(uint16 address, uint8 bank, bool chi
 	while(ATCPUMEMISSPECIAL(p)) {
 		const MemoryNode& node = *(const MemoryNode *)(p - 1);
 
-		if (!chipOK && !node.mpLayer->mbFastBus)
+		if (!chipOK && !((MemoryLayer *)node.mLayerOrForward)->mbFastBus)
 			return kChipReadNeedsDelay;
+
+		// We need to precache this as the read handler may rewrite the memory config
+		// and invalidate the node.
+		const uintptr layerOrForward = node.mLayerOrForward;
 
 		sint32 v = node.mpReadHandler(node.mpThis, addr32);
 		if (v >= 0) {
-			if (!node.mpLayer->mbFastBus)
+			if (!((MemoryLayer *)layerOrForward)->mbFastBus)
 				v |= 0x80000000;
 			
 			return v;
@@ -504,12 +579,12 @@ sint32 ATMemoryManager::CPUExtReadByteAccel(uint16 address, uint8 bank, bool chi
 	return ((uint8 *)p)[address];
 }
 
-uint8 ATMemoryManager::CPUDebugReadByte(uint16 address) {
+uint8 ATMemoryManager::CPUDebugReadByte(uint16 address) const {
 	uintptr p = mCPUReadPageMap[(uint8)(address >> 8)];
 	while(ATCPUMEMISSPECIAL(p)) {
 		const MemoryNode& node = *(const MemoryNode *)(p - 1);
 
-		ATMemoryReadHandler handler = node.mpLayer->mHandlers.mpDebugReadHandler;
+		ATMemoryReadHandler handler = ((MemoryLayer *)node.mLayerOrForward)->mHandlers.mpDebugReadHandler;
 		if (handler) {
 			sint32 v = handler(node.mpThis, address);
 			if (v >= 0)
@@ -522,14 +597,14 @@ uint8 ATMemoryManager::CPUDebugReadByte(uint16 address) {
 	return ((uint8 *)p)[address];
 }
 
-uint8 ATMemoryManager::CPUDebugExtReadByte(uint16 address, uint8 bank) {
+uint8 ATMemoryManager::CPUDebugExtReadByte(uint16 address, uint8 bank) const {
 	uintptr p = mReadBankTable[bank][(uint8)(address >> 8)];
 	const uint32 addr32 = (uint32)address + ((uint32)bank << 16);
 
 	while(ATCPUMEMISSPECIAL(p)) {
 		const MemoryNode& node = *(const MemoryNode *)(p - 1);
 
-		ATMemoryReadHandler handler = node.mpLayer->mHandlers.mpDebugReadHandler;
+		ATMemoryReadHandler handler = ((MemoryLayer *)node.mLayerOrForward)->mHandlers.mpDebugReadHandler;
 		if (handler) {
 			sint32 v = handler(node.mpThis, addr32);
 			if (v >= 0)
@@ -589,11 +664,14 @@ sint32 ATMemoryManager::CPUExtWriteByteAccel(uint16 address, uint8 bank, uint8 v
 		const MemoryNode& node = *(const MemoryNode *)(p - 1);
 
 		if (node.mpWriteHandler) {
-			if (!chipOK && !node.mpLayer->mbFastBus)
+			if (!chipOK && !((MemoryLayer *)node.mLayerOrForward)->mbFastBus)
 				return kChipReadNeedsDelay;
 
+			// We need to precache this as the read handler may rewrite the memory config
+			// and invalidate the node.
+			const uintptr layerOrForward = node.mLayerOrForward;
 			if (node.mpWriteHandler(node.mpThis, addr32, value)) {
-				return node.mpLayer->mbFastBus ? 0 : -1;
+				return ((MemoryLayer *)layerOrForward)->mbFastBus ? 0 : -1;
 			}
 		}
 
@@ -615,21 +693,17 @@ void ATMemoryManager::RebuildNodes(uintptr *array, uint32 base, uint32 n, ATMemo
 	for(Layers::const_iterator it(mLayers.begin()), itEnd(mLayers.end()); it != itEnd; ++it) {
 		MemoryLayer *layer = *it;
 
-		if (!layer->mbEnabled[accessMode])
+		if (!(layer->mFlags & accessMode))
 			continue;
 
-		if (base < layer->mPageOffset + layer->mPageCount &&
-			layer->mPageOffset < base + n &&
-			base < layer->mMaskRangeEnd &&
-			layer->mMaskRangeStart < base + n)
+		if (base < layer->mEffectiveEnd &&
+			layer->mEffectiveStart < base + n)
 		{
 			pertinentLayers.push_back(layer);
 
 			if (layer->mpBase &&
-				layer->mPageOffset <= base &&
-				(layer->mPageOffset + layer->mPageCount) >= (base + n) &&
-				layer->mMaskRangeStart <= base &&
-				layer->mMaskRangeEnd >= (base + n))
+				layer->mEffectiveStart <= base &&
+				layer->mEffectiveEnd >= (base + n))
 			{
 				completeBaseLayer = true;
 				break;
@@ -640,38 +714,7 @@ void ATMemoryManager::RebuildNodes(uintptr *array, uint32 base, uint32 n, ATMemo
 	if (completeBaseLayer && pertinentLayers.size() == 1) {
 		MemoryLayer *layer = pertinentLayers.front();
 
-		if (layer->mpBase && layer->mAddrMask == 0xFFFFFFFFU && !mbFastBusEnabled) {
-			if (base != 0x40 || n != 0x40 || !mbSimple_4000_7FFF[accessMode]) {
-				for(uint32 i=0; i<n; ++i) {
-					uintptr *root = &array[i];
-
-					// free existing nodes
-					for(uintptr p = *root; ATCPUMEMISSPECIAL(p);) {
-						if (p == ((uintptr)&mDummyReadNode + 1) || p == ((uintptr)&mDummyWriteNode + 1))
-							break;
-
-						MemoryNode *node = (MemoryNode *)(p - 1);
-						uintptr next = node->mNext;
-
-						FreeNode(node);
-
-						p = next;
-
-						if (p == 1)
-							break;
-					}
-				}
-			} else {
-				for(uint32 i=0; i<n; ++i) {
-					uintptr p = array[i];
-
-					VDASSERT(!ATCPUMEMISSPECIAL(p) || p == ((uintptr)&mDummyReadNode + 1) || p == ((uintptr)&mDummyWriteNode + 1));
-				}
-			}
-
-			if (base == 0x40 && n == 0x40)
-				mbSimple_4000_7FFF[accessMode] = true;
-
+		if (layer->mpBase && layer->mAddrMask == 0xFFFFFFFFU && !mbFastBusEnabled && !mbFloatingIoBus) {
 			const uintptr layerPtr = (uintptr)layer->mpBase - ((uintptr)layer->mPageOffset << 8);
 
 			switch(accessMode) {
@@ -697,27 +740,29 @@ void ATMemoryManager::RebuildNodes(uintptr *array, uint32 base, uint32 n, ATMemo
 		}
 	}
 
-	if (base < 0x80 && base + n > 0x40)
-		mbSimple_4000_7FFF[accessMode] = false;
+	bool boundaryBits[257] = { false };
+
+	boundaryBits[base] = true;
+
+	for(const MemoryLayer *layer : pertinentLayers) {
+		boundaryBits[layer->mEffectiveStart] = true;
+		boundaryBits[layer->mEffectiveEnd] = true;
+
+		if (layer->mAddrMask != ~(uint32)0) {
+			uint32 step = layer->mAddrMask & ~(layer->mAddrMask - 1);
+
+			for(uint32 page = layer->mEffectiveStart; page < layer->mEffectiveEnd; page += step)
+				boundaryBits[page] = true;
+		}
+	}
 
 	for(uint32 i=0; i<n; ++i) {
 		uintptr *root = &array[i];
 		uint32 pageOffset = (base + i);
 
-		// free existing nodes
-		for(uintptr p = *root; ATCPUMEMISSPECIAL(p);) {
-			if (p == ((uintptr)&mDummyReadNode + 1) || p == ((uintptr)&mDummyWriteNode + 1))
-				break;
-
-			MemoryNode *node = (MemoryNode *)(p - 1);
-			uintptr next = node->mNext;
-
-			FreeNode(node);
-
-			p = next;
-
-			if (p == 1)
-				break;
+		if (!boundaryBits[pageOffset]) {
+			*root = array[i-1];
+			continue;
 		}
 
 		Layers::const_iterator it(pertinentLayers.begin()), itEnd(pertinentLayers.end());
@@ -727,17 +772,33 @@ void ATMemoryManager::RebuildNodes(uintptr *array, uint32 base, uint32 n, ATMemo
 				for(; it != itEnd; ++it) {
 					MemoryLayer *layer = *it;
 
-					if (pageOffset - layer->mPageOffset < layer->mPageCount &&
-						pageOffset >= layer->mMaskRangeStart &&
-						pageOffset < layer->mMaskRangeEnd)
+					if (pageOffset >= layer->mEffectiveStart &&
+						pageOffset < layer->mEffectiveEnd)
 					{
-						if (layer->mpBase) {
+						if (mbFloatingIoBus && layer->mbIoBus) {
+							MemoryNode *node = AllocNode();
+							node->mpThis = layer;
+							node->mLayerOrForward = (uintptr)layer;
+
+							if (layer->mpBase)
+								node->mpReadHandler = (layer->mAddrMask == (uint32)0 - 1) ? IoMemoryFastReadWrapperHandler : IoMemoryReadWrapperHandler;
+							else
+								node->mpReadHandler = IoHandlerReadWrapperHandler;
+
+							*root = (uintptr)node + 1;
+							root = &node->mNext;
+
+							if (layer->mpBase || !layer->mHandlers.mbPassAnticReads) {
+								*root = 1;
+								break;
+							}
+						} else if (layer->mpBase) {
 							*root = (uintptr)layer->mpBase + (((uintptr)((pageOffset - layer->mPageOffset) & layer->mAddrMask) - pageOffset) << 8);
 							break;
 						} else {
 							MemoryNode *node = AllocNode();
 
-							node->mpLayer = layer;
+							node->mLayerOrForward = (uintptr)layer;
 							node->mpReadHandler = layer->mHandlers.mpReadHandler;
 							node->mpThis = layer->mHandlers.mpThis;
 							*root = (uintptr)node + 1;
@@ -759,17 +820,33 @@ void ATMemoryManager::RebuildNodes(uintptr *array, uint32 base, uint32 n, ATMemo
 				for(; it != itEnd; ++it) {
 					MemoryLayer *layer = *it;
 
-					if (pageOffset - layer->mPageOffset < layer->mPageCount &&
-						pageOffset >= layer->mMaskRangeStart &&
-						pageOffset < layer->mMaskRangeEnd)
+					if (pageOffset >= layer->mEffectiveStart &&
+						pageOffset < layer->mEffectiveEnd)
 					{
-						if (layer->mpBase) {
+						if (mbFloatingIoBus && layer->mbIoBus) {
+							MemoryNode *node = AllocNode();
+							node->mpThis = layer;
+							node->mLayerOrForward = (uintptr)layer;
+
+							if (layer->mpBase)
+								node->mpReadHandler = (layer->mAddrMask == (uint32)0 - 1) ? IoMemoryFastReadWrapperHandler : IoMemoryReadWrapperHandler;
+							else
+								node->mpReadHandler = IoHandlerReadWrapperHandler;
+
+							*root = (uintptr)node + 1;
+							root = &node->mNext;
+
+							if (layer->mpBase || !layer->mHandlers.mbPassReads) {
+								*root = 1;
+								break;
+							}
+						} else if (layer->mpBase) {
 							if (mbFastBusEnabled && !layer->mbFastBus) {
 								MemoryNode *node = AllocNode();
 
-								node->mpLayer = layer;
+								node->mLayerOrForward = (uintptr)layer;
 								node->mpReadHandler = ChipReadHandler;
-								node->mpThis = (void *)(layer->mpBase + ((uintptr)((pageOffset - layer->mPageOffset) & layer->mAddrMask) << 8));
+								node->mpThis = (void *)(layer->mpBase + ((uintptr)((pageOffset - layer->mPageOffset) & layer->mAddrMask) << 8) - (pageOffset << 8));
 								*root = (uintptr)node + 1;
 								node->mNext = 1;
 							} else {
@@ -779,7 +856,7 @@ void ATMemoryManager::RebuildNodes(uintptr *array, uint32 base, uint32 n, ATMemo
 						} else {
 							MemoryNode *node = AllocNode();
 
-							node->mpLayer = layer;
+							node->mLayerOrForward = (uintptr)layer;
 							node->mpReadHandler = layer->mHandlers.mpReadHandler;
 							node->mpThis = layer->mHandlers.mpThis;
 							*root = (uintptr)node + 1;
@@ -801,20 +878,38 @@ void ATMemoryManager::RebuildNodes(uintptr *array, uint32 base, uint32 n, ATMemo
 				for(; it != itEnd; ++it) {
 					MemoryLayer *layer = *it;
 
-					if (pageOffset - layer->mPageOffset < layer->mPageCount &&
-						pageOffset >= layer->mMaskRangeStart &&
-						pageOffset < layer->mMaskRangeEnd)
+					if (pageOffset >= layer->mEffectiveStart &&
+						pageOffset < layer->mEffectiveEnd)
 					{
-						if (layer->mbReadOnly) {
+						if (mbFloatingIoBus && layer->mbIoBus) {
+							MemoryNode *node = AllocNode();
+							node->mpThis = layer;
+							node->mLayerOrForward = (uintptr)layer;
+
+							if (layer->mbReadOnly)
+								node->mpWriteHandler = IoNullWriteWrapperHandler;
+							else if (layer->mpBase)
+								node->mpWriteHandler = IoMemoryWriteWrapperHandler;
+							else
+								node->mpWriteHandler = IoHandlerWriteWrapperHandler;
+
+							*root = (uintptr)node + 1;
+							root = &node->mNext;
+
+							if (layer->mpBase || !layer->mHandlers.mbPassWrites) {
+								*root = 1;
+								break;
+							}
+						} else if (layer->mbReadOnly) {
 							*root = (uintptr)&mDummyWriteNode + 1;
 							break;
 						} else if (layer->mpBase) {
 							if (mbFastBusEnabled && !layer->mbFastBus) {
 								MemoryNode *node = AllocNode();
 
-								node->mpLayer = layer;
+								node->mLayerOrForward = (uintptr)layer;
 								node->mpWriteHandler = ChipWriteHandler;
-								node->mpThis = (void *)(layer->mpBase + ((uintptr)((pageOffset - layer->mPageOffset) & layer->mAddrMask) << 8));
+								node->mpThis = (void *)(layer->mpBase + ((uintptr)((pageOffset - layer->mPageOffset) & layer->mAddrMask) << 8) - (pageOffset << 8));
 								*root = (uintptr)node + 1;
 								node->mNext = 1;
 							} else {
@@ -824,7 +919,7 @@ void ATMemoryManager::RebuildNodes(uintptr *array, uint32 base, uint32 n, ATMemo
 						} else {
 							MemoryNode *node = AllocNode();
 
-							node->mpLayer = layer;
+							node->mLayerOrForward = (uintptr)layer;
 							node->mpWriteHandler = layer->mHandlers.mpWriteHandler;
 							node->mpThis = layer->mHandlers.mpThis;
 							*root = (uintptr)node + 1;
@@ -845,23 +940,80 @@ void ATMemoryManager::RebuildNodes(uintptr *array, uint32 base, uint32 n, ATMemo
 	}
 
 	pertinentLayers.swap(mLayerTempList);
+
+	if (mAllocationCount >= 4096)
+		GarbageCollect();
 }
 
 ATMemoryManager::MemoryNode *ATMemoryManager::AllocNode() {
-	MemoryNode *node = mpFreeNodes;
-
-	if (!node) {
-		node = mAllocator.Allocate<MemoryNode>();
-		node->mNext = (uintptr)mpFreeNodes;
-	}
-
-	mpFreeNodes = (MemoryNode *)node->mNext;
-	return node;
+	++mAllocationCount;
+	return mAllocator.Allocate<MemoryNode>();
 }
 
-void ATMemoryManager::FreeNode(MemoryNode *node) {
-	node->mNext = (uintptr)mpFreeNodes;
-	mpFreeNodes = node;
+void ATMemoryManager::GarbageCollect() {
+	uintptr *pLink = mCPUReadPageMap;
+
+	// temporarily whack the dummy nodes so they forward to themselves
+	mDummyReadNode.mLayerOrForward = (uintptr)&mDummyReadNode + 1;
+	mDummyWriteNode.mLayerOrForward = (uintptr)&mDummyWriteNode + 1;
+
+	// mark and copy all used nodes
+	for(int i=0; i<768; ++i) {
+		uintptr *pRef = pLink;
+
+		for(;;) {
+			uintptr p = *pRef;
+
+			if (!ATCPUMEMISSPECIAL(p))
+				break;
+
+			MemoryNode *pNode = (MemoryNode *)(p - 1);
+			if (!pNode)
+				break;
+
+			// check if link was already copied
+			if (pNode->mLayerOrForward & 1) {
+				// yes -- update the link and exit
+				*pRef = pNode->mLayerOrForward;
+				break;
+			}
+
+			// copy the link
+			MemoryNode *pNewNode = mAllocatorNext.Allocate<MemoryNode>();
+			*pNewNode = *pNode;
+
+			// set up forwarding
+			pNode->mLayerOrForward = (uintptr)pNewNode + 1;
+
+			// update the reference
+			*pRef = (uintptr)pNewNode + 1;
+
+			// check the next node
+			pRef = &pNewNode->mNext;
+		}
+
+		++pLink;
+		
+		// these are to stay compliant -- they should compile out
+		if (pLink == &mCPUReadPageMap[256])
+			pLink = &mCPUWritePageMap[0];
+
+		if (pLink == &mCPUWritePageMap[256])
+			pLink = &mAnticReadPageMap[0];
+	}
+
+	// trim and swap the allocators
+	// NOTE: We must keep the previous allocator alive! This is because we might be
+	// in the middle of a memory access and can't drop the allocation chain until
+	// it completes.
+	mAllocatorPrev.Reset();
+	mAllocatorPrev.Swap(mAllocatorNext);
+	mAllocator.Swap(mAllocatorPrev);
+	mAllocationCount = 0;
+	
+	// restore the dummy nodes
+	mDummyReadNode.mLayerOrForward = (uintptr)&mDummyLayer;
+	mDummyWriteNode.mLayerOrForward = (uintptr)&mDummyLayer;
 }
 
 sint32 ATMemoryManager::DummyReadHandler(void *thisptr0, uint32 addr) {
@@ -875,10 +1027,68 @@ bool ATMemoryManager::DummyWriteHandler(void *thisptr, uint32 addr, uint8 value)
 }
 
 sint32 ATMemoryManager::ChipReadHandler(void *thisptr, uint32 addr) {
-	return ((const uint8 *)thisptr)[addr & 0xff];
+	return ((const uint8 *)thisptr)[addr & 0xffff];
 }
 
 bool ATMemoryManager::ChipWriteHandler(void *thisptr, uint32 addr, uint8 value) {
-	((uint8 *)thisptr)[addr & 0xff] = value;
+	((uint8 *)thisptr)[addr & 0xffff] = value;
 	return true;
+}
+
+sint32 ATMemoryManager::IoMemoryFastReadWrapperHandler(void *thisptr, uint32 addr) {
+	MemoryLayer *layer = (MemoryLayer *)thisptr;
+	uint8 c = layer->mpBase[addr - (layer->mPageOffset << 8)];
+
+	layer->mpParent->mIoBusValue = c;
+	return c;
+}
+
+sint32 ATMemoryManager::IoMemoryDebugReadWrapperHandler(void *thisptr, uint32 addr) {
+	MemoryLayer *layer = (MemoryLayer *)thisptr;
+	return layer->mpBase[(addr - (layer->mPageOffset << 8)) & ((layer->mAddrMask << 8) + 0xFF)];
+}
+
+sint32 ATMemoryManager::IoMemoryReadWrapperHandler(void *thisptr, uint32 addr) {
+	MemoryLayer *layer = (MemoryLayer *)thisptr;
+	uint8 c = layer->mpBase[(addr - (layer->mPageOffset << 8)) & ((layer->mAddrMask << 8) + 0xFF)];
+
+	layer->mpParent->mIoBusValue = c;
+	return c;
+}
+
+bool ATMemoryManager::IoMemoryRoWriteWrapperHandler(void *thisptr, uint32 addr, uint8 value) {
+	MemoryLayer *layer = (MemoryLayer *)thisptr;
+	layer->mpParent->mIoBusValue = value;
+	return true;
+}
+
+bool ATMemoryManager::IoMemoryWriteWrapperHandler(void *thisptr, uint32 addr, uint8 value) {
+	MemoryLayer *layer = (MemoryLayer *)thisptr;
+	((uint8 *)layer->mpBase)[(addr - (layer->mPageOffset << 8)) & ((layer->mAddrMask << 8) + 0xFF)] = value;
+
+	layer->mpParent->mIoBusValue = value;
+	return true;
+}
+
+sint32 ATMemoryManager::IoHandlerReadWrapperHandler(void *thisptr, uint32 addr) {
+	MemoryLayer *layer = (MemoryLayer *)thisptr;
+	sint32 v = layer->mHandlers.mpReadHandler(layer->mHandlers.mpThis, addr);
+
+	if (v >= 0)
+		layer->mpParent->mIoBusValue = (uint8)v;
+
+	return v;
+}
+
+bool ATMemoryManager::IoHandlerWriteWrapperHandler(void *thisptr, uint32 addr, uint8 value) {
+	MemoryLayer *layer = (MemoryLayer *)thisptr;
+	layer->mHandlers.mpWriteHandler(layer->mHandlers.mpThis, addr, value);
+	layer->mpParent->mIoBusValue = value;
+	return layer->mHandlers.mbPassWrites;
+}
+
+bool ATMemoryManager::IoNullWriteWrapperHandler(void *thisptr, uint32 addr, uint8 value) {
+	MemoryLayer *layer = (MemoryLayer *)thisptr;
+	layer->mpParent->mIoBusValue = value;
+	return layer->mHandlers.mbPassWrites;
 }

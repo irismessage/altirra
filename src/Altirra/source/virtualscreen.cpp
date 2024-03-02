@@ -25,13 +25,18 @@
 #include "cio.h"
 #include "virtualscreen.h"
 
-class ATVirtualScreenHandler : public IATVirtualScreenHandler {
+class ATVirtualScreenHandler final : public IATVirtualScreenHandler {
 public:
 	ATVirtualScreenHandler();
 	~ATVirtualScreenHandler();
 
 	void GetScreen(uint32& width, uint32& height, const uint8 *&screen) const;
 	bool GetCursorInfo(uint32& x, uint32& y) const;
+
+	void SetReadyCallback(const vdfunction<void()>& fn) override;
+	bool IsReadyForInput() const override;
+
+	void ToggleSuspend() override;
 
 	void Resize(uint32 w, uint32 h);
 	void PushLine(const char *line);
@@ -46,6 +51,8 @@ public:
 		mbBellPending = false;
 		return pending;
 	}
+	
+	int ReadRawText(uint8 *dst, int x, int y, int n) const;
 
 	void ColdReset();
 	void WarmReset();
@@ -58,41 +65,35 @@ protected:
 	void PutChar(uint8 c);
 	void PutRawChar(uint8 c);
 	void ClearScreen();
+	void ReadParams(ATCPUEmulatorMemory& mem);
+	void WriteParams(ATCPUEmulatorMemory& mem);
 
-	uint16	mGetCharAddress;
-	uint8	mHookPage;
-	bool	mbWaitingForInput;
+	uint16	mGetCharAddress = 0;
+	uint8	mHookPage = 0;
+	bool	mbWaitingForInput = false;
 
-	uint8	mShiftCtrlLockState;
-	bool	mbWriteShiftCtrlLockState;
-	bool	mbEscapeNextChar;
-	bool	mbBellPending;
-	bool	mbForcedInputMode;
+	uint8	mShiftCtrlLockState = 0x40;
+	bool	mbWriteShiftCtrlLockState = false;
+	bool	mbEscapeNextChar = false;
+	bool	mbBellPending = false;
+	bool	mbForcedInputMode = false;
+	bool	mbToggleSuspend = false;
 
-	uint32	mWidth;
-	uint32	mHeight;
-	uint32	mX;
-	uint32	mY;
-	uint32	mInputIndex;
+	uint32	mWidth = 40;
+	uint32	mHeight = 24;
+	uint32	mX = 0;
+	uint32	mY = 0;
+	uint32	mLeftMargin = 2;
+	uint32	mRightMargin = 39;
+	uint32	mInputIndex = 0;
 
 	vdfastvector<uint8> mScreen;
 	vdfastvector<uint8> mActiveInputLine;
+
+	vdfunction<void()> mpReadyHandler;
 };
 
-ATVirtualScreenHandler::ATVirtualScreenHandler()
-	: mGetCharAddress(0)
-	, mHookPage(0)
-	, mbWaitingForInput(false)
-	, mShiftCtrlLockState(0x40)
-	, mbWriteShiftCtrlLockState(false)
-	, mbEscapeNextChar(false)
-	, mbBellPending(false)
-	, mWidth(40)
-	, mHeight(24)
-	, mX(0)
-	, mY(0)
-	, mInputIndex(0)
-{
+ATVirtualScreenHandler::ATVirtualScreenHandler() {
 	mScreen.resize(mWidth * mHeight, 0x20);
 }
 
@@ -109,6 +110,18 @@ bool ATVirtualScreenHandler::GetCursorInfo(uint32& x, uint32& y) const {
 	x = mX;
 	y = mY;
 	return mbWaitingForInput;
+}
+
+void ATVirtualScreenHandler::SetReadyCallback(const vdfunction<void()>& fn) {
+	mpReadyHandler = fn;
+}
+
+bool ATVirtualScreenHandler::IsReadyForInput() const {
+	return mActiveInputLine.empty();
+}
+
+void ATVirtualScreenHandler::ToggleSuspend() {
+	mbToggleSuspend = !mbToggleSuspend;
 }
 
 void ATVirtualScreenHandler::Resize(uint32 w, uint32 h) {
@@ -162,6 +175,26 @@ bool ATVirtualScreenHandler::GetControlLockState() const {
 	return (mShiftCtrlLockState & 0x80) != 0;
 }
 
+int ATVirtualScreenHandler::ReadRawText(uint8 *dst, int x, int y, int n) const {
+	if ((x|y) < 0)
+		return 0;
+
+	if ((uint32)y >= mHeight)
+		return 0;
+
+	if ((uint32)x >= mWidth)
+		return 0;
+
+	if (n <= 0)
+		return 0;
+
+	uint32 n2 = std::min<uint32>(n, mWidth - x);
+	const uint8 *src = &mScreen[y * mWidth];
+
+	memcpy(dst, src, n2);
+	return n2;
+}
+
 void ATVirtualScreenHandler::WarmReset() {
 	ClearScreen();
 
@@ -196,6 +229,12 @@ void ATVirtualScreenHandler::OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory
 			break;
 
 		case 4:		// get byte
+			if (mbToggleSuspend) {
+				mbToggleSuspend = false;
+
+				mem->CPUWriteByte(ATKernelSymbols::SSFLAG, mem->CPUReadByte(ATKernelSymbols::SSFLAG) ^ 0xFF);
+			}
+
 			if (mbWriteShiftCtrlLockState) {
 				mbWriteShiftCtrlLockState = false;
 				kdb.SHFLOK = mShiftCtrlLockState;
@@ -207,20 +246,48 @@ void ATVirtualScreenHandler::OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory
 
 				mActiveInputLine.clear();
 
-				mbWaitingForInput = true;
-				cpu->PushWord(mGetCharAddress - 1);
-				cpu->PushWord(0xE4C0 - 1);
-				cpu->PushWord(0xE4C0 - 1);
-				return;
+				if (!mbWaitingForInput) {
+					mbWaitingForInput = true;
+					ReadParams(*mem);
+				}
+
+				if (mpReadyHandler)
+					mpReadyHandler();
+
+				if (mbWaitingForInput) {
+					cpu->PushWord(mGetCharAddress - 1);
+					cpu->PushWord(0xE4C0 - 1);
+					cpu->PushWord(0xE4C0 - 1);
+					return;
+				}
 			}
 
 			mbWaitingForInput = false;
+			WriteParams(*mem);
 			cpu->SetA(mActiveInputLine[mInputIndex++]);
 			cpu->Ldy(ATCIOSymbols::CIOStatSuccess);
 			break;
 
 		case 6:		// put byte
-			{
+			if (mbToggleSuspend) {
+				mbToggleSuspend = false;
+
+				mem->CPUWriteByte(ATKernelSymbols::SSFLAG, mem->CPUReadByte(ATKernelSymbols::SSFLAG) ^ 0xFF);
+			}
+
+			if (mem->ReadByte(ATKernelSymbols::SSFLAG)) {
+				cpu->PushWord(cpu->GetInsnPC() - 1);
+				cpu->PushWord(0xE4C0 - 1);
+				cpu->PushWord(0xE4C0 - 1);
+				return;
+			} else if (!mem->ReadByte(ATKernelSymbols::BRKKEY)) {
+				mem->WriteByte(ATKernelSymbols::BRKKEY, 0x80);
+				cpu->Ldy(ATCIOSymbols::CIOStatBreak);
+				mbWaitingForInput = false;
+				break;
+			} else {
+				ReadParams(*mem);
+
 				uint8 c = cpu->GetA();
 
 				if (mbEscapeNextChar) {
@@ -230,6 +297,8 @@ void ATVirtualScreenHandler::OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory
 					PutRawChar(c);
 				else
 					PutChar(c);
+				
+				WriteParams(*mem);
 
 				cpu->Ldy(ATCIOSymbols::CIOStatSuccess);
 				mbWaitingForInput = false;
@@ -287,7 +356,7 @@ void ATVirtualScreenHandler::PutChar(uint8 c) {
 			break;
 
 		case 0x9B:		// EOL
-			mX = 0;
+			mX = mLeftMargin;
 			if (++mY >= mHeight) {
 				memmove(mScreen.data(), &mScreen[mWidth], mWidth * (mHeight - 1));
 				memset(&mScreen[mWidth * (mHeight - 1)], ' ', mWidth);
@@ -336,8 +405,8 @@ void ATVirtualScreenHandler::PutChar(uint8 c) {
 void ATVirtualScreenHandler::PutRawChar(uint8 c) {
 	mScreen[mX + mY*mWidth] = c;
 
-	if (++mX >= mWidth) {
-		mX = 0;
+	if (++mX > mRightMargin) {
+		mX = mLeftMargin;
 
 		if (++mY >= mHeight) {
 			memmove(mScreen.data(), &mScreen[mWidth], mWidth * (mHeight - 1));
@@ -348,9 +417,39 @@ void ATVirtualScreenHandler::PutRawChar(uint8 c) {
 }
 
 void ATVirtualScreenHandler::ClearScreen() {
-	memset(mScreen.data(), 0, mScreen.size() * sizeof(mScreen[0]));
-	mX = 0;
+	memset(mScreen.data(), ' ', mScreen.size() * sizeof(mScreen[0]));
+	mX = mLeftMargin;
 	mY = 0;
+}
+
+void ATVirtualScreenHandler::ReadParams(ATCPUEmulatorMemory& mem) {
+	mX = mem.CPUReadByte(ATKernelSymbols::COLCRS);
+	mY = mem.CPUReadByte(ATKernelSymbols::ROWCRS);
+	mLeftMargin = mem.CPUReadByte(ATKernelSymbols::LMARGN);
+	mRightMargin = mem.CPUReadByte(ATKernelSymbols::RMARGN);
+
+	if (mLeftMargin > 39)
+		mLeftMargin = 39;
+
+	if (mRightMargin > 39)
+		mRightMargin = 39;
+
+	if (mRightMargin < mLeftMargin)
+		mRightMargin = mLeftMargin;
+
+	if (mRightMargin == 39)
+		mRightMargin = mWidth - 1;
+
+	if (mX > mRightMargin)
+		mX = mRightMargin;
+
+	if (mY >= mHeight)
+		mY = mHeight - 1;
+}
+
+void ATVirtualScreenHandler::WriteParams(ATCPUEmulatorMemory& mem) {
+	mem.CPUWriteByte(ATKernelSymbols::COLCRS, mX);
+	mem.CPUWriteByte(ATKernelSymbols::ROWCRS, mY);
 }
 
 ///////////////////////////////////////////////////////////////////////////

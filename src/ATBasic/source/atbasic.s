@@ -49,7 +49,6 @@ varptr		dta		a(0)	;pointer to current variable
 lvarptr		dta		a(0)	;lvar pointer for array assignment
 parptr		dta		a(0)	;parsing state machine pointer
 parout		dta		0		;parsing output idx
-expCurOp	= parout		;expression evaluator current operator
 expCurPrec	dta		0		;expression evaluator current operator precedence
 iocbexec	dta		0		;current immediate/deferred mode IOCB
 iocbidx		dta		0		;current IOCB*16
@@ -60,6 +59,9 @@ ioTermSave	dta		0		;IO: String terminator byte save location
 ioTermOff	dta		0		;IO: String terminator byte offset
 argstk2		dta		a(0)	;Evaluator: Second argument stack pointer
 dataLnEnd	dta		0		;current DATA statement line end
+pmgbase		dta		0
+pmgmode		dta		0
+ioTermFlag	dta		0
 
 		.if grColor!=$c8
 		.error "Graphics color is at ",grColor," but must be at $C8 for PEEK(200) to work (see Space Station Multiplication.bas)"
@@ -84,7 +86,7 @@ stScratch3	dta		0
 stScratch4	dta		0
 
 printDngl	= stScratch		;set if the print statement is 'dangling' - no follow EOL
-parStrType	= stScratch		;parsing string type: set if string exp, clear if numeric
+parStrType	= prefr0		;parsing string type: set if string exp, clear if numeric
 parStBegin	= stScratch2	;parsing offset of statement begin (0 if none)
 
 ;--------------------------------------------------------------------------
@@ -133,14 +135,16 @@ degflg	= $fb				;(compat) degree/radian flag: 0 for radians, 6 for degrees
 
 lbuff	equ		$0580
 
-.macro _ERROR_RETURN
-		jmp		errorBadRETURN
-.endm
-
 .macro _STATIC_ASSERT
 		.if :1
 		.else
 		.error ":2"
+		.endif
+.endm
+
+.macro _PAGE_CHECK
+		.if [:1^*]&$ff00
+		.error "Page boundary crossed between ",:1," and ",*
 		.endif
 .endm
 
@@ -423,14 +427,16 @@ have_filename_nz:
 		ldx		#0
 		stx		iocbidx
 		stx		iocbexec
+		inx
+		stx		errno
 
 		lda		#$9c				;delete loading line
 		jsr		putchar
-		ldx		#<msg_banner
+		ldx		#msg_banner-msg_base
 		jsr		IoPrintMessage
 		jsr		IoPutNewline
 
-		jsr		stNew.reset_entry
+		jsr		_stNew.reset_entry
 		jsr		ExecReset
 
 		;read filename flag
@@ -461,8 +467,7 @@ load_failed:
 		ldx		#$70
 		mva		#CIOCmdClose iccmd+$70
 		jsr		ciov
-		jsr		ExecReset
-		jmp		execLoop
+		jmp		immediateModeReset
 
 explicit_fn:
 		;move filename to line buffer
@@ -533,28 +538,20 @@ default_fn_end:
 ; so this must be replaced by the load path.
 ;
 main:
-		;init I/O
-		ldx		#0
-		stx		iocbidx
-		
 		;check if this is a warm start
-		bit		warmst
-		bmi		immediateMode
+		ldx		warmst
+		bmi		immediateModeReset
 				
-main_cold:
 		;print banner
-		ldx		#<msg_banner
-		jsr		IoPrintMessage
-		
+		jsr		IoPrintMessageIOCB0		;!! - X=0
 		jmp		stNew
 
 ;==========================================================================
 ; Message base
 ;
-.pages 1
 msg_base:
 msg_banner:
-		dta		c'Altirra 8K BASIC 1.38',0
+		dta		c'Altirra 8K BASIC 1.48',0
 
 msg_ready:
 		dta		$9B,c'Ready',$9B,0
@@ -569,42 +566,41 @@ msg_error2:
 
 msg_atline:
 		dta		c" at line ",0
-.endpg
+msg_end:
+
+		_STATIC_ASSERT (msg_end - msg_base) <= $100
 
 ;==========================================================================
 immediateModeReset:
 		jsr		ExecReset
 immediateMode:
 		;use IOCB #0 (E:) for commands
-		mva		#0 iocbexec
-.proc execLoop
-loop:
-		;display prompt
 		ldx		#0
-		stx		iocbidx
-		ldx		#<msg_ready
-		jsr		IoPrintMessage
+		stx		iocbexec
+.proc execLoop
+		;display prompt
+		ldx		#msg_ready-msg_base
+		jsr		IoPrintMessageIOCB0
 
 loop2:	
 		;reset stack
 		ldx		#$ff
 		txs
+
+		;read read pointer
+		inx
+		stx		cix
+
+		;reset errno
+		inx
+		stx		errno
 	
 		;read line
 		ldx		iocbexec
-		jsr		IoSetupReadLine
-		jsr		ciov
-		
-		;check if we got an EOF
-		cpy		#$88
+		jsr		IoReadLine
 		beq		eof
 		
-		tya
-		jsr		ioCheck
-		
 		;check for an empty line
-		jsr		ldbufa
-		mva		#0 cix
 		jsr		skpspc
 		lda		(inbuff),y
 		cmp		#$9b
@@ -615,25 +611,19 @@ loop2:
 
 		;##TRACE "Parsing immediate mode line: [%.*s]" dw(icbll) lbuff
 		jsr		parseLine
-		bcc		loop2
-		
-		;check if this line was immediate mode
-		ldy		#1
-		lda		(stmcur),y
-		bpl		loop2
-		
+		bcc		loop2		
+
 		;execute immediate mode line
-		sec
-		jmp		exec
+		jmp		execDirect
 		
 eof:
 		;close IOCB #7
 		jsr		IoCloseX
 		
-		;restart in immediate mode
+		;restart in immediate mode with IOCB 0
 		jmp		immediateMode
 .endp
-
+ 
 ;==========================================================================
 
 		icl		'parserbytecode.s'
@@ -651,9 +641,20 @@ eof:
 		icl		'error.s'
 		icl		'util.s'
 
+
 ;==========================================================================
 
-const_table = $bffa - 4 - 6*7 - 7
+pmg_dmactl_tab:					;3 bytes ($1c 0c 00)
+		dta		$1c,$0c
+empty_program:					;4 bytes ($00 00 80 03)
+		dta		$00
+pmgmode_tab:					;2 bytes ($00 80)
+		dta		$00,$80
+		dta		$03
+
+;==========================================================================
+
+const_table = $bffa - 4 - 6*9 - 6 - 7
 
 		.echo	"Main program ends at ",*," (",[((((*-$a000)*100/8192)/10)*16+(((*-$a000)*100)/8192)%10)],"% full) (", const_table-*," bytes free)"
 
@@ -670,24 +671,44 @@ devname_e:
 devname_p:
 		dta		'P'
 devpath_d1all:
-		dta		'D1:*.*',$9B
+		dta		'D:*.*',$9B
 
+		;The Maclaurin expansion for sin(x) is as follows:
+		;
+		; sin(x) = x - x^3/3! + x^5/5! - x^7/7! + x^9/9! - x^11/11!...
+		;
+		;We modify it this way:
+		;
+		; let y = x / pi2 (for x in [0, pi], pi2 = pi/2
+		; sin(x) = y*[pi2 - y^2*pi2^3/3! + y^4*pi2^5/5! - y^6*pi2^7/7! + y^8*pi2*9/9! - y^10*pi2^11/11!...]
+		;
+		; let z = y^2
+		; sin(x) = y*[pi2 - z*pi2^3/3! + z^2*pi2^5/5! - z^3*pi2^7/7! + z^4*pi2*9/9! - z^5*pi2^11/11!...]
+		;
+fpconst_sin:
+		dta		$BD,$03,$43,$18,$69,$61		;-0.00 00 03 43 18 69 61 07114469471
+		dta		$3E,$01,$60,$25,$47,$91		; 0.00 01 60 25 47 91 80067132008
+		dta		$BE,$46,$81,$65,$78,$84		;-0.00 46 81 65 78 83 6641486819
+		dta		$3F,$07,$96,$92,$60,$37		; 0.07 96 92 60 37 48579552158
+		dta		$BF,$64,$59,$64,$09,$56		;-0.64 59 64 09 55 8200198258
 angle_conv_tab:
-		.fl		1.57079633
-		.fl		90
+fpconst_pi2:
+		dta		$40,$01,$57,$07,$96,$33		; 1.57 07 96 32 67682236008 (also last sin coefficient)
+		dta		$40,$90,$00,$00,$00			; 90 (!! - last byte shared with next table!)
+hvstick_table:
+		dta		$00,$FF,$01,$00
 
-const_one:
-		.fl		1.0
-const_negone:
-		.fl		-1.0
-const_half:
-		.fl		0.5
-fpconst_neg_pi2:
-		.fl		-1.5707963267949
 fp_180_div_pi:
 		.fl		57.295779513082
 
+const_one:
+		dta		$40,$01
+pmg_move_mask_tab:
+		dta		$00,$00,$00,$00,$fc,$f3,$cf,$3f
+
 		.endpg
+
+		_STATIC_ASSERT *=$bffa
 		
 ;==========================================================================
 		

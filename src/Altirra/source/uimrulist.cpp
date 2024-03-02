@@ -19,7 +19,7 @@
 #include <vd2/system/registry.h>
 #include <vd2/system/w32assist.h>
 #include "uimrulist.h"
-#include "uimenulist.h"
+#include <at/atui/uimenulist.h>
 
 void ATClearMRUList() {
 	VDRegistryAppKey key("MRU List", true);

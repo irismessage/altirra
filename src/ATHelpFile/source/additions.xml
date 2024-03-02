@@ -14,6 +14,13 @@
       XEP80 Interface Module 80-column E:/S: driver.
     </dd>
 
+    <dt>ALTXEP8F.SYS</dt>
+    <dd>
+      Fast version of XEP80 driver. The fast driver uses 31.5Kbaud for transmission to the XEP80
+      instead of the standard 15.7Kbaud, for better output speed. Note that the XEP80 must be
+      powered off and back on again to work at standard speed after using the fast driver.
+    </dd>
+
     <dt>BOOT850.COM</dt>
     <dd>
       Downloads R: handler software from an 850 Interface Module, for when it isn't
@@ -64,6 +71,12 @@
     <dd>
       Like <tt>BOOT1030.COM</tt>, <tt>THND1030.COM</tt> will also avoid installing its
       <tt>T:</tt> handler if one is already installed.
+    </dd>
+
+     <dt>SX212.COM</dt>
+    <dd>
+      T: handler for SX212 modem. This handler is intended for use with the SX212
+      emulation but should also work on real hardware.
     </dd>
 
     <dt>ATBASICX.COM</dt>

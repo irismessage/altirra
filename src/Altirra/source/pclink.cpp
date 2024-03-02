@@ -24,11 +24,9 @@
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicesio.h>
 #include <at/atcore/propertyset.h>
+#include <at/atcore/scheduler.h>
 #include "pclink.h"
-#include "pokey.h"
-#include "scheduler.h"
 #include "console.h"
-#include "devicemanager.h"
 #include "cio.h"
 #include "cpu.h"
 #include "kerneldb.h"
@@ -40,35 +38,6 @@ ATDebuggerLogChannel g_ATLCPCLink(false, false, "PCLINK", "PCLink activity");
 uint8 ATTranslateWin32ErrorToSIOError(uint32 err);
 
 namespace {
-	const uint32 kCyclesPerByte = 945;
-	const uint32 kCyclesPerBit = 94;
-
-	// Delay for command line falling to ACK by peripheral.
-	// Spec:	0-16ms (t2)
-	// We use:	8ms
-	const uint32 kDelayCmdLineToACK = (7159090 * 3) / 4000;
-
-	// Delay for command line falling to NAK by peripheral.
-	const uint32 kDelayCmdLineToNAK = (7159090 * 1) / 4000;
-
-	// Delay for initial ACK to Complete.
-	// Spec:	250us (t5)
-	// We use:	300us
-	const uint32 kDelayACKToComplete = (7159090U * 300) / 4000000;
-
-	uint8 ATComputeSIOChecksum(const void *data, uint32 len) {
-		uint32 checksum = 0;
-
-		const uint8 *src = (const uint8 *)data;
-		for(uint32 i = 0; i < len; ++i) {
-			checksum += src[i];
-			checksum += (checksum >> 8);
-			checksum &= 0xff;
-		}
-
-		return (uint8)checksum;
-	}
-
 	// 2011 and we still have to put up with this crap
 	static const char *const kReservedDeviceNames[]={
 		"CON",
@@ -754,9 +723,13 @@ protected:
 	uint8	mTransferBuffer[65536];
 };
 
-IATPCLinkDevice *ATCreatePCLinkDevice() {
-	return new ATPCLinkDevice;
+void ATCreateDevicePCLink(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATPCLinkDevice> p(new ATPCLinkDevice);
+
+	*dev = p.release();
 }
+
+extern const ATDeviceDefinition g_ATDeviceDefPCLink = { "pclink", "pclink", L"PCLink", ATCreateDevicePCLink };
 
 ATPCLinkDevice::ATPCLinkDevice()
 	: mpSIOMgr(NULL)
@@ -804,9 +777,7 @@ void ATPCLinkDevice::SetBasePath(const wchar_t *basePath) {
 }
 
 void ATPCLinkDevice::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "pclink";
-	info.mConfigTag = "pclink";
-	info.mName = L"PCLink";
+	info.mpDef = &g_ATDeviceDefPCLink;
 }
 
 void ATPCLinkDevice::GetSettings(ATPropertySet& settings) {
@@ -1016,7 +987,6 @@ void ATPCLinkDevice::AdvanceCommand() {
 					memcpy(mTransferBuffer, src, len);
 				};
 				mpSIOMgr->ReceiveData(0, mParBuf.mF1 + ((uint32)mParBuf.mF2 << 8), true);
-				mpSIOMgr->SendACK();
 				mpSIOMgr->InsertFence(0);
 				mpFenceFn = [this]() {
 					OnRead();
@@ -1150,6 +1120,12 @@ bool ATPCLinkDevice::OnPut() {
 			return true;
 
 		case 4:		// flen
+			if (!CheckValidFileHandle(true))
+				return true;
+
+			mStatusError = ATCIOSymbols::CIOStatSuccess;
+			return true;
+
 		case 5:		// reserved
 			mStatusError = ATCIOSymbols::CIOStatNotSupported;
 			return true;
@@ -2183,16 +2159,4 @@ void ATPCLinkDevice::OnReadActivity() {
 void ATPCLinkDevice::OnWriteActivity() {
 	if (mpUIRenderer)
 		mpUIRenderer->SetPCLinkActivity(true);
-}
-
-///////////////////////////////////////////////////////////////////////////
-
-void ATCreateDevicePCLink(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATPCLinkDevice> p(new ATPCLinkDevice);
-
-	*dev = p.release();
-}
-
-void ATRegisterDevicePCLink(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("pclink", ATCreateDevicePCLink);
 }

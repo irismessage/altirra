@@ -32,6 +32,7 @@
 
 #include <limits.h>
 #include <stdexcept>
+#include <initializer_list>
 #include <memory>
 #include <string.h>
 #include <vd2/system/vdtypes.h>
@@ -113,12 +114,12 @@ T *vdmove_backward_impl(T *src1, T *src2, T *dst, vdtrue_type) {
 
 template<class T>
 T *vdmove_forward(T *src1, T *src2, T *dst) {
-	return vdmove_forward_impl(src1, src2, dst, vdmove_capable<T>::result());
+	return vdmove_forward_impl(src1, src2, dst, typename vdmove_capable<T>::result());
 }
 
 template<class T>
 T *vdmove_backward(T *src1, T *src2, T *dst) {
-	return vdmove_backward_impl(src1, src2, dst, vdmove_capable<T>::result());
+	return vdmove_backward_impl(src1, src2, dst, typename vdmove_capable<T>::result());
 }
 
 #define VDMOVE_CAPABLE(type) \
@@ -970,7 +971,7 @@ public:
 			it = mpBegin + delta;
 		}
 
-		memmove(it+1, it, sizeof(T) * (mpEnd - it));
+		memmove(it+1, it, (char *)mpEnd - (char *)it);
 		*it = temp;
 		++mpEnd;
 		VDASSERT(mpEnd <= m.eos);
@@ -1166,15 +1167,45 @@ public:
 		memcpy(mpBegin, x.mpBegin, sizeof(T) * n);
 	}
 
+	vdfastvector(vdfastvector&& x) {
+		mpBegin = x.mpBegin;
+		mpEnd = x.mpEnd;
+		m.eos = x.m.eos;
+
+		x.mpBegin = nullptr;
+		x.mpEnd = nullptr;
+		x.m.eos = nullptr;
+	}
+
 	vdfastvector(const value_type *p, const value_type *q) {
 		m.eos = NULL;
 
-		assign(p, q);
+		this->assign(p, q);
+	}
+
+	vdfastvector(const std::initializer_list<T>& ilist) {
+		m.eos = nullptr;
+		assign(ilist.begin(), ilist.end());
 	}
 
 	vdfastvector& operator=(const vdfastvector& x) {
 		if (this != &x)
-			assign(x.mpBegin, x.mpEnd);
+			this->assign(x.mpBegin, x.mpEnd);
+
+		return *this;
+	}
+
+	vdfastvector& operator=(vdfastvector&& x) {
+		if (mpBegin)
+			m.deallocate(mpBegin, m.eos - mpBegin);
+
+		mpBegin = x.mpBegin;
+		mpEnd = x.mpEnd;
+		m.eos = x.m.eos;
+
+		x.mpBegin = nullptr;
+		x.mpEnd = nullptr;
+		x.m.eos = nullptr;
 
 		return *this;
 	}

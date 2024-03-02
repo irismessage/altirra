@@ -125,6 +125,28 @@ post_wrap:
 .endp
 
 ;==========================================================================
+; Also returns with Y=1 for convenience.
+.proc ScreenShowCursorAndXitOK
+	;;##ASSERT dw(oldadr) >= dw(savmsc)
+	;check if the cursor is enabled
+	ldy		crsinh
+	bne		cursor_inhibited
+	lda		(oldadr),y
+	sta		oldchr
+	eor		#$80
+	sta		(oldadr),y
+	iny
+	rts
+	
+cursor_inhibited:
+	;mark no cursor
+	ldy		#0
+	sty		oldadr+1
+	iny
+	rts
+.endp
+
+;==========================================================================
 ; Close screen (S:).
 ;
 ; This is a no-op in OS-B mode. In XL/XE mode, it reopens the device in

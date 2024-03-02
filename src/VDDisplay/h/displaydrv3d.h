@@ -15,7 +15,7 @@ class IVDTTexture2D;
 
 ///////////////////////////////////////////////////////////////////////////
 
-class VDDisplayDriver3D : public VDVideoDisplayMinidriver, public IVDTAsyncPresent {
+class VDDisplayDriver3D final : public VDVideoDisplayMinidriver, public IVDTAsyncPresent {
 	VDDisplayDriver3D(const VDDisplayDriver3D&);
 	VDDisplayDriver3D& operator=(const VDDisplayDriver3D&);
 public:
@@ -39,6 +39,8 @@ public:
 	virtual void Refresh(UpdateMode);
 	virtual bool Paint(HDC hdc, const RECT& rClient, UpdateMode lastUpdateMode);
 	virtual void PresentQueued();
+
+	virtual bool AreVSyncTicksNeeded() const { return false; }
 
 public:
 	virtual void QueuePresent();

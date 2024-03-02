@@ -69,7 +69,7 @@ void VDUIPeerW32::SetCaption(const wchar_t *caption) {
 	VDSetWindowTextW32(mhwnd, mCaption.c_str());
 }
 
-vduirect VDUIPeerW32::GetArea() {
+vduirect VDUIPeerW32::GetArea() const {
 	RECT r;
 
 	HWND hwndParent = ::GetParent(mhwnd);

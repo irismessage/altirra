@@ -22,7 +22,6 @@
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include "ui.h"
 #include "modemtcp.h"
 #include "rs232.h"
 

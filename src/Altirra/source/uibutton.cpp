@@ -1,8 +1,8 @@
 #include "stdafx.h"
 #include <vd2/VDDisplay/textrenderer.h>
 #include "uibutton.h"
-#include "uimanager.h"
-#include "uidrawingutils.h"
+#include <at/atui/uimanager.h>
+#include <at/atui/uidrawingutils.h>
 
 ATUIButton::ATUIButton()
 	: mStockImageIdx(-1)
@@ -150,6 +150,9 @@ void ATUIButton::SetHeld(bool held) {
 	// mode can be toggled on the fly.
 	if (held)
 		mbToggleNextState = !mbDepressed;
+
+	if (mHeldEvent)
+		mHeldEvent(this, held);
 
 	if (!mbToggleMode)
 		SetDepressed(held);

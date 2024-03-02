@@ -23,9 +23,9 @@
 
 ATMMUEmulator::ATMMUEmulator()
 	: mHardwareMode(0)
-	, mHardwareModeOverride(-1)
 	, mMemoryMode(0)
 	, mMemoryModeOverride(-1)
+	, mbForceBasic(false)
 	, mpMemMan(NULL)
 	, mpMemory(NULL)
 	, mpLayerExtRAM(NULL)
@@ -85,7 +85,7 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 
 void ATMMUEmulator::RebuildMappingTables() {
 	const ATMemoryMode memmode = (ATMemoryMode)(mMemoryModeOverride >= 0 ? mMemoryModeOverride : mMemoryMode);
-	const ATHardwareMode hwmode = (ATHardwareMode)(mHardwareModeOverride >= 0 ? mHardwareModeOverride : mHardwareMode);
+	const ATHardwareMode hwmode = (ATHardwareMode)mHardwareMode;
 	uint8 extbankmask = 0;
 
 	if (mpLayerAxlonControl1)
@@ -155,7 +155,7 @@ void ATMMUEmulator::RebuildMappingTables() {
 			break;
 	}
 
-	uint8 basicMask = 0x02;
+	uint8 basicMask = mbForceBasic ? 0 : 0x02;
 	switch(hwmode) {
 		case kATHardwareMode_800XL:
 		case kATHardwareMode_XEGS:
@@ -167,7 +167,6 @@ void ATMMUEmulator::RebuildMappingTables() {
 	for(int portb=0; portb<256; ++portb) {
 		const bool cpuEnabled = (~portb & cpuBankBit) != 0;
 		const bool anticEnabled = (~portb & anticBankBit) != 0;
-		uint32 extbank = 0;
 		uint16 encodedBankInfo = 0;
 
 		if (cpuEnabled || anticEnabled) {
@@ -271,6 +270,12 @@ void ATMMUEmulator::Shutdown() {
 	mAnticBase = 0;
 }
 
+void ATMMUEmulator::SetROMMappingHook(const vdfunction<void()>& fn) {
+	mpROMMappingChangeFn = fn;
+
+	UpdateROMMappingHook();
+}
+
 void ATMMUEmulator::SetAxlonMemory(uint8 bankbits, bool enableAliasing) {
 	const uint8 bankMask = (uint8)((1 << bankbits) - 1);
 
@@ -328,15 +333,15 @@ void ATMMUEmulator::GetMemoryMapState(ATMemoryMapState& state) const {
 }
 
 void ATMMUEmulator::ClearModeOverrides() {
-	SetModeOverrides(-1, -1);
+	SetModeOverrides(-1, false);
 }
 
-void ATMMUEmulator::SetModeOverrides(int memoryMode, int hwmode) {
-	if (mMemoryModeOverride == memoryMode && mHardwareModeOverride == hwmode)
+void ATMMUEmulator::SetModeOverrides(int memoryMode, bool forceBasic) {
+	if (mMemoryModeOverride == memoryMode && mbForceBasic == forceBasic)
 		return;
 
 	mMemoryModeOverride = memoryMode;
-	mHardwareModeOverride = hwmode;
+	mbForceBasic = forceBasic;
 
 	RebuildMappingTables();
 }
@@ -425,6 +430,8 @@ void ATMMUEmulator::SetBankRegister(uint8 bank) {
 
 	if (mpLayerHiddenRAM)
 		mpMemMan->EnableLayer(mpLayerHiddenRAM, (bankInfo & kMapInfo_HiddenRAM) != 0);
+
+	UpdateROMMappingHook();
 }
 
 void ATMMUEmulator::SetAxlonBank(uint8 bank) {
@@ -448,4 +455,9 @@ bool ATMMUEmulator::OnAxlonWrite(void *thisptr, uint32 addr, uint8 value) {
 	}
 
 	return false;
+}
+
+void ATMMUEmulator::UpdateROMMappingHook() {
+	if (mpROMMappingChangeFn)
+		mpROMMappingChangeFn();
 }

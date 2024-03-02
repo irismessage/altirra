@@ -19,7 +19,7 @@
 #define f_AT_CPUSTATES_H
 
 namespace AT6502States {
-	enum ATCPUState {
+	enum ATCPUState : uint8 {
 		kStateNop,
 		kStateReadOpcode,
 		kStateReadOpcodeNoBreak,

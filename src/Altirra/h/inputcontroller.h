@@ -19,7 +19,7 @@
 #define f_AT_INPUTCONTROLLER_H
 
 #include <vd2/system/vdstl.h>
-#include "scheduler.h"
+#include <at/atcore/scheduler.h>
 
 class ATGTIAEmulator;
 class ATPokeyEmulator;
@@ -71,6 +71,7 @@ enum ATInputTrigger {
 	kATInputTrigger_UIRightShift	= 0x050B,
 	kATInputTrigger_Axis0		= 0x0800,
 	kATInputTrigger_Flag0		= 0x0900,
+	kATInputTrigger_ClassMask	= 0xFF00,
 	kATInputTrigger_Mask		= 0xFFFF,
 
 	// D2D: Button state as usual.

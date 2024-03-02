@@ -19,9 +19,9 @@
 #include <vd2/system/error.h>
 #include <vd2/system/math.h>
 #include <vd2/system/strutil.h>
-#include <at/atui/dialog.h>
+#include <at/atnativeui/dialog.h>
 #include "resource.h"
-#include <at/atui/uiproxies.h>
+#include <at/atnativeui/uiproxies.h>
 #include <at/atcore/propertyset.h>
 
 ///////////////////////////////////////////////////////////////////////////

@@ -11,6 +11,11 @@ public:
 	~VDLinearAllocator();
 	
 	void Clear();
+	void Swap(VDLinearAllocator& other);
+
+	// Deallocates all allocated storage, and frees all but the last allocated block.
+	// Very fast if only zero or one block is allocated.
+	void Reset();
 
 	void *Allocate(size_t bytes) {
 		void *p = mpAllocPtr;

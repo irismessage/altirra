@@ -1319,6 +1319,7 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbol(COLCRS, "COLCRS", 2);
 	symstore->AddSymbol(OLDROW, "OLDROW", 1);
 	symstore->AddSymbol(OLDCOL, "OLDCOL", 2);
+	symstore->AddSymbol(OLDCHR, "OLDCHR", 1);
 	symstore->AddSymbol(DINDEX, "DINDEX", 1);
 	symstore->AddSymbol(SAVMSC, "SAVMSC", 2);
 	symstore->AddSymbol(OLDADR, "OLDADR", 2);

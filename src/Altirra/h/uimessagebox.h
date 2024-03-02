@@ -2,7 +2,7 @@
 #define f_AT_UIMESSAGEBOX_H
 
 #include <vd2/system/VDString.h>
-#include "uicontainer.h"
+#include <at/atui/uicontainer.h>
 #include "callback.h"
 
 class IVDDisplayFont;

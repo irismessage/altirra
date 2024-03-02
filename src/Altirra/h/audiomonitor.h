@@ -30,7 +30,7 @@ public:
 	ATAudioMonitor();
 	~ATAudioMonitor();
 
-	void Init(ATPokeyEmulator *pokey, IATUIRenderer *uir);
+	void Init(ATPokeyEmulator *pokey, IATUIRenderer *uir, bool secondary);
 	void Shutdown();
 
 	void Update(ATPokeyAudioLog **log, ATPokeyRegisterState **rstate);
@@ -39,6 +39,7 @@ public:
 protected:
 	ATPokeyEmulator		*mpPokey;
 	IATUIRenderer		*mpUIRenderer;
+	bool				mbSecondary;
 
 	ATPokeyAudioLog		mLog;
 	ATPokeyRegisterState	mRegisterState;

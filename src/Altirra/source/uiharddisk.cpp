@@ -22,7 +22,7 @@
 #include <vd2/system/strutil.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
-#include <at/atui/dialog.h>
+#include <at/atnativeui/dialog.h>
 #include "resource.h"
 #include "ide.h"
 #include "idephysdisk.h"
@@ -30,7 +30,7 @@
 #include "simulator.h"
 #include "oshelper.h"
 #include "uiprogress.h"
-#include <at/atui/uiproxies.h>
+#include <at/atnativeui/uiproxies.h>
 
 #ifndef BCM_SETSHIELD
 #define BCM_SETSHIELD	0x160C
@@ -93,7 +93,7 @@ bool ATUIDialogCreateVHDImage::OnLoaded() {
 void ATUIDialogCreateVHDImage::OnDataExchange(bool write) {
 	ExchangeControlValueString(write, IDC_PATH, mPath);
 	ExchangeControlValueUint32(write, IDC_SIZE_SECTORS, mSectorCount, 2048, 0xFFFFFFFEU);
-	ExchangeControlValueUint32(write, IDC_SIZE_MB, mSizeInMB, 1, 4095);
+	ExchangeControlValueUint32(write, IDC_SIZE_MB, mSizeInMB, 1, 2097151);
 
 	if (write) {
 		mbAutoGeometry = IsButtonChecked(IDC_GEOMETRY_AUTO);
@@ -141,8 +141,6 @@ bool ATUIDialogCreateVHDImage::OnOK() {
 }
 
 bool ATUIDialogCreateVHDImage::OnCommand(uint32 id, uint32 extcode) {
-	int index = 0;
-
 	switch(id) {
 		case IDC_BROWSE:
 			{
@@ -277,6 +275,7 @@ bool ATUIDialogHardDisk::OnLoaded() {
 	mComboHWMode.AddItem(L"MyIDE internal ($D1xx)");
 	mComboHWMode.AddItem(L"MyIDE external ($D5xx)");
 	mComboHWMode.AddItem(L"MyIDE II");
+	mComboHWMode.AddItem(L"MyIDE II (updated CPLD)");
 	mComboHWMode.AddItem(L"KMK/JZ IDE V1");
 	mComboHWMode.AddItem(L"KMK/JZ IDE V2 (IDEPlus)");
 	mComboHWMode.AddItem(L"SIDE");
@@ -328,10 +327,11 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 				case kATIDEHardwareMode_MyIDE_D1xx: hwidx = 0; break;
 				case kATIDEHardwareMode_MyIDE_D5xx: hwidx = 1; break;
 				case kATIDEHardwareMode_MyIDE_V2_D5xx: hwidx = 2; break;
-				case kATIDEHardwareMode_KMKJZ_V1: hwidx = 3; break;
-				case kATIDEHardwareMode_KMKJZ_V2: hwidx = 4; break;
-				case kATIDEHardwareMode_SIDE: hwidx = 5; break;
-				case kATIDEHardwareMode_SIDE2: hwidx = 6; break;
+				case kATIDEHardwareMode_MyIDE_V2Updated: hwidx = 3; break;
+				case kATIDEHardwareMode_KMKJZ_V1: hwidx = 4; break;
+				case kATIDEHardwareMode_KMKJZ_V2: hwidx = 5; break;
+				case kATIDEHardwareMode_SIDE: hwidx = 6; break;
+				case kATIDEHardwareMode_SIDE2: hwidx = 7; break;
 			}
 
 			mComboHWMode.SetSelection(hwidx);
@@ -342,7 +342,6 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 
 		UpdateEnables();
 	} else {
-		bool enable = IsButtonChecked(IDC_ENABLE);
 		bool reset = false;
 
 		ATIDEEmulator *ide = g_sim.GetIDEEmulator();
@@ -352,10 +351,11 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 				case 0: hwmode = kATIDEHardwareMode_MyIDE_D1xx; break;
 				case 1: hwmode = kATIDEHardwareMode_MyIDE_D5xx; break;
 				case 2: hwmode = kATIDEHardwareMode_MyIDE_V2_D5xx; break;
-				case 3: hwmode = kATIDEHardwareMode_KMKJZ_V1; break;
-				case 4: hwmode = kATIDEHardwareMode_KMKJZ_V2; break;
-				case 5: hwmode = kATIDEHardwareMode_SIDE; break;
-				case 6: hwmode = kATIDEHardwareMode_SIDE2; break;
+				case 3: hwmode = kATIDEHardwareMode_MyIDE_V2Updated; break;
+				case 4: hwmode = kATIDEHardwareMode_KMKJZ_V1; break;
+				case 5: hwmode = kATIDEHardwareMode_KMKJZ_V2; break;
+				case 6: hwmode = kATIDEHardwareMode_SIDE; break;
+				case 7: hwmode = kATIDEHardwareMode_SIDE2; break;
 			}
 
 			const bool write = !IsButtonChecked(IDC_IDEREADONLY);
@@ -437,8 +437,6 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 }
 
 bool ATUIDialogHardDisk::OnCommand(uint32 id, uint32 extcode) {
-	int index = 0;
-
 	switch(id) {
 		case IDC_IDE_IMAGEBROWSE:
 			{

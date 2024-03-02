@@ -19,9 +19,9 @@
 #include <windows.h>
 #include <vd2/system/math.h>
 #include <vd2/system/strutil.h>
-#include <at/atui/dialog.h>
-#include <at/atui/uiproxies.h>
-#include "uiframe.h"
+#include <at/atnativeui/dialog.h>
+#include <at/atnativeui/uiproxies.h>
+#include <at/atnativeui/uiframe.h>
 #include "console.h"
 #include "resource.h"
 

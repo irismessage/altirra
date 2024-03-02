@@ -455,6 +455,7 @@ public:
 
 	void GetNameForInputCode(uint32 code, VDStringW& name) const;
 	void GetNameForTargetCode(uint32 code, ATInputControllerType type, VDStringW& name) const;
+	bool IsAnalogTrigger(uint32 code, ATInputControllerType type) const;
 
 	uint32 GetInputMapCount() const;
 	bool GetInputMapByIndex(uint32 index, ATInputMap **imap) const;

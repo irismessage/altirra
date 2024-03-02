@@ -19,7 +19,6 @@
 #include <vd2/system/date.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicesio.h>
-#include "devicemanager.h"
 
 class ATDeviceSIOClock final : public ATDevice
 					, public IATDeviceSIO
@@ -46,6 +45,14 @@ private:
 	IATDeviceSIOManager *mpSIOMgr;
 };
 
+void ATCreateDeviceSIOClock(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceSIOClock> p(new ATDeviceSIOClock);
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefSIOClock = { "sioclock", nullptr, L"SIO Real-Time Clock", ATCreateDeviceSIOClock };
+
 ATDeviceSIOClock::ATDeviceSIOClock()
 	: mpSIOMgr(nullptr)
 {
@@ -62,8 +69,7 @@ void *ATDeviceSIOClock::AsInterface(uint32 id) {
 }
 
 void ATDeviceSIOClock::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "sioclock";
-	info.mName = L"SIO Real-Time Clock";
+	info.mpDef = &g_ATDeviceDefSIOClock;
 }
 
 void ATDeviceSIOClock::Shutdown() {
@@ -148,16 +154,4 @@ void ATDeviceSIOClock::OnSerialReceiveComplete(uint32 id, const void *data, uint
 }
 
 void ATDeviceSIOClock::OnSerialFence(uint32 id) {
-}
-
-///////////////////////////////////////////////////////////////////////////
-
-void ATCreateDeviceSIOClock(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDeviceSIOClock> p(new ATDeviceSIOClock);
-
-	*dev = p.release();
-}
-
-void ATRegisterDeviceSIOClock(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("sioclock", ATCreateDeviceSIOClock);
 }

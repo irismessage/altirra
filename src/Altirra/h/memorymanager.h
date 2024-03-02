@@ -55,10 +55,18 @@ struct ATMemoryHandlerTable {
 
 class ATMemoryLayer {};
 
-enum ATMemoryAccessMode {
-	kATMemoryAccessMode_AnticRead,
-	kATMemoryAccessMode_CPURead,
-	kATMemoryAccessMode_CPUWrite
+enum ATMemoryAccessMode : uint8 {
+	kATMemoryAccessMode_0 = 0,
+	kATMemoryAccessMode_W,
+	kATMemoryAccessMode_R,
+	kATMemoryAccessMode_RW,
+	kATMemoryAccessMode_A,
+	kATMemoryAccessMode_AW,
+	kATMemoryAccessMode_AR,
+	kATMemoryAccessMode_ARW,
+	kATMemoryAccessMode_AnticRead = kATMemoryAccessMode_A,
+	kATMemoryAccessMode_CPURead = kATMemoryAccessMode_R,
+	kATMemoryAccessMode_CPUWrite = kATMemoryAccessMode_W,
 };
 
 enum ATMemoryPriority {
@@ -93,9 +101,13 @@ public:
 
 	void Init();
 
-	void SetHighMemoryBanks(int32 banks);
+	void SetHighMemoryBanks(sint32 banks);
 
 	void SetFloatingDataBus(bool floating) { mbFloatingDataBus = floating; }
+
+	bool GetFloatingIoBus() const { return mbFloatingIoBus; }
+	void SetFloatingIoBus(bool floating);
+
 	void SetFastBusEnabled(bool enabled);
 
 	void DumpStatus();
@@ -105,6 +117,7 @@ public:
 	void DeleteLayer(ATMemoryLayer *layer);
 	void EnableLayer(ATMemoryLayer *layer, bool enable);
 	void EnableLayer(ATMemoryLayer *layer, ATMemoryAccessMode mode, bool enable);
+	void SetLayerModes(ATMemoryLayer *layer, ATMemoryAccessMode modes);
 	void SetLayerMemory(ATMemoryLayer *layer, const uint8 *base);
 	void SetLayerMemory(ATMemoryLayer *layer, const uint8 *base, uint32 pageOffset, uint32 pages, uint32 addrMask = 0xFFFFFFFFU, int readOnly = -1);
 	void SetLayerAddressRange(ATMemoryLayer *layer0, uint32 pageOffset, uint32 pageCount);
@@ -114,29 +127,35 @@ public:
 	// (accelerated 65C816 mode only). The default is chip.
 	void SetLayerFastBus(ATMemoryLayer *layer, bool fast);
 
+	void SetLayerIoBus(ATMemoryLayer *layer, bool ioBus);
+
 	void ClearLayerMaskRange(ATMemoryLayer *layer);
 	void SetLayerMaskRange(ATMemoryLayer *layer, uint32 pageStart, uint32 pageCount);
 
 	uint8 ReadFloatingDataBus() const;
 
+	void WriteIoDataBus(uint8 c) { mIoBusValue = c; }
+	uint8 ReadFloatingIoDataBus() const { return mIoBusValue; }
+
 	uint8 AnticReadByte(uint32 address);
 	uint8 DebugAnticReadByte(uint16 address);
 	void DebugAnticReadMemory(void *dst, uint16 address, uint32 len);
-	uint8 CPUReadByte(uint32 address);
-	uint8 CPUExtReadByte(uint16 address, uint8 bank);
-	sint32 CPUExtReadByteAccel(uint16 address, uint8 bank, bool chipOK);
-	uint8 CPUDebugReadByte(uint16 address);
-	uint8 CPUDebugExtReadByte(uint16 address, uint8 bank);
-	void CPUWriteByte(uint16 address, uint8 value);
-	void CPUExtWriteByte(uint16 address, uint8 bank, uint8 value);
-	sint32 CPUExtWriteByteAccel(uint16 address, uint8 bank, uint8 value, bool chipOK);
+	uint8 CPUReadByte(uint32 address) override;
+	uint8 CPUExtReadByte(uint16 address, uint8 bank) override;
+	sint32 CPUExtReadByteAccel(uint16 address, uint8 bank, bool chipOK) override;
+	uint8 CPUDebugReadByte(uint16 address) const override;
+	uint8 CPUDebugExtReadByte(uint16 address, uint8 bank) const override;
+	void CPUWriteByte(uint16 address, uint8 value) override;
+	void CPUExtWriteByte(uint16 address, uint8 bank, uint8 value) override;
+	sint32 CPUExtWriteByteAccel(uint16 address, uint8 bank, uint8 value, bool chipOK) override;
 
 protected:
 	struct MemoryLayer : public ATMemoryLayer {
-		sint16 mPriority;
-		bool mbEnabled[3];
+		sint8 mPriority;
+		uint8 mFlags;
 		bool mbReadOnly;
 		bool mbFastBus;
+		bool mbIoBus;
 		const uint8 *mpBase;
 		uint32 mAddrMask;
 		uint32 mPageOffset;
@@ -145,6 +164,11 @@ protected:
 		const char *mpName;
 		uint32 mMaskRangeStart;
 		uint32 mMaskRangeEnd;
+		uint32 mEffectiveStart;
+		uint32 mEffectiveEnd;
+		ATMemoryManager *mpParent;
+
+		void UpdateEffectiveRange();
 	};
 
 	struct MemoryLayerPred {
@@ -154,7 +178,7 @@ protected:
 	};
 
 	struct MemoryNode {
-		MemoryLayer *mpLayer;
+		uintptr mLayerOrForward;
 
 		union {
 			ATMemoryReadHandler mpReadHandler;
@@ -167,24 +191,34 @@ protected:
 
 	void RebuildNodes(uintptr *array, uint32 base, uint32 n, ATMemoryAccessMode mode);
 	MemoryNode *AllocNode();
-	void FreeNode(MemoryNode *node);
+	void GarbageCollect();
 
 	static sint32 DummyReadHandler(void *thisptr, uint32 addr);
 	static bool DummyWriteHandler(void *thisptr, uint32 addr, uint8 value);
 	static sint32 ChipReadHandler(void *thisptr, uint32 addr);
 	static bool ChipWriteHandler(void *thisptr, uint32 addr, uint8 value);
+	static sint32 IoMemoryFastReadWrapperHandler(void *thisptr, uint32 addr);
+	static sint32 IoMemoryDebugReadWrapperHandler(void *thisptr, uint32 addr);
+	static sint32 IoMemoryReadWrapperHandler(void *thisptr, uint32 addr);
+	static bool IoMemoryRoWriteWrapperHandler(void *thisptr, uint32 addr, uint8 value);
+	static bool IoMemoryWriteWrapperHandler(void *thisptr, uint32 addr, uint8 value);
+	static sint32 IoHandlerReadWrapperHandler(void *thisptr, uint32 addr);
+	static bool IoHandlerWriteWrapperHandler(void *thisptr, uint32 addr, uint8 value);
+	static bool IoNullWriteWrapperHandler(void *thisptr, uint32 addr, uint8 value);
 
 	typedef vdfastvector<MemoryLayer *> Layers;
 	Layers mLayers;
 	Layers mLayerTempList;
 
 	bool	mbFloatingDataBus;
+	bool	mbFloatingIoBus = false;
 	bool	mbFastBusEnabled;
+	uint8	mIoBusValue = 0;
 
-	bool	mbSimple_4000_7FFF[3];
-
-	MemoryNode *mpFreeNodes;
+	uint32	mAllocationCount;
 	VDLinearAllocator mAllocator;
+	VDLinearAllocator mAllocatorNext;
+	VDLinearAllocator mAllocatorPrev;
 
 	vdblock<uint8> mHighMemory;
 
@@ -194,6 +228,8 @@ protected:
 
 	const uintptr	*mReadBankTable[256];
 	uintptr			*mWriteBankTable[256];
+
+	uintptr			mProtectedNodeTable[768];
 
 	uintptr			mDummyReadPageTable[256];
 	uintptr			mDummyWritePageTable[256];

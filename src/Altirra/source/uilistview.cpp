@@ -3,7 +3,7 @@
 #include <vd2/system/strutil.h>
 #include <vd2/VDDisplay/textrenderer.h>
 #include "uilistview.h"
-#include "uimanager.h"
+#include <at/atui/uimanager.h>
 #include "uislider.h"
 
 template<> void vdmove<ATUIListViewItem>(ATUIListViewItem& dst, ATUIListViewItem& src) {

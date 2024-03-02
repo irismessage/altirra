@@ -2,7 +2,7 @@
 #include <vd2/system/VDString.h>
 #include <vd2/VDDisplay/textrenderer.h>
 #include "uitextedit.h"
-#include "uimanager.h"
+#include <at/atui/uimanager.h>
 
 ATUITextEdit::ATUITextEdit()
 	: mScrollX(0)

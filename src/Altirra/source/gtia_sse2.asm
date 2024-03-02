@@ -1,5 +1,5 @@
 		section		.rdata
-		align		32
+		align		64
 window_table:
 		dq			0, 0, -1, -1, 0, 0
 lowbit_mask:

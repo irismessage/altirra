@@ -144,12 +144,25 @@ for(;;) {
 					uint8 op = ProcessHook();
 #endif
 
-					// if a jump is requested, loop around again
-					if (op == 0x4C)
-						break;
+					if (op) {
+						if (mbHistoryOrProfilingEnabled) {
+#ifdef AT_CPU_MACHINE_65C816
+#ifdef AT_CPU_MACHINE_65C816_HISPEED
+							AddHistoryEntry<true, true>(false);
+#else
+							AddHistoryEntry<true, false>(false);
+#endif
+#else
+							AddHistoryEntry<false, false>(false);
+#endif
+						}
 
-					if (op)
+						// if a jump is requested, loop around again
+						if (op == 0x4C)
+							break;
+
 						END_SUB_CYCLE();
+					}
 				}
 			}
 
@@ -1343,7 +1356,7 @@ for(;;) {
 
 			if (mIntFlags & kIntFlag_NMIPending) {
 				mNMIAssertTime -= 3;
-			} else if (!(mIntFlags & kIntFlag_IRQPending))
+			} else if (!(mIntFlags & kIntFlag_IRQPending) || mpCallbacks->CPUGetUnhaltedCycle() - mIRQAcknowledgeTime <= 0)
 				--mpNextState;
 			END_SUB_CYCLE();
 
@@ -2243,7 +2256,7 @@ for(;;) {
 
 		case kStatePushPBKNative:
 			AT_CPU_WRITE_BYTE_HL(mSH, mS, mK);
-			if (!mS-- && !mbEmulationFlag)
+			if (!mS--)
 				--mSH;
 			END_SUB_CYCLE();
 
@@ -2261,20 +2274,25 @@ for(;;) {
 
 		case kStatePushPCLM1Native:
 			AT_CPU_WRITE_BYTE_HL(mSH, mS, (mPC - 1) & 0xff);
-			if (!mS-- && !mbEmulationFlag)
+			if (!mS--)
 				--mSH;
+			// last cycle -- must force SH=1 in emu mode
+			if (mbEmulationFlag)
+				mSH = 1;
 			END_SUB_CYCLE();
 
 		case kStatePushPCHM1Native:
 			AT_CPU_WRITE_BYTE_HL(mSH, mS, (mPC - 1) >> 8);
-			if (!mS-- && !mbEmulationFlag)
+			if (!mS--)
 				--mSH;
 			END_SUB_CYCLE();
 
 		case kStatePopNative:
-			if (!++mS && !mbEmulationFlag)
+			if (!++mS)
 				++mSH;
 			mData = AT_CPU_READ_BYTE_HL(mSH, mS);
+			if (mbEmulationFlag)
+				mSH = 1;
 			END_SUB_CYCLE();
 
 		case kStatePopL16:

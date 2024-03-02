@@ -182,6 +182,11 @@ public:
 	virtual void InsertFence(uint32 id) = 0;
 	virtual void EndCommand() = 0;
 
+	// Returns true if an acceleration request is currently being processed.
+	virtual bool IsAccelRequest() const = 0;
+
+	virtual sint32 GetHighSpeedIndex() const = 0;
+
 	virtual void AddRawDevice(IATDeviceRawSIO *dev) = 0;
 	virtual void RemoveRawDevice(IATDeviceRawSIO *dev) = 0;
 	virtual void SendRawByte(uint8 byte, uint32 cyclesPerBit) = 0;

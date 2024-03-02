@@ -1053,14 +1053,6 @@ void VDImageEncoderPNG::Encode(const VDPixmap& px, const void *&p, uint32& len, 
 
 	vdautoptr<VDPNGDeflateEncoder> enc(new VDPNGDeflateEncoder);	// way too big for stack
 
-	vdautoptr<VDPNGDeflateEncoder> tempenc[5]={
-		vdautoptr<VDPNGDeflateEncoder>(new VDPNGDeflateEncoder),
-		vdautoptr<VDPNGDeflateEncoder>(new VDPNGDeflateEncoder),
-		vdautoptr<VDPNGDeflateEncoder>(new VDPNGDeflateEncoder),
-		vdautoptr<VDPNGDeflateEncoder>(new VDPNGDeflateEncoder),
-		vdautoptr<VDPNGDeflateEncoder>(new VDPNGDeflateEncoder)
-	};
-
 	const uint32 w = pxtmp.w;
 	const uint32 rowbytes = w*3;
 	vdfastvector<uint8> temprowbuf(rowbytes*5);
@@ -1069,7 +1061,6 @@ void VDImageEncoderPNG::Encode(const VDPixmap& px, const void *&p, uint32& len, 
 
 	enc->Init(quick);
 
-	int lastcomp = -1;
 	for(uint32 y=0; y<(uint32)pxtmp.h; ++y) {
 		// swap red and blue for this row
 		uint8 *dst = (uint8 *)pxtmp.data + pxtmp.pitch * y;

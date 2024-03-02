@@ -9,7 +9,8 @@
   <toc/>
   <h2>Setting up the host device</h2>
   <p>
-    Use System &gt; Host Device... in the menu to set up the host device.
+    To set up the host device, open the Devices dialog using the System &gt; Devices... menu option,
+    and add the H: device from the High-level Emulation section of the device list.
   </p>
   <h3>Long filename encoding</h3>
   <p>

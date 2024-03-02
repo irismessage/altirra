@@ -11,7 +11,7 @@ namespace nsVDUI {
 	//
 	// These constants cannot be changed without invalidating existing resource files!
 
-	enum Alignment {
+	enum Alignment : uint32 {
 		kAlignDefault	= 0,
 		kLeft			= 1,
 		kTop			= 1,

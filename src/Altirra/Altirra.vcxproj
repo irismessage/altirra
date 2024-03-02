@@ -29,75 +29,81 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{3D2571FC-091D-4845-B581-E8417164BFAE}</ProjectGuid>
     <RootNamespace>Altirra</RootNamespace>
-    <SccProjectName>Perforce Project</SccProjectName>
+    <SccProjectName>
+    </SccProjectName>
     <SccAuxPath>
     </SccAuxPath>
-    <SccLocalPath>.</SccLocalPath>
-    <SccProvider>MSSCCI:Perforce SCM</SccProvider>
+    <SccLocalPath>
+    </SccLocalPath>
+    <SccProvider>
+    </SccProvider>
     <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
   </PropertyGroup>
+  <Import Project="..\PlatformSetup.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <CharacterSet>Unicode</CharacterSet>
     <WholeProgramOptimization>false</WholeProgramOptimization>
-    <PlatformToolset>v120_xp</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <CharacterSet>Unicode</CharacterSet>
     <WholeProgramOptimization>true</WholeProgramOptimization>
-    <PlatformToolset>v120_xp</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <CharacterSet>Unicode</CharacterSet>
-    <PlatformToolset>v120_xp</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Profile|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <CharacterSet>Unicode</CharacterSet>
     <WholeProgramOptimization>false</WholeProgramOptimization>
-    <PlatformToolset>v120_xp</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <CharacterSet>Unicode</CharacterSet>
     <WholeProgramOptimization>true</WholeProgramOptimization>
-    <PlatformToolset>v120_xp</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <CharacterSet>Unicode</CharacterSet>
-    <PlatformToolset>v120_xp</PlatformToolset>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
     <Import Project="..\YASM.props" />
     <Import Project="..\RawFont.props" />
+    <Import Project="..\PackResource.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="..\DirectXSDK.props" />
     <Import Project="..\Altirra-ReleaseBuildTools.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="..\DirectXSDK.props" />
     <Import Project="..\Altirra-ReleaseBuildTools.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="..\DirectXSDK.props" />
     <Import Project="..\Altirra-DebugBuildTools.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Profile|x64'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="..\DirectXSDK.props" />
     <Import Project="..\Altirra-ReleaseBuildTools.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="..\DirectXSDK.props" />
     <Import Project="..\Altirra-ReleaseBuildTools.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="..\DirectXSDK.props" />
     <Import Project="..\Altirra-ReleaseBuildTools.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
@@ -128,7 +134,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>h;res;..\h;..\..\obj\$(Configuration)\HLEKernel;autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>h;res;..\h;autogen;..\..\obj\$(Configuration)\HLEKernel;autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500;_SECURE_SCL=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <MinimalRebuild>false</MinimalRebuild>
       <BasicRuntimeChecks>StackFrameRuntimeCheck</BasicRuntimeChecks>
@@ -147,7 +153,7 @@
       <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
     <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..\..\lib\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
@@ -163,7 +169,7 @@
     </Midl>
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>h;res;..\h;..\..\obj\$(Configuration)\HLEKernel;autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>h;res;..\h;autogen;..\..\obj\$(Configuration)\HLEKernel;autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500;_SECURE_SCL=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <MinimalRebuild>false</MinimalRebuild>
       <BasicRuntimeChecks>StackFrameRuntimeCheck</BasicRuntimeChecks>
@@ -181,7 +187,7 @@
       <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
     <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..\..\lib\$(Configuration)AMD64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
@@ -195,7 +201,7 @@
     <ClCompile>
       <Optimization>Full</Optimization>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
-      <AdditionalIncludeDirectories>h;res;..\h;..\..\obj\$(Configuration)\HLEKernel;autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>h;res;..\h;autogen;..\..\obj\$(Configuration)\HLEKernel;autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500;_SECURE_SCL=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <BufferSecurityCheck>false</BufferSecurityCheck>
@@ -213,7 +219,7 @@
       <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
     <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..\..\lib\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
@@ -232,7 +238,7 @@
     <ClCompile>
       <Optimization>Full</Optimization>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
-      <AdditionalIncludeDirectories>h;res;..\h;..\..\obj\$(Configuration)\HLEKernel;autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>h;res;..\h;autogen;..\..\obj\$(Configuration)\HLEKernel;autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500;_SECURE_SCL=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <BufferSecurityCheck>false</BufferSecurityCheck>
@@ -249,7 +255,7 @@
       <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
     <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..\..\lib\$(Configuration)AMD64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <GenerateMapFile>true</GenerateMapFile>
@@ -267,7 +273,7 @@
     <ClCompile>
       <Optimization>Full</Optimization>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
-      <AdditionalIncludeDirectories>h;res;..\h;..\..\obj\Release\HLEKernel;autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>h;res;..\h;autogen;..\..\obj\Release\HLEKernel;autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500;_SECURE_SCL=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <BufferSecurityCheck>false</BufferSecurityCheck>
@@ -284,7 +290,7 @@
       <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
     <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..\..\lib\Profile;..\..\lib\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
@@ -303,7 +309,7 @@
     <ClCompile>
       <Optimization>Full</Optimization>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
-      <AdditionalIncludeDirectories>h;res;..\h;..\..\obj\Release\HLEKernel;autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>h;res;..\h;autogen;..\..\obj\Release\HLEKernel;autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500;_SECURE_SCL=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <BufferSecurityCheck>false</BufferSecurityCheck>
@@ -319,8 +325,8 @@
       <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
     <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>..\..\lib\ReleaseAMD64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>..\..\lib\ProfileAMD64;..\..\lib\ReleaseAMD64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <OptimizeReferences>true</OptimizeReferences>
@@ -332,6 +338,9 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="h\sapconverter.h" />
+    <ClInclude Include="h\sapwriter.h" />
+    <ClInclude Include="h\sio2sd.h" />
     <ClCompile Include="source\1030.cpp" />
     <ClCompile Include="source\about.cpp" />
     <ClCompile Include="source\acia.cpp" />
@@ -340,6 +349,7 @@
     <ClCompile Include="source\artifacting.cpp" />
     <ClCompile Include="source\artifacting_ntsc_mmx.cpp" />
     <ClCompile Include="source\artifacting_ntsc_sse2.cpp" />
+    <ClCompile Include="source\artifacting_ntsc_sse2_intrin.cpp" />
     <ClCompile Include="source\artifacting_pal_mmx.cpp" />
     <ClCompile Include="source\artifacting_pal_scalar.cpp" />
     <ClCompile Include="source\artifacting_pal_sse2.cpp" />
@@ -375,18 +385,11 @@
     <ClCompile Include="source\debugger.cpp" />
     <ClCompile Include="source\debuggerexp.cpp" />
     <ClCompile Include="source\debuggerlog.cpp" />
+    <ClCompile Include="source\debugtarget.cpp" />
     <ClCompile Include="source\decmath.cpp" />
-    <ClCompile Include="source\devicemanager.cpp" />
     <ClCompile Include="source\directorywatcher.cpp" />
     <ClCompile Include="source\disasm.cpp" />
     <ClCompile Include="source\disk.cpp" />
-    <ClCompile Include="source\diskfs.cpp" />
-    <ClCompile Include="source\diskfsarc.cpp" />
-    <ClCompile Include="source\diskfsdos2.cpp" />
-    <ClCompile Include="source\diskfsdos3.cpp" />
-    <ClCompile Include="source\diskfssdx2.cpp" />
-    <ClCompile Include="source\diskfssdx2util.cpp" />
-    <ClCompile Include="source\diskimage.cpp" />
     <ClCompile Include="source\diskvirtimage.cpp" />
     <ClCompile Include="source\diskvirtimagesdfs.cpp" />
     <ClCompile Include="source\dragoncart.cpp" />
@@ -442,33 +445,35 @@
     <ClCompile Include="source\rtcds1305.cpp" />
     <ClCompile Include="source\rtcv3021.cpp" />
     <ClCompile Include="source\rtime8.cpp" />
+    <ClCompile Include="source\rverter.cpp" />
+    <ClCompile Include="source\sapconverter.cpp" />
+    <ClCompile Include="source\sapwriter.cpp" />
     <ClCompile Include="source\savestate.cpp" />
-    <ClCompile Include="source\scheduler.cpp" />
     <ClCompile Include="source\scsi.cpp" />
     <ClCompile Include="source\scsidisk.cpp" />
+    <ClCompile Include="source\sdrive.cpp" />
     <ClCompile Include="source\side.cpp" />
     <ClCompile Include="source\simeventmanager.cpp" />
     <ClCompile Include="source\simulator.cpp" />
-    <ClCompile Include="source\sio.cpp" />
+    <ClCompile Include="source\sio2sd.cpp" />
     <ClCompile Include="source\sioclock.cpp" />
     <ClCompile Include="source\siomanager.cpp" />
     <ClCompile Include="source\slightsid.cpp" />
     <ClCompile Include="source\soundboard.cpp" />
     <ClCompile Include="source\sx212.cpp" />
     <ClCompile Include="source\symbols.cpp" />
+    <ClCompile Include="source\testdevicesiohs.cpp" />
     <ClCompile Include="source\testdevicesiopoll.cpp" />
     <ClCompile Include="source\textdom.cpp" />
     <ClCompile Include="source\texteditor.cpp" />
     <ClCompile Include="source\ui.cpp" />
     <ClCompile Include="source\uiabout.cpp" />
-    <ClCompile Include="source\uianchor.cpp" />
     <ClCompile Include="source\uiaudiooptions.cpp" />
     <ClCompile Include="source\uibutton.cpp" />
     <ClCompile Include="source\uicaptionupdater.cpp" />
     <ClCompile Include="source\uicartmapper.cpp" />
     <ClCompile Include="source\uicheater.cpp" />
     <ClCompile Include="source\uicolors.cpp" />
-    <ClCompile Include="source\uicommandmanager.cpp" />
     <ClCompile Include="source\uicommondialogs.cpp" />
     <ClCompile Include="source\uiconf850.cpp" />
     <ClCompile Include="source\uiconfblackbox.cpp" />
@@ -477,7 +482,8 @@
     <ClCompile Include="source\uiconfharddisk.cpp" />
     <ClCompile Include="source\uiconfmodem.cpp" />
     <ClCompile Include="source\uiconfregister.cpp" />
-    <ClCompile Include="source\uicontainer.cpp" />
+    <ClCompile Include="source\uiconfsoundboard.cpp" />
+    <ClCompile Include="source\uiconfveronica.cpp" />
     <ClCompile Include="source\uicpuoptions.cpp" />
     <ClCompile Include="source\uidebugfont.cpp" />
     <ClCompile Include="source\uidevices.cpp" />
@@ -486,33 +492,29 @@
     <ClCompile Include="source\uidisplay.cpp" />
     <ClCompile Include="source\uidragdrop.cpp" />
     <ClCompile Include="source\uidragoncart.cpp" />
-    <ClCompile Include="source\uidrawingutils.cpp" />
     <ClCompile Include="source\uiemuerror.cpp" />
     <ClCompile Include="source\uienhancedtext.cpp" />
-    <ClCompile Include="source\uiexceptionfilter.cpp" />
     <ClCompile Include="source\uifileassoc.cpp" />
     <ClCompile Include="source\uifilebrowser.cpp" />
     <ClCompile Include="source\uifilefilters.cpp" />
     <ClCompile Include="source\uifirmware.cpp" />
     <ClCompile Include="source\uifirmwaremenu.cpp" />
     <ClCompile Include="source\uifirmwarescan.cpp" />
-    <ClCompile Include="source\uiframe.cpp" />
     <ClCompile Include="source\uiharddisk.cpp" />
     <ClCompile Include="source\uihostdevice.cpp" />
     <ClCompile Include="source\uiinput.cpp" />
     <ClCompile Include="source\uiinputrebind.cpp" />
+    <ClCompile Include="source\uiinputsetup.cpp" />
     <ClCompile Include="source\uiinstance.cpp" />
     <ClCompile Include="source\uikeyboard.cpp" />
+    <ClCompile Include="source\uikeyboardcustomize.cpp" />
     <ClCompile Include="source\uikeyboardoptions.cpp" />
     <ClCompile Include="source\uilabel.cpp" />
     <ClCompile Include="source\uilightpen.cpp" />
     <ClCompile Include="source\uilistview.cpp" />
-    <ClCompile Include="source\uimanager.cpp" />
     <ClCompile Include="source\uimenu.cpp" />
-    <ClCompile Include="source\uimenulist.cpp" />
     <ClCompile Include="source\uimessagebox.cpp" />
     <ClCompile Include="source\uimrulist.cpp" />
-    <ClCompile Include="source\uinativewindow.cpp" />
     <ClCompile Include="source\uionscreenkeyboard.cpp" />
     <ClCompile Include="source\uioptions.cpp" />
     <ClCompile Include="source\uipclink.cpp" />
@@ -532,13 +534,21 @@
     <ClCompile Include="source\uiverifier.cpp" />
     <ClCompile Include="source\uivideodisplaywindow.cpp" />
     <ClCompile Include="source\uivideorecording.cpp" />
-    <ClCompile Include="source\uiwidget.cpp" />
     <ClCompile Include="source\ultimate1mb.cpp" />
     <ClCompile Include="source\vbxe.cpp" />
     <ClCompile Include="source\verifier.cpp" />
+    <ClCompile Include="source\veronica.cpp" />
     <ClCompile Include="source\via.cpp" />
     <ClCompile Include="source\videowriter.cpp" />
     <ClCompile Include="source\virtualscreen.cpp" />
+    <ClCompile Include="source\vs2013x64crashfix.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">true</ExcludedFromBuild>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="source\xep80.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
@@ -584,14 +594,11 @@
     <ClInclude Include="h\debugger.h" />
     <ClInclude Include="h\debuggerexp.h" />
     <ClInclude Include="h\debuggerlog.h" />
+    <ClInclude Include="h\debugtarget.h" />
     <ClInclude Include="h\decmath.h" />
-    <ClInclude Include="h\devicemanager.h" />
     <ClInclude Include="h\directorywatcher.h" />
     <ClInclude Include="h\disasm.h" />
     <ClInclude Include="h\disk.h" />
-    <ClInclude Include="h\diskfs.h" />
-    <ClInclude Include="h\diskfssdx2util.h" />
-    <ClInclude Include="h\diskimage.h" />
     <ClInclude Include="h\dragoncart.h" />
     <ClInclude Include="h\eeprom.h" />
     <ClInclude Include="h\encode_png.h" />
@@ -641,50 +648,41 @@
     <ClInclude Include="h\profiler.h" />
     <ClInclude Include="h\scsi.h" />
     <ClInclude Include="h\scsidisk.h" />
+    <ClInclude Include="h\sdrive.h" />
     <ClInclude Include="h\uiaccessors.h" />
     <ClInclude Include="h\uifilefilters.h" />
     <ClInclude Include="h\uisettingswindow.h" />
+    <ClInclude Include="h\veronica.h" />
     <ClInclude Include="h\via.h" />
     <ClInclude Include="res\resource.h" />
-    <ClInclude Include="..\ATUI\res\resource.h" />
+    <ClInclude Include="..\ATNativeUI\res\resource.h" />
     <ClInclude Include="h\rs232.h" />
     <ClInclude Include="h\rtcds1305.h" />
     <ClInclude Include="h\rtcv3021.h" />
     <ClInclude Include="h\rtime8.h" />
     <ClInclude Include="h\savestate.h" />
-    <ClInclude Include="h\scheduler.h" />
     <ClInclude Include="h\side.h" />
     <ClInclude Include="h\simeventmanager.h" />
     <ClInclude Include="h\simulator.h" />
-    <ClInclude Include="h\sio.h" />
     <ClInclude Include="h\siomanager.h" />
     <ClInclude Include="h\slightsid.h" />
     <ClInclude Include="h\soundboard.h" />
     <ClInclude Include="h\symbols.h" />
     <ClInclude Include="h\textdom.h" />
     <ClInclude Include="h\texteditor.h" />
-    <ClInclude Include="h\ui.h" />
-    <ClInclude Include="h\uianchor.h" />
     <ClInclude Include="h\uibutton.h" />
     <ClInclude Include="h\uicaptionupdater.h" />
-    <ClInclude Include="h\uicommandmanager.h" />
     <ClInclude Include="h\uicommondialogs.h" />
-    <ClInclude Include="h\uicontainer.h" />
     <ClInclude Include="h\uidisplay.h" />
-    <ClInclude Include="h\uidrawingutils.h" />
     <ClInclude Include="h\uienhancedtext.h" />
     <ClInclude Include="h\uifilebrowser.h" />
-    <ClInclude Include="h\uiframe.h" />
     <ClInclude Include="h\uiinstance.h" />
     <ClInclude Include="h\uikeyboard.h" />
     <ClInclude Include="h\uilabel.h" />
     <ClInclude Include="h\uilistview.h" />
-    <ClInclude Include="h\uimanager.h" />
     <ClInclude Include="h\uimenu.h" />
-    <ClInclude Include="h\uimenulist.h" />
     <ClInclude Include="h\uimessagebox.h" />
     <ClInclude Include="h\uimrulist.h" />
-    <ClInclude Include="h\uinativewindow.h" />
     <ClInclude Include="h\uionscreenkeyboard.h" />
     <ClInclude Include="h\uiportmenus.h" />
     <ClInclude Include="h\uiprofiler.h" />
@@ -695,7 +693,6 @@
     <ClInclude Include="h\uitextedit.h" />
     <ClInclude Include="h\uitypes.h" />
     <ClInclude Include="h\uivideodisplaywindow.h" />
-    <ClInclude Include="h\uiwidget.h" />
     <ClInclude Include="h\ultimate1mb.h" />
     <ClInclude Include="h\vbxe.h" />
     <ClInclude Include="h\verifier.h" />
@@ -712,15 +709,67 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <PackResource Include="..\..\obj\Release\Kernel\playsap-r.xex">
+      <FileType>Document</FileType>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATSapPlayerTypeR</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATSapPlayerTypeR</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATSapPlayerTypeR</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATSapPlayerTypeR</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATSapPlayerTypeR</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATSapPlayerTypeR</SymbolName>
+    </PackResource>
+    <PackResource Include="..\..\obj\Release\Kernel\playsap-b.xex">
+      <FileType>Document</FileType>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATSapPlayerTypeB</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATSapPlayerTypeB</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATSapPlayerTypeB</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATSapPlayerTypeB</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATSapPlayerTypeB</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATSapPlayerTypeB</SymbolName>
+    </PackResource>
+    <PackResource Include="..\..\obj\Release\Kernel\playsap-c.xex">
+      <FileType>Document</FileType>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATSapPlayerTypeC</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATSapPlayerTypeC</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATSapPlayerTypeC</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATSapPlayerTypeC</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATSapPlayerTypeC</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATSapPlayerTypeC</SymbolName>
+    </PackResource>
+    <PackResource Include="..\..\obj\Release\Kernel\playsap-d-ntsc.xex">
+      <FileType>Document</FileType>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATSapPlayerTypeDNTSC</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATSapPlayerTypeDNTSC</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATSapPlayerTypeDNTSC</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATSapPlayerTypeDNTSC</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATSapPlayerTypeDNTSC</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATSapPlayerTypeDNTSC</SymbolName>
+    </PackResource>
+    <PackResource Include="..\..\obj\Release\Kernel\playsap-d-pal.xex">
+      <FileType>Document</FileType>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATSapPlayerTypeDPAL</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATSapPlayerTypeDPAL</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATSapPlayerTypeDPAL</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATSapPlayerTypeDPAL</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATSapPlayerTypeDPAL</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATSapPlayerTypeDPAL</SymbolName>
+    </PackResource>
     <None Include="..\..\out\release\1030firmware.bin" />
     <None Include="..\..\out\release\1030handler.bin" />
     <None Include="..\..\out\release\noblackbox.lzrom" />
     <None Include="..\..\out\release\nomio.lzrom" />
+    <None Include="autogen\playsap-b.inl" />
+    <None Include="autogen\playsap-c.inl" />
+    <None Include="autogen\playsap-d-ntsc.inl" />
+    <None Include="autogen\playsap-d-pal.inl" />
+    <None Include="autogen\playsap-r.inl" />
     <None Include="h\cpumachine.inl" />
     <None Include="..\..\out\release\850handler.bin" />
     <None Include="..\..\out\debug\850handler.bin" />
     <None Include="..\..\out\release\850relocator.bin" />
     <None Include="..\..\out\debug\850relocator.bin" />
+    <None Include="h\gtiarenderer_ssse3_intrin.inl" />
+    <None Include="h\gtia_sse2_intrin.inl" />
     <None Include="res\about.txt" />
     <None Include="..\..\out\release\atbasic.bin" />
     <None Include="..\..\out\debug\atdiskloader128.bin" />
@@ -896,6 +945,7 @@
       <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATXEP80Font_Normal</SymbolName>
       <RawFont Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</RawFont>
     </CompileRawFont>
+    <None Include="res\TrackStep3.pcm" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="res\Altirra.rc">
@@ -906,7 +956,7 @@
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ResourceCompile>
-    <ResourceCompile Include="..\ATUI\res\atui.rc" />
+    <ResourceCompile Include="..\ATNativeUI\res\atnativeui.rc" />
   </ItemGroup>
   <ItemGroup>
     <Resource Include="res\AltirraExtIcons.res" />
@@ -956,7 +1006,7 @@
       <Project>{91051a49-721f-42d7-b542-3192e2e982e2}</Project>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
-    <ProjectReference Include="..\ATUI\ATUI.vcxproj">
+    <ProjectReference Include="..\ATNativeUI\ATNativeUI.vcxproj">
       <Project>{db396fa4-478d-49b1-8ac9-59e70878c38d}</Project>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
@@ -1000,5 +1050,6 @@
   <ImportGroup Label="ExtensionTargets">
     <Import Project="..\YASM.targets" />
     <Import Project="..\RawFont.targets" />
+    <Import Project="..\PackResource.targets" />
   </ImportGroup>
 </Project>

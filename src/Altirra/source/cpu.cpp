@@ -17,6 +17,7 @@
 
 #include "stdafx.h"
 #include <vd2/system/binary.h>
+#include <at/atdebugger/target.h>
 #include "cpu.h"
 #include "cpustates.h"
 #include "console.h"
@@ -67,6 +68,10 @@ ATCPUEmulator::ATCPUEmulator()
 
 	VDASSERTCT(kStateStandard_Count <= kStateUpdateHeatMap);
 	VDASSERTCT(kStateCount < 256);
+	
+	VDASSERTCT((int)kATCPUMode_6502 == (int)kATDebugDisasmMode_6502);
+	VDASSERTCT((int)kATCPUMode_65C02 == (int)kATDebugDisasmMode_65C02);
+	VDASSERTCT((int)kATCPUMode_65C816 == (int)kATDebugDisasmMode_65C816);
 }
 
 ATCPUEmulator::~ATCPUEmulator() {
@@ -96,7 +101,7 @@ void ATCPUEmulator::SetBreakpointManager(ATBreakpointManager *bkptmanager) {
 void ATCPUEmulator::ColdReset() {
 	mbStep = false;
 	mbTrace = false;
-	mDebugFlags &= ~(kDebugFlag_Step | kDebugFlag_Trace);
+	mDebugFlags &= ~(kDebugFlag_Step | kDebugFlag_StepNMI | kDebugFlag_Trace);
 	WarmReset();
 	mNMIIgnoreUnhaltedCycle = 0xFFFFFFFFU;
 }
@@ -327,6 +332,7 @@ void ATCPUEmulator::SetStepRange(uint32 regionStart, uint32 regionSize, ATCPUSte
 	mpStepCallbackData = stepcbdata;
 	mStepStackLevel = -1;
 
+	mDebugFlags &= kDebugFlag_StepNMI;
 	mDebugFlags |= kDebugFlag_Step;
 
 	if (mbStepOver != stepOver) {
@@ -852,7 +858,7 @@ uint8 ATCPUEmulator::ProcessDebugging() {
 			} else if (stepResult == kATCPUStepResult_Stop) {
 				mbStep = false;
 				mbStepOver = false;
-				mDebugFlags &= ~kDebugFlag_Step;
+				mDebugFlags &= ~(kDebugFlag_Step | kDebugFlag_StepNMI);
 
 				mbUnusedCycle = true;
 				RedecodeInsnWithoutBreak();
@@ -925,6 +931,12 @@ bool ATCPUEmulator::ProcessInterrupts() {
 			mbMarkHistoryNMI = true;
 
 			mpNextState = mpDecodePtrNMI;
+
+			if (mDebugFlags & kDebugFlag_StepNMI) {
+				mDebugFlags &= ~kDebugFlag_StepNMI;
+				mDebugFlags |= kDebugFlag_Step;
+				mbStep = true;
+			}
 			return true;
 		}
 	}
@@ -962,10 +974,16 @@ bool ATCPUEmulator::ProcessInterrupts() {
 uint8 ATCPUEmulator::ProcessHook() {
 	uint8 op = mpHookMgr->OnHookHit(mPC);
 
-	if (op && op != 0x4C) {
-		++mPC;
-		mOpcode = op;
-		mpNextState = mDecodeHeap + mDecodePtrs[mOpcode];
+	if (op) {
+		// mark HLE entry
+		mbMarkHistoryIRQ = true;
+		mbMarkHistoryNMI = true;
+
+		if (op != 0x4C) {
+			++mPC;
+			mOpcode = op;
+			mpNextState = mDecodeHeap + mDecodePtrs[mOpcode];
+		}
 	}
 
 	return op;
@@ -986,62 +1004,75 @@ uint8 ATCPUEmulator::ProcessHook816() {
 
 template<bool is816, bool hispeed>
 void ATCPUEmulator::AddHistoryEntry(bool slowFlag) {
-	HistoryEntry& he = mHistory[mHistoryIndex++ & 131071];
+	HistoryEntry * VDRESTRICT he = &mHistory[mHistoryIndex++ & 131071];
 
-	he.mCycle = (uint16)mpCallbacks->CPUGetCycle();
-	he.mUnhaltedCycle = (uint16)mpCallbacks->CPUGetUnhaltedCycle();
-	he.mTimestamp = mpCallbacks->CPUGetTimestamp();
-	he.mEA = 0xFFFFFFFFUL;
-	he.mPC = mPC - 1;
-	he.mS = mS;
-	he.mP = mP;
-	he.mA = mA;
-	he.mX = mX;
-	he.mY = mY;
+	mpCallbacks->CPUGetHistoryTimes(he);
+	he->mEA = 0xFFFFFFFFUL;
+	he->mPC = mPC - 1;
+	he->mP = mP;
 
-	he.mOpcode[0] = mOpcode;
+	// Argh, the compiler should merge these... but it doesn't.
+	static_assert(
+		!(offsetof(HistoryEntry, mA) & 3)
+		&& offsetof(HistoryEntry, mX) == offsetof(HistoryEntry, mA)+1
+		&& offsetof(HistoryEntry, mY) == offsetof(HistoryEntry, mA)+2
+		&& offsetof(HistoryEntry, mS) == offsetof(HistoryEntry, mA)+3
+		&& !(offsetof(ATCPUEmulator, mA) & 3)
+		&& offsetof(ATCPUEmulator, mX) == offsetof(ATCPUEmulator, mA)+1
+		&& offsetof(ATCPUEmulator, mY) == offsetof(ATCPUEmulator, mA)+2
+		&& offsetof(ATCPUEmulator, mS) == offsetof(ATCPUEmulator, mA)+3
+		, "copy optimization invalidated");
 
-	if (is816) {
-		he.mOpcode[1] = mpMemory->DebugExtReadByte(mPC, mK);
-		he.mOpcode[2] = mpMemory->DebugExtReadByte(mPC+1, mK);
-		he.mOpcode[3] = mpMemory->DebugExtReadByte(mPC+2, mK);
-	} else {
-		he.mOpcode[1] = mpMemory->DebugReadByte(mPC);
-		he.mOpcode[2] = mpMemory->DebugReadByte(mPC+1);
-		he.mOpcode[3] = mpMemory->DebugReadByte(mPC+2);
-	}
+	// he->mA = mA;
+	// he->mX = mX;
+	// he->mY = mY;
+	// he->mS = mS;
+	*(uint32_t *)&he->mA = *(const uint32_t *)&mA;
 
-	he.mbIRQ = mbMarkHistoryIRQ;
-	he.mbNMI = mbMarkHistoryNMI;
+	he->mOpcode[0] = mOpcode;
+
+	he->mbIRQ = mbMarkHistoryIRQ;
+	he->mbNMI = mbMarkHistoryNMI;
 
 	if (is816) {
 		if (hispeed && !slowFlag)
-			he.mSubCycle = mSubCycles - mSubCyclesLeft;
+			he->mSubCycle = mSubCycles - mSubCyclesLeft;
 		else
-			he.mSubCycle = 0;
+			he->mSubCycle = 0;
 
-		he.mbEmulation = mbEmulationFlag;
-		he.mSH = mSH;
-		he.mAH = mAH;
-		he.mXH = mXH;
-		he.mYH = mYH;
-		he.mB = mB;
-		he.mK = mK;
-		he.mD = mDP;
+		he->mbEmulation = mbEmulationFlag;
+		he->mSH = mSH;
+		he->mAH = mAH;
+		he->mXH = mXH;
+		he->mYH = mYH;
+		he->mB = mB;
+		he->mK = mK;
+		he->mD = mDP;
 	} else {
-		he.mbEmulation = true;
-		he.mSubCycle = 0;
-		he.mSH = 1;
-		he.mAH = 0;
-		he.mXH = 0;
-		he.mYH = 0;
-		he.mB = 0;
-		he.mK = 0;
-		he.mD = 0;
+		he->mbEmulation = true;
+		he->mSubCycle = 0;
+		he->mSH = 1;
+		he->mAH = 0;
+		he->mXH = 0;
+		he->mYH = 0;
+		he->mB = 0;
+		he->mK = 0;
+		he->mD = 0;
 	}
 
 	mbMarkHistoryIRQ = false;
 	mbMarkHistoryNMI = false;
+
+	const uint16 pc = mPC;
+	const uint8 k = mK;
+	const ATCPUEmulatorMemory * VDRESTRICT mem = mpMemory;
+	if (is816) {
+		for(int i=0; i<3; ++i)
+			he->mOpcode[i+1] = mem->DebugExtReadByte(pc+i, k);
+	} else {
+		for(int i=0; i<2; ++i)
+			he->mOpcode[i+1] = mem->DebugReadByte(pc+i);
+	}
 }
 
 void ATCPUEmulator::UpdatePendingIRQState() {
@@ -1129,6 +1160,9 @@ void ATCPUEmulator::RebuildDecodeTables() {
 
 		case kATCPUMode_65C816:
 			RebuildDecodeTables65816();
+
+			// force reinit
+			mDecodeTableMode816 = 0xFF;
 			Update65816DecodeTable();
 			break;
 	}
@@ -1137,14 +1171,9 @@ void ATCPUEmulator::RebuildDecodeTables() {
 }
 
 void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
-	const bool unalignedDP = (mDP & 0xff) != 0;
-	const bool emulationMode = mbEmulationFlag;
-	const bool mode16 = !mbEmulationFlag && !(mP & kFlagM);
-	const bool index16 = !mbEmulationFlag && !(mP & kFlagX);
-
 	mpDstState = mDecodeHeap;
 	for(int i=0; i<256; ++i) {
-		mDecodePtrs[i] = mpDstState - mDecodeHeap;
+		mDecodePtrs[i] = (uint16)(mpDstState - mDecodeHeap);
 
 		if (mbPathfindingEnabled)
 			*mpDstState++ = kStateAddToPath;
@@ -1261,7 +1290,7 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 		const bool index16 = kModeInfo[i].mbIndex16;
 
 		for(int j=0; j<256; ++j) {
-			mDecodePtrs816[i][j] = mpDstState - mDecodeHeap;
+			mDecodePtrs816[i][j] = (uint16)(mpDstState - mDecodeHeap);
 
 			if (mbPathfindingEnabled)
 				*mpDstState++ = kStateAddToPath;
@@ -1278,7 +1307,7 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 		}
 
 		// predecode NMI sequence
-		mDecodePtrs816[i][256] = mpDstState - mDecodeHeap;
+		mDecodePtrs816[i][256] = (uint16)(mpDstState - mDecodeHeap);
 		*mpDstState++ = kStateReadDummyOpcode;
 		*mpDstState++ = kStateReadDummyOpcode;
 
@@ -1318,7 +1347,7 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 		*mpDstState++ = kStateReadOpcode;
 
 		// predecode IRQ sequence
-		mDecodePtrs816[i][257] = mpDstState - mDecodeHeap;
+		mDecodePtrs816[i][257] = (uint16)(mpDstState - mDecodeHeap);
 		*mpDstState++ = kStateReadDummyOpcode;
 		*mpDstState++ = kStateReadDummyOpcode;
 

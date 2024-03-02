@@ -51,8 +51,9 @@ void ATReadCOMStreamIntoMemory(vdfastvector<char>& data, IStream *stream) {
 		if (hr != S_OK && hr != S_FALSE)
 			break;
 		
-		if (64*1024*1024 - data.size() < actual)
-			throw MyError("The dragged file is too large to load (>64MB).");
+		// The!Cart images can reach 128MB... sheesh.
+		if (129*1024*1024 - data.size() < actual)
+			throw MyError("The dragged file is too large to load (>128MB).");
 
 		data.insert(data.end(), buf, buf + actual);
 
@@ -62,7 +63,7 @@ void ATReadCOMStreamIntoMemory(vdfastvector<char>& data, IStream *stream) {
 }
 
 void ATReadCOMBufferIntoMemory(vdfastvector<char>& data, HGLOBAL hglobal, uint32 knownSize) {
-	uint32 size = GlobalSize(hglobal);
+	size_t size = GlobalSize(hglobal);
 
 	// the global buffer may be a bit big, so truncate it if we know the real
 	// size
@@ -329,8 +330,9 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 				uint32 knownSize = 0;
 
 				if (fd.dwFlags & FD_FILESIZE) {
-					if (fd.nFileSizeHigh || fd.nFileSizeLow > 64*1024*1024)
-						throw MyError("The dragged file is too large to load (>64MB).");
+					// The!Cart images can reach 128MB... sheesh.
+					if (fd.nFileSizeHigh || fd.nFileSizeLow > 129*1024*1024)
+						throw MyError("The dragged file is too large to load (>128MB).");
 
 					knownSize = fd.nFileSizeLow;
 				}
@@ -360,10 +362,12 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 					else if (medium.tymed == TYMED_HGLOBAL)
 						ATReadCOMBufferIntoMemory(data, medium.hGlobal, knownSize);
 
+					VDMemoryStream memstream(data.data(), (uint32)data.size());
+
 					if (coldBoot)
-						DoBootStreamWithConfirm(fd.cFileName, VDMemoryStream(data.data(), data.size()), false, 0);
+						DoBootStreamWithConfirm(fd.cFileName, memstream, false, 0);
 					else
-						DoLoadStream((VDGUIHandle)g_hwnd, fd.cFileName, VDMemoryStream(data.data(), data.size()), false, 0, loadType, NULL, loadIndex);
+						DoLoadStream((VDGUIHandle)g_hwnd, fd.cFileName, memstream, false, 0, loadType, NULL, loadIndex);
 				}
 
 			} catch(const MyError& e) {
@@ -400,7 +404,7 @@ bool ATUIDragDropHandler::GetLoadTarget(POINTL pt, ATLoadType& loadType, int& lo
 		ID_MOUNTIMAGE_D4,
 	};
 
-	for(size_t i=0; i<vdcountof(kDiskImageIds); ++i) {
+	for(uint32 i=0; i<(uint32)vdcountof(kDiskImageIds); ++i) {
 		ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
 
 		const wchar_t *path = disk.GetPath();
@@ -466,7 +470,7 @@ void ATUIDragDropHandler::SetDropEffect(DWORD grfKeyState) {
 	} else if (grfKeyState & MK_SHIFT)
 		mDropEffect = DROPEFFECT_COPY;
 	else
-		mDropEffect = DROPEFFECT_MOVE;
+		mDropEffect = DROPEFFECT_COPY;
 }
 
 ///////////////////////////////////////////////////////////////////////////

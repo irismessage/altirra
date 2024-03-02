@@ -42,9 +42,9 @@ public:
 	void Clear();
 
 	template<class T>
-	void EnumProps(T& functor) const;
+	void EnumProperties(const T& functor) const;
 
-	void EnumProps(void (*fn)(const char *name, const ATPropertyValue& val, void *data), void *data) const;
+	void EnumProperties(void (*fn)(const char *name, const ATPropertyValue& val, void *data), void *data) const;
 
 	void Unset(const char *name);
 
@@ -86,8 +86,8 @@ void ATPropertySet::EnumPropsAdapter(const char *name, const ATPropertyValue& va
 }
 
 template<class T>
-void ATPropertySet::EnumProps(T& functor) const {
-	EnumProps(EnumPropsAdapter<T>, (void *)&functor);
+void ATPropertySet::EnumProperties(const T& functor) const {
+	EnumProperties(EnumPropsAdapter<T>, (void *)&functor);
 }
 
 #endif

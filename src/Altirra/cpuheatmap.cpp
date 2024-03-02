@@ -18,12 +18,23 @@
 #include "stdafx.h"
 #include "cpu.h"
 #include "cpuheatmap.h"
+#include "simeventmanager.h"
+#include "console.h"
 
-ATCPUHeatMap::ATCPUHeatMap() {
+#define TRAP_LOAD(memstat) if (mbTrapOnUninitAccess && (memstat) < kTypePreset) TrapOnUninitAccess(opcode, addr, pc); else ((void)0)
+
+ATCPUHeatMap::ATCPUHeatMap()
+	: mpSimEvtMgr(nullptr)
+	, mbTrapOnUninitAccess(false)
+{
 	Reset();
 }
 
 ATCPUHeatMap::~ATCPUHeatMap() {
+}
+
+void ATCPUHeatMap::Init(ATSimulatorEventManager *pSimEvtMgr) {
+	mpSimEvtMgr = pSimEvtMgr;
 }
 
 void ATCPUHeatMap::Reset() {
@@ -36,6 +47,34 @@ void ATCPUHeatMap::Reset() {
 
 	for(uint32 i=0; i<0x10000; ++i)
 		mMemAccess[i] = 0;
+}
+
+void ATCPUHeatMap::ResetMemoryRange(uint32 addr, uint32 len) {
+	if (addr >= 0x10000)
+		return;
+
+	if (0x10000 - addr < len)
+		len = 0x10000 - addr;
+
+	while(len--) {
+		mMemory[addr] = kTypeUnknown;
+		mMemAccess[addr] = 0;
+		++addr;
+	}
+}
+
+void ATCPUHeatMap::PresetMemoryRange(uint32 addr, uint32 len) {
+	if (addr >= 0x10000)
+		return;
+
+	if (0x10000 - addr < len)
+		len = 0x10000 - addr;
+
+	while(len--) {
+		mMemory[addr] = kTypePreset + addr;
+		mMemAccess[addr] = 0;
+		++addr;
+	}
 }
 
 void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 addr, uint16 pc) {
@@ -71,19 +110,19 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 
 		// transfer
 		case 0x8A:	// TXA
-			mX = mA;
+			mA = mX;
 			break;
 
 		case 0x98:	// TYA
-			mY = mA;
-			break;
-
-		case 0xA8:	// TAY
 			mA = mY;
 			break;
 
+		case 0xA8:	// TAY
+			mY = mA;
+			break;
+
 		case 0xAA:	// TAX
-			mA = mX;
+			mX = mA;
 			break;
 
 		case 0x9A:	// TXS
@@ -102,6 +141,7 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 		case 0xB9:	// LDA abs,Y
 		case 0xBD:	// LDA abs,X
 			mA = mMemory[addr];
+			TRAP_LOAD(mA);
 			mMemAccess[addr] |= kAccessRead;
 			break;
 
@@ -111,6 +151,7 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 		case 0xB6:	// LDX zp,Y
 		case 0xBE:	// LDX abs,Y
 			mX = mMemory[addr];
+			TRAP_LOAD(mX);
 			mMemAccess[addr] |= kAccessRead;
 			break;
 
@@ -120,6 +161,7 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 		case 0xB4:	// LDY zp,X
 		case 0xBC:	// LDY abs,X
 			mY = mMemory[addr];
+			TRAP_LOAD(mY);
 			mMemAccess[addr] |= kAccessRead;
 			break;
 
@@ -153,9 +195,19 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 
 		// update A
 		case 0x09:	// ORA imm
+		case 0x0A:	// ASL A
+		case 0x29:	// AND imm
+		case 0x2A:	// ROL A
+		case 0x49:	// EOR imm
+		case 0x4A:	// LSR A
+		case 0x69:	// ADC imm
+		case 0x6A:	// ROR A
+		case 0xE9:	// SBC imm
+			break;
+
+		// update A from memory
 		case 0x01:	// ORA (zp,X)
 		case 0x05:	// ORA zp
-		case 0x0A:	// ASL A
 		case 0x0D:	// ORA abs
 		case 0x11:	// ORA (zp),Y
 		case 0x15:	// ORA zp,X
@@ -163,8 +215,6 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 		case 0x1D:	// ORA abs,X
 		case 0x21:	// AND (zp,X)
 		case 0x25:	// AND zp
-		case 0x29:	// AND imm
-		case 0x2A:	// ROL A
 		case 0x2D:	// AND abs
 		case 0x31:	// AND (zp),Y
 		case 0x35:	// AND zp,X
@@ -172,9 +222,7 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 		case 0x3D:	// AND abs,X
 		case 0x41:	// EOR (zp,X)
 		case 0x45:	// EOR zp
-		case 0x49:	// EOR imm
 		case 0x4D:	// EOR abs
-		case 0x4A:	// LSR A
 		case 0x51:	// EOR (zp),Y
 		case 0x55:	// EOR zp,X
 		case 0x59:	// EOR abs,Y
@@ -182,20 +230,18 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 		case 0x6D:	// ADC abs
 		case 0x61:	// ADC (zp,X)
 		case 0x65:	// ADC zp
-		case 0x69:	// ADC imm
-		case 0x6A:	// ROR A
 		case 0x71:	// ADC (zp),Y
 		case 0x75:	// ADC zp,X
 		case 0x79:	// ADC abs,Y
 		case 0x7D:	// ADC abs,X
 		case 0xE1:	// SBC (zp,X)
 		case 0xE5:	// SBC zp
-		case 0xE9:	// SBC imm
 		case 0xED:	// SBC abs
 		case 0xF1:	// SBC (zp),Y
 		case 0xF5:	// SBC zp,X
 		case 0xF9:	// SBC abs,Y
 		case 0xFD:	// SBC abs,X
+			TRAP_LOAD(mMemory[addr]);
 			mA = kTypeComputed + pc;
 			break;
 
@@ -211,29 +257,33 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 			mY = kTypeComputed + pc;
 			break;
 
-		// update P (ignorable)
-		case 0x18:	// CLC
+		// update P with memory load
 		case 0x24:	// BIT zp
 		case 0x2C:	// BIT abs
+		case 0xC1:	// CMP (zp,X)
+		case 0xC4:	// CPY zp
+		case 0xC5:	// CMP zp
+		case 0xCC:	// CPY abs
+		case 0xCD:	// CMP abs
+		case 0xD1:	// CMP (zp),Y
+		case 0xD5:	// CMP zp,X
+		case 0xD9:	// CMP abs,Y
+		case 0xDD:	// CMP abs,X
+		case 0xE4:	// CPX zp
+		case 0xEC:	// CPX abs
+			TRAP_LOAD(mMemory[addr]);
+			break;
+
+		// update P, no memory load (ignorable)
+		case 0x18:	// CLC
 		case 0x38:	// SEC
 		case 0x58:	// CLI
 		case 0x78:	// SEI
 		case 0xB8:	// CLV
 		case 0xC0:	// CPY imm
-		case 0xC1:	// CMP (zp,X)
-		case 0xC4:	// CPY zp
-		case 0xC5:	// CMP zp
 		case 0xC9:	// CMP imm
-		case 0xCC:	// CPY abs
-		case 0xCD:	// CMP abs
-		case 0xD1:	// CMP (zp),Y
-		case 0xD5:	// CMP zp,X
 		case 0xD8:	// CLD
-		case 0xD9:	// CMP abs,Y
-		case 0xDD:	// CMP abs,X
 		case 0xE0:	// CPX imm
-		case 0xE4:	// CPX zp
-		case 0xEC:	// CPX abs
 		case 0xF8:	// SED
 			break;
 
@@ -245,12 +295,17 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 		case 0x4C:	// JMP abs
 		case 0x50:	// BVC
 		case 0x60:	// RTS
-		case 0x6C:	// JMP (abs)
 		case 0x70:	// BVS
 		case 0x90:	// BCC rel8
 		case 0xB0:	// BCS rel8
 		case 0xD0:	// BNE rel8
 		case 0xF0:	// BEQ rel8
+			break;
+
+		// indirect branch instructions
+		case 0x6C:	// JMP (abs)
+			TRAP_LOAD(mMemory[addr]);
+			TRAP_LOAD(mMemory[(addr+1) & 0xffff]);
 			break;
 
 		// ignorable operations
@@ -283,8 +338,15 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 		case 0xEE:	// INC abs
 		case 0xF6:	// INC zp,X
 		case 0xFE:	// INC abs,X
+			TRAP_LOAD(mMemory[addr]);
 			mMemory[addr] = kTypeComputed + pc;
 			mMemAccess[addr] |= kAccessRead | kAccessWrite;
 			break;
 	}
+}
+
+void ATCPUHeatMap::TrapOnUninitAccess(uint8 opcode, uint16 addr, uint16 pc) {
+	ATConsolePrintf("\n");
+	ATConsolePrintf("VERIFIER: Read from uninitialized memory.\n");
+	mpSimEvtMgr->NotifyEvent(kATSimEvent_VerifierFailure);
 }

@@ -177,10 +177,10 @@ public:
 		const value_type *p = mpBegin;
 		const value_type *q = mpEnd;
 
-		while(p != q && flags[*p])
+		while(p != q && flags[(unsigned char)*p])
 			++p;
 
-		while(p != q && flags[q[-1]])
+		while(p != q && flags[(unsigned char)q[-1]])
 			--q;
 
 		return VDStringSpanA(p, q);

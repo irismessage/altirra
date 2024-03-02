@@ -20,12 +20,32 @@
 
 class ATInputManager;
 
+struct ATJoystickState {
+	uint32 mUnit;
+	uint32 mButtons;
+	uint32 mAxisButtons;
+	sint32 mAxisVals[6];
+	sint32 mDeadifiedAxisVals[6];
+};
+
+struct ATJoystickTransforms {
+	sint32 mStickAnalogDeadZone;
+	sint32 mStickDigitalDeadZone;
+	float mStickAnalogPower;
+	sint32 mTriggerAnalogDeadZone;
+	sint32 mTriggerDigitalDeadZone;
+	float mTriggerAnalogPower;
+};
+
 class IATJoystickManager {
 public:
-	virtual ~IATJoystickManager() {}
+	virtual ~IATJoystickManager() = default;
 
 	virtual bool Init(void *hwnd, ATInputManager *inputMan) = 0;
 	virtual void Shutdown() = 0;
+
+	virtual ATJoystickTransforms GetTransforms() const = 0;
+	virtual void SetTransforms(const ATJoystickTransforms& transforms) = 0;
 
 	virtual void SetCaptureMode(bool capture) = 0;
 
@@ -39,7 +59,8 @@ public:
 
 	virtual PollResult Poll() = 0;
 
-	virtual bool PollForCapture(int& unit, uint32& inputCode) = 0;
+	virtual bool PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2) = 0;
+	virtual const ATJoystickState *PollForCapture(uint32& n) = 0;
 
 	virtual uint32 GetJoystickPortStates() const = 0;
 };

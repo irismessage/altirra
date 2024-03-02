@@ -1,5 +1,7 @@
 #include "stdafx.h"
 #include <vd2/system/binary.h>
+#include <vd2/system/int128.h>
+#include <vd2/system/time.h>
 #include <vd2/system/vdalloc.h>
 #include <at/atnetwork/ethernetframe.h>
 #include <at/atnetwork/tcp.h>
@@ -82,12 +84,15 @@ void ATNetTcpRingBuffer::Ack(uint32 n) {
 ATNetTcpStack::ATNetTcpStack()
 	: mpIpStack(NULL)
 	, mpBridgeListener(NULL)
+	, mPortCounter(49152)
 {
 }
 
 void ATNetTcpStack::Init(ATNetIpStack *ipStack) {
 	mpIpStack = ipStack;
 	mpClock = ipStack->GetClock();
+
+	mXmitInitialSequenceSalt = VDGetCurrentProcessId() ^ (VDGetPreciseTick() / 147);
 }
 
 void ATNetTcpStack::Shutdown() {
@@ -118,6 +123,56 @@ void ATNetTcpStack::Unbind(uint16 port, IATSocketListener *listener) {
 
 	if (it != mListeningSockets.end() && it->second.mpHandler == listener)
 		mListeningSockets.erase(it);
+}
+
+ bool ATNetTcpStack::Connect(uint32 dstIpAddr, uint16 dstPort, IATSocketHandler *handler, IATSocket **newSocket) {
+	// find an unused port in dynamic range
+	for(uint32 i=49152; i<65535; ++i) {
+		if (++mPortCounter == 0)
+			mPortCounter = 49152;
+
+		bool valid = true;
+
+		if (mListeningSockets.find(mPortCounter) != mListeningSockets.end()) {
+			valid = false;
+		} else {
+			for(const auto& conn : mConnections) {
+				if (conn.first.mLocalPort == mPortCounter) {
+					valid = false;
+					break;
+				}
+			}
+		}
+
+		if (valid)
+			goto found_free_port;
+	}
+
+	// doh... no free ports!
+	return false;
+
+found_free_port:
+
+	// create connection key
+	ATNetTcpConnectionKey connKey;
+	connKey.mLocalAddress = mpIpStack->GetIpAddress();
+	connKey.mLocalPort = mPortCounter;
+	connKey.mRemoteAddress = dstIpAddr;
+	connKey.mRemotePort = dstPort;
+
+	// initialize new connection
+	vdrefptr<ATNetTcpConnection> conn(new ATNetTcpConnection(this, connKey));
+
+	conn->InitOutgoing(handler, mXmitInitialSequenceSalt);
+
+	mConnections[connKey] = conn;
+	conn->AddRef();
+
+	// Send SYN+ACK
+	conn->Transmit(false);
+
+	*newSocket = conn.release();
+	return true;
 }
 
 void ATNetTcpStack::CloseAllConnections() {
@@ -175,7 +230,7 @@ void ATNetTcpStack::OnPacket(const ATEthernetPacket& packet, const ATIPv4HeaderI
 
 	// if this isn't a SYN packet, send RST
 	if (!tcpHdr.mbSYN) {
-		SendReset(packet, iphdr, tcpHdr.mSrcPort, tcpHdr.mDstPort, tcpHdr.mSequenceNo);
+		SendReset(iphdr, tcpHdr.mSrcPort, tcpHdr.mDstPort, tcpHdr);
 		return;
 	}
 
@@ -192,7 +247,7 @@ void ATNetTcpStack::OnPacket(const ATEthernetPacket& packet, const ATIPv4HeaderI
 
 	if (!listener) {
 		// No socket is listening on this port -- send RST
-		SendReset(packet, iphdr, tcpHdr.mSrcPort, tcpHdr.mDstPort, tcpHdr.mSequenceNo);
+		SendReset(iphdr, tcpHdr.mSrcPort, tcpHdr.mDstPort, tcpHdr);
 		return;
 	}
 
@@ -204,7 +259,7 @@ void ATNetTcpStack::OnPacket(const ATEthernetPacket& packet, const ATIPv4HeaderI
 	vdrefptr<IATSocketHandler> socketHandler;
 	if (!listener->OnSocketIncomingConnection(iphdr.mSrcAddr, tcpHdr.mSrcPort, iphdr.mDstAddr, tcpHdr.mDstPort, conn, ~socketHandler)) {
 		// Uh oh... we can't accept this connection.
-		SendReset(packet, iphdr, tcpHdr.mSrcPort, tcpHdr.mDstPort, tcpHdr.mSequenceNo);
+		SendReset(iphdr, tcpHdr.mSrcPort, tcpHdr.mDstPort, tcpHdr);
 		return;
 	}
 
@@ -280,22 +335,33 @@ uint32 ATNetTcpStack::EncodePacket(uint8 *dst, uint32 len, uint32 srcIpAddr, uin
 	return 22 + 20 + dataLen;
 }
 
-void ATNetTcpStack::SendReset(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& iphdr, uint16 srcPort, uint16 dstPort, uint32 seqNo) {
-	SendReset(iphdr.mSrcAddr, packet.mSrcAddr, iphdr.mDstAddr, srcPort, dstPort, seqNo);
+void ATNetTcpStack::SendReset(const ATIPv4HeaderInfo& iphdr, uint16 srcPort, uint16 dstPort, const ATTcpHeaderInfo& origTcpHdr) {
+	SendReset(iphdr.mSrcAddr, iphdr.mDstAddr, srcPort, dstPort, origTcpHdr);
 }
 
-void ATNetTcpStack::SendReset(uint32 srcIpAddr, const ATEthernetAddr& dstHwAddr, uint32 dstIpAddr, uint16 srcPort, uint16 dstPort, uint32 seqNo) {
+void ATNetTcpStack::SendReset(uint32 srcIpAddr, uint32 dstIpAddr, uint16 srcPort, uint16 dstPort, const ATTcpHeaderInfo& origTcpHdr) {
 	VDALIGN(4) uint8 rstPacket[42 + 2];
 
 	ATTcpHeaderInfo tcpHeader = {};
 	tcpHeader.mSrcPort = dstPort;
 	tcpHeader.mDstPort = srcPort;
-	tcpHeader.mAckNo = seqNo;
+	tcpHeader.mSequenceNo = origTcpHdr.mAckNo;
 	tcpHeader.mbRST = true;
+
+	// For a SYN packet, we haven't established a sequence yet, so we need to ACK
+	// the SYN instead.
+	if (origTcpHdr.mbSYN) {
+		tcpHeader.mbACK = true;
+		tcpHeader.mAckNo = origTcpHdr.mSequenceNo + 1;
+	}
 
 	VDVERIFY(EncodePacket(rstPacket + 2, 42, dstIpAddr, srcIpAddr, tcpHeader, NULL, 0));
 
-	SendFrame(dstHwAddr, rstPacket + 2, 42);
+	SendFrame(srcIpAddr, rstPacket + 2, 42);
+}
+
+void ATNetTcpStack::SendFrame(uint32 dstIpAddr, const void *data, uint32 len) {
+	mpIpStack->SendFrame(dstIpAddr, data, len);
 }
 
 void ATNetTcpStack::SendFrame(const ATEthernetAddr& dstAddr, const void *data, uint32 len) {
@@ -310,6 +376,8 @@ void ATNetTcpStack::DeleteConnection(const ATNetTcpConnectionKey& connKey) {
 
 		mConnections.erase(it);
 		conn->Release();
+	} else {
+		VDASSERT(!"Attempt to delete a nonexistent TCP connection.");
 	}
 }
 
@@ -318,9 +386,9 @@ void ATNetTcpStack::DeleteConnection(const ATNetTcpConnectionKey& connKey) {
 ATNetTcpConnection::ATNetTcpConnection(ATNetTcpStack *stack, const ATNetTcpConnectionKey& connKey)
 	: mpTcpStack(stack)
 	, mConnKey(connKey)
-	, mRemoteWindow(0)
 	, mbLocalOpen(true)
 	, mbSynQueued(false)
+	, mbSynAcked(false)
 	, mbFinQueued(false)
 	, mbFinReceived(false)
 	, mEventClose(0)
@@ -342,22 +410,7 @@ ATNetTcpConnection::ATNetTcpConnection(ATNetTcpStack *stack, const ATNetTcpConne
 }
 
 ATNetTcpConnection::~ATNetTcpConnection() {
-	IATEthernetClock *clk = mpTcpStack->GetClock();
-
-	if (mEventClose) {
-		clk->RemoveClockEvent(mEventClose);
-		mEventClose = 0;
-	}
-
-	if (mEventTransmit) {
-		clk->RemoveClockEvent(mEventTransmit);
-		mEventTransmit = 0;
-	}
-
-	if (mEventRetransmit) {
-		clk->RemoveClockEvent(mEventRetransmit);
-		mEventRetransmit = 0;
-	}
+	ClearEvents();
 }
 
 void ATNetTcpConnection::GetInfo(ATNetTcpConnectionInfo& info) const {
@@ -367,8 +420,6 @@ void ATNetTcpConnection::GetInfo(ATNetTcpConnectionInfo& info) const {
 
 void ATNetTcpConnection::Init(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& ipHdr, const ATTcpHeaderInfo& tcpHdr) {
 	mConnState = kATNetTcpConnectionState_SYN_RCVD;
-	mRemoteHwAddr = packet.mSrcAddr;
-	mRemoteWindow = tcpHdr.mWindow;
 
 	// initialize receive state to received sequence number
 	mRecvRing.Reset(tcpHdr.mSequenceNo + 1);
@@ -387,24 +438,94 @@ void ATNetTcpConnection::Init(const ATEthernetPacket& packet, const ATIPv4Header
 	mbSynQueued = true;
 }
 
+void ATNetTcpConnection::InitOutgoing(IATSocketHandler *h, uint32 isnSalt) {
+	mpSocketHandler = h;
+
+	mConnState = kATNetTcpConnectionState_SYN_SENT;
+
+	// Compute initial sequence number (ISN) [RFC6528].
+	// We're not currently doing hashing, so this isn't a very secure
+	// implementation yet.
+	mXmitNext = (uint32)(vduint128(VDGetPreciseTick()) * vduint128(250000) / vduint128(VDGetPreciseTicksPerSecondI()));
+	mXmitNext ^= isnSalt;
+	mXmitNext += mConnKey.mLocalAddress;
+	mXmitNext += VDRotateLeftU32(mConnKey.mRemoteAddress, 14);
+	mXmitNext += mConnKey.mLocalPort;
+	mXmitNext += (uint32)mConnKey.mRemotePort << 16;
+
+	// Init placeholder values for the remote sequence. The zero window
+	// will prevent us from sending until we get the real values from
+	// the SYN+ACK reply.
+	mXmitLastAck = 0;
+	mXmitWindowLimit = 0;
+
+	// Queue the SYN packet and the bogus data for the sequence number
+	// it occupies.
+	mXmitRing.Reset(mXmitNext);
+	mXmitRing.Write("", 1);
+
+	mbSynQueued = true;
+}
+
 void ATNetTcpConnection::SetSocketHandler(IATSocketHandler *h) {
 	mpSocketHandler = h;
 }
 
 void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& iphdr, const ATTcpHeaderInfo& tcpHdr, const uint8 *data, const uint32 len) {
+	VDASSERT(mpTcpStack);
+
 	// check if RST is set
 	if (tcpHdr.mbRST) {
+		// if we are in SYN-SENT, the RST is valid if it ACKs the SYN; otherwise, it is
+		// valid if it is within the window
+		if (mConnState == kATNetTcpConnectionState_SYN_SENT) {
+			if (!tcpHdr.mbACK || tcpHdr.mAckNo != mXmitNext)
+				return;
+		} else {
+			// Note that we may have advertised a zero window. Pretend that the RST takes
+			// no space, so it can fit at the end.
+			if ((uint32)(tcpHdr.mSequenceNo - mRecvRing.GetBaseSeq()) > mRecvRing.GetSpace())
+				return;
+		}
+
+		// mark both ends closed so we don't send a RST in response to a RST and so that we
+		// don't respond to a local close
+		mbLocalOpen = false;
+		mbFinReceived = true;
+
 		// delete the connection :-/
 		if (mpSocketHandler)
 			mpSocketHandler->OnSocketError();
 
-		ClearEvents();
-		mpTcpStack->DeleteConnection(mConnKey);
+		Shutdown();
 		return;
 	}
 
-	// update the hardware address for this connection
-	mRemoteHwAddr = packet.mSrcAddr;
+	// check if we're getting a SYN (only valid in this path if we are connecting out)
+	if (mConnState == kATNetTcpConnectionState_SYN_SENT) {
+		// We had better get a SYN or SYN+ACK. RST was already handled above.
+		//
+		// HOWEVER:
+		// - It is valid to receive a SYN in response to a SYN, instead of a SYN+ACK.
+		//   This happens if both sides simultaneously attempt to connect to each other.
+		//   This results in a single connection and is explicitly allowed by RFC793 3.4
+		//   and reaffirmed by RFC1122 4.2.2.10.
+		//
+		// - We can also get FIN. One-packet SYN+ACK+FIN is allowed....
+		//
+		if (!tcpHdr.mbSYN) {
+			if (mpSocketHandler)
+				mpSocketHandler->OnSocketError();
+
+			Shutdown();
+			return;
+		}
+
+		mConnState = kATNetTcpConnectionState_SYN_RCVD;
+
+		// initialize receive state to received sequence number
+		mRecvRing.Reset(tcpHdr.mSequenceNo + 1);
+	}
 
 	// update window
 	if (tcpHdr.mbACK)
@@ -425,7 +546,7 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 				PacketTimer& timer = mPacketTimers[timerIdx];
 
 				// stop removing packet timers once we reach an entry that isn't fully ACK'd
-				if ((uint32)(timer.mSequenceEnd - tcpHdr.mAckNo) < 0x80000000U)
+				if ((uint32)(timer.mSequenceEnd - tcpHdr.mAckNo - 1) < 0x7FFFFFFFU)
 					break;
 
 				if (mEventRetransmit) {
@@ -441,7 +562,8 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 			}
 
 			if (root.mNext && !mEventRetransmit) {
-				mEventRetransmit = mpTcpStack->GetClock()->AddClockEvent(mPacketTimers[root.mNext].mRetransmitTimestamp, this, kEventId_Retransmit);
+				auto *pClock = mpTcpStack->GetClock();
+				mEventRetransmit = pClock->AddClockEvent(pClock->GetTimestamp(3000), this, kEventId_Retransmit);
 			}
 
 			if (ackOffset) {
@@ -461,7 +583,11 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 
 				// notify the socket handler that more space is available; however, note
 				// that this is internal buffer, not window space
-				mpSocketHandler->OnSocketWriteReady(mXmitRing.GetSpace());
+				if (mpSocketHandler && mbLocalOpen)
+					mpSocketHandler->OnSocketWriteReady(mXmitRing.GetSpace());
+
+				if (!mpTcpStack)
+					return;
 			}
 
 			// if the ACK just emptied the buffer and we already queued the FIN, then the FIN
@@ -535,12 +661,20 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 								break;
 						}
 
-						mpSocketHandler->OnSocketClose();
+						if (mpSocketHandler)
+							mpSocketHandler->OnSocketClose();
+
+						if (!mpTcpStack)
+							return;
 					}
 				} else
 					mRecvRing.Write(data + tcpHdr.mDataOffset, tc);
 
-				mpSocketHandler->OnSocketReadReady(mRecvRing.GetLevel());
+				if (mpSocketHandler)
+					mpSocketHandler->OnSocketReadReady(mRecvRing.GetLevel());
+
+				if (!mpTcpStack)
+					return;
 			}
 		}
 	}
@@ -548,14 +682,19 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 	// if the connection is dead, delete it now -- this should be done before we send a reply
 	// packet, in case we got both an ACK and the last FIN
 	if (mConnState == kATNetTcpConnectionState_CLOSED) {
-		ClearEvents();
-		mpTcpStack->DeleteConnection(mConnKey);
+		Shutdown();
 		return;
 	}
 
 	// check if we need a reply packet or if we received an ACK and can transmit now
-	if (ackNeeded || (tcpHdr.mbACK && CanTransmitMore()))
+	if (ackNeeded || (tcpHdr.mbACK && CanTransmitMore())) {
+		if (mConnState == kATNetTcpConnectionState_ESTABLISHED && !mbSynAcked) {
+			Transmit(true);
+			mbSynAcked = true;
+		}
+
 		Transmit(true);
+	}
 }
 
 void ATNetTcpConnection::Transmit(bool ack) {
@@ -569,9 +708,8 @@ void ATNetTcpConnection::Transmit(bool ack) {
 
 	// compute how much data payload to send; we avoid doing so for a SYN packet
 	// because it's considered unusual behavior, although normal
-	uint32 dataLen = syn ? 0 : mXmitRing.GetLevel() - xmitOffset;
+	uint32 dataLen = syn || !mbSynAcked ? 0 : mXmitRing.GetLevel() - xmitOffset;
 	bool sendingLast = true;
-	bool finresend = false;
 
 	// limit data send according to window
 	uint32 windowSpace = mXmitWindowLimit - mXmitNext;
@@ -612,15 +750,16 @@ void ATNetTcpConnection::Transmit(bool ack) {
 	replyTcpHeader.mbSYN = syn;
 	replyTcpHeader.mbFIN = fin;
 	replyTcpHeader.mAckNo = ack ? mRecvRing.GetBaseSeq() + mRecvRing.GetLevel() + (mbFinReceived ? 1 : 0) : 0;
-	replyTcpHeader.mSequenceNo = mXmitNext;
+//	replyTcpHeader.mSequenceNo = mXmitNext;
+	replyTcpHeader.mSequenceNo = syn || !mbSynAcked ? mXmitRing.GetBaseSeq() : mXmitNext;
 	replyTcpHeader.mWindow = mRecvRing.GetSpace();
-
+	
 	if (dataLen)
 		mXmitRing.Read(xmitOffset, data, dataLen);
 
 	uint32 replyLen = mpTcpStack->EncodePacket(replyPacket + 2, sizeof replyPacket - 2, mConnKey.mLocalAddress, mConnKey.mRemoteAddress, replyTcpHeader, data, dataLen);
 
-	mpTcpStack->SendFrame(mRemoteHwAddr, replyPacket + 2, replyLen);
+	mpTcpStack->SendFrame(mConnKey.mRemoteAddress, replyPacket + 2, replyLen);
 
 	mXmitNext += dataLen + replyTcpHeader.mbFIN + replyTcpHeader.mbSYN;
 	VDASSERT(mXmitNext - mXmitRing.GetBaseSeq() <= mXmitRing.GetLevel());
@@ -665,8 +804,7 @@ void ATNetTcpConnection::OnClockEvent(uint32 eventid, uint32 userid) {
 			VDASSERT(mEventClose == eventid);
 			mEventClose = 0;
 
-			ClearEvents();
-			mpTcpStack->DeleteConnection(mConnKey);
+			Shutdown();
 			return;
 
 		case kEventId_Transmit:
@@ -705,13 +843,20 @@ void ATNetTcpConnection::OnClockEvent(uint32 eventid, uint32 userid) {
 }
 
 void ATNetTcpConnection::Shutdown() {
+	if (!mpTcpStack)
+		return;
+
 	// If one side hasn't been closed, send an RST.
-	if (mbLocalOpen || !mbFinReceived)
-		mpTcpStack->SendReset(mConnKey.mLocalAddress, mRemoteHwAddr, mConnKey.mRemoteAddress, mConnKey.mLocalPort, mConnKey.mRemotePort, mXmitNext);
+	if (mbLocalOpen || !mbFinReceived) {
+		ATTcpHeaderInfo dummyHdr = {};
+		dummyHdr.mAckNo = mXmitNext;
+		mpTcpStack->SendReset(mConnKey.mRemoteAddress, mConnKey.mLocalAddress, mConnKey.mRemotePort, mConnKey.mLocalPort, dummyHdr);
+	}
 
 	// Delete us.
 	ClearEvents();
 	mpTcpStack->DeleteConnection(mConnKey);
+	mpTcpStack = nullptr;
 }
 
 uint32 ATNetTcpConnection::Read(void *buf, uint32 len) {
@@ -729,6 +874,8 @@ uint32 ATNetTcpConnection::Read(void *buf, uint32 len) {
 }
 
 uint32 ATNetTcpConnection::Write(const void *buf, uint32 len) {
+	VDASSERT(mbLocalOpen);
+
 	if (len) {
 		uint32 space = mXmitRing.GetSpace();
 		if (len > space) {
@@ -753,6 +900,8 @@ void ATNetTcpConnection::Close() {
 	if (mbLocalOpen) {
 		mbLocalOpen = false;
 
+		mpSocketHandler = nullptr;
+
 		if (mXmitRing.GetSpace()) {
 			mXmitRing.Write("", 1);
 			mbFinQueued = true;
@@ -762,6 +911,8 @@ void ATNetTcpConnection::Close() {
 			mConnState = kATNetTcpConnectionState_FIN_WAIT_1;
 		else if (mConnState == kATNetTcpConnectionState_CLOSE_WAIT)
 			mConnState = kATNetTcpConnectionState_CLOSED;
+
+		Transmit(false);
 	}
 }
 
@@ -780,6 +931,9 @@ bool ATNetTcpConnection::CanTransmitMore() const {
 }
 
 void ATNetTcpConnection::ClearEvents() {
+	if (!mpTcpStack)
+		return;
+
 	IATEthernetClock *clk = mpTcpStack->GetClock();
 
 	if (mEventClose) {

@@ -100,15 +100,14 @@ waitForChar:
 	;do control lock logic
 	and		#$1f
 
+doShiftLock:
+	and		#$df
+
 notAlpha:
 	;return char
 	sta		atachr			;required or CON.SYS (SDX 4.46) breaks
 	ldy		#1
 	rts
-	
-doShiftLock:
-	and		#$df
-	bne		notAlpha
 	
 isBreak:
 	stx		brkkey
@@ -122,6 +121,17 @@ isCtrl3:
 isCapsLock:
 	tya
 	and		#$c0
+
+	.if _KERNEL_XLXE
+	;Caps Lock without Shift or Control is a toggle on the XL/XE line:
+	; None -> Shifted
+	; Shifted, Control -> None
+	bne		notToggle
+	ldx		shflok
+	sne:lda	#$40
+notToggle:
+	.endif
+
 	sta		shflok
 	jmp		waitForChar
 .endp

@@ -6,6 +6,7 @@
 class IATSocketListener;
 class IATUdpSocketListener;
 class IATNetUdpStack;
+class IATNetTcpStack;
 
 struct ATNetConnectionInfo {
 	uint8 mRemoteAddr[4];
@@ -24,6 +25,7 @@ public:
 	virtual void ColdReset() = 0;
 
 	virtual IATNetUdpStack *GetUdpStack() = 0;
+	virtual IATNetTcpStack *GetTcpStack() = 0;
 
 	virtual void SetBridgeListener(IATSocketListener *p, IATUdpSocketListener *udp) = 0;
 

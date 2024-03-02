@@ -456,7 +456,7 @@ void VDDisplayRenderer3D::StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh,
 			vdrefptr<VDDisplayTextureSourceNode3D> src(new VDDisplayTextureSourceNode3D);
 			VDDisplaySourceTexMapping mapping = {};
 
-			mapping.Init(cachedImage->mWidth, cachedImage->mHeight, cachedImage->mTexWidth, cachedImage->mTexHeight, mpContext->IsFormatSupportedTexture2D(kVDTF_B8G8R8A8));
+			mapping.Init(cachedImage->mWidth, cachedImage->mHeight, cachedImage->mTexWidth, cachedImage->mTexHeight, !mpContext->IsFormatSupportedTexture2D(kVDTF_B8G8R8A8));
 
 			if (src->Init(cachedImage->mpTexture, mapping)) {
 				// create blit node

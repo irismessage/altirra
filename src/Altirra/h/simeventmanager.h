@@ -42,7 +42,9 @@ enum ATSimulatorEvent {
 	kATSimEvent_EXEInitSegment,
 	kATSimEvent_EXERunSegment,
 	kATSimEvent_StateLoaded,
-	kATSimEvent_AbnormalDMA
+	kATSimEvent_AbnormalDMA,
+	kATSimEvent_VBI,
+	kATSimEvent_VBLANK
 };
 
 class IATSimulatorCallback {

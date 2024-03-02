@@ -137,5 +137,11 @@
     <Xml Include="source\sx212.xml">
       <Filter>Source Files</Filter>
     </Xml>
+    <Xml Include="source\debug-profiling.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\dragoncart.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
   </ItemGroup>
 </Project>

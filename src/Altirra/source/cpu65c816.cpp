@@ -25,7 +25,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 		false,	// 00
 		true,	// 01: (dp,X)
 		false,	// 02
-		true,	// 03: sr,X
+		true,	// 03: sr,S
 		false,	// 04
 		true,	// 05: dp
 		false,	// 06
@@ -229,8 +229,8 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			if (!emu)
 				*mpDstState++ = kStatePushPBKNative;	// 3*
 
-			*mpDstState++ = kStatePushPCHM1Native;	// 3
-			*mpDstState++ = kStatePushPCLM1Native;	// 4
+			*mpDstState++ = emu ? kStatePushPCHM1 : kStatePushPCHM1Native;	// 3
+			*mpDstState++ = emu ? kStatePushPCLM1 : kStatePushPCLM1Native;	// 4
 
 			if (emu) 
 				*mpDstState++ = kStatePtoD_B1;
@@ -507,8 +507,8 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			if (mpVerifier)
 				*mpDstState++ = kStateVerifyInsn;
 
-			*mpDstState++ = kStatePushPCHM1Native;
-			*mpDstState++ = kStatePushPCLM1Native;
+			*mpDstState++ = emu ? kStatePushPCHM1 : kStatePushPCHM1Native;
+			*mpDstState++ = emu ? kStatePushPCLM1 : kStatePushPCLM1Native;
 			*mpDstState++ = kStateAddrToPC;
 			*mpDstState++ = kStateWait;
 
@@ -573,7 +573,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			break;
 
 		case 0x28:	// PLP
-			*mpDstState++ = kStatePop;
+			*mpDstState++ = emu ? kStatePop : kStatePopNative;
 
 			if (emu)
 				*mpDstState++ = kStateDtoP;
@@ -754,7 +754,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateWait;
-			*mpDstState++ = kStatePopNative;
+			*mpDstState++ = emu ? kStatePop : kStatePopNative;
 
 			if (emu)
 				*mpDstState++ = kStateDtoP;
@@ -1030,7 +1030,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWait;
 				*mpDstState++ = kStateWait;
 			} else {
-				*mpDstState++ = kStatePopNative;
+				*mpDstState++ = emu ? kStatePop : kStatePopNative;
 				*mpDstState++ = kStateDSetSZ;
 				*mpDstState++ = kStateDtoA;
 				*mpDstState++ = kStateWait;
@@ -1143,7 +1143,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWait;
 				*mpDstState++ = kStateWait;
 			} else {
-				*mpDstState++ = kStatePop;
+				*mpDstState++ = emu ? kStatePop : kStatePopNative;
 				*mpDstState++ = kStateDSetSZ;
 				*mpDstState++ = kStateDtoY;
 				*mpDstState++ = kStateWait;
@@ -1478,7 +1478,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			break;
 
 		case 0xAB:	// PLB
-			*mpDstState++ = kStatePopNative;
+			*mpDstState++ = kStatePopNative;	//** doesn't wrap even in emu mode
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateDtoB;
@@ -1950,7 +1950,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWait;
 				*mpDstState++ = kStateWait;
 			} else {
-				*mpDstState++ = kStatePop;
+				*mpDstState++ = emu ? kStatePop : kStatePopNative;
 				*mpDstState++ = kStateDSetSZ;
 				*mpDstState++ = kStateDtoX;
 				*mpDstState++ = kStateWait;

@@ -16,6 +16,9 @@ struct ATEthernetPacket {
 
 class IATEthernetClockEventSink {
 public:
+	// Called when a clock event fires. userid and eventid are the values that were supplied
+	// to and returned from AddClockEvent(), respectively. When this call occurs, the eventid
+	// is already invalidated and must not be passed to RemoveClockEvent().
 	virtual void OnClockEvent(uint32 eventid, uint32 userid) = 0;
 };
 

@@ -26,6 +26,7 @@ class ATEthernetBus;
 class ATEthernetSimClock;
 class IATEthernetGatewayServer;
 class IATNetSockWorker;
+class IATNetSockVxlanTunnel;
 class ATPropertySet;
 class ATConsoleOutput;
 class ATScheduler;
@@ -41,6 +42,13 @@ struct ATDragonCartSettings {
 	uint32 mNetAddr;		// 0xaabbccdd -> a.b.c.d
 	uint32 mNetMask;
 	AccessMode mAccessMode;
+
+	uint32 mForwardingAddr;
+	uint16 mForwardingPort;
+
+	uint32 mTunnelAddr;
+	uint16 mTunnelSrcPort;
+	uint16 mTunnelTgtPort;
 
 	void SetDefault();
 
@@ -80,6 +88,7 @@ protected:
 	ATEthernetSimClock *mpEthernetClock;
 	IATEthernetGatewayServer *mpGateway;
 	IATNetSockWorker *mpNetSockWorker;
+	IATNetSockVxlanTunnel *mpNetSockVxlanTunnel = nullptr;
 	uint32 mEthernetClockId;
 
 	ATDragonCartSettings mSettings;

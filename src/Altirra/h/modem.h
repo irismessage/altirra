@@ -23,8 +23,8 @@
 #include <vd2/system/VDString.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceserial.h>
+#include <at/atcore/scheduler.h>
 #include "rs232.h"
-#include "scheduler.h"
 #include "modemtcp.h"
 
 class IATUIRenderer;

@@ -13,11 +13,14 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{91D7C6FC-D4D3-4CC0-A862-53265297E925}</ProjectGuid>
     <RootNamespace>HLEKernel</RootNamespace>
-    <SccProjectName>Perforce Project</SccProjectName>
+    <SccProjectName>
+    </SccProjectName>
     <SccAuxPath>
     </SccAuxPath>
-    <SccLocalPath>.</SccLocalPath>
-    <SccProvider>MSSCCI:Perforce SCM</SccProvider>
+    <SccLocalPath>
+    </SccLocalPath>
+    <SccProvider>
+    </SccProvider>
     <Keyword>MakeFileProj</Keyword>
     <PlatformToolset>v120</PlatformToolset>
   </PropertyGroup>

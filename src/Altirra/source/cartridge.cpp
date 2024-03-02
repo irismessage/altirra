@@ -58,8 +58,8 @@ namespace {
 		// A15 -> A10
 		// A16 -> A16
 
-		vdblock<uint8> src(131072);
-		memcpy(src.data(), p, 131072);
+		vdblock<uint8> src(65536);
+		memcpy(src.data(), p, 65536);
 
 		uint8 dtab[256];
 		uint16 alotab[256];
@@ -385,8 +385,12 @@ void ATCartridgeEmulator::LoadNewCartridge(ATCartridgeMode mode) {
 			break;
 
 		case kATCartridgeMode_MaxFlash_1024K:
-		case kATCartridgeMode_MaxFlash_1024K_Bank0:
 			mInitialCartBank = 127;
+			mCartSize = 0x100000;
+			break;
+
+		case kATCartridgeMode_MaxFlash_1024K_Bank0:
+			mInitialCartBank = 0;
 			mCartSize = 0x100000;
 			break;
 
@@ -413,16 +417,19 @@ void ATCartridgeEmulator::LoadNewCartridge(ATCartridgeMode mode) {
 		case kATCartridgeMode_TheCart_32M:
 			mCartSize = 0x2000000;
 			mInitialCartBank = 0;
+			mCARTRAM.resize(524288, 0);
 			break;
 
 		case kATCartridgeMode_TheCart_64M:
 			mCartSize = 0x4000000;
 			mInitialCartBank = 0;
+			mCARTRAM.resize(524288, 0);
 			break;
 
 		case kATCartridgeMode_TheCart_128M:
 			mCartSize = 0x8000000;
 			mInitialCartBank = 0;
+			mCARTRAM.resize(524288, 0);
 			break;
 	}
 
@@ -1606,11 +1613,24 @@ bool ATCartridgeEmulator::WriteByte_CCTL_TheCart(void *thisptr0, uint32 address,
 			}
 
 			if (forceUpdate || reg != value) {
+				const uint8 delta = reg ^ value;
 				reg = value;
 
 				// check if we updated the banking mode register -- this is particularly expensive
 				if (index == 6)
 					thisptr->UpdateTheCartBanking();
+				
+				if (index == 7) {
+					// Invalidate and recreate banking if we have an R/W state change:
+					// bit 0 controls primary window read/write
+					// bit 2 controls secondary window read/write
+
+					if (delta & 0x01)
+						thisptr->mCartBank = -1;
+
+					if (delta & 0x04)
+						thisptr->mCartBank2 = -1;
+				}
 
 				// must come after banking update
 				thisptr->UpdateTheCart();
@@ -2685,7 +2705,6 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			bank1Base	= 0xA0;
 			bank1Size	= 0x20;
 			usecctl = true;
-			usecctlread = true;
 			usecctlwrite = true;
 			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x3F>;
 			break;
@@ -2826,6 +2845,7 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 
 	if (fixedSize) {
 		mpMemLayerFixedBank1 = mpMemMan->CreateLayer(mBasePriority, mCARTROM.data() + fixedOffset, fixedBase, fixedSize, true);
+		mpMemMan->SetLayerIoBus(mpMemLayerFixedBank1, true);
 		mpMemMan->SetLayerName(mpMemLayerFixedBank1, "Cartridge fixed window 1");
 
 		if (fixedMask)
@@ -2837,6 +2857,7 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 	if (fixed2Size) {
 		uint8 *mem = fixed2RAM ? mCARTRAM.data() : mCARTROM.data();
 		mpMemLayerFixedBank2 = mpMemMan->CreateLayer(mBasePriority, mem + fixed2Offset, fixed2Base, fixedSize, true);
+		mpMemMan->SetLayerIoBus(mpMemLayerFixedBank2, true);
 		mpMemMan->SetLayerName(mpMemLayerFixedBank2, "Cartridge fixed window 2");
 
 		if (fixed2Mask >= 0)
@@ -2847,6 +2868,7 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 
 	if (bank1Size) {
 		mpMemLayerVarBank1 = mpMemMan->CreateLayer(mBasePriority+1, mCARTROM.data(), bank1Base, bank1Size, true);
+		mpMemMan->SetLayerIoBus(mpMemLayerVarBank1, true);
 		mpMemMan->SetLayerName(mpMemLayerVarBank1, "Cartridge variable window 1");
 
 		if (bank1Mask >= 0)
@@ -2855,11 +2877,13 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 
 	if (bank2Size) {
 		mpMemLayerVarBank2 = mpMemMan->CreateLayer(mBasePriority+2, mCARTROM.data(), bank2Base, bank2Size, true);
+		mpMemMan->SetLayerIoBus(mpMemLayerVarBank1, true);
 		mpMemMan->SetLayerName(mpMemLayerVarBank2, "Cartridge variable window 2");
 	}
 
 	if (spec1Size) {
 		mpMemLayerSpec1 = mpMemMan->CreateLayer(mBasePriority+3, spec1hd, spec1Base, spec1Size);
+		mpMemMan->SetLayerIoBus(mpMemLayerSpec1, true);
 		mpMemMan->SetLayerName(mpMemLayerSpec1, "Cartridge special window 1");
 
 		if (spec1ReadEnabled) {
@@ -2873,6 +2897,7 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 
 	if (spec2Size) {
 		mpMemLayerSpec2 = mpMemMan->CreateLayer(mBasePriority+4, spec2hd, spec2Base, spec2Size);
+		mpMemMan->SetLayerIoBus(mpMemLayerSpec2, true);
 		mpMemMan->SetLayerName(mpMemLayerSpec2, "Cartridge special window 2");
 
 		if (spec2Enabled)
@@ -2881,6 +2906,7 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 
 	if (usecctl) {
 		mpMemLayerControl = mpMemMan->CreateLayer(mBasePriority+5, cctlhd, 0xD5, 0x01);
+		mpMemMan->SetLayerIoBus(mpMemLayerControl, true);
 		mpMemMan->SetLayerName(mpMemLayerControl, "Cartridge control window 1");
 
 		mpMemMan->EnableLayer(mpMemLayerControl, kATMemoryAccessMode_AnticRead, usecctlread);

@@ -21,6 +21,12 @@
 		icl		'kerneldb.inc'
 		icl		'hardware.inc'
 
+.ifndef XEP_OPTION_TURBO
+		XEP_OPTION_TURBO = 0
+.endif
+
+XEP_TURBO_4X = 0
+
 ;==========================================================================
 keybdv	equ		$e420
 
@@ -104,13 +110,16 @@ XEPCMD_SET_RMARGN_LO		= $A0
 XEPCMD_SET_RMARGN_HI		= $B0
 XEPCMD_GET_BYTE_AND_ADVANCE	= $C0
 XEPCMD_MASTER_RESET			= $C2
-XEPCMD_ENTER_BURST_MODE		= $D2
-XEPCMD_EXIT_BURST_MODE		= $D3
+XEPCMD_EXIT_BURST_MODE		= $D2
+XEPCMD_ENTER_BURST_MODE		= $D3
 XEPCMD_CHARSET_A			= $D4
 XEPCMD_CHARSET_B			= $D5
 XEPCMD_CURSOR_OFF			= $D8
 XEPCMD_CURSOR_ON			= $D9
 XEPCMD_MOVE_TO_LOGLINE_START= $DB
+XEPCMD_SET_EXTRA_BYTE		= $E1
+XEPCMD_SET_BAUD_RATE		= $FA
+XEPCMD_SET_UMX				= $FC
 
 ;==========================================================================
 
@@ -142,6 +151,7 @@ curcol	dta		0
 curinh	dta		0
 data_end:
 portbit	dta		$10
+portbitr	dta		$20
 
 ;==========================================================================
 .proc XEPSDevice
@@ -165,8 +175,16 @@ portbit	dta		$10
 
 ;==========================================================================
 .proc XEPScreenOpen
-		lda		#$40
-		jmp		XEPOpen
+		lda		dspflg
+		pha
+		lda		#0
+		sta		dspflg
+		lda		#$7D
+		jsr		XEPEditorPutByte
+		pla
+		sta		dspflg
+		tya
+		rts
 .endp
 
 ;==========================================================================
@@ -191,8 +209,7 @@ portbit	dta		$10
 .proc XEPScreenGetByte
 		jsr		XEPEnterCriticalSection
 		lda		#XEPCMD_GET_BYTE_AND_ADVANCE
-		sec
-		jsr		XEPTransmitByte
+		jsr		XEPTransmitCommand
 		jsr		XEPReceiveByte
 		bmi		fail
 		pha
@@ -229,6 +246,28 @@ fail:
 ;==========================================================================
 .proc XEPEditorGetByte
 		php
+
+		lda		#0
+space_count = *-1
+		beq		no_pending_spaces
+		dec		space_count
+		lda		#' '
+return_char:
+		ldy		#1
+		plp
+		rts
+no_pending_spaces:
+
+		lda		#' '
+saved_char = *-1
+		cmp		#' '
+		beq		no_saved_char
+
+		ldy		#' '
+		sty		saved_char
+		bne		return_char
+
+no_saved_char:
 		lda		bufcnt
 		bne		in_line
 		
@@ -272,18 +311,35 @@ in_line_2:
 		pha
 		jsr		XEPReceiveCursorUpdate
 		pla
+
+		cmp		#' '
+		bne		not_space
+		lda		space_count
+		bmi		not_space
+		inc		space_count
+		bne		in_line_2
 		
+not_space:
 		cmp		#$9b
 		bne		not_eol
 		dec		bufcnt
-		
 		clc
 		jsr		XEPTransmitByte
 		jsr		XEPReceiveCursorUpdate
 		lda		#$9b
-		ldy		#1
-		
+		ldy		#0
+		sty		space_count
+		iny
 not_eol:
+		sty		_status
+		ldy		space_count
+		beq		no_spaces
+		sta		saved_char
+		dec		space_count
+		lda		#' '
+no_spaces:
+		ldy		#1
+_status = *-1
 		jsr		XEPLeaveCriticalSection
 fail:
 		plp
@@ -320,16 +376,8 @@ suspend_loop:
 		bit		burst
 		bpl		non_burst_mode
 		
-		ldx		#0
-		ldy		#0
-burst_wait_loop:
-		lda		porta
-		bit		portbit
-		bne		burst_done
-		dex
-		bne		burst_wait_loop
-		dey
-		bne		burst_wait_loop
+		jsr		XEPWaitBurstACK
+		bcc		burst_done
 
 		ldy		#CIOStatTimeout
 		bne		xit
@@ -348,6 +396,23 @@ non_burst_mode:
 is_break:
 		dec		brkkey
 		ldy		#CIOStatBreak
+		rts
+.endp
+
+.proc XEPWaitBurstACK
+		ldy		#0
+		lda		portbitr
+burst_wait_loop:
+		bit		porta
+		bne		burst_done
+		dex
+		bne		burst_wait_loop
+		dey
+		bne		burst_wait_loop
+		sec
+		rts
+burst_done:
+		clc
 		rts
 .endp
 
@@ -381,18 +446,18 @@ ok:
 		ldy		#1
 		rts
 
-cmd15:
+cmd15:	;Set burst mode: ICAX2 = 0 for normal, 1 for burst
 		ldx		#0
 		lda		icax2z
-		seq:ldx	#$ff
-		cmp		burst
+		seq:dex
+		cpx		burst
 		beq		ok
+		stx		burst
 		php
 		jsr		XEPEnterCriticalSection
 		lda		burst
-		eor		#$ff
-		clc
-		adc		#XEPCMD_EXIT_BURST_MODE
+		and		#1
+		ora		#XEPCMD_EXIT_BURST_MODE
 		jsr		XEPTransmitCommand
 		jsr		XEPLeaveCriticalSection
 		jmp		ok_2			
@@ -546,41 +611,157 @@ not_open:
 		sta		sdmctl
 		sta		dmactl
 		
+		;switch to ORA
 		lda		pactl
 		ora		#$04
 		sta		pactl
-		ldx		#$ff
+
+		;raise input line
+		ldx		portbit
 		stx		porta
-		tax
+
+		;switch to DDRA
 		and		#$fb
 		sta		pactl
-		lda		portbit
-		sta		porta
-		stx		pactl
+
+		;switch to port bit to output
+		stx		porta
+
+		;switch back to ORA
+		ora		#$04
+		sta		pactl
 		
 		php
 		jsr		XEPEnterCriticalSection
 		
-		lda		#XEPCMD_MASTER_RESET
-		jsr		XEPTransmitCommand
-		jsr		XEPReceiveByte
+.if XEP_OPTION_TURBO
+		jsr		XEPSetTransmitStd
+		jsr		XEPReset
 		bpl		open_successful
+
+std_failed:
+		;delay a bit in case the XEP-80 is farked up
+		ldx		#$40
+delay_loop:
+		lda		vcount
+		cmp:req	vcount
+		dex
+		bne		delay_loop
+
+		jsr		XEPSetTransmitFast
+		jsr		XEPReset
+		bpl		open_successful
+
+.else
+		jsr		XEPReset
+		bpl		open_successful
+.endif
+
 		tya
 		pha
-		lda		opflag
-		jsr		XEPClose
+		jsr		XEPClose.force_close
 		pla
 		tay
 xit:
 		jsr		XEPLeaveCriticalSection
 		plp
+		tya
 		rts
 		
-open_successful:
-		mva		#2 lmargn
+open_successful = xit
+.endp
+
+;==========================================================================
+.proc XEPResetScreenVars
+		lda		#2
+		sta		lmargn
+		sta		colcrs
 		mva		#79 rmargn
+		lda		#0
+		sta		rowcrs
+		sta		colcrs+1
+		rts
+.endp
+
+;==========================================================================
+.proc XEPReset
+		lda		#XEPCMD_MASTER_RESET
+		jsr		XEPTransmitCommand
+		jsr		XEPReceiveByte
+		bmi		init_timeout
+		cmp		#$01
+		beq		init_ok
+		ldy		#CIOStatNAK
+init_timeout:
+		rts
+
+init_ok:
+		jsr		XEPResetScreenVars
+
+.if XEP_OPTION_TURBO
+		;enter burst mode
+		lda		#XEPCMD_ENTER_BURST_MODE
+		jsr		XEPTransmitCommand
+
+		;set UART multiplex register to transmit at half rate
+.if XEP_TURBO_4X
+		lda		#$04			;/4
+.else
+		lda		#$02			;/2
+.endif
+		clc
+		jsr		XEPTransmitByte
+		sta		wsync
+		sta		wsync
+		jsr		XEPWaitBurstACK
+
+		lda		#XEPCMD_SET_UMX
+		jsr		XEPTransmitCommand
+		sta		wsync
+		sta		wsync
+		jsr		XEPWaitBurstACK
+
+		;switch UART prescaler from /8 to /4
+.if XEP_TURBO_4X
+		lda		#$02
+.else
+		lda		#$05			;/6 baud divisor
+.endif
+		clc
+		jsr		XEPTransmitByte
+		sta		wsync
+		sta		wsync
+		jsr		XEPWaitBurstACK
+
+		lda		#XEPCMD_SET_EXTRA_BYTE
+		jsr		XEPTransmitCommand
+		sta		wsync
+		sta		wsync
+		jsr		XEPWaitBurstACK
+
+		lda		#$10			;/4 prescaler
+		clc
+		jsr		XEPTransmitByte
+		sta		wsync
+		sta		wsync
+		jsr		XEPWaitBurstACK
+
+		lda		#XEPCMD_SET_BAUD_RATE
+		jsr		XEPTransmitCommand
+		sta		wsync
+		sta		wsync
+		jsr		XEPWaitBurstACK
+
+		;switch to fast transmit
+		jsr		XEPSetTransmitFast
+
+		;exit burst mode
+		lda		#XEPCMD_EXIT_BURST_MODE
+		jsr		XEPTransmitCommand
+.endif
+
 		ldy		#1
-		bne		xit
+		rts
 .endp
 
 ;==========================================================================
@@ -591,6 +772,7 @@ open_successful:
 		sta		opflag
 		bne		already_closed
 		
+force_close:
 		lda		pactl
 		ora		#$04
 		sta		pactl
@@ -651,6 +833,35 @@ err:
 .endp
 
 ;==========================================================================
+.if XEP_OPTION_TURBO
+.proc XEPTransmitCommand
+		sec
+.def :XEPTransmitByte
+		jmp		XEPTransmitByteStd
+.endp
+
+.proc XEPSetTransmitFast
+		_ldalo	#XEPTransmitByteFast
+		sta		XEPTransmitByte+1
+		_ldahi	#XEPTransmitByteFast
+		sta		XEPTransmitByte+2
+		rts
+.endp
+
+.proc XEPSetTransmitStd
+		_ldalo	#XEPTransmitByteStd
+		sta		XEPTransmitByte+1
+		_ldahi	#XEPTransmitByteStd
+		sta		XEPTransmitByte+2
+		rts
+.endp
+
+.else
+XEPTransmitByte = XEPTransmitByteStd
+XEPTransmitCommand = XEPTransmitCommandStd
+.endif
+
+;==========================================================================
 ; Input:
 ;	A = byte
 ;	C = command flag (1 = command, 0 = data)
@@ -661,10 +872,9 @@ err:
 ; Preserved:
 ;	Y
 ;
-XEPTransmitByte = XEPTransmitCommand.do_byte
-.proc XEPTransmitCommand
+.proc XEPTransmitCommandStd
 		sec
-do_byte:
+.def :XEPTransmitByteStd
 		;##ASSERT (p&4)
 		;##TRACE "Transmitting byte %02X" (a)
 		sta		shdatal
@@ -697,14 +907,125 @@ transmit_loop:
 .endp
 
 ;==========================================================================
+.if XEP_OPTION_TURBO
+.proc XEPTransmitCommandFast
+		sec
+.def :XEPTransmitByteFast
+		sta		shdatal
+		lda		#$ff
+		rol
+		sta		shdatah
+		
+		;send start bit
+		lda		portbit
+		eor		#$ff
+		ldy		#$ff
+		sta		wsync
+		sta		porta			;4		*,105-107
+		
+.if XEP_TURBO_4X
+		;Ideal 4X timing: 108, 22.5, 51, 79.5
+
+		;send 9 data bits and stop bit
+		ldx		#5				;2		108-109
+		bit		$80				;3		110-112
+transmit_loop:
+		lsr		shdatah			;6		113-5
+		ror		shdatal			;6		6-11
+		bcs		bit1_1			;2/3	12-13 / 12-14
+		bit		$00				;3		14-16
+		nop						;2		17-18
+		sta		porta			;4		19-22[!]
+		bcc		bit1_0			;3		23-24, 25*, 26
+bit1_1:
+		bit		portbit			;4		15-18
+		sty		porta			;4		19-22[!]
+		bcs		bit1_0			;3		23-24, 25*, 26
+bit1_0:
+
+		lsr		shdatah			;6		27-28, 29*, 30-32, 33*, 34
+		ror		shdatal			;6		35-36, 37*, 38-40, 41*, 42
+		bcs		bit2_1			;2/3	43-44 / 43-44, 45*, 46
+		sta		porta-$ff,y		;5		45*, 46-48, 49*, 50-51 [!]
+		bcc		bit2_0			;3		52, 53*, 54, 55
+bit2_1:
+		sty		porta			;4		47-48, 49*, 50-51[!]
+		bcs		bit2_0			;3		52, 53*, 54, 55
+bit2_0:
+
+		dex						;2		56, 57*, 58
+		beq		done			;2/3	59-60 / 59-61
+
+		lsr		shdatah			;6		61-66
+		ror		shdatal			;6		67-72
+		bcs		bit3_1			;2/3	73-74 / 73-75
+		sta		porta-$ff,y		;5		75-79 [!]
+		bcc		bit3_0			;3		80-82
+bit3_1:
+		sty		porta			;4		76-79 [!]
+		bcs		bit3_0			;3		80-82
+bit3_0:
+
+		lsr		shdatah			;6		83-88
+		ror		shdatal			;6		89-94
+		bcs		bit4_1			;2/3	95-96 / 95-97
+		sta		wsync			;4		97-100
+		sta		porta			;4		101, 102-104*, 105-107 [!]
+		dex						;2		108-109
+		bne		transmit_loop	;3		110-112
+bit4_1:
+		sta		wsync			;4		98-101
+		sty		porta			;4		102, 103-104*, 105-107 [!]
+		dex						;2		108-109
+		bne		transmit_loop	;3		110-112
+
+done:
+		rts
+
+.else
+		;send 9 data bits
+		ldx		#9				;2		108-109
+		bit		$80				;3		110-112
+transmit_loop:
+		lsr		shdatah			;6		113-5
+		ror		shdatal			;6		6-11
+		lda		#$ff			;2		12-13
+		scs:eor	portbit			;3/5	14-21
+		scc:cmp	portbit			;5/3	"
+		pha:pla					;7		22-24,25*,26-28,29*,30
+		pha:pla					;7		31-32,33*,34-36,37*,38-39
+		cmp		portbit			;2		40,41*,42,43,44
+		sta		porta			;4		45*,46,47,48,49*,50
+
+		lda		#$ff			;2
+		dex
+		beq		transmit_done
+
+		lsr		shdatah			;6
+		ror		shdatal			;6
+		scs:eor	portbit			;3/5
+		sta		wsync			;4
+		sta		porta			;4		*,105-107
+
+		dex						;2		108-109
+		bne		transmit_loop	;3		110-112		!! - unconditional
+
+transmit_done:
+		;send stop bit -- we do this separately to save a few cycles
+		sta		wsync
+		sta		porta
+.endif
+		rts
+.endp
+.endif
+
+;==========================================================================
 .proc XEPReceiveByte
-		;set timeout
-		ldx		#0
-		ldy		#$08
+		;set timeout (we are being sloppy on X to save time)
+		ldy		#$40
 		
 		;wait for PORTA bit to go low
-		lda		portbit
-		asl
+		lda		portbitr
 wait_loop:
 		bit		porta
 		beq		found_start
@@ -769,6 +1090,20 @@ stop_bit_bad:
 ; to return without chaining.
 ;
 .proc Reinit
+		;reset work vars
+		ldx		#data_end-data_begin-1
+		lda		#0
+		sta:rpl	data_begin,x-
+		
+		;open 80-column display
+		lda		#$40
+		jsr		XEPOpen
+		bpl		open_success
+
+		sec
+		rts
+
+open_success:
 		;install CIO handlers for E: and S:
 		ldx		#30
 check_loop:
@@ -806,30 +1141,26 @@ not_s:
 		_ldahi	#base_addr
 		sta		memtop+1
 
-		;reset work vars
-		ldx		#data_end-data_begin-1
-		lda		#0
-		sta:rpl	data_begin,x-
-		
-		;open 80-column display
-		lda		#$40
-		jsr		XEPOpen
+		;mark success for Init
+		clc
 
 		;check if this is a warmstart, and don't call into DOS if not
 		lda		warmst
 		beq		skip_chain
 		
-		jmp		$ffff
+		jmp		skip_chain
 dosini_chain = *-2
 
 skip_chain:
 		rts
 .endp
 
-bss_end = *
-
 ;==========================================================================
 .proc Init
+		;attempt to initialize XEP-80
+		jsr		Reinit
+		bcs		fail
+
 		;hook DOSINI
 		mwa		dosini Reinit.dosini_chain
 		
@@ -840,6 +1171,7 @@ bss_end = *
 		
 		;all done
 		clc
+fail:
 		rts
 .endp
 

@@ -19,7 +19,6 @@
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicesio.h>
 #include <at/atcore/propertyset.h>
-#include "devicemanager.h"
 #include "debuggerlog.h"
 #include <windows.h>
 #include <mmsystem.h>
@@ -76,6 +75,14 @@ protected:
 	HMIDIOUT mhmo;
 };
 
+void ATCreateDeviceMidiMate(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceMidiMate> p(new ATDeviceMidiMate);
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefMidiMate = { "midimate", nullptr, L"MIDIMATE", ATCreateDeviceMidiMate };
+
 ATDeviceMidiMate::ATDeviceMidiMate()
 	: mpSIOMgr(nullptr)
 	, mbActive(false)
@@ -96,8 +103,7 @@ void *ATDeviceMidiMate::AsInterface(uint32 id) {
 }
 
 void ATDeviceMidiMate::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "midimate";
-	info.mName = L"MIDIMATE";
+	info.mpDef = &g_ATDeviceDefMidiMate;
 }
 
 void ATDeviceMidiMate::GetSettings(ATPropertySet& settings) {
@@ -260,16 +266,4 @@ void ATDeviceMidiMate::OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit)
 }
 
 void ATDeviceMidiMate::OnSendReady() {
-}
-
-///////////////////////////////////////////////////////////////////////////
-
-void ATCreateDeviceMidiMate(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDeviceMidiMate> p(new ATDeviceMidiMate);
-
-	*dev = p.release();
-}
-
-void ATRegisterDeviceMidiMate(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("midimate", ATCreateDeviceMidiMate);
 }

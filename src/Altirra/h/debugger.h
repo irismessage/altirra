@@ -32,6 +32,8 @@ struct ATSourceLineInfo;
 class ATDebugExpNode;
 class IATDebuggerClient;
 struct ATDebuggerExprParseOpts;
+class IATDebugTarget;
+struct ATDebugExpEvalContext;
 
 enum ATDebugEvent {
 	kATDebugEvent_BreakpointsChanged,
@@ -73,6 +75,8 @@ struct ATDebuggerSystemState {
 	uint16	mFramePC;
 	bool	mbRunning;
 	bool	mbEmulation;
+
+	IATDebugTarget *mpDebugTarget;
 };
 
 struct ATCallStackFrame {
@@ -146,6 +150,7 @@ public:
 	virtual void StepOut(ATDebugSrcMode sourceMode) = 0;
 	virtual uint16 GetPC() const = 0;
 	virtual void SetPC(uint16 pc) = 0;
+	virtual uint32 GetExtPC() const = 0;
 	virtual uint16 GetFramePC() const = 0;
 	virtual void SetFramePC(uint16 pc) = 0;
 	virtual uint32 GetCallStack(ATCallStackFrame *dst, uint32 maxCount) = 0;
@@ -159,11 +164,11 @@ public:
 	virtual void RemoveClient(IATDebuggerClient *client) = 0;
 	virtual void RequestClientUpdate(IATDebuggerClient *client) = 0;
 
-	virtual uint32 LoadSymbols(const wchar_t *fileName, bool processDirectives = true) = 0;
+	virtual uint32 LoadSymbols(const wchar_t *fileName, bool processDirectives = true, const uint32 *targetIdOverride = nullptr) = 0;
 	virtual void UnloadSymbols(uint32 moduleId) = 0;
 	virtual void ProcessSymbolDirectives(uint32 id) = 0;
 
-	virtual sint32 ResolveSymbol(const char *s, bool allowGlobal = false, bool allowShortBase = true) = 0;
+	virtual sint32 ResolveSymbol(const char *s, bool allowGlobal = false, bool allowShortBase = true, bool allowNakedHex = true) = 0;
 
 	virtual void AddCustomSymbol(uint32 address, uint32 len, const char *name, uint32 rwxmode, uint32 moduleId = 0) = 0;
 	virtual void RemoveCustomSymbol(uint32 address) = 0;
@@ -173,6 +178,9 @@ public:
 	virtual VDStringA GetAddressText(uint32 globalAddr, bool useHexSpecifier, bool addSymbolInfo = false) = 0;
 
 	virtual void GetDirtyStorage(vdfastvector<ATDebuggerStorageId>& ids) const = 0;
+
+	virtual sint32 EvaluateThrow(const char *s) = 0;
+	virtual ATDebugExpEvalContext GetEvalContext() const = 0;
 
 	virtual void StartActiveCommand(IATDebuggerActiveCommand *cmd) = 0;
 
@@ -192,6 +200,11 @@ public:
 	virtual const char *GetPrompt() const = 0;
 	virtual VDEvent<IATDebugger, const char *>& OnPromptChanged() = 0;
 
+	virtual bool SetTarget(uint32 index) = 0;
+	virtual uint32 GetTargetIndex() const = 0;
+	virtual IATDebugTarget *GetTarget() const = 0;
+	virtual void GetTargetList(vdfastvector<IATDebugTarget *>& targets) = 0;
+
 	virtual VDEvent<IATDebugger, bool>& OnRunStateChanged() = 0;
 
 	virtual VDEvent<IATDebugger, ATDebuggerOpenEvent *>& OnDebuggerOpen() = 0;
@@ -210,6 +223,7 @@ public:
 	virtual bool LookupLine(uint32 addr, bool searchUp, uint32& moduleId, ATSourceLineInfo& lineInfo) = 0;
 	virtual bool LookupFile(const wchar_t *fileName, uint32& moduleId, uint16& fileId) = 0;
 	virtual void GetLinesForFile(uint32 moduleId, uint16 fileId, vdfastvector<ATSourceLineInfo>& lines) = 0;
+	virtual sint32 ResolveSymbol(const char *s, bool allowGlobal = false, bool allowShortBase = true, bool allowNakedHex = true) = 0;
 };
 
 class IATDebuggerClient {

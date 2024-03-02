@@ -13,10 +13,14 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{B1076C28-FEB2-40A6-8224-A072C44DD2B8}</ProjectGuid>
     <RootNamespace>ATHelpFile</RootNamespace>
-    <SccProjectName>SAK</SccProjectName>
-    <SccAuxPath>SAK</SccAuxPath>
-    <SccLocalPath>SAK</SccLocalPath>
-    <SccProvider>SAK</SccProvider>
+    <SccProjectName>
+    </SccProjectName>
+    <SccAuxPath>
+    </SccAuxPath>
+    <SccLocalPath>
+    </SccLocalPath>
+    <SccProvider>
+    </SccProvider>
     <PlatformToolset>v120</PlatformToolset>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -71,7 +75,9 @@
     <None Include="source\compatibility.xml" />
     <None Include="source\debug-basic.xml" />
     <None Include="source\debug-diagnostics.xml" />
-    <None Include="source\debug-expressions.xml" />
+    <None Include="source\debug-expressions.xml">
+      <SubType>Designer</SubType>
+    </None>
     <None Include="source\debug-intro.xml" />
     <None Include="source\debug-logging.xml" />
     <None Include="source\debug-source.xml" />
@@ -94,7 +100,9 @@
     <None Include="source\serial.xml">
       <SubType>Designer</SubType>
     </None>
-    <None Include="source\toc.xml" />
+    <None Include="source\toc.xml">
+      <SubType>Designer</SubType>
+    </None>
     <None Include="source\touch.xml" />
     <None Include="source\troubleshooting.xml" />
     <None Include="source\ultimate1mb.xml" />
@@ -118,6 +126,10 @@
     <Xml Include="source\1030.xml">
       <SubType>Designer</SubType>
     </Xml>
+    <None Include="source\debug-profiling.xml">
+      <SubType>Designer</SubType>
+    </None>
+    <Xml Include="source\dragoncart.xml" />
     <Xml Include="source\sx212.xml" />
     <Xml Include="source\using-the-emulated-computer.xml">
       <SubType>Designer</SubType>

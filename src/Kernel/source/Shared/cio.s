@@ -356,8 +356,11 @@ cmdGetCharsSingle:
 ; end. Also, in this case CIOCHR must reflect the last character in the
 ; buffer and not the EOL. (Required by Atari DOS 2.5 RAMDISK banner)
 ;
+; If length=0, the character in the A register is output without an EOL.
+; This behavior is required by the graphics library for Mad Pascal.
+;
 cmdPutRecord:
-	beq		cmdPutRecordEOL
+	beq		cmdPutCharsSingle
 cmdPutRecordLoop:
 	ldy		#0
 	lda		(icbalz),y

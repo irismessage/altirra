@@ -29,8 +29,8 @@ public:
 	virtual uint8 CPUReadByte(uint32 address) = 0;
 	virtual uint8 CPUExtReadByte(uint16 address, uint8 bank) = 0;
 	virtual sint32 CPUExtReadByteAccel(uint16 address, uint8 bank, bool chipOK) = 0;
-	virtual uint8 CPUDebugReadByte(uint16 address) = 0;
-	virtual uint8 CPUDebugExtReadByte(uint16 address, uint8 bank) = 0;
+	virtual uint8 CPUDebugReadByte(uint16 address) const = 0;
+	virtual uint8 CPUDebugExtReadByte(uint16 address, uint8 bank) const = 0;
 	virtual void CPUWriteByte(uint16 address, uint8 value) = 0;
 	virtual void CPUExtWriteByte(uint16 address, uint8 bank, uint8 value) = 0;
 	virtual sint32 CPUExtWriteByteAccel(uint16 address, uint8 bank, uint8 value, bool chipOK) = 0;
@@ -41,7 +41,7 @@ public:
 	const uintptr *const *mpCPUReadBankMap;
 	const uintptr *const *mpCPUWriteBankMap;
 
-	uint8 DebugReadByte(uint16 address) {
+	uint8 DebugReadByte(uint16 address) const {
 		uintptr readPage = mpCPUReadPageMap[address >> 8];
 		return ATCPUMEMISSPECIAL(readPage) ? CPUDebugReadByte(address) : *(const uint8 *)(readPage + address);
 	}
@@ -63,7 +63,7 @@ public:
 			CPUReadByte(address);
 	}
 
-	uint8 DebugExtReadByte(uint16 address, uint8 bank) {
+	uint8 DebugExtReadByte(uint16 address, uint8 bank) const {
 		uintptr readPage = mpCPUReadBankMap[bank][address >> 8];
 		return ATCPUMEMISSPECIAL(readPage) ? CPUDebugExtReadByte(address, bank) : *(const uint8 *)(readPage + address);
 	}

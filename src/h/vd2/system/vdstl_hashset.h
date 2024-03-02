@@ -515,7 +515,7 @@ void vdhashset<K, Hash, Pred, A>::rehash(size_type n) {
 
 template<class K, class Hash, class Pred, class A>
 void vdhashset<K, Hash, Pred, A>::rehash_to_size(size_type n) {
-	size_type buckets = compute_bucket_count(n);
+	size_type buckets = this->compute_bucket_count(n);
 	rehash(buckets);
 }
 

@@ -21,6 +21,7 @@
 #include <vd2/system/vdtypes.h>
 
 class ATCPUEmulator;
+class ATSimulatorEventManager;
 
 class ATCPUHeatMap {
 public:
@@ -40,6 +41,8 @@ public:
 	ATCPUHeatMap();
 	~ATCPUHeatMap();
 
+	void Init(ATSimulatorEventManager *pSimEvtMgr);
+
 	uint32 GetAStatus() const { return mA; }
 	uint32 GetXStatus() const { return mX; }
 	uint32 GetYStatus() const { return mY; }
@@ -49,12 +52,22 @@ public:
 
 	void Reset();
 
+	void ResetMemoryRange(uint32 addr, uint32 len);
+	void PresetMemoryRange(uint32 addr, uint32 len);
+
 	VDNOINLINE void ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 addr, uint16 pc);
 
 protected:
+	void TrapOnUninitAccess(uint8 opcode, uint16 addr, uint16 pc);
+
 	uint32	mA;
 	uint32	mX;
 	uint32	mY;
+
+	bool	mbTrapOnUninitAccess;
+
+	ATSimulatorEventManager *mpSimEvtMgr;
+
 	uint32	mMemory[0x10000];
 	uint8	mMemAccess[0x10000];
 };

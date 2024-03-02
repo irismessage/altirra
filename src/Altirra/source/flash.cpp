@@ -16,8 +16,8 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <at/atcore/scheduler.h>
 #include "flash.h"
-#include "scheduler.h"
 #include "debuggerlog.h"
 
 ATDebuggerLogChannel g_ATLCFlash(false, false, "FLASH", "Flash memory erase operations");
@@ -382,7 +382,6 @@ bool ATFlashEmulator::ReadByte(uint32 address, uint8& data) const {
 bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 	uint32 address15 = address & 0x7fff;
 	uint32 address11 = address & 0x7ff;
-	bool resetMapping = false;
 
 	g_ATLCFlashWrite("Write[$%05X] = $%02X\n", address, value);
 

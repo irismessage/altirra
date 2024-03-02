@@ -32,19 +32,56 @@ struct ATUIKeyboardOptions {
 	enum LayoutMode {
 		kLM_Natural,
 		kLM_Raw,
+		kLM_Custom,
 		kLMCount
 	};
 
 	bool mbRawKeys;
+	bool mbFullRawKeys;
 	bool mbEnableFunctionKeys;
 	bool mbAllowShiftOnColdReset;
 	ArrowKeyMode mArrowKeyMode;
 	LayoutMode mLayoutMode;
 };
 
-bool ATUIGetScanCodeForCharacter(char c, uint8& ch);
+bool ATUIGetDefaultScanCodeForCharacter(char c, uint8& ch);
+bool ATUIGetScanCodeForCharacter(char c, uint32& ch);
 void ATUIInitVirtualKeyMap(const ATUIKeyboardOptions& options);
-bool ATUIGetScanCodeForVirtualKey(uint32 virtKey, bool alt, bool ctrl, bool shift, uint8& scanCode);
+bool ATUIGetScanCodeForVirtualKey(uint32 virtKey, bool alt, bool ctrl, bool shift, bool extended, uint32& scanCode);
+
+void ATUIGetDefaultKeyMap(const ATUIKeyboardOptions& options, vdfastvector<uint32>& mappings);
+void ATUIGetCustomKeyMap(vdfastvector<uint32>& mappings);
+void ATUISetCustomKeyMap(const uint32 *mappings, size_t n);
+
+bool ATIsValidScanCode(uint32 c);
+
+// Keyboard mappings are packed in bitfields as follows:
+//
+// Bits 31-25: modifiers
+// Bits 24-9: virtual key or character code
+// Bits 0-8: scan code
+enum ATUIKeyboardMappingModifier : uint32 {
+	kATUIKeyboardMappingModifier_Shift = 0x2000000,
+	kATUIKeyboardMappingModifier_Ctrl = 0x4000000,
+	kATUIKeyboardMappingModifier_Alt = 0x8000000,
+	kATUIKeyboardMappingModifier_Extended = 0x10000000,
+	kATUIKeyboardMappingModifier_Cooked = 0x20000000
+};
+
+enum ATUIKeyScanCode : uint32 {
+	kATUIKeyScanCodeFirst = 0x100,
+	kATUIKeyScanCode_Start = 0x100,
+	kATUIKeyScanCode_Select = 0x101,
+	kATUIKeyScanCode_Option = 0x102,
+	kATUIKeyScanCode_Break = 0x103,
+	kATUIKeyScanCodeLast = 0x103
+};
+
+inline uint32 ATUIPackKeyboardMapping(uint32 scancode, uint32 vk, uint32 modifiers) {
+	return scancode + (vk << 9) + modifiers;
+}
+
+void ATUIGetKeyboardMapping();
 
 enum ATUIAccelContext {
 	kATUIAccelContext_Global,

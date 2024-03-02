@@ -52,4 +52,10 @@ public:
 	virtual void SendDatagram(uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, const ATEthernetAddr& dstHwAddr, const void *data, uint32 dataLen) = 0;
 };
 
+class IATNetTcpStack {
+public:
+	virtual bool Connect(uint32 dstIpAddr, uint16 dstPort, IATSocketHandler *handler, IATSocket **newSocket) = 0;
+
+};
+
 #endif	// f_ATNETWORK_SOCKET_H

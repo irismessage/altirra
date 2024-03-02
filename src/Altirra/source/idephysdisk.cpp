@@ -41,6 +41,10 @@ sint64 ATIDEGetPhysicalDiskSize(const wchar_t *path) {
 	return success ? partInfo.PartitionLength.QuadPart : -1;
 }
 
+void ATCreateDeviceHardDiskPhysical(const ATPropertySet& pset, IATDevice **dev);
+
+extern const ATDeviceDefinition g_ATDeviceDefIDEPhysDisk = { "hdphysdisk", "harddisk", L"Hard disk image (physical disk)", ATCreateDeviceHardDiskPhysical };
+
 ATIDEPhysicalDisk::ATIDEPhysicalDisk()
 	: mhDisk(INVALID_HANDLE_VALUE)
 	, mpBuffer(NULL)
@@ -68,9 +72,7 @@ void *ATIDEPhysicalDisk::AsInterface(uint32 iid) {
 }
 
 void ATIDEPhysicalDisk::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mName = L"Hard disk image (physical disk)";
-	info.mConfigTag = "harddisk";
-	info.mTag = "hdphysdisk";
+	info.mpDef = &g_ATDeviceDefIDEPhysDisk;
 }
 
 void ATIDEPhysicalDisk::GetSettings(ATPropertySet& settings) {

@@ -29,39 +29,7 @@
 #include <vd2/system/vdtypes.h>
 
 #ifdef VD_COMPILER_MSVC
-	// Intrinsics available in VC6.0
-	extern "C" long __cdecl _InterlockedDecrement(volatile long *p);
-	extern "C" long __cdecl _InterlockedIncrement(volatile long *p);
-	extern "C" long __cdecl _InterlockedCompareExchange(volatile long *p, long n, long p_compare);
-	extern "C" long __cdecl _InterlockedExchange(volatile long *p, long n);
-	extern "C" long __cdecl _InterlockedExchangeAdd(volatile long *p, long n);
-
-	#pragma intrinsic(_InterlockedDecrement)
-	#pragma intrinsic(_InterlockedIncrement)
-	#pragma intrinsic(_InterlockedCompareExchange)
-	#pragma intrinsic(_InterlockedExchange)
-	#pragma intrinsic(_InterlockedExchangeAdd)
-
-	// Intrinsics available in VC7.1. Note that the compiler is smart enough to
-	// use straight LOCK AND/OR/XOR if the return value is not needed; otherwise
-	// it uses a LOCK CMPXCHG loop.
-	#if _MSC_VER >= 1310
-		extern "C" long __cdecl _InterlockedAnd(volatile long *p, long n);
-		extern "C" long __cdecl _InterlockedOr(volatile long *p, long n);
-		extern "C" long __cdecl _InterlockedXor(volatile long *p, long n);
-
-		#pragma intrinsic(_InterlockedAnd)
-		#pragma intrinsic(_InterlockedOr)
-		#pragma intrinsic(_InterlockedXor)
-	#endif
-
-	// Intrinsics available with AMD64
-	#ifdef VD_CPU_AMD64
-		extern "C" void *__cdecl _InterlockedExchangePointer(void *volatile *pp, void *p);
-		#pragma intrinsic(_InterlockedExchangePointer)
-		extern "C" void *__cdecl _InterlockedCompareExchangePointer(void *volatile *pp, void *p, void *compare);
-		#pragma intrinsic(_InterlockedCompareExchangePointer)
-	#endif
+	#include <vd2/system/win32/intrin.h>
 #endif
 
 inline void *VDAtomicCompareExchangePointer(void *volatile *pp, void *p, void *compare) {

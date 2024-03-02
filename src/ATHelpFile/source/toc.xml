@@ -15,6 +15,7 @@
     <t name="Additions disk" href="additions.html"/>
     <t name="Cartridge-based devices">
       <t name="Introduction" href="devices-cartintro.html" />
+      <t name="DragonCart" href="dragoncart.html"/>
       <t name="MyIDE" href="myide.html"/>
     </t>
     <t name="Internal devices">
@@ -29,6 +30,9 @@
       <t name="SX212 Modem" href="sx212.html"/>
       <t name="PCLink" href="pclink.html"/>
     </t>
+    <t name="High-level emulation (HLE) devices">
+      <t name="Host (H:) device" href="host-device.html"/>
+    </t>
     <t name="Other devices">
       <t name="XEP-80 Interface Module" href="xep80.html" />
     </t>
@@ -39,11 +43,11 @@
     <t name="Addresses and expressions" href="debug-expressions.html"/>
     <t name="Diagnostics" href="debug-diagnostics.html"/>
     <t name="Logging" href="debug-logging.html"/>
+    <t name="Profiling" href="debug-profiling.html"/>
     <t name="Debugging BASIC programs" href="debug-basic.html"/>
   </t>
   <t name="Reference">
     <t name="Options" href="options.html"/>
-    <t name="Host device" href="host-device.html"/>
   </t>
   <t name="Troubleshooting">
     <t name="General issues" href="troubleshooting.html"/>

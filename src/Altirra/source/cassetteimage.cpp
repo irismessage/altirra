@@ -774,11 +774,7 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file) {
 
 	file.Seek(datapos);
 
-	bool outputBit = false;
-	bool lastBit = false;
-	bool dataPhase = false;
 	int bitTimer = 0;
-	uint8 bitCounter = 0;
 	int bitAccum = 0;
 
 	mImageBlocks.resize(2, (ATCassetteImageBlock *)NULL);
@@ -790,7 +786,6 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file) {
 	mImageBlocks[1] = pAudioBlock;
 
 	progress.InitF((uint32)((uint64)datalen >> 10), L"Processed %uK / %uK", L"Processing raw waveform");
-	sint64 progressValue = 0;
 
 	uint32 outAccum = 0;
 	uint32 outAccumBits = 0;
@@ -1114,7 +1109,6 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file) {
 
 	ATCassetteEncoder enc(pDataBlock->mData, mPeakMaps[0], kPeakSamplesPerSecond);
 	uint32 baudRate = 600;
-	uint32 currentCycle = 0;
 	uint8 buf[128];
 
 	ATUIProgress progress;

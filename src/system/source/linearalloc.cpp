@@ -30,6 +30,34 @@ void VDLinearAllocator::Clear() {
 	mAllocLeft = 0;
 }
 
+void VDLinearAllocator::Swap(VDLinearAllocator& other) {
+	std::swap(mpBlocks, other.mpBlocks);
+	std::swap(mpAllocPtr, other.mpAllocPtr);
+	std::swap(mAllocLeft, other.mAllocLeft);
+	std::swap(mBlockSize, other.mBlockSize);
+}
+
+void VDLinearAllocator::Reset() {
+	if (!mpBlocks)
+		return;
+	
+	// free all but the last block
+	Block *p = mpBlocks->mpNext;
+	while(p) {
+		Block *next = p->mpNext;
+
+		free(p);
+
+		p = next;
+	}
+
+	mpBlocks->mpNext = nullptr;
+
+	size_t reclaimed = mpAllocPtr - (char *)(mpBlocks + 1);
+	mpAllocPtr = (char *)(mpBlocks + 1);
+	mAllocLeft += reclaimed;
+}
+
 void *VDLinearAllocator::AllocateSlow(size_t bytes) {
 	Block *block;
 	void *p;

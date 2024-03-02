@@ -17,13 +17,13 @@
 
 #include "stdafx.h"
 #include <windows.h>
-#include <at/atui/dialog.h>
+#include <at/atnativeui/dialog.h>
 #include "resource.h"
 #include "simulator.h"
 #include "debugger.h"
 #include "cpu.h"
 #include "options.h"
-#include "uimanager.h"
+#include <at/atui/uimanager.h>
 #include "uimessagebox.h"
 #include "uicommondialogs.h"
 #include "uiqueue.h"

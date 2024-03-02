@@ -99,6 +99,8 @@ public:
 	virtual bool SetSubrect(const vdrect32 *r) = 0;
 	virtual void SetLogicalPalette(const uint8 *pLogicalPalette) = 0;
 
+	virtual bool AreVSyncTicksNeeded() const = 0;
+
 	virtual float GetSyncDelta() const = 0;
 };
 
@@ -128,6 +130,7 @@ public:
 	virtual bool SetSubrect(const vdrect32 *r);
 	virtual void SetLogicalPalette(const uint8 *pLogicalPalette);
 
+	virtual bool AreVSyncTicksNeeded() const { return true; }
 	virtual float GetSyncDelta() const;
 
 protected:

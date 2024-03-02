@@ -394,7 +394,7 @@ void ATCassetteEmulator::OnScheduledEvent(uint32 id) {
 		mpPlayEvent = NULL;
 
 		if (kBR_ByteReceived == ProcessBit()) {
-			mpPokey->ReceiveSIOByte(mDataByte, 0);
+			mpPokey->ReceiveSIOByte(mDataByte, 0, false, false);
 
 			g_ATLCCasData("Receiving byte: %02x (pos=%.3fs)\n", mDataByte, (float)mPosition / (float)kDataFrequency);
 		}
@@ -438,7 +438,12 @@ void ATCassetteEmulator::PokeyResetSerialInput() {
 	mSIOPhase = 0;
 }
 
-void ATCassetteEmulator::WriteAudio(uint32 startTime, float *dstLeft, float *dstRight, uint32 n) {
+void ATCassetteEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
+	const uint32 startTime = mixInfo.mStartTime;
+	float *dstLeft = mixInfo.mpLeft;
+	float *dstRight = mixInfo.mpRight;
+	uint32 n = mixInfo.mCount;
+
 	VDASSERT(n > 0);
 
 	// fix end for currently open event if there is one

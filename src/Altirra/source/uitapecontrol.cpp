@@ -20,8 +20,8 @@
 #include <vd2/system/w32assist.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Riza/bitmap.h>
-#include <at/atui/dialog.h>
-#include "uinativewindow.h"
+#include <at/atnativeui/dialog.h>
+#include <at/atnativeui/uinativewindow.h>
 #include "resource.h"
 #include "cassette.h"
 #include "cassetteimage.h"

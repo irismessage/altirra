@@ -2760,6 +2760,8 @@ protected:
 	int	mConversionTexW;
 	int	mConversionTexH;
 	bool mbHighPrecision;
+	bool mbPaletteTextureValid;
+	bool mbPaletteTextureIdentity;
 
 	VDPixmap			mTexFmt;
 	VDPixmapCachedBlitter mCachedBlitter;
@@ -2777,6 +2779,8 @@ protected:
 	IDirect3DTexture9	*mpD3DImageTexture2d;
 	IDirect3DTexture9	*mpD3DImageTexture2dUpload;
 	IDirect3DTexture9	*mpD3DConversionTextures[3];
+
+	vdblock<uint32> mLastPalette;
 };
 
 bool VDCreateVideoUploadContextD3D9(IVDVideoUploadContextD3D9 **ppContext) {
@@ -2796,6 +2800,7 @@ VDVideoUploadContextD3D9::VDVideoUploadContextD3D9()
 	, mpD3DImageTexture2d(NULL)
 	, mpD3DImageTexture2dUpload(NULL)
 	, mbHighPrecision(false)
+	, mbPaletteTextureValid(false)
 {
 	for(int i=0; i<3; ++i) {
 		mpD3DImageTextures[i] = NULL;
@@ -3062,6 +3067,9 @@ bool VDVideoUploadContextD3D9::Init(void *hmonitor, bool use9ex, const VDPixmap&
 					subh = 1;
 
 				if (source.format == nsVDPixmap::kPixFormat_Pal8) {
+					mbPaletteTextureValid = false;
+					mLastPalette.resize(256);
+
 					hr = dev->CreateTexture(256, 1, 1, 0, D3DFMT_X8R8G8B8, texPool, &mpD3DPaletteTexture, NULL);
 					if (FAILED(hr)) {
 						Shutdown();
@@ -3398,21 +3406,42 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
 	HRESULT hr;
 
 	if (mpD3DPaletteTexture) {
-		if (!Lock(mpD3DPaletteTexture, mpD3DPaletteTextureUpload, &lr))
-			return false;
-
-		if (source.palette) {
-			memcpy(lr.pBits, source.palette, 256*4);
-		} else {
-			uint32 *dst = (uint32 *)lr.pBits;
-			uint32 v = 0;
-			for(uint32 i=0; i<256; ++i) {
-				*dst++ = v;
-				v += 0x010101;
+		bool paletteValid = mbPaletteTextureValid;
+		if (paletteValid) {
+			if (source.palette) {
+				if (memcmp(mLastPalette.data(), source.palette, sizeof(uint32)*256))
+					paletteValid = false;
+			} else {
+				if (!mbPaletteTextureIdentity)
+					paletteValid = false;
 			}
 		}
 
-		VDVERIFY(Unlock(mpD3DPaletteTexture, mpD3DPaletteTextureUpload));
+		if (!paletteValid) {
+			if (!Lock(mpD3DPaletteTexture, mpD3DPaletteTextureUpload, &lr))
+				return false;
+
+			if (source.palette) {
+				memcpy(mLastPalette.data(), source.palette, 256*4);
+
+				mbPaletteTextureIdentity = false;
+			} else {
+				uint32 *dst = mLastPalette.data();
+				uint32 v = 0;
+				for(uint32 i=0; i<256; ++i) {
+					*dst++ = v;
+					v += 0x010101;
+				}
+
+				mbPaletteTextureIdentity = true;
+			}
+
+			memcpy(lr.pBits, mLastPalette.data(), 256*4);
+
+			VDVERIFY(Unlock(mpD3DPaletteTexture, mpD3DPaletteTextureUpload));
+
+			mbPaletteTextureValid = true;
+		}
 	}
 	
 	if (!Lock(mpD3DImageTextures[0], mpD3DImageTexturesUpload[0], &lr))
@@ -4767,7 +4796,8 @@ bool VDVideoDisplayMinidriverDX9::Tick(int id) {
 void VDVideoDisplayMinidriverDX9::Poll() {
 	if (mbSwapChainPresentPending) {
 		RECT rClient = { mClientRect.left, mClientRect.top, mClientRect.right, mClientRect.bottom };
-		UpdateScreen(rClient, kModeVSync, true);
+		if (!UpdateScreen(rClient, kModeVSync, true))
+			mSource.mpCB->RequestNextFrame();
 	}
 }
 
@@ -4782,6 +4812,9 @@ bool VDVideoDisplayMinidriverDX9::Invalidate() {
 }
 
 bool VDVideoDisplayMinidriverDX9::Update(UpdateMode mode) {
+	if (!mpManager->CheckDevice())
+		return false;
+
 	int fieldMask = 3;
 
 	switch(mode & kModeFieldMask) {
@@ -4809,7 +4842,9 @@ void VDVideoDisplayMinidriverDX9::Refresh(UpdateMode mode) {
 	if (mClientRect.right > 0 && mClientRect.bottom > 0) {
 		RECT rClient = { mClientRect.left, mClientRect.top, mClientRect.right, mClientRect.bottom };
 
-		Paint(NULL, rClient, mode);
+		if (!Paint(NULL, rClient, mode)) {
+			VDDEBUG_DX9DISP("Refresh() failed in Paint()\n");
+		}
 	}
 }
 
@@ -5258,15 +5293,15 @@ bool VDVideoDisplayMinidriverDX9::UpdateScreen(const RECT& rClient, UpdateMode u
 	VDASSERT(!mPresentHistory.mbPresentPending);
 
 	if (FAILED(hr)) {
-		VDDEBUG_DX9DISP("VideoDisplay/DX9: Render failed -- applying boot to the head.\n");
+		VDDEBUG_DX9DISP("VideoDisplay/DX9: Render failed in UpdateScreen() -- applying boot to the head.\n");
 
 		// TODO: Need to free all DEFAULT textures before proceeding
 
 		if (!mpManager->Reset())
 			return false;
-	} else
-		mSource.mpCB->RequestNextFrame();
+	}
 
+	mSource.mpCB->RequestNextFrame();
 	return true;
 }
 

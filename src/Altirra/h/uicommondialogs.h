@@ -20,5 +20,6 @@ struct ATUIFileDialogResult : public ATUIFuture {
 };
 
 vdrefptr<ATUIFileDialogResult>  ATUIShowOpenFileDialog(uint32 id, const wchar_t *title, const wchar_t *filters);
+vdrefptr<ATUIFileDialogResult>  ATUIShowSaveFileDialog(uint32 id, const wchar_t *title, const wchar_t *filters);
 
 #endif

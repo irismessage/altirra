@@ -30,6 +30,7 @@
 	#endif
 #endif
 
+#include <at/atcore/scheduler.h>
 #include "cpu.h"
 #include "cpumemory.h"
 #include "memorymanager.h"
@@ -37,7 +38,6 @@
 #include "gtia.h"
 #include "pokey.h"
 #include "disk.h"
-#include "scheduler.h"
 #include "vbxe.h"
 #include "pia.h"
 #include "simeventmanager.h"
@@ -63,6 +63,9 @@ class ATDeviceManager;
 class IATDeviceSIOManager;
 class IATDeviceCIOManager;
 class IATPrinterOutput;
+class IATDebugTarget;
+class IATDevice;
+struct ATCPUHookInitNode;
 
 enum ATMemoryMode : uint32 {
 	kATMemoryMode_48K,
@@ -129,6 +132,7 @@ enum ATIDEHardwareMode {
 	kATIDEHardwareMode_SIDE,
 	kATIDEHardwareMode_MyIDE_V2_D5xx,
 	kATIDEHardwareMode_SIDE2,
+	kATIDEHardwareMode_MyIDE_V2Updated,
 	kATIDEHardwareModeCount
 };
 
@@ -169,7 +173,6 @@ class ATCartridgeEmulator;
 class ATPortController;
 class ATInputManager;
 class ATVBXEEmulator;
-class ATSoundBoardEmulator;
 class ATCPUProfiler;
 class ATCPUVerifier;
 class ATCPUHeatMap;
@@ -182,6 +185,7 @@ class ATMMUEmulator;
 class ATAudioMonitor;
 class IATPBIDevice;
 class IATVirtualScreenHandler;
+struct ATCPUTimestampDecoder;
 
 enum ATLoadType {
 	kATLoadType_Other,
@@ -192,7 +196,8 @@ enum ATLoadType {
 	kATLoadType_BasicProgram,
 	kATLoadType_SaveState,
 	kATLoadType_Zip,
-	kATLoadType_GZip
+	kATLoadType_GZip,
+	kATLoadType_SAP
 };
 
 struct ATStateLoadContext {
@@ -252,6 +257,7 @@ public:
 	ATSimulatorEventManager *GetEventManager() { return mpSimEventManager; }
 	ATCPUEmulator& GetCPU() { return mCPU; }
 	ATCPUEmulatorMemory& GetCPUMemory() { return *mpMemMan; }
+	IATDebugTarget *GetDebugTarget() { return mpDebugTarget; }
 	ATMemoryManager *GetMemoryManager() { return mpMemMan; }
 	ATMMUEmulator *GetMMU() { return mpMMU; }
 	ATAnticEmulator& GetAntic() { return mAntic; }
@@ -264,7 +270,6 @@ public:
 	IATJoystickManager& GetJoystickManager() { return *mpJoysticks; }
 	ATPBIManager& GetPBIManager() const { return *mpPBIManager; }
 	ATVBXEEmulator *GetVBXE() { return mpVBXE; }
-	ATSoundBoardEmulator *GetSoundBoard() { return mpSoundBoard; }
 	ATCartridgeEmulator *GetCartridge(uint32 unit) { return mpCartridge[unit]; }
 	IATUIRenderer *GetUIRenderer() { return mpUIRenderer; }
 	ATIDEEmulator *GetIDEEmulator() { return mpIDE; }
@@ -346,6 +351,9 @@ public:
 	ATMemoryClearMode GetMemoryClearMode() const { return mMemoryClearMode; }
 	void SetMemoryClearMode(ATMemoryClearMode mode) { mMemoryClearMode = mode; }
 
+	bool IsFloatingIoBusEnabled() const { return mbFloatingIoBus; }
+	void SetFloatingIoBusEnabled(bool enabled);
+
 	bool IsRandomFillEXEEnabled() const { return mbRandomFillEXEEnabled; }
 	void SetRandomFillEXEEnabled(bool enabled);
 
@@ -383,10 +391,6 @@ public:
 	void SetVBXESharedMemoryEnabled(bool enable);
 	void SetVBXEAltPageEnabled(bool enable);
 
-	void SetSoundBoardEnabled(bool enable);
-	void SetSoundBoardMemBase(uint32 membase);
-	uint32 GetSoundBoardMemBase() const;
-
 	bool IsFastBootEnabled() const { return mbFastBoot; }
 	void SetFastBootEnabled(bool enable);
 
@@ -408,7 +412,7 @@ public:
 	ATCheatEngine *GetCheatEngine() { return mpCheatEngine; }
 	void SetCheatEngineEnabled(bool enable);
 
-	bool IsAudioMonitorEnabled() const { return mpAudioMonitor != NULL; }
+	bool IsAudioMonitorEnabled() const { return mpAudioMonitors[0] != NULL; }
 	void SetAudioMonitorEnabled(bool enable);
 
 	bool IsVirtualScreenEnabled() const { return mpVirtualScreenHandler != NULL; }
@@ -460,6 +464,9 @@ public:
 	AdvanceResult AdvanceUntilInstructionBoundary();
 	AdvanceResult Advance(bool dropFrame);
 
+	uint32 GetCpuCycleCounter() const { return const_cast<ATSimulator *>(this)->CPUGetUnhaltedCycle(); }
+	ATCPUTimestampDecoder GetTimestampDecoder() const;
+
 	uint8 DebugReadByte(uint16 address) const;
 	uint16 DebugReadWord(uint16 address);
 	uint32 DebugRead24(uint16 address);
@@ -506,11 +513,15 @@ private:
 	static sint32 RT8ReadByte(void *thisptr0, uint32 addr);
 	static bool RT8WriteByte(void *thisptr0, uint32 addr, uint8 value);
 
-	uint32 CPUGetCycle();
-	uint32 CPUGetUnhaltedCycle();
-	uint32 CPUGetTimestamp();
+	uint32 CPUGetCycle() override;
+	uint32 CPUGetUnhaltedCycle() override;
+	uint32 CPUGetTimestamp() override;
+	void CPUGetHistoryTimes(ATCPUHistoryEntry * VDRESTRICT he) const override;
+
 	uint8 AnticReadByte(uint32 address);
-	void AnticAssertNMI();
+	void AnticAssertNMI_VBI();
+	void AnticAssertNMI_DLI();
+	void AnticAssertNMI_RES();
 	void AnticEndFrame();
 	void AnticEndScanline();
 	bool AnticIsNextCPUCycleWrite();
@@ -540,6 +551,9 @@ private:
 	void ClearPokeyTimersOnDiskIo();
 
 	void ReinitHookPage();
+	void SetupHeldButtons();
+
+	void InitDevice(IATDevice& dev);
 
 	bool mbRunning;
 	bool mbPaused;
@@ -549,6 +563,7 @@ private:
 	bool mbFrameSkip;
 	ATVideoStandard mVideoStandard;
 	ATMemoryClearMode mMemoryClearMode;
+	bool mbFloatingIoBus;
 	bool mbRandomFillEXEEnabled;
 	bool mbDiskSIOPatchEnabled;
 	bool mbDiskSIOOverrideDetectEnabled;
@@ -570,10 +585,10 @@ private:
 	bool mbShadowROM;
 	bool mbShadowCartridge;
 	ATIDEHardwareMode mIDEHardwareMode;
-	uint32 mSoundBoardMemBase;
 	int mBreakOnScanline;
 
 	int		mStartupDelay;
+	int		mStartupDelay2;
 
 	ATMemoryMode	mMemoryMode;
 	ATKernelMode	mKernelMode;
@@ -594,6 +609,7 @@ private:
 	ATPBIManager	*mpPBIManager;
 	ATSIOManager	*mpSIOManager;
 	ATCPUHookManager *mpCPUHookManager;
+	ATCPUHookInitNode *mpCPUHookInitHook = nullptr;
 	ATSimulatorEventManager	*mpSimEventManager;
 
 	ATCPUEmulator	mCPU;
@@ -607,7 +623,7 @@ private:
 	ATScheduler		mScheduler;
 	ATScheduler		mSlowScheduler;
 	ATDiskEmulator	*mpDiskDrives[15];
-	ATAudioMonitor	*mpAudioMonitor;
+	ATAudioMonitor	*mpAudioMonitors[2];
 	ATCassetteEmulator	*mpCassette;
 	ATIDEEmulator	*mpIDE;
 	ATMyIDEEmulator	*mpMyIDE;
@@ -620,7 +636,6 @@ private:
 	IATPrinterOutput *mpPrinterOutput;
 	ATVBXEEmulator *mpVBXE;
 	void *mpVBXEMemory;
-	ATSoundBoardEmulator *mpSoundBoard;
 	ATCheatEngine *mpCheatEngine;
 	IATUIRenderer *mpUIRenderer;
 	ATKMKJZIDE *mpKMKJZIDE;
@@ -655,6 +670,7 @@ private:
 	ATCPUProfiler	*mpProfiler;
 	ATCPUVerifier	*mpVerifier;
 	ATCPUHeatMap	*mpHeatMap;
+	IATDebugTarget	*mpDebugTarget;
 
 	ATMemoryLayer	*mpMemLayerLoRAM;
 	ATMemoryLayer	*mpMemLayerHiRAM;
@@ -669,6 +685,7 @@ private:
 	ATMemoryLayer	*mpMemLayerGTIA;
 	ATMemoryLayer	*mpMemLayerPOKEY;
 	ATMemoryLayer	*mpMemLayerPIA;
+	ATMemoryLayer	*mpMemLayerIoBusFloat;
 
 	ATFirmwareManager	*mpFirmwareManager;
 	ATDeviceManager		*mpDeviceManager;

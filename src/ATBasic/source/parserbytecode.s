@@ -8,101 +8,176 @@
 
 ?parser_program_start = *
 
+.macro _PA_STATE_OFFSET
+.def ?state_offset = :1-[pa_state_start&$ff00]-1
+.if ?state_offset < 0 || ?state_offset > 255
+.error "Offset out of bounds: ",?state_offset," (state address: ",:1,", base address: ", pa_state_start, ")"
+.endif
+		dta		?state_offset
+.endm
+
 parse_state_table:
-		dta		a(pa_state0-1)
-		dta		a(pa_state1-1)
-		dta		a(pa_expr-1)
-		dta		a(pa_aexpr.entry-1)
-		dta		a(pa_sexpr-1)
-		dta		a(pa_assign-1)
-		dta		a(pa_avar-1)
-		dta		a(pa_iocb-1)
-		dta		a(pa_array-1)
-		dta		a(pa_array2-1)
-		dta		a(pa_comma-1)
-		dta		a(pa_aexpr_comma-1)
+		_PA_STATE_OFFSET		pa_state0
+		_PA_STATE_OFFSET		pa_state1
+		_PA_STATE_OFFSET		pa_expr
+		_PA_STATE_OFFSET		pa_aexpr.entry
+		_PA_STATE_OFFSET		pa_sexpr
+		_PA_STATE_OFFSET		pa_avar
+		_PA_STATE_OFFSET		pa_iocb
+		_PA_STATE_OFFSET		pa_array
+		_PA_STATE_OFFSET		pa_array2
+		_PA_STATE_OFFSET		pa_comma
+		_PA_STATE_OFFSET		pa_aexpr_comma
+		_PA_STATE_OFFSET		pa_let
+		_PA_STATE_OFFSET		pa_openfun
+		_PA_STATE_OFFSET		pa_aexpr_next
+
+.macro _PA_STATEMENT_OFFSET
+.def ?statement_offset = :1-[pa_statements_begin&$ff00]-1
+.if ?statement_offset < 0 || ?statement_offset > 255
+.error "Offset out of bounds: ",?statement_offset," (statement address: ",:1,", base address: ", pa_statements_begin, ")"
+.endif
+		dta		?statement_offset
+.endm
 
 		;statements
 parse_state_table_statements:
-		dta		<pa_state_rem-1
-		dta		<pa_state_data-1
-		dta		<pa_state_input-1
-		dta		<pa_state_color-1
-		dta		<pa_state_list-1
-		dta		<pa_state_enter-1
-		dta		<pa_state_let-1
-		dta		<pa_state_if-1
-		dta		<pa_state_for-1
-		dta		<pa_state_next-1
-		dta		<pa_state_goto-1
-		dta		<pa_state_goto2-1
-		dta		<pa_state_gosub-1
-		dta		<pa_state_trap-1
-		dta		<pa_state_bye-1
-		dta		<pa_state_cont-1
-		dta		<pa_state_com-1
-		dta		<pa_state_close-1
-		dta		<pa_state_clr-1
-		dta		<pa_state_deg-1
-		dta		<pa_state_dim-1
-		dta		<pa_state_end-1
-		dta		<pa_state_new-1
-		dta		<pa_state_open-1
-		dta		<pa_state_load-1
-		dta		<pa_state_save-1
-		dta		<pa_state_status-1
-		dta		<pa_state_note-1
-		dta		<pa_state_point-1
-		dta		<pa_state_xio-1
-		dta		<pa_state_on-1
-		dta		<pa_state_poke-1
-		dta		<pa_state_print-1
-		dta		<pa_state_rad-1
-		dta		<pa_state_read-1
-		dta		<pa_state_restore-1
-		dta		<pa_state_return-1
-		dta		<pa_state_run-1
-		dta		<pa_state_stop-1
-		dta		<pa_state_pop-1
-		dta		<pa_state_print-1
-		dta		<pa_state_get-1
-		dta		<pa_state_put-1
-		dta		<pa_state_graphics-1
-		dta		<pa_state_plot-1
-		dta		<pa_state_position-1
-		dta		<pa_state_dos-1
-		dta		<pa_state_drawto-1
-		dta		<pa_state_setcolor-1
-		dta		<pa_state_locate-1
-		dta		<pa_state_sound-1
-		dta		<pa_state_lprint-1
-		dta		<pa_state_csave-1
-		dta		<pa_state_cload-1
-		dta		<0
-		dta		<0
-		dta		<0
-		dta		<0
-		dta		<0
-		dta		<0
-		dta		<0
-		dta		<0
-		dta		<pa_state_dpoke-1
-		dta		<0
+		_PA_STATEMENT_OFFSET		pa_state_rem
+		_PA_STATEMENT_OFFSET		pa_state_data
+		_PA_STATEMENT_OFFSET		pa_state_input
+		_PA_STATEMENT_OFFSET		pa_state_color
+		_PA_STATEMENT_OFFSET		pa_state_list
+		_PA_STATEMENT_OFFSET		pa_state_enter
+		_PA_STATEMENT_OFFSET		pa_state_let
+		_PA_STATEMENT_OFFSET		pa_state_if
+		_PA_STATEMENT_OFFSET		pa_state_for
+		_PA_STATEMENT_OFFSET		pa_state_next
+		_PA_STATEMENT_OFFSET		pa_state_goto
+		_PA_STATEMENT_OFFSET		pa_state_goto2
+		_PA_STATEMENT_OFFSET		pa_state_gosub
+		_PA_STATEMENT_OFFSET		pa_state_trap
+		_PA_STATEMENT_OFFSET		pa_state_bye
+		_PA_STATEMENT_OFFSET		pa_state_cont
+		_PA_STATEMENT_OFFSET		pa_state_com
+		_PA_STATEMENT_OFFSET		pa_state_close
+		_PA_STATEMENT_OFFSET		pa_state_clr
+		_PA_STATEMENT_OFFSET		pa_state_deg
+		_PA_STATEMENT_OFFSET		pa_state_dim
+		_PA_STATEMENT_OFFSET		pa_state_end
+		_PA_STATEMENT_OFFSET		pa_state_new
+		_PA_STATEMENT_OFFSET		pa_state_open
+		_PA_STATEMENT_OFFSET		pa_state_load
+		_PA_STATEMENT_OFFSET		pa_state_save
+		_PA_STATEMENT_OFFSET		pa_state_status
+		_PA_STATEMENT_OFFSET		pa_state_note
+		_PA_STATEMENT_OFFSET		pa_state_point
+		_PA_STATEMENT_OFFSET		pa_state_xio
+		_PA_STATEMENT_OFFSET		pa_state_on
+		_PA_STATEMENT_OFFSET		pa_state_poke
+		_PA_STATEMENT_OFFSET		pa_state_print
+		_PA_STATEMENT_OFFSET		pa_state_rad
+		_PA_STATEMENT_OFFSET		pa_state_read
+		_PA_STATEMENT_OFFSET		pa_state_restore
+		_PA_STATEMENT_OFFSET		pa_state_return
+		_PA_STATEMENT_OFFSET		pa_state_run
+		_PA_STATEMENT_OFFSET		pa_state_stop
+		_PA_STATEMENT_OFFSET		pa_state_pop
+		_PA_STATEMENT_OFFSET		pa_state_print
+		_PA_STATEMENT_OFFSET		pa_state_get
+		_PA_STATEMENT_OFFSET		pa_state_put
+		_PA_STATEMENT_OFFSET		pa_state_graphics
+		_PA_STATEMENT_OFFSET		pa_state_plot
+		_PA_STATEMENT_OFFSET		pa_state_position
+		_PA_STATEMENT_OFFSET		pa_state_dos
+		_PA_STATEMENT_OFFSET		pa_state_drawto
+		_PA_STATEMENT_OFFSET		pa_state_setcolor
+		_PA_STATEMENT_OFFSET		pa_state_locate
+		_PA_STATEMENT_OFFSET		pa_state_sound
+		_PA_STATEMENT_OFFSET		pa_state_lprint
+		_PA_STATEMENT_OFFSET		pa_state_csave
+		_PA_STATEMENT_OFFSET		pa_state_cload
+		dta		0					;implicit let
+		dta		0					;syntax error
+		dta		0					;WHILE
+		dta		0					;ENDWHILE
+		dta		0					;TRACEOFF
+		dta		0					;TRACE
+		_PA_STATEMENT_OFFSET		pa_state_else
+		_PA_STATEMENT_OFFSET		pa_state_endif
+		_PA_STATEMENT_OFFSET		pa_state_dpoke
+		_PA_STATEMENT_OFFSET		pa_state_lomem
 
 		;$40
-		dta		<0
-		dta		<0
-		dta		<0
-		dta		<pa_state_bput-1
-		dta		<pa_state_bget-1
-		dta		<0
-		dta		<pa_state_cp-1
-		dta		<pa_state_erase-1
-		dta		<pa_state_protect-1
-		dta		<pa_state_unprotect-1
-		dta		<pa_state_dir-1
-		dta		<pa_state_rename-1
-		dta		<pa_state_move-1
+		dta		0					;DEL
+		dta		0					;RPUT
+		dta		0					;RGET
+		_PA_STATEMENT_OFFSET		pa_state_bput
+		_PA_STATEMENT_OFFSET		pa_state_bget
+		dta		0					;TAB
+		_PA_STATEMENT_OFFSET		pa_state_cp
+		_PA_STATEMENT_OFFSET		pa_state_erase
+		_PA_STATEMENT_OFFSET		pa_state_protect
+		_PA_STATEMENT_OFFSET		pa_state_unprotect
+		_PA_STATEMENT_OFFSET		pa_state_dir
+		_PA_STATEMENT_OFFSET		pa_state_rename
+		_PA_STATEMENT_OFFSET		pa_state_move
+		_PA_STATEMENT_OFFSET		pa_state_missile
+		_PA_STATEMENT_OFFSET		pa_state_pmclr
+		_PA_STATEMENT_OFFSET		pa_state_pmcolor
+
+		;$50
+		_PA_STATEMENT_OFFSET		pa_state_pmgraphics
+		_PA_STATEMENT_OFFSET		pa_state_pmmove
+
+.macro _PA_FUNCTION_OFFSET
+.def ?function_offset = :1-[pa_functions_begin&$ff00]-1
+.if ?function_offset < 0 || ?function_offset > 255
+.error "Offset out of bounds: ",?function_offset," (function address: ",:1,", base address: ", pa_statements_begin, ")"
+.endif
+		dta		?function_offset
+.endm
+
+		;functions
+parse_state_table_functions:
+		_PA_FUNCTION_OFFSET		pa_state_str
+		_PA_FUNCTION_OFFSET		pa_state_chr
+		_PA_FUNCTION_OFFSET		pa_state_usr
+		_PA_FUNCTION_OFFSET		pa_state_asc
+		_PA_FUNCTION_OFFSET		pa_state_val
+		_PA_FUNCTION_OFFSET		pa_state_len
+		_PA_FUNCTION_OFFSET		pa_state_adr
+		_PA_FUNCTION_OFFSET		pa_state_atn
+		_PA_FUNCTION_OFFSET		pa_state_cos
+		_PA_FUNCTION_OFFSET		pa_state_peek
+		_PA_FUNCTION_OFFSET		pa_state_sin
+		_PA_FUNCTION_OFFSET		pa_state_rnd
+		_PA_FUNCTION_OFFSET		pa_state_fre
+		_PA_FUNCTION_OFFSET		pa_state_exp
+		_PA_FUNCTION_OFFSET		pa_state_log
+		_PA_FUNCTION_OFFSET		pa_state_clog
+		_PA_FUNCTION_OFFSET		pa_state_sqr
+		_PA_FUNCTION_OFFSET		pa_state_sgn
+		_PA_FUNCTION_OFFSET		pa_state_abs
+		_PA_FUNCTION_OFFSET		pa_state_int
+		_PA_FUNCTION_OFFSET		pa_state_paddle
+		_PA_FUNCTION_OFFSET		pa_state_stick
+		_PA_FUNCTION_OFFSET		pa_state_ptrig
+		_PA_FUNCTION_OFFSET		pa_state_strig		
+		dta			0			;USING (BASIC XL/XE)
+		dta			0			;%
+		dta			0			;!
+		dta			0			;&
+		dta			0			;; (BASIC XL/XE)
+		_PA_FUNCTION_OFFSET		pa_state_bump
+		dta			0			;FIND (BASIC XL/XE)
+		_PA_FUNCTION_OFFSET		pa_state_hex
+		dta			0			;RANDOM (BASIC XL/XE)
+		_PA_FUNCTION_OFFSET		pa_state_dpeek
+		dta			0			;SYS (BASIC XL/XE)
+		_PA_FUNCTION_OFFSET		pa_state_vstick
+		_PA_FUNCTION_OFFSET		pa_state_hstick
+		_PA_FUNCTION_OFFSET		pa_state_pmadr
+		_PA_FUNCTION_OFFSET		pa_state_err
 		
 ;============================================================================
 ; Parser instructions
@@ -182,7 +257,7 @@ parse_state_table_statements:
 		PA_BRANCH_TARGET :1
 .endm
 
-.macro PAI_TRYVARIABLE		;Try to parse and emit a variable; jump to target if so.
+.macro PAI_TRYVARIABLE		;Try to parse and emit a variable; jump to target if so. Implicit space skip.
 		dta		$0b
 		PA_BRANCH_TARGET :1
 .endm
@@ -225,13 +300,17 @@ parse_state_table_statements:
 .endm
 
 .macro PAI_TRYARRAYVAR		;Try to parse and emit a array or string array variable; jump to target if so.
-		dta		$14
+		dta		$14			;Must be greater than token for TRYVARIABLE! (See code)
 		PA_BRANCH_TARGET :1
 .endm
 
 .macro PAI_BEOS				;Branch if end of statement
 		dta		$15
 		PA_BRANCH_TARGET :1
+.endm
+
+.macro PAI_ENDIF
+		dta		$16
 .endm
 
 .macro PAI_JUMP				;Jump to the given state.
@@ -274,39 +353,166 @@ parse_state_table_statements:
 		PAI_JSR PST_IOCB
 .endm
 
+.macro PAM_AEXPR_NEXT
+		PAI_JUMP PST_AEXPR_NEXT
+.endm
+
 ;============================================================================
 PST_NEXT			= $01
 PST_EXPR			= $02
 PST_AEXPR			= $03
 PST_SEXPR			= $04
-PST_ASSIGN			= $05
-PST_AVAR			= $06
-PST_IOCB			= $07
-PST_ARRAY			= $08
-PST_ARRAY2			= $09
-PST_COMMA			= $0A
-PST_AEXPR_COMMA		= $0B
-PST_STATEMENT_BASE	= (parse_state_table_statements-parse_state_table)/2
+PST_AVAR			= $05
+PST_IOCB			= $06
+PST_ARRAY			= $07
+PST_ARRAY2			= $08
+PST_COMMA			= $09
+PST_AEXPR_COMMA		= $0A
+PST_LET				= $0B
+PST_OPENFUN			= $0C
+PST_AEXPR_NEXT		= $0D
+
+;----------------------------
+.nowarn .proc pa_array_sexpr_
+sarrayvar:
+		PAI_SPACES
+		PAI_BEQEMIT	'(', TOK_EXP_OPEN_STR, substring
+sarrayvar_exit:
+		PAI_STR
+		PAI_RTS
+		
+substring:
+		PAI_JSR		PST_ARRAY2
+		PAI_B		sarrayvar_exit
+
+multi:
+		PAM_AEXPR
+		PAI_B		term
+
+const_string:
+		PAI_STRING
+done:
+		PAI_RTS
+
+is_str:
+		PAI_SPACES
+		PAI_BEQEMIT	'(', TOK_EXP_OPEN_STR, substring
+		PAI_RTS
+
+func:
+		PAI_BSTR	done
+var:
+		PAI_BSTR	is_str
+		PAI_FAIL
+
+.def :pa_state_start
+.def :pa_array
+		PAI_BSTR	sarrayvar		
+		PAI_EMIT	TOK_EXP_OPEN_ARY
+.def :pa_array2
+		PAM_AEXPR
+		PAI_BEQEMIT	',', TOK_EXP_ARRAY_COMMA, multi
+term:
+		PAI_EXPECT	')'
+		PAI_EMIT	TOK_EXP_CLOSEPAREN
+		PAI_RTS
+
+.def :pa_sexpr
+		PAI_SPACES
+		PAI_BEQEMIT		'"',TOK_EXP_CSTR, const_string
+		PAI_TRYFUNCTION	func
+		PAI_TRYVARIABLE var
+		PAI_FAIL
+.endp
+
+;----------------------------
+pa_aexpr_comma:
+		PAM_AEXPR
+.proc pa_comma
+		PAI_SPACES
+		PAI_EXPECT	','
+		PAI_EMIT	TOK_EXP_COMMA
+		PAI_RTS
+.endp
+
+;----------------------------
+.proc pa_expr
+		PAI_OR		sexpr
+		PAM_AEXPR
+		PAI_ACCEPT
+		PAI_RTS
+sexpr:
+		PAM_SEXPR
+		PAI_RTS
+.endp
+
+;----------------------------
+.proc pa_avar
+		PAI_TRYARRAYVAR fail
+		PAI_TRYVARIABLE var_ok
+fail:
+		PAI_FAIL
+var_ok:
+		PAI_BSTR	fail
+		PAI_RTS
+.endp
+
+;----------------------------
+.proc pa_iocb
+		PAI_SPACES
+		PAI_EXPECT	'#'
+		PAI_EMIT	TOK_EXP_HASH
+		PAM_AEXPR
+		PAI_RTS
+.endp
+
+;----------------------------
+.proc pa_openfun
+		PAI_EXPECT	'('
+		PAI_EMIT	TOK_EXP_OPEN_FUN
+		PAI_RTS		
+.endp
 
 ;============================================================================
+pa_cont_statement:
+		PAI_STEND
 .proc pa_state0		;initial statement
+		PAI_SPACES
 		PAI_TRYSTATEMENT
 		
 		;assume it's an implicit let
 		PAI_EMIT	TOK_ILET
-		PAI_JUMP	PST_ASSIGN
-.endp
+.def :pa_let
+		PAI_TRYARRAYVAR is_array
+		PAI_TRYVARIABLE ilet_ok
+		PAI_FAIL
+is_array:
+		PAI_JSR		PST_ARRAY
+ilet_ok:
+		PAI_SPACES
+		PAI_EXPECT	'='
+		PAI_BSTR	string_assign
+		PAI_EMIT	TOK_EXP_ASSIGNNUM
+.def :pa_aexpr_next
+		PAM_AEXPR
+		PAM_NEXT
 		
+string_assign:
+		PAI_EMIT	TOK_EXP_ASSIGNSTR
+		PAM_SEXPR
+		PAM_NEXT
+.endp
+
 .proc pa_state1
+
 		;skip spaces
 		PAI_SPACES
 		
 		;check for continuation
-		PAI_BEQEMIT	':', TOK_EOS, next_statement
-		PAI_EOL
+		PAI_BEQEMIT	':', TOK_EOS, pa_cont_statement
 		PAI_EMIT	TOK_EOL
-next_statement:
 		PAI_STEND
+		PAI_EOL
 .endp
 
 ;----------------------------
@@ -331,21 +537,26 @@ open_paren:
 		PAI_EXPECT	')'
 		PAI_EMIT_B	TOK_EXP_CLOSEPAREN, need_operator
 
+accept_need_value:
+		PAI_ACCEPT
 entry:
 need_value:
 		PAI_SPACES
-		PAI_BEQEMIT	'+', TOK_EXP_UNPLUS, need_value
-		PAI_BEQEMIT	'-', TOK_EXP_UNMINUS, need_value
 		PAI_BEQEMIT	'(', TOK_EXP_OPENPAREN, open_paren
 		PAI_BEQ		'$',const_hex
+
+		;This needs to be before unary +/- since Atari BASIC only allows one unary operator,
+		;but can fold +/- into a constant.
 		PAI_TRYNUMBER	need_operator
+		PAI_BEQEMIT	'+', TOK_EXP_UNPLUS, need_value
+		PAI_BEQEMIT	'-', TOK_EXP_UNMINUS, need_value
 		PAI_OR		not_not
 		PAI_EXPECT	'N'
 		PAI_EXPECT	'O'
 		PAI_EXPECT	'T'
 		PAI_ACCEPT
-		PAI_EMIT	TOK_EXP_NOT
-		PAI_B		need_value
+		PAI_EMIT_B	TOK_EXP_NOT, need_value
+
 not_not:
 		PAI_OR		svalue
 		PAI_TRYFUNCTION	variable
@@ -358,6 +569,8 @@ op_less:
 		PAI_BEQEMIT	'>', TOK_EXP_NE, need_value
 		PAI_EMIT_B	TOK_EXP_LT, need_value
 
+need_svalue:
+		PAM_SEXPR
 need_operator:
 		PAI_SPACES
 		PAI_BEQEMIT	'+', TOK_EXP_ADD, need_value
@@ -375,17 +588,13 @@ need_operator:
 		PAI_EXPECT	'A'
 		PAI_EXPECT	'N'
 		PAI_EXPECT	'D'
-		PAI_EMIT	TOK_EXP_AND
-		PAI_ACCEPT
-		PAI_B		need_value
+		PAI_EMIT_B	TOK_EXP_AND, accept_need_value
 
 not_and:
 		PAI_OR		not_or
 		PAI_EXPECT	'O'
 		PAI_EXPECT	'R'
-		PAI_EMIT	TOK_EXP_OR
-		PAI_ACCEPT
-		PAI_B		need_value
+		PAI_EMIT_B	TOK_EXP_OR, accept_need_value
 not_or:
 		PAI_RTS
 
@@ -410,150 +619,9 @@ op_str_l:
 op_str_g:
 		PAI_BEQEMIT	'=', TOK_EXP_STR_GE, need_svalue
 		PAI_EMIT_B	TOK_EXP_STR_GT, need_svalue
-		
-need_svalue:
-		PAM_SEXPR
-		PAI_B		need_operator
-.endp
-
-;----------------------------
-.proc pa_expr
-		PAI_OR		sexpr
-		PAM_AEXPR
-		PAI_ACCEPT
-		PAI_RTS
-sexpr:
-		PAM_SEXPR
-		PAI_RTS
-.endp
-
-;----------------------------
-.proc pa_sexpr
-		PAI_SPACES
-		PAI_BEQ		'"',const_string
-		PAI_TRYFUNCTION	func
-		PAI_TRYVARIABLE var
-		PAI_FAIL
-var:
-		PAI_BSTR	is_str
-		PAI_FAIL
-is_str:
-		PAI_BEQEMIT	'(', TOK_EXP_OPEN_STR, is_arraystr
-		PAI_RTS
-const_string:
-		PAI_STRING
-done:
-		PAI_RTS
-func:
-		PAI_BSTR	done
-		PAI_FAIL
-		
-is_arraystr:
-		PAM_AEXPR
-		PAI_SPACES
-		PAI_BEQEMIT	',', TOK_EXP_ARRAY_COMMA, substr
-end_arraystr:
-		PAI_EXPECT	')'
-		PAI_EMIT	TOK_EXP_CLOSEPAREN
-		PAI_STR
-		PAI_RTS
-
-substr:
-		PAM_AEXPR
-		PAI_SPACES
-		PAI_B		end_arraystr
-.endp
-
-;----------------------------
-.proc pa_assign
-		PAI_TRYARRAYVAR is_array
-		PAI_TRYVARIABLE ilet_ok
-		PAI_FAIL
-is_array:
-		PAI_JSR		PST_ARRAY
-ilet_ok:
-		PAI_SPACES
-		PAI_EXPECT	'='
-		PAI_BSTR	string_assign
-		PAI_EMIT	TOK_EXP_ASSIGNNUM
-		PAM_AEXPR
-		PAM_NEXT
-		
-string_assign:
-		PAI_EMIT	TOK_EXP_ASSIGNSTR
-		PAM_SEXPR
-		PAM_NEXT
-.endp
-		
-;----------------------------
-.proc pa_avar
-		PAI_SPACES
-		PAI_TRYVARIABLE var_ok
-fail:
-		PAI_FAIL
-var_ok:
-		PAI_BSTR	fail
-		PAI_RTS
-.endp
-
-;----------------------------
-.proc pa_iocb
-		PAI_SPACES
-		PAI_EXPECT	'#'
-		PAI_EMIT	TOK_EXP_HASH
-		PAM_AEXPR
-		PAI_SPACES
-		PAI_RTS
-.endp
-
-;----------------------------
-.proc pa_array
-		PAI_BSTR	sarrayvar		
-		PAI_EMIT	TOK_EXP_OPEN_ARY
-		PAI_JSR		PST_ARRAY2
-		PAI_NUM
-		PAI_RTS
-
-sarrayvar:
-		PAI_BEQEMIT	'(', TOK_EXP_OPEN_STR, substring
-sarrayvar_exit:
-		PAI_STR
-		PAI_RTS
-		
-substring:
-		PAI_JSR		PST_ARRAY2
-		PAI_B		sarrayvar_exit
-.endp
-
-;----------------------------
-.proc pa_array2
-		PAM_AEXPR
-		PAI_SPACES
-		PAI_BEQEMIT	',', TOK_EXP_ARRAY_COMMA, multi
-term:
-		PAI_EMIT	TOK_EXP_CLOSEPAREN
-		PAI_SPACES
-		PAI_EXPECT	')'
-		PAI_RTS
-		
-multi:
-		PAM_AEXPR
-		PAI_B		term
-.endp
-
-;----------------------------
-pa_aexpr_comma:
-		PAM_AEXPR
-.proc pa_comma
-		PAI_SPACES
-		PAI_EXPECT	','
-		PAI_EMIT	TOK_EXP_COMMA
-		PAI_RTS
 .endp
 
 ;==========================================================================
-.pages 1
-
 pa_functions_begin:
 
 ;aexpr fun(aexpr)
@@ -577,60 +645,64 @@ pa_state_strig:
 pa_state_dpeek:
 pa_state_vstick:
 pa_state_hstick:
-		PAI_EXPECT	'('
-		PAI_EMIT	TOK_EXP_OPEN_FUN
+pa_state_pmadr:
+pa_state_err:
+		PAI_JSR		PST_OPENFUN
+pa_start_numeric_function:
 		PAM_AEXPR
 pa_close_numeric_function:
-		PAI_EXPECT	')'
-		PAI_EMIT	TOK_EXP_CLOSEPAREN
-pa_end_numeric_function:
 		PAI_NUM
-		PAI_RTS
+		PAI_B		pa_close_function
+
+pa_state_bump:
+		PAM_AEXPR
+		PAI_EXPECT	','
+		PAI_EMIT_B	TOK_EXP_ARRAY_COMMA, pa_start_numeric_function
 
 ;aexpr fun(sexpr)
 pa_state_adr:
 pa_state_asc:
 pa_state_len:
 pa_state_val:
-		PAI_EXPECT	'('
-		PAI_EMIT	TOK_EXP_OPEN_FUN
+		PAI_JSR		PST_OPENFUN
 		PAM_SEXPR
 		PAI_B		pa_close_numeric_function
 
 ;aexpr usr(aexpr[, aexpr])
 pa_state_usr:
-		PAI_EXPECT	'('
-		PAI_EMIT	TOK_EXP_OPEN_FUN
+		PAI_JSR		PST_OPENFUN
 pa_state_usr_loop:
 		PAM_AEXPR
-		PAI_BEQEMIT	')', TOK_EXP_CLOSEPAREN, pa_end_numeric_function
 		PAI_BEQEMIT	',', TOK_EXP_ARRAY_COMMA, pa_state_usr_loop
-		PAI_FAIL
+		PAI_B		pa_close_numeric_function
 
 ;sexpr fun(aexpr)
 pa_state_chr:
 pa_state_str:
 pa_state_hex:
-		PAI_EXPECT	'('
-.endpg
-		PAI_EMIT	TOK_EXP_OPEN_FUN
+		PAI_JSR		PST_OPENFUN
+		
+		_PAGE_CHECK pa_functions_begin
+
 		PAM_AEXPR
+		PAI_STR
+pa_close_function:
 		PAI_EXPECT	')'
 		PAI_EMIT	TOK_EXP_CLOSEPAREN
-		PAI_STR
 		PAI_RTS
 
 pa_functions_end:
 
 ;==========================================================================
 
-.pages 1
 pa_statements_begin:
 
 pa_state_sound:			;STATEMENT aexpr,aexpr,aexpr,aexpr
 		PAM_AEXPR_COMMA
 pa_state_setcolor:		;STATEMENT aexpr,aexpr,aexpr
 pa_state_move:
+pa_state_missile:
+pa_state_pmcolor:
 		PAM_AEXPR_COMMA
 pa_state_drawto:		;STATEMENT aexpr,aexpr
 pa_state_plot:
@@ -644,22 +716,10 @@ pa_state_goto2:
 pa_state_gosub:
 pa_state_graphics:
 pa_state_trap:
-		PAM_AEXPR
-pa_state_bye:			;STATEMENT
-pa_state_cload:
-pa_state_clr:
-pa_state_cont:
-pa_state_csave:
-pa_state_deg:
-pa_state_dos:
-pa_state_end:
-pa_state_new:
-pa_state_pop:
-pa_state_rad:
-pa_state_return:
-pa_state_stop:
-pa_state_cp:
-		PAM_NEXT
+pa_state_lomem:
+pa_state_pmclr:
+pa_state_pmgraphics:
+		PAM_AEXPR_NEXT
 
 pa_state_bput:			;BPUT #iocb,aexpr,aexpr
 pa_state_bget:			;BGET #iocb,aexpr,aexpr
@@ -669,75 +729,92 @@ pa_state_bget:			;BGET #iocb,aexpr,aexpr
 
 pa_state_close:
 		PAM_IOCB
+pa_state_bye:			;STATEMENT
+pa_state_cload:
+pa_state_clr:
+pa_state_cont:
+pa_state_csave:
+pa_state_deg:
+pa_state_dos:
+pa_state_new:
+pa_state_pop:
+pa_state_rad:
+pa_state_return:
+pa_state_stop:
+pa_state_cp:
+pa_state_else:
+pa_state_endif:			;never actually hit due to END
 		PAM_NEXT
 
 pa_state_data:
 pa_state_rem:
 		PAI_SPACES
 		PAI_COPYLINE
+		PAI_EOL
+
+;---------------------------------------------------------------------------		
+pa_state_end:
+		;special code required for ENDIF
+		PAI_OR		pa_state_end_normal
+		PAI_EXPECT	'I'
+		PAI_EXPECT	'F'
+		PAI_ENDIF		;also does ACCEPT
+pa_state_end_normal:
+		PAM_NEXT
 
 ;---------------------------------------------------------------------------		
 .proc pa_state_restore
-		PAI_BEOS	no_lineno
-		PAM_AEXPR
-no_lineno:
-		PAM_NEXT
+		PAI_BEOS	pa_state_end_normal
+		PAM_AEXPR_NEXT
 .endp
 
 ;---------------------------------------------------------------------------		
 pa_state_com = pa_state_dim
 .proc pa_state_dim
 next_var_2:
+		PAI_SPACES
+		PAI_TRYFUNCTION is_func
 		PAI_TRYARRAYVAR	is_var
+is_func:
 		PAI_FAIL
 
 is_var:
+		PAI_SPACES
 		PAI_BSTR	is_string
 		PAI_EMIT	TOK_EXP_OPEN_DIMARY
+		PAI_JSR		PST_ARRAY2
+		PAI_B		next
+
+is_string:
+		PAI_EMIT	TOK_EXP_OPEN_DIMSTR
+		PAI_EXPECT	'('
 		PAM_AEXPR
-		PAI_SPACES
-		PAI_BEQEMIT	',', TOK_EXP_ARRAY_COMMA, is_multi
-is_done:
-		PAI_SPACES
 		PAI_EXPECT	')'
 		PAI_EMIT	TOK_EXP_CLOSEPAREN
+next:
 		PAI_SPACES
 		PAI_BEQEMIT	',', TOK_EXP_COMMA, next_var_2
 		PAM_NEXT
-		
-is_multi:
-last_dim:
-		PAM_AEXPR
-		PAI_B		is_done
-		
-is_string:
-		PAI_EXPECT	'('
-		PAI_EMIT	TOK_EXP_OPEN_DIMSTR
-		PAI_B		last_dim
 .endp
 
+;--------------------------------------------------------------------------
 .proc pa_state_for
-		PAI_TRYVARIABLE have_loop_var
-		PAI_FAIL
-have_loop_var:
+		PAM_AVAR
 		PAI_SPACES
 		PAI_EXPECT	'='
 		PAI_EMIT	TOK_EXP_ASSIGNNUM
 		PAM_AEXPR
-		PAI_SPACES
 		PAI_EMIT	TOK_EXP_TO
 		PAI_EXPECT	'T'
 		PAI_EXPECT	'O'
 		PAM_AEXPR
-		PAI_SPACES
 		PAI_BEQEMIT	'S', TOK_EXP_STEP, have_step
 		PAM_NEXT
 have_step:
 		PAI_EXPECT	'T'
 		PAI_EXPECT	'E'
 		PAI_EXPECT	'P'
-		PAM_AEXPR
-		PAM_NEXT
+		PAM_AEXPR_NEXT
 .endp
 
 ;--------------------------------------------------------------------------
@@ -746,19 +823,17 @@ pa_state_status:
 		PAM_IOCB
 		PAM_COMMA
 		PAM_AVAR
+pa_state_get_next:
 		PAM_NEXT
 
 ;--------------------------------------------------------------------------
 pa_state_put:
 		PAM_IOCB
 		PAM_COMMA
-		PAM_AEXPR
-		PAM_NEXT
+		PAM_AEXPR_NEXT
 
 ;--------------------------------------------------------------------------
-.proc pa_state_input
-		PAI_SPACES
-		
+.proc pa_state_input		
 		PAI_OR		var_loop
 		PAM_IOCB
 		PAI_ACCEPT
@@ -769,53 +844,47 @@ var_loop:
 		PAI_TRYVARIABLE var_ok
 		PAI_FAIL
 var_ok:
-		PAI_BEOS	end
+		PAI_BEOS	pa_state_get_next
 		PAM_COMMA
 		PAI_B		var_loop
-end:
-		PAM_NEXT
 .endp
 
 ;--------------------------------------------------------------------------
 .proc pa_state_if
 		PAM_AEXPR
+		PAI_BEOS	pa_state_get_next
 		PAI_EMIT	TOK_EXP_THEN
-		PAI_SPACES
 		PAI_EXPECT	'T'
 		PAI_EXPECT	'H'
 		PAI_EXPECT	'E'
 		PAI_EXPECT	'N'
-		PAI_TRYNUMBER	is_lineno
+		PAI_TRYNUMBER	pa_state_get_next
 		PAI_STEND			;must end statement without EOS
-		PAI_TRYSTATEMENT
-		PAM_AEXPR
-is_lineno:
-		PAM_NEXT
+		PAI_JUMP	0
 .endp
 
 ;--------------------------------------------------------------------------
 ; LIST filename[,lineno[,lineno]]
 ; LIST [lineno[,lineno]]
 .proc pa_state_list
-		PAI_BEOS	end
+		PAI_BEOS	pa_state_get_next
 		PAI_OR		no_filespec
 		PAM_SEXPR
 		PAI_ACCEPT
-		PAI_BEOS	end
+		PAI_BEOS	pa_state_get_next
 		PAM_COMMA
 no_filespec:
 		PAM_AEXPR
-		PAI_BEOS	end
+		PAI_BEOS	pa_state_get_next
 		PAM_COMMA
-		PAM_AEXPR
-end:
-		PAM_NEXT
+		PAM_AEXPR_NEXT
 .endp
 
 ;--------------------------------------------------------------------------
-.proc pa_state_let
-		PAI_JUMP	PST_ASSIGN
-.endp
+; We need this trampoline since states and statements are in different
+; pages. It costs a byte.
+pa_state_let:
+		PAI_JUMP	PST_LET
 
 ;--------------------------------------------------------------------------
 pa_state_locate:
@@ -837,15 +906,13 @@ pa_state_point:
 .proc pa_state_on
 		;parse conditional expression
 		PAM_AEXPR
-		PAI_SPACES
 		PAI_EXPECT	'G'
 		PAI_EXPECT	'O'
 		PAI_BEQEMIT	'T', TOK_EXP_GOTO, is_goto
 		PAI_EXPECT	'S'
 		PAI_EXPECT	'U'
 		PAI_EXPECT	'B'
-		PAI_EMIT	TOK_EXP_GOSUB
-		PAI_B		linenos
+		PAI_EMIT_B	TOK_EXP_GOSUB, linenos
 		
 is_goto:
 		PAI_EXPECT	'O'
@@ -874,29 +941,40 @@ pa_state_rename:
 pa_state_print_simple:
 		PAM_NEXT
 
+;============================================================================		
+.proc pa_state_pmmove
+		PAM_AEXPR
+		PAI_BEQEMIT	',', TOK_EXP_COMMA, horiz
+try_vert:
+		PAI_BEQEMIT ';', TOK_EXP_SEMI, vert
+done:
+		PAM_NEXT
+horiz:
+		PAM_AEXPR
+		PAI_B		try_vert
+vert:
+		PAM_AEXPR_NEXT
+.endp
+
+;============================================================================		
 pa_state_run:
 pa_state_dir:
-		PAI_SPACES
 		PAI_BEOS	pa_state_run_2
 		PAM_SEXPR
 pa_state_run_2:
 		PAM_NEXT
 
-pa_state_lprint:
-		PAI_BEOS	pa_state_print_simple
-		PAI_B		pa_state_print_item
-
 pa_state_print:
-		PAI_SPACES
-.endpg
-		PAI_BEOS	pa_state_print_simple
 		PAI_OR		pa_state_print_item
 		PAM_IOCB
 		PAI_ACCEPT
 		PAI_B		pa_state_print_sep
+pa_state_lprint:
 pa_state_print_item:
-		PAI_SPACES
 		PAI_BEOS	pa_state_print_simple
+
+		_PAGE_CHECK pa_statements_begin
+
 		PAI_BEQEMIT	',', TOK_EXP_COMMA, pa_state_print_item
 		PAI_BEQEMIT	';', TOK_EXP_SEMI, pa_state_print_item
 		PAM_EXPR
@@ -970,10 +1048,10 @@ statement_table:
 		dta		c'?'+$80
 		dta		c'?'+$80
 		dta		c'?'+$80
-		dta		c'?'+$80
-		dta		c'?'+$80
+		dta		c'ELS',c'E'+$80
+		dta		c'ENDI',c'F'+$80
 		dta		c'DPOK',c'E'+$80
-		dta		c'?'+$80
+		dta		c'LOME',c'M'+$80
 
 		;$40
 		dta		c'?'+$80
@@ -989,48 +1067,15 @@ statement_table:
 		dta		c'DI',c'R'+$80		;
 		dta		c'RENAM',c'E'+$80
 		dta		c'MOV',c'E'+$80
+		dta		'MISSIL','E'*
+		dta		'PMCL','R'*
+		dta		'PMCOLO','R'*
+
+		;$50
+		dta		'PMGRAPHIC','S'*
+		dta		'PMMOV','E'*
 		dta		0					;end for searching
 	
 .echo "-- Statement token table length: ", *-statement_table
-
-		;functions
-parse_state_table_functions:
-		dta		<pa_state_str-1
-		dta		<pa_state_chr-1
-		dta		<pa_state_usr-1
-		dta		<pa_state_asc-1
-		dta		<pa_state_val-1
-		dta		<pa_state_len-1
-		dta		<pa_state_adr-1
-		dta		<pa_state_atn-1
-		dta		<pa_state_cos-1
-		dta		<pa_state_peek-1
-		dta		<pa_state_sin-1
-		dta		<pa_state_rnd-1
-		dta		<pa_state_fre-1
-		dta		<pa_state_exp-1
-		dta		<pa_state_log-1
-		dta		<pa_state_clog-1
-		dta		<pa_state_sqr-1
-		dta		<pa_state_sgn-1
-		dta		<pa_state_abs-1
-		dta		<pa_state_int-1
-		dta		<pa_state_paddle-1
-		dta		<pa_state_stick-1
-		dta		<pa_state_ptrig-1
-		dta		<pa_state_strig-1		
-		dta		0
-		dta		0
-		dta		0
-		dta		0
-		dta		0
-		dta		0
-		dta		0
-		dta		<pa_state_hex-1
-		dta		0
-		dta		<pa_state_dpeek-1
-		dta		0
-		dta		<pa_state_vstick-1
-		dta		<pa_state_hstick-1
 
 .echo "- Parser program length: ",*-?parser_program_start

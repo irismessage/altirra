@@ -34,6 +34,8 @@ public:
 	void Init(ATScheduler *sch, ATPokeyTables *tables);
 	void ColdReset();
 
+	void SyncTo(const ATPokeyRenderer& src);
+
 	void GetAudioState(ATPokeyAudioState& state);
 	bool GetChannelOutput(int index) const { return mOutputs[index] != 0; }
 	const float *GetOutputBuffer() const { return mRawOutputBuffer; }

@@ -25,10 +25,10 @@
 #include <vd2/system/registry.h>
 #include <vd2/Dita/services.h>
 #include <at/atcore/device.h>
+#include <at/atcore/devicemanager.h>
 #include <at/atcore/propertyset.h>
-#include <at/atui/dialog.h>
+#include <at/atnativeui/dialog.h>
 #include "resource.h"
-#include "devicemanager.h"
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -116,6 +116,10 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 			{ "slightsid", L"SlightSID",
 				L"A cartridge-shaped adapter for the C64's SID sound chip."
 			},
+			{ "veronica", L"Veronica",
+				L"A cartridge-based 65C816 coprocessor with 128K of on-board memory.\n"
+					L"Veronica does not have on-board firmware, so software must be externally loaded to use it."
+			},
 		}
 	},
 	{
@@ -124,6 +128,9 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		{
 			{ "covox", L"Covox",
 				L"Provides a simple DAC for 8-bit digital sound."
+			},
+			{ "soundboard", L"SoundBoard",
+				L"Provides multi-channel, wavetable sound capabilities with 512K of internal memory."
 			},
 		}
 	},
@@ -182,6 +189,19 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 					L"device can be simulated, or in Full mode the tools from the the Additions disk can be used to load "
 					L"a software R: handler."
 			},
+			{ "rverter", L"R-Verter",
+				L"An adapter cable connecting a regular RS-232 serial device to the computer's SIO port.\n"
+				L"An R: handler is needed to use the R-Verter. The R-Verter itself has no bootstrap capability, "
+				L"so this handler must be loaded from disk or another source."
+			},
+			{ "sdrive", L"SDrive",
+				L"A hardware disk emulator based on images stored on SD cards.\n"
+				L"Currently, only raw sector access is implemented."
+			},
+			{ "sio2sd", L"SIO2SD",
+				L"A hardware disk emulator based on images stored on SD cards.\n"
+				L"Currently, only minimal configuration commands are implemented."
+			},
 			{ "midimate", L"MidiMate",
 				L"An SIO-based adapter for communicating with MIDI devices. This emulation links the MidiMate to the host "
 					L"OS MIDI support. There is no connection to MIDI IN or to the SYNC inputs."
@@ -202,6 +222,10 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 				L"A fictitious SIO device for testing that implements the XL/XE operating system's on demand handler "
 					L"auto-load protocol (type 4 poll). The handler installs a T: device that simply eats "
 					L"anything printed to it."
+			},
+			{ "testsiohs", L"SIO High Speed Test Device",
+				L"A fictitious SIO device for testing that implements an ultra-high speed SIO device with an external clock. "
+					L"The device ID is $31 and supports a pseudo-disk protocol."
 			}
 		}
 	},
@@ -363,12 +387,19 @@ protected:
 	void CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef parentNode, IATDevice *dev);
 	void SaveSettings(const char *configTag, const ATPropertySet& props);
 
+	void OnItemSelectionChanged(VDUIProxyTreeViewControl *sender, int idx);
+	void OnItemDoubleClicked(VDUIProxyTreeViewControl *sender, bool *handled);
+
 	ATDeviceManager& mDevMgr;
 	VDUIProxyTreeViewControl mTreeView;
 
 	struct DeviceNode : public vdrefcounted<IVDUITreeViewVirtualItem> {
 		DeviceNode(IATDevice *dev) : mpDev(dev) {
-			dev->GetDeviceInfo(mInfo);
+			ATDeviceInfo info;
+			dev->GetDeviceInfo(info);
+
+			mName = info.mpDef->mpName;
+			mbHasSettings = info.mpDef->mpConfigTag != nullptr;
 		}
 
 		void *AsInterface(uint32 id) {
@@ -376,18 +407,24 @@ protected:
 		}
 
 		virtual void GetText(VDStringW& s) const {
-			s = mInfo.mName;
+			s = mName;
 		}
 
 		IATDevice *mpDev;
-		ATDeviceInfo mInfo;
+		VDStringW mName;
+		bool mbHasSettings;
 	};
+
+	VDDelegate mDelSelectionChanged;
+	VDDelegate mDelDoubleClicked;
 };
 
 ATUIDialogDevices::ATUIDialogDevices(ATDeviceManager& devMgr)
 	: VDDialogFrameW32(IDD_DEVICES)
 	, mDevMgr(devMgr)
 {
+	mTreeView.OnItemSelectionChanged() += mDelSelectionChanged.Bind(this, &ATUIDialogDevices::OnItemSelectionChanged);
+	mTreeView.OnItemDoubleClicked() += mDelDoubleClicked.Bind(this, &ATUIDialogDevices::OnItemDoubleClicked);
 }
 
 bool ATUIDialogDevices::OnLoaded() {
@@ -540,7 +577,7 @@ void ATUIDialogDevices::Remove() {
 			ATDeviceInfo info;
 			(*it)->GetDeviceInfo(info);
 
-			msg.append_sprintf(L"    %ls\n", info.mName.c_str());
+			msg.append_sprintf(L"    %ls\n", info.mpDef->mpName);
 		}
 
 		msg += L"\nProceed?";
@@ -581,8 +618,11 @@ void ATUIDialogDevices::Settings() {
 	ATDeviceInfo info;
 	dev->GetDeviceInfo(info);
 
-	const char *configTag = !info.mConfigTag.empty() ? info.mConfigTag.c_str() : info.mTag.c_str();
-	ATDeviceConfigureFn fn = mDevMgr.GetDeviceConfigureFn(configTag);
+	if (!info.mpDef->mpConfigTag)
+		return;
+
+	const VDStringA configTag(info.mpDef->mpConfigTag);
+	ATDeviceConfigureFn fn = mDevMgr.GetDeviceConfigureFn(configTag.c_str());
 	if (!fn)
 		return;
 
@@ -590,43 +630,47 @@ void ATUIDialogDevices::Settings() {
 	dev->GetSettings(pset);
 	
 	if (fn((VDGUIHandle)mhdlg, pset)) {
-		SaveSettings(configTag, pset);
+		try {
+			if (!dev->SetSettings(pset)) {
+				vdfastvector<IATDevice *> childDevices;
+				mDevMgr.MarkAndSweep(&dev, 1, childDevices);
 
-		if (!dev->SetSettings(pset)) {
-			vdfastvector<IATDevice *> childDevices;
-			mDevMgr.MarkAndSweep(&dev, 1, childDevices);
+				IATDeviceParent *parent = dev->GetParent();
+				if (parent)
+					parent->RemoveChildDevice(dev);
 
-			IATDeviceParent *parent = dev->GetParent();
-			if (parent)
-				parent->RemoveChildDevice(dev);
+				mDevMgr.RemoveDevice(dev);
+				dev = nullptr;
+				devholder.clear();
 
-			mDevMgr.RemoveDevice(dev);
-			dev = nullptr;
-			devholder.clear();
+				while(!childDevices.empty()) {
+					IATDevice *child = childDevices.back();
+					childDevices.pop_back();
 
-			while(!childDevices.empty()) {
-				IATDevice *child = childDevices.back();
-				childDevices.pop_back();
+					mDevMgr.RemoveDevice(child);
+				}
 
-				mDevMgr.RemoveDevice(child);
+				IATDevice *newChild = mDevMgr.AddDevice(configTag.c_str(), pset, parent != nullptr);
+
+				if (newChild)
+					parent->AddChildDevice(newChild);
+
+				mDevMgr.MarkAndSweep(NULL, 0, childDevices);
+
+				while(!childDevices.empty()) {
+					IATDevice *child = childDevices.back();
+					childDevices.pop_back();
+
+					mDevMgr.RemoveDevice(child);
+				}
+
+				OnDataExchange(false);
 			}
 
-			IATDevice *newChild = mDevMgr.AddDevice(info.mConfigTag.c_str(), pset, parent != nullptr);
-
-			if (newChild)
-				parent->AddChildDevice(newChild);
-
-			childDevices.clear();
-			mDevMgr.MarkAndSweep(NULL, 0, childDevices);
-
-			while(!childDevices.empty()) {
-				IATDevice *child = childDevices.back();
-				childDevices.pop_back();
-
-				mDevMgr.RemoveDevice(child);
-			}
-
-			OnDataExchange(false);
+			SaveSettings(configTag.c_str(), pset);
+		} catch(const MyError& err) {
+			err.post(mhdlg, "Error");
+			return;
 		}
 	}
 }
@@ -661,6 +705,20 @@ void ATUIDialogDevices::SaveSettings(const char *configTag, const ATPropertySet&
 		key.setString(configTag, s.c_str());
 	}
 }
+
+void ATUIDialogDevices::OnItemSelectionChanged(VDUIProxyTreeViewControl *sender, int idx) {
+	const auto *node = static_cast<DeviceNode *>(mTreeView.GetSelectedVirtualItem());
+	bool enabled = node && node->mbHasSettings;
+
+	EnableControl(IDC_SETTINGS, enabled);
+}
+
+void ATUIDialogDevices::OnItemDoubleClicked(VDUIProxyTreeViewControl *sender, bool *handled) {
+	Settings();
+
+	*handled = true;
+}
+
 
 ///////////////////////////////////////////////////////////////////////////
 

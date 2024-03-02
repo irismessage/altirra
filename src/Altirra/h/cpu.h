@@ -23,6 +23,7 @@
 #endif
 
 #include <vd2/system/vdtypes.h>
+#include <at/atcpu/history.h>
 
 class ATCPUEmulator;
 class ATCPUHookManager;
@@ -33,12 +34,16 @@ class ATSaveStateReader;
 class ATSaveStateWriter;
 class ATCPUEmulatorMemory;
 class ATBreakpointManager;
+struct ATCPUHistoryEntry;
+
+enum ATDebugDisasmMode : uint8;
 
 class ATCPUEmulatorCallbacks {
 public:
 	virtual uint32 CPUGetTimestamp() = 0;
 	virtual uint32 CPUGetCycle() = 0;
 	virtual uint32 CPUGetUnhaltedCycle() = 0;
+	virtual void CPUGetHistoryTimes(ATCPUHistoryEntry * VDRESTRICT he) const = 0;
 };
 
 enum ATCPUStepResult {
@@ -49,14 +54,14 @@ enum ATCPUStepResult {
 
 typedef ATCPUStepResult (*ATCPUStepCallback)(ATCPUEmulator *cpu, uint32 pc, bool call, void *data);
 
-enum ATCPUMode {
+enum ATCPUMode : uint8 {
 	kATCPUMode_6502,
 	kATCPUMode_65C02,
 	kATCPUMode_65C816,
 	kATCPUModeCount
 };
 
-enum ATCPUSubMode {
+enum ATCPUSubMode : uint8 {
 	kATCPUSubMode_6502,
 	kATCPUSubMode_65C02,
 	kATCPUSubMode_65C816_Emulation,
@@ -90,31 +95,6 @@ namespace AT6502 {
 class VDINTERFACE IATCPUHighLevelEmulator {
 public:
 	virtual int InvokeHLE(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem, uint16 pc, uint32 code) = 0;
-};
-
-struct ATCPUHistoryEntry {
-	uint16	mCycle;
-	uint16	mUnhaltedCycle;
-	uint32	mTimestamp;
-	uint32	mEA;
-	uint16	mPC;
-	uint8	mS;
-	uint8	mP;
-	uint8	mA;
-	uint8	mX;
-	uint8	mY;
-	bool	mbIRQ : 1;
-	bool	mbNMI : 1;
-	bool	mbEmulation : 1;
-	uint8	mSubCycle : 5;
-	uint8	mOpcode[4];
-	uint8	mSH;
-	uint8	mAH;
-	uint8	mXH;
-	uint8	mYH;
-	uint8	mB;
-	uint8	mK;
-	uint16	mD;
 };
 
 class ATCPUEmulator {
@@ -196,10 +176,24 @@ public:
 		mpStepCallback = NULL;
 		mStepStackLevel = -1;
 
+		mDebugFlags &= ~kDebugFlag_StepNMI;
+
 		if (step)
 			mDebugFlags |= kDebugFlag_Step;
 		else
 			mDebugFlags &= ~kDebugFlag_Step;
+	}
+
+	void	SetStepNMI() {
+		mbStep = false;
+		mbStepOver = false;
+		mStepRegionStart = 0;
+		mStepRegionSize = 0;
+		mpStepCallback = NULL;
+		mStepStackLevel = -1;
+
+		mDebugFlags |= kDebugFlag_StepNMI;
+		mDebugFlags &= ~kDebugFlag_Step;
 	}
 
 	void	SetStepRange(uint32 regionStart, uint32 regionSize, ATCPUStepCallback stepcb, void *stepcbdata, bool stepOver);
@@ -216,6 +210,7 @@ public:
 
 	void	SetCPUMode(ATCPUMode mode, uint32 subCycles);
 	ATCPUMode GetCPUMode() const { return mCPUMode; }
+	ATDebugDisasmMode GetDisasmMode() const { return (ATDebugDisasmMode)mCPUMode; }
 	uint32 GetSubCycles() const { return mSubCycles; }
 	ATCPUSubMode GetCPUSubMode() const { return mCPUSubMode; }
 	ATCPUAdvanceMode GetAdvanceMode() const { return mAdvanceMode; }
@@ -346,11 +341,15 @@ protected:
 	void	Decode65816AddrStackRelInd();
 
 	const uint8 *mpNextState;
-	bool	mbHistoryOrProfilingEnabled;
+
+	// The register arrangement here is set up to allow DWORD copies into
+	// history entries.
 	uint8	mA;
 	uint8	mX;
 	uint8	mY;
 	uint8	mS;
+
+	bool	mbHistoryOrProfilingEnabled;
 	uint8	mP;
 	uint16	mInsnPC;
 	uint16	mPC;
@@ -364,10 +363,10 @@ protected:
 
 	uint8	mB;		// data bank register
 	uint8	mK;		// program bank register
+	uint8	mSH;
 	uint8	mAH;
 	uint8	mXH;
 	uint8	mYH;
-	uint8	mSH;
 	uint16	mDP;
 
 	uint32	mIFlagSetCycle;
@@ -392,7 +391,8 @@ protected:
 		kDebugFlag_Step = 0x01,		// mbStep is set
 		kDebugFlag_SBrk = 0x02,		// mSBrk is active
 		kDebugFlag_Trace = 0x04,	// mbTrace is set
-		kDebugFlag_BP = 0x08		// Breakpoints are set
+		kDebugFlag_BP = 0x08,		// Breakpoints are set
+		kDebugFlag_StepNMI = 0x10	// NMI step is pending
 	};
 
 	uint8	mDebugFlags;

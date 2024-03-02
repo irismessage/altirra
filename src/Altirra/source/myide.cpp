@@ -37,6 +37,7 @@ ATMyIDEEmulator::ATMyIDEEmulator()
 	, mpUIRenderer(NULL)
 	, mpSim(NULL)
 	, mbVersion2(false)
+	, mbVersion2Ex(false)
 	, mCartBank(0)
 	, mCartBank2(0)
 {
@@ -50,10 +51,11 @@ bool ATMyIDEEmulator::IsLeftCartEnabled() const {
 	return mCartBank >= 0;
 }
 
-void ATMyIDEEmulator::Init(ATMemoryManager *memman, IATUIRenderer *uir, ATScheduler *sch, ATSimulator *sim, bool used5xx, bool v2) {
+void ATMyIDEEmulator::Init(ATMemoryManager *memman, IATUIRenderer *uir, ATScheduler *sch, ATSimulator *sim, bool used5xx, bool v2, bool v2ex) {
 	mpMemMan = memman;
 	mpUIRenderer = uir;
 	mbVersion2 = v2;
+	mbVersion2Ex = v2ex;
 	mpSim = sim;
 	mbUseD5xx = used5xx;
 
@@ -243,8 +245,14 @@ bool ATMyIDEEmulator::OnWriteByte_CCTL(void *thisptr0, uint32 addr, uint8 value)
 }
 
 sint32 ATMyIDEEmulator::OnDebugReadByte_CCTL_V2(void *thisptr0, uint32 addr) {
+	ATMyIDEEmulator *thisptr = (ATMyIDEEmulator *)thisptr0;
+
+	// The updated V2 maps $D540-D57F to the data register.
+	if (thisptr->mbVersion2Ex && addr >= 0xD540 && addr < 0xD580) {
+		addr = 0xD500;
+	}
+
 	if (addr < 0xD508) {
-		ATMyIDEEmulator *thisptr = (ATMyIDEEmulator *)thisptr0;
 
 		if (!thisptr->mbCFPower || !thisptr->mpIDE)
 			return 0xFF;
@@ -260,6 +268,11 @@ sint32 ATMyIDEEmulator::OnDebugReadByte_CCTL_V2(void *thisptr0, uint32 addr) {
 
 sint32 ATMyIDEEmulator::OnReadByte_CCTL_V2(void *thisptr0, uint32 addr) {
 	ATMyIDEEmulator *thisptr = (ATMyIDEEmulator *)thisptr0;
+
+	// The updated V2 maps $D540-D57F to the data register.
+	if (thisptr->mbVersion2Ex && addr >= 0xD540 && addr < 0xD580) {
+		addr = 0xD500;
+	}
 
 	if (addr < 0xD510) {
 		if (addr >= 0xD508) {
@@ -328,6 +341,11 @@ bool ATMyIDEEmulator::OnWriteByte_CCTL_V2(void *thisptr0, uint32 addr, uint8 val
 				break;
 		}
 		return true;
+	}
+
+	// The updated V2 maps $D540-D57F to the data register.
+	if (thisptr->mbVersion2Ex && addr >= 0xD540) {
+		addr = 0xD500;
 	}
 	
 	switch(addr) {

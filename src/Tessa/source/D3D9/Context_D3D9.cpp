@@ -1398,7 +1398,7 @@ bool VDTContextD3D9::Init(IDirect3DDevice9 *dev, IDirect3DDevice9Ex *dev9Ex, IVD
 	mCaps.mMaxTextureWidth = caps.MaxTextureWidth;
 	mCaps.mMaxTextureHeight = caps.MaxTextureHeight;
 	mCaps.mbNonPow2Conditional = (caps.TextureCaps & (D3DPTEXTURECAPS_NONPOW2CONDITIONAL | D3DPTEXTURECAPS_POW2)) != 0;
-	mCaps.mbNonPow2 = !(caps.TextureCaps & D3DPTEXTURECAPS_POW2) != 0;
+	mCaps.mbNonPow2 = !(caps.TextureCaps & D3DPTEXTURECAPS_POW2);
 
 	hr = dev->GetDirect3D(&mpD3D);
 	if (FAILED(hr)) {

@@ -21,12 +21,12 @@
 #include <vd2/system/hash.h>
 #include <vd2/system/math.h>
 #include <vd2/system/strutil.h>
+#include <at/atcore/scheduler.h>
 #include "ide.h"
 #include "idephysdisk.h"
 #include "iderawimage.h"
 #include "idevhdimage.h"
 #include "console.h"
-#include "scheduler.h"
 #include "uirender.h"
 #include "simulator.h"
 #include "debuggerlog.h"

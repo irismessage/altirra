@@ -7,9 +7,12 @@
 
 struct ATIPv4HeaderInfo;
 
-class ATNetIpStack : public IATNetIpStack {
+class ATNetIpStack final : public IATNetIpStack {
+	ATNetIpStack(const ATNetIpStack&) = delete;
+	ATNetIpStack& operator=(const ATNetIpStack&) = delete;
 public:
 	ATNetIpStack();
+	~ATNetIpStack();
 
 	IATEthernetClock *GetClock() const;
 	virtual uint32 GetIpAddress() const { return mIpAddress; }
@@ -22,12 +25,15 @@ public:
 	void InitHeader(ATIPv4HeaderInfo& info);
 
 	void ClearArpCache();
-	void AddArpEntry(uint32 ipaddr, const ATEthernetAddr& hwaddr);
+	void AddArpEntry(uint32 ipaddr, const ATEthernetAddr& hwaddr, bool pendingOnly);
 
 	void SendFrame(const ATEthernetAddr& dstAddr, const void *data, uint32 len);
 	void SendFrame(uint32 dstIpAddr, const void *data, uint32 len);
 
-public:
+private:
+	void DeletePendingArpEntry(uint32 ipAddr);
+	void FlushPendingArpEntry(uint32 ipAddr, const ATEthernetAddr& hwaddr);
+
 	ATEthernetAddr mHwAddress;
 	IATEthernetSegment *mpEthSegment;
 	uint32	mEthClockId;
@@ -38,6 +44,11 @@ public:
 
 	typedef vdhashmap<uint32, ATEthernetAddr> ArpCache;
 	ArpCache mArpCache;
+
+	class PendingArpEntry;
+
+	typedef vdhashmap<uint32, PendingArpEntry *> PendingArpRequests;
+	PendingArpRequests mPendingArpRequests;
 };
 
 #endif	// f_ATNETWORK_IPSTACK_H

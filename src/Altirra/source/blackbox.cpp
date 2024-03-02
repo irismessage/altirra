@@ -25,7 +25,6 @@
 #include "debuggerlog.h"
 #include "memorymanager.h"
 #include "firmwaremanager.h"
-#include "devicemanager.h"
 #include "irqcontroller.h"
 #include "idedisk.h"
 #include "scsidisk.h"
@@ -93,6 +92,15 @@ ATBlackBoxEmulator::ATBlackBoxEmulator()
 	mSCSIBus.SetBusMonitor(this);
 }
 
+void ATCreateDeviceBlackBoxEmulator(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATBlackBoxEmulator> p(new ATBlackBoxEmulator);
+	p->SetSettings(pset);
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefBlackBox = { "blackbox", "blackbox", L"BlackBox", ATCreateDeviceBlackBoxEmulator };
+
 ATBlackBoxEmulator::~ATBlackBoxEmulator() {
 }
 
@@ -112,8 +120,7 @@ void *ATBlackBoxEmulator::AsInterface(uint32 iid) {
 }
 
 void ATBlackBoxEmulator::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "blackbox";
-	info.mName = L"BlackBox";
+	info.mpDef = &g_ATDeviceDefBlackBox;
 }
 
 void ATBlackBoxEmulator::GetSettings(ATPropertySet& settings) {
@@ -228,7 +235,7 @@ void ATBlackBoxEmulator::WarmReset() {
 
 	mbLastPrinterStrobe = true;
 
-	mPIA.Reset();
+	mPIA.WarmReset();
 	mVIA.Reset();
 	mVIA.SetCB1Input(false);
 
@@ -243,6 +250,8 @@ void ATBlackBoxEmulator::WarmReset() {
 
 void ATBlackBoxEmulator::ColdReset() {
 	memset(mRAM, 0x00, sizeof mRAM);
+
+	mPIA.ColdReset();
 
 	WarmReset();
 }
@@ -753,17 +762,4 @@ void ATBlackBoxEmulator::UpdateDipSwitches() {
 		mPBIBANK = 0xFF;
 		SetPBIBANK(pbibank);
 	}
-}
-
-/////////////////////////////////////////////////////////////////
-
-void ATCreateDeviceBlackBoxEmulator(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATBlackBoxEmulator> p(new ATBlackBoxEmulator);
-	p->SetSettings(pset);
-
-	*dev = p.release();
-}
-
-void ATRegisterDeviceBlackBox(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("blackbox", ATCreateDeviceBlackBoxEmulator);
 }

@@ -41,9 +41,9 @@ class ATConsoleOutput;
 // are run at 1MHz speed. The channel outputs are mixed and crudely box filtered
 // down to Altirra's internal mixing rate (64KHz) before the filter is applied.
 //
-class ATSlightSIDEmulator : public VDAlignedObject<16>, public IATSyncAudioSource {
-	ATSlightSIDEmulator(const ATSlightSIDEmulator&);
-	ATSlightSIDEmulator& operator=(const ATSlightSIDEmulator&);
+class ATSlightSIDEmulator final : public VDAlignedObject<16>, public IATSyncAudioSource {
+	ATSlightSIDEmulator(const ATSlightSIDEmulator&) = delete;
+	ATSlightSIDEmulator& operator=(const ATSlightSIDEmulator&) = delete;
 public:
 	enum { kTypeID = 'ssid' };
 
@@ -67,7 +67,9 @@ public:
 	void Run(uint32 cycles);
 
 public:
-	void WriteAudio(uint32 startTime, float *dstLeft, float *dstRightOpt, uint32 n);
+	bool SupportsStereoMixing() const override { return false; }
+	bool RequiresStereoMixingNow() const override { return false; }
+	void WriteAudio(const ATSyncAudioMixInfo& mixInfo);
 
 protected:
 	void Flush();

@@ -27,9 +27,9 @@ class ATMemoryLayer;
 class IATAudioOutput;
 class ATConsoleOutput;
 
-class ATCovoxEmulator : public VDAlignedObject<16>, public IATSyncAudioSource {
-	ATCovoxEmulator(const ATCovoxEmulator&);
-	ATCovoxEmulator& operator=(const ATCovoxEmulator&);
+class ATCovoxEmulator final : public VDAlignedObject<16>, public IATSyncAudioSource {
+	ATCovoxEmulator(const ATCovoxEmulator&) = delete;
+	ATCovoxEmulator& operator=(const ATCovoxEmulator&) = delete;
 public:
 	ATCovoxEmulator();
 	~ATCovoxEmulator();
@@ -47,7 +47,9 @@ public:
 	void Run(int cycles);
 
 public:
-	void WriteAudio(uint32 startTime, float *dstLeft, float *dstRightOpt, uint32 n);
+	bool SupportsStereoMixing() const override { return true; }
+	bool RequiresStereoMixingNow() const override { return mbUnbalanced; }
+	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 
 protected:
 	void Flush();
@@ -66,6 +68,8 @@ protected:
 	float	mOutputAccumRight;
 	uint32	mOutputCount;
 	uint32	mOutputLevel;
+	bool	mbUnbalanced;
+	bool	mbUnbalancedSticky;
 
 	uint32	mLastUpdate;
 

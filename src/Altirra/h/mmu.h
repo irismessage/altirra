@@ -18,6 +18,8 @@
 #ifndef f_AT_MMU_H
 #define f_AT_MMU_H
 
+#include <vd2/system/function.h>
+
 class ATMemoryLayer;
 class ATMemoryManager;
 class IATHLEKernel;
@@ -56,6 +58,11 @@ public:
 	void Shutdown();
 
 	bool IsKernelROMEnabled() const { return (mCurrentBankInfo & kMapInfo_Kernel) != 0; }
+	bool IsSelfTestROMEnabled() const { return (mCurrentBankInfo & kMapInfo_SelfTest) != 0; }
+	bool IsBASICROMEnabled() const { return (mCurrentBankInfo & kMapInfo_BASIC) != 0; }
+	bool IsBASICOrGameROMEnabled() const { return (mCurrentBankInfo & (kMapInfo_BASIC | kMapInfo_Game)) != 0; }
+
+	void SetROMMappingHook(const vdfunction<void()>& fn);
 
 	void SetAxlonMemory(uint8 bankbits, bool enableAliasing);
 
@@ -65,7 +72,7 @@ public:
 	uint32 GetAnticBankBase() const { return mAnticBase; }
 
 	void ClearModeOverrides();
-	void SetModeOverrides(int memoryMode, int hwmode);
+	void SetModeOverrides(int memoryMode, bool forceBASIC);
 
 	uint8 GetBankRegister() const { return mCurrentBank; }
 	void SetBankRegister(uint8 bank);
@@ -78,10 +85,12 @@ protected:
 	void UpdateAxlonBank();
 	static bool OnAxlonWrite(void *thisptr, uint32 addr, uint8 value);
 
+	void UpdateROMMappingHook();
+
 	int mHardwareMode;
-	int mHardwareModeOverride;
 	int mMemoryMode;
 	int mMemoryModeOverride;
+	bool mbForceBasic;
 	ATMemoryManager *mpMemMan;
 	uint8 *mpMemory;
 	ATMemoryLayer *mpLayerExtRAM;
@@ -103,6 +112,8 @@ protected:
 	uint32		mCPUBase;
 	uint32		mAnticBase;
 	uint32		mCurrentBankInfo;
+
+	vdfunction<void()> mpROMMappingChangeFn;
 
 	// bits 0-8: bank number (shr 14) (8MB)
 	// bit 9: Hidden RAM enable

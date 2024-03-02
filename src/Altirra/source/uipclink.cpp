@@ -20,7 +20,7 @@
 #include <vd2/system/error.h>
 #include <vd2/Dita/services.h>
 #include <at/atcore/propertyset.h>
-#include <at/atui/dialog.h>
+#include <at/atnativeui/dialog.h>
 #include "resource.h"
 
 class ATUIDialogPCLink : public VDDialogFrameW32 {
@@ -67,8 +67,6 @@ void ATUIDialogPCLink::OnDataExchange(bool write) {
 }
 
 bool ATUIDialogPCLink::OnCommand(uint32 id, uint32 extcode) {
-	int index = 0;
-
 	switch(id) {
 		case IDC_BROWSE:
 			{

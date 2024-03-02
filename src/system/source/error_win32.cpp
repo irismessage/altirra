@@ -41,22 +41,22 @@ static const char *GetVCMErrorString(uint32 icErr) {
 	// Does anyone have the *real* text strings for this?
 
 	switch(icErr) {
-	case ICERR_OK:				err = "The operation completed successfully."; break;		// sorry, couldn't resist....
-	case ICERR_UNSUPPORTED:		err = "The operation is not supported."; break;
-	case ICERR_BADFORMAT:		err = "The source image format is not acceptable."; break;
-	case ICERR_MEMORY:			err = "Not enough memory."; break;
-	case ICERR_INTERNAL:		err = "An internal error occurred."; break;
-	case ICERR_BADFLAGS:		err = "An invalid flag was specified."; break;
-	case ICERR_BADPARAM:		err = "An invalid parameter was specified."; break;
-	case ICERR_BADSIZE:			err = "An invalid size was specified."; break;
-	case ICERR_BADHANDLE:		err = "The handle is invalid."; break;
-	case ICERR_CANTUPDATE:		err = "Cannot update the destination image."; break;
-	case ICERR_ABORT:			err = "The operation was aborted by the user."; break;
-	case ICERR_ERROR:			err = "An unknown error occurred (may be corrupt data)."; break;
-	case ICERR_BADBITDEPTH:		err = "The source color depth is not acceptable."; break;
-	case ICERR_BADIMAGESIZE:	err = "The source image size is not acceptable."; break;
+	case (uint32)ICERR_OK:				err = "The operation completed successfully."; break;		// sorry, couldn't resist....
+	case (uint32)ICERR_UNSUPPORTED:		err = "The operation is not supported."; break;
+	case (uint32)ICERR_BADFORMAT:		err = "The source image format is not acceptable."; break;
+	case (uint32)ICERR_MEMORY:			err = "Not enough memory."; break;
+	case (uint32)ICERR_INTERNAL:		err = "An internal error occurred."; break;
+	case (uint32)ICERR_BADFLAGS:		err = "An invalid flag was specified."; break;
+	case (uint32)ICERR_BADPARAM:		err = "An invalid parameter was specified."; break;
+	case (uint32)ICERR_BADSIZE:			err = "An invalid size was specified."; break;
+	case (uint32)ICERR_BADHANDLE:		err = "The handle is invalid."; break;
+	case (uint32)ICERR_CANTUPDATE:		err = "Cannot update the destination image."; break;
+	case (uint32)ICERR_ABORT:			err = "The operation was aborted by the user."; break;
+	case (uint32)ICERR_ERROR:			err = "An unknown error occurred (may be corrupt data)."; break;
+	case (uint32)ICERR_BADBITDEPTH:		err = "The source color depth is not acceptable."; break;
+	case (uint32)ICERR_BADIMAGESIZE:	err = "The source image size is not acceptable."; break;
 	default:
-		if (icErr <= ICERR_CUSTOM) err = "A codec-specific error occurred.";
+		if (icErr >= 0x80000000U && icErr <= (uint32)ICERR_CUSTOM) err = "A codec-specific error occurred.";
 		break;
 	}
 
@@ -83,25 +83,25 @@ MyAVIError::MyAVIError(const char *s, uint32 avierr) {
 	const char *err = "(Unknown)";
 
 	switch(avierr) {
-	case AVIERR_UNSUPPORTED:		err = "unsupported"; break;
-	case AVIERR_BADFORMAT:			err = "bad format"; break;
-	case AVIERR_MEMORY:				err = "out of memory"; break;
-	case AVIERR_INTERNAL:			err = "internal error"; break;
-	case AVIERR_BADFLAGS:			err = "bad flags"; break;
-	case AVIERR_BADPARAM:			err = "bad parameters"; break;
-	case AVIERR_BADSIZE:			err = "bad size"; break;
-	case AVIERR_BADHANDLE:			err = "bad AVIFile handle"; break;
-	case AVIERR_FILEREAD:			err = "file read error"; break;
-	case AVIERR_FILEWRITE:			err = "file write error"; break;
-	case AVIERR_FILEOPEN:			err = "file open error"; break;
-	case AVIERR_COMPRESSOR:			err = "compressor error"; break;
-	case AVIERR_NOCOMPRESSOR:		err = "compressor not available"; break;
-	case AVIERR_READONLY:			err = "file marked read-only"; break;
-	case AVIERR_NODATA:				err = "no data (?)"; break;
-	case AVIERR_BUFFERTOOSMALL:		err = "buffer too small"; break;
-	case AVIERR_CANTCOMPRESS:		err = "can't compress (?)"; break;
-	case AVIERR_USERABORT:			err = "aborted by user"; break;
-	case AVIERR_ERROR:				err = "error (?)"; break;
+	case (uint32)AVIERR_UNSUPPORTED:		err = "unsupported"; break;
+	case (uint32)AVIERR_BADFORMAT:			err = "bad format"; break;
+	case (uint32)AVIERR_MEMORY:				err = "out of memory"; break;
+	case (uint32)AVIERR_INTERNAL:			err = "internal error"; break;
+	case (uint32)AVIERR_BADFLAGS:			err = "bad flags"; break;
+	case (uint32)AVIERR_BADPARAM:			err = "bad parameters"; break;
+	case (uint32)AVIERR_BADSIZE:			err = "bad size"; break;
+	case (uint32)AVIERR_BADHANDLE:			err = "bad AVIFile handle"; break;
+	case (uint32)AVIERR_FILEREAD:			err = "file read error"; break;
+	case (uint32)AVIERR_FILEWRITE:			err = "file write error"; break;
+	case (uint32)AVIERR_FILEOPEN:			err = "file open error"; break;
+	case (uint32)AVIERR_COMPRESSOR:			err = "compressor error"; break;
+	case (uint32)AVIERR_NOCOMPRESSOR:		err = "compressor not available"; break;
+	case (uint32)AVIERR_READONLY:			err = "file marked read-only"; break;
+	case (uint32)AVIERR_NODATA:				err = "no data (?)"; break;
+	case (uint32)AVIERR_BUFFERTOOSMALL:		err = "buffer too small"; break;
+	case (uint32)AVIERR_CANTCOMPRESS:		err = "can't compress (?)"; break;
+	case (uint32)AVIERR_USERABORT:			err = "aborted by user"; break;
+	case (uint32)AVIERR_ERROR:				err = "error (?)"; break;
 	}
 
 	setf("%s error: %s (%08lx)", s, err, avierr);

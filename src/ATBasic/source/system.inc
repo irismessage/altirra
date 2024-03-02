@@ -342,6 +342,7 @@ log		= $decd
 log10	= $ded1
 half	= $df6c
 
+fpconst_half    = $df6c
 fpconst_atncoef	= $dfae
 fpconst_pi4		= $dff0
 

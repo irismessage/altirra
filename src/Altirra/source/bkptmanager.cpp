@@ -444,7 +444,6 @@ int ATBreakpointManager::CheckPCBreakpoints(uint32 pc, const BreakpointIndices& 
 
 	for(BreakpointIndices::const_iterator it(bpidxs.begin()), itEnd(bpidxs.end()); it != itEnd; ++it) {
 		const uint32 idx = *it;
-		const BreakpointEntry& bpe = mBreakpoints[idx - 1];
 
 		ATBreakpointEvent ev;
 		ev.mIndex = idx;
@@ -512,7 +511,6 @@ sint32 ATBreakpointManager::OnAccessTrapRead(void *thisptr0, uint32 addr) {
 
 			if ((bre.mAttrFlags & kAttribRangeReadBkpt) && (addr - bre.mAddress) < bre.mLength) {
 				const uint32 idx = bre.mIndex;
-				const BreakpointEntry& bpe = thisptr->mBreakpoints[bre.mIndex - 1];
 
 				ATBreakpointEvent ev;
 				ev.mIndex = idx;
@@ -588,7 +586,6 @@ bool ATBreakpointManager::OnAccessTrapWrite(void *thisptr0, uint32 addr, uint8 v
 
 			if ((bre.mAttrFlags & kAttribRangeWriteBkpt) && (addr - bre.mAddress) < bre.mLength) {
 				const uint32 idx = bre.mIndex;
-				const BreakpointEntry& bpe = thisptr->mBreakpoints[bre.mIndex - 1];
 
 				ATBreakpointEvent ev;
 				ev.mIndex = idx;

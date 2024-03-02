@@ -19,8 +19,8 @@
 #define f_AT_SIOMANAGER_H
 
 #include <at/atcore/devicesio.h>
+#include <at/atcore/scheduler.h>
 #include "pokey.h"
-#include "scheduler.h"
 
 class ATCPUEmulator;
 class ATCPUEmulatorMemory;
@@ -66,7 +66,7 @@ public:
 
 public:
 	virtual void PokeyAttachDevice(ATPokeyEmulator *pokey) override;
-	virtual void PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) override;
+	virtual bool PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) override;
 	virtual void PokeyBeginCommand() override;
 	virtual void PokeyEndCommand() override;
 	virtual void PokeySerInReady() override;
@@ -85,6 +85,8 @@ public:
 	virtual void Delay(uint32 ticks) override;
 	virtual void InsertFence(uint32 id) override;
 	virtual void EndCommand() override;
+	virtual bool IsAccelRequest() const override { return mpAccelRequest != nullptr; }
+	virtual sint32 GetHighSpeedIndex() const override { return 10; }
 
 	virtual void AddRawDevice(IATDeviceRawSIO *dev) override;
 	virtual void RemoveRawDevice(IATDeviceRawSIO *dev) override;
@@ -109,6 +111,7 @@ private:
 	uint8 OnHookDSKINV(uint16);
 	uint8 OnHookSIOV(uint16);
 
+	void AbortActiveCommand();
 	void ExecuteNextStep();
 	void ShiftTransmitBuffer();
 	void ResetTransferRate();

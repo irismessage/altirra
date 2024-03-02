@@ -24,7 +24,8 @@
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/devicesio.h>
 #include <at/atcore/propertyset.h>
-#include "scheduler.h"
+#include <at/atcore/scheduler.h>
+#include <at/atcore/sioutils.h>
 #include "pokey.h"
 #include "pia.h"
 #include "cpu.h"
@@ -34,7 +35,6 @@
 #include "ksyms.h"
 #include "modem.h"
 #include "debuggerlog.h"
-#include "devicemanager.h"
 #include "firmwaremanager.h"
 
 extern ATDebuggerLogChannel g_ATLCModemData;
@@ -804,6 +804,14 @@ protected:
 	uint8 mFirmware[0x2880];
 };
 
+void ATCreateDevice1030Modem(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDevice1030Modem> p(new ATDevice1030Modem);
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDef1030Modem = { "1030", "1030", L"1030 Modem", ATCreateDevice1030Modem };
+
 ATDevice1030Modem::ATDevice1030Modem()
 	: mpScheduler(nullptr)
 	, mpSlowScheduler(nullptr)
@@ -837,8 +845,7 @@ void *ATDevice1030Modem::AsInterface(uint32 id) {
 }
 
 void ATDevice1030Modem::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "1030";
-	info.mName = L"1030 Modem";
+	info.mpDef = &g_ATDeviceDef1030Modem;
 }
 
 void ATDevice1030Modem::GetSettings(ATPropertySet& settings) {
@@ -1071,10 +1078,40 @@ IATDeviceSIO::CmdResponse ATDevice1030Modem::OnSerialBeginCommand(const ATDevice
 	if (cmd.mCommand == 0x3B) {
 		if (mEmulationLevel == kAT850SIOEmulationLevel_Full) {
 			// ModemLink software load -- return $2800 bytes to load at $C00
+			//
+			// The 1030 sends data at three different rates depending on which
+			// portion of the firmware is being sent. The speeds below are calibrated
+			// based on measurements from the actual hardware.
+
 			mpSIOMgr->BeginCommand();
 			mpSIOMgr->SendACK();
 			mpSIOMgr->SendComplete();
-			mpSIOMgr->SendData(mFirmware + 0x80, 0x2800, true);
+
+			// ModemLink part 1
+			mpSIOMgr->SetTransferRate(93, 1032);
+			mpSIOMgr->SendData(mFirmware + 0x80, 0x1100, false);
+
+			// T: handler
+			mpSIOMgr->SetTransferRate(93, 1046);
+			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1100, 0x100, false);
+			mpSIOMgr->SetTransferRate(93, 1059);
+			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1200, 0x780, false);
+			mpSIOMgr->SetTransferRate(93, 1032);
+			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1980, 0x200, false);
+			mpSIOMgr->SetTransferRate(93, 1059);
+			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1B80, 0xB0, false);
+
+			// ModemLink part 2
+			mpSIOMgr->SetTransferRate(93, 1032);
+			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1C30, 0xB50, false);
+
+			// blank sector
+			mpSIOMgr->SetTransferRate(93, 1059);
+			mpSIOMgr->SendData(mFirmware + 0x80 + 0x2780, 0x80, false);
+
+			const uint8 checksum = ATComputeSIOChecksum(mFirmware+0x80, 0x2800);
+			mpSIOMgr->SendData(&checksum, 1, false);
+
 			mpSIOMgr->EndCommand();
 			return kCmdResponse_Start;
 		}
@@ -1085,8 +1122,21 @@ IATDeviceSIO::CmdResponse ATDevice1030Modem::OnSerialBeginCommand(const ATDevice
 		mpSIOMgr->SendComplete();
 
 		if (mEmulationLevel == kAT850SIOEmulationLevel_Full) {
-			// send the embedded handler within the ModemLink firmware
-			mpSIOMgr->SendData(mFirmware + 0x1180, 0xB30, true);
+			// Send the embedded handler within the ModemLink firmware. This is a
+			// subset of the data sent by the $3B command, with the same rates.
+
+			mpSIOMgr->SetTransferRate(93, 1046);
+			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1100, 0x100, false);
+			mpSIOMgr->SetTransferRate(93, 1059);
+			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1200, 0x780, false);
+			mpSIOMgr->SetTransferRate(93, 1032);
+			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1980, 0x200, false);
+			mpSIOMgr->SetTransferRate(93, 1059);
+			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1B80, 0xB0, false);
+
+			const uint8 checksum = ATComputeSIOChecksum(mFirmware + 0x1180, 0xB30);
+			mpSIOMgr->SendData(&checksum, 1, false);
+
 		} else {
 			vdfastvector<uint8> buf(0xB30, 0);
 			buf[0x0C] = 0x60;		// RTS
@@ -1133,16 +1183,4 @@ void ATDevice1030Modem::OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit
 }
 
 void ATDevice1030Modem::OnSendReady() {
-}
-
-///////////////////////////////////////////////////////////////////////////
-
-void ATCreateDevice1030Modem(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDevice1030Modem> p(new ATDevice1030Modem);
-
-	*dev = p.release();
-}
-
-void ATRegisterDevice1030Modem(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("1030", ATCreateDevice1030Modem);
 }

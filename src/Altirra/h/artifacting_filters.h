@@ -106,8 +106,6 @@ inline void ATFilterKernelConvolve(ATFilterKernel& r, const ATFilterKernel& x, c
 	r.mCoeffs.resize(m + n - 1, 0);
 
 	float *dst = r.mCoeffs.data();
-	const float *src1 = x.mCoeffs.data();
-	const float *src2 = y.mCoeffs.data();
 
 	for(size_t i = 0; i < m; ++i) {
 		float s = x.mCoeffs[i];
@@ -319,7 +317,6 @@ inline ATFilterKernel ATFilterKernel::trim() const {
 inline ATFilterKernel operator^(const ATFilterKernel& x, const ATFilterKernel& y) {
 	ATFilterKernel r(x);
 
-	size_t m = x.mCoeffs.size();
 	size_t n = y.mCoeffs.size();
 	int off = y.mOffset;
 

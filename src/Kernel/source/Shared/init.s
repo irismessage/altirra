@@ -146,6 +146,17 @@ clearloop:
 	dex
 	bne		clearloop
 	
+.if _KERNEL_XLXE
+	;Blip the self test ROM for a second -- this is one way that Altirra detects
+	;that Option has been used by the OS. The XL/XE OS does this as part of its
+	;ROM checksum routine (which we don't bother with).
+	ldx		portb
+	txa
+	and		#$7f
+	sta		portb
+	stx		portb
+.endif
+
 	; 7. set dosvec to blackboard routine
 .if _KERNEL_USE_BOOT_SCREEN
 	mwa		#SelfTestEntry dosvec
@@ -362,7 +373,12 @@ end:
 	stx		memtop
 	stx		memlo
 	mva		tramsz memtop+1
-	mva		#$07 memlo+1
+	mvx		#$07 memlo+1
+
+.if _KERNEL_XLXE
+	dex
+	stx		keyrep
+.endif
 	
 	jsr		DiskInit
 	jsr		ScreenInit
@@ -479,7 +495,7 @@ reinitcas:
 	lda		#2
 	bit		boot?
 	beq		postcasboot
-	jsr		initCassette
+	jsr		InitCassetteBoot
 postcasboot:
 
 	; 18. do disk boot
@@ -512,7 +528,7 @@ reinitDisk:
 	lda		boot?
 	lsr
 	bcc		postDiskBoot
-	jsr		initDisk
+	jsr		InitDiskBoot
 postDiskBoot:
 
 .if _KERNEL_XLXE
@@ -554,12 +570,6 @@ NoBootCartB:
 	; run blackboard
 	jmp		(dosvec)
 
-initCassette:
-	jmp		(casini)
-
-initDisk:
-	jmp		(dosini)
-	
 InitCartA:
 	jmp		($bffe)
 
@@ -570,6 +580,15 @@ ScreenEditorName:
 	dta		c"E"
 
 .endp
+
+;==============================================================================
+.proc InitDiskBoot
+	jmp		(dosini)
+.endp
+
+.proc InitCassetteBoot
+.endp
+	jmp		(casini)
 
 ;==============================================================================
 

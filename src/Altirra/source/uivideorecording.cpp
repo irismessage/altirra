@@ -17,7 +17,7 @@
 
 #include "stdafx.h"
 #include <vd2/system/registry.h>
-#include <at/atui/dialog.h>
+#include <at/atnativeui/dialog.h>
 #include "resource.h"
 #include "uitypes.h"
 #include "videowriter.h"

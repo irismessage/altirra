@@ -3,9 +3,9 @@
 #include <vd2/VDDisplay/textrenderer.h>
 #include "uimessagebox.h"
 #include "uibutton.h"
-#include "uimanager.h"
+#include <at/atui/uimanager.h>
 #include "uilabel.h"
-#include "uidrawingutils.h"
+#include <at/atui/uidrawingutils.h>
 
 ATUIMessageBox::ATUIMessageBox()
 	: mpCaptionFont(NULL)

@@ -266,9 +266,9 @@ class ATTestListener : public IATSocketListener {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATEthernetGatewayServer : public vdrefcounted<IATEthernetGatewayServer>, public IATEthernetEndpoint {
-	ATEthernetGatewayServer(const ATEthernetGatewayServer&);
-	ATEthernetGatewayServer& operator=(const ATEthernetGatewayServer&);
+class ATEthernetGatewayServer final : public vdrefcounted<IATEthernetGatewayServer>, public IATEthernetEndpoint {
+	ATEthernetGatewayServer(const ATEthernetGatewayServer&) = delete;
+	ATEthernetGatewayServer& operator=(const ATEthernetGatewayServer&) = delete;
 public:
 	ATEthernetGatewayServer();
 	~ATEthernetGatewayServer();
@@ -278,7 +278,8 @@ public:
 
 	void ColdReset();
 
-	IATNetUdpStack *GetUdpStack() { return &mUdpStack; }
+	IATNetUdpStack *GetUdpStack() override { return &mUdpStack; }
+	IATNetTcpStack *GetTcpStack() override { return &mTcpStack; }
 
 	void SetBridgeListener(IATSocketListener *tcp, IATUdpSocketListener *udp);
 	void GetConnectionInfo(vdfastvector<ATNetConnectionInfo>& connInfo) const;
@@ -439,7 +440,10 @@ void ATEthernetGatewayServer::ReceiveFrame(const ATEthernetPacket& packet, ATEth
 }
 
 void ATEthernetGatewayServer::OnArpPacket(const ATEthernetPacket& packet, const ATEthernetArpFrameInfo& decInfo) {
-	if (decInfo.mOp == ATEthernetArpFrameInfo::kOpRequest && decInfo.mTargetProtocolAddr == mIpAddress) {
+	if (decInfo.mTargetProtocolAddr != mIpAddress)
+		return;
+
+	if (decInfo.mOp == ATEthernetArpFrameInfo::kOpRequest) {
 		ATEthernetArpFrameInfo encInfo;
 		
 		encInfo.mOp = ATEthernetArpFrameInfo::kOpReply;
@@ -464,6 +468,8 @@ void ATEthernetGatewayServer::OnArpPacket(const ATEthernetPacket& packet, const 
 
 			mpEthSegment->TransmitFrame(mEthEndpointId, replyPacket);
 		}
+	} else if (decInfo.mOp == ATEthernetArpFrameInfo::kOpReply) {
+		mIpStack.AddArpEntry(decInfo.mSenderProtocolAddr, decInfo.mSenderHardwareAddr, true);
 	}
 }
 
@@ -499,7 +505,7 @@ void ATEthernetGatewayServer::OnIPv4Datagram(const ATEthernetPacket& packet, con
 	}
 
 	// update ARP cache
-	mIpStack.AddArpEntry(decInfo.mSrcAddr, packet.mSrcAddr);
+	mIpStack.AddArpEntry(decInfo.mSrcAddr, packet.mSrcAddr, false);
 
 	// forward to TCP or UDP layer
 	OnIPv4Packet(packet, decInfo, packet.mpData + 2 + decInfo.mDataOffset, decInfo.mDataLength);

@@ -52,6 +52,10 @@ namespace {
 	}
 }
 
+void ATCreateDeviceHardDiskVHDImage(const ATPropertySet& pset, IATDevice **dev);
+
+extern const ATDeviceDefinition g_ATDeviceDefIDEVHDImage = { "hdvhdimage", "harddisk", L"Hard disk image (VHD file)", ATCreateDeviceHardDiskVHDImage };
+
 const uint8 kATVHDFooterSignature[8] = { 'c', 'o', 'n', 'e', 'c', 't', 'i', 'x' };
 const uint8 kATVHDDynamicHeaderSignature[8] = { 'c', 'x', 's', 'p', 'a', 'r', 's', 'e' };
 
@@ -141,9 +145,7 @@ void *ATIDEVHDImage::AsInterface(uint32 iid) {
 }
 
 void ATIDEVHDImage::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "hdvhdimage";
-	info.mConfigTag = "harddisk";
-	info.mName = L"Hard disk image (VHD file)";
+	info.mpDef = &g_ATDeviceDefIDEVHDImage;
 }
 
 void ATIDEVHDImage::GetSettings(ATPropertySet& settings) {

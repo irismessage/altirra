@@ -27,7 +27,7 @@
 ATDebuggerLogChannel g_ATLCCS8900AW(true, false, "CS8900AW", "CS8900A writes");
 ATDebuggerLogChannel g_ATLCCS8900AR(false, false, "CS8900AR", "CS8900A reads");
 ATDebuggerLogChannel g_ATLCCS8900AN(true, false, "CS8900AN", "CS8900A network transmit/receive");
-ATDebuggerLogChannel g_ATLCCS8900AD(false, false, "CS8900AD", "CS8900A network data (requirse CS8900AN channel)");
+ATDebuggerLogChannel g_ATLCCS8900AD(false, false, "CS8900AD", "CS8900A network data (requires CS8900AN channel)");
 
 ATCS8900AEmulator::ATCS8900AEmulator()
 	: mpEthernetSegment(NULL)

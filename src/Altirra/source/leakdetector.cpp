@@ -50,9 +50,9 @@ public:
 	BOOL (APIENTRY *pSymInitialize)(HANDLE hProcess, PTSTR UserSearchPath, BOOL fInvadeProcess);
 	BOOL (APIENTRY *pSymCleanup)(HANDLE hProcess);
 	BOOL (APIENTRY *pSymSetSearchPath)(HANDLE hProcess, PTSTR SearchPath);
-	BOOL (APIENTRY *pSymLoadModule)(HANDLE hProcess, HANDLE hFile, PSTR ImageFile, PSTR ModuleName, DWORD BaseOfDll, DWORD SizeOfDll);
-	BOOL (APIENTRY *pSymGetSymFromAddr)(HANDLE hProcess, DWORD Address, PDWORD Displacement, PIMAGEHLP_SYMBOL Symbol);
-	BOOL (APIENTRY *pSymGetModuleInfo)(HANDLE hProcess, DWORD dwAddr, PIMAGEHLP_MODULE ModuleInfo);
+	DWORD64 (APIENTRY *pSymLoadModule64)(HANDLE hProcess, HANDLE hFile, PCSTR ImageFile, PCSTR ModuleName, DWORD64 BaseOfDll, DWORD SizeOfDll);
+	BOOL (APIENTRY *pSymGetSymFromAddr64)(HANDLE hProcess, DWORD64 qwAddr, PDWORD64 pdwDisplacement, PIMAGEHLP_SYMBOL64 Symbol);
+	BOOL (APIENTRY *pSymGetModuleInfo64)(HANDLE hProcess, DWORD64 dwAddr, PIMAGEHLP_MODULE64 ModuleInfo);
 	BOOL (APIENTRY *pUnDecorateSymbolName)(PCTSTR DecoratedName, PTSTR UnDecoratedName, DWORD UndecoratedLength, DWORD Flags);
 
 	HMODULE hmodDbgHelp;
@@ -79,20 +79,21 @@ ATDbgHelpDynamicLoaderW32::ATDbgHelpDynamicLoaderW32()
 		"SymInitializeW",
 		"SymCleanup",
 		"SymSetSearchPathW",
-		"SymLoadModule",
-		"SymGetSymFromAddr",
-		"SymGetModuleInfo",
+		"SymLoadModule64",
+		"SymGetSymFromAddr64",
+		"SymGetModuleInfo64",
 		"UnDecorateSymbolNameW",
 #else
 		"SymInitialize",
 		"SymCleanup",
 		"SymSetSearchPath",
-		"SymLoadModule",
-		"SymGetSymFromAddr",
-		"SymGetModuleInfo",
+		"SymLoadModule64",
+		"SymGetSymFromAddr64",
+		"SymGetModuleInfo64",
 		"UnDecorateSymbolName",
 #endif
 	};
+
 	enum { kFuncs = sizeof(sFuncTbl)/sizeof(sFuncTbl[0]) };
 
 	if (hmodDbgHelp) {
@@ -271,11 +272,11 @@ void ATDumpMemoryLeaksVC() {
 	TCHAR *const filenameA = filename;
 #endif
 
-	DWORD dwAddr = dbghelp.pSymLoadModule(hProc, NULL, filenameA, NULL, 0, 0);
+	DWORD64 dwAddr = dbghelp.pSymLoadModule64(hProc, NULL, filenameA, NULL, (DWORD64)GetModuleHandle(NULL), 0);
 
-	IMAGEHLP_MODULE modinfo = {sizeof(IMAGEHLP_MODULE)};
+	IMAGEHLP_MODULE64 modinfo = {sizeof(IMAGEHLP_MODULE64)};
 
-	dbghelp.pSymGetModuleInfo(hProc, dwAddr, &modinfo);
+	dbghelp.pSymGetModuleInfo64(hProc, dwAddr, &modinfo);
 
 
 	_RPT0(0, "\n\n===== MEMORY LEAKS DETECTED =====\n\n");
@@ -331,14 +332,14 @@ void ATDumpMemoryLeaksVC() {
 #endif
 
 				struct {
-					IMAGEHLP_SYMBOL hdr;
+					IMAGEHLP_SYMBOL64 hdr;
 					CHAR nameext[511];
 				} sym;
 
-				sym.hdr.SizeOfStruct = sizeof(IMAGEHLP_SYMBOL);
+				sym.hdr.SizeOfStruct = sizeof(IMAGEHLP_SYMBOL64);
 				sym.hdr.MaxNameLength = 512;
 
-				if (dbghelp.pSymGetSymFromAddr(hProc, (DWORD)pRet, 0, &sym.hdr)) {
+				if (dbghelp.pSymGetSymFromAddr64(hProc, (DWORD64)pRet, 0, &sym.hdr)) {
 					s += wsprintfA(s, "  Allocator: %p [%s]", pRet, sym.hdr.Name);
 				} else
 					s += wsprintfA(s, "  Allocator: %p", pRet);
@@ -349,16 +350,16 @@ void ATDumpMemoryLeaksVC() {
 
 				if (vtbl >= (char *)modinfo.BaseOfImage && vtbl < (char *)modinfo.BaseOfImage + modinfo.ImageSize) {
 					struct {
-						IMAGEHLP_SYMBOL hdr;
+						IMAGEHLP_SYMBOL64 hdr;
 						CHAR nameext[511];
 					} sym;
 
-					sym.hdr.SizeOfStruct = sizeof(IMAGEHLP_SYMBOL);
+					sym.hdr.SizeOfStruct = sizeof(IMAGEHLP_SYMBOL64);
 					sym.hdr.MaxNameLength = 512;
 
 					char *t;
 
-					if (dbghelp.pSymGetSymFromAddr(hProc, (DWORD)vtbl, 0, &sym.hdr) && (t = strstr(sym.hdr.Name, "::`vftable'"))) {
+					if (dbghelp.pSymGetSymFromAddr64(hProc, (DWORD64)vtbl, 0, &sym.hdr) && (t = strstr(sym.hdr.Name, "::`vftable'"))) {
 						*t = 0;
 						s += wsprintfA(s, " [Type: %s]", sym.hdr.Name);
 					}

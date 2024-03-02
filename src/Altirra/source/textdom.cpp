@@ -316,9 +316,9 @@ void Paragraph::SplitLines(int line, int offset, Paragraph& dst) {
 
 	for(; it2 != it2End; ++it2) {
 		Line& ln = *it2;
-		it2->mStart -= offset;
-		dst.mHeight += it2->mHeight;
-		mHeight -= it2->mHeight;
+		ln.mStart -= offset;
+		dst.mHeight += ln.mHeight;
+		mHeight -= ln.mHeight;
 	}
 }
 
@@ -548,7 +548,6 @@ void Iterator::MoveToEnd() {
 void Iterator::MoveToPrevChar() {
 	if (mpParent) {
 		const Paragraph *para = mpParent->mParagraphs[mPara];
-		const Line& ln = para->mLines[mLine];
 
 		if (mOffset > 0)
 			--mOffset;

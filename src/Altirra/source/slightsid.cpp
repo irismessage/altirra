@@ -19,11 +19,10 @@
 #include <vd2/system/binary.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/scheduler.h>
 #include "slightsid.h"
-#include "scheduler.h"
 #include "audiooutput.h"
 #include "memorymanager.h"
-#include "devicemanager.h"
 #include "console.h"
 
 ATSlightSIDEmulator::ATSlightSIDEmulator()
@@ -534,7 +533,11 @@ void ATSlightSIDEmulator::Run(uint32 cycles) {
 #pragma float_control(pop)
 #endif
 
-void ATSlightSIDEmulator::WriteAudio(uint32 startTime, float *dstLeft, float *dstRightOpt, uint32 n) {
+void ATSlightSIDEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
+	float *const dstLeft = mixInfo.mpLeft;
+	float *const dstRightOpt = mixInfo.mpRight;
+	const uint32 n = mixInfo.mCount;
+
 	Flush();
 
 	VDASSERT(n <= kAccumBufferSize);
@@ -635,6 +638,14 @@ private:
 	ATSlightSIDEmulator mSlightSID;
 };
 
+void ATCreateDeviceSlightSID(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceSlightSID> p(new ATDeviceSlightSID);
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefSlightSID = { "slightsid", nullptr, L"SlightSID", ATCreateDeviceSlightSID };
+
 ATDeviceSlightSID::ATDeviceSlightSID()
 	: mpMemMan(nullptr)
 	, mpScheduler(nullptr)
@@ -665,9 +676,7 @@ void *ATDeviceSlightSID::AsInterface(uint32 id) {
 }
 
 void ATDeviceSlightSID::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "slightsid";
-	info.mName = L"SlightSID";
-	info.mConfigTag.clear();
+	info.mpDef = &g_ATDeviceDefSlightSID;
 }
 
 void ATDeviceSlightSID::WarmReset() {
@@ -714,14 +723,4 @@ void ATDeviceSlightSID::InitAudioOutput(IATAudioOutput *out) {
 
 void ATDeviceSlightSID::DumpStatus(ATConsoleOutput& output) {
 	mSlightSID.DumpStatus(output);
-}
-
-void ATCreateDeviceSlightSID(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDeviceSlightSID> p(new ATDeviceSlightSID);
-
-	*dev = p.release();
-}
-
-void ATRegisterDeviceSlightSID(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("slightsid", ATCreateDeviceSlightSID);
 }

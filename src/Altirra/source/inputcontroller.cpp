@@ -17,9 +17,9 @@
 
 #include "stdafx.h"
 #include <vd2/system/math.h>
+#include <at/atcore/scheduler.h>
 #include "inputcontroller.h"
 #include "inputmanager.h"
-#include "scheduler.h"
 #include "gtia.h"
 #include "pokey.h"
 #include "antic.h"
@@ -302,7 +302,7 @@ void ATMouseController::SetDigitalTrigger(uint32 trigger, bool state) {
 			if (mbButtonState[1] != state) {
 				mbButtonState[1] = state;
 
-				mpPortController->SetPotPosition(0, state ? 0 : 228);
+				SetPotPosition(false, state ? 0 : 228);
 			}
 			break;
 	}
@@ -625,7 +625,7 @@ void ATPaddleController::Tick() {
 }
 
 void ATPaddleController::OnDetach() {
-	mpPortController->SetPotPosition(mbSecond, 228);
+	SetPotPosition(mbSecond, 228);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -868,10 +868,10 @@ bool AT5200ControllerController::Select5200Controller(int index, bool potsEnable
 			}
 		} else {
 			ATPokeyEmulator& pokey = mpPortController->GetPokey();
-			pokey.SetShiftKeyState(false);
+			pokey.SetShiftKeyState(false, false);
 			pokey.SetControlKeyState(false);
-			pokey.SetBreakKeyState(false);
-			pokey.ClearKeyMatrix();
+			pokey.SetBreakKeyState(false, false);
+			pokey.ReleaseAllRawKeys(false);
 		}
 	}
 
@@ -1073,9 +1073,9 @@ void AT5200ControllerController::UpdateTopButtonState() {
 		return;
 
 	ATPokeyEmulator& pokey = mpPortController->GetPokey();
-	pokey.SetShiftKeyState(mbTopButton);
+	pokey.SetShiftKeyState(mbTopButton, false);
 	pokey.SetControlKeyState(mbTopButton);
-	pokey.SetBreakKeyState(mbTopButton);
+	pokey.SetBreakKeyState(mbTopButton, false);
 }
 
 void AT5200ControllerController::SetPot(int index, int pos) {

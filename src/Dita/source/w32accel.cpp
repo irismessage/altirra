@@ -33,18 +33,18 @@ void VDUIExtractAcceleratorTableW32(VDAccelTableDefinition& dst, HACCEL haccel, 
 					ent.mAccel.mModifiers |= VDUIAccelerator::kModShift;
 
 				switch(accel.key) {
-				  case VK_INSERT:
-				  case VK_DELETE:
-				  case VK_HOME:
-				  case VK_END:
-				  case VK_NEXT:
-				  case VK_PRIOR:
-				  case VK_LEFT:
-				  case VK_RIGHT:
-				  case VK_UP:
-				  case VK_DOWN:
-					  ent.mAccel.mModifiers |= VDUIAccelerator::kModExtended;
-					  break;
+					case VK_INSERT:
+					case VK_DELETE:
+					case VK_HOME:
+					case VK_END:
+					case VK_NEXT:
+					case VK_PRIOR:
+					case VK_LEFT:
+					case VK_RIGHT:
+					case VK_UP:
+					case VK_DOWN:
+						ent.mAccel.mModifiers |= VDUIAccelerator::kModExtended;
+						break;
 				}
 
 				dst.Add(ent);
@@ -87,41 +87,138 @@ void VDUIGetAcceleratorString(const VDUIAccelerator& accel, VDStringW& s) {
 	if (accel.mModifiers & VDUIAccelerator::kModUp)
 		s = L"^";
 
-	// Rationale for ordering:
-	//
-	//	Ctrl+Alt+Del
-	//	Alt+Shift+PrtSc
-	//
-	// Therefore, we use Ctrl+Alt+Shift+key ordering.
+	if (accel.mModifiers & VDUIAccelerator::kModCooked) {
+		s += L"\"";
+
+		const wchar_t c = (wchar_t)accel.mVirtKey;
+		VDUIAccelerator accel = {};
+
+		switch(c) {
+			case ' ':
+				accel.mVirtKey = VK_SPACE;
+				break;
+			case '\t':
+				accel.mVirtKey = VK_TAB;
+				break;
+			case '\b':
+				accel.mVirtKey = VK_BACK;
+				break;
+			case '\r':
+				accel.mVirtKey = VK_RETURN;
+				break;
+			case '\x1b':
+				accel.mVirtKey = VK_ESCAPE;
+				break;
+		}
+
+		if (accel.mVirtKey)
+			VDUIGetAcceleratorStringInternal(accel, s);
+		else
+			s += c;
+
+		s += L"\"";
+	} else {
+		// Rationale for ordering:
+		//
+		//	Ctrl+Alt+Del
+		//	Alt+Shift+PrtSc
+		//
+		// Therefore, we use Ctrl+Alt+Shift+key ordering.
+
+		if (accel.mModifiers & VDUIAccelerator::kModCtrl) {
+			VDUIAccelerator accelCtrl;
+			accelCtrl.mVirtKey = VK_CONTROL;
+			accelCtrl.mModifiers = 0;
+			VDUIGetAcceleratorStringInternal(accelCtrl, s);
+
+			s += L"+";
+		}
+
+		if (accel.mModifiers & VDUIAccelerator::kModAlt) {
+			VDUIAccelerator accelAlt;
+			accelAlt.mVirtKey = VK_MENU;
+			accelAlt.mModifiers = 0;
+			VDUIGetAcceleratorStringInternal(accelAlt, s);
+
+			s += L"+";
+		}
+
+		if (accel.mModifiers & VDUIAccelerator::kModShift) {
+			VDUIAccelerator accelShift;
+			accelShift.mVirtKey = VK_SHIFT;
+			accelShift.mModifiers = 0;
+			VDUIGetAcceleratorStringInternal(accelShift, s);
+
+			s += L"+";
+		}
+
+		VDUIGetAcceleratorStringInternal(accel, s);
+	}
+}
+
+bool VDUIGetVkAcceleratorForChar(VDUIAccelerator& accel, wchar_t c) {
+	SHORT vkCode = VkKeyScanW(c);
+	if (vkCode == (SHORT)-1)
+		return false;
+
+	if (vkCode & 0xF800)
+		return false;
+
+	accel.mVirtKey = LOBYTE(vkCode);
+	accel.mModifiers = 0;
+
+	if (vkCode & 0x100)
+		accel.mModifiers += VDUIAccelerator::kModShift;
+
+	if (vkCode & 0x200)
+		accel.mModifiers += VDUIAccelerator::kModCtrl;
+
+	if (vkCode & 0x400)
+		accel.mModifiers += VDUIAccelerator::kModAlt;
+
+	return true;
+}
+
+bool VDUIGetCharAcceleratorForVk(VDUIAccelerator& accel) {
+	if (accel.mModifiers & VDUIAccelerator::kModCooked)
+		return true;
+
+	// map the virtual key to a scan code
+	UINT scanCode = MapVirtualKey(accel.mVirtKey, MAPVK_VK_TO_VSC);
+	if (!scanCode)
+		return false;
+
+	if (scanCode > 0xFF)
+		return false;
+
+	// build keyboard state
+	BYTE keyState[256] = {0};
+
+	keyState[scanCode] = 0xFF;
+
+	if (accel.mModifiers & VDUIAccelerator::kModShift) {
+		keyState[VK_SHIFT] = 0xFF;
+		keyState[VK_LSHIFT] = 0xFF;
+	}
 
 	if (accel.mModifiers & VDUIAccelerator::kModCtrl) {
-		VDUIAccelerator accelCtrl;
-		accelCtrl.mVirtKey = VK_CONTROL;
-		accelCtrl.mModifiers = 0;
-		VDUIGetAcceleratorStringInternal(accelCtrl, s);
-
-		s += L"+";
+		keyState[VK_CONTROL] = 0xFF;
+		keyState[VK_LCONTROL] = 0xFF;
 	}
 
 	if (accel.mModifiers & VDUIAccelerator::kModAlt) {
-		VDUIAccelerator accelAlt;
-		accelAlt.mVirtKey = VK_MENU;
-		accelAlt.mModifiers = 0;
-		VDUIGetAcceleratorStringInternal(accelAlt, s);
-
-		s += L"+";
+		keyState[VK_MENU] = 0xFF;
+		keyState[VK_LMENU] = 0xFF;
 	}
 
-	if (accel.mModifiers & VDUIAccelerator::kModShift) {
-		VDUIAccelerator accelShift;
-		accelShift.mVirtKey = VK_SHIFT;
-		accelShift.mModifiers = 0;
-		VDUIGetAcceleratorStringInternal(accelShift, s);
+	// map the virtual key + scan code to a character
+	WCHAR outBuf[16];
+	if (1 != ToUnicode(accel.mVirtKey, scanCode, keyState, outBuf, vdcountof(outBuf), 0))
+		return false;
 
-		s += L"+";
-	}
-
-	VDUIGetAcceleratorStringInternal(accel, s);
+	accel.mModifiers = VDUIAccelerator::kModCooked;
+	accel.mVirtKey = (uint32)outBuf[0];
+	return true;
 }
 
 HACCEL VDUIBuildAcceleratorTableW32(const VDAccelTableDefinition& def) {

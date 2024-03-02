@@ -18,7 +18,7 @@
 #include "stdafx.h"
 #include <stdio.h>
 #include <exception>
-#include <hash_map>
+#include <unordered_map>
 #include <vd2/system/error.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/vdalloc.h>
@@ -354,7 +354,7 @@ protected:
 		IGLCFragmentShader *mpFragmentShader;
 	};
 
-	typedef stdext::hash_map<std::string, Technique> Techniques;
+	typedef std::unordered_map<std::string, Technique> Techniques;
 	Techniques mTechniques;
 };
 

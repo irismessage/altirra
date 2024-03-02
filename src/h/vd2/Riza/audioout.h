@@ -26,7 +26,9 @@ struct tWAVEFORMATEX;
 
 class IVDAudioOutput {
 public:
-	virtual ~IVDAudioOutput() {}
+	virtual ~IVDAudioOutput() = default;
+
+	virtual uint32	GetPreferredSamplingRate(const wchar_t *preferredDevice) const = 0;
 
 	virtual bool	Init(uint32 bufsize, uint32 bufcount, const tWAVEFORMATEX *wf, const wchar_t *preferredDevice) = 0;
 	virtual void	Shutdown() = 0;

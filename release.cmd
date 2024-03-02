@@ -2,14 +2,17 @@
 setlocal enableextensions enabledelayedexpansion
 
 rem ---echo banner
-echo Altirra Build Release Utility Version 2.60
-echo Copyright (C) Avery Lee 2014. Licensed under GNU General Public License
+echo Altirra Build Release Utility Version 2.70
+echo Copyright (C) Avery Lee 2014-2015. Licensed under GNU General Public License
 echo.
 
 rem ---parse command line arguments
 set _incremental=false
 set _packonly=false
 set _verid=
+set _anyvc=false
+set _clversionexp=18.00.31101
+set _clversionexpdesc=Visual Studio 2013 Update 4
 
 :arglist
 if "%1"=="" goto endargs
@@ -18,6 +21,8 @@ if "%1"=="/packonly" (
 	set _packonly=true
 ) else if "%1"=="/inc" (
 	set _incremental=true
+) else if "%1"=="/anyvc" (
+	set _anyvc=true
 ) else if "%1"=="/?" (
 	goto :usage
 ) else if "%1"=="/h" (
@@ -32,7 +37,7 @@ shift /1
 goto :arglist
 
 :usage
-echo Usage: release [/inc] [/packonly] ^<version-id^>
+echo Usage: release [/inc] [/packonly] [/anyvc] ^<version-id^>
 echo.
 exit /b 5
 
@@ -42,13 +47,28 @@ if "!_verid!"=="" goto :usage
 @where /q devenv.exe >nul
 if errorlevel 1 (
 	echo Unable to find Visual C++ IDE ^(devenv.exe^) in current path.
-	exit /b 0
+	exit /b 5
+)
+
+if "!_anyvc!"=="false" (
+	set _clversion=unknown
+	for /f "tokens=7 usebackq delims= " %%x in (`cl /? 2^>^&1 ^| findstr "Optimizing Compiler"`) do set _clversion=%%x
+
+	if not "!_clversion!"=="18.00.31101" (
+		echo Error: Unexpected version of Visual C/C++ compiler.
+		echo.
+		echo   Expected: !_clversionexp! ^(!_clversionexpdesc!^)
+		echo   Detected: !_clversion!
+		echo.
+		echo If this is expected, use the /anyvc switch to override the version check.
+		exit /b 5
+	)
 )
 
 @where /q zip.exe >nul
 if errorlevel 1 (
 	echo Unable to find Info-Zip ^(zip.exe^) in current path.
-	exit /b 0
+	exit /b 5
 )
 
 if not exist out md out
@@ -157,7 +177,9 @@ zip -9 -X -r publish\Altirra-!_verid!-src.zip ^
 	*.manifest ^
 	*.s ^
 	*.pcm ^
-	*.bas
+	*.bas ^
+	*.html ^
+	*.natvis
 
 if errorlevel 1 (
 	echo Packaging step failed.
@@ -168,6 +190,7 @@ zip -9 -X publish\Altirra-!_verid!-src.zip ^
 	Copying ^
 	release.cmd ^
 	Readme.txt ^
+	src\BUILD-HOWTO.html ^
 	src\Kasumi\data\Tuffy.* ^
 	src\Kernel\source\shared\atarifont.bin ^
 	src\Kernel\source\shared\atariifont.bin ^

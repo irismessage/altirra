@@ -152,7 +152,13 @@ timer_n_not_running:
 	dec		srtimr				;decrement repeat timer
 	bne		no_repeat			;skip if not time to repeat yet
 	mva		kbcode ch			;repeat last key
+
+.if _KERNEL_XLXE
+	mva		keyrep srtimr		;reset repeat timer
+.else
 	mva		#$06 srtimr			;reset repeat timer
+.endif
+
 	bne		no_keydel			;skip debounce counter decrement
 
 no_repeat_key:

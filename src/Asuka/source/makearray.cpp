@@ -26,7 +26,7 @@
 
 void tool_makearray(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches) {
 	if (args.size() < 3) {
-		printf("usage: makearray <binary file> <.cpp output file> <symbol name>\n");
+		printf("usage: makearray <binary file> <.cpp output file> <symbol name> [<len symbol name>]\n");
 		exit(5);
 	}
 
@@ -60,5 +60,9 @@ void tool_makearray(const vdfastvector<const char *>& args, const vdfastvector<c
 	}
 
 	fprintf(f, "};\n");
+
+	if (args.size() >= 4)
+		fprintf(f, "\nextern const size_t %s = %llu;\n", args[3], (unsigned long long)l);
+
 	fclose(f);
 }

@@ -23,13 +23,13 @@
 #include <vd2/system/strutil.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
-#include <at/atui/dialog.h>
+#include <at/atnativeui/dialog.h>
 #include "resource.h"
 #include "idephysdisk.h"
 #include "idevhdimage.h"
 #include "oshelper.h"
 #include "uiprogress.h"
-#include <at/atui/uiproxies.h>
+#include <at/atnativeui/uiproxies.h>
 #include <at/atcore/propertyset.h>
 
 #ifndef BCM_SETSHIELD
@@ -139,8 +139,6 @@ bool ATUIDialogCreateVHDImage2::OnOK() {
 }
 
 bool ATUIDialogCreateVHDImage2::OnCommand(uint32 id, uint32 extcode) {
-	int index = 0;
-
 	switch(id) {
 		case IDC_BROWSE:
 			{
@@ -354,8 +352,6 @@ void ATUIDialogDeviceHardDisk::OnDataExchange(bool write) {
 }
 
 bool ATUIDialogDeviceHardDisk::OnCommand(uint32 id, uint32 extcode) {
-	int index = 0;
-
 	switch(id) {
 		case IDC_IDE_IMAGEBROWSE:
 			{

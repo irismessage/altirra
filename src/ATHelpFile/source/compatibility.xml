@@ -196,6 +196,16 @@
         </compat-issue>
       </compat-title>
 
+      <compat-title name="Joyride">
+        <compat-issue id="minor-bug">
+          <p>
+            Has a custom SIO loader which fails out immediately on an error without doing any retries
+            and therefore has very low tolerance for communication errors. It tends to work reliably
+            in emulation, but can sporadically fail with a red screen on real hardware.
+          </p>
+        </compat-issue>
+      </compat-title>
+
       <compat-title name="Total Daze">
         <compat-issue id="minor-bug">
           <p>
@@ -606,6 +616,15 @@
         </compat-issue>
       </compat-title>
 
+      <compat-title name="DOS II+/D Version 6.4">
+        <compat-issue id="requires-xlos">
+          <p>
+            Jumps directly into the XL/XE OS E: put byte handler at $F2B0 from $18F0. Will not work with OS-B or
+            alternative operating systems.
+          </p>
+        </compat-issue>
+      </compat-title>
+      
       <compat-title name="MyDOS">
         <compat-issue id="65C816">
           <p>

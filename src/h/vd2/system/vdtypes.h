@@ -353,8 +353,8 @@ extern void VDDebugPrint(const char *format, ...);
 		#define VDASSERTPTR(exp)	__builtin_expect(0 != (exp), 1)
 	#endif
 
-	#define VDVERIFY(exp)		(exp)
-	#define VDVERIFYPTR(exp)	(exp)
+	#define VDVERIFY(exp)		(void)(exp)
+	#define VDVERIFYPTR(exp)	(void)(exp)
 	#define VDASSERTCT(exp)
 
 	#define VDINLINEASSERT(exp)	(exp)

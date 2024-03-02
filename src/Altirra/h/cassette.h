@@ -22,8 +22,8 @@
 	#pragma once
 #endif
 
+#include <at/atcore/scheduler.h>
 #include "pokey.h"
-#include "scheduler.h"
 #include "audiosource.h"
 
 class VDFile;
@@ -99,7 +99,9 @@ protected:
 	bool PokeyReadSerialInput();
 
 protected:
-	void WriteAudio(uint32 startTime, float *dstLeft, float *dstRightOpt, uint32 n);
+	bool SupportsStereoMixing() const override { return false; }
+	bool RequiresStereoMixingNow() const override { return false; }
+	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 
 protected:
 	void UpdateMotorState();

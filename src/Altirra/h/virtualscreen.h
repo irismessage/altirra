@@ -18,12 +18,19 @@
 #ifndef f_AT_VIRTUALSCREEN_H
 #define f_AT_VIRTUALSCREEN_H
 
+#include <vd2/system/function.h>
+
 class IATVirtualScreenHandler {
 public:
-	virtual ~IATVirtualScreenHandler() {}
+	virtual ~IATVirtualScreenHandler() = default;
 
 	virtual void GetScreen(uint32& width, uint32& height, const uint8 *&screen) const = 0;
 	virtual bool GetCursorInfo(uint32& x, uint32& y) const = 0;
+
+	virtual void SetReadyCallback(const vdfunction<void()>& fn) = 0;
+	virtual bool IsReadyForInput() const = 0;
+
+	virtual void ToggleSuspend() = 0;
 
 	virtual void Resize(uint32 w, uint32 h) = 0;
 	virtual void PushLine(const char *line) = 0;
@@ -33,6 +40,7 @@ public:
 	virtual bool GetShiftLockState() const = 0;
 	virtual bool GetControlLockState() const = 0;
 	virtual bool CheckForBell() = 0;
+	virtual int ReadRawText(uint8 *dst, int x, int y, int n) const = 0;
 
 	virtual void ColdReset() = 0;
 	virtual void WarmReset() = 0;

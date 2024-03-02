@@ -18,7 +18,7 @@
 #ifndef f_AT_FLASH_H
 #define f_AT_FLASH_H
 
-#include "scheduler.h"
+#include <at/atcore/scheduler.h>
 
 enum ATFlashType {
 	kATFlashType_Am29F010,	// AMD 128K x 8-bit

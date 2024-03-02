@@ -26,6 +26,10 @@
 ; running execution state. We can, however, take over the argument stack
 ; area as well as the parser pointers.
 ;
+; Another quirk in Atari BASIC is that if LIST is executed in deferred
+; mode and Break is pressed, execution continues with the next statement
+; instead of a stop occurring. We don't emulate this behavior right now.
+;
 .proc stList
 _endline = stScratch2	;and stScratch3
 _eos = stScratch4
@@ -41,13 +45,13 @@ _eos = stScratch4
 		
 		;assume IOCB #0
 		sta		iocbidx
-
-		;check if there is an argument
-		jsr		ExecTestEnd
-		beq		do_list
-		
+	
 		;evaluate it
 		jsr		evaluate
+
+		;check if there is an argument
+		ldy		argsp
+		beq		no_lineno
 		
 		;test if it is a filespec
 		lda		expType
@@ -67,17 +71,12 @@ _eos = stScratch4
 		jmp		IoClose
 		
 do_list:
-		;check if we have a comma and skip it if so
+		;check if we have more arguments
 		jsr		ExecTestEnd
-		cmp		#TOK_EXP_COMMA
-		sne:inc	exLineOffset
+		beq		no_lineno
 		
-		;check for a line number
-		jsr		ExecTestEnd
-		beq		no_lineno		
-		
-		;parse first line number
-		jsr		evaluate
+		;parse first line number after filename
+		jsr		ExprSkipCommaAndEval
 not_filespec:
 		jsr		ExprConvFR0IntPos
 		stx		parptr
@@ -144,16 +143,12 @@ statement_loop:
 		
 		;skip directly to function tokens if it's an implicit LET
 		cmp		#TOK_ILET
-		beq		implicit_let
+		beq		do_function_tokens_loop
 
 		;must special case syntax errors as the string isn't in the table
 		;(otherwise it could be parsed)
 		cmp		#TOK_SXERROR
 		beq		syntax_error
-
-		;skip bogus crap
-		cmp		#TOK_FIRST_INVALID
-		bcs		statement_done
 		
 		;lookup and print statement name
 		pha
@@ -167,19 +162,23 @@ statement_loop:
 		;check if we just printed REM, DATA or ERROR -- we must switch
 		;to raw printing after this
 		pla
-		cmp		#$02				;check for TOK_REM ($00) or TOK_DATA ($01)
-		bcc		print_raw
+		lsr					;check for TOK_REM ($00) or TOK_DATA ($01)
+		beq		print_raw
 
-		;check if we have additional tokens
-		ldy		parout
-		lda		(parptr),y
-		
-		cmp		#TOK_EOL
-		beq		statement_done
-		
-implicit_let:
 		;process function tokens
-		jsr		do_function_tokens
+do_function_tokens_loop:
+		;fetch next function token
+		jsr		ListGetByte
+		cmp		#TOK_EOL
+		beq		do_function_tokens_done
+		jsr		ListPrintFunctionToken
+		ldy		parout		
+
+		;IF statements will abruptly stop after the THEN, so we must
+		;catch that case
+		cpy		_eos
+		bne		do_function_tokens_loop
+do_function_tokens_done:
 		
 statement_done:
 		ldy		#2
@@ -189,8 +188,8 @@ statement_done:
 		
 		;next statement
 		ldy		_eos
-		jmp		statement_loop
-		
+		bne		statement_loop
+	
 line_done:
 		;advance to next line
 		ldx		#parptr
@@ -200,28 +199,26 @@ line_done:
 		jsr		IoPutNewline
 
 		;next line
-		jmp		lineloop
+		bpl		lineloop			;!! - unconditional
 
 syntax_error:
-		ldx		#<msg_error2
+		ldx		#msg_error2-msg_base
 		jsr		IoPrintMessage
 print_raw:
 		jsr		ListGetByte
 		cmp		#$9b
 		beq		statement_done
 		jsr		putchar
-		jmp		print_raw
-		
+		bpl		print_raw			;!! - unconditional
+
 print_const_number:
 		pha
 		ldx		#$fa
-		ldy		parout
 print_const_number_1:
-		lda		(parptr),y+
+		jsr		ListGetByte
 		sta		fr0+6,x
 		inx
 		bne		print_const_number_1
-		sty		parout
 		pla
 
 		;check if we are doing hex or not
@@ -255,21 +252,6 @@ print_const_string_1:
 print_const_string_2:
 		lda		#'"'
 		jmp		putchar
-
-do_function_tokens_loop:
-		;fetch next function token
-		jsr		ListGetByte
-		cmp		#TOK_EOL
-		beq		do_function_tokens_done
-		jsr		ListPrintFunctionToken
-		ldy		parout		
-do_function_tokens:
-		;IF statements will abruptly stop after the THEN, so we must
-		;catch that case
-		cpy		_eos
-		bne		do_function_tokens_loop
-do_function_tokens_done:
-		rts
 		
 print_var:
 		and		#$7f
@@ -322,8 +304,8 @@ print_var_entry:
 		dec		stScratch
 		bpl		print_var_loop
 print_var_done:
-		sta		inbuff
-		mva		iterPtr+1 inbuff+1
+		ldy		iterPtr+1
+		jsr		IoSetInbuffYA
 		jmp		printStringINBUFF
 .endp
 
@@ -421,7 +403,7 @@ funtok_name_table:
 		dta		'!'+$80
 		dta		'&'+$80
 		dta		$81
-		dta		$81
+		dta		'BUMP','('*
 		dta		$81
 		dta		c'HEX',c'$'+$80
 		dta		$81
@@ -431,6 +413,8 @@ funtok_name_table:
 		;$60
 		dta		'VSTIC','K'+$80
 		dta		'HSTIC','K'+$80
+		dta		'PMAD','R'*
+		dta		'ER','R'+$80
 		dta		0
 
 		_STATIC_ASSERT *-funtok_name_table<254, "Function token name table is too long."

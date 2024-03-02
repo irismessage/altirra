@@ -17,12 +17,13 @@
 
 #include "stdafx.h"
 #include <vd2/system/strutil.h>
-#include <at/atui/dialog.h>
+#include <at/atnativeui/dialog.h>
 #include "inputmanager.h"
 #include "inputcontroller.h"
-#include <at/atui/uiproxies.h>
+#include <at/atnativeui/uiproxies.h>
 #include "resource.h"
 #include "joystick.h"
+#include <windows.h>
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -901,14 +902,23 @@ bool ATUIDialogEditInputMapping::OnTimer(uint32 id) {
 	if (id == kTimerId_JoyPoll) {
 		if (mpJoyMan) {
 			int unit;
-			uint32 inputCode;
-			if (mpJoyMan->PollForCapture(unit, inputCode)) {
+			uint32 digitalInputCode;
+			uint32 analogInputCode;
+			if (mpJoyMan->PollForCapture(unit, digitalInputCode, analogInputCode)) {
+				int analogIndex = -1;
+				int digitalIndex = -1;
 				for(uint32 i=0; i<sizeof(kInputCodes)/sizeof(kInputCodes[0]); ++i) {
-					if (kInputCodes[i] == inputCode) {
-						CBSetSelectedIndex(IDC_SOURCE, i);
-						break;
-					}
+					if (kInputCodes[i] == digitalInputCode)
+						digitalIndex = i;
+
+					if (kInputCodes[i] == analogInputCode)
+						analogIndex = i;
 				}
+
+				if (analogIndex >= 0 && mInputMan.IsAnalogTrigger(mTargetCode, mControllerType))
+					CBSetSelectedIndex(IDC_SOURCE, analogIndex);
+				else if (digitalIndex >= 0)
+					CBSetSelectedIndex(IDC_SOURCE, digitalIndex);
 			}
 		}
 		return true;
@@ -1193,16 +1203,18 @@ void ATUIDialogInputMapListItem::Set(uint32 inputCode, uint32 targetCode) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIDialogEditInputMap : public VDDialogFrameW32 {
+class ATUIDialogEditInputMap final : public VDDialogFrameW32 {
 public:
 	ATUIDialogEditInputMap(ATInputManager& iman, IATJoystickManager *ijoy, ATInputMap& imap);
 	~ATUIDialogEditInputMap();
 
 protected:
-	bool OnLoaded();
-	void OnDestroy();
-	void OnDataExchange(bool write);
-	bool OnCommand(uint32 id, uint32 extcode);
+	bool OnLoaded() override;
+	void OnDestroy() override;
+	void OnDataExchange(bool write) override;
+	bool OnCommand(uint32 id, uint32 extcode) override;
+	void OnSize() override;
+	bool OnErase(VDZHDC hdc) override;
 	void OnItemSelectionChanged(VDUIProxyTreeViewControl *source, int); 
 	void OnItemDoubleClicked(VDUIProxyTreeViewControl *source, bool *handled);
 
@@ -1221,6 +1233,8 @@ protected:
 
 	typedef vdfastvector<ATUIDialogInputMapControllerItem *> Controllers;
 	Controllers mControllers;
+
+	VDDialogResizerW32 mResizer;
 };
 
 ATUIDialogEditInputMap::ATUIDialogEditInputMap(ATInputManager& iman, IATJoystickManager *ijoy, ATInputMap& imap)
@@ -1239,6 +1253,20 @@ ATUIDialogEditInputMap::~ATUIDialogEditInputMap() {
 }
 
 bool ATUIDialogEditInputMap::OnLoaded() {
+	SetCurrentSizeAsMinSize();
+
+	mResizer.Init(mhdlg);
+	mResizer.Add(IDC_TREE, VDDialogResizerW32::kMC | VDDialogResizerW32::kAvoidFlicker);
+	mResizer.Add(IDC_ADDCONTROLLER, VDDialogResizerW32::kBL);
+	mResizer.Add(IDC_ADDMAPPING, VDDialogResizerW32::kBL);
+	mResizer.Add(IDC_DELETE, VDDialogResizerW32::kBL);
+	mResizer.Add(IDC_EDIT, VDDialogResizerW32::kBL);
+	mResizer.Add(IDC_REBIND, VDDialogResizerW32::kBL);
+	mResizer.Add(IDC_STATIC_GAMEPAD, VDDialogResizerW32::kBL);
+	mResizer.Add(IDC_GAMEPAD, VDDialogResizerW32::kBC);
+	mResizer.Add(IDOK, VDDialogResizerW32::kBR);
+	mResizer.Add(IDCANCEL, VDDialogResizerW32::kBR);
+
 	AddProxy(&mTreeView, IDC_TREE);
 
 	VDStringW s;
@@ -1460,6 +1488,15 @@ bool ATUIDialogEditInputMap::OnCommand(uint32 id, uint32 extcode) {
 	}
 
 	return VDDialogFrameW32::OnCommand(id, extcode);
+}
+
+void ATUIDialogEditInputMap::OnSize() {
+	mResizer.Relayout();
+}
+
+bool ATUIDialogEditInputMap::OnErase(VDZHDC hdc) {
+	mResizer.Erase(&hdc);
+	return true;
 }
 
 void ATUIDialogEditInputMap::OnItemSelectionChanged(VDUIProxyTreeViewControl *source, int) {

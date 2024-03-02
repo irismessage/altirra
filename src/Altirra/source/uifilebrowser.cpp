@@ -4,7 +4,7 @@
 #include <vd2/system/math.h>
 #include <vd2/Dita/services.h>
 #include "uifilebrowser.h"
-#include "uimanager.h"
+#include <at/atui/uimanager.h>
 
 struct ATUIFileBrowserItem : public vdrefcounted<IATUIListViewVirtualItem> {
 	void *AsInterface(uint32 id) { return NULL; }

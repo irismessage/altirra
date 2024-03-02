@@ -1,7 +1,7 @@
 #ifndef f_AT_UIONSCREENKEYBOARD_H
 #define f_AT_UIONSCREENKEYBOARD_H
 
-#include "uicontainer.h"
+#include <at/atui/uicontainer.h>
 #include "callback.h"
 
 class ATUIButton;
@@ -34,6 +34,7 @@ public:
 protected:
 	void OnButtonPressed(ATUIButton *);
 	void OnButtonReleased(ATUIButton *);
+	void OnButtonHeld(ATUIButton *btn, bool state, int index);
 	void UpdateLabels();
 
 	struct KeyEntry;
@@ -66,10 +67,10 @@ protected:
 
 	sint32	mButtonWidth;
 	sint32	mButtonHeight;
-	bool	mbShift;
 	bool	mbShiftHeld;
-	bool	mbControl;
+	bool	mbShiftSticky;
 	bool	mbControlHeld;
+	bool	mbControlSticky;
 
 	vdfastvector<int> mControlButtons;
 	vdfastvector<int> mShiftButtons;

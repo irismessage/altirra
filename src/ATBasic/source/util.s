@@ -15,6 +15,7 @@
 ;
 ; Output:
 ;	16-bit result in [FR0+1, FR0+0]
+;	High byte in A
 ;	C = 0 if OK
 ;	C = 1 if overflow
 ;
@@ -61,28 +62,28 @@ overflow:
 ;==========================================================================
 ; Unsigned 16-bit x #6 multiply.
 ;
+; This routine relies on the result not overflowing. We can assume this
+; due to checks in the array allocate routines.
+;
 ; Inputs:
 ;	Multiplicand: FR0+1, FR0
 ;
 ; Output:
 ;	16-bit result in [FR0+1, FR0]
-;	C = 0 if OK
-;	C = 1 if overflow
+;	High byte in A
+;	C = 0
 ;
 .proc umul16_6
 		lda		fr0
 		ldy		fr0+1
 		asl
 		rol		fr0+1
-		bcs		xit
 		adc		fr0
 		sta		fr0
 		tya
 		adc		fr0+1
-		bcs		xit
 		asl		fr0
 		rol
 		sta		fr0+1
-xit:
 		rts
 .endp

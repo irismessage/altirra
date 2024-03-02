@@ -47,9 +47,9 @@ protected:
 	VDALIGN(16) sint16 mOutputBuffer[4096];
 };
 
-class ATAudioWriter : public VDAlignedObject<16>, public IATAudioTap {
-	ATAudioWriter(const ATAudioWriter&);
-	ATAudioWriter& operator=(const ATAudioWriter&);
+class ATAudioWriter final : public VDAlignedObject<16>, public IATAudioTap {
+	ATAudioWriter(const ATAudioWriter&) = delete;
+	ATAudioWriter& operator=(const ATAudioWriter&) = delete;
 public:
 	ATAudioWriter(const wchar_t *filename, bool rawMode, bool stereo, bool pal, IATUIRenderer *r);
 	~ATAudioWriter();
@@ -62,10 +62,13 @@ public:
 	void WriteRawAudio(const float *left, const float *right, uint32 count, uint32 timestamp);
 	
 protected:
+	void WriteRawAudioMix(const float *left, const float *right, uint32 count);
 	void WriteInterleaved(const float *left, const float *right, uint32 count);
+	void WriteInterleaved(const sint16 *left, const sint16 *right, uint32 count);
 
 	bool mbErrorState;
 	bool mbRawMode;
+	bool mbStereo;
 	VDFile mFile;
 	MyError mError;
 

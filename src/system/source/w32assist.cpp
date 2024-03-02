@@ -53,6 +53,12 @@ bool VDIsAtLeast7W32() {
 	return result;
 }
 
+bool VDIsAtLeast8W32() {
+	static const bool result = VDTestOSVersionW32(6,2);
+
+	return result;
+}
+
 bool VDIsAtLeast81W32() {
 	static const bool result = VDTestOSVersionW32(6,3);
 

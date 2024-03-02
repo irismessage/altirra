@@ -38,7 +38,6 @@ ATUltimate1MBEmulator::ATUltimate1MBEmulator()
 	, mCurrentPBIID(0)
 	, mSelectedPBIID(0)
 	, mColdFlag(0)
-	, mbControlEnabled(false)
 	, mbControlLocked(false)
 	, mbSDXEnabled(false)
 	, mbSDXModuleEnabled(false)
@@ -139,6 +138,25 @@ void ATUltimate1MBEmulator::Init(
 	mpLayerFlashControl = memman->CreateLayer(kATMemoryPri_CartridgeOverlay + 3, handlers, 0xA0, 0x20);
 	memman->SetLayerName(mpLayerFlashControl, "Ultimate1MB flash control");
 
+	handlers.mbPassAnticReads = false;
+	handlers.mbPassReads = false;
+	handlers.mbPassWrites = false;
+	handlers.mpDebugReadHandler = ReadByteOSFlash;
+	handlers.mpReadHandler = ReadByteOSFlash;
+	handlers.mpWriteHandler = WriteByteOSFlash;
+
+	mpMemLayerLowerKernelFlash = memman->CreateLayer(kATMemoryPri_ROM + 1, handlers, 0xC0, 0x10);
+	memman->SetLayerName(mpMemLayerLowerKernelFlash, "Ultimate1MB lower kernel flash overlay");
+
+	mpMemLayerUpperKernelFlash = memman->CreateLayer(kATMemoryPri_ROM + 1, handlers, 0xD8, 0x28);
+	memman->SetLayerName(mpMemLayerUpperKernelFlash, "Ultimate1MB upper kernel flash overlay");
+
+	mpMemLayerBASICGameFlash = memman->CreateLayer(kATMemoryPri_ROM + 1, handlers, 0xA0, 0x20);
+	memman->SetLayerName(mpMemLayerBASICGameFlash, "Ultimate1MB self-test flash overlay");
+
+	mpMemLayerSelfTestFlash = memman->CreateLayer(kATMemoryPri_ROM + 1, handlers, 0x50, 0x08);
+	memman->SetLayerName(mpMemLayerSelfTestFlash, "Ultimate1MB BASIC/GAME kernel flash overlay");
+
 	mpLayerCart = memman->CreateLayer(kATMemoryPri_CartridgeOverlay + 2, mFirmware, 0xA0, 0x20, true);
 	memman->SetLayerName(mpLayerCart, "Ultimate1MB cart window");
 
@@ -148,43 +166,37 @@ void ATUltimate1MBEmulator::Init(
 
 	mpLayerPBIFirmware = memman->CreateLayer(kATMemoryPri_PBI, mFirmware, 0xD8, 0x08, true);
 	memman->SetLayerName(mpLayerPBIFirmware, "Ultimate1MB PBI firmware");
+
+	// must occur after we've set up the layers
+	mpMMU->SetROMMappingHook(
+		[this]() {
+			UpdateFlashShadows();
+		}
+	);
 }
 
 void ATUltimate1MBEmulator::Shutdown() {
+	if (mpMMU) {
+		// must happen before we clear the layers
+		mpMMU->SetROMMappingHook(nullptr);
+	}
+
 	if (mpMemMan) {
-		if (mpLayerPBIControl) {
-			mpMemMan->DeleteLayer(mpLayerPBIControl);
-			mpLayerPBIControl = NULL;
-		}
-
-		if (mpLayerPIAOverlay) {
-			mpMemMan->DeleteLayer(mpLayerPIAOverlay);
-			mpLayerPIAOverlay = NULL;
-		}
-
-		if (mpLayerCartControl) {
-			mpMemMan->DeleteLayer(mpLayerCartControl);
-			mpLayerCartControl = NULL;
-		}
-
-		if (mpLayerFlashControl) {
-			mpMemMan->DeleteLayer(mpLayerFlashControl);
-			mpLayerFlashControl = NULL;
-		}
-
-		if (mpLayerCart) {
-			mpMemMan->DeleteLayer(mpLayerCart);
-			mpLayerCart = NULL;
-		}
-
-		if (mpLayerPBIData) {
-			mpMemMan->DeleteLayer(mpLayerPBIData);
-			mpLayerPBIData = NULL;
-		}
-
-		if (mpLayerPBIFirmware) {
-			mpMemMan->DeleteLayer(mpLayerPBIFirmware);
-			mpLayerPBIFirmware = NULL;
+		for(ATMemoryLayer **layerPtr : {
+			&mpLayerPBIControl,
+			&mpLayerPIAOverlay,
+			&mpLayerCartControl,
+			&mpLayerFlashControl,
+			&mpLayerCart,
+			&mpLayerPBIData,
+			&mpLayerPBIFirmware,
+			&mpMemLayerLowerKernelFlash,
+			&mpMemLayerUpperKernelFlash,
+			&mpMemLayerBASICGameFlash,
+			&mpMemLayerSelfTestFlash,
+		}) {
+			mpMemMan->DeleteLayer(*layerPtr);
+			*layerPtr = NULL;
 		}
 
 		mpMemMan = NULL;
@@ -301,6 +313,8 @@ bool ATUltimate1MBEmulator::IsPBIOverlayActive() const {
 }
 
 void ATUltimate1MBEmulator::ColdReset() {
+	mFlashEmu.ColdReset();
+
 	mColdFlag = 0x80;		// ONLY set by cold reset, not warm reset.
 
 	// The SDX module is enabled on warm reset, but the cart enables and bank
@@ -310,6 +324,7 @@ void ATUltimate1MBEmulator::ColdReset() {
 	SetSDXBank(0);
 	SetSDXEnabled(true);
 	mbExternalCartEnabled = false;
+	mbFlashWriteEnabled = true;
 
 	mVBXEPage = 0xD6;
 	mbSoundBoardEnabled = false;
@@ -326,13 +341,11 @@ void ATUltimate1MBEmulator::ColdReset() {
 void ATUltimate1MBEmulator::WarmReset() {
 	mClockEmu.ColdReset();
 
-	mpMMU->SetModeOverrides(kATMemoryMode_1088K, -1);
+	mpMMU->SetModeOverrides(kATMemoryMode_1088K, true);
 	mpHookMgr->EnableOSHooks(false);
 
 	mbControlLocked = false;
-	mbControlEnabled = true;
 
-	mbFlashWriteEnabled = true;
 	mbPBIEnabled = false;
 	mbPBIButton = false;
 	mSelectedPBIID = 0;
@@ -349,6 +362,8 @@ void ATUltimate1MBEmulator::WarmReset() {
 	SetSDXModuleEnabled(true);
 
 	UpdateExternalCart();
+	UpdateCartLayers();
+	UpdateFlashShadows();
 
 	// The $D1xx layer is always enabled after reset since config is unlocked.
 	mpMemMan->EnableLayer(mpLayerPBIControl, true);
@@ -377,7 +392,7 @@ void ATUltimate1MBEmulator::SaveNVRAM() {
 
 void ATUltimate1MBEmulator::DumpStatus() {
 	ATConsoleWrite("Ultimate1MB status:\n");
-	ATConsolePrintf("Control registers   %s\n", mbControlLocked ? "locked" : mbControlEnabled ? "enabled" : "disabled");
+	ATConsolePrintf("Control registers   %s\n", mbControlLocked ? "locked" : "unlocked");
 	ATConsolePrintf("Kernel bank         %u ($%05x)\n", mKernelBank, 0x70000 + ((uint32)mKernelBank << 14));
 	ATConsolePrintf("BASIC bank          %u ($%05x)\n", mBasicBank, 0x60000 + ((uint32)mBasicBank << 13));
 	ATConsolePrintf("Game bank           %u ($%05x)\n", mGameBank, 0x68000 + ((uint32)mGameBank << 13));
@@ -434,7 +449,7 @@ void ATUltimate1MBEmulator::UpdateCartLayers() {
 	const bool enabled = mbSDXEnabled && mbSDXModuleEnabled;
 
 	mpMemMan->EnableLayer(mpLayerCart, enabled);
-	mpMemMan->EnableLayer(mpLayerFlashControl, kATMemoryAccessMode_CPUWrite, enabled);
+	mpMemMan->EnableLayer(mpLayerFlashControl, kATMemoryAccessMode_CPUWrite, enabled && mbFlashWriteEnabled);
 
 	const bool flashRead = enabled && mFlashEmu.IsControlReadEnabled();
 	mpMemMan->EnableLayer(mpLayerFlashControl, kATMemoryAccessMode_CPURead, flashRead);
@@ -533,8 +548,10 @@ sint32 ATUltimate1MBEmulator::ReadByteFlash(void *thisptr0, uint32 addr) {
 	ATUltimate1MBEmulator *const thisptr = (ATUltimate1MBEmulator *)thisptr0;
 	uint8 value;
 
-	if (thisptr->mFlashEmu.ReadByte(thisptr->mCartBankOffset + (addr - 0xA000), value))
+	if (thisptr->mFlashEmu.ReadByte(thisptr->mCartBankOffset + (addr - 0xA000), value)) {
 		thisptr->UpdateCartLayers();
+		thisptr->UpdateFlashShadows();
+	}
 
 	return value;
 }
@@ -549,6 +566,53 @@ bool ATUltimate1MBEmulator::WriteByteFlash(void *thisptr0, uint32 addr, uint8 va
 
 		// reconfigure banking
 		thisptr->UpdateCartLayers();
+		thisptr->UpdateFlashShadows();
+	}
+
+	return true;
+}
+
+uint32 ATUltimate1MBEmulator::GetOSFlashOffset(uint32 addr) {
+	if (addr < 0x5800) {
+		// self-test kernel ROM
+		return 0x70000 + ((uint32)mKernelBank << 14) + (addr - 0x4000);
+	} else if (addr < 0xC000) {
+		// BASIC or Game ROM (BASIC has priority)
+		if (mpMMU->IsBASICROMEnabled())
+			return 0x60000 + ((uint32)mBasicBank << 13) + (addr - 0xA000);
+		else
+			return 0x68000 + ((uint32)mGameBank << 13) + (addr - 0xA000);
+	} else {
+		// lower/upper kernel ROM
+		return 0x70000 + ((uint32)mKernelBank << 14) + (addr - 0xC000);
+	}
+}
+
+sint32 ATUltimate1MBEmulator::ReadByteOSFlash(void *thisptr0, uint32 addr) {
+	ATUltimate1MBEmulator *const thisptr = (ATUltimate1MBEmulator *)thisptr0;
+	const uint32 flashOffset = thisptr->GetOSFlashOffset(addr);
+	uint8 value;
+
+	if (thisptr->mFlashEmu.ReadByte(flashOffset, value)) {
+		thisptr->UpdateCartLayers();
+		thisptr->UpdateFlashShadows();
+	}
+
+	return value;
+}
+
+bool ATUltimate1MBEmulator::WriteByteOSFlash(void *thisptr0, uint32 addr, uint8 value) {
+	ATUltimate1MBEmulator *const thisptr = (ATUltimate1MBEmulator *)thisptr0;
+	const uint32 flashOffset = thisptr->GetOSFlashOffset(addr);
+
+	if (thisptr->mFlashEmu.WriteByte(flashOffset, value)) {
+		// check for write activity
+		if (thisptr->mFlashEmu.CheckForWriteActivity())
+			thisptr->mpUIRenderer->SetFlashWriteActivity();
+
+		// reconfigure banking
+		thisptr->UpdateCartLayers();
+		thisptr->UpdateFlashShadows();
 	}
 
 	return true;
@@ -582,7 +646,7 @@ sint32 ATUltimate1MBEmulator::ReadByteD3xx(void *thisptr0, uint32 addr) {
 
 	if (addr == 0xD3E2) {
 		// RTCIN
-		return thisptr->mClockEmu.ReadState() ? 0xFF : 0xF7;
+		return thisptr->mClockEmu.ReadState() ? 0x08 : 0x00;
 	} else if (addr == 0xD383) {
 		// COLDF
 		return thisptr->mColdFlag;
@@ -605,11 +669,9 @@ sint32 ATUltimate1MBEmulator::ReadByteD3xx(void *thisptr0, uint32 addr) {
 bool ATUltimate1MBEmulator::WriteByteD3xx(void *thisptr0, uint32 addr, uint8 value) {
 	ATUltimate1MBEmulator *const thisptr = (ATUltimate1MBEmulator *)thisptr0;
 
-	if (addr == 0xD303) {
-		thisptr->mbControlEnabled = !(value & 4);
-	} else if (addr >= 0xD380) {
+	if (addr >= 0xD380) {
 		// The U1MB only decodes $D300-D37F for the PIA.
-		if (thisptr->mbControlEnabled && !thisptr->mbControlLocked) {
+		if (!thisptr->mbControlLocked) {
 			if (addr == 0xD380) {
 				// UCTL (write only)
 
@@ -620,7 +682,7 @@ bool ATUltimate1MBEmulator::WriteByteD3xx(void *thisptr0, uint32 addr, uint8 val
 					kATMemoryMode_1088K
 				};
 
-				thisptr->mpMMU->SetModeOverrides(kMemModes[value & 3], -1);
+				thisptr->mpMMU->SetModeOverrides(kMemModes[value & 3], true);
 				thisptr->SetKernelBank((value >> 2) & 3);
 				thisptr->SetSDXModuleEnabled(!(value & 0x10));
 				thisptr->SetIORAMEnabled((value & 0x40) != 0);
@@ -692,7 +754,12 @@ bool ATUltimate1MBEmulator::WriteByteD3xx(void *thisptr0, uint32 addr, uint8 val
 						thisptr->mSBPageHandler();
 				}
 
-				thisptr->mbFlashWriteEnabled = !(value & 0x80);
+				bool flashWritesEnabled = !(value & 0x80);
+				if (thisptr->mbFlashWriteEnabled != flashWritesEnabled) {
+					thisptr->mbFlashWriteEnabled = flashWritesEnabled;
+					thisptr->UpdateCartLayers();
+					thisptr->UpdateFlashShadows();
+				}
 			} else if (addr == 0xD382) {
 				// UPBI/UCAR (write only)
 
@@ -769,4 +836,17 @@ bool ATUltimate1MBEmulator::WriteByteD5xx(void *thisptr0, uint32 addr, uint8 val
 	}
 
 	return false;
+}
+
+void ATUltimate1MBEmulator::UpdateFlashShadows() {
+	ATMemoryAccessMode modes = mFlashEmu.IsControlReadEnabled() ? kATMemoryAccessMode_ARW : kATMemoryAccessMode_W;
+
+	if (!mbFlashWriteEnabled)
+		modes = (ATMemoryAccessMode)(modes & ~kATMemoryAccessMode_W);
+
+	bool kernel = mpMMU->IsKernelROMEnabled();
+	mpMemMan->SetLayerModes(mpMemLayerLowerKernelFlash, kernel ? modes : kATMemoryAccessMode_0);
+	mpMemMan->SetLayerModes(mpMemLayerUpperKernelFlash, kernel ? modes : kATMemoryAccessMode_0);
+	mpMemMan->SetLayerModes(mpMemLayerSelfTestFlash, mpMMU->IsSelfTestROMEnabled() ? modes : kATMemoryAccessMode_0);
+	mpMemMan->SetLayerModes(mpMemLayerBASICGameFlash, mpMMU->IsBASICOrGameROMEnabled() ? modes : kATMemoryAccessMode_0);
 }

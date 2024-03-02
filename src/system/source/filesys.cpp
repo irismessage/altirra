@@ -36,16 +36,17 @@
 
 ///////////////////////////////////////////////////////////////////////////
 
-template<class T, class U>
-static inline T splitimpL(const T& string, const U *s) {
-	const U *p = string.c_str();
-	return T(p, s - p);
-}
+namespace {
+	template<class T, class U>
+	inline T splitimpL(const T& string, const U *s) {
+		const U *p = string.c_str();
+		return T(p, s - p);
+	}
 
-template<class T, class U>
-static inline T splitimpR(const T& string, const U *s) {
-	const U *p = string.c_str();
-	return T(s);
+	template<class T, class U>
+	inline T splitimpR(const T& string, const U *s) {
+		return T(s);
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////

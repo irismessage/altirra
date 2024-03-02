@@ -1,0 +1,214 @@
+﻿<html>
+	<head>
+		<meta charset="utf-8" />
+		<title>Altirra Build Instructions</title>
+<style type="text/css">
+body {
+	background: #fff;
+	color: #000;	
+	font-family: Verdana, sans-serif;
+	font-size: 10pt;
+}
+
+tt {
+	font-family: Lucida Console, monospace;
+}
+
+h1 {
+	background: #8df;
+}
+
+h2 {
+	border-bottom: 2px solid black;
+}
+</style>
+	</head>
+	<body>
+		<h1>Altirra Build Instructions</h1>
+		<h2>Prerequisites</h2>
+		<h3>Build machine</h3>
+		<p>
+			Windows 7 x64 or newer is recommended as the build OS. Windows 8.1 x64 and
+			Windows 10 x64 have been tested as of this writing. XP and Vista are not
+			supported due to IDE/compiler requirements. Building from an x86 system should
+			work but is not tested or recommended, particularly since the x64 build
+			cannot be used on such a system.
+		</p>
+		<h3>Compiler</h3>
+		<p>
+			The official build environment is Visual Studio 2013 Professional Update 4.
+			VS2015 Professional and Community are also supported and can also be used.
+		</p>
+		<p>
+			Visual C++ Express for Desktop can be used with a couple of caveats. The Windows SDK
+			is required for the Win32/COM build environment and the resource editor is
+			not available.
+		</p>
+		<h3>
+			DirectX SDK
+		</h3>
+		<p>
+			The latest standalone distribution of the DirectX SDK, June 2010, is required.
+			The Windows 8 SDK is not sufficient as it does not include D3DX9. The development
+			runtime must be installed on the build machine as the build process compiles shaders.
+		</p>
+		<h3>Additional Tools</h3>
+		<p>
+			YASM 1.3.0 is needed for x86/x64 assembly language modules. (<a href="http://yasm.tortall.net/">http://yasm.tortall.net/</a>)
+		</p>
+		<p>
+			MADS 1.9.8 is needed for 6502 assembly language modules. (<a href="http://mads.atari8.info/">http://mads.atari8.info/</a>)
+		</p>
+		<p>
+			Newer versions of these tools should work but have not been tested. Older versions should be avoided;
+            some older versions of MADS, for instance, will either fail to build the AltirraOS kernel or will
+            introduce subtle corruption into floating point constants in the math pack.
+		</p>
+		<p>
+			The HTML Help 1.4 toolkit is required to build the help file. It should be automatically installed
+            with recent versions of Visual Studio. If not, it is available as a separate download from Microsoft.
+		</p>
+		<h2>Build environment setup</h2>
+		<h3>Build location</h3>
+		<p>
+			Altirra is designed to build in arbitrary locations, but don't
+			attempt to build it under a path that has spaces. This hasn't been tested and
+			may fail if some paths are not quoted. Attempting to do so is simply asking for
+			unnecessary trouble.
+		</p>
+		<h3>Platform setup</h3>
+        <p>
+            You may get a dialog from Visual Studio upon opening the solution for the first time
+            asking if you want to upgrade the projects to the newest compiler.
+            <b>Do not upgrade the projects through this dialog.</b> This will break the toolchain switching setup
+            in the projects. The projects are set up to switch toolchains through property sheets.
+        </p>
+		<p>
+			The build initially comes set to use the VS2013 compiler with XP targeting enabled
+			(<tt>v120_xp</tt>). Either the VS2013 or VS2015 IDE can be used with this toolchain. To use
+			the VS2015 compiler, edit PlatformSetup.props to select <tt>v140_xp</tt> instead. Note that
+			Visual Studio should be restarted after editing any .props file manually as the IDE
+			does not reliably recognize external changes to property files.
+		</p>
+		<p>
+			The makefile-based projects will report (Visual Studio 2013) regardless; this is
+			due to a Visual Studio quirk and can be ignored, as those projects do not actually
+			use the C++ toolchain and will build even if the VS2013 toolchain is not installed.
+            If necessary to improve cosmetics, the label may be removed by manually editing
+            the <tt>.vcxproj</tt> file to match the version of the Visual Studio IDE in use.
+		</p>
+		<h3>External SDK/tools setup</h3>
+		<p>
+			By default, the build process will attempt to source the DirectX SDK from the user
+			props and the assemblers from PATH.
+		</p>
+		<p>
+			To change the DirectX SDK location, edit
+			DirectXSDK.props in a text editor to uncomment the compile/link settings and specify
+			the required paths.
+		</p>
+		<p>
+			To change the YASM location, edit the command line templates in YASM.props.
+		</p>
+		<p>
+			To change the MADS location, edit the MADS variable in the two Makefiles.
+		</p>
+		<h2>Building</h2>
+		<h3>First time</h3>
+		<p>
+			The Release x86 configuration should be built first in a new environment as it
+			is necessary to prebuild tools that are used in all configurations. After the build
+			tools have been built once, any other configuration/platform can be built. This
+			is necessary because the x64 build uses x86 tools to enable cross-compilation.
+		</p>
+		<h3>Build targets</h3>
+		<p>
+			There are three targets that can be built from the two solution files:
+		</p>
+		<ul>
+			<li><b>Altirra:</b> This is the main computer emulator.</li>
+			<li><b>AltirraShell:</b> This is the device emulator.</li>
+			<li><b>ATHelpFile:</b> Help file for the computer emulator.</li>
+		</ul>
+		<p>
+			For the emulators, three configurations are supported: Debug (unoptimized),
+			Profile (optimized), and Release (LTCG).
+		</p>
+		<h3>Output locations and debugging setup</h3>
+		<p>
+			In general, compilation outputs go to the <tt>obj</tt> folder, library
+			outputs to <tt>lib</tt>, and executables to <tt>out</tt>. A few files are also
+			built into <tt>autogen</tt> folders within the projects. The end projects
+			are set up to automatically default to the correct executable location to
+			start debugging.
+		</p>
+		<h3>Possible failures</h3>
+        <p>
+            Link failures usually mean that an upstream project or file failed to build.
+            Visual Studio has an unfortunate tendency to uselessly attempt linking a project
+            whose dependencies have failed.
+        </p>
+        <p>
+            If assembly language (<tt>.asm</tt>) files are failing to build, i.e. YASM
+            returning a non-zero error code, this usually means that you don't have the
+            path to YASM set up correctly.
+        </p>
+		<p>
+			<tt>asuka.exe</tt> will fail to run in the build if the DirectX Developer
+			Runtime is not installed or the version of D3DX associated with the DirectX
+			SDK being used is not installed.
+		</p>
+		<h3>Licensing</h3>
+		<p>
+			<b>Please note that Altirra is licensed under the GNU General Public License, version 2 or above.
+				All rebuilt versions of it must be distributed under compatible conditions.
+			</b>
+			The source code for the rebuilt version must be made available per the terms of the GPL for any released binaries.
+			This is true even for pre-release versions.
+		</p>
+		<p>
+			A few source code files have licenses that are more permissive than the GPL, and
+			may be used as such on their own. This only applies to the files that have a block
+			comment at the top describing the more permissive license option.
+		</p>
+		<h3>Third party content</h3>
+		<p>
+			The following third party code is present in Altirra with the following licences, believed to be GPL-compatible:
+		</p>
+		<ul>
+			<li><tt>system\source\hash.cpp</tt>: MurmurHash3 (public domain)</li>
+		</ul>
+		<p>
+			In addition, the built-in kernel contains a copy of the Atari system bitmap font. This is believed
+			to not be copyrightable, but concerned parties should consult a qualified legal advisor for the
+			pertinent jurisdictions as the author cannot provide legal assurance. No other parts of the Atari system ROMs are
+			included or derived from in the included source.
+		</p>
+		<p>
+			Altirra does not link with the Microsoft D3DX library. It is used in the build, but only the build
+			tools link to D3DX and the outputs are used without it.
+		</p>
+		<h3>Release script</h3>
+		<p>
+			For shipping builds, the release script (<tt>release.cmd</tt>) automates the process
+			of generating and packaging a clean build. It is invoked in a Visual C++ build environment
+			with the name of the version being released. The release script automatically
+			injects the version string into the source tree, triggers a clean build, and then
+			packages the result in the publish directory.
+		</p>
+		<p>
+			The release script checks the version of <tt>cl.exe</tt> available in the PATH and
+			will fail if it is not VS2013 Update 4. Use <tt>/anyvc</tt> to bypass this check and
+			force the current compiler to be used.
+		</p>
+		<p>
+			The packaging step requires the Info-Zip archiver zip.exe to generate the final .zip files.
+		</p>
+		<h3>Deployment dependencies</h3>
+		<p>
+			Altirra is statically linked against all necessary runtimes. In particular, neither the
+			DirectX nor Visual C++ Redistributable are needed with the final executable regardless of
+			OS.
+		</p>
+	</body>
+</html>

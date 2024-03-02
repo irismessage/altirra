@@ -149,14 +149,14 @@ inline void VDWriteUnalignedBEU32(void *p, uint32 v) { *(uint32 *)p = VDSwizzleU
 inline void VDWriteUnalignedBES32(void *p, sint32 v) { *(sint32 *)p = VDSwizzleS32(v); }
 inline void VDWriteUnalignedBEU64(void *p, uint64 v) { *(uint64 *)p = VDSwizzleU64(v); }
 inline void VDWriteUnalignedBES64(void *p, sint64 v) { *(sint64 *)p = VDSwizzleS64(v); }
-inline void VDReadUnalignedBEF(void *p, float v) {
+inline void VDWriteUnalignedBEF(void *p, float v) {
 	union {
 		float f;
 		uint32 i;
 	} conv = {v};
 	*(uint32 *)p = VDSwizzleU32(conv.i);
 }
-inline double VDReadUnalignedBED(void *p, double v) {
+inline void VDWriteUnalignedBED(void *p, double v) {
 	union {
 		double f;
 		uint64 i;

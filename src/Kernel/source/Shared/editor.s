@@ -17,11 +17,6 @@
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 ;==========================================================================
-.proc	EditorLineLengthTab
-	dta		120, 80, 40, 0
-.endp
-
-;==========================================================================
 .proc	EditorOpen
 	jsr		ScreenResetLogicalLineMap
 	stx		dspflg		;!! relies on X=0 from ScreenResetLogicalLineMap
@@ -142,9 +137,7 @@ _start_y equ bufstr
 	;an EOL
 	lda		icax1z
 	lsr
-	bcc		read_loop
-	lda		#$9b
-	bne		is_eol
+	bcs		do_eol
 
 read_loop:
 	;get a character
@@ -164,7 +157,7 @@ read_ok:
 	;check if we've hit the warning point (logical pos 113)
 	lda		colcrs
 	cmp		#33
-	bne		no_bell
+	bne		read_loop
 	
 	;convert current row to logical start row
 	jsr		EditorGetCurLogicalRow
@@ -175,11 +168,13 @@ read_ok:
 	cmp		rowcrs
 	
 	;if so, sound the bell
-	sne:jsr	EditorBell
+	bne		read_loop
+	jsr		EditorBell
 	
-no_bell:
 	jmp		read_loop
 
+do_eol:
+	lda		#$9b
 is_eol:
 	;echo the character	
 	jsr		EditorPutByte
@@ -242,9 +237,8 @@ scan_done:
 	mvx		_start_x colcrs
 	mvy		_start_y rowcrs
 
-	;swap back to main context and exit
-	ldy		#1
-	jmp		EditorSwapToScreen
+	;swap back to main context and exit successfully
+	jmp		EditorSwapToScreen_Y1
 .endp
 
 ;==========================================================================
@@ -311,7 +305,7 @@ special_found:
 	jsr		dispatch
 	jsr		EditorRecomputeCursorAddr
 	jsr		ScreenShowCursorAndXitOK
-	bpl		xit2
+	bpl		xit2				;!! - unconditional jump
 
 not_special:
 	;ok, just put the char to the screen
@@ -1013,19 +1007,9 @@ found:
 .endp
 
 ;==========================================================================
-; Swap in the text screen (main if gr.0, split otherwise).
-;
-.proc	EditorSwapToText
-	;set C=0 (main) if gr.0, C=1 (split) otherwise
-	ldy		#23
-	cpy		botscr
-
-	;swap to it
-	jmp		ScreenSwap	
-.endp
-
-;==========================================================================
-.proc	EditorSwapToScreen
+.proc	EditorSwapToScreen_Y1
+	ldy		#1
+.def :EditorSwapToScreen = *
 	sty		adress
 	clc
 	jsr		ScreenSwap
@@ -1106,3 +1090,9 @@ found:
 	sta		toadr+1
 	rts
 .endp
+
+;==========================================================================
+.proc	EditorLineLengthTab
+	dta		120, 80, 40, 0
+.endp
+

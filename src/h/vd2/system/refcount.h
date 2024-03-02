@@ -93,7 +93,7 @@ public:
 	vdrefcount(const vdrefcount& src) : mRefCount(0) {}		// do not copy the refcount
 	virtual ~vdrefcount() {}
 
-	vdrefcount& operator=(const vdrefcount&) {}			// do not copy the refcount
+	vdrefcount& operator=(const vdrefcount&) { return *this; }			// do not copy the refcount
 
 	int AddRef() {
 		return mRefCount.inc();
@@ -127,6 +127,10 @@ template<class T> class vdrefcounted : public T {
 public:
 	vdrefcounted() : mRefCount(0) {}
 	vdrefcounted(const vdrefcounted<T>& src) : mRefCount(0) {}		// do not copy the refcount
+
+	template<typename Arg1, typename ...Args>
+	vdrefcounted(Arg1&& arg1, Args&&... args) : mRefCount(0), T(std::forward<Arg1>(arg1), std::forward<Args>(args)...) {}
+
 	virtual ~vdrefcounted() {}
 
 	vdrefcounted<T>& operator=(const vdrefcounted<T>&) {}			// do not copy the refcount
@@ -172,16 +176,22 @@ public:
 
 	/// Creates a new smart pointer and obtains a new reference on the
 	/// specified object.
-	explicit vdrefptr(T *p = 0) : ptr(p) {
+	explicit vdrefptr(T *p = nullptr) : ptr(p) {
 		if (p)
 			p->AddRef();
 	}
 
 	/// Clones a smart pointer, duplicating any held reference.
-	vdrefptr(const self_type& src) {
+	vdrefptr(const vdrefptr& src) {
 		ptr = src.ptr;
 		if (ptr)
 			ptr->AddRef();
+	}
+
+	vdrefptr(vdrefptr&& src)
+		: ptr(src.ptr)
+	{
+		src.ptr = nullptr;
 	}
 
 	/// Destroys the smart pointer, releasing any held reference.
@@ -209,6 +219,17 @@ public:
 		if (ptr)
 			ptr->Release();
 		ptr = src.ptr;
+		return *this;
+	}
+
+	self_type& operator=(vdrefptr&& src) {
+		T *p = ptr;
+		if (p)
+			p->Release();
+
+		ptr = src.ptr;
+		src.ptr = nullptr;
+
 		return *this;
 	}
 

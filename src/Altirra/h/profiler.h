@@ -19,11 +19,12 @@
 #define f_AT_PROFILER_H
 
 #include <vd2/system/linearalloc.h>
-#include "scheduler.h"
+#include <at/atcore/scheduler.h>
 
 class ATCPUEmulator;
 class ATCPUEmulatorMemory;
 class ATCPUEmulatorCallbacks;
+class IATCPUTimestampDecoderProvider;
 
 struct ATProfileRecord {
 	uint32 mAddress;
@@ -33,23 +34,33 @@ struct ATProfileRecord {
 	uint32 mEmulationMode : 1;
 	uint32 mCycles;
 	uint32 mUnhaltedCycles;
+	uint32 mCounters[2];
 };
 
 struct ATProfileCallGraphRecord {
-	uint32	mParent;
-	uint32	mAddress;
 	uint32	mInsns;
 	uint32	mCycles;
 	uint32	mUnhaltedCycles;
 	uint32	mCalls;
+};
+
+struct ATProfileCallGraphInclusiveRecord {
 	uint32	mInclusiveCycles;
 	uint32	mInclusiveUnhaltedCycles;
 	uint32	mInclusiveInsns;
 };
 
-struct ATProfileSession {
+struct ATProfileCallGraphContext {
+	uint32	mParent;
+	uint32	mAddress;
+};
+
+void ATProfileComputeInclusiveStats(ATProfileCallGraphInclusiveRecord *dst, const ATProfileCallGraphRecord *src, const ATProfileCallGraphContext *contexts, size_t n);
+
+struct ATProfileFrame {
 	typedef vdfastvector<ATProfileRecord> Records;
 	Records mRecords;
+	Records mBlockRecords;
 
 	typedef vdfastvector<ATProfileCallGraphRecord> CallGraphRecords;
 	CallGraphRecords mCallGraphRecords;
@@ -59,25 +70,60 @@ struct ATProfileSession {
 	uint32	mTotalInsns;
 };
 
+class ATProfileSession {
+	ATProfileSession(const ATProfileSession&) = delete;
+	ATProfileSession& operator=(const ATProfileSession&) = delete;
+public:
+	ATProfileSession() = default;
+	~ATProfileSession();
+
+	ATProfileSession& operator=(ATProfileSession&& src);
+
+	vdfastvector<ATProfileFrame *> mpFrames;
+
+	typedef vdfastvector<ATProfileCallGraphContext> CGContexts;
+	CGContexts mContexts;
+};
+
 enum ATProfileMode {
 	kATProfileMode_Insns,
 	kATProfileMode_Functions,
 	kATProfileMode_CallGraph,
+	kATProfileMode_BasicBlock,
 	kATProfileMode_BasicLines,
 	kATProfileModeCount
 };
 
-class ATCPUProfiler : public IATSchedulerCallback {
-	ATCPUProfiler(const ATCPUProfiler&);
-	ATCPUProfiler& operator=(const ATCPUProfiler&);
+enum ATProfileCounterMode {
+	kATProfileCounterMode_None,
+	kATProfileCounterMode_BranchTaken,
+	kATProfileCounterMode_BranchNotTaken,
+	kATProfileCounterMode_PageCrossing,
+	kATProfileCounterMode_RedundantOp,
+};
+
+enum ATProfileBoundaryRule {
+	kATProfileBoundaryRule_None,
+	kATProfileBoundaryRule_VBlank,
+	kATProfileBoundaryRule_PCAddress,
+	kATProfileBoundaryRule_PCAddressFunction
+};
+
+class ATCPUProfiler final : public IATSchedulerCallback {
+	ATCPUProfiler(const ATCPUProfiler&) = delete;
+	ATCPUProfiler& operator=(const ATCPUProfiler&) = delete;
 public:
 	ATCPUProfiler();
 	~ATCPUProfiler();
 
 	bool IsRunning() const { return mpUpdateEvent != NULL; }
 
-	void Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATCPUEmulatorCallbacks *callbacks, ATScheduler *scheduler, ATScheduler *slowScheduler);
-	void Start(ATProfileMode mode);
+	void SetBoundaryRule(ATProfileBoundaryRule rule, uint32 param, uint32 param2);
+
+	void Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATCPUEmulatorCallbacks *callbacks, ATScheduler *scheduler, ATScheduler *slowScheduler, IATCPUTimestampDecoderProvider *tsdprovider);
+	void Start(ATProfileMode mode, ATProfileCounterMode c1, ATProfileCounterMode c2);
+	void BeginFrame();
+	void EndFrame();
 	void End();
 
 	void GetSession(ATProfileSession& session);
@@ -86,8 +132,17 @@ protected:
 	void OnScheduledEvent(uint32 id);
 	void Update();
 	void UpdateCallGraph();
-	void ClearSamples();
+	void AdvanceFrame(bool enableCollection);
+	void AdvanceFrame(uint32 cycle, uint32 unhaltedCycle, bool enableCollection);
+	void OpenFrame();
+	void OpenFrame(uint32 cycle, uint32 unhaltedCycle);
+	void CloseFrame();
+	void CloseFrame(uint32 cycle, uint32 unhaltedCycle, bool keepFrame);
+	void ClearContexts();
+	void UpdateCounters(uint32 *p, const ATCPUHistoryEntry& he);
+	uint32 ScanForFrameBoundary(uint32 n);
 
+	IATCPUTimestampDecoderProvider *mpTSDProvider;
 	ATCPUEmulator *mpCPU;
 	ATCPUEmulatorMemory *mpMemory;
 	ATCPUEmulatorCallbacks *mpCallbacks;
@@ -98,14 +153,22 @@ protected:
 	ATProfileMode mProfileMode;
 	uint32 mStartCycleTime;
 	uint32 mStartUnhaltedCycleTime;
+	uint32 mNextFrameTime;
+	uint32 mFramePeriod;
 	uint32 mLastHistoryCounter;
 	uint32 mTotalSamples;
-	uint32 mTotalCycles;
-	uint32 mTotalUnhaltedCycles;
+	uint32 mTotalContexts;
 	bool mbAdjustStackNext;
+	bool mbCountersEnabled;
+	bool mbKeepNextFrame;
+	ATProfileCounterMode mCounterModes[2];
 	uint8 mLastS;
 	sint32	mCurrentFrameAddress;
 	sint32	mCurrentContext;
+
+	ATProfileBoundaryRule mBoundaryRule = kATProfileBoundaryRule_None;
+	uint32	mBoundaryParam = 0;
+	uint32	mBoundaryParam2 = 0;
 
 	struct HashLink {
 		HashLink *mpNext;
@@ -120,9 +183,16 @@ protected:
 	};
 
 	VDLinearAllocator mHashLinkAllocator;
+	VDLinearAllocator mCGHashLinkAllocator;
 	ATProfileSession mSession;
+	ATProfileFrame *mpCurrentFrame = nullptr;
 
-	HashLink *mpHashTable[256];
+	struct AddressHashTable {
+		HashLink *mpBuckets[256];
+	};
+
+ 	HashLink *mpHashTable[256];
+ 	HashLink *mpBlockHashTable[256];
 	CallGraphHashLink *mpCGHashTable[256];
 
 	sint32	mStackTable[256];

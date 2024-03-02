@@ -23,7 +23,7 @@ public:
 
 	void		SetCaption(const wchar_t *caption);
 
-	vduirect	GetArea();
+	vduirect	GetArea() const;
 	void		SetArea(const vduirect& pos);
 
 	vduirect	GetClientArea() const;

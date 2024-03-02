@@ -32,19 +32,30 @@
     <ClInclude Include="..\h\at\atcore\device.h" />
     <ClInclude Include="..\h\at\atcore\devicecio.h" />
     <ClInclude Include="..\h\at\atcore\deviceimpl.h" />
+    <ClInclude Include="..\h\at\atcore\devicemanager.h" />
     <ClInclude Include="..\h\at\atcore\deviceprinter.h" />
     <ClInclude Include="..\h\at\atcore\deviceserial.h" />
     <ClInclude Include="..\h\at\atcore\devicesio.h" />
+    <ClInclude Include="..\h\at\atcore\deviceu1mb.h" />
     <ClInclude Include="..\h\at\atcore\devicevideo.h" />
+    <ClInclude Include="..\h\at\atcore\logging.h" />
     <ClInclude Include="..\h\at\atcore\memoryutils.h" />
+    <ClInclude Include="..\h\at\atcore\profile.h" />
     <ClInclude Include="..\h\at\atcore\propertyset.h" />
+    <ClInclude Include="..\h\at\atcore\scheduler.h" />
+    <ClInclude Include="..\h\at\atcore\sioutils.h" />
     <ClInclude Include="h\stdafx.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\consoleoutput.cpp" />
     <ClCompile Include="source\deviceimpl.cpp" />
+    <ClCompile Include="source\devicemanager.cpp" />
+    <ClCompile Include="source\logging.cpp" />
     <ClCompile Include="source\memoryutils.cpp" />
+    <ClCompile Include="source\profile.cpp" />
     <ClCompile Include="source\propertyset.cpp" />
+    <ClCompile Include="source\scheduler.cpp" />
+    <ClCompile Include="source\sioutils.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
@@ -58,51 +69,51 @@
     <ProjectGuid>{B3C54D9A-6CBC-4A10-93EE-7A88B1B6E5AF}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>ATCore</RootNamespace>
-    <SccProjectName>SAK</SccProjectName>
-    <SccAuxPath>SAK</SccAuxPath>
-    <SccLocalPath>SAK</SccLocalPath>
-    <SccProvider>SAK</SccProvider>
+    <SccProjectName>
+    </SccProjectName>
+    <SccAuxPath>
+    </SccAuxPath>
+    <SccLocalPath>
+    </SccLocalPath>
+    <SccProvider>
+    </SccProvider>
+    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
   </PropertyGroup>
+  <Import Project="..\PlatformSetup.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <CharacterSet>Unicode</CharacterSet>
-    <PlatformToolset>v120_xp</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <CharacterSet>Unicode</CharacterSet>
-    <PlatformToolset>v120_xp</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
-    <PlatformToolset>v120_xp</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <WholeProgramOptimization>false</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
-    <PlatformToolset>v120_xp</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
-    <PlatformToolset>v120_xp</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Profile|x64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <WholeProgramOptimization>false</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
-    <PlatformToolset>v120_xp</PlatformToolset>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">

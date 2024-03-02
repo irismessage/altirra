@@ -24,7 +24,7 @@
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/devicesio.h>
 #include <at/atcore/propertyset.h>
-#include "scheduler.h"
+#include <at/atcore/scheduler.h>
 #include "pokey.h"
 #include "pia.h"
 #include "cpu.h"
@@ -34,7 +34,6 @@
 #include "ksyms.h"
 #include "modem.h"
 #include "debuggerlog.h"
-#include "devicemanager.h"
 
 extern ATDebuggerLogChannel g_ATLCModemData;
 
@@ -565,6 +564,14 @@ protected:
 	bool mbSIOMotorState;
 };
 
+void ATCreateDeviceSX212(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceSX212> p(new ATDeviceSX212);
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefSX212 = { "sx212", "sx212", L"SX212 Modem", ATCreateDeviceSX212 };
+
 ATDeviceSX212::ATDeviceSX212()
 	: mpScheduler(nullptr)
 	, mpSlowScheduler(nullptr)
@@ -596,8 +603,7 @@ void *ATDeviceSX212::AsInterface(uint32 id) {
 }
 
 void ATDeviceSX212::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "sx212";
-	info.mName = L"SX212 Modem";
+	info.mpDef = &g_ATDeviceDefSX212;
 }
 
 void ATDeviceSX212::GetSettings(ATPropertySet& settings) {
@@ -819,16 +825,4 @@ void ATDeviceSX212::OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) {
 }
 
 void ATDeviceSX212::OnSendReady() {
-}
-
-///////////////////////////////////////////////////////////////////////////
-
-void ATCreateDeviceSX212(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDeviceSX212> p(new ATDeviceSX212);
-
-	*dev = p.release();
-}
-
-void ATRegisterDeviceSX212(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("sx212", ATCreateDeviceSX212);
 }

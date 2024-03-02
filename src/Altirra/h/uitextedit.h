@@ -4,7 +4,7 @@
 #include <vd2/system/time.h>
 #include <vd2/system/VDString.h>
 #include <vd2/VDDisplay/font.h>
-#include "uiwidget.h"
+#include <at/atui/uiwidget.h>
 #include "callback.h"
 
 class ATUITextEdit : public ATUIWidget, public IVDTimerCallback {

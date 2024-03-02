@@ -1,10 +1,10 @@
 #include "stdafx.h"
 #include <windows.h>
 #include <vd2/Dita/services.h>
-#include "uianchor.h"
+#include <at/atui/uianchor.h>
 #include "uicommondialogs.h"
 #include "uifilebrowser.h"
-#include "uimanager.h"
+#include <at/atui/uimanager.h>
 #include "uimessagebox.h"
 #include "uiqueue.h"
 
@@ -110,6 +110,53 @@ public:
 
 vdrefptr<ATUIFileDialogResult> ATUIShowOpenFileDialog(uint32 id, const wchar_t *title, const wchar_t *filters) {
 	vdrefptr<ATUIStageOpenFileDialog> stage(new ATUIStageOpenFileDialog);
+
+	stage->Start(id, title, filters);
+
+	return vdrefptr<ATUIFileDialogResult>(stage);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIStageSaveFileDialog : public ATUIFileDialogResult {
+public:
+	void Start(uint32 id, const wchar_t *title, const wchar_t *filters) {
+		if (ATUIGetNativeDialogMode()) {
+			mPath = VDGetSaveFileName(id, (VDGUIHandle)g_hwnd, title, filters, NULL);
+			mbAccepted = !mPath.empty();
+			MarkCompleted();
+		} else {
+			mPersistId = id;
+
+			ATUIFileBrowser *fb = new ATUIFileBrowser;
+			fb->AddRef();
+			g_ATUIManager.GetMainWindow()->AddChild(fb);
+			fb->SetTitle(title);
+			fb->SetDockMode(kATUIDockMode_Fill);
+			fb->SetOwner(g_ATUIManager.GetFocusWindow());
+			fb->SetCompletionFn([this, fb](bool succeeded) { OnCompleted(fb, succeeded); });
+			fb->LoadPersistentData(id);
+			fb->ShowModal();
+			fb->Release();
+		}
+	}
+
+	void OnCompleted(ATUIFileBrowser *sender, bool accepted) {
+		sender->SavePersistentData(mPersistId);
+
+		mbAccepted = accepted;
+
+		if (accepted)
+			mPath = sender->GetPath();
+
+		MarkCompleted();
+	}
+
+	uint32 mPersistId;
+};
+
+vdrefptr<ATUIFileDialogResult> ATUIShowSaveFileDialog(uint32 id, const wchar_t *title, const wchar_t *filters) {
+	vdrefptr<ATUIStageSaveFileDialog> stage(new ATUIStageSaveFileDialog);
 
 	stage->Start(id, title, filters);
 

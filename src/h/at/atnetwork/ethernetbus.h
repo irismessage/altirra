@@ -42,11 +42,15 @@ protected:
 	struct QueuedPacket {
 		uint32 mSourceId;
 		uint32 mClockEventId;
+		uint32 mNextPacketId;
 		ATEthernetPacket mPacket;
 	};
 
 	typedef vdhashmap<uint32, QueuedPacket *> Packets;
 	Packets mPackets;
+
+	typedef vdhashmap<uint32, QueuedPacket *> PacketsByTimestamp;
+	PacketsByTimestamp mPacketsByTimestamp;
 };
 
 #endif

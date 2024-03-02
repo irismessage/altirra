@@ -2,7 +2,7 @@
 #define f_AT2_UILABEL_H
 
 #include <vd2/system/VDString.h>
-#include "uiwidget.h"
+#include <at/atui/uiwidget.h>
 
 class IVDDisplayFont;
 

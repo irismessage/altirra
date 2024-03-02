@@ -24,9 +24,9 @@
 
 #include <vd2/system/VDString.h>
 #include <vd2/system/vdstl.h>
+#include <at/atcore/scheduler.h>
+#include <at/atio/diskimage.h>
 #include "pokey.h"
-#include "scheduler.h"
-#include "diskimage.h"
 
 class ATPokeyEmulator;
 class ATAudioSyncMixer;
@@ -128,11 +128,11 @@ public:
 	void OnScheduledEvent(uint32 id);
 
 public:
-	void PokeyAttachDevice(ATPokeyEmulator *pokey);
-	void PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit);
-	void PokeyBeginCommand();
-	void PokeyEndCommand();
-	void PokeySerInReady();
+	void PokeyAttachDevice(ATPokeyEmulator *pokey) override;
+	bool PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) override;
+	void PokeyBeginCommand() override;
+	void PokeyEndCommand() override;
+	void PokeySerInReady() override;
 
 protected:
 	void InitSectorInfoArrays();
@@ -141,7 +141,7 @@ protected:
 	void BeginTransferComplete();
 	void BeginTransferError();
 	void BeginTransferNAK();
-	void BeginTransfer(uint32 length, uint32 cyclesToFirstByte, uint32 cyclesToSecondByte, bool useHighSpeedFirstByte, bool useHighSpeed);
+	void BeginTransfer(uint32 length, uint32 cyclesToFirstByte, uint32 cyclesToSecondByte, bool useHighSpeedFirstByte, bool useHighSpeed, bool enhancedDensity);
 	void UpdateRotationalCounter();
 	void QueueAutoSave();
 	void AutoSave();
@@ -154,7 +154,7 @@ protected:
 	void ComputePERCOMBlock();
 	void ComputeSupportedProfile();
 	bool SetPERCOMData(const uint8 *data);
-	bool TurnOnMotor();
+	bool TurnOnMotor(uint32 delay = 0);
 	void PlaySeekSound(uint32 initialDelay, uint32 trackCount);
 
 	ATPokeyEmulator	*mpPokey;
@@ -245,11 +245,14 @@ protected:
 	uint32	mCyclesToACKSent;
 	uint32	mCyclesToFDCCommand;
 	uint32	mCyclesToCompleteAccurate;
+	uint32	mCyclesToCompleteAccurateED;
 	uint32	mCyclesToCompleteFast;
 	uint32	mCyclesPerDiskRotation;
 	uint32	mCyclesPerTrackStep;
 	uint32	mCyclesForHeadSettle;
 	bool	mbSeekHalfTracks;
+	bool	mbRetryMode1050;
+	bool	mbReverseOnForwardSeeks;
 
 	uint8	mSendPacket[8192 + 16];
 	uint8	mReceivePacket[8192 + 16];

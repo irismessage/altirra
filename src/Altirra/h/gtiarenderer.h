@@ -133,6 +133,7 @@ protected:
 
 	bool mbHiresMode;
 	bool mbGTIAEnableTransition;
+	bool mbGTIATransitionFromHiresMode;
 	uint8 mTransitionPhase;
 	bool mbVBlank;
 	bool mbSECAMMode;

@@ -16,6 +16,8 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include <at/atcpu/execstate.h>
+#include <at/atdebugger/target.h>
 #include "simulator.h"
 #include "console.h"
 #include "debugger.h"
@@ -77,9 +79,10 @@ namespace {
 		PROCESS_OPCODE(ADC, M),	\
 		PROCESS_OPCODE(ANC, M),	\
 		PROCESS_OPCODE(AND, M),	\
+		PROCESS_OPCODE(ANE, M),	\
+		PROCESS_OPCODE(ARR, M),	\
 		PROCESS_OPCODE(ASL, M),	\
 		PROCESS_OPCODE(ASR, M),	\
-		PROCESS_OPCODE(ATX, M),	\
 		PROCESS_OPCODE(BCC, None),	\
 		PROCESS_OPCODE(BCS, None),	\
 		PROCESS_OPCODE(BEQ, None),	\
@@ -101,7 +104,6 @@ namespace {
 		PROCESS_OPCODE(DEC, M),	\
 		PROCESS_OPCODE(DEX, X),	\
 		PROCESS_OPCODE(DEY, X),	\
-		PROCESS_OPCODE(DOP, M),	\
 		PROCESS_OPCODE(EOR, M),	\
 		PROCESS_OPCODE(HLE, None),	\
 		PROCESS_OPCODE(INC, M),	\
@@ -110,12 +112,14 @@ namespace {
 		PROCESS_OPCODE(ISB, M),	\
 		PROCESS_OPCODE(JMP, None),	\
 		PROCESS_OPCODE(JSR, None),	\
+		PROCESS_OPCODE(KIL, None),	\
 		PROCESS_OPCODE(LAS, M),	\
 		PROCESS_OPCODE(LAX, M),	\
 		PROCESS_OPCODE(LDA, M),	\
 		PROCESS_OPCODE(LDX, X),	\
 		PROCESS_OPCODE(LDY, X),	\
 		PROCESS_OPCODE(LSR, M),	\
+		PROCESS_OPCODE(LXA, M),	\
 		PROCESS_OPCODE(NOP, M),	\
 		PROCESS_OPCODE(ORA, M),	\
 		PROCESS_OPCODE(PHA, M),	\
@@ -135,6 +139,7 @@ namespace {
 		PROCESS_OPCODE(SED, None),	\
 		PROCESS_OPCODE(SEI, None),	\
 		PROCESS_OPCODE(SHA, M),	\
+		PROCESS_OPCODE(SHS, M),	\
 		PROCESS_OPCODE(SHX, X),	\
 		PROCESS_OPCODE(SHY, X),	\
 		PROCESS_OPCODE(SLO, M),	\
@@ -148,8 +153,6 @@ namespace {
 		PROCESS_OPCODE(TXA, None),	\
 		PROCESS_OPCODE(TXS, None),	\
 		PROCESS_OPCODE(TYA, None),	\
-		PROCESS_OPCODE(XAA, M),	\
-		PROCESS_OPCODE(XAS, M),	\
 								\
 		/* 65C02 */				\
 		PROCESS_OPCODE(BRA, None),	\
@@ -252,30 +255,30 @@ namespace {
 
 	const uint8 kModeTbl_6502[256][2]={
 		//			   0,       1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
-		/* 00 */	Im(BRK), Ix(ORA), xx(bad), Ix(SLO), Zp(NOP), Zp(ORA), Zp(ASL), Zp(SLO), Ip(PHP), Im(ORA), Ip(ASL), Im(ANC), Ab(NOP), Ab(ORA), Ab(ASL), Ab(SLO), 
-		/* 10 */	Re(BPL), Iy(ORA), xx(bad), Iy(SLO), Zx(NOP), Zx(ORA), Zx(ASL), Zx(SLO), Ip(CLC), Ay(ORA), Ip(NOP), Ay(SLO), Ax(NOP), Ax(ORA), Ax(ASL), Ax(SLO), 
-		/* 20 */	Ab(JSR), Ix(AND), xx(bad), Ix(RLA), Zp(BIT), Zp(AND), Zp(ROL), Zp(RLA), Ip(PLP), Im(AND), Ip(ROL), Im(ANC), Ab(BIT), Ab(AND), Ab(ROL), Ab(RLA), 
-		/* 30 */	Re(BMI), Iy(AND), xx(bad), Iy(RLA), Zx(NOP), Zx(AND), Zx(ROL), Zx(RLA), Ip(SEC), Ay(AND), Ip(NOP), Ay(RLA), Ax(NOP), Ax(AND), Ax(ROL), Ax(RLA), 
+		/* 00 */	Ip(BRK), Ix(ORA), Ip(KIL), Ix(SLO), Zp(NOP), Zp(ORA), Zp(ASL), Zp(SLO), Ip(PHP), Im(ORA), Ip(ASL), Im(ANC), Ab(NOP), Ab(ORA), Ab(ASL), Ab(SLO), 
+		/* 10 */	Re(BPL), Iy(ORA), Ip(KIL), Iy(SLO), Zx(NOP), Zx(ORA), Zx(ASL), Zx(SLO), Ip(CLC), Ay(ORA), Ip(NOP), Ay(SLO), Ax(NOP), Ax(ORA), Ax(ASL), Ax(SLO), 
+		/* 20 */	Ab(JSR), Ix(AND), Ip(KIL), Ix(RLA), Zp(BIT), Zp(AND), Zp(ROL), Zp(RLA), Ip(PLP), Im(AND), Ip(ROL), Im(ANC), Ab(BIT), Ab(AND), Ab(ROL), Ab(RLA), 
+		/* 30 */	Re(BMI), Iy(AND), Ip(KIL), Iy(RLA), Zx(NOP), Zx(AND), Zx(ROL), Zx(RLA), Ip(SEC), Ay(AND), Ip(NOP), Ay(RLA), Ax(NOP), Ax(AND), Ax(ROL), Ax(RLA), 
 		/* 40 */	Ip(RTI), Ix(EOR), I2(HLE), Ix(SRE), Zp(NOP), Zp(EOR), Zp(LSR), Zp(SRE), Ip(PHA), Im(EOR), Ip(LSR), Im(ASR), Ab(JMP), Ab(EOR), Ab(LSR), Ab(SRE), 
-		/* 50 */	Re(BVC), Iy(EOR), xx(bad), Iy(SRE), Zx(NOP), Zx(EOR), Zx(LSR), Zx(SRE), Ip(CLI), Ay(EOR), Ip(NOP), Ay(SRE), Ax(NOP), Ax(EOR), Ax(LSR), Ax(SRE), 
-		/* 60 */	Ip(RTS), Ix(ADC), xx(bad), Ix(RRA), Zp(NOP), Zp(ADC), Zp(ROR), Zp(RRA), Ip(PLA), Im(ADC), Ip(ROR), xx(bad), Ia(JMP), Ab(ADC), Ab(ROR), Ab(RRA), 
-		/* 70 */	Re(BVS), Iy(ADC), xx(bad), Iy(RRA), Zx(NOP), Zx(ADC), Zx(ROR), Zx(RRA), Ip(SEI), Ay(ADC), Ip(NOP), Ay(RRA), Ax(NOP), Ax(ADC), Ax(ROR), Ax(RRA), 
-		/* 80 */	Im(NOP), Ix(STA), Im(DOP), Ix(SAX), Zp(STY), Zp(STA), Zp(STX), Zp(SAX), Ip(DEY), Im(STA), Ip(TXA), Im(XAA), Ab(STY), Ab(STA), Ab(STX), Ab(SAX), 
-		/* 90 */	Re(BCC), Iy(STA), xx(bad), Iy(SHA), Zx(STY), Zx(STA), Zy(STX), Zy(SAX), Ip(TYA), Ay(STA), Ip(TXS), Ay(XAS), Ax(SHY), Ax(STA), Ay(SHX), Ay(SHA), 
-		/* A0 */	Im(LDY), Ix(LDA), Im(LDX), Ix(LAX), Zp(LDY), Zp(LDA), Zp(LDX), Zp(LAX), Ip(TAY), Im(LDA), Ip(TAX), Im(ATX), Ab(LDY), Ab(LDA), Ab(LDX), Ab(LAX), 
-		/* B0 */	Re(BCS), Iy(LDA), xx(bad), Iy(LAX), Zx(LDY), Zx(LDA), Zy(LDX), Zy(LAX), Ip(CLV), Ay(LDA), Ip(TSX), Ab(LAS), Ax(LDY), Ax(LDA), Ay(LDX), Ay(LAX), 
-		/* C0 */	Im(CPY), Ix(CMP), Im(DOP), Ix(DCP), Zp(CPY), Zp(CMP), Zp(DEC), Zp(DCP), Ip(INY), Im(CMP), Ip(DEX), Im(SBX), Ab(CPY), Ab(CMP), Ab(DEC), Ab(DCP), 
-		/* D0 */	Re(BNE), Iy(CMP), xx(bad), Iy(DCP), Zx(NOP), Zx(CMP), Zx(DEC), Zx(DCP), Ip(CLD), Ay(CMP), Ip(NOP), Ay(DCP), Ax(NOP), Ax(CMP), Ax(DEC), Ax(DCP), 
-		/* E0 */	Im(CPX), Ix(SBC), Im(DOP), Ix(ISB), Zp(CPX), Zp(SBC), Zp(INC), Zp(ISB), Ip(INX), Im(SBC), Ip(NOP), Im(SBC), Ab(CPX), Ab(SBC), Ab(INC), Ab(ISB), 
-		/* F0 */	Re(BEQ), Iy(SBC), xx(bad), Iy(ISB), Zx(NOP), Zx(SBC), Zx(INC), Zx(ISB), Ip(SED), Ay(SBC), Ip(NOP), Ay(ISB), Ax(NOP), Ax(SBC), Ax(INC), Ax(ISB),
+		/* 50 */	Re(BVC), Iy(EOR), Ip(KIL), Iy(SRE), Zx(NOP), Zx(EOR), Zx(LSR), Zx(SRE), Ip(CLI), Ay(EOR), Ip(NOP), Ay(SRE), Ax(NOP), Ax(EOR), Ax(LSR), Ax(SRE), 
+		/* 60 */	Ip(RTS), Ix(ADC), Ip(KIL), Ix(RRA), Zp(NOP), Zp(ADC), Zp(ROR), Zp(RRA), Ip(PLA), Im(ADC), Ip(ROR), Im(ARR), Ia(JMP), Ab(ADC), Ab(ROR), Ab(RRA), 
+		/* 70 */	Re(BVS), Iy(ADC), Ip(KIL), Iy(RRA), Zx(NOP), Zx(ADC), Zx(ROR), Zx(RRA), Ip(SEI), Ay(ADC), Ip(NOP), Ay(RRA), Ax(NOP), Ax(ADC), Ax(ROR), Ax(RRA), 
+		/* 80 */	Im(NOP), Ix(STA), Im(NOP), Ix(SAX), Zp(STY), Zp(STA), Zp(STX), Zp(SAX), Ip(DEY), Im(NOP), Ip(TXA), Im(ANE), Ab(STY), Ab(STA), Ab(STX), Ab(SAX), 
+		/* 90 */	Re(BCC), Iy(STA), Ip(KIL), Iy(SHA), Zx(STY), Zx(STA), Zy(STX), Zy(SAX), Ip(TYA), Ay(STA), Ip(TXS), Ay(SHS), Ax(SHY), Ax(STA), Ay(SHX), Ay(SHA), 
+		/* A0 */	Im(LDY), Ix(LDA), Im(LDX), Ix(LAX), Zp(LDY), Zp(LDA), Zp(LDX), Zp(LAX), Ip(TAY), Im(LDA), Ip(TAX), Im(LXA), Ab(LDY), Ab(LDA), Ab(LDX), Ab(LAX), 
+		/* B0 */	Re(BCS), Iy(LDA), Ip(KIL), Iy(LAX), Zx(LDY), Zx(LDA), Zy(LDX), Zy(LAX), Ip(CLV), Ay(LDA), Ip(TSX), Ab(LAS), Ax(LDY), Ax(LDA), Ay(LDX), Ay(LAX), 
+		/* C0 */	Im(CPY), Ix(CMP), Im(NOP), Ix(DCP), Zp(CPY), Zp(CMP), Zp(DEC), Zp(DCP), Ip(INY), Im(CMP), Ip(DEX), Im(SBX), Ab(CPY), Ab(CMP), Ab(DEC), Ab(DCP), 
+		/* D0 */	Re(BNE), Iy(CMP), Ip(KIL), Iy(DCP), Zx(NOP), Zx(CMP), Zx(DEC), Zx(DCP), Ip(CLD), Ay(CMP), Ip(NOP), Ay(DCP), Ax(NOP), Ax(CMP), Ax(DEC), Ax(DCP), 
+		/* E0 */	Im(CPX), Ix(SBC), Im(NOP), Ix(ISB), Zp(CPX), Zp(SBC), Zp(INC), Zp(ISB), Ip(INX), Im(SBC), Ip(NOP), Im(SBC), Ab(CPX), Ab(SBC), Ab(INC), Ab(ISB), 
+		/* F0 */	Re(BEQ), Iy(SBC), Ip(KIL), Iy(ISB), Zx(NOP), Zx(SBC), Zx(INC), Zx(ISB), Ip(SED), Ay(SBC), Ip(NOP), Ay(ISB), Ax(NOP), Ax(SBC), Ax(INC), Ax(ISB),
 	};
 
 	const uint8 kModeTbl_65C02[256][2]={
 		//			   0,       1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
-		/* 00 */	Im(BRK), Ix(ORA), xx(bad), xx(bad), Zp(TSB), Zp(ORA), Zp(ASL), Zp(RMB), Ip(PHP), Im(ORA), Ip(ASL), xx(bad), Ab(TSB), Ab(ORA), Ab(ASL), Bb(BBR), 
+		/* 00 */	Ip(BRK), Ix(ORA), xx(bad), xx(bad), Zp(TSB), Zp(ORA), Zp(ASL), Zp(RMB), Ip(PHP), Im(ORA), Ip(ASL), xx(bad), Ab(TSB), Ab(ORA), Ab(ASL), Bb(BBR), 
 		/* 10 */	Re(BPL), Iy(ORA), Iz(ORA), xx(bad), Zp(TRB), Zx(ORA), Zx(ASL), Zp(RMB), Ip(CLC), Ay(ORA), Ip(INC), xx(bad), Ab(TRB), Ax(ORA), Ax(ASL), Bb(BBR), 
 		/* 20 */	Ab(JSR), Ix(AND), xx(bad), xx(bad), Zp(BIT), Zp(AND), Zp(ROL), Zp(RMB), Ip(PLP), Im(AND), Ip(ROL), xx(bad), Ab(BIT), Ab(AND), Ab(ROL), Bb(BBR), 
-		/* 30 */	Re(BMI), Iy(AND), Iz(AND), xx(bad), Zx(BIT), Zx(AND), Zx(ROL), Zp(RMB), Ip(SEC), Ay(AND), Ip(DEC), xx(bad), Ax(NOP), Ax(AND), Ax(ROL), Bb(BBR), 
+		/* 30 */	Re(BMI), Iy(AND), Iz(AND), xx(bad), Zx(BIT), Zx(AND), Zx(ROL), Zp(RMB), Ip(SEC), Ay(AND), Ip(DEC), xx(bad), Ax(BIT), Ax(AND), Ax(ROL), Bb(BBR), 
 		/* 40 */	Ip(RTI), Ix(EOR), I2(HLE), xx(bad), Zp(NOP), Zp(EOR), Zp(LSR), Zp(RMB), Ip(PHA), Im(EOR), Ip(LSR), xx(bad), Ab(JMP), Ab(EOR), Ab(LSR), Bb(BBR), 
 		/* 50 */	Re(BVC), Iy(EOR), Iz(EOR), xx(bad), Zx(NOP), Zx(EOR), Zx(LSR), Zp(RMB), Ip(CLI), Ay(EOR), Ip(PHY), xx(bad), Ax(NOP), Ax(EOR), Ax(LSR), Bb(BBR), 
 		/* 60 */	Ip(RTS), Ix(ADC), xx(bad), xx(bad), Zp(STZ), Zp(ADC), Zp(ROR), Zp(RMB), Ip(PLA), Im(ADC), Ip(ROR), xx(bad), Ia(JMP), Ab(ADC), Ab(ROR), Bb(BBR), 
@@ -292,7 +295,7 @@ namespace {
 
 	const uint8 kModeTbl_65C816[256][2]={
 		//			   0,       1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
-		/* 00 */	Im(BRK), Ix(ORA), Im(COP), Sr(ORA), Zp(TSB), Zp(ORA), Zp(ASL), Xd(ORA), Ip(PHP),ImM(ORA), Ip(ASL), Ip(PHD), Ab(TSB), Ab(ORA), Ab(ASL), Lg(ORA), 
+		/* 00 */	Ip(BRK), Ix(ORA), Im(COP), Sr(ORA), Zp(TSB), Zp(ORA), Zp(ASL), Xd(ORA), Ip(PHP),ImM(ORA), Ip(ASL), Ip(PHD), Ab(TSB), Ab(ORA), Ab(ASL), Lg(ORA), 
 		/* 10 */	Re(BPL), Iy(ORA), Iz(ORA), Sy(ORA), Zp(TRB), Zx(ORA), Zx(ASL), Xy(ORA), Ip(CLC), Ay(ORA), Ip(INC), Ip(TCS), Ab(TRB), Ax(ORA), Ax(ASL), Lx(ORA), 
 		/* 20 */	Ab(JSR), Ix(AND), Lg(JSL), Sr(AND), Zp(BIT), Zp(AND), Zp(ROL), Xd(AND), Ip(PLP),ImM(AND), Ip(ROL), Ip(PLD), Ab(BIT), Ab(AND), Ab(ROL), Lg(AND), 
 		/* 30 */	Re(BMI), Iy(AND), Iz(AND), Sy(AND), Zx(BIT), Zx(AND), Zx(ROL), Xy(AND), Ip(SEC), Ay(AND), Ip(DEC), Ip(TSC), Ax(BIT), Ax(AND), Ax(ROL), Lx(AND), 
@@ -360,12 +363,45 @@ void ATDisassembleCaptureRegisterContext(ATCPUHistoryEntry& hent) {
 	hent.mbEmulation = cpu.GetEmulationFlag();
 }
 
+void ATDisassembleCaptureRegisterContext(IATDebugTarget *target, ATCPUHistoryEntry& hent) {
+	ATCPUExecState state;
+
+	target->GetExecState(state);
+
+	hent.mP = state.mP;
+	hent.mX = state.mX;
+	hent.mXH = state.mXH;
+	hent.mY = state.mY;
+	hent.mYH = state.mYH;
+	hent.mD = state.mDP;
+	hent.mS = state.mS;
+	hent.mSH = state.mSH;
+	hent.mB = state.mB;
+	hent.mK = state.mK;
+	hent.mbEmulation = state.mbEmulationFlag;
+}
+
 void ATDisassembleCaptureInsnContext(uint16 addr, uint8 bank, ATCPUHistoryEntry& hent) {
 	uint32 addr24 = addr + ((uint32)bank << 16);
 	uint8 opcode = g_sim.DebugGlobalReadByte(addr24);
 	uint8 byte1 = g_sim.DebugGlobalReadByte((addr24+1) & 0xffffff);
 	uint8 byte2 = g_sim.DebugGlobalReadByte((addr24+2) & 0xffffff);
 	uint8 byte3 = g_sim.DebugGlobalReadByte((addr24+3) & 0xffffff);
+
+	hent.mPC = addr;
+	hent.mK = bank;
+	hent.mOpcode[0] = opcode;
+	hent.mOpcode[1] = byte1;
+	hent.mOpcode[2] = byte2;
+	hent.mOpcode[3] = byte3;
+}
+
+void ATDisassembleCaptureInsnContext(IATDebugTarget *target, uint16 addr, uint8 bank, ATCPUHistoryEntry& hent) {
+	uint32 addr24 = addr + ((uint32)bank << 16);
+	uint8 opcode = target->DebugReadByte(addr24);
+	uint8 byte1 = target->DebugReadByte((addr24+1) & 0xffffff);
+	uint8 byte2 = target->DebugReadByte((addr24+2) & 0xffffff);
+	uint8 byte3 = target->DebugReadByte((addr24+3) & 0xffffff);
 
 	hent.mPC = addr;
 	hent.mK = bank;
@@ -392,7 +428,8 @@ uint16 ATDisassembleInsn(VDStringA& line, uint16 addr, bool decodeReferences) {
 	ATDisassembleCaptureRegisterContext(hent);
 	ATDisassembleCaptureInsnContext(addr, hent.mK, hent);
 
-	return ATDisassembleInsn(line, hent, decodeReferences, false, true, true, true);
+	const ATCPUEmulator& cpu = g_sim.GetCPU();
+	return ATDisassembleInsn(line, g_sim.GetDebugTarget(), cpu.GetDisasmMode(), hent, decodeReferences, false, true, true, true);
 }
 
 namespace {
@@ -415,75 +452,66 @@ namespace {
 	}
 }
 
-uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool decodeReferences, bool decodeRefsHistory, bool showPCAddress, bool showCodeBytes, bool showLabels, bool lowercaseOps, bool wideOpcode, bool showLabelNamespaces) {
+uint16 ATDisassembleInsn(VDStringA& line,
+	IATDebugTarget *target,
+	ATDebugDisasmMode disasmMode,
+	const ATCPUHistoryEntry& hent, bool decodeReferences, bool decodeRefsHistory, bool showPCAddress, bool showCodeBytes, bool showLabels, bool lowercaseOps, bool wideOpcode, bool showLabelNamespaces, bool showSymbols)
+{
 	const uint8 opcode = hent.mOpcode[0];
 	const uint8 byte1 = hent.mOpcode[1];
 	const uint8 byte2 = hent.mOpcode[2];
 	const uint8 byte3 = hent.mOpcode[3];
 
 	const ATCPUEmulator& cpu = g_sim.GetCPU();
-	ATCPUSubMode subMode;
 
-	uint8 pbk = 0;
-	uint8 dbk = hent.mB;
-	uint32 dbkbase = (uint32)hent.mB << 16;
-	uint32 d = hent.mD;
-	uint32 dpmask = (uint8)d ? 0xffff : 0xff;
-	uint32 x = hent.mX;
-	uint32 y = hent.mY;
-	uint32 s16 = ((uint32)hent.mSH << 8) + hent.mS;
-	
-	const ATCPUMode cpuMode = cpu.GetCPUMode();
-	switch(cpuMode) {
-		case kATCPUMode_6502:
+	const uint8 pbk = hent.mK;
+	const uint32 d = hent.mD;
+	const uint32 dpmask = !hent.mbEmulation || (uint8)d ? 0xffff : 0xff;
+	const uint32 x = hent.mX + ((uint32)hent.mXH << 8);
+	const uint32 y = hent.mY + ((uint32)hent.mYH << 8);
+	const uint32 s16 = ((uint32)hent.mSH << 8) + hent.mS;
+
+	ATCPUSubMode subMode = kATCPUSubMode_6502;
+
+	switch(disasmMode) {
+		case kATDebugDisasmMode_6502:
+		default:
 			subMode = kATCPUSubMode_6502;
 			break;
 
-		case kATCPUMode_65C02:
+		case kATDebugDisasmMode_65C02:
 			subMode = kATCPUSubMode_65C02;
 			break;
 
-		case kATCPUMode_65C816:
-			pbk = hent.mK;
-
-			if (hent.mbEmulation) {
+		case kATDebugDisasmMode_65C816:
+			if (hent.mbEmulation)
 				subMode = kATCPUSubMode_65C816_Emulation;
-			} else {
-				dpmask = 0xffff;
-				
-				switch(hent.mP & (AT6502::kFlagM | AT6502::kFlagX)) {
-					case 0:
-						subMode = kATCPUSubMode_65C816_NativeM16X16;
-						x += (uint32)hent.mXH << 8;
-						y += (uint32)hent.mYH << 8;
-						break;
-
-					case AT6502::kFlagM:
-						subMode = kATCPUSubMode_65C816_NativeM8X16;
-						x += (uint32)hent.mXH << 8;
-						y += (uint32)hent.mYH << 8;
-						break;
-
-					case AT6502::kFlagX:
-						subMode = kATCPUSubMode_65C816_NativeM16X8;
-						break;
-
-					case AT6502::kFlagM | AT6502::kFlagX:
-						subMode = kATCPUSubMode_65C816_NativeM8X8;
-						break;
-				}
+			else switch(hent.mP & (AT6502::kFlagM | AT6502::kFlagX)) {
+				case 0:
+				default:
+					subMode = kATCPUSubMode_65C816_NativeM16X16;
+					break;
+				case AT6502::kFlagM:
+					subMode = kATCPUSubMode_65C816_NativeM8X16;
+					break;
+				case AT6502::kFlagX:
+					subMode = kATCPUSubMode_65C816_NativeM16X8;
+					break;
+				case AT6502::kFlagM | AT6502::kFlagX:
+					subMode = kATCPUSubMode_65C816_NativeM8X8;
+					break;
 			}
 			break;
 	}
-
+	
 	const uint8 (*const tbl)[2] = kModeTbl[subMode];
-	uint8 mode = tbl[opcode][0];
-	uint8 opid = tbl[opcode][1];
+	const uint8 mode = tbl[opcode][0];
+	const uint8 opid = tbl[opcode][1];
 
 	if (showPCAddress) {
 		const char kPCTemplate[]="  :    : ";
 
-		if (cpuMode == kATCPUMode_65C816) {
+		if (disasmMode == kATDebugDisasmMode_65C816) {
 			line += kPCTemplate;
 			WriteHex8(line, 9, hent.mK);
 		} else {
@@ -578,7 +606,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 	} else if (mode == kModeImm16) {
 		line.append_sprintf(" #$%02X%02X", byte2, byte1);
 	} else if (mode == kModeMove) {
-		line.append_sprintf(" #$%02X,#$%02X", byte1, byte2);
+		line.append_sprintf(" $%02X,$%02X", byte2, byte1);
 	} else if (mode != kModeInvalid && mode != kModeImplied) {
 		line += ' ';
 
@@ -605,7 +633,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 		bool addr24 = false;
 		bool ea16 = false;
 		bool ea24 = false;
-		bool dolabel = true;
+		bool dolabel = showSymbols;
 
 		switch(mode) {
 			case kModeRel:
@@ -644,7 +672,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 			case kModeAbs:
 				base = ea = byte1 + (byte2 << 8);
 
-				if (cpuMode == kATCPUMode_65C816)
+				if (disasmMode == kATDebugDisasmMode_65C816)
 					ea += ((uint32)hent.mB << 16);
 
 				addr16 = true;
@@ -654,7 +682,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 			case kModeAbsX:
 				base = byte1 + (byte2 << 8);
 
-				if (cpuMode == kATCPUMode_65C816)
+				if (disasmMode == kATDebugDisasmMode_65C816)
 					ea = (base + x + ((uint32)hent.mB << 16)) & 0xffffff;
 				else
 					ea = (base + x) & 0xffff;
@@ -666,7 +694,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 			case kModeAbsY:
 				base = byte1 + (byte2 << 8);
 
-				if (cpuMode == kATCPUMode_65C816)
+				if (disasmMode == kATDebugDisasmMode_65C816)
 					ea = (base + y + ((uint32)hent.mB << 16)) & 0xffffff;
 				else
 					ea = (base + y) & 0xffff;
@@ -681,7 +709,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 				if (decodeRefsHistory)
 					ea = hent.mEA;
 				else
-					ea = g_sim.DebugReadByte(base) + 256*g_sim.DebugReadByte(base+1);
+					ea = target->DebugReadByte(base) + 256*target->DebugReadByte(base+1);
 
 				addr16 = true;
 				ea16 = true;
@@ -693,7 +721,9 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 				if (decodeRefsHistory)
 					ea = hent.mEA;
 				else
-					ea = g_sim.DebugRead24(base);
+					ea = target->DebugReadByte(base)
+						+ 256 * target->DebugReadByte(base+1)
+						+ 65536 * target->DebugReadByte(base+2);
 
 				addr16 = true;
 				ea16 = true;
@@ -706,7 +736,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 				if (decodeRefsHistory)
 					ea = hent.mEA;
 				else
-					ea = g_sim.DebugReadByte((uint8)(base + x)) + 256*g_sim.DebugReadByte((uint8)(base + ((x + 1) & dpmask)));
+					ea = target->DebugReadByte((uint8)(base + x)) + 256*target->DebugReadByte((uint8)(base + ((x + 1) & dpmask)));
 
 				ea16 = true;
 				break;
@@ -717,7 +747,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 				if (decodeRefsHistory)
 					ea = hent.mEA;
 				else
-					ea = g_sim.DebugReadByte(d + base) + 256*g_sim.DebugReadByte(d + ((base + 1) & dpmask)) + y;
+					ea = target->DebugReadByte(d + base) + 256*target->DebugReadByte(d + ((base + 1) & dpmask)) + y;
 
 				ea16 = true;
 				break;
@@ -728,7 +758,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 				if (decodeRefsHistory)
 					ea = hent.mEA;
 				else
-					ea = g_sim.DebugReadByte(d + base) + 256*g_sim.DebugReadByte(d + ((base+1) & dpmask));
+					ea = target->DebugReadByte(d + base) + 256*target->DebugReadByte(d + ((base+1) & dpmask));
 
 				ea16 = true;
 				break;
@@ -739,7 +769,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 				if (decodeRefsHistory)
 					ea = hent.mEA;
 				else
-					ea = g_sim.DebugReadByte(base+x) + 256*g_sim.DebugReadByte(base+1+x);
+					ea = target->DebugReadByte(base+x) + 256*target->DebugReadByte(base+1+x);
 
 				addr16 = true;
 				ea16 = true;
@@ -779,8 +809,12 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 
 				if (decodeRefsHistory)
 					ea = hent.mEA;
-				else
-					ea = g_sim.DebugReadWord(base + s16) + y;
+				else {
+					ea = target->DebugReadByte(base + s16);
+					ea += 256 * target->DebugReadByte(base + s16+1);
+					ea += y;
+				}
+
 				break;
 
 			case kModeDpIndLong:
@@ -791,13 +825,9 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 				else {
 					uint16 dpaddr = d + byte1;
 
-					if (dpaddr > 0xfffd) {
-						ea = (uint32)g_sim.DebugReadByte(dpaddr++);
-						ea = (uint32)g_sim.DebugReadByte(dpaddr++) << 8;
-						ea = (uint32)g_sim.DebugReadByte(dpaddr) << 16;
-					} else {
-						ea = g_sim.DebugRead24(dpaddr);
-					}
+					ea = (uint32)target->DebugReadByte(dpaddr++);
+					ea = (uint32)target->DebugReadByte(dpaddr++) << 8;
+					ea = (uint32)target->DebugReadByte(dpaddr) << 16;
 				}
 				break;
 
@@ -809,14 +839,9 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 				else {
 					uint16 dpaddr = d + byte1;
 
-					if (dpaddr > 0xfffd) {
-						ea = (uint32)g_sim.DebugReadByte(dpaddr++);
-						ea = (uint32)g_sim.DebugReadByte(dpaddr++) << 8;
-						ea = (uint32)g_sim.DebugReadByte(dpaddr) << 16;
-					} else {
-						ea = g_sim.DebugRead24(dpaddr);
-					}
-
+					ea = (uint32)target->DebugReadByte(dpaddr++);
+					ea = (uint32)target->DebugReadByte(dpaddr++) << 8;
+					ea = (uint32)target->DebugReadByte(dpaddr) << 16;
 					ea += y;
 				}
 				break;
@@ -845,7 +870,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 			else if (absOffset < 10)
 				line.append_sprintf("%s%+d", name, offset);
 			else
-				line.append_sprintf("%s%c$%02x", name, offset < 0 ? '-' : '+', absOffset);
+				line.append_sprintf("%s%c$%02X", name, offset < 0 ? '-' : '+', absOffset);
 		} else if (addr24)
 			line.append_sprintf("$%06X", base & 0xffffff);
 		else if (addr16)
@@ -930,7 +955,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 					if (line.size() < padLen)
 						line.resize(padLen, ' ');
 
-					if (cpuMode == kATCPUMode_65C816 &&
+					if (disasmMode == kATDebugDisasmMode_65C816 &&
 						mode != kModeZpX &&
 						mode != kModeZpY)
 					{
@@ -951,7 +976,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 				if (line.size() < padLen)
 					line.resize(padLen, ' ');
 
-				if (cpuMode == kATCPUMode_65C816)
+				if (disasmMode == kATDebugDisasmMode_65C816)
 					line.append_sprintf(" [$%02X:%04X]", (ea >> 16) & 0xff, ea & 0xffff);
 				else if (ea16)
 					line.append_sprintf(" [$%04X]", ea);
@@ -998,16 +1023,18 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 							case kModeIndA:
 							case kModeStack:
 								line.append_sprintf(" = $%02X%02X",
-									g_sim.DebugExtReadByte((ea+1) & 0xffff),
-									g_sim.DebugExtReadByte(ea));
+									target->DebugReadByte((ea+1) & 0xffff),
+									target->DebugReadByte(ea));
 								break;
 
 							default:
-								line.append_sprintf(" = $%04X", g_sim.DebugGlobalReadWord(ea & 0xffffff));
+								line.append_sprintf(" = $%04X"
+									, target->DebugReadByte(ea & 0xffffff) + 256*target->DebugReadByte((ea + 1) & 0xffffff)
+									);
 								break;
 						}
 					} else
-						line.append_sprintf(" = $%02X", g_sim.DebugExtReadByte(ea));
+						line.append_sprintf(" = $%02X", target->DebugReadByte(ea));
 				}
 			}
 		}
@@ -1021,8 +1048,10 @@ uint16 ATDisassembleInsn(uint16 addr, uint8 bank) {
 	ATDisassembleCaptureRegisterContext(hent);
 	ATDisassembleCaptureInsnContext(addr, bank, hent);
 
+	const ATCPUEmulator& cpu = g_sim.GetCPU();
+
 	VDStringA buf;
-	addr = ATDisassembleInsn(buf, hent, true, false, true, true, true);
+	addr = ATDisassembleInsn(buf, g_sim.GetDebugTarget(), cpu.GetDisasmMode(), hent, true, false, true, true, true);
 	buf += '\n';
 	ATConsoleWrite(buf.c_str());
 
@@ -1089,14 +1118,28 @@ int ATGetOpcodeLength(uint8 opcode) {
 int ATGetOpcodeLength(uint8 opcode, uint8 p, bool emuMode) {
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 
+	return ATGetOpcodeLength(opcode, p, emuMode, cpu.GetDisasmMode());
+}
+
+int ATGetOpcodeLength(uint8 opcode, uint8 p, bool emuMode, ATDebugDisasmMode disasmMode) {
 	ATCPUSubMode subMode;
 
-	if (cpu.GetCPUMode() != kATCPUMode_65C816) {
-		subMode = cpu.GetCPUSubMode();
-	} else {
-		subMode = kATCPUSubMode_65C816_Emulation;
-		if (!emuMode)
-			subMode = (ATCPUSubMode)(kATCPUSubMode_65C816_NativeM16X16 + ((p >> 4) & 3));
+	switch(disasmMode) {
+		case kATDebugDisasmMode_6502:
+		default:
+			subMode = kATCPUSubMode_6502;
+			break;
+
+		case kATDebugDisasmMode_65C02:
+			subMode = kATCPUSubMode_65C02;
+			break;
+
+		case kATDebugDisasmMode_65C816:
+			subMode = kATCPUSubMode_65C816_Emulation;
+			if (!emuMode)
+				subMode = (ATCPUSubMode)(kATCPUSubMode_65C816_NativeM16X16 + ((p >> 4) & 3));
+
+			break;
 	}
 
 	const uint8 (*const tbl)[2] = kModeTbl[subMode];

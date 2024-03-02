@@ -9,10 +9,14 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{5DEDF6C8-711B-4CAE-A1AB-A3DBF2E5EBE6}</ProjectGuid>
     <RootNamespace>Kernel</RootNamespace>
-    <SccProjectName>SAK</SccProjectName>
-    <SccAuxPath>SAK</SccAuxPath>
-    <SccLocalPath>SAK</SccLocalPath>
-    <SccProvider>SAK</SccProvider>
+    <SccProjectName>
+    </SccProjectName>
+    <SccAuxPath>
+    </SccAuxPath>
+    <SccLocalPath>
+    </SccLocalPath>
+    <SccProvider>
+    </SccProvider>
     <Keyword>MakeFileProj</Keyword>
     <PlatformToolset>v120</PlatformToolset>
   </PropertyGroup>
@@ -50,13 +54,22 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\"</NMakeReBuildCommandLine>
     <None Include="source\1030\handler.s" />
     <None Include="source\Additions\autorun.s" />
     <None Include="source\Additions\boot1030.s" />
+    <None Include="source\Additions\colormap.s" />
     <None Include="source\Additions\cp.s" />
     <None Include="source\Additions\sx212.s" />
     <None Include="source\Additions\sx212handler.s" />
     <None Include="source\Additions\thnd1030.s" />
+    <None Include="source\ExeLoader\exeloader-hispeed.s" />
+    <None Include="source\ExeLoader\exeloader-nobasic.s" />
+    <None Include="source\ExeLoader\exeloader.s" />
     <None Include="source\loader.xasm" />
     <None Include="source\main.xasm" />
     <None Include="source\Placeholders\nomio.s" />
+    <None Include="source\SAPPlayers\playsap-b.s" />
+    <None Include="source\SAPPlayers\playsap-c.s" />
+    <None Include="source\SAPPlayers\playsap-d.s" />
+    <None Include="source\SAPPlayers\playsap-r.s" />
+    <None Include="source\Shared\kernel.inc" />
     <None Include="source\softkick.s" />
     <None Include="source\BASIC\main.xasm" />
     <None Include="source\NoKernel\main.xasm" />

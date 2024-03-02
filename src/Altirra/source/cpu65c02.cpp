@@ -208,6 +208,13 @@ bool ATCPUEmulator::Decode65C02(uint8 opcode) {
 			*mpDstState++ = kStateWrite;			// 5
 			break;
 
+		// BIT
+		case 0x3C:	// BIT abs,X
+			DecodeReadAbsX();
+			*mpDstState++ = kStateDSetSV;
+			*mpDstState++ = kStateBit;
+			break;
+
 		// RMB/SMB
 		case 0x07:	// RMB0 zp (5 cycles)
 		case 0x17:	// RMB1 zp
@@ -281,7 +288,7 @@ bool ATCPUEmulator::Decode65C02(uint8 opcode) {
 			*mpDstState++ = kStateBit;
 			break;
 
-		case 0x3A:	// INC A
+		case 0x3A:	// DEC A
 			*mpDstState++ = kStateAtoD;
 			*mpDstState++ = kStateDec;
 			*mpDstState++ = kStateWait;

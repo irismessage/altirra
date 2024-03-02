@@ -24,11 +24,10 @@
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/devicesio.h>
 #include <at/atcore/propertyset.h>
+#include <at/atcore/scheduler.h>
 #include "rs232.h"
-#include "scheduler.h"
 #include "debuggerlog.h"
 #include "firmwaremanager.h"
-#include "devicemanager.h"
 
 ATDebuggerLogChannel g_ATLC850SIO(false, false, "850", "850 interface SIO activity");
 ATDebuggerLogChannel g_ATLCModemData(false, false, "MODEMDATA", "Modem interface data");
@@ -822,6 +821,14 @@ protected:
 	vdfastvector<uint8> mHandler;
 };
 
+void ATCreateDevice850Modem(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATRS232Emulator> p(new ATRS232Emulator);
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDef850Modem = { "850", "850", L"850 Interface Module", ATCreateDevice850Modem };
+
 ATRS232Emulator::ATRS232Emulator()
 	: mpScheduler(NULL)
 	, mpSlowScheduler(NULL)
@@ -854,8 +861,7 @@ void *ATRS232Emulator::AsInterface(uint32 id) {
 }
 
 void ATRS232Emulator::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "850";
-	info.mName = L"850 Interface Module";
+	info.mpDef = &g_ATDeviceDef850Modem;
 }
 
 void ATRS232Emulator::Init() {
@@ -1469,16 +1475,4 @@ void ATRS232Emulator::ShutdownChannels() {
 			p = NULL;
 		}
 	}
-}
-
-///////////////////////////////////////////////////////////////////////////
-
-void ATCreateDevice850Modem(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATRS232Emulator> p(new ATRS232Emulator);
-
-	*dev = p.release();
-}
-
-void ATRegisterDevice850Modem(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("850", ATCreateDevice850Modem);
 }

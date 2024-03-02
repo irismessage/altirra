@@ -19,11 +19,10 @@
 #include <vd2/system/binary.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/scheduler.h>
 #include "covox.h"
-#include "scheduler.h"
 #include "audiooutput.h"
 #include "memorymanager.h"
-#include "devicemanager.h"
 #include "console.h"
 
 namespace {
@@ -104,6 +103,8 @@ void ATCovoxEmulator::WarmReset() {
 	mOutputLevel = 0;
 	mOutputAccumLeft = 0;
 	mOutputAccumRight = 0;
+	mbUnbalanced = false;
+	mbUnbalancedSticky = false;
 }
 
 void ATCovoxEmulator::DumpStatus(ATConsoleOutput& output) {
@@ -123,7 +124,13 @@ void ATCovoxEmulator::WriteControl(uint8 addr, uint8 value) {
 		return;
 
 	Flush();
+
 	mVolume[addr] = value;
+
+	mbUnbalanced = mVolume[0] + mVolume[3] != mVolume[1] + mVolume[2];
+
+	if (mbUnbalanced)
+		mbUnbalancedSticky = true;
 }
 
 void ATCovoxEmulator::Run(int cycles) {
@@ -179,7 +186,11 @@ void ATCovoxEmulator::Run(int cycles) {
 	}
 }
 
-void ATCovoxEmulator::WriteAudio(uint32 startTime, float *dstLeft, float *dstRightOpt, uint32 n) {
+void ATCovoxEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
+	float *const dstLeft = mixInfo.mpLeft;
+	float *const dstRightOpt = mixInfo.mpRight;
+	const uint32 n = mixInfo.mCount;
+
 	Flush();
 
 	VDASSERT(n <= kAccumBufferSize);
@@ -211,6 +222,7 @@ void ATCovoxEmulator::WriteAudio(uint32 startTime, float *dstLeft, float *dstRig
 	}
 
 	mOutputLevel = samplesLeft;
+	mbUnbalancedSticky = mbUnbalanced;
 }
 
 void ATCovoxEmulator::Flush() {
@@ -276,6 +288,14 @@ private:
 	ATCovoxEmulator mCovox;
 };
 
+void ATCreateDeviceCovox(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceCovox> p(new ATDeviceCovox);
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefCovox = { "covox", nullptr, L"Covox", ATCreateDeviceCovox };
+
 ATDeviceCovox::ATDeviceCovox()
 	: mpMemMan(nullptr)
 	, mpScheduler(nullptr)
@@ -303,9 +323,7 @@ void *ATDeviceCovox::AsInterface(uint32 id) {
 }
 
 void ATDeviceCovox::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "covox";
-	info.mName = L"Covox";
-	info.mConfigTag = "covox";
+	info.mpDef = &g_ATDeviceDefCovox;
 }
 
 void ATDeviceCovox::WarmReset() {
@@ -352,14 +370,4 @@ void ATDeviceCovox::InitAudioOutput(IATAudioOutput *out) {
 
 void ATDeviceCovox::DumpStatus(ATConsoleOutput& output) {
 	mCovox.DumpStatus(output);
-}
-
-void ATCreateDeviceCovox(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDeviceCovox> p(new ATDeviceCovox);
-
-	*dev = p.release();
-}
-
-void ATRegisterDeviceCovox(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("covox", ATCreateDeviceCovox);
 }

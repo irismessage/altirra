@@ -38,7 +38,6 @@ errorNoMemory		inc		errno		;2
 		ldy		#0
 		sty		dspflg			;force off list flag while we have a zero
 		sty		fr0+1
-		sty		iocbidx
 		lda		(stmcur),y
 		sta		stopln
 		iny
@@ -56,8 +55,8 @@ errorNoMemory		inc		errno		;2
 		bne		not_break
 
 		;print STOPPED and then jump for opt lineno
-		ldx		#<msg_stopped
-		jsr		IoPrintMessage
+		ldx		#msg_stopped-msg_base
+		jsr		IoPrintMessageIOCB0
 		jmp		print_lineno
 
 not_break:
@@ -80,8 +79,8 @@ not_break:
 		
 no_trap:
 		;ERROR-   11
-		ldx		#<msg_error
-		jsr		IoPrintMessage		
+		ldx		#msg_error-msg_base
+		jsr		IoPrintMessageIOCB0
 		jsr		IoPrintInt
 
 print_lineno:
@@ -89,7 +88,7 @@ print_lineno:
 		sta		fr0+1
 		bmi		imm_mode
 
-		ldx		#<msg_atline
+		ldx		#msg_atline-msg_base
 		jsr		IoPrintMessage
 
 		lda		stopln

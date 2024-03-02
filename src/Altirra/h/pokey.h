@@ -24,7 +24,7 @@
 
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/vdstl.h>
-#include "scheduler.h"
+#include <at/atcore/scheduler.h>
 
 class IATAudioOutput;
 class ATPokeyEmulator;
@@ -33,7 +33,6 @@ class ATSaveStateWriter;
 class ATAudioFilter;
 struct ATPokeyTables;
 class ATPokeyRenderer;
-class IATSoundBoardEmulator;
 
 class IATPokeyEmulatorConnections {
 public:
@@ -48,7 +47,10 @@ public:
 class IATPokeySIODevice {
 public:
 	virtual void PokeyAttachDevice(ATPokeyEmulator *pokey) = 0;
-	virtual void PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) = 0;
+
+	// Returns true if burst I/O is allowed.
+	virtual bool PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) = 0;
+
 	virtual void PokeyBeginCommand() = 0;
 	virtual void PokeyEndCommand() = 0;
 	virtual void PokeySerInReady() = 0;
@@ -74,7 +76,7 @@ struct ATPokeyAudioLog {
 	uint32	mMaxCount;
 };
 
-class ATPokeyEmulator : public IATSchedulerCallback {
+class ATPokeyEmulator final : public IATSchedulerCallback {
 public:
 	ATPokeyEmulator(bool isSlave);
 	~ATPokeyEmulator();
@@ -84,7 +86,6 @@ public:
 
 	void	SetSlave(ATPokeyEmulator *slave);
 	void	SetCassette(IATPokeyCassetteDevice *dev);
-	void	SetSoundBoard(IATSoundBoardEmulator *sbe);
 	void	SetAudioLog(ATPokeyAudioLog *log);
 
 	void	Set5200Mode(bool enable);
@@ -92,20 +93,10 @@ public:
 	bool	IsTraceSIOEnabled() const { return mbTraceSIO; }
 	void	SetTraceSIOEnabled(bool enable) { mbTraceSIO = enable; }
 
-	enum SerialBurstMode {
-		kSerialBurstMode_Disabled,
-		kSerialBurstMode_Standard,
-		kSerialBurstMode_Polled,
-		kSerialBurstModeCount
-	};
-
-	SerialBurstMode GetSerialBurstMode() const { return mSerBurstMode; }
-	void	SetSerialBurstMode(SerialBurstMode mode);
-
 	void	AddSIODevice(IATPokeySIODevice *device);
 	void	RemoveSIODevice(IATPokeySIODevice *device);
 
-	void	ReceiveSIOByte(uint8 byte, uint32 cyclesPerBit, bool simulateInputPort = false);
+	void	ReceiveSIOByte(uint8 byte, uint32 cyclesPerBit, bool simulateInputPort, bool allowBurst);
 
 	void	SetAudioLine2(int v);		// used for audio from motor control line
 	void	SetDataLine(bool newState);
@@ -121,18 +112,18 @@ public:
 	void	SetNonlinearMixingEnabled(bool enable);
 
 	bool	GetShiftKeyState() const { return mbShiftKeyState; }
-	void	SetShiftKeyState(bool down);
+	void	SetShiftKeyState(bool down, bool immediate);
 	bool	GetControlKeyState() const { return mbControlKeyState; }
 	void	SetControlKeyState(bool down);
 	void	PushKey(uint8 c, bool repeat, bool allowQueue = false, bool flushQueue = true, bool useCooldown = true);
-	void	PushRawKey(uint8 c);
-	void	ReleaseRawKey();
-	void	SetBreakKeyState(bool down);
+	uint64	GetRawKeyMask() const;
+	void	PushRawKey(uint8 c, bool immediate);
+	void	ReleaseRawKey(uint8 c, bool immediate);
+	void	ReleaseAllRawKeys(bool immediate);
+	void	SetBreakKeyState(bool down, bool immediate);
 	void	PushBreak();
 
-	void	UpdateKeyMatrix(int index, bool depressed);
 	void	SetKeyMatrix(const bool matrix[64]);
-	void	ClearKeyMatrix();
 
 	int	GetPotPos(unsigned idx) const { return mPOT[idx]; }
 	void	SetPotPos(unsigned idx, int pos);
@@ -161,14 +152,19 @@ public:
 	void	FlushAudio(bool pushAudio);
 
 protected:
-	void	DoFullTick();
-	void	OnScheduledEvent(uint32 id);
+	void	OnScheduledEvent(uint32 id) override;
 
 	template<uint8 channel>
 	void	FireTimer();
 
+	uint32	UpdateLast15KHzTime();
+	uint32	UpdateLast15KHzTime(uint32 t);
+	uint32	UpdateLast64KHzTime();
+	uint32	UpdateLast64KHzTime(uint32 t);
+
+	void	OnSerialInputTick();
 	void	OnSerialOutputTick();
-	uint32	GetSerialCyclesPerBit() const;
+	uint32	GetSerialCyclesPerBitRecv() const;
 
 	void	RecomputeAllowedDeferredTimers();
 
@@ -187,12 +183,18 @@ protected:
 
 	void	UpdateMixTable();
 
+	void	UpdateKeyMatrix(int index, uint16 mask, uint16 state);
+	void	UpdateEffectiveKeyMatrix();
 	void	TryPushNextKey();
-	void	ProcessReceivedSerialByte();
 
-protected:
-	void	SetLast64KHzTime(uint32 t) { mLast64KHzTime = t; }
-	void	SetLast15KHzTime(uint32 t) { mLast15KHzTime = t; }
+	void	SetKeyboardModes(bool cooked, bool scanEnabled);
+	void	UpdateKeyboardScanEvent();
+	void	QueueKeyboardIRQ();
+	void	AssertKeyboardIRQ();
+	void	AssertBreakIRQ();
+
+	void	ProcessReceivedSerialByte();
+	void	SyncRenderers(ATPokeyRenderer *r);
 
 protected:
 	ATPokeyRenderer *mpRenderer;
@@ -210,9 +212,14 @@ protected:
 	uint32	mKeyCooldownTimer;
 	bool	mbKeyboardIRQPending;
 	bool	mbUseKeyCooldownTimer;
+	bool	mbCookedKeyMode;
+	bool	mbKeyboardScanEnabled;
 	bool	mbShiftKeyState;
+	bool	mbShiftKeyLatchedState;
 	bool	mbControlKeyState;
+	bool	mbControlKeyLatchedState;
 	bool	mbBreakKeyState;
+	bool	mbBreakKeyLatchedState;
 
 	uint8	mIRQEN;
 	uint8	mIRQST;
@@ -260,8 +267,11 @@ protected:
 	bool	mbSpeakerActive;
 	bool	mbSerialRateChanged;
 	bool	mbSerialWaitingForStartBit;
-	bool	mbSerInBurstPending;
+	bool	mbSerInBurstPendingIRQ1;
+	bool	mbSerInBurstPendingIRQ2;
+	bool	mbSerInBurstPendingData;
 	bool	mbSerInDeferredLoad;
+	uint32	mSerOutBurstDeadline;
 
 	uint32	mSerialSimulateInputBaseTime;
 	uint32	mSerialSimulateInputCyclesPerBit;
@@ -270,8 +280,6 @@ protected:
 
 	uint32	mSerialExtBaseTime;
 	uint32	mSerialExtPeriod;
-
-	SerialBurstMode	mSerBurstMode;
 
 	ATPokeyTables *mpTables;
 	ATPokeyAudioLog	*mpAudioLog;
@@ -294,10 +302,12 @@ protected:
 	uint32	mPotScanStartTime;
 
 	ATEvent *mpPotScanEvent[8];
-	ATEvent	*mp15KHzEvent;
+	ATEvent	*mpKeyboardIRQEvent;
+	ATEvent	*mpKeyboardScanEvent;
 	ATEvent	*mpAudioEvent;
 	ATEvent	*mpStartBitEvent;
 	ATEvent	*mpResetTimersEvent;
+	ATEvent *mpEventSerialInput;
 	ATEvent *mpEventSerialOutput;
 	ATEvent *mpEventResetTwoTones;
 	ATEvent	*mpTimerBorrowEvents[4];
@@ -305,6 +315,9 @@ protected:
 	bool	mbDeferredTimerEvents[4];
 	uint32	mDeferredTimerStarts[4];
 	uint32	mDeferredTimerPeriods[4];
+
+	uint16	mKeyMatrix[8] = {};
+	uint16	mEffectiveKeyMatrix[8] = {};
 
 	ATScheduler *mpScheduler;
 
@@ -318,11 +331,9 @@ protected:
 	Devices	mDevices;
 
 	IATPokeyCassetteDevice *mpCassette;
-	IATSoundBoardEmulator *mpSoundBoard;
 
 	vdfastdeque<uint8> mKeyQueue;
 
-	bool	mbKeyMatrix[64];
 	uint8	mKeyScanState;
 	uint8	mKeyScanCode;
 	uint8	mKeyScanLatch;

@@ -16,7 +16,10 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #pragma once
-#pragma warning(disable: 4355)
+
+#pragma warning(disable: 4351)	// warning C4351: new behavior: elements of array '...' will be default initialized
+#pragma warning(disable: 4355)	// warning C4355: 'this' : used in base member initializer list
+
 #define _SCL_SECURE_NO_WARNINGS
 #include <stddef.h>
 #include <string.h>

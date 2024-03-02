@@ -34,7 +34,28 @@ namespace {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeConst : public ATDebugExpNode {
+const ATCPUExecState *ATDebugExpEvalCache::GetExecState(const ATDebugExpEvalContext& ctx) {
+	if (!mbExecStateValid) {
+		if (!ctx.mpTarget)
+			return nullptr;
+
+		mbExecStateValid = true;
+
+		ctx.mpTarget->GetExecState(mExecState);
+	}
+
+	return &mExecState;
+}
+
+bool ATDebugExpNode::Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpEvalCache cache;
+
+	return Evaluate(result, context, cache);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeConst final : public ATDebugExpNode {
 public:
 	ATDebugExpNodeConst(sint32 v, bool hex, bool addr)
 		: ATDebugExpNode(kATDebugExpNodeType_Const)
@@ -47,7 +68,9 @@ public:
 	bool IsHex() const { return mbHex; }
 	bool IsAddress() const { return mbAddress; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeConst(mVal, mbHex, mbAddress); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		result = mVal;
 		return true;
 	}
@@ -122,6 +145,16 @@ protected:
 
 	virtual void EmitUnaryOp(VDStringA& s) = 0;
 
+	template<class T>
+	ATDebugExpNode *CloneUnary() const {
+		vdautoptr<ATDebugExpNode> arg(mpArg->Clone());
+
+		ATDebugExpNode *result = new typename std::remove_const<typename std::remove_reference<T>::type>::type(arg);
+		arg.release();
+
+		return result;
+	}
+
 	vdautoptr<ATDebugExpNode> mpArg;
 };
 
@@ -187,6 +220,18 @@ protected:
 	virtual int GetPrecedence() const = 0;
 	virtual void EmitBinaryOp(VDStringA& s) = 0;
 
+	template<class T>
+	ATDebugExpNode *CloneBinary() const {
+		vdautoptr<ATDebugExpNode> l(mpLeft->Clone());
+		vdautoptr<ATDebugExpNode> r(mpRight->Clone());
+
+		ATDebugExpNode *result = new typename std::remove_const<typename std::remove_reference<T>::type>::type(l, r);
+		l.release();
+		r.release();
+
+		return result;
+	}
+
 	vdautoptr<ATDebugExpNode> mpLeft;
 	vdautoptr<ATDebugExpNode> mpRight;
 	bool mbAddress;
@@ -194,12 +239,14 @@ protected:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeAnd : public ATDebugExpNodeBinary {
+class ATDebugExpNodeAnd final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeAnd(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_And, x, y, false)
 	{
 	}
+
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
 	bool Optimize(ATDebugExpNode **result) {
 		if (ATDebugExpNodeBinary::Optimize(result))
@@ -226,12 +273,12 @@ public:
 		return false;
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		result = x && y;
@@ -313,19 +360,21 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeOr : public ATDebugExpNodeBinary {
+class ATDebugExpNodeOr final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeOr(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_Or, x, y, false)
 	{
 	}
+	
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		result = x || y;
@@ -411,19 +460,21 @@ bool ATDebugExpNodeOr::OptimizeInvert(ATDebugExpNode **result) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeBitwiseAnd : public ATDebugExpNodeBinary {
+class ATDebugExpNodeBitwiseAnd final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeBitwiseAnd(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_BitwiseAnd, x, y, true)
 	{
 	}
+	
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		result = x & y;
@@ -439,19 +490,21 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeBitwiseOr : public ATDebugExpNodeBinary {
+class ATDebugExpNodeBitwiseOr final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeBitwiseOr(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_BitwiseOr, x, y, true)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		result = x | y;
@@ -467,19 +520,21 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeBitwiseXor : public ATDebugExpNodeBinary {
+class ATDebugExpNodeBitwiseXor final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeBitwiseXor(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_BitwiseXor, x, y, true)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		result = x ^ y;
@@ -495,19 +550,21 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeAdd : public ATDebugExpNodeBinary {
+class ATDebugExpNodeAdd final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeAdd(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_Add, x, y, true)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		result = x + y;
@@ -523,19 +580,21 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeSub : public ATDebugExpNodeBinary {
+class ATDebugExpNodeSub final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeSub(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_Sub, x, y, true)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		result = x - y;
@@ -550,19 +609,21 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeMul : public ATDebugExpNodeBinary {
+class ATDebugExpNodeMul final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeMul(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_Mul, x, y, true)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		result = x * y;
@@ -578,19 +639,21 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeMod : public ATDebugExpNodeBinary {
+class ATDebugExpNodeMod final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeMod(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_Div, x, y, false)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		if (!y)
@@ -608,19 +671,21 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeDiv : public ATDebugExpNodeBinary {
+class ATDebugExpNodeDiv final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeDiv(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_Div, x, y, false)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		if (!y)
@@ -643,19 +708,21 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeLT : public ATDebugExpNodeBinary {
+class ATDebugExpNodeLT final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeLT(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_LT, x, y, false)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		result = x < y;
@@ -695,19 +762,21 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeLE : public ATDebugExpNodeBinary {
+class ATDebugExpNodeLE final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeLE(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_LE, x, y, false)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		result = x <= y;
@@ -747,19 +816,21 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeGT : public ATDebugExpNodeBinary {
+class ATDebugExpNodeGT final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeGT(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_GT, x, y, false)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		result = x > y;
@@ -799,19 +870,21 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeGE : public ATDebugExpNodeBinary {
+class ATDebugExpNodeGE final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeGE(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_GE, x, y, false)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		result = x >= y;
@@ -851,19 +924,21 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeEQ : public ATDebugExpNodeBinary {
+class ATDebugExpNodeEQ final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeEQ(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_EQ, x, y, false)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		result = x == y;
@@ -901,19 +976,21 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeNE : public ATDebugExpNodeBinary {
+class ATDebugExpNodeNE final : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeNE(ATDebugExpNode *x, ATDebugExpNode *y)
 		: ATDebugExpNodeBinary(kATDebugExpNodeType_NE, x, y, false)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 		sint32 y;
 
-		if (!mpLeft->Evaluate(x, context) ||
-			!mpRight->Evaluate(y, context))
+		if (!mpLeft->Evaluate(x, context, cache) ||
+			!mpRight->Evaluate(y, context, cache))
 			return false;
 
 		result = x != y;
@@ -975,12 +1052,14 @@ bool ATDebugExpNodeNE::OptimizeInvert(ATDebugExpNode **result) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeInvert : public ATDebugExpNodeUnary {
+class ATDebugExpNodeInvert final : public ATDebugExpNodeUnary {
 public:
 	ATDebugExpNodeInvert(ATDebugExpNode *x)
 		: ATDebugExpNodeUnary(kATDebugExpNodeType_Invert, x)
 	{
 	}
+
+	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
 
 	bool Optimize(ATDebugExpNode **result) {
 		if (mpArg->OptimizeInvert(result)) {
@@ -998,10 +1077,10 @@ public:
 
 	bool CanOptimizeInvert() const { return true; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 
-		if (!mpArg->Evaluate(x, context))
+		if (!mpArg->Evaluate(x, context, cache))
 			return false;
 
 		result = !x;
@@ -1015,17 +1094,19 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeNegate : public ATDebugExpNodeUnary {
+class ATDebugExpNodeNegate final : public ATDebugExpNodeUnary {
 public:
 	ATDebugExpNodeNegate(ATDebugExpNode *x)
 		: ATDebugExpNodeUnary(kATDebugExpNodeType_Negate, x)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 
-		if (!mpArg->Evaluate(x, context))
+		if (!mpArg->Evaluate(x, context, cache))
 			return false;
 
 		result = -x;
@@ -1039,23 +1120,25 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeDerefByte : public ATDebugExpNodeUnary {
+class ATDebugExpNodeDerefByte final : public ATDebugExpNodeUnary {
 public:
 	ATDebugExpNodeDerefByte(ATDebugExpNode *x)
 		: ATDebugExpNodeUnary(kATDebugExpNodeType_DerefByte, x)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 
-		if (!mpArg->Evaluate(x, context))
+		if (!mpArg->Evaluate(x, context, cache))
 			return false;
 
-		if (!context.mpMemory)
+		if (!context.mpTarget)
 			return false;
 
-		result = context.mpMemory->DebugReadByte(x & 0xffff);
+		result = context.mpTarget->DebugReadByte(x & 0xffff);
 		return true;
 	}
 
@@ -1066,23 +1149,25 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeDerefSignedByte : public ATDebugExpNodeUnary {
+class ATDebugExpNodeDerefSignedByte final : public ATDebugExpNodeUnary {
 public:
 	ATDebugExpNodeDerefSignedByte(ATDebugExpNode *x)
 		: ATDebugExpNodeUnary(kATDebugExpNodeType_DerefSignedByte, x)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 
-		if (!mpArg->Evaluate(x, context))
+		if (!mpArg->Evaluate(x, context, cache))
 			return false;
 
-		if (!context.mpMemory)
+		if (!context.mpTarget)
 			return false;
 
-		result = (sint8)context.mpMemory->DebugReadByte(x & 0xffff);
+		result = (sint8)context.mpTarget->DebugReadByte(x & 0xffff);
 		return true;
 	}
 
@@ -1093,24 +1178,26 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeDerefSignedWord : public ATDebugExpNodeUnary {
+class ATDebugExpNodeDerefSignedWord final : public ATDebugExpNodeUnary {
 public:
 	ATDebugExpNodeDerefSignedWord(ATDebugExpNode *x)
 		: ATDebugExpNodeUnary(kATDebugExpNodeType_DerefSignedWord, x)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 
-		if (!mpArg->Evaluate(x, context))
+		if (!mpArg->Evaluate(x, context, cache))
 			return false;
 
-		if (!context.mpMemory)
+		if (!context.mpTarget)
 			return false;
 
-		uint8 c0 = context.mpMemory->DebugReadByte(x & 0xffff);
-		uint8 c1 = context.mpMemory->DebugReadByte((x+1) & 0xffff);
+		uint8 c0 = context.mpTarget->DebugReadByte(x & 0xffff);
+		uint8 c1 = context.mpTarget->DebugReadByte((x+1) & 0xffff);
 		result = (sint16)(c0 + (c1 << 8));
 		return true;
 	}
@@ -1122,26 +1209,28 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeDerefSignedDoubleWord : public ATDebugExpNodeUnary {
+class ATDebugExpNodeDerefSignedDoubleWord final : public ATDebugExpNodeUnary {
 public:
 	ATDebugExpNodeDerefSignedDoubleWord(ATDebugExpNode *x)
 		: ATDebugExpNodeUnary(kATDebugExpNodeType_DerefSignedDoubleWord, x)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 
-		if (!mpArg->Evaluate(x, context))
+		if (!mpArg->Evaluate(x, context, cache))
 			return false;
 
-		if (!context.mpMemory)
+		if (!context.mpTarget)
 			return false;
 
-		uint8 c0 = context.mpMemory->DebugReadByte(x & 0xffff);
-		uint8 c1 = context.mpMemory->DebugReadByte((x+1) & 0xffff);
-		uint8 c2 = context.mpMemory->DebugReadByte((x+2) & 0xffff);
-		uint8 c3 = context.mpMemory->DebugReadByte((x+3) & 0xffff);
+		uint8 c0 = context.mpTarget->DebugReadByte(x & 0xffff);
+		uint8 c1 = context.mpTarget->DebugReadByte((x+1) & 0xffff);
+		uint8 c2 = context.mpTarget->DebugReadByte((x+2) & 0xffff);
+		uint8 c3 = context.mpTarget->DebugReadByte((x+3) & 0xffff);
 		result = (sint32)(c0 + (c1 << 8) + (c2 << 16) + (c3 << 24));
 		return true;
 	}
@@ -1153,24 +1242,26 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeDerefWord : public ATDebugExpNodeUnary {
+class ATDebugExpNodeDerefWord final : public ATDebugExpNodeUnary {
 public:
 	ATDebugExpNodeDerefWord(ATDebugExpNode *x)
 		: ATDebugExpNodeUnary(kATDebugExpNodeType_DerefWord, x)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 
-		if (!mpArg->Evaluate(x, context))
+		if (!mpArg->Evaluate(x, context, cache))
 			return false;
 
-		if (!context.mpMemory)
+		if (!context.mpTarget)
 			return false;
 
-		result = context.mpMemory->DebugReadByte(x & 0xffff)
-			+ ((sint32)context.mpMemory->DebugReadByte((x + 1) & 0xffff) << 8);
+		result = context.mpTarget->DebugReadByte(x & 0xffff)
+			+ ((sint32)context.mpTarget->DebugReadByte((x + 1) & 0xffff) << 8);
 		return true;
 	}
 
@@ -1181,17 +1272,19 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeLoByte : public ATDebugExpNodeUnary {
+class ATDebugExpNodeLoByte final : public ATDebugExpNodeUnary {
 public:
 	ATDebugExpNodeLoByte(ATDebugExpNode *x)
 		: ATDebugExpNodeUnary(kATDebugExpNodeType_LoByte, x)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 
-		if (!mpArg->Evaluate(x, context))
+		if (!mpArg->Evaluate(x, context, cache))
 			return false;
 
 		result = x & 0xff;
@@ -1205,17 +1298,19 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeHiByte : public ATDebugExpNodeUnary {
+class ATDebugExpNodeHiByte final : public ATDebugExpNodeUnary {
 public:
 	ATDebugExpNodeHiByte(ATDebugExpNode *x)
 		: ATDebugExpNodeUnary(kATDebugExpNodeType_HiByte, x)
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 
-		if (!mpArg->Evaluate(x, context))
+		if (!mpArg->Evaluate(x, context, cache))
 			return false;
 
 		result = (x & 0xff00) >> 8;
@@ -1229,14 +1324,18 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodePC : public ATDebugExpNode {
+class ATDebugExpNodePC final : public ATDebugExpNode {
 public:
 	ATDebugExpNodePC() : ATDebugExpNode(kATDebugExpNodeType_PC) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
-		if (!context.mpCPU)
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodePC; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+		const ATCPUExecState *state = cache.GetExecState(context);
+		if (!state)
 			return false;
-		result = context.mpCPU->GetInsnPC();
+
+		result = state->mPC;
 		return true;
 	}
 
@@ -1247,14 +1346,18 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeA : public ATDebugExpNode {
+class ATDebugExpNodeA final : public ATDebugExpNode {
 public:
 	ATDebugExpNodeA() : ATDebugExpNode(kATDebugExpNodeType_A) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
-		if (!context.mpCPU)
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeA; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+		const ATCPUExecState *state = cache.GetExecState(context);
+		if (!state)
 			return false;
-		result = context.mpCPU->GetA();
+
+		result = state->mA + ((sint32)state->mAH << 8);
 		return true;
 	}
 
@@ -1265,14 +1368,18 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeX : public ATDebugExpNode {
+class ATDebugExpNodeX final : public ATDebugExpNode {
 public:
 	ATDebugExpNodeX() : ATDebugExpNode(kATDebugExpNodeType_X) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
-		if (!context.mpCPU)
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeX; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+		const ATCPUExecState *state = cache.GetExecState(context);
+		if (!state)
 			return false;
-		result = context.mpCPU->GetX();
+
+		result = state->mX + ((sint32)state->mXH << 8);
 		return true;
 	}
 
@@ -1283,14 +1390,18 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeY : public ATDebugExpNode {
+class ATDebugExpNodeY final : public ATDebugExpNode {
 public:
 	ATDebugExpNodeY() : ATDebugExpNode(kATDebugExpNodeType_Y) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
-		if (!context.mpCPU)
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeY; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+		const ATCPUExecState *state = cache.GetExecState(context);
+		if (!state)
 			return false;
-		result = context.mpCPU->GetY();
+
+		result = state->mY + ((sint32)state->mYH << 8);
 		return true;
 	}
 
@@ -1301,14 +1412,18 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeS : public ATDebugExpNode {
+class ATDebugExpNodeS final : public ATDebugExpNode {
 public:
 	ATDebugExpNodeS() : ATDebugExpNode(kATDebugExpNodeType_S) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
-		if (!context.mpCPU)
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeS; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+		const ATCPUExecState *state = cache.GetExecState(context);
+		if (!state)
 			return false;
-		result = context.mpCPU->GetS();
+
+		result = state->mS;
 		return true;
 	}
 
@@ -1319,14 +1434,18 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeP : public ATDebugExpNode {
+class ATDebugExpNodeP final : public ATDebugExpNode {
 public:
 	ATDebugExpNodeP() : ATDebugExpNode(kATDebugExpNodeType_P) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
-		if (!context.mpCPU)
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeP; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+		const ATCPUExecState *state = cache.GetExecState(context);
+		if (!state)
 			return false;
-		result = context.mpCPU->GetP();
+
+		result = state->mP;
 		return true;
 	}
 
@@ -1337,11 +1456,13 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeRead : public ATDebugExpNode {
+class ATDebugExpNodeRead final : public ATDebugExpNode {
 public:
 	ATDebugExpNodeRead() : ATDebugExpNode(kATDebugExpNodeType_Read) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeRead; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		if (!context.mbAccessReadValid)
 			return false;
 
@@ -1356,11 +1477,13 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeWrite : public ATDebugExpNode {
+class ATDebugExpNodeWrite final : public ATDebugExpNode {
 public:
 	ATDebugExpNodeWrite() : ATDebugExpNode(kATDebugExpNodeType_Write) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeWrite; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		if (!context.mbAccessWriteValid)
 			return false;
 
@@ -1375,11 +1498,13 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeHPOS : public ATDebugExpNode {
+class ATDebugExpNodeHPOS final : public ATDebugExpNode {
 public:
 	ATDebugExpNodeHPOS() : ATDebugExpNode(kATDebugExpNodeType_HPOS) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeHPOS; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		if (!context.mpAntic)
 			return false;
 
@@ -1394,11 +1519,13 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeVPOS : public ATDebugExpNode {
+class ATDebugExpNodeVPOS final : public ATDebugExpNode {
 public:
 	ATDebugExpNodeVPOS() : ATDebugExpNode(kATDebugExpNodeType_VPOS) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeVPOS; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		if (!context.mpAntic)
 			return false;
 
@@ -1413,11 +1540,13 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeAddress : public ATDebugExpNode {
+class ATDebugExpNodeAddress final : public ATDebugExpNode {
 public:
 	ATDebugExpNodeAddress() : ATDebugExpNode(kATDebugExpNodeType_Address) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeAddress; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		if (!context.mbAccessValid)
 			return false;
 
@@ -1432,11 +1561,13 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeValue : public ATDebugExpNode {
+class ATDebugExpNodeValue final : public ATDebugExpNode {
 public:
 	ATDebugExpNodeValue() : ATDebugExpNode(kATDebugExpNodeType_Value) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeValue; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		if (!context.mbAccessValid)
 			return false;
 
@@ -1451,11 +1582,13 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeXBankReg : public ATDebugExpNode {
+class ATDebugExpNodeXBankReg final : public ATDebugExpNode {
 public:
 	ATDebugExpNodeXBankReg() : ATDebugExpNode(kATDebugExpNodeType_XBankReg) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeXBankReg; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		if (!context.mpMMU)
 			return false;
 
@@ -1470,11 +1603,13 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeXBankCPU : public ATDebugExpNode {
+class ATDebugExpNodeXBankCPU final : public ATDebugExpNode {
 public:
 	ATDebugExpNodeXBankCPU() : ATDebugExpNode(kATDebugExpNodeType_XBankCPU) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeXBankCPU; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		if (!context.mpMMU)
 			return false;
 
@@ -1489,11 +1624,13 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeXBankANTIC : public ATDebugExpNode {
+class ATDebugExpNodeXBankANTIC final : public ATDebugExpNode {
 public:
 	ATDebugExpNodeXBankANTIC() : ATDebugExpNode(kATDebugExpNodeType_XBankANTIC) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeXBankANTIC; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		if (!context.mpMMU)
 			return false;
 
@@ -1508,7 +1645,7 @@ public:
 
 //////////////////////////////////////////////////////
 
-class ATDebugExpNodeAddrSpace : public ATDebugExpNodeUnary {
+class ATDebugExpNodeAddrSpace final : public ATDebugExpNodeUnary {
 public:
 	ATDebugExpNodeAddrSpace(uint32 space, ATDebugExpNode *x)
 		: ATDebugExpNodeUnary(kATDebugExpNodeType_AddrSpace, x)
@@ -1516,12 +1653,21 @@ public:
 	{
 	}
 
+	ATDebugExpNode *Clone() const override {
+		vdautoptr<ATDebugExpNode> arg(mpArg->Clone());
+
+		ATDebugExpNode *result = new ATDebugExpNodeAddrSpace(mSpace, arg);
+
+		arg.release();
+		return result;
+	}
+
 	bool IsAddress() const { return true; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 x;
 
-		if (!mpArg->Evaluate(x, context))
+		if (!mpArg->Evaluate(x, context, cache))
 			return false;
 
 		result = (sint32)(((uint32)x & kATAddressOffsetMask) + mSpace);
@@ -1565,13 +1711,26 @@ public:
 	{
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override {
+		vdautoptr<ATDebugExpNode> c(mpArgCond->Clone());
+		vdautoptr<ATDebugExpNode> t(mpArgTrue->Clone());
+		vdautoptr<ATDebugExpNode> f(mpArgFalse->Clone());
+
+		ATDebugExpNode *r = new ATDebugExpNodeTernary(c, t, f);
+		c.release();
+		t.release();
+		f.release();
+
+		return r;
+	}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		sint32 cond;
 
-		if (!mpArgCond->Evaluate(cond, context))
+		if (!mpArgCond->Evaluate(cond, context, cache))
 			return false;
 
-		return (cond ? mpArgTrue : mpArgFalse)->Evaluate(result, context);
+		return (cond ? mpArgTrue : mpArgFalse)->Evaluate(result, context, cache);
 	}
 
 	bool Optimize(ATDebugExpNode **result);
@@ -1723,7 +1882,9 @@ class ATDebugExpNodeTemporary : public ATDebugExpNode {
 public:
 	ATDebugExpNodeTemporary(int index) : ATDebugExpNode(kATDebugExpNodeType_Temporary), mIndex(index) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeTemporary(mIndex); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
 		if (!context.mpTemporaries)
 			return false;
 
@@ -1747,27 +1908,29 @@ class ATDebugExpNodeReturnAddress : public ATDebugExpNode {
 public:
 	ATDebugExpNodeReturnAddress() : ATDebugExpNode(kATDebugExpNodeType_ReturnAddress) {}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
-		if (!context.mpCPU || !context.mpMemory)
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeReturnAddress; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+		const ATCPUExecState *state = cache.GetExecState(context);
+		if (!state)
 			return false;
 
 		uint32 addr = 0;
 		uint32 s;
 
-		switch(context.mpCPU->GetCPUSubMode()) {
-			case kATCPUSubMode_65C816_NativeM16X16:
-			case kATCPUSubMode_65C816_NativeM16X8:
-			case kATCPUSubMode_65C816_NativeM8X16:
-			case kATCPUSubMode_65C816_NativeM8X8:
-				s = context.mpCPU->GetS();
-				addr = context.mpMemory->CPUReadByte(s + 1);
-				addr += (uint32)context.mpMemory->CPUReadByte(s + 2) << 8;
-				break;
-
+		switch(context.mpTarget->GetDisasmMode()) {
+			case kATDebugDisasmMode_65C816:
+				if (!state->mbEmulationFlag) {
+					s = state->mS + ((uint32)state->mSH << 8);
+					addr = context.mpTarget->DebugReadByte((s + 1) & 0xffff);
+					addr += (uint32)context.mpTarget->DebugReadByte((s + 2) & 0xffff) << 8;
+					break;
+				}
+				// fall through
 			default:
-				s = context.mpCPU->GetS();
-				addr = context.mpMemory->CPUReadByte(0x100 + ((s + 1) & 0xff));
-				addr += (uint32)context.mpMemory->CPUReadByte(0x100 + ((s + 2) & 0xff)) << 8;
+				s = state->mS;
+				addr = context.mpTarget->DebugReadByte(0x100 + ((s + 1) & 0xff));
+				addr += (uint32)context.mpTarget->DebugReadByte(0x100 + ((s + 2) & 0xff)) << 8;
 				break;
 		}
 
@@ -1781,9 +1944,72 @@ public:
 	}
 };
 
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeFrame : public ATDebugExpNode {
+public:
+	ATDebugExpNodeFrame() : ATDebugExpNode(kATDebugExpNodeType_Frame) {}
+
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeFrame; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+		if (!context.mpAntic)
+			return false;
+
+		result = context.mpAntic->GetFrameCounter();
+		return true;
+	}
+
+	void ToString(VDStringA& s, int prec) {
+		s += "@frame";
+	}
+};
+
 ///////////////////////////////////////////////////////////////////////////
 
-ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const ATDebuggerExprParseOpts& opts) {
+class ATDebugExpNodeClock : public ATDebugExpNode {
+public:
+	ATDebugExpNodeClock() : ATDebugExpNode(kATDebugExpNodeType_Clock) {}
+
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeClock; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+		if (!context.mpClockFn)
+			return false;
+
+		result = context.mpClockFn(context.mpClockFnData);
+		return true;
+	}
+
+	void ToString(VDStringA& s, int prec) {
+		s += "@clk";
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeCpuClock : public ATDebugExpNode {
+public:
+	ATDebugExpNodeCpuClock() : ATDebugExpNode(kATDebugExpNodeType_CpuClock) {}
+
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeCpuClock; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+		if (!context.mpCpuClockFn)
+			return false;
+
+		result = context.mpCpuClockFn(context.mpCpuClockFnData);
+		return true;
+	}
+
+	void ToString(VDStringA& s, int prec) {
+		s += "@cclk";
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup *dbg, const ATDebuggerExprParseOpts& opts) {
 	enum {
 		kOpNone,
 		kOpOpenParen,
@@ -1909,7 +2135,10 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const
 		kTokXBankCPU,
 		kTokXBankANTIC,
 		kTokTemp,
-		kTokReturnAddr
+		kTokReturnAddr,
+		kTokFrame,
+		kTokClock,
+		kTokCpuClock
 	};
 
 	vdfastvector<ATDebugExpNode *> valstack;
@@ -1919,14 +2148,15 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const
 	sint32 intVal;
 	bool hexVal;
 
-	if (dbg && opts.mbAllowUntaggedHex) {
-		intVal = dbg->ResolveSymbol(s, true, true);
+	if (dbg && opts.mbAllowUntaggedHex && *s && isxdigit((unsigned char)*s)) {
+		char *t = const_cast<char *>(s);
+		unsigned long result = strtoul(s, &t, 16);
 
-		if (intVal >= 0) {
-			s += strlen(s);
+		if (!*t) {
+			s = t;
 			needValue = false;
 
-			valstack.push_back(new ATDebugExpNodeConst(intVal, opts.mbAllowUntaggedHex, true));
+			valstack.push_back(new ATDebugExpNodeConst((sint32)result, true, true));
 		}
 	}
 
@@ -2051,6 +2281,11 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const
 							break;
 
 						if (d == '!') {
+							// prohibit interpreting this as module split if it's part of a !=
+							// operator
+							if (s[1] == '=')
+								break;
+
 							if (seenModuleSplit)
 								break;
 
@@ -2127,8 +2362,6 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const
 						tok = kTokXBankANTIC;
 					else {
 force_ident:
-						IATDebuggerSymbolLookup *symlookup = ATGetDebuggerSymbolLookup();
-
 						VDString identstr(ident);
 						if (dbg && (intVal = dbg->ResolveSymbol(identstr.c_str(), false, false)) >= 0) {
 							tok = kTokInt;
@@ -2155,8 +2388,17 @@ force_ident:
 						intVal = (int)(nameStart[1] - '0');
 					} else if (nameEnd - nameStart == 2 && nameStart[0] == 'r' && nameStart[1] == 'a') {
 						tok = kTokReturnAddr;
-					} else
-						throw ATDebuggerExprParseException("Unknown special variable '@%.*s'", nameEnd - nameStart, nameStart);
+					} else {
+						VDStringSpanA name(nameStart, nameEnd);
+
+						if (name == "frame") {
+							tok = kTokFrame;
+						} else if (name == "clk") {
+							tok = kTokClock;
+						} else if (name == "cclk") {
+							tok = kTokCpuClock;
+						} else throw ATDebuggerExprParseException("Unknown special variable '@%.*s'", nameEnd - nameStart, nameStart);
+					}
 				} else
 					throw ATDebuggerExprParseException("Unexpected character '%c'", c);
 			}
@@ -2327,6 +2569,24 @@ force_ident:
 					needValue = false;
 				} else if (tok == kTokReturnAddr) {
 					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeReturnAddress);
+
+					valstack.push_back(node);
+					node.release();
+					needValue = false;
+				} else if (tok == kTokFrame) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeFrame);
+
+					valstack.push_back(node);
+					node.release();
+					needValue = false;
+				} else if (tok == kTokClock) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeClock);
+
+					valstack.push_back(node);
+					node.release();
+					needValue = false;
+				} else if (tok == kTokCpuClock) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeCpuClock);
 
 					valstack.push_back(node);
 					node.release();

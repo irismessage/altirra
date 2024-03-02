@@ -26,6 +26,8 @@
 #include "oshelper.h"
 #include "resource.h"
 
+bool g_ATFirmwarePathPortabilityEnabled;
+
 const char *ATGetFirmwareTypeName(ATFirmwareType type) {
 	static const char *kTypeNames[]={
 		"",
@@ -83,10 +85,14 @@ ATFirmwareType ATGetFirmwareTypeFromName(const char *type) {
 	else return kATFirmwareType_Unknown;
 }
 
+void ATSetFirmwarePathPortabilityMode(bool portable) {
+	g_ATFirmwarePathPortabilityEnabled = portable;
+}
+
 uint64 ATGetFirmwareIdFromPath(const wchar_t *path) {
 	VDStringW relPath;
 	if (!VDFileIsRelativePath(path)) {
-		relPath = VDFileGetRelativePath(VDGetProgramPath().c_str(), path, false);
+		relPath = VDFileGetRelativePath(VDGetProgramPath().c_str(), path, g_ATFirmwarePathPortabilityEnabled);
 
 		if (!relPath.empty())
 			path = relPath.c_str();
@@ -327,6 +333,9 @@ bool ATFirmwareManager::LoadFirmware(uint64 id, void *dst, uint32 offset, uint32
 
 		VDASSERTCT(vdcountof(kResourceIds) == kATFirmwareId_PredefCount);
 
+		if (id >= kATFirmwareId_PredefCount1)
+			return false;
+
 		uint32 resId = kResourceIds[id - 1];
 
 		if (resId != IDR_U1MBBIOS && resId != IDR_NOMIO && resId != IDR_NOBLACKBOX) {
@@ -402,7 +411,7 @@ void ATFirmwareManager::AddFirmware(const ATFirmwareInfo& info) {
 	key.setString("Name", info.mName.c_str());
 
 	const VDStringW& programPath = VDGetProgramPath();
-	const VDStringW& relPath = VDFileGetRelativePath(programPath.c_str(), info.mPath.c_str(), false);
+	const VDStringW& relPath = VDFileGetRelativePath(programPath.c_str(), info.mPath.c_str(), g_ATFirmwarePathPortabilityEnabled);
 	const VDStringW *path = relPath.empty() ? &info.mPath : &relPath;
 
 	key.setString("Path", path->c_str());

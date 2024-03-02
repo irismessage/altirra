@@ -44,17 +44,6 @@
 .endp
 
 ;==========================================================================
-.proc VarStoreFR0
-		ldy		#2
-loop:
-		mva		fr0-2,y (varptr),y
-		iny
-		cpy		#8
-		bne		loop
-		rts
-.endp
-
-;==========================================================================
 .proc VarAdvanceName
 		ldy		#0
 skip_loop:

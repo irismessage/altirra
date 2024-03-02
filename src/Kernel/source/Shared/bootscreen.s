@@ -135,7 +135,7 @@ sprinit:
 		
 		;need space here for HLE to shift
 		dta		" ",$9b
-		dta		d"Copyright (C) 2012-2014 Avery Lee",$9b
+		dta		d"Copyright (C) 2012-2015 Avery Lee",$9b
 		dta		d"All Rights Reserved",$9b
 		dta		d"This is a substitute for the standard OS ROM. See the help file",$9b
 		dta		d"for how to use real Atari ROM images for higher compatibility."

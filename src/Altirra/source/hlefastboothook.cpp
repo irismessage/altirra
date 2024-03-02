@@ -178,8 +178,6 @@ uint8 ATHLEFastBootHook::OnHookChecksum(uint16) {
 	uint32 checksum = mem.ReadByte(0x8B) + 256*(uint32)mem.ReadByte(0x8C);
 	uint16 limit = mem.ReadByte(0xA0) + 256*(uint32)mem.ReadByte(0xA1);
 
-	bool success = true;
-
 	do {
 		checksum += mem.ReadByte(addr++);
 	} while(addr != limit);

@@ -593,7 +593,7 @@ void vdhashmap<K, V, Hash, Pred, A>::rehash(size_type n) {
 
 template<class K, class V, class Hash, class Pred, class A>
 void vdhashmap<K, V, Hash, Pred, A>::rehash_to_size(size_type n) {
-	size_type buckets = compute_bucket_count(n);
+	size_type buckets = this->compute_bucket_count(n);
 	rehash(buckets);
 }
 

@@ -28,7 +28,6 @@
 #include "kerneldb.h"
 #include "oshelper.h"
 #include "cio.h"
-#include "devicemanager.h"
 
 using namespace ATCIOSymbols;
 
@@ -86,6 +85,14 @@ protected:
 	uint8		mLineBuf[132];
 };
 
+void ATCreateDevicePrinter(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDevicePrinter> p(new ATDevicePrinter);
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefPrinter = { "printer", nullptr, L"Printer (P:)", ATCreateDevicePrinter };
+
 ATDevicePrinter::ATDevicePrinter()
 	: mpCIOMgr(nullptr)
 	, mpSIOMgr(nullptr)
@@ -112,8 +119,7 @@ void *ATDevicePrinter::AsInterface(uint32 id) {
 }
 
 void ATDevicePrinter::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "printer";
-	info.mName = L"Printer (P:)";
+	info.mpDef = &g_ATDeviceDefPrinter;
 }
 
 void ATDevicePrinter::Shutdown() {
@@ -254,16 +260,4 @@ void ATDevicePrinter::OnSerialFence(uint32 id) {
 
 IATDeviceSIO::CmdResponse ATDevicePrinter::OnSerialAccelCommand(const ATDeviceSIORequest& request) {
 	return OnSerialBeginCommand(request);
-}
-
-///////////////////////////////////////////////////////////////////////////
-
-void ATCreateDevicePrinter(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDevicePrinter> p(new ATDevicePrinter);
-
-	*dev = p.release();
-}
-
-void ATRegisterDevicePrinter(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("printer", ATCreateDevicePrinter);
 }

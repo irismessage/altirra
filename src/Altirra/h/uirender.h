@@ -36,6 +36,7 @@ struct ATUIAudioStatus {
 	int mTargetMax;
 	double mIncomingRate;
 	double mExpectedRate;
+	bool mbStereoMixing;
 };
 
 class IATUIRenderer : public IVDRefCount {
@@ -73,7 +74,7 @@ public:
 
 	virtual void SetAudioStatus(ATUIAudioStatus *status) = 0;
 
-	virtual void SetAudioMonitor(ATAudioMonitor *monitor) = 0;
+	virtual void SetAudioMonitor(bool secondary, ATAudioMonitor *monitor) = 0;
 
 	virtual void SetSlightSID(ATSlightSIDEmulator *emu) = 0;
 

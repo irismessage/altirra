@@ -26,6 +26,7 @@
 #include "kerneldb.h"
 #include "console.h"
 #include "cpu.h"
+#include "cpuheatmap.h"
 #include "cpuhookmanager.h"
 #include "debugger.h"
 #include "simeventmanager.h"
@@ -107,7 +108,8 @@ void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IVDRandomAcc
 
 			try {
 				if (VDDoesPathExist(sympath.c_str())) {
-					uint32 moduleId = d->LoadSymbols(sympath.c_str(), false);
+					const uint32 target0 = 0;
+					uint32 moduleId = d->LoadSymbols(sympath.c_str(), false, &target0);
 
 					if (moduleId) {
 						mProgramModuleIds[i] = moduleId;
@@ -261,6 +263,9 @@ launch:
 
 		for(uint32 i=0; i<len; ++i)
 			mem->WriteByte(start + i, *src++);
+
+		if (auto *hm = mpSim->GetHeatMap())
+			hm->PresetMemoryRange(start, len);
 
 		// fake SIO read
 		kdb.PBCTL = 0x3C;

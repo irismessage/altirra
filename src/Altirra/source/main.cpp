@@ -44,23 +44,30 @@
 #include <vd2/Riza/direct3d.h>
 #include <vd2/Dita/accel.h>
 #include <vd2/Dita/services.h>
-#include <at/atui/acceleditdialog.h>
-#include <at/atui/dialog.h>
-#include <at/atui/hotkeyexcontrol.h>
+#include <at/atappbase/exceptionfilter.h>
+#include <at/atcore/profile.h>
+#include <at/atdevices/devices.h>
+#include <at/atui/constants.h>
+#include <at/atnativeui/acceleditdialog.h>
+#include <at/atnativeui/dialog.h>
+#include <at/atnativeui/hotkeyexcontrol.h>
+#include <at/atnativeui/messageloop.h>
+#include <at/atnativeui/uiframe.h>
 #include <at/atcore/device.h>
 #include <at/atcore/propertyset.h>
+#include <at/atdebugger/target.h>
 #include "console.h"
 #include "simulator.h"
 #include "cassette.h"
-#include "ui.h"
-#include "uiframe.h"
 #include "debugger.h"
+#include "debuggerlog.h"
 #include "hostdevice.h"
 #include "savestate.h"
 #include "resource.h"
 #include "oshelper.h"
 #include "autotest.h"
 #include "audiowriter.h"
+#include "sapwriter.h"
 #include "inputmanager.h"
 #include "inputcontroller.h"
 #include "joystick.h"
@@ -74,6 +81,7 @@
 #include "ultimate1mb.h"
 #include "options.h"
 #include "cheatengine.h"
+#include "joystick.h"
 #include "uienhancedtext.h"
 #include "uikeyboard.h"
 #include "uicaptionupdater.h"
@@ -85,15 +93,16 @@
 #include "uiinstance.h"
 #include "uidisplay.h"
 #include "uitypes.h"
-#include "uicommandmanager.h"
+#include <at/atui/uicommandmanager.h>
 #include "uiprofiler.h"
 #include "uiqueue.h"
 #include "uicommondialogs.h"
 #include "uiaccessors.h"
 #include "uifilefilters.h"
+#include "sapconverter.h"
 
 #include "firmwaremanager.h"
-#include "devicemanager.h"
+#include <at/atcore/devicemanager.h>
 
 #pragma comment(lib, "comctl32")
 #pragma comment(lib, "shlwapi")
@@ -104,6 +113,7 @@ void ATUITriggerButtonUp(uint32 vk);
 ///////////////////////////////////////////////////////////////////////////////
 
 void ATUIShowDialogInputMappings(VDZHWND parent, ATInputManager& iman, IATJoystickManager *ijoy);
+void ATUIShowDialogInputSetup(VDZHWND parent, ATInputManager& iman, IATJoystickManager *ijoy);
 void ATUIShowDiskDriveDialog(VDGUIHandle hParent);
 void ATUIShowHardDiskDialog(VDGUIHandle hParent);
 void ATUIOpenAdjustColorsDialog(VDGUIHandle hParent);
@@ -145,31 +155,80 @@ bool ATUIIsActiveModal();
 
 void ATUIInitFirmwareMenuCallbacks(ATFirmwareManager *fwmgr);
 
-void ATRegisterDeviceModem(ATDeviceManager& dev);
-void ATRegisterDeviceBlackBox(ATDeviceManager& dev);
-void ATRegisterDeviceMIO(ATDeviceManager& dev);
-void ATRegisterDeviceHardDisks(ATDeviceManager& dev);
-void ATRegisterDeviceConfigurers(ATDeviceManager& dev);
-void ATRegisterDeviceRTime8(ATDeviceManager& dev);
-void ATRegisterDeviceCovox(ATDeviceManager& dev);
-void ATRegisterDeviceXEP80(ATDeviceManager& dev);
-void ATRegisterDeviceSlightSID(ATDeviceManager& dev);
-void ATRegisterDeviceDragonCart(ATDeviceManager& dev);
-void ATRegisterDeviceSIOClock(ATDeviceManager& dev);
-void ATRegisterDeviceTestSIOPoll(ATDeviceManager& dev);
-void ATRegisterDevicePCLink(ATDeviceManager& dev);
-void ATRegisterDeviceHostFS(ATDeviceManager& dev);
-void ATRegisterDevicePrinter(ATDeviceManager& dev);
-void ATRegisterDevice850Modem(ATDeviceManager& dev);
-void ATRegisterDevice1030Modem(ATDeviceManager& dev);
-void ATRegisterDeviceSX212(ATDeviceManager& dev);
-void ATRegisterDeviceMidiMate(ATDeviceManager& dev);
-
 ///////////////////////////////////////////////////////////////////////////////
 
-int ATExceptionFilter(DWORD code, EXCEPTION_POINTERS *exp);
-LONG WINAPI ATUnhandledExceptionFilter(EXCEPTION_POINTERS *exp);
-void ATExceptionFilterSetFullHeapDump(bool enabled);
+void ATRegisterDeviceConfigurers(ATDeviceManager& dm);
+
+extern const ATDeviceDefinition g_ATDeviceDefModem;
+extern const ATDeviceDefinition g_ATDeviceDefBlackBox;
+extern const ATDeviceDefinition g_ATDeviceDefMIO;
+extern const ATDeviceDefinition g_ATDeviceDefHardDisks;
+extern const ATDeviceDefinition g_ATDeviceDefIDEPhysDisk;
+extern const ATDeviceDefinition g_ATDeviceDefIDERawImage;
+extern const ATDeviceDefinition g_ATDeviceDefIDEVHDImage;
+extern const ATDeviceDefinition g_ATDeviceDefRTime8;
+extern const ATDeviceDefinition g_ATDeviceDefCovox;
+extern const ATDeviceDefinition g_ATDeviceDefXEP80;
+extern const ATDeviceDefinition g_ATDeviceDefSlightSID;
+extern const ATDeviceDefinition g_ATDeviceDefDragonCart;
+extern const ATDeviceDefinition g_ATDeviceDefSIOClock;
+extern const ATDeviceDefinition g_ATDeviceDefTestSIOPoll3;
+extern const ATDeviceDefinition g_ATDeviceDefTestSIOPoll4;
+extern const ATDeviceDefinition g_ATDeviceDefTestSIOHighSpeed;
+extern const ATDeviceDefinition g_ATDeviceDefPCLink;
+extern const ATDeviceDefinition g_ATDeviceDefHostDevice;
+extern const ATDeviceDefinition g_ATDeviceDefPrinter;
+extern const ATDeviceDefinition g_ATDeviceDef850Modem;
+extern const ATDeviceDefinition g_ATDeviceDef1030Modem;
+extern const ATDeviceDefinition g_ATDeviceDefSX212;
+extern const ATDeviceDefinition g_ATDeviceDefMidiMate;
+extern const ATDeviceDefinition g_ATDeviceDefSDrive;
+extern const ATDeviceDefinition g_ATDeviceDefSIO2SD;
+extern const ATDeviceDefinition g_ATDeviceDefVeronica;
+extern const ATDeviceDefinition g_ATDeviceDefRVerter;
+extern const ATDeviceDefinition g_ATDeviceDefSoundBoard;
+
+void ATRegisterDevices(ATDeviceManager& dm) {
+	static const ATDeviceDefinition *const kDeviceDefs[]={
+		&g_ATDeviceDefModem,
+		&g_ATDeviceDefBlackBox,
+		&g_ATDeviceDefMIO,
+		&g_ATDeviceDefHardDisks,
+		&g_ATDeviceDefIDEPhysDisk,
+		&g_ATDeviceDefIDERawImage,
+		&g_ATDeviceDefIDEVHDImage,
+		&g_ATDeviceDefRTime8,
+		&g_ATDeviceDefCovox,
+		&g_ATDeviceDefXEP80,
+		&g_ATDeviceDefSlightSID,
+		&g_ATDeviceDefDragonCart,
+		&g_ATDeviceDefSIOClock,
+		&g_ATDeviceDefTestSIOPoll3,
+		&g_ATDeviceDefTestSIOPoll4,
+		&g_ATDeviceDefTestSIOHighSpeed,
+		&g_ATDeviceDefPCLink,
+		&g_ATDeviceDefHostDevice,
+		&g_ATDeviceDefPrinter,
+		&g_ATDeviceDef850Modem,
+		&g_ATDeviceDef1030Modem,
+		&g_ATDeviceDefSX212,
+		&g_ATDeviceDefMidiMate,
+		&g_ATDeviceDefSDrive,
+		&g_ATDeviceDefSIO2SD,
+		&g_ATDeviceDefVeronica,
+		&g_ATDeviceDefRVerter,
+		&g_ATDeviceDefSoundBoard,
+	};
+
+	for(const ATDeviceDefinition *def : kDeviceDefs)
+		dm.AddDeviceFactory(def->mpTag, def->mpFactoryFn);
+
+	ATRegisterDeviceLibrary(dm);
+
+	ATRegisterDeviceConfigurers(dm);
+}
+
+///////////////////////////////////////////////////////////////////////////////
 
 void ATInitDebugger();
 void ATShutdownDebugger();
@@ -180,17 +239,10 @@ void ATShowChangeLog(VDGUIHandle hParent);
 
 void SaveInputMaps();
 
-void ProcessKey(char c, bool repeat, bool allowQueue, bool useCooldown);
-void ProcessVirtKey(int vkey, uint8 keycode, bool repeat);
 void DoLoad(VDGUIHandle h, const wchar_t *path, bool vrw, bool rw, int cartmapper, ATLoadType loadType = kATLoadType_Other, bool *suppressColdReset = NULL, int loadIndex = -1);
 void DoBootWithConfirm(const wchar_t *path, bool vrw, bool rw, int cartmapper);
 
 void LoadBaselineSettings();
-
-///////////////////////////////////////////////////////////////////////////////
-
-#define ATWM_APP_PRETRANSLATE (WM_APP + 100)
-#define ATWM_APP_DEBUG_TOGGLEBREAKPOINT (WM_APP + 0x200)
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -222,7 +274,7 @@ bool g_autotestEnabled = false;
 bool g_xepViewEnabled = false;
 bool g_xepViewAutoswitchingEnabled = false;
 
-ATUIKeyboardOptions g_kbdOpts;
+ATUIKeyboardOptions g_kbdOpts = { true, false };
 
 ATDisplayFilterMode g_dispFilterMode = kATDisplayFilterMode_SharpBilinear;
 int g_dispFilterSharpness = +1;
@@ -233,6 +285,7 @@ ATSaveStateWriter::Storage g_quickSave;
 
 vdautoptr<ATAudioWriter> g_pAudioWriter;
 vdautoptr<IATVideoWriter> g_pVideoWriter;
+vdautoptr<IATSAPWriter> g_pSapWriter;
 
 ATDisplayStretchMode g_displayStretchMode = kATDisplayStretchMode_PreserveAspectRatio;
 
@@ -255,7 +308,7 @@ void ATUIUpdateSpeedTiming() {
 	// PAL: 1.773447MHz master clock, 312 scanlines of 114 clocks each
 	static const double kPeriods[3][2]={
 		{ 1.0 / 59.9227, 1.0 / 49.8607 },
-		{ 1.0 / 59.9700, 1.0 / 50.0000 },
+		{ 1.0 / 59.9400, 1.0 / 50.0000 },
 		{ 1.0 / 60.0000, 1.0 / 50.0000 },
 	};
 
@@ -327,6 +380,26 @@ void ATUISetSlowMotion(bool slowmo) {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// This is a bad hack which is needed for now since the CPU history state
+// is the master state.
+void ATSyncCPUHistoryState() {
+	const bool historyEnabled = g_sim.GetCPU().IsHistoryEnabled();
+
+	g_sim.GetDeviceManager()->ForEachInterface<IATDeviceDebugTarget>(false,
+		[=](IATDeviceDebugTarget& devtarget) {
+			uint32 index = 0;
+
+			while(IATDebugTarget *target = devtarget.GetDebugTarget(index++)) {
+				auto *thist = vdpoly_cast<IATDebugTargetHistory *>(target);
+
+				if (thist)
+					thist->SetHistoryEnabled(historyEnabled);
+			}
+		}
+	);
+}
+
+///////////////////////////////////////////////////////////////////////////////
 
 class ATInputConsoleCallback : public IATInputConsoleCallback {
 public:
@@ -358,9 +431,9 @@ void ATInputConsoleCallback::SetConsoleTrigger(uint32 id, bool state) {
 		case kATInputTrigger_KeySpace:
 			if (g_kbdOpts.mbRawKeys) {
 				if (state)
-					g_sim.GetPokey().PushRawKey(0x21);
+					g_sim.GetPokey().PushRawKey(0x21, !g_kbdOpts.mbFullRawKeys);
 				else
-					g_sim.GetPokey().ReleaseRawKey();
+					g_sim.GetPokey().ReleaseRawKey(0x21, !g_kbdOpts.mbFullRawKeys);
 			} else if (state)
 				g_sim.GetPokey().PushKey(0x21, false);
 			break;
@@ -577,8 +650,12 @@ bool ATUISwitchKernel(VDGUIHandle h, uint64 kernelId) {
 			return false;
 
 		switch(fwinfo.mType) {
-			case kATFirmwareType_KernelXL:
 			case kATFirmwareType_Kernel1200XL:
+				if (!ATUISwitchHardwareMode(h, kATHardwareMode_1200XL))
+					return false;
+				break;
+
+			case kATFirmwareType_KernelXL:
 				if (!ATUISwitchHardwareMode(h, kATHardwareMode_800XL))
 					return false;
 				break;
@@ -845,7 +922,7 @@ public:
 
 				mpConfirmResult.clear();
 				mpFileDialogResult = ATUIShowOpenFileDialog('load', L"Load disk, cassette, cartridge, or program image",
-					L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.car;*.rom;*.a52;*.bin;*.cas;*.wav;*.zip;*.atz;*.gz;*.bas;*.arc\0"
+					L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.car;*.rom;*.a52;*.bin;*.cas;*.wav;*.zip;*.atz;*.gz;*.bas;*.arc;*.sap\0"
 					L"Atari program (*.xex,*.obx,*.com)\0*.xex;*.obx;*.com\0"
 					L"BASIC program (*.bas)\0*.bas\0"
 					L"Atari disk image (*.atr,*.xfd,*.dcm)\0*.atr;*.xfd;*.dcm;*.arc\0"
@@ -856,6 +933,7 @@ public:
 					L"Zip archive (*.zip)\0*.zip\0"
 					L"gzip archive (*.gz;*.atz)\0*.gz;*.atz\0"
 					L".ARC archive (*.arc)\0*.arc\0"
+					L"SAP file (*.sap)\0*.sap\0"
 					L"All files\0*.*\0");
 
 				Wait(mpFileDialogResult);
@@ -898,9 +976,6 @@ bool ATUIGetFullscreen() {
 }
 
 void ATSetFullscreen(bool fs) {
-	if (g_enhancedText)
-		return;
-
 	ATUIPane *dispPane = ATGetUIPane(kATUIPaneId_Display);
 	ATFrameWindow *frame = NULL;
 
@@ -1083,26 +1158,91 @@ void OnCommandVideoEnhancedTextFontDialog() {
 }
 
 void Paste(const char *s, size_t len, bool useCooldown) {
-	char skipLT = 0;
-	while(len--) {
-		char c = *s++;
+	if (g_enhancedText == 2) {
+		IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+		if (pane)
+			pane->Paste(s, len);
+	} else {
+		char skipLT = 0;
+		while(len--) {
+			char c = *s++;
 
-		if (c == skipLT) {
+			if (c == skipLT) {
+				skipLT = 0;
+				continue;
+			}
+
 			skipLT = 0;
-			continue;
+
+			if (c == '\r' || c == '\n') {
+				skipLT = c ^ ('\r' ^ '\n');
+
+				g_sim.GetPokey().PushKey(0x0C, false, true, false, useCooldown);
+			} else if (c == '\t')
+				g_sim.GetPokey().PushKey(0x2C, false, true, false, useCooldown);
+			else {
+				uint8 ch;
+
+				if (ATUIGetDefaultScanCodeForCharacter(c, ch))
+					g_sim.GetPokey().PushKey(ch, false, true, false, useCooldown);
+			}
+		}
+	}
+}
+
+void Paste(const wchar_t *s, size_t len, bool useCooldown) {
+	vdfastvector<char> s8;
+
+	while(len--) {
+		wchar_t c = *s++;
+
+		// fix annoying characters
+		int repeat = 1;
+
+		switch(c) {
+			case L'\u200B':	// zero width space
+			case L'\u200C':	// zero width non-joiner
+			case L'\u200D':	// zero width joiner
+			case L'\u200E':	// left to right mark
+			case L'\u200F':	// right to left mark
+				continue;
+
+			case L'\u2010':	// hyphen
+			case L'\u2011':	// non-breaking hyphen
+			case L'\u2012':	// figure dash
+			case L'\u2013':	// en dash
+			case L'\u2014':	// em dash
+			case L'\u2015':	// horizontal bar
+				c = L'-';
+				break;
+
+			case L'\u2018':	// left single quotation mark
+			case L'\u2019':	// right single quotation mark
+				c = L'\'';
+				break;
+
+			case L'\u201C':	// left double quotation mark
+			case L'\u201D':	// right double quotation mark
+				c = L'"';
+				break;
+
+			case L'\u2026':	// ellipsis
+				c = L'.';
+				repeat = 3;
+				break;
+
+			case L'\uFEFF':	// byte order mark
+				continue;
 		}
 
-		skipLT = 0;
+		if ((unsigned)c >= 0x100)
+			continue;
 
-		if (c == '\r' || c == '\n') {
-			skipLT = c ^ ('\r' ^ '\n');
-
-			g_sim.GetPokey().PushKey(0x0C, false, true, false, useCooldown);
-		} else if (c == '\t')
-			g_sim.GetPokey().PushKey(0x2C, false, true, false, useCooldown);
-		else
-			ProcessKey(c, false, true, useCooldown);
+		while(repeat--)
+			s8.push_back((char)c);
 	}
+
+	Paste(s8.data(), s8.size(), useCooldown);
 }
 
 void OnCommandSystemTogglePause() {
@@ -1135,9 +1275,17 @@ void StopVideoRecording() {
 	}
 }
 
+void StopSapRecording() {
+	if (g_pSapWriter) {
+		g_pSapWriter->Shutdown();
+		g_pSapWriter = nullptr;
+	}
+}
+
 void StopRecording() {
 	StopAudioRecording();
 	StopVideoRecording();
+	StopSapRecording();
 }
 
 void CheckRecordingExceptions() {
@@ -1157,6 +1305,15 @@ void CheckRecordingExceptions() {
 		MyError("Audio recording has stopped with an error: %s", e.gets()).post(g_hwnd, "Altirra Error");
 
 		StopAudioRecording();
+	}
+
+	try {
+		if (g_pSapWriter)
+			g_pSapWriter->CheckExceptions();
+	} catch(const MyError& e) {
+		MyError("SAP recording has stopped with an error: %s", e.gets()).post(g_hwnd, "Altirra Error");
+
+		StopSapRecording();
 	}
 }
 
@@ -1548,8 +1705,7 @@ void OnCommandViewTogglePALExtended() {
 }
 
 void OnCommandViewToggleFullScreen() {
-	if (!g_enhancedText)
-		ATSetFullscreen(!g_fullscreen);
+	ATSetFullscreen(!g_fullscreen);
 }
 
 void OnCommandViewToggleVSync() {
@@ -1649,17 +1805,49 @@ void OnCommandEditCopyText() {
 
 void OnCommandEditPasteText() {
 	if (OpenClipboard(NULL)) {
-		HANDLE hData = GetClipboardData(CF_TEXT);
+		bool unicodeSuccessful = false;
+		bool unicodePreferred = false;
 
-		if (hData) {
-			void *data = GlobalLock(hData);
+		UINT format = 0;
+		while(format = EnumClipboardFormats(format)) {
+			if (format == CF_UNICODETEXT) {
+				unicodePreferred = true;
+				break;
+			} else if (format == CF_TEXT || format == CF_OEMTEXT)
+				break;
+		}
 
-			if (data) {
-				size_t len = GlobalSize(hData);
-				const char *s = (const char *)data;
+		if (unicodePreferred) {
+			HANDLE hData = GetClipboardData(CF_UNICODETEXT);
 
-				Paste(s, len, true);
-				GlobalUnlock(hData);
+			if (hData) {
+				void *udata = GlobalLock(hData);
+
+				if (udata) {
+					size_t len = GlobalSize(hData) / sizeof(WCHAR);
+					const WCHAR *s = (const WCHAR *)udata;
+
+					Paste(s, len, true);
+					GlobalUnlock(hData);
+
+					unicodeSuccessful = true;
+				}
+			}
+		}
+
+		if (!unicodeSuccessful) {
+			HANDLE hData = GetClipboardData(CF_TEXT);
+
+			if (hData) {
+				void *data = GlobalLock(hData);
+
+				if (data) {
+					size_t len = GlobalSize(hData);
+					const char *s = (const char *)data;
+
+					Paste(s, len, true);
+					GlobalUnlock(hData);
+				}
 			}
 		}
 
@@ -1679,7 +1867,7 @@ void OnCommandSystemColdReset() {
 	g_sim.Resume();
 
 	if (!g_kbdOpts.mbAllowShiftOnColdReset)
-		g_sim.GetPokey().SetShiftKeyState(false);
+		g_sim.GetPokey().SetShiftKeyState(false, true);
 }
 
 void OnCommandSystemTogglePauseWhenInactive() {
@@ -1704,6 +1892,7 @@ void OnCommandSystemPulseWarpOff() {
 
 void OnCommandSystemCPUOptionsDialog() {
 	ATUIShowCPUOptionsDialog((VDGUIHandle)g_hwnd);
+	ATSyncCPUHistoryState();
 }
 
 void OnCommandSystemToggleFPPatch() {
@@ -1801,6 +1990,11 @@ void OnCommandSystemToggleUltimate1MB() {
 	g_sim.ColdReset();
 }
 
+void OnCommandSystemToggleFloatingIoBus() {
+	g_sim.SetFloatingIoBusEnabled(!g_sim.IsFloatingIoBusEnabled());
+	g_sim.ColdReset();
+}
+
 template<ATMemoryClearMode T_Mode>
 void OnCommandSystemMemoryClearMode() {
 	g_sim.SetMemoryClearMode(T_Mode);
@@ -1861,11 +2055,6 @@ void OnCommandDiskToggleSIOPatch() {
 
 void OnCommandDiskToggleSIOOverrideDetection() {
 	g_sim.SetDiskSIOOverrideDetectEnabled(!g_sim.IsDiskSIOOverrideDetectEnabled());
-}
-
-template<ATPokeyEmulator::SerialBurstMode T_BurstMode>
-void OnCommandDevicesBurstMode() {
-	g_sim.GetPokey().SetSerialBurstMode(T_BurstMode);
 }
 
 void OnCommandDiskToggleAccurateSectorTiming() {
@@ -2147,21 +2336,19 @@ void OnCommandVideoToggleStandardNTSCPAL() {
 }
 
 void OnCommandVideoEnhancedModeNone() {
-		g_enhancedText = 0;
-		g_sim.SetVirtualScreenEnabled(false);
+	g_enhancedText = 0;
+	g_sim.SetVirtualScreenEnabled(false);
 }
 
 void OnCommandVideoEnhancedModeHardware() {
 	g_enhancedText = 1;
 	g_sim.SetVirtualScreenEnabled(false);
-	ATSetFullscreen(false);
 }
 
 void OnCommandVideoEnhancedModeCIO() {
 	if (g_enhancedText != 2) {
 		g_enhancedText = 2;
 		g_sim.SetVirtualScreenEnabled(true);
-		ATSetFullscreen(false);
 
 		// push a break to attempt to kick out of the OS get byte routine
 		g_sim.GetPokey().PushBreak();
@@ -2201,20 +2388,6 @@ void OnCommandAudioToggleChannel() {
 	pokey.SetChannelEnabled(T_Channel, !pokey.IsChannelEnabled(T_Channel));
 }
 
-void OnCommandAudioToggleSoundBoard() {
-	g_sim.SetSoundBoardEnabled(!g_sim.GetSoundBoard());
-	g_sim.ColdReset();
-}
-
-template<uint16 T_BaseAddress>
-void OnCommandAudioSoundBoardAddr() {
-	g_sim.SetSoundBoardMemBase(T_BaseAddress);
-
-	// The reason why we reset on these is not because the SoundBoard itself needs it,
-	// but because we may need to adjust the hook page.
-	g_sim.ColdReset();
-}
-
 void OnCommandAudioToggleSlightSid() {
 	auto& dm = *g_sim.GetDeviceManager();
 
@@ -2243,6 +2416,10 @@ void OnCommandInputInputMappingsDialog() {
 	ATUIShowDialogInputMappings(g_hwnd, *g_sim.GetInputManager(), &g_sim.GetJoystickManager());
 	SaveInputMaps();
 	ATReloadPortMenus();
+}
+
+void OnCommandInputInputSetupDialog() {
+	ATUIShowDialogInputSetup(g_hwnd, *g_sim.GetInputManager(), &g_sim.GetJoystickManager());
 }
 
 void OnCommandInputKeyboardDialog() {
@@ -2279,7 +2456,7 @@ void OnCommandRecordStop() {
 }
 
 void OnCommandRecordRawAudio() {
-	if (!g_pAudioWriter && !g_pVideoWriter) {
+	if (!g_pAudioWriter && !g_pVideoWriter && !g_pSapWriter) {
 		VDStringW s(VDGetSaveFileName('raud', (VDGUIHandle)g_hwnd, L"Record raw audio", L"Raw 32-bit float data\0*.pcm\0", L"pcm"));
 
 		if (!s.empty()) {
@@ -2291,7 +2468,7 @@ void OnCommandRecordRawAudio() {
 }
 
 void OnCommandRecordAudio() {
-	if (!g_pAudioWriter && !g_pVideoWriter) {
+	if (!g_pAudioWriter && !g_pVideoWriter && !g_pSapWriter) {
 		VDStringW s(VDGetSaveFileName('raud', (VDGUIHandle)g_hwnd, L"Record audio", L"Wave audio (*.wav)\0*.wav\0", L"wav"));
 
 		if (!s.empty()) {
@@ -2303,7 +2480,7 @@ void OnCommandRecordAudio() {
 }
 
 void OnCommandRecordVideo() {
-	if (!g_pAudioWriter && !g_pVideoWriter) {
+	if (!g_pAudioWriter && !g_pVideoWriter && !g_pSapWriter) {
 		VDStringW s(VDGetSaveFileName('rvid', (VDGUIHandle)g_hwnd, L"Record raw video", L"Audio/visual interleaved (*.avi)\0*.avi\0", L"avi"));
 
 		if (!s.empty()) {
@@ -2364,6 +2541,68 @@ void OnCommandRecordVideo() {
 			}
 		}
 	}
+}
+
+void OnCommandRecordSapTypeR() {
+	if (!g_pAudioWriter && !g_pVideoWriter && !g_pSapWriter) {
+		VDStringW s(VDGetSaveFileName('rsap', (VDGUIHandle)g_hwnd, L"Record SAP type R music file", L"SAP Type R\0*.sap\0", L"sap"));
+
+		if (!s.empty()) {
+			const auto vs = g_sim.GetVideoStandard();
+			vdautoptr<IATSAPWriter> sw(ATCreateSAPWriter());
+			sw->Init(g_sim.GetEventManager(), &g_sim.GetPokey(), g_sim.GetUIRenderer(), s.c_str(), vs != kATVideoStandard_NTSC && vs != kATVideoStandard_PAL60);
+
+			g_pSapWriter.from(sw);
+		}
+	}
+}
+
+class ATUIFutureConvertSapToExe : public ATUIFuture {
+public:
+	virtual void RunInner() {
+		switch(mStage) {
+			case 0:
+				mpSrcFileDialogResult = ATUIShowOpenFileDialog('lsap', L"Select source SAP file",
+					g_ATUIFileFilter_LoadSAP);
+
+				Wait(mpSrcFileDialogResult);
+				++mStage;
+				break;
+
+			case 1:
+				if (!mpSrcFileDialogResult->mbAccepted) {
+					MarkCompleted();
+					break;
+				}
+
+				mpDstFileDialogResult = ATUIShowSaveFileDialog('sxex', L"Select output executable name",
+					g_ATUIFileFilter_SaveXEX);
+
+				Wait(mpDstFileDialogResult);
+				++mStage;
+				break;
+
+			case 2:
+				if (!mpDstFileDialogResult->mbAccepted) {
+					MarkCompleted();
+					break;
+				}
+
+				ATConvertSAPToPlayer(mpDstFileDialogResult->mPath.c_str(), mpSrcFileDialogResult->mPath.c_str());
+
+				MarkCompleted();
+				break;
+		}
+	}
+
+	vdrefptr<ATUIFileDialogResult> mpSrcFileDialogResult;
+	vdrefptr<ATUIFileDialogResult> mpDstFileDialogResult;
+};
+
+void OnCommandToolsConvertSapToExe() {
+	vdrefptr<ATUIFutureConvertSapToExe> stage(new ATUIFutureConvertSapToExe);
+
+	ATUIPushStep(stage->GetStep());
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2587,15 +2826,6 @@ namespace {
 		return g_sim.GetCassette().IsLoadDataAsAudioEnabled();
 	}
 
-	bool IsSoundBoardEnabled() {
-		return g_sim.GetSoundBoard() != NULL;
-	}
-
-	template<uint16 T_BaseAddr>
-	bool SoundBoardBaseIs() {
-		return g_sim.GetSoundBoardMemBase() == T_BaseAddr;
-	}
-
 	bool IsSlightSidEnabled() {
 		return g_sim.GetDeviceManager()->GetDeviceByTag("slightsid") != NULL;
 	}
@@ -2753,6 +2983,9 @@ namespace {
 			case kATHardwareMode_XEGS:
 				return true;
 
+			case kATHardwareMode_1200XL:
+				return g_sim.IsUltimate1MBEnabled();
+
 			default:
 				return false;
 		}
@@ -2843,7 +3076,7 @@ namespace {
 	}
 
 	bool IsRecording() {
-		return g_pAudioWriter != NULL || g_pVideoWriter != NULL;
+		return g_pAudioWriter != NULL || g_pVideoWriter != NULL || g_pSapWriter != NULL;
 	}
 
 	bool IsRecordingRawAudio() {
@@ -2856,6 +3089,10 @@ namespace {
 
 	bool IsRecordingVideo() {
 		return g_pVideoWriter != NULL;
+	}
+
+	bool IsRecordingSap() {
+		return g_pSapWriter != NULL;
 	}
 
 	bool IsCopyTextAvailable() {
@@ -2890,11 +3127,6 @@ namespace {
 	template<int Index>
 	bool PokeyChannelEnabled() {
 		return g_sim.GetPokey().IsChannelEnabled(Index);
-	}
-
-	template<ATPokeyEmulator::SerialBurstMode T_Mode>
-	bool PokeySerialBurstModeIs() {
-		return g_sim.GetPokey().GetSerialBurstMode() == T_Mode;
 	}
 
 	template<bool (ATSimulator::*T_Method)() const>
@@ -3005,7 +3237,7 @@ namespace {
 		{ "View.VerticalOverrideFull",		OnCommandViewVerticalOverscan<ATGTIAEmulator::kVerticalOverscan_Full>,		NULL, RadioCheckedIf<VideoVerticalOverscanModeIs<ATGTIAEmulator::kVerticalOverscan_Full> > },
 		{ "View.TogglePALExtended", OnCommandViewTogglePALExtended, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsOverscanPALExtended> > },
 
-		{ "View.ToggleFullScreen", OnCommandViewToggleFullScreen, VideoEnhancedTextModeIs<0>, CheckedIf<IsFullScreen> },
+		{ "View.ToggleFullScreen", OnCommandViewToggleFullScreen, NULL, CheckedIf<IsFullScreen> },
 		{ "View.ToggleVSync", OnCommandViewToggleVSync, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsVsyncEnabled> > },
 		{ "View.ToggleFPS", OnCommandViewToggleFPS, NULL, CheckedIf<IsShowFpsEnabled> },
 		{ "View.AdjustWindowSize", OnCommandViewAdjustWindowSize },
@@ -3116,6 +3348,7 @@ namespace {
 
 		{ "System.ToggleMapRAM", OnCommandSystemToggleMapRAM, NULL, CheckedIf<SimTest<&ATSimulator::IsMapRAMEnabled> > },
 		{ "System.ToggleUltimate1MB", OnCommandSystemToggleUltimate1MB, NULL, CheckedIf<SimTest<&ATSimulator::IsUltimate1MBEnabled> > },
+		{ "System.ToggleFloatingIOBus", OnCommandSystemToggleFloatingIoBus, Is800, CheckedIf<SimTest<&ATSimulator::IsFloatingIoBusEnabled> > },
 		{ "System.MemoryClearZero", OnCommandSystemMemoryClearMode<kATMemoryClearMode_Zero>, NULL, RadioCheckedIf<MemoryClearModeIs<kATMemoryClearMode_Zero>> },
 		{ "System.MemoryClearRandom", OnCommandSystemMemoryClearMode<kATMemoryClearMode_Random>, NULL, RadioCheckedIf<MemoryClearModeIs<kATMemoryClearMode_Random>> },
 		{ "System.MemoryClearDRAM1", OnCommandSystemMemoryClearMode<kATMemoryClearMode_DRAM1>, NULL, RadioCheckedIf<MemoryClearModeIs<kATMemoryClearMode_DRAM1>> },
@@ -3158,15 +3391,11 @@ namespace {
 		{ "Disk.RotatePrev", []() { OnCommandDiskRotate(-1); }, IsDiskDriveEnabledAny },
 		{ "Disk.RotateNext", []() { OnCommandDiskRotate(+1); }, IsDiskDriveEnabledAny },
 
-		{ "Devices.BurstModeNone", OnCommandDevicesBurstMode<ATPokeyEmulator::kSerialBurstMode_Disabled>, NULL, RadioCheckedIf<PokeySerialBurstModeIs<ATPokeyEmulator::kSerialBurstMode_Disabled> > },
-		{ "Devices.BurstModeStandard", OnCommandDevicesBurstMode<ATPokeyEmulator::kSerialBurstMode_Standard>, NULL, RadioCheckedIf<PokeySerialBurstModeIs<ATPokeyEmulator::kSerialBurstMode_Standard> > },
-		{ "Devices.BurstModePolled", OnCommandDevicesBurstMode<ATPokeyEmulator::kSerialBurstMode_Polled>, NULL, RadioCheckedIf<PokeySerialBurstModeIs<ATPokeyEmulator::kSerialBurstMode_Polled> > },
-
 		{ "Disk.ToggleBurstTransfers",
 			[]() {
 				g_sim.SetDiskBurstTransfersEnabled(!g_sim.GetDiskBurstTransfersEnabled());
 			},
-			Not<PokeySerialBurstModeIs<ATPokeyEmulator::kSerialBurstMode_Disabled>>,
+			nullptr,
 			[]() {
 				return g_sim.GetDiskBurstTransfersEnabled() ? kATUICmdState_Checked : kATUICmdState_None;
 			}
@@ -3186,7 +3415,7 @@ namespace {
 			[]() {
 				g_sim.SetDeviceSIOBurstTransfersEnabled(!g_sim.GetDeviceSIOBurstTransfersEnabled());
 			},
-			Not<PokeySerialBurstModeIs<ATPokeyEmulator::kSerialBurstMode_Disabled>>,
+			nullptr,
 			[]() {
 				return g_sim.GetDeviceSIOBurstTransfersEnabled() ? kATUICmdState_Checked : kATUICmdState_None;
 			}
@@ -3259,10 +3488,6 @@ namespace {
 		{ "Audio.ToggleChannel3", OnCommandAudioToggleChannel<2>, NULL, CheckedIf<PokeyChannelEnabled<2> > },
 		{ "Audio.ToggleChannel4", OnCommandAudioToggleChannel<3>, NULL, CheckedIf<PokeyChannelEnabled<3> > },
 
-		{ "Audio.ToggleSoundBoard", OnCommandAudioToggleSoundBoard, IsNot5200, CheckedIf<IsSoundBoardEnabled > },
-		{ "Audio.SoundBoardAddrD2C0", OnCommandAudioSoundBoardAddr<0xD2C0>, And<IsSoundBoardEnabled, Not<SimTest<&ATSimulator::IsUltimate1MBEnabled> > >, CheckedIf<SoundBoardBaseIs<0xD2C0> > },
-		{ "Audio.SoundBoardAddrD500", OnCommandAudioSoundBoardAddr<0xD500>, And<IsSoundBoardEnabled, Not<SimTest<&ATSimulator::IsUltimate1MBEnabled> > >, CheckedIf<SoundBoardBaseIs<0xD500> > },
-		{ "Audio.SoundBoardAddrD600", OnCommandAudioSoundBoardAddr<0xD600>, And<IsSoundBoardEnabled, Not<SimTest<&ATSimulator::IsUltimate1MBEnabled> > >, CheckedIf<SoundBoardBaseIs<0xD600> > },
 		{ "Audio.ToggleSlightSid", OnCommandAudioToggleSlightSid, IsNot5200, CheckedIf<IsSlightSidEnabled> },
 		{ "Audio.ToggleCovox", OnCommandAudioToggleCovox, IsNot5200, CheckedIf<IsCovoxEnabled> },
 
@@ -3272,17 +3497,20 @@ namespace {
 		{ "Input.KeyboardDialog", OnCommandInputKeyboardDialog },
 		{ "Input.LightPenDialog", OnCommandInputLightPenDialog },
 		{ "Input.CycleQuickMaps", OnCommandInputCycleQuickMaps },
+		{ "Input.InputSetupDialog", OnCommandInputInputSetupDialog },
 
 		{ "Record.Stop", OnCommandRecordStop, IsRecording },
 		{ "Record.RawAudio", OnCommandRecordRawAudio, Not<IsRecording>, CheckedIf<IsRecordingRawAudio> },
 		{ "Record.Audio", OnCommandRecordAudio, Not<IsRecording>, CheckedIf<IsRecordingAudio> },
 		{ "Record.Video", OnCommandRecordVideo, Not<IsRecording>, CheckedIf<IsRecordingVideo> },
+		{ "Record.SAPTypeR", OnCommandRecordSapTypeR, Not<IsRecording>, CheckedIf<IsRecordingSap> },
 
 		{ "Cheat.ToggleDisablePMCollisions", OnCommandCheatTogglePMCollisions, NULL, CheckedIf<Not<GTIATest<&ATGTIAEmulator::ArePMCollisionsEnabled> > > },
 		{ "Cheat.ToggleDisablePFCollisions", OnCommandCheatTogglePFCollisions, NULL, CheckedIf<Not<GTIATest<&ATGTIAEmulator::ArePFCollisionsEnabled> > > },
 		{ "Cheat.CheatDialog", OnCommandCheatCheatDialog },
 
 		{ "Tools.DiskExplorer", OnCommandToolsDiskExplorer },
+		{ "Tools.ConvertSAPToEXE", OnCommandToolsConvertSapToExe },
 		{ "Tools.OptionsDialog", OnCommandToolsOptionsDialog },
 		{ "Tools.KeyboardShortcutsDialog", OnCommandToolsKeyboardShortcutsDialog },
 
@@ -3343,15 +3571,6 @@ void OnActivateApp(HWND hwnd, WPARAM wParam) {
 	}
 }
 
-void ProcessKey(char c, bool repeat, bool allowQueue, bool useCooldown) {
-	uint8 ch;
-
-	if (!ATUIGetScanCodeForCharacter(c, ch))
-		return;
-
-	g_sim.GetPokey().PushKey(ch, repeat, allowQueue, !allowQueue, useCooldown);
-}
-
 ///////////////////////////////////////////////////////////////////////////
 
 class ATMainWindow : public ATContainerWindow {
@@ -3385,6 +3604,8 @@ LRESULT ATMainWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 	return r;
 }
+
+vdfunction<bool()> g_pATIdle;
 
 LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 	switch(msg) {
@@ -3446,7 +3667,7 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case WM_SETCURSOR:
 			break;
 
-		case ATWM_APP_PRETRANSLATE:
+		case ATWM_PRETRANSLATE:
 			if (!ATUIIsActiveModal()) {
 				MSG& globalMsg = *(MSG *)lParam;
 
@@ -3475,6 +3696,9 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 			}
 			break;
 
+		case ATWM_QUERYSYSCHAR:
+			return true;
+
 		case WM_COPYDATA:
 			{
 				HWND hwndReply = (HWND)wParam;
@@ -3492,6 +3716,15 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 			if (!wParam) {
 				if (g_fullscreen)
 					ATSetFullscreen(false);
+			}
+
+			break;
+
+		case WM_ENTERIDLE:
+			if (wParam == MSGF_MENU) {
+				if (g_pATIdle())
+					PostThreadMessage(GetCurrentThreadId(), WM_NULL, 0, 0);
+				return 0;
 			}
 
 			break;
@@ -3665,13 +3898,10 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			g_sim.SetVideoStandard(kATVideoStandard_PAL60);
 
 		if (cmdLine.FindAndRemoveSwitch(L"burstio")) {
-			g_sim.GetPokey().SetSerialBurstMode(ATPokeyEmulator::kSerialBurstMode_Standard);
 			g_sim.SetDiskBurstTransfersEnabled(true);
 		} else if (cmdLine.FindAndRemoveSwitch(L"burstiopolled")) {
-			g_sim.GetPokey().SetSerialBurstMode(ATPokeyEmulator::kSerialBurstMode_Polled);
 			g_sim.SetDiskBurstTransfersEnabled(true);
 		} else if (cmdLine.FindAndRemoveSwitch(L"noburstio")) {
-			g_sim.GetPokey().SetSerialBurstMode(ATPokeyEmulator::kSerialBurstMode_Disabled);
 			g_sim.SetDiskBurstTransfersEnabled(false);
 		}
 
@@ -3754,20 +3984,30 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 
 		const wchar_t *arg;
 		if (cmdLine.FindAndRemoveSwitch(L"soundboard", arg)) {
-			g_sim.SetSoundBoardEnabled(true);
+			ATPropertySet pset;
+			
+			uint32 base = 0;
 
 			if (!vdwcsicmp(arg, L"d2c0"))
-				g_sim.SetSoundBoardMemBase(0xD2C0);
+				base = 0xD2C0;
 			else if (!vdwcsicmp(arg, L"d500"))
-				g_sim.SetSoundBoardMemBase(0xD500);
+				base = 0xD500;
 			else if (!vdwcsicmp(arg, L"d600"))
-				g_sim.SetSoundBoardMemBase(0xD600);
+				base = 0xD600;
 			else
 				throw MyError("Command line error: Invalid SoundBoard memory base: '%ls'", arg);
 
+			auto *dm = g_sim.GetDeviceManager();
+			auto *dev = dm->GetDeviceByTag("soundboard");
+
+			if (dev)
+				dev->SetSettings(pset);
+			else
+				dm->AddDevice("soundboard", pset, false);
+
 			coldReset = true;
 		} else if (cmdLine.FindAndRemoveSwitch(L"nosoundboard")) {
-			g_sim.SetSoundBoardEnabled(false);
+			g_sim.GetDeviceManager()->RemoveDevice("soundboard");
 			coldReset = true;
 		}
 
@@ -4056,6 +4296,8 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				hwmode = kATIDEHardwareMode_SIDE2;
 			else if (iorange == L"myidev2_d5xx")
 				hwmode = kATIDEHardwareMode_MyIDE_V2_D5xx;
+			else if (iorange == L"myidev2updated")
+				hwmode = kATIDEHardwareMode_MyIDE_V2Updated;
 			else
 				throw MyError("Invalid IDE hardware type: %.*ls", iorange.size(), iorange.data());
 
@@ -4076,7 +4318,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			unsigned cylval;
 			unsigned headsval;
 			unsigned sptval;
-			char dummy;
+			wchar_t dummy;
 			if (1 != swscanf(VDStringW(cylinders).c_str(), L"%u%c", &cylval, &dummy) || !cylval || cylval > 16777216 ||
 				1 != swscanf(VDStringW(heads).c_str(), L"%u%c", &headsval, &dummy) || !headsval || headsval > 16 ||
 				1 != swscanf(VDStringW(spt).c_str(), L"%u%c", &sptval, &dummy) || !sptval || sptval > 255
@@ -4558,7 +4800,6 @@ void LoadBaselineSettings() {
 	g_sim.SetCassetteAutoBootEnabled(true);
 	g_sim.SetFPPatchEnabled(false);
 	g_sim.SetFastBootEnabled(true);
-	pokey.SetSerialBurstMode(ATPokeyEmulator::kSerialBurstMode_Disabled);
 	g_sim.SetVBXEEnabled(false);
 	g_sim.SetDiskSIOPatchEnabled(true);
 	g_sim.SetDiskSIOOverrideDetectEnabled(false);
@@ -4571,7 +4812,6 @@ void LoadBaselineSettings() {
 	}
 
 	g_sim.SetDualPokeysEnabled(false);
-	g_sim.SetSoundBoardEnabled(false);
 
 	g_enhancedText = 0;
 
@@ -4640,7 +4880,6 @@ void LoadSettings(bool useHardwareBaseline) {
 		g_sim.SetCassetteAutoBootEnabled(key.getBool("Cassette: Auto-boot enabled", g_sim.IsCassetteAutoBootEnabled()));
 		g_sim.SetFPPatchEnabled(key.getBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled()));
 		g_sim.SetFastBootEnabled(key.getBool("Kernel: Fast boot enabled", g_sim.IsFastBootEnabled()));
-		pokey.SetSerialBurstMode((ATPokeyEmulator::SerialBurstMode)key.getEnumInt("POKEY: Burst mode", ATPokeyEmulator::kSerialBurstModeCount, pokey.GetSerialBurstMode()));
 		g_sim.SetVBXEEnabled(key.getBool("GTIA: VBXE support", g_sim.GetVBXE() != NULL));
 		g_sim.SetVBXESharedMemoryEnabled(key.getBool("GTIA: VBXE shared memory", g_sim.IsVBXESharedMemoryEnabled()));
 		g_sim.SetVBXEAltPageEnabled(key.getBool("GTIA: VBXE alternate page", g_sim.IsVBXEAltPageEnabled()));
@@ -4657,9 +4896,6 @@ void LoadSettings(bool useHardwareBaseline) {
 
 		g_sim.SetDualPokeysEnabled(key.getBool("Audio: Dual POKEYs enabled", g_sim.IsDualPokeysEnabled()));
 
-		g_sim.SetSoundBoardEnabled(key.getBool("SoundBoard: Enabled", g_sim.GetSoundBoard() != NULL));
-		g_sim.SetSoundBoardMemBase(key.getInt("SoundBoard: Memory base", g_sim.GetSoundBoardMemBase()));
-
 		g_enhancedText = key.getInt("Video: Enhanced text mode", 0);
 		if (g_enhancedText > 2)
 			g_enhancedText = 2;
@@ -4671,9 +4907,11 @@ void LoadSettings(bool useHardwareBaseline) {
 		g_sim.SetHighMemoryBanks(key.getInt("Memory: High banks", g_sim.GetHighMemoryBanks()));
 		g_sim.SetMapRAMEnabled(key.getBool("Memory: MapRAM", g_sim.IsMapRAMEnabled()));
 		g_sim.SetUltimate1MBEnabled(key.getBool("Memory: Ultimate1MB", g_sim.IsUltimate1MBEnabled()));
+		g_sim.SetFloatingIoBusEnabled(key.getBool("Memory: Floating IO bus", g_sim.IsFloatingIoBusEnabled()));
 		g_sim.SetMemoryClearMode((ATMemoryClearMode)key.getEnumInt("Memory: Cold start pattern", kATMemoryClearModeCount, g_sim.GetMemoryClearMode()));
 		g_sim.SetRandomFillEXEEnabled(key.getBool("Memory: Randomize on EXE load", g_sim.IsRandomFillEXEEnabled()));
 		g_kbdOpts.mbRawKeys = key.getBool("Keyboard: Raw mode", g_kbdOpts.mbRawKeys);
+		g_kbdOpts.mbFullRawKeys = key.getBool("Keyboard: Full raw mode", g_kbdOpts.mbFullRawKeys);
 		g_sim.SetKeyboardPresent(key.getBool("Console: Keyboard present", g_sim.IsKeyboardPresent()));
 		g_sim.SetForcedSelfTest(key.getBool("Console: Force self test", g_sim.IsForcedSelfTest()));
 		g_sim.SetCartridgeSwitch(key.getBool("Console: Cartridge switch", g_sim.GetCartridgeSwitch()));
@@ -4693,6 +4931,16 @@ void LoadSettings(bool useHardwareBaseline) {
 		}
 
 		g_sim.SetDeviceSIOPatchEnabled(key.getBool("Devices: SIO patch enabled", g_sim.GetDeviceSIOPatchEnabled()));
+	}
+
+	{
+		int kmlen = key.getBinaryLength("Keyboard: Custom Layout");
+
+		if (!(kmlen & 3) && kmlen < 0x10000) {
+			vdblock<uint32> km(kmlen >> 2);
+			if (key.getBinary("Keyboard: Custom Layout", (char *)km.data(), kmlen))
+				ATUISetCustomKeyMap(km.data(), km.size());
+		}
 	}
 
 	g_kbdOpts.mArrowKeyMode = (ATUIKeyboardOptions::ArrowKeyMode)key.getEnumInt("Keyboard: Arrow key mode", ATUIKeyboardOptions::kAKMCount, g_kbdOpts.mArrowKeyMode);
@@ -4722,6 +4970,8 @@ void LoadSettings(bool useHardwareBaseline) {
 	else
 		audioOut->SetStatusRenderer(NULL);
 
+	g_sim.SetAudioMonitorEnabled(key.getBool("Audio: Monitor enabled", false));
+
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 	gtia.SetArtifactingMode((ATGTIAEmulator::ArtifactMode)key.getEnumInt("GTIA: Artifacting mode", ATGTIAEmulator::kArtifactCount, gtia.GetArtifactingMode()));
 	gtia.SetOverscanMode((ATGTIAEmulator::OverscanMode)key.getEnumInt("GTIA: Overscan mode", ATGTIAEmulator::kOverscanCount, gtia.GetOverscanMode()));
@@ -4746,6 +4996,9 @@ void LoadSettings(bool useHardwareBaseline) {
 
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 	cpu.SetHistoryEnabled(key.getBool("CPU: History enabled", cpu.IsHistoryEnabled()));
+
+	ATSyncCPUHistoryState();
+
 	cpu.SetPathfindingEnabled(key.getBool("CPU: Pathfinding enabled", cpu.IsPathfindingEnabled()));
 	cpu.SetStopOnBRK(key.getBool("CPU: Stop on BRK", cpu.GetStopOnBRK()));
 	cpu.SetNMIBlockingEnabled(key.getBool("CPU: Allow NMI blocking", cpu.IsNMIBlockingEnabled()));
@@ -4787,6 +5040,15 @@ void LoadSettings(bool useHardwareBaseline) {
 
 	VDRegistryAppKey imapKey("Settings\\Input maps");
 	g_sim.GetInputManager()->Load(imapKey);
+
+	ATJoystickTransforms joyxforms = g_sim.GetJoystickManager().GetTransforms();
+	joyxforms.mStickAnalogDeadZone = key.getInt("Input: Stick analog dead zone", joyxforms.mStickAnalogDeadZone);
+	joyxforms.mStickDigitalDeadZone = key.getInt("Input: Stick digital dead zone", joyxforms.mStickDigitalDeadZone);
+	joyxforms.mStickAnalogPower = VDGetIntAsFloat(key.getInt("Input: Stick analog power", VDGetFloatAsInt(joyxforms.mStickAnalogPower)));
+	joyxforms.mTriggerAnalogDeadZone = key.getInt("Input: Trigger analog dead zone", joyxforms.mTriggerAnalogDeadZone);
+	joyxforms.mTriggerDigitalDeadZone = key.getInt("Input: Trigger digital dead zone", joyxforms.mTriggerDigitalDeadZone);
+	joyxforms.mTriggerAnalogPower = VDGetIntAsFloat(key.getInt("Input: Trigger analog power", VDGetFloatAsInt(joyxforms.mTriggerAnalogPower)));
+	g_sim.GetJoystickManager().SetTransforms(joyxforms);
 
 	ATReloadPortMenus();
 	ATUIUpdateSpeedTiming();
@@ -4848,6 +5110,7 @@ void SaveSettings() {
 	key.setInt("Memory: High banks", g_sim.GetHighMemoryBanks());
 	key.setBool("Memory: MapRAM", g_sim.IsMapRAMEnabled());
 	key.setBool("Memory: Ultimate1MB", g_sim.IsUltimate1MBEnabled());
+	key.setBool("Memory: Floating IO bus", g_sim.IsFloatingIoBusEnabled());
 	key.setInt("Memory: Cold start pattern", g_sim.GetMemoryClearMode());
 	key.setBool("Memory: Randomize on EXE load", g_sim.IsRandomFillEXEEnabled());
 
@@ -4866,9 +5129,8 @@ void SaveSettings() {
 	key.setInt("Audio: Api", audioOut->GetApi());
 	key.setBool("Audio: Show debug info", audioOut->GetStatusRenderer() != NULL);
 
-	ATPokeyEmulator& pokey = g_sim.GetPokey();
-	key.setInt("POKEY: Burst mode", pokey.GetSerialBurstMode());
-	
+	key.setBool("Audio: Monitor enabled", g_sim.IsAudioMonitorEnabled());
+
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 	key.setInt("GTIA: Artifacting mode", gtia.GetArtifactingMode());
 	key.setInt("GTIA: Overscan mode", gtia.GetOverscanMode());
@@ -4901,10 +5163,9 @@ void SaveSettings() {
 	key.setBool("Disk: Sector counter enabled", g_sim.IsDiskSectorCounterEnabled());
 
 	key.setBool("Audio: Dual POKEYs enabled", g_sim.IsDualPokeysEnabled());
-	key.setBool("Audio: Non-linear mixing", pokey.IsNonlinearMixingEnabled());
 
-	key.setBool("SoundBoard: Enabled", g_sim.GetSoundBoard() != NULL);
-	key.setInt("SoundBoard: Memory base", g_sim.GetSoundBoardMemBase());
+	ATPokeyEmulator& pokey = g_sim.GetPokey();
+	key.setBool("Audio: Non-linear mixing", pokey.IsNonlinearMixingEnabled());
 
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 	key.setBool("CPU: History enabled", cpu.IsHistoryEnabled());
@@ -4947,9 +5208,17 @@ void SaveSettings() {
 		key.setBool(s.c_str(), g_sim.GetCIOPatchEnabled(c));
 	}
 
-	key.setBool("Devices: SIO: patch enabled", g_sim.GetDeviceSIOPatchEnabled());
+	key.setBool("Devices: SIO patch enabled", g_sim.GetDeviceSIOPatchEnabled());
+
+	{
+		vdfastvector<uint32> km;
+		ATUIGetCustomKeyMap(km);
+
+		key.setBinary("Keyboard: Custom Layout", (const char *)km.data(), (int)(km.size() * sizeof(km[0])));
+	}
 
 	key.setBool("Keyboard: Raw mode", g_kbdOpts.mbRawKeys);
+	key.setBool("Keyboard: Full raw mode", g_kbdOpts.mbFullRawKeys);
 	key.setInt("Keyboard: Arrow key mode", g_kbdOpts.mArrowKeyMode);
 	key.setInt("Keyboard: Layout mode", g_kbdOpts.mLayoutMode);
 	key.setBool("Keyboard: Allow shift on cold reset", g_kbdOpts.mbAllowShiftOnColdReset);
@@ -4963,6 +5232,14 @@ void SaveSettings() {
 
 	key.setInt("Speed: Frame rate modifier", VDRoundToInt((g_speedModifier + 1.0f) * 100.0f));
 	key.setInt("Speed: Frame rate mode", g_frameRateMode);
+
+	const auto& joyxforms = g_sim.GetJoystickManager().GetTransforms();
+	key.setInt("Input: Stick analog dead zone", joyxforms.mStickAnalogDeadZone);
+	key.setInt("Input: Stick digital dead zone", joyxforms.mStickDigitalDeadZone);
+	key.setInt("Input: Stick analog power", VDGetFloatAsInt(joyxforms.mStickAnalogPower));
+	key.setInt("Input: Trigger analog dead zone", joyxforms.mTriggerAnalogDeadZone);
+	key.setInt("Input: Trigger digital dead zone", joyxforms.mTriggerDigitalDeadZone);
+	key.setInt("Input: Trigger analog power", VDGetFloatAsInt(joyxforms.mTriggerAnalogPower));
 
 	SaveInputMaps();
 	SaveMountedImages();
@@ -4988,106 +5265,6 @@ uint64 ATGetCumulativeCPUTime() {
 
 	return ((uint64)kt.dwHighDateTime << 32) + kt.dwLowDateTime
 		+ ((uint64)ut.dwHighDateTime << 32) + ut.dwLowDateTime;
-}
-
-bool ATUIProcessMessages(bool waitForMessage, int& returnCode) {
-	ATUIProfileBeginRegion(kATUIProfileRegion_NativeEvents);
-
-	HWND hwndChain[16];
-
-	for(int i=0; i<2; ++i) {
-		DWORD flags = i ? PM_REMOVE : PM_QS_INPUT | PM_REMOVE;
-
-		MSG msg;
-		while(PeekMessage(&msg, NULL, 0, 0, flags)) {
-			if (msg.message == WM_QUIT) {
-				ATUIProfileEndRegion();
-				returnCode = (int)msg.wParam;
-				return false;
-			}
-
-			if (msg.hwnd) {
-				HWND hwndOwner;
-				switch(msg.message) {
-					case WM_KEYDOWN:
-					case WM_SYSKEYDOWN:
-					case WM_KEYUP:
-					case WM_SYSKEYUP:
-					case WM_CHAR:
-						{
-							hwndOwner = GetAncestor(msg.hwnd, GA_ROOT);
-							if (hwndOwner) {
-								if (SendMessage(hwndOwner, ATWM_APP_PRETRANSLATE, 0, (LPARAM)&msg))
-									continue;
-							}
-
-							UINT preMsg = 0;
-
-							switch(msg.message) {
-								case WM_KEYDOWN:	preMsg = ATWM_PREKEYDOWN;		break;
-								case WM_SYSKEYDOWN:	preMsg = ATWM_PRESYSKEYDOWN;	break;
-								case WM_KEYUP:		preMsg = ATWM_PREKEYUP;			break;
-								case WM_SYSKEYUP:	preMsg = ATWM_PRESYSKEYUP;		break;
-							}
-
-							if (preMsg) {
-								size_t n = 0;
-
-								for(HWND hwndTarget = msg.hwnd; hwndTarget && hwndTarget != hwndOwner; hwndTarget = GetAncestor(hwndTarget, GA_PARENT)) {
-									hwndChain[n++] = hwndTarget;
-
-									if (n >= vdcountof(hwndChain))
-										break;
-								}
-
-								bool eat = false;
-								while(n > 0) {
-									if (SendMessage(hwndChain[--n], preMsg, msg.wParam, msg.lParam)) {
-										eat = true;
-										break;
-									}
-								}
-
-								if (eat)
-									continue;
-							}
-						}
-						break;
-
-					case WM_SYSCHAR:
-						if (g_hwnd && msg.hwnd != g_hwnd && GetAncestor(msg.hwnd, GA_ROOT) == g_hwnd) {
-							msg.hwnd = g_hwnd;
-						}
-						break;
-
-					case WM_MOUSEWHEEL:
-						{
-							POINT pt = { (short)LOWORD(msg.lParam), (short)HIWORD(msg.lParam) };
-							HWND hwndUnder = WindowFromPoint(pt);
-
-							if (hwndUnder && GetWindowThreadProcessId(hwndUnder, NULL) == GetCurrentThreadId())
-								msg.hwnd = hwndUnder;
-						}
-						break;
-				}
-			}
-
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
-		}
-	}
-
-	if (!g_ATCmdLineRead) {
-		g_ATCmdLineRead = true;
-
-		ReadCommandLine(g_hwnd, g_ATCmdLine);
-	}
-	ATUIProfileEndRegion();
-
-	if (waitForMessage)
-		WaitMessage();
-
-	return true;
 }
 
 // The joystick poll is normally done once a frame. However, when we aren't
@@ -5128,8 +5305,6 @@ void ATBeginIdleJoystickPoll() {
 		return;
 	g_joystickPollActive = true;
 
-	auto& jm = g_sim.GetJoystickManager();
-
 	g_joystickPollLastFast = VDGetCurrentTick();
 	g_joystickPollFast = true;
 	g_joystickPollTimer.SetPeriodicFn(ATPollJoysticks, 10);
@@ -5143,7 +5318,6 @@ void ATEndIdleJoystickPoll() {
 }
 
 int RunMainLoop2(HWND hwnd) {
-	bool commandLineRead = false;
 	int ticks = 0;
 
 	ATAnticEmulator& antic = g_sim.GetAntic();
@@ -5166,17 +5340,15 @@ int RunMainLoop2(HWND hwnd) {
 
 	int rcode = 0;
 	bool lastIsRunning = false;
-	for(;;) {
-		if (!ATUIProcessMessages(false, rcode))
-			break;
 
+	g_pATIdle = [&]() -> bool {
 		bool isRunning = g_sim.IsRunning();
 		if (!isRunning)
 			ATUIFlushDisplay();
 
 		if (ATUIGetQueue().Run()) {
 			ATBeginIdleJoystickPoll();
-			continue;
+			return true;
 		}
 
 		if (isRunning)
@@ -5279,10 +5451,10 @@ int RunMainLoop2(HWND hwnd) {
 						if (g_sim.IsTurboModeEnabled())
 							dropFrame = true;
 						else {
-							ATUIProfileBeginRegion(kATUIProfileRegion_Idle);
+							ATProfileBeginRegion(kATProfileRegion_Idle);
 							::MsgWaitForMultipleObjects(0, NULL, FALSE, ticks, QS_ALLINPUT);
-							ATUIProfileEndRegion();
-							continue;
+							ATProfileEndRegion(kATProfileRegion_Idle);
+							return true;
 						}
 					}
 				}
@@ -5293,11 +5465,11 @@ int RunMainLoop2(HWND hwnd) {
 				dropFrame = false;
 
 			if (g_sim.GetAntic().GetBeamY() == 0)
-				ATUIProfileBeginFrame();
+				ATProfileMarkEvent(kATProfileEvent_BeginFrame);
 
-			ATUIProfileBeginRegion(kATUIProfileRegion_Simulation);
+			ATProfileBeginRegion(kATProfileRegion_Simulation);
 			ATSimulator::AdvanceResult ar = g_sim.Advance(dropFrame);
-			ATUIProfileEndRegion();
+			ATProfileEndRegion(kATProfileRegion_Simulation);
 
 			if (ar == ATSimulator::kAdvanceResult_Stopped) {
 				updateScreenPending = !g_sim.IsPaused();
@@ -5305,16 +5477,16 @@ int RunMainLoop2(HWND hwnd) {
 				updateScreenPending = false;
 
 				if (ar == ATSimulator::kAdvanceResult_WaitingForFrame) {
-					ATUIProfileBeginRegion(kATUIProfileRegion_Idle);
+					ATProfileBeginRegion(kATProfileRegion_Idle);
 					::MsgWaitForMultipleObjects(0, NULL, FALSE, 1, QS_ALLINPUT);
-					ATUIProfileEndRegion();
+					ATProfileEndRegion(kATProfileRegion_Idle);
 				}
 			}
 
-			continue;
+			return true;
 		} else {
 			if (ATGetDebugger()->Tick())
-				continue;
+				return true;
 
 			g_ATAutoFrameFlipping = false;
 			ATUIFlushDisplay();
@@ -5337,7 +5509,22 @@ int RunMainLoop2(HWND hwnd) {
 			nextTickUpdate = ticks - ticks % 60;
 		}
 
-		WaitMessage();
+		return false;
+	};
+
+	for(;;) {
+		if (!ATUIProcessMessages(false, rcode))
+			break;
+
+		if (!g_ATCmdLineRead) {
+			g_ATCmdLineRead = true;
+
+			ReadCommandLine(g_hwnd, g_ATCmdLine);
+		}
+
+		if (!g_pATIdle())
+			WaitMessage();
+
 	}
 
 	if (lastIsRunning) {
@@ -5419,7 +5606,7 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 
 	VDStringW portableRegPath;
 	if (portableAltFile)
-		portableRegPath = portableAltFile;
+		portableRegPath = VDGetFullPath(portableAltFile);
 	else
 		portableRegPath = VDMakePath(VDGetProgramPath().c_str(), L"Altirra.ini");
 
@@ -5438,6 +5625,8 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 					return 5;
 			}
 		}
+
+		ATSetFirmwarePathPortabilityMode(true);
 	} else {
 		if (resetAll)
 			SHDeleteKey(HKEY_CURRENT_USER, _T("Software\\virtualdub.org\\Altirra"));
@@ -5514,30 +5703,6 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 	return rval;
 }
 
-void ATRegisterDevices() {
-	auto& dm = *g_sim.GetDeviceManager();
-
-	ATRegisterDeviceModem(dm);
-	ATRegisterDeviceBlackBox(dm);
-	ATRegisterDeviceMIO(dm);
-	ATRegisterDeviceHardDisks(dm);
-	ATRegisterDeviceConfigurers(dm);
-	ATRegisterDeviceRTime8(dm);
-	ATRegisterDeviceCovox(dm);
-	ATRegisterDeviceXEP80(dm);
-	ATRegisterDeviceSlightSID(dm);
-	ATRegisterDeviceDragonCart(dm);
-	ATRegisterDeviceSIOClock(dm);
-	ATRegisterDeviceTestSIOPoll(dm);
-	ATRegisterDevicePCLink(dm);
-	ATRegisterDeviceHostFS(dm);
-	ATRegisterDevicePrinter(dm);
-	ATRegisterDevice850Modem(dm);
-	ATRegisterDevice1030Modem(dm);
-	ATRegisterDeviceSX212(dm);
-	ATRegisterDeviceMidiMate(dm);
-}
-
 int RunInstance(int nCmdShow) {
 	VDRegisterVideoDisplayControl();
 	VDUIRegisterHotKeyExControl();
@@ -5583,6 +5748,7 @@ int RunInstance(int nCmdShow) {
 	VDLoadFilespecSystemData();
 
 	ATInitUIPanes();
+	ATInitDebuggerLogging();
 	ATInitProfilerUI();
 	ATUIRegisterDisplayPane();
 	ATUIInitVirtualKeyMap(g_kbdOpts);
@@ -5623,7 +5789,7 @@ int RunInstance(int nCmdShow) {
 	g_sim.Init(hwnd);
 	g_sim.GetInputManager()->SetConsoleCallback(&g_inputConsoleCallback);
 
-	ATRegisterDevices();
+	ATRegisterDevices(*g_sim.GetDeviceManager());
 
 	ATInitPortMenus(g_sim.GetInputManager());
 

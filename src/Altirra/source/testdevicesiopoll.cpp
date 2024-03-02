@@ -19,7 +19,6 @@
 #include <vd2/system/date.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicesio.h>
-#include "devicemanager.h"
 
 // SIO Type 3/4 Poll test device
 //
@@ -111,6 +110,16 @@ const uint8 ATDeviceTestSIOPoll::kHandlerData[]={
 	0x0B, 0x00, 0x00, 0x00
 };
 
+template<bool T_Type4>
+void ATCreateDeviceTestSIOPoll(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceTestSIOPoll> p(new ATDeviceTestSIOPoll(T_Type4));
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefTestSIOPoll4 = { "testsiopoll4", nullptr, L"SIO Type 4 Poll Test Device", ATCreateDeviceTestSIOPoll<true> };
+extern const ATDeviceDefinition g_ATDeviceDefTestSIOPoll3 = { "testsiopoll3", nullptr, L"SIO Type 3 Poll Test Device", ATCreateDeviceTestSIOPoll<false> };
+
 ATDeviceTestSIOPoll::ATDeviceTestSIOPoll(bool type4)
 	: mpSIOMgr(nullptr)
 	, mbType4(type4)
@@ -129,13 +138,10 @@ void *ATDeviceTestSIOPoll::AsInterface(uint32 id) {
 }
 
 void ATDeviceTestSIOPoll::GetDeviceInfo(ATDeviceInfo& info) {
-	if (mbType4) {
-		info.mTag = "testsiopoll4";
-		info.mName = L"SIO Type 4 Poll Test Device";
-	} else {
-		info.mTag = "testsiopoll3";
-		info.mName = L"SIO Type 3 Poll Test Device";
-	}
+	if (mbType4)
+		info.mpDef = &g_ATDeviceDefTestSIOPoll4;
+	else
+		info.mpDef = &g_ATDeviceDefTestSIOPoll3;
 }
 
 void ATDeviceTestSIOPoll::Shutdown() {
@@ -249,18 +255,4 @@ void ATDeviceTestSIOPoll::OnSerialFence(uint32 id) {
 
 IATDeviceSIO::CmdResponse ATDeviceTestSIOPoll::OnSerialAccelCommand(const ATDeviceSIORequest& request) {
 	return OnSerialBeginCommand(request);
-}
-
-///////////////////////////////////////////////////////////////////////////
-
-template<bool T_Type4>
-void ATCreateDeviceTestSIOPoll(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDeviceTestSIOPoll> p(new ATDeviceTestSIOPoll(T_Type4));
-
-	*dev = p.release();
-}
-
-void ATRegisterDeviceTestSIOPoll(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("testsiopoll3", ATCreateDeviceTestSIOPoll<false>);
-	dev.AddDeviceFactory("testsiopoll4", ATCreateDeviceTestSIOPoll<true>);
 }

@@ -16,7 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
-#include "devicemanager.h"
+#include <at/atcore/devicemanager.h>
 
 bool ATUIConfDevHardDisk(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevBlackBox(VDGUIHandle hParent, ATPropertySet& props);
@@ -27,6 +27,8 @@ bool ATUIConfDevHostFS(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDev1030(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDev850(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevSX212(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevVeronica(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevSoundBoard(VDGUIHandle hParent, ATPropertySet& props);
 
 void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("harddisk", ATUIConfDevHardDisk);
@@ -38,4 +40,6 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("1030", ATUIConfDev1030);
 	dev.AddDeviceConfigurer("850", ATUIConfDev850);
 	dev.AddDeviceConfigurer("sx212", ATUIConfDevSX212);
+	dev.AddDeviceConfigurer("veronica", ATUIConfDevVeronica);
+	dev.AddDeviceConfigurer("soundboard", ATUIConfDevSoundBoard);
 }

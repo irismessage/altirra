@@ -29,10 +29,10 @@
 #include "uirender.h"
 #include "audiomonitor.h"
 #include "slightsid.h"
-#include "uiwidget.h"
+#include <at/atui/uiwidget.h>
 #include "uilabel.h"
-#include "uicontainer.h"
-#include "uimanager.h"
+#include <at/atui/uicontainer.h>
+#include <at/atui/uimanager.h>
 
 namespace {
 	void Shade(IVDDisplayRenderer& rdr, int x1, int y1, int dx, int dy) {
@@ -84,7 +84,7 @@ void ATUIAudioStatusDisplay::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) 
 	tr.SetAlignment(VDDisplayTextRenderer::kAlignLeft, VDDisplayTextRenderer::kVertAlignTop);
 	tr.SetColorRGB(0xffffff);
 
-	for(int i=0; i<7; ++i) {
+	for(int i=0; i<8; ++i) {
 		FormatLine(i, mAudioStatus);
 		tr.DrawTextLine(2, y2, mText.c_str());
 		y2 += fonth;
@@ -107,10 +107,11 @@ void ATUIAudioStatusDisplay::AutoSize() {
 	testStatus.mTargetMax = 999999;
 	testStatus.mIncomingRate = 99999;
 	testStatus.mExpectedRate = 99999;
+	testStatus.mbStereoMixing = true;
 
 	// loop over all the strings and compute max size
 	sint32 w = 0;
-	for(int i=0; i<7; ++i) {
+	for(int i=0; i<8; ++i) {
 		FormatLine(i, testStatus);
 
 		w = std::max<sint32>(w, mpFont->MeasureString(mText.c_str(), mText.size(), false).w);
@@ -122,7 +123,7 @@ void ATUIAudioStatusDisplay::AutoSize() {
 
 	const int fonth = metrics.mAscent + metrics.mDescent;
 
-	SetSize(vdsize32(4 + w, 4 + fonth * 7));
+	SetSize(vdsize32(4 + w, 4 + fonth * 8));
 }
 
 void ATUIAudioStatusDisplay::FormatLine(int idx, const ATUIAudioStatus& status) {
@@ -153,6 +154,10 @@ void ATUIAudioStatusDisplay::FormatLine(int idx, const ATUIAudioStatus& status) 
 
 	case 6:
 		mText.sprintf(L"Expected data rate: %.2f samples/sec", status.mExpectedRate);
+		break;
+
+	case 7:
+		mText.sprintf(L"Mixing mode: %ls", status.mbStereoMixing ? L"stereo" : L"mono");
 		break;
 	}
 }
@@ -232,8 +237,9 @@ void ATUIAudioDisplay::SetSmallFont(IVDDisplayFont *font) {
 
 void ATUIAudioDisplay::AutoSize() {
 	const int chanht = 5 + mBigFontH + mSmallFontH;
+	const int chanw = (std::max<int>(11*mSmallFontW, 8*mBigFontW) + 4) * 4;
 
-	SetArea(vdrect32(mArea.left, mArea.top, mArea.left + 34 * mSmallFontW, mArea.top + chanht * 4));
+	SetArea(vdrect32(mArea.left, mArea.top, mArea.left + chanw, mArea.top + chanht * 4));
 }
 
 void ATUIAudioDisplay::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
@@ -411,7 +417,7 @@ void ATUIAudioDisplay::PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer
 	const int x_noise = x + 9*fontsmw;
 	const int x_waveform = x + std::max<int>(11*fontsmw, 8*fontw) + 4;
 
-	const int chanw = (x_waveform - x) * 5;
+	const int chanw = (x_waveform - x) * 4;
 
 	sint32 hstep = log->mRecordedCount ? ((chanw - x_waveform - 4) << 16) / log->mRecordedCount : 0;
 
@@ -492,7 +498,7 @@ void ATUIAudioDisplay::PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer
 }
 
 ///////////////////////////////////////////////////////////////////////////
-class ATUIRenderer : public vdrefcount, public IATUIRenderer, public IVDTimerCallback {
+class ATUIRenderer final : public vdrefcount, public IATUIRenderer, public IVDTimerCallback {
 public:
 	ATUIRenderer();
 	~ATUIRenderer();
@@ -528,7 +534,7 @@ public:
 	void ClearWatchedValue(int index);
 	void SetWatchedValue(int index, uint32 value, int len);
 	void SetAudioStatus(ATUIAudioStatus *status);
-	void SetAudioMonitor(ATAudioMonitor *monitor);
+	void SetAudioMonitor(bool secondary, ATAudioMonitor *monitor);
 	void SetSlightSID(ATSlightSIDEmulator *emu);
 
 	void SetFpsIndicator(float fps);
@@ -581,7 +587,7 @@ protected:
 	uint32	mWatchedValues[8];
 	sint8	mWatchedValueLens[8];
 
-	ATAudioMonitor	*mpAudioMonitor;
+	ATAudioMonitor	*mpAudioMonitors[2];
 	ATSlightSIDEmulator *mpSlightSID;
 
 	VDDisplaySubRenderCache mFpsRenderCache;
@@ -614,7 +620,7 @@ protected:
 	vdrefptr<ATUILabel> mpPausedLabel;
 	vdrefptr<ATUILabel> mpHeldButtonLabels[3];
 	vdrefptr<ATUIAudioStatusDisplay> mpAudioStatusDisplay;
-	vdrefptr<ATUIAudioDisplay> mpAudioDisplay;
+	vdrefptr<ATUIAudioDisplay> mpAudioDisplays[2];
 
 	vdrefptr<ATUILabel> mpHoverTip;
 	int mHoverTipX;
@@ -660,7 +666,6 @@ ATUIRenderer::ATUIRenderer()
 	, mPCLinkWriteCounter(0)
 	, mFlashWriteCounter(0)
 	, mLedStatus(0)
-	, mpAudioMonitor(NULL)
 	, mpSlightSID(NULL)
 	, mFps(-1.0f)
 	, mPrevLayoutWidth(0)
@@ -670,6 +675,9 @@ ATUIRenderer::ATUIRenderer()
 	, mHoverTipX(0)
 	, mHoverTipY(0)
 {
+	mpAudioMonitors[0] = nullptr;
+	mpAudioMonitors[1] = nullptr;
+
 	for(int i=0; i<15; ++i) {
 		mStatusCounter[i] = i+1;
 	}
@@ -713,10 +721,12 @@ ATUIRenderer::ATUIRenderer()
 	mpAudioStatusDisplay->SetAlphaFillColor(0x80000000);
 	mpAudioStatusDisplay->AutoSize();
 
-	mpAudioDisplay = new ATUIAudioDisplay;
-	mpAudioDisplay->SetVisible(false);
-	mpAudioDisplay->SetAlphaFillColor(0x80000000);
-	mpAudioDisplay->SetSmallFont(mpSmallMonoSysFont);
+	for(auto& disp : mpAudioDisplays) {
+		disp = new ATUIAudioDisplay;
+		disp->SetVisible(false);
+		disp->SetAlphaFillColor(0x80000000);
+		disp->SetSmallFont(mpSmallMonoSysFont);
+	}
 
 	mpHardDiskDeviceLabel = new ATUILabel;
 	mpHardDiskDeviceLabel->SetVisible(false);
@@ -926,7 +936,15 @@ void ATUIRenderer::SetRecordingPosition() {
 
 void ATUIRenderer::SetRecordingPosition(float time, sint64 size) {
 	int cpos = VDRoundToInt(time);
-	int csize = (int)((size * 10) >> 20);
+	uint32 csize = (uint32)((size * 10) >> 10);
+	bool usemb = false;
+
+	if (csize >= 10240) {
+		csize &= 0xFFFFFC00;
+		usemb = true;
+	} else {
+		csize -= csize % 10;
+	}
 
 	if (mRecordingPos == cpos && mRecordingSize == csize)
 		return;
@@ -939,7 +957,11 @@ void ATUIRenderer::SetRecordingPosition(float time, sint64 size) {
 	int hours = mins / 60;
 	mins %= 60;
 
-	mpRecordingLabel->SetTextF(L"R%02u:%02u:%02u (%.1fM)", hours, mins, secs, (float)csize / 10.0f);
+	if (usemb)
+		mpRecordingLabel->SetTextF(L"R%02u:%02u:%02u (%.1fM)", hours, mins, secs, (float)csize / 10240.0f);
+	else
+		mpRecordingLabel->SetTextF(L"R%02u:%02u:%02u (%uK)", hours, mins, secs, csize / 10);
+
 	mpRecordingLabel->AutoSize();
 	mpRecordingLabel->SetVisible(true);
 }
@@ -1000,20 +1022,21 @@ void ATUIRenderer::SetAudioStatus(ATUIAudioStatus *status) {
 	}
 }
 
-void ATUIRenderer::SetAudioMonitor(ATAudioMonitor *monitor) {
-	mpAudioMonitor = monitor;
+void ATUIRenderer::SetAudioMonitor(bool secondary, ATAudioMonitor *monitor) {
+	mpAudioMonitors[secondary] = monitor;
 
-	mpAudioDisplay->SetAudioMonitor(monitor);
-	mpAudioDisplay->AutoSize();
-	mpAudioDisplay->SetVisible(monitor != NULL);
+	ATUIAudioDisplay *disp = mpAudioDisplays[secondary];
+	disp->SetAudioMonitor(monitor);
+	disp->AutoSize();
+	disp->SetVisible(monitor != NULL);
 	InvalidateLayout();
 }
 
 void ATUIRenderer::SetSlightSID(ATSlightSIDEmulator *emu) {
 	mpSlightSID = emu;
 
-	mpAudioDisplay->SetSlightSID(emu);
-	mpAudioDisplay->AutoSize();
+	mpAudioDisplays[0]->SetSlightSID(emu);
+	mpAudioDisplays[0]->AutoSize();
 	InvalidateLayout();
 }
 
@@ -1077,7 +1100,8 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 		for(int i=0; i<8; ++i)
 			c->AddChild(mpWatchLabels[i]);
 
-		c->AddChild(mpAudioDisplay);
+		c->AddChild(mpAudioDisplays[0]);
+		c->AddChild(mpAudioDisplays[1]);
 		c->AddChild(mpAudioStatusDisplay);
 		c->AddChild(mpPausedLabel);
 		c->AddChild(mpHoverTip);
@@ -1114,8 +1138,12 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 		mpFpsLabel->SetFont(mpSysFont);
 		mpAudioStatusDisplay->SetFont(mpSysFont);
 		mpAudioStatusDisplay->AutoSize();
-		mpAudioDisplay->SetBigFont(mpSysMonoFont);
-		mpAudioDisplay->SetSmallFont(mpSmallMonoSysFont);
+
+		for(ATUIAudioDisplay *disp : mpAudioDisplays) {
+			disp->SetBigFont(mpSysMonoFont);
+			disp->SetSmallFont(mpSmallMonoSysFont);
+		}
+
 		mpHardDiskDeviceLabel->SetFont(mpSysFont);
 		mpRecordingLabel->SetFont(mpSysFont);
 		mpFlashWriteLabel->SetFont(mpSysFont);
@@ -1266,7 +1294,8 @@ void ATUIRenderer::Update() {
 	}
 
 	// update audio monitor
-	mpAudioDisplay->Update();
+	for(ATUIAudioDisplay *disp : mpAudioDisplays)
+		disp->Update();
 }
 
 void ATUIRenderer::TimerCallback() {
@@ -1294,7 +1323,12 @@ void ATUIRenderer::Relayout(int w, int h) {
 
 	mpFpsLabel->SetPosition(vdpoint32(w - 10 * mSysFontDigitWidth, 10));
 	mpStatusMessageLabel->SetPosition(vdpoint32(1, h - mSysFontDigitHeight * 2 - 4));
-	mpAudioDisplay->SetPosition(vdpoint32(8, h - mpAudioDisplay->GetArea().height() - mSysFontDigitHeight * 4));
+
+	const vdrect32 rdisp0 = mpAudioDisplays[0]->GetArea();
+	mpAudioDisplays[0]->SetPosition(vdpoint32(8, h - rdisp0.height() - mSysFontDigitHeight * 4));
+
+	const vdrect32 rdisp1 = mpAudioDisplays[1]->GetArea();
+	mpAudioDisplays[1]->SetPosition(vdpoint32(std::max(rdisp0.right, w - rdisp1.width()), h - rdisp1.height() - mSysFontDigitHeight * 4));
 
 	for(int i=0; i<8; ++i) {
 		ATUILabel& label = *mpWatchLabels[i];

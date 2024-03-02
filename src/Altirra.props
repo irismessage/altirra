@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <_ProjectFileVersion>10.0.40219.1</_ProjectFileVersion>
+  </PropertyGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Condition="'$(Platform)'=='Win32'" Project="VirtualDub-VC2005-IX86.props" />
+    <Import Condition="'$(Platform)'=='x64'" Project="VirtualDub-VC2005-AMD64.props" />
+    <Import Condition="'$(Configuration)'=='Debug' and '$(Platform)'!='x64'" Project="VirtualDub-VC2005-Debug.props" />
+    <Import Condition="'$(Configuration)'!='Debug' or '$(Platform)'=='x64'" Project="VirtualDub-VC2005-Release.props" />
+    <Import Project="VirtualDub-VC2005.props" />
+  </ImportGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>autogen;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary Condition="'$(Configuration)'=='Debug'">MultiThreadedDebug</RuntimeLibrary>
+      <RuntimeLibrary Condition="'$(Configuration)'!='Debug'">MultiThreaded</RuntimeLibrary>
+      <AdditionalOptions Condition="'$(Configuration)'!='Debug'">%(AdditionalOptions) /Zo</AdditionalOptions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <PropertyGroup Label="UserMacros">
+    <ATBuildToolPath Condition="'$(Configuration)'=='Debug'">$(SolutionDir)..\out\debug</ATBuildToolPath>
+    <ATBuildToolPath Condition="'$(Configuration)'!='Debug'">$(SolutionDir)..\out\release</ATBuildToolPath>
+    <ATLibPath Condition="'$(Configuration)'=='Debug'">$(SolutionDir)..\lib\Debug$(VDPlatformDirTag)</ATLibPath>
+    <ATLibPath Condition="'$(Configuration)'=='Profile'">$(SolutionDir)..\lib\Profile$(VDPlatformDirTag)</ATLibPath>
+    <ATLibPath Condition="'$(Configuration)'=='Release'">$(SolutionDir)..\lib\Release$(VDPlatformDirTag)</ATLibPath>
+    <ATObjPath Condition="'$(Configuration)'=='Debug'">$(SolutionDir)..\obj\Debug$(VDPlatformDirTag)\$(ProjectName)</ATObjPath>
+    <ATObjPath Condition="'$(Configuration)'=='Profile'">$(SolutionDir)..\obj\Profile$(VDPlatformDirTag)\$(ProjectName)</ATObjPath>
+    <ATObjPath Condition="'$(Configuration)'=='Release'">$(SolutionDir)..\obj\Release$(VDPlatformDirTag)\$(ProjectName)</ATObjPath>
+    <ATOutPath Condition="'$(Configuration)'=='Debug'">$(SolutionDir)..\out\Debug$(VDPlatformDirTag)</ATOutPath>
+    <ATOutPath Condition="'$(Configuration)'=='Profile'">$(SolutionDir)..\out\Profile$(VDPlatformDirTag)</ATOutPath>
+    <ATOutPath Condition="'$(Configuration)'=='Release'">$(SolutionDir)..\out\Release$(VDPlatformDirTag)</ATOutPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <BuildMacro Include="ATBuildToolPath">
+      <Value>$(ATBuildToolPath)</Value>
+    </BuildMacro>
+  </ItemGroup>
+  <PropertyGroup>
+    <IntDir>$(ATObjPath)\</IntDir>
+    <OutDir>$(ATLibPath)\</OutDir>
+  </PropertyGroup>
+</Project>

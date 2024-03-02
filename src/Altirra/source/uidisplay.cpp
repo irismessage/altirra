@@ -22,21 +22,24 @@
 #include <vd2/system/w32assist.h>
 #include <vd2/system/win32/touch.h>
 #include <vd2/VDDisplay/display.h>
+#include <at/atcore/logging.h>
+#include <at/atcore/profile.h>
+#include <at/atnativeui/messageloop.h>
+#include <at/atnativeui/uiframe.h>
 #include "console.h"
 #include "inputmanager.h"
 #include "oshelper.h"
 #include "simulator.h"
 #include "uidisplay.h"
 #include "uienhancedtext.h"
-#include "uiframe.h"
 #include "uirender.h"
 #include "uitypes.h"
 #include "uicaptionupdater.h"
-#include "uimanager.h"
+#include <at/atui/uimanager.h>
 #include "uimenu.h"
 #include "uiportmenus.h"
-#include "uimenulist.h"
-#include "uicontainer.h"
+#include <at/atui/uimenulist.h>
+#include <at/atui/uicontainer.h>
 #include "uiprofiler.h"
 #include "uitextedit.h"
 #include "uibutton.h"
@@ -115,12 +118,13 @@ extern ATDisplayStretchMode g_displayStretchMode;
 
 extern ATUIWindowCaptionUpdater g_winCaptionUpdater;
 
+ATLogChannel g_ATLCHostKeys(false, false, "HOSTKEYS", "Host keyboard activity");
+
 ATUIManager g_ATUIManager;
 
 void OnCommandEditPasteText();
 bool OnCommand(UINT id);
 
-bool ATUIProcessMessages(bool waitForMessage, int& returnCode);
 void ATUIFlushDisplay();
 
 ///////////////////////////////////////////////////////////////////////////
@@ -130,6 +134,27 @@ ATUIVideoDisplayWindow *g_pATVideoDisplayWindow;
 void ATUIOpenOnScreenKeyboard() {
 	if (g_pATVideoDisplayWindow)
 		g_pATVideoDisplayWindow->OpenOSK();
+}
+
+#ifndef MOUSEEVENTF_MASK
+	#define MOUSEEVENTF_MASK 0xFFFFFF00
+#endif
+
+#ifndef MOUSEEVENTF_FROMTOUCH
+	#define MOUSEEVENTF_FROMTOUCH 0xFF515700
+#endif
+
+namespace {
+	bool IsInjectedTouchMouseEvent() {
+		// No WM_TOUCH prior to Windows 7.
+		if (!VDIsAtLeast7W32())
+			return false;
+
+		// Recommended by MSDN. Seriously. Bit 7 is to distinguish pen events from
+		// touch events.
+		return (GetMessageExtraInfo() & (MOUSEEVENTF_MASK | 0x80)) == (MOUSEEVENTF_FROMTOUCH | 0x80);
+
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -153,7 +178,7 @@ struct ATUIStepDoModalWindow : public vdrefcount {
 	bool mbModalWindowActive;
 };
 
-class ATUINativeDisplay : public IATUINativeDisplay, public IATUIClipboard {
+class ATUINativeDisplay final : public IATUINativeDisplay, public IATUIClipboard {
 public:
 	ATUINativeDisplay()
 		: mhwnd(NULL)
@@ -169,7 +194,10 @@ public:
 	}
 
 	virtual void Invalidate() {
-		if (g_pDisplay && (!g_ATAutoFrameFlipping || mModalCount))
+		if (!g_pDisplay)
+			return;
+
+		if (mbIgnoreAutoFlipping || (!g_ATAutoFrameFlipping || mModalCount))
 			g_pDisplay->Invalidate();
 	}
 
@@ -352,6 +380,8 @@ public:
 		}
 	}
 
+	void SetIgnoreAutoFlipping(bool ignore) { mbIgnoreAutoFlipping = ignore; }
+
 private:
 	HWND mhwnd;
 	ATFrameWindow *mpFrame;
@@ -360,6 +390,7 @@ private:
 	bool mbMouseConstrained;
 	bool mbMouseMotionMode;
 	bool mbCursorImageChangesEnabled;
+	bool mbIgnoreAutoFlipping = false;
 	HCURSOR	mhcurTarget;
 	HCURSOR	mhcurTargetOff;
 } g_ATUINativeDisplay;
@@ -434,7 +465,7 @@ bool ATUIIsActiveModal() {
 	return g_ATUIManager.GetModalWindow() != NULL;
 }
 
-class ATDisplayPane : public ATUIPane, public IATDisplayPane {
+class ATDisplayPane final : public ATUIPane, public IATDisplayPane {
 public:
 	ATDisplayPane();
 	~ATDisplayPane();
@@ -448,6 +479,7 @@ public:
 	bool IsTextSelected() const { return g_pATVideoDisplayWindow->IsTextSelected(); }
 	void Copy();
 	void Paste();
+	void Paste(const char *s, size_t len);
 
 	void OnSize();
 	void UpdateFilterMode();
@@ -475,24 +507,37 @@ protected:
 	void OnOSKChange();
 	void ResizeDisplay();
 
-	HWND	mhwndDisplay;
-	HMENU	mhmenuContext;
-	IVDVideoDisplay *mpDisplay;
-	int		mLastTrackMouseX;
-	int		mLastTrackMouseY;
-	int		mMouseCursorLock;
-	int		mWidth;
-	int		mHeight;
+	HWND	mhwndDisplay = nullptr;
+	HMENU	mhmenuContext = nullptr;
+	IVDVideoDisplay *mpDisplay = nullptr;
+	int		mLastTrackMouseX = 0;
+	int		mLastTrackMouseY = 0;
+	int		mMouseCursorLock = 0;
+	int		mWidth = 0;
+	int		mHeight = 0;
 
-	vdpoint32	mGestureOrigin;
+	vdpoint32	mGestureOrigin = { 0, 0 };
 
-	vdrect32	mDisplayRect;
+	vdrect32	mDisplayRect = { 0, 0, 0, 0 };
 
-	bool	mbTextModeEnabled;
-	bool	mbHaveMouse;
-	bool	mbEatNextInjectedCaps;
-	bool	mbTurnOffCaps;
-	bool	mbAllowContextMenu;
+	bool	mbTextModeEnabled = false;
+	bool	mbHaveMouse = false;
+	bool	mbEatNextInjectedCaps = false;
+	bool	mbTurnOffCaps = false;
+	bool	mbAllowContextMenu = false;
+
+	enum {
+		kDblTapState_Initial,
+		kDblTapState_WaitDown1,
+		kDblTapState_WaitDown2,
+		kDblTapState_WaitUp2,
+		kDblTapState_Invalid
+	} mDblTapState = kDblTapState_Initial;
+
+	DWORD	mDblTapTime = 0;
+	LONG	mDblTapX = 0;
+	LONG	mDblTapY = 0;
+	LONG	mDblTapThreshold = 0;
 
 	vdautoptr<IATUIEnhancedTextEngine> mpEnhTextEngine;
 	vdrefptr<ATUIMenuList> mpMenuBar;
@@ -503,20 +548,7 @@ protected:
 
 ATDisplayPane::ATDisplayPane()
 	: ATUIPane(kATUIPaneId_Display, L"Display")
-	, mhwndDisplay(NULL)
 	, mhmenuContext(LoadMenu(NULL, MAKEINTRESOURCE(IDR_DISPLAY_CONTEXT_MENU)))
-	, mpDisplay(NULL)
-	, mLastTrackMouseX(0)
-	, mLastTrackMouseY(0)
-	, mMouseCursorLock(0)
-	, mWidth(0)
-	, mHeight(0)
-	, mDisplayRect(0,0,0,0)
-	, mbTextModeEnabled(false)
-	, mbHaveMouse(false)
-	, mbEatNextInjectedCaps(false)
-	, mbTurnOffCaps(false)
-	, mbAllowContextMenu(false)
 {
 	SetTouchMode(kATUITouchMode_Dynamic);
 
@@ -541,15 +573,23 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case ATWM_PREKEYDOWN:
 			if (mbEatNextInjectedCaps && LOWORD(wParam) == VK_CAPITAL) {
 				// drop injected CAPS LOCK keys
-				if (!(lParam & 0x00ff0000))
+				if (!(lParam & 0x00ff0000)) {
+					mbEatNextInjectedCaps = false;
 					return true;
+				}
 			}
 
-			if (g_ATUIManager.OnKeyDown(ConvertVirtKeyEvent(wParam, lParam))) {
-				if (LOWORD(wParam) == VK_CAPITAL)
-					mbTurnOffCaps = true;
+			{
+				bool result = g_ATUIManager.OnKeyDown(ConvertVirtKeyEvent(wParam, lParam));
 
-				return true;
+				g_ATLCHostKeys("Received host vkey down: VK=$%02X LP=%08X (current key mask: %016llX)%s\n", LOWORD(wParam), (unsigned)lParam, g_sim.GetPokey().GetRawKeyMask(), (HIWORD(lParam) & KF_REPEAT) != 0 ? " (repeat)" : "");
+
+				if (result) {
+					if (LOWORD(wParam) == VK_CAPITAL)
+						mbTurnOffCaps = true;
+
+					return true;
+				}
 			}
 			return false;
 
@@ -566,12 +606,32 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				keybd_event(VK_CAPITAL, 0, KEYEVENTF_KEYUP, 0);
 			}
 
-			return g_ATUIManager.OnKeyUp(ConvertVirtKeyEvent(wParam, lParam));
+
+			// Repost the key up message back to ourselves in case we need it to match against
+			// a WM_CHAR message. This is necessary since WM_CHAR is posted and in theory could
+			// arrive after the corresponding WM_KEYUP, although this has not been seen in practice.
+			PostMessage(mhwnd, ATWM_CHARUP, wParam, lParam);
+
+			{
+				bool result = g_ATUIManager.OnKeyUp(ConvertVirtKeyEvent(wParam, lParam));
+
+				g_ATLCHostKeys("Received host vkey up:   VK=$%02X LP=%08X (current key mask: %016llX)\n", LOWORD(wParam), (unsigned)lParam, g_sim.GetPokey().GetRawKeyMask());
+				return result;
+			}
 
 		case ATWM_SETFULLSCREEN:
 			if (mpMenuBar)
 				mpMenuBar->SetVisible(wParam != 0);
 
+			return 0;
+
+		case ATWM_ENDTRACKING:
+			if (g_pATVideoDisplayWindow)
+				g_pATVideoDisplayWindow->EndEnhTextSizeIndicator();
+			return 0;
+
+		case ATWM_FORCEKEYSUP:
+			g_ATUIManager.OnForceKeysUp();
 			return 0;
 
 		case WM_SIZE:
@@ -589,6 +649,15 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 					if (r)
 						r->Relayout(w, h);
+
+					if (g_pATVideoDisplayWindow) {
+						ATFrameWindow *frame = ATFrameWindow::GetFrameWindow(GetParent(mhwnd));
+						
+						if (frame && frame->IsActivelyMovingSizing()) {
+							frame->EnableEndTrackNotification();
+							g_pATVideoDisplayWindow->BeginEnhTextSizeIndicator();
+						}
+					}
 				}
 			}
 			break;
@@ -596,13 +665,28 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case WM_CHAR:
 			{
 				ATUICharEvent event;
-				event.mCh = wParam;
+				event.mCh = (uint32)wParam;
+				event.mScanCode = (uint32)((lParam >> 16) & 0xFF);
 				event.mbIsRepeat = (lParam & 0x40000000) != 0;
 
-				if (g_ATUIManager.OnChar(event))
-					return 0;
+				g_ATUIManager.OnChar(event);
+
+				g_ATLCHostKeys("Received host char:      CH=$%02X LP=%08X (current key mask: %016llX)%s\n", LOWORD(wParam), (unsigned)lParam, g_sim.GetPokey().GetRawKeyMask(), event.mbIsRepeat ? " (repeat)" : "");
 			}
 
+			return 0;
+
+		case ATWM_CHARUP:
+			{
+				ATUICharEvent event;
+				event.mCh = 0;
+				event.mScanCode = (uint32)((lParam >> 16) & 0xFF);
+				event.mbIsRepeat = false;
+
+				g_ATUIManager.OnCharUp(event);
+			}
+
+			g_ATLCHostKeys("Received host char up:   LP=%08X (current key mask: %016llX)\n", (unsigned)lParam, g_sim.GetPokey().GetRawKeyMask());
 			return 0;
 
 		case WM_PARENTNOTIFY:
@@ -616,6 +700,9 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 
 		case WM_LBUTTONUP:
+			if (IsInjectedTouchMouseEvent())
+				break;
+
 			g_ATUIManager.OnMouseUp((short)LOWORD(lParam), (short)HIWORD(lParam), kATUIVK_LButton);
 			break;
 
@@ -645,6 +732,11 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 		case WM_LBUTTONDOWN:
 		case WM_LBUTTONDBLCLK:
+			if (IsInjectedTouchMouseEvent())
+				break;
+
+			// fall through
+
 		case WM_MBUTTONDOWN:
 		case WM_MBUTTONDBLCLK:
 		case WM_RBUTTONDOWN:
@@ -788,29 +880,6 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case WM_ERASEBKGND:
 			return 0;
 
-		case WM_PAINT:
-			if (mbTextModeEnabled && mpEnhTextEngine) {
-				PAINTSTRUCT ps;
-				if (HDC hdc = BeginPaint(mhwnd, &ps)) {
-					mpEnhTextEngine->Paint(hdc);
-					EndPaint(mhwnd, &ps);
-				}
-				return 0;
-			}
-			break;
-
-		case WM_COMMAND:
-			switch(LOWORD(wParam)) {
-				case ID_DISPLAYCONTEXTMENU_COPY:
-					Copy();
-					return 0;
-
-				case ID_DISPLAYCONTEXTMENU_PASTE:
-					Paste();
-					return 0;
-			}
-			break;
-
 		case WM_COPY:
 			Copy();
 			return 0;
@@ -818,6 +887,11 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case WM_PASTE:
 			Paste();
 			return 0;
+
+		case WM_ENTERMENULOOP:
+			// We get this directly for a pop-up menu.
+			g_ATUIManager.OnForceKeysUp();
+			break;
 
 		case ATWM_GETAUTOSIZE:
 			{
@@ -841,6 +915,13 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					ATUITouchInput *dst = mTouchInputs;
 					uint32 numCookedInputs = 0;
 
+					SetHaveMouse();
+
+					::SetFocus(mhwnd);
+
+					if (!ATUIGetFullscreen())
+						ATUISetNativeDialogMode(true);
+
 					for(uint32 i=0; i<numInputs; ++i, ++src) {
 						if (src->dwFlags & TOUCHEVENTF_PALM)
 							continue;
@@ -856,11 +937,50 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 						dst->mbPrimary = (src->dwFlags & TOUCHEVENTF_PRIMARY) != 0;
 						dst->mbDown = (src->dwFlags & TOUCHEVENTF_DOWN) != 0;
 						dst->mbUp = (src->dwFlags & TOUCHEVENTF_UP) != 0;
+						dst->mbDoubleTap = false;
 
 						if (dst->mbPrimary) {
-							if (dst->mbDown)
+							bool dblTapValid = false;
+
+							if (mDblTapState != kDblTapState_Initial) {
+								// The regular double-click metrics are too small for touch.
+								if (abs(pt.x - mDblTapX) <= 32
+									&& abs(pt.y - mDblTapY) <= 32)
+								{
+									dblTapValid = true;
+								}
+							}
+
+							if (dst->mbDown) {
+								if (mDblTapState == kDblTapState_Initial) {
+									mDblTapState = kDblTapState_WaitDown1;
+									mDblTapX = pt.x;
+									mDblTapY = pt.y;
+									mDblTapTime = VDGetCurrentTick();
+								} else if (mDblTapState == kDblTapState_WaitDown2) {
+									if (dblTapValid && (VDGetCurrentTick() - mDblTapTime) <= GetDoubleClickTime()) {
+										dst->mbDoubleTap = true;
+										mDblTapState = kDblTapState_WaitUp2;
+									} else {
+										mDblTapX = pt.x;
+										mDblTapY = pt.y;
+										mDblTapTime = VDGetCurrentTick();
+									}
+								}
+
 								mGestureOrigin = vdpoint32(pt.x, pt.y);
-							else if (dst->mbUp) {
+							} else if (dst->mbUp) {
+								if (mDblTapState == kDblTapState_Invalid)
+									mDblTapState = kDblTapState_Initial;
+								else if (mDblTapState == kDblTapState_WaitDown1) {
+									if (dblTapValid)
+										mDblTapState = kDblTapState_WaitDown2;
+									else
+										mDblTapState = kDblTapState_Initial;
+								} else if (mDblTapState == kDblTapState_WaitUp2) {
+									mDblTapState = kDblTapState_Initial;
+								}
+
 								// A swipe up of at least 1/6th of the screen from the bottom quarter opens
 								// the OSK.
 								sint32 dy = pt.y - mGestureOrigin.y;
@@ -869,6 +989,9 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 									if (g_pATVideoDisplayWindow)
 										g_pATVideoDisplayWindow->OpenOSK();
 								}
+							} else {
+								if (mDblTapState != kDblTapState_Initial && !dblTapValid)
+									mDblTapState = kDblTapState_Invalid;
 							}
 						}
 
@@ -918,11 +1041,11 @@ bool ATDisplayPane::OnCreate() {
 		[](IVDVideoDisplay::ProfileEvent event) {
 			switch(event) {
 				case IVDVideoDisplay::kProfileEvent_BeginTick:
-					ATUIProfileBeginRegion(kATUIProfileRegion_DisplayTick);
+					ATProfileBeginRegion(kATProfileRegion_DisplayTick);
 					break;
 
 				case IVDVideoDisplay::kProfileEvent_EndTick:
-					ATUIProfileEndRegion();
+					ATProfileEndRegion(kATProfileRegion_DisplayTick);
 					break;
 			}
 		}
@@ -931,8 +1054,13 @@ bool ATDisplayPane::OnCreate() {
 	g_ATUINativeDisplay.SetDisplay(mhwnd, ATFrameWindow::GetFrameWindow(GetParent(mhwnd)));
 
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
-	gtia.SetVideoOutput(mpDisplay);
+
+	if (!mpEnhTextEngine)
+		gtia.SetVideoOutput(mpDisplay);
+
 	gtia.UpdateScreen(true, true);
+
+	g_ATUINativeDisplay.SetIgnoreAutoFlipping(mpEnhTextEngine != nullptr);
 
 	mpMenuBar = new ATUIMenuList;
 	mpMenuBar->SetVisible(false);
@@ -1098,6 +1226,11 @@ void ATDisplayPane::Paste() {
 	OnCommandEditPasteText();
 }
 
+void ATDisplayPane::Paste(const char *s, size_t len) {
+	if (mpEnhTextEngine)
+		mpEnhTextEngine->Paste(s, len);
+}
+
 void ATDisplayPane::OnSize() {
 	RECT r;
 	GetClientRect(mhwnd, &r);
@@ -1114,13 +1247,6 @@ void ATDisplayPane::OnSize() {
 			ResizeDisplay();
 
 		SetWindowPos(mhwndDisplay, NULL, 0, 0, r.right, r.bottom, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
-	}
-
-	if (mbTextModeEnabled) {
-		if (mpEnhTextEngine)
-			mpEnhTextEngine->OnSize(r.right, r.bottom);
-
-		InvalidateRect(mhwnd, NULL, TRUE);
 	}
 }
 
@@ -1189,6 +1315,8 @@ void ATDisplayPane::WarpCapturedMouse() {
 }
 
 void ATDisplayPane::UpdateTextDisplay(bool enabled) {
+	g_ATUINativeDisplay.SetIgnoreAutoFlipping(enabled);
+
 	if (!enabled) {
 		if (mbTextModeEnabled) {
 			mbTextModeEnabled = false;
@@ -1197,9 +1325,11 @@ void ATDisplayPane::UpdateTextDisplay(bool enabled) {
 				g_pATVideoDisplayWindow->SetEnhancedTextEngine(NULL);
 				mpEnhTextEngine->Shutdown();
 				mpEnhTextEngine = NULL;
-			}
 
-			::ShowWindow(mhwndDisplay, SW_SHOWNOACTIVATE);
+				g_sim.GetGTIA().SetVideoOutput(mpDisplay);
+				if (mpDisplay)
+					mpDisplay->SetSourceSolidColor(0);
+			}
 		}
 
 		return;
@@ -1211,15 +1341,15 @@ void ATDisplayPane::UpdateTextDisplay(bool enabled) {
 
 		if (!mpEnhTextEngine) {
 			mpEnhTextEngine = ATUICreateEnhancedTextEngine();
-			mpEnhTextEngine->Init(mhwnd, &g_sim);
-			g_pATVideoDisplayWindow->SetEnhancedTextEngine(mpEnhTextEngine);
+			mpEnhTextEngine->Init(g_pATVideoDisplayWindow, &g_sim);
 		}
 
+		g_sim.GetGTIA().SetVideoOutput(NULL);
+
+		// This will also register the enhanced text engine with the video window.
 		UpdateTextModeFont();
 
 		forceInvalidate = true;
-
-		::ShowWindow(mhwndDisplay, SW_HIDE);
 	}
 
 	if (mpEnhTextEngine)
@@ -1227,8 +1357,13 @@ void ATDisplayPane::UpdateTextDisplay(bool enabled) {
 }
 
 void ATDisplayPane::UpdateTextModeFont() {
-	if (mpEnhTextEngine)
+	if (mpEnhTextEngine) {
 		mpEnhTextEngine->SetFont(&g_enhancedTextFont);
+
+		// Must be done after we have changed the font to reinitialize char dimensions based on char size.
+		g_pATVideoDisplayWindow->SetEnhancedTextEngine(nullptr);
+		g_pATVideoDisplayWindow->SetEnhancedTextEngine(mpEnhTextEngine);
+	}
 }
 
 void ATDisplayPane::OnMenuActivated(ATUIMenuList *) {
@@ -1256,7 +1391,17 @@ void ATDisplayPane::OnDisplayContextMenu(const vdpoint32& pt) {
 		EnableMenuItem(hmenuPopup, ID_DISPLAYCONTEXTMENU_COPY, IsTextSelected() ? MF_ENABLED : MF_DISABLED|MF_GRAYED);
 		EnableMenuItem(hmenuPopup, ID_DISPLAYCONTEXTMENU_PASTE, IsClipboardFormatAvailable(CF_TEXT) ? MF_ENABLED : MF_DISABLED|MF_GRAYED);
 
-		TrackPopupMenu(hmenuPopup, TPM_LEFTALIGN | TPM_TOPALIGN, pt2.x, pt2.y, 0, mhwnd, NULL);
+		UINT cmd = (UINT)TrackPopupMenu(hmenuPopup, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RETURNCMD, pt2.x, pt2.y, 0, GetAncestor(mhwnd, GA_ROOTOWNER), NULL);
+		switch(cmd) {
+			case ID_DISPLAYCONTEXTMENU_COPY:
+				Copy();
+				break;
+
+			case ID_DISPLAYCONTEXTMENU_PASTE:
+				Paste();
+				break;
+		}
+
 		--mMouseCursorLock;
 	}
 }

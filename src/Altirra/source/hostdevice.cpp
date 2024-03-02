@@ -29,7 +29,6 @@
 #include "oshelper.h"
 #include "cio.h"
 #include "uirender.h"
-#include "devicemanager.h"
 
 using namespace ATCIOSymbols;
 
@@ -505,6 +504,14 @@ protected:
 	uint32		mFilenameEnd;
 };
 
+void ATCreateDeviceHostFS(const ATPropertySet& pset, IATDevice **dev) {
+	ATHostDeviceEmulator *p = new ATHostDeviceEmulator;
+	p->AddRef();
+	*dev = p;
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefHostDevice = { "hostfs", "hostfs", L"Host device (H:)", ATCreateDeviceHostFS };
+
 ATHostDeviceEmulator::ATHostDeviceEmulator()
 	: mPathIndex(0)
 	, mbPathTranslate(false)
@@ -564,8 +571,7 @@ void ATHostDeviceEmulator::SetBasePath(int index, const wchar_t *basePath) {
 }
 
 void ATHostDeviceEmulator::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "hostfs";
-	info.mName = L"Host device (H:)";
+	info.mpDef = &g_ATDeviceDefHostDevice;
 }
 
 void ATHostDeviceEmulator::GetSettings(ATPropertySet& settings) {
@@ -1316,10 +1322,8 @@ void ATHostDeviceEmulator::InitIndicators(IATUIRenderer *r) {
 }
 
 uint8 ATHostDeviceEmulator::ReadFilename(uint16 bufadr, bool allowDir, bool allowWild) {
-	uint8 fn[128];
-	uint8 fnerr = mpCIOMgr->ReadFilename(fn, vdcountof(fn), bufadr);
-	if (fnerr)
-		return fnerr;
+	uint8 fn[256];
+	mpCIOMgr->ReadFilename(fn, vdcountof(fn), bufadr);
 
 	return ReadFilename(fn, allowDir, allowWild);
 }
@@ -1454,16 +1458,4 @@ bool ATHostDeviceEmulator::GetNextMatch(VDDirectoryIterator& it, bool allowDirs,
 			return true;
 		}
 	}
-}
-
-///////////////////////////////////////////////////////////////////////////
-
-void ATCreateDeviceHostFS(const ATPropertySet& pset, IATDevice **dev) {
-	ATHostDeviceEmulator *p = new ATHostDeviceEmulator;
-	p->AddRef();
-	*dev = p;
-}
-
-void ATRegisterDeviceHostFS(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("hostfs", ATCreateDeviceHostFS);
 }

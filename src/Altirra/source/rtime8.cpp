@@ -35,7 +35,6 @@
 #include <time.h>
 #include "rtime8.h"
 #include "memorymanager.h"
-#include "devicemanager.h"
 
 namespace {
 	uint8 ToBCD(uint8 v) {
@@ -142,6 +141,14 @@ void ATRTime8Emulator::WriteControl(uint8 addr, uint8 value) {
 
 ///////////////////////////////////////////////////////////////////////////
 
+void ATCreateDeviceRTime8(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceRTime8> p(new ATDeviceRTime8);
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefRTime8 = { "rtime8", nullptr, L"R-Time 8", ATCreateDeviceRTime8 };
+
 ATDeviceRTime8::ATDeviceRTime8()
 	: mpMemMan(nullptr)
 	, mpMemLayerRT8(nullptr)
@@ -159,9 +166,7 @@ void *ATDeviceRTime8::AsInterface(uint32 id) {
 }
 
 void ATDeviceRTime8::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "rtime8";
-	info.mName = L"R-Time 8";
-	info.mConfigTag = "rtime8";
+	info.mpDef = &g_ATDeviceDefRTime8;
 }
 
 void ATDeviceRTime8::Shutdown() {
@@ -217,14 +222,4 @@ bool ATDeviceRTime8::WriteByte(void *thisptr0, uint32 addr, uint8 value) {
 	}
 
 	return false;
-}
-
-void ATCreateDeviceRTime8(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDeviceRTime8> p(new ATDeviceRTime8);
-
-	*dev = p.release();
-}
-
-void ATRegisterDeviceRTime8(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("rtime8", ATCreateDeviceRTime8);
 }

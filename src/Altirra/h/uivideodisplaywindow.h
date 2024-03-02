@@ -18,11 +18,13 @@
 #ifndef f_AT_UIVIDEODISPLAY_H
 #define f_AT_UIVIDEODISPLAY_H
 
-#include "uiwidget.h"
-#include "uicontainer.h"
+#include <at/atcore/devicemanager.h>
+#include <at/atui/uiwidget.h>
+#include <at/atui/uicontainer.h>
 #include "callback.h"
 #include "simeventmanager.h"
-#include "devicemanager.h"
+#include "uienhancedtext.h"
+#include "uikeyboard.h"
 
 class IATUIEnhancedTextEngine;
 class ATUILabel;
@@ -32,7 +34,7 @@ class ATXEP80Emulator;
 class ATSimulatorEventManager;
 class IATDeviceVideoOutput;
 
-class ATUIVideoDisplayWindow : public ATUIContainer, public IATSimulatorCallback, public IATDeviceChangeCallback {
+class ATUIVideoDisplayWindow final : public ATUIContainer, public IATSimulatorCallback, public IATDeviceChangeCallback, public IATUIEnhancedTextOutput {
 public:
 	enum {
 		kActionOpenOSK = kActionCustom,
@@ -58,6 +60,9 @@ public:
 	void OpenSidePanel();
 	void CloseSidePanel();
 
+	void BeginEnhTextSizeIndicator();
+	void EndEnhTextSizeIndicator();
+
 	bool IsTextSelected() const { return !mDragPreviewSpans.empty(); }
 
 	vdrect32 GetOSKSafeArea() const;
@@ -68,11 +73,14 @@ public:
 	void AddXorRect(int x1, int y1, int x2, int y2);
 
 	void SetXEP(IATDeviceVideoOutput *xep);
-	void SetEnhancedTextEngine(IATUIEnhancedTextEngine *p) { mpEnhTextEngine = p; }
+	void SetEnhancedTextEngine(IATUIEnhancedTextEngine *p);
 
 	void SetOnAllowContextMenu(const vdfunction<void()>& fn) { mpOnAllowContextMenu = fn; }
 	void SetOnDisplayContextMenu(const vdfunction<void(const vdpoint32&)>& fn) { mpOnDisplayContextMenu = fn; }
 	void SetOnOSKChange(const vdfunction<void()>& fn) { mpOnOSKChange = fn; }
+
+public:
+	void InvalidateTextOutput() override;
 
 public:
 	virtual void OnSimulatorEvent(ATSimulatorEvent ev);
@@ -95,6 +103,9 @@ protected:
 	virtual bool OnKeyDown(const ATUIKeyEvent& event);
 	virtual bool OnKeyUp(const ATUIKeyEvent& event);
 	virtual bool OnChar(const ATUICharEvent& event);
+	virtual bool OnCharUp(const ATUICharEvent& event);
+
+	virtual void OnForceKeysUp();
 
 	virtual void OnActionStart(uint32 id);
 	virtual void OnActionStop(uint32 id);
@@ -111,19 +122,24 @@ protected:
 
 	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
 
+public:
+	void UpdateAltDisplay();
+
 protected:
 	bool ProcessKeyDown(const ATUIKeyEvent& event, bool enableKeyInput);
 	bool ProcessKeyUp(const ATUIKeyEvent& event, bool enableKeyInput);
-	void ProcessVirtKey(int vkey, uint8 keycode, bool repeat);
+	void ProcessVirtKey(uint32 vkey, uint32 scancode, uint32 keycode, bool repeat);
+	void ProcessSpecialKey(uint32 scanCode, bool state);
+	void UpdateCtrlShiftState();
 
 	uint32 ComputeCursorImage(const vdpoint32& pt) const;
 	void UpdateMousePosition(int x, int y);
-	const vdrect32 GetXEP80Area() const;
+	const vdrect32 GetAltDisplayArea() const;
 	bool MapPixelToBeamPosition(int x, int y, float& hcyc, float& vcyc, bool clamp) const;
 	bool MapPixelToBeamPosition(int x, int y, int& xc, int& yc, bool clamp) const;
 	void MapBeamPositionToPixel(int xc, int yc, int& x, int& y) const;
 	void UpdateDragPreview(int x, int y);
-	void UpdateDragPreviewXEP80(int x, int y);
+	void UpdateDragPreviewAlt(int x, int y);
 	void UpdateDragPreviewAntic(int x, int y);
 	void UpdateDragPreviewRects();
 	void ClearDragPreview();
@@ -132,20 +148,21 @@ protected:
 	void ClearCoordinateIndicator();
 	void SetCoordinateIndicator(int x, int y);
 
-	uint32 mLastVkeyPressed;
-	uint32 mLastVkeySent;
+	bool mbShiftDepressed = false;
 
-	vdrect32 mDisplayRect;
+	vdrect32 mDisplayRect = { 0, 0, 0, 0 };
 
-	bool	mbDragActive;
-	int		mDragAnchorX;
-	int		mDragAnchorY;
+	bool	mbDragActive = false;
+	bool	mbDragInitial = false;
+	uint32	mDragStartTime = 0;
+	int		mDragAnchorX = 0;
+	int		mDragAnchorY = 0;
 
-	bool	mbMouseHidden;
-	int		mMouseHideX;
-	int		mMouseHideY;
+	bool	mbMouseHidden = false;
+	int		mMouseHideX = 0;
+	int		mMouseHideY = 0;
 
-	bool	mbOpenSidePanelDeferred;
+	bool	mbOpenSidePanelDeferred = false;
 
 	struct XorRect {
 		int mX1;
@@ -157,10 +174,11 @@ protected:
 	typedef vdfastvector<XorRect> XorRects;
 	XorRects mXorRects;
 
-	bool	mbCoordIndicatorActive;
-	bool	mbCoordIndicatorEnabled;
-	vdrect32	mHoverTipArea;
-	bool		mbHoverTipActive;
+	bool	mbShowEnhSizeIndicator = false;
+	bool	mbCoordIndicatorActive = false;
+	bool	mbCoordIndicatorEnabled = false;
+	vdrect32	mHoverTipArea = { 0, 0, 0, 0 };
+	bool		mbHoverTipActive = false;
 
 	struct TextSpan {
 		int mX;
@@ -174,23 +192,37 @@ protected:
 	typedef vdfastvector<TextSpan> TextSpans;
 	TextSpans mDragPreviewSpans;
 
-	IATUIEnhancedTextEngine *mpEnhTextEngine;
-	ATUIOnScreenKeyboard *mpOSK;
-	ATUISettingsWindow *mpSidePanel;
+	IATUIEnhancedTextEngine *mpEnhTextEngine = nullptr;
+	ATUIOnScreenKeyboard *mpOSK = nullptr;
+	ATUIContainer *mpOSKPanel = nullptr;
+	ATUISettingsWindow *mpSidePanel = nullptr;
 
-	ATSimulatorEventManager *mpSEM;
-	ATDeviceManager *mpDevMgr;
-	IATDeviceVideoOutput *mpXEP;
-	VDDisplayImageView mXEPImageView;
-	uint32 mXEPChangeCount;
-	uint32 mXEPLayoutChangeCount;
-	uint32 mXEPDataReceivedCount;
+	ATSimulatorEventManager *mpSEM = nullptr;
+	ATDeviceManager *mpDevMgr = nullptr;
+	IATDeviceVideoOutput *mpXEP = nullptr;
+	uint32 mXEPDataReceivedCount = 0;
 
-	ATUILabel *mpUILabelBadSignal;
+	IATDeviceVideoOutput *mpAltVideoOutput = nullptr;
+	VDDisplayImageView mAltVOImageView;
+	uint32 mAltVOChangeCount = 0;
+	uint32 mAltVOLayoutChangeCount = 0;
+
+	ATUILabel *mpUILabelBadSignal = nullptr;
+	ATUILabel *mpUILabelEnhTextSize = nullptr;
 
 	vdfunction<void()> mpOnAllowContextMenu;
 	vdfunction<void(const vdpoint32&)> mpOnDisplayContextMenu;
 	vdfunction<void()> mpOnOSKChange;
+
+	struct ActiveKey {
+		uint32 mVkey;
+		uint32 mNativeScanCode;
+		uint8 mScanCode;
+	};
+
+	vdfastvector<ActiveKey> mActiveKeys;
+	uint32 mActiveSpecialVKeys[kATUIKeyScanCodeLast + 1 - kATUIKeyScanCodeFirst] = {};
+	uint32 mActiveSpecialScanCodes[kATUIKeyScanCodeLast + 1 - kATUIKeyScanCodeFirst] = {};
 };
 
 #endif

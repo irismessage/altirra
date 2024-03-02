@@ -108,6 +108,7 @@ size_t ATAudioWriterFilter::Process(const float *src, size_t n) {
 ATAudioWriter::ATAudioWriter(const wchar_t *filename, bool rawMode, bool stereo, bool pal, IATUIRenderer *r)
 	: mbErrorState(false)
 	, mbRawMode(rawMode)
+	, mbStereo(stereo)
 	, mFile(filename, nsVDFile::kWrite | nsVDFile::kDenyRead | nsVDFile::kCreateAlways | nsVDFile::kSequential)
 	, mpUIRenderer(r)
 	, mTotalInputSamples(0)
@@ -189,12 +190,18 @@ void ATAudioWriter::WriteRawAudio(const float *left, const float *right, uint32 
 	if (mbErrorState)
 		return;
 
+	// If we got mono, and were expecting stereo, make "stereo."
+	if (mbStereo && !right)
+		right = left;
+
+	// If we got stereo, and were expecting mono... uh oh. We need to mix and retry.
+	if (!mbStereo && right)
+		return WriteRawAudioMix(left, right, count);
+
 	try {
 		mTotalInputSamples += count;
 
 		if (!mbRawMode) {
-			sint16 buf[8192];
-
 			while(count) {
 				size_t actual = mLeftFilter.Process(left, count);
 				left += actual;
@@ -214,12 +221,7 @@ void ATAudioWriter::WriteRawAudio(const float *left, const float *right, uint32 
 					if (right) {
 						const sint16 *rightout = mRightFilter.Extract();
 
-						for(size_t i=0; i<outlevel; ++i) {
-							buf[i*2+0] = leftout[i];
-							buf[i*2+1] = rightout[i];
-						}
-
-						mFile.writeData(buf, sizeof(sint16)*outlevel*2);
+						WriteInterleaved(leftout, rightout, outlevel);
 					} else {
 						mFile.writeData(leftout, sizeof(sint16)*outlevel);
 					}
@@ -241,8 +243,43 @@ void ATAudioWriter::WriteRawAudio(const float *left, const float *right, uint32 
 	}
 }
 
+void ATAudioWriter::WriteRawAudioMix(const float *left, const float *right, uint32 count) {
+	float mixbuf[512];
+
+	while(count) {
+		uint32 tc = std::min<uint32>(count, vdcountof(mixbuf));
+
+		for(uint32 i=0; i<tc; ++i)
+			mixbuf[i] = left[i] + right[i];
+
+		WriteRawAudio(mixbuf, nullptr, tc, 0);
+
+		count -= tc;
+		left += tc;
+		right += tc;
+	}
+}
+
 void ATAudioWriter::WriteInterleaved(const float *left, const float *right, uint32 count) {
 	float buf[512][2];
+
+	while(count) {
+		uint32 tc = count > 512 ? 512 : count;
+
+		for(uint32 i=0; i<tc; ++i) {
+			buf[i][0] = left[i];
+			buf[i][1] = right[i];
+		}
+
+		mFile.writeData(buf, tc*sizeof(buf[0]));
+		left += tc;
+		right += tc;
+		count -= tc;
+	}
+}
+
+void ATAudioWriter::WriteInterleaved(const sint16 *left, const sint16 *right, uint32 count) {
+	sint16 buf[512][2];
 
 	while(count) {
 		uint32 tc = count > 512 ? 512 : count;

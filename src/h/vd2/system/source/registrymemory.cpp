@@ -65,8 +65,16 @@ VDRegistryProviderMemory::Value::Value()
 
 void VDRegistryProviderMemory::Value::SetInt(sint32 v) {
 	if (mType != kTypeInt) {
-		mString.swap(VDStringW());
-		mRawData.swap(vdfastvector<char>());
+		{
+			VDStringW tempstr;
+			mString.swap(tempstr);
+		}
+
+		{
+			vdfastvector<char> tempvec;
+			mRawData.swap(tempvec);
+		}
+
 		mType = kTypeInt;
 	}
 
@@ -75,7 +83,11 @@ void VDRegistryProviderMemory::Value::SetInt(sint32 v) {
 
 void VDRegistryProviderMemory::Value::SetString(const wchar_t *str) {
 	if (mType != kTypeString) {
-		mRawData.swap(vdfastvector<char>());
+		{
+			vdfastvector<char> tempvec;
+			mRawData.swap(tempvec);
+		}
+
 		mType = kTypeString;
 	}
 
@@ -84,7 +96,11 @@ void VDRegistryProviderMemory::Value::SetString(const wchar_t *str) {
 
 void VDRegistryProviderMemory::Value::SetBinary(const void *p, size_t len) {
 	if (mType != kTypeBinary) {
-		mString.swap(VDStringW());
+		{
+			VDStringW tempstr;
+			mString.swap(tempstr);
+		}
+
 		mType = kTypeBinary;
 	}
 

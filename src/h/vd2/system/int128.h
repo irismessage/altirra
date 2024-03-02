@@ -61,7 +61,7 @@ public:
 		sint64 q[2];
 	};
 
-	vdint128() {}
+	vdint128() = default;
 
 	vdint128(sint64 x) {
 		q[0] = x;
@@ -214,7 +214,7 @@ public:
 		uint64 q[2];
 	};
 
-	vduint128() {}
+	vduint128() = default;
 
 	vduint128(sint64 x) {
 		q[0] = (sint64)x;
@@ -245,6 +245,10 @@ public:
 
 	uint64 getHi() const { return q[1]; }
 	uint64 getLo() const { return q[0]; }
+
+	operator uint32() const {
+		return d[0];
+	}
 
 	operator sint64() const {
 		return (sint64)q[0];
@@ -301,6 +305,8 @@ public:
 	}
 
 	const vduint128 operator*(const vduint128& x) const;
+	const vduint128 operator/(uint32 x) const;
+	const vduint128 operator/(const vduint128& x) const;
 
 	const vduint128 operator-() const {
 		vduint128 t(0U);

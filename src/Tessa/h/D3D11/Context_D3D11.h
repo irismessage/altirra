@@ -11,6 +11,7 @@ struct ID3D11PixelShader;
 struct ID3D11VertexShader;
 struct ID3D11InputLayout;
 struct IDXGISwapChain;
+struct IDXGISwapChain1;
 struct IDXGIAdapter1;
 
 class VDTContextD3D11;
@@ -75,7 +76,7 @@ public:
 	void *AsInterface(uint32 iid) { return NULL; }
 
 	bool Init(VDTContextD3D11 *parent, uint32 width, uint32 height, VDTFormat format, VDTUsage usage);
-	bool Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, uint32 mipLevel, bool rt);
+	bool Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, uint32 mipLevel, bool rt, bool onlyMip);
 	void Shutdown();
 
 	bool Restore();
@@ -93,6 +94,7 @@ protected:
 	ID3D11Texture2D *mpTextureSys;
 	ID3D11RenderTargetView *mpRTView;
 	uint32 mMipLevel;
+	bool mbOnlyMip;
 	VDTSurfaceDesc mDesc;
 };
 
@@ -335,6 +337,7 @@ protected:
 	void ThreadRun();
 
 	IDXGISwapChain *mpSwapChain;
+	IDXGISwapChain1 *mpSwapChain1;
 
 	VDTTexture2DD3D11 *mpTexture;
 
@@ -349,6 +352,7 @@ protected:
 	bool	mbVSyncExit;
 	uint32	mAdapterLuidLo;
 	uint32	mAdapterLuidHi;
+	HANDLE	mWaitHandle;
 };
 
 ///////////////////////////////////////////////////////////////////////////////

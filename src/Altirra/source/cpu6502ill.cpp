@@ -380,7 +380,7 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			*mpDstState++ = kStateReadImm;
 			break;
 
-		case 0x8B:	// XAA #imm
+		case 0x8B:	// ANE #imm
 			*mpDstState++ = kStateReadImm;
 			*mpDstState++ = kStateXaa;
 			break;
@@ -409,7 +409,7 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			*mpDstState++ = kStateWrite;
 			break;
 
-		case 0x9B:	// XAS abs,Y
+		case 0x9B:	// SHS abs,Y
 			*mpDstState++ = kStateReadAddrL;		// 2
 			*mpDstState++ = kStateReadAddrHY;		// 3
 			*mpDstState++ = kStateXas;
@@ -452,7 +452,7 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			*mpDstState++ = kStateDtoA;
 			break;
 
-		case 0xAB:	// ATX #imm
+		case 0xAB:	// LXA #imm
 			*mpDstState++ = kStateReadImm;
 			*mpDstState++ = kStateAnd;
 			*mpDstState++ = kStateDtoA;

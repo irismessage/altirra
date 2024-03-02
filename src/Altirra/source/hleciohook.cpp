@@ -249,7 +249,7 @@ void ATHLECIOHook::SetBurstTransfersEnabled(bool enabled) {
 }
 
 bool ATHLECIOHook::HasCIODevice(char c) const {
-	return mCIODeviceMap[c] != nullptr;
+	return mCIODeviceMap[(unsigned char)c] != nullptr;
 }
 
 bool ATHLECIOHook::GetCIOPatchEnabled(char c) const {
@@ -332,7 +332,7 @@ void ATHLECIOHook::ReinitHooks(uint8 hookPage) {
 				continue;
 
 			hookmgr.SetHook(mpDeviceRoutineHooks[i+18], kATCPUHookMode_KernelROMOnly, mPrinterHookAddresses[i], 0,
-				[=,this](uint16 pc) {
+				[i,this](uint16 pc) {
 					return HandleGenericDevice(pc, i * 2, 'P');
 				}
 			);
@@ -646,9 +646,6 @@ uint8 ATHLECIOHook::HandleGenericDevice(uint16 pc, int function, uint8 deviceNam
 		}
 
 		// dispatch function
-		uint8 c = 0;
-		uint32 actual = 0;
-
 		switch(function) {
 			case 2:		// close
 				result = dev->OnCIOClose(channel, deviceNo);
@@ -792,7 +789,6 @@ uint8 ATHLECIOHook::HandleGenericDevice(uint16 pc, int function, uint8 deviceNam
 				mActiveDeviceNo = deviceNo;
 
 				mpContinuationFn = [this]() -> sint32 {
-					ExtendedIOCB& xiocb = mExtIOCBs[mActiveChannel];
 					auto *mem = mpCPU->GetMemory();
 					sint32 result = mpActiveDevice->OnCIOGetStatus(mActiveChannel, mActiveDeviceNo, mTransferBuffer);
 
@@ -806,14 +802,13 @@ uint8 ATHLECIOHook::HandleGenericDevice(uint16 pc, int function, uint8 deviceNam
 				break;
 
 			case 10:	// special
-				// only AUX1-3 are copied to ZIOCB; we must get 4-6 from the originating
+				// only AUX1-2 are copied to ZIOCB; we must get 3-6 from the originating
 				// IOCB
 				mActiveCommandAUX[0] = kdb.ICAX1Z;
 				mActiveCommandAUX[1] = kdb.ICAX2Z;
-				mActiveCommandAUX[2] = kdb.ICAX3Z;
 
-				for(int i=0; i<3; ++i)
-					mActiveCommandAUX[i+3] = mem->ReadByte(ATKernelSymbols::ICAX1 + i + 3 + (channel << 4));
+				for(int i=0; i<4; ++i)
+					mActiveCommandAUX[i+2] = mem->ReadByte(ATKernelSymbols::ICAX1 + i + 2 + (channel << 4));
 
 				mpActiveDevice = dev;
 				mActiveChannel = channel;
@@ -823,7 +818,6 @@ uint8 ATHLECIOHook::HandleGenericDevice(uint16 pc, int function, uint8 deviceNam
 				mActiveBufferLength = kdb.ICBLZ;
 
 				mpContinuationFn = [this]() -> sint32 {
-					ExtendedIOCB& xiocb = mExtIOCBs[mActiveChannel];
 					sint32 result = mpActiveDevice->OnCIOSpecial(mActiveChannel, mActiveDeviceNo, mActiveCommand, mActiveBufferAddr, mActiveBufferLength, mActiveCommandAUX);
 
 					if (result >= 0) {
@@ -833,10 +827,9 @@ uint8 ATHLECIOHook::HandleGenericDevice(uint16 pc, int function, uint8 deviceNam
 						ATKernelDatabase kdb(mem);
 						kdb.ICAX1Z = mActiveCommandAUX[0];
 						kdb.ICAX2Z = mActiveCommandAUX[1];
-						kdb.ICAX3Z = mActiveCommandAUX[2];
 
-						for(int i=0; i<3; ++i)
-							mem->WriteByte(ATKernelSymbols::ICAX1 + i + 3 + (mActiveChannel << 4), mActiveCommandAUX[i+3]);
+						for(int i=0; i<4; ++i)
+							mem->WriteByte(ATKernelSymbols::ICAX1 + i + 2 + (mActiveChannel << 4), mActiveCommandAUX[i+2]);
 					}
 
 					return result;
@@ -1215,8 +1208,6 @@ bool ATHLECIOHook::IsValidOSCIORoutine(const uint8 *lowerROM, const uint8 *upper
 }
 
 void ATHLECIOHook::RebuildCIODeviceList() {
-	uint32 numDevices = 0;
-
 	mNewRegisteredDevices.clear();
 	std::fill(std::begin(mCIODeviceMapNew), std::end(mCIODeviceMapNew), nullptr);
 
@@ -1339,15 +1330,14 @@ void ATHLECIOHook::RegisterCIODevices() {
 	}
 
 	// compact HATABS
-	uint32 tail = 36;
-	bool pass2 = false;
+	uint32 tail = 33;
 
 	for(uint32 head = 0; head < tail; head += 3) {
 		if (hatabs[head])
 			continue;
 
 		// we have a hole -- find last filled entry
-		while(tail > head && !hatabs[tail - 3])
+		while(tail > head && !hatabs[tail])
 			tail -= 3;
 
 		if (tail == head)

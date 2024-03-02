@@ -9,10 +9,14 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{CDE4065A-7B15-429C-80C3-BF7D77942155}</ProjectGuid>
     <RootNamespace>atbasic</RootNamespace>
-    <SccProjectName>SAK</SccProjectName>
-    <SccAuxPath>SAK</SccAuxPath>
-    <SccLocalPath>SAK</SccLocalPath>
-    <SccProvider>SAK</SccProvider>
+    <SccProjectName>
+    </SccProjectName>
+    <SccAuxPath>
+    </SccAuxPath>
+    <SccLocalPath>
+    </SccLocalPath>
+    <SccProvider>
+    </SccProvider>
     <Keyword>MakeFileProj</Keyword>
     <PlatformToolset>v120</PlatformToolset>
   </PropertyGroup>

@@ -82,7 +82,6 @@ failmsg:
 .endif
 
 loaddone:
-	mva		#1 boot?
 	jsr		BootRunLoader
 	bcs		failmsg
 	
@@ -91,7 +90,12 @@ loaddone:
 	;happen here -- it happens AFTER cartridges have had a chance to run.
 	;This is necessary for BASIC to gain control before DOS goes to load
 	;DUP.SYS.
-	jmp		(dosini)
+	jsr		InitDiskBoot
+
+	;Must not occur until after init routine is called -- SpartaDOS 3.2 does
+	;an INC on this flag and never exits.
+	mva		#1 boot?
+	rts
 .endp
 
 
@@ -126,14 +130,14 @@ block_loop:
 	dec		dbsect
 	bne		block_loop
 
-	;set cassette boot flag
-	mva		#2 boot?
-
 	;run loader
 	jsr		BootRunLoader
 
 	;run cassette init routine
-	jsr		go_init
+	jsr		InitCassetteBoot
+
+	;set cassette boot flag
+	mva		#2 boot?
 	
 	;run application
 	jmp		(dosvec)
@@ -141,9 +145,6 @@ block_loop:
 load_failure:
 	jsr		CassetteClose
 	jmp		BootShowError
-	
-go_init:
-	jmp		(casini)
 .endp
 
 ;============================================================================

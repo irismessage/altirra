@@ -21,7 +21,7 @@
 #include <initializer_list>
 #include <vd2/system/function.h>
 #include <vd2/system/refcount.h>
-#include "uicontainer.h"
+#include <at/atui/uicontainer.h>
 #include "uislider.h"
 #include "uiqueue.h"
 
@@ -147,7 +147,7 @@ public:
 	void SetValue(sint32 value);
 
 	uint32 GetValueCount() const { return (uint32)mValues.size(); }
-	const wchar_t *GetValueName(uint32 index) const { return index < 0 ? L"?" : mValues[index].mpName; }
+	const wchar_t *GetValueName(uint32 index) const { return mValues[index].mpName; }
 
 protected:
 	vdfastvector<ATUIEnumValue> mValues;
@@ -205,6 +205,7 @@ public:
 	void SetSettingsScreen(IATUISettingsScreen *screen);
 	void SetCaption(const wchar_t *caption);
 	void AddSetting(ATUISetting *setting);
+	void AddSeparator();
 
 	void SetOnDestroy(const vdfunction<void()>& fn);
 
@@ -224,6 +225,7 @@ public:
 	void OnActionRepeat(uint32 trid) override;
 	void OnActionStop(uint32 trid) override;
 	void OnTrackCursorChanges(ATUIWidget *w) override;
+	void UpdateLayout() override;
 
 protected:
 	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) override;
@@ -236,7 +238,12 @@ protected:
 	void OnAsyncActionCompleted();
 	void OnDynamicUpdate();
 
-	vdfastvector<ATUISetting *> mSettings;
+	struct SettingsEntry {
+		ATUISetting *mpSetting;
+		sint32 mVPos;
+	};
+
+	vdfastvector<SettingsEntry> mSettings;
 	vdfastvector<ATUISettingWindow *> mSettingWindows;
 	sint32 mSelectedIndex;
 	sint32 mRowHeight;
@@ -246,6 +253,7 @@ protected:
 	bool mbHeaderActivated;
 	bool mbHeaderHighlighted;
 	float mScrollAccum;
+	sint32 mCurrentVPos;
 	sint32 mTotalHeight;
 
 	vdrefptr<IVDDisplayFont> mpFont;

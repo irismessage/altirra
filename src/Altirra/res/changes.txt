@@ -1,5 +1,118 @@
 Altirra Change Log
 
+Version 2.70 [December 19, 2015]:
+   [changes]
+   * Debugger: Switched BRK back to being a single byte opcode in the disassembler.
+   * Debugger: Readjusted names of illegal opcodes.
+   * Devices: SoundBoard has been moved to the Devices tree.
+   * Input: Because some broken axis mappings have been corrected, hand-edited input maps may need to be fixed up.
+
+   [features added]
+   * ATBasic: Added LOMEM, ERR(), PMGRAPHICS, PMADR(), PMCLR, PMCOLOR, PMMOVE, MISSILE, and BUMP().
+   * Audio: Sound output is auto-switched to 48KHz to reduce CPU usage if Windows is mixing at that rate.
+   * Debugger: Added ~ command (target control).
+   * Debugger: bx (break on expression) can now create tracepoints (-n).
+   * Debugger: Added Go To Source from History window.
+   * Debugger: .basic_dumpline command now has -t option for decoding TurboBasic XL tokens.
+   * Debugger: Added Go until vertical blank interrupt (gv) command.
+   * Debugger: Execution history now shows high level emulation events.
+   * Debugger: Added sw (search words), sa (search ATASCII), and si (search INTERNAL).
+   * Debugger: Added %%S format to .printf for high byte terminated strings.
+   * Debugger: Added @frame, @clk, and @cclk expression psuedovariables.
+   * Devices: Add minimal SDrive raw disk access emulation.
+   * Devices: Veronica cartridge emulation.
+   * Devices: R-Verter emulation.
+   * Disk: Added 1050 drive sounds and added emulation of 1050 reseeking on errors.
+   * Disk: Added "shift to another drive" option to disk dialog.
+   * Display: Optimized NTSC high artifacting mode.
+   * Display: Improved performance of D3D11 vsync code.
+   * Display: Enhanced text mode now works in full screen mode and supports selection.
+   * HLE: Added player for some SAP type B/C/R files.
+   * IDE: Raised VHD creation size limit in UI from 4GB to 2TB.
+   * IDE: Added support for MyIDE II with updated CPLD firmware.
+   * Input: Dead zones and curves are now adjustable for game controllers.
+   * Input: Keyboard mapping is now customizable.
+   * Profiler: Added Basic block profiling mode.
+   * Profiler: Added performance counter support.
+   * Profiler: Instruction-level data is now recorded even in function mode.
+   * Profiler: Frame triggers can now be set to record multiple frames.
+   * Recorder: Added support for recording SAP type D files.
+   * SIO: Merged standard and polled burst I/O into a single mode.
+   * SIO: Burst I/O is now supported for writes.
+   * Simulator: Emulation is no longer paused while menus are open.
+   * UI: Audio monitor now supports dual POKEYs.
+   * UI: Paste now attempts to translate Unicode characters like curly quotes and dashes to representable characters.
+   * UI: Raised drag-and-drop limit to 128MB to accommodate The!Cart images.
+   * UI: Portable mode now stores relative paths for paths above the program directory on the same drive root.
+
+   [bugs fixed]
+   * 65C02: Added missing BIT abs,X instruction (65C02 mode only).
+   * 65C816: Stack instructions new to the 65C816 now properly index outside of page one in emulation mode.
+   * 65C816: Fixed PLY instruction not working outside of page one in X8 mode.
+   * 65C816: Fixed WAI releasing execution too early on IRQs in high speed mode.
+   * ANTIC: Fixed blanking of rows 8-9 in IR mode 2.
+   * ANTIC: Fix incorrect internal state after warm reset during WSYNC wait.
+   * AltirraOS: Activate self-test ROM after memory test to mimic the XL/XE OS's behavior when doing ROM checksums.
+   * AltirraOS: Improved compatibility of S: plot/line commands in GR.0.
+   * AltirraOS: E:/S: open now enables keyboard IRQs.
+   * AltirraOS: Fixed BOOT? flag being set too early on cassette/disk boots.
+   * AltirraOS: CIO PUT RECORD with length=0 now outputs A without EOL.
+   * AltirraOS: XL/XE version now supports KEYREP.
+   * AltirraOS: Caps Lock now toggles in XL/XE mode.
+   * ATBasic: Fixed bug with terminating EOLs being left in code if a warm reset happened during a filename-based I/O statement.
+   * ATBasic: Fixed CLOAD/CSAVE not setting IRG mode consistently.
+   * Cartridge: Fixed crash with MegaCart 1M (2) mapper.
+   * Cartridge: Fixed crash problem with RAM access in newly created The!Cart cartridges.
+   * Cartridge: Newly created AtariMax 8Mbit (bank 0) carts had the wrong power-up bank.
+   * Cartridge: Fixed random crash with Atrax SDX cartridge types.
+   * Debugger: Fixed Step Over not working in 65C816 mode.
+   * Debugger: Fixed B/P/S registers being shown incorrectly in history view in 65C816 mode.
+   * Debugger: Improved call stack decoding.
+   * Debugger: Fixed assembly/disassembly of MVP/MVN instructions.
+   * Debugger: Fixed assembly of [dp],Y addressing modes.
+   * Debugger: Fixed crash when canceling edit of watch expression.
+   * Debugger: Fixed disassembly of BIT abs,X instruction in 65C02 mode.
+   * Debugger: Fixed .readmem command.
+   * Debugger: Up/down keys now work better in History when navigating search results.
+   * Debugger: Fixed time wrapping bug in .pokey deferred timer reporting.
+   * Debugger: Fixed length (Lxxx) arguments not accepting 10000 for $10000 bytes.
+   * Debugger: Fixed crash with malformed read/write access range checks in breakpoint conditional expressions.
+   * Debugger: Fixed assembler not accepting PHX, PHY, RTL, TCS, and TXA instructions.
+   * Debugger: Fixed assembler not assembling some instructions with [dp] and relative long addressing modes.
+   * Debugger: Assembler no longer uses the debugger's numeric base setting and always assumes decimal unless $ is prefixed before a number.
+   * Disk: Fixed boot sector not being initialized when precreating formatted DOS 3 disks.
+   * Disk: Data checksum errors during SIO bus transfers now result in a NAK instead of Error.
+   * Disk: Improved accurate sector timing values for enhanced density disks.
+   * Disk Explorer: Fixed crash when activating context menu with no disk image mounted.
+   * Disk Explorer: Empty filenames are no longer allowed.
+   * HDevice: Fixed regression in NOTE/POINT commands.
+   * Input: Fixed right mouse button on mice not working for ports 2/4.
+   * Input: Fixed inconsistent mappings between analog/digital interpretations of axes and between DirectInput and XInput.
+   * Network: Fixed protocol handling bugs in emulated ARP and DHCP layers.
+   * Network: Add support for tunneling over the VXLAN protocol.
+   * Simulation: Added timeout to logic for holding Option on boot.
+   * Simulation: Added emulation of floating I/O memory bus on 800 hardware.
+   * PCLink: Fixed FLEN (code 4) command.
+   * PIA: Interrupt flags can now be set without having interrupts enabled.
+   * PIA: Reenabling IRQA1 or IRQB1 with the flags already set now reasserts IRQ.
+   * PIA: Added emulation of floating inputs on PIA port B on XL/XE systems.
+   * POKEY: Serial input no longer works while initialization mode is active.
+   * POKEY: Full keyboard scan emulation is now supported, including phantom key and debounce-off effects.
+   * Recorder: Video recording failed if scanlines were enabled without VBXE or antialiasing on.
+   * U1MB: Removed bogus PORTB dependency for register access.
+   * U1MB: Flash ROM is now reset on cold reset.
+   * U1MB: Flash writes to OS, BASIC, and Game ROM windows are now supported.
+   * U1MB: Real-time clock now properly allows both clock polarities.
+   * U1MB: Fixed value of reserved bits read from RTCIN register.
+   * U1MB: Internal BASIC now works with 1200XL + U1MB, since the U1MB emulates the XL/XE MMU.
+   * UI: Fixed /portablealt writing into the current directory instead of starting directory when given a relative path.
+   * UI: Changed cursor mode to fix drag-and-drop incompatibility with 7-Zip File Manager.
+   * UI: Audio monitor setting now saves.
+   * UI: Selecting a 1200XL kernel no longer switches the hardware mode to 800XL.
+   * UI: Fixed firmware options not refreshing consistently in dialog.
+   * XEP80: Fixed UART register emulation.
+   * XEP80: Attributes, split-screen, and vertical scrolling are now supported in pixel graphics mode.
+
 Version 2.60 [March 21, 2015]:
    [changes]
    * Devices: PCLink, DragonCart, XEP-80, SlightSID, Covox, R-Time 8, 850, 1030, P:, and H: have been moved to the Devices tree.
@@ -7,7 +120,7 @@ Version 2.60 [March 21, 2015]:
    [features added]
    * ATBasic: Improved execution speed.
    * ATBasic: Added partial support for CONT statement.
-   * ATBasic: Added support for DPOKE, BPUT, BGET, ERASE, PROTECT, UNPROTECT, DIR, RENAME, MOVE, HEX$(), DPEEK(), !, %, &, and $.
+   * ATBasic: Added support for DPOKE, BPUT, BGET, ERASE, PROTECT, UNPROTECT, DIR, RENAME, MOVE, HEX$(), DPEEK(), !, %%, &, and $.
    * AltirraOS: Optimized FPI routine.
    * AltirraOS: Improved rounding of FDIV results.
    * BlackBox: Initial emulation support.

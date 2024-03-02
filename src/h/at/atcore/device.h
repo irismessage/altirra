@@ -32,11 +32,19 @@ class IATUIRenderer;
 class IATAudioOutput;
 class ATConsoleOutput;
 class ATPIAEmulator;
+class IATDeviceCartridge;
+
+typedef void (*ATDeviceFactoryFn)(const ATPropertySet& pset, IATDevice **);
+
+struct ATDeviceDefinition {
+	const char *mpTag;
+	const char *mpConfigTag;
+	const wchar_t *mpName;
+	ATDeviceFactoryFn mpFactoryFn;
+};
 
 struct ATDeviceInfo {
-	VDStringA mTag;
-	VDStringA mConfigTag;
-	VDStringW mName;
+	const ATDeviceDefinition *mpDef;
 };
 
 class IATDeviceMemMap {
@@ -125,6 +133,23 @@ public:
 	enum { kTypeID = 'adpi' };
 
 	virtual void InitPortInput(ATPIAEmulator *pia) = 0;
+};
+
+class IATDeviceCartridgePort {
+public:
+	virtual void AddCartridge(IATDeviceCartridge *cart) = 0;
+	virtual void RemoveCartridge(IATDeviceCartridge *cart) = 0;
+	virtual void UpdateRD5() = 0;
+};
+
+class IATDeviceCartridge {
+public:
+	enum { kTypeID = 'adct' };
+
+	virtual void InitCartridge(IATDeviceCartridgePort *port) = 0;
+
+	/// Returns true if the RD5 signal is active, which maps $A000-BFFF.
+	virtual bool IsRD5Active() const = 0;
 };
 
 class IATDevice : public IVDRefUnknown {

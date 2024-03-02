@@ -17,11 +17,11 @@
 
 #include "stdafx.h"
 #include <vd2/system/binary.h>
+#include <at/atcore/scheduler.h>
 #include "antic.h"
 #include "gtia.h"
 #include "console.h"
 #include "savestate.h"
-#include "scheduler.h"
 #include "simeventmanager.h"
 
 namespace {
@@ -48,6 +48,7 @@ ATAnticEmulator::ATAnticEmulator()
 	, mX(0)
 	, mY(0)
 	, mFrame(0)
+	, mFrameStart(0)
 	, mAnalysisMode(kAnalyzeOff)
 	, mpRegisterUpdateEvent(NULL)
 	, mRegisterUpdateHeadIdx(0)
@@ -141,6 +142,7 @@ void ATAnticEmulator::WarmReset() {
 	++mFrame;
 	mX = 0;
 	mY = 0;
+	mFrameStart = ATSCHEDULER_GETTIME(mpScheduler);
 
 	mDMACTL = 0;
 	mNMIEN = 0;
@@ -162,6 +164,7 @@ void ATAnticEmulator::WarmReset() {
 	}
 
 	mpScheduler->UnsetEvent(mpEventWSYNC);
+	mWSYNCPending = 0;
 
 	mpPFDataWrite = mPFDataBuffer;
 	mpPFDataRead = mPFDataBuffer;
@@ -172,7 +175,7 @@ void ATAnticEmulator::WarmReset() {
 
 void ATAnticEmulator::RequestNMI() {
 	mNMIST |= 0x20;
-	mpConn->AnticAssertNMI();
+	mpConn->AnticAssertNMI_RES();
 }
 
 void ATAnticEmulator::SetLightPenPosition(bool phase) {
@@ -602,13 +605,20 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 			uint8 cumulativeNMIENLate = mPendingNMIs & mEarlyNMIEN2 & ~mEarlyNMIEN;
 
 			if (cumulativeNMIEN) {
-				mpConn->AnticAssertNMI();
+				if (mY == 248)
+					mpConn->AnticAssertNMI_VBI();
+				else
+					mpConn->AnticAssertNMI_DLI();
 			} else if (cumulativeNMIENLate) {
 				mbLateNMI = true;
 			}
 		} else if (mX == 9) {
-			if (mbLateNMI)
-				mpConn->AnticAssertNMI();
+			if (mbLateNMI) {
+				if (mY == 248)
+					mpConn->AnticAssertNMI_VBI();
+				else
+					mpConn->AnticAssertNMI_DLI();
+			}
 		} else if (mX == 10) {
 			if (((unsigned)(mDLControl & 15) - 2) < 6)
 				memset(mPFCharBuffer, 0, sizeof mPFCharBuffer);
@@ -708,6 +718,7 @@ void ATAnticEmulator::AdvanceScanline() {
 			memset(mActivityMap, 0, sizeof mActivityMap);
 
 		++mFrame;
+		mFrameStart = ATSCHEDULER_GETTIME(mpScheduler);
 	} else if (mY >= 248) {
 		mbDLActive = false;		// needed because The Empire Strikes Back has a 259-line display list (!)
 
@@ -1083,19 +1094,41 @@ void ATAnticEmulator::Decode(int offset) {
 	if (!mAbnormalDecodePattern) {
 		switch(mode) {
 			case 2:		// 40 column text, 1.5 colors, 8 scanlines
-				for(; x < limit; x += 2) {
-					uint8 c = *src++;
-					uint8 d = *chdata++;
+				// scan lines 8 and 9 are blanked in mode 2 for $00-5F line in mode 3
+				// (but they can stll be inverted afterward!)
+				if ((mRowCounter & 14) == 8) {
+					for(; x < limit; x += 2) {
+						uint8 c = *src++;
+						uint8 d = *chdata++;
 
-					uint8 himask = (c & 128) ? 0xff : 0;
-					uint8 inv = himask & mCharInvert;
+						uint8 himask = (c & 128) ? 0xff : 0;
+						uint8 inv = himask & mCharInvert;
 
-					d &= (~himask | mCharBlink);
-					d ^= inv;
+						if ((c & 0x60) != 0x60)
+							d = 0;
+
+						d &= (~himask | mCharBlink);
+						d ^= inv;
 					
-					dst[0] = d >> 4;
-					dst[1] = d & 15;
-					dst += 2;
+						dst[0] = d >> 4;
+						dst[1] = d & 15;
+						dst += 2;
+					}
+				} else {
+					for(; x < limit; x += 2) {
+						uint8 c = *src++;
+						uint8 d = *chdata++;
+
+						uint8 himask = (c & 128) ? 0xff : 0;
+						uint8 inv = himask & mCharInvert;
+
+						d &= (~himask | mCharBlink);
+						d ^= inv;
+					
+						dst[0] = d >> 4;
+						dst[1] = d & 15;
+						dst += 2;
+					}
 				}
 				break;
 
@@ -1220,7 +1253,13 @@ void ATAnticEmulator::Decode(int offset) {
 		uint8 decodePattern2 = mAbnormalDecodePattern & ~kClockPattern[kModeToFetchRate[mode]][0];
 
 		switch(mode) {
-			case 2:		// 40 column text, 1.5 colors, 8 scanlines
+			case 2:	{	// 40 column text, 1.5 colors, 8 scanlines
+				uint8 globalMask = 0xFF;
+
+				// scan lines 8 and 9 are always blanked in mode 2
+				if ((mRowCounter & 14) == 8)
+					globalMask = 0;
+
 				for(; x < limit; ++x) {
 					const int x2 = x - mPFDMAStart;
 					const int bit = x2 & 7;
@@ -1240,7 +1279,9 @@ void ATAnticEmulator::Decode(int offset) {
 						uint8 himask = (c & 128) ? 0xff : 0;
 						uint8 inv = himask & mCharInvert;
 
-						d &= (~himask | mCharBlink);
+						d &= (~himask | mCharBlink) & globalMask;
+
+						// scan lines 8 and 9 are always blanked
 
 						mAbnormalDecodeShifter |= d;
 					}
@@ -1254,6 +1295,7 @@ void ATAnticEmulator::Decode(int offset) {
 				}
 
 				break;
+			}
 
 			case 3:		// 40 column text, 1.5 colors, 10 scanlines
 				for(; x < limit; ++x) {
@@ -1969,6 +2011,7 @@ void ATAnticEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
 void ATAnticEmulator::EndLoadState(ATSaveStateReader& reader) {
 	// Bump the frame counter in case we went backwards in beam direction.
 	++mFrame;
+	mFrameStart = ATSCHEDULER_GETTIME(mpScheduler) - mX - mY*114;
 
 	// Synchronize other state.
 	switch(mDMACTL & 3) {
@@ -2060,7 +2103,6 @@ void ATAnticEmulator::GetRegisterState(ATAnticRegisterState& state) const {
 
 void ATAnticEmulator::UpdateDMAPattern() {
 	int dmaStart = mPFDMAStart;
-	int dmaEnd = mPFDMAEnd;
 	int dmaVEnd = mPFDMAVEnd;
 	uint8 mode = mDLControl & 15;
 	uint32 key = (dmaStart << 16)
@@ -2162,8 +2204,6 @@ void ATAnticEmulator::UpdateDMAPattern() {
 		// mode of entering abnormal DMA where latent bits in the clock are recaptured by a
 		// slowly clock mode. That is handled elsewhere.
 
-		int cycleStep = mPFPushCycleMask + 1;
-
 		if (!mbPFDMAEnabled)
 			graphicFetchMode = 0;
 
@@ -2177,8 +2217,6 @@ void ATAnticEmulator::UpdateDMAPattern() {
 
 			if (mode >= 8)
 				clock = (uint8)((clock << 2) + (clock >> 6));
-
-			const uint8 preStartClock = clock;
 
 			int dmaStartOffset = dmaStart & 7;
 			clock |= kClockPattern[kModeToFetchRate[mode]][dmaStartOffset];

@@ -18,7 +18,6 @@
 #include <stdafx.h>
 #include <vd2/system/strutil.h>
 #include <at/atcore/propertyset.h>
-#include "devicemanager.h"
 #include "idephysdisk.h"
 #include "iderawimage.h"
 #include "idevhdimage.h"
@@ -67,9 +66,4 @@ void ATCreateDeviceHardDisk(const ATPropertySet& pset, IATDevice **dev) {
 	return ATCreateDeviceHardDiskRawImage(pset, dev);
 }
 
-void ATRegisterDeviceHardDisks(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("harddisk", ATCreateDeviceHardDisk);
-	dev.AddDeviceFactory("hdphysdisk", ATCreateDeviceHardDiskPhysical);
-	dev.AddDeviceFactory("hdrawimage", ATCreateDeviceHardDiskRawImage);
-	dev.AddDeviceFactory("hdvhdimage", ATCreateDeviceHardDiskVHDImage);
-}
+extern const ATDeviceDefinition g_ATDeviceDefHardDisks = { "harddisk", "harddisk", L"Hard disk", ATCreateDeviceHardDisk };

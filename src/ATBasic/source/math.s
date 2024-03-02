@@ -57,14 +57,6 @@ diff:
 .endp
 
 ;===========================================================================
-.proc	fld1
-		ldx		#<const_one
-.def :MathLoadConstFR0 = *
-		ldy		#>const_table
-		jmp		fld0r
-.endp
-
-;===========================================================================
 .proc	MathFloor
 		;if exponent is > $44 then there can be no decimals
 		lda		fr0
@@ -75,16 +67,11 @@ diff:
 		;if exponent is < $40 then we have zero or -1
 		cmp		#$40
 		bcs		not_tiny
-		lda		fr0
-		bmi		neg_tiny
-		
-		;positive... load 0
-		jmp		zfr0
-		
-neg_tiny:
-		;negative... load -1
-		ldx		#<const_negone
-		jmp		MathLoadConstFR0
+		asl		fr0
+		php
+		jsr		zfr0
+		plp
+		bcs		round_down
 done:
 		rts
 		
@@ -107,12 +94,12 @@ zero_loop:
 		;skip rounding if it was already integral
 		tay
 		beq		done
-		
-neg_round:
-		;check if we have a negative number; if so, we need to add one
+
+		;check if we have a negative number; if so, we need to subtract one
 		lda		fr0
 		bpl		done
 		
+round_down:
 		;subtract one to round down
 		jsr		MathLoadOneFR1
 		jmp		fsub
@@ -127,6 +114,7 @@ neg_round:
 		sta		funScratch1
 		and		#$7f
 		sta		fr0
+xit:
 		rts
 .endp
 
@@ -145,7 +133,7 @@ neg_round:
 		ldx		#<const_one
 .def :MathLoadConstFR1 = *
 		ldy		#>const_one
-		jmp		fld1r
+		bne		MathLoadFR1_FPSCR.fld1r_trampoline
 .endp
 
 ;===========================================================================
@@ -161,5 +149,6 @@ neg_round:
 		ldx		#<fpscr
 .def :MathLoadFR1_Page5 = *
 		ldy		#>fpscr
+fld1r_trampoline:
 		jmp		fld1r
 .endp

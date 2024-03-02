@@ -11,7 +11,8 @@ struct VDUIAccelerator {
 		kModShift		= 0x02,
 		kModAlt			= 0x04,
 		kModExtended	= 0x08,
-		kModUp			= 0x10
+		kModUp			= 0x10,
+		kModCooked		= 0x20
 	};
 
 	uint32		mVirtKey;
@@ -62,5 +63,7 @@ inline bool operator==(const VDUIAccelerator& x, const VDUIAccelerator& y) {
 }
 
 void VDUIGetAcceleratorString(const VDUIAccelerator& accel, VDStringW& s);
+bool VDUIGetVkAcceleratorForChar(VDUIAccelerator& accel, wchar_t c);
+bool VDUIGetCharAcceleratorForVk(VDUIAccelerator& accel);
 
 #endif

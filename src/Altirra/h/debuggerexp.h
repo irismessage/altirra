@@ -4,13 +4,15 @@
 #include <stdarg.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/error.h>
+#include <at/atdebugger/target.h>
+#include <at/atcpu/execstate.h>
 
 class VDStringA;
 class ATCPUEmulator;
 class ATCPUEmulatorMemory;
 class ATAnticEmulator;
 class ATMMUEmulator;
-class IATDebugger;
+class IATDebuggerSymbolLookup;
 
 enum ATDebugExpNodeType {
 	kATDebugExpNodeType_None,
@@ -57,21 +59,36 @@ enum ATDebugExpNodeType {
 	kATDebugExpNodeType_AddrSpace,
 	kATDebugExpNodeType_Ternary,
 	kATDebugExpNodeType_Temporary,
-	kATDebugExpNodeType_ReturnAddress
+	kATDebugExpNodeType_ReturnAddress,
+	kATDebugExpNodeType_Frame,
+	kATDebugExpNodeType_Clock,
+	kATDebugExpNodeType_CpuClock
 };
 
 struct ATDebugExpEvalContext {
-	ATCPUEmulator *mpCPU;
-	ATCPUEmulatorMemory *mpMemory;
+	IATDebugTarget *mpTarget;
 	ATAnticEmulator *mpAntic;
 	ATMMUEmulator *mpMMU;
 	const sint32 *mpTemporaries;
+
+	uint32 (*mpClockFn)(void *p);
+	void *mpClockFnData;
+
+	uint32 (*mpCpuClockFn)(void *p);
+	void *mpCpuClockFnData;
 
 	bool mbAccessValid;
 	bool mbAccessReadValid;
 	bool mbAccessWriteValid;
 	sint32 mAccessAddress;
 	uint8 mAccessValue;
+};
+
+struct ATDebugExpEvalCache {
+	bool mbExecStateValid = false;
+	ATCPUExecState mExecState;
+
+	const ATCPUExecState *GetExecState(const ATDebugExpEvalContext& ctx);
 };
 
 class ATDebugExpNode {
@@ -83,9 +100,13 @@ public:
 	{
 	}
 
-	virtual ~ATDebugExpNode() {}
+	virtual ~ATDebugExpNode() = default;
 
-	virtual bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const = 0;
+	virtual ATDebugExpNode *Clone() const = 0;
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const;
+
+	virtual bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const = 0;
 
 	/// Attempt to extract out a (node == const) clause from an AND sequence; returns
 	/// the constant and the remainder expression.
@@ -137,17 +158,14 @@ struct ATDebuggerExprParseOpts {
 	bool mbAllowUntaggedHex;
 };
 
-ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const ATDebuggerExprParseOpts& opts);
+ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup *dbg, const ATDebuggerExprParseOpts& opts);
 ATDebugExpNode *ATDebuggerInvertExpression(ATDebugExpNode *node);
 
 class ATDebuggerExprParseException : public MyError {
 public:
-	ATDebuggerExprParseException(const char *s, ...) {
-		va_list val;
-		va_start(val, s);
-		vsetf(s, val);
-		va_end(val);
-	}
+	template<class... Args>
+	ATDebuggerExprParseException(Args&&... args)
+		: MyError(std::forward<Args>(args)...) {}
 };
 
 #endif

@@ -69,8 +69,6 @@ inline float VDGetIntAsFloat(sint32 i) {
 
 #ifdef VD_COMPILER_MSVC_VC8_OR_LATER
 	#include <vd2/system/win32/intrin.h>
-	#pragma intrinsic(_BitScanForward)
-	#pragma intrinsic(_BitScanReverse)
 
 	inline int VDFindLowestSetBit(uint32 v) {
 		unsigned long index;

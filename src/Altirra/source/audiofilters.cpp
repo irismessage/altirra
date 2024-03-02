@@ -406,6 +406,21 @@ void ATFilterComputeSymmetricFIR_8_32F(float *dst, const float *src, size_t n, c
 	ATFilterComputeSymmetricFIR_8_32F_Scalar(dst, src, n, kernel);
 }
 
+void ATFilterComputeSymmetricFIR_8_32F(float *dst, size_t n, const float *kernel) {
+#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC)
+	if (SSE_enabled) {
+		ATFilterComputeSymmetricFIR_8_32F_SSE_asm(dst, dst, n, kernel);
+		return;
+	}
+
+	ATFilterComputeSymmetricFIR_8_32F_Scalar(dst, dst, n, kernel);
+#elif defined(VD_CPU_X64)
+	ATFilterComputeSymmetricFIR_8_32F_SSE(dst, dst, n, kernel);
+#else
+	ATFilterComputeSymmetricFIR_8_32F_Scalar(dst, dst, n, kernel);
+#endif
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 ATAudioFilter::ATAudioFilter()
@@ -477,6 +492,9 @@ void ATAudioFilter::PreFilter(float * VDRESTRICT dst, uint32 count) {
 }
 
 void ATAudioFilter::Filter(float *dst, const float *src, uint32 count) {
-	memcpy(dst, src, count*sizeof(float));
 	ATFilterComputeSymmetricFIR_8_32F(dst, src, count, mLoPassCoeffs);
+}
+
+void ATAudioFilter::Filter(float *dst, uint32 count) {
+	ATFilterComputeSymmetricFIR_8_32F(dst, count, mLoPassCoeffs);
 }

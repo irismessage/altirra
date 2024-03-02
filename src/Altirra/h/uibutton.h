@@ -1,9 +1,10 @@
 #ifndef f_AT_UIBUTTON_H
 #define f_AT_UIBUTTON_H
 
+#include <vd2/system/function.h>
 #include <vd2/system/VDString.h>
 #include <vd2/VDDisplay/font.h>
-#include "uiwidget.h"
+#include <at/atui/uiwidget.h>
 #include "callback.h"
 
 class ATUIButton : public ATUIWidget {
@@ -26,6 +27,8 @@ public:
 
 	ATCallbackHandler1<void, ATUIButton *>& OnPressedEvent() { return mPressedEvent; }
 	ATCallbackHandler1<void, ATUIButton *>& OnActivatedEvent() { return mActivatedEvent; }
+
+	vdfunction<void(ATUIButton *, bool)>& OnHeldEvent() { return mHeldEvent; }
 
 public:
 	virtual void OnMouseDownL(sint32 x, sint32 y);
@@ -59,6 +62,7 @@ protected:
 
 	ATCallbackHandler1<void, ATUIButton *> mActivatedEvent;
 	ATCallbackHandler1<void, ATUIButton *> mPressedEvent;
+	vdfunction<void(ATUIButton *, bool)> mHeldEvent;
 };
 
 #endif

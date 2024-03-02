@@ -43,7 +43,6 @@
 // - assign() is not supported.
 // - bad_function_call is not supported -- calling through an unbound function
 //   object invokes undefined behavior.
-// - Currently supports only up to two arguments.
 //
 //////////////////////////////////////////////////////////////////////////////
 
@@ -111,7 +110,7 @@ template<class> class vdfunction;
 
 class vdfuncbase {
 public:
-	inline vdfuncbase();
+	vdfuncbase() = default;
 	vdfuncbase(const vdfuncbase&);
 	inline vdfuncbase(vdfuncbase&&);
 	inline ~vdfuncbase();
@@ -126,19 +125,13 @@ protected:
 	void clear();
 
 public:
-	void (*mpFn)();
+	void (*mpFn)() = nullptr;
 	union Data {
 		void *p[2];
 		void (*fn)();
 	} mData;
-	const vdfunctraits *mpTraits;
+	const vdfunctraits *mpTraits = nullptr;
 };
-
-inline vdfuncbase::vdfuncbase()
-	: mpFn(nullptr)
-	, mpTraits(nullptr)
-{
-}
 
 inline vdfuncbase::vdfuncbase(vdfuncbase&& src)
 	: mpFn(src.mpFn)
@@ -162,10 +155,10 @@ inline vdfuncbase::operator bool() const {
 	return mpFn != nullptr;
 }
 
-template<class T> inline bool operator==(const vdfuncbase& fb, std::nullptr_t) { return fb.mpFn == nullptr; }
-template<class T> inline bool operator==(std::nullptr_t, const vdfuncbase& fb) { return fb.mpFn == nullptr; }
-template<class T> inline bool operator!=(const vdfuncbase& fb, std::nullptr_t) { return fb.mpFn != nullptr; }
-template<class T> inline bool operator!=(std::nullptr_t, const vdfuncbase& fb) { return fb.mpFn != nullptr; }
+inline bool operator==(const vdfuncbase& fb, std::nullptr_t) { return fb.mpFn == nullptr; }
+inline bool operator==(std::nullptr_t, const vdfuncbase& fb) { return fb.mpFn == nullptr; }
+inline bool operator!=(const vdfuncbase& fb, std::nullptr_t) { return fb.mpFn != nullptr; }
+inline bool operator!=(std::nullptr_t, const vdfuncbase& fb) { return fb.mpFn != nullptr; }
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -209,12 +202,12 @@ struct vdfunc_construct<2> {		// indirect (uses heap)
 
 //////////////////////////////////////////////////////////////////////////////
 
-template<class R>
-class vdfunction<R()> : public vdfuncbase {
+template<class R, class ...Args>
+class vdfunction<R(Args...)> : public vdfuncbase {
 public:
 	typedef R result_type;
 
-	vdfunction() {}
+	vdfunction() = default;
 	vdfunction(std::nullptr_t) {}
 	vdfunction(const vdfunction& src) : vdfuncbase(src) {}
 	template<class F> vdfunction(std::reference_wrapper<F> f);
@@ -232,155 +225,41 @@ public:
 		vdfuncbase::swap(other);
 	}
 
-	R operator()() const {
-		return reinterpret_cast<R (*)(const vdfuncbase *)>(mpFn)(this);
+	R operator()(Args... args) const {
+		return reinterpret_cast<R (*)(const vdfuncbase *, Args...)>(mpFn)(this, std::forward<Args>(args)...);
 	}
 };
 
 struct vdfunc_rd {
-	template<class R, class F>
-	static R go0(const vdfuncbase *p) {
-		return (*(F *)&p->mData)();
-	}
-
-	template<class R, class F, class Arg1>
-	static R go1(const vdfuncbase *p, Arg1 arg1) {
-		return (*(F *)&p->mData)(std::forward<Arg1>(arg1));
-	}
-
-	template<class R, class F, class Arg1, class Arg2>
-	static R go2(const vdfuncbase *p, Arg1 arg1, Arg2 arg2) {
-		return (*(F *)&p->mData)(std::forward<Arg1>(arg1), std::forward<Arg2>(arg2));
+	template<class R, class F, class ...Args>
+	static R go(const vdfuncbase *p, Args... args) {
+		return (*(F *)&p->mData)(std::forward<Args>(args)...);
 	}
 };
 
 struct vdfunc_ri {
-	template<class R, class F>
-	static R go0(const vdfuncbase *p) {
-		return (*(F *)p->mData.p[0])();
-	}
-
-	template<class R, class F, class Arg1>
-	static R go1(const vdfuncbase *p, Arg1 arg1) {
-		return (*(F *)p->mData.p[0])(std::forward<Arg1>(arg1));
-	}
-
-	template<class R, class F, class Arg1, class Arg2>
-	static R go2(const vdfuncbase *p, Arg1 arg1, Arg2 arg2) {
-		return (*(F *)p->mData.p[0])(std::forward<Arg1>(arg1), std::forward<Arg2>(arg2));
+	template<class R, class F, class ...Args>
+	static R go(const vdfuncbase *p, Args... args) {
+		return (*(F *)p->mData.p[0])(std::forward<Args>(args)...);
 	}
 };
 
-template<class R>
+template<class R, class... Args>
 template<class F>
-vdfunction<R()>::vdfunction(std::reference_wrapper<F> f) {
-	mpFn = vdfunc_ri::go0<R, F>;
-	mData.p[0] = &f.get();
-}
-
-template<class R>
-template<class F>
-vdfunction<R()>::vdfunction(F f) {
-	typedef decltype(f()) validity_test;
-
-	vdfunc_construct<vdfunc_mode<F>::value>::go(*this, f);
-	mpFn = reinterpret_cast<void (*)()>(std::conditional<vdfunc_mode<F>::value == 2, vdfunc_ri, vdfunc_rd>::type::go0<R, F>);
-}
-
-//////////////////////////////////////////////////////////////////////////////
-
-template<class R, class Arg1>
-class vdfunction<R(Arg1)> : public vdfuncbase {
-public:
-	typedef R result_type;
-	typedef Arg1 argument_type;
-
-	vdfunction() {}
-	vdfunction(std::nullptr_t) {}
-	vdfunction(const vdfunction& src) : vdfuncbase(src) {}
-	template<class F> vdfunction(std::reference_wrapper<F> f);
-	template<class F> vdfunction(F f);
-
-	vdfunction& operator=(std::nullptr_t) { vdfuncbase::clear(); return *this; }
-
-	template<class F>
-	vdfunction& operator=(F&& f) { vdfunction(std::forward<F>(f)).swap(*this); return *this; }
-
-	template<class F>
-	vdfunction& operator=(std::reference_wrapper<F> f) { vdfunction(f).swap(*this); }
-
-	void swap(vdfunction& other) {
-		vdfuncbase::swap(other);
-	}
-
-	R operator()(Arg1 arg1) const {
-		return reinterpret_cast<R (*)(const vdfuncbase *, Arg1)>(mpFn)(this, std::forward<Arg1>(arg1));
-	}
-};
-
-template<class R, class Arg1>
-template<class F>
-vdfunction<R(Arg1)>::vdfunction(std::reference_wrapper<F> f) {
-	mpFn = reinterpret_cast<void(*)()>(vdfunc_ri::go1<R, F, Arg1>);
+vdfunction<R(Args...)>::vdfunction(std::reference_wrapper<F> f) {
+	auto fn = vdfunc_ri::go<R, F, Args...>;
+	mpFn = reinterpret_cast<void (*)()>(fn);
 	mData.p[0] = (void *)&f.get();
 }
 
-template<class R, class Arg1>
+template<class R, class... Args>
 template<class F>
-vdfunction<R(Arg1)>::vdfunction(F f) {
-	typedef decltype(f(((Arg1(*)())nullptr)())) validity_test;
+vdfunction<R(Args...)>::vdfunction(F f) {
+	typedef decltype(f((*(std::remove_reference<Args>::type *)nullptr)...)) validity_test;
 
 	vdfunc_construct<vdfunc_mode<F>::value>::go(*this, f);
-	mpFn = reinterpret_cast<void (*)()>(std::conditional<vdfunc_mode<F>::value == 2, vdfunc_ri, vdfunc_rd>::type::go1<R, F, Arg1>);
-}
-
-//////////////////////////////////////////////////////////////////////////////
-
-template<class R, class Arg1, class Arg2>
-class vdfunction<R(Arg1, Arg2)> : public vdfuncbase {
-public:
-	typedef R result_type;
-	typedef Arg1 first_argument_type;
-	typedef Arg2 second_argument_type;
-
-	vdfunction() {}
-	vdfunction(std::nullptr_t) {}
-	vdfunction(const vdfunction& src) : vdfuncbase(src) {}
-	vdfunction(vdfunction&& src) : vdfuncbase(src) {}
-	template<class F> vdfunction(std::reference_wrapper<F> f);
-	template<class F> vdfunction(F f);
-
-	vdfunction& operator=(std::nullptr_t) { vdfuncbase::clear(); return *this; }
-
-	template<class F>
-	vdfunction& operator=(F&& f) { vdfunction(std::forward<F>(f)).swap(*this); return *this; }
-
-	template<class F>
-	vdfunction& operator=(std::reference_wrapper<F> f) { vdfunction(f).swap(*this); }
-
-	void swap(vdfunction& other) {
-		vdfuncbase::swap(other);
-	}
-
-	R operator()(Arg1 arg1, Arg2 arg2) const {
-		return reinterpret_cast<R (*)(const vdfuncbase *, Arg1, Arg2)>(mpFn)(this, std::forward<Arg1>(arg1), std::forward<Arg2>(arg2));
-	}
-};
-
-template<class R, class Arg1, class Arg2>
-template<class F>
-vdfunction<R(Arg1, Arg2)>::vdfunction(std::reference_wrapper<F> f) {
-	mpFn = reinterpret_cast<void(*)()>(vdfunc_ri::go2<R, Arg1, Arg2>);
-	mData.p[0] = &f.get();
-}
-
-template<class R, class Arg1, class Arg2>
-template<class F>
-vdfunction<R(Arg1, Arg2)>::vdfunction(F f) {
-	typedef decltype(f(*(Arg1 *)nullptr, *(Arg2 *)nullptr)) validity_test;
-
-	vdfunc_construct<vdfunc_mode<F>::value>::go(*this, f);
-	mpFn = reinterpret_cast<void (*)()>(std::conditional<vdfunc_mode<F>::value == 2, vdfunc_ri, vdfunc_rd>::type::go2<R, F, Arg1, Arg2>);
+	const auto fn = std::conditional<vdfunc_mode<F>::value == 2, vdfunc_ri, vdfunc_rd>::type::template go<R, F, Args...>;
+	mpFn = reinterpret_cast<void (*)()>(fn);
 }
 
 //////////////////////////////////////////////////////////////////////////////

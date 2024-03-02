@@ -37,6 +37,7 @@ inline bool VDIsWindowsNT() {
 
 bool VDIsAtLeastVistaW32();
 bool VDIsAtLeast7W32();
+bool VDIsAtLeast8W32();
 bool VDIsAtLeast81W32();
 
 // useful constants missing from the Platform SDK

@@ -65,6 +65,7 @@ protected:
 	bool mbBlendActive;
 	bool mbBlendCopy;
 	bool mbScanlineDelayValid;
+	bool mbGammaIdentity;
 
 	int mYScale;
 	int mYBias;
@@ -105,14 +106,19 @@ protected:
 			VDALIGN(8) uint32 mPalToBTwin[256][12];
 		} m2x;
 
-		// NTSC high artifacting - SSE2 (128-bit)
+		// NTSC high artifacting - SSE2 (128-bit) (336K)
 		struct {
-			VDALIGN(16) uint32 mPalToR[256][4][16];
+			VDALIGN(16) uint32 mPalToR[256][4][16];			// 64K
+			VDALIGN(16) uint32 mPalToRTwin[256][2][16];		// 32K
+			VDALIGN(16) uint32 mPalToRQuad[256][16];		// 16K
+
 			VDALIGN(16) uint32 mPalToG[256][4][16];
-			VDALIGN(16) uint32 mPalToB[256][4][16];
-			VDALIGN(16) uint32 mPalToRTwin[256][2][16];
 			VDALIGN(16) uint32 mPalToGTwin[256][2][16];
+			VDALIGN(16) uint32 mPalToGQuad[256][16];
+
+			VDALIGN(16) uint32 mPalToB[256][4][16];
 			VDALIGN(16) uint32 mPalToBTwin[256][2][16];
+			VDALIGN(16) uint32 mPalToBQuad[256][16];
 		} m4x;
 
 		// PAL high artifacting - scalar (32-bit) (448K)

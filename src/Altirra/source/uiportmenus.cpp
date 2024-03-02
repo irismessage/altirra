@@ -22,7 +22,7 @@
 #include <vd2/system/w32assist.h>
 #include "inputmanager.h"
 #include "resource.h"
-#include "uimenulist.h"
+#include <at/atui/uimenulist.h>
 
 class ATInputPortMenu {
 public:
@@ -177,7 +177,6 @@ void ATInputPortMenu::UpdateMenu() {
 }
 
 void ATInputPortMenu::HandleCommand(uint32 id) {
-	uint32 idx = id - mBaseId;
 	uint32 i = 1;
 
 	for(InputMaps::const_iterator it(mInputMaps.begin()), itEnd(mInputMaps.end()); it != itEnd; ++it, ++i) {

@@ -22,12 +22,12 @@
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/propertyset.h>
+#include <at/atcore/scheduler.h>
 #include <at/atnetwork/ethernetbus.h>
 #include <at/atnetwork/gatewayserver.h>
+#include <at/atnetworksockets/vxlantunnel.h>
 #include <at/atnetworksockets/worker.h>
-#include "scheduler.h"
 #include "dragoncart.h"
-#include "devicemanager.h"
 #include "memorymanager.h"
 
 class ATEthernetSimClock : public IATSchedulerCallback, public IATEthernetClock {
@@ -248,6 +248,11 @@ void ATDragonCartSettings::SetDefault() {
 	mNetAddr = 0xC0A80000;		// 192.168.0.0
 	mNetMask = 0xFFFFFF00;		// 255.255.255.0
 	mAccessMode = ATDragonCartSettings::kAccessMode_NAT;
+	mForwardingAddr = 0;
+	mForwardingPort = 0;
+	mTunnelAddr = 0;
+	mTunnelSrcPort = 0;
+	mTunnelTgtPort = 0;
 }
 
 void ATDragonCartSettings::LoadFromProps(const ATPropertySet& pset) {
@@ -265,6 +270,28 @@ void ATDragonCartSettings::LoadFromProps(const ATPropertySet& pset) {
 		else if (!wcscmp(s, L"nat"))
 			mAccessMode = kAccessMode_NAT;
 	}
+
+	uint32 fwaddr;
+	uint32 fwport;
+
+	if (pset.TryGetUint32("fwaddr", fwaddr) &&
+		pset.TryGetUint32("fwport", fwport) &&
+		fwaddr &&
+		fwport &&
+		fwport < 65536)
+	{
+		mForwardingAddr = fwaddr;
+		mForwardingPort = fwport;
+	}
+
+	pset.TryGetUint32("tunaddr", mTunnelAddr);
+
+	uint32 port;
+	if (pset.TryGetUint32("tunsrcport", port))
+		mTunnelSrcPort = (uint16)port;
+
+	if (pset.TryGetUint32("tuntgtport", port))
+		mTunnelTgtPort = (uint16)port;
 }
 
 void ATDragonCartSettings::SaveToProps(ATPropertySet& pset) {
@@ -283,12 +310,28 @@ void ATDragonCartSettings::SaveToProps(ATPropertySet& pset) {
 			pset.SetString("access", L"nat");
 			break;
 	}
+
+	if (mForwardingAddr && mForwardingPort) {
+		pset.SetUint32("fwaddr", mForwardingAddr);
+		pset.SetUint32("fwport", mForwardingPort);
+	}
+
+	if (mTunnelAddr) {
+		pset.SetUint32("tunaddr", mTunnelAddr);
+		pset.SetUint32("tunsrcport", mTunnelSrcPort);
+		pset.SetUint32("tuntgtport", mTunnelTgtPort);
+	}
 }
 
 bool ATDragonCartSettings::operator==(const ATDragonCartSettings& x) const {
 	return mNetAddr == x.mNetAddr
 		&& mNetMask == x.mNetMask
-		&& mAccessMode == x.mAccessMode;
+		&& mAccessMode == x.mAccessMode
+		&& mForwardingAddr == x.mForwardingAddr
+		&& mForwardingPort == x.mForwardingPort
+		&& mTunnelAddr == x.mTunnelAddr
+		&& mTunnelSrcPort == x.mTunnelSrcPort
+		&& mTunnelTgtPort == x.mTunnelTgtPort;
 }
 
 bool ATDragonCartSettings::operator!=(const ATDragonCartSettings& x) const {
@@ -331,11 +374,20 @@ void ATDragonCartEmulator::Init(ATMemoryManager *memmgr, ATScheduler *slowSched,
 	mpEthernetBus = new ATEthernetBus;
 	mEthernetClockId = mpEthernetBus->AddClock(mpEthernetClock);
 
-	ATCreateEthernetGatewayServer(&mpGateway);
-	mpGateway->Init(mpEthernetBus, mEthernetClockId, VDToBE32(mSettings.mNetAddr), VDToBE32(mSettings.mNetMask));
+	if (settings.mTunnelAddr)
+		ATCreateNetSockVxlanTunnel(VDToBE32(settings.mTunnelAddr), settings.mTunnelSrcPort, settings.mTunnelTgtPort, mpEthernetBus, mEthernetClockId, &mpNetSockVxlanTunnel);
 
 	if (settings.mAccessMode != ATDragonCartSettings::kAccessMode_None) {
-		ATCreateNetSockWorker(mpGateway->GetUdpStack(), settings.mAccessMode == ATDragonCartSettings::kAccessMode_NAT, &mpNetSockWorker);
+		ATCreateEthernetGatewayServer(&mpGateway);
+		mpGateway->Init(mpEthernetBus, mEthernetClockId, VDToBE32(mSettings.mNetAddr), VDToBE32(mSettings.mNetMask));
+
+		ATCreateNetSockWorker(
+			mpGateway->GetUdpStack(),
+			mpGateway->GetTcpStack(),
+			settings.mAccessMode == ATDragonCartSettings::kAccessMode_NAT,
+			VDToBE32(settings.mForwardingAddr),
+			settings.mForwardingPort,
+			&mpNetSockWorker);
 		mpGateway->SetBridgeListener(mpNetSockWorker->AsSocketListener(), mpNetSockWorker->AsUdpListener());
 	}
 
@@ -344,6 +396,8 @@ void ATDragonCartEmulator::Init(ATMemoryManager *memmgr, ATScheduler *slowSched,
 
 void ATDragonCartEmulator::Shutdown() {
 	mCS8900A.Shutdown();
+
+	vdsaferelease <<= mpNetSockVxlanTunnel;
 
 	if (mpNetSockWorker) {
 		mpGateway->SetBridgeListener(NULL, NULL);
@@ -365,7 +419,9 @@ void ATDragonCartEmulator::ColdReset() {
 	if (mpNetSockWorker)
 		mpNetSockWorker->ResetAllConnections();
 
-	mpGateway->ColdReset();
+	if (mpGateway)
+		mpGateway->ColdReset();
+
 	mpEthernetBus->ClearPendingFrames();
 	mCS8900A.ColdReset();
 }
@@ -515,6 +571,14 @@ private:
 	ATDragonCartEmulator mDragonCart;
 };
 
+void ATCreateDeviceDragonCart(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceDragonCart> p(new ATDeviceDragonCart);
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefDragonCart = { "dragoncart", "dragoncart", L"DragonCart", ATCreateDeviceDragonCart };
+
 ATDeviceDragonCart::ATDeviceDragonCart()
 	: mpMemMan(nullptr)
 	, mpSlowScheduler(nullptr)
@@ -540,9 +604,7 @@ void *ATDeviceDragonCart::AsInterface(uint32 id) {
 }
 
 void ATDeviceDragonCart::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "dragoncart";
-	info.mName = L"DragonCart";
-	info.mConfigTag = "dragoncart";
+	info.mpDef = &g_ATDeviceDefDragonCart;
 }
 
 void ATDeviceDragonCart::GetSettings(ATPropertySet& props) {
@@ -606,14 +668,4 @@ void ATDeviceDragonCart::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) 
 
 void ATDeviceDragonCart::DumpStatus(ATConsoleOutput& output) {
 	mDragonCart.DumpConnectionInfo(output);
-}
-
-void ATCreateDeviceDragonCart(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDeviceDragonCart> p(new ATDeviceDragonCart);
-
-	*dev = p.release();
-}
-
-void ATRegisterDeviceDragonCart(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("dragoncart", ATCreateDeviceDragonCart);
 }

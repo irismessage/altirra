@@ -19,7 +19,7 @@
 #define f_AT_VIA_H
 
 #include <vd2/system/function.h>
-#include "scheduler.h"
+#include <at/atcore/scheduler.h>
 
 typedef void (*ATVIA6522OutputFn)(void *data, uint32 outputState);
 

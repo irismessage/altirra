@@ -36,12 +36,13 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/VDDisplay/display.h>
-#include <at/atui/uiproxies.h>
-#include <at/atui/dialog.h>
+#include <at/atui/constants.h>
+#include <at/atnativeui/dialog.h>
+#include <at/atnativeui/uiframe.h>
+#include <at/atnativeui/uiproxies.h>
 #include <at/atcore/deviceprinter.h>
+#include <at/atdebugger/target.h>
 #include "console.h"
-#include "ui.h"
-#include "uiframe.h"
 #include "uikeyboard.h"
 #include "texteditor.h"
 #include "simulator.h"
@@ -58,8 +59,6 @@ extern HWND g_hwnd;
 
 extern ATSimulator g_sim;
 extern ATContainerWindow *g_pMainWindow;
-
-#define ATWM_APP_DEBUG_TOGGLEBREAKPOINT (WM_APP + 0x200)
 
 void ATConsoleQueueCommand(const char *s);
 
@@ -103,6 +102,26 @@ namespace {
 }
 
 ///////////////////////////////////////////////////////////////////////////
+bool ATConsoleShowSource(uint16 addr) {
+	uint32 moduleId;
+	ATSourceLineInfo lineInfo;
+	IATDebuggerSymbolLookup *lookup = ATGetDebuggerSymbolLookup();
+	if (!lookup->LookupLine(addr, false, moduleId, lineInfo))
+		return false;
+
+	VDStringW path;
+	if (!lookup->GetSourceFilePath(moduleId, lineInfo.mFileId, path) && lineInfo.mLine)
+		return false;
+
+	IATSourceWindow *w = ATOpenSourceWindow(path.c_str());
+	if (!w)
+		return false;
+
+	w->FocusOnLine(lineInfo.mLine - 1);
+	return true;
+}
+
+///////////////////////////////////////////////////////////////////////////
 
 class ATUIDebuggerPane : public ATUIPane, public IATUIDebuggerPane {
 public:
@@ -142,7 +161,7 @@ LRESULT ATUIDebuggerPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				const bool alt = GetKeyState(VK_MENU) < 0;
 				const bool ext = (lParam & (1 << 24)) != 0;
 
-				if (ATUIActivateVirtKeyMapping(wParam, alt, ctrl, shift, ext, false, kATUIAccelContext_Debugger))
+				if (ATUIActivateVirtKeyMapping((uint32)wParam, alt, ctrl, shift, ext, false, kATUIAccelContext_Debugger))
 					return TRUE;
 			}
 			break;
@@ -155,7 +174,7 @@ LRESULT ATUIDebuggerPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				const bool alt = GetKeyState(VK_MENU) < 0;
 				const bool ext = (lParam & (1 << 24)) != 0;
 
-				if (ATUIActivateVirtKeyMapping(wParam, alt, ctrl, shift, ext, true, kATUIAccelContext_Debugger))
+				if (ATUIActivateVirtKeyMapping((uint32)wParam, alt, ctrl, shift, ext, true, kATUIAccelContext_Debugger))
 					return TRUE;
 			}
 			break;
@@ -429,20 +448,7 @@ bool ATDisassemblyWindow::OnCommand(UINT cmd) {
 				if ((uint32)line < mAddressesByLine.size()) {
 					uint16 addr = mAddressesByLine[line];
 
-					uint32 moduleId;
-					ATSourceLineInfo lineInfo;
-					IATDebuggerSymbolLookup *lookup = ATGetDebuggerSymbolLookup();
-					if (lookup->LookupLine(addr, false, moduleId, lineInfo)) {
-						VDStringW path;
-						if (lookup->GetSourceFilePath(moduleId, lineInfo.mFileId, path) && lineInfo.mLine) {
-							IATSourceWindow *w = ATOpenSourceWindow(path.c_str());
-							if (w) {
-								w->FocusOnLine(lineInfo.mLine - 1);
-
-								error = false;
-							}
-						}
-					}
+					error = !ATConsoleShowSource(addr);
 				}
 				
 				if (error)
@@ -450,11 +456,7 @@ bool ATDisassemblyWindow::OnCommand(UINT cmd) {
 			}
 			break;
 		case ID_CONTEXT_SHOWNEXTSTATEMENT:
-			{
-				ATCPUEmulator& cpu = g_sim.GetCPU();
-
-				SetPosition(cpu.GetInsnPC() + ((uint32)cpu.GetK() << 16));
-			}
+			SetPosition(ATGetDebugger()->GetExtPC());
 			break;
 		case ID_CONTEXT_SETNEXTSTATEMENT:
 			{
@@ -506,97 +508,102 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 	mPCLine = -1;
 	mFramePCLine = -1;
 
-	ATCPUHistoryEntry hent0;
-	ATDisassembleCaptureRegisterContext(hent0);
-
-	ATCPUHistoryEntry hent(hent0);
-
-	bool autoModeSwitching = false;
-
-	if (g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C816)
-		autoModeSwitching = true;
-
-	uint32 viewLength = mpTextEditor->GetVisibleLineCount() * 24;
-
-	if (viewLength < 0x100)
-		viewLength = 0x100;
-
-	int line = 0;
 	int focusLine = -1;
 
-	mpTextEditor->SetUpdateEnabled(false);
+	if (mLastState.mpDebugTarget) {
+		IATDebugTarget *target = mLastState.mpDebugTarget;
+		ATCPUHistoryEntry hent0;
+		ATDisassembleCaptureRegisterContext(target, hent0);
 
-	while((uint32)(pc - mViewStart) < viewLength) {
-		if (pc == (uint16)mPCAddr)
-			mPCLine = line;
-		else if (pc == (uint16)mFramePCAddr)
-			mFramePCLine = line;
+		ATCPUHistoryEntry hent(hent0);
 
-		if (pc <= focusAddr)
-			focusLine = line;
+		const ATDebugDisasmMode disasmMode = target->GetDisasmMode();
+		bool autoModeSwitching = false;
 
-		++line;
+		if (disasmMode == kATDebugDisasmMode_65C816)
+			autoModeSwitching = true;
 
-		if (autoModeSwitching && pc == (uint16)mPCAddr)
-			hent = hent0;
+		uint32 viewLength = mpTextEditor->GetVisibleLineCount() * 24;
 
-		mAddressesByLine.push_back(pc);
-		ATDisassembleCaptureInsnContext(pc, mViewBank, hent);
-		buf.clear();
-		uint16 newpc = ATDisassembleInsn(buf, hent, false, false, true, mbShowCodeBytes, mbShowLabels);
-		buf += '\n';
+		if (viewLength < 0x100)
+			viewLength = 0x100;
 
-		// auto-switch mode if necessary
-		if (autoModeSwitching) {
-			switch(hent.mOpcode[0]) {
-				case 0x18:	// CLC
-					hent.mP &= ~AT6502::kFlagC;
-					break;
+		int line = 0;
 
-				case 0x38:	// SEC
-					hent.mP |= AT6502::kFlagC;
-					break;
+		mpTextEditor->SetUpdateEnabled(false);
 
-				case 0xC2:	// REP
-					if (hent.mbEmulation)
-						hent.mP &= ~hent.mOpcode[1] | 0x30;
-					else
-						hent.mP &= ~hent.mOpcode[1];
-					break;
+		while((uint32)(pc - mViewStart) < viewLength) {
+			if (pc == (uint16)mPCAddr)
+				mPCLine = line;
+			else if (pc == (uint16)mFramePCAddr)
+				mFramePCLine = line;
 
-				case 0xE2:	// SEP
-					if (hent.mbEmulation)
-						hent.mP |= hent.mOpcode[1] & 0xcf;
-					else
-						hent.mP |= hent.mOpcode[1];
-					break;
+			if (pc <= focusAddr)
+				focusLine = line;
 
-				case 0xFB:	// XCE
-					{
-						uint8 e = hent.mbEmulation ? 1 : 0;
-						uint8 xorv = hent.mP ^ e;
+			++line;
 
-						if (xorv) {
-							e ^= xorv;
-							hent.mP ^= xorv;
+			if (autoModeSwitching && pc == (uint16)mPCAddr)
+				hent = hent0;
 
-							hent.mbEmulation = (e & 1) != 0;
+			mAddressesByLine.push_back(pc);
+			ATDisassembleCaptureInsnContext(target, pc, mViewBank, hent);
+			buf.clear();
+			uint16 newpc = ATDisassembleInsn(buf, target, disasmMode, hent, false, false, true, mbShowCodeBytes, mbShowLabels);
+			buf += '\n';
 
-							if (hent.mbEmulation)
-								hent.mP |= 0x30;
+			// auto-switch mode if necessary
+			if (autoModeSwitching) {
+				switch(hent.mOpcode[0]) {
+					case 0x18:	// CLC
+						hent.mP &= ~AT6502::kFlagC;
+						break;
+
+					case 0x38:	// SEC
+						hent.mP |= AT6502::kFlagC;
+						break;
+
+					case 0xC2:	// REP
+						if (hent.mbEmulation)
+							hent.mP &= ~hent.mOpcode[1] | 0x30;
+						else
+							hent.mP &= ~hent.mOpcode[1];
+						break;
+
+					case 0xE2:	// SEP
+						if (hent.mbEmulation)
+							hent.mP |= hent.mOpcode[1] & 0xcf;
+						else
+							hent.mP |= hent.mOpcode[1];
+						break;
+
+					case 0xFB:	// XCE
+						{
+							uint8 e = hent.mbEmulation ? 1 : 0;
+							uint8 xorv = (hent.mP ^ e) & 1;
+
+							if (xorv) {
+								e ^= xorv;
+								hent.mP ^= xorv;
+
+								hent.mbEmulation = (e & 1) != 0;
+
+								if (hent.mbEmulation)
+									hent.mP |= 0x30;
+							}
 						}
-					}
-					break;
+						break;
+				}
 			}
+
+			// don't allow disassembly to skip the desired PC
+			if (newpc > focusAddr && pc < focusAddr)
+				newpc = focusAddr;
+
+			pc = newpc;
+
+			mpTextEditor->Append(buf.c_str());
 		}
-
-		// don't allow disassembly to skip the desired PC
-		if (newpc > focusAddr && pc < focusAddr)
-			newpc = focusAddr;
-
-		pc = newpc;
-
-		mpTextEditor->Append(buf.c_str());
 	}
 
 	mpTextEditor->SetUpdateEnabled(true);
@@ -614,15 +621,22 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 
 void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
 	if (state.mbRunning) {
+		if (mLastState.mpDebugTarget != state.mpDebugTarget)
+			mLastState.mpDebugTarget = nullptr;
+
 		mPCLine = -1;
 		mFramePCLine = -1;
 		mpTextEditor->RecolorAll();
 		return;
 	}
 
+	bool targetChanged = false;
 	bool changed = false;
 
-	if (mLastState.mPC != state.mPC || mLastState.mFramePC != state.mFramePC || mLastState.mK != state.mK)
+	if (mLastState.mpDebugTarget != state.mpDebugTarget) {
+		changed = true;
+		targetChanged = true;
+	} else if (mLastState.mPC != state.mPC || mLastState.mFramePC != state.mFramePC || mLastState.mK != state.mK)
 		changed = true;
 
 	mLastState = state;
@@ -637,10 +651,10 @@ void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemStat
 		mFramePCAddr = (uint32)-1;
 	}
 
-	if (changed && ((state.mFramePC - mViewStart) >= mViewLength || state.mK != mViewBank || g_sim.GetCPU().GetCPUSubMode() != mLastSubMode)) {
+	if (changed && ((state.mFramePC - mViewStart) >= mViewLength || state.mK != mViewBank || g_sim.GetCPU().GetCPUSubMode() != mLastSubMode || targetChanged)) {
 		SetPosition(mFramePCAddr);
 	} else {
-		const int n = mAddressesByLine.size();
+		const int n = (int)mAddressesByLine.size();
 
 		for(int line = 0; line < n; ++line) {
 			uint16 addr = mAddressesByLine[line];
@@ -692,7 +706,7 @@ void ATDisassemblyWindow::OnTextEditorScrolled(int firstVisiblePara, int lastVis
 			if (cenIdx < 0)
 				cenIdx = 0;
 			else if ((uint32)cenIdx >= mAddressesByLine.size())
-				cenIdx = mAddressesByLine.size() - 1;
+				cenIdx = (int)mAddressesByLine.size() - 1;
 
 			SetPosition(mAddressesByLine[cenIdx]);
 		}
@@ -817,13 +831,15 @@ void ATRegistersWindow::OnFontsUpdated() {
 void ATRegistersWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
 	mState.clear();
 
-	bool is65C816 = g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C816;
+	mState.append_sprintf("Target: %s\r\n", state.mpDebugTarget->GetName());
+
+	bool is65C816 = state.mpDebugTarget->GetDisasmMode() == kATDebugDisasmMode_65C816;
 
 	if (is65C816) {
 		if (state.mbEmulation)
-			mState += "Emulation\r\n";
+			mState += "Mode: Emulation\r\n";
 		else {
-			mState.append_sprintf("Native (M%d X%d)\r\n"
+			mState.append_sprintf("Mode: Native (M%d X%d)\r\n"
 				, state.mP & AT6502::kFlagM ? 8 : 16
 				, state.mP & AT6502::kFlagX ? 8 : 16
 				);
@@ -940,7 +956,7 @@ LRESULT ATCallStackWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 		case WM_COMMAND:
 			if (LOWORD(wParam) == 100 && HIWORD(wParam) == LBN_DBLCLK) {
-				int idx = SendMessage(mhwndList, LB_GETCURSEL, 0, 0);
+				int idx = (int)SendMessage(mhwndList, LB_GETCURSEL, 0, 0);
 
 				if ((size_t)idx < mFrames.size())
 					ATGetDebugger()->SetFramePC(mFrames[idx]);
@@ -1298,7 +1314,7 @@ bool ATSourceWindow::OnPaneCommand(ATUIPaneCommandId id) {
 
 LRESULT ATSourceWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	switch(msg) {
-		case WM_APP+101:
+		case WM_USER + 101:
 			if (!mPath.empty()) {
 				try {
 					LoadFile(mPath.c_str(), NULL);
@@ -1595,7 +1611,7 @@ int ATSourceWindow::GetLineForAddress(uint32 addr) {
 
 bool ATSourceWindow::OnFileUpdated(const wchar_t *path) {
 	if (mhwnd)
-		PostMessage(mhwnd, WM_APP + 101, 0, 0);
+		PostMessage(mhwnd, WM_USER + 101, 0, 0);
 
 	return true;
 }
@@ -1812,7 +1828,7 @@ public:
 	~ATHistoryWindow();
 
 protected:
-	enum NodeType {
+	enum NodeType : uint8 {
 		kNodeTypeInsn,
 		kNodeTypeRepeat,
 		kNodeTypeInterrupt,
@@ -1823,19 +1839,20 @@ protected:
 		uint32	mRelYPos;		// Y position in items, relative to parent
 		uint32	mHeight;		// Height, in items
 		bool	mbExpanded;
-		bool	mbHeightDirty;
 		bool	mbVisible;
+		NodeType	mNodeType;
 		TreeNode *mpParent;
 		TreeNode *mpPrevSibling;
 		TreeNode *mpNextSibling;
 		TreeNode *mpFirstChild;
 		TreeNode *mpLastChild;
-		ATCPUHistoryEntry mHEnt;
-		uint16	mHiBaseCycles;
-		uint16	mHiBaseUnhaltedCycles;
-		uint32	mRepeatCount;
-		uint32	mRepeatSize;
-		NodeType	mNodeType;
+		union {
+			ATCPUHistoryEntry mHEnt;
+			struct {
+				uint32	mCount;
+				uint32	mSize;
+			} mRepeat;
+		};
 		const char *mpText;
 	};
 
@@ -1952,11 +1969,6 @@ protected:
 	uint32	mTimeBaseCycles;
 	uint32	mTimeBaseUnhaltedCycles;
 
-	uint16	mHiBaseCycles;
-	uint16	mHiBaseUnhaltedCycles;
-	uint16	mLastLoCycles;
-	uint16	mLastLoUnhaltedCycles;
-
 	VDStringA mTempLine;
 
 	struct NodeBlock {
@@ -2054,10 +2066,6 @@ ATHistoryWindow::ATHistoryWindow()
 	, mbShowLabelNamespaces(true)
 	, mTimeBaseCycles(0)
 	, mTimeBaseUnhaltedCycles(0)
-	, mHiBaseCycles(0)
-	, mHiBaseUnhaltedCycles(0)
-	, mLastLoCycles(0)
-	, mLastLoUnhaltedCycles(0)
 	, mNodeCount(0)
 	, mpNodeFreeList(NULL)
 	, mpNodeBlocks(NULL)
@@ -2115,18 +2123,18 @@ LRESULT ATHistoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			return 0;
 
 		case WM_KEYDOWN:
-			if (OnKeyDown(wParam))
+			if (OnKeyDown((int)wParam))
 				return 0;
 			break;
 
 		case WM_LBUTTONDOWN:
 			::SetFocus(mhwnd);
-			OnLButtonDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), wParam);
+			OnLButtonDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), (int)wParam);
 			return 0;
 
 		case WM_LBUTTONDBLCLK:
 			::SetFocus(mhwnd);
-			OnLButtonDblClk(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), wParam);
+			OnLButtonDblClk(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), (int)wParam);
 			return 0;
 
 		case WM_MOUSEWHEEL:
@@ -2161,6 +2169,7 @@ LRESULT ATHistoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				TreeNode *pNode = GetNodeFromClientPoint(pt.x, pt.y);
 				SelectNode(pNode);
 
+				VDEnableMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_GOTOSOURCE, pNode != nullptr);
 				VDEnableMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SETTIMESTAMPORIGIN, pNode && pNode->mNodeType == kNodeTypeInsn);
 
 				TrackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
@@ -2169,6 +2178,12 @@ LRESULT ATHistoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 		case WM_COMMAND:
 			switch(LOWORD(wParam)) {
+				case ID_HISTORYCONTEXTMENU_GOTOSOURCE:
+					if (mpSelectedNode && mpSelectedNode->mNodeType == kNodeTypeInsn)
+						ATConsoleShowSource(mpSelectedNode->mHEnt.mPC);
+					
+					return true;
+
 				case ID_HISTORYCONTEXTMENU_SHOWPCADDRESS:
 					mbShowPCAddress = !mbShowPCAddress;
 					InvalidateRect(mhwnd, NULL, TRUE);
@@ -2244,8 +2259,8 @@ LRESULT ATHistoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 				case ID_HISTORYCONTEXTMENU_SETTIMESTAMPORIGIN:
 					if (mpSelectedNode && mpSelectedNode->mNodeType == kNodeTypeInsn) {
-						mTimeBaseCycles = mpSelectedNode->mHEnt.mCycle + ((uint32)mpSelectedNode->mHiBaseCycles << 16);
-						mTimeBaseUnhaltedCycles = mpSelectedNode->mHEnt.mUnhaltedCycle + ((uint32)mpSelectedNode->mHiBaseUnhaltedCycles << 16);
+						mTimeBaseCycles = mpSelectedNode->mHEnt.mCycle;
+						mTimeBaseUnhaltedCycles = mpSelectedNode->mHEnt.mUnhaltedCycle;
 						InvalidateRect(mhwnd, NULL, TRUE);
 					}
 
@@ -2445,8 +2460,11 @@ void ATHistoryWindow::OnLButtonDown(int x, int y, int mods) {
 	TreeNode *node = GetNodeFromClientPoint(x, y);
 
 	if (!node) {
-		mpSelectedNode = NULL;
-		InvalidateRect(mhwnd, NULL, FALSE);
+		if (mpSelectedNode) {
+			mpSelectedNode = NULL;
+			InvalidateRect(mhwnd, NULL, FALSE);
+		}
+
 		return;
 	}
 
@@ -2455,8 +2473,10 @@ void ATHistoryWindow::OnLButtonDown(int x, int y, int mods) {
 		++level;
 
 	if (x >= level * (int)mItemHeight) {
-		mpSelectedNode = node;
-		InvalidateRect(mhwnd, NULL, FALSE);
+		if (mpSelectedNode != node) {
+			mpSelectedNode = node;
+			InvalidateRect(mhwnd, NULL, FALSE);
+		}
 	} else if (x >= (level - 1)*(int)mItemHeight && node->mpFirstChild) {
 		if (node->mbExpanded)
 			CollapseNode(node);
@@ -2469,8 +2489,10 @@ void ATHistoryWindow::OnLButtonDblClk(int x, int y, int mods) {
 	TreeNode *node = GetNodeFromClientPoint(x, y);
 
 	if (!node) {
-		mpSelectedNode = NULL;
-		InvalidateRect(mhwnd, NULL, FALSE);
+		if (mpSelectedNode) {
+			mpSelectedNode = NULL;
+			InvalidateRect(mhwnd, NULL, FALSE);
+		}
 		return;
 	}
 
@@ -2479,8 +2501,10 @@ void ATHistoryWindow::OnLButtonDblClk(int x, int y, int mods) {
 		++level;
 
 	if (x >= level * (int)mItemHeight) {
-		mpSelectedNode = node;
-		InvalidateRect(mhwnd, NULL, FALSE);
+		if (mpSelectedNode != node) {
+			mpSelectedNode = node;
+			InvalidateRect(mhwnd, NULL, FALSE);
+		}
 
 		if (!*node->mpText)
 			ATGetDebugger()->SetFramePC(node->mHEnt.mPC);
@@ -2799,7 +2823,6 @@ void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 	if (!baseNode)
 		return;
 
-	const bool is65C816 = g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C816;
 	TreeNode *baseParent = baseNode->mpParent;
 	TreeNode *node = baseNode;
 
@@ -2840,7 +2863,7 @@ void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 
 				const char *s = GetNodeText(node);
 
-				ExtTextOutA(hdc, x + mItemHeight, rOpaque.top + mItemTextVOffset, ETO_OPAQUE | ETO_CLIPPED, &rOpaque, s, strlen(s), NULL);
+				ExtTextOutA(hdc, x + mItemHeight, rOpaque.top + mItemTextVOffset, ETO_OPAQUE | ETO_CLIPPED, &rOpaque, s, (UINT)strlen(s), NULL);
 
 				RECT rPad;
 				rPad.left = rPaint->left;
@@ -2908,46 +2931,56 @@ const char *ATHistoryWindow::GetNodeText(TreeNode *node) {
 
 	switch(node->mNodeType) {
 		case kNodeTypeRepeat:
-			mTempLine.sprintf("Last %d insns repeated %d times", node->mRepeatSize, node->mRepeatCount);
+			mTempLine.sprintf("Last %d insns repeated %d times", node->mRepeat.mSize, node->mRepeat.mCount);
 			s = mTempLine.c_str();
 			break;
 
 		case kNodeTypeInterrupt:
 			{
+				IATDebugTarget *target = ATGetDebugger()->GetTarget();
 				const ATCPUHistoryEntry& hent = node->mHEnt;
 
-				int beamy = (hent.mTimestamp >> 8) & 0xfff;
+				const auto& tsdecoder = g_sim.GetTimestampDecoder();
+				uint32 rawts = vdpoly_cast<IATDebugTargetHistory *>(target)->ConvertRawTimestamp(hent.mCycle);
 
-				mTempLine = hent.mbNMI ? beamy >= 248 ? "NMI interrupt (VBI)" : "NMI interrupt (DLI)" : "IRQ interrupt";
+				mTempLine = hent.mbNMI ? tsdecoder.IsInterruptPositionVBI(rawts) ? "NMI interrupt (VBI)" : "NMI interrupt (DLI)" : "IRQ interrupt";
 				s = mTempLine.c_str();
 			}
 			break;
 
 		case kNodeTypeInsn:
 			{
-				const bool is65C816 = g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C816;
+				IATDebugTarget *target = ATGetDebugger()->GetTarget();
+				const ATDebugDisasmMode disasmMode = target->GetDisasmMode();
+				const bool is65C816 = disasmMode == kATDebugDisasmMode_65C816;
 				const ATCPUHistoryEntry& hent = node->mHEnt;
 
 				switch(mTimestampMode) {
 					case kTsMode_Beam:{
-						uint32 frameBase = g_sim.GetAntic().GetFrameCounter();
-						uint32 tsframelo = hent.mTimestamp >> 20;
-						uint32 tsframe = (frameBase & ~0xfff) + tsframelo;
-						if (tsframe > frameBase)
-							tsframe -= 0x1000;
+						const auto& tsdecoder = g_sim.GetTimestampDecoder();
+						uint32 rawts = vdpoly_cast<IATDebugTargetHistory *>(target)->ConvertRawTimestamp(hent.mCycle);
+						const auto& beamPos = tsdecoder.GetBeamPosition(rawts);
 
-						if (g_sim.GetCPU().GetSubCycles() > 1) {
+						const uint32 subCycles = g_sim.GetCPU().GetSubCycles();
+						if (subCycles >= 10) {
+							mTempLine.sprintf("%d:%3d:%3d.%2u | "
+									, beamPos.mFrame
+									, beamPos.mY
+									, beamPos.mX
+									, hent.mSubCycle
+								);
+						} else if (subCycles > 1) {
 							mTempLine.sprintf("%d:%3d:%3d.%u | "
-									, tsframe
-									, (hent.mTimestamp >> 8) & 0xfff
-									, hent.mTimestamp & 0xff
+									, beamPos.mFrame
+									, beamPos.mY
+									, beamPos.mX
 									, hent.mSubCycle
 								);
 						} else {
 							mTempLine.sprintf("%d:%3d:%3d | "
-									, tsframe
-									, (hent.mTimestamp >> 8) & 0xfff
-									, hent.mTimestamp & 0xff
+									, beamPos.mFrame
+									, beamPos.mY
+									, beamPos.mX
 								);
 						}
 						break;
@@ -2955,19 +2988,18 @@ const char *ATHistoryWindow::GetNodeText(TreeNode *node) {
 
 					case kTsMode_Microseconds: {
 						auto vs = g_sim.GetVideoStandard();
-						mTempLine.sprintf("T%+.6f | ", (float)(sint32)(((uint32)node->mHiBaseCycles << 16) + hent.mCycle - mTimeBaseCycles) *
+						mTempLine.sprintf("T%+.6f | ", (float)(sint32)(hent.mCycle - mTimeBaseCycles) *
 							(vs == kATVideoStandard_NTSC || vs == kATVideoStandard_PAL60 ? 1.0f / 1773447.0f : 1.0f / 1789772.5f));
 						break;
 				    }
 
 					case kTsMode_Cycles: {
-						mTempLine.sprintf("T%+d | ", (sint32)(((uint32)node->mHiBaseCycles << 16) + hent.mCycle - mTimeBaseCycles));
-						mTimeBaseCycles;
+						mTempLine.sprintf("T%+-4d | ", (sint32)(hent.mCycle - mTimeBaseCycles));
 						break;
 					}
 
 					case kTsMode_UnhaltedCycles: {
-						mTempLine.sprintf("T%+d | ", (sint16)(((uint32)node->mHiBaseUnhaltedCycles << 16) + hent.mUnhaltedCycle - mTimeBaseUnhaltedCycles));
+						mTempLine.sprintf("T%+-4d | ", (sint32)(hent.mUnhaltedCycle - mTimeBaseUnhaltedCycles));
 						break;
 					}
 				}
@@ -3005,9 +3037,9 @@ const char *ATHistoryWindow::GetNodeText(TreeNode *node) {
 								mTempLine.append_sprintf(" S=%02X%02X B=%02X D=%04X P=%02X"
 									, hent.mSH
 									, hent.mS
-									, hent.mP
 									, hent.mB
 									, hent.mD
+									, hent.mP
 									);
 							}
 						} else {
@@ -3019,8 +3051,10 @@ const char *ATHistoryWindow::GetNodeText(TreeNode *node) {
 								);
 
 							if (mbShowSpecialRegisters) {
-								mTempLine.append_sprintf(" S=%02X P=%02X"
+								mTempLine.append_sprintf(" S=%02X B=%02X D=%04D P=%02X"
 									, hent.mS
+									, hent.mB
+									, hent.mD
 									, hent.mP
 									);
 							}
@@ -3068,7 +3102,10 @@ const char *ATHistoryWindow::GetNodeText(TreeNode *node) {
 				if (mbShowRegisters || mbShowFlags)
 					mTempLine += " | ";
 
-				ATDisassembleInsn(mTempLine, hent, false, true, mbShowPCAddress, mbShowCodeBytes, mbShowLabels, false, false, mbShowLabelNamespaces);
+				if (hent.mbIRQ && hent.mbNMI)
+					mTempLine.append_sprintf("%04X: -- High level emulation --", hent.mPC);
+				else
+					ATDisassembleInsn(mTempLine, target, disasmMode, hent, false, true, mbShowPCAddress, mbShowCodeBytes, mbShowLabels, false, false, mbShowLabelNamespaces);
 
 				s = mTempLine.c_str();
 			}
@@ -3302,47 +3339,40 @@ ATHistoryWindow::TreeNode *ATHistoryWindow::GetNodeFromClientPoint(int x, int y)
 }
 
 ATHistoryWindow::TreeNode *ATHistoryWindow::GetPrevVisibleNode(TreeNode *node) const {
-	TreeNode *p = node->mpPrevSibling;
+	do {
+		if (node->mpPrevSibling) {
+			node = node->mpPrevSibling;
 
-	if (p) {
-		while(p->mbExpanded) {
-			TreeNode *q = p->mpLastChild;
-
-			if (!q)
-				break;
-
-			p = q;
+			while(node->mbExpanded && node->mpLastChild && node->mbVisible)
+				node = node->mpLastChild;
+		} else {
+			do {
+				node = node->mpParent;
+				if (node == &mRootNode)
+					return nullptr;
+			} while(!node->mpPrevSibling);
 		}
+	} while(!node->mbVisible);
 
-		return p;
-	}
-
-	// pop up to parent
-	node = node->mpParent;
-	if (node != &mRootNode)
-		return node;
-
-	return NULL;
+	return node;
 }
 
 ATHistoryWindow::TreeNode *ATHistoryWindow::GetNextVisibleNode(TreeNode *node) const {
-	if (node->mbExpanded) {
-		TreeNode *q = node->mpFirstChild;
-
-		if (q)
-			return q;
-	}
-
 	do {
-		TreeNode *p = node->mpNextSibling;
+		if (node->mbExpanded && node->mpFirstChild)
+			node = node->mpFirstChild;
+		else {
+			while(!node->mpNextSibling) {
+				node = node->mpParent;
+				if (node == &mRootNode)
+					return nullptr;
+			}
 
-		if (p)
-			return p;
+			node = node->mpNextSibling;
+		}
+	} while(!node->mbVisible);
 
-		node = node->mpParent;
-	} while(node != &mRootNode);
-
-	return NULL;
+	return node;
 }
 
 ATHistoryWindow::TreeNode *ATHistoryWindow::GetNearestVisibleNode(TreeNode *node) const {
@@ -3434,16 +3464,14 @@ void ATHistoryWindow::Reset() {
 	mRepeatLoopSize = 0;
 	mRepeatLoopCount = 0;
 	mRepeatInsnCount = 0;
-	mHiBaseCycles = 0;
-	mHiBaseUnhaltedCycles = 0;
-	mLastLoCycles = 0;
-	mLastLoUnhaltedCycles = 0;
 }
 
 void ATHistoryWindow::UpdateOpcodes() {
-	ATCPUEmulator& cpu = g_sim.GetCPU();
+	IATDebugTarget *target = ATGetDebugger()->GetTarget();
+	IATDebugTargetHistory *history = vdpoly_cast<IATDebugTargetHistory *>(target);
+
 	if (mbHistoryError)  {
-		if (!cpu.IsHistoryEnabled())
+		if (!history || !history->GetHistoryEnabled())
 			return;
 
 		Reset();
@@ -3451,7 +3479,7 @@ void ATHistoryWindow::UpdateOpcodes() {
 		OnSize();
 		InvalidateRect(mhwnd, NULL, TRUE);
 	} else {
-		if (!cpu.IsHistoryEnabled()) {
+		if (!history || !history->GetHistoryEnabled()) {
 			ClearAllNodes();
 			Reset();
 			mbHistoryError = true;
@@ -3462,11 +3490,13 @@ void ATHistoryWindow::UpdateOpcodes() {
 		}
 	}
 
-	bool is65C02 = cpu.GetCPUMode() == kATCPUMode_65C02;
-	bool is65C816 = cpu.GetCPUMode() == kATCPUMode_65C816;
-	uint32 c = cpu.GetHistoryCounter();
+	const auto dmode = target->GetDisasmMode();
+	bool is65C02 = dmode == kATDebugDisasmMode_65C02;
+	bool is65C816 = dmode == kATDebugDisasmMode_65C816;
+	const auto historyRange = history->GetHistoryRange();
+	uint32 c = historyRange.second;
 	uint32 dist = c - mLastCounter;
-	uint32 l = cpu.GetHistoryLength();
+	uint32 l = historyRange.second - historyRange.first;
 
 	if (dist == 0)
 		return;
@@ -3492,9 +3522,25 @@ void ATHistoryWindow::UpdateOpcodes() {
 
 	mbUpdatesBlocked = true;
 
+	const ATCPUHistoryEntry *htab[64];
+	uint32 htabidx = 0;
+	uint32 htabmax = 0;
+	uint32 hposnext = mLastCounter;
+
+	mLastCounter += dist;
+
 	TreeNode *last = NULL;
 	while(dist--) {
-		const ATCPUHistoryEntry& hent = cpu.GetHistory(c - ++mLastCounter);
+		if (htabidx >= htabmax) {
+			htabmax = history->ExtractHistory(htab, hposnext, std::min<uint32>(dist+1, vdcountof(htab)));
+			if (!htabmax)
+				break;
+
+			hposnext += htabmax;
+			htabidx = 0;
+		}
+
+		const ATCPUHistoryEntry& hent = *htab[htabidx++];
 
 		// If we've had a change in stack height or an interrupt, terminate
 		// any loop tracking.
@@ -3545,7 +3591,7 @@ void ATHistoryWindow::UpdateOpcodes() {
 			if (!parent)
 				parent = &mRootNode;
 
-			if (hent.mbNMI || hent.mbIRQ) {
+			if ((hent.mbNMI || hent.mbIRQ) && !(hent.mbNMI && hent.mbIRQ)) {
 				if (mbCollapseInterrupts) {
 					if (parentDepth >= kMaxNestingDepth) {
 						parent = &mRootNode;
@@ -3627,16 +3673,6 @@ void ATHistoryWindow::UpdateOpcodes() {
 		// add new node
 		last = InsertNode(parent, parent->mpLastChild, "", &hent, kNodeTypeInsn);
 
-		// update time base
-		if (hent.mCycle < mLastLoCycles)
-			++mHiBaseCycles;
-
-		if (hent.mUnhaltedCycle < mLastLoUnhaltedCycles)
-			++mHiBaseUnhaltedCycles;
-
-		mLastLoCycles = hent.mCycle;
-		mLastLoUnhaltedCycles = hent.mUnhaltedCycle;
-
 		// check if we have a match on the repeat window
 		int repeatOffset = -1;
 
@@ -3679,8 +3715,8 @@ void ATHistoryWindow::UpdateOpcodes() {
 				}
 
 				if (mpRepeatNode) {
-					mpRepeatNode->mRepeatCount = mRepeatLoopCount;
-					mpRepeatNode->mRepeatSize = mRepeatLoopSize;
+					mpRepeatNode->mRepeat.mCount = mRepeatLoopCount;
+					mpRepeatNode->mRepeat.mSize = mRepeatLoopSize;
 					RefreshNode(mpRepeatNode);
 
 					TreeNode *looseNode = mpRepeatNode->mpParent->mpLastChild;
@@ -3744,7 +3780,6 @@ void ATHistoryWindow::ClearAllNodes() {
 	memset(&mRootNode, 0, sizeof mRootNode);
 	mRootNode.mbExpanded = true;
 	mRootNode.mHeight = 1;
-	mRootNode.mRepeatCount = 0;
 
 	UpdateScrollMax();
 
@@ -3761,10 +3796,7 @@ ATHistoryWindow::TreeNode *ATHistoryWindow::InsertNode(TreeNode *parent, TreeNod
 	node->mpFirstChild = NULL;
 	node->mpLastChild = NULL;
 	node->mHeight = 1;
-	node->mRepeatCount = 0;
 	node->mNodeType = nodeType;
-	node->mHiBaseCycles = mHiBaseCycles;
-	node->mHiBaseUnhaltedCycles = mHiBaseUnhaltedCycles;
 
 	if (hent)
 		node->mHEnt = *hent;
@@ -4342,7 +4374,7 @@ void ATConsoleWindow::OnSize() {
 	RECT r;
 
 	if (GetClientRect(mhwnd, &r)) {
-		int prw = 8 * g_monoFontCharWidth + 4*GetSystemMetrics(SM_CXEDGE);
+		int prw = 10 * g_monoFontCharWidth + 4*GetSystemMetrics(SM_CXEDGE);
 		int h = g_monoFontLineHeight + 4*GetSystemMetrics(SM_CYEDGE);
 
 		if (prw * 3 > r.right)
@@ -4640,7 +4672,7 @@ void ATConsoleWindow::FlushAppendBuffer() {
 	if (SendMessage(mhwndLog, EM_GETLINECOUNT, 0, 0) > 5000) {
 		POINT pt;
 		SendMessage(mhwndLog, EM_GETSCROLLPOS, 0, (LPARAM)&pt);
-		int idx = SendMessage(mhwndLog, EM_LINEINDEX, 2000, 0);
+		int idx = (int)SendMessage(mhwndLog, EM_LINEINDEX, 2000, 0);
 		SendMessage(mhwndLog, EM_SETSEL, 0, idx);
 		SendMessage(mhwndLog, EM_REPLACESEL, FALSE, (LPARAM)_T(""));
 		SendMessage(mhwndLog, EM_SETSCROLLPOS, 0, (LPARAM)&pt);
@@ -4656,7 +4688,7 @@ void ATConsoleWindow::FlushAppendBuffer() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATMemoryWindow : public ATUIDebuggerPane,
+class ATMemoryWindow final : public ATUIDebuggerPane,
 							public IATDebuggerClient,
 							public IVDUIMessageFilterW32
 {
@@ -4688,8 +4720,10 @@ protected:
 
 	RECT	mTextArea;
 	uint32	mViewStart;
+	bool	mbViewValid;
 	uint32	mCharWidth;
 	uint32	mLineHeight;
+	uintptr	mLastTarget;
 
 	VDStringW	mName;
 	VDStringA	mTempLine;
@@ -4705,7 +4739,9 @@ ATMemoryWindow::ATMemoryWindow(uint32 id)
 	, mMenu(LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_MEMORY_CONTEXT_MENU)))
 	, mTextArea()
 	, mViewStart(0)
+	, mbViewValid(false)
 	, mLineHeight(16)
+	, mLastTarget(0)
 {
 	mPreferredDockCode = kATContainerDockRight;
 
@@ -4755,36 +4791,33 @@ LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			{
 				int x = GET_X_LPARAM(lParam);
 				int y = GET_Y_LPARAM(lParam);
+				POINT pt = {x, y};
+				ScreenToClient(mhwnd, &pt);
 
-				UINT id = TrackPopupMenu(GetSubMenu(mMenu, 0), TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, 0, mhwnd, NULL);
+				uint32 addr;
+				const bool addrValid = GetAddressFromPoint(pt.x, pt.y, addr);
+
+				HMENU hSubMenu = GetSubMenu(mMenu, 0);
+
+				VDEnableMenuItemByCommandW32(hSubMenu, ID_CONTEXT_TOGGLEREADBREAKPOINT, addrValid);
+				VDEnableMenuItemByCommandW32(hSubMenu, ID_CONTEXT_TOGGLEWRITEBREAKPOINT, addrValid);
+
+				UINT id = TrackPopupMenu(hSubMenu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, 0, mhwnd, NULL);
 
 				switch(id) {
 					case ID_CONTEXT_TOGGLEREADBREAKPOINT:
-						{
-							POINT pt = {x, y};
-							ScreenToClient(mhwnd, &pt);
-
-							uint32 addr;
-							if (GetAddressFromPoint(pt.x, pt.y, addr)) {
-								ATGetDebugger()->ToggleAccessBreakpoint(addr, false);
-							}
-						}
+						if (addrValid)
+							ATGetDebugger()->ToggleAccessBreakpoint(addr, false);
 						break;
 
 					case ID_CONTEXT_TOGGLEWRITEBREAKPOINT:
-						{							
-							POINT pt = {x, y};
-							ScreenToClient(mhwnd, &pt);
-
-							uint32 addr;
-							if (GetAddressFromPoint(pt.x, pt.y, addr)) {
-								ATGetDebugger()->ToggleAccessBreakpoint(addr, true);
-							}
-						}
+						if (addrValid)
+							ATGetDebugger()->ToggleAccessBreakpoint(addr, true);
 						break;
 				}
 			}
-			break;
+
+			return 0;
 	}
 
 	return ATUIDebuggerPane::WndProc(msg, wParam, lParam);
@@ -4899,11 +4932,14 @@ void ATMemoryWindow::OnPaint() {
 				break;
 		}
 
+		IATDebugger *debugger = ATGetDebugger();
+		IATDebugTarget *target = debugger->GetTarget();
+
 		uint32 addrBase = mViewStart & ~incMask;
 		for(int rowIndex = rowStart; rowIndex < rowEnd; ++rowIndex) {
 			uint32 addr = addrBase + ((mViewStart + (rowIndex << 4)) & incMask);
 
-			mTempLine.sprintf("%s:", ATGetDebugger()->GetAddressText(addr, false).c_str());
+			mTempLine.sprintf("%s:", debugger->GetAddressText(addr, false).c_str());
 			mTempLine2.clear();
 			mTempLine2.resize(mTempLine.size(), ' ');
 
@@ -4911,7 +4947,7 @@ void ATMemoryWindow::OnPaint() {
 			for(int i=0; i<16; ++i) {
 				uint32 baddr = addrBase + ((addr + i) & incMask);
 
-				data[i] = g_sim.DebugGlobalReadByte(baddr);
+				data[i] = target->DebugReadByte(baddr);
 
 				if (changeMask & (1 << i)) {
 					mTempLine += "   ";
@@ -4956,20 +4992,19 @@ void ATMemoryWindow::OnPaint() {
 }
 
 void ATMemoryWindow::RemakeView(uint32 focusAddr) {
-	ATCPUEmulatorMemory& mem = g_sim.GetCPUMemory();
-
 	bool changed = false;
 	uint32 changeMask = 0xFFFFFFFFU;
 
-	if (mViewStart != focusAddr) {
+	if (mViewStart != focusAddr || !mbViewValid) {
 		mViewStart = focusAddr;
+		mbViewValid = true;
 		changed = true;
 		changeMask = 0;
 	}
 
-	int rows = mChangedBits.size();
+	int rows = (int)mChangedBits.size();
 
-	int limit = mViewData.size();
+	int limit = (int)mViewData.size();
 
 	if (limit != (rows << 4))
 		changed = true;
@@ -5051,6 +5086,12 @@ bool ATMemoryWindow::GetAddressFromPoint(int x, int y, uint32& addr) const {
 }
 
 void ATMemoryWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
+	if (mLastTarget != (uintptr)state.mpDebugTarget) {
+		mLastTarget = (uintptr)state.mpDebugTarget;
+
+		mbViewValid = false;
+	}
+
 	RemakeView(mViewStart);
 }
 
@@ -5115,7 +5156,7 @@ protected:
 			mpExpr.reset();
 
 			try {
-				mpExpr = ATDebuggerParseExpression(VDTextWToA(expr).c_str(), ATGetDebugger(), ATGetDebugger()->GetExprOpts());
+				mpExpr = ATDebuggerParseExpression(VDTextWToA(expr).c_str(), ATGetDebuggerSymbolLookup(), ATGetDebugger()->GetExprOpts());
 			} catch(const ATDebuggerExprParseException& ex) {
 				mValueStr = L"<Evaluation error: ";
 				mValueStr += VDTextAToW(ex.gets());
@@ -5127,11 +5168,7 @@ protected:
 			if (!mpExpr)
 				return false;
 
-			ATDebugExpEvalContext ctx = {};
-			ctx.mpCPU = &g_sim.GetCPU();
-			ctx.mpMemory = &g_sim.GetCPUMemory();
-			ctx.mpAntic = &g_sim.GetAntic();
-			ctx.mpMMU = g_sim.GetMMU();
+			ATDebugExpEvalContext ctx = ATGetDebugger()->GetEvalContext();
 
 			sint32 result;
 			if (mpExpr->Evaluate(result, ctx))
@@ -5249,7 +5286,7 @@ void ATWatchWindow::OnItemLabelChanged(VDUIProxyListView *sender, VDUIProxyListV
 	const int n = sender->GetItemCount();
 	const bool isLast = event->mIndex == n - 1;
 
-	if (*event->mpNewLabel) {
+	if (event->mpNewLabel && *event->mpNewLabel) {
 		if (isLast)
 			sender->InsertVirtualItem(n, new WatchItem);
 
@@ -5261,7 +5298,7 @@ void ATWatchWindow::OnItemLabelChanged(VDUIProxyListView *sender, VDUIProxyListV
 			mListView.AutoSizeColumns();
 		}
 	} else {
-		if (!isLast)
+		if (event->mpNewLabel && !isLast)
 			sender->DeleteItem(event->mIndex);
 
 		event->mbAllowEdit = false;
@@ -5441,7 +5478,7 @@ LRESULT ATDebugDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			if (lParam) {
 				if (lParam == (LPARAM)mhwndDLAddrCombo) {
 					if (HIWORD(wParam) == CBN_SELCHANGE) {
-						int sel = SendMessageW(mhwndDLAddrCombo, CB_GETCURSEL, 0, 0);
+						int sel = (int)SendMessageW(mhwndDLAddrCombo, CB_GETCURSEL, 0, 0);
 
 						switch(sel) {
 							case 0:
@@ -5458,7 +5495,7 @@ LRESULT ATDebugDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					}
 				} else if (lParam == (LPARAM)mhwndPFAddrCombo) {
 					if (HIWORD(wParam) == CBN_SELCHANGE) {
-						int sel = SendMessageW(mhwndDLAddrCombo, CB_GETCURSEL, 0, 0);
+						int sel = (int)SendMessageW(mhwndDLAddrCombo, CB_GETCURSEL, 0, 0);
 
 						if (sel >= 0)
 							mDebugDisplay.SetPFAddrOverride(-1);

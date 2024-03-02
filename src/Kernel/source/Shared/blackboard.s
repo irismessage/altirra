@@ -18,18 +18,18 @@
 
 .proc Blackboard
 	;print banner
-	ldx		#0
-	mva		#$09	iccmd
-	mwa		#banner	icbal
-	lda		#24
+	mva		#<banner icbal
+	mva		#>banner icbah
 	sta		icbll
+	ldx		#0
 	stx		icblh
-	
+	lda		#CIOCmdPutRecord
 echoloop:
+	sta		iccmd
 	jsr		ciov
 
-	mva		#$07	iccmd		;get characters
 	stx		icbll
+	lda		#CIOCmdGetChars
 	bne		echoloop
 
 banner:

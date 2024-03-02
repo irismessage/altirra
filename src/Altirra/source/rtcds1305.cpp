@@ -70,14 +70,16 @@ void ATRTCDS1305Emulator::WriteState(bool chipEnable, bool clock, bool data) {
 		if (!chipEnable) {
 			mPhase = 0;
 			mbState = true;
-			mbSPIClock = true;
+		} else {
+			mbSPIClock = clock;
+			mbSPIInitialClock = clock;
 		}
 	}
 
 	if (chipEnable && mbSPIClock != clock) {
 		mbSPIClock = clock;
 
-		if (clock) {	// read (0 -> 1 clock transition)
+		if (clock != mbSPIInitialClock) {	// read (0 -> 1 clock transition)
 			if (mPhase >= 8 && mAddress < 0x80) {
 				mbState = (mValue >= 0x80);
 				mValue += mValue;

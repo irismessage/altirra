@@ -19,17 +19,17 @@
 #define f_AT_AUDIOSYNCMIXER_H
 
 #include <vd2/system/linearalloc.h>
+#include <at/atcore/scheduler.h>
 #include "audiosource.h"
-#include "scheduler.h"
 
 enum ATAudioMix {
 	kATAudioMix_Drive,
 	kATAudioMixCount
 };
 
-class ATAudioSyncMixer : public IATSyncAudioSource {
-	ATAudioSyncMixer(const ATAudioSyncMixer&);
-	ATAudioSyncMixer& operator=(const ATAudioSyncMixer&);
+class ATAudioSyncMixer final : public IATSyncAudioSource {
+	ATAudioSyncMixer(const ATAudioSyncMixer&) = delete;
+	ATAudioSyncMixer& operator=(const ATAudioSyncMixer&) = delete;
 public:
 	ATAudioSyncMixer();
 	~ATAudioSyncMixer();
@@ -46,7 +46,9 @@ public:
 	void StopSound(uint32 id, uint32 time);
 
 public:
-	virtual void WriteAudio(uint32 startTime, float *dstLeft, float *dstRightOpt, uint32 n);
+	bool SupportsStereoMixing() const override { return false; }
+	bool RequiresStereoMixingNow() const override { return false; }
+	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 
 protected:
 	ATScheduler *mpScheduler;

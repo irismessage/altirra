@@ -2,18 +2,19 @@
 #include <vd2/system/math.h>
 #include <vd2/system/time.h>
 #include <vd2/VDDisplay/textrenderer.h>
-#include "uiwidget.h"
+#include <at/atcore/profile.h>
+#include <at/atui/uiwidget.h>
 #include "uiprofiler.h"
-#include "uicontainer.h"
-#include "uimanager.h"
+#include <at/atui/uicontainer.h>
+#include <at/atui/uimanager.h>
 
-class ATUIProfilerWindow : public ATUIWidget {
+class ATUIProfilerWindow final : public ATUIWidget, public IATProfiler {
 public:
 	ATUIProfilerWindow();
 
-	void BeginFrame();
-	void BeginRegion(ATUIProfileRegion region);
-	void EndRegion();
+	void OnEvent(ATProfileEvent event);
+	void BeginRegion(ATProfileRegion region);
+	void EndRegion(ATProfileRegion region);
 
 	void AutoSize(const vdpoint32& origin);
 
@@ -23,7 +24,7 @@ protected:
 
 	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
 
-	void RecordRegion(ATUIProfileRegion region, uint64 t);
+	void RecordRegion(ATProfileRegion region, uint64 t);
 
 	int mX;
 	int mLastY;
@@ -32,12 +33,12 @@ protected:
 	uint64 mFrameStartTime;
 	double mPreciseTicksToPixels;
 
-	uint32 mRegionRectStarts[kATUIProfileRegionCount];
+	uint32 mRegionRectStarts[kATProfileRegionCount];
 
 	vdrefptr<IVDDisplayFont> mpFont;
 
-	vdvector<vdrect32> mRegionRects[kATUIProfileRegionCount];
-	ATUIProfileRegion mRegionStack[64];
+	vdvector<vdrect32> mRegionRects[kATProfileRegionCount];
+	ATProfileRegion mRegionStack[64];
 };
 
 ATUIProfilerWindow *g_pATUIProfilerWindow;
@@ -56,10 +57,13 @@ ATUIProfilerWindow::ATUIProfilerWindow()
 	mFrameStartTime = VDGetPreciseTick();
 	mPreciseTicksToPixels = VDGetPreciseSecondsPerTick() * (double)mMaxY * 30.0f;
 
-	std::fill(mRegionRectStarts, mRegionRectStarts + kATUIProfileRegionCount, 0);
+	std::fill(mRegionRectStarts, mRegionRectStarts + kATProfileRegionCount, 0);
 }
 
-void ATUIProfilerWindow::BeginFrame() {
+void ATUIProfilerWindow::OnEvent(ATProfileEvent event) {
+	if (event != kATProfileEvent_BeginFrame)
+		return;
+
 	Invalidate();
 
 	mRegionStackHt = 0;
@@ -69,7 +73,7 @@ void ATUIProfilerWindow::BeginFrame() {
 	mFrameStartTime = VDGetPreciseTick();
 
 	uint32 xdel = (mX + 1) & 255;
-	for(int i=0; i<kATUIProfileRegionCount; ++i) {
+	for(int i=0; i<kATProfileRegionCount; ++i) {
 		vdvector<vdrect32>& v = mRegionRects[i];
 		uint32& regionStart = mRegionRectStarts[i];
 		uint32 n = v.size();
@@ -84,7 +88,7 @@ void ATUIProfilerWindow::BeginFrame() {
 	}
 }
 
-void ATUIProfilerWindow::BeginRegion(ATUIProfileRegion region) {
+void ATUIProfilerWindow::BeginRegion(ATProfileRegion region) {
 	if (mRegionStackHt < vdcountof(mRegionStack)) {
 		if (mRegionStackHt) {
 			uint64 t = VDGetPreciseTick();
@@ -96,7 +100,7 @@ void ATUIProfilerWindow::BeginRegion(ATUIProfileRegion region) {
 	}
 }
 
-void ATUIProfilerWindow::EndRegion() {
+void ATUIProfilerWindow::EndRegion(ATProfileRegion) {
 	if (mRegionStackHt) {
 		uint64 t = VDGetPreciseTick();
 
@@ -112,7 +116,7 @@ void ATUIProfilerWindow::AutoSize(const vdpoint32& origin) {
 		VDDisplayFontMetrics metrics;
 		mpFont->GetMetrics(metrics);
 
-		h += (metrics.mAscent + metrics.mDescent)*kATUIProfileRegionCount;
+		h += (metrics.mAscent + metrics.mDescent)*kATProfileRegionCount;
 	}
 
 	SetArea(vdrect32(16, 48, 16 + w, 48 + h));
@@ -120,9 +124,13 @@ void ATUIProfilerWindow::AutoSize(const vdpoint32& origin) {
 
 void ATUIProfilerWindow::OnCreate() {
 	mpFont = mpManager->GetThemeFont(kATUIThemeFont_Default);
+
+	g_pATProfiler = this;
 }
 
 void ATUIProfilerWindow::OnDestroy() {
+	g_pATProfiler = nullptr;
+
 	mpFont.clear();
 }
 
@@ -134,9 +142,9 @@ void ATUIProfilerWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 		0x20E010,
 	};
 
-	VDASSERTCT(vdcountof(kColors) == kATUIProfileRegionCount);
+	VDASSERTCT(vdcountof(kColors) == kATProfileRegionCount);
 
-	for(int i=0; i<kATUIProfileRegionCount; ++i) {
+	for(int i=0; i<kATProfileRegionCount; ++i) {
 		uint32 n = mRegionRects[i].size();
 		uint32 pos = mRegionRectStarts[i];
 
@@ -161,7 +169,7 @@ void ATUIProfilerWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 			L"Display tick",
 		};
 
-		VDASSERTCT(vdcountof(kNames) == kATUIProfileRegionCount);
+		VDASSERTCT(vdcountof(kNames) == kATProfileRegionCount);
 
 		VDDisplayFontMetrics metrics;
 		mpFont->GetMetrics(metrics);
@@ -179,7 +187,7 @@ void ATUIProfilerWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 	}
 }
 
-void ATUIProfilerWindow::RecordRegion(ATUIProfileRegion region, uint64 t) {
+void ATUIProfilerWindow::RecordRegion(ATProfileRegion region, uint64 t) {
 	int y = VDRoundToInt((double)(t - mFrameStartTime) * mPreciseTicksToPixels);
 
 	if (y < 0)
@@ -217,19 +225,4 @@ void ATUIProfileDestroyWindow() {
 		g_pATUIProfilerWindow->Release();
 		g_pATUIProfilerWindow = NULL;
 	}
-}
-
-void ATUIProfileBeginFrame() {
-	if (g_pATUIProfilerWindow)
-		g_pATUIProfilerWindow->BeginFrame();
-}
-
-void ATUIProfileBeginRegion(ATUIProfileRegion region) {
-	if (g_pATUIProfilerWindow)
-		g_pATUIProfilerWindow->BeginRegion(region);
-}
-
-void ATUIProfileEndRegion() {
-	if (g_pATUIProfilerWindow)
-		g_pATUIProfilerWindow->EndRegion();
 }

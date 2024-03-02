@@ -5,7 +5,8 @@
 
 enum ATEthernetFrameType {
 	kATEthernetFrameType_IP = 0x0800,
-	kATEthernetFrameType_ARP = 0x0806
+	kATEthernetFrameType_ARP = 0x0806,
+	kATEthernetFrameType_TransparentEthernet = 0x6558		// [NVGRE]
 };
 
 struct ATEthernetArpFrameInfo {
@@ -20,6 +21,8 @@ struct ATEthernetArpFrameInfo {
 	uint32			mSenderProtocolAddr;
 	uint32			mTargetProtocolAddr;
 };
+
+typedef uint8 ATEthernetArpFrameBuffer[30];
 
 struct ATIPv4HeaderInfo {
 	uint32	mSrcAddr;
@@ -41,6 +44,10 @@ uint16 ATIPComputeChecksum(uint64 initialSum, const uint8 *data, uint32 dwords);
 
 bool ATIPv4DecodeHeader(ATIPv4HeaderInfo& dstInfo, const uint8 *data, uint32 len);
 uint32 ATIPv4EncodeHeader(uint8 *data, uint32 len, const ATIPv4HeaderInfo& srcInfo);
+
+inline ATEthernetAddr ATEthernetGetBroadcastAddr() {
+	return ATEthernetAddr { { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } };
+}
 
 inline bool ATEthernetIsBroadcastAddr(const ATEthernetAddr& addr) {
 	return (addr.mAddr[0] & addr.mAddr[1] & addr.mAddr[2] & addr.mAddr[3] & addr.mAddr[4] & addr.mAddr[5]) == 0xFF;

@@ -23,22 +23,25 @@
 ATAudioMonitor::ATAudioMonitor()
 	: mpPokey(NULL)
 	, mpUIRenderer(NULL)
+	, mbSecondary(false)
 {
 }
 
 ATAudioMonitor::~ATAudioMonitor() {
+	Shutdown();
 }
 
-void ATAudioMonitor::Init(ATPokeyEmulator *pokey, IATUIRenderer *uir) {
+void ATAudioMonitor::Init(ATPokeyEmulator *pokey, IATUIRenderer *uir, bool secondary) {
 	mpPokey = pokey;
 	mpUIRenderer = uir;
+	mbSecondary = secondary;
 
 	mLog.mpStates = mAudioStates;
 	mLog.mRecordedCount = 0;
 	mLog.mMaxCount = sizeof(mAudioStates)/sizeof(mAudioStates[0]);
 
 	pokey->SetAudioLog(&mLog);
-	uir->SetAudioMonitor(this);
+	uir->SetAudioMonitor(mbSecondary, this);
 }
 
 void ATAudioMonitor::Shutdown() {
@@ -48,7 +51,7 @@ void ATAudioMonitor::Shutdown() {
 	}
 
 	if (mpUIRenderer) {
-		mpUIRenderer->SetAudioMonitor(NULL);
+		mpUIRenderer->SetAudioMonitor(mbSecondary, NULL);
 		mpUIRenderer = NULL;
 
 	}

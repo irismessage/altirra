@@ -126,28 +126,6 @@ int VDTextAToWLength(const char *s, int length) {
 }
 
 namespace {
-	// UTF8:
-	//      000000000xxxxxxx -> 0xxxxxxx
-	//      00000yyyyyxxxxxx -> 110yyyyy 10xxxxxx
-	//      zzzzyyyyyyxxxxxx -> 1110zzzz 10yyyyyy 10xxxxxx
-	// uuuuuzzzzyyyyyyxxxxxx -> 11110uuu 10uuzzzz 10yyyyyy 10xxxxxx
-	//               (UTF16) -> 110110wwwwzzzzyy (uuuuu = wwww+1)
-	//                          110111yyyyxxxxxx
-	int VDGetCharLengthInUTF8(wchar_t c) {
-		if (c < 0x0080)			// 7 bits
-			return 1;
-		else if (c < 0x0800)	// 11 bits
-			return 2;
-		else if (c < 0x10000)	// 16 bits
-			return 3;
-		else if (c < 0x200000)	// 21 bits
-			return 4;
-		else {
-			VDASSERT(false);
-			return 1;			// Uh oh.  Well, we're screwed.
-		}
-	}
-
 	bool VDIsUnicodeSurrogateFirst(wchar_t c) {
 		return (c >= 0xD800 && c < 0xDC00); 
 	}

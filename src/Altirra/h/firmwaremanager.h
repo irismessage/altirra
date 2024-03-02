@@ -94,6 +94,8 @@ VDMOVE_CAPABLE_INLINE(ATFirmwareInfo) {
 	dst.mType = src.mType;
 }
 
+void ATSetFirmwarePathPortabilityMode(bool portable);
+
 const char *ATGetFirmwareTypeName(ATFirmwareType type);
 ATFirmwareType ATGetFirmwareTypeFromName(const char *type);
 uint64 ATGetFirmwareIdFromPath(const wchar_t *path);

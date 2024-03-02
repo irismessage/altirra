@@ -7,7 +7,8 @@
 #include <vd2/system/filewatcher.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/time.h>
-#include "diskimage.h"
+#include <at/atio/diskimage.h>
+#include <at/atio/diskfsdos2util.h>
 #include "debuggerlog.h"
 #include "hostdeviceutils.h"
 
@@ -234,13 +235,10 @@ void ATDiskImageVirtualFolder::ReadPhysicalSector(uint32 index, void *data, uint
 				}
 			}
 		} else {
-			static const uint8 kBootSector[]={
-				0x00, 0x03, 0x00, 0x07, 0x14, 0x07, 0x4C, 0x14, 0x07, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x7D, 0x00, 0x00, 0x38, 0x60
-			};
+			unsigned offset = index * 128;
 
-			if (!index)
-				memcpy(data, kBootSector, sizeof kBootSector);
+			if (offset < g_ATResDOSBootSectorLen)
+				memcpy(data, g_ATResDOSBootSector + offset, std::min<size_t>(g_ATResDOSBootSectorLen - offset, 128));
 		}
 		return;
 	}
@@ -282,7 +280,6 @@ void ATDiskImageVirtualFolder::ReadPhysicalSector(uint32 index, void *data, uint
 
 	uint8 validLen = 0;
 	uint32 link = (uint32)0 - 1;
-	uint32 offset = 0;
 
 	// Check if we are beyond the end of the file -- this can happen with an update. If
 	// this happens, we report an empty terminator sector.

@@ -20,11 +20,10 @@
 #include <vd2/system/binary.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicevideo.h>
+#include <at/atcore/scheduler.h>
 #include "xep80.h"
-#include "scheduler.h"
 #include "pia.h"
 #include "debuggerlog.h"
-#include "devicemanager.h"
 #include "xep80_font_normal.inl"
 #include "xep80_font_intl.inl"
 #include "xep80_font_internal.inl"
@@ -37,6 +36,13 @@ namespace {
 
 		return c;
 	}
+
+	const uint8 kDoubleTableLo[16]={
+		0x00, 0x03, 0x0c, 0x0f,
+		0x30, 0x33, 0x3c, 0x3f,
+		0xc0, 0xc3, 0xcc, 0xcf,
+		0xf0, 0xf3, 0xfc, 0xff
+	};
 }
 
 ATDebuggerLogChannel g_ATLCXEPData(false, false, "XEPDATA", "XEP80 Data Transfer");
@@ -90,11 +96,15 @@ const ATXEP80Emulator::CommandInfo ATXEP80Emulator::kCommands[]={
 	{ 0xe4, 0xe4, &ATXEP80Emulator::OnCmdSetExtraByte, "set extended byte" },	// set extended byte for test commands
 	{ 0xe5, 0xe5, &ATXEP80Emulator::OnCmdWriteInternalByte, "write internal RAM" },	// write byte into internal RAM
 	{ 0xe6, 0xe6, &ATXEP80Emulator::OnCmdSetExtraByte },	// set extended byte for test commands
+	{ 0xe7, 0xe7, &ATXEP80Emulator::OnCmdSetHomeAddr, "set HOME addr" },	// set display home address
 	{ 0xed, 0xed, &ATXEP80Emulator::OnCmdWriteVCR, "set VCR" },		// write video control register
 	{ 0xee, 0xee, &ATXEP80Emulator::OnCmdSetExtraByte },	// set extended byte for test commands
+	{ 0xef, 0xef, &ATXEP80Emulator::OnCmdSetBeginAddr, "set BEGD addr" },	// set begin display address
 	{ 0xf0, 0xf0, &ATXEP80Emulator::OnCmdSetExtraByte },	// set extended byte for test commands
+	{ 0xf1, 0xf1, &ATXEP80Emulator::OnCmdSetEndAddr, "set ENDD addr" },		// set end display address
 	{ 0xf2, 0xf2, &ATXEP80Emulator::OnCmdSetExtraByte },	// set extended byte for test commands
-	{ 0xf4, 0xf5, &ATXEP80Emulator::OnCmdSetAttrLatch },	// set attribute latch 0/1
+	{ 0xf3, 0xf3, &ATXEP80Emulator::OnCmdSetStatusAddr, "set SROW addr" },	// set extended byte for test commands
+	{ 0xf4, 0xf5, &ATXEP80Emulator::OnCmdSetAttrLatch, "set attribute latch" },	// set attribute latch 0/1
 	{ 0xf6, 0xf6, &ATXEP80Emulator::OnCmdSetTCP, "set TCP" },			// set timing control pointer
 	{ 0xf7, 0xf7, &ATXEP80Emulator::OnCmdWriteTCP, "write TCP" },		// write to timing control chain
 	{ 0xf9, 0xf9, &ATXEP80Emulator::OnCmdSetExtraByte },	// set extended byte for test commands
@@ -155,6 +165,12 @@ void ATXEP80Emulator::Shutdown() {
 }
 
 void ATXEP80Emulator::ColdReset() {
+	// UART settings are not affected by master reset command ($C2).
+	mUARTBaud = 0x05;
+	mUARTPrescale = 0x90;
+	mUARTMultiplex = 0x01;
+	RecomputeBaudRate();
+
 	SoftReset();
 }
 
@@ -200,16 +216,12 @@ void ATXEP80Emulator::SoftReset() {
 	mVertBlankStart = 25 - 1;
 	mVertSyncBegin = 0;
 	mVertSyncEnd = 2;
+	mVertStatusRow = 23;
 	mVertExtraScans = 2;
 	RecomputeVideoTiming();
 
 	mbInvalidBlockGraphics = true;
 	mbInvalidActiveFont = true;
-
-	mUARTBaud = 0x05;
-	mUARTPrescale = 0x90;
-	mUARTMultiplex = 0x01;
-	RecomputeBaudRate();
 
 	mTCP = 0;
 
@@ -219,6 +231,11 @@ void ATXEP80Emulator::SoftReset() {
 	mLastY = 0xFF;
 	mCursorAddr = 0;
 	mScrollX = 0;
+
+	mBeginAddr = 0;
+	mEndAddr = 0x1900;
+	mHomeAddr = 0;
+	mStatusAddr = 0;
 
 	for(int i=0; i<25; ++i)
 		mRowPtrs[i] = i;
@@ -310,36 +327,156 @@ void ATXEP80Emulator::UpdateFrame() {
 	uint8 *VDRESTRICT row = (uint8 *)mFrame.data;
 	const uint16 reverseMask = mbReverseVideo ? 0xFFFF : 0x00;
 
-	if (mbGraphicsMode) {
-		uint32 vramaddr = 0;
-		uint8 wrapbuf[256];
+	// Attribute latch format (0 = enabled):
+	//
+	//	D7	Block graphics (text mode only, internal charset only)
+	//	D6	Blank
+	//	D5	Underline
+	//	D4	Double width
+	//	D3	Double height (text mode only, internal charset only)
+	//	D2	Blink
+	//	D1	Half intensity (not connected)
+	//	D0	Reverse video
+	//
+	const uint8 attrMask = charBlinkState ? 0 : 0x04;
+	const uint8 attrs[2] = { mAttrA | attrMask, mAttrB | attrMask };
 
+	if (mbGraphicsMode) {
+		uint32 vramaddr = mHomeAddr;
+		uint8 wrapbuf[256 + 1];		// +1 for double width
+
+		// Attribute reverse video does not work in pixel graphic mode, but global RV does.
 		const uint8 rvs8 = (uint8)reverseMask;
-		const int bytew = (int)mHorzBlankStart + 1;
+		const uint32 bytew = (int)mHorzBlankStart + 1;
 		const int pixelh = mFrame.h;
+		uint32 charScan = 0;
+		uint32 charRow = 0;
+
 		for(int y=0; y<pixelh; ++y) {
 			uint32 accum = 0;
 			int shift = 16;
 			uint16 *VDRESTRICT rowdst = (uint16 *)row;
-			const uint8 *VDRESTRICT src;
 
-			// check for wraparound
-			src = mVRAM + vramaddr;
+			// read from VRAM -- note that we must translate through the character ROMs
+			// if the VRAM address has been altered to be <$4000
+			uint8 *fetchdst = wrapbuf;
+			uint16 fetchaddr = vramaddr;
+			uint32 fetchidx = 0;
 
-			if (0x2000 - (int)vramaddr < bytew) {
-				const int len1 = 0x2000 - vramaddr;
-				const int len2 = bytew - len1;
+			while(fetchidx < bytew) {
+				const uint32 vramoffset = fetchaddr & 0x1fff;
+				const uint8 *VDRESTRICT fetchsrc = mVRAM + vramoffset;
 
-				memcpy(wrapbuf, src, len1);
-				memcpy(wrapbuf + len1, mVRAM, len2);
+				// check if we are going to cross a chargen mode boundary
+				uint32 tc = 0x2000 - vramoffset;
+				if (tc > bytew - fetchidx)
+					tc = bytew - fetchidx;
 
-				src = wrapbuf;
+				// check if the character set is in the data path
+				if (fetchaddr & 0x4000) {
+					// no -- apply bit reverse to compensate for NS405 displaying LSB first
+					// (BOOOOOO!!!) and then apply global reverse video
+					for(uint32 i=0; i<tc; ++i) {
+						wrapbuf[fetchidx] = ReverseBits8(fetchsrc[i]);
+						++fetchidx;
+					}
+				} else {
+					// For unknown reasons, the character row increments at character position 5 when
+					// in pixel graphics mode. This is independent of the horizontal sync positions
+					// and display width.
+					if (fetchidx < 5 && fetchidx + tc > 5)
+						tc = 5 - fetchidx;
+
+					uint32 localCharScan = charScan;
+					if (fetchidx == 5) {
+						if (++localCharScan >= mCharHeight)
+							localCharScan = 0;
+					}
+
+					// yes -- select character generator and appropriate row. note that our
+					// chargen is already bit reversed, but needs to be extended to 8 bits
+					const uint16 *VDRESTRICT chargen = &mFonts[fetchaddr & 0x2000 ? 1 : 0][localCharScan];
+
+					for(uint32 i=0; i<tc; ++i) {
+						uint8 c = fetchsrc[i];
+						uint8 pat = (uint8)(chargen[c << 4] >> 8);
+
+						if (c >= 0x80 && c != 0x9B)
+							++pat;
+
+						wrapbuf[fetchidx] = pat;
+						++fetchidx;
+					}
+				}
+
+				// reverse the bits in all bytes, since the NS405 displays LSB first (BOOOO!)
+				// and then apply reverse video
+
+				fetchaddr += tc;
+			}
+			
+			// apply attributes and global reverse video
+			for(uint32 i=0; i<bytew; ++i) {
+				uint8 c = wrapbuf[i];
+
+				// We're testing bit 0 here because we've already bit reversed the data for our frame buffer.
+				const uint8 attr = attrs[c & 1];
+
+				// blanking
+				if ((attr & 0x48) == 0x08)
+					c = 0;
+
+				// blinking
+				if (!(attr & 0x04)) {
+					// if reverse video is set on this character and rvs blink field mode is
+					// active, the whole character is toggled below instead of the character
+					// data being inverted here
+					if ((attr & 0x01) || !mbReverseVideoBlinkField)
+						c = 0;
+				}
+
+				// reverse video
+				if (!(attr & 0x01)) {
+					// check if we also have inversion coming from blinking
+					if ((attr & 0x04) || !mbReverseVideoBlinkField)
+						c = ~c;
+				}
+
+				// global reverse video
+				c ^= rvs8;
+
+				// double width
+				if (!(attr & 0x10)) {
+					uint8 d1 = kDoubleTableLo[c >> 4];
+					uint8 d2;
+
+					switch(mCharWidth) {
+					case 6:
+						d2 = kDoubleTableLo[(c >> 1) & 15];
+						break;
+
+					case 7:
+						d2 = kDoubleTableLo[(c >> 1) & 15] << 1;
+						break;
+
+					case 8:
+						d2 = kDoubleTableLo[c & 15];
+						break;
+					}
+
+					wrapbuf[i] = d1;
+					++i;		// this may bump us one greater, but that's fine
+					c = d2;
+				}
+
+
+				wrapbuf[i] = c;
 			}
 
 			switch(mCharWidth) {
 				case 6:
-					for(int x=0; x<bytew; ++x) {
-						const uint32 c = ReverseBits8(*src++) & 0xfc;
+					for(uint32 x=0; x<bytew; ++x) {
+						const uint32 c = wrapbuf[x] & 0xfc;
 
 						accum += c << shift;
 						shift -= 6;
@@ -353,8 +490,8 @@ void ATXEP80Emulator::UpdateFrame() {
 					break;
 
 				case 7:
-					for(int x=0; x<bytew; ++x) {
-						const uint32 c = ReverseBits8(*src++) & 0xfe;
+					for(uint32 x=0; x<bytew; ++x) {
+						const uint32 c = wrapbuf[x] & 0xfe;
 
 						accum += c << shift;
 						shift -= 7;
@@ -368,10 +505,10 @@ void ATXEP80Emulator::UpdateFrame() {
 					break;
 
 				case 8:
-					for(int x=0; x<bytew; ++x) {
-						uint8 c = ReverseBits8(*src++);
+					for(uint32 x=0; x<bytew; ++x) {
+						uint8 c = wrapbuf[x];
 
-						row[x] = c ^ rvs8;
+						row[x] = c;
 					}
 					break;
 			}
@@ -380,20 +517,29 @@ void ATXEP80Emulator::UpdateFrame() {
 				*rowdst++ = (uint16)VDSwizzleU32(accum);
 
 			row += mFrame.pitch;
-			vramaddr = (vramaddr + bytew) & 0x1FFF;
+
+			vramaddr += bytew;
+
+			// mVertStatusRow = TC[8], so it's actually the last row before the status row.
+			// Once we hit the status row, we stop wrapping. However, the NS405 appears to
+			// have a bug where it resets the display address at the end of every scanline
+			// on the row specified by TC[8], not just at the end of the row. This
+			// behavior is... less than useful.
+			if (vramaddr == mEndAddr && charRow <= mVertStatusRow)
+				vramaddr = mBeginAddr;
+
+			if (charRow == mVertStatusRow)
+				vramaddr = mStatusAddr;
+
+			// advance character scanline counter
+			if (++charScan >= mCharHeight) {
+				charScan = 0;
+
+				++charRow;
+			}
+
 		}
 	} else {
-		// Attribute latch format (0 = enabled):
-		//
-		//	D7	Graphics
-		//	D6	Blank
-		//	D5	Underline
-		//	D4	Double width
-		//	D3	Double height (internal charset only)
-		//	D2	Blink
-		//	D1	Half intensity (not connected)
-		//	D0	Reverse video
-
 		// check if the block graphic set needs to be reinitialized
 		if (mbInvalidBlockGraphics && (mAttrA & mAttrB & 0x80))
 			RebuildBlockGraphics();
@@ -407,7 +553,6 @@ void ATXEP80Emulator::UpdateFrame() {
 
 		const uint16 charMask = 0x10000 - (0x10000 >> mCharWidth);
 		const uint16 cursormask = mbCursorBlinkState ? charMask : 0x00;
-		const uint8 attrs[2] = { mAttrA, mAttrB };
 
 		// This EOL check looks like a terrible hack, but it's correct.
 		//
@@ -455,7 +600,7 @@ void ATXEP80Emulator::UpdateFrame() {
 					c = 0x20;
 
 				// blinking
-				if (!(attr & 0x04) && charBlinkState) {
+				if (!(attr & 0x04)) {
 					// if reverse video is set on this character and rvs blink field mode is
 					// active, the whole character is toggled below instead of the character
 					// data being inverted here
@@ -468,7 +613,7 @@ void ATXEP80Emulator::UpdateFrame() {
 
 				if (!(attr & 0x01)) {
 					// check if we also have inversion coming from blinking
-					if ((attr & 0x04) || !charBlinkState || !mbReverseVideoBlinkField)
+					if ((attr & 0x04) || !mbReverseVideoBlinkField)
 						rvs = ~rvs;
 				}
 
@@ -743,11 +888,11 @@ void ATXEP80Emulator::OnReceiveByte(uint32 ch) {
 	}
 
 	if (pci)
-		g_ATLCXEPData("(%3d,%2d) Received byte %03x (%s)\n", mX, mY, ch, cmdName);
+		g_ATLCXEPData("(%3d,%2d) Received byte %03X (%s)\n", mX, mY, ch, cmdName);
 	else if ((uint32)((ch & 0x7f) - 0x20) < 0x7d)
-		g_ATLCXEPData("(%3d,%2d) Received byte %03x ('%c')\n", mX, mY, ch, (char)(ch & 0x7f));
+		g_ATLCXEPData("(%3d,%2d) Received byte %03X ('%c')\n", mX, mY, ch, (char)(ch & 0x7f));
 	else
-		g_ATLCXEPData("(%3d,%2d) Received byte %03x\n", mX, mY, ch);
+		g_ATLCXEPData("(%3d,%2d) Received byte %03X\n", mX, mY, ch);
 
 	mDataReceivedCount |= 1;
 
@@ -815,7 +960,7 @@ void ATXEP80Emulator::BeginWrite(uint8 len) {
 	mCurrentWriteData = ((uint32)mWriteBuffer[0] << 1) + 0x1c00;
 	mWriteBitState = 0;
 
-	mpWriteBitEvent = mpScheduler->AddEvent(mCyclesPerBitXmit + 100, this, 2);
+	mpWriteBitEvent = mpScheduler->AddEvent(1 + 0*mCyclesPerBitXmit, this, 2);
 }
 
 void ATXEP80Emulator::OnChar(uint8 ch) {
@@ -828,7 +973,11 @@ void ATXEP80Emulator::OnChar(uint8 ch) {
 		mVRAM[mCursorAddr & 0x1FFF] = ReverseBits8(ch);
 		++mCursorAddr;
 		InvalidateFrame();
-		SendCursor(0);
+
+		if (mbBurstMode)
+			mpPIA->SetInput(mPIAInput, ~0);
+		else
+			SendCursor(0);
 		return;
 	}
 
@@ -1021,7 +1170,7 @@ void ATXEP80Emulator::OnCmdSetCursorVPos(uint8 ch) {
 
 void ATXEP80Emulator::OnCmdSetGraphics(uint8) {
 	mbGraphicsMode = true;
-	mCursorAddr = 0;
+	mCursorAddr = 0x4000;
 
 	// 8x10 character cell
 	// 40 cols displayed with 93 total -> 16.129KHz horizontal
@@ -1039,6 +1188,10 @@ void ATXEP80Emulator::OnCmdSetGraphics(uint8) {
 	mVertSyncBegin = 7;
 	mVertSyncEnd = 9;
 	mVertExtraScans = 9;
+
+	mHomeAddr = 0x4000;
+	mBeginAddr = 0x0000;
+	mEndAddr = 0xFFFF;
 
 	RecomputeVideoTiming();
 }
@@ -1077,6 +1230,7 @@ void ATXEP80Emulator::OnCmdReadCharAndAdvance(uint8) {
 	} else
 		++mX;
 
+	UpdateCursorAddr();
 	InvalidateFrame();
 	SendCursor(1);
 }
@@ -1175,6 +1329,8 @@ void ATXEP80Emulator::OnCmdSetCharSet(uint8 ch) {
 	for(int i=0; i<25; ++i)
 		mRowPtrs[i] = chsbits + (mRowPtrs[i] & 0x9f);
 
+	mStatusAddr = (uint16)((uint32)mRowPtrs[24] << 8);
+
 	mbInvalidActiveFont = true;
 	InvalidateFrame();
 }
@@ -1269,6 +1425,16 @@ void ATXEP80Emulator::OnCmdWriteByte(uint8) {
 	mVRAM[mCursorAddr & 0x1FFF] = mLastChar;
 }
 
+void ATXEP80Emulator::OnCmdSetHomeAddr(uint8) {
+	uint16 addr = (uint16)(mExtraByte + ((uint32)mLastChar << 8));
+
+	if (mHomeAddr != addr) {
+		mHomeAddr = addr;
+
+		InvalidateFrame();
+	}
+}
+
 void ATXEP80Emulator::OnCmdWriteVCR(uint8) {
 	// partial support only -- used by demo80.bas
 
@@ -1345,6 +1511,10 @@ void ATXEP80Emulator::OnCmdWriteTCP(uint8) {
 			RecomputeVideoTiming();
 			break;
 
+		case 8:		// status row pos (5 bits)
+			mVertStatusRow = mLastChar & 31;
+			break;
+
 		case 9:		// blink rate / duty cycle
 			mBlinkRate = (mLastChar >> 3) + 1;
 			mBlinkDutyCycle = mLastChar & 7;
@@ -1376,6 +1546,33 @@ void ATXEP80Emulator::OnCmdWriteTCP(uint8) {
 	mTCP = (mTCP + 1) & 15;
 }
 
+void ATXEP80Emulator::OnCmdSetBeginAddr(uint8) {
+	uint16 addr = (uint16)(mExtraByte + ((uint32)mLastChar << 8));
+
+	if (mBeginAddr != addr) {
+		mBeginAddr = addr;
+		InvalidateFrame();
+	}
+}
+
+void ATXEP80Emulator::OnCmdSetEndAddr(uint8) {
+	uint16 addr = (uint16)(mExtraByte + ((uint32)mLastChar << 8));
+
+	if (mEndAddr != addr) {
+		mEndAddr = addr;
+		InvalidateFrame();
+	}
+}
+
+void ATXEP80Emulator::OnCmdSetStatusAddr(uint8) {
+	uint16 addr = (uint16)(mExtraByte + ((uint32)mLastChar << 8));
+
+	if (mStatusAddr != addr) {
+		mStatusAddr = addr;
+		InvalidateFrame();
+	}
+}
+
 void ATXEP80Emulator::OnCmdSetAttrLatch(uint8 ch) {
 	uint8& latch = ch & 1 ? mAttrB : mAttrA;
 
@@ -1392,12 +1589,16 @@ void ATXEP80Emulator::OnCmdSetBaudRate(uint8) {
 	mUARTBaud = mExtraByte;
 
 	RecomputeBaudRate();
+
+	g_ATLCXEPCmd("Baud rate now set to %u cycles/bit receive, %u cycles/bit transmit\n", mCyclesPerBitRecv, mCyclesPerBitXmit);
 }
 
 void ATXEP80Emulator::OnCmdSetUMX(uint8) {
 	mUARTMultiplex = mLastChar;
 
 	RecomputeBaudRate();
+
+	g_ATLCXEPCmd("Baud rate now set to %u cycles/bit receive, %u cycles/bit transmit\n", mCyclesPerBitRecv, mCyclesPerBitXmit);
 }
 
 void ATXEP80Emulator::Clear() {
@@ -1660,8 +1861,6 @@ void ATXEP80Emulator::RebuildBlockGraphics() {
 
 	// compute vertical divisions
 	int rowTable[16];
-	int midScan = 0;
-	int botScan = 0;
 
 	for(int i=0, maskIdx = 0; i<16; ++i) {
 		if (i == mGfxRowMid)
@@ -1697,13 +1896,6 @@ void ATXEP80Emulator::RebuildActiveFont() {
 		0xf000, 0xf300, 0xfc00, 0xff00
 	};
 
-	static const uint16 kDoubleTableLo[16]={
-		0x00, 0x03, 0x0c, 0x0f,
-		0x30, 0x33, 0x3c, 0x3f,
-		0xc0, 0xc3, 0xcc, 0xcf,
-		0xf0, 0xf3, 0xfc, 0xff
-	};
-
 	const uint16 *src;
 
 	// Because the XEP80 allows switching of the charset on a line basis via A13
@@ -1713,7 +1905,6 @@ void ATXEP80Emulator::RebuildActiveFont() {
 	for(int charSet = 0; charSet < 3; ++charSet) {
 		uint16 *dstbase = mActiveFonts[charSet];
 		uint16 *dst = dstbase;
-		uint8 c = 0;
 		
 		const uint16 charMask = (uint16)(0x10000 - (0x10000 >> mCharWidth));
 		for(int attrLatch = 0; attrLatch < 2; ++attrLatch) {
@@ -1928,7 +2119,7 @@ void ATXEP80Emulator::RecomputeBaudRate() {
 
 	for(int i=5; i>0; --i) {
 		if (mUARTMultiplex & (1 << i)) {
-			cyclesPerBit2 /= (float)(1 << i);
+			cyclesPerBit2 *= (float)(1 << i);
 			break;
 		}
 	}
@@ -2023,6 +2214,14 @@ private:
 	ATXEP80Emulator mXEP80;
 };
 
+void ATCreateDeviceXEP80(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceXEP80> p(new ATDeviceXEP80);
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefXEP80 = { "xep80", nullptr, L"XEP80", ATCreateDeviceXEP80 };
+
 ATDeviceXEP80::ATDeviceXEP80()
 	: mpScheduler(nullptr)
 	, mpPIA(nullptr)
@@ -2049,9 +2248,7 @@ void *ATDeviceXEP80::AsInterface(uint32 id) {
 }
 
 void ATDeviceXEP80::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "xep80";
-	info.mName = L"XEP80";
-	info.mConfigTag = "xep80";
+	info.mpDef = &g_ATDeviceDefXEP80;
 }
 
 void ATDeviceXEP80::ColdReset() {
@@ -2103,6 +2300,8 @@ const ATDeviceVideoInfo& ATDeviceXEP80::GetVideoInfo() {
 	mVideoInfo.mPixelAspectRatio = mXEP80.GetPixelAspectRatio();
 	mVideoInfo.mDisplayArea = mXEP80.GetDisplayArea();
 
+	mVideoInfo.mBorderColor = 0;
+
 	return mVideoInfo;
 }
 
@@ -2123,14 +2322,4 @@ uint32 ATDeviceXEP80::GetActivityCounter() {
 }
 
 void ATDeviceXEP80::DumpStatus(ATConsoleOutput& output) {
-}
-
-void ATCreateDeviceXEP80(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDeviceXEP80> p(new ATDeviceXEP80);
-
-	*dev = p.release();
-}
-
-void ATRegisterDeviceXEP80(ATDeviceManager& dev) {
-	dev.AddDeviceFactory("xep80", ATCreateDeviceXEP80);
 }

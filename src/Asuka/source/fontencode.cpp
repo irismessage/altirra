@@ -270,7 +270,7 @@ void tool_fontencode(const vdfastvector<const char *>& args, const vdfastvector<
 		fprintf(f, "const VDBitmapFontInfo %s_FontInfo={\n", args[9]);
 		fprintf(f, "\t%s_FontData,\n", args[9]);
 		if (bigfont) {
-			fprintf(f, "\tNULL,\n", args[9]);
+			fprintf(f, "\tNULL,\n");
 			fprintf(f, "\t%s_PosData,\n", args[9]);
 		} else {
 			fprintf(f, "\t%s_PosData,\n", args[9]);

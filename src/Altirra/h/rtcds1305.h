@@ -46,6 +46,7 @@ protected:
 	uint8	mValue;
 	bool	mbState;
 	bool	mbChipEnable;
+	bool	mbSPIInitialClock;
 	bool	mbSPIClock;
 	uint8	mClockRAM[0x12];
 	uint8	mUserRAM[0x60];

@@ -18,6 +18,7 @@
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/bitmath.h>
+#include <at/atcore/scheduler.h>
 #include "pia.h"
 #include "irqcontroller.h"
 #include "console.h"
@@ -25,6 +26,7 @@
 
 ATPIAEmulator::ATPIAEmulator()
 	: mpIRQController(NULL)
+	, mpFloatingInputs(nullptr)
 	, mInput(0xFFFFFFFF)
 	, mOutput(0xFFFFFFFF)
 	, mPortOutput(0)
@@ -116,7 +118,17 @@ void ATPIAEmulator::Init(ATIRQController *irqcon) {
 	mpIRQController = irqcon;
 }
 
-void ATPIAEmulator::Reset() {
+void ATPIAEmulator::ColdReset() {
+	if (mpFloatingInputs)
+		memset(mpFloatingInputs->mFloatTimers, 0, sizeof mpFloatingInputs->mFloatTimers);
+
+	WarmReset();
+}
+
+void ATPIAEmulator::WarmReset() {
+	// need to do this to float inputs
+	SetPortBDirection(0);
+
 	mPortOutput = kATPIAOutput_CA2 | kATPIAOutput_CB2;
 	mPortDirection = kATPIAOutput_CA2 | kATPIAOutput_CB2;
 	mPORTACTL	= 0x00;
@@ -137,8 +149,8 @@ void ATPIAEmulator::SetCA1(bool level) {
 
 	mbCA1 = level;
 
-	// check if interrupts are enabled and that the interrupt isn't already active
-	if ((mPORTACTL & 0x81) != 0x01)
+	// check that the interrupt isn't already active
+	if (mPORTACTL & 0x80)
 		return;
 
 	// check if we have the correct transition
@@ -150,10 +162,11 @@ void ATPIAEmulator::SetCA1(bool level) {
 			return;
 	}
 
-	// assert IRQ
+	// set interrupt flag
 	mPORTACTL |= 0x80;
 
-	if (mpIRQController)
+	// assert IRQ if enabled
+	if ((mPORTACTL & 0x01) && mpIRQController)
 		mpIRQController->Assert(kATIRQSource_PIAA1, true);
 }
 
@@ -163,8 +176,8 @@ void ATPIAEmulator::SetCB1(bool level) {
 
 	mbCB1 = level;
 
-	// check if interrupts are enabled and that the interrupt isn't already active
-	if ((mPORTBCTL & 0x81) != 0x01)
+	// check that the interrupt isn't already active
+	if (mPORTBCTL & 0x80)
 		return;
 
 	// check if we have the correct transition
@@ -176,10 +189,11 @@ void ATPIAEmulator::SetCB1(bool level) {
 			return;
 	}
 
-	// assert IRQ
+	// set interrupt flag
 	mPORTBCTL |= 0x80;
 
-	if (mpIRQController)
+	// assert IRQ if enabled
+	if ((mPORTBCTL & 0x01) && mpIRQController)
 		mpIRQController->Assert(kATIRQSource_PIAB1, true);
 }
 
@@ -193,10 +207,34 @@ uint8 ATPIAEmulator::DebugReadByte(uint8 addr) const {
 			: (uint8)mPortDirection;
 
 	case 0x01:
+		// return DDRB if selected
+		if (!(mPORTBCTL & 0x04))
+			return (uint8)(mPortDirection >> 8);
+
 		// Port B reads output bits instead of input bits for those selected as output. No ANDing with input.
-		return mPORTBCTL & 0x04
-			? (uint8)((((mInput ^ mOutput) & mPortDirection) ^ mInput) >> 8)
-			: (uint8)(mPortDirection >> 8);
+		{
+			uint8 pb = (uint8)((((mInput ^ mOutput) & mPortDirection) ^ mInput) >> 8);
+
+			// If we have floating bits, roll them in.
+			if (mpFloatingInputs) {
+				const uint8 visibleFloatingBits = mpFloatingInputs->mFloatingInputMask & ~(mPortDirection >> 8);
+				
+				if (visibleFloatingBits) {
+					const uint64 t64 = mpFloatingInputs->mpScheduler->GetTick64();
+					uint8 bit = 0x01;
+
+					for(int i=0; i<8; ++i, (bit += bit)) {
+						if (visibleFloatingBits & bit) {
+							// Turn off this bit if we've passed the droop deadline.
+							if (t64 >= mpFloatingInputs->mFloatTimers[i])
+								pb &= ~bit;
+						}
+					}
+				}
+			}
+
+			return pb;
+		}
 
 	case 0x02:
 		return mPORTACTL;
@@ -242,20 +280,20 @@ void ATPIAEmulator::WriteByte(uint8 addr, uint8 value) {
 	switch(addr & 0x03) {
 	case 0x00:
 		{
-			uint32 xor;
+			uint32 delta;
 			if (mPORTACTL & 0x04) {
-				xor = (mPortOutput ^ value) & 0xff;
-				if (!xor)
+				delta = (mPortOutput ^ value) & 0xff;
+				if (!delta)
 					return;
 
-				mPortOutput ^= xor;
+				mPortOutput ^= delta;
 			} else {
-				xor = (mPortDirection ^ value) & 0xff;
+				delta = (mPortDirection ^ value) & 0xff;
 
-				if (!xor)
+				if (!delta)
 					return;
 
-				mPortDirection ^= xor;
+				mPortDirection ^= delta;
 			}
 
 			UpdateOutput();
@@ -263,20 +301,16 @@ void ATPIAEmulator::WriteByte(uint8 addr, uint8 value) {
 		break;
 	case 0x01:
 		{
-			uint32 xor;
+			uint32 delta;
 			if (mPORTBCTL & 0x04) {
-				xor = (mPortOutput ^ ((uint32)value << 8)) & 0xff00;
-				if (!xor)
+				delta = (mPortOutput ^ ((uint32)value << 8)) & 0xff00;
+				if (!delta)
 					return;
 
-				mPortOutput ^= xor;
+				mPortOutput ^= delta;
 			} else {
-				xor = (mPortDirection ^ ((uint32)value << 8)) & 0xff00;
-
-				if (!xor)
+				if (!SetPortBDirection(value))
 					return;
-
-				mPortDirection ^= xor;
 			}
 
 			UpdateOutput();
@@ -317,6 +351,11 @@ void ATPIAEmulator::WriteByte(uint8 addr, uint8 value) {
 				mpIRQController->Assert(kATIRQSource_PIAA2, true);
 			else
 				mpIRQController->Negate(kATIRQSource_PIAA2, true);
+
+			if ((mPORTACTL & 0x81) == 0x81)
+				mpIRQController->Assert(kATIRQSource_PIAA1, true);
+			else
+				mpIRQController->Negate(kATIRQSource_PIAA1, true);
 		}
 
 		UpdateCA2();
@@ -367,11 +406,23 @@ void ATPIAEmulator::WriteByte(uint8 addr, uint8 value) {
 				mpIRQController->Assert(kATIRQSource_PIAB2, true);
 			else
 				mpIRQController->Negate(kATIRQSource_PIAB2, true);
+
+			if ((mPORTBCTL & 0x81) == 0x81)
+				mpIRQController->Assert(kATIRQSource_PIAB1, true);
+			else
+				mpIRQController->Negate(kATIRQSource_PIAB1, true);
 		}
 
 		UpdateCB2();
 		break;
 	}
+}
+
+void ATPIAEmulator::SetPortBFloatingInputs(ATPIAFloatingInputs *inputs) {
+	mpFloatingInputs = inputs;
+
+	if (inputs)
+		memset(inputs->mFloatTimers, 0, sizeof inputs->mFloatTimers);
 }
 
 void ATPIAEmulator::GetState(ATPIAState& state) const {
@@ -427,6 +478,9 @@ void ATPIAEmulator::EndLoadState(ATSaveStateReader& reader) {
 	UpdateCA2();
 	UpdateCB2();
 	UpdateOutput();
+
+	if (mpFloatingInputs)
+		memset(mpFloatingInputs->mFloatTimers, 0, sizeof mpFloatingInputs->mFloatTimers);
 }
 
 void ATPIAEmulator::BeginSaveState(ATSaveStateWriter& writer) {
@@ -455,7 +509,7 @@ void ATPIAEmulator::UpdateCA2() {
 	//	110		output - low
 	//	111		output - high
 	//
-	// Right now we don't emulate the interrupt or pulse modes.
+	// Right now we don't emulate the pulse modes.
 
 	if ((mPORTACTL & 0x38) == 0x30)
 		mPortOutput &= ~kATPIAOutput_CA2;
@@ -473,7 +527,7 @@ void ATPIAEmulator::UpdateCB2() {
 	//	110		output - low
 	//	111		output - high
 	//
-	// Right now we don't emulate the interrupt or pulse modes.
+	// Right now we don't emulate the pulse modes.
 
 	if ((mPORTBCTL & 0x38) == 0x30)
 		mPortOutput &= ~kATPIAOutput_CB2;
@@ -500,4 +554,53 @@ void ATPIAEmulator::UpdateOutput() {
 				output.mpFn(output.mpData, mOutput);
 		}
 	}
+}
+
+bool ATPIAEmulator::SetPortBDirection(uint8 value) {
+	const uint32 delta = (mPortDirection ^ ((uint32)value << 8)) & 0xff00;
+
+	if (!delta)
+		return false;
+
+	mPortDirection ^= delta;
+
+	// Check if any bits that have transitioned from output (1) to input (0) correspond
+	// to floating inputs. If so, we need to update the floating timers.
+	if (mpFloatingInputs) {
+		const uint8 newlyFloatingInputs = mpFloatingInputs->mFloatingInputMask & (uint8)((delta & ~mPortDirection) >> 8);
+
+		if (newlyFloatingInputs) {
+			const uint64 t64 = mpFloatingInputs->mpScheduler->GetTick64();
+			const uint8 outputs = (uint8)(mPortOutput >> 8);
+			uint8 bit = 0x01;
+
+			// if we have any bits that are transitioning 1 -> floating, update the PRNG
+			if (newlyFloatingInputs & outputs) {
+				mpFloatingInputs->mRandomSeed ^= (uint32)t64;
+				mpFloatingInputs->mRandomSeed &= 0x7FFFFFFFU;
+
+				if (!mpFloatingInputs->mRandomSeed)
+					mpFloatingInputs->mRandomSeed = 1;
+			}
+
+			for(int i=0; i<8; ++i, (bit += bit)) {
+				if (newlyFloatingInputs & bit) {
+					// Floating bits slowly drift toward 0. Therefore, we need to check whether
+					// the output was a 0. If it is, reset the timer to 0 so it stays 0; otherwise,
+					// compute a pseudorandom timeout value.
+					if (outputs & bit) {
+						// pull 16 bits out of 31-bit LFSR
+						uint32 rval = mpFloatingInputs->mRandomSeed & 0xffff;
+						mpFloatingInputs->mRandomSeed = (rval << 12) ^ (rval << 15) ^ (mpFloatingInputs->mRandomSeed >> 16);
+
+						mpFloatingInputs->mFloatTimers[i] = t64 + mpFloatingInputs->mDecayTimeMin + (uint32)(((uint64)mpFloatingInputs->mDecayTimeRange * rval) >> 16);
+					} else {
+						mpFloatingInputs->mFloatTimers[i] = 0;
+					}
+				}
+			}
+		}
+	}
+
+	return true;
 }

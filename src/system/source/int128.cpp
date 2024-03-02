@@ -26,6 +26,7 @@
 #include "stdafx.h"
 #include <math.h>
 
+#include <vd2/system/bitmath.h>
 #include <vd2/system/int128.h>
 
 #if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC)
@@ -571,6 +572,57 @@ const vduint128 vduint128::operator*(const vduint128& x) const {
 	result.q[1] += q[0]*x.q[1] + q[1]*x.q[0];
 
 	return result;
+}
+
+const vduint128 vduint128::operator/(uint32 x) const {
+	vduint128 r;
+	uint64 accum;
+
+	r.d[3] = d[3] / x;
+	
+	accum = ((uint64)(d[3] % x) << 32) + d[2];
+	r.d[2] = (uint32)(accum / x);
+
+	accum = ((accum % x) << 32) + d[1];
+	r.d[1] = (uint32)(accum / x);
+
+	accum = ((accum % x) << 32) + d[0];
+	r.d[0] = (uint32)(accum / x);
+
+	return r;
+}
+
+const vduint128 vduint128::operator/(const vduint128& x) const {
+	// if we actually have a 32-bit divisor, use the faster 32-bit div; this
+	// also triggers the div-0 trap for us
+	if (!(x.d[1] | x.d[2] | x.d[3]))
+		return operator/((uint32)x.d[0]);
+
+	// check if we only have a 64-bit dividend; if so, we can use the runtime's
+	// 64-bit divide
+	if (!q[1])
+		return x.q[1] ? 0 : q[0] / x.q[0];
+
+	// do long division using simple algorithm for now
+	vduint128 a(*this);
+	vduint128 r(0);
+
+	for(int i=0; i<128; ++i) {
+		r <<= 1;
+
+		if (a.d[3] & 0x80000000)
+			++r.d[0];
+
+		a <<= 1;
+
+		if (r >= x) {
+			r -= x;
+
+			++a.d[0];
+		}
+	}
+
+	return a;
 }
 
 #if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC)

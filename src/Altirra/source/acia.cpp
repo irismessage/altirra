@@ -26,9 +26,9 @@
 //
 
 #include <stdafx.h>
+#include <at/atcore/scheduler.h>
 #include "acia.h"
 #include "debuggerlog.h"
-#include "scheduler.h"
 
 ATDebuggerLogChannel g_ATLCACIAIO(false, false, "ACIAIO", "6551 ACIA input/output traffic");
 

@@ -19,7 +19,7 @@
 #include "oshelper.h"
 #include "firmwaremanager.h"
 #include "uimenu.h"
-#include "uimenulist.h"
+#include <at/atui/uimenulist.h>
 #include "simulator.h"
 
 extern ATSimulator g_sim;

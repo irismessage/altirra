@@ -4,7 +4,7 @@
 #include <vd2/system/vectors.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmaputils.h>
-#include "scheduler.h"
+#include <at/atcore/scheduler.h>
 
 class ATPIAEmulator;
 
@@ -101,9 +101,13 @@ private:
 	void OnCmdSetCursorAddr(uint8);
 	void OnCmdWriteByte(uint8);
 	void OnCmdWriteInternalByte(uint8);
+	void OnCmdSetHomeAddr(uint8);
 	void OnCmdWriteVCR(uint8);
 	void OnCmdSetTCP(uint8);
 	void OnCmdWriteTCP(uint8);
+	void OnCmdSetBeginAddr(uint8);
+	void OnCmdSetEndAddr(uint8);
+	void OnCmdSetStatusAddr(uint8);
 	void OnCmdSetAttrLatch(uint8 ch);
 	void OnCmdSetBaudRate(uint8);
 	void OnCmdSetUMX(uint8);
@@ -143,7 +147,11 @@ private:
 	uint8 mScrollX;
 	uint8 mX;
 	uint8 mY;
-	uint16 mCursorAddr;
+	uint16 mBeginAddr;			// BEGD register
+	uint16 mEndAddr;			// ENDD register
+	uint16 mHomeAddr;			// HOME register
+	uint16 mCursorAddr;			// CURS register
+	uint16 mStatusAddr;			// SROW register
 	uint8 mLastX;
 	uint8 mLastY;
 	uint8 mLastChar;
@@ -194,6 +202,7 @@ private:
 	uint8 mVertBlankStart;
 	uint8 mVertSyncBegin;
 	uint8 mVertSyncEnd;
+	uint8 mVertStatusRow;		// Timing chain register 8. Note that this is the last row before the status row.
 	uint8 mVertExtraScans;
 	float mHorzRate;
 	float mVertRate;
@@ -228,6 +237,9 @@ private:
 	//
 	// We pregen all of these at once because it is possible to
 	// mix them by writing directly to row addresses.
+	//
+	// Within each character set, there are three subarrays, one for normal
+	// mode, and another two for left and right halves of double width.
 	//
 	// The subarrays are in turn indexed by VRAM byte and then line (0-15).
 	// Each 128 character half is generated according to the current attribute

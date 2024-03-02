@@ -17,25 +17,27 @@
 
 #include "stdafx.h"
 #include <vd2/system/binary.h>
+#include <at/atcore/devicevideo.h>
 #include <windows.h>
 #include "uienhancedtext.h"
-#include "uiwidget.h"
+#include <at/atui/uiwidget.h>
 #include "gtia.h"
 #include "antic.h"
 #include "simulator.h"
 #include "virtualscreen.h"
 
-class ATUIEnhancedTextEngine : public IATUIEnhancedTextEngine {
-	ATUIEnhancedTextEngine(const ATUIEnhancedTextEngine&);
-	ATUIEnhancedTextEngine& operator=(const ATUIEnhancedTextEngine&);
+class ATUIEnhancedTextEngine final : public IATUIEnhancedTextEngine, public IATDeviceVideoOutput {
+	ATUIEnhancedTextEngine(const ATUIEnhancedTextEngine&) = delete;
+	ATUIEnhancedTextEngine& operator=(const ATUIEnhancedTextEngine&) = delete;
 public:
 	ATUIEnhancedTextEngine();
 	~ATUIEnhancedTextEngine();
 
-	void Init(HWND hwnd, ATSimulator *sim);
+	void Init(IATUIEnhancedTextOutput *output, ATSimulator *sim);
 	void Shutdown();
 
 	bool IsRawInputEnabled() const;
+	IATDeviceVideoOutput *GetVideoOutput();
 
 	void SetFont(const LOGFONTW *font);
 
@@ -44,72 +46,82 @@ public:
 	bool OnKeyDown(uint32 keyCode);
 	bool OnKeyUp(uint32 keyCode);
 
+	void Paste(const char *s, size_t);
+
 	void Update(bool forceInvalidate);
-	void Paint(HDC hdc);
+
+public:
+	void Tick(uint32 hz300ticks) override;
+	void UpdateFrame() override;
+	const VDPixmap& GetFrameBuffer() override;
+	const ATDeviceVideoInfo& GetVideoInfo() override;
+	vdpoint32 PixelToCaretPos(const vdpoint32& pixelPos) override;
+	vdrect32 CharToPixelRect(const vdrect32& r) override;
+	int ReadRawText(uint8 *dst, int x, int y, int n) override;
+	uint32 GetActivityCounter() override;
 
 protected:
-	void Paint(HDC hdc, const bool *lineRedrawFlags);
-	void PaintHWMode(HDC hdc, const bool *lineRedrawFlags);
-	void PaintSWMode(HDC hdc, const bool *lineRedrawFlags);
+	void Paint(const bool *lineRedrawFlags);
+	void PaintHWMode(const bool *lineRedrawFlags);
+	void PaintSWMode(const bool *lineRedrawFlags);
 
 	void AddToHistory(const char *s);
+	void OnInputReady();
+	void ProcessPastedInput();
 
-	HWND	mhwnd;
-	HFONT	mTextModeFont;
-	HFONT	mTextModeFont2x;
-	HFONT	mTextModeFont4x;
-	int		mTextCharW;
-	int		mTextCharH;
+	IATUIEnhancedTextOutput *mpOutput = nullptr;
+	HDC		mhdc = nullptr;
+	HBITMAP	mhBitmap = nullptr;
+	void	*mpBitmap = nullptr;
+	HGDIOBJ	mhOldBitmap = nullptr;
+	int		mBitmapWidth = 0;
+	int		mBitmapHeight = 0;
+	HFONT	mTextModeFont = nullptr;
+	HFONT	mTextModeFont2x = nullptr;
+	HFONT	mTextModeFont4x = nullptr;
+	int		mTextCharW = 16;
+	int		mTextCharH = 16;
 
-	uint32	mTextLastForeColor;
-	uint32	mTextLastBackColor;
-	uint32	mTextLastBorderColor;
-	int		mTextLastTotalHeight;
-	int		mTextLastLineCount;
-	uint8	mTextLineMode[30];
-	uint8	mTextLastData[30][40];
+	uint32	mTextLastForeColor = 0;
+	uint32	mTextLastBackColor = 0;
+	uint32	mTextLastBorderColor = 0;
+	int		mTextLastTotalHeight = 0;
+	int		mTextLastLineCount = 0;
+	uint8	mTextLineMode[30] = {};
+	uint8	mTextLastData[30][40] = {};
 
-	WCHAR	mGlyphIndices[94];
+	WCHAR	mGlyphIndices[94] = {};
 
 	vdfastvector<WCHAR> mLineBuffer;
 	vdfastvector<INT> mGlyphOffsets;
 
 	vdfastvector<char> mInputBuffer;
-	uint32 mInputPos;
-	uint32 mInputHistIdx;
+	uint32 mInputPos = 0;
+	uint32 mInputHistIdx = 0;
 
 	vdfastvector<char> mHistoryBuffer;
 	vdfastvector<uint8> mLastScreen;
-	bool mbLastScreenValid;
-	bool mbLastInputLineDirty;
-	uint32 mLastCursorX;
-	uint32 mLastCursorY;
+	bool mbLastScreenValid = false;
+	bool mbLastInputLineDirty = false;
+	uint32 mLastCursorX = 0;
+	uint32 mLastCursorY = 0;
 
-	ATGTIAEmulator *mpGTIA;
-	ATAnticEmulator *mpANTIC;
-	ATSimulator *mpSim;
+	vdfastdeque<uint8> mPasteBuffer;
+
+	ATGTIAEmulator *mpGTIA = nullptr;
+	ATAnticEmulator *mpANTIC = nullptr;
+	ATSimulator *mpSim = nullptr;
+
+	ATDeviceVideoInfo mVideoInfo = {};
+	VDPixmap mFrameBuffer = {};
 };
 
-ATUIEnhancedTextEngine::ATUIEnhancedTextEngine()
-	: mhwnd(NULL)
-	, mTextModeFont(NULL)
-	, mTextModeFont2x(NULL)
-	, mTextModeFont4x(NULL)
-	, mTextCharW(16)
-	, mTextCharH(16)
-	, mTextLastForeColor(0)
-	, mTextLastBackColor(0)
-	, mTextLastBorderColor(0)
-	, mTextLastTotalHeight(-1)
-	, mInputPos(0)
-	, mbLastScreenValid(false)
-	, mbLastInputLineDirty(false)
-	, mLastCursorX(0)
-	, mLastCursorY(0)
-	, mpGTIA(NULL)
-	, mpANTIC(NULL)
-	, mpSim(NULL)
-{
+ATUIEnhancedTextEngine::ATUIEnhancedTextEngine() {
+	mVideoInfo.mPixelAspectRatio = 1.0f;
+	mVideoInfo.mbSignalValid = true;
+	mVideoInfo.mHorizScanRate = 15735.0f;
+	mVideoInfo.mVertScanRate = 59.94f;
+	
 	memset(mTextLineMode, 0, sizeof mTextLineMode);
 	memset(mTextLastData, 0, sizeof mTextLastData);
 }
@@ -118,20 +130,42 @@ ATUIEnhancedTextEngine::~ATUIEnhancedTextEngine() {
 	Shutdown();
 }
 
-void ATUIEnhancedTextEngine::Init(HWND hwnd, ATSimulator *sim) {
-	mhwnd = hwnd;
+void ATUIEnhancedTextEngine::Init(IATUIEnhancedTextOutput *output, ATSimulator *sim) {
+	mpOutput = output;
 	mpSim = sim;
 	mpGTIA = &sim->GetGTIA();
 	mpANTIC = &sim->GetAntic();
 
-	RECT r;
-	if (GetClientRect(hwnd, &r))
-		OnSize(r.right, r.bottom);
+	if (HDC hdc = GetDC(NULL)) {
+		mhdc = CreateCompatibleDC(hdc);
+
+		mhOldBitmap = SelectObject(mhdc, mhBitmap);
+	}
+
+	auto *vs = sim->GetVirtualScreenHandler();
+	if (vs)
+		vs->SetReadyCallback([this]() { OnInputReady(); });
 }
 
 void ATUIEnhancedTextEngine::Shutdown() {
 	SetFont(NULL);
-	mhwnd = NULL;
+
+	if (mhdc) {
+		if (mhOldBitmap) {
+			SelectObject(mhdc, mhOldBitmap);
+			mhOldBitmap = nullptr;
+		}
+
+		DeleteDC(mhdc);
+		mhdc = nullptr;
+	}
+
+	if (mhBitmap) {
+		DeleteObject(mhBitmap);
+		mhBitmap = nullptr;
+		mpBitmap = nullptr;
+	}
+
 	mpSim = NULL;
 	mpGTIA = NULL;
 	mpANTIC = NULL;
@@ -141,6 +175,10 @@ bool ATUIEnhancedTextEngine::IsRawInputEnabled() const {
 	IATVirtualScreenHandler *vs = mpSim->GetVirtualScreenHandler();
 	
 	return !vs || vs->IsRawInputActive();
+}
+
+IATDeviceVideoOutput *ATUIEnhancedTextEngine::GetVideoOutput() {
+	return this;
 }
 
 void ATUIEnhancedTextEngine::SetFont(const LOGFONTW *font) {
@@ -170,29 +208,27 @@ void ATUIEnhancedTextEngine::SetFont(const LOGFONTW *font) {
 
 	mTextCharW = 16;
 	mTextCharH = 16;
-	if (HDC hdc = GetDC(mhwnd)) {
-		HGDIOBJ hOldFont = SelectObject(hdc, mTextModeFont);
-		if (hOldFont) {
-			TEXTMETRICW tm;
-			if (GetTextMetricsW(hdc, &tm)) {
-				mTextCharW = tm.tmAveCharWidth;
-				mTextCharH = tm.tmHeight;
-			}
 
-			for(int i=0; i<94; ++i) {
-				const WCHAR ch = (WCHAR)(33 + i);
-
-				GCP_RESULTSW results = {sizeof(GCP_RESULTSW)};
-				results.lpGlyphs = &mGlyphIndices[i];
-				results.nGlyphs = 1;
-
-				if (!GetCharacterPlacementW(hdc, &ch, 1, 0, &results, 0))
-					mGlyphIndices[i] = -1;
-			}
-
-			SelectObject(hdc, hOldFont);
+	HGDIOBJ hOldFont = SelectObject(mhdc, mTextModeFont);
+	if (hOldFont) {
+		TEXTMETRICW tm;
+		if (GetTextMetricsW(mhdc, &tm)) {
+			mTextCharW = tm.tmAveCharWidth;
+			mTextCharH = tm.tmHeight;
 		}
-		ReleaseDC(mhwnd, hdc);
+
+		for(int i=0; i<94; ++i) {
+			const WCHAR ch = (WCHAR)(33 + i);
+
+			GCP_RESULTSW results = {sizeof(GCP_RESULTSW)};
+			results.lpGlyphs = &mGlyphIndices[i];
+			results.nGlyphs = 1;
+
+			if (!GetCharacterPlacementW(mhdc, &ch, 1, 0, &results, 0))
+				mGlyphIndices[i] = -1;
+		}
+
+		SelectObject(mhdc, hOldFont);
 	}
 
 	LOGFONTW logfont2x4x(*font);
@@ -206,37 +242,104 @@ void ATUIEnhancedTextEngine::SetFont(const LOGFONTW *font) {
 	mTextModeFont4x = CreateFontIndirectW(&logfont2x4x);
 	if (!mTextModeFont4x)
 		mTextModeFont4x = CreateFontW(32, mTextCharW * 2, 0, 0, 0, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FF_DONTCARE | DEFAULT_PITCH, L"Lucida Console");
-
-	RECT r;
-	if (GetClientRect(mhwnd, &r))
-		OnSize(r.right, r.bottom);
 }
 
 void ATUIEnhancedTextEngine::OnSize(uint32 w, uint32 h) {
 	if (!w || !h)
 		return;
 
-	w /= mTextCharW;
-	h /= mTextCharH;
+	if (w > 32767)
+		w = 32767;
 
-	if (!w)
-		w = 1;
+	if (h > 32767)
+		h = 32767;
 
-	if (!h)
-		h = 1;
+	uint32 charW;
+	uint32 charH;
 
-	if (w > 255)
-		w = 255;
+	if (mpSim->GetVirtualScreenHandler()) {
+		charW = (uint32)((sint32)w / mTextCharW);
+		charH = (uint32)((sint32)h / mTextCharH);
 
-	if (h > 255)
-		h = 255;
+		if (charW < 40)
+			charW = 40;
+
+		if (charH < 24)
+			charH = 24;
+
+		if (charW > 255)
+			charW = 255;
+
+		if (charH > 255)
+			charH = 255;
+	} else {
+		charW = 40;
+		charH = 30;
+	}
+
+	uint32 adjustedW = (uint32)(charW * mTextCharW);
+	uint32 adjustedH = (uint32)(charH * mTextCharH);
+
+	if (mBitmapWidth == adjustedW && mBitmapHeight == adjustedH)
+		return;
+
+	mBitmapWidth = adjustedW;
+	mBitmapHeight = adjustedH;
+
+	if (mhOldBitmap) {
+		SelectObject(mhdc, mhOldBitmap);
+		mhOldBitmap = nullptr;
+	}
+
+	if (mhBitmap) {
+		DeleteObject(mhBitmap);
+		mhBitmap = nullptr;
+		mpBitmap = nullptr;
+	}
+
+	BITMAPINFO bitmapInfo = {};
+
+	bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	bitmapInfo.bmiHeader.biWidth = adjustedW;
+	bitmapInfo.bmiHeader.biHeight = adjustedH;
+	bitmapInfo.bmiHeader.biPlanes = 1;
+	bitmapInfo.bmiHeader.biBitCount = 32;
+	bitmapInfo.bmiHeader.biSizeImage = adjustedW * adjustedH * 4;
+
+	++mVideoInfo.mFrameBufferLayoutChangeCount;
+	++mVideoInfo.mFrameBufferChangeCount;
+
+	mFrameBuffer = VDPixmap();
+
+	mhBitmap = CreateDIBSection(mhdc, &bitmapInfo, DIB_RGB_COLORS, &mpBitmap, NULL, 0);
+
+	if (!mhBitmap) {
+		mBitmapWidth = 0;
+		mBitmapHeight = 0;
+		return;
+	}
+
+	mhOldBitmap = SelectObject(mhdc, mhBitmap);
+
+	mFrameBuffer.data = (char *)mpBitmap + adjustedW * 4 * (adjustedH - 1);
+	mFrameBuffer.w = adjustedW;
+	mFrameBuffer.h = adjustedH;
+	mFrameBuffer.format = nsVDPixmap::kPixFormat_XRGB8888;
+	mFrameBuffer.pitch = -(ptrdiff_t)adjustedW * 4;
+
+	mVideoInfo.mTextColumns = charW;
+	mVideoInfo.mTextRows = charH;
+	mVideoInfo.mDisplayArea.set(0, 0, adjustedW, adjustedH);
 
 	IATVirtualScreenHandler *vs = mpSim->GetVirtualScreenHandler();
 	if (vs)
-		vs->Resize(w, h);
+		vs->Resize(charW, charH);
 
 	mbLastScreenValid = false;
-	InvalidateRect(mhwnd, NULL, TRUE);
+	++mVideoInfo.mFrameBufferChangeCount;
+
+	if (mpOutput)
+		mpOutput->InvalidateTextOutput();
 }
 
 void ATUIEnhancedTextEngine::OnChar(int ch) {
@@ -388,6 +491,28 @@ bool ATUIEnhancedTextEngine::OnKeyUp(uint32 keyCode) {
 	return false;
 }
 
+void ATUIEnhancedTextEngine::Paste(const char *s, size_t len) {
+	char skipNext = 0;
+
+	while(len--) {
+		char c = *s++;
+
+		if (c == skipNext) {
+			skipNext = 0;
+			continue;
+		}
+
+		if (c == '\r' || c == '\n') {
+			skipNext = c ^ ('\r' ^ '\n');
+			c = '\n';
+		}
+
+		mPasteBuffer.push_back((uint8)c);
+	}
+
+	ProcessPastedInput();
+}
+
 void ATUIEnhancedTextEngine::Update(bool forceInvalidate) {
 	IATVirtualScreenHandler *const vs = mpSim->GetVirtualScreenHandler();
 
@@ -410,6 +535,9 @@ void ATUIEnhancedTextEngine::Update(bool forceInvalidate) {
 
 	if (mTextLastBorderColor != colorBorder) {
 		mTextLastBorderColor = colorBorder;
+
+		mVideoInfo.mBorderColor = VDSwizzleU32(colorBorder) >> 8;
+
 		forceInvalidate = true;
 	}
 
@@ -461,16 +589,17 @@ void ATUIEnhancedTextEngine::Update(bool forceInvalidate) {
 				lineFlagsPtr[cursorY] = true;
 		}
 
-		if (HDC hdc = GetDC(mhwnd)) {
-			Paint(hdc, lineFlagsPtr);
-			ReleaseDC(mhwnd, hdc);
-		}
-
+		Paint(lineFlagsPtr);
 		return;
 	}
 
 	// update data from ANTIC
 	const ATAnticEmulator::DLHistoryEntry *history = mpANTIC->GetDLHistory();
+
+	if (!mbLastScreenValid) {
+		mbLastScreenValid = true;
+		forceInvalidate = true;
+	}
 
 	int line = 0;
 	bool redrawFlags[30] = {false};
@@ -497,7 +626,7 @@ void ATUIEnhancedTextEngine::Update(bool forceInvalidate) {
 
 		const int width = (mode == 2 ? baseWidth * 2 : baseWidth);
 		uint8 *lastData = mTextLastData[line];
-		uint8 data[40] = {0};
+		uint8 data[48] = {0};
 		for(int i=0; i<width; ++i) {
 			uint8 c = mpSim->DebugAnticReadByte(pfAddr + i);
 
@@ -520,41 +649,81 @@ void ATUIEnhancedTextEngine::Update(bool forceInvalidate) {
 	mTextLastLineCount = line;
 
 	if (forceInvalidate || linesDirty) {
-		if (HDC hdc = GetDC(mhwnd)) {
-			Paint(hdc, forceInvalidate ? NULL : redrawFlags);
-			ReleaseDC(mhwnd, hdc);
-		}
+		Paint(forceInvalidate ? NULL : redrawFlags);
 	}
 }
 
-void ATUIEnhancedTextEngine::Paint(HDC hdc) {
-	Paint(hdc, NULL);
+void ATUIEnhancedTextEngine::Tick(uint32 hz300ticks) {
 }
 
-void ATUIEnhancedTextEngine::Paint(HDC hdc, const bool *lineRedrawFlags) {
-	int saveHandle = SaveDC(hdc);
+void ATUIEnhancedTextEngine::UpdateFrame() {
+}
+
+const VDPixmap& ATUIEnhancedTextEngine::GetFrameBuffer() {
+	return mFrameBuffer;
+}
+
+const ATDeviceVideoInfo& ATUIEnhancedTextEngine::GetVideoInfo() {
+	return mVideoInfo;
+}
+
+vdpoint32 ATUIEnhancedTextEngine::PixelToCaretPos(const vdpoint32& pixelPos) {
+	if (pixelPos.y < 0)
+		return vdpoint32(0, 0);
+
+	if (pixelPos.y >= mVideoInfo.mDisplayArea.bottom)
+		return vdpoint32(mVideoInfo.mTextColumns - 1, mVideoInfo.mTextRows - 1);
+
+	return vdpoint32(
+		pixelPos.x < 0 ? 0
+		: pixelPos.x >= mVideoInfo.mDisplayArea.right ? mVideoInfo.mTextColumns - 1
+		: pixelPos.x / mTextCharW,
+		pixelPos.y / mTextCharH);
+}
+
+vdrect32 ATUIEnhancedTextEngine::CharToPixelRect(const vdrect32& r) {
+	return vdrect32(r.left * mTextCharW, r.top * mTextCharH, r.right * mTextCharW, r.bottom * mTextCharH);
+}
+
+int ATUIEnhancedTextEngine::ReadRawText(uint8 *dst, int x, int y, int n) {
+	IATVirtualScreenHandler *const vs = mpSim->GetVirtualScreenHandler();
+
+	if (!vs)
+		return 0;
+
+	return vs->ReadRawText(dst, x, y, n);
+}
+
+uint32 ATUIEnhancedTextEngine::GetActivityCounter() {
+	return 0;
+}
+
+void ATUIEnhancedTextEngine::Paint(const bool *lineRedrawFlags) {
+	int saveHandle = SaveDC(mhdc);
 
 	if (!saveHandle)
 		return;
 
 	if (mpSim->GetVirtualScreenHandler())
-		PaintSWMode(hdc, lineRedrawFlags);
+		PaintSWMode(lineRedrawFlags);
 	else
-		PaintHWMode(hdc, lineRedrawFlags);
+		PaintHWMode(lineRedrawFlags);
 
-	RestoreDC(hdc, saveHandle);
+	RestoreDC(mhdc, saveHandle);
+
+	++mVideoInfo.mFrameBufferChangeCount;
+
+	if (mpOutput)
+		mpOutput->InvalidateTextOutput();
 }
 
-void ATUIEnhancedTextEngine::PaintHWMode(HDC hdc, const bool *lineRedrawFlags) {
+void ATUIEnhancedTextEngine::PaintHWMode(const bool *lineRedrawFlags) {
 	const COLORREF colorBack = mTextLastBackColor;
 	const COLORREF colorFore = mTextLastForeColor;
 	const COLORREF colorBorder = mTextLastBorderColor;
 
-	SetTextAlign(hdc, TA_TOP | TA_LEFT);
-	SetBkMode(hdc, OPAQUE);
-
-	RECT rClient;
-	GetClientRect(mhwnd, &rClient);
+	SetTextAlign(mhdc, TA_TOP | TA_LEFT);
+	SetBkMode(mhdc, OPAQUE);
 
 	uint8 lastMode = 0;
 	int py = 0;
@@ -581,7 +750,7 @@ void ATUIEnhancedTextEngine::PaintHWMode(HDC hdc, const bool *lineRedrawFlags) {
 				c ^= kInternalToATASCIIXorTab[(c >> 5) & 3];
 
 				if ((uint8)((c & 0x7f) - 0x20) >= 0x5f)
-					c = (c & 0x80) + 0x20;
+					c = (c & 0x80) + '.';
 
 				buf[i] = c & 0x7f;
 				inverted[i] = (c & 0x80) != 0;
@@ -596,15 +765,15 @@ void ATUIEnhancedTextEngine::PaintHWMode(HDC hdc, const bool *lineRedrawFlags) {
 				switch(mode) {
 					case 2:
 					default:
-						SelectObject(hdc, mTextModeFont);
+						SelectObject(mhdc, mTextModeFont);
 						break;
 
 					case 6:
-						SelectObject(hdc, mTextModeFont2x);
+						SelectObject(mhdc, mTextModeFont2x);
 						break;
 
 					case 7:
-						SelectObject(hdc, mTextModeFont4x);
+						SelectObject(mhdc, mTextModeFont4x);
 						break;
 				}
 			}
@@ -618,21 +787,21 @@ void ATUIEnhancedTextEngine::PaintHWMode(HDC hdc, const bool *lineRedrawFlags) {
 					++xe;
 
 				if (invertSpan) {
-					SetTextColor(hdc, colorBack);
-					SetBkColor(hdc, colorFore);
+					SetTextColor(mhdc, colorBack);
+					SetBkColor(mhdc, colorFore);
 				} else {
-					SetTextColor(hdc, colorFore);
-					SetBkColor(hdc, colorBack);
+					SetTextColor(mhdc, colorFore);
+					SetBkColor(mhdc, colorBack);
 				}
 
-				TextOutA(hdc, charWidth * x, py, buf + x, xe - x);
+				TextOutA(mhdc, charWidth * x, py, buf + x, xe - x);
 
 				x = xe;
 			}
 
-			RECT rClear = { charWidth * x, py, rClient.right, py + charHeight };
-			SetBkColor(hdc, colorBorder);
-			ExtTextOutW(hdc, 0, py, ETO_OPAQUE, &rClear, L"", 0, NULL);
+			RECT rClear = { charWidth * x, py, mBitmapWidth, py + charHeight };
+			SetBkColor(mhdc, colorBorder);
+			ExtTextOutW(mhdc, 0, py, ETO_OPAQUE, &rClear, L"", 0, NULL);
 		}
 
 		py += charHeight;
@@ -641,13 +810,13 @@ void ATUIEnhancedTextEngine::PaintHWMode(HDC hdc, const bool *lineRedrawFlags) {
 	if (mTextLastTotalHeight != py || !lineRedrawFlags) {
 		mTextLastTotalHeight = py;
 
-		RECT rClear = { 0, py, rClient.right, rClient.bottom };
-		SetBkColor(hdc, colorBorder);
-		ExtTextOutW(hdc, 0, py, ETO_OPAQUE, &rClear, L"", 0, NULL);
+		RECT rClear = { 0, py, mBitmapWidth, mBitmapHeight };
+		SetBkColor(mhdc, colorBorder);
+		ExtTextOutW(mhdc, 0, py, ETO_OPAQUE, &rClear, L"", 0, NULL);
 	}
 }
 
-void ATUIEnhancedTextEngine::PaintSWMode(HDC hdc, const bool *lineRedrawFlags) {
+void ATUIEnhancedTextEngine::PaintSWMode(const bool *lineRedrawFlags) {
 	IATVirtualScreenHandler *const vs = mpSim->GetVirtualScreenHandler();
 	uint32 w;
 	uint32 h;
@@ -667,16 +836,16 @@ void ATUIEnhancedTextEngine::PaintSWMode(HDC hdc, const bool *lineRedrawFlags) {
 	const COLORREF colorFore = mTextLastForeColor;
 	const COLORREF colorBorder = mTextLastBorderColor;
 
-	SetTextAlign(hdc, TA_TOP | TA_LEFT);
-	SetBkMode(hdc, OPAQUE);
+	SetTextAlign(mhdc, TA_TOP | TA_LEFT);
+	SetBkMode(mhdc, OPAQUE);
 
-	RECT rClient = {0};
-	GetClientRect(mhwnd, &rClient);
-
-	SelectObject(hdc, mTextModeFont);
+	SelectObject(mhdc, mTextModeFont);
 
 	uint32 cursorX, cursorY;
-	bool waiting = vs->GetCursorInfo(cursorX, cursorY);
+	if (!vs->GetCursorInfo(cursorX, cursorY)) {
+		cursorX = (uint32)0-1;
+		cursorY = (uint32)0-1;
+	}
 
 	int py = 0;
 	int lastInvert = 2;
@@ -714,7 +883,7 @@ void ATUIEnhancedTextEngine::PaintSWMode(HDC hdc, const bool *lineRedrawFlags) {
 			uint8 c = linedata[x];
 
 			if ((uint8)((c & 0x7f) - 0x20) >= 0x5f)
-				c = (c & 0x80) + 0x20;
+				c = (c & 0x80) + '.';
 
 			line[x] = (wchar_t)c;
 		}
@@ -731,15 +900,15 @@ void ATUIEnhancedTextEngine::PaintSWMode(HDC hdc, const bool *lineRedrawFlags) {
 				if (lastInvert != 1) {
 					lastInvert = 1;
 
-					SetTextColor(hdc, colorBack);
-					SetBkColor(hdc, colorFore);
+					SetTextColor(mhdc, colorBack);
+					SetBkColor(mhdc, colorFore);
 				}
 			} else {
 				if (lastInvert != 0) {
 					lastInvert = 0;
 
-					SetTextColor(hdc, colorFore);
-					SetBkColor(hdc, colorBack);
+					SetTextColor(mhdc, colorFore);
+					SetBkColor(mhdc, colorBack);
 				}
 			}
 
@@ -769,20 +938,20 @@ void ATUIEnhancedTextEngine::PaintSWMode(HDC hdc, const bool *lineRedrawFlags) {
 				glyphPos += mTextCharW;
 			}
 
-			ExtTextOutW(hdc, px, py, ETO_GLYPH_INDEX | ETO_OPAQUE, &rLine, line, countOut, glyphOffsets);
+			ExtTextOutW(mhdc, px, py, ETO_GLYPH_INDEX | ETO_OPAQUE, &rLine, line, countOut, glyphOffsets);
 
 			x2 = xe;
 		}
 	}
 
 	if (!lineRedrawFlags) {
-		SetBkColor(hdc, colorBorder);
+		SetBkColor(mhdc, colorBorder);
 
-		RECT rClear = { mTextCharW * w, 0, rClient.right, py };
-		ExtTextOutW(hdc, 0, py, ETO_OPAQUE, &rClear, L"", 0, NULL);
+		RECT rClear = { mTextCharW * w, 0, mBitmapWidth, py };
+		ExtTextOutW(mhdc, 0, py, ETO_OPAQUE, &rClear, L"", 0, NULL);
 
-		RECT rClear2 = { 0, py, rClient.right, rClient.bottom };
-		ExtTextOutW(hdc, 0, py, ETO_OPAQUE, &rClear2, L"", 0, NULL);
+		RECT rClear2 = { 0, py, mBitmapWidth, mBitmapHeight };
+		ExtTextOutW(mhdc, 0, py, ETO_OPAQUE, &rClear2, L"", 0, NULL);
 	}
 }
 
@@ -807,6 +976,27 @@ void ATUIEnhancedTextEngine::AddToHistory(const char *s) {
 	}
 
 	mHistoryBuffer.insert(mHistoryBuffer.end(), s, s + len + 1);
+}
+
+void ATUIEnhancedTextEngine::OnInputReady() {
+	ProcessPastedInput();
+}
+
+void ATUIEnhancedTextEngine::ProcessPastedInput() {
+	auto *vs = mpSim->GetVirtualScreenHandler();
+	if (!vs || !vs->IsReadyForInput())
+		return;
+
+	while(!mPasteBuffer.empty()) {
+		char c = mPasteBuffer.front();
+		mPasteBuffer.pop_front();
+
+		if (c == '\n') {
+			OnKeyDown(kATUIVK_Return);
+			break;
+		} else if (c >= 0x20 && c < 0x7F)
+			OnChar(c);
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////

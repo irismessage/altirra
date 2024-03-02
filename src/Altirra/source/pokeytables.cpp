@@ -22,12 +22,6 @@ ATPokeyTables::ATPokeyTables() {
 	// The 4-bit and 5-bit polynomial counters are of the XNOR variety, which means
 	// that the all-1s case causes a lockup. The INIT mode shifts zeroes into the
 	// register.
-	static const uint8 kRevBits4[16]={
-		0,  8, 4, 12,
-		2, 10, 6, 14,
-		1,  9, 5, 13,
-		3, 11, 7, 15,
-	};
 
 	int poly4 = 0;
 	for(int i=0; i<131071; ++i) {

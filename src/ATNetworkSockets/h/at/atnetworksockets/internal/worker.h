@@ -5,8 +5,9 @@
 #include <at/atnetworksockets/worker.h>
 
 class ATNetSockWorker;
+class IATNetTcpStack;
 
-class ATNetSockBridgeHandler : public vdrefcounted<IATSocketHandler> {
+class ATNetSockBridgeHandler final : public vdrefcounted<IATSocketHandler> {
 public:
 	ATNetSockBridgeHandler(ATNetSockWorker *parent, SOCKET s, IATSocket *s2, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort);
 
@@ -17,6 +18,8 @@ public:
 
 	void Shutdown();
 
+	void SetLocalSocket(IATSocket *s2);
+
 	void OnNativeSocketConnect();
 	void OnNativeSocketReadReady();
 	void OnNativeSocketWriteReady();
@@ -24,11 +27,11 @@ public:
 	void OnNativeSocketError();
 
 public:
-	virtual void OnSocketOpen();
-	virtual void OnSocketReadReady(uint32 len);
-	virtual void OnSocketWriteReady(uint32 len);
-	virtual void OnSocketClose();
-	virtual void OnSocketError();
+	void OnSocketOpen() override;
+	void OnSocketReadReady(uint32 len) override;
+	void OnSocketWriteReady(uint32 len) override;
+	void OnSocketClose() override;
+	void OnSocketError() override;
 	
 protected:
 	void TryCopyToNative();
@@ -56,7 +59,7 @@ protected:
 	char mSendBuf[1024];
 };
 
-class ATNetSockWorker : public vdrefcounted<IATNetSockWorker>, public IATSocketListener, public IATUdpSocketListener {
+class ATNetSockWorker final : public vdrefcounted<IATNetSockWorker>, public IATSocketListener, public IATUdpSocketListener {
 	friend class ATNetSockBridgeHandler;
 public:
 	ATNetSockWorker();
@@ -65,7 +68,7 @@ public:
 	virtual IATSocketListener *AsSocketListener() { return this; }
 	virtual IATUdpSocketListener *AsUdpListener() { return this; }
 
-	bool Init(IATNetUdpStack *udp, bool externalAccess);
+	bool Init(IATNetUdpStack *udp, IATNetTcpStack *tcp, bool externalAccess, uint32 forwardingAddr, uint16 forwardingPort);
 	void Shutdown();
 
 	void ResetAllConnections();
@@ -76,24 +79,31 @@ public:
 	virtual bool OnSocketIncomingConnection(uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, IATSocket *socket, IATSocketHandler **handler);
 	virtual void OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, const void *data, uint32 dataLen);
 
-protected:
-	void DeleteConnection(SOCKET s);
-
-protected:
+private:
 	enum {
 		MYWM_TCP_SOCKET = WM_USER,
-		MYWM_UDP_SOCKET
+		MYWM_UDP_SOCKET,
+		MYWM_TCP_LISTEN_SOCKET
 	};
+
+	SOCKET CreateUdpConnection(uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, bool redirected);
+	void DeleteConnection(SOCKET s);
 
 	LRESULT WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	void ProcessUdpDatagram(SOCKET s, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort);
 
-	VDFunctionThunk *mpWndThunk;
-	ATOM mWndClass;
-	HWND mhwnd;
+	VDFunctionThunk *mpWndThunk = nullptr;
+	ATOM mWndClass = 0;
+	HWND mhwnd = nullptr;
 
-	IATNetUdpStack *mpUdpStack;
-	bool mbAllowExternalAccess;
+	IATNetTcpStack *mpTcpStack = nullptr;
+	IATNetUdpStack *mpUdpStack = nullptr;
+	bool mbAllowExternalAccess = false;
+
+	uint32 mForwardingAddr = 0;
+	uint16 mForwardingPort = 0;
+
+	SOCKET mTcpListeningSocket = INVALID_SOCKET;
 
 	typedef vdhashmap<SOCKET, ATNetSockBridgeHandler *> TcpConnections;
 	TcpConnections mTcpConnections;

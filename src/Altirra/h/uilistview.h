@@ -6,7 +6,7 @@
 #include <vd2/system/VDString.h>
 #include <vd2/VDDisplay/font.h>
 #include "callback.h"
-#include "uicontainer.h"
+#include <at/atui/uicontainer.h>
 
 class ATUISlider;
 

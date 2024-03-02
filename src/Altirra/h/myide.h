@@ -29,8 +29,8 @@ class IATUIRenderer;
 class ATFirmwareManager;
 
 class ATMyIDEEmulator {
-	ATMyIDEEmulator(const ATMyIDEEmulator&);
-	ATMyIDEEmulator& operator=(const ATMyIDEEmulator&);
+	ATMyIDEEmulator(const ATMyIDEEmulator&) = delete;
+	ATMyIDEEmulator& operator=(const ATMyIDEEmulator&) = delete;
 public:
 	ATMyIDEEmulator();
 	~ATMyIDEEmulator();
@@ -40,7 +40,7 @@ public:
 	bool IsLeftCartEnabled() const;
 	bool IsUsingD5xx() const { return mbUseD5xx; }
 
-	void Init(ATMemoryManager *memman, IATUIRenderer *uir, ATScheduler *sch, ATSimulator *sim, bool used5xx, bool v2);
+	void Init(ATMemoryManager *memman, IATUIRenderer *uir, ATScheduler *sch, ATSimulator *sim, bool used5xx, bool v2, bool v2ex);
 	void Shutdown();
 
 	void SetIDEImage(ATIDEEmulator *ide);
@@ -84,6 +84,7 @@ protected:
 	bool mbCFReset;
 	bool mbCFAltReg;
 	bool mbVersion2;
+	bool mbVersion2Ex;
 	bool mbUseD5xx;
 
 	// MyIDE II control registers

@@ -63,6 +63,17 @@ void ATNetDhcpDaemon::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 	if (pkt.mOp != 1)
 		return;
 
+	enum : uint8 {
+		kATNetDhcpMsgType_DHCPDISCOVER = 1,
+		kATNetDhcpMsgType_DHCPOFFER = 2,
+		kATNetDhcpMsgType_DHCPREQUEST = 3,
+		kATNetDhcpMsgType_DHCPDECLINE = 4,
+		kATNetDhcpMsgType_DHCPACK = 5,
+		kATNetDhcpMsgType_DHCPNAK = 6,
+		kATNetDhcpMsgType_DHCPRELEASE = 7,
+		kATNetDhcpMsgType_DHCPINFORM = 8
+	};
+
 	// Hardware address type must be 10mb Ethernet (1).
 	// Hardware address length must be 6.
 	if (pkt.mHtype != 1 || pkt.mHlen != 6)
@@ -76,6 +87,7 @@ void ATNetDhcpDaemon::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 	uint32 reqIpAddr = 0;
 	uint32 serverId = 0;
 	uint32 leaseTime = 0;
+	int messageType = -1;
 
 	if (dataLen > sizeof(ATNetDhcpPacket)) {
 		uint32 optionsLen = dataLen - sizeof(ATNetDhcpPacket);
@@ -117,6 +129,11 @@ void ATNetDhcpDaemon::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 					return;
 
 				leaseTime = VDReadUnalignedU32(opdata);
+			} else if (token == 53) {
+				if (oplen != 1)
+					return;
+
+				messageType = *opdata;
 			} else if (token == 54) {
 				if (oplen != 4)
 					return;
@@ -127,6 +144,10 @@ void ATNetDhcpDaemon::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 			opdata += oplen;
 		}
 	}
+
+	// Option 53 (message type) is required by RFC 2131
+	if (messageType < 0)
+		return;
 
 	// Form reply
 	IATNetIpStack *const ipStack = mpUdpStack->GetIpStack();
@@ -145,38 +166,60 @@ void ATNetDhcpDaemon::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 	reply.mPkt.mGiaddr	= pkt.mGiaddr;
 	reply.mPkt.mCiaddr	= pkt.mCiaddr;
 	reply.mPkt.mSiaddr	= ipStack->GetIpAddress();
+	memcpy(reply.mPkt.mChaddr, pkt.mChaddr, sizeof reply.mPkt.mChaddr);
 	reply.mPkt.mOptionsKey	= VDToBE32(0x63825363);
 
 	// Check if we have a DHCPDISCOVER, DHCPREQUEST or a DHCPDECLINE/RELEASE message
-	if (pkt.mCiaddr) {		// DHCPREQUEST
+	if (messageType == kATNetDhcpMsgType_DHCPREQUEST) {
 		// check that the address is in the right subnet
 		const uint32 netip = ipStack->GetIpAddress();
 		const uint32 netmask = ipStack->GetIpNetMask();
 
-		if ((pkt.mCiaddr ^ netip) & netmask) {
+		// IP64 passes ciaddr=0 and uses the the Requested IP Address option (50).
+		const uint32 ipAddr = reqIpAddr ? reqIpAddr : pkt.mCiaddr;
+
+		if ((ipAddr ^ netip) & netmask) {
 			// uh, wrong subnet
 			return;
 		}
 
 		// check that the address is within our lease range
-		uint8 addrid = (uint8)VDFromBE32(pkt.mCiaddr);
+		uint8 addrid = (uint8)VDFromBE32(ipAddr);
 
 		if (addrid < 100 || addrid >= 100 + vdcountof(mLeases))
 			return;
 
-		// check that the address isn't already assigned, or that it is assigned to
-		// this client
+		// Check that the address isn't already assigned, or that it is assigned to
+		// this client.
+		//
+		// We used to validate the Xid here, but don't anymore because IP64 and lwIP
+		// both generate new Xids for the DHCPREQUEST message. This is supposed to
+		// be the same as the DHCPOFFER message per RFC2131 4.4.1, but apparently
+		// common DHCP servers don't validate this....
+		//
 		uint32 leaseIdx = addrid - 100;
 		Lease& lease = mLeases[addrid - 100];
 
-		if (lease.mbValid && lease.mXid != pkt.mXid) {
+		if (lease.mbValid && memcmp(mLeases[leaseIdx].mAddr.mAddr, pkt.mChaddr, 6)) {
 			// occupied -- send DHCPNAK
 			reply.mPkt.mSiaddr = 0;
+
+			// set up message type option (required by RFC2131)
+			*optdst++ = 53;
+			*optdst++ = 1;
+			*optdst++ = kATNetDhcpMsgType_DHCPNAK;
 		} else {
 			// looks good... assign the address and set up a DHCPACK
 			lease.mbValid = true;
 			lease.mXid = pkt.mXid;
 			lease.mAddr = srcHwAddr;
+
+			reply.mPkt.mYiaddr = ipAddr;
+
+			// set up message type option (required by RFC2131)
+			*optdst++ = 53;
+			*optdst++ = 1;
+			*optdst++ = kATNetDhcpMsgType_DHCPACK;
 
 			// set up server identifier option (required)
 			*optdst++ = 54;
@@ -207,15 +250,24 @@ void ATNetDhcpDaemon::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 			*optdst++ = 4;
 			VDWriteUnalignedU32(optdst, ipStack->GetIpAddress());
 			optdst += 4;
+
+			// set up DNS option (optional)
+			*optdst++ = 6;
+			*optdst++ = 4;
+			VDWriteUnalignedU32(optdst, ipStack->GetIpAddress());
+			optdst += 4;
 		}
-	} else if (serverId) {	// DHCPDECLINE / DHCPRELEASE
+	} else if (messageType == kATNetDhcpMsgType_DHCPDECLINE || messageType == kATNetDhcpMsgType_DHCPRELEASE) {
 		// these messages require a server identifier -- so make sure it's
 		// a valid one
 		if (serverId >= 0x100 && serverId < 0x100 + vdcountof(mLeases)) {
 			// release the lease
 			mLeases[serverId - 0x100].mbValid = false;
 		}
-	} else {				// DHCPDISCOVER / DHCPINFORM
+
+		// exit without replying
+		return;
+	} else if (messageType == kATNetDhcpMsgType_DHCPDISCOVER || messageType == kATNetDhcpMsgType_DHCPINFORM) {
 		// find an unused address or one that matches the hardware address
 		bool found = false;
 		uint32 leaseIdx;
@@ -224,6 +276,7 @@ void ATNetDhcpDaemon::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 			if (!memcmp(mLeases[i].mAddr.mAddr, pkt.mChaddr, 6)) {
 				found = true;
 				leaseIdx = i;
+				break;
 			}
 		}
 
@@ -248,6 +301,11 @@ void ATNetDhcpDaemon::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 			
 			// send DHCPOFFER
 			reply.mPkt.mYiaddr = VDToBE32(VDFromBE32(ipStack->GetIpAddress() & ipStack->GetIpNetMask()) + 100 + leaseIdx);
+
+			// set up message type option (required by RFC2131)
+			*optdst++ = 53;
+			*optdst++ = 1;
+			*optdst++ = kATNetDhcpMsgType_DHCPOFFER;
 
 			// set up server identifier option (required)
 			*optdst++ = 54;
@@ -281,6 +339,11 @@ void ATNetDhcpDaemon::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 		} else {
 			// no addresses available -- send DHCPNAK
 			reply.mPkt.mSiaddr = 0;
+
+			// set up message type option (required by RFC2131)
+			*optdst++ = 53;
+			*optdst++ = 1;
+			*optdst++ = kATNetDhcpMsgType_DHCPNAK;
 		}
 	}
 
@@ -290,10 +353,10 @@ void ATNetDhcpDaemon::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 
 	if (reply.mPkt.mGiaddr != 0) {
 		// giaddr!=0 => send to the DHCP server port on the relay agent
-		mpUdpStack->SendDatagram(dstIpAddr, dstPort, reply.mPkt.mGiaddr, 67, &reply, replylen);
+		mpUdpStack->SendDatagram(mpUdpStack->GetIpStack()->GetIpAddress(), dstPort, reply.mPkt.mGiaddr, 67, &reply, replylen);
 	} else if (reply.mPkt.mCiaddr != 0) {
 		// giaddr=0, ciaddr!=0 => send to client address
-		mpUdpStack->SendDatagram(dstIpAddr, dstPort, reply.mPkt.mCiaddr, 68, &reply, replylen);
+		mpUdpStack->SendDatagram(mpUdpStack->GetIpStack()->GetIpAddress(), dstPort, reply.mPkt.mCiaddr, 68, &reply, replylen);
 	} else if (reply.mPkt.mFlags & VDToBE16(0x8000)) {
 		// giaddr,ciaddr=0 and broadcast is set => broadcast
 		const ATEthernetAddr broadcastHwAddr = {
@@ -305,12 +368,12 @@ void ATNetDhcpDaemon::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 			(uint8)0xFF
 		};
 
-		mpUdpStack->SendDatagram(dstIpAddr, dstPort, 0xFFFFFFFFU, 68, broadcastHwAddr, &reply, replylen);
+		mpUdpStack->SendDatagram(mpUdpStack->GetIpStack()->GetIpAddress(), dstPort, 0xFFFFFFFFU, 68, broadcastHwAddr, &reply, replylen);
 	} else {
 		// else => unicast to hardware address
 		ATEthernetAddr chaddr;
 		memcpy(chaddr.mAddr, reply.mPkt.mChaddr, 6);
 
-		mpUdpStack->SendDatagram(dstIpAddr, dstPort, reply.mPkt.mYiaddr, 68, chaddr, &reply, replylen);
+		mpUdpStack->SendDatagram(mpUdpStack->GetIpStack()->GetIpAddress(), dstPort, reply.mPkt.mYiaddr, 68, chaddr, &reply, replylen);
 	}
 }

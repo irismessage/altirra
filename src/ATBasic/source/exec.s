@@ -7,22 +7,9 @@
 ; without any warranty.
 
 ;===========================================================================
-; Input:
-;	P.C		Set to run in direct mode, clear to run in normal mode
-;
-.proc exec				
-		;reset error number
-		mvy		#1 errno
-
-		;fix the runtime stack to addresses
-		php
-		jsr		ExecFixStack
-		plp
-
+.proc exec
 		;if we're running in direct mode, stmcur is already set and we
 		;should bypass changing that and checking for line 32768.		
-		bcs		direct_bypass
-		
 		mwa		stmtab stmcur
 		
 		;reset DATA pointer
@@ -44,11 +31,11 @@ new_line:
 		;hitting the end of immediate mode does an implicit END
 		jmp		stEnd
 
+;Entry point for direct execution from immediate mode.
+.def :execDirect
 direct_bypass:
-		ldy		#2
-
-		;stash statement length
-		mva		(stmcur),y+ exLineEnd
+		;set EOL cache and start at beginning of line
+		jsr		stNext.restart_line
 loop:
 		;check if break has been pressed
 		lda		brkkey
@@ -74,7 +61,12 @@ loop:
 		
 		;skip continuation or EOL token
 		ldy		exLineOffsetNxt
-		jmp		loop
+		bne		loop
+
+.def :stRem = *
+		;remove return address
+		pla
+		pla
 
 next_line:
 		;check if we're at the immediate mode line already
@@ -101,22 +93,244 @@ dispatch:
 		lda		statementJumpTableLo,x
 		pha
 		
+next_statement:
 		;execute the statement
 		rts
 .endp
 
 ;===========================================================================
 .proc execStop
-		mva		#$80 brkkey
-		sta		errno
+		mvy		#$80 brkkey
 
-		;load current line number
-		ldx		stmcur
-		ldy		stmcur+1
-		jsr		fld0r
-
-		jmp		errorDispatch
+		dta		{bit $0100}
+.def :ExecStopInvStructure = *
+		ldy		#28
+		jmp		IoThrowErrorY
 .endp
+
+;===========================================================================
+; IF aexp THEN {lineno | statement [:statement...]}
+;
+; Evaluates aexp and checks whether it is non-zero. If so, the THEN clause
+; is executed. Otherwise, execution proceeds at the next line (NOT the next
+; statement). aexp is evaluated in float context so it may be negative or
+; >65536.
+;
+; The token setup for the THEN clause is a bit wonky. If lineno is present,
+; it shows up as an expression immediately after the THEN token, basically
+; treating the THEN token as an operator. Otherwise, the statement abruptly
+; ends at the THEN with no end of statement token and a new statement
+; follows.
+;
+.proc stIf
+		;evaluate condition
+		jsr		evaluate
+
+		;check for THEN token
+		ldy		exLineOffset
+		lda		(stmcur),y
+		cmp		#TOK_EXP_THEN
+		bne		block_if
+		
+		;check if condition is zero and skip the line if so
+		lda		fr0
+		;;##TRACE "If condition: %g" fr0
+		beq		stRem
+
+		;skip the THEN token, which is always present
+		iny
+		
+		;check if this is the end of the statement
+		cpy		exLineOffsetNxt
+		beq		exec.next_statement		;statement follows, so execute it
+		
+		;no, it isn't... process the implicit GOTO.
+		ldx		#$80-6
+copy_loop:
+		iny
+		lda		(stmcur),y
+		sta		fr0+6-$80,x
+		inx
+		bpl		copy_loop
+		jsr		ExprConvFR0IntPos
+		jmp		stGoto.gotoFR0Int
+
+block_if:
+		;For a block IF, a successful condition merely resumes execution.
+		lda		fr0
+		bne		exec.next_statement
+
+		;Now we need to skip until the next ELSE or ENDIF. Tricky part is
+		;that we also need to handle nested block AND non-block IFs, and
+		;also reuse this code for ELSE. The logic is as follows:
+		;
+		;	if statement is IF:
+		;		skip expression (must not evaluate)
+		;		if token() is THEN:
+		;			skip remainder of line
+		;		else:
+		;			++nesting_count
+		;	else if statement is ELSE:
+		;		if nesting_count == 0:
+		;			if original statement is ELSE:
+		;				error
+		;			else
+		;				break
+		;	else if statement is ENDIF:
+		;		if nesting_count == 0:
+		;			break
+		;		--nesting_count
+		;	else if end of program:
+		;		error
+
+		sec
+		dta		{bit $00}
+.def :stElse = *
+		clc
+		ror		stScratch
+
+.def :ExecScanBlockIf = *
+		mva		#$ff stScratch2			;nesting count = -1
+next_statement_incnest:
+		inc		stScratch2
+next_statement:
+		ldy		exLineOffsetNxt
+scan_loop:
+		;check if we're at EOL
+		cpy		exLineEnd
+		bne		not_eol
+
+		;check for immediate mode on the *current* line
+		tya
+		pha
+		ldy		#1
+		lda		(stmcur),y
+		bmi		ExecStopInvStructure
+		pla
+
+		;bump statement pointer to next line
+		ldx		#stmcur
+		jsr		VarAdvancePtrX
+
+		;check for immediate mode on the *next* line
+		lda		(stmcur),y
+		bmi		ExecStopInvStructure
+
+		;fetch end
+		iny
+		lda		(stmcur),y
+		sta		exLineEnd
+
+		;begin processing statements
+		iny
+		bne		scan_loop
+
+not_eol:
+		lda		(stmcur),y
+		sta		exLineOffsetNxt
+		iny
+
+		;get statement token
+		lda		(stmcur),y
+
+		;check for ENDIF
+		cmp		#TOK_ENDIF
+		bne		not_endif
+
+		;decrement nesting count and continue execution on underflow
+		dec		stScratch2
+		bpl		next_statement
+		rts
+
+not_endif:
+		;check for ELSE
+		cmp		#TOK_ELSE
+		bne		not_else
+
+		;check if nesting count is non-zero, in which case ELSE is
+		;ignored
+		lda		stScratch2
+		bne		next_statement
+
+		;continue execution if doing IF; fail with error if ELSE
+		bit		stScratch
+		bpl		ExecStopInvStructure
+		rts
+
+not_else:
+		;check for IF
+		cmp		#TOK_IF
+		bne		next_statement
+
+		;Okay, we have an IF statement... this is the annoying part. We
+		;need to check for the THEN token to see if this is a block IF or
+		;not since only block IFs increase the nesting count. This means
+		;that we need to parse past the expression.
+		;
+		;Note that there is an ambiguity in Basic XE regarding non-block
+		;IF constructs nested within block IFs:
+		;
+		; 10 IF X=0
+		; 20 IF Z=1 THEN PRINT "FOO" : ELSE
+		; 30 PRINT "BAR"
+		; 40 ENDIF
+		;
+		;This prints BAR because the block IF prevents the execution
+		;engine from seeing the ELSE. However, if the condition is changed
+		;to X=1, it still prints BAR, because the scanner sees the ELSE.
+		;This means that the scanner should continue with the next
+		;statement after an IF regardless of whether it's a block IF or not.
+		;
+		;The logic for the expression scanning loop:
+		;
+		;	token = stmcur[pos++]
+		;	if token is THEN:
+		;		break
+		;	else if token is EOS or EOL:
+		;		++nesting_count
+		;		break
+		;	else if token is CSTR:
+		;		pos += 1 + stmcur[pos]
+		;	else if token is CNUM or CHEX:
+		;		pos += 7
+
+exp_loop:
+		;bump pointer and check for end of statement
+		iny
+		cpy		exLineOffsetNxt
+		beq		next_statement_incnest
+
+		;get expression token
+		lda		(stmcur),y
+
+		;check for THEN
+		cmp		#TOK_EXP_THEN
+		beq		next_statement
+
+		;check for constant string or number
+		cmp		#TOK_EXP_CSTR
+		bcc		is_cnum
+		bne		exp_loop			;nope, single byte token (note: may be EOL/EOS)
+
+		;literal string
+		iny
+		lda		(stmcur),y			;get length
+		clc
+		dta		{bit $0100}			;skip LDA #6 below
+is_cnum:
+		lda		#6					;!! - skipped by cstr path
+		sty		exLineOffset
+		adc		exLineOffset
+		tay
+		bne		exp_loop			;!! - unconditional
+.endp
+
+;===========================================================================
+; ENDIF
+;
+; The ENDIF statement is a no-op when encountered in regular execution.
+;
+stEndIf = exec.next_statement
 
 ;===========================================================================
 .macro STATEMENT_JUMP_TABLE
@@ -179,22 +393,22 @@ dispatch:
 		dta		:1[stCload-1]
 		dta		:1[stImpliedLet-1]
 		dta		:1[stSyntaxError-1]
-		dta		:1[stRem-1]
-		dta		:1[stRem-1]
-		dta		:1[stRem-1]
-		dta		:1[stRem-1]
-		dta		:1[stRem-1]
-		dta		:1[stRem-1]
+		dta		:1[errorWTF-1]			;BASIC XL/XE: WHILE
+		dta		:1[errorWTF-1]			;BASIC XL/XE: ENDWHILE
+		dta		:1[errorWTF-1]			;BASIC XL/XE: TRACEOFF
+		dta		:1[errorWTF-1]			;BASIC XL/XE: TRACE
+		dta		:1[stElse-1]
+		dta		:1[stEndIf-1]
 		dta		:1[stDpoke-1]
-		dta		:1[stRem-1]
+		dta		:1[stLomem-1]			;BASIC XL/XE: LOMEM
 
 		;$40
-		dta		:1[stRem-1]
-		dta		:1[stRem-1]
-		dta		:1[stRem-1]
+		dta		:1[errorWTF-1]			;BASIC XL/XE: DEL
+		dta		:1[errorWTF-1]			;BASIC XL/XE: RPUT
+		dta		:1[errorWTF-1]			;BASIC XL/XE: RGET
 		dta		:1[stBput-1]
 		dta		:1[stBget-1]
-		dta		:1[stRem-1]
+		dta		:1[errorWTF-1]			;BASIC XL/XE: TAB
 		dta		:1[stCp-1]
 		dta		:1[stFileOp-1]
 		dta		:1[stFileOp-1]
@@ -202,6 +416,13 @@ dispatch:
 		dta		:1[stDir-1]
 		dta		:1[stFileOp-1]
 		dta		:1[stMove-1]
+		dta		:1[stMissile-1]
+		dta		:1[stPmclr-1]
+		dta		:1[stPmcolor-1]
+
+		;$50
+		dta		:1[stPmgraphics-1]
+		dta		:1[stPmmove-1]
 .endm
 
 statementJumpTableLo:
@@ -234,10 +455,9 @@ _lptr = iterPtr
 		ldy		#1
 		lda		fr0+1
 		sbc		(stmcur),y
-		bcc		use_start
-		dta		{bit $0100}		;leave X=0 (stmcur-stmtab)
-use_start:
-		ldx		#$fe
+		bcs		use_current
+		ldx		#<[stmtab-stmcur]
+use_current
 		
 		;load pointer
 		lda.b	stmcur+1,x
@@ -311,26 +531,21 @@ is_end:
 .endp
 
 ;===========================================================================
-.proc ExecReset		
-		;close IOCBs 1-7
-		ldx		#$70
-close_loop:
-		jsr		IoCloseX
-		txa
-		sec
-		sbc		#$10
+.proc _ExecFixStack
+.def :ExecCheckStack
+		clc
+		adc		memtop2
 		tax
-		bne		close_loop
-
-		;silence all sound channels
-		ldx		#7
-		sta:rpl	$d200,x-		;!! - A=0 from above
-
-		rts
-.endp
-
-;===========================================================================
-.proc ExecFixStack
+		lda		#0
+		adc		memtop2+1
+		cpx		memtop
+		sbc		memtop+1
+		bcc		chkstk_ok
+		jmp		errorNoMemory
+chkstk_ok:
+		;Now we have to fix the stack in case it is floating, since
+		;we can't mix fixed and floated data on the stack.
+.def :ExecFixStack
 		bit		exFloatStk
 		bpl		xit
 		lsr		exFloatStk
@@ -356,8 +571,7 @@ loop:
 		bcc		not_found
 		ldx		iterPtr+1
 
-		ldy		#1
-		jsr		stFor.push_ax
+		jsr		stFor.push_ax_1
 
 		;advance pointer
 		jsr		stPop.pop_frame_remainder
@@ -382,7 +596,7 @@ not_found:
 ;===========================================================================
 .proc ExecFloatStack
 		bit		exFloatStk
-		bmi		ExecFixStack.xit
+		bmi		_ExecFixStack.xit
 		sec
 		ror		exFloatStk
 
@@ -393,7 +607,7 @@ not_found:
 loop:
 		;check if we're at the bottom of the stack
 		jsr		stReturn.check_rtstack_empty
-		bcs		ExecFixStack.done
+		bcs		_ExecFixStack.done
 
 		lda		#$fc
 		jsr		stPop.dec_ptr_2
@@ -412,8 +626,7 @@ loop:
 		dey
 		lda		(fr0),y
 
-		iny
-		jsr		stFor.push_ax
+		jsr		stFor.push_ax_1
 
 		;advance pointer
 		jsr		stPop.pop_frame_remainder

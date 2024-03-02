@@ -63,12 +63,12 @@ namespace {
 			// read the hardware ID string
 			DWORD regType = 0;
 			DWORD required = 0;
-			if (!SetupDiGetDeviceRegistryPropertyW(hdi, &sdd, SPDRP_HARDWAREID, &regType, (PBYTE)buf.data(), (buf.size() - 1) * sizeof(buf[0]), &required)
+			if (!SetupDiGetDeviceRegistryPropertyW(hdi, &sdd, SPDRP_HARDWAREID, &regType, (PBYTE)buf.data(), (DWORD)((buf.size() - 1) * sizeof(buf[0])), &required)
 				&& GetLastError() == ERROR_INSUFFICIENT_BUFFER)
 			{
 				buf.resize(required / sizeof(WCHAR) + 2);
 
-				if (!SetupDiGetDeviceRegistryPropertyW(hdi, &sdd, SPDRP_HARDWAREID, &regType, (PBYTE)buf.data(), (buf.size() - 1) * sizeof(buf[0]), &required))
+				if (!SetupDiGetDeviceRegistryPropertyW(hdi, &sdd, SPDRP_HARDWAREID, &regType, (PBYTE)buf.data(), (DWORD)((buf.size() - 1) * sizeof(buf[0])), &required))
 					continue;
 			}
 
@@ -183,14 +183,20 @@ public:
 	bool IsMarked() const { return mbMarked; }
 	void SetMarked(bool mark) { mbMarked = mark;}
 
-	virtual void SetDeadZone(int zone) {}
+	void SetTransforms(const ATJoystickTransforms& transforms) {
+		mTransforms = transforms;
+	}
 
 	virtual bool Poll() = 0;
-	virtual bool PollForCapture(int& unit, uint32& inputCode) = 0;
+	virtual bool PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2) = 0;
+	virtual void PollForCapture(ATJoystickState& dst) = 0;
 
 protected:
+	static uint32 ConvertAnalogToDirectionMask(sint32 x, sint32 y, sint32 deadZone);
+
 	bool mbMarked;
 	ATInputUnitIdentifier mId;
+	ATJoystickTransforms mTransforms;
 };
 
 ATController::ATController()
@@ -198,17 +204,38 @@ ATController::ATController()
 {
 }
 
+uint32 ATController::ConvertAnalogToDirectionMask(sint32 x, sint32 y, sint32 deadZone) {
+	const float kTan22_5d = 0.4142135623730950488016887242097f;
+	float dxf = fabsf((float)x);
+	float dyf = fabsf((float)y);
+	uint32 mask = 0;
+
+	if (dxf * dxf + dyf * dyf < (float)deadZone * (float)deadZone)
+		return 0;
+
+	if (dxf > dyf * kTan22_5d) {
+		if (x < 0) mask |= (1 << 0);
+		if (x > 0) mask |= (1 << 1);
+	}
+
+	if (dyf > dxf * kTan22_5d) {
+		if (y > 0) mask |= (1 << 2);
+		if (y < 0) mask |= (1 << 3);
+	}
+
+	return mask;
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
-class ATControllerXInput : public ATController, public IATInputUnitNameSource {
+class ATControllerXInput final : public ATController, public IATInputUnitNameSource {
 public:
 	ATControllerXInput(ATXInputBinding& xinput, uint32 xid, ATInputManager *inputMan, const ATInputUnitIdentifier& id);
 	~ATControllerXInput();
 
-	virtual void SetDeadZone(int zone) { mDeadZone = zone << 5; }
-
 	virtual bool Poll();
-	virtual bool PollForCapture(int& unit, uint32& inputCode);
+	virtual bool PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2);
+	virtual void PollForCapture(ATJoystickState& dst);
 
 public:
 	virtual bool GetInputCodeName(uint32 id, VDStringW& name) const;
@@ -216,18 +243,18 @@ public:
 protected:
 	struct DecodedState {
 		sint32 mAxisVals[6];
+		sint32 mDeadifiedAxisVals[6];
 		uint32 mAxisButtons;
 		uint32 mButtons;
 	};
 
 	void PollState(DecodedState& state, const XINPUT_STATE& xis);
-	static void ConvertStick(sint32 dst[2], sint32 x, sint32 y, float threshold);
+	void ConvertStick(sint32 dst[2], sint32 x, sint32 y);
 
 	ATXInputBinding& mXInput;
 	ATInputManager *const mpInputManager;
 	uint32 mXid;
 	int mUnit;
-	sint32 mDeadZone;
 
 	DWORD mLastPacketId;
 	DecodedState mLastState;
@@ -237,7 +264,6 @@ ATControllerXInput::ATControllerXInput(ATXInputBinding& xinput, uint32 xid, ATIn
 	: mXInput(xinput)
 	, mpInputManager(inputMan)
 	, mXid(xid)
-	, mDeadZone(16384)
 	, mLastPacketId(0)
 	, mLastState()
 {
@@ -277,7 +303,7 @@ bool ATControllerXInput::Poll() {
 	}
 
 	const uint32 buttonDelta = dstate.mButtons ^ mLastState.mButtons;
-	for(size_t i=0; i<11; ++i) {
+	for(int i=0; i<11; ++i) {
 		if (buttonDelta & (1 << i)) {
 			if (dstate.mButtons & (1 << i))
 				mpInputManager->OnButtonDown(mUnit, kATInputCode_JoyButton0 + i);
@@ -288,14 +314,14 @@ bool ATControllerXInput::Poll() {
 
 	for(int i=0; i<6; ++i) {
 		if (dstate.mAxisVals[i] != mLastState.mAxisVals[i])
-			mpInputManager->OnAxisInput(mUnit, kATInputCode_JoyHoriz1 + i, dstate.mAxisVals[i], dstate.mAxisVals[i]);
+			mpInputManager->OnAxisInput(mUnit, kATInputCode_JoyHoriz1 + i, dstate.mAxisVals[i], dstate.mDeadifiedAxisVals[i]);
 	}
 
 	mLastState = dstate;
 	return true;
 }
 
-bool ATControllerXInput::PollForCapture(int& unit, uint32& inputCode) {
+bool ATControllerXInput::PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2) {
 
 	XINPUT_STATE xis;
 
@@ -318,16 +344,49 @@ bool ATControllerXInput::PollForCapture(int& unit, uint32& inputCode) {
 	if (newButtons) {
 		unit = mUnit;
 		inputCode = kATInputCode_JoyButton0 + VDFindLowestSetBitFast(newButtons);
+		inputCode2 = 0;
 		return true;
 	}
 
 	if (newAxisButtons) {
 		unit = mUnit;
-		inputCode = kATInputCode_JoyStick1Left + VDFindLowestSetBitFast(newAxisButtons);
+
+		const int idx = VDFindLowestSetBitFast(newAxisButtons);
+		inputCode = kATInputCode_JoyStick1Left + idx;
+		inputCode2 = kATInputCode_JoyHoriz1 + (idx >> 1);
 		return true;
 	}
 
 	return false;
+}
+
+void ATControllerXInput::PollForCapture(ATJoystickState& dst) {
+	XINPUT_STATE xis;
+
+	dst.mUnit = mUnit;
+	dst.mButtons = 0;
+	dst.mAxisButtons = 0;
+	memset(dst.mAxisVals, 0, sizeof dst.mAxisVals);
+
+	if (ERROR_SUCCESS != mXInput.mpXInputGetState(mXid, &xis))
+		return;
+
+	if (!mLastPacketId || mLastPacketId != xis.dwPacketNumber) {
+		mLastPacketId = xis.dwPacketNumber;
+
+		DecodedState dstate;
+
+		PollState(dstate, xis);
+		mLastState = dstate;
+	}
+
+	dst.mButtons = mLastState.mButtons;
+	dst.mAxisButtons = mLastState.mAxisButtons;
+
+	for(int i=0; i<6; ++i) {
+		dst.mAxisVals[i] = mLastState.mAxisVals[i];
+		dst.mDeadifiedAxisVals[i] = mLastState.mDeadifiedAxisVals[i];
+	}
 }
 
 bool ATControllerXInput::GetInputCodeName(uint32 id, VDStringW& name) const {
@@ -357,13 +416,14 @@ bool ATControllerXInput::GetInputCodeName(uint32 id, VDStringW& name) const {
 		L"Left stick right",
 		L"Left stick up",
 		L"Left stick down",
-		L"Right trigger pressed",
+		NULL,
 		L"Left trigger pressed",
 		L"Right stick left",
 		L"Right stick right",
 		L"Right stick up",
 		L"Right stick down",
 		NULL,
+		L"Right trigger pressed",
 		NULL,
 		L"D-pad left",
 		L"D-pad right",
@@ -396,28 +456,38 @@ bool ATControllerXInput::GetInputCodeName(uint32 id, VDStringW& name) const {
 }
 
 void ATControllerXInput::PollState(DecodedState& state, const XINPUT_STATE& xis) {
-	ConvertStick(state.mAxisVals, xis.Gamepad.sThumbLX, xis.Gamepad.sThumbLY, XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-	ConvertStick(state.mAxisVals + 3, xis.Gamepad.sThumbRX, xis.Gamepad.sThumbRY, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE);
+	ConvertStick(state.mDeadifiedAxisVals, xis.Gamepad.sThumbLX, xis.Gamepad.sThumbLY);
+	ConvertStick(state.mDeadifiedAxisVals + 3, xis.Gamepad.sThumbRX, xis.Gamepad.sThumbRY);
 
-	state.mAxisVals[1] = -state.mAxisVals[1];
-	state.mAxisVals[4] = -state.mAxisVals[4];
+	state.mAxisVals[0] = xis.Gamepad.sThumbLX * 2;
+	state.mAxisVals[1] = xis.Gamepad.sThumbLY * -2;
+	state.mAxisVals[3] = xis.Gamepad.sThumbRX * 2;
+	state.mAxisVals[4] = xis.Gamepad.sThumbRY * -2;
+
+	state.mDeadifiedAxisVals[1] = -state.mDeadifiedAxisVals[1];
+	state.mDeadifiedAxisVals[4] = -state.mDeadifiedAxisVals[4];
+
+	const float triggerThreshold = (float)mTransforms.mTriggerAnalogDeadZone / (float)0x10000;
 
 	for(int i=0; i<2; ++i) {
-		int val = i ? xis.Gamepad.bRightTrigger : xis.Gamepad.bLeftTrigger;
-		sint32 res;
+		const int rawVal = i ? xis.Gamepad.bRightTrigger : xis.Gamepad.bLeftTrigger;
+		const float fVal = (float)rawVal / 255.0f;
+		const sint32 axisVal = VDRoundToInt32(fVal * (float)0x10000);
+		sint32 adjVal = 0;
 
-		if (val < XINPUT_GAMEPAD_TRIGGER_THRESHOLD)
-			res = 0;
-		else {
-			const sint32 lim = 255 - XINPUT_GAMEPAD_TRIGGER_THRESHOLD;
+		if (fVal > triggerThreshold) {
+			const float deadVal = (fVal - triggerThreshold) / (1.0f - triggerThreshold);
 
-			res = ((val - XINPUT_GAMEPAD_TRIGGER_THRESHOLD) * 65536 + (lim >> 1)) / lim;
+			adjVal = VDRoundToInt32(65536.0f * powf(deadVal, mTransforms.mTriggerAnalogPower));
 		}
 
-		if (i)
-			state.mAxisVals[2] = res;
-		else
-			state.mAxisVals[5] = res;
+		if (i) {
+			state.mAxisVals[5] = axisVal;
+			state.mDeadifiedAxisVals[5] = adjVal;
+		} else {
+			state.mAxisVals[2] = axisVal;
+			state.mDeadifiedAxisVals[2] = adjVal;
+		}
 	}
 
 	// Axis buttons 0-3 map to -/+X and -/+Y on left stick.
@@ -430,16 +500,10 @@ void ATControllerXInput::PollState(DecodedState& state, const XINPUT_STATE& xis)
 	// Axis button 15 is D-pad down.
 
 	uint32 axisButtonStates = 0;
-	if (xis.Gamepad.sThumbLX < -mDeadZone)		axisButtonStates |= (1 << 0);
-	if (xis.Gamepad.sThumbLX > +mDeadZone)		axisButtonStates |= (1 << 1);
-	if (xis.Gamepad.sThumbLY > +mDeadZone)		axisButtonStates |= (1 << 2);
-	if (xis.Gamepad.sThumbLY < -mDeadZone)		axisButtonStates |= (1 << 3);
-	if (xis.Gamepad.bRightTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD)	axisButtonStates |= (1 << 4);
-	if (xis.Gamepad.bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD)	axisButtonStates |= (1 << 5);
-	if (xis.Gamepad.sThumbRX < -mDeadZone)		axisButtonStates |= (1 << 6);
-	if (xis.Gamepad.sThumbRX > +mDeadZone)		axisButtonStates |= (1 << 7);
-	if (xis.Gamepad.sThumbRY > +mDeadZone)		axisButtonStates |= (1 << 8);
-	if (xis.Gamepad.sThumbRY < -mDeadZone)		axisButtonStates |= (1 << 9);
+	axisButtonStates |= ConvertAnalogToDirectionMask(xis.Gamepad.sThumbLX, xis.Gamepad.sThumbLY, mTransforms.mStickDigitalDeadZone / 2);
+	if (xis.Gamepad.bLeftTrigger > (mTransforms.mTriggerDigitalDeadZone >> 8)) axisButtonStates |= (1 << 5);
+	if (xis.Gamepad.bRightTrigger > (mTransforms.mTriggerDigitalDeadZone >> 8)) axisButtonStates |= (1 << 11);
+	axisButtonStates |= ConvertAnalogToDirectionMask(xis.Gamepad.sThumbRX, xis.Gamepad.sThumbRY, mTransforms.mStickDigitalDeadZone / 2) << 6;
 	if (xis.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT)				axisButtonStates |= (1 << 12);
 	if (xis.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT)				axisButtonStates |= (1 << 13);
 	if (xis.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP)					axisButtonStates |= (1 << 14);
@@ -481,18 +545,28 @@ void ATControllerXInput::PollState(DecodedState& state, const XINPUT_STATE& xis)
 	state.mButtons = buttonStates;		
 }
 
-void ATControllerXInput::ConvertStick(sint32 dst[2], sint32 x, sint32 y, float threshold) {
-	const float fx = (float)x;
-	const float fy = (float)y;
+void ATControllerXInput::ConvertStick(sint32 dst[2], sint32 x, sint32 y) {
+	float fx = (float)x * 2;
+	float fy = (float)y * 2;
 	const float mag = sqrtf(fx*fx + fy*fy);
 	sint32 rx = 0;
 	sint32 ry = 0;
 
-	if (mag > threshold) {
-		const float scale = 65536.0f * (mag - threshold) / (mag * (32767 - threshold));
+	if (mag > mTransforms.mStickAnalogDeadZone) {
+		float scale = (mag - mTransforms.mStickAnalogDeadZone) / (mag * (65536 - mTransforms.mStickAnalogDeadZone));
 
-		rx = VDRoundToInt(fx * scale);
-		ry = VDRoundToInt(fy * scale);
+		// vec * scale = intended vector at power=1, so each
+		// integer power needs to scale by mag*scale. Note that
+		// we need to scale along the vector and not component-wise.
+		// Also, analog power must not be 0 or else we will potentially
+		// divide by zero.
+		scale *= powf(mag * scale, mTransforms.mStickAnalogPower - 1.0f);
+
+		fx *= scale;
+		fy *= scale;
+
+		rx = VDRoundToInt(fx * 65536.0f);
+		ry = VDRoundToInt(fy * 65536.0f);
 
 		if (rx < -65536) rx = -65536; else if (rx > 65536) rx = 65536;
 		if (ry < -65536) ry = -65536; else if (ry > 65536) ry = 65536;
@@ -504,7 +578,7 @@ void ATControllerXInput::ConvertStick(sint32 dst[2], sint32 x, sint32 y, float t
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATControllerDirectInput : public ATController {
+class ATControllerDirectInput final : public ATController {
 public:
 	ATControllerDirectInput(IDirectInput8 *di);
 	~ATControllerDirectInput();
@@ -512,10 +586,9 @@ public:
 	bool Init(LPCDIDEVICEINSTANCE devInst, HWND hwnd, ATInputManager *inputMan);
 	void Shutdown();
 
-	void SetDeadZone(int zone) { mDeadZone = zone; }
-
 	bool Poll();
-	bool PollForCapture(int& unit, uint32& inputCode);
+	bool PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2);
+	void PollForCapture(ATJoystickState& dst);
 
 protected:
 	struct DecodedState {
@@ -535,7 +608,6 @@ protected:
 	int			mUnit;
 	DecodedState	mLastSentState;
 	DecodedState	mLastPolledState;
-	sint32		mDeadZone;
 	DIJOYSTATE	mState;
 };
 
@@ -543,7 +615,6 @@ ATControllerDirectInput::ATControllerDirectInput(IDirectInput8 *di)
 	: mpDI(di)
 	, mUnit(-1)
 	, mpInputManager(NULL)
-	, mDeadZone(512)
 {
 	memset(&mState, 0, sizeof mState);
 	memset(&mLastSentState, 0, sizeof mLastSentState);
@@ -645,7 +716,7 @@ bool ATControllerDirectInput::Poll() {
 		{
 			change = true;
 			// We set DirectInput to use [-1024, 1024], but we want +/-64K.
-			mpInputManager->OnAxisInput(mUnit, kATInputCode_JoyHoriz1 + i, state.mAxisVals[i] << 6, state.mAxisDeadVals[i] << 6);
+			mpInputManager->OnAxisInput(mUnit, kATInputCode_JoyHoriz1 + i, state.mAxisVals[i], state.mAxisDeadVals[i]);
 		}
 	}
 
@@ -655,7 +726,7 @@ bool ATControllerDirectInput::Poll() {
 	return change;
 }
 
-bool ATControllerDirectInput::PollForCapture(int& unit, uint32& inputCode) {
+bool ATControllerDirectInput::PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2) {
 	DecodedState state;
 	PollState(state);
 
@@ -667,16 +738,33 @@ bool ATControllerDirectInput::PollForCapture(int& unit, uint32& inputCode) {
 	if (newButtons) {
 		unit = mUnit;
 		inputCode = kATInputCode_JoyButton0 + VDFindLowestSetBitFast(newButtons);
+		inputCode2 = 0;
 		return true;
 	}
 
 	if (newAxisButtons) {
 		unit = mUnit;
-		inputCode = kATInputCode_JoyStick1Left + VDFindLowestSetBitFast(newAxisButtons);
+
+		const int idx = VDFindLowestSetBitFast(newAxisButtons);
+		inputCode = kATInputCode_JoyStick1Left + idx;
+		inputCode2 = kATInputCode_JoyHoriz1 + (idx >> 1);
 		return true;
 	}
 
 	return false;
+}
+
+void ATControllerDirectInput::PollForCapture(ATJoystickState& dst) {
+	DecodedState state;
+	PollState(state);
+
+	mLastPolledState = state;
+
+	dst.mUnit = mUnit;
+	dst.mButtons = state.mButtonStates;
+	dst.mAxisButtons = state.mAxisButtonStates;
+	memcpy(dst.mAxisVals, state.mAxisVals, sizeof dst.mAxisVals);
+	memcpy(dst.mDeadifiedAxisVals, state.mAxisDeadVals, sizeof dst.mDeadifiedAxisVals);
 }
 
 void ATControllerDirectInput::UpdateButtons(int baseId, uint32 states, uint32 mask) {
@@ -725,51 +813,55 @@ void ATControllerDirectInput::PollState(DecodedState& state) {
 		axisButtonStates = kPOVLookup[octant];
 	}
 
-	if (mState.lX < -mDeadZone)		axisButtonStates |= (1 << 0);
-	if (mState.lX > +mDeadZone)		axisButtonStates |= (1 << 1);
-	if (mState.lY < -mDeadZone)		axisButtonStates |= (1 << 2);
-	if (mState.lY > +mDeadZone)		axisButtonStates |= (1 << 3);
-	if (mState.lZ < -mDeadZone)		axisButtonStates |= (1 << 4);
-	if (mState.lZ > +mDeadZone)		axisButtonStates |= (1 << 5);
-	if (mState.lRx < -mDeadZone)	axisButtonStates |= (1 << 6);
-	if (mState.lRx > +mDeadZone)	axisButtonStates |= (1 << 7);
-	if (mState.lRy < -mDeadZone)	axisButtonStates |= (1 << 8);
-	if (mState.lRy > +mDeadZone)	axisButtonStates |= (1 << 9);
-	if (mState.lRz < -mDeadZone)	axisButtonStates |= (1 << 10);
-	if (mState.lRz > +mDeadZone)	axisButtonStates |= (1 << 11);
+	state.mAxisVals[0] = mState.lX << 6;
+	state.mAxisVals[1] = mState.lY << 6;
+	state.mAxisVals[2] = mState.lZ << 6;
+	state.mAxisVals[3] = mState.lRx << 6;
+	state.mAxisVals[4] = mState.lRy << 6;
+	state.mAxisVals[5] = mState.lRz << 6;
 
-	state.mAxisVals[0] = mState.lX;
-	state.mAxisVals[1] = mState.lY;
-	state.mAxisVals[2] = mState.lZ;
-	state.mAxisVals[3] = mState.lRx;
-	state.mAxisVals[4] = mState.lRy;
-	state.mAxisVals[5] = mState.lRz;
+	axisButtonStates |= ConvertAnalogToDirectionMask(state.mAxisVals[0], -state.mAxisVals[1], mTransforms.mStickDigitalDeadZone);
+	axisButtonStates |= ConvertAnalogToDirectionMask(state.mAxisVals[3], -state.mAxisVals[4], mTransforms.mStickDigitalDeadZone) << 6;
+	if (state.mAxisVals[2] < -mTransforms.mTriggerDigitalDeadZone) axisButtonStates |= (1 << 4);
+	if (state.mAxisVals[2] > +mTransforms.mTriggerDigitalDeadZone) axisButtonStates |= (1 << 5);
+	if (state.mAxisVals[5] < -mTransforms.mTriggerDigitalDeadZone) axisButtonStates |= (1 << 10);
+	if (state.mAxisVals[5] > +mTransforms.mTriggerDigitalDeadZone) axisButtonStates |= (1 << 11);
 
 	// We treat the X/Y axes as one 2D controller, and lRx/lRy as another.
-	// The Z axes are deadified as 1D axes.
-	int analogDeadZone = 256;
+	// The Z axes are deadified as 1D vertical axes.
+	const float stickAnalogDeadZone = (float)mTransforms.mStickAnalogDeadZone;
+	const float triggerAnalogDeadZone = (float)mTransforms.mTriggerAnalogDeadZone;
 	for(int i=0; i<=3; i+=3) {
 		float x = (float)state.mAxisVals[i];
 		float y = (float)state.mAxisVals[i+1];
 
 		float lensq = x*x + y*y;
-		if (lensq < (float)(analogDeadZone * analogDeadZone)) {
+		if (lensq < stickAnalogDeadZone * stickAnalogDeadZone) {
 			state.mAxisDeadVals[i] = 0;
 			state.mAxisDeadVals[i+1] = 0;
 		} else {
 			float len = sqrtf(lensq);
-			float scale = (1024 - analogDeadZone) / 1024.0f * (len - analogDeadZone) / len;
+			float scale = (len - stickAnalogDeadZone) / (len * (65536.0f - stickAnalogDeadZone));
 
-			state.mAxisDeadVals[i] = VDRoundToInt32((float)x * scale);
-			state.mAxisDeadVals[i+1] = VDRoundToInt32((float)y * scale);
+			scale *= powf(len * scale, mTransforms.mStickAnalogPower - 1.0f);
+			scale *= 65536.0f;
+
+			state.mAxisDeadVals[i] = VDRoundToInt32(x * scale);
+			state.mAxisDeadVals[i+1] = VDRoundToInt32(y * scale);
 		}
 
-		int z = state.mAxisVals[i+2];
-		int zlen = abs(z);
-		if (zlen < analogDeadZone)
+		float z = (float)state.mAxisVals[i+2];
+		float zlen = fabsf(z);
+		if (zlen < triggerAnalogDeadZone)
 			state.mAxisDeadVals[i+2] = 0;
-		else
-			state.mAxisDeadVals[i+2] = VDRoundToInt32((float)z * (1024.0f - analogDeadZone) * ((float)zlen - analogDeadZone) / (float)zlen);
+		else {
+			float zscale = (zlen - triggerAnalogDeadZone) / (zlen * (65536.0f - triggerAnalogDeadZone));
+
+			zscale *= powf(zlen * zscale, mTransforms.mTriggerAnalogPower - 1.0f);
+			zscale *= 65536.0f;
+
+			state.mAxisDeadVals[i+2] = VDRoundToInt32(z * zscale);
+		}
 	}
 
 	uint32 buttonStates = 0;
@@ -793,12 +885,15 @@ public:
 	bool Init(void *hwnd, ATInputManager *inputMan);
 	void Shutdown();
 
+	ATJoystickTransforms GetTransforms() const;
+	void SetTransforms(const ATJoystickTransforms&);
+
 	void SetCaptureMode(bool capture) { mbCaptureMode = capture; }
 
 	void RescanForDevices();
 	PollResult Poll();
-	bool PollForCapture(int& unit, uint32& inputCode);
-	void SetDeadZone(int zone);
+	bool PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2);
+	const ATJoystickState *PollForCapture(uint32& count);
 
 	uint32 GetJoystickPortStates() const;
 
@@ -806,32 +901,35 @@ protected:
 	static BOOL CALLBACK StaticJoystickCallback(LPCDIDEVICEINSTANCE devInst, LPVOID pThis);
 	BOOL JoystickCallback(LPCDIDEVICEINSTANCE devInst);
 
-	bool mbCOMInitialized;
-	bool mbCaptureMode;
-	HWND mhwnd;
+	bool mbCOMInitialized = false;
+	bool mbCaptureMode = false;
+	HWND mhwnd = nullptr;
 	vdrefptr<IDirectInput8> mpDI;
-	ATInputManager *mpInputManager;
+	ATInputManager *mpInputManager = nullptr;
 
-	int	mDeadZone;
+	ATJoystickTransforms mTransforms = ATJoystickTransforms {
+		0x2666,	// 15%
+		0x7333,	// 45%
+		1,
+		0x0CCC,	// 5%
+		0x3333,	// 20%
+		1
+	};
 
 	typedef vdfastvector<ATController *> Controllers;
 	Controllers mControllers;
 
 	vdfastvector<DWORD> mXInputDeviceIds;
 	ATXInputBinding mXInputBinding;
+
+	vdfastvector<ATJoystickState> mJoyStates;
 };
 
 IATJoystickManager *ATCreateJoystickManager() {
 	return new ATJoystickManager;
 }
 
-ATJoystickManager::ATJoystickManager()
-	: mbCOMInitialized(false)
-	, mbCaptureMode(false)
-	, mhwnd(NULL)
-	, mpInputManager(NULL)
-	, mDeadZone(512)
-{
+ATJoystickManager::ATJoystickManager() {
 }
 
 ATJoystickManager::~ATJoystickManager() {
@@ -893,6 +991,18 @@ void ATJoystickManager::Shutdown() {
 	}
 }
 
+ATJoystickTransforms ATJoystickManager::GetTransforms() const {
+	return mTransforms;
+}
+
+void ATJoystickManager::SetTransforms(const ATJoystickTransforms& transforms) {
+	mTransforms = transforms;
+
+	for(auto *ctrl : mControllers) {
+		ctrl->SetTransforms(mTransforms);
+	}
+}
+
 void ATJoystickManager::RescanForDevices() {
 	Controllers::iterator it(mControllers.begin()), itEnd(mControllers.end());
 	for(; it!=itEnd; ++it) {
@@ -942,6 +1052,7 @@ void ATJoystickManager::RescanForDevices() {
 					vdautoptr<ATControllerXInput> dev(new ATControllerXInput(mXInputBinding, i, mpInputManager, id));
 
 					if (dev) {
+						dev->SetTransforms(mTransforms);
 						dev->SetMarked(true);
 						mControllers.push_back(dev);
 						dev.release();
@@ -992,25 +1103,28 @@ ATJoystickManager::PollResult ATJoystickManager::Poll() {
 	return change ? kPollResult_OK : kPollResult_NoActivity;
 }
 
-bool ATJoystickManager::PollForCapture(int& unit, uint32& inputCode) {
+bool ATJoystickManager::PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2) {
 	Controllers::const_iterator it(mControllers.begin()), itEnd(mControllers.end());
 	for(; it!=itEnd; ++it) {
 		ATController *ctrl = *it;
 
-		if (ctrl->PollForCapture(unit, inputCode))
+		if (ctrl->PollForCapture(unit, inputCode, inputCode2))
 			return true;
 	}
 
 	return false;
 }
 
-void ATJoystickManager::SetDeadZone(int zone) {
-	Controllers::const_iterator it(mControllers.begin()), itEnd(mControllers.end());
-	for(; it!=itEnd; ++it) {
-		ATController *ctrl = *it;
+const ATJoystickState *ATJoystickManager::PollForCapture(uint32& count) {
+	size_t n = mControllers.size();
 
-		ctrl->SetDeadZone(zone);
-	}
+	mJoyStates.resize(n);
+
+	for(size_t i=0; i<n; ++i)
+		mControllers[i]->PollForCapture(mJoyStates[i]);
+
+	count = (uint32)n;
+	return mJoyStates.data();
 }
 
 uint32 ATJoystickManager::GetJoystickPortStates() const {
@@ -1045,7 +1159,7 @@ BOOL ATJoystickManager::JoystickCallback(LPCDIDEVICEINSTANCE devInst) {
 
 	if (dev) {
 		if (dev->Init(devInst, mhwnd, mpInputManager)) {
-			dev->SetDeadZone(mDeadZone);
+			dev->SetTransforms(mTransforms);
 			dev->SetMarked(true);
 			mControllers.push_back(dev);
 			dev.release();

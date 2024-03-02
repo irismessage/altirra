@@ -21,6 +21,7 @@
 class ATIRQController;
 class ATSaveStateReader;
 class ATSaveStateWriter;
+class ATScheduler;
 
 struct ATPIAState {
 	uint8 mORA;
@@ -38,6 +39,15 @@ enum ATPIAOutputBits {
 
 typedef void (*ATPIAOutputFn)(void *data, uint32 outputState);
 
+struct ATPIAFloatingInputs {
+	ATScheduler *mpScheduler;
+	uint8 mFloatingInputMask;
+	uint32	mRandomSeed;
+	uint32	mDecayTimeMin;
+	uint32	mDecayTimeRange;
+	uint64	mFloatTimers[8];
+};
+
 class ATPIAEmulator {
 public:
 	ATPIAEmulator();
@@ -52,7 +62,8 @@ public:
 	void FreeOutput(int index);
 
 	void Init(ATIRQController *irqcon);
-	void Reset();
+	void ColdReset();
+	void WarmReset();
 
 	void SetCA1(bool level);		// Proceed
 	void SetCB1(bool level);		// Interrupt
@@ -60,6 +71,20 @@ public:
 	uint8 DebugReadByte(uint8 addr) const;
 	uint8 ReadByte(uint8 addr);
 	void WriteByte(uint8 addr, uint8 value);
+
+	// Sets which port B bits are left floating and can therefore drift when switched
+	// to input mode. Port A cannot float since it has internal pull-ups.
+	//
+	// The scheduler pointer, input mask, and decay time range, and random fields must
+	// be filled out. The float timers will be auto-inited on set.
+	//
+	// Floating bits are only visible to the CPU, not to allocated outputs. Any bits
+	// that are actually used are typically pulled up. A special case is U1MB, which
+	// can have active bank bits that are floating on the PIA. We don't use floating
+	// bits for banking there either, as the U1MB is itself shadowing PIA state
+	// independently in the CPLD and doesn't see the floating bits.
+	//
+	void SetPortBFloatingInputs(ATPIAFloatingInputs *inputs);
 
 	void GetState(ATPIAState& state) const;
 	void DumpState();
@@ -75,8 +100,10 @@ protected:
 	void UpdateCA2();
 	void UpdateCB2();
 	void UpdateOutput();
+	bool SetPortBDirection(uint8 value);
 
 	ATIRQController *mpIRQController;
+	ATPIAFloatingInputs *mpFloatingInputs;
 
 	uint32	mInput;
 	uint32	mOutput;

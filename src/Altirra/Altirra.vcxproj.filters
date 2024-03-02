@@ -35,6 +35,12 @@
       <UniqueIdentifier>{1fa3a2a9-bd9a-4b89-8bdd-35976a24ccfc}</UniqueIdentifier>
       <Extensions>asm</Extensions>
     </Filter>
+    <Filter Include="Source Files - Device Configuration UI">
+      <UniqueIdentifier>{2c1fc8b8-2286-437f-8687-4d8c5cdf4fbd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Autogen Intermediate Files">
+      <UniqueIdentifier>{8f265e47-a0f5-48ff-b7cd-7e2ef9366686}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\about.cpp">
@@ -167,24 +173,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\disk.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\diskfs.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\diskfsarc.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\diskfsdos2.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\diskfssdx2.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\diskfssdx2util.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\diskimage.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\diskvirtimage.cpp">
@@ -346,9 +334,6 @@
     <ClCompile Include="source\savestate.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\scheduler.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\side.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -356,9 +341,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\simulator.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\sio.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\siomanager.cpp">
@@ -385,9 +367,6 @@
     <ClCompile Include="source\uiabout.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\uianchor.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\uiaudiooptions.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -406,13 +385,7 @@
     <ClCompile Include="source\uicolors.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\uicommandmanager.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\uicommondialogs.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\uicontainer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\uicpuoptions.cpp">
@@ -436,16 +409,10 @@
     <ClCompile Include="source\uidragoncart.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\uidrawingutils.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\uiemuerror.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\uienhancedtext.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\uiexceptionfilter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\uifileassoc.cpp">
@@ -461,9 +428,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\uifirmwarescan.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\uiframe.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\uiharddisk.cpp">
@@ -496,22 +460,13 @@
     <ClCompile Include="source\uilistview.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\uimanager.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\uimenu.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\uimenulist.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\uimessagebox.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\uimrulist.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\uinativewindow.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\uionscreenkeyboard.cpp">
@@ -565,9 +520,6 @@
     <ClCompile Include="source\uivideorecording.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\uiwidget.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\ultimate1mb.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -595,9 +547,6 @@
     <ClCompile Include="source\uidevices.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\devicemanager.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\via.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -610,25 +559,10 @@
     <ClCompile Include="source\idediskdevices.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\uiconfharddisk.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\uiconfregister.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\uiconfblackbox.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\acia.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\uiconfmodem.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\mio.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\diskfsdos3.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\uisettingswindow.cpp">
@@ -649,19 +583,73 @@
     <ClCompile Include="source\1030.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\uiconfdev1030.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\uiconf850.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\uiconfdevsx212.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\sx212.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\midimate.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\sdrive.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\veronica.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\debugtarget.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rverter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\sio2sd.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\testdevicesiohs.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconf850.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfblackbox.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdev1030.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevsx212.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfharddisk.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfmodem.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfregister.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfveronica.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfsoundboard.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\vs2013x64crashfix.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\artifacting_ntsc_sse2_intrin.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiinputsetup.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uikeyboardcustomize.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\sapwriter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\sapconverter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -772,15 +760,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\disk.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\diskfs.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\diskfssdx2util.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\diskimage.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\dragoncart.h">
@@ -924,9 +903,6 @@
     <ClInclude Include="res\resource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\ATUI\res\resource.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="h\rs232.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -942,9 +918,6 @@
     <ClInclude Include="h\savestate.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\scheduler.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="h\side.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -952,9 +925,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\simulator.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\sio.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\siomanager.h">
@@ -975,40 +945,22 @@
     <ClInclude Include="h\texteditor.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\ui.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\uianchor.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="h\uibutton.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\uicaptionupdater.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\uicommandmanager.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="h\uicommondialogs.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\uicontainer.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="h\uidisplay.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\uidrawingutils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\uienhancedtext.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\uifilebrowser.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\uiframe.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\uiinstance.h">
@@ -1023,22 +975,13 @@
     <ClInclude Include="h\uilistview.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\uimanager.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="h\uimenu.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\uimenulist.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\uimessagebox.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\uimrulist.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\uinativewindow.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\uionscreenkeyboard.h">
@@ -1071,9 +1014,6 @@
     <ClInclude Include="h\uivideodisplaywindow.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\uiwidget.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="h\ultimate1mb.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -1104,9 +1044,6 @@
     <ClInclude Include="h\blackbox.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\devicemanager.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="h\via.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -1129,6 +1066,27 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\uifilefilters.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\sdrive.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\veronica.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\debugtarget.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\sio2sd.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ATNativeUI\res\resource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\sapwriter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\sapconverter.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -1294,12 +1252,34 @@
     </None>
     <None Include="..\..\out\release\nomio.lzrom" />
     <None Include="..\..\out\release\noblackbox.lzrom" />
+    <None Include="res\TrackStep3.pcm" />
+    <None Include="h\gtiarenderer_ssse3_intrin.inl">
+      <Filter>Header Files</Filter>
+    </None>
+    <None Include="h\gtia_sse2_intrin.inl">
+      <Filter>Header Files</Filter>
+    </None>
+    <None Include="autogen\playsap-r.inl">
+      <Filter>Autogenerated Files</Filter>
+    </None>
+    <None Include="autogen\playsap-b.inl">
+      <Filter>Autogenerated Files</Filter>
+    </None>
+    <None Include="autogen\playsap-c.inl">
+      <Filter>Autogenerated Files</Filter>
+    </None>
+    <None Include="autogen\playsap-d-ntsc.inl">
+      <Filter>Autogenerated Files</Filter>
+    </None>
+    <None Include="autogen\playsap-d-pal.inl">
+      <Filter>Autogenerated Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="res\Altirra.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
-    <ResourceCompile Include="..\ATUI\res\atui.rc">
+    <ResourceCompile Include="..\ATNativeUI\res\atnativeui.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
   </ItemGroup>
@@ -1331,5 +1311,18 @@
     <YASM Include="source\gtia_sse2.asm">
       <Filter>Assembly Files</Filter>
     </YASM>
+  </ItemGroup>
+  <ItemGroup>
+    <PackResource Include="..\..\obj\Release\Kernel\playsap-b.xex">
+      <Filter>Autogen Intermediate Files</Filter>
+    </PackResource>
+    <PackResource Include="..\..\obj\Release\Kernel\playsap-c.xex">
+      <Filter>Autogen Intermediate Files</Filter>
+    </PackResource>
+    <PackResource Include="..\..\obj\Release\Kernel\playsap-r.xex">
+      <Filter>Autogen Intermediate Files</Filter>
+    </PackResource>
+    <PackResource Include="..\..\obj\Release\Kernel\playsap-d-ntsc.xex" />
+    <PackResource Include="..\..\obj\Release\Kernel\playsap-d-pal.xex" />
   </ItemGroup>
 </Project>

@@ -766,6 +766,12 @@ bool VDVideoDisplayWindow::DispatchActiveFrame() {
 
 		if (!SyncSetSource(false, params)) {
 			ReleaseActiveFrame();
+
+			// Uh oh. At this point we have no guarantee that any of the other frames
+			// will dispatch either, so flush them all.
+			vdsynchronized(mMutex) {
+				mIdleFrames.splice(mIdleFrames.end(), mPendingFrames);
+			}
 			return false;
 		}
 
@@ -907,6 +913,9 @@ void VDVideoDisplayWindow::OnChildPaint() {
 
 
 	--mInhibitRefresh;
+
+	if (mpMiniDriver && mpMiniDriver->IsFramePending())
+		RequestNextFrame();
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1258,7 +1267,7 @@ void VDVideoDisplayWindow::SyncUpdate(int mode) {
 	if (mpMiniDriver) {
 		bool vsync = 0 != (mode & kVSync);
 		SetPreciseMode(vsync);
-		SetTicksEnabled(vsync);
+		SetTicksEnabled(vsync && mpMiniDriver->AreVSyncTicksNeeded());
 
 		mpMiniDriver->SetColorOverride(0);
 
@@ -1289,6 +1298,12 @@ void VDVideoDisplayWindow::SyncUpdate(int mode) {
 
 				if (!mpMiniDriver->IsFramePending())
 					RequestNextFrame();
+			}
+		} else {
+			VDDEBUG_DISP("SyncUpdate() failed at Update() call\n");
+
+			vdsynchronized(mMutex) {
+				mIdleFrames.splice(mIdleFrames.back(), mPendingFrames);
 			}
 		}
 	}
@@ -1482,12 +1497,18 @@ void VDVideoDisplayWindow::RequestUpdate() {
 
 void VDVideoDisplayWindow::VerifyDriverResult(bool result) {
 	if (!result) {
+		VDDEBUG_DISP("VerifyDriverResult() failed.\n");
+
 		if (mpMiniDriver) {
 			ShutdownMiniDriver();
 		}
 
 		if (!mReinitDisplayTimer)
 			mReinitDisplayTimer = SetTimer(mhwnd, kReinitDisplayTimerId, 500, NULL);
+
+		vdsynchronized(mMutex) {
+			mIdleFrames.splice(mIdleFrames.end(), mPendingFrames);
+		}
 	}
 }
 

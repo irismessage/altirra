@@ -43,6 +43,10 @@ extern "C" void atasm_update_playfield_160_sse2(
 );
 #endif
 
+#ifdef VD_CPU_AMD64
+#include "gtia_sse2_intrin.inl"
+#endif
+
 class ATFrameTracker : public vdrefcounted<IVDRefCount> {
 public:
 	ATFrameTracker() : mActiveFrames(0) { }
@@ -507,7 +511,7 @@ vdrect32 ATGTIAEmulator::GetFrameScanArea() const {
 }
 
 void ATGTIAEmulator::GetRawFrameFormat(int& w, int& h, bool& rgb32) const {
-	rgb32 = (mpVBXE != NULL) || mArtifactMode || mbBlendMode;
+	rgb32 = (mpVBXE != NULL) || mArtifactMode || mbBlendMode || mbScanlinesEnabled;
 
 	OverscanMode omode = mOverscanMode;
 	VerticalOverscanMode vomode = DeriveVerticalOverscanMode();
@@ -1128,7 +1132,7 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 			height *= 2;
 
 		// check if we need to reinitialize the frame bitmap
-		if (mpFrame->mPixmap.format != format || mpFrame->mPixmap.w != width || mpFrame->mPixmap.h != height) {
+		if (fb->mBuffer.format != format || fb->mBuffer.w != width || fb->mBuffer.h != height) {
 			VDPixmapLayout layout;
 			VDPixmapCreateLinearLayout(layout, format, width, height, 16);
 
@@ -1456,12 +1460,16 @@ void ATGTIAEmulator::UpdatePlayfield160(uint32 x, const uint8 *__restrict src, u
 	}
 #endif
 
+#ifdef VD_CPU_AMD64
+	atasm_update_playfield_160_sse2(dst, src, n);
+#else
 	do {
 		const uint8 byte = *src++;
 		dst[0] = (byte >>  4) & 15;
 		dst[1] = (byte      ) & 15;
 		dst += 2;
 	} while(--n);
+#endif
 }
 
 void ATGTIAEmulator::UpdatePlayfield320(uint32 x, uint8 byte) {
@@ -1561,7 +1569,7 @@ void ATGTIAEmulator::SyncTo(int xend) {
 				++rc;
 			} while(++mRCIndex < mRCCount);
 
-			UpdateRegisters(rc0, rc - rc0);
+			UpdateRegisters(rc0, (int)(rc - rc0));
 		}
 
 		if (x2 > x1) {
@@ -1595,12 +1603,20 @@ void ATGTIAEmulator::Render(int x1, int x2) {
 	// convert modes if necessary
 	bool needHires = mbHiresMode || (mActivePRIOR & 0xC0);
 	if (needHires != mbANTICHiresMode) {
-		mbMixedRendering = true;
+		int xc1start = xc1;
+
+		// We need to convert one clock back to support the case of a mode 8/L -> 10 transition;
+		// we handle PRIOR changes one cycle later here than in the renderer, but the renderer
+		// needs the converted result one half cycle (1cc) in.
+		if (!mbMixedRendering) {
+			mbMixedRendering = true;
+			--xc1start;
+		}
 
 		if (mbANTICHiresMode)
-			Convert320To160(xc1, xc2, mMergeBuffer, mAnticData);
+			Convert320To160(xc1start, xc2, mMergeBuffer, mAnticData);
 		else
-			Convert160To320(xc1, xc2, mAnticData, mMergeBuffer);
+			Convert160To320(xc1start, xc2, mAnticData, mMergeBuffer);
 	}
 
 	static const uint8 kPFTable[16]={
@@ -1691,8 +1707,6 @@ void ATGTIAEmulator::Render(int x1, int x2) {
 		if (x1 >= xc1 && mMergeBuffer[x1])
 			mMergeBuffer[x1] = kPFTable[4 + mAnticData[x1 - 1]];
 	}
-
-	uint8 *dst = mMergeBuffer;
 
 	// flush player images
 	for(int i=0; i<4; ++i) {
@@ -1907,8 +1921,6 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 
 		mpDisplay->SetSourcePersistent(true, mpFrame->mPixmap);
 	} else {
-		const VDPixmap& pxdst = mbPostProcessThisFrame ? mPreArtifactFrameVisible : fb->mPixmap;
-
 		ApplyArtifacting(false);
 
 		// copy over previous field
@@ -2299,7 +2311,6 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 
 	const uint8 *srcrow = (const uint8 *)mPreArtifactFrame.data;
 	ptrdiff_t srcpitch = mPreArtifactFrame.pitch;
-	uint32 srch = mPreArtifactFrame.h;
 
 	uint32 y1 = mPreArtifactFrameVisibleY1;
 	uint32 y2 = mPreArtifactFrameVisibleY2;

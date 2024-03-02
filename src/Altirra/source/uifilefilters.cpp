@@ -62,3 +62,9 @@ extern const wchar_t g_ATUIFileFilter_LoadTape[]=
 			L"*.cas\0"
 			L"Waveform audio (*.wav)\0*.wav\0"
 			L"All files\0*.*\0";
+
+extern const wchar_t g_ATUIFileFilter_LoadSAP[]=
+			L"SAP file (*.sap)\0*.sap\0";
+
+extern const wchar_t g_ATUIFileFilter_SaveXEX[]=
+			L"Atari program (*.xex)\0*.xex\0";

@@ -15,7 +15,7 @@ struct ATNetUdpListeningSocket {
 };
 
 
-class ATNetUdpStack : public IATNetUdpStack {
+class ATNetUdpStack final : public IATNetUdpStack {
 public:
 	ATNetUdpStack();
 

@@ -439,6 +439,16 @@ alloc_ok:
 	stx		txtmsc+1
 	mva		#$60 txtmsc
 
+	;Turn on keyboard and break interrupts; note that this is done both for S:
+	;and E: opens. Close does not do this.
+	php
+	sei
+	asl							;!! - A = $C0
+	ora		pokmsk
+	sta		pokmsk
+	sta		irqen
+	plp
+
 	;Set row count: 24 for full-screen. We will fix up the split case to 4 later
 	;while we are writing the display list. Mapping the Atari incorrectly states
 	;that this value is set to 0 when no text window is present; this is wrong
@@ -540,11 +550,10 @@ show_cursor:
 	jsr		ScreenPutByte.recompute_show_cursor_exit
 no_cursor:
 	;swap back to main context
-	jsr		EditorSwapToScreen
+	jsr		EditorSwapToScreen_Y1
 	
 	;exit
 	ldx		#0				;required by Qix (v3)
-	ldy		#1
 	rts
 	
 	
@@ -657,15 +666,13 @@ write_repeat:
 	sta		(rowac),y+
 	dex
 	bne		write_repeat
+no_clear:
 	rts
 	
-;--------------------------------------------------------
 try_clear:
 	bit		frmadr
 	bmi		no_clear
-	jsr		ScreenClear
-no_clear:
-	rts
+	jmp		ScreenClear
 	
 ;--------------------------------------------------------
 standard_colors:
@@ -783,6 +790,9 @@ bit_pos_flip_tab:
 error:
 	rts
 	
+graphics_eol:
+	jmp		ScreenAdvancePosNonMode0.graphics_eol
+
 	;*** ENTRY POINT FROM EDITOR FOR ESC HANDLING ***
 not_clear:
 	jsr		ScreenCheckPosition
@@ -802,7 +812,7 @@ not_clear_2:
 	;nope, we're in a graphics mode... that makes this easier.
 	;check if it's an EOL
 	cmp		#$9b
-	sne:jmp	ScreenAdvancePosNonMode0.graphics_eol
+	beq		graphics_eol
 	
 	;check for display suspend (ctrl+1) and wait until it is cleared
 	ldx:rne	ssflag
@@ -825,9 +835,6 @@ not_clear_2:
 	jmp		ScreenAdvancePosNonMode0
 	
 mode_0:
-	;hide the cursor
-	jsr		ScreenHideCursor
-
 	;check for EOL, which bypasses the ESC check
 	cmp		#$9b
 	bne		not_eol
@@ -928,6 +935,41 @@ check_extend:
 
 ;==========================================================================
 ScreenGetStatus = CIOExitSuccess
+
+;==========================================================================
+; Given a color byte, mask it off to the pertinent bits and reflect it
+; throughout a byte. The byte is converted from ATASCII to Internal
+; if the mode uses byte encoding.
+;
+; Entry:
+;	A = color value
+;
+; Exit:
+;	A = folded color byte
+;	Y = encoding mode
+;	DMASK = right-justified bit mask
+;	DELTAC = left-justified bit mask
+;
+; Modified:
+;	HOLD1, ADRESS
+;
+.proc ScreenFoldColor
+	ldx		dindex
+	ldy		ScreenEncodingTab,x			;0 = 8-bit, 1 = 4-bit, 2 = 2-bit, 3 = 1-bit
+	mvx		ScreenPixelMasks+4,y deltac
+	mvx		ScreenPixelMasks,y dmask
+	bmi		fold_byte
+	and		dmask
+	ora		ScreenEncodingOffsetTable-1,y
+	tax
+	lda		ScreenEncodingTable,x
+	rts
+	
+fold_byte:
+	;convert byte from ATASCII to Internal -- this is required for gr.1
+	;and gr.2 to work correctly, and harmless for other modes
+	jmp		ScreenConvertATASCIIToInternal
+.endp
 
 ;==========================================================================
 .proc ScreenSpecial
@@ -1043,9 +1085,9 @@ going_right:
 	ldy		ScreenEncodingTab,x
 	clc
 	adc		shift_lo_tab,y
-	sta		oldcol
+	sta		adress
 	lda		#>left_shift_8
-	sta		oldcol+1
+	sta		adress+1
 	sta		endpt+1
 	
 	;set up x fill shift routine
@@ -1053,100 +1095,112 @@ going_right:
 	adc		#fill_right_8-right_shift_8
 	sta		endpt
 	
-	;compute max(dx, dy)
-	lda		colac
-	ldy		colac+1
-	bne		dy_larger
-	cmp		deltar
-	bcs		dy_larger
-	ldy		#0
-	lda		deltar
-dy_larger:
-	sta		countr
-	sty		countr+1
-	
-	;;##TRACE "Pixel count = %d" dw(countr)
-
 	;compute initial error accumulator in frmadr (dx-dy)
-	lda		colac
+	ldx		colac
+	txa
 	sub		deltar
 	sta		frmadr
-	lda		colac+1
+	ldy		colac+1				;leave dx in y:x for max() below
+	tya
 	sbc		#0
 	sta		frmadr+1
+
+	;compute max(dx, dy) based on sign of (dx - dy)
+	bcs		dx_larger
+	ldy		#0
+	ldx		deltar
+dx_larger:
+	stx		countr
+	sty		countr+1
+
+	tya
+	bne		not_empty
+	txa
+	beq		skip_showcursor
+not_empty:
+	
+	;;##TRACE "Pixel count = %d" dw(countr)
 	
 	;enter pixel loop (this will do a decrement for us)
 	jmp		next_pixel
-	
-	;------- pixel loop state -------
-	;	(zp)	frmadr		error accumulator
-	;	(zp)	toadr		current row address
-	;	(abs)	dmask		right-justified bit mask
-	;	(zp)	deltac		left-justified bit mask
-	;	(zp)	bitmsk		current bit mask
-	;	(zp)	shfamt		current byte offset within row
-	;	(zp)	rowac		y step address increment/decrement (note different from Atari OS)
-	;	(zp)	oldcol		left/right shift routine
-	;	(zp)	deltac+1	screen pitch, in bytes (for fill)
-	;	(zp)	endpt		right shift routine
-	;	(zp)	colac		dy
-pixel_loop:
-	;compute 2*err
-	;;##TRACE "Error accum = %d (dx=%d, dy=%d(%d))" dsw(frmadr) dw(colac) db(deltar) dsw(rowac)
-	lda		frmadr
+
+;----------------------------------------------
+done:
+	jsr		ScreenSetLastPosition
+
+	;RYBA PILA requires the quirky behavior of the last character of a non-zero length
+	;DRAWTO being stomped by the character saved from the cursor draw of the last PLOT
+	;(write to S:). Note that we must NOT do this for length 0 or it breaks SPACEWAY.
+	ldy		dindex
+	bne		skip_showcursor
+	jsr		EditorRecomputeCursorAddr
+skip_showcursor:
+	ldy		#1
+	rts
+
+;----------------------------------------------	
+fill_done:
+	stx		bitmsk
+	jmp		next_pixel
+
+;----------------------------------------------	
+do_fill:
+	ldy		shfamt				;load current byte offset
+	ldx		bitmsk				;save current bitmask
+	bne		fill_start			;!! - unconditional
+
+;----------------------------------------------		
+shift_lo_tab:
+	dta		<right_shift_8	
+	dta		<right_shift_4	
+	dta		<right_shift_2	
+	dta		<right_shift_1
+
+;----------------------------------------------	
+left_shift_4:
 	asl
-	tay
-	lda		frmadr+1
-	rol
-	pha
-	
-	;check for y increment (2*e < dx, or A:X < colac)
-	;note: 2*e is also in A:X
-	bmi		do_yinc
-	cpy		colac
-	sbc		colac+1
-	bcs		no_yinc
+	asl
+left_shift_2:
+	asl
+left_shift_1:
+	asl
+	bcc		left_shift_ok
+left_shift_8:
+	dec		shfamt
+	lda		dmask
+left_shift_ok:
+	bne		post_xinc			;!! - unconditional
 
-do_yinc:
-	;bump y (add/subtract pitch, e += dx)
-	ldx		#2
-yinc_loop:
-	lda		rowac,x
-	clc
-	adc		toadr,x
-	sta		toadr,x
-	lda		rowac+1,x
-	adc		toadr+1,x
-	sta		toadr+1,x
-	dex
-	dex
-	bpl		yinc_loop
-no_yinc:
-
-	;check for x increment (2*e + dy > 0, or Y:X + deltar > 0)
-	tya
-	clc
-	adc		deltar
-	tay
-	pla
-	adc		#0
-	bmi		no_xinc
-	bne		do_xinc
-	tya
-	beq		no_xinc
-do_xinc:
-	;update error accumulator
-	lda		frmadr
-	sub		deltar
-	sta		frmadr
-	scs:dec	frmadr+1
-
-	;bump x
+;----------------------------------------------	
+fill_right_4:
+	lsr
+	lsr
+fill_right_2:
+	lsr
+fill_right_1:
+	lsr
+	bcc		fill_right_ok
+fill_right_8:
+	lda		deltac
+	iny
+	cpy		deltac+1
+	scc:ldy	#0
+fill_right_ok:
+	sta		bitmsk
+	beq		fill_done
+fill_loop:
+	lda		(toadr),y			;load screen byte
+	bit		bitmsk				;mask to current pixel
+	bne		fill_done			;exit loop if non-zero
+	eor		hold4				;XOR with fill color
+	and		bitmsk				;mask change bits to current pixel
+	eor		(toadr),y			;merge with screen byte
+	sta		(toadr),y			;save screen byte
+fill_start:
 	lda		bitmsk
-	jmp		(oldcol)
+	jmp		(endpt)
 
-	.pages 1
-	
+;----------------------------------------------	
 right_shift_4:
 	lsr
 	lsr
@@ -1160,7 +1214,6 @@ right_shift_8:
 	lda		deltac
 right_shift_ok:
 	;fall through to post_xinc
-
 post_xinc:
 	sta		bitmsk
 no_xinc:
@@ -1182,118 +1235,92 @@ no_xinc:
 next_pixel:
 	;loop back for next pixel
 	lda		countr
-	beq		next_pixel_2
-next_pixel_1:
-	dec		countr
-	jmp		pixel_loop
-next_pixel_2:
+	bne		next_pixel_2
 	dec		countr+1
-	bpl		next_pixel_1
+	bmi		done
+next_pixel_2:
+	dec		countr
+
+	;!! - fall through to pixel loop
+
+	;------- pixel loop state -------
+	;	(zp)	frmadr		error accumulator
+	;	(zp)	toadr		current row address
+	;	(abs)	dmask		right-justified bit mask
+	;	(zp)	deltac		left-justified bit mask
+	;	(zp)	bitmsk		current bit mask
+	;	(zp)	shfamt		current byte offset within row
+	;	(zp)	rowac		y step address increment/decrement (note different from Atari OS)
+	;	(zp)	adress		left/right shift routine
+	;	(zp)	deltac+1	screen pitch, in bytes (for fill)
+	;	(zp)	endpt		right shift routine
+	;	(zp)	colac		dy
+pixel_loop:
+	;compute 2*err
+	;;##TRACE "Error accum = %d (dx=%d, dy=%d(%d))" dsw(frmadr) dw(colac) db(deltar) dsw(rowac)
+	lda		frmadr
+	asl
+	tay
+	lda		frmadr+1
+	rol
+	tax
 	
-done:
-	jsr		ScreenSetLastPosition
-	ldy		#1
-	rts
+	;check for y increment (2*e < dx, or A:Y < colac)
+	tya
+	clc
+	sbc		colac
+	txa
+	pha
+	sbc		colac+1
+	bpl		no_yinc
 
-;----------------------------------------------	
-left_shift_4:
-	asl
-	asl
-left_shift_2:
-	asl
-left_shift_1:
-	asl
-	bcc		left_shift_ok
-left_shift_8:
-	dec		shfamt
-	.endpg
-	lda		dmask
-left_shift_ok:
-	bne		post_xinc
+do_yinc:
+	;bump y (add/subtract pitch, e += dx)
+	ldx		#2
+yinc_loop:
+	lda		rowac,x
+	clc
+	adc		toadr,x
+	sta		toadr,x
+	lda		rowac+1,x
+	adc		toadr+1,x
+	sta		toadr+1,x
+	dex
+	dex
+	bpl		yinc_loop
+no_yinc:
 
-;----------------------------------------------	
-fill_right_4:
-	lsr
-	lsr
-fill_right_2:
-	lsr
-fill_right_1:
-	lsr
-	bcc		fill_right_ok
-fill_right_8:
-	lda		deltac
-	iny
-	cpy		deltac+1
-	scc:ldy	#0
-fill_right_ok:
-	sta		bitmsk
-	bne		fill_loop
-fill_done:
-	stx		bitmsk
-	jmp		next_pixel
+	;check for x increment (2*e + dy > 0, or Y:[S] + deltar > 0)
+	tya
+	clc
+	adc		deltar
+	pla
+	adc		#0
+	bmi		no_xinc
 
-.if [(fill_right_8 ^ left_shift_4)&$ff00]
-.error "Line draw / fill table crosses page boundary: ",right_shift_4," vs. ",fill_right_8
+	;update error accumulator
+	lda		frmadr
+	sub		deltar
+	sta		frmadr
+	scs:dec	frmadr+1
+
+	;bump x
+	lda		bitmsk
+	jmp		(adress)
+
+.if [right_shift_4 ^ right_shift_8]&$ff00
+	.error "Right draw routines cross page: ",right_shift_4,"-",right_shift_8
+.endif
+.if [left_shift_4 ^ left_shift_8]&$ff00
+	.error "Left draw routines cross page: ",left_shift_4,"-",left_shift_8
+.endif
+.if [fill_right_4 ^ fill_right_8]&$ff00
+	.error "Fill routines cross page: ",fill_right_4,"-",fill_right_8
+.endif
+.if [[right_shift_4^left_shift_4]|[left_shift_4^fill_right_4]]&$ff00
+	.error	"Line/fill routines cross page: ",left_shift_4,',',right_shift_4,',',fill_right_4
 .endif
 
-;----------------------------------------------	
-do_fill:
-	ldy		shfamt				;load current byte offset
-	ldx		bitmsk				;save current bitmask
-	bne		fill_start
-fill_loop:
-	lda		(toadr),y			;load screen byte
-	bit		bitmsk				;mask to current pixel
-	bne		fill_done			;exit loop if non-zero
-	eor		hold4				;XOR with fill color
-	and		bitmsk				;mask change bits to current pixel
-	eor		(toadr),y			;merge with screen byte
-	sta		(toadr),y			;save screen byte
-fill_start:
-	lda		bitmsk
-	jmp		(endpt)
-
-;----------------------------------------------		
-shift_lo_tab:
-	dta		<right_shift_8	
-	dta		<right_shift_4	
-	dta		<right_shift_2	
-	dta		<right_shift_1
-.endp
-
-;==========================================================================
-; Given a color byte, mask it off to the pertinent bits and reflect it
-; throughout a byte. The byte is converted from ATASCII to Internal
-; if the mode uses byte encoding.
-;
-; Entry:
-;	A = color value
-;
-; Exit:
-;	A = folded color byte
-;	Y = encoding mode
-;	DMASK = right-justified bit mask
-;	DELTAC = left-justified bit mask
-;
-; Modified:
-;	HOLD1, ADRESS
-;
-.proc ScreenFoldColor
-	ldx		dindex
-	ldy		ScreenEncodingTab,x			;0 = 8-bit, 1 = 4-bit, 2 = 2-bit, 3 = 1-bit
-	mvx		ScreenPixelMasks+4,y deltac
-	mvx		ScreenPixelMasks,y dmask
-	bmi		fold_byte
-	and		dmask
-	ora		ScreenEncodingOffsetTable-1,y
-	tax
-	lda		ScreenEncodingTable,x
-	rts
-	
-fold_byte:
-	;convert byte from ATASCII to Internal -- this is required for gr.1
-	;and gr.2 to work correctly, and harmless for other modes
-	jmp		ScreenConvertATASCIIToInternal
 .endp
 
 ;==========================================================================
@@ -1376,10 +1403,8 @@ use_c:
 	;compute addresses
 	ldy		botscr
 	dey
-	jsr		ScreenComputeFromAddrX0
-	
-	ldy		botscr
 	jsr		ScreenComputeToAddrX0
+	jsr		EditorNextLineAddr
 	
 	;copy lines
 	ldx		botscr
@@ -1467,28 +1492,6 @@ no_cursor:
 .endp
 
 ;==========================================================================
-; Also returns with Y=1 for convenience.
-.proc ScreenShowCursorAndXitOK
-	;;##ASSERT dw(oldadr) >= dw(savmsc)
-	;check if the cursor is enabled
-	ldy		crsinh
-	bne		cursor_inhibited
-	lda		(oldadr),y
-	sta		oldchr
-	eor		#$80
-	sta		(oldadr),y
-	iny
-	rts
-	
-cursor_inhibited:
-	;mark no cursor
-	ldy		#0
-	sty		oldadr+1
-	iny
-	rts
-.endp
-
-;==========================================================================
 .proc	ScreenCheckPosition
 	;Check for ROWCRS out of range. Note that for split screen modes we still
 	;check against the full height!
@@ -1508,6 +1511,14 @@ rmargn_ok:
 	sbc		rowcrs
 	bcs		rowcheck_pass	
 invalid_position:
+
+	;If the cursor is out of range, reset it within bounds.
+	ldy		#0
+	sty		colcrs+1		;X high = 0
+	txa
+	sne:ldy	lmargn
+	sty		colcrs			;X low = X origin
+
 	ldy		#CIOStatCursorRange
 	rts
 	
@@ -1547,7 +1558,15 @@ no_break:
 ; Preserved:
 ;	A
 ;	
-.proc ScreenSwap
+;==========================================================================
+; Swap in the text screen (main if gr.0, split otherwise).
+;
+.proc	EditorSwapToText
+	;set C=0 (main) if gr.0, C=1 (split) otherwise
+	ldy		#23
+	cpy		botscr
+
+.def :ScreenSwap = *
 	;check if the correct set is in place
 	pha
 	lda		#0

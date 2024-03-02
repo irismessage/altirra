@@ -50,6 +50,9 @@ struct ATDeviceVideoInfo {
 	// Portion of the frame buffer intended for display. This can be smaller
 	// than the pixmap supplied.
 	vdrect32 mDisplayArea;
+
+	// #RRGGBB border color.
+	uint32 mBorderColor;
 };
 
 class IATDeviceVideoOutput {

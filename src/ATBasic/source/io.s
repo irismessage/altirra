@@ -12,16 +12,17 @@
 ; Entry:
 ;	X = LSB of message pointer
 ;
-.proc IoPrintMessage
+.proc IoPrintMessageIOCB0
+		lda		#0
+		sta		iocbidx
+.def :IoPrintMessage
 		stx		inbuff
 loop:
 		ldx		inbuff
-		lda		msg_base&$ff00,x
-		beq		xit
+		lda		msg_base,x
+		beq		printStringINBUFF.xit
 		jsr		IoPutCharAndInc
-		jmp		loop
-xit:
-		rts
+		bpl		loop			;!! - unconditional
 .endp
 
 ;==========================================================================
@@ -38,6 +39,7 @@ loop:
 		jsr		IoPutCharAndInc
 		pla
 		bpl		loop
+xit:
 		rts
 .endp
 
@@ -97,11 +99,12 @@ direct:
 		ldx		iocbidx
 direct_with_x:
 		jsr		dispatch
+.def :IoCheckY
 		tya
 
 .def :ioCheck = *
 		bpl		done
-dispatch_error:
+.def :IoThrowErrorY
 		sty		errno
 		jmp		errorDispatch
 		
@@ -115,6 +118,16 @@ dispatch:
 		pha
 		lda		ciochr
 done:
+		rts
+.endp
+
+;==========================================================================
+.proc IoReadLine
+		jsr		IoSetupReadLineLDBUFA
+		jsr		ciov
+		bpl		putchar.done
+		cpy		#$88
+		bne		IoThrowErrorY
 		rts
 .endp
 
@@ -155,14 +168,13 @@ IoDoOpenWithFilename:
 .proc IoDoWithFilename
 		;stash command
 		ldx		iocbidx
-		sta		iccmd,x
+		pha
 						
-		;move pointer to ICBAL/H
-		mwa		fr0 icbal,x
-		
 		;call CIO
 		jsr		IoTerminateString
-		jsr		ciov
+		jsr		IoSetupBufferAddress
+		pla
+		jsr		IoTryCmdX
 		jsr		IoUnterminateString
 		
 		;now we can check for errors and exit
@@ -181,6 +193,37 @@ with_IOCB_X:
 .def :IoTryCmdX = *
 		sta		iccmd,x
 		jmp		ciov
+.endp
+
+;==========================================================================
+; Open the cassette (C:) device or any other stock device.
+;
+; Entry (IoOpenCassette):
+;	None
+;
+; Entry (IoOpenStockDeviceIOCB7):
+;	A = AUX1 mode
+;	Y = Low byte of device name address in constant page
+;
+; Entry (IoOpenStockDevice):
+;	A = AUX1 mode
+;	X = IOCB #
+;	Y = Low byte of device name address in constant page
+;
+.proc IoOpenCassette
+		sec
+		ror		icax2+$70		
+		ldy		#<devname_c
+.def :IoOpenStockDeviceIOCB7 = *
+		ldx		#$70
+		stx		iocbidx
+.def :IoOpenStockDevice = *
+		sta		icax1,x
+		tya
+		ldy		#>devname_c
+		jsr		IoSetupBufferAddress
+		lda		#CIOCmdOpen
+		bne		IoDoCmdX
 .endp
 
 ;==========================================================================
@@ -212,16 +255,22 @@ with_IOCB_X:
 		seq:ldy	#$ff
 		sty		ioTermOff
 		
-		;copy term address
-		mwa		fr0 inbuff
-		
 		;save existing byte
-		lda		(inbuff),y
+		lda		(fr0),y
 		sta		ioTermSave
 		
 		;stomp it with an EOL
 		lda		#$9b
-		sta		(inbuff),y
+		sta		ioTermFlag		;!! - must be first in case reset happens in between
+		sta		(fr0),y
+
+		;copy term address
+.def :IoSetInbuffFR0 = *
+		lda		fr0
+		ldy		fr0+1
+.def :IoSetInbuffYA = *
+		sta		inbuff
+		sty		inbuff+1
 		rts
 .endp
 
@@ -230,62 +279,39 @@ with_IOCB_X:
 ;	INBUFF = string pointer
 ;
 ; Registers:
-;	Y, P preserved
+;	Y, P.C preserved
+;	P.NZ set by Y
 ;
 .proc IoUnterminateString
-		php
 		tya
 		pha
+		lda		#0
+		sta		ioTermFlag
 		ldy		ioTermOff
 		lda		ioTermSave
 		sta		(inbuff),y
 		pla
 		tay
-		plp
 		rts
 .endp
 
 ;==========================================================================
-; Open the cassette (C:) device or any other stock device.
-;
-; Entry (IoOpenCassette):
-;	None
-;
-; Entry (IoOpenStockDeviceIOCB7):
-;	A = AUX1 mode
-;	Y = Low byte of device name address in constant page
-;
-; Entry (IoOpenStockDevice):
-;	A = AUX1 mode
-;	X = IOCB #
-;	Y = Low byte of device name address in constant page
-;
-.proc IoOpenCassette
-		ldy		#<devname_c
-.def :IoOpenStockDeviceIOCB7 = *
-		ldx		#$70
-		stx		iocbidx
-.def :IoOpenStockDevice = *
-		sta		icax1,x
-		tya
-		sta		icbal,x
-		mva		#>devname_c icbah,x
-		lda		#CIOCmdOpen
-		jmp		IoDoCmdX
-.endp
-
-;==========================================================================
+IoSetupReadLineLDBUFA:
+		jsr		ldbufa
 .proc IoSetupReadLine
 		;we are using some pretty bad hacks here:
 		;- GET RECORD and >LBUFF are $05
 		;- <LBUFF is $80
-		mva		#CIOCmdGetRecord iccmd,x
-		sta		icbah,x
+		ldy		#$05
 		lda		#$80
-		sta		icbal,x
-		asl
+		jsr		IoSetupBufferAddress
+		sta		iccmd,x
+		ldy		#$ff
+.def :IoSetupBufferLengthY
+		lda		#$00
+.def :IoSetupBufferLengthAY
 		sta		icblh,x
-		lda		#$ff
+		tya
 		sta		icbll,x
 		rts
 .endp

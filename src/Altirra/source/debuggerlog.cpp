@@ -7,53 +7,36 @@
 
 extern ATSimulator g_sim;
 
-ATDebuggerLogChannel *g_ATDebuggerLogChannels;
 VDStringA g_ATDebuggerLogBuffer;
 
-void ATRegisterLogChannel(ATDebuggerLogChannel *channel, bool enabled, bool tagged, const char *shortName, const char *longDesc) {
-	channel->mpNext = g_ATDebuggerLogChannels;
-	channel->mbEnabled = enabled;
-	channel->mTagFlags = tagged ? kATTagFlags_Timestamp : 0;
-	channel->mpShortName = shortName;
-	channel->mpLongDesc = longDesc;
+void ATConsoleLogWriteTag(ATLogChannel *channel);
 
-	g_ATDebuggerLogChannels = channel;
-}
-
-void ATDebuggerLogChannel::operator<<=(const char *message) {
-	if (!mbEnabled)
-		return;
-
-	WriteTag();
+void ATConsoleLogWrite(ATLogChannel *channel, const char *message) {
+	ATConsoleLogWriteTag(channel);
 
 	g_ATDebuggerLogBuffer.append(message);
 	ATConsoleWrite(g_ATDebuggerLogBuffer.c_str());
 }
 
-void ATDebuggerLogChannel::operator()(const char *format, ...) {
-	if (!mbEnabled)
-		return;
+void ATConsoleLogWriteV(ATLogChannel *channel, const char *format, va_list val) {
+	ATConsoleLogWriteTag(channel);
 
-	WriteTag();
-
-	va_list val;
-
-	va_start(val, format);
 	g_ATDebuggerLogBuffer.append_vsprintf(format, val);
-	va_end(val);
 
 	ATConsoleWrite(g_ATDebuggerLogBuffer.c_str());
 }
 
-void ATDebuggerLogChannel::WriteTag() {
+void ATConsoleLogWriteTag(ATLogChannel *channel) {
 	g_ATDebuggerLogBuffer.clear();
 
-	if (mTagFlags & kATTagFlags_Timestamp) {
+	const auto flags = channel->GetTagFlags();
+
+	if (flags & kATLogFlags_Timestamp) {
 		ATAnticEmulator& antic = g_sim.GetAntic();
 		g_ATDebuggerLogBuffer.append_sprintf("(%3d:%3d,%3d) ", antic.GetFrameCounter(), antic.GetBeamY(), antic.GetBeamX());
 	}
 
-	if (mTagFlags & kATTagFlags_CassettePos) {
+	if (flags & kATLogFlags_CassettePos) {
 		ATCassetteEmulator& cas = g_sim.GetCassette();
 
 		if (!cas.IsLoaded())
@@ -65,14 +48,11 @@ void ATDebuggerLogChannel::WriteTag() {
 		}
 	}
 
-	g_ATDebuggerLogBuffer += mpShortName;
+	g_ATDebuggerLogBuffer += channel->GetName();
 	g_ATDebuggerLogBuffer += ": ";
 }
 
-ATDebuggerLogChannel *ATDebuggerLogChannel::GetFirstChannel() {
-	return g_ATDebuggerLogChannels;
+void ATInitDebuggerLogging() {
+	ATLogSetWriteCallbacks(ATConsoleLogWrite, ATConsoleLogWriteV);
 }
 
-ATDebuggerLogChannel *ATDebuggerLogChannel::GetNextChannel(ATDebuggerLogChannel *p) {
-	return p->mpNext;
-}

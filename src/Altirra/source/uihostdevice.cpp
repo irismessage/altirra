@@ -22,7 +22,7 @@
 #include <vd2/Dita/services.h>
 #include <at/atcore/device.h>
 #include <at/atcore/propertyset.h>
-#include <at/atui/dialog.h>
+#include <at/atnativeui/dialog.h>
 #include "resource.h"
 #include "hostdevice.h"
 #include "oshelper.h"
@@ -35,20 +35,6 @@ namespace {
 		IDC_PATH2,
 		IDC_PATH3,
 		IDC_PATH4,
-	};
-
-	const uint32 kBrowseIds[]={
-		IDC_BROWSE1,
-		IDC_BROWSE2,
-		IDC_BROWSE3,
-		IDC_BROWSE4,
-	};
-
-	const uint32 kStaticIds[]={
-		IDC_STATIC_HOSTPATH1,
-		IDC_STATIC_HOSTPATH2,
-		IDC_STATIC_HOSTPATH3,
-		IDC_STATIC_HOSTPATH4,
 	};
 }
 

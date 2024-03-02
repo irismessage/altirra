@@ -17,8 +17,8 @@
 
 #include "stdafx.h"
 #include <at/atcore/propertyset.h>
-#include <at/atui/dialog.h>
-#include <at/atui/uiproxies.h>
+#include <at/atnativeui/dialog.h>
+#include <at/atnativeui/uiproxies.h>
 #include "resource.h"
 
 class ATUIDialogDevice1030 : public VDDialogFrameW32 {

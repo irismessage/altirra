@@ -23,7 +23,7 @@
 #endif
 
 #include <vd2/system/vdtypes.h>
-#include "scheduler.h"
+#include <at/atcore/scheduler.h>
 
 class ATGTIAEmulator;
 class ATSaveStateReader;
@@ -39,7 +39,9 @@ public:
 	}
 
 	virtual uint8 AnticReadByte(uint32 address) = 0;
-	virtual void AnticAssertNMI() = 0;
+	virtual void AnticAssertNMI_DLI() = 0;
+	virtual void AnticAssertNMI_VBI() = 0;
+	virtual void AnticAssertNMI_RES() = 0;
 	virtual void AnticEndFrame() = 0;
 	virtual void AnticEndScanline() = 0;
 	virtual bool AnticIsNextCPUCycleWrite() = 0;
@@ -78,6 +80,7 @@ public:
 
 	uint16	GetDisplayListPointer() const { return mDLIST; }
 	uint32	GetTimestamp() const { return (mFrame << 20) + (mY << 8) + mX; }
+	uint32	GetFrameStartTime() const { return mFrameStart; }
 	uint32	GetFrameCounter() const { return mFrame; }
 	uint32	GetBeamX() const { return mX; }
 	uint32	GetBeamY() const { return mY; }
@@ -174,6 +177,7 @@ protected:
 
 	uint32	mY;
 	uint32	mFrame;
+	uint32	mFrameStart;
 	uint32	mScanlineLimit;
 	uint32	mScanlineMax;
 	uint32	mVSyncStart;

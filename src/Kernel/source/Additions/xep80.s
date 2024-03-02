@@ -23,6 +23,10 @@
 
 ciov	equ		$e456
 
+.ifndef XEP_OPTION_TURBO
+XEP_OPTION_TURBO = 0
+.endif
+
 ;==========================================================================
 .macro _ASSERT condition, message
 		.if (:condition)=0
@@ -102,27 +106,31 @@ xtra_loop:
 		
 		;execute init
 		jsr		do_init
+		bcc		init_succeeded
 
-		;fake cold start around cold init so we don't reinit DOS
-		lda		warmst
-		pha
-		mva		#0 warmst
-		jsr		do_init2
-		pla
-		sta		warmst
+		lda		#<msg_load_failed
+		ldy		#>msg_load_failed
+		jmp		PutMessage
+
+init_succeeded:
 		
+		;print banner
 		lda		#<msg_load_succeeded
 		ldy		#>msg_load_succeeded
 		jmp		PutMessage
 
-do_init2:
-		jmp		(dosini)
-		
 do_init:
 		jmp		(basead)
 
 msg_load_succeeded:
-		dta		'Altirra XEP80 handler V0.4 loaded.',$9B
+.if XEP_OPTION_TURBO
+		dta		$7D,'Altirra XEP80 handler V0.5 loaded (fast mode).',$9B
+.else
+		dta		'Altirra XEP80 handler V0.5 loaded.',$9B
+.endif
+
+msg_load_failed:
+		dta		'Failed to initialize XEP-80 on port 2.',$9B
 .endp
 
 ;==========================================================================
@@ -132,11 +140,12 @@ msg_load_succeeded:
 .proc PutMessage
 		sta		icbal
 		sty		icbah
-		mva		#CIOCmdPutRecord iccmd
 		ldx		#1
-		sta		icblh
+		stx		icblh
 		dex
-		sta		icbll
+		stx		icbll
+		lda		#CIOCmdPutRecord
+		sta		iccmd
 		jmp		ciov
 .endp
 
@@ -209,12 +218,20 @@ get_ptr = *-2
 
 ;==========================================================================
 		opt		l-
+.if XEP_OPTION_TURBO
+		icl		'xep80handlerf-relocs.inc'
+.else
 		icl		'xep80handler-relocs.inc'
+.endif
 		opt		l+
 
 ;==========================================================================
 .proc HandlerData
+.if XEP_OPTION_TURBO
+		ins		'xep80handler2f.bin'
+.else
 		ins		'xep80handler2.bin'
+.endif
 .endp
 
 ;==========================================================================

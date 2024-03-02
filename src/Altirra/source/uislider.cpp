@@ -2,8 +2,8 @@
 #include <vd2/system/math.h>
 #include "uibutton.h"
 #include "uislider.h"
-#include "uimanager.h"
-#include "uidrawingutils.h"
+#include <at/atui/uimanager.h>
+#include <at/atui/uidrawingutils.h>
 
 ATUISlider::ATUISlider()
 	: mMin(0)

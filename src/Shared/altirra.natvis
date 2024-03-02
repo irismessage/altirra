@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+  <Type Name="vdfastvector&lt;*,*&gt;">
+    <DisplayString>size={mpEnd-mpBegin,i}/{m.eos-mpBegin,i}</DisplayString>
+	<Expand>
+		<Item Name="[size]">mpEnd-mpBegin</Item>
+		<Item Name="[capacity]">m.eos-mpBegin</Item>
+		<ArrayItems>
+			<Size>mpEnd-mpBegin</Size>
+			<ValuePointer>mpBegin</ValuePointer>
+		</ArrayItems>
+	</Expand>
+  </Type>
+
+  <Type Name="VDStringSpanA">
+	<DisplayString Condition="mpEnd&gt;=mpBegin">len={mpEnd-mpBegin,i} "{mpBegin,[mpEnd-mpBegin]sb}"</DisplayString>
+	<DisplayString Condition="mpEnd&lt;mpBegin">invalid!</DisplayString>
+
+	<Expand>
+		<Item Name="[size]">mpEnd-mpBegin</Item>
+		<ArrayItems>
+			<Size>mpEnd-mpBegin</Size>
+			<ValuePointer>mpBegin</ValuePointer>
+		</ArrayItems>
+	</Expand>
+  </Type>
+</AutoVisualizer>

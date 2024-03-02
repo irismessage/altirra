@@ -1,6 +1,6 @@
 #include "stdafx.h"
 #include <windows.h>
-#include <at/atui/dialog.h>
+#include <at/atnativeui/dialog.h>
 #include "inputmanager.h"
 #include "inputcontroller.h"
 #include "resource.h"
@@ -144,9 +144,14 @@ bool ATUIDialogRebindInput::OnTimer(uint32 id) {
 	if (id == kTimerId_JoyPoll) {
 		if (mpJoyMan) {
 			int unit;
-			uint32 inputCode;
-			if (mpJoyMan->PollForCapture(unit, inputCode)) {
-				mInputCode = (ATInputCode)inputCode;
+			uint32 digitalInputCode;
+			uint32 analogInputCode;
+			if (mpJoyMan->PollForCapture(unit, digitalInputCode, analogInputCode)) {
+				if (analogInputCode && mInputMan.IsAnalogTrigger(mTargetCode, mControllerType))
+					mInputCode = (ATInputCode)analogInputCode;
+				else
+					mInputCode = (ATInputCode)digitalInputCode;
+
 				End(true);
 			}
 		}

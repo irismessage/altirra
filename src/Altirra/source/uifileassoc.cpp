@@ -24,8 +24,8 @@
 #include <shlwapi.h>
 #include <shlobj.h>
 #include "resource.h"
-#include <at/atui/dialog.h>
-#include <at/atui/uiproxies.h>
+#include <at/atnativeui/dialog.h>
+#include <at/atnativeui/uiproxies.h>
 #include "oshelper.h"
 
 #ifndef SEE_MASK_WAITFORINPUTIDLE

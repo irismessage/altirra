@@ -21,7 +21,7 @@
 #include <vd2/system/filesys.h>
 #include <vd2/system/thread.h>
 #include <vd2/Dita/services.h>
-#include <at/atui/dialog.h>
+#include <at/atnativeui/dialog.h>
 #include "firmwaremanager.h"
 #include "firmwaredetect.h"
 #include "uiprogress.h"

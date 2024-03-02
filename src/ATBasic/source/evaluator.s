@@ -69,6 +69,8 @@
 ; allows selecting a range beyond the current length of a string.
 
 ;===========================================================================
+ExprEvalIOCBCommaInt:
+		jsr		evaluateHashIOCB
 ExprSkipCommaAndEvalPopInt:
 		inc		exLineOffset
 .proc	evaluateInt
@@ -79,13 +81,11 @@ ExprSkipCommaAndEvalPopInt:
 ;===========================================================================
 .proc evaluateHashIOCBOpt
 		;default to IOCB #0
-		lda		#0
-		tax
-		sta		iocbidx
+		ldx		#0
+		stx		iocbidx
 		
 		;check if we have an IOCB
-		ldy		exLineOffset
-		lda		(stmcur),y
+		jsr		ExecTestEnd
 		cmp		#TOK_EXP_HASH
 		sec							;set C=1 to indicate no #iocb found
 		bne		valid_iocb
@@ -133,12 +133,6 @@ invalid_iocb:
 .endp
 
 ;===========================================================================
-.proc	evaluateAssignment
-		lda		#$80
-		bne		evaluate._assign_entry
-.endp
-
-;===========================================================================
 ExprSkipCommaAndEvalVar = ExprSkipCommaAndEval
 evaluateVar = evaluate
 
@@ -150,7 +144,7 @@ evaluateVar = evaluate
 		:6 mva (stmcur),y+ fr0+#
 		sty		exLineOffset
 		;##TRACE "Pushing literal constant: %g" fr0
-		jmp		evaluate.loop
+		bne		evaluate.loop
 .endp
 
 ;===========================================================================
@@ -166,7 +160,6 @@ evaluateVar = evaluate
 		ldy		exLineOffset
 		lda		(stmcur),y
 		sta		fr0+2
-		sta		fr0+4
 		
 		;skip past length and string in statement text
 		sec
@@ -180,12 +173,11 @@ evaluateVar = evaluate
 		sta		fr0
 		lda		#0
 		sta		fr0+3
-		sta		fr0+5
 		adc		stmcur+1
 		sta		fr0+1
 		
 		;all done
-		jmp		evaluate.loop
+		bne		evaluate.loop
 .endp
 
 
@@ -209,7 +201,10 @@ _tmpadr = fr0+1
 
 		;set up rvalue context
 		lda		#0
-_assign_entry = *
+		dta		{bit $0100}				;bit $80xx
+.def :evaluateAssignment
+		lda		#$80
+_assign_entry:
 		sta		expAsnCtx
 		
 		;;##TRACE "Beginning evaluation at $%04x+$%02x = $%04x" dw(stmcur) db(exLineOffset) dw(stmcur)+db(exLineOffset)
@@ -218,6 +213,7 @@ _assign_entry = *
 		ldy		#0
 		sty		opsp
 		sty		argsp
+loop_open_parens:
 		sty		expCommas
 loop:
 		;get next token
@@ -241,11 +237,10 @@ not_imm:
 		;get push-on / shift precedence
 		;
 		;if bit 7 is set, we immedately shift
-		sta		expCurOp
+		pha
 		tax
-		lda		prec_table-$10,x
+		lda		prec_table-$12,x
 		bmi		shift
-		and		#$7f
 		sta		expCurPrec
 		;;##TRACE "Current operator get-on precedence = $%02x" a
 
@@ -256,15 +251,14 @@ reduce_loop:
 		
 		;get pull-off/reduce precendence
 		tax
-		lda		prec_table-$10,x
+		lda		prec_table-$12,x		;!! - $10 (COM) and $11 (CLOSE) can never follow an expression
 		and		#$7e
 		
 		;stop reducing if the current operator has higher precedence
 		;;##TRACE "Checking precedence: tos $%02x vs. cur $%02x" a db(expCurPrec)
 		cmp		expCurPrec
 		bcc		reduce_done
-		
-reduce_go:
+
 		inc		opsp
 		jsr		dispatch
 		;##ASSERT (db(argsp)%3)=0
@@ -277,13 +271,15 @@ reduce_done:
 
 		;push current operator on stack
 shift:
-		lda		expCurOp		
 		dec		opsp	
 		ldy		opsp
 		;##TRACE "Shift: $%02x" (a)
+		pla
 		sta		(argstk),y
-		bne		loop
-done:	
+		bne		loop					;!! - unconditional (we would never shift a $00 token)
+
+done:
+		pla
 		;;##TRACE "Exiting evaluator"
 		dec		exLineOffset
 		rts
@@ -341,15 +337,9 @@ undim_ok:
 		
 		;it's relative -- convert relative pointer to absolute
 		;;##TRACE "Converting to absolute"
-		lda		fr0
-		adc		starp
-		sta		fr0
-		lda		fr0+1
-		adc		starp+1
-		sta		fr0+1
-
-		;push variable onto argument stack and exit
-		jmp		loop
+		ldy		#starp
+		jsr		IntAddToFR0
+		bne		loop		;!! - unconditional
 
 not_dimmed:
 		;check if we allow unDIM'd vars (i.e. we're in DIM)
@@ -358,11 +348,14 @@ not_dimmed:
 		jmp		errorDimError
 
 dispatch:
-		;##TRACE "Reduce: $%02x (%y) by %02x - %u values on stack (%02X%02X%02X%02X%02X%02X %g)" (x) db(functionDispatchTableLo-$12+x)+256*db(functionDispatchTableHi-$12+x)+1 db(expCurOp) db(argsp)/3 db(dw(argstk)+db(argsp)-3) db(dw(argstk2)+db(argsp)-3) db(dw(argstk)+db(argsp)-2) db(dw(argstk2)+db(argsp)-2) db(dw(argstk)+db(argsp)-1) db(dw(argstk2)+db(argsp)-1) fr0
-		lda		functionDispatchTableHi-$12,x
+		;##TRACE "Reduce: $%02x (%y) by %02x - %u values on stack (%02X%02X%02X%02X%02X%02X %g)" (x) db(functionDispatchTableLo-$12+x)+256*db(functionDispatchTableHi-$12+x)+1 db($100+((s+1)&$ff)) db(argsp)/3 db(dw(argstk)+db(argsp)-3) db(dw(argstk2)+db(argsp)-3) db(dw(argstk)+db(argsp)-2) db(dw(argstk2)+db(argsp)-2) db(dw(argstk)+db(argsp)-1) db(dw(argstk2)+db(argsp)-1) fr0
+		lda		functionDispatchTableHi-$1D,x
 		pha
-		lda		functionDispatchTableLo-$12,x
+		lda		functionDispatchTableLo-$1D,x
 		pha
+
+		;On entry to all functions, X is guaranteed to hold the operator
+		;token. This is used by some multi-dispatch points.
 		rts
 .endp
 
@@ -418,8 +411,6 @@ PREC_RELSTR		= 28
 PREC_FUNC		= 30
 
 .proc	prec_table
-		dta		0				;$10
-		dta		0				;$11
 		dta		0				;$12	,
 		dta		0				;$13	$
 		dta		0				;$14	: (statement end)
@@ -494,7 +485,7 @@ PREC_FUNC		= 30
 		dta		PREC_BITWISE	;$57	! (or)
 		dta		PREC_BITWISE	;$58	& (and)
 		dta		PREC_FUNC		;$59
-		dta		PREC_FUNC		;$5A
+		dta		PREC_POPEN		;$5A	BUMP(
 		dta		PREC_FUNC		;$5B
 		dta		PREC_FUNC		;$5C
 		dta		PREC_FUNC		;$5D
@@ -508,6 +499,8 @@ PREC_FUNC		= 30
 ExprPopExtFR0 = expPopFR0
 
 ;===========================================================================
+ExprFmoveAndPopFR0:
+		jsr		fmove
 .proc	expPopFR0
 		ldy		argsp
 		;##ASSERT (y%3)=0 and y
@@ -528,6 +521,7 @@ ExprPopExtFR0 = expPopFR0
 ; Output:
 ;	A:X = integer value
 ;	P.N,Z = set from A
+;	P.C = 0 (since we fire an error if C=1 from FPI)
 ;
 .proc	expPopFR0Int
 		jsr		expPopFR0
@@ -536,6 +530,7 @@ ExprPopExtFR0 = expPopFR0
 		bcs		fail
 		ldx		fr0
 		lda		fr0+1
+exit:
 		rts
 fail:
 		jmp		errorValueErr
@@ -545,6 +540,7 @@ fail:
 ; Output:
 ;	A:X = integer value
 ;	P.N,Z = set from A
+;	P.C = 0
 ;
 ExprSkipCommaAndEvalPopIntPos:
 		inc		exLineOffset
@@ -552,13 +548,15 @@ ExprEvalPopIntPos:
 		jsr		evaluate
 .proc	ExprConvFR0IntPos
 		jsr		ExprConvFR0Int
-		bmi		is_neg
-		rts
-is_neg:
+		bpl		expPopFR0Int.exit
 		jmp		errorValue32K
 .endp
 
 ;===========================================================================
+; Exit:
+;	A = exponent/sign of popped value
+;	P.NZ = set from A
+;
 .proc	expPopFR1
 		ldy		argsp
 		;##ASSERT (y%3)=0 and y
@@ -586,8 +584,7 @@ is_neg:
 		mva		fr0+3 (argstk2),y+
 		mva		fr0+4 (argstk),y
 		mva		fr0+5 (argstk2),y+
-		sty		argsp
-		rts
+		dta		{bit $0100}
 stack_empty:
 		ldy		#3
 		sty		argsp
@@ -596,18 +593,7 @@ stack_empty:
 
 ;===========================================================================
 .macro FUNCTION_DISPATCH_TABLE
-		;$12
-		dta		:1[expComma-1]
-		dta		:1[0]
-		dta		:1[0]
-		dta		:1[0]
-		dta		:1[0]
-		dta		:1[0]
-		dta		:1[0]
-		dta		:1[0]
-		dta		:1[0]
-		dta		:1[0]
-		dta		:1[0]
+		;$1D
 		dta		:1[funCompare-1]
 		dta		:1[funCompare-1]
 		dta		:1[funCompare-1]
@@ -625,7 +611,7 @@ stack_empty:
 		dta		:1[funOr-1]
 		dta		:1[funAnd-1]
 		dta		:1[funOpenParens-1]
-		dta		:1[0]
+		dta		:1[funInvalid-1]
 		dta		:1[funAssignNum-1]
 		dta		:1[funAssignStr-1]
 		dta		:1[funStringCompare-1]
@@ -674,21 +660,28 @@ stack_empty:
 		dta		:1[funPaddleStick-1]		;STICK
 		dta		:1[funPaddleStick-1]		;PTRIG
 		dta		:1[funPaddleStick-1]		;STRIG
-		dta		0
+		dta		:1[funInvalid-1]			;USING
 		dta		:1[funBitwiseXor-1]
 		dta		:1[funBitwiseOr-1]
 		dta		:1[funBitwiseAnd-1]
-		dta		0
-		dta		0
-		dta		0
+		dta		:1[funInvalid-1]			;semicolon
+		dta		:1[funBump-1]				;BUMP
+		dta		:1[funInvalid-1]			;FIND
 		dta		:1[funHex-1]
-		dta		0
+		dta		:1[funInvalid-1]			;RANDOM
 		dta		:1[funDpeek-1]
-		dta		0
+		dta		:1[funInvalid-1]			;SYS
+
+		;$60
 		dta		:1[funVstick-1]
 		dta		:1[funHstick-1]
+		dta		:1[funPmadr-1]				;PMADR
+		dta		:1[funErr-1]
 .endm
 
+funInvalid = errorWTF
+
+;===========================================================================
 .proc functionDispatchTableLo
 		FUNCTION_DISPATCH_TABLE <
 .endp

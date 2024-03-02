@@ -122,12 +122,12 @@ void *VDJSONValuePool::Allocate(size_t n) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-const VDJSONValueRef VDJSONValueRef::operator[](int index) const {
+const VDJSONValueRef VDJSONValueRef::operator[](size_t index) const {
 	if (mpRef->mType != VDJSONValue::kTypeArray)
 		return VDJSONValueRef(mpDoc, &VDJSONValue::null);
 
 	VDJSONArray *arr = mpRef->mpArray;
-	if ((unsigned)index >= arr->mLength)
+	if (index >= arr->mLength)
 		return VDJSONValueRef(mpDoc, &VDJSONValue::null);
 
 	return VDJSONValueRef(mpDoc, &arr->mpElements[index]);

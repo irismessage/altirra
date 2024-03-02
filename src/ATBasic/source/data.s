@@ -6,6 +6,8 @@
 ; notice and this notice are preserved.  This file is offered as-is,
 ; without any warranty.
 
+?read_start = *
+
 ;===========================================================================
 ; INPUT [#aexp{,|;}] var [,var...]
 ;
@@ -142,39 +144,38 @@ data_line_scan:
 		dey
 		lda		(dataptr),y
 		tay
-		bne		data_line_scan
+		bne		data_line_scan				;!! - unconditional
 		
 data_line_end:
 		;jump to next line
-		ldy		#2
-		lda		(dataptr),y
+		lda		dataLnEnd
 		ldx		#dataptr
 		jsr		VarAdvancePtrX
 		
 		;##TRACE "Data: Advancing to line %u ($%04X)" dw(dw(dataptr)) dw(dataptr)
 		;stash off line number
-		ldy		#0
-		mva		(dataptr),y dataln
-		iny
+		ldy		#1
+		mva		(0,x) dataln				;!! X = dataptr
 		mva		(dataptr),y dataln+1
-		jmp		have_data_line_2
+		bpl		have_data_line_2			;!! - unconditional
 		
 have_data_stmt:
 		iny
 have_data:
 		sty		cix
-		mwa		dataptr inbuff
+
+		lda		dataptr
+		ldy		dataptr+1
+		jsr		IoSetInbuffYA
+
 		;##TRACE "Beginning READ with data: $%04X+$%02X [%.*s]" dw(dataptr) db(cix) db(dataLnEnd)-db(cix) dw(dataptr)+db(cix)
-		jmp		parse_loop
+		bne		parse_loop					;!! - unconditional
 
 read_line_input:
 		;read line to LBUFF
-		jsr		IoSetupReadLine
+		jsr		IoSetupReadLineLDBUFA
 		jsr		ioChecked
-		
-		;vector INBUFF to line buffer
-		jsr		ldbufa
-		
+				
 parse_loop:
 		;get next variable
 		jsr		evaluateVar
@@ -195,8 +196,10 @@ parse_loop:
 		;Eating the comma here would cause the end of read code to jump to
 		;the next line, preventing the empty trailing string from being read.
 		;
+		ldx		#fr1
+		jsr		zf1
 		ldy		cix
-		ldx		#0
+		sty		fr1				;set src offset
 len_loop:
 		lda		(inbuff),y
 		cmp		#$9b
@@ -207,47 +210,20 @@ len_loop:
 		beq		len_loop_end
 no_comma_stop:
 		iny
-		inx
+		inc		fr1+2
 		bne		len_loop
 len_loop_end:
 
-		;stash the end of the string -- we need this before
-		;we do truncation to the buffer length
-		tya
-		pha
-		
-		;compare against the capacity in the string buffer and truncate
-		;as necessary
-		ldy		fr0+5
-		bne		string_fits		;>=256 chars... guaranteed to fit
-		cpx		fr0+4
-		scc:ldx	fr0+4			;use capacity if it is smaller (or equal)
-string_fits:
-		
-		;write length to string variable
-		ldy		#5
-		mva		#0 (varptr),y-
-		txa
-		sta		(varptr),y
-		sta		fr0+2			;for convenience below
-		
-		;copy string to string storage		
-		beq		strcpy_end
-		ldy		cix
-		ldx		#0
-strcpy_loop:
-		lda		(inbuff),y
-		sta		(fr0,x)
-		inw		fr0
-		iny
-		dec		fr0+2
-		bne		strcpy_loop
-		
-strcpy_end:
 		;warp to end of the input
-		pla
-		sta		cix
-		
+		sty		cix
+
+		;jump through string assignment code to set string array
+		ldx		#fr1
+		stx		expAsnCtx		;set assignment mode to force length update
+		ldy		#inbuff
+		jsr		IntAdd
+		jsr		funAssignStr._read_entry
+
 advance:
 		;advance to next input, checking for EOL or a comma -- we must
 		;do this before we store the parsed value and even if there are no
@@ -294,7 +270,7 @@ xit:
 
 is_numeric:
 		;attempt to parse out a number
-		jsr		afp
+		jsr		MathParseFP
 		bcs		parse_error
 
 		;store numeric value to variable
@@ -303,3 +279,7 @@ is_numeric:
 
 		jmp		advance
 .endp
+
+;============================================================================
+
+.echo "- READ/INPUT module length: ",*-?read_start

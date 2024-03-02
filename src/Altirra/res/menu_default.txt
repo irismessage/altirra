@@ -158,10 +158,6 @@
 		PRT: patch (Other SIO)		{Devices.ToggleSIOPatch}
 		SIO Override Detection		{Disk.ToggleSIOOverrideDetection}
 		SIO Burst Transfers
-			Disabled						{Devices.BurstModeNone}
-			Standard IRQ Transfers			{Devices.BurstModeStandard}
-			Polled (SpartaDOS X compatible)	{Devices.BurstModePolled}
-			---
 			Disk (D:)				{Disk.ToggleBurstTransfers}
 			Other (PRT:)			{Devices.ToggleSIOBurstTransfers}
 		---
@@ -216,6 +212,7 @@
 		---
 		MapRAM						{System.ToggleMapRAM}
 		Ultimate1MB					{System.ToggleUltimate1MB}
+		Floating I/O Bus			{System.ToggleFloatingIOBus}
 	&Video
 		&NTSC						{Video.StandardNTSC}
 		&PAL						{Video.StandardPAL}
@@ -267,12 +264,6 @@
 		&Options...						{Audio.OptionsDialog}
 	CP&U Options...						{System.CPUOptionsDialog}
 	Ha&rd Disk...						{System.HardDiskDialog}
-	SoundBoard
-		Enabled							{Audio.ToggleSoundBoard}
-		---
-		Use $D2C0-D2FF					{Audio.SoundBoardAddrD2C0}
-		Use $D500-D5FF					{Audio.SoundBoardAddrD500}
-		Use $D600-D6FF					{Audio.SoundBoardAddrD600}
 	Console Switches
 		Keyboard Present (XEGS)			{System.ToggleKeyboardPresent}
 		Force Self-Test					{System.ToggleForcedSelfTest}
@@ -281,8 +272,9 @@
 		BlackBox: Dump Screen			{Console.BlackBoxDumpScreen}
 		BlackBox: Menu					{Console.BlackBoxMenu}
 
-Input
+&Input
 	Input Mappings...					{Input.InputMappingsDialog}
+	Input Setup...					{Input.InputSetupDialog}
 	Cycle &Quick Maps					{Input.CycleQuickMaps}
 	---
 	Capture Mouse						{Input.CaptureMouse}
@@ -350,10 +342,12 @@ Input
 	Record &Raw Audio...				{Record.RawAudio}
 	Record &Audio...					{Record.Audio}
 	Record &Video...					{Record.Video}
+	Record &SAP type R...				{Record.SAPTypeR}
 	&Stop Recording						{Record.Stop}
 	
 &Tools
 	&Disk Explorer...					{Tools.DiskExplorer}
+	Convert SAP to EXE...				{Tools.ConvertSAPToEXE}
 	---
 	&Options...							{Tools.OptionsDialog}
 	&Keyboard Shortcuts...				{Tools.KeyboardShortcutsDialog}

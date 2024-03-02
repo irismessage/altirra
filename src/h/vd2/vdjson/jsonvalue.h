@@ -151,6 +151,15 @@ struct VDJSONValueRef {
 
 	bool IsValid() const { return mpRef->mType != VDJSONValue::kTypeNull; }
 
+	bool IsNull() const { return mpRef->mType == VDJSONValue::kTypeNull; }
+	bool IsBool() const { return mpRef->mType == VDJSONValue::kTypeBool; }
+	bool IsInt() const { return mpRef->mType == VDJSONValue::kTypeInt; }
+	bool IsReal() const { return mpRef->mType == VDJSONValue::kTypeReal; }
+	bool IsNumeric() const { return mpRef->mType == VDJSONValue::kTypeInt || mpRef->mType == VDJSONValue::kTypeReal; }
+	bool IsString() const { return mpRef->mType == VDJSONValue::kTypeString; }
+	bool IsObject() const { return mpRef->mType == VDJSONValue::kTypeObject; }
+	bool IsArray() const { return mpRef->mType == VDJSONValue::kTypeArray; }
+
 	bool AsBool() const { return mpRef->mType == VDJSONValue::kTypeBool ? mpRef->mBoolValue : false; }
 	sint64 AsInt64() const { return mpRef->mType == VDJSONValue::kTypeInt ? mpRef->mIntValue : 0; }
 	double AsDouble() const { return mpRef->mType == VDJSONValue::kTypeReal ? mpRef->mRealValue : ConvertToReal(); }
@@ -159,7 +168,7 @@ struct VDJSONValueRef {
 
 	size_t GetArrayLength() const { return mpRef->mType == VDJSONValue::kTypeArray ? mpRef->mpArray->mLength : 0; }
 
-	const VDJSONValueRef operator[](int index) const;
+	const VDJSONValueRef operator[](size_t index) const;
 	const VDJSONValueRef operator[](VDJSONNameToken nameToken) const;
 	const VDJSONValueRef operator[](const char *s) const;
 	const VDJSONValueRef operator[](const wchar_t *s) const;

@@ -67,7 +67,7 @@ void ATPropertySet::Clear() {
 	}
 }
 
-void ATPropertySet::EnumProps(void (*fn)(const char *name, const ATPropertyValue& val, void *data), void *data) const {
+void ATPropertySet::EnumProperties(void (*fn)(const char *name, const ATPropertyValue& val, void *data), void *data) const {
 	for(auto it = mProperties.begin(), itEnd = mProperties.end();
 		it != itEnd;
 		++it)

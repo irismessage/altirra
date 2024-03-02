@@ -20,20 +20,36 @@
 #include <mmsystem.h>
 #include <cguid.h>
 #include <dsound.h>
+#include <mmdeviceapi.h>
+#include <audioclient.h>
 
 #include <vd2/system/math.h>
+#include <vd2/system/refcount.h>
 #include <vd2/system/text.h>
 #include <vd2/system/thread.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/VDRingBuffer.h>
+#include <vd2/system/w32assist.h>
 #include <vd2/Riza/audioout.h>
+
+// Declare these here since we don't want to require mmddk.h.
+#ifndef DRVM_MAPPER_PREFERRED_GET
+#define DRVM_MAPPER_PREFERRED_GET 0x2015
+#endif
+
+#ifndef DRV_QUERYFUNCTIONINSTANCEID
+#define DRV_QUERYFUNCTIONINSTANCEID		(DRV_RESERVED + 17)
+#define DRV_QUERYFUNCTIONINSTANCEIDSIZE	(DRV_RESERVED + 18)
+#endif
 
 extern HINSTANCE g_hInst;
 
-class VDAudioOutputWaveOutW32 : public IVDAudioOutput {
+class VDAudioOutputWaveOutW32 final : public IVDAudioOutput {
 public:
 	VDAudioOutputWaveOutW32();
 	~VDAudioOutputWaveOutW32();
+
+	uint32	GetPreferredSamplingRate(const wchar_t *preferredDevice) const override;
 
 	bool	Init(uint32 bufsize, uint32 bufcount, const tWAVEFORMATEX *wf, const wchar_t *preferredDevice);
 	void	Shutdown();
@@ -58,6 +74,8 @@ public:
 private:
 	bool	CheckBuffers();
 	bool	WaitBuffers(uint32 timeout);
+
+	static UINT FindDevice(const wchar_t *preferredDevice);
 
 	uint32	mBlockHead;
 	uint32	mBlockTail;
@@ -107,25 +125,65 @@ VDAudioOutputWaveOutW32::~VDAudioOutputWaveOutW32() {
 	Shutdown();
 }
 
-bool VDAudioOutputWaveOutW32::Init(uint32 bufsize, uint32 bufcount, const WAVEFORMATEX *wf, const wchar_t *preferredDevice) {
-	UINT deviceID = WAVE_MAPPER;
+uint32 VDAudioOutputWaveOutW32::GetPreferredSamplingRate(const wchar_t *preferredDevice) const {
+	// if we don't have WASAPI, just return don't know
+	if (!VDIsAtLeastVistaW32())
+		return 0;
 
-	if (preferredDevice && *preferredDevice) {
-		UINT numDevices = waveOutGetNumDevs();
+	DWORD deviceID = FindDevice(preferredDevice);
 
-		for(UINT i=0; i<numDevices; ++i) {
-			WAVEOUTCAPSA caps = {0};
+	if (deviceID == WAVE_MAPPER) {
+		// The wave mapper will just give us a blank ID, so we must look up the actual device.
+		DWORD statusFlags;
+		waveOutMessage((HWAVEOUT)deviceID, DRVM_MAPPER_PREFERRED_GET, (DWORD_PTR)&deviceID, (DWORD_PTR)&statusFlags);
+	}
 
-			if (MMSYSERR_NOERROR == waveOutGetDevCapsA(i, &caps, sizeof(caps))) {
-				const VDStringW key(VDTextAToW(caps.szPname).c_str());
+	// retrieve the endpoint ID for the device
+	size_t len = 0;
+	if (MMSYSERR_NOERROR != waveOutMessage((HWAVEOUT)deviceID, DRV_QUERYFUNCTIONINSTANCEIDSIZE, (DWORD_PTR)&len, NULL))
+		return 0;
 
-				if (key == preferredDevice) {
-					deviceID = i;
-					break;
+	vdblock<WCHAR> buf(len / sizeof(WCHAR) + 2);
+	memset(buf.data(), 0, sizeof(buf[0]) * buf.size());
+
+	if (MMSYSERR_NOERROR != waveOutMessage((HWAVEOUT)deviceID, DRV_QUERYFUNCTIONINSTANCEID, (DWORD_PTR)buf.data(), len))
+		return 0;
+
+	HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+	if (FAILED(hr))
+		return 0;
+	
+	uint32 samplingRate = 0;
+
+	// enumerate audio endpoints in WASAPI and see if we get a match
+	vdrefptr<IMMDeviceEnumerator> devEnum;
+	hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_INPROC_SERVER, __uuidof(IMMDeviceEnumerator), (LPVOID *)~devEnum);
+	if (SUCCEEDED(hr)) {
+		vdrefptr<IMMDevice> dev;
+		hr = devEnum->GetDevice(buf.data(), ~dev);
+		if (SUCCEEDED(hr)) {
+			vdrefptr<IAudioClient> client;
+			hr = dev->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, NULL, (void **)~client);
+			if (SUCCEEDED(hr)) {
+				WAVEFORMATEX *pwfex = nullptr;
+				hr = client->GetMixFormat(&pwfex);
+				if (pwfex) {
+					if (SUCCEEDED(hr))
+						samplingRate = pwfex->nSamplesPerSec;
+
+					CoTaskMemFree(pwfex);
 				}
 			}
 		}
 	}
+
+	CoUninitialize();
+
+	return samplingRate;
+}
+
+bool VDAudioOutputWaveOutW32::Init(uint32 bufsize, uint32 bufcount, const WAVEFORMATEX *wf, const wchar_t *preferredDevice) {
+	const UINT deviceID = FindDevice(preferredDevice);
 
 	mBuffer.resize(bufsize * bufcount);
 	mBlockHead = 0;
@@ -494,12 +552,37 @@ bool VDAudioOutputWaveOutW32::IsFrozen() {
 	return !mBlocksPending;
 }
 
+UINT VDAudioOutputWaveOutW32::FindDevice(const wchar_t *preferredDevice) {
+	UINT deviceID = WAVE_MAPPER;
+
+	if (preferredDevice && *preferredDevice) {
+		UINT numDevices = waveOutGetNumDevs();
+
+		for(UINT i=0; i<numDevices; ++i) {
+			WAVEOUTCAPSW caps = {0};
+
+			if (MMSYSERR_NOERROR == waveOutGetDevCapsW(i, &caps, sizeof(caps))) {
+				const VDStringSpanW key(caps.szPname);
+
+				if (key == preferredDevice) {
+					deviceID = i;
+					break;
+				}
+			}
+		}
+	}
+
+	return deviceID;
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
-class VDAudioOutputDirectSoundW32 : public IVDAudioOutput, private VDThread {
+class VDAudioOutputDirectSoundW32 final : public IVDAudioOutput, private VDThread {
 public:
 	VDAudioOutputDirectSoundW32();
 	~VDAudioOutputDirectSoundW32();
+
+	uint32	GetPreferredSamplingRate(const wchar_t *preferredDevice) const override;
 
 	bool	Init(uint32 bufsize, uint32 bufcount, const tWAVEFORMATEX *wf, const wchar_t *preferredDevice);
 	void	Shutdown();
@@ -601,6 +684,40 @@ VDAudioOutputDirectSoundW32::VDAudioOutputDirectSoundW32()
 
 VDAudioOutputDirectSoundW32::~VDAudioOutputDirectSoundW32() {
 	Shutdown();
+}
+
+uint32 VDAudioOutputDirectSoundW32::GetPreferredSamplingRate(const wchar_t *preferredDevice) const {
+	HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+	if (FAILED(hr))
+		return 0;
+	
+	uint32 samplingRate = 0;
+
+	// enumerate audio endpoints in WASAPI and see if we get a match
+	vdrefptr<IMMDeviceEnumerator> devEnum;
+	hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_INPROC_SERVER, __uuidof(IMMDeviceEnumerator), (LPVOID *)~devEnum);
+	if (SUCCEEDED(hr)) {
+		vdrefptr<IMMDevice> dev;
+		hr = devEnum->GetDefaultAudioEndpoint(eRender, eConsole, ~dev);
+		if (SUCCEEDED(hr)) {
+			vdrefptr<IAudioClient> client;
+			hr = dev->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, NULL, (void **)~client);
+			if (SUCCEEDED(hr)) {
+				WAVEFORMATEX *pwfex = nullptr;
+				hr = client->GetMixFormat(&pwfex);
+				if (pwfex) {
+					if (SUCCEEDED(hr))
+						samplingRate = pwfex->nSamplesPerSec;
+
+					CoTaskMemFree(pwfex);
+				}
+			}
+		}
+	}
+
+	CoUninitialize();
+
+	return samplingRate;
 }
 
 bool VDAudioOutputDirectSoundW32::Init(uint32 bufsize, uint32 bufcount, const tWAVEFORMATEX *wf, const wchar_t *preferredDevice) {
@@ -845,7 +962,7 @@ bool VDAudioOutputDirectSoundW32::InitDirectSound() {
 	mDSBufferSizeHalf = mBufferSize;
 
 	// attempt to load DirectSound library
-	mhmodDS = LoadLibraryA("dsound");
+	mhmodDS = VDLoadSystemLibraryW32("dsound");
 	if (!mhmodDS)
 		return false;
 

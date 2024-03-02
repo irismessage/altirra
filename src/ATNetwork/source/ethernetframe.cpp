@@ -120,6 +120,10 @@ bool ATIPv4DecodeHeader(ATIPv4HeaderInfo& dstInfo, const uint8 *data, uint32 len
 	dstInfo.mDataOffset = 4*ihl;
 	dstInfo.mDataLength = totalLen - 4*ihl;
 
+	// TTL = 0 is bogus (RFC1122 3.2.1.7)
+	if (dstInfo.mTTL == 0)
+		return false;
+
 	return true;
 }
 

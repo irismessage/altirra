@@ -29,17 +29,18 @@
 #include "cpu.h"
 #include "savestate.h"
 #include "audiooutput.h"
-#include "soundboard.h"
 
 namespace {
 	enum {
-		kATPokeyEvent15KHzTick = 2,
+		kATPokeyEventKeyboardIRQ = 2,
+		kATPokeyEventKeyboardScan = 3,
 		kATPokeyEventTimer1Borrow = 7,
 		kATPokeyEventTimer2Borrow = 8,
 		kATPokeyEventTimer3Borrow = 9,
 		kATPokeyEventTimer4Borrow = 10,
 		kATPokeyEventResetTimers = 11,
 		kATPokeyEventSerialOutput = 12,
+		kATPokeyEventSerialInput = 13,
 		kATPokeyEventPot0ScanComplete = 16	// x8
 	};
 
@@ -57,9 +58,14 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mKeyCooldownTimer(0)
 	, mbKeyboardIRQPending(false)
 	, mbUseKeyCooldownTimer(true)
+	, mbCookedKeyMode(false)
+	, mbKeyboardScanEnabled(false)
 	, mbShiftKeyState(false)
+	, mbShiftKeyLatchedState(false)
 	, mbControlKeyState(false)
+	, mbControlKeyLatchedState(false)
 	, mbBreakKeyState(false)
+	, mbBreakKeyLatchedState(false)
 	, mIRQEN(0)
 	, mIRQST(0)
 	, mAUDCTL(0)
@@ -80,7 +86,9 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mbSpeakerActive(false)
 	, mbSerialRateChanged(false)
 	, mbSerialWaitingForStartBit(true)
-	, mbSerInBurstPending(false)
+	, mbSerInBurstPendingIRQ1(false)
+	, mbSerInBurstPendingIRQ2(false)
+	, mbSerInBurstPendingData(false)
 	, mbSerInDeferredLoad(false)
 	, mSerialSimulateInputBaseTime(0)
 	, mSerialSimulateInputCyclesPerBit(0)
@@ -88,7 +96,6 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mbSerialSimulateInputPort(false)
 	, mSerialExtBaseTime(0)
 	, mSerialExtPeriod(0)
-	, mSerBurstMode(kSerialBurstMode_Disabled)
 	, mpAudioLog(NULL)
 	, mbFastTimer1(false)
 	, mbFastTimer3(false)
@@ -99,9 +106,11 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mLast64KHzTime(0)
 	, mALLPOT(0)
 	, mPotScanStartTime(0)
-	, mp15KHzEvent(NULL)
+	, mpKeyboardScanEvent(NULL)
+	, mpKeyboardIRQEvent(NULL)
 	, mpStartBitEvent(NULL)
 	, mpResetTimersEvent(NULL)
+	, mpEventSerialInput(NULL)
 	, mpEventSerialOutput(NULL)
 	, mpScheduler(NULL)
 	, mpConn(NULL)
@@ -109,7 +118,6 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mbIsSlave(isSlave)
 	, mpAudioOut(NULL)
 	, mpCassette(NULL)
-	, mpSoundBoard(NULL)
 {
 	for(int i=0; i<8; ++i) {
 		mpPotScanEvent[i] = NULL;
@@ -133,16 +141,19 @@ void ATPokeyEmulator::Init(IATPokeyEmulatorConnections *mem, ATScheduler *sched,
 
 	mpRenderer->Init(sched, tables);
 
-	VDASSERT(!mp15KHzEvent);
+	VDASSERT(!mpKeyboardScanEvent);
+	VDASSERT(!mpKeyboardIRQEvent);
 
 	ColdReset();
 }
 
 void ATPokeyEmulator::ColdReset() {
-	memset(mbKeyMatrix, 0, sizeof mbKeyMatrix);
 	mKeyScanCode = 0;
 	mKeyScanState = 0;
 	mbKeyboardIRQPending = false;
+	mbControlKeyLatchedState = false;
+	mbShiftKeyLatchedState = false;
+	mbBreakKeyLatchedState = false;
 
 	memset(&mState, 0, sizeof mState);
 
@@ -176,9 +187,12 @@ void ATPokeyEmulator::ColdReset() {
 	RecomputeTimerPeriod<3>();
 	RecomputeAllowedDeferredTimers();
 
+	mpScheduler->UnsetEvent(mpKeyboardScanEvent);
+	mpScheduler->UnsetEvent(mpKeyboardIRQEvent);
 	mpScheduler->UnsetEvent(mpStartBitEvent);
 	mpScheduler->UnsetEvent(mpResetTimersEvent);
 	mpScheduler->UnsetEvent(mpEventSerialOutput);
+	mpScheduler->UnsetEvent(mpEventSerialInput);
 
 	mpRenderer->ColdReset();
 
@@ -193,7 +207,10 @@ void ATPokeyEmulator::ColdReset() {
 	mbSerShiftValid = false;
 	mbSerialOutputState = false;
 	mbSerialWaitingForStartBit = true;
-	mbSerInBurstPending = false;
+	mbSerInBurstPendingIRQ1 = false;
+	mbSerInBurstPendingIRQ2 = false;
+	mbSerInBurstPendingData = false;
+	mSerOutBurstDeadline = 0;
 	mbSerialSimulateInputPort = false;
 
 	memset(mAUDF, 0, sizeof mAUDF);
@@ -201,11 +218,6 @@ void ATPokeyEmulator::ColdReset() {
 
 	mLast15KHzTime = ATSCHEDULER_GETTIME(mpScheduler);
 	mLast64KHzTime = ATSCHEDULER_GETTIME(mpScheduler);
-
-	if (mp15KHzEvent) {
-		mpScheduler->RemoveEvent(mp15KHzEvent);
-		mp15KHzEvent = NULL;
-	}
 
 	for(int i=0; i<8; ++i) {
 		if (mpPotScanEvent[i]) {
@@ -223,14 +235,34 @@ void ATPokeyEmulator::ColdReset() {
 }
 
 void ATPokeyEmulator::SetSlave(ATPokeyEmulator *slave) {
-	ColdReset();
 	if (mpSlave)
 		mpSlave->ColdReset();
 
 	mpSlave = slave;
 
-	if (mpSlave)
+	if (mpSlave) {
 		mpSlave->ColdReset();
+		mpSlave->SyncRenderers(mpRenderer);
+
+		// If we're hot-starting a slave, let's try to get it into
+		// a somewhat reasonable state.
+
+		static const uint8 kInitRegs[][2]={
+			{ 0x00, 0xFF },		// AUDF1 = $00
+			{ 0x01, 0xB0 },		// AUDC1 = $B0
+			{ 0x02, 0xFF },		// AUDF2 = $00
+			{ 0x03, 0xB0 },		// AUDC2 = $B0
+			{ 0x04, 0xFF },		// AUDF3 = $00
+			{ 0x05, 0xB0 },		// AUDC3 = $B0
+			{ 0x06, 0xFF },		// AUDF4 = $00
+			{ 0x07, 0xB0 },		// AUDC4 = $B0
+			{ 0x08, 0x00 },		// AUDCTL = $00
+			{ 0x0F, 0x03 },		// SKCTL = $03
+		};
+
+		for(const auto& data : kInitRegs)
+			mpSlave->WriteByte(data[0], data[1]);
+	}
 
 	UpdateMixTable();
 }
@@ -238,10 +270,6 @@ void ATPokeyEmulator::SetSlave(ATPokeyEmulator *slave) {
 void ATPokeyEmulator::SetCassette(IATPokeyCassetteDevice *dev) {
 	mpCassette = dev;
 	mbSerialRateChanged = true;
-}
-
-void ATPokeyEmulator::SetSoundBoard(IATSoundBoardEmulator *sbe) {
-	mpSoundBoard = sbe;
 }
 
 void ATPokeyEmulator::SetAudioLog(ATPokeyAudioLog *log) {
@@ -253,11 +281,7 @@ void ATPokeyEmulator::Set5200Mode(bool enable) {
 		return;
 
 	mb5200Mode = enable;
-}
-
-void ATPokeyEmulator::SetSerialBurstMode(SerialBurstMode mode) {
-	mSerBurstMode = mode;
-	mbSerInBurstPending = false;
+	UpdateKeyboardScanEvent();
 }
 
 void ATPokeyEmulator::AddSIODevice(IATPokeySIODevice *device) {
@@ -272,12 +296,19 @@ void ATPokeyEmulator::RemoveSIODevice(IATPokeySIODevice *device) {
 		mDevices.erase(it);
 }
 
-void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulateInputPort) {
+void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulateInputPort, bool allowBurst) {
 	if (mbTraceSIO)
-		ATConsoleTaggedPrintf("POKEY: Receiving byte (c=%02x; %02x %02x)\n", c, mSERIN, mSerialInputShiftRegister);
+		ATConsoleTaggedPrintf("POKEY: Receiving byte (c=%02X; %02X %02X) at %u cycles/bit (%.1f baud)\n", c, mSERIN, mSerialInputShiftRegister, cyclesPerBit, 7159090.0f / 4.0f / (float)cyclesPerBit);
+
+	// check for attempted read in init mode (partial fix -- audio not emulated)
+	if (!(mSKCTL & 3)) {
+		if (mbTraceSIO)
+			ATConsoleTaggedPrintf("POKEY: Dropping byte due to initialization mode.\n");
+
+		return;
+	}
 
 	mbSerialSimulateInputPort = simulateInputPort;
-	mSerialInputPendingStatus = 0xff;
 
 	if (simulateInputPort) {
 		mSerialSimulateInputBaseTime = ATSCHEDULER_GETTIME(mpScheduler);
@@ -285,13 +316,23 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 		mSerialSimulateInputData = ((uint32)c << 1) + 0x200;
 	}
 
-	// check for attempted read in synchronous mode
-	if (!(mSKCTL & 0x10)) {
+	if (!(mSKCTL & 0x30) && !mSerialExtPeriod) {
+		if (mbTraceSIO)
+			ATConsoleTaggedPrintf("POKEY: Dropping byte $%02X due to external receive mode being used with no external clock (SKCTL=$%02X).\n", c, mSKCTL);
+
+		return;
+	}
+
+	mSerialInputPendingStatus = 0xff;
+
+	// check for attempted read in synchronous mode; note that external clock mode is OK as presumably that
+	// is synchronized
+	if ((mSKCTL & 0x30) == 0x20) {
 		// set the framing error bit
 		mSerialInputPendingStatus &= 0x7F;
 
 		if (mbTraceSIO)
-			ATConsoleTaggedPrintf("POKEY: Trashing byte $%02x and signaling framing error due to asynchronous input mode not being enabled.\n", c);
+			ATConsoleTaggedPrintf("POKEY: Trashing byte $%02x and signaling framing error due to asynchronous input mode not being enabled (SKCTL=$%02X).\n", c, mSKCTL);
 
 		// blown read -- trash the byte by faking a dropped bit
 		c = (c & 0x0f) + ((c & 0xe0) >> 1) + 0x80;
@@ -299,7 +340,7 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 
 	// check for mismatched baud rate
 	if (cyclesPerBit) {
-		uint32 expectedCPB = GetSerialCyclesPerBit();
+		uint32 expectedCPB = GetSerialCyclesPerBitRecv();
 		uint32 margin = (expectedCPB + 7) >> 3;
 
 		if (cyclesPerBit < expectedCPB - margin || cyclesPerBit > expectedCPB + margin) {
@@ -312,7 +353,14 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 		}
 	}
 
-	if (mSKCTL & 0x10) {
+	if (!(mSKCTL & 0x30)) {
+		if (mpEventSerialInput) {
+			if (mbTraceSIO)
+				ATConsoleTaggedPrintf("POKEY: Interrupting send already in progress (%u cycles, %u bits left).\n", c, mpScheduler->GetTicksToEvent(mpEventSerialInput), mSerialInputCounter);
+		}
+
+		mpScheduler->SetEvent(mSerialExtPeriod, this, kATPokeyEventSerialInput, mpEventSerialInput);
+	} else if (mSKCTL & 0x10) {
 		// Restart timers 3 and 4 immediately.
 		UpdateTimerCounter<2>();
 		UpdateTimerCounter<3>();
@@ -330,12 +378,28 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 	}
 
 	mSerialInputShiftRegister = c;
-	mSerialInputCounter = 19;
+
+	if (!(mSKCTL & 0x30))
+		mSerialInputCounter = 9;
+	else
+		mSerialInputCounter = 19;
 
 	// assert serial input busy
 	mSKSTAT &= 0xfd;
 
-	mbSerInDeferredLoad = simulateInputPort && !mSerBurstMode;
+	mbSerInDeferredLoad = simulateInputPort;
+	
+	if (allowBurst) {
+		mbSerInBurstPendingData = true;
+		mbSerInBurstPendingIRQ1 = true;
+		mbSerInDeferredLoad = false;
+	} else {
+		mbSerInBurstPendingData = false;
+		mbSerInBurstPendingIRQ1 = false;
+	}
+
+	mbSerInBurstPendingIRQ2 = false;
+	mSerOutBurstDeadline = 0;
 
 	if (!mbSerInDeferredLoad)
 		ProcessReceivedSerialByte();
@@ -377,6 +441,11 @@ void ATPokeyEmulator::SetSpeaker(bool newState) {
 void ATPokeyEmulator::SetExternalSerialClock(uint32 basetime, uint32 period) {
 	mSerialExtBaseTime = basetime;
 	mSerialExtPeriod = period;
+
+	if (!period) {
+		mpScheduler->UnsetEvent(mpEventSerialInput);
+		mpScheduler->UnsetEvent(mpEventSerialOutput);
+	}
 }
 
 bool ATPokeyEmulator::IsChannelEnabled(uint32 channel) const {
@@ -401,27 +470,47 @@ void ATPokeyEmulator::SetNonlinearMixingEnabled(bool enable) {
 	}
 }
 
-void ATPokeyEmulator::SetShiftKeyState(bool newState) {
+void ATPokeyEmulator::SetShiftKeyState(bool newState, bool immediate) {
 	mbShiftKeyState = newState;
 
-	if (newState)
-		mSKSTAT &= ~0x08;
-	else
-		mSKSTAT |= 0x08;
+	// Shift key state can only change if keyboard scan is enabled. Debounce doesn't matter.
+	if (immediate && (mSKCTL & 0x02)) {
+		if (newState)
+			mSKSTAT &= ~0x08;
+		else
+			mSKSTAT |= 0x08;
+	}
+
+	// Shift is on the $10-17 row with the KR2 column
+	UpdateKeyMatrix(2, 0x100, newState ? 0x100 : 0);
 }
 
 void ATPokeyEmulator::SetControlKeyState(bool newState) {
 	mbControlKeyState = newState;
+
+	// Control is on the $00-07 row with the KR2 column
+	UpdateKeyMatrix(0, 0x100, newState ? 0x100 : 0);
 }
 
 void ATPokeyEmulator::PushKey(uint8 c, bool repeat, bool allowQueue, bool flushQueue, bool useCooldown) {
-	if (mb5200Mode)
+	SetKeyboardModes(true, false);
+
+	// Discard keys that are impossible due to key matrix conflicts.
+	// Codes 0xC0-C7 and 0xD0-D7 cannot be produced due to a keyboard
+	// matrix conflict when Ctrl+Shift is pressed and keys on 0x00-07/10-17.
+	// They ARE possible with debounce disabled, but we don't support that
+	// in the cooked key path.
+	if ((c & 0xE8) == 0xC0)
+		return;
+
+	// If debounce or scan is disabled, drop the key.
+	if ((mSKCTL & 3) != 3)
 		return;
 
 	mbUseKeyCooldownTimer = useCooldown;
 
 	if (allowQueue) {
-		if (!mKeyQueue.empty() || mKeyCodeTimer || mKeyCooldownTimer || !(mIRQST & 0x40) || !mpConn->PokeyIsKeyPushOK(c)) {
+		if (!mKeyQueue.empty() || mbKeyboardIRQPending || mKeyCodeTimer || mKeyCooldownTimer || !(mIRQST & 0x40) || !mpConn->PokeyIsKeyPushOK(c)) {
 			mKeyQueue.push_back(c);
 			return;
 		}
@@ -433,73 +522,139 @@ void ATPokeyEmulator::PushKey(uint8 c, bool repeat, bool allowQueue, bool flushQ
 	mSKSTAT &= ~0x04;
 
 	if (!mKeyCodeTimer || !repeat)
-		mbKeyboardIRQPending = true;
+		QueueKeyboardIRQ();
 
 	mKeyCodeTimer = 1;
 	mKeyCooldownTimer = 0;
 }
 
-void ATPokeyEmulator::PushRawKey(uint8 c) {
+uint64 ATPokeyEmulator::GetRawKeyMask() const {
+	uint64 v = 0;
+
+	for(int i=0; i<8; ++i)
+		v += (uint64)(mKeyMatrix[i] & 0xFF) << (i*8);
+
+	return v;
+}
+
+void ATPokeyEmulator::PushRawKey(uint8 c, bool immediate) {
 	if (mb5200Mode)
 		return;
 
+	SetKeyboardModes(false, !immediate);
 	mKeyQueue.clear();
 
-	mKBCODE = c;
-	mSKSTAT &= ~0x04;
+	int row = (c >> 3) & 7;
+	uint16 colbit = 1 << (c & 7);
 
-	if ((mIRQEN & 0x40) && (mSKCTL & 2)) {
-		// If keyboard IRQ is already active, set the keyboard overrun bit.
-		if (!(mIRQST & 0x40))
-			mSKSTAT &= ~0x40;
+	if (!immediate) {
+		UpdateKeyMatrix(row, colbit, 0xFF);
+	} else {
+		// Stomp the entire main keyboard matrix with the newly pressed key (NOT the
+		// extended matrix!). We need to update the effective matrix, too. Since we
+		// only have one key active in the main matrix, it is not possible to introduce
+		// phantoms in Ctrl/Shift/Break. It IS possible for Ctrl/Shift/Break to interfere
+		// with the main matrix if two are held down; we handle Ctrl+Shift by a check on
+		// the key code and ignore the Break conflict.
+		for(int i=0; i<8; ++i)
+			mKeyMatrix[i] &= 0xFF00;
 
-		mIRQST &= ~0x40;
-		mpConn->PokeyAssertIRQ(false);
+		mKeyMatrix[row] |= colbit;
+
+		memcpy(mEffectiveKeyMatrix, mKeyMatrix, sizeof mEffectiveKeyMatrix);
+
+		// If we're in immediate mode, scan and debounce are enabled, and it's
+		// not a key blocked by an inherent matrix conflict, push it now.
+		if ((mSKCTL & 3) == 3 && (c & 0xE8) != 0xC0) {
+			mSKSTAT &= ~0x04;
+			mKBCODE = c;
+		
+			QueueKeyboardIRQ();
+		}
 	}
 }
 
-void ATPokeyEmulator::ReleaseRawKey() {
-	mSKSTAT |= 0x04;
+void ATPokeyEmulator::ReleaseRawKey(uint8 c, bool immediate) {
+	if (mb5200Mode)
+		return;
+
+	SetKeyboardModes(false, !immediate);
+	mKeyQueue.clear();
+
+	const int row = (c >> 3) & 7;
+	const uint16 colbit = 1 << (c & 7);
+	if (!immediate) {
+		UpdateKeyMatrix(row, colbit, 0);
+	} else {
+		if (mKeyMatrix[row] & colbit) {
+			for(int i=0; i<8; ++i)
+				mKeyMatrix[i] &= 0xFF00;
+
+			memcpy(mEffectiveKeyMatrix, mKeyMatrix, sizeof mEffectiveKeyMatrix);
+
+			mSKSTAT |= 0x04;
+		}
+	}
 }
 
-void ATPokeyEmulator::SetBreakKeyState(bool state) {
+void ATPokeyEmulator::ReleaseAllRawKeys(bool immediate) {
+	if (mb5200Mode)
+		return;
+
+	memset(mKeyMatrix, 0, sizeof mKeyMatrix);
+	memset(mEffectiveKeyMatrix, 0, sizeof mEffectiveKeyMatrix);
+
+	if (immediate) {
+		mbKeyboardIRQPending = false;
+		mSKSTAT |= 0x04;
+	}
+
+	SetKeyboardModes(mbCookedKeyMode, !immediate);
+}
+
+void ATPokeyEmulator::SetBreakKeyState(bool state, bool immediate) {
+	if (mbBreakKeyState == state)
+		return;
+
 	mbBreakKeyState = state;
 
-	if (state) {
-		if (mIRQEN & mIRQST & 0x80) {
-			mIRQST &= ~0x80;
-			mpConn->PokeyAssertIRQ(false);
-		}
-	} else {
-		if (!(mIRQST & 0x80)) {
-			mIRQST |= 0x80;
-
-			if (!(mIRQEN & ~mIRQST))
-				mpConn->PokeyNegateIRQ(false);
-		}
+	if (immediate) {
+		if (state)
+			PushBreak();
 	}
+
+	// Break is on the $30-37 row with the KR2 column
+	UpdateKeyMatrix(6, 0x100, state ? 0x100 : 0);
 }
 
 void ATPokeyEmulator::PushBreak() {
 	mKeyQueue.clear();
 
-	if (mIRQEN & 0x80) {
-		mIRQST &= ~0x80;
-		mpConn->PokeyAssertIRQ(false);
-	}
-}
-
-void ATPokeyEmulator::UpdateKeyMatrix(int index, bool depressed) {
-	mbKeyMatrix[index] = depressed;
+	// The keyboard scan must be enabled for Break to be detected. However, debounce
+	// doesn't matter.
+	if (mSKCTL & 2)
+		AssertBreakIRQ();
 }
 
 void ATPokeyEmulator::SetKeyMatrix(const bool matrix[64]) {
-	for(int i=0; i<64; ++i)
-		mbKeyMatrix[i] = matrix[i];
-}
+	uint16 *dst = mKeyMatrix;
+	const bool *src = matrix;
 
-void ATPokeyEmulator::ClearKeyMatrix() {
-	memset(mbKeyMatrix, 0, sizeof mbKeyMatrix);
+	for(int i=0; i<8; ++i) {
+		uint16 v	= (src[0] ? 0x01 : 0x00)
+					+ (src[1] ? 0x02 : 0x00)
+					+ (src[2] ? 0x04 : 0x00)
+					+ (src[3] ? 0x08 : 0x00)
+					+ (src[4] ? 0x10 : 0x00)
+					+ (src[5] ? 0x20 : 0x00)
+					+ (src[6] ? 0x40 : 0x00)
+					+ (src[7] ? 0x80 : 0x00);
+
+		dst[i] = (dst[i] & 0xFF00) + v;
+		src += 8;
+	}
+
+	UpdateEffectiveKeyMatrix();
 }
 
 template<uint8 activeChannel>
@@ -549,24 +704,8 @@ void ATPokeyEmulator::FireTimer() {
 			mpConn->PokeyAssertIRQ(false);
 		}
 
-		if (mSerialInputCounter && (mSKCTL & 0x30)) {
-			--mSerialInputCounter;
-
-			if (!mSerialInputCounter) {
-				// deassert serial input active
-				mSKSTAT |= 0x02;
-
-				mbSerialWaitingForStartBit = true;
-
-				if ((mSKCTL & 0x10) && !mbLinkedTimers34) {
-					mCounter[2] = mAUDFP1[2];
-					SetupTimers(0x04);
-				}
-
-				if (mbSerInDeferredLoad)
-					ProcessReceivedSerialByte();
-			}
-		}
+		if (mSKCTL & 0x30)
+			OnSerialInputTick();
 
 		if (mSerialOutputCounter) {
 			switch(mSKCTL & 0x60) {
@@ -576,6 +715,62 @@ void ATPokeyEmulator::FireTimer() {
 					break;
 			}
 		}
+	}
+}
+
+uint32 ATPokeyEmulator::UpdateLast15KHzTime() {
+	return UpdateLast15KHzTime(ATSCHEDULER_GETTIME(mpScheduler));
+}
+
+uint32 ATPokeyEmulator::UpdateLast15KHzTime(uint32 t) {
+	uint32 offset = t - mLast15KHzTime;
+
+	if (offset >= 114)
+		mLast15KHzTime += offset - offset % 114;
+
+	return mLast15KHzTime;
+}
+
+uint32 ATPokeyEmulator::UpdateLast64KHzTime() {
+	return UpdateLast64KHzTime(ATSCHEDULER_GETTIME(mpScheduler));
+}
+
+uint32 ATPokeyEmulator::UpdateLast64KHzTime(uint32 t) {
+	uint32 offset = t - mLast64KHzTime;
+
+	if (offset >= 28) {
+		mLast64KHzTime += 28;
+		offset -= 28;
+
+		if (offset >= 28)
+			mLast64KHzTime += offset - offset % 28;
+	}
+
+	return mLast64KHzTime;
+}
+
+void ATPokeyEmulator::OnSerialInputTick() {
+	if (!mSerialInputCounter)
+		return;
+
+	--mSerialInputCounter;
+
+	if (!mSerialInputCounter) {
+		// deassert serial input active
+		mSKSTAT |= 0x02;
+
+		mbSerialWaitingForStartBit = true;
+
+		if ((mSKCTL & 0x10) && !mbLinkedTimers34) {
+			mCounter[2] = mAUDFP1[2];
+			SetupTimers(0x04);
+		}
+
+		if (mbSerInDeferredLoad)
+			ProcessReceivedSerialByte();
+	} else {
+		if (!(mSKCTL & 0x30) && mSerialExtPeriod)
+			mpScheduler->SetEvent(mSerialExtPeriod, this, kATPokeyEventSerialInput, mpEventSerialInput);
 	}
 }
 
@@ -620,12 +815,26 @@ void ATPokeyEmulator::OnSerialOutputTick() {
 					);
 			}
 
-			for(Devices::const_iterator it(mDevices.begin()), itEnd(mDevices.end()); it!=itEnd; ++it)
-				(*it)->PokeyWriteSIO(mSerialOutputShiftRegister, mbCommandLineState, cyclesPerBit);
+
+			bool burstOK = false;
+
+			for(IATPokeySIODevice *dev : mDevices) {
+				if (dev->PokeyWriteSIO(mSerialOutputShiftRegister, mbCommandLineState, cyclesPerBit))
+					burstOK = true;
+			}
+
+			if (burstOK)
+				mSerOutBurstDeadline = (ATSCHEDULER_GETTIME(mpScheduler) + cyclesPerBit*10) | 1;
+			else
+				mSerOutBurstDeadline = 0;
 		}
 
 		if (mbSerOutValid) {
 			mSerialOutputCounter = 20;
+
+			if (mSerOutBurstDeadline && ATSCHEDULER_GETTIME(mpScheduler) - mSerOutBurstDeadline >= uint32(0x80000000))
+				mSerialOutputCounter = 1;
+
 			mbSerialOutputState = true;
 			mSerialOutputShiftRegister = mSEROUT;
 			mbSerOutValid = false;
@@ -646,11 +855,18 @@ void ATPokeyEmulator::OnSerialOutputTick() {
 	}
 
 	// check if we must reset the tick for external clock
-	if (mSerialOutputCounter && !(mSKCTL & 0x60))
-		mpScheduler->SetEvent(mSerialExtPeriod, this, kATPokeyEventSerialOutput, mpEventSerialOutput);
+	if (mSerialOutputCounter && !(mSKCTL & 0x60)) {
+		if (mSerialExtPeriod)
+			mpScheduler->SetEvent(mSerialExtPeriod, this, kATPokeyEventSerialOutput, mpEventSerialOutput);
+		else
+			mpScheduler->UnsetEvent(mpEventSerialOutput);
+	}
 }
 
-uint32 ATPokeyEmulator::GetSerialCyclesPerBit() const {
+uint32 ATPokeyEmulator::GetSerialCyclesPerBitRecv() const {
+	if (!(mSKCTL & 0x30))
+		return mSerialExtPeriod;
+
 	const uint32 divisor = mTimerPeriod[3];
 
 	return divisor + divisor;
@@ -671,7 +887,7 @@ void ATPokeyEmulator::AdvanceScanLine() {
 		mbSerialRateChanged = false;
 
 		if (mpCassette) {
-			uint32 divisor = GetSerialCyclesPerBit() >> 1;
+			uint32 divisor = GetSerialCyclesPerBitRecv() >> 1;
 
 			mpCassette->PokeyChangeSerialRate(divisor);
 		}
@@ -681,6 +897,9 @@ void ATPokeyEmulator::AdvanceScanLine() {
 		if (mpAudioLog->mRecordedCount < mpAudioLog->mMaxCount)
 			GetAudioState(mpAudioLog->mpStates[mpAudioLog->mRecordedCount++]);
 	}
+
+	if (mpSlave)
+		mpSlave->AdvanceScanLine();
 }
 
 void ATPokeyEmulator::AdvanceFrame(bool pushAudio) {
@@ -696,7 +915,7 @@ void ATPokeyEmulator::AdvanceFrame(bool pushAudio) {
 		if (mKeyCooldownTimer)
 			--mKeyCooldownTimer;
 
-		if ((mIRQST & mIRQEN & 0x40) && !mKeyQueue.empty() && ((mbUseKeyCooldownTimer && !mKeyCooldownTimer) || mpConn->PokeyIsKeyPushOK(mKeyQueue.front())))
+		if (!mKeyQueue.empty() && !mbKeyboardIRQPending && (mIRQST & mIRQEN & 0x40) && ((mbUseKeyCooldownTimer && !mKeyCooldownTimer) || mpConn->PokeyIsKeyPushOK(mKeyQueue.front())))
 			TryPushNextKey();
 	}
 
@@ -735,8 +954,9 @@ void ATPokeyEmulator::AdvanceFrame(bool pushAudio) {
 		mDeferredTimerStarts[i] += bigPeriod;
 	}
 
-	if (t - mLast64KHzTime > 28*65536)
-		mLast64KHzTime += 28*65536;
+	// Catch up 15KHz and 64Khz clocks.
+	UpdateLast15KHzTime();
+	UpdateLast64KHzTime();
 
 	// Catch up the external clock, to avoid glitches at 2^32
 	if (mSerialExtPeriod) {
@@ -751,30 +971,25 @@ void ATPokeyEmulator::AdvanceFrame(bool pushAudio) {
 
 void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 	switch(id) {
-		case kATPokeyEvent15KHzTick:
+		case kATPokeyEventKeyboardIRQ:
+			mpKeyboardIRQEvent = nullptr;
+
+			if (mbKeyboardIRQPending) {
+				mbKeyboardIRQPending = false;
+
+				if (mSKCTL & 2)
+					AssertKeyboardIRQ();
+			}
+			break;
+
+		case kATPokeyEventKeyboardScan:
 			{
-				mp15KHzEvent = mpScheduler->AddEvent(114, this, kATPokeyEvent15KHzTick);
+				mpKeyboardScanEvent = nullptr;
 
-				uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-				mLast15KHzTime = t;
+				if ((mb5200Mode || mbKeyboardScanEnabled) && (mSKCTL & 2)) {
+					mpKeyboardScanEvent = mpScheduler->AddEvent(114, this, kATPokeyEventKeyboardScan);
 
-				if (mbKeyboardIRQPending) {
-					mbKeyboardIRQPending = false;
-
-					if ((mIRQEN & 0x40) && (mSKCTL & 2)) {
-						// If keyboard IRQ is already active, set the keyboard overrun bit.
-						if (!(mIRQST & 0x40))
-							mSKSTAT &= ~0x40;
-
-						mIRQST &= ~0x40;
-						mpConn->PokeyAssertIRQ(false);
-					}
-				}
-
-				if (mb5200Mode && (mSKCTL & 2)) {
-					++mKeyScanCode;
-
-					uint8 kc = mKeyScanCode & 0x3F;
+					const uint8 kc = mKeyScanCode++ & 0x3F;
 
 					// POKEY's keyboard circuitry is a two-bit state machine with a keyboard line and
 					// a comparator as input, and result/comparator latch signals as output. The state
@@ -804,20 +1019,56 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 					// for a key to be recognized, and since keys are mirrored four times on the 5200
 					// keypad, this causes IRQs to be sent 8 times a frame.
 
+					switch(kc) {
+						case 0x00:
+							mbControlKeyLatchedState = (mEffectiveKeyMatrix[0] & 0x100) != 0;
+							break;
+
+						case 0x10:
+							{
+								const bool shiftState = (mEffectiveKeyMatrix[2] & 0x100) != 0;
+
+								if (mbShiftKeyLatchedState != shiftState) {
+									mbShiftKeyLatchedState = shiftState;
+
+									if (shiftState)
+										mSKSTAT &= ~0x08;
+									else
+										mSKSTAT |= 0x08;
+								}
+							}
+							break;
+
+						case 0x30:
+							{
+								const bool breakKeyState = (mEffectiveKeyMatrix[6] & 0x100) != 0;
+
+								if (mbBreakKeyLatchedState != breakKeyState) {
+									mbBreakKeyLatchedState = breakKeyState;
+
+									if (breakKeyState)
+										AssertBreakIRQ();
+								}
+							}
+							break;
+					}
+
+					const bool keyState = (mEffectiveKeyMatrix[kc >> 3] & (1 << (kc & 7))) != 0;
+
 					switch(mKeyScanState) {
 						case 0:		// waiting for key
-							if (mbKeyMatrix[kc]) {
+							if (keyState) {
 								mKeyScanLatch = kc;
 								mKeyScanState = 1;
 							}
 							break;
 
 						case 1:		// waiting for key bounce
-							if (mbKeyMatrix[kc]) {
+							if (keyState) {
 								if (kc == mKeyScanLatch || !(mSKCTL & 1)) {
 									// same key down -- fire IRQ, save key, and continue
 									mKeyScanState = 2;
-									mKBCODE = kc | (mbControlKeyState ? 0x40 : 0x00) | (mbShiftKeyState ? 0x80 : 0x00);
+									mKBCODE = kc | (mbShiftKeyLatchedState ? 0x40 : 0x00) | (mbControlKeyLatchedState ? 0x80 : 0x00);
 									mSKSTAT &= ~0x04;
 									if (mIRQEN & 0x40) {
 										// If keyboard IRQ is already active, set the keyboard overrun bit.
@@ -840,7 +1091,7 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 
 						case 2:		// waiting for key up
 							if (kc == mKeyScanLatch || !(mSKCTL & 1)) {
-								if (!mbKeyMatrix[kc]) {
+								if (!keyState) {
 									mKeyScanState = 3;
 								}
 							}
@@ -848,7 +1099,7 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 
 						case 3:		// waiting for debounce
 							if (kc == mKeyScanLatch || !(mSKCTL & 1)) {
-								if (mbKeyMatrix[kc])
+								if (keyState)
 									mKeyScanState = 2;
 								else {
 									mSKSTAT |= 0x04;
@@ -947,6 +1198,13 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 
 			if (mSerialOutputCounter)
 				OnSerialOutputTick();
+			break;
+
+		case kATPokeyEventSerialInput:
+			mpEventSerialInput = NULL;
+
+			if (mSerialInputCounter)
+				OnSerialInputTick();
 			break;
 
 		default:
@@ -1172,24 +1430,12 @@ void ATPokeyEmulator::SetupTimers(uint8 channels) {
 	int cyclesToNextSlowTick;
 
 	if (mbUse15KHzClock) {
-		cyclesToNextSlowTick = 114 - (t - mLast15KHzTime);
+		cyclesToNextSlowTick = 114 - (t - UpdateLast15KHzTime());
 
 		if (cyclesToNextSlowTick)
 			cyclesToNextSlowTick -= 114;
 	} else {
-		int slowTickOffset = t - mLast64KHzTime;
-
-		if (slowTickOffset >= 28) {
-			mLast64KHzTime += 28;
-			slowTickOffset -= 28;
-
-			if (slowTickOffset >= 28) {
-				int largeDelta = slowTickOffset - slowTickOffset % 28;
-
-				mLast64KHzTime += largeDelta;
-				slowTickOffset -= largeDelta;
-			}
-		}
+		int slowTickOffset = t - UpdateLast64KHzTime();
 
 		cyclesToNextSlowTick = (28 - slowTickOffset);
 
@@ -1636,9 +1882,17 @@ uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
 				if (mbTraceSIO)
 					ATConsoleTaggedPrintf("POKEY: Reading SERIN value %02x (shiftreg: %02x)\n", c, mSerialInputShiftRegister);
 
-				if ((mIRQST & 0x20) && mSerBurstMode == kSerialBurstMode_Standard) {
-					for(Devices::const_iterator it(mDevices.begin()), itEnd(mDevices.end()); it!=itEnd && (mIRQST & 0x20); ++it)
-						(*it)->PokeySerInReady();
+				if (mbSerInBurstPendingData) {
+					mbSerInBurstPendingData = false;
+
+					if (!mbSerInBurstPendingIRQ1 && !mbSerInBurstPendingIRQ2) {
+						for(IATPokeySIODevice *dev : mDevices) {
+							if (mbSerInBurstPendingData)
+								break;
+
+							dev->PokeySerInReady();
+						}
+					}
 				}
 
 				return c;
@@ -1646,15 +1900,6 @@ uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
 			break;
 
 		case 0x0E:	// $D20E IRQST
-			if (mbSerInBurstPending) {
-				if (mSerBurstMode == kSerialBurstMode_Polled) {
-					for(Devices::const_iterator it(mDevices.begin()), itEnd(mDevices.end()); it!=itEnd && (mIRQST & 0x20); ++it)
-						(*it)->PokeySerInReady();
-				}
-
-				mbSerInBurstPending = false;
-			}
-
 			return mIRQST;
 
 		case 0x0F:
@@ -1855,7 +2100,7 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 			if (mSKCTL & 4)
 				mPotScanStartTime = ATSCHEDULER_GETTIME(mpScheduler);
 			else
-				mPotScanStartTime = mLast15KHzTime;
+				mPotScanStartTime = UpdateLast15KHzTime();
 
 			for(int i=0; i<8; ++i) {
 				if (mpPotScanEvent[i])
@@ -1927,9 +2172,6 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 				else
 					mpConn->PokeyAssertIRQ(true);
 
-				if ((mIRQST & 0x20) && mSerBurstMode == kSerialBurstMode_Polled)
-					mbSerInBurstPending = true;
-
 				// Check if any of the IRQ bits are being turned on and we are currently running that timer
 				// in deferred mode. If so, we need to yank it out of deferred mode. We don't do the
 				// opposite here; we wait until the existing timer expires to reinit the timer into
@@ -1962,6 +2204,29 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 						}
 					}
 				}
+
+				// check if the receive interrupt was toggled
+				if (delta & 0x20) {
+					if (value & 0x20) {
+						if (mbSerInBurstPendingIRQ2) {
+							mbSerInBurstPendingIRQ2 = false;
+							
+							if (!mbSerInBurstPendingData) {
+								for(IATPokeySIODevice *dev : mDevices) {
+									if (mbSerInBurstPendingData)
+										break;
+
+									dev->PokeySerInReady();
+								}
+							}
+						}
+					} else {
+						if (mbSerInBurstPendingIRQ1) {
+							mbSerInBurstPendingIRQ1 = false;
+							mbSerInBurstPendingIRQ2 = true;
+						}
+					}
+				}
 			}
 			break;
 		case 0x0F:
@@ -1977,17 +2242,21 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 					mCounter[3] = mAUDFP1[3];
 				}
 
+				const uint8 delta = value ^ mSKCTL;
+
+				// force serial rate re-evaluation if any clocking mode bits have changed
+				if (delta & 0x70)
+					mbSerialRateChanged = true;
+
 				bool prvInit = (mSKCTL & 3) == 0;
 				bool newInit = (value & 3) == 0;
 
 				if (newInit != prvInit) {
 					if (newInit) {
-						if (mp15KHzEvent) {
-							mpScheduler->RemoveEvent(mp15KHzEvent);
-							mp15KHzEvent = NULL;
-						}
+						mpScheduler->UnsetEvent(mpKeyboardScanEvent);
+						mpScheduler->UnsetEvent(mpKeyboardIRQEvent);
 					} else {
-						VDASSERT(!mp15KHzEvent);
+						VDASSERT(!mpKeyboardScanEvent);
 
 						// The 64KHz polynomial counter is a 5-bit LFSR that is reset to all 1s
 						// on init and XORs bits 4 and 2, if seen as shifting left. In order to
@@ -2001,7 +2270,6 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 						// on init and XNORs bits 7 and 6, if seen as shifting left. In order to
 						// achieve a 114 cycle period, a one is force fed when the register
 						// equals 1001001.
-						mp15KHzEvent = mpScheduler->AddEvent(81, this, kATPokeyEvent15KHzTick);
 
 						mLast15KHzTime = ATSCHEDULER_GETTIME(mpScheduler) + 81 - 114;
 						mLast64KHzTime = ATSCHEDULER_GETTIME(mpScheduler) + 22 - 28;
@@ -2021,6 +2289,12 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 					mbSerShiftValid = false;
 					mbSerialOutputState = false;
 
+					// reset burst state
+					mbSerInBurstPendingData = false;
+					mbSerInBurstPendingIRQ1 = false;
+					mbSerInBurstPendingIRQ2 = false;
+					mSerOutBurstDeadline = 0;
+
 					// reset serial input active bit
 					mSKSTAT |= 0x02;
 
@@ -2037,6 +2311,44 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 				}
 
 				mSKCTL = value;
+
+				// check for change in keyboard scan
+				if (delta & 0x02) {
+					if (!(value & 0x02)) {
+						// Keyboard scan is being disabled -- this resets the keyboard state machine
+						// and so bit 2 deasserts. However, this doesn't affect the shift key state
+						// (bit 3).
+						mSKSTAT |= 0x04;
+
+						mKeyScanState = 0;
+						mKeyScanCode = 0;
+					} else {
+						// Keyboard scan is being enabled -- check if we are in cooked/non-immediate raw mode, and
+						// if so, immediately update the shift key state
+						if (!mbKeyboardScanEnabled && !mb5200Mode) {
+							if (mbShiftKeyState)
+								mSKSTAT &= ~0x08;
+							else
+								mSKSTAT |= 0x08;
+
+							if ((mKeyMatrix[0]
+								| mKeyMatrix[1]
+								| mKeyMatrix[2]
+								| mKeyMatrix[3]
+								| mKeyMatrix[4]
+								| mKeyMatrix[5]
+								| mKeyMatrix[6]
+								| mKeyMatrix[7]) & 0xff)
+							{
+								mSKSTAT &= ~0x04;
+								QueueKeyboardIRQ();
+							}
+						}
+					}
+
+					UpdateKeyboardScanEvent();
+				}
+
 				RecomputeAllowedDeferredTimers();
 				SetupTimers(0x0f);
 			}
@@ -2145,7 +2457,14 @@ void ATPokeyEmulator::EndLoadState(ATSaveStateReader& reader) {
 
 	mLastPolyTime = t;
 
-	mpScheduler->SetEvent(114 - (t - mLast15KHzTime), this, kATPokeyEvent15KHzTick, mp15KHzEvent);
+	uint32 keyboardTickOffset = 114 - (t - UpdateLast15KHzTime());
+
+	if (mbKeyboardIRQPending)
+		mpScheduler->SetEvent(keyboardTickOffset, this, kATPokeyEventKeyboardIRQ, mpKeyboardIRQEvent);
+	else
+		mpScheduler->UnsetEvent(mpKeyboardIRQEvent);
+
+	UpdateKeyboardScanEvent();
 
 	RecomputeTimerPeriod<0>();
 	RecomputeTimerPeriod<1>();
@@ -2202,8 +2521,8 @@ void ATPokeyEmulator::SaveStatePrivate(ATSaveStateWriter& writer) {
 	for(int i=0; i<4; ++i)
 		writer != mCounterBorrow[i];
 
-	writer.WriteUint8(t - mLast15KHzTime);
-	writer.WriteUint8(t - mLast64KHzTime);
+	writer.WriteUint8(t - UpdateLast15KHzTime(t));
+	writer.WriteUint8(t - UpdateLast64KHzTime(t));
 
 	int polyDelta = t - mLastPolyTime;
 	writer.WriteUint16((mPoly9Counter + polyDelta) % 511);
@@ -2235,7 +2554,7 @@ void ATPokeyEmulator::DumpStatus(bool isSlave) {
 		if (mbDeferredTimerEvents[i]) {
 			uint32 delay;
 
-			if (mDeferredTimerStarts[i] > t)
+			if (mDeferredTimerStarts[i] - t - 1 < 0x7FFFFFFF)		// wrap(start > t) => wrap(start - t) > 0 => 0 < (start - t) < 80000000
 				delay = mDeferredTimerStarts[i] - t;
 			else
 				delay = mDeferredTimerPeriods[i] - (t - mDeferredTimerStarts[i]) % mDeferredTimerPeriods[i];
@@ -2258,8 +2577,47 @@ void ATPokeyEmulator::DumpStatus(bool isSlave) {
 		, mAUDCTL & 0x04 ? ", highpass 1+3" : ""
 		, mAUDCTL & 0x02 ? ", highpass 2+4" : ""
 		, mAUDCTL & 0x01 ? ", 15KHz" : ", 64KHz");
-	ATConsolePrintf("SKCTL: %02x\n", mSKCTL);
-	ATConsolePrintf("SERIN: %02x\n", mSERIN);
+
+	static const char *kRecvModes[4]={
+		"recv ext",
+		"recv ch3+4 async",
+		"recv ch4",
+		"recv ch3+4 async",
+	};
+
+	static const char *kSendModes[8]={
+		"send ext",
+		"send ext",
+		"send ch4",
+		"send ch4 async (x)",
+		"send ch4",
+		"send ch4 async (x)",
+		"send ch2",
+		"send ch2",
+	};
+
+	static const char *kInitModes[4]={
+		"init mode",
+		"keyboard scan disabled",
+		"keyboard scan enabled w/o debounce",
+		"keyboard scan enabled",
+	};
+
+	ATConsolePrintf("SKCTL: %02x | %s | %s | %s | %s%s%s\n"
+		, mSKCTL
+		, kRecvModes[(mSKCTL >> 4) & 3]
+		, kSendModes[(mSKCTL >> 4) & 7]
+		, kInitModes[mSKCTL & 3]
+		, mSKCTL & 0x80 ? " | force break" : ""
+		, mSKCTL & 0x08 ? " | two-tone mode" : ""
+		, mSKCTL & 0x04 ? " | fast pot scan" : ""
+		);
+
+	if (mSerialInputCounter)
+		ATConsolePrintf("SERIN: %02X (shifting in %02X)\n", mSERIN, mSerialInputShiftRegister);
+	else
+		ATConsolePrintf("SERIN: %02X\n", mSERIN);
+
 	ATConsolePrintf("SEROUT: %02x (%s)\n", mSEROUT, mbSerOutValid ? "pending" : "done");
 	ATConsolePrintf("        shift register %02x (%d: %s)\n", mSerialOutputShiftRegister, mSerialOutputCounter, mSerialOutputCounter ? "pending" : "done");
 	ATConsolePrintf("IRQEN:  %02x%s%s%s%s%s%s%s%s\n"
@@ -2307,21 +2665,12 @@ void ATPokeyEmulator::FlushAudio(bool pushAudio) {
 	if (mpAudioOut) {
 		uint32 timestamp = mpConn->PokeyGetTimestamp() - 28 * outputSampleCount;
 
-		if (mpSoundBoard) {
-			mpSoundBoard->WriteAudio(
-				mpRenderer->GetOutputBuffer(),
-				mpSlave ? mpSlave->mpRenderer->GetOutputBuffer() : NULL,
-				outputSampleCount,
-				pushAudio,
-				timestamp);
-		} else {
-			mpAudioOut->WriteAudio(
-				mpRenderer->GetOutputBuffer(),
-				mpSlave ? mpSlave->mpRenderer->GetOutputBuffer() : NULL,
-				outputSampleCount,
-				pushAudio,
-				timestamp);
-		}
+		mpAudioOut->WriteAudio(
+			mpRenderer->GetOutputBuffer(),
+			mpSlave ? mpSlave->mpRenderer->GetOutputBuffer() : NULL,
+			outputSampleCount,
+			pushAudio,
+			timestamp);
 	}
 }
 
@@ -2379,11 +2728,153 @@ void ATPokeyEmulator::UpdateMixTable() {
 	}
 }
 
+void ATPokeyEmulator::UpdateKeyMatrix(int index, uint16 mask, uint16 state) {
+	uint16 delta = (mKeyMatrix[index] ^ state) & mask;
+
+	if (delta) {
+		mKeyMatrix[index] ^= delta;
+
+		UpdateEffectiveKeyMatrix();
+	}
+}
+
+// Three or more keys pressed at the same time can produce phantom keys
+// by connecting column lines to the active row line by other row lines:
+//
+// 1   .    A<---B
+//     .    |    ^
+//     .    |    |
+// 2 --.----.--->C   active row
+//     .    |    |
+//     .    |    |
+// 3   .    .    .
+//     .    |    |
+//     .    v    v
+//     1    2    3
+//        sensed columns
+//
+// Here the connections formed by depressed keys A, B, and C cause a
+// false detection of a fourth key at row 2, column 2. Trickier, however,
+// is that such phantom keys can effectively serve as one of the keys
+// necessary to produce other phantom keys:
+//
+// 1   .    A<---B
+//     .    |    ^
+//     .    |    |
+// 2 --E----.--->C
+//     |    |    |
+//     |    |    |
+// 3 --D----.----.   active row
+//     .    |    |
+//     .    v    v
+//     1    2    3
+//        sensed columns
+//
+// In this case, phantom keys at row 2, column 2 and row 3, column 3
+// can be directly determined, but an additional phantom key at row
+// 3, column 2 is also indirectly produced. This means that we need
+// to produce the transitive closure of all interactions to get the
+// full set of phantom keys.
+//
+// Why do we bother with this? Normally, pressing multiple keys does
+// nothing because of debounce. However, there are two exceptions.
+// First, Ctrl/Shift/Break participate in the matrix but are not
+// affected by debounce. This causes Ctrl+Shift+X keys corresponding
+// to scan codes $C0-C7 and $D0-D7 to not work. Second, the phantom
+// keys ARE visible if debounce is disabled.
+//
+// To compute the transitive closure, we use an O(N^2) algorithm to
+// compute the connected rows, and then an O(N) pass to propagate
+// the unified column sets to all rows. Since only a few keys are
+// pressed most of the time, we can save a lot of time by doing an
+// early out for rows that have no active switches.
+// 
+void ATPokeyEmulator::UpdateEffectiveKeyMatrix() {
+	int srcRows[8];
+	bool activeKeys = false;
+
+	memcpy(mEffectiveKeyMatrix, mKeyMatrix, sizeof mEffectiveKeyMatrix);
+
+	// The computer line connects the control (KR2) signal via the same
+	// row select lines as the main keyboard on KR1, so both the main
+	// keyboard and the Ctrl/Shift/Break keys can interact to create
+	// phantom keys on both sides. The 5200 just connects the top button
+	// to KR2, so nothing in the main matrix can interfere.
+	const uint16 crossConnectMask = mb5200Mode ? 0xFF : 0xFFFF;
+
+	for(int i=0; i<8; ++i) {
+		int srcRow = i;
+		uint16 connectedColumns = mEffectiveKeyMatrix[i] & crossConnectMask;
+
+		if (connectedColumns) {
+			for(int j = i + 1; j < 8; ++j) {
+				if (mEffectiveKeyMatrix[j] & connectedColumns) {
+					connectedColumns |= mEffectiveKeyMatrix[j];
+					srcRow = j;
+				}
+			}
+
+			mEffectiveKeyMatrix[srcRow] |= connectedColumns & crossConnectMask;
+
+			activeKeys = true;
+		}
+
+		srcRows[i] = srcRow;
+	}
+
+	if (!activeKeys)
+		return;
+
+	for(int i=0; i<8; ++i)
+		mEffectiveKeyMatrix[i] |= mEffectiveKeyMatrix[srcRows[i]];
+}
+
 void ATPokeyEmulator::TryPushNextKey() {
 	uint8 c = mKeyQueue.front();
 	mKeyQueue.pop_front();
 
 	PushKey(c, false, false, false, mbUseKeyCooldownTimer);
+}
+
+void ATPokeyEmulator::SetKeyboardModes(bool cooked, bool scanEnabled) {
+	mbCookedKeyMode = cooked;
+	mbKeyboardScanEnabled = scanEnabled;
+
+	UpdateKeyboardScanEvent();
+}
+
+void ATPokeyEmulator::UpdateKeyboardScanEvent() {
+	if ((mb5200Mode || mbKeyboardScanEnabled) && (mSKCTL & 2)) {
+		const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+
+		mpScheduler->SetEvent(114 - (t - UpdateLast15KHzTime()), this, kATPokeyEventKeyboardScan, mpKeyboardScanEvent);
+	} else
+		mpScheduler->UnsetEvent(mpKeyboardScanEvent);
+}
+
+void ATPokeyEmulator::QueueKeyboardIRQ() {
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+	if (!mpKeyboardIRQEvent)
+		mpKeyboardIRQEvent = mpScheduler->AddEvent(114 - (t - UpdateLast15KHzTime()), this, kATPokeyEventKeyboardIRQ);
+	mbKeyboardIRQPending = true;
+}
+
+void ATPokeyEmulator::AssertKeyboardIRQ() {
+	if (mIRQEN & 0x40) {
+		// If keyboard IRQ is already active, set the keyboard overrun bit.
+		if (!(mIRQST & 0x40))
+			mSKSTAT &= ~0x40;
+
+		mIRQST &= ~0x40;
+		mpConn->PokeyAssertIRQ(false);
+	}
+}
+
+void ATPokeyEmulator::AssertBreakIRQ() {
+	if (mIRQEN & 0x80) {
+		mIRQST &= ~0x80;
+		mpConn->PokeyAssertIRQ(false);
+	}
 }
 
 void ATPokeyEmulator::ProcessReceivedSerialByte() {
@@ -2405,4 +2896,8 @@ void ATPokeyEmulator::ProcessReceivedSerialByte() {
 
 	mSERIN = mSerialInputShiftRegister;
 	mSKSTAT &= mSerialInputPendingStatus;
+}
+
+void ATPokeyEmulator::SyncRenderers(ATPokeyRenderer *r) {
+	mpRenderer->SyncTo(*r);
 }

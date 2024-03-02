@@ -55,6 +55,12 @@
     <Filter Include="Source Files\Placeholders">
       <UniqueIdentifier>{745fa111-d5de-4ce4-aa58-b831dfc7f511}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\ExeLoader">
+      <UniqueIdentifier>{cf2ba6e4-2137-4189-996a-f904611199a2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\SAPPlayers">
+      <UniqueIdentifier>{66bdecc0-48d4-431f-81e5-afce5ec74a24}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="source\loader.xasm">
@@ -243,6 +249,33 @@
     </None>
     <None Include="source\Placeholders\nomio.s">
       <Filter>Source Files\Placeholders</Filter>
+    </None>
+    <None Include="source\ExeLoader\exeloader.s">
+      <Filter>Source Files\ExeLoader</Filter>
+    </None>
+    <None Include="source\ExeLoader\exeloader-hispeed.s">
+      <Filter>Source Files\ExeLoader</Filter>
+    </None>
+    <None Include="source\ExeLoader\exeloader-nobasic.s">
+      <Filter>Source Files\ExeLoader</Filter>
+    </None>
+    <None Include="source\Shared\kernel.inc">
+      <Filter>Source Files\Shared</Filter>
+    </None>
+    <None Include="source\Additions\colormap.s">
+      <Filter>Source Files\Additions</Filter>
+    </None>
+    <None Include="source\SAPPlayers\playsap-r.s">
+      <Filter>Source Files\SAPPlayers</Filter>
+    </None>
+    <None Include="source\SAPPlayers\playsap-b.s">
+      <Filter>Source Files\SAPPlayers</Filter>
+    </None>
+    <None Include="source\SAPPlayers\playsap-c.s">
+      <Filter>Source Files\SAPPlayers</Filter>
+    </None>
+    <None Include="source\SAPPlayers\playsap-d.s">
+      <Filter>Source Files\SAPPlayers</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>

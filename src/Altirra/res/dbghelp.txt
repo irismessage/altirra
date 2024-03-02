@@ -8,6 +8,19 @@
     escape hatch if you somehow manage to alias over both the alias set (as) and
     alias clear (ac) commands.
 
++ ~    Target control
+
+    Switches or displays information about debugging targets.
+
+      ~                  (Display target list)
+      ~0s, ~1s, ...      (Switch current target)
+
+    The default debugging target is target 0, which is the main computer CPU.
+    When a device that has a coprocessor is present, such as the Veronica
+    cartridge, additional targets will be available.
+
+    Not all commands work with all targets; many are restricted to target 0.
+
 + ?    Evaluate expression
 
     Prints the value of an expression.
@@ -39,6 +52,9 @@
       xbankantic  PORTB extended memory bank (ANTIC)
       @t0-t9   Temporaries
       @ra      Return address (if RTS executed immediately)
+      @frame   ANTIC frame counter
+      @clk     Clock cycle counter
+      @cclk    CPU clock cycle counter
      
      Grouping
       (exp)    Subexpression
@@ -364,6 +380,10 @@
     memory and work even after the location has been modified; they also
     fire at an address regardless of any bank switching.
 
+    The address expression is evaluated when the bp command is executed, not
+    when the breakpoint is tested. "pc+3", for instance, sets the breakpoint
+    at 3 bytes after the position that the program counter is at now.
+
     The -n option creates a non-stopping breakpoint after which execution
     continues.
 
@@ -380,7 +400,19 @@
     stop after the commands are executed unless a command is also issued
     to continue execution. This can be used to implement tracepoints.
     
-    Example: bp pc "? db(rtclok); g"
+    Examples:
+
+        bp -n pc "? db(rtclok+2)"
+
+            Set a breakpoint at the current location that prints the low
+            byte of the OS real-time clock, and continue execution (-n).
+
+        bp -n main "r @t1 @frame-@t0; r @t0 @frame"
+
+           Set a non-blocking breakpoint on main so that whenever main is
+           hit, temporary variable @t1 is set to the difference in the
+           frame counter since the last time (@t0) and update @t0 to the
+           current frame counter value.
 
     Breakpoints can also be set on source lines using source notation:
     
@@ -389,7 +421,7 @@
     The breakpoint is set immediately if symbols are available. Otherwise,
     a deferred breakpoint is created and the breakpoint is bound to the
     code address when the symbols are loaded.    
-    
+
     See also: ba, bs
 
 + bt   Set breakpoint with trace (tracepoint)
@@ -622,6 +654,16 @@
     During traced execution, the current beam location, PC, registers, and
     instruction are logged.
 
++ gv   Go until vertical blank interrupt (VBI)
+
+    Resume execution until the beginning of the vertical blank interrupt
+    (VBI) is hit.
+
+      gv
+
+    If the VBI is disabled, execution stops at the beginning of scan line
+    248.
+
 + h    Show CPU history
 
     Display history of CPU instructions executed.
@@ -811,14 +853,23 @@
       p.x    Index size flag
       e      Emulation flag
 
-+ s    Search memory
+^ s, sa, si, sw    Search memory
+> s    Search memory for bytes
+> sa   Search memory for ATASCII text
+> si   Search memory for INTERNAL text
+> sw   Search memory for words
 
     Searches memory for a specific pattern.
     
-      s <xaddress> L<length> <value>...
+      s <xaddress> L<length> <value>...   (search bytes)
+      sa <xaddress> L<length> "string"    (search ATASCII)
+      si <xaddress> L<length> "string"    (search INTERNAL)
+      sw <xaddress> L<length> <value>...  (search words)
       
-    All starting addresses of blocks of memory that contain the given byte
-    pattern are reported. Expressions must evaluate to unsigned byte range
+    All starting addresses of blocks of memory that contain the given byte,
+    word, or string pattern.
+
+    For s (search bytes), expressions must evaluate to unsigned byte range
     (0-255); use the low byte (<) operator if necessary to forcibly truncate
     values.
     
@@ -826,6 +877,8 @@
     
       s 0 L10000 00 04 A5
       s E800 L2800 <vimirq >vimirq
+      sw E800 L2800 vimirq
+      sa 0 L10000 "BOOT"
 
 + st   Static trace
 
@@ -890,16 +943,21 @@
 > ww   Watch word
 > wx   Watch expression
 
-    Continuously display the value of a memory location on-screen.
+    Continuously display the value of a memory location or expression.
     
       wb <address>     (Watch byte)
       ww <address>     (Watch word)
       wx <expr>        (Watch expression)
-      wl               (Watch list)
-      wc               (Clear all watches)
+      wl               (List watches)
+      wc <index>|*     (Clear watches)
       
-    Watched values are sampled and displayed each frame. Up to eight watches
-    can be active at any one time.
+    The wb and ww commands display the contents of a byte or word at the
+    given address. Watched values are sampled and displayed each frame.
+    Up to eight watches can be active at any one time.
+
+    The wx command displays the value of an expression, which is re-evaluated
+    every frame. The expression can include memory reads (db/dw/etc.), which
+    is useful for reading variables too complex for wb or ww.
     
     See also: ? (evaluate expression)
 
@@ -950,8 +1008,8 @@
 
     Selects decimal or hexadecimal as the default parsing base for numbers.
 
-      .base dec            (Set base 10 for numbers)
-      .base hex            (Set base 16 for numbers)
+      .base dec / 10       (Set base 10 for numbers)
+      .base hex / 16       (Set base 16 for numbers)
       .base mixed          (Set base 10 with 16 shortcut for numbers)
       
     The .base command changes whether numbers in expressions are by default
@@ -987,7 +1045,7 @@
 
     Lists the statements contained within a BASIC line.
     
-      .basic_dumpline [<address> | * | 0] [-o <offset>] [-c]
+      .basic_dumpline [<address> | * | 0] [-o <offset>] [-c] [-t]
       
     The optional address specifies the beginning of the line, including
     the line number. If no address is specified, the continuation address
@@ -1002,7 +1060,9 @@
 
     -c gives continuous output until the end of the program.
     
-    Tokens from Atari BASIC, BASIC XL, and BASIC XE are supported.
+    Tokens from Atari BASIC, BASIC XL, and BASIC XE are supported by default.
+    -t specifies decoding of TurboBasic XL tokens instead of Basic XL/XE
+    tokens.
     
     See also: .basic, .basic_vars
 
@@ -1534,7 +1594,8 @@
       %f       Decimal float by address, floating-point notation
       %g       Decimal float by address, general notation
       %i       Signed decimal (equivalent to %d)
-      %s       ATASCII string buffer by address
+      %s       ATASCII string buffer by address ($20-7F)
+      %S       ATASCII string buffer by address (high byte term.)
       %u       Unsigned decimal
       %x       Hexadecimal (lowercase)
       %X       Hexadecimal (uppercase)
@@ -1549,6 +1610,22 @@
       .printf "Display list vector: $%04x" dw(vdslst)
 
     See also: .echo
+
+^ .profile_beginframe, .profile_endframe   Trigger profiler frames
+> .profile_beginframe   Trigger start of profiler frame
+> .profile_endframe     Trigger end of profiler frame
+
+    Starts or ends a frame in the CPU profiler.
+
+     .profile_beginframe   Trigger start of profiler frame
+     .profile_endframe     Trigger end of profiler frame
+
+    The .profile_beginframe and .profile_endframe commands can be
+    used with conditional breakpoints to trigger frame boundaries
+    with complex conditions. Note that any frame triggers set in
+    the profiler itself will still fire even when these commands
+    are used. If profiling is not active, these commands are
+    silently ignored.
 
 + .readmem     Read memory from disk
 

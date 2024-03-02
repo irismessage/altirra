@@ -8,8 +8,8 @@
 #include <vd2/system/hash.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/time.h>
-#include "diskimage.h"
-#include "diskfssdx2util.h"
+#include <at/atio/diskimage.h>
+#include <at/atio/diskfssdx2util.h>
 #include "directorywatcher.h"
 #include "debuggerlog.h"
 #include "hostdeviceutils.h"
@@ -809,7 +809,6 @@ void ATDiskImageVirtualFolderSDFS::ScanDirectory(File& dir) {
 			xde.mDirEnt.mExt[encExtLen++] = 0x20;
 
 		// encode size
-		const uint32 size = (uint32)dirIt.GetSize();
 		xde.mDirEnt.mSize[0] = (uint8)xde.mSize;
 		xde.mDirEnt.mSize[1] = (uint8)(xde.mSize >> 8);
 		xde.mDirEnt.mSize[2] = (uint8)(xde.mSize >> 16);

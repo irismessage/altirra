@@ -22,11 +22,11 @@
 #include <vd2/system/VDString.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/accel.h>
+#include <at/atui/uicommandmanager.h>
 #include "oshelper.h"
-#include "uicommandmanager.h"
 #include "uikeyboard.h"
 #include "uimenu.h"
-#include "uimenulist.h"
+#include <at/atui/uimenulist.h>
 #include "uimrulist.h"
 #include "uiportmenus.h"
 #include "resource.h"
@@ -69,7 +69,7 @@ void ATUILoadMenu() {
 
 		ATLoadMiscResource(IDR_MENU_DEFAULT, buf);
 
-		VDStringW buf16(VDTextU8ToW((const char *)buf.data(), buf.size()));
+		VDStringW buf16(VDTextU8ToW((const char *)buf.data(), (int)buf.size()));
 
 		const wchar_t *s = buf16.data();
 		const wchar_t *end = s + buf16.size();

@@ -208,6 +208,7 @@ namespace ATKernelSymbols {
 		CH     = 0x02FC,
 		FILDAT = 0x02FD,
 		DSPFLG = 0x02FE,
+		SSFLAG = 0x02FF,
 		DDEVIC = 0x0300,
 		DUNIT  = 0x0301,
 		DCOMND = 0x0302,

@@ -17,10 +17,11 @@
 
 #include "stdafx.h"
 #include <initializer_list>
+#include <vd2/system/math.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/VDDisplay/textrenderer.h>
-#include "uicontainer.h"
-#include "uimanager.h"
+#include <at/atui/uicontainer.h>
+#include <at/atui/uimanager.h>
 #include "uilabel.h"
 #include "uibutton.h"
 #include "uisettingswindow.h"
@@ -771,6 +772,7 @@ void ATUISettingsWindow::SetSettingsScreen(IATUISettingsScreen *screen) {
 	DestroyScreen();
 
 	mpCurrentScreen = screen;
+	mCurrentVPos = 0;
 
 	BuildScreen();
 }
@@ -784,7 +786,13 @@ void ATUISettingsWindow::SetCaption(const wchar_t *caption) {
 }
 
 void ATUISettingsWindow::AddSetting(ATUISetting *setting) {
-	mSettings.push_back(setting);
+	mSettings.push_back( { setting, mCurrentVPos } );
+
+	mCurrentVPos += 2;
+}
+
+void ATUISettingsWindow::AddSeparator() {
+	++mCurrentVPos;
 }
 
 void ATUISettingsWindow::SetOnDestroy(const vdfunction<void()>& fn) {
@@ -808,7 +816,7 @@ void ATUISettingsWindow::SetSelectedIndex(int index, bool scroll) {
 		} else {
 			mpSelectionFill->SetVisible(true);
 
-			const sint32 y = index * mRowHeight;
+			const sint32 y = (mSettings[index].mVPos * mRowHeight) >> 1;
 			mpSelectionFill->SetArea(vdrect32(0, y, GetArea().width(), y + mRowHeight));
 
 			if (scroll) {
@@ -1039,15 +1047,35 @@ void ATUISettingsWindow::OnTrackCursorChanges(ATUIWidget *w) {
 		vdpoint32 pt;
 
 		if (mpScrollPane) {
-			mpScrollPane->TranslateScreenPtToClientPt(w->TranslateClientPtToScreenPt(vdpoint32(0, 0)), pt);
-			index = pt.y / mRowHeight;
+			// We may get rounding errors during positioning, so test the center of the
+			// control rather than the top.
+			mpScrollPane->TranslateScreenPtToClientPt(w->TranslateClientPtToScreenPt(vdpoint32(0, w->GetArea().height() / 2)), pt);
+			sint32 vpos = pt.y * 2 / mRowHeight;
 
-			if ((uint32)index >= mSettingWindows.size())
-				index = -1;
+			if (vpos >= 0) {
+				auto it = std::upper_bound(mSettings.begin(), mSettings.end(), vpos,
+					[](sint32 v, const SettingsEntry& se) { return v < se.mVPos; } );
+
+				if (it != mSettings.begin() && (uint32)(vpos - it[-1].mVPos) < 2)
+					index = (it - 1) - mSettings.begin();
+			}
 		}
 	}
 
 	SetSelectedIndex(index, false);
+}
+
+void ATUISettingsWindow::UpdateLayout() {
+	ATUIWidget *p = GetParent();
+	if (!p)
+		return;
+
+	const sint32 disph = p->GetClientArea().height();
+	sint32 w = VDRoundToInt32(250 * mpManager->GetThemeScaleFactor());
+	sint32 h = std::min<sint32>(disph, VDRoundToInt32(300 * mpManager->GetThemeScaleFactor()));
+	sint32 y = std::max<sint32>(0, std::min<sint32>(VDRoundToInt32(100 * mpManager->GetThemeScaleFactor()), (disph - h) >> 1));
+
+	SetArea(vdrect32(0, y, w, y + h));
 }
 
 void ATUISettingsWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
@@ -1089,7 +1117,7 @@ void ATUISettingsWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 
 void ATUISettingsWindow::DestroyScreen() {
 	while(!mSettings.empty()) {
-		auto *p = mSettings.back();
+		auto *p = mSettings.back().mpSetting;
 		mSettings.pop_back();
 
 		delete p;
@@ -1116,8 +1144,9 @@ void ATUISettingsWindow::BuildScreen() {
 	mpCurrentScreen->BuildSettings(this);
 
 	sint32 width = mpScrollPane->GetClientArea().width();
-	int y = 0;
-	for(ATUISetting *s : mSettings) {
+	for(const auto& entry : mSettings) {
+		ATUISetting *s = entry.mpSetting;
+
 		s->Read();
 
 		vdrefptr<ATUISettingWindow> w(new ATUISettingWindow(s));
@@ -1126,15 +1155,20 @@ void ATUISettingsWindow::BuildScreen() {
 		w->SetOnAction([this](ATUIActionSetting *s) { this->OnAction(s); });
 		w->SetOnDynamicUpdate([this]() { this->OnDynamicUpdate(); });
 	
-		w->SetArea(vdrect32(0, y, width, y+mRowHeight));
-		y += mRowHeight;
+		vdrect32 r(0, 0, width, 0);
+
+		r.top = (entry.mVPos * mRowHeight) >> 1;
+		r.bottom = r.top + mRowHeight;
+
+		w->SetArea(r);
+
+		mTotalHeight = r.bottom;
+
 		mpScrollPane->AddChild(w);
 
 		mSettingWindows.push_back(w);
 		w.release();
 	}
-
-	mTotalHeight = y;
 
 	RecomputeSlider();
 

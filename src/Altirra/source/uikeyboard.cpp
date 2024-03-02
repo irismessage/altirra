@@ -21,193 +21,345 @@
 #include <vd2/system/VDString.h>
 #include <vd2/Dita/accel.h>
 #include "uikeyboard.h"
-#include "uicommandmanager.h"
+#include <at/atui/uicommandmanager.h>
 #include <windows.h>
 
 extern ATUICommandManager g_ATUICommandMgr;
 
+static bool g_ATUICustomKeyMapEnabled;
+static vdfastvector<uint32> g_ATDefaultKeyMap;
+static vdfastvector<uint32> g_ATCustomKeyMap;
+
 VDAccelTableDefinition g_ATUIDefaultAccelTables[kATUIAccelContextCount];
 VDAccelTableDefinition g_ATUIAccelTables[kATUIAccelContextCount];
 
-struct ATUICookedKeyMap {
-	uint8	mScanCode[256];
-};
+void ATUIAddDefaultCharMappings(vdfastvector<uint32>& dst) {
+	static const uint32 kDefaultCharMappings[]={
+#define ATCHAR_MAPPING(ch, sc) (((uint32)(uint8)(ch) << 9) + (uint32)(sc) + kATUIKeyboardMappingModifier_Cooked)
+		ATCHAR_MAPPING((uint8)'l', 0x00 ),
+		ATCHAR_MAPPING((uint8)'L', 0x40 ),
 
-struct ATUIDefaultCookedKeyMap : public ATUICookedKeyMap {
-public:
-	ATUIDefaultCookedKeyMap();
-};
+		ATCHAR_MAPPING((uint8)'j', 0x01 ),
+		ATCHAR_MAPPING((uint8)'J', 0x41 ),
 
-ATUIDefaultCookedKeyMap::ATUIDefaultCookedKeyMap() {
-	mScanCode[(uint8)'l'] = 0x80;	// really 0x00
-	mScanCode[(uint8)'L'] = 0x40;
+		ATCHAR_MAPPING((uint8)';', 0x02 ),
+		ATCHAR_MAPPING((uint8)':', 0x42 ),
 
-	mScanCode[(uint8)'j'] = 0x01;
-	mScanCode[(uint8)'J'] = 0x41;
+		ATCHAR_MAPPING((uint8)'k', 0x05 ),
+		ATCHAR_MAPPING((uint8)'K', 0x45 ),
 
-	mScanCode[(uint8)';'] = 0x02;
-	mScanCode[(uint8)':'] = 0x42;
+		ATCHAR_MAPPING((uint8)'+', 0x06 ),
+		ATCHAR_MAPPING((uint8)'\\', 0x46 ),
 
-	mScanCode[(uint8)'k'] = 0x05;
-	mScanCode[(uint8)'K'] = 0x45;
+		ATCHAR_MAPPING((uint8)'*', 0x07 ),
+		ATCHAR_MAPPING((uint8)'^', 0x47 ),
 
-	mScanCode[(uint8)'+'] = 0x06;
-	mScanCode[(uint8)'\\']= 0x46;
+		ATCHAR_MAPPING((uint8)'o', 0x08 ),
+		ATCHAR_MAPPING((uint8)'O', 0x48 ),
 
-	mScanCode[(uint8)'*'] = 0x07;
-	mScanCode[(uint8)'^'] = 0x47;
+		ATCHAR_MAPPING((uint8)'p', 0x0A ),
+		ATCHAR_MAPPING((uint8)'P', 0x4A ),
 
-	mScanCode[(uint8)'o'] = 0x08;
-	mScanCode[(uint8)'O'] = 0x48;
+		ATCHAR_MAPPING((uint8)'u', 0x0B ),
+		ATCHAR_MAPPING((uint8)'U', 0x4B ),
 
-	mScanCode[(uint8)'p'] = 0x0A;
-	mScanCode[(uint8)'P'] = 0x4A;
+		ATCHAR_MAPPING((uint8)'i', 0x0D ),
+		ATCHAR_MAPPING((uint8)'I', 0x4D ),
 
-	mScanCode[(uint8)'u'] = 0x0B;
-	mScanCode[(uint8)'U'] = 0x4B;
+		ATCHAR_MAPPING((uint8)'-', 0x0E ),
+		ATCHAR_MAPPING((uint8)'_', 0x4E ),
 
-	mScanCode[(uint8)'i'] = 0x0D;
-	mScanCode[(uint8)'I'] = 0x4D;
+		ATCHAR_MAPPING((uint8)'=', 0x0F ),
+		ATCHAR_MAPPING((uint8)'|', 0x4F ),
 
-	mScanCode[(uint8)'-'] = 0x0E;
-	mScanCode[(uint8)'_'] = 0x4E;
+		ATCHAR_MAPPING((uint8)'v', 0x10 ),
+		ATCHAR_MAPPING((uint8)'V', 0x50 ),
 
-	mScanCode[(uint8)'='] = 0x0F;
-	mScanCode[(uint8)'|'] = 0x4F;
+		ATCHAR_MAPPING((uint8)'c', 0x12 ),
+		ATCHAR_MAPPING((uint8)'C', 0x52 ),
 
-	mScanCode[(uint8)'v'] = 0x10;
-	mScanCode[(uint8)'V'] = 0x50;
+		ATCHAR_MAPPING((uint8)'b', 0x15 ),
+		ATCHAR_MAPPING((uint8)'B', 0x55 ),
 
-	mScanCode[(uint8)'c'] = 0x12;
-	mScanCode[(uint8)'C'] = 0x52;
+		ATCHAR_MAPPING((uint8)'x', 0x16 ),
+		ATCHAR_MAPPING((uint8)'X', 0x56 ),
 
-	mScanCode[(uint8)'b'] = 0x15;
-	mScanCode[(uint8)'B'] = 0x55;
+		ATCHAR_MAPPING((uint8)'z', 0x17 ),
+		ATCHAR_MAPPING((uint8)'Z', 0x57 ),
 
-	mScanCode[(uint8)'x'] = 0x16;
-	mScanCode[(uint8)'X'] = 0x56;
+		ATCHAR_MAPPING((uint8)'4', 0x18 ),
+		ATCHAR_MAPPING((uint8)'$', 0x58 ),
 
-	mScanCode[(uint8)'z'] = 0x17;
-	mScanCode[(uint8)'Z'] = 0x57;
+		ATCHAR_MAPPING((uint8)'3', 0x1A ),
+		ATCHAR_MAPPING((uint8)'#', 0x5A ),
 
-	mScanCode[(uint8)'4'] = 0x18;
-	mScanCode[(uint8)'$'] = 0x58;
+		ATCHAR_MAPPING((uint8)'6', 0x1B ),
+		ATCHAR_MAPPING((uint8)'&', 0x5B ),
 
-	mScanCode[(uint8)'3'] = 0x1A;
-	mScanCode[(uint8)'#'] = 0x5A;
+		ATCHAR_MAPPING((uint8)'5', 0x1D ),
+		ATCHAR_MAPPING((uint8)'%', 0x5D ),
 
-	mScanCode[(uint8)'6'] = 0x1B;
-	mScanCode[(uint8)'&'] = 0x5B;
+		ATCHAR_MAPPING((uint8)'2', 0x1E ),
+		ATCHAR_MAPPING((uint8)'"', 0x5E ),
 
-	mScanCode[(uint8)'5'] = 0x1D;
-	mScanCode[(uint8)'%'] = 0x5D;
+		ATCHAR_MAPPING((uint8)'1', 0x1F ),
+		ATCHAR_MAPPING((uint8)'!', 0x5F ),
 
-	mScanCode[(uint8)'2'] = 0x1E;
-	mScanCode[(uint8)'"'] = 0x5E;
+		ATCHAR_MAPPING((uint8)',', 0x20 ),
+		ATCHAR_MAPPING((uint8)'[', 0x60 ),
 
-	mScanCode[(uint8)'1'] = 0x1F;
-	mScanCode[(uint8)'!'] = 0x5F;
+		ATCHAR_MAPPING((uint8)' ', 0x21 ),
 
-	mScanCode[(uint8)','] = 0x20;
-	mScanCode[(uint8)'['] = 0x60;
+		ATCHAR_MAPPING((uint8)'.', 0x22 ),
+		ATCHAR_MAPPING((uint8)']', 0x62 ),
 
-	mScanCode[(uint8)' '] = 0x21;
+		ATCHAR_MAPPING((uint8)'n', 0x23 ),
+		ATCHAR_MAPPING((uint8)'N', 0x63 ),
 
-	mScanCode[(uint8)'.'] = 0x22;
-	mScanCode[(uint8)']'] = 0x62;
-	mScanCode[(uint8)'`'] = 0xa2;
+		ATCHAR_MAPPING((uint8)'m', 0x25 ),
+		ATCHAR_MAPPING((uint8)'M', 0x65 ),
 
-	mScanCode[(uint8)'n'] = 0x23;
-	mScanCode[(uint8)'N'] = 0x63;
+		ATCHAR_MAPPING((uint8)'/', 0x26 ),
+		ATCHAR_MAPPING((uint8)'?', 0x66 ),
 
-	mScanCode[(uint8)'m'] = 0x25;
-	mScanCode[(uint8)'M'] = 0x65;
+		ATCHAR_MAPPING((uint8)'r', 0x28 ),
+		ATCHAR_MAPPING((uint8)'R', 0x68 ),
 
-	mScanCode[(uint8)'/'] = 0x26;
-	mScanCode[(uint8)'?'] = 0x66;
+		ATCHAR_MAPPING((uint8)'e', 0x2A ),
+		ATCHAR_MAPPING((uint8)'E', 0x6A ),
 
-	mScanCode[(uint8)'r'] = 0x28;
-	mScanCode[(uint8)'R'] = 0x68;
+		ATCHAR_MAPPING((uint8)'y', 0x2B ),
+		ATCHAR_MAPPING((uint8)'Y', 0x6B ),
 
-	mScanCode[(uint8)'e'] = 0x2A;
-	mScanCode[(uint8)'E'] = 0x6A;
+		ATCHAR_MAPPING((uint8)'t', 0x2D ),
+		ATCHAR_MAPPING((uint8)'T', 0x6D ),
 
-	mScanCode[(uint8)'y'] = 0x2B;
-	mScanCode[(uint8)'Y'] = 0x6B;
+		ATCHAR_MAPPING((uint8)'w', 0x2E ),
+		ATCHAR_MAPPING((uint8)'W', 0x6E ),
 
-	mScanCode[(uint8)'t'] = 0x2D;
-	mScanCode[(uint8)'T'] = 0x6D;
+		ATCHAR_MAPPING((uint8)'q', 0x2F ),
+		ATCHAR_MAPPING((uint8)'Q', 0x6F ),
 
-	mScanCode[(uint8)'w'] = 0x2E;
-	mScanCode[(uint8)'W'] = 0x6E;
+		ATCHAR_MAPPING((uint8)'9', 0x30 ),
+		ATCHAR_MAPPING((uint8)'(', 0x70 ),
 
-	mScanCode[(uint8)'q'] = 0x2F;
-	mScanCode[(uint8)'Q'] = 0x6F;
+		ATCHAR_MAPPING((uint8)'0', 0x32 ),
+		ATCHAR_MAPPING((uint8)')', 0x72 ),
 
-	mScanCode[(uint8)'9'] = 0x30;
-	mScanCode[(uint8)'('] = 0x70;
+		ATCHAR_MAPPING((uint8)'7', 0x33 ),
+		ATCHAR_MAPPING((uint8)'\'', 0x73 ),
 
-	mScanCode[(uint8)'0'] = 0x32;
-	mScanCode[(uint8)')'] = 0x72;
+		ATCHAR_MAPPING((uint8)'8', 0x35 ),
+		ATCHAR_MAPPING((uint8)'@', 0x75 ),
 
-	mScanCode[(uint8)'7'] = 0x33;
-	mScanCode[(uint8)'\'']= 0x73;
+		ATCHAR_MAPPING((uint8)'<', 0x36 ),
+		ATCHAR_MAPPING((uint8)'>', 0x37 ),
 
-	mScanCode[(uint8)'8'] = 0x35;
-	mScanCode[(uint8)'@'] = 0x75;
+		ATCHAR_MAPPING((uint8)'f', 0x38 ),
+		ATCHAR_MAPPING((uint8)'F', 0x78 ),
 
-	mScanCode[(uint8)'<'] = 0x36;
-	mScanCode[(uint8)'>'] = 0x37;
+		ATCHAR_MAPPING((uint8)'h', 0x39 ),
+		ATCHAR_MAPPING((uint8)'H', 0x79 ),
 
-	mScanCode[(uint8)'f'] = 0x38;
-	mScanCode[(uint8)'F'] = 0x78;
+		ATCHAR_MAPPING((uint8)'d', 0x3A ),
+		ATCHAR_MAPPING((uint8)'D', 0x7A ),
 
-	mScanCode[(uint8)'h'] = 0x39;
-	mScanCode[(uint8)'H'] = 0x79;
+		ATCHAR_MAPPING((uint8)'g', 0x3D ),
+		ATCHAR_MAPPING((uint8)'G', 0x7D ),
 
-	mScanCode[(uint8)'d'] = 0x3A;
-	mScanCode[(uint8)'D'] = 0x7A;
+		ATCHAR_MAPPING((uint8)'s', 0x3E ),
+		ATCHAR_MAPPING((uint8)'S', 0x7E ),
 
-	mScanCode[(uint8)'g'] = 0x3D;
-	mScanCode[(uint8)'G'] = 0x7D;
+		ATCHAR_MAPPING((uint8)'a', 0x3F ),
+		ATCHAR_MAPPING((uint8)'A', 0x7F ),
 
-	mScanCode[(uint8)'s'] = 0x3E;
-	mScanCode[(uint8)'S'] = 0x7E;
+		ATCHAR_MAPPING((uint8)'`', 0x27 ),
+		ATCHAR_MAPPING((uint8)'~', 0x67 ),
+#undef ATCHAR_MAPPING
+	};
 
-	mScanCode[(uint8)'a'] = 0x3F;
-	mScanCode[(uint8)'A'] = 0x7F;
-
-	mScanCode[(uint8)'`'] = 0x27;
-	mScanCode[(uint8)'~'] = 0x67;
+	dst.insert(dst.end(), std::begin(kDefaultCharMappings), std::end(kDefaultCharMappings));
 }
 
-const ATUIDefaultCookedKeyMap g_ATCookedKeyMap;
+const vdfastvector<uint32>& ATUIGetCurrentKeyMap() {
+	return g_ATUICustomKeyMapEnabled ? g_ATCustomKeyMap : g_ATDefaultKeyMap;
+}
 
-bool ATUIGetScanCodeForCharacter(char c, uint8& ch) {
-	uint8 scanCode = g_ATCookedKeyMap.mScanCode[(uint8)c];
+bool ATUIGetScanCodeForKeyInput(uint32 keyInputCode, uint32& ch) {
+	const auto& keyMap = ATUIGetCurrentKeyMap();
 
-	if (!scanCode)
+	auto it = std::lower_bound(keyMap.begin(), keyMap.end(), keyInputCode);
+	if (it == keyMap.end() || (*it & 0xFFFFFE00) != keyInputCode)
 		return false;
 
-	ch = scanCode & 0x7F;
+	ch = (*it & 0x1FF);
 	return true;
+}
+
+bool ATUIGetScanCodeForCharacter(char c, uint32& ch) {
+	return ATUIGetScanCodeForKeyInput(ATUIPackKeyboardMapping(0, c, kATUIKeyboardMappingModifier_Cooked), ch);
+}
+
+bool ATUIGetDefaultScanCodeForCharacter(char c, uint8& ch) {
+	switch(c) {
+#define ATCHAR_CASE(chval, sc) case chval: ch = sc; return true;
+		ATCHAR_CASE('l', 0x00 )
+		ATCHAR_CASE('L', 0x40 )
+
+		ATCHAR_CASE('j', 0x01 )
+		ATCHAR_CASE('J', 0x41 )
+
+		ATCHAR_CASE(';', 0x02 )
+		ATCHAR_CASE(':', 0x42 )
+
+		ATCHAR_CASE('k', 0x05 )
+		ATCHAR_CASE('K', 0x45 )
+
+		ATCHAR_CASE('+', 0x06 )
+		ATCHAR_CASE('\\', 0x46 )
+
+		ATCHAR_CASE('*', 0x07 )
+		ATCHAR_CASE('^', 0x47 )
+
+		ATCHAR_CASE('o', 0x08 )
+		ATCHAR_CASE('O', 0x48 )
+
+		ATCHAR_CASE('p', 0x0A )
+		ATCHAR_CASE('P', 0x4A )
+
+		ATCHAR_CASE('u', 0x0B )
+		ATCHAR_CASE('U', 0x4B )
+
+		ATCHAR_CASE('i', 0x0D )
+		ATCHAR_CASE('I', 0x4D )
+
+		ATCHAR_CASE('-', 0x0E )
+		ATCHAR_CASE('_', 0x4E )
+
+		ATCHAR_CASE('=', 0x0F )
+		ATCHAR_CASE('|', 0x4F )
+
+		ATCHAR_CASE('v', 0x10 )
+		ATCHAR_CASE('V', 0x50 )
+
+		ATCHAR_CASE('c', 0x12 )
+		ATCHAR_CASE('C', 0x52 )
+
+		ATCHAR_CASE('b', 0x15 )
+		ATCHAR_CASE('B', 0x55 )
+
+		ATCHAR_CASE('x', 0x16 )
+		ATCHAR_CASE('X', 0x56 )
+
+		ATCHAR_CASE('z', 0x17 )
+		ATCHAR_CASE('Z', 0x57 )
+
+		ATCHAR_CASE('4', 0x18 )
+		ATCHAR_CASE('$', 0x58 )
+
+		ATCHAR_CASE('3', 0x1A )
+		ATCHAR_CASE('#', 0x5A )
+
+		ATCHAR_CASE('6', 0x1B )
+		ATCHAR_CASE('&', 0x5B )
+
+		ATCHAR_CASE('5', 0x1D )
+		ATCHAR_CASE('%', 0x5D )
+
+		ATCHAR_CASE('2', 0x1E )
+		ATCHAR_CASE('"', 0x5E )
+
+		ATCHAR_CASE('1', 0x1F )
+		ATCHAR_CASE('!', 0x5F )
+
+		ATCHAR_CASE(',', 0x20 )
+		ATCHAR_CASE('[', 0x60 )
+
+		ATCHAR_CASE(' ', 0x21 )
+
+		ATCHAR_CASE('.', 0x22 )
+		ATCHAR_CASE(']', 0x62 )
+
+		ATCHAR_CASE('n', 0x23 )
+		ATCHAR_CASE('N', 0x63 )
+
+		ATCHAR_CASE('m', 0x25 )
+		ATCHAR_CASE('M', 0x65 )
+
+		ATCHAR_CASE('/', 0x26 )
+		ATCHAR_CASE('?', 0x66 )
+
+		ATCHAR_CASE('r', 0x28 )
+		ATCHAR_CASE('R', 0x68 )
+
+		ATCHAR_CASE('e', 0x2A )
+		ATCHAR_CASE('E', 0x6A )
+
+		ATCHAR_CASE('y', 0x2B )
+		ATCHAR_CASE('Y', 0x6B )
+
+		ATCHAR_CASE('t', 0x2D )
+		ATCHAR_CASE('T', 0x6D )
+
+		ATCHAR_CASE('w', 0x2E )
+		ATCHAR_CASE('W', 0x6E )
+
+		ATCHAR_CASE('q', 0x2F )
+		ATCHAR_CASE('Q', 0x6F )
+
+		ATCHAR_CASE('9', 0x30 )
+		ATCHAR_CASE('(', 0x70 )
+
+		ATCHAR_CASE('0', 0x32 )
+		ATCHAR_CASE(')', 0x72 )
+
+		ATCHAR_CASE('7', 0x33 )
+		ATCHAR_CASE('\'', 0x73 )
+
+		ATCHAR_CASE('8', 0x35 )
+		ATCHAR_CASE('@', 0x75 )
+
+		ATCHAR_CASE('<', 0x36 )
+		ATCHAR_CASE('>', 0x37 )
+
+		ATCHAR_CASE('f', 0x38 )
+		ATCHAR_CASE('F', 0x78 )
+
+		ATCHAR_CASE('h', 0x39 )
+		ATCHAR_CASE('H', 0x79 )
+
+		ATCHAR_CASE('d', 0x3A )
+		ATCHAR_CASE('D', 0x7A )
+
+		ATCHAR_CASE('g', 0x3D )
+		ATCHAR_CASE('G', 0x7D )
+
+		ATCHAR_CASE('s', 0x3E )
+		ATCHAR_CASE('S', 0x7E )
+
+		ATCHAR_CASE('a', 0x3F )
+		ATCHAR_CASE('A', 0x7F )
+
+		ATCHAR_CASE('`', 0x27 )
+		ATCHAR_CASE('~', 0x67 )
+#undef ATCHAR_CASE
+	}
+
+	return false;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
 namespace {
-	enum {
-		kShift = 0x10000,
-		kCtrl = 0x20000,
-		kAlt = 0x40000
+	enum : uint32 {
+		kShift = kATUIKeyboardMappingModifier_Shift,
+		kCtrl = kATUIKeyboardMappingModifier_Ctrl,
+		kAlt = kATUIKeyboardMappingModifier_Alt,
+		kExtended = kATUIKeyboardMappingModifier_Extended
 	};
-
-	const uint8 kInvalidKeyCode = 0x24;
 }
 
-static uint8 g_ATVKeyMap[256*8];
-
-#define VKEYMAP(vkey, mods, sc) (((vkey) << 8) + (mods) + (sc))
+#define VKEYMAP(vkey, mods, sc) (((vkey) << 9) + (mods) + (sc))
 #define VKEYMAP_CSALL(vkey, sc) \
 	VKEYMAP((vkey), 0, (sc)),	\
 	VKEYMAP((vkey), kShift, (sc) + 0x40),	\
@@ -230,6 +382,10 @@ static const uint32 g_ATDefaultVKeyMap[]={
 	VKEYMAP_CSALL(VK_TAB,		0x2C),	// Tab
 	VKEYMAP_CSALL(VK_BACK,		0x34),	// Backspace
 	VKEYMAP_CSALL(VK_RETURN,	0x0C),	// Enter
+	VKEYMAP(VK_RETURN, kExtended, 0x0C),	// keypad Enter
+	VKEYMAP(VK_RETURN, kExtended + kShift, 0x4C),	// keypad Enter
+	VKEYMAP(VK_RETURN, kExtended + kCtrl, 0x8C),	// keypad Enter
+	VKEYMAP(VK_RETURN, kExtended + kCtrl + kShift, 0xCC),	// keypad Enter
 	VKEYMAP_CSALL(VK_ESCAPE,	0x1C),	// Esc
 	VKEYMAP_CSALL(VK_END,		0x27),	// Fuji
 	VKEYMAP_CSXOR(VK_F6,		0x11),	// Help
@@ -299,6 +455,8 @@ static const uint32 g_ATDefaultVKeyMap[]={
 	VKEYMAP_C_SALL('7', 0x33),
 	VKEYMAP_C_SALL('8', 0x35),
 	VKEYMAP_C_SALL('9', 0x30),
+
+	VKEYMAP_CSALL(VK_CAPITAL, 0x3C),
 };
 
 static const uint32 g_ATRawVKeyMap[]={
@@ -312,6 +470,10 @@ static const uint32 g_ATRawVKeyMap[]={
 	VKEYMAP_CSALL('P', 0x0A),
 	VKEYMAP_CSALL('U', 0x0B),
 	VKEYMAP_CSALL(VK_RETURN, 0x0C),	// Enter
+	VKEYMAP(VK_RETURN, kExtended, 0x0C),	// keypad Enter
+	VKEYMAP(VK_RETURN, kExtended + kShift, 0x4C),	// keypad Enter
+	VKEYMAP(VK_RETURN, kExtended + kCtrl, 0x8C),	// keypad Enter
+	VKEYMAP(VK_RETURN, kExtended + kCtrl + kShift, 0xCC),	// keypad Enter
 	VKEYMAP_CSALL('I', 0x0D),
 	VKEYMAP_CSALL(VK_OEM_4, 0x0E),	// [{
 	VKEYMAP_CSALL(VK_OEM_6, 0x0F),	// ]}
@@ -354,10 +516,40 @@ static const uint32 g_ATRawVKeyMap[]={
 	VKEYMAP_CSALL('F', 0x38),
 	VKEYMAP_CSALL('H', 0x39),
 	VKEYMAP_CSALL('D', 0x3A),
-	// 3C caps
+	VKEYMAP_CSALL(VK_CAPITAL, 0x3C),
 	VKEYMAP_CSALL('G', 0x3D),
 	VKEYMAP_CSALL('S', 0x3E),
 	VKEYMAP_CSALL('A', 0x3F),
+};
+
+static const uint32 g_ATDefaultVKeyMapCommonSSO[]={
+	VKEYMAP(VK_F2, 0, kATUIKeyScanCode_Start),
+	VKEYMAP(VK_F2, kShift, kATUIKeyScanCode_Start),
+	VKEYMAP(VK_F2, kCtrl, kATUIKeyScanCode_Start),
+	VKEYMAP(VK_F2, kCtrl + kShift, kATUIKeyScanCode_Start),
+	VKEYMAP(VK_F3, 0, kATUIKeyScanCode_Select),
+	VKEYMAP(VK_F3, kShift, kATUIKeyScanCode_Select),
+	VKEYMAP(VK_F3, kCtrl, kATUIKeyScanCode_Select),
+	VKEYMAP(VK_F3, kCtrl + kShift, kATUIKeyScanCode_Select),
+	VKEYMAP(VK_F4, 0, kATUIKeyScanCode_Option),
+	VKEYMAP(VK_F4, kShift, kATUIKeyScanCode_Option),
+	VKEYMAP(VK_F4, kCtrl, kATUIKeyScanCode_Option),
+	VKEYMAP(VK_F4, kCtrl + kShift, kATUIKeyScanCode_Option),
+};
+
+static const uint32 g_ATDefaultVKeyMapCommonBreak[]={
+	VKEYMAP(VK_F7, 0, kATUIKeyScanCode_Break),
+	VKEYMAP(VK_F7, kShift, kATUIKeyScanCode_Break),
+	VKEYMAP(VK_F7, kCtrl, kATUIKeyScanCode_Break),
+	VKEYMAP(VK_F7, kCtrl + kShift, kATUIKeyScanCode_Break),
+	VKEYMAP(VK_PAUSE, 0, kATUIKeyScanCode_Break),
+	VKEYMAP(VK_PAUSE, kShift, kATUIKeyScanCode_Break),
+	VKEYMAP(VK_PAUSE, kCtrl, kATUIKeyScanCode_Break),
+	VKEYMAP(VK_PAUSE, kCtrl + kShift, kATUIKeyScanCode_Break),
+	VKEYMAP(VK_CANCEL, 0, kATUIKeyScanCode_Break),
+	VKEYMAP(VK_CANCEL, kShift, kATUIKeyScanCode_Break),
+	VKEYMAP(VK_CANCEL, kCtrl, kATUIKeyScanCode_Break),
+	VKEYMAP(VK_CANCEL, kCtrl + kShift, kATUIKeyScanCode_Break),
 };
 
 static const uint32 g_ATDefaultVKeyMapFKey[]={
@@ -367,35 +559,52 @@ static const uint32 g_ATDefaultVKeyMapFKey[]={
 	VKEYMAP_CSXOR(VK_F4, 0x14),
 };
 
-void ATUIRegisterVirtualKeyMappings(const uint32 *mappings, uint32 n) {
+void ATUIRegisterVirtualKeyMappings(vdfastvector<uint32>& dst, const uint32 *mappings, uint32 n) {
 	while(n--) {
-		const uint32 code = *mappings++;
+		uint32 mapping = *mappings++;
 
-		g_ATVKeyMap[code >> 8] = (uint8)code;
+		// Force extended flag for keys that need it.
+		switch((mapping >> 9) & 0xFFFF) {
+			case VK_INSERT:
+			case VK_DELETE:
+			case VK_HOME:
+			case VK_END:
+			case VK_NEXT:
+			case VK_PRIOR:
+			case VK_LEFT:
+			case VK_RIGHT:
+			case VK_UP:
+			case VK_DOWN:
+				mapping |= kExtended;
+				break;
+		}
+
+		dst.push_back(mapping);
 	}
 }
 
-template<size_t N>
-void ATUIRegisterVirtualKeyMappings(const uint32 (&mappings)[N]) {
-	ATUIRegisterVirtualKeyMappings(mappings, N);
-}
+void ATUIGetDefaultKeyMap(const ATUIKeyboardOptions& options, vdfastvector<uint32>& mappings) {
+	VDASSERT(options.mLayoutMode != ATUIKeyboardOptions::kLM_Custom);
 
-void ATUIInitVirtualKeyMap(const ATUIKeyboardOptions& options) {
-	memset(g_ATVKeyMap, kInvalidKeyCode, sizeof g_ATVKeyMap);
+	mappings.clear();
 
 	switch(options.mLayoutMode) {
 		case ATUIKeyboardOptions::kLM_Natural:
 		default:
-			ATUIRegisterVirtualKeyMappings(g_ATDefaultVKeyMap);
+			ATUIRegisterVirtualKeyMappings(mappings, g_ATDefaultVKeyMap, vdcountof(g_ATDefaultVKeyMap));
 			break;
 
 		case ATUIKeyboardOptions::kLM_Raw:
-			ATUIRegisterVirtualKeyMappings(g_ATRawVKeyMap);
+			ATUIRegisterVirtualKeyMappings(mappings, g_ATRawVKeyMap, vdcountof(g_ATRawVKeyMap));
 			break;
 	}
 
+	ATUIRegisterVirtualKeyMappings(mappings, g_ATDefaultVKeyMapCommonBreak, vdcountof(g_ATDefaultVKeyMapCommonBreak));
+
 	if (options.mbEnableFunctionKeys)
-		ATUIRegisterVirtualKeyMappings(g_ATDefaultVKeyMapFKey);
+		ATUIRegisterVirtualKeyMappings(mappings, g_ATDefaultVKeyMapFKey, vdcountof(g_ATDefaultVKeyMapFKey));
+	else
+		ATUIRegisterVirtualKeyMappings(mappings, g_ATDefaultVKeyMapCommonSSO, vdcountof(g_ATDefaultVKeyMapCommonSSO));
 
 	// set up arrow keys
 	static const uint8 kArrowVKs[4]={ VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT };
@@ -413,46 +622,90 @@ void ATUIInitVirtualKeyMap(const ATUIKeyboardOptions& options) {
 	const uint8 *csmasks = kCtrlShiftMasks[options.mArrowKeyMode];
 
 	for(int i=0; i<4; ++i) {
-		uint8 *dst = &g_ATVKeyMap[kArrowVKs[i]];
+		const uint32 baseVK = kArrowVKs[i];
 		const uint8 kbcode = kArrowKCs[i];
 
 		for(int j=0; j<4; ++j) {
 			uint8 kbcode2 = kbcode | csmasks[j];
 
-			// codes 0xC0-C7 and 0xD0-D7 cannot be produced due to a keyboard
-			// matrix conflict when Ctrl+Shift is pressed and keys on 0x00-07/10-17.
-
-			if ((kbcode2 & 0xE8) == 0xC0)
-				kbcode2 = kInvalidKeyCode;
-
-			dst[0] = dst[1024] = kbcode2;
-			dst += 256;
+			mappings.push_back(ATUIPackKeyboardMapping(kbcode2, baseVK, (j << 25) + kATUIKeyboardMappingModifier_Extended));
+			mappings.push_back(ATUIPackKeyboardMapping(kbcode2, baseVK, (j << 25) + kATUIKeyboardMappingModifier_Alt + kATUIKeyboardMappingModifier_Extended));
 		}
+	}
+
+	ATUIAddDefaultCharMappings(mappings);
+
+	// strip invalid scan codes
+	mappings.erase(
+		std::remove_if(
+			mappings.begin(),
+			mappings.end(),
+			[](uint32 mapping) -> bool { return !ATIsValidScanCode((uint8)mapping); }),
+		mappings.end());
+
+	std::sort(mappings.begin(), mappings.end());
+}
+
+void ATUIInitVirtualKeyMap(const ATUIKeyboardOptions& options) {
+	if (options.mLayoutMode == ATUIKeyboardOptions::kLM_Custom)
+		g_ATDefaultKeyMap = g_ATCustomKeyMap;
+	else {
+		g_ATDefaultKeyMap.clear();
+		g_ATDefaultKeyMap.reserve(2048);
+		ATUIGetDefaultKeyMap(options, g_ATDefaultKeyMap);
 	}
 }
 
-bool ATUIGetScanCodeForVirtualKey(uint32 virtKey, bool alt, bool ctrl, bool shift, uint8& scanCode) {
-	uint32 vkindex = virtKey;
-
-	if (virtKey >= 0x100)
+bool ATUIGetScanCodeForVirtualKey(uint32 virtKey, bool alt, bool ctrl, bool shift, bool extended, uint32& scanCode) {
+	if (virtKey >= 0x10000)
 		return false;
+
+	uint32 baseCode = virtKey << 9;
 
 	if (alt)
-		vkindex += kAlt >> 8;
+		baseCode += kAlt;
 
 	if (ctrl)
-		vkindex += kCtrl >> 8;
+		baseCode += kCtrl;
 
 	if (shift)
-		vkindex += kShift >> 8;
+		baseCode += kShift;
 
-	const uint8 kbcode = g_ATVKeyMap[vkindex];
+	if (extended)
+		baseCode += kExtended;
 
-	if (kbcode == kInvalidKeyCode)
-		return false;
+	return ATUIGetScanCodeForKeyInput(baseCode, scanCode);
+}
 
-	scanCode = kbcode;
-	return true;
+void ATUIGetCustomKeyMap(vdfastvector<uint32>& mappings) {
+	mappings = g_ATCustomKeyMap;
+}
+
+void ATUISetCustomKeyMap(const uint32 *mappings, size_t n) {
+	g_ATCustomKeyMap.clear();
+	g_ATCustomKeyMap.assign(mappings, mappings + n);
+
+	std::sort(g_ATCustomKeyMap.begin(), g_ATCustomKeyMap.end());
+}
+
+bool ATIsValidScanCode(uint32 c) {
+	// check for our special scan codes
+	if (c >= 0x100)
+		return c < kATUIKeyScanCodeLast;
+
+	// six values are never produced by the matrix
+	switch(c & 0x3F) {
+		case 0x09:
+		case 0x19:
+		case 0x24:
+		case 0x29:
+		case 0x31:
+		case 0x3B:
+			return false;
+
+		default:
+			return true;
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -542,7 +795,7 @@ void ATUILoadAccelTables() {
 
 		if (key.isReady()) {
 			try {
-				g_ATUIAccelTables[i].Load(key, commands.data(), commands.size());
+				g_ATUIAccelTables[i].Load(key, commands.data(), (uint32)commands.size());
 			} catch(const MyError&) {
 				// eat load error
 			}

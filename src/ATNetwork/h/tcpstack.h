@@ -119,7 +119,7 @@ struct ATNetTcpConnectionInfo {
 	ATNetTcpConnectionState mConnState;
 };
 
-class ATNetTcpStack {
+class ATNetTcpStack final : public IATNetTcpStack {
 public:
 	ATNetTcpStack();
 
@@ -133,6 +133,8 @@ public:
 	bool Bind(uint16 port, IATSocketListener *listener);
 	void Unbind(uint16 port, IATSocketListener *listener);
 
+	bool Connect(uint32 dstIpAddr, uint16 dstPort, IATSocketHandler *handler, IATSocket **newSocket);
+
 	void CloseAllConnections();
 
 	void GetConnectionInfo(vdfastvector<ATNetTcpConnectionInfo>& conns) const;
@@ -141,8 +143,9 @@ public:
 	void OnPacket(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& iphdr, const uint8 *data, const uint32 len);
 
 	uint32 EncodePacket(uint8 *dst, uint32 len, uint32 srcIpAddr, uint32 dstIpAddr, const ATTcpHeaderInfo& hdrInfo, const void *data, uint32 dataLen);
-	void SendReset(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& iphdr, uint16 srcPort, uint16 dstPort, uint32 seqNo);
-	void SendReset(uint32 srcIpAddr, const ATEthernetAddr& dstHwAddr, uint32 dstIpAddr, uint16 srcPort, uint16 dstPort, uint32 seqNo);
+	void SendReset(const ATIPv4HeaderInfo& iphdr, uint16 srcPort, uint16 dstPort, const ATTcpHeaderInfo& origTcpHdr);
+	void SendReset(uint32 srcIpAddr, uint32 dstIpAddr, uint16 srcPort, uint16 dstPort, const ATTcpHeaderInfo& origTcpHdr);
+	void SendFrame(uint32 dstIpAddr, const void *data, uint32 len);
 	void SendFrame(const ATEthernetAddr& dstAddr, const void *data, uint32 len);
 
 	void DeleteConnection(const ATNetTcpConnectionKey& connKey);
@@ -150,6 +153,8 @@ public:
 protected:
 	ATNetIpStack *mpIpStack;
 	IATEthernetClock *mpClock;
+	uint16 mPortCounter;
+	uint32 mXmitInitialSequenceSalt;
 
 	IATSocketListener *mpBridgeListener;
 
@@ -168,6 +173,8 @@ public:
 	void GetInfo(ATNetTcpConnectionInfo& info) const;
 
 	void Init(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& ipHdr, const ATTcpHeaderInfo& tcpHdr);
+	void InitOutgoing(IATSocketHandler *h, uint32 isnSalt);
+
 	void SetSocketHandler(IATSocketHandler *h);
 
 	void OnPacket(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& iphdr, const ATTcpHeaderInfo& tcpHdr, const uint8 *data, const uint32 len);
@@ -194,11 +201,12 @@ protected:
 	};
 
 	const ATNetTcpConnectionKey mConnKey;
-	ATNetTcpStack *const mpTcpStack;
+	ATNetTcpStack *mpTcpStack;
 	vdrefptr<IATSocketHandler> mpSocketHandler;
 	uintptr_t mSocketHandlerData;
 	bool mbLocalOpen;
 	bool mbSynQueued;
+	bool mbSynAcked;
 	bool mbFinQueued;
 	bool mbFinReceived;
 
@@ -207,9 +215,6 @@ protected:
 	uint32	mEventClose;
 	uint32	mEventTransmit;
 	uint32	mEventRetransmit;
-
-	ATEthernetAddr mRemoteHwAddr;
-	uint32 mRemoteWindow;
 
 	struct PacketTimer {
 		uint32 mNext;

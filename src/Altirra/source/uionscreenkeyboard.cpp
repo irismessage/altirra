@@ -1,9 +1,12 @@
 #include "stdafx.h"
 #include "uionscreenkeyboard.h"
 #include "uibutton.h"
-#include "uimanager.h"
+#include "uikeyboard.h"
+#include <at/atui/uimanager.h>
 #include "simulator.h"
 #include "pokey.h"
+
+extern ATUIKeyboardOptions g_kbdOpts;
 
 extern ATSimulator g_sim;
 
@@ -36,9 +39,9 @@ const ATUIOnScreenKeyboard::KeyEntry ATUIOnScreenKeyboard::kEntries[]={
 	{ 0, 4, 0x35, L"8", L"@", NULL },
 	{ 0, 4, 0x30, L"9", L"(", NULL },
 	{ 0, 4, 0x32, L"0", L")", NULL },
-	{ 0, 4, 0x36, L"<", L"Clr", NULL },
-	{ 0, 4, 0x37, L">", L"Ins", NULL },
-	{ 0, 4, 0x34, L"BkSp", L"Del", NULL },
+	{ 0, 4, 0x36, L"<", L"Clr" },
+	{ 0, 4, 0x37, L">", L"Ins", L"Ins" },
+	{ 0, 4, 0x34, L"BkSp", L"Del", L"Del" },
 
 	{ 0, 5, 0x2C, L"Tab", L"Set", L"Clr" },
 	{ 0, 4, 0x2F, L"Q", NULL, NULL },
@@ -100,10 +103,10 @@ const int ATUIOnScreenKeyboard::kRowBreaks[]={
 ATUIOnScreenKeyboard::ATUIOnScreenKeyboard()
 	: mButtonWidth(32)
 	, mButtonHeight(32)
-	, mbShift(false)
 	, mbShiftHeld(false)
-	, mbControl(false)
+	, mbShiftSticky(false)
 	, mbControlHeld(false)
+	, mbControlSticky(false)
 {
 	for(size_t i=0; i<vdcountof(mButtons); ++i)
 		mButtons[i].mpButton = NULL;
@@ -144,8 +147,6 @@ void ATUIOnScreenKeyboard::OnCreate() {
 //	SetFillColor(0xD4D0C8);
 	SetFillColor(0xD4D0C8 / 4 * 3);
 
-	const int bw = mButtonWidth;
-	const int bh = mButtonHeight;
 	int x = 0;
 	int y = -1;
 
@@ -173,6 +174,9 @@ void ATUIOnScreenKeyboard::OnCreate() {
 
 		button->OnPressedEvent() = ATBINDCALLBACK(this, &ATUIOnScreenKeyboard::OnButtonPressed);
 		button->OnActivatedEvent() = ATBINDCALLBACK(this, &ATUIOnScreenKeyboard::OnButtonReleased);
+
+		if (kEntries[i].mbToggle)
+			button->OnHeldEvent() = [=, this](ATUIButton *src, bool state) { OnButtonHeld(src, state, i); };
 
 		switch(entry.mpKeyEntry->mScanCode) {
 			case 0x34:	// backspace
@@ -202,8 +206,6 @@ void ATUIOnScreenKeyboard::OnCreate() {
 		const int base3 = row+2 < vdcountof(kRowBreaks) ? kRowBreaks[row+2] : base2;
 
 		for(int i=base1; i<base2; ++i) {
-			ATUIButton *btn = mButtons[i].mpButton;
-
 			if (i != base1)
 				mButtons[i].mNavOrder[0] = i-1;
 
@@ -273,7 +275,7 @@ void ATUIOnScreenKeyboard::OnActionStart(uint32 id) {
 	switch(id) {
 		case kActionHoldShift:
 			mbShiftHeld = true;
-			g_sim.GetPokey().SetShiftKeyState(true);
+			g_sim.GetPokey().SetShiftKeyState(true, !g_kbdOpts.mbFullRawKeys);
 			UpdateLabels();
 			break;
 
@@ -319,14 +321,14 @@ void ATUIOnScreenKeyboard::OnActionRepeat(uint32 id) {
 void ATUIOnScreenKeyboard::OnActionStop(uint32 id) {
 	switch(id) {
 		case kActionHoldShift:
-			mbShift = false;
+			mbShiftSticky = false;
 			mbShiftHeld = false;
-			g_sim.GetPokey().SetShiftKeyState(false);
+			g_sim.GetPokey().SetShiftKeyState(false, !g_kbdOpts.mbFullRawKeys);
 			UpdateLabels();
 			break;
 
 		case kActionHoldControl:
-			mbControl = false;
+			mbControlSticky = false;
 			mbControlHeld = false;
 			g_sim.GetPokey().SetControlKeyState(false);
 			UpdateLabels();
@@ -344,7 +346,7 @@ void ATUIOnScreenKeyboard::OnButtonPressed(ATUIButton *src) {
 
 			switch(ke.mScanCode) {
 				default:
-					pokey.PushRawKey(ke.mScanCode + (pokey.GetControlKeyState() ? 0x80 : 0x00) + (pokey.GetShiftKeyState() ? 0x40 : 0x00));
+					pokey.PushRawKey(ke.mScanCode + (pokey.GetControlKeyState() ? 0x80 : 0x00) + (pokey.GetShiftKeyState() ? 0x40 : 0x00), !g_kbdOpts.mbFullRawKeys);
 					break;
 
 				case 0x40:
@@ -352,15 +354,7 @@ void ATUIOnScreenKeyboard::OnButtonPressed(ATUIButton *src) {
 					break;
 
 				case 0x41:
-					mbControl = true;
-					pokey.SetControlKeyState(true);
-					UpdateLabels();
-					break;
-
 				case 0x42:
-					mbShift = true;
-					pokey.SetShiftKeyState(true);
-					UpdateLabels();
 					break;
 
 				case 0x48:
@@ -385,33 +379,15 @@ void ATUIOnScreenKeyboard::OnButtonPressed(ATUIButton *src) {
 }
 
 void ATUIOnScreenKeyboard::OnButtonReleased(ATUIButton *src) {
-	bool toggled = false;
-
 	for(size_t i=0; i<vdcountof(mButtons); ++i) {
 		if (mButtons[i].mpButton == src) {
 			const KeyEntry& ke = *mButtons[i].mpKeyEntry;
-
-			toggled = ke.mbToggle;
 
 			ATPokeyEmulator& pokey = g_sim.GetPokey();
 			ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
 			switch(ke.mScanCode) {
 				case 0x40:
-					break;
-				case 0x41:
-					mbControl = false;
-					if (!mbControlHeld) {
-						pokey.SetControlKeyState(false);
-						UpdateLabels();
-					}
-					break;
-				case 0x42:
-					mbShift = false;
-					if (!mbShiftHeld) {
-						pokey.SetShiftKeyState(false);
-						UpdateLabels();
-					}
 					break;
 				case 0x43:
 					break;
@@ -426,8 +402,10 @@ void ATUIOnScreenKeyboard::OnButtonReleased(ATUIButton *src) {
 				case 0x4A:
 					gtia.SetConsoleSwitch(0x04, false);
 					break;
+
 				default:
-					pokey.ReleaseRawKey();
+					pokey.ReleaseRawKey(ke.mScanCode, !g_kbdOpts.mbFullRawKeys);
+					break;
 			}
 
 			break;
@@ -435,9 +413,15 @@ void ATUIOnScreenKeyboard::OnButtonReleased(ATUIButton *src) {
 	}
 
 	// release any buttons that are toggles -- do this AFTER we've pushed keys
-	if (!toggled) {
-		if (mbShift && !mbShiftHeld) {
-			mbShift = false;
+	ATPokeyEmulator& pokey = g_sim.GetPokey();
+	bool needLabelChange = false;
+
+	if (mbShiftSticky) {
+		mbShiftSticky = false;
+		
+		if (!mbShiftHeld) {
+			pokey.SetShiftKeyState(false, !g_kbdOpts.mbFullRawKeys);
+			needLabelChange = true;
 
 			for(int index : mShiftButtons) {
 				ATUIButton *b = mButtons[index].mpButton;
@@ -447,8 +431,15 @@ void ATUIOnScreenKeyboard::OnButtonReleased(ATUIButton *src) {
 				}
 			}
 		}
+	}
 
-		if (mbControl && !mbControlHeld) {
+	if (mbControlSticky) {
+		mbControlSticky = false;
+
+		if (!mbControlHeld) {
+			pokey.SetControlKeyState(false);
+			needLabelChange = true;
+
 			for(int index : mControlButtons) {
 				ATUIButton *b = mButtons[index].mpButton;
 
@@ -458,6 +449,46 @@ void ATUIOnScreenKeyboard::OnButtonReleased(ATUIButton *src) {
 			}
 		}
 	}
+
+	if (needLabelChange)
+		UpdateLabels();
+}
+
+void ATUIOnScreenKeyboard::OnButtonHeld(ATUIButton *btn, bool held, int index) {
+	const KeyEntry& ke = *mButtons[index].mpKeyEntry;
+
+	ATPokeyEmulator& pokey = g_sim.GetPokey();
+	ATGTIAEmulator& gtia = g_sim.GetGTIA();
+
+	switch(ke.mScanCode) {
+		case 0x41:
+			mbControlHeld = held;
+			if (held) {
+				mbControlSticky = !mbControlSticky;
+				pokey.SetControlKeyState(true);
+				UpdateLabels();
+			} else {
+				if (!mbControlSticky) {
+					pokey.SetControlKeyState(false);
+					UpdateLabels();
+				}
+			}
+			break;
+
+		case 0x42:
+			mbShiftHeld = held;
+			if (held) {
+				mbShiftSticky = !mbShiftSticky;
+				pokey.SetShiftKeyState(true, !g_kbdOpts.mbFullRawKeys);
+				UpdateLabels();
+			} else {
+				if (!mbShiftSticky) {
+					pokey.SetShiftKeyState(false, !g_kbdOpts.mbFullRawKeys);
+					UpdateLabels();
+				}
+			}
+			break;
+	}
 }
 
 void ATUIOnScreenKeyboard::UpdateLabels() {
@@ -465,7 +496,7 @@ void ATUIOnScreenKeyboard::UpdateLabels() {
 		ATUIButton *b = mButtons[index].mpButton;
 
 		if (b) {
-			b->SetDepressed(mbShiftHeld || mbShift);
+			b->SetDepressed(mbShiftHeld || mbShiftSticky);
 		}
 	}
 
@@ -473,7 +504,7 @@ void ATUIOnScreenKeyboard::UpdateLabels() {
 		ATUIButton *b = mButtons[index].mpButton;
 
 		if (b) {
-			b->SetDepressed(mbControlHeld || mbControl);
+			b->SetDepressed(mbControlHeld || mbControlSticky);
 		}
 	}
 
@@ -484,10 +515,10 @@ void ATUIOnScreenKeyboard::UpdateLabels() {
 			const KeyEntry& ke = *be.mpKeyEntry;
 			const wchar_t *s = ke.mpNormalText;
 
-			if (mbControl) {
+			if (mbControlHeld || mbControlSticky) {
 				if (ke.mpControlText)
 					s = ke.mpControlText;
-			} else if (mbShift) {
+			} else if (mbShiftHeld || mbShiftSticky) {
 				if (ke.mpShiftText)
 					s = ke.mpShiftText;
 			}

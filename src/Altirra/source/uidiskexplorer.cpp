@@ -32,10 +32,10 @@
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
 #include "resource.h"
-#include "diskimage.h"
-#include <at/atui/dialog.h>
-#include <at/atui/uiproxies.h>
-#include "diskfs.h"
+#include <at/atio/diskimage.h>
+#include <at/atio/diskfs.h>
+#include <at/atnativeui/dialog.h>
+#include <at/atnativeui/uiproxies.h>
 #include "uifilefilters.h"
 
 class ATUIFileViewer : public VDDialogFrameW32 {
@@ -1643,6 +1643,9 @@ void ATUIDialogDiskExplorer::OnItemContextMenu(VDUIProxyListView *sender, const 
 	if (!mhMenuItemContext)
 		return;
 
+	if (!mpFS)
+		return;
+
 	const int idx = mList.GetSelectedIndex();
 	const bool writable = !mpFS->IsReadOnly();
 	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_VIEW, idx >= 0);
@@ -1681,14 +1684,14 @@ void ATUIDialogDiskExplorer::OnItemLabelChanged(VDUIProxyListView *sender, VDUIP
 				s.sprintf(L"Cannot create directory \"%ls\": %hs", event->mpNewLabel, e.gets());
 				ShowError(s.c_str(), L"Altirra Error");
 
-				PostCall([=,this]() { mList.DeleteItem(idx); });
+				PostCall([idx,this]() { mList.DeleteItem(idx); });
 			}
 		}
 
 		return;
 	}
 
-	if (!fle->mFileKey)
+	if (!fle->mFileKey || !event->mpNewLabel)
 		return;
 
 	try {

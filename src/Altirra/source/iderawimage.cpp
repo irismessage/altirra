@@ -21,6 +21,10 @@
 #include <vd2/system/filesys.h>
 #include "iderawimage.h"
 
+void ATCreateDeviceHardDiskRawImage(const ATPropertySet& pset, IATDevice **dev);
+
+extern const ATDeviceDefinition g_ATDeviceDefIDERawImage = { "hdrawimage", "harddisk", L"Hard disk image (raw file)", ATCreateDeviceHardDiskRawImage };
+
 ATIDERawImage::ATIDERawImage()
 	: mSectorCount(0)
 	, mSectorCountLimit(0)
@@ -49,9 +53,7 @@ void *ATIDERawImage::AsInterface(uint32 iid) {
 }
 
 void ATIDERawImage::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mTag = "hdrawimage";
-	info.mConfigTag = "harddisk";
-	info.mName = L"Hard disk image (raw file)";
+	info.mpDef = &g_ATDeviceDefIDERawImage;
 }
 
 void ATIDERawImage::GetSettings(ATPropertySet& settings) {
