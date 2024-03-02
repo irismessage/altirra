@@ -32,6 +32,8 @@ public:
 	~ATCartridgeEmulator();
 
 	int GetCartBank() const { return mCartBank; }
+	bool IsABxxMapped() const;
+	bool IsBASICDisableAllowed() const;		// Cleared if we have a cart type that doesn't want OPTION pressed (AtariMax).
 
 	void LoadSuperCharger3D();
 	void Load(const wchar_t *fn);

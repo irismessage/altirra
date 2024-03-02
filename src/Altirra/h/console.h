@@ -54,6 +54,7 @@ void ATActivateUIPane(uint32 id, bool giveFocus, bool visible = true);
 
 bool ATRestorePaneLayout(const char *name);
 void ATSavePaneLayout(const char *name);
+void ATLoadDefaultPaneLayout();
 
 enum {
 	kATUIPaneId_None,

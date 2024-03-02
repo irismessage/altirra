@@ -247,6 +247,12 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::IRQST > IRQST ;
 		ATByteAdapter<ATKernelSymbols::IRQEN > IRQEN ;
 
+		// POKEY (D2xx)
+		ATByteAdapter<ATKernelSymbols::AUDC1 > AUDC1 ;
+		ATByteAdapter<ATKernelSymbols::AUDF1 > AUDF1 ;
+		ATByteAdapter<ATKernelSymbols::AUDCTL> AUDCTL;
+		ATByteAdapter<ATKernelSymbols::SKCTL > SKCTL ;
+
 		// PIAs (D3xx)
 		ATByteAdapter<ATKernelSymbols::PORTA > PORTA ;
 		ATByteAdapter<ATKernelSymbols::PORTB > PORTB ;

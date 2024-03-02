@@ -184,12 +184,17 @@ PotReadLoop:
 	sta		paddl0,x
 	lda		pot4,x
 	sta		paddl4,x
-	lda		trig0,x
-	sta		strig0,x
 	lda		#1
 	sta		ptrig4,x
 	dex
 	bpl		PotReadLoop
+
+	lda		trig0
+	sta		strig0
+	sta		strig2
+	lda		trig1
+	sta		strig1
+	sta		strig3
 	
 	lda		porta
 	tax
@@ -221,6 +226,9 @@ PotReadLoop:
 	lda		#$0f
 	sta		stick2
 	sta		stick3
+	
+	;restart pots (required for SysInfo)
+	sta		potgo
 	
 	jmp		(vvblkd)	;jump through vblank deferred vector
 	

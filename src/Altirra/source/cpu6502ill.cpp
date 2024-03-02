@@ -380,6 +380,14 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			*mpDstState++ = kStateWrite;
 			break;
 
+		case 0x93:	// SHA abs,X
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateRead;				// 3
+			*mpDstState++ = kStateReadIndYAddr_SHA;	// 4
+			*mpDstState++ = kStateWait;				// 5
+			*mpDstState++ = kStateWrite;			// 6
+			break;
+
 		case 0x9C:	// SHY abs,X
 			*mpDstState++ = kStateReadAddrL;
 			*mpDstState++ = kStateReadAddrHX_SHY;
@@ -427,6 +435,11 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			*mpDstState++ = kStateDSetSZ;
 			*mpDstState++ = kStateDtoX;
 			*mpDstState++ = kStateDtoA;
+			break;
+
+		case 0xBB:	// LAS abs
+			DecodeReadAbs();
+			*mpDstState++ = kStateLas;
 			break;
 
 		case 0xBF:	// LAX abs,Y

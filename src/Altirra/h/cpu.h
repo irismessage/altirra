@@ -161,6 +161,7 @@ public:
 	}
 
 	bool	IsInstructionInProgress() const;
+	bool	IsNextCycleWrite() const;
 
 	bool	GetEmulationFlag() const { return mbEmulationFlag; }
 	uint16	GetInsnPC() const { return mInsnPC; }

@@ -15,31 +15,17 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#ifndef f_ARTIFACTING_H
-#define f_ARTIFACTING_H
+#ifndef f_AT_INPUTDRIVER_H
+#define f_AT_INPUTDRIVER_H
 
-class ATArtifactingEngine {
-	ATArtifactingEngine(const ATArtifactingEngine&);
-	ATArtifactingEngine& operator=(const ATArtifactingEngine&);
-public:
-	ATArtifactingEngine();
-	~ATArtifactingEngine();
-
-	enum { N = 456 };
-
-	void BeginFrame(bool pal);
-	void Artifact(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
-
-protected:
-	void ArtifactPAL(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
-	void ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
-	void BlitNoArtifacts(uint32 dst[N], const uint8 src[N]);
-
-	bool mbPAL;
-
-	int mChromaVectors[16][3];
-	uint32 mPalette[256];
-	uint8 mPALDelayLine[N];
+class ATKeyboardDriver {
 };
 
-#endif	// f_ARTIFACTING_H
+class ATMouseDriver {
+};
+
+class ATJoystickDriver {
+};
+
+#endif // f_AT_INPUTDRIVER_H
+

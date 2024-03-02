@@ -52,6 +52,7 @@ enum ATKernelMode {
 	kATKernelMode_XL,
 	kATKernelMode_HLE,
 	kATKernelMode_LLE,
+	kATKernelMode_OSA,
 	kATKernelModeCount
 };
 
@@ -78,6 +79,8 @@ class IATHLEKernel;
 class IATJoystickManager;
 class IATHardDiskEmulator;
 class ATCartridgeEmulator;
+class ATPortController;
+class ATInputManager;
 
 class IATSimulatorCallback {
 public:
@@ -115,6 +118,7 @@ public:
 	ATDiskEmulator& GetDiskDrive(int index) { return mDiskDrives[index]; }
 	ATCassetteEmulator& GetCassette() { return *mpCassette; }
 	IATHardDiskEmulator *GetHardDisk() { return mpHardDisk; }
+	ATInputManager *GetInputManager() { return mpInputManager; }
 
 	bool IsTurboModeEnabled() const { return mbTurbo; }
 	bool IsFrameSkipEnabled() const { return mbFrameSkip; }
@@ -131,7 +135,7 @@ public:
 	bool IsAutoLoadKernelSymbolsEnabled() const { return mbAutoLoadKernelSymbols; }
 	bool IsDualPokeysEnabled() const { return mbDualPokeys; }
 
-	uint8	GetBankRegister() const { return mPORTBIN & (mPORTBOUT | ~mPORTBDDR); }
+	uint8	GetBankRegister() const { return mPORTBOUT | ~mPORTBDDR; }
 	uint32	GetCPUBankBase() const { return mpReadMemoryMap[0x40] - mMemory; }
 	uint32	GetAnticBankBase() const { return mpAnticMemoryMap[0x40] - mMemory; }
 	int		GetCartBank() const;
@@ -197,6 +201,8 @@ public:
 		return AnticReadByte(address);
 	}
 
+	void DumpPIAState();
+
 	void LoadState(ATSaveStateReader& reader);
 	void SaveState(ATSaveStateWriter& writer);
 
@@ -215,6 +221,7 @@ private:
 	void AnticAssertNMI();
 	void AnticEndFrame();
 	void AnticEndScanline();
+	bool AnticIsNextCPUCycleWrite();
 	uint32 GTIAGetXClock();
 	void GTIASetSpeaker(bool newState);
 	void GTIARequestAnticSync();
@@ -261,11 +268,15 @@ private:
 	ATPokeyEmulator	mPokey;
 	ATPokeyEmulator	mPokey2;
 	ATScheduler		mScheduler;
+	ATScheduler		mSlowScheduler;
 	ATDiskEmulator	mDiskDrives[4];
 	ATCassetteEmulator	*mpCassette;
 	IATJoystickManager	*mpJoysticks;
 	IATHardDiskEmulator	*mpHardDisk;
 	ATCartridgeEmulator	*mpCartridge;
+	ATInputManager	*mpInputManager;
+	ATPortController *mpPortAController;
+	ATPortController *mpPortBController;
 
 	uint32	mJoystickControllerData;
 	uint32	mKeyboardControllerData;
@@ -278,7 +289,6 @@ private:
 	uint8	mPORTAOUT;
 	uint8	mPORTADDR;
 	uint8	mPORTACTL;
-	uint8	mPORTBIN;
 	uint8	mPORTBOUT;
 	uint8	mPORTBDDR;
 	uint8	mPORTBCTL;
@@ -293,27 +303,13 @@ private:
 	const uint8 *mpBPReadPage;
 	uint8 *mpBPWritePage;
 
-	////////////////////////////////////
-	const uint8	*mReadMemoryMap[256];
-	uint8	*mWriteMemoryMap[256];
-	const uint8	*mAnticMemoryMap[256];
-
-	uint8	mOSBKernelROM[0x2800];
-	uint8	mXLKernelROM[0x4000];
-	uint8	mHLEKernelROM[0x4000];
-	uint8	mLLEKernelROM[0x2800];
-	uint8	mBASICROM[0x2000];
-
-	uint8	mMemory[0x110000];
-	uint8	mDummyRead[256];
-	uint8	mDummyWrite[256];
-
 	const uint8 *mpKernelUpperROM;
 	const uint8 *mpKernelLowerROM;
 	const uint8 *mpKernelSelfTestROM;
 	uint32	mKernelSymbolsModuleId;
 
 	vdfastvector<uint8>		mProgramToLoad;
+	bool		mbProgramLoadPending;
 	ptrdiff_t	mProgramLoadIndex;
 	uint32		mProgramModuleIds[2];
 	uint32		mCartModuleIds[2];
@@ -324,6 +320,22 @@ private:
 	bool		mbCallbacksChanged;
 
 	IATHLEKernel	*mpHLEKernel;
+
+	////////////////////////////////////
+	const uint8	*mReadMemoryMap[256];
+	uint8	*mWriteMemoryMap[256];
+	const uint8	*mAnticMemoryMap[256];
+
+	uint8	mOSAKernelROM[0x2800];
+	uint8	mOSBKernelROM[0x2800];
+	uint8	mXLKernelROM[0x4000];
+	uint8	mHLEKernelROM[0x4000];
+	uint8	mLLEKernelROM[0x2800];
+	uint8	mBASICROM[0x2000];
+
+	uint8	mMemory[0x110000];
+	uint8	mDummyRead[256];
+	uint8	mDummyWrite[256];
 };
 
 #endif

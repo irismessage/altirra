@@ -109,6 +109,98 @@ bool ATCPUEmulator::IsInstructionInProgress() const {
 	return state != kStateReadOpcode && state != kStateReadOpcodeNoBreak;
 }
 
+bool ATCPUEmulator::IsNextCycleWrite() const {
+	const uint8 *p = mpNextState;
+	for(;;) {
+		const uint8 state = *p++;
+
+		switch(state) {
+			case kStateReadOpcode:
+			case kStateReadOpcodeNoBreak:
+			case kStateReadDummyOpcode:
+			case kStateReadImm:
+			case kStateReadAddrL:
+			case kStateReadAddrH:
+			case kStateReadAddrHX:
+			case kStateReadAddrHY:
+			case kStateReadAddrHX_SHY:
+			case kStateRead:
+			case kStateReadAddX:
+			case kStateReadAddY:
+			case kStateReadCarry:
+			case kStateReadCarryForced:
+			case kStateReadAbsIndAddr:
+			case kStateReadAbsIndAddrBroken:
+			case kStateReadIndAddr:
+			case kStateReadIndYAddr:
+			case kStateReadIndYAddr_SHA:
+			case kStatePop:
+			case kStatePopPCL:
+			case kStatePopPCH:
+			case kStatePopPCHP1:
+			case kStateReadRel:
+			case kStateReadImmL16:
+			case kStateReadImmH16:
+			case kStateReadAddrDp:
+			case kStateReadAddrDpX:
+			case kStateReadAddrDpY:
+			case kStateReadIndAddrDp:
+			case kStateReadIndAddrDpY:
+			case kStateReadIndAddrDpLongH:
+			case kStateReadIndAddrDpLongB:
+			case kStateReadAddrAddY:
+			case kState816ReadAddrL:
+			case kStateRead816AddrAbsHY:
+			case kStateRead816AddrAbsLongL:
+			case kStateRead816AddrAbsLongH:
+			case kStateRead816AddrAbsLongB:
+			case kState816ReadAddrHX:
+			case kState816ReadAddrHY:
+			case kStateReadAddrB:
+			case kStateReadAddrBX:
+			case kStateReadAddrSO:
+			case kState816ReadByte:
+			case kStateReadL16:
+			case kStateReadH16:
+			case kStatePopNative:
+			case kStatePopL16:
+			case kStatePopH16:
+			case kStatePopPBKNative:
+			case kStatePopPCLNative:
+			case kStatePopPCHNative:
+			case kStatePopPCHP1Native:
+			case kState816_MoveRead:
+				return false;
+
+			case kStateWait:
+			case kStateWrite:
+			case kStateWriteZpX:
+			case kStateWriteZpY:
+			case kStateWriteAbsX:
+			case kStateWriteAbsY:
+			case kStatePush:
+			case kStatePushPCL:
+			case kStatePushPCH:
+			case kStatePushPCLM1:
+			case kStatePushPCHM1:
+			case kState816WriteByte:
+			case kStateWriteL16:
+			case kStateWriteH16:
+			case kStatePushNative:
+			case kStatePushL16:
+			case kStatePushH16:
+			case kStatePushPBKNative:
+			case kStatePushPCLNative:
+			case kStatePushPCHNative:
+			case kStatePushPCLM1Native:
+			case kStatePushPCHM1Native:
+			case kState816_MoveWriteP:
+			case kState816_MoveWriteN:
+				return true;
+		}
+	}
+}
+
 void ATCPUEmulator::SetPC(uint16 pc) {
 	mPC = pc;
 	mInsnPC = pc;
@@ -555,13 +647,18 @@ int ATCPUEmulator::Advance(bool busLocked) {
 			case kStateReadAddrHX_SHY:
 				{
 					uint8 hiByte = mpMemory->ReadByte(mPC++);
+					uint32 lowSum = (uint32)mAddr + mX;
+
+					// compute borked result from page crossing
 					mData = mY & (hiByte + 1);
-					mP &= ~(kFlagN | kFlagZ);
-					if (mData & 0x80)
-						mP |= kFlagN;
-					if (!mData)
-						mP |= kFlagZ;
-					mAddr = (uint16)(mAddr + ((uint32)hiByte << 8) + mX);
+
+					// replace high byte if page crossing detected
+					if (lowSum >= 0x100) {
+						hiByte = mData;
+						lowSum &= 0xff;
+					}
+
+					mAddr = (uint16)(lowSum + ((uint32)hiByte << 8));
 				}
 				return kATSimEvent_None;
 
@@ -615,6 +712,24 @@ int ATCPUEmulator::Advance(bool busLocked) {
 				mAddr = mData + ((uint16)mpMemory->ReadByte(0xff & (mAddr + 1)) << 8);
 				mAddr2 = (mAddr & 0xff00) + ((mAddr + mY) & 0x00ff);
 				mAddr = mAddr + mY;
+				return kATSimEvent_None;
+
+			case kStateReadIndYAddr_SHA:
+				{
+					uint32 lowSum = (uint32)mData + mY;
+					uint8 hiByte = mpMemory->ReadByte(0xff & (mAddr + 1));
+
+					// compute "adjusted" high address byte
+					mData = mA & mX & (hiByte + 1);
+
+					// check for page crossing and replace high byte if so
+					if (lowSum >= 0x100) {
+						lowSum &= 0xff;
+						hiByte = mData;
+					}
+
+					mAddr = (uint16)(lowSum + ((uint32)hiByte << 8));
+				}
 				return kATSimEvent_None;
 
 			case kStateWait:
@@ -947,6 +1062,15 @@ int ATCPUEmulator::Advance(bool busLocked) {
 				if (mA & 0x80)
 					mP |= kFlagN;
 				if (!mA)
+					mP |= kFlagZ;
+				break;
+
+			case kStateLas:
+				mA = mX = mS = (mData & mS);
+				mP &= ~(kFlagN | kFlagZ);
+				if (mS & 0x80)
+					mP |= kFlagN;
+				if (!mS)
 					mP |= kFlagZ;
 				break;
 

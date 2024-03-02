@@ -204,6 +204,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\audiowriter.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\autotest.cpp"
 				>
 			</File>
@@ -264,11 +268,23 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\gtiarenderer.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\harddisk.cpp"
 				>
 			</File>
 			<File
 				RelativePath=".\source\hlekernel.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\inputcontroller.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\inputmanager.cpp"
 				>
 			</File>
 			<File
@@ -334,6 +350,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\audiowriter.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\autotest.h"
 				>
 			</File>
@@ -382,11 +402,27 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\gtiarenderer.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\harddisk.h"
 				>
 			</File>
 			<File
 				RelativePath=".\h\hlekernel.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\inputcontroller.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\inputdriver.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\inputmanager.h"
 				>
 			</File>
 			<File

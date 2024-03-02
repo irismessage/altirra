@@ -387,6 +387,19 @@ void ATContainerDockingPane::SetArea(const vdrect32& area, bool parentContainsFu
 	Relayout();
 }
 
+void ATContainerDockingPane::Clear() {
+	AddRef();
+
+	while(!mChildren.empty())
+		mChildren.back()->Clear();
+
+	if (mpContent) {
+		DestroyWindow(mpContent->GetHandleW32());
+	}
+
+	Release();
+}
+
 void ATContainerDockingPane::Relayout() {
 	mCenterArea = mArea;
 
@@ -844,6 +857,11 @@ void ATContainerWindow::Destroy() {
 	}
 }
 
+void ATContainerWindow::Clear() {
+	if (mpDockingPane)
+		mpDockingPane->Clear();
+}
+
 void ATContainerWindow::Relayout() {
 	OnSize();
 }
@@ -1251,8 +1269,9 @@ void ATFrameWindow::SetFullScreen(bool fs) {
 		LONG exStyle = GetWindowLong(mhwnd, GWL_EXSTYLE);
 
 		if (fs) {
-			style &= ~(WS_CAPTION | WS_THICKFRAME);
-			style |= WS_POPUP;
+			style &= ~(WS_CAPTION | WS_THICKFRAME | WS_POPUP);
+			if (!(style & WS_CHILD))
+				style |= WS_POPUP;
 			exStyle &= WS_EX_TOOLWINDOW;
 		} else {
 			style &= ~WS_POPUP;
@@ -1324,15 +1343,6 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			if (mbDragging) {
 				if (wParam == VK_ESCAPE) {
 					EndDrag(false);
-				}
-			}
-			break;
-
-		case WM_MENUCHAR:
-			if (GetWindowLong(mhwnd, GWL_STYLE) & WS_CAPTION) {
-				if (HWND hwndParent = GetParent(mhwnd)) {
-					PostMessage(hwndParent, WM_SYSCOMMAND, SC_KEYMENU, wParam);
-					return MAKELRESULT(0, 1);
 				}
 			}
 			break;

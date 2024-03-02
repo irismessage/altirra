@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL emulator
-//	Copyright (C) 2009 Avery Lee
+//	Copyright (C) 2008-2009 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -15,31 +15,25 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#ifndef f_ARTIFACTING_H
-#define f_ARTIFACTING_H
+#ifndef f_AT_AUDIOWRITER_H
+#define f_AT_AUDIOWRITER_H
 
-class ATArtifactingEngine {
-	ATArtifactingEngine(const ATArtifactingEngine&);
-	ATArtifactingEngine& operator=(const ATArtifactingEngine&);
+#include <vd2/system/file.h>
+#include "pokey.h"
+
+class ATAudioWriter : public IATPokeyAudioTap {
+	ATAudioWriter(const ATAudioWriter&);
+	ATAudioWriter& operator=(const ATAudioWriter&);
 public:
-	ATArtifactingEngine();
-	~ATArtifactingEngine();
+	ATAudioWriter(const wchar_t *filename);
+	~ATAudioWriter();
 
-	enum { N = 456 };
-
-	void BeginFrame(bool pal);
-	void Artifact(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
-
+	void WriteRawAudio(const float *left, const float *right, uint32 count);
+	
 protected:
-	void ArtifactPAL(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
-	void ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
-	void BlitNoArtifacts(uint32 dst[N], const uint8 src[N]);
+	void WriteInterleaved(const float *left, const float *right, uint32 count);
 
-	bool mbPAL;
-
-	int mChromaVectors[16][3];
-	uint32 mPalette[256];
-	uint8 mPALDelayLine[N];
+	VDFile mFile;
 };
 
-#endif	// f_ARTIFACTING_H
+#endif	// f_AT_AUDIOWRITER_H

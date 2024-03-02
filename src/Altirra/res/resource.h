@@ -209,6 +209,23 @@
 #define ID_FILE_OPENIMAGE               40161
 #define ID_CASSETTE_AUTO                40162
 #define ID_CASSETTE_AUTOBOOT            40163
+#define ID_VIEW_RESETWINDOWLAYOUT       40164
+#define ID_CASSETTE_UNLOAD              40165
+#define ID_RECORD_RAWAUDIO              40166
+#define ID_RECORD_STOPRECORDING         40167
+#define ID_RECORD_RECORDRAWAUDIO        40168
+#define ID_FILE_BOOTIMAGE               40169
+#define ID_VIDEO_STANDARDVIDEOONLY      40172
+#define ID_VIDEO_ENHANCEDTEXT           40173
+#define ID_VIDEO_STANDARDVIDEO          40174
+#define ID_VIDEO_ENHANCEDTEXTFONT       40175
+#define ID_FIRMWARE_800                 40176
+#define ID_FIRMWARE_OSA                 40177
+#define ID_VIDEO_NOARTIFACTING          40178
+#define ID_VIDEO_PALARTIFACTING         40179
+#define ID_VIDEO_PALARTIFACTING40180    40180
+#define ID_VIDEO_NTSCARTIFACTING        40181
+#define ID_CASSETTE_LOADDATAASAUDIO     40182
 #define IDC_STATIC                      -1
 
 // Next default values for new objects
@@ -217,7 +234,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
 #define _APS_NEXT_RESOURCE_VALUE        119
-#define _APS_NEXT_COMMAND_VALUE         40164
+#define _APS_NEXT_COMMAND_VALUE         40183
 #define _APS_NEXT_CONTROL_VALUE         1020
 #define _APS_NEXT_SYMED_VALUE           101
 #endif

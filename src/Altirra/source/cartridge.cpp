@@ -48,6 +48,20 @@ ATCartridgeEmulator::ATCartridgeEmulator()
 ATCartridgeEmulator::~ATCartridgeEmulator() {
 }
 
+bool ATCartridgeEmulator::IsABxxMapped() const {
+	return mCartMode && mCartBank >= 0;
+}
+
+bool ATCartridgeEmulator::IsBASICDisableAllowed() const {
+	switch(mCartMode) {
+		case kATCartridgeMode_MaxFlash_128K:
+		case kATCartridgeMode_MaxFlash_1024K:
+			return false;
+	}
+
+	return true;
+}
+
 void ATCartridgeEmulator::LoadSuperCharger3D() {
 	mCartMode = kATCartridgeMode_SuperCharger3D;
 	mCartBank = -1;
@@ -464,4 +478,5 @@ void ATCartridgeEmulator::SaveState(ATSaveStateWriter& writer) {
 template<class T>
 void ATCartridgeEmulator::ExchangeState(T& io) {
 	io != mCartBank;
+	io != mCartBank2;
 }

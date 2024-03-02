@@ -53,6 +53,11 @@ public:
 	virtual void PokeyResetSerialInput() = 0;
 };
 
+class IATPokeyAudioTap {
+public:
+	virtual void WriteRawAudio(const float *left, const float *right, uint32 count) = 0;
+};
+
 struct ATAudioFilter {
 	float	mHiPassAccum;
 	float	mLoPassPrev1;
@@ -62,7 +67,7 @@ struct ATAudioFilter {
 
 	ATAudioFilter();
 
-	void Filter(float * VDRESTRICT dst, const float * VDRESTRICT src, uint32 count, float loCoeff, float hiCoeff);
+	void Filter(float * VDRESTRICT dst, const float * VDRESTRICT src, uint32 count, float hiCoeff);
 };
 
 
@@ -76,6 +81,7 @@ public:
 
 	void	SetSlave(ATPokeyEmulator *slave);
 	void	SetCassette(IATPokeyCassetteDevice *dev);
+	void	SetAudioTap(IATPokeyAudioTap *tap);
 
 	void	SetPal(bool pal) { mbPal = pal; }
 	void	SetTurbo(bool enable) { mbTurbo = enable; }
@@ -86,10 +92,16 @@ public:
 	void	AddSIODevice(IATPokeySIODevice *device);
 	void	ReceiveSIOByte(uint8 byte);
 
-	void	SetAudioLine(int v);
+	void	SetAudioLine(int v);		// used for audio from tape
+	void	SetAudioLine2(int v);		// used for audio from motor control line
 	void	SetDataLine(bool newState);
 	void	SetCommandLine(bool newState);
-	void	SetSpeaker(bool newState) { mbSpeakerState = newState; }
+	void	SetSpeaker(bool newState) {
+		if (mbSpeakerState != newState) {
+			mbSpeakerState = newState;
+			UpdateOutput();
+		}
+	}
 
 	void	SetShiftKeyState(bool down);
 	void	PushKey(uint8 c, bool repeat);
@@ -141,10 +153,12 @@ protected:
 	void	SetLast15KHzTime(uint32 t) { mLast15KHzTime = t; }
 
 protected:
-	int		mAccum;
+	float	mAccum;
 	int		mSampleCounter;
-	int		mOutputLevel;
+	float	mOutputLevel;
 	int		mLastOutputTime;
+	int		mAudioInput;
+	int		mAudioInput2;
 	int		mExternalInput;
 
 	bool	mbResampleWaitForLatencyDrain;
@@ -206,6 +220,7 @@ protected:
 
 	uint8	mSerialInputShiftRegister;
 	uint8	mSerialOutputShiftRegister;
+	uint8	mSerialInputCounter;
 	uint8	mSerialOutputCounter;
 	bool	mbSerInValid;
 	bool	mbSerShiftInValid;
@@ -213,7 +228,7 @@ protected:
 	bool	mbSerialOutputState;
 	bool	mbSpeakerState;
 	bool	mbSerialRateChanged;
-	bool	mbSerialStartBitActive;
+	bool	mbSerialWaitingForStartBit;
 
 	// AUDCTL breakout
 	bool	mbFastTimer1;
@@ -234,6 +249,7 @@ protected:
 	ATEvent *mpPotScanEvent[8];
 	ATEvent	*mp64KHzEvent;
 	ATEvent	*mp15KHzEvent;
+	ATEvent	*mpAudioEvent;
 	ATEvent	*mpStartBitEvent;
 	ATEvent	*mpTimerEvents[4];
 	ATScheduler *mpScheduler;
@@ -248,6 +264,7 @@ protected:
 	Devices	mDevices;
 
 	IATPokeyCassetteDevice *mpCassette;
+	IATPokeyAudioTap *mpAudioTap;
 
 	enum {
 		kSamplesPerBlock = 128,
@@ -258,11 +275,12 @@ protected:
 		kRawBlockSize = kSamplesPerBlock * 16
 	};
 
+	float	mMixTable[61];
 	float	mRawOutputBuffer[kRawBlockSize];
 	float	mFilteredOutputBuffer[kRawBlockSize];
 	sint16	mOutputBuffer[kBlockSize];
-	bool	mPoly4Buffer[15];
-	bool	mPoly5Buffer[31];
+	uint8	mPoly4Buffer[15];
+	uint8	mPoly5Buffer[31];
 	uint8	mPoly9Buffer[511];
 	uint8	mPoly17Buffer[131071];
 };

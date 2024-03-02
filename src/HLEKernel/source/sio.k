@@ -29,6 +29,7 @@ SIOErrorDeviceDone	= $90
 
 	;turn off POKEY init mode so polynomial counters and audio run
 	mva		#3 skctl
+	mva		#3 sskctl
 	rts
 .endp
 
@@ -108,10 +109,14 @@ ackOK:
 	jmp		xit
 	
 xit:
-	mva		#0		audf3
-	mva		#$10	audc3
-	mva		#$10	audc4
-
+	lda		#0
+	ldx		#6
+silenceloop:
+	sta		audc1,x
+	dex
+	dex
+	bpl		silenceloop
+	
 	ldx		stackp
 	txs
 	tya
@@ -267,8 +272,8 @@ error:
 	and		#$df
 	sta		pokmsk
 	sta		irqen
-	cli
-	
+	cli	
+
 	;we're done
 	tya
 	rts

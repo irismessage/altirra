@@ -33,6 +33,9 @@
 	
 	;turn on shift lock
 	mva		#$40	shflok
+	
+	;enable key click
+	mva		#$00	noclik
 	rts
 .endp
 
@@ -91,6 +94,12 @@ waitForChar:
 	and		#$1f
 
 notAlpha:
+	;do key click logic if needed
+	ldy		noclik
+	bne		skipClick
+	jsr		KeyboardClick
+skipClick:
+
 	;return char
 	ldy		#0
 	rts
@@ -138,6 +147,24 @@ keyCodeToATASCII:
 	dta		$12, $F0, $05, $19, $9E, $14, $17, $11
 	dta		$F0, $F0, $F0, $F0, $FE, $F0, $7D, $FF
 	dta		$06, $08, $04, $F0, $F0, $07, $13, $01
+.endp
+
+;==============================================================================
+.proc	KeyboardClick
+	pha					;save key
+	ldx		#$7e		;128 scanlines (~8ms)
+clickloop:
+	txa
+	and		#$08		;mask off only console speaker bit
+	eor		#$08		;make sure we end with CONSOL bit 3 set
+	sta		consol
+	lda		vcount
+	cmp:req	vcount		;wait for scan line
+	dex
+	dex
+	bpl		clickloop
+	pla
+	rts
 .endp
 
 ;==============================================================================

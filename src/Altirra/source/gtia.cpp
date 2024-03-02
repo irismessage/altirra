@@ -23,9 +23,12 @@
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Kasumi/triblt.h>
 #include "gtia.h"
+#include "gtiarenderer.h"
 #include "console.h"
 #include "artifacting.h"
 #include "savestate.h"
+
+using namespace ATGTIA;
 
 class ATFrameTracker : public vdrefcounted<IVDRefCount> {
 public:
@@ -50,107 +53,18 @@ public:
 namespace {
 	const int kPlayerWidths[4]={8,16,8,32};
 	const int kMissileWidths[4]={2,4,2,8};
-
-	const uint8 PF0		= 0x01;
-	const uint8 PF1		= 0x02;
-	const uint8 PF01	= 0x03;
-	const uint8 PF2		= 0x04;
-	const uint8 PF3		= 0x08;
-	const uint8 PF23	= 0x0c;
-	const uint8 PF		= 0x0f;
-	const uint8 P0		= 0x10;
-	const uint8 P1		= 0x20;
-	const uint8 P01		= 0x30;
-	const uint8 P2		= 0x40;
-	const uint8 P3		= 0x80;
-	const uint8 P23		= 0xc0;
-
-	static const uint8 kMissileTables[2][16]={
-		{ 0, P0, P1, P0|P1, P2, P2|P0, P2|P1, P2|P0|P1, P3, P0|P3, P1|P3, P0|P1|P3, P2|P3, P3|P2|P0, P3|P2|P1, P3|P2|P0|P1 },
-		{ 0, PF3, PF3, PF3, PF3, PF3, PF3, PF3, PF3, PF3, PF3, PF3, PF3, PF3, PF3, PF3 }
-	};
-
-	enum {
-		kColorP0		= 0,
-		kColorP1,
-		kColorP2,
-		kColorP3,
-		kColorPF0,
-		kColorPF1,
-		kColorPF2,
-		kColorPF3,
-		kColorBAK,
-		kColorBlack,
-		kColorP0P1,
-		kColorP2P3,
-		kColorPF0P0,
-		kColorPF0P1,
-		kColorPF0P0P1,
-		kColorPF1P0,
-		kColorPF1P1,
-		kColorPF1P0P1,
-		kColorPF2P2,
-		kColorPF2P3,
-		kColorPF2P2P3,
-		kColorPF3P2,
-		kColorPF3P3,
-		kColorPF3P2P3
-	};
-
-	static const uint8 kAnalysisColorTable[]={
-		// players
-		0x1a,
-		0x5a,
-		0x7a,
-		0x9a,
-
-		// playfields
-		0x03,
-		0x07,
-		0x0b,
-		0x0f,
-
-		// background
-		0x01,
-
-		// black
-		0x00,
-
-		// p0+p1, p2+p3
-		0x3a,
-		0x8a,
-
-		// pf0+p0/p1/p0p1
-		0x13,
-		0x53,
-		0x33,
-
-		// pf1+p0/p1/p0p1
-		0x17,
-		0x57,
-		0x37,
-
-		// pf2+p2/p3/p2p3
-		0x1b,
-		0x5b,
-		0x3b,
-
-		// pf3+p2/p3/p2p3
-		0x1f,
-		0x5f,
-		0x3f,
-	};
-
-	const uint8 kPlayerMaskLookup[16]={0xff};
 }
 
 ATGTIAEmulator::ATGTIAEmulator()
 	: mpFrameTracker(new ATFrameTracker)
-	, mArtifactMode(0)
+	, mArtifactMode(kArtifactNone)
 	, mArtifactModeThisFrame(0)
 	, mbShowCassetteIndicator(false)
 	, mPreArtifactFrameBuffer(456*262)
 	, mpArtifactingEngine(new ATArtifactingEngine)
+	, mpRenderer(new ATGTIARenderer)
+	, mRCIndex(0)
+	, mRCCount(0)
 {
 	mPreArtifactFrame.data = mPreArtifactFrameBuffer.data();
 	mPreArtifactFrame.pitch = 456;
@@ -177,7 +91,6 @@ ATGTIAEmulator::ATGTIAEmulator()
 	mStatusFlags = 0;
 	mStickyStatusFlags = 0;
 	mCassettePos = 0;
-	memset(mColorTable, 0, sizeof mColorTable);
 	memset(mPlayerCollFlags, 0, sizeof mPlayerCollFlags);
 	memset(mMissileCollFlags, 0, sizeof mMissileCollFlags);
 	mCollisionMask = 0xFF;
@@ -196,172 +109,8 @@ ATGTIAEmulator::ATGTIAEmulator()
 	mMissileWidth[2] = 2;
 	mMissileWidth[3] = 2;
 
-	mpPriTable = mPriorityTables[0];
-	mpMissileTable = kMissileTables[0];
-
 	mbTurbo = false;
-	mbVideoDelayed = false;
 	mbForcedBorder = false;
-
-	// Priority table initialization
-	//
-	// The priority logic in the GTIA works as follows:
-	//
-	//	SP0 = P0 * /(PF01*PRI23) * /(PRI2*PF23)
-	//	SP1 = P1 * /(PF01*PRI23) * /(PRI2*PF23) * (/P0 + MULTI)
-	//	SP2 = P2 * /P01 * /(PF23*PRI12) * /(PF01*/PRI0)
-	//	SP3 = P3 * /P01 * /(PF23*PRI12) * /(PF01*/PRI0) * (/P2 + MULTI)
-	//	SF0 = PF0 * /(P23*PRI0) * /(P01*PRI01) * /SF3
-	//	SF1 = PF1 * /(P23*PRI0) * /(P01*PRI01) * /SF3
-	//	SF2 = PF2 * /(P23*PRI03) * /(P01*/PRI2) * /SF3
-	//	SF3 = PF3 * /(P23*PRI03) * /(P01*/PRI2)
-	//	SB  = /P01 * /P23 * /PF01 * /PF23
-	//
-	// Normally, both players and missiles contribute to P0-P3. If fifth player enable
-	// is set, missiles 0-3 contribute to PF3 instead of P0-P3.
-	//
-	// There are a couple of notable anomalies in the above:
-	//
-	//	* When all priority bits are zero, the result is NOT all black as
-	//	  the hardware manual implies. In fact, priority breaks and players
-	//	  0-1 and playfields 0-1 and 3 can mix.
-	//
-	//	* The fifth player always has priority over all playfields.\
-	//
-	// The result is that there are 24 colors possible:
-	//
-	//	* black
-	//	* BAK
-	//	* P0 - P3
-	//	* PF0 - PF3
-	//	* P0 | P1
-	//	* P2 | P3
-	//	* PF0 | P0
-	//	* PF0 | P1
-	//	* PF0 | P0 | P1
-	//	* PF1 | P0
-	//	* PF1 | P1
-	//	* PF1 | P0 | P1
-	//	* PF2 | P2
-	//	* PF2 | P3
-	//	* PF2 | P2 | P3
-	//	* PF3 | P2
-	//	* PF3 | P3
-	//	* PF3 | P2 | P3
-	//
-	// A maximum of 23 of these can be accessed at a time, via a PRIOR setting of
-	// xxx10000. xxx00000 gets to 17, and the rest of the illegal modes access
-	// either 10 or 12 through the addition of black.
-
-	static const int kBasePriorities[4][4]={
-		{ P01, P23, PF, PF },
-		{ P01, PF, PF, P23 },
-		{ PF, PF, P01, P23 },
-		{ PF01, P01, P23, PF23 },
-	};
-
-	memset(mPriorityTables, 0, sizeof mPriorityTables);
-	
-	for(int prior=0; prior<32; ++prior) {
-		const bool multi = (prior & 16) != 0;
-		const bool pri0 = (prior & 1) != 0;
-		const bool pri1 = (prior & 2) != 0;
-		const bool pri2 = (prior & 4) != 0;
-		const bool pri3 = (prior & 8) != 0;
-		const bool pri01 = pri0 | pri1;
-		const bool pri12 = pri1 | pri2;
-		const bool pri23 = pri2 | pri3;
-		const bool pri03 = pri0 | pri3;
-
-		for(int i=0; i<256; ++i) {
-			// The way the ANx decode logic works in GTIA, there is no possibility of any
-			// conflict between playfield bits except for PF3, which can conflict due to
-			// being reused for the fifth player. Therefore, we remap the table so that
-			// any conflicts are resolved in favor of the higher playfield.
-			static const uint8 kPlayfieldPriorityTable[8]={
-				0,
-				1,
-				2,
-				2,
-				4,
-				4,
-				4,
-				4,
-			};
-
-			const uint8 v = kPlayfieldPriorityTable[i & 7];
-
-			const bool pf0 = (v & 1) != 0;
-			const bool pf1 = (v & 2) != 0;
-			const bool pf2 = (v & 4) != 0;
-			const bool pf3 = (i & 8) != 0;
-			const bool p0 = (i & 16) != 0;
-			const bool p1 = (i & 32) != 0;
-			const bool p2 = (i & 64) != 0;
-			const bool p3 = (i & 128) != 0;
-
-			const bool p01 = p0 | p1;
-			const bool p23 = p2 | p3;
-			const bool pf01 = pf0 | pf1;
-			const bool pf23 = pf2 | pf3;
-
-			const bool sp0 = p0 & !(pf01 & pri23) & !(pri2 & pf23);
-			const bool sp1 = p1 & !(pf01 & pri23) & !(pri2 & pf23) & (!p0 | multi);
-			const bool sp2 = p2 & !p01 & !(pf23 & pri12) & !(pf01 & !pri0);
-			const bool sp3 = p3 & !p01 & !(pf23 & pri12) & !(pf01 & !pri0) & (!p2 | multi);
-
-			const bool sf3 = pf3 & !(p23 & pri03) & !(p01 & !pri2);
-			const bool sf2 = pf2 & !(p23 & pri03) & !(p01 & !pri2) & !sf3;
-			const bool sf1 = pf1 & !(p23 & pri0) & !(p01 & pri01) & !sf3;
-			const bool sf0 = pf0 & !(p23 & pri0) & !(p01 & pri01) & !sf3;
-
-			const bool sb = !p01 & !p23 & !pf01 & !pf23;
-
-			int out = 0;
-			if (sf0) out += 0x001;
-			if (sf1) out += 0x002;
-			if (sf2) out += 0x004;
-			if (sf3) out += 0x008;
-			if (sp0) out += 0x010;
-			if (sp1) out += 0x020;
-			if (sp2) out += 0x040;
-			if (sp3) out += 0x080;
-			if (sb ) out += 0x100;
-
-			uint8 c;
-
-			switch(out) {
-				default:
-					VDASSERT(!"Invalid priority table decode detected.");
-				case 0x000:		c = kColorBlack;	break;
-				case 0x001:		c = kColorPF0;		break;
-				case 0x002:		c = kColorPF1;		break;
-				case 0x004:		c = kColorPF2;		break;
-				case 0x008:		c = kColorPF3;		break;
-				case 0x010:		c = kColorP0;		break;
-				case 0x011:		c = kColorPF0P0;	break;
-				case 0x012:		c = kColorPF1P0;	break;
-				case 0x020:		c = kColorP1;		break;
-				case 0x021:		c = kColorPF0P1;	break;
-				case 0x022:		c = kColorPF1P1;	break;
-				case 0x030:		c = kColorP0P1;		break;
-				case 0x031:		c = kColorPF0P0P1;	break;
-				case 0x032:		c = kColorPF1P0P1;	break;
-				case 0x040:		c = kColorP2;		break;
-				case 0x044:		c = kColorPF2P2;	break;
-				case 0x048:		c = kColorPF3P2;	break;
-				case 0x080:		c = kColorP3;		break;
-				case 0x084:		c = kColorPF2P3;	break;
-				case 0x088:		c = kColorPF3P3;	break;
-				case 0x0c0:		c = kColorP2P3;		break;
-				case 0x0c4:		c = kColorPF2P2P3;	break;
-				case 0x0c8:		c = kColorPF3P2P3;	break;
-				case 0x100:		c = kColorBAK;		break;
-			}
-
-			mPriorityTables[prior][i] = c;
-		}
-	}
 
 	SetPALMode(false);
 }
@@ -375,6 +124,7 @@ ATGTIAEmulator::~ATGTIAEmulator() {
 	}
 
 	delete mpArtifactingEngine;
+	delete mpRenderer;
 }
 
 void ATGTIAEmulator::Init(IATGTIAEmulatorConnections *conn) {
@@ -400,7 +150,7 @@ void ATGTIAEmulator::AdjustColors(double baseDelta, double rangeDelta) {
 
 void ATGTIAEmulator::SetAnalysisMode(AnalysisMode mode) {
 	mAnalysisMode = mode;
-	mpColorTable = mode ? kAnalysisColorTable : mColorTable;
+	mpRenderer->SetAnalysisMode(mode != kAnalyzeNone);
 }
 
 bool ATGTIAEmulator::ArePMCollisionsEnabled() const {
@@ -583,55 +333,61 @@ void ATGTIAEmulator::DumpStatus() {
 	}
 }
 
+template<class T>
+void ATGTIAEmulator::ExchangeState(T& io) {
+	for(int i=0; i<4; ++i)
+		io != mPlayerPos[i];
+
+	for(int i=0; i<4; ++i)
+		io != mMissilePos[i];
+
+	for(int i=0; i<4; ++i)
+		io != mPlayerSize[i];
+
+	io != mMissileSize;
+
+	for(int i=0; i<4; ++i)
+		io != mPlayerData[i];
+
+	io != mMissileData;
+
+	for(int i=0; i<4; ++i)
+		io != mPMColor[i];
+
+	for(int i=0; i<4; ++i)
+		io != mPFColor[i];
+
+	io != mPFBAK;
+	io != mPRIOR;
+	io != mVDELAY;
+	io != mGRACTL;
+	io != mSwitchOutput;
+
+	for(int i=0; i<4; ++i)
+		io != mPlayerCollFlags[i];
+
+	for(int i=0; i<4; ++i)
+		io != mMissileCollFlags[i];
+
+	io != mbHiresMode;
+}
+
 void ATGTIAEmulator::LoadState(ATSaveStateReader& reader) {
-	mPlayerPos[0] = reader.ReadUint8();
-	mPlayerPos[1] = reader.ReadUint8();
-	mPlayerPos[2] = reader.ReadUint8();
-	mPlayerPos[3] = reader.ReadUint8();
-	mMissilePos[0] = reader.ReadUint8();
-	mMissilePos[1] = reader.ReadUint8();
-	mMissilePos[2] = reader.ReadUint8();
-	mMissilePos[3] = reader.ReadUint8();
-	mPlayerSize[0] = reader.ReadUint8();
-	mPlayerSize[1] = reader.ReadUint8();
-	mPlayerSize[2] = reader.ReadUint8();
-	mPlayerSize[3] = reader.ReadUint8();
-	mMissileSize = reader.ReadUint8();
-	mPlayerData[0] = reader.ReadUint8();
-	mPlayerData[1] = reader.ReadUint8();
-	mPlayerData[2] = reader.ReadUint8();
-	mPlayerData[3] = reader.ReadUint8();
-	mDelayedPlayerData[0] = reader.ReadUint8();
-	mDelayedPlayerData[1] = reader.ReadUint8();
-	mDelayedPlayerData[2] = reader.ReadUint8();
-	mDelayedPlayerData[3] = reader.ReadUint8();
-	mMissileData = reader.ReadUint8();
-	mDelayedMissileData = reader.ReadUint8();
-	mPMColor[0] = reader.ReadUint8();
-	mPMColor[1] = reader.ReadUint8();
-	mPMColor[2] = reader.ReadUint8();
-	mPMColor[3] = reader.ReadUint8();
-	mPFColor[0] = reader.ReadUint8();
-	mPFColor[1] = reader.ReadUint8();
-	mPFColor[2] = reader.ReadUint8();
-	mPFColor[3] = reader.ReadUint8();
-	mPFBAK = reader.ReadUint8();
-	mPRIOR = reader.ReadUint8();
-	mVDELAY = reader.ReadUint8();
-	mGRACTL = reader.ReadUint8();
-	mSwitchOutput = reader.ReadUint8();
+	ExchangeState(reader);
 
-	mPlayerCollFlags[0] = reader.ReadUint8() & 15;
-	mPlayerCollFlags[1] = reader.ReadUint8() & 15;
-	mPlayerCollFlags[2] = reader.ReadUint8() & 15;
-	mPlayerCollFlags[3] = reader.ReadUint8() & 15;
-	mMissileCollFlags[0] = reader.ReadUint8() & 15;
-	mMissileCollFlags[1] = reader.ReadUint8() & 15;
-	mMissileCollFlags[2] = reader.ReadUint8() & 15;
-	mMissileCollFlags[3] = reader.ReadUint8() & 15;
+	// read register changes
+	mRegisterChanges.resize(mRCCount);
+	for(int i=0; i<mRCCount; ++i) {
+		RegisterChange& rc = mRegisterChanges[i];
 
-	mbHiresMode = reader.ReadBool();
+		rc.mPos = reader.ReadUint8();
+		rc.mReg = reader.ReadUint8();
+		rc.mValue = reader.ReadUint8();
+	}
 
+	mpRenderer->LoadState(reader);
+
+	// recompute derived state
 	mpConn->GTIASetSpeaker(0 != (mSwitchOutput & 8));
 
 	for(int i=0; i<4; ++i) {
@@ -639,90 +395,31 @@ void ATGTIAEmulator::LoadState(ATSaveStateReader& reader) {
 		mMissileWidth[i] = kMissileWidths[(mMissileSize >> (i+i)) & 3];
 	}
 
-	mColorTable[kColorP0] = mPMColor[0];
-	mColorTable[kColorP1] = mPMColor[1];
-	mColorTable[kColorP2] = mPMColor[2];
-	mColorTable[kColorP3] = mPMColor[3];
-	mColorTable[kColorPF0] = mPFColor[0];
-	mColorTable[kColorPF1] = mPFColor[1];
-	mColorTable[kColorPF2] = mPFColor[2];
-	mColorTable[kColorPF3] = mPFColor[3];
+	for(int i=0; i<4; ++i) {
+		mpRenderer->SetRegisterImmediate(0x12 + i, mPMColor[i]);
+		mpRenderer->SetRegisterImmediate(0x16 + i, mPFColor[i]);
+	}
 
-	mColorTable[kColorP0P1] = mPMColor[0] | mPMColor[1];
-	mColorTable[kColorP2P3] = mPMColor[1] | mPMColor[3];
+	mpRenderer->SetRegisterImmediate(0x1A, mPFBAK);
 
-	mColorTable[kColorPF0P0]	= mPFColor[0] | mPMColor[0];
-	mColorTable[kColorPF0P1]	= mPFColor[0] | mPMColor[1];
-	mColorTable[kColorPF0P0P1]	= mPFColor[0] | mColorTable[kColorP0P1];
-	mColorTable[kColorPF1P0]	= mPFColor[1] | mPMColor[0];
-	mColorTable[kColorPF1P1]	= mPFColor[1] | mPMColor[1];
-	mColorTable[kColorPF1P0P1]	= mPFColor[1] | mColorTable[kColorP0P1];
-	mColorTable[kColorPF2P2]	= mPFColor[2] | mPMColor[2];
-	mColorTable[kColorPF2P3]	= mPFColor[2] | mPMColor[3];
-	mColorTable[kColorPF2P2P3]	= mPFColor[2] | mColorTable[kColorP2P3];
-	mColorTable[kColorPF3P2]	= mPFColor[3] | mPMColor[2];
-	mColorTable[kColorPF3P3]	= mPFColor[3] | mPMColor[3];
-	mColorTable[kColorPF3P2P3]	= mPFColor[3] | mColorTable[kColorP2P3];
-	mColorTable[kColorBAK] = mPFBAK;
-
-	mpPriTable = mPriorityTables[(mPRIOR & 15) + (mPRIOR&32 ? 16 : 0)];
-
-	if (mPRIOR & 16)
-		mpMissileTable = kMissileTables[1];
-	else
-		mpMissileTable = kMissileTables[0];
-
-	mbVideoDelayed = ((mPRIOR & 0xC0) == 0x80) != 0;
+	// Terminate existing scan line
+	mpDst = NULL;
+	mpRenderer->EndScanline();
 }
 
 void ATGTIAEmulator::SaveState(ATSaveStateWriter& writer) {
-	writer.WriteUint8(mPlayerPos[0]);
-	writer.WriteUint8(mPlayerPos[1]);
-	writer.WriteUint8(mPlayerPos[2]);
-	writer.WriteUint8(mPlayerPos[3]);
-	writer.WriteUint8(mMissilePos[0]);
-	writer.WriteUint8(mMissilePos[1]);
-	writer.WriteUint8(mMissilePos[2]);
-	writer.WriteUint8(mMissilePos[3]);
-	writer.WriteUint8(mPlayerSize[0]);
-	writer.WriteUint8(mPlayerSize[1]);
-	writer.WriteUint8(mPlayerSize[2]);
-	writer.WriteUint8(mPlayerSize[3]);
-	writer.WriteUint8(mMissileSize);
-	writer.WriteUint8(mPlayerData[0]);
-	writer.WriteUint8(mPlayerData[1]);
-	writer.WriteUint8(mPlayerData[2]);
-	writer.WriteUint8(mPlayerData[3]);
-	writer.WriteUint8(mDelayedPlayerData[0]);
-	writer.WriteUint8(mDelayedPlayerData[1]);
-	writer.WriteUint8(mDelayedPlayerData[2]);
-	writer.WriteUint8(mDelayedPlayerData[3]);
-	writer.WriteUint8(mMissileData);
-	writer.WriteUint8(mDelayedMissileData);
-	writer.WriteUint8(mPMColor[0]);
-	writer.WriteUint8(mPMColor[1]);
-	writer.WriteUint8(mPMColor[2]);
-	writer.WriteUint8(mPMColor[3]);
-	writer.WriteUint8(mPFColor[0]);
-	writer.WriteUint8(mPFColor[1]);
-	writer.WriteUint8(mPFColor[2]);
-	writer.WriteUint8(mPFColor[3]);
-	writer.WriteUint8(mPFBAK);
-	writer.WriteUint8(mPRIOR);
-	writer.WriteUint8(mVDELAY);
-	writer.WriteUint8(mGRACTL);
-	writer.WriteUint8(mSwitchOutput);
+	ExchangeState(writer);
 
-	writer.WriteUint8(mPlayerCollFlags[0]);
-	writer.WriteUint8(mPlayerCollFlags[1]);
-	writer.WriteUint8(mPlayerCollFlags[2]);
-	writer.WriteUint8(mPlayerCollFlags[3]);
-	writer.WriteUint8(mMissileCollFlags[0]);
-	writer.WriteUint8(mMissileCollFlags[1]);
-	writer.WriteUint8(mMissileCollFlags[2]);
-	writer.WriteUint8(mMissileCollFlags[3]);
+	// write register changes
+	for(int i=0; i<mRCCount; ++i) {
+		const RegisterChange& rc = mRegisterChanges[i];
 
-	writer.WriteBool(mbHiresMode);
+		writer.WriteUint8(rc.mPos);
+		writer.WriteUint8(rc.mReg);
+		writer.WriteUint8(rc.mValue);
+	}
+
+	mpRenderer->SaveState(writer);
 }
 
 bool ATGTIAEmulator::BeginFrame(bool force) {
@@ -749,6 +446,9 @@ bool ATGTIAEmulator::BeginFrame(bool force) {
 		ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 
 		mArtifactModeThisFrame = mArtifactMode;
+
+		if (mArtifactMode)
+			mpArtifactingEngine->BeginFrame(mArtifactMode == kArtifactPAL);
 
 		int format = mArtifactMode ? nsVDPixmap::kPixFormat_XRGB8888 : nsVDPixmap::kPixFormat_Pal8;
 
@@ -797,24 +497,28 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 	
 	mY = y;
 	mX = 0;
-	mLastSyncX = 0;
+	mLastSyncX = 34;
 
 	if (mpFrame) {
 		ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 
-		if (mArtifactModeThisFrame)
-			mpDst = &mPreArtifactFrameBuffer[y * 456];
-		else
-			mpDst = (uint8 *)fb->mBuffer.data + y * fb->mBuffer.pitch;
-
 		if (y < 262) {
+			if (mArtifactModeThisFrame)
+				mpDst = &mPreArtifactFrameBuffer[y * 456];
+			else
+				mpDst = (uint8 *)fb->mBuffer.data + y * fb->mBuffer.pitch;
+
 			memset(mpDst, 0, 456);
 		} else {
 			mpDst = NULL;
 		}
 	}
+
 	memset(mMergeBuffer, 0, sizeof mMergeBuffer);
 	memset(mAnticData, 0, sizeof mAnticData);
+
+	if (mpDst)
+		mpRenderer->BeginScanline(mpDst, mMergeBuffer, mAnticData, mbHiresMode);
 
 	mPlayerTriggerPos[0] = mPlayerPos[0] < 34 ? mPlayerPos[0] : 0;
 	mPlayerTriggerPos[1] = mPlayerPos[1] < 34 ? mPlayerPos[1] : 0;
@@ -824,22 +528,33 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 	mMissileTriggerPos[1] = mMissilePos[1] < 34 ? mMissilePos[1] : 0;
 	mMissileTriggerPos[2] = mMissilePos[2] < 34 ? mMissilePos[2] : 0;
 	mMissileTriggerPos[3] = mMissilePos[3] < 34 ? mMissilePos[3] : 0;
+	mPlayerShiftData[0] = mPlayerData[0];
+	mPlayerShiftData[1] = mPlayerData[1];
+	mPlayerShiftData[2] = mPlayerData[2];
+	mPlayerShiftData[3] = mPlayerData[3];
+	mMissileShiftData[0] = (mMissileData >> 0) & 3;
+	mMissileShiftData[1] = (mMissileData >> 2) & 3;
+	mMissileShiftData[2] = (mMissileData >> 4) & 3;
+	mMissileShiftData[3] = (mMissileData >> 6) & 3;
 }
 
 void ATGTIAEmulator::EndScanline(uint8 dlControl) {
 	// obey VBLANK
-	if (mY < 8 || mY >= 248) {
-		if (mpDst)
-			memset(mpDst, mColorTable[kColorBAK], 456);
-	} else {
+	if (mY >= 8 && mY < 248)
 		Sync();
 
-		mPlayerData[0] = mDelayedPlayerData[0];
-		mPlayerData[1] = mDelayedPlayerData[1];
-		mPlayerData[2] = mDelayedPlayerData[2];
-		mPlayerData[3] = mDelayedPlayerData[3];
-		mMissileData = mDelayedMissileData;
-	}
+	if (mpDst)
+		mpRenderer->RenderScanline(222);
+
+	mpRenderer->EndScanline();
+
+	// flush remaining register changes
+	if (mRCIndex < mRCCount)
+		UpdateRegisters(&mRegisterChanges[mRCIndex], mRCCount - mRCIndex);
+
+	mRegisterChanges.clear();
+	mRCCount = 0;
+	mRCIndex = 0;
 
 	if (!mpDst)
 		return;
@@ -849,7 +564,7 @@ void ATGTIAEmulator::EndScanline(uint8 dlControl) {
 			break;
 		case kAnalyzeColors:
 			for(int i=0; i<9; ++i)
-				mpDst[i*2+0] = mpDst[i*2+1] = mColorTable[i];
+				mpDst[i*2+0] = mpDst[i*2+1] = ((const uint8 *)mPMColor)[i];
 			break;
 		case kAnalyzeDList:
 			mpDst[0] = mpDst[1] = (dlControl & 0x80) ? 0x1f : 0x00;
@@ -861,29 +576,28 @@ void ATGTIAEmulator::EndScanline(uint8 dlControl) {
 	}
 }
 
-void ATGTIAEmulator::UpdatePlayer(int index, uint8 byte) {
+void ATGTIAEmulator::UpdatePlayer(bool odd, int index, uint8 byte) {
 	if (mGRACTL & 2) {
-		mDelayedPlayerData[index] = byte;
-		if (!(mVDELAY & (0x10 << index)))
+		if (odd || !(mVDELAY & (0x10 << index)))
 			mPlayerData[index] = byte;
 	}
 }
 
-void ATGTIAEmulator::UpdateMissile(uint8 byte) {
+void ATGTIAEmulator::UpdateMissile(bool odd, uint8 byte) {
 	if (mGRACTL & 1) {
-		mDelayedMissileData = byte;
+		uint8 mask = 0xFF;
 
-		uint8 mask = 0;
-		if (mVDELAY & 1)
-			mask |= 3;
-		if (mVDELAY & 2)
-			mask |= 0x0c;
-		if (mVDELAY & 4)
-			mask |= 0x30;
-		if (mVDELAY & 8)
-			mask |= 0xc0;
+		static const uint8 kDelayTable[16]={
+			0xFF, 0xFC, 0xF3, 0xF0,
+			0xCF, 0xCC, 0xC3, 0xC0,
+			0x3F, 0x3C, 0x33, 0x30,
+			0x0F, 0x0C, 0x03, 0x00,
+		};
 
-		mMissileData ^= (mMissileData ^ byte) & ~mask;
+		if (!odd)
+			mask = kDelayTable[mVDELAY & 15];
+
+		mMissileData ^= (mMissileData ^ byte) & mask;
 	}
 }
 
@@ -996,25 +710,53 @@ namespace {
 }
 
 void ATGTIAEmulator::Sync() {
-	mpConn->GTIARequestAnticSync();
-
-	uint32 targetX = mpConn->GTIAGetXClock();
-
-	int x1 = mLastSyncX;
-	int x2 = targetX;
-	mLastSyncX = targetX;
-
-	if (x1 < 34)
-		x1 = 34;
-	if (x2 > 222)
-		x2 = 222;
-	if (x1 >= x2)
-		return;
-
 	// obey VBLANK
 	if (mY < 8 || mY >= 248)
 		return;
 
+	mpConn->GTIARequestAnticSync();
+
+	int xend = (int)mpConn->GTIAGetXClock() + 2;
+
+	if (xend > 222)
+		xend = 222;
+
+	int x1 = mLastSyncX;
+
+	if (x1 >= xend)
+		return;
+
+	// render spans and process register changes
+	do {
+		int x2 = xend;
+
+		if (mRCIndex < mRCCount) {
+			const RegisterChange *rc0 = &mRegisterChanges[mRCIndex];
+			const RegisterChange *rc = rc0;
+			do {
+				int xchg = rc->mPos;
+				if (xchg > x1) {
+					if (x2 > xchg)
+						x2 = xchg;
+					break;
+				}
+
+				++rc;
+			} while(++mRCIndex < mRCCount);
+
+			UpdateRegisters(rc0, rc - rc0);
+		}
+
+		if (x2 > x1) {
+			SyncTo(x1, x2);
+			x1 = x2;
+		}
+	} while(x1 < xend);
+
+	mLastSyncX = x1;
+}
+
+void ATGTIAEmulator::SyncTo(int x1, int x2) {
 	// convert modes if necessary
 	bool needHires = mbHiresMode || (mPRIOR & 0xC0);
 	if (needHires != mbANTICHiresMode) {
@@ -1054,7 +796,7 @@ void ATGTIAEmulator::Sync() {
 	for(uint32 player=0; player<4; ++player) {
 		uint8 data = mPlayerData[player];
 
-		if (data) {
+		if (data | mPlayerShiftData[player]) {
 			int xst = x1;
 			int xend;
 
@@ -1066,11 +808,15 @@ void ATGTIAEmulator::Sync() {
 				int ptx = mPlayerPos[player]; 
 				if (ptx >= xst && ptx < x2) {
 					if (px + pw > xst) {
+						// We're still shifting out a player image, so continue shifting the
+						// existing image until the trigger point.
 						xend = ptx;
 						mPlayerTriggerPos[player] = 0;
 					} else {
+						// We have a new image to trigger.
 						px = ptx;
 						mPlayerTriggerPos[player] = ptx;
+						mPlayerShiftData[player] = data;
 					}
 				}
 
@@ -1082,13 +828,13 @@ void ATGTIAEmulator::Sync() {
 				if (px2 > xend)
 					px2 = xend;
 
-				if (px1 != px2) {
+				if (px1 < px2) {
 					uint8 *pldst = mMergeBuffer + px1;
 					uint8 bit = P0 << player;
-					sint32 mask = Expand(data, mPlayerSize[player]) << (px1 - px);
+					sint32 mask = Expand(mPlayerShiftData[player], mPlayerSize[player]) << (px1 - px);
 					sint32 mask2 = mask;
 					uint8 flags = 0;
-					for(int x=px2-px1; x >= 0; --x) {
+					for(int x=px2-px1; x > 0; --x) {
 						if (mask < 0) {
 							flags |= *pldst;
 							*pldst |= bit;
@@ -1121,7 +867,7 @@ void ATGTIAEmulator::Sync() {
 		}
 	}
 
-	if (mMissileData) {
+	if (mMissileData | mMissileShiftData[0] | mMissileShiftData[1] | mMissileShiftData[2] | mMissileShiftData[3]) {
 		static const int kMissileShifts[4]={6,4,2,0};
 
 		struct MissileRange {
@@ -1154,6 +900,7 @@ void ATGTIAEmulator::Sync() {
 							mMissileTriggerPos[missile] = 0;
 						} else {
 							px = ptx;
+							mMissileShiftData[missile] = data;
 							mMissileTriggerPos[missile] = ptx;
 						}
 					}
@@ -1166,7 +913,7 @@ void ATGTIAEmulator::Sync() {
 					if (px2 > xend)
 						px2 = xend;
 
-					if (px1 != px2) {
+					if (px1 < px2) {
 						mrnext->mX = px;
 						mrnext->mX1 = px1;
 						mrnext->mX2 = px2;
@@ -1176,7 +923,7 @@ void ATGTIAEmulator::Sync() {
 
 						uint8 *pldst = mMergeBuffer + px1;
 						int mwidx = (mMissileSize >> (2*missile)) & 3;
-						sint32 mask = Expand(data, mwidx) << (px1 - px);
+						sint32 mask = Expand(mMissileShiftData[missile], mwidx) << (px1 - px);
 						sint32 mask2 = mask;
 						uint8 flags = 0;
 						for(int x=px2-px1; x > 0; --x) {
@@ -1230,12 +977,6 @@ void ATGTIAEmulator::Sync() {
 			}
 		}
 	}
-
-	// render scanline
-	if (!mpDst)
-		return;
-
-	Render(x1, x2);
 }
 
 void ATGTIAEmulator::RenderActivityMap(const uint8 *src) {
@@ -1273,8 +1014,12 @@ void ATGTIAEmulator::UpdateScreen() {
 
 	if (mY < 261) {
 		const VDPixmap& pxdst = mArtifactModeThisFrame ? mPreArtifactFrame : fb->mBuffer;
-		Sync();
 		uint32 x = mpConn->GTIAGetXClock();
+
+		Sync();
+
+		if (mpDst)
+			mpRenderer->RenderScanline(x);
 
 		uint8 *row = (uint8 *)pxdst.data + (mY+1)*pxdst.pitch;
 		VDMemset8(row, 0x00, 2*x);
@@ -1465,7 +1210,7 @@ void ATGTIAEmulator::RecomputePalette() {
 		double q = (75.0/255.0) * sin(angle);
 
 		for(int luma=0; luma<16; ++luma) {
-			double y = (double)(luma + 1) / 16.0;
+			double y = (double)luma / 15.0;
 			double r = y + 0.956*i + 0.621*q;
 			double g = y - 0.272*i - 0.647*q;
 			double b = y - 1.107*i + 1.704*q;
@@ -1492,7 +1237,7 @@ uint8 ATGTIAEmulator::ReadByte(uint8 reg) {
 		case 0x13:
 			return mTRIG[reg - 0x10];
 		case 0x14:
-			return mbPALMode ? 0x00 : 0x0F;
+			return mbPALMode ? 0x01 : 0x0F;
 		case 0x15:
 		case 0x16:
 		case 0x17:	// must return LSB0 set or Recycle hangs
@@ -1505,7 +1250,7 @@ uint8 ATGTIAEmulator::ReadByte(uint8 reg) {
 		case 0x1E:
 			return 0x0F;
 		case 0x1F:		// $D01F CONSOL
-			return (~mSwitchOutput & mSwitchInput & mForcedSwitchInput) & 7;
+			return (~mSwitchOutput & mSwitchInput & mForcedSwitchInput) & 15;
 	}
 
 	Sync();	
@@ -1552,6 +1297,27 @@ uint8 ATGTIAEmulator::ReadByte(uint8 reg) {
 
 void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 	switch(reg) {
+		case 0x12:
+		case 0x13:
+		case 0x14:
+		case 0x15:
+			mPMColor[reg - 0x12] = value & 0xfe;
+			mpRenderer->AddRegisterChange(mpConn->GTIAGetXClock() + 1, reg, value);
+			break;
+
+		case 0x16:
+		case 0x17:
+		case 0x18:
+		case 0x19:
+			mPFColor[reg - 0x16] = value & 0xfe;
+			mpRenderer->AddRegisterChange(mpConn->GTIAGetXClock() + 1, reg, value);
+			break;
+
+		case 0x1A:
+			mPFBAK = value & 0xfe;
+			mpRenderer->AddRegisterChange(mpConn->GTIAGetXClock() + 1, reg, value);
+			break;
+
 		case 0x1C:
 			mVDELAY = value;
 			return;
@@ -1570,178 +1336,41 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 			return;
 	}
 
-	Sync();
+	const uint8 xpos = mpConn->GTIAGetXClock();
 
 	switch(reg) {
-		case 0x00:	mPlayerPos[0] = value;			break;
-		case 0x01:	mPlayerPos[1] = value;			break;
-		case 0x02:	mPlayerPos[2] = value;			break;
-		case 0x03:	mPlayerPos[3] = value;			break;
-		case 0x04:	mMissilePos[0] = value;			break;
-		case 0x05:	mMissilePos[1] = value;			break;
-		case 0x06:	mMissilePos[2] = value;			break;
-		case 0x07:	mMissilePos[3] = value;			break;
-		case 0x08:
-			value &= 3;
-			mPlayerSize[0] = value;
-			mPlayerWidth[0] = kPlayerWidths[value];
+		case 0x00:	// $D000 HPOSP0
+		case 0x01:	// $D001 HPOSP1
+		case 0x02:	// $D002 HPOSP2
+		case 0x03:	// $D003 HPOSP3
+		case 0x04:	// $D004 HPOSM0
+		case 0x05:	// $D005 HPOSM1
+		case 0x06:	// $D006 HPOSM2
+		case 0x07:	// $D007 HPOSM3
+			AddRegisterChange(xpos + 5, reg, value);
 			break;
-		case 0x09:
-			value &= 3;
-			mPlayerSize[1] = value;
-			mPlayerWidth[1] = kPlayerWidths[value];
+		case 0x08:	// $D008 SIZEP0
+		case 0x09:	// $D009 SIZEP1
+		case 0x0A:	// $D00A SIZEP2
+		case 0x0B:	// $D00B SIZEP3
+		case 0x0C:	// $D00C SIZEM
+			AddRegisterChange(xpos + 3, reg, value);
 			break;
-		case 0x0A:
-			value &= 3;
-			mPlayerSize[2] = value;
-			mPlayerWidth[2] = kPlayerWidths[value];
-			break;
-		case 0x0B:
-			value &= 3;
-			mPlayerSize[3] = value;
-			mPlayerWidth[3] = kPlayerWidths[value];
-			break;
-		case 0x0C:
-			mMissileSize = value;
-			mMissileWidth[0] = kMissileWidths[(value >> 0) & 3];
-			mMissileWidth[1] = kMissileWidths[(value >> 2) & 3];
-			mMissileWidth[2] = kMissileWidths[(value >> 4) & 3];
-			mMissileWidth[3] = kMissileWidths[(value >> 6) & 3];
-			break;
-		case 0x0D:
-			mDelayedPlayerData[0] = value;
-			if (!(mVDELAY & 0x10))
-				mPlayerData[0] = value;
-			break;
-		case 0x0E:
-			mDelayedPlayerData[1] = value;
-			if (!(mVDELAY & 0x20))
-				mPlayerData[1] = value;
-			break;
-		case 0x0F:
-			mDelayedPlayerData[2] = value;
-			if (!(mVDELAY & 0x40))
-				mPlayerData[2] = value;
-			break;
-		case 0x10:
-			mDelayedPlayerData[3] = value;
-			if (!(mVDELAY & 0x80))
-				mPlayerData[3] = value;
-			break;
-		case 0x11:
-			mDelayedMissileData = value;
-			{
-				uint8 mask = 0;
-				if (mVDELAY & 1)
-					mask |= 3;
-				if (mVDELAY & 2)
-					mask |= 0x0c;
-				if (mVDELAY & 4)
-					mask |= 0x30;
-				if (mVDELAY & 8)
-					mask |= 0xc0;
-
-				mMissileData ^= (mMissileData ^ value) & ~mask;
-			}
+		case 0x0D:	// $D00D GRAFP0
+		case 0x0E:	// $D00E GRAFP1
+		case 0x0F:	// $D00F GRAFP2
+		case 0x10:	// $D010 GRAFP3
+		case 0x11:	// $D011 GRAFM
+			AddRegisterChange(xpos + 3, reg, value);
 			break;
 
-		case 0x12:
-			value &= 0xfe;
-			mPMColor[0] = value;
-			mColorTable[kColorP0] = value;
-			mColorTable[kColorP0P1] = value | mPMColor[1];
-			mColorTable[kColorPF0P0] = mPFColor[0] | value;
-			mColorTable[kColorPF0P0P1] = mColorTable[kColorPF0P1] | value;
-			mColorTable[kColorPF1P0] = mPFColor[1] | value;
-			mColorTable[kColorPF1P0P1] = mColorTable[kColorPF1P1] | value;
+		case 0x1B:	// $D01B PRIOR
+			AddRegisterChange(xpos + 3, reg, value);
+			mpRenderer->AddRegisterChange(xpos + 3, reg, value);
 			break;
-		case 0x13:
-			value &= 0xfe;
-			mPMColor[1] = value;
-			mColorTable[kColorP1] = value;
-			mColorTable[kColorP0P1] = mPMColor[0] | value;
-			mColorTable[kColorPF0P1] = mPFColor[0] | value;
-			mColorTable[kColorPF0P0P1] = mColorTable[kColorPF0P0] | value;
-			mColorTable[kColorPF1P1] = mPFColor[1] | value;
-			mColorTable[kColorPF1P0P1] = mColorTable[kColorPF1P0] | value;
-			break;
-		case 0x14:
-			value &= 0xfe;
-			mPMColor[2] = value;
-			mColorTable[kColorP2] = value;
-			mColorTable[kColorP2P3] = value | mPMColor[3];
-			mColorTable[kColorPF2P2] = mPFColor[2] | value;
-			mColorTable[kColorPF2P2P3] = mColorTable[kColorPF2P3] | value;
-			mColorTable[kColorPF3P2] = mPFColor[3] | value;
-			mColorTable[kColorPF3P2P3] = mColorTable[kColorPF3P3] | value;
-			break;
-		case 0x15:
-			value &= 0xfe;
-			mPMColor[3] = value;
-			mColorTable[kColorP3] = value;
-			mColorTable[kColorP2P3] = mPMColor[2] | value;
-			mColorTable[kColorPF2P3] = mPFColor[2] | value;
-			mColorTable[kColorPF2P2P3] = mColorTable[kColorPF2P2] | value;
-			mColorTable[kColorPF3P3] = mPFColor[3] | value;
-			mColorTable[kColorPF3P2P3] = mColorTable[kColorPF3P2] | value;
-			break;
-		case 0x16:
-			value &= 0xfe;
-			mPFColor[0] = value;
-			mColorTable[kColorPF0] = value;
-			mColorTable[kColorPF0P0] = value | mPMColor[0];
-			mColorTable[kColorPF0P1] = value | mPMColor[1];
-			mColorTable[kColorPF0P0P1] = value | mColorTable[kColorP0P1];
-			break;
-		case 0x17:
-			value &= 0xfe;
-			mPFColor[1] = value;
-			mColorTable[kColorPF1] = value;
-			mColorTable[kColorPF1P0] = value | mPMColor[0];
-			mColorTable[kColorPF1P1] = value | mPMColor[1];
-			mColorTable[kColorPF1P0P1] = value | mColorTable[kColorP0P1];
-			break;
-		case 0x18:
-			value &= 0xfe;
-			mPFColor[2] = value;
-			mColorTable[kColorPF2] = value;
-			mColorTable[kColorPF2P2] = value | mPMColor[2];
-			mColorTable[kColorPF2P3] = value | mPMColor[3];
-			mColorTable[kColorPF2P2P3] = value | mColorTable[kColorP2P3];
-			break;
-		case 0x19:
-			value &= 0xfe;
-			mPFColor[3] = value;
-			mColorTable[kColorPF3] = value;
-			mColorTable[kColorPF3P2] = value | mPMColor[2];
-			mColorTable[kColorPF3P3] = value | mPMColor[3];
-			mColorTable[kColorPF3P2P3] = value | mColorTable[kColorP2P3];
-			break;
-		case 0x1A:
-			value &= 0xfe;
-			mPFBAK = value;
-			mColorTable[kColorBAK] = value;
-			break;
-		case 0x1B:
-			mPRIOR = value;
-			mpPriTable = mPriorityTables[(value & 15) + (value&32 ? 16 : 0)];
-//			mpPriTable = mPriorityTables[1];
-			if (mPRIOR & 16)
-				mpMissileTable = kMissileTables[1];
-			else
-				mpMissileTable = kMissileTables[0];
 
-			if (value & 0xC0)
-				mbHiresMode = false;
-
-			mbVideoDelayed = ((value & 0xC0) == 0x80) != 0;
-			break;
-		case 0x1E:		// $D01E HITCLR
-			memset(mPlayerCollFlags, 0, sizeof mPlayerCollFlags);
-			memset(mMissileCollFlags, 0, sizeof mMissileCollFlags);
-			break;
-		default:
-//			__debugbreak();
+		case 0x1E:
+			AddRegisterChange(xpos + 3, reg, value);
 			break;
 	}
 }
@@ -1768,227 +1397,91 @@ void ATGTIAEmulator::ApplyArtifacting() {
 	}
 }
 
-void ATGTIAEmulator::Render(int x1, int x2) {
-	if (x1 == 34)
-		memset(mpDst, mpColorTable[8], 68);
+void ATGTIAEmulator::AddRegisterChange(uint8 pos, uint8 addr, uint8 value) {
+	RegisterChanges::iterator it(mRegisterChanges.end()), itBegin(mRegisterChanges.begin());
 
-	// 40 column mode is set by ANTIC during horizontal blank if ANTIC modes 2, 3, or
-	// F are used. 40 column mode has the following effects:
-	//
-	//	* The priority logic always sees PF2.
-	//	* The collision logic sees either BAK or PF2. Adjacent bits are ORed each color
-	//	  clock to determine this (PF2C in schematic).
-	//	* The playfield bits are used instead to substitute the luminance of PF1 on top
-	//	  of the priority logic output. This happens even if players have priority.
-	//
-	// The flip-flip in the GTIA that controls 40 column mode can only be set by the
-	// horizontal sync command, but can be reset at any time whenever either of the
-	// top two bits of PRIOR are set. If this happens, the GTIA will begin interpreting
-	// AN0-AN2 in lores mode, but ANTIC will continue sending in hires mode. The result
-	// is that the bit pair patterns 00-11 produce PF0-PF3 instead of BAK + PF0-PF2 as
-	// usual.
+	while(it != itBegin && it[-1].mPos > pos)
+		--it;
 
-	switch(mPRIOR & 0xc0) {
-		case 0x00:
-			if (mbHiresMode)
-				RenderMode8(x1, x2);
-			else
-				RenderLores(x1, x2);
-			break;
+	RegisterChange change;
+	change.mPos = pos;
+	change.mReg = addr;
+	change.mValue = value;
+	change.mPad = 0;
+	mRegisterChanges.insert(it, change);
 
-		case 0x40:
-			RenderMode9(x1, x2);
-			break;
-
-		case 0x80:
-			RenderMode10(x1, x2);
-			break;
-
-		case 0xC0:
-			RenderMode11(x1, x2);
-			break;
-	}
-
-	if (x2 == 222)
-		memset(mpDst + 444, mpColorTable[8], 456 - 444);
+	++mRCCount;
 }
 
-void ATGTIAEmulator::RenderLores(int x1, int x2) {
-	const uint8 *__restrict colorTable = mpColorTable;
-	const uint8 *__restrict priTable = mpPriTable;
+void ATGTIAEmulator::UpdateRegisters(const RegisterChange *rc, int count) {
+	while(count--) {
+		uint8 value = rc->mValue;
 
-	uint8 *dst = mpDst + x1*2;
-	const uint8 *src = mMergeBuffer + x1;
+		switch(rc->mReg) {
+			case 0x00:	mPlayerPos[0] = value;			break;
+			case 0x01:	mPlayerPos[1] = value;			break;
+			case 0x02:	mPlayerPos[2] = value;			break;
+			case 0x03:	mPlayerPos[3] = value;			break;
+			case 0x04:	mMissilePos[0] = value;			break;
+			case 0x05:	mMissilePos[1] = value;			break;
+			case 0x06:	mMissilePos[2] = value;			break;
+			case 0x07:	mMissilePos[3] = value;			break;
+			case 0x08:
+				value &= 3;
+				mPlayerSize[0] = value;
+				mPlayerWidth[0] = kPlayerWidths[value];
+				break;
+			case 0x09:
+				value &= 3;
+				mPlayerSize[1] = value;
+				mPlayerWidth[1] = kPlayerWidths[value];
+				break;
+			case 0x0A:
+				value &= 3;
+				mPlayerSize[2] = value;
+				mPlayerWidth[2] = kPlayerWidths[value];
+				break;
+			case 0x0B:
+				value &= 3;
+				mPlayerSize[3] = value;
+				mPlayerWidth[3] = kPlayerWidths[value];
+				break;
+			case 0x0C:
+				mMissileSize = value;
+				mMissileWidth[0] = kMissileWidths[(value >> 0) & 3];
+				mMissileWidth[1] = kMissileWidths[(value >> 2) & 3];
+				mMissileWidth[2] = kMissileWidths[(value >> 4) & 3];
+				mMissileWidth[3] = kMissileWidths[(value >> 6) & 3];
+				break;
+			case 0x0D:
+				mPlayerData[0] = value;
+				break;
+			case 0x0E:
+				mPlayerData[1] = value;
+				break;
+			case 0x0F:
+				mPlayerData[2] = value;
+				break;
+			case 0x10:
+				mPlayerData[3] = value;
+				break;
+			case 0x11:
+				mMissileData = value;
+				break;
 
-	int w = x2 - x1;
-	int w4 = w >> 2;
+			case 0x1B:
+				mPRIOR = value;
 
-	for(int i=0; i<w4; ++i) {
-		dst[0] = dst[1] = colorTable[priTable[src[0]]];
-		dst[2] = dst[3] = colorTable[priTable[src[1]]];
-		dst[4] = dst[5] = colorTable[priTable[src[2]]];
-		dst[6] = dst[7] = colorTable[priTable[src[3]]];
-		src += 4;
-		dst += 8;
-	}
+				if (value & 0xC0)
+					mbHiresMode = false;
 
-	for(int i=w & 3; i; --i) {
-		dst[0] = dst[1] = colorTable[priTable[src[0]]];
-		++src;
-		dst += 2;
-	}
-}
+				break;
+			case 0x1E:		// $D01E HITCLR
+				memset(mPlayerCollFlags, 0, sizeof mPlayerCollFlags);
+				memset(mMissileCollFlags, 0, sizeof mMissileCollFlags);
+				break;
+		}
 
-void ATGTIAEmulator::RenderMode8(int x1, int x2) {
-	const uint8 *__restrict colorTable = mpColorTable;
-	const uint8 *__restrict priTable = mpPriTable;
-
-	const uint8 *lumasrc = &mAnticData[x1];
-	uint8 *dst = mpDst + x1*2;
-	const uint8 *src = mMergeBuffer + x1;
-
-	const uint8 luma1 = mPFColor[1] & 0xf;
-
-	int w = x2 - x1;
-	while(w--) {
-		uint8 lb = *lumasrc++;
-
-		uint8 c0 = colorTable[priTable[*src++]];
-		uint8 c1 = c0;
-
-		if (lb & 2) c0 = (c0 & 0xf0) + luma1;
-		if (lb & 1) c1 = (c1 & 0xf0) + luma1;
-
-		dst[0] = c0;
-		dst[1] = c1;
-		dst += 2;
-		++x1;
-	}
-}
-
-void ATGTIAEmulator::RenderMode9(int x1, int x2) {
-	const uint8 *__restrict colorTable = mpColorTable;
-	const uint8 *__restrict priTable = mpPriTable;
-
-	uint8 *dst = mpDst + x1*2;
-	const uint8 *src = mMergeBuffer + x1;
-
-	// 1 color / 16 luma mode
-	//
-	// In this mode, PF0-PF3 are forced off, so no playfield collisions ever register
-	// and the playfield always registers as the background color. Luminance is
-	// ORed in after the priority logic, but its substitution is gated by all P/M bits
-	// and so it does not affect players or missiles. It does, however, affect PF3 if
-	// the fifth player is enabled.
-
-	int w = x2 - x1;
-
-	while(w--) {
-		uint8 code0 = *src++ & (P0|P1|P2|P3|PF3);
-		uint8 pri0 = colorTable[priTable[code0]];
-
-		const uint8 *lumasrc = &mAnticData[x1++ & ~1];
-		uint8 l1 = (lumasrc[0] << 2) + lumasrc[1];
-
-		uint8 c4 = pri0 | (l1 & kPlayerMaskLookup[code0 >> 4]);
-
-		dst[0] = dst[1] = c4;
-		dst += 2;
-	}
-}
-
-void ATGTIAEmulator::RenderMode10(int x1, int x2) {
-	const uint8 *__restrict colorTable = mpColorTable;
-	const uint8 *__restrict priTable = mpPriTable;
-
-	uint8 *dst = mpDst + x1*2;
-	const uint8 *src = mMergeBuffer + x1;
-
-	// 9 colors
-	//
-	// This mode works by using AN0-AN1 to trigger either the playfield or the player/missle
-	// bits going into the priority logic. This means that when player colors are used, the
-	// playfield takes the same priority as that player. Playfield collisions are triggered
-	// only for PF0-PF3; P0-P3 colors coming from the playfield do not trigger collisions.
-
-	static const uint8 kMode10Lookup[16]={
-		P0,
-		P1,
-		P2,
-		P3,
-		PF0,
-		PF1,
-		PF2,
-		PF3,
-		0,
-		0,
-		0,
-		0,
-		PF0,
-		PF1,
-		PF2,
-		PF3
-	};
-
-	int w = x2 - x1;
-
-	while(w--) {
-		const uint8 *lumasrc = &mAnticData[(x1++ - 1) & ~1];
-		uint8 l1 = lumasrc[0]*4 + lumasrc[1];
-
-		uint8 c4 = kMode10Lookup[l1];
-
-		dst[0] = dst[1] = colorTable[priTable[c4 | (*src++ & 0xf8)]];
-		dst += 2;
-	}
-}
-
-void ATGTIAEmulator::RenderMode11(int x1, int x2) {
-	const uint8 *__restrict colorTable = mpColorTable;
-	const uint8 *__restrict priTable = mpPriTable;
-
-	uint8 *dst = mpDst + x1*2;
-	const uint8 *src = mMergeBuffer + x1;
-
-	// 16 colors / 1 luma
-	//
-	// In this mode, PF0-PF3 are forced off, so no playfield collisions ever register
-	// and the playfield always registers as the background color. Chroma is
-	// ORed in after the priority logic, but its substitution is gated by all P/M bits
-	// and so it does not affect players or missiles. It does, however, affect PF3 if
-	// the fifth player is enabled.
-
-	static const uint8 kMode11Lookup[16][2][2]={
-		{{0xff,0xff},{0xff,0xf0}},
-		{{0x00,0xff},{0x00,0xff}},
-		{{0x00,0xff},{0x00,0xff}},
-		{{0x00,0xff},{0x00,0xff}},
-		{{0x00,0xff},{0x00,0xff}},
-		{{0x00,0xff},{0x00,0xff}},
-		{{0x00,0xff},{0x00,0xff}},
-		{{0x00,0xff},{0x00,0xff}},
-		{{0x00,0xff},{0x00,0xff}},
-		{{0x00,0xff},{0x00,0xff}},
-		{{0x00,0xff},{0x00,0xff}},
-		{{0x00,0xff},{0x00,0xff}},
-		{{0x00,0xff},{0x00,0xff}},
-		{{0x00,0xff},{0x00,0xff}},
-		{{0x00,0xff},{0x00,0xff}},
-		{{0x00,0xff},{0x00,0xff}}
-	};
-
-	int w = x2 - x1;
-
-	while(w--) {
-		const uint8 code0 = *src++ & (P0|P1|P2|P3|PF3);
-		uint8 pri0 = colorTable[priTable[code0]];
-
-		const uint8 *lumasrc = &mAnticData[x1++ & ~1];
-		uint8 l0 = (lumasrc[0] << 6) + (lumasrc[1] << 4);
-
-		uint8 c0 = (pri0 | (l0 & kMode11Lookup[code0 >> 4][l0 == 0][0])) & kMode11Lookup[code0 >> 4][l0 == 0][1];
-
-		dst[0] = dst[1] = c0;
-		dst += 2;
+		++rc;
 	}
 }

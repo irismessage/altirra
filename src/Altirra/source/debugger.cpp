@@ -28,6 +28,7 @@
 #include "symbols.h"
 #include "ksyms.h"
 #include "kerneldb.h"
+#include "cassette.h"
 
 extern ATSimulator g_sim;
 
@@ -510,7 +511,11 @@ void ATDebugger::DumpCIOParameters() {
 			break;
 
 		case 0x07:
-			ATConsolePrintf("CIO: IOCB=%u, CMD=$07 (get characters)\n", iocbIdx);
+			ATConsolePrintf("CIO: IOCB=%u, CMD=$07 (get characters), buffer=$%04x, length=$%04x\n"
+				, iocbIdx
+				, g_sim.DebugReadWord(iocb + ATKernelSymbols::ICBAL)
+				, g_sim.DebugReadWord(iocb + ATKernelSymbols::ICBLL)
+				);
 			break;
 
 		case 0x09:
@@ -1676,13 +1681,132 @@ void ATConsoleCmdLoadKernelSymbols(int argc, const char *const *argv) {
 	ATConsolePrintf("Kernel symbols loaded: %s\n", argv[0]);
 }
 
+void ATConsoleCmdDiskOrder(int argc, const char *const *argv) {
+	if (argc < 1) {
+		ATConsoleWrite("Syntax: .diskorder <sector> <indices>...\n");
+		return;
+	}
+
+	ATDiskEmulator& disk = g_sim.GetDiskDrive(0);
+	uint32 sector = strtoul(argv[0], NULL, 10);
+	uint32 phantomCount = disk.GetSectorPhantomCount(sector);
+
+	if (!phantomCount) {
+		ATConsolePrintf("Invalid sector number: %u\n", sector);
+		return;
+	}
+
+	if (argc == 1) {
+		for(uint32 i=0; i<phantomCount; ++i)
+			disk.SetForcedPhantomSector(sector, i, -1);
+
+		ATConsolePrintf("Automatic sector ordering restored for sector %u.\n", sector);
+		return;
+	}
+
+	vdfastvector<uint8> indices;
+
+	for(int i=1; i<argc; ++i) {
+		uint32 index = strtoul(argv[i], NULL, 10);
+
+		if (!index || index > phantomCount) {
+			ATConsolePrintf("Invalid phantom sector index: %u\n", index);
+			return;
+		}
+
+		uint8 i8 = (uint8)(index - 1);
+		if (std::find(indices.begin(), indices.end(), i8) != indices.end()) {
+			ATConsolePrintf("Invalid repeated phantom sector index: %u\n", index);
+			return;
+		}
+
+		indices.push_back(i8);
+	}
+
+	for(uint32 i=0; i<phantomCount; ++i) {
+		vdfastvector<uint8>::const_iterator it(std::find(indices.begin(), indices.end(), i));
+
+		if (it == indices.end())
+			disk.SetForcedPhantomSector(sector, i, -1);
+		else
+			disk.SetForcedPhantomSector(sector, i, it - indices.begin());
+	}
+}
+
+namespace {
+	struct SecInfo {
+		int mVirtSec;
+		int mPhantomIndex;
+		float mPos;
+
+		bool operator<(const SecInfo& x) const {
+			return mPos < x.mPos;
+		}
+	};
+}
+
+void ATConsoleCmdDiskTrack(int argc, const char *const *argv) {
+	if (argc < 1) {
+		ATConsoleWrite("Syntax: .disktrack <track>...\n");
+		return;
+	}
+
+	ATDiskEmulator& disk = g_sim.GetDiskDrive(0);
+	uint32 track = strtoul(argv[0], NULL, 10);
+
+	ATConsolePrintf("Track %d\n", track);
+
+	uint32 vsecBase = track * 18;
+
+	vdfastvector<SecInfo> sectors;
+
+	for(uint32 i=0; i<18; ++i) {
+		uint32 vsec = vsecBase + i;
+		uint32 phantomCount = disk.GetSectorPhantomCount(vsec);
+
+		for(uint32 phantomIdx = 0; phantomIdx < phantomCount; ++phantomIdx) {
+			float timing = disk.GetSectorTiming(vsec, phantomIdx);
+
+			if (timing >= 0) {
+				SecInfo& si = sectors.push_back();
+
+				si.mVirtSec = vsec;
+				si.mPhantomIndex = phantomIdx;
+				si.mPos = timing;
+			}
+		}
+	}
+
+	std::sort(sectors.begin(), sectors.end());
+
+	vdfastvector<SecInfo>::const_iterator it(sectors.begin()), itEnd(sectors.end());
+	for(; it != itEnd; ++it) {
+		const SecInfo& si = *it;
+
+		ATConsolePrintf("%4d/%d   %5.3f\n", si.mVirtSec, si.mPhantomIndex, si.mPos);
+	}
+}
+
+void ATConsoleCmdCasLogData(int argc, const char *const *argv) {
+	ATCassetteEmulator& cas = g_sim.GetCassette();
+
+	bool newSetting = !cas.IsLogDataEnabled();
+	cas.SetLogDataEnable(newSetting);
+
+	ATConsolePrintf("Verbose cassette read data logging is now %s.\n", newSetting ? "enabled" : "disabled");
+}
+
+void ATConsoleCmdDumpPIAState() {
+	g_sim.DumpPIAState();
+}
+
 void ATConsoleCmdDumpHelp() {
 	ATConsoleWrite("t    Trace (step one instruction) (F11)\n");
 	ATConsoleWrite("g    Go\n");
 	ATConsoleWrite("gr   Go until return (step out)\n");
 	ATConsoleWrite("gs   Go until scanline\n");
 	ATConsoleWrite("gt   Go with tracing enabled\n");
-	ATConsoleWrite("k    Call stack\n");
+	ATConsoleWrite("k    Show call stack\n");
 	ATConsoleWrite("s    Step over\n");
 	ATConsoleWrite("bp   Set breakpoint\n");
 	ATConsoleWrite("bc   Clear breakpoint(s)\n");
@@ -1690,16 +1814,21 @@ void ATConsoleCmdDumpHelp() {
 	ATConsoleWrite("bl   List breakpoints\n");
 	ATConsoleWrite("u    Unassemble\n");
 	ATConsoleWrite("r    Show registers\n");
+	ATConsoleWrite("da   Display ATASCII\n");
 	ATConsoleWrite("db   Display bytes\n");
 	ATConsoleWrite("dw   Display words\n");
 	ATConsoleWrite("df   Display decimal float\n");
 	ATConsoleWrite("lm   List modules\n");
-	ATConsoleWrite(".antic       Display Antic status\n");
+	ATConsoleWrite("e    Enter (alter) data in memory\n");
+	ATConsoleWrite(".antic       Display ANTIC status\n");
 	ATConsoleWrite(".bank        Show memory bank state\n");
-	ATConsoleWrite(".beam        Show Antic scan position\n");
-	ATConsoleWrite(".dumpdlist   Dump Antic display list\n");
+	ATConsoleWrite(".beam        Show ANTIC scan position\n");
+	ATConsoleWrite(".caslogdata  Toggle verbose cassette data read logging\n");
+	ATConsoleWrite(".diskorder   Set forced phantom sector ordering\n");
+	ATConsoleWrite(".dlhistory   Show ANTIC display list execution history\n");
+	ATConsoleWrite(".dma         Show current ANTIC DMA pattern\n");
+	ATConsoleWrite(".dumpdlist   Dump ANTIC display list\n");
 	ATConsoleWrite(".dumpdsm     Dump disassembly to file\n");
-	ATConsoleWrite(".dlhistory   Show Antic display list execution history\n");
 	ATConsoleWrite(".history     Show CPU history\n");
 	ATConsoleWrite(".gtia        Display GTIA status\n");
 	ATConsoleWrite(".loadksym    Load kernel symbols\n");
@@ -1707,7 +1836,7 @@ void ATConsoleCmdDumpHelp() {
 	ATConsoleWrite(".pokey       Display POKEY status\n");
 	ATConsoleWrite(".restart     Restart emulated system\n");
 	ATConsoleWrite(".tracecio    Toggle CIO call tracing\n");
-	ATConsoleWrite(".traceser    Toggle serial I/O call tracing\n");
+	ATConsoleWrite(".traceser    Toggle serial I/O port tracing\n");
 	ATConsoleWrite(".unloadsym   Unload module symbols\n");
 	ATConsoleWrite(".vectors     Display kernel vectors\n");
 	ATConsoleWrite(".writemem    Write memory to disk\n");
@@ -1829,6 +1958,16 @@ void ATConsoleExecuteCommand(char *s) {
 			ATConsoleCmdLoadSymbols(argc-1, argv+1);
 		} else if (!strcmp(cmd, ".unloadsym")) {
 			ATConsoleCmdUnloadSymbols(argc-1, argv+1);
+		} else if (!strcmp(cmd, ".diskorder")) {
+			ATConsoleCmdDiskOrder(argc-1, argv+1);
+		} else if (!strcmp(cmd, ".disktrack")) {
+			ATConsoleCmdDiskTrack(argc-1, argv+1);
+		} else if (!strcmp(cmd, ".dma")) {
+			g_sim.GetAntic().DumpDMAPattern();
+		} else if (!strcmp(cmd, ".caslogdata")) {
+			ATConsoleCmdCasLogData(argc-1, argv+1);
+		} else if (!strcmp(cmd, ".pia")) {
+			ATConsoleCmdDumpPIAState();
 		} else if (!strcmp(cmd, "?")) {
 			ATConsoleCmdDumpHelp();
 		} else {

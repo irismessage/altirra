@@ -36,6 +36,7 @@ class ATFrameTracker;
 class ATArtifactingEngine;
 class ATSaveStateReader;
 class ATSaveStateWriter;
+class ATGTIARenderer;
 
 class ATGTIAEmulator {
 public:
@@ -51,6 +52,13 @@ public:
 		kAnalyzeDList,
 		kAnalyzePM,
 		kAnalyzeCount
+	};
+
+	enum ArtifactMode {
+		kArtifactNone,
+		kArtifactNTSC,
+		kArtifactPAL,
+		kArtifactCount
 	};
 
 	void AdjustColors(double baseDelta, double rangeDelta);
@@ -77,16 +85,18 @@ public:
 
 	void SetPALMode(bool enabled);
 
-	bool IsArtifactingEnabled() const { return mArtifactMode != 0; }
-	void SetArtifactingEnabled(bool enabled) { mArtifactMode = enabled; }
+	ArtifactMode GetArtifactingMode() const { return mArtifactMode; }
+	void SetArtifactingMode(ArtifactMode mode) { mArtifactMode = mode; }
 
 	void SetConsoleSwitch(uint8 c, bool down);
 	void SetForcedConsoleSwitches(uint8 c);
 	void SetControllerTrigger(int index, bool state) { mTRIG[index] = state ? 0x00 : 0x01; }
 
-	bool IsVideoDelayed() const { return mbVideoDelayed; }
-
 	const VDPixmap *GetLastFrameBuffer() const;
+
+	uint32 GetBackgroundColor24() const { return mPalette[mPFBAK]; }
+	uint32 GetPlayfieldColor24(int index) const { return mPalette[mPFColor[index]]; }
+	uint32 GetPlayfieldColorPF2H() const { return mPalette[(mPFColor[2] & 0xf0) + (mPFColor[1] & 0x0f)]; }
 
 	void DumpStatus();
 
@@ -96,8 +106,8 @@ public:
 	bool BeginFrame(bool force);
 	void BeginScanline(int y, bool hires);
 	void EndScanline(uint8 dlControl);
-	void UpdatePlayer(int index, uint8 byte);
-	void UpdateMissile(uint8 byte);
+	void UpdatePlayer(bool odd, int index, uint8 byte);
+	void UpdateMissile(bool odd, uint8 byte);
 	void UpdatePlayfield160(uint32 x, uint8 byte);
 	void UpdatePlayfield320(uint32 x, uint8 byte);
 	void EndPlayfield();
@@ -112,14 +122,18 @@ public:
 	void WriteByte(uint8 reg, uint8 value);
 
 protected:
-	void ApplyArtifacting();
+	struct RegisterChange {
+		uint8 mPos;
+		uint8 mReg;
+		uint8 mValue;
+		uint8 mPad;
+	};
 
-	void Render(int x1, int x2);
-	void RenderLores(int x1, int x2);
-	void RenderMode8(int x1, int x2);
-	void RenderMode9(int x1, int x2);
-	void RenderMode10(int x1, int x2);
-	void RenderMode11(int x1, int x2);
+	template<class T> void ExchangeState(T& io);
+	void SyncTo(int x1, int targetX);
+	void ApplyArtifacting();
+	void AddRegisterChange(uint8 pos, uint8 addr, uint8 value);
+	void UpdateRegisters(const RegisterChange *rc, int count);
 
 	IATGTIAEmulatorConnections *mpConn; 
 	IVDVideoDisplay *mpDisplay;
@@ -128,7 +142,7 @@ protected:
 	uint32	mLastSyncX;
 
 	AnalysisMode	mAnalysisMode;
-	uint8	mArtifactMode;
+	ArtifactMode	mArtifactMode;
 	uint8	mArtifactModeThisFrame;
 
 	uint8	mPlayerPos[4];
@@ -138,16 +152,19 @@ protected:
 
 	uint32	mPlayerTriggerPos[4];
 	uint32	mMissileTriggerPos[4];
+	uint8	mPlayerShiftData[4];
+	uint8	mMissileShiftData[4];
 
 	uint8	mPlayerSize[4];
 	uint8	mPlayerData[4];
-	uint8	mDelayedPlayerData[4];
 	uint8	mMissileData;
-	uint8	mDelayedMissileData;
 	uint8	mMissileSize;
+
+	// The following 9 registers must be contiguous.
 	uint8	mPMColor[4];		// $D012-D015 player and missile colors
 	uint8	mPFColor[4];		// $D016-D019 playfield colors
 	uint8	mPFBAK;				// $D01A background color
+
 	uint8	mPRIOR;				// $D01B priority
 	uint8	mVDELAY;			// $D01C vertical delay
 	uint8	mGRACTL;			// $D01D
@@ -173,7 +190,6 @@ protected:
 	bool	mbTurbo;
 	bool	mbPALMode;
 	bool	mbShowCassetteIndicator;
-	bool	mbVideoDelayed;		// Set only for Gr.10, which is delayed by a color clock.
 	bool	mbForcedBorder;
 
 	uint32	mStatusFlags;
@@ -181,13 +197,10 @@ protected:
 	float	mCassettePos;
 
 	const uint8 *mpPriTable;
-	const uint8 *mpMissileTable;
 	const uint8 *mpColorTable;
 
-	uint8	mColorTable[24];
 	uint8	mMergeBuffer[228];
 	uint8	mAnticData[228];
-	uint8	mPriorityTables[32][256];
 	uint32	mPalette[256];
 	bool	mbScanlinesWithHiRes[240];
 
@@ -200,6 +213,13 @@ protected:
 
 	ATArtifactingEngine	*mpArtifactingEngine;
 	vdrefptr<VDVideoDisplayFrame> mpLastFrame;
+
+	ATGTIARenderer *mpRenderer;
+
+	typedef vdfastvector<RegisterChange> RegisterChanges;
+	RegisterChanges mRegisterChanges;
+	int mRCIndex;
+	int mRCCount;
 };
 
 #endif

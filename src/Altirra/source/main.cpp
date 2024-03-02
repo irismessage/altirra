@@ -19,6 +19,8 @@
 #include <windows.h>
 #include <mmsystem.h>
 #include <dbghelp.h>
+#include <shellapi.h>
+#include <commdlg.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/w32assist.h>
@@ -26,6 +28,8 @@
 #include <vd2/system/registry.h>
 #include <vd2/system/cmdline.h>
 #include <vd2/system/thunk.h>
+#include <vd2/system/binary.h>
+#include <vd2/system/strutil.h>
 #include <vd2/Riza/display.h>
 #include <vd2/Riza/direct3d.h>
 #include <vd2/Dita/services.h>
@@ -41,6 +45,8 @@
 #include "resource.h"
 #include "oshelper.h"
 #include "autotest.h"
+#include "audiowriter.h"
+#include "inputmanager.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -54,6 +60,8 @@ public:
 	ATDisplayBasePane();
 
 	virtual void OnSize() = 0;
+	virtual void UpdateTextDisplay(bool enabled) = 0;
+	virtual void UpdateTextModeFont() = 0;
 };
 
 ATDisplayBasePane::ATDisplayBasePane()
@@ -73,16 +81,16 @@ HMENU g_hMenu;
 ATSimulator g_sim;
 
 bool g_fullscreen = false;
-int g_keyboardInput = true;
-bool g_mouse = false;
-bool g_paddles = false;
-int g_paddlePos = 0;
 bool g_mouseCaptured = false;
 bool g_pauseInactive = true;
 bool g_winActive = true;
 IVDVideoDisplay::FilterMode g_dispFilterMode = IVDVideoDisplay::kFilterBilinear;
+int g_enhancedText = 0;
+LOGFONTW g_enhancedTextFont;
 
 ATSaveStateWriter::Storage g_quickSave;
+
+vdautoptr<ATAudioWriter> g_pAudioWriter;
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -520,11 +528,11 @@ namespace {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-void OnCommandOpen() {
+void OnCommandOpen(bool forceColdBoot) {
 	VDStringW fn(VDGetLoadFileName('load', (VDGUIHandle)g_hwnd, L"Load disk, cassette, cartridge, or program image",
-		L"All supported types\0*.atr;*.xfd;*.pro;*.atx;*.xex;*.obx;*.rom;*.bin;*.cas;*.wav\0"
-		L"Atari program (*.xex,*.obx)\0*.xex;*.obx\0"
-		L"Atari disk image (*.atr,*.xfd)\0*.atr;*.xfd\0"
+		L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.rom;*.bin;*.cas;*.wav\0"
+		L"Atari program (*.xex,*.obx,*.com)\0*.xex;*.obx;*.com\0"
+		L"Atari disk image (*.atr,*.xfd,*.dcm)\0*.atr;*.xfd;*.dcm\0"
 		L"Protected disk image (*.pro)\0*.pro\0"
 		L"VAPI disk image (*.atx)\0*.atx\0"
 		L"Cartridge (*.rom,*.bin)\0*.rom;*.bin\0"
@@ -535,7 +543,17 @@ void OnCommandOpen() {
 
 	if (!fn.empty()) {
 		try {
+			if (forceColdBoot) {
+				g_sim.LoadCartridge(NULL);
+				g_sim.GetCassette().Unload();
+				g_sim.GetDiskDrive(0).UnloadDisk();
+				g_sim.GetDiskDrive(0).SetEnabled(false);
+			}
+
 			g_sim.Load(fn.c_str());
+
+			if (forceColdBoot)
+				g_sim.ColdReset();
 		} catch(const MyError& e) {
 			e.post(g_hwnd, "Altirra Error");
 		}
@@ -567,18 +585,19 @@ void ATSetFullscreen(bool fs) {
 	if (fs) {
 		SetMenu(g_hwnd, NULL);
 		SetWindowLong(g_hwnd, GWL_STYLE, (style & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
-		SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_FRAMECHANGED);
+		SetWindowPos(g_hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_FRAMECHANGED|SWP_NOZORDER);
+		SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE);
 		ShowWindow(g_hwnd, SW_MAXIMIZE);
 		g_fullscreen = true;
 		if (g_pDisplay)
 			g_pDisplay->SetFullScreen(true);
 		g_sim.SetFrameSkipEnabled(false);
 	} else {
-		SetWindowLong(g_hwnd, GWL_STYLE, (style | WS_OVERLAPPEDWINDOW) & ~WS_POPUP);
-		SetWindowPos(g_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_FRAMECHANGED);
-		ShowWindow(g_hwnd, SW_SHOWNORMAL);
 		if (g_pDisplay)
 			g_pDisplay->SetFullScreen(false);
+		SetWindowLong(g_hwnd, GWL_STYLE, (style | WS_OVERLAPPEDWINDOW) & ~WS_POPUP);
+		SetWindowPos(g_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_FRAMECHANGED|SWP_NOACTIVATE);
+		ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
 		g_fullscreen = false;
 		SetMenu(g_hwnd, g_hMenu);
 		g_sim.SetFrameSkipEnabled(true);
@@ -586,7 +605,8 @@ void ATSetFullscreen(bool fs) {
 }
 
 void OnCommandToggleFullScreen() {
-	ATSetFullscreen(!g_fullscreen);
+	if (!g_enhancedText)
+		ATSetFullscreen(!g_fullscreen);
 }
 
 void OnCommandFilterModeNext() {
@@ -621,10 +641,47 @@ void OnCommandGTIAVisualizationNext() {
 	gtia.SetAnalysisMode((ATGTIAEmulator::AnalysisMode)(((int)gtia.GetAnalysisMode() + 1) % ATGTIAEmulator::kAnalyzeCount));
 }
 
+void OnCommandEnhancedTextFont() {
+	CHOOSEFONTW cf = {sizeof(CHOOSEFONTW)};
+
+	cf.hwndOwner	= g_hwnd;
+	cf.hDC			= NULL;
+	cf.lpLogFont	= &g_enhancedTextFont;
+	cf.iPointSize	= 0;
+	cf.Flags		= CF_FIXEDPITCHONLY | CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT;
+
+	if (ChooseFontW(&cf)) {
+		g_enhancedTextFont.lfWidth			= 0;
+		g_enhancedTextFont.lfEscapement		= 0;
+		g_enhancedTextFont.lfOrientation	= 0;
+		g_enhancedTextFont.lfWeight			= 0;
+		g_enhancedTextFont.lfItalic			= FALSE;
+		g_enhancedTextFont.lfUnderline		= FALSE;
+		g_enhancedTextFont.lfStrikeOut		= FALSE;
+		g_enhancedTextFont.lfCharSet		= DEFAULT_CHARSET;
+		g_enhancedTextFont.lfOutPrecision	= OUT_DEFAULT_PRECIS;
+		g_enhancedTextFont.lfClipPrecision	= CLIP_DEFAULT_PRECIS;
+		g_enhancedTextFont.lfQuality		= DEFAULT_QUALITY;
+		g_enhancedTextFont.lfPitchAndFamily	= FF_DONTCARE | DEFAULT_PITCH;
+
+		VDRegistryAppKey key("Settings");
+		key.setString("Enhanced video: Font family", g_enhancedTextFont.lfFaceName);
+		key.setInt("Enhanced video: Font size", g_enhancedTextFont.lfHeight);
+
+		ATDisplayBasePane *pane = static_cast<ATDisplayBasePane *>(ATGetUIPane(kATUIPaneId_Display));
+		if (pane)
+			pane->UpdateTextModeFont();
+	}
+}
+
 bool OnCommand(UINT id) {
 	switch(id) {
 		case ID_FILE_OPENIMAGE:
-			OnCommandOpen();
+			OnCommandOpen(false);
+			return true;
+
+		case ID_FILE_BOOTIMAGE:
+			OnCommandOpen(true);
 			return true;
 
 		case ID_FILE_DISKDRIVES:
@@ -703,12 +760,24 @@ bool OnCommand(UINT id) {
 			}
 			return true;
 
+		case ID_CASSETTE_UNLOAD:
+			g_sim.GetCassette().Unload();
+			return true;
+
 		case ID_CASSETTE_SIOPATCH:
 			g_sim.SetCassetteSIOPatchEnabled(!g_sim.IsCassetteSIOPatchEnabled());
 			return true;
 
 		case ID_CASSETTE_AUTOBOOT:
 			g_sim.SetCassetteAutoBootEnabled(!g_sim.IsCassetteAutoBootEnabled());
+			return true;
+
+		case ID_CASSETTE_LOADDATAASAUDIO:
+			{
+				ATCassetteEmulator& cas = g_sim.GetCassette();
+
+				cas.SetLoadDataAsAudioEnable(!cas.IsLoadDataAsAudioEnabled());
+			}
 			return true;
 
 		case ID_DEBUG_OPENSOURCE:
@@ -754,8 +823,7 @@ bool OnCommand(UINT id) {
 			return true;
 
 		case ID_VIEW_DISPLAY:
-			if (ATIsDebugConsoleActive())
-				ATActivateUIPane(kATUIPaneId_Display, true);
+			ATActivateUIPane(kATUIPaneId_Display, true);
 			return true;
 
 		case ID_VIEW_CONSOLE:
@@ -797,6 +865,10 @@ bool OnCommand(UINT id) {
 			}
 			return true;
 
+		case ID_VIEW_RESETWINDOWLAYOUT:
+			ATLoadDefaultPaneLayout();
+			return true;
+
 		case ID_ANTICVISUALIZATION_NEXTMODE:
 			OnCommandAnticVisualizationNext();
 			return true;
@@ -819,6 +891,11 @@ bool OnCommand(UINT id) {
 
 		case ID_FIRMWARE_DEFAULT:
 			g_sim.SetKernelMode(kATKernelMode_Default);
+			g_sim.ColdReset();
+			return true;
+
+		case ID_FIRMWARE_OSA:
+			g_sim.SetKernelMode(kATKernelMode_OSA);
 			g_sim.ColdReset();
 			return true;
 
@@ -919,11 +996,27 @@ bool OnCommand(UINT id) {
 			}
 			return true;
 
-		case ID_SYSTEM_ARTIFACTING:
+		case ID_VIDEO_NOARTIFACTING:
 			{
 				ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
-				gtia.SetArtifactingEnabled(!gtia.IsArtifactingEnabled());
+				gtia.SetArtifactingMode(ATGTIAEmulator::kArtifactNone);
+			}
+			return true;
+
+		case ID_VIDEO_NTSCARTIFACTING:
+			{
+				ATGTIAEmulator& gtia = g_sim.GetGTIA();
+
+				gtia.SetArtifactingMode(ATGTIAEmulator::kArtifactNTSC);
+			}
+			return true;
+
+		case ID_VIDEO_PALARTIFACTING:
+			{
+				ATGTIAEmulator& gtia = g_sim.GetGTIA();
+
+				gtia.SetArtifactingMode(ATGTIAEmulator::kArtifactPAL);
 			}
 			return true;
 
@@ -953,6 +1046,19 @@ bool OnCommand(UINT id) {
 					dlg.ShowDialog((VDGUIHandle)g_hwnd);
 				}
 			}
+			return true;
+
+		case ID_VIDEO_STANDARDVIDEO:
+			g_enhancedText = 0;
+			return true;
+
+		case ID_VIDEO_ENHANCEDTEXT:
+			g_enhancedText = 1;
+			ATSetFullscreen(false);
+			return true;
+
+		case ID_VIDEO_ENHANCEDTEXTFONT:
+			OnCommandEnhancedTextFont();
 			return true;
 
 		case ID_DISKDRIVE_ENABLED:
@@ -985,72 +1091,31 @@ bool OnCommand(UINT id) {
 			return true;
 
 		case ID_PORT1_NONE:
-			if (g_keyboardInput == 1)
-				g_keyboardInput = 0;
+			g_sim.GetInputManager()->SetPortMode(0, kATInputMode_None);
 			return true;
 
 		case ID_PORT1_JOYSTICK:
-			g_keyboardInput = 1;
-			if (g_mouse && g_paddles)
-				g_mouse = false;
+			g_sim.GetInputManager()->SetPortMode(0, kATInputMode_JoyKeys);
 			return true;
 
 		case ID_PORT1_PADDLE:
-			if (g_mouse && !g_paddles) {
-				g_paddles = true;
-				g_sim.ResetMouse();
-				g_sim.GetGTIA().SetControllerTrigger(1, false);
-			} else {
-				g_mouse = true;
-				g_paddles = true;
-
-				if (g_keyboardInput == 1)
-					g_keyboardInput = 0;
-			}
+			g_sim.GetInputManager()->SetPortMode(0, kATInputMode_Paddle);
 			return true;
 
 		case ID_PORT2_NONE:
-			if (g_keyboardInput == 2)
-				g_keyboardInput = 0;
-
-			if (g_mouse) {
-				g_sim.ResetMouse();
-				g_sim.GetGTIA().SetControllerTrigger(1, false);
-				g_mouse = false;
-			}
+			g_sim.GetInputManager()->SetPortMode(1, kATInputMode_None);
 			return true;
 
 		case ID_PORT2_JOYSTICK:
-			g_keyboardInput = 2;
-			if (g_mouse && !g_paddles)
-				g_mouse = false;
+			g_sim.GetInputManager()->SetPortMode(1, kATInputMode_JoyKeys);
 			return true;
 
 		case ID_PORT2_MOUSE:
-			if (g_mouse && g_paddles) {
-				g_paddles = false;
-			} else {
-				g_mouse = !g_mouse;
-				if (g_mouse) {
-					g_paddles = false;
-					if (g_keyboardInput == 2)
-						g_keyboardInput = 0;
-				} else {
-					g_sim.ResetMouse();
-					g_sim.GetGTIA().SetControllerTrigger(1, false);
-				}
-			}
+			g_sim.GetInputManager()->SetPortMode(1, kATInputMode_Mouse);
 			return true;
 
 		case ID_INPUT_SWAPPORTASSIGNMENTS:
-			if (g_mouse) {
-				g_mouse = false;
-				g_sim.ResetMouse();
-				g_sim.GetGTIA().SetControllerTrigger(1, false);
-			}
-
-			if (g_keyboardInput)
-				g_keyboardInput ^= 3;
+			g_sim.GetInputManager()->SwapPorts(0, 1);
 			return true;
 
 		case ID_CHEAT_DISABLEPMCOLLISIONS:
@@ -1100,6 +1165,28 @@ bool OnCommand(UINT id) {
 			ATGetDebugger()->StepOver(kATDebugSrcMode_Same);
 			return true;
 
+		case ID_RECORD_STOPRECORDING:
+			if (g_pAudioWriter) {
+				g_sim.GetPokey().SetAudioTap(NULL);
+				g_pAudioWriter = NULL;
+			}
+			return true;
+
+		case ID_RECORD_RECORDRAWAUDIO:
+			{
+				VDStringW s(VDGetSaveFileName('raud', (VDGUIHandle)g_hwnd, L"Record raw audio", L"Raw 32-bit float data\0*.pcm\0", L"pcm"));
+
+				if (!s.empty()) {
+					try {
+						g_pAudioWriter = new ATAudioWriter(s.c_str());
+						g_sim.GetPokey().SetAudioTap(g_pAudioWriter);
+					} catch(const MyError& e) {
+						e.post(g_hwnd, "Altirra Error");
+					}
+				}
+			}
+			return true;
+
 		case ID_HELP_ABOUT:
 			ATAboutDialog().ShowDialog((VDGUIHandle)g_hwnd);
 			return true;
@@ -1112,18 +1199,28 @@ bool OnCommand(UINT id) {
 }
 
 void OnInitMenu(HMENU hmenu) {
+	VDEnableMenuItemByCommandW32(hmenu, ID_CASSETTE_UNLOAD, g_sim.GetCassette().IsLoaded());
 	VDEnableMenuItemByCommandW32(hmenu, ID_FILE_DETACHCARTRIDGE, g_sim.IsCartridgeAttached());
 
 	VDCheckMenuItemByCommandW32(hmenu, ID_SYSTEM_PAL, g_sim.IsPALMode());
 
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
-	VDCheckMenuItemByCommandW32(hmenu, ID_SYSTEM_ARTIFACTING, gtia.IsArtifactingEnabled());
+	ATGTIAEmulator::ArtifactMode artmode = gtia.GetArtifactingMode();
+	VDCheckRadioMenuItemByCommandW32(hmenu, ID_VIDEO_NOARTIFACTING, artmode == ATGTIAEmulator::kArtifactNone);
+	VDCheckRadioMenuItemByCommandW32(hmenu, ID_VIDEO_NTSCARTIFACTING, artmode == ATGTIAEmulator::kArtifactNTSC);
+	VDCheckRadioMenuItemByCommandW32(hmenu, ID_VIDEO_PALARTIFACTING, artmode == ATGTIAEmulator::kArtifactPAL);
 	VDCheckMenuItemByCommandW32(hmenu, ID_SYSTEM_WARPSPEED, g_sim.IsTurboModeEnabled());
 	VDCheckMenuItemByCommandW32(hmenu, ID_SYSTEM_PAUSEWHENINACTIVE, g_pauseInactive);
-	VDCheckMenuItemByCommandW32(hmenu, ID_PORT1_JOYSTICK, g_keyboardInput == 1);
-	VDCheckMenuItemByCommandW32(hmenu, ID_PORT1_PADDLE, g_mouse && g_paddles);
-	VDCheckMenuItemByCommandW32(hmenu, ID_PORT2_JOYSTICK, g_keyboardInput == 2);
-	VDCheckMenuItemByCommandW32(hmenu, ID_PORT2_MOUSE, g_mouse && !g_paddles);
+
+	ATInputManager& im = *g_sim.GetInputManager();
+	ATInputMode import0 = im.GetPortMode(0);
+	ATInputMode import1 = im.GetPortMode(1);
+	VDCheckMenuItemByCommandW32(hmenu, ID_PORT1_NONE, import0 == kATInputMode_None);
+	VDCheckMenuItemByCommandW32(hmenu, ID_PORT1_JOYSTICK, import0 == kATInputMode_JoyKeys);
+	VDCheckMenuItemByCommandW32(hmenu, ID_PORT1_PADDLE, import0 == kATInputMode_Paddle);
+	VDCheckMenuItemByCommandW32(hmenu, ID_PORT2_NONE, import1 == kATInputMode_None);
+	VDCheckMenuItemByCommandW32(hmenu, ID_PORT2_JOYSTICK, import1 == kATInputMode_JoyKeys);
+	VDCheckMenuItemByCommandW32(hmenu, ID_PORT2_MOUSE, import1 == kATInputMode_Mouse);
 
 	if (g_pDisplay) {
 		IVDVideoDisplay::FilterMode filterMode = g_pDisplay->GetFilterMode();
@@ -1139,6 +1236,7 @@ void OnInitMenu(HMENU hmenu) {
 
 	ATKernelMode kernelMode = g_sim.GetKernelMode();
 	VDCheckRadioMenuItemByCommandW32(hmenu, ID_FIRMWARE_DEFAULT, kernelMode == kATKernelMode_Default);
+	VDCheckRadioMenuItemByCommandW32(hmenu, ID_FIRMWARE_OSA, kernelMode == kATKernelMode_OSA);
 	VDCheckRadioMenuItemByCommandW32(hmenu, ID_FIRMWARE_OSB, kernelMode == kATKernelMode_OSB);
 	VDCheckRadioMenuItemByCommandW32(hmenu, ID_FIRMWARE_800XL, kernelMode == kATKernelMode_XL);
 	VDCheckRadioMenuItemByCommandW32(hmenu, ID_FIRMWARE_LLE, kernelMode == kATKernelMode_LLE);
@@ -1158,6 +1256,7 @@ void OnInitMenu(HMENU hmenu) {
 
 	VDCheckMenuItemByCommandW32(hmenu, ID_CASSETTE_SIOPATCH, g_sim.IsCassetteSIOPatchEnabled());
 	VDCheckMenuItemByCommandW32(hmenu, ID_CASSETTE_AUTOBOOT, g_sim.IsCassetteAutoBootEnabled());
+	VDCheckMenuItemByCommandW32(hmenu, ID_CASSETTE_LOADDATAASAUDIO, g_sim.GetCassette().IsLoadDataAsAudioEnabled());
 
 	VDCheckMenuItemByCommandW32(hmenu, ID_DEBUG_AUTORELOADROMS, g_sim.IsROMAutoReloadEnabled());
 	VDCheckMenuItemByCommandW32(hmenu, ID_DEBUG_AUTOLOADKERNELSYMBOLS, g_sim.IsAutoLoadKernelSymbolsEnabled());
@@ -1169,7 +1268,9 @@ void OnInitMenu(HMENU hmenu) {
 	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_DISASSEMBLY, debuggerEnabled);
 	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_HISTORY, debuggerEnabled);
 	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_REGISTERS, debuggerEnabled);
+	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_MEMORY, debuggerEnabled);
 
+	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_FULLSCREEN, g_enhancedText == 0);
 	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_COPYFRAMETOCLIPBOARD, gtia.GetLastFrameBuffer() != NULL);
 
 	VDCheckMenuItemByCommandW32(hmenu, ID_CHEAT_DISABLEPMCOLLISIONS, !gtia.ArePMCollisionsEnabled());
@@ -1189,6 +1290,12 @@ void OnInitMenu(HMENU hmenu) {
 	VDCheckMenuItemByCommandW32(hmenu, ID_DISKDRIVE_ACCURATESECTORTIMING, disk.IsAccurateSectorTimingEnabled());
 
 	VDCheckMenuItemByCommandW32(hmenu, ID_AUDIO_STEREO, g_sim.IsDualPokeysEnabled());
+
+	VDCheckRadioMenuItemByCommandW32(hmenu, ID_VIDEO_STANDARDVIDEO, g_enhancedText == 0);
+	VDCheckRadioMenuItemByCommandW32(hmenu, ID_VIDEO_ENHANCEDTEXT, g_enhancedText == 1);
+
+	VDEnableMenuItemByCommandW32(hmenu, ID_RECORD_STOPRECORDING, g_pAudioWriter != NULL);
+	VDCheckMenuItemByCommandW32(hmenu, ID_RECORD_RECORDRAWAUDIO, g_pAudioWriter != NULL);
 }
 
 void OnActivateApp(HWND hwnd, WPARAM wParam) {
@@ -1199,37 +1306,37 @@ void OnActivateApp(HWND hwnd, WPARAM wParam) {
 }
 
 bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
-	switch(LOWORD(wParam)) {
+	const bool isRepeat = (lParam & 0xffff) > 0;
+	const int key = LOWORD(wParam);
+	const bool shift = (GetKeyState(VK_SHIFT) < 0);
+	const bool ctrl = (GetKeyState(VK_CONTROL) < 0);
+	const bool alt = (GetKeyState(VK_MENU) < 0);
+	const uint8 ctrlmod = (ctrl ? 0x80 : 0x00);
+	const uint8 shiftmod = (shift ? 0x40 : 0x00);
+	const uint8 modifier = ctrlmod + shiftmod;
+
+	switch(key) {
 		case VK_CAPITAL:
 			// drop injected CAPS LOCK keys
-			if (lParam & 0x00ff0000) {
-				if (GetKeyState(VK_SHIFT) < 0) {
-					g_sim.GetPokey().PushKey(0x7C, false);
-				} else if (GetKeyState(VK_CONTROL) < 0) {
-					g_sim.GetPokey().PushKey(0xBC, false);
-				} else {
-					g_sim.GetPokey().PushKey(0x3C, false);
-				}
-			}
-
+			if (lParam & 0x00ff0000)
+				g_sim.GetPokey().PushKey(0x3C + modifier, isRepeat);
 			return true;
 
 		case VK_SHIFT:
 			g_sim.GetPokey().SetShiftKeyState(true);
 			break;
 
-		case VK_RETURN:
-			if (GetKeyState(VK_MENU) < 0) {
-				OnCommandToggleFullScreen();
-			}
-			return true;
-
 		case VK_F1:
-			if (GetKeyState(VK_SHIFT) < 0) {
-				g_keyboardInput = (g_keyboardInput == 1) ? 0 : 1;
-			} else if (GetKeyState(VK_CONTROL) < 0) {
+			if (shift) {
+				ATInputManager *im = g_sim.GetInputManager();
+
+				if (im->GetPortMode(0) == kATInputMode_JoyKeys)
+					im->SetPortMode(0, kATInputMode_None);
+				else
+					im->SetPortMode(0, kATInputMode_JoyKeys);
+			} else if (ctrl) {
 				OnCommandFilterModeNext();
-			} else if (GetKeyState(VK_MENU) < 0) {
+			} else if (alt) {
 				OnCommand(ID_INPUT_SWAPPORTASSIGNMENTS);
 			} else {
 				g_sim.SetTurboModeEnabled(true);
@@ -1237,8 +1344,8 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			return true;
 
 		case VK_F2:
-			if (GetKeyState(VK_MENU) < 0) {
-				if (GetKeyState(VK_SHIFT) < 0)
+			if (alt) {
+				if (shift)
 					g_sim.GetGTIA().AdjustColors(-0.01, 0);
 				else
 					g_sim.GetGTIA().AdjustColors(0, -0.1);
@@ -1247,8 +1354,8 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			}
 			return true;
 		case VK_F3:
-			if (GetKeyState(VK_MENU) < 0) {
-				if (GetKeyState(VK_SHIFT) < 0)
+			if (alt) {
+				if (shift)
 					g_sim.GetGTIA().AdjustColors(0.01, 0);
 				else
 					g_sim.GetGTIA().AdjustColors(0, 0.1);
@@ -1257,31 +1364,33 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			}
 			return true;
 		case VK_F4:
-			if (GetKeyState(VK_MENU) < 0)
+			if (alt)
 				return false;
 
 			g_sim.GetGTIA().SetConsoleSwitch(0x04, true);
 			return true;
 
 		case VK_F5:
-			if (GetKeyState(VK_CONTROL) < 0) {
+			if (ctrl) {
 				g_sim.WarmReset();
 				g_sim.Resume();
-			} else if (GetKeyState(VK_SHIFT) < 0) {
+			} else if (shift) {
 				g_sim.ColdReset();
+				g_sim.Resume();
+			} else {
 				g_sim.Resume();
 			}
 			return true;
 
 		case VK_F7:
-			if (GetKeyState(VK_CONTROL) < 0)
+			if (ctrl)
 				g_sim.SetPALMode(!g_sim.IsPALMode());
 			return true;
 
 		case VK_F8:
-			if (GetKeyState(VK_SHIFT) < 0) {
+			if (shift) {
 				OnCommandAnticVisualizationNext();
-			} else if (GetKeyState(VK_CONTROL) < 0) {
+			} else if (ctrl) {
 				OnCommandGTIAVisualizationNext();
 			} else {
 				ATOpenConsole();
@@ -1290,84 +1399,61 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			return true;
 
 		case VK_UP:
-			switch(g_keyboardInput) {
-				case 0:
-					g_sim.GetPokey().PushKey(0x8E, false);
-					break;
+			{
+				ATInputManager *im = g_sim.GetInputManager();
 
-				case 1:
-					UpdateController(0x01, 0x01);
-					break;
-
-				case 2:
-					UpdateController(0x10, 0x10);
-					break;
+				if (im->IsJoystickActive())
+					im->SetJoystickInput(0, true);
+				else
+					g_sim.GetPokey().PushKey(0x8E + shiftmod, isRepeat);
 			}
 			return true;
 
 		case VK_DOWN:
-			switch(g_keyboardInput) {
-				case 0:
-					g_sim.GetPokey().PushKey(0x8F, false);
-					break;
+			{
+				ATInputManager *im = g_sim.GetInputManager();
 
-				case 1:
-					UpdateController(0x02, 0x02);
-					break;
-
-				case 2:
-					UpdateController(0x20, 0x20);
-					break;
+				if (im->IsJoystickActive())
+					im->SetJoystickInput(1, true);
+				else
+					g_sim.GetPokey().PushKey(0x8F + shiftmod, isRepeat);
 			}
 			return true;
 
 		case VK_LEFT:
-			switch(g_keyboardInput) {
-				case 0:
-					g_sim.GetPokey().PushKey(0x86, false);
-					break;
+			{
+				ATInputManager *im = g_sim.GetInputManager();
 
-				case 1:
-					UpdateController(0x04, 0x04);
-					break;
-
-				case 2:
-					UpdateController(0x40, 0x40);
-					break;
+				if (im->IsJoystickActive())
+					im->SetJoystickInput(2, true);
+				else
+					g_sim.GetPokey().PushKey(0x86 + shiftmod, isRepeat);
 			}
 			return true;
 
 		case VK_RIGHT:
-			switch(g_keyboardInput) {
-				case 0:
-					g_sim.GetPokey().PushKey(0x87, false);
-					break;
+			{
+				ATInputManager *im = g_sim.GetInputManager();
 
-				case 1:
-					UpdateController(0x08, 0x08);
-					break;
-
-				case 2:
-					UpdateController(0x80, 0x80);
-					break;
+				if (im->IsJoystickActive())
+					im->SetJoystickInput(3, true);
+				else
+					g_sim.GetPokey().PushKey(0x87 + shiftmod, isRepeat);
 			}
 			return true;
 
 		case VK_CONTROL:
-			switch(g_keyboardInput) {
-				case 1:
-					g_sim.SetKeyboardControlData(0x10000, 0x10000);
-					break;
+			{
+				ATInputManager *im = g_sim.GetInputManager();
 
-				case 2:
-					g_sim.SetKeyboardControlData(0x20000, 0x20000);
-					break;
+				if (im->IsJoystickActive())
+					im->SetJoystickInput(4, true);
 			}
 			return true;
 
 		case VK_CANCEL:
 		case VK_PAUSE:
-			if (GetKeyState(VK_CONTROL) < 0) {
+			if (ctrl) {
 				ATOpenConsole();
 				ATGetDebugger()->Break();
 			} else {
@@ -1376,12 +1462,171 @@ bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			return true;
 
 		case 'C':
-			if (GetKeyState(VK_MENU) < 0) {
+			if (alt) {
 				OnCommand(ID_VIEW_COPYFRAMETOCLIPBOARD);
 				return true;
 			}
 
 			break;
+
+		case VK_TAB:
+			if (!alt)
+				g_sim.GetPokey().PushKey(0x2C | modifier, isRepeat);
+			return true;
+
+		case VK_BACK:
+			if (!alt)
+				g_sim.GetPokey().PushKey(0x34 | modifier, isRepeat);
+			return true;
+
+		case VK_RETURN:
+			if (alt)
+				OnCommandToggleFullScreen();
+			else
+				g_sim.GetPokey().PushKey(0x0C | modifier, isRepeat);
+			return true;
+
+		case VK_ESCAPE:
+			if (!alt)
+				g_sim.GetPokey().PushKey(0x1C | modifier, isRepeat);
+			return true;
+
+		case VK_END:	// Fuji
+			if (!alt)
+				g_sim.GetPokey().PushKey(0x27 | modifier, isRepeat);
+			return true;
+
+		case VK_NEXT:	// Help
+			if (!alt)
+				g_sim.GetPokey().PushKey(0x11 | modifier, isRepeat);
+			return true;
+
+		case VK_OEM_1:		// ;: in US
+			if (!alt && ctrl)
+				g_sim.GetPokey().PushKey(0x82 | shiftmod, isRepeat);
+			return true;
+
+		case VK_OEM_PLUS:	// + any country
+			if (!alt && ctrl)
+				g_sim.GetPokey().PushKey(0x86, isRepeat);
+			return true;
+
+		case VK_OEM_4:		// [{ in US
+			if (!alt && ctrl)
+				g_sim.GetPokey().PushKey(0xE0, isRepeat);	// ignore shift
+			return true;
+
+		case VK_OEM_6:		// ]} in US
+			if (!alt && ctrl)
+				g_sim.GetPokey().PushKey(0xE2, isRepeat);	// ignore shift
+			return true;
+
+		case VK_OEM_COMMA:	// , any country
+			if (!alt && ctrl && !shift)
+				g_sim.GetPokey().PushKey(0xA0, isRepeat);
+			return true;
+
+		case VK_OEM_PERIOD:	// . any country
+			if (!alt && ctrl && !shift)
+				g_sim.GetPokey().PushKey(0xA2, isRepeat);
+			return true;
+
+		case VK_OEM_2:		// /? in US
+			if (!alt && ctrl)
+				g_sim.GetPokey().PushKey(0xA6 | shiftmod, isRepeat);
+			return true;
+
+		case VK_DELETE:
+			if (!alt) {
+				if (!ctrl && !shift)
+					g_sim.GetPokey().PushKey(0x76, isRepeat);
+				else
+					g_sim.GetPokey().PushKey(0x36 | modifier, isRepeat);
+			}
+			return true;
+
+		case VK_INSERT:
+			if (!alt) {
+				if (!ctrl && !shift)
+					g_sim.GetPokey().PushKey(0x77, isRepeat);
+				else
+					g_sim.GetPokey().PushKey(0x37 | modifier, isRepeat);
+			}
+			return true;
+
+		case VK_SPACE:
+			if (!alt && (ctrl || shift))
+				g_sim.GetPokey().PushKey(0x21 | modifier, isRepeat);
+			return true;
+	}
+
+	if (!alt) {
+		// translate ctrl keys
+		if (key >= 'A' && key <= 'Z') {
+			if (ctrl) {
+				static const uint8 kAlphaScanCodeTable[26]={
+					/* A */ 0xBF,
+					/* B */ 0x95,
+					/* C */ 0x92,
+					/* D */ 0xBA,
+					/* E */ 0xAA,
+					/* F */ 0xB8,
+					/* G */ 0xBD,
+					/* H */ 0xB9,
+					/* I */ 0x8D,
+					/* J */ 0x81,
+					/* K */ 0x85,
+					/* L */ 0x80,
+					/* M */ 0xA5,
+					/* N */ 0xA3,
+					/* O */ 0x88,
+					/* P */ 0x8A,
+					/* Q */ 0xAF,
+					/* R */ 0xA8,
+					/* S */ 0xBE,
+					/* T */ 0xAD,
+					/* U */ 0x8B,	
+					/* V */ 0x90,
+					/* W */ 0xAE,
+					/* X */ 0x96,
+					/* Y */ 0xAB,
+					/* Z */ 0x97,
+				};
+
+				uint8 scanCode = kAlphaScanCodeTable[key - 'A'];
+
+				if (shift)
+					scanCode |= 0x40;
+
+				g_sim.GetPokey().PushKey(scanCode, isRepeat);
+				return true;
+			}
+		}
+
+		if (key >= '0' && key <= '9') {
+			if (ctrl) {
+				static const uint8 kNumberScanCodeTable[10]={
+					/* 0 */ 0xB2,
+					/* 1 */ 0x9F,
+					/* 2 */ 0x9E,
+					/* 3 */ 0x9A,
+					/* 4 */ 0x98,
+					/* 5 */ 0x9D,
+					/* 6 */ 0x9B,
+					/* 7 */ 0xB3,
+					/* 8 */ 0xB5,
+					/* 9 */ 0xB0,
+				};
+
+				uint8 scanCode = kNumberScanCodeTable[key - '0'];
+
+				if (shift)
+					scanCode |= 0x40;
+
+				g_sim.GetPokey().PushKey(scanCode, isRepeat);
+				return true;
+			}
+		}
 	}
 
 	return false;
@@ -1415,59 +1660,44 @@ bool OnKeyUp(HWND hwnd, WPARAM wParam) {
 			return true;
 
 		case VK_UP:
-			switch(g_keyboardInput) {
-				case 1:
-					UpdateController(0x01, 0x00);
-					break;
+			{
+				ATInputManager *im = g_sim.GetInputManager();
 
-				case 2:
-					UpdateController(0x10, 0x00);
-					break;
+				if (im->IsJoystickActive())
+					im->SetJoystickInput(0, false);
 			}
 			return true;
 		case VK_DOWN:
-			switch(g_keyboardInput) {
-				case 1:
-					UpdateController(0x02, 0x00);
-					break;
+			{
+				ATInputManager *im = g_sim.GetInputManager();
 
-				case 2:
-					UpdateController(0x20, 0x00);
-					break;
+				if (im->IsJoystickActive())
+					im->SetJoystickInput(1, false);
 			}
 			return true;
 		case VK_LEFT:
-			switch(g_keyboardInput) {
-				case 1:
-					UpdateController(0x04, 0x00);
-					break;
+			{
+				ATInputManager *im = g_sim.GetInputManager();
 
-				case 2:
-					UpdateController(0x40, 0x00);
-					break;
+				if (im->IsJoystickActive())
+					im->SetJoystickInput(2, false);
 			}
 			return true;
 		case VK_RIGHT:
-			switch(g_keyboardInput) {
-				case 1:
-					UpdateController(0x08, 0x00);
-					break;
+			{
+				ATInputManager *im = g_sim.GetInputManager();
 
-				case 2:
-					UpdateController(0x80, 0x00);
-					break;
+				if (im->IsJoystickActive())
+					im->SetJoystickInput(3, false);
 			}
 			return true;
 
 		case VK_CONTROL:
-			switch(g_keyboardInput) {
-				case 1:
-					g_sim.SetKeyboardControlData(0x10000, 0);
-					break;
+			{
+				ATInputManager *im = g_sim.GetInputManager();
 
-				case 2:
-					g_sim.SetKeyboardControlData(0x20000, 0);
-					break;
+				if (im->IsJoystickActive())
+					im->SetJoystickInput(4, false);
 			}
 			return true;
 	}
@@ -1481,18 +1711,15 @@ void OnChar(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
 	case 'l': ch = 0x00; break;
 	case 'L': ch = 0x40; break;
-	case ('L' & 0x1f): ch = 0x80; break;
 
 	case 'j': ch = 0x01; break;
 	case 'J': ch = 0x41; break;
-	case ('J' & 0x1f): ch = 0x81; break;
 
 	case ';': ch = 0x02; break;
 	case ':': ch = 0x42; break;
 
 	case 'k': ch = 0x05; break;
 	case 'K': ch = 0x45; break;
-	case ('K' & 0x1f): ch = 0x85; break;
 
 	case '+': ch = 0x06; break;
 	case '\\':ch = 0x46; break;
@@ -1502,17 +1729,12 @@ void OnChar(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
 	case 'o': ch = 0x08; break;
 	case 'O': ch = 0x48; break;
-	case ('O' & 0x1f): ch = 0x88; break;
 
 	case 'p': ch = 0x0A; break;
 	case 'P': ch = 0x4A; break;
-	case ('P' & 0x1f): ch = 0x8A; break;
 
 	case 'u': ch = 0x0B; break;
 	case 'U': ch = 0x4B; break;
-	case ('U' & 0x1f): ch = 0x8B; break;
-
-	case '\r':ch = 0x0C; break;
 
 	case 'i': ch = 0x0D; break;
 	case 'I': ch = 0x4D; break;
@@ -1525,23 +1747,18 @@ void OnChar(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
 	case 'v': ch = 0x10; break;
 	case 'V': ch = 0x50; break;
-	case ('V' & 0x1f): ch = 0x90; break;
 
 	case 'c': ch = 0x12; break;
 	case 'C': ch = 0x52; break;
-	case ('C' & 0x1f): ch = 0x92; break;
 
 	case 'b': ch = 0x15; break;
 	case 'B': ch = 0x55; break;
-	case ('B' & 0x1f): ch = 0x95; break;
 
 	case 'x': ch = 0x16; break;
 	case 'X': ch = 0x56; break;
-	case ('X' & 0x1f): ch = 0x96; break;
 
 	case 'z': ch = 0x17; break;
 	case 'Z': ch = 0x57; break;
-	case ('Z' & 0x1f): ch = 0x97; break;
 
 	case '4': ch = 0x18; break;
 	case '$': ch = 0x58; break;
@@ -1551,8 +1768,6 @@ void OnChar(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
 	case '6': ch = 0x1B; break;
 	case '&': ch = 0x5B; break;
-
-	case 0x1B:ch = 0x1C; break;
 
 	case '5': ch = 0x1D; break;
 	case '%': ch = 0x5D; break;
@@ -1574,7 +1789,6 @@ void OnChar(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
 	case 'n': ch = 0x23; break;
 	case 'N': ch = 0x63; break;
-	case ('N' & 0x1f): ch = 0xA3; break;
 
 	case 'm': ch = 0x25; break;
 	case 'M': ch = 0x65; break;
@@ -1584,29 +1798,21 @@ void OnChar(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
 	case 'r': ch = 0x28; break;
 	case 'R': ch = 0x68; break;
-	case ('R' & 0x1f): ch = 0xA8; break;
 
 	case 'e': ch = 0x2A; break;
 	case 'E': ch = 0x6A; break;
-	case ('E' & 0x1f): ch = 0xAA; break;
 
 	case 'y': ch = 0x2B; break;
 	case 'Y': ch = 0x6B; break;
-	case ('Y' & 0x1f): ch = 0xAB; break;
-
-	case '\t':ch = 0x2C; break;
 
 	case 't': ch = 0x2D; break;
 	case 'T': ch = 0x6D; break;
-	case ('T' & 0x1f): ch = 0xAD; break;
 
 	case 'w': ch = 0x2E; break;
 	case 'W': ch = 0x6E; break;
-	case ('W' & 0x1f): ch = 0xAE; break;
 
 	case 'q': ch = 0x2F; break;
 	case 'Q': ch = 0x6F; break;
-	case ('Q' & 0x1f): ch = 0xAF; break;
 
 	case '9': ch = 0x30; break;
 	case '(': ch = 0x70; break;
@@ -1617,9 +1823,6 @@ void OnChar(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 	case '7': ch = 0x33; break;
 	case '\'':ch = 0x73; break;
 
-	case '\b':ch = 0x34; break;
-	case 0x7f:ch = 0x74; break;
-
 	case '8': ch = 0x35; break;
 	case '@': ch = 0x75; break;
 
@@ -1628,26 +1831,21 @@ void OnChar(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
 	case 'f': ch = 0x38; break;
 	case 'F': ch = 0x78; break;
-	case ('F' & 0x1f): ch = 0xB8; break;
 
 	case 'h': ch = 0x39; break;
 	case 'H': ch = 0x79; break;
 
 	case 'd': ch = 0x3A; break;
 	case 'D': ch = 0x7A; break;
-	case ('D' & 0x1f): ch = 0xBA; break;
 
 	case 'g': ch = 0x3D; break;
 	case 'G': ch = 0x7D; break;
-	case ('G' & 0x1f): ch = 0xBD; break;
 
 	case 's': ch = 0x3E; break;
 	case 'S': ch = 0x7E; break;
-	case ('S' & 0x1f): ch = 0xBE; break;
 
 	case 'a': ch = 0x3F; break;
 	case 'A': ch = 0x7F; break;
-	case ('A' & 0x1f): ch = 0xBF; break;
 
 	default:
 		return;
@@ -1671,6 +1869,9 @@ protected:
 	bool OnCreate();
 	void OnDestroy();
 	void WarpCapturedMouse();
+	void UpdateTextDisplay(bool enabled);
+	void RepaintTextDisplay(HDC hdc, const bool *lineRedrawFlags);
+	void UpdateTextModeFont();
 
 	HWND	mhwndDisplay;
 	IVDVideoDisplay *mpDisplay;
@@ -1678,6 +1879,19 @@ protected:
 	int		mLastHoverY;
 	int		mLastTrackMouseX;
 	int		mLastTrackMouseY;
+
+	bool	mbTextModeEnabled;
+	HFONT	mTextModeFont;
+	HFONT	mTextModeWideFont;
+	int		mTextCharW;
+	int		mTextCharH;
+
+	uint32	mTextLastForeColor;
+	uint32	mTextLastBackColor;
+	uint32	mTextLastBorderColor;
+	int		mTextLastTotalHeight;
+	int		mTextLastLineCount;
+	uint8	mTextLastData[30][40];
 };
 
 ATDisplayPane::ATDisplayPane()
@@ -1687,8 +1901,18 @@ ATDisplayPane::ATDisplayPane()
 	, mLastHoverY(INT_MIN)
 	, mLastTrackMouseX(0)
 	, mLastTrackMouseY(0)
+	, mbTextModeEnabled(false)
+	, mTextModeFont((HFONT)GetStockObject(DEFAULT_GUI_FONT))
+	, mTextCharW(16)
+	, mTextCharH(16)
+	, mTextLastForeColor(0)
+	, mTextLastBackColor(0)
+	, mTextLastBorderColor(0)
+	, mTextLastTotalHeight(-1)
 {
 	mPreferredDockCode = kATContainerDockCenter;
+
+	memset(mTextLastData, 0, sizeof mTextLastData);
 }
 
 ATDisplayPane::~ATDisplayPane() {
@@ -1696,6 +1920,17 @@ ATDisplayPane::~ATDisplayPane() {
 
 LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	switch(msg) {
+		case WM_CREATE:
+			UpdateTextModeFont();
+			break;
+
+		case WM_DESTROY:
+			if (mTextModeFont) {
+				DeleteObject(mTextModeFont);
+				mTextModeFont = NULL;
+			}
+			break;
+
 		case WM_SYSKEYDOWN:
 			// Right-Alt kills capture.
 			if (wParam == VK_MENU && (lParam & (1 << 24))) {
@@ -1731,20 +1966,24 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 		case WM_LBUTTONUP:
 			if (::GetCapture() == mhwnd) {
-				if (g_paddles)
-					g_sim.SetKeyboardControlData(0x04, 0x04);
-				else
-					g_sim.GetGTIA().SetControllerTrigger(1, false);
+				ATInputManager *im = g_sim.GetInputManager();
+
+				if (im->IsMouseActive())
+					im->SetMouseButton(0, false);
+				else if (im->IsPaddleActive())
+					im->SetPaddleButton(false);
 			}
 			break;
 
 		case WM_LBUTTONDOWN:
 		case WM_LBUTTONDBLCLK:
 			if (::GetCapture() == mhwnd) {
-				if (g_paddles)
-					g_sim.SetKeyboardControlData(0x04, 0x00);
-				else
-					g_sim.GetGTIA().SetControllerTrigger(1, true);
+				ATInputManager *im = g_sim.GetInputManager();
+
+				if (im->IsMouseActive())
+					im->SetMouseButton(0, true);
+				else if (im->IsPaddleActive())
+					im->SetPaddleButton(true);
 			}
 
 			// fall through
@@ -1752,18 +1991,22 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case WM_RBUTTONDOWN:
 			::SetFocus(mhwnd);
 
-			if (g_mouse && ::GetCapture() != mhwnd) {
-				::SetCapture(mhwnd);
-				::SetCursor(NULL);
+			{
+				ATInputManager *im = g_sim.GetInputManager();
 
-				g_mouseCaptured = true;
+				if ((im->IsMouseActive() || im->IsPaddleActive()) && ::GetCapture() != mhwnd) {
+					::SetCapture(mhwnd);
+					::SetCursor(NULL);
 
-				DWORD pos = ::GetMessagePos();
+					g_mouseCaptured = true;
 
-				mLastTrackMouseX = (short)LOWORD(pos);
-				mLastTrackMouseY = (short)HIWORD(pos);
+					DWORD pos = ::GetMessagePos();
 
-				WarpCapturedMouse();
+					mLastTrackMouseX = (short)LOWORD(pos);
+					mLastTrackMouseY = (short)HIWORD(pos);
+
+					WarpCapturedMouse();
+				}
 			}
 			break;
 
@@ -1796,21 +2039,12 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					int dy = y - mLastTrackMouseY;
 
 					if (dx | dy) {
-						if (g_paddles) {
-							ATPokeyEmulator& pokey = g_sim.GetPokey();
+						ATInputManager *im = g_sim.GetInputManager();
 
-							g_paddlePos -= dx;
-
-							if (g_paddlePos < 0)
-								g_paddlePos = 0;
-
-							if (g_paddlePos > (228 << 3))
-								g_paddlePos = (228 << 3);
-
-							pokey.SetPotPos(0, g_paddlePos >> 3);
-						} else {
-							g_sim.ApplyMouseDelta(dx, dy);
-						}
+						if (im->IsPaddleActive())
+							im->AddPaddleDelta(dx);
+						else if (im->IsMouseActive())
+							im->AddMouseDelta(dx, dy);
 
 						WarpCapturedMouse();
 					}
@@ -1847,6 +2081,20 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 		case WM_CAPTURECHANGED:
 			g_mouseCaptured = false;
+			break;
+
+		case WM_ERASEBKGND:
+			return 0;
+
+		case WM_PAINT:
+			if (mbTextModeEnabled) {
+				PAINTSTRUCT ps;
+				if (HDC hdc = BeginPaint(mhwnd, &ps)) {
+					RepaintTextDisplay(hdc, NULL);
+					EndPaint(mhwnd, &ps);
+				}
+				return 0;
+			}
 			break;
 	}
 
@@ -1920,6 +2168,9 @@ void ATDisplayPane::OnSize() {
 
 		SetWindowPos(mhwndDisplay, NULL, 0, 0, r.right, r.bottom, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
 	}
+
+	if (mbTextModeEnabled)
+		InvalidateRect(mhwnd, NULL, TRUE);
 }
 
 void ATDisplayPane::WarpCapturedMouse() {
@@ -1934,6 +2185,197 @@ void ATDisplayPane::WarpCapturedMouse() {
 	}
 }
 
+void ATDisplayPane::UpdateTextDisplay(bool enabled) {
+	if (!enabled) {
+		if (mbTextModeEnabled) {
+			mbTextModeEnabled = false;
+
+			::ShowWindow(mhwndDisplay, SW_SHOWNOACTIVATE);
+		}
+
+		return;
+	}
+
+	bool forceInvalidate = false;
+	if (!mbTextModeEnabled) {
+		mbTextModeEnabled = true;
+		forceInvalidate = true;
+
+		::ShowWindow(mhwndDisplay, SW_HIDE);
+	}
+
+	ATGTIAEmulator& gtia = g_sim.GetGTIA();
+	COLORREF colorBack = VDSwizzleU32(gtia.GetPlayfieldColor24(2)) >> 8;
+	COLORREF colorFore = VDSwizzleU32(gtia.GetPlayfieldColorPF2H()) >> 8;
+	COLORREF colorBorder = VDSwizzleU32(gtia.GetBackgroundColor24()) >> 8;
+
+	if (mTextLastBackColor != colorBack) {
+		mTextLastBackColor = colorBack;
+		forceInvalidate = true;
+	}
+
+	if (mTextLastForeColor != colorFore) {
+		mTextLastForeColor = colorFore;
+		forceInvalidate = true;
+	}
+
+	if (mTextLastBorderColor != colorBorder) {
+		mTextLastBorderColor = colorBorder;
+		forceInvalidate = true;
+	}
+
+	// update data from ANTIC
+	ATAnticEmulator& antic = g_sim.GetAntic();
+	const ATAnticEmulator::DLHistoryEntry *history = g_sim.GetAntic().GetDLHistory();
+
+	int line = 0;
+	bool redrawFlags[30] = {false};
+	bool linesDirty = false;
+	for(int y=8; y<240; ++y) {
+		const ATAnticEmulator::DLHistoryEntry& hval = history[y];
+
+		if (!hval.mbValid || (hval.mControl & 0x0F) != 2)
+			continue;
+
+		uint32 pfAddr = hval.mPFAddress;
+
+		uint8 *lastData = mTextLastData[line];
+		uint8 data[40];
+		for(int i=0; i<40; ++i) {
+			uint8 c = g_sim.DebugAnticReadByte(pfAddr + i);
+
+			data[i] = c;
+		}
+
+		if (forceInvalidate || line >= mTextLastLineCount || memcmp(data, lastData, 40)) {
+			memcpy(lastData, data, 40);
+			redrawFlags[line] = true;
+			linesDirty = true;
+		}
+
+		++line;
+	}
+
+	mTextLastLineCount = line;
+
+	if (forceInvalidate || linesDirty) {
+		if (HDC hdc = GetDC(mhwnd)) {
+			RepaintTextDisplay(hdc, forceInvalidate ? NULL : redrawFlags);
+			ReleaseDC(mhwnd, hdc);
+		}
+	}
+}
+
+void ATDisplayPane::RepaintTextDisplay(HDC hdc, const bool *lineRedrawFlags) {
+	int saveHandle = SaveDC(hdc);
+
+	if (!saveHandle)
+		return;
+
+	const COLORREF colorBack = mTextLastBackColor;
+	const COLORREF colorFore = mTextLastForeColor;
+	const COLORREF colorBorder = mTextLastBorderColor;
+
+	SelectObject(hdc, mTextModeFont);
+	SetTextAlign(hdc, TA_TOP | TA_LEFT);
+	SetBkMode(hdc, OPAQUE);
+
+	RECT rClient;
+	GetClientRect(mhwnd, &rClient);
+
+	int py = 0;
+	for(int line = 0; line < mTextLastLineCount; ++line) {
+		uint8 *data = mTextLastData[line];
+
+		static const uint8 kInternalToATASCIIXorTab[4]={
+			0x20, 0x60, 0x40, 0x00
+		};
+
+		if (!lineRedrawFlags || lineRedrawFlags[line]) {
+			char buf[41];
+			bool inverted[41];
+			for(int i=0; i<40; ++i) {
+				uint8 c = data[i];
+
+				c ^= kInternalToATASCIIXorTab[(c >> 5) & 3];
+
+				if ((uint8)((c & 0x7f) - 0x20) >= 0x5f)
+					c = (c & 0x80) + 0x20;
+
+				buf[i] = c & 0x7f;
+				inverted[i] = (c & 0x80) != 0;
+			}
+
+			buf[40] = 0;
+			inverted[40] = !inverted[39];
+
+			int x = 0;
+			while(x < 40) {
+				bool invertSpan = inverted[x];
+				int xe = x + 1;
+
+				while(inverted[xe] == invertSpan)
+					++xe;
+
+				if (invertSpan) {
+					SetTextColor(hdc, colorBack);
+					SetBkColor(hdc, colorFore);
+				} else {
+					SetTextColor(hdc, colorFore);
+					SetBkColor(hdc, colorBack);
+				}
+
+				TextOutA(hdc, mTextCharW * x, py, buf + x, xe - x);
+
+				x = xe;
+			}
+
+			RECT rClear = { mTextCharW * x, py, rClient.right, py + mTextCharH };
+			SetBkColor(hdc, colorBorder);
+			ExtTextOutW(hdc, 0, py, ETO_OPAQUE, &rClear, L"", 0, NULL);
+		}
+
+		py += mTextCharH;
+	}
+
+	if (mTextLastTotalHeight != py || !lineRedrawFlags) {
+		mTextLastTotalHeight = py;
+
+		RECT rClear = { 0, py, rClient.right, rClient.bottom };
+		SetBkColor(hdc, colorBorder);
+		ExtTextOutW(hdc, 0, py, ETO_OPAQUE, &rClear, L"", 0, NULL);
+	}
+
+	RestoreDC(hdc, saveHandle);
+}
+
+void ATDisplayPane::UpdateTextModeFont() {
+	if (mTextModeFont)
+		DeleteObject(mTextModeFont);
+
+	mTextModeFont = CreateFontIndirectW(&g_enhancedTextFont);
+	if (!mTextModeFont)
+		mTextModeFont = CreateFontW(16, 0, 0, 0, 0, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FF_DONTCARE | DEFAULT_PITCH, L"Lucida Console");
+
+	mTextCharW = 16;
+	mTextCharH = 16;
+	if (HDC hdc = GetDC(mhwnd)) {
+		HGDIOBJ hOldFont = SelectObject(hdc, mTextModeFont);
+		if (hOldFont) {
+			TEXTMETRICW tm;
+			if (GetTextMetricsW(hdc, &tm)) {
+				mTextCharW = tm.tmAveCharWidth;
+				mTextCharH = tm.tmHeight;
+			}
+
+			SelectObject(hdc, hOldFont);
+		}
+		ReleaseDC(mhwnd, hdc);
+	}
+
+	InvalidateRect(mhwnd, NULL, TRUE);
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 class ATMainWindow : public ATContainerWindow {
@@ -1945,6 +2387,7 @@ protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
 
 	void OnCopyData(HWND hwndReply, const COPYDATASTRUCT& cds);
+	void OnDropFiles(HDROP hdrop);
 };
 
 ATMainWindow::ATMainWindow() {
@@ -1961,6 +2404,7 @@ LRESULT ATMainWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					return -1;
 
 				ATActivateUIPane(kATUIPaneId_Display, true);
+				DragAcceptFiles(mhwnd, TRUE);
 				return 0;
 
 			case WM_CLOSE:
@@ -1968,6 +2412,7 @@ LRESULT ATMainWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				break;
 
 			case WM_DESTROY:
+				DragAcceptFiles(mhwnd, FALSE);
 				PostQuitMessage(0);
 				break;
 
@@ -2008,6 +2453,10 @@ LRESULT ATMainWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					OnCopyData(hwndReply, *cds);
 				}
 				return TRUE;
+
+			case WM_DROPFILES:
+				OnDropFiles((HDROP)wParam);
+				return 0;
 		}
 	} __except(ATExceptionFilter(GetExceptionCode(), GetExceptionInformation())) {
 	}
@@ -2049,6 +2498,24 @@ void ATMainWindow::OnCopyData(HWND hwndReply, const COPYDATASTRUCT& cds) {
 	}
 }
 
+void ATMainWindow::OnDropFiles(HDROP hdrop) {
+	UINT count = DragQueryFileW(hdrop, 0xFFFFFFFF, NULL, 0);
+
+	if (count) {
+		UINT len = DragQueryFileW(hdrop, 0, NULL, 0);
+
+		vdfastvector<wchar_t> buf(len+1, 0);
+		if (DragQueryFileW(hdrop, 0, buf.data(), len+1)) {
+			try {
+				g_sim.Load(buf.data());
+			} catch(const MyError& e) {
+				e.post(g_hwnd, "Altirra Error");
+			}
+		}
+	}
+
+	DragFinish(hdrop);
+}
 
 class D3D9Lock : public VDD3D9Client {
 public:
@@ -2172,8 +2639,10 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				"/[no]accuratedisk - control accurate sector timing\n"
 				"/[no]basic - enable/disable BASIC ROM\n"
 				"/kernel:default|osb|xl|lle|hle - select kernel ROM\n"
-				"/memsize:48K|52K|64K|128K|320K|576K|1088K - select memory size"
-				"/[no]stereo - enable dual pokeys"
+				"/memsize:48K|52K|64K|128K|320K|576K|1088K - select memory size\n"
+				"/[no]stereo - enable dual pokeys\n"
+				"/gdi - force GDI display mode\n"
+				"/ddraw - force DirectDraw display mode"
 				,
 				"Altirra command-line help", MB_OK | MB_ICONINFORMATION);
 		}
@@ -2185,6 +2654,33 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		}
 	} catch(const MyError& e) {
 		e.post(hwnd, "Altirra error");
+	}
+}
+
+void LoadSettingsEarly() {
+	g_enhancedTextFont.lfHeight			= 16;
+    g_enhancedTextFont.lfWidth			= 0;
+    g_enhancedTextFont.lfEscapement		= 0;
+    g_enhancedTextFont.lfOrientation	= 0;
+    g_enhancedTextFont.lfWeight			= 0;
+    g_enhancedTextFont.lfItalic			= FALSE;
+    g_enhancedTextFont.lfUnderline		= FALSE;
+    g_enhancedTextFont.lfStrikeOut		= FALSE;
+	g_enhancedTextFont.lfCharSet		= DEFAULT_CHARSET;
+	g_enhancedTextFont.lfOutPrecision	= OUT_DEFAULT_PRECIS;
+	g_enhancedTextFont.lfClipPrecision	= CLIP_DEFAULT_PRECIS;
+    g_enhancedTextFont.lfQuality		= DEFAULT_QUALITY;
+	g_enhancedTextFont.lfPitchAndFamily	= FF_DONTCARE | DEFAULT_PITCH;
+    wcscpy(g_enhancedTextFont.lfFaceName, L"Lucida Console");
+
+	VDRegistryAppKey key("Settings");
+	VDStringW family;
+	int fontSize;
+	if (key.getString("Enhanced video: Font family", family)
+		&& (fontSize = key.getInt("Enhanced video: Font size", 0))) {
+
+		g_enhancedTextFont.lfHeight = fontSize;
+		vdwcslcpy(g_enhancedTextFont.lfFaceName, family.c_str(), sizeof(g_enhancedTextFont.lfFaceName)/sizeof(g_enhancedTextFont.lfFaceName[0]));
 	}
 }
 
@@ -2201,11 +2697,12 @@ void LoadSettings() {
 
 	g_sim.SetCassetteSIOPatchEnabled(key.getBool("Cassette: SIO patch enabled", g_sim.IsCassetteSIOPatchEnabled()));
 	g_sim.SetCassetteAutoBootEnabled(key.getBool("Cassette: Auto-boot enabled", g_sim.IsCassetteAutoBootEnabled()));
+	g_sim.GetCassette().SetLoadDataAsAudioEnable(key.getBool("Cassette: Load data as audio", g_sim.GetCassette().IsLoadDataAsAudioEnabled()));
 
 	g_sim.SetFPPatchEnabled(key.getBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled()));
 
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
-	gtia.SetArtifactingEnabled(key.getInt("GTIA: Artifacting mode", gtia.IsArtifactingEnabled()) != 0);
+	gtia.SetArtifactingMode((ATGTIAEmulator::ArtifactMode)key.getEnumInt("GTIA: Artifacting mode", ATGTIAEmulator::kArtifactCount, gtia.GetArtifactingMode()));
 
 	ATDiskEmulator& disk = g_sim.GetDiskDrive(0);
 	g_sim.SetDiskSIOPatchEnabled(key.getBool("Disk: SIO patch enabled", g_sim.IsDiskSIOPatchEnabled()));
@@ -2233,6 +2730,10 @@ void LoadSettings() {
 	g_dispFilterMode = (IVDVideoDisplay::FilterMode)key.getEnumInt("Display: Filter mode", IVDVideoDisplay::kFilterBicubic + 1, g_dispFilterMode);
 	if (g_pDisplay)
 		g_pDisplay->SetFilterMode(g_dispFilterMode);
+
+	g_enhancedText = key.getInt("Video: Enhanced text mode", 0);
+	if (g_enhancedText > 1)
+		g_enhancedText = 1;
 }
 
 void SaveSettings() {
@@ -2250,9 +2751,10 @@ void SaveSettings() {
 
 	key.setBool("Cassette: SIO patch enabled", g_sim.IsCassetteSIOPatchEnabled());
 	key.setBool("Cassette: Auto-boot enabled", g_sim.IsCassetteAutoBootEnabled());
+	key.setBool("Cassette: Load data as audio", g_sim.GetCassette().IsLoadDataAsAudioEnabled());
 
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
-	key.setInt("GTIA: Artifacting mode", gtia.IsArtifactingEnabled());
+	key.setInt("GTIA: Artifacting mode", gtia.GetArtifactingMode());
 
 	ATDiskEmulator& disk = g_sim.GetDiskDrive(0);
 	key.setBool("Disk: SIO patch enabled", g_sim.IsDiskSIOPatchEnabled());
@@ -2275,6 +2777,7 @@ void SaveSettings() {
 	}
 
 	key.setInt("Display: Filter mode", g_dispFilterMode);
+	key.setInt("Video: Enhanced text mode", g_enhancedText);
 }
 
 class ATUIWindowCaptionUpdater {
@@ -2352,6 +2855,13 @@ int RunMainLoop(HWND hwnd, VDCommandLine& cmdLine) {
 						return (int)msg.wParam;
 
 					if (msg.hwnd) {
+						if (msg.message == WM_SYSCHAR) {
+							if (g_hwnd && msg.hwnd != g_hwnd && GetAncestor(msg.hwnd, GA_ROOT) == g_hwnd)
+							{
+								msg.hwnd = g_hwnd;
+							}
+						}
+
 						HWND hwndOwner;
 						switch(msg.message) {
 							case WM_KEYDOWN:
@@ -2382,6 +2892,10 @@ int RunMainLoop(HWND hwnd, VDCommandLine& cmdLine) {
 			if (g_sim.IsRunning() && (g_winActive || !g_pauseInactive)) {
 				uint32 frame = antic.GetFrameCounter();
 				if (frame != lastFrame) {
+					ATDisplayBasePane *pane = static_cast<ATDisplayBasePane *>(ATGetUIPane(kATUIPaneId_Display));
+					if (pane)
+						pane->UpdateTextDisplay(g_enhancedText != 0);
+
 					lastFrame = frame;
 
 					LARGE_INTEGER curTime;
@@ -2407,7 +2921,7 @@ int RunMainLoop(HWND hwnd, VDCommandLine& cmdLine) {
 					nextFrameTimeValid = false;
 					if (g_sim.IsTurboModeEnabled())
 						error = 0;
-					else if (error < 0 && !g_fullscreen) {
+					else if (error < 0) {
 						nextFrameTimeValid = true;
 						nextFrameTime = curTime.QuadPart - error;
 					}
@@ -2466,6 +2980,8 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 	VDRegistryAppKey::setDefaultKey("Software\\virtualdub.org\\Altirra\\");
 
+	LoadSettingsEarly();
+
 	VDShaderEditorBaseWindow::Register();
 
 	ATInitUIFrameSystem();
@@ -2473,7 +2989,12 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	if (cmdLine.FindAndRemoveSwitch(L"lockd3d"))
 		g_d3d9Lock.Lock();
 
-	VDVideoDisplaySetFeatures(true, true, false, false, true, false, false);
+	if (cmdLine.FindAndRemoveSwitch(L"gdi"))
+		VDVideoDisplaySetFeatures(false, false, false, false, false, false, false);
+	else if (cmdLine.FindAndRemoveSwitch(L"ddraw"))
+		VDVideoDisplaySetFeatures(true, true, false, false, false, false, false);
+	else
+		VDVideoDisplaySetFeatures(true, true, false, false, true, false, false);
 	//VDVideoDisplaySetD3DFXFileName(L"d:\\shaders\\tvela2.fx");
 	VDVideoDisplaySetDebugInfoEnabled(false);
 
@@ -2518,6 +3039,9 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	int returnCode = RunMainLoop(hwnd, cmdLine);
 
 	timeEndPeriod(1);
+
+	g_pAudioWriter = NULL;
+
 	SaveSettings();
 	VDSaveFilespecSystemData();
 

@@ -136,6 +136,10 @@ Default:
 	Chooses either the OS-B ROM for 800 hardware or the XL ROM for 800XL
 	hardware.
 
+800 (OS-A):
+	Selects the OS-A version of the Atari 800 firmware. You must have
+	ATARIOSA.ROM for this to work.
+
 800 (OS-B):
 	Selects the OS-B version of the Atari 800 firmware. You must have
 	ATARIOSB.ROM for this to work.
@@ -199,10 +203,22 @@ PAL:
 	refresh rate. This is recommended for demos since many are written
 	in Europe.
 
-Artifacting:
+NTSC Artifacting:
 	Enables emulation of false colors from alternating high resolution
-	pixels. This is necessary to see colors in some games that use
-	artifacting, such as Choplifter and Pitstop II.
+	pixels with NTSC video encoding. This is necessary to see colors in
+	some games that use artifacting, such as Choplifter and Pitstop II.
+
+PAL Artifacting:
+	Enables emulation of false colors from chroma blending in the delay
+	line of a PAL video decoder. This gives more accurate color output
+	in programs that alternate color and grayscale lines to increase
+	the effective color depth.
+
+Enhanced text output (hardware intercept):
+	Replaces the standard emulated video display with a text screen
+	using native Windows fonts. This disables emulation of most Atari
+	video features and only supports basic text modes, but produces
+	a higher quality text display.	
 
 ------------
 Disk options
@@ -241,6 +257,16 @@ SIO patch:
 	Intercepts and accelerates cassette I/O calls to the serial input/
 	output (SIO) routine in the kernel. This greatly speeds up cassette
 	loads.
+
+Auto-boot on startup:
+	Automatically holds down START during system startup and then hits
+	a key to initiate a cassette tape load. This only works with cassette
+	tapes that have a machine language program; BASIC tapes must be loaded
+	via CLOAD at the BASIC prompt instead.
+
+Load data as audio:
+	Converts the data from a .CAS tape image into raw audio data so it
+	plays through the speaker.
 
 -----------
 CPU options
@@ -337,6 +363,10 @@ Ctrl+F7		Toggles PAL mode.
 Break		Atari Break key.
 Ctrl+Break	Break into debugger.
 Right-Alt	Release mouse capture.
+End		Atari key
+Del		Shift+< (Clear)
+Ins		Shift+> (Insert)
+Page Down	Help
 
 ==============================================================================
 Emulation accuracy
@@ -421,8 +451,7 @@ FLOPPY DISK:
 	for VAPI disks.
 
 CASSETTE:
-	Only partially implemented. No custom baud rates are supported, only
-	standard 600 baud. However, the emulation is based on raw SIO
+	Only partially implemented. The emulation is based on raw SIO
 	waveforms and not decoded sectors; CAS files are converted to
 	bitstreams.
 

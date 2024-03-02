@@ -109,6 +109,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\mathpack.k"
+				>
+			</File>
+			<File
 				RelativePath=".\source\nmi.k"
 				>
 			</File>

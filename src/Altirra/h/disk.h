@@ -30,6 +30,7 @@
 class ATPokeyEmulator;
 
 class ATCPUEmulatorMemory;
+class VDFile;
 
 class IATDiskActivity {
 public:
@@ -66,9 +67,15 @@ public:
 	void CreateDisk(uint32 sectorCount, uint32 bootSectorCount, bool dd);
 	void UnloadDisk();
 
+	uint32 GetSectorCount() const;
 	uint32 GetSectorSize(uint16 sector) const;
+	uint32 GetSectorPhantomCount(uint16 sector) const;
+	float GetSectorTiming(uint16 sector, int phantomIdx) const;
 	uint8 ReadSector(uint16 bufadr, uint16 len, uint16 sector, ATCPUEmulatorMemory *mpMem);
 	uint8 WriteSector(uint16 bufadr, uint16 len, uint16 sector, ATCPUEmulatorMemory *mpMem);
+
+	void SetForcedPhantomSector(uint16 sector, uint8 index, int order);
+	int GetForcedPhantomSector(uint16 sector, uint8 index);
 
 public:
 	void OnScheduledEvent(uint32 id);
@@ -81,6 +88,12 @@ public:
 	void PokeySerInReady();
 
 protected:
+	void LoadDiskDCM(VDFile& file, uint32 len, const wchar_t *s, const uint8 *header);
+	void LoadDiskATX(VDFile& file, uint32 len, const wchar_t *s, const uint8 *header);
+	void LoadDiskP2(VDFile& file, uint32 len, const wchar_t *s, const uint8 *header);
+	void LoadDiskP3(VDFile& file, uint32 len, const wchar_t *s, const uint8 *header);
+	void LoadDiskATR(VDFile& file, uint32 len, const wchar_t *s, const uint8 *header);
+
 	void BeginTransfer(uint32 length, uint32 cyclesToFirstByte, bool useRotationalDelay);
 	void UpdateRotationalCounter();
 	void QueueAutoSave();
@@ -143,6 +156,8 @@ protected:
 		uint32	mSize;
 		float	mRotPos;
 		uint8	mFDCStatus;
+		sint8	mForcedOrder;
+		sint16	mWeakDataOffset;
 	};
 	vdfastvector<PhysSectorInfo>	mPhysSectorInfo;
 
@@ -153,6 +168,8 @@ protected:
 	};
 	typedef vdfastvector<VirtSectorInfo> VirtSectors;
 	VirtSectors mVirtSectorInfo;
+
+	uint32	mWeakBitLFSR;
 };
 
 #endif

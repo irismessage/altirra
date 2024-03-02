@@ -93,6 +93,8 @@ public:
 
 	const vdrect32& GetArea() const { return mArea; }
 	void	SetArea(const vdrect32& area, bool parentContainsFullScreen);
+
+	void	Clear();
 	void	Relayout();
 
 	// Docking panes automatically disappear when they have no content unless they
@@ -163,6 +165,7 @@ public:
 	VDGUIHandle Create(int x, int y, int cx, int cy, VDGUIHandle parent);
 	void Destroy();
 
+	void Clear();
 	void Relayout();
 
 	static ATContainerWindow *GetContainerWindow(HWND hwnd);

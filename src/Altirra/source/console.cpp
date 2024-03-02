@@ -3272,6 +3272,18 @@ bool ATRestorePaneLayout(const char *name) {
 	return true;
 }
 
+void ATLoadDefaultPaneLayout() {
+	g_pMainWindow->Clear();
+
+	if (g_uiDebuggerMode) {
+		ATActivateUIPane(kATUIPaneId_Display, false);
+		ATActivateUIPane(kATUIPaneId_Console, true);
+		ATActivateUIPane(kATUIPaneId_Registers, false);
+	} else {
+		ATActivateUIPane(kATUIPaneId_Display, true);
+	}
+}
+
 void ATConsoleWrite(const char *s) {
 	if (g_pConsoleWindow) {
 		g_pConsoleWindow->Write(s);

@@ -677,6 +677,11 @@ LRESULT VDVideoDisplayWindow::ChildWndProc(UINT msg, WPARAM wParam, LPARAM lPara
 		}
 		break;
 
+	case WM_SIZE:
+		if (mpMiniDriver)
+			VerifyDriverResult(mpMiniDriver->Resize(LOWORD(lParam), HIWORD(lParam)));
+		break;
+
 	case WM_TIMER:
 		if (mpMiniDriver)
 			VerifyDriverResult(mpMiniDriver->Tick((int)wParam));
@@ -812,9 +817,6 @@ LRESULT VDVideoDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	case WM_SIZE:
 		if (mhwndChild)
 			SetWindowPos(mhwndChild, NULL, 0, 0, LOWORD(lParam), HIWORD(lParam), SWP_NOMOVE|SWP_NOCOPYBITS|SWP_NOZORDER|SWP_NOACTIVATE);
-
-		if (mpMiniDriver)
-			VerifyDriverResult(mpMiniDriver->Resize(LOWORD(lParam), HIWORD(lParam)));
 		break;
 	case WM_TIMER:
 		if (wParam == mReinitDisplayTimer) {

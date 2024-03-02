@@ -34,6 +34,7 @@ public:
 	virtual void AnticAssertNMI() = 0;
 	virtual void AnticEndFrame() = 0;
 	virtual void AnticEndScanline() = 0;
+	virtual bool AnticIsNextCPUCycleWrite() = 0;
 };
 
 class ATAnticEmulator {
@@ -87,6 +88,7 @@ public:
 	void WriteByte(uint8 reg, uint8 value);
 
 	void DumpStatus();
+	void DumpDMAPattern();
 
 	void	LoadState(ATSaveStateReader& reader);
 	void	SaveState(ATSaveStateWriter& writer);

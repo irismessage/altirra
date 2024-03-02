@@ -43,28 +43,32 @@ namespace {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-class ATCassetteFilter {
+class ATCassetteDecoderFSK {
 public:
-	ATCassetteFilter();
+	ATCassetteDecoderFSK();
 
 	void Reset();
-	float Advance(float x);
+	bool Advance(float x);
 
 protected:
 	float mHistory[64];
+	float mHistorySum3[64];
+	float mHistorySum4[64];
 	int mIndex;
 };
 
-ATCassetteFilter::ATCassetteFilter() {
+ATCassetteDecoderFSK::ATCassetteDecoderFSK() {
 	Reset();
 }
 
-void ATCassetteFilter::Reset() {
+void ATCassetteDecoderFSK::Reset() {
 	mIndex = 0;
 	memset(mHistory, 0, sizeof mHistory);
+	memset(mHistorySum3, 0, sizeof mHistorySum3);
+	memset(mHistorySum4, 0, sizeof mHistorySum4);
 }
 
-float ATCassetteFilter::Advance(float x) {
+bool ATCassetteDecoderFSK::Advance(float x) {
 	int base = mIndex++ & 31;
 	int write = (base + 31) & 31;
 
@@ -73,6 +77,7 @@ float ATCassetteFilter::Advance(float x) {
 	// 3995Hz filter has an 8 cycle period.
 	// 5327Hz filter has a 6 cycle period.
 
+#if 0
 	const float sin0_12 = 0.0f;
 	const float sin1_12 = 0.5f;
 	const float sin2_12 = 0.86602540378443864676372317075294f;
@@ -105,8 +110,8 @@ float ATCassetteFilter::Advance(float x) {
 	float x6 = xs[6] + xs[14] + xs[22];
 	float x7 = xs[7] + xs[15] + xs[23];
 
-	float one_s = x0*sin0_8 + x1*sin1_8 + x2*sin2_8 + x3*sin3_8 + x4*sin4_8 + x5*sin5_8 + x6*sin6_8 + x7*sin7_8;
-	float one_c = x0*sin2_8 + x1*sin3_8 + x2*sin4_8 + x3*sin5_8 + x4*sin6_8 + x5*sin7_8 + x6*sin0_8 + x7*sin1_8;
+	float zero_s = x0*sin0_8 + x1*sin1_8 + x2*sin2_8 + x3*sin3_8 + x4*sin4_8 + x5*sin5_8 + x6*sin6_8 + x7*sin7_8;
+	float zero_c = x0*sin2_8 + x1*sin3_8 + x2*sin4_8 + x3*sin5_8 + x4*sin6_8 + x5*sin7_8 + x6*sin0_8 + x7*sin1_8;
 
 	float y1 = xs[0] + xs[ 6] + xs[12] + xs[18];
 	float y2 = xs[1] + xs[ 7] + xs[13] + xs[19];
@@ -115,13 +120,93 @@ float ATCassetteFilter::Advance(float x) {
 	float y5 = xs[4] + xs[10] + xs[16] + xs[22];
 	float y6 = xs[5] + xs[11] + xs[17] + xs[23];
 
-	float zero_s = y1*sin0_12 + y2*sin2_12 + y3*sin4_12 + y4*sin6_12 + y5*sin8_12 + y6*sin10_12;
-	float zero_c = y1*sin3_12 + y2*sin5_12 + y3*sin7_12 + y4*sin9_12 + y5*sin11_12 + y6*sin1_12;
+	float one_s = y1*sin0_12 + y2*sin2_12 + y3*sin4_12 + y4*sin6_12 + y5*sin8_12 + y6*sin10_12;
+	float one_c = y1*sin3_12 + y2*sin5_12 + y3*sin7_12 + y4*sin9_12 + y5*sin11_12 + y6*sin1_12;
+#else
+	const float *xs = &mHistory[base + 8];
+	mHistorySum3[write] = mHistorySum3[write + 32] = xs[7] + xs[15] + xs[23];
+	mHistorySum4[write] = mHistorySum4[write + 32] = xs[5] + xs[11] + xs[17] + xs[23];
 
-	float one = sqrtf(one_s * one_s + one_c * one_c);
-	float zero = sqrtf(zero_s * zero_s + zero_c * zero_c);
+	const float *s3 = &mHistorySum3[base + 32 - 8];
+	const float *s4 = &mHistorySum4[base + 32 - 6];
 
-	return zero - one;
+	const float x0 = s3[0];
+	const float x1 = s3[1];
+	const float x2 = s3[2];
+	const float x3 = s3[3];
+	const float x4 = s3[4];
+	const float x5 = s3[5];
+	const float x6 = s3[6];
+	const float x7 = s3[7];
+
+	const float sqrt2 = 0.707107f;
+	float x1mx5 = x1 - x5;
+	float x3mx7 = x3 - x7;
+	float zero_s = (x2 - x6) + (x1mx5 + x3mx7)*sqrt2;
+	float zero_c = (x0 - x4) + (x1mx5 - x3mx7)*sqrt2;
+
+	const float y1 = s4[0];
+	const float y2 = s4[1];
+	const float y3 = s4[2];
+	const float y4 = s4[3];
+	const float y5 = s4[4];
+	const float y6 = s4[5];
+
+	const float half = 0.5f;
+	const float sin2_12 = 0.86602540378443864676372317075294f;
+
+	float y2my5 = y2 - y5;
+	float y3my6 = y3 - y6;
+	float one_s = (y2my5 + y3my6)*sin2_12;
+	float one_c = (y1 - y4) + (y2my5 - y3my6)*half;
+#endif
+
+	float one = (one_s * one_s + one_c * one_c) * ((8.0f / 6.0f) * (8.0f / 6.0f));
+	float zero = (zero_s * zero_s + zero_c * zero_c);
+
+	return one > zero;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+class ATCassetteDecoderDirect {
+public:
+	ATCassetteDecoderDirect();
+
+	void Reset();
+	bool Advance(float x);
+
+protected:
+	float mZeroLevel;
+	float mOneLevel;
+	bool mbCurrentState;
+};
+
+ATCassetteDecoderDirect::ATCassetteDecoderDirect() {
+	Reset();
+}
+
+void ATCassetteDecoderDirect::Reset() {
+	mZeroLevel = 0.0f;
+	mOneLevel = 1.0f;
+}
+
+bool ATCassetteDecoderDirect::Advance(float x) {
+	float range = mOneLevel - mZeroLevel;
+	float oneThird = mZeroLevel + range * (1.0f / 3.0f);
+	float twoThirds = mZeroLevel + range * (2.0f / 3.0f);
+
+	if (x < oneThird) {
+		mbCurrentState = false;
+
+		mZeroLevel += (x - mZeroLevel) * 0.95f;
+	} else if (x > twoThirds) {
+		mbCurrentState = true;
+
+		mOneLevel += (x - mOneLevel) * 0.95f;
+	}
+
+	return mbCurrentState;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -136,6 +221,8 @@ namespace {
 ATCassetteEmulator::ATCassetteEmulator()
 	: mpPlayEvent(NULL)
 	, mpAudioEvent(NULL)
+	, mbLogData(false)
+	, mbLoadDataAsAudio(false)
 {
 	mAudioPosition = 0;
 	mAudioLength = 0;
@@ -181,8 +268,7 @@ namespace {
 			src.read(buf, tc);
 
 			for(uint32 i=0; i<tc; ++i) {
-				dst[0] = (buf[i] << 8) - 0x8000;
-				dst[1] = 0;
+				dst[0] = dst[1] = (buf[i] << 8) - 0x8000;
 				dst += 2;
 			}
 		}
@@ -198,8 +284,7 @@ namespace {
 			src.read(buf, tc*2);
 
 			for(uint32 i=0; i<tc; ++i) {
-				dst[0] = buf[i];
-				dst[1] = 0;
+				dst[0] = dst[1] = buf[i];
 				dst += 2;
 			}
 		}
@@ -306,8 +391,7 @@ namespace {
 }
 
 void ATCassetteEmulator::Load(const wchar_t *fn) {
-	mBitstream.clear();
-	mAudioStream.clear();
+	Unload();
 
 	VDFile file;
 	file.open(fn);
@@ -330,6 +414,19 @@ void ATCassetteEmulator::Load(const wchar_t *fn) {
 	mLength = mBitstream.size();
 	mAudioPosition = 0;
 	mAudioLength = mAudioStream.size();
+}
+
+void ATCassetteEmulator::Unload() {
+	mBitstream.clear();
+	mAudioStream.clear();
+	mPosition = 0;
+	mLength = 0;
+	mAudioPosition = 0;
+	mAudioLength = 0;
+
+	mbMotorEnable = false;
+	mbPlayEnable = false;
+	UpdateMotorState();
 }
 
 void ATCassetteEmulator::ParseWAVE(VDFile& file) {
@@ -396,7 +493,8 @@ void ATCassetteEmulator::ParseWAVE(VDFile& file) {
 		throw MyError("'%ls' is not a valid WAV file.", file.getFilenameForError());
 
 	// These are hard-coded into the 410 hardware.
-	ATCassetteFilter	filter;
+	ATCassetteDecoderFSK	decoder;
+//	ATCassetteDecoderDirect	decoder;
 
 	uint64	resampAccum = 0;
 	uint64	resampStep = VDRoundToInt64(wf.mSamplesPerSec / kAudioFrequency * 4294967296.0f);
@@ -460,13 +558,10 @@ void ATCassetteEmulator::ParseWAVE(VDFile& file) {
 			outputBufferLevel = resampCount;
 		}
 
-		int ix = outputBuffer[outputBufferIdx][0];
-		++outputBufferIdx;
+		int ix = outputBuffer[outputBufferIdx][1];
 
 		float x = (float)ix;
-		float dresult = filter.Advance(x);
-
-		const bool outputBit = (dresult > 0);
+		const bool outputBit = decoder.Advance(x);
 
 		bitAccum += outputBit;
 
@@ -478,7 +573,9 @@ void ATCassetteEmulator::ParseWAVE(VDFile& file) {
 			mBitstream.push_back(bitCounter);
 		}
 
-		mAudioStream.push_back((outputBuffer[outputBufferIdx][1] >> 8) + 0x80);
+		mAudioStream.push_back((outputBuffer[outputBufferIdx][0] >> 8) + 0x80);
+
+		++outputBufferIdx;
 	}
 }
 
@@ -617,6 +714,17 @@ void ATCassetteEmulator::ParseCAS(VDFile& file) {
 
 	// add two second footer
 	enc.EncodeTone(true, 2.0f);
+
+	if (mbLoadDataAsAudio)
+		ConvertDataToAudio();
+}
+
+void ATCassetteEmulator::SetLogDataEnable(bool enable) {
+	mbLogData = enable;
+}
+
+void ATCassetteEmulator::SetLoadDataAsAudioEnable(bool enable) {
+	mbLoadDataAsAudio = enable;
 }
 
 void ATCassetteEmulator::SetMotorEnable(bool enable) {
@@ -678,11 +786,16 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemo
 
 	uint32 offset = 0;
 	uint32 sum = 0;
-	uint8 status = 0x43;	// complete
+	uint8 status = 0x01;	// complete
 
+	uint32 syncGapTimeout = 80;
+	uint32 syncGapTimeLeft = syncGapTimeout;
 	uint32 syncMarkTimeout = 30;
 	int syncBitsLeft = 20;
-	uint32 syncStart;
+	uint32 syncStart = 0;
+	float idealBaudRate = 0.0f;
+	int framingErrors = 0;
+	uint32 firstFramingError = 0;
 
 	//VDDEBUG("CAS: Beginning accelerated read.\n");
 
@@ -691,6 +804,15 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemo
 			return 0x8A;	// timeout
 
 		BitResult r = ProcessBit();
+
+		if (syncGapTimeLeft > 0) {
+			if (!mbDataLineState)
+				syncGapTimeLeft = syncGapTimeout;
+			else
+				--syncGapTimeLeft;
+
+			continue;
+		}
 
 		if (syncBitsLeft > 0) {
 			bool expected = (syncBitsLeft & 1) != 0;
@@ -701,6 +823,7 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemo
 
 					if (syncBitsLeft < 15) {
 						//VDDEBUG("CAS: Sync timeout; restarting.\n");
+						syncGapTimeLeft = syncGapTimeout;
 					}
 
 					syncBitsLeft = 20;
@@ -732,12 +855,15 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemo
 					PokeyChangeSerialRate(VDRoundToInt32(kClockCyclesPerDataBit / 19.0f * 0.5f * (float)bitDelta));
 
 					mSIOPhase = 0;
-					VDDEBUG("CAS: Sync mark found. Computed baud rate = %.2f baud\n", 7159090.0f / 1760.0f * 19.0f / (float)bitDelta);
+					idealBaudRate = 7159090.0f / 1760.0f * 19.0f / (float)bitDelta;
+					VDDEBUG("CAS: Sync mark found. Computed baud rate = %.2f baud\n", idealBaudRate);
 
 					mpMem->WriteByte(bufadr++, 0x55);
 					mpMem->WriteByte(bufadr++, 0x55);
 					sum = 0x55*2;
 					offset = 2;
+					framingErrors = 0;
+					firstFramingError = 0;
 				}
 			}
 
@@ -748,34 +874,58 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemo
 			continue;
 
 		if (r == kBR_FramingError) {
+			++framingErrors;
+			firstFramingError = mPosition;
 			continue;
 		}
 
 		VDASSERT(r == kBR_ByteReceived);
 
 		if (offset < len) {
-//			ATConsolePrintf("CAS: Reading block[%02x] = %02x\n", offset, mDataByte);
+			if (mbLogData)
+				ATConsolePrintf("CAS: Reading block[%02x] = %02x (pos = %.3fs)\n", offset, mDataByte, (float)mPosition / (float)kDataFrequency);
 
 			mpMem->WriteByte(bufadr++, mDataByte);
 			sum += mDataByte;
 			++offset;
 		} else {
 			sum = (sum & 0xff) + ((sum >> 8) & 0xff) + ((sum >> 16) & 0xff);
+			sum = (sum & 0xff) + ((sum >> 8) & 0xff);
 			uint8 actualChecksum = (uint8)((sum & 0xff) + ((sum >> 8) & 0xff));
 			uint8 readChecksum = mDataByte;
 
 			mpMem->WriteByte(0x0031, readChecksum);
 
-//			ATConsolePrintf("CAS: Reading checksum %02x (expected %02x)\n", readChecksum, actualChecksum);
-
-			if (actualChecksum != readChecksum)
+			if (actualChecksum != readChecksum) {
 				status = 0x8F;		// checksum error
+
+				ATConsolePrintf("CAS: Checksum error encountered (got %02x, expected %02x).\n", readChecksum, actualChecksum);
+				ATConsolePrintf("CAS: Sector sync pos: %.3f s | End pos: %.3f s | Baud rate: %.2f baud | Framing errors: %d (first at %.02f)\n"
+					, (float)syncStart / (float)kDataFrequency
+					, (float)mPosition / (float)kDataFrequency
+					, idealBaudRate
+					, framingErrors
+					, (float)firstFramingError / (float)kDataFrequency
+					);
+			}
 
 			++offset;
 		}
 	}
 
-	ATConsolePrintf("CAS: Completed read with status %02x; control=%02x, position=%.2fs (cycle %u)\n", status, mpMem->ReadByte(bufadr - len + 2), mPosition / kDataFrequency, mPosition);
+	// resync audio position
+	mAudioPosition = VDRoundToInt((float)mPosition * (kAudioFrequency / kDataFrequency));
+
+	if (mAudioPosition >= mAudioLength) {
+		mAudioPosition = mAudioLength;
+
+		if (mpAudioEvent) {
+			mpScheduler->RemoveEvent(mpAudioEvent);
+			mpAudioEvent = NULL;
+		}
+	}
+
+	ATConsolePrintf("CAS: Completed read with status %02x; control=%02x, position=%.2fs (cycle %u), baud=%.2fs\n", status, mpMem->ReadByte(bufadr - len + 2), mPosition / kDataFrequency, mPosition, idealBaudRate);
 
 	// check if short inter-record gaps (IRGs) are enabled
 	uint8 daux2 = mpMem->ReadByte(0x030B);
@@ -820,12 +970,20 @@ void ATCassetteEmulator::PokeyChangeSerialRate(uint32 divisor) {
 		mThresholdZeroBit = 1;
 
 	mThresholdOneBit = mAveragingPeriod - mThresholdZeroBit;
-	mDataBitHalfPeriod = divisor;
 
-	//VDDEBUG("Setting divisor to %d (avper = %d, thresholds = %d,%d)\n", divisor, mAveragingPeriod, mThresholdZeroBit, mThresholdOneBit);
+	if (mDataBitHalfPeriod != divisor) {
+		mDataBitHalfPeriod = divisor;
+
+		if (mbMotorEnable) {
+			VDDEBUG("Setting divisor to %d (avper = %d, thresholds = %d,%d)\n", divisor, mAveragingPeriod, mThresholdZeroBit, mThresholdOneBit);
+		}
+	}
 }
 
 void ATCassetteEmulator::PokeyResetSerialInput() {
+	if (mbMotorEnable) {
+		VDDEBUG("Reset received\n");
+	}
 	mSIOPhase = 0;
 }
 
@@ -852,17 +1010,17 @@ void ATCassetteEmulator::UpdateMotorState() {
 
 ATCassetteEmulator::BitResult ATCassetteEmulator::ProcessBit() {
 	// The sync mark has to be read before the baud rate is set, so we force the averaging
-	// period to ~800 baud.
-	const uint32 prevPosDirect = (mPosition < 5) ? 0 : mPosition - 5;
+	// period to ~2000 baud.
+	const uint32 prevPosDirect = (mPosition < 2) ? 0 : mPosition - 2;
 	const uint8 counterDirect = mBitstream[mPosition] - mBitstream[prevPosDirect];
 
-	if (counterDirect < 2) {
+	if (counterDirect == 0) {
 		if (mbDataLineState) {
 			mbDataLineState = false;
 			mpPokey->SetDataLine(false);
 //			VDDEBUG("[%.1f | %d] Setting data line to low\n", (float)mPosition / 6.77944f, ATSCHEDULER_GETTIME(mpScheduler));
 		}
-	} else if (counterDirect > 3) {
+	} else if (counterDirect >= 2) {
 		if (!mbDataLineState) {
 			mbDataLineState = true;
 			mpPokey->SetDataLine(true);
@@ -883,12 +1041,12 @@ ATCassetteEmulator::BitResult ATCassetteEmulator::ProcessBit() {
 	if (dataBit != mbOutputBit) {
 		mbOutputBit = dataBit;
 
-//		VDDEBUG("[%.1f] Data bit is now %d\n", (float)mPosition / 6.77944f, dataBit);
+		//VDDEBUG("[%.1f] Data bit is now %d\n", (float)mPosition / 6.77944f, dataBit);
 
 		// Alright, we've seen a transition, so this must be the start of a data bit.
 		// Set ourselves up to sample.
 		if (mbDataBitEdge) {
-//			VDDEBUG("[%.1f] Starting data bit\n", (float)mPosition / 6.77944f);
+			//VDDEBUG("[%.1f] Starting data bit\n", (float)mPosition / 6.77944f);
 			mbDataBitEdge = false;
 		}
 
@@ -952,4 +1110,40 @@ ATCassetteEmulator::BitResult ATCassetteEmulator::ProcessBit() {
 	}
 
 	return kBR_NoOutput;
+}
+
+void ATCassetteEmulator::ConvertDataToAudio() {
+	vdblock<uint8> phaseTable(1024);
+
+	for(int i=0; i<1024; ++i) {
+		float t = (float)i * (nsVDMath::kfTwoPi / 1024.0f);
+		phaseTable[i] = VDClampedRoundFixedToUint8Fast(0.5f + 0.25f * sinf(t));
+	}
+
+	uint32 dataLength = mBitstream.size();
+
+	if (dataLength < 2)
+		return;
+
+	const uint32 kPhaseIncZero = (uint32)(0.5 + 5327.0f / kAudioFrequency * 1024.0f);
+	const uint32 kPhaseIncOne = (uint32)(0.5 + 3995.0f / kAudioFrequency * 1024.0f);
+
+	mAudioStream.resize((dataLength - 1) * kAudioSamplesPerDataBit);
+	mAudioLength = mAudioStream.size();
+	mAudioPosition = 0;
+
+	uint8 *dst = mAudioStream.data();
+
+	uint32 phaseAccum = 0;
+	for(uint32 i=1; i<dataLength; ++i) {
+		const bool bit = (mBitstream[i - 1] != mBitstream[i]);
+		const uint32 phaseInc = bit ? kPhaseIncOne : kPhaseIncZero;
+
+		for(uint32 j=0; j<kAudioSamplesPerDataBit; ++j) {
+			dst[j] = phaseTable[phaseAccum & 1023];
+			phaseAccum += phaseInc;
+		}
+
+		dst += kAudioSamplesPerDataBit;
+	}
 }

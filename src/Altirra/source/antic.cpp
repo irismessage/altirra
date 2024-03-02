@@ -89,8 +89,14 @@ void ATAnticEmulator::RequestNMI() {
 bool ATAnticEmulator::Advance() {
 	bool busActive = false;
 
-	if (mWSYNCPending && !--mWSYNCPending)
-		mbWSYNCActive = true;
+	if (mWSYNCPending && !--mWSYNCPending) {
+		// The 6502 doesn't respond to RDY for write cycles, so if the next CPU cycle is a write,
+		// we cannot pull RDY yet.
+		if (mpConn->AnticIsNextCPUCycleWrite())
+			++mWSYNCPending;
+		else
+			mbWSYNCActive = true;
+	}
 
 	if (++mX >= 114)
 		AdvanceScanline();
@@ -223,14 +229,12 @@ bool ATAnticEmulator::AdvanceHBlank() {
 			if (mDMACTL & 0x10) {
 				uint8 byte = mpConn->AnticReadByte(((mPMBASE & 0xf8) << 8) + 0x0300 + mY);
 				busActive = true;
-				mpGTIA->UpdateMissile(byte);
+				mpGTIA->UpdateMissile((mY & 1) != 0, byte);
 			} else {
 				// DMA occurs every scanline even in half-height mode.
 				uint8 byte = mpConn->AnticReadByte(((mPMBASE & 0xfc) << 8) + 0x0180 + (mY >> 1));
 				busActive = true;
-
-				if (!(mY & 1))
-					mpGTIA->UpdateMissile(byte);
+				mpGTIA->UpdateMissile((mY & 1) != 0, byte);
 			}
 		}
 	} else if (mX == 1) {
@@ -261,20 +265,21 @@ bool ATAnticEmulator::AdvanceHBlank() {
 			if (mbDLActive) {
 				mDLControlPrev = mDLControl;
 
+				DLHistoryEntry& ent = mDLHistory[mY];
+				ent.mDLAddress = mDLIST;
+				ent.mPFAddress = mPFDMAPtr;
+				ent.mHVScroll = mHSCROL + (mVSCROL << 4);
+				ent.mDMACTL = mDMACTL;
+				ent.mbValid = true;
+
 				if (mDMACTL & 0x20) {
 					mDLControl = mpConn->AnticReadByte(mDLIST);
-
-					DLHistoryEntry& ent = mDLHistory[mY];
-					ent.mDLAddress = mDLIST;
-					ent.mPFAddress = mPFDMAPtr;
-					ent.mControl = mDLControl;
-					ent.mHVScroll = mHSCROL + (mVSCROL << 4);
-					ent.mDMACTL = mDMACTL;
-					ent.mbValid = true;
 
 					busActive = true;
 					mDLIST = (mDLIST & 0xFC00) + ((mDLIST + 1) & 0x03FF);
 				}
+
+				ent.mControl = mDLControl;
 
 				uint8 mode = mDLControl & 0x0f;
 				if (mode == 1 || (mode >= 2 && (mDLControl & 0x40)))
@@ -406,13 +411,12 @@ bool ATAnticEmulator::AdvanceHBlank() {
 			if (mDMACTL & 0x10) {
 				uint8 byte = mpConn->AnticReadByte(((mPMBASE & 0xf8) << 8) + 0x400 + (0x0100 * index) + mY);
 				busActive = true;
-				mpGTIA->UpdatePlayer(index, byte);
+				mpGTIA->UpdatePlayer((mY & 1) != 0, index, byte);
 			} else {
 				// DMA occurs every scanline even in half-height mode.
 				uint8 byte = mpConn->AnticReadByte(((mPMBASE & 0xfc) << 8) + 0x200 + (0x0080 * index) + (mY >> 1));
 				busActive = true;
-				if (!(mY & 1))
-					mpGTIA->UpdatePlayer(index, byte);
+				mpGTIA->UpdatePlayer((mY & 1) != 0, index, byte);
 			}
 		}
 	} else if (mX == 6) {		// address DMA (low)
@@ -440,6 +444,10 @@ bool ATAnticEmulator::AdvanceHBlank() {
 					mRowCount = 1;
 				}
 			} else {
+				// correct display list history with new address
+				DLHistoryEntry& ent = mDLHistory[mY];
+				ent.mPFAddress = addr;
+
 				mPFDMAPtr = addr;
 			}
 		}
@@ -886,6 +894,65 @@ void ATAnticEmulator::DumpStatus() {
 		, mNMIST & 0x40 ? " vbi" : ""
 		, mNMIST & 0x20 ? " reset" : ""
 		);
+}
+
+void ATAnticEmulator::DumpDMAPattern() {
+	char buf[116];
+	buf[114] = '\n';
+	buf[115] = 0;
+
+	for(int i=0; i<114; ++i)
+		buf[i] = (i >= 100) && !(i % 10) ? '1' : ' ';
+
+	ATConsoleWrite(buf);
+
+	for(int i=0; i<114; ++i)
+		buf[i] = (i % 10) || (i < 10) ? ' ' : '0' + ((i / 10) % 10);
+
+	ATConsoleWrite(buf);
+
+	for(int i=0; i<114; ++i)
+		buf[i] = '0' + (i % 10);
+
+	ATConsoleWrite(buf);
+
+	for(int i=0; i<114; ++i) {
+		if (mbDMAPattern[i]) {
+			switch(mDMAPFFetchPattern[i]) {
+				case 0:
+					buf[i] = 'R';
+					break;
+				case 1:
+					buf[i] = 'F';
+					break;
+				case 2:
+				case 3:
+					buf[i] = 'C';
+					break;
+			}
+		} else {
+			buf[i] = '.';
+		}
+	}
+
+	if (mDMACTL & 0x0C) {
+		buf[0] = 'M';
+
+		if (mDMACTL & 0x08) {
+			buf[2] = 'P';
+			buf[3] = 'P';
+			buf[4] = 'P';
+			buf[5] = 'P';
+		}
+	}
+
+	if (mDMACTL & 0x20)
+		buf[1] = 'D';
+
+	ATConsoleWrite(buf);
+	ATConsoleWrite("\n");
+	ATConsoleWrite("Legend: (M)issile (P)layer (D)isplayList (R)efresh Play(F)ield (C)haracter\n");
+	ATConsoleWrite("\n");
 }
 
 template<class T>

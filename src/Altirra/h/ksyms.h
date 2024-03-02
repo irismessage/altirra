@@ -144,6 +144,7 @@ namespace ATKernelSymbols {
 		ICCMD  = 0x0342,
 		ICSTA  = 0x0343,
 		ICBAL  = 0x0344,
+		ICBLL  = 0x0348,
 		CASBUF = 0x03FD,
 		LBUFF  = 0x0580
 	};
@@ -161,12 +162,15 @@ namespace ATKernelSymbols {
 		COLBK  = 0xD01A,
 		PRIOR  = 0xD01B,
 		CONSOL = 0xD01F,
+		AUDF1  = 0xD200,
 		AUDC1  = 0xD201,
 		AUDC2  = 0xD203,
 		AUDC3  = 0xD205,
 		AUDC4  = 0xD207,
+		AUDCTL = 0xD208,
 		IRQST  = 0xD20E,
 		IRQEN  = 0xD20E,
+		SKCTL  = 0xD20F,
 		PORTA  = 0xD300,
 		PORTB  = 0xD301,
 		PACTL  = 0xD302,

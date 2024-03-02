@@ -1060,6 +1060,13 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			}
 			break;
 
+		case 0x7B:	// TDC
+			*mpDstState++ = kStateDPtoD16;
+			*mpDstState++ = kStateDSetSZ16;
+			*mpDstState++ = kStateDtoA16;
+			*mpDstState++ = kStateWait;
+			break;
+
 		case 0x7C:	// JMP (abs,X)
 			*mpDstState++ = kStateReadAddrL;
 			*mpDstState++ = kStateReadAddrHX;

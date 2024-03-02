@@ -871,11 +871,6 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			*mpDstState++ = kStateCmp;
 			break;
 
-		case 0xDC:	// JML
-			Decode65816AddrAbsLong();
-			*mpDstState++ = kState816_LongAddrToPC;
-			break;
-
 		case 0xDD:	// CMP abs,X
 			DecodeReadAbsX();
 			*mpDstState++ = kStateCmp;

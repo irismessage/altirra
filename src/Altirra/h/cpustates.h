@@ -25,6 +25,7 @@ namespace AT6502States {
 		kStateReadAbsIndAddrBroken,
 		kStateReadIndAddr,					// Read high byte of indirect address into address register, wrapped in zero page.
 		kStateReadIndYAddr,
+		kStateReadIndYAddr_SHA,
 		kStateWrite,
 		kStateWriteZpX,
 		kStateWriteZpY,
@@ -69,6 +70,7 @@ namespace AT6502States {
 		kStateAnd,
 		kStateAnc,
 		kStateXaa,
+		kStateLas,
 		kStateOr,
 		kStateXor,
 		kStateAsl,

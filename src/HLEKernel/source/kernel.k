@@ -50,6 +50,7 @@ audc4	equ	$d207
 audctl	equ	$d208
 kbcode	equ	$d209
 skres	equ	$d20a
+potgo	equ	$d20b
 serin	equ	$d20d
 serout	equ	$d20d
 irqen	equ	$d20e
@@ -67,6 +68,7 @@ hscrol	equ	$d404
 vscrol	equ	$d405
 chbase	equ	$d409
 wsync	equ	$d40a
+vcount	equ	$d40b
 nmien	equ	$d40e
 nmist	equ	$d40f
 nmires	equ	$d40f
@@ -131,6 +133,9 @@ adress	= $0064			;temporary storage (display code)
 a1		= adress
 ramtop	= $006a			;ram size
 holdch	= $007c			;temporary key hold area prior to shift/control lock logic
+
+fr0		= $00d4			;floating point register 0
+fr1		= $00e0			;floating point register 1
 
 vdslst	= $0200			;display list interrupt vector
 vprced	= $0202			;serial bus proceed interrupt vector
@@ -213,6 +218,7 @@ color3	= $02c7			;shadow for COLPF3 ($D019)
 color4	= $02c8			;shadow for COLBK ($D01A)
 dsctln	= $02d5			;disk sector length (1200XL and newer only)
 		; $02d6
+noclik	= $02db			;key click disable (XL/XE only)
 memtop	= $02e5			;highest location for programs and data
 memlo	= $02e7			;base of application memory
 dvstat	= $02ea			;DISK: Status request buffer area (4 bytes)
@@ -265,8 +271,7 @@ icax6	= $034f			;
 :4096	dta		$12
 :2048	dta		$12
 	
-	org		$d800
-:2048	dta		$12
+	#include <mathpack.k>
 
 	org		$e000
 	ins		'..\..\src\kernel\source\atarifont.bin',$0,$400

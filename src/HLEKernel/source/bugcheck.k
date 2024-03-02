@@ -17,10 +17,18 @@
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 .proc BugCheck
-	; turn off all ANTIC interrupts
+	;turn off all interrupts
+	sei
 	lda		#$00
 	sta		nmien
 	sta		nmires
+	
+	;copy out return address
+	tsx
+	lda		$0101,x
+	sta		$80
+	lda		$0102,x
+	sta		$81
 
 	;initialize CPU
 	cld
@@ -31,7 +39,7 @@
 	lda		#$00
 	sta		dmactl
 	
-	;construct display list at $0800
+	;construct display list at $0800 with screen at $1000
 	lda		#$70
 	sta		$0800
 	sta		$0801
@@ -103,6 +111,35 @@ clearloop:
 	ldx		#>text
 	jsr		copytext
 	
+	mva		#40		$00
+	lda		#<text2
+	ldx		#>text2
+	jsr		copytext
+	
+	;write return address
+	lda		$81
+	lsr
+	lsr
+	lsr
+	lsr
+	tax
+	mva		hexdig,x	$1031
+	lda		$81
+	and		#$0f
+	tax
+	mva		hexdig,x	$1032
+	lda		$80
+	lsr
+	lsr
+	lsr
+	lsr
+	tax
+	mva		hexdig,x	$1033
+	lda		$80
+	and		#$0f
+	tax
+	mva		hexdig,x	$1034
+	
 	;lock up cpu
 jam:
 	sta		wsync
@@ -129,6 +166,12 @@ copydone:
 copyxit:
 	rts
 	
+hexdig:
+	dta		d'0123456789ABCDEF'
+
 text:
 	dta		d'Unimplemented command',$ff
+	
+text2:
+	dta		d'Address:',$ff
 .endp

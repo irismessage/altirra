@@ -58,9 +58,14 @@ public:
 
 	bool IsLoaded() const { return mLength || mAudioLength; }
 	bool IsMotorRunning() const { return mpPlayEvent != NULL; }
+	bool IsLogDataEnabled() const { return mbLogData; }
+	bool IsLoadDataAsAudioEnabled() const { return mbLoadDataAsAudio; }
 
 	void Load(const wchar_t *fn);
+	void Unload();
 
+	void SetLogDataEnable(bool enable);
+	void SetLoadDataAsAudioEnable(bool enable);
 	void SetMotorEnable(bool enable);
 
 	void Stop();
@@ -91,11 +96,15 @@ protected:
 	void ParseWAVE(VDFile& file);
 	void ParseCAS(VDFile& file);
 
+	void ConvertDataToAudio();
+
 	uint32	mAudioPosition;
 	uint32	mAudioLength;
 	uint32	mPosition;
 	uint32	mLength;
 
+	bool	mbLogData;
+	bool	mbLoadDataAsAudio;
 	bool	mbMotorEnable;
 	bool	mbPlayEnable;
 	bool	mbDataLineState;

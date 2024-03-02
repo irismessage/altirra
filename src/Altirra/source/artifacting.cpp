@@ -32,10 +32,13 @@ ATArtifactingEngine::ATArtifactingEngine() {
 		float theta = nsVDMath::kfTwoPi * (-15.0f / 360.0f + (float)j / 14.4f);
 		float i = cosf(theta);
 		float q = sinf(theta);
+		double r = 65280.0f * (+ 0.9563f*i + 0.6210f*q) * kSaturation;
+		double g = 65280.0f * (- 0.2721f*i - 0.6474f*q) * kSaturation;
+		double b = 65280.0f * (- 1.1070f*i + 1.7046f*q) * kSaturation;
 
-		mChromaVectors[j+1][0] = VDRoundToInt(65536.0f * (+ 0.9563f*i + 0.6210f*q) * kSaturation);
-		mChromaVectors[j+1][1] = VDRoundToInt(65536.0f * (- 0.2721f*i - 0.6474f*q) * kSaturation);
-		mChromaVectors[j+1][2] = VDRoundToInt(65536.0f * (- 1.1070f*i + 1.7046f*q) * kSaturation);
+		mChromaVectors[j+1][0] = VDRoundToInt(r);
+		mChromaVectors[j+1][1] = VDRoundToInt(g);
+		mChromaVectors[j+1][2] = VDRoundToInt(b);
 	}
 
 	for(int i=0; i<256; ++i) {
@@ -44,7 +47,7 @@ ATArtifactingEngine::ATArtifactingEngine() {
 		int cr = mChromaVectors[c][0];
 		int cg = mChromaVectors[c][1];
 		int cb = mChromaVectors[c][2];
-		int y = (i & 15) * (65535 / 15);
+		int y = (((i & 15) * 0xff00 + 7) / 15) + 0x80;
 
 		cr += y;
 		cg += y;
@@ -75,7 +78,34 @@ ATArtifactingEngine::ATArtifactingEngine() {
 ATArtifactingEngine::~ATArtifactingEngine() {
 }
 
+void ATArtifactingEngine::BeginFrame(bool pal) {
+	mbPAL = pal;
+
+	if (pal)
+		memset(mPALDelayLine, 0, sizeof mPALDelayLine);
+}
+
 void ATArtifactingEngine::Artifact(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes) {
+	if (mbPAL)
+		ArtifactPAL(dst, src, scanlineHasHiRes);
+	else
+		ArtifactNTSC(dst, src, scanlineHasHiRes);
+}
+
+void ATArtifactingEngine::ArtifactPAL(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes) {
+	for(int i=0; i<N; ++i) {
+		uint8 prev = mPALDelayLine[i];
+		uint8 next = src[i];
+		uint32 prevColor = mPalette[(prev & 0xf0) + (next & 0x0f)];
+		uint32 nextColor = mPalette[next];
+
+		dst[i] = (prevColor | nextColor) - (((prevColor ^ nextColor) & 0xfefefe) >> 1);
+	}
+
+	memcpy(mPALDelayLine, src, sizeof mPALDelayLine);
+}
+
+void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes) {
 	if (!scanlineHasHiRes) {
 		BlitNoArtifacts(dst, src);
 		return;

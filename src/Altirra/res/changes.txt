@@ -1,5 +1,78 @@
 Altirra Change Log
 
+Version 1.4 [November 8, 2009]:
+   [features added]
+   * Debugger: Added .diskorder command to force phantom sector load order.
+   * Debugger: Added .dma command to dump current ANTIC DMA pattern.
+   * Debugger: Added .caslogdata to diagnose cassette data read failures.
+   * Debugger: Added .pia command to dump PIA state.
+   * Disk: Added support for command $4E (Read PERCOM Block).
+   * Disk: Added support for reading Diskcomm (DCM) images.
+   * Cassette: CAS images and mono WAV files now play data as audio.
+   * Cassette: The SIO acceleration engine now reports diagnostics about damaged blocks to the console window.
+   * Cassette: Made accelerated read routine more robust against interpreting garbage as the start of block sync.
+   * Cassette: Optimized WAV processing routine.
+   * Cassette: Added command to unload tape.
+   * Cassette: Added emulation of feedback from SIO motor control line into audio input.
+   * UI: Added command to reset window layout.
+   * UI: Drag-and-drop is now a synonym for the Open Image command.
+   * UI: Added more key mappings.
+   * UI: Added Boot Image command to unload all existing cartridges/disks/tapes and cold reset after loading an image.
+   * UI: Added debugging option to dump raw audio to disk (32-bit float @ 63920.4 NTSC / 63337.4Hz PAL).
+   * UI: Added .com to list of file filters for the Open Image/Boot Image commands.
+   * UI: Added enhanced text display mode.
+   * Simulator: Added support for loading OS-A kernel ROM.
+   * GTIA: Added support for PAL artifacting.
+
+   [bugs fixed]
+   * UI: Mapped Ctrl+alpha/num and Ctrl+Shift+alpha/num keys.
+   * UI: Arrow-keys now auto-repeat.
+   * UI: View > Display works when the debugger is disabled.
+   * UI: Fixed window activation and sizing problems when toggling full screen mode.
+   * UI: This simulation is now throttled in full-screen mode.
+   * CPU: Implemented TDC instruction in 65C816 mode.
+   * CPU: Implemented undocumented $93 (SHA) and $BB (LAS) opcodes.
+   * CPU: Fixed flags on $9C (SHY) opcode.
+   * CPU: Removed bogus 65C816 opcode ($DC) in 6502 decoder.
+   * Cassette: Fixed desync between audio and data after accelerated load.
+   * Cassette: Audio/data channels are no longer swapped when processing stereo input.
+   * Cassette: Raised cutoff on control line low-pass filter to fix reliability problems at turbo baud rates.
+   * Cassette: Fixed incorrect SIO return code for accelerated cassette reads.
+   * Cartridge: Fixed MMU mapper so that the cartridge ROM now overrides BASIC at $A000-BFFF.
+   * Cartridge: TRIG3 is now deasserted when $A000-BFFF is unmapped.
+   * Cartridge: The second bank setting for Bounty Bob Strikes Back! cartridges is now saved in save states.
+   * Disk: Added support for weak bit emulation in VAPI images.
+   * Disk: Fixed VAPI image read errors when missing sectors are present.
+   * Disk: Fixed incorrect FDC status when loading long sectors that set the "lost data" status bit.
+   * Disk: SIOV/DSKINV acceleration handlers set more kernel variables for better compatibility.
+   * Disk: Abort acceleration attempt when disk buffer contains SIO timeout flag (TIMFLG).
+   * Disk: Adjusted sector read delay to increase VAPI image compatibility.
+   * Disk: Fixed cases where the virtual read/write setting was not obeyed properly.
+   * GTIA: Changes to GRAFPx/GRAFM are latched and no longer affect a sprite image that is already shifting out.
+   * GTIA: Increased timing precision of console speaker from 28 cycles to single cycle.
+   * GTIA: Fixed bug that caused some apps to misdetect the video mode as SECAM.
+   * GTIA: Adjusted timing for mid-screen changes to P/M graphics and color registers.
+   * GTIA: CONSOL output bit 3 wasn't affecting input bit 3.
+   * GTIA: VDELAY now masks DMA fetches rather than actually delaying loads.
+   * POKEY: Fixed random crash in stereo mode.
+   * POKEY: 15KHz and 64KHz clocks are no longer joined between the left and right channel chips.
+   * POKEY: The channels now have the correct 0-3 clock skew for reading the noise generators.
+   * POKEY: Implemented channel 1/2 inversion when not in volume-only mode.
+   * POKEY: Implemented non-linear mixing.
+   * POKEY: Audio plays again when initialization mode is active.
+   * POKEY: Implemented serial force break bit (SKCTL bit 7) affecting two-tone mode.
+   * POKEY: STIMER now resets output channel states properly.
+   * POKEY: Asynchronous serial input mode now holds down timers 3 and 4 again when a byte is not shifting in.
+   * HLE: The math pack is now emulated even if the acceleration option is disabled.
+   * HLE: POTGO is now strobed during vertical blank stage 2 processing.
+   * HLE: STRIG2/3 are now updated from TRIG0/1 instead of TRIG2/3 for XL/XE hardware compatibility.
+   * HLE: Fixed bug where POKEY was put into initialization mode after an unaccelerated SIO transfer.
+   * HLE: POKEY audio channels are now shut off after an SIO operation.
+   * HLE: Added keyboard click.
+   * ANTIC: Two-line resolution mode now reloads GTIA every scan line.
+   * ANTIC: Fixed timing when using read-modify-write instructions to trigger WSYNC.
+   * Simulator: Memory banking wasn't updated properly on changes to the port B data direction register.
+
 Version 1.3 [September 4, 2009]:
    [features added]
    * Debugger: Register pane now shows 65C816 state.
