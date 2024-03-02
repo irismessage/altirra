@@ -1,4 +1,4 @@
-//	Altirra - Atari 800/800XL/5200 emulator
+﻿//	Altirra - Atari 800/800XL/5200 emulator
 //	Copyright (C) 2009-2011 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
@@ -24,8 +24,8 @@
 #include <at/atcore/devicecart.h>
 #include "pbi.h"
 #include "ide.h"
-#include "flash.h"
-#include "rtcv3021.h"
+#include <at/atemulation/flash.h>
+#include <at/atemulation/rtcv3021.h>
 #include "covox.h"
 
 class ATMemoryManager;
@@ -47,6 +47,7 @@ class ATKMKJZIDE final : public ATDevice
 	, public IATDeviceIRQSource
 	, public IATDeviceButtons
 	, public IATDeviceAudioOutput
+	, public VDAlignedObject<16>
 {
 	ATKMKJZIDE(const ATKMKJZIDE&) = delete;
 	ATKMKJZIDE& operator=(const ATKMKJZIDE&) = delete;
@@ -55,22 +56,23 @@ public:
 	ATKMKJZIDE(bool version2);
 	~ATKMKJZIDE();
 
-	void *AsInterface(uint32 id);
+	void *AsInterface(uint32 id) override;
 
 	bool IsVersion2() const { return mbVersion2; }
 	bool IsMainFlashDirty() const { return mFlashCtrl.IsDirty(); }
 	bool IsSDXFlashDirty() const { return mSDXCtrl.IsDirty(); }
 
+	void GetSettingsBlurb(VDStringW& buf);
 	void GetSettings(ATPropertySet& settings);
 	bool SetSettings(const ATPropertySet& settings);
 
-	void Init();
-	void Shutdown();
+	void Init() override;
+	void Shutdown() override;
 
-	void GetDeviceInfo(ATDeviceInfo& info);
+	void GetDeviceInfo(ATDeviceInfo& info) override;
 
-	void ColdReset();
-	void WarmReset();
+	void ColdReset() override;
+	void WarmReset() override;
 
 	void LoadNVRAM();
 	void SaveNVRAM();
@@ -126,7 +128,7 @@ public:		// IATDeviceButtons
 	void ActivateButton(ATDeviceButton idx, bool state) override;
 
 public:		// IATDeviceAudioOutput
-	void InitAudioOutput(IATAudioOutput *output) override;
+	void InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) override;
 
 protected:
 	static sint32 OnControlDebugRead(void *thisptr, uint32 addr);

@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <at/atcore/audiosource.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceu1mb.h>
 #include <at/atcore/propertyset.h>
@@ -24,7 +25,6 @@
 #include "soundboard.h"
 #include "audiooutput.h"
 #include "memorymanager.h"
-#include "audiosource.h"
 
 class ATSoundBoardEmulator final : public VDAlignedObject<16>
 						, public ATDevice
@@ -45,7 +45,7 @@ public:
 	void SetMemBase(uint32 membase);
 
 public:
-	void InitAudioOutput(IATAudioOutput *output) override;
+	void InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) override;
 
 public:
 	void InitMemMap(ATMemoryManager *memmap) override;
@@ -73,7 +73,6 @@ public:
 	void Run(uint32 cycles);
 
 public:
-	bool SupportsStereoMixing() const override { return true; }
 	bool RequiresStereoMixingNow() const override { return true; }
 	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 
@@ -191,7 +190,7 @@ void ATSoundBoardEmulator::SetMemBase(uint32 membase) {
 		UpdateControlLayer();
 }
 
-void ATSoundBoardEmulator::InitAudioOutput(IATAudioOutput *output) {
+void ATSoundBoardEmulator::InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) {
 	mpAudioOut = output;
 
 	output->AddSyncAudioSource(this);

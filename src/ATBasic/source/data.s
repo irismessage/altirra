@@ -53,6 +53,14 @@
 ;	IOCBIDX = IOCB to use for INPUT, or -1 for READ
 ;
 .nowarn .proc stDataRead
+need_data_line:
+		;check if we are at line 32768
+		;#ASSERT dw(dataptr) >= dw(stmtab) && dw(dataptr) < dw(starp)
+		ldy		#1
+		lda		(dataptr),y
+		bpl		data_line_valid
+		jmp		errorOutOfData
+
 .def :stInput = *
 		;parse optional #iocb and set iocbidx
 		jsr		evaluateHashIOCBOpt
@@ -110,20 +118,21 @@ have_data_line:
 		ldy		dataoff
 		beq		need_data_line
 		cpy		dataLnEnd
-		bcs		data_line_end
 		bcc		have_data
 		
-need_data_line:
-
-		;check if we are at line 32768
-		;#ASSERT dw(dataptr) >= dw(stmtab) && dw(dataptr) < dw(starp)
+data_line_end:
+		;jump to next line
+		lda		dataLnEnd
+		ldx		#dataptr
+		jsr		VarAdvancePtrX
+		
+		;##TRACE "Data: Advancing to line %u ($%04X)" dw(dw(dataptr)) dw(dataptr)
+		;stash off line number
 		ldy		#1
-		lda		(dataptr),y
-		bpl		data_line_valid
-		
-		;yup -- no data left
-		jmp		errorOutOfData
-		
+		mva		(0,x) dataln				;!! X = dataptr
+		mva		(dataptr),y dataln+1
+		bpl		have_data_line_2			;!! - unconditional
+
 data_line_valid:
 		;##TRACE "Data: Scanning for DATA token on line %u ($%04X)" dw(dw(dataptr)) dw(dataptr)
 		ldy		#3
@@ -145,20 +154,7 @@ data_line_scan:
 		lda		(dataptr),y
 		tay
 		bne		data_line_scan				;!! - unconditional
-		
-data_line_end:
-		;jump to next line
-		lda		dataLnEnd
-		ldx		#dataptr
-		jsr		VarAdvancePtrX
-		
-		;##TRACE "Data: Advancing to line %u ($%04X)" dw(dw(dataptr)) dw(dataptr)
-		;stash off line number
-		ldy		#1
-		mva		(0,x) dataln				;!! X = dataptr
-		mva		(dataptr),y dataln+1
-		bpl		have_data_line_2			;!! - unconditional
-		
+				
 have_data_stmt:
 		iny
 have_data:
@@ -170,6 +166,26 @@ have_data:
 
 		;##TRACE "Beginning READ with data: $%04X+$%02X [%.*s]" dw(dataptr) db(cix) db(dataLnEnd)-db(cix) dw(dataptr)+db(cix)
 		bne		parse_loop					;!! - unconditional
+
+is_eol:
+		;force end of DATA statement, if we are reading one
+		ldy		dataLnEnd
+
+is_comma:
+		;check if we are processing a DATA statement -- if so, stash the current
+		;offset.
+		bit		iocbidx
+		spl:sty	dataoff
+
+		;check if we have more vars to read
+		;read current token and check for comma
+		jsr		ExecGetComma
+		bne		xit
+				
+		;read new line if line is empty, else keep parsing
+		txa
+		bne		parse_loop
+		beq		read_loop		;!! - unconditional
 
 read_line_input:
 		;read line to LBUFF
@@ -245,26 +261,6 @@ advance:
 parse_error:
 		jmp		errorInputStmt
 
-is_eol:
-		;force end of DATA statement, if we are reading one
-		ldy		dataLnEnd
-
-is_comma:
-		;check if we are processing a DATA statement -- if so, stash the current
-		;offset.
-		bit		iocbidx
-		spl:sty	dataoff
-
-		;check if we have more vars to read
-		;read current token and check for comma
-		jsr		ExecGetComma
-		bne		xit
-				
-		;read new line if line is empty, else keep parsing
-		txa
-		bne		parse_loop
-		jmp		read_loop
-
 xit:
 		rts
 
@@ -277,7 +273,7 @@ is_numeric:
 		;##TRACE "READ -> %g" fr0
 		jsr		VarStoreFR0
 
-		jmp		advance
+		beq		advance			;!! - unconditional
 .endp
 
 ;============================================================================

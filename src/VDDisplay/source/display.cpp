@@ -48,7 +48,6 @@ extern const char g_szVideoDisplayControlName[] = "phaeronVideoDisplay";
 
 extern void VDMemcpyRect(void *dst, ptrdiff_t dststride, const void *src, ptrdiff_t srcstride, size_t w, size_t h);
 
-extern IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverD3DFX(bool clipToMonitor);
 extern IVDVideoDisplayMinidriver *VDCreateDisplayDriver3D();
 
 vdautoptr<VDVideoDisplayManager> g_pVDVideoDisplayManager;
@@ -102,6 +101,7 @@ protected:
 	void SetSourceSolidColor(uint32 color) override;
 	void SetReturnFocus(bool fs) override;
 	void SetTouchEnabled(bool enable) override;
+	void SetUse16Bit(bool enable) override;
 	void SetFullScreen(bool fs, uint32 width, uint32 height, uint32 refresh) override;
 	void SetDestRect(const vdrect32 *r, uint32 backgroundColor) override;
 	void SetPixelSharpness(float xsharpness, float ysharpness) override;
@@ -120,6 +120,8 @@ protected:
 	FilterMode GetFilterMode() override;
 	void SetFilterMode(FilterMode mode) override;
 	float GetSyncDelta() const override { return mSyncDelta; }
+
+	vdrect32 GetMonitorRect() override;
 
 	void SetProfileHook(const vdfunction<void(ProfileEvent)>& profileHook) override {
 		mpProfileHook = profileHook;
@@ -167,6 +169,7 @@ protected:
 	void RequestUpdate();
 	void VerifyDriverResult(bool result);
 	bool CheckForMonitorChange();
+	void CheckAndRespondToMonitorChange();
 	bool IsOnSecondaryMonitor() const;
 
 	static void GetMonitorRect(RECT *r, HMONITOR hmon);
@@ -212,6 +215,7 @@ protected:
 	bool		mbUseSubrect;
 	bool		mbReturnFocus;
 	bool		mbTouchEnabled;
+	bool		mbUse16Bit;
 	bool		mbFullScreen;
 	uint32		mFullScreenWidth;
 	uint32		mFullScreenHeight;
@@ -234,11 +238,25 @@ protected:
 
 	static ATOM				sChildWindowClass;
 
+	static const UINT MYWM_SETSOURCE			= WM_USER + 0x100;
+	static const UINT MYWM_UPDATE				= WM_USER + 0x101;
+	static const UINT MYWM_CACHE				= WM_USER + 0x102;
+	static const UINT MYWM_RESET				= WM_USER + 0x103;
+	static const UINT MYWM_SETSOURCEMSG			= WM_USER + 0x104;
+	static const UINT MYWM_PROCESSNEXTFRAME		= WM_USER + 0x105;
+	static const UINT MYWM_DESTROY				= WM_USER + 0x106;
+	static const UINT MYWM_SETFILTERMODE		= WM_USER + 0x107;
+	static const UINT MYWM_SETSOLIDCOLOR		= WM_USER + 0x108;
+	static const UINT MYWM_INVALIDATE			= WM_USER + 0x109;
+	static const UINT MYWM_QUEUEPRESENT			= WM_USER + 0x10A;
+	static const UINT MYWM_SETTOUCHENABLED		= WM_USER + 0x10B;
+	static const UINT MYWM_GETMONITORRECT		= WM_USER + 0x10C;
+	static const UINT MYWM_SETUSE16BIT			= WM_USER + 0x10D;
+
 public:
 	static bool		sbEnableDX;
 	static bool		sbEnableDXOverlay;
 	static bool		sbEnableD3D;
-	static bool		sbEnableD3DFX;
 	static bool		sbEnable3D;
 	static bool		sbEnableOGL;
 	static bool		sbEnableTS;
@@ -256,7 +274,6 @@ ATOM									VDVideoDisplayWindow::sChildWindowClass;
 bool VDVideoDisplayWindow::sbEnableDX = true;
 bool VDVideoDisplayWindow::sbEnableDXOverlay = true;
 bool VDVideoDisplayWindow::sbEnableD3D;
-bool VDVideoDisplayWindow::sbEnableD3DFX;
 bool VDVideoDisplayWindow::sbEnable3D;
 bool VDVideoDisplayWindow::sbEnableOGL;
 bool VDVideoDisplayWindow::sbEnableTS;
@@ -298,7 +315,6 @@ void VDVideoDisplaySetFeatures(bool enableDirectX, bool enableDirectXOverlay, bo
 	VDVideoDisplayWindow::sbEnableDX = enableDirectX;
 	VDVideoDisplayWindow::sbEnableDXOverlay = enableDirectXOverlay;
 	VDVideoDisplayWindow::sbEnableD3D = enableDirect3D;
-	VDVideoDisplayWindow::sbEnableD3DFX = enableDirect3DFX;
 	VDVideoDisplayWindow::sbEnableOGL = enableOpenGL;
 	VDVideoDisplayWindow::sbEnableTS = enableTermServ;
 	VDVideoDisplayWindow::sbEnableHighPrecision = enableHighPrecision;
@@ -416,19 +432,6 @@ VDVideoDisplayWindow::~VDVideoDisplayWindow() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-#define MYWM_SETSOURCE		(WM_USER + 0x100)
-#define MYWM_UPDATE			(WM_USER + 0x101)
-#define MYWM_CACHE			(WM_USER + 0x102)
-#define MYWM_RESET			(WM_USER + 0x103)
-#define MYWM_SETSOURCEMSG	(WM_USER + 0x104)
-#define MYWM_PROCESSNEXTFRAME	(WM_USER+0x105)
-#define MYWM_DESTROY		(WM_USER + 0x106)
-#define MYWM_SETFILTERMODE	(WM_USER + 0x107)
-#define MYWM_SETSOLIDCOLOR	(WM_USER + 0x108)
-#define MYWM_INVALIDATE		(WM_USER + 0x109)
-#define MYWM_QUEUEPRESENT	(WM_USER + 0x10A)
-#define MYWM_SETTOUCHENABLED (WM_USER + 0x10B)
-
 void VDVideoDisplayWindow::SetSourceMessage(const wchar_t *msg) {
 	SendMessage(mhwnd, MYWM_SETSOURCEMSG, 0, (LPARAM)msg);
 }
@@ -450,6 +453,7 @@ bool VDVideoDisplayWindow::SetSource(bool bAutoUpdate, const VDPixmap& src, void
 	params.bAllowConversion	= bAllowConversion;
 	params.bPersistent		= pObject != 0;
 	params.bInterlaced		= bInterlaced;
+	params.use16bit			= mbUse16Bit;
 
 	const VDPixmapFormatInfo& info = VDPixmapGetInfo(src.format);
 	params.bpp = info.qsize >> info.qhbits;
@@ -473,6 +477,7 @@ bool VDVideoDisplayWindow::SetSourcePersistent(bool bAutoUpdate, const VDPixmap&
 	params.bAllowConversion	= bAllowConversion;
 	params.bPersistent		= true;
 	params.bInterlaced		= bInterlaced;
+	params.use16bit			= mbUse16Bit;
 
 	const VDPixmapFormatInfo& info = VDPixmapGetInfo(src.format);
 	params.bpp = info.qsize >> info.qhbits;
@@ -507,14 +512,29 @@ void VDVideoDisplayWindow::SetTouchEnabled(bool enable) {
 	SendMessage(mhwnd, MYWM_SETTOUCHENABLED, enable, 0);
 }
 
+void VDVideoDisplayWindow::SetUse16Bit(bool enable) {
+	SendMessage(mhwnd, MYWM_SETUSE16BIT, enable, 0);
+}
+
 void VDVideoDisplayWindow::SetFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh) {
 	mbFullScreen = fs;
 	mFullScreenWidth = w;
 	mFullScreenHeight = h;
 	mFullScreenRefreshRate = refresh;
 	if (mpMiniDriver)
-		mpMiniDriver->SetFullScreen(fs, w, h, refresh);
+		mpMiniDriver->SetFullScreen(fs, w, h, refresh, mbUse16Bit);
+
+	const bool leavingFS = mbRequiresFullScreen && !fs;
 	SetRequiresFullScreen(fs);
+
+	// OnDisplayChange() is suppressed when in full screen mode, so if we are leaving
+	// full screen mode, we need to trigger it here. We don't however, want it to force
+	// a reinit, so we wrap it in an init lock.
+	if (leavingFS) {
+		++mMinidriverInitLock;
+		OnDisplayChange();
+		--mMinidriverInitLock;
+	}
 
 	// If we're going to full screen mode, resize the top-level window to the monitor.
 	if (fs) {
@@ -671,6 +691,13 @@ void VDVideoDisplayWindow::SetFilterMode(FilterMode mode) {
 	SendMessage(mhwnd, MYWM_SETFILTERMODE, 0, (LPARAM)mode);
 }
 
+vdrect32 VDVideoDisplayWindow::GetMonitorRect() {
+	RECT r {};
+	SendMessage(mhwnd, MYWM_GETMONITORRECT, 0, (LPARAM)&r);
+
+	return vdrect32(r.left, r.top, r.right, r.bottom);
+}
+
 void VDVideoDisplayWindow::ReleaseActiveFrame() {
 	VDVideoDisplayFrame *pFrameToDiscard = NULL;
 	VDVideoDisplayFrame *pFrameToDiscard2 = NULL;
@@ -757,6 +784,7 @@ bool VDVideoDisplayWindow::DispatchActiveFrame() {
 		params.bAllowConversion	= mpActiveFrame->mbAllowConversion;
 		params.bPersistent		= false;
 		params.bInterlaced		= interlaced;
+		params.use16bit			= mbUse16Bit;
 
 		const VDPixmapFormatInfo& info = VDPixmapGetInfo(mpActiveFrame->mPixmap.format);
 		params.bpp = info.qsize >> info.qhbits;
@@ -858,6 +886,8 @@ void VDVideoDisplayWindow::OnChildPaint() {
 	}
 
 	++mInhibitRefresh;
+
+	CheckAndRespondToMonitorChange();
 
 	bool bDisplayOK = false;
 
@@ -1028,6 +1058,18 @@ LRESULT VDVideoDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		}
 		return 0;
 
+	case MYWM_GETMONITORRECT:
+		{
+			CheckAndRespondToMonitorChange();
+
+			GetMonitorRect((RECT *)lParam, mhLastMonitor);
+		}
+		return 0;
+
+	case MYWM_SETUSE16BIT:
+		mbUse16Bit = (wParam != 0);
+		return 0;
+
 	case WM_SIZE:
 		if (mhwndChild)
 			SetWindowPos(mhwndChild, NULL, 0, 0, LOWORD(lParam), HIWORD(lParam), SWP_NOMOVE|SWP_NOCOPYBITS|SWP_NOZORDER|SWP_NOACTIVATE);
@@ -1193,10 +1235,7 @@ bool VDVideoDisplayWindow::SyncInit(bool bAutoRefresh, bool bAllowNonpersistentS
 
 					if (sbEnableSecondaryMonitorDX || sbEnableMonitorSwitchingDX || !(CheckForMonitorChange(), IsOnSecondaryMonitor())) {
 						if (!mbUseSubrect && sbEnableD3D && (sbEnableTS3D || !isTermServ)) {
-							if (sbEnableD3DFX)
-								mpMiniDriver = VDCreateVideoDisplayMinidriverD3DFX(!sbEnableSecondaryMonitorDX || sbEnableMonitorSwitchingDX);
-							else
-								mpMiniDriver = VDCreateVideoDisplayMinidriverDX9(!sbEnableSecondaryMonitorDX || sbEnableMonitorSwitchingDX, sbEnableD3D9Ex);
+							mpMiniDriver = VDCreateVideoDisplayMinidriverDX9(!sbEnableSecondaryMonitorDX || sbEnableMonitorSwitchingDX, sbEnableD3D9Ex);
 
 							if (InitMiniDriver()) {
 								mbMiniDriverSecondarySensitive = !sbEnableSecondaryMonitorDX;
@@ -1348,6 +1387,7 @@ void VDVideoDisplayWindow::SyncSetSolidColor(uint32 color) {
 	info.bPersistent		= true;
 	info.bpp				= 4;
 	info.bpr				= 4;
+	info.use16bit			= mbUse16Bit;
 	info.mpCB				= this;
 	info.pixmap.data		= &mSolidColorBuffer;
 	info.pixmap.format		= nsVDPixmap::kPixFormat_XRGB8888;
@@ -1440,7 +1480,7 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 	mpMiniDriver->SetFilterMode((IVDVideoDisplayMinidriver::FilterMode)mFilterMode);
 	mpMiniDriver->SetSubrect(mbUseSubrect ? &mSourceSubrect : NULL);
 	mpMiniDriver->SetDisplayDebugInfo(sbEnableDebugInfo);
-	mpMiniDriver->SetFullScreen(mbFullScreen, mFullScreenWidth, mFullScreenHeight, mFullScreenRefreshRate);
+	mpMiniDriver->SetFullScreen(mbFullScreen, mFullScreenWidth, mFullScreenHeight, mFullScreenRefreshRate, mbUse16Bit);
 	mpMiniDriver->SetHighPrecision(sbEnableHighPrecision);
 	mpMiniDriver->SetDestRect(mbDestRectEnabled ? &mDestRect : NULL, mBackgroundColor);
 	mpMiniDriver->SetPixelSharpness(mPixelSharpnessX, mPixelSharpnessY);
@@ -1519,13 +1559,6 @@ void VDVideoDisplayWindow::VerifyDriverResult(bool result) {
 bool VDVideoDisplayWindow::CheckForMonitorChange() {
 	HMONITOR hmon = NULL;
 
-	typedef HMONITOR (WINAPI *tpMonitorFromRect)(LPCRECT, DWORD);
-	static const HMODULE shmodUser32 = GetModuleHandleA("user32");
-	static const tpMonitorFromRect spMonitorFromRect = (tpMonitorFromRect)GetProcAddress(shmodUser32, "MonitorFromRect");
-
-	if (!spMonitorFromRect)
-		return false;
-
 	RECT r;
 	if (!GetWindowRect(mhwnd, &r))
 		return false;
@@ -1559,7 +1592,7 @@ bool VDVideoDisplayWindow::CheckForMonitorChange() {
 		hwndTest = hwndParent;
 	}
 
-	hmon = spMonitorFromRect(&r, MONITOR_DEFAULTTONEAREST);
+	hmon = MonitorFromRect(&r, MONITOR_DEFAULTTONEAREST);
 	if (hmon == mhLastMonitor)
 		return false;
 
@@ -1567,6 +1600,11 @@ bool VDVideoDisplayWindow::CheckForMonitorChange() {
 
 	mhLastMonitor = hmon;
 	return true;
+}
+
+void VDVideoDisplayWindow::CheckAndRespondToMonitorChange() {
+	if ((!sbEnableSecondaryMonitorDX || sbEnableMonitorSwitchingDX) && CheckForMonitorChange())
+		SyncReset();
 }
 
 bool VDVideoDisplayWindow::IsOnSecondaryMonitor() const {

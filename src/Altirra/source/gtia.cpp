@@ -242,6 +242,7 @@ ATGTIAEmulator::ATGTIAEmulator()
 	: mpConn(NULL)
 	, mpVideoTap(NULL)
 	, mpFrameTracker(new ATFrameTracker)
+	, mbCTIAMode(false)
 	, mbPALMode(false)
 	, mbSECAMMode(false)
 	, mArtifactMode(kArtifactNone)
@@ -349,7 +350,7 @@ void ATGTIAEmulator::ColdReset() {
 	ResetSprites();
 
 	mpConn->GTIASelectController(0, false);
-
+	mpRenderer->ColdReset();
 }
 
 void ATGTIAEmulator::SetVBXE(ATVBXEEmulator *vbxe) {
@@ -387,15 +388,21 @@ void ATGTIAEmulator::SetArtifactingParams(const ATArtifactingParams& params) {
 void ATGTIAEmulator::ResetColors() {
 	{
 		ATColorParams& colpa = mColorSettings.mNTSCParams;
-		colpa.mHueStart = -36.0f;
-		colpa.mHueRange = 25.5f * 15.0f;
-		colpa.mBrightness = -0.08f;
-		colpa.mContrast = 1.08f;
-		colpa.mSaturation = 75.0f / 255.0f;
+		colpa.mHueStart = -57.0f;
+		colpa.mHueRange = 27.1f * 15.0f;
+		colpa.mBrightness = -0.04f;
+		colpa.mContrast = 1.04f;
+		colpa.mSaturation = 0.20f;
 		colpa.mGammaCorrect = 1.0f;
-		colpa.mArtifactHue = 279.0f;
-		colpa.mArtifactSat = 2.76f;
-		colpa.mArtifactBias = 0.35f;
+		colpa.mArtifactHue = 252.0f;
+		colpa.mArtifactSat = 1.15f;
+		colpa.mArtifactSharpness = 0.50f;
+		colpa.mRedShift = 0.0f;
+		colpa.mRedScale = 1.0f;
+		colpa.mGrnShift = 0.0f;
+		colpa.mGrnScale = 1.0f;
+		colpa.mBluShift = 0.0f;
+		colpa.mBluScale = 1.50f;
 		colpa.mbUsePALQuirks = false;
 		colpa.mLumaRampMode = kATLumaRampMode_XL;
 	}
@@ -410,7 +417,13 @@ void ATGTIAEmulator::ResetColors() {
 		colpa.mGammaCorrect = 1.0f;
 		colpa.mArtifactHue = 96.0f;
 		colpa.mArtifactSat = 2.76f;
-		colpa.mArtifactBias = 0.35f;
+		colpa.mArtifactSharpness = 0.50f;
+		colpa.mRedShift = 0.0f;
+		colpa.mRedScale = 1.0f;
+		colpa.mGrnShift = 0.0f;
+		colpa.mGrnScale = 1.0f;
+		colpa.mBluShift = 0.0f;
+		colpa.mBluScale = 1.0f;
 		colpa.mbUsePALQuirks = true;
 		colpa.mLumaRampMode = kATLumaRampMode_XL;
 	}
@@ -641,7 +654,7 @@ void ATGTIAEmulator::GetFrameSize(int& w, int& h) const {
 			break;
 	}
 
-	if (mb14MHzThisFrame || mbInterlaceEnabled || mbScanlinesEnabled) {
+	if (mpVBXE != NULL || mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi || mbInterlaceEnabled || mbScanlinesEnabled) {
 		w *= 2;
 		h *= 2;
 	}
@@ -709,6 +722,22 @@ void ATGTIAEmulator::SetVideoOutput(IVDVideoDisplay *pDisplay) {
 	if (!pDisplay) {
 		mpFrame = NULL;
 		mpDst = NULL;
+	}
+}
+
+void ATGTIAEmulator::SetCTIAMode(bool enabled) {
+	mbCTIAMode = enabled;
+
+	if (!enabled && (mPRIOR & 0xC0)) {
+		mPRIOR &= 0x3F;
+
+		mpRenderer->SetCTIAMode();
+
+		// scrub any register changes
+		for(int i=mRCIndex; i<mRCCount; ++i) {
+			if (mRegisterChanges[i].mReg == 0x1B)
+				mRegisterChanges[i].mValue &= 0x3F;
+		}
 	}
 }
 
@@ -1976,6 +2005,14 @@ void ATGTIAEmulator::RecomputePalette() {
 
 	ATComputeLumaRamp(params.mLumaRampMode, lumaRamp);
 
+	vdfloat2 co_r { 0.956f, 0.620f };
+	vdfloat2 co_g { -0.272f, -0.647f };
+	vdfloat2 co_b { -1.108f, 1.705f };
+
+	co_r = vdfloat2x2::rotation(params.mRedShift * (nsVDMath::kfPi / 180.0f)) * co_r * params.mRedScale;
+	co_g = vdfloat2x2::rotation(params.mGrnShift * (nsVDMath::kfPi / 180.0f)) * co_g * params.mGrnScale;
+	co_b = vdfloat2x2::rotation(params.mBluShift * (nsVDMath::kfPi / 180.0f)) * co_b * params.mBluScale;
+
 	for(int hue=0; hue<16; ++hue) {
 		float i = 0;
 		float q = 0;
@@ -2018,21 +2055,26 @@ void ATGTIAEmulator::RecomputePalette() {
 			}
 		}
 
-		for(int luma=0; luma<16; ++luma) {
-			double y = params.mContrast * lumaRamp[luma] + params.mBrightness;
+		const vdfloat2 iq { i, q };
+		float cr = nsVDMath::dot(iq, co_r);
+		float cg = nsVDMath::dot(iq, co_g);
+		float cb = nsVDMath::dot(iq, co_b);
 
-			double r = y + 0.956*i + 0.621*q;
-			double g = y - 0.272*i - 0.647*q;
-			double b = y - 1.107*i + 1.704*q;
+		for(int luma=0; luma<16; ++luma) {
+			float y = params.mContrast * lumaRamp[luma] + params.mBrightness;
+
+			float r = y + cr;
+			float g = y + cg;
+			float b = y + cb;
 
 			if (r > 0.0f)
-				r = pow(r, gamma);
+				r = powf(r, gamma);
 
 			if (g > 0.0f)
-				g = pow(g, gamma);
+				g = powf(g, gamma);
 
 			if (b > 0.0f)
-				b = pow(b, gamma);
+				b = powf(b, gamma);
 
 			*dst++	= (VDClampedRoundFixedToUint8Fast((float)r) << 16)
 					+ (VDClampedRoundFixedToUint8Fast((float)g) <<  8)
@@ -2155,6 +2197,9 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 			break;
 
 		case 0x1B:
+			if (mbCTIAMode)
+				value &= 0x3F;
+
 			mPRIOR = value;
 			break;
 

@@ -130,10 +130,15 @@ _atasm_gtia_render_lores_fast_ssse3:
 		punpckhbw	xmm1, xmm1
 		movdqa		xmm6, [edi]
 		movdqa		xmm7, [edi+16]
-		maskmovdqu	xmm0, xmm4
-		add			edi, 16
-		maskmovdqu	xmm1, xmm5
-		add			edi, 16
+		pand		xmm0, xmm4
+		pand		xmm1, xmm5
+		pandn		xmm4, xmm6
+		pandn		xmm5, xmm7
+		por			xmm0, xmm4
+		por			xmm1, xmm5
+		movdqa		[edi], xmm0
+		movdqa		[edi+16], xmm1
+		add			edi, 32
 		ret
 
 ;==========================================================================
@@ -275,10 +280,15 @@ _atasm_gtia_render_mode8_fast_ssse3:
 		punpckhbw	xmm7, xmm1
 		movdqa		xmm6, [edi]
 		movdqa		xmm1, [edi+16]
-		maskmovdqu	xmm0, xmm4
-		add			edi, 16
-		maskmovdqu	xmm7, xmm5
-		add			edi, 16
+		pand		xmm0, xmm4
+		pand		xmm7, xmm5
+		pandn		xmm4, xmm6
+		pandn		xmm5, xmm1
+		por			xmm0, xmm4
+		por			xmm7, xmm5
+		movdqa		[edi], xmm0
+		movdqa		[edi+16], xmm7
+		add			edi, 32
 		ret
 
 		end

@@ -22,11 +22,16 @@
 	#pragma once
 #endif
 
+#include <vd2/system/fraction.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/linearalloc.h>
 
 // Advances the scheduler time by one cycle and executes pending events.
 #define ATSCHEDULER_ADVANCE(pThis) if(++static_cast<ATScheduler *>(pThis)->mNextEventCounter);else((pThis)->ProcessNextEvent()); VDASSERT((pThis)->mNextEventCounter >= 0x80000000);
+#define ATSCHEDULER_ADVANCE_N(pThis, amount) if(static_cast<ATScheduler *>(pThis)->mNextEventCounter += static_cast<uint32>((amount)));else((pThis)->ProcessNextEvent()); VDASSERT((pThis)->mNextEventCounter >= 0x80000000);
+
+// Returns the number of cycles to next event
+#define ATSCHEDULER_GETTIMETONEXT(pThis) (uint32(0)-static_cast<ATScheduler *>(pThis)->mNextEventCounter)
 
 // Returns the absolute time currently maintained by the scheduler.
 #define ATSCHEDULER_GETTIME(pThis) (static_cast<const ATScheduler *>(pThis)->mNextEventCounter + (pThis)->mTimeBase)
@@ -114,6 +119,9 @@ public:
 
 	uint32	GetTicksToNextEvent() const;
 
+	void SetRate(const VDFraction& f) { mRate = f; }
+	VDFraction GetRate() const { return mRate; }
+
 public:
 	uint32	mNextEventCounter;
 	uint32	mTimeBase;
@@ -122,7 +130,8 @@ protected:
 	ATEventLink mActiveEvents;
 	ATEventLink *mpFreeEvents;
 
-	uint64		mTick64Floor = 0;
+	uint64		mTick64Floor;
+	VDFraction	mRate;
 
 	VDLinearAllocator mAllocator;
 };

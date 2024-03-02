@@ -29,7 +29,7 @@
 #include <vd2/system/bitmath.h>
 #include <vd2/system/int128.h>
 
-#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC)
+#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC) && !defined(VD_COMPILER_MSVC_CLANG)
 	void __declspec(naked) __cdecl vdasm_uint128_add(uint64 dst[2], const uint64 x[2], const uint64 y[2]) {
 		__asm {
 			push	ebx
@@ -327,7 +327,7 @@
 			mov		eax,[esi+12]
 			mov		ecx,[esp+24]
 			cmp		ecx,127
-			jae		clearit
+			ja		clearit
 
 			mov		ebx,[esi+8]
 			mov		edi,[esi+4]
@@ -363,7 +363,7 @@
 			ret		8
 
 	clearit:
-			sar		eax, 31
+			xor		eax, eax
 			mov		[edx+0],eax
 			mov		[edx+4],eax
 			mov		[edx+8],eax
@@ -625,7 +625,7 @@ const vduint128 vduint128::operator/(const vduint128& x) const {
 	return a;
 }
 
-#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC)
+#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC) && !defined(VD_COMPILER_MSVC_CLANG)
 	vduint128 __declspec(naked) __cdecl VDUMul64x64To128(uint64 x, uint64 y) {
 		__asm {
 			mov		ecx,[esp+4]

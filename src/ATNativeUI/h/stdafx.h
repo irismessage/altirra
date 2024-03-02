@@ -20,5 +20,6 @@
 #define _SCL_SECURE_NO_DEPRECATE
 #define _SCL_SECURE 0
 #define WINVER 0x0501
+#define STRICT_TYPED_ITEMIDS
 
 #include <vd2/system/vdtypes.h>

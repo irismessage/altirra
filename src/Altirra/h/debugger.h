@@ -25,6 +25,8 @@
 #include <vd2/system/event.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/vdstl.h>
+#include <at/ATCPU/execstate.h>
+#include <at/ATDebugger/target.h>
 #include "symbols.h"
 
 struct ATSymbol;
@@ -55,18 +57,10 @@ enum ATDebuggerStorageId {
 struct ATDebuggerSystemState {
 	uint16	mPC;
 	uint16	mInsnPC;
-	uint8	mA;
-	uint8	mX;
-	uint8	mY;
-	uint8	mP;
-	uint8	mS;
-	uint8	mAH;
-	uint8	mXH;
-	uint8	mYH;
-	uint8	mSH;
-	uint8	mK;
-	uint8	mB;
-	uint16	mD;
+	uint8	mPCBank;
+
+	ATDebugDisasmMode mExecMode;
+	ATCPUExecState mExecState;
 
 	uint32	mPCModuleId;
 	uint16	mPCFileId;
@@ -74,21 +68,20 @@ struct ATDebuggerSystemState {
 
 	uint16	mFramePC;
 	bool	mbRunning;
-	bool	mbEmulation;
 
 	IATDebugTarget *mpDebugTarget;
 };
 
 struct ATCallStackFrame {
-	uint16	mPC;
-	uint8	mS;
+	uint32	mPC;
+	uint16	mSP;
 	uint8	mP;
-	uint8	mK;
 };
 
 struct ATDebuggerWatchInfo {
 	uint32	mAddress;
 	uint32	mLen;
+	uint32	mTargetIndex;
 	ATDebugExpNode *mpExpr;
 };
 

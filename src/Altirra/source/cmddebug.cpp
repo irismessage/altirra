@@ -56,9 +56,7 @@ void OnCommandDebugChangeFontDialog() {
 
 void OnCommandDebugToggleDebugger() {
 	if (ATIsDebugConsoleActive()) {
-		if (!g_sim.IsRunning())
-			ATGetDebugger()->Detach();
-
+		ATGetDebugger()->Detach();
 		ATCloseConsole();
 	} else
 		ATOpenConsole();

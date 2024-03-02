@@ -86,6 +86,7 @@ struct ATDebugExpEvalContext {
 
 struct ATDebugExpEvalCache {
 	bool mbExecStateValid = false;
+	ATDebugDisasmMode mExecMode;
 	ATCPUExecState mExecState;
 
 	const ATCPUExecState *GetExecState(const ATDebugExpEvalContext& ctx);

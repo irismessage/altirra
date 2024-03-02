@@ -178,7 +178,7 @@ namespace {
 }
 
 IGLCFragmentShader *CompileFragmentShaderATIFragmentShader(GLCErrorSink& errout, const GLCFragmentShader& shader) {
-	vdautoptr<ATIFragmentShader> out(new ATIFragmentShader);
+	vdrefptr<ATIFragmentShader> out(new ATIFragmentShader);
 
 	bool secondPhase = false;
 

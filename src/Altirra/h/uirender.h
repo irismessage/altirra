@@ -42,9 +42,15 @@ struct ATUIAudioStatus {
 
 class IATUIRenderer : public IVDRefCount, public IATDeviceIndicatorManager {
 public:
+	virtual void SetCyclesPerSecond(double rate) = 0;
+
 	virtual void SetLedStatus(uint8 ledMask) = 0;
 	
 	virtual void SetHeldButtonStatus(uint8 consolMask) = 0;
+
+	virtual void SetPendingHoldMode(bool enabled) = 0;
+	virtual void SetPendingHeldKey(int key) = 0;
+	virtual void SetPendingHeldButtons(uint8 consolMask) = 0;
 
 	virtual void ClearWatchedValue(int index) = 0;
 	virtual void SetWatchedValue(int index, uint32 value, int len) = 0;

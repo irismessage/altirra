@@ -22,10 +22,10 @@
 	#pragma once
 #endif
 
+#include <at/atcore/audiosource.h>
 #include <at/atcore/deferredevent.h>
 #include <at/atcore/scheduler.h>
 #include "pokey.h"
-#include "audiosource.h"
 
 class VDFile;
 
@@ -59,16 +59,19 @@ public:
 	bool IsMotorRunning() const { return mbMotorRunning; }
 	bool IsLogDataEnabled() const { return mbLogData; }
 	bool IsLoadDataAsAudioEnabled() const { return mbLoadDataAsAudio; }
+	bool IsAutoRewindEnabled() const { return mbAutoRewind; }
 
 	void LoadNew();
 	void Load(const wchar_t *fn);
 	void Load(IVDRandomAccessStream& stream);
+	void Load(IATCassetteImage *image);
 	void Unload();
 
 	void SetLogDataEnable(bool enable);
 	void SetLoadDataAsAudioEnable(bool enable);
 	void SetMotorEnable(bool enable);
 	void SetRandomizedStartEnabled(bool enable);
+	void SetAutoRewindEnabled(bool enable) { mbAutoRewind = enable; }
 
 	void Stop();
 	void Play();
@@ -83,7 +86,7 @@ public:
 	uint8 ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemory *mpMem);
 	uint8 WriteBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemory *mpMem);
 
-	void OnScheduledEvent(uint32 id);
+	void OnScheduledEvent(uint32 id) override;
 
 public:
 	ATDeferredEvent PositionChanged;
@@ -99,7 +102,6 @@ protected:
 	bool PokeyWriteCassetteData(uint8 c, uint32 cyclesPerBit) override;
 
 protected:
-	bool SupportsStereoMixing() const override { return false; }
 	bool RequiresStereoMixingNow() const override { return false; }
 	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 
@@ -126,9 +128,13 @@ protected:
 	uint32	mAudioLength = 0;
 	uint32	mPosition = 0;
 	uint32	mLength = 0;
+	uint32	mLastSampleOffset = 0;
+	uint32	mJitterPRNG = 0;
+	uint32	mJitterSeed = 0;
 
 	bool	mbLogData = false;
 	bool	mbLoadDataAsAudio = false;
+	bool	mbAutoRewind = true;
 	bool	mbMotorEnable = false;
 	bool	mbMotorRunning = false;
 	bool	mbPlayEnable = false;

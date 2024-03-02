@@ -239,6 +239,13 @@ void ATXEP80Emulator::SoftReset() {
 
 	for(int i=0; i<25; ++i)
 		mRowPtrs[i] = i;
+
+	// set up tabs at 2 and then 7+8N
+	memset(&mVRAM[0x1900], 0, 256);
+	mVRAM[0x1902] = 1;
+
+	for(uint32 i=0x1907; i<0x2000; i += 8)
+		mVRAM[i] = 1;
 }
 
 void ATXEP80Emulator::InitFonts() {

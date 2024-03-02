@@ -1,4 +1,4 @@
-﻿<html>
+<html>
 	<head>
 		<meta charset="utf-8" />
 		<title>Altirra Build Instructions</title>
@@ -17,9 +17,11 @@ tt {
 
 h1 {
 	background: #8df;
+    font-weight: bold;
 }
 
 h2 {
+    margin-top: 30px;
 	border-bottom: 1px solid black;
     font-weight: normal;
 }
@@ -27,6 +29,8 @@ h2 {
 h3 {
     font-size: 12pt;
     font-weight: bold;
+    margin-top: 25px;
+    margin-bottom: 12px;
 }
 </style>
 	</head>
@@ -34,37 +38,63 @@ h3 {
 		<h1>Altirra Build Instructions</h1>
 		<h2>Prerequisites</h2>
 		<h3>Build machine</h3>
+		<ul>
+			<li>Required: Windows 7 x64 or newer</li>
+			<li>Recommended: Windows 10 x64</li>
+			<li>Not supported: Windows XP or Vista (cannot run toolchain)</li>
+		</ul>
 		<p>
-			Windows 7 x64 or newer is recommended as the build OS. Windows 8.1 x64 and
-			Windows 10 x64 have been tested as of this writing. XP and Vista are not
-			supported due to IDE/compiler requirements. Building from an x86 system should
+			Building from an x86 system should
 			work but is not tested or recommended, particularly since the x64 build
 			cannot be tested on such a system.
 		</p>
 		<h3>Compiler</h3>
+		<ul>
+			<li>Recommended: Visual Studio 2015 Update 3 (Professional or Community)</li>
+			<ul>
+				<li>Windows 8.1 SDK and XP targeting features required</li>
+			</ul>
+			<li>Not supported: VS2015 pre-Update 2</li>
+			<li>Not supported: VS2013 or earlier</li>
+			<li>Not supported: MinGW/GCC/Clang</li>
+		</ul>
 		<p>
-			The official build environment is Visual Studio 2013 Professional Update 5.
-			VS2015 Professional and Community Update 1 are also supported and can also be used.
-            (As of this writing, the dev enviroment is actually VS2015u1 building with the
-            VS2013u4 compiler.)
-		</p>
-		<p>
-			Visual C++ Express for Desktop can be used with a couple of caveats. The Windows SDK
+			Visual C++ Express for Desktop can probably be used with a couple of caveats. The Windows SDK
 			is required for the Win32/COM build environment and the resource editor is
 			not available. Note that this is not a tested configuration and Community or Professional
             Edition is recommended instead.
 		</p>
         <p>
-            The GCC/MinGW and Clang compilers are not currently supported and will not work.
+            The GCC/MinGW and Clang compilers are not currently supported and will not work. As of this writing, the
+            latest preview version of Clang/C2 (July 2016) will not work either.
         </p>
-		<h3>
-			DirectX SDK
-		</h3>
+		<h3>DirectX SDK</h3>
 		<p>
-			The latest standalone distribution of the DirectX SDK, June 2010, is required.
-			The Windows 8 SDK is not sufficient as it does not include D3DX9. The development
-			runtime must be installed on the build machine as the build process compiles shaders.
+            As of 2.90, the DirectX SDK is no longer necessary for the build as D3DCompiler from the Windows SDK is used
+            instead. However, since D3DCompiler no longer supports shader model 1.x, the remaining
+            vs/ps1.1 shaders have been included in precompiled form. The source has been included and
+            they can be rebuilt with the included <tt>rebuildps11.cmd</tt> script, but doing so requires
+            an older version of the DirectX SDK that still has <tt>psa.exe</tt>, since the latest SDK
+            only includes <tt>fxc</tt> which can only compile HLSL.
+        </p>
+        <p>
+            Since D3DCompiler no longer supports shader model 1.x, the remaining
+            vs/ps1.1 shaders have been included in precompiled form. The source has been included and
+            they can be rebuilt with the included <tt>rebuildps11.cmd</tt> script, but doing so requires
+            an older version of the DirectX SDK that still has <tt>psa.exe</tt>, since the latest SDK
+            only includes <tt>fxc</tt> which can only compile HLSL.
 		</p>
+        <p>
+            If you really, really feel the need to edit the pixel shaders and don't want to install
+            DXSDK November 2008 to get psa.exe, you can write a small wrapper around D3DXAssembleShader().
+            Sorry, but at this point even the author's tolerance for ps1.x is waning.
+        </p>
+        <p>
+            If you have the DirectX SDK in your default VC++ Directories setup, make sure that its include
+            headers are lower priority than the Windows SDK per Microsoft's integration guidelines. Otherwise,
+            you can get compile warnings or errors due to it overriding newer DXGI headers from the Windows
+            SDK.
+        </p>
 		<h3>Additional Tools</h3>
 		<p>
 			YASM 1.3.0 is needed for x86/x64 assembly language modules. (<a href="http://yasm.tortall.net/">http://yasm.tortall.net/</a>)
@@ -89,44 +119,54 @@ h3 {
 			may fail if some paths are not quoted. Attempting to do so is simply asking for
 			unnecessary trouble.
 		</p>
+		<h3>Local configuration</h3>
+		<p>
+			The build system is configured by a tree of property sheets and as of 2.90 supports
+			configuration overrides that can be set without changing the base source files. This
+			permits local configuration without having to alter files within source code control.
+			All overrides are placed in the <tt>localconfig/active</tt> folder, with examples
+			that can be copied from the <tt>localconfig/example</tt> folder. Note that the
+			overrides are applied on top of instead of replacing the standard .props files.
+		</p>
+		<p>
+			When using source code control, you may find it convenient to put <tt>localconfig/active/*</tt>
+			in the "ignore" configuration file of your VCS so it will not pick up files in that
+			folder for submission.
+		</p>
 		<h3>Platform setup</h3>
         <p>
             The <tt>PlatformSetup.props</tt> file controls the platform toolset that is used to build the
-            programs. The normal Visual Studio dialog to offering to upgrade the projects to the newest
+            programs. This allows the toolchain for the entire solution to be switched with one property sheet.
+            The normal Visual Studio dialog to offering to upgrade the projects to the newest
             compiler has been inhibited to prevent the converter from breaking this setup. If you still
             receive this dialog, <b>do not upgrade the projects through it.</b> This will break the
             toolchain switching setup in the projects. The <tt>PlatformSetup.props</tt> file should be
-            used to switch the toolchain instead.
+            used to control the toolchain instead.
         </p>
 		<p>
-			The build initially comes set to use the VS2013 compiler with XP targeting enabled
-			(<tt>v120_xp</tt>). Either the VS2013 or VS2015 IDE can be used with this toolchain. To use
-			the VS2015 compiler, edit PlatformSetup.props to select <tt>v140_xp</tt> instead. Note that
+			To switch the toolchain locally, create <tt>localconfig/active/PlatformSetup.local.props</tt>
+			and modify the toolchain setting in it. Use <tt>localconfig/example/PlatformSetup.local.props</tt>
+			as a reference.
+		</p>
+		<p>
+			The build initially comes set to use the VS2015 compiler with XP targeting enabled
+			(<tt>v140_xp</tt>).To use the VS2015 compiler without XP targeting, edit <tt>PlatformSetup.props</tt>
+			or <tt>PlatformSetup.local.props</tt>
+            to select <tt>v140</tt> instead. This is necessary for Code Analysis. Note that
 			Visual Studio should be restarted after editing any .props file manually as the IDE
 			does not reliably recognize external changes to property files.
 		</p>
+		<h3>MADS Assembler</h3>
 		<p>
-			The makefile-based projects will report (Visual Studio 2013) regardless; this is
-			due to a Visual Studio quirk and can be ignored, as those projects do not actually
-			use the C++ toolchain and will build even if the VS2013 toolchain is not installed.
-            If necessary to improve cosmetics, the label may be removed by manually editing
-            the <tt>.vcxproj</tt> file to match the version of the Visual Studio IDE in use.
+			By default, the build process will attempt to source <tt>mads.exe</tt> from PATH.
+			This can be overridden in the <tt>ATMadsPath</tt> property of <tt>localconfig/active/Altirra.local.props</tt>.
+			Use <tt>localconfig/example/Altirra.local.props</tt> as a reference.
 		</p>
-		<h3>External SDK/tools setup</h3>
+		<h3>YASM Assembler</h3>
 		<p>
-			By default, the build process will attempt to source the DirectX SDK from the user
-			props and the assemblers from PATH.
-		</p>
-		<p>
-			To change the DirectX SDK location, edit
-			DirectXSDK.props in a text editor to uncomment the compile/link settings and specify
-			the required paths.
-		</p>
-		<p>
-			To change the YASM location, edit the command line templates in YASM.props.
-		</p>
-		<p>
-			To change the MADS location, edit the MADS variable in the two Makefiles.
+			By default, the build process will attempt to source <tt>yasm.exe</tt> from PATH.
+			This can be overridden in the <tt>YASMPath</tt> property of <tt>localconfig/active/YASM.local.props</tt>.
+			Use <tt>localconfig/example/YASM.local.props</tt> as a reference.
 		</p>
 		<h2>Building</h2>
 		<h3>First time</h3>
@@ -138,16 +178,22 @@ h3 {
 		</p>
 		<h3>Build targets</h3>
 		<p>
-			There are three targets that can be built from the two solution files:
+			There are end projects that can be built from the two solution files:
 		</p>
 		<ul>
 			<li><b>Altirra:</b> This is the main computer emulator.</li>
 			<li><b>AltirraShell:</b> This is the device emulator.</li>
 			<li><b>ATHelpFile:</b> Help file for the computer emulator.</li>
 		</ul>
+        <p>
+            These projects have no direct dependency on each other, and the "run only startup"
+            option in Visual Studio can be used to avoid having to build both Altirra and AltirraShell
+            on every modification.
+        </p>
 		<p>
 			For the emulators, three configurations are supported: Debug (unoptimized),
-			Profile (optimized), and Release (LTCG).
+			Profile (optimized), and Release (LTCG). Debug is noticeably slower, but the
+            performance difference between Profile and Release is minor.
 		</p>
 		<h3>Output locations and debugging setup</h3>
 		<p>
@@ -168,11 +214,6 @@ h3 {
             returning a non-zero error code, this usually means that you don't have the
             path to YASM set up correctly.
         </p>
-		<p>
-			<tt>asuka.exe</tt> will fail to run in the build if the DirectX Developer
-			Runtime is not installed or the version of D3DX associated with the DirectX
-			SDK being used is not installed.
-		</p>
 		<h3>Release script</h3>
 		<p>
 			For shipping builds, the release script (<tt>release.cmd</tt>) automates the process
@@ -183,7 +224,7 @@ h3 {
 		</p>
 		<p>
 			The release script checks the version of <tt>cl.exe</tt> available in the PATH and
-			will fail if it is not VS2013 Update 4. Use <tt>/anyvc</tt> to bypass this check and
+			will fail if it is not VS2015 Update 3. Use <tt>/anyvc</tt> to bypass this check and
 			force the current compiler to be used.
 		</p>
 		<p>
@@ -219,8 +260,8 @@ h3 {
 			included or derived from in the included source.
 		</p>
 		<p>
-			Altirra does not link with the Microsoft D3DX library. It is used in the build, but only the build
-			tools link to D3DX and the outputs are used without it.
+			Altirra does not link with the Microsoft D3DX or D3DCompiler libraries. The latter is used in the build, but only
+            the build tools link to D3DCompiler and the outputs are used without it.
 		</p>
 		<h3>Deployment dependencies</h3>
 		<p>

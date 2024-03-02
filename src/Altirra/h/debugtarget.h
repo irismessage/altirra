@@ -53,6 +53,7 @@ public:
 	std::pair<uint32, uint32> GetHistoryRange() const override;
 	uint32 ExtractHistory(const ATCPUHistoryEntry **hparray, uint32 end, uint32 n) const override;
 	uint32 ConvertRawTimestamp(uint32 rawTimestamp) const override;
+	double GetTimestampFrequency() const override;
 };
 
 #endif	// f_AT_DEBUGTARGET_H

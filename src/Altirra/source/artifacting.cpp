@@ -73,9 +73,7 @@ ATArtifactingEngine::ATArtifactingEngine()
 	, mbHighPALTablesInited(false)
 	, mbGammaIdentity(false)
 {
-	mArtifactingParams.mNTSCLumaSharpness = 0.30f;
-	mArtifactingParams.mNTSCChromaSharpness = 1.00f;
-	mArtifactingParams.mNTSCLumaNotchQ = 3.80f;
+	mArtifactingParams = {};
 }
 
 ATArtifactingEngine::~ATArtifactingEngine() {
@@ -89,14 +87,16 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params) {
 
 	mYScale = VDRoundToInt32(params.mContrast * 65280.0f * 1024.0f);
 	mYBias = VDRoundToInt32(params.mBrightness * 65280.0f * 1024.0f) + 512;
-	mArtifactYScale = VDRoundToInt32(params.mArtifactBias * 65280.0f * 1024.0f / 15.0f);
+
+	const vdfloat2 co_r = vdfloat2x2::rotation(params.mRedShift * (nsVDMath::kfPi / 180.0f)) * vdfloat2 { +0.9563f, +0.6210f } * params.mRedScale;
+	const vdfloat2 co_g = vdfloat2x2::rotation(params.mGrnShift * (nsVDMath::kfPi / 180.0f)) * vdfloat2 { -0.2721f, -0.6474f } * params.mGrnScale;
+	const vdfloat2 co_b = vdfloat2x2::rotation(params.mBluShift * (nsVDMath::kfPi / 180.0f)) * vdfloat2 { -1.1070f, +1.7046f } * params.mBluScale;
 
 	const float artphase = params.mArtifactHue * (nsVDMath::kfTwoPi / 360.0f);
-	const float arti = cosf(artphase);
-	const float artq = sinf(artphase);
-	mArtifactRed   = (int)(65280.0f * (+ 0.9563f*arti + 0.6210f*artq) * kSaturation / 15.0f * params.mArtifactSat);
-	mArtifactGreen = (int)(65280.0f * (- 0.2721f*arti - 0.6474f*artq) * kSaturation / 15.0f * params.mArtifactSat);
-	mArtifactBlue  = (int)(65280.0f * (- 1.1070f*arti + 1.7046f*artq) * kSaturation / 15.0f * params.mArtifactSat);
+	const vdfloat2 rot_art { cosf(artphase), sinf(artphase) };
+	mArtifactRed   = (int)(65280.0f * nsVDMath::dot(rot_art, co_r) * kSaturation / 15.0f * params.mArtifactSat);
+	mArtifactGreen = (int)(65280.0f * nsVDMath::dot(rot_art, co_g) * kSaturation / 15.0f * params.mArtifactSat);
+	mArtifactBlue  = (int)(65280.0f * nsVDMath::dot(rot_art, co_b) * kSaturation / 15.0f * params.mArtifactSat);
 
 	mChromaVectors[0][0] = 0;
 	mChromaVectors[0][1] = 0;
@@ -145,9 +145,10 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params) {
 			q = sinf(theta);
 		}
 
-		double r = 65280.0f * (+ 0.9563f*i + 0.6210f*q) * params.mSaturation;
-		double g = 65280.0f * (- 0.2721f*i - 0.6474f*q) * params.mSaturation;
-		double b = 65280.0f * (- 1.1070f*i + 1.7046f*q) * params.mSaturation;
+		vdfloat2 iq { i, q };
+		float r = 65280.0f * nsVDMath::dot(co_r, iq) * params.mSaturation;
+		float g = 65280.0f * nsVDMath::dot(co_g, iq) * params.mSaturation;
+		float b = 65280.0f * nsVDMath::dot(co_b, iq) * params.mSaturation;
 
 		mChromaVectors[j+1][0] = VDRoundToInt(r);
 		mChromaVectors[j+1][1] = VDRoundToInt(g);
@@ -452,7 +453,7 @@ void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool s
 			int cr = mChromaVectors[c][0];
 			int cg = mChromaVectors[c][1];
 			int cb = mChromaVectors[c][2];
-			int y = mLumaRamp[luma2[x]] + ((abs(art) * mArtifactYScale) >> 10);
+			int y = mLumaRamp[luma2[x]];
 
 			cr += artr * art + y;
 			cg += artg * art + y;
@@ -488,6 +489,16 @@ void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool s
 
 namespace {
 	void rotate(float& xr, float& yr, float cs, float sn) {
+		float x0 = xr;
+		float y0 = yr;
+
+		xr = x0*cs + y0*sn;
+		yr = -x0*sn + y0*cs;
+	}
+
+	void rotate(float& xr, float& yr, float angle) {
+		const float sn = sinf(angle);
+		const float cs = cosf(angle);
 		float x0 = xr;
 		float y0 = yr;
 
@@ -788,29 +799,6 @@ namespace {
 				x1 = x0;
 			}
 		}
-
-		void Filter1(float *p, size_t n) {
-			if (!n)
-				return;
-
-			float x1 = p[0];
-			float x2 = 0;
-			float y1 = x1*b0;
-			float y2 = 0;
-
-			while(--n) {
-				const float x0 = p[1];
-				const float y0 = x0*b0 + x1*b1 + x2*b2 - y1*a1 - y2*a2;
-
-				*p++ = y0;
-				y2 = y1;
-				y1 = y0;
-				x2 = x1;
-				x1 = x0;
-			}
-
-			*p = x1*b1 + x2*b2 - y1*a1 - y2*a2;
-		}
 	};
 
 	struct BiquadLPF : public BiquadFilter {
@@ -873,7 +861,7 @@ namespace {
             a1 = (-2*cos_w0) * inv_a0;
             a2 = (1 - alpha) * inv_a0;
             b0 = inv_a0;
-            b1 = (-2*cos_w0) * inv_a0;
+            b1 = a1;
             b2 = inv_a0;
 		}
 	};
@@ -885,11 +873,44 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 
 	vdint3 chroma_to_rgb[16][2][11] = {};
 
-	float ca;
-	float cb;
-
-	cb = 2.54375f;
-	ca = 0.6155f;
+	// NTSC signal parameters:
+	//
+	// Decoding matrix we use:
+	//
+	//	R-Y =  0.956*I + 0.620*Q
+	//	G-Y = -0.272*I - 0.647*Q
+	//	B-Y = -1.108*I + 1.705*Q
+	//
+	// Blank is at 0 IRE, black at 7.5 IRE, white at 100 IRE.
+	// Color burst signal is +/-20 IRE.
+	//
+	// For 100% bars:
+	//	white		100 IRE
+	//	yellow		89.4 +/- 41.4 IRE (chroma 82.7 IRQ p-p)
+	//	cyan		72.3 +/- 58.5 IRE
+	//	green		61.8 +/- 54.7 IRE
+	//	magenta		45.7 +/- 54.7 IRE
+	//	red			35.1 +/- 58.5 IRE
+	//	blue		18.0 +/- 41.4 IRE
+	//
+	// {Matlab/Scilab solver: YIQ = inv([1 0.956 0.620; 1 -0.272 -0.647; 1 -1.108 1.705])*[R G B]'; disp(YIQ); disp(YIQ(1)*92.5+7.5); disp(norm(YIQ(2:3))*100*0.925)}
+	//
+	// Note that the chrominance signal amplitude is also reduced when
+	// adjusting for the 7.5 IRE pedestal.
+	//
+	// However, since the computer outputs the same amplitude for the colorburst as
+	// for regular color, the saturation is reduced. Take 100% yellow, which
+	// has a IQ amplitude of 0.447 raw and 41.4 IRE; the computer would produce
+	// the equivalent of 20 IRE after the color AGC kicked in, giving an equivalent
+	// raw IQ amplitude of 0.447 * 20 / 41.4 = 21.6%. In theory this is invariant
+	// to the actual chrominance signal strength due to the color AGC.
+	//
+	// Eyeballed scope traces show the chroma amplitude to be about 30% of full luma
+	// amplitude.
+	//
+	//
+	float chromaSignalAmplitude = 0.5f / std::max<float>(0.10f, params.mArtifactSat);
+	float chromaSignalInvAmplitude = params.mArtifactSat * 2.0f;
 
 	float phadjust = -params.mArtifactHue * (nsVDMath::kfTwoPi / 360.0f) + nsVDMath::kfPi * 1.25f;
 
@@ -897,39 +918,45 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 	float sp = sinf(phadjust);
 
 	float co_ir = 0.956f;
-	float co_qr = 0.621f;
+	float co_qr = 0.620f;
 	float co_ig = -0.272f;
 	float co_qg = -0.647f;
-	float co_ib = -1.107f;
-	float co_qb = 1.704f;
+	float co_ib = -1.108f;
+	float co_qb = 1.705f;
+	rotate(co_ir, co_qr, -mColorParams.mRedShift * (nsVDMath::kfPi / 180.0f));
+	rotate(co_ig, co_qg, -mColorParams.mGrnShift * (nsVDMath::kfPi / 180.0f));
+	rotate(co_ib, co_qb, -mColorParams.mBluShift * (nsVDMath::kfPi / 180.0f));
+	co_ir *= mColorParams.mRedScale;
+	co_qr *= mColorParams.mRedScale;
+	co_ig *= mColorParams.mGrnScale;
+	co_qg *= mColorParams.mGrnScale;
+	co_ib *= mColorParams.mBluScale;
+	co_qb *= mColorParams.mBluScale;
 
 	rotate(co_ir, co_qr, cp, -sp);
 	rotate(co_ig, co_qg, cp, -sp);
 	rotate(co_ib, co_qb, cp, -sp);
 
-	co_ir *= cb;
-	co_ig *= cb;
-	co_ib *= cb;
-	co_qr *= cb;
-	co_qg *= cb;
-	co_qb *= cb;
+	const float saturationScale = params.mSaturation * 2;
 
-	const vdfloat3 co_i { co_ir, co_ig, co_ib };
-	const vdfloat3 co_q { co_qr, co_qg, co_qb };
+	const vdfloat3 co_i = vdfloat3 { co_ir, co_ig, co_ib };
+	const vdfloat3 co_q = vdfloat3 { co_qr, co_qg, co_qb };
 
-	const float saturationScale = params.mSaturation * 3.0f;
+	auto decodeChromaRGB = [=](float i, float q) {
+		return i*co_i + q*co_q;
+	};
 
 	float lumaRamp[16];
 	ATComputeLumaRamp(params.mLumaRampMode, lumaRamp);
 
+	// chroma processing
 	for(int i=0; i<15; ++i) {
 		float chromatab[4];
 		float phase = phadjust + nsVDMath::kfTwoPi * ((params.mHueStart / 360.0f) + (float)i / 15.0f * (params.mHueRange / 360.0f));
 
+		// create chroma signal
 		for(int j=0; j<4; ++j) {
 			float v = sinf(phase + (0.25f * nsVDMath::kfTwoPi * j));
-
-			v *= ca / cb;
 
 			chromatab[j] = v;
 		}
@@ -953,15 +980,21 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 		ytab[14-1] = (1*c0                     ) * (1.0f / 16.0f);
 
 		// multiply chroma signal by pixel pulse
+		const float chromaSharp = 0.50f;
 		float t[28] = {0};
-		t[11-5] = c3 * ((1.0f - mArtifactingParams.mNTSCChromaSharpness) / 3.0f);
-		t[12-5] = c0 * ((2.0f + mArtifactingParams.mNTSCChromaSharpness) / 3.0f);
+		t[11-5] = c3 * ((1.0f - chromaSharp) / 3.0f);
+		t[12-5] = c0 * ((2.0f + chromaSharp) / 3.0f);
 		t[13-5] = c1;
 		t[14-5] = c2;
-		t[15-5] = c3 * ((2.0f + mArtifactingParams.mNTSCChromaSharpness) / 3.0f);
-		t[16-5] = c0 * ((1.0f - mArtifactingParams.mNTSCChromaSharpness) / 3.0f);
+		t[15-5] = c3 * ((2.0f + chromaSharp) / 3.0f);
+		t[16-5] = c0 * ((1.0f - chromaSharp) / 3.0f);
 
 		// demodulate chroma axes by multiplying by sin/cos
+		//	t[0] = +I
+		//	t[1] = -Q
+		//	t[2] = -I
+		//	t[3] = +Q
+		//
 		for(int j=0; j<26; ++j) {
 			if ((j+1) & 2)
 				t[j] = -t[j];
@@ -978,6 +1011,7 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 				 + (  0.1278410428f * u[j- 2]);
 		}
 
+		// compensate for gain from pixel shape filter (4x) and low-pass filter (~4.5x)
 		for(float& y : u)
 			y = y / 4 / ((2+0.9732320952f*2) / (1 - 0.1278410428f));
 
@@ -995,12 +1029,13 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 		vdint3 rgbtab[2][22];
 
 		for(int j=0; j<22; ++j) {
-			float fy = ytab[j];
-			float fi = itab[j] * saturationScale;
-			float fq = qtab[j] * saturationScale;
+			float fy = ytab[j] * chromaSignalAmplitude;
+			float fi = itab[j];
+			float fq = qtab[j];
 
-			vdfloat3 f0 = co_i*fi + co_q*fq - fy;
-			vdfloat3 f1 = co_i*fi + co_q*fq + fy;
+			vdfloat3 fc = (fi*co_i + fq*co_q) * saturationScale;
+			vdfloat3 f0 = fc - fy;
+			vdfloat3 f1 = fc + fy;
 
 			rgbtab[0][j] = nsVDMath::intround(f0 * 32.0f * 255.0f);
 			rgbtab[1][j] = nsVDMath::intround(f1 * 32.0f * 255.0f);
@@ -1105,70 +1140,32 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 
 	vdint3 y_to_rgb[16][2][11];
 
-	float lumanotch[16] = {
-		(1.0f - mArtifactingParams.mNTSCLumaSharpness) / 6.0f,
-		(2.0f + mArtifactingParams.mNTSCLumaSharpness) / 6.0f,
-		(2.0f + mArtifactingParams.mNTSCLumaSharpness) / 6.0f,
-		(1.0f - mArtifactingParams.mNTSCLumaSharpness) / 6.0f,
+	const float lumaSharpness = params.mArtifactSharpness;
+	float lumapulse[16] = {
+		(1.0f - lumaSharpness) / 3.0f,
+		(2.0f + lumaSharpness) / 3.0f,
+		(2.0f + lumaSharpness) / 3.0f,
+		(1.0f - lumaSharpness) / 3.0f,
 	};
-
-	BiquadNotch lumaNotchFilter(0.25f, mArtifactingParams.mNTSCLumaNotchQ);
-
-	lumaNotchFilter.Filter(lumanotch, vdcountof(lumanotch));
-	lumaNotchFilter.Filter(lumanotch, vdcountof(lumanotch));
-
-	for(float& x : lumanotch)
-		x *= 2;
 
 	for(int i=0; i<16; ++i) {
 		float y = lumaRamp[i] * params.mContrast + params.mBrightness;
 
 		float t[30] = {0};
-		t[11] = y*((1.0f - mArtifactingParams.mNTSCChromaSharpness)/3.0f);
-		t[12] = y*((2.0f + mArtifactingParams.mNTSCChromaSharpness)/3.0f);
-		t[13] = y*((2.0f + mArtifactingParams.mNTSCChromaSharpness)/3.0f);
-		t[14] = y*((1.0f - mArtifactingParams.mNTSCChromaSharpness)/3.0f);
+		t[11] = y*((1.0f - 1.0f)/3.0f);
+		t[12] = y*((2.0f + 1.0f)/3.0f);
+		t[13] = y*((2.0f + 1.0f)/3.0f);
+		t[14] = y*((1.0f - 1.0f)/3.0f);
 
 		for(int j=0; j<30; ++j) {
 			if (!(j & 2))
 				t[j] = -t[j];
 		}
 
-		//std::rotate(t, t+30, t+30);
-
 		float u[28] = {0};
 
-		// apply low-pass filter to chroma
-		for(int j=4; j<24; ++j) {
-			u[j] = (  1 * t[j- 4])
-				 + (  0.9732320952f * t[j- 2])
-				 + (  0.9732320952f * t[j- 0])
-				 + (  1 * t[j+2])
-				 + (  0.1278410428f * u[j- 2]);
-		}
-
-		for(float& y : u)
-			y = y / 4 / ((2+0.9732320952f*2) / (1 - 0.1278410428f));
-
-		std::rotate(u, u+2, u+24);
-
-		{
-			float tu[28] = {0};
-			memcpy(tu, u, sizeof tu);
-
-			for(int j=4; j<24; ++j) {
-				tu[j] = (  1 * u[j- 4])
-					 + (  0.9732320952f * u[j- 2])
-					 + (  0.9732320952f * u[j- 0])
-					 + (  1 * u[j+2])
-					 + (  0.1278410428f * tu[j- 2]);
-			}
-
-			for(float& y : tu)
-				y = y / ((2+0.9732320952f*2) / (1 - 0.1278410428f));
-
-			memcpy(u, tu, sizeof u);
-			std::rotate(u, u+2, u+24);
+		for(int j=4; j<20; ++j) {
+			u[j] = (t[j-4] * 0.25f + t[j-2]*0.625f + t[j]*0.75f + t[j+2]*0.625f + t[j+4]*0.25f) / 10.0f;
 		}
 
 		float ytab[22] = {0};
@@ -1177,17 +1174,26 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 
 		for(int j=0; j<22; ++j) {
 			if ((j & 1)) {
-				itab[j] = (u[j+2] + u[j+4]) * 0.625f - (u[j] + u[j+6]) * 0.125f;
+				itab[j] = (u[j+2] + u[j+4]) * 0.575f - (u[j] + u[j+6]) * 0.065f;
 				qtab[j] = u[j+3];
 			} else {
 				itab[j] = u[j+3];
-				qtab[j] = (u[j+2] + u[j+4]) * 0.625f - (u[j] + u[j+6]) * 0.125f;
+				qtab[j] = (u[j+2] + u[j+4]) * 0.575f - (u[j] + u[j+6]) * 0.065f;
 			}
 		}
 
-		// Luma notch filter (14MHz)
+		// Form luma pulse (14MHz)
 		for(int j=0; j<11; ++j)
-			ytab[7+j] = y * lumanotch[j];
+			ytab[7+j] = y * lumapulse[j];
+
+		// subtract chroma signal from luma
+		const float antiChromaScale = 1.3333333f + lumaSharpness * 2.666666f;
+		for(int j=0; j<22; ++j) {
+			float cs = cosf((0.25f * nsVDMath::kfTwoPi) * (j+2));
+			float sn = sinf((0.25f * nsVDMath::kfTwoPi) * (j+2));
+
+			ytab[j] -= (cs*itab[j] + sn*qtab[j]) * antiChromaScale;
+		}
 
 		vdint3 rgbtab[2][22];
 
@@ -1196,8 +1202,9 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 			float fi = itab[j];
 			float fq = qtab[j];
 
-			vdfloat3 f0 = fy + co_i*fi + co_q*fq;
-			vdfloat3 f1 = fy - co_i*fi - co_q*fq;
+			vdfloat3 fc = (fi*co_i + fq*co_q) * chromaSignalInvAmplitude;
+			vdfloat3 f0 = fy + fc;
+			vdfloat3 f1 = fy - fc;
 
 			rgbtab[0][j] = nsVDMath::intround(f0 * (32.0f * 255.0f));
 			rgbtab[1][j] = nsVDMath::intround(f1 * (32.0f * 255.0f));

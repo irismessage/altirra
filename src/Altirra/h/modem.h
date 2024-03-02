@@ -190,9 +190,11 @@ protected:
 
 	enum ConnectionState {
 		kConnectionState_NotConnected,
+		kConnectionState_Connecting,
 		kConnectionState_Connected,
 		kConnectionState_LostCarrier
 	} mConnectionState;
+	uint32	mConnectStartTime = 0;
 	uint32	mLostCarrierTime;
 	uint32	mLostCarrierDelayCycles;
 

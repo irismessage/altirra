@@ -82,7 +82,10 @@ public:
 
 	void SetAnalysisMode(bool analysisMode);
 	void SetVBlank(bool vblank);
+	void SetCTIAMode();
 	void SetSECAMMode(bool secam) { mbSECAMMode = secam; }
+
+	void ColdReset();
 
 	void BeginScanline(uint8 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires);
 	void RenderScanline(int x2, bool pfgraphics, bool pmgraphics, bool mixed);

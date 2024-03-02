@@ -284,6 +284,7 @@ do_io:
 	mwa		#131 dbytlo
 	mva		#$60 ddevic
 	mva		#0 dunit
+	mva		ftype daux2
 
 	;do it
 	jsr		siov
@@ -314,7 +315,7 @@ rolling_stop:
 ;
 CassetteWait = CassetteWaitLongShortCheck.normal_entry
 .proc CassetteWaitLongShortCheck
-	bit		ftype
+	bit		daux2
 	spl:inx
 normal_entry:
 	jsr		SIOSetTimeoutVector

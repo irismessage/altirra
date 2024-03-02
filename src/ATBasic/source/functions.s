@@ -588,46 +588,47 @@ sub1_ok:
 
 		;determine whether we should use the length or the capacity to
 		;bounds check
-		ldx		#fr0+2				;use length
-		stx		expType				;!! - set expression type to string!
-		lda		argsp				;bottom of stack?
-		cmp		#3
+		ldx		#3					;use length
+		cpx		argsp				;bottom of stack?
 		bne		use_length			;nope, can't be root assignment... use length
 		lda		expAsnCtx			;in assignment context?
 		beq		use_length			;nope, use length
-		ldx		#fr0+4				;use capacity
+		ldx		#5					;use capacity
 		lda		expCommas
-		seq:asl	expAsnCtx
+		seq:asl	expAsnCtx			;clear assignment flag for A$(x,y) so = doesn't set length
 use_length:
 		
 		;check if we had a second subscript
 		lda		expCommas
-		bne		check_second
-		
-		;no second subscript - copy the limit
-		mwa		0,x fr1+4
-		jmp		second_ok
 
-check_second:
-		;yes, we did - bounds check it against the limit
-		lda		fr1+5
-		cmp		1,x
-		bcc		second_ok
-		beq		second_eq
+		;copy limit to second subscript if not
+		beq		use_limit_as_end
+
+		;we do - bounds check it against the limit (require y <= limit,
+		;or limit - y >= 0).
+		lda		fr0-1,x
+		cmp		fr1+4
+		lda		fr0,x
+		sbc		fr1+5
+		bcs		second_ok
 bad_subscript:
 		jmp		errorStringLength
-second_eq:
-		lda		fr1+4
-		cmp		0,x
-		bcc		second_ok
-		bne		bad_subscript
+
 second_ok:
-		;check the second subscript against the first subscript
-		lda		fr1+2
-		cmp		fr1+4
-		lda		fr1+3
-		sbc		fr1+5
-		bcs		bad_subscript		;(x-1)-y >= 0 => (x-1) >= y --> invalid
+		;use second subscript
+		ldx		#fr1+5-fr0
+use_limit_as_end:
+		;check the second subscript against the first subscript: A$(x,y) requires x <= y,
+		;or y - x >= 0. However, we've decremented x, so this needs to be y - (x+1) >= 0
+		;or y - x - 1 >= 0.
+		lda		fr0-1,x
+		sta		fr0+4				;copy to capacity lo
+		clc
+		sbc		fr1+2
+		lda		fr0,x
+		sta		fr0+5				;copy to capacity hi
+		sbc		fr1+3
+		bcc		bad_subscript
 		
 		;Merge subscripts back into string descriptor:
 		; - offset address by X
@@ -639,34 +640,32 @@ second_ok:
 
 		;address += start
 		ldy		#fr1+2
+		sty		expType				;!! - set expression type to string!
 		jsr		IntAddToFR0
 
-		;length -= start; clamp if needed
-		sec
-		lda		fr0+2
-		sbc		fr1+2
-		sta		fr0+2
-		lda		fr0+3
-		sbc		fr1+3
-		sta		fr0+3
-
 		;capacity -= start
+		;length -= start
+		ldx		#$7c
+offset_loop:
 		sec
-		lda		fr1+4
+		lda		fr0+2-$7c,x
 		sbc		fr1+2
-		sta		fr0+4
-		tax
-		lda		fr1+5
+		sta		fr0+2-$7c,x
+		tay
+		lda		fr0+3-$7c,x
 		sbc		fr1+3
-		sta		fr0+5
+		sta		fr0+3-$7c,x
+		inx
+		inx
+		bpl		offset_loop
 		
 		;limit length against capacity
-		cpx		fr0+2
-		tay
+		cpy		fr0+2
+		tax
 		sbc		fr0+3
 		bcs		length_ok
-		stx		fr0+2
-		sty		fr0+3
+		sty		fr0+2
+		stx		fr0+3
 length_ok:
 		
 		;push subscripted result back onto eval stack

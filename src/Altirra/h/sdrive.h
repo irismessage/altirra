@@ -35,15 +35,15 @@ public:
 	ATSDriveEmulator();
 	~ATSDriveEmulator();
 
-	void *AsInterface(uint32 iid);
+	void *AsInterface(uint32 iid) override;
 
-	virtual void GetDeviceInfo(ATDeviceInfo& info);
-	virtual void GetSettings(ATPropertySet& settings);
-	virtual bool SetSettings(const ATPropertySet& settings);
-	virtual void Init();
-	virtual void Shutdown();
-	virtual void WarmReset();
-	virtual void ColdReset();
+	virtual void GetDeviceInfo(ATDeviceInfo& info) override;
+	virtual void GetSettings(ATPropertySet& settings) override;
+	virtual bool SetSettings(const ATPropertySet& settings) override;
+	virtual void Init() override;
+	virtual void Shutdown() override;
+	virtual void WarmReset() override;
+	virtual void ColdReset() override;
 
 public:
 	virtual const char *GetSupportedType(uint32 index) override;

@@ -68,10 +68,13 @@ public:
 	bool IsAccelRequest() const override { return false; }
 	uint32 GetAccelTimeSkew() const override { return 0; }
 	sint32 GetHighSpeedIndex() const override { return mHighSpeedBaudRate ? mHighSpeedDivisor : -1; }
+	uint32 GetCyclesPerBitRecv() const override { return 0; }
+	uint32 GetRecvResetCounter() const override { return 0; }
 
 	void AddRawDevice(IATDeviceRawSIO *dev) override;
 	void RemoveRawDevice(IATDeviceRawSIO *dev) override;
-	void SendRawByte(uint8 byte, uint32 cyclesPerBit) override;
+	void SendRawByte(uint8 byte, uint32 cyclesPerBit, bool synchronous, bool forceFramingError, bool simulateInput) override;
+	void SetRawInput(bool state) override;
 
 	bool IsSIOCommandAsserted() const override { return mbCommandState; }
 	bool IsSIOMotorAsserted() const override { return mbMotorState; }

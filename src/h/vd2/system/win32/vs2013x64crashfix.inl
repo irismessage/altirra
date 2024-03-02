@@ -63,7 +63,8 @@ extern "C" int __use_fma3_lib;
 
 class VDFixVS2013FMACrash {
 public:
-	VDFixVS2013FMACrash::VDFixVS2013FMACrash() {
+	VDFixVS2013FMACrash() {
+#if _MSC_VER < 1900
 		if (__use_fma3_lib) {
 			// Check if OSXSAVE is set (bit 27) and AVX (bit 28).
 			int cpuInfo[4] = {0};
@@ -84,5 +85,6 @@ public:
 			// instructions.
 			_set_FMA3_enable(0);
 		}
+#endif
 	}
 } g_VDFixVS2013FMACrash;

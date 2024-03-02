@@ -44,8 +44,8 @@ protected:
 	struct MapSorter {
 		bool operator()(int x, int y) const {
 			// The terminology is a bit screwed here -- need to clean up mapper vs. mode.
-			int xm = ATGetCartridgeMapperForMode(x, 0);
-			int ym = ATGetCartridgeMapperForMode(y, 0);
+			int xm = ATGetCartridgeMapperForMode((ATCartridgeMode)x, 0);
+			int ym = ATGetCartridgeMapperForMode((ATCartridgeMode)y, 0);
 
 			if (!xm)
 				xm = 1000;

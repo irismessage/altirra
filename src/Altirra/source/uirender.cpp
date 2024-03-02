@@ -23,14 +23,17 @@
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Kasumi/text.h>
+#include <vd2/Kasumi/resample.h>
 #include <vd2/VDDisplay/compositor.h>
 #include <vd2/VDDisplay/renderer.h>
+#include <vd2/VDDisplay/renderersoft.h>
 #include <vd2/VDDisplay/textrenderer.h>
 #include "uirender.h"
 #include "audiomonitor.h"
 #include "slightsid.h"
 #include <at/atui/uiwidget.h>
-#include "uilabel.h"
+#include <at/atuicontrols/uilabel.h>
+#include "uikeyboard.h"
 #include <at/atui/uicontainer.h>
 #include <at/atui/uimanager.h>
 
@@ -167,6 +170,8 @@ class ATUIAudioDisplay : public ATUIWidget {
 public:
 	ATUIAudioDisplay();
 
+	void SetCyclesPerSecond(double rate) { mCyclesPerSecond = rate; }
+
 	void SetAudioMonitor(ATAudioMonitor *mon);
 	void SetSlightSID(ATSlightSIDEmulator *ss);
 
@@ -180,6 +185,8 @@ protected:
 	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
 	void PaintSID(IVDDisplayRenderer& rdr, VDDisplayTextRenderer& tr, sint32 w, sint32 h);
 	void PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer& tr, sint32 w, sint32 h);
+
+	double mCyclesPerSecond = 1;
 
 	vdrefptr<IVDDisplayFont> mpBigFont;
 	vdrefptr<IVDDisplayFont> mpSmallFont;
@@ -430,7 +437,7 @@ void ATUIAudioDisplay::PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer
 		const int chandetaily = chy + 4 + fonth + 1;
 
 		// draw frequency
-		swprintf(buf, 128, L"%.1f", 7159090.0f / 8.0f / divisors[ch]);
+		swprintf(buf, 128, L"%.1f", (mCyclesPerSecond * 0.5) / divisors[ch]);
 
 		tr.SetColorRGB(0xFFFFFF);
 		tr.SetFont(mpBigFont);
@@ -510,8 +517,12 @@ public:
 	void ResetStatusFlags(uint32 flags) { mStatusFlags &= ~flags; }
 	void PulseStatusFlags(uint32 flags) { mStickyStatusFlags |= flags; }
 
+	void SetCyclesPerSecond(double rate);
+
 	void SetStatusCounter(uint32 index, uint32 value);
+	void SetDiskLEDState(uint32 index, sint32 ledDisplay);
 	void SetDiskMotorActivity(uint32 index, bool on);
+	void SetDiskErrorState(uint32 index, bool on);
 
 	void SetHActivity(bool write);
 	void SetPCLinkActivity(bool write);
@@ -519,7 +530,7 @@ public:
 	void SetFlashWriteActivity();
 
 	void SetCassetteIndicatorVisible(bool vis) { mbShowCassetteIndicator = vis; }
-	void SetCassettePosition(float pos);
+	void SetCassettePosition(float pos, bool recordMode);
 
 	void SetRecordingPosition();
 	void SetRecordingPosition(float time, sint64 size);
@@ -530,6 +541,9 @@ public:
 
 	void SetLedStatus(uint8 ledMask);
 	void SetHeldButtonStatus(uint8 consolMask);
+	void SetPendingHoldMode(bool enabled);
+	void SetPendingHeldKey(int key);
+	void SetPendingHeldButtons(uint8 consolMask);
 
 	void ClearWatchedValue(int index);
 	void SetWatchedValue(int index, uint32 value, int len);
@@ -554,56 +568,73 @@ public:
 protected:
 	void InvalidateLayout();
 
+	void UpdatePendingHoldLabel();
+	void RelayoutPendingKeyLabels();
 	void UpdateHostDeviceLabel();
 	void UpdatePCLinkLabel();
 	void UpdateHoverTipPos();
+	void RemakeLEDFont();
 
-	uint32	mStatusFlags;
-	uint32	mStickyStatusFlags;
-	uint32	mStatusCounter[15];
-	uint32	mDiskMotorFlags;
-	float	mCassettePos;
-	int		mRecordingPos;
-	sint64	mRecordingSize;
-	bool	mbShowCassetteIndicator;
-	int		mShowCassetteIndicatorCounter;
+	double	mCyclesPerSecond = 1;
 
-	uint32	mHardDiskLBA;
-	uint8	mHardDiskCounter;
-	bool	mbHardDiskRead;
-	bool	mbHardDiskWrite;
+	uint32	mStatusFlags = 0;
+	uint32	mStickyStatusFlags = 0;
+	uint32	mStatusCounter[15] = {};
+	sint32	mStatusLEDs[15] = {};
+	uint32	mDiskMotorFlags = 0;
+	uint32	mDiskErrorFlags = 0;
+	float	mCassettePos = 0;
+	int		mRecordingPos = -1;
+	sint64	mRecordingSize = -1;
+	bool	mbShowCassetteIndicator = false;
+	int		mShowCassetteIndicatorCounter = 0;
 
-	uint8	mHReadCounter;
-	uint8	mHWriteCounter;
-	uint8	mPCLinkReadCounter;
-	uint8	mPCLinkWriteCounter;
-	uint8	mFlashWriteCounter;
+	uint32	mHardDiskLBA = 0;
+	uint8	mHardDiskCounter = 0;
+	bool	mbHardDiskRead = false;
+	bool	mbHardDiskWrite = false;
+
+	uint8	mHReadCounter = 0;
+	uint8	mHWriteCounter = 0;
+	uint8	mPCLinkReadCounter = 0;
+	uint8	mPCLinkWriteCounter = 0;
+	uint8	mFlashWriteCounter = 0;
 
 	VDStringW	mModemConnection;
 	VDStringW	mStatusMessage;
 
-	uint8	mLedStatus;
+	uint8	mLedStatus = 0;
 
 	uint32	mWatchedValues[8];
 	sint8	mWatchedValueLens[8];
 
-	ATAudioMonitor	*mpAudioMonitors[2];
-	ATSlightSIDEmulator *mpSlightSID;
+	ATAudioMonitor	*mpAudioMonitors[2] = {};
+	ATSlightSIDEmulator *mpSlightSID = nullptr;
 
 	VDDisplaySubRenderCache mFpsRenderCache;
-	float mFps;
+	float mFps = -1.0f;
 
 	vdrefptr<IVDDisplayFont> mpSysFont;
 	vdrefptr<IVDDisplayFont> mpSmallMonoSysFont;
 	vdrefptr<IVDDisplayFont> mpSysMonoFont;
 	vdrefptr<IVDDisplayFont> mpSysHoverTipFont;
 	vdrefptr<IVDDisplayFont> mpSysBoldHoverTipFont;
-	int mSysFontDigitWidth;
-	int mSysFontDigitHeight;
-	int mSysMonoFontHeight;
+	int mSysFontDigitWidth = 0;
+	int mSysFontDigitHeight = 0;
+	int mSysFontDigitAscent = 0;
+	int mSysFontDigitInternalLeading = 0;
+	int mSysMonoFontHeight = 0;
 
-	sint32	mPrevLayoutWidth;
-	sint32	mPrevLayoutHeight;
+	sint32	mPrevLayoutWidth = 0;
+	sint32	mPrevLayoutHeight = 0;
+
+	int		mPendingHeldKey = -1;
+	uint8	mPendingHeldButtons = 0;
+	bool	mbPendingHoldMode = false;
+
+	int		mLEDFontCellWidth = 0;
+	int		mLEDFontCellAscent = 0;
+	vdrefptr<IVDDisplayFont> mpLEDFont;
 
 	vdrefptr<ATUILabel> mpDiskDriveIndicatorLabels[15];
 	vdrefptr<ATUILabel> mpFpsLabel;
@@ -619,12 +650,13 @@ protected:
 	vdrefptr<ATUILabel> mpCassetteTimeLabel;
 	vdrefptr<ATUILabel> mpPausedLabel;
 	vdrefptr<ATUILabel> mpHeldButtonLabels[3];
+	vdrefptr<ATUILabel> mpPendingHeldKeyLabel;
 	vdrefptr<ATUIAudioStatusDisplay> mpAudioStatusDisplay;
 	vdrefptr<ATUIAudioDisplay> mpAudioDisplays[2];
 
 	vdrefptr<ATUILabel> mpHoverTip;
-	int mHoverTipX;
-	int mHoverTipY;
+	int mHoverTipX = 0;
+	int mHoverTipY = 0;
 
 	VDLazyTimer mStatusTimer;
 
@@ -647,39 +679,10 @@ void ATCreateUIRenderer(IATUIRenderer **r) {
 	(*r)->AddRef();
 }
 
-ATUIRenderer::ATUIRenderer()
-	: mStatusFlags(0)
-	, mStickyStatusFlags(0)
-	, mDiskMotorFlags(0)
-	, mCassettePos(0)
-	, mRecordingPos(-1)
-	, mRecordingSize(-1)
-	, mbShowCassetteIndicator(false)
-	, mShowCassetteIndicatorCounter(0)
-	, mHardDiskLBA(0)
-	, mbHardDiskRead(false)
-	, mbHardDiskWrite(false)
-	, mHardDiskCounter(0)
-	, mHReadCounter(0)
-	, mHWriteCounter(0)
-	, mPCLinkReadCounter(0)
-	, mPCLinkWriteCounter(0)
-	, mFlashWriteCounter(0)
-	, mLedStatus(0)
-	, mpSlightSID(NULL)
-	, mFps(-1.0f)
-	, mPrevLayoutWidth(0)
-	, mPrevLayoutHeight(0)
-	, mSysFontDigitWidth(0)
-	, mSysFontDigitHeight(0)
-	, mHoverTipX(0)
-	, mHoverTipY(0)
-{
-	mpAudioMonitors[0] = nullptr;
-	mpAudioMonitors[1] = nullptr;
-
+ATUIRenderer::ATUIRenderer() {
 	for(int i=0; i<15; ++i) {
 		mStatusCounter[i] = i+1;
+		mStatusLEDs[i] = -1;
 	}
 
 	for(int i=0; i<8; ++i)
@@ -773,7 +776,6 @@ ATUIRenderer::ATUIRenderer()
 
 	mpCassetteTimeLabel = new ATUILabel;
 	mpCassetteTimeLabel->SetVisible(false);
-	mpCassetteTimeLabel->SetTextColor(0x0755ab);
 	mpCassetteTimeLabel->SetFillColor(0);
 
 	mpPausedLabel = new ATUILabel;
@@ -800,20 +802,38 @@ ATUIRenderer::ATUIRenderer()
 
 	VDASSERTCT(vdcountof(kHeldButtonLabels) == vdcountof(mpHeldButtonLabels));
 
-	for(size_t i=0; i<vdcountof(mpHeldButtonLabels); ++i) {
+	for(int i=0; i<(int)vdcountof(mpHeldButtonLabels); ++i) {
 		mpHeldButtonLabels[i] = new ATUILabel;
 		mpHeldButtonLabels[i]->SetVisible(false);
 		mpHeldButtonLabels[i]->SetTextColor(0);
 		mpHeldButtonLabels[i]->SetFillColor(0xd4d080);
 		mpHeldButtonLabels[i]->SetText(kHeldButtonLabels[i]);
 	}
+
+	mpPendingHeldKeyLabel = new ATUILabel;
+	mpPendingHeldKeyLabel->SetVisible(false);
+	mpPendingHeldKeyLabel->SetBorderColor(0xffffff);
+	mpPendingHeldKeyLabel->SetTextOffset(2, 2);
+	mpPendingHeldKeyLabel->SetTextColor(0xffffff);
+	mpPendingHeldKeyLabel->SetFillColor(0xa44050);
 }
 
 ATUIRenderer::~ATUIRenderer() {
 }
 
+void ATUIRenderer::SetCyclesPerSecond(double rate) {
+	mCyclesPerSecond = rate;
+
+	mpAudioDisplays[0]->SetCyclesPerSecond(rate);
+	mpAudioDisplays[1]->SetCyclesPerSecond(rate);
+}
+
 void ATUIRenderer::SetStatusCounter(uint32 index, uint32 value) {
 	mStatusCounter[index] = value;
+}
+
+void ATUIRenderer::SetDiskLEDState(uint32 index, sint32 ledDisplay) {
+	mStatusLEDs[index] = ledDisplay;
 }
 
 void ATUIRenderer::SetDiskMotorActivity(uint32 index, bool on) {
@@ -821,6 +841,13 @@ void ATUIRenderer::SetDiskMotorActivity(uint32 index, bool on) {
 		mDiskMotorFlags |= (1 << index);
 	else
 		mDiskMotorFlags &= ~(1 << index);
+}
+
+void ATUIRenderer::SetDiskErrorState(uint32 index, bool on) {
+	if (on)
+		mDiskErrorFlags |= (1 << index);
+	else
+		mDiskErrorFlags &= ~(1 << index);
 }
 
 void ATUIRenderer::SetHActivity(bool write) {
@@ -981,7 +1008,33 @@ void ATUIRenderer::SetHeldButtonStatus(uint8 consolMask) {
 		mpHeldButtonLabels[i]->SetVisible((consolMask & (1 << i)) != 0);
 }
 
-void ATUIRenderer::SetCassettePosition(float pos) {
+void ATUIRenderer::SetPendingHoldMode(bool enable) {
+	if (mbPendingHoldMode != enable) {
+		mbPendingHoldMode = enable;
+
+		UpdatePendingHoldLabel();
+	}
+}
+
+void ATUIRenderer::SetPendingHeldKey(int key) {
+	if (mPendingHeldKey != key) {
+		mPendingHeldKey = key;
+
+		UpdatePendingHoldLabel();
+	}
+}
+
+void ATUIRenderer::SetPendingHeldButtons(uint8 consolMask) {
+	if (mPendingHeldButtons != consolMask) {
+		mPendingHeldButtons = consolMask;
+
+		UpdatePendingHoldLabel();
+	}
+}
+
+void ATUIRenderer::SetCassettePosition(float pos, bool recordMode) {
+	mpCassetteTimeLabel->SetTextColor(recordMode ? 0xff8040 : 0x93e1ff);
+
 	if (mCassettePos == pos)
 		return;
 
@@ -994,7 +1047,7 @@ void ATUIRenderer::SetCassettePosition(float pos) {
 	int hours = mins / 60;
 	mins %= 60;
 
-	mpCassetteTimeLabel->SetTextF(L"%02u:%02u:%02u", hours, mins, secs);
+	mpCassetteTimeLabel->SetTextF(L"%02u:%02u:%02u %ls", hours, mins, secs, recordMode ? L"REC" : L"Play");
 	mpCassetteTimeLabel->AutoSize();
 }
 
@@ -1087,8 +1140,10 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 		for(int i=0; i<2; ++i)
 			c->AddChild(mpLedLabels[i]);
 
-		for(int i=0; i<(int)vdcountof(mpHeldButtonLabels); ++i)
-			c->AddChild(mpHeldButtonLabels[i]);
+		for(auto&& p : mpHeldButtonLabels)
+			c->AddChild(p);
+
+		c->AddChild(mpPendingHeldKeyLabel);
 
 		c->AddChild(mpHostDeviceLabel);
 		c->AddChild(mpPCLinkLabel);
@@ -1117,6 +1172,10 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 			vdsize32 digitSize = mpSysFont->MeasureString(L"0123456789", 10, false);
 			mSysFontDigitWidth = digitSize.w / 10;
 			mSysFontDigitHeight = digitSize.h;
+
+			VDDisplayFontMetrics sysFontMetrics;
+			mpSysFont->GetMetrics(sysFontMetrics);
+			mSysFontDigitAscent = sysFontMetrics.mAscent;
 		}
 
 		mSysMonoFontHeight = 0;
@@ -1128,8 +1187,12 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 			mSysMonoFontHeight = metrics.mAscent + metrics.mDescent;
 		}
 
-		for(int i=0; i<15; ++i)
+		RemakeLEDFont();
+
+		for(int i=0; i<15; ++i) {
 			mpDiskDriveIndicatorLabels[i]->SetFont(mpSysFont);
+			mpDiskDriveIndicatorLabels[i]->SetBoldFont(mpLEDFont);
+		}
 
 		for(int i=0; i<8; ++i)
 			mpWatchLabels[i]->SetFont(mpSysFont);
@@ -1154,10 +1217,13 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 			mpLedLabels[i]->AutoSize();
 		}
 
-		for(int i=0; i<(int)vdcountof(mpHeldButtonLabels); ++i) {
-			mpHeldButtonLabels[i]->SetFont(mpSysFont);
-			mpHeldButtonLabels[i]->AutoSize();
+		for(auto&& p : mpHeldButtonLabels) {
+			p->SetFont(mpSysFont);
+			p->AutoSize();
 		}
+
+		mpPendingHeldKeyLabel->SetFont(mpSysFont);
+		mpPendingHeldKeyLabel->AutoSize();
 
 		mpPCLinkLabel->SetFont(mpSysFont);
 		mpHostDeviceLabel->SetFont(mpSysFont);
@@ -1181,18 +1247,37 @@ void ATUIRenderer::Update() {
 	int x = mPrevLayoutWidth;
 	int y = mPrevLayoutHeight - mSysFontDigitHeight;
 
+	const uint32 diskErrorFlags = (VDGetCurrentTick() % 1000) >= 500 ? mDiskErrorFlags : 0;
+	VDStringW s;
+
 	for(int i = 14; i >= 0; --i) {
 		ATUILabel& label = *mpDiskDriveIndicatorLabels[i];
 		const uint32 flag = (1 << i);
+		sint32 leds = mStatusLEDs[i];
 
-		if ((statusFlags | mDiskMotorFlags) & flag) {
-			label.SetTextF(L"%u", mStatusCounter[i]);
+		const bool isActive = ((diskErrorFlags | statusFlags) & flag) != 0;
+		const bool shouldShow = ((statusFlags | mDiskMotorFlags | diskErrorFlags) & flag) != 0;
+		if (leds >= 0 || shouldShow) {
+			if (leds >= 0) {
+				s.clear();
+				if (shouldShow)
+					s.append_sprintf(L"%u  ", mStatusCounter[i]);
+				s += L"<bg=#404040><fg=#ff4018> <b>";
+				s += (wchar_t)(((uint32)leds & 0xFF) + 0x80);
+				s += (wchar_t)((((uint32)leds >> 8) & 0xFF) + 0x80);
+				s += L"</b> </fg></bg>";
+				label.SetHTMLText(s.c_str());
+			} else {
+				label.SetTextF(L"%u", mStatusCounter[i]);
+			}
+
 			label.AutoSize(x, mPrevLayoutHeight - mSysFontDigitHeight);
 
 			x -= label.GetArea().width();
 			label.SetPosition(vdpoint32(x, y));
 
-			label.SetFillColor(kDiskColors[i & 7][(statusFlags & flag) != 0]);
+			label.SetTextColor(0xFF000000);
+			label.SetFillColor(kDiskColors[i & 7][isActive]);
 			label.SetVisible(true);
 		} else {
 			label.SetVisible(false);
@@ -1353,6 +1438,7 @@ void ATUIRenderer::Relayout(int w, int h) {
 	mpCassetteTimeLabel->SetPosition(vdpoint32(mpCassetteLabel->GetArea().width(), ystats));
 
 	const int ystats2 = ystats - (mSysFontDigitHeight * 5) / 4;
+	const int ystats3 = ystats2 - (mSysFontDigitHeight * 5) / 4;
 	int x = w;
 
 	for(int i=(int)vdcountof(mpHeldButtonLabels)-1; i>=0; --i) {
@@ -1362,11 +1448,63 @@ void ATUIRenderer::Relayout(int w, int h) {
 		label.SetPosition(vdpoint32(x, ystats2));
 	}
 
+	RelayoutPendingKeyLabels();
+
 	mpAudioStatusDisplay->SetPosition(vdpoint32(16, 16));
 
 	mpPausedLabel->SetPosition(vdpoint32((w - mpPausedLabel->GetArea().width()) >> 1, 64));
 
 	UpdateHoverTipPos();
+}
+
+void ATUIRenderer::UpdatePendingHoldLabel() {
+	if (mbPendingHoldMode || mPendingHeldButtons || mPendingHeldKey >= 0) {
+		VDStringW s;
+
+		if (mbPendingHoldMode)
+			s = L"Press keys to hold on next reset: ";
+
+		if (mPendingHeldButtons & 1)
+			s += L"Start+";
+
+		if (mPendingHeldButtons & 2)
+			s += L"Select+";
+
+		if (mPendingHeldButtons & 4)
+			s += L"Option+";
+
+		if (mPendingHeldKey >= 0) {
+			const wchar_t *label = ATUIGetNameForKeyCode((uint8)mPendingHeldKey);
+			
+			if (label)
+				s += label;
+			else
+				s.append_sprintf(L"[$%02X]", mPendingHeldKey);
+		}
+
+		if (!s.empty() && s.back() == L'+')
+			s.pop_back();
+
+		mpPendingHeldKeyLabel->SetText(s.c_str());
+
+		mpPendingHeldKeyLabel->AutoSize();
+		mpPendingHeldKeyLabel->SetVisible(true);
+
+		RelayoutPendingKeyLabels();
+	} else {
+		mpPendingHeldKeyLabel->SetVisible(false);
+	}
+}
+
+void ATUIRenderer::RelayoutPendingKeyLabels() {
+	const int h = mPrevLayoutHeight;
+	const int ystats3 = h - mSysFontDigitHeight - ((mSysFontDigitHeight * 5) / 4) * 2;
+	int x = mPrevLayoutWidth;
+
+	if (mpPendingHeldKeyLabel->IsVisible()) {
+		x -= mpPendingHeldKeyLabel->GetArea().width();
+		mpPendingHeldKeyLabel->SetPosition(vdpoint32(x, ystats3));
+	}
 }
 
 void ATUIRenderer::UpdateHostDeviceLabel() {
@@ -1428,4 +1566,98 @@ void ATUIRenderer::UpdateHoverTipPos() {
 
 		mpHoverTip->SetPosition(vdpoint32(x, y));
 	}
+}
+
+void ATUIRenderer::RemakeLEDFont() {
+	if (mpLEDFont) {
+		if (mLEDFontCellWidth == mSysFontDigitWidth && mLEDFontCellAscent == mSysFontDigitAscent)
+			return;
+	}
+
+	class RefCountedBitmap : public vdrefcounted<VDPixmapBuffer, IVDRefCount> {};
+	vdrefptr<RefCountedBitmap> p(new RefCountedBitmap);
+
+	mLEDFontCellWidth = mSysFontDigitWidth;
+	mLEDFontCellAscent = mSysFontDigitAscent;
+
+	wchar_t chars[128] = {};
+	for(uint32 i=0; i<128; ++i)
+		chars[i] = (wchar_t)(i + 0x80);
+
+	int w = mLEDFontCellWidth;
+	int h = mLEDFontCellAscent;
+	int pad = 8;
+	int tw = w * 8 + 16;
+	int th = h * 8 + 16;
+
+	while(tw < 128 && th < 128) {
+		tw += tw;
+		th += th;
+		pad += pad;
+	}
+
+	VDPixmapBuffer tempBuf(tw, th, nsVDPixmap::kPixFormat_XRGB8888);
+
+	p->init(w + 2, (h + 2) * 128, nsVDPixmap::kPixFormat_XRGB8888);
+
+	VDPixmap pxDstCell = *p;
+	pxDstCell.w = w + 2;
+	pxDstCell.h = h + 2;
+
+	VDDisplayRendererSoft rs;
+	rs.Init();
+	rs.Begin(tempBuf);
+	
+	const int stemWidth = std::min<int>(tw, th) / 10;
+	const int endOffset = tw / 16;
+	const int gridX1 = pad + tw / 6;
+	const int gridX2 = pad + tw - tw / 6;
+	const int gridY1 = pad + th / 6;
+	const int gridY2 = pad + th / 2;
+	const int gridY3 = pad + th - th / 6;
+	const int descent = (th - (gridY3 + stemWidth)) / pad;
+
+	const vdrect32 segmentRects[7]={
+		vdrect32(gridX1 + endOffset, gridY1 - stemWidth, gridX2 - endOffset, gridY1 + stemWidth),	// A (top)
+		vdrect32(gridX2 - stemWidth, gridY1 + endOffset, gridX2 + stemWidth, gridY2 - endOffset),	// B (top right)
+		vdrect32(gridX2 - stemWidth, gridY2 + endOffset, gridX2 + stemWidth, gridY3 - endOffset),	// C (bottom right)
+		vdrect32(gridX1 + endOffset, gridY3 - stemWidth, gridX2 - endOffset, gridY3 + stemWidth),	// D (bottom)
+		vdrect32(gridX1 - stemWidth, gridY2 + endOffset, gridX1 + stemWidth, gridY3 - endOffset),	// E (bottom left)
+		vdrect32(gridX1 - stemWidth, gridY1 + endOffset, gridX1 + stemWidth, gridY2 - endOffset),	// F (top left)
+		vdrect32(gridX1 + endOffset, gridY2 - stemWidth, gridX2 - endOffset, gridY2 + stemWidth),	// G (center)
+	};
+
+	for(uint32 i=0; i<128; ++i) {
+		rs.SetColorRGB(0);
+		rs.FillRect(0, 0, tw, th);
+
+		rs.SetColorRGB(0xFFFFFF);
+		for(uint32 bit=0; bit<7; ++bit) {
+			if (i & (1 << bit)) {
+				const auto& r = segmentRects[bit];
+				rs.FillRect(r.left, r.top, r.width(), r.height());
+			}
+		}
+
+		pxDstCell.data = (char *)p->data + (p->pitch * (h + 2)) * i;
+		VDPixmapResample(pxDstCell, tempBuf, IVDPixmapResampler::kFilterLinear);
+	}
+
+	vdblock<VDDisplayBitmapFontGlyphInfo> glyphInfos(128);
+	int cellPad = std::max<int>(1, mLEDFontCellWidth / 10 + 1);
+	for(uint32 i=0; i<128; ++i) {
+		auto& gi = glyphInfos[i];
+		gi.mAdvance = mLEDFontCellWidth + (cellPad + 1) / 2;
+		gi.mCellX = -1 + cellPad / 2;
+		gi.mCellY = -(mLEDFontCellAscent + 1) + descent;
+		gi.mWidth = mLEDFontCellWidth + 2;
+		gi.mHeight = mLEDFontCellAscent + 2;
+		gi.mBitmapX = 0;
+		gi.mBitmapY = (mLEDFontCellAscent + 2) * i;
+	}
+
+	VDDisplayFontMetrics metrics {};
+	metrics.mAscent = mLEDFontCellAscent - descent;
+	metrics.mDescent = descent;
+	VDCreateDisplayBitmapFont(metrics, 128, chars, glyphInfos.data(), *p, 0, p, ~mpLEDFont);
 }

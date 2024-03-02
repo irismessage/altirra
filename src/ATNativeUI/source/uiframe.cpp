@@ -400,7 +400,7 @@ ATDragHandleWindow::~ATDragHandleWindow() {
 }
 
 VDGUIHandle ATDragHandleWindow::Create(int x, int y, int cx, int cy, VDGUIHandle parent, int id) {
-	HWND hwnd = CreateWindowEx(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE, (LPCTSTR)sWndClass, _T(""), WS_POPUP, x, y, cx, cy, (HWND)parent, (HMENU)(INT_PTR)id, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
+	HWND hwnd = CreateWindowEx(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE, (LPCTSTR)(uintptr_t)sWndClass, _T(""), WS_POPUP, x, y, cx, cy, (HWND)parent, (HMENU)(INT_PTR)id, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
 
 	if (hwnd)
 		ShowWindow(hwnd, SW_SHOWNOACTIVATE);
@@ -1012,12 +1012,20 @@ bool ATContainerDockingPane::Undock(ATFrameWindow *frame) {
 	if (itFrame == mContent.end())
 		return false;
 
+	VDASSERT(!mpDockParent || !mpDockParent->mChildren.empty());
+
 	// stash off the index of the tab (if we have tabs)
 	int pos = (int)(itFrame - mContent.begin());
 
 	// remove the frame
 	frame->SetPane(NULL);
 	mContent.erase(itFrame);
+
+	if (mVisibleFrameIndex > pos)
+		--mVisibleFrameIndex;
+
+	if (mVisibleFrameIndex >= (int)mContent.size())
+		mVisibleFrameIndex = mContent.empty() ? -1 : 0;
 
 	// check if we have a tab control
 	if (mhwndTabControl) {
@@ -1037,8 +1045,6 @@ bool ATContainerDockingPane::Undock(ATFrameWindow *frame) {
 						SetWindowPos(hwndOther, NULL, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 				}
 
-				mVisibleFrameIndex = 0;
-
 				// do a relayout
 				if (mpParent->IsLayoutSuspended())
 					InvalidateLayout();
@@ -1051,12 +1057,6 @@ bool ATContainerDockingPane::Undock(ATFrameWindow *frame) {
 		} else {
 			// otherwise, remove the tab
 			SendMessageW(mhwndTabControl, TCM_DELETEITEM, (WPARAM)pos, 0);
-
-			if (mVisibleFrameIndex > pos)
-				--mVisibleFrameIndex;
-
-			if (mVisibleFrameIndex >= (int)mContent.size())
-				mVisibleFrameIndex = 0;
 
 			SendMessageW(mhwndTabControl, TCM_SETCURSEL, (WPARAM)mVisibleFrameIndex, 0);
 			mContent[mVisibleFrameIndex]->SetVisible(true);
@@ -1400,12 +1400,13 @@ void ATContainerDockingPane::RemoveEmptyNode() {
 	if (!parent || !mContent.empty() || mbPinned)
 		return;
 
+	VDASSERT(!parent->mChildren.empty());
+
 	VDASSERT(!mhwndTabControl);
 
 	// Check if we have any children. If we do, promote the innermost one to center.
 	if (!mChildren.empty()) {
 		ATContainerDockingPane *child = mChildren.back();
-		mChildren.pop_back();
 
 		// Steal the content and the tab control.
 		mContent.swap(child->mContent);
@@ -1421,9 +1422,6 @@ void ATContainerDockingPane::RemoveEmptyNode() {
 			frame->SetPane(this);
 		}
 
-		child->DestroySplitter();
-		child->Release();
-
 		if (mpParent->IsLayoutSuspended())
 			InvalidateLayout();
 		else {
@@ -1432,6 +1430,7 @@ void ATContainerDockingPane::RemoveEmptyNode() {
 			resizer.Flush();
 		}
 
+		child->RemoveEmptyNode();
 		return;
 	}
 
@@ -1517,7 +1516,7 @@ VDGUIHandle ATContainerWindow::Create(int x, int y, int cx, int cy, VDGUIHandle 
 }
 
 VDGUIHandle ATContainerWindow::Create(ATOM wc, int x, int y, int cx, int cy, VDGUIHandle parent, bool visible) {
-	return (VDGUIHandle)CreateWindowEx(0, (LPCTSTR)wc, _T(""), WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|(visible ? WS_VISIBLE : 0), x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
+	return (VDGUIHandle)CreateWindowEx(0, (LPCTSTR)(uintptr_t)wc, _T(""), WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|(visible ? WS_VISIBLE : 0), x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
 }
 
 void ATContainerWindow::Destroy() {
@@ -1770,7 +1769,7 @@ void ATContainerWindow::UndockFrame(ATFrameWindow *frame, bool visible, bool des
 	UINT style = GetWindowLong(hwndFrame, GWL_STYLE);
 
 	if (mpActiveFrame == frame) {
-		mpActiveFrame = NULL;
+		mpActiveFrame = ChooseNewActiveFrame(frame);
 
 		if (!visible)
 			::SetFocus(mhwnd);
@@ -2043,25 +2042,8 @@ void ATContainerWindow::NotifyDockedFrameDestroyed(ATFrameWindow *frame) {
 	if (mpActiveFrame == frame) {
 		mpActiveFrame = NULL;
 
-		ATFrameWindow *frameToActivate = NULL;
+		auto *frameToActivate = ChooseNewActiveFrame(frame);
 
-		for(ATContainerDockingPane *pane = frame->GetPane(); pane; pane = pane->GetParentPane()) {
-			uint32 n = pane->GetContentCount();
-
-			for(uint32 i=0; i<n; ++i) {
-				ATFrameWindow *frame2 = pane->GetContent(i);
-
-				if (frame2 && frame2 != frame && frame2->IsVisible()) {
-					frameToActivate = frame2;
-					goto found_focus_successor;
-				}
-			}
-		}
-
-		if (!frameToActivate)
-			frameToActivate = mpDockingPane->GetAnyContent(true, frame);
-
-found_focus_successor:
 		if (frameToActivate) {
 			HWND hwndNewFocus = frameToActivate->GetHandleW32();
 
@@ -2220,6 +2202,23 @@ void ATContainerWindow::UpdateMonitorDpi() {
 }
 
 void ATContainerWindow::UpdateMonitorDpi(unsigned dpiY) {
+}
+
+ATFrameWindow *ATContainerWindow::ChooseNewActiveFrame(ATFrameWindow *prevFrame) {
+	ATFrameWindow *frameToActivate = nullptr;
+
+	for(ATContainerDockingPane *pane = prevFrame->GetPane(); pane; pane = pane->GetParentPane()) {
+		uint32 n = pane->GetContentCount();
+
+		for(uint32 i=0; i<n; ++i) {
+			ATFrameWindow *frame = pane->GetContent(i);
+
+			if (frame && frame != prevFrame && frame->IsVisible())
+				return frame;
+		}
+	}
+
+	return mpDockingPane->GetAnyContent(true, prevFrame);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2425,11 +2424,11 @@ void ATFrameWindow::Relayout(int w, int h) {
 }
 
 VDGUIHandle ATFrameWindow::Create(const wchar_t *title, int x, int y, int cx, int cy, VDGUIHandle parent) {
-	return (VDGUIHandle)CreateWindowExW(WS_EX_TOOLWINDOW, (LPCWSTR)sWndClass, title, WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
+	return (VDGUIHandle)CreateWindowExW(WS_EX_TOOLWINDOW, (LPCWSTR)(uintptr_t)sWndClass, title, WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
 }
 
 VDGUIHandle ATFrameWindow::CreateChild(const wchar_t *title, int x, int y, int cx, int cy, VDGUIHandle parent) {
-	return (VDGUIHandle)CreateWindowExW(WS_EX_TOOLWINDOW, (LPCWSTR)sWndClass, title, WS_CHILD|WS_CAPTION|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
+	return (VDGUIHandle)CreateWindowExW(WS_EX_TOOLWINDOW, (LPCWSTR)(uintptr_t)sWndClass, title, WS_CHILD|WS_CAPTION|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
 }
 
 LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -2979,8 +2978,6 @@ namespace {
 
 	typedef vdhashmap<uint32, ATUIPane *> ActivePanes;
 	ActivePanes g_activePanes;
-
-	HFONT	g_monoFont;
 }
 
 void ATRegisterUIPaneType(uint32 id, ATPaneCreator creator) {
@@ -3170,8 +3167,8 @@ uint32 ATUIGetActivePaneId() {
 ///////////////////////////////////////////////////////////////////////////
 
 ATUIPane::ATUIPane(uint32 paneId, const wchar_t *name)
-	: mPaneId(paneId)
-	, mpName(name)
+	: mpName(name)
+	, mPaneId(paneId)
 	, mDefaultWindowStyles(WS_CHILD|WS_CLIPCHILDREN)
 	, mPreferredDockCode(-1)
 {
@@ -3188,7 +3185,7 @@ void *ATUIPane::AsInterface(uint32 iid) {
 }
 
 bool ATUIPane::Create(ATFrameWindow *frame) {
-	HWND hwnd = CreateWindow((LPCTSTR)sWndClass, _T(""), mDefaultWindowStyles & ~WS_VISIBLE, 0, 0, 0, 0, frame->GetHandleW32(), (HMENU)100, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
+	HWND hwnd = CreateWindow((LPCTSTR)(uintptr_t)sWndClass, _T(""), mDefaultWindowStyles & ~WS_VISIBLE, 0, 0, 0, 0, frame->GetHandleW32(), (HMENU)100, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
 
 	if (!hwnd)
 		return false;

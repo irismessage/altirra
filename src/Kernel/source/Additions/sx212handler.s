@@ -1192,10 +1192,10 @@ serialVecSave	.ds		4
 serialVecSave2	.ds		4
 serialErrors	.ds		1
 serialStatus	.ds		1
-serialHiSpeed	.ds		1
 
 ;these are cleared together
 serialClearBegin = *
+serialHiSpeed	.ds		1
 serialXlatMode	.ds		1
 serialXlatChar	.ds		1
 serialConcurrent	.ds	1

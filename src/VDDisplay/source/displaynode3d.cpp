@@ -1113,6 +1113,7 @@ void VDDisplayImageNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx) 
 
 	ctx.SetVertexFormat(mpVF);
 	ctx.SetVertexProgram(mpVP);
+	ctx.SetVertexProgramConstCount(0);
 	ctx.SetFragmentProgram(mpFP);
 
 	ctx.SetIndexStream(NULL);
@@ -1227,6 +1228,7 @@ void VDDisplayBlitNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx) {
 			1.0f / (float)mMapping.mTexWidth,
 		};
 
+		ctx.SetFragmentProgramConstCount(1);
 		ctx.SetFragmentProgramConstF(0, 1, params);
 		ctx.SetFragmentProgram(mpFP);
 	} else

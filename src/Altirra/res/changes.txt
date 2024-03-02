@@ -1,5 +1,101 @@
 Altirra Change Log
-Version 2.81:
+Version 2.90:
+   [changes]
+   * Display: Direct3D 9 bicubic filtered display support has been removed for pixel shader 1.x video cards.
+   * Display: Default color presets have been updated.
+   * Firmware: The HLE kernel has been removed, as it was out of date and did not have enough advantages. The 800 LLE kernel is now loaded for any profiles that used the HLE kernel.
+   * HDevice: The escape character for reserved device name conflicts is now !. $ is still accepted on read.
+
+   [features added]
+   * Cartridge: Added /nocartchecksum command line switch for loading .CAR files without an initialized checksum field for development.
+   * Cassette: Motor restarts and individual sample timings are now randomized when the randomize option is enabled.
+   * Cassette: Automatic rewind on cold reset can now be disabled.
+   * CPU: 65C816 CPU speed can now be changed on the fly without a restart.
+   * Debugger: History window now shows preview of next instruction.
+   * Debugger: Added directive and debugger script support for cartridge images.
+   * Debugger: Added 'ir' command to read from input ports that have side effects on read.
+   * Debugger: Added .tracesio command.
+   * Debugger: Added .crc command.
+   * Debugger: db (dump bytes) now takes a -w (width) argument.
+   * Debugger: st (static trace) now has a -m option to add a symbol for the starting address.
+   * Debugger: Added .logopen and .logclose commands.
+   * Devices: Improved usability of Devices dialog.
+   * Devices: BlackBox and MIO now support multiple devices on the SCSI bus.
+   * Disk: Disk drives dialog now supports drag-and-drop.
+   * Disk: Disk drives dialog is now resizable (horizontally).
+   * Disk: Initial Happy 810 support (memory read/write commands only).
+   * Disk: Added support for full disk drive emulation of 810, Happy 810, 810 Archiver, 1050, 1050 Duplicator, US Doubler, Speedy 1050, Happy 1050, Super Archiver, TOMS 1050, Tiger 1050, 1050 Turbo, Indus GT, XF551, ATR8000, and PERCOM RFD-40S1 drives.
+   * Disk: Virtual DOS 2 disk image handler now supports preallocation of blocks to work with track buffering.
+   * Disk Explorer: Compressed disk images can now be loaded from the Disk Explorer.
+   * Disk Explorer: Read/write access is now allowed to SDFS filesystems that have less serious VTOC/bitmap errors (inaccessible sectors only).
+   * Display: Added borderless windowed / windowed fullscreen mode (enabled in Options).
+   * Display: Added 16-bit surface option for low-end graphics devices.
+   * Display: Sharp bilinear filter mode avoids sharpening horizontally if high artifacting is enabled.
+   * Display: Reduced luma bleed-through in NTSC artifacting algorithm and added support for modifying the color conversion matrix.
+   * Firmware: Added option to export the internal ROM set.
+   * GTIA: Added CTIA emulation mode.
+   * HLE: Fast boot now accelerates OS startup when Ultimate1MB is active.
+   * IDE: KMK/JZ IDE now has a setting to change the PBI device ID.
+   * Input: "Hold keys" now allows console button and key combinations to be held down on the next Reset that might be difficult or impossible to hold down normally.
+   * Input: Added a keyboard option to allow host keys to be shared between by the keyboard and input maps.
+   * POKEY: Improved SIO transfer logging.
+   * Profiler: Tabular data can now be copied to the clipboard via right-click option.
+   * Simulator: Added power-on delay setting to simulate turning on the computer later than peripherals.
+   * Simulator: Added some optional confirmations before automatic resets.
+   * UI: Copy/Save Frame now works for XEP-80 display.
+   * UI: Added variant of Copy/Save Frame which uses the true pixel aspect ratio with filtering.
+   * VBXE: Implemented config latch.
+
+   [bugs fixed]
+   * Additions: Colormap now restores palette properly on exit.
+   * Additions: Fixed an uninitialized variable in SX212.COM that could cause speed-switching issues on init.
+   * AltirraOS: Modified values of PALNTS for better compatibility with XL/XE OS.
+   * AltirraOS: Fix short block flag not being handled by direct SIO calls for the cassette device.
+   * AltirraOS: Suppress type 3 poll to disk boot only (fixes Pole Position and Missile Command cartridge audio).
+   * ANTIC: Fixed bogus abnormal playfield DMA condition on playfield clock speed switch with blank line in between.
+   * ATBasic: Fixed READ line not getting reset after NEW.
+   * ATBasic: PMBASE is no longer altered if PMGRAPHICS has not been executed.
+   * Cassette: Improved stability of modified bit decoding algorithm.
+   * Cassette: Fixed sporadic crash when re-recording in the middle of an existing tape.
+   * Cassette: Fixed "randomize" setting not saving properly.
+   * Cassette: Acceleration patch now updates the POKEY SERIN register after reading a block.
+   * CPU: Fixed broken STZ zp,X instruction in 65C02 mode only.
+   * Debugger: Fixed breakpoints not being disabled on detach if simulator was running.
+   * Debugger: Blocked rich text paste into command line.
+   * Debugger: Disk write from .diskwritesec was not always auto-flushed to disk.
+   * Debugger: Static trace (st) and dump disassembly (.dumpdsm) commands now work with coprocessor targets.
+   * Debugger: Watches now work with coprocessor targets.
+   * Debugger: Heat-map based uninitialized effective address trap is now filtered properly.
+   * Debugger: Fixed crash when examining I/O bus memory in the debugger in 800 mode.
+   * Devices: Fixed SX212 auto-speed switching issues in the emulated R: handler.
+   * Devices: SX212 now powers up in high speed.
+   * Disk: Improved timing of SIO burst transfers for more reliable operation at very high speeds.
+   * Disk: Added workaround to SDFS formatter and virtual disk handler for unusual disk format check in IDE+2 executable loader.
+   * Disk: Adjusted high speed C/E-to-data delay for 1050 Turbo emulation mode.
+   * Disk: Adjusted serial timing for Indus GT.
+   * Disk: Fixed double density and quad density .XFD disk images.
+   * Disk: Fixed disk position not being deterministic on a cold reset.
+   * Disk Explorer: Fixed failures when trying to drag a zero byte file from Explorer into a disk image.
+   * Display: Fixed saving of non-fullscreen window positioning after exiting in fullscreen mode.
+   * Display: Enhanced CIO display now sets cursor position properly on Delete Line.
+   * Display: XEP80 display no longer renders with point sampling when filter mode is set to bicubic.
+   * Display: Added workaround for display issues on Intel graphics in Direct3D 11 mode.
+   * Display: Fixed display not updating scaling properly after toggling VBXE.
+   * HDevice: Fixed crash when doing wildcard rename with filename that matches a reserved device name.
+   * HLE: Removed DSKINV acceleration hook to work around nonstandard DSCTLN handling in QMEG OS.
+   * HLE: Fixed incorrect handling of an accelerated SIO command interrupting a non-accelerated SIO command.
+   * HLE: Fixed AFP allowing exponent zero with FP acceleration enabled.
+   * PCLink: Fixed characters after ? in a wildcard pattern being ignored.
+   * POKEY: High-pass flip flop update was off by one cycle.
+   * POKEY: Three-cycle offset between low and high linked timers is now properly maintained in passive timer mode.
+   * Serial: Added delay between ATA/ATD and CONNECT to deal with programs that expect to be able to close and reopen R: in between.
+   * Simulator: Corrected machine clock rate for SECAM machines.
+   * UI: Main window now autoselects a new active pane when the current active pane is undocked.
+   * UI: Audio monitor now shows correct frequencies for PAL.
+   * VBXE: The xcolor bit now also gates bit 0 of colors in attribute map cells.
+   * XEP80: Tab stops are now set properly on soft reset.
+
+Version 2.81 [October 16, 2016]:
    [bug fixes]
    * Cartridge: Fixed saving SIDE 1 cartridge images.
    * Cartridge: Fixed crash with XEGS cartridge types.

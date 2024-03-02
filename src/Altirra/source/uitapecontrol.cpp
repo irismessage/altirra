@@ -21,13 +21,13 @@
 #include <vd2/system/w32assist.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Riza/bitmap.h>
+#include <at/atio/cassetteimage.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/messageloop.h>
 #include <at/atnativeui/uiframe.h>
 #include <at/atnativeui/uinativewindow.h>
 #include "resource.h"
 #include "cassette.h"
-#include "cassetteimage.h"
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -437,12 +437,12 @@ ATTapeControlDialog::ATTapeControlDialog(ATCassetteEmulator& tape)
 	, mFnTapeChanged([this]() { OnTapeChanged(); })
 	, mFnTapePeaksUpdated([this]() { OnTapePeaksUpdated(); })
 {
-	mButtonStop.SetOnClicked([this](VDUIProxyButtonControl *) { Stop(); });
-	mButtonPause.SetOnClicked([this](VDUIProxyButtonControl *) { TogglePause(); });
-	mButtonPlay.SetOnClicked([this](VDUIProxyButtonControl *) { Play(); });
-	mButtonRecord.SetOnClicked([this](VDUIProxyButtonControl *) { Record(); });
-	mButtonSeekStart.SetOnClicked([this](VDUIProxyButtonControl *) { SeekStart(); });
-	mButtonSeekEnd.SetOnClicked([this](VDUIProxyButtonControl *) { SeekEnd(); });
+	mButtonStop.SetOnClicked([this] { Stop(); });
+	mButtonPause.SetOnClicked([this] { TogglePause(); });
+	mButtonPlay.SetOnClicked([this] { Play(); });
+	mButtonRecord.SetOnClicked([this] { Record(); });
+	mButtonSeekStart.SetOnClicked([this] { SeekStart(); });
+	mButtonSeekEnd.SetOnClicked([this] { SeekEnd(); });
 }
 
 void ATTapeControlDialog::Open(VDGUIHandle parent, ATCassetteEmulator& tape) {
@@ -451,10 +451,11 @@ void ATTapeControlDialog::Open(VDGUIHandle parent, ATCassetteEmulator& tape) {
 	else {
 		ATTapeControlDialog *dlg = new ATTapeControlDialog(tape);
 
-		if (!dlg->Create(parent))
+		if (dlg->Create(parent)) {
+			ATUIRegisterModelessDialog(dlg->GetWindowHandle());
+		} else
 			delete dlg;
 
-		ATUIRegisterModelessDialog(dlg->GetWindowHandle());
 	}
 }
 

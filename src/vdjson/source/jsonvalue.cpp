@@ -155,6 +155,65 @@ const VDJSONValueRef VDJSONValueRef::operator[](const wchar_t *s) const {
 	return operator[](mpDoc->mNameTable.GetToken(s));
 }
 
+void VDJSONValueRef::RequireObject() const {
+	if (!IsObject())
+		throw VDParseException("A required object was not found.");
+}
+
+void VDJSONValueRef::RequireInt() const {
+	if (!IsInt())
+		throw VDParseException("A required integer was not found.");
+}
+
+void VDJSONValueRef::RequireString() const {
+	if (!IsString())
+		throw VDParseException("A required string was not found.");
+}
+
+const VDJSONArrayEnum VDJSONValueRef::GetRequiredArray(const char *key) const {
+	const auto& node = operator[](key);
+	if (!node.IsValid())
+		throw VDParseException("A required array element was not found: %s", key);
+
+	if (!node.IsArray())
+		throw VDParseException("An element was not of array type: %s", key);
+
+	return node.AsArray();
+}
+
+bool VDJSONValueRef::GetRequiredBool(const char *key) const {
+	const auto& node = operator[](key);
+	if (!node.IsValid())
+		throw VDParseException("A required boolean element was not found: %s", key);
+
+	if (!node.IsBool())
+		throw VDParseException("An element was not of boolean type: %s", key);
+
+	return node.AsBool();
+}
+
+sint64 VDJSONValueRef::GetRequiredInt64(const char *key) const {
+	const auto& node = operator[](key);
+	if (!node.IsValid())
+		throw VDParseException("A required boolean element was not found: %s", key);
+
+	if (!node.IsInt())
+		throw VDParseException("An element was not of integer type: %s", key);
+
+	return node.AsInt64();
+}
+
+const wchar_t *VDJSONValueRef::GetRequiredString(const char *key) const {
+	const auto& node = operator[](key);
+	if (!node.IsValid())
+		throw VDParseException("A required string element was not found: %s", key);
+
+	if (!node.IsString())
+		throw VDParseException("An element was not of string type: %s", key);
+
+	return node.AsString();
+}
+
 double VDJSONValueRef::ConvertToReal() const {
 	if (mpRef->mType == VDJSONValue::kTypeInt)
 		return (double)mpRef->mIntValue;

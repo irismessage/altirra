@@ -820,7 +820,8 @@ void VDDisplayRenderer3D::ApplyBaselineState() {
 		1.0f
 	};
 
-	mpContext->SetVertexProgramConstF(1, 1, trans2d);
+	mpContext->SetVertexProgramConstCount(2);
+	mpContext->SetVertexProgramConstF(0, 1, trans2d);
 	mpContext->SetIndexStream(mpIB);
 	mpContext->SetBlendState(mpBS);
 	mpContext->SetSamplerStates(0, 1, &mpSS);

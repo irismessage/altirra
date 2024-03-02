@@ -75,6 +75,18 @@ void ATGTIARenderer::SetVBlank(bool vblank) {
 	mbVBlank = vblank;
 }
 
+void ATGTIARenderer::SetCTIAMode() {
+	// scrub any register changes
+	for(int i=mRCIndex; i<mRCCount; ++i) {
+		if (mRegisterChanges[i].mReg == 0x1B)
+			mRegisterChanges[i].mValue &= 0x3F;
+	}
+}
+
+void ATGTIARenderer::ColdReset() {
+	memset(mColorTable, 0, sizeof mColorTable);
+}
+
 void ATGTIARenderer::BeginScanline(uint8 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires) {
 	mpDst = dst;
 	mbHiresMode = hires;

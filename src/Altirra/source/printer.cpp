@@ -24,7 +24,6 @@
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceprinter.h>
 #include <at/atcore/devicesio.h>
-#include "printer.h"
 #include "kerneldb.h"
 #include "oshelper.h"
 #include "cio.h"
@@ -38,7 +37,7 @@ public:
 	ATDevicePrinter();
 	~ATDevicePrinter();
 
-	void *AsInterface(uint32 id);
+	void *AsInterface(uint32 id) override;
 
 	void SetHookPageByte(uint8 page) {
 		mHookPageByte = page;

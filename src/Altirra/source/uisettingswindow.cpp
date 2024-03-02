@@ -22,8 +22,8 @@
 #include <vd2/VDDisplay/textrenderer.h>
 #include <at/atui/uicontainer.h>
 #include <at/atui/uimanager.h>
-#include "uilabel.h"
-#include "uibutton.h"
+#include <at/atuicontrols/uilabel.h>
+#include <at/atuicontrols/uibutton.h>
 #include "uisettingswindow.h"
 
 ///////////////////////////////////////////////////////////////////////////
@@ -348,10 +348,10 @@ public:
 	void OnActionRepeat(uint32 id) override;
 
 private:
-	void OnPrevDown(ATUIButton *);
-	void OnPrevUp(ATUIButton *);
-	void OnNextDown(ATUIButton *);
-	void OnNextUp(ATUIButton *);
+	void OnPrevDown();
+	void OnPrevUp();
+	void OnNextDown();
+	void OnNextUp();
 	void UpdateLabels();
 
 	vdrefptr<IVDDisplayFont> mpFont;
@@ -492,8 +492,8 @@ void ATUISettingWindow::OnCreate() {
 		mpButtonPrev->SetFrameEnabled(false);
 		mpButtonPrev->SetTextColor(0xFFFFFF);
 		mpButtonPrev->SetStockImage(kATUIStockImageIdx_ButtonLeft);
-		mpButtonPrev->OnPressedEvent() = ATBINDCALLBACK(this, &ATUISettingWindow::OnPrevDown);
-		mpButtonPrev->OnActivatedEvent() = ATBINDCALLBACK(this, &ATUISettingWindow::OnPrevUp);
+		mpButtonPrev->OnPressedEvent() = [this] { OnPrevDown(); };
+		mpButtonPrev->OnActivatedEvent() = [this] { OnPrevUp(); };
 		AddChild(mpButtonPrev);
 	}
 
@@ -517,8 +517,8 @@ void ATUISettingWindow::OnCreate() {
 		mpButtonNext->SetTextColor(0xFFFFFF);
 		mpButtonNext->SetFrameEnabled(false);
 		mpButtonNext->SetStockImage(kATUIStockImageIdx_ButtonRight);
-		mpButtonNext->OnPressedEvent() = ATBINDCALLBACK(this, &ATUISettingWindow::OnNextDown);
-		mpButtonNext->OnActivatedEvent() = ATBINDCALLBACK(this, &ATUISettingWindow::OnNextUp);
+		mpButtonNext->OnPressedEvent() = [this] { OnNextDown(); };
+		mpButtonNext->OnActivatedEvent() = [this] { OnNextUp(); };
 		AddChild(mpButtonNext);
 	}
 
@@ -636,7 +636,7 @@ void ATUISettingWindow::OnActionStart(uint32 id) {
 			} else if (mpBoolSetting)
 				SetSelectedIndex(mSelectedIndex ^ 1);
 			else if (mpSubScreenSetting || mpActionSetting)
-				OnNextUp(nullptr);
+				OnNextUp();
 			break;
 
 		case kActionTurnOn:
@@ -669,7 +669,7 @@ void ATUISettingWindow::OnActionRepeat(uint32 id) {
 	return ATUIContainer::OnActionRepeat(id);
 }
 
-void ATUISettingWindow::OnPrevDown(ATUIButton *) {
+void ATUISettingWindow::OnPrevDown() {
 	if (mpIntSetting) {
 		ATUITriggerBinding binding = {};
 		binding.mVk = kATUIVK_UILeft;
@@ -678,7 +678,7 @@ void ATUISettingWindow::OnPrevDown(ATUIButton *) {
 	}
 }
 
-void ATUISettingWindow::OnPrevUp(ATUIButton *) {
+void ATUISettingWindow::OnPrevUp() {
 	if (mpBoolSetting)
 		SetSelectedIndex(mSelectedIndex ^ 1);
 	else if (mpIntSetting)
@@ -687,7 +687,7 @@ void ATUISettingWindow::OnPrevUp(ATUIButton *) {
 		SetSelectedIndex(mSelectedIndex - 1);
 }
 
-void ATUISettingWindow::OnNextDown(ATUIButton *) {
+void ATUISettingWindow::OnNextDown() {
 	if (mpIntSetting) {
 		ATUITriggerBinding binding = {};
 		binding.mVk = kATUIVK_UIRight;
@@ -696,7 +696,7 @@ void ATUISettingWindow::OnNextDown(ATUIButton *) {
 	}
 }
 
-void ATUISettingWindow::OnNextUp(ATUIButton *) {
+void ATUISettingWindow::OnNextUp() {
 	if (mpActionSetting) {
 		if (mpOnAction)
 			mpOnAction(mpActionSetting);

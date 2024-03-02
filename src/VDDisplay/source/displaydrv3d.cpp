@@ -114,7 +114,7 @@ void VDDisplayDriver3D::SetFilterMode(FilterMode mode) {
 	mbCompositionTreeDirty = true;
 }
 
-void VDDisplayDriver3D::SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh) {
+void VDDisplayDriver3D::SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh, bool use16bit) {
 	if (mbFullScreen != fullscreen) {
 		mbFullScreen = fullscreen;
 		mFullScreenWidth = w;

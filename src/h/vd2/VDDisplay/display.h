@@ -37,16 +37,6 @@ public:
 
 class VDINTERFACE IVDVideoDisplay {
 public:
-	enum {
-		kFormatPal8			= nsVDPixmap::kPixFormat_Pal8,
-		kFormatRGB1555		= nsVDPixmap::kPixFormat_XRGB1555,
-		kFormatRGB565		= nsVDPixmap::kPixFormat_RGB565,
-		kFormatRGB888		= nsVDPixmap::kPixFormat_RGB888,
-		kFormatRGB8888		= nsVDPixmap::kPixFormat_XRGB8888,
-		kFormatYUV422_YUYV	= nsVDPixmap::kPixFormat_YUV422_YUYV,
-		kFormatYUV422_UYVY	= nsVDPixmap::kPixFormat_YUV422_UYVY
-	};
-
 	enum FieldMode {
 		kEvenFieldOnly		= 0x0001,
 		kOddFieldOnly		= 0x0002,
@@ -82,6 +72,7 @@ public:
 
 	virtual void SetReturnFocus(bool enable) = 0;
 	virtual void SetTouchEnabled(bool enable) = 0;
+	virtual void SetUse16Bit(bool enable) = 0;
 
 	virtual void SetFullScreen(bool fs, uint32 width = 0, uint32 height = 0, uint32 refresh = 0) = 0;
 	virtual void SetDestRect(const vdrect32 *r, uint32 backgroundColor) = 0;
@@ -109,6 +100,8 @@ public:
 	virtual void SetFilterMode(FilterMode) = 0;
 	virtual float GetSyncDelta() const = 0;
 
+	virtual vdrect32 GetMonitorRect() = 0;
+
 	enum ProfileEvent {
 		kProfileEvent_BeginTick,
 		kProfileEvent_EndTick,
@@ -121,7 +114,6 @@ void VDVideoDisplaySetFeatures(bool enableDirectX, bool enableOverlays, bool ena
 void VDVideoDisplaySetD3D9ExEnabled(bool enable);
 void VDVideoDisplaySetDDrawEnabled(bool enable);
 void VDVideoDisplaySet3DEnabled(bool enable);
-void VDVideoDisplaySetD3DFXFileName(const wchar_t *path);
 void VDVideoDisplaySetDebugInfoEnabled(bool enable);
 void VDVideoDisplaySetBackgroundFallbackEnabled(bool enable);
 void VDVideoDisplaySetSecondaryDXEnabled(bool enable);

@@ -8,11 +8,13 @@
   <PropertyGroup>
     <YASMDependsOn
       Condition="'$(ConfigurationType)' != 'Makefile'">_SelectedFiles;$(YASMDependsOn)</YASMDependsOn>
+    <YASMPath>yasm.exe</YASMPath>
   </PropertyGroup>
+  <Import Condition="Exists('$(MSBuildThisFileDirectory)..\localconfig\active\YASM.local.props')" Project="$(MSBuildThisFileDirectory)..\localconfig\active\YASM.local.props" />
   <ItemDefinitionGroup>
     <YASM>
-      <CommandLineTemplate Condition="'$(Platform)' == 'Win32'">yasm -X vc -g cv8 -f win32 -o "$(IntDir)%(Filename).obj" "%(FullPath)"</CommandLineTemplate>
-      <CommandLineTemplate Condition="'$(Platform)' == 'X64'">yasm -X vc -g cv8 -f win64 -o "$(IntDir)%(Filename).obj" "%(FullPath)"</CommandLineTemplate>
+      <CommandLineTemplate Condition="'$(Platform)' == 'Win32'">"$(YASMPath)" -X vc -g cv8 -f win32 -o "$(IntDir)%(Filename).obj" "%(FullPath)"</CommandLineTemplate>
+      <CommandLineTemplate Condition="'$(Platform)' == 'X64'">"$(YASMPath)" -X vc -g cv8 -f win64 -o "$(IntDir)%(Filename).obj" "%(FullPath)"</CommandLineTemplate>
       <Outputs>$(IntDir)%(Filename).obj</Outputs>
       <ExecutionDescription>Assembling: %(Filename)%(Extension)</ExecutionDescription>
     </YASM>

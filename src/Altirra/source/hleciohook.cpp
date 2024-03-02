@@ -37,13 +37,13 @@ public:
 	ATHLECIOHook();
 	~ATHLECIOHook();
 
-	void *AsInterface(uint32 id);
+	void *AsInterface(uint32 id) override;
 
 	void Init(ATCPUEmulator *cpu, ATSimulator *sim, ATMemoryManager *memman);
 	void Shutdown();
 
-	void WarmReset();
-	void ColdReset();
+	void WarmReset() override;
+	void ColdReset() override;
 
 	bool HasCIODevice(char c) const override;
 	bool GetBurstTransfersEnabled() const override;

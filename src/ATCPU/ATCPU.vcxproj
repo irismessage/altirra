@@ -27,8 +27,17 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="source\co6502.cpp" />
+    <ClCompile Include="source\co6502machine.cpp" />
     <ClCompile Include="source\co65802.cpp" />
+    <ClCompile Include="source\co6809.cpp" />
+    <ClCompile Include="source\co8048.cpp" />
+    <ClCompile Include="source\coz80.cpp" />
+    <ClCompile Include="source\decode6502.cpp" />
     <ClCompile Include="source\decode65816.cpp" />
+    <ClCompile Include="source\decode6809.cpp" />
+    <ClCompile Include="source\decodez80.cpp" />
+    <ClCompile Include="source\memorymap.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
@@ -40,15 +49,28 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\at\atcpu\breakpoints.h" />
+    <ClInclude Include="..\h\at\atcpu\co6502.h" />
     <ClInclude Include="..\h\at\atcpu\co65802.h" />
+    <ClInclude Include="..\h\at\atcpu\co6809.h" />
+    <ClInclude Include="..\h\at\atcpu\co8048.h" />
+    <ClInclude Include="..\h\at\atcpu\coz80.h" />
+    <ClInclude Include="..\h\at\atcpu\decode6502.h" />
     <ClInclude Include="..\h\at\atcpu\decode65816.h" />
+    <ClInclude Include="..\h\at\atcpu\decode6809.h" />
+    <ClInclude Include="..\h\at\atcpu\decodez80.h" />
     <ClInclude Include="..\h\at\atcpu\execstate.h" />
     <ClInclude Include="..\h\at\atcpu\history.h" />
+    <ClInclude Include="..\h\at\atcpu\memorymap.h" />
     <ClInclude Include="..\h\at\atcpu\states.h" />
+    <ClInclude Include="..\h\at\atcpu\states6502.h" />
+    <ClInclude Include="..\h\at\atcpu\states6809.h" />
+    <ClInclude Include="..\h\at\atcpu\statesz80.h" />
     <ClInclude Include="h\stdafx.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="h\co65802.inl" />
+    <None Include="h\co6809.inl" />
+    <None Include="h\coz80.inl" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{27BE11EC-E0BE-4E86-AC21-69EC426B48FC}</ProjectGuid>
@@ -163,6 +185,7 @@
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <MinimalRebuild>false</MinimalRebuild>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -176,6 +199,7 @@
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <MinimalRebuild>false</MinimalRebuild>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>

@@ -309,15 +309,6 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			*mpDstState++ = kStateXor;
 			break;
 
-		case 0x42:	// HLE (emulator escape insn)
-			*mpDstState++ = kStateReadAddrL;
-			*mpDstState++ = kStateReadAddrH;
-			*mpDstState++ = kStateInvokeHLE;
-			*mpDstState++ = kStateHLEDelay;
-			*mpDstState++ = kStateReadOpcode;
-			*mpDstState++ = kStateBreakOnUnsupportedOpcode;
-			break;
-
 		case 0x45:	// EOR zp
 			DecodeReadZp();
 			*mpDstState++ = kStateXor;

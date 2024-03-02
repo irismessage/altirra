@@ -28,6 +28,7 @@ enum ATDebugDisasmMode : uint8;
 
 void ATDisassembleCaptureRegisterContext(ATCPUHistoryEntry& hent);
 void ATDisassembleCaptureRegisterContext(IATDebugTarget *target, ATCPUHistoryEntry& hent);
+void ATDisassembleCaptureRegisterContext(ATCPUHistoryEntry& hent, const ATCPUExecState& execState, ATDebugDisasmMode execMode);
 void ATDisassembleCaptureInsnContext(uint16 addr, uint8 bank, ATCPUHistoryEntry& hent);
 void ATDisassembleCaptureInsnContext(IATDebugTarget *target, uint16 addr, uint8 bank, ATCPUHistoryEntry& hent);
 uint16 ATDisassembleInsn(uint16 addr, uint8 bank = 0);
@@ -48,12 +49,17 @@ uint16 ATDisassembleInsn(VDStringA& buf,
 	bool showLabelNamespaces = true,
 	bool showSymbols = true);
 
-void ATDisassembleRange(FILE *f, uint16 addr1, uint16 addr2);
-uint16 ATDisassembleGetFirstAnchor(uint16 addr, uint16 target, uint8 bank);
+uint16 ATDisassembleGetFirstAnchor(IATDebugTarget *target, uint16 addr, uint16 targetAddr, uint8 bank);
 
 int ATGetOpcodeLength(uint8 opcode);
 int ATGetOpcodeLength(uint8 opcode, uint8 p, bool emuMode);
 int ATGetOpcodeLength(uint8 opcode, uint8 p, bool emuMode, ATDebugDisasmMode disasmMode);
 bool ATIsValidOpcode(uint8 opcode);
+
+uint32 ATGetOpcodeLengthZ80(uint8 opcode);
+uint32 ATGetOpcodeLengthZ80ED(uint8 opcode);
+uint32 ATGetOpcodeLengthZ80CB(uint8 opcode);
+uint32 ATGetOpcodeLengthZ80DDFD(uint8 opcode);
+uint32 ATGetOpcodeLengthZ80DDFDCB(uint8 opcode);
 
 #endif

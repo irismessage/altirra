@@ -151,7 +151,7 @@ void ATDeviceDiskDrive::MountDisk(const wchar_t *path) {
 		} catch(const MyError&) {
 		}
 
-		mpDiskImage.reset();
+		mpDiskImage = nullptr;
 	}
 
 	mPath.clear();
@@ -159,7 +159,7 @@ void ATDeviceDiskDrive::MountDisk(const wchar_t *path) {
 	if (!path)
 		return;
 
-	mpDiskImage = ATLoadDiskImage(path);
+	ATLoadDiskImage(path, ~mpDiskImage);
 
 	mbReadOnly = mbReadOnlyRequested || !mpDiskImage->IsUpdatable();
 

@@ -119,7 +119,9 @@
 	Reset Window Layout			{View.ResetWindowLayout}
 	---
 	Copy Frame to Clipboard		{Edit.CopyFrame}
+	Copy Frame to Clipboard (True Aspect)		{Edit.CopyFrameTrueAspect}
 	Save Frame...				{Edit.SaveFrame}
+	Save Frame (True Aspect)...	{Edit.SaveFrameTrueAspect}
 	Copy Text					{Edit.CopyText}
 	Paste Text					{Edit.PasteText}
 
@@ -132,6 +134,13 @@
 	Warm Reset					{System.WarmReset}
 	Cold Reset					{System.ColdReset}
 	Pause						{System.TogglePause}
+	Hold Keys For Reset			{Console.HoldKeys}
+	Power-On Delay
+		&Auto					{System.PowerOnDelayAuto}
+		&None					{System.PowerOnDelayNone}
+		&1 Second				{System.PowerOnDelay1s}
+		&2 Seconds				{System.PowerOnDelay2s}
+		&3 Seconds				{System.PowerOnDelay3s}
 	---
 	&Warp Speed					{System.ToggleWarpSpeed}
 	Pause When Inactive			{System.TogglePauseWhenInactive}
@@ -233,6 +242,7 @@
 		&NTSC-50					{Video.StandardNTSC50}
 		&PAL-60						{Video.StandardPAL60}
 		---
+		CTIA mode					{Video.ToggleCTIA}
 		&Frame Blending				{Video.ToggleFrameBlending}
 		&Interlace					{Video.ToggleInterlace}
 		&Scanlines					{Video.ToggleScanlines}
@@ -254,14 +264,13 @@
 		Adjust Colors...				{Video.AdjustColorsDialog}
 		Enhanced Text Font...			{Video.EnhancedTextFontDialog}
 	&Disk Drive
-		&Enabled						{Disk.ToggleAllEnabled}
-		---
 		&Accurate Sector Timing			{Disk.ToggleAccurateSectorTiming}
 		---
 		Show Sector Counter				{Disk.ToggleSectorCounter}
 		Drive Sounds					{Disk.ToggleDriveSounds}
 	&Cassette
-		&Auto-boot on Startup			{Cassette.ToggleAutoBoot}
+		&Auto-Boot on Startup			{Cassette.ToggleAutoBoot}
+		Auto-Re&wind on Startup			{Cassette.ToggleAutoRewind}
 		Load &Data as Audio				{Cassette.ToggleLoadDataAsAudio}
 		&Randomize Starting Position	{Cassette.ToggleRandomizeStartPosition}
 	Audio
@@ -288,6 +297,14 @@
 		IDE Plus 2.0: Switch Disks		{Console.IDEPlus2SwitchDisks}
 		IDE Plus 2.0: Write Protect		{Console.IDEPlus2WriteProtect}
 		IDE Plus 2.0: SDX Enable		{Console.IDEPlus2SDX}
+		Indus GT: Error Button			{Console.IndusGTError}
+		Indus GT: Track Button			{Console.IndusGTTrack}
+		Indus GT: Drive Type Button		{Console.IndusGTId}
+		Indus GT: Boot CP/M				{Console.IndusGTBootCPM}
+		Happy: Slow Switch				{Console.HappyToggleFastSlow}
+		Happy 1050: Write protect disk	{Console.HappyToggleWriteProtect}
+		Happy 1050: Write enable disk	{Console.HappyToggleWriteEnable}
+		ATR8000: Reset					{Console.ATR8000Reset}
 
 &Input
 	Input Mappings...					{Input.InputMappingsDialog}
@@ -365,11 +382,13 @@
 &Tools
 	&Disk Explorer...					{Tools.DiskExplorer}
 	Convert SAP to EXE...				{Tools.ConvertSAPToEXE}
+	Export ROM set...					{Tools.ExportROMSet}
 	---
 	First Time Setup...					{Tools.SetupWizard}
 	---
 	&Options...							{Tools.OptionsDialog}
 	&Keyboard Shortcuts...				{Tools.KeyboardShortcutsDialog}
+	&Compatibility Database...			{Tools.CompatDBDialog}
 	
 &Window
 	&Close								{Window.Close}

@@ -164,11 +164,11 @@ VDFraction VDFraction::operator/(VDFraction b) const {
 	return reduce((uint64)hi * b.lo, (uint64)lo * b.hi);
 }
 
-VDFraction VDFraction::operator*(unsigned long b) const {
+VDFraction VDFraction::operator*(uint32 b) const {
 	return reduce((uint64)hi * b, lo);
 }
 
-VDFraction VDFraction::operator/(unsigned long b) const {
+VDFraction VDFraction::operator/(uint32 b) const {
 	return reduce(hi, (uint64)lo * b);
 }
 
@@ -180,11 +180,11 @@ VDFraction& VDFraction::operator/=(VDFraction b) {
 	return *this = reduce((uint64)hi * b.lo, (uint64)lo * b.hi);
 }
 
-VDFraction& VDFraction::operator*=(unsigned long b) {
+VDFraction& VDFraction::operator*=(uint32 b) {
 	return *this = reduce((uint64)hi * b, lo);
 }
 
-VDFraction& VDFraction::operator/=(unsigned long b) {
+VDFraction& VDFraction::operator/=(uint32 b) {
 	return *this = reduce(hi, (uint64)lo * b);
 }
 
@@ -246,15 +246,7 @@ sint64 VDFraction::scale64iu(sint64 v) const {
 
 ///////////////////////////////////////////////////////////////////////////
 
-double VDFraction::asDouble() const {
-	return (double)hi / (double)lo;
-}
-
-double VDFraction::AsInverseDouble() const {
-	return (double)lo / (double)hi;
-}
-
-unsigned long VDFraction::roundup32ul() const {
+uint32 VDFraction::roundup32ul() const {
 	return (hi + (lo-1)) / lo;
 }
 

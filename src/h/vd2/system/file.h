@@ -338,6 +338,7 @@ public:
 	void Write(const char *s, int len);
 	void PutLine();
 	void PutLine(const char *s);
+	void PutLine(const char *s, int len);
 	void Format(const char *format, ...);
 	void FormatLine(const char *format, ...);
 

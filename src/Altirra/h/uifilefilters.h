@@ -28,5 +28,8 @@ extern const wchar_t g_ATUIFileFilter_LoadTape[];
 extern const wchar_t g_ATUIFileFilter_SaveTape[];
 extern const wchar_t g_ATUIFileFilter_LoadSAP[];
 extern const wchar_t g_ATUIFileFilter_SaveXEX[];
+extern const wchar_t g_ATUIFileFilter_LoadCompatEngine[];
+extern const wchar_t g_ATUIFileFilter_SaveCompatEngine[];
+extern const wchar_t g_ATUIFileFilter_LoadCompatImageFile[];
 
 #endif

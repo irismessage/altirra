@@ -23,7 +23,7 @@
 #include "simeventmanager.h"
 #include "uirender.h"
 
-class ATSAPWriter final : public IATSAPWriter, public IATSimulatorCallback {
+class ATSAPWriter final : public IATSAPWriter {
 public:
 	~ATSAPWriter();
 
@@ -32,13 +32,14 @@ public:
 
 	void CheckExceptions() override;
 
-	void OnSimulatorEvent(ATSimulatorEvent ev) override;
-
 private:
+	void OnVBlank();
+
 	void Write(const void *buf, uint32 len);
 	void Flush();
 
 	ATSimulatorEventManager *mpSimEvtMgr = nullptr;
+	uint32 mSimEvtRegId = 0;
 	ATPokeyEmulator *mpPokey = nullptr;
 	IATUIRenderer *mpUIRenderer = nullptr;
 
@@ -71,7 +72,7 @@ void ATSAPWriter::Init(ATSimulatorEventManager *evtMgr, ATPokeyEmulator *pokey, 
 
 	try {
 		mpSimEvtMgr = evtMgr;
-		mpSimEvtMgr->AddCallback(this);
+		mSimEvtRegId = mpSimEvtMgr->AddEventCallback(kATSimEvent_VBLANK, [this] { OnVBlank(); });
 
 		mpPokey = pokey;
 		mpUIRenderer = uir;
@@ -148,7 +149,8 @@ void ATSAPWriter::Shutdown() {
 	}
 
 	if (mpSimEvtMgr) {
-		mpSimEvtMgr->RemoveCallback(this);
+		mpSimEvtMgr->RemoveEventCallback(mSimEvtRegId);
+		mSimEvtRegId = 0;
 		mpSimEvtMgr = nullptr;
 	}
 
@@ -171,29 +173,27 @@ void ATSAPWriter::CheckExceptions() {
 	}
 }
 
-void ATSAPWriter::OnSimulatorEvent(ATSimulatorEvent ev) {
-	if (ev == kATSimEvent_VBLANK) {
-		if (mpPendingException)
+void ATSAPWriter::OnVBlank() {
+	if (mpPendingException)
+		return;
+
+	ATPokeyRegisterState rstate;
+	mpPokey->GetRegisterState(rstate);
+
+	if (!mbSilencePassed) {
+		const uint8 volumes = rstate.mReg[0] | rstate.mReg[2] | rstate.mReg[4] | rstate.mReg[6];
+
+		if (!(volumes & 15))
 			return;
 
-		ATPokeyRegisterState rstate;
-		mpPokey->GetRegisterState(rstate);
-
-		if (!mbSilencePassed) {
-			const uint8 volumes = rstate.mReg[0] | rstate.mReg[2] | rstate.mReg[4] | rstate.mReg[6];
-
-			if (!(volumes & 15))
-				return;
-
-			mbSilencePassed = true;
-		}
-
-		Write(rstate.mReg, 9);
-
-		++mFrames;
-
-		mpUIRenderer->SetRecordingPosition((float)mFrames / (mbPal ? 49.8607f : 59.9227f), mFlushedSize + mWriteLevel);
+		mbSilencePassed = true;
 	}
+
+	Write(rstate.mReg, 9);
+
+	++mFrames;
+
+	mpUIRenderer->SetRecordingPosition((float)mFrames / (mbPal ? 49.8607f : 59.9227f), mFlushedSize + mWriteLevel);
 }
 
 void ATSAPWriter::Write(const void *buf, uint32 len) {

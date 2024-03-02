@@ -227,7 +227,6 @@ loop:
 		cmp		#$0f
 		bcc		ExprPushLiteralConst
 		beq		ExprPushLiteralStr
-not_imm:
 			
 		;==== reduce loop ====
 				

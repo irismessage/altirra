@@ -135,8 +135,6 @@ namespace ATCPUStates {
 		kStateJoAddToPath,
 		kStateJnoAddToPath,
 		kStateJccFalseRead,
-		kStateInvokeHLE,
-		kStateHLEDelay,
 		kStateStepOver,
 		kStateRegenerateDecodeTables,
 

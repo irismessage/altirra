@@ -1,4 +1,4 @@
-//	Altirra - Atari 800/800XL/5200 emulator
+﻿//	Altirra - Atari 800/800XL/5200 emulator
 //	Copyright (C) 2009-2014 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
@@ -19,6 +19,7 @@
 #include <vd2/system/math.h>
 #include <vd2/system/filesys.h>
 #include <at/atcore/media.h>
+#include <at/atio/image.h>
 #include "uisettingswindow.h"
 
 #include "audiooutput.h"
@@ -38,11 +39,11 @@ void ATUISetOverscanMode(ATGTIAEmulator::OverscanMode mode);
 void OnCommandOpen(bool forceColdBoot);
 void OnCommandExit();
 
-void ATAppendDiskDrivePath(VDStringW& s, const ATDiskEmulator& drive) {
-	if (drive.IsEnabled()) {
-		if (drive.IsDiskLoaded()) {
+void ATAppendDiskDrivePath(VDStringW& s, const ATDiskEmulator& drive, const ATDiskInterface& diskIf) {
+	if (drive.IsEnabled() || diskIf.GetClientCount() > 1) {
+		if (diskIf.IsDiskLoaded()) {
 			s += L" [";
-			s += VDFileSplitPath(drive.GetPath());
+			s += VDFileSplitPath(diskIf.GetPath());
 			s += L']';
 		} else {
 			s += L" (No disk)";
@@ -66,8 +67,8 @@ public:
 				MarkCompleted(false);
 
 				if (mFileResult->mbAccepted) {
-					ATLoadContext ctx = {};
-					ctx.mLoadType = kATLoadType_Disk;
+					ATImageLoadContext ctx = {};
+					ctx.mLoadType = kATImageType_Disk;
 					ctx.mLoadIndex = mDriveIndex;
 					g_sim.Load(mFileResult->mPath.c_str(), kATMediaWriteMode_RO, &ctx);
 				}
@@ -95,8 +96,9 @@ public:
 			{
 				{ 0, L"Off" },
 				{ 1, L"Read only" },
-				{ 2, L"Virtual read/write" },
-				{ 3, L"Read/write" },
+				{ 2, L"VirtRW Safe" },
+				{ 3, L"Virtual read/write" },
+				{ 4, L"Read/write" },
 			}
 		);
 
@@ -109,21 +111,48 @@ public:
 				if (!dd.IsEnabled())
 					return 0;
 
-				if (!dd.IsWriteEnabled())
+				auto& diskIf = g_sim.GetDiskInterface(driveIndex);
+				const auto writeMode = diskIf.GetWriteMode();
+				if (!(writeMode & kATMediaWriteMode_AllowWrite))
 					return 1;
 
-				return dd.IsAutoFlushEnabled() ? 3 : 2;
+				if (!(writeMode & kATMediaWriteMode_AllowFormat))
+					return 2;
+
+				if (!(writeMode & kATMediaWriteMode_AutoFlush))
+					return 3;
+
+				return 4;
 			}
 		);
 
 		es->SetSetter(
 			[driveIndex](sint32 v) {
 				auto& dd = g_sim.GetDiskDrive(driveIndex);
+				auto& diskIf = g_sim.GetDiskInterface(driveIndex);
 				
-				dd.SetEnabled(v != 0);
+				if (v) {
+					if (diskIf.GetClientCount() < 2)
+						dd.SetEnabled(true);
+				} else {
+					dd.SetEnabled(false);
+				}
 
-				if (v)
-					dd.SetWriteFlushMode(v >= 2, v == 3);
+				switch(v) {
+					case 1:
+					default:
+						diskIf.SetWriteMode(kATMediaWriteMode_RO);
+						break;
+					case 2:
+						diskIf.SetWriteMode(kATMediaWriteMode_VRWSafe);
+						break;
+					case 3:
+						diskIf.SetWriteMode(kATMediaWriteMode_VRW);
+						break;
+					case 4:
+						diskIf.SetWriteMode(kATMediaWriteMode_RW);
+						break;
+				}
 			}
 		);
 
@@ -138,7 +167,7 @@ public:
 			[driveIndex](VDStringW& name) {
 				name = L"Image";
 
-				ATAppendDiskDrivePath(name, g_sim.GetDiskDrive(driveIndex));
+				ATAppendDiskDrivePath(name, g_sim.GetDiskDrive(driveIndex), g_sim.GetDiskInterface(driveIndex));
 			}
 		);
 
@@ -151,10 +180,11 @@ public:
 		as = new ATUIActionSetting(L"Eject");
 		as->SetAction(
 			[driveIndex]() -> bool {
+				auto& diskIf = g_sim.GetDiskInterface(driveIndex);
 				auto& drive = g_sim.GetDiskDrive(driveIndex);
 
-				if (drive.IsDiskLoaded())
-					drive.UnloadDisk();
+				if (diskIf.IsDiskLoaded())
+					diskIf.UnloadDisk();
 				else
 					drive.SetEnabled(false);
 				return false;
@@ -212,7 +242,8 @@ public:
 				{ kATDiskEmulationMode_USDoubler,		L"US Doubler" },
 				{ kATDiskEmulationMode_Speedy1050,		L"Speedy 1050" },
 				{ kATDiskEmulationMode_IndusGT,			L"Indus GT" },
-				{ kATDiskEmulationMode_Happy,			L"Happy" },
+				{ kATDiskEmulationMode_Happy810,		L"Happy 810" },
+				{ kATDiskEmulationMode_Happy1050,		L"Happy 1050" },
 				{ kATDiskEmulationMode_1050Turbo,		L"1050 Turbo" },
 				{ kATDiskEmulationMode_Generic57600,	L"Generic (57.6Kbaud)" },
 			}
@@ -233,7 +264,7 @@ public:
 			VDStringW label;
 			label.sprintf(L"Drive D%d:", i+1);
 
-			ATAppendDiskDrivePath(label, drive);
+			ATAppendDiskDrivePath(label, drive, g_sim.GetDiskInterface(i));
 
 			ss = new ATUISubScreenSetting(label.c_str(),
 				[=](IATUISettingsScreen **screen) {

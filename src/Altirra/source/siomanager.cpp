@@ -21,6 +21,7 @@
 #include "simulator.h"
 #include "cpu.h"
 #include "cpuhookmanager.h"
+#include "disk.h"
 #include "kerneldb.h"
 #include "debuggerlog.h"
 #include "uirender.h"
@@ -179,9 +180,6 @@ void ATSIOManager::ReinitHooks() {
 	if (mbSIOPatchEnabled) {
 		if (mbOtherSIOAccelEnabled || mbDiskSIOAccelEnabled || mpSim->IsCassetteSIOPatchEnabled() || mpSim->IsFastBootEnabled())
 			hookmgr.SetHookMethod(mpSIOVHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::SIOV, 0, this, &ATSIOManager::OnHookSIOV);
-
-		if (mbDiskSIOAccelEnabled)
-			hookmgr.SetHookMethod(mpDSKINVHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::DSKINV, 0, this, &ATSIOManager::OnHookDSKINV);
 	}
 }
 
@@ -190,7 +188,6 @@ void ATSIOManager::UninitHooks() {
 		ATCPUHookManager& hookmgr = *mpCPU->GetHookManager();
 
 		hookmgr.UnsetHook(mpSIOVHook);
-		hookmgr.UnsetHook(mpDSKINVHook);
 	}
 }
 
@@ -201,14 +198,15 @@ void ATSIOManager::TryAccelPBIRequest() {
 		mpCPU->SetP(mpCPU->GetP() & ~AT6502::kFlagC);
 }
 
-bool ATSIOManager::TryAccelRequest(const ATSIORequest& req, bool isDSKINV) {
-	g_ATLCHookSIOReqs("Checking %s request: Device $%02X | Command $%02X | Mode $%02X | Address $%04X | Length $%04X\n"
-		, isDSKINV ? "DSKINV" : "SIOV"
+bool ATSIOManager::TryAccelRequest(const ATSIORequest& req) {
+	g_ATLCHookSIOReqs("Checking SIOV request: Device $%02X | Command $%02X | Mode $%02X | Address $%04X | Length $%04X | AUX $%02X%02X\n"
 		, req.mDevice
 		, req.mCommand
 		, req.mMode
 		, req.mAddress
 		, req.mLength
+		, req.mAUX[1]
+		, req.mAUX[0]
 		);
 
 	// Check if we already have a command in progress. If so, bail.
@@ -311,7 +309,7 @@ bool ATSIOManager::TryAccelRequest(const ATSIORequest& req, bool isDSKINV) {
 		const uint32 diskIndex = req.mDevice - 0x31;
 		ATDiskEmulator& disk = mpSim->GetDiskDrive(diskIndex);
 
-		if (!disk.IsEnabled() && mpSim->IsFastBootEnabled())
+		if (!disk.IsEnabled() && mpSim->GetDiskInterface(diskIndex).GetClientCount() < 2 && mpSim->IsFastBootEnabled())
 			goto fastbootignore;
 
 		return false;
@@ -437,7 +435,7 @@ bool ATSIOManager::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) {
 		}
 	}
 
-	return mbActiveDeviceDisk ? mbDiskBurstTransfersEnabled : mbBurstTransfersEnabled;
+	return mpActiveDevice && (mbActiveDeviceDisk ? mbDiskBurstTransfersEnabled : mbBurstTransfersEnabled);
 }
 
 void ATSIOManager::PokeyBeginCommand() {
@@ -569,12 +567,13 @@ void ATSIOManager::PokeySerInReady() {
 	if (!mbTransferSend)
 		return;
 
-	if (mTransferIndex - mTransferStart < 2)
+	if (mTransferIndex - mTransferStart < 3)
 		return;
 
 	uint32 existingDelay = mpScheduler->GetTicksToEvent(mpTransferEvent);
 	if (existingDelay > 50) {
-		mAccelTimeSkew += (existingDelay - 50);
+		mTransferBurstOffset = (existingDelay - 50);
+		mAccelTimeSkew += mTransferBurstOffset;
 
 		mpScheduler->SetEvent(50, this, kEventId_Send, mpTransferEvent);
 	}
@@ -606,9 +605,16 @@ void ATSIOManager::BeginCommand() {
 			, mAccelBufferAddress
 			, mpAccelRequest->mLength);
 	}
+
+	mTransferStart = 0;
+	mTransferIndex = 0;
+	mTransferEnd = 0;
+	mTransferLevel = 0;
 }
 
 void ATSIOManager::SendData(const void *data, uint32 len, bool addChecksum) {
+	VDASSERT(mTransferIndex <= mTransferLevel);
+
 	if (!len)
 		return;
 
@@ -794,6 +800,14 @@ void ATSIOManager::EndCommand() {
 	step.mType = kStepType_EndCommand;
 }
 
+uint32 ATSIOManager::GetCyclesPerBitRecv() const {
+	return mpPokey->GetSerialCyclesPerBitRecv();
+}
+
+uint32 ATSIOManager::GetRecvResetCounter() const {
+	return mpPokey->GetSerialInputResetCounter();
+}
+
 void ATSIOManager::AddRawDevice(IATDeviceRawSIO *dev) {
 	if (std::find(mSIORawDevices.begin(), mSIORawDevices.end(), dev) != mSIORawDevices.end())
 		return;
@@ -831,8 +845,12 @@ void ATSIOManager::RemoveRawDevice(IATDeviceRawSIO *dev) {
 	}
 }
 
-void ATSIOManager::SendRawByte(uint8 byte, uint32 cyclesPerBit) {
-	mpPokey->ReceiveSIOByte(byte, cyclesPerBit, true, (mbActiveDeviceDisk ? mbDiskBurstTransfersEnabled : mbBurstTransfersEnabled), mbTransmitSynchronous);
+void ATSIOManager::SendRawByte(uint8 byte, uint32 cyclesPerBit, bool synchronous, bool forceFramingError, bool simulateInput) {
+	mpPokey->ReceiveSIOByte(byte, cyclesPerBit, simulateInput, false, synchronous, forceFramingError);
+}
+
+void ATSIOManager::SetRawInput(bool input) {
+	mpPokey->SetDataLine(input);
 }
 
 bool ATSIOManager::IsSIOCommandAsserted() const {
@@ -949,9 +967,10 @@ void ATSIOManager::OnScheduledEvent(uint32 id) {
 			if (mTransferIndex < mTransferEnd) {
 				uint8 c = mTransferBuffer[mTransferIndex++];
 
-				mpPokey->ReceiveSIOByte(c, mTransferCyclesPerBit, true, mbActiveDeviceDisk ? mbDiskBurstTransfersEnabled : mbBurstTransfersEnabled, false);
+				mpPokey->ReceiveSIOByte(c, mTransferCyclesPerBit, true, mbActiveDeviceDisk ? mbDiskBurstTransfersEnabled : mbBurstTransfersEnabled, false, false);
 
-				mpScheduler->SetEvent(mTransferCyclesPerByte, this, kEventId_Send, mpTransferEvent);
+				mpScheduler->SetEvent(mTransferCyclesPerByte + mTransferBurstOffset, this, kEventId_Send, mpTransferEvent);
+				mTransferBurstOffset = 0;
 			} else {
 				mTransferStart = mTransferEnd;
 				mCurrentStep.mType = kStepType_None;
@@ -959,63 +978,6 @@ void ATSIOManager::OnScheduledEvent(uint32 id) {
 			}
 			break;
 	}
-}
-
-uint8 ATSIOManager::OnHookDSKINV(uint16 pc) {
-	ATKernelDatabase kdb(mpMemory);
-
-	// check if we support the command
-	const uint8 cmd = kdb.DCOMND;
-
-	switch(cmd) {
-		case 0x50:	// put
-		case 0x52:	// read
-		case 0x57:	// write
-			break;
-
-		default:
-			return 0;
-	}
-
-	// Check if the I flag is set -- if so, bail. This will hang in SIO
-	// if not intercepted by a PBI device.
-	if (mpCPU->GetP() & AT6502::kFlagI)
-		return 0;
-
-	// Set transfer mode.
-	kdb.DSTATS = (cmd == 0x52) ? 0x40 : 0x80;
-
-	// Set sector size. If we have an XL bios, use DSCTLN, otherwise force 128 bytes.
-	// Since hooks only trigger from ROM, we can check if the lower ROM exists.
-	if (mpSim->GetKernelMode() == kATKernelMode_XL) {
-		uint16 seclen = kdb.DSCTLN;
-
-		// punt if sector length isn't 128 or 256 bytes -- this check is needed if
-		// OS-B is running on XL+U1MB
-		if (seclen != 128 && seclen != 256)
-			return 0;
-
-		kdb.DBYTLO_DBYTHI = seclen;
-	} else
-		kdb.DBYTLO_DBYTHI = 0x80;
-
-	// set device and invoke SIOV
-	kdb.DDEVIC = 0x31;
-
-	uint8 opcode = OnHookSIOV(pc);
-	if (!opcode)
-		return 0;
-
-	// We need to set the carry flag to satisfy Arcade Machine, which stupidly
-	// relies on it being set after a CMP #'!' command check in the OS. Since
-	// we only handle commands above that, the carry flag is always set.
-	//
-	// Update: This needs to be done only on success. Micropainter depends on
-	//         DSKINV not changing the carry flag coming out of SIOV on failure.
-	if (mpCPU->GetY() < 0x80)
-		mpCPU->SetFlagC();
-
-	return opcode;
 }
 
 uint8 ATSIOManager::OnHookSIOV(uint16 pc) {
@@ -1041,7 +1003,7 @@ uint8 ATSIOManager::OnHookSIOV(uint16 pc) {
 	for(int i=0; i<2; ++i)
 		req.mAUX[i] = siodata[i + 10];
 
-	return TryAccelRequest(req, pc == ATKernelSymbols::DSKINV) ? 0x60 : 0;
+	return TryAccelRequest(req) ? 0x60 : 0;
 }
 
 void ATSIOManager::AbortActiveCommand() {
@@ -1073,6 +1035,7 @@ void ATSIOManager::ExecuteNextStep() {
 				mbTransferSend = true;
 				mTransferStart = mTransferIndex;
 				mTransferEnd = mTransferStart + mCurrentStep.mTransferLength;
+				mTransferBurstOffset = 0;
 				VDASSERT(mTransferEnd <= vdcountof(mTransferBuffer));
 
 				if (mpAccelRequest) {

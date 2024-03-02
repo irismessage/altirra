@@ -134,8 +134,6 @@ namespace AT6502States {
 		kStateJoAddToPath,
 		kStateJnoAddToPath,
 		kStateJccFalseRead,
-		kStateInvokeHLE,
-		kStateHLEDelay,
 		kStateStepOver,
 
 		// 65C02 states

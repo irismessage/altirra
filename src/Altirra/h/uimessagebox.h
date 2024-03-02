@@ -40,8 +40,8 @@ protected:
 
 	void EndWithResult(Result result);
 
-	void OnOKPressed(ATUIButton *);
-	void OnCancelPressed(ATUIButton *);
+	void OnOKPressed();
+	void OnCancelPressed();
 
 	VDStringW mCaption;
 	VDStringW mText;

@@ -2,8 +2,8 @@
 #include <vd2/system/function.h>
 #include <test.h>
 
-#if 1
-	#ifdef VD_COMPILER_MSVC
+#if 0
+	#if defined(VD_COMPILER_MSVC) && !defined(VD_COMPILER_MSVC_CLANG)
 		#define LOG_ME() ((void)puts(__FUNCTION__ "(" __FUNCSIG__ ")"))
 	#else
 		#define LOG_ME() ((void)printf("%s()\n", __func__))
@@ -140,33 +140,10 @@ namespace ATTestSystemFunction {
 	int MovableObject<T>::sTotal = 0;
 }
 
-class Simple {
-public:
-    Simple( int value ) { puts( "Constructing simple!" ); this->value = value; }
-    Simple( const Simple& rhs ) { puts( "Copying simple!" ); this->value = rhs.value; }
-    Simple( Simple&& rhs ) { puts( "Moving simple!" ); this->value = rhs.value; }
-    ~Simple() { puts( "Destroying simple!" ); }
-    int Get() const { return this->value; }
-
-private:
-    int value;
-};
 
 DEFINE_TEST(System_Function) {
 	using namespace ATTestSystemFunction;
 	int e = 0;
-
-	{
-    Simple test( 5 );
-
-    vdfunction<int ()> f = std::move(
-        [test] ()
-        {
-            return test.Get();
-        });
-
-    printf( "%d\n", f() );
-	}
 
 	vdfunction<void()> vfn;
 	TEST_ASSERT(vfn == nullptr);

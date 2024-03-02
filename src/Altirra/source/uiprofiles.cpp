@@ -297,13 +297,12 @@ ATUIDialogProfiles::ATUIDialogProfiles()
 	mProfileTree.SetOnBeginDrag([this](const VDUIProxyTreeViewControl::BeginDragEvent& event) { OnTreeDrag(event); });
 	mCategoryList.OnItemCheckedChanging() += mDelCheckedChanging.Bind(this, &ATUIDialogProfiles::OnCheckedChanging);
 
-
-	mAddButton.SetOnClicked([this](VDUIProxyButtonControl*) { OnAdd(); });
-	mDeleteButton.SetOnClicked([this](VDUIProxyButtonControl*) { OnDelete(); });
-	mSetDefaultButton.SetOnClicked([this](VDUIProxyButtonControl*) { OnSetDefault(); });
-	mUpdateButton.SetOnClicked([this](VDUIProxyButtonControl*) { OnUpdate(); });
-	mSwitchButton.SetOnClicked([this](VDUIProxyButtonControl*) { OnSwitch(); });
-	mVisibleCheckBox.SetOnClicked([this](VDUIProxyButtonControl*) { OnVisibleChanged(); });
+	mAddButton.SetOnClicked([this] { OnAdd(); });
+	mDeleteButton.SetOnClicked([this] { OnDelete(); });
+	mSetDefaultButton.SetOnClicked([this] { OnSetDefault(); });
+	mUpdateButton.SetOnClicked([this] { OnUpdate(); });
+	mSwitchButton.SetOnClicked([this] { OnSwitch(); });
+	mVisibleCheckBox.SetOnClicked([this] { OnVisibleChanged(); });
 }
 
 bool ATUIDialogProfiles::OnLoaded() {
@@ -563,7 +562,7 @@ void ATUIDialogProfiles::OnSetDefault() {
 		ATSetDefaultProfileId(defaultProfile, newId);
 
 		mProfileTree.EnumChildrenRecursive(mProfileTree.kNodeRoot,
-			[=,this](IVDUITreeViewVirtualItem *p) {
+			[node, oldId, newId, this](IVDUITreeViewVirtualItem *p) {
 				ProfileNode *node = static_cast<ProfileNode *>(p);
 				const uint32 id = node->mId;
 
@@ -606,12 +605,12 @@ void ATUIDialogProfiles::OnSwitch() {
 		ATSettingsSwitchProfile(newId);
 
 		mProfileTree.EnumChildrenRecursive(mProfileTree.kNodeRoot,
-			[=,this](IVDUITreeViewVirtualItem *p) {
-				ProfileNode *node = static_cast<ProfileNode *>(p);
-				const uint32 id = node->mId;
+			[oldId, newId, this](IVDUITreeViewVirtualItem *p) {
+				ProfileNode *node2 = static_cast<ProfileNode *>(p);
+				const uint32 id = node2->mId;
 
 				if (id == oldId || id == newId)
-					mProfileTree.RefreshNode(node->mTreeNode);
+					mProfileTree.RefreshNode(node2->mTreeNode);
 			}
 		);
 	}
@@ -658,13 +657,14 @@ void ATUIDialogProfiles::OnTreeSelectionChanged(VDUIProxyTreeViewControl *, int)
 	for(int i=0; i<(int)vdcountof(kCategoryNames); ++i)
 		mCategoryList.SetItemChecked(i+1, (mask & (1 << i)) != 0);
 
-	mVisibleCheckBox.SetChecked(node->mbVisible);
+	mVisibleCheckBox.SetChecked(node && node->mbVisible);
 
 	--mUpdateHandlerInhibit;
 }
 
 void ATUIDialogProfiles::OnTreeGetDispAttr(VDUIProxyTreeViewControl *, VDUIProxyTreeViewControl::GetDispAttrEvent *event) {
-	event->mbIsBold = static_cast<ProfileNode *>(event->mpItem)->mId == ATSettingsGetCurrentProfileId();
+	if (event->mpItem)
+		event->mbIsBold = static_cast<ProfileNode *>(event->mpItem)->mId == ATSettingsGetCurrentProfileId();
 }
 
 void ATUIDialogProfiles::OnTreeDrag(const VDUIProxyTreeViewControl::BeginDragEvent& event) {

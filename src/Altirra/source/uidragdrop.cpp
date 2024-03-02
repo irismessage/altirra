@@ -29,14 +29,17 @@
 #include <vd2/system/w32assist.h>
 #include <at/atcore/media.h>
 #include <at/atcore/vfs.h>
+#include <at/atio/image.h>
+#include <at/atnativeui/dragdrop.h>
 #include "simulator.h"
+#include "disk.h"
 #include "resource.h"
 
 extern HWND g_hwnd;
 extern ATSimulator g_sim;
 
-extern void DoLoad(VDGUIHandle h, const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper, ATLoadType loadType = kATLoadType_Other, bool *suppressColdReset = NULL, int loadIndex = -1);
-extern void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageName, IVDRandomAccessStream& stream, const ATMediaWriteMode *writeMode, int cartmapper, ATLoadType loadType = kATLoadType_Other, bool *suppressColdReset = NULL, int loadIndex = -1);
+extern void DoLoad(VDGUIHandle h, const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType = kATImageType_None, bool *suppressColdReset = NULL, int loadIndex = -1);
+extern void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageName, IVDRandomAccessStream& stream, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType = kATImageType_None, bool *suppressColdReset = NULL, int loadIndex = -1);
 extern void DoBootWithConfirm(const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper);
 extern void DoBootStreamWithConfirm(const wchar_t *origPath, const wchar_t *imageName, IVDRandomAccessStream& stream, const ATMediaWriteMode *writeMode, int cartmapper);
 
@@ -86,7 +89,7 @@ void ATReadCOMBufferIntoMemory(vdfastvector<char>& data, HGLOBAL hglobal, uint32
 
 ///////////////////////////////////////////////////////////////////////////////
 
-class ATUIDragDropHandler : public IDropTarget {
+class ATUIDragDropHandler final : public IDropTarget {
 public:
 	ATUIDragDropHandler(HWND hwnd);
 
@@ -99,17 +102,13 @@ public:
     virtual HRESULT STDMETHODCALLTYPE Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect);
 
 protected:
-	bool GetLoadTarget(POINTL pt, ATLoadType& loadType, int& loadIndex, bool& doBoot) const;
+	bool GetLoadTarget(POINTL pt, ATImageType& loadType, int& loadIndex, bool& doBoot) const;
 	void SetDropEffect(DWORD grfKeyState);
 
 	VDAtomicInt mRefCount;
 	DWORD mDropEffect;
 	bool mbOpenContextMenu;
 	HWND mhwnd;
-	UINT mClipFormatFileDescriptorA;
-	UINT mClipFormatFileDescriptorW;
-	UINT mClipFormatFileContents;
-	UINT mClipFormatShellIdList;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -119,10 +118,6 @@ ATUIDragDropHandler::ATUIDragDropHandler(HWND hwnd)
 	, mDropEffect(DROPEFFECT_NONE)
 	, mhwnd(hwnd)
 {
-	mClipFormatFileDescriptorA = RegisterClipboardFormat(CFSTR_FILEDESCRIPTORA);
-	mClipFormatFileDescriptorW = RegisterClipboardFormat(CFSTR_FILEDESCRIPTORW);
-	mClipFormatFileContents = RegisterClipboardFormat(CFSTR_FILECONTENTS);
-	mClipFormatShellIdList = RegisterClipboardFormat(CFSTR_SHELLIDLIST);
 }
 
 ULONG STDMETHODCALLTYPE ATUIDragDropHandler::AddRef() {
@@ -156,41 +151,46 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::QueryInterface(const IID& riid, v
 HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragEnter(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
 	mDropEffect = DROPEFFECT_NONE;
 
-	if (!(GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED)) {
-		FORMATETC etc;
-		etc.cfFormat = CF_HDROP;
-		etc.dwAspect = DVASPECT_CONTENT;
+	if (GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED) {
+		*pdwEffect = mDropEffect;
+		return S_OK;
+	}
+
+	const auto& formats = ATUIInitDragDropFormatsW32();
+
+	FORMATETC etc;
+	etc.cfFormat = CF_HDROP;
+	etc.dwAspect = DVASPECT_CONTENT;
+	etc.lindex = -1;
+	etc.ptd = NULL;
+	etc.tymed = TYMED_HGLOBAL;
+
+	HRESULT hr = pDataObj->QueryGetData(&etc);
+
+	// Note that we get S_FALSE if the format is not supported.
+	if (hr == S_OK) {
+		SetDropEffect(grfKeyState);
+	} else {
+		etc.cfFormat = formats.mDescriptorA;
 		etc.lindex = -1;
-		etc.ptd = NULL;
 		etc.tymed = TYMED_HGLOBAL;
 
-		HRESULT hr = pDataObj->QueryGetData(&etc);
+		hr = pDataObj->QueryGetData(&etc);
 
-		// Note that we get S_FALSE if the format is not supported.
+		if (hr != S_OK) {
+			etc.cfFormat = formats.mDescriptorW;
+
+			hr = pDataObj->QueryGetData(&etc);
+		}
+
 		if (hr == S_OK) {
-			SetDropEffect(grfKeyState);
-		} else {
-			etc.cfFormat = mClipFormatFileDescriptorA;
-			etc.lindex = -1;
-			etc.tymed = TYMED_HGLOBAL;
+			etc.lindex = 0;
+			etc.cfFormat = formats.mContents;
 
 			hr = pDataObj->QueryGetData(&etc);
 
-			if (hr != S_OK) {
-				etc.cfFormat = mClipFormatFileDescriptorW;
-
-				hr = pDataObj->QueryGetData(&etc);
-			}
-
 			if (hr == S_OK) {
-				etc.lindex = 0;
-				etc.cfFormat = mClipFormatFileContents;
-
-				hr = pDataObj->QueryGetData(&etc);
-
-				if (hr == S_OK) {
-					SetDropEffect(grfKeyState);
-				}
+				SetDropEffect(grfKeyState);
 			}
 		}
 	}
@@ -215,166 +215,57 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragLeave() {
 HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
 	if (GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED)
 		return S_OK;
+	
+	const auto& formats = ATUIInitDragDropFormatsW32();
 
-	FORMATETC etc;
-	etc.cfFormat = mClipFormatShellIdList;
+	FORMATETC etc {};
+	etc.cfFormat = formats.mShellIdList;
 	etc.dwAspect = DVASPECT_CONTENT;
 	etc.lindex = -1;
 	etc.ptd = NULL;
 	etc.tymed = TYMED_HGLOBAL;
 
-	STGMEDIUM medium;
+	ATAutoStgMediumW32 medium;
 	medium.tymed = TYMED_HGLOBAL;
 	medium.hGlobal = NULL;
-	medium.pUnkForRelease = NULL;
 
-	bool handledViaShell = false;
 	bool coldBoot = !(grfKeyState & MK_SHIFT);
 	int loadIndex = -1;
-	ATLoadType loadType = kATLoadType_Other;
+	ATImageType loadType = kATImageType_None;
 
 	HRESULT hr = pDataObj->GetData(&etc, &medium);
 	if (hr == S_OK) {
-		CIDA *c = (CIDA *)GlobalLock(medium.hGlobal);
-		if (c && c->cidl) {
-			// pull out the parent PIDL and child item ID
-			const PCUIDLIST_ABSOLUTE parentIDList = (PCUIDLIST_ABSOLUTE)((char *)c + c->aoffset[0]);
-			const PCUITEMID_CHILD childID = (PCUITEMID_CHILD)((char *)c + c->aoffset[1]);
+		VDStringW vfsPath;
 
-			// bind to the child and see if it's filesystem based
-			vdrefptr<IShellFolder> desktop;
-			hr = SHGetDesktopFolder(~desktop);
-			if (SUCCEEDED(hr)) {
-				vdrefptr<IShellFolder> parent;
-				hr = desktop->BindToObject(parentIDList, NULL, IID_IShellFolder, (void **)~parent);
-				if (SUCCEEDED(hr)) {
-					// Check if the child is not filesystem based.
-					SFGAOF flags = SFGAO_FILESYSTEM;
-					hr = parent->GetAttributesOf(1, &childID, &flags);
-					if (SUCCEEDED(hr)) {
-						if (!(flags & SFGAO_FILESYSTEM)) {
-							// Okay, the child is not filesystem based. Walk the parent chain and try to find the
-							// last item that is filesystem based.
-							vdrefptr<IShellFolder> prev = desktop;
-							VDStringW lastValidPath;
-							VDStringW relPath;
+		if (ATUIGetVFSPathFromShellIDListW32(medium.hGlobal, vfsPath)) {
+			try {
+				// try to open the .zip file via VFS -- if it fails, we bail silently and fall
+				// through to file/stream based path
+				vdrefptr<ATVFSFileView> view;
+				ATVFSOpenFileView(vfsPath.c_str(), false, ~view);
 
-							for(PCUIDLIST_RELATIVE relIDList = parentIDList; relIDList; relIDList = ILGetNext(relIDList)) {
-								vdblock<char> buf(relIDList->mkid.cb + 2);
-
-								memset(buf.data(), 0, relIDList->mkid.cb + 2);
-								memcpy(buf.data(), &relIDList->mkid, relIDList->mkid.cb);
-
-								vdrefptr<IShellFolder> next;
-								hr = prev->BindToObject((PCUIDLIST_RELATIVE)buf.data(), nullptr, IID_IShellFolder, (void **)~next);
-								if (FAILED(hr))
-									break;
-
-								// check if the next folder is filesystem based but its children are not
-								PCUITEMID_CHILD queryPtr = (PCUITEMID_CHILD)buf.data();
-								SFGAOF flags = SFGAO_FILESYSTEM | SFGAO_FILESYSANCESTOR;
-								hr = prev->GetAttributesOf(1, &queryPtr, &flags);
-								if (SUCCEEDED(hr) && (flags & SFGAO_FILESYSTEM) && !(flags & SFGAO_FILESYSANCESTOR)) {
-									lastValidPath.clear();
-									relPath.clear();
-
-									STRRET sr = {};
-									sr.uType = STRRET_WSTR;
-									hr = prev->GetDisplayNameOf((PCUITEMID_CHILD)buf.data(), SHGDN_FORPARSING, &sr);
-									if (SUCCEEDED(hr)) {
-										LPWSTR s;
-										hr = StrRetToStrW(&sr, nullptr, &s);
-										if (SUCCEEDED(hr)) {
-											lastValidPath = s;
-											CoTaskMemFree(s);
-										}
-									}
-								} else {
-									STRRET sr = {};
-									sr.uType = STRRET_WSTR;
-									hr = prev->GetDisplayNameOf((PCUITEMID_CHILD)buf.data(), SHGDN_FORPARSING | SHGDN_INFOLDER, &sr);
-									if (SUCCEEDED(hr)) {
-										LPWSTR s;
-										hr = StrRetToStrW(&sr, nullptr, &s);
-										if (SUCCEEDED(hr)) {
-											if (!relPath.empty())
-												relPath += L'\\';
-
-											relPath += s;
-											CoTaskMemFree(s);
-										}
-									}
-								}
-
-								prev = std::move(next);
-							}
-
-							if (lastValidPath.size() > 4 && !vdwcsicmp(lastValidPath.c_str() + lastValidPath.size() - 4, L".zip")) {
-								// Okay, we got a plausible .zip file. Get the parsing name for the child component and try
-								// to open the path through VFS.
-
-								STRRET sr = {};
-								sr.uType = STRRET_WSTR;
-								hr = prev->GetDisplayNameOf(childID, SHGDN_FORPARSING | SHGDN_INFOLDER, &sr);
-								if (SUCCEEDED(hr)) {
-									LPWSTR s;
-									hr = StrRetToStrW(&sr, nullptr, &s);
-									if (SUCCEEDED(hr)) {
-										if (!relPath.empty())
-											relPath += '\\';
-
-										relPath += s;
-
-										VDStringW vfsPath(L"zip://");
-										ATEncodeVFSPath(vfsPath, lastValidPath, true);
-										vfsPath += L'!';
-										ATEncodeVFSPath(vfsPath, relPath, true);
-
-										try {
-											// try to open the .zip file via VFS -- if it fails, we bail silently and fall
-											// through to file/stream based path
-											vdrefptr<ATVFSFileView> view;
-											ATVFSOpenFileView(vfsPath.c_str(), false, ~view);
-
-											handledViaShell = true;
-
-											if (!mbOpenContextMenu || GetLoadTarget(pt, loadType, loadIndex, coldBoot)) {
-												try {
-													if (coldBoot)
-														DoBootStreamWithConfirm(vfsPath.c_str(), view->GetFileName(), view->GetStream(), nullptr, 0);
-													else
-														DoLoadStream((VDGUIHandle)g_hwnd, vfsPath.c_str(), view->GetFileName(), view->GetStream(), nullptr, 0, loadType, NULL, loadIndex);
-												} catch(const MyError& e) {
-													e.post(g_hwnd, "Altirra Error");
-												}
-											}
-										} catch(const MyError&) {
-											// Eat VFS errors. We assume that it's something like a .zip we can't handle,
-											// and fall through.
-										}
-
-										CoTaskMemFree(s);
-									}
-								}
-							}
-						}
+				if (!mbOpenContextMenu || GetLoadTarget(pt, loadType, loadIndex, coldBoot)) {
+					try {
+						if (coldBoot)
+							DoBootStreamWithConfirm(vfsPath.c_str(), view->GetFileName(), view->GetStream(), nullptr, 0);
+						else
+							DoLoadStream((VDGUIHandle)g_hwnd, vfsPath.c_str(), view->GetFileName(), view->GetStream(), nullptr, 0, loadType, NULL, loadIndex);
+					} catch(const MyError& e) {
+						e.post(g_hwnd, "Altirra Error");
 					}
 				}
+
+				return S_OK;
+			} catch(const MyError&) {
+				// Eat VFS errors. We assume that it's something like a .zip we can't handle,
+				// and fall through.
 			}
 		}
-
-		GlobalUnlock(c);
-
-		ReleaseStgMedium(&medium);
 	}
 
-	if (handledViaShell) {
-		return S_OK;
-	}
-
+	medium.Clear();
 	medium.tymed = TYMED_HGLOBAL;
 	medium.hGlobal = NULL;
-	medium.pUnkForRelease = NULL;
 
 	etc.cfFormat = CF_HDROP;
 	etc.dwAspect = DVASPECT_CONTENT;
@@ -387,7 +278,7 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 	if (hr == S_OK) {
 		if (mbOpenContextMenu) {
 			if (!GetLoadTarget(pt, loadType, loadIndex, coldBoot))
-				goto aborted;
+				return S_OK;
 		}
 
 		HDROP hdrop = (HDROP)medium.hGlobal;
@@ -412,15 +303,15 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 		}
 	} else {
 		// Okay, that can't get an HDROP. Let's see if we can get a file contents stream.
-		etc.cfFormat = mClipFormatFileDescriptorW;
+		etc.cfFormat = formats.mDescriptorW;
 		etc.dwAspect = DVASPECT_CONTENT;
 		etc.lindex = -1;
 		etc.ptd = NULL;
 		etc.tymed = TYMED_HGLOBAL;
 
+		medium.Clear();
 		medium.tymed = TYMED_HGLOBAL;
 		medium.hGlobal = NULL;
-		medium.pUnkForRelease = NULL;
 
 		hr = pDataObj->GetData(&etc, &medium);
 
@@ -439,10 +330,12 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 
 				GlobalUnlock(hgDesc);
 			}
-
-			ReleaseStgMedium(&medium);
 		} else {
-			etc.cfFormat = mClipFormatFileDescriptorA;
+			etc.cfFormat = formats.mDescriptorA;
+
+			medium.Clear();
+			medium.tymed = TYMED_HGLOBAL;
+			medium.hGlobal = NULL;
 
 			hr = pDataObj->GetData(&etc, &medium);
 
@@ -474,13 +367,10 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 
 					GlobalUnlock(hgDesc);
 				}
-
-				ReleaseStgMedium(&medium);
 			}
 		}
 
-		medium.hGlobal = NULL;
-		medium.pUnkForRelease = NULL;
+		medium.Clear();
 
 		if (foundFile) {
 			try {
@@ -494,7 +384,7 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 					knownSize = fd.nFileSizeLow;
 				}
 
-				etc.cfFormat = mClipFormatFileContents;
+				etc.cfFormat = formats.mContents;
 				etc.dwAspect = DVASPECT_CONTENT;
 				etc.lindex = 0;
 				etc.ptd = NULL;
@@ -507,7 +397,7 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 				if (hr == S_OK) {
 					if (mbOpenContextMenu) {
 						if (!GetLoadTarget(pt, loadType, loadIndex, coldBoot))
-							goto aborted;
+							return S_OK;
 					}
 
 					vdfastvector<char> data;
@@ -533,16 +423,13 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 		}
 	}
 
-aborted:
-	ReleaseStgMedium(&medium);
-
 	return S_OK;
 }
 
-bool ATUIDragDropHandler::GetLoadTarget(POINTL pt, ATLoadType& loadType, int& loadIndex, bool& doBoot) const {
+bool ATUIDragDropHandler::GetLoadTarget(POINTL pt, ATImageType& loadType, int& loadIndex, bool& doBoot) const {
 	doBoot = false;
 	loadIndex = -1;
-	loadType = kATLoadType_Other;
+	loadType = kATImageType_None;
 
 	HMENU hmenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_DRAGDROP_MENU));
 	if (!hmenu)
@@ -562,9 +449,9 @@ bool ATUIDragDropHandler::GetLoadTarget(POINTL pt, ATLoadType& loadType, int& lo
 	};
 
 	for(uint32 i=0; i<(uint32)vdcountof(kDiskImageIds); ++i) {
-		ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
+		ATDiskInterface& diskIf = g_sim.GetDiskInterface(i);
 
-		const wchar_t *path = disk.GetPath();
+		const wchar_t *path = diskIf.GetPath();
 
 		VDStringW s = VDGetMenuItemTextByCommandW32(hmenu2, kDiskImageIds[i]);
 
@@ -589,27 +476,27 @@ bool ATUIDragDropHandler::GetLoadTarget(POINTL pt, ATLoadType& loadType, int& lo
 			break;
 
 		case ID_MOUNTIMAGE_D1:
-			loadType = kATLoadType_Disk;
+			loadType = kATImageType_Disk;
 			loadIndex = 0;
 			break;
 
 		case ID_MOUNTIMAGE_D2:
-			loadType = kATLoadType_Disk;
+			loadType = kATImageType_Disk;
 			loadIndex = 1;
 			break;
 
 		case ID_MOUNTIMAGE_D3:
-			loadType = kATLoadType_Disk;
+			loadType = kATImageType_Disk;
 			loadIndex = 2;
 			break;
 
 		case ID_MOUNTIMAGE_D4:
-			loadType = kATLoadType_Disk;
+			loadType = kATImageType_Disk;
 			loadIndex = 3;
 			break;
 
 		case ID_MOUNTIMAGE_CARTRIDGE:
-			loadType = kATLoadType_Cartridge;
+			loadType = kATImageType_Cartridge;
 			loadIndex = 0;
 			break;
 	}

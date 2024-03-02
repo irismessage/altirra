@@ -502,6 +502,9 @@ found:
 ;	A = current token
 ;	P.Z = set if end of statement/line
 ;
+; Preserved:
+;	X
+;
 .proc ExecTestEnd
 		ldy		exLineOffset
 		lda		(stmcur),y
@@ -518,15 +521,6 @@ is_end:
 		inc		exLineOffset
 		lda		(stmcur),y
 		cmp		#TOK_EXP_COMMA
-		rts
-.endp
-
-;===========================================================================
-.proc execRestore
-		lda		#0
-		sta		dataln
-		sta		dataln+1
-		sta		dataptr+1
 		rts
 .endp
 

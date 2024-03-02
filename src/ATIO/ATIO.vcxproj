@@ -27,7 +27,10 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="source\cartridgeimage.cpp" />
+    <ClCompile Include="source\cartridgetypes.cpp" />
     <ClCompile Include="source\cassetteblock.cpp" />
+    <ClCompile Include="source\cassetteimage.cpp" />
     <ClCompile Include="source\diskfs.cpp" />
     <ClCompile Include="source\diskfsarc.cpp" />
     <ClCompile Include="source\diskfsdos2.cpp" />
@@ -36,6 +39,9 @@
     <ClCompile Include="source\diskfssdx2util.cpp" />
     <ClCompile Include="source\diskfsutil.cpp" />
     <ClCompile Include="source\diskimage.cpp" />
+    <ClCompile Include="source\blobimage.cpp" />
+    <ClCompile Include="source\image.cpp" />
+    <ClCompile Include="source\savestate.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
@@ -44,8 +50,11 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="source\wav.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\h\at\atio\cartridgeimage.h" />
+    <ClInclude Include="..\h\at\atio\cartridgetypes.h" />
     <ClInclude Include="..\h\at\atio\cassetteblock.h" />
     <ClInclude Include="..\h\at\atio\cassettedecoder.h" />
     <ClInclude Include="..\h\at\atio\cassetteimage.h" />
@@ -54,6 +63,10 @@
     <ClInclude Include="..\h\at\atio\diskfssdx2util.h" />
     <ClInclude Include="..\h\at\atio\diskfsutil.h" />
     <ClInclude Include="..\h\at\atio\diskimage.h" />
+    <ClInclude Include="..\h\at\atio\blobimage.h" />
+    <ClInclude Include="..\h\at\atio\image.h" />
+    <ClInclude Include="..\h\at\atio\savestate.h" />
+    <ClInclude Include="..\h\at\atio\wav.h" />
     <ClInclude Include="h\stdafx.h" />
   </ItemGroup>
   <ItemGroup>

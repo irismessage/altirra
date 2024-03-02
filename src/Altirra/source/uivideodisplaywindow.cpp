@@ -18,13 +18,18 @@
 #include <stdafx.h>
 #include <vd2/system/math.h>
 #include <vd2/system/time.h>
+#include <vd2/Dita/services.h>
+#include <vd2/Kasumi/pixmapops.h>
+#include <vd2/Kasumi/resample.h>
 #include <vd2/VDDisplay/font.h>
 #include <at/atcore/device.h>
 #include <at/atcore/devicevideo.h>
 #include "console.h"
 #include "inputmanager.h"
+#include "oshelper.h"
 #include "pokey.h"
 #include "simulator.h"
+#include "uiaccessors.h"
 #include "uicaptionupdater.h"
 #include "uienhancedtext.h"
 #include "uikeyboard.h"
@@ -34,7 +39,7 @@
 #include "uionscreenkeyboard.h"
 #include "uisettingswindow.h"
 #include "uitypes.h"
-#include "uilabel.h"
+#include <at/atuicontrols/uilabel.h>
 #include <at/atui/uianchor.h>
 #include "xep80.h"
 
@@ -125,7 +130,9 @@ ATUIVideoDisplayWindow::~ATUIVideoDisplayWindow() {
 
 bool ATUIVideoDisplayWindow::Init(ATSimulatorEventManager& sem, ATDeviceManager& devMgr) {
 	mpSEM = &sem;
-	mpSEM->AddCallback(this);
+	mEventCallbackIdWarmReset = mpSEM->AddEventCallback(kATSimEvent_WarmReset, [this] { OnReset(); });
+	mEventCallbackIdColdReset = mpSEM->AddEventCallback(kATSimEvent_ColdReset, [this] { OnReset(); });
+	mEventCallbackIdFrameTick = mpSEM->AddEventCallback(kATSimEvent_FrameTick, [this] { OnFrameTick(); });
 
 	mpDevMgr = &devMgr;
 	mpDevMgr->AddDeviceChangeCallback(IATDeviceVideoOutput::kTypeID, this);
@@ -142,11 +149,25 @@ void ATUIVideoDisplayWindow::Shutdown() {
 	}
 
 	if (mpSEM) {
-		mpSEM->RemoveCallback(this);
-		mpSEM = NULL;
+		mpSEM->RemoveEventCallback(mEventCallbackIdWarmReset);
+		mpSEM->RemoveEventCallback(mEventCallbackIdColdReset);
+		mpSEM->RemoveEventCallback(mEventCallbackIdFrameTick);
+
+		mpSEM = nullptr;
 	}
 
 	vdsaferelease <<= mpUILabelEnhTextSize;
+}
+
+void ATUIVideoDisplayWindow::ToggleHoldKeys() {
+	mbHoldKeys = !mbHoldKeys;
+
+	if (!mbHoldKeys) {
+		g_sim.SetPendingHeldKey(-1);
+		g_sim.SetPendingHeldSwitches(0);
+	}
+
+	g_sim.GetUIRenderer()->SetPendingHoldMode(mbHoldKeys);
 }
 
 void ATUIVideoDisplayWindow::ToggleCaptureMouse() {
@@ -321,6 +342,105 @@ void ATUIVideoDisplayWindow::Copy() {
 	}
 }
 
+void ATUIVideoDisplayWindow::CopySaveFrame(bool saveFrame, bool trueAspect) {
+	VDPixmap frameView;
+	double par = 1;
+
+	if (mpAltVideoOutput) {
+		const auto& videoInfo = mpAltVideoOutput->GetVideoInfo();
+		const auto& framebuffer = mpAltVideoOutput->GetFrameBuffer();
+
+		par = videoInfo.mPixelAspectRatio;
+		frameView = framebuffer;
+	} else {
+		ATGTIAEmulator& gtia = g_sim.GetGTIA();
+		const VDPixmap *frame = gtia.GetLastFrameBuffer();
+
+		if (!frame)
+			return;
+
+		int px = 2;
+		int py = 2;
+		gtia.GetPixelAspectMultiple(px, py);
+
+		par = (double)py / (double)px;
+		frameView = *frame;
+
+		const bool pal = g_sim.GetVideoStandard() != kATVideoStandard_NTSC && g_sim.GetVideoStandard() != kATVideoStandard_PAL60;
+		par *= (pal ? 1.03964f : 0.857141f);
+	}
+
+	// We may get a really evil format like Pal1 from the XEP-80 layer, so first blit
+	// it to RGB32.
+	VDPixmapBuffer buf(frameView.w, frameView.h, nsVDPixmap::kPixFormat_XRGB8888);
+
+	VDPixmapBlt(buf, frameView);
+
+	// Perform aspect ratio correction.
+	int sw = frameView.w;
+	int sh = frameView.h;
+	double dw = sw;
+	double dh = sh;
+
+	if (trueAspect) {
+		if (par < 1.0) {
+			dh *= 2;
+			par *= 2;
+		}
+
+		dw *= par;
+	} else {
+		if (par < 0.75)
+			dh *= 2;
+		else if (par > 1.5)
+			dw *= 2;
+	}
+
+	int iw = VDRoundToInt(dw);
+	int ih = VDRoundToInt(dh);
+
+	if (iw != buf.w || ih != buf.h) {
+		VDPixmapBuffer buf2(iw, ih, nsVDPixmap::kPixFormat_XRGB8888);
+
+		if (trueAspect) {
+			vdautoptr<IVDPixmapResampler> r(VDCreatePixmapResampler());
+
+			r->SetFilters(IVDPixmapResampler::kFilterLinear, IVDPixmapResampler::kFilterLinear, false);
+
+			const vdrect32f dstRect {
+				(float)((iw - dw) * 0.5),
+				(float)((ih - dh) * 0.5),
+				(float)((iw + dw) * 0.5),
+				(float)((ih + dh) * 0.5)
+			};
+
+			const vdrect32f srcRect {
+				(float)0,
+				(float)0,
+				(float)frameView.w,
+				(float)frameView.h
+			};
+
+			r->Init(dstRect, buf2.w, buf2.h, buf2.format, srcRect, buf.w, buf.h, buf.format);
+			r->Process(buf2, buf);
+		} else
+			VDPixmapStretchBltNearest(buf2, buf);
+
+		buf.swap(buf2);
+	}
+
+	frameView = buf;
+
+	if (saveFrame) {
+		const VDStringW fn(VDGetSaveFileName('scrn', ATUIGetMainWindow(), L"Save Screenshot", L"Portable Network Graphics (*.png)\0*.png\0", L"png"));
+
+		if (!fn.empty())
+			ATSaveFrame(ATUIGetMainWindow(), frameView, fn.c_str());
+	} else
+		ATCopyFrameToClipboard(ATUIGetMainWindow(), frameView);
+
+}
+
 vdrect32 ATUIVideoDisplayWindow::GetOSKSafeArea() const {
 	vdrect32 r(GetArea());
 	r.translate(-r.left, -r.top);
@@ -397,30 +517,28 @@ void ATUIVideoDisplayWindow::InvalidateTextOutput() {
 	Invalidate();
 }
 
-void ATUIVideoDisplayWindow::OnSimulatorEvent(ATSimulatorEvent ev) {
-	switch(ev) {
-		case kATSimEvent_ColdReset:
-		case kATSimEvent_WarmReset:
-			if (mpXEP) {
-				if (g_xepViewAutoswitchingEnabled)
-					ATUISetXEPViewEnabled(false);
+void ATUIVideoDisplayWindow::OnReset() {
+	mbHoldKeys = false;
+	g_sim.GetUIRenderer()->SetPendingHoldMode(false);
 
-				mXEPDataReceivedCount = mpXEP->GetActivityCounter();
-			}
-			break;
+	if (mpXEP) {
+		if (g_xepViewAutoswitchingEnabled)
+			ATUISetXEPViewEnabled(false);
 
-		case kATSimEvent_FrameTick:
-			if (mpXEP) {
-				uint32 c = mpXEP->GetActivityCounter();
+		mXEPDataReceivedCount = mpXEP->GetActivityCounter();
+	}
+}
 
-				if (mXEPDataReceivedCount != c) {
-					mXEPDataReceivedCount = c;
+void ATUIVideoDisplayWindow::OnFrameTick() {
+	if (mpXEP) {
+		uint32 c = mpXEP->GetActivityCounter();
 
-					if (g_xepViewAutoswitchingEnabled && !g_xepViewEnabled)
-						ATUISetXEPViewEnabled(true);
-				}
-			}
-			break;
+		if (mXEPDataReceivedCount != c) {
+			mXEPDataReceivedCount = c;
+
+			if (g_xepViewAutoswitchingEnabled && !g_xepViewEnabled)
+				ATUISetXEPViewEnabled(true);
+		}
 	}
 }
 
@@ -429,6 +547,9 @@ void ATUIVideoDisplayWindow::OnDeviceAdded(uint32 iid, IATDevice *dev, void *ifa
 
 	if (vo)
 		SetXEP(vo);
+}
+
+void ATUIVideoDisplayWindow::OnDeviceRemoving(uint32 iid, IATDevice *dev, void *iface) {
 }
 
 void ATUIVideoDisplayWindow::OnDeviceRemoved(uint32 iid, IATDevice *dev, void *iface) {
@@ -954,6 +1075,8 @@ bool ATUIVideoDisplayWindow::OnChar(const ATUICharEvent& event) {
 		if (!event.mbIsRepeat && ATUIGetScanCodeForCharacter(code, ch)) {
 			if (ch >= 0x100)
 				ProcessVirtKey(0, event.mScanCode, ch, false);
+			else if (mbHoldKeys)
+				ToggleHeldKey((uint8)ch);
 			else {
 				auto it = std::find_if(mActiveKeys.begin(), mActiveKeys.end(), [=](const ActiveKey& ak) { return ak.mVkey == 0 && ak.mNativeScanCode == event.mScanCode; });
 				if (it != mActiveKeys.end())
@@ -1163,7 +1286,9 @@ void ATUIVideoDisplayWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) 
 					opts.mFilterMode = VDDisplayBltOptions::kFilterMode_Point;
 					break;
 
+				case kATDisplayFilterMode_AnySuitable:
 				case kATDisplayFilterMode_Bilinear:
+				case kATDisplayFilterMode_Bicubic:
 					opts.mFilterMode = VDDisplayBltOptions::kFilterMode_Bilinear;
 					break;
 
@@ -1260,7 +1385,9 @@ bool ATUIVideoDisplayWindow::ProcessKeyDown(const ATUIKeyEvent& event, bool enab
 
 		if (im->IsInputMapped(0, inputCode)) {
 			im->OnButtonDown(0, inputCode);
-			return true;
+
+			if (!g_kbdOpts.mbAllowInputMapOverlap)
+				return true;
 		}
 	}
 
@@ -1306,7 +1433,9 @@ bool ATUIVideoDisplayWindow::ProcessKeyUp(const ATUIKeyEvent& event, bool enable
 
 		if (im->IsInputMapped(0, inputCode)) {
 			im->OnButtonUp(0, inputCode);
-			return true;
+
+			if (!g_kbdOpts.mbAllowInputMapOverlap)
+				return true;
 		}
 	}
 
@@ -1352,6 +1481,9 @@ void ATUIVideoDisplayWindow::ProcessVirtKey(uint32 vkey, uint32 scancode, uint32
 			mActiveSpecialVKeys[keycode - kATUIKeyScanCodeFirst] = vkey;
 			mActiveSpecialScanCodes[keycode - kATUIKeyScanCodeFirst] = scancode;
 		}
+	} else if (mbHoldKeys) {
+		if (!repeat)
+			ToggleHeldKey((uint8)keycode);
 	} else {
 		if (g_kbdOpts.mbRawKeys) {
 			if (!repeat) {
@@ -1372,18 +1504,43 @@ void ATUIVideoDisplayWindow::ProcessVirtKey(uint32 vkey, uint32 scancode, uint32
 void ATUIVideoDisplayWindow::ProcessSpecialKey(uint32 scanCode, bool state) {
 	switch(scanCode) {
 		case kATUIKeyScanCode_Start:
-			g_sim.GetGTIA().SetConsoleSwitch(0x01, state);
+			if (mbHoldKeys) {
+				if (state)
+					ToggleHeldConsoleButton(0x01);
+			} else
+				g_sim.GetGTIA().SetConsoleSwitch(0x01, state);
 			break;
 		case kATUIKeyScanCode_Select:
-			g_sim.GetGTIA().SetConsoleSwitch(0x02, state);
+			if (mbHoldKeys) {
+				if (state)
+					ToggleHeldConsoleButton(0x02);
+			} else
+				g_sim.GetGTIA().SetConsoleSwitch(0x02, state);
 			break;
 		case kATUIKeyScanCode_Option:
-			g_sim.GetGTIA().SetConsoleSwitch(0x04, state);
+			if (mbHoldKeys) {
+				if (state)
+					ToggleHeldConsoleButton(0x04);
+			} else
+				g_sim.GetGTIA().SetConsoleSwitch(0x04, state);
 			break;
 		case kATUIKeyScanCode_Break:
 			g_sim.GetPokey().SetBreakKeyState(state, !g_kbdOpts.mbFullRawKeys);
 			break;
 	}
+}
+
+void ATUIVideoDisplayWindow::ToggleHeldKey(uint8 keycode) {
+	if (g_sim.GetPendingHeldKey() == keycode)
+		g_sim.ClearPendingHeldKey();
+	else
+		g_sim.SetPendingHeldKey(keycode);
+}
+
+void ATUIVideoDisplayWindow::ToggleHeldConsoleButton(uint8 encoding) {
+	uint8 buttons = g_sim.GetPendingHeldSwitches();
+
+	g_sim.SetPendingHeldSwitches(buttons ^ encoding);
 }
 
 void ATUIVideoDisplayWindow::UpdateCtrlShiftState() {

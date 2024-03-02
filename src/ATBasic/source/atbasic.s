@@ -1,5 +1,5 @@
 ; Altirra BASIC
-; Copyright (C) 2014 Avery Lee, All Rights Reserved.
+; Copyright (C) 2014-2016 Avery Lee, All Rights Reserved.
 ;
 ; Copying and distribution of this file, with or without modification,
 ; are permitted in any medium without royalty provided the copyright
@@ -10,6 +10,11 @@
 
 		icl		'system.inc'
 		icl		'tokens.inc'
+
+;===========================================================================
+.macro _MSG_BANNER
+		dta		c'Altirra 8K BASIC 1.54'
+.endm
 
 ;===========================================================================
 ; Zero page variables
@@ -431,11 +436,12 @@ have_filename_nz:
 		inx
 		stx		errno
 
-		lda		#$9c				;delete loading line
-		jsr		putchar
-		ldx		#msg_banner-msg_base
-		jsr		IoPrintMessage
-		jsr		IoPutNewline
+		;print startup banner
+		mwa		#msg_banner_begin icbal
+		mwa		#msg_banner_end-msg_banner_begin icbll
+		mva		#CIOCmdPutChars iccmd
+		ldx		#0
+		jsr		ciov
 
 		jsr		_stNew.reset_entry
 		jsr		ExecReset
@@ -518,6 +524,12 @@ editor:
 default_fn_start:
 		dta		'D:AUTORUN.BAS',$9B
 default_fn_end:
+
+msg_banner_begin:
+		dta		$9c				;delete loading line
+		_MSG_BANNER
+		dta		$9b
+msg_banner_end:
 .endp
 
 		opt		h-
@@ -535,9 +547,24 @@ default_fn_end:
 ;==========================================================================
 ; Entry point
 ;
-; This can be skipped by the loader if a command line load is requested,
-; so this must be replaced by the load path.
+; This is totally skipped in the EXE version, where we reuse the space for
+; a reload-E: stub when returning to DOS.
 ;
+		.if CART==0
+msg_base = *+10
+ReturnToDOS:
+		ldx		#0
+		jsr		IoCloseX
+		mva		#$c0 ramtop
+		sta		icax2
+		lda		#$0c
+		ldy		#<devname_e
+		jsr		IoOpenStockDeviceX			;!! this overwrites $BC20+
+		jmp		(dosvec)
+
+		:10 dta 0
+
+		.else
 main:
 		;check if this is a warm start
 		ldx		warmst
@@ -552,7 +579,18 @@ main:
 ;
 msg_base:
 msg_banner:
-		dta		c'Altirra 8K BASIC 1.51',0
+		_MSG_BANNER
+		dta		0
+		.endif
+
+		.if		msg_base != $A00A
+		.error	"msg_base misaligned: ",*
+		.endif
+
+		.if		* != $A020
+		.error	"msg_ready misaligned: ",*
+		.endif
+		org		$A020
 
 msg_ready:
 		dta		$9B,c'Ready',$9B,0
@@ -710,7 +748,7 @@ pmg_move_mask_tab:
 		.echo	"Program ends at ",*," (",[((((*-$a000)*100/8192)/10)*16+(((*-$a000)*100)/8192)%10)],"% full)"
 
 		org		$bffa
-		dta		a(main)			;boot vector
+		dta		a($a000)		;boot vector
 		dta		$00				;do not init
 		dta		$05				;boot disk/tape, boot cart
 		dta		a(ExNop)		;init vector (no-op)

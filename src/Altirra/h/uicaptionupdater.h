@@ -26,7 +26,8 @@ public:
 	ATUIWindowCaptionUpdater();
 	~ATUIWindowCaptionUpdater();
 
-	void Init(ATSimulator *sim, const vdfunction<void(const wchar_t *)>& fn);
+	void Init(const vdfunction<void(const wchar_t *)>& fn);
+	void InitMonitoring(ATSimulator *sim);
 
 	void SetShowFps(bool showFps) { mbShowFps = showFps; }
 	void SetFullScreen(bool fs) { mbFullScreen = fs; }

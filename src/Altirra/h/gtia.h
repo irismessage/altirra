@@ -65,7 +65,13 @@ struct ATColorParams {
 	float mGammaCorrect;
 	float mArtifactHue;	
 	float mArtifactSat;
-	float mArtifactBias;
+	float mArtifactSharpness;
+	float mRedShift;
+	float mRedScale;
+	float mGrnShift;
+	float mGrnScale;
+	float mBluShift;
+	float mBluScale;
 	bool mbUsePALQuirks;
 	ATLumaRampMode mLumaRampMode;
 };
@@ -77,9 +83,12 @@ struct ATColorSettings {
 };
 
 struct ATArtifactingParams {
-	float mNTSCLumaSharpness;
-	float mNTSCChromaSharpness;
-	float mNTSCLumaNotchQ;
+	float mNTSCRedAngle;
+	float mNTSCRedMagnitude;
+	float mNTSCGrnAngle;
+	float mNTSCGrnMagnitude;
+	float mNTSCBluAngle;
+	float mNTSCBluMagnitude;
 };
 
 struct ATGTIARegisterState {
@@ -172,6 +181,9 @@ public:
 	void SetPFCollisionsEnabled(bool enable);
 
 	void SetVideoOutput(IVDVideoDisplay *pDisplay);
+
+	bool IsCTIAMode() const { return mbCTIAMode; }
+	void SetCTIAMode(bool enabled);
 
 	bool IsPALMode() const { return mbPALMode; }
 	void SetPALMode(bool enabled);
@@ -393,6 +405,7 @@ protected:
 	bool	mbMixedRendering;	// GTIA mode with non-hires or pseudo mode E
 	bool	mbGTIADisableTransition;
 	bool	mbTurbo;
+	bool	mbCTIAMode;
 	bool	mbPALMode;
 	bool	mbSECAMMode;
 	bool	mbForcedBorder;

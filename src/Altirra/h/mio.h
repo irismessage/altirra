@@ -25,8 +25,8 @@
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/scheduler.h>
 #include "pia.h"
-#include "acia.h"
-#include "scsi.h"
+#include <at/atemulation/acia.h>
+#include <at/atemulation/scsi.h>
 
 class ATMemoryLayer;
 class ATIRQController;
@@ -47,19 +47,19 @@ public:
 	ATMIOEmulator();
 	~ATMIOEmulator();
 
-	void *AsInterface(uint32 iid);
+	void *AsInterface(uint32 iid) override;
 
-	virtual void GetDeviceInfo(ATDeviceInfo& info);
-	virtual void GetSettings(ATPropertySet& settings);
-	virtual bool SetSettings(const ATPropertySet& settings);
-	virtual void Init();
-	virtual void Shutdown();
-	virtual void WarmReset();
-	virtual void ColdReset();
+	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void GetSettings(ATPropertySet& settings) override;
+	bool SetSettings(const ATPropertySet& settings) override;
+	void Init() override;
+	void Shutdown() override;
+	void WarmReset() override;
+	void ColdReset() override;
 
 public:
-	virtual void InitMemMap(ATMemoryManager *memmap);
-	virtual bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const;
+	void InitMemMap(ATMemoryManager *memmap) override;
+	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const override;
 
 public:
 	void InitFirmware(ATFirmwareManager *fwman) override;
@@ -69,10 +69,10 @@ public:
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override {}
 
 public:
-	virtual void InitIRQSource(ATIRQController *fwirq);
+	virtual void InitIRQSource(ATIRQController *fwirq) override;
 
 public:
-	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch);
+	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:
 	virtual const char *GetSupportedType(uint32 index) override;
@@ -87,10 +87,10 @@ public:
 	virtual void SetPrinterOutput(IATPrinterOutput *out) override;
 
 public:
-	virtual void OnSCSIControlStateChanged(uint32 state);
+	virtual void OnSCSIControlStateChanged(uint32 state) override;
 
 public:
-	virtual void OnScheduledEvent(uint32 id);
+	virtual void OnScheduledEvent(uint32 id) override;
 
 public:
 	void OnControlStateChanged(const ATDeviceSerialStatus& status);

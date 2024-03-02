@@ -56,6 +56,10 @@ void ATIDERawImage::GetDeviceInfo(ATDeviceInfo& info) {
 	info.mpDef = &g_ATDeviceDefIDERawImage;
 }
 
+void ATIDERawImage::GetSettingsBlurb(VDStringW& buf) {
+	buf = VDFileSplitPathRightSpan(mPath);
+}
+
 void ATIDERawImage::GetSettings(ATPropertySet& settings) {
 	settings.SetString("path", mPath.c_str());
 	settings.SetUint32("sectors", mSectorCountLimit);

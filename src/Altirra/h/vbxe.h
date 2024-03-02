@@ -174,6 +174,9 @@ protected:
 	bool mbIRQEnabled;
 	bool mbIRQRequest;
 
+	// configuration latch
+	uint8 mConfigLatch;
+
 	uint32	mDMACycles;
 
 	// blitter

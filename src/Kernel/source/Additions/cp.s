@@ -180,6 +180,10 @@ has_ext:
 		lda		#CIOCmdOpen
 		jsr		DupDoCmdFnbufIOCB1
 
+		;clear WARMST as we are about to stomp user memory and we don't
+		;want BASIC to try to resume
+		mva		#0 warmst
+
 		;attempt to run it by XIO 40 and then exit (this usually does
 		;not return on success)
 		mva		#40 iccmd+$10

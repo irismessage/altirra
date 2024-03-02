@@ -1,4 +1,4 @@
-//	Altirra - Atari 800/800XL/5200 emulator
+﻿//	Altirra - Atari 800/800XL/5200 emulator
 //	Copyright (C) 2009-2012 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
@@ -21,7 +21,7 @@
 #include <at/atcore/blockdevice.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicecart.h>
-#include "flash.h"
+#include <at/atemulation/flash.h>
 #include "ide.h"
 
 class ATMemoryManager;
@@ -57,11 +57,11 @@ public:
 	void ColdReset() override;
 
 public:		// IATDeviceScheduling
-	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch);
+	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:		// IATDeviceMemMap
-	void InitMemMap(ATMemoryManager *memmap);
-	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const;
+	void InitMemMap(ATMemoryManager *memmap) override;
+	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const override;
 
 public:		// IATDeviceCartridge
 	void InitCartridge(IATDeviceCartridgePort *cartPort) override;

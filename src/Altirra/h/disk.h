@@ -1,4 +1,4 @@
-//	Altirra - Atari 800/800XL emulator
+﻿//	Altirra - Atari 800/800XL emulator
 //	Copyright (C) 2008 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
@@ -22,11 +22,13 @@
 	#pragma once
 #endif
 
+#include <vd2/system/time.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/vdstl.h>
 #include <at/atcore/devicesio.h>
 #include <at/atcore/scheduler.h>
 #include <at/atio/diskimage.h>
+#include "diskinterface.h"
 #include "pokey.h"
 
 class ATPokeyEmulator;
@@ -35,12 +37,8 @@ class ATAudioSyncMixer;
 class ATCPUEmulatorMemory;
 class VDFile;
 class IVDRandomAccessStream;
-
-class IATDiskActivity {
-public:
-	virtual void OnDiskActivity(uint8 drive, bool active, uint32 sector) = 0;
-	virtual void OnDiskMotorChange(uint8 drive, bool active) = 0;
-};
+class IATDeviceIndicatorManager;
+class IATUIRenderer;
 
 enum ATMediaWriteMode : uint8;
 
@@ -53,82 +51,41 @@ enum ATDiskEmulationMode {
 	kATDiskEmulationMode_USDoubler,
 	kATDiskEmulationMode_Speedy1050,
 	kATDiskEmulationMode_IndusGT,
-	kATDiskEmulationMode_Happy,
+	kATDiskEmulationMode_Happy1050,
 	kATDiskEmulationMode_1050Turbo,
 	kATDiskEmulationMode_Generic57600,
+	kATDiskEmulationMode_Happy810,
 	kATDiskEmulationModeCount
 };
 
 class ATDiskEmulator final
 	: public IATDeviceSIO
-	, public IATSchedulerCallback {
+	, public IATSchedulerCallback
+	, public IATDiskInterfaceClient
+{
 public:
 	ATDiskEmulator();
 	~ATDiskEmulator();
 
-	void Init(int unit, IATDiskActivity *act, ATScheduler *sched, ATScheduler *slowsched, ATAudioSyncMixer *mixer);
+	void Init(int unit, ATDiskInterface *dif, ATScheduler *sched, ATScheduler *slowsched, ATAudioSyncMixer *mixer);
 	void Shutdown();
 
 	void Rename(int unit);
 
 	bool IsEnabled() const { return mbEnabled; }
-	bool IsAccurateSectorTimingEnabled() const { return mbAccurateSectorTiming; }
-	bool AreDriveSoundsEnabled() const { return mbDriveSoundsEnabled; }
 
-	void SetEnabled(bool enabled) { mbEnabled = enabled; }
-	void SetAccurateSectorTimingEnabled(bool enabled) { mbAccurateSectorTiming = enabled; }
-	void SetDriveSoundsEnabled(bool enabled);
-
-	void SetSectorBreakpoint(int sector) { mSectorBreakpoint = sector; }
-	int GetSectorBreakpoint() const { return mSectorBreakpoint; }
-
-	bool IsDirty() const;
-	bool IsDiskLoaded() const { return mTotalSectorCount > 0; }
-	bool IsDiskBacked() const { return mbHasDiskSource; }
-	const wchar_t *GetPath() const { return mPath.empty() ? NULL : mPath.c_str(); }
-	IATDiskImage *GetDiskImage() const { return mpDiskImage; }
-
-	bool IsWriteEnabled() const { return mbWriteEnabled; }
-	bool IsAutoFlushEnabled() const { return mbAutoFlush; }
-	void SetWriteFlushMode(bool writeEnabled, bool autoFlush);
-
-	bool IsFormatEnabled() const { return mbFormatEnabled; }
-	void SetFormatEnabled(bool enabled) { mbFormatEnabled = enabled; }
-
-	ATMediaWriteMode GetWriteMode() const;
+	void SetEnabled(bool enabled);
 
 	void SetEmulationMode(ATDiskEmulationMode mode);
 	ATDiskEmulationMode GetEmulationMode() { return mEmuMode; }
 
-	void Flush();
 	void Reset();
-	void MountFolder(const wchar_t *path, bool sdfs);
-	void LoadDisk(const wchar_t *s);
-	void LoadDisk(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream);
-	void RefreshDiskImage();
-	void SaveDisk(const wchar_t *s, ATDiskImageFormat format);
-	void CreateDisk(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize);
-	void FormatDisk(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize);
-	void UnloadDisk();
-
-	VDStringW GetMountedImageLabel() const;
-
-	uint32 GetSectorCount() const;
-	uint32 GetSectorSize(uint16 sector) const;
-	uint32 GetSectorPhantomCount(uint16 sector) const;
-
-	struct SectorInfo {
-		float mRotPos;
-		uint8 mFDCStatus;
-	};
-
-	bool GetSectorInfo(uint16 sector, int phantomIdx, SectorInfo& info) const;
 
 	void SetForcedPhantomSector(uint16 sector, uint8 index, int order);
 	int GetForcedPhantomSector(uint16 sector, uint8 index);
 
 public:
-	void OnScheduledEvent(uint32 id);
+	void OnScheduledEvent(uint32 id) override;
 
 public:
 	void InitSIO(IATDeviceSIOManager *mgr) override;
@@ -137,6 +94,12 @@ public:
 	void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) override;
 	void OnSerialFence(uint32 id) override; 
 	CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
+
+public:		// IATDiskInterfaceClient
+	void OnDiskChanged(bool mediaRemoved) override;
+	void OnWriteModeChanged() override;
+	void OnTimingModeChanged() override;
+	void OnAudioModeChanged() override;
 
 protected:
 	void UpdateAccelTimeSkew();
@@ -155,10 +118,6 @@ protected:
 	void EndCommand();
 	void AbortCommand();
 	void UpdateRotationalCounter();
-	void QueueAutoSave();
-	void AutoSave();
-	void SetAutoSaveError(bool error);
-	void UpdateDisk();
 
 	void ProcessCommand();
 	void ProcessUnsupportedCommand();
@@ -189,15 +148,11 @@ protected:
 	void PlaySeekSound(uint32 initialDelay, uint32 trackCount);
 
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
-	IATDiskActivity *mpActivity = nullptr;
 	ATScheduler *mpScheduler = nullptr;
 	ATScheduler *mpSlowScheduler = nullptr;
 	ATAudioSyncMixer *mpAudioSyncMixer = nullptr;
 	int		mUnit = 0;
-	VDStringW	mPath;
 
-	ATEvent		*mpAutoSaveEvent = nullptr;
-	ATEvent		*mpAutoSaveErrorEvent = nullptr;
 	ATEvent		*mpMotorOffEvent = nullptr;
 
 	uint32	mLastRotationUpdateCycle = 0;
@@ -214,6 +169,7 @@ protected:
 	uint32	mActiveCommandState = 0;
 	uint32	mActiveCommandSector = 0;
 	sint32	mActiveCommandPhysSector = 0;
+	float	mActiveCommandStartRotPos = 0;
 	uint8	mCustomCodeState = 0;
 	uint32	mPhantomSectorCounter = 0;
 	uint32	mRotationalCounter = 0;
@@ -226,9 +182,6 @@ protected:
 
 	bool	mbFormatEnabled = false;
 	bool	mbWriteEnabled = false;
-	bool	mbAutoFlush = false;
-	bool	mbHasDiskSource = false;
-	bool	mbErrorIndicatorPhase = false;
 
 	bool	mbCommandMode = false;
 	bool	mbCommandValid = false;
@@ -242,7 +195,6 @@ protected:
 	int		mBootSectorCount = 0;
 	int		mTotalSectorCount = 0;
 	int		mSectorSize = 0;
-	int		mSectorBreakpoint = 0;
 	uint32	mLastSector = 0;
 
 	uint32	mRotationSoundId = 0;
@@ -284,7 +236,7 @@ protected:
 	bool	mbRetryMode1050 = false;
 	bool	mbReverseOnForwardSeeks = false;
 
-	vdautoptr<IATDiskImage> mpDiskImage;
+	ATDiskInterface *mpDiskInterface = nullptr;
 
 	struct ExtPhysSector {
 		sint8	mForcedOrder;

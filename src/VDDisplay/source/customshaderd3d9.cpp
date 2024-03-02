@@ -16,7 +16,8 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-#include <d3dcompiler.h>
+#include <d3dcommon.h>
+#include <d3d10.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
@@ -191,8 +192,6 @@ private:
 	bool mbHasScalingFactor = false;
 	ScaleType mScaleTypeX = kScaleType_Source;
 	ScaleType mScaleTypeY = kScaleType_Source;
-	bool mbScaleViewportRelative = false;
-	bool mbScaleSourceRelative = false;
 	float mScaleFactorX = 0;
 	float mScaleFactorY = 0;
 	bool mbFloatFramebuffer = false;
@@ -233,14 +232,14 @@ VDDisplayCustomShaderD3D9::~VDDisplayCustomShaderD3D9() {
 }
 
 namespace {
-	class VDDisplayIncludeHandlerD3D9 final : public ID3DInclude {
+	class VDDisplayIncludeHandlerD3D9 final : public ID3D10Include {
 	public:
 		VDDisplayIncludeHandlerD3D9(const wchar_t *defaultBasePath)
 			: mDefaultBasePath(defaultBasePath)
 		{
 		}
 
-		HRESULT STDMETHODCALLTYPE Open(D3D_INCLUDE_TYPE includeType, LPCSTR pFileName, LPCVOID pParentData, LPCVOID *ppData, UINT *pBytes);
+		HRESULT STDMETHODCALLTYPE Open(D3D10_INCLUDE_TYPE includeType, LPCSTR pFileName, LPCVOID pParentData, LPCVOID *ppData, UINT *pBytes);
 		HRESULT STDMETHODCALLTYPE Close(LPCVOID pData);
 
 	private:
@@ -251,7 +250,7 @@ namespace {
 		VDStringW mDefaultBasePath;
 	};
 
-	HRESULT STDMETHODCALLTYPE VDDisplayIncludeHandlerD3D9::Open(D3D_INCLUDE_TYPE includeType, LPCSTR pFileName, LPCVOID pParentData, LPCVOID *ppData, UINT *pBytes) {
+	HRESULT STDMETHODCALLTYPE VDDisplayIncludeHandlerD3D9::Open(D3D10_INCLUDE_TYPE includeType, LPCSTR pFileName, LPCVOID pParentData, LPCVOID *ppData, UINT *pBytes) {
 		const wchar_t *basePath = pParentData ? ((IncludeHeader *)((const char *)pParentData - sizeof(IncludeHeader)))->mpBasePath : mDefaultBasePath.c_str();
 		const auto newPath = VDMakePath(VDStringSpanW(basePath), VDTextAToW(pFileName));
 
@@ -308,7 +307,7 @@ void VDDisplayCustomShaderD3D9::Init(const char *shaderPath8, const VDDisplayCus
 
 	// attempt to read in the vertex and pixel shaders
 	HMODULE hmod = nullptr;
-	typedef HRESULT (WINAPI *tpD3DCompileFromFile)(LPCWSTR, const D3D_SHADER_MACRO *, ID3DInclude *, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob **, ID3DBlob **);
+	typedef HRESULT (WINAPI *tpD3DCompileFromFile)(LPCWSTR, const D3D10_SHADER_MACRO *, ID3D10Include *, LPCSTR, LPCSTR, UINT, UINT, ID3D10Blob **, ID3D10Blob **);
 	tpD3DCompileFromFile pD3DCompileFromFile = nullptr;
 
 	vdfastvector<uint32> vsbytecode;
@@ -352,7 +351,7 @@ void VDDisplayCustomShaderD3D9::Init(const char *shaderPath8, const VDDisplayCus
 				// nope... try original
 				fxPath = VDMakePath(VDStringSpanW(basePath), shaderPath);
 				if (!VDDoesPathExist(fxPath.c_str()))
-					throw MyError("Pass %u %s shader: cannot find '%s' or a precompiled/HLSL specific version", pass + 1, shaderType, shaderPath);
+					throw MyError("Pass %u %s shader: cannot find '%s' or a precompiled/HLSL specific version", pass + 1, shaderType, shaderPath.c_str());
 			}
 
 			if (!hmod) {
@@ -362,7 +361,7 @@ void VDDisplayCustomShaderD3D9::Init(const char *shaderPath8, const VDDisplayCus
 				}
 
 				if (!pD3DCompileFromFile)
-					throw MyError("Pass %u %s shader: cannot compile '%s' as d3dcompiler_47.dll is not available", pass + 1, shaderType, shaderPath);
+					throw MyError("Pass %u %s shader: cannot compile '%s' as d3dcompiler_47.dll is not available", pass + 1, shaderType, shaderPath.c_str());
 			}
 
 			VDDisplayIncludeHandlerD3D9 includeHandler(VDFileSplitPathLeft(fxPath).c_str());
@@ -373,19 +372,19 @@ void VDDisplayCustomShaderD3D9::Init(const char *shaderPath8, const VDDisplayCus
 				profile = propLookup.GetString(VDStringSpanA("shader_profile_d3d9"));
 
 			if (profile) {
-				if (!i && !strcmp(profile, "2_a") || !strcmp(profile, "2_b"))
+				if (!i && (!strcmp(profile, "2_a") || !strcmp(profile, "2_b")))
 					profile = "2_0";
 			} else
 				profile = "2_0";
 
-			vdrefptr<ID3DBlob> outputBlob;
-			vdrefptr<ID3DBlob> errorMessages;
+			vdrefptr<ID3D10Blob> outputBlob;
+			vdrefptr<ID3D10Blob> errorMessages;
 			HRESULT hr = pD3DCompileFromFile(fxPath.c_str(),
 				nullptr,
 				&includeHandler,
 				i ? "main_fragment" : "main_vertex",
 				(VDStringA(i ? "ps_" : "vs_") + profile).c_str(),
-				D3DCOMPILE_OPTIMIZATION_LEVEL3,
+				D3D10_SHADER_OPTIMIZATION_LEVEL3,		// equivalent to D3DCOMPILE_OPTIMIZATION_LEVEL3
 				0,
 				~outputBlob,
 				~errorMessages);
@@ -490,8 +489,8 @@ void VDDisplayCustomShaderD3D9::Init(const char *shaderPath8, const VDDisplayCus
 			const SamplerState newStates[] = {
 				{ texBinding.mStage, D3DSAMP_ADDRESSU, clampToBorder },
 				{ texBinding.mStage, D3DSAMP_ADDRESSV, clampToBorder },
-				{ texBinding.mStage, D3DSAMP_MAGFILTER, refLinear ? D3DTEXF_LINEAR : D3DTEXF_POINT },
-				{ texBinding.mStage, D3DSAMP_MINFILTER, refLinear ? D3DTEXF_LINEAR : D3DTEXF_POINT },
+				{ texBinding.mStage, D3DSAMP_MAGFILTER, refLinear ? (uint32)D3DTEXF_LINEAR : (uint32)D3DTEXF_POINT },
+				{ texBinding.mStage, D3DSAMP_MINFILTER, refLinear ? (uint32)D3DTEXF_LINEAR : (uint32)D3DTEXF_POINT },
 				{ texBinding.mStage, D3DSAMP_MIPFILTER, D3DTEXF_NONE },
 				{ texBinding.mStage, D3DSAMP_MIPMAPLODBIAS, 0 },
 				{ texBinding.mStage, D3DSAMP_SRGBTEXTURE, FALSE },
@@ -505,8 +504,8 @@ void VDDisplayCustomShaderD3D9::Init(const char *shaderPath8, const VDDisplayCus
 			const SamplerState newStates[] = {
 				{ texBinding.mStage, D3DSAMP_ADDRESSU, clampToBorder },
 				{ texBinding.mStage, D3DSAMP_ADDRESSV, clampToBorder },
-				{ texBinding.mStage, D3DSAMP_MAGFILTER, refLinear ? D3DTEXF_LINEAR : D3DTEXF_POINT },
-				{ texBinding.mStage, D3DSAMP_MINFILTER, refLinear ? D3DTEXF_LINEAR : D3DTEXF_POINT },
+				{ texBinding.mStage, D3DSAMP_MAGFILTER, refLinear ? (uint32)D3DTEXF_LINEAR : (uint32)D3DTEXF_POINT },
+				{ texBinding.mStage, D3DSAMP_MINFILTER, refLinear ? (uint32)D3DTEXF_LINEAR : (uint32)D3DTEXF_POINT },
 				{ texBinding.mStage, D3DSAMP_MIPFILTER, D3DTEXF_NONE },
 				{ texBinding.mStage, D3DSAMP_MIPMAPLODBIAS, 0 },
 				{ texBinding.mStage, D3DSAMP_SRGBTEXTURE, FALSE },
@@ -522,8 +521,8 @@ void VDDisplayCustomShaderD3D9::Init(const char *shaderPath8, const VDDisplayCus
 			const SamplerState newStates[] = {
 				{ texBinding.mStage, D3DSAMP_ADDRESSU, clampToBorder },
 				{ texBinding.mStage, D3DSAMP_ADDRESSV, clampToBorder },
-				{ texBinding.mStage, D3DSAMP_MAGFILTER, texInfo.mbLinear ? D3DTEXF_LINEAR : D3DTEXF_POINT },
-				{ texBinding.mStage, D3DSAMP_MINFILTER, texInfo.mbLinear ? D3DTEXF_LINEAR : D3DTEXF_POINT },
+				{ texBinding.mStage, D3DSAMP_MAGFILTER, texInfo.mbLinear ? (uint32)D3DTEXF_LINEAR : (uint32)D3DTEXF_POINT },
+				{ texBinding.mStage, D3DSAMP_MINFILTER, texInfo.mbLinear ? (uint32)D3DTEXF_LINEAR : (uint32)D3DTEXF_POINT },
 				{ texBinding.mStage, D3DSAMP_MIPFILTER, D3DTEXF_NONE },
 				{ texBinding.mStage, D3DSAMP_MIPMAPLODBIAS, 0 },
 				{ texBinding.mStage, D3DSAMP_SRGBTEXTURE, FALSE },
@@ -1273,8 +1272,8 @@ public:
 
 	bool ContainsFinalBlit() const override;
 	uint32 GetMaxPrevFrames() const override { return mMaxPrevFrames; }
-	bool HasTimingInfo() const { return !mPassInfos.empty(); }
-	const VDDisplayCustomShaderPassInfo *GetPassTimings(uint32& numPasses);
+	bool HasTimingInfo() const override { return !mPassInfos.empty(); }
+	const VDDisplayCustomShaderPassInfo *GetPassTimings(uint32& numPasses) override;
 
 	void Run(IDirect3DTexture9 *const *srcTextures, const vdsize32& texSize, const vdsize32& imageSize, const vdsize32& viewportSize) override;
 	void RunFinal(const vdrect32f& dstRect, const vdsize32& viewportSize) override;
@@ -1462,7 +1461,7 @@ bool VDDisplayCustomShaderPipelineD3D9::ContainsFinalBlit() const {
 
 void VDDisplayCustomShaderPipelineD3D9::Run(IDirect3DTexture9 *const *srcTextures, const vdsize32& texSize, const vdsize32& imageSize, const vdsize32& viewportSize) {
 	if (!mPasses.empty()) {
-		VDDisplayCustomShaderD3D9::TextureSpec srcTexSpec = { *srcTextures++, texSize.w, texSize.h, imageSize.w, imageSize.h };
+		VDDisplayCustomShaderD3D9::TextureSpec srcTexSpec = { *srcTextures++, (uint32)texSize.w, (uint32)texSize.h, (uint32)imageSize.w, (uint32)imageSize.h };
 		mInputTexSpecs.front() = srcTexSpec;
 
 		for(auto& prevTexSpec : mPrevInputTexSpecs) {

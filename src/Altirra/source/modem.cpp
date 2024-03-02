@@ -19,6 +19,7 @@
 #include <at/atcore/propertyset.h>
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/scheduler.h>
+#include <at/atcore/wraptime.h>
 #include "modem.h"
 #include "uirender.h"
 #include "console.h"
@@ -41,6 +42,9 @@ namespace {
 
 		// four seconds of not ringing
 		kRingOffTime = 7159090 * 4 / 4,
+
+		// two seconds from dial/answer to CONNECT
+		kConnectTime = 7159090/2
 	};
 }
 
@@ -301,7 +305,7 @@ void ATModemEmulator::ColdReset() {
 
 	mCommandRate = 9600;
 
-	mControlState.mbHighSpeed = false;
+	mControlState.mbHighSpeed = true;
 	mControlState.mbRinging = false;
 
 	mSavedRegisters = ATModemRegisters();
@@ -463,6 +467,8 @@ void ATModemEmulator::Write(uint32 baudRate, uint8 c) {
 			if (mControlState.mbHighSpeed != highSpeed) {
 				mControlState.mbHighSpeed = highSpeed;
 
+				g_ATLCModem("Autoswitching to %u baud\n", highSpeed ? 1200 : 300);
+
 				if (mpCB)
 					mpCB(mControlState);
 			}
@@ -570,6 +576,9 @@ void ATModemEmulator::Set1030Mode() {
 void ATModemEmulator::SetSX212Mode() {
 	mConfig.mDeviceMode = kATRS232DeviceMode_SX212;
 	mRegisters.mbReportCarrier = true;
+	mRegisters.mFlowControlMode = ATModemFlowControl::None;
+	mTerminalState.mbDataTerminalReady = true;
+	mTerminalState.mbRequestToSend = true;
 }
 
 void ATModemEmulator::SetToneDialingMode(bool enable) {
@@ -718,6 +727,18 @@ void ATModemEmulator::Poll() {
 			switch(mConnectionState) {
 				case kConnectionState_NotConnected:
 					if (nowConnected) {
+						mConnectionState = kConnectionState_Connecting;
+						mConnectStartTime = ATSCHEDULER_GETTIME(mpScheduler);
+						mbCommandMode = false;
+						UpdateControlState();
+						UpdateUIStatus();
+					}
+					break;
+
+				case kConnectionState_Connecting:
+					if (!nowConnected) {
+						goto no_carrier;
+					} else if (ATWrapTime{ATSCHEDULER_GETTIME(mpScheduler)} > mConnectStartTime + kConnectTime) {
 						mConnectionState = kConnectionState_Connected;
 
 						if (mConfig.mDeviceMode == kATRS232DeviceMode_SX212) {
@@ -740,7 +761,6 @@ void ATModemEmulator::Poll() {
 
 						SendConnectResponse();
 
-						mbCommandMode = false;
 						mbSuppressNoCarrier = false;
 
 						UpdateControlState();
@@ -765,6 +785,7 @@ void ATModemEmulator::Poll() {
 					} else if (mLostCarrierDelayCycles && ATSCHEDULER_GETTIME(mpScheduler) - mLostCarrierTime > mLostCarrierDelayCycles) {
 						TerminateCall();
 
+no_carrier:
 						mConnectionState = kConnectionState_NotConnected;
 
 						UpdateUIStatus();
@@ -1504,7 +1525,7 @@ void ATModemEmulator::RestoreListeningState() {
 }
 
 void ATModemEmulator::UpdateControlState() {
-	const bool cd = mRegisters.mbReportCarrier ? mConnectionState == kConnectionState_Connected : true;
+	const bool cd = mRegisters.mbReportCarrier ? mConnectionState == kConnectionState_Connected || mConnectionState == kConnectionState_Connecting : true;
 	bool changed = false;
 
 	if (mControlState.mbCarrierDetect != cd) {
@@ -1551,6 +1572,7 @@ void ATModemEmulator::UpdateUIStatus() {
 			}
 			break;
 
+		case kConnectionState_Connecting:
 		case kConnectionState_Connected:
 			{
 				const char *preBracket = "";
@@ -1561,7 +1583,8 @@ void ATModemEmulator::UpdateUIStatus() {
 					postBracket = "]";
 				}
 
-				str.sprintf("Connected to %s%s%s:%s%s"
+				str.sprintf("%s to %s%s%s:%s%s"
+					, mConnectionState == kConnectionState_Connecting ? "Establishing connection" : "Connected"
 					, preBracket
 					, mAddress.c_str()
 					, postBracket

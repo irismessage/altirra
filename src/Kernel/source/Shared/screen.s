@@ -340,8 +340,8 @@ not_gtia_mode_or_gr0:
 	;compute number of mode lines that we're going to have and save it off
 	ldy		ScreenHeightShifts,x
 	ldx		ScreenHeights,y
-	and		#$40
-	seq:ldx	ScreenHeightsSplit,y
+	asl
+	spl:ldx	ScreenHeightsSplit,y
 	stx		frmadr+1
 
 	;attempt to allocate playfield memory
@@ -527,13 +527,15 @@ nosplit:
 	lda		rtclok+2
 	cmp:req	rtclok+2
 
-	;if there is a text window, show the cursor
-	lda		dindex
-	beq		show_cursor
-	bit		frmadr
-	bvc		no_cursor
+	;If we're in screen mode 0, show the cursor; otherwise, skip it and wait for
+	;E: to do so. We need to skip this even if a split screen is present, or else
+	;ACTris 2.1 displays a bogus cursor. Unfortunately we may have swapped to the
+	;split screen, so the mode we need may be in either DINDEX or TINDEX; it's
+	;easier for us just to re-check AUX2 bits 0-3.
+	lda		icax2z
+	and		#$0f
+	bne		no_cursor
 
-show_cursor:
 	;show cursor
 	jsr		ScreenPutByte.recompute_show_cursor_exit
 no_cursor:

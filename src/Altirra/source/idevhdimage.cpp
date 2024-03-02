@@ -20,6 +20,7 @@
 #include <vd2/system/bitmath.h>
 #include <vd2/system/date.h>
 #include <vd2/system/error.h>
+#include <vd2/system/filesys.h>
 #include <vd2/system/math.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/progress.h>
@@ -146,6 +147,10 @@ void *ATIDEVHDImage::AsInterface(uint32 iid) {
 
 void ATIDEVHDImage::GetDeviceInfo(ATDeviceInfo& info) {
 	info.mpDef = &g_ATDeviceDefIDEVHDImage;
+}
+
+void ATIDEVHDImage::GetSettingsBlurb(VDStringW& buf) {
+	buf = VDFileSplitPathRightSpan(mPath);
 }
 
 void ATIDEVHDImage::GetSettings(ATPropertySet& settings) {

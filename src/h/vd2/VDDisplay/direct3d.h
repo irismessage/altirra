@@ -181,7 +181,7 @@ public:
 	int			GetMainRTWidth() const { return mPresentParms.BackBufferWidth; }
 	int			GetMainRTHeight() const { return mPresentParms.BackBufferHeight; }
 
-	void		AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh);
+	void		AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh, bool use16bit);
 	bool		IsFullScreen() const { return mFullScreenCount != 0; }
 
 	bool		Reset();
@@ -231,7 +231,7 @@ public:
 		return CreateSharedTexture(name, VDRefCountObjectFactory<T, IVDD3D9TextureGenerator>, ppTexture);
 	}
 
-	bool		CreateSwapChain(HWND hwnd, int width, int height, bool clipToMonitor, IVDD3D9SwapChain **ppSwapChain);
+	bool		CreateSwapChain(HWND hwnd, int width, int height, bool clipToMonitor, bool use16bit, IVDD3D9SwapChain **ppSwapChain);
 	void		SetSwapChainActive(IVDD3D9SwapChain *pSwapChain);
 	HRESULT		PresentSwapChain(IVDD3D9SwapChain *pSwapChain, const RECT *srcRect, HWND hwndDest, bool vsync, bool newframe, bool donotwait, float& syncDelta, VDD3DPresentHistory& history);
 

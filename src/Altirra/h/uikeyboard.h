@@ -40,6 +40,7 @@ struct ATUIKeyboardOptions {
 	bool mbFullRawKeys;
 	bool mbEnableFunctionKeys;
 	bool mbAllowShiftOnColdReset;
+	bool mbAllowInputMapOverlap;
 	ArrowKeyMode mArrowKeyMode;
 	LayoutMode mLayoutMode;
 };
@@ -54,6 +55,10 @@ void ATUIGetCustomKeyMap(vdfastvector<uint32>& mappings);
 void ATUISetCustomKeyMap(const uint32 *mappings, size_t n);
 
 bool ATIsValidScanCode(uint32 c);
+
+// Returns the readable name for a key code, or nullptr if the key code is not
+// valid.
+const wchar_t *ATUIGetNameForKeyCode(uint32 c);
 
 // Keyboard mappings are packed in bitfields as follows:
 //

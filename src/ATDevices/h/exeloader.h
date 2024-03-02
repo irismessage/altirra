@@ -22,13 +22,13 @@
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/vdstl.h>
 #include <at/atcore/deviceimpl.h>
-#include <at/atcore/devicesio.h>
+#include <at/atcore/devicesioimpl.h>
 
 class ATPropertySet;
 
-class ATDeviceExeLoader final : public ATDevice, public IATDeviceSIO {
-	ATDeviceExeLoader(const ATDeviceExeLoader&);
-	ATDeviceExeLoader& operator=(const ATDeviceExeLoader&);
+class ATDeviceExeLoader final : public ATDevice, public ATDeviceSIO {
+	ATDeviceExeLoader(const ATDeviceExeLoader&) = delete;
+	ATDeviceExeLoader& operator=(const ATDeviceExeLoader&) = delete;
 
 public:
 	ATDeviceExeLoader();
@@ -49,10 +49,6 @@ public:
 public:
 	void InitSIO(IATDeviceSIOManager *mgr) override;
 	CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
-	void OnSerialAbortCommand() override;
-	void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) override;
-	void OnSerialFence(uint32 id) override;
-	CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
 
 private:
 	IATDeviceSIO::CmdResponse OnCmdReadSegment(const ATDeviceSIOCommand& cmd);

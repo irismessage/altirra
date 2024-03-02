@@ -350,7 +350,7 @@ bool VDVideoDisplayMinidriver::IsFramePending() {
 void VDVideoDisplayMinidriver::SetFilterMode(FilterMode mode) {
 }
 
-void VDVideoDisplayMinidriver::SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh) {
+void VDVideoDisplayMinidriver::SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh, bool use16bit) {
 }
 
 void VDVideoDisplayMinidriver::SetDisplayDebugInfo(bool enable) {

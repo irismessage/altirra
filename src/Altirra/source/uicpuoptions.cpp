@@ -17,23 +17,41 @@
 
 #include <stdafx.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/genericdialog.h>
 #include "resource.h"
 #include "cpu.h"
 #include "simulator.h"
+#include "uiconfirm.h"
 
 extern ATSimulator g_sim;
 
-class ATUICPUOptionsDialog : public VDDialogFrameW32 {
+class ATUICPUOptionsDialog final : public VDDialogFrameW32 {
 public:
 	ATUICPUOptionsDialog();
 
 protected:
-	void OnDataExchange(bool write);
+	bool OnOK() override;
+	void OnDataExchange(bool write) override;
+
+	typedef std::pair<ATCPUMode, uint32> CPUConfig;
+	CPUConfig GetCPUConfig() const;
+	void SetCPUConfig(const CPUConfig& config);
 };
 
 ATUICPUOptionsDialog::ATUICPUOptionsDialog()
 	: VDDialogFrameW32(IDD_CPU_OPTIONS)
 {
+}
+
+bool ATUICPUOptionsDialog::OnOK() {
+	ATCPUEmulator& cpuem = g_sim.GetCPU();
+	
+	if (cpuem.GetCPUMode() != GetCPUConfig().first) {
+		if (!ATUIConfirmDiscardMemory((VDGUIHandle)GetControl(IDOK), L"Changing CPU type"))
+			return true;
+	}
+
+	return VDDialogFrameW32::OnOK();
 }
 
 void ATUICPUOptionsDialog::OnDataExchange(bool write) {
@@ -46,51 +64,23 @@ void ATUICPUOptionsDialog::OnDataExchange(bool write) {
 		cpuem.SetStopOnBRK(IsButtonChecked(IDC_STOP_ON_BRK));
 		cpuem.SetNMIBlockingEnabled(IsButtonChecked(IDC_ALLOWNMIBLOCKING));
 
-		ATCPUMode cpuMode = kATCPUMode_6502;
-		uint32 subCycles = 1;
-
-		if (IsButtonChecked(IDC_CPUMODEL_65C816_21MHZ)) {
-			cpuMode = kATCPUMode_65C816;
-			subCycles = 12;
-		} else if (IsButtonChecked(IDC_CPUMODEL_65C816_17MHZ)) {
-			cpuMode = kATCPUMode_65C816;
-			subCycles = 10;
-		} else if (IsButtonChecked(IDC_CPUMODEL_65C816_14MHZ)) {
-			cpuMode = kATCPUMode_65C816;
-			subCycles = 8;
-		} else if (IsButtonChecked(IDC_CPUMODEL_65C816_10MHZ)) {
-			cpuMode = kATCPUMode_65C816;
-			subCycles = 6;
-		} else if (IsButtonChecked(IDC_CPUMODEL_65C816_7MHZ)) {
-			cpuMode = kATCPUMode_65C816;
-			subCycles = 4;
-		} else if (IsButtonChecked(IDC_CPUMODEL_65C816_3MHZ)) {
-			cpuMode = kATCPUMode_65C816;
-			subCycles = 2;
-		} else if (IsButtonChecked(IDC_CPUMODEL_65C816))
-			cpuMode = kATCPUMode_65C816;
-		else if (IsButtonChecked(IDC_CPUMODEL_65C02))
-			cpuMode = kATCPUMode_65C02;
+		const auto cpuConfig = GetCPUConfig();
 
 		bool reset = false;
+		bool cpuModeChange = cpuem.GetCPUMode() != cpuConfig.first;
 
-		if (cpuem.GetCPUMode() != cpuMode || cpuem.GetSubCycles() != subCycles) {
-			cpuem.SetCPUMode(cpuMode, subCycles);
-			reset = true;
+		if (cpuModeChange || cpuem.GetSubCycles() != cpuConfig.second) {
+			cpuem.SetCPUMode(cpuConfig.first, cpuConfig.second);
+
+			if (cpuModeChange)
+				reset = true;
 		}
 
 		bool shadowROM = IsButtonChecked(IDC_SHADOW_ROM);
 		bool shadowCarts = IsButtonChecked(IDC_SHADOW_CARTS);
 
-		if (g_sim.GetShadowROMEnabled() != shadowROM) {
-			g_sim.SetShadowROMEnabled(shadowROM);
-			reset = true;
-		}
-
-		if (g_sim.GetShadowCartridgeEnabled() != shadowCarts) {
-			g_sim.SetShadowCartridgeEnabled(shadowCarts);
-			reset = true;
-		}
+		g_sim.SetShadowROMEnabled(shadowROM);
+		g_sim.SetShadowCartridgeEnabled(shadowCarts);
 
 		if (reset)
 			g_sim.ColdReset();
@@ -105,36 +95,72 @@ void ATUICPUOptionsDialog::OnDataExchange(bool write) {
 		CheckButton(IDC_SHADOW_ROM, g_sim.GetShadowROMEnabled());
 		CheckButton(IDC_SHADOW_CARTS, g_sim.GetShadowCartridgeEnabled());
 
-		switch(cpuem.GetCPUMode()) {
-			case kATCPUMode_6502:
-				CheckButton(IDC_CPUMODEL_6502C, true);
-				break;
-			case kATCPUMode_65C02:
-				CheckButton(IDC_CPUMODEL_65C02, true);
-				break;
-			case kATCPUMode_65C816:
-				{
-					uint32 subCycles = cpuem.GetSubCycles();
-
-					if (subCycles >= 12)
-						CheckButton(IDC_CPUMODEL_65C816_21MHZ, true);
-					else if (subCycles >= 10)
-						CheckButton(IDC_CPUMODEL_65C816_17MHZ, true);
-					else if (subCycles >= 8)
-						CheckButton(IDC_CPUMODEL_65C816_14MHZ, true);
-					else if (subCycles >= 6)
-						CheckButton(IDC_CPUMODEL_65C816_10MHZ, true);
-					else if (subCycles >= 4)
-						CheckButton(IDC_CPUMODEL_65C816_7MHZ, true);
-					else if (subCycles >= 2)
-						CheckButton(IDC_CPUMODEL_65C816_3MHZ, true);
-					else
-						CheckButton(IDC_CPUMODEL_65C816, true);
-				}
-				break;
-		}
+		SetCPUConfig({ cpuem.GetCPUMode(), cpuem.GetSubCycles() });
 	}
 }
+
+ATUICPUOptionsDialog::CPUConfig ATUICPUOptionsDialog::GetCPUConfig() const {
+	ATCPUMode cpuMode = kATCPUMode_6502;
+	uint32 subCycles = 1;
+
+	if (IsButtonChecked(IDC_CPUMODEL_65C816_21MHZ)) {
+		cpuMode = kATCPUMode_65C816;
+		subCycles = 12;
+	} else if (IsButtonChecked(IDC_CPUMODEL_65C816_17MHZ)) {
+		cpuMode = kATCPUMode_65C816;
+		subCycles = 10;
+	} else if (IsButtonChecked(IDC_CPUMODEL_65C816_14MHZ)) {
+		cpuMode = kATCPUMode_65C816;
+		subCycles = 8;
+	} else if (IsButtonChecked(IDC_CPUMODEL_65C816_10MHZ)) {
+		cpuMode = kATCPUMode_65C816;
+		subCycles = 6;
+	} else if (IsButtonChecked(IDC_CPUMODEL_65C816_7MHZ)) {
+		cpuMode = kATCPUMode_65C816;
+		subCycles = 4;
+	} else if (IsButtonChecked(IDC_CPUMODEL_65C816_3MHZ)) {
+		cpuMode = kATCPUMode_65C816;
+		subCycles = 2;
+	} else if (IsButtonChecked(IDC_CPUMODEL_65C816))
+		cpuMode = kATCPUMode_65C816;
+	else if (IsButtonChecked(IDC_CPUMODEL_65C02))
+		cpuMode = kATCPUMode_65C02;
+
+	return { cpuMode, subCycles };
+}
+
+void ATUICPUOptionsDialog::SetCPUConfig(const CPUConfig& config) {
+	switch(config.first) {
+		case kATCPUMode_6502:
+			CheckButton(IDC_CPUMODEL_6502C, true);
+			break;
+		case kATCPUMode_65C02:
+			CheckButton(IDC_CPUMODEL_65C02, true);
+			break;
+		case kATCPUMode_65C816:
+			{
+				uint32 subCycles = config.second;
+
+				if (subCycles >= 12)
+					CheckButton(IDC_CPUMODEL_65C816_21MHZ, true);
+				else if (subCycles >= 10)
+					CheckButton(IDC_CPUMODEL_65C816_17MHZ, true);
+				else if (subCycles >= 8)
+					CheckButton(IDC_CPUMODEL_65C816_14MHZ, true);
+				else if (subCycles >= 6)
+					CheckButton(IDC_CPUMODEL_65C816_10MHZ, true);
+				else if (subCycles >= 4)
+					CheckButton(IDC_CPUMODEL_65C816_7MHZ, true);
+				else if (subCycles >= 2)
+					CheckButton(IDC_CPUMODEL_65C816_3MHZ, true);
+				else
+					CheckButton(IDC_CPUMODEL_65C816, true);
+			}
+			break;
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
 
 void ATUIShowCPUOptionsDialog(VDGUIHandle h) {
 	ATUICPUOptionsDialog dlg;

@@ -30,7 +30,9 @@
 #include <stdarg.h>
 
 class VDStringA;
+class VDStringSpanA;
 class VDStringW;
+class VDStringSpanW;
 
 // The max_dst value needs to include space for the NULL as well.  The number
 // of characters produced is returned, minus the null terminator.
@@ -43,9 +45,14 @@ VDStringA VDTextWToA(const VDStringW& sw);
 VDStringW VDTextAToW(const char *src, int length = -1);
 VDStringW VDTextAToW(const VDStringA& sw);
 
-VDStringA VDTextWToU8(const VDStringW& s);
+// Convert wide chars to UTF-8.
+// Directly returns number of bytes emitted and indirectly returns number of source
+// characters consumed.
+size_t VDCodePointToU8(uint8 *dst, size_t dstLen, const wchar_t *src, size_t srcLen, size_t& srcElementsUsed);
+
+VDStringA VDTextWToU8(const VDStringSpanW& s);
 VDStringA VDTextWToU8(const wchar_t *s, int length);
-VDStringW VDTextU8ToW(const VDStringA& s);
+VDStringW VDTextU8ToW(const VDStringSpanA& s);
 VDStringW VDTextU8ToW(const char *s, int length);
 
 // The terminating NULL character is not included in these.

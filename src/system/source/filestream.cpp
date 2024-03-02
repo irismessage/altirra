@@ -432,7 +432,11 @@ void VDTextOutputStream::PutLine() {
 }
 
 void VDTextOutputStream::PutLine(const char *s) {
-	PutData(s, strlen(s));
+	PutLine(s, strlen(s));
+}
+
+void VDTextOutputStream::PutLine(const char *s, int len) {
+	PutData(s, len);
 	PutData("\r\n", 2);
 }
 

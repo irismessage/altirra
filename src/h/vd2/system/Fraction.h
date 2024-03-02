@@ -29,18 +29,17 @@
 #include <vd2/system/vdtypes.h>
 
 class VDFraction {
-friend VDFraction operator*(unsigned long b, const VDFraction f);
-friend VDFraction operator*(int b, const VDFraction f);
+	friend VDFraction operator*(uint32 b, const VDFraction f);
 private:
-	unsigned long	hi, lo;
+	uint32	hi, lo;
 
 	static VDFraction reduce(uint64 hi, uint64 lo);
 
 public:
-	VDFraction() {}
-	explicit VDFraction(int i) : hi(i), lo(1) {}
-	explicit VDFraction(unsigned long i) : hi(i), lo(1) { }
-	explicit VDFraction(unsigned long i, unsigned long j) : hi(i), lo(j) {}
+	VDFraction() = default;
+	explicit constexpr VDFraction(uint32 i) : hi(i), lo(1) { }
+	explicit constexpr VDFraction(uint32 i, uint32 j) : hi(i), lo(j) {}
+
 	explicit VDFraction(double d);
 
 	bool	operator<(VDFraction b) const;
@@ -53,15 +52,15 @@ public:
 	VDFraction operator*(VDFraction b) const;
 	VDFraction operator/(VDFraction b) const;
 
-	VDFraction operator*(unsigned long b) const;
-	VDFraction operator/(unsigned long b) const;
+	VDFraction operator*(uint32 b) const;
+	VDFraction operator/(uint32 b) const;
 
 	VDFraction& operator*=(VDFraction b);
 	VDFraction& operator/=(VDFraction b);
-	VDFraction& operator*=(unsigned long b);
-	VDFraction& operator/=(unsigned long b);
+	VDFraction& operator*=(uint32 b);
+	VDFraction& operator/=(uint32 b);
 
-	void	Assign(unsigned long n, unsigned long d) {
+	void	Assign(uint32 n, uint32 d) {
 		hi = n;
 		lo = d;
 	}
@@ -73,13 +72,18 @@ public:
 	sint64 scale64ir(sint64) const;
 	sint64 scale64iu(sint64) const;
 
-	double asDouble() const;
-	double AsInverseDouble() const;
+	constexpr double asDouble() const {
+		return (double)hi / (double)lo;
+	}
 
-	unsigned long roundup32ul() const;
+	constexpr double AsInverseDouble() const {
+		return (double)lo / (double)hi;
+	}
 
-	unsigned long getHi() const { return hi; }
-	unsigned long getLo() const { return lo; }
+	uint32 roundup32ul() const;
+
+	uint32 getHi() const { return hi; }
+	uint32 getLo() const { return lo; }
 
 	VDFraction reduce() const { return reduce(hi, lo); }
 
@@ -88,7 +92,7 @@ public:
 	static inline VDFraction reduce64(sint64 hi, sint64 lo) { return reduce(hi, lo); }
 };
 
-inline VDFraction operator*(unsigned long b, const VDFraction f) { return f*b; }
+inline VDFraction operator*(uint32 b, const VDFraction f) { return f*b; }
 
 typedef VDFraction Fraction;
 

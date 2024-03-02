@@ -60,9 +60,12 @@ ATAdjustArtifactingDialog::ATAdjustArtifactingDialog()
 }
 
 bool ATAdjustArtifactingDialog::OnLoaded() {
-	AddMapping(IDC_NTSC_LUMASHARP, 0, 100, [this]() { return VDRoundToInt32(mParams.mNTSCLumaSharpness * 100.0f); }, [this](sint32 v) { mParams.mNTSCLumaSharpness = (float)v / 100.0f; });
-	AddMapping(IDC_NTSC_CHROMASHARP, 0, 100, [this]() { return VDRoundToInt32(mParams.mNTSCChromaSharpness * 100.0f); }, [this](sint32 v) { mParams.mNTSCChromaSharpness = (float)v / 100.0f; });
-	AddMapping(IDC_NTSC_LUMANOTCHQ, 1, 100, [this]() { return VDRoundToInt32(mParams.mNTSCLumaNotchQ * 10.0f); }, [this](sint32 v) { mParams.mNTSCLumaNotchQ = (float)v / 10.0f; });
+	AddMapping(IDC_NTSC_PARAM1, 0, 100, [this]() { return VDRoundToInt32(mParams.mNTSCRedAngle * 100.0f); }, [this](sint32 v) { mParams.mNTSCRedAngle = (float)v / 100.0f; });
+	AddMapping(IDC_NTSC_PARAM2, 0, 100, [this]() { return VDRoundToInt32(mParams.mNTSCRedMagnitude * 100.0f); }, [this](sint32 v) { mParams.mNTSCRedMagnitude = (float)v / 100.0f; });
+	AddMapping(IDC_NTSC_PARAM3, 0, 100, [this]() { return VDRoundToInt32(mParams.mNTSCGrnAngle * 100.0f); }, [this](sint32 v) { mParams.mNTSCGrnAngle = (float)v / 100.0f; });
+	AddMapping(IDC_NTSC_PARAM4, 0, 100, [this]() { return VDRoundToInt32(mParams.mNTSCGrnMagnitude * 100.0f); }, [this](sint32 v) { mParams.mNTSCGrnMagnitude = (float)v / 100.0f; });
+	AddMapping(IDC_NTSC_PARAM5, 0, 100, [this]() { return VDRoundToInt32(mParams.mNTSCBluAngle * 100.0f); }, [this](sint32 v) { mParams.mNTSCBluAngle = (float)v / 100.0f; });
+	AddMapping(IDC_NTSC_PARAM6, 0, 100, [this]() { return VDRoundToInt32(mParams.mNTSCBluMagnitude * 100.0f); }, [this](sint32 v) { mParams.mNTSCBluMagnitude = (float)v / 100.0f; });
 
 	for(const Mapping& mapping : mMappings) {
 		TBSetRange(mapping.mId, mapping.mTickMin, mapping.mTickMax);
@@ -104,15 +107,12 @@ void ATAdjustArtifactingDialog::OnHScroll(uint32 id, int code) {
 
 void ATAdjustArtifactingDialog::UpdateLabel(const Mapping& mapping) {
 	switch(mapping.mId) {
-		case IDC_NTSC_LUMASHARP:
-			SetControlTextF(IDC_STATIC_NTSC_LUMASHARP, L"%.2f", mParams.mNTSCLumaSharpness);
-			break;
-		case IDC_NTSC_CHROMASHARP:
-			SetControlTextF(IDC_STATIC_NTSC_CHROMASHARP, L"%.2f", mParams.mNTSCChromaSharpness);
-			break;
-		case IDC_NTSC_LUMANOTCHQ:
-			SetControlTextF(IDC_STATIC_NTSC_LUMANOTCHQ, L"%.1f", mParams.mNTSCLumaNotchQ);
-			break;
+		case IDC_NTSC_PARAM1: SetControlTextF(IDC_STATIC_NTSC_PARAM1, L"%.2f", mParams.mNTSCRedAngle); break;
+		case IDC_NTSC_PARAM2: SetControlTextF(IDC_STATIC_NTSC_PARAM2, L"%.2f", mParams.mNTSCRedMagnitude); break;
+		case IDC_NTSC_PARAM3: SetControlTextF(IDC_STATIC_NTSC_PARAM3, L"%.2f", mParams.mNTSCGrnAngle); break;
+		case IDC_NTSC_PARAM4: SetControlTextF(IDC_STATIC_NTSC_PARAM4, L"%.2f", mParams.mNTSCGrnMagnitude); break;
+		case IDC_NTSC_PARAM5: SetControlTextF(IDC_STATIC_NTSC_PARAM5, L"%.2f", mParams.mNTSCBluAngle); break;
+		case IDC_NTSC_PARAM6: SetControlTextF(IDC_STATIC_NTSC_PARAM6, L"%.2f", mParams.mNTSCBluMagnitude); break;
 	}
 }
 
@@ -137,6 +137,7 @@ protected:
 	void UpdateColorImage();
 	void ExportPalette(const wchar_t *s);
 	void OnLumaRampChanged(VDUIProxyComboBoxControl *sender, int sel);
+	void LoadPreset(uint32 id);
 
 	ATColorSettings mSettings;
 	ATColorParams *mpParams;
@@ -173,7 +174,13 @@ bool ATAdjustColorsDialog::OnLoaded() {
 	TBSetRange(IDC_GAMMACORRECT, 50, 260);
 	TBSetRange(IDC_ARTPHASE, -60, 360);
 	TBSetRange(IDC_ARTSAT, 0, 400);
-	TBSetRange(IDC_ARTBRI, -50, 50);
+	TBSetRange(IDC_ARTSHARP, 0, 100);
+	TBSetRange(IDC_RED_SHIFT, -225, 225);
+	TBSetRange(IDC_RED_SCALE, 0, 400);
+	TBSetRange(IDC_GRN_SHIFT, -225, 225);
+	TBSetRange(IDC_GRN_SCALE, 0, 400);
+	TBSetRange(IDC_BLU_SHIFT, -225, 225);
+	TBSetRange(IDC_BLU_SCALE, 0, 400);
 
 	EnableControl(IDC_PALQUIRKS, g_sim.GetGTIA().IsPALMode());
 
@@ -239,7 +246,13 @@ void ATAdjustColorsDialog::OnDataExchange(bool write) {
 		TBSetValue(IDC_ARTPHASE, adjustedHue);
 
 		TBSetValue(IDC_ARTSAT, VDRoundToInt(mpParams->mArtifactSat * 100.0f));
-		TBSetValue(IDC_ARTBRI, VDRoundToInt(mpParams->mArtifactBias * 100.0f));
+		TBSetValue(IDC_ARTSHARP, VDRoundToInt(mpParams->mArtifactSharpness * 100.0f));
+		TBSetValue(IDC_RED_SHIFT, VDRoundToInt(mpParams->mRedShift * 10.0f));
+		TBSetValue(IDC_RED_SCALE, VDRoundToInt(mpParams->mRedScale * 100.0f));
+		TBSetValue(IDC_GRN_SHIFT, VDRoundToInt(mpParams->mGrnShift * 10.0f));
+		TBSetValue(IDC_GRN_SCALE, VDRoundToInt(mpParams->mGrnScale * 100.0f));
+		TBSetValue(IDC_BLU_SHIFT, VDRoundToInt(mpParams->mBluShift * 10.0f));
+		TBSetValue(IDC_BLU_SCALE, VDRoundToInt(mpParams->mBluScale * 100.0f));
 
 		mLumaRampCombo.SetSelection(mpParams->mLumaRampMode);
 
@@ -251,7 +264,13 @@ void ATAdjustColorsDialog::OnDataExchange(bool write) {
 		UpdateLabel(IDC_GAMMACORRECT);
 		UpdateLabel(IDC_ARTPHASE);
 		UpdateLabel(IDC_ARTSAT);
-		UpdateLabel(IDC_ARTBRI);
+		UpdateLabel(IDC_ARTSHARP);
+		UpdateLabel(IDC_RED_SHIFT);
+		UpdateLabel(IDC_RED_SCALE);
+		UpdateLabel(IDC_GRN_SHIFT);
+		UpdateLabel(IDC_GRN_SCALE);
+		UpdateLabel(IDC_BLU_SHIFT);
+		UpdateLabel(IDC_BLU_SCALE);
 		UpdateColorImage();
 	}
 }
@@ -296,122 +315,23 @@ bool ATAdjustColorsDialog::OnCommand(uint32 id, uint32 extcode) {
 			ExportPalette(fn.c_str());
 		}
 	} else if (id == ID_COLORS_DEFAULTNTSC_XL) {
-		mpParams->mHueStart = -36.0f;
-		mpParams->mHueRange = 25.5f * 15.0f;
-		mpParams->mBrightness = -0.08f;
-		mpParams->mContrast = 1.08f;
-		mpParams->mSaturation = 0.33f;
-		mpParams->mGammaCorrect = 1.0f;
-		mpParams->mArtifactHue = 279.0f;
-		mpParams->mArtifactSat = 0.68f;
-		mpParams->mArtifactBias = 0.25f;
-		mpParams->mbUsePALQuirks = false;
-		OnDataExchange(true);
-		OnDataExchange(false);
+		LoadPreset(id);
 	} else if (id == ID_COLORS_DEFAULTNTSC_XE) {
-		mpParams->mHueStart = -36.0f;
-		mpParams->mHueRange = 25.5f * 15.0f;
-		mpParams->mBrightness = -0.08f;
-		mpParams->mContrast = 1.08f;
-		mpParams->mSaturation = 0.33f;
-		mpParams->mGammaCorrect = 1.0f;
-		mpParams->mArtifactHue = 220.0f;
-		mpParams->mArtifactSat = 0.68f;
-		mpParams->mArtifactBias = 0.25f;
-		mpParams->mbUsePALQuirks = false;
-		OnDataExchange(true);
-		OnDataExchange(false);
+		LoadPreset(id);
 	} else if (id == ID_COLORS_DEFAULTPAL) {
-		mpParams->mHueStart = -23.0f;
-		mpParams->mHueRange = 23.5f * 15.0f;
-		mpParams->mBrightness = 0.0f;
-		mpParams->mContrast = 1.0f;
-		mpParams->mSaturation = 0.29f;
-		mpParams->mGammaCorrect = 1.0f;
-		mpParams->mArtifactHue = -96.0f;
-		mpParams->mArtifactSat = 2.76f;
-		mpParams->mArtifactBias = 0.35f;
-		mpParams->mbUsePALQuirks = true;
-		OnDataExchange(true);
-		OnDataExchange(false);
-	} else if (id == ID_COLORS_1XNTSC) {
-		mpParams->mHueStart = -15.0f;
-		mpParams->mHueRange = 360.0f * 15.0f / 14.4f;
-		mpParams->mBrightness = 0.0f;
-		mpParams->mContrast = 1.0f;
-		mpParams->mSaturation = 75.0f / 255.0f;
-		mpParams->mGammaCorrect = 1.0f;
-		mpParams->mArtifactHue = -96.0f;
-		mpParams->mArtifactSat = 2.76f;
-		mpParams->mArtifactBias = 0.35f;
-		mpParams->mbUsePALQuirks = false;
-		OnDataExchange(true);
-		OnDataExchange(false);
+		LoadPreset(id);
+	} else if (id == ID_COLORS_NTSCXL_1702) {
+		LoadPreset(id);
+	} else if (id == ID_COLORS_28NTSC) {
+		LoadPreset(id);
 	} else if (id == ID_COLORS_25NTSC) {
-		mpParams->mHueStart = -51.0f;
-		mpParams->mHueRange = 27.9f * 15.0f;
-		mpParams->mBrightness = 0.0f;
-		mpParams->mContrast = 1.0f;
-		mpParams->mSaturation = 75.0f / 255.0f;
-		mpParams->mGammaCorrect = 1.0f;
-		mpParams->mArtifactHue = -96.0f;
-		mpParams->mArtifactSat = 2.76f;
-		mpParams->mArtifactBias = 0.35f;
-		mpParams->mbUsePALQuirks = false;
-		OnDataExchange(true);
-		OnDataExchange(false);
-	} else if (id == ID_COLORS_ALTERNATE) {
-		mpParams->mHueStart = -29.0f;
-		mpParams->mHueRange = 26.1f * 15.0f;
-		mpParams->mBrightness = -0.03f;
-		mpParams->mContrast = 0.88f;
-		mpParams->mSaturation = 0.23f;
-		mpParams->mGammaCorrect = 1.0f;
-		mpParams->mArtifactHue = -96.0f;
-		mpParams->mArtifactSat = 2.76f;
-		mpParams->mArtifactBias = 0.35f;
-		mpParams->mbUsePALQuirks = false;
-		OnDataExchange(true);
-		OnDataExchange(false);
+		LoadPreset(id);
 	} else if (id == ID_COLORS_AUTHENTICNTSC) {
-		mpParams->mHueStart = -51.0f;
-		mpParams->mHueRange = 418.0f;
-		mpParams->mBrightness = -0.11f;
-		mpParams->mContrast = 1.04f;
-		mpParams->mSaturation = 0.34f;
-		mpParams->mGammaCorrect = 1.0f;
-		mpParams->mArtifactHue = -96.0f;
-		mpParams->mArtifactSat = 2.76f;
-		mpParams->mArtifactBias = 0.35f;
-		mpParams->mbUsePALQuirks = false;
-		OnDataExchange(true);
-		OnDataExchange(false);
+		LoadPreset(id);
 	} else if (id == ID_COLORS_G2F) {
-		mpParams->mHueStart = -9.36754f;
-		mpParams->mHueRange = 361.019f;
-		mpParams->mBrightness = +0.174505f;
-		mpParams->mContrast = 0.82371f;
-		mpParams->mSaturation = 0.21993f;
-		mpParams->mGammaCorrect = 1.0f;
-		mpParams->mArtifactHue = -96.0f;
-		mpParams->mArtifactSat = 2.76f;
-		mpParams->mArtifactBias = 0.35f;
-		mpParams->mbUsePALQuirks = false;
-		OnDataExchange(true);
-		OnDataExchange(false);
+		LoadPreset(id);
 	} else if (id == ID_COLORS_OLIVIERPAL) {
-		mpParams->mHueStart = -14.7889f;
-		mpParams->mHueRange = 385.155f;
-		mpParams->mBrightness = +0.057038f;
-		mpParams->mContrast = 0.941149f;
-		mpParams->mSaturation = 0.195861f;
-		mpParams->mGammaCorrect = 1.0f;
-		mpParams->mArtifactHue = -96.0f;
-		mpParams->mArtifactSat = 2.76f;
-		mpParams->mArtifactBias = 0.35f;
-		mpParams->mbUsePALQuirks = false;
-		OnDataExchange(true);
-		OnDataExchange(false);
+		LoadPreset(id);
 	}
 
 	return false;
@@ -498,11 +418,71 @@ void ATAdjustColorsDialog::OnHScroll(uint32 id, int code) {
 			UpdateColorImage();
 			UpdateLabel(id);
 		}
-	} else if (id == IDC_ARTBRI) {
-		float v = (float)TBGetValue(IDC_ARTBRI) / 100.0f;
+	} else if (id == IDC_ARTSHARP) {
+		float v = (float)TBGetValue(IDC_ARTSHARP) / 100.0f;
 
-		if (mpParams->mArtifactBias != v) {
-			mpParams->mArtifactBias = v;
+		if (mpParams->mArtifactSharpness != v) {
+			mpParams->mArtifactSharpness = v;
+
+			OnDataExchange(true);
+			UpdateColorImage();
+			UpdateLabel(id);
+		}
+	} else if (id == IDC_RED_SHIFT) {
+		float v = (float)TBGetValue(IDC_RED_SHIFT) / 10.0f;
+
+		if (mpParams->mRedShift != v) {
+			mpParams->mRedShift = v;
+
+			OnDataExchange(true);
+			UpdateColorImage();
+			UpdateLabel(id);
+		}
+	} else if (id == IDC_RED_SCALE) {
+		float v = (float)TBGetValue(IDC_RED_SCALE) / 100.0f;
+
+		if (mpParams->mRedScale != v) {
+			mpParams->mRedScale = v;
+
+			OnDataExchange(true);
+			UpdateColorImage();
+			UpdateLabel(id);
+		}
+	} else if (id == IDC_GRN_SHIFT) {
+		float v = (float)TBGetValue(IDC_GRN_SHIFT) / 10.0f;
+
+		if (mpParams->mGrnShift != v) {
+			mpParams->mGrnShift = v;
+
+			OnDataExchange(true);
+			UpdateColorImage();
+			UpdateLabel(id);
+		}
+	} else if (id == IDC_GRN_SCALE) {
+		float v = (float)TBGetValue(IDC_GRN_SCALE) / 100.0f;
+
+		if (mpParams->mGrnScale != v) {
+			mpParams->mGrnScale = v;
+
+			OnDataExchange(true);
+			UpdateColorImage();
+			UpdateLabel(id);
+		}
+	} else if (id == IDC_BLU_SHIFT) {
+		float v = (float)TBGetValue(IDC_BLU_SHIFT) / 10.0f;
+
+		if (mpParams->mBluShift != v) {
+			mpParams->mBluShift = v;
+
+			OnDataExchange(true);
+			UpdateColorImage();
+			UpdateLabel(id);
+		}
+	} else if (id == IDC_BLU_SCALE) {
+		float v = (float)TBGetValue(IDC_BLU_SCALE) / 100.0f;
+
+		if (mpParams->mBluScale != v) {
+			mpParams->mBluScale = v;
 
 			OnDataExchange(true);
 			UpdateColorImage();
@@ -589,8 +569,26 @@ void ATAdjustColorsDialog::UpdateLabel(uint32 id) {
 		case IDC_ARTSAT:
 			SetControlTextF(IDC_STATIC_ARTSAT, L"%.0f%%", mpParams->mArtifactSat * 100.0f);
 			break;
-		case IDC_ARTBRI:
-			SetControlTextF(IDC_STATIC_ARTBRI, L"%+.0f%%", mpParams->mArtifactBias * 100.0f);
+		case IDC_ARTSHARP:
+			SetControlTextF(IDC_STATIC_ARTSHARP, L"%.2f", mpParams->mArtifactSharpness);
+			break;
+		case IDC_RED_SHIFT:
+			SetControlTextF(IDC_STATIC_RED_SHIFT, L"%.1f\u00B0", mpParams->mRedShift);
+			break;
+		case IDC_RED_SCALE:
+			SetControlTextF(IDC_STATIC_RED_SCALE, L"%.2f", mpParams->mRedScale);
+			break;
+		case IDC_GRN_SHIFT:
+			SetControlTextF(IDC_STATIC_GRN_SHIFT, L"%.1f\u00B0", mpParams->mGrnShift);
+			break;
+		case IDC_GRN_SCALE:
+			SetControlTextF(IDC_STATIC_GRN_SCALE, L"%.2f", mpParams->mGrnScale);
+			break;
+		case IDC_BLU_SHIFT:
+			SetControlTextF(IDC_STATIC_BLU_SHIFT, L"%.1f\u00B0", mpParams->mBluShift);
+			break;
+		case IDC_BLU_SCALE:
+			SetControlTextF(IDC_STATIC_BLU_SCALE, L"%.2f", mpParams->mBluScale);
 			break;
 	}
 }
@@ -629,6 +627,120 @@ void ATAdjustColorsDialog::OnLumaRampChanged(VDUIProxyComboBoxControl *sender, i
 		OnDataExchange(true);
 		UpdateColorImage();
 	}
+}
+
+void ATAdjustColorsDialog::LoadPreset(uint32 id) {
+	mpParams->mRedShift = 0;
+	mpParams->mRedScale = 1;
+	mpParams->mGrnShift = 0;
+	mpParams->mGrnScale = 1;
+	mpParams->mBluShift = 0;
+	mpParams->mBluScale = 1;
+	mpParams->mArtifactSharpness = 0.50f;
+	mpParams->mbUsePALQuirks = false;
+
+	switch(id) {
+		case ID_COLORS_DEFAULTNTSC_XL:
+		default:
+			mpParams->mHueStart = -57.0f;
+			mpParams->mHueRange = 27.1f * 15.0f;
+			mpParams->mBrightness = -0.04f;
+			mpParams->mContrast = 1.04f;
+			mpParams->mSaturation = 0.20f;
+			mpParams->mGammaCorrect = 1.0f;
+			mpParams->mArtifactHue = 252.0f;
+			mpParams->mArtifactSat = 1.15f;
+			mpParams->mBluScale = 1.50f;
+			break;
+		case ID_COLORS_DEFAULTNTSC_XE:
+			mpParams->mHueStart = -57.0f;
+			mpParams->mHueRange = 27.1f * 15.0f;
+			mpParams->mBrightness = -0.04f;
+			mpParams->mContrast = 1.04f;
+			mpParams->mSaturation = 0.20f;
+			mpParams->mGammaCorrect = 1.0f;
+			mpParams->mArtifactHue = 191.0f;
+			mpParams->mArtifactSat = 1.32f;
+			mpParams->mBluScale = 1.50f;
+			break;
+		case ID_COLORS_DEFAULTPAL:
+			mpParams->mHueStart = -23.0f;
+			mpParams->mHueRange = 23.5f * 15.0f;
+			mpParams->mBrightness = 0.0f;
+			mpParams->mContrast = 1.0f;
+			mpParams->mSaturation = 0.29f;
+			mpParams->mGammaCorrect = 1.0f;
+			mpParams->mArtifactHue = -96.0f;
+			mpParams->mArtifactSat = 2.76f;
+			mpParams->mbUsePALQuirks = true;
+			break;
+		case ID_COLORS_NTSCXL_1702:
+			mpParams->mHueStart = -33.0f;
+			mpParams->mHueRange = 24.0f * 15.0f;
+			mpParams->mBrightness = 0;
+			mpParams->mContrast = 1.08f;
+			mpParams->mSaturation = 0.30f;
+			mpParams->mGammaCorrect = 1.0f;
+			mpParams->mArtifactHue = 277.0f;
+			mpParams->mArtifactSat = 2.13f;
+			mpParams->mGrnScale = 0.60f;
+			mpParams->mBluShift = -5.5f;
+			mpParams->mBluScale = 1.56f;
+			break;
+		case ID_COLORS_28NTSC:
+			mpParams->mHueStart = -36.0f;
+			mpParams->mHueRange = 25.5f * 15.0f;
+			mpParams->mBrightness = -0.08f;
+			mpParams->mContrast = 1.08f;
+			mpParams->mSaturation = 0.33f;
+			mpParams->mGammaCorrect = 1.0f;
+			mpParams->mArtifactHue = 279.0f;
+			mpParams->mArtifactSat = 0.68f;
+			break;
+		case ID_COLORS_25NTSC:
+			mpParams->mHueStart = -51.0f;
+			mpParams->mHueRange = 27.9f * 15.0f;
+			mpParams->mBrightness = 0.0f;
+			mpParams->mContrast = 1.0f;
+			mpParams->mSaturation = 75.0f / 255.0f;
+			mpParams->mGammaCorrect = 1.0f;
+			mpParams->mArtifactHue = -96.0f;
+			mpParams->mArtifactSat = 2.76f;
+			break;
+		case ID_COLORS_AUTHENTICNTSC:
+			mpParams->mHueStart = -57.0f;
+			mpParams->mHueRange = 27.1f * 15.0f;
+			mpParams->mBrightness = -0.08f;
+			mpParams->mContrast = 1.11f;
+			mpParams->mSaturation = 0.25f;
+			mpParams->mGammaCorrect = 1.0f;
+			mpParams->mArtifactHue = 274.0f;
+			mpParams->mArtifactSat = 1.34f;
+			break;
+		case ID_COLORS_G2F:
+			mpParams->mHueStart = -9.36754f;
+			mpParams->mHueRange = 361.019f;
+			mpParams->mBrightness = +0.174505f;
+			mpParams->mContrast = 0.82371f;
+			mpParams->mSaturation = 0.21993f;
+			mpParams->mGammaCorrect = 1.0f;
+			mpParams->mArtifactHue = -96.0f;
+			mpParams->mArtifactSat = 2.76f;
+			break;
+		case ID_COLORS_OLIVIERPAL:
+			mpParams->mHueStart = -14.7889f;
+			mpParams->mHueRange = 385.155f;
+			mpParams->mBrightness = +0.057038f;
+			mpParams->mContrast = 0.941149f;
+			mpParams->mSaturation = 0.195861f;
+			mpParams->mGammaCorrect = 1.0f;
+			mpParams->mArtifactHue = -96.0f;
+			mpParams->mArtifactSat = 2.76f;
+			break;
+	}
+
+	OnDataExchange(true);
+	OnDataExchange(false);
 }
 
 void ATUIOpenAdjustColorsDialog(VDGUIHandle hParent) {

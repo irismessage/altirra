@@ -60,6 +60,23 @@ extern const ATDeviceDefinition g_ATDeviceDefSIDE;
 extern const ATDeviceDefinition g_ATDeviceDefSIDE2;
 extern const ATDeviceDefinition g_ATDeviceDefDongle;
 extern const ATDeviceDefinition g_ATDeviceDefPBIDisk;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrive810;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrive810Archiver;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDriveHappy810;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrive1050;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDriveUSDoubler;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDriveSpeedy1050;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDriveHappy1050;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDriveSuperArchiver;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDriveTOMS1050;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDriveTygrys1050;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrive1050Duplicator;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrive1050Turbo;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrive1050TurboII;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDriveIndusGT;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDriveXF551;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDriveATR8000;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercom;
 
 void ATRegisterDevices(ATDeviceManager& dm) {
 	static const ATDeviceDefinition *const kDeviceDefs[]={
@@ -101,6 +118,23 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefSIDE2,
 		&g_ATDeviceDefDongle,
 		&g_ATDeviceDefPBIDisk,
+		&g_ATDeviceDefDiskDrive810,
+		&g_ATDeviceDefDiskDrive810Archiver,
+		&g_ATDeviceDefDiskDriveHappy810,
+		&g_ATDeviceDefDiskDrive1050,
+		&g_ATDeviceDefDiskDriveUSDoubler,
+		&g_ATDeviceDefDiskDriveSpeedy1050,
+		&g_ATDeviceDefDiskDriveHappy1050,
+		&g_ATDeviceDefDiskDriveSuperArchiver,
+		&g_ATDeviceDefDiskDriveTOMS1050,
+		&g_ATDeviceDefDiskDriveTygrys1050,
+		&g_ATDeviceDefDiskDrive1050Duplicator,
+		&g_ATDeviceDefDiskDrive1050Turbo,
+		&g_ATDeviceDefDiskDrive1050TurboII,
+		&g_ATDeviceDefDiskDriveIndusGT,
+		&g_ATDeviceDefDiskDriveXF551,
+		&g_ATDeviceDefDiskDriveATR8000,
+		&g_ATDeviceDefDiskDrivePercom,
 	};
 
 	for(const ATDeviceDefinition *def : kDeviceDefs)

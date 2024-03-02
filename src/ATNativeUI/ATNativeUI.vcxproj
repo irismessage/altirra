@@ -246,6 +246,8 @@
   <ItemGroup>
     <ClCompile Include="source\acceleditdialog.cpp" />
     <ClCompile Include="source\dialog.cpp" />
+    <ClCompile Include="source\dragdrop.cpp" />
+    <ClCompile Include="source\genericdialog.cpp" />
     <ClCompile Include="source\hotkeyexcontrol.cpp" />
     <ClCompile Include="source\messageloop.cpp" />
     <ClCompile Include="source\syncwait.cpp" />
@@ -269,6 +271,8 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\h\at\atnativeui\dragdrop.h" />
+    <ClInclude Include="..\h\at\atnativeui\genericdialog.h" />
     <ClInclude Include="..\h\at\atnativeui\messageloop.h" />
     <ClInclude Include="..\h\at\atnativeui\syncwait.h" />
     <ClInclude Include="..\h\at\atnativeui\uiframe.h" />

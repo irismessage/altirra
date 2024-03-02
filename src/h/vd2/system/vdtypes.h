@@ -56,6 +56,10 @@
 		#endif
 
 		#define VD_COMPILER_MSVC_VC8_OR_LATER 1
+
+		#ifdef __clang__
+			#define VD_COMPILER_MSVC_CLANG 1
+		#endif
 	#elif defined(__GNUC__)
 		#define VD_COMPILER_GCC
 		#if defined(__MINGW32__) || defined(__MINGW64__)
@@ -73,6 +77,14 @@
 		#define VD_CPU_X86		1
 	#elif defined(_M_ARM)
 		#define VD_CPU_ARM
+	#endif
+#endif
+
+#ifndef VD_PTR_SIZE
+	#if defined(VD_CPU_AMD64)
+		#define VD_PTR_SIZE		8
+	#else
+		#define VD_PTR_SIZE		4
 	#endif
 #endif
 
@@ -213,6 +225,7 @@ extern void VDDebugPrint(const char *format, ...);
 	#define VDBREAK		*(volatile char *)0 = *(volatile char *)0
 #endif
 
+#define VDASSERTCT(exp)	static_assert((exp), #exp)
 
 #ifdef _DEBUG
 
@@ -229,11 +242,11 @@ extern void VDDebugPrint(const char *format, ...);
 		};
 	}
 
+	#define VDFAIL(str)			if (VDAssert(#str, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
 	#define VDASSERT(exp)		if (!(exp) && VDAssert   (#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
 	#define VDASSERTPTR(exp) 	if (!(exp) && VDAssertPtr(#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
 	#define VDVERIFY(exp)		if (!(exp) && VDAssert   (#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
 	#define VDVERIFYPTR(exp) 	if (!(exp) && VDAssertPtr(#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
-	#define VDASSERTCT(exp)		(void)sizeof(int[(exp)?1:-1])
 
 	#define VDINLINEASSERT(exp)			((exp)||(VDAssertHelper<__LINE__>(#exp, __FILE__),false))
 	#define VDINLINEASSERTFALSE(exp)	((exp)&&(VDAssertHelper<__LINE__>("!("#exp")", __FILE__),true))
@@ -246,21 +259,16 @@ extern void VDDebugPrint(const char *format, ...);
 #else
 
 	#if defined(_MSC_VER)
-		#ifndef _M_AMD64
-			#define VDASSERT(exp)		__assume(!!(exp))
-			#define VDASSERTPTR(exp)	__assume(!!(exp))
-		#else
-			#define VDASSERT(exp)		__noop(exp)
-			#define VDASSERTPTR(exp)	__noop(exp)
-		#endif
+		#define VDASSERT(exp)		((void)0)
+		#define VDASSERTPTR(exp)	((void)0)
 	#elif defined(__GNUC__)
 		#define VDASSERT(exp)		__builtin_expect(0 != (exp), 1)
 		#define VDASSERTPTR(exp)	__builtin_expect(0 != (exp), 1)
 	#endif
 
+	#define VDFAIL(str)			(void)(str)
 	#define VDVERIFY(exp)		(void)(exp)
 	#define VDVERIFYPTR(exp)	(void)(exp)
-	#define VDASSERTCT(exp)
 
 	#define VDINLINEASSERT(exp)	(exp)
 	#define VDINLINEASSERTFALSE(exp)	(exp)
@@ -298,38 +306,6 @@ extern void VDDebugPrint(const char *format, ...);
 	#define vdnoexcept_(cond)	noexcept(cond)
 	#define vdnoexcept_false	noexcept(false)
 	#define vdnoexcept_true		noexcept(true)
-#endif
-
-// TODO macros
-//
-// These produce a diagnostic during compilation that indicate a TODO for
-// later:
-//
-//		#pragma message(__TODO__ "Fix this.)
-//		#vdpragma_TODO("Fix this.")
-
-#define vdpragma_TODO2(x)	#x
-#define vdpragma_TODO1(x)	vdpragma_TODO2(x)
-#define vdpragma_TODO0		__FILE__ "(" vdpragma_TODO1(__LINE__) ") : TODO: "
-
-#ifdef _MSC_VER
-#define vdpragma_TODO(x)		message(vdpragma_TODO0 x)
-#else
-#define vdpragma_TODO(x)
-#endif
-
-// BS macros
-//
-// These tag code that is not meant to go into a final build.
-
-#define vdpragma_BS2(x)	#x
-#define vdpragma_BS1(x)	vdpragma_BS2(x)
-#define vdpragma_BS0		__FILE__ "(" vdpragma_BS1(__LINE__) ") : BS: "
-
-#ifdef _MSC_VER
-#define vdpragma_BS(x)		message(vdpragma_BS0 x)
-#else
-#define vdpragma_BS(x)
 #endif
 
 ///////////////////////////////////////////////////////////////////////////

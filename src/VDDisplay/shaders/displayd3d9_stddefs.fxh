@@ -25,20 +25,18 @@ struct VertexInput {
 	float2		uv2		: TEXCOORD1;
 };
 
-float4 vd_vpsize;
-float4 vd_cvpsize;
-float4 vd_srcsize;
-float4 vd_texsize;
-float4 vd_tex2size;
-float4 vd_tempsize;
-float4 vd_temp2size;
-float4 vd_interphtexsize;
-float4 vd_interpvtexsize;
-float4 vd_interptexsize;
-float4 vd_fieldinfo;
-float2 vd_chromauvscale;
-float2 vd_chromauvoffset;
-float2 vd_pixelsharpness;
+float4 vd_vpsize : register(c0);
+float4 vd_srcsize : register(c1);
+float4 vd_texsize : register(c2);
+float4 vd_tex2size : register(c3);
+float4 vd_tempsize : register(c4);
+float4 vd_interphtexsize : register(c5);
+float4 vd_interpvtexsize : register(c6);
+float4 vd_interptexsize : register(c7);
+float4 vd_fieldinfo : register(c8);
+float2 vd_chromauvscale : register(c9);
+float2 vd_chromauvoffset : register(c10);
+float2 vd_pixelsharpness : register(c11);
 
 texture vd_srctexture;
 texture vd_src2atexture;
@@ -91,30 +89,6 @@ const sampler vd_src2bsampler_clamp_linear = sampler_state {
 	AddressV = Clamp;
 	MinFilter = Linear;
 	MagFilter = Linear;
-};
-
-const sampler vd_src2csampler_clamp_linear = sampler_state {
-	Texture = <vd_src2ctexture>;
-	AddressU = Clamp;
-	AddressV = Clamp;
-	MinFilter = Linear;
-	MagFilter = Linear;
-};
-
-const sampler vd_src2dsampler_clamp_linear = sampler_state {
-	Texture = <vd_src2dtexture>;
-	AddressU = Clamp;
-	AddressV = Clamp;
-	MinFilter = Linear;
-	MagFilter = Linear;
-};
-
-const sampler vd_hevenoddsampler = sampler_state {
-	Texture = <vd_hevenoddtexture>;
-	AddressU = Wrap;
-	AddressV = Clamp;
-	MinFilter = Point;
-	MagFilter = Point;
 };
 
 #endif

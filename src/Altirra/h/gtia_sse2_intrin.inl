@@ -19,16 +19,17 @@
 #define f_GTIA_SSE2_INTRIN_INL
 
 #include <intrin.h>
+#include <at/atcore/intrin_sse2.h>
 
 void atasm_update_playfield_160_sse2(void *dst0, const uint8 *src, uint32 n) {
 	// We do unaligned loads from this array, so it's important that we
 	// avoid data cache unit (DCU) split penalties on older CPUs. Minimum
-	// for SSSE3 is Core 2, so we can assume at least 64 byte cache lines.
-	static const __declspec(align(64)) uint64 window_table[6] = {
+	// for SSE2 is Pentium 4, so we can assume at least 64 byte cache lines.
+	alignas(64) static const uint64 window_table[6] = {
 		0, 0, (uint64)0 - 1, (uint64)0 - 1, 0, 0
 	};
 
-	static const __declspec(align(16)) uint64 lowbit_mask[2] = { 0x0f0f0f0f0f0f0f0f, 0x0f0f0f0f0f0f0f0f };
+	alignas(16) static const uint64 lowbit_mask[2] = { 0x0f0f0f0f0f0f0f0f, 0x0f0f0f0f0f0f0f0f };
 
 	// load and preshuffle color table
 	const __m128i pfMask = *(const __m128i *)lowbit_mask;
@@ -62,13 +63,12 @@ void atasm_update_playfield_160_sse2(void *dst0, const uint8 *src, uint32 n) {
 		mask2 = _mm_unpacklo_epi8(mask2, mask2);
 
 		const __m128i anxData = *(const __m128i *)src;
-		src += 16;
 
 		const __m128i evenColorCodes = _mm_and_si128(_mm_srli_epi32(anxData, 4), pfMask);
 		const __m128i  oddColorCodes = _mm_and_si128(               anxData    , pfMask);
 
-		_mm_maskmoveu_si128(_mm_unpacklo_epi8(evenColorCodes, oddColorCodes), mask1, dst);
-		_mm_maskmoveu_si128(_mm_unpackhi_epi8(evenColorCodes, oddColorCodes), mask2, dst+16);
+		ATMaskedWrite_SSE2(_mm_unpacklo_epi8(evenColorCodes, oddColorCodes), mask1, dst);
+		ATMaskedWrite_SSE2(_mm_unpackhi_epi8(evenColorCodes, oddColorCodes), mask2, dst+16);
 	} else {
 		// process initial oword
 		if (startOffset) {
@@ -86,8 +86,8 @@ void atasm_update_playfield_160_sse2(void *dst0, const uint8 *src, uint32 n) {
 			const __m128i evenColorCodes = _mm_and_si128(_mm_srli_epi32(anxData, 4), pfMask);
 			const __m128i  oddColorCodes = _mm_and_si128(               anxData    , pfMask);
 
-			_mm_maskmoveu_si128(_mm_unpacklo_epi8(evenColorCodes, oddColorCodes), mask1, dst);
-			_mm_maskmoveu_si128(_mm_unpackhi_epi8(evenColorCodes, oddColorCodes), mask2, dst+16);
+			ATMaskedWrite_SSE2(_mm_unpacklo_epi8(evenColorCodes, oddColorCodes), mask1, dst);
+			ATMaskedWrite_SSE2(_mm_unpackhi_epi8(evenColorCodes, oddColorCodes), mask2, dst+16);
 			dst += 32;
 		}
 
@@ -124,13 +124,10 @@ void atasm_update_playfield_160_sse2(void *dst0, const uint8 *src, uint32 n) {
 			const __m128i evenColorCodes = _mm_and_si128(_mm_srli_epi32(anxData, 4), pfMask);
 			const __m128i  oddColorCodes = _mm_and_si128(               anxData    , pfMask);
 
-			_mm_maskmoveu_si128(_mm_unpacklo_epi8(evenColorCodes, oddColorCodes), mask1, dst);
-			_mm_maskmoveu_si128(_mm_unpackhi_epi8(evenColorCodes, oddColorCodes), mask2, dst+16);
+			ATMaskedWrite_SSE2(_mm_unpacklo_epi8(evenColorCodes, oddColorCodes), mask1, dst);
+			ATMaskedWrite_SSE2(_mm_unpackhi_epi8(evenColorCodes, oddColorCodes), mask2, dst+16);
 		}
 	}
-
-	// flush store queue
-	_mm_sfence();
 }
 
 #endif

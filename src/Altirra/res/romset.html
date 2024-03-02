@@ -1,0 +1,90 @@
+<html>
+  <head>
+    <title>Altirra ROM set</title>
+    <style>
+      body {
+        background: #fff;
+        color: #000;  
+        font-family: sans-serif;
+        font-size: 10pt;
+      }
+
+      tt {
+        font-family: Lucida Console, monospace;
+        color: #800;
+      }
+
+      h1 {
+        font-weight: 400;
+        font-size: 250%;
+      }
+
+      h2 {
+        margin-top: 30px;
+        border-bottom: 1px solid black;
+        font-weight: normal;
+      }
+
+      h3 {
+          font-size: 12pt;
+          font-weight: bold;
+          margin-top: 25px;
+          margin-bottom: 12px;
+      }
+
+      p.copy {
+        font-style: italic;
+      }
+
+      span.mono {
+        font-family: monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Altirra ROM set</h1>
+    <p class="copy">Copyright &copy; 2016 Avery Lee, All Rights Reserved.</p>
+    <p class="copy">
+Copying and distribution of this file, with or without modification,
+are permitted in any medium without royalty provided the copyright
+notice and this notice are preserved.  This file is offered as-is,
+without any warranty.
+    </p>
+    <p>
+      This ROM set consists of the following four files:
+    </p>
+    <ul>
+      <li><span class="mono">atbasic.rom</span> (Altirra 8K BASIC)</li>
+      <li><span class="mono">altirraos-800.rom</span> (AltirraOS for 400/800 Computers)</li>
+      <li><span class="mono">altirraos-xl.rom</span> (AltirraOS for XL/XE/XEGS Computers)</li>
+      <li><span class="mono">altirraos-5200.rom</span> (AltirraOS for 5200 SuperSystem)</li>
+    </ul>
+    <p>
+      These are replacements for the standard Atari ROMs that would normally be present in these
+      systems; they are not the original ROMs, but new ones rewritten from scratch to match the
+      same programming interface without the original code. They may be used in either real
+      hardware or in emulators with sufficient accuracy. The mapping to standard filenames
+      expected by most emulators is as follows:
+    </p>
+    <ul>
+      <li><span class="mono">atbasic.rom -&gt; ATARIBAS.ROM</span></li>
+      <li><span class="mono">altirraos-800.rom -&gt; ATARIOSB.ROM</span></li>
+      <li><span class="mono">altirraos-xl.rom -&gt; ATARIXL.ROM / ATARIXEGS.ROM</span></li>
+      <li><span class="mono">altirraos-5200.rom -&gt; ATARI5200.ROM</span></li>
+    </ul>
+    <p>
+      <b>Please note:</b> The replacement ROMs have been written to support software that conforms
+      to Atari's original specifications for usage of public variables and entry points into the
+      firmware ROMs. Software that makes use of undocumented entry points or behaviors from the
+      original OS and BASIC ROMs may not work with these ROMs. An attempt has been made to achieve
+      reasonably high compatibility, but some programs have hardcoded assumptions that cannot work
+      with such a replacement ROM and will only run on the original firmware.
+    </p>
+    <p>
+      The license for all files is the all-permissive license as shown at the top of this page.
+    </p>
+    <p>
+      The source code for these files is included in the source of the <a href="http://virtualdub.org/altirra.html">Altirra emulator</a>.
+    </p>
+  </body>
+</html>

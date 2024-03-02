@@ -43,12 +43,6 @@
     These are used by default if no other firmware is available. They are functionally compatible with the standard Atari OSes and
     have a good compatibility rate, but you may run into software with issues due to depending on OS ROM internals.
   </p>
-
-  <h3>AltirraOS HLE</h3>
-  <p>
-    Selects the internal high level emulation (HLE) kernel, which executes kernel calls in native code. No firmware is required.
-    This is a bit faster than the other built-in ROMs, but is somewhat old at this point and is deprecated.
-  </p>
   
   <h3>Atari 5200 OS</h3>
   <p>

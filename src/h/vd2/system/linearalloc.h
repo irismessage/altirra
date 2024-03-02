@@ -1,6 +1,7 @@
 #ifndef f_VD2_SYSTEM_LINEARALLOC_H
 #define f_VD2_SYSTEM_LINEARALLOC_H
 
+#include <vd2/system/vdtypes.h>
 #include <new>
 
 class VDLinearAllocator {

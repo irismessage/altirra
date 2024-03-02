@@ -91,11 +91,6 @@ namespace AT6502 {
 	};
 }
 
-class VDINTERFACE IATCPUHighLevelEmulator {
-public:
-	virtual int InvokeHLE(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem, uint16 pc, uint32 code) = 0;
-};
-
 class ATCPUEmulator {
 public:
 	ATCPUEmulator();
@@ -106,7 +101,6 @@ public:
 	ATCPUEmulatorMemory *GetMemory() const { return mpMemory; }
 	ATCPUHookManager *GetHookManager() const { return mpHookMgr; }
 
-	void	SetHLE(IATCPUHighLevelEmulator *hle);
 	void	SetBreakpointManager(ATBreakpointManager *bkptmanager);
 
 	void	ColdReset();
@@ -118,6 +112,7 @@ public:
 		return b;
 	}
 
+	bool	IsAtInsnStep() const;
 	bool	IsInstructionInProgress() const;
 	bool	IsNextCycleWrite() const;
 	uint8	GetHeldCycleValue();
@@ -268,7 +263,6 @@ public:
 	void	SaveStatePrivate(ATSaveStateWriter& writer);
 	void	EndSaveState(ATSaveStateWriter& writer);
 
-	void	SetHLEDelay(int delay) { mHLEDelay = delay; }
 	void	InjectOpcode(uint8 op);
 	void	Push(uint8 v);
 	void	PushWord(uint16 v);
@@ -420,8 +414,6 @@ protected:
 	ATCPUHookManager *mpHookMgr;
 	ATCPUEmulatorCallbacks	*mpCallbacks;
 	ATBreakpointManager *mpBkptManager;
-	IATCPUHighLevelEmulator	*mpHLE;
-	uint32	mHLEDelay;
 
 	ATCPUProfiler	*mpProfiler;
 	ATCPUVerifier	*mpVerifier;

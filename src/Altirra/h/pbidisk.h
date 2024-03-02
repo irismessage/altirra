@@ -20,7 +20,7 @@
 
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicepbi.h>
-#include <at/atcore/devicesio.h>
+#include <at/atcore/devicesioimpl.h>
 
 class ATMemoryLayer;
 
@@ -28,7 +28,7 @@ class ATPBIDiskEmulator final : public ATDevice
 	, public IATDeviceMemMap
 	, public IATDevicePBIConnection
 	, public IATPBIDevice
-	, public IATDeviceSIO
+	, public ATDeviceSIO
 {
 public:
 	void *AsInterface(uint32 iid) override;
@@ -52,11 +52,6 @@ public:
 
 public:
 	void InitSIO(IATDeviceSIOManager *mgr) override;
-	CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
-	void OnSerialAbortCommand() override;
-	void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) override;
-	void OnSerialFence(uint32 id) override;
-	CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
 
 private:
 	bool OnWriteByte(uint32 address, uint8 value);

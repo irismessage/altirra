@@ -1258,28 +1258,6 @@ for(;;) {
 			AT_CPU_READ_BYTE(mAddr);
 			END_SUB_CYCLE();
 
-		case kStateInvokeHLE:
-			if (mpHLE) {
-				mHLEDelay = 0;
-				int r = mpHLE->InvokeHLE(*this, *mpMemory, mPC - 1, mAddr);
-
-				if (r == -2) {
-					mpNextState += 2;
-					break;
-				}
-
-				if (r >= 0)
-					return r;
-			}
-			break;
-
-		case kStateHLEDelay:
-			if (mHLEDelay) {
-				--mHLEDelay;
-				END_SUB_CYCLE();
-			}
-			break;
-
 		case kStateStepOver:
 			ProcessStepOver();
 			break;

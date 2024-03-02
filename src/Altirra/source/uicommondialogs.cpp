@@ -1,10 +1,12 @@
 #include <stdafx.h>
 #include <windows.h>
+#include <vd2/system/error.h>
+#include <vd2/system/text.h>
 #include <vd2/Dita/services.h>
 #include <at/atui/uianchor.h>
+#include <at/atui/uimanager.h>
 #include "uicommondialogs.h"
 #include "uifilebrowser.h"
-#include <at/atui/uimanager.h>
 #include "uimessagebox.h"
 #include "uiqueue.h"
 
@@ -23,10 +25,33 @@ void ATUISetNativeDialogMode(bool enabled) {
 
 ///////////////////////////////////////////////////////////////////////////
 
+void ATUIShowInfo(VDGUIHandle h, const wchar_t *text) {
+	MessageBoxW((HWND)h, text, L"Altirra", MB_OK | MB_ICONINFORMATION);
+}
+
+void ATUIShowWarning(VDGUIHandle h, const wchar_t *text, const wchar_t *caption) {
+	MessageBoxW((HWND)h, text, caption, MB_OK | MB_ICONWARNING);
+}
+
+bool ATUIShowWarningConfirm(VDGUIHandle h, const wchar_t *text) {
+	return IDOK == MessageBoxW((HWND)h, text, L"Altirra Warning", MB_OKCANCEL | MB_ICONEXCLAMATION);
+}
+
+void ATUIShowError(VDGUIHandle h, const wchar_t *text) {
+	MessageBoxW((HWND)h, text, L"Altirra Error", MB_OK | MB_ICONERROR);
+}
+
+void ATUIShowError(VDGUIHandle h, const MyError& e) {
+	ATUIShowError(h, VDTextAToW(e.c_str()).c_str());
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 class ATUIStageAlert : public ATUIFutureWithResult<bool> {
 public:
 	void Start(const wchar_t *text, const wchar_t *caption) {
 		if (ATUIGetNativeDialogMode()) {
+
 			if (IDOK == MessageBoxW(g_hwnd, text, caption, MB_OKCANCEL | MB_ICONERROR))
 				mResult = true;
 			else

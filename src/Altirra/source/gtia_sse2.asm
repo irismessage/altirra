@@ -34,27 +34,25 @@ _atasm_update_playfield_160_sse2:
 		;compute srcEnd = src + n
 		mov			ebx, ecx
 		add			ebx, edx
-		mov			[esp+12+16], ebx
-		
-		;check if we have a start offset
-		mov			edx, ecx
-		and			edx, 15
-		jz			.xstart
-		
-		;remove start offset
-		sub			edi, edx
-		sub			ecx, edx
-		sub			edi, edx
 		
 		;check if we have overlapping start and stop masks
-		mov			esi, eax
-		xor			esi, edx
-		and			esi, 0fffffff0h
-		jz			.dosingle
+		;remove start offset
+		mov			edx, ecx
+		mov			eax, ecx
+		and			edx, 15
+		sub			edi, edx
+		xor			eax, ebx
+		sub			ecx, edx
+		sub			edi, edx
+		cmp			eax, 16
+		jb			.dosingle
+
+		;check if we have a start offset
+		or			edx, edx
+		jz			.xstart
 
 		;process start section
 		xor			edx, 15
-		inc			edx
 		call		.domask
 		
 .xstart:
@@ -81,12 +79,11 @@ _atasm_update_playfield_160_sse2:
 		and			eax, 15
 		jz			.xit
 		
-		mov			edx, 32
-		sub			edx, eax
+		xor			eax, 31
+		mov			edx, eax
 		call		.domask
 		
 .xit:
-		sfence
 		pop			ebx
 		pop			esi
 		pop			edi
@@ -95,18 +92,20 @@ _atasm_update_playfield_160_sse2:
 
 .dosingle:
 		xor			edx, 15
+		and			ebx, 15
+		xor			ebx, 15
 		movq		xmm4, qword [window_table+edx+1]
 		movq		xmm5, qword [window_table+edx+9]
-		movq		xmm0, qword [window_table+edx+17]
-		movq		xmm1, qword [window_table+edx+25]
+		movq		xmm0, qword [window_table+ebx+17]
+		movq		xmm1, qword [window_table+ebx+25]
 		pand		xmm4, xmm0
 		pand		xmm5, xmm1
 		call		.domask2
 		jmp			short .xit
 
 .domask:
-		movq		xmm4, qword [window_table+edx]
-		movq		xmm5, qword [window_table+edx+8]
+		movq		xmm4, qword [window_table+edx+1]
+		movq		xmm5, qword [window_table+edx+9]
 .domask2:
 		punpcklbw	xmm4, xmm4
 		punpcklbw	xmm5, xmm5
@@ -121,10 +120,15 @@ _atasm_update_playfield_160_sse2:
 		pand		xmm2, xmm3
 		movdqa		xmm6, [edi]
 		movdqa		xmm7, [edi+16]
-		maskmovdqu	xmm0, xmm4
-		add			edi, 16
-		maskmovdqu	xmm2, xmm5
-		add			edi, 16
+		pand		xmm0, xmm4
+		pand		xmm2, xmm5
+		pandn		xmm4, xmm6
+		pandn		xmm5, xmm7
+		por			xmm0, xmm4
+		por			xmm2, xmm5
+		movdqa		[edi], xmm0
+		movdqa		[edi+16], xmm2
+		add			edi, 32
 		ret
 
 		end

@@ -259,8 +259,8 @@ void VDCache::MarkCompleted(VDCachedObject *pObject) {
 ///////////////////////////////////////////////////////////////////////////
 
 VDCachedObject::VDCachedObject()
-	: mRefCount(0)
-	, mpCache(NULL)
+	: mpCache(nullptr)
+	, mRefCount(0)
 {
 }
 
@@ -384,8 +384,8 @@ void VDPool::NotifyFree(VDPooledObject *pObject) {
 ///////////////////////////////////////////////////////////////////////////
 
 VDPooledObject::VDPooledObject()
-	: mRefCount(0)
-	, mpPool(NULL)
+	: mpPool(nullptr)
+	, mRefCount(0)
 {
 }
 

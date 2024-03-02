@@ -3,10 +3,10 @@
 
 #include <vd2/system/function.h>
 #include <at/atui/uicontainer.h>
-#include "uilabel.h"
-#include "uibutton.h"
-#include "uilistview.h"
-#include "uitextedit.h"
+#include <at/atuicontrols/uilabel.h>
+#include <at/atuicontrols/uibutton.h>
+#include <at/atuicontrols/uilistview.h>
+#include <at/atuicontrols/uitextedit.h>
 #include "callback.h"
 
 class ATUIFileBrowser final : public ATUIContainer {
@@ -36,13 +36,13 @@ public:
 	void OnSize() override;
 
 protected:
-	void OnGoUpPressed(ATUIButton *);
-	void OnOKPressed(ATUIButton *);
-	void OnCancelPressed(ATUIButton *);
-	void OnItemSelected(ATUIListView *, sint32);
-	void OnItemActivated(ATUIListView *, sint32);
-	void OnRootItemActivated(ATUIListView *, sint32);
-	void OnNewPathEntered(ATUITextEdit *);
+	void OnGoUpPressed();
+	void OnOKPressed();
+	void OnCancelPressed();
+	void OnItemSelected(sint32);
+	void OnItemActivated(sint32);
+	void OnRootItemActivated(sint32);
+	void OnNewPathEntered();
 
 	void Repopulate();
 

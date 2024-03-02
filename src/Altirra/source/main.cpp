@@ -1,4 +1,4 @@
-//	Altirra - Atari 800/800XL/5200 emulator
+﻿//	Altirra - Atari 800/800XL/5200 emulator
 //	Copyright (C) 2009-2015 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
@@ -18,6 +18,7 @@
 #include <stdafx.h>
 #include <windows.h>
 #include <tchar.h>
+#include <time.h>
 #include <mmsystem.h>
 #include <shlwapi.h>
 #include <commdlg.h>
@@ -46,12 +47,17 @@
 #include <vd2/Dita/services.h>
 #include <at/atappbase/crthooks.h>
 #include <at/atappbase/exceptionfilter.h>
+#include <at/atcore/constants.h>
+#include <at/atcore/checksum.h>
 #include <at/atcore/media.h>
 #include <at/atcore/profile.h>
 #include <at/atdevices/devices.h>
+#include <at/atio/cassetteimage.h>
+#include <at/atio/image.h>
 #include <at/atui/constants.h>
 #include <at/atnativeui/acceleditdialog.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/genericdialog.h>
 #include <at/atnativeui/hotkeyexcontrol.h>
 #include <at/atnativeui/messageloop.h>
 #include <at/atnativeui/progress.h>
@@ -62,9 +68,9 @@
 #include "console.h"
 #include "simulator.h"
 #include "cassette.h"
-#include "cassetteimage.h"
 #include "debugger.h"
 #include "debuggerlog.h"
+#include "disk.h"
 #include "hostdevice.h"
 #include "savestate.h"
 #include "resource.h"
@@ -103,6 +109,9 @@
 #include "sapconverter.h"
 #include "cmdhelpers.h"
 #include "settings.h"
+#include "compatdb.h"
+#include "compatengine.h"
+#include "uicompat.h"
 
 #include "firmwaremanager.h"
 #include <at/atcore/devicemanager.h>
@@ -158,7 +167,7 @@ void ATShutdownUIPanes();
 void ATShowChangeLog(VDGUIHandle hParent);
 void ATUIInitCommandMappings(ATUICommandManager& cmdMgr);
 
-void DoLoad(VDGUIHandle h, const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper, ATLoadType loadType = kATLoadType_Other, bool *suppressColdReset = NULL, int loadIndex = -1);
+void DoLoad(VDGUIHandle h, const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType = kATImageType_None, bool *suppressColdReset = NULL, int loadIndex = -1);
 void DoBootWithConfirm(const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper);
 
 void LoadBaselineSettings();
@@ -181,11 +190,14 @@ VDCommandLine g_ATCmdLine;
 bool g_ATCmdLineRead;
 bool g_ATCmdLineHadAnything;
 bool g_ATRegistryHadAnything;
+VDRegistryProviderMemory *g_pATRegistryMemory;
+VDStringW g_ATRegistryPathPortable;
 
 ATSimulator g_sim;
 
 bool g_ATAutoFrameFlipping = false;
 bool g_fullscreen = false;
+bool g_fullscreenDisplay = false;
 WINDOWPLACEMENT g_ATWindowPreFSPlacement;
 bool g_mouseCaptured = false;
 bool g_mouseClipped = false;
@@ -242,20 +254,25 @@ sint64	g_frameTimeout;
 void ATUIUpdateSpeedTiming() {
 	// NTSC: 1.7897725MHz master clock, 262 scanlines of 114 clocks each
 	// PAL: 1.773447MHz master clock, 312 scanlines of 114 clocks each
-	static const double kPeriods[3][2]={
-		{ 1.0 / 59.9227, 1.0 / 49.8607 },
-		{ 1.0 / 59.9400, 1.0 / 50.0000 },
-		{ 1.0 / 60.0000, 1.0 / 50.0000 },
+	// SECAM: 1.7815MHz master clock, 312 scanlines of 114 clocks each
+	static constexpr double kMasterClocks[3]={
+		kATMasterClock_NTSC,
+		kATMasterClock_PAL,
+		kATMasterClock_SECAM,
+	};
+
+	static constexpr double kPeriods[3][3]={
+		{ 1.0 / kATFrameRate_NTSC, 1.0f / kATFrameRate_PAL, 1.0f / kATFrameRate_SECAM },
+		{ 1.0 / 59.9400, 1.0 / 50.0000, 1.0 / 50.0 },
+		{ 1.0 / 60.0000, 1.0 / 50.0000, 1.0 / 50.0 },
 	};
 
 	const bool hz50 = (g_sim.GetVideoStandard() != kATVideoStandard_NTSC) && (g_sim.GetVideoStandard() != kATVideoStandard_PAL60);
-	double rawSecondsPerFrame = kPeriods[g_frameRateMode][hz50];
+	const bool isSECAM = (g_sim.GetVideoStandard() == kATVideoStandard_SECAM);
+	const int tableIndex = isSECAM ? 2 : hz50 ? 1 : 0;
+	double rawSecondsPerFrame = kPeriods[g_frameRateMode][tableIndex];
 	
-	double cyclesPerSecond;
-	if (hz50)
-		cyclesPerSecond = 1773447.0 * kPeriods[0][1] / rawSecondsPerFrame;
-	else							  
-		cyclesPerSecond = 1789772.5 * kPeriods[0][0] / rawSecondsPerFrame;
+	const double cyclesPerSecond = kMasterClocks[tableIndex] * kPeriods[0][tableIndex] / rawSecondsPerFrame;
 
 	double rate = 1.0;
 	
@@ -462,7 +479,7 @@ bool ATUIConfirmDiscardCartridge(VDGUIHandle h) {
 	return IDYES == MessageBoxW((HWND)h, L"Modified cartridge image has not been saved. Discard it anyway?", L"Altirra Warning", MB_ICONEXCLAMATION | MB_YESNO);
 }
 
-VDStringW ATUIConfirmDiscardAllStorageGetMessage(const wchar_t *prompt, bool includeUnmountables, ATStorageId storageType = kATStorageId_None) {
+VDStringW ATUIConfirmDiscardAllStorageGetMessage(const wchar_t *prompt, bool includeUnmountables, ATStorageId storageType = kATStorageId_None, bool includeMemory = false) {
 	typedef vdfastvector<ATStorageId> DirtyIds;
 	DirtyIds dirtyIds;
 
@@ -487,6 +504,9 @@ VDStringW ATUIConfirmDiscardAllStorageGetMessage(const wchar_t *prompt, bool inc
 
 	msg = L"The following modified items have not been saved:\n\n";
 	
+	if (includeMemory)
+		msg += L"\tContents of emulation memory\n";
+
 	for(DirtyIds::const_iterator it(dirtyIds.begin()), itEnd(dirtyIds.end()); it != itEnd; ++it) {
 		ATStorageId id = *it;
 
@@ -541,20 +561,36 @@ VDStringW ATUIConfirmDiscardAllStorageGetMessage(const wchar_t *prompt, bool inc
 	return msg;
 }
 
+bool ATUIConfirmDiscardMemory(VDGUIHandle h, const wchar_t *title) {
+	return ATUIConfirm(h, "DiscardMemory", L"Any unsaved work in emulation memory will be lost. Are you sure?", title);
+}
+
+bool ATUIConfirmDiscardAll(VDGUIHandle h, const wchar_t *title, const wchar_t *prompt) {
+	const VDStringW& msg = ATUIConfirmDiscardAllStorageGetMessage(prompt, true, kATStorageId_None, true);
+
+	if (msg.empty())
+		return ATUIConfirmDiscardMemory(h, title);
+
+	return ATUIConfirm(h, "DiscardStorage", msg.c_str(), title);
+}
+
 bool ATUIConfirmDiscardAllStorage(VDGUIHandle h, const wchar_t *prompt, bool includeUnmountables = false) {
 	const VDStringW& msg = ATUIConfirmDiscardAllStorageGetMessage(prompt, includeUnmountables);
 
 	if (msg.empty())
 		return true;
 
-	return IDYES == MessageBoxW((HWND)h, msg.c_str(), L"Altirra Warning", MB_YESNO | MB_ICONEXCLAMATION);
+	return ATUIConfirm(h, "DiscardStorage", msg.c_str(), L"Unsaved Items");
 }
 
-vdrefptr<ATUIFutureWithResult<bool > > ATUIConfirmDiscardAllStorage(const wchar_t *prompt, bool includeUnmountables, ATStorageId storageType = kATStorageId_None) {
+vdrefptr<ATUIFutureWithResult<bool> > ATUIConfirmDiscardAllStorage(const wchar_t *prompt, bool includeUnmountables, ATStorageId storageType = kATStorageId_None) {
 	const VDStringW& msg = ATUIConfirmDiscardAllStorageGetMessage(prompt, includeUnmountables, storageType);
 
 	if (msg.empty())
 		return vdrefptr<ATUIFutureWithResult<bool> >(new ATUIFutureWithResult<bool>(true));
+
+	if (ATUIGetNativeDialogMode())
+		return vdmakerefptr(new ATUIFutureWithResult<bool>(ATUIConfirm(ATUIGetMainWindow(), "DiscardStorage", msg.c_str(), L"Unsaved Items")));
 
 	return ATUIShowAlert(msg.c_str(), L"Altirra Warning");
 }
@@ -598,7 +634,7 @@ bool ATUISwitchHardwareMode(VDGUIHandle h, ATHardwareMode mode, bool switchProfi
 	const bool switching5200 = (mode == kATHardwareMode_5200 || prevMode == kATHardwareMode_5200);
 	if (switching5200 || switchingProfile) {
 		// check if it's OK to unload everything
-		if (h && !ATUIConfirmDiscardAllStorage(h, L"OK to switch hardware mode and discard everything?"))
+		if (h && !ATUIConfirmDiscardAll(h, L"Changing hardware type", L"OK to switch hardware mode and discard everything?"))
 			return false;
 	}
 
@@ -816,21 +852,41 @@ void ATUISwitchMemoryMode(VDGUIHandle h, ATMemoryMode mode) {
 	g_sim.ColdReset();
 }
 
-void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageName, IVDRandomAccessStream *stream, const ATMediaWriteMode *writeMode, int cartmapper, ATLoadType loadType, bool *suppressColdReset, int loadIndex) {
+void DoCompatibilityCheck() {
+	vdfastvector<ATCompatKnownTag> tags;
+	auto *title = ATCompatCheck(tags);
+
+	if (title) {
+		auto result = ATUIShowDialogCompatWarning((VDGUIHandle)g_hwnd, title, tags.data(), tags.size());
+
+		VDTextU8ToW(VDStringSpanA(title->mName.c_str())).c_str();
+
+		if (result == kATUICompatAction_Pause)
+			g_sim.Pause();
+		else if (result == kATUICompatAction_AutoAdjust)
+			ATCompatAdjust((VDGUIHandle)g_hwnd, tags.data(), tags.size());
+	}
+}
+
+void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageName, IVDRandomAccessStream *stream, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType, bool *suppressColdReset, int loadIndex) {
 	vdfastvector<uint8> captureBuffer;
 
 	ATCartLoadContext cartctx = {};
 	cartctx.mbReturnOnUnknownMapper = true;
 
-	if (cartmapper) {
+	if (cartmapper > 0) {
 		cartctx.mbReturnOnUnknownMapper = false;
 		cartctx.mCartMapper = cartmapper;
-	} else
+	} else {
 		cartctx.mpCaptureBuffer = &captureBuffer;
+
+		if (cartmapper < 0)
+			cartctx.mbIgnoreChecksum = true;
+	}
 
 	ATStateLoadContext statectx = {};
 
-	ATLoadContext ctx;
+	ATImageLoadContext ctx;
 	ctx.mLoadType = loadType;
 	ctx.mLoadIndex = loadIndex;
 	ctx.mpCartLoadContext = &cartctx;
@@ -844,7 +900,7 @@ void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageNa
 
 	int safetyCounter = 10;
 	for(;;) {
-		cartctx.mHardwareModeCheck = g_sim.GetHardwareMode();
+		cartctx.mb5200ModeCheck = g_sim.GetHardwareMode() == kATHardwareMode_5200;
 
 		if (stream) {
 			if (g_sim.Load(origPath, imageName, *stream, *writeMode, &ctx))
@@ -867,7 +923,7 @@ void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageNa
 			continue;
 		}
 
-		if (ctx.mLoadType == kATLoadType_Cartridge) {
+		if (ctx.mLoadType == kATImageType_Cartridge) {
 			if (cartctx.mLoadStatus == kATCartLoadStatus_HardwareMismatch) {
 				if (g_sim.GetHardwareMode() == kATHardwareMode_5200) {
 					if (!ATUISwitchHardwareModeComputer(h))
@@ -879,13 +935,43 @@ void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageNa
 				continue;
 			}
 
-			int mapper = ATUIShowDialogCartridgeMapper(h, cartctx.mCartSize, captureBuffer.data());
-			if (mapper < 0)
-				return;
+			vdfastvector<ATCompatKnownTag> tags;
+			const auto markers = {
+				ATCompatMarker { kATCompatRuleType_CartChecksum, cartctx.mRawImageChecksum }
+			};
+
+			ATCompatFindTitle(markers, tags);
+
+			int mapper = -1;
+			for(auto&& tag : tags) {
+				switch(tag) {
+					case kATCompatKnownTag_Cart52008K:
+						mapper = kATCartridgeMode_5200_8K;
+						break;
+
+					case kATCompatKnownTag_Cart520016KOneChip:
+						mapper = kATCartridgeMode_5200_16K_OneChip;
+						break;
+
+					case kATCompatKnownTag_Cart520016KTwoChip:
+						mapper = kATCartridgeMode_5200_16K_TwoChip;
+						break;
+
+					case kATCompatKnownTag_Cart520032K:
+						mapper = kATCartridgeMode_5200_32K;
+						break;
+				}
+			}
+
+			if (mapper < 0) {
+				mapper = ATUIShowDialogCartridgeMapper(h, cartctx.mCartSize, captureBuffer.data());
+				if (mapper < 0)
+					return;
+			}
 
 			cartctx.mbReturnOnUnknownMapper = false;
 			cartctx.mCartMapper = mapper;
-		} else if (ctx.mLoadType == kATLoadType_SaveState) {
+		} else if (ctx.mLoadType == kATImageType_SaveState) {
 			if (statectx.mbKernelMismatchDetected) {
 				if (IDOK != MessageBoxW((HWND)h,
 					L"The currently loaded kernel ROM image doesn't match the one referenced by the saved state. This may cause the simulated program to fail when resumed. Proceed anyway?",
@@ -897,7 +983,7 @@ void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageNa
 		}
 	}
 
-	if (ctx.mLoadType == kATLoadType_SaveState) {
+	if (ctx.mLoadType == kATImageType_SaveState) {
 		if (!statectx.mbPrivateStateLoaded) {
 			MessageBoxW((HWND)h, L"The save state loaded successfully, but detailed emulation state could not be loaded as it was produced by a different program version. Some glitches may appear in the simulation.", L"Altirra Warning", MB_ICONWARNING | MB_OK);
 		}
@@ -905,13 +991,15 @@ void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageNa
 		if (suppressColdReset)
 			*suppressColdReset = true;
 	}
+
+	DoCompatibilityCheck();
 }
 
-void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageName, IVDRandomAccessStream& stream, const ATMediaWriteMode *writeMode, int cartmapper, ATLoadType loadType, bool *suppressColdReset, int loadIndex) {
+void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageName, IVDRandomAccessStream& stream, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType, bool *suppressColdReset, int loadIndex) {
 	DoLoadStream(h, origPath, imageName, &stream, writeMode, cartmapper, loadType, suppressColdReset, loadIndex);
 }
 
-void DoLoad(VDGUIHandle h, const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper, ATLoadType loadType, bool *suppressColdReset, int loadIndex) {
+void DoLoad(VDGUIHandle h, const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType, bool *suppressColdReset, int loadIndex) {
 	DoLoadStream(h, path, path, nullptr, writeMode, cartmapper, loadType, suppressColdReset, loadIndex);
 }
 
@@ -939,7 +1027,7 @@ void DoBootStreamWithConfirm(const wchar_t *origPath, const wchar_t *imageName, 
 	try {
 		g_sim.UnloadAll();
 
-		DoLoadStream((VDGUIHandle)g_hwnd, origPath, imageName, stream, writeMode, cartmapper, kATLoadType_Other, NULL, -1);
+		DoLoadStream((VDGUIHandle)g_hwnd, origPath, imageName, stream, writeMode, cartmapper, kATImageType_None, NULL, -1);
 
 		g_sim.ColdReset();
 	} catch(const MyError& e) {
@@ -1024,6 +1112,25 @@ bool ATUIGetFullscreen() {
 	return g_fullscreen;
 }
 
+bool ATUIGetDisplayFullscreen() {
+	return g_fullscreenDisplay;
+}
+
+void ATUISaveMainWindowPlacement() {
+	if (g_fullscreen) {
+		ATUISaveWindowPlacement("Main window",
+			vdrect32 {
+				g_ATWindowPreFSPlacement.rcNormalPosition.left,
+				g_ATWindowPreFSPlacement.rcNormalPosition.top,
+				g_ATWindowPreFSPlacement.rcNormalPosition.right,
+				g_ATWindowPreFSPlacement.rcNormalPosition.bottom
+			},
+			g_ATWindowPreFSPlacement.showCmd == SW_MAXIMIZE);
+	} else {
+		ATUISaveWindowPlacement(g_hwnd, "Main window");
+	}
+}
+
 void ATSetFullscreen(bool fs) {
 	ATUIPane *dispPane = ATGetUIPane(kATUIPaneId_Display);
 	ATFrameWindow *frame = NULL;
@@ -1042,10 +1149,14 @@ void ATSetFullscreen(bool fs) {
 	if (fs == g_fullscreen)
 		return;
 
-	ATUISetNativeDialogMode(!fs);
+	bool displayFS = fs && !g_ATOptions.mbFullScreenBorderless;
+
+	ATUISetNativeDialogMode(!displayFS);
 
 	if (frame)
 		frame->SetFullScreen(fs);
+
+	g_fullscreenDisplay = displayFS;
 
 	DWORD style = GetWindowLong(g_hwnd, GWL_STYLE);
 	if (fs) {
@@ -1068,17 +1179,34 @@ void ATSetFullscreen(bool fs) {
 		}
 		g_ATWindowPreFSPlacement.flags = 0;
 
-		ShowWindow(g_hwnd, SW_RESTORE);
-
 		SetMenu(g_hwnd, NULL);
 		SetWindowLong(g_hwnd, GWL_STYLE, (style & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
-		SetWindowPos(g_hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_FRAMECHANGED|SWP_NOZORDER|SWP_NOACTIVATE);
-		SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE);
-		BringWindowToTop(g_hwnd);
+		
+		ShowWindow(g_hwnd, SW_RESTORE);
+
+		if (displayFS) {
+			SetWindowPos(g_hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_FRAMECHANGED|SWP_NOZORDER|SWP_NOACTIVATE);
+			SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE);
+			BringWindowToTop(g_hwnd);
+		} else {
+			vdrect32 r { 0, 0, 0, 0 };
+
+			if (g_pDisplay)
+				r = g_pDisplay->GetMonitorRect();
+
+			if (!r.empty())
+				SetWindowPos(g_hwnd, NULL, r.left, r.top, r.width(), r.height(), SWP_FRAMECHANGED|SWP_NOZORDER|SWP_NOACTIVATE);
+			else
+				SetWindowPos(g_hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_FRAMECHANGED|SWP_NOZORDER|SWP_NOACTIVATE);
+		}
+
 		g_fullscreen = true;
-		if (g_pDisplay)
-			g_pDisplay->SetFullScreen(true, g_ATOptions.mFullScreenWidth, g_ATOptions.mFullScreenHeight, g_ATOptions.mFullScreenRefreshRate);
-		g_sim.SetFrameSkipEnabled(true);
+
+		if (displayFS) {
+			if (g_pDisplay)
+				g_pDisplay->SetFullScreen(true, g_ATOptions.mFullScreenWidth, g_ATOptions.mFullScreenHeight, g_ATOptions.mFullScreenRefreshRate);
+			g_sim.SetFrameSkipEnabled(true);
+		}
 	} else {
 		if (g_pDisplay)
 			g_pDisplay->SetFullScreen(false);
@@ -1294,7 +1422,7 @@ void Paste(const wchar_t *s, size_t len, bool useCooldown) {
 	Paste(s8.data(), s8.size(), useCooldown);
 }
 
-void ResizeDisplay() {
+void ATUIResizeDisplay() {
 	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
 	if (pane)
 		pane->OnSize();
@@ -1392,7 +1520,7 @@ void OnCommandLoadState() {
 		));
 
 	if (!fn.empty()) {
-		DoLoad((VDGUIHandle)g_hwnd, fn.c_str(), nullptr, 0, kATLoadType_SaveState);
+		DoLoad((VDGUIHandle)g_hwnd, fn.c_str(), nullptr, 0, kATImageType_SaveState);
 	}
 }
 
@@ -1491,6 +1619,10 @@ void OnCommandCassetteToggleAutoBoot() {
 	g_sim.SetCassetteAutoBootEnabled(!g_sim.IsCassetteAutoBootEnabled());
 }
 
+void OnCommandCassetteToggleAutoRewind() {
+	g_sim.SetCassetteAutoRewindEnabled(!g_sim.IsCassetteAutoRewindEnabled());
+}
+
 void OnCommandCassetteToggleLoadDataAsAudio() {
 	ATCassetteEmulator& cas = g_sim.GetCassette();
 
@@ -1533,23 +1665,23 @@ void ATUISetDisplayStretchMode(ATDisplayStretchMode mode) {
 	if (g_displayStretchMode != mode) {
 		g_displayStretchMode = mode;
 
-		ResizeDisplay();
+		ATUIResizeDisplay();
 	}
 }
 
 void ATUISetOverscanMode(ATGTIAEmulator::OverscanMode mode) {
 	g_sim.GetGTIA().SetOverscanMode(mode);
-	ResizeDisplay();
+	ATUIResizeDisplay();
 }
 
 void OnCommandViewVerticalOverscan(ATGTIAEmulator::VerticalOverscanMode mode) {
 	g_sim.GetGTIA().SetVerticalOverscanMode(mode);
-	ResizeDisplay();
+	ATUIResizeDisplay();
 }
 
 void OnCommandViewTogglePALExtended() {
 	g_sim.GetGTIA().SetOverscanPALExtended(!g_sim.GetGTIA().IsOverscanPALExtended());
-	ResizeDisplay();
+	ATUIResizeDisplay();
 }
 
 void OnCommandViewToggleVSync() {
@@ -1585,55 +1717,27 @@ void OnCommandPane(uint32 paneId) {
 }
 
 void OnCommandEditCopyFrame() {
-	ATGTIAEmulator& gtia = g_sim.GetGTIA();
-	const VDPixmap *frame = gtia.GetLastFrameBuffer();
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (pane)
+		pane->CopyFrame(false);
+}
 
-	if (frame) {
-		int px = 2;
-		int py = 2;
-		gtia.GetPixelAspectMultiple(px, py);
-
-		if (px == 1 && py == 1)
-			ATCopyFrameToClipboard(g_hwnd, *frame);
-		else {
-			VDPixmapBuffer buf(frame->w * 2 / px, frame->h * 2 / py, frame->format);
-
-			if (frame->format == nsVDPixmap::kPixFormat_Pal8)
-				memcpy((uint32 *)buf.palette, frame->palette, 256*4);
-
-			VDPixmapStretchBltNearest(buf, *frame);
-
-			ATCopyFrameToClipboard(g_hwnd, buf);
-		}
-	}
+void OnCommandEditCopyFrameTrueAspect() {
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (pane)
+		pane->CopyFrame(true);
 }
 
 void OnCommandEditSaveFrame() {
-	ATGTIAEmulator& gtia = g_sim.GetGTIA();
-	const VDPixmap *frame = gtia.GetLastFrameBuffer();
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (pane)
+		pane->SaveFrame(false);
+}
 
-	if (frame) {
-		const VDStringW fn(VDGetSaveFileName('scrn', (VDGUIHandle)g_hwnd, L"Save Screenshot", L"Portable Network Graphics (*.png)\0*.png\0", L"png"));
-
-		if (!fn.empty()) {
-			int px = 2;
-			int py = 2;
-			gtia.GetPixelAspectMultiple(px, py);
-
-			if (px == 1 && py == 1)
-				ATSaveFrame(g_hwnd, *frame, fn.c_str());
-			else {
-				VDPixmapBuffer buf(frame->w * 2 / px, frame->h * 2 / py, frame->format);
-
-				if (frame->format == nsVDPixmap::kPixFormat_Pal8)
-					memcpy((uint32 *)buf.palette, frame->palette, 256*4);
-
-				VDPixmapStretchBltNearest(buf, *frame);
-
-				ATSaveFrame(g_hwnd, buf, fn.c_str());
-			}
-		}
-	}
+void OnCommandEditSaveFrameTrueAspect() {
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (pane)
+		pane->SaveFrame(true);
 }
 
 void OnCommandEditCopyText() {
@@ -1656,6 +1760,10 @@ void OnCommandEditPasteText() {
 }
 
 ///////////////////////////////////////////////////////////////////////////
+
+void OnCommandConsoleHoldKeys() {
+	ATUIToggleHoldKeys();
+}
 
 void OnCommandConsoleBlackBoxDumpScreen() {
 	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
@@ -1682,17 +1790,58 @@ void OnCommandConsoleIDEPlus2SDX() {
 		p->ActivateButton(kATDeviceButton_IDEPlus2SDX, true);
 }
 
+void OnCommandConsoleIndusGTId() {
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false)) {
+		p->ActivateButton(kATDeviceButton_IndusGTError, true);
+		p->ActivateButton(kATDeviceButton_IndusGTError, false);
+	}
+}
+
+void OnCommandConsoleIndusGTError() {
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false)) {
+		p->ActivateButton(kATDeviceButton_IndusGTId, true);
+		p->ActivateButton(kATDeviceButton_IndusGTId, false);
+	}
+}
+
+void OnCommandConsoleIndusGTTrack() {
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false)) {
+		p->ActivateButton(kATDeviceButton_IndusGTTrack, true);
+		p->ActivateButton(kATDeviceButton_IndusGTTrack, false);
+	}
+}
+
+void OnCommandConsoleIndusGTBootCPM() {
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
+		p->ActivateButton(kATDeviceButton_IndusGTBootCPM, true);
+}
+
+void OnCommandConsoleHappyToggleFastSlow() {
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
+		p->ActivateButton(kATDeviceButton_HappySlow, !p->IsButtonDepressed(kATDeviceButton_HappySlow));
+}
+
+void OnCommandConsoleHappyToggleWriteProtect() {
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
+		p->ActivateButton(kATDeviceButton_HappyWPEnable, !p->IsButtonDepressed(kATDeviceButton_HappyWPEnable));
+}
+
+void OnCommandConsoleHappyToggleWriteEnable() {
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
+		p->ActivateButton(kATDeviceButton_HappyWPDisable, !p->IsButtonDepressed(kATDeviceButton_HappyWPDisable));
+}
+
+void OnCommandConsoleATR8000Reset() {
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false)) {
+		p->ActivateButton(kATDeviceButton_ATR8000Reset, true);
+		p->ActivateButton(kATDeviceButton_ATR8000Reset, false);
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void OnCommandDiskDrivesDialog() {
 	ATUIShowDiskDriveDialog((VDGUIHandle)g_hwnd);
-}
-
-void OnCommandDiskToggleAllEnabled() {
-	for(int i=0; i<15; ++i) {
-		ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
-		disk.SetEnabled(!disk.IsEnabled());
-	}
 }
 
 void OnCommandDiskToggleSIOPatch() {
@@ -1704,21 +1853,18 @@ void OnCommandDiskToggleSIOOverrideDetection() {
 }
 
 void OnCommandDiskToggleAccurateSectorTiming() {
-	for(int i=0; i<15; ++i) {
-		ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
-		disk.SetAccurateSectorTimingEnabled(!disk.IsAccurateSectorTimingEnabled());
-	}
+	g_sim.SetDiskAccurateTimingEnabled(!g_sim.IsDiskAccurateTimingEnabled());
 }
 
 bool ATUIGetDriveSoundsEnabled() {
-	const ATDiskEmulator& disk = g_sim.GetDiskDrive(0);
-	return disk.AreDriveSoundsEnabled();
+	const ATDiskInterface& diskIf = g_sim.GetDiskInterface(0);
+	return diskIf.AreDriveSoundsEnabled();
 }
 
 void ATUISetDriveSoundsEnabled(bool enabled) {
 	for(int i=0; i<15; ++i) {
-		ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
-		disk.SetDriveSoundsEnabled(enabled);
+		ATDiskInterface& diskIf = g_sim.GetDiskInterface(i);
+		diskIf.SetDriveSoundsEnabled(enabled);
 	}
 }
 
@@ -1774,7 +1920,7 @@ public:
 
 			case 2:
 				if (mpFileDialogResult->mbAccepted) {
-					DoLoad((VDGUIHandle)g_hwnd, mpFileDialogResult->mPath.c_str(), nullptr, 0, kATLoadType_Disk, NULL, mIndex);
+					DoLoad((VDGUIHandle)g_hwnd, mpFileDialogResult->mPath.c_str(), nullptr, 0, kATImageType_Disk, NULL, mIndex);
 
 					ATAddMRUListItem(mpFileDialogResult->mPath.c_str());
 				}
@@ -1835,15 +1981,17 @@ public:
 			case 1:
 				if (mIndex < 0) {
 					for(int i=0; i<15; ++i) {
+						ATDiskInterface& diskIf = g_sim.GetDiskInterface(i);
+						diskIf.UnloadDisk();
+
 						ATDiskEmulator& drive = g_sim.GetDiskDrive(i);
-						drive.UnloadDisk();
-						drive.Reset();
 						drive.SetEnabled(false);
 					}
 				} else {
+					ATDiskInterface& diskIf = g_sim.GetDiskInterface(mIndex);
+					diskIf.UnloadDisk();
+
 					ATDiskEmulator& drive = g_sim.GetDiskDrive(mIndex);
-					drive.UnloadDisk();
-					drive.Reset();
 					drive.SetEnabled(false);
 				}
 
@@ -1890,7 +2038,7 @@ void OnCommandDiskRotate(int delta) {
 	g_sim.RotateDrives(activeDrives, delta);
 
 	if (uir)
-		uir->SetStatusMessage(VDStringW().sprintf(L"Rotated to D1: %ls", g_sim.GetDiskDrive(0).GetMountedImageLabel().c_str()).c_str());
+		uir->SetStatusMessage(VDStringW().sprintf(L"Rotated to D1: %ls", g_sim.GetDiskInterface(0).GetMountedImageLabel().c_str()).c_str());
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1947,12 +2095,12 @@ void OnCommandInputToggleAutoCaptureMouse() {
 }
 
 void OnCommandInputInputMappingsDialog() {
-	ATUIShowDialogInputMappings(g_hwnd, *g_sim.GetInputManager(), &g_sim.GetJoystickManager());
+	ATUIShowDialogInputMappings(g_hwnd, *g_sim.GetInputManager(), g_sim.GetJoystickManager());
 	ATReloadPortMenus();
 }
 
 void OnCommandInputInputSetupDialog() {
-	ATUIShowDialogInputSetup(g_hwnd, *g_sim.GetInputManager(), &g_sim.GetJoystickManager());
+	ATUIShowDialogInputSetup(g_hwnd, *g_sim.GetInputManager(), g_sim.GetJoystickManager());
 }
 
 void OnCommandInputKeyboardDialog() {
@@ -2301,6 +2449,14 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			ATSetAutotestEnabled(true);
 		}
 
+		if (cmdLine.FindAndRemoveSwitch(L"borderless")) {
+			g_ATOptions.mbFullScreenBorderless = true;
+			g_ATOptions.mbDirty = true;
+		} else if (cmdLine.FindAndRemoveSwitch(L"noborderless")) {
+			g_ATOptions.mbFullScreenBorderless = false;
+			g_ATOptions.mbDirty = true;
+		}
+
 		if (cmdLine.FindAndRemoveSwitch(L"f"))
 			ATSetFullscreen(true);
 
@@ -2349,15 +2505,9 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"accuratedisk")) {
-			for(int i=0; i<15; ++i) {
-				ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
-				disk.SetAccurateSectorTimingEnabled(true);
-			}
+			g_sim.SetDiskAccurateTimingEnabled(true);
 		} else if (cmdLine.FindAndRemoveSwitch(L"noaccuratedisk")) {
-			for(int i=0; i<15; ++i) {
-				ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
-				disk.SetAccurateSectorTimingEnabled(false);
-			}
+			g_sim.SetDiskAccurateTimingEnabled(false);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"stereo")) {
@@ -2482,7 +2632,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			else if (!vdwcsicmp(arg, L"llexl"))
 				g_sim.SetKernel(kATFirmwareId_Kernel_LLEXL);
 			else if (!vdwcsicmp(arg, L"hle"))
-				g_sim.SetKernel(kATFirmwareId_Kernel_HLE);
+				g_sim.SetKernel(kATFirmwareId_Kernel_LLE);
 			else if (!vdwcsicmp(arg, L"5200lle"))
 				g_sim.SetKernel(kATFirmwareId_5200_LLE);
 			else
@@ -2699,7 +2849,9 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		else if (cmdLine.FindAndRemoveSwitch(L"norawkeys"))
 			g_kbdOpts.mbRawKeys = false;
 
-		if (cmdLine.FindAndRemoveSwitch(L"cartmapper", arg)) {
+		if (cmdLine.FindAndRemoveSwitch(L"nocartchecksum")) {
+			cartmapper = -1;
+		} else if (cmdLine.FindAndRemoveSwitch(L"cartmapper", arg)) {
 			cartmapper = ATGetCartridgeModeForMapper(wcstol(arg, NULL, 10));
 
 			if (cartmapper <= 0 || cartmapper >= kATCartridgeModeCount)
@@ -2771,7 +2923,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.UnloadAll();
 			}
 
-			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATLoadType_Cartridge);
+			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_Cartridge);
 			coldReset = true;// required to set up cassette autoboot
 		}
 
@@ -2782,7 +2934,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.UnloadAll();
 			}
 
-			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATLoadType_Disk, nullptr, diskIndex++);
+			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_Disk, nullptr, diskIndex++);
 			coldReset = true;// required to set up cassette autoboot
 		}
 
@@ -2792,7 +2944,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.UnloadAll();
 			}
 
-			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATLoadType_Program);
+			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_Program);
 			coldReset = true;// required to set up cassette autoboot
 		}
 
@@ -2802,7 +2954,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.UnloadAll();
 			}
 
-			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATLoadType_BasicProgram);
+			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_BasicProgram);
 			coldReset = true;// required to set up cassette autoboot
 		}
 
@@ -2812,7 +2964,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.UnloadAll();
 			}
 
-			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATLoadType_Tape);
+			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_Tape);
 			coldReset = true;// required to set up cassette autoboot
 		}
 
@@ -2832,7 +2984,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.UnloadAll();
 			}
 
-			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATLoadType_Other, &suppressColdReset);
+			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_None, &suppressColdReset);
 
 			VDSetLastLoadSavePath('load', VDGetFullPath(arg).c_str());
 
@@ -2948,9 +3100,11 @@ bool g_joystickPollFast;
 uint32 g_joystickLastActivity;
 
 void ATPollJoysticks() {
-	auto& jm = g_sim.GetJoystickManager();
+	auto *jm = g_sim.GetJoystickManager();
+	if (!jm)
+		return;
 
-	switch(jm.Poll()) {
+	switch(jm->Poll()) {
 		case IATJoystickManager::kPollResult_NoControllers:
 			g_joystickPollTimer.Stop();
 			break;
@@ -3009,7 +3163,25 @@ void ATOnJoystickActivity() {
 	}
 }
 
-void ATUIUpdateWindowCaption() {
+void ATInitJoysticks() {
+	vdautoptr<IATJoystickManager> jm { ATCreateJoystickManager() };
+
+	if (!jm->Init(g_hwnd, g_sim.GetInputManager()))
+		return;
+
+	jm->SetOnActivity(ATOnJoystickActivity);
+
+	g_sim.SetJoystickManager(jm.release());
+}
+
+void ATShutdownJoysticks() {
+	IATJoystickManager *jm = g_sim.GetJoystickManager();
+
+	if (jm) {
+		g_sim.SetJoystickManager(nullptr);
+
+		delete jm;
+	}
 }
 
 int RunMainLoop2(HWND hwnd) {
@@ -3032,8 +3204,6 @@ int RunMainLoop2(HWND hwnd) {
 	uint64 lastCPUTime = 0;
 
 	g_winCaptionUpdater.Update(true, 0, 0, 0);
-
-	g_sim.GetJoystickManager().SetOnActivity(ATOnJoystickActivity);
 
 	int rcode = 0;
 	bool lastIsRunning = false;
@@ -3234,8 +3404,6 @@ int RunMainLoop2(HWND hwnd) {
 		timeEndPeriod(1);
 	}
 
-	g_sim.GetJoystickManager().SetOnActivity({});
-
 	return 0;
 }
 
@@ -3257,16 +3425,77 @@ void ATUISetCommandLine(const wchar_t *s) {
 	g_ATCmdLineRead = false;
 }
 
-int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
-	ATInitCRTHooks();
+bool ATInitRegistry() {
+	// setup registry
+	VDRegistryAppKey::setDefaultKey("Software\\virtualdub.org\\Altirra\\");
 
-	ATUISetCommandLine(GetCommandLineW());
+	bool resetAll = g_ATCmdLine.FindAndRemoveSwitch(L"resetall");
 
-	::SetUnhandledExceptionFilter(ATUnhandledExceptionFilter);
+	const wchar_t *portableAltFile = nullptr;
+	g_ATCmdLine.FindAndRemoveSwitch(L"portablealt", portableAltFile);
 
-	if (g_ATCmdLine.FindAndRemoveSwitch(L"fullheapdump"))
-		ATExceptionFilterSetFullHeapDump(true);
+	const bool portable =  g_ATCmdLine.FindAndRemoveSwitch(L"portable");
 
+	// Check for any switches other than /resetall, /portable, and /portablealt
+	g_ATCmdLineHadAnything = g_ATCmdLine.GetCount() > 1;
+
+	if (portableAltFile)
+		g_ATRegistryPathPortable = VDGetFullPath(portableAltFile);
+	else
+		g_ATRegistryPathPortable = VDMakePath(VDGetProgramPath().c_str(), L"Altirra.ini");
+
+	if (portableAltFile || portable || VDDoesPathExist(g_ATRegistryPathPortable.c_str())) {
+		g_pATRegistryMemory = new VDRegistryProviderMemory;
+		VDSetRegistryProvider(g_pATRegistryMemory);
+
+		if (!resetAll && VDDoesPathExist(g_ATRegistryPathPortable.c_str())) {
+			try {
+				ATUILoadRegistry(g_ATRegistryPathPortable.c_str());
+			} catch(const MyError& err) {
+				VDStringW message;
+
+				message.sprintf(L"There was an error loading the settings file:\n\n%s\n\nDo you want to continue? If so, settings will be reset to defaults and may not be saved.", VDTextAToW(err.c_str()).c_str());
+				if (IDYES != MessageBox(NULL, message.c_str(), _T("Altirra Warning"), MB_YESNO | MB_ICONWARNING))
+					return false;
+			}
+		}
+
+		ATSetFirmwarePathPortabilityMode(true);
+	} else {
+		if (!resetAll)
+			resetAll = ATSettingsIsResetPending();
+
+		if (resetAll)
+			SHDeleteKey(HKEY_CURRENT_USER, _T("Software\\virtualdub.org\\Altirra"));
+	}
+
+	g_ATRegistryHadAnything = VDRegistryAppKey("", false).isReady();
+	return true;
+}
+
+void ATShutdownRegistry() {
+	const bool shouldReset = ATSettingsIsResetPending();
+
+	if (g_pATRegistryMemory) {
+		try {
+			if (shouldReset) {
+				VDFile f(g_ATRegistryPathPortable.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kTruncateExisting);
+			} else {
+				ATUISaveRegistry(g_ATRegistryPathPortable.c_str());
+			}
+		} catch(const MyError&) {
+		}
+
+		VDSetRegistryProvider(nullptr);
+		delete g_pATRegistryMemory;
+		g_pATRegistryMemory = nullptr;
+	} else {
+		if (shouldReset)
+			SHDeleteKey(HKEY_CURRENT_USER, _T("Software\\virtualdub.org\\Altirra"));
+	}
+}
+
+void ATInitCPUOptions() {
 	uint32 cpuext = CPUCheckForExtensions();
 
 	{
@@ -3298,59 +3527,71 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 
 	CPUEnableExtensions(cpuext);
 	VDFastMemcpyAutodetect();
+}
+
+void ATInitDisplayOptions() {
+	if (g_ATCmdLine.FindAndRemoveSwitch(L"gdi")) {
+		g_ATOptions.mbDirty = true;
+		g_ATOptions.mbDisplayDDraw = false;
+		g_ATOptions.mbDisplayD3D9 = false;
+		g_ATOptions.mbDisplay3D = false;
+		g_ATOptions.mbDisplayOpenGL = false;
+	} else if (g_ATCmdLine.FindAndRemoveSwitch(L"ddraw")) {
+		g_ATOptions.mbDirty = true;
+		g_ATOptions.mbDisplayDDraw = true;
+		g_ATOptions.mbDisplayD3D9 = false;
+		g_ATOptions.mbDisplay3D = false;
+		g_ATOptions.mbDisplayOpenGL = false;
+	} else if (g_ATCmdLine.FindAndRemoveSwitch(L"opengl")) {
+		g_ATOptions.mbDirty = true;
+		g_ATOptions.mbDisplayDDraw = false;
+		g_ATOptions.mbDisplayD3D9 = false;
+		g_ATOptions.mbDisplay3D = false;
+		g_ATOptions.mbDisplayOpenGL = true;
+	}
+}
+
+void ATInitRand() {
+	// Visual C++'s rand() is a 48-bit LCG with a factor of 214013 and returning
+	// the high 16-bits, which unfortunately means that the output of the first
+	// call to rand() highly tracks the argument to srand() x3. This makes
+	// srand(time()) unacceptable, even for our minimal requirements. To fix
+	// this, we mix in the system uptime, thread ID, and process ID.
+
+	const struct ChecksumData {
+		time_t t;
+		uint32 pid;
+		uint32 tid;
+	} data = {
+		time(nullptr),
+		VDGetCurrentProcessId(),
+		VDGetCurrentThreadID()
+	};
+
+	const uint64 hash = ATComputeBlockChecksum(kATBaseChecksum, &data, sizeof data);
+
+	srand((unsigned)(hash ^ (hash >> 32)));
+}
+
+int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
+	ATInitCRTHooks();
+
+	ATUISetCommandLine(GetCommandLineW());
+
+	::SetUnhandledExceptionFilter(ATUnhandledExceptionFilter);
+
+	if (g_ATCmdLine.FindAndRemoveSwitch(L"fullheapdump"))
+		ATExceptionFilterSetFullHeapDump(true);
+
+	ATInitCPUOptions();
+
 	VDInitThunkAllocator();
 
 	OleInitialize(NULL);
 
+	ATInitRand();
+
 	InitCommonControls();
-
-	// setup registry
-	VDRegistryAppKey::setDefaultKey("Software\\virtualdub.org\\Altirra\\");
-
-	VDRegistryProviderMemory *rpmem = NULL;
-
-	bool resetAll = g_ATCmdLine.FindAndRemoveSwitch(L"resetall");
-
-	const wchar_t *portableAltFile = nullptr;
-	g_ATCmdLine.FindAndRemoveSwitch(L"portablealt", portableAltFile);
-
-	const bool portable =  g_ATCmdLine.FindAndRemoveSwitch(L"portable");
-
-	// Check for any switches other than /resetall, /portable, and /portablealt
-	g_ATCmdLineHadAnything = g_ATCmdLine.GetCount() > 1;
-
-	VDStringW portableRegPath;
-	if (portableAltFile)
-		portableRegPath = VDGetFullPath(portableAltFile);
-	else
-		portableRegPath = VDMakePath(VDGetProgramPath().c_str(), L"Altirra.ini");
-
-	if (portableAltFile || portable || VDDoesPathExist(portableRegPath.c_str())) {
-		rpmem = new VDRegistryProviderMemory;
-		VDSetRegistryProvider(rpmem);
-
-		if (!resetAll && VDDoesPathExist(portableRegPath.c_str())) {
-			try {
-				ATUILoadRegistry(portableRegPath.c_str());
-			} catch(const MyError& err) {
-				VDStringW message;
-
-				message.sprintf(L"There was an error loading the settings file:\n\n%s\n\nDo you want to continue? If so, settings will be reset to defaults and may not be saved.", VDTextAToW(err.c_str()).c_str());
-				if (IDYES != MessageBox(NULL, message.c_str(), _T("Altirra Warning"), MB_YESNO | MB_ICONWARNING))
-					return 5;
-			}
-		}
-
-		ATSetFirmwarePathPortabilityMode(true);
-	} else {
-		if (!resetAll)
-			resetAll = ATSettingsIsResetPending();
-
-		if (resetAll)
-			SHDeleteKey(HKEY_CURRENT_USER, _T("Software\\virtualdub.org\\Altirra"));
-	}
-
-	g_ATRegistryHadAnything = VDRegistryAppKey("", false).isReady();
 
 	int rval = 0;
 	const wchar_t *token;
@@ -3369,70 +3610,35 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 		if (1 == swscanf(token, L"%llx%c", &hwndParent, &dummy))
 			ATUIShowDialogRemoveFileAssociations((VDGUIHandle)(UINT_PTR)hwndParent, false, false);
 	} else {
-		ATOptionsLoad();
-		LoadSettingsEarly();
+		if (!ATInitRegistry()) {
+			rval = 5;
+		} else {
+			ATOptionsLoad();
+			LoadSettingsEarly();
 
-		bool d3d9lock = false;
-		if (g_ATCmdLine.FindAndRemoveSwitch(L"lockd3d"))
-			d3d9lock = true;
+			ATInitDisplayOptions();
 
-		if (g_ATCmdLine.FindAndRemoveSwitch(L"gdi")) {
-			g_ATOptions.mbDirty = true;
-			g_ATOptions.mbDisplayDDraw = false;
-			g_ATOptions.mbDisplayD3D9 = false;
-			g_ATOptions.mbDisplay3D = false;
-			g_ATOptions.mbDisplayOpenGL = false;
-		} else if (g_ATCmdLine.FindAndRemoveSwitch(L"ddraw")) {
-			g_ATOptions.mbDirty = true;
-			g_ATOptions.mbDisplayDDraw = true;
-			g_ATOptions.mbDisplayD3D9 = false;
-			g_ATOptions.mbDisplay3D = false;
-			g_ATOptions.mbDisplayOpenGL = false;
-		} else if (g_ATCmdLine.FindAndRemoveSwitch(L"opengl")) {
-			g_ATOptions.mbDirty = true;
-			g_ATOptions.mbDisplayDDraw = false;
-			g_ATOptions.mbDisplayD3D9 = false;
-			g_ATOptions.mbDisplay3D = false;
-			g_ATOptions.mbDisplayOpenGL = true;
-		}
-
-		bool singleInstance = g_ATOptions.mbSingleInstance;
-		if (g_ATCmdLine.FindAndRemoveSwitch(L"singleinstance") ||
-			g_ATCmdLine.FindAndRemoveSwitch(L"si"))
-		{
-			singleInstance = true;
-		}
-		else if (g_ATCmdLine.FindAndRemoveSwitch(L"nosingleinstance") ||
-			g_ATCmdLine.FindAndRemoveSwitch(L"nosi"))
-		{
-			singleInstance = false;
-		}
-
-		if (!singleInstance || !ATNotifyOtherInstance(g_ATCmdLine)) {
-			if (d3d9lock)
-				g_d3d9Lock.Lock();
-
-			rval = RunInstance(nCmdShow);
-		}
-	}
-
-	const bool shouldReset = ATSettingsIsResetPending();
-
-	if (rpmem) {
-		try {
-			if (shouldReset) {
-				VDFile f(portableRegPath.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kTruncateExisting);
-			} else {
-				ATUISaveRegistry(portableRegPath.c_str());
+			bool singleInstance = g_ATOptions.mbSingleInstance;
+			if (g_ATCmdLine.FindAndRemoveSwitch(L"singleinstance") ||
+				g_ATCmdLine.FindAndRemoveSwitch(L"si"))
+			{
+				singleInstance = true;
 			}
-		} catch(const MyError&) {
-		}
+			else if (g_ATCmdLine.FindAndRemoveSwitch(L"nosingleinstance") ||
+				g_ATCmdLine.FindAndRemoveSwitch(L"nosi"))
+			{
+				singleInstance = false;
+			}
 
-		VDSetRegistryProvider(NULL);
-		delete rpmem;
-	} else {
-		if (shouldReset)
-			SHDeleteKey(HKEY_CURRENT_USER, _T("Software\\virtualdub.org\\Altirra"));
+			if (!singleInstance || !ATNotifyOtherInstance(g_ATCmdLine)) {
+				if (g_ATCmdLine.FindAndRemoveSwitch(L"lockd3d"))
+					g_d3d9Lock.Lock();
+
+				rval = RunInstance(nCmdShow);
+			}
+
+			ATShutdownRegistry();
+		}
 	}
 
 	OleUninitialize();
@@ -3443,6 +3649,8 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 }
 
 int RunInstance(int nCmdShow) {
+	g_hInst = VDGetLocalModuleHandleW32();
+
 	VDRegisterVideoDisplayControl();
 	VDUIRegisterHotKeyExControl();
 	ATUINativeWindow::Register();
@@ -3452,6 +3660,7 @@ int RunInstance(int nCmdShow) {
 	ATUIInitDefaultAccelTables();
 	
 	VDDialogFrameW32::SetDefaultCaption(L"Altirra");
+	ATUISetDefaultGenericDialogCaption(L"Altirra");
 
 	struct local {
 		static void DisplayUpdateFn(ATOptions& opts, const ATOptions *prevOpts, void *) {
@@ -3460,6 +3669,7 @@ int RunInstance(int nCmdShow) {
 					&& prevOpts->mbDisplayD3D9 == opts.mbDisplayD3D9
 					&& prevOpts->mbDisplayOpenGL == opts.mbDisplayOpenGL
 					&& prevOpts->mbDisplay3D == opts.mbDisplay3D
+					&& prevOpts->mbDisplay16Bit == opts.mbDisplay16Bit
 					)
 					return;
 			}
@@ -3492,54 +3702,22 @@ int RunInstance(int nCmdShow) {
 	ATUIInitVirtualKeyMap(g_kbdOpts);
 	ATUILoadAccelTables();
 
-	ATUIInitFirmwareMenuCallbacks(g_sim.GetFirmwareManager());
-	ATUIInitProfileMenuCallbacks();
-
-	try {
-		ATUILoadMenu();
-	} catch(const MyError& e) {
-		e.post(NULL, "Altirra Error");
-	}
-
-	g_hInst = VDGetLocalModuleHandleW32();
-
 	WNDCLASS wc = {};
 	wc.lpszClassName = _T("AltirraMainWindow");
 	ATOM atom = ATContainerWindow::RegisterCustom(wc);
 	ATUICreateMainWindow(&g_pMainWindow);
 	HWND hwnd = (HWND)g_pMainWindow->Create(atom, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, NULL, false);
+	g_hwnd = hwnd;
 
 	ATUIInitProgressDialog();
 	ATUIPushProgressParent((VDGUIHandle)hwnd);
-
-	HICON hIcon = (HICON)LoadImage(g_hInst, MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED);
-	if (hIcon)
-		SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
-
-	HICON hSmallIcon = (HICON)LoadImage(g_hInst, MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
-	if (hSmallIcon)
-		SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hSmallIcon);
 
 	ATUIRestoreWindowPlacement(hwnd, "Main window", nCmdShow);
 
 	if (!(GetWindowLong(hwnd, GWL_STYLE) & WS_VISIBLE))
 		ShowWindow(hwnd, nCmdShow);
 
-	g_sim.Init(hwnd);
-	g_sim.GetInputManager()->SetConsoleCallback(&g_inputConsoleCallback);
-
-	ATRegisterDevices(*g_sim.GetDeviceManager());
-
-	ATInitPortMenus(g_sim.GetInputManager());
-
-	g_winCaptionUpdater.Init(&g_sim, [hwnd](const wchar_t *s) { SetWindowTextW(hwnd, s); } );
-
-	SetWindowText(hwnd, _T("Altirra"));
-	g_hwnd = hwnd;
-
-	SetMenu(hwnd, g_hMenu);
-
-	ATUIInitManager();
+	g_winCaptionUpdater.Init([hwnd](const wchar_t *s) { SetWindowTextW(hwnd, s); } );
 
 	// Init Winsock. We want to delay this as much as possible, but it must be done before we
 	// attempt to bring up a modem (which LoadSettings or a command prompt can do).
@@ -3549,12 +3727,42 @@ int RunInstance(int nCmdShow) {
 	if (!WSAStartup(MAKEWORD(2, 0), &wsa))
 		wsaInited = true;
 
-	const bool useHardwareBaseline = g_ATCmdLine.FindAndRemoveSwitch(L"baseline");
+	// bring up simulator
+	g_sim.Init();
+	ATInitJoysticks();
 
+	g_sim.GetInputManager()->SetConsoleCallback(&g_inputConsoleCallback);
+	g_winCaptionUpdater.InitMonitoring(&g_sim);
+	ATRegisterDevices(*g_sim.GetDeviceManager());
+
+	// initialize menus (requires simulator)
+	ATUIInitFirmwareMenuCallbacks(g_sim.GetFirmwareManager());
+	ATUIInitProfileMenuCallbacks();
+
+	try {
+		ATUILoadMenu();
+	} catch(const MyError& e) {
+		e.post(hwnd, "Altirra Error");
+	}
+
+	ATInitPortMenus(g_sim.GetInputManager());
+	SetMenu(hwnd, g_hMenu);
+
+	// bring up debugger
 	ATInitDebugger();
 
+	// init compatibility database
+	ATCompatInit();
+
+	// initialize runtime UI (requires simulator)
+	ATUIInitManager();
+
+	// load available profile set
 	if (ATLoadDefaultProfiles())
 		ATUIRebuildDynamicMenu(kATUIDynamicMenu_Profile);
+
+	// load initial profile
+	const bool useHardwareBaseline = g_ATCmdLine.FindAndRemoveSwitch(L"baseline");
 
 	const ATSettingsCategory settingsToLoad = useHardwareBaseline
 			? ATSettingsCategory(kATSettingsCategory_All & ~(kATSettingsCategory_FullScreen | kATSettingsCategory_Baseline))
@@ -3626,10 +3834,14 @@ int RunInstance(int nCmdShow) {
 
 	VDSaveFilespecSystemData();
 
+	ATCompatShutdown();
+
 	ATUIShutdownManager();
 
 	ATShutdownEmuErrorHandler();
 	ATShutdownDebugger();
+	ATConsoleCloseLogFileNT();
+	ATShutdownJoysticks();
 	g_sim.Shutdown();
 
 	g_d3d9Lock.Unlock();

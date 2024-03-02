@@ -136,6 +136,12 @@ for(;;) {
 		case kStateReadOpcodeNoBreak:
 			mInsnPC = rPC;
 
+			if (mExtraFlags) {
+				mP = rP;
+				DoExtra();
+				rP = mP;
+			}
+
 			{
 				bool slowFlag = false;
 				uint8 opcode;
@@ -627,7 +633,7 @@ for(;;) {
 
 		/////////
 		case kStateJccFalseRead:
-			AT_CPU_READ_BYTE(rAddr);
+			AT_CPU_DUMMY_READ_BYTE(rAddr);
 			END_SUB_CYCLE();
 
 		case kStateWaitForInterrupt:

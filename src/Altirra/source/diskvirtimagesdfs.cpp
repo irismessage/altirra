@@ -1,4 +1,4 @@
-#include <stdafx.h>
+﻿#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/math.h>
 #include <vd2/system/error.h>
@@ -133,11 +133,15 @@ namespace {
 // affected data structures would have been seen by DOS.
 //
 
-class ATDiskImageVirtualFolderSDFS final : public IATDiskImage, public IVDTimerCallback {
+class ATDiskImageVirtualFolderSDFS final : public vdrefcounted<IATDiskImage>, public IVDTimerCallback {
 public:
 	ATDiskImageVirtualFolderSDFS();
 
 	void Init(const wchar_t *path, uint64 unique);
+
+	void *AsInterface(uint32 id) override;
+
+	ATImageType GetImageType() const override { return kATImageType_Tape; }
 
 	ATDiskTimingMode GetTimingMode() const override { return kATDiskTimingMode_Any; }
 
@@ -146,9 +150,11 @@ public:
 	bool IsDynamic() const override { return true; }
 	ATDiskImageFormat GetImageFormat() const override { return kATDiskImageFormat_None; }
 
+	uint64 GetImageChecksum() const override { return 0; }
+
 	bool Flush() override { return true; }
 
-	void SetPath(const wchar_t *path) override;
+	void SetPath(const wchar_t *path, ATDiskImageFormat format) override;
 	void Save(const wchar_t *path, ATDiskImageFormat format) override;
 
 	ATDiskGeometryInfo GetGeometry() const override;
@@ -169,6 +175,7 @@ public:
 	bool WriteVirtualSector(uint32 index, const void *data, uint32 len) override;
 
 	void Resize(uint32 sectors) override;
+	void FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskVirtualSectorInfo *vsecs, uint32 psCount, const ATDiskPhysicalSectorInfo *psecs, const uint8 *psecData) override;
 
 protected:
 	struct DirEnt;
@@ -390,7 +397,15 @@ void ATDiskImageVirtualFolderSDFS::Init(const wchar_t *path, uint64 uniquenessVa
 	}
 }
 
-void ATDiskImageVirtualFolderSDFS::SetPath(const wchar_t *path) {
+void *ATDiskImageVirtualFolderSDFS::AsInterface(uint32 id) {
+	switch(id) {
+		case IATDiskImage::kTypeID: return static_cast<IATDiskImage *>(this);
+	}
+
+	return nullptr;
+}
+
+void ATDiskImageVirtualFolderSDFS::SetPath(const wchar_t *path, ATDiskImageFormat format) {
 }
 
 void ATDiskImageVirtualFolderSDFS::Save(const wchar_t *path, ATDiskImageFormat format) {
@@ -647,6 +662,10 @@ bool ATDiskImageVirtualFolderSDFS::WriteVirtualSector(uint32 index, const void *
 
 void ATDiskImageVirtualFolderSDFS::Resize(uint32 sectors) {
 	throw MyError("A virtual disk cannot be resized.");
+}
+
+void ATDiskImageVirtualFolderSDFS::FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskVirtualSectorInfo *vsecs, uint32 psCount, const ATDiskPhysicalSectorInfo *psecs, const uint8 *psecData) {
+	throw MyError("A virtual disk cannot be formatted.");
 }
 
 void ATDiskImageVirtualFolderSDFS::InitRoot() {
@@ -1109,9 +1128,9 @@ uint32 ATDiskImageVirtualFolderSDFS::HashSectorKey(uint32 sectorKey) const {
 
 ///////////////////////////////////////////////////////////////////////////
 
-IATDiskImage *ATMountDiskImageVirtualFolderSDFS(const wchar_t *path, uint32 sectorCount, uint64 unique) {
-	vdautoptr<ATDiskImageVirtualFolderSDFS> p(new ATDiskImageVirtualFolderSDFS);
+void ATMountDiskImageVirtualFolderSDFS(const wchar_t *path, uint32 sectorCount, uint64 unique, IATDiskImage **ppImage) {
+	vdrefptr<ATDiskImageVirtualFolderSDFS> p(new ATDiskImageVirtualFolderSDFS);
 	
 	p->Init(path, unique);
-	return p.release();
+	*ppImage = p.release();
 }

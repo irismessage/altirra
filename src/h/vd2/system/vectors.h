@@ -56,6 +56,16 @@ public:
 		return vdfloat2x2 {{1,0}, {0,1}};
 	}
 
+	static vdfloat2x2 rotation(float angle) {
+		const float s(sinf(angle));
+		const float c(cosf(angle));
+
+		return vdfloat2x2 {
+			{ c,-s },
+			{ s, c }
+		};
+	}
+
 	vdfloat2x2 operator*(const vdfloat2x2& v) const {
 		return vdfloat2x2 {
 #define DO(i,j) i.x*v.x.j + i.y*v.y.j

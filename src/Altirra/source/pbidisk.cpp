@@ -127,23 +127,6 @@ void ATPBIDiskEmulator::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOManager = mgr;
 }
 
-ATPBIDiskEmulator::CmdResponse ATPBIDiskEmulator::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
-	return kCmdResponse_NotHandled;
-}
-
-void ATPBIDiskEmulator::OnSerialAbortCommand() {
-}
-
-void ATPBIDiskEmulator::OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) {
-}
-
-void ATPBIDiskEmulator::OnSerialFence(uint32 id) {
-}
-
-ATPBIDiskEmulator::CmdResponse ATPBIDiskEmulator::OnSerialAccelCommand(const ATDeviceSIORequest& request) {
-	return kCmdResponse_NotHandled;
-}
-
 bool ATPBIDiskEmulator::OnWriteByte(uint32 address, uint8 value) {
 	if (address == 0xDCEF) {
 		// Time to cheat.

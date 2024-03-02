@@ -208,11 +208,10 @@ ATMemoryLayer *ATMemoryManager::CreateLayer(int priority, const uint8 *base, uin
 	layer->mHandlers.mbPassAnticReads = false;
 	layer->mHandlers.mbPassReads = false;
 	layer->mHandlers.mbPassWrites = false;
-	layer->mHandlers.mpThis = this;
-	layer->mHandlers.mpDebugReadHandler = ChipReadHandler;
+	layer->mHandlers.mpThis = layer;
+	layer->mHandlers.mpDebugReadHandler = ChipDebugReadHandler;
 	layer->mHandlers.mpReadHandler = ChipReadHandler;
 	layer->mHandlers.mpWriteHandler = ChipWriteHandler;
-	layer->mHandlers.mpThis = NULL;
 	layer->mAddrMask = 0xFFFFFFFFU;
 	layer->mpName = NULL;
 	layer->mMaskRangeStart = 0x00;
@@ -410,7 +409,7 @@ void ATMemoryManager::SetLayerIoBus(ATMemoryLayer *layer0, bool ioBus) {
 		if (ioBus) {
 			layer->mHandlers.mpDebugReadHandler = IoMemoryDebugReadWrapperHandler;
 		} else {
-			layer->mHandlers.mpDebugReadHandler = ChipReadHandler;
+			layer->mHandlers.mpDebugReadHandler = ChipDebugReadHandler;
 		}
 	}
 
@@ -592,9 +591,12 @@ uint8 ATMemoryManager::CPUDebugReadByte(uint16 address) const {
 	while(ATCPUMEMISSPECIAL(p)) {
 		const MemoryNode& node = *(const MemoryNode *)(p - 1);
 
-		ATMemoryReadHandler handler = ((MemoryLayer *)node.mLayerOrForward)->mHandlers.mpDebugReadHandler;
+		const ATMemoryHandlerTable& handlers = ((MemoryLayer *)node.mLayerOrForward)->mHandlers;
+		ATMemoryReadHandler handler = handlers.mpDebugReadHandler;
 		if (handler) {
-			sint32 v = handler(node.mpThis, address);
+			// We need to use mpThis from the layer handler table because the I/O layer thunk may have
+			// replaced the this pointer in the node.
+			sint32 v = handler(handlers.mpThis, address);
 			if (v >= 0)
 				return (uint8)v;
 		}
@@ -612,9 +614,12 @@ uint8 ATMemoryManager::CPUDebugExtReadByte(uint16 address, uint8 bank) const {
 	while(ATCPUMEMISSPECIAL(p)) {
 		const MemoryNode& node = *(const MemoryNode *)(p - 1);
 
-		ATMemoryReadHandler handler = ((MemoryLayer *)node.mLayerOrForward)->mHandlers.mpDebugReadHandler;
+		const ATMemoryHandlerTable& handlers = ((MemoryLayer *)node.mLayerOrForward)->mHandlers;
+		ATMemoryReadHandler handler = handlers.mpDebugReadHandler;
 		if (handler) {
-			sint32 v = handler(node.mpThis, addr32);
+			// We need to use mpThis from the layer handler table because the I/O layer thunk may have
+			// replaced the this pointer in the node.
+			sint32 v = handler(handlers.mpThis, addr32);
 			if (v >= 0)
 				return (uint8)v;
 		}
@@ -1032,6 +1037,11 @@ sint32 ATMemoryManager::DummyReadHandler(void *thisptr0, uint32 addr) {
 
 bool ATMemoryManager::DummyWriteHandler(void *thisptr, uint32 addr, uint8 value) {
 	return true;
+}
+
+sint32 ATMemoryManager::ChipDebugReadHandler(void *thisptr, uint32 addr) {
+	MemoryLayer *layer = (MemoryLayer *)thisptr;
+	return layer->mpBase[(addr - (layer->mPageOffset << 8)) & ((layer->mAddrMask << 8) + 0xFF)];
 }
 
 sint32 ATMemoryManager::ChipReadHandler(void *thisptr, uint32 addr) {

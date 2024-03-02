@@ -356,7 +356,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTContextD3D11 final : public IVDTContext, public IVDTProfiler, public VDTResourceManagerD3D11 {
+class VDTContextD3D11 final : public IVDTContext, public IVDTProfiler, public VDTResourceManagerD3D11, public VDAlignedObject<16> {
 public:
 	VDTContextD3D11();
 	~VDTContextD3D11();
@@ -414,7 +414,9 @@ public:
 	vdrect32 GetScissorRect();
 	void SetScissorRect(const vdrect32& r);
 
+	void SetVertexProgramConstCount(uint32 count);
 	void SetVertexProgramConstF(uint32 baseIndex, uint32 count, const float *data);
+	void SetFragmentProgramConstCount(uint32 count);
 	void SetFragmentProgramConstF(uint32 baseIndex, uint32 count, const float *data);
 
 	void Clear(VDTClearFlags clearFlags, uint32 color, float depth, uint32 stencil);
@@ -454,7 +456,7 @@ public:
 	void ProcessHRESULT(uint32 hr);
 
 protected:
-	void UpdateRenderStates(const uint32 *ids, uint32 count, uint32 *shadow, const uint32 *values);
+	void UpdateConstants();
 
 	struct PrivateData;
 
@@ -466,10 +468,17 @@ protected:
 	IDXGIAdapter1 *mpDXGIAdapter;
 	ID3D11Device *mpD3DDevice;
 	ID3D11DeviceContext *mpD3DDeviceContext;
-	ID3D11Buffer *mpVSConstBuffer;
-	ID3D11Buffer *mpVSConstBufferSys;
-	ID3D11Buffer *mpPSConstBuffer;
-	ID3D11Buffer *mpPSConstBufferSys;
+
+	static const uint32 kConstBaseShift = 4;
+	static const uint32 kConstMaxShift = 5;
+	static const uint8 kConstLookup[17];
+
+	ID3D11Buffer *mpVSConstBuffers[kConstMaxShift] = {};
+	ID3D11Buffer *mpPSConstBuffers[kConstMaxShift] = {};
+	uint32 mVSConstShift = 0;
+	uint32 mPSConstShift = 0;
+	bool mbVSConstDirty = true;
+	bool mbPSConstDirty = true;
 
 	VDTSwapChainD3D11 *mpSwapChain;
 	VDTSurfaceD3D11 *mpCurrentRT;
@@ -498,6 +507,9 @@ protected:
 	void	*mpBeginEvent;
 	void	*mpEndEvent;
 	VDRTProfileChannel	mProfChan;
+
+	alignas(16) float mVSConsts[16][4] = {};
+	alignas(16) float mPSConsts[16][4] = {};
 };
 
 bool VDTCreateContextD3D11(IVDTContext **ppctx);

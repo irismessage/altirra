@@ -6,6 +6,7 @@
 #include <vd2/system/vectors.h>
 
 struct VDPixmap;
+class IVDRefCount;
 
 struct VDDisplayFontGlyphMetrics {
 	int mWidth;
@@ -42,5 +43,24 @@ public:
 };
 
 bool VDCreateDisplaySystemFont(int height, bool bold, const char *fontName, IVDDisplayFont **font);
+
+struct VDDisplayBitmapFontGlyphInfo {
+	// Top-left corner of glyph image in font bitmap.
+	int mBitmapX;
+	int mBitmapY;
+
+	// Offset from base position of glyph to top-left corner render position (top down).
+	int mCellX;
+	int mCellY;
+
+	// Width and heigth of glyph image.
+	int mWidth;
+	int mHeight;
+
+	// Advance amount for horizontal base position.
+	int mAdvance;
+};
+
+void VDCreateDisplayBitmapFont(const VDDisplayFontMetrics& metrics, uint32 numGlyphs, const wchar_t *chars, const VDDisplayBitmapFontGlyphInfo *glyphInfos, const VDPixmap& pixmap, uint32 missingGlyph, IVDRefCount *objectToOwn, IVDDisplayFont **font);
 
 #endif

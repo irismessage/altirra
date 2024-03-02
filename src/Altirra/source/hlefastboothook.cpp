@@ -20,39 +20,45 @@
 #include "cpu.h"
 #include "cpumemory.h"
 #include "cpuhookmanager.h"
+#include "ksyms.h"
 
 class ATHLEFastBootHook {
 public:
-	ATHLEFastBootHook();
 	~ATHLEFastBootHook();
 
-	void Init(ATCPUEmulator *cpu, const uint8 *lowerROM, const uint8 *upperROM);
+	void Init(ATCPUEmulator *cpu);
 	void Shutdown();
 
 protected:
+	void OnInitHooks(const uint8 *lowerROM, const uint8 *upperROM);
+	void Unhook();
 	uint8 OnHookMemCheck(uint16);
+	uint8 OnHookMemClear(uint16);
 	uint8 OnHookChecksum(uint16);
 
-	ATCPUEmulator *mpCPU;
-	ATCPUHookNode *mpChecksumHook;
-	ATCPUHookNode *mpMemCheckHook;
+	ATCPUEmulator *mpCPU = nullptr;
+	ATCPUHookInitNode *mpInitHook = nullptr;
+	ATCPUHookNode *mpChecksumHook = nullptr;
+	ATCPUHookNode *mpMemClearHook = nullptr;
+	ATCPUHookNode *mpMemCheckHook = nullptr;
 };
-
-ATHLEFastBootHook::ATHLEFastBootHook()
-	: mpCPU(NULL)
-	, mpChecksumHook(NULL)
-	, mpMemCheckHook(NULL)
-{
-}
 
 ATHLEFastBootHook::~ATHLEFastBootHook() {
 	Shutdown();
 }
 
-void ATHLEFastBootHook::Init(ATCPUEmulator *cpu, const uint8 *lowerROM, const uint8 *upperROM) {
+void ATHLEFastBootHook::Init(ATCPUEmulator *cpu) {
 	mpCPU = cpu;
 
 	ATCPUHookManager& hookmgr = *cpu->GetHookManager();
+
+	mpInitHook = hookmgr.AddInitHook([this](auto lowerROM, auto upperROM) { OnInitHooks(lowerROM, upperROM); });
+}
+
+void ATHLEFastBootHook::OnInitHooks(const uint8 *lowerROM, const uint8 *upperROM) {
+	Unhook();
+	
+	ATCPUHookManager& hookmgr = *mpCPU->GetHookManager();
 
 	// Check if we can find and accelerate the kernel boot routines.
 	static const uint8 kMemCheckRoutine[]={
@@ -72,6 +78,25 @@ void ATHLEFastBootHook::Init(ATCPUEmulator *cpu, const uint8 *lowerROM, const ui
 
 	if (lowerROM && !memcmp(lowerROM + 0x02E4, kMemCheckRoutine, sizeof kMemCheckRoutine))
 		hookmgr.SetHookMethod(mpMemCheckHook, kATCPUHookMode_KernelROMOnly, 0xC2E4, 0, this, &ATHLEFastBootHook::OnHookMemCheck);
+
+	// This is AltirraOS's fill routine.
+	static const uint8 kMemClearRoutine[]={
+		0x91, 0x66,		// sta (toadr),y
+		0xC8,			// iny
+		0xD0, 0xFB,		// bne *-5
+		0xE6, 0x67,		// inc toadr+1
+		0xCA,			// dex
+		0xD0, 0xF6,		// bne *-10
+	};
+
+	if (upperROM) {
+		for(uint32 i=0; i<0x1C00 - sizeof(kMemClearRoutine); ++i) {
+			if (upperROM[i + 0x0C00] == kMemClearRoutine[0] && !memcmp(upperROM + 0xC00 + i + 1, kMemClearRoutine + 1, sizeof kMemClearRoutine - 1)) {
+				hookmgr.SetHookMethod(mpMemClearHook, kATCPUHookMode_KernelROMOnly, 0xE400 + i, 0, this, &ATHLEFastBootHook::OnHookMemClear);
+				break;
+			}
+		}
+	}
 
 	static const uint8 kChecksumRoutine[]={
 		0xa0, 0x00,	// ldy #0
@@ -98,12 +123,25 @@ void ATHLEFastBootHook::Init(ATCPUEmulator *cpu, const uint8 *lowerROM, const ui
 
 void ATHLEFastBootHook::Shutdown() {
 	if (mpCPU) {
+		Unhook();
+
+		ATCPUHookManager& hookmgr = *mpCPU->GetHookManager();
+		if (mpInitHook) {
+			hookmgr.RemoveInitHook(mpInitHook);
+			mpInitHook = nullptr;
+		}
+
+		mpCPU = nullptr;
+	}
+}
+
+void ATHLEFastBootHook::Unhook() {
+	if (mpCPU) {
 		ATCPUHookManager& hookmgr = *mpCPU->GetHookManager();
 
 		hookmgr.UnsetHook(mpMemCheckHook);
+		hookmgr.UnsetHook(mpMemClearHook);
 		hookmgr.UnsetHook(mpChecksumHook);
-
-		mpCPU = NULL;
 	}
 }
 
@@ -152,6 +190,42 @@ uint8 ATHLEFastBootHook::OnHookMemCheck(uint16) {
 	return 0xEA;
 }
 
+uint8 ATHLEFastBootHook::OnHookMemClear(uint16 pc) {
+	ATCPUEmulatorMemory& mem = *mpCPU->GetMemory();
+
+	// AltirraOS memory clear routine
+	//
+	// sta (toadr),y
+	// iny
+	// bne *-5
+	// inc toadr+1
+	// dex
+	// bne *-10
+
+	uint32 addr = mem.ReadByte(ATKernelSymbols::TOADR) + 256*(uint32)mem.ReadByte(ATKernelSymbols::TOADR + 1);
+
+	bool success = true;
+
+	const uint8 fillByte = mpCPU->GetA();
+	uint8 x = mpCPU->GetX();
+	uint8 y = mpCPU->GetY();
+
+	do {
+		for(uint32 i=y; i<256; ++i)
+			mem.WriteByte(addr + i, fillByte);
+
+		addr += 0x100;
+	} while(--x);
+
+	mem.WriteByte(ATKernelSymbols::TOADR + 1, (uint8)(addr >> 8));
+
+	mpCPU->SetX(0);
+	mpCPU->SetY(0);
+	mpCPU->SetP((mpCPU->GetP() & ~AT6502::kFlagN) | AT6502::kFlagZ);
+	mpCPU->Jump(pc + 10 - 1);
+	return 0xEA;
+}
+
 uint8 ATHLEFastBootHook::OnHookChecksum(uint16) {
 	ATCPUEmulatorMemory& mem = *mpCPU->GetMemory();
 
@@ -194,10 +268,10 @@ uint8 ATHLEFastBootHook::OnHookChecksum(uint16) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATHLEFastBootHook *ATCreateHLEFastBootHook(ATCPUEmulator *cpu, const uint8 *lowerROM, const uint8 *upperROM) {
+ATHLEFastBootHook *ATCreateHLEFastBootHook(ATCPUEmulator *cpu) {
 	vdautoptr<ATHLEFastBootHook> hook(new ATHLEFastBootHook);
 
-	hook->Init(cpu, lowerROM, upperROM);
+	hook->Init(cpu);
 
 	return hook.release();
 }

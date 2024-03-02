@@ -31,7 +31,7 @@ public:
 
 	void SetActiveMode(bool active);
 
-	void PreFilter(float * VDRESTRICT dst, uint32 count);
+	void PreFilter(float * VDRESTRICT dst, uint32 count, float dcLevel);
 	void Filter(float *dst, const float *src, uint32 count);
 	void Filter(float *dst, uint32 count);
 

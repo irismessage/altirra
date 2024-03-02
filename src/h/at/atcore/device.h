@@ -31,6 +31,7 @@ class ATPropertySet;
 class IATDevice;
 class IATUIRenderer;
 class IATAudioOutput;
+class ATAudioSyncMixer;
 class ATConsoleOutput;
 class ATPIAEmulator;
 class IATDeviceCartridge;
@@ -114,6 +115,14 @@ enum ATDeviceButton : uint32 {
 	kATDeviceButton_IDEPlus2SwitchDisks,
 	kATDeviceButton_IDEPlus2WriteProtect,
 	kATDeviceButton_IDEPlus2SDX,
+	kATDeviceButton_IndusGTTrack,
+	kATDeviceButton_IndusGTId,
+	kATDeviceButton_IndusGTError,
+	kATDeviceButton_IndusGTBootCPM,
+	kATDeviceButton_HappySlow,
+	kATDeviceButton_HappyWPEnable,
+	kATDeviceButton_HappyWPDisable,
+	kATDeviceButton_ATR8000Reset,
 };
 
 class IATDeviceButtons {
@@ -146,7 +155,7 @@ class IATDeviceAudioOutput {
 public:
 	enum { kTypeID = 'adao' };
 
-	virtual void InitAudioOutput(IATAudioOutput *output) = 0;
+	virtual void InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) = 0;
 };
 
 class IATDeviceDiagnostics {
@@ -170,12 +179,21 @@ public:
 	virtual IATDeviceParent *GetParent() = 0;
 	virtual void SetParent(IATDeviceParent *parent) = 0;
 	virtual void GetDeviceInfo(ATDeviceInfo& info) = 0;
+	virtual void GetSettingsBlurb(VDStringW& buf) = 0;
 	virtual void GetSettings(ATPropertySet& settings) = 0;
 	virtual bool SetSettings(const ATPropertySet& settings) = 0;
 	virtual void Init() = 0;
 	virtual void Shutdown() = 0;
+
+	// Return recommended power-on delay, in tenths of seconds. If the power-on delay is
+	// set to 'auto', the simulator will wait the maximum of all device recommended
+	// delays.
+	virtual uint32 GetComputerPowerOnDelay() const = 0;
+
 	virtual void WarmReset() = 0;
 	virtual void ColdReset() = 0;
+	virtual void ComputerColdReset() = 0;
+	virtual void PeripheralColdReset() = 0;
 };
 
 #endif

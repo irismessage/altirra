@@ -35,7 +35,6 @@ using namespace AT6502;
 ATCPUEmulator::ATCPUEmulator()
 	: mpMemory(NULL)
 	, mpHookMgr(NULL)
-	, mpHLE(NULL)
 	, mpProfiler(NULL)
 	, mpVerifier(NULL)
 	, mpHeatMap(NULL)
@@ -90,10 +89,6 @@ bool ATCPUEmulator::Init(ATCPUEmulatorMemory *mem, ATCPUHookManager *hookmgr, AT
 	return true;
 }
 
-void ATCPUEmulator::SetHLE(IATCPUHighLevelEmulator *hle) {
-	mpHLE = hle;
-}
-
 void ATCPUEmulator::SetBreakpointManager(ATBreakpointManager *bkptmanager) {
 	mpBkptManager = bkptmanager;
 }
@@ -141,6 +136,15 @@ void ATCPUEmulator::WarmReset() {
 
 	if (mpVerifier)
 		mpVerifier->OnReset();
+}
+
+bool ATCPUEmulator::IsAtInsnStep() const {
+	uint8 state = *mpNextState;
+
+	if (state == kStateUpdateHeatMap)
+		state = mpNextState[1];
+
+	return state == kStateReadOpcodeNoBreak;
 }
 
 bool ATCPUEmulator::IsInstructionInProgress() const {
@@ -372,7 +376,7 @@ void ATCPUEmulator::SetCPUMode(ATCPUMode mode, uint32 subCycles) {
 
 	mCPUMode = mode;
 	mSubCycles = subCycles;
-	mSubCyclesLeft = subCycles;
+	mSubCyclesLeft = 1;
 	mbForceNextCycleSlow = false;
 
 	// ensure sane 65C816 state
@@ -647,7 +651,6 @@ void ATCPUEmulator::LoadStateResetPrivate(ATSaveStateReader& reader) {
 }
 
 void ATCPUEmulator::EndLoadState(ATSaveStateReader& reader) {
-	mHLEDelay		= 0;
 }
 
 void ATCPUEmulator::BeginSaveState(ATSaveStateWriter& writer) {

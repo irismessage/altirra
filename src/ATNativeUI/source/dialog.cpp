@@ -6,6 +6,7 @@
 #include <vd2/system/w32assist.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/progress.h>
+#include <at/atnativeui/uiframe.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -44,11 +45,14 @@ bool VDUIDropFileListW32::GetFileName(int index, VDStringW& fileName) {
 const wchar_t *VDDialogFrameW32::spDefaultCaption = L"";
 
 VDDialogFrameW32::VDDialogFrameW32(uint32 dlgid)
-	: mpDialogResourceName(MAKEINTRESOURCEA(dlgid))
-	, mbIsModal(false)
+	: mbIsModal(false)
 	, mhdlg(NULL)
 	, mMinWidth(0)
 	, mMinHeight(0)
+	, mMaxWidth(INT_MAX)
+	, mMaxHeight(INT_MAX)
+	, mpDialogResourceName(MAKEINTRESOURCEA(dlgid))
+	, mAccel(nullptr)
 {
 }
 
@@ -138,7 +142,9 @@ vdrect32 VDDialogFrameW32::GetArea() const {
 
 	HWND hwndParent = GetAncestor(mhdlg, GA_PARENT);
 	if (hwndParent) {
-		if (!MapWindowPoints(NULL, hwndParent, (LPPOINT)&r, 2))
+		SetLastError(0);
+
+		if (!MapWindowPoints(NULL, hwndParent, (LPPOINT)&r, 2) && GetLastError())
 			return vdrect32(0, 0, 0, 0);
 	}
 
@@ -168,6 +174,15 @@ vdrect32 VDDialogFrameW32::GetClientArea() const {
 	RECT r = {0};
 	GetClientRect(mhdlg, &r);
 	return vdrect32(r.left, r.top, r.right, r.bottom);
+}
+
+VDStringW VDDialogFrameW32::GetCaption() const {
+	return mhdlg ? VDGetWindowTextW32(mhdlg) : VDStringW();
+}
+
+void VDDialogFrameW32::SetCaption(const wchar_t *caption) {
+	if (mhdlg)
+		VDSetWindowTextW32(mhdlg, caption);
 }
 
 void VDDialogFrameW32::AdjustPosition() {
@@ -225,6 +240,17 @@ void VDDialogFrameW32::SetCurrentSizeAsMinSize() {
 	}
 }
 
+void VDDialogFrameW32::SetCurrentSizeAsMaxSize(bool width, bool height) {
+	RECT r;
+	if (GetWindowRect(mhdlg, &r)) {
+		if (r.right > r.left && width)
+			mMaxWidth = r.right - r.left;
+
+		if (r.bottom > r.top && height)
+			mMaxHeight = r.bottom - r.top;
+	}
+}
+
 VDZHWND VDDialogFrameW32::GetControl(uint32 id) {
 	if (!mhdlg)
 		return NULL;
@@ -273,6 +299,14 @@ vdrect32 VDDialogFrameW32::GetControlPos(uint32 id) {
 	}
 
 	return vdrect32(0, 0, 0, 0);
+}
+
+void VDDialogFrameW32::SetControlPos(uint32 id, const vdrect32& r) {
+	if (mhdlg) {
+		const HWND hwnd = GetDlgItem(mhdlg, id);
+		if (hwnd)
+			SetWindowPos(hwnd, nullptr, r.left, r.top, r.width(), r.height(), SWP_NOZORDER | SWP_NOACTIVATE);
+	}
 }
 
 vdrect32 VDDialogFrameW32::GetControlScreenPos(uint32 id) {
@@ -833,6 +867,10 @@ bool VDDialogFrameW32::PreNCDestroy() {
 	return false;
 }
 
+bool VDDialogFrameW32::ShouldSetDialogIcon() const {
+	return true;
+}
+
 void VDDialogFrameW32::SetCapture() {
 	if (mhdlg)
 		::SetCapture(mhdlg);
@@ -840,6 +878,10 @@ void VDDialogFrameW32::SetCapture() {
 
 void VDDialogFrameW32::ReleaseCapture() {
 	::ReleaseCapture();
+}
+
+void VDDialogFrameW32::LoadAcceleratorTable(uint32 id) {
+	mAccel = LoadAccelerators(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(id));
 }
 
 void VDDialogFrameW32::ExecutePostedCalls() {
@@ -912,7 +954,8 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 				mhPrevProgressParent = ATUIPushProgressParent((VDGUIHandle)mhdlg);
 			}
 
-			SetDialogIcon();
+			if (ShouldSetDialogIcon())
+				SetDialogIcon();
 			OnPreLoaded();
 			return !OnLoaded();
 
@@ -1014,6 +1057,12 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 
 				if (mmi.ptMinTrackSize.y < mMinHeight)
 					mmi.ptMinTrackSize.y = mMinHeight;
+
+				if (mmi.ptMaxTrackSize.x > mMaxWidth)
+					mmi.ptMaxTrackSize.x = mMaxWidth;
+
+				if (mmi.ptMaxTrackSize.y > mMaxHeight)
+					mmi.ptMaxTrackSize.y = mMaxHeight;
 			}
 			return 0;
 
@@ -1038,6 +1087,11 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 		case VDWM_APP_POSTEDCALL:
 			ExecutePostedCalls();
 			return TRUE;
+
+		case ATWM_PRETRANSLATE:
+			if (mAccel && TranslateAccelerator(mhdlg, mAccel, (MSG *)lParam))
+				return TRUE;
+			break;
 	}
 
 	return FALSE;
@@ -1132,7 +1186,8 @@ void VDDialogResizerW32::Add(uint32 id, int alignment) {
 	if (!GetWindowRect(hwndControl, &r))
 		return;
 
-	if (!MapWindowPoints(NULL, mhwndBase, (LPPOINT)&r, 2))
+	SetLastError(0);
+	if (!MapWindowPoints(NULL, mhwndBase, (LPPOINT)&r, 2) && GetLastError())
 		return;
 
 	ControlEntry& ce = mControls.push_back();

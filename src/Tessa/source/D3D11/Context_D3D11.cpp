@@ -1,4 +1,12 @@
 #include <stdafx.h>
+#define D3D11_NO_HELPERS
+#define INITGUID
+#include <guiddef.h>
+
+#ifdef NTDDI_WINBLUE
+#include <dxgi1_3.h>
+#endif
+
 #include <D3D11.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/w32assist.h>
@@ -55,6 +63,8 @@ namespace {
 }
 
 ///////////////////////////////////////////////////////////////////////////
+
+#ifndef NTDDI_WINBLUE
 
 typedef struct DXGI_SWAP_CHAIN_DESC1 DXGI_SWAP_CHAIN_DESC1;
 typedef struct DXGI_SWAP_CHAIN_FULLSCREEN_DESC DXGI_SWAP_CHAIN_FULLSCREEN_DESC;
@@ -122,6 +132,7 @@ const GUID IID_IDXGISwapChain1 = __uuidof(IDXGISwapChain1);
 const GUID IID_IDXGISwapChain2 = __uuidof(IDXGISwapChain2);
 
 const DXGI_SWAP_EFFECT DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL	= (DXGI_SWAP_EFFECT)3;
+#endif
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -1739,6 +1750,14 @@ struct VDTContextD3D11::PrivateData {
 	VDTFenceManagerD3D11 mFenceManager;
 };
 
+const uint8 VDTContextD3D11::kConstLookup[] = {
+	0, 0,					// 0-16
+	1,						// 17-32
+	2, 2,					// 33-64
+	3, 3, 3, 3,				// 65-128
+	4, 4, 4, 4, 4, 4, 4, 4,	// 129-256
+};
+
 VDTContextD3D11::VDTContextD3D11()
 	: mRefCount(0)
 	, mpData(NULL)
@@ -1746,10 +1765,6 @@ VDTContextD3D11::VDTContextD3D11()
 	, mpDXGIFactory(NULL)
 	, mpD3DDevice(NULL)
 	, mpD3DDeviceContext(NULL)
-	, mpVSConstBuffer(NULL)
-	, mpPSConstBuffer(NULL)
-	, mpVSConstBufferSys(NULL)
-	, mpPSConstBufferSys(NULL)
 	, mpSwapChain(NULL)
 	, mpCurrentRT(NULL)
 	, mpCurrentVB(NULL)
@@ -1871,23 +1886,19 @@ bool VDTContextD3D11::Init(ID3D11Device *dev, ID3D11DeviceContext *devctx, IDXGI
 		mpCurrentSamplerStates[i] = mpDefaultSS;
 
 	D3D11_BUFFER_DESC bufdesc = {};
-    bufdesc.ByteWidth = 256 * sizeof(float) * 4;
-	bufdesc.Usage = D3D11_USAGE_DEFAULT;
-	bufdesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-	bufdesc.CPUAccessFlags = 0;
-    bufdesc.MiscFlags = 0;
-    bufdesc.StructureByteStride = 0;
-	mpD3DDevice->CreateBuffer(&bufdesc, NULL, &mpVSConstBuffer);
-	mpD3DDevice->CreateBuffer(&bufdesc, NULL, &mpPSConstBuffer);
+	for(uint32 i=0; i<kConstMaxShift; ++i) {
+		bufdesc.ByteWidth = (sizeof(float) * 4) << (kConstBaseShift + i);
+		bufdesc.Usage = D3D11_USAGE_DEFAULT;
+		bufdesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+		bufdesc.CPUAccessFlags = 0;
+		bufdesc.MiscFlags = 0;
+		bufdesc.StructureByteStride = 0;
+		mpD3DDevice->CreateBuffer(&bufdesc, NULL, &mpVSConstBuffers[i]);
+		mpD3DDevice->CreateBuffer(&bufdesc, NULL, &mpPSConstBuffers[i]);
+	}
 
-	bufdesc.Usage = D3D11_USAGE_STAGING;
-	bufdesc.BindFlags = 0;
-	bufdesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-	mpD3DDevice->CreateBuffer(&bufdesc, NULL, &mpVSConstBufferSys);
-	mpD3DDevice->CreateBuffer(&bufdesc, NULL, &mpPSConstBufferSys);
-
-	mpD3DDeviceContext->VSSetConstantBuffers(0, 1, &mpVSConstBuffer);
-	mpD3DDeviceContext->PSSetConstantBuffers(0, 1, &mpPSConstBuffer);
+	mpD3DDeviceContext->VSSetConstantBuffers(0, 1, &mpVSConstBuffers[0]);
+	mpD3DDeviceContext->PSSetConstantBuffers(0, 1, &mpPSConstBuffers[0]);
 
 	SetBlendState(NULL);
 	SetRasterizerState(NULL);
@@ -1914,7 +1925,9 @@ void VDTContextD3D11::Shutdown() {
 
 	ShutdownAllResources();
 
-	vdsaferelease <<= mpDefaultSS, mpDefaultRS, mpDefaultBS, mpPSConstBuffer, mpVSConstBuffer, mpPSConstBufferSys, mpVSConstBufferSys;
+	vdsaferelease <<= mpDefaultSS, mpDefaultRS, mpDefaultBS;
+	vdsaferelease <<= mpPSConstBuffers;
+	vdsaferelease <<= mpVSConstBuffers;
 
 	mpData->mFenceManager.Shutdown();
 
@@ -2268,34 +2281,35 @@ void VDTContextD3D11::SetScissorRect(const vdrect32& r) {
 	mScissorRect = r;
 }
 
+void VDTContextD3D11::SetVertexProgramConstCount(uint32 count) {
+	uint32 shift = kConstLookup[(count + 15) >> 4];
+
+	if (mVSConstShift != shift) {
+		mVSConstShift = shift;
+
+		mpD3DDeviceContext->VSSetConstantBuffers(0, 1, &mpVSConstBuffers[shift]);
+		mbVSConstDirty = true;
+	}
+}
+
 void VDTContextD3D11::SetVertexProgramConstF(uint32 baseIndex, uint32 count, const float *data) {
-	D3D11_MAPPED_SUBRESOURCE info;
-	HRESULT hr = mpD3DDeviceContext->Map(mpVSConstBufferSys, 0, D3D11_MAP_WRITE, 0, &info);
+	memcpy(&mVSConsts[baseIndex][0], data, count * 16);
+	mbVSConstDirty = true;
+}
 
-	if (FAILED(hr))
-		ProcessHRESULT(hr);
-	else {
-		memcpy((char *)info.pData + baseIndex*16, data, count*16);
-		mpD3DDeviceContext->Unmap(mpVSConstBufferSys, 0);
+void VDTContextD3D11::SetFragmentProgramConstCount(uint32 count) {
+	uint32 shift = kConstLookup[(count + 15) >> 4];
 
-		const D3D11_BOX box = { baseIndex * 16, 0, 0, (baseIndex + count) * 16, 1, 1 };
-		mpD3DDeviceContext->CopySubresourceRegion(mpVSConstBuffer, 0, 0, 0, 0, mpVSConstBufferSys, 0, &box);
+	if (mPSConstShift != shift) {
+		mPSConstShift = shift;
+		mpD3DDeviceContext->PSSetConstantBuffers(0, 1, &mpPSConstBuffers[shift]);
+		mbPSConstDirty = true;
 	}
 }
 
 void VDTContextD3D11::SetFragmentProgramConstF(uint32 baseIndex, uint32 count, const float *data) {
-	D3D11_MAPPED_SUBRESOURCE info;
-	HRESULT hr = mpD3DDeviceContext->Map(mpPSConstBufferSys, 0, D3D11_MAP_WRITE, 0, &info);
-
-	if (FAILED(hr))
-		ProcessHRESULT(hr);
-	else {
-		memcpy((char *)info.pData + baseIndex*16, data, count*16);
-		mpD3DDeviceContext->Unmap(mpPSConstBufferSys, 0);
-
-		const D3D11_BOX box = { baseIndex * 16, 0, 0, (baseIndex + count) * 16, 1, 1 };
-		mpD3DDeviceContext->CopySubresourceRegion(mpPSConstBuffer, 0, 0, 0, 0, mpPSConstBufferSys, 0, &box);
-	}
+	memcpy(&mPSConsts[baseIndex][0], data, count * 16);
+	mbPSConstDirty = true;
 }
 
 void VDTContextD3D11::Clear(VDTClearFlags clearFlags, uint32 color, float depth, uint32 stencil) {
@@ -2323,6 +2337,8 @@ namespace {
 void VDTContextD3D11::DrawPrimitive(VDTPrimitiveType type, uint32 startVertex, uint32 primitiveCount) {
 	mpD3DDeviceContext->IASetPrimitiveTopology(kPTLookup[type]);
 
+	UpdateConstants();
+
 	switch(type) {
 		case kVDTPT_Triangles:
 			mpD3DDeviceContext->Draw(primitiveCount * 3, startVertex);
@@ -2344,6 +2360,8 @@ void VDTContextD3D11::DrawPrimitive(VDTPrimitiveType type, uint32 startVertex, u
 
 void VDTContextD3D11::DrawIndexedPrimitive(VDTPrimitiveType type, uint32 baseVertexIndex, uint32 minVertex, uint32 vertexCount, uint32 startIndex, uint32 primitiveCount) {
 	mpD3DDeviceContext->IASetPrimitiveTopology(kPTLookup[type]);
+
+	UpdateConstants();
 
 	uint32 indexCount = 0;
 	switch(type) {
@@ -2477,6 +2495,20 @@ void VDTContextD3D11::UnsetTexture(IVDTTexture *tex) {
 }
 
 void VDTContextD3D11::ProcessHRESULT(uint32 hr) {
+}
+
+void VDTContextD3D11::UpdateConstants() {
+	if (mbVSConstDirty) {
+		mbVSConstDirty = false;
+
+		mpD3DDeviceContext->UpdateSubresource(mpVSConstBuffers[mVSConstShift], 0, nullptr, mVSConsts, 0, 0    );
+	}
+
+	if (mbPSConstDirty) {
+		mbPSConstDirty = false;
+
+		mpD3DDeviceContext->UpdateSubresource(mpPSConstBuffers[mPSConstShift], 0, nullptr, mPSConsts, 0, 0);
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////

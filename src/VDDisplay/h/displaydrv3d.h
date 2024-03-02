@@ -22,25 +22,25 @@ public:
 	VDDisplayDriver3D();
 	~VDDisplayDriver3D();
 
-	virtual bool Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info);
-	virtual void Shutdown();
+	virtual bool Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info) override;
+	virtual void Shutdown() override;
 
-	virtual bool ModifySource(const VDVideoDisplaySourceInfo& info);
+	virtual bool ModifySource(const VDVideoDisplaySourceInfo& info) override;
 
-	virtual void SetFilterMode(FilterMode mode);
-	virtual void SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh);
-	virtual void SetDestRect(const vdrect32 *r, uint32 color);
-	virtual void SetPixelSharpness(float xfactor, float yfactor);
+	virtual void SetFilterMode(FilterMode mode) override;
+	virtual void SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh, bool use16bit) override;
+	virtual void SetDestRect(const vdrect32 *r, uint32 color) override;
+	virtual void SetPixelSharpness(float xfactor, float yfactor) override;
 
-	virtual bool IsValid();
-	virtual bool IsFramePending();
-	virtual bool Resize(int w, int h);
-	virtual bool Update(UpdateMode);
-	virtual void Refresh(UpdateMode);
-	virtual bool Paint(HDC hdc, const RECT& rClient, UpdateMode lastUpdateMode);
-	virtual void PresentQueued();
+	virtual bool IsValid() override;
+	virtual bool IsFramePending() override;
+	virtual bool Resize(int w, int h) override;
+	virtual bool Update(UpdateMode) override;
+	virtual void Refresh(UpdateMode) override;
+	virtual bool Paint(HDC hdc, const RECT& rClient, UpdateMode lastUpdateMode) override;
+	virtual void PresentQueued() override;
 
-	virtual bool AreVSyncTicksNeeded() const { return false; }
+	virtual bool AreVSyncTicksNeeded() const override { return false; }
 
 	IVDDisplayCompositionEngine *GetDisplayCompositionEngine() override { return this; }
 

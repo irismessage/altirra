@@ -21,6 +21,10 @@
 #include <vd2/system/VDString.h>
 
 ///////////////////////////////////////////////////////////////////////////
+void ATConsoleOpenLogFile(const wchar_t *path);
+void ATConsoleCloseLogFileNT();
+void ATConsoleCloseLogFile();
+
 void ATConsoleWrite(const char *s);
 void ATConsolePrintf(const char *format, ...);
 void ATConsoleTaggedPrintf(const char *format, ...);

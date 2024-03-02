@@ -1826,10 +1826,16 @@ void VDTContextD3D9::SetTextures(uint32 baseIndex, uint32 count, IVDTTexture *co
 	}
 }
 
+void VDTContextD3D9::SetVertexProgramConstCount(uint32 count) {
+}
+
 void VDTContextD3D9::SetVertexProgramConstF(uint32 baseIndex, uint32 count, const float *data) {
 	HRESULT hr = mpD3DDevice->SetVertexShaderConstantF(baseIndex, data, count);
 	if (FAILED(hr))
 		ProcessHRESULT(hr);
+}
+
+void VDTContextD3D9::SetFragmentProgramConstCount(uint32 count) {
 }
 
 void VDTContextD3D9::SetFragmentProgramConstF(uint32 baseIndex, uint32 count, const float *data) {

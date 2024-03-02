@@ -581,13 +581,16 @@ void ATSSerialEmulator::RemoveRawDevice(IATDeviceRawSIO *dev) {
 	}
 }
 
-void ATSSerialEmulator::SendRawByte(uint8 byte, uint32 cyclesPerBit) {
+void ATSSerialEmulator::SendRawByte(uint8 byte, uint32 cyclesPerBit, bool synchronous, bool forceFramingError, bool simulateInput) {
 	void *dst = mpSerEngine->LockWrite(1);
 
 	if (dst) {
 		*(uint8 *)dst = byte;
 		mpSerEngine->UnlockWrite(true);
 	}
+}
+
+void ATSSerialEmulator::SetRawInput(bool state) {
 }
 
 void ATSSerialEmulator::SetSIOInterrupt(IATDeviceRawSIO *dev, bool state) {

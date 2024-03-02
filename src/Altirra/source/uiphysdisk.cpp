@@ -249,33 +249,12 @@ void ATUIDialogBrowsePhysicalDisks::LoadTree() {
 			
 			WCHAR tmp2[MAX_PATH];
 
-			typedef BOOL (WINAPI *tpGetVolumeNameForVolumeMountPointW)(
-				LPCWSTR lpszVolumeMountPoint,
-				LPWSTR lpszVolumeName,
-				DWORD cchBufferLength
-				);
-
-			typedef BOOL (WINAPI *tpGetVolumePathNamesForVolumeNameW)(
-				LPCWSTR lpszVolumeName,
-				LPWCH lpszVolumePathNames,
-				DWORD cchBufferLength,
-				PDWORD lpcchReturnLength
-				);
-
-			HMODULE hmodKernel32 = GetModuleHandle(_T("kernel32"));
-			tpGetVolumeNameForVolumeMountPointW pGetVolumeNameForVolumeMountPointW = (tpGetVolumeNameForVolumeMountPointW)
-				GetProcAddress(hmodKernel32, "GetVolumeNameForVolumeMountPointW");
-			tpGetVolumePathNamesForVolumeNameW pGetVolumePathNamesForVolumeNameW = (tpGetVolumePathNamesForVolumeNameW)
-				GetProcAddress(hmodKernel32, "GetVolumePathNamesForVolumeNameW");
-
-			if (pGetVolumeNameForVolumeMountPointW &&
-				pGetVolumePathNamesForVolumeNameW &&
-				pGetVolumeNameForVolumeMountPointW(volumePath.c_str(), tmp2, MAX_PATH)) {
+			if (GetVolumeNameForVolumeMountPointW(volumePath.c_str(), tmp2, MAX_PATH)) {
 				DWORD len;
-				if (!pGetVolumePathNamesForVolumeNameW(tmp2, NULL, 0, &len) && GetLastError() == ERROR_MORE_DATA) {
+				if (!GetVolumePathNamesForVolumeNameW(tmp2, NULL, 0, &len) && GetLastError() == ERROR_MORE_DATA) {
 					vdfastvector<WCHAR> paths(len);
 
-					if (pGetVolumePathNamesForVolumeNameW(tmp2, paths.data(), len, &len)) {
+					if (GetVolumePathNamesForVolumeNameW(tmp2, paths.data(), len, &len)) {
 						if (paths[0]) {
 							item->mText += L" (";
 							item->mText += paths.data();

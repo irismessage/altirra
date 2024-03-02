@@ -44,8 +44,8 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\..\out\$(Configuration)\</OutDir>
-    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\..\obj\$(Configuration)\</IntDir>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\..\out\HelpFile\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\..\obj\HelpFile\</IntDir>
     <NMakeBuildCommandLine Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\..\out\$(Configuration)\athelpbuilder.exe "%programfiles%\html help workshop\hhc.exe" source ..\..\out\Helpfile</NMakeBuildCommandLine>
     <NMakeReBuildCommandLine Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\..\out\$(Configuration)\athelpbuilder.exe "%programfiles%\html help workshop\hhc.exe" source ..\..\out\Helpfile</NMakeReBuildCommandLine>
     <NMakeCleanCommandLine Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" />
@@ -55,8 +55,8 @@
     <NMakeForcedIncludes Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(NMakeForcedIncludes)</NMakeForcedIncludes>
     <NMakeAssemblySearchPath Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(NMakeAssemblySearchPath)</NMakeAssemblySearchPath>
     <NMakeForcedUsingAssemblies Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(NMakeForcedUsingAssemblies)</NMakeForcedUsingAssemblies>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\out\$(Configuration)\</OutDir>
-    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\obj\$(Configuration)\</IntDir>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\out\HelpFile\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\obj\HelpFile\</IntDir>
     <NMakeBuildCommandLine Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\out\$(Configuration)\athelpbuilder.exe "%programfiles%\html help workshop\hhc.exe" source ..\..\out\Helpfile</NMakeBuildCommandLine>
     <NMakeReBuildCommandLine Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\out\$(Configuration)\athelpbuilder.exe "%programfiles%\html help workshop\hhc.exe" source ..\..\out\Helpfile</NMakeReBuildCommandLine>
     <NMakeCleanCommandLine Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" />
@@ -129,10 +129,17 @@
     <None Include="source\debug-profiling.xml">
       <SubType>Designer</SubType>
     </None>
+    <Xml Include="source\devices-blackbox.xml" />
     <Xml Include="source\devices-cassette.xml" />
     <Xml Include="source\devices-corvus.xml" />
+    <Xml Include="source\devices-fulldisk.xml" />
+    <Xml Include="source\devices-indusgt.xml">
+      <SubType>Designer</SubType>
+    </Xml>
+    <Xml Include="source\devices-mio.xml" />
     <Xml Include="source\devices-pocketmodem.xml" />
     <Xml Include="source\devices-rtime8.xml" />
+    <Xml Include="source\devices-xf551.xml" />
     <Xml Include="source\dragoncart.xml" />
     <Xml Include="source\options-accel.xml" />
     <Xml Include="source\options-firmware.xml">
@@ -144,6 +151,13 @@
     </Xml>
     <Xml Include="source\profiles.xml" />
     <Xml Include="source\sx212.xml" />
+    <Xml Include="source\systems-1200xl.xml">
+      <SubType>Designer</SubType>
+    </Xml>
+    <Xml Include="source\systems-5200.xml" />
+    <Xml Include="source\systems-800.xml" />
+    <Xml Include="source\systems-xegs.xml" />
+    <Xml Include="source\systems-xlxe.xml" />
     <Xml Include="source\using-the-emulated-computer.xml">
       <SubType>Designer</SubType>
     </Xml>

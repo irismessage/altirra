@@ -325,7 +325,7 @@ public:	// IATDeviceScheduling
 	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:	// IATDeviceAudioOutput
-	virtual void InitAudioOutput(IATAudioOutput *out) override;
+	virtual void InitAudioOutput(IATAudioOutput *out, ATAudioSyncMixer *syncmixer) override;
 
 public:	// IATDeviceDiagnostics
 	virtual void DumpStatus(ATConsoleOutput& output) override;
@@ -442,7 +442,7 @@ void ATDeviceCovox::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 	mpScheduler = sch;
 }
 
-void ATDeviceCovox::InitAudioOutput(IATAudioOutput *out) {
+void ATDeviceCovox::InitAudioOutput(IATAudioOutput *out, ATAudioSyncMixer *syncmixer) {
 	mpAudioOutput = out;
 }
 

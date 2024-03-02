@@ -101,6 +101,7 @@ ATVBXEEmulator::ATVBXEEmulator()
 	, mCsel(0)
 	, mbIRQEnabled(false)
 	, mbIRQRequest(false)
+	, mConfigLatch(0)
 	, mDMACycles(0)
 	, mbBlitLogging(false)
 	, mbBlitterEnabled(false)
@@ -209,6 +210,8 @@ void ATVBXEEmulator::ColdReset() {
 	mAttrHscroll	= 0;
 	mAttrRow		= 0;
 	mChAddr			= 0;
+
+	mConfigLatch	= 0;
 
 	mbExtendedColor	= false;
 	mbAttrMapEnabled = false;
@@ -611,6 +614,17 @@ sint32 ATVBXEEmulator::ReadControl(uint8 addrLo) {
 
 		case 0x5F:	// MEMAC_BANK_SEL
 			return mMemAcBankA;
+
+		default:
+			if (addrLo >= 0xC0) {
+				// D0 = DATA0
+				// D1 = DCLK
+				// D2 = /CONFIG
+				// D7 = CONF_DONE
+				return mConfigLatch;
+			}
+
+			break;
 	}
 
 	return -1;
@@ -744,7 +758,14 @@ bool ATVBXEEmulator::WriteControl(uint8 addrLo, uint8 value) {
 			break;
 
 		default:
-			return false;
+			if (addrLo >= 0xC0) {
+				// D0 = DATA0
+				// D1 = DCLK
+				// D2 = /CONFIG
+				mConfigLatch = value & 7;
+			}
+
+			break;
 	}
 
 	return false;
@@ -762,7 +783,9 @@ void ATVBXEEmulator::InitMemoryMaps() {
 
 	// Window A has priority over window B
 	mpMemLayerMEMACA = mpMemMan->CreateLayer(kATMemoryPri_Extsel+1, NULL, 0xD8, 0x10, false);
+	mpMemMan->SetLayerName(mpMemLayerMEMACA, "VBXE MEMAC A");
 	mpMemLayerMEMACB = mpMemMan->CreateLayer(kATMemoryPri_Extsel, NULL, 0x40, 0x40, false);
+	mpMemMan->SetLayerName(mpMemLayerMEMACB, "VBXE MEMAC B");
 
 	ATMemoryHandlerTable handler;
 	handler.mbPassReads			= true;
@@ -1375,11 +1398,13 @@ int ATVBXEEmulator::RenderAttrPixels(int x1h, int x2h) {
 	uint32 srcAddr = mAttrAddr + (x1h - xlh) / mAttrWidth * 4;
 	int hiresShift = mAttrWidth > 16 ? 2 : mAttrWidth > 8 ? 1 : 0;
 
+	const uint8 colorMask = mbExtendedColor ? 0xFF : 0xFE;
+
 	AttrPixel px;
 	px.mPFK = 0;
-	px.mPF0 = VBXE_FETCH(srcAddr + 0);
-	px.mPF1 = VBXE_FETCH(srcAddr + 1);
-	px.mPF2 = VBXE_FETCH(srcAddr + 2);
+	px.mPF0 = VBXE_FETCH(srcAddr + 0) & colorMask;
+	px.mPF1 = VBXE_FETCH(srcAddr + 1) & colorMask;
+	px.mPF2 = VBXE_FETCH(srcAddr + 2) & colorMask;
 	px.mCtrl = VBXE_FETCH(srcAddr + 3);
 	px.mPriority = mOvPriority[px.mCtrl & 3];
 	srcAddr += 4;
@@ -1391,9 +1416,9 @@ int ATVBXEEmulator::RenderAttrPixels(int x1h, int x2h) {
 		mAttrPixels[x1h] = px;
 
 		if (++offset >= mAttrWidth) {
-			px.mPF0 = VBXE_FETCH(srcAddr + 0);
-			px.mPF1 = VBXE_FETCH(srcAddr + 1);
-			px.mPF2 = VBXE_FETCH(srcAddr + 2);
+			px.mPF0 = VBXE_FETCH(srcAddr + 0) & colorMask;
+			px.mPF1 = VBXE_FETCH(srcAddr + 1) & colorMask;
+			px.mPF2 = VBXE_FETCH(srcAddr + 2) & colorMask;
 			px.mCtrl = VBXE_FETCH(srcAddr + 3);
 			px.mPriority = mOvPriority[px.mCtrl & 3];
 			srcAddr += 4;

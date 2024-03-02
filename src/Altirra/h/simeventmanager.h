@@ -18,6 +18,7 @@
 #ifndef f_AT_SIMEVENTMANAGER_H
 #define f_AT_SIMEVENTMANAGER_H
 
+#include <vd2/system/function.h>
 #include <vd2/system/vdstl.h>
 
 enum ATSimulatorEvent {
@@ -44,7 +45,8 @@ enum ATSimulatorEvent {
 	kATSimEvent_StateLoaded,
 	kATSimEvent_AbnormalDMA,
 	kATSimEvent_VBI,
-	kATSimEvent_VBLANK
+	kATSimEvent_VBLANK,
+	kATSimEventCount
 };
 
 class IATSimulatorCallback {
@@ -53,8 +55,8 @@ public:
 };
 
 class ATSimulatorEventManager {
-	ATSimulatorEventManager(const ATSimulatorEventManager&);
-	ATSimulatorEventManager& operator=(const ATSimulatorEventManager&);
+	ATSimulatorEventManager(const ATSimulatorEventManager&) = delete;
+	ATSimulatorEventManager& operator=(const ATSimulatorEventManager&) = delete;
 public:
 	ATSimulatorEventManager();
 	~ATSimulatorEventManager();
@@ -64,13 +66,36 @@ public:
 	void AddCallback(IATSimulatorCallback *cb);
 	void RemoveCallback(IATSimulatorCallback *cb);
 
+	uint32 AddEventCallback(ATSimulatorEvent ev, const vdfunction<void()>& fn);
+	void RemoveEventCallback(uint32 id);
+
 	void NotifyEvent(ATSimulatorEvent ev);
 
 protected:
 	typedef vdfastvector<IATSimulatorCallback *> Callbacks;
+
+	struct Iterator {
+		Iterator *mpNext;
+
+		size_t mGlobalIdx;
+		size_t mGlobalSize;
+		uint32 mEventIdx;
+	};
+
+	Iterator	*mpIteratorList = nullptr;
+
 	Callbacks	mCallbacks;
-	int			mCallbacksBusy;
-	bool		mbCallbacksChanged;
+
+	struct EventCallback {
+		uint32 mPrev;
+		uint32 mNext;
+		uint32 mValidId;
+		vdfunction<void()> mpFunction;
+	};
+
+	vdvector<EventCallback> mEventCallbackTable;
+	uint32		mECFreeList = 0;
+	uint32		mEventCallbackLists[kATSimEventCount - 1] = {};
 };
 
 #endif	// f_AT_SIMEVENTMANAGER_H

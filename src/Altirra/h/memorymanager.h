@@ -196,6 +196,7 @@ protected:
 
 	static sint32 DummyReadHandler(void *thisptr, uint32 addr);
 	static bool DummyWriteHandler(void *thisptr, uint32 addr, uint8 value);
+	static sint32 ChipDebugReadHandler(void *thisptr, uint32 addr);
 	static sint32 ChipReadHandler(void *thisptr, uint32 addr);
 	static bool ChipWriteHandler(void *thisptr, uint32 addr, uint8 value);
 	static sint32 IoMemoryFastReadWrapperHandler(void *thisptr, uint32 addr);

@@ -21,6 +21,7 @@
 #include <vd2/system/registry.h>
 #include <vd2/system/hash.h>
 #include <vd2/system/int128.h>
+#include <at/atcore/consoleoutput.h>
 #include "ultimate1mb.h"
 #include "mmu.h"
 #include "pbi.h"
@@ -393,24 +394,24 @@ void ATUltimate1MBEmulator::SaveNVRAM() {
 	key.setBinary("Ultimate1MB clock", (const char *)buf, 0x72);
 }
 
-void ATUltimate1MBEmulator::DumpStatus() {
-	ATConsoleWrite("Ultimate1MB status:\n");
-	ATConsolePrintf("Control registers   %s\n", mbControlLocked ? "locked" : "unlocked");
-	ATConsolePrintf("Kernel bank         %u ($%05x)\n", mKernelBank, 0x70000 + ((uint32)mKernelBank << 14));
-	ATConsolePrintf("BASIC bank          %u ($%05x)\n", mBasicBank, 0x60000 + ((uint32)mBasicBank << 13));
-	ATConsolePrintf("Game bank           %u ($%05x)\n", mGameBank, 0x68000 + ((uint32)mGameBank << 13));
-	ATConsolePrintf("Cartridge bank      $%05x (%s)\n", mCartBankOffset, mbSDXEnabled ? "enabled" : "disabled");
-	ATConsolePrintf("I/O memory          %s\n", mbIORAMEnabled ? "enabled" : "disabled");
-	ATConsolePrintf("Flash writes        %s\n", mbFlashWriteEnabled ? "enabled" : "protected");
-	ATConsolePrintf("PBI device ID       $%02x (%s)\n", mSelectedPBIID, mbPBISelected ? "selected" : mbPBIEnabled ? "enabled" : "disabled");
-	ATConsolePrintf("PBI button status   %s\n", mbExternalCartActive ? "external cart active" : "external cart inactive");
-	ATConsolePrintf("External cart ROM   %s\n", mbExternalCartEnabled ? mbPBIButton ? "$8000-9FFF only (PBI button mode)" : "enabled" : "disabled");
-	ATConsolePrintf("VBXE decoder        $%02x00\n", GetVBXEPage());
-	ATConsolePrintf("SoundBoard decoder  %s\n", mbSoundBoardEnabled ? "$D2C0" : "disabled");
+void ATUltimate1MBEmulator::DumpStatus(ATConsoleOutput& output) {
+	output <<= "Ultimate1MB status:";
+	output("Control registers   %s", mbControlLocked ? "locked" : "unlocked");
+	output("Kernel bank         %u ($%05x)", mKernelBank, 0x70000 + ((uint32)mKernelBank << 14));
+	output("BASIC bank          %u ($%05x)", mBasicBank, 0x60000 + ((uint32)mBasicBank << 13));
+	output("Game bank           %u ($%05x)", mGameBank, 0x68000 + ((uint32)mGameBank << 13));
+	output("Cartridge bank      $%05x (%s)", mCartBankOffset, mbSDXEnabled ? "enabled" : "disabled");
+	output("I/O memory          %s", mbIORAMEnabled ? "enabled" : "disabled");
+	output("Flash writes        %s", mbFlashWriteEnabled ? "enabled" : "protected");
+	output("PBI device ID       $%02x (%s)", mSelectedPBIID, mbPBISelected ? "selected" : mbPBIEnabled ? "enabled" : "disabled");
+	output("PBI button status   %s", mbExternalCartActive ? "external cart active" : "external cart inactive");
+	output("External cart ROM   %s", mbExternalCartEnabled ? mbPBIButton ? "$8000-9FFF only (PBI button mode)" : "enabled" : "disabled");
+	output("VBXE decoder        $%02x00", GetVBXEPage());
+	output("SoundBoard decoder  %s", mbSoundBoardEnabled ? "$D2C0" : "disabled");
 }
 
-void ATUltimate1MBEmulator::DumpRTCStatus() {
-	mClockEmu.DumpStatus();
+void ATUltimate1MBEmulator::DumpRTCStatus(ATConsoleOutput& output) {
+	mClockEmu.DumpStatus(output);
 }
 
 void ATUltimate1MBEmulator::InitCartridge(IATDeviceCartridgePort *cartPort) {

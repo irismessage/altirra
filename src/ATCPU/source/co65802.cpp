@@ -21,11 +21,12 @@
 #include <at/atcpu/co65802.h>
 #include <at/atcpu/execstate.h>
 #include <at/atcpu/history.h>
+#include <at/atcpu/memorymap.h>
 #include <at/atcpu/states.h>
 
 #define ATCP_MEMORY_CONTEXT	\
-	uint16 tmpaddr;
-	uintptr tmpbase;
+	uint16 tmpaddr;		\
+	uintptr tmpbase;	\
 	uint8 tmpval;
 
 #define ATCP_DUMMY_READ_BYTE(addr) ((void)(0))
@@ -36,29 +37,7 @@
 const uint8 ATCoProc65802::kInitialState = ATCPUStates::kStateReadOpcode;
 const uint8 ATCoProc65802::kInitialStateNoBreak = ATCPUStates::kStateReadOpcodeNoBreak;
 
-ATCoProc65802::ATCoProc65802()
-	: mA(0)
-	, mAH(0)
-	, mP(0)
-	, mbEmulationFlag(false)
-	, mX(0)
-	, mXH(0)
-	, mY(0)
-	, mYH(0)
-	, mS(0)
-	, mSH(0)
-	, mDP(0)
-	, mB(0)
-	, mK(0)
-	, mPC(0)
-	, mInsnPC(0)
-	, mCyclesLeft(0)
-	, mpHistory(nullptr)
-	, mHistoryIndex(0)
-{
-	memset(mReadMap, 0, sizeof mReadMap);
-	memset(mWriteMap, 0, sizeof mWriteMap);
-
+ATCoProc65802::ATCoProc65802() {
 	ATCPUDecoderGenerator65816 gen;
 	gen.RebuildTables(mDecoderTables, false, false, false);
 }
@@ -80,39 +59,44 @@ void ATCoProc65802::SetHistoryBuffer(ATCPUHistoryEntry buffer[131072]) {
 }
 
 void ATCoProc65802::GetExecState(ATCPUExecState& state) const {
-	state.mPC = mInsnPC;
-	state.mA = mA;
-	state.mX = mX;
-	state.mY = mY;
-	state.mS = mS;
-	state.mP = mP;
-	state.mAH = mAH;
-	state.mXH = mXH;
-	state.mYH = mYH;
-	state.mSH = mSH;
-	state.mB = mB;
-	state.mK = mK;
-	state.mDP = mDP;
-	state.mbEmulationFlag = mbEmulationFlag;
+	state.m6502.mPC = mInsnPC;
+	state.m6502.mA = mA;
+	state.m6502.mX = mX;
+	state.m6502.mY = mY;
+	state.m6502.mS = mS;
+	state.m6502.mP = mP;
+	state.m6502.mAH = mAH;
+	state.m6502.mXH = mXH;
+	state.m6502.mYH = mYH;
+	state.m6502.mSH = mSH;
+	state.m6502.mB = mB;
+	state.m6502.mK = mK;
+	state.m6502.mDP = mDP;
+	state.m6502.mbEmulationFlag = mbEmulationFlag;
+
+	state.m6502.mbAtInsnStep = (*mpNextState == ATCPUStates::kStateReadOpcodeNoBreak);
 }
 
 void ATCoProc65802::SetExecState(const ATCPUExecState& state) {
-	if (mInsnPC != state.mPC) {
-		mPC = state.mPC;
-		mInsnPC = state.mPC;
+	const ATCPUExecState6502& state6502 = state.m6502;
 
+	if (mInsnPC != state6502.mPC) {
+		mPC = state6502.mPC;
+		mInsnPC = state6502.mPC;
+
+		mExtraFlags = {};
 		mpNextState = &kInitialStateNoBreak;
 	}
 
-	mA = state.mA;
-	mX = state.mX;
-	mY = state.mY;
-	mS = state.mS;
+	mA = state6502.mA;
+	mX = state6502.mX;
+	mY = state6502.mY;
+	mS = state6502.mS;
 
-	uint8 p = state.mP;
+	uint8 p = state6502.mP;
 	bool redecode = false;
 
-	if (state.mbEmulationFlag)
+	if (state6502.mbEmulationFlag)
 		p |= 0x30;
 
 	if (mP != p) {
@@ -122,27 +106,27 @@ void ATCoProc65802::SetExecState(const ATCPUExecState& state) {
 		mP = p;
 	}
 
-	mAH = state.mAH;
+	mAH = state6502.mAH;
 
 	if (!(mP & 0x10)) {
-		mXH = state.mXH;
-		mYH = state.mYH;
+		mXH = state6502.mXH;
+		mYH = state6502.mYH;
 	}
 
 	if (!mbEmulationFlag)
-		mSH = state.mSH;
+		mSH = state6502.mSH;
 
-	mB = state.mB;
-	mK = state.mK;
+	mB = state6502.mB;
+	mK = state6502.mK;
 
-	if (mDP != state.mDP) {
-		mDP = state.mDP;
+	if (mDP != state6502.mDP) {
+		mDP = state6502.mDP;
 
 		redecode = true;
 	}
 
-	if (mbEmulationFlag != state.mbEmulationFlag) {
-		mbEmulationFlag = state.mbEmulationFlag;
+	if (mbEmulationFlag != state6502.mbEmulationFlag) {
+		mbEmulationFlag = state6502.mbEmulationFlag;
 
 		if (mbEmulationFlag) {
 			mXH = 0;
@@ -258,6 +242,14 @@ inline void ATCoProc65802::WriteByteSlow(uintptr base, uint32 addr, uint8 value)
 	auto node = (ATCoProcWriteMemNode *)(base - 1);
 
 	node->mpWrite(addr, value, node->mpThis);
+}
+
+void ATCoProc65802::DoExtra() {
+	if (mExtraFlags & kExtraFlag_SetV) {
+		mP |= 0x40;
+	}
+
+	mExtraFlags = {};
 }
 
 bool ATCoProc65802::CheckBreakpoint() {

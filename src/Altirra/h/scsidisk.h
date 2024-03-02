@@ -1,7 +1,7 @@
 #ifndef f_AT_SCSIDISK_H
 #define f_AT_SCSIDISK_H
 
-#include "scsi.h"
+#include <at/atemulation/scsi.h>
 
 class IATDeviceIndicatorManager;
 class IATBlockDevice;

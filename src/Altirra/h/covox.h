@@ -1,4 +1,4 @@
-//	Altirra - Atari 800/800XL/5200 emulator
+﻿//	Altirra - Atari 800/800XL/5200 emulator
 //	Copyright (C) 2008-2012 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
@@ -19,7 +19,7 @@
 #define f_AT_COVOX_H
 
 #include <vd2/system/memory.h>
-#include "audiosource.h"
+#include <at/atcore/audiosource.h>
 
 class ATScheduler;
 class ATMemoryManager;
@@ -52,7 +52,6 @@ public:
 	void Run(int cycles);
 
 public:
-	bool SupportsStereoMixing() const override { return true; }
 	bool RequiresStereoMixingNow() const override { return mbUnbalancedSticky; }
 	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 

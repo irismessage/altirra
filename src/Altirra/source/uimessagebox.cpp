@@ -2,10 +2,10 @@
 #include <vd2/VDDisplay/font.h>
 #include <vd2/VDDisplay/textrenderer.h>
 #include "uimessagebox.h"
-#include "uibutton.h"
 #include <at/atui/uimanager.h>
-#include "uilabel.h"
 #include <at/atui/uidrawingutils.h>
+#include <at/atuicontrols/uibutton.h>
+#include <at/atuicontrols/uilabel.h>
 
 ATUIMessageBox::ATUIMessageBox()
 	: mpCaptionFont(NULL)
@@ -80,14 +80,14 @@ void ATUIMessageBox::OnCreate() {
 	AddChild(mpButtonOK);
 	mpButtonOK->SetText(L"OK");
 	mpButtonOK->SetSize(vdsize32(75, 24));
-	mpButtonOK->OnActivatedEvent() = ATBINDCALLBACK(this, &ATUIMessageBox::OnOKPressed);
+	mpButtonOK->OnActivatedEvent() = [this] { OnOKPressed(); };
 
 	mpButtonCancel = new ATUIButton;
 	mpButtonCancel->AddRef();
 	AddChild(mpButtonCancel);
 	mpButtonCancel->SetText(L"Cancel");
 	mpButtonCancel->SetSize(vdsize32(75, 24));
-	mpButtonCancel->OnActivatedEvent() = ATBINDCALLBACK(this, &ATUIMessageBox::OnCancelPressed);
+	mpButtonCancel->OnActivatedEvent() = [this] { OnCancelPressed(); };
 
 	OnSize();
 
@@ -157,10 +157,10 @@ void ATUIMessageBox::EndWithResult(Result result) {
 		mCompletedEvent(result);
 }
 
-void ATUIMessageBox::OnOKPressed(ATUIButton *) {
+void ATUIMessageBox::OnOKPressed() {
 	EndWithResult(kResultOK);
 }
 
-void ATUIMessageBox::OnCancelPressed(ATUIButton *) {
+void ATUIMessageBox::OnCancelPressed() {
 	EndWithResult(kResultCancel);
 }

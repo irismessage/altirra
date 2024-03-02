@@ -1,4 +1,6 @@
 #include <windows.h>
+#define INITGUID
+#include <guiddef.h>
 #include <ddraw.h>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/vdstl.h>

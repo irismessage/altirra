@@ -53,7 +53,25 @@ const char *ATGetFirmwareTypeName(ATFirmwareType type) {
 		"850handler",
 		"850relocator",
 		"1030firmware",
+		"810",
+		"happy810",
+		"810archiver",
+		"1050",
+		"usdoubler",
+		"speedy1050",
+		"happy1050",
+		"superarchiver",
+		"toms1050",
+		"tygrys1050",
+		"1050duplicator",
+		"indusgt",
+		"1050turbo",
+		"1050turboii",
+		"xf551",
+		"atr8000",
+		"percom",
 	};
+
 	VDASSERTCT(vdcountof(kTypeNames) == kATFirmwareTypeCount);
 
 	return kTypeNames[type];
@@ -82,7 +100,57 @@ ATFirmwareType ATGetFirmwareTypeFromName(const char *type) {
 	else if (!strcmp(type, "850handler")) return kATFirmwareType_850Handler;
 	else if (!strcmp(type, "850relocator")) return kATFirmwareType_850Relocator;
 	else if (!strcmp(type, "1030firmware")) return kATFirmwareType_1030Firmware;
+	else if (!strcmp(type, "810")) return kATFirmwareType_810;
+	else if (!strcmp(type, "happy810")) return kATFirmwareType_Happy810;
+	else if (!strcmp(type, "810archiver")) return kATFirmwareType_810Archiver;
+	else if (!strcmp(type, "1050")) return kATFirmwareType_1050;
+	else if (!strcmp(type, "usdoubler")) return kATFirmwareType_USDoubler;
+	else if (!strcmp(type, "speedy1050")) return kATFirmwareType_Speedy1050;
+	else if (!strcmp(type, "happy1050")) return kATFirmwareType_Happy1050;
+	else if (!strcmp(type, "superarchiver")) return kATFirmwareType_SuperArchiver;
+	else if (!strcmp(type, "toms1050")) return kATFirmwareType_TOMS1050;
+	else if (!strcmp(type, "tygrys1050")) return kATFirmwareType_Tygrys1050;
+	else if (!strcmp(type, "1050duplicator")) return kATFirmwareType_1050Duplicator;
+	else if (!strcmp(type, "indusgt")) return kATFirmwareType_IndusGT;
+	else if (!strcmp(type, "1050turbo")) return kATFirmwareType_1050Turbo;
+	else if (!strcmp(type, "1050turboii")) return kATFirmwareType_1050TurboII;
+	else if (!strcmp(type, "xf551")) return kATFirmwareType_XF551;
+	else if (!strcmp(type, "atr8000")) return kATFirmwareType_ATR8000;
+	else if (!strcmp(type, "percom")) return kATFirmwareType_Percom;
 	else return kATFirmwareType_Unknown;
+}
+
+const char *ATGetSpecificFirmwareTypeKey(ATSpecificFirmwareType ft) {
+	switch(ft) {
+	case kATSpecificFirmwareType_BASICRevA:		return "BASIC rev A";
+	case kATSpecificFirmwareType_BASICRevB:		return "BASIC rev B";
+	case kATSpecificFirmwareType_BASICRevC:		return "BASIC rev C";
+	case kATSpecificFirmwareType_OSA:			return "OS-A";
+	case kATSpecificFirmwareType_OSB:			return "OS-B";
+	case kATSpecificFirmwareType_XLOSr2:		return "XLOS rev 2";
+	case kATSpecificFirmwareType_XLOSr4:		return "XLOS rev 4";
+	default:
+		return nullptr;
+	}
+}
+
+bool ATIsSpecificFirmwareTypeCompatible(ATFirmwareType type, ATSpecificFirmwareType specificType) {
+	switch(specificType) {
+		case kATSpecificFirmwareType_BASICRevA:
+		case kATSpecificFirmwareType_BASICRevB:
+		case kATSpecificFirmwareType_BASICRevC:
+			return type == kATFirmwareType_Basic;
+
+		case kATSpecificFirmwareType_OSA:
+		case kATSpecificFirmwareType_OSB:
+			return type == kATFirmwareType_Kernel800_OSA || type == kATFirmwareType_Kernel800_OSB;
+
+		case kATSpecificFirmwareType_XLOSr2:
+		case kATSpecificFirmwareType_XLOSr4:
+			return type == kATFirmwareType_KernelXL || type == kATFirmwareType_KernelXEGS || type == kATFirmwareType_Kernel1200XL;
+	}
+
+	return false;
 }
 
 void ATSetFirmwarePathPortabilityMode(bool portable) {
@@ -106,7 +174,72 @@ uint64 ATGetFirmwareIdFromPath(const wchar_t *path) {
 	return hash | 0x8000000000000000ull;
 }
 
+bool ATLoadInternalFirmware(uint64 id, void *dst, uint32 offset, uint32 len, bool *changed, uint32 *actualLen, vdfastvector<uint8> *dstbuf) {
+	static const uint32 kResourceIds[]={
+		IDR_NOKERNEL,
+		IDR_KERNEL,
+		IDR_KERNELXL,
+		0,
+		IDR_BASIC,
+		IDR_5200KERNEL,
+		IDR_NOCARTRIDGE,
+		IDR_U1MBBIOS,
+		IDR_NOHDBIOS,
+		IDR_850RELOCATOR,
+		IDR_850HANDLER,
+		IDR_1030HANDLER,
+		IDR_NOMIO,
+		IDR_NOBLACKBOX,
+		IDR_NOGAME,
+	};
+
+	VDASSERTCT(vdcountof(kResourceIds) == kATFirmwareId_PredefCount);
+
+	if (id >= kATFirmwareId_PredefCount1 || id == kATFirmwareId_Kernel_HLE)
+		return false;
+
+	uint32 resId = kResourceIds[id - 1];
+
+	if (resId != IDR_U1MBBIOS && resId != IDR_NOMIO && resId != IDR_NOBLACKBOX) {
+		if (dstbuf)
+			return ATLoadKernelResource(resId, *dstbuf);
+		else
+			return ATLoadKernelResource(resId, dst, offset, len, true);
+	}
+
+	vdfastvector<uint8> buffer;
+	ATLoadKernelResourceLZPacked(resId, buffer);
+
+	if (dstbuf) {
+		if (changed && *dstbuf != buffer)
+			*changed = true;
+
+		*dstbuf = buffer;
+	} else {
+		if (offset >= buffer.size())
+			return false;
+
+		size_t avail = buffer.size() - offset;
+		if (len > avail)
+			len = (uint32)avail;
+
+		if (changed && memcmp(dst, buffer.data() + offset, len))
+			*changed = true;
+
+		memcpy(dst, buffer.data() + offset, len);
+	}
+
+	if (actualLen)
+		*actualLen = len;
+
+	return true;
+}
+
 ATFirmwareManager::ATFirmwareManager() {
+	// mark specific firmware cache uninitialized
+	for(uint64& id : mSpecificFirmwares) {
+		id = 0xFFFF;
+	}
 }
 
 ATFirmwareManager::~ATFirmwareManager() {
@@ -120,6 +253,9 @@ bool ATFirmwareManager::GetFirmwareInfo(uint64 id, ATFirmwareInfo& fwinfo) const
 		if (id >= kATFirmwareId_PredefCount1)
 			return false;
 
+		if (id == kATFirmwareId_Kernel_HLE)
+			return false;
+
 		static const struct {
 			bool mbAutoselect;
 			bool mbVisible;
@@ -129,7 +265,7 @@ bool ATFirmwareManager::GetFirmwareInfo(uint64 id, ATFirmwareInfo& fwinfo) const
 			{ false, false, kATFirmwareType_KernelXL, L"NoKernel" },
 			{ true, true, kATFirmwareType_Kernel800_OSB, L"AltirraOS for 400/800" },
 			{ true, true, kATFirmwareType_KernelXL,  L"AltirraOS for XL/XE/XEGS" },
-			{ true, true, kATFirmwareType_KernelXL, L"AltirraOS HLE" },
+			{ false, false, kATFirmwareType_KernelXL, L"AltirraOS HLE" },
 			{ true, true, kATFirmwareType_Basic, L"Altirra BASIC" },
 			{ true, true, kATFirmwareType_Kernel5200, L"AltirraOS for 5200" },
 			{ true, false, kATFirmwareType_5200Cartridge, L"No5200" },
@@ -190,8 +326,12 @@ bool ATFirmwareManager::GetFirmwareInfo(uint64 id, ATFirmwareInfo& fwinfo) const
 void ATFirmwareManager::GetFirmwareList(vdvector<ATFirmwareInfo>& firmwares) const {
 	// add predefined
 	firmwares.resize(kATFirmwareId_PredefCount);
-	for(uint32 i=0; i<kATFirmwareId_PredefCount; ++i)
+	for(uint32 i=0; i<kATFirmwareId_PredefCount; ++i) {
+		if (i+1 == kATFirmwareId_Kernel_HLE)
+			continue;
+
 		VDVERIFY(GetFirmwareInfo(i+1, firmwares[i]));
+	}
 
 	// add custom
 	VDRegistryAppKey key("Firmware\\Available", false, false);
@@ -308,72 +448,44 @@ void ATFirmwareManager::SetDefaultFirmware(ATFirmwareType type, uint64 id) {
 	key.setString(ATGetFirmwareTypeName(type), GetFirmwareRefString(id).c_str());
 }
 
+uint64 ATFirmwareManager::GetSpecificFirmware(ATSpecificFirmwareType ft) const {
+	if (mSpecificFirmwares[ft] != 0xFFFF)
+		return mSpecificFirmwares[ft];
+
+	VDRegistryAppKey key("Firmware\\Specific", false);
+
+	VDStringA s;
+	if (!key.getString(ATGetSpecificFirmwareTypeKey(ft), s))
+		return 0;
+
+	unsigned long long id;
+	char c;
+	if (1 != sscanf(s.c_str(), "%llx%c", &id, &c))
+		id = 0;
+
+	mSpecificFirmwares[ft] = id;
+	return id;
+}
+
+void ATFirmwareManager::SetSpecificFirmware(ATSpecificFirmwareType ft, uint64 id) {
+	VDRegistryAppKey key("Firmware\\Specific", true);
+
+	VDStringA s;
+	s.sprintf("%016llx", id);
+
+	key.setString(ATGetSpecificFirmwareTypeKey(ft), s.c_str());
+
+	mSpecificFirmwares[ft] = id;
+}
+
 bool ATFirmwareManager::LoadFirmware(uint64 id, void *dst, uint32 offset, uint32 len, bool *changed, uint32 *actualLen, vdfastvector<uint8> *dstbuf) {
+	if (id < kATFirmwareId_Custom)
+		return ATLoadInternalFirmware(id, dst, offset, len, changed, actualLen, dstbuf);
+
 	ATFirmwareInfo fwinfo;
 
 	if (!GetFirmwareInfo(id, fwinfo))
 		return false;
-
-	if (id < kATFirmwareId_Custom) {
-		static const uint32 kResourceIds[]={
-			IDR_NOKERNEL,
-			IDR_KERNEL,
-			IDR_KERNELXL,
-			IDR_HLEKERNEL,
-			IDR_BASIC,
-			IDR_5200KERNEL,
-			IDR_NOCARTRIDGE,
-			IDR_U1MBBIOS,
-			IDR_NOHDBIOS,
-			IDR_850RELOCATOR,
-			IDR_850HANDLER,
-			IDR_1030HANDLER,
-			IDR_NOMIO,
-			IDR_NOBLACKBOX,
-			IDR_NOGAME,
-		};
-
-		VDASSERTCT(vdcountof(kResourceIds) == kATFirmwareId_PredefCount);
-
-		if (id >= kATFirmwareId_PredefCount1)
-			return false;
-
-		uint32 resId = kResourceIds[id - 1];
-
-		if (resId != IDR_U1MBBIOS && resId != IDR_NOMIO && resId != IDR_NOBLACKBOX) {
-			if (dstbuf)
-				return ATLoadKernelResource(resId, *dstbuf);
-			else
-				return ATLoadKernelResource(resId, dst, offset, len, true);
-		}
-
-		vdfastvector<uint8> buffer;
-		ATLoadKernelResourceLZPacked(resId, buffer);
-
-		if (dstbuf) {
-			if (changed && *dstbuf != buffer)
-				*changed = true;
-
-			*dstbuf = buffer;
-		} else {
-			if (offset >= buffer.size())
-				return false;
-
-			size_t avail = buffer.size() - offset;
-			if (len > avail)
-				len = (uint32)avail;
-
-			if (changed && memcmp(dst, buffer.data() + offset, len))
-				*changed = true;
-
-			memcpy(dst, buffer.data() + offset, len);
-		}
-
-		if (actualLen)
-			*actualLen = len;
-
-		return true;
-	}
 
 	long actual;
 

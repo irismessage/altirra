@@ -682,7 +682,7 @@ void ATRS232Channel850::PollDevice(bool unthrottled) {
 
 		if (mpDeviceSerial) {
 			const uint8 c = mOutputBuffer[mOutputReadOffset];
-			g_ATLCModemData("Sending byte to modem: $%02X\n", c);
+			g_ATLCModemData("Sending byte to modem: $%02X [%c]\n", c, (uint8)(c - 0x20) < 0x7F ? c : '.');
 			mpDeviceSerial->Write(mBaudRate, c);
 		}
 
@@ -695,7 +695,7 @@ void ATRS232Channel850::PollDevice(bool unthrottled) {
 		bool framingError;
 
 		while (mInputLevel < mInputBufferSize && mpDeviceSerial->Read(mBaudRate, c, framingError)) {
-			g_ATLCModemData("Receiving byte from modem: $%02X\n", c);
+			g_ATLCModemData("Receiving byte from modem: $%02X [%c]\n", c, (uint8)(c - 0x20) < 0x7F ? c : '.');
 
 			if (framingError)
 				mErrorFlags |= kErrorFlag850_FramingError;
@@ -742,16 +742,16 @@ public:
 	ATRS232Emulator();
 	~ATRS232Emulator();
 
-	void *AsInterface(uint32 id);
+	void *AsInterface(uint32 id) override;
 
-	void Init();
-	void Shutdown();
+	void Init() override;
+	void Shutdown() override;
 	void GetDeviceInfo(ATDeviceInfo& info) override;
 
-	void ColdReset();
+	void ColdReset() override;
 
-	void GetSettings(ATPropertySet& props);
-	bool SetSettings(const ATPropertySet& props);
+	void GetSettings(ATPropertySet& props) override;
+	bool SetSettings(const ATPropertySet& props) override;
 
 public:	// IATDeviceFirmware
 	void InitFirmware(ATFirmwareManager *fwman) override;

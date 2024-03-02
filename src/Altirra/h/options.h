@@ -34,6 +34,7 @@ struct ATOptions {
 	bool mbDisplayD3D9;
 	bool mbDisplay3D;
 	bool mbDisplayOpenGL;
+	bool mbDisplay16Bit;
 
 	bool mbSingleInstance;
 	bool mbPauseDuringMenu;
@@ -42,6 +43,7 @@ struct ATOptions {
 
 	ATErrorMode mErrorMode;
 
+	bool	mbFullScreenBorderless;
 	uint32	mFullScreenWidth;
 	uint32	mFullScreenHeight;
 	uint32	mFullScreenRefreshRate;
@@ -50,6 +52,11 @@ struct ATOptions {
 	VDStringA	mU1MBFlashChip;
 
 	ATMediaWriteMode mDefaultWriteMode;
+
+	bool mbCompatEnable;
+	bool mbCompatEnableInternalDB;
+	bool mbCompatEnableExternalDB;
+	VDStringW mCompatExternalDBPath;
 
 	ATOptions();
 };

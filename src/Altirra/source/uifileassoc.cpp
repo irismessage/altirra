@@ -520,39 +520,34 @@ void ATUIShowDialogFileAssociationsVista(bool userOnly) {
 ///////////////////////////////////////////////////////////////////////////
 
 void ATRelaunchElevated(VDGUIHandle parent, const wchar_t *params) {
-	typedef BOOL (WINAPI *tpShellExecuteExW)(LPSHELLEXECUTEINFOW lpExecInfo);
-	tpShellExecuteExW pShellExecuteExW = (tpShellExecuteExW)GetProcAddress(GetModuleHandleW(L"shell32"), "ShellExecuteExW");
+	const VDStringW path = VDGetProgramFilePath();
 
-	if (pShellExecuteExW) {
-		const VDStringW path = VDGetProgramFilePath();
+	SHELLEXECUTEINFOW execInfo = {sizeof(SHELLEXECUTEINFOW)};
+	execInfo.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_UNICODE | SEE_MASK_WAITFORINPUTIDLE;
+	execInfo.hwnd = (HWND)parent;
+	execInfo.lpVerb = L"runas";
+	execInfo.lpFile = path.c_str();
+	execInfo.lpParameters = params;
+	execInfo.nShow = SW_SHOWNORMAL;
 
-		SHELLEXECUTEINFOW execInfo = {sizeof(SHELLEXECUTEINFOW)};
-		execInfo.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_UNICODE | SEE_MASK_WAITFORINPUTIDLE;
-		execInfo.hwnd = (HWND)parent;
-		execInfo.lpVerb = L"runas";
-		execInfo.lpFile = path.c_str();
-		execInfo.lpParameters = params;
-		execInfo.nShow = SW_SHOWNORMAL;
+	if (ShellExecuteExW(&execInfo) && execInfo.hProcess) {
+		for(;;) {
+			DWORD r = MsgWaitForMultipleObjects(1, &execInfo.hProcess, FALSE, INFINITE, QS_ALLINPUT);
 
-		if (pShellExecuteExW(&execInfo) && execInfo.hProcess) {
-			for(;;) {
-				DWORD r = MsgWaitForMultipleObjects(1, &execInfo.hProcess, FALSE, INFINITE, QS_ALLINPUT);
+			if (r == WAIT_OBJECT_0 + 1) {
+				MSG msg;
+				while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+					if (CallMsgFilter(&msg, 0))
+						continue;
 
-				if (r == WAIT_OBJECT_0 + 1) {
-					MSG msg;
-					while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-						if (CallMsgFilter(&msg, 0))
-							continue;
-
-						TranslateMessage(&msg);
-						DispatchMessage(&msg);
-					}
-				} else
-					break;
-			}
-
-			CloseHandle(execInfo.hProcess);
+					TranslateMessage(&msg);
+					DispatchMessage(&msg);
+				}
+			} else
+				break;
 		}
+
+		CloseHandle(execInfo.hProcess);
 	}
 }
 

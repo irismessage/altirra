@@ -164,20 +164,22 @@ namespace {
 }
 
 void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 addr, uint16 pc) {
-	switch(kIndexUsageByOpcode[opcode]) {
-		case kIndexUsage_N:
-		default:
-			break;
+	if (mbTrapOnUninitEa) {
+		switch(kIndexUsageByOpcode[opcode]) {
+			case kIndexUsage_N:
+			default:
+				break;
 
-		case kIndexUsage_X:
-			if (mXValid != 0xFF)
-				TrapOnUninitEffectiveAddress(opcode, addr, pc);
-			break;
+			case kIndexUsage_X:
+				if (mXValid != 0xFF)
+					TrapOnUninitEffectiveAddress(opcode, addr, pc);
+				break;
 
-		case kIndexUsage_Y:
-			if (mYValid != 0xFF)
-				TrapOnUninitEffectiveAddress(opcode, addr, pc);
-			break;
+			case kIndexUsage_Y:
+				if (mYValid != 0xFF)
+					TrapOnUninitEffectiveAddress(opcode, addr, pc);
+				break;
+		}
 	}
 
 	switch(opcode) {

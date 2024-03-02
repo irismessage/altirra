@@ -23,10 +23,11 @@ class ATCPUHookManager;
 class ATSimulator;
 class ATSimulatorEventManager;
 struct ATCPUHookNode;
+class IATBlobImage;
 
 class ATHLEProgramLoader {
-	ATHLEProgramLoader(const ATHLEProgramLoader&);
-	ATHLEProgramLoader& operator=(const ATHLEProgramLoader&);
+	ATHLEProgramLoader(const ATHLEProgramLoader&) = delete;
+	ATHLEProgramLoader& operator=(const ATHLEProgramLoader&) = delete;
 public:
 	ATHLEProgramLoader();
 	~ATHLEProgramLoader();
@@ -36,32 +37,32 @@ public:
 
 	void SetRandomizeMemoryOnLoad(bool enable) { mbRandomizeMemoryOnLoad = enable; }
 
+	IATBlobImage *GetCurrentImage() const { return mpImage; }
 	bool IsLaunchPending() const { return mbLaunchPending; }
 
-	void LoadProgram(const wchar_t *symbolHintPath, IVDRandomAccessStream& stream);
+	void LoadProgram(const wchar_t *symbolHintPath, IATBlobImage *image);
 
 protected:
 	uint8 OnDSKINV(uint16);
 	uint8 OnLoadContinue(uint16);
 
-	uint8 LoadProgramHookCont();
 	void UnloadProgramSymbols();
 
-	ATCPUEmulator *mpCPU;
-	ATCPUHookManager *mpCPUHookMgr;
-	ATSimulatorEventManager *mpSimEventMgr;
-	ATSimulator *mpSim;
-	ATCPUHookNode *mpLaunchHook;
-	ATCPUHookNode *mpLoadContinueHook;
+	ATCPUEmulator *mpCPU = nullptr;
+	ATCPUHookManager *mpCPUHookMgr = nullptr;
+	ATSimulatorEventManager *mpSimEventMgr = nullptr;
+	ATSimulator *mpSim = nullptr;
+	ATCPUHookNode *mpLaunchHook = nullptr;
+	ATCPUHookNode *mpLoadContinueHook = nullptr;
 
-	vdfastvector<uint8>		mProgramToLoad;
-	ptrdiff_t	mProgramLoadIndex;
+	IATBlobImage *mpImage = nullptr;
+	uint32		mProgramLoadIndex = 0;
 
-	bool		mbLastKernelEnabledState;
+	bool		mbLastKernelEnabledState = false;
 
-	bool		mbRandomizeMemoryOnLoad;
-	bool		mbLaunchPending;
-	uint32		mProgramModuleIds[4];
+	bool		mbRandomizeMemoryOnLoad = false;
+	bool		mbLaunchPending = false;
+	uint32		mProgramModuleIds[4] = {};
 };
 
 #endif	// f_AT_HLEPROGRAMLOADER_H

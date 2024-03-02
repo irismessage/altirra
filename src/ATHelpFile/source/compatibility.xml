@@ -64,7 +64,7 @@
           Program requires the original 400/800 version B operating system to run ("OS-B"), which was
           the most common version of the OS prior to the XL/XE machines. This is usually because of
           dependencies on specific code or data locations that weren't guaranteed to be stable
-          across OS versions. As a result, the program can fail if run under the HLE/LLE OSes or
+          across OS versions. As a result, the program can fail if run under the LLE OSes or
           with another custom OS.
         </p>
       </desc>

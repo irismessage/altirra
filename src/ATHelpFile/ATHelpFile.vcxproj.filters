@@ -126,7 +126,9 @@
     <None Include="source\athelp.hhc" />
     <None Include="source\athelp.hhp" />
     <None Include="source\athelp.hhw" />
-    <None Include="source\debug-profiling.xml" />
+    <None Include="source\debug-profiling.xml">
+      <Filter>Source Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Xml Include="source\1030.xml">
@@ -166,6 +168,36 @@
       <Filter>Source Files</Filter>
     </Xml>
     <Xml Include="source\profiles.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\systems-800.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\systems-xlxe.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\systems-xegs.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\systems-5200.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\systems-1200xl.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\devices-blackbox.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\devices-mio.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\devices-fulldisk.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\devices-indusgt.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\devices-xf551.xml">
       <Filter>Source Files</Filter>
     </Xml>
   </ItemGroup>

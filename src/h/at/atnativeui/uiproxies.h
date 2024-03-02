@@ -47,6 +47,8 @@ public:
 
 	void SetEnabled(bool);
 	void SetRedraw(bool);
+	
+	bool IsVisible() const;
 
 	virtual VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
 	virtual VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
@@ -255,13 +257,20 @@ protected:
 
 /////////////////////////////////////////////////////////////////////////////
 
-class VDUIProxyListBoxControl : public VDUIProxyControl {
+class VDUIProxyListBoxControl final : public VDUIProxyControl {
 public:
 	VDUIProxyListBoxControl();
 	~VDUIProxyListBoxControl();
 
+	void EnableAutoItemEditing();
+
 	void Clear();
 	int AddItem(const wchar_t *s, uintptr data = 0);
+	int InsertItem(int pos, const wchar_t *s, uintptr data = 0);
+	void DeleteItem(int pos);
+	void EnsureItemVisible(int pos);
+	void EditItem(int pos);
+
 	void SetItemText(int index, const wchar_t *s);
 	uintptr GetItemData(int index) const;
 
@@ -272,6 +281,10 @@ public:
 
 	void SetTabStops(const int *units, uint32 n);
 
+	void SetOnSelectionChanged(vdfunction<void(int)> fn);
+	void SetOnItemDoubleClicked(vdfunction<void(int)> fn);
+	void SetOnItemEdited(vdfunction<void(int ,const wchar_t *)> fn);
+
 	VDEvent<VDUIProxyListBoxControl, int>& OnSelectionChanged() {
 		return mSelectionChanged;
 	}
@@ -281,10 +294,31 @@ public:
 	}
 
 protected:
+	void EndEditItem();
+	void CancelEditTimer();
+	
+	void Detach() override;
+
 	VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
+	VDZLRESULT ListBoxWndProc(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
+	VDZLRESULT LabelEditWndProc(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
+	void AutoEditTimerProc(VDZHWND, VDZUINT, VDZUINT_PTR, VDZDWORD);
 
 	uint32 mSuppressNotificationCount = 0;
 
+	int mEditItem = -1;
+	VDZHWND mhwndEdit = nullptr;
+	void (*mPrevEditWndProc)() = nullptr;
+	VDFunctionThunk *mpEditWndProcThunk = nullptr;
+	
+	void (*mPrevWndProc)() = nullptr;
+	VDFunctionThunk *mpWndProcThunk = nullptr;
+	VDFunctionThunk *mpEditTimerThunk = nullptr;
+	VDZUINT_PTR mAutoEditTimer = 0;
+
+	vdfunction<void(int)> mpFnSelectionChanged;
+	vdfunction<void(int)> mpFnItemDoubleClicked;
+	vdfunction<void(int, const wchar_t *)> mpFnItemEdited;
 	VDEvent<VDUIProxyListBoxControl, int> mSelectionChanged;
 	VDEvent<VDUIProxyListBoxControl, int> mEventItemDoubleClicked;
 };
@@ -392,6 +426,7 @@ public:
 	struct GetDispAttrEvent {
 		IVDUITreeViewVirtualItem *mpItem;
 		bool mbIsBold;
+		bool mbIsMuted;
 	};
 
 	VDEvent<VDUIProxyTreeViewControl, GetDispAttrEvent *>& OnItemGetDisplayAttributes() {
@@ -419,7 +454,7 @@ protected:
 	VDZHFONT	mhfontBold;
 	bool		mbCreatedBoldFont;
 
-	void *mPrevEditWndProc;
+	void (*mPrevEditWndProc)();
 	VDFunctionThunk *mpEditWndProcThunk;
 
 	VDEvent<VDUIProxyTreeViewControl, int> mEventItemSelectionChanged;
@@ -484,12 +519,12 @@ public:
 	bool GetChecked() const;
 	void SetChecked(bool enable);
 
-	void SetOnClicked(vdfunction<void(VDUIProxyButtonControl *)> fn);
+	void SetOnClicked(vdfunction<void()> fn);
 
 private:
 	VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
 
-	vdfunction<void(VDUIProxyButtonControl *)> mpOnClicked;
+	vdfunction<void()> mpOnClicked;
 };
 
 #endif

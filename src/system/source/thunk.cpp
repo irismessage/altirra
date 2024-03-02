@@ -235,7 +235,7 @@ VDFunctionThunk *VDCreateFunctionThunkFromMethod(void *method, void *pThis, size
 		uint8 thunkbytes[16]={
 			0xE8, 0x00, 0x00, 0x00, 0x00,				// call VDFunctionThunk32
 			0xC3,										// ret
-			argbytes,									// db argbytes
+			(uint8)argbytes,							// db argbytes
 			0,											// db 0
 			0x00, 0x00, 0x00, 0x00,						// dd method
 			0x00, 0x00, 0x00, 0x00,						// dd this

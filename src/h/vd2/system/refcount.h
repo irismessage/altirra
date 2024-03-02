@@ -123,7 +123,7 @@ protected:
 ///	class or to implement it on an interface. Use it by deriving your
 ///	class from it.
 ///
-template<class T> class vdrefcounted : public T {
+template<typename T, typename... Others> class vdrefcounted : public T, public Others... {
 public:
 	vdrefcounted() : mRefCount(0) {}
 	vdrefcounted(const vdrefcounted<T>& src) : mRefCount(0) {}		// do not copy the refcount

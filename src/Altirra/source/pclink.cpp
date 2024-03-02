@@ -255,14 +255,16 @@ bool ATPCLinkFileName::ParseFromNet(const uint8 fn[11]) {
 		else {
 			uint8 c = fn[i];
 
-			if (c == '*')
+			if (c == '*') {
 				c = '?';
+				fill = c;
+			}
 
-			if (c == '?' || c == ' ')
+			if (c == ' ')
 				fill = c;
 			else if (c >= L'a' && c <= L'z')
 				c &= ~0x20;
-			else if ((c < L'A' || c > L'Z') && (c < L'0' || c > L'9') && c != L'_')
+			else if ((c < L'A' || c > L'Z') && (c < L'0' || c > L'9') && c != L'_' && c != '?')
 				return false;
 
 			mName[i] = c;
@@ -277,7 +279,7 @@ bool ATPCLinkFileName::ParseFromNative(const wchar_t *fn) {
 	bool inext = false;
 	bool isescaped = false;
 
-	if (*fn == '!') {
+	if (*fn == '!' || *fn == '$') {
 		++fn;
 		isescaped = true;
 	}
@@ -690,7 +692,7 @@ bool ATPCLinkFileHandle::GetNextDirEnt(ATPCLinkDirEnt& dirEnt) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATPCLinkDevice : public IATPCLinkDevice
+class ATPCLinkDevice final : public IATPCLinkDevice
 			, public ATDevice
 			, public IATDeviceSIO
 			, public IATDeviceIndicators
@@ -702,7 +704,7 @@ public:
 	ATPCLinkDevice();
 	~ATPCLinkDevice();
 
-	void *AsInterface(uint32 id);
+	void *AsInterface(uint32 id) override;
 
 	bool IsReadOnly() { return mbReadOnly; }
 	void SetReadOnly(bool readOnly);
@@ -711,25 +713,25 @@ public:
 	void SetBasePath(const wchar_t *basePath);
 
 public:
-	virtual void GetDeviceInfo(ATDeviceInfo& info) override;
-	virtual void GetSettings(ATPropertySet& settings) override;
-	virtual bool SetSettings(const ATPropertySet& settings) override;
-	virtual void Shutdown() override;
-	virtual void ColdReset() override;
+	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void GetSettings(ATPropertySet& settings) override;
+	bool SetSettings(const ATPropertySet& settings) override;
+	void Shutdown() override;
+	void ColdReset() override;
 
 public:
-	virtual void InitIndicators(IATDeviceIndicatorManager *uir) override;
+	void InitIndicators(IATDeviceIndicatorManager *uir) override;
 
 public:
-	virtual void InitSIO(IATDeviceSIOManager *mgr) override;
-	virtual CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
-	virtual void OnSerialAbortCommand() override;
-	virtual void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) override;
-	virtual void OnSerialFence(uint32 id) override;
-	virtual CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
+	void InitSIO(IATDeviceSIOManager *mgr) override;
+	CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
+	void OnSerialAbortCommand() override;
+	void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) override;
+	void OnSerialFence(uint32 id) override;
+	CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
 
 public:
-	virtual void DumpStatus(ATConsoleOutput& output) override;
+	void DumpStatus(ATConsoleOutput& output) override;
 
 protected:
 	enum Command {
@@ -753,7 +755,6 @@ protected:
 	bool ResolvePath(bool allowDir, VDStringA& resultPath);
 	bool ResolveNativePath(bool allowDir, VDStringW& resultPath);
 	bool ResolveNativePath(VDStringW& resultPath, const VDStringA& netPath);
-	bool ResolveFileName(ATPCLinkFileName& fn, const uint8 src[11], bool allowWildcards);
 	void OnReadActivity();
 	void OnWriteActivity();
 
@@ -2143,49 +2144,6 @@ bool ATPCLinkDevice::ResolveNativePath(VDStringW& resultPath, const VDStringA& n
 	// ensure trailing separator
 	if (!resultPath.empty() && resultPath.back() != L'\\')
 		resultPath += L'\\';
-
-	return true;
-}
-
-bool ATPCLinkDevice::ResolveFileName(ATPCLinkFileName& fn, const uint8 src[11], bool allowWildcards) {
-	for(int i=0; i<11; ++i) {
-		uint8 c = src[i];
-
-		if (allowWildcards) {
-			if (c == '*') {
-				int limit = i < 8 ? 8 : 11;
-
-				for(int j = i; j < limit; ++j)
-					fn.mName[j] = '?';
-
-				continue;
-			}
-
-			if (c == '?')
-				fn.mName[i] = c;
-
-			continue;
-		}
-
-		if (c == ' ') {
-			int limit = i < 8 ? 8 : 11;
-
-			for(int j = i; j < limit; ++j)
-				fn.mName[j] = ' ';
-
-			break;
-		}
-
-		if ((uint8)(c - 'a') < 26)
-			c &= ~0x20;
-
-		if (c != '_' && (uint8)(c - 'A') >= 26 && (uint8)(c - '0') >= 10) {
-			mStatusError = ATCIOSymbols::CIOStatFileNameErr;
-			return false;
-		}
-
-		fn.mName[i] = c;
-	}
 
 	return true;
 }

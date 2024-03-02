@@ -29,7 +29,10 @@ class IATCPUBreakpointHandler;
 enum ATDebugDisasmMode : uint8 {
 	kATDebugDisasmMode_6502,
 	kATDebugDisasmMode_65C02,
-	kATDebugDisasmMode_65C816
+	kATDebugDisasmMode_65C816,
+	kATDebugDisasmMode_Z80,
+	kATDebugDisasmMode_8048,
+	kATDebugDisasmMode_6809
 };
 
 class IATDebugTarget : public IVDUnknown {
@@ -79,6 +82,7 @@ public:
 	virtual std::pair<uint32, uint32> GetHistoryRange() const = 0;
 	virtual uint32 ExtractHistory(const ATCPUHistoryEntry **hparray, uint32 start, uint32 n) const = 0;
 	virtual uint32 ConvertRawTimestamp(uint32 rawTimestamp) const = 0;
+	virtual double GetTimestampFrequency() const = 0;
 };
 
 class IATDebugTargetExecutionControl {

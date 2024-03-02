@@ -104,7 +104,7 @@ private:
 	ATScheduler *mpScheduler = nullptr;
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
 
-	vdautoptr<IATDiskImage> mpDiskImage;
+	vdrefptr<IATDiskImage> mpDiskImage;
 	VDStringW mPath;
 
 	bool mbLastOpError = false;

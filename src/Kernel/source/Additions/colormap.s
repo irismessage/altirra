@@ -73,7 +73,7 @@ charinit_loop2:
 		;save and swap colors
 		ldx		#8
 swapcol_loop:
-		mva		color0,x colsav,x
+		mva		pcolr0,x colsav,x
 		mva		color_table,x pcolr0,x
 		dex
 		bpl		swapcol_loop

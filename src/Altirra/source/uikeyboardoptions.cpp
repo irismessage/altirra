@@ -64,8 +64,8 @@ ATUIDialogKeyboardOptions::ATUIDialogKeyboardOptions(ATUIKeyboardOptions& opts)
 {
 	mKeyMode.OnSelectionChanged() += mDelKeyModeChanged.Bind(this, &ATUIDialogKeyboardOptions::OnKeyModeChanged);
 	mLayoutMode.OnSelectionChanged() += mDelLayoutModeChanged.Bind(this, &ATUIDialogKeyboardOptions::OnLayoutModeChanged);
-	mCopyButton.SetOnClicked([this](VDUIProxyButtonControl*) { OnCopyLayout(); });
-	mCustomizeButton.SetOnClicked([this](VDUIProxyButtonControl*) { OnCustomizeLayout(); });
+	mCopyButton.SetOnClicked([this] { OnCopyLayout(); });
+	mCustomizeButton.SetOnClicked([this] { OnCustomizeLayout(); });
 }
 
 bool ATUIDialogKeyboardOptions::OnLoaded() {
@@ -96,6 +96,7 @@ void ATUIDialogKeyboardOptions::OnDataExchange(bool write) {
 	} else {
 		ExchangeControlValueBoolCheckbox(write, IDC_RESETSHIFT, mOpts.mbAllowShiftOnColdReset);
 		ExchangeControlValueBoolCheckbox(write, IDC_ENABLE_FKEYS, mOpts.mbEnableFunctionKeys);
+		ExchangeControlValueBoolCheckbox(write, IDC_ALLOW_INPUT_OVERLAP, mOpts.mbAllowInputMapOverlap);
 
 		mKeyMode.SetSelection(mOpts.mbRawKeys ? mOpts.mbFullRawKeys ? 2 : 1 : 0);
 		mArrowKeyMode.SetSelection((int)mOpts.mArrowKeyMode);
@@ -157,6 +158,7 @@ ATUIKeyboardOptions ATUIDialogKeyboardOptions::GetOptions() const {
 	ATUIKeyboardOptions opts;
 	opts.mbAllowShiftOnColdReset = IsButtonChecked(IDC_RESETSHIFT);
 	opts.mbEnableFunctionKeys = IsButtonChecked(IDC_ENABLE_FKEYS);
+	opts.mbAllowInputMapOverlap = IsButtonChecked(IDC_ALLOW_INPUT_OVERLAP);
 
 	int keyMode = mKeyMode.GetSelection();
 	opts.mbRawKeys = keyMode > 0;
@@ -164,6 +166,7 @@ ATUIKeyboardOptions ATUIDialogKeyboardOptions::GetOptions() const {
 
 	opts.mArrowKeyMode = (ATUIKeyboardOptions::ArrowKeyMode)mArrowKeyMode.GetSelection();
 	opts.mLayoutMode = (ATUIKeyboardOptions::LayoutMode)mLayoutMode.GetSelection();
+
 
 	return opts;
 }

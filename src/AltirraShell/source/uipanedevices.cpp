@@ -494,6 +494,9 @@ IATDevice *ATSUIPaneDrive::EngGetDevice(ATPropertySet *pset) {
 	ATDeviceManager *dm = ATSGetDeviceManager();
 	IATDevice *dev = dm->GetDeviceByTag("disk");
 
+	if (!dev)
+		return nullptr;
+
 	ATPropertySet psetcur;
 	dev->GetSettings(psetcur);
 

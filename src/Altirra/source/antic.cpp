@@ -737,6 +737,8 @@ void ATAnticEmulator::AdvanceScanline() {
 		// Update abnormal DMA pattern.
 		const int mode = mDLControl & 15;
 
+		mEndingDMAPattern = 0;
+
 		if (mode >= 2) {
 			int dmaStart = mPFDMALatchedStart ? mPFDMALatchedStart : mPFDMAStart;
 			int dmaVEnd = mPFDMALatchedVEnd ? mPFDMALatchedVEnd : mPFDMAVEnd;
@@ -762,7 +764,6 @@ void ATAnticEmulator::AdvanceScanline() {
 			// IR modes 6, 7, A, B, and C use medium fetch rate and can trigger this bug via HSCROL 14-15;
 			// modes 2, 3, 4, 5, D, E, and F use fast fetch rate and cause it for HSCROL 12-15.
 			//
-			mEndingDMAPattern = 0;
 
 			if (mPFDMAVEnd > mPFDMAStart && fetchRate) {
 				const int dangerOffset = dmaVEnd - (16 >> fetchRate) - 109;

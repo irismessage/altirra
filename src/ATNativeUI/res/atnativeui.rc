@@ -13,13 +13,11 @@
 #undef APSTUDIO_READONLY_SYMBOLS
 
 /////////////////////////////////////////////////////////////////////////////
-// English (U.S.) resources
+// English (United States) resources
 
 #if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
-#ifdef _WIN32
 LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 #pragma code_page(1252)
-#endif //_WIN32
 
 #ifdef APSTUDIO_INVOKED
 /////////////////////////////////////////////////////////////////////////////
@@ -74,6 +72,19 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,343,185,50,14
 END
 
+IDD_GENERIC_DIALOG DIALOGEX 0, 0, 279, 78
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Generic Dialog"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    DEFPUSHBUTTON   "OK",IDOK,170,57,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,223,57,50,14
+    ICON            "",IDC_GENERIC_ICON,34,24,20,20,SS_CENTERIMAGE
+    LTEXT           "Static Text",IDC_GENERIC_TITLE,51,7,137,12,SS_NOPREFIX
+    LTEXT           "Static Text",IDC_GENERIC_TEXT,94,27,137,12,SS_NOPREFIX
+    CONTROL         "&Don't ask this again",IDC_DISABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,61,78,10
+END
+
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -81,7 +92,7 @@ END
 //
 
 #ifdef APSTUDIO_INVOKED
-GUIDELINES DESIGNINFO 
+GUIDELINES DESIGNINFO
 BEGIN
     IDD_CONFIGURE_ACCEL, DIALOG
     BEGIN
@@ -91,10 +102,29 @@ BEGIN
         VERTGUIDE, 151
         VERTGUIDE, 393
     END
+
+    IDD_GENERIC_DIALOG, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 273
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 71
+    END
 END
 #endif    // APSTUDIO_INVOKED
 
-#endif    // English (U.S.) resources
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// AFX_DIALOG_LAYOUT
+//
+
+IDD_GENERIC_DIALOG AFX_DIALOG_LAYOUT
+BEGIN
+    0
+END
+
+#endif    // English (United States) resources
 /////////////////////////////////////////////////////////////////////////////
 
 

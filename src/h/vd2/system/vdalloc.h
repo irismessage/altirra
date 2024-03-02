@@ -30,7 +30,11 @@
 	#pragma once
 #endif
 
+#include <type_traits>
 #include <stdlib.h>
+
+class IVDRefCount;
+class IVDRefUnknown;
 
 // Why don't I use STL auto_ptr?  Two reasons.  First, auto_ptr has
 // the overhead of an ownership flag, and second, auto_ptr can't
@@ -90,7 +94,11 @@ public:
 		src.ptr = nullptr;
 	}
 
-	~vdautoptr() { delete ptr; }
+	~vdautoptr() {
+		static_assert(!std::is_base_of<IVDRefCount, T>::value && !std::is_base_of<IVDRefUnknown, T>::value,
+			"vdautoptr<T> cannot be used on reference counted classes. Use vdrefptr<T> instead.");
+		delete ptr;
+	}
 
 	vdautoptr& operator=(vdautoptr&& src) {
 		delete ptr;

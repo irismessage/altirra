@@ -369,6 +369,7 @@ void ATVirtualScreenHandler::PutChar(uint8 c) {
 				memmove(&mScreen[mY * mWidth], &mScreen[mY * mWidth + mWidth], mWidth * (mHeight - mY - 1));
 
 			memset(&mScreen[(mHeight - 1) * mWidth], ' ', mWidth);
+			mX = mLeftMargin;
 			break;
 
 		case 0x9D:		// Insert line

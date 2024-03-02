@@ -26,7 +26,13 @@
 #include <stdio.h>
 #include <math.h>
 #include <tchar.h>
+#include <vd2/system/function.h>
+#include <vd2/system/linearalloc.h>
+#include <vd2/system/refcount.h>
+#include <vd2/system/unknown.h>
+#include <vd2/system/vdalloc.h>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
 #include <deque>
+#include <iterator>

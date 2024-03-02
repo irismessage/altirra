@@ -34,7 +34,7 @@ class ATXEP80Emulator;
 class ATSimulatorEventManager;
 class IATDeviceVideoOutput;
 
-class ATUIVideoDisplayWindow final : public ATUIContainer, public IATSimulatorCallback, public IATDeviceChangeCallback, public IATUIEnhancedTextOutput {
+class ATUIVideoDisplayWindow final : public ATUIContainer, public IATDeviceChangeCallback, public IATUIEnhancedTextOutput {
 public:
 	enum {
 		kActionOpenOSK = kActionCustom,
@@ -49,6 +49,9 @@ public:
 	void Shutdown();
 
 	void Copy();
+	void CopySaveFrame(bool saveFrame, bool trueAspect);
+
+	void ToggleHoldKeys();
 
 	void ToggleCaptureMouse();
 	void ReleaseMouse();
@@ -82,11 +85,13 @@ public:
 public:
 	void InvalidateTextOutput() override;
 
-public:
-	virtual void OnSimulatorEvent(ATSimulatorEvent ev);
+private:
+	void OnReset();
+	void OnFrameTick();
 
 public:
 	virtual void OnDeviceAdded(uint32 iid, IATDevice *dev, void *iface) override;
+	virtual void OnDeviceRemoving(uint32 iid, IATDevice *dev, void *iface) override;
 	virtual void OnDeviceRemoved(uint32 iid, IATDevice *dev, void *iface) override;
 
 protected:
@@ -131,6 +136,8 @@ protected:
 	bool ProcessKeyUp(const ATUIKeyEvent& event, bool enableKeyInput);
 	void ProcessVirtKey(uint32 vkey, uint32 scancode, uint32 keycode, bool repeat);
 	void ProcessSpecialKey(uint32 scanCode, bool state);
+	void ToggleHeldKey(uint8 keycode);
+	void ToggleHeldConsoleButton(uint8 encoding);
 	void UpdateCtrlShiftState();
 
 	uint32 ComputeCursorImage(const vdpoint32& pt) const;
@@ -152,6 +159,7 @@ protected:
 	void ClearHoverTip();
 
 	bool mbShiftDepressed = false;
+	bool mbHoldKeys = false;
 
 	vdrect32 mDisplayRect = { 0, 0, 0, 0 };
 
@@ -201,6 +209,10 @@ protected:
 	ATUISettingsWindow *mpSidePanel = nullptr;
 
 	ATSimulatorEventManager *mpSEM = nullptr;
+	uint32 mEventCallbackIdWarmReset = 0;
+	uint32 mEventCallbackIdColdReset = 0;
+	uint32 mEventCallbackIdFrameTick = 0;
+
 	ATDeviceManager *mpDevMgr = nullptr;
 	IATDeviceVideoOutput *mpXEP = nullptr;
 	uint32 mXEPDataReceivedCount = 0;

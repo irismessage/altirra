@@ -19,6 +19,7 @@
 #define f_GTIARENDERER_SSSE3_INTRIN_INL
 
 #include <intrin.h>
+#include <at/atcore/intrin_sse2.h>
 
 namespace nsATGTIARenderer {
 	// We do unaligned loads from this array, so it's important that we
@@ -70,8 +71,8 @@ void atasm_gtia_render_lores_fast_ssse3(void *dst0, const uint8 *src, uint32 n, 
 
 		const __m128i paletteIndices = _mm_shuffle_epi8(colorTable, *(const __m128i *)src);
 
-		_mm_maskmoveu_si128(_mm_unpacklo_epi8(paletteIndices, paletteIndices), mask1, dst);
-		_mm_maskmoveu_si128(_mm_unpackhi_epi8(paletteIndices, paletteIndices), mask2, dst+16);
+		ATMaskedWrite_SSE2(_mm_unpacklo_epi8(paletteIndices, paletteIndices), mask1, dst);
+		ATMaskedWrite_SSE2(_mm_unpackhi_epi8(paletteIndices, paletteIndices), mask2, dst+16);
 	} else {
 		// process initial oword
 		if (startOffset) {
@@ -86,8 +87,8 @@ void atasm_gtia_render_lores_fast_ssse3(void *dst0, const uint8 *src, uint32 n, 
 			const __m128i paletteIndices = _mm_shuffle_epi8(colorTable, *(const __m128i *)src);
 			src += 16;
 
-			_mm_maskmoveu_si128(_mm_unpacklo_epi8(paletteIndices, paletteIndices), mask1, dst);
-			_mm_maskmoveu_si128(_mm_unpackhi_epi8(paletteIndices, paletteIndices), mask2, dst+16);
+			ATMaskedWrite_SSE2(_mm_unpacklo_epi8(paletteIndices, paletteIndices), mask1, dst);
+			ATMaskedWrite_SSE2(_mm_unpackhi_epi8(paletteIndices, paletteIndices), mask2, dst+16);
 			dst += 32;
 		}
 
@@ -118,13 +119,10 @@ void atasm_gtia_render_lores_fast_ssse3(void *dst0, const uint8 *src, uint32 n, 
 			mask2 = _mm_unpacklo_epi8(mask2, mask2);
 
 			const __m128i paletteIndices = _mm_shuffle_epi8(colorTable, *(const __m128i *)src);
-			_mm_maskmoveu_si128(_mm_unpacklo_epi8(paletteIndices, paletteIndices), mask1, dst);
-			_mm_maskmoveu_si128(_mm_unpackhi_epi8(paletteIndices, paletteIndices), mask2, dst+16);
+			ATMaskedWrite_SSE2(_mm_unpacklo_epi8(paletteIndices, paletteIndices), mask1, dst);
+			ATMaskedWrite_SSE2(_mm_unpackhi_epi8(paletteIndices, paletteIndices), mask2, dst+16);
 		}
 	}
-
-	// flush store queue
-	_mm_sfence();
 }
 
 void atasm_gtia_render_mode8_fast_ssse3(
@@ -178,8 +176,8 @@ void atasm_gtia_render_mode8_fast_ssse3(
 		const __m128i evenPixels = _mm_shuffle_epi8(evenPixelTable, combinedData);
 		const __m128i  oddPixels = _mm_shuffle_epi8( oddPixelTable, combinedData);
 
-		_mm_maskmoveu_si128(_mm_unpacklo_epi8(evenPixels, oddPixels), mask1, dst +  0);
-		_mm_maskmoveu_si128(_mm_unpackhi_epi8(evenPixels, oddPixels), mask2, dst + 16);
+		ATMaskedWrite_SSE2(_mm_unpacklo_epi8(evenPixels, oddPixels), mask1, dst +  0);
+		ATMaskedWrite_SSE2(_mm_unpackhi_epi8(evenPixels, oddPixels), mask2, dst + 16);
 	} else {
 		// process starting oword
 		if (startOffset) {
@@ -198,8 +196,8 @@ void atasm_gtia_render_mode8_fast_ssse3(
 			const __m128i evenPixels = _mm_shuffle_epi8(evenPixelTable, combinedData);
 			const __m128i  oddPixels = _mm_shuffle_epi8( oddPixelTable, combinedData);
 
-			_mm_maskmoveu_si128(_mm_unpacklo_epi8(evenPixels, oddPixels), mask1, dst +  0);
-			_mm_maskmoveu_si128(_mm_unpackhi_epi8(evenPixels, oddPixels), mask2, dst + 16);
+			ATMaskedWrite_SSE2(_mm_unpacklo_epi8(evenPixels, oddPixels), mask1, dst +  0);
+			ATMaskedWrite_SSE2(_mm_unpackhi_epi8(evenPixels, oddPixels), mask2, dst + 16);
 			dst += 32;
 		}
 
@@ -234,12 +232,10 @@ void atasm_gtia_render_mode8_fast_ssse3(
 			const __m128i evenPixels = _mm_shuffle_epi8(evenPixelTable, combinedData);
 			const __m128i  oddPixels = _mm_shuffle_epi8( oddPixelTable, combinedData);
 
-			_mm_maskmoveu_si128(_mm_unpacklo_epi8(evenPixels, oddPixels), mask1, dst +  0);
-			_mm_maskmoveu_si128(_mm_unpackhi_epi8(evenPixels, oddPixels), mask2, dst + 16);
+			ATMaskedWrite_SSE2(_mm_unpacklo_epi8(evenPixels, oddPixels), mask1, dst +  0);
+			ATMaskedWrite_SSE2(_mm_unpackhi_epi8(evenPixels, oddPixels), mask2, dst + 16);
 		}	
 	}
-
-	_mm_sfence();
 }
 
 #endif

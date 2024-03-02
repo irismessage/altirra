@@ -18,7 +18,127 @@
 
 #include "displayd3d9_stddefs.fxh"
 #include "utils.fxh"
-#include "displayd3d9_ff.fxh"
 #include "displayd3d9_ps1.fxh"
-#include "displayd3d9_ps14.fxh"
 #include "displayd3d9_ps2.fxh"
+
+//	$$technique boxlinear_1_1
+//		$$pass
+//			$$bumpenv
+//			$$vertex_shader_ext vs11_boxlinear.vsh
+//			$$pixel_shader_ext ps11_boxlinear.psh
+//			$$texture 0 vd_interptexture clamp clamp point
+//			$$texture 1 vd_srctexture clamp clamp bilinear
+//
+//	$$technique pal8_to_rgb_1_1
+//		$$pass
+//			$$viewport unclipped unclipped
+//			$$vertex_shader_ext vs11_pal8_to_rgb.vsh
+//			$$pixel_shader_ext ps11_pal8_to_rgb.psh
+//			$$texture 0 vd_srctexture clamp clamp point
+//			$$texture 2 vd_srcpaltexture clamp clamp point
+//
+//	$$technique point_2_0
+//		$$pass
+//			$$clip_pos
+//			$$vertex_shader vs_2_0 VertexShaderPointBilinear_2_0
+//			$$pixel_shader ps_2_0 PixelShaderPointBilinear_2_0
+//			$$texture 0 vd_srctexture clamp clamp point
+//			$$texture 1 vd_dithertexture wrap wrap point
+//
+//	$$technique bilinear_2_0
+//		$$pass
+//			$$clip_pos
+//			$$vertex_shader vs_2_0 VertexShaderPointBilinear_2_0
+//			$$pixel_shader ps_2_0 PixelShaderPointBilinear_2_0
+//			$$texture 0 vd_srctexture clamp clamp bilinear
+//			$$texture 1 vd_dithertexture wrap wrap point
+//
+//	$$technique boxlinear_2_0
+//		$$pass
+//			$$clip_pos
+//			$$vertex_shader vs_2_0 VertexShaderBoxlinear_2_0
+//			$$pixel_shader ps_2_0 PixelShaderBoxlinear_2_0
+//			$$texture 0 vd_srctexture clamp clamp bilinear
+//
+//	$$technique bicubic_2_0
+//		$$pass
+//			$$target temp
+//			$$viewport out src
+//			$$vertex_shader vs_2_0 VertexShaderBicubic_2_0_A
+//			$$pixel_shader ps_2_0 PixelShaderBicubic_2_0_A
+//			$$texture 0 vd_interphtexture wrap clamp point		
+//			$$texture 1 vd_srctexture clamp clamp point
+//			$$texture 2 vd_srctexture clamp clamp bilinear
+//		$$pass
+//			$$target main
+//			$$viewport out out
+//			$$vertex_shader vs_2_0 VertexShaderBicubic_2_0_B
+//			$$pixel_shader ps_2_0 PixelShaderBicubic_2_0_B
+//			$$texture 0 vd_interpvtexture wrap clamp point		
+//			$$texture 1 vd_temptexture clamp clamp point
+//			$$texture 2 vd_temptexture clamp clamp bilinear
+//
+//	$$technique bicubic_2_0_dither
+//		$$pass
+//			$$target temp
+//			$$viewport out src
+//			$$vertex_shader vs_2_0 VertexShaderBicubic_2_0_A
+//			$$pixel_shader ps_2_0 PixelShaderBicubic_2_0_A
+//			$$texture 0 vd_interphtexture wrap clamp point		
+//			$$texture 1 vd_srctexture clamp clamp point
+//			$$texture 2 vd_srctexture clamp clamp bilinear
+//		$$pass
+//			$$target main
+//			$$viewport out out
+//			$$vertex_shader vs_2_0 VertexShaderBicubic_2_0_B
+//			$$pixel_shader ps_2_0 PixelShaderBicubic_2_0_B_Dither
+//			$$texture 0 vd_interpvtexture wrap clamp point		
+//			$$texture 1 vd_temptexture clamp clamp point
+//			$$texture 2 vd_temptexture clamp clamp bilinear
+//			$$texture 3 vd_dithertexture wrap wrap point
+
+//	$$technique ycbcr_601_to_rgb_2_0
+//		$$pass
+//			$$viewport unclipped unclipped
+//			$$vertex_shader vs_2_0 VS_YCbCr_to_RGB_2_0
+//			$$pixel_shader ps_2_0 PS_YCbCr_to_RGB_2_0_Rec601
+//			$$texture 0 vd_srctexture clamp clamp point
+//			$$texture 1 vd_src2atexture clamp clamp bilinear
+//			$$texture 2 vd_src2btexture clamp clamp bilinear
+
+//	$$technique ycbcr_709_to_rgb_2_0
+//		$$pass
+//			$$viewport unclipped unclipped
+//			$$vertex_shader vs_2_0 VS_YCbCr_to_RGB_2_0
+//			$$pixel_shader ps_2_0 PS_YCbCr_to_RGB_2_0_Rec601
+//			$$texture 0 vd_srctexture clamp clamp point
+//			$$texture 1 vd_src2atexture clamp clamp bilinear
+//			$$texture 2 vd_src2btexture clamp clamp bilinear
+
+//	$$technique ycbcr_601fr_to_rgb_2_0
+//		$$pass
+//			$$viewport unclipped unclipped
+//			$$vertex_shader vs_2_0 VS_YCbCr_to_RGB_2_0
+//			$$pixel_shader ps_2_0 PS_YCbCr_to_RGB_2_0_Rec601_FR
+//			$$texture 0 vd_srctexture clamp clamp point
+//			$$texture 1 vd_src2atexture clamp clamp bilinear
+//			$$texture 2 vd_src2btexture clamp clamp bilinear
+
+//	$$technique ycbcr_709fr_to_rgb_2_0
+//		$$pass
+//			$$viewport unclipped unclipped
+//			$$vertex_shader vs_2_0 VS_YCbCr_to_RGB_2_0
+//			$$pixel_shader ps_2_0 PS_YCbCr_to_RGB_2_0_Rec709_FR
+//			$$texture 0 vd_srctexture clamp clamp point
+//			$$texture 1 vd_src2atexture clamp clamp bilinear
+//			$$texture 2 vd_src2btexture clamp clamp bilinear
+
+//	$$technique pal8_to_rgb_2_0
+//		$$pass
+//			$$viewport unclipped unclipped
+//			$$vertex_shader vs_2_0 VS_Pal8_to_RGB_2_0
+//			$$pixel_shader ps_2_0 PS_Pal8_to_RGB_2_0
+//			$$texture 0 vd_srctexture clamp clamp point
+//			$$texture 1 vd_srcpaltexture clamp clamp point
+//
+// $$emit_defs

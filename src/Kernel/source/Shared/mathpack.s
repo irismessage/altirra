@@ -92,6 +92,7 @@
 ;     breaks.
 ; [2] MAC/65 relies on $DE/DF not being touched by IPF.
 ; [3] DARG relies on FPI not touching FR1.
+; [4] ACTris 1.2 relies on FASC not touching lower parts of FR2.
 ;
 
 .macro	ckaddr
@@ -325,10 +326,10 @@ expterm:
 .endp
 
 ;==========================================================================
-.proc fp_carryup
+.proc fp_fmul_carryup
 round_loop:
-	adc		0,x
-	sta		0,x
+	adc		fr0,x
+	sta		fr0,x
 dec_entry:
 	dex
 	lda		#0
@@ -345,16 +346,14 @@ dec_entry:
 		fixadr	$d8e6
 _fasc = fasc
 .proc fasc
-dotcntr = fr2
-expflg = fr2+1
-absexp = fr2+2
-expval = fr2+3
+dotcntr = ztemp4
+expval = ztemp4+1
+trimbase = ztemp4+2
 	jsr		ldbufa
 	ldy		#0
-	sty		expval
 
-	;check if number is zero
-	ldx		fr0
+	;read exponent and check if number is zero
+	lda		fr0
 	bne		notzero
 	
 	lda		#$b0
@@ -362,12 +361,23 @@ expval = fr2+3
 	rts
 	
 notzero:
+	sty		expval
+	sty		trimbase
+
+	;insert sixth mantissa byte
+	sty		fr0
+
 	;check if number is negative
 	bpl		ispos
-	lda		#'-'
-	sta		(inbuff),y
+	ldx		#'-'
+	dec		inbuff
+	stx		lbuff-1
+	inc		trimbase
 	iny
 ispos:
+
+	;set up for 5 mantissa bytes
+	ldx		#-5
 
 	;compute digit offset to place dot
 	;  0.001 (10.0E-04) = 3E 10 00 00 00 00 -> -1
@@ -377,49 +387,47 @@ ispos:
 	;   10.0 (10.0E+00) = 40 10 00 00 00 00 -> 3
 	;  100.0 ( 1.0E+02) = 40 01 00 00 00 00 -> 5
 	; 1000.0 (10.0E+02) = 40 10 00 00 00 00 -> 5
-	txa
+
 	asl
 	sec
 	sbc		#125
 
 	;check if we should go to exponential form (exp >= 10 or <=-3)
-	bmi		exp
 	cmp		#12
 	bcc		noexp
 
-exp:
-	;compute and stash explicit exponent
-	sec
-	sbc		#2
-	sta		expval
-	
+	;yes - compute and stash explicit exponent
+	sbc		#2				;!! - carry set from BCC fail
+	sta		expval			;$0A <= expval < $FE
+
 	;reset dot counter
 	lda		#2
 
-noexp:
-	sta		dotcntr
-	
-	;set up for 5 mantissa bytes
-	ldx		#-5
-	
+	;exclude first two digits from zero trim
+	inc		trimbase
+	inc		trimbase
+
+noexp:		
 	;check if number is less than 1.0 and init dot counter
 	cmp		#2
 	bcs		not_tiny
 	
-	;insert a sixth mantissa byte
-	mva		#0 fr0
-	inc		dotcntr
-	inc		dotcntr
+	;use sixth mantissa byte
+	adc		#2
 	dex
 not_tiny:
+	sta		dotcntr			;$02 <= dotcntr < $0C
 	
-	;check if number begins with a leading zero, and if so, skip high digit
+	;check if number begins with a leading zero
 	lda		fr0+6,x
 	cmp		#$10
 	bcs		digitloop
-	lda		#$fe
-	and		expval
-	sta		expval
+
+	dec		trimbase
+
+	;yes - skip the high digit
+	lsr		expval
+	asl		expval
 	bne		writelow
 	dec		dotcntr
 	bcc		writelow
@@ -469,11 +477,14 @@ no_lodot:
 	;trim off leading zeroes
 	lda		#'0'
 lzloop:
+	cpy		trimbase
+	beq		stop_zero_trim
 	dey
 	cmp		(inbuff),y
 	beq		lzloop
 
 	;trim off dot
+stop_zero_trim:
 	lda		(inbuff),y
 	cmp		#'.'
 	bne		no_trailing_dot
@@ -527,10 +538,6 @@ noexp2:
 	sta		(inbuff),y
 	rts
 .endp
-
-;==========================================================================
-fp_mul10:
-	dta		0,10,20,30,40,50,60,70,80,90
 
 ;==========================================================================
 ; IPF [D9AA]	Convert 16-bit integer at FR0 to FP
@@ -659,6 +666,10 @@ done:
 err:
 	rts
 .endp
+
+;==========================================================================
+fp_mul10:
+	dta		0,10,20,30,40,50,60,70,80,90
 
 ;==========================================================================
 ; ZFR0 [DA44]	Zero FR0
@@ -841,6 +852,7 @@ sub_loop_entry:
 	lsr
 	tay
 	pla
+.def :fp_exit_success
 	clc
 	rts
 .endp
@@ -865,15 +877,12 @@ _offset2 = fr2
 
 	;if FR0 is zero, we're done
 	lda		fr0
-	beq		xit
+	beq		fp_exit_success
 	
 	;if FR1 is zero, zero FR0 and exit
 	lda		fr1
-	bne		nonzero
 	clc
-	jmp		zfr0
-
-nonzero:
+	beq		fp_exit_zero
 	
 	;move fr0 to fr2
 	jsr		fp_fmul_fr0_to_binfr2
@@ -884,13 +893,21 @@ nonzero:
 	jsr		fp_adjust_exponent.fmul_entry
 	
 	sta		fr0
+	inc		fr0
+
+	;clear accumulator through to exponent byte of fr1
+	ldx		#fr0+1
+	ldy		#12
+	sed
 
 	jmp		fp_fmul_innerloop
-
-xit:
-	clc
-	rts	
 .endp
+
+underflow_overflow:
+	pla
+	pla
+fp_exit_zero:
+	jmp		zfr0
 
 .proc fp_adjust_exponent
 fdiv_entry:
@@ -921,14 +938,8 @@ fmul_entry:
 	
 	;rebias exponent
 	txa
-	sec
-	sbc		#$40
+	sbc		#$40-1		;!! - C=0 from bcs fail
 	rts
-	
-underflow_overflow:
-	pla
-	pla
-	jmp		zfr0
 .endp
 
 ;==========================================================================
@@ -960,17 +971,11 @@ _index = _fr3+2
 	;check if divisor is zero
 	lda		fr1
 	beq		err
-	
-	ldx		#fr2
-	jsr		zf1
-	lda		#$50
-	sta		fr2+6
-	
+
 	;compute new exponent
 	jsr		fp_adjust_exponent.fdiv_entry
-	
+
 	jsr		fp_fdiv_init	
-	sec
 
 digitloop:
 	;just keep going if we're accurate
@@ -981,25 +986,7 @@ digitloop:
 	;check if we should either divide or add based on current sign (stored in carry)
 	bcc		incloop
 
-decloop:
-	;increment quotient mantissa byte
-	lda		_digit
-	ldx		_index
-uploop:
-	adc		fr2+7,x
-	sta		fr2+7,x
-	lda		#0
-	dex
-	bcs		uploop
-
-	;subtract mantissas
-	jsr		fp_fastsub5
-	lda		fr0
-	sbc		#0
-	sta		fr0
-
-	;keep going until we underflow
-	bcs		decloop
+	jsr		fp_fdiv_decloop
 	bcc		nextdigit
 	
 incloop:
@@ -1015,15 +1002,30 @@ downloop:
 	bcc		downloop
 	
 	;add mantissas
-	ldx		#fr0
-	jsr		fp_fastadd6_fr1
+	clc
+	.rept 6
+		lda		fr0+(5-#)
+		adc		fr1+(5-#)
+		sta		fr0+(5-#)
+	.endr
 	
 	;keep going until we overflow
 	bcc		incloop	
 	
 nextdigit:
 	;shift dividend (make sure to save carry state)
-	jsr		fp_fr0_shl4
+	php
+	ldx		#4
+bitloop:
+	asl		fr0+5
+	rol		fr0+4
+	rol		fr0+3
+	rol		fr0+2
+	rol		fr0+1
+	rol		fr0
+	dex
+	bne		bitloop
+	plp
 	
 	;next digit
 	lda		_digit
@@ -1036,16 +1038,7 @@ nextdigit:
 	bne		digitloop
 	
 	;move back to fr0
-	ldx		#fr2-1
-	ldy		_fr3
-	lda		fr2
-	bne		no_normstep
-	inx
-	dey
-no_normstep:
-	sty		0,x
-	jsr		fld0r_zp
-
+	jsr		fp_fdiv_complete
 	cld
 ok:
 	clc
@@ -1086,31 +1079,19 @@ isdigt = _isdigt
 .endp
 
 ;==========================================================================
-.proc fp_fastadd6_fr1			;$36 bytes
-	clc
-	lda		5,x
-	adc		fr1+5
-	sta		5,x
-	lda		4,x
-	adc		fr1+4
-	sta		4,x
-	lda		3,x
-	adc		fr1+3
-	sta		3,x
-	lda		2,x
-	adc		fr1+2
-	sta		2,x
-	lda		1,x
-	adc		fr1+1
-	sta		1,x
-	lda		0,x
-	adc		fr1+0
-	sta		0,x
-	rts
-.endp
+.proc fp_fdiv_decloop
+decloop:
+	;increment quotient mantissa byte
+	lda		fdiv._digit
+	ldx		fdiv._index
+uploop:
+	adc		fr2+7,x
+	sta		fr2+7,x
+	lda		#0
+	dex
+	bcs		uploop
 
-;==========================================================================
-.proc fp_fastsub5				;$20 bytes
+	;subtract mantissas
 	sec
 	lda		fr0+5
 	sbc		fr1+5
@@ -1127,7 +1108,25 @@ isdigt = _isdigt
 	lda		fr0+1
 	sbc		fr1+1
 	sta		fr0+1
+	lda		fr0
+	sbc		#0
+	sta		fr0
+
+	;keep going until we underflow
+	bcs		decloop
 	rts
+.endp
+
+.proc fp_fdiv_complete
+	ldx		#fr2-1
+	ldy		_fr3
+	lda		fr2
+	bne		no_normstep
+	inx
+	dey
+no_normstep:
+	sty		0,x
+	jmp		fld0r_zp
 .endp
 
 ;==========================================================================
@@ -1137,7 +1136,7 @@ fp_normalize_cld:
 	cld
 	ckaddr	$dc00
 fp_normalize:
-normalize .proc
+.nowarn .proc normalize
 	ldy		#5
 normloop:
 	lda		fr0
@@ -1187,9 +1186,14 @@ underflow:
 ; HELPER ROUTINES
 ;==========================================================================
 
-.proc fp_fdiv_init		
+.proc fp_fdiv_init
 	sta		_fr3
 
+	ldx		#fr2
+	jsr		zf1
+	lda		#$50
+	sta		fr2+6
+	
 	ldx		#0
 	stx		fr0
 	stx		fr1
@@ -1219,6 +1223,7 @@ start_with_ones:
 
 	ldx		#0-7
 	stx		fdiv._index
+	sec
 	rts
 .endp
 
@@ -1329,17 +1334,10 @@ round_up:
 _offset = _fr3+5
 _offset2 = fr2
 
-	inc		fr0
-
-	;clear accumulator through to exponent byte of fr1
-	ldx		#fr0+1
-	ldy		#12
 	jsr		zfl
 
 	;set up for 7 bits per digit pair (0-99 in 0-127)
-	ldx		#7
-	stx		_offset
-	sed
+	ldy		#7
 
 	;set rounding byte, assuming renormalize needed (fr0+2 through fr0+6)
 	lda		#$50
@@ -1352,34 +1350,54 @@ offloop:
 
 	;begin inner loop -- here we process the same bit in each multiplier
 	;byte, going from byte 5 down to byte 1
-	ldx		#fr0+5
+	ldx		#5
 offloop2:
-	;shift a bit out of fr1 mantissa
-	lsr		fr2-fr0,x
-	bcc		noadd
+	;shift an inverted bit out of fr1 mantissa
+	lsr		fr2,x
+	bcs		noadd
 			
 	;add fr1 to fr0 at offset	
-	jsr		fp_fastadd6_fr1
+	.rept 6
+		lda		fr0+(5-#),x
+		adc		fr1+(5-#)
+		sta		fr0+(5-#),x
+	.endr
 	
 	;check if we have a carry out to the upper bytes
 	bcc		no_carry
 	stx		_offset2
-	jsr		fp_carryup.dec_entry
+	jsr		fp_fmul_carryup.dec_entry
 	ldx		_offset2
 no_carry:
 	
 noadd:
 	;go back for next byte
 	dex
-	cpx		#fr0
 	bne		offloop2
 
 	;double fr1
 	clc
-	jsr		fp_fastdbl_fr1
+	lda		fr1+5
+	adc		fr1+5
+	sta		fr1+5
+	lda		fr1+4
+	adc		fr1+4
+	sta		fr1+4
+	lda		fr1+3
+	adc		fr1+3
+	sta		fr1+3
+	lda		fr1+2
+	adc		fr1+2
+	sta		fr1+2
+	lda		fr1+1
+	adc		fr1+1
+	sta		fr1+1
+	lda		fr1+0
+	adc		fr1+0
+	sta		fr1+0
 
 	;loop back until all mantissa bytes finished
-	dec		_offset
+	dey
 	bne		offloop
 	
 	;check if no renormalize is needed, and if so, re-add new rounding
@@ -1387,48 +1405,12 @@ noadd:
 	beq		renorm_needed
 
 	lda		#$50
-	ldx		#fr0+6
-	jsr		fp_carryup
+	ldx		#6
+	jsr		fp_fmul_carryup
 
 renorm_needed:
 	;all done
 	jmp		fp_normalize_cld
-.endp
-
-;==========================================================================
-.proc fp_fmul_fr0_to_binfr2		;$15 bytes
-	ldx		#4
-loop:
-	lda		fr0+1,x
-	lsr
-	lsr
-	lsr
-	lsr
-	tay
-	clc
-	lda		fr0+1,x
-	adc		fp_dectobin_tab,y
-	sta		fr2+1,x
-	dex
-	bpl		loop
-	rts
-.endp
-
-;==========================================================================
-.proc fp_tab_lo_1000
-	:10 dta <[1000*#]
-.endp
-
-.proc fp_tab_hi_1000
-	:10 dta >[1000*#]
-.endp
-
-.proc fp_tab_hi_100
-	:10 dta >[100*#]
-.endp
-
-.proc fp_tab_hi_10000
-	:6 dta >[10000*[#+1]]
 .endp
 
 ;==========================================================================
@@ -1667,32 +1649,47 @@ coeff:		;Minimax polynomial for 10^x over 0 <= x < 1
 .endp	
 
 ;==========================================================================
-.proc fp_fastdbl_fr1
-	lda		fr1+5
-	adc		fr1+5
-	sta		fr1+5
-	lda		fr1+4
-	adc		fr1+4
-	sta		fr1+4
-	lda		fr1+3
-	adc		fr1+3
-	sta		fr1+3
-	lda		fr1+2
-	adc		fr1+2
-	sta		fr1+2
-	lda		fr1+1
-	adc		fr1+1
-	sta		fr1+1
-	lda		fr1+0
-	adc		fr1+0
-	sta		fr1+0
-xit:
+fpconst_log10_e:
+	.fl		0.43429448190325182765112891891661
+
+.proc fp_carry_expup
+	;adjust exponent
+	inc		fr0
+
+	;shift down FR0
+	ldx		#4
+sum_shiftloop:
+	lda		fr0,x
+	sta		fr0+1,x
+	dex
+	bne		sum_shiftloop
+	
+	;add a $01 at the top
+	inx
+	stx		fr0+1
 	rts
 .endp
 
 ;==========================================================================
-fpconst_log10_e:
-	.fl		0.43429448190325182765112891891661
+.proc fp_fmul_fr0_to_binfr2		;$15 bytes
+	ldx		#4
+loop:
+	lda		fr0+1,x
+	lsr
+	lsr
+	lsr
+	lsr
+	tay
+	clc
+	lda		fr0+1,x
+	adc		fp_dectobin_tab,y
+	eor		#$ff
+	sta		fr2+1,x
+	dex
+	bpl		loop
+.def :fp_rts1
+	rts
+.endp
 
 ;==========================================================================
 ; REDRNG [DE95]	Reduce range via y = (x-C)/(x+C) (undocumented)
@@ -1726,7 +1723,7 @@ redrng = _redrng
 	jsr		fld1r
 	jmp		fdiv
 	
-fail = fp_fastdbl_fr1.xit
+fail = fp_rts1
 .endp
 
 ;==========================================================================
@@ -1851,39 +1848,20 @@ err2:
 .endp
 
 ;==========================================================================
-.proc fp_fr0_shl4				;$14 bytes
-	php
-	ldx		#4
-bitloop:
-	asl		fr0+5
-	rol		fr0+4
-	rol		fr0+3
-	rol		fr0+2
-	rol		fr0+1
-	rol		fr0
-	dex
-	bne		bitloop
-	plp
-	rts
+.proc fp_tab_lo_1000
+	:10 dta <[1000*#]
 .endp
 
-;==========================================================================
-.proc fp_carry_expup
-	;adjust exponent
-	inc		fr0
+.proc fp_tab_hi_1000
+	:10 dta >[1000*#]
+.endp
 
-	;shift down FR0
-	ldx		#4
-sum_shiftloop:
-	lda		fr0,x
-	sta		fr0+1,x
-	dex
-	bne		sum_shiftloop
-	
-	;add a $01 at the top
-	inx
-	stx		fr0+1
-	rts
+.proc fp_tab_hi_100
+	:10 dta >[100*#]
+.endp
+
+.proc fp_tab_hi_10000
+	:6 dta >[10000*[#+1]]
 .endp
 
 ;==========================================================================

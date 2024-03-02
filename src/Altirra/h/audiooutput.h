@@ -22,7 +22,7 @@
 #pragma once
 #endif
 
-#include "audiosource.h"
+#include <at/atcore/audiosource.h>
 
 class IATUIRenderer;
 class IATSyncAudioSource;

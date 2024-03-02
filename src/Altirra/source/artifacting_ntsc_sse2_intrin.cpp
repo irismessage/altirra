@@ -17,6 +17,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <intrin.h>
 
 #if defined(VD_COMPILER_MSVC) && defined(VD_CPU_AMD64)
 

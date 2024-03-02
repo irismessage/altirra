@@ -1,4 +1,4 @@
-//	Altirra - Atari 800/800XL/5200 emulator
+﻿//	Altirra - Atari 800/800XL/5200 emulator
 //	Copyright (C) 2008-2010 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
@@ -20,9 +20,9 @@
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/time.h>
 #include <vd2/Riza/audioout.h>
-#include <vd2/Riza/audioformat.h>
+#include <at/atcore/audiosource.h>
+#include <at/atio/wav.h>
 #include "audiofilters.h"
-#include "audiosource.h"
 #include "audiooutput.h"
 #include "uirender.h"
 
@@ -377,21 +377,23 @@ void ATAudioOutput::InternalWriteAudio(
 
 
 	// run audio sources
-	{
-		ATSyncAudioMixInfo mixInfo;
-		mixInfo.mStartTime = timestamp;
-		mixInfo.mCount = count;
-		mixInfo.mpLeft = dstLeft + kPreFilterOffset;
-		mixInfo.mpRight = dstRight ? dstRight + kPreFilterOffset : nullptr;
-		mixInfo.mpMixLevels = mMixLevels;
+	float dcLevels[2] = { 0, 0 };
 
-		for(IATSyncAudioSource *src : mSyncAudioSources)
-			src->WriteAudio(mixInfo);
-	}
+	ATSyncAudioMixInfo mixInfo;
+	mixInfo.mStartTime = timestamp;
+	mixInfo.mCount = count;
+	mixInfo.mpLeft = dstLeft + kPreFilterOffset;
+	mixInfo.mpRight = dstRight ? dstRight + kPreFilterOffset : nullptr;
+	mixInfo.mpDCLeft = &dcLevels[0];
+	mixInfo.mpDCRight = &dcLevels[1];
+	mixInfo.mpMixLevels = mMixLevels;
+
+	for(IATSyncAudioSource *src : mSyncAudioSources)
+		src->WriteAudio(mixInfo);
 
 	// filter channels
 	for(int ch=0; ch<(mbFilterStereo ? 2 : 1); ++ch) {
-		mFilters[ch].PreFilter(&mSourceBuffer[ch][mBufferLevel + kPreFilterOffset], count);
+		mFilters[ch].PreFilter(&mSourceBuffer[ch][mBufferLevel + kPreFilterOffset], count, dcLevels[ch]);
 		mFilters[ch].Filter(&mSourceBuffer[ch][mBufferLevel + kFilterOffset], count);
 	}
 
@@ -578,9 +580,9 @@ void ATAudioOutput::ReinitAudio() {
 		nsVDWinFormats::WaveFormatEx wfex;
 		wfex.mFormatTag = nsVDWinFormats::kWAVE_FORMAT_PCM;
 		wfex.mChannels = 2;
-		wfex.mSamplesPerSec = mSamplingRate;
+		wfex.SetSamplesPerSec(mSamplingRate);
 		wfex.mBlockAlign = 4;
-		wfex.mAvgBytesPerSec = wfex.mSamplesPerSec * wfex.mBlockAlign;
+		wfex.SetAvgBytesPerSec(mSamplingRate * wfex.mBlockAlign);
 		wfex.mBitsPerSample = 16;
 		mpAudioOut->Init(kBufferSize * 4, 30, (const tWAVEFORMATEX *)&wfex, NULL);
 		mpAudioOut->Start();

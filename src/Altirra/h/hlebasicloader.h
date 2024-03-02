@@ -23,10 +23,11 @@ class ATCPUHookManager;
 class ATSimulator;
 class ATSimulatorEventManager;
 struct ATCPUHookNode;
+class IATBlobImage;
 
 class ATHLEBasicLoader {
-	ATHLEBasicLoader(const ATHLEBasicLoader&);
-	ATHLEBasicLoader& operator=(const ATHLEBasicLoader&);
+	ATHLEBasicLoader(const ATHLEBasicLoader&) = delete;
+	ATHLEBasicLoader& operator=(const ATHLEBasicLoader&) = delete;
 public:
 	ATHLEBasicLoader();
 	~ATHLEBasicLoader();
@@ -36,22 +37,22 @@ public:
 
 	bool IsLaunchPending() const { return mbLaunchPending; }
 
-	void LoadProgram(IVDRandomAccessStream& stream);
+	void LoadProgram(IATBlobImage *image);
 
 protected:
 	uint8 OnCIOV(uint16);
 
-	ATCPUEmulator *mpCPU;
-	ATCPUHookManager *mpCPUHookMgr;
-	ATSimulatorEventManager *mpSimEventMgr;
-	ATSimulator *mpSim;
-	ATCPUHookNode *mpLaunchHook;
+	ATCPUEmulator *mpCPU = nullptr;
+	ATCPUHookManager *mpCPUHookMgr = nullptr;
+	ATSimulatorEventManager *mpSimEventMgr = nullptr;
+	ATSimulator *mpSim = nullptr;
+	ATCPUHookNode *mpLaunchHook = nullptr;
 
-	vdfastvector<uint8>		mProgramToLoad;
+	IATBlobImage *mpImage = nullptr;
 
-	bool		mbLaunchPending;
-	uint8		mProgramIOCB;
-	uint32		mProgramIndex;
+	bool		mbLaunchPending = false;
+	uint8		mProgramIOCB = 0;
+	uint32		mProgramIndex = 0;
 };
 
 #endif	// f_AT_HLEBASICLOADER_H

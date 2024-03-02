@@ -67,8 +67,39 @@ enum ATFirmwareType {
 	kATFirmwareType_850Relocator,
 	kATFirmwareType_850Handler,
 	kATFirmwareType_1030Firmware,
+	kATFirmwareType_810,
+	kATFirmwareType_Happy810,
+	kATFirmwareType_810Archiver,
+	kATFirmwareType_1050,
+	kATFirmwareType_USDoubler,
+	kATFirmwareType_Speedy1050,
+	kATFirmwareType_Happy1050,
+	kATFirmwareType_SuperArchiver,
+	kATFirmwareType_TOMS1050,
+	kATFirmwareType_Tygrys1050,
+	kATFirmwareType_1050Duplicator,
+	kATFirmwareType_IndusGT,
+	kATFirmwareType_1050Turbo,
+	kATFirmwareType_1050TurboII,
+	kATFirmwareType_XF551,
+	kATFirmwareType_ATR8000,
+	kATFirmwareType_Percom,
 	kATFirmwareTypeCount
 };
+
+enum ATSpecificFirmwareType {
+	kATSpecificFirmwareType_None,
+	kATSpecificFirmwareType_BASICRevA,
+	kATSpecificFirmwareType_BASICRevB,
+	kATSpecificFirmwareType_BASICRevC,
+	kATSpecificFirmwareType_OSA,
+	kATSpecificFirmwareType_OSB,
+	kATSpecificFirmwareType_XLOSr2,
+	kATSpecificFirmwareType_XLOSr4,
+	kATSpecificFirmwareTypeCount,
+};
+
+bool ATIsSpecificFirmwareTypeCompatible(ATFirmwareType type, ATSpecificFirmwareType specificType);
 
 enum ATFirmwareFlags : uint32 {
 	kATFirmwareFlags_None,
@@ -100,10 +131,11 @@ void ATSetFirmwarePathPortabilityMode(bool portable);
 const char *ATGetFirmwareTypeName(ATFirmwareType type);
 ATFirmwareType ATGetFirmwareTypeFromName(const char *type);
 uint64 ATGetFirmwareIdFromPath(const wchar_t *path);
+bool ATLoadInternalFirmware(uint64 id, void *dst, uint32 offset, uint32 len, bool *changed = nullptr, uint32 *actualLen = nullptr, vdfastvector<uint8> *dstbuf = nullptr);
 
 class ATFirmwareManager {
-	ATFirmwareManager(const ATFirmwareManager&);
-	ATFirmwareManager& operator=(const ATFirmwareManager&);
+	ATFirmwareManager(const ATFirmwareManager&) = delete;
+	ATFirmwareManager& operator=(const ATFirmwareManager&) = delete;
 public:
 	ATFirmwareManager();
 	~ATFirmwareManager();
@@ -119,10 +151,16 @@ public:
 	uint64 GetDefaultFirmware(ATFirmwareType type) const;
 	void SetDefaultFirmware(ATFirmwareType type, uint64 id);
 
+	uint64 GetSpecificFirmware(ATSpecificFirmwareType types) const;
+	void SetSpecificFirmware(ATSpecificFirmwareType types, uint64 id);
+
 	bool LoadFirmware(uint64 id, void *dst, uint32 offset, uint32 len, bool *changed = nullptr, uint32 *actualLen = nullptr, vdfastvector<uint8> *dstbuf = nullptr);
 
 	void AddFirmware(const ATFirmwareInfo& info);
 	void RemoveFirmware(uint64 id);
+
+private:
+	mutable uint64 mSpecificFirmwares[kATSpecificFirmwareTypeCount];
 };
 
 #endif	// f_AT_FIRMWAREMANAGER_H

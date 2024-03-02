@@ -331,6 +331,8 @@ protected:
 	void UpdateMonitorDpi();
 	virtual void UpdateMonitorDpi(unsigned dpiY);
 
+	ATFrameWindow *ChooseNewActiveFrame(ATFrameWindow *prevFrame);
+
 	ATContainerDockingPane *mpDockingPane = nullptr;
 	ATContainerDockingPane *mpDragPaneTarget = nullptr;
 	ATFrameWindow *mpActiveFrame = nullptr;

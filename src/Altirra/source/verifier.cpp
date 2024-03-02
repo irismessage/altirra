@@ -23,13 +23,7 @@
 #include "simeventmanager.h"
 #include "ksyms.h"
 
-ATCPUVerifier::ATCPUVerifier()
-	: mpCPU(NULL)
-	, mpMemory(NULL)
-	, mpSimulator(NULL)
-	, mpSimEventMgr(NULL)
-	, mFlags(0)
-{
+ATCPUVerifier::ATCPUVerifier() {
 }
 
 ATCPUVerifier::~ATCPUVerifier() {
@@ -42,7 +36,7 @@ void ATCPUVerifier::Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATSimulat
 	mpSimulator = sim;
 	mpSimEventMgr = simevmgr;
 
-	mpSimEventMgr->AddCallback(this);
+	mEventCallbackId = mpSimEventMgr->AddEventCallback(kATSimEvent_AbnormalDMA, [this] { OnAbnormalDMA(); });
 
 	OnReset();
 	ResetAllowedTargets();
@@ -50,7 +44,11 @@ void ATCPUVerifier::Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATSimulat
 
 void ATCPUVerifier::Shutdown() {
 	if (mpSimEventMgr) {
-		mpSimEventMgr->RemoveCallback(this);
+		if (mEventCallbackId) {
+			mpSimEventMgr->RemoveEventCallback(mEventCallbackId);
+			mEventCallbackId = 0;
+		}
+
 		mpSimEventMgr = NULL;
 	}
 }
@@ -331,8 +329,8 @@ void ATCPUVerifier::VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ta
 	}
 }
 
-void ATCPUVerifier::OnSimulatorEvent(ATSimulatorEvent ev) {
-	if (ev == kATSimEvent_AbnormalDMA && (mFlags & kATVerifierFlag_AbnormalDMA)) {
+void ATCPUVerifier::OnAbnormalDMA() {
+	if (mFlags & kATVerifierFlag_AbnormalDMA) {
 		ATConsolePrintf("\n");
 		ATConsolePrintf("VERIFIER: Abnormal playfield DMA detected.\n");
 		mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);

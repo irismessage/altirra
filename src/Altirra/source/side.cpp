@@ -353,7 +353,7 @@ void ATSIDEEmulator::RemoveChildDevice(IATDevice *dev) {
 }
 
 void ATSIDEEmulator::DumpStatus(ATConsoleOutput& output) {
-	mRTC.DumpStatus();
+	mRTC.DumpStatus(output);
 }
 
 uint32 ATSIDEEmulator::GetSupportedButtons() const {

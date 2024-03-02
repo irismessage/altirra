@@ -1478,7 +1478,13 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbol(ICPTL , "ICPTL" , 1);
 	symstore->AddSymbol(ICPTH , "ICPTH" , 1);
 	symstore->AddSymbol(ICBLL , "ICBLL" , 1);
+	symstore->AddSymbol(ICBLH , "ICBLH" , 1);
 	symstore->AddSymbol(ICAX1 , "ICAX1" , 1);
+	symstore->AddSymbol(ICAX2 , "ICAX2" , 1);
+	symstore->AddSymbol(ICAX3 , "ICAX3" , 1);
+	symstore->AddSymbol(ICAX4 , "ICAX4" , 1);
+	symstore->AddSymbol(ICAX5 , "ICAX5" , 1);
+	symstore->AddSymbol(ICAX6 , "ICAX6" , 1);
 	symstore->AddSymbol(BASICF, "BASICF", 1);
 	symstore->AddSymbol(GINTLK, "GINTLK", 1);
 	symstore->AddSymbol(CASBUF, "CASBUF", 131);

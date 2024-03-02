@@ -55,7 +55,7 @@ void ATCreateDeviceKMKJZIDE(const ATPropertySet& pset, IATDevice **dev) {
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDefKMKJZIDE = { "kmkjzide", nullptr, L"KMK/JZ IDE v1", ATCreateDeviceKMKJZIDE<false> };
+extern const ATDeviceDefinition g_ATDeviceDefKMKJZIDE = { "kmkjzide", "kmkjzide", L"KMK/JZ IDE v1", ATCreateDeviceKMKJZIDE<false> };
 extern const ATDeviceDefinition g_ATDeviceDefKMKJZIDE2 = { "kmkjzide2", "kmkjzide2", L"KMK/JZ IDE v2", ATCreateDeviceKMKJZIDE<true> };
 
 ATKMKJZIDE::ATKMKJZIDE(bool version2)
@@ -94,6 +94,10 @@ void *ATKMKJZIDE::AsInterface(uint32 id) {
 	return ATDevice::AsInterface(id);
 }
 
+void ATKMKJZIDE::GetSettingsBlurb(VDStringW& buf) {
+	buf.sprintf(L"ID %u", (unsigned)VDFindLowestSetBit(mDeviceId));
+}
+
 void ATKMKJZIDE::GetSettings(ATPropertySet& settings) {
 	if (mbVersion2) {
 		settings.SetBool("enablesdx", mbSDXSwitchEnabled);
@@ -111,8 +115,9 @@ void ATKMKJZIDE::GetSettings(ATPropertySet& settings) {
 
 		settings.SetString("revision", revstr);
 		settings.SetBool("writeprotect", mbWriteProtect);
-		settings.SetUint32("id", (uint32)VDFindLowestSetBit(mDeviceId));
 	}
+
+	settings.SetUint32("id", (uint32)VDFindLowestSetBit(mDeviceId));
 }
 
 bool ATKMKJZIDE::SetSettings(const ATPropertySet& settings) {
@@ -141,21 +146,21 @@ bool ATKMKJZIDE::SetSettings(const ATPropertySet& settings) {
 		}
 
 		mbWriteProtect = settings.GetBool("writeprotect", false);
+	}
 
-		uint32 id = settings.GetUint32("id", 0);
+	uint32 id = settings.GetUint32("id", 0);
 
-		if (id < 8) {
-			const uint8 deviceId = 1 << id;
+	if (id < 8) {
+		const uint8 deviceId = 1 << id;
 
-			if (mDeviceId != deviceId) {
-				if (mpPBIManager)
-					mpPBIManager->RemoveDevice(this);
+		if (mDeviceId != deviceId) {
+			if (mpPBIManager)
+				mpPBIManager->RemoveDevice(this);
 
-				mDeviceId = deviceId;
+			mDeviceId = deviceId;
 
-				if (mpPBIManager)
-					mpPBIManager->AddDevice(this);
-			}
+			if (mpPBIManager)
+				mpPBIManager->AddDevice(this);
 		}
 	}
 
@@ -255,11 +260,11 @@ void ATKMKJZIDE::ColdReset() {
 	mpMemMan->SetLayerMemory(mpMemLayerSDX, mSDX);
 	mSDXBankOffset = 0 - 0xA000;
 	mbSDXEnabled = mbSDXSwitchEnabled;
-	mbExternalEnabled = false;
+	mbExternalEnabled = true;
 
 	if (mpCartPort) {
-		mpCartPort->OnLeftWindowChanged(mCartId, true);
-		mpCartPort->EnablePassThrough(mCartId, false, false, false);
+		mpCartPort->OnLeftWindowChanged(mCartId, mbSDXEnabled);
+		mpCartPort->EnablePassThrough(mCartId, mbExternalEnabled, mbExternalEnabled, mbExternalEnabled);
 	}
 
 	UpdateMemoryLayersSDX();
@@ -659,7 +664,7 @@ void ATKMKJZIDE::ActivateButton(ATDeviceButton idx, bool state) {
 	}
 }
 
-void ATKMKJZIDE::InitAudioOutput(IATAudioOutput *output) {
+void ATKMKJZIDE::InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) {
 	mpAudioOutput = output;
 }
 

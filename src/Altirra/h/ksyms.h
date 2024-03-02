@@ -236,6 +236,11 @@ namespace ATKernelSymbols {
 		ICBLL  = 0x0348,
 		ICBLH  = 0x0349,
 		ICAX1  = 0x034A,
+		ICAX2  = 0x034B,
+		ICAX3  = 0x034C,
+		ICAX4  = 0x034D,
+		ICAX5  = 0x034E,
+		ICAX6  = 0x034F,
 		BASICF = 0x03F8,	// XL/XE
 		GINTLK = 0x03FA,	// XL/XE
 		CASBUF = 0x03FD,

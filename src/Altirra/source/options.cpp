@@ -26,14 +26,20 @@ ATOptions::ATOptions()
 	, mbDisplayD3D9(true)
 	, mbDisplay3D(false)
 	, mbDisplayOpenGL(false)
+	, mbDisplay16Bit(false)
 	, mbSingleInstance(false)
 	, mbPauseDuringMenu(false)
 	, mThemeScale(100)
 	, mErrorMode(kATErrorMode_Dialog)
+	, mbFullScreenBorderless(false)
 	, mFullScreenWidth(0)
 	, mFullScreenHeight(0)
 	, mFullScreenRefreshRate(0)
 	, mDefaultWriteMode(kATMediaWriteMode_VRWSafe)
+	, mbCompatEnable(true)
+	, mbCompatEnableInternalDB(true)
+	, mbCompatEnableExternalDB(false)
+	, mCompatExternalDBPath()
 {
 }
 
@@ -65,6 +71,13 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, const char *name, VDStrin
 		key.getString(name, val);
 }
 
+void ATOptionsExchange(VDRegistryKey& key, bool write, const char *name, VDStringW& val) {
+	if (write)
+		key.setString(name, val.c_str());
+	else
+		key.getString(name, val);
+}
+
 template<class T>
 void ATOptionsExchangeEnum(VDRegistryKey& key, bool write, const char *name, T& val, T limit) {
 	if (write)
@@ -79,15 +92,22 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "Display: Direct3D9", opts.mbDisplayD3D9);
 	ATOptionsExchange(key, write, "Display: 3D", opts.mbDisplay3D);
 	ATOptionsExchange(key, write, "Display: OpenGL", opts.mbDisplayOpenGL);
+	ATOptionsExchange(key, write, "Display: Use 16-bit surfaces", opts.mbDisplay16Bit);
 	ATOptionsExchangeEnum(key, write, "Simulator: Error mode", opts.mErrorMode, kATErrorModeCount);
 	ATOptionsExchange(key, write, "Display: Full screen mode width", opts.mFullScreenWidth);
 	ATOptionsExchange(key, write, "Display: Full screen mode height", opts.mFullScreenHeight);
 	ATOptionsExchange(key, write, "Display: Full screen mode refresh rate", opts.mFullScreenRefreshRate);
+	ATOptionsExchange(key, write, "Display: Borderless mode", opts.mbFullScreenBorderless);
 	ATOptionsExchange(key, write, "Flash: SIC! cartridge flash mode", opts.mSICFlashChip);
 	ATOptionsExchange(key, write, "Flash: Ultimate1MB flash mode", opts.mU1MBFlashChip);
 	ATOptionsExchange(key, write, "UI: Theme scale factor", opts.mThemeScale);
 	ATOptionsExchange(key, write, "UI: Pause during menus", opts.mbPauseDuringMenu);
 	ATOptionsExchangeEnum(key, write, "Media: Default write mode", opts.mDefaultWriteMode, (ATMediaWriteMode)(kATMediaWriteMode_All + 1));
+
+	ATOptionsExchange(key, write, "CompatDB: Enable", opts.mbCompatEnable);
+	ATOptionsExchange(key, write, "CompatDB: Enable internal DB", opts.mbCompatEnableInternalDB);
+	ATOptionsExchange(key, write, "CompatDB: Enable external DB", opts.mbCompatEnableExternalDB);
+	ATOptionsExchange(key, write, "CompatDB: External DB path", opts.mCompatExternalDBPath);
 }
 
 void ATOptionsLoad() {

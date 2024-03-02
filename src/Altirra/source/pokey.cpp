@@ -296,7 +296,7 @@ void ATPokeyEmulator::RemoveSIODevice(IATPokeySIODevice *device) {
 		mDevices.erase(it);
 }
 
-void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulateInputPort, bool allowBurst, bool synchronous) {
+void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulateInputPort, bool allowBurst, bool synchronous, bool forceFramingError) {
 	if (cyclesPerBit && mbSerialNoiseEnabled) {
 		const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 
@@ -314,8 +314,14 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 
 	VDStringA sioDataInfo;
 
-	if (g_ATLCSIOData)
-		sioDataInfo.sprintf("Receive      < $%02X     (@ %u cycles/bit / %.1f baud)", c, cyclesPerBit, 7159090.0f / 4.0f / (float)cyclesPerBit);
+	if (g_ATLCSIOData) {
+		if (mTraceByteIndex >= 1000 || mTraceDirectionSend) {
+			mTraceByteIndex = 0;
+			mTraceDirectionSend = false;
+		}
+
+		sioDataInfo.sprintf("[%3u] Receive      < $%02X     (@ %u cycles/bit / %.1f baud)", mTraceByteIndex++, c, cyclesPerBit, 7159090.0f / 4.0f / (float)cyclesPerBit);
+	}
 
 	// check for attempted read in init mode (partial fix -- audio not emulated)
 	if (!(mSKCTL & 3)) {
@@ -332,6 +338,7 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 	mbSerialSimulateInputPort = simulateInputPort;
 
 	if (simulateInputPort) {
+		VDASSERT(cyclesPerBit);
 		mSerialSimulateInputBaseTime = ATSCHEDULER_GETTIME(mpScheduler);
 		mSerialSimulateInputCyclesPerBit = cyclesPerBit;
 		mSerialSimulateInputData = ((uint32)c << 1) + 0x200;
@@ -339,10 +346,11 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 
 	if (!(mSKCTL & 0x30) && !mSerialExtPeriod) {
 		if (mbTraceSIO)
-			ATConsoleTaggedPrintf("POKEY: Dropping byte $%02X due to external receive mode being used with no external clock (SKCTL=$%02X).\n", c, mSKCTL);
+			ATConsoleTaggedPrintf("POKEY: Dropping byte $%02X due to external receive mode being used with no external clock (SKCTL=$%02X).", c, mSKCTL);
 
 		if (g_ATLCSIOData) {
 			sioDataInfo += " [dropped - external mode with no clock]";
+			sioDataInfo += "\n";
 			g_ATLCSIOData <<= sioDataInfo.c_str();
 		}
 
@@ -350,6 +358,11 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 	}
 
 	mSerialInputPendingStatus = 0xff;
+
+	if (forceFramingError) {
+		mSerialInputPendingStatus &= 0x7f;
+		sioDataInfo += " [framing error]\n";
+	}
 
 	// check for attempted read in synchronous mode; note that external clock mode is OK as presumably that
 	// is synchronized
@@ -869,8 +882,14 @@ void ATPokeyEmulator::OnSerialOutputTick() {
 					);
 			}
 
-			if (g_ATLCSIOData)
-				g_ATLCSIOData("Send     $%02X >         (@ %u cycles/bit / %.1f baud)\n", mSerialOutputShiftRegister, cyclesPerBit, 7159090.0f / 4.0f / (float)cyclesPerBit);
+			if (g_ATLCSIOData) {
+				if (mTraceByteIndex >= 1000 || !mTraceDirectionSend) {
+					mTraceByteIndex = 0;
+					mTraceDirectionSend = true;
+				}
+
+				g_ATLCSIOData("[%3u] Send     $%02X >         (@ %u cycles/bit / %.1f baud)\n", mTraceByteIndex++, mSerialOutputShiftRegister, cyclesPerBit, 7159090.0f / 4.0f / (float)cyclesPerBit);
+			}
 
 			bool burstOK = false;
 
@@ -1322,9 +1341,9 @@ void ATPokeyEmulator::RecomputeTimerPeriod() {
 
 		period = ((uint32)mAUDF[channel] << 8) + mAUDFP1[channel - 1];
 
-		if (fastLinkedTimer)
+		if (fastLinkedTimer) {
 			period += 6;
-		else if (mbUse15KHzClock)
+		} else if (mbUse15KHzClock)
 			period *= 114;
 		else
 			period *= 28;
@@ -1573,7 +1592,7 @@ void ATPokeyEmulator::SetupTimers(uint8 channels) {
 				const uint32 loTime = t + ticks;
 				const uint32 hiTime = loTime + 3 + mTimerFullPeriod[0] * (mCounter[1] - 1);
 
-				SetupDeferredTimerEventsLinked(0, loTime, mTimerFullPeriod[0], hiTime, mTimerPeriod[1], mTimerPeriod[0]);
+				SetupDeferredTimerEventsLinked(0, loTime, mTimerFullPeriod[0], hiTime, mTimerPeriod[1], mTimerPeriod[0] - 3);
 			} else
 				SetupDeferredTimerEvents(0, t + ticks, mTimerPeriod[0]);
 		}
@@ -2390,6 +2409,8 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 
 					if (mpCassette)
 						mpCassette->PokeyResetSerialInput();
+
+					++mSerialInputResetCounter;
 				}
 
 				mSKCTL = value;

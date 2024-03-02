@@ -211,6 +211,7 @@ stEnd = immediateModeReset
 		sta		memlo+1
 .def :stNew
 		jsr		reset_entry
+		jsr		execRestore
 		jmp		immediateModeReset
 
 reset_entry:
@@ -769,12 +770,12 @@ strprint_loop1:
 		jsr		execRestore
 		
 		;check if we have a line number
-		jsr		evaluate
-		ldy		argsp
+		jsr		ExecTestEnd
 		beq		no_lineno
 		
 		;we have a line number -- pop it and copy to dataln
-		jsr		ExprConvFR0IntPos
+		jsr		ExprEvalPopIntPos
+write_dataln:
 		stx		dataln
 		sta		dataln+1
 no_lineno:
@@ -782,50 +783,12 @@ no_lineno:
 .endp
 
 ;===========================================================================
-; RETURN
-;
-; Returns to the execution point after the most recent GOSUB. Any
-; intervening FOR frames are discarded (GOMOKO.BAS relies on this).
-;
-.proc stReturn
-		;pop entries off runtime stack until we find the right frame
-loop:
-		;##ASSERT dw(runstk)<=dw(memtop2) and !((dw(memtop2)-dw(runstk))&3) and (dw(runstk)=dw(memtop2) or ((db(dw(memtop2)-4)=0 or db(dw(memtop2)-4)>=$80) and dw(dw(memtop2)-3) >= dw(stmtab)))
-		jsr		fix_and_check_rtstack_empty
-		bcs		stack_empty
-stack_not_empty:
-
-		;check if we have a GOSUB frame (varbyte=0) or a FOR frame (varbyte>=$80)
-		dec		memtop2+1
-		ldy		#<-4
-		lda		(memtop2),y
-		spl:ldy	#<-16
-
-		;pop back one frame, regardless of its type
-		jsr		stFor.advance_memtop2_y
-		
-		;keep going if it was a FOR
-		cpy		#<-16
-		beq		loop
-		
-		;switch context and exit
-		ldy		#1
-		jmp		stNext.pop_frame
-
-stack_empty:
-		jmp		errorBadRETURN
-
-fix_and_check_rtstack_empty:
-		;check if the runtime stack is floating and fix it if needed
-		jsr		ExecFixStack
-check_rtstack_empty:
-		lda		runstk
-		cmp		memtop2
-		lda		runstk+1
-		sbc		memtop2+1
-		rts
+.proc execRestore
+		lda		#0
+		sta		dataptr+1
+		tax
+		beq		stRestore.write_dataln		;!! - unconditional
 .endp
-
 
 ;===========================================================================
 stStop = execStop
@@ -921,7 +884,7 @@ loop:
 		iny
 		cpy		#8
 		bne		loop
-		rts
+		rts						;!! - READ/INPUT relies on Z set
 .endp
 
 
@@ -968,8 +931,7 @@ loop:
 .proc stGraphics
 		jsr		evaluateInt
 
-		lda		pmgbase
-		seq:jsr	pmDisable
+		jsr		pmTryDisable
 
 		;close and reopen IOCB 6 with S:
 		lda		fr0
@@ -1002,9 +964,14 @@ loop:
 stCp = stDos
 .proc stDos
 		jsr		ExecReset
+
 		;We may end up returning if DOS fails to load (MEM.SAV error, user
 		;backs out!).
+		.if CART==0
+		jmp		ReturnToDOS
+		.else
 		jmp		(dosvec)
+		.endif
 .endp
 
 
@@ -1140,6 +1107,50 @@ chkstk_ok:
 		rts
 .endp
 
+;===========================================================================
+; RETURN
+;
+; Returns to the execution point after the most recent GOSUB. Any
+; intervening FOR frames are discarded (GOMOKO.BAS relies on this).
+;
+.proc stReturn
+		;pop entries off runtime stack until we find the right frame
+loop:
+		;##ASSERT dw(runstk)<=dw(memtop2) and !((dw(memtop2)-dw(runstk))&3) and (dw(runstk)=dw(memtop2) or ((db(dw(memtop2)-4)=0 or db(dw(memtop2)-4)>=$80) and dw(dw(memtop2)-3) >= dw(stmtab)))
+		jsr		fix_and_check_rtstack_empty
+		bcs		stack_empty
+stack_not_empty:
+
+		;check if we have a GOSUB frame (varbyte=0) or a FOR frame (varbyte>=$80)
+		dec		memtop2+1
+		ldy		#<-4
+		lda		(memtop2),y
+		spl:ldy	#<-16
+
+		;pop back one frame, regardless of its type
+		jsr		stFor.advance_memtop2_y
+		
+		;keep going if it was a FOR
+		cpy		#<-16
+		beq		loop
+		
+		;switch context and exit
+		ldy		#1
+		bne		stNext.pop_frame		;!! - unconditional
+
+stack_empty:
+		jmp		errorBadRETURN
+
+fix_and_check_rtstack_empty:
+		;check if the runtime stack is floating and fix it if needed
+		jsr		ExecFixStack
+check_rtstack_empty:
+		lda		runstk
+		cmp		memtop2
+		lda		runstk+1
+		sbc		memtop2+1
+		rts
+.endp
 
 ;===========================================================================
 ; NEXT avar
@@ -1702,6 +1713,10 @@ close_loop:
 		ldx		#7
 		sta:rpl	$d200,x-		;!! - A=0 from above
 		
+.def :pmTryDisable
+		lda		pmgbase
+		beq		no_pmg
+
 .def :pmDisable
 		ldx		#2
 		lda		#0
@@ -1730,7 +1745,8 @@ skip_pmenable:
 		ldy		#17
 		lda		#0
 		sta:rpl	hposp0,y-
-		
+
+no_pmg:
 		rts
 
 mask_tab:

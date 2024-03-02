@@ -20,8 +20,9 @@
 
 class VDStringW;
 struct ATFirmwareInfo;
+enum ATSpecificFirmwareType : uint32;
 
 bool ATFirmwareAutodetectCheckSize(uint64 fileSize);
-bool ATFirmwareAutodetect(const void *data, uint32 len, ATFirmwareInfo& info);
+bool ATFirmwareAutodetect(const void *data, uint32 len, ATFirmwareInfo& info, ATSpecificFirmwareType& specificFirmware);
 
 #endif

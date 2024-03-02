@@ -16,11 +16,14 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <at/atcore/logging.h>
 #include <at/atcore/scheduler.h>
 #include "pokey.h"
 #include "pokeyrenderer.h"
 #include "pokeytables.h"
 #include "savestate.h"
+
+ATLogChannel g_ATLCPokeyTEv(false, false, "POKEYTEV", "POKEY timer events (high traffic)");
 
 ATPokeyRenderer::ATPokeyRenderer()
 	: mpScheduler(NULL)
@@ -484,12 +487,21 @@ void ATPokeyRenderer::Flush(const uint32 t) {
 
 	mSortedEdgesTemp2[1].back().t = 0xFFFFFFFF;
 
-	MergeEvents(mSortedEdgesTemp2[0].data(),
-		mSortedEdgesTemp2[1].data(),
+	// The merge order here is critical -- we need channels 3 and 4 to update before
+	// 1 and 2 in case high pass mode is enabled, because if 1+3 or 2+4 fire at the
+	// same time, the high pass is updated with the output state from the last cycle.
+	MergeEvents(mSortedEdgesTemp2[1].data(),
+		mSortedEdgesTemp2[0].data(),
 		mSortedEdges.data());
 
 	VDASSERT((sint32)(mSortedEdges.back().t + timeSortOffset - t) <= 0);
 	VDASSERT((sint32)(mSortedEdges.front().t + timeSortOffset - mLastOutputTime) >= 0);
+
+	if (g_ATLCPokeyTEv.IsEnabled()) {
+		for(const auto& edge : mSortedEdges) {
+			g_ATLCPokeyTEv("%08X:%u\n", edge.t + timeSortOffset, edge.channel);
+		}
+	}
 
 	SortedEdges::iterator it(mSortedEdges.begin()), itEnd(mSortedEdges.end());
 

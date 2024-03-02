@@ -119,7 +119,7 @@ bool VDDisplayFontGDI::Init(HFONT font) {
 	if (!mhbmOld)
 		return false;
 
-	if (!GetTextMetricsA(mhdc, &mMetrics))
+	if (!GetTextMetricsW(mhdc, &mMetrics))
 		return false;
 
 	::SetTextAlign(mhdc, TA_BASELINE | TA_LEFT);
@@ -168,8 +168,6 @@ void VDDisplayFontGDI::ShapeText(const wchar_t *s, uint32 n, vdfastvector<VDDisp
 	size_t gpbase = glyphPlacements.size();
 
 	glyphPlacements.resize(gpbase + n);
-
-	const MAT2 mat = { {0,1}, {0,0}, {0,0}, {0,1} };
 
 	int x = 0;
 	int y = 0;
@@ -406,10 +404,7 @@ vdsize32 VDDisplayFontGDI::FitString(const wchar_t *s, uint32 n, uint32 maxWidth
 	INT maxFit = n;
 	SIZE sz = {0, 0};
 
-	if (VDIsWindowsNT())
-		GetTextExtentExPointW(mhdc, s, n, maxWidth, &maxFit, NULL, &sz);
-	else
-		GetTextExtentExPointA(mhdc, VDTextWToA(s, n).c_str(), (int)n, maxWidth, &maxFit, NULL, &sz);
+	GetTextExtentExPointW(mhdc, s, n, maxWidth, &maxFit, NULL, &sz);
 
 	if (count)
 		*count = maxFit;

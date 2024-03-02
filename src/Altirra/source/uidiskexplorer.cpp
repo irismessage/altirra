@@ -37,6 +37,7 @@
 #include <at/atio/diskimage.h>
 #include <at/atio/diskfs.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/dragdrop.h>
 #include <at/atnativeui/uiproxies.h>
 #include "uifilefilters.h"
 
@@ -390,92 +391,44 @@ public:
 };
 
 namespace {
-	UINT gCFContents;
-	UINT gCFDescriptorA;
-	UINT gCFDescriptorW;
-
-	void InitFileDropClipboardFormats() {
-		gCFContents = RegisterClipboardFormat(CFSTR_FILECONTENTS);
-		gCFDescriptorA = RegisterClipboardFormat(CFSTR_FILEDESCRIPTORA);
-		gCFDescriptorW = RegisterClipboardFormat(CFSTR_FILEDESCRIPTORW);
-	}
-}
-
-namespace {
 	class IATDropTargetNotify {
 	public:
 		virtual uint32 GetDropTargetParentKey() const = 0;
 		virtual void OnFSModified() = 0;
 	};
 
-	class DropTarget : public IDropTarget {
+	class DropTarget final : public ATUIDropTargetBaseW32 {
 	public:
 		DropTarget(HWND hwnd, IATDropTargetNotify *notify);
 
 		void SetFS(IATDiskFS *fs) { mpFS = fs; }
 
-		ULONG STDMETHODCALLTYPE AddRef();
-		ULONG STDMETHODCALLTYPE Release();
-		HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObj);
-
-		HRESULT STDMETHODCALLTYPE DragEnter(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect);
-		HRESULT STDMETHODCALLTYPE DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect);
-		HRESULT STDMETHODCALLTYPE DragLeave();
-		HRESULT STDMETHODCALLTYPE Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect);
+		HRESULT STDMETHODCALLTYPE DragEnter(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) override;
+		HRESULT STDMETHODCALLTYPE DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) override;
+		HRESULT STDMETHODCALLTYPE Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) override;
 
 	protected:
 		void WriteFromStorageMedium(STGMEDIUM *medium, const char *filename, uint32 len);
 
-		VDAtomicInt mRefCount;
-		DWORD mDropEffect;
-		HWND mhwnd;
+		HWND mhwnd = nullptr;
 
-		IATDiskFS *mpFS;
-		IATDropTargetNotify *mpNotify;
+		IATDiskFS *mpFS = nullptr;
+		IATDropTargetNotify *mpNotify = nullptr;
 	};
 
 	DropTarget::DropTarget(HWND hwnd, IATDropTargetNotify *notify)
-		: mRefCount(0)
-		, mDropEffect(DROPEFFECT_NONE)
-		, mhwnd(hwnd)
-		, mpFS(NULL)
+		: mhwnd(hwnd)
 		, mpNotify(notify)
 	{
-		InitFileDropClipboardFormats();
-	}
-
-	ULONG STDMETHODCALLTYPE DropTarget::AddRef() {
-		return ++mRefCount;
-	}
-
-	ULONG STDMETHODCALLTYPE DropTarget::Release() {
-		DWORD rc = --mRefCount;
-
-		if (!rc)
-			delete this;
-
-		return rc;
-	}
-
-	HRESULT STDMETHODCALLTYPE DropTarget::QueryInterface(REFIID riid, void **ppvObj) {
-		if (riid == IID_IDropTarget)
-			*ppvObj = static_cast<IDropTarget *>(this);
-		else if (riid == IID_IUnknown)
-			*ppvObj = static_cast<IUnknown *>(this);
-		else {
-			*ppvObj = NULL;
-			return E_NOINTERFACE;
-		}
-
-		AddRef();
-		return S_OK;
 	}
 
 	HRESULT STDMETHODCALLTYPE DropTarget::DragEnter(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
 		mDropEffect = DROPEFFECT_NONE;
 
 		if (!(GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED) && mpFS && !mpFS->IsReadOnly()) {
-			FORMATETC etc;
+			const auto& formats = ATUIInitDragDropFormatsW32();
+
+			FORMATETC etc {};
 			etc.cfFormat = CF_HDROP;
 			etc.dwAspect = DVASPECT_CONTENT;
 			etc.lindex = -1;
@@ -485,20 +438,17 @@ namespace {
 			HRESULT hr = pDataObj->QueryGetData(&etc);
 
 			if (hr != S_OK) {
-				etc.cfFormat = gCFDescriptorW;
+				etc.cfFormat = formats.mDescriptorW;
 				hr = pDataObj->QueryGetData(&etc);
 
 				if (hr != S_OK) {
-					etc.cfFormat = gCFDescriptorA;
+					etc.cfFormat = formats.mDescriptorA;
 					hr = pDataObj->QueryGetData(&etc);
 				}
 			}
 
 			if (hr == S_OK) {
-				if (grfKeyState & MK_SHIFT)
-					mDropEffect = DROPEFFECT_COPY;
-				else
-					mDropEffect = DROPEFFECT_MOVE;
+				mDropEffect = DROPEFFECT_COPY;
 			}
 		}
 
@@ -507,30 +457,24 @@ namespace {
 	}
 
 	HRESULT STDMETHODCALLTYPE DropTarget::DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
-		if (mDropEffect != DROPEFFECT_NONE) {
-			if (grfKeyState & MK_SHIFT)
-				mDropEffect = DROPEFFECT_COPY;
-			else
-				mDropEffect = DROPEFFECT_MOVE;
-		}
-
 		*pdwEffect = mDropEffect;
 		return S_OK;
 	}
 
-	HRESULT STDMETHODCALLTYPE DropTarget::DragLeave() {
-		return S_OK;
-	}
-
 	HRESULT STDMETHODCALLTYPE DropTarget::Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
-		if ((GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED) || !mpFS || mpFS->IsReadOnly())
+		if (GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED)
 			return S_OK;
+		
+		if (!mpFS || mpFS->IsReadOnly())
+			return S_OK;
+
+		const auto& formats = ATUIInitDragDropFormatsW32();
 
 		// pull filenames
 		vdautoptr2<FILEGROUPDESCRIPTOR> descriptors;
 
 		FORMATETC etc;
-		etc.cfFormat = gCFDescriptorA;
+		etc.cfFormat = formats.mDescriptorA;
 		etc.dwAspect = DVASPECT_CONTENT;
 		etc.lindex = -1;
 		etc.ptd = NULL;
@@ -553,7 +497,7 @@ namespace {
 					if (len64 > 0x4000000)
 						continue;
 
-					etc.cfFormat = gCFContents;
+					etc.cfFormat = formats.mContents;
 					etc.dwAspect = DVASPECT_CONTENT;
 					etc.lindex = i;
 					etc.ptd = NULL;
@@ -582,7 +526,7 @@ namespace {
 
 			ReleaseStgMedium(&medium);
 		} else {
-			etc.cfFormat = gCFDescriptorW;
+			etc.cfFormat = formats.mDescriptorW;
 			hr = pDataObj->GetData(&etc, &medium);
 
 			if (SUCCEEDED(hr)) {
@@ -596,7 +540,7 @@ namespace {
 						if (len64 > 0x4000000)
 							continue;
 
-						etc.cfFormat = gCFContents;
+						etc.cfFormat = formats.mContents;
 						etc.dwAspect = DVASPECT_CONTENT;
 						etc.lindex = i;
 						etc.ptd = NULL;
@@ -694,8 +638,11 @@ namespace {
 		if (SUCCEEDED(hr)) {
 			buf.resize(len32);
 
-			ULONG actual;
-			hr = stream->Read(buf.data(), len32, &actual);
+			ULONG actual = 0;
+			if (len32 > 0)
+				hr = stream->Read(buf.data(), len32, &actual);
+			else
+				hr = S_OK;
 
 			if (SUCCEEDED(hr))
 				mpFS->WriteFile(mpNotify->GetDropTargetParentKey(), filename, buf.data(), actual);
@@ -752,7 +699,7 @@ protected:
 	bool	mbAutoFlush;
 
 	IATDiskImage *mpImage;
-	vdautoptr<IATDiskImage> mpImageAlloc;
+	vdrefptr<IATDiskImage> mpImageAlloc;
 	const wchar_t *mpImageName;
 
 	vdautoptr<IATDiskFS> mpFS;
@@ -898,13 +845,18 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 				} else {
 					ATDiskFSValidationReport validationReport;
 					if (!mpFS->Validate(validationReport)) {
-						mpFS->SetReadOnly(true);
+						// Check if we had a serious error for which we should block writes.
+						if (!validationReport.IsSerious() && validationReport.mbBitmapIncorrectLostSectorsOnly) {
+							ShowWarning(L"The allocation bitmap on this disk is incorrect: some sectors are marked allocated when they are actually free.");
+						} else {
+							mpFS->SetReadOnly(true);
 
-						ShowWarning(
-							validationReport.mbBrokenFiles || validationReport.mbOpenWriteFiles
-								? L"The file system on this disk is damaged and has been mounted as read-only to prevent further damage."
-								: L"The allocation bitmap on this disk is incorrect. The disk has been mounted read-only as a precaution to prevent further damage.",
-							L"Altirra Warning");
+							ShowWarning(
+								validationReport.mbBrokenFiles || validationReport.mbOpenWriteFiles
+									? L"The file system on this disk is damaged and has been mounted as read-only to prevent further damage."
+									: L"The allocation bitmap on this disk is incorrect. The disk has been mounted read-only as a precaution to prevent further damage.",
+								L"Altirra Warning");
+						}
 					}
 				}
 			}
@@ -966,30 +918,39 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 		const VDStringW fn(VDGetLoadFileName(VDMAKEFOURCC('d', 'i', 's', 'k'),
 			(VDGUIHandle)mhdlg,
 			L"Choose disk image to browse",
-			g_ATUIFileFilter_Disk,
+			g_ATUIFileFilter_DiskWithArchives,
 			NULL
 			));
 
 		if (!fn.empty()) {
 			try {
-				vdautoptr<IATDiskImage> image;
+				vdrefptr<IATDiskImage> image;
 				vdautoptr<IATDiskFS> fs;
 				
 				const wchar_t *const fnp = fn.c_str();
+
 				const bool isArc = !vdwcsicmp(VDFileSplitExt(fnp), L".arc");
 
 				if (isArc) {
 					fs = ATDiskMountImageARC(fnp);
 				} else {
-					image = ATLoadDiskImage(fnp);
-					fs = ATDiskMountImage(image, false);
+					ATImageLoadContext ctx;
+					ctx.mLoadType = kATImageType_Disk;
 
-					if (!fs)
-						throw MyError("Unable to detect the file system on the disk image.");
+					VDFileStream fstream(fnp);
+					vdrefptr<IATImage> image0;
+					ATImageLoadAuto(fnp, fnp, fstream, &ctx, nullptr, nullptr, ~image0);
 
-					mpImageAlloc.from(image);
-					mpImage = mpImageAlloc;
+					image = vdpoly_cast<IATDiskImage *>(image0);
+
+					fs = ATDiskMountImage(image, !image->IsUpdatable());
 				}
+
+				if (!fs)
+					throw MyError("Unable to detect the file system on the disk image.");
+
+				mpImageAlloc = std::move(image);
+				mpImage = mpImageAlloc;
 
 				mpFS.from(fs);
 				mpDropTarget->SetFS(mpFS);
@@ -1000,7 +961,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 
 				RefreshList();
 
-				if (!isArc && mpFS->IsReadOnly()) {
+				if ((mpImage && mpImage->IsUpdatable()) && mpFS->IsReadOnly()) {
 					ShowWarning(L"This disk format is only supported in read-only mode.", L"Altirra Warning");
 				} else {
 					ATDiskFSValidationReport validationReport;
@@ -1213,6 +1174,8 @@ namespace {
 	}
 
 	HRESULT STDMETHODCALLTYPE DataObjectFormatEnumerator::Next(ULONG celt, FORMATETC *rgelt, ULONG *pceltFetched) {
+		const auto& formats = ATUIInitDragDropFormatsW32();
+
 		ULONG fetched = 0;
 
 		memset(rgelt, 0, sizeof(rgelt[0])*celt);
@@ -1220,7 +1183,7 @@ namespace {
 		while(celt && mPos < 3) {
 			switch(mPos) {
 				case 0:
-					rgelt->cfFormat = gCFDescriptorA;
+					rgelt->cfFormat = formats.mDescriptorA;
 					rgelt->dwAspect = DVASPECT_CONTENT;
 					rgelt->lindex = -1;
 					rgelt->ptd = NULL;
@@ -1228,7 +1191,7 @@ namespace {
 					break;
 
 				case 1:
-					rgelt->cfFormat = gCFDescriptorW;
+					rgelt->cfFormat = formats.mDescriptorW;
 					rgelt->dwAspect = DVASPECT_CONTENT;
 					rgelt->lindex = -1;
 					rgelt->ptd = NULL;
@@ -1236,7 +1199,7 @@ namespace {
 					break;
 
 				default:
-					rgelt->cfFormat = gCFContents;
+					rgelt->cfFormat = formats.mContents;
 					rgelt->dwAspect = DVASPECT_CONTENT;
 					rgelt->lindex = mPos - 1;
 					rgelt->ptd = NULL;
@@ -1323,7 +1286,6 @@ namespace {
 		: mRefCount(0)
 		, mpFS(fs)
 	{
-		InitFileDropClipboardFormats();
 	}
 
 	DataObject::~DataObject() {
@@ -1366,7 +1328,9 @@ namespace {
 		if (FAILED(hr))
 			return hr;
 
-		if (pformatetcIn->cfFormat == gCFDescriptorA) {
+		const auto& formats = ATUIInitDragDropFormatsW32();
+
+		if (pformatetcIn->cfFormat == formats.mDescriptorA) {
 			HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, sizeof(FILEGROUPDESCRIPTORA) + sizeof(FILEDESCRIPTORA) * (mFiles.size() - 1));
 
 			if (!hMem)
@@ -1385,7 +1349,7 @@ namespace {
 			pmedium->tymed = TYMED_HGLOBAL;
 			pmedium->hGlobal = hMem;
 			pmedium->pUnkForRelease = NULL;
-		} else if (pformatetcIn->cfFormat == gCFDescriptorW) {
+		} else if (pformatetcIn->cfFormat == formats.mDescriptorW) {
 			HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, sizeof(FILEGROUPDESCRIPTORW) + sizeof(FILEDESCRIPTORW) * (mFiles.size() - 1));
 
 			if (!hMem)
@@ -1454,8 +1418,10 @@ namespace {
 
 		if (FAILED(hr))
 			return hr;
+		
+		const auto& formats = ATUIInitDragDropFormatsW32();
 
-		if (pformatetc->cfFormat == gCFDescriptorA) {
+		if (pformatetc->cfFormat == formats.mDescriptorA) {
 			SIZE_T bytesNeeded = sizeof(FILEGROUPDESCRIPTORA) + sizeof(FILEDESCRIPTORA)*(mFiles.size() - 1);
 
 			if (pmedium->tymed != TYMED_HGLOBAL)
@@ -1471,7 +1437,7 @@ namespace {
 			GenerateFileDescriptors((FILEGROUPDESCRIPTORA *)p);
 
 			GlobalUnlock(pmedium->hGlobal);
-		} else if (pformatetc->cfFormat == gCFDescriptorW) {
+		} else if (pformatetc->cfFormat == formats.mDescriptorW) {
 			SIZE_T bytesNeeded = sizeof(FILEGROUPDESCRIPTORW) + sizeof(FILEDESCRIPTORW)*(mFiles.size() - 1);
 
 			if (pmedium->tymed != TYMED_HGLOBAL)
@@ -1487,7 +1453,7 @@ namespace {
 			GenerateFileDescriptors((FILEGROUPDESCRIPTORW *)p);
 
 			GlobalUnlock(pmedium->hGlobal);
-		} else if (pformatetc->cfFormat == gCFContents) {
+		} else if (pformatetc->cfFormat == formats.mContents) {
 			vdrefptr<IStream> streamAlloc;
 			IStream *stream;
 
@@ -1535,13 +1501,15 @@ namespace {
 	}
 
 	HRESULT STDMETHODCALLTYPE DataObject::QueryGetData(FORMATETC *pformatetc) {
-		if (pformatetc->cfFormat == gCFContents) {
+		const auto& formats = ATUIInitDragDropFormatsW32();
+
+		if (pformatetc->cfFormat == formats.mContents) {
 			if ((uint32)pformatetc->lindex >= mFiles.size())
 				return DV_E_LINDEX;
 
 			if (!(pformatetc->tymed & (TYMED_ISTREAM | TYMED_HGLOBAL)))
 				return DV_E_TYMED;
-		} else if (pformatetc->cfFormat == gCFDescriptorA || pformatetc->cfFormat == gCFDescriptorW) {
+		} else if (pformatetc->cfFormat == formats.mDescriptorA || pformatetc->cfFormat == formats.mDescriptorW) {
 			if (pformatetc->lindex != -1)
 				return DV_E_LINDEX;
 

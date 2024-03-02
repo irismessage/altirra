@@ -131,7 +131,9 @@ public:
 	virtual vdrect32 GetScissorRect() = 0;
 	virtual void SetScissorRect(const vdrect32& r) = 0;
 
+	virtual void SetVertexProgramConstCount(uint32 count) = 0;
 	virtual void SetVertexProgramConstF(uint32 baseIndex, uint32 count, const float *data) = 0;
+	virtual void SetFragmentProgramConstCount(uint32 count) = 0;
 	virtual void SetFragmentProgramConstF(uint32 baseIndex, uint32 count, const float *data) = 0;
 
 	virtual void Clear(VDTClearFlags clearFlags, uint32 color, float depth, uint32 stencil) = 0;

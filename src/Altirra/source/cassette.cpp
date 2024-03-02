@@ -21,12 +21,12 @@
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/math.h>
-#include <vd2/Riza/audioformat.h>
 #include <at/atcore/cio.h>
 #include <at/atcore/vfs.h>
+#include <at/atio/cassetteimage.h>
+#include <at/atio/wav.h>
 #include "audiooutput.h"
 #include "cassette.h"
-#include "cassetteimage.h"
 #include "cpu.h"
 #include "cpumemory.h"
 #include "console.h"
@@ -38,6 +38,7 @@ using namespace nsVDWinFormats;
 ATDebuggerLogChannel g_ATLCCas(true, false, "CAS", "Cassette I/O");
 ATDebuggerLogChannel g_ATLCCasData(false, true, "CASDATA", "Cassette data");
 ATDebuggerLogChannel g_ATLCCasDirectData(false, true, "CASDRDATA", "Cassette direct data");
+ATDebuggerLogChannel g_ATLCCasDecoder(false, true, "CASDEC", "Cassette data decoder");
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -97,6 +98,7 @@ void ATCassetteEmulator::Init(ATPokeyEmulator *pokey, ATScheduler *sched, ATSche
 
 	audioOut->AddSyncAudioSource(this);
 
+	RewindToStart();
 	ColdReset();
 }
 
@@ -141,7 +143,9 @@ void ATCassetteEmulator::ColdReset() {
 	mAudioPosition = 0;
 	mAudioEvents.clear();
 
-	RewindToStart();
+	if (mbAutoRewind)
+		RewindToStart();
+
 	Play();
 }
 	
@@ -168,15 +172,23 @@ void ATCassetteEmulator::Load(const wchar_t *fn) {
 	Load(view->GetStream());
 }
 
-void ATCassetteEmulator::Load(IVDRandomAccessStream& file) {
+void ATCassetteEmulator::Load(IVDRandomAccessStream& stream) {
+	Unload();
+
+	vdrefptr<IATCassetteImage> image;
+	ATLoadCassetteImage(stream, ~image);
+
+	Load(image);
+}
+
+void ATCassetteEmulator::Load(IATCassetteImage *image) {
 	TapeChanging.Notify();
 
 	try {
 		UnloadInternal();
 
-		VDBufferedStream bs(&file, 65536);
-
-		ATLoadCassetteImage(bs, mbLoadDataAsAudio, &mpImage);
+		mpImage = image;
+		mpImage->AddRef();
 
 		mPosition = 0;
 		mLength = mpImage->GetDataLength();
@@ -301,6 +313,10 @@ void ATCassetteEmulator::RewindToStart() {
 		pos = pos % (uint32)(kATCassetteDataSampleRate / 10.0f);
 	}
 
+	mJitterSeed = pos;
+	if (!mJitterSeed)
+		mJitterSeed = 1;
+
 	SeekToBitPos(pos);
 }
 
@@ -368,14 +384,17 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr0, uint16 len, ATCPUEmulatorMem
 	uint8 actualChecksum = 0;
 	uint8 status = 0x01;	// complete
 
-	uint32 syncGapTimeout = 80;
-	uint32 syncGapTimeLeft = syncGapTimeout;
-	uint32 syncMarkTimeout = 30;
+	constexpr uint32 kMaxDataBitsPerSyncBit = (uint32)(0.5f + kATCassetteDataSampleRate / 600.0f) * 2;
+	constexpr uint32 kSyncGapTimeout = kMaxDataBitsPerSyncBit * 3;
+
+	uint32 syncGapTimeLeft = kSyncGapTimeout;
+	uint32 syncMarkTimeout = kMaxDataBitsPerSyncBit;
 	int syncBitsLeft = 20;
 	uint32 syncStart = 0;
 	float idealBaudRate = 0.0f;
 	int framingErrors = 0;
 	uint32 firstFramingError = 0;
+	int lastReceivedByte = -1;
 
 	uint16 bufadr = bufadr0;
 	while(offset <= len) {
@@ -386,7 +405,7 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr0, uint16 len, ATCPUEmulatorMem
 
 		if (syncGapTimeLeft > 0) {
 			if (!mbDataLineState)
-				syncGapTimeLeft = syncGapTimeout;
+				syncGapTimeLeft = kSyncGapTimeout;
 			else
 				--syncGapTimeLeft;
 
@@ -398,11 +417,11 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr0, uint16 len, ATCPUEmulatorMem
 
 			if (expected != mbDataLineState) {
 				if (--syncMarkTimeout <= 0) {
-					syncMarkTimeout = 30;
+					syncMarkTimeout = kMaxDataBitsPerSyncBit;
 
 					if (syncBitsLeft < 15) {
 						//VDDEBUG("CAS: Sync timeout; restarting.\n");
-						syncGapTimeLeft = syncGapTimeout;
+						syncGapTimeLeft = kSyncGapTimeout;
 					}
 
 					syncBitsLeft = 20;
@@ -413,7 +432,7 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr0, uint16 len, ATCPUEmulatorMem
 				}
 
 				--syncBitsLeft;
-				syncMarkTimeout = 30;
+				syncMarkTimeout = kMaxDataBitsPerSyncBit;
 
 				if (syncBitsLeft == 0) {
 					uint32 bitDelta = mPosition - syncStart;
@@ -443,6 +462,7 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr0, uint16 len, ATCPUEmulatorMem
 					offset = 2;
 					framingErrors = 0;
 					firstFramingError = 0;
+					lastReceivedByte = 0x55;
 				}
 			}
 
@@ -459,6 +479,8 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr0, uint16 len, ATCPUEmulatorMem
 		}
 
 		VDASSERT(r == kBR_ByteReceived);
+		
+		lastReceivedByte = mDataByte;
 
 		if (offset < len) {
 			g_ATLCCasData("CASDATA: Receiving byte: %02x (accelerated) (pos=%.3fs)\n", mDataByte, (float)mPosition / (float)kATCassetteDataSampleRate);
@@ -475,7 +497,7 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr0, uint16 len, ATCPUEmulatorMem
 			actualChecksum = (uint8)((sum & 0xff) + ((sum >> 8) & 0xff));
 			uint8 readChecksum = mDataByte;
 
-			mpMem->WriteByte(0x0031, readChecksum);
+			mpMem->WriteByte(ATKernelSymbols::CHKSUM, readChecksum);
 
 			if (actualChecksum != readChecksum) {
 				status = 0x8F;		// checksum error
@@ -493,6 +515,10 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr0, uint16 len, ATCPUEmulatorMem
 			++offset;
 		}
 	}
+
+	// set SERIN to the last received byte (needed by Misja + Fred)
+	if (lastReceivedByte >= 0)
+		mpPokey->SetSERIN((uint8)lastReceivedByte);
 
 	// resync audio position
 	SeekAudio(VDRoundToInt((float)mPosition * (kATCassetteImageAudioRate / kATCassetteDataSampleRate)));
@@ -556,17 +582,30 @@ uint8 ATCassetteEmulator::WriteBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMem
 
 void ATCassetteEmulator::OnScheduledEvent(uint32 id) {
 	if (id == kATCassetteEventId_ProcessBit) {
-		mpPlayEvent = NULL;
+		mpPlayEvent = nullptr;
 
-		if (kBR_ByteReceived == ProcessBit()) {
-			mpPokey->ReceiveSIOByte(mDataByte, 0, false, false, false);
+		const auto result = ProcessBit();
+		
+		if (mPosition < mLength) {
+			static_assert(kATCassetteCyclesPerDataSample == 112, "Re-check jitter parameters");
+
+			// Update xorshift32 RNG
+			mJitterPRNG ^= mJitterPRNG >> 1;
+			mJitterPRNG ^= mJitterPRNG << 3;
+			mJitterPRNG ^= mJitterPRNG >> 10;
+
+			const uint32 newPeriod = kATCassetteCyclesPerDataSample - 32 + (mJitterPRNG & 63);
+			const uint32 newDelay = newPeriod + kATCassetteCyclesPerDataSample - mLastSampleOffset;
+			mLastSampleOffset = newPeriod;
+			mpScheduler->SetEvent(newDelay, this, kATCassetteEventId_ProcessBit, mpPlayEvent);
+		}
+
+		if (result == kBR_ByteReceived) {
+			mpPokey->ReceiveSIOByte(mDataByte, 0, false, false, false, false);
 
 			g_ATLCCasData("Receiving byte: %02x (pos=%.3fs)\n", mDataByte, (float)mPosition / (float)kATCassetteDataSampleRate);
 		}
 
-		if (mPosition < mLength) {
-			mpPlayEvent = mpScheduler->AddEvent(kATCassetteCyclesPerDataSample, this, kATCassetteEventId_ProcessBit);
-		}
 	} else if (id == kATCassetteEventId_Record) {
 		mpRecordEvent = mpScheduler->AddEvent(kRecordPollPeriod, this, kATCassetteEventId_Record);
 
@@ -604,6 +643,9 @@ void ATCassetteEmulator::PokeyChangeSerialRate(uint32 divisor) {
 
 void ATCassetteEmulator::PokeyResetSerialInput() {
 	mSIOPhase = 0;
+
+	if (g_ATLCCasDecoder.IsEnabled())
+		g_ATLCCasDecoder("[%.1f / %d] Serial input hardware reset\n", (float)mPosition * kATCassetteMSPerDataSample, mPosition);
 }
 
 void ATCassetteEmulator::PokeyBeginCassetteData(uint8 skctl) {
@@ -649,6 +691,8 @@ void ATCassetteEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 	// fix end for currently open event if there is one
 	if (mbAudioEventOpen)
 		mAudioEvents.back().mStopTime = ATSCHEDULER_GETTIME(mpScheduler);
+
+	const bool haveAudio = mpImage && (!mpImage->IsAudioCreated() || mbLoadDataAsAudio);
 
 	uint32 t = startTime;
 	uint32 t2 = t + n * kATCyclesPerSyncSample;
@@ -701,7 +745,7 @@ void ATCassetteEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 			toRender = n;
 
 		// render samples
-		if (mpImage)
+		if (haveAudio)
 			mpImage->AccumulateAudio(dstLeft, dstRight, pos, posfrac, toRender);
 
 		n -= toRender;
@@ -721,8 +765,15 @@ void ATCassetteEmulator::UpdateMotorState() {
 	mbMotorRunning = (mbPlayEnable || mbRecordEnable) && motorCanMove;
 
 	if (mbMotorRunning && mbPlayEnable) {
-		if (!mpPlayEvent && mPosition < mLength)
+		if (!mpPlayEvent && mPosition < mLength) {
+			mJitterPRNG = mPosition + mJitterSeed;
+
+			if (!mJitterPRNG)
+				mJitterPRNG = 1;
+
+			mLastSampleOffset = kATCassetteCyclesPerDataSample;
 			mpPlayEvent = mpScheduler->AddEvent(kATCassetteCyclesPerDataSample, this, kATCassetteEventId_ProcessBit);
+		}
 
 		StartAudio();
 	} else {
@@ -753,16 +804,20 @@ void ATCassetteEmulator::UpdateMotorState() {
 ATCassetteEmulator::BitResult ATCassetteEmulator::ProcessBit() {
 	// The sync mark has to be read before the baud rate is set, so we force the averaging
 	// period to ~2000 baud.
-	const bool newDataLineState = mpImage && mpImage->GetBit(mPosition, 2, 1, mbDataLineState);
+	const bool newDataLineState = mpImage && mpImage->GetBit(mPosition, 8, 3, mbDataLineState);
 
 	if (mbDataLineState != newDataLineState) {
 		mbDataLineState = newDataLineState;
 
-		g_ATLCCasDirectData("[%.1f] Direct data line is now %d\n", (float)mPosition / 6.77944f, mbDataLineState);
+		g_ATLCCasDirectData("[%.1f] Direct data line is now %d\n", (float)mPosition * kATCassetteMSPerDataSample, mbDataLineState);
 		mpPokey->SetDataLine(mbDataLineState);
 	}
 
-	const bool dataBit = mpImage && mpImage->GetBit(mPosition, mAveragingPeriod, mThresholdZeroBit, mbOutputBit);
+	const uint32 halfPeriod = mAveragingPeriod >> 1;
+	const uint32 startPos = mPosition < halfPeriod ? 0 : mPosition - halfPeriod;
+	const uint32 endPos = mPosition + (mAveragingPeriod - halfPeriod);
+
+	const bool dataBit = mpImage && mpImage->GetBit(startPos, endPos - startPos, mThresholdZeroBit, mbOutputBit);
 	++mPosition;
 
 	PositionChanged.NotifyDeferred();
@@ -770,18 +825,19 @@ ATCassetteEmulator::BitResult ATCassetteEmulator::ProcessBit() {
 	if (dataBit != mbOutputBit) {
 		mbOutputBit = dataBit;
 
-		//VDDEBUG("[%.1f] Data bit is now %d\n", (float)mPosition / 6.77944f, dataBit);
-
 		// Alright, we've seen a transition, so this must be the start of a data bit.
 		// Set ourselves up to sample.
-		if (mbDataBitEdge) {
-			//VDDEBUG("[%.1f] Starting data bit\n", (float)mPosition / 6.77944f);
-			mbDataBitEdge = false;
-		}
+		if (mSIOPhase == 0 && !dataBit) {
+			mSIOPhase = 1;
 
-		mDataBitCounter = 0;
-		return kBR_NoOutput;
+			mbDataBitEdge = false;
+			mDataBitCounter = kATCassetteCyclesPerDataSample >> 1;
+			return kBR_NoOutput;
+		}
 	}
+
+	if (mSIOPhase == 0 || (mSIOPhase == 1 && dataBit))
+		return kBR_NoOutput;
 
 	mDataBitCounter += kATCassetteCyclesPerDataSample;
 	if (mDataBitCounter < mDataBitHalfPeriod)
@@ -790,17 +846,18 @@ ATCassetteEmulator::BitResult ATCassetteEmulator::ProcessBit() {
 	mDataBitCounter -= mDataBitHalfPeriod;
 
 	if (mbDataBitEdge) {
+		if (g_ATLCCasDecoder.IsEnabled())
+			g_ATLCCasDecoder("[%.1f / %d] Bit cell %d start  - %d\n", (float)mPosition * kATCassetteMSPerDataSample, mPosition, mSIOPhase, dataBit);
+
 		// We were expecting the leading edge of a bit and didn't see a transition.
 		// Assume there is an invisible bit boundary and set ourselves up to sample
 		// the data bit one half bit period from now.
 		mbDataBitEdge = false;
-//		VDDEBUG("[%.1f] Starting data bit (implicit)\n", (float)mPosition / 6.77944f);
 		return kBR_NoOutput;
 	}
 
 	// Set ourselves up to look for another edge transition.
 	mbDataBitEdge = true;
-//	VDDEBUG("[%.1f] Sampling data bit %d\n", (float)mPosition / 6.77944f, mbOutputBit);
 
 	// Time to sample the data bit.
 	//
@@ -812,25 +869,26 @@ ATCassetteEmulator::BitResult ATCassetteEmulator::ProcessBit() {
 	// ____|____|____|____|____|____|____|____|____|
 	// start                                         stop
 
-	if (mSIOPhase == 0) {
+	if (g_ATLCCasDecoder.IsEnabled())
+		g_ATLCCasDecoder("[%.1f / %d] Bit cell %d sample - %d\n", (float)mPosition * kATCassetteMSPerDataSample, mPosition, mSIOPhase, dataBit);
+
+	if (mSIOPhase == 1) {
 		// Check for start bit.
 		if (!mbOutputBit) {
-			mSIOPhase = 1;
-//			VDDEBUG("[%.1f] Start bit detected\n", (float)mPosition / 6.77944f);
-		}
+			mSIOPhase = 2;
+		} else
+			mSIOPhase = 0;
 	} else {
 		++mSIOPhase;
-		if (mSIOPhase > 9) {
+		if (mSIOPhase > 10) {
 			mSIOPhase = 0;
 
 			// Check for stop bit.
 			if (mbOutputBit) {
 				// We got a mark -- send the byte on.
-				//VDDEBUG("[%.1f] Stop bit detected; receiving byte %02x\n", (float)mPosition / 6.77944f, mDataByte);
 				return kBR_ByteReceived;
 			} else {
 				// Framing error -- drop the byte.
-				//VDDEBUG("[%.1f] Framing error detected (baud rate = %.2f)\n", (float)mPosition / 6.77944f, 7159090.0f / 8.0f / (float)mDataBitHalfPeriod);
 				return kBR_FramingError;
 			}
 		} else {

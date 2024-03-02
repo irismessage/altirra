@@ -1,4 +1,4 @@
-//	Altirra - Atari 800/800XL/5200 emulator
+﻿//	Altirra - Atari 800/800XL/5200 emulator
 //	Copyright (C) 2008-2012 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
@@ -20,7 +20,22 @@
 
 #include <vd2/system/linearalloc.h>
 #include <at/atcore/scheduler.h>
-#include "audiosource.h"
+#include <at/atcore/audiosource.h>
+
+enum ATAudioSampleId : uint32 {
+	kATAudioSampleId_None,
+	kATAudioSampleId_DiskRotation,
+	kATAudioSampleId_DiskStep1,
+	kATAudioSampleId_DiskStep2,
+	kATAudioSampleId_DiskStep2H,
+	kATAudioSampleId_DiskStep3
+};
+
+struct ATAudioSampleDesc {
+	const sint16 *mpData;
+	uint32 mLength;
+	float mBaseVolume;
+};
 
 class ATAudioSyncMixer final : public IATSyncAudioSource {
 	ATAudioSyncMixer(const ATAudioSyncMixer&) = delete;
@@ -32,13 +47,15 @@ public:
 	void Init(ATScheduler *sch);
 	void Shutdown();
 
+	uint32 AddSound(ATAudioMix mix, uint32 delay, ATAudioSampleId sampleId, float volume);
+	uint32 AddLoopingSound(ATAudioMix mix, uint32 delay, ATAudioSampleId sampleId, float volume);
+
 	uint32 AddSound(ATAudioMix mix, uint32 delay, const sint16 *sample, uint32 len, float volume);
 	uint32 AddLoopingSound(ATAudioMix mix, uint32 delay, const sint16 *sample, uint32 len, float volume);
 	void StopSound(uint32 id);
 	void StopSound(uint32 id, uint32 time);
 
 public:
-	bool SupportsStereoMixing() const override { return false; }
 	bool RequiresStereoMixingNow() const override { return false; }
 	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 
@@ -63,6 +80,8 @@ protected:
 	typedef vdfastvector<Sound *> Sounds;
 	Sounds mSounds;
 	Sounds mFreeSounds;
+
+	ATAudioSampleDesc mSamples[5];
 
 	VDLinearAllocator mAllocator;
 };

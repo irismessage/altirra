@@ -12,6 +12,18 @@
 		</Expand>
 	</Type>
 
+	<Type Name="vdfastfixedvector&lt;*,*&gt;">
+		<DisplayString>size={mpEnd-mpBegin,i}/{m.eos-mpBegin,i}</DisplayString>
+		<Expand>
+			<Item Name="[size]">mpEnd-mpBegin</Item>
+			<Item Name="[capacity]">m.eos-mpBegin</Item>
+			<ArrayItems>
+				<Size>mpEnd-mpBegin</Size>
+				<ValuePointer>mpBegin</ValuePointer>
+			</ArrayItems>
+		</Expand>
+	</Type>
+
 	<Type Name="vdvector&lt;*,*&gt;">
 		<DisplayString>size={m.mpEnd-m.mpBegin,i}/{m.mpEOS-m.mpBegin,i}</DisplayString>
 		<Expand>
@@ -101,14 +113,29 @@
 		</Expand>
 	</Type>
 
-  <Type Name="vdhashtable_iterator&lt;*&gt;">
-    <DisplayString><![CDATA[{static_cast<vdhashtable_node<$T1 > *>(mpNode)}]]></DisplayString>
-    <Expand>
-      <Item Name="Data"><![CDATA[static_cast<vdhashtable_node<$T1 > *>(mpNode)->mData]]></Item>
-      <Item Name="Next"><![CDATA[mpNode->mpHashNext]]></Item>
-    </Expand>
-  </Type>
-  
+	<Type Name="vdhashtable_iterator&lt;*&gt;">
+		<DisplayString><![CDATA[{static_cast<vdhashtable_node<$T1 > *>(mpNode)}]]></DisplayString>
+		<Expand>
+			<Item Name="Data"><![CDATA[static_cast<vdhashtable_node<$T1 > *>(mpNode)->mData]]></Item>
+			<Item Name="Next"><![CDATA[mpNode->mpHashNext]]></Item>
+		</Expand>
+	</Type>
+	
+	<Type Name="vdblock&lt;*&gt;">
+		<DisplayString>size={mSize,i}</DisplayString>
+		<Expand>
+			<Item Name="[size]">mSize</Item>
+			<ArrayItems>
+				<Size>mSize</Size>
+				<ValuePointer>mpBlock</ValuePointer>
+			</ArrayItems>
+		</Expand>		
+	</Type>
+	
+	<Type Name="VDRect&lt;*&gt;">
+		<DisplayString>({left},{top})-({right},{bottom}) [{right-left}x{bottom-top}]</DisplayString>
+	</Type>
+
 	<Type Name="ATEthernetAddr">
 		<DisplayString>{mAddr[0],xb}</DisplayString>
 	</Type>
@@ -120,5 +147,29 @@
 				{mRemoteAddress&255,i}.{(mRemoteAddress>>8)&255,i}.{(mRemoteAddress>>16)&255,i}.{(mRemoteAddress>>24)&255,i}:{mRemotePort,i}
 			]]>
 		</DisplayString>
+	</Type>
+
+	<Type Name="ATDBString">
+		<DisplayString>
+			<![CDATA[
+				{(const char *)&mOffset + mOffset,s8}
+			]]>
+		</DisplayString>
+		<Expand>
+			<Item Name="offset">mOffset</Item>
+			<Item Name="ptr">(const char *)&amp;mOffset + mOffset</Item>
+		</Expand>
+	</Type>
+	
+	<Type Name="ATDBVector&lt;*&gt;">
+		<DisplayString>size={mSize}</DisplayString>
+		<Expand>
+			<Item Name="[offset]">mOffset</Item>
+			<Item Name="[size]">mSize</Item>
+			<ArrayItems>
+				<Size>mSize</Size>
+				<ValuePointer>(const $T1 *)((const char *)&amp;mOffset + mOffset)</ValuePointer>
+			</ArrayItems>			
+		</Expand>
 	</Type>
 </AutoVisualizer>

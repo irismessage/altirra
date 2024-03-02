@@ -32,9 +32,9 @@ public:
 	virtual void OnActionStop(uint32 id) override;
 
 protected:
-	void OnButtonPressed(ATUIButton *);
-	void OnButtonReleased(ATUIButton *);
-	void OnButtonHeld(ATUIButton *btn, bool state, int index);
+	void OnButtonPressed(uint32 index);
+	void OnButtonReleased(uint32 index);
+	void OnButtonHeld(bool state, int index);
 	void UpdateLabels();
 
 	struct KeyEntry;

@@ -1769,8 +1769,9 @@ already_open:
 
 		;close the IOCB first, then call it
 		jsr		close_and_exit
-
-		jmp		(runad)
+		jsr		do_run
+		ldy		#1
+		rts
 
 close_and_exit:
 		ldx		dos_iocb
@@ -1780,6 +1781,9 @@ close_and_exit:
 		ldy		#1
 fail:
 		rts
+
+do_run:
+		jmp		(runad)
 .endp
 
 ;==========================================================================

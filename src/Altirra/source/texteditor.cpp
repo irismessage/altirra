@@ -16,7 +16,6 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
-#define _WIN32_WINNT 0x0500
 #include "texteditor.h"
 
 #include <vd2/system/binary.h>

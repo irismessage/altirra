@@ -36,6 +36,7 @@ public:
 
 public:
 	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void GetSettingsBlurb(VDStringW& buf) override;
 	void GetSettings(ATPropertySet& settings) override;
 	bool SetSettings(const ATPropertySet& settings) override;
 

@@ -32,12 +32,16 @@ public:
 
 	virtual IATDeviceParent *GetParent() override;
 	virtual void SetParent(IATDeviceParent *parent) override;
+	virtual void GetSettingsBlurb(VDStringW& buf) override;
 	virtual void GetSettings(ATPropertySet& settings) override;
 	virtual bool SetSettings(const ATPropertySet& settings) override;
 	virtual void Init() override;
 	virtual void Shutdown() override;
+	virtual uint32 GetComputerPowerOnDelay() const override;
 	virtual void WarmReset() override;
 	virtual void ColdReset() override;
+	virtual void ComputerColdReset() override;
+	virtual void PeripheralColdReset() override;
 
 protected:
 	IATDeviceParent *mpDeviceParent;

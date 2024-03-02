@@ -98,7 +98,8 @@ public:
 	void	AddSIODevice(IATPokeySIODevice *device);
 	void	RemoveSIODevice(IATPokeySIODevice *device);
 
-	void	ReceiveSIOByte(uint8 byte, uint32 cyclesPerBit, bool simulateInputPort, bool allowBurst, bool synchronous);
+	void	ReceiveSIOByte(uint8 byte, uint32 cyclesPerBit, bool simulateInputPort, bool allowBurst, bool synchronous, bool forceFramingError);
+	void	SetSERIN(uint8 v) { mSERIN = v; }
 
 	void	SetAudioLine2(int v);		// used for audio from motor control line
 	void	SetDataLine(bool newState);
@@ -106,6 +107,8 @@ public:
 	void	SetSpeaker(bool newState);
 
 	void	SetExternalSerialClock(uint32 basetime, uint32 period);
+	uint32	GetSerialCyclesPerBitRecv() const;
+	uint32	GetSerialInputResetCounter() const { return mSerialInputResetCounter; }
 
 	bool	IsChannelEnabled(uint32 channel) const;
 	void	SetChannelEnabled(uint32 channel, bool enabled);
@@ -171,7 +174,6 @@ protected:
 
 	void	OnSerialInputTick();
 	void	OnSerialOutputTick();
-	uint32	GetSerialCyclesPerBitRecv() const;
 
 	void	RecomputeAllowedDeferredTimers();
 
@@ -284,6 +286,7 @@ protected:
 	bool	mbSerInBurstPendingData;
 	bool	mbSerInDeferredLoad;
 	uint32	mSerOutBurstDeadline;
+	uint32	mSerialInputResetCounter = 0;
 
 	uint32	mSerialSimulateInputBaseTime;
 	uint32	mSerialSimulateInputCyclesPerBit;
@@ -352,6 +355,9 @@ protected:
 	uint8	mPotMasterCounter = 0;
 	uint32	mPotLastTimeFast = 0;
 	uint32	mPotLastTimeSlow = 0;
+
+	bool	mTraceDirectionSend = false;
+	uint32	mTraceByteIndex = 0;
 };
 
 #endif

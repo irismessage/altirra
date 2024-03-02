@@ -27,12 +27,16 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\h\at\atcore\audiosource.h" />
     <ClInclude Include="..\h\at\atcore\blockdevice.h" />
+    <ClInclude Include="..\h\at\atcore\checksum.h" />
     <ClInclude Include="..\h\at\atcore\cio.h" />
     <ClInclude Include="..\h\at\atcore\consoleoutput.h" />
+    <ClInclude Include="..\h\at\atcore\constants.h" />
     <ClInclude Include="..\h\at\atcore\deferredevent.h" />
     <ClInclude Include="..\h\at\atcore\device.h" />
     <ClInclude Include="..\h\at\atcore\devicecart.h" />
+    <ClInclude Include="..\h\at\atcore\devicediskdrive.h" />
     <ClInclude Include="..\h\at\atcore\deviceindicators.h" />
     <ClInclude Include="..\h\at\atcore\devicecio.h" />
     <ClInclude Include="..\h\at\atcore\deviceimpl.h" />
@@ -42,8 +46,10 @@
     <ClInclude Include="..\h\at\atcore\deviceprinter.h" />
     <ClInclude Include="..\h\at\atcore\deviceserial.h" />
     <ClInclude Include="..\h\at\atcore\devicesio.h" />
+    <ClInclude Include="..\h\at\atcore\devicesioimpl.h" />
     <ClInclude Include="..\h\at\atcore\deviceu1mb.h" />
     <ClInclude Include="..\h\at\atcore\devicevideo.h" />
+    <ClInclude Include="..\h\at\atcore\intrin_sse2.h" />
     <ClInclude Include="..\h\at\atcore\logging.h" />
     <ClInclude Include="..\h\at\atcore\media.h" />
     <ClInclude Include="..\h\at\atcore\memoryutils.h" />
@@ -54,9 +60,11 @@
     <ClInclude Include="..\h\at\atcore\scheduler.h" />
     <ClInclude Include="..\h\at\atcore\sioutils.h" />
     <ClInclude Include="..\h\at\atcore\vfs.h" />
+    <ClInclude Include="..\h\at\atcore\wraptime.h" />
     <ClInclude Include="h\stdafx.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="source\checksum.cpp" />
     <ClCompile Include="source\consoleoutput.cpp" />
     <ClCompile Include="source\deferredevent.cpp" />
     <ClCompile Include="source\deviceimpl.cpp" />
@@ -77,6 +85,11 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="source\vfs.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\devicesioimpl.cpp">
+      <FileType>Document</FileType>
+    </ClCompile>
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{B3C54D9A-6CBC-4A10-93EE-7A88B1B6E5AF}</ProjectGuid>

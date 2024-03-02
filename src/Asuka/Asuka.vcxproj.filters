@@ -36,9 +36,6 @@
     <ClCompile Include="source\fontrender.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\fxc.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\fxc10.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -54,9 +51,6 @@
     <ClCompile Include="source\hash.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\lookup.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -66,22 +60,7 @@
     <ClCompile Include="source\maketables.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\mapconv.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\psa.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\snapsetup.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\symbols.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\utils.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\verinc.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\stdafx.cpp">

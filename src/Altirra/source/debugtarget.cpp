@@ -50,43 +50,47 @@ ATDebugDisasmMode ATDebuggerDefaultTarget::GetDisasmMode() {
 
 void ATDebuggerDefaultTarget::GetExecState(ATCPUExecState& state) {
 	ATCPUEmulator& cpu = g_sim.GetCPU();
-	state.mPC = cpu.GetInsnPC();
-	state.mA = cpu.GetA();
-	state.mX = cpu.GetX();
-	state.mY = cpu.GetY();
-	state.mS = cpu.GetS();
-	state.mP = cpu.GetP();
+	ATCPUExecState6502& state6502 = state.m6502;
+	state6502.mPC = cpu.GetInsnPC();
+	state6502.mA = cpu.GetA();
+	state6502.mX = cpu.GetX();
+	state6502.mY = cpu.GetY();
+	state6502.mS = cpu.GetS();
+	state6502.mP = cpu.GetP();
 
-	state.mAH = cpu.GetAH();
-	state.mXH = cpu.GetXH();
-	state.mYH = cpu.GetYH();
-	state.mSH = cpu.GetSH();
-	state.mB = cpu.GetB();
-	state.mK = cpu.GetK();
-	state.mDP = cpu.GetD();
-	state.mbEmulationFlag = cpu.GetEmulationFlag();
+	state6502.mAH = cpu.GetAH();
+	state6502.mXH = cpu.GetXH();
+	state6502.mYH = cpu.GetYH();
+	state6502.mSH = cpu.GetSH();
+	state6502.mB = cpu.GetB();
+	state6502.mK = cpu.GetK();
+	state6502.mDP = cpu.GetD();
+	state6502.mbEmulationFlag = cpu.GetEmulationFlag();
+	
+	state6502.mbAtInsnStep = cpu.IsAtInsnStep();
 }
 
 void ATDebuggerDefaultTarget::SetExecState(const ATCPUExecState& state) {
 	ATCPUEmulator& cpu = g_sim.GetCPU();
+	const ATCPUExecState6502& state6502 = state.m6502;
 
 	// we must guard this to avoid disturbing an instruction in progress
-	if (state.mPC != cpu.GetInsnPC())
-		cpu.SetPC(state.mPC);
+	if (state6502.mPC != cpu.GetInsnPC())
+		cpu.SetPC(state6502.mPC);
 
-	cpu.SetA(state.mA);
-	cpu.SetX(state.mX);
-	cpu.SetY(state.mY);
-	cpu.SetS(state.mS);
-	cpu.SetP(state.mP);
-	cpu.SetAH(state.mAH);
-	cpu.SetXH(state.mXH);
-	cpu.SetYH(state.mYH);
-	cpu.SetSH(state.mSH);
-	cpu.SetB(state.mB);
-	cpu.SetK(state.mK);
-	cpu.SetD(state.mDP);
-	cpu.SetEmulationFlag(state.mbEmulationFlag);
+	cpu.SetA(state6502.mA);
+	cpu.SetX(state6502.mX);
+	cpu.SetY(state6502.mY);
+	cpu.SetS(state6502.mS);
+	cpu.SetP(state6502.mP);
+	cpu.SetAH(state6502.mAH);
+	cpu.SetXH(state6502.mXH);
+	cpu.SetYH(state6502.mYH);
+	cpu.SetSH(state6502.mSH);
+	cpu.SetB(state6502.mB);
+	cpu.SetK(state6502.mK);
+	cpu.SetD(state6502.mDP);
+	cpu.SetEmulationFlag(state6502.mbEmulationFlag);
 }
 
 sint32 ATDebuggerDefaultTarget::GetTimeSkew() {
@@ -168,4 +172,8 @@ uint32 ATDebuggerDefaultTarget::ExtractHistory(const ATCPUHistoryEntry **hparray
 
 uint32 ATDebuggerDefaultTarget::ConvertRawTimestamp(uint32 rawTimestamp) const {
 	return rawTimestamp;
+}
+
+double ATDebuggerDefaultTarget::GetTimestampFrequency() const {
+	return g_sim.GetScheduler()->GetRate().asDouble();
 }

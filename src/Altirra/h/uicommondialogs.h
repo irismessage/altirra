@@ -5,10 +5,18 @@
 #include <vd2/system/VDString.h>
 #include "uiqueue.h"
 
+class MyError;
+
 bool ATUIGetNativeDialogMode();
 void ATUISetNativeDialogMode(bool enabled);
 
 ///////////////////////////////////////////////////////////////////////////
+
+void ATUIShowInfo(VDGUIHandle h, const wchar_t *text);
+void ATUIShowWarning(VDGUIHandle h, const wchar_t *text, const wchar_t *caption);
+bool ATUIShowWarningConfirm(VDGUIHandle h, const wchar_t *text);
+void ATUIShowError(VDGUIHandle h, const wchar_t *text);
+void ATUIShowError(VDGUIHandle h, const MyError& e);
 
 vdrefptr<ATUIFutureWithResult<bool> > ATUIShowAlert(const wchar_t *text, const wchar_t *caption);
 

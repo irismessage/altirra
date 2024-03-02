@@ -13,11 +13,6 @@ VDTFenceManagerD3D11::~VDTFenceManagerD3D11() {
 }
 
 void VDTFenceManagerD3D11::Init(ID3D11Device *dev, ID3D11DeviceContext *devctx) {
-	D3D11_QUERY_DESC desc;
-	desc.Query = D3D11_QUERY_EVENT;
-	desc.MiscFlags = 0;
-	HRESULT hr = dev->CreateQuery(&desc, NULL);
-
 	mpD3DDevice = dev;
 	mpD3DDevice->AddRef();
 	mpD3DDeviceContext = devctx;

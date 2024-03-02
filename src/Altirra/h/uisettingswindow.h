@@ -22,7 +22,7 @@
 #include <vd2/system/function.h>
 #include <vd2/system/refcount.h>
 #include <at/atui/uicontainer.h>
-#include "uislider.h"
+#include <at/atuicontrols/uislider.h>
 #include "uiqueue.h"
 
 class ATUISetting;

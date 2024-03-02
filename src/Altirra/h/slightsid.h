@@ -19,7 +19,7 @@
 #define f_AT_SLIGHTSID_H
 
 #include <vd2/system/memory.h>
-#include "audiosource.h"
+#include <at/atcore/audiosource.h>
 
 class ATScheduler;
 class ATMemoryManager;
@@ -67,9 +67,8 @@ public:
 	void Run(uint32 cycles);
 
 public:
-	bool SupportsStereoMixing() const override { return false; }
 	bool RequiresStereoMixingNow() const override { return false; }
-	void WriteAudio(const ATSyncAudioMixInfo& mixInfo);
+	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 
 protected:
 	void Flush();

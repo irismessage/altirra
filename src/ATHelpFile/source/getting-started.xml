@@ -71,7 +71,7 @@
   </blockquote>
   <h2>Hooking up actual kernel ROM images</h2>
   <p>
-    By default, Altirra uses its internal high-level emulation (HLE) kernel. This provides a reasonable level of compatibility with
+    By default, Altirra uses its internal kernel. This provides a reasonable level of compatibility with
     software, but BASIC is not included and some software will not work properly. For maximum compatibility, you will need to
     use real Atari ROM images. These are not included with Altirra and must be obtained elsewhere, but if you have them, place
     them in the Altirra program directory with the following names:

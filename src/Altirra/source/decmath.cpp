@@ -463,10 +463,15 @@ void ATAccelAFP(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 				++index;
 			}
 
-			if (negexp)
-				exp = -exp;
+			// zero is not a valid exponent
+			if (!exp) {
+				index = index0;
+			} else {
+				if (negexp)
+					exp = -exp;
 
-			leading += exp;
+				leading += exp;
+			}
 		}
 	}
 

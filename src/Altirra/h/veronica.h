@@ -28,6 +28,7 @@
 #include <at/atcpu/co65802.h>
 #include <at/atcpu/breakpoints.h>
 #include <at/atcpu/history.h>
+#include <at/atcpu/memorymap.h>
 #include <at/atdebugger/target.h>
 #include <at/atcore/scheduler.h>
 
@@ -101,6 +102,7 @@ public:	// IATDebugTargetHistory
 	std::pair<uint32, uint32> GetHistoryRange() const override;
 	uint32 ExtractHistory(const ATCPUHistoryEntry **hparray, uint32 start, uint32 n) const override;
 	uint32 ConvertRawTimestamp(uint32 rawTimestamp) const override;
+	double GetTimestampFrequency() const override;
 
 public:	// IATDebugTargetBreakpoints
 	virtual void SetBreakpointHandler(IATCPUBreakpointHandler *handler) override;
@@ -180,6 +182,8 @@ protected:
 	
 	vdfunction<void(bool)> mpStepHandler = {};
 	bool mbStepOut = false;
+	bool mbStepNotifyPending = false;
+	bool mbStepNotifyPendingBP = false;
 	uint32 mStepStartSubCycle = 0;
 	uint16 mStepOutS = 0;
 	uint32 mBreakpointCount = 0;

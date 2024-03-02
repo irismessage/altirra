@@ -52,6 +52,7 @@ struct VDVideoDisplaySourceInfo {
 	bool		bAllowConversion;
 	bool		bPersistent;
 	bool		bInterlaced;
+	bool		use16bit;
 	IVDVideoDisplayMinidriverCallback *mpCB;
 };
 
@@ -89,7 +90,7 @@ public:
 	virtual bool IsValid() = 0;
 	virtual bool IsFramePending() = 0;
 	virtual void SetFilterMode(FilterMode mode) = 0;
-	virtual void SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh) = 0;
+	virtual void SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh, bool use16bit) = 0;
 	virtual void SetDisplayDebugInfo(bool enable) = 0;
 	virtual void SetColorOverride(uint32 color) = 0;
 	virtual void SetHighPrecision(bool enable) = 0;
@@ -123,7 +124,7 @@ public:
 
 	virtual bool IsFramePending();
 	virtual void SetFilterMode(FilterMode mode);
-	virtual void SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh);
+	virtual void SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh, bool use16bit);
 	virtual void SetDisplayDebugInfo(bool enable);
 	virtual void SetColorOverride(uint32 color);
 	virtual void SetHighPrecision(bool enable);

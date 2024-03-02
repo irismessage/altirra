@@ -21,8 +21,8 @@
 #include <at/atcore/blockdevice.h>
 #include <at/atcore/devicecart.h>
 #include <at/atcore/deviceimpl.h>
-#include "flash.h"
-#include "rtcds1305.h"
+#include <at/atemulation/flash.h>
+#include <at/atemulation/rtcds1305.h>
 #include "ide.h"
 
 class IATDeviceIndicatorManager;

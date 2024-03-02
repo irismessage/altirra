@@ -47,7 +47,7 @@ void ATHostDeviceEncodeName(char xlName[13], const wchar_t *hostName, bool useLo
 	const char *name = name8.c_str();
 	char xlExt[4];
 
-	if (name[0] == L'$')
+	if (name[0] == L'$' || name[0] == L'!')
 		++name;
 
 	const char *ext = strrchr(name, '.');

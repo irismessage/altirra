@@ -30,33 +30,21 @@ extern ATSimulator g_sim;
 bool ATUIConfirmDiscardCartridge(VDGUIHandle h);
 int ATUIShowDialogCartridgeMapper(VDGUIHandle h, uint32 cartSize, const void *data);
 
+extern void DoLoad(VDGUIHandle h, const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType = kATImageType_None, bool *suppressColdReset = NULL, int loadIndex = -1);
+
 void OnCommandAttachCartridge(bool cart2) {
-	if (ATUIConfirmDiscardCartridge(ATUIGetMainWindow())) {
-		VDStringW fn(VDGetLoadFileName('cart', ATUIGetMainWindow(), L"Load cartridge",
-			g_ATUIFileFilter_LoadCartridge,
-			L"bin"));
+	if (!ATUIConfirmDiscardCartridge(ATUIGetMainWindow()))
+		return;
 
-		if (!fn.empty()) {
-			vdfastvector<uint8> captureBuffer;
+	VDStringW fn(VDGetLoadFileName('cart', ATUIGetMainWindow(), L"Load cartridge",
+		g_ATUIFileFilter_LoadCartridge,
+		L"bin"));
 
-			ATCartLoadContext cartctx = {};
-			cartctx.mbReturnOnUnknownMapper = true;
-			cartctx.mpCaptureBuffer = &captureBuffer;
+	if (fn.empty())
+		return;
 
-			if (!g_sim.LoadCartridge(cart2, fn.c_str(), &cartctx)) {
-				int mapper = ATUIShowDialogCartridgeMapper(ATUIGetMainWindow(), cartctx.mCartSize, captureBuffer.data());
-
-				if (mapper >= 0) {
-					cartctx.mbReturnOnUnknownMapper = false;
-					cartctx.mCartMapper = mapper;
-
-					g_sim.LoadCartridge(cart2, fn.c_str(), &cartctx);
-				}
-			}
-
-			g_sim.ColdReset();
-		}
-	}
+	DoLoad(ATUIGetMainWindow(), fn.c_str(), nullptr, 0, kATImageType_Cartridge, nullptr, cart2 ? 1 : 0);
+	g_sim.ColdReset();
 }
 
 void OnCommandAttachCartridge() {

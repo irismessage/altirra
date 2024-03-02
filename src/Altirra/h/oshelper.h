@@ -3,10 +3,12 @@
 
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/system/vectors.h>
 
 struct VDPixmap;
 class VDStringW;
 
+const void *ATLockResource(uint32 id, size_t& size);
 bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size, bool allowPartial);
 bool ATLoadKernelResource(int id, vdfastvector<uint8>& data);
 bool ATLoadKernelResourceLZPacked(int id, vdfastvector<uint8>& data);
@@ -17,9 +19,11 @@ void ATCopyFrameToClipboard(void *hwnd, const VDPixmap& px);
 void ATSaveFrame(void *hwnd, const VDPixmap& px, const wchar_t *filename);
 
 void ATCopyTextToClipboard(void *hwnd, const char *s);
+void ATCopyTextToClipboard(void *hwnd, const wchar_t *s);
 
 void ATUISaveWindowPlacement(void *hwnd, const char *name);
-void ATUIRestoreWindowPlacement(void *hwnd, const char *name, int nCmdShow);
+void ATUISaveWindowPlacement(const char *name, const vdrect32& r, bool isMaximized);
+void ATUIRestoreWindowPlacement(void *hwnd, const char *name, int nCmdShow = -1, bool sizeOnly = false);
 
 void ATUIEnableEditControlAutoComplete(void *hwnd);
 

@@ -48,7 +48,7 @@ KeyboardClose = CIOExitSuccess
 ;	- Any Ctrl+Shift key code (>=$C0) produces a key click but is otherwise
 ;	  ignored.
 ;
-.proc	_KeyboardGetByte
+.nowarn .proc	_KeyboardGetByte
 toggle_shift:
 	.if _KERNEL_XLXE
 	;Caps Lock without Shift or Control is a toggle on the XL/XE line:

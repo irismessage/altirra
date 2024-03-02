@@ -17,6 +17,8 @@
 
 #include <stdafx.h>
 #include "audiosyncmixer.h"
+#include "oshelper.h"
+#include "resource.h"
 
 struct ATAudioSyncMixer::SoundPred {
 	SoundPred(uint32 t) : mTimeBase(t + 0x80000000U) {}
@@ -38,10 +40,67 @@ ATAudioSyncMixer::~ATAudioSyncMixer() {
 
 void ATAudioSyncMixer::Init(ATScheduler *sch) {
 	mpScheduler = sch;
+
+	static const uint32 kResIds[]={
+		IDR_DISK_SPIN,
+		IDR_TRACK_STEP,
+		IDR_TRACK_STEP_2,
+		IDR_TRACK_STEP_2,
+		IDR_TRACK_STEP_3
+	};
+
+	static const float kBaseVolumes[]={
+		0.05f,
+		0.4f,
+		0.8f,
+		0.8f,
+		0.4f
+	};
+
+	static_assert(vdcountof(kResIds) == vdcountof(mSamples), "Sample array mismatch");
+	static_assert(vdcountof(kBaseVolumes) == vdcountof(mSamples), "Sample array mismatch");
+
+	vdfastvector<uint8> data;
+	for(size_t i=0; i<vdcountof(kResIds); ++i) {
+		if (i + 1 == kATAudioSampleId_DiskStep2H) {
+			// special case
+			auto samp = mSamples[kATAudioSampleId_DiskStep2 - 1];
+			samp.mLength >>= 1;
+			mSamples[i] = samp;
+		} else {
+			ATLoadMiscResource(kResIds[i], data);
+
+			const size_t len = data.size() * sizeof(data[0]);
+			sint16 *p = (sint16 *)mAllocator.Allocate(len);
+			memcpy(p, data.data(), len);
+
+			mSamples[i] = { p, (uint32)(len / sizeof(sint16)), kBaseVolumes[i] };
+		}
+	}
 }
 
 void ATAudioSyncMixer::Shutdown() {
 	mpScheduler = NULL;
+}
+
+uint32 ATAudioSyncMixer::AddSound(ATAudioMix mix, uint32 delay, ATAudioSampleId sampleId, float volume) {
+	const uint32 index = (uint32)((uint32)sampleId - 1);
+	
+	if (index >= vdcountof(mSamples))
+		return 0;
+
+	const auto& sample = mSamples[index];
+	return AddSound(mix, delay, sample.mpData, sample.mLength, sample.mBaseVolume * volume);
+}
+
+uint32 ATAudioSyncMixer::AddLoopingSound(ATAudioMix mix, uint32 delay, ATAudioSampleId sampleId, float volume) {
+	const uint32 index = (uint32)((uint32)sampleId - 1);
+	
+	if (index >= vdcountof(mSamples))
+		return 0;
+
+	const auto& sample = mSamples[index];
+	return AddLoopingSound(mix, delay, sample.mpData, sample.mLength, sample.mBaseVolume * volume);
 }
 
 uint32 ATAudioSyncMixer::AddSound(ATAudioMix mix, uint32 delay, const sint16 *sample, uint32 len, float volume) {
@@ -95,7 +154,7 @@ uint32 ATAudioSyncMixer::AddLoopingSound(ATAudioMix mix, uint32 delay, const sin
 }
 
 void ATAudioSyncMixer::StopSound(uint32 id) {
-	Sounds::iterator it(mSounds.begin()), itEnd(mSounds.end());
+	auto it = mSounds.begin(), itEnd = mSounds.end();
 
 	for(; it != itEnd; ++it) {
 		Sound *s = *it;
@@ -111,7 +170,7 @@ void ATAudioSyncMixer::StopSound(uint32 id) {
 }
 
 void ATAudioSyncMixer::StopSound(uint32 id, uint32 time) {
-	Sounds::iterator it(mSounds.begin()), itEnd(mSounds.end());
+	auto it = mSounds.begin(), itEnd = mSounds.end();
 
 	for(; it != itEnd; ++it) {
 		Sound *s = *it;
@@ -147,21 +206,20 @@ void ATAudioSyncMixer::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 	const uint32 endTime = startTime + n*kATCyclesPerSyncSample;
 
 	// process one-shot sounds
-	Sounds::iterator it(mSounds.begin()), itEnd(mSounds.end());
+	auto it = mSounds.begin(), itEnd = mSounds.end();
 	while(it != itEnd) {
 		Sound *s = *it;
 
-		++it;
-
 		// drop sounds that we've already passed
 		if ((sint32)(s->mEndTime - startTime) <= 0 && s->mbEndValid) {
-			--it;
 			mFreeSounds.push_back(s);
 			*it = mSounds.back();
 			mSounds.pop_back();
 			itEnd = mSounds.end();
 			continue;
 		}
+		
+		++it;
 
 		// skip if sound hasn't happened yet
 		if ((sint32)(s->mStartTime - endTime) >= 0)

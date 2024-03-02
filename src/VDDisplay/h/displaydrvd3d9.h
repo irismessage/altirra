@@ -56,10 +56,9 @@ class VDINTERFACE IVDVideoDisplayDX9Manager : public IVDRefCount {
 public:
 	enum CubicMode {
 		kCubicNotInitialized,
-		kCubicNotPossible,		// Your card is LAME
-		kCubicUsePS1_1Path,		// Use programmable, 3 stage path (GeForce3/GeForce4 - 4 passes)
-		kCubicUsePS1_4Path,		// Use programmable, 5 stage path (RADEON 85xx+/GeForceFX+ - 2 passes)
-		kMaxCubicMode = kCubicUsePS1_4Path
+		kCubicNotPossible,
+		kCubicUsePS2_0Path,
+		kMaxCubicMode = kCubicUsePS2_0Path
 	};
 
 	struct EffectContext {
@@ -121,7 +120,7 @@ class VDINTERFACE IVDVideoUploadContextD3D9 : public IVDRefCount {
 public:
 	virtual IDirect3DTexture9 *GetD3DTexture(int i) = 0;
 
-	virtual bool Init(void *hmonitor, bool use9ex, const VDPixmap& source, bool allowConversion, bool preserveYCbCr, int buffers) = 0;
+	virtual bool Init(void *hmonitor, bool use9ex, const VDPixmap& source, bool allowConversion, bool preserveYCbCr, int buffers, bool use16bit) = 0;
 	virtual void Shutdown() = 0;
 
 	virtual bool Update(const VDPixmap& source, int fieldMask) = 0;

@@ -87,6 +87,8 @@ void ATDeviceManager::AddDevice(IATDevice *dev, bool child, bool hidden) {
 	}
 
 	dev->ColdReset();
+	dev->PeripheralColdReset();
+	dev->ComputerColdReset();
 
 	++mChangeCounter;
 
@@ -137,11 +139,22 @@ void ATDeviceManager::RemoveDevice(IATDevice *dev) {
 
 				if (iface) {
 					for(IATDeviceChangeCallback *cb : changeClass.second)
-						cb->OnDeviceRemoved(iid, dev, iface);
+						cb->OnDeviceRemoving(iid, dev, iface);
 				}
 			}
 
 			dev->Shutdown();
+
+			for(const auto& changeClass : mChangeCallbacks) {
+				const uint32 iid = changeClass.first;
+				void *iface = dev->AsInterface(iid);
+
+				if (iface) {
+					for(IATDeviceChangeCallback *cb : changeClass.second)
+						cb->OnDeviceRemoved(iid, dev, iface);
+				}
+			}
+
 			dev->Release();
 			break;
 		}

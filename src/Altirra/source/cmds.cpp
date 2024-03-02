@@ -1,4 +1,4 @@
-//	Altirra - Atari 800/800XL/5200 emulator
+﻿//	Altirra - Atari 800/800XL/5200 emulator
 //	Copyright (C) 2009-2015 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
@@ -24,6 +24,7 @@
 #include "console.h"
 #include "cmdhelpers.h"
 #include "debugger.h"
+#include "disk.h"
 #include "simulator.h"
 #include "audiooutput.h"
 #include "uiaccessors.h"
@@ -65,6 +66,7 @@ void OnCommandCassetteSave();
 void OnCommandCassetteTapeControlDialog();
 void OnCommandCassetteToggleSIOPatch();
 void OnCommandCassetteToggleAutoBoot();
+void OnCommandCassetteToggleAutoRewind();
 void OnCommandCassetteToggleLoadDataAsAudio();
 void OnCommandCassetteToggleRandomizeStartPosition();
 void OnCommandDebuggerOpenSourceFile();
@@ -115,7 +117,9 @@ void OnCommandVideoToggleXEP80View();
 void OnCommandVideoToggleXEP80ViewAutoswitching();
 void OnCommandPane(uint32 paneId);
 void OnCommandEditCopyFrame();
+void OnCommandEditCopyFrameTrueAspect();
 void OnCommandEditSaveFrame();
+void OnCommandEditSaveFrameTrueAspect();
 void OnCommandEditCopyText();
 void OnCommandEditPasteText();
 void OnCommandSystemWarmReset();
@@ -132,11 +136,20 @@ void OnCommandSystemSpeedOptionsDialog();
 void OnCommandSystemDevicesDialog();
 void OnCommandSystemToggleKeyboardPresent();
 void OnCommandSystemToggleForcedSelfTest();
+void OnCommandConsoleHoldKeys();
 void OnCommandConsoleBlackBoxDumpScreen();
 void OnCommandConsoleBlackBoxMenu();
 void OnCommandConsoleIDEPlus2SwitchDisks();
 void OnCommandConsoleIDEPlus2WriteProtect();
 void OnCommandConsoleIDEPlus2SDX();
+void OnCommandConsoleIndusGTError();
+void OnCommandConsoleIndusGTId();
+void OnCommandConsoleIndusGTTrack();
+void OnCommandConsoleIndusGTBootCPM();
+void OnCommandConsoleHappyToggleFastSlow();
+void OnCommandConsoleHappyToggleWriteProtect();
+void OnCommandConsoleHappyToggleWriteEnable();
+void OnCommandConsoleATR8000Reset();
 void OnCommandSystemHardwareMode(ATHardwareMode mode);
 void OnCommandSystemKernel(ATFirmwareId id);
 void OnCommandSystemBasic(ATFirmwareId id);
@@ -154,7 +167,6 @@ void OnCommandSystemROMImagesDialog();
 void OnCommandSystemToggleRTime8();
 void OnCommandSystemEditProfilesDialog();
 void OnCommandDiskDrivesDialog();
-void OnCommandDiskToggleAllEnabled();
 void OnCommandDiskToggleSIOPatch();
 void OnCommandDiskToggleSIOOverrideDetection();
 void OnCommandDiskToggleAccurateSectorTiming();
@@ -166,6 +178,7 @@ void OnCommandDiskDetach(int index);
 void OnCommandDiskRotate(int delta);
 void OnCommandVideoStandard(ATVideoStandard mode);
 void OnCommandVideoToggleStandardNTSCPAL();
+void OnCommandVideoToggleCTIA();
 void OnCommandVideoToggleFrameBlending();
 void OnCommandVideoToggleInterlace();
 void OnCommandVideoToggleScanlines();
@@ -207,7 +220,9 @@ void OnCommandToolsDiskExplorer();
 void OnCommandToolsConvertSapToExe();
 void OnCommandToolsOptionsDialog();
 void OnCommandToolsKeyboardShortcutsDialog();
+void OnCommandToolsCompatDBDialog();
 void OnCommandToolsSetupWizard();
+void OnCommandToolsExportROMSet();
 void OnCommandWindowClose();
 void OnCommandWindowUndock();
 void OnCommandHelpContents();
@@ -406,11 +421,11 @@ namespace ATCommands {
 	}
 
 	bool IsDiskEnabled() {
-		return g_sim.GetDiskDrive(0).IsEnabled();
+		return g_sim.GetDiskDrive(0).IsEnabled() || g_sim.GetDiskInterface(0).GetClientCount() > 1;
 	}
 
 	bool IsDiskAccurateSectorTimingEnabled() {
-		return g_sim.GetDiskDrive(0).IsAccurateSectorTimingEnabled();
+		return g_sim.GetDiskInterface(0).IsAccurateSectorTimingEnabled();
 	}
 
 	bool IsDiskDriveEnabledAny() {
@@ -430,10 +445,11 @@ namespace ATCommands {
 	template<int index>
 	void UIFormatMenuItemDiskName(VDStringW& s) {
 		const ATDiskEmulator& disk = g_sim.GetDiskDrive(index);
+		const ATDiskInterface& diskIf = g_sim.GetDiskInterface(index);
 
-		if (disk.IsEnabled()) {
-			if (disk.IsDiskLoaded()) {
-				s.append_sprintf(L" [%ls]", disk.GetPath());
+		if (disk.IsEnabled() || diskIf.GetClientCount() > 1) {
+			if (diskIf.IsDiskLoaded()) {
+				s.append_sprintf(L" [%ls]", diskIf.GetPath());
 			} else {
 				s += L" [-]";
 			}
@@ -565,6 +581,7 @@ namespace ATCommands {
 		{ "Cassette.TapeControlDialog", OnCommandCassetteTapeControlDialog, NULL },
 		{ "Cassette.ToggleSIOPatch", OnCommandCassetteToggleSIOPatch, NULL, CheckedIf<SimTest<&ATSimulator::IsCassetteSIOPatchEnabled> > },
 		{ "Cassette.ToggleAutoBoot", OnCommandCassetteToggleAutoBoot, NULL, CheckedIf<SimTest<&ATSimulator::IsCassetteAutoBootEnabled> > },
+		{ "Cassette.ToggleAutoRewind", OnCommandCassetteToggleAutoRewind, NULL, CheckedIf<SimTest<&ATSimulator::IsCassetteAutoRewindEnabled> > },
 		{ "Cassette.ToggleLoadDataAsAudio", OnCommandCassetteToggleLoadDataAsAudio, NULL, CheckedIf<IsCassetteLoadDataAsAudioEnabled> },
 		{ "Cassette.ToggleRandomizeStartPosition", OnCommandCassetteToggleRandomizeStartPosition, NULL, CheckedIf<IsCassetteRandomizeStartPositionEnabled> },
 
@@ -647,7 +664,9 @@ namespace ATCommands {
 		{ "Pane.ProfileView",		[]() { OnCommandPane(kATUIPaneId_Profiler); },		IsDebuggerEnabled },
 
 		{ "Edit.CopyFrame", OnCommandEditCopyFrame, IsVideoFrameAvailable },
+		{ "Edit.CopyFrameTrueAspect", OnCommandEditCopyFrameTrueAspect, IsVideoFrameAvailable },
 		{ "Edit.SaveFrame", OnCommandEditSaveFrame, IsVideoFrameAvailable },
+		{ "Edit.SaveFrameTrueAspect", OnCommandEditSaveFrameTrueAspect, IsVideoFrameAvailable },
 		{ "Edit.CopyText", OnCommandEditCopyText, IsCopyTextAvailable },
 		{ "Edit.PasteText", OnCommandEditPasteText, ATUIClipIsTextAvailable },
 
@@ -667,6 +686,14 @@ namespace ATCommands {
 
 		{ "System.ToggleKeyboardPresent", OnCommandSystemToggleKeyboardPresent, HardwareModeIs<kATHardwareMode_XEGS>, CheckedIf<And<HardwareModeIs<kATHardwareMode_XEGS>, SimTest<&ATSimulator::IsKeyboardPresent> > >},
 		{ "System.ToggleForcedSelfTest", OnCommandSystemToggleForcedSelfTest, IsXLHardware, CheckedIf<And<IsXLHardware, SimTest<&ATSimulator::IsForcedSelfTest> > > },
+
+		{ "System.PowerOnDelayAuto", [] { g_sim.SetPowerOnDelay(-1); }, nullptr, [] { return g_sim.GetPowerOnDelay() == -1 ? kATUICmdState_RadioChecked : kATUICmdState_None; } },
+		{ "System.PowerOnDelayNone", [] { g_sim.SetPowerOnDelay(0); }, nullptr, [] { return g_sim.GetPowerOnDelay() == 0 ? kATUICmdState_RadioChecked : kATUICmdState_None; } },
+		{ "System.PowerOnDelay1s", [] { g_sim.SetPowerOnDelay(10); }, nullptr, [] { return g_sim.GetPowerOnDelay() == 10 ? kATUICmdState_RadioChecked : kATUICmdState_None; } },
+		{ "System.PowerOnDelay2s", [] { g_sim.SetPowerOnDelay(20); }, nullptr, [] { return g_sim.GetPowerOnDelay() == 20 ? kATUICmdState_RadioChecked : kATUICmdState_None; } },
+		{ "System.PowerOnDelay3s", [] { g_sim.SetPowerOnDelay(30); }, nullptr, [] { return g_sim.GetPowerOnDelay() == 30 ? kATUICmdState_RadioChecked : kATUICmdState_None; } },
+
+		{ "Console.HoldKeys", OnCommandConsoleHoldKeys },
 		{ "Console.BlackBoxDumpScreen", OnCommandConsoleBlackBoxDumpScreen, []() { return ATUIGetDeviceButtonSupported(kATDeviceButton_BlackBoxDumpScreen); } },
 		{ "Console.BlackBoxMenu", OnCommandConsoleBlackBoxMenu, []() { return ATUIGetDeviceButtonSupported(kATDeviceButton_BlackBoxMenu); } },
 		{ "Console.IDEPlus2SwitchDisks",	OnCommandConsoleIDEPlus2SwitchDisks, []() { return ATUIGetDeviceButtonSupported(kATDeviceButton_IDEPlus2SwitchDisks); } },
@@ -680,6 +707,45 @@ namespace ATCommands {
 			[] { return ATUIGetDeviceButtonSupported(kATDeviceButton_IDEPlus2SDX); },
 			[] { return ATUIGetDeviceButtonDepressed(kATDeviceButton_IDEPlus2SDX) ? kATUICmdState_Checked : kATUICmdState_None; }
 		},
+		{ "Console.IndusGTError",
+			OnCommandConsoleIndusGTError,
+			[] { return ATUIGetDeviceButtonSupported(kATDeviceButton_IndusGTError); },
+			[] { return ATUIGetDeviceButtonDepressed(kATDeviceButton_IndusGTError) ? kATUICmdState_Checked : kATUICmdState_None; }
+		},
+		{ "Console.IndusGTId",
+			OnCommandConsoleIndusGTId,
+			[] { return ATUIGetDeviceButtonSupported(kATDeviceButton_IndusGTId); },
+			[] { return ATUIGetDeviceButtonDepressed(kATDeviceButton_IndusGTId) ? kATUICmdState_Checked : kATUICmdState_None; }
+		},
+		{ "Console.IndusGTTrack",
+			OnCommandConsoleIndusGTTrack,
+			[] { return ATUIGetDeviceButtonSupported(kATDeviceButton_IndusGTTrack); },
+			[] { return ATUIGetDeviceButtonDepressed(kATDeviceButton_IndusGTTrack) ? kATUICmdState_Checked : kATUICmdState_None; }
+		},
+		{ "Console.IndusGTBootCPM",
+			OnCommandConsoleIndusGTBootCPM,
+			[] { return ATUIGetDeviceButtonSupported(kATDeviceButton_IndusGTBootCPM); },
+			[] { return ATUIGetDeviceButtonDepressed(kATDeviceButton_IndusGTBootCPM) ? kATUICmdState_Checked : kATUICmdState_None; }
+		},
+		{ "Console.HappyToggleFastSlow",
+			OnCommandConsoleHappyToggleFastSlow,
+			[] { return ATUIGetDeviceButtonSupported(kATDeviceButton_HappySlow); },
+			[] { return ATUIGetDeviceButtonDepressed(kATDeviceButton_HappySlow) ? kATUICmdState_Checked : kATUICmdState_None; }
+		},
+		{ "Console.HappyToggleWriteProtect",
+			OnCommandConsoleHappyToggleWriteProtect,
+			[] { return ATUIGetDeviceButtonSupported(kATDeviceButton_HappyWPEnable); },
+			[] { return ATUIGetDeviceButtonDepressed(kATDeviceButton_HappyWPEnable) ? kATUICmdState_Checked : kATUICmdState_None; }
+		},
+		{ "Console.HappyToggleWriteEnable",
+			OnCommandConsoleHappyToggleWriteEnable,
+			[] { return ATUIGetDeviceButtonSupported(kATDeviceButton_HappyWPDisable); },
+			[] { return ATUIGetDeviceButtonDepressed(kATDeviceButton_HappyWPDisable) ? kATUICmdState_Checked : kATUICmdState_None; }
+		},
+		{ "Console.ATR8000Reset",
+			OnCommandConsoleATR8000Reset,
+			[] { return ATUIGetDeviceButtonSupported(kATDeviceButton_ATR8000Reset); }
+		},
 
 		{ "System.HardwareMode800",		[]() { OnCommandSystemHardwareMode(kATHardwareMode_800); }, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_800> > },
 		{ "System.HardwareMode800XL",	[]() { OnCommandSystemHardwareMode(kATHardwareMode_800XL); }, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_800XL> > },
@@ -689,7 +755,7 @@ namespace ATCommands {
 		{ "System.HardwareMode5200",	[]() { OnCommandSystemHardwareMode(kATHardwareMode_5200); }, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_5200> > },
 
 		{ "System.KernelModeDefault",	[]() { OnCommandSystemKernel(kATFirmwareId_Invalid); }, NULL, RadioCheckedIf<KernelIs<kATFirmwareId_Invalid> > },
-		{ "System.KernelModeHLE",		[]() { OnCommandSystemKernel(kATFirmwareId_Kernel_HLE); }, NULL, RadioCheckedIf<KernelIs<kATFirmwareId_Kernel_HLE> > },
+		{ "System.KernelModeHLE",		[]() { OnCommandSystemKernel(kATFirmwareId_Kernel_HLE); }, NULL, RadioCheckedIf<KernelIs<kATFirmwareId_Kernel_LLE> > },
 		{ "System.KernelModeLLE",		[]() { OnCommandSystemKernel(kATFirmwareId_Kernel_LLE); }, NULL, RadioCheckedIf<KernelIs<kATFirmwareId_Kernel_LLE> > },
 		{ "System.KernelModeLLEXL",		[]() { OnCommandSystemKernel(kATFirmwareId_Kernel_LLEXL); }, NULL, RadioCheckedIf<KernelIs<kATFirmwareId_Kernel_LLEXL> > },
 		{ "System.KernelMode5200LLE",	[]() { OnCommandSystemKernel(kATFirmwareId_5200_LLE); }, NULL, RadioCheckedIf<KernelIs<kATFirmwareId_5200_LLE> > },
@@ -759,7 +825,6 @@ namespace ATCommands {
 		},
 
 		{ "Disk.DrivesDialog", OnCommandDiskDrivesDialog },
-		{ "Disk.ToggleAllEnabled", OnCommandDiskToggleAllEnabled, NULL, CheckedIf<IsDiskEnabled> },
 		{ "Disk.ToggleSIOPatch", OnCommandDiskToggleSIOPatch, NULL, CheckedIf<SimTest<&ATSimulator::IsDiskSIOPatchEnabled> > },
 		{ "Disk.ToggleSIOOverrideDetection", OnCommandDiskToggleSIOOverrideDetection, NULL, CheckedIf<SimTest<&ATSimulator::IsDiskSIOOverrideDetectEnabled> > },
 		{ "Disk.ToggleAccurateSectorTiming", OnCommandDiskToggleAccurateSectorTiming, NULL, CheckedIf<IsDiskAccurateSectorTimingEnabled> },
@@ -871,6 +936,7 @@ namespace ATCommands {
 		{ "Video.StandardPAL60",	[]() { OnCommandVideoStandard(kATVideoStandard_PAL60); }, IsNot5200, RadioCheckedIf<VideoStandardIs<kATVideoStandard_PAL60> > },
 		{ "Video.ToggleStandardNTSCPAL", OnCommandVideoToggleStandardNTSCPAL, IsNot5200 },
 
+		{ "Video.ToggleCTIA", OnCommandVideoToggleCTIA, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsCTIAMode> > },
 		{ "Video.ToggleFrameBlending", OnCommandVideoToggleFrameBlending, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsBlendModeEnabled> > },
 		{ "Video.ToggleInterlace", OnCommandVideoToggleInterlace, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsInterlaceEnabled> > },
 		{ "Video.ToggleScanlines", OnCommandVideoToggleScanlines, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::AreScanlinesEnabled> > },
@@ -927,7 +993,9 @@ namespace ATCommands {
 		{ "Tools.ConvertSAPToEXE", OnCommandToolsConvertSapToExe },
 		{ "Tools.OptionsDialog", OnCommandToolsOptionsDialog },
 		{ "Tools.KeyboardShortcutsDialog", OnCommandToolsKeyboardShortcutsDialog },
+		{ "Tools.CompatDBDialog", OnCommandToolsCompatDBDialog },
 		{ "Tools.SetupWizard", OnCommandToolsSetupWizard },
+		{ "Tools.ExportROMSet", OnCommandToolsExportROMSet },
 
 		{ "Window.Close", OnCommandWindowClose, ATUICanManipulateWindows },
 		{ "Window.Undock", OnCommandWindowUndock, ATUICanManipulateWindows },

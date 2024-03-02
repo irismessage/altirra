@@ -21,8 +21,12 @@
 	dta		c'K',a(keybdv)
 .endp
 
-InitColdStart = InitReset.cold_boot
-.proc InitReset
+.nowarn .proc _InitReset
+run_diag:
+	; start diagnostic cartridge
+	jmp		($bffe)
+
+.def :InitReset
 	;mask interrupts and initialize CPU
 	sei
 	cld
@@ -57,6 +61,7 @@ warm_check:
 	jmp		InitWarmStart
 	.endif
 
+.def :InitColdStart
 cold_boot:
 	; 1. initialize CPU
 	sei
@@ -81,11 +86,8 @@ cold_boot:
 	
 	; is it enabled?
 	bit		$bffd
-	bpl		not_diag
-	
-	; start diagnostic cartridge
-	jmp		($bffe)
-	
+	bmi		run_diag
+		
 not_diag:
 	
 	jsr		InitHardwareReset
@@ -183,8 +185,13 @@ clearloop:
 ;==============================================================================
 .proc InitWarmStart
 	; A. initialize CPU
+	; Undocumented: Check if cold start completed (COLDST=0); if not, force
+	; a cold start. ACTris 2.1 relies on this since its boot doesn't reset
+	; COLDST.
+	;
 	sei								;!! FIRST TWO BYTES CHECKED BY ARCHON
-	lda		$0100
+	lda		coldst
+	bne		InitColdStart
 	cld
 	ldx		#$ff
 	txs
@@ -341,7 +348,7 @@ end:
 	ldx		#0
 	lda		pal
 	and		#$0e
-	sne:dex
+	sne:inx
 	stx		palnts
 	.endif
 	
@@ -513,17 +520,19 @@ noCartBBoot:
 noCartABoot:
 boot_disk:
 	jsr		BootDisk
-	jmp		postDiskBoot
+	jmp		postDiskBoot2
 	
 reinitDisk:
 	lda		boot?
 	lsr
 	bcc		postDiskBoot
 	jsr		InitDiskBoot
-postDiskBoot:
 
+postDiskBoot2:
 .if _KERNEL_XLXE
 	; (XL/XE only) do type 3 poll or reinit handlers
+	; !! - must only do this if a disk boot occurs; Pole Position audio breaks if
+	; we do this and hit SKCTL before booting the cart
 	lda		warmst
 	bne		reinit_handlers
 	jsr		PHStartupPoll
@@ -532,6 +541,7 @@ reinit_handlers:
 	jsr		PHReinitHandlers
 post_reinit:
 .endif
+postDiskBoot:
 
 	; H. same as steps 19 and 20
 	; 19. reset coldstart flag

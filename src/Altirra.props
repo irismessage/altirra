@@ -26,20 +26,28 @@
     <ATLibPath Condition="'$(Configuration)'=='Debug'">$(SolutionDir)..\lib\Debug$(VDPlatformDirTag)</ATLibPath>
     <ATLibPath Condition="'$(Configuration)'=='Profile'">$(SolutionDir)..\lib\Profile$(VDPlatformDirTag)</ATLibPath>
     <ATLibPath Condition="'$(Configuration)'=='Release'">$(SolutionDir)..\lib\Release$(VDPlatformDirTag)</ATLibPath>
+    <ATMadsPath>mads.exe</ATMadsPath>
     <ATObjPath Condition="'$(Configuration)'=='Debug'">$(SolutionDir)..\obj\Debug$(VDPlatformDirTag)\$(ProjectName)</ATObjPath>
     <ATObjPath Condition="'$(Configuration)'=='Profile'">$(SolutionDir)..\obj\Profile$(VDPlatformDirTag)\$(ProjectName)</ATObjPath>
     <ATObjPath Condition="'$(Configuration)'=='Release'">$(SolutionDir)..\obj\Release$(VDPlatformDirTag)\$(ProjectName)</ATObjPath>
     <ATOutPath Condition="'$(Configuration)'=='Debug'">$(SolutionDir)..\out\Debug$(VDPlatformDirTag)</ATOutPath>
     <ATOutPath Condition="'$(Configuration)'=='Profile'">$(SolutionDir)..\out\Profile$(VDPlatformDirTag)</ATOutPath>
     <ATOutPath Condition="'$(Configuration)'=='Release'">$(SolutionDir)..\out\Release$(VDPlatformDirTag)</ATOutPath>
+    <ATYasmPath>yasm.exe</ATYasmPath>
   </PropertyGroup>
   <ItemGroup>
     <BuildMacro Include="ATBuildToolPath">
       <Value>$(ATBuildToolPath)</Value>
+    </BuildMacro>
+    <BuildMacro Include="ATMadsPath">
+      <Value>$(ATMadsPath)</Value>
     </BuildMacro>
   </ItemGroup>
   <PropertyGroup>
     <IntDir>$(ATObjPath)\</IntDir>
     <OutDir>$(ATLibPath)\</OutDir>
   </PropertyGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Condition="Exists('$(MSBuildThisFileDirectory)..\localconfig\active\Altirra.local.props')" Project="$(MSBuildThisFileDirectory)..\localconfig\active\Altirra.local.props" />
+  </ImportGroup>
 </Project>

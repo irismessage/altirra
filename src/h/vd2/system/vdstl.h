@@ -926,7 +926,7 @@ public:
 	}
 
 	template<typename RandomAccessIterator, typename =
-		std::enable_if<
+		typename std::enable_if<
 			std::is_same<typename std::iterator_traits<RandomAccessIterator>::iterator_category, std::random_access_iterator_tag>::value
 			&& !std::is_pointer<RandomAccessIterator>::value
 		>::type
@@ -1172,7 +1172,7 @@ public:
 		memcpy(mpBegin, x.mpBegin, sizeof(T) * n);
 	}
 
-	vdfastvector(vdfastvector&& x) {
+	vdfastvector(vdfastvector&& x) vdnoexcept {
 		mpBegin = x.mpBegin;
 		mpEnd = x.mpEnd;
 		m.eos = x.m.eos;
@@ -1182,7 +1182,7 @@ public:
 		x.m.eos = nullptr;
 	}
 
-	template<typename InputIterator, typename = std::enable_if<!std::is_integral<InputIterator>::value>::type>
+	template<typename InputIterator, typename = typename std::enable_if<!std::is_integral<InputIterator>::value>::type>
 	vdfastvector(InputIterator it1, InputIterator it2) {
 		m.eos = NULL;
 
@@ -1191,7 +1191,7 @@ public:
 
 	vdfastvector(const std::initializer_list<T>& ilist) {
 		m.eos = nullptr;
-		assign(ilist.begin(), ilist.end());
+		this->assign(ilist.begin(), ilist.end());
 	}
 
 	vdfastvector& operator=(const vdfastvector& x) {
@@ -1201,7 +1201,7 @@ public:
 		return *this;
 	}
 
-	vdfastvector& operator=(vdfastvector&& x) {
+	vdfastvector& operator=(vdfastvector&& x) vdnoexcept {
 		if (mpBegin)
 			m.deallocate(mpBegin, m.eos - mpBegin);
 

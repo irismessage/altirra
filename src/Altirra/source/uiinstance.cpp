@@ -69,12 +69,12 @@ protected:
 	}
 
 	BOOL Callback(HWND hwnd) {
-		TCHAR className[64];
+		WCHAR className[64];
 		
-		if (!GetClassName(hwnd, className, sizeof(className)/sizeof(className[0])))
+		if (!GetClassName(hwnd, className, vdcountof(className)))
 			return TRUE;
 
-		if (_tcscmp(className, _T("AltirraMainWindow")))
+		if (wcscmp(className, L"AltirraMainWindow"))
 			return TRUE;
 
 		DWORD pid = 0;

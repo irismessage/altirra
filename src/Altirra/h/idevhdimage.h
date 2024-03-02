@@ -70,29 +70,30 @@ public:
 	~ATIDEVHDImage();
 
 public:
-	int AddRef();
-	int Release();
-	void *AsInterface(uint32 iid);
+	int AddRef() override;
+	int Release() override;
+	void *AsInterface(uint32 iid) override;
 
 public:
-	void GetDeviceInfo(ATDeviceInfo& info);
-	void GetSettings(ATPropertySet& settings);
-	bool SetSettings(const ATPropertySet& settings);
+	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void GetSettingsBlurb(VDStringW& buf) override;
+	void GetSettings(ATPropertySet& settings) override;
+	bool SetSettings(const ATPropertySet& settings) override;
 
 public:
 	virtual bool IsReadOnly() const override { return mbReadOnly; }
-	uint32 GetSectorCount() const;
-	ATBlockDeviceGeometry GetGeometry() const;
+	uint32 GetSectorCount() const override;
+	ATBlockDeviceGeometry GetGeometry() const override;
 
 	void Init(const wchar_t *path, bool write, bool solidState);
 	void InitNew(const wchar_t *path, uint8 heads, uint8 spt, uint32 totalSectorCount, bool dynamic);
-	virtual void Init() {}
-	virtual void Shutdown();
+	void Init() override {}
+	void Shutdown() override;
 
-	void Flush();
+	void Flush() override;
 
-	void ReadSectors(void *data, uint32 lba, uint32 n);
-	void WriteSectors(const void *data, uint32 lba, uint32 n);
+	void ReadSectors(void *data, uint32 lba, uint32 n) override;
+	void WriteSectors(const void *data, uint32 lba, uint32 n) override;
 
 protected:
 	void InitCommon();

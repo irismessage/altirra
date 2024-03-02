@@ -22,7 +22,7 @@
 #include <at/atcore/devicecio.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceserial.h>
-#include <at/atcore/devicesio.h>
+#include <at/atcore/devicesioimpl.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
 #include <at/atcore/sioutils.h>
@@ -727,7 +727,7 @@ class ATDevice1030Modem final
 	, public IATDeviceScheduling
 	, public IATDeviceIndicators					
 	, public IATDeviceCIO
-	, public IATDeviceSIO
+	, public ATDeviceSIO
 	, public IATDeviceRawSIO
 {
 	ATDevice1030Modem(const ATDevice1030Modem&) = delete;
@@ -770,22 +770,15 @@ public:	// IATDeviceCIO
 	sint32 OnCIOSpecial(int channel, uint8 deviceNo, uint8 cmd, uint16 bufadr, uint16 buflen, uint8 aux[6]) override;
 	void OnCIOAbortAsync() override;
 
-public:	// IATDeviceSIO
+public:	// ATDeviceSIO
 	void InitSIO(IATDeviceSIOManager *mgr) override;
 	CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
-	void OnSerialAbortCommand() override;
-	void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) override;
-	void OnSerialFence(uint32 id) override; 
-	CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
 
 public:	// IATDeviceRawSIO
 	void OnCommandStateChanged(bool asserted) override;
 	void OnMotorStateChanged(bool asserted) override;
 	void OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) override;
 	void OnSendReady() override;
-
-public:
-	void OnScheduledEvent(uint32 id);
 
 protected:
 	ATScheduler *mpScheduler;
@@ -1151,19 +1144,6 @@ IATDeviceSIO::CmdResponse ATDevice1030Modem::OnSerialBeginCommand(const ATDevice
 	}
 
 	return kCmdResponse_NotHandled;
-}
-
-void ATDevice1030Modem::OnSerialAbortCommand() {
-}
-
-void ATDevice1030Modem::OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) {
-}
-
-void ATDevice1030Modem::OnSerialFence(uint32 id) {
-}
-
-IATDeviceSIO::CmdResponse ATDevice1030Modem::OnSerialAccelCommand(const ATDeviceSIORequest& request) {
-	return OnSerialBeginCommand(request);
 }
 
 void ATDevice1030Modem::OnCommandStateChanged(bool asserted) {

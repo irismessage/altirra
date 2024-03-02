@@ -47,6 +47,7 @@ bool ATUIGetDriveSoundsEnabled();
 void ATUISetDriveSoundsEnabled(bool enabled);
 
 void ATUIOpenOnScreenKeyboard();
+void ATUIToggleHoldKeys();
 
 int ATUIGetViewFilterSharpness();
 void ATUISetViewFilterSharpness(int sharpness);
@@ -57,6 +58,7 @@ void ATUISetDisplayFilterMode(ATDisplayFilterMode mode);
 bool ATUIGetShowFPS();
 void ATUISetShowFPS(bool enabled);
 bool ATUIGetFullscreen();
+bool ATUIGetDisplayFullscreen();
 void ATSetFullscreen(bool);
 
 bool ATUICanManipulateWindows();

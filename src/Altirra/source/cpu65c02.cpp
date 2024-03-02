@@ -187,9 +187,9 @@ bool ATCPUEmulator::Decode65C02(uint8 opcode) {
 			break;
 
 		case 0x74:	// STZ zp,X
-			*mpDstState++ = kState0toD;
 			*mpDstState++ = kStateReadAddrL;		// 2
 			*mpDstState++ = kStateReadAddX;			// 3
+			*mpDstState++ = kState0toD;
 			*mpDstState++ = kStateWrite;			// 4
 			break;
 

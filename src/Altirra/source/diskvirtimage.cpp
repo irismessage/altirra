@@ -1,3 +1,96 @@
+﻿//	Altirra - Atari 800/800XL/5200 emulator
+//	Atari DOS 2.x virtual filesystem handler
+//	Copyright (C) 2009-2017 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License
+//	along with this program; if not, write to the Free Software
+//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+//=========================================================================
+// Virtual DOS 2.x disk handler
+//
+// The virtual folder handler maps a host directory onto a virtual DOS 2.x
+// disk, such that a compatible DOS using normal access patterns can read
+// files on the disk. The data sectors on the disk are allocated
+// dynamically so that this is possible even if the total size of the files
+// exceeds the space normally available on a 90K single density volume.
+// The handler accomplishes this by watching the access pattern and
+// dynamically assigning factors according to the "read wavefront" being
+// pushed by DOS. This is possible due to DOS's lack of a significant disk
+// cache and the singly-linked sector structure limiting visibility.
+//
+// Disk layout
+// -----------
+// The disk is laid out as follows:
+//
+// +------+---------------+----------------+------------------+---------------+
+// | boot | start sectors | sector pool 1  | VTOC + directory | sector pool 2 |
+// | 3 s. |   64 sectors  |  292 sectors   |     9 sectors    |  351 sectors  |  
+// +------+---------------+----------------+------------------+---------------+
+// 
+// As with DOS 2.x, the last sector on the disk is not used (720).
+//
+// The first three sectors are reserved for the boot sectors; it is possible to
+// place an image of these called $dosboot.bin in the mapped directory and the
+// handler will include those to make the disk bootable. For this to work, the
+// DOS.SYS must match the boot sectors as the boot sectors are essentially the
+// first 384 bytes of DOS.SYS.
+//
+// 64 sectors on the disk are reserved for the starting sector of any file on
+// the disk. This prevents issues with aggressive caching, particularly with
+// the SpartaDOS X ATARIDOS.SYS driver.
+//
+// The remaining 643 sectors are used as a pool to provide data sectors as DOS
+// reads files on the disk. They are allocated in LRU order as DOS sees
+// successive sector links in the file -- that is, whenever a data sector is
+// read, the next sector for that file is allocated and assigned. The cache
+// attempts to maintain as consistent of an image as possible within the
+// constraints of the pool size vs. total data. If the total working set of
+// data sectors accessed by the drive fits within the pool, the disk image will
+// be completely stable. If the working set does not fit within the pool, the
+// handler attempts to keep as much recent history stable as possible. This
+// allows the virtual disk to be accessed by operating systems that have
+// dynamic disk caching (SpartaDOS X), or by applications that make extensive
+// use of direct reseeking via POINT.
+//
+// Preallocation
+// -------------
+// If the drive reads sectors that have not been committed yet because they
+// have not been referenced by another sector previously read, the handler
+// attempts to preallocate those sectors and store valid data in them. This
+// is primarily to make the virtual disk image work with drives that do track
+// buffering, since those drives will read an entire track of 18 sectors
+// whenever DOS requests a sector on a new track. Preallocation ensures that
+// the track buffer holds valid data since the handler cannot invalidate the
+// drive's track cache to reassign those sectors.
+//
+// Note that track buffering causes the handler to see a LOT of false
+// references, since the handler cannot tell which sectors are actually
+// requested by DOS. The sector pool is big enough to ensure that DOS continues
+// to see valid data structures as it advances its read wavefronts, but this
+// results in some rather astounding levels of fragmentation once sectors
+// start to be recycled in the sector pool. As an example, simply reading
+// track 0 requires the handler to allocate the second data sector for as
+// many as 15 files due to the initial sector links. It tries to separate
+// files into different tracks to keep the read pattern sane, but this
+// quickly breaks down once the sector pool starts to fill up.
+//
+// A side effect of preallocation is that a disk whose total data size fits
+// within 90K can be copied using a sector copier to create a working disk.
+// The VTOC will be wrong (all sectors allocated), but all files will be
+// present on the disk.
+//
+
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/math.h>
@@ -20,11 +113,15 @@ namespace {
 	};
 }
 
-class ATDiskImageVirtualFolder final : public IATDiskImage, public IVDTimerCallback {
+class ATDiskImageVirtualFolder final : public vdrefcounted<IATDiskImage>, public IVDTimerCallback {
 public:
 	ATDiskImageVirtualFolder();
 
 	void Init(const wchar_t *path);
+
+	void *AsInterface(uint32 id) override;
+
+	ATImageType GetImageType() const override { return kATImageType_Tape; }
 
 	ATDiskTimingMode GetTimingMode() const override { return kATDiskTimingMode_Any; }
 
@@ -34,8 +131,9 @@ public:
 	ATDiskImageFormat GetImageFormat() const override { return kATDiskImageFormat_None; }
 
 	bool Flush() override { return true; }
+	virtual uint64 GetImageChecksum() const override { return 0; }
 
-	void SetPath(const wchar_t *path) override;
+	void SetPath(const wchar_t *path, ATDiskImageFormat format) override;
 	void Save(const wchar_t *path, ATDiskImageFormat format) override;
 
 	ATDiskGeometryInfo GetGeometry() const override;
@@ -56,6 +154,7 @@ public:
 	bool WriteVirtualSector(uint32 index, const void *data, uint32 len) override;
 
 	void Resize(uint32 sectors) override;
+	void FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskVirtualSectorInfo *vsecs, uint32 psCount, const ATDiskPhysicalSectorInfo *psecs, const uint8 *psecData) override;
 
 public:
 	void TimerCallback() override;
@@ -80,24 +179,22 @@ protected:
 
 	struct XDirBaseEnt {
 		VDStringW mPath;
-		uint32	mSize;
-		uint32	mSectorCount;
-		uint32	mLockedSector;
-
-		XDirBaseEnt() : mSize(0), mSectorCount(0), mLockedSector(0) {}
+		uint32	mSize = 0;				// File size in bytes.
+		uint32	mSectorCount = 0;		// Number of data sectors in the file.
+		uint32	mLockedSector = 0;		// Virtual sector number of the next data sector after the last read one, or 0 if none.
 	};
 
 	struct XDirEnt : public XDirBaseEnt {
 		VDFile	mFile;
-		bool	mbValid;
-
-		XDirEnt() : mbValid(false) {}
+		bool	mbValid = false;
+		uint32	mSectorsAllocated = 1;
+		uint32	mNextPrealloc = 0;
 	};
 
 	struct SectorEnt {
-		bool	mbLinked;
-		sint8	mFileIndex;
-		uint16	mSectorIndex;
+		bool	mbInCache;				// True if sector is in the LRU cache and can be reassigned. Locked and special sectors are not.
+		sint8	mFileIndex;				// File index, or -1 if not assigned to a file.
+		uint16	mSectorIndex;			// 0-based index of sector in file, in file order.
 		uint16	mLRUPrev;
 		uint16	mLRUNext;
 	};
@@ -106,9 +203,12 @@ protected:
 	uint32 FindDataSector(sint8 fileIndex, uint16 sectorIndex) const;
 	void UnlinkDataSector(uint32 sector);
 	void LinkDataSector(uint32 sector);
+	uint32 FindBestNextDataSector(sint8 fileIndex, uint32 prevSectorIndex);
+	void PreallocateTrack(uint32 baseSectorIndex);
 
 	VDStringW mPath;
 	uint32	mSectorCount;
+	uint32	mFreeSectorCount;
 	bool mbBootFilePresent;
 	VDDate mBootFileLastDate;
 	int mDosEntry;
@@ -139,12 +239,13 @@ void ATDiskImageVirtualFolder::Init(const wchar_t *path) {
 	UpdateDirectory(false);
 
 	// Mark all sectors as in use.
-	for(uint32 i=0; i<720; ++i) {
-		mSectorMap[i].mbLinked = false;
-		mSectorMap[i].mFileIndex = -1;
-		mSectorMap[i].mLRUNext = i;
-		mSectorMap[i].mLRUPrev = i;
-		mSectorMap[i].mSectorIndex = 0;
+	for(uint32 i=0; i<(uint32)vdcountof(mSectorMap); ++i) {
+		SectorEnt& se = mSectorMap[i];
+		se.mbInCache = false;
+		se.mFileIndex = -1;
+		se.mLRUNext = i;
+		se.mLRUPrev = i;
+		se.mSectorIndex = 0;
 	}
 
 	// Sectors 3-66 are permanently dedicated to the first sector of each file.
@@ -153,7 +254,9 @@ void ATDiskImageVirtualFolder::Init(const wchar_t *path) {
 		mSectorMap[i].mSectorIndex = 0;
 	}
 
-	// Free up sectors 67-358 and 368-718 for rotating data sector use.
+	// Put sectors 67-358 and 368-718 in the pool for rotating data sector use.
+	mFreeSectorCount = 0;
+
 	for(uint32 i=67; i<=358; ++i)
 		LinkDataSector(i);
 
@@ -166,7 +269,15 @@ void ATDiskImageVirtualFolder::Init(const wchar_t *path) {
 	}
 }
 
-void ATDiskImageVirtualFolder::SetPath(const wchar_t *path) {
+void *ATDiskImageVirtualFolder::AsInterface(uint32 id) {
+	switch(id) {
+		case IATDiskImage::kTypeID: return static_cast<IATDiskImage *>(this);
+	}
+
+	return nullptr;
+}
+
+void ATDiskImageVirtualFolder::SetPath(const wchar_t *path, ATDiskImageFormat format) {
 }
 
 void ATDiskImageVirtualFolder::Save(const wchar_t *path, ATDiskImageFormat format) {
@@ -269,16 +380,46 @@ void ATDiskImageVirtualFolder::ReadPhysicalSector(uint32 index, void *data, uint
 
 	// First, check if the sector is assigned to a file. If not, bail.
 	SectorEnt& se = mSectorMap[index];
-	if (se.mFileIndex < 0)
+
+	if (se.mFileIndex < 0) {
+		if (!se.mbInCache)
+			return;
+
+		// Sector is not allocated. Try to preallocate all sectors on the track, and then check if
+		// the sector is still unallocated; if so, blacklist the sector by moving it to the end.
+		// We need to preallocate the entire track if we can or else fragmentation gets horrific
+		// on track caching drives.
+		PreallocateTrack(index);
+
+		if (se.mFileIndex < 0) {
+			// We didn't find anything useful to allocate this sector to. Move it to
+			// the back of the LRU reuse order and return an empty sector.
+			g_ATLCVDisk("Blacklisting sector %u\n", index+1);
+			UnlinkDataSector(index);
+			LinkDataSector(index);
+			return;
+		}
+	}
+
+	// Retrieve the data corresponding to that file.
+	XDirEnt& xd = mXDirEnt[se.mFileIndex];
+
+	// Check if this file entry is actually in use. If it is not, we might be reading the
+	// preallocated entry for a file slot that's unused, in which case we should bail.
+	if (!xd.mbValid)
 		return;
 
 	// Promote this sector to LRU head.
 	PromoteDataSector(index);
-
-	// Retrieve the data corresponding to that file.
-	XDirEnt& xd = mXDirEnt[se.mFileIndex];
 	
-	g_ATLCVDisk("Reading sector %u (sector %u of file %d / %ls)\n", index+1, se.mSectorIndex, se.mFileIndex, VDFileSplitPath(xd.mPath.c_str()));
+	g_ATLCVDisk("Reading sector %u [%2u:%2u] (sector %u/%u of file %d / %ls)\n"
+		, index+1
+		, index/18
+		, index%18+1
+		, se.mSectorIndex
+		, xd.mSectorCount
+		, se.mFileIndex
+		, VDFileSplitPath(xd.mPath.c_str()));
 
 	uint8 validLen = 0;
 	uint32 link = (uint32)0 - 1;
@@ -318,26 +459,38 @@ void ATDiskImageVirtualFolder::ReadPhysicalSector(uint32 index, void *data, uint
 				link = FindDataSector(se.mFileIndex, se.mSectorIndex + 1);
 
 				if (link) {
-					g_ATLCVDisk("Resurrecting cached link at sector %u\n", link);
+					UnlinkDataSector(link);
 				} else {
-					// No -- allocate a fresh sector from the LRU tail.
-					link = mSectorMap[0].mLRUPrev;
-					VDASSERT(link);
-
-					g_ATLCVDisk("Reassigning cached link at sector %u\n", link);
+					// No -- allocate a fresh sector. Try to grab the next sector if it has not been used yet; otherwise,
+					// allocate a sector from the LRU cache.
+					link = FindBestNextDataSector(se.mFileIndex, index);
+					
+					UnlinkDataSector(link);
 
 					// Reassign the sector.
 					SectorEnt& le = mSectorMap[link];
-					VDASSERT(le.mbLinked);
+
+					g_ATLCVDisk("%s sector %u [%2u:%2u] as sector %u of file %ls\n"
+						, le.mFileIndex >= 0 ? "Reassigning" : "Allocating"
+						, link + 1
+						, link / 18
+						, link % 18 + 1
+						, se.mSectorIndex + 1
+						, VDFileSplitPath(xd.mPath.c_str()));
+
+					if (le.mFileIndex >= 0) {
+						VDASSERT(mXDirEnt[le.mFileIndex].mSectorsAllocated > 1);
+						--mXDirEnt[le.mFileIndex].mSectorsAllocated;
+					}
 
 					le.mFileIndex = se.mFileIndex;
 					le.mSectorIndex = se.mSectorIndex + 1;
+					++xd.mSectorsAllocated;
 				}
 
-				UnlinkDataSector(link);
 				xd.mLockedSector = link;
 			} else {
-				g_ATLCVDisk("Using cached link at sector %u\n", link);
+				g_ATLCVDisk("Using cached link at sector %u\n", link + 1);
 			}
 		}
 	}
@@ -381,6 +534,10 @@ void ATDiskImageVirtualFolder::Resize(uint32 sectors) {
 	throw MyError("A virtual disk cannot be resized.");
 }
 
+void ATDiskImageVirtualFolder::FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskVirtualSectorInfo *vsecs, uint32 psCount, const ATDiskPhysicalSectorInfo *psecs, const uint8 *psecData) {
+	throw MyError("A virtual disk cannot be formatted.");
+}
+
 void ATDiskImageVirtualFolder::TimerCallback() {
 	for(size_t i=0; i<vdcountof(mXDirEnt); ++i) {
 		XDirEnt& xd = mXDirEnt[i];
@@ -393,7 +550,7 @@ void ATDiskImageVirtualFolder::TimerCallback() {
 }
 
 void ATDiskImageVirtualFolder::PromoteDataSector(uint32 sector) {
-	if (!mSectorMap[sector].mbLinked)
+	if (!mSectorMap[sector].mbInCache)
 		return;
 
 	UnlinkDataSector(sector);
@@ -410,10 +567,12 @@ uint32 ATDiskImageVirtualFolder::FindDataSector(sint8 fileIndex, uint16 sectorIn
 }
 
 void ATDiskImageVirtualFolder::UnlinkDataSector(uint32 sector) {
-	VDASSERT(sector != 0);
+	VDASSERT(sector > 0 && sector < 720);
 
 	// unlink sector
 	SectorEnt& se = mSectorMap[sector];
+	VDASSERT(se.mbInCache);
+
 	SectorEnt& pe = mSectorMap[se.mLRUPrev];
 	SectorEnt& ne = mSectorMap[se.mLRUNext];
 
@@ -421,12 +580,19 @@ void ATDiskImageVirtualFolder::UnlinkDataSector(uint32 sector) {
 	pe.mLRUNext = se.mLRUNext;
 	se.mLRUPrev = sector;
 	se.mLRUNext = sector;
-	se.mbLinked = false;
+	se.mbInCache = false;
+
+	if (se.mFileIndex < 0)
+		--mFreeSectorCount;
 }
 
 void ATDiskImageVirtualFolder::LinkDataSector(uint32 sector) {
+	VDASSERT(sector > 0 && sector < 720);
+
 	// relink sector at head
 	SectorEnt& se = mSectorMap[sector];
+	VDASSERT(!se.mbInCache);
+
 	SectorEnt& re = mSectorMap[0];
 	SectorEnt& he = mSectorMap[re.mLRUNext];
 	se.mLRUPrev = 0;
@@ -435,7 +601,192 @@ void ATDiskImageVirtualFolder::LinkDataSector(uint32 sector) {
 	he.mLRUPrev = sector;
 	re.mLRUNext = sector;
 
-	se.mbLinked = true;
+	se.mbInCache = true;
+
+	if (se.mFileIndex < 0)
+		++mFreeSectorCount;
+}
+
+uint32 ATDiskImageVirtualFolder::FindBestNextDataSector(sint8 fileIndex, uint32 prevSectorIndex) {
+	// If we are out of free sectors, free up some until we have three tracks' worth again.
+	if (!mFreeSectorCount) {
+		uint32 vsi = mSectorMap[0].mLRUPrev;
+
+		while(mFreeSectorCount < 18*3 && vsi) {
+			const int fileIndex = mSectorMap[vsi].mFileIndex;
+			if (fileIndex >= 0) {
+				--mXDirEnt[fileIndex].mSectorsAllocated;
+				mSectorMap[vsi].mFileIndex = -1;
+				++mFreeSectorCount;
+			}
+
+			vsi = mSectorMap[vsi].mLRUPrev;
+		}
+	}
+
+	// validate count
+	VDASSERT(mFreeSectorCount == std::count_if(std::begin(mSectorMap), std::end(mSectorMap), [](const SectorEnt& se) { return se.mbInCache && se.mFileIndex < 0; }));
+
+	// Find a suitable sector to use as the next data link sector for a file. Ideally, we want
+	// to cluster them within the same track and preferably within the same track, to reduce
+	// pollution with track buffered drives.
+	
+	// 1) If there are unallocated sectors within the same track, use them.
+	uint32 trackStart = prevSectorIndex - prevSectorIndex % 18;
+
+	for(uint32 i=0, testSec = prevSectorIndex; i<18; ++i) {
+		if (mSectorMap[testSec].mbInCache && mSectorMap[testSec].mFileIndex < 0)
+			return testSec;
+
+		if (++testSec >= trackStart + 18)
+			testSec = trackStart;
+	}
+
+	// 2) Scan all other tracks on the disk and try to find another track we can use. Score
+	// tracks first by the number of other files included and then by the number of free sectors.
+	//
+	// Tracks we want to avoid, due to how hot they are for access and pollution potential:
+	//	- Tracks 0-3: These include the initial sectors for files.
+	//	- Track 20: This holds the directory.
+
+	uint32 bestTrackScore = 0;
+	uint32 bestFreeSector = 0;
+
+	for(uint32 track = 4; track < 40; ++track) {
+		if (track == 20)
+			continue;
+
+		const uint32 trackStartIndex = track * 18;
+		bool fileMap[64] = {false};
+		fileMap[fileIndex] = true;
+		uint32 otherFilesOnTrack = 0;
+		uint32 freeSectorsOnTrack = 0;
+		uint32 firstFreeSector = 0;
+
+		for(uint32 i=0; i<18; ++i) {
+			const SectorEnt& se = mSectorMap[trackStartIndex + i];
+			if (se.mFileIndex >= 0) {
+				if (!fileMap[se.mFileIndex]) {
+					fileMap[se.mFileIndex] = true;
+					++otherFilesOnTrack;
+				}
+			} else if (se.mbInCache) {
+				++freeSectorsOnTrack;
+				if (!firstFreeSector)
+					firstFreeSector = trackStartIndex + i;
+			}
+		}
+
+		if (freeSectorsOnTrack) {
+			uint32 trackScore = ((18 - otherFilesOnTrack) << 8) + freeSectorsOnTrack;
+
+			if (trackScore > bestTrackScore) {
+				bestTrackScore = trackScore;
+				bestFreeSector = firstFreeSector;
+			}
+		}
+	}
+
+	if (bestFreeSector)
+		return bestFreeSector;
+
+	// Uh oh, looks like all tracks are in use. Whelp, guess we'll have to just return the next sector
+	// in the LRU cache.
+
+	const uint32 recycleSectorIndex = mSectorMap[0].mLRUPrev;
+	VDASSERT(recycleSectorIndex);
+
+	return recycleSectorIndex;
+}
+
+void ATDiskImageVirtualFolder::PreallocateTrack(uint32 baseSectorIndex) {
+	const uint32 trackStart = baseSectorIndex - baseSectorIndex % 18;
+	const uint32 trackEnd = trackStart + 18;
+	uint32 nextSectorIndex = baseSectorIndex;
+	uint32 filesScanned = 0;
+
+	// Construct file order for track. Use the files that we currently have on the track,
+	// then the remainder of files.
+	uint8 fileOrder[64];
+	bool filesSeen[64] = {};
+	int nextFileOrder = 0;
+
+	for(uint32 i=trackStart; i<trackEnd; ++i) {
+		int fi = mSectorMap[i].mFileIndex;
+		if (fi >= 0 && !filesSeen[fi]) {
+			filesSeen[fi] = true;
+			fileOrder[nextFileOrder++] = (uint8)fi;
+
+			mXDirEnt[fi].mNextPrealloc = mSectorMap[i].mSectorIndex + 1;
+		}
+	}
+
+	for(uint32 i=0; i<64; ++i) {
+		if (!filesSeen[i]) {
+			filesSeen[i] = true;
+			fileOrder[nextFileOrder++] = (uint8)i;
+		}
+	}
+
+	uint32 nextFileOrderIndex = 0;
+	for(;;) {
+		// Find the next sector on the track that is in the LRU cache and not currently
+		// allocated to a file.
+		while(!mSectorMap[nextSectorIndex].mbInCache || mSectorMap[nextSectorIndex].mFileIndex >= 0) {
+			if (++nextSectorIndex == trackEnd)
+				nextSectorIndex = trackStart;
+
+			if (nextSectorIndex == baseSectorIndex)
+				return;
+		}
+
+		const uint32 fileIndex = fileOrder[nextFileOrderIndex];
+		XDirEnt& xdpre = mXDirEnt[fileIndex];
+
+		// check if this file still has sectors to allocate and we're still within the
+		// file
+		while(xdpre.mSectorsAllocated < xdpre.mSectorCount) {
+			if (xdpre.mNextPrealloc >= xdpre.mSectorCount)
+				xdpre.mNextPrealloc = 1;
+
+			uint32 vsec = FindDataSector((sint8)fileIndex, (uint16)xdpre.mNextPrealloc);
+
+			if (vsec == 0) {
+				// Hurray, we found a sector in this file that hasn't be allocated yet.
+				// Allocate this sector to the file and then stop; the normal read code will then
+				// allocate the next sector for the link.
+				UnlinkDataSector(nextSectorIndex);
+
+				SectorEnt& se = mSectorMap[nextSectorIndex];
+				se.mFileIndex = fileIndex;
+				se.mSectorIndex = xdpre.mNextPrealloc;
+				++xdpre.mSectorsAllocated;
+
+				VDASSERT(xdpre.mSectorsAllocated <= xdpre.mSectorCount);
+
+				g_ATLCVDisk("Preallocating sector %u [%2u:%2u] as sector %u/%u of file %d / %ls\n"
+					, nextSectorIndex+1
+					, nextSectorIndex/18
+					, nextSectorIndex%18 + 1
+					, se.mSectorIndex
+					, xdpre.mSectorCount
+					, fileIndex
+					, VDFileSplitPath(xdpre.mPath.c_str()));
+
+				LinkDataSector(nextSectorIndex);
+
+				goto next_sector;
+			}
+
+			++xdpre.mNextPrealloc;
+		}
+
+		if (++nextFileOrderIndex >= 64)
+			break;
+
+next_sector:
+		;
+	}
 }
 
 void ATDiskImageVirtualFolder::UpdateDirectory(bool reportNewFiles) {
@@ -530,12 +881,7 @@ void ATDiskImageVirtualFolder::UpdateDirectory(bool reportNewFiles) {
 		if (!xde.mbValid) {
 			memset(&de, 0, sizeof de);
 			xde.mFile.closeNT();
-
-			if (xde.mLockedSector) {
-				LinkDataSector(xde.mLockedSector);
-				xde.mLockedSector = 0;
-			}
-
+			xde.mLockedSector = 0;
 			xde.mSectorCount = 0;
 			xde.mSize = 0;
 		}
@@ -621,6 +967,36 @@ void ATDiskImageVirtualFolder::UpdateDirectory(bool reportNewFiles) {
 			mDirEnt[i-1].mFlags = DirEnt::kFlagDeleted;
 	}
 
+	// Scan the sector map and deallocate all sectors that are no longer valid because
+	// either the file slot is no longer in use or the index extends beyond the new
+	// length of the file. Scan in reverse so the sectors are placed in ascending order
+	// on the disk.
+	for(uint32 i=718; i>=67; --i) {
+		SectorEnt& se = mSectorMap[i];
+
+		if (se.mFileIndex >= 0) {
+			XDirEnt& xde = mXDirEnt[se.mFileIndex];
+
+			if (!xde.mbValid || se.mSectorIndex >= xde.mSectorCount) {
+				// file or sector is not valid -- push the sector back on the LRU list
+				se.mFileIndex = -1;
+				se.mSectorIndex = 0;
+
+				if (se.mbInCache)
+					++mFreeSectorCount;
+				else
+					LinkDataSector(i);
+
+				VDASSERT(xde.mSectorsAllocated > 1);
+				--xde.mSectorsAllocated;
+			}
+		}
+
+		// skip the VTOC and directory at 359-367
+		if (i == 368)
+			i = 359;
+	}
+
 	// Recompute directory entry metadata.
 	mDosEntry = -1;
 
@@ -651,9 +1027,9 @@ void ATDiskImageVirtualFolder::UpdateDirectory(bool reportNewFiles) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-IATDiskImage *ATMountDiskImageVirtualFolder(const wchar_t *path, uint32 sectorCount) {
-	vdautoptr<ATDiskImageVirtualFolder> p(new ATDiskImageVirtualFolder);
+void ATMountDiskImageVirtualFolder(const wchar_t *path, uint32 sectorCount, IATDiskImage **ppImage) {
+	vdrefptr<ATDiskImageVirtualFolder> p(new ATDiskImageVirtualFolder);
 	
 	p->Init(path);
-	return p.release();
+	*ppImage = p.release();
 }

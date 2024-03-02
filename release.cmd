@@ -2,7 +2,7 @@
 setlocal enableextensions enabledelayedexpansion
 
 rem ---echo banner
-echo Altirra Build Release Utility Version 2.80
+echo Altirra Build Release Utility Version 2.90
 echo Copyright (C) Avery Lee 2014-2016. Licensed under GNU General Public License
 echo.
 
@@ -11,8 +11,8 @@ set _incremental=false
 set _packonly=false
 set _verid=
 set _anyvc=false
-set _clversionexp=18.00.40629
-set _clversionexpdesc=Visual Studio 2013 Update 5
+set _clversionexp=19.00.24215.1
+set _clversionexpdesc=Visual Studio 2015 Update 3 w/Hotfix
 
 :arglist
 if "%1"=="" goto endargs
@@ -185,7 +185,13 @@ zip -9 -X -r publish\Altirra-!_verid!-src.zip ^
 	*.pcm ^
 	*.bas ^
 	*.html ^
-	*.natvis
+	*.natvis ^
+	*.vs ^
+	*.ps ^
+	*.vsh ^
+	*.psh ^
+	*.cmd ^
+	*.atcpengine
 
 if errorlevel 1 (
 	echo Packaging step failed.
@@ -195,14 +201,12 @@ if errorlevel 1 (
 zip -9 -X publish\Altirra-!_verid!-src.zip ^
 	Copying ^
 	release.cmd ^
-	Readme.txt ^
 	src\BUILD-HOWTO.html ^
 	src\Kasumi\data\Tuffy.* ^
 	src\Kernel\source\shared\atarifont.bin ^
 	src\Kernel\source\shared\atariifont.bin ^
 	src\atbasic\Makefile ^
 	src\Kernel\Makefile ^
-	src\HLEKernel\Makefile ^
 	src\ATHelpFile\source\*.xml ^
 	src\ATHelpFile\source\*.xsl ^
 	src\ATHelpFile\source\*.css ^
@@ -210,7 +214,7 @@ zip -9 -X publish\Altirra-!_verid!-src.zip ^
 	src\ATHelpFile\source\*.hhw ^
 	src\ATHelpFile\source\*.hhc ^
 	src\Altirra\res\altirraexticons.res ^
-	out\debug\kernel.rom ^
+	localconfig\example\*.props ^
 	out\release\kernel.rom
 
 if errorlevel 1 (

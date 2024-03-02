@@ -32,8 +32,11 @@ vdrect32 VDUIProxyControl::GetArea() const {
 		if (GetWindowRect(mhwnd, &r)) {
 			HWND hwndParent = GetAncestor(mhwnd, GA_PARENT);
 
-			if (hwndParent && MapWindowPoints(NULL, hwndParent, (LPPOINT)&r, 2))
-				return vdrect32(r.left, r.top, r.right, r.bottom);
+			if (hwndParent) {
+				SetLastError(0);
+				if (MapWindowPoints(NULL, hwndParent, (LPPOINT)&r, 2) || !GetLastError())
+					return vdrect32(r.left, r.top, r.right, r.bottom);
+			}
 		}
 	}
 
@@ -62,6 +65,10 @@ void VDUIProxyControl::SetRedraw(bool redraw) {
 				SendMessage(mhwnd, WM_SETREDRAW, FALSE, 0);
 		}
 	}
+}
+
+bool VDUIProxyControl::IsVisible() const {
+	return mhwnd && (GetWindowLong(mhwnd, GWL_STYLE) & WS_VISIBLE);
 }
 
 VDZLRESULT VDUIProxyControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
@@ -776,6 +783,33 @@ VDUIProxyListBoxControl::VDUIProxyListBoxControl() {
 }
 
 VDUIProxyListBoxControl::~VDUIProxyListBoxControl() {
+	if (mpEditWndProcThunk) {
+		VDDestroyFunctionThunk(mpEditWndProcThunk);
+		mpEditWndProcThunk = NULL;
+	}
+
+	if (mpWndProcThunk) {
+		VDDestroyFunctionThunk(mpWndProcThunk);
+		mpWndProcThunk = NULL;
+	}
+
+	CancelEditTimer();
+
+	if (mpEditTimerThunk) {
+		VDDestroyFunctionThunk(mpEditTimerThunk);
+		mpEditTimerThunk = NULL;
+	}
+}
+
+void VDUIProxyListBoxControl::EnableAutoItemEditing() {
+	if (!mPrevWndProc) {
+		mPrevWndProc = (void(*)())GetWindowLongPtr(mhwnd, GWLP_WNDPROC);
+
+		if (!mpWndProcThunk)
+			mpWndProcThunk = VDCreateFunctionThunkFromMethod(this, &VDUIProxyListBoxControl::ListBoxWndProc, true);
+
+		SetWindowLongPtr(mhwnd, GWLP_WNDPROC, (LONG_PTR)mpWndProcThunk);
+	}
 }
 
 void VDUIProxyListBoxControl::Clear() {
@@ -789,6 +823,8 @@ int VDUIProxyListBoxControl::AddItem(const wchar_t *s, uintptr_t cookie) {
 	if (!mhwnd)
 		return -1;
 
+	CancelEditTimer();
+
 	int idx;
 	idx = (int)SendMessageW(mhwnd, LB_ADDSTRING, 0, (LPARAM)s);
 
@@ -798,9 +834,104 @@ int VDUIProxyListBoxControl::AddItem(const wchar_t *s, uintptr_t cookie) {
 	return idx;
 }
 
+int VDUIProxyListBoxControl::InsertItem(int pos, const wchar_t *s, uintptr_t cookie) {
+	if (!mhwnd)
+		return -1;
+
+	CancelEditTimer();
+
+	int idx;
+	idx = (int)SendMessageW(mhwnd, LB_INSERTSTRING, (WPARAM)pos, (LPARAM)s);
+
+	if (idx >= 0)
+		SendMessage(mhwnd, LB_SETITEMDATA, idx, (LPARAM)cookie);
+
+	return idx;
+}
+
+void VDUIProxyListBoxControl::DeleteItem(int pos) {
+	if (!mhwnd)
+		return;
+
+	CancelEditTimer();
+	SendMessageW(mhwnd, LB_DELETESTRING, (WPARAM)pos, 0);
+}
+
+void VDUIProxyListBoxControl::EnsureItemVisible(int pos) {
+	if (!mhwnd || pos < 0)
+		return;
+
+	CancelEditTimer();
+
+	RECT r;
+	if (!GetClientRect(mhwnd, &r))
+		return;
+
+	RECT rItem;
+	if (LB_ERR != SendMessageW(mhwnd, LB_GETITEMRECT, (WPARAM)pos, (LPARAM)&rItem)) {
+		if (rItem.top < r.bottom && r.top < rItem.bottom)
+			return;
+	}
+
+	// Item isn't visible. Scroll it into view.
+	int itemHeight = (int)SendMessageW(mhwnd, LB_GETITEMHEIGHT, 0, 0);
+	if (itemHeight <= 0)
+		return;
+
+	int topIndex = std::max<int>(0, pos - (r.bottom - itemHeight) / (2 * itemHeight));
+	SendMessageW(mhwnd, LB_SETTOPINDEX, (WPARAM)topIndex, 0);
+}
+
+void VDUIProxyListBoxControl::EditItem(int index) {
+	if (!mhwnd)
+		return;
+
+	CancelEditTimer();
+	EnsureItemVisible(index);
+
+	RECT rItem {};
+	if (LB_ERR == SendMessageW(mhwnd, LB_GETITEMRECT, (WPARAM)index, (LPARAM)&rItem))
+		return;
+
+	int textLen = (int)SendMessageW(mhwnd, LB_GETTEXTLEN, (WPARAM)index, 0);
+	vdfastvector<WCHAR> textbuf(textLen + 1, 0);
+
+	SendMessageW(mhwnd, LB_GETTEXT, (WPARAM)index, (LPARAM)textbuf.data());
+
+	mEditItem = index;
+
+	int cxedge = 1;
+	int cyedge = 1;
+
+	mhwndEdit = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, WC_EDITW, textbuf.data(), WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+		rItem.left - 0*cxedge,
+		rItem.top - 2*cxedge,
+		(rItem.right - rItem.left) + 0*cxedge,
+		(rItem.bottom - rItem.top) + 4*cyedge,
+		mhwnd, NULL, VDGetLocalModuleHandleW32(), NULL);
+
+	SendMessageW(mhwndEdit, WM_SETFONT, (WPARAM)SendMessageW(mhwnd, WM_GETFONT, 0, 0), (LPARAM)TRUE);
+
+	if (!mpEditWndProcThunk)
+		mpEditWndProcThunk = VDCreateFunctionThunkFromMethod(this, &VDUIProxyListBoxControl::LabelEditWndProc, true);
+
+	if (mpEditWndProcThunk) {
+		mPrevEditWndProc = (void (*)())(WNDPROC)GetWindowLongPtrW(mhwndEdit, GWLP_WNDPROC);
+
+		if (mPrevEditWndProc)
+			SetWindowLongPtrW(mhwndEdit, GWLP_WNDPROC, (LONG_PTR)mpEditWndProcThunk);
+	}
+
+	ShowWindow(mhwndEdit, SW_SHOWNOACTIVATE);
+	::SetFocus(mhwndEdit);
+	SendMessageW(mhwndEdit, EM_SETSEL, 0, -1);
+}
+
 void VDUIProxyListBoxControl::SetItemText(int index, const wchar_t *s) {
 	if (!mhwnd || index < 0)
 		return;
+
+	CancelEditTimer();
 
 	int n = (int)SendMessage(mhwnd, LB_GETCOUNT, 0, 0);
 	if (index >= n)
@@ -850,6 +981,18 @@ void VDUIProxyListBoxControl::MakeSelectionVisible() {
 		SendMessage(mhwnd, LB_SETCURSEL, idx, 0);
 }
 
+void VDUIProxyListBoxControl::SetOnSelectionChanged(vdfunction<void(int)> fn) {
+	mpFnSelectionChanged = fn;
+}
+
+void VDUIProxyListBoxControl::SetOnItemDoubleClicked(vdfunction<void(int)> fn) {
+	mpFnItemDoubleClicked = fn;
+}
+
+void VDUIProxyListBoxControl::SetOnItemEdited(vdfunction<void(int ,const wchar_t *)> fn) {
+	mpFnItemEdited = fn;
+}
+
 void VDUIProxyListBoxControl::SetTabStops(const int *units, uint32 n) {
 	if (!mhwnd)
 		return;
@@ -862,20 +1005,161 @@ void VDUIProxyListBoxControl::SetTabStops(const int *units, uint32 n) {
 	SendMessage(mhwnd, LB_SETTABSTOPS, n, (LPARAM)v.data());
 }
 
+void VDUIProxyListBoxControl::EndEditItem() {
+	if (mhwndEdit) {
+		SetWindowLongPtrW(mhwndEdit, GWLP_WNDPROC, (LONG_PTR)mPrevEditWndProc);
+
+		auto h = mhwndEdit;
+		mhwndEdit = nullptr;
+
+		DestroyWindow(h);
+	}
+}
+
+void VDUIProxyListBoxControl::CancelEditTimer() {
+	if (mAutoEditTimer) {
+		KillTimer(nullptr, mAutoEditTimer);
+		mAutoEditTimer = 0;
+	}
+}
+
+void VDUIProxyListBoxControl::Detach() {
+	EndEditItem();
+
+	if (mPrevWndProc) {
+		SetWindowLongPtrW(mhwnd, GWLP_WNDPROC, (LONG_PTR)mPrevWndProc);
+		mPrevWndProc = nullptr;
+	}
+}
+
 VDZLRESULT VDUIProxyListBoxControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
 	if (mSuppressNotificationCount)
 		return 0;
 
 	if (HIWORD(wParam) == LBN_SELCHANGE) {
-		mSelectionChanged.Raise(this, GetSelection());
+		int selIndex = GetSelection();
+
+		if (mpFnSelectionChanged)
+			mpFnSelectionChanged(selIndex);
+
+		mSelectionChanged.Raise(this, selIndex);
 	} else if (HIWORD(wParam) == LBN_DBLCLK) {
 		int sel = GetSelection();
 
-		if (sel >= 0)
-			mEventItemDoubleClicked.Raise(this, GetSelection());
+		if (sel >= 0) {
+			if (mpFnItemDoubleClicked)
+				mpFnItemDoubleClicked(sel);
+
+			mEventItemDoubleClicked.Raise(this, sel);
+		}
 	}
 
 	return 0;
+}
+
+VDZLRESULT VDUIProxyListBoxControl::ListBoxWndProc(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) {
+	switch(msg) {
+		case WM_LBUTTONDOWN:
+			{
+				int prevSel = (int)CallWindowProcW((WNDPROC)mPrevWndProc, hwnd, LB_GETCURSEL, 0, 0);
+				LRESULT r = CallWindowProcW((WNDPROC)mPrevWndProc, hwnd, msg, wParam, lParam);
+				int nextSel = (int)CallWindowProcW((WNDPROC)mPrevWndProc, hwnd, LB_GETCURSEL, 0, 0);
+
+				CancelEditTimer();
+
+				if (nextSel == prevSel && nextSel >= 0) {
+					RECT r {};
+					CallWindowProcW((WNDPROC)mPrevWndProc, hwnd, LB_GETITEMRECT, (WPARAM)nextSel, (LPARAM)&r);
+
+					POINT pt = { (SHORT)LOWORD(lParam), (SHORT)HIWORD(lParam) };
+					if (PtInRect(&r, pt)) {
+						if (!mpEditTimerThunk)
+							mpEditTimerThunk = VDCreateFunctionThunkFromMethod(this, &VDUIProxyListBoxControl::AutoEditTimerProc, true);
+
+						if (mpEditTimerThunk)
+							mAutoEditTimer = SetTimer(NULL, 0, 1000, (TIMERPROC)mpEditTimerThunk);
+					}
+				}
+			}
+			break;
+
+		case WM_KEYDOWN:
+			if (wParam == VK_F2) {
+				int sel = (int)CallWindowProcW((WNDPROC)mPrevWndProc, hwnd, LB_GETCURSEL, 0, 0);
+
+				if (sel >= 0)
+					EditItem(sel);
+				return 0;
+			}
+			break;
+
+		case WM_KEYUP:
+			if (wParam == VK_F2)
+				return 0;
+			break;
+
+		case WM_RBUTTONDOWN:
+		case WM_MBUTTONDOWN:
+		case WM_XBUTTONDOWN:
+		case WM_LBUTTONDBLCLK:
+		case WM_RBUTTONDBLCLK:
+		case WM_MBUTTONDBLCLK:
+		case WM_XBUTTONDBLCLK:
+			CancelEditTimer();
+			break;
+	}
+
+	return CallWindowProcW((WNDPROC)mPrevWndProc, hwnd, msg, wParam, lParam);
+}
+
+VDZLRESULT VDUIProxyListBoxControl::LabelEditWndProc(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) {
+	switch(msg) {
+		case WM_GETDLGCODE:
+			return DLGC_WANTALLKEYS;
+			break;
+
+		case WM_KEYDOWN:
+			if (wParam == VK_RETURN) {
+				VDStringW s = VDGetWindowTextW32(hwnd);
+				EndEditItem();
+
+				if (mpFnItemEdited)
+					mpFnItemEdited(mEditItem, s.c_str());
+
+				return 0;
+			} else if (wParam == VK_ESCAPE) {
+				EndEditItem();
+
+				if (mpFnItemEdited)
+					mpFnItemEdited(mEditItem, nullptr);
+				return 0;
+			}
+			break;
+
+		case WM_KILLFOCUS:
+			if (wParam != (WPARAM)hwnd){
+				VDStringW s = VDGetWindowTextW32(hwnd);
+				EndEditItem();
+
+				if (mpFnItemEdited)
+					mpFnItemEdited(mEditItem, s.c_str());
+			}
+			return 0;
+
+		case WM_MOUSEACTIVATE:
+			return MA_NOACTIVATE;
+	}
+
+	return CallWindowProcW((WNDPROC)mPrevEditWndProc, hwnd, msg, wParam, lParam);
+}
+
+void VDUIProxyListBoxControl::AutoEditTimerProc(VDZHWND, VDZUINT, VDZUINT_PTR, VDZDWORD) {
+	CancelEditTimer();
+
+	int idx = (int)CallWindowProcW((WNDPROC)mPrevWndProc, mhwnd, LB_GETCURSEL, 0, 0);
+
+	if (idx >= 0)
+		EditItem(idx);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -921,9 +1205,9 @@ const VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::kNodeLast = (N
 
 VDUIProxyTreeViewControl::VDUIProxyTreeViewControl()
 	: mNextTextIndex(0)
-	, mpEditWndProcThunk(NULL)
 	, mhfontBold(NULL)
 	, mbCreatedBoldFont(false)
+	, mpEditWndProcThunk(NULL)
 {
 }
 
@@ -1120,7 +1404,7 @@ void VDUIProxyTreeViewControl::EnumChildrenRecursive(NodeRef parent, const vdfun
 	for(;;) {
 		while(current) {
 			itemw.hItem = current;
-			if (SendMessageW(mhwnd, TVM_GETITEMW, 0, (LPARAM)&itemw))
+			if (SendMessageW(mhwnd, TVM_GETITEMW, 0, (LPARAM)&itemw) && itemw.lParam)
 				callback((IVDUITreeViewVirtualItem *)itemw.lParam);
 
 			HTREEITEM firstChild = TreeView_GetChild(mhwnd, current);
@@ -1269,7 +1553,7 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 							mpEditWndProcThunk = VDCreateFunctionThunkFromMethod(this, &VDUIProxyTreeViewControl::FixLabelEditWndProcA, true);
 
 						if (mpEditWndProcThunk) {
-							mPrevEditWndProc = (void *)(WNDPROC)GetWindowLongPtrA(hwndEdit, GWLP_WNDPROC);
+							mPrevEditWndProc = (void (*)())(WNDPROC)GetWindowLongPtrA(hwndEdit, GWLP_WNDPROC);
 
 							if (mPrevEditWndProc)
 								SetWindowLongPtrA(hwndEdit, GWLP_WNDPROC, (LONG_PTR)mpEditWndProcThunk);
@@ -1303,7 +1587,7 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 							mpEditWndProcThunk = VDCreateFunctionThunkFromMethod(this, &VDUIProxyTreeViewControl::FixLabelEditWndProcW, true);
 
 						if (mpEditWndProcThunk) {
-							mPrevEditWndProc = (WNDPROC)GetWindowLongPtrW(hwndEdit, GWLP_WNDPROC);
+							mPrevEditWndProc = (void (*)())(WNDPROC)GetWindowLongPtrW(hwndEdit, GWLP_WNDPROC);
 
 							if (mPrevEditWndProc)
 								SetWindowLongPtrW(hwndEdit, GWLP_WNDPROC, (LONG_PTR)mpEditWndProcThunk);
@@ -1393,10 +1677,11 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 				if (!mEventItemGetDisplayAttributes.IsEmpty()) {
 					if (cd.nmcd.dwDrawStage == CDDS_PREPAINT) {
 						return CDRF_NOTIFYITEMDRAW;
-					} else if (cd.nmcd.dwDrawStage == CDDS_ITEMPREPAINT && cd.nmcd.lItemlParam) {
+					} else if (cd.nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
 						GetDispAttrEvent event;
 						event.mpItem = (IVDUITreeViewVirtualItem *)cd.nmcd.lItemlParam;
 						event.mbIsBold = false;
+						event.mbIsMuted = false;
 
 						mEventItemGetDisplayAttributes.Raise(this, &event);
 
@@ -1420,6 +1705,11 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 								::SelectObject(cd.nmcd.hdc, mhfontBold);
 								return CDRF_NEWFONT;
 							}
+						}
+
+						if (event.mbIsMuted) {
+							// blend half of the background color into the foreground color
+							cd.clrText = (cd.clrText | (cd.clrTextBk & 0xFFFFFF)) - (((cd.clrText ^ cd.clrTextBk) & 0xFEFEFE) >> 1);
 						}
 					}
 				}
@@ -1577,12 +1867,12 @@ void VDUIProxyButtonControl::SetChecked(bool enable) {
 VDZLRESULT VDUIProxyButtonControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
 	if (HIWORD(wParam) == BN_CLICKED) {
 		if (mpOnClicked)
-			mpOnClicked(this);
+			mpOnClicked();
 	}
 
 	return 0;
 }
 
-void VDUIProxyButtonControl::SetOnClicked(vdfunction<void(VDUIProxyButtonControl *)> fn) {
+void VDUIProxyButtonControl::SetOnClicked(vdfunction<void()> fn) {
 	mpOnClicked = std::move(fn);
 }

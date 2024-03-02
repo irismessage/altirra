@@ -28,11 +28,12 @@
 #include <at/atcore/devicemanager.h>
 #include <at/atcore/propertyset.h>
 #include <at/atnativeui/dialog.h>
+#include "oshelper.h"
 #include "resource.h"
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIDialogDeviceNew : public VDDialogFrameW32 {
+class ATUIDialogDeviceNew : public VDResizableDialogFrameW32 {
 public:
 	ATUIDialogDeviceNew(const vdfunction<bool(const char *)>& filter);
 
@@ -201,6 +202,94 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		}
 	},
 	{
+		L"Disk drives",
+		"sio",
+		{
+			{ "diskdrive810", L"810 disk drive (full emulation)",
+				L"Full 810 disk drive emulation, including 6507 CPU.\n"
+					L"The 810 has a 40-track drive and only reads single density disks. It is the lowest common denominator among all "
+					L"compatible disk drives and will not read any larger disk formats, such as enhanced or double density."
+			},
+
+			{ "diskdrive810archiver", L"810 Archiver disk drive (full emulation)",
+				L"Full emulation for the 810 Archiver disk drive, a.k.a. 810 with \"The Chip\", including 6507 CPU."
+			},
+
+			{ "diskdrivehappy810", L"Happy 810 disk drive (full emulation)",
+				L"Full Happy 810 disk drive emulation, including 6507 CPU.\n"
+					L"The Happy 810 adds track buffering and custom code execution capabilities to the 810 drive. It does not support "
+					L"double density, however."
+			},
+
+			{ "diskdrive1050", L"1050 disk drive (full emulation)",
+				L"Full 1050 disk drive emulation, including 6507 CPU.\n"
+					L"The 1050 supports single density and enhanced density disks. True double density (256 bytes/sector) disks are not "
+					L"supported."
+			},
+
+			{ "diskdrive1050duplicator", L"1050 Duplicator disk drive (full emulation)",
+				L"Full 1050 Duplicator disk drive emulation, including 6507 CPU."
+			},
+
+			{ "diskdriveusdoubler", L"US Doubler disk drive (full emulation)",
+				L"Full US Doubler disk drive emulation, including 6507 CPU.\n"
+					L"The US Doubler is an enhanced 1050 drive that supports true double density and high speed operation."
+			},
+
+			{ "diskdrivespeedy1050", L"Speedy 1050 disk drive (full emulation)",
+				L"Full Speedy 1050 disk drive emulation, including 65C02 CPU.\n"
+					L"The Speedy 1050 is an enhanced 1050 that supports double density, track buffering, and high speed operation.\n"
+					L"NOTE: The Speedy 1050 may operate erratically in high-speed mode with NTSC computers due to marginal write timing."
+			},
+
+			{ "diskdrivehappy1050", L"Happy 1050 disk drive (full emulation)",
+				L"Full Happy 1050 disk drive emulation, including 6502 CPU."
+			},
+
+			{ "diskdrivesuperarchiver", L"Super Archiver disk drive (full emulation)",
+				L"Full Super Archiver disk drive emulation, including 6507 CPU."
+			},
+
+			{ "diskdrivetoms1050", L"TOMS 1050 disk drive (full emulation)",
+				L"Full TOMS 1050 disk drive emulation, including 6507 CPU."
+			},
+
+			{ "diskdrivetygrys1050", L"Tygrys 1050 disk drive (full emulation)",
+				L"Full Tygrys 1050 disk drive emulation, including 6507 CPU."
+			},
+
+			{ "diskdrive1050turbo", L"1050 Turbo disk drive (full emulation)",
+				L"Full 1050 Turbo disk drive emulation, including 6507 CPU."
+			},
+
+			{ "diskdrive1050turboii", L"1050 Turbo II disk drive (full emulation)",
+				L"Full 1050 Turbo disk drive emulation, including 6507 CPU. This model is also known as Version 3.5 in some places."
+			},
+
+			{ "diskdriveindusgt", L"Indus GT disk drive (full emulation)",
+				L"Full Indus GT disk drive emulation, including Z80 CPU and RamCharger. This will also work for TOMS Turbo Drive firmware.\n"
+					L"The Indus GT supports single density, double density, and enhanced density formats. It does not, however, support double-sided disks."
+			},
+
+			{ "diskdrivexf551", L"XF551 disk drive (full emulation)",
+				L"Full XF551 disk drive emulation, including 8048 CPU.\n"
+					L"The XF551 supports single density, double density, enhanced density, and double-sided double density formats."
+			},
+
+			{ "diskdriveatr8000", L"ATR8000 disk drive (full emulation)",
+				L"Full ATR8000 disk drive emulation, including Z80 CPU.\n"
+					L"The ATR8000 supports up to four disk drives, either 5.25\" or 8\", as well as a built-in parallel "
+					L"printer port and RS-232 serial port."
+			},
+
+			{ "diskdrivepercom", L"Percom RFD-40S1 disk drive (full emulation)",
+				L"Full Percom RFD-40S1 disk drive emulation, including 6809 CPU.\n"
+					L"The RFD-40S1 supports up to four disk drives, which may be either single-sided or double-sided "
+					L"and 40 or 80 track. Both single-density and double-density are supported by the hardware."
+			},
+		},
+	},
+	{
 		L"Serial I/O bus devices",
 		"sio",
 		{
@@ -287,7 +376,7 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 };
 
 ATUIDialogDeviceNew::ATUIDialogDeviceNew(const vdfunction<bool(const char *)>& filter)
-	: VDDialogFrameW32(IDD_DEVICE_NEW)
+	: VDResizableDialogFrameW32(IDD_DEVICE_NEW)
 	, mFilter(filter)
 	, mpDeviceTag(nullptr)
 	, mpLastHelpText(nullptr)
@@ -297,6 +386,13 @@ ATUIDialogDeviceNew::ATUIDialogDeviceNew(const vdfunction<bool(const char *)>& f
 
 bool ATUIDialogDeviceNew::OnLoaded() {
 	AddProxy(&mTreeView, IDC_TREE);
+
+	mResizer.Add(IDC_HELP_INFO, mResizer.kML);
+	mResizer.Add(IDC_TREE, mResizer.kMC);
+	mResizer.Add(IDOK, mResizer.kBR);
+	mResizer.Add(IDCANCEL, mResizer.kBR);
+
+	ATUIRestoreWindowPlacement(mhdlg, "Add new device", SW_SHOW, true);
 
 	HWND hwndHelp = GetDlgItem(mhdlg, IDC_HELP_INFO);
 	if (hwndHelp) {
@@ -336,6 +432,7 @@ bool ATUIDialogDeviceNew::OnLoaded() {
 }
 
 void ATUIDialogDeviceNew::OnDestroy() {
+	ATUISaveWindowPlacement(mhdlg, "Add new device");
 }
 
 void ATUIDialogDeviceNew::OnDataExchange(bool write) {
@@ -409,7 +506,7 @@ void ATUIDialogDeviceNew::AppendRTF(VDStringA& rtf, const wchar_t *text) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIDialogDevices : public VDDialogFrameW32 {
+class ATUIDialogDevices : public VDResizableDialogFrameW32 {
 public:
 	ATUIDialogDevices(ATDeviceManager& devMgr);
 
@@ -427,6 +524,7 @@ protected:
 
 	void OnItemSelectionChanged(VDUIProxyTreeViewControl *sender, int idx);
 	void OnItemDoubleClicked(VDUIProxyTreeViewControl *sender, bool *handled);
+	void OnItemGetDisplayAttributes(VDUIProxyTreeViewControl *sender, VDUIProxyTreeViewControl::GetDispAttrEvent *event);
 
 	ATDeviceManager& mDevMgr;
 	VDUIProxyTreeViewControl mTreeView;
@@ -440,33 +538,62 @@ protected:
 			mbHasSettings = info.mpDef->mpConfigTag != nullptr;
 		}
 
+		DeviceNode(DeviceNode *parent, const wchar_t *label) {
+			mName = label;
+			mpParent = parent;
+		}
+
 		void *AsInterface(uint32 id) {
 			return nullptr;
 		}
 
 		virtual void GetText(VDStringW& s) const {
 			s = mName;
+
+			if (mpDev) {
+				VDStringW buf;
+				mpDev->GetSettingsBlurb(buf);
+
+				if (!buf.empty()) {
+					s += L" - ";
+					s += buf;
+				}
+			}
 		}
 
-		IATDevice *mpDev;
+		IATDevice *mpDev = nullptr;
 		VDStringW mName;
-		bool mbHasSettings;
+		bool mbHasSettings = false;
+		VDUIProxyTreeViewControl::NodeRef mNode = {};
+		VDUIProxyTreeViewControl::NodeRef mChildNode = {};
+		DeviceNode *mpParent = nullptr;
 	};
 
 	VDDelegate mDelSelectionChanged;
 	VDDelegate mDelDoubleClicked;
+	VDDelegate mDelGetDisplayAttributes;
 };
 
 ATUIDialogDevices::ATUIDialogDevices(ATDeviceManager& devMgr)
-	: VDDialogFrameW32(IDD_DEVICES)
+	: VDResizableDialogFrameW32(IDD_DEVICES)
 	, mDevMgr(devMgr)
 {
 	mTreeView.OnItemSelectionChanged() += mDelSelectionChanged.Bind(this, &ATUIDialogDevices::OnItemSelectionChanged);
 	mTreeView.OnItemDoubleClicked() += mDelDoubleClicked.Bind(this, &ATUIDialogDevices::OnItemDoubleClicked);
+	mTreeView.OnItemGetDisplayAttributes() += mDelGetDisplayAttributes.Bind(this, &ATUIDialogDevices::OnItemGetDisplayAttributes);
 }
 
 bool ATUIDialogDevices::OnLoaded() {
 	AddProxy(&mTreeView, IDC_TREE);
+
+	mResizer.Add(IDC_TREE, mResizer.kMC);
+	mResizer.Add(IDC_ADD, mResizer.kBL);
+	mResizer.Add(IDC_REMOVE, mResizer.kBL);
+	mResizer.Add(IDC_REMOVEALL, mResizer.kBL);
+	mResizer.Add(IDC_SETTINGS, mResizer.kBL);
+	mResizer.Add(IDOK, mResizer.kBR);
+
+	ATUIRestoreWindowPlacement(mhdlg, "Devices", -1, true);
 
 	OnDataExchange(false);
 
@@ -475,6 +602,8 @@ bool ATUIDialogDevices::OnLoaded() {
 }
 
 void ATUIDialogDevices::OnDestroy() {
+	ATUISaveWindowPlacement(mhdlg, "Devices");
+
 	mTreeView.Clear();
 
 	VDDialogFrameW32::OnDestroy();
@@ -523,8 +652,12 @@ void ATUIDialogDevices::Add() {
 	IATDeviceParent *devParent = nullptr;
 
 	auto *p = static_cast<DeviceNode *>(mTreeView.GetSelectedVirtualItem());
-	if (p)
+	if (p) {
+		if (p->mpParent)
+			p = p->mpParent;
+
 		devParent = vdpoly_cast<IATDeviceParent *>(p->mpDev);
+	}
 
 	static const char *const kBaseCategories[]={
 		"pbi",
@@ -685,6 +818,8 @@ void ATUIDialogDevices::Settings() {
 		try {
 			if (dev->SetSettings(pset)) {
 				mDevMgr.IncrementChangeCounter();
+
+				mTreeView.RefreshNode(p->mNode);
 			} else {
 				vdfastvector<IATDevice *> childDevices;
 				mDevMgr.MarkAndSweep(&dev, 1, childDevices);
@@ -733,7 +868,10 @@ void ATUIDialogDevices::Settings() {
 }
 
 void ATUIDialogDevices::CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef parentNode, IATDevice *dev) {
-	auto devnode = mTreeView.AddVirtualItem(parentNode, mTreeView.kNodeLast, vdmakerefptr(new DeviceNode(dev)));
+	auto nodeObject = vdmakerefptr(new DeviceNode(dev));
+	auto devnode = mTreeView.AddVirtualItem(parentNode, mTreeView.kNodeLast, nodeObject);
+
+	nodeObject->mNode = devnode;
 
 	IATDeviceParent *devParent = vdpoly_cast<IATDeviceParent *>(dev);
 	if (devParent) {
@@ -741,11 +879,19 @@ void ATUIDialogDevices::CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef paren
 
 		devParent->GetChildDevices(childDevs);
 
-		for(auto it = childDevs.begin(), itEnd = childDevs.end();
-			it != itEnd;
-			++it)
-		{
-			CreateDeviceNode(devnode, *it);
+		if (childDevs.empty()) {
+			auto emptyNode = vdmakerefptr(new DeviceNode(nodeObject, L"(No attached devices)"));
+			auto emptyTreeNode = mTreeView.AddVirtualItem(devnode, mTreeView.kNodeLast, emptyNode);
+
+			emptyNode->mNode = emptyTreeNode;
+			nodeObject->mChildNode = emptyTreeNode;
+		} else {
+			for(auto it = childDevs.begin(), itEnd = childDevs.end();
+				it != itEnd;
+				++it)
+			{
+				CreateDeviceNode(devnode, *it);
+			}
 		}
 	}
 
@@ -768,6 +914,7 @@ void ATUIDialogDevices::OnItemSelectionChanged(VDUIProxyTreeViewControl *sender,
 	bool enabled = node && node->mbHasSettings;
 
 	EnableControl(IDC_SETTINGS, enabled);
+	EnableControl(IDC_REMOVE, node != nullptr);
 }
 
 void ATUIDialogDevices::OnItemDoubleClicked(VDUIProxyTreeViewControl *sender, bool *handled) {
@@ -776,6 +923,12 @@ void ATUIDialogDevices::OnItemDoubleClicked(VDUIProxyTreeViewControl *sender, bo
 	*handled = true;
 }
 
+void ATUIDialogDevices::OnItemGetDisplayAttributes(VDUIProxyTreeViewControl *sender, VDUIProxyTreeViewControl::GetDispAttrEvent *event) {
+	const auto *node = static_cast<DeviceNode *>(event->mpItem);
+
+	if (node && node->mpParent)
+		event->mbIsMuted = true;
+}
 
 ///////////////////////////////////////////////////////////////////////////
 

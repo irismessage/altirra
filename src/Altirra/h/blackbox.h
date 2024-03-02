@@ -23,9 +23,9 @@
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/scheduler.h>
 #include "pia.h"
-#include "via.h"
-#include "acia.h"
-#include "scsi.h"
+#include <at/atemulation/via.h>
+#include <at/atemulation/acia.h>
+#include <at/atemulation/scsi.h>
 #include "rs232.h"
 
 class ATMemoryLayer;

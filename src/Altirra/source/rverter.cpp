@@ -22,7 +22,7 @@
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicecio.h>
 #include <at/atcore/deviceserial.h>
-#include <at/atcore/devicesio.h>
+#include <at/atcore/devicesioimpl.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
 #include "rs232.h"
@@ -37,12 +37,12 @@ class ATDeviceRVerter final
 	, public IATDeviceParent
 	, public IATDeviceScheduling
 	, public IATDeviceIndicators
-	, public IATDeviceSIO
+	, public ATDeviceSIO
 	, public IATDeviceRawSIO
 	, public IATSchedulerCallback
 {
-	ATDeviceRVerter(const ATDeviceRVerter&);
-	ATDeviceRVerter& operator=(const ATDeviceRVerter&);
+	ATDeviceRVerter(const ATDeviceRVerter&) = delete;
+	ATDeviceRVerter& operator=(const ATDeviceRVerter&) = delete;
 public:
 	ATDeviceRVerter();
 	~ATDeviceRVerter();
@@ -70,13 +70,8 @@ public:	// IATDeviceScheduling
 public:	// IATDeviceIndicators
 	void InitIndicators(IATDeviceIndicatorManager *r) override;
 
-public:	// IATDeviceSIO
+public:	// ATDeviceSIO
 	void InitSIO(IATDeviceSIOManager *mgr) override;
-	CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
-	void OnSerialAbortCommand() override;
-	void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) override;
-	void OnSerialFence(uint32 id) override; 
-	CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
 
 public:	// IATDeviceRawSIO
 	void OnCommandStateChanged(bool asserted) override;
@@ -230,23 +225,6 @@ void ATDeviceRVerter::InitIndicators(IATDeviceIndicatorManager *r) {
 void ATDeviceRVerter::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
 	mpSIOMgr->AddRawDevice(this);
-}
-
-IATDeviceSIO::CmdResponse ATDeviceRVerter::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
-	return kCmdResponse_NotHandled;
-}
-
-void ATDeviceRVerter::OnSerialAbortCommand() {
-}
-
-void ATDeviceRVerter::OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) {
-}
-
-void ATDeviceRVerter::OnSerialFence(uint32 id) {
-}
-
-IATDeviceSIO::CmdResponse ATDeviceRVerter::OnSerialAccelCommand(const ATDeviceSIORequest& request) {
-	return OnSerialBeginCommand(request);
 }
 
 void ATDeviceRVerter::OnCommandStateChanged(bool asserted) {

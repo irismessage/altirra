@@ -17,7 +17,7 @@
 
 #include <stdafx.h>
 #include <at/atcore/deviceimpl.h>
-#include <at/atcore/devicesio.h>
+#include <at/atcore/devicesioimpl.h>
 #include <at/atcore/propertyset.h>
 #include "debuggerlog.h"
 #include <windows.h>
@@ -27,7 +27,7 @@ ATDebuggerLogChannel g_ATLCMIDI(false, false, "MIDI", "MIDI command activity");
 
 class ATDeviceMidiMate final
 	: public ATDevice
-	, public IATDeviceSIO
+	, public ATDeviceSIO
 	, public IATDeviceRawSIO
 {
 	ATDeviceMidiMate(const ATDeviceMidiMate&) = delete;
@@ -48,20 +48,12 @@ public:
 
 public:	// IATDeviceSIO
 	void InitSIO(IATDeviceSIOManager *mgr) override;
-	CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
-	void OnSerialAbortCommand() override;
-	void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) override;
-	void OnSerialFence(uint32 id) override; 
-	CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
 
 public:	// IATDeviceRawSIO
 	void OnCommandStateChanged(bool asserted) override;
 	void OnMotorStateChanged(bool asserted) override;
 	void OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) override;
 	void OnSendReady() override;
-
-public:
-	void OnScheduledEvent(uint32 id);
 
 protected:
 	IATDeviceSIOManager *mpSIOMgr;
@@ -137,23 +129,6 @@ void ATDeviceMidiMate::ColdReset() {
 void ATDeviceMidiMate::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
 	mpSIOMgr->AddRawDevice(this);
-}
-
-IATDeviceSIO::CmdResponse ATDeviceMidiMate::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
-	return kCmdResponse_NotHandled;
-}
-
-void ATDeviceMidiMate::OnSerialAbortCommand() {
-}
-
-void ATDeviceMidiMate::OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) {
-}
-
-void ATDeviceMidiMate::OnSerialFence(uint32 id) {
-}
-
-IATDeviceSIO::CmdResponse ATDeviceMidiMate::OnSerialAccelCommand(const ATDeviceSIORequest& request) {
-	return kCmdResponse_NotHandled;
 }
 
 void ATDeviceMidiMate::OnCommandStateChanged(bool asserted) {

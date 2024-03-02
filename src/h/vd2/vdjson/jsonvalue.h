@@ -21,6 +21,15 @@
 
 #include <vd2/vdjson/jsonnametable.h>
 
+#include <vd2/system/error.h>
+class VDParseException : public MyError {
+public:
+	VDParseException() = default;
+
+	template<typename... Args>
+	VDParseException(const char *fmt, Args... args) : MyError(fmt, std::forward<Args>(args)...) {}
+};
+
 class VDJSONNameTable;
 struct VDJSONMember;
 struct VDJSONElement;
@@ -85,8 +94,8 @@ struct VDJSONElement {
 ///////////////////////////////////////////////////////////////////////
 
 class VDJSONValuePool {
-	VDJSONValuePool(const VDJSONValuePool&);
-	VDJSONValuePool& operator=(const VDJSONValuePool&);
+	VDJSONValuePool(const VDJSONValuePool&) = delete;
+	VDJSONValuePool& operator=(const VDJSONValuePool&) = delete;
 public:
 	VDJSONValuePool(uint32 initialBlockSize = 256, uint32 maxBlockSize = 4096, uint32 largeBlockThreshold = 128);
 	~VDJSONValuePool();
@@ -139,6 +148,67 @@ protected:
 	const VDJSONDocument *const mpDoc;
 };
 
+class VDJSONArrayIterator {
+public:
+	typedef std::random_access_iterator_tag iterator_category;
+	typedef ptrdiff_t difference_type;
+	typedef VDJSONValueRef value_type;
+	typedef VDJSONValueRef reference;
+
+	VDJSONArrayIterator(const VDJSONValue *p, const VDJSONDocument *doc)
+		: mpElement(p)
+		, mpDoc(doc)
+	{
+	}
+
+	ptrdiff_t operator-(const VDJSONArrayIterator& other) const { return mpElement - other.mpElement; }
+
+	VDJSONArrayIterator operator+(ptrdiff_t d) const { return VDJSONArrayIterator(mpElement + d, mpDoc); }
+	VDJSONArrayIterator operator-(ptrdiff_t d) const { return VDJSONArrayIterator(mpElement - d, mpDoc); }
+
+	VDJSONArrayIterator& operator+=(ptrdiff_t d) { mpElement += d; return *this; }
+	VDJSONArrayIterator& operator-=(ptrdiff_t d) { mpElement += d; return *this; }
+
+	VDJSONArrayIterator& operator++() { ++mpElement; return *this; }
+	VDJSONArrayIterator& operator--() { --mpElement; return *this; }
+	VDJSONArrayIterator operator++(int) { return VDJSONArrayIterator(mpElement++, mpDoc); }
+	VDJSONArrayIterator operator--(int) { return VDJSONArrayIterator(mpElement--, mpDoc); }
+
+	inline VDJSONValueRef operator[](ptrdiff_t d) const;
+	inline VDJSONValueRef operator*() const;
+	inline VDJSONValueRef operator->() const;
+
+	bool operator==(const VDJSONArrayIterator& other) const { return mpElement == other.mpElement; }
+	bool operator!=(const VDJSONArrayIterator& other) const { return mpElement != other.mpElement; }
+	bool operator< (const VDJSONArrayIterator& other) const { return mpElement <  other.mpElement; }
+	bool operator<=(const VDJSONArrayIterator& other) const { return mpElement <= other.mpElement; }
+	bool operator> (const VDJSONArrayIterator& other) const { return mpElement >  other.mpElement; }
+	bool operator>=(const VDJSONArrayIterator& other) const { return mpElement >= other.mpElement; }
+
+private:
+	const VDJSONValue *mpElement;
+	const VDJSONDocument *const mpDoc;
+};
+
+class VDJSONArrayEnum {
+public:
+	VDJSONArrayEnum() = default;
+	VDJSONArrayEnum(VDJSONValue *p, size_t n, const VDJSONDocument *doc)
+		: mpElements(p)
+		, mCount(n)
+		, mpDoc(doc)
+	{
+	}
+
+	VDJSONArrayIterator begin() const { return VDJSONArrayIterator(mpElements, mpDoc); }
+	VDJSONArrayIterator end() const { return VDJSONArrayIterator(mpElements + mCount, mpDoc); }
+
+private:
+	const VDJSONValue *const mpElements = nullptr;
+	const size_t mCount = 0;
+	const VDJSONDocument *const mpDoc = nullptr;
+};
+
 struct VDJSONValueRef {
 	VDJSONValueRef(const VDJSONDocument *doc, const VDJSONValue *ref)
 		: mpDoc(doc)
@@ -166,6 +236,13 @@ struct VDJSONValueRef {
 	const wchar_t *AsString() const { return mpRef->mType == VDJSONValue::kTypeString ? mpRef->mpString->mpChars : L""; }
 	VDJSONMemberEnum AsObject() const { return VDJSONMemberEnum(mpRef->mType == VDJSONValue::kTypeObject ? mpRef->mpObject : NULL, mpDoc); };
 
+	VDJSONArrayEnum AsArray() const {
+		if (mpRef->mType == VDJSONValue::kTypeArray)
+			return VDJSONArrayEnum(mpRef->mpArray->mpElements, mpRef->mpArray->mLength, mpDoc);
+		else
+			return VDJSONArrayEnum();
+	}
+
 	size_t GetArrayLength() const { return mpRef->mType == VDJSONValue::kTypeArray ? mpRef->mpArray->mLength : 0; }
 
 	const VDJSONValueRef operator[](size_t index) const;
@@ -173,12 +250,25 @@ struct VDJSONValueRef {
 	const VDJSONValueRef operator[](const char *s) const;
 	const VDJSONValueRef operator[](const wchar_t *s) const;
 
+	void RequireObject() const;
+	void RequireInt() const;
+	void RequireString() const;
+
+	const VDJSONArrayEnum GetRequiredArray(const char *key) const;
+	bool GetRequiredBool(const char *key) const;
+	sint64 GetRequiredInt64(const char *key) const;
+	const wchar_t *GetRequiredString(const char *key) const;
+
 protected:
 	double ConvertToReal() const;
 
 	const VDJSONDocument *const mpDoc;
 	const VDJSONValue *const mpRef;
 };
+
+inline VDJSONValueRef VDJSONArrayIterator::operator[](ptrdiff_t d) const { return VDJSONValueRef(mpDoc, mpElement + d); }
+inline VDJSONValueRef VDJSONArrayIterator::operator*() const { return VDJSONValueRef(mpDoc, mpElement); }
+inline VDJSONValueRef VDJSONArrayIterator::operator->() const { return VDJSONValueRef(mpDoc, mpElement); }
 
 class VDJSONDocument {
 public:

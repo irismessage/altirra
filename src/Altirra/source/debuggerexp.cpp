@@ -40,6 +40,7 @@ const ATCPUExecState *ATDebugExpEvalCache::GetExecState(const ATDebugExpEvalCont
 			return nullptr;
 
 		mbExecStateValid = true;
+		mExecMode = ctx.mpTarget->GetDisasmMode();
 
 		ctx.mpTarget->GetExecState(mExecState);
 	}
@@ -1422,7 +1423,10 @@ public:
 		if (!state)
 			return false;
 
-		result = state->mPC;
+		if (cache.mExecMode == kATDebugDisasmMode_Z80)
+			result = state->mZ80.mPC;
+		else
+			result = state->m6502.mPC;
 		return true;
 	}
 
@@ -1444,7 +1448,10 @@ public:
 		if (!state)
 			return false;
 
-		result = state->mA + ((sint32)state->mAH << 8);
+		if (cache.mExecMode == kATDebugDisasmMode_Z80)
+			result = state->mZ80.mA;
+		else
+			result = state->m6502.mA + ((sint32)state->m6502.mAH << 8);
 		return true;
 	}
 
@@ -1466,7 +1473,10 @@ public:
 		if (!state)
 			return false;
 
-		result = state->mX + ((sint32)state->mXH << 8);
+		if (cache.mExecMode == kATDebugDisasmMode_Z80)
+			return false;
+
+		result = state->m6502.mX + ((sint32)state->m6502.mXH << 8);
 		return true;
 	}
 
@@ -1488,7 +1498,10 @@ public:
 		if (!state)
 			return false;
 
-		result = state->mY + ((sint32)state->mYH << 8);
+		if (cache.mExecMode == kATDebugDisasmMode_Z80)
+			return false;
+
+		result = state->m6502.mY + ((sint32)state->m6502.mYH << 8);
 		return true;
 	}
 
@@ -1510,7 +1523,11 @@ public:
 		if (!state)
 			return false;
 
-		result = state->mS;
+		if (cache.mExecMode == kATDebugDisasmMode_Z80)
+			result = state->mZ80.mSP;
+		else
+			result = state->m6502.mS;
+
 		return true;
 	}
 
@@ -1532,7 +1549,10 @@ public:
 		if (!state)
 			return false;
 
-		result = state->mP;
+		if (cache.mExecMode == kATDebugDisasmMode_Z80)
+			return false;
+
+		result = state->m6502.mP;
 		return true;
 	}
 
@@ -2006,22 +2026,29 @@ public:
 		uint32 s;
 
 		switch(context.mpTarget->GetDisasmMode()) {
+			case kATDebugDisasmMode_Z80:
+				s = state->mZ80.mSP;
+				addr = context.mpTarget->DebugReadByte(s);
+				addr += (uint32)context.mpTarget->DebugReadByte((s + 1) & 0xffff) << 8;
+				break;
+
 			case kATDebugDisasmMode_65C816:
-				if (!state->mbEmulationFlag) {
-					s = state->mS + ((uint32)state->mSH << 8);
+				if (!state->m6502.mbEmulationFlag) {
+					s = state->m6502.mS + ((uint32)state->m6502.mSH << 8);
 					addr = context.mpTarget->DebugReadByte((s + 1) & 0xffff);
 					addr += (uint32)context.mpTarget->DebugReadByte((s + 2) & 0xffff) << 8;
+					result = (addr + 1) & 0xffff;
 					break;
 				}
 				// fall through
 			default:
-				s = state->mS;
+				s = state->m6502.mS;
 				addr = context.mpTarget->DebugReadByte(0x100 + ((s + 1) & 0xff));
 				addr += (uint32)context.mpTarget->DebugReadByte(0x100 + ((s + 2) & 0xff)) << 8;
+				result = (addr + 1) & 0xffff;
 				break;
 		}
 
-		result = (addr + 1) & 0xffff;
 
 		return true;
 	}

@@ -18,10 +18,7 @@
 #include <stdafx.h>
 #include "simeventmanager.h"
 
-ATSimulatorEventManager::ATSimulatorEventManager()
-	: mCallbacksBusy(0)
-	, mbCallbacksChanged(false)
-{
+ATSimulatorEventManager::ATSimulatorEventManager() {
 }
 
 ATSimulatorEventManager::~ATSimulatorEventManager() {
@@ -31,58 +28,153 @@ void ATSimulatorEventManager::Shutdown() {
 }
 
 void ATSimulatorEventManager::AddCallback(IATSimulatorCallback *cb) {
-	Callbacks::const_iterator it(std::find(mCallbacks.begin(), mCallbacks.end(), cb));
-	if (it == mCallbacks.end())
+	if (!cb) {
+		VDFAIL("Invalid null callback.");
+		return;
+	}
+
+	auto it = std::find(mCallbacks.begin(), mCallbacks.end(), cb);
+
+	if (it == mCallbacks.end()) {
+		// Add the new callback to the list. Note that we deliberately
+		// aren't updating the size values in the iterator list; this
+		// prevents the new entry from being called from an iteration
+		// in progress.
 		mCallbacks.push_back(cb);
+	}
 }
 
 void ATSimulatorEventManager::RemoveCallback(IATSimulatorCallback *cb) {
-	Callbacks::iterator it(std::find(mCallbacks.begin(), mCallbacks.end(), cb));
+	if (!cb)
+		return;
+
+	auto it = std::find(mCallbacks.begin(), mCallbacks.end(), cb);
 	if (it != mCallbacks.end()) {
-		if (mCallbacksBusy) {
-			*it = NULL;
-			mbCallbacksChanged = true;
-		} else {
-			*it = mCallbacks.back();
-			mCallbacks.pop_back();
+		const size_t index = (size_t)(it - mCallbacks.begin());
+
+		// Normally, we would move the last entry into the current entry. We avoid
+		// doing so because with our iteration style it could cause an entry to be
+		// skipped or doubly called during an active iteration. We do need to decrement
+		// the global size for any active iterations that have captured the current
+		// entry.
+
+		mCallbacks.erase(it);
+
+		for(auto *p = mpIteratorList; p; p = p->mpNext) {
+			if (p->mGlobalSize > index)
+				--p->mGlobalSize;
 		}
 	}
 }
 
-void ATSimulatorEventManager::NotifyEvent(ATSimulatorEvent ev) {
-	if (ev == kATSimEvent_AnonymousInterrupt)
+uint32 ATSimulatorEventManager::AddEventCallback(ATSimulatorEvent ev, const vdfunction<void()>& fn) {
+	if (ev <= kATSimEvent_None || ev >= kATSimEventCount) {
+		VDFAIL("Invalid callback ID passed to AddEventCallback.");
+		return 0;
+	}
+
+	// see if we have a free entry
+	uint32 index = mECFreeList;
+	if (!index) {
+		mEventCallbackTable.push_back();
+		index = (uint32)mEventCallbackTable.size();
+
+		auto& ne = mEventCallbackTable.back();
+		ne.mValidId = index + 0x1000000;
+		ne.mNext = 0;
+	}
+
+	auto& e = mEventCallbackTable[index - 1];
+	VDASSERT((e.mValidId & 0xFFFFFF) == index);
+	VDASSERT(!e.mpFunction);
+
+	mECFreeList = e.mNext;
+
+	e.mpFunction = fn;
+	e.mNext = mEventCallbackLists[ev - 1];
+	e.mValidId += 0x1000000 + ((uint32)ev << 16);
+	mEventCallbackLists[ev - 1] = index;
+
+	return e.mValidId;
+}
+
+void ATSimulatorEventManager::RemoveEventCallback(uint32 id) {
+	if (id == 0)
 		return;
 
-	VDVERIFY(++mCallbacksBusy < 100);
+	uint32 index = id & 0xFFFF;
 
-	// Note that this list may change on the fly.
-	size_t n = mCallbacks.size();
-	for(uint32 i=0; i<n; ++i) {
-		IATSimulatorCallback *cb = mCallbacks[i];
-
-		if (cb)
-			cb->OnSimulatorEvent(ev);
+	if (!index || index > mEventCallbackTable.size()) {
+		VDFAIL("Invalid callback ID passed to RemoveEventCallback.");
+		return;
 	}
 
-	VDVERIFY(--mCallbacksBusy >= 0);
+	auto& e = mEventCallbackTable[index - 1];
+	if (e.mValidId != id) {
+		VDFAIL("Invalid callback ID passed to RemoveEventCallback.");
+		return;
+	}
 
-	if (!mCallbacksBusy && mbCallbacksChanged) {
-		Callbacks::iterator src = mCallbacks.begin();
-		Callbacks::iterator dst = src;
-		Callbacks::iterator end = mCallbacks.end();
+	// check if we need to bump any active iterators
+	for(auto *p = mpIteratorList; p; p = p->mpNext) {
+		if (p->mEventIdx == index)
+			p->mEventIdx = e.mNext;
+	}
 
-		for(; src != end; ++src) {
-			IATSimulatorCallback *cb = *src;
+	ATSimulatorEvent ev = (ATSimulatorEvent)((id >> 16) & 0xFF);
+	e.mpFunction = {};
+	e.mValidId = (e.mValidId + 0x01000000) & 0xFF00FFFF;
 
-			if (cb) {
-				*dst = cb;
-				++dst;
-			}
+	uint32& headIndex = mEventCallbackLists[(int)ev - 1];
+	uint32 curIndex = headIndex;
+	uint32 prevIndex = 0;
+	for(;;) {
+		if (curIndex == 0) {
+			VDFAIL("Event callback not found in the list it is supposed to be registered in.");
+			return;
 		}
 
-		if (dst != end)
-			mCallbacks.erase(dst, end);
+		if (curIndex == index)
+			break;
 
-		mbCallbacksChanged = false;
+		const auto& curEC = mEventCallbackTable[curIndex - 1];
+		VDASSERT((curEC.mValidId & 0xFFFFFF) == (curIndex + (id & 0xFF0000)));
+
+		prevIndex = curIndex;
+		curIndex = curEC.mNext;
 	}
+
+	if (prevIndex)
+		mEventCallbackTable[prevIndex - 1].mNext = e.mNext;
+	else
+		headIndex = e.mNext;
+
+	e.mNext = mECFreeList;
+	mECFreeList = index;
+}
+
+void ATSimulatorEventManager::NotifyEvent(ATSimulatorEvent ev) {
+	if (ev == kATSimEvent_AnonymousInterrupt || !ev)
+		return;
+
+	Iterator it = { mpIteratorList, 0, mCallbacks.size(), mEventCallbackLists[ev - 1] };
+	mpIteratorList = &it;
+
+	while(it.mGlobalIdx < it.mGlobalSize) {
+		IATSimulatorCallback *cb = mCallbacks[it.mGlobalIdx++];
+
+		cb->OnSimulatorEvent(ev);
+	}
+
+	while(it.mEventIdx) {
+		const auto& e = mEventCallbackTable[it.mEventIdx - 1];
+		const auto& fn = e.mpFunction;
+
+		it.mEventIdx = e.mNext;
+
+		fn();
+	}
+
+	VDASSERT(mpIteratorList == &it);
+	mpIteratorList = it.mpNext;
 }

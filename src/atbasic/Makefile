@@ -1,4 +1,3 @@
-MADS = mads
 OUT = ..\..\out\Release
 OBJ = ..\..\obj\Release\ATBasic
 SRC = source

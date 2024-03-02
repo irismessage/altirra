@@ -109,6 +109,7 @@ next:
 		}
 	}
 
+	printf("Tests complete. Failures: %u\n", failedTests);
 
 	return failedTests;
 }

@@ -19,7 +19,7 @@
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <at/atcore/blockdevice.h>
-#include "scsi.h"
+#include <at/atemulation/scsi.h>
 #include "scsidisk.h"
 #include "uirender.h"
 

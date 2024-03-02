@@ -9,17 +9,9 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{5DEDF6C8-711B-4CAE-A1AB-A3DBF2E5EBE6}</ProjectGuid>
     <RootNamespace>Kernel</RootNamespace>
-    <SccProjectName>
-    </SccProjectName>
-    <SccAuxPath>
-    </SccAuxPath>
-    <SccLocalPath>
-    </SccLocalPath>
-    <SccProvider>
-    </SccProvider>
     <Keyword>MakeFileProj</Keyword>
-    <PlatformToolset>v120</PlatformToolset>
   </PropertyGroup>
+  <Import Project="..\PlatformSetup.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>Makefile</ConfigurationType>
@@ -29,6 +21,7 @@
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="..\Altirra.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
@@ -36,9 +29,9 @@
     <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\out\$(Configuration)\</OutDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\obj\$(Configuration)\$(ProjectName)\</IntDir>
     <NMakeBuildCommandLine Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">if not exist "$(IntDir)\" md "$(IntDir)\"
-nmake /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\"</NMakeBuildCommandLine>
+nmake /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeBuildCommandLine>
     <NMakeReBuildCommandLine Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">if not exist "$(IntDir)\" md "$(IntDir)\"
-nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\"</NMakeReBuildCommandLine>
+nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeReBuildCommandLine>
     <NMakeCleanCommandLine Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">nmake /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" clean</NMakeCleanCommandLine>
     <NMakeOutput Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(OutDir)kernel.rom</NMakeOutput>
     <NMakePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">WIN32;NDEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>

@@ -42,6 +42,9 @@ void ATDevice::SetParent(IATDeviceParent *parent) {
 	mpDeviceParent = parent;
 }
 
+void ATDevice::GetSettingsBlurb(VDStringW& buf) {
+}
+
 void ATDevice::GetSettings(ATPropertySet& settings) {
 }
 
@@ -55,8 +58,18 @@ void ATDevice::Init() {
 void ATDevice::Shutdown() {
 }
 
+uint32 ATDevice::GetComputerPowerOnDelay() const {
+	return 0;
+}
+
 void ATDevice::WarmReset() {
 }
 
 void ATDevice::ColdReset() {
+}
+
+void ATDevice::ComputerColdReset() {
+}
+
+void ATDevice::PeripheralColdReset() {
 }

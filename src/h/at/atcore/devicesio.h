@@ -219,9 +219,19 @@ public:
 	// speed transfer rate. -1 means that standard speed should be used.
 	virtual sint32 GetHighSpeedIndex() const = 0;
 
+	// Gets the number of cycles per bit that POKEY is currently configured to receive at.
+	// Zero means that receive is disabled, such as if the serial clock is frozen. Note
+	// that this may be as large as several million cycles if POKEY is not actually
+	// being used to receive serial data.
+	virtual uint32 GetCyclesPerBitRecv() const = 0;
+
+	// Changes every time the serial input register in POKEY is reset.
+	virtual uint32 GetRecvResetCounter() const = 0;
+
 	virtual void AddRawDevice(IATDeviceRawSIO *dev) = 0;
 	virtual void RemoveRawDevice(IATDeviceRawSIO *dev) = 0;
-	virtual void SendRawByte(uint8 byte, uint32 cyclesPerBit) = 0;
+	virtual void SendRawByte(uint8 byte, uint32 cyclesPerBit, bool synchronous = false, bool forceFramingError = false, bool simulateInput = true) = 0;
+	virtual void SetRawInput(bool input) = 0;
 
 	// Returns if the SIO command and motor lines are asserted. Both are active low,
 	// so true (asserted) means low and active, and false (negated) means high and not active.

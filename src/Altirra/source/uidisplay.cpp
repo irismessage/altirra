@@ -41,9 +41,9 @@
 #include <at/atui/uimenulist.h>
 #include <at/atui/uicontainer.h>
 #include "uiprofiler.h"
-#include "uitextedit.h"
-#include "uibutton.h"
-#include "uilistview.h"
+#include <at/atuicontrols/uitextedit.h>
+#include <at/atuicontrols/uibutton.h>
+#include <at/atuicontrols/uilistview.h>
 #include "uifilebrowser.h"
 #include "uivideodisplaywindow.h"
 #include "uimessagebox.h"
@@ -91,13 +91,13 @@ typedef struct _GESTUREINFO {
 #endif
 
 BOOL WINAPI ATGetGestureInfoW32(HGESTUREINFO hGestureInfo, PGESTUREINFO pGestureInfo) {
-	static void *pfn = GetProcAddress(GetModuleHandle(_T("user32")), "GetGestureInfo");
+	static auto pfn = GetProcAddress(GetModuleHandle(_T("user32")), "GetGestureInfo");
 
 	return pfn && ((BOOL (WINAPI *)(HGESTUREINFO, PGESTUREINFO))pfn)(hGestureInfo, pGestureInfo);
 }
 
 BOOL WINAPI ATCloseGestureInfoHandleW32(HGESTUREINFO hGestureInfo) {
-	static void *pfn = GetProcAddress(GetModuleHandle(_T("user32")), "CloseGestureInfoHandle");
+	static auto pfn = GetProcAddress(GetModuleHandle(_T("user32")), "CloseGestureInfoHandle");
 
 	return pfn && ((BOOL (WINAPI *)(HGESTUREINFO))pfn)(hGestureInfo);
 }
@@ -133,6 +133,11 @@ ATUIVideoDisplayWindow *g_pATVideoDisplayWindow;
 void ATUIOpenOnScreenKeyboard() {
 	if (g_pATVideoDisplayWindow)
 		g_pATVideoDisplayWindow->OpenOSK();
+}
+
+void ATUIToggleHoldKeys() {
+	if (g_pATVideoDisplayWindow)
+		g_pATVideoDisplayWindow->ToggleHoldKeys();
 }
 
 #ifndef MOUSEEVENTF_MASK
@@ -477,6 +482,8 @@ public:
 
 	bool IsTextSelected() const { return g_pATVideoDisplayWindow->IsTextSelected(); }
 	void Copy();
+	void CopyFrame(bool trueAspect);
+	void SaveFrame(bool trueAspect);
 	void Paste();
 	void Paste(const char *s, size_t len);
 
@@ -1040,6 +1047,7 @@ bool ATDisplayPane::OnCreate() {
 
 	mpDisplay->SetReturnFocus(true);
 	mpDisplay->SetTouchEnabled(true);
+	mpDisplay->SetUse16Bit(g_ATOptions.mbDisplay16Bit);
 	UpdateFilterMode();
 	mpDisplay->SetAccelerationMode(IVDVideoDisplay::kAccelResetInForeground);
 	mpDisplay->SetCompositor(&g_ATUIManager);
@@ -1224,13 +1232,22 @@ void ATDisplayPane::ToggleCaptureMouse() {
 }
 
 void ATDisplayPane::ResetDisplay() {
-	if (mpDisplay)
+	if (mpDisplay) {
 		mpDisplay->Reset();
+		mpDisplay->SetUse16Bit(g_ATOptions.mbDisplay16Bit);
+	}
 }
 
 void ATDisplayPane::Copy() {
 	g_pATVideoDisplayWindow->Copy();
+}
 
+void ATDisplayPane::CopyFrame(bool trueAspect) {
+	g_pATVideoDisplayWindow->CopySaveFrame(false, trueAspect);
+}
+
+void ATDisplayPane::SaveFrame(bool trueAspect) {
+	g_pATVideoDisplayWindow->CopySaveFrame(true, trueAspect);
 }
 
 void ATDisplayPane::Paste() {
@@ -1289,7 +1306,10 @@ void ATDisplayPane::UpdateFilterMode() {
 
 				const float factor = kFactors[std::max(0, std::min(4, g_dispFilterSharpness + 2))];
 
-				mpDisplay->SetPixelSharpness(std::max(1.0f, factor / (float)pw), std::max(1.0f, factor / (float)ph));
+				const auto afmode = gtia.GetArtifactingMode();
+				const bool isHighArtifacting = afmode == ATGTIAEmulator::kArtifactNTSCHi || afmode == ATGTIAEmulator::kArtifactPALHi;
+
+				mpDisplay->SetPixelSharpness(isHighArtifacting ? 1.0f : std::max(1.0f, factor / (float)pw), std::max(1.0f, factor / (float)ph));
 			}
 			break;
 
@@ -1468,8 +1488,10 @@ void ATDisplayPane::ResizeDisplay() {
 			const float fh = (float)h;
 			float zoom = std::min<float>(fw / fsw, fh / fsh);
 
-			if (g_displayStretchMode == kATDisplayStretchMode_IntegralPreserveAspectRatio && zoom > 1)
-				zoom = floorf(zoom);
+			if (g_displayStretchMode == kATDisplayStretchMode_IntegralPreserveAspectRatio && zoom > 1) {
+				// We may have some small rounding errors, so give a teeny bit of leeway.
+				zoom = floorf(zoom * 1.0001f);
+			}
 
 			sint32 w2 = (sint32)(0.5f + fsw * zoom);
 			sint32 h2 = (sint32)(0.5f + fsh * zoom);

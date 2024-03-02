@@ -125,7 +125,7 @@ inbuff	= $00f3			;FP: ASCII conversion buffer
 		; $00f4
 		; $00f5			;FP: temporary storage -- also temporarily used by BASIC power routine
 		; $00f6			;FP: temporary storage
-		; $00f7			;FP: temporary storage -- also temporarily used by BASIC power routine
+ztemp4	= $00f7			;FP: temporary storage -- also temporarily used by BASIC power routine
 		; $00f8			;FP: temporary storage
 		; $00f9			;FP: temporary storage
 		; $00fa			;FP: temporary storage

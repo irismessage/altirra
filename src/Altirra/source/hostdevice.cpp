@@ -131,7 +131,7 @@ bool ATHostDeviceParseFilename(const char *s, bool allowDir, bool allowWild, boo
 				return false;
 
 			if (ATHostDeviceIsDevice(nativeRelPath.c_str() + componentStart))
-				nativeRelPath.insert(nativeRelPath.begin() + componentStart, L'$');
+				nativeRelPath.insert(nativeRelPath.begin() + componentStart, L'!');
 
 			inext = false;
 			fnchars = 0;
@@ -223,7 +223,7 @@ bool ATHostDeviceParseFilename(const char *s, bool allowDir, bool allowWild, boo
 		return false;
 
 	if (!wild && ATHostDeviceIsDevice(nativeRelPath.c_str() + componentStart))
-		nativeRelPath.insert(nativeRelPath.begin() + componentStart, L'$');
+		nativeRelPath.insert(nativeRelPath.begin() + componentStart, L'!');
 
 	// strip off trailing separator if present
 	if (!nativeRelPath.empty() && nativeRelPath.back() == '\\')
@@ -251,8 +251,8 @@ namespace {
 			nativeRelPath = L""; VDASSERT( ATHostDeviceParseFilename("FOO>BAR>", true, false, true, false, nativeRelPath) && nativeRelPath == L"FOO\\BAR");
 			nativeRelPath = L""; VDASSERT( ATHostDeviceParseFilename("FOO>BAR>.", true, false, true, false, nativeRelPath) && nativeRelPath == L"FOO\\BAR");
 			nativeRelPath = L""; VDASSERT( ATHostDeviceParseFilename("FOO>BAR>..", true, false, true, false, nativeRelPath) && nativeRelPath == L"FOO");
-			nativeRelPath = L""; VDASSERT( ATHostDeviceParseFilename("CON", false, false, true, false, nativeRelPath) && nativeRelPath == L"$CON");
-			nativeRelPath = L""; VDASSERT( ATHostDeviceParseFilename("CON.TXT", false, false, true, false, nativeRelPath) && nativeRelPath == L"$CON.TXT");
+			nativeRelPath = L""; VDASSERT( ATHostDeviceParseFilename("CON", false, false, true, false, nativeRelPath) && nativeRelPath == L"!CON");
+			nativeRelPath = L""; VDASSERT( ATHostDeviceParseFilename("CON.TXT", false, false, true, false, nativeRelPath) && nativeRelPath == L"!CON.TXT");
 			nativeRelPath = L""; VDASSERT( ATHostDeviceParseFilename("CONX.TXT", false, false, true, false, nativeRelPath) && nativeRelPath == L"CONX.TXT");
 			nativeRelPath = L""; VDASSERT( ATHostDeviceParseFilename("TEST.TXT", false, false, true, false, nativeRelPath) && nativeRelPath == L"TEST.TXT");
 			nativeRelPath = L""; VDASSERT( ATHostDeviceParseFilename("TEST.TXT", false, false, true, false, nativeRelPath) && nativeRelPath == L"TEST.TXT");
@@ -741,7 +741,7 @@ sint32 ATHostDeviceEmulator::OnCIOOpen(int channel, uint8 deviceNo, uint8 mode, 
 					for(; it != itEnd; ++it) {
 						wchar_t c = *it;
 
-						if (c == L'$')
+						if (c == L'$' || c == L'!')
 							continue;
 
 						if (c == '\\')
@@ -1178,14 +1178,14 @@ sint32 ATHostDeviceEmulator::OnCIOSpecial(int channel, uint8 deviceNo, uint8 com
 
 				if (wildDest) {
 					const wchar_t *srcName = it.GetName();
-					if (*srcName == L'$')
+					if (*srcName == L'$' || *srcName == L'!')
 						++srcName;
 
 					destFileBuf.clear();
 					ATHostDeviceMergeWildPath(destFileBuf, srcName, destName);
 
-					if (ATHostDeviceIsPathWild(destFileBuf.c_str()))
-						destFileBuf.insert(0, L'$');
+					if (ATHostDeviceIsDevice(destFileBuf.c_str()))
+						destFileBuf.insert(destFileBuf.begin(), L'!');
 
 					const VDStringW& destFile = VDMakePath(mNativeDirPath.c_str(), destFileBuf.c_str());
 					VDMoveFile(it.GetFullPath().c_str(), destFile.c_str());
@@ -1248,7 +1248,7 @@ sint32 ATHostDeviceEmulator::OnCIOSpecial(int channel, uint8 deviceNo, uint8 com
 				for(; it != itEnd; ++it) {
 					wchar_t c = *it;
 
-					if (c == L'$')
+					if (c == L'$' || c == L'!')
 						continue;
 
 					if (c == '\\')
@@ -1428,7 +1428,7 @@ uint8 ATHostDeviceEmulator::ReadFilename(const uint8 *rawfn, bool allowDir, bool
 	mNativeDirPath.append(nativeRelPath, nativeFile);
 	mNativeSearchPath = mNativeDirPath;
 	mNativeSearchPath += L"*.*";
-	mFilePattern = VDTextWToA(nativeFile);
+	mFilePattern = VDTextWToA(*nativeFile == L'!' ? nativeFile + 1 : nativeFile);
 
 	if (mFilePattern.find('.') == VDStringW::npos)
 		mFilePattern += '.';

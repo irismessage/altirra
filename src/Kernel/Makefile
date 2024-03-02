@@ -1,4 +1,3 @@
-MADS = mads.exe
 ATCOMPILER = $(OUT)\atcompiler.exe
 
 SRCFILES = source\main.xasm \

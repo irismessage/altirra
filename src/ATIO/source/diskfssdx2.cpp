@@ -578,14 +578,28 @@ directory_finished:
 		lastSectorIncluded = false;
 	}
 
+	// Check if the free count matches. If we found more free sectors than
+	// were on the disk, then that's OK; if we found less, that's bad.
 	if (computedFreeSectors != mFreeSectors) {
-		report.mbBitmapIncorrect = true;
+		if (computedFreeSectors > mFreeSectors)
+			report.mbBitmapIncorrectLostSectorsOnly = true;
+		else
+			report.mbBitmapIncorrect = true;
 		errorsFound = true;
-	} else {
-		// do more exhaustive check
-		for(uint32 i=1; i<=mTotalSectors; ++i) {
-			if (IsSectorAllocated(i) != bitmap[i]) {
+	}
+
+	// do more exhaustive check
+	for(uint32 i=1; i<=mTotalSectors; ++i) {
+		if (IsSectorAllocated(i) != bitmap[i]) {
+			if (bitmap[i]) {
+				// Traversal showed the sector as allocated, but the bitmap doesn't. That's bad.
 				report.mbBitmapIncorrect = true;
+				errorsFound = true;
+				break;
+			} else {
+				// Sector is marked as allocated in bitmap but not in traversal. Not great, but
+				// at least it won't cause file corruption.
+				report.mbBitmapIncorrectLostSectorsOnly = true;
 				errorsFound = true;
 				break;
 			}
@@ -1017,7 +1031,7 @@ uint32 ATDiskFSSDX2::WriteEntry(uint32 parentKey, const char *filename, const vo
 		dirEnt2[21] = tmvp->tm_min;
 		dirEnt2[22] = tmvp->tm_sec;
 	} else {
-		memcpy(dirEnt2 + 17, 0, 6);
+		memset(dirEnt2 + 17, 0, 6);
 	}
 
 	SeekFile(fh, dirEntOffset, true);

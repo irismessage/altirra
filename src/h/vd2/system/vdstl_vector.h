@@ -54,8 +54,10 @@ public:
 	template <class InputIterator>
 	vdvector(InputIterator first, InputIterator last, const A& = A());
 	vdvector(const vdvector<T,A>& x);
+	vdvector(vdvector<T,A>&& x) vdnoexcept;
 	~vdvector();
 	vdvector<T,A>& operator=(const vdvector<T,A>& x);
+	vdvector<T,A>& operator=(vdvector<T,A>&& x) vdnoexcept;
 	template <class InputIterator>
 	void assign(InputIterator first, InputIterator last);
 	void			assign(size_type n, const T& u);
@@ -98,6 +100,10 @@ public:
 	reference	push_back();
 	void		push_back(const T& x);
 	void		pop_back();
+
+	template<class... Args>
+	reference	emplace_back(Args&&... args);
+
 	iterator	insert(iterator position, const T& x);
 
 	template<class U>
@@ -113,6 +119,7 @@ public:
 
 private:
 	void free_storage();
+	static size_type raise_capacity(size_type current, size_type additional);
 
 	struct Data : public A {
 		pointer mpBegin;
@@ -162,6 +169,18 @@ vdvector<T,A>::vdvector(const vdvector<T,A>& x)
 }
 
 template <class T, class A>
+vdvector<T,A>::vdvector(vdvector<T,A>&& x) vdnoexcept
+	: m(std::move(static_cast<A&>(x.m)))
+{
+	m.mpBegin = x.m.mpBegin;
+	m.mpEnd = x.m.mpEnd;
+	m.mpEOS = x.m.mpEOS;
+	x.m.mpBegin = nullptr;
+	x.m.mpEnd = nullptr;
+	x.m.mpEOS = nullptr;
+}
+
+template <class T, class A>
 vdvector<T,A>::~vdvector() {
 	clear();
 
@@ -176,6 +195,24 @@ vdvector<T,A>& vdvector<T,A>::operator=(const vdvector<T,A>& x) {
 
 		swap(tmp);
 	}
+
+	return *this;
+}
+
+template <class T, class A>
+vdvector<T,A>& vdvector<T,A>::operator=(vdvector<T,A>&& x) vdnoexcept {
+	clear();
+
+	if (m.mpBegin)
+		m.deallocate(m.mpBegin, m.mpEOS - m.mpBegin);
+
+	m.mpBegin = x.m.mpBegin;
+	m.mpEnd = x.m.mpEnd;
+	m.mpEOS = x.m.mpEOS;
+
+	x.m.mpBegin = nullptr;
+	x.m.mpEnd = nullptr;
+	x.m.mpEOS = nullptr;
 
 	return *this;
 }
@@ -397,6 +434,44 @@ typename vdvector<T,A>::iterator vdvector<T,A>::insert_as(iterator position, con
 	}
 }
 
+template<class T, class A>
+template<class... Args>
+typename vdvector<T,A>::reference vdvector<T,A>::emplace_back(Args&&... args) {
+	if (m.mpEnd == m.mpEOS) {
+		const size_type currSize = m.mpEnd - m.mpBegin;
+		const size_type newCapacity = currSize + 1;
+
+		const pointer p0 = m.allocate(newCapacity);
+		pointer pe = p0;
+		try {
+			const pointer p1 = std::uninitialized_copy(m.mpBegin, m.mpEnd, p0);
+			pe = p1;
+
+			new(pe) T(std::forward<Args>(args)...);
+			++pe;
+
+			free_storage();
+
+			m.mpBegin = p0;
+			m.mpEnd = pe;
+			m.mpEOS = p0 + newCapacity;
+
+			return *p1;
+		} catch(...) {
+			while(pe != p0) {
+				--pe;
+				pe->~T();
+			}
+
+			m.deallocate(p0, newCapacity);
+			throw;
+		}
+	} else {
+		new(m.mpEnd) T(std::forward<Args>(args)...);
+		return *m.mpEnd++;
+	}
+}
+
 template <class T, class A>
 typename vdvector<T,A>::iterator vdvector<T,A>::insert(iterator position, const T& x) {
 	if (m.mpEnd == m.mpEOS) {
@@ -460,7 +535,7 @@ template <class T, class A>
 void vdvector<T,A>::insert(iterator position, size_type n, const T& x) {
 	if ((size_type)(m.mpEOS - m.mpEnd) < n) {
 		const size_type currSize = m.mpEnd - m.mpBegin;
-		const size_type newCapacity = currSize + n;
+		const size_type newCapacity = raise_capacity(currSize, n);
 
 		const pointer p0 = m.allocate(newCapacity);
 		pointer pe = p0;
@@ -510,7 +585,7 @@ void vdvector<T,A>::insert(iterator position, InputIterator first, InputIterator
 
 	if ((size_type)(m.mpEOS - m.mpEnd) < n) {
 		const size_type currSize = m.mpEnd - m.mpBegin;
-		const size_type newCapacity = currSize + n;
+		const size_type newCapacity = raise_capacity(currSize, n);
 
 		const pointer p0 = m.allocate(newCapacity);
 		pointer pe = p0;
@@ -601,6 +676,13 @@ void vdvector<T,A>::free_storage() {
 	}
 
 	m.deallocate(b, m.mpEOS - b);
+}
+
+template<class T, class A>
+typename vdvector<T,A>::size_type vdvector<T,A>::raise_capacity(size_type current, size_type additional) {
+	size_type nextStep = current >> 1;
+
+	return current + std::max<size_type>(nextStep, additional);
 }
 
 #endif	// f_VD2_SYSTEM_VDSTL_VECTOR_H

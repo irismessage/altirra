@@ -76,12 +76,16 @@ void ATUIScanForFirmware(VDGUIHandle hParent, ATFirmwareManager& fwmgr) {
 			vdblock<char> buf(size32);
 			f.read(buf.data(), (long)buf.size());
 
-			if (ATFirmwareAutodetect(buf.data(), (uint32)buf.size(), info)) {
+			ATSpecificFirmwareType specificType;
+			if (ATFirmwareAutodetect(buf.data(), (uint32)buf.size(), info, specificType)) {
 				ATFirmwareInfo& info2 = detectedFirmwares.push_back();
 
 				vdmove(info2, info);
 				info2.mId = ATGetFirmwareIdFromPath(fullPath.c_str());
 				info2.mPath = fullPath;
+
+				if (specificType != kATSpecificFirmwareType_None && !fwmgr.GetSpecificFirmware(specificType))
+					fwmgr.SetSpecificFirmware(specificType, info2.mId);
 			}
 		} catch(const MyError&) {
 		}

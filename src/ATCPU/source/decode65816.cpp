@@ -866,12 +866,8 @@ bool ATCPUDecoderGenerator65816::DecodeInsn(uint8 opcode, bool unalignedDP, bool
 				*mpDstState++ = kStatePopPBKNative;
 			break;
 
-		case 0x42:	// HLE (emulator escape insn) (reuse of WDM)
-			*mpDstState++ = kStateReadAddrL;
-			*mpDstState++ = kStateReadAddrH;
-			*mpDstState++ = kStateInvokeHLE;
-			*mpDstState++ = kStateHLEDelay;
-			*mpDstState++ = kStateBreakOnUnsupportedOpcode;
+		case 0x42:	// WDM
+			*mpDstState++ = kStateWait;		// 2
 			break;
 
 		case 0x44:	// MVP

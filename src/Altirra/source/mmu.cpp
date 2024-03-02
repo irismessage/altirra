@@ -19,7 +19,6 @@
 #include "mmu.h"
 #include "memorymanager.h"
 #include "simulator.h"
-#include "hlekernel.h"
 
 ATMMUEmulator::ATMMUEmulator()
 	: mHardwareMode(0)
@@ -37,7 +36,6 @@ ATMMUEmulator::ATMMUEmulator()
 	, mpLayerHiddenRAM(NULL)
 	, mpLayerAxlonControl1(NULL)
 	, mpLayerAxlonControl2(NULL)
-	, mpHLE(NULL)
 	, mCurrentBank(0xFF)
 	, mCPUBase(0)
 	, mAnticBase(0)
@@ -72,8 +70,7 @@ void ATMMUEmulator::InitMapping(int hwmode, int memoryMode, void *mem,
 						 ATMemoryLayer *upperKernelLayer,
 						 ATMemoryLayer *basicLayer,
 						 ATMemoryLayer *gameLayer,
-						 ATMemoryLayer *hiddenRamLayer,
-						 IATHLEKernel *hle) {
+						 ATMemoryLayer *hiddenRamLayer) {
 	mHardwareMode = hwmode;
 	mMemoryMode = memoryMode;
 	mpMemory = (uint8 *)mem;
@@ -84,7 +81,6 @@ void ATMMUEmulator::InitMapping(int hwmode, int memoryMode, void *mem,
 	mpLayerBASIC = basicLayer;
 	mpLayerGame = gameLayer;
 	mpLayerHiddenRAM = hiddenRamLayer;
-	mpHLE = hle;
 
 	mCPUBase = 0;
 	mAnticBase = 0;
@@ -286,7 +282,6 @@ void ATMMUEmulator::ShutdownMapping() {
 	mpLayerBASIC = NULL;
 	mpLayerGame = NULL;
 	mpLayerHiddenRAM = NULL;
-	mpHLE = NULL;
 
 	mCPUBase = 0;
 	mAnticBase = 0;
@@ -420,9 +415,6 @@ void ATMMUEmulator::SetBankRegister(uint8 bank) {
 	if (mpLayerSelfTest)
 		mpMemMan->EnableLayer(mpLayerSelfTest, selfTestEnabled);
 
-	if (mpHLE)
-		mpHLE->EnableSelfTestROM(selfTestEnabled);
-
 	const bool kernelEnabled = (bankInfo & kMapInfo_Kernel) != 0;
 
 	if (mpLayerAxlonControl2)
@@ -430,22 +422,10 @@ void ATMMUEmulator::SetBankRegister(uint8 bank) {
 
 	if (mpLayerLowerKernel) {
 		mpMemMan->EnableLayer(mpLayerLowerKernel, kernelEnabled);
-
-		if (mpHLE)
-			mpHLE->EnableLowerROM(kernelEnabled);
-	} else {
-		if (mpHLE)
-			mpHLE->EnableLowerROM(false);
 	}
 
 	if (mpLayerUpperKernel) {
 		mpMemMan->EnableLayer(mpLayerUpperKernel, kernelEnabled);
-
-		if (mpHLE)
-			mpHLE->EnableUpperROM(kernelEnabled);
-	} else {
-		if (mpHLE)
-			mpHLE->EnableUpperROM(false);
 	}
 
 	if (mpLayerBASIC)

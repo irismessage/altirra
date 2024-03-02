@@ -26,24 +26,56 @@ struct ATCPUHistoryEntry {
 	uint32	mCycle;
 	uint32	mUnhaltedCycle;
 	uint32	mEA;
-	uint8	mA;
-	uint8	mX;
-	uint8	mY;
-	uint8	mS;
+	union {
+		uint8	mA;
+		uint8	mZ80_A;
+	};
+	union {
+		uint8	mX;
+		uint8	mZ80_F;
+		uint8	m8048_P1;
+	};
+	union {
+		uint8	mY;
+		uint8	mZ80_B;
+		uint8	m8048_P2;
+	};
+	union {
+		uint8	mS;
+		uint8	mZ80_C;
+	};
 	uint16	mPC;
-	uint8	mP;
+	union {
+		uint8	mP;
+		uint8	mZ80_D;
+	};
 	bool	mbIRQ : 1;			// Both are set -> HLE.
 	bool	mbNMI : 1;
 	bool	mbEmulation : 1;
 	uint8	mSubCycle : 5;
 	uint8	mOpcode[4];
 	uint8	mSH;
-	uint8	mAH;
-	uint8	mXH;
-	uint8	mYH;
+	union {
+		uint8	mAH;
+		uint8	mZ80_E;
+		uint8	m8048_R0;
+	};
+	union {
+		uint8	mXH;
+		uint8	mZ80_H;
+		uint8	m8048_R1;
+	};
+	union {
+		uint8	mYH;
+		uint8	mZ80_L;
+	};
 	uint8	mB;
 	uint8	mK;
-	uint16	mD;
+
+	union {
+		uint16	mD;
+		uint16	mZ80_SP;
+	};
 };
 
 struct ATCPUBeamPosition {

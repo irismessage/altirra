@@ -22,7 +22,7 @@
 #include <at/atcore/devicecio.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceserial.h>
-#include <at/atcore/devicesio.h>
+#include <at/atcore/devicesioimpl.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
 #include "pokey.h"
@@ -222,7 +222,9 @@ void ATRS232ChannelSX212::ColdReset() {
 	if (mpDevice)
 		mpDevice->ColdReset();
 
-	mbHighSpeed = false;
+	// The SX212 hardware powers up in high speed mode.
+	mbHighSpeed = true;
+
 	mbTranslationEnabled = true;
 	mbTranslationHeavy = false;
 	mbAddLFAfterEOL = false;
@@ -365,7 +367,7 @@ sint32 ATRS232ChannelSX212::PutByte(uint8 c) {
 		if (mOutputLevel >= vdcountof(mOutputBuffer))
 			return -1;
 		
-		uint8 d = c;
+		uint16 d = c;
 
 		switch(mOutputParityMode) {
 			case kParityMode_None:
@@ -385,6 +387,9 @@ sint32 ATRS232ChannelSX212::PutByte(uint8 c) {
 				d |= 0x80;
 				break;
 		}
+
+		if (mbHandlerHighSpeed)
+			d |= 0x100;
 
 		mOutputBuffer[mOutputWriteOffset] = d;
 		if (++mOutputWriteOffset >= vdcountof(mOutputBuffer))
@@ -451,9 +456,10 @@ void ATRS232ChannelSX212::PollDevice() {
 		--mOutputLevel;
 
 		if (mpDevice) {
-			const uint16 c = mOutputBuffer[mOutputReadOffset];
-			g_ATLCModemData("Sending byte to modem: $%02X (%c)\n", c, c >= 0x20 && c < 0x7F ? (char)c : '.');
-			mpDevice->Write(c & 0x100 ? 1200 : 300, (uint8)c);
+			const uint16 v = mOutputBuffer[mOutputReadOffset];
+			const uint8 c = (uint8)v;
+			g_ATLCModemData("Sending byte to modem @ %u: $%02X (%c)\n", v & 0x100 ? 1200 : 300, c, c >= 0x20 && c < 0x7F ? (char)c : '.');
+			mpDevice->Write(v & 0x100 ? 1200 : 300, c);
 		}
 
 		if (++mOutputReadOffset >= vdcountof(mOutputBuffer))
@@ -498,7 +504,7 @@ class ATDeviceSX212 final
 	, public IATDeviceScheduling
 	, public IATDeviceIndicators					
 	, public IATDeviceCIO
-	, public IATDeviceSIO
+	, public ATDeviceSIO
 	, public IATDeviceRawSIO
 {
 	ATDeviceSX212(const ATDeviceSX212&) = delete;
@@ -536,20 +542,12 @@ public:	// IATDeviceCIO
 
 public:	// IATDeviceSIO
 	void InitSIO(IATDeviceSIOManager *mgr) override;
-	CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
-	void OnSerialAbortCommand() override;
-	void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) override;
-	void OnSerialFence(uint32 id) override; 
-	CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
 
 public:	// IATDeviceRawSIO
 	void OnCommandStateChanged(bool asserted) override;
 	void OnMotorStateChanged(bool asserted) override;
 	void OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) override;
 	void OnSendReady() override;
-
-public:
-	void OnScheduledEvent(uint32 id);
 
 protected:
 	ATScheduler *mpScheduler;
@@ -788,23 +786,6 @@ void ATDeviceSX212::InitSIO(IATDeviceSIOManager *mgr) {
 
 	if (mEmulationLevel != kAT850SIOEmulationLevel_None)
 		mpSIOMgr->AddRawDevice(this);
-}
-
-IATDeviceSIO::CmdResponse ATDeviceSX212::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
-	return kCmdResponse_NotHandled;
-}
-
-void ATDeviceSX212::OnSerialAbortCommand() {
-}
-
-void ATDeviceSX212::OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) {
-}
-
-void ATDeviceSX212::OnSerialFence(uint32 id) {
-}
-
-IATDeviceSIO::CmdResponse ATDeviceSX212::OnSerialAccelCommand(const ATDeviceSIORequest& request) {
-	return kCmdResponse_NotHandled;
 }
 
 void ATDeviceSX212::OnCommandStateChanged(bool asserted) {

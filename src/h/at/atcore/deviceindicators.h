@@ -32,8 +32,10 @@ public:
 	virtual void PulseStatusFlags(uint32 flags) = 0;
 
 	virtual void SetStatusCounter(uint32 index, uint32 value) = 0;
+	virtual void SetDiskLEDState(uint32 index, sint32 ledDisplay) = 0;
 
 	virtual void SetDiskMotorActivity(uint32 index, bool on) = 0;
+	virtual void SetDiskErrorState(uint32 index, bool error) = 0;
 
 	virtual void SetHActivity(bool write) = 0;
 	virtual void SetIDEActivity(bool write, uint32 lba) = 0;
@@ -42,7 +44,7 @@ public:
 	virtual void SetFlashWriteActivity() = 0;
 
 	virtual void SetCassetteIndicatorVisible(bool vis) = 0;
-	virtual void SetCassettePosition(float pos) = 0;
+	virtual void SetCassettePosition(float pos, bool recordMode) = 0;
 
 	virtual void SetRecordingPosition() = 0;
 	virtual void SetRecordingPosition(float time, sint64 size) = 0;

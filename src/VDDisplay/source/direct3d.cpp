@@ -1125,7 +1125,7 @@ bool VDD3D9Manager::UpdateCachedDisplayMode() {
 	return true;
 }
 
-void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh) {
+void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh, bool use16bit) {
 	if (fs) {
 		++mFullScreenCount;
 	} else {
@@ -1151,18 +1151,27 @@ void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh
 		const int targetheight = w && h ? h : dm.Height;
 		const int targetrefresh = w && h && refresh ? refresh : dm.RefreshRate;
 
+		D3DFORMAT format = D3DFMT_X8R8G8B8;
+
+		if (use16bit) {
+			if (mpD3D->GetAdapterModeCount(mAdapter, D3DFMT_R5G6B5))
+				format = D3DFMT_R5G6B5;
+			else if (mpD3D->GetAdapterModeCount(mAdapter, D3DFMT_X1R5G5B5))
+				format = D3DFMT_X1R5G5B5;
+		}
+
 		// First, we try resetting with the desired display mode. This is necessary to access
 		// modes not reported by the monitor (i.e. 50Hz) as there is no way to enumerate
 		// unpruned modes in Direct3D 9 or 9Ex. If that fails then we try monitor mode matching.
 		mPresentParms.BackBufferWidth = targetwidth;
 		mPresentParms.BackBufferHeight = targetheight;
 		mPresentParms.FullScreen_RefreshRateInHz = targetrefresh;
-		mPresentParms.BackBufferFormat = D3DFMT_X8R8G8B8;
+		mPresentParms.BackBufferFormat = format;
 
 		if (Reset())
 			return;
 
-		UINT count = mpD3D->GetAdapterModeCount(mAdapter, D3DFMT_X8R8G8B8);
+		UINT count = mpD3D->GetAdapterModeCount(mAdapter, format);
 		VDDEBUG_D3D_MODESWITCH("Unable to switch to requested mode. Trying to match against %u display modes.\n", count);
 
 		D3DDISPLAYMODE dm2;
@@ -1173,7 +1182,7 @@ void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh
 		int bestrefresherr = 0;
 		
 		for(UINT mode=0; mode<count; ++mode) {
-			HRESULT hr = mpD3D->EnumAdapterModes(mAdapter, D3DFMT_X8R8G8B8, mode, &dm2);
+			HRESULT hr = mpD3D->EnumAdapterModes(mAdapter, format, mode, &dm2);
 			if (FAILED(hr))
 				break;
 
@@ -1202,12 +1211,12 @@ void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh
 			mPresentParms.BackBufferWidth = dm.Width;
 			mPresentParms.BackBufferHeight = dm.Height;
 			mPresentParms.FullScreen_RefreshRateInHz = dm.RefreshRate;
-			mPresentParms.BackBufferFormat = D3DFMT_X8R8G8B8;
+			mPresentParms.BackBufferFormat = format;
 		} else {
 			mPresentParms.BackBufferWidth = dmbest.Width;
 			mPresentParms.BackBufferHeight = dmbest.Height;
 			mPresentParms.FullScreen_RefreshRateInHz = dmbest.RefreshRate;
-			mPresentParms.BackBufferFormat = D3DFMT_X8R8G8B8;
+			mPresentParms.BackBufferFormat = format;
 		}
 	} else {
 		mPresentParms.BackBufferWidth = dm.Width;
@@ -1854,7 +1863,7 @@ bool VDD3D9Manager::CreateSharedTexture(const char *name, SharedTextureFactory f
 	return true;
 }
 
-bool VDD3D9Manager::CreateSwapChain(HWND hwnd, int width, int height, bool clipToMonitor, IVDD3D9SwapChain **ppSwapChain) {
+bool VDD3D9Manager::CreateSwapChain(HWND hwnd, int width, int height, bool clipToMonitor, bool use16bit, IVDD3D9SwapChain **ppSwapChain) {
 	D3DPRESENT_PARAMETERS pparms={};
 
 	pparms.Windowed			= TRUE;
@@ -1870,7 +1879,16 @@ bool VDD3D9Manager::CreateSwapChain(HWND hwnd, int width, int height, bool clipT
 
 	pparms.BackBufferWidth	= width;
 	pparms.BackBufferHeight	= height;
+
 	pparms.BackBufferFormat	= mPresentParms.BackBufferFormat;
+
+	if (use16bit) {
+		if (D3D_OK == mpD3D->CheckDeviceFormat(mAdapter, mDevType, D3DFMT_R5G6B5, D3DUSAGE_RENDERTARGET, D3DRTYPE_SURFACE, D3DFMT_R5G6B5))
+			pparms.BackBufferFormat	= D3DFMT_R5G6B5;
+		else if (D3D_OK == mpD3D->CheckDeviceFormat(mAdapter, mDevType, D3DFMT_X1R5G5B5, D3DUSAGE_RENDERTARGET, D3DRTYPE_SURFACE, D3DFMT_X1R5G5B5))
+			pparms.BackBufferFormat	= D3DFMT_X1R5G5B5;
+	}
+
 	pparms.hDeviceWindow = hwnd;
 
 	// Disabling DEVICECLIP with only one monitor due to clipping issues on the

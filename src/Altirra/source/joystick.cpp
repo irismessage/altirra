@@ -16,9 +16,10 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#define INITGUID
 #define DIRECTINPUT_VERSION 0x0800
+#include <guiddef.h>
 #include <dinput.h>
-#include <comutil.h>
 #include <setupapi.h>
 #include <xinput.h>
 #include <vd2/system/bitmath.h>
@@ -29,7 +30,6 @@
 #include "joystick.h"
 #include "inputmanager.h"
 
-#pragma comment(lib, "dxguid")
 #pragma comment(lib, "dinput8")
 #pragma comment(lib, "setupapi")
 
@@ -887,22 +887,22 @@ public:
 	ATJoystickManager();
 	~ATJoystickManager();
 
-	bool Init(void *hwnd, ATInputManager *inputMan);
-	void Shutdown();
+	bool Init(void *hwnd, ATInputManager *inputMan) override;
+	void Shutdown() override;
 
-	ATJoystickTransforms GetTransforms() const;
-	void SetTransforms(const ATJoystickTransforms&);
+	ATJoystickTransforms GetTransforms() const override;
+	void SetTransforms(const ATJoystickTransforms&) override;
 
-	void SetCaptureMode(bool capture) { mbCaptureMode = capture; }
+	void SetCaptureMode(bool capture) override { mbCaptureMode = capture; }
 
 	void SetOnActivity(const vdfunction<void()>& fn) override { mpActivityFn = fn; }
 
-	void RescanForDevices();
-	PollResult Poll();
-	bool PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2);
-	const ATJoystickState *PollForCapture(uint32& count);
+	void RescanForDevices() override;
+	PollResult Poll() override;
+	bool PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2) override;
+	const ATJoystickState *PollForCapture(uint32& count) override;
 
-	uint32 GetJoystickPortStates() const;
+	uint32 GetJoystickPortStates() const override;
 
 protected:
 	static BOOL CALLBACK StaticJoystickCallback(LPCDIDEVICEINSTANCE devInst, LPVOID pThis);

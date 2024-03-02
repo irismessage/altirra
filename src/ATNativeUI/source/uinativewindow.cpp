@@ -67,7 +67,7 @@ ATOM ATUINativeWindow::RegisterCustom(const WNDCLASS& wc0) {
 
 void ATUINativeWindow::Unregister() {
 	if (sWndClass) {
-		UnregisterClass((LPCTSTR)sWndClass, (HINSTANCE)&__ImageBase);
+		UnregisterClass((LPCTSTR)(uintptr_t)sWndClass, (HINSTANCE)&__ImageBase);
 		sWndClass = NULL;
 	}
 }

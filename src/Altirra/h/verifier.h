@@ -32,9 +32,9 @@ enum {
 	kATVerifierFlag_AbnormalDMA = 0x10
 };
 
-class ATCPUVerifier : public IATSimulatorCallback {
-	ATCPUVerifier(const ATCPUVerifier&);
-	ATCPUVerifier& operator=(const ATCPUVerifier&);
+class ATCPUVerifier {
+	ATCPUVerifier(const ATCPUVerifier&) = delete;
+	ATCPUVerifier& operator=(const ATCPUVerifier&) = delete;
 public:
 	ATCPUVerifier();
 	~ATCPUVerifier();
@@ -57,19 +57,19 @@ public:
 	void OnReturn();
 	void VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 target);
 
-public:
-	virtual void OnSimulatorEvent(ATSimulatorEvent ev);
+private:
+	void OnAbnormalDMA();
 
-protected:
-	ATCPUEmulator *mpCPU;
-	ATCPUEmulatorMemory *mpMemory;
-	ATSimulator *mpSimulator;
-	ATSimulatorEventManager *mpSimEventMgr;
+	ATCPUEmulator *mpCPU = nullptr;
+	ATCPUEmulatorMemory *mpMemory = nullptr;
+	ATSimulator *mpSimulator = nullptr;
+	ATSimulatorEventManager *mpSimEventMgr = nullptr;
+	uint32 mEventCallbackId = 0;
 
-	uint32	mFlags;
+	uint32	mFlags = 0;
 
-	bool	mbInNMIRoutine;
-	uint8	mNMIStackLevel;
+	bool	mbInNMIRoutine = false;
+	uint8	mNMIStackLevel = 0;
 
 	typedef vdfastvector<uint16> Addresses;
 	Addresses	mAllowedTargets;
@@ -83,7 +83,7 @@ protected:
 		uint16	mPad2;
 	};
 
-	StackRegState mStackRegState[256];
+	StackRegState mStackRegState[256] = {};
 };
 
 #endif	// f_AT_VERIFIER_H

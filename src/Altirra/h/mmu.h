@@ -37,8 +37,8 @@ struct ATMemoryMapState {
 };
 
 class ATMMUEmulator {
-	ATMMUEmulator(const ATMMUEmulator&);
-	ATMMUEmulator& operator=(const ATMMUEmulator&);
+	ATMMUEmulator(const ATMMUEmulator&) = delete;
+	ATMMUEmulator& operator=(const ATMMUEmulator&) = delete;
 public:
 	ATMMUEmulator();
 	~ATMMUEmulator();
@@ -55,8 +55,7 @@ public:
 		ATMemoryLayer *upperKernelLayer,
 		ATMemoryLayer *basicLayer,
 		ATMemoryLayer *gameLayer,
-		ATMemoryLayer *hiddenRamLayer,
-		IATHLEKernel *hle);
+		ATMemoryLayer *hiddenRamLayer);
 	void ShutdownMapping();
 
 	bool IsKernelROMEnabled() const { return (mCurrentBankInfo & kMapInfo_Kernel) != 0; }
@@ -104,7 +103,6 @@ protected:
 	ATMemoryLayer *mpLayerHiddenRAM;
 	ATMemoryLayer *mpLayerAxlonControl1;
 	ATMemoryLayer *mpLayerAxlonControl2;
-	IATHLEKernel *mpHLE;
 	bool		mbBASICForced;
 	uint8		mCurrentBank;
 	uint8		mAxlonBank;

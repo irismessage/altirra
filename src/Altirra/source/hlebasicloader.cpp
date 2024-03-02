@@ -20,6 +20,7 @@
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
+#include <at/atio/blobimage.h>
 #include "hlebasicloader.h"
 #include "hleutils.h"
 #include "kerneldb.h"
@@ -31,15 +32,7 @@
 #include "simulator.h"
 #include "cio.h"
 
-ATHLEBasicLoader::ATHLEBasicLoader()
-	: mpCPU(NULL)
-	, mpCPUHookMgr(NULL)
-	, mpSimEventMgr(NULL)
-	, mpSim(NULL)
-	, mpLaunchHook(NULL)
-	, mbLaunchPending(0)
-	, mProgramIOCB(0)
-{
+ATHLEBasicLoader::ATHLEBasicLoader() {
 }
 
 ATHLEBasicLoader::~ATHLEBasicLoader() {
@@ -55,6 +48,8 @@ void ATHLEBasicLoader::Init(ATCPUEmulator *cpu, ATSimulatorEventManager *simEven
 }
 
 void ATHLEBasicLoader::Shutdown() {
+	vdsaferelease <<= mpImage;
+
 	if (mpCPUHookMgr) {
 		mpCPUHookMgr->UnsetHook(mpLaunchHook);
 		mpCPUHookMgr = NULL;
@@ -67,14 +62,16 @@ void ATHLEBasicLoader::Shutdown() {
 	mbLaunchPending = false;
 }
 
-void ATHLEBasicLoader::LoadProgram(IVDRandomAccessStream& stream) {
-	uint32 len = (uint32)stream.Length();
+void ATHLEBasicLoader::LoadProgram(IATBlobImage *image) {
+	vdsaferelease <<= mpImage;
+
+	mpImage = image;
+	image->AddRef();
+
+	uint32 len = image->GetSize();
 
 	if (len < 14)
 		throw MyError("Invalid BASIC program: must be at least 12 bytes.");
-
-	mProgramToLoad.resize(len);
-	stream.Read(mProgramToLoad.data(), len);
 
 	mpCPUHookMgr->SetHookMethod(mpLaunchHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::CIOV, 10, this, &ATHLEBasicLoader::OnCIOV);
 
@@ -107,10 +104,10 @@ uint8 ATHLEBasicLoader::OnCIOV(uint16) {
 				return 0x60;
 
 			case ATCIOSymbols::CIOCmdGetChars:
-				if (mProgramIndex >= mProgramToLoad.size()) {
+				if (mProgramIndex >= mpImage->GetSize()) {
 					mpCPU->Ldy(ATCIOSymbols::CIOStatEndOfFile);
 				} else {
-					uint32 maxRead = (uint32)(mProgramToLoad.size() - mProgramIndex);
+					uint32 maxRead = (uint32)(mpImage->GetSize() - mProgramIndex);
 					uint32 addr = mem->ReadByte(ATKernelSymbols::ICBAL + iocb) + 256*mem->ReadByte(ATKernelSymbols::ICBAH + iocb);
 					uint32 len = mem->ReadByte(ATKernelSymbols::ICBLL + iocb) + 256*mem->ReadByte(ATKernelSymbols::ICBLH + iocb);
 					bool trunc = false;
@@ -120,8 +117,9 @@ uint8 ATHLEBasicLoader::OnCIOV(uint16) {
 						len = maxRead;
 					}
 
+					const uint8 *src = (const uint8 *)mpImage->GetBuffer();
 					for(uint32 i=0; i<len; ++i)
-						mem->WriteByte((uint16)(addr++), mProgramToLoad[mProgramIndex++]);
+						mem->WriteByte((uint16)(addr++), src[mProgramIndex++]);
 
 					mem->WriteByte(ATKernelSymbols::ICBLL + iocb, (uint8)len);
 					mem->WriteByte(ATKernelSymbols::ICBLH + iocb, (uint8)(len >> 8));

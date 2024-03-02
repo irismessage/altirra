@@ -1,4 +1,4 @@
-//	Altirra - Atari 800/800XL/5200 emulator
+﻿//	Altirra - Atari 800/800XL/5200 emulator
 //	I/O library - disk image definitions
 //	Copyright (C) 2008-2015 Avery Lee
 //
@@ -19,6 +19,9 @@
 #ifndef f_AT_ATIO_DISKIMAGE_H
 #define f_AT_ATIO_DISKIMAGE_H
 
+#include <vd2/system/refcount.h>
+#include <at/atio/image.h>
+
 class IVDRandomAccessStream;
 
 enum ATDiskTimingMode {
@@ -38,7 +41,7 @@ struct ATDiskPhysicalSectorInfo {
 	uint16	mSize;
 	bool	mbDirty;
 	float	mRotPos;
-	uint8	mFDCStatus;
+	uint8	mFDCStatus;			// FDC status as seen by 810 firmware (inverted)
 	sint16	mWeakDataOffset;
 };
 
@@ -62,9 +65,9 @@ enum ATDiskImageFormat {
 	kATDiskImageFormat_DCM
 };
 
-class VDINTERFACE IATDiskImage {
+class VDINTERFACE IATDiskImage : public IATImage {
 public:
-	virtual ~IATDiskImage() = default;
+	enum : uint32 { kTypeID = 'dsim' };
 
 	virtual ATDiskTimingMode GetTimingMode() const = 0;
 
@@ -89,9 +92,12 @@ public:
 	// Flush any changes back to the persistent store. Returns true on success or no-op;
 	// false if the image is not updatable. I/O exceptions may be thrown. A dirty image
 	// becomes clean after a successful flush.
+
 	virtual bool Flush() = 0;
 
-	virtual void SetPath(const wchar_t *path) = 0;
+	virtual uint64 GetImageChecksum() const = 0;
+
+	virtual void SetPath(const wchar_t *path, ATDiskImageFormat format) = 0;
 	virtual void Save(const wchar_t *path, ATDiskImageFormat format) = 0;
 
 	virtual ATDiskGeometryInfo GetGeometry() const = 0;
@@ -118,13 +124,17 @@ public:
 	// auto-computed according to inference rules. An exception is thrown if
 	// the disk is dynamic.
 	virtual void Resize(uint32 sectors) = 0;
+
+	// Replace a series of virtual sectors with new ones.
+	virtual void FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskVirtualSectorInfo *vsecs, uint32 psCount, const ATDiskPhysicalSectorInfo *psecs, const uint8 *psecData) = 0;
 };
 
-IATDiskImage *ATLoadDiskImage(const wchar_t *path);
-IATDiskImage *ATLoadDiskImage(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream);
-IATDiskImage *ATMountDiskImageVirtualFolder(const wchar_t *path, uint32 sectorCount);
-IATDiskImage *ATMountDiskImageVirtualFolderSDFS(const wchar_t *path, uint32 sectorCount, uint64 uniquenessValue);
-IATDiskImage *ATCreateDiskImage(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize);
+void ATLoadDiskImage(const wchar_t *path, IATDiskImage **ppImage);
+void ATLoadDiskImage(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, IATDiskImage **ppImage);
+void ATMountDiskImageVirtualFolder(const wchar_t *path, uint32 sectorCount, IATDiskImage **ppImage);
+void ATMountDiskImageVirtualFolderSDFS(const wchar_t *path, uint32 sectorCount, uint64 uniquenessValue, IATDiskImage **ppImage);
+void ATCreateDiskImage(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize, IATDiskImage **ppImage);
+void ATCreateDiskImage(const ATDiskGeometryInfo& geometry, IATDiskImage **ppImage);
 
 void ATDiskConvertGeometryToPERCOM(uint8 percom[12], const ATDiskGeometryInfo& geom);
 void ATDiskConvertPERCOMToGeometry(ATDiskGeometryInfo& geom, const uint8 percom[12]);

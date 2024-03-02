@@ -107,14 +107,14 @@ void ATUIFileBrowser::OnCreate() {
 	mpListView = new ATUIListView;
 	AddChild(mpListView);
 	mpListView->SetDockMode(kATUIDockMode_Fill);
-	mpListView->OnItemSelectedEvent() = ATBINDCALLBACK(this, &ATUIFileBrowser::OnItemSelected);
-	mpListView->OnItemActivatedEvent() = ATBINDCALLBACK(this, &ATUIFileBrowser::OnItemActivated);
+	mpListView->OnItemSelectedEvent() = [this](auto index) { OnItemSelected(index); };
+	mpListView->OnItemActivatedEvent() = [this](auto index) { OnItemActivated(index); };
 	mpListView->SetFrameMode(kATUIFrameMode_Sunken);
 
 	mpRootListView = new ATUIListView;
 	AddChild(mpRootListView);
 	mpRootListView->SetDockMode(kATUIDockMode_Left);
-	mpRootListView->OnItemActivatedEvent() = ATBINDCALLBACK(this, &ATUIFileBrowser::OnRootItemActivated);
+	mpRootListView->OnItemActivatedEvent() = [this](auto index) { OnRootItemActivated(index); };
 //	mpRootListView->SetFrameMode(kATUIFrameMode_Sunken);
 	mpRootListView->SetArea(vdrect32(0, 0, 100, 0));
 
@@ -158,7 +158,7 @@ void ATUIFileBrowser::OnCreate() {
 	mpTopContainer->AddChild(mpTextEditPath);
 	mpTextEditPath->SetDockMode(kATUIDockMode_Fill);
 	mpTextEditPath->SetFrameMode(kATUIFrameMode_Sunken);
-	mpTextEditPath->OnReturnPressed() = ATBINDCALLBACK(this, &ATUIFileBrowser::OnNewPathEntered);
+	mpTextEditPath->OnReturnPressed() = [this] { OnNewPathEntered(); };
 
 	const sint32 rowHt = mpTextEditPath->GetIdealHeight();
 	const sint32 buttonWidth = VDRoundToInt32((float)rowHt * (75.0f / 20.0f));
@@ -169,7 +169,7 @@ void ATUIFileBrowser::OnCreate() {
 	mpButtonUp->SetArea(vdrect32(0, 0, buttonWidth, 20));
 	mpButtonUp->SetText(L"Up");
 	mpButtonUp->SetDockMode(kATUIDockMode_Right);
-	mpButtonUp->OnActivatedEvent() = ATBINDCALLBACK(this, &ATUIFileBrowser::OnGoUpPressed);
+	mpButtonUp->OnActivatedEvent() = [this] { OnGoUpPressed(); };
 
 	mpBottomContainer = new ATUIContainer;
 	AddChild(mpBottomContainer);
@@ -187,14 +187,14 @@ void ATUIFileBrowser::OnCreate() {
 	mpButtonOK->SetArea(vdrect32(0, 0, buttonWidth, 20));
 	mpButtonOK->SetText(L"OK");
 	mpButtonOK->SetDockMode(kATUIDockMode_Right);
-	mpButtonOK->OnActivatedEvent() = ATBINDCALLBACK(this, &ATUIFileBrowser::OnOKPressed);
+	mpButtonOK->OnActivatedEvent() = [this] { OnOKPressed(); };
 
 	mpButtonCancel = new ATUIButton;
 	mpBottomContainer->AddChild(mpButtonCancel);
 	mpButtonCancel->SetArea(vdrect32(0, 0, buttonWidth, 20));
 	mpButtonCancel->SetText(L"Cancel");
 	mpButtonCancel->SetDockMode(kATUIDockMode_Right);
-	mpButtonCancel->OnActivatedEvent() = ATBINDCALLBACK(this, &ATUIFileBrowser::OnCancelPressed);
+	mpButtonCancel->OnActivatedEvent() = [this] { OnCancelPressed(); };
 
 	mpLabel = new ATUILabel;
 	AddChild(mpLabel);
@@ -269,11 +269,11 @@ void ATUIFileBrowser::OnSize() {
 	}
 }
 
-void ATUIFileBrowser::OnGoUpPressed(ATUIButton *) {
+void ATUIFileBrowser::OnGoUpPressed() {
 	Ascend();
 }
 
-void ATUIFileBrowser::OnOKPressed(ATUIButton *) {
+void ATUIFileBrowser::OnOKPressed() {
 	const VDStringW name(mpTextEdit->GetText());
 
 	if (name.empty())
@@ -313,7 +313,7 @@ void ATUIFileBrowser::OnOKPressed(ATUIButton *) {
 		mpParent->RemoveChild(this);
 }
 
-void ATUIFileBrowser::OnCancelPressed(ATUIButton *) {
+void ATUIFileBrowser::OnCancelPressed() {
 	if (mbModal) {
 		mbModal = false;
 		mpManager->EndModal();
@@ -326,19 +326,19 @@ void ATUIFileBrowser::OnCancelPressed(ATUIButton *) {
 		mpParent->RemoveChild(this);
 }
 
-void ATUIFileBrowser::OnItemSelected(ATUIListView *, sint32 idx) {
+void ATUIFileBrowser::OnItemSelected(sint32 idx) {
 	ATUIFileBrowserItem *item = static_cast<ATUIFileBrowserItem *>(mpListView->GetSelectedVirtualItem());
 
 	if (item)
 		mpTextEdit->SetText(item->mName.c_str());
 }
 
-void ATUIFileBrowser::OnItemActivated(ATUIListView *, sint32 idx) {
-	OnItemSelected(NULL, idx);
-	OnOKPressed(NULL);
+void ATUIFileBrowser::OnItemActivated(sint32 idx) {
+	OnItemSelected(idx);
+	OnOKPressed();
 }
 
-void ATUIFileBrowser::OnRootItemActivated(ATUIListView *, sint32) {
+void ATUIFileBrowser::OnRootItemActivated(sint32) {
 	ATUIFileBrowserItem *item = static_cast<ATUIFileBrowserItem *>(mpRootListView->GetSelectedVirtualItem());
 
 	if (item && item->mbIsDirectory) {
@@ -349,7 +349,7 @@ void ATUIFileBrowser::OnRootItemActivated(ATUIListView *, sint32) {
 	}
 }
 
-void ATUIFileBrowser::OnNewPathEntered(ATUITextEdit *) {
+void ATUIFileBrowser::OnNewPathEntered() {
 	const wchar_t *path = mpTextEditPath->GetText();
 	const uint32 attr = VDFileGetAttributes(path);
 

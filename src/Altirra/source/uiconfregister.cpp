@@ -33,8 +33,12 @@ bool ATUIConfDevPocketModem(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevCorvus(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevMyIDE2(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevDongle(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevKMKJZIDE(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevKMKJZIDE2(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevCovox(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevDiskDriveFull(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevATR8000(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevPercom(VDGUIHandle hParent, ATPropertySet& props);
 
 void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("harddisk", ATUIConfDevHardDisk);
@@ -52,6 +56,31 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("corvus", ATUIConfDevCorvus);
 	dev.AddDeviceConfigurer("myide2", ATUIConfDevMyIDE2);
 	dev.AddDeviceConfigurer("dongle", ATUIConfDevDongle);
+	dev.AddDeviceConfigurer("kmkjzide", ATUIConfDevKMKJZIDE);
 	dev.AddDeviceConfigurer("kmkjzide2", ATUIConfDevKMKJZIDE2);
 	dev.AddDeviceConfigurer("covox", ATUIConfDevCovox);
+	dev.AddDeviceConfigurer("diskdriveatr8000", ATUIConfDevATR8000);
+	dev.AddDeviceConfigurer("diskdrivepercom", ATUIConfDevPercom);
+
+	static const char *const kDiskDriveFullTypes[]={
+		"diskdrive810",
+		"diskdrive810archiver",
+		"diskdrivehappy810",
+		"diskdrive1050",
+		"diskdriveusdoubler",
+		"diskdrivespeedy1050",
+		"diskdrivehappy1050",
+		"diskdrivesuperarchiver",
+		"diskdrivetoms1050",
+		"diskdrive1050duplicator",
+		"diskdrivetygrys1050",
+		"diskdrive1050turbo",
+		"diskdrive1050turboii",
+		"diskdriveindusgt",
+		"diskdrivexf551",
+	};
+
+	for(const char *s : kDiskDriveFullTypes) {
+		dev.AddDeviceConfigurer(s, ATUIConfDevDiskDriveFull);
+	}
 }

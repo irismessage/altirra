@@ -22,6 +22,7 @@
 #include <vd2/system/filesys.h>
 #include <at/atcore/memoryutils.h>
 #include <at/atcore/vfs.h>
+#include <at/atio/blobimage.h>
 #include "hleprogramloader.h"
 #include "hleutils.h"
 #include "kerneldb.h"
@@ -33,17 +34,7 @@
 #include "simeventmanager.h"
 #include "simulator.h"
 
-ATHLEProgramLoader::ATHLEProgramLoader()
-	: mpCPU(NULL)
-	, mpCPUHookMgr(NULL)
-	, mpSimEventMgr(NULL)
-	, mpSim(NULL)
-	, mpLaunchHook(NULL)
-	, mpLoadContinueHook(NULL)
-	, mbRandomizeMemoryOnLoad(false)
-	, mbLaunchPending(false)
-{
-	std::fill(mProgramModuleIds, mProgramModuleIds + sizeof(mProgramModuleIds)/sizeof(mProgramModuleIds[0]), 0);
+ATHLEProgramLoader::ATHLEProgramLoader() {
 }
 
 ATHLEProgramLoader::~ATHLEProgramLoader() {
@@ -66,25 +57,25 @@ void ATHLEProgramLoader::Shutdown() {
 		mpCPUHookMgr = NULL;
 	}
 
-	mpSim = NULL;
-	mpSimEventMgr = NULL;
-	mpCPU = NULL;
+	mpSim = nullptr;
+	mpSimEventMgr = nullptr;
+	mpCPU = nullptr;
 
 	mbLaunchPending = false;
+
+	vdsaferelease <<= mpImage;
 }
 
-void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IVDRandomAccessStream& stream) {
-	uint32 len = (uint32)stream.Length();
-	mProgramToLoad.resize(len);
-	stream.Read(mProgramToLoad.data(), len);
+void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IATBlobImage *image) {
+	vdsaferelease <<= mpImage;
+
+	uint32 len = image->GetSize();
+	const uint8 *const buf = (const uint8 *)image->GetBuffer();
 	mProgramLoadIndex = 0;
 
 	// check if this is a SpartaDOS executable by looking for a reloc block
-	if (len >= 4 && (mProgramToLoad[0] == 0xfe || mProgramToLoad[0] == 0xfa) && mProgramToLoad[1] == 0xff)
-	{
-		mProgramToLoad.clear();
+	if (len >= 4 && (buf[0] == 0xfe || buf[0] == 0xfa) && buf[1] == 0xff)
 		throw MyError("Program load failed: this program must be loaded under SpartaDOS X.");
-	}
 
 	mpCPUHookMgr->SetHookMethod(mpLaunchHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::DSKINV, 10, this, &ATHLEProgramLoader::OnDSKINV);
 
@@ -151,6 +142,9 @@ void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IVDRandomAcc
 	}
 
 	mbLaunchPending = true;
+
+	image->AddRef();
+	mpImage = image;
 }
 
 uint8 ATHLEProgramLoader::OnDSKINV(uint16) {
@@ -218,9 +212,9 @@ uint8 ATHLEProgramLoader::OnLoadContinue(uint16 pc) {
 	kdb.INITAD = 0xE4C0;
 
 	// resume loading segments
-	const uint8 *src0 = mProgramToLoad.data();
+	const uint8 *src0 = (const uint8 *)mpImage->GetBuffer();
 	const uint8 *src = src0 + mProgramLoadIndex;
-	const uint8 *srcEnd = src0 + mProgramToLoad.size();
+	const uint8 *srcEnd = src0 + mpImage->GetSize();
 	for(;;) {
 		// check if we're done
 		if (srcEnd - src < 4) {
@@ -243,7 +237,7 @@ launch:
 
 			mpSimEventMgr->NotifyEvent(kATSimEvent_EXERunSegment);
 
-			vdfastvector<uint8>().swap(mProgramToLoad);
+			vdsaferelease <<= mpImage;
 			return 0x4C;
 		}
 

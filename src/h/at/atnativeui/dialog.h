@@ -76,6 +76,9 @@ public:
 
 	vdrect32 GetClientArea() const;
 
+	VDStringW GetCaption() const;
+	void SetCaption(const wchar_t *caption);
+
 	void AdjustPosition();
 	void CenterOnParent();
 
@@ -93,6 +96,7 @@ protected:
 	void AddProxy(VDUIProxyControl *proxy, uint32 id);
 
 	void SetCurrentSizeAsMinSize();
+	void SetCurrentSizeAsMaxSize(bool width, bool height);
 
 	VDZHWND GetControl(uint32 id);
 
@@ -102,6 +106,7 @@ protected:
 
 	vdrect32 GetControlPos(uint32 id);
 	vdrect32 GetControlScreenPos(uint32 id);
+	void SetControlPos(uint32 id, const vdrect32& r);
 
 	void SetCaption(uint32 id, const wchar_t *format);
 
@@ -193,15 +198,20 @@ protected:
 	virtual void OnHelp();
 	virtual void OnContextMenu(uint32 id, int x, int y);
 	virtual bool PreNCDestroy();
+	virtual bool ShouldSetDialogIcon() const;
 
 	void SetCapture();
 	void ReleaseCapture();
+	void LoadAcceleratorTable(uint32 id);
 
 	bool	mbValidationFailed;
 	bool	mbIsModal;
 	VDZHWND	mhdlg;
 	int		mMinWidth;
 	int		mMinHeight;
+	int		mMaxWidth;
+	int		mMaxHeight;
+	VDZHACCEL	mAccel = nullptr;
 
 private:
 	void ExecutePostedCalls();

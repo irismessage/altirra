@@ -32,8 +32,8 @@
 template<typename T>
 class vdvector_view {
 public:
-	typedef typename T&			reference;
-	typedef typename const T&	const_reference;
+	typedef T&					reference;
+	typedef const T&			const_reference;
 	typedef T*					iterator;
 	typedef const T*			const_iterator;
 	typedef size_t				size_type;
@@ -51,6 +51,14 @@ public:
 		: mpBegin(v.data())
 		, mSize(v.size())
 	{
+	}
+
+	template<typename U>
+	vdvector_view(const U& v)
+		: mpBegin(&*std::begin(v))
+		, mSize(size_type(std::end(v) - std::begin(v)))
+	{
+
 	}
 
 	bool			empty() const { return !mSize; }

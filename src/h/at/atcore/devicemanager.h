@@ -34,6 +34,7 @@ typedef bool (*ATDeviceConfigureFn)(VDGUIHandle parent, ATPropertySet& pset);
 class IATDeviceChangeCallback {
 public:
 	virtual void OnDeviceAdded(uint32 iid, IATDevice *dev, void *iface) = 0;
+	virtual void OnDeviceRemoving(uint32 iid, IATDevice *dev, void *iface) = 0;
 	virtual void OnDeviceRemoved(uint32 iid, IATDevice *dev, void *iface) = 0;
 };
 

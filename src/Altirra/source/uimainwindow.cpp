@@ -20,6 +20,7 @@
 #include <vd2/system/error.h>
 #include <vd2/system/function.h>
 #include <vd2/system/registry.h>
+#include <vd2/system/w32assist.h>
 #include <at/atappbase/exceptionfilter.h>
 #include <at/atnativeui/messageloop.h>
 #include <at/atnativeui/uiframe.h>
@@ -47,13 +48,14 @@ void ATUIRevokeDragDropHandler(VDGUIHandle h);
 bool ATUIIsActiveModal();
 void ATUICloseAdjustColorsDialog();
 void ATUISetCommandLine(const wchar_t *s);
+void ATUISaveMainWindowPlacement();
 
 void DoBootWithConfirm(const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper);
-bool ATUIConfirmDiscardAllStorage(VDGUIHandle h, const wchar_t *prompt, bool includeUnmountables = false);
+bool ATUIConfirmDiscardAll(VDGUIHandle h, const wchar_t *title, const wchar_t *prompt);
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATMainWindow : public ATContainerWindow {
+class ATMainWindow final : public ATContainerWindow {
 public:
 	ATMainWindow();
 	~ATMainWindow();
@@ -66,7 +68,9 @@ protected:
 	bool OnCommand(UINT id);
 	void OnActivateApp(WPARAM wParam);
 
-	virtual void UpdateMonitorDpi(unsigned dpiY) {
+	void SetIcons();
+
+	void UpdateMonitorDpi(unsigned dpiY) override {
 		ATConsoleSetFontDpi(dpiY);
 	}
 };
@@ -94,6 +98,7 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 				return -1;
 
 			ATUIRegisterDragDropHandler((VDGUIHandle)mhwnd);
+			SetIcons();
 			return 0;
 
 		case WM_CLOSE:
@@ -102,7 +107,7 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 				return 0;
 			}
 
-			if (!ATUIConfirmDiscardAllStorage((VDGUIHandle)mhwnd, L"Exit without saving?", true))
+			if (!ATUIConfirmDiscardAll((VDGUIHandle)mhwnd, L"About to exit", L"Are you sure you want to exit?"))
 				return 0;
 
 			ATSavePaneLayout(NULL);
@@ -114,7 +119,12 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 		case WM_DESTROY:
 			ATUIDestroyModelessDialogs(mhwnd);
-			ATUISaveWindowPlacement(mhwnd, "Main window");
+
+			// We can't use the normal save placement function because the non-fullscreen state
+			// is saved off in the UI layer. This allows the non-fullscreen window size and maximized
+			// state to be saved properly when exiting in fullscreen mode.
+			ATUISaveMainWindowPlacement();
+
 			ATUIRevokeDragDropHandler((VDGUIHandle)mhwnd);
 			ATUICloseAdjustColorsDialog();
 
@@ -188,12 +198,17 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 			return TRUE;
 
 		case WM_DEVICECHANGE:
-			g_sim.GetJoystickManager().RescanForDevices();
+			{
+				auto *jm = g_sim.GetJoystickManager();
+
+				if (jm)
+					jm->RescanForDevices();
+			}
 			break;
 
 		case WM_ENABLE:
 			if (!wParam) {
-				if (ATUIGetFullscreen())
+				if (ATUIGetDisplayFullscreen())
 					ATSetFullscreen(false);
 			}
 
@@ -347,8 +362,19 @@ void ATMainWindow::OnActivateApp(WPARAM wParam) {
 		if (pane)
 			pane->ReleaseMouse();
 
-		ATSetFullscreen(false);
+		if (ATUIGetDisplayFullscreen())
+			ATSetFullscreen(false);
 	}
+}
+
+void ATMainWindow::SetIcons() {
+	HICON hIcon = (HICON)LoadImage(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED);
+	if (hIcon)
+		SendMessage(mhwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
+
+	HICON hSmallIcon = (HICON)LoadImage(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
+	if (hSmallIcon)
+		SendMessage(mhwnd, WM_SETICON, ICON_SMALL, (LPARAM)hSmallIcon);
 }
 
 ///////////////////////////////////////////////////////////////////////////

@@ -76,19 +76,19 @@ public:
 
 	static const size_type npos = (size_type)-1;
 
-	VDStringSpanA() 
+	VDStringSpanA() vdnoexcept
 		: mpBegin(const_cast<value_type *>(sNull))
 		, mpEnd(const_cast<value_type *>(sNull))
 	{
 	}
 
-	explicit VDStringSpanA(const value_type *s)
+	explicit VDStringSpanA(const value_type *s) vdnoexcept
 		: mpBegin(const_cast<value_type *>(s))
 		, mpEnd(const_cast<value_type *>(s) + strlen(s))
 	{
 	}
 
-	VDStringSpanA(const value_type *s, const value_type *t)
+	VDStringSpanA(const value_type *s, const value_type *t) vdnoexcept
 		: mpBegin(const_cast<value_type *>(s))
 		, mpEnd(const_cast<value_type *>(t))
 	{
@@ -420,6 +420,17 @@ public:
 		assign(x);
 	}
 
+	VDStringA(this_type&& x) vdnoexcept
+		: mpEOS(x.mpEOS)
+	{
+		mpBegin = x.mpBegin;
+		mpEnd = x.mpEnd;
+
+		x.mpBegin = const_cast<value_type *>(sNull);
+		x.mpEnd = x.mpBegin;
+		x.mpEOS = x.mpBegin;
+	}
+
 	explicit VDStringA(const value_type *s)
 		: mpEOS(const_cast<value_type *>(sNull))
 	{
@@ -456,6 +467,21 @@ public:
 
 	this_type& operator=(const this_type& str) {
 		assign(str);
+		return *this;
+	}
+
+	this_type& operator=(this_type&& x) vdnoexcept {
+		if (mpBegin != sNull)
+			delete[] mpBegin;
+
+		mpBegin = x.mpBegin;
+		mpEnd = x.mpEnd;
+		mpEOS = x.mpEOS;
+
+		x.mpBegin = const_cast<value_type *>(sNull);
+		x.mpEnd = x.mpBegin;
+		x.mpEOS = x.mpBegin;
+
 		return *this;
 	}
 
@@ -662,6 +688,8 @@ public:
 		return *this;
 	}
 
+	this_type& insert(int pos, value_type c) = delete;		// block implicit conversion from null pointer constant
+
 	this_type& insert(iterator it, value_type c) {
 		if (mpEnd == mpEOS) {
 			size_type pos = (size_type)(it - mpBegin);
@@ -777,6 +805,14 @@ inline VDStringA operator+(const VDStringA& str, const VDStringA& s) {
 	return result;
 }
 
+inline VDStringA operator+(const VDStringA& str, const VDStringSpanA& s) {
+	VDStringA result;
+	result.reserve((VDStringA::size_type)(str.size() + s.size()));
+	result.assign(str);
+	result.append(s);
+	return result;
+}
+
 inline VDStringA operator+(const VDStringA& str, const char *s) {
 	VDStringA result;
 	result.reserve((VDStringA::size_type)(str.size() + strlen(s)));
@@ -791,6 +827,26 @@ inline VDStringA operator+(const VDStringA& str, char c) {
 	result.assign(str);
 	result += c;
 	return result;
+}
+
+inline VDStringA operator+(VDStringA&& str, const VDStringA& s) {
+	str.append(s);
+	return std::move(str);
+}
+
+inline VDStringA operator+(VDStringA&& str, const VDStringSpanA& s) {
+	str.append(s);
+	return std::move(str);
+}
+
+inline VDStringA operator+(VDStringA&& str, const char *s) {
+	str.append(s);
+	return std::move(str);
+}
+
+inline VDStringA operator+(VDStringA&& str, char c) {
+	str += c;
+	return std::move(str);
 }
 
 namespace std {
@@ -818,19 +874,19 @@ public:
 
 	static const size_type npos = (size_type)-1;
 
-	VDStringSpanW() 
+	VDStringSpanW() vdnoexcept
 		: mpBegin(const_cast<value_type *>(sNull))
 		, mpEnd(const_cast<value_type *>(sNull))
 	{
 	}
 
-	explicit VDStringSpanW(const value_type *s)
+	explicit VDStringSpanW(const value_type *s) vdnoexcept
 		: mpBegin(const_cast<value_type *>(s))
 		, mpEnd(const_cast<value_type *>(s) + wcslen(s))
 	{
 	}
 
-	VDStringSpanW(const value_type *s, const value_type *t)
+	VDStringSpanW(const value_type *s, const value_type *t) vdnoexcept
 		: mpBegin(const_cast<value_type *>(s))
 		, mpEnd(const_cast<value_type *>(t))
 	{
@@ -1027,7 +1083,7 @@ public:
 
 	// 21.3.1 construct/copy/destroy
 
-	VDStringW()
+	VDStringW() vdnoexcept
 		: mpEOS(const_cast<value_type *>(sNull))
 	{
 	}
@@ -1042,6 +1098,17 @@ public:
 		: mpEOS(const_cast<value_type *>(sNull))
 	{
 		assign(x);
+	}
+
+	VDStringW(this_type&& x) vdnoexcept
+		: mpEOS(x.mpEOS)
+	{
+		mpBegin = x.mpBegin;
+		mpEnd = x.mpEnd;
+
+		x.mpBegin = const_cast<value_type *>(sNull);
+		x.mpEnd = x.mpBegin;
+		x.mpEOS = x.mpBegin;
 	}
 
 	explicit VDStringW(const value_type *s)
@@ -1068,7 +1135,7 @@ public:
 		assign(s, t);
 	}
 
-	~VDStringW() {
+	~VDStringW() vdnoexcept {
 		if (mpBegin != sNull)
 			delete[] mpBegin;
 	}
@@ -1080,6 +1147,21 @@ public:
 
 	this_type& operator=(const this_type& str) {
 		assign(str);
+		return *this;
+	}
+
+	this_type& operator=(this_type&& x) vdnoexcept {
+		if (mpBegin != sNull)
+			delete[] mpBegin;
+
+		mpBegin = x.mpBegin;
+		mpEnd = x.mpEnd;
+		mpEOS = x.mpEOS;
+
+		x.mpBegin = const_cast<value_type *>(sNull);
+		x.mpEnd = x.mpBegin;
+		x.mpEOS = x.mpBegin;
+
 		return *this;
 	}
 
@@ -1261,6 +1343,8 @@ public:
 		return *this;
 	}
 
+	this_type& insert(int pos, value_type c) = delete;		// block implicit conversion from null pointer constant
+
 	this_type& insert(iterator it, value_type c) {
 		if (mpEnd == mpEOS) {
 			size_type pos = (size_type)(it - mpBegin);
@@ -1381,6 +1465,14 @@ inline VDStringW operator+(const VDStringW& str, const VDStringW& s) {
 	return result;
 }
 
+inline VDStringW operator+(const VDStringW& str, const VDStringSpanW& s) {
+	VDStringW result;
+	result.reserve((VDStringA::size_type)(str.size() + s.size()));
+	result.assign(str);
+	result.append(s);
+	return result;
+}
+
 inline VDStringW operator+(const VDStringW& str, const wchar_t *s) {
 	VDStringW result;
 	result.reserve((VDStringA::size_type)(str.size() + wcslen(s)));
@@ -1395,6 +1487,26 @@ inline VDStringW operator+(const VDStringW& str, wchar_t c) {
 	result.assign(str);
 	result += c;
 	return result;
+}
+
+inline VDStringW operator+(VDStringW&& str, const VDStringW& s) {
+	str.append(s);
+	return std::move(str);
+}
+
+inline VDStringW operator+(VDStringW&& str, const VDStringSpanW& s) {
+	str.append(s);
+	return std::move(str);
+}
+
+inline VDStringW operator+(VDStringW&& str, const wchar_t *s) {
+	str.append(s);
+	return std::move(str);
+}
+
+inline VDStringW operator+(VDStringW&& str, wchar_t c) {
+	str += c;
+	return std::move(str);
 }
 
 ///////////////////////////////////////////////////////////////////////////

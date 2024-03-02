@@ -287,7 +287,7 @@ void ATFilterComputeSymmetricFIR_8_32F_SSE(float *dst, const float *src, size_t 
 }
 #endif
 
-#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC)
+#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC) && !defined(VD_COMPILER_MSVC_CLANG)
 void __declspec(naked) __cdecl ATFilterComputeSymmetricFIR_8_32F_SSE_asm(float *dst, const float *src, size_t n, const float *kernel) {
 	__asm {
 	mov	edx, esp
@@ -396,7 +396,7 @@ xloop:
 #endif
 
 void ATFilterComputeSymmetricFIR_8_32F(float *dst, const float *src, size_t n, const float *kernel) {
-#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC)
+#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC) && !defined(VD_COMPILER_MSVC_CLANG)
 	if (SSE_enabled) {
 		ATFilterComputeSymmetricFIR_8_32F_SSE_asm(dst, src, n, kernel);
 		return;
@@ -407,7 +407,7 @@ void ATFilterComputeSymmetricFIR_8_32F(float *dst, const float *src, size_t n, c
 }
 
 void ATFilterComputeSymmetricFIR_8_32F(float *dst, size_t n, const float *kernel) {
-#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC)
+#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC) && !defined(VD_COMPILER_MSVC_CLANG)
 	if (SSE_enabled) {
 		ATFilterComputeSymmetricFIR_8_32F_SSE_asm(dst, dst, n, kernel);
 		return;
@@ -471,10 +471,10 @@ void ATAudioFilter::SetActiveMode(bool active) {
 		mHiCoeff = 0.0001f;
 }
 
-void ATAudioFilter::PreFilter(float * VDRESTRICT dst, uint32 count) {
+void ATAudioFilter::PreFilter(float * VDRESTRICT dst, uint32 count, float dcLevel) {
 	const float scale = mScale;
 	const float hiCoeff = mHiCoeff;
-	float hiAccum = mHiPassAccum;
+	float hiAccum = mHiPassAccum - dcLevel;
 
 	do {
 		float v0 = *dst;

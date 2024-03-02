@@ -72,7 +72,6 @@ protected:
 	int mArtifactRed;
 	int mArtifactGreen;
 	int mArtifactBlue;
-	int mArtifactYScale;
 
 	ATColorParams mColorParams;
 	ATArtifactingParams mArtifactingParams;

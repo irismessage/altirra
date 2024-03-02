@@ -768,13 +768,8 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStatePopPBKNative;
 			break;
 
-		case 0x42:	// HLE (emulator escape insn) (reuse of WDM)
-			*mpDstState++ = kStateReadAddrL;
-			*mpDstState++ = kStateReadAddrH;
-			*mpDstState++ = kStateInvokeHLE;
-			*mpDstState++ = kStateHLEDelay;
-			*mpDstState++ = kStateReadOpcode;
-			*mpDstState++ = kStateBreakOnUnsupportedOpcode;
+		case 0x42:	// WDM
+			*mpDstState++ = kStateWait;
 			break;
 
 		case 0x44:	// MVP

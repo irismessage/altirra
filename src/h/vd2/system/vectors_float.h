@@ -15,7 +15,7 @@ public:
 	self_type&	operator+=(const self_type& r)			{ x+=r.x; y+=r.y; return *this; }
 	self_type&	operator-=(const self_type& r)			{ x-=r.x; y-=r.y; return *this; }
 
-	self_type	operator*(const float s) const			{ self_type a = {x*s, x*s}; return a; }
+	self_type	operator*(const float s) const			{ self_type a = {x*s, y*s}; return a; }
 	self_type&	operator*=(const float s)				{ x*=s; y*=s; return *this; }
 
 	self_type	operator/(const float s) const			{ const float inv(float(1)/s); self_type a = {x*inv, y*inv}; return a; }

@@ -553,9 +553,15 @@
     If no address or length is given, memory dumping continues from the
     end of the last continuable operation.
 
-    The db and dbi commands take an optional -c switch, which changes the
-    text dump to interpret the data as it would be displayed on a 20 column
-    text mode display, with the reduced 64 byte character set.
+    The db and dbi commands take additional optional switches:
+
+      -c:
+        Changes the text dump to interpret the data as it would be
+        Displayed on a 20 column text mode display, with the reduced 64
+        byte character set.
+
+      -w <width>:
+        Displays data with <width> bytes per row.
     
 + dy   Display binary
 
@@ -829,7 +835,7 @@
     also be tracked from one memory location to another through registers
     during a memory copy. However, the engine does not track the memory
     map state and can be confused by additional hardware, high level
-    emulation, or cartridge ROMs. The 
+    emulation, or cartridge ROMs. 
 
     The heat map must be enabled for heat map traps to work. Since the
     heat map traps the source of values, it should be enabled from boot
@@ -846,6 +852,22 @@
       hmu <xaddr> L<length>
 
     See also: hmp (preset heat map range)
+
++ ib   Input byte
+
+    Read from a memory address in CPU address space with side effects.
+
+      ib <address>
+
+    Reads from a memory address using normal CPU core read rules, activating
+    any side effects normally associated with reads from that location.
+    Normally, reads in the debugger have side effects disabled so that they
+    do not change simulation state; the 'ib' command allows those side
+    effects to occur as usual. This includes clearing PIA interrupts when
+    PORTA/B is read and switching cartridge banks on reads from the CCTL
+    region with certain cartridge types.
+
+    See also: db (display bytes)
 
 + k    Show call stack
 
@@ -927,8 +949,8 @@
       r                (Display registers)
       r <reg> <value>  (Modify register)
       
-    Registers that can be modified are: PC, A, X, Y, S, and P. The flags in
-    the P register can also be individually toggled:
+    For 6502-derived CPUs, the registers that can be modified are: PC, A, X,
+    Y, S, and P. The flags in the P register can also be individually toggled:
     
       p.n    Negative (sign) flag
       p.v    Overflow flag
@@ -949,6 +971,12 @@
       p.m    Accumulator size flag
       p.x    Index size flag
       e      Emulation flag
+
+    For Z80 coprocessors, the available registers are: A, F, B, C, D, E, H, L,
+    I, R, AF, BC, DE, HL, IX, IY, SP, A', B', C', D', E', H', L', AF', BC', DE',
+    and HL'.
+
+    For 8048 coprocessors, the available registers are: A, PSW, R0-R7.
 
 ^ s, sa, si, sw    Search memory
 > s    Search memory for bytes
@@ -981,12 +1009,14 @@
 
     Statically traces program execution and marks labels.
     
-      st <baseaddr> [<restrictbase> L<restrictlength>]
+      st [-m] <baseaddr> [<restrictbase> L<restrictlength>]
       
     The st command examines program code and finds all static program traces
     by following absolute JMP/JSR and relative branch instructions. The custom
     symbol table is then populated with labels for each jump or branch target.
-    
+
+    If -m is specified, a label is also added for the initial base address.
+
     Static tracing is only capable of following traces by references that are
     statically embedded within the code. Dynamic references through jump tables
     or vectors cannot be seen by the static tracer.
@@ -1142,7 +1172,7 @@
 
     Lists the statements contained within a BASIC line.
     
-      .basic_dumpline [<address> | * | 0] [-o <offset>] [-c] [-t]
+      .basic_dumpline [<address> | * | 0] [-o <offset>] [-c] [-t] [-k]
       
     The optional address specifies the beginning of the line, including
     the line number. If no address is specified, the continuation address
@@ -1160,6 +1190,8 @@
     Tokens from Atari BASIC, BASIC XL, and BASIC XE are supported by default.
     -t specifies decoding of TurboBasic XL tokens instead of Basic XL/XE
     tokens.
+
+    -k displays a hex dump beside each token.
     
     See also: .basic, .basic_vars
 
@@ -1250,6 +1282,32 @@
       .ciodevs
 
 + .covox       Dump Covox sound extension status
+
++ .crc         Compute CRC of memory range
+
+    Computes Cyclic Redundancy Check (CRC) values for data in a memory
+    range.
+    
+      .crc [-i initial_value] address L<length>
+
+    The CRC-16-CCITT and CRC-32 values are computed and reported.
+    These particular CRC algorithms are used by Atari physical disk
+    formats and for identifying ROM images, respectively. Both CRCs
+    are computed conventionally, as a modulus of the message appended
+    with zero bytes at the end where the CRC would be located. The
+    CRC-32 is additionally inverted at the end.
+
+    If -i is specified, its argument is used as the initial value for
+    the CRC computation instead of -1.
+
+    See also: .sum
+
++ .ctc         Dump Z8430 CTC status
+
+      .ctc
+
+    Displays the status of any Z8430 Counter/Timer Circuit (CTC) chips
+    in the system.
 
 + .diskdumpsec Dump floppy disk sector data
 
@@ -1582,6 +1640,25 @@
     debugging. Both label and listing files can be loaded at the same time,
     and multiple sets of symbols can also be loaded.
 
++ .logopen     Open log file
+
+    Records all console output to a log file.
+
+      .logopen <file>
+
+    Closes any existing log file and opens a new one. All subsequent console
+    output is recorded to the file until the log file is closed.
+
+    See also: .logclose
+
++ .logclose    Close log file
+
+    Closes any currently open log file.
+
+      .logclose
+
+    See also: .logopen
+
 + .map         Show memory map layers
 
     Displays memory layers active in the memory mapper
@@ -1791,6 +1868,14 @@
     
       .restart
 
++ .riot        Dump 6532 RIOT status
+
+      .riot
+
+    Displays the status of any 6532 RAM Input/Output Timer (RIOT) chips
+    in the system, particularly those in disk drives (full drive emulation
+    only).
+
 + .sdx_loadsyms  Load SpartaDOS X symbols
 
     Loads symbols from the SpartaDOS X symbol table.
@@ -1892,7 +1977,30 @@
     See also: .tape
 
 + .tracecio    Toggle CIO call tracing
+
+    Logs calls to the operating system's Character Input/Output (CIO)
+    facility.
+
+      .tracecio [on|off]
+
+    If enabled, calls to the CIOV vector are trapped and the parameters
+    for the active IOCB are reported to the console.
+
+    See also: .tracesio
+
 + .traceser    Toggle serial I/O port tracing
+
++ .tracesio    Toggle SIO call tracing
+
+    Logs calls to the operating system's Serial Input/Output (CIO)
+    facility.
+
+      .tracesio [on|off]
+
+    If enabled, calls to the SIOV vector are trapped and the parameters
+    in the device control block (DCB) are reported to the console.
+
+    See also: .tracecio
 
 + .ultimate    Dump Ultimate1MB status
 

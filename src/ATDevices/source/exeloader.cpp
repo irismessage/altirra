@@ -277,19 +277,6 @@ IATDeviceSIO::CmdResponse ATDeviceExeLoader::OnSerialBeginCommand(const ATDevice
 	}
 }
 
-void ATDeviceExeLoader::OnSerialAbortCommand() {
-}
-
-void ATDeviceExeLoader::OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) {
-}
-
-void ATDeviceExeLoader::OnSerialFence(uint32 id) {
-}
-
-IATDeviceSIO::CmdResponse ATDeviceExeLoader::OnSerialAccelCommand(const ATDeviceSIORequest& request) {
-	return OnSerialBeginCommand(request);
-}
-
 IATDeviceSIO::CmdResponse ATDeviceExeLoader::OnCmdReadSegment(const ATDeviceSIOCommand& cmd) {
 	mpSIOMgr->BeginCommand();
 	SetupHighSpeed(cmd);

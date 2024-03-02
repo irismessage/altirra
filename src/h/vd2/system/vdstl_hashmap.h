@@ -61,9 +61,11 @@ public:
 
 	vdhashmap();
 	vdhashmap(const vdhashmap&);
+	vdhashmap(vdhashmap&&) vdnoexcept;
 	~vdhashmap();
 
 	vdhashmap& operator=(const vdhashmap&);
+	vdhashmap& operator=(vdhashmap&&) vdnoexcept;
 
 	mapped_type&		operator[](const K& key);
 
@@ -170,6 +172,18 @@ vdhashmap<K, V, Hash, Pred, A>::vdhashmap(const vdhashmap& src)
 }
 
 template<class K, class V, class Hash, class Pred, class A>
+vdhashmap<K, V, Hash, Pred, A>::vdhashmap(vdhashmap&& src) vdnoexcept
+	: mHasher(src.mHasher)
+	, mPred(src.mPred)
+{
+	mBucketCount = src.mBucketCount;
+	mElementCount = src.mElementCount;
+	mpBucketStart = src.mpBucketStart;
+	mpBucketEnd = src.mpBucketEnd;
+	static_cast<vdhashtable_base&>(src) = {};
+}
+
+template<class K, class V, class Hash, class Pred, class A>
 vdhashmap<K, V, Hash, Pred, A>::~vdhashmap() {
 	reset();
 }
@@ -193,10 +207,24 @@ vdhashmap<K, V, Hash, Pred, A>& vdhashmap<K, V, Hash, Pred, A>::operator=(const 
 
 				p = next;
 			}
-
-			*bucket = NULL;
 		}
 	}
+	
+	return *this;
+}
+
+template<class K, class V, class Hash, class Pred, class A>
+vdhashmap<K, V, Hash, Pred, A>& vdhashmap<K, V, Hash, Pred, A>::operator=(vdhashmap&& src) vdnoexcept {
+	clear();
+
+	mHasher = src.mHasher;
+	mPred = src.mPred;
+	mElementCount = src.mElementCount;
+	mBucketCount = src.mBucketCount;
+	mpBucketStart = src.mpBucketStart;
+	mpBucketEnd = src.mpBucketEnd;
+
+	static_cast<vdhashtable_base&>(src) = {};
 	
 	return *this;
 }

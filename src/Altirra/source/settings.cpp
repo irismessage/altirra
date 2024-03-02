@@ -1,4 +1,4 @@
-//	Altirra - Atari 800/800XL/5200 emulator
+﻿//	Altirra - Atari 800/800XL/5200 emulator
 //	Copyright (C) 2009-2015 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
@@ -25,6 +25,7 @@
 #include <vd2/system/time.h>
 #include <at/atcore/devicemanager.h>
 #include <at/atcore/media.h>
+#include <at/atio/image.h>
 #include <at/atui/uimanager.h>
 #include "audiosyncmixer.h"
 #include "audiooutput.h"
@@ -56,7 +57,7 @@ uint32 g_ATDefaultProfileIds[kATDefaultProfileCount];
 
 void ATSyncCPUHistoryState();
 void ATUIUpdateSpeedTiming();
-void ResizeDisplay();
+void ATUIResizeDisplay();
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -366,6 +367,14 @@ void ATSettingsExchangeEnum(bool write, VDRegistryKey& key, const char *name, T 
 		setter((T)key.getEnumInt(name, count, (int)getter()));
 }
 
+float ATSettingsGetFloat(VDRegistryKey& key, const char *name, float defaultValue) {
+	int defaultInt = VDGetFloatAsInt(defaultValue);
+	int currentInt = key.getInt(name, defaultInt);
+	float currentValue = VDGetIntAsFloat(currentInt);
+
+	return std::isfinite(currentValue) ? currentValue : defaultValue;
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
@@ -423,7 +432,7 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 	} else {
 		g_sim.SetDiskSectorCounterEnabled(key.getBool("Disk: Sector counter enabled", g_sim.IsDiskSectorCounterEnabled()));
 
-		ResizeDisplay();
+		ATUIResizeDisplay();
 	}
 }
 
@@ -467,6 +476,7 @@ void ATSettingsExchangeInput(bool write, VDRegistryKey& key) {
 		key.setInt("Keyboard: Layout mode", g_kbdOpts.mLayoutMode);
 		key.setBool("Keyboard: Allow shift on cold reset", g_kbdOpts.mbAllowShiftOnColdReset);
 		key.setBool("Keyboard: Enable function keys", g_kbdOpts.mbEnableFunctionKeys);
+		key.setBool("Keyboard: Allow input map overlap", g_kbdOpts.mbAllowInputMapOverlap);
 	} else {
 		{
 			int kmlen = key.getBinaryLength("Keyboard: Custom Layout");
@@ -484,12 +494,13 @@ void ATSettingsExchangeInput(bool write, VDRegistryKey& key) {
 		g_kbdOpts.mLayoutMode = (ATUIKeyboardOptions::LayoutMode)key.getEnumInt("Keyboard: Layout mode", ATUIKeyboardOptions::kLMCount, g_kbdOpts.mLayoutMode);
 		g_kbdOpts.mbAllowShiftOnColdReset = key.getBool("Keyboard: Allow shift on cold reset", g_kbdOpts.mbAllowShiftOnColdReset);
 		g_kbdOpts.mbEnableFunctionKeys = key.getBool("Keyboard: Enable function keys", g_kbdOpts.mbEnableFunctionKeys);
+		g_kbdOpts.mbAllowInputMapOverlap = key.getBool("Keyboard: Allow input map overlap", g_kbdOpts.mbAllowInputMapOverlap);
 		ATUIInitVirtualKeyMap(g_kbdOpts);
 	}
 
 	// joystick
 	if (write) {
-		const auto& joyxforms = g_sim.GetJoystickManager().GetTransforms();
+		const auto& joyxforms = g_sim.GetJoystickManager()->GetTransforms();
 		key.setInt("Input: Stick analog dead zone", joyxforms.mStickAnalogDeadZone);
 		key.setInt("Input: Stick digital dead zone", joyxforms.mStickDigitalDeadZone);
 		key.setInt("Input: Stick analog power", VDGetFloatAsInt(joyxforms.mStickAnalogPower));
@@ -497,14 +508,14 @@ void ATSettingsExchangeInput(bool write, VDRegistryKey& key) {
 		key.setInt("Input: Trigger digital dead zone", joyxforms.mTriggerDigitalDeadZone);
 		key.setInt("Input: Trigger analog power", VDGetFloatAsInt(joyxforms.mTriggerAnalogPower));
 	} else {
-		ATJoystickTransforms joyxforms = g_sim.GetJoystickManager().GetTransforms();
+		ATJoystickTransforms joyxforms = g_sim.GetJoystickManager()->GetTransforms();
 		joyxforms.mStickAnalogDeadZone = key.getInt("Input: Stick analog dead zone", joyxforms.mStickAnalogDeadZone);
 		joyxforms.mStickDigitalDeadZone = key.getInt("Input: Stick digital dead zone", joyxforms.mStickDigitalDeadZone);
 		joyxforms.mStickAnalogPower = VDGetIntAsFloat(key.getInt("Input: Stick analog power", VDGetFloatAsInt(joyxforms.mStickAnalogPower)));
 		joyxforms.mTriggerAnalogDeadZone = key.getInt("Input: Trigger analog dead zone", joyxforms.mTriggerAnalogDeadZone);
 		joyxforms.mTriggerDigitalDeadZone = key.getInt("Input: Trigger digital dead zone", joyxforms.mTriggerDigitalDeadZone);
 		joyxforms.mTriggerAnalogPower = VDGetIntAsFloat(key.getInt("Input: Trigger analog power", VDGetFloatAsInt(joyxforms.mTriggerAnalogPower)));
-		g_sim.GetJoystickManager().SetTransforms(joyxforms);
+		g_sim.GetJoystickManager()->SetTransforms(joyxforms);
 	}
 
 	// input map selections
@@ -573,6 +584,7 @@ void ATSettingsExchangeHardware(bool write, VDRegistryKey& key) {
 		key.setBool("CPU: Shadow ROMs", g_sim.GetShadowROMEnabled());
 		key.setBool("CPU: Shadow cartridges", g_sim.GetShadowCartridgeEnabled());
 
+		key.setBool("GTIA: CTIA mode", gtia.IsCTIAMode());
 		key.setBool("GTIA: VBXE support", g_sim.GetVBXE() != NULL);
 		key.setBool("GTIA: VBXE shared memory", g_sim.IsVBXESharedMemoryEnabled());
 		key.setBool("GTIA: VBXE alternate page", g_sim.IsVBXEAltPageEnabled());
@@ -631,6 +643,8 @@ void ATSettingsExchangeHardware(bool write, VDRegistryKey& key) {
 		uint32 cpuMultiplier = key.getInt("CPU: Clock multiplier", 1);
 		cpu.SetCPUMode(cpuMode, cpuMultiplier);
 
+		gtia.SetCTIAMode(key.getBool("GTIA: CTIA mode", false));
+
 		g_sim.SetVBXEEnabled(key.getBool("GTIA: VBXE support", false));
 		g_sim.SetVBXESharedMemoryEnabled(key.getBool("GTIA: VBXE shared memory", false));
 		g_sim.SetVBXEAltPageEnabled(key.getBool("GTIA: VBXE alternate page", false));
@@ -688,6 +702,8 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 	if (write) {
 		key.setBool("Cassette: SIO patch enabled", g_sim.IsCassetteSIOPatchEnabled());
 		key.setBool("Cassette: Auto-boot enabled", g_sim.IsCassetteAutoBootEnabled());
+		key.setBool("Cassette: Auto-rewind enabled", g_sim.IsCassetteAutoRewindEnabled());
+		key.setBool("Cassette: Randomize start position", g_sim.IsCassetteRandomizedStartEnabled());
 
 		key.setBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled());
 		key.setBool("Kernel: Fast boot enabled", g_sim.IsFastBootEnabled());
@@ -715,6 +731,8 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 	} else {
 		g_sim.SetCassetteSIOPatchEnabled(key.getBool("Cassette: SIO patch enabled", g_sim.IsCassetteSIOPatchEnabled()));
 		g_sim.SetCassetteAutoBootEnabled(key.getBool("Cassette: Auto-boot enabled", g_sim.IsCassetteAutoBootEnabled()));
+		g_sim.SetCassetteAutoRewindEnabled(key.getBool("Cassette: Auto-rewind enabled", g_sim.IsCassetteAutoRewindEnabled()));
+		g_sim.SetCassetteRandomizedStartEnabled(key.getBool("Cassette: Randomize start position", g_sim.IsCassetteRandomizedStartEnabled()));
 
 		g_sim.SetFPPatchEnabled(key.getBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled()));
 		g_sim.SetFastBootEnabled(key.getBool("Kernel: Fast boot enabled", g_sim.IsFastBootEnabled()));
@@ -743,18 +761,26 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 }
 
 void LoadColorParams(VDRegistryKey& key, ATColorParams& colpa) {
-	colpa.mHueStart = VDGetIntAsFloat(key.getInt("Hue Start", VDGetFloatAsInt(colpa.mHueStart)));
-	colpa.mHueRange = VDGetIntAsFloat(key.getInt("Hue Range", VDGetFloatAsInt(colpa.mHueRange)));
-	colpa.mBrightness = VDGetIntAsFloat(key.getInt("Brightness", VDGetFloatAsInt(colpa.mBrightness)));
-	colpa.mContrast = VDGetIntAsFloat(key.getInt("Contrast", VDGetFloatAsInt(colpa.mContrast)));
-	colpa.mSaturation = VDGetIntAsFloat(key.getInt("Saturation", VDGetFloatAsInt(colpa.mSaturation)));
-	colpa.mGammaCorrect = VDGetIntAsFloat(key.getInt("Gamma Correction2", VDGetFloatAsInt(colpa.mGammaCorrect)));
+	colpa.mHueStart = ATSettingsGetFloat(key, "Hue Start", colpa.mHueStart);
+	colpa.mHueRange = ATSettingsGetFloat(key, "Hue Range", colpa.mHueRange);
+	colpa.mBrightness = ATSettingsGetFloat(key, "Brightness", colpa.mBrightness);
+	colpa.mContrast = ATSettingsGetFloat(key, "Contrast", colpa.mContrast);
+	colpa.mSaturation = ATSettingsGetFloat(key, "Saturation", colpa.mSaturation);
+	colpa.mGammaCorrect = ATSettingsGetFloat(key, "Gamma Correction2", colpa.mGammaCorrect);
 
 	// Artifact hue is stored negated for compatibility reasons.
-	colpa.mArtifactHue = -VDGetIntAsFloat(key.getInt("Artifact Hue", VDGetFloatAsInt(-colpa.mArtifactHue)));
+	colpa.mArtifactHue = -ATSettingsGetFloat(key, "Artifact Hue", -colpa.mArtifactHue);
 
-	colpa.mArtifactSat = VDGetIntAsFloat(key.getInt("Artifact Saturation", VDGetFloatAsInt(colpa.mArtifactSat)));
-	colpa.mArtifactBias = VDGetIntAsFloat(key.getInt("Artifact Bias", VDGetFloatAsInt(colpa.mArtifactBias)));
+	colpa.mArtifactSat = ATSettingsGetFloat(key, "Artifact Saturation", colpa.mArtifactSat);
+	colpa.mArtifactSharpness = ATSettingsGetFloat(key, "Artifact Sharpness", colpa.mArtifactSharpness);
+
+	colpa.mRedShift = ATSettingsGetFloat(key, "Red Shift", colpa.mRedShift);
+	colpa.mRedScale = ATSettingsGetFloat(key, "Red Scale", colpa.mRedScale);
+	colpa.mGrnShift = ATSettingsGetFloat(key, "Green Shift", colpa.mGrnShift);
+	colpa.mGrnScale = ATSettingsGetFloat(key, "Green Scale", colpa.mGrnScale);
+	colpa.mBluShift = ATSettingsGetFloat(key, "Blue Shift", colpa.mBluShift);
+	colpa.mBluScale = ATSettingsGetFloat(key, "Blue Scale", colpa.mBluScale);
+
 	colpa.mbUsePALQuirks = key.getBool("PAL quirks", colpa.mbUsePALQuirks);
 	colpa.mLumaRampMode = (ATLumaRampMode)key.getEnumInt("Luma ramp mode", (int)kATLumaRampModeCount, (int)colpa.mLumaRampMode);
 }
@@ -771,7 +797,15 @@ void SaveColorParams(VDRegistryKey& key, const ATColorParams& colpa) {
 	key.setInt("Artifact Hue", VDGetFloatAsInt(-colpa.mArtifactHue));
 
 	key.setInt("Artifact Saturation", VDGetFloatAsInt(colpa.mArtifactSat));
-	key.setInt("Artifact Bias", VDGetFloatAsInt(colpa.mArtifactBias));
+	key.setInt("Artifact Sharpness", VDGetFloatAsInt(colpa.mArtifactSharpness));
+
+	key.setInt("Red Shift", VDGetFloatAsInt(colpa.mRedShift));
+	key.setInt("Red Scale", VDGetFloatAsInt(colpa.mRedScale));
+	key.setInt("Green Shift", VDGetFloatAsInt(colpa.mGrnShift));
+	key.setInt("Green Scale", VDGetFloatAsInt(colpa.mGrnScale));
+	key.setInt("Blue Shift", VDGetFloatAsInt(colpa.mBluShift));
+	key.setInt("Blue Scale", VDGetFloatAsInt(colpa.mBluScale));
+
 	key.setBool("PAL quirks", colpa.mbUsePALQuirks);
 	key.setInt("Luma ramp mode", colpa.mLumaRampMode);
 }
@@ -806,7 +840,7 @@ void ATSettingsExchangeColor(bool write, VDRegistryKey& key) {
 }
 
 void ATSettingsExchangeSound(bool write, VDRegistryKey& key) {
-	ATDiskEmulator& disk = g_sim.GetDiskDrive(0);
+	ATDiskInterface& diskIf = g_sim.GetDiskInterface(0);
 	IATAudioOutput *audioOut = g_sim.GetAudioOutput();
 	ATPokeyEmulator& pokey = g_sim.GetPokey();
 
@@ -825,7 +859,7 @@ void ATSettingsExchangeSound(bool write, VDRegistryKey& key) {
 
 		key.setBool("Cassette: Load data as audio", g_sim.GetCassette().IsLoadDataAsAudioEnabled());
 
-		key.setBool("Disk: Drive sounds", disk.AreDriveSoundsEnabled());
+		key.setBool("Disk: Drive sounds", diskIf.AreDriveSoundsEnabled());
 
 		key.setInt("Audio: Drive sounds volume", VDGetFloatAsInt(g_sim.GetAudioOutput()->GetMixLevel(kATAudioMix_Drive)));
 		key.setInt("Audio: Covox volume", VDGetFloatAsInt(g_sim.GetAudioOutput()->GetMixLevel(kATAudioMix_Covox)));
@@ -852,9 +886,10 @@ void ATSettingsExchangeSound(bool write, VDRegistryKey& key) {
 
 		g_sim.GetCassette().SetLoadDataAsAudioEnable(key.getBool("Cassette: Load data as audio", g_sim.GetCassette().IsLoadDataAsAudioEnabled()));
 
+		bool enableDriveSounds = key.getBool("Disk: Drive sounds", diskIf.AreDriveSoundsEnabled());
+
 		for(int i=0; i<15; ++i) {
-			ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
-			disk.SetDriveSoundsEnabled(key.getBool("Disk: Drive sounds", disk.AreDriveSoundsEnabled()));
+			g_sim.GetDiskInterface(i).SetDriveSoundsEnabled(enableDriveSounds);
 		}
 
 		audioOut->SetMixLevel(kATAudioMix_Drive, VDGetIntAsFloat(key.getInt("Audio: Drive sounds volume", VDGetFloatAsInt(0.8f))));
@@ -909,17 +944,20 @@ void ATSettingsExchangeDevices(bool write, VDRegistryKey& key) {
 
 		ATDiskEmulator& disk = g_sim.GetDiskDrive(0);
 		key.setInt("Disk: Emulation mode", disk.GetEmulationMode());
-		key.setBool("Disk: Accurate sector timing", disk.IsAccurateSectorTimingEnabled());
+		key.setBool("Disk: Accurate sector timing", g_sim.GetDiskInterface(0).IsAccurateSectorTimingEnabled());
 	} else {
 		VDStringW devStr;
 		key.getString("Devices", devStr);
 		dm->RemoveAllDevices(false);
 		dm->DeserializeDevices(nullptr, devStr.c_str());
 
+		bool accurateSectorTiming = key.getBool("Disk: Accurate sector timing", g_sim.GetDiskInterface(0).IsAccurateSectorTimingEnabled());
 		for(int i=0; i<15; ++i) {
 			ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
 			disk.SetEmulationMode((ATDiskEmulationMode)key.getEnumInt("Disk: Emulation mode", kATDiskEmulationModeCount, disk.GetEmulationMode()));
-			disk.SetAccurateSectorTimingEnabled(key.getBool("Disk: Accurate sector timing", disk.IsAccurateSectorTimingEnabled()));
+
+			ATDiskInterface& diskIf = g_sim.GetDiskInterface(i);
+			diskIf.SetAccurateSectorTimingEnabled(accurateSectorTiming);
 		}
 	}
 }
@@ -930,11 +968,13 @@ void ATSettingsExchangeStartupConfig(bool write, VDRegistryKey& key) {
 		key.setBool("Console: Keyboard present", g_sim.IsKeyboardPresent());
 		key.setBool("Console: Force self test", g_sim.IsForcedSelfTest());
 		key.setBool("Console: Cartridge switch", g_sim.GetCartridgeSwitch());
+		key.setInt("System: Power-On Delay", g_sim.GetPowerOnDelay());
 	} else {
 		g_sim.SetBASICEnabled(key.getBool("BASIC enabled", g_sim.IsBASICEnabled()));
 		g_sim.SetKeyboardPresent(key.getBool("Console: Keyboard present", g_sim.IsKeyboardPresent()));
 		g_sim.SetForcedSelfTest(key.getBool("Console: Force self test", g_sim.IsForcedSelfTest()));
 		g_sim.SetCartridgeSwitch(key.getBool("Console: Cartridge switch", g_sim.GetCartridgeSwitch()));
+		g_sim.SetPowerOnDelay(key.getInt("System: Power-On Delay", g_sim.GetPowerOnDelay()));
 	}
 }
 
@@ -947,22 +987,24 @@ void SaveMountedImages(VDRegistryKey& rootKey) {
 
 	for(int i=0; i<15; ++i) {
 		ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
+		ATDiskInterface& diskIf = g_sim.GetDiskInterface(i);
 		name.sprintf("Disk %d", i);
 
 
-		if (disk.IsEnabled()) {
-			const wchar_t *path = disk.GetPath();
+		if (disk.IsEnabled() || diskIf.GetClientCount() > 1) {
+			const wchar_t *path = diskIf.GetPath();
+			const auto writeMode = diskIf.GetWriteMode();
 			
 			wchar_t c = 'R';
 
-			if (disk.IsWriteEnabled()) {
-				if (disk.IsAutoFlushEnabled())
+			if (writeMode & kATMediaWriteMode_AllowWrite) {
+				if (writeMode & kATMediaWriteMode_AutoFlush)
 					c = 'W';
 				else
 					c = 'V';
 			}
 
-			if (path && disk.IsDiskBacked())
+			if (path && diskIf.IsDiskBacked())
 				imagestr.sprintf(L"%c%ls", c, path);
 			else
 				imagestr.sprintf(L"%c", c);
@@ -1017,6 +1059,7 @@ void LoadMountedImages(VDRegistryKey& rootKey) {
 		name.sprintf("Disk %d", i);
 
 		ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
+		ATDiskInterface& diskIf = g_sim.GetDiskInterface(i);
 		if (key.getString(name.c_str(), imagestr) && !imagestr.empty()) {
 
 			wchar_t mode = imagestr[0];
@@ -1037,10 +1080,13 @@ void LoadMountedImages(VDRegistryKey& rootKey) {
 				try {
 					const wchar_t *star = wcschr(imagestr.c_str(), L'*');
 					if (star) {
-						disk.LoadDisk(imagestr.c_str() + 1);
+						diskIf.LoadDisk(imagestr.c_str() + 1);
+
+						if (diskIf.GetClientCount() < 2)
+							disk.SetEnabled(true);
 					} else {
-						ATLoadContext ctx;
-						ctx.mLoadType = kATLoadType_Disk;
+						ATImageLoadContext ctx;
+						ctx.mLoadType = kATImageType_Disk;
 						ctx.mLoadIndex = i;
 
 						g_sim.Load(imagestr.c_str() + 1, writeMode, &ctx);
@@ -1048,12 +1094,13 @@ void LoadMountedImages(VDRegistryKey& rootKey) {
 				} catch(const MyError&) {
 				}
 			} else {
-				disk.SetEnabled(true);
-				disk.SetWriteFlushMode((writeMode & kATMediaWriteMode_AllowWrite) != 0, (writeMode & kATMediaWriteMode_AutoFlush) != 0);
-				disk.SetFormatEnabled((writeMode & kATMediaWriteMode_AllowFormat) != 0);
+				diskIf.SetWriteMode(writeMode);
+
+				if (diskIf.GetClientCount() < 2)
+					disk.SetEnabled(true);
 			}
 		} else {
-			disk.UnloadDisk();
+			diskIf.UnloadDisk();
 			disk.SetEnabled(false);
 		}
 	}
@@ -1159,9 +1206,11 @@ void LoadBaselineSettings() {
 	g_sim.SetPBIPatchEnabled(false);
 
 	for(int i=0; i<15; ++i) {
+		ATDiskInterface& diskIf = g_sim.GetDiskInterface(i);
+		diskIf.SetAccurateSectorTimingEnabled(false);
+		diskIf.SetDriveSoundsEnabled(false);
+
 		ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
-		disk.SetAccurateSectorTimingEnabled(false);
-		disk.SetDriveSoundsEnabled(false);
 		disk.SetEmulationMode(kATDiskEmulationMode_Generic);
 	}
 
@@ -1170,7 +1219,7 @@ void LoadBaselineSettings() {
 	ATUISetEnhancedTextMode(kATUIEnhancedTextMode_None);
 
 	g_sim.SetMemoryClearMode(kATMemoryClearMode_DRAM1);
-	g_kbdOpts.mbRawKeys = false;
+	g_kbdOpts.mbRawKeys = true;
 	g_sim.SetKeyboardPresent(true);
 	g_sim.SetForcedSelfTest(false);
 }

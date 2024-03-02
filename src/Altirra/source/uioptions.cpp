@@ -19,18 +19,22 @@
 #include <list>
 #include <windows.h>
 #include <richedit.h>
+#include <vd2/system/error.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/math.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
 #include <at/atcore/media.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/genericdialog.h>
 #include <at/atnativeui/uiproxies.h>
 #include <at/atui/uimanager.h>
 #include "resource.h"
 #include "options.h"
 #include "oshelper.h"
 #include "settings.h"
+#include "compatengine.h"
+#include "uifilefilters.h"
 
 // This is actually deprecated in earlier SDKs (VS2005) and undeprecated
 // in later ones (Win7). Interesting.
@@ -331,6 +335,8 @@ bool ATUIDialogOptionsPageDisplay::OnLoaded() {
 	AddHelpEntry(IDC_GRAPHICS_D3D9, L"Direct3D 9", L"Enable Direct3D 9 support. This is the best option for speed and quality, and also enables the filtering options.");
 	AddHelpEntry(IDC_GRAPHICS_3D, L"Direct3D 11", L"Enable Direct3D 11 support. This is an experimental driver.");
 	AddHelpEntry(IDC_GRAPHICS_OPENGL, L"OpenGL", L"Enable OpenGL support. Direct3D 9 is a better option, but this is a reasonable fallback.");
+	AddHelpEntry(IDC_16BIT, L"Use 16-bit surfaces", L"Use 16-bit surfaces for faster speed on low-end graphics cards. May reduce visual quality.");
+	AddHelpEntry(IDC_FSMODE_BORDERLESS, L"Full screen mode: Match desktop", L"Use a full-screen borderless window without switching to full screen mode.");
 	AddHelpEntry(IDC_FSMODE_DESKTOP, L"Full screen mode: Match desktop", L"Uses the desktop resolution for full screen mode. This avoids a mode switch.");
 	AddHelpEntry(IDC_FSMODE_CUSTOM, L"Full screen mode: Custom", L"Use a specific video mode for full screen mode. Zero for refresh rate allows any rate.");
 	LinkHelpEntry(IDC_FSMODE_WIDTH, IDC_FSMODE_CUSTOM);
@@ -346,34 +352,44 @@ void ATUIDialogOptionsPageDisplay::OnDataExchange(bool write) {
 	ExchangeControlValueBoolCheckbox(write, IDC_GRAPHICS_D3D9, mOptions.mbDisplayD3D9);
 	ExchangeControlValueBoolCheckbox(write, IDC_GRAPHICS_3D, mOptions.mbDisplay3D);
 	ExchangeControlValueBoolCheckbox(write, IDC_GRAPHICS_OPENGL, mOptions.mbDisplayOpenGL);
+	ExchangeControlValueBoolCheckbox(write, IDC_16BIT, mOptions.mbDisplay16Bit);
 
 	if (write) {
 		mOptions.mFullScreenWidth = 0;
 		mOptions.mFullScreenHeight = 0;
 		mOptions.mFullScreenRefreshRate = 0;
 
-		if (IsButtonChecked(IDC_FSMODE_CUSTOM)) {
-			VDStringW s;
-			VDStringW t;
+		if (IsButtonChecked(IDC_FSMODE_BORDERLESS)) {
+			mOptions.mbFullScreenBorderless = true;
+		} else {
+			mOptions.mbFullScreenBorderless = false;
+			 
+			if (IsButtonChecked(IDC_FSMODE_CUSTOM)) {
+				VDStringW s;
+				VDStringW t;
 
-			if (GetControlText(IDC_FSMODE_WIDTH, s) && GetControlText(IDC_FSMODE_HEIGHT, t)) {
-				mOptions.mFullScreenWidth = wcstoul(s.c_str(), NULL, 10);
-				mOptions.mFullScreenHeight = wcstoul(t.c_str(), NULL, 10);
+				if (GetControlText(IDC_FSMODE_WIDTH, s) && GetControlText(IDC_FSMODE_HEIGHT, t)) {
+					mOptions.mFullScreenWidth = wcstoul(s.c_str(), NULL, 10);
+					mOptions.mFullScreenHeight = wcstoul(t.c_str(), NULL, 10);
 
-				if (GetControlText(IDC_FSMODE_REFRESH, s))
-					mOptions.mFullScreenRefreshRate = wcstoul(s.c_str(), NULL, 10);
+					if (GetControlText(IDC_FSMODE_REFRESH, s))
+						mOptions.mFullScreenRefreshRate = wcstoul(s.c_str(), NULL, 10);
+				}
 			}
 		}
 	} else {
 		if (mOptions.mFullScreenWidth && mOptions.mFullScreenHeight) {
 			CheckButton(IDC_FSMODE_DESKTOP, false);
 			CheckButton(IDC_FSMODE_CUSTOM, true);
+			CheckButton(IDC_FSMODE_BORDERLESS, false);
 			SetControlTextF(IDC_FSMODE_WIDTH, L"%u", mOptions.mFullScreenWidth);
 			SetControlTextF(IDC_FSMODE_HEIGHT, L"%u", mOptions.mFullScreenHeight);
 			SetControlTextF(IDC_FSMODE_REFRESH, L"%u", mOptions.mFullScreenRefreshRate);
 		} else {
-			CheckButton(IDC_FSMODE_DESKTOP, true);
+			CheckButton(IDC_FSMODE_DESKTOP, !mOptions.mbFullScreenBorderless);
+			CheckButton(IDC_FSMODE_BORDERLESS, mOptions.mbFullScreenBorderless);
 			CheckButton(IDC_FSMODE_CUSTOM, false);
+
 			SetControlText(IDC_FSMODE_WIDTH, L"");
 			SetControlText(IDC_FSMODE_HEIGHT, L"");
 			SetControlText(IDC_FSMODE_REFRESH, L"");
@@ -676,6 +692,7 @@ public:
 
 protected:
 	bool OnLoaded();
+	bool OnCommand(uint32 id, uint32 mode);
 	void OnDataExchange(bool write);
 };
 
@@ -690,6 +707,16 @@ bool ATUIDialogOptionsPageUI::OnLoaded() {
 		L"Pause the simulation temporarily when a menu is opened.");
 
 	return ATUIDialogOptionsPage::OnLoaded();
+}
+
+bool ATUIDialogOptionsPageUI::OnCommand(uint32 id, uint32 mode) {
+	if (id == IDC_UNDISABLE) {
+		if (Confirm(L"This will re-enable all dialogs previously hidden using the \"don't show this again\" option. Are you sure?")) {
+			ATUIGenericDialogUndoAllIgnores();
+		}
+	}
+
+	return false;
 }
 
 void ATUIDialogOptionsPageUI::OnDataExchange(bool write) {
@@ -777,6 +804,102 @@ void ATUIDialogOptionsPageMedia::OnDataExchange(bool write) {
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATUIDialogOptionsPageCompat final : public ATUIDialogOptionsPage {
+public:
+	ATUIDialogOptionsPageCompat(ATOptions& opts);
+
+protected:
+	bool OnLoaded() override;
+	void OnDataExchange(bool write) override;
+
+	void OnUnmuteAll();
+	void OnExternalDBToggled();
+	void OnBrowse();
+	void UpdateEnables();
+
+	VDUIProxyButtonControl mCheckExternalDB;
+	VDUIProxyButtonControl mButtonUnmuteAll;
+	VDUIProxyButtonControl mButtonBrowse;
+};
+
+ATUIDialogOptionsPageCompat::ATUIDialogOptionsPageCompat(ATOptions& opts)
+	: ATUIDialogOptionsPage(IDD_OPTIONS_COMPAT, opts)
+{
+	mCheckExternalDB.SetOnClicked([this] { OnExternalDBToggled(); });
+	mButtonUnmuteAll.SetOnClicked([this] { OnUnmuteAll(); });
+	mButtonBrowse.SetOnClicked([this] { OnBrowse(); });
+}
+
+bool ATUIDialogOptionsPageCompat::OnLoaded() {
+	AddProxy(&mCheckExternalDB, IDC_COMPAT_EXTERNAL);
+	AddProxy(&mButtonUnmuteAll, IDC_UNMUTE_ALL);
+	AddProxy(&mButtonBrowse, IDC_BROWSE);
+
+	AddHelpEntry(IDC_COMPAT_ENABLE, L"Show compatibility warnings",
+		L"If enabled, detect and warn about compatibility issues with loaded titles.");
+
+	AddHelpEntry(IDC_COMPAT_INTERNAL, L"Use internal database",
+		L"Use built-in compatibility database.");
+
+	AddHelpEntry(IDC_COMPAT_EXTERNAL, L"Use external database",
+		L"Use compatibility database in external file.");
+
+	LinkHelpEntry(IDC_COMPAT_EXTERNAL, IDC_PATH);
+	LinkHelpEntry(IDC_COMPAT_EXTERNAL, IDC_BROWSE);
+
+	OnDataExchange(false);
+
+	return ATUIDialogOptionsPage::OnLoaded();
+}
+
+void ATUIDialogOptionsPageCompat::OnDataExchange(bool write) {
+	if (write) {
+		mOptions.mbCompatEnable = IsButtonChecked(IDC_COMPAT_ENABLE);
+		mOptions.mbCompatEnableInternalDB = IsButtonChecked(IDC_COMPAT_INTERNAL);
+		mOptions.mbCompatEnableExternalDB = IsButtonChecked(IDC_COMPAT_EXTERNAL);
+		GetControlText(IDC_PATH, mOptions.mCompatExternalDBPath);
+	} else {
+		CheckButton(IDC_COMPAT_ENABLE, mOptions.mbCompatEnable);
+		CheckButton(IDC_COMPAT_INTERNAL, mOptions.mbCompatEnableInternalDB);
+		CheckButton(IDC_COMPAT_EXTERNAL, mOptions.mbCompatEnableExternalDB);
+		SetControlText(IDC_PATH, mOptions.mCompatExternalDBPath.c_str());
+
+		UpdateEnables();
+	}
+}
+
+void ATUIDialogOptionsPageCompat::OnUnmuteAll() {
+	if (Confirm(L"This will unmute all compatibility warnings previously muted. Are you sure?"))
+		ATCompatUnmuteAllTitles();
+}
+
+void ATUIDialogOptionsPageCompat::OnExternalDBToggled() {
+	UpdateEnables();
+}
+
+void ATUIDialogOptionsPageCompat::OnBrowse() {
+	const auto& path = VDGetLoadFileName('cpdc', (VDGUIHandle)mhdlg, L"Load external compatibility database", g_ATUIFileFilter_LoadCompatEngine, L"atcpengine");
+
+	if (!path.empty()) {
+		try {
+			ATCompatLoadExtDatabase(path.c_str(), true);
+
+			SetControlText(IDC_PATH, path.c_str());
+		} catch(const MyError& e) {
+			ShowError(e);
+		}
+	}
+}
+
+void ATUIDialogOptionsPageCompat::UpdateEnables() {
+	bool extdb = mCheckExternalDB.GetChecked();
+
+	EnableControl(IDC_PATH, extdb);
+	EnableControl(IDC_BROWSE, extdb);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 class ATUIDialogOptions final : public VDDialogFrameW32 {
 public:
 	ATUIDialogOptions(ATOptions& opts);
@@ -799,7 +922,7 @@ protected:
 	uint32 mLastHelpId;
 	HWND mhwndHelp;
 
-	ATUIDialogOptionsPage *mpPages[9];
+	ATUIDialogOptionsPage *mpPages[10];
 
 	ATOptions& mOptions;
 };
@@ -832,6 +955,7 @@ bool ATUIDialogOptions::OnLoaded() {
 	mpPages[6] = new ATUIDialogOptionsPageMedia(mOptions);
 	mpPages[7] = new ATUIDialogOptionsPageUI(mOptions);
 	mpPages[8] = new ATUIDialogOptionsPageSettings(mOptions);
+	mpPages[9] = new ATUIDialogOptionsPageCompat(mOptions);
 	mSelectedPage = -1;
 
 	OnDataExchange(false);
@@ -845,6 +969,7 @@ bool ATUIDialogOptions::OnLoaded() {
 	LBAddString(IDC_PAGE_LIST, L"Media");
 	LBAddString(IDC_PAGE_LIST, L"UI");
 	LBAddString(IDC_PAGE_LIST, L"Settings");
+	LBAddString(IDC_PAGE_LIST, L"Compatibility");
 
 	SelectPage(0);
 	LBSetSelectedIndex(IDC_PAGE_LIST, 0);

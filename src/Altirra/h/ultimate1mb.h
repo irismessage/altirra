@@ -20,9 +20,9 @@
 
 #include <at/atcore/devicecart.h>
 #include <at/atcore/devicepbi.h>
-#include "flash.h"
+#include <at/atemulation/flash.h>
 #include "pbi.h"
-#include "rtcds1305.h"
+#include <at/atemulation/rtcds1305.h>
 #include "callback.h"
 
 class ATMMUEmulator;
@@ -89,8 +89,8 @@ public:
 	void LoadNVRAM();
 	void SaveNVRAM();
 
-	void DumpStatus();
-	void DumpRTCStatus();
+	void DumpStatus(ATConsoleOutput&);
+	void DumpRTCStatus(ATConsoleOutput&);
 
 public:
 	void InitCartridge(IATDeviceCartridgePort *cartPort) override;

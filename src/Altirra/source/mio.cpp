@@ -28,12 +28,6 @@
 #include "irqcontroller.h"
 #include "scsidisk.h"
 
-// HACK
-#include "simulator.h"
-#include "printer.h"
-
-extern ATSimulator g_sim;
-
 extern ATDebuggerLogChannel g_ATLCParPrint;
 
 void ATCreateDeviceMIOEmulator(const ATPropertySet& pset, IATDevice **dev) {
@@ -308,8 +302,13 @@ void ATMIOEmulator::AddChildDevice(IATDevice *dev) {
 	if (disk) {
 		VDASSERT(vdpoly_cast<IATDevice *>(disk));
 
+		if (mSCSIDisks.size() >= 8)
+			return;
+
 		vdrefptr<IATSCSIDiskDevice> scsidev;
 		ATCreateSCSIDiskDevice(disk, ~scsidev);
+
+		const uint32 id = (uint32)mSCSIDisks.size();
 
 		SCSIDiskEntry entry = { dev, scsidev, disk };
 		mSCSIDisks.push_back(entry);
@@ -321,7 +320,7 @@ void ATMIOEmulator::AddChildDevice(IATDevice *dev) {
 		scsidev->SetBlockSize(256);
 		scsidev->SetUIRenderer(mpUIRenderer);
 
-		mSCSIBus.AttachDevice(0, scsidev);
+		mSCSIBus.AttachDevice(id, scsidev);
 	}
 
 	if (!mpSerialDevice) {
@@ -371,7 +370,12 @@ void ATMIOEmulator::RemoveChildDevice(IATDevice *dev) {
 			ent.mpDisk->Release();
 			ent.mpSCSIDevice->Release();
 			ent.mpDevice->Release();
+
+			const uint32 eraseIndex = (uint32)(it - mSCSIDisks.begin());
 			mSCSIDisks.erase(it);
+
+			for(uint32 i=eraseIndex; i<7; ++i)
+				mSCSIBus.SwapDevices(i, i+1);
 		}
 	}
 }

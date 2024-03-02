@@ -44,7 +44,7 @@ sint64 VDRoundToInt64(double x) {
 	return (sint64)floor(x + 0.5);
 }
 
-#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC)
+#if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC) && !defined(VD_COMPILER_MSVC_CLANG)
 	sint64 __declspec(naked) __stdcall VDFractionScale64(uint64 a, uint32 b, uint32 c, uint32& remainder) {
 		__asm {
 			push	edi

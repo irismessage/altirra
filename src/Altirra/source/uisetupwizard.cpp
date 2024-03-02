@@ -104,7 +104,7 @@ private:
 ATUIDialogSetupWizardFirmware::ATUIDialogSetupWizardFirmware()
 	: VDDialogFrameW32(IDD_WIZARD_FIRMWARE)
 {
-	mScanButton.SetOnClicked([this](VDUIProxyButtonControl *) { OnScan(); });
+	mScanButton.SetOnClicked([this] { OnScan(); });
 }
 
 void ATUIDialogSetupWizardFirmware::FirmwareItem::GetText(int subItem, VDStringW& s) const {
@@ -252,7 +252,7 @@ void ATUIDialogSetupWizardSelectVideoType::OnDataExchange(bool write) {
 		bool selectNTSC = IsButtonChecked(IDC_TYPE_NTSC);
 
 		if (isNTSC != selectNTSC) {
-			g_sim.SetVideoStandard(selectNTSC ? kATVideoStandard_NTSC : kATVideoStandard_PAL);
+			ATSetVideoStandard(selectNTSC ? kATVideoStandard_NTSC : kATVideoStandard_PAL);
 		}
 	} else {
 		CheckButton(IDC_TYPE_NTSC, isNTSC);

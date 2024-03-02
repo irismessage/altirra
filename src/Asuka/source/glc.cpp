@@ -553,7 +553,7 @@ void GLCCompiler::ParseTechnique() {
 					else
 						mLexer.ThrowError("Unknown shader profile '%.*s'", mLexer.GetTokenLen(), mLexer.GetToken());
 
-					vdautoptr<IGLCFragmentShader> fshader;
+					vdrefptr<IGLCFragmentShader> fshader;
 					if (profile == kProfileARBFS) {
 						Expect('{');
 						mLexer.EnableForeignCode(true);

@@ -40,6 +40,9 @@
     <ClCompile Include="source\vfs.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\checksum.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\at\atcore\device.h">
@@ -126,6 +129,27 @@
     <ClInclude Include="..\h\at\atcore\vfs.h">
       <Filter>Interface Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\h\at\atcore\checksum.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\audiosource.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\intrin_sse2.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\devicediskdrive.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\wraptime.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\constants.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\devicesioimpl.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Interface Files">
@@ -137,5 +161,10 @@
     <Filter Include="Header Files">
       <UniqueIdentifier>{ee650614-e257-455e-adeb-e53d043cdadc}</UniqueIdentifier>
     </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="source\devicesioimpl.cpp">
+      <Filter>Source Files</Filter>
+    </None>
   </ItemGroup>
 </Project>

@@ -32,6 +32,7 @@
 #include "profiler.h"
 #include "debugger.h"
 #include "disasm.h"
+#include "oshelper.h"
 
 extern ATSimulator g_sim;
 
@@ -1373,6 +1374,7 @@ protected:
 	void OnColumnClicked(VDUIProxyListView *lv, int column);
 	void OnItemDoubleClicked(VDUIProxyListView *lv, int item);
 	void OnItemSelectionChanged(VDUIProxyListView *lv, int item);
+	void OnItemContextMenu(VDUIProxyListView *lv, VDUIProxyListView::ContextMenuEvent event);
 	void OnTreeItemDoubleClicked(VDUIProxyTreeViewControl *tv, bool *handled);
 	void OnRangeSelected(uint32 start, uint32 end);
 	void UpdateRunButtonEnables();
@@ -1383,6 +1385,8 @@ protected:
 	void LoadProfile();
 	void RemakeView();
 	void MergeFrames(uint32 start, uint32 end);
+
+	void CopyAsCsv();
 
 	void StartProfiler();
 
@@ -1589,10 +1593,12 @@ protected:
 	VLComparer mComparer;
 	vdvector<VLItem> mVLItems;
 	vdvector<VTItem> mVTItems;
+	vdvector<VDStringW> mListColumnNames;
 
 	VDDelegate mDelegateColumnClicked;
 	VDDelegate mDelegateItemDoubleClicked;
 	VDDelegate mDelegateItemSelectionChanged;
+	VDDelegate mDelegateItemContextMenu;
 	VDDelegate mDelegateTreeItemDoubleClicked;
 
 	ATUIProfilerTimelineView mTimelineView;
@@ -1634,6 +1640,7 @@ ATUIProfilerPane::ATUIProfilerPane()
 	mListView.OnColumnClicked() += mDelegateColumnClicked.Bind(this, &ATUIProfilerPane::OnColumnClicked);
 	mListView.OnItemDoubleClicked() += mDelegateItemDoubleClicked.Bind(this, &ATUIProfilerPane::OnItemDoubleClicked);
 	mListView.OnItemSelectionChanged() += mDelegateItemSelectionChanged.Bind(this, &ATUIProfilerPane::OnItemSelectionChanged);
+	mListView.OnItemContextMenu() += mDelegateItemContextMenu.Bind(this, &ATUIProfilerPane::OnItemContextMenu);
 	mTreeView.OnItemDoubleClicked() += mDelegateTreeItemDoubleClicked.Bind(this, &ATUIProfilerPane::OnTreeItemDoubleClicked);
 
 	// pin embedded timeline view object
@@ -1665,6 +1672,12 @@ LRESULT ATUIProfilerPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			return res;
 
 		return mDispatcher.Dispatch_WM_NOTIFY(wParam, lParam);
+	} else if (msg == WM_CONTEXTMENU) {
+		if (mListView.IsVisible()) {
+			POINT pt { 0, 0 };
+			ClientToScreen(mListView.GetHandle(), &pt);
+			OnItemContextMenu(&mListView, {0, pt.x, pt.y});
+		}
 	} else if (msg == WM_USER + 100) {
 		const VTItem *vti = static_cast<VTItem *>(mTreeView.GetSelectedVirtualItem());
 
@@ -2124,6 +2137,22 @@ void ATUIProfilerPane::OnItemSelectionChanged(VDUIProxyListView *lv, int item) {
 		);
 }
 
+void ATUIProfilerPane::OnItemContextMenu(VDUIProxyListView *lv, VDUIProxyListView::ContextMenuEvent event) {
+	HMENU hmenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_PROFILE_LIST_CONTEXT_MENU));
+	if (!hmenu)
+		return;
+
+	UINT selectedId = (UINT)TrackPopupMenuEx(GetSubMenu(hmenu, 0), TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL | TPM_NONOTIFY | TPM_RETURNCMD, event.mX, event.mY, mhwnd, NULL);
+
+	DestroyMenu(hmenu);
+
+	switch(selectedId) {
+		case ID_COPYASCSV:
+			CopyAsCsv();
+			break;
+	}
+}
+
 void ATUIProfilerPane::OnTreeItemDoubleClicked(VDUIProxyTreeViewControl *tv, bool *handled) {
 	*handled = true;
 
@@ -2298,6 +2327,8 @@ void ATUIProfilerPane::RemakeView() {
 		}
 	}
 
+	mListColumnNames.clear();
+
 	if (!mpRecords || mpRecords->empty()) {
 		::SetWindowText(mhwndMessage, _T("No profiling data is available. Begin execution with the Play button in this profiler pane to begin data collection and Stop to end the session."));
 
@@ -2363,29 +2394,33 @@ void ATUIProfilerPane::RemakeView() {
 				case kATProfileMode_Insns:
 				case kATProfileMode_Functions:
 				case kATProfileMode_BasicBlock:
-					mListView.InsertColumn(1, L"Address", 0);
+					mListColumnNames.emplace_back(L"Address");
 					break;
 				case kATProfileMode_BasicLines:
-					mListView.InsertColumn(1, L"Line", 0);
+					mListColumnNames.emplace_back(L"Line");
 					break;
 			}
 
-			mListView.InsertColumn(2, L"Calls", 0, true);
-			mListView.InsertColumn(3, L"Clocks", 0, true);
-			mListView.InsertColumn(4, L"Insns", 0, true);
-			mListView.InsertColumn(5, L"Clocks%", 0, true);
-			mListView.InsertColumn(6, L"Insns%", 0, true);
-			mListView.InsertColumn(7, L"CPUClocks", 0, true);
-			mListView.InsertColumn(8, L"CPUClocks%", 0, true);
-			mListView.InsertColumn(9, L"DMA%", 0, true);
+			mListColumnNames.emplace_back(L"Calls");
+			mListColumnNames.emplace_back(L"Clocks");
+			mListColumnNames.emplace_back(L"Insns");
+			mListColumnNames.emplace_back(L"Clocks%");
+			mListColumnNames.emplace_back(L"Insns%");
+			mListColumnNames.emplace_back(L"CPUClocks");
+			mListColumnNames.emplace_back(L"CPUClocks%");
+			mListColumnNames.emplace_back(L"DMA%");
 
-			int nc = 10;
 			for (auto cm : mProfileSessionCounterModes) {
 				if (cm) {
-					mListView.InsertColumn(nc++, kCounterModeColumnNames[cm - 1], 0, true);
-					mListView.InsertColumn(nc++, (VDStringW(kCounterModeColumnNames[cm - 1])+L"%").c_str(), 0, true);
+					mListColumnNames.emplace_back(kCounterModeColumnNames[cm - 1]);
+					mListColumnNames.emplace_back(VDStringW(kCounterModeColumnNames[cm - 1]) + L"%");
 				}
 			}
+
+			int nc = 1;
+
+			for (const auto& name : mListColumnNames)
+				mListView.InsertColumn(nc++, name.c_str(), 0, nc > 1);
 
 			mListView.InsertColumn(nc, L"", 0, false);		// crude hack to fix full justified column
 
@@ -2512,6 +2547,57 @@ void ATUIProfilerPane::MergeFrames(uint32 start, uint32 end) {
 	}
 
 	RemakeView();
+}
+
+void ATUIProfilerPane::CopyAsCsv() {
+	if (!(mListView.IsVisible()) || mListColumnNames.empty())
+		return;
+
+	VDStringW text;
+
+	const auto appendQuoted = [&](const wchar_t *s) {
+		if (wcschr(s, ' ') || wcschr(s, ',') || wcschr(s, '"')) {
+			text.push_back('"');
+
+			while(const wchar_t c = *s++) {
+				if (c == '"')
+					text.push_back('"');
+
+				text.push_back(c);
+			}
+
+			text.push_back('"');
+		} else {
+			text.append(s, s + wcslen(s));
+		}
+		text.push_back(',');
+	};
+
+	const auto endLine = [&] {
+		text.pop_back();
+		text.push_back('\r');
+		text.push_back('\n');
+	};
+
+	for(const VDStringW& columnName : mListColumnNames) {
+		appendQuoted(columnName.c_str());
+	}
+
+	endLine();
+
+	const uint32 numColumns = (uint32)mListColumnNames.size();
+	VDStringW cellText;
+	for(const auto& item : mVLItems) {
+		for(uint32 i = 0; i < numColumns; ++i) {
+			cellText.clear();
+			item.GetText(i, cellText);
+
+			appendQuoted(cellText.c_str());
+		}
+		endLine();
+	}
+
+	ATCopyTextToClipboard(mhwnd, text.c_str());
 }
 
 void ATUIProfilerPane::StartProfiler() {

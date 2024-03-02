@@ -22,7 +22,7 @@
 #include "memorymanager.h"
 #include "simulator.h"
 
-class ATBreakpointManager::TargetBPHandler : public IATCPUBreakpointHandler {
+class ATBreakpointManager::TargetBPHandler final : public IATCPUBreakpointHandler {
 public:
 	TargetBPHandler(ATBreakpointManager *parent, uint32 targetOffset)
 		: mpParent(parent)

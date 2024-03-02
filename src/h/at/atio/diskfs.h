@@ -44,10 +44,15 @@ struct ATDiskFSEntryInfo {
 };
 
 struct ATDiskFSValidationReport {
-	bool mbBitmapIncorrect;
-	bool mbBrokenFiles;
-	bool mbOpenWriteFiles;
-	bool mbMetadataCorruption;
+	bool mbBitmapIncorrect = false;
+	bool mbBitmapIncorrectLostSectorsOnly = false;
+	bool mbBrokenFiles = false;
+	bool mbOpenWriteFiles = false;
+	bool mbMetadataCorruption = false;
+
+	bool IsSerious() const {
+		return mbBitmapIncorrect || mbBrokenFiles || mbOpenWriteFiles || mbMetadataCorruption;
+	}
 };
 
 enum ATDiskFSError {

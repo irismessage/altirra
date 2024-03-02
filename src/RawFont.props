@@ -12,7 +12,7 @@
   <ItemDefinitionGroup>
     <CompileRawFont>
       <RawFont>False</RawFont>
-      <OutputPath>$(ProjectDir)h\%(Filename).inl</OutputPath>
+      <OutputPath>$(ProjectDir)autogen\%(Filename).inl</OutputPath>
       <CellWidth>8</CellWidth>
       <CellHeight>8</CellHeight>
       <GridColumns>0</GridColumns>

@@ -305,7 +305,7 @@ IGLCFragmentShader *CompileFragmentShaderNVRegisterCombiners(GLCErrorSink& errou
 	bool combinerAlphaOp = false;
 	bool combinerColorOp = false;
 
-	vdautoptr<RegisterCombinerConfig> config(new RegisterCombinerConfig);
+	vdrefptr<RegisterCombinerConfig> config(new RegisterCombinerConfig);
 	RegisterCombiner *pCombiner = config->mGeneralCombiners;
 
 	int constantMapping[16]={-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};

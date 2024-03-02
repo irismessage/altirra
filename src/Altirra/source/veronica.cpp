@@ -408,6 +408,10 @@ uint32 ATVeronicaEmulator::ConvertRawTimestamp(uint32 rawTimestamp) const {
 	return mLastSync - ((mCoProc.GetTimeBase() - rawTimestamp + 7) >> 3);
 }
 
+double ATVeronicaEmulator::GetTimestampFrequency() const {
+	return mpScheduler->GetRate().asDouble() * 8.0;
+}
+
 void ATVeronicaEmulator::SetBreakpointHandler(IATCPUBreakpointHandler *handler) {
 	mpBreakpointHandler = handler;
 
@@ -511,11 +515,8 @@ bool ATVeronicaEmulator::CheckBreakpoint(uint32 pc) {
 		mCoProc.SetBreakpointMap(nullptr, nullptr);
 	}
 
-	auto p = std::move(mpStepHandler);
-	mpStepHandler = nullptr;
-
-	p(!bpHit);
-
+	mbStepNotifyPending = true;
+	mbStepNotifyPendingBP = bpHit;
 	return true;
 }
 
@@ -786,6 +787,16 @@ void ATVeronicaEmulator::Sync() {
 	mSubCyclesLeft = 0;
 
 	RunSubCycles(vcycles);
+
+	if (mbStepNotifyPending) {
+		mbStepNotifyPending = false;
+
+		auto p = std::move(mpStepHandler);
+		mpStepHandler = nullptr;
+
+		if (p)
+			p(!mbStepNotifyPendingBP);
+	}
 }
 
 void ATVeronicaEmulator::AccumSubCycles() {

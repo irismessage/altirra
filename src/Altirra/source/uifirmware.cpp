@@ -20,6 +20,7 @@
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
+#include <vd2/system/linearalloc.h>
 #include <vd2/system/math.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/zip.h>
@@ -37,6 +38,20 @@ void ATUIScanForFirmware(VDGUIHandle hParent, ATFirmwareManager& fwmgr);
 ///////////////////////////////////////////////////////////////////////////
 
 namespace {
+	const wchar_t *GetSpecificFirmwareLabel(ATSpecificFirmwareType ft) {
+		switch(ft) {
+			case kATSpecificFirmwareType_BASICRevA:	return L"BASIC rev. A";
+			case kATSpecificFirmwareType_BASICRevB:	return L"BASIC rev. B";
+			case kATSpecificFirmwareType_BASICRevC:	return L"BASIC rev. C";
+			case kATSpecificFirmwareType_OSA:		return L"OS-A";
+			case kATSpecificFirmwareType_OSB:		return L"OS-B";
+			case kATSpecificFirmwareType_XLOSr2:	return L"XL/XE OS ver. 2";
+			case kATSpecificFirmwareType_XLOSr4:	return L"XL/XE/XEGS OS ver. 4";
+			default:
+				return nullptr;
+		}
+	}
+
 	struct FirmwareItem : public vdrefcounted<IVDUITreeViewVirtualItem> {
 		FirmwareItem(uint64 id, ATFirmwareType type, bool category, const wchar_t *text, const wchar_t *path)
 			: mId(id)
@@ -63,6 +78,8 @@ namespace {
 		uint32 mFlags;
 		bool mbCategory;
 		bool mbDefault;
+
+		vdhashmap<ATSpecificFirmwareType, VDUIProxyTreeViewControl::NodeRef, vdhash<uint32>> mSpecificNodes;
 	};
 
 	void FirmwareItem::GetText(VDStringW& s) const {
@@ -79,7 +96,7 @@ namespace {
 	};
 
 	VDStringW BrowseForFirmware(VDDialogFrameW32 *parent) {
-		return VDGetLoadFileName('ROMI', (VDGUIHandle)parent->GetWindowHandle(), L"Browse for ROM image", L"ROM image (*.rom,*.bin)\0*.rom;*.bin\0All files\0*.*\0", NULL);
+		return VDGetLoadFileName('ROMI', (VDGUIHandle)parent->GetWindowHandle(), L"Browse for ROM image", L"ROM image\0*.rom;*.bin;*.epr;*.epm\0All files\0*.*\0", NULL);
 	}
 }
 
@@ -107,7 +124,7 @@ protected:
 		const wchar_t *mpName;
 	};
 
-	const TypeEntry *mpSortedTypes[18];
+	const TypeEntry *mpSortedTypes[35];
 	
 	static const TypeEntry kTypeNames[];
 };
@@ -131,6 +148,23 @@ const ATUIDialogEditFirmwareSettings::TypeEntry ATUIDialogEditFirmwareSettings::
 	{ kATFirmwareType_BlackBox, L"BlackBox" },
 	{ kATFirmwareType_MIO, L"MIO" },
 	{ kATFirmwareType_1030Firmware, L"1030 Modem Firmware" },
+	{ kATFirmwareType_810, L"810 Disk Drive Firmware" },
+	{ kATFirmwareType_Happy810, L"Happy 810 Disk Drive Firmware" },
+	{ kATFirmwareType_810Archiver, L"810 Archiver Disk Drive Firmware" },
+	{ kATFirmwareType_1050, L"1050 Disk Drive Firmware" },
+	{ kATFirmwareType_1050Duplicator, L"1050 Duplicator Disk Drive Firmware" },
+	{ kATFirmwareType_USDoubler, L"US Doubler Disk Drive Firmware" },
+	{ kATFirmwareType_Speedy1050, L"Speedy 1050 Disk Drive Firmware" },
+	{ kATFirmwareType_Happy1050, L"Happy 1050 Disk Drive Firmware" },
+	{ kATFirmwareType_SuperArchiver, L"Super Archiver Disk Drive Firmware" },
+	{ kATFirmwareType_TOMS1050, L"TOMS 1050 Disk Drive Firmware" },
+	{ kATFirmwareType_Tygrys1050, L"Tygrys 1050 Disk Drive Firmware" },
+	{ kATFirmwareType_IndusGT, L"Indus GT Disk Drive Firmware" },
+	{ kATFirmwareType_1050Turbo, L"1050 Turbo Disk Drive Firmware" },
+	{ kATFirmwareType_1050TurboII, L"1050 Turbo II Disk Drive Firmware" },
+	{ kATFirmwareType_XF551, L"XF551 Disk Drive Firmware" },
+	{ kATFirmwareType_ATR8000, L"ATR8000 Disk Drive Firmware" },
+	{ kATFirmwareType_Percom, L"PERCOM Disk Drive Firmware" },
 };
 
 ATUIDialogEditFirmwareSettings::ATUIDialogEditFirmwareSettings(FirmwareItem& item)
@@ -138,7 +172,7 @@ ATUIDialogEditFirmwareSettings::ATUIDialogEditFirmwareSettings(FirmwareItem& ite
 	, mItem(item)
 	, mFlagCount(0)
 {
-	VDASSERTCT(vdcountof(kTypeNames) == vdcountof(mpSortedTypes));
+	static_assert(vdcountof(kTypeNames) == vdcountof(mpSortedTypes), "array mismatch");
 
 	mTypeList.OnSelectionChanged() += mDelTypeChanged.Bind(this, &ATUIDialogEditFirmwareSettings::OnTypeChanged);
 }
@@ -264,7 +298,9 @@ protected:
 	void Remove();
 	void EditSettings();
 	void SetAsDefault();
+	void SetAsSpecific();
 	void UpdateFirmwareItem(const FirmwareItem& item);
+	void UpdateSpecificNodes(FirmwareItem *item);
 
 	void OnSelChanged(VDUIProxyTreeViewControl *sender, int idx);
 	void OnItemDoubleClicked(VDUIProxyTreeViewControl *sender, bool *handled);
@@ -307,9 +343,12 @@ bool ATUIDialogFirmware::OnLoaded() {
 	mResizer.Add(IDC_SETTINGS, RS::kBL);
 	mResizer.Add(IDC_SCAN, RS::kBL);
 	mResizer.Add(IDC_SETASDEFAULT, RS::kBL);
+	mResizer.Add(IDC_SETASSPECIFIC, RS::kBL);
 	mResizer.Add(IDC_CLEAR, RS::kBL);
 	mResizer.Add(IDOK, RS::kBR);
 	SetCurrentSizeAsMinSize();
+
+	ATUIRestoreWindowPlacement(mhdlg, "Firmware dialog", SW_SHOW);
 
 	OnDataExchange(false);
 
@@ -326,6 +365,8 @@ bool ATUIDialogFirmware::OnLoaded() {
 void ATUIDialogFirmware::OnDestroy() {
 	mTreeView.Clear();
 
+	ATUISaveWindowPlacement(mhdlg, "Firmware dialog");
+
 	VDDialogFrameW32::OnDestroy();
 }
 
@@ -335,7 +376,7 @@ void ATUIDialogFirmware::OnDataExchange(bool write) {
 		mTreeView.SetRedraw(false);
 		mTreeView.Clear();
 
-		struct Category {
+		static constexpr struct Category {
 			ATFirmwareType mType;
 			const wchar_t *mpName;
 		} kCategories[]={
@@ -357,6 +398,23 @@ void ATUIDialogFirmware::OnDataExchange(bool write) {
 			{ kATFirmwareType_BlackBox, L"BlackBox ROMs" },
 			{ kATFirmwareType_MIO, L"MIO ROMs" },
 			{ kATFirmwareType_1030Firmware, L"1030 Modem Firmware" },
+			{ kATFirmwareType_810, L"810 Disk Drive Firmware" },
+			{ kATFirmwareType_Happy810, L"Happy 810 Disk Drive Firmware" },
+			{ kATFirmwareType_810Archiver, L"810 Archiver Disk Drive Firmware" },
+			{ kATFirmwareType_1050, L"1050 Disk Drive Firmware" },
+			{ kATFirmwareType_1050Duplicator, L"1050 Duplicator Disk Drive Firmware" },
+			{ kATFirmwareType_USDoubler, L"US Doubler Disk Drive Firmware" },
+			{ kATFirmwareType_Speedy1050, L"Speedy 1050 Disk Drive Firmware" },
+			{ kATFirmwareType_Happy1050, L"Happy 1050 Disk Drive Firmware" },
+			{ kATFirmwareType_SuperArchiver, L"Super Archiver Disk Drive Firmware" },
+			{ kATFirmwareType_TOMS1050, L"TOMS 1050 Disk Drive Firmware" },
+			{ kATFirmwareType_Tygrys1050, L"Tygrys 1050 Disk Drive Firmware" },
+			{ kATFirmwareType_1050Turbo, L"1050 Turbo Disk Drive Firmware" },
+			{ kATFirmwareType_1050TurboII, L"1050 Turbo II Disk Drive Firmware" },
+			{ kATFirmwareType_IndusGT, L"Indus GT Disk Drive Firmware" },
+			{ kATFirmwareType_XF551, L"XF551 Disk Drive Firmware" },
+			{ kATFirmwareType_ATR8000, L"ATR8000 Disk Drive Firmware" },
+			{ kATFirmwareType_Percom, L"PERCOM Disk Drive Firmware" },
 		};
 
 		std::fill(mDefaultIds, mDefaultIds + vdcountof(mDefaultIds), 0);
@@ -386,6 +444,8 @@ void ATUIDialogFirmware::OnDataExchange(bool write) {
 				item->mFlags = it->mFlags;
 				item->mNode = mTreeView.AddVirtualItem(mpCategories[it->mType]->mNode, mTreeView.kNodeLast, item);
 				item->mbDefault = (mDefaultIds[it->mType] == it->mId);
+
+				UpdateSpecificNodes(item);
 			}
 		}
 
@@ -436,6 +496,10 @@ bool ATUIDialogFirmware::OnCommand(uint32 id, uint32 extcode) {
 		case IDC_SETASDEFAULT:
 			SetAsDefault();
 			return true;
+
+		case IDC_SETASSPECIFIC:
+			SetAsSpecific();
+			return true;
 	}
 
 	return false;
@@ -476,6 +540,7 @@ void ATUIDialogFirmware::Add(const wchar_t *path) {
 	vdrefptr<FirmwareItem> newItem(new FirmwareItem(id, kATFirmwareType_Unknown, false, VDFileSplitExtLeft(VDStringW(VDFileSplitPath(path))).c_str(), path));
 
 	// try to autodetect it
+	ATSpecificFirmwareType specificType = kATSpecificFirmwareType_None;
 	try {
 		VDFile f(path);
 
@@ -488,7 +553,7 @@ void ATUIDialogFirmware::Add(const wchar_t *path) {
 			f.read(buf.data(), size32);
 
 			ATFirmwareInfo info;
-			if (ATFirmwareAutodetect(buf.data(), size32, info)) {
+			if (ATFirmwareAutodetect(buf.data(), size32, info, specificType)) {
 				newItem->mText = info.mName;
 				newItem->mFlags = info.mFlags;
 				newItem->mType = info.mType;
@@ -502,6 +567,11 @@ void ATUIDialogFirmware::Add(const wchar_t *path) {
 		newItem->mNode = mTreeView.AddVirtualItem(mpCategories[newItem->mType]->mNode, mTreeView.kNodeLast, newItem);
 		if (newItem->mNode) {
 			UpdateFirmwareItem(*newItem);
+
+			if (specificType && !mFwManager.GetSpecificFirmware(specificType))
+				mFwManager.SetSpecificFirmware(specificType, newItem->mId);
+
+			UpdateSpecificNodes(newItem);
 
 			mTreeView.RefreshNode(newItem->mNode);
 
@@ -523,6 +593,7 @@ void ATUIDialogFirmware::Remove() {
 	if (item->mId < kATFirmwareId_Custom)
 		return;
 
+	item->mSpecificNodes.clear();
 	mTreeView.DeleteItem(item->mNode);
 	mFwManager.RemoveFirmware(item->mId);
 	mbAnyChanges = true;
@@ -583,6 +654,74 @@ void ATUIDialogFirmware::SetAsDefault() {
 	mbAnyChanges = true;
 }
 
+void ATUIDialogFirmware::SetAsSpecific() {
+	vdrefptr<FirmwareItem> item(static_cast<FirmwareItem *>(mTreeView.GetSelectedVirtualItem()));
+	if (!item || item->mbCategory || !item->mId)
+		return;
+
+	VDLinearAllocator alloc;
+	vdfastvector<const wchar_t *> items(1, L"Clear compatibility flags");
+	vdfastvector<ATSpecificFirmwareType> menuLookup(1, kATSpecificFirmwareType_None);
+
+	VDStringW label;
+	for(uint32 i = 1; i < kATSpecificFirmwareTypeCount; ++i) {
+		const auto ft = (ATSpecificFirmwareType)i;
+
+		if (ATIsSpecificFirmwareTypeCompatible(item->mType, ft)) {
+			label.sprintf(L"Use for software requiring: %ls", GetSpecificFirmwareLabel(ft));
+
+			size_t len = sizeof(wchar_t) * (label.size() + 1);
+			wchar_t *buf = (wchar_t *)alloc.Allocate(len);
+			memcpy(buf, label.c_str(), len);
+			items.push_back(buf);
+			menuLookup.push_back(ft);
+		}
+	}
+
+	items.push_back(nullptr);
+
+	int index = ActivateMenuButton(IDC_SETASSPECIFIC, items.data());
+	if (index == 0) {
+		for(uint32 i = 1; i < kATSpecificFirmwareTypeCount; ++i) {
+			ATSpecificFirmwareType ft = (ATSpecificFirmwareType)i;
+
+			if (mFwManager.GetSpecificFirmware(ft) == item->mId)
+				mFwManager.SetSpecificFirmware(ft, 0);
+		}
+
+		UpdateSpecificNodes(item);
+		mTreeView.RefreshNode(item->mNode);
+	} else if (index > 0 && index < (int)menuLookup.size()) {
+		const ATSpecificFirmwareType ft = menuLookup[index];
+
+		uint64 prevId = mFwManager.GetSpecificFirmware(ft);
+		if (prevId == item->mId)
+			mFwManager.SetSpecificFirmware(ft, 0);
+		else {
+			if (prevId) {
+				FirmwareItem *itemToRefresh = nullptr;
+
+				mTreeView.EnumChildrenRecursive(mTreeView.kNodeRoot,
+					[prevId, &itemToRefresh](auto *item) {
+						FirmwareItem *curItem = static_cast<FirmwareItem *>(item);
+
+						if (curItem->mId == prevId)
+							itemToRefresh = curItem;
+					}
+				);
+
+				if (itemToRefresh)
+					UpdateSpecificNodes(itemToRefresh);
+			}
+
+			mFwManager.SetSpecificFirmware(ft, item->mId);
+		}
+
+		UpdateSpecificNodes(item);
+		mTreeView.RefreshNode(item->mNode);
+	}
+}
+
 void ATUIDialogFirmware::UpdateFirmwareItem(const FirmwareItem& item) {
 	ATFirmwareInfo info;
 	info.mId = item.mId;
@@ -593,15 +732,47 @@ void ATUIDialogFirmware::UpdateFirmwareItem(const FirmwareItem& item) {
 	mFwManager.AddFirmware(info);
 }
 
+void ATUIDialogFirmware::UpdateSpecificNodes(FirmwareItem *item) {
+	if (!item)
+		return;
+
+	const auto id = item->mId;
+	for(uint32 i = 1; i < kATSpecificFirmwareTypeCount; ++i) {
+		auto type = (ATSpecificFirmwareType)i;
+
+		if (id && mFwManager.GetSpecificFirmware(type) == id) {
+			auto newNode = item->mSpecificNodes.insert_as(type);
+
+			if (newNode.second) {
+				VDStringW label;
+				label.sprintf(L"(Use for software requiring: %ls)", GetSpecificFirmwareLabel(type));
+				newNode.first->second = mTreeView.AddItem(item->mNode, mTreeView.kNodeLast, label.c_str());
+				mTreeView.ExpandNode(item->mNode, true);
+			}
+		} else {
+			auto existingNode = item->mSpecificNodes.find(type);
+
+			if (existingNode != item->mSpecificNodes.end()) {
+				mTreeView.DeleteItem(existingNode->second);
+				item->mSpecificNodes.erase(existingNode);
+			}
+		}
+	}
+}
+
 void ATUIDialogFirmware::OnSelChanged(VDUIProxyTreeViewControl *sender, int idx) {
 	FirmwareItem *pItem = static_cast<FirmwareItem *>(sender->GetSelectedVirtualItem());
 
 	if (pItem) {
 		EnableControl(IDC_REMOVE, !pItem->mbCategory && pItem->mId >= kATFirmwareId_Custom);
 		EnableControl(IDC_SETTINGS, !pItem->mbCategory && pItem->mId >= kATFirmwareId_Custom);
+		EnableControl(IDC_SETASDEFAULT, !pItem->mbCategory);
+		EnableControl(IDC_SETASSPECIFIC, !pItem->mbCategory);
 	} else {
 		EnableControl(IDC_REMOVE, false);
 		EnableControl(IDC_SETTINGS, false);
+		EnableControl(IDC_SETASDEFAULT, false);
+		EnableControl(IDC_SETASSPECIFIC, false);
 	}
 }
 
@@ -617,7 +788,10 @@ void ATUIDialogFirmware::OnItemDoubleClicked(VDUIProxyTreeViewControl *sender, b
 void ATUIDialogFirmware::OnItemGetDisplayAttributes(VDUIProxyTreeViewControl *sender, VDUIProxyTreeViewControl::GetDispAttrEvent *event) {
 	FirmwareItem *pItem = static_cast<FirmwareItem *>(event->mpItem);
 
-	event->mbIsBold = pItem->mbCategory;
+	if (pItem)
+		event->mbIsBold = pItem->mbCategory;
+	else
+		event->mbIsMuted = true;
 }
 
 void ATUIDialogFirmware::OnBeginEdit(VDUIProxyTreeViewControl *sender, VDUIProxyTreeViewControl::BeginEditEvent *event) {

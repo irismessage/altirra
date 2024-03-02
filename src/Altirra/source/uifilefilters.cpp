@@ -70,3 +70,20 @@ extern const wchar_t g_ATUIFileFilter_LoadSAP[]=
 
 extern const wchar_t g_ATUIFileFilter_SaveXEX[]=
 			L"Atari program (*.xex)\0*.xex\0";
+
+extern const wchar_t g_ATUIFileFilter_LoadCompatEngine[]=
+			L"Altirra Compat Engine (*.atcpengine)\0*.atcpengine\0";
+
+extern const wchar_t g_ATUIFileFilter_SaveCompatEngine[]=
+			L"Altirra Compat Engine (*.atcpengine)\0*.atcpengine\0"
+			L"All files\0*.*\0";
+
+extern const wchar_t g_ATUIFileFilter_LoadCompatImageFile[]=
+			L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.car;*.rom;*.a52;*.bin;*.zip;*.atz;*.gz;*.arc\0"
+			L"Atari disk image (*.atr,*.xfd,*.dcm)\0*.atr;*.xfd;*.dcm;*.arc\0"
+			L"Protected disk image (*.pro)\0*.pro\0"
+			L"VAPI disk image (*.atx)\0*.atx\0"
+			L"Cartridge (*.rom,*.bin,*.a52,*.car)\0*.rom;*.bin;*.a52;*.car\0"
+			L"Zip archive (*.zip)\0*.zip\0"
+			L"gzip archive (*.gz;*.atz)\0*.gz;*.atz\0"
+			L"All files\0*.*\0";

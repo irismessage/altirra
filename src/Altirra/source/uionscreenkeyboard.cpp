@@ -1,6 +1,6 @@
 #include <stdafx.h>
 #include "uionscreenkeyboard.h"
-#include "uibutton.h"
+#include <at/atuicontrols/uibutton.h>
 #include "uikeyboard.h"
 #include <at/atui/uimanager.h>
 #include "simulator.h"
@@ -172,11 +172,11 @@ void ATUIOnScreenKeyboard::OnCreate() {
 
 		button->BindAction(kATUIVK_UIAccept, ATUIButton::kActionActivate);
 
-		button->OnPressedEvent() = ATBINDCALLBACK(this, &ATUIOnScreenKeyboard::OnButtonPressed);
-		button->OnActivatedEvent() = ATBINDCALLBACK(this, &ATUIOnScreenKeyboard::OnButtonReleased);
+		button->OnPressedEvent() = [i,this] { OnButtonPressed(i); };
+		button->OnActivatedEvent() = [i,this] { OnButtonReleased(i); };
 
 		if (kEntries[i].mbToggle)
-			button->OnHeldEvent() = [=, this](ATUIButton *src, bool state) { OnButtonHeld(src, state, i); };
+			button->OnHeldEvent() = [i, this](bool state) { OnButtonHeld(state, i); };
 
 		switch(entry.mpKeyEntry->mScanCode) {
 			case 0x34:	// backspace
@@ -336,84 +336,72 @@ void ATUIOnScreenKeyboard::OnActionStop(uint32 id) {
 	}
 }
 
-void ATUIOnScreenKeyboard::OnButtonPressed(ATUIButton *src) {
-	for(size_t i=0; i<vdcountof(mButtons); ++i) {
-		if (mButtons[i].mpButton == src) {
-			const KeyEntry& ke = *mButtons[i].mpKeyEntry;
+void ATUIOnScreenKeyboard::OnButtonPressed(uint32 i) {
+	const KeyEntry& ke = *mButtons[i].mpKeyEntry;
 
-			ATPokeyEmulator& pokey = g_sim.GetPokey();
-			ATGTIAEmulator& gtia = g_sim.GetGTIA();
+	ATPokeyEmulator& pokey = g_sim.GetPokey();
+	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
-			switch(ke.mScanCode) {
-				default:
-					pokey.PushRawKey(ke.mScanCode + (pokey.GetControlKeyState() ? 0x80 : 0x00) + (pokey.GetShiftKeyState() ? 0x40 : 0x00), !g_kbdOpts.mbFullRawKeys);
-					break;
-
-				case 0x40:
-					pokey.PushBreak();
-					break;
-
-				case 0x41:
-				case 0x42:
-					break;
-
-				case 0x48:
-					gtia.SetConsoleSwitch(0x01, true);
-					break;
-
-				case 0x49:
-					gtia.SetConsoleSwitch(0x02, true);
-					break;
-
-				case 0x4A:
-					gtia.SetConsoleSwitch(0x04, true);
-					break;
-
-				case 0x4B:
-					g_sim.WarmReset();
-					break;
-			}
+	switch(ke.mScanCode) {
+		default:
+			pokey.PushRawKey(ke.mScanCode + (pokey.GetControlKeyState() ? 0x80 : 0x00) + (pokey.GetShiftKeyState() ? 0x40 : 0x00), !g_kbdOpts.mbFullRawKeys);
 			break;
-		}
+
+		case 0x40:
+			pokey.PushBreak();
+			break;
+
+		case 0x41:
+		case 0x42:
+			break;
+
+		case 0x48:
+			gtia.SetConsoleSwitch(0x01, true);
+			break;
+
+		case 0x49:
+			gtia.SetConsoleSwitch(0x02, true);
+			break;
+
+		case 0x4A:
+			gtia.SetConsoleSwitch(0x04, true);
+			break;
+
+		case 0x4B:
+			g_sim.WarmReset();
+			break;
 	}
 }
 
-void ATUIOnScreenKeyboard::OnButtonReleased(ATUIButton *src) {
-	for(size_t i=0; i<vdcountof(mButtons); ++i) {
-		if (mButtons[i].mpButton == src) {
-			const KeyEntry& ke = *mButtons[i].mpKeyEntry;
+void ATUIOnScreenKeyboard::OnButtonReleased(uint32 i) {
+	const KeyEntry& ke = *mButtons[i].mpKeyEntry;
 
-			ATPokeyEmulator& pokey = g_sim.GetPokey();
-			ATGTIAEmulator& gtia = g_sim.GetGTIA();
+	ATPokeyEmulator& pokey = g_sim.GetPokey();
+	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
-			switch(ke.mScanCode) {
-				case 0x40:
-					break;
-				case 0x43:
-					break;
-				case 0x48:
-					gtia.SetConsoleSwitch(0x01, false);
-					break;
-
-				case 0x49:
-					gtia.SetConsoleSwitch(0x02, false);
-					break;
-
-				case 0x4A:
-					gtia.SetConsoleSwitch(0x04, false);
-					break;
-
-				default:
-					pokey.ReleaseRawKey(ke.mScanCode, !g_kbdOpts.mbFullRawKeys);
-					break;
-			}
-
+	switch(ke.mScanCode) {
+		case 0x40:
 			break;
-		}
+		case 0x43:
+			break;
+		case 0x48:
+			gtia.SetConsoleSwitch(0x01, false);
+			break;
+
+		case 0x49:
+			gtia.SetConsoleSwitch(0x02, false);
+			break;
+
+		case 0x4A:
+			gtia.SetConsoleSwitch(0x04, false);
+			break;
+
+		default:
+			pokey.ReleaseRawKey(ke.mScanCode, !g_kbdOpts.mbFullRawKeys);
+			break;
 	}
 
 	// release any buttons that are toggles -- do this AFTER we've pushed keys
-	ATPokeyEmulator& pokey = g_sim.GetPokey();
 	bool needLabelChange = false;
 
 	if (mbShiftSticky) {
@@ -454,7 +442,7 @@ void ATUIOnScreenKeyboard::OnButtonReleased(ATUIButton *src) {
 		UpdateLabels();
 }
 
-void ATUIOnScreenKeyboard::OnButtonHeld(ATUIButton *btn, bool held, int index) {
+void ATUIOnScreenKeyboard::OnButtonHeld(bool held, int index) {
 	const KeyEntry& ke = *mButtons[index].mpKeyEntry;
 
 	ATPokeyEmulator& pokey = g_sim.GetPokey();

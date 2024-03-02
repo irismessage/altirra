@@ -22,7 +22,7 @@
 #include <at/atcore/devicecio.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceserial.h>
-#include <at/atcore/devicesio.h>
+#include <at/atcore/devicesioimpl.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
@@ -42,7 +42,7 @@ class ATDevicePocketModem final
 	: public ATDevice
 	, public IATDeviceScheduling
 	, public IATDeviceIndicators					
-	, public IATDeviceSIO
+	, public ATDeviceSIO
 	, public IATDeviceRawSIO
 	, public IATSchedulerCallback
 {
@@ -68,13 +68,8 @@ public:	// IATDeviceScheduling
 public:	// IATDeviceIndicators
 	void InitIndicators(IATDeviceIndicatorManager *r) override;
 
-public:	// IATDeviceSIO
+public:	// ATDeviceSIO
 	void InitSIO(IATDeviceSIOManager *mgr) override;
-	CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
-	void OnSerialAbortCommand() override;
-	void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) override;
-	void OnSerialFence(uint32 id) override; 
-	CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
 
 public:	// IATDeviceRawSIO
 	void OnCommandStateChanged(bool asserted) override;
@@ -248,23 +243,6 @@ void ATDevicePocketModem::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr->AddRawDevice(this);
 	mpSIOMgr->SetSIOProceed(this, true);
 	mpSIOMgr->SetSIOInterrupt(this, true);
-}
-
-ATDevicePocketModem::CmdResponse ATDevicePocketModem::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
-	return kCmdResponse_NotHandled;
-}
-
-void ATDevicePocketModem::OnSerialAbortCommand() {
-}
-
-void ATDevicePocketModem::OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) {
-}
-
-void ATDevicePocketModem::OnSerialFence(uint32 id) {
-}
-
-ATDevicePocketModem::CmdResponse ATDevicePocketModem::OnSerialAccelCommand(const ATDeviceSIORequest& request) {
-	return kCmdResponse_NotHandled;
 }
 
 void ATDevicePocketModem::OnCommandStateChanged(bool asserted) {

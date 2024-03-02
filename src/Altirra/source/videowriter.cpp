@@ -12,7 +12,7 @@
 #include <vd2/system/vdalloc.h>
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
-#include <vd2/Riza/audioformat.h>
+#include <at/atio/wav.h>
 #include "videowriter.h"
 #include "audiofilters.h"
 #include "aviwriter.h"
@@ -2173,9 +2173,9 @@ void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w
 	nsVDWinFormats::WaveFormatEx wf;
 	wf.mFormatTag = nsVDWinFormats::kWAVE_FORMAT_PCM;
 	wf.mChannels = mbStereo ? 2 : 1;
-	wf.mSamplesPerSec = 48000;
+	wf.SetSamplesPerSec(48000);
 	wf.mBlockAlign = 2 * wf.mChannels;
-	wf.mAvgBytesPerSec = wf.mSamplesPerSec * wf.mBlockAlign;
+	wf.SetAvgBytesPerSec(48000 * wf.mBlockAlign);
 	wf.mBitsPerSample = 16;
 	wf.mSize = 0;
 
@@ -2187,7 +2187,7 @@ void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w
     hdr.wLanguage				= 0;
     hdr.dwInitialFrames			= 0;
 	hdr.dwScale					= wf.mBlockAlign;
-	hdr.dwRate					= wf.mAvgBytesPerSec;
+	hdr.dwRate					= wf.GetAvgBytesPerSec();
     hdr.dwStart					= 0;
     hdr.dwLength				= 0;
     hdr.dwSuggestedBufferSize	= 0;

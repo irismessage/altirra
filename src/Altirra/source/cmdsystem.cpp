@@ -37,6 +37,7 @@ void ATSyncCPUHistoryState();
 void ATUIUpdateSpeedTiming();
 void ATUISwitchKernel(uint64 id);
 void ATUISwitchBasic(uint64 basicId);
+void ATUIResizeDisplay();
 
 extern ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
@@ -188,6 +189,12 @@ void OnCommandSystemToggleRTime8() {
 		dm->AddDevice("rtime8", ATPropertySet(), false, false);
 }
 
+void OnCommandVideoToggleCTIA() {
+	ATGTIAEmulator& gtia = g_sim.GetGTIA();
+
+	gtia.SetCTIAMode(!gtia.IsCTIAMode());
+}
+
 void OnCommandVideoToggleFrameBlending() {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
@@ -198,12 +205,14 @@ void OnCommandVideoToggleInterlace() {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
 	gtia.SetInterlaceEnabled(!gtia.IsInterlaceEnabled());
+	ATUIResizeDisplay();
 }
 
 void OnCommandVideoToggleScanlines() {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
 	gtia.SetScanlinesEnabled(!gtia.AreScanlinesEnabled());
+	ATUIResizeDisplay();
 }
 
 void OnCommandVideoToggleXEP80() {
@@ -213,6 +222,7 @@ void OnCommandVideoToggleXEP80() {
 void OnCommandVideoToggleVBXE() {
 	g_sim.SetVBXEEnabled(!g_sim.GetVBXE());
 	g_sim.ColdReset();
+	ATUIResizeDisplay();
 }
 
 void OnCommandVideoToggleVBXESharedMemory() {

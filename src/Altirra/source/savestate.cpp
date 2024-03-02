@@ -21,8 +21,6 @@
 #include <vd2/system/VDString.h>
 #include "savestate.h"
 
-extern const uint8 kATSaveStateHeader[12]={'A', 'l', 't', 'S', 'a', 'v', 'e', 0x0D, 0x0A, 0x1A, 0x00, 0x80 };
-
 ///////////////////////////////////////////////////////////////////////////
 
 ATInvalidSaveStateException::ATInvalidSaveStateException()

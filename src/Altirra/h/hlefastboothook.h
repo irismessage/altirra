@@ -20,7 +20,7 @@
 
 class ATHLEFastBootHook;
 
-ATHLEFastBootHook *ATCreateHLEFastBootHook(ATCPUEmulator *cpu, const uint8 *lowerROM, const uint8 *upperROM);
+ATHLEFastBootHook *ATCreateHLEFastBootHook(ATCPUEmulator *cpu);
 void ATDestroyHLEFastBootHook(ATHLEFastBootHook *hook);
 
 #endif	// f_AT_HLEFASTBOOTHOOK_H

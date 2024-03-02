@@ -14,6 +14,21 @@
 #include <vd2/Riza/bitmap.h>
 #include "encode_png.h"
 
+const void *ATLockResource(uint32 id, size_t& size) {
+	HMODULE hmod = VDGetLocalModuleHandleW32();
+
+	HRSRC hrsrc = FindResourceA(hmod, MAKEINTRESOURCEA(id), "STUFF");
+	if (!hrsrc)
+		return false;
+
+	size = SizeofResource(hmod, hrsrc);
+
+	HGLOBAL hg = LoadResource(hmod, hrsrc);
+	const void *p = LockResource(hg);
+
+	return p;
+}
+
 bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size, bool allowPartial) {
 	HMODULE hmod = VDGetLocalModuleHandleW32();
 
@@ -233,6 +248,31 @@ void ATCopyTextToClipboard(void *hwnd, const char *s) {
 	}
 }
 
+void ATCopyTextToClipboard(void *hwnd, const wchar_t *s) {
+	if (!::OpenClipboard((HWND)hwnd))
+		return;
+
+	if (::EmptyClipboard()) {
+		HANDLE hMem;
+		void *lpvMem;
+
+		size_t len = wcslen(s);
+
+		if (hMem = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, (len + 1) * sizeof(WCHAR))) {
+			if (lpvMem = ::GlobalLock(hMem)) {
+				memcpy(lpvMem, s, (len + 1) * sizeof(WCHAR));
+
+				::GlobalUnlock(lpvMem);
+				::SetClipboardData(CF_UNICODETEXT, hMem);
+				::CloseClipboard();
+				return;
+			}
+			::GlobalFree(hMem);
+		}
+	}
+	::CloseClipboard();
+}
+
 namespace {
 	struct ATUISavedWindowPlacement {
 		sint32 mLeft;
@@ -245,22 +285,36 @@ namespace {
 }
 
 void ATUISaveWindowPlacement(void *hwnd, const char *name) {
-	VDRegistryAppKey key("Window Placement");
-
 	WINDOWPLACEMENT wp = {sizeof(WINDOWPLACEMENT)};
 
 	if (GetWindowPlacement((HWND)hwnd, &wp)) {
-		ATUISavedWindowPlacement sp = {0};
-		sp.mLeft	= wp.rcNormalPosition.left;
-		sp.mTop		= wp.rcNormalPosition.top;
-		sp.mRight	= wp.rcNormalPosition.right;
-		sp.mBottom	= wp.rcNormalPosition.bottom;
-		sp.mbMaximized = (wp.showCmd == SW_MAXIMIZE);
-		key.setBinary(name, (const char *)&sp, sizeof sp);
+		ATUISaveWindowPlacement(name,
+			vdrect32 {
+				wp.rcNormalPosition.left,
+				wp.rcNormalPosition.top,
+				wp.rcNormalPosition.right,
+				wp.rcNormalPosition.bottom,
+			},
+			wp.showCmd == SW_MAXIMIZE);
 	}
 }
 
-void ATUIRestoreWindowPlacement(void *hwnd, const char *name, int nCmdShow) {
+void ATUISaveWindowPlacement(const char *name, const vdrect32& r, bool isMaximized) {
+	VDRegistryAppKey key("Window Placement");
+
+	ATUISavedWindowPlacement sp {};
+	sp.mLeft	= r.left;
+	sp.mTop		= r.top;
+	sp.mRight	= r.right;
+	sp.mBottom	= r.bottom;
+	sp.mbMaximized = isMaximized;
+	key.setBinary(name, (const char *)&sp, sizeof sp);
+}
+
+void ATUIRestoreWindowPlacement(void *hwnd, const char *name, int nCmdShow, bool sizeOnly) {
+	if (nCmdShow < 0)
+		nCmdShow = SW_SHOW;
+
 	if (!IsZoomed((HWND)hwnd) && !IsIconic((HWND)hwnd)) {
 		VDRegistryAppKey key("Window Placement");
 		ATUISavedWindowPlacement sp = {0};
@@ -278,10 +332,16 @@ void ATUIRestoreWindowPlacement(void *hwnd, const char *name, int nCmdShow) {
 				wp.length			= sizeof(WINDOWPLACEMENT);
 				wp.flags			= 0;
 				wp.showCmd			= nCmdShow;
-				wp.rcNormalPosition.left = sp.mLeft;
-				wp.rcNormalPosition.top = sp.mTop;
-				wp.rcNormalPosition.right = sp.mRight;
-				wp.rcNormalPosition.bottom = sp.mBottom;
+
+				if (sizeOnly) {
+					wp.rcNormalPosition.right = wp.rcNormalPosition.left + (sp.mRight - sp.mLeft);
+					wp.rcNormalPosition.bottom = wp.rcNormalPosition.top + (sp.mBottom - sp.mTop);
+				} else {
+					wp.rcNormalPosition.left = sp.mLeft;
+					wp.rcNormalPosition.top = sp.mTop;
+					wp.rcNormalPosition.right = sp.mRight;
+					wp.rcNormalPosition.bottom = sp.mBottom;
+				}
 
 				if ((wp.showCmd == SW_SHOW || wp.showCmd == SW_SHOWNORMAL || wp.showCmd == SW_SHOWDEFAULT) && sp.mbMaximized)
 					wp.showCmd = SW_SHOWMAXIMIZED;

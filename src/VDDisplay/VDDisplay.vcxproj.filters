@@ -96,13 +96,13 @@
     <ClCompile Include="source\displaydrvgl.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\displayd3dfx.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\minid3dx.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\customshaderd3d9.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\fontbitmap.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -170,13 +170,13 @@
     <ClInclude Include="..\h\vd2\VDDisplay\opengl.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\d3dxfx.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="..\h\vd2\VDDisplay\minid3dx.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\vd2\VDDisplay\internal\customshaderd3d9.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\vd2\VDDisplay\internal\fontbitmap.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -211,16 +211,10 @@
     <None Include="shaders\displayd3d9_stddefs.fxh">
       <Filter>Shader Source Files</Filter>
     </None>
-    <None Include="shaders\displayd3d9_ff.fxh">
-      <Filter>Shader Source Files</Filter>
-    </None>
     <None Include="shaders\displayd3d9_ps1.fxh">
       <Filter>Shader Source Files</Filter>
     </None>
     <None Include="shaders\displayd3d9_ps2.fxh">
-      <Filter>Shader Source Files</Filter>
-    </None>
-    <None Include="shaders\displayd3d9_ps14.fxh">
       <Filter>Shader Source Files</Filter>
     </None>
     <None Include="autogen\displayd3d9_shader.inl">

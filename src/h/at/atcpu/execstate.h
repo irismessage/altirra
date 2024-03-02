@@ -25,8 +25,8 @@
 
 #include <vd2/system/vdtypes.h>
 
-struct ATCPUExecState {
-	// 6502/65C02/65802/65816
+// 6502/65C02/65802/65816
+struct ATCPUExecState6502 {
 	uint16	mPC;
 	uint8	mA;
 	uint8	mX;
@@ -42,7 +42,72 @@ struct ATCPUExecState {
 	uint8	mB;
 	uint8	mK;
 	uint16	mDP;
+
 	bool	mbEmulationFlag;
+	bool	mbAtInsnStep;
+};
+
+struct ATCPUExecStateZ80 {
+	uint16	mPC;
+	uint8	mA;
+	uint8	mF;
+	uint8	mB;
+	uint8	mC;
+	uint8	mD;
+	uint8	mE;
+	uint8	mH;
+	uint8	mL;
+	uint8	mAltA;
+	uint8	mAltF;
+	uint8	mAltB;
+	uint8	mAltC;
+	uint8	mAltD;
+	uint8	mAltE;
+	uint8	mAltH;
+	uint8	mAltL;
+	uint8	mR;
+	uint8	mI;
+	uint16	mIX;
+	uint16	mIY;
+	uint16	mSP;
+
+	bool	mbIFF1;
+	bool	mbIFF2;
+	bool	mbAtInsnStep;
+};
+
+struct ATCPUExecState8048 {
+	uint16	mPC;
+	uint8	mA;
+	uint8	mPSW;
+	bool	mbF1;
+	bool	mbTF;
+	bool	mbIF;
+	uint8	mP1;
+	uint8	mP2;
+	uint8	mReg[2][8];
+};
+
+struct ATCPUExecState6809 {
+	uint16	mPC;
+	uint8	mA;
+	uint8	mB;
+	uint16	mX;
+	uint16	mY;
+	uint16	mS;
+	uint16	mU;
+	uint8	mCC;
+	uint8	mDP;
+	bool	mbAtInsnStep;
+};
+
+struct ATCPUExecState {
+	union {
+		ATCPUExecState6502 m6502;
+		ATCPUExecStateZ80 mZ80;
+		ATCPUExecState8048 m8048;
+		ATCPUExecState6809 m6809;
+	};
 };
 
 #endif

@@ -32,7 +32,7 @@ namespace {
 		CrtBlockHeader *pNext, *pPrev;
 		const char *pFilename;
 		int			line;
-#ifdef VD_CPU_AMD64
+#if defined(VD_CPU_AMD64) || _MSC_VER >= 1600		// VC14/UCRT uses this layout regardless
 		int			type;
 		size_t		size;
 #else
@@ -256,7 +256,7 @@ void ATDumpMemoryLeaksVC() {
 	dbghelp.pSymInitialize(hProc, NULL, FALSE);
 
 	TCHAR filename[MAX_PATH], path[MAX_PATH];
-	GetModuleFileName(NULL, filename, sizeof filename);
+	GetModuleFileName(NULL, filename, vdcountof(filename));
 
 	_tcscpy(path, filename);
 	*VDFileSplitPath(path) = 0;

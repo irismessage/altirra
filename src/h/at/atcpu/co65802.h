@@ -25,25 +25,6 @@ struct ATCPUExecState;
 struct ATCPUHistoryEntry;
 class IATCPUBreakpointHandler;
 
-struct ATCoProcReadMemNode {
-	uint8 (*mpRead)(uint32 addr, void *thisptr);
-	uint8 (*mpDebugRead)(uint32 addr, void *thisptr);
-	void *mpThis;
-
-	uintptr AsBase() const {
-		return (uintptr)this + 1;
-	}
-};
-
-struct ATCoProcWriteMemNode {
-	void (*mpWrite)(uint32 addr, uint8 val, void *thisptr);
-	void *mpThis;
-
-	uintptr AsBase() const {
-		return (uintptr)this + 1;
-	}
-};
-
 class ATCoProc65802 {
 public:
 	ATCoProc65802();
@@ -60,6 +41,7 @@ public:
 	void SetExecState(const ATCPUExecState& state);
 
 	uint16 GetS() const { return ((uint16)mSH << 8) + mS; }
+	void SetV() { mExtraFlags = (ExtraFlags)(mExtraFlags | kExtraFlag_SetV); }
 
 	void SetBreakpointMap(const bool bpMap[65536], IATCPUBreakpointHandler *bphandler);
 
@@ -74,6 +56,7 @@ private:
 	inline uint8 DebugReadByteSlow(uintptr base, uint32 addr);
 	inline uint8 ReadByteSlow(uintptr base, uint32 addr);
 	inline void WriteByteSlow(uintptr base, uint32 addr, uint8 value);
+	void DoExtra();
 	bool CheckBreakpoint();
 	void UpdateDecodeTable();
 	const uint8 *RegenerateDecodeTables();
@@ -87,41 +70,46 @@ private:
 		kSubModeCount
 	};
 
-	SubMode		mSubMode;
+	enum ExtraFlags : uint8 {
+		kExtraFlag_SetV = 0x01
+	};
 
-	uint8		mA;
-	uint8		mAH;
-	uint8		mP;
-	bool		mbEmulationFlag;
-	uint8		mX;
-	uint8		mXH;
-	uint8		mY;
-	uint8		mYH;
-	uint8		mS;
-	uint8		mSH;
-	uint16		mDP;
-	uint8		mB;
-	uint8		mK;
-	uint8		mData;
-	uint16		mData16;
-	uint16		mAddr;
-	uint16		mAddr2;
-	uint8		mAddrBank;
-	uint16		mPC;
-	uint16		mInsnPC;
-	sint32		mCyclesLeft;
-	uint32		mCyclesBase;
+	SubMode		mSubMode = {};
+	ExtraFlags	mExtraFlags = {};
+
+	uint8		mA = 0;
+	uint8		mAH = 0;
+	uint8		mP = 0;
+	bool		mbEmulationFlag = false;
+	uint8		mX = 0;
+	uint8		mXH = 0;
+	uint8		mY = 0;
+	uint8		mYH = 0;
+	uint8		mS = 0;
+	uint8		mSH = 0;
+	uint16		mDP = 0;
+	uint8		mB = 0;
+	uint8		mK = 0;
+	uint8		mData = 0;
+	uint16		mData16 = 0;
+	uint16		mAddr = 0;
+	uint16		mAddr2 = 0;
+	uint8		mAddrBank = 0;
+	uint16		mPC = 0;
+	uint16		mInsnPC = 0;
+	sint32		mCyclesLeft = 0;
+	uint32		mCyclesBase = 0;
 	const uint8	*mpNextState = nullptr;
 	const uint16 *mpDecodePtrs = nullptr;
 	const bool	*mpBreakpointMap = nullptr;
 	IATCPUBreakpointHandler *mpBreakpointHandler = nullptr;
 	ATCPUHistoryEntry *mpHistory = nullptr;
-	uint32		mHistoryIndex;
+	uint32		mHistoryIndex = 0;
 
-	uintptr		mReadMap[256];
-	uintptr		mWriteMap[256];
+	uintptr		mReadMap[256] = {};
+	uintptr		mWriteMap[256] = {};
 
-	ATCPUDecoderTables65816 mDecoderTables;
+	ATCPUDecoderTables65816 mDecoderTables {};
 
 	static const uint8 kInitialState;
 	static const uint8 kInitialStateNoBreak;

@@ -74,7 +74,7 @@ public:
 
 	void TryAccelPBIRequest();
 
-	bool TryAccelRequest(const ATSIORequest& req, bool isDSKINV);
+	bool TryAccelRequest(const ATSIORequest& req);
 
 public:
 	virtual void PokeyAttachDevice(ATPokeyEmulator *pokey) override;
@@ -102,10 +102,13 @@ public:
 	virtual bool IsAccelRequest() const override { return mpAccelRequest != nullptr; }
 	virtual uint32 GetAccelTimeSkew() const override { return mAccelTimeSkew; }
 	virtual sint32 GetHighSpeedIndex() const override { return 10; }
+	virtual uint32 GetCyclesPerBitRecv() const override;
+	virtual uint32 GetRecvResetCounter() const override;
 
 	virtual void AddRawDevice(IATDeviceRawSIO *dev) override;
 	virtual void RemoveRawDevice(IATDeviceRawSIO *dev) override;
-	virtual void SendRawByte(uint8 byte, uint32 cyclesPerBit) override;
+	virtual void SendRawByte(uint8 byte, uint32 cyclesPerBit, bool synchronous, bool forceFramingError, bool simulateInput) override;
+	virtual void SetRawInput(bool input) override;
 
 	bool IsSIOCommandAsserted() const override;
 	bool IsSIOMotorAsserted() const override;
@@ -152,6 +155,7 @@ private:
 	uint32	mTransferStart = 0;		// Starting offset for current transfer.
 	uint32	mTransferIndex = 0;		// Next byte to send/receive for current transfer.
 	uint32	mTransferEnd = 0;		// Stopping offset for current transfer.
+	uint32	mTransferBurstOffset = 0;
 	uint32	mTransferCyclesPerBit = 0;
 	uint32	mTransferCyclesPerBitRecvMin = 0;
 	uint32	mTransferCyclesPerBitRecvMax = 0;

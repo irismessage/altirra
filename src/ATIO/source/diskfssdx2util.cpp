@@ -21,13 +21,13 @@
 extern const uint8 kATSDFSBootSector0[128]={
 	0x00,
 	0x03,		// +1	number of boot sectors
-	0x00,		// +2	load address low ($0700)
+	0x00,		// +2	load address low ($3000)
 	0x07,		// +3	load address high
 	0x40,		// +4	init address low ($0740)
 	0x07,		// +5	init address high
-	0x4C,		// +6	launch address (JMP)
+	0x4C,		// +6	launch address (JMP) -- must be JMP $3080 or $0440 to be recognized by IDE+2 EXE loader
 	0x80,		// +7	signature byte
-	0x07,		// +8
+	0x30,		// +8
 	0x44,		// +9	root directory sector map low (vsec 68)
 	0x00,		// +10	root directory sector map high
 	0xfe,		// +11	total sector count low (65535)
@@ -91,6 +91,8 @@ extern const uint8 kATSDFSBootSector0[128]={
 };
 
 extern const uint8 kATSDFSBootSector1[128]={
-	0x38,	// SEC
-	0x60	// RTS
+	0xA9,0x60,		// LDA #$60
+	0x8D,0x40,0x07,	// STA $0740
+	0x38,			// SEC
+	0x60			// RTS
 };

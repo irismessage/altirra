@@ -397,7 +397,9 @@ public:
 	vdrect32 GetScissorRect();
 	void SetScissorRect(const vdrect32& r);
 
+	void SetVertexProgramConstCount(uint32 count);
 	void SetVertexProgramConstF(uint32 baseIndex, uint32 count, const float *data);
+	void SetFragmentProgramConstCount(uint32 count);
 	void SetFragmentProgramConstF(uint32 baseIndex, uint32 count, const float *data);
 
 	void Clear(VDTClearFlags clearFlags, uint32 color, float depth, uint32 stencil);

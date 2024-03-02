@@ -56,9 +56,13 @@ ATUIWindowCaptionUpdater::ATUIWindowCaptionUpdater() {
 ATUIWindowCaptionUpdater::~ATUIWindowCaptionUpdater() {
 }
 
-void ATUIWindowCaptionUpdater::Init(ATSimulator *sim, const vdfunction<void(const wchar_t *)>& fn) {
-	mpSim = sim;
+void ATUIWindowCaptionUpdater::Init(const vdfunction<void(const wchar_t *)>& fn) {
 	mpUpdateFn = fn;
+	mpUpdateFn(mBasePrefix.c_str());
+}
+
+void ATUIWindowCaptionUpdater::InitMonitoring(ATSimulator *sim) {
+	mpSim = sim;
 
 	CheckForStateChange(true);
 }
@@ -91,6 +95,9 @@ void ATUIWindowCaptionUpdater::Update(bool running, int ticks, float fps, float 
 }
 
 void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
+	if (!mpSim)
+		return;
+
 	bool change = false;
 
 	DetectChange(change, mbTemporaryProfile, ATSettingsGetTemporaryProfileMode());

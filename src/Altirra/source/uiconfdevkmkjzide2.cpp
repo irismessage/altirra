@@ -49,7 +49,7 @@ bool ATUIDialogDeviceKMKJZIDE2::OnLoaded() {
 	mComboVersion.AddItem(L"Rev. E");
 
 	for(uint32 i=0; i<8; ++i) {
-		const wchar_t idstr[] = { L'0' + i, 0 };
+		const wchar_t idstr[] = { (wchar_t)(L'0' + i), 0 };
 
 		mComboId.AddItem(idstr);
 	}

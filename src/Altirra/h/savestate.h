@@ -27,8 +27,6 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vdstl_hashmap.h>
 
-extern const uint8 kATSaveStateHeader[12];
-
 enum ATSaveStateSection {
 	// architectural state
 	kATSaveStateSection_Arch,

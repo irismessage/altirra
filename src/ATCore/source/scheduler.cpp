@@ -18,9 +18,16 @@
 #include <stdafx.h>
 #include <at/atcore/scheduler.h>
 
+//#define TRACK_VTABLES
+
 class ATEvent : public ATEventLink {
 public:
 	IATSchedulerCallback *mpCB;
+
+#ifdef TRACK_VTABLES
+	void *mpVtbl;
+#endif
+
 	uint32 mId;
 	uint32 mNextTime;
 };
@@ -28,6 +35,7 @@ public:
 ATScheduler::ATScheduler()
 	: mNextEventCounter(0U-1000)
 	, mTimeBase(0xFFF00000 + 1000)
+	, mTick64Floor(mTimeBase)
 	, mpFreeEvents(NULL)
 {
 	mActiveEvents.mpNext = mActiveEvents.mpPrev = &mActiveEvents;
@@ -106,6 +114,10 @@ ATEvent *ATScheduler::AddEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id
 	ev->mpCB = cb;
 	ev->mId = id;
 	ev->mNextTime = t + ticks;
+
+#ifdef TRACK_VTABLES
+	ev->mpVtbl = *(void **)cb;
+#endif
 
 	ATEventLink *it = mActiveEvents.mpNext;
 	for(; it != &mActiveEvents; it = it->mpNext) {
