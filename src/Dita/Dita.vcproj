@@ -329,6 +329,10 @@
 			Filter="cpp;c;cxx;rc;def;r;odl;idl;hpj;bat"
 			>
 			<File
+				RelativePath=".\source\accel.cpp"
+				>
+			</File>
+			<File
 				RelativePath="source\basetypes.cpp"
 				>
 				<FileConfiguration
@@ -581,6 +585,10 @@
 		<Filter
 			Name="Win32 Source Files"
 			>
+			<File
+				RelativePath=".\source\w32accel.cpp"
+				>
+			</File>
 			<File
 				RelativePath="source\w32base.cpp"
 				>
@@ -1030,6 +1038,10 @@
 			Name="Win32 Header Files"
 			>
 			<File
+				RelativePath="..\h\vd2\Dita\w32accel.h"
+				>
+			</File>
+			<File
 				RelativePath="..\h\vd2\Dita\w32base.h"
 				>
 			</File>
@@ -1045,6 +1057,10 @@
 		<Filter
 			Name="Interface files"
 			>
+			<File
+				RelativePath="..\h\vd2\Dita\accel.h"
+				>
+			</File>
 			<File
 				RelativePath="..\h\vd2\Dita\basetypes.h"
 				>

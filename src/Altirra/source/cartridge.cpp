@@ -213,19 +213,22 @@ void ATCartridgeEmulator::Load(const wchar_t *s) {
 	mCartBank2 = mInitialCartBank2;
 
 	mCARTROM.resize(allocSize, 0);
+	mImagePath = s;
 }
 
 void ATCartridgeEmulator::Unload() {
 	mInitialCartBank = 0;
 	mCartBank = 0;
 	mCartMode = kATCartridgeMode_None;
+
+	mImagePath.clear();
 }
 
 void ATCartridgeEmulator::ColdReset() {
 	mCartBank = mInitialCartBank;
 }
 
-bool ATCartridgeEmulator::WriteMemoryMap89(const uint8 **readMap, uint8 **writeMap, const uint8 *dummyReadPage, uint8 *dummyWritePage) {
+bool ATCartridgeEmulator::WriteMemoryMap89(const uint8 **readMap, uint8 **writeMap, const uint8 **anticMap, const uint8 *dummyReadPage, uint8 *dummyWritePage) {
 	if (mCartBank < 0)
 		return false;
 
@@ -237,7 +240,7 @@ bool ATCartridgeEmulator::WriteMemoryMap89(const uint8 **readMap, uint8 **writeM
 			{
 				const uint8 *cartbase = mCARTROM.data() + 0x2000 * mCartBank;
 				for(int i=0; i<32; ++i) {
-					readMap[i] = cartbase + (i << 8);
+					anticMap[i] = readMap[i] = cartbase + (i << 8);
 					writeMap[i] = dummyWritePage;
 				}
 			}
@@ -247,7 +250,7 @@ bool ATCartridgeEmulator::WriteMemoryMap89(const uint8 **readMap, uint8 **writeM
 			{
 				const uint8 *cartbase = mCARTROM.data() + 0x4000 * mCartBank;
 				for(int i=0; i<32; ++i) {
-					readMap[i] = cartbase + (i << 8);
+					anticMap[i] = readMap[i] = cartbase + (i << 8);
 					writeMap[i] = dummyWritePage;
 				}
 			}
@@ -259,8 +262,8 @@ bool ATCartridgeEmulator::WriteMemoryMap89(const uint8 **readMap, uint8 **writeM
 				const uint8 *cartbase2 = mCARTROM.data() + 0x4000 + 0x1000 * mCartBank2;
 
 				for(int i=0; i<15; ++i) {
-					readMap[i] = cartbase1 + (i << 8);
-					readMap[i+16] = cartbase2 + (i << 8);
+					anticMap[i] = readMap[i] = cartbase1 + (i << 8);
+					anticMap[i+16] = readMap[i+16] = cartbase2 + (i << 8);
 					writeMap[i] = dummyWritePage;
 					writeMap[i+16] = dummyWritePage;
 				}
@@ -276,7 +279,7 @@ bool ATCartridgeEmulator::WriteMemoryMap89(const uint8 **readMap, uint8 **writeM
 	return false;
 }
 
-bool ATCartridgeEmulator::WriteMemoryMapAB(const uint8 **readMap, uint8 **writeMap, const uint8 *dummyReadPage, uint8 *dummyWritePage) {
+bool ATCartridgeEmulator::WriteMemoryMapAB(const uint8 **readMap, uint8 **writeMap, const uint8 **anticMap, const uint8 *dummyReadPage, uint8 *dummyWritePage) {
 	if (!mCartMode || mCartBank < 0)
 		return false;
 
@@ -316,7 +319,7 @@ bool ATCartridgeEmulator::WriteMemoryMapAB(const uint8 **readMap, uint8 **writeM
 				const uint8 *cartbase = mCARTROM.data() + 0x8000;
 
 				for(int i=0; i<32; ++i) {
-					readMap[i] = cartbase + (i << 8);
+					anticMap[i] = readMap[i] = cartbase + (i << 8);
 					writeMap[i] = dummyWritePage;
 				}
 			}
@@ -324,7 +327,7 @@ bool ATCartridgeEmulator::WriteMemoryMapAB(const uint8 **readMap, uint8 **writeM
 	}
 
 	for(int i=0; i<32; ++i) {
-		readMap[i] = cartbase + (i << 8);
+		anticMap[i] = readMap[i] = cartbase + (i << 8);
 		writeMap[i] = dummyWritePage;
 	}
 

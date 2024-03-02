@@ -58,11 +58,12 @@ BEGIN
     BEGIN
         MENUITEM "&Boot Image...\tAlt+B",       ID_FILE_BOOTIMAGE
         MENUITEM "&Open Image...\tAlt+O",       ID_FILE_OPENIMAGE
-        MENUITEM "Dis&k Drives...",             ID_FILE_DISKDRIVES
+        MENUITEM "Dis&k Drives...\tAlt+Shift+D", ID_FILE_DISKDRIVES
         POPUP "Cassette"
         BEGIN
             MENUITEM "Load...",                     ID_CASSETTE_LOAD
             MENUITEM "&Unload",                     ID_CASSETTE_UNLOAD
+            MENUITEM "Tape Control...",             ID_CASSETTE_TAPECONTROL
         END
         MENUITEM SEPARATOR
         MENUITEM "Quick load state",            ID_FILE_QUICKLOADSTATE
@@ -89,6 +90,19 @@ BEGIN
             MENUITEM "Bicubic",                     ID_FILTERMODE_BICUBIC
             MENUITEM "Any Suitable",                ID_FILTERMODE_ANYSUITABLE
         END
+        POPUP "&Stretch Mode"
+        BEGIN
+            MENUITEM "&Fit to Window",              ID_STRETCHMODE_FITTOWINDOW
+            MENUITEM "&Preserve Aspect Ratio",      ID_STRETCHMODE_PRESERVEASPECTRATIO
+            MENUITEM "&Square Pixels",              ID_STRETCHMODE_SQUAREPIXELS
+            MENUITEM "&Integral Square Pixels",     ID_STRETCHMODE_INTEGRALSQUAREPIXELS
+        END
+        POPUP "&Overscan Mode"
+        BEGIN
+            MENUITEM "&Normal",                     ID_OVERSCAN_NORMAL
+            MENUITEM "&Extended",                   ID_OVERSCAN_EXTENDED
+            MENUITEM "&Full",                       ID_OVERSCAN_FULL
+        END
         POPUP "&GTIA Visualization"
         BEGIN
             MENUITEM "&Next Mode\tCtrl+F8",         ID_GTIAVISUALIZATION_NEXTMODE
@@ -97,8 +111,10 @@ BEGIN
         BEGIN
             MENUITEM "&Next Mode\tShift+F8",        ID_ANTICVISUALIZATION_NEXTMODE
         END
+        MENUITEM "Show FPS",                    ID_VIEW_SHOWFPS
         MENUITEM SEPARATOR
         MENUITEM "&Display\tAlt+1",             ID_VIEW_DISPLAY
+        MENUITEM "&Printer Output\tAlt+8",      ID_VIEW_PRINTEROUTPUT
         MENUITEM "Reset Window Layout",         ID_VIEW_RESETWINDOWLAYOUT
         MENUITEM SEPARATOR
         MENUITEM "Copy Frame To Clipboard\tAlt+C", ID_VIEW_COPYFRAMETOCLIPBOARD
@@ -122,6 +138,7 @@ BEGIN
             MENUITEM "800 (OS-A)",                  ID_FIRMWARE_OSA
             MENUITEM "800 (OS-B)",                  ID_FIRMWARE_OSB
             MENUITEM "600XL/800XL",                 40091
+            MENUITEM "Other",                       ID_FIRMWARE_OTHER
             MENUITEM "HLE Kernel",                  ID_FIRMWARE_HLE
             MENUITEM "LLE Kernel",                  ID_FIRMWARE_LLE
             MENUITEM SEPARATOR
@@ -140,14 +157,20 @@ BEGIN
         POPUP "&Video"
         BEGIN
             MENUITEM "&PAL",                        ID_SYSTEM_PAL
+            MENUITEM "&Frame Blending",             ID_VIDEO_FRAMEBLENDING
+            MENUITEM "&Interlace",                  ID_VIDEO_INTERLACE
             MENUITEM SEPARATOR
-            MENUITEM "No artifacting",              ID_VIDEO_NOARTIFACTING
+            MENUITEM "VB&XE (FX1.20 core)",         ID_VIDEO_VBXE
+            MENUITEM "Use VBXE memory for expansion", ID_VIDEO_VBXESHAREDMEMORY
+            MENUITEM SEPARATOR
+            MENUITEM "No Artifacting",              ID_VIDEO_NOARTIFACTING
             MENUITEM "NTSC &Artifacting",           ID_VIDEO_NTSCARTIFACTING
             MENUITEM "PA&L Artifacting",            ID_VIDEO_PALARTIFACTING
             MENUITEM SEPARATOR
             MENUITEM "Standard Video Only",         ID_VIDEO_STANDARDVIDEO
             MENUITEM "Enhanced Text (Hardware Intercept)", ID_VIDEO_ENHANCEDTEXT
             MENUITEM SEPARATOR
+            MENUITEM "Adjust Colors...",            ID_VIDEO_ADJUSTCOLORS
             MENUITEM "Enhanced Text Font...",       ID_VIDEO_ENHANCEDTEXTFONT
         END
         POPUP "&Disk Drive"
@@ -155,8 +178,13 @@ BEGIN
             MENUITEM "&Enabled",                    ID_DISKDRIVE_ENABLED
             MENUITEM SEPARATOR
             MENUITEM "&SIO Patch",                  ID_DISKDRIVE_SIOPATCH
-            MENUITEM "&Burst SIO Transfer",         ID_DISKDRIVE_BURSTSIOTRANSFER
             MENUITEM "&Accurate Sector Timing",     ID_DISKDRIVE_ACCURATESECTORTIMING
+            MENUITEM SEPARATOR
+            MENUITEM "No burst transfers",          ID_DISKDRIVE_BURSTDISABLED
+            MENUITEM "Burst (standard)",            ID_DISKDRIVE_BURSTSTANDARD
+            MENUITEM "Burst (polled / SDX compatible)", ID_DISKDRIVE_BURSTPOLLED
+            MENUITEM SEPARATOR
+            MENUITEM "Show Sector &Counter",        ID_DISKDRIVE_SHOWSECTORCOUNTER
         END
         MENUITEM "Ha&rd Disk...",               ID_SYSTEM_HARDDISK
         POPUP "&Cassette"
@@ -169,24 +197,33 @@ BEGIN
         MENUITEM "Accelerated Floating-Point",  ID_SYSTEM_FPPATCH
         POPUP "Audio"
         BEGIN
-            MENUITEM "Stereo",                      ID_AUDIO_STEREO
+            MENUITEM "&Stereo",                     ID_AUDIO_STEREO
+            MENUITEM SEPARATOR
+            MENUITEM "&Options...",                 ID_AUDIO_OPTIONS
         END
+        MENUITEM "&Printer",                    ID_SYSTEM_PRINTER
+        MENUITEM "&R-Time 8",                   ID_SYSTEM_RTIME8
     END
     POPUP "&Input"
     BEGIN
+        MENUITEM "Input Mappings...",           ID_INPUT_INPUTMAPPINGS
+        MENUITEM SEPARATOR
         POPUP "Port &1"
         BEGIN
-            MENUITEM "&None",                       ID_PORT1_NONE
-            MENUITEM "&Joystick (keyboard arrows)\tShift+F1", ID_PORT1_JOYSTICK
-            MENUITEM "&Paddle (mouse)",             ID_PORT1_PADDLE
+            MENUITEM "&None",                       ID_INPUT_PORT1_NONE
         END
         POPUP "Port &2"
         BEGIN
-            MENUITEM "&None",                       ID_PORT2_NONE
-            MENUITEM "&Joystick (keyboard arrows)", ID_PORT2_JOYSTICK
-            MENUITEM "&Mouse",                      ID_PORT2_MOUSE
+            MENUITEM "&None",                       ID_INPUT_PORT2_NONE
         END
-        MENUITEM "&Swap Port Assignments\tAlt+F1", ID_INPUT_SWAPPORTASSIGNMENTS
+        POPUP "Port &3"
+        BEGIN
+            MENUITEM "&None",                       ID_INPUT_PORT3_NONE
+        END
+        POPUP "Port &4"
+        BEGIN
+            MENUITEM "&None",                       ID_INPUT_PORT4_NONE
+        END
     END
     POPUP "&Cheat"
     BEGIN
@@ -196,7 +233,7 @@ BEGIN
     POPUP "&Debug"
     BEGIN
         MENUITEM "Enable Debugger",             ID_DEBUG_ENABLEDEBUGGER
-        MENUITEM "Open Source File...\tCtrl+Shift+O", ID_DEBUG_OPENSOURCE
+        MENUITEM "Open Source File...\tAlt+Shift+O", ID_DEBUG_OPENSOURCE
         POPUP "&Window"
         BEGIN
             MENUITEM "&Console\tAlt+2",             ID_VIEW_CONSOLE
@@ -233,13 +270,17 @@ END
 
 IDR_DEBUGGER_MENU MENU 
 BEGIN
-    MENUITEM "&Debug",                      65535
+    POPUP "Context"
+    BEGIN
+        MENUITEM "Clear All",                   ID_CONTEXT_CLEARALL
+    END
 END
 
 IDR_SOURCE_CONTEXT_MENU MENU 
 BEGIN
     POPUP "Context"
     BEGIN
+        MENUITEM "Show Next Statement",         ID_CONTEXT_SHOWNEXTSTATEMENT
         MENUITEM "Go to Disassembly",           ID_CONTEXT_GOTODISASSEMBLY
         MENUITEM SEPARATOR
         MENUITEM "Set Next Statement",          ID_CONTEXT_SETNEXTSTATEMENT
@@ -261,6 +302,25 @@ BEGIN
     END
 END
 
+IDR_COLOR_PRESETS_MENU MENU 
+BEGIN
+    POPUP "Context Menu"
+    BEGIN
+        MENUITEM "Original",                    ID_COLORS_ORIGINAL
+        MENUITEM "Alternate",                   ID_COLORS_ALTERNATE
+        MENUITEM "Authentic NTSC",              ID_COLORS_AUTHENTICNTSC
+    END
+END
+
+IDR_MEMORY_CONTEXT_MENU MENU 
+BEGIN
+    POPUP "Context"
+    BEGIN
+        MENUITEM "Toggle Read Breakpoint",      ID_CONTEXT_TOGGLEREADBREAKPOINT
+        MENUITEM "Toggle Write Breakpoint",     ID_CONTEXT_TOGGLEWRITEBREAKPOINT
+    END
+END
+
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -279,6 +339,8 @@ END
 
 IDR_ACCELERATOR1 ACCELERATORS 
 BEGIN
+    "B",            ID_FILE_BOOTIMAGE,      VIRTKEY, ALT, NOINVERT
+    "D",            ID_FILE_DISKDRIVES,     VIRTKEY, SHIFT, ALT, NOINVERT
     "O",            ID_FILE_OPENIMAGE,      VIRTKEY, ALT, NOINVERT
     "5",            ID_VIEW_CALLSTACK,      VIRTKEY, ALT, NOINVERT
     "2",            ID_VIEW_CONSOLE,        VIRTKEY, ALT, NOINVERT
@@ -287,7 +349,7 @@ BEGIN
     "6",            ID_VIEW_HISTORY,        VIRTKEY, ALT, NOINVERT
     "7",            ID_VIEW_MEMORY,         VIRTKEY, ALT, NOINVERT
     "3",            ID_VIEW_REGISTERS,      VIRTKEY, ALT, NOINVERT
-    "B",            ID_FILE_BOOTIMAGE,      VIRTKEY, ALT, NOINVERT
+    "O",            ID_DEBUG_OPENSOURCE,    VIRTKEY, SHIFT, ALT, NOINVERT
 END
 
 
@@ -313,47 +375,71 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,129,104,50,14
 END
 
-IDD_DISK_DRIVES DIALOGEX 0, 0, 335, 162
+IDD_DISK_DRIVES DIALOGEX 0, 0, 335, 143
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Disk drives"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    LTEXT           "Drive &1",IDC_STATIC,7,7,40,14,SS_CENTERIMAGE
-    EDITTEXT        IDC_DISKPATH1,47,7,206,14,ES_AUTOHSCROLL | ES_READONLY
-    PUSHBUTTON      "...",IDC_BROWSE1,256,7,18,14
-    PUSHBUTTON      "Save As...",IDC_SAVEAS1,277,7,51,14
-    LTEXT           "Write mode",IDC_STATIC,47,23,48,12,SS_CENTERIMAGE
-    COMBOBOX        IDC_WRITEMODE1,101,23,119,64,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "New disk...",IDC_NEWDISK1,223,22,51,14
-    PUSHBUTTON      "Eject",IDC_EJECT1,277,22,51,14
-    LTEXT           "Drive &2",IDC_STATIC,7,39,40,14,SS_CENTERIMAGE
-    EDITTEXT        IDC_DISKPATH2,47,39,206,14,ES_AUTOHSCROLL | ES_READONLY
-    PUSHBUTTON      "...",IDC_BROWSE2,256,39,18,14
-    PUSHBUTTON      "Save As...",IDC_SAVEAS2,277,39,51,14
-    LTEXT           "Write mode",IDC_STATIC,47,55,48,12,SS_CENTERIMAGE
-    COMBOBOX        IDC_WRITEMODE2,101,55,119,62,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "New disk...",IDC_NEWDISK2,223,54,51,14
-    PUSHBUTTON      "Eject",IDC_EJECT2,277,54,51,14
-    LTEXT           "Drive &3",IDC_STATIC,7,71,40,14,SS_CENTERIMAGE
-    EDITTEXT        IDC_DISKPATH3,47,71,206,14,ES_AUTOHSCROLL | ES_READONLY
-    PUSHBUTTON      "...",IDC_BROWSE3,256,71,18,14
-    PUSHBUTTON      "Save As...",IDC_SAVEAS3,277,71,51,14
-    LTEXT           "Write mode",IDC_STATIC,47,87,48,12,SS_CENTERIMAGE
-    COMBOBOX        IDC_WRITEMODE3,101,87,119,68,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "New disk...",IDC_NEWDISK3,223,86,51,14
-    PUSHBUTTON      "Eject",IDC_EJECT3,277,86,51,14
-    LTEXT           "Drive &4",IDC_STATIC,7,103,40,14,SS_CENTERIMAGE
-    EDITTEXT        IDC_DISKPATH4,47,103,206,14,ES_AUTOHSCROLL | ES_READONLY
-    PUSHBUTTON      "...",IDC_BROWSE4,256,103,18,14
-    PUSHBUTTON      "Save As...",IDC_SAVEAS4,277,103,51,14
-    LTEXT           "Write mode",IDC_STATIC,47,119,48,12,SS_CENTERIMAGE
-    COMBOBOX        IDC_WRITEMODE4,101,119,119,81,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "New disk...",IDC_NEWDISK4,223,118,51,14
-    PUSHBUTTON      "Eject",IDC_EJECT4,277,118,51,14
-    DEFPUSHBUTTON   "OK",IDOK,278,141,50,14
+    LTEXT           "Drive &1",IDC_STATIC,7,7,25,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_DISKPATH1,34,7,164,12,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "...",IDC_BROWSE1,198,7,12,12
+    COMBOBOX        IDC_WRITEMODE1,211,7,46,64,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "New",IDC_NEWDISK1,257,7,20,12
+    PUSHBUTTON      "Save",IDC_SAVEAS1,278,7,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT1,303,7,25,12
+    LTEXT           "Drive &2",IDC_STATIC,7,21,25,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_DISKPATH2,34,21,164,12,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "...",IDC_BROWSE2,198,21,12,12
+    COMBOBOX        IDC_WRITEMODE2,211,21,46,62,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "New",IDC_NEWDISK2,257,21,20,12
+    PUSHBUTTON      "Save",IDC_SAVEAS2,278,21,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT2,303,21,25,12
+    LTEXT           "Drive &3",IDC_STATIC,7,35,25,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_DISKPATH3,34,35,164,12,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "...",IDC_BROWSE3,198,35,12,12
+    COMBOBOX        IDC_WRITEMODE3,211,35,46,68,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "New",IDC_NEWDISK3,257,35,20,12
+    PUSHBUTTON      "Save",IDC_SAVEAS3,278,35,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT3,303,35,25,12
+    LTEXT           "Drive &4",IDC_STATIC,7,49,25,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_DISKPATH4,34,49,164,12,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "...",IDC_BROWSE4,198,49,12,12
+    COMBOBOX        IDC_WRITEMODE4,211,49,46,81,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "New",IDC_NEWDISK4,257,49,20,12
+    PUSHBUTTON      "Save",IDC_SAVEAS4,278,49,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT4,303,49,25,12
+    LTEXT           "Drive &5",IDC_STATIC,7,63,25,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_DISKPATH5,34,63,164,12,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "...",IDC_BROWSE5,198,63,12,12
+    COMBOBOX        IDC_WRITEMODE5,211,63,46,64,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "New",IDC_NEWDISK5,257,63,20,12
+    PUSHBUTTON      "Save",IDC_SAVEAS5,278,63,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT5,303,63,25,12
+    LTEXT           "Drive &6",IDC_STATIC,7,77,25,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_DISKPATH6,34,77,164,12,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "...",IDC_BROWSE6,198,77,12,12
+    COMBOBOX        IDC_WRITEMODE6,211,77,46,62,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "New",IDC_NEWDISK6,257,77,20,12
+    PUSHBUTTON      "Save",IDC_SAVEAS6,278,77,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT6,303,77,25,12
+    LTEXT           "Drive &7",IDC_STATIC,7,91,25,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_DISKPATH7,34,91,164,12,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "...",IDC_BROWSE7,198,91,12,12
+    COMBOBOX        IDC_WRITEMODE7,211,91,46,68,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "New",IDC_NEWDISK7,257,91,20,12
+    PUSHBUTTON      "Save",IDC_SAVEAS7,278,91,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT7,303,91,25,12
+    LTEXT           "Drive &8",IDC_STATIC,7,105,25,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_DISKPATH8,34,105,164,12,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "...",IDC_BROWSE8,198,105,12,12
+    COMBOBOX        IDC_WRITEMODE8,211,105,46,81,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "New",IDC_NEWDISK8,257,105,20,12
+    PUSHBUTTON      "Save",IDC_SAVEAS8,278,105,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT8,303,105,25,12
+    DEFPUSHBUTTON   "OK",IDOK,278,122,50,14
 END
 
-IDD_CREATE_DISK DIALOGEX 0, 0, 229, 94
+IDD_CREATE_DISK DIALOGEX 0, 0, 229, 101
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Create new disk"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
@@ -363,10 +449,11 @@ BEGIN
     LTEXT           "Boot sector count",IDC_STATIC,7,24,70,14,SS_CENTERIMAGE
     EDITTEXT        IDC_BOOT_SECTOR_COUNT,77,24,145,14,ES_AUTOHSCROLL
     LTEXT           "Sector size",IDC_STATIC,7,42,70,10,SS_CENTERIMAGE
-    CONTROL         "128 (SD)",IDC_SECTOR_SIZE_128,"Button",BS_AUTORADIOBUTTON | WS_GROUP,77,42,44,10
-    CONTROL         "256 (DD)",IDC_SECTOR_SIZE_256,"Button",BS_AUTORADIOBUTTON,77,53,45,10
-    DEFPUSHBUTTON   "OK",IDOK,119,73,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,172,73,50,14
+    CONTROL         "128 bytes (SD)",IDC_SECTOR_SIZE_128,"Button",BS_AUTORADIOBUTTON | WS_GROUP,77,42,64,10
+    CONTROL         "256 bytes (DD)",IDC_SECTOR_SIZE_256,"Button",BS_AUTORADIOBUTTON,77,53,65,10
+    CONTROL         "512 bytes",IDC_SECTOR_SIZE_512,"Button",BS_AUTORADIOBUTTON,77,64,48,10
+    DEFPUSHBUTTON   "OK",IDOK,119,80,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,172,80,50,14
 END
 
 IDD_ABOUT DIALOGEX 0, 0, 290, 113
@@ -403,6 +490,103 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,263,50,50,14
 END
 
+IDD_INPUT_MAPPINGS DIALOGEX 0, 0, 300, 199
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Input Maps"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    CONTROL         "",IDC_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_EDITLABELS | LVS_ALIGNLEFT | WS_TABSTOP,7,7,286,168,WS_EX_CLIENTEDGE
+    PUSHBUTTON      "Add...",IDC_ADD,7,178,50,14
+    PUSHBUTTON      "Delete",IDC_DELETE,59,178,50,14,WS_DISABLED
+    PUSHBUTTON      "Edit...",IDC_EDIT,111,178,50,14,WS_DISABLED
+    DEFPUSHBUTTON   "Close",IDOK,243,178,50,14
+    PUSHBUTTON      "Reset",IDC_RESET,163,178,50,14
+END
+
+IDD_INPUTMAP_EDIT DIALOGEX 0, 0, 300, 181
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Edit Input Map"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    DEFPUSHBUTTON   "OK",IDOK,190,160,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,243,160,50,14
+    CONTROL         "",IDC_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_ALIGNLEFT | WS_TABSTOP,7,7,286,150,WS_EX_CLIENTEDGE
+    PUSHBUTTON      "Add...",IDC_ADD,7,160,50,14
+    PUSHBUTTON      "Delete",IDC_DELETE,59,160,50,14,WS_DISABLED
+END
+
+IDD_INPUTMAP_ADD DIALOGEX 0, 0, 186, 92
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Add/Edit Input Mapping"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    DEFPUSHBUTTON   "OK",IDOK,77,71,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,129,71,50,14
+    COMBOBOX        IDC_SOURCE,56,7,123,157,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    COMBOBOX        IDC_CONTROLLER,56,22,123,125,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    COMBOBOX        IDC_TARGET,56,52,123,135,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "&Source",IDC_STATIC,7,7,49,12,SS_CENTERIMAGE
+    LTEXT           "&Controller",IDC_STATIC,7,22,49,12,SS_CENTERIMAGE
+    LTEXT           "&Target",IDC_STATIC,7,52,49,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_PORT,56,37,123,135,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "&Port",IDC_STATIC,7,37,49,12,SS_CENTERIMAGE
+END
+
+IDD_AUDIO_OPTIONS DIALOGEX 0, 0, 220, 50
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Audio options"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "&Volume",IDC_STATIC,7,7,40,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_VOLUME,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,47,7,130,15
+    LTEXT           "0 dB",IDC_STATIC_VOLUME,178,7,35,15,SS_CENTERIMAGE,WS_EX_RIGHT
+    DEFPUSHBUTTON   "OK",IDOK,111,29,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,163,29,50,14
+END
+
+IDD_TAPE_CONTROL DIALOGEX 0, 0, 250, 30
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Cassette Tape Control"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    CONTROL         "",IDC_POSITION,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,7,7,169,15
+    LTEXT           "Static",IDC_STATIC_POSITION,180,7,63,15,SS_CENTERIMAGE,WS_EX_RIGHT
+END
+
+IDD_ADJUST_COLORS DIALOGEX 0, 0, 296, 247
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION "Adjust Colors"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Hue start",IDC_STATIC,7,7,92,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_HUESTART,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,7,147,15
+    RTEXT           "",IDC_STATIC_HUESTART,246,7,43,15,SS_CENTERIMAGE
+    LTEXT           "Hue step",IDC_STATIC,7,23,92,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_HUERANGE,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,23,147,15
+    RTEXT           "",IDC_STATIC_HUERANGE,246,23,43,15,SS_CENTERIMAGE
+    LTEXT           "Brightness",IDC_STATIC,7,38,92,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_BRIGHTNESS,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,38,147,15
+    RTEXT           "",IDC_STATIC_BRIGHTNESS,246,38,43,15,SS_CENTERIMAGE
+    LTEXT           "Contrast",IDC_STATIC,7,53,92,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_CONTRAST,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,53,147,15
+    RTEXT           "",IDC_STATIC_CONTRAST,246,53,43,15,SS_CENTERIMAGE
+    LTEXT           "Saturation",IDC_STATIC,7,68,92,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_SATURATION,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,68,147,15
+    RTEXT           "",IDC_STATIC_SATURATION,246,68,43,15,SS_CENTERIMAGE
+    LTEXT           "Artifacting phase",IDC_STATIC,7,83,92,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_ARTPHASE,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,83,147,15
+    RTEXT           "",IDC_STATIC_ARTPHASE,246,83,43,15,SS_CENTERIMAGE
+    LTEXT           "Artifacting saturation",IDC_STATIC,7,98,92,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_ARTSAT,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,98,147,15
+    RTEXT           "",IDC_STATIC_ARTSAT,246,98,43,15,SS_CENTERIMAGE
+    LTEXT           "Artifacting brightness",IDC_STATIC,7,113,92,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_ARTBRI,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,113,147,15
+    RTEXT           "",IDC_STATIC_ARTBRI,246,113,43,15,SS_CENTERIMAGE
+    PUSHBUTTON      "Load Preset",IDC_LOADPRESET,239,134,50,14
+    CONTROL         "",IDC_COLORS,"Static",SS_OWNERDRAW,104,134,123,106,WS_EX_CLIENTEDGE
+    LTEXT           "Resulting palette",IDC_STATIC,7,135,92,15
+END
+
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -424,12 +608,15 @@ BEGIN
     BEGIN
         LEFTMARGIN, 7
         RIGHTMARGIN, 328
-        VERTGUIDE, 47
-        VERTGUIDE, 220
-        VERTGUIDE, 253
-        VERTGUIDE, 274
+        VERTGUIDE, 34
+        VERTGUIDE, 101
+        VERTGUIDE, 147
+        VERTGUIDE, 198
+        VERTGUIDE, 244
+        VERTGUIDE, 264
+        VERTGUIDE, 303
         TOPMARGIN, 7
-        BOTTOMMARGIN, 155
+        BOTTOMMARGIN, 136
     END
 
     IDD_CREATE_DISK, DIALOG
@@ -438,7 +625,7 @@ BEGIN
         RIGHTMARGIN, 222
         VERTGUIDE, 77
         TOPMARGIN, 7
-        BOTTOMMARGIN, 87
+        BOTTOMMARGIN, 94
     END
 
     IDD_ABOUT, DIALOG
@@ -465,6 +652,60 @@ BEGIN
         TOPMARGIN, 7
         BOTTOMMARGIN, 64
     END
+
+    IDD_INPUT_MAPPINGS, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 293
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 192
+    END
+
+    IDD_INPUTMAP_EDIT, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 293
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 174
+    END
+
+    IDD_INPUTMAP_ADD, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 179
+        VERTGUIDE, 56
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 85
+    END
+
+    IDD_AUDIO_OPTIONS, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 213
+        VERTGUIDE, 47
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 43
+    END
+
+    IDD_TAPE_CONTROL, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 243
+        VERTGUIDE, 176
+        VERTGUIDE, 180
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 23
+    END
+
+    IDD_ADJUST_COLORS, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 289
+        VERTGUIDE, 99
+        VERTGUIDE, 246
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 240
+    END
 END
 #endif    // APSTUDIO_INVOKED
 
@@ -475,8 +716,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,4,0,0
- PRODUCTVERSION 1,4,0,0
+ FILEVERSION 1,5,0,0
+ PRODUCTVERSION 1,5,0,0
  FILEFLAGSMASK 0x17L
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -492,12 +733,12 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "FileDescription", "Altirra 8-bit computer emulator"
-            VALUE "FileVersion", "1, 4, 0, 0"
+            VALUE "FileVersion", "1, 5, 0, 0"
             VALUE "InternalName", "Altirra"
-            VALUE "LegalCopyright", "Copyright (C) 2008-2009 Avery Lee, All Rights Reserved."
+            VALUE "LegalCopyright", "Copyright (C) 2008-2010 Avery Lee, All Rights Reserved."
             VALUE "OriginalFilename", "Altirra.exe"
             VALUE "ProductName", "Altirra"
-            VALUE "ProductVersion", "1.4"
+            VALUE "ProductVersion", "1.5"
         END
     END
     BLOCK "VarFileInfo"
@@ -538,6 +779,34 @@ IDR_HLEKERNEL           KERNEL                  "..\\..\\..\\out\\release\\hleke
 IDR_HLEKERNEL$(DEBUG)   KERNEL                  "..\\..\\..\\out\\debug\\hlekernel.rom"
 #else
 IDR_HLEKERNEL           KERNEL                  "..\\..\\..\\out\\debug\\hlekernel.rom"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(NDEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_NOKERNEL$(NDEBUG)   KERNEL                  "..\\..\\..\\out\\release\\nokernel.rom"
+#else
+IDR_NOKERNEL            KERNEL                  "..\\..\\..\\out\\release\\nokernel.rom"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(DEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_NOKERNEL$(DEBUG)    KERNEL                  "..\\..\\..\\out\\debug\\nokernel.rom"
+#else
+IDR_NOKERNEL            KERNEL                  "..\\..\\..\\out\\debug\\nokernel.rom"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(NDEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_BASIC$(NDEBUG)      KERNEL                  "..\\..\\..\\out\\release\\basic.rom"
+#else
+IDR_BASIC               KERNEL                  "..\\..\\..\\out\\release\\basic.rom"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(DEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_BASIC$(DEBUG)       KERNEL                  "..\\..\\..\\out\\debug\\basic.rom"
+#else
+IDR_BASIC               KERNEL                  "..\\..\\..\\out\\debug\\basic.rom"
 #endif
 #endif
 

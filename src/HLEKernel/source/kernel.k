@@ -128,10 +128,12 @@ dindex	= $0057			;display mode index (0-15)
 savmsc	= $0058			;lowest address of screen region
 oldchr	= $005d			;cursor character save/restore
 oldadr	= $005e			;cursor memory address
+logcol	= $0063			;logical line column
 adress	= $0064			;temporary storage (display code)
 		; $0065
 a1		= adress
 ramtop	= $006a			;ram size
+bufcnt	= $006b
 holdch	= $007c			;temporary key hold area prior to shift/control lock logic
 
 fr0		= $00d4			;floating point register 0
@@ -205,6 +207,7 @@ strig2	= $0286			;shadow for TRIG2 ($D003)
 strig3	= $0287			;shadow for TRIG3 ($D004)
 txtmsc	= $0294			;text window pointer
 		; $0295
+logmap	= $02b2			;line logical map
 shflok	= $02be			;shift/control lock flags
 botscr	= $02bf			;number of text rows in text window
 pcolr0	= $02c0			;shadow for COLPM0 ($D012)
@@ -288,7 +291,7 @@ editrv	dta		a(EditorOpen-1)
 
 screnv	dta		a(ScreenOpen-1)
 		dta		a(ScreenClose-1)
-		dta		a(BugCheck-1)
+		dta		a(ScreenGetByte-1)
 		dta		a(ScreenPutByte-1)
 		dta		a(BugCheck-1)
 		dta		a(BugCheck-1)
@@ -360,8 +363,15 @@ HandlerTable:
 #include <keyboard.k>
 #include <nmi.k>
 #include <screen.k>
-#include <sio.k>
 
+;==============================================================================
+; Hacks
+;==============================================================================
+	org		$f3f6
+	jmp		ScreenOpen
+
+#include <sio.k>
+	
 ;==============================================================================
 DefaultHandler_A_RTI:
 	pla
@@ -379,11 +389,6 @@ DefaultHandler_RTI:
 	mva		#$40 nmien
 	rts
 	.endp
-;==============================================================================
-; Hacks
-;==============================================================================
-	org		$f3f6
-	jmp		ScreenOpen
 
 ;==============================================================================
 ; CPU vectors

@@ -998,6 +998,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\refcount.cpp"
+				>
+			</File>
+			<File
 				RelativePath="source\registry.cpp"
 				>
 				<FileConfiguration
@@ -1648,6 +1652,10 @@
 			</File>
 			<File
 				RelativePath="..\h\vd2\system\vdstl.h"
+				>
+			</File>
+			<File
+				RelativePath="..\h\vd2\system\vdstl_vector.h"
 				>
 			</File>
 			<File

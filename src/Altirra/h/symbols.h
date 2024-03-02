@@ -24,7 +24,8 @@
 enum {
 	kATSymbol_Read		= 0x01,
 	kATSymbol_Write		= 0x02,
-	kATSymbol_Execute	= 0x04
+	kATSymbol_Execute	= 0x04,
+	kATSymbol_Any		= 0x07
 };
 
 struct ATSymbol {

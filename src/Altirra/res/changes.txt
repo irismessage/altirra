@@ -1,5 +1,62 @@
 Altirra Change Log
 
+Version 1.5 [January 31, 2010]:
+   [features added]
+   * Added option to redirect P: to a text pane.
+   * UI: Added handing for gamepads being added or pulled during execution.
+   * UI: Rewrote input system and added general input mapper.
+   * UI: Added options for controlling display stretching and aspect ratio.
+   * UI: Added better handling for cases in which a requested firmware ROM is not available.
+   * UI: Added option to control overscan display.
+   * UI: Mounted disks and cartridges are saved and restored across runs.
+   * UI: FPS display in window caption is now optional.
+   * UI: System configuration is now shown on the window caption.
+   * POKEY: Added volume control.
+   * Simulator: Added "Other" firmware option to load an otheros.rom custom kernel (16K XL).
+   * Cassette: Added seek UI.
+   * Cassette: Reworked playback indicator.
+   * GTIA: Added option to blend adjacent frames to reduce flicker.
+   * GTIA: Added System > Video > Adjust Colors.
+   * GTIA: Added support for interlaced output.
+   * Disk: Added sector counter option.
+   * Disk: Increased max drive count to 8.
+   * Disk: Added burst transfer mode compatible with SpartaDOS X.
+   * Disk: Get Status and Read PERCOM Block commands are now accelerated.
+   * Disk: Lazy writes are now incremental.
+   * VBXE: Initial emulation support.
+   * Misc: Added R-Time 8 support.
+   * Debugger: Added list nearest symbol (ln) command.
+   * Debugger: "Go to Source" command now asks for source file location if it cannot be found.
+
+   [bugs fixed]
+   * HLE: Improved compatibility of screen editor.
+   * HLE: Fixed bug in emulated math pack that broke Atari Basic.
+   * Debugger: Fixed crash when a source file couldn't be found.
+   * Debugger: Auto-loading of symbols for executable files works again.
+   * Debugger: Source windows no longer recenter when toggling breakpoints.
+   * Debugger: Fixed misspelled SKRES symbol.
+   * ANTIC: Fixed incorrect CPU timing for STA WSYNC + PHA combination.
+   * ANTIC: Vertical scroll bit is now kept across VBLANK if display list is too long.
+   * ANTIC: Fixed timing of display list DMA enable changes (DMACTL bit 5).
+   * ANTIC: Internal line buffer is no longer cleared when repeating mode lines with display list DMA disabled.
+   * ANTIC: Mode lines can now repeat across VBLANK with display list DMA disabled.
+   * ANTIC: Added emulation of bug where VBLANK can fail to occur if scan line 247 is a hires line.
+   * POKEY: Fixed reading of POT timers before pot counters have stabilized.
+   * CPU: Implemented SBX instruction ($CB).
+   * Disk: Increased reliability of lazy flush mechanism.
+   * Disk: Fixed PERCOM block for large disk images.
+   * Disk: Fixed boot sector count for 512 byte/sector images.
+   * Disk: Hard disk (H:) no longer goes away on a warm reset.
+   * Disk: Reverted change to raise RTCLOK on SIO acceleration to fix bugs with programs that monitor RTCLOK from a VBI handler.
+   * UI: Mouse capture is automatically released when the simulator stops.
+   * UI: Fixed USER handle leaks.
+   * Simulator: 1088K memory mode no longer disables self-test bit when extended RAM is disabled.
+   * LLE: Fixed cartridge initialization.
+   * LLE: Fixed BASIC ROM switching.
+   * LLE: K: open/close calls are now implemented.
+   * LLE: Added initial math pack implementation.
+   * LLE: SIO now shuts off all audio channels.
+
 Version 1.4 [November 8, 2009]:
    [features added]
    * Debugger: Added .diskorder command to force phantom sector load order.

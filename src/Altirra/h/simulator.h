@@ -28,6 +28,7 @@
 #include "pokey.h"
 #include "disk.h"
 #include "scheduler.h"
+#include "vbxe.h"
 
 enum ATMemoryMode {
 	kATMemoryMode_48K,
@@ -53,6 +54,7 @@ enum ATKernelMode {
 	kATKernelMode_HLE,
 	kATKernelMode_LLE,
 	kATKernelMode_OSA,
+	kATKernelMode_Other,
 	kATKernelModeCount
 };
 
@@ -81,13 +83,22 @@ class IATHardDiskEmulator;
 class ATCartridgeEmulator;
 class ATPortController;
 class ATInputManager;
+class IATPrinterEmulator;
+class ATVBXEEmulator;
+class ATRTime8Emulator;
 
 class IATSimulatorCallback {
 public:
 	virtual void OnSimulatorEvent(ATSimulatorEvent ev) = 0;
 };
 
-class ATSimulator : ATCPUEmulatorMemory, IATAnticEmulatorConnections, IATPokeyEmulatorConnections, IATGTIAEmulatorConnections, IATDiskActivity {
+class ATSimulator : ATCPUEmulatorMemory,
+					IATAnticEmulatorConnections,
+					IATPokeyEmulatorConnections,
+					IATGTIAEmulatorConnections,
+					IATDiskActivity,
+					IATVBXEEmulatorConnections
+{
 public:
 	ATSimulator();
 	~ATSimulator();
@@ -119,14 +130,20 @@ public:
 	ATCassetteEmulator& GetCassette() { return *mpCassette; }
 	IATHardDiskEmulator *GetHardDisk() { return mpHardDisk; }
 	ATInputManager *GetInputManager() { return mpInputManager; }
+	IATJoystickManager& GetJoystickManager() { return *mpJoysticks; }
+	IATPrinterEmulator *GetPrinter() { return mpPrinter; }
+	ATVBXEEmulator *GetVBXE() { return mpVBXE; }
+	ATCartridgeEmulator *GetCartridge() { return mpCartridge; }
 
 	bool IsTurboModeEnabled() const { return mbTurbo; }
 	bool IsFrameSkipEnabled() const { return mbFrameSkip; }
 	bool IsPALMode() const { return mbPALMode; }
 	ATMemoryMode GetMemoryMode() const { return mMemoryMode; }
 	ATKernelMode GetKernelMode() const { return mKernelMode; }
+	ATKernelMode GetActualKernelMode() const { return mActualKernelMode; }
 	ATHardwareMode GetHardwareMode() const { return mHardwareMode; }
 	bool IsDiskSIOPatchEnabled() const { return mbDiskSIOPatchEnabled; }
+	bool IsDiskSectorCounterEnabled() const { return mbDiskSectorCounterEnabled; }
 	bool IsCassetteSIOPatchEnabled() const { return mbCassetteSIOPatchEnabled; }
 	bool IsCassetteAutoBootEnabled() const { return mbCassetteAutoBootEnabled; }
 	bool IsFPPatchEnabled() const { return mbFPPatchEnabled; }
@@ -134,6 +151,8 @@ public:
 	bool IsROMAutoReloadEnabled() const { return mbROMAutoReloadEnabled; }
 	bool IsAutoLoadKernelSymbolsEnabled() const { return mbAutoLoadKernelSymbols; }
 	bool IsDualPokeysEnabled() const { return mbDualPokeys; }
+	bool IsVBXESharedMemoryEnabled() const { return mbVBXESharedMemory; }
+	bool IsRTime8Enabled() const { return mpRTime8 != NULL; }
 
 	uint8	GetBankRegister() const { return mPORTBOUT | ~mPORTBDDR; }
 	uint32	GetCPUBankBase() const { return mpReadMemoryMap[0x40] - mMemory; }
@@ -159,6 +178,7 @@ public:
 	void SetKernelMode(ATKernelMode mode);
 	void SetHardwareMode(ATHardwareMode mode);
 	void SetDiskSIOPatchEnabled(bool enable);
+	void SetDiskSectorCounterEnabled(bool enable);
 	void SetCassetteSIOPatchEnabled(bool enable);
 	void SetCassetteAutoBootEnabled(bool enable);
 	void SetFPPatchEnabled(bool enable);
@@ -166,6 +186,12 @@ public:
 	void SetROMAutoReloadEnabled(bool enable);
 	void SetAutoLoadKernelSymbolsEnabled(bool enable);
 	void SetDualPokeysEnabled(bool enable);
+	void SetVBXEEnabled(bool enable);
+	void SetVBXESharedMemoryEnabled(bool enable);
+	void SetRTime8Enabled(bool enable);
+
+	bool IsPrinterEnabled() const;
+	void SetPrinterEnabled(bool enable);
 
 	void ColdReset();
 	void WarmReset();
@@ -188,10 +214,6 @@ public:
 
 	AdvanceResult AdvanceUntilInstructionBoundary();
 	AdvanceResult Advance();
-
-	void SetKeyboardControlData(uint32 mask, uint32 data);
-	void ApplyMouseDelta(int dx, int dy);
-	void ResetMouse();
 
 	uint8 DebugReadByte(uint16 address);
 	uint16 DebugReadWord(uint16 address);
@@ -228,7 +250,12 @@ private:
 	void PokeyAssertIRQ();
 	void PokeyNegateIRQ();
 	void PokeyBreak();
-	void OnDiskActivity(uint8 drive, bool active);
+	bool PokeyIsInInterrupt() const;
+	void OnDiskActivity(uint8 drive, bool active, uint32 sector);
+	void VBXERequestMemoryMapUpdate();
+	void VBXEAssertIRQ();
+	void VBXENegateIRQ();
+
 	uint8 LoadProgramHook();
 	uint8 LoadProgramHookCont();
 	void UnloadProgramSymbols();
@@ -236,6 +263,8 @@ private:
 
 	void HookCassetteOpenVector();
 	void UnhookCassetteOpenVector();
+	void UpdatePrinterHook();
+	void UpdateCIOVHook();
 
 	bool mbRunning;
 	bool mbBreak;
@@ -244,6 +273,7 @@ private:
 	bool mbFrameSkip;
 	bool mbPALMode;
 	bool mbDiskSIOPatchEnabled;
+	bool mbDiskSectorCounterEnabled;
 	bool mbCassetteSIOPatchEnabled;
 	bool mbCassetteAutoBootEnabled;
 	bool mbFPPatchEnabled;
@@ -251,6 +281,7 @@ private:
 	bool mbROMAutoReloadEnabled;
 	bool mbAutoLoadKernelSymbols;
 	bool mbDualPokeys;
+	bool mbVBXESharedMemory;
 	int mBreakOnScanline;
 
 	int		mStartupDelay;
@@ -259,6 +290,7 @@ private:
 
 	ATMemoryMode	mMemoryMode;
 	ATKernelMode	mKernelMode;
+	ATKernelMode	mActualKernelMode;
 	ATHardwareMode	mHardwareMode;
 	ATSimulatorEvent	mPendingEvent;
 
@@ -269,7 +301,7 @@ private:
 	ATPokeyEmulator	mPokey2;
 	ATScheduler		mScheduler;
 	ATScheduler		mSlowScheduler;
-	ATDiskEmulator	mDiskDrives[4];
+	ATDiskEmulator	mDiskDrives[8];
 	ATCassetteEmulator	*mpCassette;
 	IATJoystickManager	*mpJoysticks;
 	IATHardDiskEmulator	*mpHardDisk;
@@ -277,14 +309,9 @@ private:
 	ATInputManager	*mpInputManager;
 	ATPortController *mpPortAController;
 	ATPortController *mpPortBController;
-
-	uint32	mJoystickControllerData;
-	uint32	mKeyboardControllerData;
-	uint32	mMouseControllerData;
-	int		mMouseDeltaX;
-	int		mMouseFineDeltaX;
-	int		mMouseDeltaY;
-	int		mMouseFineDeltaY;
+	IATPrinterEmulator	*mpPrinter;
+	ATVBXEEmulator *mpVBXE;
+	ATRTime8Emulator *mpRTime8;
 
 	uint8	mPORTAOUT;
 	uint8	mPORTADDR;
@@ -292,6 +319,13 @@ private:
 	uint8	mPORTBOUT;
 	uint8	mPORTBDDR;
 	uint8	mPORTBCTL;
+
+	enum {
+		kIRQSource_POKEY,
+		kIRQSource_VBXE
+	};
+
+	uint32	mIRQFlags;
 
 	uint32	mReadBreakAddress;
 	uint32	mWriteBreakAddress;
@@ -326,12 +360,16 @@ private:
 	uint8	*mWriteMemoryMap[256];
 	const uint8	*mAnticMemoryMap[256];
 
+	bool	mbHaveOSBKernel;
+	bool	mbHaveXLKernel;
+
 	uint8	mOSAKernelROM[0x2800];
 	uint8	mOSBKernelROM[0x2800];
 	uint8	mXLKernelROM[0x4000];
 	uint8	mHLEKernelROM[0x4000];
 	uint8	mLLEKernelROM[0x2800];
 	uint8	mBASICROM[0x2000];
+	uint8	mOtherKernelROM[0x4000];
 
 	uint8	mMemory[0x110000];
 	uint8	mDummyRead[256];

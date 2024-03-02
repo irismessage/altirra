@@ -55,3 +55,13 @@ int VDCountBits(uint32 v) {
 	}
 
 #endif
+
+uint32 VDCeilToPow2(uint32 v) {
+	v += v;
+	--v;
+
+	while(uint32 x = v & (v - 1))
+		v = x;
+
+	return v;
+}

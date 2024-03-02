@@ -18,10 +18,12 @@
 #include "stdafx.h"
 #define DIRECTINPUT_VERSION 0x0800
 #include <dinput.h>
+#include <vd2/system/bitmath.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vdalloc.h>
 #include "joystick.h"
+#include "inputmanager.h"
 
 #pragma comment(lib, "dxguid")
 #pragma comment(lib, "dinput8")
@@ -31,31 +33,59 @@ public:
 	ATController(IDirectInput8 *di);
 	~ATController();
 
-	bool Init(LPCDIDEVICEINSTANCE devInst, HWND hwnd);
+	const ATInputUnitIdentifier& GetId() const { return mId; }
+
+	bool Init(LPCDIDEVICEINSTANCE devInst, HWND hwnd, ATInputManager *inputMan);
 	void Shutdown();
 
-	uint32 Poll();
+	bool IsMarked() { return mbMarked; }
+	void SetMarked(bool mark) { mbMarked = mark;}
+
+	void SetDeadZone(int zone) { mDeadZone = zone; }
+
+	void Poll();
+	bool PollForCapture(int& unit, uint32& inputCode);
 
 protected:
+	struct DecodedState {
+		uint32	mButtonStates;
+		uint32	mAxisButtonStates;
+		sint32	mAxisVals[8];
+	};
+
+	void PollState(DecodedState& state);
+	void UpdateButtons(int baseId, uint32 states, uint32 mask);
+
 	vdrefptr<IDirectInput8> mpDI;
 	vdrefptr<IDirectInputDevice8> mpDevice;
+	ATInputManager *mpInputManager;
 
-	uint32		mDigitalEmuState;
+	bool		mbMarked;
+	int			mUnit;
+	DecodedState	mLastSentState;
+	DecodedState	mLastPolledState;
+	sint32		mDeadZone;
 	DIJOYSTATE	mState;
+	ATInputUnitIdentifier mId;
 };
 
 ATController::ATController(IDirectInput8 *di)
 	: mpDI(di)
-	, mDigitalEmuState(0)
+	, mbMarked(false)
+	, mUnit(-1)
+	, mpInputManager(NULL)
+	, mDeadZone(512)
 {
 	memset(&mState, 0, sizeof mState);
+	memset(&mLastSentState, 0, sizeof mLastSentState);
+	memset(&mLastPolledState, 0, sizeof mLastPolledState);
 }
 
 ATController::~ATController() {
 	Shutdown();
 }
 
-bool ATController::Init(LPCDIDEVICEINSTANCE devInst, HWND hwnd) {
+bool ATController::Init(LPCDIDEVICEINSTANCE devInst, HWND hwnd, ATInputManager *inputMan) {
 	HRESULT hr = mpDI->CreateDevice(devInst->guidInstance, ~mpDevice, NULL);
 	if (FAILED(hr))
 		return false;
@@ -66,20 +96,120 @@ bool ATController::Init(LPCDIDEVICEINSTANCE devInst, HWND hwnd) {
 		return false;
 	}
 
-	hr = mpDevice->SetCooperativeLevel(hwnd, DISCL_FOREGROUND | DISCL_NONEXCLUSIVE);
+	hr = mpDevice->SetCooperativeLevel(hwnd, DISCL_BACKGROUND | DISCL_NONEXCLUSIVE);
 	if (FAILED(hr)) {
 		Shutdown();
 		return false;
 	}
 
+	// Set the axis ranges.
+	//
+	// It'd be better to do this by enumerating the axis objects, but it seems that in
+	// XP this can give completely erroneous dwOfs values, i.e. Y Axis = 0, X Axis = 4,
+	// RZ axis = 12, etc. Therefore, we just loop through all of the axes.
+	DIPROPRANGE range;
+	range.diph.dwSize = sizeof(DIPROPRANGE);
+	range.diph.dwHeaderSize = sizeof(DIPROPHEADER);
+	range.diph.dwHow = DIPH_BYOFFSET;
+	range.lMin = -1024;
+	range.lMax = +1024;
+
+	static const int kOffsets[6]={
+		DIJOFS_X,
+		DIJOFS_Y,
+		DIJOFS_Z,
+		DIJOFS_RX,
+		DIJOFS_RY,
+		DIJOFS_RZ,
+	};
+
+	for(int i=0; i<6; ++i) {
+		range.diph.dwObj = kOffsets[i];
+		mpDevice->SetProperty(DIPROP_RANGE, &range.diph);
+	}
+
+//	mpDevice->EnumObjects(StaticInitAxisCallback, this, DIDFT_ABSAXIS);
+
+	mpInputManager = inputMan;
+
+	memcpy(&mId, &devInst->guidInstance, sizeof mId);
+	mUnit = inputMan->RegisterInputUnit(mId);
+
 	return true;
 }
 
 void ATController::Shutdown() {
+	if (mUnit >= 0) {
+		UpdateButtons(kATInputCode_JoyButton0, 0, mLastSentState.mButtonStates);
+		UpdateButtons(kATInputCode_JoyStick1Left, 0, mLastSentState.mAxisButtonStates);
+		memset(&mLastSentState, 0, sizeof mLastSentState);
+
+		mpInputManager->UnregisterInputUnit(mUnit);
+		mUnit = -1;
+	}
+
+	mpInputManager = NULL;
 	mpDevice = NULL;
 }
 
-uint32 ATController::Poll() {
+void ATController::Poll() {
+	DecodedState state;
+	PollState(state);
+
+	uint32 buttonDelta = (state.mButtonStates ^ mLastSentState.mButtonStates);
+	if (buttonDelta)
+		UpdateButtons(kATInputCode_JoyButton0, state.mButtonStates, buttonDelta);
+
+	uint32 axisButtonDelta = (state.mAxisButtonStates ^ mLastSentState.mAxisButtonStates);
+	if (axisButtonDelta)
+		UpdateButtons(kATInputCode_JoyStick1Left, state.mAxisButtonStates, axisButtonDelta);
+
+	for(int i=0; i<6; ++i) {
+		if (state.mAxisVals[i] != mLastSentState.mAxisVals[i])
+			mpInputManager->OnAxisInput(mUnit, kATInputCode_JoyHoriz1 + i, state.mAxisVals[i]);
+	}
+
+	mLastSentState = state;
+	mLastPolledState = state;
+}
+
+bool ATController::PollForCapture(int& unit, uint32& inputCode) {
+	DecodedState state;
+	PollState(state);
+
+	const uint32 newButtons = state.mButtonStates & ~mLastPolledState.mButtonStates;
+	const uint32 newAxisButtons = state.mAxisButtonStates & ~mLastPolledState.mAxisButtonStates;
+
+	mLastPolledState = state;
+
+	if (newButtons) {
+		unit = mUnit;
+		inputCode = kATInputCode_JoyButton0 + VDFindLowestSetBitFast(newButtons);
+		return true;
+	}
+
+	if (newAxisButtons) {
+		unit = mUnit;
+		inputCode = kATInputCode_JoyStick1Left + VDFindLowestSetBitFast(newAxisButtons);
+		return true;
+	}
+
+	return false;
+}
+
+void ATController::UpdateButtons(int baseId, uint32 states, uint32 mask) {
+	for(int i=0; i<32; ++i) {
+		uint32 bit = (1 << i);
+		if (mask & bit) {
+			if (states & bit)
+				mpInputManager->OnButtonDown(mUnit, baseId + i);
+			else
+				mpInputManager->OnButtonUp(mUnit, baseId + i);
+		}
+	}
+}
+
+void ATController::PollState(DecodedState& state) {
 	HRESULT hr = mpDevice->Poll();
 
 	if (FAILED(hr))
@@ -88,33 +218,60 @@ uint32 ATController::Poll() {
 	if (SUCCEEDED(hr))
 		hr = mpDevice->GetDeviceState(sizeof(DIJOYSTATE), &mState);
 
-	if (FAILED(hr))
+	if (FAILED(hr)) {
 		memset(&mState, 0, sizeof mState);
+		mState.rgdwPOV[0] = 0xFFFFFFFFU;
+	}
 
-	mDigitalEmuState = 0;
+	uint32 axisButtonStates = 0;
 
 	uint32 pov = mState.rgdwPOV[0] & 0xffff;
 	if (pov < 0xffff) {
 		uint32 octant = ((pov + 2250) / 4500) & 7;
 
 		static const uint32 kPOVLookup[8]={
-			0x01,	// up
-			0x09,
-			0x08,	// right
-			0x0a,
-			0x02,	// down
-			0x06,
-			0x04,	// left
-			0x05
+			(1 << 14),	// up
+			(1 << 14) | (1 << 13),
+			(1 << 13),	// right
+			(1 << 15) | (1 << 13),
+			(1 << 15),	// down
+			(1 << 15) | (1 << 12),
+			(1 << 12),	// left
+			(1 << 12) | (1 << 14),
 		};
 
-		mDigitalEmuState = kPOVLookup[octant];
+		axisButtonStates = kPOVLookup[octant];
 	}
 
-	if (mState.rgbButtons[0] | mState.rgbButtons[1] | mState.rgbButtons[2] | mState.rgbButtons[3])
-		mDigitalEmuState |= 0x10000;
+	if (mState.lX < -mDeadZone)		axisButtonStates |= (1 << 0);
+	if (mState.lX > +mDeadZone)		axisButtonStates |= (1 << 1);
+	if (mState.lY < -mDeadZone)		axisButtonStates |= (1 << 2);
+	if (mState.lY > +mDeadZone)		axisButtonStates |= (1 << 3);
+	if (mState.lZ < -mDeadZone)		axisButtonStates |= (1 << 4);
+	if (mState.lZ > +mDeadZone)		axisButtonStates |= (1 << 5);
+	if (mState.lRx < -mDeadZone)	axisButtonStates |= (1 << 6);
+	if (mState.lRx > +mDeadZone)	axisButtonStates |= (1 << 7);
+	if (mState.lRy < -mDeadZone)	axisButtonStates |= (1 << 8);
+	if (mState.lRy > +mDeadZone)	axisButtonStates |= (1 << 9);
+	if (mState.lRz < -mDeadZone)	axisButtonStates |= (1 << 10);
+	if (mState.lRz > +mDeadZone)	axisButtonStates |= (1 << 11);
 
-	return mDigitalEmuState;
+	state.mAxisVals[0] = mState.lX;
+	state.mAxisVals[1] = mState.lY;
+	state.mAxisVals[2] = mState.lZ;
+	state.mAxisVals[3] = mState.lRx;
+	state.mAxisVals[4] = mState.lRy;
+	state.mAxisVals[5] = mState.lRz;
+
+	uint32 buttonStates = 0;
+	for(int i=0; i<32; ++i) {
+		buttonStates >>= 1;
+		if (mState.rgbButtons[i])
+			buttonStates |= 0x80000000;
+	}
+
+	state.mButtonStates = buttonStates;
+	state.mAxisButtonStates = axisButtonStates;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -124,10 +281,15 @@ public:
 	ATJoystickManager();
 	~ATJoystickManager();
 
-	bool Init(void *hwnd);
+	bool Init(void *hwnd, ATInputManager *inputMan);
 	void Shutdown();
 
+	void SetCaptureMode(bool capture) { mbCaptureMode = capture; }
+
+	void RescanForDevices();
 	void Poll();
+	bool PollForCapture(int& unit, uint32& inputCode);
+	void SetDeadZone(int zone);
 
 	uint32 GetJoystickPortStates() const;
 
@@ -136,10 +298,12 @@ protected:
 	BOOL JoystickCallback(LPCDIDEVICEINSTANCE devInst);
 
 	bool mbCOMInitialized;
+	bool mbCaptureMode;
 	HWND mhwnd;
 	vdrefptr<IDirectInput8> mpDI;
+	ATInputManager *mpInputManager;
 
-	uint32	mJoyPortStates;
+	int	mDeadZone;
 
 	typedef vdfastvector<ATController *> Controllers;
 	Controllers mControllers;
@@ -151,16 +315,19 @@ IATJoystickManager *ATCreateJoystickManager() {
 
 ATJoystickManager::ATJoystickManager()
 	: mbCOMInitialized(false)
+	, mbCaptureMode(false)
 	, mhwnd(NULL)
-	, mJoyPortStates(0)
+	, mpInputManager(NULL)
+	, mDeadZone(512)
 {
 }
 
 ATJoystickManager::~ATJoystickManager() {
 }
 
-bool ATJoystickManager::Init(void *hwnd) {
+bool ATJoystickManager::Init(void *hwnd, ATInputManager *inputMan) {
 	HRESULT hr;
+
 	
 	if (!mbCOMInitialized) {
 		hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
@@ -185,8 +352,9 @@ bool ATJoystickManager::Init(void *hwnd) {
 	}
 
 	mhwnd = (HWND)hwnd;
-	mpDI->EnumDevices(DI8DEVCLASS_GAMECTRL, StaticJoystickCallback, this, DIEDFL_ATTACHEDONLY);
+	mpInputManager = inputMan;
 
+	RescanForDevices();
 	return true;
 }
 
@@ -203,27 +371,79 @@ void ATJoystickManager::Shutdown() {
 		mpDI = NULL;
 	}
 
+	mpInputManager = NULL;
+
 	if (mbCOMInitialized) {
 		CoUninitialize();
 		mbCOMInitialized = false;
 	}
 }
 
+void ATJoystickManager::RescanForDevices() {
+	Controllers::iterator it(mControllers.begin()), itEnd(mControllers.end());
+	for(; it!=itEnd; ++it) {
+		ATController *ctrl = *it;
+		ctrl->SetMarked(false);
+	}
+
+	mpDI->EnumDevices(DI8DEVCLASS_GAMECTRL, StaticJoystickCallback, this, DIEDFL_ATTACHEDONLY);
+
+	it = mControllers.begin();
+	while(it != mControllers.end()) {
+		ATController *ctrl = *it;
+
+		if (ctrl->IsMarked()) {
+			++it;
+		} else {
+			ctrl->Shutdown();
+			delete ctrl;
+
+			if (&*it == &mControllers.back()) {
+				mControllers.pop_back();
+				break;
+			}
+
+			*it = mControllers.back();
+			mControllers.pop_back();
+		}
+	}
+}
+
 void ATJoystickManager::Poll() {
-	uint32 result = 0;
+	if (mbCaptureMode)
+		return;
 
 	Controllers::const_iterator it(mControllers.begin()), itEnd(mControllers.end());
 	for(; it!=itEnd; ++it) {
 		ATController *ctrl = *it;
 
-		result |= ctrl->Poll();
+		ctrl->Poll();
+	}
+}
+
+bool ATJoystickManager::PollForCapture(int& unit, uint32& inputCode) {
+	Controllers::const_iterator it(mControllers.begin()), itEnd(mControllers.end());
+	for(; it!=itEnd; ++it) {
+		ATController *ctrl = *it;
+
+		if (ctrl->PollForCapture(unit, inputCode))
+			return true;
 	}
 
-	mJoyPortStates = result;
+	return false;
+}
+
+void ATJoystickManager::SetDeadZone(int zone) {
+	Controllers::const_iterator it(mControllers.begin()), itEnd(mControllers.end());
+	for(; it!=itEnd; ++it) {
+		ATController *ctrl = *it;
+
+		ctrl->SetDeadZone(zone);
+	}
 }
 
 uint32 ATJoystickManager::GetJoystickPortStates() const {
-	return mJoyPortStates;
+	return 0;
 }
 
 BOOL CALLBACK ATJoystickManager::StaticJoystickCallback(LPCDIDEVICEINSTANCE devInst, LPVOID pvThis) {
@@ -233,10 +453,25 @@ BOOL CALLBACK ATJoystickManager::StaticJoystickCallback(LPCDIDEVICEINSTANCE devI
 }
 
 BOOL ATJoystickManager::JoystickCallback(LPCDIDEVICEINSTANCE devInst) {
+	ATInputUnitIdentifier id;
+	memcpy(&id, &devInst->guidInstance, sizeof id);
+
+	Controllers::const_iterator it(mControllers.begin()), itEnd(mControllers.end());
+	for(; it!=itEnd; ++it) {
+		ATController *ctrl = *it;
+
+		if (ctrl->GetId() == id) {
+			ctrl->SetMarked(true);
+			return DIENUM_CONTINUE;
+		}
+	}
+
 	vdautoptr<ATController> dev(new ATController(mpDI));
 
 	if (dev) {
-		if (dev->Init(devInst, mhwnd)) {
+		if (dev->Init(devInst, mhwnd, mpInputManager)) {
+			dev->SetDeadZone(mDeadZone);
+			dev->SetMarked(true);
 			mControllers.push_back(dev);
 			dev.release();
 		}

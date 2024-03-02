@@ -33,7 +33,7 @@ private:
 	void *pHandle;
 
 public:
-	VDRegistryKey(const char *pszKey, bool bGlobal = false);
+	VDRegistryKey(const char *pszKey, bool global = false, bool write = true);
 	~VDRegistryKey();
 
 	void *getRawHandle() const { return pHandle; }
@@ -76,7 +76,7 @@ private:
 
 public:
 	VDRegistryAppKey();
-	VDRegistryAppKey(const char *pszKey);
+	VDRegistryAppKey(const char *pszKey, bool write = true);
 
 	static void setDefaultKey(const char *pszAppName);
 };

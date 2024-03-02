@@ -124,3 +124,23 @@ sint64 VDMulDiv64(sint64 a, sint64 b, sint64 c) {
 
 	return flip ? -(sint64)v : (sint64)v;
 }
+
+bool VDVerifyFiniteFloats(const float *p0, uint32 n) {
+	const uint32 *p = (const uint32 *)p0;
+
+	while(n--) {
+		uint32 v = *p++;
+
+		// 00000000				zero
+		// 00000001-007FFFFF	denormal
+		// 00800000-7F7FFFFF	finite
+		// 7F800000				infinity
+		// 7F800001-7FBFFFFF	SNaN
+		// 7FC00000-7FFFFFFF	QNaN
+
+		if ((v & 0x7FFFFFFF) >= 0x7F800000)
+			return false;
+	}
+
+	return true;
+}

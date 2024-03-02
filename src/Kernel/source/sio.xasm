@@ -108,9 +108,11 @@ ackOK:
 	jmp		xit
 	
 xit:
-	mva		#0		audf3
-	mva		#$10	audc3
-	mva		#$10	audc4
+	lda		#0
+	sta		audc1
+	sta		audc2
+	sta		audc3
+	sta		audc4
 
 	ldx		stackp
 	txs
@@ -264,7 +266,7 @@ wait:
 error:
 	sei
 	lda		pokmsk
-	and		#$df
+	and		#$d7
 	sta		pokmsk
 	sta		irqen
 	cli

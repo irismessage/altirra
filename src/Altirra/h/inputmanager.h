@@ -18,18 +18,323 @@
 #ifndef f_AT_INPUTMANAGER_H
 #define f_AT_INPUTMANAGER_H
 
+#include <map>
+#include <set>
+#include <vd2/system/VDString.h>
+#include <vd2/system/vdstl.h>
+#include <vd2/system/refcount.h>
+
 class ATPortController;
+class ATPortInputController;
 class ATJoystickController;
 class ATMouseController;
 class ATPaddleController;
 class IATJoystickManager;
 class ATScheduler;
+class VDRegistryKey;
+
+class IATInputConsoleCallback {
+public:
+	virtual void SetConsoleTrigger(uint32 id, bool state) = 0;
+};
 
 enum ATInputMode {
 	kATInputMode_None,
 	kATInputMode_JoyKeys,
 	kATInputMode_Mouse,
-	kATInputMode_Paddle
+	kATInputMode_Paddle,
+	kATInputMode_Count
+};
+
+enum ATInputCode {
+	kATInputCode_KeyBack		= 0x08,		// VK_BACK
+	kATInputCode_KeyTab			= 0x09,		// VK_TAB
+	kATInputCode_KeyReturn		= 0x0D,		// VK_RETURN
+	kATInputCode_KeyEscape		= 0x1B,		// VK_ESCAPE
+	kATInputCode_KeySpace		= 0x20,		// VK_SPACE
+	kATInputCode_KeyPrior		= 0x21,		// VK_PRIOR
+	kATInputCode_KeyNext		= 0x22,		// VK_NEXT
+	kATInputCode_KeyEnd			= 0x23,		// VK_END
+	kATInputCode_KeyHome		= 0x24,		// VK_HOME
+	kATInputCode_KeyLeft		= 0x25,		// VK_LEFT
+	kATInputCode_KeyUp			= 0x26,		// VK_UP
+	kATInputCode_KeyRight		= 0x27,		// VK_RIGHT
+	kATInputCode_KeyDown		= 0x28,		// VK_DOWN
+	kATInputCode_KeyInsert		= 0x2D,		// VK_INSERT
+	kATInputCode_KeyDelete		= 0x2E,		// VK_DELETE
+	kATInputCode_0				= 0x30,		// VK_0
+	kATInputCode_A				= 0x41,		// VK_A
+	kATInputCode_KeyNumpad0		= 0x60,		// VK_NUMPAD0
+	kATInputCode_KeyNumpad1		= 0x61,		// VK_NUMPAD1
+	kATInputCode_KeyNumpad2		= 0x62,		// VK_NUMPAD2
+	kATInputCode_KeyNumpad3		= 0x63,		// VK_NUMPAD3
+	kATInputCode_KeyNumpad4		= 0x64,		// VK_NUMPAD4
+	kATInputCode_KeyNumpad5		= 0x65,		// VK_NUMPAD5
+	kATInputCode_KeyNumpad6		= 0x66,		// VK_NUMPAD6
+	kATInputCode_KeyNumpad7		= 0x67,		// VK_NUMPAD7
+	kATInputCode_KeyNumpad8		= 0x68,		// VK_NUMPAD8
+	kATInputCode_KeyNumpad9		= 0x69,		// VK_NUMPAD9
+	kATInputCode_KeyMultiply	= 0x6A,		// VK_MULTIPLY
+	kATInputCode_KeyAdd			= 0x6B,		// VK_ADD
+	kATInputCode_KeySubtract	= 0x6D,		// VK_SUBTRACT
+	kATInputCode_KeyDecimal		= 0x6E,		// VK_DECIMAL
+	kATInputCode_KeyDivide		= 0x6F,		// VK_DIVIDE
+	kATInputCode_KeyF1			= 0x70,		// VK_F1
+	kATInputCode_KeyF2			= 0x71,		// VK_F2
+	kATInputCode_KeyF3			= 0x72,		// VK_F3
+	kATInputCode_KeyF4			= 0x73,		// VK_F4
+	kATInputCode_KeyF5			= 0x74,		// VK_F5
+	kATInputCode_KeyF6			= 0x75,		// VK_F6
+	kATInputCode_KeyF7			= 0x76,		// VK_F7
+	kATInputCode_KeyF8			= 0x77,		// VK_F8
+	kATInputCode_KeyF9			= 0x78,		// VK_F9
+	kATInputCode_KeyF10			= 0x79,		// VK_F10
+	kATInputCode_KeyF11			= 0x7A,		// VK_F11
+	kATInputCode_KeyF12			= 0x7B,		// VK_F12
+	kATInputCode_KeyLShift		= 0xA0,		// VK_LSHIFT
+	kATInputCode_KeyRShift		= 0xA1,		// VK_RSHIFT
+	kATInputCode_KeyLControl	= 0xA2,		// VK_LCONTROL
+	kATInputCode_KeyRControl	= 0xA3,		// VK_RCONTROL
+	kATInputCode_KeyOem1		= 0xBA,		// VK_OEM_1   // ';:' for US
+	kATInputCode_KeyOemPlus		= 0xBB,		// VK_OEM_PLUS   // '+' any country
+	kATInputCode_KeyOemComma	= 0xBC,		// VK_OEM_COMMA   // ',' any country
+	kATInputCode_KeyOemMinus	= 0xBD,		// VK_OEM_MINUS   // '-' any country
+	kATInputCode_KeyOemPeriod	= 0xBE,		// VK_OEM_PERIOD   // '.' any country
+	kATInputCode_KeyOem2		= 0xBF,		// VK_OEM_2   // '/?' for US
+	kATInputCode_KeyOem3		= 0xC0,		// VK_OEM_3   // '`~' for US
+	kATInputCode_KeyOem4		= 0xDB,		// VK_OEM_4  //  '[{' for US
+	kATInputCode_KeyOem5		= 0xDC,		// VK_OEM_5  //  '\|' for US
+	kATInputCode_KeyOem6		= 0xDD,		// VK_OEM_6  //  ']}' for US
+	kATInputCode_KeyOem7		= 0xDE,		// VK_OEM_7  //  ''"' for US
+	kATInputCode_KeyNumpadEnter	= 0x10D,	// VK_RETURN (extended)
+
+	kATInputCode_MouseHoriz		= 0x1000,
+	kATInputCode_MouseVert		= 0x1001,
+	kATInputCode_MouseLeft		= 0x1100,
+	kATInputCode_MouseRight		= 0x1101,
+	kATInputCode_MouseUp		= 0x1102,
+	kATInputCode_MouseDown		= 0x1103,
+	kATInputCode_MouseLMB		= 0x1800,
+	kATInputCode_MouseMMB		= 0x1801,
+	kATInputCode_MouseRMB		= 0x1802,
+	kATInputCode_MouseX1B		= 0x1803,
+	kATInputCode_MouseX2B		= 0x1804,
+	kATInputCode_JoyHoriz1		= 0x2000,
+	kATInputCode_JoyVert1		= 0x2001,
+	kATInputCode_JoyVert2		= 0x2002,
+	kATInputCode_JoyHoriz3		= 0x2003,
+	kATInputCode_JoyVert3		= 0x2004,
+	kATInputCode_JoyVert4		= 0x2005,
+	kATInputCode_JoyPOVHoriz	= 0x2006,
+	kATInputCode_JoyPOVVert		= 0x2007,
+	kATInputCode_JoyStick1Left	= 0x2100,
+	kATInputCode_JoyStick1Right	= 0x2101,
+	kATInputCode_JoyStick1Up	= 0x2102,
+	kATInputCode_JoyStick1Down	= 0x2103,
+	kATInputCode_JoyStick2Up	= 0x2104,
+	kATInputCode_JoyStick2Down	= 0x2105,
+	kATInputCode_JoyStick3Left	= 0x2106,
+	kATInputCode_JoyStick3Right	= 0x2107,
+	kATInputCode_JoyStick3Up	= 0x2108,
+	kATInputCode_JoyStick3Down	= 0x2109,
+	kATInputCode_JoyStick4Up	= 0x210A,
+	kATInputCode_JoyStick4Down	= 0x210B,
+	kATInputCode_JoyPOVLeft		= 0x210C,
+	kATInputCode_JoyPOVRight	= 0x210D,
+	kATInputCode_JoyPOVUp		= 0x210E,
+	kATInputCode_JoyPOVDown		= 0x210F,
+	kATInputCode_JoyButton0		= 0x2800,
+
+	kATInputCode_SpecificUnit	= 0x80000000,
+	kATInputCode_UnitScale		= 0x01000000,
+	kATInputCode_UnitShift		= 24
+};
+
+enum ATInputControllerType {
+	kATInputControllerType_None,
+	kATInputControllerType_Joystick,
+	kATInputControllerType_Paddle,
+	kATInputControllerType_Mouse,
+	kATInputControllerType_Console
+};
+
+struct atfixedhash_basenode {
+	atfixedhash_basenode *mpNext;
+	atfixedhash_basenode *mpPrev;
+};
+
+template<typename T>
+struct atfixedhash_node : public atfixedhash_basenode {
+	T mValue;
+
+	atfixedhash_node(const T& v) : mValue(v) {}
+};
+
+template<typename T>
+struct athash
+{
+	size_t operator()(const T& value) const {
+		return (size_t)value;
+	}
+};
+
+template<typename K, typename V, size_t N>
+class atfixedhash {
+public:
+	typedef K key_type;
+	typedef V mapped_type;
+	typedef typename std::pair<K, V> value_type;
+	typedef value_type *pointer;
+	typedef const value_type *const_pointer;
+	typedef value_type& reference;
+	typedef const value_type& const_reference;
+	typedef typename athash<K> hasher;
+
+	typedef pointer iterator;
+	typedef const_pointer const_iterator;
+
+	atfixedhash();
+	~atfixedhash();
+
+	const_iterator end() const;
+
+	void clear();
+
+	iterator find(const key_type& k);
+	std::pair<pointer, bool> insert(const value_type& v);
+
+protected:
+	struct : hasher {
+		atfixedhash_basenode table[N];
+	} m;
+};
+
+template<typename K, typename V, size_t N>
+atfixedhash<K,V,N>::atfixedhash() {
+	for(int i=0; i<N; ++i) {
+		atfixedhash_basenode& n = m.table[i];
+
+		n.mpNext = n.mpPrev = &n;
+	}
+}
+
+template<typename K, typename V, size_t N>
+atfixedhash<K,V,N>::~atfixedhash() {
+	clear();
+}
+
+template<typename K, typename V, size_t N>
+typename atfixedhash<K,V,N>::const_iterator atfixedhash<K,V,N>::end() const {
+	return NULL;
+}
+
+template<typename K, typename V, size_t N>
+void atfixedhash<K,V,N>::clear() {
+	for(int i=0; i<N; ++i) {
+		atfixedhash_basenode *bucket = &m.table[i];
+		atfixedhash_basenode *p = bucket->mpNext;
+
+		if (p != bucket) {
+			do {
+				atfixedhash_basenode *n = p->mpNext;
+
+				delete static_cast<atfixedhash_node<value_type> *>(p);
+
+				p = n;
+			} while(p != bucket);
+
+			bucket->mpPrev = bucket->mpNext = bucket;
+		}
+	}
+}
+
+template<typename K, typename V, size_t N>
+typename atfixedhash<K,V,N>::iterator atfixedhash<K,V,N>::find(const key_type& k) {
+	size_t bucketIdx = m(k) % N;
+	const atfixedhash_basenode *bucket = &m.table[bucketIdx];
+
+	for(atfixedhash_basenode *p = bucket->mpNext; p != bucket; p = p->mpNext) {
+		atfixedhash_node<value_type>& n = static_cast<atfixedhash_node<value_type>&>(*p);
+
+		if (n.mValue.first == k)
+			return &n.mValue;
+	}
+
+	return NULL;
+}
+
+template<typename K, typename V, size_t N>
+std::pair<typename atfixedhash<K,V,N>::iterator, bool> atfixedhash<K,V,N>::insert(const value_type& v) {
+	size_t bucketIdx = m(v.first) % N;
+	
+	atfixedhash_basenode *bucket = &m.table[bucketIdx];
+
+	for(atfixedhash_basenode *p = bucket->mpNext; p != bucket; p = p->mpNext) {
+		atfixedhash_node<value_type>& n = static_cast<atfixedhash_node<value_type>&>(*p);
+
+		if (n.mValue.first == v.first)
+			return std::pair<iterator, bool>(&n.mValue, false);
+	}
+
+	atfixedhash_node<value_type> *node = new atfixedhash_node<value_type>(v);
+	atfixedhash_basenode *last = bucket->mpPrev;
+	node->mpPrev = last;
+	node->mpNext = bucket;
+	last->mpNext = node;
+	bucket->mpPrev = node;
+	return std::pair<iterator, bool>(&node->mValue, true);
+}
+
+struct ATInputUnitIdentifier {
+	char buf[16];
+
+	bool operator==(const ATInputUnitIdentifier& x) const {
+		return !memcmp(buf, x.buf, 16);
+	}
+};
+
+class ATInputMap : public vdrefcounted<IVDRefCount> {
+public:
+	struct Controller {
+		ATInputControllerType mType;
+		uint32 mIndex;
+	};
+
+	struct Mapping {
+		uint32 mInputCode;
+		uint32 mControllerId;
+		uint32 mCode;
+	};
+
+	ATInputMap();
+	~ATInputMap();
+
+	const wchar_t *GetName() const;
+	void SetName(const wchar_t *name);
+
+	bool UsesPhysicalPort(int portIdx) const;
+
+	void Clear();
+
+	uint32 GetControllerCount() const;
+	const Controller& GetController(uint32 i) const;
+	uint32 AddController(ATInputControllerType type, uint32 index);
+
+	uint32 GetMappingCount() const;
+	const Mapping& GetMapping(uint32 i) const;
+	void AddMapping(uint32 inputCode, uint32 controllerId, uint32 code);
+
+	bool Load(VDRegistryKey& key, const char *name);
+	void Save(VDRegistryKey& key, const char *name);
+
+protected:
+	typedef vdfastvector<Controller> Controllers;
+	Controllers mControllers;
+
+	typedef vdfastvector<Mapping> Mappings;
+	Mappings mMappings;
+
+	VDStringW mName;
 };
 
 class ATInputManager {
@@ -37,38 +342,77 @@ public:
 	ATInputManager();
 	~ATInputManager();
 
-	void Init(IATJoystickManager *joysticks, ATScheduler *scheduler, ATPortController *porta, ATPortController *portb);
+	void Init(ATScheduler *scheduler, ATPortController *porta, ATPortController *portb);
 	void Shutdown();
 
-	ATInputMode GetPortMode(int port) const { return mInputModes[port]; }
-	void SetPortMode(int port, ATInputMode inputMode);
+	void ResetToDefaults();
+
+	IATInputConsoleCallback *GetConsoleCallback() const { return mpCB; }
+	void SetConsoleCallback(IATInputConsoleCallback *cb) { mpCB = cb; }
 
 	void SwapPorts(int p1, int p2);
 	void Poll();
 
-	bool IsJoystickActive() const { return mInputModes[0] == kATInputMode_JoyKeys || mInputModes[1] == kATInputMode_JoyKeys; }
-	void SetJoystickInput(int input, bool val);
+	int RegisterInputUnit(const ATInputUnitIdentifier& id);
+	void UnregisterInputUnit(int unit);
 
-	bool IsMouseActive() const { return mInputModes[0] == kATInputMode_Mouse || mInputModes[1] == kATInputMode_Mouse; }
-	void AddMouseDelta(int dx, int dy);
-	void SetMouseButton(int input, bool val);
+	bool IsInputMapped(int unit, uint32 inputCode) const;
+	bool IsMouseMapped() const;
 
-	bool IsPaddleActive() const { return mInputModes[0] == kATInputMode_Paddle || mInputModes[1] == kATInputMode_Paddle; }
-	void AddPaddleDelta(int dx);
-	void SetPaddleButton(bool val);
+	void OnButtonDown(int unit, int id);
+	void OnButtonUp(int unit, int id);
+	void OnAxisInput(int unit, int axis, sint32 value);
+	void OnMouseMove(int unit, int dx, int dy);
+
+	void GetNameForInputCode(uint32 code, VDStringW& name) const;
+	void GetNameForTargetCode(uint32 code, VDStringW& name) const;
+
+	uint32 GetInputMapCount() const;
+	bool GetInputMapByIndex(uint32 index, ATInputMap **imap) const;
+	bool IsInputMapEnabled(ATInputMap *imap) const;
+	void AddInputMap(ATInputMap *imap);
+	void RemoveInputMap(ATInputMap *imap);
+	void RemoveAllInputMaps();
+	void ActivateInputMap(ATInputMap *imap, bool enable);
+
+	bool Load(VDRegistryKey& key);
+	void Save(VDRegistryKey& key);
 
 protected:
 	void ReconfigurePorts();
+	void RebuildMappings();
+	void ActivateMappings(uint32 id, bool state);
+	void ActivateImpulseMappings(uint32 id, int ds);
+	void ClearTriggers();
+	void SetTrigger(uint32 id, bool state);
 
+	ATScheduler *mpScheduler;
 	ATPortController *mpPorts[2];
-	ATInputMode mInputModes[2];
+	IATInputConsoleCallback *mpCB;
 
-	IATJoystickManager *mpJoyMgr;
-	ATJoystickController *mpJoy;
-	ATJoystickController *mpJoy1;
-	ATJoystickController *mpJoy2;
-	ATPaddleController *mpPaddle;
-	ATMouseController *mpMouse;
+	typedef atfixedhash<int, uint32, 64> Buttons;
+	Buttons mButtons;
+
+	typedef std::multimap<uint32, uint32> Mappings;
+	Mappings mMappings;
+
+	struct Trigger {
+		uint32 mId;
+		uint32 mCount;
+		ATPortInputController *mpController;
+	};
+
+	typedef vdfastvector<Trigger> Triggers;
+	Triggers mTriggers;
+
+	typedef std::map<ATInputMap *, bool> InputMaps;
+	InputMaps mInputMaps;
+
+	typedef std::map<uint32, ATPortInputController *> InputControllers;
+	InputControllers mInputControllers;
+
+	uint32	mAllocatedUnits;
+	ATInputUnitIdentifier mUnitIds[32];
 };
 
 #endif	// f_AT_INPUTMANAGER_H

@@ -5,7 +5,7 @@
 
 struct VDPixmap;
 
-bool ATLoadKernelResource(int id, void *dst, uint32 size);
+bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size);
 void ATFileSetReadOnlyAttribute(const wchar_t *path, bool readOnly);
 
 void ATCopyFrameToClipboard(void *hwnd, const VDPixmap& px);

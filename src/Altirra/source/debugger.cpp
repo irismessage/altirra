@@ -29,6 +29,7 @@
 #include "ksyms.h"
 #include "kerneldb.h"
 #include "cassette.h"
+#include "vbxe.h"
 
 extern ATSimulator g_sim;
 
@@ -54,6 +55,7 @@ public:
 	void StepOver(ATDebugSrcMode sourceMode);
 	void StepOut(ATDebugSrcMode sourceMode);
 	void SetPC(uint16 pc);
+	uint16 GetFramePC() const;
 	void SetFramePC(uint16 pc);
 	uint32 GetCallStack(ATCallStackFrame *dst, uint32 maxCount);
 	void DumpCallStack();
@@ -88,6 +90,7 @@ public:
 public:
 	bool GetSourceFilePath(uint32 moduleId, uint16 fileId, VDStringW& path);
 	bool LookupSymbol(uint32 moduleOffset, uint32 flags, ATSymbol& symbol);
+	bool LookupSymbol(uint32 moduleOffset, uint32 flags, ATDebuggerSymbol& symbol);
 	bool LookupLine(uint32 addr, uint32& moduleId, ATSourceLineInfo& lineInfo);
 	bool LookupFile(const wchar_t *fileName, uint32& moduleId, uint16& fileId);
 	void GetLinesForFile(uint32 moduleId, uint16 fileId, vdfastvector<ATSourceLineInfo>& lines);
@@ -321,6 +324,10 @@ void ATDebugger::SetPC(uint16 pc) {
 	UpdateClientSystemState();
 }
 
+uint16 ATDebugger::GetFramePC() const {
+	return mFramePC;
+}
+
 void ATDebugger::SetFramePC(uint16 pc) {
 	mFramePC = pc;
 
@@ -507,7 +514,11 @@ void ATDebugger::DumpCIOParameters() {
 			break;
 
 		case 0x05:
-			ATConsolePrintf("CIO: IOCB=%u, CMD=$05 (get record)\n", iocbIdx);
+			ATConsolePrintf("CIO: IOCB=%u, CMD=$05 (get record), buffer=$%04x, length=$%04x\n"
+				, iocbIdx
+				, g_sim.DebugReadWord(iocb + ATKernelSymbols::ICBAL)
+				, g_sim.DebugReadWord(iocb + ATKernelSymbols::ICBLL)
+				);
 			break;
 
 		case 0x07:
@@ -688,14 +699,25 @@ bool ATDebugger::GetSourceFilePath(uint32 moduleId, uint16 fileId, VDStringW& pa
 }
 
 bool ATDebugger::LookupSymbol(uint32 addr, uint32 flags, ATSymbol& symbol) {
+	ATDebuggerSymbol symbol2;
+
+	if (!LookupSymbol(addr, flags, symbol2))
+		return false;
+
+	symbol = symbol2.mSymbol;
+	return true;
+}
+
+bool ATDebugger::LookupSymbol(uint32 addr, uint32 flags, ATDebuggerSymbol& symbol) {
 	Modules::const_iterator it(mModules.begin()), itEnd(mModules.end());
 	for(; it!=itEnd; ++it) {
 		const Module& mod = *it;
 		uint32 offset = addr - mod.mBase;
 
 		if (offset < mod.mSize && mod.mpSymbols) {
-			if (mod.mpSymbols->LookupSymbol(offset, flags, symbol)) {
-				symbol.mOffset += mod.mBase;
+			if (mod.mpSymbols->LookupSymbol(offset, flags, symbol.mSymbol)) {
+				symbol.mSymbol.mOffset += mod.mBase;
+				symbol.mModuleId = mod.mId;
 				return true;
 			}
 		}
@@ -1227,6 +1249,36 @@ void ATConsoleCmdListModules() {
 	g_debugger.ListModules();
 }
 
+void ATConsoleCmdListNearestSymbol(int argc, const char *const *argv) {
+	if (!argc)
+		return;
+
+	sint32 v = g_debugger.ResolveSymbol(argv[0]);
+	if (v < 0) {
+		ATConsolePrintf("Unable to resolve symbol: %s\n", argv[0]);
+		return;
+	}
+
+	uint16 addr = (uint16)v;
+
+	ATDebuggerSymbol sym;
+	if (g_debugger.LookupSymbol(addr, kATSymbol_Any, sym)) {
+		VDStringW sourceFile;
+		ATSourceLineInfo lineInfo;
+		uint32 moduleId;
+
+		if (g_debugger.LookupLine(addr, moduleId, lineInfo) &&
+			g_debugger.GetSourceFilePath(moduleId, lineInfo.mFileId, sourceFile))
+		{
+			ATConsolePrintf("%04X = %s + %d [%ls:%d]\n", addr, sym.mSymbol.mpName, (int)addr - (int)sym.mSymbol.mOffset, sourceFile.c_str(), lineInfo.mLine);
+		} else {
+			ATConsolePrintf("%04X = %s + %d\n", addr, sym.mSymbol.mpName, (int)addr - (int)sym.mSymbol.mOffset);
+		}
+	} else {
+		ATConsolePrintf("No symbol found for address: %04X\n", addr);
+	}
+}
+
 void ATConsoleCmdEnter(int argc, const char *const *argv) {
 	{
 		if (argc < 2)
@@ -1518,11 +1570,16 @@ void ATConsoleCmdBank() {
 
 	ATMemoryMode mmode = g_sim.GetMemoryMode();
 
-	if (mmode != kATMemoryMode_48K) {
+	if (mmode != kATMemoryMode_48K && mmode != kATMemoryMode_52K) {
 		ATConsolePrintf("  Kernel ROM:    %s\n", (portb & 0x01) ? "enabled" : "disabled");
 		ATConsolePrintf("  BASIC ROM:     %s\n", (portb & 0x02) ? "disabled" : "enabled");
-		ATConsolePrintf("  CPU bank:      %s\n", mmode == kATMemoryMode_128K || (portb & 0x10) ? "disabled" : "enabled");
-		ATConsolePrintf("  Antic bank:    %s\n", mmode == kATMemoryMode_128K || (portb & 0x20) ? "disabled" : "enabled");
+
+		if (mmode != kATMemoryMode_64K)
+			ATConsolePrintf("  CPU bank:      %s\n", (portb & 0x10) ? "disabled" : "enabled");
+
+		if (mmode == kATMemoryMode_128K || mmode == kATMemoryMode_320K)
+			ATConsolePrintf("  Antic bank:    %s\n", (portb & 0x20) ? "disabled" : "enabled");
+
 		ATConsolePrintf("  Self test ROM: %s\n", (portb & 0x80) ? "disabled" : "enabled");
 	}
 
@@ -1800,6 +1857,56 @@ void ATConsoleCmdDumpPIAState() {
 	g_sim.DumpPIAState();
 }
 
+void ATConsoleCmdDumpVBXEState() {
+	ATVBXEEmulator *vbxe = g_sim.GetVBXE();
+
+	if (!vbxe)
+		ATConsoleWrite("VBXE is not enabled.\n");
+	else
+		vbxe->DumpStatus();
+}
+
+void ATConsoleCmdDumpVBXEBL() {
+	ATVBXEEmulator *vbxe = g_sim.GetVBXE();
+
+	if (!vbxe)
+		ATConsoleWrite("VBXE is not enabled.\n");
+	else
+		vbxe->DumpBlitList();
+}
+
+void ATConsoleCmdDumpVBXEXDL() {
+	ATVBXEEmulator *vbxe = g_sim.GetVBXE();
+
+	if (!vbxe)
+		ATConsoleWrite("VBXE is not enabled.\n");
+	else
+		vbxe->DumpXDL();
+}
+
+void ATConsoleCmdVBXETraceBlits(int argc, const char **argv) {
+	ATVBXEEmulator *vbxe = g_sim.GetVBXE();
+
+	if (!vbxe) {
+		ATConsoleWrite("VBXE is not enabled.\n");
+		return;
+	}
+
+	if (argc) {
+		bool newState = false;
+		if (!_stricmp(argv[0], "on")) {
+			newState = true;
+		} else if (_stricmp(argv[0], "off")) {
+			ATConsoleWrite("Syntax: .vbxe_traceblits on|off\n");
+			return;
+		}
+
+		vbxe->SetBlitLoggingEnabled(newState);
+	}
+
+	ATConsolePrintf("VBXE blit tracing is currently %s.\n", vbxe->IsBlitLoggingEnabled() ? "on" : "off");
+}
+
 void ATConsoleCmdDumpHelp() {
 	ATConsoleWrite("t    Trace (step one instruction) (F11)\n");
 	ATConsoleWrite("g    Go\n");
@@ -1819,6 +1926,7 @@ void ATConsoleCmdDumpHelp() {
 	ATConsoleWrite("dw   Display words\n");
 	ATConsoleWrite("df   Display decimal float\n");
 	ATConsoleWrite("lm   List modules\n");
+	ATConsoleWrite("ln   List nearest symbol\n");
 	ATConsoleWrite("e    Enter (alter) data in memory\n");
 	ATConsoleWrite(".antic       Display ANTIC status\n");
 	ATConsoleWrite(".bank        Show memory bank state\n");
@@ -1838,6 +1946,10 @@ void ATConsoleCmdDumpHelp() {
 	ATConsoleWrite(".tracecio    Toggle CIO call tracing\n");
 	ATConsoleWrite(".traceser    Toggle serial I/O port tracing\n");
 	ATConsoleWrite(".unloadsym   Unload module symbols\n");
+	ATConsoleWrite(".vbxe        Display VBXE status\n");
+	ATConsoleWrite(".vbxe_bl     Display VBXE blit list (BL)\n");
+	ATConsoleWrite(".vbxe_xdl    Display VBXE extended display list (XDL)\n");
+	ATConsoleWrite(".vbxe_traceblits    Toggle VBXE blit tracing\n");
 	ATConsoleWrite(".vectors     Display kernel vectors\n");
 	ATConsoleWrite(".writemem    Write memory to disk\n");
 }
@@ -1917,6 +2029,8 @@ void ATConsoleExecuteCommand(char *s) {
 			ATConsoleCmdDumpFloats(argc-1, argv+1);
 		} else if (!strcmp(cmd, "lm")) {
 			ATConsoleCmdListModules();
+		} else if (!strcmp(cmd, "ln")) {
+			ATConsoleCmdListNearestSymbol(argc-1, argv+1);
 		} else if (!strcmp(cmd, "e")) {
 			ATConsoleCmdEnter(argc-1, argv+1);
 		} else if (!strcmp(cmd, ".antic")) {
@@ -1968,6 +2082,14 @@ void ATConsoleExecuteCommand(char *s) {
 			ATConsoleCmdCasLogData(argc-1, argv+1);
 		} else if (!strcmp(cmd, ".pia")) {
 			ATConsoleCmdDumpPIAState();
+		} else if (!strcmp(cmd, ".vbxe")) {
+			ATConsoleCmdDumpVBXEState();
+		} else if (!strcmp(cmd, ".vbxe_xdl")) {
+			ATConsoleCmdDumpVBXEXDL();
+		} else if (!strcmp(cmd, ".vbxe_bl")) {
+			ATConsoleCmdDumpVBXEBL();
+		} else if (!strcmp(cmd, ".vbxe_traceblits")) {
+			ATConsoleCmdVBXETraceBlits(argc-1, argv+1);
 		} else if (!strcmp(cmd, "?")) {
 			ATConsoleCmdDumpHelp();
 		} else {

@@ -57,7 +57,7 @@ zf1:
 	org		$da51
 ldbufa:
 	#{
-		ATAccelFSUB(*mpCPU, *mpMemory);
+		ATAccelLDBUFA(*mpCPU, *mpMemory);
 	#}
 	rts
 

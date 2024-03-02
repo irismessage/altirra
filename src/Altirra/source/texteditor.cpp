@@ -1163,6 +1163,12 @@ void TextEditor::OnKeyDown(WPARAM key) {
 }
 
 void TextEditor::OnChar(int ch) {
+	if (ch == 0x01) {
+		SelectAll();
+	} else if (ch == 0x03) {
+		Copy();
+	}
+
 	if (mbReadOnly)
 		return;
 

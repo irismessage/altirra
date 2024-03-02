@@ -17,16 +17,27 @@ if exist publish\build.log del publish\build.log
 if exist publish\Altirra-!_verid!-src.zip del publish\Altirra-!_verid!-src.zip
 if exist publish\Altirra-!_verid!.zip del publish\Altirra-!_verid!.zip
 
+set _abverfile=src\Altirra\autobuild\version.h
+
+if not exist src\Altirra\autobuild md src\Altirra\autobuild
+
+devenv src\Altirra.sln /Clean Release
+
+echo #ifndef AT_VERSION_H >%_abverfile%
+echo #define AT_VERSION_H >>%_abverfile%
+echo #define AT_VERSION "%_verid%" >>%_abverfile%
+echo #endif >>%_abverfile%
+
 devenv src\Altirra.sln /Build Debug /Project Kernel /Out publish\build-debug.log
 if errorlevel 1 (
 	echo Build failed!
-	exit /b 0
+	goto :cleanup
 )
 
 devenv src\Altirra.sln /Rebuild Release /Out publish\build.log
 if errorlevel 1 (
 	echo Build failed!
-	exit /b 0
+	goto :cleanup
 )
 
 zip -9 -X -r publish\Altirra-!_verid!-src.zip ^
@@ -51,3 +62,9 @@ zip -9 -X -j publish\Altirra-!_verid!.zip out\release\Altirra.exe copying README
 copy out\release\Altirra.pdb publish\Altirra-!_verid!.pdb
 
 dir publish
+if exist src\Altirra\autobuild\version.h del src\Altirra\autobuild\version.h
+exit /b 0
+
+:cleanup
+if exist src\Altirra\autobuild\version.h del src\Altirra\autobuild\version.h
+exit /b 5

@@ -276,6 +276,10 @@ public:
 	vector_type m[3];
 };
 
+inline vdfloat3 operator*(const vdfloat3& v, const vdfloat3x3& m) {
+	return v.x * m.m[0] + v.y * m.m[1] + v.z * m.m[2];
+}
+
 class vdfloat4x4 {
 public:
 	enum zero_type { zero };

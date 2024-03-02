@@ -34,7 +34,7 @@ class VDFile;
 
 class IATDiskActivity {
 public:
-	virtual void OnDiskActivity(uint8 drive, bool active) = 0;
+	virtual void OnDiskActivity(uint8 drive, bool active, uint32 sector) = 0;
 };
 
 class ATDiskEmulator : public IATPokeySIODevice, public IATSchedulerCallback {
@@ -45,26 +45,26 @@ public:
 	void Init(int unit, IATDiskActivity *act, ATScheduler *sched);
 
 	bool IsEnabled() const { return mbEnabled; }
-	bool IsBurstIOEnabled() const { return mbBurstTransfer; }
 	bool IsAccurateSectorTimingEnabled() const { return mbAccurateSectorTiming; }
 
 	void SetEnabled(bool enabled) { mbEnabled = enabled; }
-	void SetBurstIOEnabled(bool burst);
 	void SetAccurateSectorTimingEnabled(bool enabled) { mbAccurateSectorTiming = enabled; }
 	void SetSectorBreakpoint(int sector) { mSectorBreakpoint = sector; }
 	int GetSectorBreakpoint() const { return mSectorBreakpoint; }
 
 	bool IsDirty() const;
+	bool IsDiskBacked() const { return mbHasDiskSource; }
 	const wchar_t *GetPath() const { return mPath.empty() ? NULL : mPath.c_str(); }
 
 	bool IsWriteEnabled() const { return mbWriteEnabled; }
 	bool IsAutoFlushEnabled() const { return mbAutoFlush; }
 	void SetWriteFlushMode(bool writeEnabled, bool autoFlush);
 
+	void Flush();
 	void Reset();
 	void LoadDisk(const wchar_t *s);
 	void SaveDisk(const wchar_t *s);
-	void CreateDisk(uint32 sectorCount, uint32 bootSectorCount, bool dd);
+	void CreateDisk(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize);
 	void UnloadDisk();
 
 	uint32 GetSectorCount() const;
@@ -73,6 +73,8 @@ public:
 	float GetSectorTiming(uint16 sector, int phantomIdx) const;
 	uint8 ReadSector(uint16 bufadr, uint16 len, uint16 sector, ATCPUEmulatorMemory *mpMem);
 	uint8 WriteSector(uint16 bufadr, uint16 len, uint16 sector, ATCPUEmulatorMemory *mpMem);
+	void ReadStatus(uint8 dst[5]);
+	void ReadPERCOMBlock(uint8 dst[13]);
 
 	void SetForcedPhantomSector(uint16 sector, uint8 index, int order);
 	int GetForcedPhantomSector(uint16 sector, uint8 index);
@@ -97,7 +99,9 @@ protected:
 	void BeginTransfer(uint32 length, uint32 cyclesToFirstByte, bool useRotationalDelay);
 	void UpdateRotationalCounter();
 	void QueueAutoSave();
+	void AutoSave();
 	void SetAutoSaveError(bool error);
+	void UpdateDisk();
 	void ProcessCommandPacket();
 	void ProcessCommandTransmitCompleted();
 	void ProcessCommandData();
@@ -127,10 +131,12 @@ protected:
 	uint32	mCurrentTrack;
 	uint32	mSectorsPerTrack;
 
+	sint32	mReWriteOffset;
 	bool	mbWriteEnabled;
 	bool	mbWriteRotationalDelay;
 	bool	mbAutoFlush;
 	bool	mbDirty;
+	bool	mbHasDiskSource;
 	bool	mbErrorIndicatorPhase;
 
 	bool	mbWriteMode;
@@ -145,6 +151,7 @@ protected:
 	int		mTotalSectorCount;
 	int		mSectorSize;
 	int		mSectorBreakpoint;
+	uint32	mLastSector;
 
 	uint8	mSendPacket[528];
 	uint8	mReceivePacket[528];
@@ -153,13 +160,18 @@ protected:
 
 	struct PhysSectorInfo {
 		uint32	mOffset;
-		uint32	mSize;
+		uint16	mSize;
+		bool	mbDirty;
 		float	mRotPos;
 		uint8	mFDCStatus;
 		sint8	mForcedOrder;
 		sint16	mWeakDataOffset;
 	};
-	vdfastvector<PhysSectorInfo>	mPhysSectorInfo;
+
+	struct SortDirtySectors;
+
+	typedef vdfastvector<PhysSectorInfo> PhysSectors;
+	PhysSectors mPhysSectorInfo;
 
 	struct VirtSectorInfo {
 		uint32	mStartPhysSector;

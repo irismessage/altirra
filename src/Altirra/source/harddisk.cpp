@@ -21,52 +21,9 @@
 #include "harddisk.h"
 #include "kerneldb.h"
 #include "oshelper.h"
+#include "cio.h"
 
-namespace {
-	enum {
-		CIOStatBreak		= 0x80,	// break key abort
-		CIOStatIOCBInUse	= 0x81,	// IOCB in use
-		CIOStatUnkDevice	= 0x82,	// unknown device
-		CIOStatWriteOnly	= 0x83,	// opened for write only
-		CIOStatInvalidCmd	= 0x84,	// invalid command
-		CIOStatNotOpen		= 0x85,	// device or file not open
-		CIOStatInvalidIOCB	= 0x86,	// invalid IOCB number
-		CIOStatReadOnly		= 0x87,	// opened for read only
-		CIOStatEndOfFile	= 0x88,	// end of file reached
-		CIOStatTruncRecord	= 0x89,	// record truncated
-		CIOStatTimeout		= 0x8A,	// device timeout
-		CIOStatNAK			= 0x8B,	// device NAK
-		CIOStatSerFrameErr	= 0x8C,	// serial bus framing error
-		CIOStatCursorRange	= 0x8D,	// cursor out of range
-		CIOStatSerOverrun	= 0x8E,	// serial frame overrun error
-		CIOStatSerChecksum	= 0x8F,	// serial checksum error
-		CIOStatDeviceDone	= 0x90,	// device done error
-		CIOStatBadScrnMode	= 0x91,	// bad screen mode
-		CIOStatNotSupported	= 0x92,	// function not supported by handler
-		CIOStatOutOfMemory	= 0x93,	// not enough memory
-		CIOStatDriveNumErr	= 0xA0,	// disk drive # error
-		CIOStatTooManyFiles	= 0xA1,	// too many open disk files
-		CIOStatDiskFull		= 0xA2,	// disk full
-		CIOStatFatalDiskIO	= 0xA3,	// fatal disk I/O error
-		CIOStatFileNumDiff	= 0xA4,	// internal file # mismatch
-		CIOStatFileNameErr	= 0xA5,	// filename error
-		CIOStatPointDLen	= 0xA6,	// point data length error
-		CIOStatFileLocked	= 0xA7,	// file locked
-		CIOStatInvDiskCmd	= 0xA8,	// invalid command for disk
-		CIOStatDirFull		= 0xA9,	// directory full (64 files)
-		CIOStatFileNotFound	= 0xAA,	// file not found
-		CIOStatInvPoint		= 0xAB,	// invalid point
-
-		CIOCmdOpen			= 0x03,
-		CIOCmdGetRecord		= 0x05,
-		CIOCmdGetChars		= 0x07,
-		CIOCmdPutRecord		= 0x09,
-		CIOCmdPutChars		= 0x0B,
-		CIOCmdClose			= 0x0C,
-		CIOCmdGetStatus		= 0x0D,
-		CIOCmdSpecial		= 0x0E	// $0E and up is escape
-	};
-}
+using namespace ATCIOSymbols;
 
 class ATHardDiskEmulator : public IATHardDiskEmulator {
 	ATHardDiskEmulator(const ATHardDiskEmulator&);

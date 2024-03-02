@@ -233,6 +233,10 @@ ATCassetteEmulator::ATCassetteEmulator()
 ATCassetteEmulator::~ATCassetteEmulator() {
 }
 
+float ATCassetteEmulator::GetLength() const {
+	return mLength / kDataFrequency;
+}
+
 float ATCassetteEmulator::GetPosition() const {
 	return mPosition / kDataFrequency;
 }
@@ -747,17 +751,25 @@ void ATCassetteEmulator::RewindToStart() {
 	mAudioPosition = 0;
 }
 
-void ATCassetteEmulator::SkipForward(float seconds) {
-	// compute tape offset
-	sint32 bitsToSkip = VDRoundToInt(seconds * kDataFrequency);
+void ATCassetteEmulator::SeekToTime(float seconds) {
+	if (seconds < 0.0f)
+		seconds = 0.0f;
 
-	// compute new data position
-	mPosition += bitsToSkip;
+	uint32 pos = VDRoundToInt(seconds * kDataFrequency);
+
+	SeekToBitPos(pos);
+}
+
+void ATCassetteEmulator::SeekToBitPos(uint32 bitPos) {
+	if (mPosition == bitPos)
+		return;
+
+	mPosition = bitPos;
 
 	// compute new audio position from data position
 	mAudioPosition = VDRoundToInt((float)mPosition * (kAudioFrequency / kDataFrequency));
 
-	// clamp positions and kill events as appropriate
+	// clamp positions and kill or recreate events as appropriate
 	if (mPosition >= mLength) {
 		mPosition = mLength;
 
@@ -775,6 +787,15 @@ void ATCassetteEmulator::SkipForward(float seconds) {
 			mpAudioEvent = NULL;
 		}
 	}
+
+	UpdateMotorState();
+}
+
+void ATCassetteEmulator::SkipForward(float seconds) {
+	// compute tape offset
+	sint32 bitsToSkip = VDRoundToInt(seconds * kDataFrequency);
+
+	SeekToBitPos(mPosition + bitsToSkip);
 }
 
 uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemory *mpMem) {

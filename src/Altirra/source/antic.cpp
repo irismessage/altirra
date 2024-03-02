@@ -42,6 +42,7 @@ void ATAnticEmulator::Init(IATAnticEmulatorConnections *mem, ATGTIAEmulator *gti
 
 void ATAnticEmulator::SetPALMode(bool pal) {
 	mScanlineLimit = pal ? 312 : 262;
+	mVSyncStart = pal ? 275 : 251;
 }
 
 void ATAnticEmulator::ColdReset() {
@@ -72,6 +73,8 @@ void ATAnticEmulator::ColdReset() {
 	mPFWidthShift = 0;
 	mPFDMAPatternCacheKey = 0xFFFFFFFF;
 	mbHScrollEnabled = false;
+	mGTIAHSyncOffset = 110;
+	mbInBuggedVBlank = false;
 }
 
 void ATAnticEmulator::WarmReset() {
@@ -121,7 +124,10 @@ bool ATAnticEmulator::Advance() {
 					mbLateNMI = true;
 				}
 
-				mDLControl = 0;
+				// Note that we need to preserve the vertical scroll bit here to handle oversize DLs
+				// properly.
+				mDLControlPrev = mDLControl;
+				mDLControl &= 0x20;
 			}
 
 			uint32 rowStop = mbRowStopUseVScroll ? mLatchedVScroll : ((mRowCount - 1) & 15);
@@ -148,7 +154,33 @@ bool ATAnticEmulator::Advance() {
 
 			memset(mPFCharBuffer, 0, sizeof mPFCharBuffer);
 			memset(mPFDecodeBuffer, 0x00, sizeof mPFDecodeBuffer);
+
+			if ((unsigned)(mY - 8) >= 240) {
+				if (mPFPushMode != k320 || !(mDMACTL & 3)) {
+					mpGTIA->SetVBLANK(ATGTIAEmulator::kVBlankModeOn);
+				} else {
+					mpGTIA->SetVBLANK(ATGTIAEmulator::kVBlankModeBugged);
+
+					memset(mPFDecodeBuffer, 0x0a, sizeof mPFDecodeBuffer);
+				}
+
+				if (mY == 248) {
+					if (mPFPushMode == k320) {
+						mbInBuggedVBlank = true;
+						mVSyncShiftTime = 0;
+					} else {
+						mbInBuggedVBlank = false;
+					}
+				}
+			} else {
+				mpGTIA->SetVBLANK(ATGTIAEmulator::kVBlankModeOff);
+				mbInBuggedVBlank = false;
+			}
+
 			mpGTIA->BeginScanline(mY, mPFPushMode == k320);
+
+			if (mY == 248)
+				mGTIAHSyncOffset = 110;
 
 			mPFDecodeCounter = mPFDMAStart;
 			mPFDisplayCounter = mPFDisplayStart;
@@ -159,35 +191,8 @@ bool ATAnticEmulator::Advance() {
 
 		busActive = mbDMAPattern[mX];
 
-		if (mX == 105)		// WSYNC end
+		if (mX == 105)			// WSYNC end
 			mbWSYNCActive = false;
-
-		// We need to latch VSCROL at cycle 109 for determining the end of mode lines.
-		if (mX == 109)
-			mLatchedVScroll = mVSCROL;
-
-		if (mX == 111) {
-			// Step row counter. We do this instead of using the incrementally stepped value, because there
-			// may be DMA cycles blocked after this point.
-
-			if (mPFDMAEnd < 127 && mbPFDMAActive) {
-				uint32 bytes = 0;
-				switch(mPFFetchWidth) {
-					case kPFNarrow:
-						bytes = 8;
-						break;
-					case kPFNormal:
-						bytes = 10;
-						break;
-					case kPFWide:
-						bytes = 12;
-						break;
-				}
-				mPFDMAPtr = (mPFDMAPtr & 0xf000) + ((mPFDMAPtr + (bytes << mPFWidthShift)) & 0xfff);
-			}
-
-			mVCOUNT = (mY + 1 >= mScanlineLimit) ? 0 : (mY + 1) >> 1;
-		}
 
 		uint8 fetchMode = mDMAPFFetchPattern[mX];
 
@@ -216,6 +221,34 @@ bool ATAnticEmulator::Advance() {
 				mPFCharBuffer[xoff - mPFDMAStart] = mpConn->AnticReadByte(mPFCharFetchPtr + ((uint32)(c & 0x3f) << 3));
 			}
 			break;
+		
+		case 4:	// cycle 109
+			// We need to latch VSCROL at cycle 109 for determining the end of mode lines.
+			mLatchedVScroll = mVSCROL;
+			break;
+
+		case 5:	// cycle 111
+			// Step row counter. We do this instead of using the incrementally stepped value, because there
+			// may be DMA cycles blocked after this point.
+
+			if (mPFDMAEnd < 127 && mbPFDMAActive) {
+				uint32 bytes = 0;
+				switch(mPFFetchWidth) {
+					case kPFNarrow:
+						bytes = 8;
+						break;
+					case kPFNormal:
+						bytes = 10;
+						break;
+					case kPFWide:
+						bytes = 12;
+						break;
+				}
+				mPFDMAPtr = (mPFDMAPtr & 0xf000) + ((mPFDMAPtr + (bytes << mPFWidthShift)) & 0xfff);
+			}
+
+			mVCOUNT = (mY + 1 >= mScanlineLimit) ? 0 : (mY + 1) >> 1;
+			break;
 		}
 	}
 
@@ -237,11 +270,14 @@ bool ATAnticEmulator::AdvanceHBlank() {
 				mpGTIA->UpdateMissile((mY & 1) != 0, byte);
 			}
 		}
+
+		mbDLDMAEnabledInTime = (mDMACTL & 0x20) != 0;
+		mDLISTLatch = mDLIST;
 	} else if (mX == 1) {
 		mbDLExtraLoadsPending = false;
 		mbPFDMAActive = false;
-		mPFDisplayStart = 127;
-		mPFDisplayEnd = 127;
+		mPFDisplayStart = 110;
+		mPFDisplayEnd = 110;
 		mDLHistory[mY].mbValid = false;
 
 		// Display start is at scanline 8.
@@ -250,8 +286,12 @@ bool ATAnticEmulator::AdvanceHBlank() {
 			mRowCounter = 0;
 			mRowCount = 1;
 			mbRowStopUseVScroll = false;
-			mDLControlPrev = 0;
 			mbRowAdvance = false;
+
+			// Note that we MUST NOT clear mDLControlPrev here. If the display list extends all
+			// the way to scan line 248, ANTIC still remembers the status of the vertical scroll
+			// bit.
+			mDLControl = mDLControlPrev;
 		}
 
 		// compute stop line
@@ -266,14 +306,14 @@ bool ATAnticEmulator::AdvanceHBlank() {
 				mDLControlPrev = mDLControl;
 
 				DLHistoryEntry& ent = mDLHistory[mY];
-				ent.mDLAddress = mDLIST;
+				ent.mDLAddress = mDLISTLatch;
 				ent.mPFAddress = mPFDMAPtr;
 				ent.mHVScroll = mHSCROL + (mVSCROL << 4);
 				ent.mDMACTL = mDMACTL;
 				ent.mbValid = true;
 
-				if (mDMACTL & 0x20) {
-					mDLControl = mpConn->AnticReadByte(mDLIST);
+				if (mbDLDMAEnabledInTime) {
+					mDLControl = mpConn->AnticReadByte(mDLISTLatch);
 
 					busActive = true;
 					mDLIST = (mDLIST & 0xFC00) + ((mDLIST + 1) & 0x03FF);
@@ -402,8 +442,6 @@ bool ATAnticEmulator::AdvanceHBlank() {
 
 				mbPFDMAActive = true;
 			}
-
-			memset(mPFDataBuffer, 0, sizeof mPFDataBuffer);
 		}
 	} else if (mX >= 2 && mX <= 5) {		// player DMA
 		if ((mDMACTL & 0x08) && (uint32)(mY - 8) < 240) {
@@ -473,6 +511,10 @@ bool ATAnticEmulator::AdvanceHBlank() {
 }
 
 void ATAnticEmulator::AdvanceScanline() {
+	if (mY == 253) {
+		int x = 0;
+	}
+
 	SyncWithGTIA(0);
 	mpGTIA->EndPlayfield();
 	mpGTIA->EndScanline(mDLControl);
@@ -483,6 +525,9 @@ void ATAnticEmulator::AdvanceScanline() {
 		mbDLActive = false;		// necessary when DL DMA disabled for Joyride ptB
 
 		mpConn->AnticEndFrame();
+
+		// tell GTIA if the next field is an odd field
+		mpGTIA->SetFieldPolarity(!mbInBuggedVBlank || mVSyncShiftTime < 20);
 
 		if (mAnalysisMode)
 			memset(mActivityMap, 0, sizeof mActivityMap);
@@ -508,6 +553,9 @@ void ATAnticEmulator::SyncWithGTIA(int offset) {
 
 	if (xoff2 >= limit)
 		return;
+
+	if (mbInBuggedVBlank && mY == mVSyncStart)
+		mVSyncShiftTime += limit - xoff2;
 
 	if (mPFWidth != kPFDisabled) {
 		const uint8 *src = &mPFDecodeBuffer[xoff2];
@@ -842,7 +890,9 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 			break;
 
 		case 0x0A:	// $D40A WSYNC
-			mWSYNCPending = 2;
+			if (!mWSYNCPending || (mWSYNCPending == 1 && mX == 104)) {
+				mWSYNCPending = 2;
+			}
 			break;
 
 		case 0x0E:
@@ -964,6 +1014,7 @@ void ATAnticEmulator::ExchangeState(T& io) {
 
 	io != mbDLExtraLoadsPending;
 	io != mbDLActive;
+	io != mbDLDMAEnabledInTime;
 	io != mPFDisplayCounter;
 	io != mPFDecodeCounter;
 	io != mbPFDMAActive;
@@ -1012,6 +1063,10 @@ void ATAnticEmulator::ExchangeState(T& io) {
 	io != mPFCharBuffer;
 
 	io != mPFDecodeBuffer;
+
+	io != mDLISTLatch;
+
+	io != mWSYNCPending;
 }
 
 void ATAnticEmulator::LoadState(ATSaveStateReader& reader) {
@@ -1047,7 +1102,6 @@ void ATAnticEmulator::LoadState(ATSaveStateReader& reader) {
 	mCharBaseAddr128 = (uint32)(mCHBASE & 0xfc) << 8;
 	mCharBaseAddr64 = (uint32)(mCHBASE & 0xfe) << 8;
 	UpdateCurrentCharRow();
-	mWSYNCPending = 0;
 }
 
 void ATAnticEmulator::SaveState(ATSaveStateWriter& writer) {
@@ -1144,6 +1198,9 @@ void ATAnticEmulator::UpdateDMAPattern(int dmaStart, int dmaEnd, uint8 mode) {
 				}
 			}
 		}
+
+		mDMAPFFetchPattern[109] = 4;
+		mDMAPFFetchPattern[111] = 5;
 	}
 
 	if (mAnalysisMode == kAnalyzeDMATiming) {
@@ -1178,10 +1235,12 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 	if (mbHScrollEnabled && mPFFetchWidth != kPFDisabled && mPFFetchWidth != kPFWide)
 		mPFFetchWidth = (PFWidthMode)((int)mPFFetchWidth + 1);
 
+	bool pfActive = (uint32)(mX - mPFDisplayStart) < (uint32)(mPFDisplayEnd - mPFDisplayStart);
+
 	switch(mPFWidth) {
 		case kPFDisabled:
-			mPFDisplayStart = 127;
-			mPFDisplayEnd = 127;
+			mPFDisplayStart = 110;
+			mPFDisplayEnd = 110;
 			break;
 		case kPFNarrow:
 			mPFDisplayStart = 32;
@@ -1196,6 +1255,9 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 			mPFDisplayEnd = 110;
 			break;
 	}
+
+	if (pfActive && mX < mPFDisplayStart || mX >= mPFDisplayEnd)
+		mGTIAHSyncOffset = mX;
 
 	mPFDMAStart = 127;
 	mPFDMAEnd = 127;

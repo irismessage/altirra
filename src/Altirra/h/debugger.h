@@ -23,6 +23,7 @@
 #endif
 
 #include <vd2/system/vdstl.h>
+#include "symbols.h"
 
 struct ATSymbol;
 struct ATSourceLineInfo;
@@ -82,6 +83,7 @@ public:
 	virtual void StepOver(ATDebugSrcMode sourceMode) = 0;
 	virtual void StepOut(ATDebugSrcMode sourceMode) = 0;
 	virtual void SetPC(uint16 pc) = 0;
+	virtual uint16 GetFramePC() const = 0;
 	virtual void SetFramePC(uint16 pc) = 0;
 	virtual uint32 GetCallStack(ATCallStackFrame *dst, uint32 maxCount) = 0;
 	virtual void DumpCallStack() = 0;
@@ -97,10 +99,16 @@ public:
 	virtual sint32 ResolveSymbol(const char *s) = 0;
 };
 
+struct ATDebuggerSymbol {
+	ATSymbol mSymbol;
+	uint32 mModuleId;
+};
+
 class IATDebuggerSymbolLookup {
 public:
 	virtual bool GetSourceFilePath(uint32 moduleId, uint16 fileId, VDStringW& path) = 0;
 	virtual bool LookupSymbol(uint32 addr, uint32 flags, ATSymbol& symbol) = 0;
+	virtual bool LookupSymbol(uint32 addr, uint32 flags, ATDebuggerSymbol& symbol) = 0;
 	virtual bool LookupLine(uint32 addr, uint32& moduleId, ATSourceLineInfo& lineInfo) = 0;
 	virtual bool LookupFile(const wchar_t *fileName, uint32& moduleId, uint16& fileId) = 0;
 	virtual void GetLinesForFile(uint32 moduleId, uint16 fileId, vdfastvector<ATSourceLineInfo>& lines) = 0;

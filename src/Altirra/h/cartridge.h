@@ -19,6 +19,7 @@
 #define f_AT_CARTRIDGE_H
 
 #include <vd2/system/vdstl.h>
+#include <vd2/system/VDString.h>
 
 class ATSaveStateReader;
 class ATSaveStateWriter;
@@ -35,14 +36,18 @@ public:
 	bool IsABxxMapped() const;
 	bool IsBASICDisableAllowed() const;		// Cleared if we have a cart type that doesn't want OPTION pressed (AtariMax).
 
+	const wchar_t *GetPath() const {
+		return mCartMode ? mImagePath.c_str() : NULL;
+	}
+
 	void LoadSuperCharger3D();
 	void Load(const wchar_t *fn);
 	void Unload();
 
 	void ColdReset();
 
-	bool WriteMemoryMap89(const uint8 **readMap, uint8 **writeMap, const uint8 *dummyReadPage, uint8 *dummyWritePage);
-	bool WriteMemoryMapAB(const uint8 **readMap, uint8 **writeMap, const uint8 *dummyReadPage, uint8 *dummyWritePage);
+	bool WriteMemoryMap89(const uint8 **readMap, uint8 **writeMap, const uint8 **anticMap, const uint8 *dummyReadPage, uint8 *dummyWritePage);
+	bool WriteMemoryMapAB(const uint8 **readMap, uint8 **writeMap, const uint8 **anticMap, const uint8 *dummyReadPage, uint8 *dummyWritePage);
 
 	uint8 ReadByte89AB(uint16 address, bool& remapRequired);
 	bool WriteByte89AB(uint16 address, uint8 value);
@@ -64,6 +69,7 @@ protected:
 	uint8	mSC3D[4];
 
 	vdfastvector<uint8> mCARTROM;
+	VDStringW mImagePath;
 };
 
 #endif	// f_AT_CARTRIDGE_H

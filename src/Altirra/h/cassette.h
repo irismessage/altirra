@@ -51,6 +51,7 @@ public:
 	ATCassetteEmulator();
 	~ATCassetteEmulator();
 
+	float GetLength() const;
 	float GetPosition() const;
 
 	void Init(ATPokeyEmulator *pokey, ATScheduler *sched);
@@ -72,6 +73,8 @@ public:
 	void Play();
 	void RewindToStart();
 
+	void SeekToTime(float seconds);
+	void SeekToBitPos(uint32 bitPos);
 	void SkipForward(float seconds);
 
 	uint8 ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemory *mpMem);

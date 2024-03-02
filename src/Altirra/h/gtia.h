@@ -37,6 +37,18 @@ class ATArtifactingEngine;
 class ATSaveStateReader;
 class ATSaveStateWriter;
 class ATGTIARenderer;
+class ATVBXEEmulator;
+
+struct ATColorParams {
+	float mHueStart;
+	float mHueRange;
+	float mBrightness;
+	float mContrast;
+	float mSaturation;
+	float mArtifactHue;
+	float mArtifactSat;
+	float mArtifactBias;
+};
 
 class ATGTIAEmulator {
 public:
@@ -44,6 +56,8 @@ public:
 	~ATGTIAEmulator();
 
 	void Init(IATGTIAEmulatorConnections *);
+
+	void SetVBXE(ATVBXEEmulator *);
 	
 	enum AnalysisMode {
 		kAnalyzeNone,
@@ -61,10 +75,25 @@ public:
 		kArtifactCount
 	};
 
-	void AdjustColors(double baseDelta, double rangeDelta);
+	enum OverscanMode {
+		kOverscanNormal,
+		kOverscanExtended,
+		kOverscanFull,
+		kOverscanCount
+	};
+
+	ATColorParams GetColorParams() const;
+	void SetColorParams(const ATColorParams& params);
+	void ResetColors();
+	void GetPalette(uint32 pal[256]) const;
 
 	AnalysisMode GetAnalysisMode() const { return mAnalysisMode; }
 	void SetAnalysisMode(AnalysisMode mode);
+
+	OverscanMode GetOverscanMode() const { return mOverscanMode; }
+	void SetOverscanMode(OverscanMode mode);
+
+	void GetFrameSize(int& w, int& h) const;
 
 	void SetForcedBorder(bool forcedBorder) { mbForcedBorder = forcedBorder; }
 	void SetFrameSkip(bool turbo) { mbTurbo = turbo; }
@@ -80,6 +109,8 @@ public:
 	void ResetStatusFlags(uint32 flags) { mStatusFlags &= ~flags; }
 	void PulseStatusFlags(uint32 flags) { mStickyStatusFlags |= flags; }
 
+	void SetStatusCounter(uint32 index, uint32 value);
+
 	void SetCassetteIndicatorVisible(bool vis) { mbShowCassetteIndicator = vis; }
 	void SetCassettePosition(float pos);
 
@@ -87,6 +118,12 @@ public:
 
 	ArtifactMode GetArtifactingMode() const { return mArtifactMode; }
 	void SetArtifactingMode(ArtifactMode mode) { mArtifactMode = mode; }
+
+	bool IsBlendModeEnabled() const { return mbBlendMode; }
+	void SetBlendModeEnabled(bool enable) { mbBlendMode = enable; }
+
+	bool IsInterlaceEnabled() const { return mbInterlaceEnabled; }
+	void SetInterlaceEnabled(bool enable) { mbInterlaceEnabled = enable; }
 
 	void SetConsoleSwitch(uint8 c, bool down);
 	void SetForcedConsoleSwitches(uint8 c);
@@ -103,6 +140,14 @@ public:
 	void LoadState(ATSaveStateReader& reader);
 	void SaveState(ATSaveStateWriter& writer);
 
+	enum VBlankMode {
+		kVBlankModeOff,
+		kVBlankModeOn,
+		kVBlankModeBugged
+	};
+
+	void SetFieldPolarity(bool polarity);
+	void SetVBLANK(VBlankMode vblMode);
 	bool BeginFrame(bool force);
 	void BeginScanline(int y, bool hires);
 	void EndScanline(uint8 dlControl);
@@ -143,7 +188,15 @@ protected:
 
 	AnalysisMode	mAnalysisMode;
 	ArtifactMode	mArtifactMode;
-	uint8	mArtifactModeThisFrame;
+	OverscanMode	mOverscanMode;
+	VBlankMode		mVBlankMode;
+	bool	mbBlendMode;
+	bool	mbInterlaceEnabled;
+	bool	mbInterlaceEnabledThisFrame;
+	bool	mbFieldPolarity;
+	bool	mbLastFieldPolarity;
+	bool	mbPostProcessThisFrame;
+	bool	mb14MHzThisFrame;
 
 	uint8	mPlayerPos[4];
 	uint8	mMissilePos[4];
@@ -190,10 +243,12 @@ protected:
 	bool	mbTurbo;
 	bool	mbPALMode;
 	bool	mbShowCassetteIndicator;
+	int		mShowCassetteIndicatorCounter;
 	bool	mbForcedBorder;
 
 	uint32	mStatusFlags;
 	uint32	mStickyStatusFlags;
+	uint32	mStatusCounter[8];
 	float	mCassettePos;
 
 	const uint8 *mpPriTable;
@@ -204,8 +259,7 @@ protected:
 	uint32	mPalette[256];
 	bool	mbScanlinesWithHiRes[240];
 
-	double	mPaletteColorBase;
-	double	mPaletteColorRange;
+	ATColorParams mColorParams;
 
 	vdfastvector<uint8>		mPreArtifactFrameBuffer;
 	VDPixmap	mPreArtifactFrame;
@@ -215,6 +269,7 @@ protected:
 	vdrefptr<VDVideoDisplayFrame> mpLastFrame;
 
 	ATGTIARenderer *mpRenderer;
+	ATVBXEEmulator *mpVBXE;
 
 	typedef vdfastvector<RegisterChange> RegisterChanges;
 	RegisterChanges mRegisterChanges;

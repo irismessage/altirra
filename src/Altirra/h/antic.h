@@ -107,9 +107,11 @@ protected:
 	uint32	mY;
 	uint32	mFrame;
 	uint32	mScanlineLimit;
+	uint32	mVSyncStart;
 
 	bool	mbDLExtraLoadsPending;
 	bool	mbDLActive;
+	bool	mbDLDMAEnabledInTime;
 	int		mPFDisplayCounter;
 	int		mPFDecodeCounter;
 	bool	mbPFDMAActive;
@@ -120,6 +122,7 @@ protected:
 	bool	mbRowStopUseVScroll;
 	bool	mbRowAdvance;
 	bool	mbLateNMI;
+	bool	mbInBuggedVBlank;
 	uint8	mEarlyNMIEN;
 	uint8	mEarlyNMIEN2;
 	uint32	mRowCounter;
@@ -169,6 +172,7 @@ protected:
 	uint8	mCHACTL;	//
 
 	uint16	mDLIST;		// display list pointer
+	uint16	mDLISTLatch;// latched display list pointer
 	uint8	mDLControlPrev;
 	uint8	mDLControl;
 	uint8	mDLNext;
@@ -194,6 +198,9 @@ protected:
 
 	uint8	mVCOUNT;
 	int mWSYNCPending;
+
+	uint32	mGTIAHSyncOffset;
+	uint32	mVSyncShiftTime;
 
 	ATGTIAEmulator *mpGTIA;
 	IATAnticEmulatorConnections *mpConn;

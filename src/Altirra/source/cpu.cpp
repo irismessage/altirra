@@ -170,9 +170,9 @@ bool ATCPUEmulator::IsNextCycleWrite() const {
 			case kStatePopPCHNative:
 			case kStatePopPCHP1Native:
 			case kState816_MoveRead:
+			case kStateWait:
 				return false;
 
-			case kStateWait:
 			case kStateWrite:
 			case kStateWriteZpX:
 			case kStateWriteZpY:
@@ -1071,6 +1071,18 @@ int ATCPUEmulator::Advance(bool busLocked) {
 				if (mS & 0x80)
 					mP |= kFlagN;
 				if (!mS)
+					mP |= kFlagZ;
+				break;
+
+			case kStateSbx:
+				mP &= ~(kFlagN | kFlagZ | kFlagC);
+				mX &= mA;
+				if (mX >= mData)
+					mP |= kFlagC;
+				mX -= mData;
+				if (mX & 0x80)
+					mP |= kFlagN;
+				if (!mX)
 					mP |= kFlagZ;
 				break;
 
@@ -2415,6 +2427,9 @@ int ATCPUEmulator::Advance(bool busLocked) {
 			default:
 				VDASSERT(!"Invalid CPU state detected.");
 				break;
+#else
+			default:
+				__assume(false);
 #endif
 		}
 	}

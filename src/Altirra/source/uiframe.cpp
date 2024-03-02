@@ -56,6 +56,9 @@ ATContainerSplitterBar::ATContainerSplitterBar()
 {
 }
 
+ATContainerSplitterBar::~ATContainerSplitterBar() {
+}
+
 bool ATContainerSplitterBar::Init(HWND hwndParent, ATContainerDockingPane *pane, bool vertical) {
 	mbVertical = vertical;
 	mpControlledPane = pane;
@@ -397,6 +400,8 @@ void ATContainerDockingPane::Clear() {
 		DestroyWindow(mpContent->GetHandleW32());
 	}
 
+	RemoveEmptyNode();
+
 	Release();
 }
 
@@ -668,8 +673,10 @@ void ATContainerDockingPane::CreateSplitter() {
 		return;
 
 	mpSplitter = new ATContainerSplitterBar;
-	if (!mpSplitter->Init(mpParent->GetHandleW32(), this, mDockCode == kATContainerDockLeft || mDockCode == kATContainerDockRight))
+	if (!mpSplitter->Init(mpParent->GetHandleW32(), this, mDockCode == kATContainerDockLeft || mDockCode == kATContainerDockRight)) {
 		mpSplitter = NULL;
+		return;
+	}
 
 	HWND hwndSplitter = mpSplitter->GetHandleW32();
 
@@ -764,6 +771,33 @@ void ATContainerDockingPane::RepositionContent() {
 	}
 }
 
+void ATContainerDockingPane::RemoveAnyEmptyNodes() {
+	AddRef();
+
+	RemoveEmptyNode();
+
+	if ((mpDockParent || mbPinned) && !mChildren.empty()) {
+		vdfastvector<ATContainerDockingPane *> children;
+
+		for(Children::const_iterator it(mChildren.begin()), itEnd(mChildren.end()); it != itEnd; ++it) {
+			ATContainerDockingPane *child = *it;
+
+			child->AddRef();
+			children.push_back(child);
+		}
+
+		while(!children.empty()) {
+			ATContainerDockingPane *child = children.back();
+			children.pop_back();
+
+			child->RemoveEmptyNode();
+			child->Release();
+		}
+	}
+
+	Release();
+}
+
 void ATContainerDockingPane::RemoveEmptyNode() {
 	ATContainerDockingPane *parent = mpDockParent;
 	if (!parent || mpContent || mbPinned)
@@ -787,8 +821,10 @@ void ATContainerDockingPane::RemoveEmptyNode() {
 
 		child->mChildren.clear();
 
+		AddRef();
 		child->RemoveEmptyNode();
 		Relayout();
+		Release();
 		return;
 	}
 
@@ -1060,6 +1096,11 @@ void ATContainerWindow::ActivateFrame(ATFrameWindow *frame) {
 		return;
 
 	NotifyFrameActivated(frame);
+}
+
+void ATContainerWindow::RemoveAnyEmptyNodes() {
+	if (mpDockingPane)
+		mpDockingPane->RemoveAnyEmptyNodes();
 }
 
 void ATContainerWindow::NotifyFrameActivated(ATFrameWindow *frame) {

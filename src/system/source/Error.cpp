@@ -167,8 +167,8 @@ MyICError::MyICError(uint32 icErr, const char *format, ...) {
 
 	va_list val;
 	va_start(val, format);
-	tmpbuf[sizeof tmpbuf - 1] = 0;
-	_vsnprintf(tmpbuf, sizeof tmpbuf, format, val);
+	tmpbuf[(sizeof tmpbuf) - 1] = 0;
+	_vsnprintf(tmpbuf, (sizeof tmpbuf) - 1, format, val);
 	va_end(val);
 
 	setf(tmpbuf, GetVCMErrorString(icErr));
@@ -236,6 +236,49 @@ MyWin32Error::MyWin32Error(const char *format, uint32 err, ...) {
 	char szTemp[1024];
 	va_list val;
 
+	va_start(val, err);
+	szError[(sizeof szError)-1] = 0;
+	_vsnprintf(szError, (sizeof szError)-1, format, val);
+	va_end(val);
+
+	// Determine the position of the last %s, and escape everything else. This doesn't
+	// track escaped % signs properly, but it works for the strings that we receive (and at
+	// worst just produces a funny message).
+	const char *keep = strstr(szError, "%s");
+	if (keep) {
+		for(;;) {
+			const char *test = strstr(keep + 1, "%s");
+
+			if (!test)
+				break;
+
+			keep = test;
+		}
+	}
+
+	char *t = szTemp;
+	char *end = szTemp + (sizeof szTemp) - 1;
+	const char *s = szError;
+
+	while(char c = *s++) {
+		if (c == '%') {
+			// We allow one %s to go through. Everything else gets escaped.
+			if (s-1 != keep) {
+				if (t >= end)
+					break;
+
+				*t++ = '%';
+			}
+		}
+
+		if (t >= end)
+			break;
+
+		*t++ = c;
+	}
+
+	*t = 0;
+
 	if (!FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
 			0,
 			err,
@@ -255,11 +298,6 @@ MyWin32Error::MyWin32Error(const char *format, uint32 err, ...) {
 		else if (szError[l-1] == '\n')
 			szError[l-1] = 0;
 	}
-
-	va_start(val, err);
-	szTemp[sizeof szTemp-1] = 0;
-	_vsnprintf(szTemp, sizeof szTemp, format, val);
-	va_end(val);
 
 	setf(szTemp, szError);
 }
@@ -294,7 +332,8 @@ MyInternalError::MyInternalError(const char *format, ...) {
 	va_list val;
 
 	va_start(val, format);
-	_vsnprintf(buf, sizeof buf, format, val);
+	_vsnprintf(buf, (sizeof buf) - 1, format, val);
+	buf[1023] = 0;
 	va_end(val);
 
 	setf("Internal error: %s", buf);

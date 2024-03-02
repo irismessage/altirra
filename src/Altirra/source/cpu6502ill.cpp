@@ -461,6 +461,11 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			*mpDstState++ = kStateWrite;
 			break;
 
+		case 0xCB:	// SBX #arg
+			*mpDstState++ = kStateReadImm;
+			*mpDstState++ = kStateSbx;
+			break;
+
 		case 0xC7:	// DCP zp
 			DecodeReadZp();
 			*mpDstState++ = kStateWrite;

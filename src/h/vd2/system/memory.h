@@ -77,4 +77,8 @@ void VDMemset32Rect(void *dst, ptrdiff_t pitch, uint32 value, size_t w, size_t h
 
 void VDMemcpyRect(void *dst, ptrdiff_t dststride, const void *src, ptrdiff_t srcstride, size_t w, size_t h);
 
+/// Copy a region of memory with an access violation guard; used in cases where a sporadic
+/// AV is unavoidable (dynamic Direct3D VB under XP). The regions must not overlap.
+bool VDMemcpyGuarded(void *dst, const void *src, size_t bytes);
+
 #endif

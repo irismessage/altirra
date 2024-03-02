@@ -44,7 +44,7 @@
 			<Tool
 				Name="VCCLCompilerTool"
 				Optimization="0"
-				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\$(ConfigurationName)\HLEKernel"
+				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\$(ConfigurationName)\HLEKernel;autobuild;autobuild_default"
 				PreprocessorDefinitions="WIN32;_DEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500"
 				MinimalRebuild="true"
 				BasicRuntimeChecks="1"
@@ -126,7 +126,7 @@
 				Name="VCCLCompilerTool"
 				Optimization="3"
 				InlineFunctionExpansion="2"
-				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\$(ConfigurationName)\HLEKernel"
+				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\$(ConfigurationName)\HLEKernel;autobuild;autobuild_default"
 				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500"
 				RuntimeLibrary="0"
 				BufferSecurityCheck="false"
@@ -272,6 +272,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\gtiatables.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\harddisk.cpp"
 				>
 			</File>
@@ -301,6 +305,14 @@
 			</File>
 			<File
 				RelativePath=".\source\pokey.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\printer.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\rtime8.cpp"
 				>
 			</File>
 			<File
@@ -335,6 +347,18 @@
 				RelativePath=".\source\uiframe.cpp"
 				>
 			</File>
+			<File
+				RelativePath=".\source\uiinput.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uiproxies.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\vbxe.cpp"
+				>
+			</File>
 		</Filter>
 		<Filter
 			Name="Header Files"
@@ -363,6 +387,10 @@
 			</File>
 			<File
 				RelativePath=".\h\cassette.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\cio.h"
 				>
 			</File>
 			<File
@@ -406,6 +434,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\gtiatables.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\harddisk.h"
 				>
 			</File>
@@ -446,7 +478,15 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\printer.h"
+				>
+			</File>
+			<File
 				RelativePath=".\res\resource.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\rtime8.h"
 				>
 			</File>
 			<File
@@ -479,6 +519,14 @@
 			</File>
 			<File
 				RelativePath=".\h\uiframe.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uiproxies.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\vbxe.h"
 				>
 			</File>
 		</Filter>
@@ -561,6 +609,14 @@
 			</Filter>
 		</Filter>
 		<File
+			RelativePath="..\..\out\release\basic.rom"
+			>
+		</File>
+		<File
+			RelativePath="..\..\out\debug\basic.rom"
+			>
+		</File>
+		<File
 			RelativePath="..\..\out\release\hlekernel.rom"
 			>
 		</File>
@@ -574,6 +630,14 @@
 		</File>
 		<File
 			RelativePath="..\..\out\release\kernel.rom"
+			>
+		</File>
+		<File
+			RelativePath="..\..\out\release\nokernel.rom"
+			>
+		</File>
+		<File
+			RelativePath="..\..\out\debug\nokernel.rom"
 			>
 		</File>
 	</Files>

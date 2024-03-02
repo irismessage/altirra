@@ -20,6 +20,18 @@ public:
 		mpMem->WriteByte(mAddress, v);
 	}
 
+	uint8 operator&=(uint8 mask) {
+		uint8 c = mpMem->ReadByte(mAddress) & mask;
+		mpMem->WriteByte(mAddress, c);
+		return c;
+	}
+
+	uint8 operator|=(uint8 mask) {
+		uint8 c = mpMem->ReadByte(mAddress) | mask;
+		mpMem->WriteByte(mAddress, c);
+		return c;
+	}
+
 	uint16 r16() const {
 		return (uint16)((uint32)mpMem->ReadByte(mAddress) + 256*(uint32)mpMem->ReadByte(mAddress + 1));
 	}
@@ -167,7 +179,10 @@ struct ATKernelDatabase {
 		ATWordAdapter<ATKernelSymbols::OLDCOL> OLDCOL;
 		ATByteAdapter<ATKernelSymbols::OLDCHR> OLDCHR;
 		ATWordAdapter<ATKernelSymbols::OLDADR> OLDADR;
-		ATWordAdapter<ATKernelSymbols::RAMTOP> RAMTOP;
+		ATByteAdapter<ATKernelSymbols::LOGCOL> LOGCOL;
+		ATByteAdapter<ATKernelSymbols::RAMTOP> RAMTOP;
+		ATByteAdapter<ATKernelSymbols::BUFCNT> BUFCNT;
+		ATWordAdapter<ATKernelSymbols::BUFADR> BUFADR;
 		ATByteAdapter<ATKernelSymbols::SWPFLG> SWPFLG;
 		ATWordAdapter<ATKernelSymbols::RAMLO > RAMLO ;
 		ATByteAdapter<ATKernelSymbols::CIX   > CIX   ;
@@ -211,6 +226,7 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::TINDEX> TINDEX;
 		ATWordAdapter<ATKernelSymbols::TXTMSC> TXTMSC;
 		ATByteAdapter<ATKernelSymbols::TXTOLD> TXTOLD;
+		ATByteAdapter<ATKernelSymbols::LOGMAP> LOGMAP;
 		ATByteAdapter<ATKernelSymbols::BOTSCR> BOTSCR;
 		ATByteAdapter<ATKernelSymbols::PCOLR0> PCOLR0;
 		ATByteAdapter<ATKernelSymbols::PCOLR1> PCOLR1;
@@ -232,6 +248,7 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::ICCMD > ICCMD;
 		ATByteAdapter<ATKernelSymbols::ICSTA > ICSTA;
 		ATByteAdapter<ATKernelSymbols::ICBAL > ICBAL;
+		ATByteAdapter<ATKernelSymbols::ICBLL > ICBLL;
 
 		ATByteAdapter<ATKernelSymbols::COLPM0> COLPM0;
 		ATByteAdapter<ATKernelSymbols::COLPM1> COLPM1;

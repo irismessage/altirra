@@ -24,7 +24,7 @@
 class VDShaderEditorBaseWindow : public IVDUnknown {
 public:
 	VDShaderEditorBaseWindow();
-	~VDShaderEditorBaseWindow();
+	virtual ~VDShaderEditorBaseWindow();
 
 	static ATOM Register();
 	static void Unregister();

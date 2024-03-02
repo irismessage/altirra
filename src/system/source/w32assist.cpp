@@ -153,8 +153,26 @@ void VDAppendMenuW32(HMENU hmenu, UINT flags, UINT id, const wchar_t *text){
 	}
 }
 
+void VDCheckMenuItemByPositionW32(HMENU hmenu, uint32 pos, bool checked) {
+	CheckMenuItem(hmenu, pos, checked ? MF_BYPOSITION|MF_CHECKED : MF_BYPOSITION|MF_UNCHECKED);
+}
+
 void VDCheckMenuItemByCommandW32(HMENU hmenu, UINT cmd, bool checked) {
 	CheckMenuItem(hmenu, cmd, checked ? MF_BYCOMMAND|MF_CHECKED : MF_BYCOMMAND|MF_UNCHECKED);
+}
+
+void VDCheckRadioMenuItemByPositionW32(HMENU hmenu, uint32 pos, bool checked) {
+	MENUITEMINFOA mii;
+
+	mii.cbSize = sizeof(MENUITEMINFOA);
+	mii.fMask = MIIM_FTYPE | MIIM_STATE;
+	if (GetMenuItemInfo(hmenu, pos, TRUE, &mii)) {
+		mii.fType |= MFT_RADIOCHECK;
+		mii.fState &= ~MFS_CHECKED;
+		if (checked)
+			mii.fState |= MFS_CHECKED;
+		SetMenuItemInfo(hmenu, pos, TRUE, &mii);
+	}
 }
 
 void VDCheckRadioMenuItemByCommandW32(HMENU hmenu, UINT cmd, bool checked) {
@@ -186,6 +204,7 @@ VDStringW VDGetMenuItemTextByCommandW32(HMENU hmenu, UINT cmd) {
 		mmiW.fMask		= MIIM_TYPE;
 		mmiW.fType		= MFT_STRING;
 		mmiW.dwTypeData	= NULL;
+		mmiW.cch		= 0;		// required to avoid crash on NT4
 
 		if (GetMenuItemInfoW(hmenu, cmd, FALSE, &mmiW)) {
 			bufW.resize(mmiW.cch + 1, 0);

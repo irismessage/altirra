@@ -29,9 +29,16 @@
 #include <vd2/system/VDString.h>
 #include <vd2/system/registry.h>
 
-VDRegistryKey::VDRegistryKey(const char *pszKey, bool bGlobal) {
-	if (RegCreateKeyEx(bGlobal ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER, pszKey, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, (PHKEY)&pHandle, NULL))
-		pHandle = NULL;
+VDRegistryKey::VDRegistryKey(const char *keyName, bool global, bool write) {
+	const HKEY rootKey = global ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+
+	if (write) {
+		if (RegCreateKeyEx(rootKey, keyName, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, (PHKEY)&pHandle, NULL))
+			pHandle = NULL;
+	} else {
+		if (RegOpenKeyEx(rootKey, keyName, 0, KEY_READ, (PHKEY)&pHandle))
+			pHandle = NULL;
+	}
 }
 
 VDRegistryKey::~VDRegistryKey() {
@@ -226,7 +233,9 @@ VDString VDRegistryAppKey::s_appbase;
 VDRegistryAppKey::VDRegistryAppKey() : VDRegistryKey(s_appbase.c_str()) {
 }
 
-VDRegistryAppKey::VDRegistryAppKey(const char *pszKey) : VDRegistryKey((s_appbase + pszKey).c_str()) {
+VDRegistryAppKey::VDRegistryAppKey(const char *pszKey, bool write)
+	: VDRegistryKey((s_appbase + pszKey).c_str(), false, write)
+{
 }
 
 void VDRegistryAppKey::setDefaultKey(const char *pszAppName) {

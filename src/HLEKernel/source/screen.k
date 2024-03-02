@@ -221,7 +221,12 @@ ScreenTextRows			dta
 		else
 			kdb.TXTCOL = 0;
 			
+		kdb.LOGCOL = 0;
 		kdb.SWPFLG = 0;
+
+		kdb.LOGMAP[0] = 0xFF;
+		kdb.LOGMAP[1] = 0xFF;
+		kdb.LOGMAP[2] = 0xFF;
 		
 		// init display list and playfield DMA
 		kdb.SDLSTL = (uint8)baseAddr;
@@ -271,6 +276,121 @@ vblwait:
 		4,20,10,20,40,40,80,80,160,160,160,160,20,10,160,160
 	};
 #]
+
+.proc ScreenGetByte
+	#{
+		uint8 c = ScreenRead();
+		mpCPU->SetA(c);
+	#}
+	ldy		#0
+	rts
+.endp
+
+#<
+uint8 ScreenRead() {
+	uint32 mode = kdb.DINDEX & 15;
+	uint32 x = kdb.COLCRS;
+	uint32 y = kdb.ROWCRS;
+		
+	static const uint8 kBytesPerRow[]={
+		40, 20, 20, 10, 10, 20, 20, 40, 40, 40, 40, 40, 40, 40, 40, 40
+	};
+
+	static const uint8 kShiftTable[]={
+		0, 0, 0, 2, 3, 2, 3, 2, 3, 1, 1, 1, 0, 0, 1, 3
+	};
+			
+	uint16 rowAddr = kdb.SAVMSC + y * kBytesPerRow[mode];
+	uint8 mask;
+	int shift;
+	
+	// ATASCII	Internal
+	// 00-1F	40-5F
+	// 20-3F	00-1F
+	// 40-5F	20-3F
+	// 60-7F	60-7F
+	// 80-9F	C0-DF
+	// A0-BF	80-9F
+	// C0-DF	A0-BF
+	// E0-FF	E0-FF
+
+	static const uint8 kInternalToATASCIIXorTab[4]={
+		0x20, 0x60, 0x40, 0x00
+	};
+		
+	switch(mode) {
+		case 0:
+		case 1:
+		case 2:
+			mask = 0xFF;
+			rowAddr += x;
+			shift = 0;
+			break;
+		case 12:
+		case 13:
+			mask = 0xFF;
+			rowAddr += x;
+			shift = 0;
+			break;
+			
+		case 9:
+		case 10:
+		case 11:
+			mask = 0x0F;
+			rowAddr += x >> 1;
+			shift = (x & 1) << 2;
+			break;
+			
+		case 3:
+		case 5:
+		case 7:
+		case 15:
+			mask = 0x03;
+			rowAddr += x >> 2;
+			shift = (x & 3) << 1;
+			break;
+		
+		case 4:
+		case 6:
+		case 8:
+		case 14:
+			mask = 0x01;
+			rowAddr += x >> 3;
+			shift = x & 7;
+			break;
+	}
+			
+	uint8 c = mpMemory->ReadByte(rowAddr);
+	
+	if (mode == 0)
+		c ^= kInternalToATASCIIXorTab[(c >> 5) & 3];
+	else if (mode == 1 || mode == 2)
+		c ^= kInternalToATASCIIXorTab[(c >> 5) & 1];
+	else
+		c = (c >> shift) & mask;
+	
+	static const uint16 kPixelsPerRow[]={
+		40, 20, 20, 40, 80, 80, 160, 160, 320, 80, 80, 80, 40, 40, 160, 160
+	};
+			
+	if (mode == 0) {
+		if (++kdb.COLCRS >= kdb.RMARGN) {
+			kdb.COLCRS = kdb.LMARGN;
+			
+			if (++kdb.ROWCRS >= kdb.BOTSCR)
+				kdb.ROWCRS = 0;
+		}
+	} else {
+		if (++kdb.COLCRS >= kPixelsPerRow[mode]) {
+			kdb.COLCRS = 0;
+			if (++kdb.ROWCRS >= kdb.BOTSCR)
+				kdb.ROWCRS = 0;
+		}
+	}
+	
+	return c;
+}
+#>
 
 .proc ScreenPutByte
 	#{
@@ -331,6 +451,7 @@ void ScreenWrite(uint8 d) {
 	// A0-BF	80-9F
 	// C0-DF	A0-BF
 	// E0-FF	E0-FF
+	
 
 	static const uint8 kATASCIIToInternalXorTab[4]={
 		0x40, 0x20, 0x60, 0x00
@@ -420,9 +541,12 @@ void ScreenClear() {
 		} while(--bytes);
 	}
 	
-	if (mode == 0)
+	if (mode == 0) {
 		kdb.COLCRS = kdb.LMARGN;
-	else
+		kdb.LOGMAP[0] = 0xFF;
+		kdb.LOGMAP[1] = 0xFF;
+		kdb.LOGMAP[2] = 0xFF;
+	} else
 		kdb.COLCRS = 0;
 
 	kdb.ROWCRS = 0;
@@ -445,23 +569,57 @@ void ScreenRecomputeCursorAddr() {
 #>
 
 #<
-void ScreenScroll() {
+uint16 ScreenComputeLineAddr(uint32 y) {
+	int i = kdb.DINDEX & 15;
+	return kdb.SAVMSC + (int)y*kScreenModeBytesPerRow[i];
+}
+#>
+
+#<
+uint8 ScreenScroll() {
 	const int index = kdb.DINDEX & 15;
 	const int bpr = kScreenModeBytesPerRow[index];
 	uint16 dst = kdb.SAVMSC;
 	uint16 src = dst + bpr;
 	uint8 h = kdb.BOTSCR;
+	uint8 scrolled = 0;
 	
-	if (h > 1) {
-		uint32 bytes = (h - 1) * bpr;
+	for(;;) {	
+		if (h > 1) {
+			uint32 bytes = (h - 1) * bpr;
+			
+			do {
+				mpMemory->WriteByte(dst++, mpMemory->ReadByte(src++));
+			} while(--bytes);
+		}
 		
-		do {
-			mpMemory->WriteByte(dst++, mpMemory->ReadByte(src++));
-		} while(--bytes);
+		for(int i=0; i<bpr; ++i)
+			mpMemory->WriteByte(dst++, 0);
+			
+		if (index != 0)
+			break;
+			
+		// scroll logical map
+		uint8 l0 = kdb.LOGMAP[0];
+		uint8 l1 = kdb.LOGMAP[1];
+		uint8 l2 = kdb.LOGMAP[2];
+		
+		l0 = (l0 << 1) + (l1 >> 7);
+		l1 = (l1 << 1) + (l2 >> 7);
+		l2 = (l2 << 1) + 1;
+		
+		kdb.LOGMAP[0] = l0;
+		kdb.LOGMAP[1] = l1;
+		kdb.LOGMAP[2] = l2;
+		
+		if (++scrolled >= h)
+			break;
+
+		if (l0 & 0x80)
+			break;
 	}
 	
-	for(int i=0; i<bpr; ++i)
-		mpMemory->WriteByte(dst++, 0);
+	return scrolled;
 }
 #>
 

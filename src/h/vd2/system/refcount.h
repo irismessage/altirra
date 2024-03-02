@@ -254,4 +254,29 @@ bool VDRefCountObjectFactory(U **pp) {
 	return true;
 }
 
+///////////////////////////////////////////////////////////////////////////
+
+struct vdsaferelease_t {};
+extern vdsaferelease_t vdsaferelease;
+
+template<class T>
+inline vdsaferelease_t& operator<<=(vdsaferelease_t& x, T *& p) {
+	if (p) {
+		p->Release();
+		p = 0;
+	}
+
+	return x;
+}
+
+template<class T>
+inline vdsaferelease_t& operator,(vdsaferelease_t& x, T *& p) {
+	if (p) {
+		p->Release();
+		p = 0;
+	}
+
+	return x;
+}
+
 #endif

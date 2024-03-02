@@ -17,6 +17,7 @@
 
 #include "stdafx.h"
 #include "inputcontroller.h"
+#include "inputmanager.h"
 #include "scheduler.h"
 #include "gtia.h"
 #include "pokey.h"
@@ -71,6 +72,11 @@ void ATPortController::SetPortInput(int index, uint32 portBits) {
 		mPortInputs[index] = (oldVal & 0xf0000000) + portBits;
 		UpdatePortValue();
 	}
+}
+
+void ATPortController::ResetPotPositions() {
+	mpPokey->SetPotPos(mTriggerIndex * 2 + 0, 228);
+	mpPokey->SetPotPos(mTriggerIndex * 2 + 1, 228);
 }
 
 void ATPortController::SetPotPosition(int offset, uint8 pos) {
@@ -181,8 +187,30 @@ void ATMouseController::SetButtonState(int button, bool state) {
 	mbButtonState[button] = state;
 }
 
+void ATMouseController::SetDigitalTrigger(uint32 trigger, bool state) {
+	switch(trigger) {
+		case kATInputTrigger_Button0:
+			mbButtonState[0] = state;
+			break;
+		case kATInputTrigger_Button0 + 1:
+			mbButtonState[1] = state;
+			break;
+	}
+}
+
+void ATMouseController::ApplyImpulse(uint32 trigger, int ds) {
+	switch(trigger) {
+		case kATInputTrigger_Axis0:
+			mTargetX += ds;
+			break;
+		case kATInputTrigger_Axis0+1:
+			mTargetY += ds;
+			break;
+	}
+}
+
 void ATMouseController::OnScheduledEvent(uint32 id) {
-	mpUpdateEvent = mpScheduler->AddEvent(32, this, 0);
+	mpUpdateEvent = mpScheduler->AddEvent(32, this, 1);
 	Update();
 }
 
@@ -224,7 +252,7 @@ void ATMouseController::Update() {
 
 void ATMouseController::OnAttach() {
 	if (!mpUpdateEvent)
-		mpUpdateEvent = mpScheduler->AddEvent(8, this, 0);
+		mpUpdateEvent = mpScheduler->AddEvent(8, this, 1);
 }
 
 void ATMouseController::OnDetach() {
@@ -277,6 +305,16 @@ void ATPaddleController::SetTrigger(bool enable) {
 	}
 }
 
+void ATPaddleController::SetDigitalTrigger(uint32 trigger, bool state) {
+	if (trigger == kATInputTrigger_Button0)
+		SetTrigger(state);
+}
+
+void ATPaddleController::ApplyImpulse(uint32 trigger, int ds) {
+	if (trigger == kATInputTrigger_Axis0)
+		AddDelta(ds);
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 ATJoystickController::ATJoystickController()
@@ -287,20 +325,35 @@ ATJoystickController::ATJoystickController()
 ATJoystickController::~ATJoystickController() {
 }
 
-void ATJoystickController::SetDirection(int dir, bool enable) {
-	uint32 mask = 1 << dir;
-	uint32 bit = enable ? mask : 0;
+void ATJoystickController::SetDigitalTrigger(uint32 trigger, bool state) {
+	uint32 mask = 0;
 
-	if ((mPortBits ^ bit) & mask) {
-		mPortBits ^= mask;
+	switch(trigger) {
+		case kATInputTrigger_Button0:
+			mask = 0x100;
+			break;
 
-		UpdatePortOutput();
+		case kATInputTrigger_Up:
+			mask = 0x01;
+			break;
+
+		case kATInputTrigger_Down:
+			mask = 0x02;
+			break;
+
+		case kATInputTrigger_Left:
+			mask = 0x04;
+			break;
+
+		case kATInputTrigger_Right:
+			mask = 0x08;
+			break;
+
+		default:
+			return;
 	}
-}
 
-void ATJoystickController::SetTrigger(bool enable) {
-	uint32 mask = 0x100;
-	uint32 bit = enable ? mask : 0;
+	uint32 bit = state ? mask : 0;
 
 	if ((mPortBits ^ bit) & mask) {
 		mPortBits ^= mask;
@@ -319,4 +372,21 @@ void ATJoystickController::UpdatePortOutput() {
 		v &= ~0x03;
 
 	SetPortOutput(v);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+ATConsoleController::ATConsoleController(ATInputManager *im)
+	: mpParent(im)
+{
+}
+
+ATConsoleController::~ATConsoleController() {
+}
+
+void ATConsoleController::SetDigitalTrigger(uint32 trigger, bool state) {
+	IATInputConsoleCallback *cb = mpParent->GetConsoleCallback();
+
+	if (cb)
+		cb->SetConsoleTrigger(trigger, state);
 }

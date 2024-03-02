@@ -441,3 +441,12 @@ void VDMemcpyRect(void *dst, ptrdiff_t dststride, const void *src, ptrdiff_t src
 	VDFastMemcpyFinish();
 }
 
+bool VDMemcpyGuarded(void *dst, const void *src, size_t bytes) {
+	__try {
+		memcpy(dst, src, bytes);
+	} __except(GetExceptionCode() == STATUS_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		return false;
+	}
+
+	return true;
+}

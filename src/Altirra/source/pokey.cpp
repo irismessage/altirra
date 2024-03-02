@@ -49,22 +49,35 @@ ATAudioFilter::ATAudioFilter()
 	, mLoPassPrev3(0)
 	, mLoPassPrev4(0)
 {
+	SetScale(1.0f);
+}
+
+float ATAudioFilter::GetScale() const {
+	return mRawScale;
+}
+
+void ATAudioFilter::SetScale(float scale) {
+	// We accumulate 28 cycles worth of output per sample, and each output can
+	// be from 0-60 (4*15). We ignore the speaker and cassette inputs in order
+	// to get a little more range.
+	mRawScale = scale;
+	mScale = scale * (1.0f / (60.0f * 28.0f));
 }
 
 void ATAudioFilter::Filter(float * VDRESTRICT dst, const float * VDRESTRICT src, uint32 count, float hiCoeff) {
 	float hiAccum = mHiPassAccum;
 
 	// Coefficients for an order 4 Chebyshev filter, cutoff @ 8000Hz, 2dB passband ripple
-	const float a0 = 0.003094076;
-	const float a1 = 0.012376304;
-	const float a2 = 0.018564455;
-	const float a3 = 0.012376304;
-	const float a4 = 0.003094076;
-	const float b0 = 1;
-	const float b1 = -2.891038;
-	const float b2 = 3.6045542;
-	const float b3 = -2.222399;
-	const float b4 = 0.57120585;
+	const float a0 = 0.003094076f;
+	const float a1 = 0.012376304f;
+	const float a2 = 0.018564455f;
+//	const float a3 = 0.012376304f;	same as a1
+//	const float a4 = 0.003094076f;	same as a0
+//	const float b0 = 1f;			unused (implicit)
+	const float b1 = -2.891038f;
+	const float b2 = 3.6045542f;
+	const float b3 = -2.222399f;
+	const float b4 = 0.57120585f;
 
 	float y1 = mLoPassPrev1;
 	float y2 = mLoPassPrev2;
@@ -79,12 +92,9 @@ void ATAudioFilter::Filter(float * VDRESTRICT dst, const float * VDRESTRICT src,
 		y4 = 0;
 	}
 
-	// We accumulate 28 cycles worth of output per sample, and each output can
-	// be from 0-60 (4*15). We ignore the speaker and cassette inputs in order
-	// to get a little more range.
-	const float scale = 1.0f / (60.0f * 28.0f);
+	const float scale = mScale;
 	do {
-		float v = a0*src[0] + a1*src[-1] + a2*src[-2] + a3*src[-3] + a4*src[-4]
+		float v = a0*(src[0] + src[-4]) + a1*(src[-1] + src[-3]) + a2*src[-2]
 							- b1*y1 - b2*y2 - b3*y3 - b4*y4;
 
 		++src;
@@ -108,19 +118,73 @@ void ATAudioFilter::Filter(float * VDRESTRICT dst, const float * VDRESTRICT src,
 }
 
 ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
-//	: mpAudioOut(VDCreateAudioOutputDirectSoundW32())
-	: mpAudioOut(isSlave ? NULL : VDCreateAudioOutputWaveOutW32())
+	: mAccum(0)
+	, mSampleCounter(0)
+	, mOutputLevel(0)
+	, mLastOutputTime(0)
+	, mAudioInput(0)
+	, mAudioInput2(0)
+	, mExternalInput(0)
+	, mbResampleWaitForLatencyDrain(false)
+	, mResampleAccum(0)
+	, mResampleRate(0)
+	, mResampleRateF(0)
+	, mResampleSamplesFiltered(0)
+	, mResampleSamplesPresent(0)
+	, mResampleSamplesNeeded(0)
+	, mResampleRestabilizeCounter(0)
+	, mTicksAccumulated(0)
+	, mbCommandLineState(false)
 	, mbPal(false)
 	, mbTurbo(false)
 	, mbTraceSIO(false)
+	, mKBCODE(0)
+	, mKeyCodeTimer(0)
+	, mIRQEN(0)
+	, mIRQST(0)
+	, mAUDCTL(0)
+	, mSERIN(0)
+	, mSEROUT(0)
+	, mSKSTAT(0)
+	, mSKCTL(0)
+	, mLastPolyTime(0)
+	, mPoly17Counter(0)
+	, mPoly9Counter(0)
+	, mPoly5Counter(0)
+	, mPoly4Counter(0)
+	, mSerialInputShiftRegister(0)
+	, mSerialOutputShiftRegister(0)
+	, mSerialInputCounter(0)
+	, mSerialOutputCounter(0)
+	, mbSerInValid(false)
+	, mbSerShiftInValid(false)
+	, mbSerOutValid(false)
+	, mbSerialOutputState(false)
+	, mbSpeakerState(false)
 	, mbSerialRateChanged(false)
 	, mbSerialWaitingForStartBit(true)
+	, mbSerInBurstPending(false)
+	, mSerBurstMode(kSerialBurstMode_Disabled)
+	, mbFastTimer1(false)
+	, mbFastTimer3(false)
+	, mbLinkedTimers12(false)
+	, mbLinkedTimers34(false)
+	, mbUse15KHzClock(false)
+	, mLast15KHzTime(0)
+	, mLast64KHzTime(0)
+	, mAudioRate(0)
+	, mAudioDampedError(0)
+	, mALLPOT(0)
+	, mPotScanStartTime(0)
 	, mp64KHzEvent(NULL)
 	, mp15KHzEvent(NULL)
-	, mpStartBitEvent(NULL)
 	, mpAudioEvent(NULL)
+	, mpStartBitEvent(NULL)
+	, mpScheduler(NULL)
+	, mpConn(NULL)
 	, mpSlave(NULL)
 	, mbIsSlave(isSlave)
+	, mpAudioOut(isSlave ? NULL : VDCreateAudioOutputWaveOutW32())
 	, mpCassette(NULL)
 	, mpAudioTap(NULL)
 {
@@ -141,13 +205,6 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 		mPOT[i] = 228;
 	}
 
-	mAccum = 0;
-	mbSpeakerState = false;
-	mbSerialOutputState = false;
-	mExternalInput = 0;
-	mAudioInput = 0;
-	mAudioInput2 = 0;
-
 	memset(mpTimerEvents, 0, sizeof(mpTimerEvents));
 
 	ResamplerReset();
@@ -156,7 +213,6 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 		float x = (float)i / 60.0f;
 		float y = ((1.184256f*x - 3.16932f)*x + 2.98506f)*x;
 
-//		mMixTable[i] = y * 63.0f;
 		mMixTable[i] = y * 60.0f;
 	}
 }
@@ -273,6 +329,7 @@ void ATPokeyEmulator::ColdReset() {
 	mbSerOutValid = false;
 	mbSerialOutputState = false;
 	mbSerialWaitingForStartBit = true;
+	mbSerInBurstPending = false;
 
 	mAudioDampedError = 0;
 
@@ -324,8 +381,10 @@ void ATPokeyEmulator::SetSlave(ATPokeyEmulator *slave) {
 
 	mpSlave = slave;
 
-	if (mpSlave)
+	if (mpSlave) {
+		mpSlave->mFilter.SetScale(mFilter.GetScale());
 		mpSlave->ColdReset();
+	}
 }
 
 void ATPokeyEmulator::SetCassette(IATPokeyCassetteDevice *dev) {
@@ -335,6 +394,11 @@ void ATPokeyEmulator::SetCassette(IATPokeyCassetteDevice *dev) {
 
 void ATPokeyEmulator::SetAudioTap(IATPokeyAudioTap *tap) {
 	mpAudioTap = tap;
+}
+
+void ATPokeyEmulator::SetSerialBurstMode(SerialBurstMode mode) {
+	mSerBurstMode = mode;
+	mbSerInBurstPending = false;
 }
 
 void ATPokeyEmulator::AddSIODevice(IATPokeySIODevice *device) {
@@ -418,6 +482,17 @@ void ATPokeyEmulator::SetCommandLine(bool newState) {
 		for(Devices::const_iterator it(mDevices.begin()), itEnd(mDevices.end()); it!=itEnd; ++it)
 			(*it)->PokeyEndCommand();
 	}
+}
+
+float ATPokeyEmulator::GetVolume() const {
+	return mFilter.GetScale();
+}
+
+void ATPokeyEmulator::SetVolume(float vol) {
+	mFilter.SetScale(vol);
+
+	if (mpSlave)
+		mpSlave->mFilter.SetScale(vol);
 }
 
 void ATPokeyEmulator::SetShiftKeyState(bool newState) {
@@ -1225,7 +1300,6 @@ uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
 					else
 						delay -= 2;
 
-					delay += val;
 					if (delay > 228)
 						val = 228;
 					else
@@ -1255,14 +1329,33 @@ uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
 				if (!(mIRQEN & ~mIRQST))
 					mpConn->PokeyNegateIRQ();
 
-				for(Devices::const_iterator it(mDevices.begin()), itEnd(mDevices.end()); it!=itEnd && !mbSerInValid; ++it)
-					(*it)->PokeySerInReady();
+				switch(mSerBurstMode) {
+					case kSerialBurstMode_Standard:
+						for(Devices::const_iterator it(mDevices.begin()), itEnd(mDevices.end()); it!=itEnd && !mbSerInValid; ++it)
+							(*it)->PokeySerInReady();
+						break;
+
+					case kSerialBurstMode_Polled:
+						mbSerInBurstPending = true;
+						break;
+				}
+
 				return c;
 			}
 			break;
 
-		case 0x0E:
+		case 0x0E:	// $D20E IRQST
+			if (mbSerInBurstPending) {
+				if (mSerBurstMode == kSerialBurstMode_Polled) {
+					for(Devices::const_iterator it(mDevices.begin()), itEnd(mDevices.end()); it!=itEnd && !mbSerInValid; ++it)
+						(*it)->PokeySerInReady();
+				}
+
+				mbSerInBurstPending = false;
+			}
+
 			return mIRQST;
+
 		case 0x0F:
 			return mSKSTAT;
 		default:
@@ -1619,8 +1712,15 @@ void ATPokeyEmulator::DumpStatus(bool isSlave) {
 		, mIRQST & 0x02 ? "" : ", timer2"
 		, mIRQST & 0x01 ? "" : ", timer1"
 		);
+	ATConsolePrintf("ALLPOT: %02x\n", mALLPOT);
 
-	ATConsolePrintf("Command line: %s\n", mbCommandLineState ? "asserted" : "negated");
+	for(int i=0; i<8; ++i) {
+		if (mpPotScanEvent[i])
+			ATConsolePrintf("  Pot %d will finish in %d cycles\n", i, mpScheduler->GetTicksToEvent(mpPotScanEvent[i]));
+	}
+	
+
+	ATConsolePrintf("\nCommand line: %s\n", mbCommandLineState ? "asserted" : "negated");
 }
 
 void ATPokeyEmulator::ResamplerReset() {

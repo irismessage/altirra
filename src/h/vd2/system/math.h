@@ -254,4 +254,8 @@ inline uint8 VDClampedRoundFixedToUint8Fast(float x) {
 
 sint64 VDMulDiv64(sint64 a, sint64 b, sint64 c);
 
+///////////////////////////////////////////////////////////////////////////
+
+bool VDVerifyFiniteFloats(const float *p, uint32 n);
+
 #endif

@@ -18,6 +18,8 @@
 #ifndef f_ARTIFACTING_H
 #define f_ARTIFACTING_H
 
+#include "gtia.h"
+
 class ATArtifactingEngine {
 	ATArtifactingEngine(const ATArtifactingEngine&);
 	ATArtifactingEngine& operator=(const ATArtifactingEngine&);
@@ -25,21 +27,46 @@ public:
 	ATArtifactingEngine();
 	~ATArtifactingEngine();
 
-	enum { N = 456 };
+	void SetColorParams(const ATColorParams& params);
 
-	void BeginFrame(bool pal);
-	void Artifact(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
+	enum {
+		N = 456,
+		M = 262
+	};
+
+	void BeginFrame(bool pal, bool chromaArtifact, bool blend);
+	void Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
+	void Artifact32(uint32 y, uint32 *dst, uint32 width);
 
 protected:
-	void ArtifactPAL(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
+	void ArtifactPAL8(uint32 dst[N], const uint8 src[N]);
+	void ArtifactPAL32(uint32 *dst, uint32 width);
+
 	void ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
 	void BlitNoArtifacts(uint32 dst[N], const uint8 src[N]);
+	void BlendExchange(uint32 dst[N], uint32 blendDst[N]);
 
 	bool mbPAL;
+	bool mbChromaArtifacts;
+	bool mbBlendActive;
+	bool mbBlendCopy;
+
+	int mYScale;
+	int mYBias;
+	int mArtifactRed;
+	int mArtifactGreen;
+	int mArtifactBlue;
+	int mArtifactYScale;
 
 	int mChromaVectors[16][3];
 	uint32 mPalette[256];
-	uint8 mPALDelayLine[N];
+
+	union {
+		uint8 mPALDelayLine[N];
+		uint8 mPALDelayLine32[N*2*3];	// RGB24 @ 14MHz resolution
+	};
+
+	uint32 mPrevFrame[M][N];
 };
 
 #endif	// f_ARTIFACTING_H

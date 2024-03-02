@@ -118,6 +118,9 @@ VDShaderEditorSplitterBar::VDShaderEditorSplitterBar()
 	mSplitter.bottom = 0;
 }
 
+VDShaderEditorSplitterBar::~VDShaderEditorSplitterBar() {
+}
+
 LRESULT VDShaderEditorSplitterBar::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	switch(msg) {
 	case WM_CREATE:

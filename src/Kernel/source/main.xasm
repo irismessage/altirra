@@ -130,6 +130,19 @@ adress	= $0064			;temporary storage (display code)
 a1		= adress
 ramtop	= $006a			;ram size
 holdch	= $007c			;temporary key hold area prior to shift/control lock logic
+fr0		= $00d4			;FP: Accumulator 0
+_fr4	= $00da			;FP: Accumulator 4
+fr1		= $00e0			;FP: Accumulator 1
+_fr2	= $00e6			;FP: Accumulator 2
+_fr3	= $00ec			;FP: Accumulator 3
+
+cix		= $00f2			;FP: Character index
+inbuff	= $00f3			;FP: ASCII conversion buffer
+_fpcount= $00f5
+_fptemp0= $00f6
+_fptemp1= $00f7
+flptr	= $00fc			;FP: pointer for floating-point loads and stores
+_flptr2	= $00fe
 
 vdslst	= $0200			;display list interrupt vector
 vprced	= $0202			;serial bus proceed interrupt vector
@@ -202,6 +215,7 @@ color1	= $02c5			;shadow for COLPF1 ($D017)
 color2	= $02c6			;shadow for COLPF2 ($D018)
 color3	= $02c7			;shadow for COLPF3 ($D019)
 color4	= $02c8			;shadow for COLBK ($D01A)
+ramsiz	= $02e4			;ram size in pages
 memtop	= $02e5			;highest location for programs and data
 memlo	= $02e7			;base of application memory
 dvstat	= $02ea			;DISK: Status request buffer area (4 bytes)
@@ -245,13 +259,16 @@ icax3	= $034c			;
 icax4	= $034d			;
 icax5	= $034e			;
 icax6	= $034f			;
+basicf	= $03f8			;(XL) ROM BASIC flag. 0 = enabled
+lbuff	= $0580			;
 
 	opt		h-o+f+
 
 ;	icl		'loader.xasm'
 
 	org		$d800
-:2048	dta		$12
+
+	icl		'mathpack.xasm'
 
 	org		$e000
 	ins		'atarifont.bin',$0,$400
@@ -275,8 +292,8 @@ screnv	dta		a(ScreenOpen-1)
 		jsr		BugCheck
 		dta		$00
 
-keybdv	dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
+keybdv	dta		a(KeyboardOpen-1)
+		dta		a(KeyboardClose-1)
 		dta		a(KeyboardGetByte-1)
 		dta		a(BugCheck-1)
 		dta		a(BugCheck-1)

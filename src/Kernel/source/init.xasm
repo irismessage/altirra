@@ -60,44 +60,11 @@ clearloop2:
 	; 14. initialize cartridges
 	; 15. use IOCB #0 to open screen editor (E)
 	; 16. wait for VBLANK so screen is initialized
-	jsr		InitEnvironment
-	
 	; 17. do cassette boot, if it was requested
-	
-	lda		ckey
-	bne		nocasboot2
-	
-	jsr		BugCheck
-	
-nocasboot2:
-
 	; 18. do disk boot
-	
-	;check for cart B requesting boot
-	lda		tstdat
-	beq		noCartBBoot
-	lda		#$01
-	bit		$9ffd
-	bne		bootDisk
-	lda		tramsz
-	beq		skipDiskBoot
-noCartBBoot:
-
-	;check for cart A requesting boot
-	lda		tramsz
-	beq		noCartABoot
-	lda		#$01
-	bit		$bffd
-	beq		skipDiskBoot
-noCartABoot:
-bootDisk:
-	jsr		DiskBoot
-
-skipDiskBoot:
-
 	; 19. reset coldstart flag
 	; 20. run cartridges or blackboard
-	jmp		RunCarts
+	jmp		InitEnvironment
 .endp
 
 ;==============================================================================
@@ -130,34 +97,10 @@ dbclear:
 	bne		dbclear
 	
 	; E. steps 9-16 above
-	jsr		InitEnvironment
-
 	; F. if cassette boot was successful on cold boot, execute cassette init
-	lda		boot?
-	cmp		#2
-	bne		noCassetteBoot
-	
-	jsr		initCassette
-	
-noCassetteBoot:
-	
 	; G. if disk boot was successful on cold boot, execute disk init
-	lda		boot?
-	cmp		#1
-	bne		noDiskBoot
-
-	jsr		initDisk
-
-noDiskBoot:
-	
 	; H. same as steps 19 and 20
-	jmp		RunCarts
-	
-initCassette:
-	jmp		(casini)
-
-initDisk:
-	jmp		(dosini)
+	jmp		InitEnvironment
 .endp
 
 ;==============================================================================
@@ -179,21 +122,7 @@ initDisk:
 	jmp		($bffe)
 	
 notdiag:
-
-	;(Altirra specific) Check OPTION and enable BASIC rom.
-	lda		#$3c
-	sta		pbctl
-	sta		pactl
-	lda		#$00
-	sta		porta
-
-	lda		consol
-	and		#$04
-	lsr
-	eor		#$02
-	ora		#$b1
-	sta		portb
-
+	
 	; 4. measure memory -> tramsz
 	ldy		#$00
 	sty		a0
@@ -228,6 +157,37 @@ hwclear:
 
 ;==============================================================================
 .proc InitEnvironment
+	;(Altirra specific) Check OPTION and enable BASIC rom.
+	ldx		basicf
+	lda		warmst
+	bne		skipoption
+	
+	lda		consol
+	ldx		#0
+	and		#$04
+	sne:ldx	#$ff
+	stx		basicf
+skipoption:
+	
+	ldx		#$b3
+	ldy		basicf
+	bne		nobasic
+
+	;bank in BASIC	
+	ldx		#$b1
+
+	mva		#$a0 tramsz
+nobasic:
+
+	mvy		#$3c pbctl
+	sty		pactl
+	stx		portb
+	mva		#$38 pbctl
+	mva		#$ff portb
+	sty		pbctl
+	
+	mva		tramsz ramsiz
+	
 	; 9. set screen margins
 	mva		#2 lmargn
 	mva		#39 rmargn
@@ -282,7 +242,7 @@ htabinit:
 	sta		hatabs,x
 	dex
 	bpl		htabinit
-
+	
 	; 14. initialize cartridges
 	mva		#0 tstdat
 	lda		$9ffc
@@ -320,21 +280,65 @@ skipCartAInit:
 waitvbl:
 	cmp		rtclok+2
 	beq		waitvbl
-	rts	
 
-InitCartA:
-	jmp		($bffe)
+;-----------------------------------------------------------
 
-InitCartB:
-	jmp		($9ffe)
+	; 17. do cassette boot, if it was requested
+	; F. if cassette boot was successful on cold boot, execute cassette init
 	
-ScreenEditorName:
-	dta		c"E:",$9B
+	; The cold boot path must check the warm start flag and switch paths if
+	; necessary. SpartaDOS X relies on being able to set the warm start
+	; flag from its cart init handler.
+	
+	lda		warmst
+	bne		reinitcas
+	
+	lda		ckey
+	bne		postcasboot
+	jsr		BugCheck
+	jmp		postcasboot
 
-.endp
+reinitcas:	
+	lda		boot?
+	cmp		#2
+	bne		postcasboot
+	jsr		initCassette
+postcasboot:
 
-;==============================================================================
-.proc RunCarts
+	; 18. do disk boot
+	; G. if disk boot was successful on cold boot, execute disk init
+	lda		warmst
+	bne		reinitDisk
+	
+	;check for cart B requesting boot
+	lda		tstdat
+	beq		noCartBBoot
+	lda		#$01
+	bit		$9ffd
+	bne		bootDisk
+	lda		tramsz
+	beq		postDiskBoot
+noCartBBoot:
+
+	;check for cart A requesting boot
+	lda		tramsz
+	beq		noCartABoot
+	lda		#$01
+	bit		$bffd
+	beq		postDiskBoot
+noCartABoot:
+bootDisk:
+	jsr		DiskBoot
+	jmp		postDiskBoot
+	
+reinitDisk:
+	lda		boot?
+	cmp		#1
+	bne		postDiskBoot
+	jsr		initDisk
+postDiskBoot:
+
+	; H. same as steps 19 and 20
 	; 19. reset coldstart flag
 	
 	mva		#0 coldst
@@ -360,7 +364,24 @@ NoBootCartB:
 
 	; run blackboard
 	jmp		(dosvec)
+
+initCassette:
+	jmp		(casini)
+
+initDisk:
+	jmp		(dosini)
+	
+InitCartA:
+	jmp		($bffe)
+
+InitCartB:
+	jmp		($9ffe)
+	
+ScreenEditorName:
+	dta		c"E:",$9B
+
 .endp
 
+;==============================================================================
 
 	nop

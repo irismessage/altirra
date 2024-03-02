@@ -36,6 +36,7 @@ public:
 	virtual void PokeyAssertIRQ() = 0;
 	virtual void PokeyNegateIRQ() = 0;
 	virtual void PokeyBreak() = 0;
+	virtual bool PokeyIsInInterrupt() const = 0;
 };
 
 class IATPokeySIODevice {
@@ -64,8 +65,13 @@ struct ATAudioFilter {
 	float	mLoPassPrev2;
 	float	mLoPassPrev3;
 	float	mLoPassPrev4;
+	float	mScale;
+	float	mRawScale;
 
 	ATAudioFilter();
+
+	float GetScale() const;
+	void SetScale(float scale);
 
 	void Filter(float * VDRESTRICT dst, const float * VDRESTRICT src, uint32 count, float hiCoeff);
 };
@@ -89,6 +95,16 @@ public:
 	bool	IsTraceSIOEnabled() const { return mbTraceSIO; }
 	void	SetTraceSIOEnabled(bool enable) { mbTraceSIO = enable; }
 
+	enum SerialBurstMode {
+		kSerialBurstMode_Disabled,
+		kSerialBurstMode_Standard,
+		kSerialBurstMode_Polled,
+		kSerialBurstModeCount
+	};
+
+	SerialBurstMode GetSerialBurstMode() const { return mSerBurstMode; }
+	void	SetSerialBurstMode(SerialBurstMode mode);
+
 	void	AddSIODevice(IATPokeySIODevice *device);
 	void	ReceiveSIOByte(uint8 byte);
 
@@ -102,6 +118,9 @@ public:
 			UpdateOutput();
 		}
 	}
+
+	float	GetVolume() const;
+	void	SetVolume(float vol);
 
 	void	SetShiftKeyState(bool down);
 	void	PushKey(uint8 c, bool repeat);
@@ -229,6 +248,8 @@ protected:
 	bool	mbSpeakerState;
 	bool	mbSerialRateChanged;
 	bool	mbSerialWaitingForStartBit;
+	bool	mbSerInBurstPending;
+	SerialBurstMode	mSerBurstMode;
 
 	// AUDCTL breakout
 	bool	mbFastTimer1;

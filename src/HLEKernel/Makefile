@@ -18,6 +18,11 @@ source\mathpack.k
 
 all: hlekernel
 
+clean:
+	if exist "$(OUT)\hlekernel.lst" del "$(OUT)\hlekernel.lst"
+	if exist "$(OUT)\hlekernel.rom" del "$(OUT)\hlekernel.rom"
+	if exist "$(OBJ)\hlekernel_gen.h" del "$(OBJ)\hlekernel_gen.h"
+
 hlekernel: $(OUT)\hlekernel.rom $(HLECC)
 
 $(OUT)\hlekernel.rom $(OBJ)\hlekernel.xasm $(OBJ)\hlekernel_gen.inl $(OBJ)\hlekernel_gen.h: $(SRCFILES)

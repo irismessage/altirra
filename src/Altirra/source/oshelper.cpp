@@ -8,7 +8,7 @@
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Riza/bitmap.h>
 
-bool ATLoadKernelResource(int id, void *dst, uint32 size) {
+bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size) {
 	HMODULE hmod = VDGetLocalModuleHandleW32();
 
 	HRSRC hrsrc = FindResourceA(hmod, MAKEINTRESOURCE(id), "KERNEL");
@@ -16,7 +16,7 @@ bool ATLoadKernelResource(int id, void *dst, uint32 size) {
 		return false;
 
 	DWORD rsize = SizeofResource(hmod, hrsrc);
-	if (size != rsize)
+	if (offset > rsize || (rsize - offset) < size)
 		return false;
 
 	HGLOBAL hg = LoadResource(hmod, hrsrc);
@@ -26,7 +26,7 @@ bool ATLoadKernelResource(int id, void *dst, uint32 size) {
 	if (!p)
 		return false;
 
-	memcpy(dst, p, size);
+	memcpy(dst, (const char *)p + offset, size);
 
 	return true;
 }

@@ -29,8 +29,8 @@
 				Name="VCNMakeTool"
 				BuildCommandLine="nmake /nologo &quot;OUT=$(OutDir)&quot;"
 				ReBuildCommandLine="nmake /a /nologo &quot;OUT=$(OutDir)&quot;"
-				CleanCommandLine=""
-				Output="$(OutputDir)kernel.rom"
+				CleanCommandLine="nmake /nologo &quot;OUT=$(OutDir)&quot; clean"
+				Output="$(OutDir)kernel.rom"
 				PreprocessorDefinitions="WIN32;_DEBUG"
 				IncludeSearchPath=""
 				ForcedIncludes=""
@@ -49,8 +49,8 @@
 				Name="VCNMakeTool"
 				BuildCommandLine="nmake /nologo &quot;OUT=$(OutDir)&quot;"
 				ReBuildCommandLine="nmake /a /nologo &quot;OUT=$(OutDir)&quot;"
-				CleanCommandLine=""
-				Output="$(OutputDir)kernel.rom"
+				CleanCommandLine="nmake /nologo &quot;OUT=$(OutDir)&quot; clean"
+				Output="$(OutDir)kernel.rom"
 				PreprocessorDefinitions="WIN32;NDEBUG"
 				IncludeSearchPath=""
 				ForcedIncludes=""
@@ -113,6 +113,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\mathpack.xasm"
+				>
+			</File>
+			<File
 				RelativePath=".\source\nmi.xasm"
 				>
 			</File>
@@ -124,6 +128,22 @@
 				RelativePath=".\source\sio.xasm"
 				>
 			</File>
+			<Filter
+				Name="BASIC"
+				>
+				<File
+					RelativePath=".\source\BASIC\main.xasm"
+					>
+				</File>
+			</Filter>
+			<Filter
+				Name="NoKernel"
+				>
+				<File
+					RelativePath=".\source\NoKernel\main.xasm"
+					>
+				</File>
+			</Filter>
 		</Filter>
 		<Filter
 			Name="Header Files"

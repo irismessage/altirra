@@ -107,8 +107,6 @@ protected:
 	void RenderMode10(int x1, int x2);
 	void RenderMode11(int x1, int x2);
 
-	void InitPriorityTables();
-
 	const uint8 *mpMergeBuffer;
 	const uint8 *mpAnticBuffer;
 

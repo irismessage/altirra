@@ -529,7 +529,7 @@ sint64 VDBufferedStream::Pos() {
 
 void VDBufferedStream::Read(void *buffer, sint32 bytes) {
 	if (bytes != ReadData(buffer, bytes))
-		throw MyError("Cannot read %d bytes at location %08llx from %ls", mpSrc->GetNameForError());
+		throw MyError("Cannot read %d bytes at location %08llx from %ls", bytes, mBasePosition + mBufferOffset, mpSrc->GetNameForError());
 }
 
 sint32 VDBufferedStream::ReadData(void *buffer, sint32 bytes) {

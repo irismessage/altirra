@@ -129,6 +129,7 @@ namespace {
 		kOpcodeRTS,
 		kOpcodeSAX,
 		kOpcodeSBC,
+		kOpcodeSBX,
 		kOpcodeSEC,
 		kOpcodeSED,
 		kOpcodeSEI,
@@ -248,6 +249,7 @@ namespace {
 		"RTS",
 		"SAX",
 		"SBC",
+		"SBX",
 		"SEC",
 		"SED",
 		"SEI",
@@ -353,7 +355,7 @@ namespace {
 		/* 90 */	Re(BCC), Iy(STA), xx(bad), Iy(SHA), Zx(STY), Zx(STA), Zy(STX), xx(bad), Ip(TYA), Ay(STA), Ip(TXS), xx(bad), Ax(SHY), Ax(STA), xx(bad), xx(bad), 
 		/* A0 */	Im(LDY), Ix(LDA), Im(LDX), Ix(LAX), Zp(LDY), Zp(LDA), Zp(LDX), Zp(LAX), Ip(TAY), Im(LDA), Ip(TAX), Im(ATX), Ab(LDY), Ab(LDA), Ab(LDX), Ab(LAX), 
 		/* B0 */	Re(BCS), Iy(LDA), xx(bad), Iy(LAX), Zx(LDY), Zx(LDA), Zy(LDX), Zy(LAX), Ip(CLV), Ay(LDA), Ip(TSX), Ab(LAS), Ax(LDY), Ax(LDA), Ay(LDX), Ay(LAX), 
-		/* C0 */	Im(CPY), Ix(CMP), Im(DOP), Ix(DCP), Zp(CPY), Zp(CMP), Zp(DEC), Zp(DCP), Ip(INY), Im(CMP), Ip(DEX), xx(bad), Ab(CPY), Ab(CMP), Ab(DEC), Ab(DCP), 
+		/* C0 */	Im(CPY), Ix(CMP), Im(DOP), Ix(DCP), Zp(CPY), Zp(CMP), Zp(DEC), Zp(DCP), Ip(INY), Im(CMP), Ip(DEX), Im(SBX), Ab(CPY), Ab(CMP), Ab(DEC), Ab(DCP), 
 		/* D0 */	Re(BNE), Iy(CMP), xx(bad), Iy(DCP), xx(bad), Zx(CMP), Zx(DEC), Zx(DCP), Ip(CLD), Ay(CMP), Ip(NOP), Ay(DCP), Ax(NOP), Ax(CMP), Ax(DEC), Ax(DCP), 
 		/* E0 */	Im(CPX), Ix(SBC), xx(bad), Ix(ISB), Zp(CPX), Zp(SBC), Zp(INC), Zp(ISB), Ip(INX), Im(SBC), Ip(NOP), xx(bad), Ab(CPX), Ab(SBC), Ab(INC), Ab(ISB), 
 		/* F0 */	Re(BEQ), Iy(SBC), xx(bad), Iy(ISB), Zx(NOP), Zx(SBC), Zx(INC), Zx(ISB), Ip(SED), Ay(SBC), Ip(NOP), Ay(ISB), Ax(NOP), Ax(SBC), Ax(INC), Ax(ISB),
@@ -415,6 +417,9 @@ const char *ATGetSymbolName(uint16 addr, bool write) {
 
 	ATSymbol sym;
 	if (!symlookup->LookupSymbol(addr, write ? kATSymbol_Write : kATSymbol_Read | kATSymbol_Execute, sym))
+		return NULL;
+
+	if (sym.mOffset != addr)
 		return NULL;
 
 	return sym.mpName;

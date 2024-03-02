@@ -129,6 +129,8 @@ public:
 	void	UpdateFullScreenState();
 	bool	IsFullScreen() const;
 
+	void	RemoveAnyEmptyNodes();
+
 protected:
 	void	RepositionContent();
 	void	RemoveEmptyNode();
@@ -186,6 +188,8 @@ public:
 	void	UndockFrame(ATFrameWindow *frame, bool visible = true);
 	void	SetFullScreenFrame(ATFrameWindow *frame);
 	void	ActivateFrame(ATFrameWindow *frame);
+
+	void	RemoveAnyEmptyNodes();
 
 	void	NotifyFrameActivated(ATFrameWindow *frame);
 	void	NotifyUndockedFrameDestroyed(ATFrameWindow *frame);

@@ -27,6 +27,7 @@
 #include "console.h"
 #include "artifacting.h"
 #include "savestate.h"
+#include "vbxe.h"
 
 using namespace ATGTIA;
 
@@ -58,14 +59,25 @@ namespace {
 ATGTIAEmulator::ATGTIAEmulator()
 	: mpFrameTracker(new ATFrameTracker)
 	, mArtifactMode(kArtifactNone)
-	, mArtifactModeThisFrame(0)
+	, mOverscanMode(kOverscanExtended)
+	, mVBlankMode(kVBlankModeOn)
+	, mbBlendMode(false)
+	, mbInterlaceEnabled(false)
+	, mbInterlaceEnabledThisFrame(false)
+	, mbFieldPolarity(false)
+	, mbLastFieldPolarity(false)
+	, mbPostProcessThisFrame(false)
 	, mbShowCassetteIndicator(false)
 	, mPreArtifactFrameBuffer(456*262)
 	, mpArtifactingEngine(new ATArtifactingEngine)
 	, mpRenderer(new ATGTIARenderer)
+	, mpVBXE(NULL)
 	, mRCIndex(0)
 	, mRCCount(0)
+	, mShowCassetteIndicatorCounter(0)
 {
+	ResetColors();
+
 	mPreArtifactFrame.data = mPreArtifactFrameBuffer.data();
 	mPreArtifactFrame.pitch = 456;
 	mPreArtifactFrame.palette = mPalette;
@@ -113,6 +125,15 @@ ATGTIAEmulator::ATGTIAEmulator()
 	mbForcedBorder = false;
 
 	SetPALMode(false);
+
+	mStatusCounter[0] = 1;
+	mStatusCounter[1] = 2;
+	mStatusCounter[2] = 3;
+	mStatusCounter[3] = 4;
+	mStatusCounter[4] = 5;
+	mStatusCounter[5] = 6;
+	mStatusCounter[6] = 7;
+	mStatusCounter[7] = 8;
 }
 
 ATGTIAEmulator::~ATGTIAEmulator() {
@@ -139,18 +160,87 @@ void ATGTIAEmulator::Init(IATGTIAEmulatorConnections *conn) {
 	mMissileData = 0;
 	memset(mPMColor, 0, sizeof mPMColor);
 	memset(mPFColor, 0, sizeof mPFColor);
-	RecomputePalette();
 }
 
-void ATGTIAEmulator::AdjustColors(double baseDelta, double rangeDelta) {
-	mPaletteColorBase += baseDelta;
-	mPaletteColorRange += rangeDelta;
+void ATGTIAEmulator::SetVBXE(ATVBXEEmulator *vbxe) {
+	mpVBXE = vbxe;
+
+	if (mpVBXE)
+		mpVBXE->SetDefaultPalette(mPalette);
+
+	// kill current frame update
+	mpDst = NULL;
+	mpFrame = NULL;
+}
+
+ATColorParams ATGTIAEmulator::GetColorParams() const {
+	return mColorParams;
+}
+
+void ATGTIAEmulator::SetColorParams(const ATColorParams& params) {
+	mColorParams = params;
 	RecomputePalette();
+
+	mpArtifactingEngine->SetColorParams(params);
+}
+
+void ATGTIAEmulator::ResetColors() {
+	mColorParams.mHueStart = -15.0f;
+	mColorParams.mHueRange = 360.0f * 15.0f / 14.4f;
+	mColorParams.mBrightness = 0.0f;
+	mColorParams.mContrast = 1.0f;
+	mColorParams.mSaturation = 75.0f / 255.0f;
+	mColorParams.mArtifactHue = 96.0f;
+	mColorParams.mArtifactSat = 2.76f;
+	mColorParams.mArtifactBias = 0.35f;
+	RecomputePalette();
+
+	if (mpVBXE)
+		mpVBXE->SetDefaultPalette(mPalette);
+
+	mpArtifactingEngine->SetColorParams(mColorParams);
+}
+
+void ATGTIAEmulator::GetPalette(uint32 pal[256]) const {
+	memcpy(pal, mPalette, sizeof(uint32)*256);
 }
 
 void ATGTIAEmulator::SetAnalysisMode(AnalysisMode mode) {
 	mAnalysisMode = mode;
 	mpRenderer->SetAnalysisMode(mode != kAnalyzeNone);
+}
+
+void ATGTIAEmulator::SetOverscanMode(OverscanMode mode) {
+	mOverscanMode = mode;
+}
+
+void ATGTIAEmulator::GetFrameSize(int& w, int& h) const {
+	if (mAnalysisMode || mbForcedBorder) {
+		w = 456;
+		h = 262;
+	} else {
+		switch(mOverscanMode) {
+			case kOverscanFull:
+				w = 456;
+				h = 262;
+				break;
+
+			case kOverscanExtended:
+				w = 376;
+				h = 240;
+				break;
+
+			case kOverscanNormal:
+				w = 336;
+				h = 240;
+				break;
+		}
+	}
+
+	if (mb14MHzThisFrame) {
+		w *= 2;
+		h *= 2;
+	}
 }
 
 bool ATGTIAEmulator::ArePMCollisionsEnabled() const {
@@ -196,27 +286,16 @@ void ATGTIAEmulator::SetVideoOutput(IVDVideoDisplay *pDisplay) {
 	}
 }
 
+void ATGTIAEmulator::SetStatusCounter(uint32 index, uint32 value) {
+	mStatusCounter[index] = value;
+}
+
 void ATGTIAEmulator::SetCassettePosition(float pos) {
 	mCassettePos = pos;
 }
 
 void ATGTIAEmulator::SetPALMode(bool enabled) {
 	mbPALMode = enabled;
-
-	// These constants, and the algorithm in RecomputePalette(), come from an AtariAge post
-	// by Olivier Galibert. Sadly, the PAL palette doesn't quite look right, so it's disabled
-	// for now.
-
-	// PAL palette doesn't look quite right.
-//	if (enabled) {
-//		mPaletteColorBase = -58.0/360.0;
-//		mPaletteColorRange = 14.0;
-//	} else {
-		mPaletteColorBase = -15/360.0;
-		mPaletteColorRange = 14.4;
-//	}
-
-	RecomputePalette();
 }
 
 void ATGTIAEmulator::SetConsoleSwitch(uint8 c, bool set) {
@@ -422,6 +501,14 @@ void ATGTIAEmulator::SaveState(ATSaveStateWriter& writer) {
 	mpRenderer->SaveState(writer);
 }
 
+void ATGTIAEmulator::SetFieldPolarity(bool polarity) {
+	mbFieldPolarity = polarity;
+}
+
+void ATGTIAEmulator::SetVBLANK(VBlankMode vblMode) {
+	mVBlankMode = vblMode;
+}
+
 bool ATGTIAEmulator::BeginFrame(bool force) {
 	if (mpFrame)
 		return true;
@@ -442,21 +529,24 @@ bool ATGTIAEmulator::BeginFrame(bool force) {
 			return false;
 	}
 
+	bool use14MHz = (mpVBXE != NULL);
+
 	if (mpFrame) {
 		ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 
-		mArtifactModeThisFrame = mArtifactMode;
+		mbPostProcessThisFrame = (mArtifactMode || mbBlendMode) && !use14MHz;
+		mb14MHzThisFrame = use14MHz;
+		mbInterlaceEnabledThisFrame = mbInterlaceEnabled;
 
-		if (mArtifactMode)
-			mpArtifactingEngine->BeginFrame(mArtifactMode == kArtifactPAL);
+		if (mbPostProcessThisFrame)
+			mpArtifactingEngine->BeginFrame(mArtifactMode == kArtifactPAL, mArtifactMode != kArtifactNone, mbBlendMode);
 
-		int format = mArtifactMode ? nsVDPixmap::kPixFormat_XRGB8888 : nsVDPixmap::kPixFormat_Pal8;
+		int format = mArtifactMode || mbBlendMode || use14MHz ? nsVDPixmap::kPixFormat_XRGB8888 : nsVDPixmap::kPixFormat_Pal8;
+		int width = use14MHz ? 912 : 456;
+		int height = mbInterlaceEnabledThisFrame ? 524 : 262;
 
-		if (mpFrame->mPixmap.format != format) {
-			if (mArtifactMode)
-				fb->mBuffer.init(456, 262, format);
-			else
-				fb->mBuffer.init(456, 262, format);
+		if (mpFrame->mPixmap.format != format || mpFrame->mPixmap.w != width || mpFrame->mPixmap.h != height) {
+			fb->mBuffer.init(width, height, format);
 		}
 
 		fb->mPixmap = fb->mBuffer;
@@ -464,19 +554,21 @@ bool ATGTIAEmulator::BeginFrame(bool force) {
 
 		mPreArtifactFrameVisible = mPreArtifactFrame;
 
-		if (!mAnalysisMode && !mbForcedBorder) {
-			ptrdiff_t offset = 34*2;
+		if (!mAnalysisMode && !mbForcedBorder && mOverscanMode != kOverscanFull) {
+			ptrdiff_t offset = (mOverscanMode == kOverscanExtended ? 34*2 : 44*2);
 
-			if (mArtifactMode)
+			if (use14MHz)
+				offset *= 8;
+			else if (mbPostProcessThisFrame)
 				offset *= 4;
 
-			offset += fb->mPixmap.pitch * 8;
+			offset += fb->mPixmap.pitch * (mbInterlaceEnabledThisFrame ? 16 : 8);
 
 			fb->mPixmap.data = (char *)fb->mPixmap.data + offset;
-			fb->mPixmap.w = (222 - 34)*2;
-			fb->mPixmap.h = 240;
+			fb->mPixmap.w = ((mOverscanMode == kOverscanExtended) ? (222 - 34)*2 : (212 - 44)*2) * (use14MHz ? 2 : 1);
+			fb->mPixmap.h = mbInterlaceEnabledThisFrame ? 480 : 240;
 
-			mPreArtifactFrameVisible.data = (char *)mPreArtifactFrameVisible.data + 34*2 + mPreArtifactFrameVisible.pitch * 8;
+			mPreArtifactFrameVisible.data = (char *)mPreArtifactFrameVisible.data + (mOverscanMode == kOverscanExtended ? 34*2 : 44*2) * (use14MHz ? 2 : 1) + mPreArtifactFrameVisible.pitch * 8;
 			mPreArtifactFrameVisible.w = fb->mPixmap.w;
 			mPreArtifactFrameVisible.h = fb->mPixmap.h;
 
@@ -493,6 +585,9 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 	if ((unsigned)(y - 8) < 240)
 		mbScanlinesWithHiRes[y - 8] = mbHiresMode;
 
+	if (y == 8 && mpVBXE)
+		mpVBXE->BeginFrame();
+
 	mpDst = NULL;
 	
 	mY = y;
@@ -503,12 +598,14 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 		ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 
 		if (y < 262) {
-			if (mArtifactModeThisFrame)
+			if (mbPostProcessThisFrame)
 				mpDst = &mPreArtifactFrameBuffer[y * 456];
-			else
+			else if (!mbInterlaceEnabledThisFrame)
 				mpDst = (uint8 *)fb->mBuffer.data + y * fb->mBuffer.pitch;
+			else
+				mpDst = (uint8 *)fb->mBuffer.data + y * fb->mBuffer.pitch*2 + (mbFieldPolarity ? fb->mBuffer.pitch : 0);
 
-			memset(mpDst, 0, 456);
+			memset(mpDst, 0, mb14MHzThisFrame ? 912 : 456);
 		} else {
 			mpDst = NULL;
 		}
@@ -517,7 +614,9 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 	memset(mMergeBuffer, 0, sizeof mMergeBuffer);
 	memset(mAnticData, 0, sizeof mAnticData);
 
-	if (mpDst)
+	if (mpVBXE)
+		mpVBXE->BeginScanline((uint32*)mpDst, mMergeBuffer, mAnticData, mbHiresMode);
+	else if (mpDst)
 		mpRenderer->BeginScanline(mpDst, mMergeBuffer, mAnticData, mbHiresMode);
 
 	mPlayerTriggerPos[0] = mPlayerPos[0] < 34 ? mPlayerPos[0] : 0;
@@ -540,13 +639,20 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 
 void ATGTIAEmulator::EndScanline(uint8 dlControl) {
 	// obey VBLANK
-	if (mY >= 8 && mY < 248)
+	if (mVBlankMode != kVBlankModeOn)
 		Sync();
 
-	if (mpDst)
-		mpRenderer->RenderScanline(222);
+	if (mpDst) {
+		if (mpVBXE)
+			mpVBXE->RenderScanline(222);
+		else
+			mpRenderer->RenderScanline(222);
+	}
 
-	mpRenderer->EndScanline();
+	if (mpVBXE)
+		mpVBXE->EndScanline();
+	else
+		mpRenderer->EndScanline();
 
 	// flush remaining register changes
 	if (mRCIndex < mRCCount)
@@ -711,7 +817,7 @@ namespace {
 
 void ATGTIAEmulator::Sync() {
 	// obey VBLANK
-	if (mY < 8 || mY >= 248)
+	if (mVBlankMode == kVBlankModeOn)
 		return;
 
 	mpConn->GTIARequestAnticSync();
@@ -1001,10 +1107,206 @@ void ATGTIAEmulator::RenderActivityMap(const uint8 *src) {
 	}
 }
 
-#if 0
-	extern float g_arhist[];
-	extern float g_arhist2[];
-#endif
+namespace {
+	static const uint8 kCharData[12][7][4]={
+#define X 0xFF
+		{
+			X,X,X,X,
+			X,X,0,X,
+			X,0,X,0,
+			X,0,X,0,
+			X,0,X,0,
+			X,X,0,X,
+			X,X,X,X,
+		},
+		{
+			X,X,X,X,
+			X,X,0,X,
+			X,0,0,X,
+			X,X,0,X,
+			X,X,0,X,
+			X,0,0,0,
+			X,X,X,X,
+		},
+		{
+			X,X,X,X,
+			X,0,0,X,
+			X,X,X,0,
+			X,X,0,X,
+			X,0,X,X,
+			X,0,0,0,
+			X,X,X,X,
+		},
+		{
+			X,X,X,X,
+			X,0,0,X,
+			X,X,X,0,
+			X,X,0,X,
+			X,X,X,0,
+			X,0,0,X,
+			X,X,X,X,
+		},
+		{
+			X,X,X,X,
+			X,0,X,0,
+			X,0,X,0,
+			X,0,0,0,
+			X,X,X,0,
+			X,X,X,0,
+			X,X,X,X,
+		},
+		{
+			X,X,X,X,
+			X,0,0,0,
+			X,0,X,X,
+			X,0,0,X,
+			X,X,X,0,
+			X,0,0,X,
+			X,X,X,X,
+		},
+		{
+			X,X,X,X,
+			X,X,0,0,
+			X,0,X,X,
+			X,0,0,X,
+			X,0,X,0,
+			X,X,0,X,
+			X,X,X,X,
+		},
+		{
+			X,X,X,X,
+			X,0,0,0,
+			X,X,X,0,
+			X,X,0,X,
+			X,X,0,X,
+			X,X,0,X,
+			X,X,X,X,
+		},
+		{
+			X,X,X,X,
+			X,X,0,X,
+			X,0,X,0,
+			X,X,0,X,
+			X,0,X,0,
+			X,X,0,X,
+			X,X,X,X,
+		},
+		{
+			X,X,X,X,
+			X,X,0,X,
+			X,0,X,0,
+			X,X,0,0,
+			X,X,X,0,
+			X,0,0,X,
+			X,X,X,X,
+		},
+		{
+			X,X,X,X,
+			X,X,0,0,
+			X,0,X,X,
+			X,0,X,X,
+			X,0,X,X,
+			X,X,0,0,
+			X,X,X,X,
+		},
+		{
+			X,X,X,X,
+			X,X,X,X,
+			X,X,0,X,
+			X,X,X,X,
+			X,X,0,X,
+			X,X,X,X,
+			X,X,X,X,
+		},
+#undef X
+	};
+
+	void DrawString8(const VDPixmap& px, const uint32 *palette, int x, int y, uint8 forecolor, uint8 backcolor, const char *str) {
+		size_t len = strlen(str);
+		int w = px.w;
+		int h = px.h;
+
+		if (x >= w || y >= h || y <= -7)
+			return;
+
+		int y1 = y < 0 ? -y : 0;
+		int y2 = y > h - 7 ? h - y : 7;
+		uint8 xorcolor = forecolor ^ backcolor;
+
+		for(;;) {
+			const uint8 *data = NULL;
+
+			if (!len) {
+				if (x < 0 || x >= w)
+					break;
+
+				uint8 *dst = (uint8 *)px.data + px.pitch * (y + y1);
+
+				if (px.format == nsVDPixmap::kPixFormat_XRGB8888) {
+					for(int yi = y1; yi < y2; ++yi) {
+						((uint32 *)dst)[x] = palette[backcolor];
+						dst += px.pitch;
+					}
+				} else {
+					for(int yi = y1; yi < y2; ++yi) {
+						dst[x] = backcolor;
+						dst += px.pitch;
+					}
+				}
+
+				break;
+			}
+
+			--len;
+			const char c = *str++;
+
+			if (c >= '0' && c <= '9')
+				data = kCharData[c - '0'][0];
+			else if (c == 'C')
+				data = kCharData[10][0];
+			else if (c == ':')
+				data = kCharData[11][0];
+
+			if (data) {
+				int x1 = 0;
+				int x2 = 4;
+
+				if (x < 0)
+					x1 = -x;
+
+				if (x > w - 4)
+					x2 = w - x;
+
+				const uint8 *src = data + 5 * y1;
+				uint8 *dst = (uint8 *)px.data + px.pitch * (y + y1);
+
+				if (px.format == nsVDPixmap::kPixFormat_XRGB8888) {
+					for(int yi = y1; yi < y2; ++yi) {
+						uint32 *dstrow = (uint32 *)dst;
+
+						for(int xi = x1; xi < x2; ++xi) {
+							dstrow[x + xi] = palette[forecolor ^ (src[xi] & xorcolor)];
+						}
+
+						src += 4;
+						dst += px.pitch;
+					}
+				} else {
+					for(int yi = y1; yi < y2; ++yi) {
+						for(int xi = x1; xi < x2; ++xi) {
+							dst[x + xi] = forecolor ^ (src[xi] & xorcolor);
+						}
+
+						src += 4;
+						dst += px.pitch;
+					}
+				}
+			}
+
+			x += 4;
+		} 
+	}
+}
 
 void ATGTIAEmulator::UpdateScreen() {
 	if (!mpFrame)
@@ -1013,162 +1315,72 @@ void ATGTIAEmulator::UpdateScreen() {
 	ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 
 	if (mY < 261) {
-		const VDPixmap& pxdst = mArtifactModeThisFrame ? mPreArtifactFrame : fb->mBuffer;
+		const VDPixmap& pxdst = mbPostProcessThisFrame ? mPreArtifactFrame : fb->mBuffer;
 		uint32 x = mpConn->GTIAGetXClock();
 
 		Sync();
 
-		if (mpDst)
-			mpRenderer->RenderScanline(x);
+		if (mpDst) {
+			if (mpVBXE)
+				mpVBXE->RenderScanline(x);
+			else
+				mpRenderer->RenderScanline(x);
+		}
 
 		uint8 *row = (uint8 *)pxdst.data + (mY+1)*pxdst.pitch;
-		VDMemset8(row, 0x00, 2*x);
-		VDMemset8(row + x*2, 0xFF, 456 - 2*x);
+
+		if (mb14MHzThisFrame) {
+			VDMemset32(row, 0x00, 4*x);
+			VDMemset32(row + x*4, 0xFFFF00, 912 - 4*x);
+		} else {
+			VDMemset8(row, 0x00, 2*x);
+			VDMemset8(row + x*2, 0xFF, 456 - 2*x);
+		}
 
 		ApplyArtifacting();
 
 		mpDisplay->SetSourcePersistent(true, mpFrame->mPixmap);
 	} else {
-		const VDPixmap& pxdst = mArtifactModeThisFrame ? mPreArtifactFrameVisible : fb->mPixmap;
+		const VDPixmap& pxdst = mbPostProcessThisFrame ? mPreArtifactFrameVisible : fb->mPixmap;
 		uint32 statusFlags = mStatusFlags | mStickyStatusFlags;
 		mStickyStatusFlags = mStatusFlags;
 
-		static const uint8 chars[5][7][5]={
-			{
-#define X 0x1F
-				X,X,X,X,X,
-				X,X,0,X,X,
-				X,0,0,X,X,
-				X,X,0,X,X,
-				X,X,0,X,X,
-				X,0,0,0,X,
-				X,X,X,X,X,
-#undef X
-			},
-			{
-#define X 0x3F
-				X,X,X,X,X,
-				X,0,0,X,X,
-				X,X,X,0,X,
-				X,X,0,X,X,
-				X,0,X,X,X,
-				X,0,0,0,X,
-				X,X,X,X,X,
-#undef X
-			},
-			{
-#define X 0x5F
-				X,X,X,X,X,
-				X,0,0,X,X,
-				X,X,X,0,X,
-				X,X,0,X,X,
-				X,X,X,0,X,
-				X,0,0,X,X,
-				X,X,X,X,X,
-#undef X
-			},
-			{
-#define X 0x7F
-				X,X,X,X,X,
-				X,0,X,0,X,
-				X,0,X,0,X,
-				X,0,0,0,X,
-				X,X,X,0,X,
-				X,X,X,0,X,
-				X,X,X,X,X,
-#undef X
-			},
-			{
-#define X 0x9F
-				X,X,X,X,X,
-				X,X,0,0,X,
-				X,0,X,X,X,
-				X,0,X,X,X,
-				X,0,X,X,X,
-				X,X,0,0,X,
-				X,X,X,X,X,
-#undef X
-			},
-		};
+		int x = pxdst.w;
+		int y = pxdst.h - 7;
 
-		for(int i=0; i<5; ++i) {
+		for(int i = 7; i >= 0; --i) {
 			if (statusFlags & (1 << i)) {
-				VDPixmap pxsrc;
-				pxsrc.data = (void *)chars[i];
-				pxsrc.pitch = sizeof chars[i][0];
-				pxsrc.format = nsVDPixmap::kPixFormat_Pal8;
-				pxsrc.palette = mPalette;
-				pxsrc.w = 5;
-				pxsrc.h = 7;
+				char buf[11];
 
-				VDPixmapBlt(pxdst, pxdst.w - 25 + 5*i, pxdst.h - 7, pxsrc, 0, 0, 5, 7);
+				sprintf(buf, "%u", mStatusCounter[i]);
+
+				x -= 4 * strlen(buf) + 1;
+
+				DrawString8(pxdst, mPalette, x, y, 0, 0x1F + (i << 5), buf);
+			} else {
+				x -= 5;
 			}
 		}
 
-		if (mbShowCassetteIndicator) {
-			static const int kIndices[]={
-				0,1,2,0,2,3,
-				4,5,6,4,6,7,
-				8,9,10,8,10,11,
-				12,13,14,12,14,15,
-				16,17,18,16,18,19,
-			};
+		if (statusFlags & 0x100) {
+			DrawString8(pxdst, mPalette, 0, y, 0, 0x9F, "C");
+			mShowCassetteIndicatorCounter = 60;
+		} else if (mbShowCassetteIndicator)
+			mShowCassetteIndicatorCounter = 60;
 
-			VDTriColorVertex vx[20];
+		if (mShowCassetteIndicatorCounter) {
+			--mShowCassetteIndicatorCounter;
 
-			float f = (mCassettePos - floor(mCassettePos)) * 20.0f;
+			char buf[64];
+			int cpos = VDRoundToInt(mCassettePos);
 
-			for(int i=0; i<20; i+=4) {
-				float a1 = (float)(i + f) * nsVDMath::kfTwoPi / 20.0f;
-				float a2 = (float)(i + f + 2.0f) * nsVDMath::kfTwoPi / 20.0f;
-				float x1 = cosf(a1);
-				float y1 = -sinf(a1);
-				float x2 = cosf(a2);
-				float y2 = -sinf(a2);
+			int secs = cpos % 60;
+			int mins = cpos / 60;
+			int hours = mins / 60;
+			mins %= 60;
 
-				vx[i+0].x = 424.0f + 10.0f*x1;
-				vx[i+0].y = 222.0f + 10.0f*y1;
-				vx[i+0].z = 0.0f;
-				vx[i+0].a = 255;
-				vx[i+0].r = 255;
-				vx[i+0].g = 0x0E;
-				vx[i+0].b = 255;
-
-				vx[i+1].x = 424.0f + 15.0f*x1;
-				vx[i+1].y = 222.0f + 15.0f*y1;
-				vx[i+1].z = 0.0f;
-				vx[i+1].a = 255;
-				vx[i+1].r = 255;
-				vx[i+1].g = 0x0E;
-				vx[i+1].b = 255;
-
-				vx[i+2].x = 424.0f + 15.0f*x2;
-				vx[i+2].y = 222.0f + 15.0f*y2;
-				vx[i+2].z = 0.0f;
-				vx[i+2].a = 255;
-				vx[i+2].r = 255;
-				vx[i+2].g = 0x0E;
-				vx[i+2].b = 255;
-
-				vx[i+3].x = 424.0f + 10.0f*x2;
-				vx[i+3].y = 222.0f + 10.0f*y2;
-				vx[i+3].z = 0.0f;
-				vx[i+3].a = 255;
-				vx[i+3].r = 255;
-				vx[i+3].g = 0x0E;
-				vx[i+3].b = 255;
-			}
-
-			const float xf[16]={
-				2.0f / 456.0f, 0, 0, -1.0f,
-				0, -2.0f / 262.0f, 0, 1.0f,
-				0, 0, 0, 0,
-				0, 0, 0, 1.0f
-			};
-
-			VDPixmap tmp(pxdst);
-			tmp.format = nsVDPixmap::kPixFormat_Y8;
-			VDPixmapTriFill(tmp, vx, 20, kIndices, 30, xf);
+			sprintf(buf, "%02u:%02u:%02u", hours, mins, secs);
+			DrawString8(pxdst, mPalette, 5, y, 0x94, 0, buf);
 		}
 
 #if 0
@@ -1187,6 +1399,27 @@ void ATGTIAEmulator::UpdateScreen() {
 		}
 #endif
 
+		// copy over previous field
+		if (mbInterlaceEnabledThisFrame) {
+			VDPixmap dstField(VDPixmapExtractField(mpFrame->mPixmap, !mbFieldPolarity));
+
+			if (mpLastFrame &&
+				mpLastFrame->mPixmap.w == mpFrame->mPixmap.w &&
+				mpLastFrame->mPixmap.h == mpFrame->mPixmap.h &&
+				mpLastFrame->mPixmap.format == mpFrame->mPixmap.format &&
+				mbFieldPolarity != mbLastFieldPolarity) {
+				VDPixmap srcField(VDPixmapExtractField(mpLastFrame->mPixmap, !mbFieldPolarity));
+
+				VDPixmapBlt(dstField, srcField);
+			} else {
+				VDPixmap srcField(VDPixmapExtractField(mpFrame->mPixmap, mbFieldPolarity));
+				
+				VDPixmapBlt(dstField, srcField);
+			}
+
+			mbLastFieldPolarity = mbFieldPolarity;
+		}
+
 		ApplyArtifacting();
 		mpDisplay->PostBuffer(mpFrame);
 
@@ -1198,19 +1431,20 @@ void ATGTIAEmulator::UpdateScreen() {
 
 void ATGTIAEmulator::RecomputePalette() {
 	uint32 *dst = mPalette;
-	for(int luma = 0; luma<16; ++luma) {
-		*dst++ = 0x111111 * luma;
-	}
 
-	double angle = mPaletteColorBase * nsVDMath::krTwoPi;
-	double angleStep = nsVDMath::krTwoPi / mPaletteColorRange;
+	double angle = mColorParams.mHueStart * (nsVDMath::krTwoPi / 360.0f);
+	double angleStep = nsVDMath::krTwoPi * mColorParams.mHueRange / (360.0f * 15.0f);
 
-	for(int hue=0; hue<15; ++hue) {
-		double i = (75.0/255.0) * cos(angle);
-		double q = (75.0/255.0) * sin(angle);
+	for(int hue=0; hue<16; ++hue) {
+		double i = mColorParams.mSaturation * cos(angle);
+		double q = mColorParams.mSaturation * sin(angle);
+
+		if (!hue) {
+			i = q = 0.0;
+		}
 
 		for(int luma=0; luma<16; ++luma) {
-			double y = (double)luma / 15.0;
+			double y = (double)luma * mColorParams.mContrast / 15.0f + mColorParams.mBrightness;
 			double r = y + 0.956*i + 0.621*q;
 			double g = y - 0.272*i - 0.647*q;
 			double b = y - 1.107*i + 1.704*q;
@@ -1220,7 +1454,8 @@ void ATGTIAEmulator::RecomputePalette() {
 					+ (VDClampedRoundFixedToUint8Fast((float)b)      );
 		}
 
-		angle += angleStep;
+		if (hue)
+			angle += angleStep;
 	}
 }
 
@@ -1302,7 +1537,10 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 		case 0x14:
 		case 0x15:
 			mPMColor[reg - 0x12] = value & 0xfe;
-			mpRenderer->AddRegisterChange(mpConn->GTIAGetXClock() + 1, reg, value);
+			if (mpVBXE)
+				mpVBXE->AddRegisterChange(mpConn->GTIAGetXClock() + 1, reg, value);
+			else
+				mpRenderer->AddRegisterChange(mpConn->GTIAGetXClock() + 1, reg, value);
 			break;
 
 		case 0x16:
@@ -1310,12 +1548,18 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 		case 0x18:
 		case 0x19:
 			mPFColor[reg - 0x16] = value & 0xfe;
-			mpRenderer->AddRegisterChange(mpConn->GTIAGetXClock() + 1, reg, value);
+			if (mpVBXE)
+				mpVBXE->AddRegisterChange(mpConn->GTIAGetXClock() + 1, reg, value);
+			else
+				mpRenderer->AddRegisterChange(mpConn->GTIAGetXClock() + 1, reg, value);
 			break;
 
 		case 0x1A:
 			mPFBAK = value & 0xfe;
-			mpRenderer->AddRegisterChange(mpConn->GTIAGetXClock() + 1, reg, value);
+			if (mpVBXE)
+				mpVBXE->AddRegisterChange(mpConn->GTIAGetXClock() + 1, reg, value);
+			else
+				mpRenderer->AddRegisterChange(mpConn->GTIAGetXClock() + 1, reg, value);
 			break;
 
 		case 0x1C:
@@ -1366,7 +1610,10 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 
 		case 0x1B:	// $D01B PRIOR
 			AddRegisterChange(xpos + 3, reg, value);
-			mpRenderer->AddRegisterChange(xpos + 3, reg, value);
+			if (mpVBXE)
+				mpVBXE->AddRegisterChange(xpos + 3, reg, value);
+			else
+				mpRenderer->AddRegisterChange(xpos + 3, reg, value);
 			break;
 
 		case 0x1E:
@@ -1376,12 +1623,44 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 }
 
 void ATGTIAEmulator::ApplyArtifacting() {
-	if (!mArtifactModeThisFrame)
+	if (mb14MHzThisFrame) {
+		if (mArtifactMode == kArtifactPAL) {
+			ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
+			char *dstrow = (char *)fb->mBuffer.data;
+			ptrdiff_t dstpitch = fb->mBuffer.pitch;
+
+			if (mbInterlaceEnabledThisFrame) {
+				if (mbFieldPolarity)
+					dstrow += dstpitch;
+
+				dstpitch *= 2;
+			}
+
+			for(uint32 row=0; row<262; ++row) {
+				uint32 *dst = (uint32 *)dstrow;
+
+				mpArtifactingEngine->Artifact32(row, dst, 912);
+
+				dstrow += dstpitch;
+			}
+		}
+
+		return;
+	}
+
+	if (!mbPostProcessThisFrame)
 		return;
 
 	ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 	char *dstrow = (char *)fb->mBuffer.data;
 	ptrdiff_t dstpitch = fb->mBuffer.pitch;
+
+	if (mbInterlaceEnabledThisFrame) {
+		if (mbFieldPolarity)
+			dstrow += dstpitch;
+
+		dstpitch *= 2;
+	}
 
 	const uint8 *srcrow = (const uint8 *)mPreArtifactFrame.data;
 	ptrdiff_t srcpitch = mPreArtifactFrame.pitch;
@@ -1390,7 +1669,7 @@ void ATGTIAEmulator::ApplyArtifacting() {
 		uint32 *dst = (uint32 *)dstrow;
 		const uint8 *src = srcrow;
 
-		mpArtifactingEngine->Artifact(dst, src, (unsigned)(row-8) < 240 && mbScanlinesWithHiRes[row - 8]);
+		mpArtifactingEngine->Artifact8(row, dst, src, (unsigned)(row-8) < 240 && mbScanlinesWithHiRes[row - 8]);
 
 		srcrow += srcpitch;
 		dstrow += dstpitch;

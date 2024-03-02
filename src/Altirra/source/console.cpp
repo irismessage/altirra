@@ -44,6 +44,7 @@
 #include "resource.h"
 #include "disasm.h"
 #include "symbols.h"
+#include "printer.h"
 
 extern HINSTANCE g_hInst;
 extern HWND g_hwnd;
@@ -751,10 +752,14 @@ public:
 
 	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
 
-	void LoadFile(const wchar_t *s);
+	void LoadFile(const wchar_t *s, const wchar_t *alias);
 
 	const wchar_t *GetPath() const {
 		return mPath.c_str();
+	}
+
+	const wchar_t *GetPathAlias() const {
+		return mPathAlias.empty() ? NULL : mPathAlias.c_str();
 	}
 
 protected:
@@ -783,6 +788,8 @@ protected:
 
 	uint32	mModuleId;
 	uint16	mFileId;
+	sint32	mLastPC;
+	sint32	mLastFramePC;
 
 	int		mPCLine;
 	int		mFramePCLine;
@@ -791,6 +798,7 @@ protected:
 	HWND	mhwndTextEditor;
 	HACCEL	mhAccel;
 	VDStringW	mPath;
+	VDStringW	mPathAlias;
 
 	typedef stdext::hash_map<uint32, uint32> AddressLookup;
 	AddressLookup	mAddressToLineLookup;
@@ -803,7 +811,9 @@ protected:
 };
 
 ATSourceWindow::ATSourceWindow()
-	: mPCLine(-1)
+	: mLastPC(-1)
+	, mLastFramePC(-1)
+	, mPCLine(-1)
 	, mFramePCLine(-1)
 	, mhAccel(LoadAccelerators(g_hInst, MAKEINTRESOURCE(IDR_DEBUGGER_ACCEL)))
 {
@@ -816,10 +826,13 @@ VDGUIHandle ATSourceWindow::Create(uint32 exStyle, uint32 style, int x, int y, i
 	return (VDGUIHandle)CreateWindowEx(exStyle, (LPCSTR)sWndClass, "", style, x, y, cx, cy, (HWND)parent, (HMENU)id, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
 }
 
-void ATSourceWindow::LoadFile(const wchar_t *s) {
+void ATSourceWindow::LoadFile(const wchar_t *s, const wchar_t *alias) {
 	VDTextInputFile ifile(s);
 
 	mpTextEditor->Clear();
+
+	mAddressToLineLookup.clear();
+	mLineToAddressLookup.clear();
 
 	uint32 lineno = 0;
 	bool listingMode = false;
@@ -898,9 +911,15 @@ void ATSourceWindow::LoadFile(const wchar_t *s) {
 	}
 
 	mPath = s;
+
+	if (alias)
+		mPathAlias = alias;
+	else
+		mPathAlias.clear();
+
 	mFileWatcher.Init(s, this);
 
-	VDSetWindowTextW32(mhwnd, VDFileSplitPath(s));
+	VDSetWindowTextFW32(mhwnd, L"%ls [source] - Altirra", VDFileSplitPath(s));
 	ATGetDebugger()->RequestClientUpdate(this);
 }
 
@@ -929,7 +948,7 @@ LRESULT ATSourceWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case WM_APP+101:
 			if (!mPath.empty()) {
 				try {
-					LoadFile(mPath.c_str());
+					LoadFile(mPath.c_str(), NULL);
 				} catch(const MyError&) {
 					// eat
 				}
@@ -962,6 +981,13 @@ LRESULT ATSourceWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case WM_SETFOCUS:
 			::SetFocus(mhwndTextEditor);
 			return 0;
+
+		case WM_SETCURSOR:
+			if (LOWORD(lParam) == HTCLIENT && HIWORD(lParam)) {
+				::SetCursor(::LoadCursor(NULL, IDC_IBEAM));
+				return TRUE;
+			}
+			break;
 	}
 
 	return VDShaderEditorBaseWindow::WndProc(msg, wParam, lParam);
@@ -1034,6 +1060,25 @@ bool ATSourceWindow::OnCommand(UINT cmd) {
 			ATGetDebugger()->StepOut(kATDebugSrcMode_Source);
 			return true;
 
+		case ID_CONTEXT_SHOWNEXTSTATEMENT:
+			{
+				uint32 moduleId;
+				ATSourceLineInfo lineInfo;
+				IATDebuggerSymbolLookup *lookup = ATGetDebuggerSymbolLookup();
+				if (lookup->LookupLine(ATGetDebugger()->GetFramePC(), moduleId, lineInfo)) {
+					VDStringW path;
+					if (lookup->GetSourceFilePath(moduleId, lineInfo.mFileId, path) && lineInfo.mLine) {
+						IATSourceWindow *w = ATOpenSourceWindow(path.c_str());
+						if (w) {
+							w->FocusOnLine(lineInfo.mLine - 1);
+
+							return true;
+						}
+					}
+				}
+			}
+			// fall through to go-to-disassembly
+
 		case ID_CONTEXT_GOTODISASSEMBLY:
 			{
 				sint32 addr = GetCurrentLineAddress();
@@ -1044,6 +1089,8 @@ bool ATSourceWindow::OnCommand(UINT cmd) {
 					if (disPane) {
 						disPane->SetPosition((uint16)addr);
 					}
+				} else {
+					::MessageBoxW(mhwnd, L"There are no symbols associating code with that location.", L"Altirra Error", MB_ICONERROR | MB_OK);
 				}
 			}
 			return true;
@@ -1132,6 +1179,12 @@ void ATSourceWindow::OnSimulatorEvent(ATSimulatorEvent ev) {
 }
 
 void ATSourceWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
+	if (mLastFramePC == state.mFramePC && mLastPC == state.mPC)
+		return;
+
+	mLastFramePC = state.mFramePC;
+	mLastPC = state.mPC;
+
 	int pcline = -1;
 	int frameline = -1;
 
@@ -1230,6 +1283,31 @@ IATSourceWindow *ATGetSourceWindow(const wchar_t *s) {
 
 		if (VDFileIsPathEqual(s, t))
 			return w;
+
+		t = w->GetPathAlias();
+
+		if (t && VDFileIsPathEqual(s, t))
+			return w;
+	}
+
+	// try a looser check
+	s = VDFileSplitPath(s);
+
+	for(it = g_sourceWindows.begin(); it != itEnd; ++it) {
+		IATSourceWindow *w = *it;
+
+		const wchar_t *t = VDFileSplitPath(w->GetPath());
+
+		if (VDFileIsPathEqual(s, t))
+			return w;
+
+		t = w->GetPathAlias();
+		if (t) {
+			t = VDFileSplitPath(t);
+
+			if (VDFileIsPathEqual(s, t))
+				return w;
+		}
 	}
 
 	return NULL;
@@ -1240,16 +1318,30 @@ IATSourceWindow *ATOpenSourceWindow(const wchar_t *s) {
 	if (w)
 		return w;
 
+	VDStringW fn;
+	if (!VDDoesPathExist(s)) {
+		VDStringW title(L"Find source file ");
+		title += s;
+		fn = VDGetLoadFileName('src ', (VDGUIHandle)g_hwnd, title.c_str(), L"All files (*.*)\0*.*\0", NULL);
+
+		if (fn.empty())
+			return NULL;
+	}
+
 	vdrefptr<ATSourceWindow> srcwin(new ATSourceWindow);
 
 	HWND hwndSrcWin = (HWND)srcwin->Create(WS_EX_NOPARENTNOTIFY, WS_OVERLAPPEDWINDOW|WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, (VDGUIHandle)g_hwnd, 0);
 
 	if (hwndSrcWin) {
 		try {
-			srcwin->LoadFile(s);
+			if (fn.empty())
+				srcwin->LoadFile(s, NULL);
+			else
+				srcwin->LoadFile(fn.c_str(), s);
 		} catch(const MyError& e) {
 			DestroyWindow(hwndSrcWin);
 			e.post(g_hwnd, "Altirra error");
+			return NULL;
 		}
 
 		return srcwin;
@@ -2425,6 +2517,13 @@ LRESULT ATConsoleWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	case WM_SIZE:
 		OnSize();
 		return 0;
+	case WM_COMMAND:
+		switch(LOWORD(wParam)) {
+			case ID_CONTEXT_CLEARALL:
+				SetWindowText(mhwndLog, "");
+				return 0;
+		}
+		break;
 	case WM_SETFOCUS:
 		SetFocus(mhwndEdit);
 		return 0;
@@ -2433,6 +2532,14 @@ LRESULT ATConsoleWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		if (!lParam)
 			return 0;
 		break;
+	case WM_CONTEXTMENU:
+		{
+			int x = GET_X_LPARAM(lParam);
+			int y = GET_Y_LPARAM(lParam);
+
+			TrackPopupMenu(GetSubMenu(mMenu, 0), TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
+		}
+		return 0;
 	}
 
 	return ATUIPane::WndProc(msg, wParam, lParam);
@@ -2620,11 +2727,14 @@ protected:
 	void OnSize();
 	void OnPaint();
 	void RemakeView(uint16 focusAddr);
+	bool GetAddressFromPoint(int x, int y, uint16& addr) const;
 
 	HWND	mhwndAddress;
+	HMENU	mMenu;
 
 	RECT	mTextArea;
 	uint32	mViewStart;
+	uint32	mCharWidth;
 	uint32	mLineHeight;
 
 	VDStringA	mTempLine;
@@ -2637,6 +2747,7 @@ protected:
 ATMemoryWindow::ATMemoryWindow()
 	: ATUIPane(kATUIPaneId_Memory, "Memory")
 	, mhwndAddress(NULL)
+	, mMenu(LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_MEMORY_CONTEXT_MENU)))
 	, mTextArea()
 	, mViewStart(0)
 	, mLineHeight(16)
@@ -2645,6 +2756,8 @@ ATMemoryWindow::ATMemoryWindow()
 }
 
 ATMemoryWindow::~ATMemoryWindow() {
+	if (mMenu)
+		DestroyMenu(mMenu);
 }
 
 LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -2677,6 +2790,47 @@ LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case WM_PAINT:
 			OnPaint();
 			return 0;
+
+		case WM_CONTEXTMENU:
+			{
+				int x = GET_X_LPARAM(lParam);
+				int y = GET_Y_LPARAM(lParam);
+
+				UINT id = TrackPopupMenu(GetSubMenu(mMenu, 0), TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, 0, mhwnd, NULL);
+
+				switch(id) {
+					case ID_CONTEXT_TOGGLEREADBREAKPOINT:
+						{
+							POINT pt = {x, y};
+							ScreenToClient(mhwnd, &pt);
+
+							uint16 addr;
+							if (GetAddressFromPoint(pt.x, pt.y, addr)) {
+								if (g_sim.IsReadBreakEnabled() && g_sim.GetReadBreakAddress() == addr)
+									g_sim.SetReadBreakAddress();
+								else
+									g_sim.SetReadBreakAddress(addr);
+							}
+						}
+						break;
+
+					case ID_CONTEXT_TOGGLEWRITEBREAKPOINT:
+						{							
+							POINT pt = {x, y};
+							ScreenToClient(mhwnd, &pt);
+
+							uint16 addr;
+							if (GetAddressFromPoint(pt.x, pt.y, addr)) {
+								if (g_sim.IsWriteBreakEnabled() && g_sim.GetWriteBreakAddress() == addr)
+									g_sim.SetWriteBreakAddress();
+								else
+									g_sim.SetWriteBreakAddress(addr);
+							}
+						}
+						break;
+				}
+			}
+			break;
 	}
 
 	return ATUIPane::WndProc(msg, wParam, lParam);
@@ -2737,6 +2891,7 @@ bool ATMemoryWindow::OnCreate() {
 		if (hOldFont) {
 			TEXTMETRIC tm = {0};
 			if (GetTextMetrics(hdc, &tm)) {
+				mCharWidth = tm.tmAveCharWidth;
 				mLineHeight = tm.tmHeight;
 			}
 
@@ -2900,6 +3055,31 @@ void ATMemoryWindow::RemakeView(uint16 focusAddr) {
 		::InvalidateRect(mhwnd, NULL, TRUE);
 }
 
+bool ATMemoryWindow::GetAddressFromPoint(int x, int y, uint16& addr) const {
+	if (!mLineHeight || !mCharWidth)
+		return false;
+	
+	if ((uint32)(x - mTextArea.left) >= (uint32)(mTextArea.right - mTextArea.left))
+		return false;
+
+	if ((uint32)(y - mTextArea.top) >= (uint32)(mTextArea.bottom - mTextArea.top))
+		return false;
+
+	int xc = (x - mTextArea.left) / mCharWidth;
+	int yc = (y - mTextArea.top) / mLineHeight;
+
+	// 0000: 00 00 00 00 00 00 00 00-00 00 00 00 00 00 00 00 |................|
+	if (xc >= 6 && xc < 54) {
+		addr = (uint16)((yc << 4) + (xc - 6)/3);
+		return true;
+	} else if (xc >= 55 && xc < 71) {
+		addr = (uint16)((yc << 4) + (xc - 55));
+		return true;
+	}
+
+	return false;
+}
+
 void ATMemoryWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
 	RemakeView(mViewStart);
 }
@@ -2911,6 +3091,94 @@ void ATMemoryWindow::SetPosition(uint16 addr) {
 	VDSetWindowTextFW32(mhwndAddress, L"$%04X", addr);
 
 	RemakeView(addr);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATPrinterOutputWindow : public ATUIPane,
+							  public IATPrinterOutput
+{
+public:
+	ATPrinterOutputWindow();
+	~ATPrinterOutputWindow();
+
+	void WriteLine(const char *line);
+
+protected:
+	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+
+	bool OnCreate();
+	void OnDestroy();
+	void OnSize();
+	void OnSetFocus();
+
+	vdrefptr<IVDTextEditor> mpTextEditor;
+	HWND	mhwndTextEditor;
+};
+
+ATPrinterOutputWindow::ATPrinterOutputWindow()
+	: ATUIPane(kATUIPaneId_PrinterOutput, "Printer Output")
+	, mhwndTextEditor(NULL)
+{
+	mPreferredDockCode = kATContainerDockBottom;
+}
+
+ATPrinterOutputWindow::~ATPrinterOutputWindow() {
+}
+
+void ATPrinterOutputWindow::WriteLine(const char *line) {
+	if (mpTextEditor)
+		mpTextEditor->Append(line);
+}
+
+LRESULT ATPrinterOutputWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+	switch(msg) {
+		case WM_SIZE:
+			OnSize();
+			break;
+	}
+
+	return ATUIPane::WndProc(msg, wParam, lParam);
+}
+
+bool ATPrinterOutputWindow::OnCreate() {
+	if (!ATUIPane::OnCreate())
+		return false;
+
+	if (!VDCreateTextEditor(~mpTextEditor))
+		return false;
+
+	mhwndTextEditor = (HWND)mpTextEditor->Create(WS_EX_NOPARENTNOTIFY, WS_CHILD|WS_VISIBLE, 0, 0, 0, 0, (VDGUIHandle)mhwnd, 100);
+	SendMessage(mhwndTextEditor, WM_SETFONT, (WPARAM)g_monoFont, NULL);
+
+	mpTextEditor->SetReadOnly(true);
+
+	OnSize();
+
+	IATPrinterEmulator *p = g_sim.GetPrinter();
+
+	if (p)
+		p->SetOutput(this);
+
+	return true;
+}
+
+void ATPrinterOutputWindow::OnDestroy() {
+	IATPrinterEmulator *p = g_sim.GetPrinter();
+
+	if (p)
+		p->SetOutput(NULL);
+}
+
+void ATPrinterOutputWindow::OnSize() {
+	RECT r;
+	if (GetClientRect(mhwnd, &r))
+		SetWindowPos(mhwndTextEditor, NULL, 0, 0, r.right, r.bottom, SWP_NOZORDER|SWP_NOACTIVATE);
+}
+
+void ATPrinterOutputWindow::OnSetFocus() {
+	::SetFocus(mhwndTextEditor);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2972,6 +3240,7 @@ void ATInitUIPanes() {
 	ATRegisterUIPaneType(kATUIPaneId_CallStack, VDRefCountObjectFactory<ATCallStackWindow, ATUIPane>);
 	ATRegisterUIPaneType(kATUIPaneId_History, VDRefCountObjectFactory<ATHistoryWindow, ATUIPane>);
 	ATRegisterUIPaneType(kATUIPaneId_Memory, VDRefCountObjectFactory<ATMemoryWindow, ATUIPane>);
+	ATRegisterUIPaneType(kATUIPaneId_PrinterOutput, VDRefCountObjectFactory<ATPrinterOutputWindow, ATUIPane>);
 
 	if (!g_monoFont) {
 		g_monoFont = CreateFont(-10, 0, 0, 0, 0, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Lucida Console");
@@ -3164,10 +3433,13 @@ bool ATRestorePaneLayout(const char *name) {
 		}
 	}
 
+	g_pMainWindow->RemoveAnyEmptyNodes();
+
 	const char *s = str.c_str();
 
 	// parse dockable panes
 	s = UnserializeDockablePane(s, g_pMainWindow, g_pMainWindow->GetBasePane(), frames.data());
+	g_pMainWindow->RemoveAnyEmptyNodes();
 	g_pMainWindow->Relayout();
 
 	// parse undocked panes

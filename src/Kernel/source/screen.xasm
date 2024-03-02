@@ -159,6 +159,22 @@ nodefaultrows:
 	dex
 	pla
 rowloop:
+	cpy		#100+5
+	bne		notsplit
+	pha
+	ora		#$40
+	sta		(a0),y
+	iny
+	lda		#0
+	sta		(a0),y
+	iny
+	lda		savmsc+1
+	clc
+	adc		#$10
+	sta		(a0),y
+	iny
+	pla
+notsplit:
 	sta		(a0),y
 	iny
 	dex

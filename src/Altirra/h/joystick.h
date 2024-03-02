@@ -18,14 +18,20 @@
 #ifndef AT_JOYSTICK_H
 #define AT_JOYSTICK_H
 
+class ATInputManager;
+
 class IATJoystickManager {
 public:
 	virtual ~IATJoystickManager() {}
 
-	virtual bool Init(void *hwnd) = 0;
+	virtual bool Init(void *hwnd, ATInputManager *inputMan) = 0;
 	virtual void Shutdown() = 0;
 
+	virtual void SetCaptureMode(bool capture) = 0;
+
+	virtual void RescanForDevices() = 0;
 	virtual void Poll() = 0;
+	virtual bool PollForCapture(int& unit, uint32& inputCode) = 0;
 
 	virtual uint32 GetJoystickPortStates() const = 0;
 };

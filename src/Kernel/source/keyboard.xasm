@@ -36,6 +36,26 @@
 	rts
 .endp
 
+.proc	KeyboardOpen
+	jsr		KeyboardInit
+	ldy		#1
+	rts
+.endp
+
+.proc	KeyboardClose
+	;disable keyboard interrupts	
+	php
+	sei
+	lda		pokmsk
+	and		#$3f
+	sta		pokmsk
+	sta		irqen
+	plp
+	
+	ldy		#1
+	rts
+.endp
+
 .proc	KeyboardGetByte
 waitForChar:
 	lda		brkkey
@@ -79,7 +99,7 @@ waitForChar:
 
 notAlpha:
 	;return char
-	ldy		#0
+	ldy		#1
 	rts
 	
 doShiftLock:
