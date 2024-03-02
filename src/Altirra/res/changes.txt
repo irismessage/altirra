@@ -1,6 +1,22 @@
 Altirra Change Log
 
-Version 3.90:
+Version 3.91:
+   [bugs fixed]
+   * AltirraOS: Adjusted internal variable usage of P: handler for better compatibility with programs that jump into it without opening P: (Monkey Wrench II).
+   * AltirraOS: Fixed E: Put Byte routine sometimes returning Y=2 instead of Y=1.
+   * AltirraOS: Implemented XL/XE NOCLIK variable.
+   * AltirraOS: Fixed minor rounding error in ATN() constant from assembler.
+   * AltirraOS: Fixed bugs with E: move left and delete char at column 0 with LMARGN=0.
+   * AltirraOS: Added workaround to SIO for devices sending two ACKs instead of ACK+Complete (fixes Indus GT diagnostics zero adjust).
+   * Display: Fixed failure to switch to exclusive full-screen mode in D3D9 with bloom enabled.
+   * Display: Reduced banding in PAL high artifacting mode.
+   * Input: Fixed Shift key interfering with controllers in 5200 mode.
+   * SaveStates: Improved reliability of save states.
+   * Serial: Fixed hang when dropping modem connection with unread data.
+   * Serial: Fixed initial socket data sometimes not being read from modem until first byte is sent.
+   * UI: Fixed a crash in dockable pane code with mixed DPI monitors.
+
+Version 3.90: [June 14, 2020]
    [features added]
    * AltirraOS: The boot screen in the XL/XE version now continues boot on disk insertion rather than forcing a reboot.
    * AltirraOS: Extended memory scan limit for 800 version to $D000 to support 52K expanded configurations.

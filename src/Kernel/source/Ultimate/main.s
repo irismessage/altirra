@@ -20,6 +20,12 @@
 		
 ;==========================================================================
 
+		_KERNEL_PRE_BOOT_HOOK = 1
+		_KERNEL_PBI_SUPPORT = 1
+		_KERNEL_XLXE = 1
+		_KERNEL_USE_BOOT_SCREEN = 0
+		_KERNEL_PRINTER_SUPPORT = 1
+
 		icl		'hardware.inc'
 		icl		'kerneldb.inc'
 

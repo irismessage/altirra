@@ -3061,7 +3061,7 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				HWND hwndChild = GetWindow(mhwnd, GW_CHILD);
 
 				if (hwndChild)
-					SendMessage(mhwnd, ATWM_INHERIT_DPICHANGED, wParam, 0);
+					SendMessage(hwndChild, ATWM_INHERIT_DPICHANGED, wParam, 0);
 
 				return 0;
 			}

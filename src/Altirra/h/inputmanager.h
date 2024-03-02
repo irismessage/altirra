@@ -424,6 +424,7 @@ public:
 	void Init(ATScheduler *fastScheduler, ATScheduler *slowScheduler, ATPortController *porta, ATPortController *portb, ATLightPenPort *lightPen);
 	void Shutdown();
 
+	bool Is5200Mode() const { return mb5200Mode; }
 	void Set5200Mode(bool is5200);
 
 	void ResetToDefaults();

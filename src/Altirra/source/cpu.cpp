@@ -1280,25 +1280,29 @@ bool ATCPUEmulator::LoadState(const IATObjectState& state) {
 	mpNextState = mStates;
 	mStateRelocOffset = 0;
 
+	// 0 - read opcode
+	// 1 - first uop of instruction (after 1st cycle)
+	// 2 - first uop of instruction after 2nd cycle
 	if (cpustate.mCurrentExtOpcodePhase) {
 		if (mCPUMode == kATCPUMode_65C816)
 			Update65816DecodeTable();
 
 		const uint8 *insnStates = mDecodeHeap + mDecodePtrs[cpustate.mCurrentExtOpcode];
 
-		mpNextState = insnStates;
-
 		for(uint32 i=1; i<cpustate.mCurrentExtOpcodePhase; ++i) {
-			const uint8 state = insnStates[i];
+			for(;;) {
+				const auto state = (ATCPUState)*insnStates;
 
-			if (state == kStateReadOpcode)
-				break;
+				if (state == kStateReadOpcode || state == kStateReadOpcodeNoBreak)
+					break;
 
-			if (IsCycleEndingState((ATCPUState)state)) {
-				mpNextState = &insnStates[i + 1];
-				break;
+				++insnStates;
+				if (IsCycleEndingState(state))
+					break;
 			}
 		}
+
+		mpNextState = insnStates;
 	}
 
 	return true;

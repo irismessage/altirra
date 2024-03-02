@@ -16,12 +16,6 @@
 ;	along with this program; if not, write to the Free Software
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-		_KERNEL_PRE_BOOT_HOOK = 1
-		_KERNEL_PBI_SUPPORT = 1
-		_KERNEL_XLXE = 1
-		_KERNEL_USE_BOOT_SCREEN = 0
-		_KERNEL_PRINTER_SUPPORT = 1
-
 		icl		'version.inc'
 		icl		'cio.inc'
 		icl		'sio.inc'

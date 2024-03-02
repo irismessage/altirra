@@ -26,6 +26,12 @@ rtclok	= $0012
 bufadr	= $0015			;indirect buffer address pointer (temp for disk buffer)
 		; $0016
 iccomt	= $0017			;CIO: command byte
+
+.if !_KERNEL_XLXE
+pbpnt	= $001d			;Printer: Buffer index (OS-A/B location)
+pbufsz	= $001e			;Printer: Record size (OS-A/B location)
+.endif
+
 ziocb	= $0020			;zero-page IOCB
 ichidz	= $0020			;Zero page IOCB: device index ($FF = not open)
 icdnoz	= $0021			;Zero page IOCB: device number
@@ -115,11 +121,8 @@ fr0		= $00d4			;FP: Accumulator 0
 _fr3	= $00da			;FP: Accumulator 3 (officially FRE)
 fr1		= $00e0			;FP: Accumulator 1
 fr2		= $00e6			;FP: Accumulator 2
-_fpcocnt= $00ec			;FP: temporary storage - polynomial coefficient counter
-_fptemp0= $00ed			;FP: temporary storage - transcendental temporary (officially EEXP)
-_fptemp1= $00ee			;FP: temporary storage - transcendental temporary (officially NSIGN)
 ;esign	  $00ef			;BASIC: Used in sqr() routine -- must not be touched by FP elementary functions
-;fchrflg  $00f0			;BASIC: Used in sin() routine -- must not be touched by any FP functions
+;fchrflg  $00f0			;BASIC: Used in sin() routine -- must not be touched by any non-transcendental FP functions
 cix		= $00f2			;FP: Character index
 inbuff	= $00f3			;FP: ASCII conversion buffer
 		; $00f4
@@ -296,9 +299,14 @@ zloada	= $02d3			;Relocating loader: Zero-page load address (XL/XE)
 dsctln	= $02d5			;Disk sector size (XL/XE)
 krpdel	= $02d9			;Keyboard repeat delay (XL/XE)
 keyrep	= $02da			;Keyboard repeat rate (XL/XE)
+noclik	= $02db			;Keyboard no-click (XL/XE)
 helpfg	= $02dc			;Help flag (XL/XE)
+
+.if _KERNEL_XLXE
 pbpnt	= $02de			;Printer: Buffer index (XL/XE location)
 pbufsz	= $02df			;Printer: Record size (XL/XE location)
+.endif
+
 ramsiz	= $02e4			;ram size in pages
 memtop	= $02e5			;highest location for programs and data
 memlo	= $02e7			;base of application memory

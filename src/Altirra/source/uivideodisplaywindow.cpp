@@ -1767,6 +1767,11 @@ void ATUIVideoDisplayWindow::ToggleHeldConsoleButton(uint8 encoding) {
 }
 
 void ATUIVideoDisplayWindow::UpdateCtrlShiftState() {
+	// if we're in 5200 mode, do not update ctrl/shift as there is no keyboard
+	ATInputManager *im = g_sim.GetInputManager();
+	if (im->Is5200Mode())
+		return;
+
 	uint8 c = 0;
 	
 	// It is possible for us to have a conflict where a key mapping has been

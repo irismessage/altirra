@@ -298,16 +298,16 @@ uint64 ATFilterResampleStereo16_Reference(sint16 *d, const float *s1, const floa
 uint64 ATFilterResampleStereo16_SSE2(sint16 *d0, const float *s1, const float *s2, uint32 count, uint64 accum, sint64 inc) {
 	sint16 *VDRESTRICT d = d0;
 	do {
-		const __m128 *VDRESTRICT r1 = (const __m128 *)(s1 + (accum >> 32));
-		const __m128 *VDRESTRICT r2 = (const __m128 *)(s2 + (accum >> 32));
-		const __m128 *VDRESTRICT f = (const __m128 *)&g_ATAudioResamplingKernel2.kernel[(uint32)accum >> 27];
+		const float *VDRESTRICT r1 = s1 + (accum >> 32);
+		const float *VDRESTRICT r2 = s2 + (accum >> 32);
+		const float *VDRESTRICT f = g_ATAudioResamplingKernel2.kernel[(uint32)accum >> 27];
 		accum += inc;
 
-		const __m128 f0 = f[0];
-		const __m128 f1 = f[1];
+		const __m128 f0 = _mm_load_ps(&f[0]);
+		const __m128 f1 = _mm_load_ps(&f[4]);
 
-		const __m128 l = _mm_add_ps(_mm_mul_ps(r1[0], f0), _mm_mul_ps(r1[1], f1));
-		const __m128 r = _mm_add_ps(_mm_mul_ps(r2[0], f0), _mm_mul_ps(r2[1], f1));
+		const __m128 l = _mm_add_ps(_mm_mul_ps(_mm_loadu_ps(&r1[0]), f0), _mm_mul_ps(_mm_loadu_ps(&r1[4]), f1));
+		const __m128 r = _mm_add_ps(_mm_mul_ps(_mm_loadu_ps(&r2[0]), f0), _mm_mul_ps(_mm_loadu_ps(&r2[4]), f1));
 
 		// fold horizontally -> llrr
 		const __m128 lr1 = _mm_add_ps(_mm_shuffle_ps(l, r, 0b01'00'01'00), _mm_shuffle_ps(l, r, 0b11'10'11'10));

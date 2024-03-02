@@ -1883,7 +1883,7 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params) {
 						sint32 w0 = VDRoundToInt32(p2yw[offset*2+0] * 64.0f * 255.0f);
 						sint32 w1 = VDRoundToInt32(p2yw[offset*2+1] * 64.0f * 255.0f);
 
-						kerny16[offset] = (w1 << 16) + w0;
+						kerny16[offset] = (w1 << 16) + (w0 & 0xFFFF);
 					}
 
 					kerny16[i & 3] += 0x00200020;
@@ -1892,14 +1892,14 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params) {
 						sint32 w0 = VDRoundToInt32(p2uw[offset*2+0] * 64.0f * 255.0f);
 						sint32 w1 = VDRoundToInt32(p2uw[offset*2+1] * 64.0f * 255.0f);
 
-						kernu16[offset] = (w1 << 16) + w0;
+						kernu16[offset] = (w1 << 16) + (w0 & 0xFFFF);
 					}
 
 					for(int offset=0; offset<16; ++offset) {
 						sint32 w0 = VDRoundToInt32(p2vw[offset*2+0] * 64.0f * 255.0f);
 						sint32 w1 = VDRoundToInt32(p2vw[offset*2+1] * 64.0f * 255.0f);
 
-						kernv16[offset] = (w1 << 16) + w0;
+						kernv16[offset] = (w1 << 16) + (w0 & 0xFFFF);
 					}
 				} else {
 					int ypos = 3 - i*2;

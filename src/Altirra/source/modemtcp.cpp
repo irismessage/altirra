@@ -170,7 +170,8 @@ IATModemDriver *ATCreateModemDriverTCP() {
 }
 
 ATModemDriverTCP::ATModemDriverTCP()
-	: mSocket(INVALID_SOCKET)
+	: VDThread("Altirra TCP modem worker")
+	, mSocket(INVALID_SOCKET)
 	, mSocket2(INVALID_SOCKET)
 	, mCommandEvent(WSA_INVALID_EVENT)
 	, mNetworkEvent(WSA_INVALID_EVENT)
@@ -725,6 +726,8 @@ void ATModemDriverTCP::ThreadRun() {
 				if (mpCB)
 					mpCB->OnEvent(this, kATModemPhase_Connected, kATModemEvent_Connected);
 			}
+
+			networkEventMask &= ~FD_CONNECT;
 		}
 
 		if (networkEventMask & FD_CLOSE) {
@@ -735,6 +738,7 @@ void ATModemDriverTCP::ThreadRun() {
 				mpCB->OnEvent(this, kATModemPhase_Connected, kATModemEvent_ConnectionClosing);
 
 			// loop back around, begin waiting for drain
+			networkEventMask &= ~FD_CLOSE;
 			continue;
 		}
 
@@ -1171,20 +1175,26 @@ void ATModemDriverTCP::OnError(int err) {
 }
 
 void ATModemDriverTCP::QueueRead() {
-	if (mbReadEOF || mReadIndex < mReadLevel)
-		return;
+	for(;;) {
+		mMutex.Lock();
 
-	mMutex.Lock();
-	mReadIndex = 0;
-	mReadLevel = 0;
-	mMutex.Unlock();
+		if (mbReadEOF || mReadIndex < mReadLevel) {
+			mMutex.Unlock();
+			return;
+		}
 
-	int actual = recv(mSocket, (char *)mReadBuffer, sizeof mReadBuffer, 0);
+		mReadIndex = 0;
+		mReadLevel = 0;
+		mMutex.Unlock();
 
-	if (actual >= 0) {
-		OnRead(actual);
-	} else {
-		OnError(WSAGetLastError());
+		int actual = recv(mSocket, (char *)mReadBuffer, sizeof mReadBuffer, 0);
+
+		if (actual >= 0) {
+			OnRead(actual);
+		} else {
+			OnError(WSAGetLastError());
+			break;
+		}
 	}
 }
 

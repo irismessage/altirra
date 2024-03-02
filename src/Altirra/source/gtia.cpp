@@ -1529,14 +1529,15 @@ void ATGTIAEmulator::LoadState(const IATObjectState& state) {
 		mActivePRIOR = gistate.mActivePRIOR;
 
 		size_t len = gistate.mRegisterChanges.size();
-		mRegisterChanges.reserve(len / 3);
+		size_t numChanges = len / 3;
+		mRegisterChanges.resize(numChanges);
 
-		for(size_t i=0; i<len; i+=3) {
+		for(size_t i = 0, j = 0; i < numChanges; ++i, j += 3) {
 			RegisterChange& rc = mRegisterChanges[i];
 
-			rc.mPos = gistate.mRegisterChanges[i + 0];
-			rc.mReg = gistate.mRegisterChanges[i + 1];
-			rc.mValue = gistate.mRegisterChanges[i + 2];
+			rc.mPos = gistate.mRegisterChanges[j + 0];
+			rc.mReg = gistate.mRegisterChanges[j + 1];
+			rc.mValue = gistate.mRegisterChanges[j + 2];
 		}
 
 		mpRenderer->LoadState(gistate.mpRendererState);

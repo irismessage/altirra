@@ -134,6 +134,31 @@
 		as part of the memo pad banner.
 	</p>
     <ul class="verhistory">
+    <li>Version 3.31</li>
+    <ul>
+      <li>Fixed a lockup in the <tt>E:</tt> device when processing a Delete Char command at column 0 with LMARGN=0.</li>
+      <li>Fixed <tt>E:</tt> move left command not working at column 0 with LMARGN=0.</li>
+      <li>Added workaround to SIO to allow an ACK response from a device when a Complete or Error response is expected in the SIO protocol, to match the behavior of the stock OS. This fixes the Zero Adjust mode of the Indus GT Diagnostics.</li>
+    </ul>
+    <li>Version 3.30</li>
+    <ul>
+      <li>Applied workarounds for floating-point constant encoding errors in MADS assembler. This fixes minor rounding errors in math pack ATN() constants with MADS 1.9.8b5, and major errors with MADS 2.1.0b8 (3.29 was assembled with 1.9.8b5).</li>
+    </ul>
+	  <li>Version 3.29</li>
+    <ul>
+      <li>Implemented support for XL/XE NOCLIK variable.</li>
+    </ul>
+	  <li>Version 3.28</li>
+    <ul>
+      <li>Fixed a memory overlap bug in FDIV that occasionally introduced small errors into results.</li>
+      <li>Fixed E: put byte routine returning Y&lt;&gt;1 with cursor inhibited.</li>
+    </ul>
+	  <li>Version 3.27</li>
+    <ul>
+      <li>800 build: Modified internal variable usage to accommodate direct calls into the E: and P: handlers from Monkey Wrench II.</li>
+      <li>Improved compatibility of P: handler with OS-B and XL/XE OS behavior -- EOLs and inverse characters are handled more similarly, and the 800 build now pads on close with $20 while the XL/XE build uses $9B.</li>
+    </ul>
+
 	  <li>Version 3.26</li>
     <ul>
       <li>Line draws in GR.0 no longer restore the cursor, which was causing screen corruption in Worms of Bemer.</li>
@@ -241,6 +266,11 @@
 
     <h3>Altirra BASIC</h3>
     <ul class="verhistory">
+      <li>Version 1.57</li>
+      <ul>
+        <li>Compatibility fix to DRAWTO statement to allow LOCATE statements to work after XIO n,#6,0.</li>
+      </ul>
+
       <li>Version 1.56</li>
       <ul>
         <li>Fixed crash when Break is pressed prior to startup banner.</li>

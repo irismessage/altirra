@@ -976,7 +976,21 @@ stCp = stDos
 
 
 ;===========================================================================
+; DRAWTO x, y
+;
+; Issues XIO 17 to S: to draw a line from the current point to the target
+; point in the current color, excluding the current point but including the
+; target point.
+;
+; Quirks:
+;	- Resets ICAX1 of IOCB#6 to $0C. This is required by Invasion - Planetary
+;	  Defense.bas for LOCATE to work after an XIO #6,0,0. None of the other
+;	  drawing commands seem to do this (COLOR, PLOT, LOCATE, SETCOLOR).
+;
 .proc stDrawto
+		lda		#$0C
+		sta		icax1+$60
+
 		jsr		stSetupCommandXY
 		sta		atachr
 

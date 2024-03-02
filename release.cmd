@@ -14,8 +14,8 @@ set _verid=
 set _anyvc=false
 set _checkvc=false
 set _arm64=false
-set _clversionexp=19.16.27032.1
-set _clversionexpdesc=Visual Studio 2017 Version 15.9.15
+set _clversionexp=19.16.27045
+set _clversionexpdesc=Visual Studio 2017 Version 15.9.40
 
 :arglist
 if "%1"=="" goto endargs

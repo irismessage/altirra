@@ -2866,7 +2866,7 @@ void VDVideoDisplayMinidriverDX9::LoadCustomEffect(const wchar_t *path) {
 }
 
 void VDVideoDisplayMinidriverDX9::OnPreDeviceReset() {
-	vdsaferelease <<= mpD3DBloomPrescale2RTT, mpD3DBloomBlur1RTT, mpD3DBloomBlur2RTT;
+	vdsaferelease <<= mpD3DBloomPrescale1RTT, mpD3DBloomPrescale2RTT, mpD3DBloomBlur1RTT, mpD3DBloomBlur2RTT;
 
 	ShutdownBicubic();
 	ShutdownBicubicPS2Filters();

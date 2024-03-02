@@ -1464,7 +1464,7 @@ void ATDiskEmulator::ProcessCommandRead() {
 				mActiveCommandPhysSector = -1;
 
 			ATDiskPhysicalSectorInfo psi = {};
-			if (mActiveCommandPhysSector >= 0)
+			if (image && mActiveCommandPhysSector >= 0)
 				image->GetPhysicalSectorInfo((uint32)mActiveCommandPhysSector, psi);
 
 			// Warp disk to beginning of sector, if it isn't already there.
