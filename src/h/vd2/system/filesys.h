@@ -164,7 +164,12 @@ VDStringW VDFileGetCanonicalPath(const wchar_t *path);
 /// allowAscent flag is set.
 VDStringW VDFileGetRelativePath(const wchar_t *basePath, const wchar_t *pathToConvert, bool allowAscent);
 
+/// Returns true if the given path is a relative path.
 bool VDFileIsRelativePath(const wchar_t *path);
+
+/// Resolves a possibly relatively path with a given base path. If the path
+/// is absolute, the base path is ignored.
+VDStringW VDFileResolvePath(const wchar_t *basePath, const wchar_t *pathToResolve);
 
 /////////////////////////////////////////////////////////////////////////////
 

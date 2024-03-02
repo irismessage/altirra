@@ -17,6 +17,8 @@ VDPixmapCachedBlitter::~VDPixmapCachedBlitter() {
 }
 
 void VDPixmapCachedBlitter::Blit(const VDPixmap& dst, const VDPixmap& src) {
+	VDASSERT(src.w == dst.w && src.h == dst.h);
+
 	if (!mpCachedBlitter ||
 		dst.w != mDstWidth ||
 		dst.h != mDstHeight ||

@@ -1,0 +1,119 @@
+;	Altirra - Atari 800/800XL emulator
+;	5200 default cartridge
+;	Copyright (C) 2008 Avery Lee
+;
+;	This program is free software; you can redistribute it and/or modify
+;	it under the terms of the GNU General Public License as published by
+;	the Free Software Foundation; either version 2 of the License, or
+;	(at your option) any later version.
+;
+;	This program is distributed in the hope that it will be useful,
+;	but WITHOUT ANY WARRANTY; without even the implied warranty of
+;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;	GNU General Public License for more details.
+;
+;	You should have received a copy of the GNU General Public License
+;	along with this program; if not, write to the Free Software
+;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+trig0	equ	$c010
+trig1	equ	$c011
+trig2	equ	$c012
+colpm0	equ	$c012
+trig3	equ	$c013
+colpm1	equ	$c013
+colpm2	equ	$c014
+colpm3	equ	$c015
+colpf0	equ	$c016
+colpf1	equ	$c017
+colpf2	equ	$c018
+colpf3	equ	$c019
+colbk	equ	$c01a
+prior	equ	$c01b
+consol	equ	$c01f
+pot0	equ	$e800
+audf1	equ	$e800
+pot1	equ	$e801
+audc1	equ	$e801
+pot2	equ	$e802
+audf2	equ	$e802
+pot3	equ	$e803
+audc2	equ	$e803
+pot4	equ	$e804
+audf3	equ	$e804
+pot5	equ	$e805
+audc3	equ	$e805
+pot6	equ	$e806
+audf4	equ	$e806
+pot7	equ	$e807
+audc4	equ	$e807
+audctl	equ	$e808
+kbcode	equ	$e809
+skres	equ	$e80a
+potgo	equ	$e80b
+serin	equ	$e80d
+serout	equ	$e80d
+irqen	equ	$e80e
+irqst	equ	$e80e
+skctl	equ	$e80f
+dmactl	equ	$d400
+chactl	equ	$d401
+dlistl	equ	$d402
+dlisth	equ	$d403
+hscrol	equ	$d404
+vscrol	equ	$d405
+chbase	equ	$d409
+wsync	equ	$d40a
+vcount	equ	$d40b
+nmien	equ	$d40e
+nmist	equ	$d40f
+nmires	equ	$d40f
+
+		opt		h-o+f+
+
+		org		$b000
+main:
+		;clear hardware registers and zero page
+		lda		#0
+		tax
+clearloop:
+		sta		$c000,x
+		sta		$d400,x
+		sta		$e800,x
+		sta		$00,x
+		inx
+		bne		clearloop
+		
+		;initialize display
+		jsr		waitvbl
+		mva		#$f8 chbase
+		mva		#$ca colpf1
+		mva		#$94 colpf2
+		mva		#$21 dmactl
+		mwa		#dlist dlistl
+		
+		;sit tight
+jam:
+		jmp		jam
+
+waitvbl:
+		lda		#124
+		cmp:rne	vcount
+		rts
+
+;=========================================================================
+dlist:
+		:11 dta $70
+		dta		$30
+		dta		$42,a(playfield)
+		dta		$41,a(dlist)
+		
+;=========================================================================
+playfield:
+		;		  01234567890123456789012345678901
+		dta		d"     Insert 5200 cartridge.     "
+
+;=========================================================================
+		org		$bffd
+		dta		$ff
+		dta		a(main)

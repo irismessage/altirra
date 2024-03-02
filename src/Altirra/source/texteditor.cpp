@@ -45,6 +45,8 @@ public:
 	void	SetColorizer(IVDTextEditorColorizer *pColorizer);
 	void	SetMsgFilter(IVDUIMessageFilterW32 *pFilter);
 
+	void	SetGutters(int x, int y);
+
 	bool	IsSelectionPresent();
 	bool	IsCutPossible();
 	bool	IsCopyPossible();
@@ -143,10 +145,13 @@ protected:
 	int		mVisibleHeight;
 	int		mTotalHeight;
 	int		mReflowWidth;
+	int		mScrollX;
 	int		mScrollY;
 	int		mTabWidth;
 	int		mScrollVertMargin;
 	int		mEffectiveScrollVertMargin;
+	int		mGutterX;
+	int		mGutterY;
 	bool	mbCaretPresent;
 	bool	mbCaretVisible;
 	bool	mbReadOnly;
@@ -184,10 +189,19 @@ bool VDCreateTextEditor(IVDTextEditor **ppTextEditor) {
 }
 
 TextEditor::TextEditor()
-	: mTotalHeight(0)
+	: mhfont(NULL)
+	, mFontHeight(0)
+	, mVisibleWidth(0)
 	, mVisibleHeight(0)
+	, mTotalHeight(0)
 	, mReflowWidth(0)
+	, mScrollX(0)
+	, mScrollY(0)
+	, mTabWidth(0)
 	, mScrollVertMargin(0)
+	, mEffectiveScrollVertMargin(0)
+	, mGutterX(GetSystemMetrics(SM_CXEDGE))
+	, mGutterY(GetSystemMetrics(SM_CYEDGE))
 	, mbCaretPresent(false)
 	, mbCaretVisible(false)
 	, mbReadOnly(false)
@@ -199,6 +213,10 @@ TextEditor::TextEditor()
 	, mpColorizer(NULL)
 	, mpMsgFilter(NULL)
 	, mMouseWheelAccum(0)
+	, mColorTextFore(0)
+	, mColorTextBack(0)
+	, mColorTextHiFore(0)
+	, mColorTextHiBack(0)
 {
 	mDocument.SetCallback(this);
 }
@@ -220,6 +238,12 @@ void TextEditor::SetColorizer(IVDTextEditorColorizer *pColorizer) {
 
 void TextEditor::SetMsgFilter(IVDUIMessageFilterW32 *pFilter) {
 	mpMsgFilter = pFilter;
+}
+
+void TextEditor::SetGutters(int x, int y) {
+	mGutterX = x;
+	mGutterY = y;
+	OnResize();
 }
 
 bool TextEditor::IsSelectionPresent() {
@@ -318,7 +342,7 @@ void TextEditor::SetCursorPos(int line, int offset) {
 }
 
 void TextEditor::SetCursorPixelPos(int x, int y) {
-	MoveCaret(PixelToPos(x, y + mScrollY), false, false);
+	MoveCaret(PixelToPos(x - mGutterX, y + mScrollY - mGutterY), false, false);
 }
 
 namespace {
@@ -903,6 +927,17 @@ void TextEditor::OnPaint() {
 			SetBkMode(hdc, OPAQUE);
 			SetBkColor(hdc, mColorTextBack);
 
+			// fill gutters
+			if (mScrollY < mGutterY) {
+				RECT rtop = {0, 0, mVisibleWidth, mGutterY - mScrollY};
+				ExtTextOutW(hdc, 0, 0, ETO_OPAQUE, &rtop, L"", 0, NULL);
+			}
+
+			if (mScrollX < mGutterX) {
+				RECT rleft = {0, 0, mGutterX - mScrollX, mVisibleHeight};
+				ExtTextOutW(hdc, 0, 0, ETO_OPAQUE, &rleft, L"", 0, NULL);
+			}
+
 			const Iterator *selStart = NULL;
 			const Iterator *selEnd = NULL;
 
@@ -916,8 +951,8 @@ void TextEditor::OnPaint() {
 				}
 			}
 
-			int y1 = ps.rcPaint.top + mScrollY;
-			int y2 = ps.rcPaint.bottom + mScrollY;
+			int y1 = ps.rcPaint.top + mScrollY - mGutterY;
+			int y2 = ps.rcPaint.bottom + mScrollY - mGutterY;
 			int ylast = y1;
 
 			int paraIdx = mDocument.GetParagraphFromY(y1);
@@ -968,11 +1003,9 @@ void TextEditor::OnPaint() {
 					int xend = ln.mStart + ln.mLength;
 					int xp = 0;
 
-					while(xpos < xend) {
-						int xrend = xend;
-
+					for(;;) {
 						VDASSERT(xpos <= spanNext);
-						if (xpos == spanNext) {
+						while(xpos == spanNext) {
 							foreColor = itS->mForeColor;
 							if (foreColor < 0)
 								foreColor = mColorTextFore;
@@ -987,6 +1020,10 @@ void TextEditor::OnPaint() {
 								spanNext = itS->mStart;
 						}
 
+						if (xpos >= xend)
+							break;
+
+						int xrend = xend;
 						if (xrend > spanNext)
 							xrend = spanNext;
 
@@ -1032,7 +1069,8 @@ void TextEditor::OnPaint() {
 							r.top = yp;
 							r.bottom = yp + ln.mHeight;
 
-							ExtTextOutW(hdc, xp, yp, ETO_OPAQUE, &r, L"", 0, NULL);
+							OffsetRect(&r, mGutterX, mGutterY);
+							ExtTextOutW(hdc, mGutterX + xp, mGutterY + yp, ETO_OPAQUE, &r, L"", 0, NULL);
 							xp = xpnew;
 						} else {
 							SIZE siz;
@@ -1044,7 +1082,8 @@ void TextEditor::OnPaint() {
 							r.top = yp;
 							r.bottom = yp + ln.mHeight;
 
-							ExtTextOut(hdc, xp, yp, ETO_OPAQUE, &r, s + xpos, xrend - xpos, NULL);
+							OffsetRect(&r, mGutterX, mGutterY);
+							ExtTextOut(hdc, mGutterX + xp, mGutterY + yp, ETO_OPAQUE, &r, s + xpos, xrend - xpos, NULL);
 							xp += siz.cx;
 						}
 
@@ -1052,6 +1091,7 @@ void TextEditor::OnPaint() {
 					}
 
 					RECT r = { xp, yp, ps.rcPaint.right, yp + ln.mHeight };
+					OffsetRect(&r, mGutterX, mGutterY);
 					SetBkColor(hdc, backColor);
 					ExtTextOutW(hdc, 0, 0, ETO_OPAQUE, &r, L"", 0, NULL);
 
@@ -1062,8 +1102,8 @@ void TextEditor::OnPaint() {
 				++paraIdx;
 			}
 
-			if (ylast < y2) {
-				RECT r = { ps.rcPaint.left, ylast, ps.rcPaint.right, ps.rcPaint.bottom };
+			if (ylast < y2 - mScrollY) {
+				RECT r = { ps.rcPaint.left, ylast + mGutterY, ps.rcPaint.right, ps.rcPaint.bottom };
 				SetBkColor(hdc, mColorTextBack);
 				ExtTextOutW(hdc, 0, 0, ETO_OPAQUE, &r, L"", 0, NULL);
 			}
@@ -1246,7 +1286,7 @@ void TextEditor::OnChar(int ch) {
 }
 
 void TextEditor::OnLButtonDown(WPARAM modifiers, int x, int y) {
-	MoveCaret(PixelToPos(x, y + mScrollY), GetKeyState(VK_SHIFT) < 0, false);
+	MoveCaret(PixelToPos(x - mGutterX, y + mScrollY - mGutterY), GetKeyState(VK_SHIFT) < 0, false);
 	mbDragging = true;
 }
 
@@ -1257,7 +1297,7 @@ void TextEditor::OnLButtonUp(WPARAM modifiers, int x, int y) {
 void TextEditor::OnMouseMove(WPARAM modifiers, int x, int y) {
 	if (modifiers & MK_LBUTTON) {
 		if (mbDragging) {
-			Iterator newPos(PixelToPos(x, y + mScrollY));
+			Iterator newPos(PixelToPos(x - mGutterX, y + mScrollY - mGutterY));
 			MoveCaret(newPos, true, false);
 		}
 	} else {
@@ -1436,7 +1476,7 @@ void TextEditor::UpdateCaretPos(bool autoscroll, bool sendScrollUpdate) {
 	}
 
 	if (mbCaretPresent) {
-		int yo = yp - mScrollY;
+		int yo = yp - mScrollY + mGutterY;
 
 		if (yo > -mFontHeight && yo < mVisibleHeight) {
 			if (!mbCaretVisible) {
@@ -1501,6 +1541,8 @@ void TextEditor::InvalidateRange(const Iterator& pos1, const Iterator& pos2) {
 
 	r.top -= mScrollY;
 	r.bottom -= mScrollY;
+
+	OffsetRect(&r, 0, mGutterY);
 
 	InvalidateRect(mhwnd, &r, FALSE);
 }
@@ -1767,8 +1809,8 @@ Iterator TextEditor::PixelToPos(int px, int py) {
 void TextEditor::InvalidateRows(int ystart, int yend) {
 	RECT r;
 	r.left = 0;
-	r.top = ystart - mScrollY;
-	r.bottom = yend - mScrollY;
+	r.top = ystart - mScrollY + mGutterY;
+	r.bottom = yend - mScrollY + mGutterY;
 	r.right = mVisibleWidth;
 
 	if (r.top < 0)

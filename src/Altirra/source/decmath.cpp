@@ -303,6 +303,19 @@ double ATReadDecFloatAsBinary(ATCPUEmulatorMemory& mem, uint16 addr) {
 	return ATReadDecFloat(mem, addr).ToDouble();
 }
 
+double ATReadDecFloatAsBinary(const uint8 bytes[6]) {
+	ATDecFloat v;
+
+	v.mSignExp		= bytes[0];
+	v.mMantissa[0]	= bytes[1];
+	v.mMantissa[1]	= bytes[2];
+	v.mMantissa[2]	= bytes[3];
+	v.mMantissa[3]	= bytes[4];
+	v.mMantissa[4]	= bytes[5];
+
+	return v.ToDouble();
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 void ATAccelAFP(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {

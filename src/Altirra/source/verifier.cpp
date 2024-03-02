@@ -36,6 +36,37 @@ void ATCPUVerifier::Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATSimulat
 	mpCPU = cpu;
 	mpMemory = mem;
 	mpSimulator = sim;
+
+	OnReset();
+}
+
+void ATCPUVerifier::OnReset() {
+	mbInNMIRoutine = false;
+}
+
+void ATCPUVerifier::OnIRQEntry() {
+}
+
+void ATCPUVerifier::OnNMIEntry() {
+	if (mbInNMIRoutine) {
+		ATConsolePrintf("\n");
+		ATConsolePrintf("VERIFIER: Recursive NMI handler execution detected.\n");
+		ATConsolePrintf("          PC: %04X\n", mpCPU->GetPC());
+		ATConsolePrintf("\n");
+		mpSimulator->NotifyEvent(kATSimEvent_VerifierFailure);
+	} else {
+		mNMIStackLevel = mpCPU->GetS();
+		mbInNMIRoutine = true;
+	}
+}
+
+void ATCPUVerifier::OnReturn() {
+	if (mbInNMIRoutine) {
+		uint8 s = mpCPU->GetS();
+
+		if ((uint8)(s - mNMIStackLevel) < 8)
+			mbInNMIRoutine = false;
+	}
 }
 
 void ATCPUVerifier::VerifyJump(uint16 addr) {

@@ -144,6 +144,13 @@ void VDDialogFrameW32::SetPosition(const vdpoint32& pt) {
 	SetWindowPos(mhdlg, NULL, pt.x, pt.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+void VDDialogFrameW32::AdjustPosition() {
+	if (!mhdlg)
+		return;
+
+	SendMessage(mhdlg, DM_REPOSITION, 0, 0);
+}
+
 void VDDialogFrameW32::End(sintptr result) {
 	if (!mhdlg)
 		return;
@@ -193,9 +200,32 @@ void VDDialogFrameW32::SetFocusToControl(uint32 id) {
 void VDDialogFrameW32::EnableControl(uint32 id, bool enabled) {
 	if (!mhdlg)
 		return;
+
 	HWND hwnd = GetDlgItem(mhdlg, id);
 	if (hwnd)
 		EnableWindow(hwnd, enabled);
+}
+
+void VDDialogFrameW32::ShowControl(uint32 id, bool visible) {
+	if (!mhdlg)
+		return;
+
+	HWND hwnd = GetDlgItem(mhdlg, id);
+	if (hwnd)
+		ShowWindow(hwnd, visible ? SW_SHOW : SW_HIDE);
+}
+
+vdrect32 VDDialogFrameW32::GetControlScreenPos(uint32 id) {
+	if (mhdlg) {
+		HWND hwnd = GetDlgItem(mhdlg, id);
+		if (hwnd) {
+			RECT r;
+			if (GetWindowRect(hwnd, &r))
+				return vdrect32(r.left, r.top, r.right, r.bottom);
+		}
+	}
+
+	return vdrect32(0, 0, 0, 0);
 }
 
 bool VDDialogFrameW32::GetControlText(uint32 id, VDStringW& s) {
@@ -236,6 +266,29 @@ void VDDialogFrameW32::SetControlTextF(uint32 id, const wchar_t *format, ...) {
 
 		VDSetWindowTextW32(hwnd, s.c_str());
 	}
+}
+
+sint32 VDDialogFrameW32::GetControlValueSint32(uint32 id) {
+	if (!mhdlg) {
+		FailValidation(id);
+		return 0;
+	}
+
+	HWND hwnd = GetDlgItem(mhdlg, id);
+	if (!hwnd) {
+		FailValidation(id);
+		return 0;
+	}
+
+	VDStringW s(VDGetWindowTextW32(hwnd));
+	int val;
+	wchar_t tmp;
+	if (1 != swscanf(s.c_str(), L" %d %c", &val, &tmp)) {
+		FailValidation(id);
+		return 0;
+	}
+
+	return val;
 }
 
 uint32 VDDialogFrameW32::GetControlValueUint32(uint32 id) {
@@ -307,6 +360,16 @@ void VDDialogFrameW32::ExchangeControlValueBoolCheckbox(bool write, uint32 id, b
 	}
 }
 
+void VDDialogFrameW32::ExchangeControlValueSint32(bool write, uint32 id, sint32& val, sint32 minVal, sint32 maxVal) {
+	if (write) {
+		val = GetControlValueSint32(id);
+		if (val < minVal || val > maxVal)
+			FailValidation(id);
+	} else {
+		SetControlTextF(id, L"%d", (int)val);
+	}
+}
+
 void VDDialogFrameW32::ExchangeControlValueUint32(bool write, uint32 id, uint32& val, uint32 minVal, uint32 maxVal) {
 	if (write) {
 		val = GetControlValueUint32(id);
@@ -340,6 +403,37 @@ void VDDialogFrameW32::CheckButton(uint32 id, bool checked) {
 
 bool VDDialogFrameW32::IsButtonChecked(uint32 id) {
 	return IsDlgButtonChecked(mhdlg, id) != 0;
+}
+
+int VDDialogFrameW32::GetButtonTriState(uint32 id) {
+	switch(IsDlgButtonChecked(mhdlg, id)) {
+		case BST_UNCHECKED:
+		default:
+			return 0;
+
+		case BST_INDETERMINATE:
+			return 1;
+
+		case BST_CHECKED:
+			return 2;
+	}
+}
+
+void VDDialogFrameW32::SetButtonTriState(uint32 id, int state) {
+	switch(state) {
+		case 0:
+		default:
+			CheckDlgButton(mhdlg, id, BST_UNCHECKED);
+			break;
+
+		case 1:
+			CheckDlgButton(mhdlg, id, BST_INDETERMINATE);
+			break;
+
+		case 2:
+			CheckDlgButton(mhdlg, id, BST_CHECKED);
+			break;
+	}
 }
 
 void VDDialogFrameW32::BeginValidation() {
@@ -391,6 +485,39 @@ bool VDDialogFrameW32::Confirm(const wchar_t *message, const wchar_t *caption) {
 		result = ::MessageBoxA(mhdlg, VDTextWToA(message).c_str(), VDTextWToA(caption).c_str(), MB_OKCANCEL | MB_ICONEXCLAMATION);
 
 	return result == IDOK;
+}
+
+int VDDialogFrameW32::ActivateMenuButton(uint32 id, const wchar_t *const *items) {
+	if (!mhdlg)
+		return -1;
+
+	HWND hwndItem = GetDlgItem(mhdlg, id);
+	if (!hwndItem)
+		return -1;
+
+	RECT r;
+	if (!GetWindowRect(hwndItem, &r))
+		return -1;
+
+	HMENU hmenu = CreatePopupMenu();
+
+	if (!hmenu)
+		return -1;
+
+	UINT commandId = 100;
+	while(const wchar_t *s = *items++)
+		VDAppendMenuW32(hmenu, MF_ENABLED, commandId++, s);
+
+	TPMPARAMS params = { sizeof(TPMPARAMS) };
+	params.rcExclude = r;
+	UINT selectedId = (UINT)TrackPopupMenuEx(hmenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL | TPM_NONOTIFY | TPM_RETURNCMD, r.left, r.bottom, mhdlg, &params);
+
+	DestroyMenu(hmenu);
+
+	if (selectedId >= 100 && selectedId < commandId)
+		return selectedId - 100;
+	else
+		return -1;
 }
 
 void VDDialogFrameW32::LBClear(uint32 id) {
@@ -455,6 +582,14 @@ void VDDialogFrameW32::TBSetValue(uint32 id, sint32 value) {
 void VDDialogFrameW32::TBSetRange(uint32 id, sint32 minval, sint32 maxval) {
 	SendDlgItemMessage(mhdlg, id, TBM_SETRANGEMIN, FALSE, minval);
 	SendDlgItemMessage(mhdlg, id, TBM_SETRANGEMAX, TRUE, maxval);
+}
+
+void VDDialogFrameW32::TBSetPageStep(uint32 id, sint32 pageStep) {
+	SendDlgItemMessage(mhdlg, id, TBM_SETPAGESIZE, 0, pageStep);
+}
+
+void VDDialogFrameW32::UDSetRange(uint32 id, sint32 minval, sint32 maxval) {
+	SendDlgItemMessage(mhdlg, id, UDM_SETRANGE32, minval, maxval);
 }
 
 void VDDialogFrameW32::OnDataExchange(bool write) {

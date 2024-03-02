@@ -27,6 +27,14 @@
 #include <vd2/system/vectors.h>
 #include "ui.h"
 
+#ifndef ATWM_FONTSUPDATED
+#define ATWM_FONTSUPDATED (WM_APP+200)
+#endif
+
+#ifndef ATWM_GETAUTOSIZE
+#define ATWM_GETAUTOSIZE (WM_APP+201)
+#endif
+
 void ATInitUIFrameSystem();
 void ATShutdownUIFrameSystem();
 
@@ -40,6 +48,19 @@ enum {
 	kATContainerDockTop,
 	kATContainerDockBottom,
 	kATContainerDockCenter
+};
+
+class ATContainerResizer {
+public:
+	ATContainerResizer();
+
+	void LayoutWindow(HWND hwnd, int x, int y, int width, int height);
+	void ResizeWindow(HWND hwnd, int width, int height);
+
+	void Flush();
+
+protected:
+	HDWP mhdwp;
 };
 
 class ATContainerSplitterBar : public VDShaderEditorBaseWindow {
@@ -93,10 +114,11 @@ public:
 	~ATContainerDockingPane();
 
 	const vdrect32& GetArea() const { return mArea; }
-	void	SetArea(const vdrect32& area, bool parentContainsFullScreen);
+	void	SetArea(ATContainerResizer& resizer, const vdrect32& area, bool parentContainsFullScreen);
 
 	void	Clear();
-	void	Relayout();
+	void	Relayout(ATContainerResizer& resizer);
+	bool	GetFrameSizeForContent(vdsize32& sz);
 
 	// Docking panes automatically disappear when they have no content unless they
 	// are pinned.
@@ -117,6 +139,10 @@ public:
 	void	SetContent(ATFrameWindow *frame);
 	void	Dock(ATContainerDockingPane *pane, int code);
 	bool	Undock(ATFrameWindow *pane);
+
+	void	NotifyFontsUpdated();
+
+	void	RecalcFrame();
 
 	void	UpdateActivationState(ATFrameWindow *frame);
 
@@ -169,6 +195,7 @@ public:
 	void Destroy();
 
 	void Clear();
+	void AutoSize();
 	void Relayout();
 
 	static ATContainerWindow *GetContainerWindow(HWND hwnd);
@@ -176,8 +203,13 @@ public:
 	ATContainerDockingPane *GetBasePane() const { return mpDockingPane; }
 	ATFrameWindow *GetActiveFrame() const { return mpActiveFrame; }
 
+	HFONT GetCaptionFont() const { return mhfontCaption; }
+	HFONT GetCaptionSymbolFont() const { return mhfontCaptionSymbol; }
+
 	uint32	GetUndockedPaneCount() const;
 	ATFrameWindow *GetUndockedPane(uint32 index) const;
+
+	void	NotifyFontsUpdated();
 
 	bool	InitDragHandles();
 	void	ShutdownDragHandles();
@@ -207,12 +239,17 @@ protected:
 	void OnKillFocus(HWND hwndNewFocus);
 	bool OnActivate(UINT code, bool minimized, HWND hwnd);
 
+	void RecreateSystemObjects();
+	void DestroySystemObjects();
+
 	ATContainerDockingPane *mpDockingPane;
 	ATContainerDockingPane *mpDragPaneTarget;
 	ATFrameWindow *mpActiveFrame;
 	ATFrameWindow *mpFullScreenFrame;
 	int mDragPaneTargetCode;
 	bool mbBlockActiveUpdates;
+	HFONT mhfontCaption;
+	HFONT mhfontCaptionSymbol;
 
 	typedef vdfastvector<ATFrameWindow *> UndockedFrames;
 	UndockedFrames mUndockedFrames;
@@ -238,11 +275,17 @@ public:
 	bool IsFullScreen() const;
 	void SetFullScreen(bool fs);
 
+	void NotifyFontsUpdated();
+
+	bool GetIdealSize(vdsize32& sz);
+	void RecalcFrame();
+
 	VDGUIHandle Create(const char *title, int x, int y, int cx, int cy, VDGUIHandle parent);
 	VDGUIHandle CreateChild(const char *title, int x, int y, int cx, int cy, VDGUIHandle parent);
 
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+	void PaintCaption(HRGN clipRegion);
 
 	bool OnCreate();
 	void OnDestroy();
@@ -256,9 +299,17 @@ protected:
 	int		mDragOffsetY;
 	bool	mbDragging;
 	bool	mbFullScreen;
+	bool	mbActiveCaption;
+	bool	mbCloseDown;
+	bool	mbCloseTracking;
+	vdrect32	mCaptionRect;
+	vdrect32	mClientRect;
+	vdrect32	mCloseRect;
 	ATContainerDockingPane *mpDockingPane;
 	ATContainerWindow *mpContainer;
 	vdrefptr<ATContainerWindow> mpDragContainer;
+
+	VDStringA	mTitle;
 };
 
 class ATUIPane : public VDShaderEditorBaseWindow {
@@ -279,6 +330,7 @@ protected:
 	virtual void OnDestroy();
 	virtual void OnSize();
 	virtual void OnSetFocus();
+	virtual void OnFontsUpdated();
 	virtual bool OnCommand(uint32 id, uint32 extcode);
 
 	void RegisterUIPane();

@@ -244,6 +244,7 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::COLOR4> COLOR4;
 		ATWordAdapter<ATKernelSymbols::MEMTOP> MEMTOP;
 		ATByteAdapter<ATKernelSymbols::MEMLO > MEMLO;
+		ATByteAdapter<ATKernelSymbols::CRSINH> CRSINH;
 		ATByteAdapter<ATKernelSymbols::CHACT > CHACT;
 		ATByteAdapter<ATKernelSymbols::CHBAS > CHBAS;
 		ATByteAdapter<ATKernelSymbols::DSPFLG> DSPFLG;
@@ -296,6 +297,79 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::CHBASE> CHBASE;
 		ATByteAdapter<ATKernelSymbols::NMIEN > NMIEN ;
 		ATByteAdapter<ATKernelSymbols::NMIRES> NMIRES;
+	};
+};
+
+struct ATKernelDatabase5200 {
+	ATKernelDatabase5200(ATCPUEmulatorMemory *mem) {
+		mAdapter.mpMem = mem;
+	}
+
+	union {
+		ATMemoryAdapter mAdapter;
+
+		// page zero
+		ATByteAdapter<ATKernelSymbols5200::POKMSK> POKMSK;
+		ATWordAdapter<ATKernelSymbols5200::RTCLOK> RTCLOK;
+		ATByteAdapter<ATKernelSymbols5200::CRITIC> CRITIC;
+		ATByteAdapter<ATKernelSymbols5200::PCOLR0> PCOLR0;
+		ATByteAdapter<ATKernelSymbols5200::PCOLR1> PCOLR1;
+		ATByteAdapter<ATKernelSymbols5200::PCOLR2> PCOLR2;
+		ATByteAdapter<ATKernelSymbols5200::PCOLR3> PCOLR3;
+		ATByteAdapter<ATKernelSymbols5200::COLOR0> COLOR0;
+		ATByteAdapter<ATKernelSymbols5200::COLOR1> COLOR1;
+		ATByteAdapter<ATKernelSymbols5200::COLOR2> COLOR2;
+		ATByteAdapter<ATKernelSymbols5200::COLOR3> COLOR3;
+		ATByteAdapter<ATKernelSymbols5200::COLOR4> COLOR4;
+
+		ATWordAdapter<ATKernelSymbols5200::VIMIRQ> VIMIRQ;
+		ATWordAdapter<ATKernelSymbols5200::VVBLKI> VVBLKI;
+		ATWordAdapter<ATKernelSymbols5200::VVBLKD> VVBLKD;
+		ATWordAdapter<ATKernelSymbols5200::VDSLST> VDSLST;
+		ATWordAdapter<ATKernelSymbols5200::VKYBDI> VKYBDI;
+		ATWordAdapter<ATKernelSymbols5200::VKYBDF> VKYBDF;
+		ATWordAdapter<ATKernelSymbols5200::VTRIGR> VTRIGR;
+		ATWordAdapter<ATKernelSymbols5200::VBRKOP> VBRKOP;
+		ATWordAdapter<ATKernelSymbols5200::VSERIN> VSERIN;
+		ATWordAdapter<ATKernelSymbols5200::VSEROR> VSEROR;
+		ATWordAdapter<ATKernelSymbols5200::VSEROC> VSEROC;
+		ATWordAdapter<ATKernelSymbols5200::VTIMR1> VTIMR1;
+		ATWordAdapter<ATKernelSymbols5200::VTIMR2> VTIMR2;
+		ATWordAdapter<ATKernelSymbols5200::VTIMR4> VTIMR4;
+
+		// GTIA (C0xx)
+		ATByteAdapter<ATKernelSymbols5200::COLPM0> COLPM0;
+		ATByteAdapter<ATKernelSymbols5200::COLPM1> COLPM1;
+		ATByteAdapter<ATKernelSymbols5200::COLPM2> COLPM2;
+		ATByteAdapter<ATKernelSymbols5200::COLPM3> COLPM3;
+		ATByteAdapter<ATKernelSymbols5200::COLPF0> COLPF0;
+		ATByteAdapter<ATKernelSymbols5200::COLPF1> COLPF1;
+		ATByteAdapter<ATKernelSymbols5200::COLPF2> COLPF2;
+		ATByteAdapter<ATKernelSymbols5200::COLPF3> COLPF3;
+		ATByteAdapter<ATKernelSymbols5200::COLBK > COLBK ;
+		ATByteAdapter<ATKernelSymbols5200::PRIOR > PRIOR ;
+		ATByteAdapter<ATKernelSymbols5200::CONSOL> CONSOL;
+		ATByteAdapter<ATKernelSymbols5200::IRQST > IRQST ;
+		ATByteAdapter<ATKernelSymbols5200::IRQEN > IRQEN ;
+
+		// ANTIC (D4xx)
+		ATByteAdapter<ATKernelSymbols5200::DMACTL> DMACTL;
+		ATByteAdapter<ATKernelSymbols5200::CHACTL> CHACTL;
+		ATByteAdapter<ATKernelSymbols5200::DLISTL> DLISTL;
+		ATByteAdapter<ATKernelSymbols5200::DLISTH> DLISTH;
+		ATByteAdapter<ATKernelSymbols5200::CHBASE> CHBASE;
+		ATByteAdapter<ATKernelSymbols5200::NMIEN > NMIEN ;
+		ATByteAdapter<ATKernelSymbols5200::NMIRES> NMIRES;
+
+		// POKEY (E8xx)
+		ATByteAdapter<ATKernelSymbols5200::AUDC1 > AUDC1 ;
+		ATByteAdapter<ATKernelSymbols5200::AUDF1 > AUDF1 ;
+		ATByteAdapter<ATKernelSymbols5200::AUDC3 > AUDC3 ;
+		ATByteAdapter<ATKernelSymbols5200::AUDF3 > AUDF3 ;
+		ATByteAdapter<ATKernelSymbols5200::AUDC4 > AUDC4 ;
+		ATByteAdapter<ATKernelSymbols5200::AUDF4 > AUDF4 ;
+		ATByteAdapter<ATKernelSymbols5200::AUDCTL> AUDCTL;
+		ATByteAdapter<ATKernelSymbols5200::SKCTL > SKCTL ;
 	};
 };
 

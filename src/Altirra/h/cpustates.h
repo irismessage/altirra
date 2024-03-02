@@ -24,6 +24,7 @@ namespace AT6502States {
 		kStateReadOpcode,
 		kStateReadOpcodeNoBreak,
 		kStateAddToHistory,
+		kStateAddEAToHistory,
 		kStateReadDummyOpcode,
 		kStateAddAsPathStart,
 		kStateAddToPath,
@@ -34,6 +35,7 @@ namespace AT6502States {
 		kStateReadAddrHX,
 		kStateReadAddrHY,
 		kStateReadAddrHX_SHY,
+		kStateReadAddrHY_SHX,
 		kStateRead,
 		kStateReadAddX,
 		kStateReadAddY,
@@ -63,6 +65,7 @@ namespace AT6502States {
 		kStateDtoY,
 		kStateDtoS,
 		kStateDtoP,
+		kStateDtoP_noICheck,
 		kStateDSetSZ,
 		kStateDSetSV,
 		kStateAddrToPC,
@@ -86,6 +89,7 @@ namespace AT6502States {
 		kStateDec,
 		kStateDecC,
 		kStateAnd,
+		kStateAnd_SAX,
 		kStateAnc,
 		kStateXaa,
 		kStateLas,
@@ -239,7 +243,10 @@ namespace AT6502States {
 		kState816_MoveWriteN,
 		kState816_Per,
 
-		kStateVerifyJump	= 0xF8,
+		kStateVerifyJump		= 0xF8,
+		kStateVerifyNMIEntry,
+		kStateVerifyIRQEntry,
+		kStateVerifyReturn,
 
 		kStateCount
 	};

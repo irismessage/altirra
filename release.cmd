@@ -71,7 +71,9 @@ zip -9 -X -r publish\Altirra-!_verid!-src.zip ^
 	*.k ^
 	*.txt ^
 	*.bmp ^
-	*.ico
+	*.ico ^
+	*.cur ^
+	*.manifest
 
 zip -9 -X publish\Altirra-!_verid!-src.zip ^
 	Copying ^

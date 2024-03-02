@@ -65,6 +65,7 @@ ATVBXEEmulator::ATVBXEEmulator()
 	, mMemAcControl(0)
 	, mMemAcBankA(0)
 	, mMemAcBankB(0)
+	, mb5200Mode(false)
 	, mXdlBaseAddr(0)
 	, mXdlAddr(0)
 	, mbXdlActive(false)
@@ -126,6 +127,8 @@ ATVBXEEmulator::ATVBXEEmulator()
 	, mpOvPalette(0)
 	, mpMergeBuffer(0)
 	, mpAnticBuffer(0)
+	, mpMergeBuffer0(0)
+	, mpAnticBuffer0(0)
 	, mpDst(0)
 	, mX(0)
 	, mRCIndex(0)
@@ -133,6 +136,7 @@ ATVBXEEmulator::ATVBXEEmulator()
 	, mbHiresMode(false)
 	, mPRIOR(0)
 	, mpPriTable(0)
+	, mpPriTableHi(0)
 	, mpColorTable(0)
 {
 	memset(mColorTable, 0, sizeof mColorTable);
@@ -141,6 +145,7 @@ ATVBXEEmulator::ATVBXEEmulator()
 
 	mpColorTable = mColorTable;
 	mpPriTable = mPriorityTables[0];
+	mpPriTableHi = mPriorityTablesHi[0];
 }
 
 ATVBXEEmulator::~ATVBXEEmulator() {
@@ -264,9 +269,13 @@ void ATVBXEEmulator::DumpStatus() {
 		0x78,
 	};
 
-	ATConsolePrintf("MEMAC Window A:    $%02X | $%04X-$%04X -> $%05X - %s\n", mMemAcBankA, winABase, winALimit - 1, (uint32)(mMemAcBankA & kBankAMask[mMemAcControl & 3]) << 12,
-		kBankModes[mMemAcBankA & 0x80 ? (mMemAcControl >> 2) & 3 : 0]);
-	ATConsolePrintf("MEMAC Window B:    $%02X | $%05X - %s\n", mMemAcBankB, ((uint32)mMemAcBankB & 0x1F) << 14, kBankModes[mMemAcBankB >> 6]);
+	if (mb5200Mode) {
+		ATConsolePrintf("MEMAC Window A:    $%02X | $D800-$E7FF -> $%05X\n", mMemAcBankA, (uint32)(mMemAcBankA & 0xF8) << 12);
+	} else {
+		ATConsolePrintf("MEMAC Window A:    $%02X | $%04X-$%04X -> $%05X - %s\n", mMemAcBankA, winABase, winALimit - 1, (uint32)(mMemAcBankA & kBankAMask[mMemAcControl & 3]) << 12,
+			kBankModes[mMemAcBankA & 0x80 ? (mMemAcControl >> 2) & 3 : 0]);
+		ATConsolePrintf("MEMAC Window B:    $%02X | $%05X - %s\n", mMemAcBankB, ((uint32)mMemAcBankB & 0x1F) << 14, kBankModes[mMemAcBankB >> 6]);
+	}
 
 	ATConsolePrintf("Blitter IRQ:       %s, %s\n"
 		, mbIRQEnabled ? "enabled" : "disabled"
@@ -663,70 +672,83 @@ void ATVBXEEmulator::WriteControl(uint8 addrLo, uint8 value) {
 }
 
 void ATVBXEEmulator::UpdateMemoryMaps(const uint8 *cpuRead[256], uint8 *cpuWrite[256], const uint8 *anticRead[256]) {
-	// Window B ($4000-7FFF)
-	if (mMemAcBankB & 0xC0) {
-		uint8 *winB = mpMemory + ((mMemAcBankB & 0x1F) << 14);
-
-		// MEMAC-B access - CPU
-		if (mMemAcBankB & 0x80) {
-			for(int i=0; i<64; ++i) {
-				cpuRead[0x40 + i] = winB + (i << 8);
-				cpuWrite[0x40 + i] = winB + (i << 8);
-			}
-		}
-
-		// MEMAC-B access - ANTIC
-		if (mMemAcBankB & 0x40) {
-			for(int i=0; i<64; ++i)
-				anticRead[0x40 + i] = winB + (i << 8);
-		}
-	}
-
-	// Window A ($2000-3FFF) -- has priority over window B
-	if ((mMemAcBankA & 0x80) && (mMemAcControl & 0x0C)) {
-		static const int kPageCount[4]={
-			16,		// 00 - 4K window
-			32,		// 01 - 8K window
-			64,		// 10 - 16K window
-			128		// 11 - 32K window
-		};
-
-		int numPages = kPageCount[mMemAcControl & 3];
-		int pageBase = mMemAcControl & 0xF0;
-
-		// check for overflow -- window is truncated in this case (does not wrap to $0000)
-		if (pageBase + numPages > 0x100)
-			numPages = 0x100 - pageBase;
-
-		static const uint32 kAddrMask[4]={
-			0x7F000,
-			0x7E000,
-			0x7C000,
-			0x78000
-		};
-
-		uint8 *winA = mpMemory + (((uint32)mMemAcBankA << 12) & kAddrMask[mMemAcControl & 3]);
+	if (mb5200Mode) {
+		// Window A ($D800-E7FF)
+		uint8 *winA = mpMemory + (((uint32)mMemAcBankA << 12) & 0x7F000);
 
 		// MEMAC-A access - CPU
-		if (mMemAcControl & 0x08) {
-			for(int i=0; i<numPages; ++i) {
-				uint8 *p = winA + (i << 8);
-				int page = pageBase + i;
+		for(int i=0; i<16; ++i) {
+			cpuRead[0xD8 + i] = winA;
+			cpuWrite[0xD8 + i] = winA;
+			anticRead[0xD8 + i] = winA;
+			winA += 0x100;
+		}
+	} else {
+		// Window B ($4000-7FFF)
+		if (mMemAcBankB & 0xC0) {
+			uint8 *winB = mpMemory + ((mMemAcBankB & 0x1F) << 14);
 
-				if (pageBase < 0xD0 || page >= 0xD8) {
-					cpuRead[page] = p;
-					cpuWrite[page] = p;
+			// MEMAC-B access - CPU
+			if (mMemAcBankB & 0x80) {
+				for(int i=0; i<64; ++i) {
+					cpuRead[0x40 + i] = winB + (i << 8);
+					cpuWrite[0x40 + i] = winB + (i << 8);
 				}
+			}
+
+			// MEMAC-B access - ANTIC
+			if (mMemAcBankB & 0x40) {
+				for(int i=0; i<64; ++i)
+					anticRead[0x40 + i] = winB + (i << 8);
 			}
 		}
 
-		// MEMAC-A access - ANTIC
-		if (mMemAcControl & 0x04) {
-			for(int i=0; i<numPages; ++i) {
-				int page = pageBase + i;
+		// Window A -- has priority over window B
+		if ((mMemAcBankA & 0x80) && (mMemAcControl & 0x0C)) {
+			static const int kPageCount[4]={
+				16,		// 00 - 4K window
+				32,		// 01 - 8K window
+				64,		// 10 - 16K window
+				128		// 11 - 32K window
+			};
 
-				if (pageBase < 0xD0 || page >= 0xD8)
-					anticRead[page] = winA + (i << 8);
+			int numPages = kPageCount[mMemAcControl & 3];
+			int pageBase = mMemAcControl & 0xF0;
+
+			// check for overflow -- window is truncated in this case (does not wrap to $0000)
+			if (pageBase + numPages > 0x100)
+				numPages = 0x100 - pageBase;
+
+			static const uint32 kAddrMask[4]={
+				0x7F000,
+				0x7E000,
+				0x7C000,
+				0x78000
+			};
+
+			uint8 *winA = mpMemory + (((uint32)mMemAcBankA << 12) & kAddrMask[mMemAcControl & 3]);
+
+			// MEMAC-A access - CPU
+			if (mMemAcControl & 0x08) {
+				for(int i=0; i<numPages; ++i) {
+					uint8 *p = winA + (i << 8);
+					int page = pageBase + i;
+
+					if (pageBase < 0xD0 || page >= 0xD8) {
+						cpuRead[page] = p;
+						cpuWrite[page] = p;
+					}
+				}
+			}
+
+			// MEMAC-A access - ANTIC
+			if (mMemAcControl & 0x04) {
+				for(int i=0; i<numPages; ++i) {
+					int page = pageBase + i;
+
+					if (pageBase < 0xD0 || page >= 0xD8)
+						anticRead[page] = winA + (i << 8);
+				}
 			}
 		}
 	}
@@ -750,6 +772,11 @@ void ATVBXEEmulator::BeginFrame() {
 	mAttrHscroll = 0;
 	mAttrVscroll = 0;
 	mDMACycles = 0;
+
+	mOvHscroll = 0;
+	mOvVscroll = 0;
+	mOvAddr = 0;
+	mOvStep = 0;
 }
 
 void ATVBXEEmulator::BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires) {
@@ -758,7 +785,9 @@ void ATVBXEEmulator::BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const 
 	mbHiresMode = hires;
 	mX = 0;
 	mpMergeBuffer = mergeBuffer;
+	mpMergeBuffer0 = mergeBuffer;
 	mpAnticBuffer = anticBuffer;
+	mpAnticBuffer0 = anticBuffer;
 	mDMACycles = 0;
 
 	if (dst)
@@ -931,46 +960,107 @@ void ATVBXEEmulator::RenderScanline(int xend) {
 		}
 
 		// render out attpixels
-		if (mbAttrMapEnabled)
-			RenderAttrPixels(x1, x2);
-		else
-			RenderAttrDefaultPixels(x1, x2);
+		int x1h = x1 * 2;
+		int x2h = x2 * 2;
 
-		// 40 column mode is set by ANTIC during horizontal blank if ANTIC modes 2, 3, or
-		// F are used. 40 column mode has the following effects:
-		//
-		//	* The priority logic always sees PF2.
-		//	* The collision logic sees either BAK or PF2. Adjacent bits are ORed each color
-		//	  clock to determine this (PF2C in schematic).
-		//	* The playfield bits are used instead to substitute the luminance of PF1 on top
-		//	  of the priority logic output. This happens even if players have priority.
-		//
-		// The flip-flip in the GTIA that controls 40 column mode can only be set by the
-		// horizontal sync command, but can be reset at any time whenever either of the
-		// top two bits of PRIOR are set. If this happens, the GTIA will begin interpreting
-		// AN0-AN2 in lores mode, but ANTIC will continue sending in hires mode. The result
-		// is that the bit pair patterns 00-11 produce PF0-PF3 instead of BAK + PF0-PF2 as
-		// usual.
+		while(x1h < x2h) {
+			int xth = x2h;
 
-		switch(mPRIOR & 0xc0) {
-			case 0x00:
-				if (mbHiresMode)
-					RenderMode8(x1, x2);
-				else
-					RenderLores(x1, x2);
-				break;
+			if (mbAttrMapEnabled)
+				xth = RenderAttrPixels(x1h, x2h);
+			else
+				RenderAttrDefaultPixels(x1h, x2h);
 
-			case 0x40:
-				RenderMode9(x1, x2);
-				break;
+			VDASSERT(xth > x1h);
 
-			case 0x80:
-				RenderMode10(x1, x2);
-				break;
+			bool hiresMode = mbHiresMode;
+			bool revMode = false;
 
-			case 0xC0:
-				RenderMode11(x1, x2);
-				break;
+			if (mAttrPixels[x1h].mCtrl & 0x04) {
+				revMode = true;
+				hiresMode = !hiresMode;
+
+				const int x1l = x1h >> 1;
+				const int xtl = (xth + 1) >> 1;
+
+				if (hiresMode) {
+
+					static const uint8 kPriTable[8]={
+						0,		// BAK
+						1,		// PF0
+						2,		// PF1
+						2,		// PF01
+						3,		// PF2
+						3,		// PF02
+						3,		// PF12
+						3,		// PF012
+					};
+
+					for(int x = x1l; x < xtl; ++x)
+						mTempAnticData[x] = kPriTable[mpMergeBuffer0[x] & 7];
+
+					for(int x = x1l; x < xtl; ++x)
+						mTempMergeBuffer[x] = (mpMergeBuffer0[x] & (P0|P1|P2|P3)) | PF2;
+
+					mpAnticBuffer = mTempAnticData;
+					mpMergeBuffer = mTempMergeBuffer;
+				} else {
+					for(int x = x1l; x < xtl; ++x) {
+						uint8 d = mpMergeBuffer0[x];
+
+						if (d & PF2) {
+							uint8 c = mpAnticBuffer0[x];
+							mTempMergeBuffer[x] = (d & ~PF) | (1 << c);
+						}
+					}
+
+					mpMergeBuffer = mTempMergeBuffer;
+				}
+			}
+
+			// 40 column mode is set by ANTIC during horizontal blank if ANTIC modes 2, 3, or
+			// F are used. 40 column mode has the following effects:
+			//
+			//	* The priority logic always sees PF2.
+			//	* The collision logic sees either BAK or PF2. Adjacent bits are ORed each color
+			//	  clock to determine this (PF2C in schematic).
+			//	* The playfield bits are used instead to substitute the luminance of PF1 on top
+			//	  of the priority logic output. This happens even if players have priority.
+			//
+			// The flip-flip in the GTIA that controls 40 column mode can only be set by the
+			// horizontal sync command, but can be reset at any time whenever either of the
+			// top two bits of PRIOR are set. If this happens, the GTIA will begin interpreting
+			// AN0-AN2 in lores mode, but ANTIC will continue sending in hires mode. The result
+			// is that the bit pair patterns 00-11 produce PF0-PF3 instead of BAK + PF0-PF2 as
+			// usual.
+
+			switch(mPRIOR & 0xc0) {
+				case 0x00:
+					if (hiresMode)
+						RenderMode8(x1h, xth);
+					else
+						RenderLores(x1h, xth);
+					break;
+
+				case 0x40:
+					RenderMode9(x1h, xth);
+					break;
+
+				case 0x80:
+					RenderMode10(x1h, xth);
+					break;
+
+				case 0xC0:
+					RenderMode11(x1h, xth);
+					break;
+			}
+
+			if (revMode) {
+				mpAnticBuffer = mpAnticBuffer0;
+				mpMergeBuffer = mpMergeBuffer0;
+			}
+
+			x1h = xth;
 		}
 
 		RenderOverlay(x1, x2);
@@ -1082,6 +1172,7 @@ void ATVBXEEmulator::UpdateRegisters(const RegisterChange *rc, int count) {
 		case 0x1B:
 			mPRIOR = value;
 			mpPriTable = mPriorityTables[(value & 15) + (value&32 ? 16 : 0)];
+			mpPriTableHi = mPriorityTablesHi[(value & 15) + (value&32 ? 16 : 0)];
 
 			if (value & 0xC0)
 				mbHiresMode = false;
@@ -1092,49 +1183,48 @@ void ATVBXEEmulator::UpdateRegisters(const RegisterChange *rc, int count) {
 	}
 }
 
-void ATVBXEEmulator::RenderAttrPixels(int x1, int x2) {
+int ATVBXEEmulator::RenderAttrPixels(int x1h, int x2h) {
 	// x1 and x2 are measured in color clocks.
 	static const int kBounds[3][2]={
 		// Narrow: $40-BF
-		{ 64, 192 },
+		{ 64*2, 192*2 },
 
 		// Normal: $30-CF
-		{ 48, 208 },
+		{ 48*2, 208*2 },
 
 		// Wide: $2C-D4 (NOTE: This is different from ANTIC!)
-		{ 44, 212 },
+		{ 44*2, 212*2 },
 	};
 
-	int xl = kBounds[mOvWidth][0];
-	int xr = kBounds[mOvWidth][1];
+	const int x1h0 = x1h;
+	const int x2h0 = x2h;
+	int xlh = kBounds[mOvWidth][0];
+	int xrh = kBounds[mOvWidth][1];
 
-	if (x1 < xl) {
-		if (x2 <= xl) {
-			RenderAttrDefaultPixels(x1, x2);
-			return;
+	if (x1h < xlh) {
+		if (x2h <= xlh) {
+			RenderAttrDefaultPixels(x1h, x2h);
+			return x2h;
 		}
 
-		RenderAttrDefaultPixels(x1, xl);
-		x1 = xl;
+		RenderAttrDefaultPixels(x1h, xlh);
+		x1h = xlh;
 	}
 
-	if (x2 > xr) {
-		if (x1 >= xr) {
-			RenderAttrDefaultPixels(x1, x2);
-			return;
+	if (x2h > xrh) {
+		if (x1h >= xrh) {
+			RenderAttrDefaultPixels(x1h, x2h);
+			return x2h;
 		}
 
-		RenderAttrDefaultPixels(xr, x2);
-		x2 = xr;
+		x2h = xrh;
 	}
 
-	if (x2 <= x1)
-		return;
+	if (x2h <= x1h)
+		return x1h;
 
-	uint32 offset = ((x1 - xl) * 2 + mAttrHscroll) % mAttrWidth;
-	int x1h = x1 * 2;
-	int x2h = x2 * 2;
-	uint32 srcAddr = mAttrAddr + ((x1 - xl) * 2) / mAttrWidth;
+	uint32 offset = (x1h - xlh + mAttrHscroll) % mAttrWidth;
+	uint32 srcAddr = mAttrAddr + (x1h - xlh) / mAttrWidth * 4;
 	int hiresShift = mAttrWidth > 16 ? 2 : mAttrWidth > 8 ? 1 : 0;
 
 	AttrPixel px;
@@ -1145,6 +1235,8 @@ void ATVBXEEmulator::RenderAttrPixels(int x1, int x2) {
 	px.mCtrl = VBXE_FETCH(srcAddr + 3);
 	px.mPriority = mOvPriority[px.mCtrl & 3];
 	srcAddr += 4;
+
+	const uint8 resBit = x1h > x1h0 ? 0 : px.mCtrl;
 
 	do {
 		px.mHiresFlag = (sint8)(px.mPF0 << (offset >> hiresShift)) >> 7;
@@ -1158,12 +1250,21 @@ void ATVBXEEmulator::RenderAttrPixels(int x1, int x2) {
 			px.mPriority = mOvPriority[px.mCtrl & 3];
 			srcAddr += 4;
 			offset = 0;
-		}
 
+			if ((px.mCtrl ^ resBit) & 0x04)
+				return x1h + 1;
+		}
 	} while(++x1h < x2h);
+
+	if (x2h < x2h0) {
+		RenderAttrDefaultPixels(x2h, x2h0);
+		x2h = x2h0;
+	}
+
+	return x2h;
 }
 
-void ATVBXEEmulator::RenderAttrDefaultPixels(int x1, int x2) {
+void ATVBXEEmulator::RenderAttrDefaultPixels(int x1h, int x2h) {
 	const AttrPixel px = {
 		0,
 		mColorTable[kColorPF0],
@@ -1174,20 +1275,36 @@ void ATVBXEEmulator::RenderAttrDefaultPixels(int x1, int x2) {
 		mOvMainPriority
 	};
 
-	for(int x = x1*2; x < x2*2; ++x)
+	for(int x = x1h; x < x2h; ++x)
 		mAttrPixels[x] = px;
 }
 
-void ATVBXEEmulator::RenderLores(int x1, int x2) {
+void ATVBXEEmulator::RenderLores(int x1h, int x2h) {
 	const uint8 *__restrict colorTable = mpColorTable;
 	const uint8 (*__restrict priTable)[2] = mpPriTable;
 
-	uint32 *dst = mpDst + x1*4;
-	uint8 *priDst = mOvPriDecode + x1*2;
-	const uint8 *src = mpMergeBuffer + x1;
+	uint32 *dst = mpDst + x1h*2;
+	uint8 *priDst = mOvPriDecode + x1h;
+	const uint8 *src = mpMergeBuffer + (x1h >> 1);
 
-	int w = x2 - x1;
-	const AttrPixel *apx = &mAttrPixels[x1*2];
+	const AttrPixel *apx = &mAttrPixels[x1h];
+
+	if (x1h & 1) {
+		uint8 i0 = *src++;
+		uint8 a0 = priTable[i0][0];
+		uint8 b0 = priTable[i0][1];
+		uint8 c0 = colorTable[b0];
+		uint8 d1 = (&apx->mPFK)[a0] | c0;
+
+		dst[0] = dst[1] = mPalette[apx[1].mCtrl >> 6][d1];
+		priDst[0] = apx->mPriority & i0;
+		++apx;
+		dst += 2;
+		++priDst;
+		++x1h;
+	}
+
+	int w = (x2h - x1h) >> 1;
 
 	for(int i=0; i<w; ++i) {
 		uint8 i0 = *src++;
@@ -1205,22 +1322,53 @@ void ATVBXEEmulator::RenderLores(int x1, int x2) {
 		dst += 4;
 		priDst += 2;
 	}
+
+	if (x2h & 1) {
+		uint8 i0 = *src;
+		uint8 a0 = priTable[i0][0];
+		uint8 b0 = priTable[i0][1];
+		uint8 c0 = colorTable[b0];
+		uint8 d0 = (&apx->mPFK)[a0] | c0;
+
+		dst[0] = dst[1] = mPalette[apx->mCtrl >> 6][d0];
+		priDst[0] = apx->mPriority & i0;
+	}
 }
 
-void ATVBXEEmulator::RenderMode8(int x1, int x2) {
+void ATVBXEEmulator::RenderMode8(int x1h, int x2h) {
 	const uint8 *__restrict colorTable = mpColorTable;
-	const uint8 (*__restrict priTable)[2] = mpPriTable;
 
-	const uint8 *lumasrc = &mpAnticBuffer[x1];
-	uint32 *dst = mpDst + x1*4;
-	uint8 *priDst = mOvPriDecode + x1*2;
-	const uint8 *src = mpMergeBuffer + x1;
-
-	const uint8 luma1 = mpColorTable[5] & 0xf;
+	const uint8 *lumasrc = &mpAnticBuffer[x1h >> 1];
+	uint32 *dst = mpDst + x1h*2;
+	uint8 *priDst = mOvPriDecode + x1h;
+	const uint8 *src = mpMergeBuffer + (x1h >> 1);
 
 	if (mbExtendedColor) {
-		const AttrPixel *apx = &mAttrPixels[x1 * 2];
-		int w = x2 - x1;
+		const uint8 (*__restrict priTable)[2] = mpPriTableHi;
+		const AttrPixel *apx = &mAttrPixels[x1h];
+
+		if (x1h & 1) {
+			uint8 lb = *lumasrc++;
+			uint8 i1 = *src++;
+
+			if (lb & 1)
+				i1 -= (i1 & PF2) >> 1;
+
+			i1 += (i1 & PF2) & apx->mHiresFlag;
+
+			uint8 a1 = priTable[i1][0];
+			uint8 b1 = priTable[i1][1];
+			uint8 c1 = (&apx->mPFK)[a1] | colorTable[b1];
+
+			dst[0] = dst[1] = mPalette[apx->mCtrl >> 6][c1];
+			priDst[0] = apx->mPriority & i1;
+			++apx;
+			dst += 2;
+			++priDst;
+			++x1h;
+		}
+
+		int w = (x2h - x1h) >> 1;
 		while(w--) {
 			uint8 lb = *lumasrc++;
 			uint8 i0 = *src++;
@@ -1249,11 +1397,53 @@ void ATVBXEEmulator::RenderMode8(int x1, int x2) {
 			apx += 2;
 			dst += 4;
 			priDst += 2;
-			++x1;
+		}
+
+		if (x2h & 1) {
+			uint8 lb = *lumasrc++;
+			uint8 i0 = *src++;
+
+			if (lb & 2)
+				i0 -= (i0 & PF2) >> 1;
+
+			i0 += (i0 & PF2) & apx[0].mHiresFlag;
+
+			uint8 a0 = priTable[i0][0];
+			uint8 b0 = priTable[i0][1];
+			uint8 c0 = (&apx[0].mPFK)[a0] | colorTable[b0];
+
+			dst[0] = dst[1] = mPalette[apx[0].mCtrl >> 6][c0];
+			priDst[0] = apx[0].mPriority & i0;
 		}
 	} else {
-		const AttrPixel *apx = &mAttrPixels[x1 * 2];
-		int w = x2 - x1;
+		const AttrPixel *apx = &mAttrPixels[x1h];
+		const uint8 (*__restrict priTable)[2] = mpPriTableHi;
+
+		if (x1h & 1) {
+			uint8 lb = *lumasrc++;
+			uint8 i0 = *src++;
+			uint8 i1 = i0;
+
+			i1 += (i1 & PF2) & apx->mHiresFlag;
+
+			uint8 a1 = priTable[i1][0];
+			uint8 b1 = priTable[i1][1];
+			uint8 c1 = (&apx[1].mPFK)[a1] | colorTable[b1];
+
+			if (lb & 1) {
+				c1 = (c1 & 0xf0) + (apx->mPF1 & 0x0f);
+			}
+
+			dst[0] = dst[1] = mPalette[apx->mCtrl >> 6][c1];
+
+			priDst[0] = apx->mPriority & ((i1 & ~PF2) | (lb & 1 ? PF2 : 0));
+			++apx;
+			dst += 2;
+			++priDst;
+			++x1h;
+		}
+
+		int w = (x2h - x1h) >> 1;
 		while(w--) {
 			uint8 lb = *lumasrc++;
 			uint8 i0 = *src++;
@@ -1285,20 +1475,38 @@ void ATVBXEEmulator::RenderMode8(int x1, int x2) {
 			apx += 2;
 			dst += 4;
 			priDst += 2;
-			++x1;
+		}
+
+		if (x2h & 1) {
+			uint8 lb = *lumasrc++;
+			uint8 i0 = *src++;
+
+			i0 += (i0 & PF2) & apx[0].mHiresFlag;
+
+			uint8 a0 = priTable[i0][0];
+			uint8 b0 = priTable[i0][1];
+			uint8 c0 = (&apx[0].mPFK)[a0] | colorTable[b0];
+
+			if (lb & 2) {
+				c0 = (c0 & 0xf0) + (apx[0].mPF1 & 0x0f);
+			}
+
+			dst[0] = dst[1] = mPalette[apx[0].mCtrl >> 6][c0];
+
+			priDst[0] = apx[0].mPriority & ((i0 & ~PF2) | (lb & 2 ? PF2 : 0));
 		}
 	}
 }
 
-void ATVBXEEmulator::RenderMode9(int x1, int x2) {
+void ATVBXEEmulator::RenderMode9(int x1h, int x2h) {
 	static const uint8 kPlayerMaskLookup[16]={0xff};
 
 	const uint8 *__restrict colorTable = mpColorTable;
 	const uint8 (*__restrict priTable)[2] = mpPriTable;
 
-	uint32 *dst = mpDst + x1*4;
-	uint8 *priDst = mOvPriDecode + x1*2;
-	const uint8 *src = mpMergeBuffer + x1;
+	uint32 *dst = mpDst + x1h*2;
+	uint8 *priDst = mOvPriDecode + x1h;
+	const uint8 *src = mpMergeBuffer + (x1h >> 1);
 
 	// 1 color / 16 luma mode
 	//
@@ -1308,9 +1516,28 @@ void ATVBXEEmulator::RenderMode9(int x1, int x2) {
 	// and so it does not affect players or missiles. It does, however, affect PF3 if
 	// the fifth player is enabled.
 
-	const AttrPixel *apx = &mAttrPixels[x1 * 2];
-	int w = x2 - x1;
+	const AttrPixel *apx = &mAttrPixels[x1h];
 
+	if (x1h & 1) {
+		uint8 i0 = *src++ & (P0|P1|P2|P3|PF3);
+		uint8 a0 = priTable[i0][0];
+		uint8 b0 = priTable[i0][1];
+		uint8 c1 = (&apx[1].mPFK)[a0] | colorTable[b0];
+
+		const uint8 *lumasrc = &mpAnticBuffer[(x1h >> 1) & ~1];
+		uint8 l0 = ((lumasrc[0] << 2) + lumasrc[1]) & kPlayerMaskLookup[i0 >> 4];
+
+		dst[0] = dst[1] = mPalette[apx->mCtrl >> 6][c1 | l0];
+		priDst[1] = apx->mPriority & i0;
+		++apx;
+		dst += 2;
+		++priDst;
+		++x1h;
+	}
+
+	int w = (x2h - x1h) >> 1;
+
+	int x1 = x1h >> 1;
 	while(w--) {
 		uint8 i0 = *src++ & (P0|P1|P2|P3|PF3);
 		uint8 a0 = priTable[i0][0];
@@ -1329,15 +1556,28 @@ void ATVBXEEmulator::RenderMode9(int x1, int x2) {
 		dst += 4;
 		priDst += 2;
 	}
+
+	if (x2h & 1) {
+		uint8 i0 = *src++ & (P0|P1|P2|P3|PF3);
+		uint8 a0 = priTable[i0][0];
+		uint8 b0 = priTable[i0][1];
+		uint8 c0 = (&apx[0].mPFK)[a0] | colorTable[b0];
+
+		const uint8 *lumasrc = &mpAnticBuffer[x1++ & ~1];
+		uint8 l0 = ((lumasrc[0] << 2) + lumasrc[1]) & kPlayerMaskLookup[i0 >> 4];
+
+		dst[0] = dst[1] = mPalette[apx[0].mCtrl >> 6][c0 | l0];
+		priDst[0] = apx[0].mPriority & i0;
+	}
 }
 
-void ATVBXEEmulator::RenderMode10(int x1, int x2) {
+void ATVBXEEmulator::RenderMode10(int x1h, int x2h) {
 	const uint8 *__restrict colorTable = mpColorTable;
 	const uint8 (*__restrict priTable)[2] = mpPriTable;
 
-	uint32 *dst = mpDst + x1*4;
-	uint8 *priDst = mOvPriDecode + x1*2;
-	const uint8 *src = mpMergeBuffer + x1;
+	uint32 *dst = mpDst + x1h*2;
+	uint8 *priDst = mOvPriDecode + x1h;
+	const uint8 *src = mpMergeBuffer + (x1h >> 1);
 
 	// 9 colors
 	//
@@ -1365,9 +1605,27 @@ void ATVBXEEmulator::RenderMode10(int x1, int x2) {
 		PF3
 	};
 
-	const AttrPixel *apx = &mAttrPixels[x1 * 2];
-	int w = x2 - x1;
+	const AttrPixel *apx = &mAttrPixels[x1h];
 
+	if (x1h & 1) {
+		const uint8 *lumasrc = &mpAnticBuffer[((x1h >> 1) - 1) & ~1];
+		uint8 l0 = lumasrc[0]*4 + lumasrc[1];
+
+		uint8 i0 = kMode10Lookup[l0] | (*src++ & 0xf8);
+		uint8 a0 = priTable[i0][0];
+		uint8 b0 = priTable[i0][1];
+		uint8 c1 = (&apx[1].mPFK)[a0] | colorTable[b0];
+
+		dst[0] = dst[1] = mPalette[apx[0].mCtrl >> 6][c1];
+		priDst[0] = apx[0].mPriority & i0;
+		++apx;
+		dst += 2;
+		++priDst;
+		++x1h;
+	}
+
+	int w = (x2h - x1h) >> 1;
+	int x1 = x1h >> 1;
 	while(w--) {
 		const uint8 *lumasrc = &mpAnticBuffer[(x1++ - 1) & ~1];
 		uint8 l0 = lumasrc[0]*4 + lumasrc[1];
@@ -1386,15 +1644,28 @@ void ATVBXEEmulator::RenderMode10(int x1, int x2) {
 		dst += 4;
 		priDst += 2;
 	}
+
+	if (x2h & 1) {
+		const uint8 *lumasrc = &mpAnticBuffer[(x1 - 1) & ~1];
+		uint8 l0 = lumasrc[0]*4 + lumasrc[1];
+
+		uint8 i0 = kMode10Lookup[l0] | (*src++ & 0xf8);
+		uint8 a0 = priTable[i0][0];
+		uint8 b0 = priTable[i0][1];
+		uint8 c0 = (&apx[0].mPFK)[a0] | colorTable[b0];
+
+		dst[0] = dst[1] = mPalette[apx[0].mCtrl >> 6][c0];
+		priDst[0] = apx[0].mPriority & i0;
+	}
 }
 
-void ATVBXEEmulator::RenderMode11(int x1, int x2) {
+void ATVBXEEmulator::RenderMode11(int x1h, int x2h) {
 	const uint8 *__restrict colorTable = mpColorTable;
 	const uint8 (*__restrict priTable)[2] = mpPriTable;
 
-	uint32 *dst = mpDst + x1*4;
-	uint8 *priDst = mOvPriDecode + x1*2;
-	const uint8 *src = mpMergeBuffer + x1;
+	uint32 *dst = mpDst + x1h*2;
+	uint8 *priDst = mOvPriDecode + x1h;
+	const uint8 *src = mpMergeBuffer + (x1h >> 1);
 
 	// 16 colors / 1 luma
 	//
@@ -1423,9 +1694,28 @@ void ATVBXEEmulator::RenderMode11(int x1, int x2) {
 		{{0x00,0xff},{0x00,0xff}}
 	};
 
-	const AttrPixel *apx = &mAttrPixels[x1 * 2];
-	int w = x2 - x1;
+	const AttrPixel *apx = &mAttrPixels[x1h];
 
+	if (x1h & 1) {
+		const uint8 i0 = *src++ & (P0|P1|P2|P3|PF3);
+		const uint8 a0 = priTable[i0][0];
+		const uint8 b0 = priTable[i0][1];
+		uint8 pri1 = (&apx[0].mPFK)[a0] | colorTable[b0];
+
+		const uint8 *lumasrc = &mpAnticBuffer[(x1h >> 1) & ~1];
+		uint8 l0 = (lumasrc[0] << 6) + (lumasrc[1] << 4);
+
+		uint8 c1 = (pri1 | (l0 & kMode11Lookup[i0 >> 4][l0 == 0][0])) & kMode11Lookup[i0 >> 4][l0 == 0][1];
+
+		dst[0] = dst[1] = mPalette[apx[0].mCtrl >> 6][c1];
+		priDst[1] = apx[0].mPriority & i0;
+		++apx;
+		dst += 2;
+		++priDst;
+	}
+
+	int w = (x2h - x1h) >> 1;
+	int x1 = x1h >> 1;
 	while(w--) {
 		const uint8 i0 = *src++ & (P0|P1|P2|P3|PF3);
 		const uint8 a0 = priTable[i0][0];
@@ -1447,6 +1737,21 @@ void ATVBXEEmulator::RenderMode11(int x1, int x2) {
 		dst += 4;
 		priDst += 2;
 	}
+
+	if (x2h & 1) {
+		const uint8 i0 = *src++ & (P0|P1|P2|P3|PF3);
+		const uint8 a0 = priTable[i0][0];
+		const uint8 b0 = priTable[i0][1];
+		uint8 pri0 = (&apx[0].mPFK)[a0] | colorTable[b0];
+
+		const uint8 *lumasrc = &mpAnticBuffer[x1++ & ~1];
+		uint8 l0 = (lumasrc[0] << 6) + (lumasrc[1] << 4);
+
+		uint8 c0 = (pri0 | (l0 & kMode11Lookup[i0 >> 4][l0 == 0][0])) & kMode11Lookup[i0 >> 4][l0 == 0][1];
+
+		dst[0] = dst[1] = mPalette[apx[0].mCtrl >> 6][c0];
+		priDst[0] = apx[0].mPriority & i0;
+	}
 }
 
 void ATVBXEEmulator::RenderOverlay(int x1, int x2) {
@@ -1462,15 +1767,24 @@ void ATVBXEEmulator::RenderOverlay(int x1, int x2) {
 		{ 44, 212 },
 	};
 
+	uint32 hscroll = mOvMode == kOvMode_80Text ? mOvHscroll : 0;
 	int xl = kBounds[mOvWidth][0];
 	int xr = kBounds[mOvWidth][1];
 
 	// Note that we need to fetch and process an additional 8 HR pixels
-	// (2 color clocks) for scrolling.
-	int xr2 = xr + 2;
+	// (2 color clocks) for scrolled text modes. This includes extending
+	// the right fetch border and fetching two color clocks ahead. Bitmap
+	// modes don't scroll and don't need this.
+	int xr2 = xr;
 
-	int x1f = x1 + 2;
-	int x2f = x2 + 2;
+	int x1f = x1;
+	int x2f = x2;
+
+	if (hscroll) {
+		xr2 += 2;
+		x1f += 2;
+		x2f += 2;
+	}
 
 	if (x1f < xl)
 		x1f = xl;
@@ -1513,13 +1827,13 @@ void ATVBXEEmulator::RenderOverlay(int x1, int x2) {
 	x1h += x1h;
 	x2h += x2h;
 
-	const uint8 *dec = &mOverlayDecode[x1h*2 + mOvHscroll];
+	const uint8 *dec = &mOverlayDecode[x1h*2 + hscroll];
 	uint32 *dst = mpDst + x1h * 2;
 	const AttrPixel *apx = &mAttrPixels[x1h];
 	const uint8 *prisrc = &mOvPriDecode[x1h];
 	if (mbOvTrans) {
 		if (mOvMode == kOvMode_80Text) {
-			const uint8 *ovpri = &mOvTextTrans[x1h * 2 + mOvHscroll];
+			const uint8 *ovpri = &mOvTextTrans[x1h * 2 + hscroll];
 
 			if (mbOvTrans15) {
 				for(int xh = x1h; xh < x2h; ++xh) {
@@ -2121,108 +2435,164 @@ void ATVBXEEmulator::InitPriorityTables() {
 	for(int table=0; table<32; ++table) {
 		const uint8 *src = tab[table];
 		uint8 *dst = mPriorityTables[table][0];
+		uint8 *dst2 = mPriorityTablesHi[table][0];
 
 		for(int idx=0; idx<256; ++idx) {
+			// The first value is the index in the attribute cell (0-3); the
+			// second value is from the color table. PF0-PF2 must come from
+			// the attribute cell in CCR modes; in hires modes only PF1 and
+			// PF2 come from there since the PF0 cell is used for the PF2/PF3
+			// selector instead.
+
 			switch(src[idx]) {
 				case kColorP0:
 					dst[0] = 0;
 					dst[1] = kColorP0;
+					dst2[0] = 0;
+					dst2[1] = kColorP0;
 					break;
 				case kColorP1:
 					dst[0] = 0;
 					dst[1] = kColorP1;
+					dst2[0] = 0;
+					dst2[1] = kColorP1;
 					break;
 				case kColorP2:
 					dst[0] = 0;
 					dst[1] = kColorP2;
+					dst2[0] = 0;
+					dst2[1] = kColorP2;
 					break;
 				case kColorP3:
 					dst[0] = 0;
 					dst[1] = kColorP3;
+					dst2[0] = 0;
+					dst2[1] = kColorP3;
 					break;
 				case kColorPF0:
 					dst[0] = 1;
 					dst[1] = kColorBlack;
+					dst2[0] = 0;
+					dst2[1] = kColorPF0;
 					break;
 				case kColorPF1:
 					dst[0] = 2;
 					dst[1] = kColorBlack;
+					dst2[0] = 2;
+					dst2[1] = kColorBlack;
 					break;
 				case kColorPF2:
 					dst[0] = 3;
 					dst[1] = kColorBlack;
+					dst2[0] = 3;
+					dst2[1] = kColorBlack;
 					break;
 				case kColorPF3:
 					dst[0] = 0;
 					dst[1] = kColorPF3;
+					dst2[0] = 0;
+					dst2[1] = kColorPF3;
 					break;
 				case kColorBAK:
 					dst[0] = 0;
 					dst[1] = kColorBAK;
+					dst2[0] = 0;
+					dst2[1] = kColorBAK;
 					break;
 				case kColorBlack:
 					dst[0] = 0;
 					dst[1] = kColorBlack;
+					dst2[0] = 0;
+					dst2[1] = kColorBlack;
 					break;
 				case kColorP0P1:
 					dst[0] = 0;
 					dst[1] = kColorP0P1;
+					dst2[0] = 0;
+					dst2[1] = kColorP0P1;
 					break;
 				case kColorP2P3:
 					dst[0] = 0;
 					dst[1] = kColorP2P3;
+					dst2[0] = 0;
+					dst2[1] = kColorP2P3;
 					break;
 				case kColorPF0P0:
 					dst[0] = 1;
 					dst[1] = kColorP0;
+					dst2[0] = 0;
+					dst2[1] = kColorPF0P0;
 					break;
 				case kColorPF0P1:
 					dst[0] = 1;
 					dst[1] = kColorP1;
+					dst2[0] = 0;
+					dst2[1] = kColorPF0P1;
 					break;
 				case kColorPF0P0P1:
 					dst[0] = 1;
 					dst[1] = kColorP0P1;
+					dst2[0] = 0;
+					dst2[1] = kColorPF0P0P1;
 					break;
 				case kColorPF1P0:
 					dst[0] = 2;
 					dst[1] = kColorP0;
+					dst2[0] = 2;
+					dst2[1] = kColorP0;
 					break;
 				case kColorPF1P1:
 					dst[0] = 2;
 					dst[1] = kColorP1;
+					dst2[0] = 2;
+					dst2[1] = kColorP1;
 					break;
 				case kColorPF1P0P1:
 					dst[0] = 2;
 					dst[1] = kColorP0P1;
+					dst2[0] = 2;
+					dst2[1] = kColorP0P1;
 					break;
 				case kColorPF2P2:
 					dst[0] = 3;
 					dst[1] = kColorP2;
+					dst2[0] = 3;
+					dst2[1] = kColorP2;
 					break;
 				case kColorPF2P3:
 					dst[0] = 3;
 					dst[1] = kColorP3;
+					dst2[0] = 3;
+					dst2[1] = kColorP3;
 					break;
 				case kColorPF2P2P3:
 					dst[0] = 3;
 					dst[1] = kColorP2P3;
+					dst2[0] = 3;
+					dst2[1] = kColorP2P3;
 					break;
 				case kColorPF3P2:
 					dst[0] = 0;
 					dst[1] = kColorPF3P2;
+					dst2[0] = 0;
+					dst2[1] = kColorPF3P2;
 					break;
 				case kColorPF3P3:
 					dst[0] = 0;
 					dst[1] = kColorPF3P3;
+					dst2[0] = 0;
+					dst2[1] = kColorPF3P3;
 					break;
 				case kColorPF3P2P3:
 					dst[0] = 0;
 					dst[1] = kColorPF3P2P3;
+					dst2[0] = 0;
+					dst2[1] = kColorPF3P2P3;
 					break;
 			}
 
 			dst += 2;
+			dst2 += 2;
 		}
 	}
 }

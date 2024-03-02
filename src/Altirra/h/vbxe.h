@@ -40,6 +40,8 @@ public:
 	void ColdReset();
 	void WarmReset();
 
+	void Set5200Mode(bool enable) { mb5200Mode = enable; }
+
 	void SetAnalysisMode(bool analysisMode);
 	void SetDefaultPalette(const uint32 pal[256]);
 
@@ -76,8 +78,8 @@ protected:
 
 	void UpdateRegisters(const RegisterChange *changes, int count);
 
-	void RenderAttrPixels(int x1, int x2);
-	void RenderAttrDefaultPixels(int x1, int x2);
+	int RenderAttrPixels(int x1, int x2);
+	void RenderAttrDefaultPixels(int x1h, int x2h);
 
 	void RenderLores(int x1, int x2);
 	void RenderMode8(int x1, int x2);
@@ -101,6 +103,7 @@ protected:
 	uint8	mMemAcControl;
 	uint8	mMemAcBankA;
 	uint8	mMemAcBankB;
+	bool	mb5200Mode;
 
 	uint32 mXdlBaseAddr;
 	uint32 mXdlAddr;
@@ -193,6 +196,8 @@ protected:
 
 	const uint8 *mpMergeBuffer;
 	const uint8 *mpAnticBuffer;
+	const uint8 *mpMergeBuffer0;
+	const uint8 *mpAnticBuffer0;
 
 	uint32 *mpDst;
 	int mX;
@@ -203,6 +208,7 @@ protected:
 	uint8 mPRIOR;
 
 	const uint8 (*mpPriTable)[2];
+	const uint8 (*mpPriTableHi)[2];
 	const uint8 *mpColorTable;
 
 	typedef vdfastvector<RegisterChange> RegisterChanges;
@@ -210,11 +216,11 @@ protected:
 
 	uint8	mColorTable[24];
 	uint8	mPriorityTables[32][256][2];
+	uint8	mPriorityTablesHi[32][256][2];
 
 	uint32	mPalette[4][256];
 	uint32	mDefaultPalette[256];
 
-	uint8	mGTIADecode[912];
 	uint8	mOverlayDecode[912];
 	uint8	mOvPriDecode[456];
 	uint8	mOvTextTrans[912];
@@ -231,6 +237,9 @@ protected:
 	};
 
 	AttrPixel	mAttrPixels[456];
+
+	uint8	mTempMergeBuffer[228];
+	uint8	mTempAnticData[228];
 
 	static const OvMode kOvModeTable[3][4];
 };

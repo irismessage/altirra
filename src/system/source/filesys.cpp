@@ -184,7 +184,7 @@ const char *VDFileSplitExt(const char *s) {
 			break;
 	}
 
-	return NULL;
+	return end;
 }
 
 const wchar_t *VDFileSplitExt(const wchar_t *s) {
@@ -479,6 +479,13 @@ bool VDFileIsRelativePath(const wchar_t *path) {
 	VDParsedPath ppath(path);
 
 	return ppath.IsRelative();
+}
+
+VDStringW VDFileResolvePath(const wchar_t *basePath, const wchar_t *pathToResolve) {
+	if (VDFileIsRelativePath(pathToResolve))
+		return VDFileGetCanonicalPath(VDMakePath(basePath, pathToResolve).c_str());
+
+	return VDStringW(pathToResolve);
 }
 
 /////////////////////////////////////////////////////////////////////////////

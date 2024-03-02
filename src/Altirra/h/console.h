@@ -27,6 +27,9 @@ void ATConsoleTaggedPrintf(const char *format, ...);
 
 ///////////////////////////////////////////////////////////////////////////
 
+void ATConsoleGetFont(struct tagLOGFONTW& font);
+void ATConsoleSetFont(const struct tagLOGFONTW& font);
+
 void ATShowConsole();
 void ATOpenConsole();
 void ATCloseConsole();

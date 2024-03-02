@@ -144,6 +144,26 @@
 					>
 				</File>
 			</Filter>
+			<Filter
+				Name="SuperKernel"
+				>
+				<File
+					RelativePath=".\source\SuperKernel\includes.xasm"
+					>
+				</File>
+				<File
+					RelativePath=".\source\SuperKernel\main.xasm"
+					>
+				</File>
+			</Filter>
+			<Filter
+				Name="NoCartridge"
+				>
+				<File
+					RelativePath=".\source\NoCartridge\main.xasm"
+					>
+				</File>
+			</Filter>
 		</Filter>
 		<Filter
 			Name="Header Files"

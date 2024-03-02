@@ -49,8 +49,7 @@ haveLine:
 		} else {
 			// restore old cursor pos and toggle cursor back on
 			ScreenWrite(0x9B);
-			ScreenRecomputeCursorAddr();
-			ScreenToggleCursor();
+			ScreenShowCursor();
 		}
 		
 		mpCPU->SetA(rval);
@@ -142,13 +141,11 @@ isEOL:
 		kdb.BUFADR = kdb.COLCRS + (kdb.ROWCRS << 8);
 		
 		EditorRecomputeLogicalColumn();
-		ScreenToggleCursor();
+		ScreenHideCursor();
 
 		// reset cursor to start of line
 		kdb.COLCRS = x1;
 		kdb.ROWCRS = y1;
-		
-		ScreenRecomputeCursorAddr();
 	#}
 	
 	lda		#$9b
@@ -248,7 +245,7 @@ suspendloop:
 		
 		// check for EOL -- this handling bypasses the control code flag
 		if (c == 0x9B) {
-			ScreenToggleCursor();
+			ScreenHideCursor();
 			
 			kdb.COLCRS = kdb.LMARGN;
 			uint8 y = kdb.ROWCRS + 1;
@@ -261,8 +258,7 @@ suspendloop:
 			
 			EditorRecomputeLogicalColumn();
 			
-			ScreenRecomputeCursorAddr();
-			ScreenToggleCursor();
+			ScreenShowCursor();
 			return;
 		}
 
@@ -321,14 +317,13 @@ suspendloop:
 					
 				case 0x7D:	// clear
 					ScreenClear();
-					ScreenRecomputeCursorAddr();
-					ScreenToggleCursor();
+					ScreenShowCursor();
 					EditorRecomputeLogicalColumn();
 					return;
 					
 				case 0x7E:	// backspace
 					if (kdb.COLCRS > kdb.LMARGN || kdb.ROWCRS) {
-						ScreenToggleCursor();
+						ScreenHideCursor();
 						
 						if (kdb.COLCRS <= kdb.LMARGN) {
 							if (!EditorIsLogicalLineStart(kdb.ROWCRS)) {
@@ -342,9 +337,8 @@ suspendloop:
 						}
 							
 						EditorRecomputeLogicalColumn();
-						ScreenRecomputeCursorAddr();
-						mpMemory->WriteByte(kdb.OLDADR, 0);
-						ScreenToggleCursor();
+						mpMemory->WriteByte(ScreenComputeCursorAddr(), 0);
+						ScreenShowCursor();
 					}
 					return;
 										
@@ -392,13 +386,15 @@ suspendloop:
 								break;
 						}
 						
+						kdb.COLCRS = kdb.LMARGN;
+						
 						EditorRecomputeLogicalColumn();
-						ScreenToggleCursor();
+						ScreenShowCursor();
 					}
 					return;
 					
 				case 0x9D:	// insert line
-					ScreenToggleCursor();
+					ScreenHideCursor();
 					{
 						const int index = kdb.DINDEX & 15;
 						const int bpr = kScreenModeBytesPerRow[index];
@@ -419,14 +415,13 @@ suspendloop:
 							mpMemory->WriteByte(newrow + i, 0);
 					}
 					EditorRecomputeLogicalColumn();
-					ScreenToggleCursor();
+					ScreenShowCursor();
 					return;
 			}
 			
 			if (moveexit) {
-				ScreenToggleCursor();
-				ScreenRecomputeCursorAddr();
-				ScreenToggleCursor();
+				ScreenHideCursor();
+				ScreenShowCursor();
 				mpCPU->SetY(0);
 				return;
 			}
@@ -439,12 +434,9 @@ suspendloop:
 		c ^= kATASCIIToInternalTab[(c >> 5) & 3];
 		
 		// plot character
-		ScreenRecomputeCursorAddr();
-		mpMemory->WriteByte(kdb.OLDADR, c);
+		mpMemory->WriteByte(ScreenComputeCursorAddr(), c);
 		
 		// inc pos		
-		kdb.OLDADR = kdb.OLDADR + 1;
-		
 		int logcol = kdb.LOGCOL + 1;
 		int rmargn = kdb.RMARGN;
 		if (++kdb.COLCRS >= rmargn) {
@@ -466,12 +458,11 @@ suspendloop:
 			}
 
 			kdb.COLCRS = kdb.LMARGN;
-			ScreenRecomputeCursorAddr();
 		}
 		
 		kdb.LOGCOL = logcol;
 		
-		ScreenToggleCursor();
+		ScreenShowCursor();
 	#}
 		
 	ldy		#0

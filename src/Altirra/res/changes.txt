@@ -1,6 +1,108 @@
 Altirra Change Log
 
-Version 1.7:
+Version 1.8:
+   [features added]
+   * Initial 5200 support.
+   * Simulator: Added 16K memory size support.
+   * Simulator: 576K and 1088K modes now allow ANTIC access to extended memory.
+   * Simulator: ROM image paths are now configurable.
+   * Cartridge: Added support for Corina 1MB + 8K EEPROM and 512K + 512K SRAM + 8K EEPROM cartridges.
+   * Cartridge: Added support for Telelink II NVSRAM.
+   * Cartridge: Added support for DB 32K, Williams 32K / 64K, Diamond 64K, SpartaDOS X 64K/128K, Phoenix 8K, Blizzard 16K, and Atrax 128K cartridges.
+   * Cartridge: Added support for 8K right slot cartridges.
+   * Cartridge: Added support for non-switchable 256K-1M XEGS cartridges.
+   * Cartridge: Mapper dialog attempts to detect Atari 2600 cartridge images (unsupported).
+   * Debugger: The history window no longer needs to be closed and reopened after toggling history mode.
+   * Debugger: Source windows now highlight lines that have symbol information associated and can be used for execution control.
+   * Debugger: Added on-screen watch byte/word commands (wb/ww/wc/wl).
+   * Debugger: History window now detects and collapses loops.
+   * Debugger: Added optional length parameter for dump and disassemble commands.
+   * Debugger: Added dump INTERNAL string command (di).
+   * Debugger: Added .iocb command.
+   * Debugger: Added ya/yc/yd/yr/yw commands for manually adding symbols.
+   * Debugger: Verifier now detects recursive NMIs.
+   * Debugger: Font and font size can now be changed.
+   * Debugger: Added 6502 miniassembler.
+   * Debugger: Added detailed command help.
+   * Debugger: Added .pathrecord command and documented existing path commands.
+   * Debugger: Added .basic and .basic_vars commands.
+   * Debugger: Console window now supports multiple history entries and page up/down from the command line.
+   * Debugger: Added symbol parsing support for ATasm and XASM assembler output.
+   * Disk: Added support for D9: through D15:.
+   * UI: Added DirectSound support.
+   * UI: Audio latency can now be adjusted.
+   * UI: Switched to larger font for on-screen UI.
+   * UI: Shift key now controls whether dropped files are mounted/added (shift) or booted (no shift).
+   * UI: Left-shift and right-shift keys can now be bound separately.
+   * UI: Warnings are now displayed before modified images are implicitly discarded.
+   * UI: Enabled themed controls.
+   * UI: Removed borders on docked panes.
+   * UI: Added first pass at pause button (F9).
+   * UI: Ctrl+Arrow keys now give the un-Ctrl'd keys on the emulated keyboard for programs that use pseudo arrow keys.
+   * UI: Mouse auto-capture is now an option.
+   * UI: Added option to resize main window to remove letterboxing on display.
+   * Input: Input map editor redesigned for easier controller configuration.
+   * Input: Input maps now support shifted subsets via flags.
+   * Input: Analog axes can now be bound as either relative or absolute, with tunable speed for relative mode.
+   * Input: Paddles now support rotation-based control.
+   * Input: Added light pen/gun support.
+   * Input: Added tablet support.
+   * VBXE: 5200 support added.
+   * IDE: Added option to switch between short and long BSY-to-DRQ delays to simulate platter and solid-state media.
+   * Serial: Added support for 850 R: and basic virtual-modem-over-TCP emulation.
+   * Cheats: Added simple cheat finder and value locker.
+   * Recording: Added options to tweak the frame rate and to record at half rate.
+
+   [bugs fixed]
+   * Disk: Added workaround for yet another goofy way to store boot sectors in a DD ATR image (3 x 128K followed by 384K of nulls).
+   * Disk: Fixed crash when opening .zip file containing files with no filename extension.
+   * Disk: Disk drives dialog now highlights disk images that have been modified and not saved.
+   * IDE: Fixed excessively long delay for BSY to assert after a command is issued.
+   * Input: Binding mouse up/down/left/right outputs to digital inputs now works.
+   * UI: Fix for crash when using Direct3D display on video cards that don't support arbitrary non-pow2 textures.
+   * UI: Rewrote audio output path to use block duplication/removal rather than resampling to maintain sync.
+   * UI: Fixed emulated mouse button not working reliably.
+   * UI: Reduced border artifacts when using bicubic display stretching.
+   * UI: Fixed crosstalk between interlace and frame blending settings.
+   * PIA: Control bits 6 and 7 are no longer writable.
+   * POKEY: Fixed RANDOM offset in 17-bit noise generator mode.
+   * POKEY: Fixed IRQ timing for CPU-triggered IRQs.
+   * POKEY: Fixed serial output complete interrupt not always deactivating properly.
+   * POKEY: Clearing SKCTL bit 1 now disables the keyboard.
+   * POKEY: Adjusted timing of 15KHz and 64KHz timers after exiting initializing mode.
+   * GTIA: Phantom P/M graphics DMA is now implemented.
+   * GTIA: Fixed graphic output when changing the size in the middle of a player image.
+   * GTIA: Improved accuracy of graphic output when changing GTIA modes mid-screen.
+   * GTIA: Latched triggers are now implemented.
+   * HLE: Delete line ($9C) now resets cursor column.
+   * HLE: Implemented CRSINH function.
+   * HLE: IRQ handler now clears decimal flag.
+   * HLE: Fixed crash when jumping to cassette init routine.
+   * Debugger: Fixed MADS listing parsing for code lines after ORG statements.
+   * Debugger: .dumpdsm command works again.
+   * Debugger: History window now shows effective addresses.
+   * Debugger: Disassembly and history windows now allow disassembly columns to be toggled.
+   * Debugger: Stepping in source view now steps by source line instead of instruction.
+   * Debugger: Fixed uninitialized screen data sometimes appearing when stepping.
+   * Debugger: Register "r" command can now set A register.
+   * Debugger: Breakpoints now work on the run address of a loaded executable.
+   * Debugger: Fixed .writemem crashing if filename was invalid.
+   * CPU: Fixed IRQ timing around CLI and SEI instructions.
+   * CPU: Fixed a couple of bugs with decimal mode.
+   * CPU: Taken branches now delay IRQ/NMI acknowledgement by one cycle.
+   * CPU: Fixed false read behavior for: STA (zp),Y; STA abs,Y; STA abs,X; STX abs,Y.
+   * CPU: Implemented reserved NOPs in 65C02 mode.
+   * CPU: Fixes to undocumented opcodes: RLA ($23, $27, $2F, $33, $37, $3B, $3F); ASR ($4B); SAX ($83, $87, $8F, $97); SHX ($9E).
+   * ANTIC: Fixed occasional unexpected DLIs on cold reset, which was causing once-only emulation crashes.
+   * ANTIC: Corrected NMIST change timing.
+   * Cartridge: Fixed OSS 034M and M091 mappers.
+   * Recording: Fixed crashes in some cases when recording start process failed.
+   * VBXE: Attribute map RES bit is now implemented.
+   * VBXE: Fixed attribute map addressing getting scrambled on mid-screen changes.
+   * VBXE: Overlay scrolling and addressing is now reset at VBL and no longer affects bitmap modes.
+   * VBXE: Frame blending is now supported in VBXE mode.
+
+Version 1.7 [September 4, 2010]:
    [features added]
    * Cartridge: Fixed ID mistake on mappers 1 and 2; added 3, 15, 26-30, 32-38.
    * Cartridge: Added dialog to ask for mapper when header is missing.

@@ -30,12 +30,19 @@ public:
 
 	void Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATSimulator *sim);
 
+	void OnReset();
+	void OnIRQEntry();
+	void OnNMIEntry();
+	void OnReturn();
 	void VerifyJump(uint16 target);
 
 protected:
 	ATCPUEmulator *mpCPU;
 	ATCPUEmulatorMemory *mpMemory;
 	ATSimulator *mpSimulator;
+
+	bool	mbInNMIRoutine;
+	uint8	mNMIStackLevel;
 };
 
 #endif	// f_AT_VERIFIER_H

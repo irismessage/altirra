@@ -23,6 +23,8 @@
 
 class ATSaveStateReader;
 class ATSaveStateWriter;
+class IVDRandomAccessStream;
+class IATUIRenderer;
 
 enum ATCartridgeMode {
 	kATCartridgeMode_None,
@@ -50,7 +52,30 @@ enum ATCartridgeMode {
 	kATCartridgeMode_SuperCharger3D,
 	kATCartridgeMode_BountyBob800,
 	kATCartridgeMode_OSS_034M,
-	kATCartridgeMode_OSS_091M,
+	kATCartridgeMode_OSS_M091,
+	kATCartridgeMode_5200_32K,
+	kATCartridgeMode_5200_16K_TwoChip,
+	kATCartridgeMode_5200_16K_OneChip,
+	kATCartridgeMode_5200_8K,
+	kATCartridgeMode_5200_4K,
+	kATCartridgeMode_Corina_1M_EEPROM,
+	kATCartridgeMode_Corina_512K_SRAM_EEPROM,
+	kATCartridgeMode_BountyBob5200,
+	kATCartridgeMode_SpartaDosX_128K,
+	kATCartridgeMode_TelelinkII,
+	kATCartridgeMode_Williams_64K,
+	kATCartridgeMode_Diamond_64K,
+	kATCartridgeMode_Express_64K,
+	kATCartridgeMode_SpartaDosX_64K,
+	kATCartridgeMode_RightSlot_8K,
+	kATCartridgeMode_XEGS_256K,
+	kATCartridgeMode_XEGS_512K,
+	kATCartridgeMode_XEGS_1M,
+	kATCartridgeMode_DB_32K,
+	kATCartridgeMode_Atrax_128K,
+	kATCartridgeMode_Williams_32K,
+	kATCartridgeMode_Phoenix_8K,
+	kATCartridgeMode_Blizzard_16K,
 	kATCartridgeModeCount
 };
 
@@ -65,6 +90,7 @@ struct ATCartLoadContext {
 	uint32 mCartSize;
 
 	ATCartLoadStatus mLoadStatus;
+	bool mbMayBe2600;
 };
 
 class ATCartridgeEmulator {
@@ -75,17 +101,21 @@ public:
 	ATCartridgeEmulator();
 	~ATCartridgeEmulator();
 
+	void SetUIRenderer(IATUIRenderer *r);
+
 	int GetCartBank() const { return mCartBank; }
 	bool IsABxxMapped() const;
 	bool IsBASICDisableAllowed() const;		// Cleared if we have a cart type that doesn't want OPTION pressed (AtariMax).
-
+	bool IsDirty() const { return mbDirty; }
+	
 	const wchar_t *GetPath() const {
 		return mCartMode ? mImagePath.c_str() : NULL;
 	}
 
-	int GetMode() const { return mCartMode; }
+	ATCartridgeMode GetMode() const { return mCartMode; }
 
 	void LoadSuperCharger3D();
+	void Load5200Default();
 	void LoadFlash1Mb(bool altbank);
 	void LoadFlash8Mb();
 	bool Load(const wchar_t *fn, ATCartLoadContext *loadCtx);
@@ -96,12 +126,15 @@ public:
 
 	void ColdReset();
 
+	bool WriteMemoryMap5200(const uint8 **readMap, uint8 **writeMap, const uint8 **anticMap, const uint8 *dummyReadPage, uint8 *dummyWritePage);
 	bool WriteMemoryMap89(const uint8 **readMap, uint8 **writeMap, const uint8 **anticMap, const uint8 *dummyReadPage, uint8 *dummyWritePage);
 	bool WriteMemoryMapAB(const uint8 **readMap, uint8 **writeMap, const uint8 **anticMap, const uint8 *dummyReadPage, uint8 *dummyWritePage);
 
+	uint8 ReadByte4567(uint16 address, bool& remapRequired);
+	bool WriteByte4567(uint16 address, uint8 value);
 	uint8 ReadByte89AB(uint16 address, bool& remapRequired);
 	bool WriteByte89AB(uint16 address, uint8 value);
-	uint8 ReadByteD5(uint16 address);
+	bool ReadByteD5(uint16 address, uint8& value);
 	bool WriteByteD5(uint16 address, uint8 value);
 
 	void LoadState(ATSaveStateReader& reader);
@@ -110,12 +143,14 @@ public:
 protected:
 	template<class T> void ExchangeState(T& io);
 
-	int mCartMode;
+	ATCartridgeMode mCartMode;
 	int	mCartBank;
 	int	mCartBank2;
 	int	mInitialCartBank;
 	int	mInitialCartBank2;
 	int mCommandPhase;
+	bool mbDirty;
+	IATUIRenderer *mpUIRenderer;
 
 	enum FlashReadMode {
 		kFlashReadMode_Normal,
@@ -128,9 +163,11 @@ protected:
 	uint8	mSC3D[4];
 
 	vdfastvector<uint8> mCARTROM;
+	vdfastvector<uint8> mCARTRAM;
 	VDStringW mImagePath;
 };
 
 int ATGetCartridgeModeForMapper(int mapper);
+bool ATIsCartridgeModeHWCompatible(ATCartridgeMode cartmode, int hwmode);
 
 #endif	// f_AT_CARTRIDGE_H

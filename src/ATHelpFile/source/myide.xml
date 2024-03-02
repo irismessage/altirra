@@ -20,6 +20,12 @@
     Two I/O regions can be used for the IDE interface. Select $D5xx as the interface region for a cartridge-based
     interface, and $D1xx for an internal interface.
   </p>
+  <h3>Device speed</h3>
+  <p>
+    The emulated device can run at either slow or fast speed. At fast speed the emulated device responds
+    almost immediately to commands, simulating a solid state device. At slow speed, there is additional
+    moderate delay in command completion, comparable to average access time for a traditional hard disk.
+  </p>
   <h2>Software support</h2>
   <p>
     Altirra does not include software to make use of the emulated IDE drive. You can use the MyIDE firmware

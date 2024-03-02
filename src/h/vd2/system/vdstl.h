@@ -734,6 +734,10 @@ public:
 	typedef typename vdreverse_iterator<const_iterator, const T>::type	const_reverse_iterator;
 
 	VDTINLINE vdspan();
+
+	template<size_t N>
+	VDTINLINE vdspan(T (&arr)[N]);
+
 	VDTINLINE vdspan(T *p1, T *p2);
 	VDTINLINE vdspan(T *p1, size_type len);
 
@@ -786,6 +790,7 @@ protected:
 #endif
 
 template<class T> VDTINLINE vdspan<T>::vdspan() : mpBegin(NULL), mpEnd(NULL) {}
+template<class T> template<size_t N> VDTINLINE vdspan<T>::vdspan(T (&arr)[N]) : mpBegin(&arr[0]), mpEnd(&arr[N]) {}
 template<class T> VDTINLINE vdspan<T>::vdspan(T *p1, T *p2) : mpBegin(p1), mpEnd(p2) {}
 template<class T> VDTINLINE vdspan<T>::vdspan(T *p, size_type len) : mpBegin(p), mpEnd(p+len) {}
 template<class T> VDTINLINE bool					vdspan<T>::empty() const { return mpBegin == mpEnd; }

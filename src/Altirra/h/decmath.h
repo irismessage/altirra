@@ -22,6 +22,7 @@ class ATCPUEmulator;
 class ATCPUEmulatorMemory;
 
 double ATReadDecFloatAsBinary(ATCPUEmulatorMemory& mem, uint16 addr);
+double ATReadDecFloatAsBinary(const uint8 bytes[6]);
 
 void ATAccelAFP(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
 void ATAccelFASC(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);

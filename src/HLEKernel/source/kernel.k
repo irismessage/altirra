@@ -336,7 +336,7 @@ casetv	dta		a(CassetteOpen-1)
 		dta		a(CassettePutByte-1)
 		dta		a(CassetteGetStatus-1)
 		dta		a(CassetteSpecial-1)
-		jsr		CassetteInit
+		jmp		CassetteInit
 		dta		$00
 	
 		;vector table

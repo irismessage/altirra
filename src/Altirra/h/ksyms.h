@@ -136,6 +136,8 @@ namespace ATKernelSymbols {
 		COLOR4 = 0x02C8,
 		MEMTOP = 0x02E5,
 		MEMLO  = 0x02E7,
+		DVSTAT = 0x02EA,
+		CRSINH = 0x02F0,
 		KEYDEL = 0x02F1,
 		CH1    = 0x02F2,
 		CHACT  = 0x02F3,
@@ -254,5 +256,86 @@ namespace ATKernelSymbols {
 	};
 }
 
+namespace ATKernelSymbols5200 {
+	// page zero
+	enum {
+		POKMSK = 0x0000,
+		RTCLOK = 0x0001,
+		CRITIC = 0x0003,
+		ATRACT = 0x0004,
+		SDLSTL = 0x0005,
+		SDLSTH = 0x0006,
+		SDMCTL = 0x0007,
+		PCOLR0 = 0x0008,
+		PCOLR1 = 0x0009,
+		PCOLR2 = 0x000A,
+		PCOLR3 = 0x000B,
+		COLOR0 = 0x000C,
+		COLOR1 = 0x000D,
+		COLOR2 = 0x000E,
+		COLOR3 = 0x000F,
+		COLOR4 = 0x0010,
+		PADDL0 = 0x0011,
+		PADDL1 = 0x0012,
+		PADDL2 = 0x0013,
+		PADDL3 = 0x0014,
+		PADDL4 = 0x0015,
+		PADDL5 = 0x0016,
+		PADDL6 = 0x0017,
+		PADDL7 = 0x0018,
+	};
+
+	// page 2/3 symbols
+	enum {
+		VIMIRQ = 0x0200,
+		VVBLKI = 0x0202,
+		VVBLKD = 0x0204,
+		VDSLST = 0x0206,
+		VKYBDI = 0x0208,
+		VKYBDF = 0x020A,
+		VTRIGR = 0x020C,
+		VBRKOP = 0x020E,
+		VSERIN = 0x0210,
+		VSEROR = 0x0212,
+		VSEROC = 0x0214,
+		VTIMR1 = 0x0216,
+		VTIMR2 = 0x0218,
+		VTIMR4 = 0x021A,
+	};
+
+	// hardware symbols
+	enum {
+		COLPM0 = 0xC012,
+		COLPM1 = 0xC013,
+		COLPM2 = 0xC014,
+		COLPM3 = 0xC015,
+		COLPF0 = 0xC016,
+		COLPF1 = 0xC017,
+		COLPF2 = 0xC018,
+		COLPF3 = 0xC019,
+		COLBK  = 0xC01A,
+		PRIOR  = 0xC01B,
+		CONSOL = 0xC01F,
+		DMACTL = 0xD400,
+		CHACTL = 0xD401,
+		DLISTL = 0xD402,
+		DLISTH = 0xD403,
+		CHBASE = 0xD409,
+		NMIEN  = 0xD40E,
+		NMIRES = 0xD40F,
+		AUDF1  = 0xE800,
+		AUDC1  = 0xE801,
+		AUDF2  = 0xE802,
+		AUDC2  = 0xE803,
+		AUDF3  = 0xE804,
+		AUDC3  = 0xE805,
+		AUDF4  = 0xE806,
+		AUDC4  = 0xE807,
+		AUDCTL = 0xE808,
+		IRQST  = 0xE80E,
+		IRQEN  = 0xE80E,
+		SKCTL  = 0xE80F,
+	};
+}
 
 #endif

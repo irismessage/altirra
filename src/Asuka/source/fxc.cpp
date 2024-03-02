@@ -586,6 +586,7 @@ namespace {
 		uint8 mViewportW;
 		uint8 mViewportH;
 		uint8 mBumpEnvScale;
+		uint8 mTileMode;
 		bool mbClipPosition;
 		bool mbRTDoClear;
 		uint32 mRTClearColor;
@@ -760,6 +761,7 @@ void tool_fxc(const vdfastvector<const char *>& args, const vdfastvector<const c
 	fprintf(f, "\tuint8 mViewportW;\n");
 	fprintf(f, "\tuint8 mViewportH;\n");
 	fprintf(f, "\tuint8 mBumpEnvScale;\n");
+	fprintf(f, "\tuint8 mTileMode;\n");
 	fprintf(f, "\tbool mbClipPosition;\n");
 	fprintf(f, "\tbool mbRTDoClear;\n");
 	fprintf(f, "\tuint32 mRTClearColor;\n");
@@ -1027,6 +1029,16 @@ void tool_fxc(const vdfastvector<const char *>& args, const vdfastvector<const c
 				}
 			}
 
+			pi.mTileMode = 0;
+			D3DXHANDLE hTMAnno = pEffect->GetAnnotationByName(hPass, "vd_tilemode");
+			if (hTMAnno) {
+				INT val;
+
+				if (SUCCEEDED(pEffect->GetInt(hTMAnno, &val))) {
+					pi.mTileMode = val;
+				}
+			}
+
 			mPasses.push_back(pi);
 
 			pEffect->EndPass();
@@ -1038,7 +1050,7 @@ void tool_fxc(const vdfastvector<const char *>& args, const vdfastvector<const c
 		fprintf(f, "static const PassInfo g_technique_%s_passes[]={\n", techDesc.Name);
 		for(int i=0; i<(int)passCount; ++i) {
 			const PassInfo& pi = mPasses[i];
-			fprintf(f, "\t{ %d, %d, %d, %d, %d, %d, %d, %d, %s, %s, 0x%08x },\n"
+			fprintf(f, "\t{ %d, %d, %d, %d, %d, %d, %d, %d, %d, %s, %s, 0x%08x },\n"
 				, pi.mVertexShaderIndex
 				, pi.mPixelShaderIndex
 				, pi.mStateStart
@@ -1047,6 +1059,7 @@ void tool_fxc(const vdfastvector<const char *>& args, const vdfastvector<const c
 				, pi.mViewportW
 				, pi.mViewportH
 				, pi.mBumpEnvScale
+				, pi.mTileMode
 				, pi.mbClipPosition ? "true" : "false"
 				, pi.mbRTDoClear ? "true" : "false"
 				, pi.mRTClearColor);

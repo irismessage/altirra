@@ -21,6 +21,7 @@
 	
 	mva		#0	colrsh
 	mva		#$FE	drkmsk
+	mwa		#0	oldadr
 	
 	;set XL/XE PAL/NTSC flag
 	lda		pal
@@ -249,7 +250,6 @@ ScreenTextRows			dta
 		kdb.DINDEX = mode;
 		
 		// clear if requested
-		ScreenRecomputeCursorAddr();
 		if (!(kdb.ICAX1Z & 0x20)) {
 			if (kdb.BOTSCR == 4) {
 				ScreenSwap(true);
@@ -260,7 +260,7 @@ ScreenTextRows			dta
 			ScreenClear();
 		}
 		
-		ScreenToggleCursor();
+		ScreenShowCursor();
 	#}
 
 	;wait for one vertical blank to pass
@@ -562,17 +562,34 @@ void ScreenClear() {
 #>
 
 #<
-void ScreenToggleCursor() {
-	uint16 addr = kdb.OLDADR;
+void ScreenShowCursor() {
+	if (kdb.CRSINH)
+		return;
+
+	int i = kdb.DINDEX & 15;
+	uint16 addr = ScreenComputeCursorAddr();
+	kdb.OLDADR = addr;
 	
 	mpMemory->WriteByte(addr, mpMemory->ReadByte(addr) ^ 0x80);
 }
 #>
 
 #<
-void ScreenRecomputeCursorAddr() {
+void ScreenHideCursor() {
+	uint16 addr = kdb.OLDADR;
+	
+	if (addr < 0x100)
+		return;
+	
+	mpMemory->WriteByte(addr, mpMemory->ReadByte(addr) ^ 0x80);
+	kdb.OLDADR = 0;
+}
+#>
+
+#<
+uint16 ScreenComputeCursorAddr() {
 	int i = kdb.DINDEX & 15;
-	kdb.OLDADR = kdb.SAVMSC + (int)kdb.ROWCRS*kScreenModeBytesPerRow[i] + (kdb.COLCRS >> kScreenModeXShift[i]);
+	return kdb.SAVMSC + (int)kdb.ROWCRS*kScreenModeBytesPerRow[i] + (kdb.COLCRS >> kScreenModeXShift[i]);
 }
 #>
 

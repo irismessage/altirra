@@ -1,14 +1,21 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <toc>
   <t name="Introduction" href="index.html"/>
+  <t name="FAQ" href="faq.html"/>
   <t name="How to use">
     <t name="Getting started" href="getting-started.html"/>
     <t name="Keyboard layout" href="keyboard.html"/>
+    <t name="Configuring input" href="input.html"/>
     <t name="Portable mode" href="portable-mode.html"/>
+  </t>
+  <t name="Debugger">
+    <t name="Starting the debugger" href="debug-intro.html"/>
+    <t name="Source-level debugging" href="debug-source.html"/>
   </t>
   <t name="Reference">
     <t name="Options" href="options.html"/>
     <t name="MyIDE emulation" href="myide.html"/>
+    <t name="Serial port emulation" href="serial.html"/>
   </t>
   <t name="Troubleshooting">
     <t name="General issues" href="troubleshooting.html"/>

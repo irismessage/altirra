@@ -176,8 +176,8 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 
 		case 0x28:	// PLP
 			*mpDstState++ = kStatePop;
-			*mpDstState++ = kStateDtoP;
 			*mpDstState++ = kStateWait;
+			*mpDstState++ = kStateDtoP;
 			*mpDstState++ = kStateWait;
 			break;
 
@@ -269,9 +269,12 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStatePop;
-			*mpDstState++ = kStateDtoP;
+			*mpDstState++ = kStateDtoP_noICheck;
 			*mpDstState++ = kStatePopPCL;
 			*mpDstState++ = kStatePopPCH;
+
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyReturn;
 			break;
 
 		case 0x41:	// EOR (zp,X)
@@ -315,13 +318,6 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			*mpDstState++ = kStateAtoD;
 			*mpDstState++ = kStateLsr;
 			*mpDstState++ = kStateWait;
-			*mpDstState++ = kStateDtoA;
-			break;
-
-		case 0x4B:	// ASR imm
-			*mpDstState++ = kStateAtoD;
-			*mpDstState++ = kStateAnd;
-			*mpDstState++ = kStateLsr;
 			*mpDstState++ = kStateDtoA;
 			break;
 
@@ -401,6 +397,10 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateWait;
+
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyReturn;
+
 			break;
 
 		case 0x61:	// ADC (zp,X)
@@ -515,6 +515,9 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			*mpDstState++ = kStateReadIndAddr;
 			*mpDstState++ = kStateAtoD;
 			*mpDstState++ = kStateWrite;
+
+			if (mbHistoryEnabled)
+				*mpDstState++ = kStateAddEAToHistory;
 			break;
 
 		case 0x84:	// STY zp
@@ -580,9 +583,12 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			*mpDstState++ = kStateReadAddrL;
 			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateReadIndYAddr;
+			*mpDstState++ = kStateReadCarryForced;
 			*mpDstState++ = kStateAtoD;
-			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateWrite;
+
+			if (mbHistoryEnabled)
+				*mpDstState++ = kStateAddEAToHistory;
 			break;
 
 		case 0x94:	// STY zp,X
@@ -616,8 +622,8 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 		case 0x99:	// STA abs,Y
 			*mpDstState++ = kStateReadAddrL;
 			*mpDstState++ = kStateReadAddrHY;
+			*mpDstState++ = kStateReadCarryForced;
 			*mpDstState++ = kStateAtoD;
-			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateWrite;
 			break;
 
@@ -630,16 +636,8 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 		case 0x9D:	// STA abs,X
 			*mpDstState++ = kStateReadAddrL;
 			*mpDstState++ = kStateReadAddrHX;
+			*mpDstState++ = kStateReadCarryForced;
 			*mpDstState++ = kStateAtoD;
-			*mpDstState++ = kStateWait;
-			*mpDstState++ = kStateWrite;
-			break;
-
-		case 0x9E:	// STX abs,Y
-			*mpDstState++ = kStateReadAddrL;
-			*mpDstState++ = kStateReadAddrHY;
-			*mpDstState++ = kStateXtoD;
-			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateWrite;
 			break;
 

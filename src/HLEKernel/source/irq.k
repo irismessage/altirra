@@ -17,6 +17,7 @@
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 .proc IrqRoutine
+	cld
 	jmp		(vimirq)
 .endp
 

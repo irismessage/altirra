@@ -154,3 +154,146 @@ void VDPixmapConvertTextToPath(VDPixmapPathRasterizer& rast, const VDOutlineFont
 		yoffset += step * transform[1][0];
 	}
 }
+
+namespace {
+	void Fill(const VDPixmap& pxdst, int x, int y, int w, int h, uint32 c) {
+		if (x >= pxdst.w || y >= pxdst.h)
+			return;
+
+		if (x < 0) {
+			w += x;
+			x = 0;
+		}
+
+		if (y < 0) {
+			h += y;
+			y = 0;
+		}
+
+		if (w > pxdst.w - x)
+			w = pxdst.w - x;
+
+		if (h > pxdst.h - y)
+			h = pxdst.h - y;
+
+		if (w <= 0 || h <= 0)
+			return;
+
+		switch(pxdst.format) {
+			case nsVDPixmap::kPixFormat_Pal8:
+				VDMemset8Rect((uint8 *)pxdst.data + pxdst.pitch * y + x, pxdst.pitch, (uint8)c, w, h);
+				break;
+
+			case nsVDPixmap::kPixFormat_XRGB8888:
+				VDMemset32Rect((uint8 *)pxdst.data + pxdst.pitch * y + x * 4, pxdst.pitch, c, w, h);
+				break;
+		}
+	}
+}
+
+void VDPixmapDrawText(const VDPixmap& pxdst, const VDBitmapFontInfo *font, int x, int y, uint32 fore, uint32 back, const char *pText) {
+	if (pxdst.format != nsVDPixmap::kPixFormat_Pal8 && pxdst.format != nsVDPixmap::kPixFormat_XRGB8888)
+		return;
+
+	int textWidth = 0;
+
+	for(const char *s = pText; *s; ++s) {
+		uint8 c = *s;
+
+		if (c < font->mStartChar || c > font->mEndChar)
+			textWidth += font->mCellWidth;
+		else
+			textWidth += font->mpPosArray[c - font->mStartChar] & 15;
+
+		textWidth += font->mCellAdvance;
+	}
+
+	Fill(pxdst, x, y, textWidth + font->mCellAdvance, font->mCellHeight + 1, back);
+
+	x += font->mCellAdvance;
+	++y;
+
+	if (x >= pxdst.w || y >= pxdst.h)
+		return;
+
+	if (font->mStartChar > font->mEndChar)
+		return;
+
+	const uint8 *bits = font->mpBitsArray;
+	while(uint8 c = (uint8)*pText++) {
+		if (x >= pxdst.w)
+			break;
+
+		if (c < font->mStartChar || c > font->mEndChar) {
+			x += font->mCellWidth;
+			x += font->mCellAdvance;
+			continue;
+		}
+
+		uint32 posInfo = font->mpPosArray[c - font->mStartChar];
+		int cx = x;
+		int cw = posInfo & 15;
+		int cy = y;
+		int ch = font->mCellHeight;
+
+		x += cw;
+		x += font->mCellAdvance;
+
+		if (posInfo < 16)
+			continue;
+
+		uint32 bitOffset = ((posInfo >> 4) - 1) * font->mCellHeight;
+
+		if (cy < 0) {
+			if (cy < -ch)
+				continue;
+
+			ch += cy;
+			bitOffset += -cy * font->mCellWidth;
+		}
+
+		if (cy + ch > pxdst.h)
+			ch = pxdst.h - cy;
+
+		int cskip = 0;
+		if (cx < 0) {
+			if (cx < -(int)pxdst.w)
+				continue;
+
+			bitOffset += -cx;
+			cskip += -cx;
+			cx = 0;
+		}
+
+		if (cx + cw > pxdst.w) {
+			cskip += cx + cw - pxdst.w;
+			cw = pxdst.w - cx;
+		}
+
+		uint8 *dstrow = (uint8 *)pxdst.data + pxdst.pitch * cy;
+		for(int yi = 0; yi < ch; ++yi) {
+			if (pxdst.format == nsVDPixmap::kPixFormat_Pal8) {
+				uint8 *dst8 = dstrow + cx;
+				for(int xi = 0; xi < cw; ++xi) {
+					if ((sint8)(bits[bitOffset >> 3] << (bitOffset & 7)) < 0)
+						*dst8 = (uint8)fore;
+
+					++dst8;
+					++bitOffset;
+				}
+			} else if (pxdst.format == nsVDPixmap::kPixFormat_XRGB8888) {
+				uint32 *dst32 = (uint32 *)dstrow + cx;
+				for(int xi = 0; xi < cw; ++xi) {
+					if ((sint8)(bits[bitOffset >> 3] << (bitOffset & 7)) < 0)
+						*dst32 = fore;
+
+					++dst32;
+					++bitOffset;
+				}
+			}
+
+			bitOffset += cskip;
+			dstrow += pxdst.pitch;
+		}
+	}
+}

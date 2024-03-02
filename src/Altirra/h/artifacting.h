@@ -46,7 +46,7 @@ protected:
 	void ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
 	void ArtifactNTSCHi(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
 	void BlitNoArtifacts(uint32 dst[N], const uint8 src[N]);
-	void BlendExchange(uint32 dst[N], uint32 blendDst[N]);
+	void BlendExchange(uint32 *dst, uint32 *blendDst, uint32 n);
 
 	void RecomputeNTSCTables(const ATColorParams& params);
 
@@ -71,7 +71,10 @@ protected:
 		uint8 mPALDelayLine32[N*2*3];	// RGB24 @ 14MHz resolution
 	};
 
-	uint32 mPrevFrame[M][N];
+	union {
+		uint32 mPrevFrame7MHz[M][N];
+		uint32 mPrevFrame14MHz[M][N*2];
+	};
 
 	//  NTSC artifacting
 	union {

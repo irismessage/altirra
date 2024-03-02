@@ -36,6 +36,13 @@ struct ATSymbol {
 	uint16	mFileId;
 };
 
+struct ATSymbolInfo {
+	const char *mpName;
+	uint16	mFlags;
+	uint16	mOffset;
+	uint16	mLength;
+};
+
 struct ATSourceLineInfo {
 	uint32	mOffset;
 	uint16	mLine;
@@ -45,7 +52,7 @@ struct ATSourceLineInfo {
 class IATSymbolStore : public IVDRefCount {
 public:
 	virtual uint32	GetDefaultBase() const = 0;
-	virtual uint32	GetDefaultSize() const = 0;
+	virtual uint32	GetDefaultSize() const = 0; 
 	virtual bool	LookupSymbol(uint32 moduleOffset, uint32 flags, ATSymbol& symbol) = 0;
 	virtual sint32	LookupSymbol(const char *name) = 0;
 	virtual const wchar_t *GetFileName(uint16 fileid) = 0;
@@ -54,12 +61,16 @@ public:
 	virtual void	GetLines(uint16 fileId, vdfastvector<ATSourceLineInfo>& lines) = 0;
 	virtual bool	GetLineForOffset(uint32 moduleOffset, ATSourceLineInfo& lineInfo) = 0;
 	virtual bool	GetOffsetForLine(const ATSourceLineInfo& lineInfo, uint32& moduleOffset) = 0;
+
+	virtual uint32	GetSymbolCount() const = 0;
+	virtual void	GetSymbol(uint32 index, ATSymbolInfo& symbol) = 0;
 };
 
 class IATCustomSymbolStore : public IATSymbolStore {
 public:
 	virtual void Load(const wchar_t *filename) = 0;
 	virtual void Init(uint32 moduleBase, uint32 moduleSize) = 0;
+	virtual void RemoveSymbol(uint32 offset) = 0;
 	virtual void AddSymbol(uint32 offset, const char *name, uint32 size = 1, uint32 flags = kATSymbol_Read | kATSymbol_Write | kATSymbol_Execute, uint16 file = 0, uint16 line = 0) = 0;
 	virtual void AddReadWriteRegisterSymbol(uint32 offset, const char *writename, const char *readname = NULL) = 0;
 	virtual uint16 AddFileName(const wchar_t *fileName) = 0;
@@ -67,9 +78,12 @@ public:
 };
 
 bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore);
+bool ATCreateDefaultVariableSymbolStore5200(IATSymbolStore **ppStore);
 bool ATCreateDefaultKernelSymbolStore(IATSymbolStore **ppStore);
 bool ATCreateDefaultHardwareSymbolStore(IATSymbolStore **ppStore);
+bool ATCreateDefault5200HardwareSymbolStore(IATSymbolStore **ppStore);
 bool ATCreateCustomSymbolStore(IATCustomSymbolStore **ppStore);
 bool ATLoadSymbols(const wchar_t *filename, IATSymbolStore **ppStore);
+void ATSaveSymbols(const wchar_t *filename, IATSymbolStore *ppStore);
 
 #endif

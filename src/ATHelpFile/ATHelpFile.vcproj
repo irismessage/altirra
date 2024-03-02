@@ -73,170 +73,74 @@
 			<File
 				RelativePath=".\source\common-errors.xml"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
 			</File>
 			<File
 				RelativePath=".\source\compatibility.xml"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
+			</File>
+			<File
+				RelativePath=".\source\debug-intro.xml"
+				>
+			</File>
+			<File
+				RelativePath=".\source\debug-source.xml"
+				>
 			</File>
 			<File
 				RelativePath=".\source\emulation-accuracy.xml"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
 			</File>
 			<File
 				RelativePath=".\source\faq.xml"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
 			</File>
 			<File
 				RelativePath=".\source\getting-started.xml"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
 			</File>
 			<File
 				RelativePath=".\source\hardware-status.xml"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
 			</File>
 			<File
 				RelativePath=".\source\index.xml"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
+			</File>
+			<File
+				RelativePath=".\source\input.xml"
+				>
 			</File>
 			<File
 				RelativePath=".\source\keyboard.xml"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
 			</File>
 			<File
 				RelativePath=".\source\license.xml"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
 			</File>
 			<File
 				RelativePath=".\source\myide.xml"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
 			</File>
 			<File
 				RelativePath=".\source\options.xml"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
 			</File>
 			<File
 				RelativePath=".\source\portable-mode.xml"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
+			</File>
+			<File
+				RelativePath=".\source\serial.xml"
+				>
 			</File>
 			<File
 				RelativePath=".\source\toc.xml"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
 			</File>
 			<File
 				RelativePath=".\source\troubleshooting.xml"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
 			</File>
 		</Filter>
 		<Filter
@@ -247,26 +151,10 @@
 			<File
 				RelativePath=".\source\index.xsl"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
 			</File>
 			<File
 				RelativePath=".\source\toc.xsl"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
 			</File>
 		</Filter>
 		<Filter
@@ -277,51 +165,19 @@
 			<File
 				RelativePath=".\source\layout.css"
 				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-				</FileConfiguration>
 			</File>
 		</Filter>
 		<File
 			RelativePath=".\source\athelp.hhc"
 			>
-			<FileConfiguration
-				Name="Debug|Win32"
-				>
-			</FileConfiguration>
-			<FileConfiguration
-				Name="Release|Win32"
-				>
-			</FileConfiguration>
 		</File>
 		<File
 			RelativePath=".\source\athelp.hhp"
 			>
-			<FileConfiguration
-				Name="Debug|Win32"
-				>
-			</FileConfiguration>
-			<FileConfiguration
-				Name="Release|Win32"
-				>
-			</FileConfiguration>
 		</File>
 		<File
 			RelativePath=".\source\athelp.hhw"
 			>
-			<FileConfiguration
-				Name="Debug|Win32"
-				>
-			</FileConfiguration>
-			<FileConfiguration
-				Name="Release|Win32"
-				>
-			</FileConfiguration>
 		</File>
 	</Files>
 	<Globals>

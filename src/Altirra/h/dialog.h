@@ -36,6 +36,8 @@ public:
 	vdrect32 GetArea() const;
 	void SetPosition(const vdpoint32& pt);
 
+	void AdjustPosition();
+
 	sintptr ShowDialog(VDGUIHandle hwndParent);
 
 protected:
@@ -51,6 +53,9 @@ protected:
 
 	void SetFocusToControl(uint32 id);
 	void EnableControl(uint32 id, bool enabled);
+	void ShowControl(uint32 id, bool visible);
+
+	vdrect32 GetControlScreenPos(uint32 id);
 
 	void SetCaption(uint32 id, const wchar_t *format);
 
@@ -58,17 +63,22 @@ protected:
 	void SetControlText(uint32 id, const wchar_t *s);
 	void SetControlTextF(uint32 id, const wchar_t *format, ...);
 
+	sint32 GetControlValueSint32(uint32 id);
 	uint32 GetControlValueUint32(uint32 id);
 	double GetControlValueDouble(uint32 id);
 	VDStringW GetControlValueString(uint32 id);
 
 	void ExchangeControlValueBoolCheckbox(bool write, uint32 id, bool& val);
+	void ExchangeControlValueSint32(bool write, uint32 id, sint32& val, sint32 minVal, sint32 maxVal);
 	void ExchangeControlValueUint32(bool write, uint32 id, uint32& val, uint32 minVal, uint32 maxVal);
 	void ExchangeControlValueDouble(bool write, uint32 id, const wchar_t *format, double& val, double minVal, double maxVal);
 	void ExchangeControlValueString(bool write, uint32 id, VDStringW& s);
 
 	void CheckButton(uint32 id, bool checked);
 	bool IsButtonChecked(uint32 id);
+
+	int GetButtonTriState(uint32 id);
+	void SetButtonTriState(uint32 id, int state);
 
 	void BeginValidation();
 	bool EndValidation();
@@ -80,6 +90,8 @@ protected:
 
 	void ShowError(const wchar_t *message, const wchar_t *caption);
 	bool Confirm(const wchar_t *message, const wchar_t *caption);
+
+	int ActivateMenuButton(uint32 id, const wchar_t *const *items);
 
 	// listbox
 	void LBClear(uint32 id);
@@ -98,6 +110,10 @@ protected:
 	sint32 TBGetValue(uint32 id);
 	void TBSetValue(uint32 id, sint32 value);
 	void TBSetRange(uint32 id, sint32 minval, sint32 maxval);
+	void TBSetPageStep(uint32 id, sint32 pageStep);
+
+	// up/down controls
+	void UDSetRange(uint32 id, sint32 minval, sint32 maxval);
 
 protected:
 	virtual VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);

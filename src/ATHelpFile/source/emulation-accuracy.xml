@@ -66,20 +66,17 @@
   </ul>
   <h2>Known issues: GTIA</h2>
   <ul>
-    <li>Players show a slightly incorrect pattern when their width is changed during scan out.</li>
     <li>Incorrect pixels may be shown during the transition when GTIA modes are switched mid-scanline with non-uniform bit patterns.</li>
   </ul>
   <h2>Known issues: POKEY</h2>
   <ul>
     <li>Not all serial port modes are implemented.</li>
     <li>The phases of the 15KHz clock may not be correct if initialization mode is toggled off very briefly (less than 7 cycles).</li>
-    <li>The RANDOM register may produce the wrong pattern offset when the 17-bit PSNR is switched from 9-bit to 17-bit mode.</li>
     <li>The SIO data monitoring bit in SKSTAT only works for cassette transfers, not disk transfers.</li>
     <li>Keyboard IRQs can happen at any offset, instead of relative to the 15KHz clock.</li>
   </ul>
   <h2>Known issues: PIA</h2>
   <ul>
-    <li>PIA interrupts are not implemented.</li>
     <li>Not all PIA control line modes are implemented. (The only ones that are program visible are ones that affect the SIO motor or control lines, or cause interrupts.)</li>
   </ul>
   <h2>Known issues: Video Board XE (VBXE)</h2>

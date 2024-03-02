@@ -105,6 +105,10 @@ ATGTIAEmulator::ATGTIAEmulator()
 	mTRIG[1] = 0x01;
 	mTRIG[2] = 0x01;
 	mTRIG[3] = 0x01;
+	mTRIGLatched[0] = 0x01;
+	mTRIGLatched[1] = 0x01;
+	mTRIGLatched[2] = 0x01;
+	mTRIGLatched[3] = 0x01;
 	SetAnalysisMode(kAnalyzeNone);
 	memset(mPlayerCollFlags, 0, sizeof mPlayerCollFlags);
 	memset(mMissileCollFlags, 0, sizeof mMissileCollFlags);
@@ -128,61 +132,6 @@ ATGTIAEmulator::ATGTIAEmulator()
 	mbForcedBorder = false;
 
 	SetPALMode(false);
-
-#if 0
-	FILE *f = fopen("e:\\g2f\\g2f.act", "rb");
-//	FILE *f = fopen("e:\\g2f\\olivierp.act", "rb");
-	uint8 pal[256][3];
-
-	fread(pal, 768, 1, f);
-	fclose(f);
-
-	ResetColors();
-
-	mColorParams.mContrast = 0.823529f;
-
-	int bestError = 0x7fffffff;
-	float th = 0;
-	for(;;) {
-		ATColorParams cp(mColorParams);
-
-		float scale = sin(th) + 1.0f;
-		th += 0.001f;
-		mColorParams.mBrightness += ((float)rand() / 32767.0f - 0.5f) * 0.1f * scale;
-		mColorParams.mContrast += ((float)rand() / 32767.0f - 0.5f) * 0.1f * scale;
-		mColorParams.mSaturation += ((float)rand() / 32767.0f - 0.5f) * 0.1f * scale;
-		mColorParams.mHueRange += ((float)rand() / 32767.0f - 0.5f) * 10.0f * scale;
-		mColorParams.mHueStart += ((float)rand() / 32767.0f - 0.5f) * 10.0f * scale;
-
-		SetColorParams(mColorParams);
-
-		int e = 0;
-		for(int i=1; i<256; ++i) {
-			uint32 cv = mPalette[i];
-			int r1 = pal[i][0];
-			int g1 = pal[i][1];
-			int b1 = pal[i][2];
-			int r2 = (cv >> 16) & 0xff;
-			int g2 = (cv >>  8) & 0xff;
-			int b2 = (cv >>  0) & 0xff;
-
-			int re = r1 - r2;
-			int ge = g1 - g2;
-			int be = b1 - b2;
-
-			e += re*re + ge*ge + be*be;
-		}
-
-		if (e < bestError) {
-			bestError = e;
-
-			VDDEBUG2("Error %d | Brightness %g | Contrast %g | Saturation %g | HueRange %g | HueStart %g\n"
-				, bestError, mColorParams.mBrightness, mColorParams.mContrast, mColorParams.mSaturation, mColorParams.mHueRange, mColorParams.mHueStart);
-		} else {
-			mColorParams = cp;
-		}
-	}
-#endif
 }
 
 ATGTIAEmulator::~ATGTIAEmulator() {
@@ -618,14 +567,14 @@ void ATGTIAEmulator::SetVBLANK(VBlankMode vblMode) {
 	mVBlankMode = vblMode;
 }
 
-bool ATGTIAEmulator::BeginFrame(bool force) {
+bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 	if (mpFrame)
 		return true;
 
 	if (!mpDisplay)
 		return true;
 
-	if (!mpDisplay->RevokeBuffer(false, ~mpFrame)) {
+	if (!drop && !mpDisplay->RevokeBuffer(false, ~mpFrame)) {
 		if (mpFrameTracker->mActiveFrames < 3) {
 			ATFrameBuffer *fb = new ATFrameBuffer(mpFrameTracker);
 			mpFrame = fb;
@@ -650,6 +599,7 @@ bool ATGTIAEmulator::BeginFrame(bool force) {
 		else
 			fb->mFlags &= ~IVDVideoDisplay::kVSync;
 
+		mbFrameCopiedFromPrev = false;
 		mbPALThisFrame = mbPALMode;
 		mbOverscanPALExtendedThisFrame = mbPALThisFrame && mbOverscanPALExtended;
 		mbPostProcessThisFrame = (mArtifactMode || mbBlendMode) && !mpVBXE;
@@ -659,6 +609,8 @@ bool ATGTIAEmulator::BeginFrame(bool force) {
 		if (mbPostProcessThisFrame) {
 			mPreArtifactFrame.h = mbOverscanPALExtendedThisFrame ? 312 : 262;
 
+			mpArtifactingEngine->BeginFrame(mArtifactMode == kArtifactPAL, mArtifactMode != kArtifactNone, mArtifactMode == kArtifactNTSCHi, mbBlendMode);
+		} else if (mpVBXE && (mArtifactMode == kArtifactPAL || mbBlendMode)) {
 			mpArtifactingEngine->BeginFrame(mArtifactMode == kArtifactPAL, mArtifactMode != kArtifactNone, mArtifactMode == kArtifactNTSCHi, mbBlendMode);
 		}
 
@@ -675,6 +627,7 @@ bool ATGTIAEmulator::BeginFrame(bool force) {
 
 		if (mpFrame->mPixmap.format != format || mpFrame->mPixmap.w != width || mpFrame->mPixmap.h != height) {
 			fb->mBuffer.init(width, height, format);
+			memset(fb->mBuffer.base(), 0, fb->mBuffer.size());
 		}
 
 		fb->mPixmap = fb->mBuffer;
@@ -721,8 +674,17 @@ bool ATGTIAEmulator::BeginFrame(bool force) {
 }
 
 void ATGTIAEmulator::BeginScanline(int y, bool hires) {
+	// flush remaining register changes (required for PRIOR to interact properly with hires)
+	if (mRCIndex < mRCCount)
+		UpdateRegisters(&mRegisterChanges[mRCIndex], mRCCount - mRCIndex);
+
+	mRegisterChanges.clear();
+	mRCCount = 0;
+	mRCIndex = 0;
+
 	mbANTICHiresMode = hires;
 	mbHiresMode = hires && !(mPRIOR & 0xc0);
+	mbGTIADisableTransition = false;
 
 	if ((unsigned)(y - 8) < 240)
 		mbScanlinesWithHiRes[y - 8] = mbHiresMode;
@@ -1036,16 +998,16 @@ void ATGTIAEmulator::SyncTo(int x1, int x2) {
 			Convert160To320(x1, x2, mAnticData, mMergeBuffer);
 	}
 
+	static const uint8 kPFTable[8]={
+		0, 0, 0, 0,
+		PF0, PF1, PF2, PF3,
+	};
+
 	switch(mPRIOR & 0xC0) {
 		case 0x00:
 			break;
 		case 0x80:
 			{
-				static const uint8 kPFTable[8]={
-					0, 0, 0, 0,
-					PF0, PF1, PF2, PF3,
-				};
-
 				for(int x=x1; x<x2; ++x) {
 					const uint8 *ad = &mAnticData[(x - 1) & ~1];
 
@@ -1059,6 +1021,16 @@ void ATGTIAEmulator::SyncTo(int x1, int x2) {
 		case 0xC0:
 			memset(mMergeBuffer + x1, 0, (x2 - x1));
 			break;
+	}
+
+	if (mbGTIADisableTransition) {
+		mbGTIADisableTransition = false;
+
+		// The effects of the GTIA ANx latches are still in effect, which causes the low
+		// two bits to be repeated.
+
+		if (mMergeBuffer[x1])
+			mMergeBuffer[x1] = kPFTable[4 + mAnticData[x1 - 1]];
 	}
 
 	uint8 *dst = mMergeBuffer;
@@ -1276,13 +1248,16 @@ void ATGTIAEmulator::RenderActivityMap(const uint8 *src) {
 	}
 }
 
-void ATGTIAEmulator::UpdateScreen(bool immediate) {
-	if (!mpFrame)
+void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
+	if (!mpFrame) {
+		if (forceAnyScreen && mpLastFrame)
+			mpDisplay->SetSourcePersistent(true, mpLastFrame->mPixmap);
 		return;
+	}
 
 	ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 
-	if (mY < 261) {
+	if (immediate) {
 		const VDPixmap& pxdst = mbPostProcessThisFrame ? mPreArtifactFrame : fb->mBuffer;
 		uint32 x = mpConn->GTIAGetXClock();
 
@@ -1308,17 +1283,22 @@ void ATGTIAEmulator::UpdateScreen(bool immediate) {
 				y += 16;
 		}
 
-		uint8 *row = (uint8 *)pxdst.data + y*pxdst.pitch;
+		if (y < (uint32)pxdst.h) {
+			uint8 *row = (uint8 *)pxdst.data + y*pxdst.pitch;
 
-		if (mpVBXE) {
-			VDMemset32(row, 0x00, 4*x);
-			VDMemset32(row + x*4*4, 0xFFFF00, 912 - 4*x);
-		} else if (mb14MHzThisFrame) {
-			VDMemset8(row, 0x00, 4*x);
-			VDMemset8(row + x*4, 0xFF, 912 - 4*x);
-		} else {
-			VDMemset8(row, 0x00, 2*x);
-			VDMemset8(row + x*2, 0xFF, 456 - 2*x);
+			if (mpVBXE) {
+				VDMemset32(row, 0x00, 4*x);
+				VDMemset32(row + x*4*4, 0xFFFF00, 912 - 4*x);
+			} else {
+				VDMemset8(row, 0x00, 2*x);
+				VDMemset8(row + x*2, 0xFF, 456 - 2*x);
+			}
+		}
+
+		if (!mbFrameCopiedFromPrev && !mbPostProcessThisFrame && mpLastFrame && y+1 < (uint32)pxdst.h) {
+			mbFrameCopiedFromPrev = true;
+
+			VDPixmapBlt(fb->mBuffer, 0, y+1, static_cast<ATFrameBuffer *>(&*mpLastFrame)->mBuffer, 0, y+1, pxdst.w, pxdst.h - (y + 1));
 		}
 
 		ApplyArtifacting();
@@ -1355,6 +1335,11 @@ void ATGTIAEmulator::UpdateScreen(bool immediate) {
 
 		if (mpUIRenderer)
 			mpUIRenderer->Render(mpFrame->mPixmap, mPalette);
+
+		if (mbTurbo)
+			mpFrame->mFlags |= IVDVideoDisplay::kDoNotWait;
+		else
+			mpFrame->mFlags &= ~IVDVideoDisplay::kDoNotWait;
 
 		mpDisplay->PostBuffer(mpFrame);
 
@@ -1405,7 +1390,7 @@ uint8 ATGTIAEmulator::ReadByte(uint8 reg) {
 		case 0x11:
 		case 0x12:
 		case 0x13:
-			return mTRIG[reg - 0x10];
+			return (mGRACTL & 4) ? mTRIGLatched[reg - 0x10] : mTRIG[reg - 0x10];
 		case 0x14:
 			return mbPALMode ? 0x01 : 0x0F;
 		case 0x15:
@@ -1502,14 +1487,27 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 			return;
 
 		case 0x1D:
+			if (mGRACTL & ~value & 4) {
+				mTRIGLatched[0] = mTRIG[0];
+				mTRIGLatched[1] = mTRIG[1];
+				mTRIGLatched[2] = mTRIG[2];
+				mTRIGLatched[3] = mTRIG[3];
+			}
+
 			mGRACTL = value;
 			return;
 
 		case 0x1F:		// $D01F CONSOL
 			{
 				uint8 newConsol = value & 0x0F;
-				if ((newConsol ^ mSwitchOutput) & 8)
-					mpConn->GTIASetSpeaker(0 != (newConsol & 8));
+				uint8 delta = newConsol ^ mSwitchOutput;
+				if (delta) {
+					if (delta & 8)
+						mpConn->GTIASetSpeaker(0 != (newConsol & 8));
+
+					if (delta & 7)
+						mpConn->GTIASelectController(newConsol & 3, (newConsol & 4) != 0);
+				}
 				mSwitchOutput = newConsol;
 			}
 			return;
@@ -1533,7 +1531,7 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 		case 0x0A:	// $D00A SIZEP2
 		case 0x0B:	// $D00B SIZEP3
 		case 0x0C:	// $D00C SIZEM
-			AddRegisterChange(xpos + 3, reg, value);
+			AddRegisterChange(xpos + 4, reg, value);
 			break;
 		case 0x0D:	// $D00D GRAFP0
 		case 0x0E:	// $D00E GRAFP1
@@ -1544,14 +1542,27 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 			break;
 
 		case 0x1B:	// $D01B PRIOR
-			AddRegisterChange(xpos + 3, reg, value);
+
+			// PRIOR is quite an annoying register, since several of its components
+			// take effect at different stages in the color pipeline:
+			//
+			//	|			|			|			|			|			|
+			//	|			B->	PFx	----B-> priA ---B-> priB ---B->color----B-> output
+			//	|			|	decode	|	 ^		|	 ^		|  lookup	|     ^
+			//	|			|			|  pri0-3	|   5th		|			|	  |
+			//	|			|			|			|  player	| mode 9/11	B-----/
+			//	|			|			|			|			|	enable	|
+			//	|			|			|			|			|			|
+			//	2			1			2			1			2			1
+
+			AddRegisterChange(xpos + 2, reg, value);
 			if (mpVBXE)
-				mpVBXE->AddRegisterChange(xpos + 3, reg, value);
+				mpVBXE->AddRegisterChange(xpos + 1, reg, value);
 			else
-				mpRenderer->AddRegisterChange(xpos + 3, reg, value);
+				mpRenderer->AddRegisterChange(xpos + 1, reg, value);
 			break;
 
-		case 0x1E:
+		case 0x1E:	// $D01E HITCLR
 			AddRegisterChange(xpos + 3, reg, value);
 			break;
 	}
@@ -1559,7 +1570,7 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 
 void ATGTIAEmulator::ApplyArtifacting() {
 	if (mpVBXE) {
-		if (mArtifactMode == kArtifactPAL) {
+		if (mArtifactMode == kArtifactPAL || mbBlendMode) {
 			ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 			char *dstrow = (char *)fb->mBuffer.data;
 			ptrdiff_t dstpitch = fb->mBuffer.pitch;
@@ -1652,26 +1663,55 @@ void ATGTIAEmulator::UpdateRegisters(const RegisterChange *rc, int count) {
 			case 0x05:	mMissilePos[1] = value;			break;
 			case 0x06:	mMissilePos[2] = value;			break;
 			case 0x07:	mMissilePos[3] = value;			break;
+
 			case 0x08:
-				value &= 3;
-				mPlayerSize[0] = value;
-				mPlayerWidth[0] = kPlayerWidths[value];
-				break;
 			case 0x09:
-				value &= 3;
-				mPlayerSize[1] = value;
-				mPlayerWidth[1] = kPlayerWidths[value];
-				break;
 			case 0x0A:
-				value &= 3;
-				mPlayerSize[2] = value;
-				mPlayerWidth[2] = kPlayerWidths[value];
-				break;
 			case 0x0B:
-				value &= 3;
-				mPlayerSize[3] = value;
-				mPlayerWidth[3] = kPlayerWidths[value];
+				{
+					int idx = rc->mReg & 3;
+
+					static const uint8 kSizeMap[4]={0,1,0,3};
+
+					const uint8 newSize = kSizeMap[value & 3];
+
+					const uint8 oldSize = mPlayerSize[idx];
+					if (newSize != oldSize) {
+						// Check if we are in the middle of shifting out the player. If so, we need to
+						// change the trigger position to reflect the correct shift position.
+						const uint32 tpos = mPlayerTriggerPos[idx];
+						if (tpos) {
+							static const int kBitShifts[4] = {2,1,2,0};
+
+							const uint32 offset = rc->mPos - tpos;
+							int shiftedBits = offset << kBitShifts[mPlayerSize[idx]];
+
+							static const int kPerturb1[4]={
+								1, 2, 3, 0
+							};
+
+							static const int kPerturb2[4]={
+								-2, -2, -1, -1
+							};
+
+							if (newSize == 1 && oldSize == 3)
+								shiftedBits += kPerturb1[shiftedBits & 3];
+							else if (newSize == 3 && oldSize == 1)
+								shiftedBits += kPerturb2[shiftedBits & 2];
+							else if (newSize == 0 && oldSize == 3)
+								shiftedBits += 3;
+							else if (newSize == 0 && oldSize == 1)
+								shiftedBits++;
+
+							mPlayerTriggerPos[idx] = rc->mPos - (shiftedBits >> kBitShifts[newSize]);
+						}
+
+						mPlayerSize[idx] = newSize;
+						mPlayerWidth[idx] = kPlayerWidths[newSize];
+					}
+				}
 				break;
+
 			case 0x0C:
 				mMissileSize = value;
 				mMissileWidth[0] = kMissileWidths[(value >> 0) & 3];
@@ -1696,6 +1736,9 @@ void ATGTIAEmulator::UpdateRegisters(const RegisterChange *rc, int count) {
 				break;
 
 			case 0x1B:
+				if (!(value & 0xc0) && (mPRIOR & 0xc0))
+					mbGTIADisableTransition = true;
+
 				mPRIOR = value;
 
 				if (value & 0xC0)

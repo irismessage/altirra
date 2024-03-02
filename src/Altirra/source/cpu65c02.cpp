@@ -348,7 +348,51 @@ bool ATCPUEmulator::Decode65C02(uint8 opcode) {
 			*mpDstState++ = kStateJccFalseRead;
 			break;
 
+		case 0x02:	// Reserved NOP (2 bytes, 2 cycles)
+		case 0x22:
+		//case 0x42:	We use this as an escape.
+		case 0x62:
+		case 0x82:
+		case 0xC2:
+		case 0xE2:
+			*mpDstState++ = kStateReadImm;
+			break;
+
+		case 0x44:	// Reserved NOP (2 bytes, 3 cycles)
+			*mpDstState++ = kStateReadImm;
+			*mpDstState++ = kStateWait;
+			break;
+
+		case 0x54:	// Reserved NOP (2 bytes, 4 cycles)
+		case 0xD4:
+		case 0xF4:
+			*mpDstState++ = kStateReadImm;
+			*mpDstState++ = kStateWait;
+			*mpDstState++ = kStateWait;
+			break;
+
+		case 0x5C:	// Reserved NOP (3 bytes, 8 cycles)
+			*mpDstState++ = kStateReadImm;
+			*mpDstState++ = kStateReadImm;
+			*mpDstState++ = kStateWait;
+			*mpDstState++ = kStateWait;
+			*mpDstState++ = kStateWait;
+			*mpDstState++ = kStateWait;
+			*mpDstState++ = kStateWait;
+			break;
+
+		case 0xDC:	// Reserved NOP (3 bytes, 4 cycles)
+			*mpDstState++ = kStateReadImm;
+			*mpDstState++ = kStateReadImm;
+			*mpDstState++ = kStateWait;
+			break;
+
 		default:
+			if ((opcode & 0x03) == 0x03) {
+				// Reserved NOP (1 byte, 1 cycle)
+				return true;
+			}
+
 			return false;
 	}
 

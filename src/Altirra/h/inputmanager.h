@@ -32,21 +32,16 @@ class ATPaddleController;
 class IATJoystickManager;
 class ATScheduler;
 class VDRegistryKey;
+class ATLightPenPort;
 
 class IATInputConsoleCallback {
 public:
 	virtual void SetConsoleTrigger(uint32 id, bool state) = 0;
 };
 
-enum ATInputMode {
-	kATInputMode_None,
-	kATInputMode_JoyKeys,
-	kATInputMode_Mouse,
-	kATInputMode_Paddle,
-	kATInputMode_Count
-};
-
 enum ATInputCode {
+	kATInputCode_None			= 0x00,
+
 	kATInputCode_KeyBack		= 0x08,		// VK_BACK
 	kATInputCode_KeyTab			= 0x09,		// VK_TAB
 	kATInputCode_KeyReturn		= 0x0D,		// VK_RETURN
@@ -62,8 +57,20 @@ enum ATInputCode {
 	kATInputCode_KeyDown		= 0x28,		// VK_DOWN
 	kATInputCode_KeyInsert		= 0x2D,		// VK_INSERT
 	kATInputCode_KeyDelete		= 0x2E,		// VK_DELETE
-	kATInputCode_0				= 0x30,		// VK_0
-	kATInputCode_A				= 0x41,		// VK_A
+	kATInputCode_Key0			= 0x30,		// VK_0
+	kATInputCode_Key1			= 0x31,		//
+	kATInputCode_Key2			= 0x32,		//
+	kATInputCode_Key3			= 0x33,		//
+	kATInputCode_Key4			= 0x34,		//
+	kATInputCode_Key5			= 0x35,		//
+	kATInputCode_Key6			= 0x36,		//
+	kATInputCode_Key7			= 0x37,		//
+	kATInputCode_Key8			= 0x38,		//
+	kATInputCode_Key9			= 0x39,		//
+	kATInputCode_KeyA			= 0x41,		// VK_A
+	kATInputCode_KeyP			= 0x50,		//
+	kATInputCode_KeyR			= 0x52,		//
+	kATInputCode_KeyS			= 0x53,		//
 	kATInputCode_KeyNumpad0		= 0x60,		// VK_NUMPAD0
 	kATInputCode_KeyNumpad1		= 0x61,		// VK_NUMPAD1
 	kATInputCode_KeyNumpad2		= 0x62,		// VK_NUMPAD2
@@ -108,8 +115,13 @@ enum ATInputCode {
 	kATInputCode_KeyOem7		= 0xDE,		// VK_OEM_7  //  ''"' for US
 	kATInputCode_KeyNumpadEnter	= 0x10D,	// VK_RETURN (extended)
 
+	kATInputCode_MouseClass		= 0x1000,
 	kATInputCode_MouseHoriz		= 0x1000,
 	kATInputCode_MouseVert		= 0x1001,
+	kATInputCode_MousePadX		= 0x1002,
+	kATInputCode_MousePadY		= 0x1003,
+	kATInputCode_MouseBeamX		= 0x1004,
+	kATInputCode_MouseBeamY		= 0x1005,
 	kATInputCode_MouseLeft		= 0x1100,
 	kATInputCode_MouseRight		= 0x1101,
 	kATInputCode_MouseUp		= 0x1102,
@@ -148,6 +160,15 @@ enum ATInputCode {
 	kATInputCode_JoyButton0		= 0x2800,
 
 	kATInputCode_ClassMask		= 0xF000,
+	kATInputCode_IdMask			= 0xFFFF,
+
+	kATInputCode_FlagCheck0		= 0x00010000,
+	kATInputCode_FlagCheck1		= 0x00020000,
+	kATInputCode_FlagCheckMask	= 0x00030000,
+	kATInputCode_FlagValue0		= 0x00040000,
+	kATInputCode_FlagValue1		= 0x00080000,
+	kATInputCode_FlagValueMask	= 0x000C0000,
+	kATInputCode_FlagMask		= 0x000F0000,
 
 	kATInputCode_SpecificUnit	= 0x80000000,
 	kATInputCode_UnitScale		= 0x01000000,
@@ -159,7 +180,12 @@ enum ATInputControllerType {
 	kATInputControllerType_Joystick,
 	kATInputControllerType_Paddle,
 	kATInputControllerType_Mouse,
-	kATInputControllerType_Console
+	kATInputControllerType_Console,
+	kATInputControllerType_5200Controller,
+	kATInputControllerType_InputState,
+	kATInputControllerType_LightPen,
+	kATInputControllerType_Tablet,
+	kATInputControllerType_KoalaPad
 };
 
 struct atfixedhash_basenode {
@@ -368,7 +394,7 @@ public:
 	ATInputManager();
 	~ATInputManager();
 
-	void Init(ATScheduler *scheduler, ATPortController *porta, ATPortController *portb);
+	void Init(ATScheduler *fastScheduler, ATScheduler *slowScheduler, ATPortController *porta, ATPortController *portb, ATLightPenPort *lightPen);
 	void Shutdown();
 
 	void ResetToDefaults();
@@ -376,7 +402,8 @@ public:
 	IATInputConsoleCallback *GetConsoleCallback() const { return mpCB; }
 	void SetConsoleCallback(IATInputConsoleCallback *cb) { mpCB = cb; }
 
-	void SwapPorts(int p1, int p2);
+	void Select5200Controller(int index, bool potsEnabled);
+
 	void Poll();
 
 	int GetInputUnitCount() const;
@@ -386,12 +413,16 @@ public:
 	void UnregisterInputUnit(int unit);
 
 	bool IsInputMapped(int unit, uint32 inputCode) const;
-	bool IsMouseMapped() const;
+	bool IsMouseMapped() const { return mbMouseMapped; }
+	bool IsMouseAbsoluteMode() const { return mbMouseAbsMode; }
 
 	void OnButtonDown(int unit, int id);
 	void OnButtonUp(int unit, int id);
-	void OnAxisInput(int unit, int axis, sint32 value);
+	void OnAxisInput(int unit, int axis, sint32 value, sint32 deadifiedValue);
 	void OnMouseMove(int unit, int dx, int dy);
+	void SetMouseBeamPos(int x, int y);
+	void SetMousePadPos(int x, int y);
+	void ActivateFlag(uint32 id, bool state);
 
 	void GetNameForInputCode(uint32 code, VDStringW& name) const;
 	void GetNameForTargetCode(uint32 code, VDStringW& name) const;
@@ -404,25 +435,58 @@ public:
 	void RemoveAllInputMaps();
 	void ActivateInputMap(ATInputMap *imap, bool enable);
 
+	uint32 GetPresetInputMapCount() const;
+	bool GetPresetInputMapByIndex(uint32 index, ATInputMap **imap) const;
+
 	bool Load(VDRegistryKey& key);
 	void Save(VDRegistryKey& key);
 
 protected:
+	struct Mapping;
+
 	void ReconfigurePorts();
 	void RebuildMappings();
 	void ActivateMappings(uint32 id, bool state);
+	void ActivateAnalogMappings(uint32 id, int ds, int dsdead);
 	void ActivateImpulseMappings(uint32 id, int ds);
 	void ClearTriggers();
-	void SetTrigger(uint32 id, bool state);
+	void SetTrigger(Mapping& mapping, bool state);
+	void Update5200Controller();
+	void InitPresetMaps();
 
-	ATScheduler *mpScheduler;
+	ATScheduler *mpSlowScheduler;
+	ATScheduler *mpFastScheduler;
+	ATLightPenPort *mpLightPen;
 	ATPortController *mpPorts[2];
 	IATInputConsoleCallback *mpCB;
+	int m5200ControllerIndex;
+	bool mb5200PotsEnabled;
+	bool mbMouseAbsMode;
+	bool mbMouseMapped;
+
+	uint32 mMouseAvgQueue[4];
+	int mMouseAvgIndex;
 
 	typedef atfixedhash<int, uint32, 64> Buttons;
 	Buttons mButtons;
 
-	typedef std::multimap<uint32, uint32> Mappings;
+	struct Mapping {
+		uint32 mTriggerIdx;
+		uint32 mFlagIndex1;
+		uint32 mFlagIndex2;
+		bool mbFlagValue1;
+		bool mbFlagValue2;
+		bool mbMotionActive;
+		bool mbTriggerActivated;
+		int mValue;
+		int mAccel;
+		int mDamping;
+	};
+
+	typedef vdfastvector<bool> Flags;
+	Flags mFlags;
+
+	typedef std::multimap<uint32, Mapping> Mappings;
 	Mappings mMappings;
 
 	struct Trigger {
@@ -443,6 +507,9 @@ protected:
 	uint32	mAllocatedUnits;
 	ATInputUnitIdentifier mUnitIds[32];
 	VDStringW	mUnitNames[32];
+
+	typedef vdfastvector<ATInputMap *> PresetMaps;
+	PresetMaps mPresetMaps;
 };
 
 #endif	// f_AT_INPUTMANAGER_H

@@ -16,11 +16,12 @@ public:
 	~ATIDEEmulator();
 
 	void Init(ATScheduler *mpScheduler, IATUIRenderer *uirenderer);
-	void OpenImage(bool write, uint32 cylinders, uint32 heads, uint32 sectors, const wchar_t *filename);
+	void OpenImage(bool write, bool fast, uint32 cylinders, uint32 heads, uint32 sectors, const wchar_t *filename);
 	void CloseImage();
 
 	const wchar_t *GetImagePath() const;
 	bool IsWriteEnabled() const { return mbWriteEnabled; }
+	bool IsFastDevice() const { return mbFastDevice; }
 	uint32 GetImageSizeMB() const { return mSectorCount >> 11; }
 	uint32 GetCylinderCount() const { return mCylinderCount; }
 	uint32 GetHeadCount() const { return mHeadCount; }
@@ -67,6 +68,7 @@ protected:
 	uint32 mSectorsPerTrack;
 	uint32 mHeadCount;
 	uint32 mCylinderCount;
+	uint32 mIODelaySetting;
 	uint32 mTransferIndex;
 	uint32 mTransferLength;
 	uint32 mTransferSectorCount;
@@ -77,6 +79,7 @@ protected:
 	bool mbTransferAsWrites;
 	bool mbTransfer16Bit;
 	bool mbWriteEnabled;
+	bool mbFastDevice;
 
 	vdfastvector<uint8> mTransferBuffer;
 

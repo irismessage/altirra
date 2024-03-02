@@ -19,9 +19,9 @@
 #define f_AT_AUDIOWRITER_H
 
 #include <vd2/system/file.h>
-#include "pokey.h"
+#include "audiooutput.h"
 
-class ATAudioWriter : public IATPokeyAudioTap {
+class ATAudioWriter : public IATAudioTap {
 	ATAudioWriter(const ATAudioWriter&);
 	ATAudioWriter& operator=(const ATAudioWriter&);
 public:

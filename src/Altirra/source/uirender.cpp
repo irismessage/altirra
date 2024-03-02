@@ -17,240 +17,23 @@
 
 #include "stdafx.h"
 #include <vd2/system/math.h>
+#include <vd2/system/VDString.h>
 #include <vd2/Kasumi/pixmap.h>
+#include <vd2/Kasumi/text.h>
 #include "uirender.h"
+#include "font3x5.inl"
+#include "font5x8p.inl"
 
 namespace {
-	static const uint8 kCharData[15][7][4]={
-#define X 0xFF
-		{
-			X,X,X,X,
-			X,X,0,X,
-			X,0,X,0,
-			X,0,X,0,
-			X,0,X,0,
-			X,X,0,X,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,X,0,X,
-			X,0,0,X,
-			X,X,0,X,
-			X,X,0,X,
-			X,0,0,0,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,0,0,X,
-			X,X,X,0,
-			X,X,0,X,
-			X,0,X,X,
-			X,0,0,0,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,0,0,X,
-			X,X,X,0,
-			X,X,0,X,
-			X,X,X,0,
-			X,0,0,X,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,0,X,0,
-			X,0,X,0,
-			X,0,0,0,
-			X,X,X,0,
-			X,X,X,0,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,0,0,0,
-			X,0,X,X,
-			X,0,0,X,
-			X,X,X,0,
-			X,0,0,X,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,X,0,0,
-			X,0,X,X,
-			X,0,0,X,
-			X,0,X,0,
-			X,X,0,X,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,0,0,0,
-			X,X,X,0,
-			X,X,0,X,
-			X,X,0,X,
-			X,X,0,X,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,X,0,X,
-			X,0,X,0,
-			X,X,0,X,
-			X,0,X,0,
-			X,X,0,X,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,X,0,X,
-			X,0,X,0,
-			X,X,0,0,
-			X,X,X,0,
-			X,0,0,X,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,X,0,0,
-			X,0,X,X,
-			X,0,X,X,
-			X,0,X,X,
-			X,X,0,0,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,0,0,X,
-			X,0,X,0,
-			X,0,0,X,
-			X,0,X,0,
-			X,0,X,0,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,X,X,X,
-			X,X,0,X,
-			X,X,X,X,
-			X,X,0,X,
-			X,X,X,X,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,0,X,0,
-			X,0,X,0,
-			X,0,0,0,
-			X,0,0,0,
-			X,0,X,0,
-			X,X,X,X,
-		},
-		{
-			X,X,X,X,
-			X,0,X,0,
-			X,0,X,0,
-			X,0,0,0,
-			X,0,X,0,
-			X,0,X,0,
-			X,X,X,X,
-		},
-#undef X
-	};
-
 	void DrawString8(const VDPixmap& px, const uint32 *palette, int x, int y, uint8 forecolor, uint8 backcolor, const char *str) {
-		size_t len = strlen(str);
-		int w = px.w;
-		int h = px.h;
+		uint32 fc = forecolor;
+		uint32 bc = backcolor;
+		if (px.format == nsVDPixmap::kPixFormat_XRGB8888) {
+			fc = palette[fc];
+			bc = palette[bc];
+		}
 
-		if (x >= w || y >= h || y <= -7)
-			return;
-
-		int y1 = y < 0 ? -y : 0;
-		int y2 = y > h - 7 ? h - y : 7;
-		uint8 xorcolor = forecolor ^ backcolor;
-
-		for(;;) {
-			const uint8 *data = NULL;
-
-			if (!len) {
-				if (x < 0 || x >= w)
-					break;
-
-				uint8 *dst = (uint8 *)px.data + px.pitch * (y + y1);
-
-				if (px.format == nsVDPixmap::kPixFormat_XRGB8888) {
-					for(int yi = y1; yi < y2; ++yi) {
-						((uint32 *)dst)[x] = palette[backcolor];
-						dst += px.pitch;
-					}
-				} else {
-					for(int yi = y1; yi < y2; ++yi) {
-						dst[x] = backcolor;
-						dst += px.pitch;
-					}
-				}
-
-				break;
-			}
-
-			--len;
-			const char c = *str++;
-
-			if (c >= '0' && c <= '9')
-				data = kCharData[c - '0'][0];
-			else if (c == 'C')
-				data = kCharData[10][0];
-			else if (c == 'R')
-				data = kCharData[11][0];
-			else if (c == ':')
-				data = kCharData[12][0];
-			else if (c == 'W')
-				data = kCharData[13][0];
-			else if (c == 'H')
-				data = kCharData[14][0];
-
-			if (data) {
-				int x1 = 0;
-				int x2 = 4;
-
-				if (x < 0)
-					x1 = -x;
-
-				if (x > w - 4)
-					x2 = w - x;
-
-				const uint8 *src = data + 5 * y1;
-				uint8 *dst = (uint8 *)px.data + px.pitch * (y + y1);
-
-				if (px.format == nsVDPixmap::kPixFormat_XRGB8888) {
-					for(int yi = y1; yi < y2; ++yi) {
-						uint32 *dstrow = (uint32 *)dst;
-
-						for(int xi = x1; xi < x2; ++xi) {
-							dstrow[x + xi] = palette[forecolor ^ (src[xi] & xorcolor)];
-						}
-
-						src += 4;
-						dst += px.pitch;
-					}
-				} else {
-					for(int yi = y1; yi < y2; ++yi) {
-						for(int xi = x1; xi < x2; ++xi) {
-							dst[x + xi] = forecolor ^ (src[xi] & xorcolor);
-						}
-
-						src += 4;
-						dst += px.pitch;
-					}
-				}
-			}
-
-			x += 4;
-		} 
+		VDPixmapDrawText(px, &g_ATFont5x8p_FontInfo, x, y, fc, bc, str);
 	}
 }
 
@@ -267,6 +50,7 @@ public:
 
 	void SetHActivity(bool write);
 	void SetIDEActivity(bool write, uint32 lba);
+	void SetFlashWriteActivity();
 
 	void SetCassetteIndicatorVisible(bool vis) { mbShowCassetteIndicator = vis; }
 	void SetCassettePosition(float pos);
@@ -274,12 +58,17 @@ public:
 	void SetRecordingPosition() { mRecordingPos = -1; }
 	void SetRecordingPosition(float time) { mRecordingPos = time; }
 
+	void SetModemConnection(const char *str) { mModemConnection = str; }
+
+	void SetWatchedValue(int index, uint32 value, int len);
+	void SetAudioStatus(ATUIAudioStatus *status);
+
 	void Render(const VDPixmap& px, const uint32 *palette);
 
 protected:
 	uint32	mStatusFlags;
 	uint32	mStickyStatusFlags;
-	uint32	mStatusCounter[8];
+	uint32	mStatusCounter[15];
 	float	mCassettePos;
 	float	mRecordingPos;
 	bool	mbShowCassetteIndicator;
@@ -292,6 +81,15 @@ protected:
 
 	uint8	mHReadCounter;
 	uint8	mHWriteCounter;
+	uint8	mFlashWriteCounter;
+
+	VDStringA	mModemConnection;
+
+	uint32	mWatchedValues[8];
+	uint8	mWatchedValueLens[8];
+
+	bool	mbShowAudioStatus;
+	ATUIAudioStatus mAudioStatus;
 };
 
 void ATCreateUIRenderer(IATUIRenderer **r) {
@@ -312,15 +110,15 @@ ATUIRenderer::ATUIRenderer()
 	, mHardDiskCounter(0)
 	, mHReadCounter(0)
 	, mHWriteCounter(0)
+	, mFlashWriteCounter(0)
+	, mbShowAudioStatus(false)
 {
-	mStatusCounter[0] = 1;
-	mStatusCounter[1] = 2;
-	mStatusCounter[2] = 3;
-	mStatusCounter[3] = 4;
-	mStatusCounter[4] = 5;
-	mStatusCounter[5] = 6;
-	mStatusCounter[6] = 7;
-	mStatusCounter[7] = 8;
+	for(int i=0; i<15; ++i) {
+		mStatusCounter[i] = i+1;
+	}
+
+	for(int i=0; i<8; ++i)
+		mWatchedValueLens[i] = 0;
 }
 
 ATUIRenderer::~ATUIRenderer() {
@@ -353,8 +151,28 @@ void ATUIRenderer::SetIDEActivity(bool write, uint32 lba) {
 	mHardDiskLBA = lba;
 }
 
+void ATUIRenderer::SetFlashWriteActivity() {
+	mFlashWriteCounter = 20;
+}
+
 void ATUIRenderer::SetCassettePosition(float pos) {
 	mCassettePos = pos;
+}
+
+void ATUIRenderer::SetWatchedValue(int index, uint32 value, int len) {
+	if (index >= 0 && index < 8) {
+		mWatchedValues[index] = value;
+		mWatchedValueLens[index] = len;
+	}
+}
+
+void ATUIRenderer::SetAudioStatus(ATUIAudioStatus *status) {
+	if (status) {
+		mAudioStatus = *status;
+		mbShowAudioStatus = true;
+	} else {
+		mbShowAudioStatus = false;
+	}
 }
 
 void ATUIRenderer::Render(const VDPixmap& pxdst, const uint32 *palette) {
@@ -362,15 +180,30 @@ void ATUIRenderer::Render(const VDPixmap& pxdst, const uint32 *palette) {
 	mStickyStatusFlags = mStatusFlags;
 
 	int x = pxdst.w;
-	int y = pxdst.h - 7;
+	int y = pxdst.h - 9;
 
-	for(int i = 7; i >= 0; --i) {
+	char buf[128];
+
+	if (mbShowAudioStatus) {
+		sprintf(buf, "Underflow count: %d ", mAudioStatus.mUnderflowCount);
+		DrawString8(pxdst, palette, 16, 16, 0x0F, 0x00, buf);
+		sprintf(buf, "Overflow count: %d ", mAudioStatus.mOverflowCount);
+		DrawString8(pxdst, palette, 16, 24, 0x0F, 0x00, buf);
+		sprintf(buf, "Drop count: %d ", mAudioStatus.mDropCount);
+		DrawString8(pxdst, palette, 16, 32, 0x0F, 0x00, buf);
+		sprintf(buf, "Measured range: %5d-%5d ", mAudioStatus.mMeasuredMin, mAudioStatus.mMeasuredMax);
+		DrawString8(pxdst, palette, 16, 40, 0x0F, 0x00, buf);
+		sprintf(buf, "Target range: %5d-%5d ", mAudioStatus.mTargetMin, mAudioStatus.mTargetMax);
+		DrawString8(pxdst, palette, 16, 48, 0x0F, 0x00, buf);
+		sprintf(buf, "Incoming data rate: %.2f samples/sec", mAudioStatus.mIncomingRate);
+		DrawString8(pxdst, palette, 16, 56, 0x0F, 0x00, buf);
+	}
+
+	for(int i = 14; i >= 0; --i) {
 		if (statusFlags & (1 << i)) {
-			char buf[11];
-
 			sprintf(buf, "%u", mStatusCounter[i]);
 
-			x -= 4 * strlen(buf) + 1;
+			x -= 5 * strlen(buf) + 1;
 
 			DrawString8(pxdst, palette, x, y, 0, 0x1F + (i << 5), buf);
 		} else {
@@ -378,13 +211,25 @@ void ATUIRenderer::Render(const VDPixmap& pxdst, const uint32 *palette) {
 		}
 	}
 
-	if (statusFlags & 0x100) {
+	const bool showAllIndicators = false;
+	if (showAllIndicators) {
+		statusFlags = 0x10000;
+		mShowCassetteIndicatorCounter = 1;
+		mRecordingPos = 10000;
+		mHReadCounter = 4;
+		mHWriteCounter = 4;
+		mFlashWriteCounter = 30;
+		mbHardDiskRead = true;
+		mbHardDiskWrite = true;
+		mHardDiskLBA = 1000000;
+	}
+
+	if (statusFlags & 0x10000) {
 		DrawString8(pxdst, palette, 0, y, 0, 0x9F, "C");
 		mShowCassetteIndicatorCounter = 60;
 	} else if (mbShowCassetteIndicator)
 		mShowCassetteIndicatorCounter = 60;
 
-	char buf[64];
 	if (mShowCassetteIndicatorCounter) {
 		--mShowCassetteIndicatorCounter;
 
@@ -396,9 +241,25 @@ void ATUIRenderer::Render(const VDPixmap& pxdst, const uint32 *palette) {
 		mins %= 60;
 
 		sprintf(buf, "%02u:%02u:%02u", hours, mins, secs);
-		DrawString8(pxdst, palette, 5, y, 0x94, 0, buf);
+		DrawString8(pxdst, palette, 7, y, 0x94, 0, buf);
 	}
 
+	// draw IDE indicators
+	if (mHReadCounter || mHWriteCounter) {
+		DrawString8(pxdst, palette, 48, y, 0x00, 0xB4, "H:  ");
+
+		if (mHReadCounter) {
+			--mHReadCounter;
+			DrawString8(pxdst, palette, 58, y, mHReadCounter >= 25 ? 0xFF : 0x00, 0xB4, "R");
+		}
+
+		if (mHWriteCounter) {
+			--mHWriteCounter;
+			DrawString8(pxdst, palette, 64, y, mHWriteCounter >= 25 ? 0xFF : 0x00, 0xB4, "W");
+		}
+	}
+
+	// draw recording position
 	if (mRecordingPos > 0) {
 		int cpos = VDRoundToInt(mRecordingPos);
 
@@ -408,12 +269,13 @@ void ATUIRenderer::Render(const VDPixmap& pxdst, const uint32 *palette) {
 		mins %= 60;
 
 		sprintf(buf, "R%02u:%02u:%02u", hours, mins, secs);
-		DrawString8(pxdst, palette, 66, y, 0x0f, 0x34, buf);
+		DrawString8(pxdst, palette, 72, y, 0x0f, 0x34, buf);
 	}
 
+	// draw H: indicators
 	if (mbHardDiskRead || mbHardDiskWrite) {
 		sprintf(buf, "%c%u", mbHardDiskWrite ? 'W' : 'R', mHardDiskLBA);
-		DrawString8(pxdst, palette, 110, y, 0x00, 0xDC, buf);
+		DrawString8(pxdst, palette, 116, y, 0x00, 0xDC, buf);
 
 		if (!--mHardDiskCounter) {
 			mbHardDiskRead = false;
@@ -421,17 +283,35 @@ void ATUIRenderer::Render(const VDPixmap& pxdst, const uint32 *palette) {
 		}
 	}
 
-	if (mHReadCounter || mHWriteCounter) {
-		DrawString8(pxdst, palette, 48, y, 0x00, 0xB4, "H:  ");
+	// draw flash write counter
+	if (mFlashWriteCounter) {
+		--mFlashWriteCounter;
 
-		if (mHReadCounter) {
-			--mHReadCounter;
-			DrawString8(pxdst, palette, 56, y, mHReadCounter >= 25 ? 0xFF : 0x00, 0xB4, "R");
+		DrawString8(pxdst, palette, 180, y, 0x00, 0x38, "F");
+	}
+
+	// draw modem connection
+	if (!mModemConnection.empty()) {
+		DrawString8(pxdst, palette, 1, y - 10, 0x78, 0x70, mModemConnection.c_str());
+	}
+
+	// draw watched values
+	for(int i=0; i<8; ++i) {
+		int len = mWatchedValueLens[i];
+		if (!len)
+			continue;
+
+		int y = pxdst.h - 6*12 + i*8;
+
+		switch(len) {
+			case 1:
+				sprintf(buf, "%02X", mWatchedValues[i]);
+				break;
+			case 2:
+				sprintf(buf, "%04X", mWatchedValues[i]);
+				break;
 		}
 
-		if (mHWriteCounter) {
-			--mHWriteCounter;
-			DrawString8(pxdst, palette, 60, y, mHWriteCounter >= 25 ? 0xFF : 0x00, 0xB4, "W");
-		}
+		DrawString8(pxdst, palette, 64, y, 0xFF, 0x00, buf);
 	}
 }

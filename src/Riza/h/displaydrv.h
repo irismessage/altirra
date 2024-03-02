@@ -55,7 +55,8 @@ public:
 		kModeFirstField	= 0x00000008,
 		kModeBobEven	= 0x00000100,
 		kModeBobOdd		= 0x00000200,
-		kModeAll		= 0x0000030f
+		kModeDoNotWait	= 0x00000800,
+		kModeAll		= 0x00000f0f
 	};
 
 	enum FilterMode {

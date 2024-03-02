@@ -2,7 +2,7 @@
 #define f_AT_VIDEOWRITER_H
 
 #include "gtia.h"
-#include "pokey.h"
+#include "audiooutput.h"
 
 struct VDPixmap;
 class VDFraction;
@@ -14,11 +14,11 @@ enum ATVideoEncoding {
 	kATVideoEncodingCount
 };
 
-class IATVideoWriter : public IATGTIAVideoTap, public IATPokeyAudioTap {
+class IATVideoWriter : public IATGTIAVideoTap, public IATAudioTap {
 public:
 	virtual ~IATVideoWriter() {}
 
-	virtual void Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, const VDFraction& samplingRate, bool stereo, double timestampRate, IATUIRenderer *r) = 0;
+	virtual void Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, IATUIRenderer *r) = 0;
 	virtual void Shutdown() = 0;
 };
 

@@ -57,6 +57,7 @@ void ATGTIARenderer::SetVBlank(bool vblank) {
 void ATGTIARenderer::BeginScanline(uint8 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires) {
 	mpDst = dst;
 	mbHiresMode = hires;
+	mbGTIAEnableTransition = false;
 	mX = mbVBlank ? 34 : 0;
 	mpMergeBuffer = mergeBuffer;
 	mpAnticBuffer = anticBuffer;
@@ -89,6 +90,15 @@ void ATGTIARenderer::RenderScanline(int xend, bool pmgraphics) {
 			} while(++mRCIndex < mRCCount);
 
 			UpdateRegisters(rc0, rc - rc0);
+		}
+
+		if (mbGTIAEnableTransition) {
+			mbGTIAEnableTransition = false;
+
+			RenderMode8(x1, x1+1);
+
+			if (++x1 >= x2)
+				continue;
 		}
 
 		// 40 column mode is set by ANTIC during horizontal blank if ANTIC modes 2, 3, or
@@ -295,6 +305,9 @@ void ATGTIARenderer::UpdateRegisters(const RegisterChange *rc, int count) {
 			mColorTable[kColorBAK] = value;
 			break;
 		case 0x1B:
+			if ((value & 0xc0) && !(mPRIOR & 0xc0))
+				mbGTIAEnableTransition = true;
+
 			mPRIOR = value;
 			mpPriTable = mPriorityTables[(value & 15) + (value&32 ? 16 : 0)];
 

@@ -28,14 +28,21 @@
 #include "symbols.h"
 #include "ksyms.h"
 
+class ATSymbolFileParsingException : public MyError {
+public:
+	ATSymbolFileParsingException(int line) : MyError("Symbol file parsing failed at line %d.", line) {}
+};
+
 class ATSymbolStore : public vdrefcounted<IATCustomSymbolStore> {
 public:
 	ATSymbolStore();
 	~ATSymbolStore();
 
 	void Load(const wchar_t *filename);
+	void Save(const wchar_t *filename);
 
 	void Init(uint32 moduleBase, uint32 moduleSize);
+	void RemoveSymbol(uint32 offset);
 	void AddSymbol(uint32 offset, const char *name, uint32 size = 1, uint32 flags = kATSymbol_Read | kATSymbol_Write | kATSymbol_Execute, uint16 fileid = 0, uint16 lineno = 0);
 	void AddReadWriteRegisterSymbol(uint32 offset, const char *writename, const char *readname = NULL);
 	uint16 AddFileName(const wchar_t *filename);
@@ -51,9 +58,13 @@ public:
 	void	GetLines(uint16 fileId, vdfastvector<ATSourceLineInfo>& lines);
 	bool	GetLineForOffset(uint32 moduleOffset, ATSourceLineInfo& lineInfo);
 	bool	GetOffsetForLine(const ATSourceLineInfo& lineInfo, uint32& moduleOffset);
+	uint32	GetSymbolCount() const;
+	void	GetSymbol(uint32 index, ATSymbolInfo& symbol);
 
 protected:
+	void LoadSymbols(VDTextStream& ifile);
 	void LoadCC65Labels(VDTextStream& ifile);
+	void LoadLabels(VDTextStream& ifile);
 	void LoadMADSListing(VDTextStream& ifile);
 	void LoadKernelListing(VDTextStream& ifile);
 
@@ -64,6 +75,20 @@ protected:
 		uint8	mSize;
 		uint16	mFileId;
 		uint16	mLine;
+	};
+
+	struct SymEqPred {
+		bool operator()(const Symbol& sym, uint32 offset) const {
+			return sym.mOffset == offset;
+		}
+
+		bool operator()(uint32 offset, const Symbol& sym) const {
+			return offset == sym.mOffset;
+		}
+
+		bool operator()(const Symbol& sym1, const Symbol& sym2) const {
+			return sym1.mOffset == sym2.mOffset;
+		}
 	};
 
 	struct SymSort {
@@ -117,8 +142,13 @@ void ATSymbolStore::Load(const wchar_t *filename) {
 
 		const char *line = ts.GetNextLine();
 
-		if (!strncmp(line, "mads ", 5)) {
+		if (!strncmp(line, "mads ", 5) || !strncmp(line, "xasm ", 5)) {
 			LoadMADSListing(ts);
+			return;
+		}
+
+		if (!strncmp(line, "Altirra symbol file", 19)) {
+			LoadSymbols(ts);
 			return;
 		}
 
@@ -130,8 +160,14 @@ void ATSymbolStore::Load(const wchar_t *filename) {
 
 	VDTextStream ts2(&fs);
 
-	if (!vdwcsicmp(VDFileSplitExt(filename), L".lbl")) {
+	const wchar_t *ext = VDFileSplitExt(filename);
+	if (!vdwcsicmp(ext, L".lbl")) {
 		LoadCC65Labels(ts2);
+		return;
+	}
+
+	if (!vdwcsicmp(ext, L".lab")) {
+		LoadLabels(ts2);
 		return;
 	}
 
@@ -141,6 +177,18 @@ void ATSymbolStore::Load(const wchar_t *filename) {
 void ATSymbolStore::Init(uint32 moduleBase, uint32 moduleSize) {
 	mModuleBase = moduleBase;
 	mModuleSize = moduleSize;
+}
+
+void ATSymbolStore::RemoveSymbol(uint32 offset) {
+	if (mbSymbolsNeedSorting) {
+		std::sort(mSymbols.begin(), mSymbols.end(), SymSort());
+		mbSymbolsNeedSorting = false;
+	}
+
+	Symbols::iterator it(std::lower_bound(mSymbols.begin(), mSymbols.end(), offset, SymSort()));
+
+	if (it != mSymbols.end() && it->mOffset == offset)
+		mSymbols.erase(it);
 }
 
 void ATSymbolStore::AddSymbol(uint32 offset, const char *name, uint32 size, uint32 flags, uint16 fileid, uint16 lineno) {
@@ -319,6 +367,130 @@ bool ATSymbolStore::GetOffsetForLine(const ATSourceLineInfo& lineInfo, uint32& m
 	return true;
 }
 
+uint32 ATSymbolStore::GetSymbolCount() const {
+	return mSymbols.size();
+}
+
+void ATSymbolStore::GetSymbol(uint32 index, ATSymbolInfo& symbol) {
+	const Symbol& sym = mSymbols[index];
+
+	symbol.mpName	= mNameBytes.data() + sym.mNameOffset;
+	symbol.mFlags	= sym.mFlags;
+	symbol.mOffset	= sym.mOffset;
+	symbol.mLength	= sym.mSize;
+}
+
+void ATSymbolStore::LoadSymbols(VDTextStream& ifile) {
+	enum {
+		kStateNone,
+		kStateSymbols
+	} state = kStateNone;
+
+	mModuleBase = 0;
+	mModuleSize = 0x10000;
+
+	int lineno = 0;
+	while(const char *line = ifile.GetNextLine()) {
+		++lineno;
+
+		while(*line == ' ' || *line == '\t')
+			++line;
+
+		// skip comments
+		if (*line == ';')
+			continue;
+
+		// skip blank lines
+		if (!*line)
+			continue;
+
+		// check for group
+		if (*line == '[') {
+			const char *groupStart = ++line;
+
+			while(*line != ']') {
+				if (!*line)
+					throw ATSymbolFileParsingException(lineno);
+				++line;
+			}
+
+			VDStringSpanA groupName(groupStart, line);
+
+			if (groupName == "symbols")
+				state = kStateSymbols;
+			else
+				state = kStateNone;
+
+			continue;
+		}
+
+		if (state == kStateSymbols) {
+			// rwx address,length name
+			uint32 rwxflags = 0;
+			for(;;) {
+				char c = *line++;
+
+				if (!c)
+					throw ATSymbolFileParsingException(lineno);
+
+				if (c == ' ' || c == '\t')
+					break;
+
+				if (c == 'r')
+					rwxflags |= kATSymbol_Read;
+				else if (c == 'w')
+					rwxflags |= kATSymbol_Write;
+				else if (c == 'x')
+					rwxflags |= kATSymbol_Execute;
+			}
+
+			if (!rwxflags)
+				throw ATSymbolFileParsingException(lineno);
+
+			while(*line == ' ' || *line == '\t')
+				++line;
+
+			char *end;
+			unsigned long address = strtoul(line, &end, 16);
+
+			if (line == end)
+				throw ATSymbolFileParsingException(lineno);
+
+			line = end;
+
+			if (*line++ != ',')
+				throw ATSymbolFileParsingException(lineno);
+
+			unsigned long length = strtoul(line, &end, 16);
+			if (line == end)
+				throw ATSymbolFileParsingException(lineno);
+
+			line = end;
+
+			while(*line == ' ' || *line == '\t')
+				++line;
+
+			const char *nameStart = line;
+
+			while(*line != ' ' && *line != '\t' && *line != ';' && *line)
+				++line;
+
+			if (line == nameStart)
+				throw ATSymbolFileParsingException(lineno);
+
+			const char *nameEnd = line;
+
+			while(*line == ' ' || *line == '\t')
+				++line;
+
+			if (*line && *line != ';')
+				throw ATSymbolFileParsingException(lineno);
+
+			AddSymbol(address, VDStringA(nameStart, nameEnd).c_str(), length);
+		}
+	}
+}
+
 void ATSymbolStore::LoadCC65Labels(VDTextStream& ifile) {
 	VDStringA label;
 
@@ -350,6 +522,37 @@ void ATSymbolStore::LoadCC65Labels(VDTextStream& ifile) {
 	mModuleSize = 0x10000;
 }
 
+void ATSymbolStore::LoadLabels(VDTextStream& ifile) {
+	VDStringA label;
+
+	while(const char *line = ifile.GetNextLine()) {
+		unsigned long addr;
+		int nameoffset;
+		char namecheck;
+
+		if (2 != sscanf(line, "%6lx %n%c", &addr, &nameoffset, &namecheck))
+			continue;
+
+		const char *labelStart = line + nameoffset;
+		const char *labelEnd = labelStart;
+
+		for(;;) {
+			char c = *labelEnd;
+
+			if (!c || c == ' ' || c == '\t' || c == '\n' || c== '\r')
+				break;
+
+			++labelEnd;
+		}
+
+		label.assign(labelStart, labelEnd);
+		AddSymbol(addr, label.c_str());
+	}
+
+	mModuleBase = 0;
+	mModuleSize = 0x10000;	
+}
+
 void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 	uint16 fileid = 0;
 
@@ -364,11 +567,13 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 	typedef vdfastvector<std::pair<int, int> > LastLines;
 	LastLines lastLines;
 	int nextline = 1;
+	bool macroMode = false;
 
 	while(const char *line = ifile.GetNextLine()) {
 		char space0;
 		int origline;
 		int address;
+		int address2;
 		char dummy;
 		char space1;
 		char space2;
@@ -376,13 +581,19 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 		char space4;
 		int op;
 
-		if (!strncmp(line, "Source: ", 8)) {
-			if (fileid)
-				lastLines.push_back(LastLines::value_type(nextline, fileid));
+		if (!strncmp(line, "Macro: ", 7)) {
+			macroMode = true;
+		} else if (!strncmp(line, "Source: ", 8)) {
+			if (macroMode)
+				macroMode = false;
+			else {
+				if (fileid)
+					lastLines.push_back(LastLines::value_type(nextline, fileid));
 
-			fileid = AddFileName(VDTextAToW(line+8).c_str());
-			mode = kModeSource;
-			nextline = 1;
+				fileid = AddFileName(VDTextAToW(line+8).c_str());
+				mode = kModeSource;
+				nextline = 1;
+			}
 
 			continue;
 		} else if (!strncmp(line, "Label table:", 12)) {
@@ -391,6 +602,9 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 		}
 
 		if (mode == kModeSource) {
+			if (macroMode)
+				continue;
+
 			bool valid = false;
 
 			if (2 == sscanf(line, "%c%5d", &space0, &origline)
@@ -412,7 +626,19 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 					nextline = origline + 1;
 				}
 
+				// 105 1088 8D ...
+				// 131 2000-201F> 00 ...
 				if (7 == sscanf(line, "%c%5d%c%4x%c%2x%c", &space0, &origline, &space1, &address, &space2, &op, &space3)
+					&& space0 == ' '
+					&& space1 == ' '
+					&& space2 == ' '
+					&& (space3 == ' ' || space3 == '\t'))
+				{
+					if (fileid && origline > 0)
+						AddSourceLine(fileid, origline, address);
+
+					valid = true;
+				} else if (8 == sscanf(line, "%c%5d%c%4x-%4x>%c%2x%c", &space0, &origline, &space1, &address, &address2, &space2, &op, &space3)
 					&& space0 == ' '
 					&& space1 == ' '
 					&& space2 == ' '
@@ -446,12 +672,28 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 				mLineToOffset.insert(LineToOffset::value_type(key, address));
 			}
 		} else if (mode == kModeLabels) {
-			int pos1;
-			int pos2;
-			if (3 == sscanf(line, "%2x %4x %n%c%*s%n", &op, &address, &pos1, &dummy, &pos2)) {
-				label.assign(line + pos1, line + pos2);
+			// MADS:
+			// 00      11A3    DLI
+			//
+			// xasm:
+			//         2000 MAIN
 
-				AddSymbol(address, label.c_str());
+			if (isdigit((unsigned char)line[0])) {
+				int pos1;
+				int pos2;
+				if (3 == sscanf(line, "%2x %4x %n%c%*s%n", &op, &address, &pos1, &dummy, &pos2)) {
+					label.assign(line + pos1, line + pos2);
+
+					AddSymbol(address, label.c_str());
+				}
+			} else {
+				int pos1;
+				int pos2;
+				if (2 == sscanf(line, "%4x %n%c%*s%n", &address, &pos1, &dummy, &pos2)) {
+					label.assign(line + pos1, line + pos2);
+
+					AddSymbol(address, label.c_str());
+				}
 			}
 		}
 	}
@@ -629,6 +871,48 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	return true;
 }
 
+bool ATCreateDefaultVariableSymbolStore5200(IATSymbolStore **ppStore) {
+	vdrefptr<ATSymbolStore> symstore(new ATSymbolStore);
+
+	symstore->Init(0x0000, 0x0400);
+
+	using namespace ATKernelSymbols5200;
+	symstore->AddSymbol(POKMSK, "POKMSK", 1);
+	symstore->AddSymbol(RTCLOK, "RTCLOK", 1);
+	symstore->AddSymbol(CRITIC, "CRITIC", 1);
+	symstore->AddSymbol(ATRACT, "ATRACT", 1);
+	symstore->AddSymbol(SDMCTL, "SDMCTL", 1);
+	symstore->AddSymbol(SDLSTL, "SDLSTL", 1);
+	symstore->AddSymbol(SDLSTH, "SDLSTH", 1);
+	symstore->AddSymbol(PCOLR0, "PCOLR0", 1);
+	symstore->AddSymbol(PCOLR1, "PCOLR1", 1);
+	symstore->AddSymbol(PCOLR2, "PCOLR2", 1);
+	symstore->AddSymbol(PCOLR3, "PCOLR3", 1);
+	symstore->AddSymbol(COLOR0, "COLOR0", 1);
+	symstore->AddSymbol(COLOR1, "COLOR1", 1);
+	symstore->AddSymbol(COLOR2, "COLOR2", 1);
+	symstore->AddSymbol(COLOR3, "COLOR3", 1);
+	symstore->AddSymbol(COLOR4, "COLOR4", 1);
+
+	symstore->AddSymbol(VIMIRQ, "VIMIRQ", 1);
+	symstore->AddSymbol(VVBLKI, "VVBLKI", 1);
+	symstore->AddSymbol(VVBLKD, "VVBLKD", 1);
+	symstore->AddSymbol(VDSLST, "VDSLST", 1);
+	symstore->AddSymbol(VTRIGR, "VTRIGR", 1);
+	symstore->AddSymbol(VBRKOP, "VBRKOP", 1);
+	symstore->AddSymbol(VKYBDI, "VKYBDI", 1);
+	symstore->AddSymbol(VKYBDF, "VKYBDF", 1);
+	symstore->AddSymbol(VSERIN, "VSERIN", 1);
+	symstore->AddSymbol(VSEROR, "VSEROR", 1);
+	symstore->AddSymbol(VSEROC, "VSEROC", 1);
+	symstore->AddSymbol(VTIMR1, "VTIMR1", 1);
+	symstore->AddSymbol(VTIMR2, "VTIMR2", 1);
+	symstore->AddSymbol(VTIMR4, "VTIMR4", 1);
+
+	*ppStore = symstore.release();
+	return true;
+}
+
 bool ATCreateDefaultKernelSymbolStore(IATSymbolStore **ppStore) {
 	using namespace ATKernelSymbols;
 
@@ -684,78 +968,123 @@ bool ATCreateDefaultKernelSymbolStore(IATSymbolStore **ppStore) {
 	return true;
 }
 
+namespace {
+	struct HardwareSymbol {
+		uint32 mOffset;
+		const char *mpWriteName;
+		const char *mpReadName;
+	};
+
+	static const HardwareSymbol kGTIASymbols[]={
+		{ 0x00, "HPOSP0", "M0PF" },
+		{ 0x01, "HPOSP1", "M1PF" },
+		{ 0x02, "HPOSP2", "M2PF" },
+		{ 0x03, "HPOSP3", "M3PF" },
+		{ 0x04, "HPOSM0", "P0PF" },
+		{ 0x05, "HPOSM1", "P1PF" },
+		{ 0x06, "HPOSM2", "P2PF" },
+		{ 0x07, "HPOSM3", "P3PF" },
+		{ 0x08, "SIZEP0", "M0PL" },
+		{ 0x09, "SIZEP1", "M1PL" },
+		{ 0x0A, "SIZEP2", "M2PL" },
+		{ 0x0B, "SIZEP3", "M3PL" },
+		{ 0x0C, "SIZEM", "P0PL" },
+		{ 0x0D, "GRAFP0", "P1PL" },
+		{ 0x0E, "GRAFP1", "P2PL" },
+		{ 0x0F, "GRAFP2", "P3PL" },
+		{ 0x10, "GRAFP3", "TRIG0" },
+		{ 0x11, "GRAFM", "TRIG1" },
+		{ 0x12, "COLPM0", "TRIG2" },
+		{ 0x13, "COLPM1", "TRIG3" },
+		{ 0x14, "COLPM2", "PAL" },
+		{ 0x15, "COLPM3", NULL },
+		{ 0x16, "COLPF0" },
+		{ 0x17, "COLPF1" },
+		{ 0x18, "COLPF2" },
+		{ 0x19, "COLPF3" },
+		{ 0x1A, "COLBK" },
+		{ 0x1B, "PRIOR" },
+		{ 0x1C, "VDELAY" },
+		{ 0x1D, "GRACTL" },
+		{ 0x1E, "HITCLR" },
+		{ 0x1F, "CONSOL", "CONSOL" },
+	};
+
+	static const HardwareSymbol kPOKEYSymbols[]={
+		{ 0x00, "AUDF1", "POT0" },
+		{ 0x01, "AUDC1", "POT1" },
+		{ 0x02, "AUDF2", "POT2" },
+		{ 0x03, "AUDC2", "POT3" },
+		{ 0x04, "AUDF3", "POT4" },
+		{ 0x05, "AUDC3", "POT5" },
+		{ 0x06, "AUDF4", "POT6" },
+		{ 0x07, "AUDC4", "POT7" },
+		{ 0x08, "AUDCTL", "ALLPOT" },
+		{ 0x09, "STIMER", "KBCODE" },
+		{ 0x0A, "SKRES", "RANDOM" },
+		{ 0x0B, "POTGO" },
+		{ 0x0D, "SEROUT", "SERIN" },
+		{ 0x0E, "IRQEN", "IRQST" },
+		{ 0x0F, "SKCTL", "SKSTAT" },
+	};
+
+	static const HardwareSymbol kPIASymbols[]={
+		{ 0x00, "PORTA" },
+		{ 0x01, "PORTB" },
+		{ 0x02, "PACTL" },
+		{ 0x03, "PBCTL" },
+	};
+
+	static const HardwareSymbol kANTICSymbols[]={
+		{ 0x00, "DMACTL" },
+		{ 0x01, "CHACTL" },
+		{ 0x02, "DLISTL" },
+		{ 0x03, "DLISTH" },
+		{ 0x04, "HSCROL" },
+		{ 0x05, "VSCROL" },
+		{ 0x07, "PMBASE" },
+		{ 0x09, "CHBASE" },
+		{ 0x0A, "WSYNC" },
+		{ 0x0B, NULL, "VCOUNT" },
+		{ 0x0C, NULL, "PENH" },
+		{ 0x0D, NULL, "PENV" },
+		{ 0x0E, "NMIEN" },
+		{ 0x0F, "NMIRES", "NMIST" },
+	};
+
+	void AddHardwareSymbols(ATSymbolStore *store, uint32 base, const HardwareSymbol *sym, uint32 n) {
+		while(n--) {
+			store->AddReadWriteRegisterSymbol(base + sym->mOffset, sym->mpWriteName, sym->mpReadName);
+			++sym;
+		}
+	}
+
+	template<size_t N>
+	inline void AddHardwareSymbols(ATSymbolStore *store, uint32 base, const HardwareSymbol (&syms)[N]) {
+		AddHardwareSymbols(store, base, syms, N);
+	}
+}
+
 bool ATCreateDefaultHardwareSymbolStore(IATSymbolStore **ppStore) {
 	vdrefptr<ATSymbolStore> symstore(new ATSymbolStore);
 
 	symstore->Init(0xD000, 0x0500);
-	symstore->AddReadWriteRegisterSymbol(0xD000, "HPOSP0", "M0PF");
-	symstore->AddReadWriteRegisterSymbol(0xD001, "HPOSP1", "M1PF");
-	symstore->AddReadWriteRegisterSymbol(0xD002, "HPOSP2", "M2PF");
-	symstore->AddReadWriteRegisterSymbol(0xD003, "HPOSP3", "M3PF");
-	symstore->AddReadWriteRegisterSymbol(0xD004, "HPOSM0", "P0PF");
-	symstore->AddReadWriteRegisterSymbol(0xD005, "HPOSM1", "P1PF");
-	symstore->AddReadWriteRegisterSymbol(0xD006, "HPOSM2", "P2PF");
-	symstore->AddReadWriteRegisterSymbol(0xD007, "HPOSM3", "P3PF");
-	symstore->AddReadWriteRegisterSymbol(0xD008, "SIZEP0", "M0PL");
-	symstore->AddReadWriteRegisterSymbol(0xD009, "SIZEP1", "M1PL");
-	symstore->AddReadWriteRegisterSymbol(0xD00A, "SIZEP2", "M2PL");
-	symstore->AddReadWriteRegisterSymbol(0xD00B, "SIZEP3", "M3PL");
-	symstore->AddReadWriteRegisterSymbol(0xD00C, "SIZEM", "P0PL");
-	symstore->AddReadWriteRegisterSymbol(0xD00D, "GRAFP0", "P1PL");
-	symstore->AddReadWriteRegisterSymbol(0xD00E, "GRAFP1", "P2PL");
-	symstore->AddReadWriteRegisterSymbol(0xD00F, "GRAFP2", "P3PL");
-	symstore->AddReadWriteRegisterSymbol(0xD010, "GRAFP3", "TRIG0");
-	symstore->AddReadWriteRegisterSymbol(0xD011, "GRAFM", "TRIG1");
-	symstore->AddReadWriteRegisterSymbol(0xD012, "COLPM0", "TRIG2");
-	symstore->AddReadWriteRegisterSymbol(0xD013, "COLPM1", "TRIG3");
-	symstore->AddReadWriteRegisterSymbol(0xD014, "COLPM2", "PAL");
-	symstore->AddReadWriteRegisterSymbol(0xD015, "COLPM3", NULL);
-	symstore->AddReadWriteRegisterSymbol(0xD016, "COLPF0");
-	symstore->AddReadWriteRegisterSymbol(0xD017, "COLPF1");
-	symstore->AddReadWriteRegisterSymbol(0xD018, "COLPF2");
-	symstore->AddReadWriteRegisterSymbol(0xD019, "COLPF3");
-	symstore->AddReadWriteRegisterSymbol(0xD01A, "COLBK");
-	symstore->AddReadWriteRegisterSymbol(0xD01B, "PRIOR");
-	symstore->AddReadWriteRegisterSymbol(0xD01C, "VDELAY");
-	symstore->AddReadWriteRegisterSymbol(0xD01D, "GRACTL");
-	symstore->AddReadWriteRegisterSymbol(0xD01E, "HITCLR");
-	symstore->AddReadWriteRegisterSymbol(0xD01F, "CONSOL", "CONSOL");
+	AddHardwareSymbols(symstore, 0xD000, kGTIASymbols);
+	AddHardwareSymbols(symstore, 0xD200, kPOKEYSymbols);
+	AddHardwareSymbols(symstore, 0xD300, kPIASymbols);
+	AddHardwareSymbols(symstore, 0xD400, kANTICSymbols);
 
-	symstore->AddReadWriteRegisterSymbol(0xD200, "AUDF1", "POT0");
-	symstore->AddReadWriteRegisterSymbol(0xD201, "AUDC1", "POT1");
-	symstore->AddReadWriteRegisterSymbol(0xD202, "AUDF2", "POT2");
-	symstore->AddReadWriteRegisterSymbol(0xD203, "AUDC2", "POT3");
-	symstore->AddReadWriteRegisterSymbol(0xD204, "AUDF3", "POT4");
-	symstore->AddReadWriteRegisterSymbol(0xD205, "AUDC3", "POT5");
-	symstore->AddReadWriteRegisterSymbol(0xD206, "AUDF4", "POT6");
-	symstore->AddReadWriteRegisterSymbol(0xD207, "AUDC4", "POT7");
-	symstore->AddReadWriteRegisterSymbol(0xD208, "AUDCTL", "ALLPOT");
-	symstore->AddReadWriteRegisterSymbol(0xD209, "STIMER", "KBCODE");
-	symstore->AddReadWriteRegisterSymbol(0xD20A, "SKRES", "RANDOM");
-	symstore->AddReadWriteRegisterSymbol(0xD20B, "POTGO");
-	symstore->AddReadWriteRegisterSymbol(0xD20D, "SEROUT", "SERIN");
-	symstore->AddReadWriteRegisterSymbol(0xD20E, "IRQEN", "IRQST");
-	symstore->AddReadWriteRegisterSymbol(0xD20F, "SKCTL", "SKSTAT");
+	*ppStore = symstore.release();
+	return true;
+}
 
-	symstore->AddReadWriteRegisterSymbol(0xD300, "PORTA");
-	symstore->AddReadWriteRegisterSymbol(0xD301, "PORTB");
-	symstore->AddReadWriteRegisterSymbol(0xD302, "PACTL");
-	symstore->AddReadWriteRegisterSymbol(0xD303, "PBCTL");
+bool ATCreateDefault5200HardwareSymbolStore(IATSymbolStore **ppStore) {
+	vdrefptr<ATSymbolStore> symstore(new ATSymbolStore);
 
-	symstore->AddReadWriteRegisterSymbol(0xD400, "DMACTL");
-	symstore->AddReadWriteRegisterSymbol(0xD401, "CHACTL");
-	symstore->AddReadWriteRegisterSymbol(0xD402, "DLISTL");
-	symstore->AddReadWriteRegisterSymbol(0xD403, "DLISTH");
-	symstore->AddReadWriteRegisterSymbol(0xD404, "HSCROL");
-	symstore->AddReadWriteRegisterSymbol(0xD405, "VSCROL");
-	symstore->AddReadWriteRegisterSymbol(0xD407, "PMBASE");
-	symstore->AddReadWriteRegisterSymbol(0xD409, "CHBASE");
-	symstore->AddReadWriteRegisterSymbol(0xD40A, "WSYNC");
-	symstore->AddReadWriteRegisterSymbol(0xD40B, NULL, "VCOUNT");
-	symstore->AddReadWriteRegisterSymbol(0xD40C, NULL, "PENH");
-	symstore->AddReadWriteRegisterSymbol(0xD40D, NULL, "PENV");
-	symstore->AddReadWriteRegisterSymbol(0xD40E, "NMIEN");
-	symstore->AddReadWriteRegisterSymbol(0xD40F, "NMIRES", "NMIST");
+	symstore->Init(0xC000, 0x3000);
+	AddHardwareSymbols(symstore, 0xC000, kGTIASymbols);
+	AddHardwareSymbols(symstore, 0xE800, kPOKEYSymbols);
+	AddHardwareSymbols(symstore, 0xD400, kANTICSymbols);
 
 	*ppStore = symstore.release();
 	return true;
@@ -780,4 +1109,33 @@ bool ATLoadSymbols(const wchar_t *sym, IATSymbolStore **outsymbols) {
 
 	*outsymbols = symbols.release();
 	return true;
+}
+
+void ATSaveSymbols(const wchar_t *filename, IATSymbolStore *syms) {
+	VDFileStream fs(filename, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
+	VDTextOutputStream tos(&fs);
+
+	// write header
+	tos.PutLine("Altirra symbol file");
+
+	// write out symbols
+	tos.PutLine();
+	tos.PutLine("[symbols]");
+
+	uint32 base = syms->GetDefaultBase();
+
+	const uint32 n = syms->GetSymbolCount();
+	for(uint32 i=0; i<n; ++i) {
+		ATSymbolInfo sym;
+
+		syms->GetSymbol(i, sym);
+
+		tos.FormatLine("%s%s%s %04x,%x %s"
+			, sym.mFlags & kATSymbol_Read ? "r" : ""
+			, sym.mFlags & kATSymbol_Write ? "w" : ""
+			, sym.mFlags & kATSymbol_Execute ? "x" : ""
+			, base + sym.mOffset
+			, sym.mLength
+			, sym.mpName);
+	}
 }

@@ -22,6 +22,14 @@
 	#pragma once
 #endif
 
+#ifndef VDNOINLINE
+	#ifdef _MSC_VER
+		#define VDNOINLINE __declspec(noinline)
+	#else
+		#define VDNOINLINE
+	#endif
+#endif
+
 #include "cpu.h"
 #include "antic.h"
 #include "gtia.h"
@@ -40,13 +48,25 @@ enum ATMemoryMode {
 	kATMemoryMode_320K,
 	kATMemoryMode_576K,
 	kATMemoryMode_1088K,
+	kATMemoryMode_16K,
 	kATMemoryModeCount
 };
 
 enum ATHardwareMode {
 	kATHardwareMode_800,
 	kATHardwareMode_800XL,
+	kATHardwareMode_5200,
 	kATHardwareModeCount
+};
+
+enum ATROMImage {
+	kATROMImage_OSA,
+	kATROMImage_OSB,
+	kATROMImage_XL,
+	kATROMImage_Other,
+	kATROMImage_5200,
+	kATROMImage_Basic,
+	kATROMImageCount
 };
 
 enum ATKernelMode {
@@ -57,6 +77,8 @@ enum ATKernelMode {
 	kATKernelMode_LLE,
 	kATKernelMode_OSA,
 	kATKernelMode_Other,
+	kATKernelMode_5200,
+	kATKernelMode_5200_LLE,
 	kATKernelModeCount
 };
 
@@ -75,7 +97,9 @@ enum ATSimulatorEvent {
 	kATSimEvent_ScanlineBreakpoint,
 	kATSimEvent_Resume,
 	kATSimEvent_Suspend,
-	kATSimEvent_VerifierFailure
+	kATSimEvent_VerifierFailure,
+	kATSimEvent_ColdReset,
+	kATSimEvent_FrameTick
 };
 
 enum {
@@ -85,6 +109,15 @@ enum {
 	kATAddressSpace_PORTB	= 0x30000000,
 	kATAddressOffsetMask	= 0x00FFFFFF,
 	kATAddressSpaceMask		= 0xF0000000
+};
+
+enum ATStorageId {
+	kATStorageId_None,
+	kATStorageId_UnitMask	= 0x00FF,
+	kATStorageId_Disk		= 0x0100,
+	kATStorageId_Cartridge	= 0x0200,
+	kATStorageId_TypeMask	= 0xFF00,
+	kATStorageId_All
 };
 
 class ATSaveStateReader;
@@ -102,6 +135,10 @@ class ATRTime8Emulator;
 class ATCPUProfiler;
 class ATCPUVerifier;
 class ATIDEEmulator;
+class IATAudioOutput;
+class IATRS232Emulator;
+class ATLightPenPort;
+class ATCheatEngine;
 
 class IATSimulatorCallback {
 public:
@@ -169,6 +206,9 @@ public:
 	ATCartridgeEmulator *GetCartridge() { return mpCartridge; }
 	IATUIRenderer *GetUIRenderer() { return mpUIRenderer; }
 	ATIDEEmulator *GetIDEEmulator() { return mpIDE; }
+	IATAudioOutput *GetAudioOutput() { return mpAudioOutput; }
+	IATRS232Emulator *GetRS232() { return mpRS232; }
+	ATLightPenPort *GetLightPenPort() { return mpLightPen; }
 
 	bool IsTurboModeEnabled() const { return mbTurbo; }
 	bool IsFrameSkipEnabled() const { return mbFrameSkip; }
@@ -239,16 +279,28 @@ public:
 	void SetVBXEAltPageEnabled(bool enable);
 	void SetRTime8Enabled(bool enable);
 
+	bool IsRS232Enabled() const;
+	void SetRS232Enabled(bool enable);
+
 	bool IsPrinterEnabled() const;
 	void SetPrinterEnabled(bool enable);
 
 	bool IsFastBootEnabled() const { return mbFastBoot; }
 	void SetFastBootEnabled(bool enable);
 
+	ATCheatEngine *GetCheatEngine() { return mpCheatEngine; }
+	void SetCheatEngineEnabled(bool enable);
+
 	void ColdReset();
 	void WarmReset();
 	void Resume();
 	void Suspend();
+
+	void GetROMImagePath(ATROMImage image, VDStringW& s) const;
+	void SetROMImagePath(ATROMImage image, const wchar_t *s);
+
+	void GetDirtyStorage(vdfastvector<ATStorageId>& ids) const;
+	bool IsStorageDirty(ATStorageId mediaId) const;
 
 	void UnloadAll();
 	bool Load(const wchar_t *path, bool vrw, bool rw, ATLoadContext *loadCtx);
@@ -261,10 +313,11 @@ public:
 	bool LoadCartridge(const wchar_t *s, ATCartLoadContext *loadCtx);
 	bool LoadCartridge(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream&, ATCartLoadContext *loadCtx);
 	void LoadCartridgeSC3D();
+	void LoadCartridge5200Default();
 	void LoadCartridgeFlash1Mb(bool altbank);
 	void LoadCartridgeFlash8Mb();
 
-	void LoadIDE(bool d5xx, bool write, uint32 cylinders, uint32 heads, uint32 sectors, const wchar_t *path);
+	void LoadIDE(bool d5xx, bool write, bool fast, uint32 cylinders, uint32 heads, uint32 sectors, const wchar_t *path);
 	void UnloadIDE();
 
 	enum AdvanceResult {
@@ -274,7 +327,7 @@ public:
 	};
 
 	AdvanceResult AdvanceUntilInstructionBoundary();
-	AdvanceResult Advance();
+	AdvanceResult Advance(bool dropFrame);
 
 	uint8 DebugReadByte(uint16 address) const;
 	uint16 DebugReadWord(uint16 address);
@@ -303,6 +356,7 @@ private:
 	void UpdateKernel();
 	void RecomputeMemoryMaps();
 	uint8 ReadPortA() const;
+	ATSimulatorEvent VDNOINLINE AdvancePhantomDMA(int x);
 
 	uint8 CPUReadByte(uint16 address);
 	uint8 CPUDebugReadByte(uint16 address);
@@ -312,6 +366,7 @@ private:
 	uint32 CPUGetUnhaltedCycle();
 	uint32 CPUGetTimestamp();
 	uint8 CPUHookHit(uint16 address);
+	uint8 CPURecordBusActivity(uint8 value);
 	uint8 AnticReadByte(uint16 address);
 	void AnticAssertNMI();
 	void AnticEndFrame();
@@ -320,9 +375,10 @@ private:
 	uint32 GTIAGetXClock();
 	uint32 GTIAGetTimestamp() const;
 	void GTIASetSpeaker(bool newState);
+	void GTIASelectController(uint8 index, bool potsEnabled);
 	void GTIARequestAnticSync();
-	void PokeyAssertIRQ();
-	void PokeyNegateIRQ();
+	void PokeyAssertIRQ(bool cpuBased);
+	void PokeyNegateIRQ(bool cpuBased);
 	void PokeyBreak();
 	bool PokeyIsInInterrupt() const;
 	bool PokeyIsKeyPushOK(uint8 c) const;
@@ -379,11 +435,12 @@ private:
 	ATCPUEmulator	mCPU;
 	ATAnticEmulator	mAntic;
 	ATGTIAEmulator	mGTIA;
+	vdautoptr<IATAudioOutput> mpAudioOutput;
 	ATPokeyEmulator	mPokey;
 	ATPokeyEmulator	mPokey2;
 	ATScheduler		mScheduler;
 	ATScheduler		mSlowScheduler;
-	ATDiskEmulator	mDiskDrives[8];
+	ATDiskEmulator	mDiskDrives[15];
 	ATCassetteEmulator	*mpCassette;
 	ATIDEEmulator	*mpIDE;
 	IATJoystickManager	*mpJoysticks;
@@ -392,9 +449,12 @@ private:
 	ATInputManager	*mpInputManager;
 	ATPortController *mpPortAController;
 	ATPortController *mpPortBController;
+	ATLightPenPort *mpLightPen;
 	IATPrinterEmulator	*mpPrinter;
 	ATVBXEEmulator *mpVBXE;
 	ATRTime8Emulator *mpRTime8;
+	IATRS232Emulator *mpRS232;
+	ATCheatEngine *mpCheatEngine;
 	IATUIRenderer *mpUIRenderer;
 
 	uint8	mPORTAOUT;
@@ -427,6 +487,7 @@ private:
 	const uint8 *mpKernelUpperROM;
 	const uint8 *mpKernelLowerROM;
 	const uint8 *mpKernelSelfTestROM;
+	const uint8 *mpKernel5200ROM;
 	uint32	mKernelSymbolsModuleId;
 
 	vdfastvector<uint8>		mProgramToLoad;
@@ -444,6 +505,8 @@ private:
 	ATCPUProfiler	*mpProfiler;
 	ATCPUVerifier	*mpVerifier;
 
+	VDStringW	mROMImagePaths[kATROMImageCount];
+
 	////////////////////////////////////
 	const uint8	*mReadMemoryMap[256];
 	uint8	*mWriteMemoryMap[256];
@@ -451,6 +514,7 @@ private:
 
 	bool	mbHaveOSBKernel;
 	bool	mbHaveXLKernel;
+	bool	mbHave5200Kernel;
 
 	uint8	mOSAKernelROM[0x2800];
 	uint8	mOSBKernelROM[0x2800];
@@ -459,6 +523,8 @@ private:
 	uint8	mLLEKernelROM[0x2800];
 	uint8	mBASICROM[0x2000];
 	uint8	mOtherKernelROM[0x4000];
+	uint8	m5200KernelROM[0x0800];
+	uint8	m5200LLEKernelROM[0x0800];
 
 	uint8	mMemory[0x140000];
 	uint8	mDummyRead[256];

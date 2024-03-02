@@ -72,6 +72,7 @@ public:
 	virtual uint32 CPUGetCycle() = 0;
 	virtual uint32 CPUGetUnhaltedCycle() = 0;
 	virtual uint8 CPUHookHit(uint16 address) = 0;
+	virtual uint8 CPURecordBusActivity(uint8 value) = 0;
 
 	const uint8 *const *mpCPUReadPageMap;
 	uint8 *const *mpCPUWritePageMap;
@@ -145,15 +146,16 @@ public:
 struct ATCPUHistoryEntry {
 	uint32	mCycle;
 	uint32	mTimestamp;
+	uint32	mEA;
 	uint16	mPC;
 	uint8	mS;
 	uint8	mP;
 	uint8	mA;
 	uint8	mX;
 	uint8	mY;
-	bool	mbIRQ;
-	bool	mbNMI;
-	bool	mbEmulation;
+	bool	mbIRQ : 1;
+	bool	mbNMI : 1;
+	bool	mbEmulation : 1;
 	uint8	mOpcode[4];
 	uint8	mSH;
 	uint8	mAH;
@@ -214,7 +216,8 @@ public:
 	void	ClearFlagC() { mP &= ~AT6502::kFlagC; }
 
 	void	SetHook(uint16 pc, bool enable);
-	void	SetStep(bool step) { mbStep = step; }
+	void	SetStep(bool step) { mbStep = step; mStepRegionStart = 0; mStepRegionSize = 0; }
+	void	SetStepRange(uint32 regionStart, uint32 regionSize) { mbStep = true; mStepRegionStart = regionStart; mStepRegionSize = regionSize; }
 	void	SetTrace(bool trace) { mbTrace = trace; }
 	void	SetRTSBreak() { mSBrk = 0x100; }
 	void	SetRTSBreak(uint8 sp) { mSBrk = sp; }
@@ -272,13 +275,16 @@ public:
 	void	Jump(uint16 addr);
 	void	Ldy(uint8 v);
 
-	void	AssertIRQ();
+	void	AssertIRQ(int cycleOffset);
 	void	NegateIRQ();
 	void	AssertNMI();
 	void	NegateNMI();
 	int		Advance();
+	int		AdvanceWithBusTracking();
 	int		Advance6502();
 	int		Advance65816();
+	int		Advance6502WithBusTracking();
+	int		Advance65816WithBusTracking();
 
 protected:
 	void	UpdatePendingIRQState();
@@ -339,14 +345,19 @@ protected:
 	uint8	mSH;
 	uint16	mDP;
 
+	uint32	mIFlagSetCycle;
 	bool	mbIRQReleasePending;
 	bool	mbIRQActive;
 	bool	mbIRQPending;
 	bool	mbNMIPending;
 	bool	mbTrace;
 	bool	mbStep;
+	uint32	mStepRegionStart;
+	uint32	mStepRegionSize;
 	bool	mbUnusedCycle;
 	bool	mbEmulationFlag;
+	uint32	mNMIIgnoreUnhaltedCycle;
+	uint32	mNMIAssertTime;
 	uint32	mIRQAssertTime;
 	uint32	mIRQAcknowledgeTime;
 	uint32	mSBrk;

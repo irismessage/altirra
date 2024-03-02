@@ -135,6 +135,7 @@ namespace {
 		kOpcodeSED,
 		kOpcodeSEI,
 		kOpcodeSHA,
+		kOpcodeSHX,
 		kOpcodeSHY,
 		kOpcodeSLO,
 		kOpcodeSRE,
@@ -257,6 +258,7 @@ namespace {
 		"SED",
 		"SEI",
 		"SHA",
+		"SHX",
 		"SHY",
 		"SLO",
 		"SRE",
@@ -356,7 +358,7 @@ namespace {
 		/* 60 */	Ip(RTS), Ix(ADC), xx(bad), Ix(RRA), Zp(NOP), Zp(ADC), Zp(ROR), Zp(RRA), Ip(PLA), Im(ADC), Ip(ROR), xx(bad), Ia(JMP), Ab(ADC), Ab(ROR), Ab(RRA), 
 		/* 70 */	Re(BVS), Iy(ADC), xx(bad), Iy(RRA), Zx(NOP), Zx(ADC), Zx(ROR), Zx(RRA), Ip(SEI), Ay(ADC), Ip(NOP), Ay(RRA), Ax(NOP), Ax(ADC), Ax(ROR), Ax(RRA), 
 		/* 80 */	Im(NOP), Ix(STA), Im(DOP), Ix(SAX), Zp(STY), Zp(STA), Zp(STX), Zp(SAX), Ip(DEY), Im(STA), Ip(TXA), Im(XAA), Ab(STY), Ab(STA), Ab(STX), Ab(SAX), 
-		/* 90 */	Re(BCC), Iy(STA), xx(bad), Iy(SHA), Zx(STY), Zx(STA), Zy(STX), Zy(SAX), Ip(TYA), Ay(STA), Ip(TXS), Ay(XAS), Ax(SHY), Ax(STA), xx(bad), xx(bad), 
+		/* 90 */	Re(BCC), Iy(STA), xx(bad), Iy(SHA), Zx(STY), Zx(STA), Zy(STX), Zy(SAX), Ip(TYA), Ay(STA), Ip(TXS), Ay(XAS), Ax(SHY), Ax(STA), Ay(SHX), xx(bad), 
 		/* A0 */	Im(LDY), Ix(LDA), Im(LDX), Ix(LAX), Zp(LDY), Zp(LDA), Zp(LDX), Zp(LAX), Ip(TAY), Im(LDA), Ip(TAX), Im(ATX), Ab(LDY), Ab(LDA), Ab(LDX), Ab(LAX), 
 		/* B0 */	Re(BCS), Iy(LDA), xx(bad), Iy(LAX), Zx(LDY), Zx(LDA), Zy(LDX), Zy(LAX), Ip(CLV), Ay(LDA), Ip(TSX), Ab(LAS), Ax(LDY), Ax(LDA), Ay(LDX), Ay(LAX), 
 		/* C0 */	Im(CPY), Ix(CMP), Im(DOP), Ix(DCP), Zp(CPY), Zp(CMP), Zp(DEC), Zp(DCP), Ip(INY), Im(CMP), Ip(DEX), Im(SBX), Ab(CPY), Ab(CMP), Ab(DEC), Ab(DCP), 
@@ -439,6 +441,7 @@ void ATDisassembleCaptureRegisterContext(ATCPUHistoryEntry& hent) {
 	hent.mD = cpu.GetD();
 	hent.mS = cpu.GetS();
 	hent.mSH = cpu.GetSH();
+	hent.mK = cpu.GetK();
 	hent.mbEmulation = cpu.GetEmulationFlag();
 }
 
@@ -474,10 +477,10 @@ uint16 ATDisassembleInsn(VDStringA& line, uint16 addr, bool decodeReferences) {
 	ATDisassembleCaptureRegisterContext(hent);
 	ATDisassembleCaptureInsnContext(addr, hent.mK, hent);
 
-	return ATDisassembleInsn(line, hent, decodeReferences);
+	return ATDisassembleInsn(line, hent, decodeReferences, false, true, true, true);
 }
 
-uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool decodeReferences) {
+uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool decodeReferences, bool decodeRefsHistory, bool showPCAddress, bool showCodeBytes, bool showLabels) {
 	const uint8 opcode = hent.mOpcode[0];
 	const uint8 byte1 = hent.mOpcode[1];
 	const uint8 byte2 = hent.mOpcode[2];
@@ -539,33 +542,50 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 	uint8 opid = tbl[opcode][1];
 	const char *opname = kOpcodes[opid];
 
-	if (cpuMode == kATCPUMode_65C816)
-		line.append_sprintf("%02X:%04X:", hent.mK, hent.mPC);
-	else
-		line.append_sprintf("%04X:", hent.mPC);
+	if (showPCAddress) {
+		if (cpuMode == kATCPUMode_65C816)
+			line.append_sprintf("%02X:%04X:", hent.mK, hent.mPC);
+		else
+			line.append_sprintf("%04X:", hent.mPC);
+	}
 
 	int opsize = kBytesPerModeTables[subMode][mode];
 
-	switch(opsize) {
-		case 1:
-			line.append_sprintf(" %02X      ", opcode);
-			break;
-		case 2:
-			line.append_sprintf(" %02X %02X   ", opcode, byte1);
-			break;
-		case 3:
-			line.append_sprintf(" %02X %02X %02X", opcode, byte1, byte2);
-			break;
-		case 4:
-			line.append_sprintf(" %02X%02X%02X%02X", opcode, byte1, byte2, byte3);
-			break;
+	if (showCodeBytes) {
+		switch(opsize) {
+			case 1:
+				line.append_sprintf(" %02X      ", opcode);
+				break;
+			case 2:
+				line.append_sprintf(" %02X %02X   ", opcode, byte1);
+				break;
+			case 3:
+				line.append_sprintf(" %02X %02X %02X", opcode, byte1, byte2);
+				break;
+			case 4:
+				line.append_sprintf(" %02X%02X%02X%02X", opcode, byte1, byte2, byte3);
+				break;
+		}
 	}
 
 	size_t startPos = line.size();
 
 	const uint16 addr = hent.mPC;
-	const char *label = ATGetSymbolName(addr, false);
-	line.append_sprintf("  %-6s %s", label ? label : "", opname);
+
+	if (showLabels) {
+		VDStringA tempLabel;
+
+		const char *label = ATGetSymbolName(addr, false);
+
+		if (!label && cpu.IsPathfindingEnabled() && cpu.IsPathStart(addr)) {
+			tempLabel.sprintf("L%04X", addr);
+			label = tempLabel.c_str();
+		}
+
+		line.append_sprintf("  %-6s %s", label ? label : "", opname);
+	} else {
+		line.append_sprintf(" %s", opname);
+	}
 
 	if (mode == kModeImm) {
 		line.append_sprintf(" #$%02X", byte1);
@@ -656,14 +676,24 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 
 			case kModeIndA:
 				base = byte1 + (byte2 << 8);
-				ea = g_sim.DebugReadByte(base) + 256*g_sim.DebugReadByte(base+1);
+
+				if (decodeRefsHistory)
+					ea = hent.mEA;
+				else
+					ea = g_sim.DebugReadByte(base) + 256*g_sim.DebugReadByte(base+1);
+
 				addr16 = true;
 				ea16 = true;
 				break;
 
 			case kModeIndAL:
 				base = byte1 + (byte2 << 8);
-				ea = g_sim.DebugRead24(base);
+
+				if (decodeRefsHistory)
+					ea = hent.mEA;
+				else
+					ea = g_sim.DebugRead24(base);
+
 				addr16 = true;
 				ea16 = true;
 				ea24 = true;
@@ -671,25 +701,45 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 
 			case kModeIndX:
 				base = byte1;
-				ea = g_sim.DebugReadByte((uint8)(base + x)) + 256*g_sim.DebugReadByte((uint8)(base + x + 1));
+
+				if (decodeRefsHistory)
+					ea = hent.mEA;
+				else
+					ea = g_sim.DebugReadByte((uint8)(base + x)) + 256*g_sim.DebugReadByte((uint8)(base + x + 1));
+
 				ea16 = true;
 				break;
 
 			case kModeIndY:
 				base = byte1;
-				ea = g_sim.DebugReadByte(base) + 256*g_sim.DebugReadByte((base+1) & 0xff) + y;
+
+				if (decodeRefsHistory)
+					ea = hent.mEA;
+				else
+					ea = g_sim.DebugReadByte(base) + 256*g_sim.DebugReadByte((base+1) & 0xff) + y;
+
 				ea16 = true;
 				break;
 
 			case kModeInd:
 				base = byte1;
-				ea = g_sim.DebugReadByte(base) + 256*g_sim.DebugReadByte((base+1) & 0xff);
+
+				if (decodeRefsHistory)
+					ea = hent.mEA;
+				else
+					ea = g_sim.DebugReadByte(base) + 256*g_sim.DebugReadByte((base+1) & 0xff);
+
 				ea16 = true;
 				break;
 
 			case kModeIndAX:
 				base = byte1 + (byte2 << 8);
-				ea = g_sim.DebugReadByte(base+x) + 256*g_sim.DebugReadByte(base+1+x);
+
+				if (decodeRefsHistory)
+					ea = hent.mEA;
+				else
+					ea = g_sim.DebugReadByte(base+x) + 256*g_sim.DebugReadByte(base+1+x);
+
 				addr16 = true;
 				ea16 = true;
 				break;
@@ -725,17 +775,29 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 			case kModeStackIndY:
 				dolabel = false;
 				base = byte1 + s16;
-				ea = g_sim.DebugReadWord(base) + y;
+
+				if (decodeRefsHistory)
+					ea = hent.mEA;
+				else
+					ea = g_sim.DebugReadWord(base) + y;
 				break;
 
 			case kModeDpIndLong:
 				base = byte1;
-				ea = g_sim.DebugRead24(byte1) + y;
+
+				if (decodeRefsHistory)
+					ea = hent.mEA;
+				else
+					ea = g_sim.DebugRead24(byte1) + y;
 				break;
 
 			case kModeDpIndLongY:
 				base = byte1;
-				ea = g_sim.DebugRead24(byte1) + y;
+
+				if (decodeRefsHistory)
+					ea = hent.mEA;
+				else
+					ea = g_sim.DebugRead24(byte1) + y;
 				break;
 		}
 
@@ -819,18 +881,48 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 				break;
 		}
 
-		if (decodeReferences && mode != kModeRel && mode != kModeRel16) {
-			size_t padLen = startPos + 20;
+		if (decodeRefsHistory && ea != 0xFFFFFFFFUL) {
+			switch(mode) {
+				case kModeZpX:
+				case kModeZpY:
+				case kModeAbsX:
+				case kModeAbsY:
+				case kModeIndA:
+				case kModeIndAL:
+				case kModeIndX:
+				case kModeIndY:
+				case kModeInd:
+				case kModeIndAX:
+				case kModeStackIndY:
+				case kModeDpIndLong:
+				case kModeDpIndLongY:
+					size_t padLen = startPos + 20;
 
-			if (line.size() < padLen)
-				line.resize(padLen, ' ');
+					if (line.size() < padLen)
+						line.resize(padLen, ' ');
 
-			if (cpuMode == kATCPUMode_65C816)
-				line.append_sprintf(" [$%02X:%04X] = $%02X", (ea >> 16) & 0xff, ea & 0xffff, g_sim.DebugExtReadByte(ea));
-			else if (ea16)
-				line.append_sprintf(" [$%04X] = $%02X", ea, g_sim.DebugReadByte(ea));
-			else
-				line.append_sprintf(" [$%02X] = $%02X", ea, g_sim.DebugReadByte(ea));
+					if (cpuMode == kATCPUMode_65C816)
+						line.append_sprintf(" ;$%02X:%04X", (ea >> 16) & 0xff, ea & 0xffff);
+					else if (ea16)
+						line.append_sprintf(" ;$%04X", ea);
+					else
+						line.append_sprintf(" ;$%02X", ea);
+					break;
+			}
+		} else if (decodeReferences) {
+			if (mode != kModeRel && mode != kModeRel16) {
+				size_t padLen = startPos + 20;
+
+				if (line.size() < padLen)
+					line.resize(padLen, ' ');
+
+				if (cpuMode == kATCPUMode_65C816)
+					line.append_sprintf(" [$%02X:%04X] = $%02X", (ea >> 16) & 0xff, ea & 0xffff, g_sim.DebugExtReadByte(ea));
+				else if (ea16)
+					line.append_sprintf(" [$%04X] = $%02X", ea, g_sim.DebugReadByte(ea));
+				else
+					line.append_sprintf(" [$%02X] = $%02X", ea, g_sim.DebugReadByte(ea));
+			}
 		}
 	}
 
@@ -843,7 +935,7 @@ uint16 ATDisassembleInsn(uint16 addr, uint8 bank) {
 	ATDisassembleCaptureInsnContext(addr, bank, hent);
 
 	VDStringA buf;
-	addr = ATDisassembleInsn(buf, hent, true);
+	addr = ATDisassembleInsn(buf, hent, true, false, true, true, true);
 	buf += '\n';
 	ATConsoleWrite(buf.c_str());
 

@@ -22,6 +22,8 @@
 	#pragma once
 #endif
 
+#include <vd2/system/event.h>
+#include <vd2/system/refcount.h>
 #include <vd2/system/vdstl.h>
 #include "symbols.h"
 
@@ -30,13 +32,20 @@ struct ATSourceLineInfo;
 class IATDebuggerClient;
 
 enum ATDebugEvent {
-	kATDebugEvent_BreakpointsChanged
+	kATDebugEvent_BreakpointsChanged,
+	kATDebugEvent_SymbolsChanged
 };
 
 enum ATDebugSrcMode {
 	kATDebugSrcMode_Same,
 	kATDebugSrcMode_Disasm,
 	kATDebugSrcMode_Source
+};
+
+enum ATDebuggerStorageId {
+	kATDebuggerStorageId_None,
+	kATDebuggerStorageId_CustomSymbols	= 0x0100,
+	kATDebuggerStorageId_All
 };
 
 struct ATDebuggerSystemState {
@@ -71,6 +80,21 @@ struct ATCallStackFrame {
 	uint8	mK;
 };
 
+struct ATDebuggerWatchInfo {
+	uint32	mAddress;
+	uint32	mLen;
+};
+
+class IATDebugger;
+
+class IATDebuggerActiveCommand : public IVDRefCount {
+public:
+	virtual const char *GetPrompt() = 0;
+	virtual void BeginCommand(IATDebugger *debugger) = 0;
+	virtual void EndCommand() = 0;
+	virtual bool ProcessSubCommand(const char *s) = 0;
+};
+
 class IATDebugger {
 public:
 	virtual bool IsRunning() const = 0;
@@ -82,7 +106,7 @@ public:
 	virtual void RunTraced() = 0;
 	virtual void ClearAllBreakpoints() = 0;
 	virtual void ToggleBreakpoint(uint16 addr) = 0;
-	virtual void StepInto(ATDebugSrcMode sourceMode) = 0;
+	virtual void StepInto(ATDebugSrcMode sourceMode, uint32 regionStart = 0, uint32 regionSize = 0) = 0;
 	virtual void StepOver(ATDebugSrcMode sourceMode) = 0;
 	virtual void StepOut(ATDebugSrcMode sourceMode) = 0;
 	virtual void SetPC(uint16 pc) = 0;
@@ -100,7 +124,22 @@ public:
 	virtual void UnloadSymbols(uint32 moduleId) = 0;
 
 	virtual sint32 ResolveSymbol(const char *s, bool allowGlobal = false) = 0;
-	virtual VDStringA GetAddressText(uint32 globalAddr, bool useHexSpecifier) = 0;
+
+	virtual void AddCustomSymbol(uint32 address, uint32 len, const char *name, uint32 rwxmode) = 0;
+	virtual void RemoveCustomSymbol(uint32 address) = 0;
+	virtual void LoadCustomSymbols(const wchar_t *filename) = 0;
+	virtual void SaveCustomSymbols(const wchar_t *filename) = 0;
+
+	virtual VDStringA GetAddressText(uint32 globalAddr, bool useHexSpecifier, bool addSymbolInfo = false) = 0;
+
+	virtual void GetDirtyStorage(vdfastvector<ATDebuggerStorageId>& ids) const = 0;
+
+	virtual void StartActiveCommand(IATDebuggerActiveCommand *cmd) = 0;
+
+	virtual void WriteMemoryCPU(uint16 address, const void *data, uint32 len) = 0;
+
+	virtual const char *GetPrompt() const = 0;
+	virtual VDEvent<IATDebugger, const char *>& OnPromptChanged() = 0;
 };
 
 struct ATDebuggerSymbol {

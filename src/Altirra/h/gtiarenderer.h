@@ -119,6 +119,7 @@ protected:
 	int mRCCount;
 
 	bool mbHiresMode;
+	bool mbGTIAEnableTransition;
 	bool mbVBlank;
 	uint8 mPRIOR;
 

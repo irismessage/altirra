@@ -73,10 +73,12 @@ void ATCPUEmulator::ColdReset() {
 	mbStep = false;
 	mbTrace = false;
 	WarmReset();
+	mNMIIgnoreUnhaltedCycle = 0xFFFFFFFFU;
 }
 
 void ATCPUEmulator::WarmReset() {
 	mpNextState = mStates;
+	mIFlagSetCycle = mpMemory->CPUGetUnhaltedCycle();
 	mbIRQReleasePending = false;
 	mbNMIPending = false;
 	mbUnusedCycle = false;
@@ -106,6 +108,9 @@ void ATCPUEmulator::WarmReset() {
 
 		Update65816DecodeTable();
 	}
+
+	if (mpVerifier)
+		mpVerifier->OnReset();
 }
 
 bool ATCPUEmulator::IsInstructionInProgress() const {
@@ -506,13 +511,13 @@ void ATCPUEmulator::Ldy(uint8 v) {
 		mP |= kFlagZ;
 }
 
-void ATCPUEmulator::AssertIRQ() {
+void ATCPUEmulator::AssertIRQ(int cycleOffset) {
 	if (!mbIRQActive) {
 		if (mbIRQPending)
 			UpdatePendingIRQState();
 
 		mbIRQActive = true;
-		mIRQAssertTime = mpMemory->CPUGetUnhaltedCycle();
+		mIRQAssertTime = mpMemory->CPUGetUnhaltedCycle() + cycleOffset;
 	}
 }
 
@@ -526,7 +531,10 @@ void ATCPUEmulator::NegateIRQ() {
 }
 
 void ATCPUEmulator::AssertNMI() {
-	mbNMIPending = true;
+	if (!mbNMIPending) {
+		mbNMIPending = true;
+		mNMIAssertTime = mpMemory->CPUGetUnhaltedCycle();
+	}
 }
 
 int ATCPUEmulator::Advance() {
@@ -534,6 +542,13 @@ int ATCPUEmulator::Advance() {
 		return Advance65816();
 	else
 		return Advance6502();
+}
+
+int ATCPUEmulator::AdvanceWithBusTracking() {
+	if (mCPUMode == kATCPUMode_65C816)
+		return Advance65816WithBusTracking();
+	else
+		return Advance6502WithBusTracking();
 }
 
 int ATCPUEmulator::Advance6502() {
@@ -546,6 +561,18 @@ int ATCPUEmulator::Advance65816() {
 #undef AT_CPU_MACHINE_65C816
 }
 
+#define AT_CPU_RECORD_BUS_ACTIVITY
+int ATCPUEmulator::Advance6502WithBusTracking() {
+	#include "cpumachine.inl"
+}
+
+int ATCPUEmulator::Advance65816WithBusTracking() {
+#define AT_CPU_MACHINE_65C816
+	#include "cpumachine.inl"
+#undef AT_CPU_MACHINE_65C816
+}
+#undef AT_CPU_RECORD_BUS_ACTIVITY
+
 void ATCPUEmulator::UpdatePendingIRQState() {
 	VDASSERT(mbIRQActive != mbIRQPending);
 
@@ -556,9 +583,9 @@ void ATCPUEmulator::UpdatePendingIRQState() {
 		// line has been down for a minimum of three cycles; if so, set the pending
 		// IRQ flag.
 
-		if (cycle - mIRQAssertTime >= 2) {
+		if (cycle - mIRQAssertTime >= 3) {
 			mbIRQPending = true;
-			mIRQAcknowledgeTime = mIRQAssertTime + 2;
+			mIRQAcknowledgeTime = mIRQAssertTime + 3;
 		}
 	} else {
 		// IRQ line is pulled up, but an IRQ acknowledge is pending. Check if more than
@@ -669,6 +696,9 @@ void ATCPUEmulator::RebuildDecodeTables() {
 			*mpDstState++ = kStatePushNative;
 		}
 
+		if (mpVerifier)
+			*mpDstState++ = kStateVerifyNMIEntry;
+
 		*mpDstState++ = kStateSEI;
 
 		if (emulationMode)
@@ -703,6 +733,9 @@ void ATCPUEmulator::RebuildDecodeTables() {
 			*mpDstState++ = kStatePushNative;
 		}
 
+		if (mpVerifier)
+			*mpDstState++ = kStateVerifyIRQEntry;
+
 		*mpDstState++ = kStateSEI;
 
 		if (emulationMode)
@@ -727,6 +760,10 @@ void ATCPUEmulator::RebuildDecodeTables() {
 		*mpDstState++ = kStatePushPCL;
 		*mpDstState++ = kStatePtoD_B0;
 		*mpDstState++ = kStatePush;
+
+		if (mpVerifier)
+			*mpDstState++ = kStateVerifyNMIEntry;
+
 		*mpDstState++ = kStateSEI;
 		*mpDstState++ = kStateNMIVecToPC;
 		*mpDstState++ = kStateReadAddrL;
@@ -746,6 +783,10 @@ void ATCPUEmulator::RebuildDecodeTables() {
 		*mpDstState++ = kStatePushPCL;
 		*mpDstState++ = kStatePtoD_B0;
 		*mpDstState++ = kStatePush;
+
+		if (mpVerifier)
+			*mpDstState++ = kStateVerifyIRQEntry;
+
 		*mpDstState++ = kStateSEI;
 		*mpDstState++ = kStateIRQVecToPC;
 		*mpDstState++ = kStateReadAddrL;
@@ -804,6 +845,9 @@ void ATCPUEmulator::DecodeReadIndX() {
 	*mpDstState++ = kStateRead;				// 4
 	*mpDstState++ = kStateReadIndAddr;		// 5
 	*mpDstState++ = kStateRead;				// 6
+
+	if (mbHistoryEnabled)
+		*mpDstState++ = kStateAddEAToHistory;
 }
 
 void ATCPUEmulator::DecodeReadIndY() {
@@ -812,6 +856,9 @@ void ATCPUEmulator::DecodeReadIndY() {
 	*mpDstState++ = kStateReadIndYAddr;		// 4
 	*mpDstState++ = kStateReadCarry;		// 5
 	*mpDstState++ = kStateRead;				// (6)
+
+	if (mbHistoryEnabled)
+		*mpDstState++ = kStateAddEAToHistory;
 }
 
 void ATCPUEmulator::DecodeReadInd() {
@@ -819,4 +866,7 @@ void ATCPUEmulator::DecodeReadInd() {
 	*mpDstState++ = kStateRead;				// 3
 	*mpDstState++ = kStateReadIndAddr;		// 4
 	*mpDstState++ = kStateRead;				// 5
+
+	if (mbHistoryEnabled)
+		*mpDstState++ = kStateAddEAToHistory;
 }

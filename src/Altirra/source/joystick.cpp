@@ -19,6 +19,7 @@
 #define DIRECTINPUT_VERSION 0x0800
 #include <dinput.h>
 #include <vd2/system/bitmath.h>
+#include <vd2/system/math.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vdalloc.h>
@@ -50,7 +51,8 @@ protected:
 	struct DecodedState {
 		uint32	mButtonStates;
 		uint32	mAxisButtonStates;
-		sint32	mAxisVals[8];
+		sint32	mAxisVals[6];
+		sint32	mAxisDeadVals[6];
 	};
 
 	void PollState(DecodedState& state);
@@ -165,8 +167,11 @@ void ATController::Poll() {
 		UpdateButtons(kATInputCode_JoyStick1Left, state.mAxisButtonStates, axisButtonDelta);
 
 	for(int i=0; i<6; ++i) {
-		if (state.mAxisVals[i] != mLastSentState.mAxisVals[i])
-			mpInputManager->OnAxisInput(mUnit, kATInputCode_JoyHoriz1 + i, state.mAxisVals[i]);
+		if (state.mAxisVals[i] != mLastSentState.mAxisVals[i] ||
+			state.mAxisDeadVals[i] != mLastSentState.mAxisDeadVals[i]) {
+			// We set DirectInput to use [-1024, 1024], but we want +/-64K.
+			mpInputManager->OnAxisInput(mUnit, kATInputCode_JoyHoriz1 + i, state.mAxisVals[i] << 6, state.mAxisDeadVals[i] << 6);
+		}
 	}
 
 	mLastSentState = state;
@@ -262,6 +267,33 @@ void ATController::PollState(DecodedState& state) {
 	state.mAxisVals[3] = mState.lRx;
 	state.mAxisVals[4] = mState.lRy;
 	state.mAxisVals[5] = mState.lRz;
+
+	// We treat the X/Y axes as one 2D controller, and lRx/lRy as another.
+	// The Z axes are deadified as 1D axes.
+	int analogDeadZone = 256;
+	for(int i=0; i<=3; i+=3) {
+		float x = (float)state.mAxisVals[i];
+		float y = (float)state.mAxisVals[i+1];
+
+		float lensq = x*x + y*y;
+		if (lensq < (float)(analogDeadZone * analogDeadZone)) {
+			state.mAxisDeadVals[i] = 0;
+			state.mAxisDeadVals[i+1] = 0;
+		} else {
+			float len = sqrtf(lensq);
+			float scale = (1024 - analogDeadZone) / 1024.0f * (len - analogDeadZone) / len;
+
+			state.mAxisDeadVals[i] = VDRoundToInt32((float)x * scale);
+			state.mAxisDeadVals[i+1] = VDRoundToInt32((float)y * scale);
+		}
+
+		int z = state.mAxisVals[i+2];
+		int zlen = abs(z);
+		if (zlen < analogDeadZone)
+			state.mAxisDeadVals[i+2] = 0;
+		else
+			state.mAxisDeadVals[i+2] = VDRoundToInt32((float)z * (1024.0f - analogDeadZone) * ((float)zlen - analogDeadZone) / (float)zlen);
+	}
 
 	uint32 buttonStates = 0;
 	for(int i=0; i<32; ++i) {

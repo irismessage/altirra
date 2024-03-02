@@ -26,7 +26,7 @@
 #include <vd2/system/vdstl.h>
 #include "scheduler.h"
 
-class IVDAudioOutput;
+class IATAudioOutput;
 class ATPokeyEmulator;
 class ATSaveStateReader;
 class ATSaveStateWriter;
@@ -34,8 +34,8 @@ class ATAudioFilter;
 
 class IATPokeyEmulatorConnections {
 public:
-	virtual void PokeyAssertIRQ() = 0;
-	virtual void PokeyNegateIRQ() = 0;
+	virtual void PokeyAssertIRQ(bool cpuBased) = 0;
+	virtual void PokeyNegateIRQ(bool cpuBased) = 0;
 	virtual void PokeyBreak() = 0;
 	virtual bool PokeyIsInInterrupt() const = 0;
 	virtual bool PokeyIsKeyPushOK(uint8 c) const = 0;
@@ -57,25 +57,18 @@ public:
 	virtual void PokeyResetSerialInput() = 0;
 };
 
-class IATPokeyAudioTap {
-public:
-	virtual void WriteRawAudio(const float *left, const float *right, uint32 count, uint32 timestamp) = 0;
-};
-
 class ATPokeyEmulator : public IATSchedulerCallback {
 public:
 	ATPokeyEmulator(bool isSlave);
 	~ATPokeyEmulator();
 
-	void	Init(IATPokeyEmulatorConnections *mem, ATScheduler *sched);
+	void	Init(IATPokeyEmulatorConnections *mem, ATScheduler *sched, IATAudioOutput *output);
 	void	ColdReset();
 
 	void	SetSlave(ATPokeyEmulator *slave);
 	void	SetCassette(IATPokeyCassetteDevice *dev);
-	void	SetAudioTap(IATPokeyAudioTap *tap);
 
-	void	SetPal(bool pal) { mbPal = pal; }
-	void	SetTurbo(bool enable) { mbTurbo = enable; }
+	void	Set5200Mode(bool enable);
 
 	bool	IsTraceSIOEnabled() const { return mbTraceSIO; }
 	void	SetTraceSIOEnabled(bool enable) { mbTraceSIO = enable; }
@@ -105,9 +98,6 @@ public:
 		}
 	}
 
-	float	GetVolume() const;
-	void	SetVolume(float vol);
-
 	bool	IsChannelEnabled(uint32 channel) const { return mbChannelEnabled[channel]; }
 	void	SetChannelEnabled(uint32 channel, bool enabled);
 
@@ -115,10 +105,16 @@ public:
 	void	SetNonlinearMixingEnabled(bool enable);
 
 	void	SetShiftKeyState(bool down);
+	void	SetControlKeyState(bool down);
 	void	PushKey(uint8 c, bool repeat, bool allowQueue = false, bool flushQueue = true, bool useCooldown = true);
 	void	PushRawKey(uint8 c);
 	void	ReleaseRawKey();
+	void	SetBreakKeyState(bool down);
 	void	PushBreak();
+
+	void	UpdateKeyMatrix(int index, bool depressed);
+	void	SetKeyMatrix(const bool matrix[64]);
+	void	ClearKeyMatrix();
 
 	int	GetPotPos(unsigned idx) const { return mPOT[idx]; }
 	void	SetPotPos(unsigned idx, int pos) {
@@ -132,7 +128,7 @@ public:
 	}
 
 	void	AdvanceScanLine();
-	void	AdvanceFrame();
+	void	AdvanceFrame(bool pushAudio);
 
 	uint8	DebugReadByte(uint8 reg) const;
 	uint8	ReadByte(uint8 reg);
@@ -143,6 +139,8 @@ public:
 	void	LoadState(ATSaveStateReader& reader);
 	void	SaveState(ATSaveStateWriter& writer);
 
+	void	FlushAudio(bool pushAudio);
+
 protected:
 	void	DoFullTick();
 	void	OnScheduledEvent(uint32 id);
@@ -150,17 +148,13 @@ protected:
 	void	GenerateSample(uint32 pos, uint32 t);
 	void	UpdatePolynomialCounters() const;
 	void	FireTimers(uint8 activeChannels);
-	void	OnSerialOutputTick();
+	void	OnSerialOutputTick(bool cpuBased);
 	void	UpdateOutput();
 	void	FlushBlock();
 	void	UpdateTimerCounters(uint8 channels);
 	void	SetupTimers(uint8 channels);
 
 	void	DumpStatus(bool isSlave);
-
-	void	ResamplerReset();
-	void	ResamplerShift();
-	void	ResamplerSetRate(float rate);
 
 	void	UpdateMixTable();
 
@@ -180,17 +174,6 @@ protected:
 	int		mAudioInput2;
 	int		mExternalInput;
 
-	bool	mbResampleWaitForLatencyDrain;
-	uint64	mResampleAccum;
-	uint64	mResampleRate;
-	float	mResampleRateF;
-	uint32	mResampleSamplesFiltered;
-	uint32	mResampleSamplesPresent;
-	uint32	mResampleSamplesNeeded;
-	int		mResampleRestabilizeCounter;
-
-	ATAudioFilter	*mpFilter;
-
 	int		mTicksAccumulated;
 
 	int		mTimerCounters[4];
@@ -204,7 +187,7 @@ protected:
 
 	bool	mbCommandLineState;
 	bool	mbPal;
-	bool	mbTurbo;
+	bool	mb5200Mode;
 	bool	mbTraceSIO;
 	bool	mbNonlinearMixingEnabled;
 
@@ -212,6 +195,9 @@ protected:
 	uint32	mKeyCodeTimer;
 	uint32	mKeyCooldownTimer;
 	bool	mbUseKeyCooldownTimer;
+	bool	mbShiftKeyState;
+	bool	mbControlKeyState;
+	bool	mbBreakKeyState;
 
 	uint8	mIRQEN;
 	uint8	mIRQST;
@@ -265,9 +251,6 @@ protected:
 
 	uint32	mLast15KHzTime;
 	uint32	mLast64KHzTime;
-	uint32	mAudioRate;
-	float	mAudioDampedError;
-	int		mSamplingRate;
 
 	uint8	mPOT[8];
 	uint8	mALLPOT;
@@ -287,29 +270,32 @@ protected:
 	ATPokeyEmulator	*mpSlave;
 	const bool	mbIsSlave;
 
-	vdautoptr<IVDAudioOutput>	mpAudioOut;
+	IATAudioOutput *mpAudioOut;
 
 	typedef vdfastvector<IATPokeySIODevice *> Devices;
 	Devices	mDevices;
 
 	IATPokeyCassetteDevice *mpCassette;
-	IATPokeyAudioTap *mpAudioTap;
-
-	enum {
-		kSamplesPerBlock = 256,
-		kBlockSize = kSamplesPerBlock * 4,
-		kBlockCount = 32,
-		kBufferSize = kBlockSize * kBlockCount,
-		kLatency = 2048 * 4 * 2,
-		kRawBlockSize = kSamplesPerBlock * 16
-	};
 
 	vdfastdeque<uint8> mKeyQueue;
 
+	bool	mbKeyMatrix[64];
+	uint8	mKeyScanState;
+	uint8	mKeyScanCode;
+	uint8	mKeyScanLatch;
+
 	float	mMixTable[61];
-	float	mRawOutputBuffer[kRawBlockSize];
-	float	mFilteredOutputBuffer[kRawBlockSize];
-	sint16	mOutputBuffer[kBlockSize];
+
+	enum {
+		// 1271 samples is the max (35568 cycles/frame / 28 cycles/sample + 1). We add a little bit here
+		// to round it out. We need a 16 sample holdover in order to run the FIR filter.
+		kBufferSize = 1536
+	};
+
+	uint32	mOutputSampleCount;
+
+	float	mRawOutputBuffer[kBufferSize];
+
 	uint8	mPoly4Buffer[15];
 	uint8	mPoly5Buffer[31];
 	uint8	mPoly9Buffer[511];

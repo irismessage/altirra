@@ -142,7 +142,7 @@
 				Name="VCCLCompilerTool"
 				Optimization="2"
 				InlineFunctionExpansion="1"
-				AdditionalIncludeDirectories="h,..\h"
+				AdditionalIncludeDirectories="h,..\h,res"
 				PreprocessorDefinitions="NDEBUG;WIN32;_CONSOLE;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;NOMINMAX"
 				StringPooling="true"
 				RuntimeLibrary="0"
@@ -320,7 +320,7 @@
 			<Tool
 				Name="VCCLCompilerTool"
 				Optimization="0"
-				AdditionalIncludeDirectories="h,..\h"
+				AdditionalIncludeDirectories="h,..\h,res"
 				PreprocessorDefinitions="_DEBUG;WIN32;_CONSOLE;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;NOMINMAX"
 				StringPooling="true"
 				MinimalRebuild="true"
@@ -388,6 +388,10 @@
 			>
 			<File
 				RelativePath=".\source\filecreator.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\fontencode.cpp"
 				>
 			</File>
 			<File

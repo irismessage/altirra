@@ -2,11 +2,13 @@
 #define AT_OSHELPER_H
 
 #include <vd2/system/vdtypes.h>
+#include <vd2/system/vdstl.h>
 
 struct VDPixmap;
 class VDStringW;
 
 bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size);
+bool ATLoadMiscResource(int id, vdfastvector<uint8>& data);
 void ATFileSetReadOnlyAttribute(const wchar_t *path, bool readOnly);
 
 void ATCopyFrameToClipboard(void *hwnd, const VDPixmap& px);

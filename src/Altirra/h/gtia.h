@@ -31,6 +31,7 @@ public:
 	virtual uint32 GTIAGetXClock() = 0;
 	virtual uint32 GTIAGetTimestamp() const = 0;
 	virtual void GTIASetSpeaker(bool state) = 0;
+	virtual void GTIASelectController(uint8 index, bool potsEnabled) = 0;
 	virtual void GTIARequestAnticSync() = 0;
 };
 
@@ -96,6 +97,8 @@ public:
 	void ResetColors();
 	void GetPalette(uint32 pal[256]) const;
 
+	bool IsFrameInProgress() const { return mpFrame != NULL; }
+
 	bool IsVsyncEnabled() const { return mbVsyncEnabled; }
 	void SetVsyncEnabled(bool enabled) { mbVsyncEnabled = enabled; }
 
@@ -135,7 +138,12 @@ public:
 
 	void SetConsoleSwitch(uint8 c, bool down);
 	void SetForcedConsoleSwitches(uint8 c);
-	void SetControllerTrigger(int index, bool state) { mTRIG[index] = state ? 0x00 : 0x01; }
+	void SetControllerTrigger(int index, bool state) {
+		uint8 v = state ? 0x00 : 0x01;
+
+		mTRIG[index] = v;
+		mTRIGLatched[index] &= v;
+	}
 
 	void SetVideoTap(IATGTIAVideoTap *vtap);
 
@@ -144,6 +152,10 @@ public:
 	uint32 GetBackgroundColor24() const { return mPalette[mPFBAK]; }
 	uint32 GetPlayfieldColor24(int index) const { return mPalette[mPFColor[index]]; }
 	uint32 GetPlayfieldColorPF2H() const { return mPalette[(mPFColor[2] & 0xf0) + (mPFColor[1] & 0x0f)]; }
+
+	bool IsPhantomDMAPossible() const {
+		return (mGRACTL & 3) != 0;
+	}
 
 	void DumpStatus();
 
@@ -158,7 +170,7 @@ public:
 
 	void SetFieldPolarity(bool polarity);
 	void SetVBLANK(VBlankMode vblMode);
-	bool BeginFrame(bool force);
+	bool BeginFrame(bool force, bool drop);
 	void BeginScanline(int y, bool hires);
 	void EndScanline(uint8 dlControl);
 	void UpdatePlayer(bool odd, int index, uint8 byte);
@@ -169,7 +181,7 @@ public:
 	void Sync();
 
 	void RenderActivityMap(const uint8 *src);
-	void UpdateScreen(bool immediate);
+	void UpdateScreen(bool immediate, bool forceAnyScreen);
 	void RecomputePalette();
 
 	uint8 DebugReadByte(uint8 reg) const;
@@ -204,6 +216,7 @@ protected:
 	VBlankMode		mVBlankMode;
 	bool	mbVsyncEnabled;
 	bool	mbBlendMode;
+	bool	mbFrameCopiedFromPrev;
 	bool	mbOverscanPALExtended;
 	bool	mbOverscanPALExtendedThisFrame;
 	bool	mbPALThisFrame;
@@ -246,6 +259,7 @@ protected:
 	uint8	mForcedSwitchInput;
 
 	uint8	mTRIG[4];
+	uint8	mTRIGLatched[4];
 
 	uint8	mPlayerCollFlags[4];
 	uint8	mMissileCollFlags[4];
@@ -257,6 +271,7 @@ protected:
 	ATFrameTracker *mpFrameTracker;
 	bool	mbANTICHiresMode;
 	bool	mbHiresMode;
+	bool	mbGTIADisableTransition;
 	bool	mbTurbo;
 	bool	mbPALMode;
 	bool	mbForcedBorder;

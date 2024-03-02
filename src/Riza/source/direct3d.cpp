@@ -1384,6 +1384,11 @@ HRESULT VDD3D9Manager::PresentSwapChain(IVDD3D9SwapChain *pSwapChain, const RECT
 			if (hr != D3DERR_WASSTILLDRAWING)
 				break;
 
+			if (donotwait) {
+				hr = S_FALSE;
+				break;
+			}
+
 			::Sleep(1);
 		}
 

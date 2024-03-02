@@ -1603,32 +1603,106 @@ bool VDVideoDisplayDX9Manager::RunEffect(const EffectContext& ctx, const Techniq
 		// render!
 		bool validDraw = true;
 
-		if (Vertex *pvx = mpManager->LockVertices(4)) {
-			const float ustep = 1.0f / (float)(int)ctx.mSourceTexW * ctx.mDefaultUVScaleCorrectionX;
-			const float vstep = 1.0f / (float)(int)ctx.mSourceTexH * ctx.mDefaultUVScaleCorrectionY;
-			const float u0 = 0.0f;
-			const float v0 = pi.mbClipPosition ? ctx.mFieldOffset * vstep * -0.25f : 0.0f;
-			const float u1 = u0 + (int)ctx.mSourceW * ustep;
-			const float v1 = v0 + (int)ctx.mSourceH * vstep;
+		if (pi.mTileMode == 0) {
+			if (Vertex *pvx = mpManager->LockVertices(4)) {
+				const float ustep = 1.0f / (float)(int)ctx.mSourceTexW * ctx.mDefaultUVScaleCorrectionX;
+				const float vstep = 1.0f / (float)(int)ctx.mSourceTexH * ctx.mDefaultUVScaleCorrectionY;
+				const float u0 = 0.0f;
+				const float v0 = pi.mbClipPosition ? ctx.mFieldOffset * vstep * -0.25f : 0.0f;
+				const float u1 = u0 + (int)ctx.mSourceW * ustep;
+				const float v1 = v0 + (int)ctx.mSourceH * vstep;
 
-			const float invVpW = 1.f / (float)vp.Width;
-			const float invVpH = 1.f / (float)vp.Height;
+				const float invVpW = 1.f / (float)vp.Width;
+				const float invVpH = 1.f / (float)vp.Height;
 
-			const float x0 = -1.f - invVpW;
-			const float y0 = 1.f + invVpH;
-			const float x1 = pi.mbClipPosition ? x0 + ctx.mOutputW * 2.0f * invVpW : 1.f - invVpW;
-			const float y1 = pi.mbClipPosition ? y0 - ctx.mOutputH * 2.0f * invVpH : -1.f + invVpH;
+				const float x0 = -1.f - invVpW;
+				const float y0 = 1.f + invVpH;
+				const float x1 = pi.mbClipPosition ? x0 + ctx.mOutputW * 2.0f * invVpW : 1.f - invVpW;
+				const float y1 = pi.mbClipPosition ? y0 - ctx.mOutputH * 2.0f * invVpH : -1.f + invVpH;
 
-			__try {
-				pvx[0].SetFF2(x0, y0, 0xFFFFFFFF, u0, v0, 0, 0);
-				pvx[1].SetFF2(x1, y0, 0xFFFFFFFF, u1, v0, 1, 0);
-				pvx[2].SetFF2(x0, y1, 0xFFFFFFFF, u0, v1, 0, 1);
-				pvx[3].SetFF2(x1, y1, 0xFFFFFFFF, u1, v1, 1, 1);
-			} __except(1) {
-				validDraw = false;
+				__try {
+					pvx[0].SetFF2(x0, y0, 0xFFFFFFFF, u0, v0, 0, 0);
+					pvx[1].SetFF2(x1, y0, 0xFFFFFFFF, u1, v0, 1, 0);
+					pvx[2].SetFF2(x0, y1, 0xFFFFFFFF, u0, v1, 0, 1);
+					pvx[3].SetFF2(x1, y1, 0xFFFFFFFF, u1, v1, 1, 1);
+				} __except(1) {
+					validDraw = false;
+				}
+
+				mpManager->UnlockVertices();
 			}
+		} else if (pi.mTileMode == 1) {
+			if (Vertex *pvx = mpManager->LockVertices(12)) {
+				const float ustep = 1.0f / (float)(int)ctx.mSourceTexW * ctx.mDefaultUVScaleCorrectionX;
+				const float vstep = 1.0f / (float)(int)ctx.mSourceTexH * ctx.mDefaultUVScaleCorrectionY;
+				const float u0 = 0.0f;
+				const float v0 = pi.mbClipPosition ? ctx.mFieldOffset * vstep * -0.25f : 0.0f;
+				const float u1 = u0 + (int)ctx.mSourceW * ustep;
+				const float v1 = v0 + (int)ctx.mSourceH * vstep;
 
-			mpManager->UnlockVertices();
+				const float invVpW = 1.f / (float)vp.Width;
+				const float invVpH = 1.f / (float)vp.Height;
+
+				const float x0 = -1.f - invVpW;
+				const float y0 = 1.f + invVpH;
+				const float x1 = pi.mbClipPosition ? x0 + ctx.mOutputW * 2.0f * invVpW : 1.f - invVpW;
+				const float y1 = pi.mbClipPosition ? y0 - ctx.mOutputH * 2.0f * invVpH : -1.f + invVpH;
+
+				__try {
+					pvx[ 0].SetFF2(x0, y1, 0xFFFFFFFF,  0.0f, 0, 0, 1);
+					pvx[ 1].SetFF2(x0, y0, 0xFFFFFFFF,  0.0f, 0, 0, 0);
+					pvx[ 2].SetFF2(x0, y1, 0xFFFFFFFF, +0.5f, 0, 0, 1);
+					pvx[ 3].SetFF2(x0, y0, 0xFFFFFFFF, +0.5f, 0, 0, 0);
+					pvx[ 4].SetFF2(x0, y1, 0xFFFFFFFF, +2.0f, 0, 0, 1);
+					pvx[ 5].SetFF2(x0, y0, 0xFFFFFFFF, +2.0f, 0, 0, 0);
+					pvx[ 6].SetFF2(x1, y1, 0xFFFFFFFF, -2.0f, 0, 1, 1);
+					pvx[ 7].SetFF2(x1, y0, 0xFFFFFFFF, -2.0f, 0, 1, 0);
+					pvx[ 8].SetFF2(x1, y1, 0xFFFFFFFF, -0.5f, 0, 1, 1);
+					pvx[ 9].SetFF2(x1, y0, 0xFFFFFFFF, -0.5f, 0, 1, 0);
+					pvx[10].SetFF2(x1, y1, 0xFFFFFFFF,  0.0f, 0, 1, 1);
+					pvx[11].SetFF2(x1, y0, 0xFFFFFFFF,  0.0f, 0, 1, 0);
+				} __except(1) {
+					validDraw = false;
+				}
+
+				mpManager->UnlockVertices();
+			}
+		} else if (pi.mTileMode == 2) {
+			if (Vertex *pvx = mpManager->LockVertices(12)) {
+				const float ustep = 1.0f / (float)(int)ctx.mSourceTexW * ctx.mDefaultUVScaleCorrectionX;
+				const float vstep = 1.0f / (float)(int)ctx.mSourceTexH * ctx.mDefaultUVScaleCorrectionY;
+				const float u0 = 0.0f;
+				const float v0 = pi.mbClipPosition ? ctx.mFieldOffset * vstep * -0.25f : 0.0f;
+				const float u1 = u0 + (int)ctx.mSourceW * ustep;
+				const float v1 = v0 + (int)ctx.mSourceH * vstep;
+
+				const float invVpW = 1.f / (float)vp.Width;
+				const float invVpH = 1.f / (float)vp.Height;
+
+				const float x0 = -1.f - invVpW;
+				const float y0 = 1.f + invVpH;
+				const float x1 = pi.mbClipPosition ? x0 + ctx.mOutputW * 2.0f * invVpW : 1.f - invVpW;
+				const float y1 = pi.mbClipPosition ? y0 - ctx.mOutputH * 2.0f * invVpH : -1.f + invVpH;
+
+				__try {
+					pvx[ 0].SetFF2(x1, y0, 0xFFFFFFFF, 0,  0.0f, 1, 0);
+					pvx[ 1].SetFF2(x0, y0, 0xFFFFFFFF, 0,  0.0f, 0, 0);
+					pvx[ 2].SetFF2(x1, y0, 0xFFFFFFFF, 0,  0.5f, 1, 0);
+					pvx[ 3].SetFF2(x0, y0, 0xFFFFFFFF, 0,  0.5f, 0, 0);
+					pvx[ 4].SetFF2(x1, y0, 0xFFFFFFFF, 0,  2.0f, 1, 0);
+					pvx[ 5].SetFF2(x0, y0, 0xFFFFFFFF, 0,  2.0f, 0, 0);
+					pvx[ 6].SetFF2(x1, y1, 0xFFFFFFFF, 0, -2.0f, 1, 1);
+					pvx[ 7].SetFF2(x0, y1, 0xFFFFFFFF, 0, -2.0f, 0, 1);
+					pvx[ 8].SetFF2(x1, y1, 0xFFFFFFFF, 0, -0.5f, 1, 1);
+					pvx[ 9].SetFF2(x0, y1, 0xFFFFFFFF, 0, -0.5f, 0, 1);
+					pvx[10].SetFF2(x1, y1, 0xFFFFFFFF, 0,  0.0f, 1, 1);
+					pvx[11].SetFF2(x0, y1, 0xFFFFFFFF, 0,  0.0f, 0, 1);
+				} __except(1) {
+					validDraw = false;
+				}
+
+				mpManager->UnlockVertices();
+			}
 		}
 
 		if (!validDraw) {
@@ -1639,7 +1713,12 @@ bool VDVideoDisplayDX9Manager::RunEffect(const EffectContext& ctx, const Techniq
 		if (!mpManager->BeginScene())
 			return false;
 
-		hr = mpManager->DrawArrays(D3DPT_TRIANGLESTRIP, 0, 2);
+		if (pi.mTileMode) {
+			hr = mpManager->DrawArrays(D3DPT_TRIANGLESTRIP, 0, 10);
+		} else {
+			hr = mpManager->DrawArrays(D3DPT_TRIANGLESTRIP, 0, 2);
+		}
+
 		if (FAILED(hr)) {
 			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to draw primitive! hr=%08x\n", hr);
 			return false;
@@ -3691,7 +3770,9 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 	if (bSuccess && !mpManager->EndScene())
 		bSuccess = false;
 
-	mpManager->Flush();
+	if (updateMode & kModeVSync)
+		mpManager->Flush();
+
 	mpManager->SetSwapChainActive(NULL);
 
 	if (!bSuccess) {
@@ -3715,7 +3796,7 @@ bool VDVideoDisplayMinidriverDX9::UpdateScreen(const RECT& rClient, UpdateMode u
 
 	HRESULT hr;
 	if (mbFullScreen) {
-		hr = mpManager->PresentFullScreen(!polling);
+		hr = mpManager->PresentFullScreen(!polling && !(updateMode & kModeDoNotWait));
 
 		if (!polling || !mbSwapChainPresentPolling) {
 			mPresentHistory.mPresentStartTime = VDGetPreciseTick();
@@ -3725,7 +3806,7 @@ bool VDVideoDisplayMinidriverDX9::UpdateScreen(const RECT& rClient, UpdateMode u
 			mPresentHistory.mAveragePresentTime += ((VDGetPreciseTick() - mPresentHistory.mPresentStartTime)*VDGetPreciseSecondsPerTick() - mPresentHistory.mAveragePresentTime) * 0.01f;
 		}
 
-		if (hr == S_FALSE) {
+		if (hr == S_FALSE && polling) {
 			++mPresentHistory.mPollCount;
 			mPresentHistory.mbPresentPending = true;
 		} else {
@@ -3733,10 +3814,10 @@ bool VDVideoDisplayMinidriverDX9::UpdateScreen(const RECT& rClient, UpdateMode u
 		}
 
 	} else {
-		hr = mpManager->PresentSwapChain(mpSwapChain, &rClient, mhwnd, (updateMode & kModeVSync) != 0, !polling || !mbSwapChainPresentPolling, polling, mSyncDelta, mPresentHistory);
+		hr = mpManager->PresentSwapChain(mpSwapChain, &rClient, mhwnd, (updateMode & kModeVSync) != 0, !polling || !mbSwapChainPresentPolling, polling || (updateMode & kModeDoNotWait) != 0, mSyncDelta, mPresentHistory);
 	}
 
-	if (hr == S_FALSE) {
+	if (hr == S_FALSE && polling) {
 		mbSwapChainPresentPolling = true;
 		return true;
 	}

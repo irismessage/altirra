@@ -96,7 +96,7 @@ void ATScheduler::SetEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id, AT
 }
 
 ATEvent *ATScheduler::AddEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id) {
-	VDASSERT(ticks > 0 && ticks < 10000000);
+	VDASSERT(ticks > 0 && ticks < 100000000);
 	VDASSERT(id);
 
 	ATEvent *ev;
@@ -126,7 +126,7 @@ ATEvent *ATScheduler::AddEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id
 		mTimeBase += mNextEventCounter;
 		mNextEventCounter = -(sint32)ticks;
 		mTimeBase -= mNextEventCounter;
-		VDASSERT((uint32)-mNextEventCounter < 10000000);
+		VDASSERT((uint32)-mNextEventCounter < 100000000);
 	}
 
 	ATEventLink *t = it->mpPrev;

@@ -217,6 +217,7 @@ void ATFilterComputeSymmetricFIR_8_32F_SSE(float *dst, const float *src, size_t 
 	} while(--n);
 }
 
+#ifdef VD_CPU_X86
 void __declspec(naked) __cdecl ATFilterComputeSymmetricFIR_8_32F_SSE_asm(float *dst, const float *src, size_t n, const float *kernel) {
 	__asm {
 	mov	edx, esp
@@ -322,12 +323,15 @@ xloop:
 	ret
 	}
 }
+#endif
 
 void ATFilterComputeSymmetricFIR_8_32F(float *dst, const float *src, size_t n, const float *kernel) {
+#ifdef VD_CPU_X86
 	if (SSE_enabled) {
 		ATFilterComputeSymmetricFIR_8_32F_SSE_asm(dst, src, n, kernel);
 		return;
 	}
+#endif
 
 	ATFilterComputeSymmetricFIR_8_32F_Scalar(dst, src, n, kernel);
 }
@@ -392,8 +396,6 @@ void ATAudioFilter::PreFilter(float * VDRESTRICT dst, uint32 count) {
 	mHiPassAccum = hiAccum;
 }
 
-void ATAudioFilter::Filter(float * VDRESTRICT dst, const float * VDRESTRICT src, uint32 count) {
-	src -= kFilterOverlap;
-
+void ATAudioFilter::Filter(float *dst, const float *src, uint32 count) {
 	ATFilterComputeSymmetricFIR_8_32F(dst, src, count, mLoPassCoeffs);
 }

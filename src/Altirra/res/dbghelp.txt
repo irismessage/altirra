@@ -1,0 +1,347 @@
++ a    Assemble
+
+    Invoke 6502 miniassembler.
+  
+      a <address>
+    
+    Allows entry of 6502 assembly language code starting at a particular
+    address. Enter one line at a time, and enter a blank line to end.
+    
+    Labels may be entered and referenced; created labels are entered into
+    the custom symbol table. Labels must be defined before use and forward
+    references are not allowed.
+    
+    Auto-increment syntax is allowed: LDA $1000,X+ -> LDA $1000,X / INX
+    
+    Statements may be stacked to share an operand: LDA:RNE VCOUNT
+    
+    Some helper macros supported:
+        MVA src dst -> LDA src / STA dst
+        MVX src dst -> LDX src / STX dst
+        MVY src dst -> LDY src / STY dst
+        Rcc -> Bcc *
+        Scc:<insn> -> Bcc next / <insn> / next:
+        INW/DEW -> INC/DEC / BNE / INC/DEC
+
++ ba   Break on memory access
+
+    Set or clear a memory access breakpoint.
+    
+      ba r <address>   (Break on memory read)
+      ba w <address>   (Break on memory write)
+      ba r/w *         (Clear memory read/write access breakpoint)
+      
+    Memory access breakpoints cause the emulator to stop whenever the CPU
+    core reads or writes a particular address. There can only be one
+    access breakpoint of a type outstanding at a type; attempting to
+    set two read or two write access breakpoints overwrites the previous
+    one of the same type.
+    
+    DMA accesses, such as by ANTIC or VBXE, do not trip access breakpoints.
+
+^ bc, bl, bp   Breakpoint control
+> bp   Set breakpoint
+> bc   Clear breakpoint(s)
+> bl   List breakpoints
+
+    Set, clear, or list PC breakpoints.
+    
+      bp <address>   (Set breakpoint)
+      bc <address>   (Clear a breakpoint)
+      bc *           (Clear all breakpoints)
+      bl             (List breakpoints)
+      
+    Manages breakpoints in the CPU core, which cause the emulator to stop
+    when the PC is equal to the address of a breakpoint. There are no
+    limits to the number of PC breakpoints. Breakpoints do not modify
+    memory and work even after the location has been modified; they also
+    fire at an address regardless of any bank switching.
+    
+    See also: ba, bs
+
++ bs   Break on disk sector
+
+    Set a breakpoint when D1: reads a particular virtual disk sector.
+    
+      bs <sector>    (Set disk sector breakpoint)
+      bs *           (Clear disk sector breakpoint)
+      
+    Stops emulation when the first disk drive (D1:) receives a request
+    to read a particular virtual disk sector.
+
+^ da, db, df, di, dw   Display memory
+> da   Display ATASCII string
+> db   Display bytes
+> df   Display decimal float
+> di   Display INTERNAL string
+> dw   Display words
+
+    Shows the contents of memory with a particular interpretation.
+    
+      da <address> [L<length>]   (Display ATASCII string)
+      db <address> [L<length>]   (Display bytes)
+      df <address> [L<length>]   (Display decimal float)
+      di <address> [L<length>]   (Display INTERNAL string)
+      dw <address> [L<length>]   (Display words)
+      
+    Length specifies the number of elements to display.
+
++ e    Enter (alter) data in memory
+
+    Modifies a block of memory with new data.
+    
+      e <address> <byte> [<bytes...]
+
++ g    Go
+
+    Resume execution.
+    
+      g
+
++ gr   Go until return (step out)
+
+    Resume execution until the current function is exited.
+    
+      gr
+      
+    Resumes execution until the stack pointer rises above the level of
+    the current function. Any child functions executed due to a JSR
+    instruction or an interrupt are run in their entirety.
+
++ gs   Go until scanline
+
+    Resume execution until the beginning of a particular scanline.
+    
+      gs <scanline>
+      
+    If the current scanline is specified, an entire frame is executed.
+
++ gt   Go with tracing enabled
+
+    Resume execution with per-instruction tracing enabled.
+    
+      gt
+      
+    During traced execution, the current beam location, PC, registers, and
+    instruction are logged.
+
++ h    Show CPU history
+
+    Display history of CPU instructions executed.
+
+      h [-i] [-c] [-s <startidx>] [<count> [<pattern>]]
+      
+      -i: Show only interrupt routine execution
+      -c: Compress loops
+      -s: Start from position
+      <count>: Number of entries to display
+      <pattern>: Glob wildcard (?*) to search for
+    
+    The "record instruction history" setting must be enabled in CPU options
+    for the history command to work.
+    
+    The history UI pane contains a more powerful history preprocessor that is
+    also able to identify subroutines and is recommended for serious history
+    review.
+
++ k    Show call stack
+
+    Display a list of return addresses on the stack.
+    
+      k
+      
+    The call stack is computed by virtualized execution, so it may be
+    incorrect if bankswitching or other complex techniques are involved.
+    Note that because return addresses are displayed, the call stack
+    will not show parent call sites to children that never return in
+    normal execution.
+
++ lm   List modules
+
+    Displays a list of currently known modules and any loaded symbols.
+    
+      lm
+
++ ln   List nearest symbol
+
+    Displays the closest symbol to a given address.
+    
+      ln <address>
+      
+    The closest symbol is the one with the highest address that is equal to
+    or lower than the given address.
+
++ r    Registers
+
+    Display or modify register values
+    
+      r                (Display registers)
+      r <reg> <value>  (Modify register)
+      
+    Registers that can be modified are: PC, A, X, Y, S, and P.
+
++ s    Step over
+
+    Execute one instruction, stepping over any subroutine calls.
+    
+      s
+      
+    This is the same as (t)race, except that if a JSR or an interrupt is
+    encountered, execution continues until the subroutine exits.
+
++ t    Trace (step one instruction) (F11)
+
+    Execute one instruction, stepping into a subroutine or interrupt.
+    
+      t
+
++ u    Unassemble
+
+    Disassemble CPU code at a given address.
+    
+      u <address> [L<length>]
+
+^ wb, wc, wl, ww   Watch data
+> wb   Watch byte
+> wc   Watch clear
+> wl   Watch list
+> ww   Watch word
+
+    Continuously display the value of a memory location on-screen.
+    
+      wb <address>     (Watch byte)
+      ww <address>     (Watch word)
+      wl               (Watch list)
+      wc               (Clear all watches)
+      
+    Watched values are sampled and displayed each frame. Up to eight watches
+    can be active at any one time.
+
+^ ya, yc, yd, yr, yw   Manage manual symbol table
+> ya   Add manual symbol
+> yc   Clear manual symbols
+> yd   Delete manual symbol
+> yr   Read manual symbol table
+> yw   Write manual symbol table
+
+    Add or remove symbols from the manual symbol table.
+    
+      ya <name> <address> [L<length>]  (Add manual symbol)
+      yc                               (Clear manual symbols)
+      yd <address>                     (Delete manual symbol)
+      yr <filename>                    (Read manual symbol table)
+      yw <filename>                    (Write manual symbol table)
+      
+    The manual symbol table allows on-the-fly naming of addresses in memory.
+    Any symbols added to the manual symbol table can be used for address
+    specification and decoding as any other symbol.
+
++ .antic       Display ANTIC status
++ .bank        Show memory bank state
+
++ .basic       Dump BASIC table pointers
+
+    Displays the addresses and sizes of BASIC tables.
+    
+      .basic
+
++ .basic_vars  Dump BASIC variables
+
+    Dumps the contents of the Atari BASIC variable name table (VNT).
+    
+      .basic_vars
+      
+    The token and name of each variable is displayed.
+
++ .beam        Show ANTIC scan position
++ .caslogdata  Toggle verbose cassette data read logging
++ .diskorder   Set forced phantom sector ordering
++ .dlhistory   Show ANTIC display list execution history
+
+    Displays history of display list instructions executed by ANTIC.
+    
+      .dlhistory
+      
+    Unlike .dumpdlist, .dlhistory shows past display list history even if
+    the display list has been modified in memory. It also shows some
+    recorded information not found in the display list itself, such as the
+    HSCROL, VSCROL, and DMACTL states when the display list instructions
+    were executed.
+
++ .dma         Show current ANTIC DMA pattern
++ .dumpdlist   Dump ANTIC display list
+
+    Disassemble an ANTIC display list stored in memory.
+    
+      .dumpdlist [<address>]
+      
+    If no address is supplied, the current ANTIC display list pointer is
+    used.
+
++ .dumpdsm     Dump disassembly to file
++ .gtia        Display GTIA status
++ .iocb        Display CIO I/O control blocks
++ .loadksym    Load kernel symbols
++ .loadsym     Load module symbols
+
+    Load module symbols from a symbol file.
+    
+      .loadsym <file>
+      
+    Two types of symbols are supported. A labels file allows the debugger to
+    match addresses to labels, while a listing file permits source-level
+    debugging. Both label and listing files can be loaded at the same time,
+    and multiple sets of symbols can also be loaded.
+
+^ .pathdump, .pathreset, .pathbreak   Manage execution path recording
+> .pathreset   Clear recorded paths
+> .pathdump    Dump disassembly of recorded paths to a file
+> .pathbreak   Toggle break on new path
+
+    Record and dump instruction paths executed by the CPU.
+
+      .pathrecord [on|off] (Show or change path recording setting) 
+      .pathreset           (Clear recorded paths)
+      .pathdump <file>     (Dump path disassembly to a file)
+      .pathbreak [on|off]  (Show or change new path break setting)
+    
+    Path recording, when enabled, marks the addresses of branch targets
+    and subroutines during execution, making it easier to follow
+    execution flow in a disassembly and identifying which memory areas
+    are confirmed to contain code. When enabled, the diassembly will
+    also show pseudo-labels for any addresses not already marked with
+    a symbol.
+    
+    The .pathbreak command permits halting execution whenever a new
+    path is encountered. This is handy for identifying the exit path
+    in a large frame loop, as the body of the loop can be captured and
+    then .pathbreak enabled to capture the exit path.
+
++ .pokey       Display POKEY status
++ .restart     Restart emulated system
+
+    Performs a cold reset.
+    
+      .restart
+
++ .tracecio    Toggle CIO call tracing
++ .traceser    Toggle serial I/O port tracing
++ .unloadsym   Unload module symbols
++ .vbxe        Display VBXE status
++ .vbxe_bl     Display VBXE blit list (BL)
++ .vbxe_xdl    Display VBXE extended display list (XDL)
++ .vbxe_traceblits    Toggle VBXE blit tracing
++ .vectors     Display kernel vectors
++ .writemem    Write memory to disk
+. 
+. Some commands support extended memory syntax:
+.   $0000      CPU view of primary memory
+.   $01:0000   CPU view, 65C816 high memory
+.   n:$0000    ANTIC view of primary memory
+.   v:$00000   VBXE memory
+.   x:$00000   Extended memory
+. 
+. Some commands support length syntax:
+.   db siov L100
+.
+. Use ? <command> for detailed help on that command.

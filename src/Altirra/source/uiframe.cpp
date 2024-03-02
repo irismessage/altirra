@@ -19,12 +19,21 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <hash_map>
+#include <vd2/system/strutil.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/system/math.h>
 #include "ui.h"
 #include "uiframe.h"
+
+// Requires Windows XP
+#ifndef WM_THEMECHANGED
+#define WM_THEMECHANGED 0x031A
+#endif
+
+
+#pragma comment(lib, "msimg32")
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -40,11 +49,57 @@ namespace ATUIFrame {
 using namespace ATUIFrame;
 
 void ATInitUIFrameSystem() {
-	g_splitterDistH = GetSystemMetrics(SM_CXEDGE) * 2;
-	g_splitterDistV = GetSystemMetrics(SM_CYEDGE) * 2;
+	g_splitterDistH = GetSystemMetrics(SM_CXEDGE);
+	g_splitterDistV = GetSystemMetrics(SM_CYEDGE);
 }
 
 void ATShutdownUIFrameSystem() {
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+ATContainerResizer::ATContainerResizer()
+	: mhdwp(NULL)
+{
+}
+
+void ATContainerResizer::LayoutWindow(HWND hwnd, int x, int y, int width, int height) {
+	if (!mhdwp)
+		mhdwp = BeginDeferWindowPos(4);
+
+	if (mhdwp) {
+		HDWP hdwp = DeferWindowPos(mhdwp, hwnd, NULL, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+
+		if (hdwp) {
+			mhdwp = hdwp;
+			return;
+		}
+	}
+
+	SetWindowPos(hwnd, NULL, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void ATContainerResizer::ResizeWindow(HWND hwnd, int width, int height) {
+	if (!mhdwp)
+		mhdwp = BeginDeferWindowPos(4);
+
+	if (mhdwp) {
+		HDWP hdwp = DeferWindowPos(mhdwp, hwnd, NULL, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE);
+
+		if (hdwp) {
+			mhdwp = hdwp;
+			return;
+		}
+	}
+
+	SetWindowPos(hwnd, NULL, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE);
+}
+
+void ATContainerResizer::Flush() {
+	if (mhdwp) {
+		EndDeferWindowPos(mhdwp);
+		mhdwp = NULL;
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -116,7 +171,7 @@ void ATContainerSplitterBar::OnPaint() {
 	if (HDC hdc = BeginPaint(mhwnd, &ps)) {
 		RECT r;
 		GetClientRect(mhwnd, &r);
-		DrawEdge(hdc, &r, EDGE_RAISED, mbVertical ? BF_LEFT|BF_RIGHT|BF_ADJUST : BF_TOP|BF_BOTTOM|BF_ADJUST);
+//		DrawEdge(hdc, &r, EDGE_RAISED, mbVertical ? BF_LEFT|BF_RIGHT|BF_ADJUST : BF_TOP|BF_BOTTOM|BF_ADJUST);
 		FillRect(hdc, &r, (HBRUSH)(COLOR_3DFACE+1));
 
 		EndPaint(mhwnd, &ps);
@@ -378,7 +433,7 @@ ATContainerDockingPane::~ATContainerDockingPane() {
 	DestroySplitter();
 }
 
-void ATContainerDockingPane::SetArea(const vdrect32& area, bool parentContainsFullScreen) {
+void ATContainerDockingPane::SetArea(ATContainerResizer& resizer, const vdrect32& area, bool parentContainsFullScreen) {
 	bool fullScreenLayout = mbFullScreen || parentContainsFullScreen;
 
 	if (mArea == area && mbFullScreenLayout == fullScreenLayout)
@@ -387,7 +442,7 @@ void ATContainerDockingPane::SetArea(const vdrect32& area, bool parentContainsFu
 	mArea = area;
 	mbFullScreenLayout = fullScreenLayout;
 
-	Relayout();
+	Relayout(resizer);
 }
 
 void ATContainerDockingPane::Clear() {
@@ -405,7 +460,7 @@ void ATContainerDockingPane::Clear() {
 	Release();
 }
 
-void ATContainerDockingPane::Relayout() {
+void ATContainerDockingPane::Relayout(ATContainerResizer& resizer) {
 	mCenterArea = mArea;
 
 	if (mpSplitter) {
@@ -415,19 +470,19 @@ void ATContainerDockingPane::Relayout() {
 
 		switch(mDockCode) {
 			case kATContainerDockLeft:
-				SetWindowPos(hwndSplitter, NULL, mArea.right, mArea.top, g_splitterDistH, mArea.height(), SWP_NOZORDER|SWP_NOACTIVATE);
+				resizer.LayoutWindow(hwndSplitter, mArea.right, mArea.top, g_splitterDistH, mArea.height());
 				break;
 
 			case kATContainerDockRight:
-				SetWindowPos(hwndSplitter, NULL, mArea.left - g_splitterDistH, mArea.top, g_splitterDistH, mArea.height(), SWP_NOZORDER|SWP_NOACTIVATE);
+				resizer.LayoutWindow(hwndSplitter, mArea.left - g_splitterDistH, mArea.top, g_splitterDistH, mArea.height());
 				break;
 
 			case kATContainerDockTop:
-				SetWindowPos(hwndSplitter, NULL, mArea.left, mArea.bottom, mArea.width(), g_splitterDistV, SWP_NOZORDER|SWP_NOACTIVATE);
+				resizer.LayoutWindow(hwndSplitter, mArea.left, mArea.bottom, mArea.width(), g_splitterDistV);
 				break;
 
 			case kATContainerDockBottom:
-				SetWindowPos(hwndSplitter, NULL, mArea.left, mArea.top - g_splitterDistV, mArea.width(), g_splitterDistV, SWP_NOZORDER|SWP_NOACTIVATE);
+				resizer.LayoutWindow(hwndSplitter, mArea.left, mArea.top - g_splitterDistV, mArea.width(), g_splitterDistV);
 				break;
 		}
 	}
@@ -482,10 +537,46 @@ void ATContainerDockingPane::Relayout() {
 			}
 		}
 
-		pane->SetArea(rPane, mbFullScreenLayout);
+		pane->SetArea(resizer, rPane, mbFullScreenLayout);
 	}
 
 	RepositionContent();
+}
+
+bool ATContainerDockingPane::GetFrameSizeForContent(vdsize32& sz) {
+	double horizFraction = 1.0f;
+	double vertFraction = 1.0f;
+	int horizExtra = 0;
+	int vertExtra = 0;
+
+	Children::const_iterator it(mChildren.begin()), itEnd(mChildren.end());
+	for(; it != itEnd; ++it) {
+		ATContainerDockingPane *pane = *it;
+
+		switch(pane->mDockCode) {
+			case kATContainerDockLeft:
+			case kATContainerDockRight:
+				horizFraction -= pane->mDockFraction;
+				horizExtra += g_splitterDistH + 1;		// +1 for rounding bias
+				break;
+
+			case kATContainerDockTop:
+			case kATContainerDockBottom:
+				vertFraction -= pane->mDockFraction;
+				vertExtra += g_splitterDistV + 1;
+				break;
+
+			case kATContainerDockCenter:
+				break;
+		}
+	}
+
+	if (horizFraction < 1e-5f || vertFraction < 1e-5f)
+		return false;
+
+	sz.w = VDRoundToInt32((double)sz.w / horizFraction) + horizExtra;
+	sz.h = VDRoundToInt32((double)sz.h / vertFraction) + vertExtra;
+	return true;
 }
 
 int ATContainerDockingPane::GetDockCode() const {
@@ -505,8 +596,11 @@ void ATContainerDockingPane::SetDockFraction(float frac) {
 
 	mDockFraction = frac;
 
-	if (mpDockParent)
-		mpDockParent->Relayout();
+	if (mpDockParent) {
+		ATContainerResizer resizer;
+		mpDockParent->Relayout(resizer);
+		resizer.Flush();
+	}
 }
 
 ATContainerDockingPane *ATContainerDockingPane::GetCenterPane() const {
@@ -589,7 +683,9 @@ void ATContainerDockingPane::Dock(ATContainerDockingPane *pane, int code) {
 	pane->mpDockParent = this;
 	pane->mDockCode = code;
 
-	Relayout();
+	ATContainerResizer resizer;
+	Relayout(resizer);
+	resizer.Flush();
 
 	pane->CreateSplitter();
 }
@@ -616,6 +712,30 @@ bool ATContainerDockingPane::Undock(ATFrameWindow *pane) {
 	}
 
 	return false;
+}
+
+void ATContainerDockingPane::NotifyFontsUpdated() {
+	if (mpContent)
+		mpContent->NotifyFontsUpdated();
+
+	Children::const_iterator it(mChildren.begin()), itEnd(mChildren.end());
+	for(; it!=itEnd; ++it) {
+		ATContainerDockingPane *child = *it;
+
+		child->NotifyFontsUpdated();
+	}
+}
+
+void ATContainerDockingPane::RecalcFrame() {
+	Children::const_iterator it(mChildren.begin()), itEnd(mChildren.end());
+	for(; it!=itEnd; ++it) {
+		ATContainerDockingPane *child = *it;
+
+		child->RecalcFrame();
+	}
+
+	if (mpContent)
+		mpContent->RecalcFrame();
 }
 
 void ATContainerDockingPane::UpdateActivationState(ATFrameWindow *frame) {
@@ -823,7 +943,9 @@ void ATContainerDockingPane::RemoveEmptyNode() {
 
 		AddRef();
 		child->RemoveEmptyNode();
-		Relayout();
+		ATContainerResizer resizer;
+		Relayout(resizer);
+		resizer.Flush();
 		Release();
 		return;
 	}
@@ -844,7 +966,10 @@ void ATContainerDockingPane::RemoveEmptyNode() {
 
 	// NOTE: We're dead at this point!
 
-	parent->Relayout();
+	ATContainerResizer resizer;
+	parent->Relayout(resizer);
+	resizer.Flush();
+
 	if (parent->mChildren.empty())
 		parent->RemoveEmptyNode();
 }
@@ -857,6 +982,8 @@ ATContainerWindow::ATContainerWindow()
 	, mpActiveFrame(NULL)
 	, mpFullScreenFrame(NULL)
 	, mbBlockActiveUpdates(false)
+	, mhfontCaption(NULL)
+	, mhfontCaptionSymbol(NULL)
 {
 	if (mpDockingPane) {
 		mpDockingPane->AddRef();
@@ -883,7 +1010,8 @@ void *ATContainerWindow::AsInterface(uint32 id) {
 }
 
 VDGUIHandle ATContainerWindow::Create(int x, int y, int cx, int cy, VDGUIHandle parent, bool visible) {
-	return (VDGUIHandle)CreateWindowEx(WS_EX_CLIENTEDGE, (LPCSTR)sWndClass, "", WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|(visible ? WS_VISIBLE : 0), x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
+//	return (VDGUIHandle)CreateWindowEx(WS_EX_CLIENTEDGE, (LPCSTR)sWndClass, "", WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|(visible ? WS_VISIBLE : 0), x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
+	return (VDGUIHandle)CreateWindowEx(0, (LPCSTR)sWndClass, "", WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|(visible ? WS_VISIBLE : 0), x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
 }
 
 void ATContainerWindow::Destroy() {
@@ -896,6 +1024,42 @@ void ATContainerWindow::Destroy() {
 void ATContainerWindow::Clear() {
 	if (mpDockingPane)
 		mpDockingPane->Clear();
+}
+
+void ATContainerWindow::AutoSize() {
+	if (!mpDockingPane || !mhwnd || mpFullScreenFrame)
+		return;
+
+	WINDOWPLACEMENT wp = {sizeof(WINDOWPLACEMENT)};
+	if (!GetWindowPlacement(mhwnd, &wp))
+		return;
+
+	if (wp.showCmd != SW_SHOWNORMAL)
+		return;
+
+	ATContainerDockingPane *centerPane = mpDockingPane->GetCenterPane();
+	if (!centerPane)
+		return;
+
+	ATFrameWindow *frame = centerPane->GetContent();
+	if (!frame)
+		return;
+
+	vdsize32 sz;
+	if (!frame->GetIdealSize(sz))
+		return;
+
+	if (!mpDockingPane->GetFrameSizeForContent(sz))
+		return;
+
+	RECT r = {0, 0, sz.w, sz.h};
+	if (!AdjustWindowRect(&r, GetWindowLong(mhwnd, GWL_STYLE), GetMenu(mhwnd) != NULL))
+		return;
+
+	wp.rcNormalPosition.right = wp.rcNormalPosition.left + (r.right - r.left);
+	wp.rcNormalPosition.bottom = wp.rcNormalPosition.top + (r.bottom - r.top);
+
+	SetWindowPlacement(mhwnd, &wp);
 }
 
 void ATContainerWindow::Relayout() {
@@ -924,6 +1088,11 @@ ATFrameWindow *ATContainerWindow::GetUndockedPane(uint32 index) const {
 		return NULL;
 
 	return mUndockedFrames[index];
+}
+
+void ATContainerWindow::NotifyFontsUpdated() {
+	if (mpDockingPane)
+		mpDockingPane->NotifyFontsUpdated();
 }
 
 bool ATContainerWindow::InitDragHandles() {
@@ -998,7 +1167,6 @@ ATContainerDockingPane *ATContainerWindow::DockFrame(ATFrameWindow *frame) {
 			exstyle &= ~WS_EX_WINDOWEDGE;
 			SetWindowLong(hwndFrame, GWL_EXSTYLE, exstyle);
 
-			SetWindowPos(hwndFrame, NULL, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_FRAMECHANGED|SWP_NOACTIVATE);
 			SendMessage(mhwnd, WM_CHANGEUISTATE, MAKELONG(UIS_INITIALIZE, UISF_HIDEACCEL|UISF_HIDEFOCUS), 0);
 
 			if (hwndActive)
@@ -1011,6 +1179,7 @@ ATContainerDockingPane *ATContainerWindow::DockFrame(ATFrameWindow *frame) {
 	if (frame) {
 		frame->SetContainer(this);
 		newPane->SetContent(frame);
+		frame->RecalcFrame();
 	}
 
 	mpDragPaneTarget->Dock(newPane, mDragPaneTargetCode);
@@ -1081,15 +1250,17 @@ void ATContainerWindow::SetFullScreenFrame(ATFrameWindow *frame) {
 
 	LONG exStyle = GetWindowLong(mhwnd, GWL_EXSTYLE);
 
-	if (frame)
-		exStyle &= ~WS_EX_CLIENTEDGE;
-	else
-		exStyle |= WS_EX_CLIENTEDGE;
+//	if (frame)
+//		exStyle &= ~WS_EX_CLIENTEDGE;
+//	else
+//		exStyle |= WS_EX_CLIENTEDGE;
 
 	SetWindowLong(mhwnd, GWL_EXSTYLE, exStyle);
 	SetWindowPos(mhwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 
-	mpDockingPane->Relayout();
+	ATContainerResizer resizer;
+	mpDockingPane->Relayout(resizer);
+	resizer.Flush();
 }
 
 void ATContainerWindow::ActivateFrame(ATFrameWindow *frame) {
@@ -1167,23 +1338,34 @@ LRESULT ATContainerWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			if (OnActivate(LOWORD(wParam), HIWORD(wParam) != 0, (HWND)lParam))
 				return 0;
 			break;
+
+		case WM_SYSCOLORCHANGE:
+		case WM_THEMECHANGED:
+			if (mpDockingPane)
+				mpDockingPane->RecalcFrame();
+			break;
 	}
 
 	return VDShaderEditorBaseWindow::WndProc(msg, wParam, lParam);
 }
 
 bool ATContainerWindow::OnCreate() {
+	RecreateSystemObjects();
 	OnSize();
 	return true;
 }
 
 void ATContainerWindow::OnDestroy() {
+	DestroySystemObjects();
 }
 
 void ATContainerWindow::OnSize() {
 	RECT r;
 	GetClientRect(mhwnd, &r);
-	mpDockingPane->SetArea(vdrect32(0, 0, r.right, r.bottom), false);
+
+	ATContainerResizer resizer;
+	mpDockingPane->SetArea(resizer, vdrect32(0, 0, r.right, r.bottom), false);
+	resizer.Flush();
 }
 
 void ATContainerWindow::OnChildDestroy(HWND hwndChild) {
@@ -1228,25 +1410,7 @@ void ATContainerWindow::OnKillFocus(HWND hwndNewFocus) {
 }
 
 bool ATContainerWindow::OnActivate(UINT code, bool minimized, HWND hwnd) {
-	if (code == WA_INACTIVE) {
-#if 0
-		HWND hwndFocus = GetFocus();
-
-		if (IsChild(mhwnd, hwndFocus)) {
-			HWND hwndFocusTopLevel = hwndFocus;
-			while(GetWindowLong(hwndFocusTopLevel, GWL_STYLE) & WS_CHILD) {
-				HWND next = GetParent(hwndFocusTopLevel);
-				VDASSERT(next);
-				hwndFocusTopLevel = next;
-			}
-
-			if (hwndFocusTopLevel == mhwnd) {
-				VDASSERT(GetAncestor(hwndFocus, GA_ROOT) == mhwnd);
-				mhwndActiveFrame = hwndFocus;
-			}
-		}
-#endif
-	} else if (!minimized) {
+	if (code != WA_INACTIVE && !minimized) {
 		if (mpActiveFrame) {
 			VDASSERT(mpActiveFrame->GetContainer() == this);
 
@@ -1261,11 +1425,45 @@ bool ATContainerWindow::OnActivate(UINT code, bool minimized, HWND hwnd) {
 	return true;
 }
 
+void ATContainerWindow::RecreateSystemObjects() {
+	DestroySystemObjects();
+
+	NONCLIENTMETRICS ncm = {sizeof(NONCLIENTMETRICS)};
+
+	SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &ncm, FALSE);
+
+	mhfontCaption = CreateFontIndirect(&ncm.lfSmCaptionFont);
+
+	LOGFONT lf = ncm.lfSmCaptionFont;
+	lf.lfEscapement = 0;
+	lf.lfItalic = FALSE;
+	lf.lfUnderline = FALSE;
+	lf.lfWeight = 0;
+	vdstrlcpy(lf.lfFaceName, "Marlett", sizeof(lf.lfFaceName)/sizeof(lf.lfFaceName[0]));
+
+	mhfontCaptionSymbol = CreateFontIndirect(&lf);
+}
+
+void ATContainerWindow::DestroySystemObjects() {
+	if (mhfontCaption) {
+		DeleteFont(mhfontCaption);
+		mhfontCaption = NULL;
+	}
+
+	if (mhfontCaptionSymbol) {
+		DeleteFont(mhfontCaptionSymbol);
+		mhfontCaptionSymbol = NULL;
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 ATFrameWindow::ATFrameWindow()
 	: mbDragging(false)
 	, mbFullScreen(false)
+	, mbActiveCaption(false)
+	, mbCloseDown(false)
+	, mbCloseTracking(false)
 	, mpDockingPane(NULL)
 	, mpContainer(NULL)
 {
@@ -1331,6 +1529,46 @@ void ATFrameWindow::SetFullScreen(bool fs) {
 	}
 }
 
+void ATFrameWindow::NotifyFontsUpdated() {
+	if (mhwnd) {
+		HWND hwndChild = GetWindow(mhwnd, GW_CHILD);
+
+		if (hwndChild)
+			SendMessage(hwndChild, ATWM_FONTSUPDATED, 0, 0);
+	}
+}
+
+bool ATFrameWindow::GetIdealSize(vdsize32& sz) {
+	if (!mhwnd)
+		return false;
+
+	sz.w = 0;
+	sz.h = 0;
+
+	HWND hwndChild = GetWindow(mhwnd, GW_CHILD);
+	if (!hwndChild)
+		return false;
+
+	if (!SendMessage(hwndChild, ATWM_GETAUTOSIZE, 0, (LPARAM)&sz))
+		return false;
+
+	NONCLIENTMETRICS ncm = {sizeof(NONCLIENTMETRICS)};
+	SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &ncm, FALSE);
+
+	sz.h += ncm.iSmCaptionHeight;
+	sz.w += 2*GetSystemMetrics(SM_CXEDGE);
+	sz.h += 2*GetSystemMetrics(SM_CYEDGE);
+
+	return true;
+}
+
+void ATFrameWindow::RecalcFrame() {
+	if (mhwnd) {
+		SetWindowPos(mhwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+		OnSize();
+	}
+}
+
 VDGUIHandle ATFrameWindow::Create(const char *title, int x, int y, int cx, int cy, VDGUIHandle parent) {
 	return (VDGUIHandle)CreateWindowEx(WS_EX_TOOLWINDOW, (LPCSTR)sWndClass, title, WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
 }
@@ -1342,6 +1580,7 @@ VDGUIHandle ATFrameWindow::CreateChild(const char *title, int x, int y, int cx, 
 LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	switch(msg) {
 		case WM_CREATE:
+			mTitle = (const TCHAR *)((LPCREATESTRUCT)lParam)->lpszName;
 			if (!OnCreate())
 				return -1;
 			break;
@@ -1360,22 +1599,89 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 
 		case WM_NCLBUTTONDOWN:
+			if (mpDockingPane && wParam == HTCLOSE) {
+				mbCloseDown = true;
+				mbCloseTracking = true;
+				::SetCapture(mhwnd);
+				PaintCaption(NULL);
+				return 0;
+			}
+
 			if (OnNCLButtonDown(wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)))
 				return 0;
 			break;
 
 		case WM_LBUTTONUP:
+			if (mbCloseTracking) {
+				mbCloseTracking = false;
+				::ReleaseCapture();
+
+				int x = GET_X_LPARAM(lParam);
+				int y = GET_Y_LPARAM(lParam);
+
+				POINT pt = {x, y};
+				ClientToScreen(mhwnd, &pt);
+
+				x = pt.x;
+				y = pt.y;
+
+				RECT r = {};
+				GetWindowRect(mhwnd, &r);
+
+				x -= r.left;
+				y -= r.top;
+
+				mbCloseDown = false;
+
+				PaintCaption(NULL);
+
+				if (mCloseRect.contains(vdpoint32(x, y)))
+					SendMessage(mhwnd, WM_SYSCOMMAND, SC_CLOSE, lParam);
+			}
+
 			if (mbDragging) {
 				EndDrag(true);
 			}
 			break;
 
 		case WM_MOUSEMOVE:
+			if (mbCloseTracking) {
+				int x = GET_X_LPARAM(lParam);
+				int y = GET_Y_LPARAM(lParam);
+
+				POINT pt = {x, y};
+				ClientToScreen(mhwnd, &pt);
+
+				x = pt.x;
+				y = pt.y;
+
+				RECT r = {};
+				GetWindowRect(mhwnd, &r);
+
+				x -= r.left;
+				y -= r.top;
+
+				bool closeDown = mCloseRect.contains(vdpoint32(x, y));
+
+				if (mbCloseDown != closeDown) {
+					mbCloseDown = closeDown;
+
+					PaintCaption(NULL);
+				}
+
+				return 0;
+			}
+
 			if (OnMouseMove(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)))
 				return 0;
 			break;
 
 		case WM_CAPTURECHANGED:
+			if (mbCloseTracking) {
+				mbCloseTracking = false;
+				return 0;
+			}
+
 			if ((HWND)lParam != mhwnd) {
 				EndDrag(false);
 			}
@@ -1410,9 +1716,206 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 		case WM_ERASEBKGND:
 			return TRUE;
+
+		case WM_NCACTIVATE:
+			mbActiveCaption = (wParam != 0);
+
+			if (mpDockingPane) {
+				PaintCaption(NULL);
+
+				// Toggle visible flag to prevent DefWindowProc() from painting the caption.
+				DWORD prevFlags = GetWindowLong(mhwnd, GWL_STYLE);
+				SetWindowLong(mhwnd, GWL_STYLE, prevFlags & ~WS_VISIBLE);
+				LRESULT r = VDShaderEditorBaseWindow::WndProc(msg, wParam, lParam);
+				SetWindowLong(mhwnd, GWL_STYLE, prevFlags);
+				return r;
+			}
+			break;
+
+		case WM_NCCALCSIZE:
+			if (mpDockingPane) {
+				NONCLIENTMETRICS ncm = {sizeof(NONCLIENTMETRICS)};
+
+				SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &ncm, FALSE);
+
+				RECT& r = *(RECT *)lParam;
+				const int x = r.left;
+				const int y = r.top;
+				const int h = ncm.iSmCaptionHeight;
+
+				mCaptionRect.set(0, 0, r.right, h);
+
+				int bsize = std::min<int>(GetSystemMetrics(SM_CXSMSIZE), GetSystemMetrics(SM_CYSMSIZE));
+
+				mCloseRect.set(r.right - r.left - bsize, 0, r.right - r.left, h);
+
+				r.top += h;
+				if (r.top > r.bottom)
+					r.top = r.bottom;
+
+				int xe = GetSystemMetrics(SM_CXEDGE);
+				int ye = GetSystemMetrics(SM_CYEDGE);
+				r.left += xe;
+				r.top += ye;
+				r.right -= xe;
+				r.bottom -= ye;
+
+				mClientRect.set(r.left, r.top, r.right, r.bottom);
+				mClientRect.translate(-x, -y);
+				return 0;
+			}
+			break;
+
+		case WM_NCPAINT:
+			if (mpDockingPane) {
+				PaintCaption((HRGN)wParam);
+				return 0;
+			}
+			break;
+
+		case WM_NCHITTEST:
+			if (mpDockingPane) {
+				int x = GET_X_LPARAM(lParam);
+				int y = GET_Y_LPARAM(lParam);
+
+				RECT r = {};
+				GetWindowRect(mhwnd, &r);
+
+				x -= r.left;
+				y -= r.top;
+
+				const vdpoint32 pt(x, y);
+
+				if (mCloseRect.contains(pt))
+					return HTCLOSE;
+
+				if (mCaptionRect.contains(pt))
+					return HTCAPTION;
+
+				if (mClientRect.contains(pt))
+					return HTCLIENT;
+
+				return HTBORDER;
+			}
+			break;
+
+		case WM_SETTEXT:
+			mTitle = (const TCHAR *)lParam;
+			if (mpDockingPane) {
+				DWORD prevFlags = GetWindowLong(mhwnd, GWL_STYLE);
+				SetWindowLong(mhwnd, GWL_STYLE, prevFlags & ~WS_VISIBLE);
+				LRESULT r = VDShaderEditorBaseWindow::WndProc(msg, wParam, lParam);
+				SetWindowLong(mhwnd, GWL_STYLE, prevFlags);
+			}
+			break;
 	}
 
 	return VDShaderEditorBaseWindow::WndProc(msg, wParam, lParam);
+}
+
+void ATFrameWindow::PaintCaption(HRGN clipRegion) {
+	HDC hdc;
+	
+	if (clipRegion && clipRegion != (HRGN)1)
+		hdc = GetDCEx(mhwnd, clipRegion, DCX_WINDOW | DCX_INTERSECTRGN | 0x10000);
+	else
+		hdc = GetDCEx(mhwnd, NULL, DCX_WINDOW | 0x10000);
+
+	if (!hdc)
+		return;
+
+	NONCLIENTMETRICS ncm = {sizeof(NONCLIENTMETRICS)};
+
+	SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &ncm, FALSE);
+	RECT r;
+	GetWindowRect(mhwnd, &r);
+	int x = r.left;
+	int y = r.top;
+	r.right -= r.left;
+	r.bottom = ncm.iSmCaptionHeight;
+	r.top = 0;
+	r.left = 0;
+
+	int xe = GetSystemMetrics(SM_CXEDGE);
+	int ye = GetSystemMetrics(SM_CYEDGE);
+
+	RECT rc;
+	rc.left = mClientRect.left - xe;
+	rc.top = mClientRect.top - ye;
+	rc.right = mClientRect.right + xe;
+	rc.bottom = mClientRect.bottom + ye;
+	DrawEdge(hdc, &rc, EDGE_SUNKEN, BF_RECT);
+
+	RECT r2 = r;
+	if (r2.right < 0)
+		r2.right = 0;
+
+	BOOL gradientsEnabled = FALSE;
+	SystemParametersInfo(SPI_GETGRADIENTCAPTIONS, 0, &gradientsEnabled, FALSE);
+
+	if (gradientsEnabled) {
+		const uint32 c0 = GetSysColor(mbActiveCaption ? COLOR_ACTIVECAPTION : COLOR_INACTIVECAPTION);
+		const uint32 c1 = GetSysColor(mbActiveCaption ? COLOR_GRADIENTACTIVECAPTION : COLOR_GRADIENTINACTIVECAPTION);
+		TRIVERTEX v[2];
+		v[0].x = r.left;
+		v[0].y = r.top;
+		v[0].Red = (c0 & 0xff) << 8;
+		v[0].Green = c0 & 0xff00;
+		v[0].Blue = (c0 & 0xff0000) >> 8;
+		v[1].x = r.right;
+		v[1].y = r.bottom;
+		v[1].Red = (c1 & 0xff) << 8;
+		v[1].Green = c1 & 0xff00;
+		v[1].Blue = (c1 & 0xff0000) >> 8;
+
+		GRADIENT_RECT gr;
+		gr.UpperLeft = 0;
+		gr.LowerRight = 1;
+		GradientFill(hdc, v, 2, &gr, 1, GRADIENT_FILL_RECT_H);
+	} else {
+		FillRect(hdc, &r2, mbActiveCaption ? (HBRUSH)(COLOR_ACTIVECAPTION + 1) : (HBRUSH)(COLOR_INACTIVECAPTION + 1));
+	}
+	
+	if (mpContainer) {
+		HFONT hfont = mpContainer->GetCaptionFont();
+		if (hfont) {
+			HGDIOBJ holdfont = SelectObject(hdc, hfont);
+
+			if (holdfont) {
+				//SetBkMode(hdc, OPAQUE);
+				SetBkMode(hdc, TRANSPARENT);
+				SetBkColor(hdc, GetSysColor(mbActiveCaption ? COLOR_ACTIVECAPTION : COLOR_INACTIVECAPTION));
+				SetTextColor(hdc, GetSysColor(mbActiveCaption ? COLOR_CAPTIONTEXT : COLOR_INACTIVECAPTIONTEXT));
+				SetTextAlign(hdc, TA_LEFT | TA_TOP);
+
+				RECT rc = { mCaptionRect.left + xe*2, mCaptionRect.top, mCaptionRect.right, mCaptionRect.bottom };
+				DrawText(hdc, mTitle.data(), mTitle.size(), &rc, DT_NOPREFIX | DT_SINGLELINE | DT_LEFT | DT_VCENTER);
+				SelectObject(hdc, holdfont);
+			}
+		}
+
+		HFONT hfont2 = mpContainer->GetCaptionSymbolFont();
+		if (hfont2) {
+			HGDIOBJ holdfont = SelectObject(hdc, hfont2);
+
+			if (holdfont) {
+				RECT r3;
+				r3.left = mCloseRect.left;
+				r3.top = mCloseRect.top;
+				r3.right = mCloseRect.right;
+				r3.bottom = mCloseRect.bottom;
+
+				SetTextColor(hdc, RGB(0, 0, 0));
+				if (mbCloseDown)
+					DrawText(hdc, "r", 1, &r3, DT_NOPREFIX | DT_LEFT | DT_BOTTOM | DT_SINGLELINE);
+				else
+					DrawText(hdc, "r", 1, &r3, DT_NOPREFIX | DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+				SelectObject(hdc, holdfont);
+			}
+		}
+	}
+
+	ReleaseDC(mhwnd, hdc);
 }
 
 bool ATFrameWindow::OnCreate() {
@@ -1431,8 +1934,11 @@ void ATFrameWindow::OnSize() {
 		HWND hwndChild = GetWindow(mhwnd, GW_CHILD);
 
 		if (hwndChild)
-			SetWindowPos(hwndChild, NULL, 0, 0, r.right, r.bottom, SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOMOVE);
+			SetWindowPos(hwndChild, NULL, 0, 0, r.right, r.bottom, SWP_NOZORDER|SWP_NOACTIVATE);
 	}
+
+	if (mpDockingPane)
+		PaintCaption(NULL);
 }
 
 bool ATFrameWindow::OnNCLButtonDown(int code, int x, int y) {
@@ -1631,6 +2137,10 @@ LRESULT ATUIPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			if (OnCommand(LOWORD(wParam), HIWORD(wParam)))
 				return 0;
 			break;
+
+		case ATWM_FONTSUPDATED:
+			OnFontsUpdated();
+			break;
 	}
 
 	return VDShaderEditorBaseWindow::WndProc(msg, wParam, lParam);
@@ -1650,6 +2160,9 @@ void ATUIPane::OnSize() {
 }
 
 void ATUIPane::OnSetFocus() {
+}
+
+void ATUIPane::OnFontsUpdated() {
 }
 
 bool ATUIPane::OnCommand(uint32 id, uint32 extcode) {

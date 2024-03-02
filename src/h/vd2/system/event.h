@@ -189,8 +189,8 @@ public:
 		Add(*binding.mpBoundDelegate);
 	}
 
-	void operator-=(const VDDelegateBinding<Source, ArgType>& binding) {
-		Remove(*binding.mpBoundDelegate);
+	void operator-=(VDDelegate& del) {
+		Remove(del);
 	}
 
 	void Raise(Source *src, const ArgType& args) {

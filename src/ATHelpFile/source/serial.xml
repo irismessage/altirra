@@ -1,0 +1,225 @@
+<?xml version='1.0' standalone='yes'?>
+<?xml-stylesheet type="text/xsl" href="index.xsl" ?>
+<topic title="Serial port emulation">
+  <style>
+    .support {
+      margin: 24pt;
+    }
+
+    .support-title {
+      font-weight: bold;
+    }
+
+    .support table {
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .support th,td {
+      text-align: left;
+      font-size: 10pt;
+    }
+
+    .support th {
+      background: #cfc;
+    }
+
+    .support td {
+      background: #eee;
+    }
+  </style>
+  
+  <p>
+    Altirra partially emulates the serial port side of the Atari 850 Interface Module.
+  </p>
+
+  <toc/>
+
+  <h2>R: handler</h2>
+  <p>
+    Access to the serial port is provided by means of the CIO R: device. This is provided by a high-level
+    handler, so this does not result in a reduction of available memory as with the original 850 R: handler,
+    nor is there a need to load the handler from disk.
+  </p>
+  <p>
+    There is currently no support for emulating the 850 device on the SIO bus.
+  </p>
+  <h3>Feature support</h3>
+  <div class="support">
+    <table>
+      <tr>
+        <th>Units</th>
+        <td>R1-R4:</td>
+      </tr>
+      
+      <tr>
+        <th>Block mode</th>
+        <td>Not supported</td>
+      </tr>
+
+      <tr>
+        <th>Continuous mode</th>
+        <td>Always enabled</td>
+      </tr>
+
+      <tr>
+        <th>Baud rates</th>
+        <td>All standard 850 rates emulated</td>
+      </tr>
+
+      <tr>
+        <th>Data bits</th>
+        <td>8 data bits only</td>
+      </tr>
+
+      <tr>
+        <th>Stop bits</th>
+        <td>Ignored</td>
+      </tr>
+      
+      <tr>
+        <th>Input parity</th>
+        <td>Cleared, but not checked</td>
+      </tr>
+      
+      <tr>
+        <th>Output parity</th>
+        <td>Supported</td>
+      </tr>
+
+      <tr>
+        <th>Control signals</th>
+        <td>Ignored</td>
+      </tr>
+      
+      <tr>
+        <th>Input buffer</th>
+        <td>Default buffer only (32 byte)</td>
+      </tr>
+
+      <tr>
+        <th>Output buffer</th>
+        <td>Supported (32 byte)</td>
+      </tr>
+
+      <tr>
+        <th>Translation</th>
+        <td>All modes supported (light, heavy, none)</td>
+      </tr>
+      
+      <tr>
+        <th>EOL-to-CR/LF</th>
+        <td>Supported</td>
+      </tr>
+    </table>
+  </div>
+
+  <h2>Modem emulation</h2>
+  <p>
+    Altirra emulates a simple modem in order to provide line control and answer/dial support. Supported
+    commands are:
+  </p>
+  <div class="support">
+    <table>
+      <tr>
+        <th>A/</th>
+        <td>Repeat last command.</td>
+      </tr>
+      <tr>
+        <th>ATA</th>
+        <td>Answer incoming call (currently always says no answer)</td>
+      </tr>
+      <tr>
+        <th>ATB</th>
+        <td>Change communication standard (currently ignored).</td>
+      </tr>
+      <tr>
+        <th>ATD</th>
+        <td>Dial out.</td>
+      </tr>
+      <tr>
+        <th>ATE</th>
+        <td>Change command echo mode.</td>
+      </tr>
+      <tr>
+        <th>ATH</th>
+        <td>Hang up.</td>
+      </tr>
+      <tr>
+        <th>ATL</th>
+        <td>Change speaker loudness (currently ignored).</td>
+      </tr>
+      <tr>
+        <th>ATM</th>
+        <td>Change speaker mode (currently ignored).</td>
+      </tr>
+      <tr>
+        <th>ATO</th>
+        <td>Exit command mode and return to online mode.</td>
+      </tr>
+      <tr>
+        <th>ATQ</th>
+        <td>Switch to quiet response mode (currently ignored).</td>
+      </tr>
+      <tr>
+        <th>ATV</th>
+        <td>Switch to verbose response mode (currently ignored).</td>
+      </tr>
+    </table>
+  </div>
+  <p>
+    The modem starts in command mode.
+  </p>
+  <p>
+    In order to return to command mode after establishing a connection, the sequence <tt>+++</tt> must be
+    transmitted with at least a one-second guard time before and after the sequence. This can only be done
+    from the local side; the sequence is ignored if sent from the remote side.
+  </p>
+
+  <h3>Inbound calls</h3>
+  <p>
+    There is currently no support for accepting inbound connections (calls).
+  </p>
+
+  <h3>Dialing out</h3>
+  <p>
+    The dial command (D) is used to connect across the network to a server using TCP/IP. The syntax for doing
+    this is as follows:
+  </p>
+  <blockquote>
+    <tt>ATDI hostname port</tt>
+  </blockquote>
+  <p>
+    (This syntax is compatible with that used by the Atari800 emulator.)
+  </p>
+  <p>
+    For instance, to connect to a telnet server on the local machine, you could use <tt>atdi localhost 23</tt>
+    or <tt>atdi 127.0.0.1 23</tt>.
+  </p>
+  <p>
+    If a connection is successfully established, you will get a <tt>CONNECT</tt> banner as with a real phone
+    line, and the modem will switch to the online state. If the connection fails, the modem will emit a
+    <tt>NO ANSWER</tt> result code instead.
+  </p>
+  <h3>Terminating a call</h3>
+  <p>
+    If the server ends the connection gracefully, such as a web server ending transmission, the modem will drop
+    the call with <tt>NO CARRIER</tt> once the remaining data in the connection has been read by the guest program.
+  </p>
+  <p>
+    If the connection drops less than gracefully, the modem will emit <tt>NO CARRIER</tt> immediately.
+  </p>
+  <p>
+    The connection can be terminated at any time by sending the <tt>ATH</tt> command.
+  </p>
+ 
+  <h2>Options</h2>
+  <h3>Telnet emulation</h3>
+  <p>
+    Telnet emulation allows the emulated program to connect to a server that uses the Telnet protocol
+    by escaping command bytes and processing incoming commands. This is necessary as some Telnet
+    servers will not send any data until protocol options have been negotiated. All requests to
+    change options are declined.
+  </p>
+
+</topic>

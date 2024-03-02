@@ -85,8 +85,8 @@ void VDPixmapUberBlitterDirectCopy::Blit(const VDPixmap& dst, const vdrect32 *rD
 	void *p = dst.data;
 	void *p2 = dst.data2;
 	void *p3 = dst.data3;
-	int w = dst.w;
-	int h = dst.h;
+	int w = std::min<int>(dst.w, src.w);
+	int h = std::min<int>(dst.h, src.h);
 
 	if (formatInfo.qchunky)  {
 		w = (w + formatInfo.qw - 1) / formatInfo.qw;

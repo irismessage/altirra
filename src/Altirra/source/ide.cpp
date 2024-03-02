@@ -5,6 +5,9 @@
 #include "console.h"
 #include "scheduler.h"
 #include "uirender.h"
+#include "simulator.h"
+
+extern ATSimulator g_sim;
 
 namespace {
 	enum {
@@ -28,6 +31,11 @@ namespace {
 		kATIDEError_TK0NF	= 0x02,		// track 0 not found
 		kATIDEError_AMNF	= 0x01		// address mark not found
 	};
+
+	// These control the amount of time that BSY is asserted during a sector
+	// read or write.
+	const uint32 kIODelayFast = 100;	// 
+	const uint32 kIODelaySlow = 10000;	// ~5.5ms
 }
 
 struct ATIDEEmulator::DecodedCHS {
@@ -44,6 +52,7 @@ ATIDEEmulator::ATIDEEmulator() {
 	mSectorsPerTrack = 0;
 	mHeadCount = 0;
 	mCylinderCount = 0;
+	mIODelaySetting = 0;
 
 	mActiveCommand = 0;
 	mActiveCommandNextTime = 0;
@@ -73,7 +82,7 @@ void ATIDEEmulator::Init(ATScheduler *scheduler, IATUIRenderer *uirenderer) {
 	mpUIRenderer = uirenderer;
 }
 
-void ATIDEEmulator::OpenImage(bool write, uint32 cylinders, uint32 heads, uint32 sectors, const wchar_t *filename) {
+void ATIDEEmulator::OpenImage(bool write, bool fast, uint32 cylinders, uint32 heads, uint32 sectors, const wchar_t *filename) {
 	CloseImage();
 
 	// validate geometry
@@ -88,6 +97,8 @@ void ATIDEEmulator::OpenImage(bool write, uint32 cylinders, uint32 heads, uint32
 		mHeadCount = heads;
 		mSectorsPerTrack = sectors;
 		mPath = filename;
+		mIODelaySetting = fast ? kIODelayFast : kIODelaySlow;
+		mbFastDevice = fast;
 	} catch(const MyError&) {
 		CloseImage();
 		throw;
@@ -157,6 +168,8 @@ void ATIDEEmulator::WriteByte(uint8 address, uint8 value) {
 				if (mTransferIndex >= mTransferLength) {
 					mRFile.mStatus &= ~kATIDEStatus_DRQ;
 					mRFile.mStatus |= kATIDEStatus_BSY;
+
+					UpdateStatus();
 				}
 			}
 			break;
@@ -174,6 +187,7 @@ void ATIDEEmulator::WriteByte(uint8 address, uint8 value) {
 
 			if (mRFile.mStatus & kATIDEStatus_BSY) {
 				ATConsolePrintf("IDE: Attempted write of $%02x to register file index $%02x while drive is busy.\n", value, idx);
+//				g_sim.PostInterruptingEvent(kATSimEvent_VerifierFailure);
 			} else {
 				// bits 7 and 5 in the drive/head register are always 1
 				if (idx == 6)
@@ -214,21 +228,16 @@ void ATIDEEmulator::UpdateStatus() {
 		case 0x21:	// read sector(s) w/o retry
 			switch(mActiveCommandState) {
 				case 1:
-					++mActiveCommandState;
-					mActiveCommandNextTime = t + 250;
-					break;
-
-				case 2:
 					mRFile.mStatus |= kATIDEStatus_BSY;
 					++mActiveCommandState;
 
 					// BOGUS: FDISK.BAS requires a delay before BSY drops since it needs to see
 					// BSY=1. ATA-4 7.15.6.1 BSY (Busy) states that this is not safe as the drive
 					// may operate too quickly to spot this.
-					mActiveCommandNextTime = t + 10000;
+					mActiveCommandNextTime = t + mIODelaySetting;
 					break;
 
-				case 3:
+				case 2:
 					{
 						uint32 lba;
 						uint32 nsecs = mRFile.mSectorCount;
@@ -279,17 +288,12 @@ void ATIDEEmulator::UpdateStatus() {
 		case 0x31:	// write sector(s) w/o retry
 			switch(mActiveCommandState) {
 				case 1:
-					++mActiveCommandState;
-					mActiveCommandNextTime = t + 250;
-					break;
-
-				case 2:
 					mRFile.mStatus |= kATIDEStatus_BSY;
 					++mActiveCommandState;
 					mActiveCommandNextTime = t + 250;
 					break;
 
-				case 3:
+				case 2:
 					{
 						uint32 lba;
 						if (!ReadLBA(lba)) {
@@ -326,7 +330,7 @@ void ATIDEEmulator::UpdateStatus() {
 					}
 					break;
 
-				case 4:
+				case 3:
 					if (mTransferIndex < mTransferLength)
 						break;
 
@@ -343,10 +347,10 @@ void ATIDEEmulator::UpdateStatus() {
 
 					mRFile.mStatus |= kATIDEStatus_BSY;
 					++mActiveCommandState;
-					mActiveCommandNextTime = t + 10000;
+					mActiveCommandNextTime = t + mIODelaySetting;
 					break;
 
-				case 5:
+				case 4:
 					CompleteCommand();
 					break;
 			}
@@ -355,17 +359,12 @@ void ATIDEEmulator::UpdateStatus() {
 		case 0xec:	// identify drive
 			switch(mActiveCommandState) {
 				case 1:
-					++mActiveCommandState;
-					mActiveCommandNextTime = t + 250;
-					break;
-
-				case 2:
 					mRFile.mStatus |= kATIDEStatus_BSY;
 					++mActiveCommandState;
 					mActiveCommandNextTime = t + 10000;
 					break;
 
-				case 3:
+				case 2:
 					{
 						uint8 *dst = mTransferBuffer.data();
 
@@ -403,17 +402,12 @@ void ATIDEEmulator::UpdateStatus() {
 		case 0xef:	// set features
 			switch(mActiveCommandState) {
 				case 1:
-					++mActiveCommandState;
-					mActiveCommandNextTime = t + 250;
-					break;
-
-				case 2:
 					mRFile.mStatus |= kATIDEStatus_BSY;
 					++mActiveCommandState;
 					mActiveCommandNextTime = t + 250;
 					break;
 
-				case 3:
+				case 2:
 					switch(mFeatures) {
 						case 0x01:		// enable 8-bit data transfers
 							mbTransfer16Bit = false;

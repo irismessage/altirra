@@ -1999,7 +1999,7 @@ public:
 	ATVideoWriter();
 	~ATVideoWriter();
 
-	void Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, const VDFraction& samplingRate, bool stereo, double timestampRate, IATUIRenderer *r);
+	void Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, IATUIRenderer *r);
 	void Shutdown();
 
 	void WriteFrame(const VDPixmap& px, uint32 timestamp);
@@ -2011,6 +2011,7 @@ protected:
 	uint32	mKeyCounter;
 	uint32	mKeyInterval;
 	bool mbStereo;
+	bool mbHalfRate;
 	bool mbErrorState;
 
 	bool	mbVideoTimestampSet;
@@ -2040,23 +2041,27 @@ protected:
 	float	mResampleBuffers[2][4096];
 };
 
-ATVideoWriter::ATVideoWriter() {
+ATVideoWriter::ATVideoWriter()
+	: mpUIRenderer(NULL)
+	, mVideoStream(NULL)
+{
 }
 
 ATVideoWriter::~ATVideoWriter() {
 }
 
-void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, const VDFraction& samplingRate, bool stereo, double timestampRate, IATUIRenderer *r) {
+void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, IATUIRenderer *r) {
 	if (!palette && venc == kATVideoEncoding_RLE)
 		throw MyError("RLE encoding is not available as the current emulator video settings require 24-bit video.");
 
 	mFile = VDCreateMediaOutputAVIFile();
 	mbStereo = stereo;
+	mbHalfRate = halfRate;
 	mbErrorState = false;
 	mbVideoTimestampSet = false;
 	mbAudioPreskipSet = false;
 	mFrameRate = frameRate.asDouble();
-	mSamplingRate = samplingRate.asDouble();
+	mSamplingRate = samplingRate;
 	mTimestampRate = timestampRate;
 	mAudioPreskip = 0;
 	mVideoPreskip = 0;
@@ -2065,7 +2070,7 @@ void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w
 
 	mResampleLevel = 0;
 	mResampleAccum = 0;
-	mResampleRate = VDRoundToInt64(4294967296.0 / 48000.0 * samplingRate.asDouble());
+	mResampleRate = VDRoundToInt64(4294967296.0 / 48000.0 * samplingRate);
 
 	mpUIRenderer = r;
 
@@ -2112,14 +2117,19 @@ void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w
 	} else
 		mVideoStream->setFormat(&bmf.hdr, sizeof bmf.hdr);
 
+	VDFraction recordingFrameRate = frameRate;
+
+	if (halfRate)
+		recordingFrameRate /= 2;
+
 	AVIStreamHeader_fixed hdr;
 	hdr.fccType					= VDMAKEFOURCC('v', 'i', 'd', 's');
     hdr.dwFlags					= 0;
     hdr.wPriority				= 0;
     hdr.wLanguage				= 0;
     hdr.dwInitialFrames			= 0;
-    hdr.dwScale					= frameRate.getLo();
-    hdr.dwRate					= frameRate.getHi();
+    hdr.dwScale					= recordingFrameRate.getLo();
+    hdr.dwRate					= recordingFrameRate.getHi();
     hdr.dwStart					= 0;
     hdr.dwLength				= 0;
     hdr.dwSuggestedBufferSize	= 0;
@@ -2242,6 +2252,9 @@ void ATVideoWriter::WriteFrame(const VDPixmap& px, uint32 timestamp) {
 
 		uint32 len = mpVideoEncoder->GetEncodedLength();
 		mVideoStream->write(len && intra ? IVDMediaOutputStream::kFlagKeyFrame : 0, mpVideoEncoder->GetEncodedData(), len, 1);
+
+		if (mbHalfRate)
+			mVideoPreskip = 1;
 	} catch(const MyError& e) {
 		RaiseError(e);
 	}

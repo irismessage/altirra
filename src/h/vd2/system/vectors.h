@@ -471,6 +471,8 @@ public:
 	T area() const;
 	VDSize<T> size() const;
 
+	bool contains(const VDPoint<T>& pt) const;
+
 public:
 	T left, top, right, bottom;
 };
@@ -583,11 +585,21 @@ T VDRect<T>::area() const { return (right-left)*(bottom-top); }
 template<class T>
 VDSize<T> VDRect<T>::size() const { return VDSize<T>(right-left, bottom-top); }
 
+template<class T>
+bool VDRect<T>::contains(const VDPoint<T>& pt) const {
+	return pt.x >= left
+		&& pt.x < right
+		&& pt.y >= top
+		&& pt.y < bottom;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 typedef VDPoint<sint32>	vdpoint32;
 typedef VDSize<sint32>	vdsize32;
 typedef VDSize<float>	vdsize32f;
 typedef	VDRect<sint32>	vdrect32;
 typedef	VDRect<float>	vdrect32f;
+
+template<> bool vdrect32::contains(const vdpoint32& pt) const;
 
 #endif

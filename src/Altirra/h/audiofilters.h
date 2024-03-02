@@ -17,7 +17,7 @@ public:
 	void SetScale(float scale);
 
 	void PreFilter(float * VDRESTRICT dst, uint32 count);
-	void Filter(float * VDRESTRICT dst, const float * VDRESTRICT src, uint32 count);
+	void Filter(float *dst, const float *src, uint32 count);
 
 protected:
 	float	mHiPassAccum;

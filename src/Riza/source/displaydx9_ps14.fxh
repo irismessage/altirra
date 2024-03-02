@@ -37,22 +37,39 @@ struct VertexOutputBicubic1_4 {
 VertexOutputBicubic1_4 VertexShaderBicubic1_4A(VertexInput IN) {
 	VertexOutputBicubic1_4 OUT;
 	
+	float step = IN.uv.x * vd_srcsize.w;
+	IN.uv2.x += step;
+	
 	OUT.pos = IN.pos;
+	OUT.pos.x += 2.0f * step;
 	OUT.uvfilt.x = IN.uv2.x * vd_vpsize.x * vd_interphtexsize.w;
 	OUT.uvfilt.y = 0;
 
-	OUT.uvsrc0 = IN.uv + float2(-1.5f, vd_fieldinfo.y)*vd_texsize.wz;
-	OUT.uvsrc1 = IN.uv + float2( 0.0f, vd_fieldinfo.y)*vd_texsize.wz;
-	OUT.uvsrc2 = IN.uv + float2( 0.0f, vd_fieldinfo.y)*vd_texsize.wz;
-	OUT.uvsrc3 = IN.uv + float2(+1.5f, vd_fieldinfo.y)*vd_texsize.wz;
+	float2 uv = IN.uv2 * float2(vd_srcsize.x, vd_srcsize.y) * vd_texsize.wz;
+	OUT.uvsrc0 = uv + float2(-1.5f, vd_fieldinfo.y)*vd_texsize.wz;
+	OUT.uvsrc1 = uv + float2( 0.0f, vd_fieldinfo.y)*vd_texsize.wz;
+	OUT.uvsrc2 = uv + float2( 0.0f, vd_fieldinfo.y)*vd_texsize.wz;
+	OUT.uvsrc3 = uv + float2(+1.5f, vd_fieldinfo.y)*vd_texsize.wz;
+
+	float ulo = 0.5f * vd_texsize.w;
+	float uhi = (vd_srcsize.x - 0.5f) * vd_texsize.w;
 	
+	OUT.uvsrc0.x = clamp(OUT.uvsrc0.x, ulo, uhi);
+	OUT.uvsrc1.x = clamp(OUT.uvsrc1.x, ulo, uhi);
+	OUT.uvsrc2.x = clamp(OUT.uvsrc2.x, ulo, uhi);
+	OUT.uvsrc3.x = clamp(OUT.uvsrc3.x, ulo, uhi);
+
 	return OUT;
 }
 
 VertexOutputBicubic1_4 VertexShaderBicubic1_4B(VertexInput IN) {
 	VertexOutputBicubic1_4 OUT;
 	
+	float step = IN.uv.y * vd_srcsize.z;
+	IN.uv2.y += step;
+	
 	OUT.pos = IN.pos;
+	OUT.pos.y -= 2.0f * step;
 	OUT.uvfilt.x = IN.uv2.y * vd_vpsize.y * vd_interpvtexsize.w;
 	OUT.uvfilt.y = 0;
 	
@@ -61,6 +78,14 @@ VertexOutputBicubic1_4 VertexShaderBicubic1_4B(VertexInput IN) {
 	OUT.uvsrc1 = uv + float2(0,  0.0f)*vd_tempsize.wz;
 	OUT.uvsrc2 = uv + float2(0,  0.0f)*vd_tempsize.wz;
 	OUT.uvsrc3 = uv + float2(0, +1.5f)*vd_tempsize.wz;
+
+	float vlo = 0.5f * vd_tempsize.z;
+	float vhi = (vd_srcsize.y - 0.5f) * vd_tempsize.z;
+	
+	OUT.uvsrc0.y = clamp(OUT.uvsrc0.y, vlo, vhi);
+	OUT.uvsrc1.y = clamp(OUT.uvsrc1.y, vlo, vhi);
+	OUT.uvsrc2.y = clamp(OUT.uvsrc2.y, vlo, vhi);
+	OUT.uvsrc3.y = clamp(OUT.uvsrc3.y, vlo, vhi);
 	
 	return OUT;
 }
@@ -72,23 +97,18 @@ pixelshader bicubic1_4_ps = asm {
 	texld r2, t2
 	texld r3, t3
 	texld r4, t4
-#if 0
-	mad_x4 r2, r2, r0_bias.g, r2
-	mad r2, r1, -r0.b, r2
-	mad_d2 r2, r4, -r0.a, r2
-	mad_d2 r0, r3, r0.r, r2
-#else
+
 	lrp r1, r0.b, r1, r4
 	lrp r2, r0.g, r2, r3
 	add r1, r2, -r1
 	mad r0, r1, r0.r, r2
-#endif
 };
 
 technique bicubic1_4 {
 	pass horiz <
 		string vd_target="temp";
 		string vd_viewport="out, src";
+		int vd_tilemode = 1;
 	> {
 		VertexShader = compile vs_1_1 VertexShaderBicubic1_4A();
 		PixelShader = <bicubic1_4_ps>;
@@ -132,6 +152,7 @@ technique bicubic1_4 {
 	pass vert <
 		string vd_target="";
 		string vd_viewport="out,out";
+		int vd_tilemode = 2;
 	> {
 		VertexShader = compile vs_1_1 VertexShaderBicubic1_4B();
 		PixelShader = <bicubic1_4_ps>;

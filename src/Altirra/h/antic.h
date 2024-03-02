@@ -100,6 +100,13 @@ public:
 	void ColdReset();
 	void WarmReset();
 	void RequestNMI();
+
+	bool IsPhantomDMARequired() const { return mbPhantomPMDMA && mX < 8; }
+	void SetPhantomDMAData(uint8 byte) { if (mX < 8) mPhantomDMAData[mX] = byte; }
+
+	void SetLightPenPosition(bool phase);
+	void SetLightPenPosition(int x, int y);
+
 	VDFORCEINLINE bool Advance();
 	void SyncWithGTIA(int offset);
 	void Decode(int offset);
@@ -152,6 +159,9 @@ protected:
 	bool	mbRowAdvance;
 	bool	mbLateNMI;
 	bool	mbInBuggedVBlank;
+	bool	mbPhantomPMDMA;
+	bool	mbPhantomPMDMAActive;
+	uint8	mPendingNMIs;
 	uint8	mEarlyNMIEN;
 	uint8	mEarlyNMIEN2;
 	uint32	mRowCounter;
@@ -236,11 +246,16 @@ protected:
 						// bit 6 = VBI pending
 						// bit 5 = RESET key pending
 
+	uint8	mPENH;
+	uint8	mPENV;
+
 	uint8	mVCOUNT;
 	int mWSYNCPending;
 
 	uint32	mGTIAHSyncOffset;
 	uint32	mVSyncShiftTime;
+
+	uint8	mPhantomDMAData[8];
 
 	ATGTIAEmulator *mpGTIA;
 	ATAnticEmulatorConnections *mpConn;

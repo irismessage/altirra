@@ -3,6 +3,7 @@
 
 #include <vd2/system/event.h>
 #include <vd2/system/refcount.h>
+#include <vd2/system/unknown.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
 #include <vd2/system/VDString.h>
@@ -197,6 +198,54 @@ protected:
 	VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
 
 	VDEvent<VDUIProxyComboBoxControl, int> mSelectionChanged;
+};
+
+/////////////////////////////////////////////////////////////////////////////
+
+class IVDUITreeViewVirtualItem : public IVDRefUnknown {
+public:
+	virtual void GetText(VDStringW& s) const = 0;
+};
+
+class VDUIProxyTreeViewControl : public VDUIProxyControl {
+public:
+	typedef uintptr NodeRef;
+
+	static const NodeRef kNodeRoot;
+	static const NodeRef kNodeFirst;
+	static const NodeRef kNodeLast;
+
+	VDUIProxyTreeViewControl();
+	~VDUIProxyTreeViewControl();
+
+	IVDUITreeViewVirtualItem *GetSelectedVirtualItem() const;
+
+	void Clear();
+	void DeleteItem(NodeRef ref);
+	NodeRef AddItem(NodeRef parent, NodeRef insertAfter, const wchar_t *label);
+	NodeRef AddVirtualItem(NodeRef parent, NodeRef insertAfter, IVDUITreeViewVirtualItem *item);
+
+	void MakeNodeVisible(NodeRef node);
+	void SelectNode(NodeRef node);
+	void RefreshNode(NodeRef node);
+
+	VDEvent<VDUIProxyTreeViewControl, int>& OnItemSelectionChanged() {
+		return mEventItemSelectionChanged;
+	}
+
+	VDEvent<VDUIProxyTreeViewControl, bool *>& OnItemDoubleClicked() {
+		return mEventItemDoubleClicked;
+	}
+
+protected:
+	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
+
+	int			mNextTextIndex;
+	VDStringW mTextW[3];
+	VDStringA mTextA[3];
+
+	VDEvent<VDUIProxyTreeViewControl, int> mEventItemSelectionChanged;
+	VDEvent<VDUIProxyTreeViewControl, bool *> mEventItemDoubleClicked;
 };
 
 #endif

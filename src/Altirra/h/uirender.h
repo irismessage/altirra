@@ -22,6 +22,17 @@
 
 struct VDPixmap;
 
+struct ATUIAudioStatus {
+	int mUnderflowCount;
+	int mOverflowCount;
+	int mDropCount;
+	int mMeasuredMin;
+	int mMeasuredMax;
+	int mTargetMin;
+	int mTargetMax;
+	double mIncomingRate;
+};
+
 class IATUIRenderer : public IVDRefCount {
 public:
 	virtual void SetStatusFlags(uint32 flags) = 0;
@@ -33,11 +44,19 @@ public:
 	virtual void SetHActivity(bool write) = 0;
 	virtual void SetIDEActivity(bool write, uint32 lba) = 0;
 
+	virtual void SetFlashWriteActivity() = 0;
+
 	virtual void SetCassetteIndicatorVisible(bool vis) = 0;
 	virtual void SetCassettePosition(float pos) = 0;
 
 	virtual void SetRecordingPosition() = 0;
 	virtual void SetRecordingPosition(float time) = 0;
+
+	virtual void SetModemConnection(const char *str) = 0;
+
+	virtual void SetWatchedValue(int index, uint32 value, int len) = 0;
+
+	virtual void SetAudioStatus(ATUIAudioStatus *status) = 0;
 
 	virtual void Render(const VDPixmap& px, const uint32 *palette) = 0;
 };

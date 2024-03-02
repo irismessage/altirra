@@ -129,18 +129,28 @@ void ATArtifactingEngine::Artifact8(uint32 y, uint32 dst[N], const uint8 src[N],
 		ArtifactNTSC(dst, src, scanlineHasHiRes);
 
 	if (mbBlendActive && y < M) {
-		uint32 *blendDst = mPrevFrame[y];
+		uint32 *blendDst = mbChromaArtifactsHi ? mPrevFrame14MHz[y] : mPrevFrame7MHz[y];
+		uint32 n = mbChromaArtifactsHi ? N*2 : N;
 
 		if (mbBlendCopy)
-			memcpy(blendDst, dst, sizeof(uint32)*N);
+			memcpy(blendDst, dst, sizeof(uint32)*n);
 		else
-			BlendExchange(dst, blendDst);
+			BlendExchange(dst, blendDst, n);
 	}
 }
 
 void ATArtifactingEngine::Artifact32(uint32 y, uint32 dst[N], uint32 width) {
 	if (mbPAL)
 		ArtifactPAL32(dst, width);
+
+	if (mbBlendActive && y < M && width <= N*2) {
+		uint32 *blendDst = width > N ? mPrevFrame14MHz[y] : mPrevFrame7MHz[y];
+
+		if (mbBlendCopy)
+			memcpy(blendDst, dst, sizeof(uint32)*width);
+		else
+			BlendExchange(dst, blendDst, width);
+	}
 }
 
 void ATArtifactingEngine::ArtifactPAL8(uint32 dst[N], const uint8 src[N]) {
@@ -802,8 +812,8 @@ void ATArtifactingEngine::BlitNoArtifacts(uint32 dst[N], const uint8 src[N]) {
 		dst[x] = mPalette[src[x]];
 }
 
-void ATArtifactingEngine::BlendExchange(uint32 dst[N], uint32 blendDst[N]) {
-	for(int x=0; x<N; ++x) {
+void ATArtifactingEngine::BlendExchange(uint32 *dst, uint32 *blendDst, uint32 n) {
+	for(uint32 x=0; x<n; ++x) {
 		const uint32 a = dst[x];
 		const uint32 b = blendDst[x];
 

@@ -58,6 +58,7 @@ public:
 		kBobEven			= 0x0100,
 		kBobOdd				= 0x0200,
 		kSequentialFields	= 0x0400,
+		kDoNotWait			= 0x0800,
 
 		kFieldModeMax		= 0xffff,
 	};

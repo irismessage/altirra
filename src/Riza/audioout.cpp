@@ -23,7 +23,9 @@
 
 #include <vd2/system/math.h>
 #include <vd2/system/text.h>
+#include <vd2/system/thread.h>
 #include <vd2/system/VDString.h>
+#include <vd2/system/VDRingBuffer.h>
 #include <vd2/Riza/audioout.h>
 
 extern HINSTANCE g_hInst;
@@ -41,6 +43,7 @@ public:
 	bool	IsFrozen();
 	uint32	GetAvailSpace();
 	uint32	GetBufferLevel();
+	uint32	EstimateHWBufferLevel();
 	sint32	GetPosition();
 	sint32	GetPositionBytes();
 	double	GetPositionTime();
@@ -62,6 +65,7 @@ private:
 	uint32	mBlocksPending;
 	uint32	mBlockSize;
 	uint32	mBlockCount;
+	uint32	mBytesQueued;
 	vdblock<char> mBuffer;
 	vdblock<WAVEHDR> mHeaders;
 
@@ -90,6 +94,7 @@ VDAudioOutputWaveOutW32::VDAudioOutputWaveOutW32()
 	, mBlocksPending(0)
 	, mBlockSize(0)
 	, mBlockCount(0)
+	, mBytesQueued(0)
 	, mhWaveOut(NULL)
 	, mhWaveEvent(NULL)
 	, mSamplesPerSec(0)
@@ -129,6 +134,7 @@ bool VDAudioOutputWaveOutW32::Init(uint32 bufsize, uint32 bufcount, const WAVEFO
 	mBlocksPending = 0;
 	mBlockSize = bufsize;
 	mBlockCount = bufcount;
+	mBytesQueued = 0;
 
 	if (!mhWaveEvent) {
 		mhWaveEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
@@ -193,6 +199,7 @@ void VDAudioOutputWaveOutW32::Shutdown() {
 	mBlocksPending = 0;
 	mBlockCount = 0;
 	mBlockSize = 0;
+	mBytesQueued = 0;
 
 	if (mhWaveOut) {
 		waveOutClose(mhWaveOut);
@@ -262,6 +269,7 @@ bool VDAudioOutputWaveOutW32::CheckBuffers() {
 		if (mBlockHead >= mBlockCount)
 			mBlockHead = 0;
 		--mBlocksPending;
+		mBytesQueued -= hdr.dwBufferLength;
 		VDASSERT(mBlocksPending >= 0);
 		found = true;
 	}
@@ -298,6 +306,10 @@ uint32 VDAudioOutputWaveOutW32::GetBufferLevel() {
 	}
 
 	return level;
+}
+
+uint32 VDAudioOutputWaveOutW32::EstimateHWBufferLevel() {
+	return GetBufferLevel();
 }
 
 bool VDAudioOutputWaveOutW32::Write(const void *data, uint32 len) {
@@ -362,6 +374,7 @@ bool VDAudioOutputWaveOutW32::Flush() {
 	hdr.dwBufferLength = mBlockWriteOffset;
 	hdr.dwFlags &= ~WHDR_DONE;
 	MMRESULT res = waveOutWrite(mhWaveOut, &hdr, sizeof hdr);
+	mBytesQueued += mBlockWriteOffset;
 	mBlockWriteOffset = 0;
 
 	if (res != MMSYSERR_NOERROR)
@@ -483,7 +496,7 @@ bool VDAudioOutputWaveOutW32::IsFrozen() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class VDAudioOutputDirectSoundW32 : public IVDAudioOutput {
+class VDAudioOutputDirectSoundW32 : public IVDAudioOutput, private VDThread {
 public:
 	VDAudioOutputDirectSoundW32();
 	~VDAudioOutputDirectSoundW32();
@@ -496,6 +509,7 @@ public:
 	bool	IsFrozen();
 	uint32	GetAvailSpace();
 	uint32	GetBufferLevel();
+	uint32	EstimateHWBufferLevel();
 	sint32	GetPosition();
 	sint32	GetPositionBytes();
 	double	GetPositionTime();
@@ -508,56 +522,327 @@ public:
 	bool	Finalize(uint32 timeout);
 
 private:
-	bool	Init2(uint32 bufsize, uint32 bufcount, const tWAVEFORMATEX *wf);
+	struct Cursors {
+		uint32	mPlayCursor;
+		uint32	mWriteCursor;
+	};
 
-	static ATOM sWndClass;
+	bool	ReadCursors(Cursors& cursors) const;
+	bool	WriteAudio(uint32 offset, const void *buf, uint32 bytes);
+	void	ThreadRun();
+	bool	InitDirectSound();
+	void	ShutdownDirectSound();
+	bool	InitPlayback();
+	void	StartPlayback();
+	void	StopPlayback();
+	void	ShutdownPlayback();
 
-	HWND				mhwnd;
+	uint32				mStreamWritePosition;
+
 	HMODULE				mhmodDS;
 	IDirectSound8		*mpDS8;
 	IDirectSoundBuffer8	*mpDSBuffer;
 
-	uint32	mBufferSize;
-	uint32	mTailCursor;
+	uint32				mBufferSize;
+	uint32				mDSBufferSize;
+	uint32				mDSBufferSizeHalf;
+	uint32				mDSWriteCursor;
 
-	double	mMillisecsPerByte;
+	double				mMillisecsPerByte;
 
-	enum InitState {
-		kStateNone		= 0,
-		kStateOpened	= 1,
-		kStatePlaying	= 2,
-		kStateSilent	= 10,
-	} mCurState;
+	enum ThreadState {
+		kThreadStateStop,
+		kThreadStatePlay,
+		kThreadStateFinalize,
+		kThreadStateExit
+	};
+
+	vdstructex<tWAVEFORMATEX>	mInitFormat;
+
+	VDCriticalSection	mMutex;
+	uint32				mDSBufferedBytes;
+	uint32				mDSStreamPlayPosition;
+	uint32				mDSStreamWritePosition;
+	vdfastvector<uint8>	mBuffer;
+	uint32				mBufferReadOffset;
+	uint32				mBufferWriteOffset;
+	uint32				mBufferLevel;
+	bool				mbThreadInited;
+	bool				mbThreadInitSucceeded;
+	bool				mbFrozen;
+	ThreadState			mThreadState;
+	VDSignal			mUpdateEvent;
+	VDSignal			mResponseEvent;
+
+	bool				mbDSBufferPlaying;
 };
-
-ATOM VDAudioOutputDirectSoundW32::sWndClass;
 
 IVDAudioOutput *VDCreateAudioOutputDirectSoundW32() {
 	return new VDAudioOutputDirectSoundW32;
 }
 
 VDAudioOutputDirectSoundW32::VDAudioOutputDirectSoundW32()
-	: mhwnd(NULL)
+	: mStreamWritePosition(0)
 	, mhmodDS(NULL)
 	, mpDS8(NULL)
 	, mpDSBuffer(NULL)
+	, mDSBufferedBytes(0)
+	, mDSStreamPlayPosition(0)
+	, mDSStreamWritePosition(0)
+	, mBufferReadOffset(0)
+	, mBufferWriteOffset(0)
+	, mBufferLevel(0)
+	, mBufferSize(0)
+	, mbFrozen(false)
+	, mThreadState(kThreadStateStop)
+	, mbDSBufferPlaying(false)
 {
 }
 
 VDAudioOutputDirectSoundW32::~VDAudioOutputDirectSoundW32() {
+	Shutdown();
 }
 
 bool VDAudioOutputDirectSoundW32::Init(uint32 bufsize, uint32 bufcount, const tWAVEFORMATEX *wf, const wchar_t *preferredDevice) {
-	if (!Init2(bufsize, bufcount, wf)) {
-		Shutdown();
+	mBufferSize = bufsize * bufcount;
+	mBuffer.resize(mBufferSize);
+	mBufferReadOffset = 0;
+	mBufferWriteOffset = 0;
+	mBufferLevel = 0;
+
+	if (wf->wFormatTag == WAVE_FORMAT_PCM) {
+		mInitFormat.resize(sizeof(tWAVEFORMATEX));
+		memcpy(&*mInitFormat, wf, sizeof(PCMWAVEFORMAT));
+		mInitFormat->cbSize = 0;
+	} else
+		mInitFormat.assign(wf, sizeof(tWAVEFORMATEX) + wf->cbSize);
+
+	mMutex.Lock();
+	mbThreadInited = false;
+	mbThreadInitSucceeded = false;
+	mMutex.Unlock();
+
+	if (!ThreadStart())
 		return false;
+
+	mMutex.Lock();
+	while(!mbThreadInited) {
+		mMutex.Unlock();
+		HANDLE h[2] = { getThreadHandle(), mUpdateEvent.getHandle() };
+
+		if (WaitForMultipleObjects(2, h, FALSE, INFINITE) != WAIT_OBJECT_0 + 1)
+			break;
+
+		mMutex.Lock();
 	}
+	bool succeeded = mbThreadInitSucceeded;
+	mMutex.Unlock();
+
+	return succeeded;
+}
+
+void VDAudioOutputDirectSoundW32::Shutdown() {
+	mMutex.Lock();
+	mThreadState = kThreadStateExit;
+	mMutex.Unlock();
+	mUpdateEvent.signal();
+
+	ThreadWait();
+}
+
+void VDAudioOutputDirectSoundW32::GoSilent() {
+}
+
+bool VDAudioOutputDirectSoundW32::IsSilent() {
+	return false;
+}
+
+bool VDAudioOutputDirectSoundW32::IsFrozen() {
+	return mbFrozen;
+}
+
+uint32 VDAudioOutputDirectSoundW32::GetAvailSpace() {
+	mMutex.Lock();
+	uint32 space = mBufferSize - mBufferLevel;
+	mMutex.Unlock();
+
+	return space;
+}
+
+uint32 VDAudioOutputDirectSoundW32::GetBufferLevel() {
+	mMutex.Lock();
+	uint32 level = mBufferLevel;
+	mMutex.Unlock();
+
+	return level;
+}
+
+uint32 VDAudioOutputDirectSoundW32::EstimateHWBufferLevel() {
+	mMutex.Lock();
+	uint32 level = mBufferLevel + mDSBufferedBytes;
+	mMutex.Unlock();
+
+	return level;
+}
+
+sint32 VDAudioOutputDirectSoundW32::GetPosition() {
+	mMutex.Lock();
+	uint32 pos = VDRoundToInt(mDSStreamPlayPosition * mMillisecsPerByte);
+	mMutex.Unlock();
+
+	return pos;
+}
+
+sint32 VDAudioOutputDirectSoundW32::GetPositionBytes() {
+	mMutex.Lock();
+	uint32 pos = mDSStreamPlayPosition;
+	mMutex.Unlock();
+
+	return pos;
+}
+
+double VDAudioOutputDirectSoundW32::GetPositionTime() {
+	return GetPosition() / 1000.0;
+}
+
+bool VDAudioOutputDirectSoundW32::Start() {
+	mMutex.Lock();
+	mThreadState = kThreadStatePlay;
+	mMutex.Unlock();
+	mUpdateEvent.signal();
 	return true;
 }
 
-bool VDAudioOutputDirectSoundW32::Init2(uint32 bufsize, uint32 bufcount, const tWAVEFORMATEX *wf) {
-	mBufferSize = bufsize * bufcount;
-	mMillisecsPerByte = 1000.0 * (double)wf->nBlockAlign / (double)wf->nAvgBytesPerSec;
+bool VDAudioOutputDirectSoundW32::Stop() {
+	mMutex.Lock();
+	mThreadState = kThreadStateStop;
+	mMutex.Unlock();
+	mUpdateEvent.signal();
+	return true;
+}
+
+bool VDAudioOutputDirectSoundW32::Flush() {
+	return true;
+}
+
+bool VDAudioOutputDirectSoundW32::Write(const void *data, uint32 len) {
+	if (!len)
+		return true;
+
+	mStreamWritePosition += len;
+
+	bool wroteData = false;
+
+	mMutex.Lock();
+	while(len > 0) {
+		uint32 tc = mBufferSize - mBufferLevel;
+
+		if (!tc) {
+			mMutex.Unlock();
+
+			if (wroteData) {
+				mUpdateEvent.signal();
+				wroteData = false;
+			}
+
+			mResponseEvent.wait();
+			mMutex.Lock();
+			continue;
+		}
+
+		if (tc > len)
+			tc = len;
+
+		uint32 contigLeft = mBufferSize - mBufferWriteOffset;
+		if (tc > contigLeft)
+			tc = contigLeft;
+
+		memcpy(mBuffer.data() + mBufferWriteOffset, data, tc);
+
+		mBufferWriteOffset += tc;
+		if (mBufferWriteOffset >= mBufferSize)
+			mBufferWriteOffset = 0;
+
+		data = (const char *)data + tc;
+		len -= tc;
+		wroteData = true;
+
+		mBufferLevel += tc;
+	}
+	mMutex.Unlock();
+
+	if (wroteData)
+		mUpdateEvent.signal();
+
+	return true;
+}
+
+bool VDAudioOutputDirectSoundW32::Finalize(uint32 timeout) {
+	DWORD deadline = GetTickCount() + timeout;
+
+	mMutex.Lock();
+	for(;;) {
+		if (mThreadState != kThreadStatePlay || !isThreadAttached() || mDSStreamPlayPosition == mStreamWritePosition)
+			break;
+
+		mMutex.Unlock();
+
+		if (timeout == (uint32)-1)
+			mResponseEvent.wait();
+		else {
+			uint32 timeNow = GetTickCount();
+			sint32 delta = deadline - timeNow;
+
+			if (delta < 0)
+				return false;
+
+			mResponseEvent.tryWait(delta);
+		}
+
+		mMutex.Lock();
+	}
+	mMutex.Unlock();
+	return true;
+}
+
+bool VDAudioOutputDirectSoundW32::ReadCursors(Cursors& cursors) const {
+	if (!mpDSBuffer)
+		return false;
+
+	DWORD playCursor, writeCursor;
+	HRESULT hr = mpDSBuffer->GetCurrentPosition(&playCursor, &writeCursor);
+
+	if (FAILED(hr))
+		return false;
+
+	cursors.mPlayCursor = playCursor;
+	cursors.mWriteCursor = writeCursor;
+	return true;
+}
+
+bool VDAudioOutputDirectSoundW32::WriteAudio(uint32 offset, const void *data, uint32 bytes) {
+	VDASSERT(offset < mDSBufferSize);
+	VDASSERT(mDSBufferSize - offset >= bytes);
+
+	LPVOID p1, p2;
+	DWORD tc1, tc2;
+	HRESULT hr = mpDSBuffer->Lock(offset, bytes, &p1, &tc1, &p2, &tc2, 0);
+
+	if (FAILED(hr))
+		return false;
+
+	memcpy(p1, data, tc1);
+	data = (char *)data + tc1;
+	memcpy(p2, data, tc2);
+	data = (char *)data + tc2;
+
+	mpDSBuffer->Unlock(p1, tc1, p2, tc2);
+	return true;
+}
+
+bool VDAudioOutputDirectSoundW32::InitDirectSound() {
+	mDSBufferSize = mBufferSize * 2;
+	mDSBufferSizeHalf = mBufferSize;
 
 	// attempt to load DirectSound library
 	mhmodDS = LoadLibraryA("dsound");
@@ -575,24 +860,6 @@ bool VDAudioOutputDirectSoundW32::Init2(uint32 bufsize, uint32 bufcount, const t
 	HRESULT hr = pDirectSoundCreate8(NULL, &mpDS8, NULL);
 	if (FAILED(hr)) {
 		VDDEBUG("VDAudioOutputDirectSound: Failed to create DirectSound object! hr=%08x\n", hr);
-		return false;
-	}
-
-	// register window class
-	if (!sWndClass) {
-		WNDCLASS wc = {0};
-		wc.lpfnWndProc = DefWindowProc;
-		wc.lpszClassName = "VirtualDub DirectSound window";
-		wc.hInstance = g_hInst;
-		sWndClass = RegisterClass(&wc);
-		if (!sWndClass)
-			return false;
-	}
-
-	// create window
-	mhwnd = CreateWindowA((LPCTSTR)sWndClass, "", WS_POPUP, 0, 0, 0, 0, NULL, NULL, g_hInst, NULL);
-	if (!mhwnd) {
-		VDDEBUG("VDAudioOutputDirectSound: Failed to create window!\n");
 		return false;
 	}
 
@@ -616,15 +883,36 @@ bool VDAudioOutputDirectSoundW32::Init2(uint32 bufsize, uint32 bufcount, const t
 		return false;
 	}
 
+	return true;
+}
+
+void VDAudioOutputDirectSoundW32::ShutdownDirectSound() {
+	ShutdownPlayback();
+
+	if (mpDS8) {
+		mpDS8->Release();
+		mpDS8 = NULL;
+	}
+
+	if (mhmodDS) {
+		FreeLibrary(mhmodDS);
+		mhmodDS = NULL;
+	}
+}
+
+bool VDAudioOutputDirectSoundW32::InitPlayback() {
+	tWAVEFORMATEX *wf = &*mInitFormat;
+	mMillisecsPerByte = 1000.0 * (double)wf->nBlockAlign / (double)wf->nAvgBytesPerSec;
+
 	// create looping secondary buffer
 	DSBUFFERDESC dsd={sizeof(DSBUFFERDESC)};
 	dsd.dwFlags			= DSBCAPS_GETCURRENTPOSITION2 | DSBCAPS_GLOBALFOCUS;
-	dsd.dwBufferBytes	= bufsize * bufcount;
+	dsd.dwBufferBytes	= mDSBufferSize;
 	dsd.lpwfxFormat		= (WAVEFORMATEX *)wf;
 	dsd.guid3DAlgorithm	= DS3DALG_DEFAULT;
 
 	IDirectSoundBuffer *pDSB;
-	hr = mpDS8->CreateSoundBuffer(&dsd, &pDSB, NULL);
+	HRESULT hr = mpDS8->CreateSoundBuffer(&dsd, &pDSB, NULL);
 	if (FAILED(hr)) {
 		VDDEBUG("VDAudioOutputDirectSound: Failed to create secondary buffer! hr=%08x\n", hr);
 		return false;
@@ -639,143 +927,186 @@ bool VDAudioOutputDirectSoundW32::Init2(uint32 bufsize, uint32 bufcount, const t
 	}
 
 	// all done!
-	mTailCursor = 0;
+	mDSWriteCursor = 0;
 	return true;
 }
 
-void VDAudioOutputDirectSoundW32::Shutdown() {
+void VDAudioOutputDirectSoundW32::StartPlayback() {
+	if (!mbDSBufferPlaying) {
+		if (mpDSBuffer)
+			mpDSBuffer->Play(0, 0, DSBPLAY_LOOPING);
+
+		mbDSBufferPlaying = true;
+	}
+}
+
+void VDAudioOutputDirectSoundW32::StopPlayback() {
+	if (mbDSBufferPlaying) {
+		if (mpDSBuffer)
+			mpDSBuffer->Stop();
+
+		mbDSBufferPlaying = false;
+	}
+}
+
+void VDAudioOutputDirectSoundW32::ShutdownPlayback() {
 	if (mpDSBuffer) {
 		mpDSBuffer->Release();
 		mpDSBuffer = NULL;
 	}
+}
 
-	if (mpDS8) {
-		mpDS8->Release();
-		mpDS8 = NULL;
+void VDAudioOutputDirectSoundW32::ThreadRun() {
+	if (!InitDirectSound()) {
+		ShutdownDirectSound();
+		mMutex.Lock();
+		mbThreadInited = true;
+		mbThreadInitSucceeded = false;
+		mMutex.Unlock();
+		mUpdateEvent.signal();
+		return;
 	}
 
-	if (mhmodDS) {
-		FreeLibrary(mhmodDS);
-		mhmodDS = NULL;
+	ThreadState threadState = kThreadStateStop;
+	uint32 lastInitCount = 0;
+	bool underflow = false;
+	bool playing = false;
+	uint32 dsStreamWritePosition = 0;
+
+	if (!InitPlayback()) {
+		ShutdownDirectSound();
+
+		mMutex.Lock();
+		mbThreadInited = true;
+		mbThreadInitSucceeded = false;
+		mMutex.Unlock();
+		mUpdateEvent.signal();
+		return;
 	}
 
-	if (mhwnd) {
-		DestroyWindow(mhwnd);
-		mhwnd = NULL;
-	}
-}
+	mMutex.Lock();
+	mbThreadInited = true;
+	mbThreadInitSucceeded = true;
+	mUpdateEvent.signal();
+	mMutex.Unlock();
 
-void VDAudioOutputDirectSoundW32::GoSilent() {
-}
+	for(;;) {
+		if (playing)
+			mUpdateEvent.tryWait(10);
+		else
+			mUpdateEvent.wait();
 
-bool VDAudioOutputDirectSoundW32::IsSilent() {
-	return !mpDSBuffer;
-}
+		mMutex.Lock();
+		threadState = (ThreadState)mThreadState;
+		mMutex.Unlock();
 
-bool VDAudioOutputDirectSoundW32::IsFrozen() {
-	return false;
-}
-
-uint32 VDAudioOutputDirectSoundW32::GetAvailSpace() {
-	DWORD playCursor, writeCursor;
-	HRESULT hr = mpDSBuffer->GetCurrentPosition(&playCursor, &writeCursor);
-
-	sint32 space = playCursor - mTailCursor;
-	if (space < 0)
-		space += mBufferSize;
-
-	return (uint32)space;
-}
-
-uint32 VDAudioOutputDirectSoundW32::GetBufferLevel() {
-	return mBufferSize - GetAvailSpace();
-}
-
-sint32 VDAudioOutputDirectSoundW32::GetPosition() {
-	DWORD playCursor;
-	HRESULT hr = mpDSBuffer->GetCurrentPosition(&playCursor, NULL);
-
-	return VDRoundToInt32(playCursor * mMillisecsPerByte);
-}
-
-sint32 VDAudioOutputDirectSoundW32::GetPositionBytes() {
-	DWORD playCursor;
-	HRESULT hr = mpDSBuffer->GetCurrentPosition(&playCursor, NULL);
-
-	return playCursor;
-}
-
-double VDAudioOutputDirectSoundW32::GetPositionTime() {
-	return GetPosition() / 1000.0;
-}
-
-bool VDAudioOutputDirectSoundW32::Start() {
-	if (!mpDSBuffer)
-		return true;
-
-	HRESULT hr = mpDSBuffer->Play(0, 0, DSBPLAY_LOOPING);
-
-	return SUCCEEDED(hr);
-}
-
-bool VDAudioOutputDirectSoundW32::Stop() {
-	if (!mpDSBuffer)
-		return true;
-
-	HRESULT hr = mpDSBuffer->Stop();
-	return SUCCEEDED(hr);
-}
-
-bool VDAudioOutputDirectSoundW32::Flush() {
-	return true;
-}
-
-bool VDAudioOutputDirectSoundW32::Write(const void *data, uint32 len) {
-	if (!mpDSBuffer)
-		return true;
-
-	while(len > 0) {
-		DWORD playCursor, writeCursor;
-		HRESULT hr = mpDSBuffer->GetCurrentPosition(&playCursor, &writeCursor);
-		if (FAILED(hr)) {
-			return false;
+		if (threadState == kThreadStatePlay) {
+			if (!underflow) {
+				StartPlayback();
+				playing = true;
+			}
+		} else {
+			StopPlayback();
+			playing = false;
 		}
 
-		sint32 tc = (sint32)playCursor - mTailCursor;
-		if (tc < 0)
-			tc += mBufferSize;
+		if (threadState == kThreadStateExit)
+			break;
 
-		if (!tc) {
-			::Sleep(1);
+		if (!playing)
+			continue;
+
+		Cursors cursors;
+		if (!ReadCursors(cursors))
+			continue;
+
+		uint32 level;
+		mMutex.Lock();
+		level = mBufferLevel;
+
+		// Compute current buffering level.
+		sint32 bufferedLevel = mDSWriteCursor - cursors.mPlayCursor;
+		if (bufferedLevel > (sint32)mDSBufferSizeHalf)
+			bufferedLevel -= mDSBufferSize;
+		else if (bufferedLevel < -(sint32)mDSBufferSizeHalf)
+			bufferedLevel += mDSBufferSize;
+
+		if (bufferedLevel < 0) {
+			bufferedLevel = 0;
+			mDSWriteCursor = cursors.mWriteCursor;
+		}
+
+		// Compute the stream play position. This should never go backward. If it
+		// has, we have underflowed.
+		uint32 newDSStreamPlayPos = dsStreamWritePosition - bufferedLevel;
+
+		if (newDSStreamPlayPos < mDSStreamPlayPosition) {
+			mDSStreamPlayPosition = dsStreamWritePosition;
+			bufferedLevel = 0;
+		}
+
+		mDSBufferedBytes = bufferedLevel;
+
+		mMutex.Unlock();
+
+		if (!level) {
+			if (!underflow && playing) {
+				// Check for underflow.
+				if (!bufferedLevel) {
+					StopPlayback();
+					playing = false;
+				}
+			}
+
 			continue;
 		}
 
-		if ((uint32)tc > len)
-			tc = len;
+		// compute how many bytes to copy
+		uint32 toCopy = level;
+		if (toCopy + bufferedLevel > mDSBufferSizeHalf)
+			toCopy = mDSBufferSizeHalf - bufferedLevel;
 
-		LPVOID p1, p2;
-		DWORD tc1, tc2;
-		hr = mpDSBuffer->Lock(mTailCursor, tc, &p1, &tc1, &p2, &tc2, 0);
-		if (FAILED(hr))
-			return false;
+		if (!toCopy)
+			continue;
 
-		memcpy(p1, data, tc1);
-		data = (char *)data + tc1;
-		memcpy(p2, data, tc2);
-		data = (char *)data + tc2;
+		// update local write position
+		dsStreamWritePosition += toCopy;
 
-		mpDSBuffer->Unlock(p1, tc1, p2, tc2);
+		// lock and copy into DirectSound buffer
+		const uint8 *src = mBuffer.data();
+		uint32 consumed = 0;
+		while(toCopy > 0) {
+			const uint32 tc2 = std::min<uint32>(toCopy, mBufferSize - mBufferReadOffset);
+			const uint32 tc3 = std::min<uint32>(tc2, mDSBufferSize - mDSWriteCursor);
 
-		len -= tc;
+			WriteAudio(mDSWriteCursor, src + mBufferReadOffset, tc3);
+			mBufferReadOffset += tc3;
+			if (mBufferReadOffset >= mBufferSize)
+				mBufferReadOffset = 0;
 
-		mTailCursor += tc;
-		if (mTailCursor >= mBufferSize)
-			mTailCursor -= mBufferSize;
+			mDSWriteCursor += tc3;
+			if (mDSWriteCursor >= mDSBufferSize)
+				mDSWriteCursor = 0;
+
+			toCopy -= tc3;
+			consumed += tc3;
+		}
+
+		mMutex.Lock();
+		mBufferLevel -= consumed;
+		mMutex.Unlock();
+
+		// restart playback if we were in underflow state
+		if (underflow && !playing) {
+			underflow = false;
+			playing = true;
+
+			StartPlayback();
+		}
+
+		mResponseEvent.signal();
 	}
 
-	return true;
-}
-
-bool VDAudioOutputDirectSoundW32::Finalize(uint32 timeout) {
-	return true;
+	ShutdownPlayback();
+	ShutdownDirectSound();
 }

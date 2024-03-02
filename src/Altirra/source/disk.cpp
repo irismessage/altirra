@@ -830,6 +830,7 @@ void ATDiskEmulator::LoadDiskATR(IVDRandomAccessStream& stream, uint32 len, cons
 	mSectorSize = header[4] + 256*header[5];
 
 	int imageBootSectorCount = 0;
+	bool packedBootSectors = false;
 
 	if (mSectorSize <= 256) {
 		mBootSectorCount = 3;
@@ -840,8 +841,33 @@ void ATDiskEmulator::LoadDiskATR(IVDRandomAccessStream& stream, uint32 len, cons
 		if (mSectorSize == 256) {
 			uint32 headerParas = header[2] + 256*header[3];
 
-			if (!(headerParas & 0x0f))
+			if (!(headerParas & 0x0f)) {
 				imageBootSectorCount = 0;
+
+				// Okay, now we need to check for REALLY screwed up images where the
+				// first three sectors are stored back to back, followed by a 192 byte
+				// section of nulls.
+				bool slotTwoEmpty = true;
+
+				for(int i=0; i<128; ++i) {
+					if (mDiskImage[16 + 128 + i]) {
+						slotTwoEmpty = false;
+						break;
+					}
+				}
+
+				bool slotFiveEmpty = true;
+
+				for(int i=0; i<128; ++i) {
+					if (mDiskImage[16 + 128*4 + i]) {
+						slotFiveEmpty = false;
+						break;
+					}
+				}
+
+				if (!slotTwoEmpty && slotFiveEmpty)
+					packedBootSectors = true;
+			}
 		}
 	} else
 		mBootSectorCount = 0;
@@ -866,8 +892,12 @@ void ATDiskEmulator::LoadDiskATR(IVDRandomAccessStream& stream, uint32 len, cons
 		vsi.mNumPhysSectors = 1;
 		vsi.mPhantomSectorCounter = 0;
 
-		psi.mOffset		= i < imageBootSectorCount ? 128*i : 128*imageBootSectorCount + mSectorSize*(i-imageBootSectorCount);
-		psi.mSize		= i < mBootSectorCount ? 128 : + mSectorSize;
+		if (packedBootSectors && i < 3) {
+			psi.mOffset		= 128*i;
+		} else {
+			psi.mOffset		= i < imageBootSectorCount ? 128*i : 128*imageBootSectorCount + mSectorSize*(i-imageBootSectorCount);
+		}
+		psi.mSize		= i < mBootSectorCount ? 128 : mSectorSize;
 		psi.mFDCStatus	= 0xFF;
 		psi.mRotPos		= mSectorSize >= 256 ? (float)kTrackInterleaveDD[i % 18] / 18.0f
 			: mSectorsPerTrack >= 26 ? (float)kTrackInterleave26[i % 26] / 26.0f

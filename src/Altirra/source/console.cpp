@@ -29,6 +29,7 @@
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/filewatcher.h>
+#include <vd2/system/strutil.h>
 #include <vd2/system/thread.h>
 #include <vd2/system/thunk.h>
 #include <vd2/system/refcount.h>
@@ -59,8 +60,26 @@ void ATConsoleExecuteCommand(char *s);
 class ATUIPane;
 
 namespace {
+	LOGFONTW g_monoFontDesc = {
+		-10,	// lfHeight
+		0,		// lfWidth
+		0,		// lfEscapement
+		0,		// lfOrientation
+		0,		// lfWeight
+		FALSE,	// lfItalic
+		FALSE,	// lfUnderline
+		FALSE,	// lfStrikeOut
+		DEFAULT_CHARSET,	// lfCharSet
+		OUT_DEFAULT_PRECIS,	// lfOutPrecision
+		CLIP_DEFAULT_PRECIS,	// lfClipPrecision
+		DEFAULT_QUALITY,	// lfQuality
+		DEFAULT_PITCH | FF_DONTCARE,	// lfPitchAndFamily
+		L"Lucida Console"
+	};
+
 	HFONT	g_monoFont;
 	int		g_monoFontLineHeight;
+	int		g_monoFontCharWidth;
 	HMENU	g_hmenuSrcContext;
 }
 
@@ -95,6 +114,7 @@ protected:
 	void OnDestroy();
 	void OnSize();
 	void OnSetFocus();
+	void OnFontsUpdated();
 	bool OnCommand(UINT cmd);
 	void RemakeView(uint16 focusAddr);
 
@@ -106,11 +126,14 @@ protected:
 	uint32	mViewStart;
 	uint32	mViewLength;
 	uint8	mViewBank;
+	uint16	mFocusAddr;
 	int		mPCLine;
 	uint32	mPCAddr;
 	int		mFramePCLine;
 	uint32	mFramePCAddr;
 	ATCPUSubMode	mLastSubMode;
+	bool	mbShowCodeBytes;
+	bool	mbShowLabels;
 	
 	ATDebuggerSystemState mLastState;
 
@@ -124,11 +147,14 @@ ATDisassemblyWindow::ATDisassemblyWindow()
 	, mhmenu(LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_DISASM_CONTEXT_MENU)))
 	, mViewStart(0)
 	, mViewLength(0)
+	, mFocusAddr(0)
 	, mPCLine(-1)
 	, mPCAddr(0)
 	, mFramePCLine(-1)
 	, mFramePCAddr(0)
 	, mLastSubMode(kATCPUSubMode_6502)
+	, mbShowCodeBytes(true)
+	, mbShowLabels(true)
 {
 	mPreferredDockCode = kATContainerDockRight;
 
@@ -227,15 +253,19 @@ bool ATDisassemblyWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lPa
 				int x = GET_X_LPARAM(lParam);
 				int y = GET_Y_LPARAM(lParam);
 
+				HMENU menu = GetSubMenu(mhmenu, 0);
+				VDCheckMenuItemByCommandW32(menu, ID_CONTEXT_SHOWCODEBYTES, mbShowCodeBytes);
+				VDCheckMenuItemByCommandW32(menu, ID_CONTEXT_SHOWLABELS, mbShowLabels);
+
 				if (x >= 0 && y >= 0) {
 					POINT pt = {x, y};
 
 					if (ScreenToClient(mhwndTextEditor, &pt)) {
 						mpTextEditor->SetCursorPixelPos(pt.x, pt.y);
-						TrackPopupMenu(GetSubMenu(mhmenu, 0), TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
+						TrackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
 					}
 				} else {
-					TrackPopupMenu(GetSubMenu(mhmenu, 0), TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
+					TrackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
 				}
 			}
 			break;
@@ -254,7 +284,8 @@ bool ATDisassemblyWindow::OnCreate() {
 	mhwndAddress = CreateWindowEx(0, WC_COMBOBOXEX, "", WS_VISIBLE|WS_CHILD|WS_CLIPSIBLINGS|CBS_DROPDOWN|CBS_HASSTRINGS|CBS_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)101, g_hInst, NULL);
 
 	mhwndTextEditor = (HWND)mpTextEditor->Create(WS_EX_NOPARENTNOTIFY, WS_CHILD|WS_VISIBLE, 0, 0, 0, 0, (VDGUIHandle)mhwnd, 100);
-	SendMessage(mhwndTextEditor, WM_SETFONT, (WPARAM)g_monoFont, NULL);
+
+	OnFontsUpdated();
 
 	mpTextEditor->SetCallback(this);
 	mpTextEditor->SetColorizer(this);
@@ -351,12 +382,27 @@ bool ATDisassemblyWindow::OnCommand(UINT cmd) {
 					MessageBeep(MB_ICONEXCLAMATION);
 			}
 			break;
+		case ID_CONTEXT_SHOWCODEBYTES:
+			mbShowCodeBytes = !mbShowCodeBytes;
+			RemakeView(mFocusAddr);
+			break;
+		case ID_CONTEXT_SHOWLABELS:
+			mbShowLabels = !mbShowLabels;
+			RemakeView(mFocusAddr);
+			break;
 	}
 
 	return false;
 }
 
+void ATDisassemblyWindow::OnFontsUpdated() {
+	if (mhwndTextEditor)
+		SendMessage(mhwndTextEditor, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+}
+
 void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
+	mFocusAddr = focusAddr;
+
 	uint16 pc = mViewStart;
 	VDStringA buf;
 
@@ -403,7 +449,7 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 		mAddressesByLine.push_back(pc);
 		ATDisassembleCaptureInsnContext(pc, mViewBank, hent);
 		buf.clear();
-		uint16 newpc = ATDisassembleInsn(buf, hent, false);
+		uint16 newpc = ATDisassembleInsn(buf, hent, false, false, true, mbShowCodeBytes, mbShowLabels);
 		buf += '\n';
 
 		// auto-switch mode if necessary
@@ -531,6 +577,8 @@ void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemStat
 void ATDisassemblyWindow::OnDebuggerEvent(ATDebugEvent eventId) {
 	if (eventId == kATDebugEvent_BreakpointsChanged)
 		mpTextEditor->RecolorAll();
+	else if (eventId == kATDebugEvent_SymbolsChanged)
+		RemakeView(mFocusAddr);
 }
 
 void ATDisassemblyWindow::OnTextEditorUpdated() {
@@ -608,6 +656,7 @@ protected:
 	bool OnCreate();
 	void OnDestroy();
 	void OnSize();
+	void OnFontsUpdated();
 
 	HWND	mhwndEdit;
 	VDStringA	mState;
@@ -641,8 +690,7 @@ bool ATRegistersWindow::OnCreate() {
 	if (!mhwndEdit)
 		return false;
 
-	SendMessage(mhwndEdit, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
-
+	OnFontsUpdated();
 	OnSize();
 
 	ATGetDebugger()->AddClient(this, true);
@@ -657,8 +705,18 @@ void ATRegistersWindow::OnDestroy() {
 void ATRegistersWindow::OnSize() {
 	RECT r;
 	if (mhwndEdit && GetClientRect(mhwnd, &r)) {
+		RECT r2;
+		r2.left = GetSystemMetrics(SM_CXEDGE);
+		r2.top = GetSystemMetrics(SM_CYEDGE);
+		r2.right = std::max<int>(r2.left, r.right - r2.left);
+		r2.bottom = std::max<int>(r2.top, r.bottom - r2.top);
+		SendMessage(mhwndEdit, EM_SETRECT, 0, (LPARAM)&r2);
 		VDVERIFY(SetWindowPos(mhwndEdit, NULL, 0, 0, r.right, r.bottom, SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOMOVE));
 	}
+}
+
+void ATRegistersWindow::OnFontsUpdated() {
+	SendMessage(mhwndEdit, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
 }
 
 void ATRegistersWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
@@ -763,6 +821,7 @@ protected:
 	bool OnCreate();
 	void OnDestroy();
 	void OnSize();
+	void OnFontsUpdated();
 
 	HWND	mhwndList;
 	VDStringA	mState;
@@ -807,7 +866,7 @@ bool ATCallStackWindow::OnCreate() {
 	if (!mhwndList)
 		return false;
 
-	SendMessage(mhwndList, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+	OnFontsUpdated();
 
 	OnSize();
 
@@ -825,6 +884,11 @@ void ATCallStackWindow::OnSize() {
 	if (mhwndList && GetClientRect(mhwnd, &r)) {
 		VDVERIFY(SetWindowPos(mhwndList, NULL, 0, 0, r.right, r.bottom, SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOMOVE));
 	}
+}
+
+void ATCallStackWindow::OnFontsUpdated() {
+	if (mhwndList)
+		SendMessage(mhwndList, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
 }
 
 void ATCallStackWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
@@ -891,6 +955,7 @@ protected:
 	bool OnCreate();
 	void OnDestroy();
 	void OnSize();
+	void OnFontsUpdated();
 	bool OnCommand(UINT cmd);
 
 	void OnTextEditorUpdated();
@@ -927,6 +992,9 @@ protected:
 	typedef stdext::hash_map<uint32, uint32> AddressLookup;
 	AddressLookup	mAddressToLineLookup;
 	AddressLookup	mLineToAddressLookup;
+
+	typedef std::map<int, uint32> LooseLineLookup;
+	LooseLineLookup	mLineToAddressLooseLookup;
 
 	typedef std::map<uint32, int> LooseAddressLookup;
 	LooseAddressLookup	mAddressToLineLooseLookup;
@@ -1034,6 +1102,14 @@ void ATSourceWindow::LoadFile(const wchar_t *s, const wchar_t *alias) {
 		mAddressToLineLooseLookup.insert(*it);
 	}
 
+	mLineToAddressLooseLookup.clear();
+
+	for(AddressLookup::const_iterator it(mLineToAddressLookup.begin()), itEnd(mLineToAddressLookup.end()); it != itEnd; ++it) {
+		mLineToAddressLooseLookup.insert(*it);
+	}
+
+	mpTextEditor->RecolorAll();
+
 	mPath = s;
 
 	if (alias)
@@ -1122,7 +1198,8 @@ bool ATSourceWindow::OnCreate() {
 		return false;
 
 	mhwndTextEditor = (HWND)mpTextEditor->Create(WS_EX_NOPARENTNOTIFY, WS_CHILD|WS_VISIBLE, 0, 0, 0, 0, (VDGUIHandle)mhwnd, 100);
-	SendMessage(mhwndTextEditor, WM_SETFONT, (WPARAM)g_monoFont, NULL);
+
+	OnFontsUpdated();
 
 	mpTextEditor->SetReadOnly(true);
 	mpTextEditor->SetCallback(this);
@@ -1156,6 +1233,11 @@ void ATSourceWindow::OnSize() {
 	}
 }
 
+void ATSourceWindow::OnFontsUpdated() {
+	if (mhwndTextEditor)
+		SendMessage(mhwndTextEditor, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+}
+
 bool ATSourceWindow::OnCommand(UINT cmd) {
 	switch(cmd) {
 		case ID_DEBUG_BREAK:
@@ -1177,7 +1259,32 @@ bool ATSourceWindow::OnCommand(UINT cmd) {
 			}
 			return true;
 		case ID_DEBUG_STEPINTO:
-			ATGetDebugger()->StepInto(kATDebugSrcMode_Source);
+			{
+				IATDebugger *dbg = ATGetDebugger();
+				int line = mpTextEditor->GetCursorLine();
+
+				LooseLineLookup::const_iterator it(mLineToAddressLooseLookup.find(line));
+
+				if (it == mLineToAddressLooseLookup.end())
+					dbg->StepInto(kATDebugSrcMode_Source);
+				else {
+					LooseLineLookup::const_iterator itNext(it);
+
+					++itNext;
+
+					if (itNext == mLineToAddressLooseLookup.end())
+						dbg->StepInto(kATDebugSrcMode_Source);
+					else {
+						uint32 addr1 = it->second;
+						uint32 addr2 = itNext->second;
+
+						if (addr2 - addr1 > 100)
+							dbg->StepInto(kATDebugSrcMode_Source);
+						else
+							dbg->StepInto(kATDebugSrcMode_Source, addr1, addr2 - addr1);
+					}
+				}
+			}
 			return true;
 		case ID_DEBUG_STEPOVER:
 			ATGetDebugger()->StepOver(kATDebugSrcMode_Source);
@@ -1244,6 +1351,8 @@ void ATSourceWindow::RecolorLine(int line, const char *text, int length, IVDText
 	int next = 0;
 
 	AddressLookup::const_iterator it(mLineToAddressLookup.find(line));
+	bool addressMapped = false;
+
 	if (it != mLineToAddressLookup.end()) {
 		uint32 addr = it->second;
 
@@ -1251,6 +1360,8 @@ void ATSourceWindow::RecolorLine(int line, const char *text, int length, IVDText
 			cl->AddTextColorPoint(next, 0x000000, 0xFF8080);
 			next += 4;
 		}
+
+		addressMapped = true;
 	}
 
 	if (line == mPCLine) {
@@ -1264,11 +1375,17 @@ void ATSourceWindow::RecolorLine(int line, const char *text, int length, IVDText
 	if (next > 0)
 		return;
 
+	sint32 backColor = -1;
+	if (!addressMapped) {
+		backColor = 0xf0f0f0;
+		cl->AddTextColorPoint(next, -1, backColor);
+	}
+
 	for(int i=0; i<length; ++i) {
 		char c = text[i];
 
 		if (c == ';') {
-			cl->AddTextColorPoint(0, 0x008000, -1);
+			cl->AddTextColorPoint(0, 0x008000, backColor);
 			return;
 		} else if (c == '.') {
 			int j = i + 1;
@@ -1287,8 +1404,8 @@ void ATSourceWindow::RecolorLine(int line, const char *text, int length, IVDText
 			}
 
 			if (j > i+1) {
-				cl->AddTextColorPoint(i, 0x0000FF, -1);
-				cl->AddTextColorPoint(j, -1, -1);
+				cl->AddTextColorPoint(i, 0x0000FF, backColor);
+				cl->AddTextColorPoint(j, -1, backColor);
 			}
 
 			return;
@@ -1488,8 +1605,8 @@ public:
 
 protected:
 	struct TreeNode {
-		uint32	mRelYPos;		// Y position, relative to parent
-		uint32	mHeight;
+		uint32	mRelYPos;		// Y position in items, relative to parent
+		uint32	mHeight;		// Height, in items
 		bool	mbExpanded;
 		bool	mbHeightDirty;
 		TreeNode *mpParent;
@@ -1505,7 +1622,9 @@ protected:
 	bool OnCreate();
 	void OnDestroy();
 	void OnSize();
+	void OnFontsUpdated();
 	void OnLButtonDown(int x, int y, int mods);
+	void OnLButtonDblClk(int x, int y, int mods);
 	bool OnKeyDown(int code);
 	void OnMouseWheel(int lineDelta);
 	void OnVScroll(int code);
@@ -1518,6 +1637,7 @@ protected:
 	void CollapseNode(TreeNode *node);
 	void EnsureNodeVisible(TreeNode *node);
 	void ValidateNode(TreeNode *node);
+	void RefreshNode(TreeNode *node);
 	uint32 GetNodeYPos(TreeNode *node) const;
 	TreeNode *GetNodeFromClientPoint(int x, int y) const;
 	TreeNode *GetPrevVisibleNode(TreeNode *node) const;
@@ -1529,14 +1649,17 @@ protected:
 	void UpdateOpcodes();
 	void ClearAllNodes();
 	TreeNode *InsertNode(TreeNode *parent, TreeNode *after, const char *text, const ATCPUHistoryEntry *hent);
+	void InsertNode(TreeNode *parent, TreeNode *after, TreeNode *node);
+	void RemoveNode(TreeNode *node);
 	TreeNode *AllocNode();
 	void FreeNode(TreeNode *);
 	void FreeNodes(TreeNode *);
 
 	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
-	void OnDebuggerEvent(ATDebugEvent eventId) {}
+	void OnDebuggerEvent(ATDebugEvent eventId);
 
 	HWND mhwndHeader;
+	HMENU mMenu;
 	RECT mContentRect;
 	TreeNode mRootNode;
 	TreeNode *mpSelectedNode;
@@ -1556,6 +1679,11 @@ protected:
 	bool	mbHistoryError;
 	bool	mbUpdatesBlocked;
 	bool	mbDirtyScrollBar;
+	bool	mbShowPCAddress;
+	bool	mbShowRegisters;
+	bool	mbShowFlags;
+	bool	mbShowCodeBytes;
+	bool	mbShowLabels;
 
 	VDStringA mTempLine;
 
@@ -1567,12 +1695,22 @@ protected:
 	TreeNode *mpNodeFreeList;
 	NodeBlock *mpNodeBlocks;
 
+	enum { kRepeatWindowSize = 16 };
+	uint32 mRepeatIPs[kRepeatWindowSize];
+	uint8 mRepeatOpcodes[kRepeatWindowSize];
+	TreeNode *mpRepeatNode;
+	int mRepeatLoopSize;
+	int mRepeatLoopCount;
+	int mRepeatInsnCount;
+	int mRepeatLooseNodeCount;
+
 	TreeNode *mStackLevels[256];
 };
 
 ATHistoryWindow::ATHistoryWindow()
 	: ATUIPane(kATUIPaneId_History, "History")
 	, mhwndHeader(NULL)
+	, mMenu(LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_HISTORY_CONTEXT_MENU)))
 	, mpSelectedNode(NULL)
 	, mWidth(0)
 	, mHeight(0)
@@ -1586,6 +1724,11 @@ ATHistoryWindow::ATHistoryWindow()
 	, mbHistoryError(false)
 	, mbUpdatesBlocked(false)
 	, mbDirtyScrollBar(false)
+	, mbShowPCAddress(true)
+	, mbShowRegisters(true)
+	, mbShowFlags(false)
+	, mbShowCodeBytes(true)
+	, mbShowLabels(true)
 	, mpNodeFreeList(NULL)
 	, mpNodeBlocks(NULL)
 {
@@ -1598,26 +1741,84 @@ ATHistoryWindow::ATHistoryWindow()
 }
 
 ATHistoryWindow::~ATHistoryWindow() {
+	if (mMenu)
+		DestroyMenu(mMenu);
 }
 
 LRESULT ATHistoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
-	if (msg == WM_PAINT) {
-		OnPaint();
-		return 0;
-	} else if (msg == WM_ERASEBKGND) {
-		return 0;
-	} else if (msg == WM_VSCROLL) {
-		OnVScroll(LOWORD(wParam));
-		return 0;
-	} else if (msg == WM_KEYDOWN) {
-		if (OnKeyDown(wParam))
+	switch(msg) {
+		case WM_PAINT:
+			OnPaint();
 			return 0;
-	} else if (msg == WM_LBUTTONDOWN) {
-		::SetFocus(mhwnd);
-		OnLButtonDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), wParam);
-		return 0;
-	} else if (msg == WM_MOUSEWHEEL) {
-		OnMouseWheel((short)HIWORD(wParam));
+
+		case WM_ERASEBKGND:
+			return 0;
+
+		case WM_VSCROLL:
+			OnVScroll(LOWORD(wParam));
+			return 0;
+
+		case WM_KEYDOWN:
+			if (OnKeyDown(wParam))
+				return 0;
+			break;
+
+		case WM_LBUTTONDOWN:
+			::SetFocus(mhwnd);
+			OnLButtonDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), wParam);
+			return 0;
+
+		case WM_LBUTTONDBLCLK:
+			::SetFocus(mhwnd);
+			OnLButtonDblClk(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), wParam);
+			return 0;
+
+		case WM_MOUSEWHEEL:
+			OnMouseWheel((short)HIWORD(wParam));
+			break;
+
+		case WM_CONTEXTMENU:
+			{
+				int x = GET_X_LPARAM(lParam);
+				int y = GET_Y_LPARAM(lParam);
+
+				HMENU menu = GetSubMenu(mMenu, 0);
+
+				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWPCADDRESS, mbShowPCAddress);
+				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWREGISTERS, mbShowRegisters);
+				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWFLAGS, mbShowFlags);
+				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWCODEBYTES, mbShowCodeBytes);
+				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWLABELS, mbShowLabels);
+
+				TrackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
+			}
+			return 0;
+
+		case WM_COMMAND:
+			switch(LOWORD(wParam)) {
+				case ID_HISTORYCONTEXTMENU_SHOWPCADDRESS:
+					mbShowPCAddress = !mbShowPCAddress;
+					InvalidateRect(mhwnd, NULL, TRUE);
+					return true;
+				case ID_HISTORYCONTEXTMENU_SHOWREGISTERS:
+					mbShowRegisters = !mbShowRegisters;
+					InvalidateRect(mhwnd, NULL, TRUE);
+					return true;
+				case ID_HISTORYCONTEXTMENU_SHOWFLAGS:
+					mbShowFlags = !mbShowFlags;
+					InvalidateRect(mhwnd, NULL, TRUE);
+					return true;
+				case ID_HISTORYCONTEXTMENU_SHOWCODEBYTES:
+					mbShowCodeBytes = !mbShowCodeBytes;
+					InvalidateRect(mhwnd, NULL, TRUE);
+					return true;
+				case ID_HISTORYCONTEXTMENU_SHOWLABELS:
+					mbShowLabels = !mbShowLabels;
+					InvalidateRect(mhwnd, NULL, TRUE);
+					return true;
+			}
+
+			break;
 	}
 
 	return ATUIPane::WndProc(msg, wParam, lParam);
@@ -1627,20 +1828,7 @@ bool ATHistoryWindow::OnCreate() {
 	if (!ATUIPane::OnCreate())
 		return false;
 
-	mItemHeight = 16;
-	mItemTextVOffset = 0;
-
-	if (HDC hdc = GetDC(mhwnd)) {
-		SelectObject(hdc, g_monoFont);
-
-		TEXTMETRIC tm = {0};
-		if (GetTextMetrics(hdc, &tm)) {
-			mItemHeight = tm.tmHeight + 2*GetSystemMetrics(SM_CYEDGE);
-			mItemTextVOffset = GetSystemMetrics(SM_CYEDGE);
-		}
-
-		ReleaseDC(mhwnd, hdc);
-	}
+	OnFontsUpdated();
 
 	mhwndHeader = CreateWindowEx(WS_EX_CLIENTEDGE, WC_HEADER, "", WS_VISIBLE|WS_CHILD, 0, 0, 0, 0, mhwnd, (HMENU)100, g_hInst, NULL);
 	if (!mhwndHeader)
@@ -1719,6 +1907,26 @@ void ATHistoryWindow::OnSize() {
 	ScrollToPixel(mScrollY);
 }
 
+void ATHistoryWindow::OnFontsUpdated() {
+	mItemHeight = 16;
+	mItemTextVOffset = 0;
+
+	if (HDC hdc = GetDC(mhwnd)) {
+		SelectObject(hdc, g_monoFont);
+
+		TEXTMETRIC tm = {0};
+		if (GetTextMetrics(hdc, &tm)) {
+			mItemHeight = tm.tmHeight + 2*GetSystemMetrics(SM_CYEDGE);
+			mItemTextVOffset = GetSystemMetrics(SM_CYEDGE);
+		}
+
+		ReleaseDC(mhwnd, hdc);
+	}
+
+	OnSize();
+	InvalidateRect(mhwnd, NULL, TRUE);
+}
+
 void ATHistoryWindow::OnLButtonDown(int x, int y, int mods) {
 	TreeNode *node = GetNodeFromClientPoint(x, y);
 
@@ -1735,6 +1943,33 @@ void ATHistoryWindow::OnLButtonDown(int x, int y, int mods) {
 	if (x >= level * (int)mItemHeight) {
 		mpSelectedNode = node;
 		InvalidateRect(mhwnd, NULL, FALSE);
+	} else if (x >= (level - 1)*(int)mItemHeight && node->mpFirstChild) {
+		if (node->mbExpanded)
+			CollapseNode(node);
+		else
+			ExpandNode(node);
+	}
+}
+
+void ATHistoryWindow::OnLButtonDblClk(int x, int y, int mods) {
+	TreeNode *node = GetNodeFromClientPoint(x, y);
+
+	if (!node) {
+		mpSelectedNode = NULL;
+		InvalidateRect(mhwnd, NULL, FALSE);
+		return;
+	}
+
+	int level = 0;
+	for(TreeNode *p = node->mpParent; p; p = p->mpParent)
+		++level;
+
+	if (x >= level * (int)mItemHeight) {
+		mpSelectedNode = node;
+		InvalidateRect(mhwnd, NULL, FALSE);
+
+		if (node->mText.empty())
+			ATGetDebugger()->SetFramePC(node->mHEnt.mPC);
 	} else if (x >= (level - 1)*(int)mItemHeight && node->mpFirstChild) {
 		if (node->mbExpanded)
 			CollapseNode(node);
@@ -2018,50 +2253,78 @@ void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 						, hent.mTimestamp & 0xff
 					);
 
-				if (is65C816 && !hent.mbEmulation) {
-					if (hent.mP & AT6502::kFlagM) {
-						mTempLine.append_sprintf("B=%02X A=%02X"
-							, hent.mAH
-							, hent.mA
+				if (mbShowRegisters) {
+					if (is65C816 && !hent.mbEmulation) {
+						if (hent.mP & AT6502::kFlagM) {
+							mTempLine.append_sprintf("B=%02X A=%02X"
+								, hent.mAH
+								, hent.mA
+								);
+						} else {
+							mTempLine.append_sprintf("A=%02X%02X"
+								, hent.mAH
+								, hent.mA
+								);
+						}
+
+						if (hent.mP & AT6502::kFlagX) {
+							mTempLine.append_sprintf(" X=%02X Y=%02X"
+								, hent.mX
+								, hent.mY
+								);
+						} else {
+							mTempLine.append_sprintf(" X=%02X%02X Y=%02X%02X"
+								, hent.mXH
+								, hent.mX
+								, hent.mYH
+								, hent.mY
+								);
+						}
+
+						mTempLine.append_sprintf(" S=%02X%02X P=%02X"
+							, hent.mSH
+							, hent.mS
+							, hent.mP
 							);
 					} else {
-						mTempLine.append_sprintf("A=%02X%02X"
-							, hent.mAH
+						mTempLine.append_sprintf("A=%02X X=%02X Y=%02X S=%02X P=%02X"
 							, hent.mA
-							);
-					}
-
-					if (hent.mP & AT6502::kFlagX) {
-						mTempLine.append_sprintf(" X=%02X Y=%02X"
 							, hent.mX
 							, hent.mY
-							);
-					} else {
-						mTempLine.append_sprintf(" X=%02X%02X Y=%02X%02X"
-							, hent.mXH
-							, hent.mX
-							, hent.mYH
-							, hent.mY
+							, hent.mS
+							, hent.mP
 							);
 					}
-
-					mTempLine.append_sprintf(" P=%02X S=%02X%02X"
-						, hent.mP
-						, hent.mSH
-						, hent.mS
-						);
-				} else {
-					mTempLine.append_sprintf("A=%02X X=%02X Y=%02X P=%02X S=%02X"
-						, hent.mA
-						, hent.mX
-						, hent.mY
-						, hent.mP
-						, hent.mS);
 				}
 
-				mTempLine += " | ";
+				if (mbShowFlags) {
+					if (is65C816) {
+						mTempLine.append_sprintf(" (%c%c%c%c%c%c%c%c)"
+							, (hent.mP & AT6502::kFlagN) ? 'N' : ' '
+							, (hent.mP & AT6502::kFlagV) ? 'V' : ' '
+							, (hent.mP & AT6502::kFlagM) ? 'M' : ' '
+							, (hent.mP & AT6502::kFlagX) ? 'X' : ' '
+							, (hent.mP & AT6502::kFlagD) ? 'D' : ' '
+							, (hent.mP & AT6502::kFlagI) ? 'I' : ' '
+							, (hent.mP & AT6502::kFlagZ) ? 'Z' : ' '
+							, (hent.mP & AT6502::kFlagC) ? 'C' : ' '
+							);
+					} else {
+						mTempLine.append_sprintf(" (%c%c1B%c%c%c%c)"
+							, (hent.mP & AT6502::kFlagN) ? 'N' : ' '
+							, (hent.mP & AT6502::kFlagV) ? 'V' : ' '
+							, (hent.mP & AT6502::kFlagD) ? 'D' : ' '
+							, (hent.mP & AT6502::kFlagI) ? 'I' : ' '
+							, (hent.mP & AT6502::kFlagZ) ? 'Z' : ' '
+							, (hent.mP & AT6502::kFlagC) ? 'C' : ' '
+							);
+					}
+				}
 
-				ATDisassembleInsn(mTempLine, hent, false);
+				if (mbShowRegisters || mbShowFlags)
+					mTempLine += " | ";
+
+				ATDisassembleInsn(mTempLine, hent, false, true, mbShowPCAddress, mbShowCodeBytes, mbShowLabels);
 
 				s = &mTempLine;
 			}
@@ -2264,6 +2527,17 @@ void ATHistoryWindow::ValidateNode(TreeNode *node) {
 	VDASSERT(h == node->mHeight);
 }
 
+void ATHistoryWindow::RefreshNode(TreeNode *node) {
+	uint32 ypos1 = GetNodeYPos(node);
+	uint32 ypos2 = ypos1 + mItemHeight;
+
+	if (ypos2 >= mScrollY && ypos1 < mScrollY + mHeight) {
+		RECT r = { 0, ypos1 - mScrollY, mWidth, ypos2 - mScrollY };
+
+		InvalidateRect(mhwnd, &r, TRUE);
+	}
+}
+
 uint32 ATHistoryWindow::GetNodeYPos(TreeNode *node) const {
 	sint32 y = node->mRelYPos;
 
@@ -2375,13 +2649,38 @@ void ATHistoryWindow::Reset() {
 	uint32 l = cpu.GetHistoryLength();
 	mLastCounter = c > l ? c - l : 0;
 	mLastS = 0xFF;
+
+	for(int i=0; i<kRepeatWindowSize; ++i) {
+		mRepeatIPs[i] = 0xFFFFFFFFUL;
+		mRepeatOpcodes[i] = 0;
+	}
+
+	mpRepeatNode = NULL;
+	mRepeatLoopSize = 0;
+	mRepeatLoopCount = 0;
+	mRepeatInsnCount = 0;
 }
 
 void ATHistoryWindow::UpdateOpcodes() {
-	if (mbHistoryError)
-		return;
-
 	ATCPUEmulator& cpu = g_sim.GetCPU();
+	if (mbHistoryError)  {
+		if (!cpu.IsHistoryEnabled())
+			return;
+
+		Reset();
+		OnSize();
+		mbHistoryError = false;
+		InvalidateRect(mhwnd, NULL, TRUE);
+	} else {
+		if (!cpu.IsHistoryEnabled()) {
+			ClearAllNodes();
+			Reset();
+			mbHistoryError = true;
+			InvalidateRect(mhwnd, NULL, TRUE);
+			return;
+		}
+	}
+
 	bool is65C02 = cpu.GetCPUMode() == kATCPUMode_65C02;
 	bool is65C816 = cpu.GetCPUMode() == kATCPUMode_65C816;
 	uint32 c = cpu.GetHistoryCounter();
@@ -2408,6 +2707,16 @@ void ATHistoryWindow::UpdateOpcodes() {
 	TreeNode *last = NULL;
 	while(dist--) {
 		const ATCPUHistoryEntry& hent = cpu.GetHistory(c - ++mLastCounter);
+
+		// If we've had a change in stack height or an interrupt, terminate
+		// any loop tracking.
+		if (hent.mbIRQ || hent.mbNMI || hent.mS != mLastS) {
+			mpRepeatNode = NULL;
+			mRepeatLoopSize = 0;
+			mRepeatLoopCount = 0;
+			mRepeatInsnCount = 0;
+			mRepeatLooseNodeCount = 0;
+		}
 
 		// If we're higher on the stack than before (pop/return), pop entries off the tree parent stack.
 		while(hent.mS > mLastS)
@@ -2465,7 +2774,89 @@ void ATHistoryWindow::UpdateOpcodes() {
 
 		mLastS = hent.mS;
 		
-		last = InsertNode(parent, parent ? parent->mpLastChild : NULL, "", &hent);
+		// add new node
+		last = InsertNode(parent, parent->mpLastChild, "", &hent);
+
+		// check if we have a match on the repeat window
+		int repeatOffset = -1;
+
+		if (mRepeatLoopSize) {
+			if (mRepeatIPs[mRepeatLoopSize - 1] == hent.mPC && mRepeatOpcodes[mRepeatLoopSize - 1] == hent.mOpcode[0])
+				repeatOffset = mRepeatLoopSize - 1;
+		}
+
+		if (repeatOffset < 0) {
+			for(int i=0; i<kRepeatWindowSize; ++i) {
+				if (mRepeatIPs[i] == hent.mPC && mRepeatOpcodes[i] == hent.mOpcode[0]) {
+					repeatOffset = i;
+					break;
+				}
+			}
+		}
+
+		if (repeatOffset >= 0) {
+			if (mRepeatLoopSize != repeatOffset + 1) {
+				mpRepeatNode = NULL;
+				mRepeatLoopSize = repeatOffset + 1;
+				mRepeatLoopCount = 0;
+				mRepeatInsnCount = 0;
+				mRepeatLooseNodeCount = 0;
+			}
+
+			++mRepeatLooseNodeCount;
+
+			if (++mRepeatInsnCount >= mRepeatLoopSize) {
+				mRepeatInsnCount = 0;
+				++mRepeatLoopCount;
+
+				if (!mpRepeatNode && mRepeatLoopCount == 3) {
+					TreeNode *pred = parent->mpLastChild;
+
+					for(int i=0; i<mRepeatLooseNodeCount; ++i)
+						pred = pred->mpPrevSibling;
+
+					mpRepeatNode = InsertNode(parent, pred, "", NULL);
+				}
+
+				if (mpRepeatNode) {
+					mpRepeatNode->mText.sprintf("Last %d insns repeated %d times", mRepeatLoopSize, mRepeatLoopCount);
+					RefreshNode(mpRepeatNode);
+
+					TreeNode *looseNode = mpRepeatNode->mpParent->mpLastChild;
+
+					for(int i=1; i<mRepeatLooseNodeCount; ++i)
+						looseNode = looseNode->mpPrevSibling;
+
+					while(looseNode) {
+						TreeNode *nextLooseNode = looseNode->mpNextSibling;
+
+						RemoveNode(looseNode);
+						InsertNode(mpRepeatNode, mpRepeatNode->mpLastChild, looseNode);
+
+						looseNode = nextLooseNode;
+					}
+
+					last = mpRepeatNode;
+
+					mRepeatLooseNodeCount = 0;
+				}
+			}
+		} else if (mRepeatLoopSize) {
+			mpRepeatNode = NULL;
+			mRepeatLoopSize = 0;
+			mRepeatLoopCount = 0;
+			mRepeatInsnCount = 0;
+			mRepeatLooseNodeCount = 0;
+		}
+
+		// shift in new instruction into repeat window
+		for(int i=kRepeatWindowSize - 1; i; --i) {
+			mRepeatIPs[i] = mRepeatIPs[i-1];
+			mRepeatOpcodes[i] = mRepeatOpcodes[i - 1];
+		}
+
+		mRepeatIPs[0] = hent.mPC;
+		mRepeatOpcodes[0] = hent.mOpcode[0];
 	}
 
 	if (last)
@@ -2493,19 +2884,26 @@ void ATHistoryWindow::ClearAllNodes() {
 }
 
 ATHistoryWindow::TreeNode *ATHistoryWindow::InsertNode(TreeNode *parent, TreeNode *insertAfter, const char *text, const ATCPUHistoryEntry *hent) {
-	if (!parent)
-		parent = &mRootNode;
-
 	TreeNode *node = AllocNode();
 	node->mText = text;
 	node->mRelYPos = 0;
 	node->mbExpanded = false;
 	node->mpFirstChild = NULL;
 	node->mpLastChild = NULL;
-	node->mpParent = parent;
 	node->mHeight = 1;
 	if (hent)
 		node->mHEnt = *hent;
+
+	InsertNode(parent, insertAfter, node);
+
+	return node;
+}
+
+void ATHistoryWindow::InsertNode(TreeNode *parent, TreeNode *insertAfter, TreeNode *node) {
+	if (!parent)
+		parent = &mRootNode;
+
+	node->mpParent = parent;
 
 	if (insertAfter) {
 		TreeNode *next = insertAfter->mpNextSibling;
@@ -2554,7 +2952,46 @@ ATHistoryWindow::TreeNode *ATHistoryWindow::InsertNode(TreeNode *parent, TreeNod
 	}
 
 	InvalidateStartingAtNode(node);
-	return node;
+}
+
+void ATHistoryWindow::RemoveNode(TreeNode *node) {
+	VDASSERT(node);
+
+	TreeNode *successorNode = node;
+
+	while(successorNode) {
+		if (successorNode->mpNextSibling)
+			break;
+
+		successorNode = successorNode->mpParent;
+	}
+
+	// adjust heights of parents and siblings
+	TreeNode *parentNode = node->mpParent;
+	uint32 nodeHeight = node->mHeight;
+	for(TreeNode *p = parentNode; p && p->mbExpanded; p = p->mpParent) {
+		p->mHeight -= nodeHeight;
+
+		for(TreeNode *q = p->mpNextSibling; q; q = q->mpNextSibling)
+			q->mRelYPos -= nodeHeight;
+	}
+
+	// unlink nodes
+	TreeNode *nextNode = node->mpNextSibling;
+	TreeNode *prevNode = node->mpPrevSibling;
+
+	if (prevNode)
+		prevNode->mpNextSibling = nextNode;
+	else
+		parentNode->mpFirstChild = nextNode;
+
+	if (nextNode)
+		nextNode->mpPrevSibling = prevNode;
+	else
+		parentNode->mpLastChild = prevNode;
+
+	if (successorNode)
+		InvalidateStartingAtNode(successorNode);
 }
 
 ATHistoryWindow::TreeNode *ATHistoryWindow::AllocNode() {
@@ -2622,6 +3059,10 @@ void ATHistoryWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& s
 	UpdateOpcodes();
 }
 
+void ATHistoryWindow::OnDebuggerEvent(ATDebugEvent eventId) {
+	InvalidateRect(mhwnd, NULL, TRUE);
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 class ATConsoleWindow : public ATUIPane {
@@ -2644,15 +3085,29 @@ protected:
 	bool OnCreate();
 	void OnDestroy();
 	void OnSize();
+	void OnFontsUpdated();
+
+	void OnPromptChanged(IATDebugger *target, const char *prompt);
+	
+	void AddToHistory(const char *s);
 
 	HWND	mhwndLog;
 	HWND	mhwndEdit;
+	HWND	mhwndPrompt;
 	HMENU	mMenu;
 
 	VDFunctionThunk	*mpCmdEditThunk;
 	WNDPROC	mCmdEditProc;
 
-	VDStringA	mLastCommand;
+	VDDelegate	mDelegatePromptChanged;
+
+	enum { kHistorySize = 8192 };
+
+	char	mHistory[kHistorySize];
+	int		mHistoryFront;
+	int		mHistoryBack;
+	int		mHistorySize;
+	int		mHistoryCurrent;
 };
 
 ATConsoleWindow *g_pConsoleWindow;
@@ -2661,8 +3116,13 @@ ATConsoleWindow::ATConsoleWindow()
 	: ATUIPane(kATUIPaneId_Console, "Console")
 	, mMenu(LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_DEBUGGER_MENU)))
 	, mhwndLog(NULL)
+	, mhwndPrompt(NULL)
 	, mhwndEdit(NULL)
 	, mpCmdEditThunk(NULL)
+	, mHistoryFront(0)
+	, mHistoryBack(0)
+	, mHistorySize(0)
+	, mHistoryCurrent(0)
 {
 	mPreferredDockCode = kATContainerDockBottom;
 }
@@ -2713,7 +3173,9 @@ bool ATConsoleWindow::OnCreate() {
 	if (!mhwndLog)
 		return false;
 
-	SendMessage(mhwndLog, WM_SETFONT, (WPARAM)g_monoFont, NULL);
+	mhwndPrompt = CreateWindowEx(WS_EX_CLIENTEDGE, "EDIT", "", WS_VISIBLE|WS_CHILD|ES_READONLY, 0, 0, 0, 0, mhwnd, (HMENU)100, g_hInst, NULL);
+	if (!mhwndPrompt)
+		return false;
 
 	mhwndEdit = CreateWindowEx(WS_EX_CLIENTEDGE, "RICHEDIT", "", WS_VISIBLE|WS_CHILD, 0, 0, 0, 0, mhwnd, (HMENU)100, g_hInst, NULL);
 	if (!mhwndEdit)
@@ -2724,15 +3186,25 @@ bool ATConsoleWindow::OnCreate() {
 	mCmdEditProc = (WNDPROC)GetWindowLongPtr(mhwndEdit, GWLP_WNDPROC);
 	SetWindowLongPtr(mhwndEdit, GWLP_WNDPROC, (LONG_PTR)mpCmdEditThunk);
 
-	SendMessage(mhwndEdit, WM_SETFONT, (WPARAM)g_monoFont, NULL);
+	OnFontsUpdated();
 
 	OnSize();
 
 	g_pConsoleWindow = this;
+
+	IATDebugger *d = ATGetDebugger();
+
+	d->OnPromptChanged() += mDelegatePromptChanged.Bind(this, &ATConsoleWindow::OnPromptChanged);
+
+	VDSetWindowTextFW32(mhwndPrompt, L"%hs>", d->GetPrompt());
 	return true;
 }
 
 void ATConsoleWindow::OnDestroy() {
+	IATDebugger *d = ATGetDebugger();
+
+	d->OnPromptChanged() -= mDelegatePromptChanged;
+
 	g_pConsoleWindow = NULL;
 
 	if (mhwndEdit) {
@@ -2745,6 +3217,9 @@ void ATConsoleWindow::OnDestroy() {
 		mpCmdEditThunk = NULL;
 	}
 
+	mhwndPrompt = NULL;
+	mhwndLog = NULL;
+
 	ATUIPane::OnDestroy();
 }
 
@@ -2752,16 +3227,47 @@ void ATConsoleWindow::OnSize() {
 	RECT r;
 
 	if (GetClientRect(mhwnd, &r)) {
-		int h = 20;
+		int prw = 8 * g_monoFontCharWidth + 4*GetSystemMetrics(SM_CXEDGE);
+		int h = g_monoFontLineHeight + 4*GetSystemMetrics(SM_CYEDGE);
+
+		if (prw * 3 > r.right)
+			prw = 0;
 
 		if (mhwndLog) {
-			VDVERIFY(SetWindowPos(mhwndLog, NULL, 0, 0, r.right, r.bottom > h ? r.bottom - h : 0, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS));
+			VDVERIFY(SetWindowPos(mhwndLog, NULL, 0, 0, r.right, r.bottom > h ? r.bottom - h : 0, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE));
+		}
+
+		if (mhwndPrompt) {
+			if (prw > 0) {
+				VDVERIFY(SetWindowPos(mhwndPrompt, NULL, 0, r.bottom - h, prw, h, SWP_NOZORDER|SWP_NOACTIVATE));
+				ShowWindow(mhwndPrompt, SW_SHOW);
+			} else {
+				ShowWindow(mhwndPrompt, SW_HIDE);
+			}
 		}
 
 		if (mhwndEdit) {
-			VDVERIFY(SetWindowPos(mhwndEdit, NULL, 0, r.bottom - h, r.right, h, SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS));
+			VDVERIFY(SetWindowPos(mhwndEdit, NULL, prw, r.bottom - h, r.right, h, SWP_NOZORDER|SWP_NOACTIVATE));
 		}
 	}
+}
+
+void ATConsoleWindow::OnFontsUpdated() {
+	if (mhwndLog)
+		SendMessage(mhwndLog, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+
+	if (mhwndEdit)
+		SendMessage(mhwndEdit, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+
+	if (mhwndPrompt)
+		SendMessage(mhwndPrompt, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+
+	OnSize();
+}
+
+void ATConsoleWindow::OnPromptChanged(IATDebugger *target, const char *prompt) {
+	if (mhwndPrompt)
+		VDSetWindowTextFW32(mhwndPrompt, L"%hs>", prompt);
 }
 
 void ATConsoleWindow::Write(const char *s) {
@@ -2825,13 +3331,69 @@ LRESULT ATConsoleWindow::CommandEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, 
 			ATActivateUIPane(kATUIPaneId_Display, true);
 			return 0;
 		} else if (wParam == VK_UP) {
-			const int len = mLastCommand.size();
-			SetWindowText(hwnd, mLastCommand.c_str());
+			if (mHistoryCurrent != mHistoryFront) {
+				mHistoryCurrent = (mHistoryCurrent - 1) & (kHistorySize - 1);
+
+				while(mHistoryCurrent != mHistoryFront) {
+					uint32 i = (mHistoryCurrent - 1) & (kHistorySize - 1);
+
+					char c = mHistory[i];
+
+					if (!c)
+						break;
+
+					mHistoryCurrent = i;
+				}
+			}
+
+			uint32 len = 0;
+
+			if (mHistoryCurrent == mHistoryBack)
+				SetWindowText(hwnd, "");
+			else {
+				VDStringA s;
+
+				for(uint32 i = mHistoryCurrent; mHistory[i]; i = (i+1) & (kHistorySize - 1))
+					s += mHistory[i];
+
+				SetWindowText(hwnd, s.c_str());
+				len = s.size();
+			}
+
 			SendMessage(hwnd, EM_SETSEL, len, len);
 			return 0;
 		} else if (wParam == VK_DOWN) {
-			SetWindowText(hwnd, "");
+			if (mHistoryCurrent != mHistoryBack) {
+				for(;;) {
+					char c = mHistory[mHistoryCurrent];
+					mHistoryCurrent = (mHistoryCurrent + 1) & (kHistorySize - 1);
+
+					if (!c)
+						break;
+				}
+			}
+
+			uint32 len = 0;
+
+			if (mHistoryCurrent == mHistoryBack)
+				SetWindowText(hwnd, "");
+			else {
+				VDStringA s;
+
+				for(uint32 i = mHistoryCurrent; mHistory[i]; i = (i+1) & (kHistorySize - 1))
+					s += mHistory[i];
+
+				SetWindowText(hwnd, s.c_str());
+				len = s.size();
+			}
+
+			SendMessage(hwnd, EM_SETSEL, len, len);
 			return 0;
+		} else if (wParam == VK_PRIOR || wParam == VK_NEXT) {
+			if (mhwndLog) {
+				SendMessage(mhwndLog, msg, wParam, lParam);
+				return 0;
+			}
 		}
 	} else if (msg == WM_KEYUP || msg == WM_SYSKEYUP) {
 		switch(wParam) {
@@ -2842,31 +3404,87 @@ LRESULT ATConsoleWindow::CommandEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, 
 		case VK_ESCAPE:
 		case VK_UP:
 		case VK_DOWN:
-			return true;
+			return 0;
+
+		case VK_PRIOR:
+		case VK_NEXT:
+			if (mhwndLog) {
+				SendMessage(mhwndLog, msg, wParam, lParam);
+				return 0;
+			}
+			break;
 		}
 	} else if (msg == WM_CHAR || msg == WM_SYSCHAR) {
 		if (wParam == '\r') {
-			int len = GetWindowTextLength(mhwndEdit);
-			if (len) {
-				char *buf = (char *)_alloca(len+1);
-				buf[0] = 0;
+			const VDStringA& s = VDGetWindowTextAW32(mhwndEdit);
 
-				if (GetWindowText(mhwndEdit, buf, len+1)) {
-					mLastCommand = buf;
-					SetWindowText(mhwndEdit, "");
-
-					try {
-						ATConsoleExecuteCommand(buf);
-					} catch(const MyError& e) {
-						ATConsolePrintf("%s\n", e.gets());
-					}
-				}
+			if (!s.empty()) {
+				AddToHistory(s.c_str());
+				SetWindowText(mhwndEdit, "");
 			}
-			return true;
+
+			try {
+				ATConsoleExecuteCommand((char *)s.c_str());
+			} catch(const MyError& e) {
+				ATConsolePrintf("%s\n", e.gets());
+			}
+
+			return 0;
 		}
 	}
 
 	return CallWindowProc(mCmdEditProc, hwnd, msg, wParam, lParam);
+}
+
+void ATConsoleWindow::AddToHistory(const char *s) {
+	uint32 len = (uint32)strlen(s) + 1;
+
+	if (len > kHistorySize)
+		return;
+
+	uint32 newLen = mHistorySize + len;
+
+	// Remove strings if the history buffer is too full. We don't allow the
+	// buffer to become completely full as that makes the start/end positions
+	// ambiguous.
+	if (newLen > (kHistorySize - 1)) {
+		uint32 overflow = newLen - (kHistorySize - 1);
+
+		if (overflow > 1) {
+			mHistoryFront += (overflow - 1);
+			if (mHistoryFront >= kHistorySize)
+				mHistoryFront -= kHistorySize;
+
+			mHistorySize -= (overflow - 1);
+		}
+
+		for(;;) {
+			char c = mHistory[mHistoryFront];
+			--mHistorySize;
+
+			if (++mHistoryFront >= kHistorySize)
+				mHistoryFront = 0;
+
+			if (!c)
+				break;
+		}
+	}
+
+	if (mHistoryBack + len > kHistorySize) {
+		uint32 tc1 = kHistorySize - mHistoryBack;
+		uint32 tc2 = len - tc1;
+
+		memcpy(mHistory + mHistoryBack, s, tc1);
+		memcpy(mHistory, s + tc1, tc2);
+
+		mHistoryBack = tc2;
+	} else {
+		memcpy(mHistory + mHistoryBack, s, len);
+		mHistoryBack += len;
+	}
+
+	mHistorySize += len;
+	mHistoryCurrent = mHistoryBack;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2893,6 +3511,7 @@ protected:
 	bool OnCreate();
 	void OnDestroy();
 	void OnSize();
+	void OnFontsUpdated();
 	void OnPaint();
 	void RemakeView(uint32 focusAddr);
 	bool GetAddressFromPoint(int x, int y, uint32& addr) const;
@@ -3054,21 +3673,7 @@ bool ATMemoryWindow::OnCreate() {
 
 	VDSetWindowTextFW32(mhwndAddress, L"%hs", ATGetDebugger()->GetAddressText(mViewStart, true).c_str());
 
-	HDC hdc = GetDC(mhwnd);
-	if (hdc) {
-		HGDIOBJ hOldFont = SelectObject(hdc, g_monoFont);
-		if (hOldFont) {
-			TEXTMETRIC tm = {0};
-			if (GetTextMetrics(hdc, &tm)) {
-				mCharWidth = tm.tmAveCharWidth;
-				mLineHeight = tm.tmHeight;
-			}
-
-			SelectObject(hdc, hOldFont);
-		}
-
-		ReleaseDC(mhwnd, hdc);
-	}
+	OnFontsUpdated();
 
 	OnSize();
 	ATGetDebugger()->AddClient(this, true);
@@ -3108,6 +3713,26 @@ void ATMemoryWindow::OnSize() {
 	mChangedBits.resize(rows, 0);
 
 	RemakeView(mViewStart);
+}
+
+void ATMemoryWindow::OnFontsUpdated() {
+	HDC hdc = GetDC(mhwnd);
+	if (hdc) {
+		HGDIOBJ hOldFont = SelectObject(hdc, g_monoFont);
+		if (hOldFont) {
+			TEXTMETRIC tm = {0};
+			if (GetTextMetrics(hdc, &tm)) {
+				mCharWidth = tm.tmAveCharWidth;
+				mLineHeight = tm.tmHeight;
+			}
+
+			SelectObject(hdc, hOldFont);
+		}
+
+		ReleaseDC(mhwnd, hdc);
+	}
+
+	InvalidateRect(mhwnd, NULL, TRUE);
 }
 
 void ATMemoryWindow::OnPaint() {
@@ -3319,6 +3944,7 @@ protected:
 	bool OnCreate();
 	void OnDestroy();
 	void OnSize();
+	void OnFontsUpdated();
 	void OnSetFocus();
 
 	vdrefptr<IVDTextEditor> mpTextEditor;
@@ -3358,7 +3984,8 @@ bool ATPrinterOutputWindow::OnCreate() {
 		return false;
 
 	mhwndTextEditor = (HWND)mpTextEditor->Create(WS_EX_NOPARENTNOTIFY, WS_CHILD|WS_VISIBLE, 0, 0, 0, 0, (VDGUIHandle)mhwnd, 100);
-	SendMessage(mhwndTextEditor, WM_SETFONT, (WPARAM)g_monoFont, NULL);
+
+	OnFontsUpdated();
 
 	mpTextEditor->SetReadOnly(true);
 
@@ -3386,6 +4013,11 @@ void ATPrinterOutputWindow::OnSize() {
 	if (mhwndTextEditor && GetClientRect(mhwnd, &r)) {
 		VDVERIFY(SetWindowPos(mhwndTextEditor, NULL, 0, 0, r.right, r.bottom, SWP_NOZORDER|SWP_NOACTIVATE));
 	}
+}
+
+void ATPrinterOutputWindow::OnFontsUpdated() {
+	if (mhwndTextEditor)
+		SendMessage(mhwndTextEditor, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
 }
 
 void ATPrinterOutputWindow::OnSetFocus() {
@@ -3447,6 +4079,54 @@ int ATGetConsoleFontLineHeightW32() {
 
 ///////////////////////////////////////////////////////////////////////////
 
+void ATConsoleGetFont(LOGFONTW& font) {
+	font = g_monoFontDesc;
+}
+
+void ATConsoleSetFont(const LOGFONTW& font) {
+	HFONT newFont = CreateFontIndirectW(&font);
+
+	if (!newFont) {
+		if (g_monoFont)
+			return;
+
+		newFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+	}
+
+	g_monoFontLineHeight = 10;
+	g_monoFontCharWidth = 10;
+
+	HDC hdc = GetDC(NULL);
+	if (hdc) {
+		HGDIOBJ hgoFont = SelectObject(hdc, newFont);
+		if (hgoFont) {
+			TEXTMETRIC tm={0};
+
+			if (GetTextMetrics(hdc, &tm)) {
+				g_monoFontLineHeight = tm.tmHeight + tm.tmExternalLeading;
+				g_monoFontCharWidth = tm.tmAveCharWidth;
+			}
+		}
+
+		SelectObject(hdc, hgoFont);
+		ReleaseDC(NULL, hdc);
+	}
+
+	g_monoFontDesc = font;
+
+	HFONT prevFont = g_monoFont;
+	g_monoFont = newFont;
+
+	if (g_pMainWindow)
+		g_pMainWindow->NotifyFontsUpdated();
+
+	DeleteObject(prevFont);
+
+	VDRegistryAppKey key("Settings");
+	key.setString("Console: Font family", font.lfFaceName);
+	key.setInt("Console: Font size", font.lfHeight);
+}
+
 void ATInitUIPanes() {
 	LoadLibrary("riched32");
 
@@ -3459,25 +4139,19 @@ void ATInitUIPanes() {
 	ATRegisterUIPaneType(kATUIPaneId_PrinterOutput, VDRefCountObjectFactory<ATPrinterOutputWindow, ATUIPane>);
 
 	if (!g_monoFont) {
-		g_monoFont = CreateFont(-10, 0, 0, 0, 0, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Lucida Console");
+		LOGFONTW consoleFont(g_monoFontDesc);
 
-		if (!g_monoFont)
-			g_monoFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+		VDRegistryAppKey key("Settings");
+		VDStringW family;
+		int fontSize;
+		if (key.getString("Console: Font family", family)
+			&& (fontSize = key.getInt("Console: Font size", 0))) {
 
-		g_monoFontLineHeight = 10;
-		HDC hdc = GetDC(NULL);
-		if (hdc) {
-			HGDIOBJ hgoFont = SelectObject(hdc, g_monoFont);
-			if (hgoFont) {
-				TEXTMETRIC tm={0};
-
-				if (GetTextMetrics(hdc, &tm))
-					g_monoFontLineHeight = tm.tmHeight + tm.tmExternalLeading;
-			}
-
-			SelectObject(hdc, hgoFont);
-			ReleaseDC(NULL, hdc);
+			consoleFont.lfHeight = fontSize;
+			vdwcslcpy(consoleFont.lfFaceName, family.c_str(), sizeof(consoleFont.lfFaceName)/sizeof(consoleFont.lfFaceName[0]));
 		}
+
+		ATConsoleSetFont(consoleFont);
 	}
 
 	g_hmenuSrcContext = LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_SOURCE_CONTEXT_MENU));
@@ -3821,4 +4495,8 @@ void ATConsoleTaggedPrintf(const char *format, ...) {
 		va_end(val);
 		g_pConsoleWindow->ShowEnd();
 	}
+}
+
+bool ATConsoleCheckBreak() {
+	return GetAsyncKeyState(VK_CONTROL) < 0 && (GetAsyncKeyState(VK_CANCEL) < 0 || GetAsyncKeyState(VK_PAUSE) < 0 || GetAsyncKeyState('A' + 2) < 0);
 }

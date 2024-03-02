@@ -36,6 +36,27 @@ bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size) {
 	return true;
 }
 
+bool ATLoadMiscResource(int id, vdfastvector<uint8>& data) {
+	HMODULE hmod = VDGetLocalModuleHandleW32();
+
+	HRSRC hrsrc = FindResourceA(hmod, MAKEINTRESOURCE(id), "STUFF");
+	if (!hrsrc)
+		return false;
+
+	DWORD rsize = SizeofResource(hmod, hrsrc);
+	HGLOBAL hg = LoadResource(hmod, hrsrc);
+	const void *p = LockResource(hg);
+
+	if (!p)
+		return false;
+
+	data.resize(rsize);
+
+	memcpy(data.data(), p, rsize);
+
+	return true;
+}
+
 void ATFileSetReadOnlyAttribute(const wchar_t *path, bool readOnly) {
 	VDStringA s;
 	DWORD attrs;
