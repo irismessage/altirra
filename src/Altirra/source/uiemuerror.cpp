@@ -22,6 +22,7 @@
 #include "simulator.h"
 #include "debugger.h"
 #include "cpu.h"
+#include "options.h"
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -82,6 +83,7 @@ void ATUIDialogEmuError::OnDataExchange(bool write) {
 		GetControlText(IDC_CHANGE_HARDWARE, s);
 		switch(mpSim->GetHardwareMode()) {
 			case kATHardwareMode_800:
+			case kATHardwareMode_XEGS:
 				s += L"XL/XE";
 				break;
 
@@ -128,7 +130,7 @@ void ATUIDialogEmuError::OnDataExchange(bool write) {
 		mbNewPALMode = false;
 		
 		if (mpSim->GetHardwareMode() != kATHardwareMode_5200) {
-			mbNewPALMode = !mpSim->IsPALMode();
+			mbNewPALMode = mpSim->GetVideoStandard() == kATVideoStandard_NTSC;
 	
 			GetControlText(IDC_CHANGE_VIDEO, s);
 			if (mbNewPALMode)
@@ -155,8 +157,12 @@ bool ATUIDialogEmuError::OnOK() {
 	if (IsButtonChecked(IDC_CHANGE_HARDWARE)) {
 		mpSim->SetHardwareMode(mNewHardwareMode);
 
-		if (mNewHardwareMode == kATHardwareMode_800) {
+		if (mNewHardwareMode == kATHardwareMode_800XL || mNewHardwareMode == kATHardwareMode_XEGS) {
 			switch(mpSim->GetMemoryMode()) {
+				case kATMemoryMode_8K:
+				case kATMemoryMode_24K:
+				case kATMemoryMode_32K:
+				case kATMemoryMode_40K:
 				case kATMemoryMode_48K:
 				case kATMemoryMode_52K:
 					mpSim->SetMemoryMode(kATMemoryMode_64K);
@@ -172,7 +178,7 @@ bool ATUIDialogEmuError::OnOK() {
 		mpSim->SetKernelMode(mNewKernelMode);
 
 	if (IsButtonChecked(IDC_CHANGE_VIDEO))
-		mpSim->SetPALMode(mbNewPALMode);
+		mpSim->SetVideoStandard(mbNewPALMode ? kATVideoStandard_PAL : kATVideoStandard_NTSC);
 
 	if (IsButtonChecked(IDC_CHANGE_BASIC))
 		mpSim->SetBASICEnabled(false);
@@ -247,6 +253,24 @@ void ATEmuErrorHandler::Shutdown() {
 }
 
 void ATEmuErrorHandler::OnDebuggerOpen(IATDebugger *dbg, ATDebuggerOpenEvent *event) {
+	switch(g_ATOptions.mErrorMode) {
+		case kATErrorMode_Dialog:
+			break;
+
+		case kATErrorMode_Debug:
+			return;
+
+		case kATErrorMode_Pause:
+			event->mbAllowOpen = false;
+			return;
+
+		case kATErrorMode_ColdReset:
+			mpSim->ColdReset();
+			mpSim->Resume();
+			event->mbAllowOpen = false;
+			return;
+	}
+
 	switch(ATUIShowDialogEmuError(mParent, mpSim)) {
 		case kATErrorAction_Debug:
 			break;

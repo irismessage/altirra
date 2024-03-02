@@ -17,6 +17,8 @@
 
 #include "stdafx.h"
 #include "pokey.h"
+#include "pokeyrenderer.h"
+#include "pokeytables.h"
 #include <float.h>
 #include <vd2/system/math.h>
 
@@ -30,31 +32,21 @@
 
 namespace {
 	enum {
-		kATPokeyEvent64KHzTick = 1,
 		kATPokeyEvent15KHzTick = 2,
-		kATPokeyEventTimer1 = 3,
-		kATPokeyEventTimer2 = 4,
-		kATPokeyEventTimer3 = 5,
-		kATPokeyEventTimer4 = 6,
 		kATPokeyEventTimer1Borrow = 7,
 		kATPokeyEventTimer2Borrow = 8,
 		kATPokeyEventTimer3Borrow = 9,
 		kATPokeyEventTimer4Borrow = 10,
 		kATPokeyEventResetTimers = 11,
-		kATPokeyEventPot0ScanComplete = 16,	// x8
-		kATPokeyEventAudio = 32
+		kATPokeyEventSerialOutput = 12,
+		kATPokeyEventPot0ScanComplete = 16	// x8
 	};
+
+	const bool kForceActiveTimers = false;
 }
 
 ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
-	: mAccum(0)
-	, mSampleCounter(0)
-	, mOutputLevel(0)
-	, mLastOutputTime(0)
-	, mAudioInput(0)
-	, mAudioInput2(0)
-	, mExternalInput(0)
-	, mTicksAccumulated(0)
+	: mpRenderer(new ATPokeyRenderer)
 	, mbCommandLineState(false)
 	, mb5200Mode(false)
 	, mbTraceSIO(false)
@@ -77,20 +69,17 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mLastPolyTime(0)
 	, mPoly17Counter(0)
 	, mPoly9Counter(0)
-	, mPoly5Counter(0)
-	, mPoly4Counter(0)
 	, mSerialInputShiftRegister(0)
 	, mSerialOutputShiftRegister(0)
 	, mSerialInputCounter(0)
 	, mSerialOutputCounter(0)
 	, mbSerOutValid(false)
 	, mbSerialOutputState(false)
-	, mbSpeakerState(false)
-	, mbSpeakerActive(false)
 	, mbSerialRateChanged(false)
 	, mbSerialWaitingForStartBit(true)
 	, mbSerInBurstPending(false)
 	, mSerBurstMode(kSerialBurstMode_Disabled)
+	, mbSpeakerActive(false)
 	, mpAudioLog(NULL)
 	, mbFastTimer1(false)
 	, mbFastTimer3(false)
@@ -101,11 +90,10 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mLast64KHzTime(0)
 	, mALLPOT(0)
 	, mPotScanStartTime(0)
-	, mp64KHzEvent(NULL)
 	, mp15KHzEvent(NULL)
-	, mpAudioEvent(NULL)
 	, mpStartBitEvent(NULL)
 	, mpResetTimersEvent(NULL)
+	, mpEventSerialOutput(NULL)
 	, mpScheduler(NULL)
 	, mpConn(NULL)
 	, mpSlave(NULL)
@@ -113,90 +101,31 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mpAudioOut(NULL)
 	, mpCassette(NULL)
 	, mpSoundBoard(NULL)
-	, mOutputSampleCount(0)
 {
 	for(int i=0; i<8; ++i) {
 		mpPotScanEvent[i] = NULL;
 		mPOT[i] = 228;
 	}
 
-	memset(mpTimerEvents, 0, sizeof(mpTimerEvents));
 	memset(mpTimerBorrowEvents, 0, sizeof(mpTimerBorrowEvents));
-
-	UpdateMixTable();
-
-	for(int i=0; i<4; ++i)
-		mbChannelEnabled[i] = true;
 }
 
 ATPokeyEmulator::~ATPokeyEmulator() {
+	delete mpRenderer;
 }
 
-void ATPokeyEmulator::Init(IATPokeyEmulatorConnections *mem, ATScheduler *sched, IATAudioOutput *output) {
+void ATPokeyEmulator::Init(IATPokeyEmulatorConnections *mem, ATScheduler *sched, IATAudioOutput *output, ATPokeyTables *tables) {
 	mpConn = mem;
 	mpScheduler = sched;
 	mpAudioOut = output;
+	mpTables = tables;
+	UpdateMixTable();
 
-	if (!mbIsSlave)
-		mpAudioEvent = sched->AddEvent(28, this, kATPokeyEventAudio);
-	mLastOutputTime = ATSCHEDULER_GETTIME(mpScheduler);
+	mpRenderer->Init(sched, tables);
 
-	VDASSERT(!mp64KHzEvent);
 	VDASSERT(!mp15KHzEvent);
 
 	ColdReset();
-
-	// The 4-bit and 5-bit polynomial counters are of the XNOR variety, which means
-	// that the all-1s case causes a lockup. The INIT mode shifts zeroes into the
-	// register.
-	static const uint8 kRevBits4[16]={
-		0,  8, 4, 12,
-		2, 10, 6, 14,
-		1,  9, 5, 13,
-		3, 11, 7, 15,
-	};
-
-	int poly4 = 0;
-	for(int i=0; i<15; ++i) {
-		poly4 = (poly4+poly4) + (~((poly4 >> 2) ^ (poly4 >> 3)) & 1);
-
-		mPoly4Buffer[i] = kRevBits4[poly4 & 15];
-	}
-
-	int poly5 = 0;
-	for(int i=0; i<31; ++i) {
-		poly5 = (poly5+poly5) + (~((poly5 >> 2) ^ (poly5 >> 4)) & 1);
-
-		mPoly5Buffer[i] = kRevBits4[poly5 & 15];
-	}
-
-	// The 17-bit polynomial counter is also of the XNOR variety, but one big
-	// difference is that you're allowed to read out 8 bits of it. The RANDOM
-	// register actually reports the INVERTED state of these bits (the Q' output
-	// of the flip flops is connected to the data bus). This means that even
-	// though we clear the register to 0, it reads as FF.
-	//
-	// From the perspective of the CPU through RANDOM, the LFSR shifts to the
-	// right, and new bits appear on the left. The equivalent operation for the
-	// 9-bit LFSR would be to set carry equal to (D0 ^ D5) and then execute
-	// a ROR.
-	int poly9 = 0;
-	for(int i=0; i<511; ++i) {
-		// Note: This one is actually verified against a real Atari.
-		// At WSYNC time, the pattern goes: 00 DF EE 16 B9....
-		poly9 = (poly9 >> 1) + (~((poly9 << 8) ^ (poly9 << 3)) & 0x100);
-
-		mPoly9Buffer[i] = (~poly9 & 0xff);
-	}
-
-	// The 17-bit mode inserts an additional 8 register bits immediately after
-	// the XNOR. The generator polynomial is unchanged.
-	int poly17 = 0;
-	for(int i=0; i<131071; ++i) {
-		poly17 = (poly17 >> 1) + (~((poly17 << 16) ^ (poly17 << 11)) & 0x10000);
-
-		mPoly17Buffer[i] = ((~poly17 >> 8) & 0xff);
-	}
 }
 
 void ATPokeyEmulator::ColdReset() {
@@ -208,7 +137,7 @@ void ATPokeyEmulator::ColdReset() {
 	memset(&mState, 0, sizeof mState);
 
 	mKBCODE = 0;
-	mSKSTAT = 0xFF;
+	mSKSTAT = mbShiftKeyState ? 0xF7 : 0xFF;
 	mSKCTL = 0;
 	mKeyCodeTimer = 0;
 	mKeyCooldownTimer = 0;
@@ -224,60 +153,44 @@ void ATPokeyEmulator::ColdReset() {
 
 	for(int i=0; i<4; ++i) {
 		mCounter[i] = 1;
+		mCounterBorrow[i] = 0;
+		mAUDFP1[i] = 1;
+		mbDeferredTimerEvents[i] = false;
 
-		if (mpTimerEvents[i]) {
-			mpScheduler->RemoveEvent(mpTimerEvents[i]);
-			mpTimerEvents[i] = NULL;
-		}
-
-		if (mpTimerBorrowEvents[i]) {
-			mpScheduler->RemoveEvent(mpTimerBorrowEvents[i]);
-			mpTimerBorrowEvents[i] = NULL;
-		}
+		mpScheduler->UnsetEvent(mpTimerBorrowEvents[i]);
 	}
 
-	if (mpStartBitEvent) {
-		mpScheduler->RemoveEvent(mpStartBitEvent);
-		mpStartBitEvent = NULL;
-	}
+	RecomputeTimerPeriod<0>();
+	RecomputeTimerPeriod<1>();
+	RecomputeTimerPeriod<2>();
+	RecomputeTimerPeriod<3>();
+	RecomputeAllowedDeferredTimers();
 
-	if (mpResetTimersEvent) {
-		mpScheduler->RemoveEvent(mpResetTimersEvent);
-		mpResetTimersEvent = NULL;
-	}
+	mpScheduler->UnsetEvent(mpStartBitEvent);
+	mpScheduler->UnsetEvent(mpResetTimersEvent);
+	mpScheduler->UnsetEvent(mpEventSerialOutput);
+
+	mpRenderer->ColdReset();
 
 	mLastPolyTime = ATSCHEDULER_GETTIME(mpScheduler);
 	mPoly17Counter = 0;
 	mPoly9Counter = 0;
-	mPoly5Counter = 0;
-	mPoly4Counter = 0;
 	mSerialInputShiftRegister = 0;
 	mSerialOutputShiftRegister = 0;
 	mSerialOutputCounter = 0;
 	mSerialInputCounter = 0;
 	mbSerOutValid = false;
+	mbSerShiftValid = false;
 	mbSerialOutputState = false;
 	mbSerialWaitingForStartBit = true;
 	mbSerInBurstPending = false;
+	mbSerialSimulateInputPort = false;
 
 	memset(mAUDF, 0, sizeof mAUDF);
 	memset(mAUDC, 0, sizeof mAUDC);
 
-	for(int i=0; i<4; ++i)
-		UnpackAUDCx(i);
-
-	mOutputs[0] = 1;
-	mOutputs[1] = 1;
-	mOutputs[2] = 1;
-	mOutputs[3] = 1;
-	mOutputLevel = 0;
 	mLast15KHzTime = ATSCHEDULER_GETTIME(mpScheduler);
 	mLast64KHzTime = ATSCHEDULER_GETTIME(mpScheduler);
-
-	if (mp64KHzEvent) {
-		mpScheduler->RemoveEvent(mp64KHzEvent);
-		mp64KHzEvent = NULL;
-	}
 
 	if (mp15KHzEvent) {
 		mpScheduler->RemoveEvent(mp15KHzEvent);
@@ -292,11 +205,6 @@ void ATPokeyEmulator::ColdReset() {
 	}
 
 	mALLPOT = 0;
-
-	mNoiseFF[0] = false;
-	mNoiseFF[1] = false;
-	mNoiseFF[2] = false;
-	mNoiseFF[3] = false;
 
 	mbCommandLineState = false;
 
@@ -354,9 +262,17 @@ void ATPokeyEmulator::RemoveSIODevice(IATPokeySIODevice *device) {
 		mDevices.erase(it);
 }
 
-void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit) {
+void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulateInputPort) {
 	if (mbTraceSIO)
 		ATConsoleTaggedPrintf("POKEY: Receiving byte (c=%02x; %02x %02x)\n", c, mSERIN, mSerialInputShiftRegister);
+
+	mbSerialSimulateInputPort = simulateInputPort;
+
+	if (simulateInputPort) {
+		mSerialSimulateInputBaseTime = ATSCHEDULER_GETTIME(mpScheduler);
+		mSerialSimulateInputCyclesPerBit = cyclesPerBit;
+		mSerialSimulateInputData = ((uint32)c << 1) + 0x200;
+	}
 
 	// check for overrun
 	if (!(mIRQST & 0x20)) {
@@ -385,8 +301,11 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit) {
 
 	if (mSKCTL & 0x10) {
 		// Restart timers 3 and 4 immediately.
-		mCounter[2] = (uint32)mAUDF[2] + 1;
-		mCounter[3] = (uint32)mAUDF[3] + 1;
+		UpdateTimerCounter<2>();
+		UpdateTimerCounter<3>();
+
+		mCounter[2] = mAUDFP1[2];
+		mCounter[3] = mAUDFP1[3];
 
 		mbSerialWaitingForStartBit = false;
 		SetupTimers(0x0c);
@@ -410,16 +329,8 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit) {
 	}
 }
 
-void ATPokeyEmulator::SetAudioLine(int v) {
-	mAudioInput = v;
-	mExternalInput = mAudioInput + mAudioInput2;
-	UpdateOutput();
-}
-
 void ATPokeyEmulator::SetAudioLine2(int v) {
-	mAudioInput2 = v;
-	mExternalInput = mAudioInput + mAudioInput2;
-	UpdateOutput();
+	mpRenderer->SetAudioLine2(v);
 }
 
 void ATPokeyEmulator::SetDataLine(bool newState) {
@@ -446,14 +357,17 @@ void ATPokeyEmulator::SetCommandLine(bool newState) {
 	}
 }
 
-void ATPokeyEmulator::SetChannelEnabled(uint32 channel, bool enabled) {
-	VDASSERT(channel < 4);
-	if (mbChannelEnabled[channel] != enabled) {
-		mbChannelEnabled[channel] = enabled;
+void ATPokeyEmulator::SetSpeaker(bool newState) {
+	if (mpRenderer->SetSpeaker(newState))
+		mbSpeakerActive = true;
+}
 
-		UnpackAUDCx(channel);
-		UpdateOutput();
-	}
+bool ATPokeyEmulator::IsChannelEnabled(uint32 channel) const {
+	return mpRenderer->IsChannelEnabled(channel);
+}
+
+void ATPokeyEmulator::SetChannelEnabled(uint32 channel, bool enabled) {
+	mpRenderer->SetChannelEnabled(channel, enabled);
 }
 
 void ATPokeyEmulator::SetNonlinearMixingEnabled(bool enable) {
@@ -565,30 +479,11 @@ void ATPokeyEmulator::ClearKeyMatrix() {
 	memset(mbKeyMatrix, 0, sizeof mbKeyMatrix);
 }
 
-void ATPokeyEmulator::FireTimers(uint8 activeChannels) {
-	UpdatePolynomialCounters();
+template<uint8 activeChannel>
+void ATPokeyEmulator::FireTimer() {
+	mpRenderer->AddChannelEvent(activeChannel);
 
-	uint8 poly17 = mAUDCTL & 0x80 ? mPoly9Buffer[mPoly9Counter] : mPoly17Buffer[mPoly17Counter];
-	uint8 poly5 = mPoly5Buffer[mPoly5Counter];
-	uint8 poly4 = mPoly4Buffer[mPoly4Counter];
-	bool outputsChanged = false;
-
-	if (activeChannels & 0x01) {
-		bool noiseFFInput = (mAUDC[0] & 0x20) ? !mNoiseFF[0] : ((((mAUDC[0] & 0x40) ? poly4 : poly17) & 8) != 0);
-		bool noiseFFClock = (mAUDC[0] & 0x80) ? true : ((poly5 & 8) != 0);
-
-		if (noiseFFClock)
-			mNoiseFF[0] = noiseFFInput;
-
-		mOutputs[0] = mNoiseFF[0];
-		if (mAUDCTL & 0x04)
-			mOutputs[0] ^= mHighPassFF[0] ? 0x01 : 0x00;
-		else
-			mOutputs[0] ^= 0x01;
-
-		if (mChannelVolume[0])
-			outputsChanged = true;
-
+	if (activeChannel == 0) {
 		if (mIRQEN & 0x01) {
 			mIRQST &= ~0x01;
 			mpConn->PokeyAssertIRQ(false);
@@ -597,28 +492,14 @@ void ATPokeyEmulator::FireTimers(uint8 activeChannels) {
 		// two tone
 		if ((mSKCTL & 8) && mbSerialOutputState && !(mSKCTL & 0x80)) {
 			// resync timer 2 to timer 1
-			mCounter[1] = (uint32)mAUDF[1] + 1;
+			mCounter[1] = mAUDFP1[1];
+			mCounterBorrow[1] = 0;
 			SetupTimers(0x02);
 		}
 	}
 
 	// count timer 2
-	if (activeChannels & 0x02) {
-		bool noiseFFInput = (mAUDC[1] & 0x20) ? !mNoiseFF[1] : ((((mAUDC[1] & 0x40) ? poly4 : poly17) & 4) != 0);
-		bool noiseFFClock = (mAUDC[1] & 0x80) ? true : ((poly5 & 4) != 0);
-
-		if (noiseFFClock)
-			mNoiseFF[1] = noiseFFInput;
-
-		mOutputs[1] = mNoiseFF[1];
-		if (mAUDCTL & 0x02)
-			mOutputs[1] ^= mHighPassFF[1] ? 0x01 : 0x00;
-		else
-			mOutputs[1] ^= 0x01;
-
-		if (mChannelVolume[1])
-			outputsChanged = true;
-
+	if (activeChannel == 1) {
 		if (mIRQEN & 0x02) {
 			mIRQST &= ~0x02;
 			mpConn->PokeyAssertIRQ(false);
@@ -626,58 +507,20 @@ void ATPokeyEmulator::FireTimers(uint8 activeChannels) {
 
 		// two tone
 		if (mSKCTL & 8) {
-			// resync timer  to timer 2
-			mCounter[0] = (uint32)mAUDF[0] + 1;
+			// resync timer 1 to timer 2
+			mCounter[0] = mAUDFP1[0];
+			mCounterBorrow[0] = 0;
 			SetupTimers(0x01);
 		}
 
 		if (mSerialOutputCounter) {
 			if ((mSKCTL & 0x60) == 0x60)
-				OnSerialOutputTick(false);
+				mpScheduler->SetEvent(2, this, kATPokeyEventSerialOutput, mpEventSerialOutput);
 		}
-	}
-
-	// count timer 3
-	if (activeChannels & 0x04) {
-		bool noiseFFInput = (mAUDC[2] & 0x20) ? !mNoiseFF[2] : ((((mAUDC[2] & 0x40) ? poly4 : poly17) & 2) != 0);
-		bool noiseFFClock = (mAUDC[2] & 0x80) ? true : ((poly5 & 2) != 0);
-
-		if (noiseFFClock)
-			mNoiseFF[2] = noiseFFInput;
-
-		mOutputs[2] = mNoiseFF[2];
-
-		mHighPassFF[0] = mNoiseFF[0];
-		if (mAUDCTL & 0x04) {
-			mOutputs[0] = mNoiseFF[0] ^ mHighPassFF[0];
-			if (mChannelVolume[0])
-				outputsChanged = true;
-		}
-
-		if (mChannelVolume[2])
-			outputsChanged = true;
 	}
 
 	// count timer 4
-	if (activeChannels & 0x08) {
-		bool noiseFFInput = (mAUDC[3] & 0x20) ? !mNoiseFF[3] : ((((mAUDC[3] & 0x40) ? poly4 : poly17) & 1) != 0);
-		bool noiseFFClock = (mAUDC[3] & 0x80) ? true : ((poly5 & 1) != 0);
-
-		if (noiseFFClock)
-			mNoiseFF[3] = noiseFFInput;
-
-		mOutputs[3] = mNoiseFF[3];
-
-		mHighPassFF[1] = mNoiseFF[1];
-		if (mAUDCTL & 0x02) {
-			mOutputs[1] = mNoiseFF[1] ^ mHighPassFF[1];
-			if (mChannelVolume[1])
-				outputsChanged = true;
-		}
-
-		if (mChannelVolume[3])
-			outputsChanged = true;
-
+	if (activeChannel == 3) {
 		if (mIRQEN & 0x04) {
 			mIRQST &= ~0x04;
 			mpConn->PokeyAssertIRQ(false);
@@ -688,6 +531,11 @@ void ATPokeyEmulator::FireTimers(uint8 activeChannels) {
 
 			if (!mSerialInputCounter && (mSKCTL & 0x10)) {
 				mbSerialWaitingForStartBit = true;
+
+				if (!mbLinkedTimers34) {
+					mCounter[2] = mAUDFP1[2];
+					SetupTimers(0x04);
+				}
 			}
 		}
 
@@ -695,17 +543,14 @@ void ATPokeyEmulator::FireTimers(uint8 activeChannels) {
 			switch(mSKCTL & 0x60) {
 				case 0x20:
 				case 0x40:
-					OnSerialOutputTick(false);
+					mpScheduler->SetEvent(2, this, kATPokeyEventSerialOutput, mpEventSerialOutput);
 					break;
 			}
 		}
 	}
-
-	if (outputsChanged)
-		UpdateOutput();
 }
 
-void ATPokeyEmulator::OnSerialOutputTick(bool cpuBased) {
+void ATPokeyEmulator::OnSerialOutputTick() {
 	--mSerialOutputCounter;
 
 	// We've already transmitted the start bit (low), so we need to do data bits and then
@@ -713,61 +558,62 @@ void ATPokeyEmulator::OnSerialOutputTick(bool cpuBased) {
 	mbSerialOutputState = mSerialOutputCounter ? (mSerialOutputShiftRegister & (1 << (9 - (mSerialOutputCounter >> 1)))) != 0 : true;
 
 	if (!mSerialOutputCounter) {
-		if (mbTraceSIO)
-			ATConsoleTaggedPrintf("POKEY: Transmitted serial byte %02x to SIO bus\n", mSerialOutputShiftRegister);
+		if (mbSerShiftValid) {
+			mbSerShiftValid = false;
 
-		for(Devices::const_iterator it(mDevices.begin()), itEnd(mDevices.end()); it!=itEnd; ++it)
-			(*it)->PokeyWriteSIO(mSerialOutputShiftRegister);
+			if (mbTraceSIO)
+				ATConsoleTaggedPrintf("POKEY: Transmitted serial byte %02x to SIO bus\n", mSerialOutputShiftRegister);
+
+			uint32 cyclesPerBit;
+		
+			switch(mSKCTL & 0x60) {
+				case 0x00:		// external clock
+					cyclesPerBit = 0;
+					break;
+
+				case 0x20:		// timer 4 as transmit clock
+				case 0x40:
+					cyclesPerBit = mTimerPeriod[3];
+					break;
+
+				case 0x60:		// timer 2 as transmit clock
+					cyclesPerBit = mTimerPeriod[1];
+					break;
+
+				default:
+					VDNEVERHERE;
+			}
+
+			cyclesPerBit += cyclesPerBit;
+
+			for(Devices::const_iterator it(mDevices.begin()), itEnd(mDevices.end()); it!=itEnd; ++it)
+				(*it)->PokeyWriteSIO(mSerialOutputShiftRegister, mbCommandLineState, cyclesPerBit);
+		}
 
 		if (mbSerOutValid) {
 			mSerialOutputCounter = 20;
 			mbSerialOutputState = true;
 			mSerialOutputShiftRegister = mSEROUT;
 			mbSerOutValid = false;
-		}
+			mbSerShiftValid = true;
 
-		if (mIRQEN & 0x10) {
-			mIRQST &= ~0x10;
-			mpConn->PokeyAssertIRQ(cpuBased);
-		}
+			// bit 3 is special and doesn't get cleared by IRQEN
+			mIRQST |= 0x08;
 
-		// bit 3 is special and doesn't get cleared by IRQEN
-		if (!mSerialOutputCounter) {
+			if (mIRQEN & 0x10)
+				mIRQST &= ~0x10;
+		} else
 			mIRQST &= ~0x08;
-			if (mIRQEN & 0x08) {
-				mpConn->PokeyAssertIRQ(cpuBased);
-			}
-		}
-	}
 
-	if (!mbSerOutValid) {
-		if (mIRQEN & 0x10) {
-			mIRQST &= ~0x10;
-			mpConn->PokeyAssertIRQ(cpuBased);
-		}
+		if (mIRQEN & ~mIRQST)
+			mpConn->PokeyAssertIRQ(false);
+		else
+			mpConn->PokeyNegateIRQ(false);
 	}
 }
 
 uint32 ATPokeyEmulator::GetSerialCyclesPerBit() const {
-	uint32 divisor;
-
-	if (mbLinkedTimers34) {
-		divisor = ((uint32)mAUDF[3] << 8) + mAUDF[2] + 1;
-
-		if (mbFastTimer3)
-			divisor += 6;
-		else if (mbUse15KHzClock)
-			divisor *= 114;
-		else
-			divisor *= 28;
-
-	} else if (mbUse15KHzClock) {
-		// 15KHz clock
-		divisor = ((uint32)mAUDF[3] + 1) * 114;
-	} else {
-		// 64KHz clock
-		divisor = ((uint32)mAUDF[3] + 1) * 28;
-	}
+	const uint32 divisor = mTimerPeriod[3];
 
 	return divisor + divisor;
 }
@@ -809,34 +655,44 @@ void ATPokeyEmulator::AdvanceFrame(bool pushAudio) {
 	mbSpeakerActive = false;
 
 	FlushAudio(pushAudio);
+
+	// Scan all of the deferred timers and push any that are too far behind. We need to do this to
+	// prevent any of the timers from getting too far behind the clock (>30 bits). This calculation
+	// is wrong for the low timer of a linked timer pair, but it turns out we don't use the start
+	// value in that case; this module uses the high timer delay, and only the renderer does the
+	// funky linked step.
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+
+	for(int i=0; i<4; ++i) {
+		if (!mbDeferredTimerEvents[i])
+			continue;
+
+		// Determine what kind of lag we want to check for on the deferred timer start. This must be
+		// at least 8893, which is the number of times that a 1.79MHz frequency 0 timer can count in
+		// a PAL frame. However, a slow 15KHz linked timer can take as long as 7.4M clocks to cycle.
+		// We keep shifting up the value until it's a bit more than a second. We do need to keep this
+		// value a multiple of the original, though.
+		uint32 bigPeriod = mDeferredTimerPeriods[i];
+
+		while(bigPeriod < 2097152) {
+			bigPeriod <<= 4;
+		}
+
+		// The deferred timers may start in the future for one that hasn't hit the first tick,
+		// so we must check for that case.
+		if ((sint32)(t - mDeferredTimerStarts[i]) <= (sint32)bigPeriod)
+			continue;
+
+		// Bump the timer up by a number of periods so it catches up. 
+		mDeferredTimerStarts[i] += bigPeriod;
+	}
+
+	if (t - mLast64KHzTime > 28*65536)
+		mLast64KHzTime += 28*65536;
 }
 
 void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 	switch(id) {
-		case kATPokeyEventAudio:
-			{
-				mpAudioEvent = mpScheduler->AddEvent(28, this, kATPokeyEventAudio);
-
-				uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-				GenerateSample(mOutputSampleCount, t);
-
-				if (mpSlave)
-					mpSlave->GenerateSample(mOutputSampleCount, t);
-
-				if (++mOutputSampleCount >= kBufferSize)
-					mOutputSampleCount = kBufferSize - 1;
-			}
-			break;
-
-		case kATPokeyEvent64KHzTick:
-			{
-				mp64KHzEvent = mpScheduler->AddEvent(28, this, kATPokeyEvent64KHzTick);
-
-				uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-				mLast64KHzTime = t;
-			}
-			break;
-
 		case kATPokeyEvent15KHzTick:
 			{
 				mp15KHzEvent = mpScheduler->AddEvent(114, this, kATPokeyEvent15KHzTick);
@@ -947,117 +803,92 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 			}
 			break;
 
-		case kATPokeyEventTimer1:
-			mpTimerEvents[0] = NULL;
-			mCounter[0] = (uint32)mAUDF[0] + 1;
-			if (mbLinkedTimers12) {
-				mCounter[0] = 256;
-				SetupTimers(0x01);
-			}
-
-			mpScheduler->SetEvent(3, this, kATPokeyEventTimer1Borrow, mpTimerBorrowEvents[0]);
-			break;
-
 		case kATPokeyEventTimer1Borrow:
 			mpTimerBorrowEvents[0] = NULL;
-			FireTimers(0x01);
+			FireTimer<0>();
+
 			if (!mbLinkedTimers12) {
-				SetupTimers(0x01);
-				break;
+				mCounter[0] = mAUDFP1[0];
+			} else {
+				// If we are operating at 1.79MHz, three cycles have already elapsed from the underflow to
+				// when the borrow goes through.
+				mCounter[0] = mbFastTimer1 ? 253 : 256;
 			}
 
-			if (--mCounter[1])
-				break;
-
-			if (mpTimerEvents[1])
-				mpScheduler->RemoveEvent(mpTimerEvents[1]);
-			// fall through
-		case kATPokeyEventTimer2:
-			mpTimerEvents[1] = NULL;
-			mCounter[1] = (uint32)mAUDF[1] + 1;
-
-			if (mbLinkedTimers12)
-				mCounter[0] = (uint32)mAUDF[0] + 1;
-
-			mpScheduler->SetEvent(3, this, kATPokeyEventTimer2Borrow, mpTimerBorrowEvents[1]);
+			mCounterBorrow[0] = 0;
+			SetupTimers(0x01);
 			break;
 
 		case kATPokeyEventTimer2Borrow:
 			mpTimerBorrowEvents[1] = NULL;
-			FireTimers(0x02);
-			if (mbLinkedTimers12)
+			FireTimer<1>();
+
+			mCounterBorrow[1] = 0;
+			mCounter[1] = mAUDFP1[1];
+			if (mbLinkedTimers12) {
+				mCounter[0] = mAUDFP1[0];
+				mCounterBorrow[0] = 0;
 				SetupTimers(0x03);
-			else
+			} else
 				SetupTimers(0x02);
-			break;
-
-		case kATPokeyEventTimer3:
-			mpTimerEvents[2] = NULL;
-			mCounter[2] = (uint32)mAUDF[2] + 1;
-			if (mbLinkedTimers34) {
-				mCounter[2] = 256;
-				SetupTimers(0x04);
-			}
-
-			mpScheduler->SetEvent(3, this, kATPokeyEventTimer3Borrow, mpTimerBorrowEvents[2]);
 			break;
 
 		case kATPokeyEventTimer3Borrow:
 			mpTimerBorrowEvents[2] = NULL;
-			FireTimers(0x04);
+			FireTimer<2>();
+
 			if (!mbLinkedTimers34) {
-				SetupTimers(0x04);
-				break;
+				mCounter[2] = mAUDFP1[2];
+			} else {
+				// If we are operating at 1.79MHz, three cycles have already elapsed from the underflow to
+				// when the borrow goes through.
+				mCounter[2] = mbFastTimer3 ? 253 : 256;
 			}
 
-			if (--mCounter[3])
-				break;
-
-			if (mpTimerEvents[3])
-				mpScheduler->RemoveEvent(mpTimerEvents[3]);
-			// fall through
-		case kATPokeyEventTimer4:
-			mpTimerEvents[3] = NULL;
-			mCounter[3] = (uint32)mAUDF[3] + 1;
-			if (mbLinkedTimers34)
-				mCounter[2] = (uint32)mAUDF[2] + 1;
-
-			mpScheduler->SetEvent(3, this, kATPokeyEventTimer4Borrow, mpTimerBorrowEvents[3]);
+			mCounterBorrow[2] = 0;
+			SetupTimers(0x04);
 			break;
 
 		case kATPokeyEventTimer4Borrow:
 			mpTimerBorrowEvents[3] = NULL;
-			FireTimers(0x08);
-			if (mbLinkedTimers34)
+			FireTimer<3>();
+
+			mCounter[3] = mAUDFP1[3];
+			mCounterBorrow[3] = 0;
+			if (mbLinkedTimers34) {
+				mCounter[2] = mAUDFP1[2];
+				mCounterBorrow[2] = 0;
 				SetupTimers(0x0C);
-			else
+			} else
 				SetupTimers(0x08);
 			break;
 
 		case kATPokeyEventResetTimers:
 			mpResetTimersEvent = NULL;
-			mCounter[0] = (uint32)mAUDF[0] + 1;
-			mCounter[1] = (uint32)mAUDF[1] + 1;
-			mCounter[2] = (uint32)mAUDF[2] + 1;
-			mCounter[3] = (uint32)mAUDF[3] + 1;
-			mOutputs[0] = 0;
-			mOutputs[1] = 0;
-			mOutputs[2] = 1;
-			mOutputs[3] = 1;
-			mNoiseFF[0] = 1;
-			mNoiseFF[1] = 1;
-			mNoiseFF[2] = 1;
-			mNoiseFF[3] = 1;
+			mCounter[0] = mAUDFP1[0];
+			mCounter[1] = mAUDFP1[1];
+			mCounter[2] = mAUDFP1[2];
+			mCounter[3] = mAUDFP1[3];
+
+			mpRenderer->ResetTimers();
 
 			for(int i=0; i<4; ++i) {
+				mCounterBorrow[0] = 0;
+
 				if (mpTimerBorrowEvents[i]) {
 					mpScheduler->RemoveEvent(mpTimerBorrowEvents[i]);
 					mpTimerBorrowEvents[i] = NULL;
 				}
 			}
 
-			UpdateOutput();
 			SetupTimers(0x0f);
+			break;
+
+		case kATPokeyEventSerialOutput:
+			mpEventSerialOutput = NULL;
+
+			if (mSerialOutputCounter)
+				OnSerialOutputTick();
 			break;
 
 		default:
@@ -1075,229 +906,561 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 	}
 }
 
-void ATPokeyEmulator::GenerateSample(uint32 pos, uint32 t) {
-	int oc = t - mLastOutputTime;
-	mAccum += mOutputLevel * oc;
-	mLastOutputTime = t;
+template<int channel>
+void ATPokeyEmulator::RecomputeTimerPeriod() {
 
-	float v = mAccum;
+	const bool fastTimer = (channel == 0) ? mbFastTimer1 : (channel == 2) ? mbFastTimer3 : false;
+	const bool hiLinkedTimer = channel == 1 ? mbLinkedTimers12 : channel == 3 ? mbLinkedTimers34 : false;
+	const bool loLinkedTimer = channel == 0 ? mbLinkedTimers12 : channel == 2 ? mbLinkedTimers34 : false;
 
-	mAccum = 0;
-	mRawOutputBuffer[pos] = (float)v;
+	uint32 period;
+	if (hiLinkedTimer) {
+		const bool fastLinkedTimer = (channel == 1) ? mbFastTimer1 : (channel == 3) ? mbFastTimer3 : false;
+
+		period = ((uint32)mAUDF[channel] << 8) + mAUDFP1[channel - 1];
+
+		if (fastLinkedTimer)
+			period += 6;
+		else if (mbUse15KHzClock)
+			period *= 114;
+		else
+			period *= 28;
+	} else {
+		period = mAUDFP1[channel];
+
+		if (fastTimer)
+			period += 3;
+		else if (mbUse15KHzClock)
+			period *= 114;
+		else
+			period *= 28;
+
+		if (loLinkedTimer) {
+			uint32 fullPeriod;
+
+			if (fastTimer)
+				fullPeriod = 256;
+			else if (mbUse15KHzClock)
+				fullPeriod = 256 * 114;
+			else
+				fullPeriod = 256 * 28;
+
+			mTimerFullPeriod[channel >> 1] = fullPeriod;
+		}
+	}
+
+	mTimerPeriod[channel] = period;
 }
 
-void ATPokeyEmulator::UpdatePolynomialCounters() const {
-	if (!(mSKCTL & 3))
-		return;
+void ATPokeyEmulator::RecomputeAllowedDeferredTimers() {
+	// Timer 2 IRQ, two-tone mode, or timer 2 as serial output clock prohibits deferring timer 2.
+	mbAllowDeferredTimer[1] = !kForceActiveTimers
+		&& !(mIRQEN & 0x02)
+		&& !(mSKCTL & 8)
+		&& (mSKCTL & 0x60) != 0x60;
 
-	int t = ATSCHEDULER_GETTIME(mpScheduler);
-	int polyDelta = t - mLastPolyTime;
-	mPoly4Counter += polyDelta;
-	mPoly5Counter += polyDelta;
-	mPoly9Counter += polyDelta;
-	mPoly17Counter += polyDelta;
-	mLastPolyTime = t;
+	// Timer 1 IRQ or two-tone mode prohibits deferring timer 1.
+	mbAllowDeferredTimer[0] = !kForceActiveTimers
+		&& !(mIRQEN & 0x01)
+		&& !(mSKCTL & 8);
 
-	if (mPoly4Counter >= 15)
-		mPoly4Counter %= 15;
+	// Timer 4 IRQ, asynchronous receive mode, or using timer 4 as transmit clock prohibits deferring timer 4.
+	mbAllowDeferredTimer[3] = !kForceActiveTimers
+		&& !(mIRQEN & 0x04)
+		&& !(mSKCTL & 0x10)
+		&& (mSKCTL & 0x60) != 0x20
+		&& (mSKCTL & 0x60) != 0x40;
 
-	if (mPoly5Counter >= 31)
-		mPoly5Counter %= 31;
+	// Timer 3 deferring is ordinarily always possible.
+	mbAllowDeferredTimer[2] = !kForceActiveTimers;
 
-	if (mPoly9Counter >= 511)
-		mPoly9Counter %= 511;
+	// Check if timers are linked; both timers must be able to defer together.
+	if (mbLinkedTimers12) {
+		if (!mbAllowDeferredTimer[0] || !mbAllowDeferredTimer[1]) {
+			mbAllowDeferredTimer[0] = false;
+			mbAllowDeferredTimer[1] = false;
+		}
+	}
 
-	if (mPoly17Counter >= 131071)
-		mPoly17Counter %= 131071;
+	if (mbLinkedTimers34) {
+		if (!mbAllowDeferredTimer[2] || !mbAllowDeferredTimer[3]) {
+			mbAllowDeferredTimer[2] = false;
+			mbAllowDeferredTimer[3] = false;
+		}
+	}
 }
 
-void ATPokeyEmulator::UpdateOutput() {
-	int t = ATSCHEDULER_GETTIME(mpScheduler);
-	int oc = t - mLastOutputTime;
-	mAccum += mOutputLevel * oc;
-	mLastOutputTime = t;
+template<int channel>
+void ATPokeyEmulator::UpdateTimerCounter() {
+	VDASSERT(mCounter[0] > 0);
+	VDASSERT(mCounterBorrow[0] >= 0);
 
-	int out0 = mOutputs[0];
-	int out1 = mOutputs[1];
-	int out2 = mOutputs[2];
-	int out3 = mOutputs[3];
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 
-	int v0 = mChannelVolume[0];
-	int v1 = mChannelVolume[1];
-	int v2 = mChannelVolume[2];
-	int v3 = mChannelVolume[3];
-	int vpok	= ((mAUDC[0] & 0x10) ? v0 : out0 * v0)
-				+ ((mAUDC[1] & 0x10) ? v1 : out1 * v1)
-				+ ((mAUDC[2] & 0x10) ? v2 : out2 * v2)
-				+ ((mAUDC[3] & 0x10) ? v3 : out3 * v3);
+	mCounterBorrow[channel] = 0;
 
-	mOutputLevel	= mMixTable[vpok] 
-					+ mExternalInput
-					+ (mbSpeakerState ? +24 : 0);		// The XL speaker is approximately 80% as loud as a full volume channel.
-					;
-}
+	const bool fastTimer = channel == 0 || (channel == 1 && mbLinkedTimers12) ? mbFastTimer1
+		: channel == 2 || (channel == 3 && mbLinkedTimers34) ? mbFastTimer3 : false;
+	const bool hiLinkedTimer = channel == 1 ? mbLinkedTimers12 : channel == 3 ? mbLinkedTimers34 : false;
+	const bool loLinkedTimer = channel == 0 ? mbLinkedTimers12 : channel == 2 ? mbLinkedTimers34 : false;
 
-void ATPokeyEmulator::UpdateTimerCounters(uint8 channels) {
-	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	int slowTickOffset = (mbUse15KHzClock ? t - mLast15KHzTime : t - mLast64KHzTime);
+	if (loLinkedTimer) {
+		const int hiChannel = channel + 1;
 
-	if (channels & 0x01) {
-		if (mpTimerEvents[0]) {
-			int ticksLeft = mpScheduler->GetTicksToEvent(mpTimerEvents[0]);
+		// Compute the number of ticks until the next borrow event. The borrow occurs three cycles after
+		// the timer channel underflows; 16-bit channels take 6 cycles because the borrows from the two
+		// channels are cascaded. If we have a borrow event, we can simply use that time directly.
 
-			if (mbFastTimer1) {
-				mCounter[0] = ticksLeft;
-			} else if (mbUse15KHzClock)
-				mCounter[0] = (ticksLeft + slowTickOffset) / 114;
+		int ticksLeft;
+		if (mbDeferredTimerEvents[hiChannel]) {
+			if ((sint32)(t - mDeferredTimerStarts[hiChannel]) < 0)
+				ticksLeft = mDeferredTimerStarts[hiChannel] - t;
 			else
-				mCounter[0] = (ticksLeft + slowTickOffset) / 28;
+				ticksLeft = mDeferredTimerPeriods[hiChannel] - (t - mDeferredTimerStarts[hiChannel]) % mDeferredTimerPeriods[hiChannel];
+		} else if (mpTimerBorrowEvents[hiChannel])
+			ticksLeft = mpScheduler->GetTicksToEvent(mpTimerBorrowEvents[hiChannel]);
+		else
+			return;
 
-			VDASSERT(mCounter[0] > 0);
+		// Compute the low timer offset from the high timer offset.
+		if (ticksLeft <= 3) {
+			// Three ticks or less means that the high timer is borrowing, so we're free running. We've
+			// already run through the three ticks of low timer borrow.
+			if (fastTimer)
+				mCounter[channel] = 253 - ticksLeft;
+			else
+				mCounter[channel] = 256;
+		} else {
+			ticksLeft = (uint32)(ticksLeft - 3) % mTimerFullPeriod[channel >> 1];
+
+			if (ticksLeft <= 3) {
+				// Low timer borrow is in progress.
+				mCounterBorrow[channel] = ticksLeft;
+
+				if (fastTimer)
+					mCounter[channel] = 256 - ticksLeft;
+				else
+					mCounter[channel] = 256;
+			} else {
+				ticksLeft -= 3;
+
+				if (!fastTimer) {
+					if (mbUse15KHzClock)
+						ticksLeft = (ticksLeft + 113) / 114;
+					else
+						ticksLeft = (ticksLeft + 27) / 28;
+				}
+
+				mCounter[channel] = ticksLeft;
+			}
+		}
+	} else {
+		// Compute the number of ticks until the next borrow event. The borrow occurs three cycles after
+		// the timer channel underflows; 16-bit channels take 6 cycles because the borrows from the two
+		// channels are cascaded. If we have a borrow event, we can simply use that time directly.
+
+		int ticksLeft;
+		if (mbDeferredTimerEvents[channel]) {
+			if ((sint32)(t - mDeferredTimerStarts[channel]) < 0)
+				ticksLeft = mDeferredTimerStarts[channel] - t;
+			else
+				ticksLeft = mDeferredTimerPeriods[channel] - (t - mDeferredTimerStarts[channel]) % mDeferredTimerPeriods[channel];
+		} else if (mpTimerBorrowEvents[channel])
+			ticksLeft = mpScheduler->GetTicksToEvent(mpTimerBorrowEvents[channel]);
+		else
+			return;
+
+		// If we're three ticks or less away, we have a borrow pending. At fast clock the timer will begin
+		// counting down immediately during the borrow; this is important to maintain 16-bit, 1.79MHz accuracy.
+		// At slow clock this can only happen once if the slow clock just happens to fall at the right time
+		// (can happen if 1.79MHz clocking is disabled).
+		//
+		// TODO: Handle slow tick happening in borrow land.
+
+		if (ticksLeft <= 3) {
+			mCounterBorrow[channel] = ticksLeft;
+
+			if (fastTimer && !hiLinkedTimer)
+				mCounter[channel] = 256 - ticksLeft;
+			else
+				mCounter[channel] = 256;
+		} else {
+			if (hiLinkedTimer) {
+				if (fastTimer)
+					mCounter[channel] = (ticksLeft + 255) >> 8;
+				else if (mbUse15KHzClock)
+					mCounter[channel] = (ticksLeft + 114*256 - 1) / (114*256);
+				else
+					mCounter[channel] = (ticksLeft + 28*256 - 1) / (28*256);
+			} else {
+				ticksLeft -= 3;
+
+				if (fastTimer)
+					mCounter[channel] = ticksLeft;
+				else if (mbUse15KHzClock)
+					mCounter[channel] = (ticksLeft + 113) / 114;
+				else
+					mCounter[channel] = (ticksLeft + 27) / 28;
+			}
 		}
 	}
 
-	if (channels & 0x02) {
-		if (mpTimerEvents[1]) {
-			int ticksLeft = mpScheduler->GetTicksToEvent(mpTimerEvents[1]);
-
-			if (mbUse15KHzClock)
-				mCounter[1] = (ticksLeft + slowTickOffset) / 114;
-			else
-				mCounter[1] = (ticksLeft + slowTickOffset) / 28;
-		}
-	}
-
-	if (channels & 0x04) {
-		if (mpTimerEvents[2]) {
-			int ticksLeft = mpScheduler->GetTicksToEvent(mpTimerEvents[2]);
-
-			if (mbFastTimer3) {
-				mCounter[2] = ticksLeft;
-			} else if (mbUse15KHzClock)
-				mCounter[2] = (ticksLeft + slowTickOffset) / 114;
-			else
-				mCounter[2] = (ticksLeft + slowTickOffset) / 28;
-		}
-	}
-
-	if (channels & 0x08) {
-		if (mpTimerEvents[3]) {
-			int ticksLeft = mpScheduler->GetTicksToEvent(mpTimerEvents[3]);
-
-			if (mbUse15KHzClock)
-				mCounter[3] = (ticksLeft + slowTickOffset) / 114;
-			else
-				mCounter[3] = (ticksLeft + slowTickOffset) / 28;
-		}
-	}
+	VDASSERT(mCounter[channel] > 0 && mCounter[channel] <= 256);
+	VDASSERT(mCounterBorrow[channel] >= 0);
 }
 
 void ATPokeyEmulator::SetupTimers(uint8 channels) {
 	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	int cyclesToNextSlowTick = (mbUse15KHzClock ? 114 - (t - mLast15KHzTime) : 28 - (t - mLast64KHzTime));
+	int cyclesToNextSlowTick;
 
-	if (cyclesToNextSlowTick)
-		cyclesToNextSlowTick -= (mbUse15KHzClock ? 114 : 28);
+	if (mbUse15KHzClock) {
+		cyclesToNextSlowTick = 114 - (t - mLast15KHzTime);
 
-	bool slowTickValid = (mSKCTL & 3) != 0;
+		if (cyclesToNextSlowTick)
+			cyclesToNextSlowTick -= 114;
+	} else {
+		int slowTickOffset = t - mLast64KHzTime;
 
-	if (channels & 0x01) {
-		if (mpTimerEvents[0]) {
-			mpScheduler->RemoveEvent(mpTimerEvents[0]);
-			mpTimerEvents[0] = NULL;
+		if (slowTickOffset >= 28) {
+			mLast64KHzTime += 28;
+			slowTickOffset -= 28;
+
+			if (slowTickOffset >= 28) {
+				int largeDelta = slowTickOffset - slowTickOffset % 28;
+
+				mLast64KHzTime += largeDelta;
+				slowTickOffset -= largeDelta;
+			}
 		}
 
-		if (mbFastTimer1 || slowTickValid) {
-			uint32 ticks;
-			if (mbLinkedTimers12) {
-				if (mbFastTimer1) {
-					ticks = mCounter[0];
-				} else if (mbUse15KHzClock)
-					ticks = mCounter[0] * 114 + cyclesToNextSlowTick;
-				else
-					ticks = mCounter[0] * 28 + cyclesToNextSlowTick;
-			} else {
-				if (mbFastTimer1) {
-					ticks = mCounter[0];
-				} else if (mbUse15KHzClock)
-					ticks = mCounter[0] * 114 + cyclesToNextSlowTick;
-				else
-					ticks = mCounter[0] * 28 + cyclesToNextSlowTick;
+		cyclesToNextSlowTick = (28 - slowTickOffset);
+
+		if (cyclesToNextSlowTick)
+			cyclesToNextSlowTick -= 28;
+	}
+
+	const bool slowTickValid = (mSKCTL & 3) != 0;
+
+	if (channels & 0x01) {
+		mpScheduler->UnsetEvent(mpTimerBorrowEvents[0]);
+		FlushDeferredTimerEvents(0);
+
+		if (!mbFastTimer1 && !slowTickValid) {
+			// 15/64KHz clock is stopped and we're not running at 1.79MHz. In this case, we still
+			// fire the borrow event if we have one pending.
+			if (mCounterBorrow[0])
+				mpTimerBorrowEvents[0] = mpScheduler->AddEvent(mCounterBorrow[0], this, kATPokeyEventTimer1Borrow);
+		} else {
+			// Computer number of ticks until the next borrow event. If we have a borrow pending,
+			// that's easy; otherwise, we have to look at the current counter value, slow tick offset,
+			// and mode.
+			uint32 ticks = mCounterBorrow[0];
+			
+			if (!ticks) {
+				ticks = mCounter[0];
+
+				if (!mbFastTimer1) {
+					if (mbUse15KHzClock)
+						ticks = ticks * 114;
+					else
+						ticks = ticks * 28;
+
+					ticks += cyclesToNextSlowTick;
+				}
+
+				// Borrow takes place three cycles after underflow.
+				ticks += 3;
 			}
 
 			VDASSERT(ticks > 0);
-			mpTimerEvents[0] = mpScheduler->AddEvent(ticks, this, kATPokeyEventTimer1);
+
+			if (!mbAllowDeferredTimer[0])
+				mpTimerBorrowEvents[0] = mpScheduler->AddEvent(ticks, this, kATPokeyEventTimer1Borrow);
+			else if (mbLinkedTimers12) {
+				const uint32 loTime = t + ticks;
+				const uint32 hiTime = loTime + 3 + mTimerFullPeriod[0] * (mCounter[1] - 1);
+
+				SetupDeferredTimerEventsLinked(0, loTime, mTimerFullPeriod[0], hiTime, mTimerPeriod[1], mTimerPeriod[0]);
+			} else
+				SetupDeferredTimerEvents(0, t + ticks, mTimerPeriod[0]);
 		}
 	}
 
 	if (channels & 0x02) {
-		if (mpTimerEvents[1]) {
-			mpScheduler->RemoveEvent(mpTimerEvents[1]);
-			mpTimerEvents[1] = NULL;
-		}
+		mpScheduler->UnsetEvent(mpTimerBorrowEvents[1]);
+		FlushDeferredTimerEvents(1);
 
-		uint32 ticks;
-		if (!mbLinkedTimers12 && slowTickValid) {
-			if (mbUse15KHzClock)
-				ticks = mCounter[1] * 114 + cyclesToNextSlowTick;
-			else
-				ticks = mCounter[1] * 28 + cyclesToNextSlowTick;
+		if (mbLinkedTimers12) {
+			if (!mbFastTimer1 && !slowTickValid) {
+				// 15/64KHz clock is stopped and we're not running at 1.79MHz. In this case, we still
+				// fire the borrow event if we have one pending.
+				if (mCounterBorrow[1])
+					mpTimerBorrowEvents[1] = mpScheduler->AddEvent(mCounterBorrow[1], this, kATPokeyEventTimer2Borrow);
+			} else {
+				// Computer number of ticks until the next borrow event. If we have a borrow pending,
+				// that's easy; otherwise, we have to look at the current counter value, slow tick offset,
+				// and mode.
+				uint32 ticks = mCounterBorrow[1];
+				
+				if (!ticks) {
+					ticks = mCounterBorrow[0];
 
-			VDASSERT(ticks > 0);
-			mpTimerEvents[1] = mpScheduler->AddEvent(ticks, this, kATPokeyEventTimer2);
-		}
-	}
+					if (!ticks) {
+						ticks = mCounter[0];
 
-	if (channels & 0x04) {
-		if (mpTimerEvents[2]) {
-			mpScheduler->RemoveEvent(mpTimerEvents[2]);
-			mpTimerEvents[2] = NULL;
-		}
+						if (!mbFastTimer1) {
+							if (mbUse15KHzClock)
+								ticks = ticks * 114;
+							else
+								ticks = ticks * 28;
 
-		if (mbFastTimer3 || slowTickValid) {
-			if (!(mSKCTL & 0x10) || !mbSerialWaitingForStartBit) {
-				uint32 ticks;
-				if (mbLinkedTimers34) {
-					if (mbFastTimer3) {
-						ticks = mCounter[2];
-					} else if (mbUse15KHzClock)
-						ticks = mCounter[2] * 114 + cyclesToNextSlowTick;
+							ticks += cyclesToNextSlowTick;
+						}
+
+						ticks += 3;
+					}
+
+					if (mbFastTimer1)
+						ticks += (mCounter[1] - 1) << 8;
+					else if (mbUse15KHzClock)
+						ticks += (mCounter[1] - 1) * (256 * 114);
 					else
-						ticks = mCounter[2] * 28 + cyclesToNextSlowTick;
-				} else {
-					if (mbFastTimer3) {
-						ticks = mCounter[2];
-					} else if (mbUse15KHzClock)
-						ticks = mCounter[2] * 114 + cyclesToNextSlowTick;
-					else
-						ticks = mCounter[2] * 28 + cyclesToNextSlowTick;
+						ticks += (mCounter[1] - 1) * (256 * 28);
+
+					// Borrow takes place three cycles after underflow.
+					ticks += 3;
 				}
 
 				VDASSERT(ticks > 0);
-				mpTimerEvents[2] = mpScheduler->AddEvent(ticks, this, kATPokeyEventTimer3);
-			}
-		}
-	}
 
-	if (channels & 0x08) {
-		if (mpTimerEvents[3]) {
-			mpScheduler->RemoveEvent(mpTimerEvents[3]);
-			mpTimerEvents[3] = NULL;
-		}
-
-		if (!(mSKCTL & 0x10) || !mbSerialWaitingForStartBit) {
-			uint32 ticks;
-			if (!mbLinkedTimers34 && slowTickValid) {
-				if (mbUse15KHzClock)
-					ticks = mCounter[3] * 114 + cyclesToNextSlowTick;
+				if (!mbAllowDeferredTimer[1])
+					mpTimerBorrowEvents[1] = mpScheduler->AddEvent(ticks, this, kATPokeyEventTimer2Borrow);
 				else
-					ticks = mCounter[3] * 28 + cyclesToNextSlowTick;
+					SetupDeferredTimerEvents(1, t + ticks, mTimerPeriod[1]);
+
+			}
+		} else {
+			if (!slowTickValid) {
+				// 15/64KHz clock is stopped and we're not running at 1.79MHz. In this case, we still
+				// fire the borrow event if we have one pending.
+				if (mCounterBorrow[1])
+					mpTimerBorrowEvents[1] = mpScheduler->AddEvent(mCounterBorrow[1], this, kATPokeyEventTimer2Borrow);
+			} else {
+				// Computer number of ticks until the next borrow event. If we have a borrow pending,
+				// that easy; otherwise, we have to look at the current counter value, slow tick offset,
+				// and mode.
+				uint32 ticks = mCounterBorrow[1];
+				
+				if (!ticks) {
+					ticks = mCounter[1];
+
+					if (mbUse15KHzClock)
+						ticks = ticks * 114;
+					else
+						ticks = ticks * 28;
+
+					ticks += cyclesToNextSlowTick;
+
+					// Borrow takes place three cycles after underflow.
+					ticks += 3;
+				}
 
 				VDASSERT(ticks > 0);
-				mpTimerEvents[3] = mpScheduler->AddEvent(ticks, this, kATPokeyEventTimer4);
+
+				if (!mbAllowDeferredTimer[1]) {
+					mpTimerBorrowEvents[1] = mpScheduler->AddEvent(ticks, this, kATPokeyEventTimer2Borrow);
+				} else {
+					SetupDeferredTimerEvents(1, t + ticks, mTimerPeriod[1]);
+				}
 			}
 		}
 	}
+
+	if ((mSKCTL & 0x10) && mbSerialWaitingForStartBit) {
+		if (channels & 0x04) {
+			mpScheduler->UnsetEvent(mpTimerBorrowEvents[2]);
+			FlushDeferredTimerEvents(2);
+
+			if (mCounterBorrow[2])
+				mpTimerBorrowEvents[2] = mpScheduler->AddEvent(mCounterBorrow[2], this, kATPokeyEventTimer3Borrow);
+		}
+
+		if (channels & 0x08) {
+			mpScheduler->UnsetEvent(mpTimerBorrowEvents[3]);
+			FlushDeferredTimerEvents(3);
+
+			if (mCounterBorrow[3])
+				mpTimerBorrowEvents[3] = mpScheduler->AddEvent(mCounterBorrow[3], this, kATPokeyEventTimer4Borrow);
+		}
+	} else {
+		if (channels & 0x04) {
+			mpScheduler->UnsetEvent(mpTimerBorrowEvents[2]);
+			FlushDeferredTimerEvents(2);
+
+			if (!mbFastTimer3 && !slowTickValid) {
+				// 15/64KHz clock is stopped and we're not running at 1.79MHz. In this case, we still
+				// fire the borrow event if we have one pending.
+				if (mCounterBorrow[2])
+					mpTimerBorrowEvents[2] = mpScheduler->AddEvent(mCounterBorrow[2], this, kATPokeyEventTimer3Borrow);
+			} else {
+				// Computer number of ticks until the next borrow event. If we have a borrow pending,
+				// that's easy; otherwise, we have to look at the current counter value, slow tick offset,
+				// and mode.
+				uint32 ticks = mCounterBorrow[2];
+				
+				if (!ticks) {
+					ticks = mCounter[2];
+
+					if (!mbFastTimer3) {
+						if (mbUse15KHzClock)
+							ticks = ticks * 114;
+						else
+							ticks = ticks * 28;
+
+						ticks += cyclesToNextSlowTick;
+					}
+
+					// Borrow takes place three cycles after underflow.
+					ticks += 3;
+				}
+
+				VDASSERT(ticks > 0);
+
+				// Check if we need an active event or if we can go to deferred mode. We only need an
+				// active event if timers are linked, timer 1 IRQ is enabled, or two-tone mode is active.
+				if (!mbAllowDeferredTimer[2])
+					mpTimerBorrowEvents[2] = mpScheduler->AddEvent(ticks, this, kATPokeyEventTimer3Borrow);
+				else if (mbLinkedTimers34) {
+					const uint32 loTime = t + ticks;
+					const uint32 hiTime = loTime + 3 + mTimerFullPeriod[1] * (mCounter[3] - 1);
+
+					SetupDeferredTimerEventsLinked(2, loTime, mTimerFullPeriod[1], hiTime, mTimerPeriod[3], mTimerPeriod[2]);
+				} else
+					SetupDeferredTimerEvents(2, t + ticks, mTimerPeriod[2]);
+			}
+		}
+
+		if (channels & 0x08) {
+			mpScheduler->UnsetEvent(mpTimerBorrowEvents[3]);
+			FlushDeferredTimerEvents(3);
+
+			if (mbLinkedTimers34) {
+				if (!mbFastTimer3 && !slowTickValid) {
+					// 15/64KHz clock is stopped and we're not running at 1.79MHz. In this case, we still
+					// fire the borrow event if we have one pending.
+					if (mCounterBorrow[3])
+						mpTimerBorrowEvents[3] = mpScheduler->AddEvent(mCounterBorrow[3], this, kATPokeyEventTimer4Borrow);
+				} else {
+					// Computer number of ticks until the next borrow event. If we have a borrow pending,
+					// that's easy; otherwise, we have to look at the current counter value, slow tick offset,
+					// and mode.
+					uint32 ticks = mCounterBorrow[3];
+					
+					if (!ticks) {
+						ticks = mCounterBorrow[2];
+
+						if (!ticks) {
+							ticks = mCounter[2];
+
+							if (!mbFastTimer3) {
+								if (mbUse15KHzClock)
+									ticks = ticks * 114;
+								else
+									ticks = ticks * 28;
+
+								ticks += cyclesToNextSlowTick;
+							}
+
+							ticks += 3;
+						}
+
+						if (mbFastTimer3)
+							ticks += (mCounter[3] - 1) << 8;
+						else if (mbUse15KHzClock)
+							ticks += (mCounter[3] - 1) * (114 * 256);
+						else
+							ticks += (mCounter[3] - 1) * (28 * 256);
+
+						// Borrow takes place three cycles after underflow.
+						ticks += 3;
+					}
+
+					VDASSERT(ticks > 0);
+
+					if (!mbAllowDeferredTimer[3])
+						mpTimerBorrowEvents[3] = mpScheduler->AddEvent(ticks, this, kATPokeyEventTimer4Borrow);
+					else
+						SetupDeferredTimerEvents(3, t + ticks, mTimerPeriod[3]);
+				}
+			} else {
+				if (!slowTickValid) {
+					// 15/64KHz clock is stopped and we're not running at 1.79MHz. In this case, we still
+					// fire the borrow event if we have one pending.
+					if (mCounterBorrow[3])
+						mpTimerBorrowEvents[3] = mpScheduler->AddEvent(mCounterBorrow[3], this, kATPokeyEventTimer4Borrow);
+				} else {
+					// Computer number of ticks until the next borrow event. If we have a borrow pending,
+					// that easy; otherwise, we have to look at the current counter value, slow tick offset,
+					// and mode.
+					uint32 ticks = mCounterBorrow[3];
+					
+					if (!ticks) {
+						ticks = mCounter[3];
+
+						if (mbUse15KHzClock)
+							ticks = ticks * 114;
+						else
+							ticks = ticks * 28;
+
+						ticks += cyclesToNextSlowTick;
+
+						// Borrow takes place three cycles after underflow.
+						ticks += 3;
+					}
+
+					VDASSERT(ticks > 0);
+
+					// We only need the timer 4 event if the timers are linked, the timer 4 IRQ is enabled,
+					// asynchronous receive mode is enabled, or timer 4 is being used as the output clock.
+					if (!mbAllowDeferredTimer[3]) {
+						mpTimerBorrowEvents[3] = mpScheduler->AddEvent(ticks, this, kATPokeyEventTimer4Borrow);
+					} else {
+						SetupDeferredTimerEvents(3, t + ticks, mTimerPeriod[3]);
+					}
+				}
+			}
+		}
+	}
+}
+
+void ATPokeyEmulator::FlushDeferredTimerEvents(int channel) {
+	if (!mbDeferredTimerEvents[channel])
+		return;
+
+	// get current time
+	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+
+	mbDeferredTimerEvents[channel] = false;
+
+	mpRenderer->ClearChannelDeferredEvents(channel, t);
+}
+
+void ATPokeyEmulator::SetupDeferredTimerEvents(int channel, uint32 t0, uint32 period) {
+	VDASSERT(!mbDeferredTimerEvents[channel]);
+	mbDeferredTimerEvents[channel] = true;
+	mDeferredTimerStarts[channel] = t0;
+	mDeferredTimerPeriods[channel] = period;
+
+	mpRenderer->SetChannelDeferredEvents(channel, t0, period);
+}
+
+void ATPokeyEmulator::SetupDeferredTimerEventsLinked(int channel, uint32 t0, uint32 period, uint32 hit0, uint32 hiperiod, uint32 hilooffset) {
+	VDASSERT(!mbDeferredTimerEvents[channel]);
+	mbDeferredTimerEvents[channel] = true;
+	mDeferredTimerStarts[channel] = t0;
+	mDeferredTimerPeriods[channel] = period;
+
+	mpRenderer->SetChannelDeferredEventsLinked(channel, t0, period, hit0, hiperiod, hilooffset);
 }
 
 uint8 ATPokeyEmulator::DebugReadByte(uint8 reg) const {
@@ -1318,14 +1481,13 @@ uint8 ATPokeyEmulator::DebugReadByte(uint8 reg) const {
 		case 0x09:	// $D209 KBCODE
 			return mKBCODE;
 		case 0x0A:	// $D20A RANDOM
-			UpdatePolynomialCounters();
-			return mAUDCTL & 0x80 ? (uint8)(mPoly9Buffer[mPoly9Counter]) : (uint8)(mPoly17Buffer[mPoly17Counter]);
+			return const_cast<ATPokeyEmulator *>(this)->ReadByte(reg);
 		case 0x0D:	// $D20D SERIN
 			return mSERIN;
 		case 0x0E:
 			return mIRQST;
 		case 0x0F:
-			return mSKSTAT;
+			return const_cast<ATPokeyEmulator *>(this)->ReadByte(reg);
 	}
 
 	if (reg & 0x10) {
@@ -1378,8 +1540,21 @@ uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
 		case 0x09:	// $D209 KBCODE
 			return mKBCODE;
 		case 0x0A:	// $D20A RANDOM
-			UpdatePolynomialCounters();
-			return mAUDCTL & 0x80 ? (uint8)(mPoly9Buffer[mPoly9Counter]) : (uint8)(mPoly17Buffer[mPoly17Counter]);
+			if (mSKCTL & 3) {
+				int t = ATSCHEDULER_GETTIME(mpScheduler);
+				int polyDelta = t - mLastPolyTime;
+				mPoly9Counter += polyDelta;
+				mPoly17Counter += polyDelta;
+				mLastPolyTime = t;
+
+				if (mPoly9Counter >= 511)
+					mPoly9Counter %= 511;
+
+				if (mPoly17Counter >= 131071)
+					mPoly17Counter %= 131071;
+
+			}
+			return mAUDCTL & 0x80 ? (uint8)(mpTables->mPoly9Buffer[mPoly9Counter]) : (uint8)(mpTables->mPoly17Buffer[mPoly17Counter]);
 		case 0x0D:	// $D20D SERIN
 			{
 				uint8 c = mSERIN;
@@ -1409,7 +1584,27 @@ uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
 			return mIRQST;
 
 		case 0x0F:
-			return mSKSTAT;
+			{
+				uint8 c = mSKSTAT;
+
+				if (mbSerialSimulateInputPort) {
+					uint32 dt = ATSCHEDULER_GETTIME(mpScheduler) - mSerialSimulateInputBaseTime;
+					uint32 bitidx = dt / mSerialSimulateInputCyclesPerBit;
+
+					if (bitidx >= 10)
+						mbSerialSimulateInputPort = false;
+					else {
+						c &= 0xef;
+
+						if (mSerialSimulateInputData & (1 << bitidx))
+							c |= 0x10;
+					}
+				}
+
+				return c;
+			}
+			break;
+
 		default:
 //			__debugbreak();
 			break;
@@ -1432,53 +1627,123 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 
 	switch(reg) {
 		case 0x00:	// $D200 AUDF1
-			mAUDF[0] = value;
+			if (mAUDF[0] != value) {
+				mAUDF[0] = value;
+				mAUDFP1[0] = (int)value + 1;
+
+				RecomputeTimerPeriod<0>();
+				
+				if (mbLinkedTimers12) {
+					RecomputeTimerPeriod<1>();
+
+					// Both counters must be updated before we run SetupTimers().
+					UpdateTimerCounter<0>();
+					UpdateTimerCounter<1>();
+					SetupTimers(0x03);
+				} else {
+					UpdateTimerCounter<0>();
+					SetupTimers(0x01);
+				}
+			}
 			break;
 		case 0x01:	// $D201 AUDC1
 			if (mAUDC[0] != value) {
 				mAUDC[0] = value;
-				UnpackAUDCx(0);
-				UpdateOutput();
+				mpRenderer->SetAUDCx(0, value);
 			}
 			break;
 		case 0x02:	// $D202 AUDF2
-			mAUDF[1] = value;
+			if (mAUDF[1] != value) {
+				mAUDF[1] = value;
+				mAUDFP1[1] = (int)value + 1;
+
+				RecomputeTimerPeriod<1>();
+
+				if (mbLinkedTimers12) {
+					// Both counters must be updated before we run SetupTimers().
+					UpdateTimerCounter<0>();
+					UpdateTimerCounter<1>();
+					SetupTimers(0x03);
+				} else {
+					UpdateTimerCounter<1>();
+					SetupTimers(0x02);
+				}
+			}
 			break;
 		case 0x03:	// $D203 AUDC2
 			if (mAUDC[1] != value) {
 				mAUDC[1] = value;
-				UnpackAUDCx(1);
-				UpdateOutput();
+				mpRenderer->SetAUDCx(1, value);
 			}
 			break;
 		case 0x04:	// $D204 AUDF3
-			mAUDF[2] = value;
+			if (mAUDF[2] != value) {
+				mAUDF[2] = value;
+				mAUDFP1[2] = (int)value + 1;
+
+				RecomputeTimerPeriod<2>();
+
+				if (mbLinkedTimers34) {
+					RecomputeTimerPeriod<3>();
+
+					// Both counters must be updated before we run SetupTimers().
+					UpdateTimerCounter<2>();
+					UpdateTimerCounter<3>();
+					SetupTimers(0x0C);
+				} else {
+					UpdateTimerCounter<2>();
+					SetupTimers(0x04);
+				}
+			}
 			mbSerialRateChanged = true;
 			break;
 		case 0x05:	// $D205 AUDC3
 			if (mAUDC[2] != value) {
 				mAUDC[2] = value;
-				UnpackAUDCx(2);
-				UpdateOutput();
+				mpRenderer->SetAUDCx(2, value);
 			}
 			break;
 		case 0x06:	// $D206 AUDF4
-			mAUDF[3] = value;
+			if (mAUDF[3] != value) {
+				mAUDF[3] = value;
+				mAUDFP1[3] = (int)value + 1;
+
+				RecomputeTimerPeriod<3>();
+
+				if (mbLinkedTimers34) {
+					// Both counters must be updated before we run SetupTimers().
+					UpdateTimerCounter<2>();
+					UpdateTimerCounter<3>();
+					SetupTimers(0x0C);
+				} else {
+					UpdateTimerCounter<3>();
+					SetupTimers(0x08);
+				}
+			}
 			mbSerialRateChanged = true;
 			break;
 		case 0x07:	// $D207 AUDC4
 			if (mAUDC[3] != value) {
 				mAUDC[3] = value;
-				UnpackAUDCx(3);
-				UpdateOutput();
+				mpRenderer->SetAUDCx(3, value);
 			}
 			break;
 		case 0x08:	// $D208 AUDCTL
 			if (mAUDCTL != value) {
-				if ((mAUDCTL ^ value) & 0x29)
+				uint8 delta = mAUDCTL ^ value;
+				if (delta & 0x29)
 					mbSerialRateChanged = true;
 
-				UpdateTimerCounters(0x0f);
+				UpdateTimerCounter<0>();
+				UpdateTimerCounter<1>();
+				UpdateTimerCounter<2>();
+				UpdateTimerCounter<3>();
+
+				FlushDeferredTimerEvents(0);
+				FlushDeferredTimerEvents(1);
+				FlushDeferredTimerEvents(2);
+				FlushDeferredTimerEvents(3);
+
 				mAUDCTL = value;
 				mbFastTimer1 = (mAUDCTL & 0x40) != 0;
 				mbFastTimer3 = (mAUDCTL & 0x20) != 0;
@@ -1486,23 +1751,20 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 				mbLinkedTimers34 = (mAUDCTL & 0x08) != 0;
 				mbUse15KHzClock = (mAUDCTL & 0x01) != 0;
 
-				bool outputsChanged = false;
-				if (!(mAUDCTL & 0x04) && !mHighPassFF[0]) {
-					mHighPassFF[0] = true;
-					mOutputs[0] = mNoiseFF[0] ^ 0x01;
-					if (mChannelVolume[0])
-						outputsChanged = true;
+				mpRenderer->SetAUDCTL(value);
+
+				if (delta & 0x18)
+					RecomputeAllowedDeferredTimers();
+
+				if (delta & 0x51) {
+					RecomputeTimerPeriod<0>();
+					RecomputeTimerPeriod<1>();
 				}
 
-				if (!(mAUDCTL & 0x02) && !mHighPassFF[1]) {
-					mHighPassFF[1] = true;
-					mOutputs[1] = mNoiseFF[1] ^ 0x01;
-					if (mChannelVolume[1])
-						outputsChanged = true;
+				if (delta & 0x29) {
+					RecomputeTimerPeriod<2>();
+					RecomputeTimerPeriod<3>();
 				}
-
-				if (outputsChanged)
-					UpdateOutput();
 
 				SetupTimers(0x0f);
 			}
@@ -1540,28 +1802,22 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 			if (mbTraceSIO)
 				ATConsoleTaggedPrintf("POKEY: Sending serial byte %02x\n", value);
 
+			// The only thing that writing to SEROUT does is load the register and set a latch
+			// indicating that a byte is ready. The actual load into the output shift register
+			// cannot occur until another serial clock pulse arrives.
 			mSEROUT = value;
-			if (!mSerialOutputCounter) {
-				mSerialOutputShiftRegister = value;
-				mbSerialOutputState = false;
-				mSerialOutputCounter = 20;
-				mIRQST |= 0x08;
+			if (mbSerOutValid && mbTraceSIO)
+				ATConsoleTaggedPrintf("POKEY: Serial output overrun detected.\n");
 
-				if (!(mIRQEN & ~mIRQST))
-					mpConn->PokeyNegateIRQ(true);
-			} else if (!mbSerOutValid) {
-				mbSerOutValid = true;
-				mIRQST |= 0x18;
+			if (!mSerialOutputCounter)
+				mSerialOutputCounter = 1;
 
-				if (!(mIRQEN & ~mIRQST))
-					mpConn->PokeyNegateIRQ(true);
-			} else {
-				if (mbTraceSIO)
-					ATConsoleTaggedPrintf("POKEY: Serial output overrun detected.\n");
-			}
+			mbSerOutValid = true;
 			break;
 		case 0x0E:
-			{
+			if (mIRQEN != value) {
+				const uint8 delta = (mIRQEN ^ value);
+
 				mIRQEN = value;
 
 				mIRQST |= ~value & 0xF7;
@@ -1577,28 +1833,58 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 
 				if ((mIRQST & 0x20) && mSerBurstMode == kSerialBurstMode_Polled)
 					mbSerInBurstPending = true;
+
+				// Check if any of the IRQ bits are being turned on and we are currently running that timer
+				// in deferred mode. If so, we need to yank it out of deferred mode. We don't do the
+				// opposite here; we wait until the existing timer expires to reinit the timer into
+				// deferred mode so as to not trigger on momentary clears.
+				if (delta & 0x07) {
+					RecomputeAllowedDeferredTimers();
+
+					if (delta & mIRQEN & 0x07) {
+						uint8 timersToChange = 0;
+
+						// timer 1
+						if ((delta & 0x01) && mbDeferredTimerEvents[0])
+							timersToChange |= 0x01;
+
+						// timer 2
+						if ((delta & 0x02) && mbDeferredTimerEvents[1])
+							timersToChange |= 0x02;
+
+						// timer 4
+						if ((delta & 0x04) && mbDeferredTimerEvents[3])
+							timersToChange |= 0x08;
+
+						if (timersToChange) {
+							UpdateTimerCounter<0>();
+							UpdateTimerCounter<1>();
+							UpdateTimerCounter<2>();
+							UpdateTimerCounter<3>();
+
+							SetupTimers(timersToChange);
+						}
+					}
+				}
 			}
 			break;
 		case 0x0F:
 			if (value != mSKCTL) {
-				UpdateTimerCounters(0x0f);
+				UpdateTimerCounter<0>();
+				UpdateTimerCounter<1>();
+				UpdateTimerCounter<2>();
+				UpdateTimerCounter<3>();
 
 				bool prvInit = (mSKCTL & 3) == 0;
 				bool newInit = (value & 3) == 0;
 
 				if (newInit != prvInit) {
 					if (newInit) {
-						if (mp64KHzEvent) {
-							mpScheduler->RemoveEvent(mp64KHzEvent);
-							mp64KHzEvent = NULL;
-						}
-
 						if (mp15KHzEvent) {
 							mpScheduler->RemoveEvent(mp15KHzEvent);
 							mp15KHzEvent = NULL;
 						}
 					} else {
-						VDASSERT(!mp64KHzEvent);
 						VDASSERT(!mp15KHzEvent);
 
 						// The 64KHz polynomial counter is a 5-bit LFSR that is reset to all 1s
@@ -1608,20 +1894,19 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 						// register actually starts it 19 cycles in. There is, however, an
 						// additional two clock delay from the shift register comparator to
 						// the timers.
-						mp64KHzEvent = mpScheduler->AddEvent(22, this, kATPokeyEvent64KHzTick);
 
 						// The 15KHz polynomial counter is a 7-bit LFSR that is reset to all 0s
 						// on init and XNORs bits 7 and 6, if seen as shifting left. In order to
 						// achieve a 114 cycle period, a one is force fed when the register
-						// equals XXXXXX. [PROBLEM: LFSR in schematic doesn't appear to work!]
+						// equals 1001001.
 						mp15KHzEvent = mpScheduler->AddEvent(81, this, kATPokeyEvent15KHzTick);
 
 						mLast15KHzTime = ATSCHEDULER_GETTIME(mpScheduler) + 81 - 114;
 						mLast64KHzTime = ATSCHEDULER_GETTIME(mpScheduler) + 22 - 28;
 					}
 
-					mPoly4Counter = 0;
-					mPoly5Counter = 0;
+					mpRenderer->SetInitMode(newInit);
+
 					mPoly9Counter = 0;
 					mPoly17Counter = 0;
 					mLastPolyTime = ATSCHEDULER_GETTIME(mpScheduler) + 1;
@@ -1631,6 +1916,7 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 					mSerialOutputCounter = 0;
 					mSerialInputCounter = 0;
 					mbSerOutValid = false;
+					mbSerShiftValid = false;
 					mbSerialOutputState = false;
 					mSKSTAT |= 0xC0;
 
@@ -1649,11 +1935,12 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 				}
 
 				mSKCTL = value;
+				RecomputeAllowedDeferredTimers();
 				SetupTimers(0x0f);
 			}
 			break;
+
 		default:
-//			__debugbreak();
 			if (reg & 0x10) {
 				if (mpSlave)
 					mpSlave->WriteByte(reg & 0x0f, value);
@@ -1700,15 +1987,26 @@ void ATPokeyEmulator::LoadState(ATSaveStateReader& reader) {
 	mbLinkedTimers34 = (mAUDCTL & 0x08) != 0;
 	mbUse15KHzClock = (mAUDCTL & 0x01) != 0;
 
-	for(int i=0; i<4; ++i)
-		UnpackAUDCx(i);
+	mpRenderer->SetAUDCTL(mAUDCTL);
+	for(int i=0; i<4; ++i) {
+		mAUDFP1[i] = mAUDF[i] + 1;
+		mpRenderer->SetAUDCx(i, mAUDC[i]);
+	}
 
-	UpdateOutput();
+	RecomputeTimerPeriod<0>();
+	RecomputeTimerPeriod<1>();
+	RecomputeTimerPeriod<2>();
+	RecomputeTimerPeriod<3>();
+	RecomputeAllowedDeferredTimers();
+
 	SetupTimers(0x0f);
 }
 
 void ATPokeyEmulator::SaveState(ATSaveStateWriter& writer) {
-	UpdateTimerCounters(0x0f);
+	UpdateTimerCounter<0>();
+	UpdateTimerCounter<1>();
+	UpdateTimerCounter<2>();
+	UpdateTimerCounter<3>();
 
 	writer.WriteUint8(mAUDF[0]);
 	writer.WriteUint8(mAUDF[1]);
@@ -1734,22 +2032,30 @@ void ATPokeyEmulator::GetRegisterState(ATPokeyRegisterState& state) const {
 }
 
 void ATPokeyEmulator::GetAudioState(ATPokeyAudioState& state) const {
-	for(int ch=0; ch<4; ++ch) {
-		int level = mChannelVolume[ch];
-
-		if (!(mAUDC[ch] & 0x10))
-			level *= mOutputs[ch];
-
-		state.mChannelOutputs[ch] = level;
-	}
+	mpRenderer->GetAudioState(state);
 }
 
 void ATPokeyEmulator::DumpStatus(bool isSlave) {
+	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+
+	VDStringA s;
 	for(int i=0; i<4; ++i) {
-		if (mpTimerEvents[i])
-			ATConsolePrintf("AUDF%u: %02x  AUDC%u: %02x  Output: %d  (%u cycles until fire)\n", i+1, mAUDF[i], i+1, mAUDC[i], mOutputs[i], (int)mpScheduler->GetTicksToEvent(mpTimerEvents[i]));
-		else
-			ATConsolePrintf("AUDF%u: %02x  AUDC%u: %02x  Output: %d\n", i+1, mAUDF[i], i+1, mAUDC[i], mOutputs[i]);
+		s.sprintf("AUDF%u: %02x  AUDC%u: %02x  Output: %d", i+1, mAUDF[i], i+1, mAUDC[i], mpRenderer->GetChannelOutput(i));
+
+		if (mbDeferredTimerEvents[i]) {
+			uint32 delay;
+
+			if (mDeferredTimerStarts[i] > t)
+				delay = mDeferredTimerStarts[i] - t;
+			else
+				delay = mDeferredTimerPeriods[i] - (t - mDeferredTimerStarts[i]) % mDeferredTimerPeriods[i];
+
+			s.append_sprintf("  (%u cycles until fire) (passive: %d cycles)", delay, mDeferredTimerPeriods[i]);
+		} else if (mpTimerBorrowEvents[i])
+			s.append_sprintf("  (%u cycles until fire) (active)", (int)mpScheduler->GetTicksToEvent(mpTimerBorrowEvents[i]));
+
+		s += '\n';
+		ATConsoleWrite(s.c_str());
 	}
 
 	ATConsolePrintf("AUDCTL: %02x%s%s%s%s%s%s%s%s\n"
@@ -1800,16 +2106,22 @@ void ATPokeyEmulator::DumpStatus(bool isSlave) {
 }
 
 void ATPokeyEmulator::FlushAudio(bool pushAudio) {
-	if (mpAudioOut) {
-		uint32 timestamp = mpConn->PokeyGetTimestamp() - 28 * mOutputSampleCount;
+	const uint32 outputSampleCount = mpRenderer->EndBlock();
 
-		if (mpSoundBoard)
-			mpSoundBoard->WriteAudio(mRawOutputBuffer, mpSlave ? mpSlave->mRawOutputBuffer : NULL, mOutputSampleCount, pushAudio, timestamp);
-		else
-			mpAudioOut->WriteAudio(mRawOutputBuffer, mpSlave ? mpSlave->mRawOutputBuffer : NULL, mOutputSampleCount, pushAudio, timestamp);
+	if (mpSlave) {
+		const uint32 slaveOutputSampleCount = mpSlave->mpRenderer->EndBlock();
+
+		VDASSERT(outputSampleCount == slaveOutputSampleCount);
 	}
 
-	mOutputSampleCount = 0;
+	if (mpAudioOut) {
+		uint32 timestamp = mpConn->PokeyGetTimestamp() - 28 * outputSampleCount;
+
+		if (mpSoundBoard)
+			mpSoundBoard->WriteAudio(mpRenderer->GetOutputBuffer(), mpSlave ? mpSlave->mpRenderer->GetOutputBuffer() : NULL, outputSampleCount, pushAudio, timestamp);
+		else
+			mpAudioOut->WriteAudio(mpRenderer->GetOutputBuffer(), mpSlave ? mpSlave->mpRenderer->GetOutputBuffer() : NULL, outputSampleCount, pushAudio, timestamp);
+	}
 }
 
 void ATPokeyEmulator::UpdateMixTable() {
@@ -1818,19 +2130,12 @@ void ATPokeyEmulator::UpdateMixTable() {
 			float x = (float)i / 60.0f;
 			float y = ((1.30f*x - 3.3f)*x + 3.0f)*x;
 
-			mMixTable[i] = y * 60.0f;
+			mpTables->mMixTable[i] = y * 60.0f;
 		}
 	} else {
 		for(int i=0; i<61; ++i)
-			mMixTable[i] = (float)i;
+			mpTables->mMixTable[i] = (float)i;
 	}
-
-	if (mpSlave)
-		memcpy(mpSlave->mMixTable, mMixTable, sizeof mMixTable);
-}
-
-void ATPokeyEmulator::UnpackAUDCx(int index) {
-	mChannelVolume[index] = mbChannelEnabled[index] ? mAUDC[index] & 15 : 0;
 }
 
 void ATPokeyEmulator::TryPushNextKey() {

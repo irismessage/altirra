@@ -173,10 +173,6 @@ void ATVBXEEmulator::ColdReset() {
 	memcpy(mPalette[0], mDefaultPalette, sizeof mPalette[0]);
 	memset(mPalette[1], 0, sizeof(uint32)*256*3);
 
-	WarmReset();
-}
-
-void ATVBXEEmulator::WarmReset() {
 	mPsel			= 0;
 	mCsel			= 0;
 	mMemAcBankA		= 0;
@@ -208,16 +204,45 @@ void ATVBXEEmulator::WarmReset() {
 	mAttrRow		= 0;
 	mChAddr			= 0;
 
-	mbIRQEnabled	= false;
-	mbIRQRequest	= false;
+	mbExtendedColor	= false;
+	mbAttrMapEnabled = false;
+
+	WarmReset();
+}
+
+void ATVBXEEmulator::WarmReset() {
+	// VIDEO_CONTROL: set to 0
+	mbXdlEnabled	= false;
+	mbExtendedColor = false;
+	mbOvTrans		= true;
+	mbOvTrans15		= false;
+
+	// MEMAC_CONTROL: MCE and MAE set to 0
+	mMemAcControl &= 0xf3;
+
+	// MEMAC_BANK_SEL: MGE set to 0
+	mMemAcBankA &= 0x7f;
+
+	// MEMAC_B_CONTROL: MBCE and MBAE set to 0
+	mMemAcBankB &= 0x3f;
+
+	// BLITTER_START: set to 0
+	// BLITTER_BUSY: set to 0
 	mbBlitterEnabled = false;
 	mbBlitterActive = false;
 	mbBlitterListActive = false;
 	mBlitCollisionCode = 0;
 	mBlitCyclesLeft = 0;
 
-	mbExtendedColor	= false;
-	mbAttrMapEnabled = false;
+	// IRQ_CONTROL: set to 0
+	// IRQ_STATUS: set to 0
+	mbXdlActive		= false;
+	mbIRQEnabled	= false;
+	mbIRQRequest	= false;
+
+	// Nuke current XDL processing.
+	mOvWidth = kOvWidth_Normal;
+	mOvMode = kOvMode_Disabled;
 
 	InitMemoryMaps();
 	UpdateMemoryMaps();
@@ -544,7 +569,7 @@ bool ATVBXEEmulator::DumpBlitListEntry(uint32 addr) {
 	return (controlByte & 0x08) != 0;
 }
 
-uint8 ATVBXEEmulator::ReadControl(uint8 addrLo) {
+sint32 ATVBXEEmulator::ReadControl(uint8 addrLo) {
 	switch(addrLo) {
 		case 0x40:	// CORE_VERSION
 			return 0x10;
@@ -574,10 +599,10 @@ uint8 ATVBXEEmulator::ReadControl(uint8 addrLo) {
 			return mMemAcBankA;
 	}
 
-	return 0xFF;
+	return -1;
 }
 
-void ATVBXEEmulator::WriteControl(uint8 addrLo, uint8 value) {
+bool ATVBXEEmulator::WriteControl(uint8 addrLo, uint8 value) {
 	switch(addrLo) {
 		case 0x40:	// VIDEO_CONTROL
 			mbXdlEnabled = (value & 0x01) != 0;
@@ -700,7 +725,12 @@ void ATVBXEEmulator::WriteControl(uint8 addrLo, uint8 value) {
 				UpdateMemoryMaps();
 			}
 			break;
+
+		default:
+			return false;
 	}
+
+	return true;
 }
 
 bool ATVBXEEmulator::StaticGTIAWrite(void *thisptr, uint32 reg, uint8 value) {
@@ -733,9 +763,9 @@ void ATVBXEEmulator::InitMemoryMaps() {
 
 	mpMemMan->EnableLayer(mpMemLayerGTIAOverlay, kATMemoryAccessMode_CPUWrite, true);
 
-	handler.mbPassReads			= false;
-	handler.mbPassAnticReads	= false;
-	handler.mbPassWrites		= false;
+	handler.mbPassReads			= true;
+	handler.mbPassAnticReads	= true;
+	handler.mbPassWrites		= true;
 	handler.mpThis				= this;
 	handler.mpDebugReadHandler	= StaticReadControl;
 	handler.mpReadHandler		= StaticReadControl;

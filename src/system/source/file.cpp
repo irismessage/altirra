@@ -404,6 +404,15 @@ sint64 VDFile::tell() {
 	return mFilePosition;
 }
 
+bool VDFile::flushNT() {
+	return 0 != FlushFileBuffers(mhFile);
+}
+
+void VDFile::flush() {
+	if (!flushNT())
+		throw MyWin32Error("Cannot flush file \"%ls\": %%s", GetLastError(), mpFilename.get());
+}
+
 bool VDFile::isOpen() {
 	return mhFile != 0;
 }

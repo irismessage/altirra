@@ -24,6 +24,7 @@
 #include <vd2/system/vdstring.h>
 #include <vd2/system/error.h>
 #include <vd2/system/time.h>
+#include <vd2/system/w32assist.h>
 #include <windows.h>
 #include <vfw.h>
 #include <vector>
@@ -1192,7 +1193,7 @@ IVDCaptureSystem *VDCreateCaptureSystemVFW() {
 }
 
 VDCaptureSystemVFW::VDCaptureSystemVFW()
-	: mhmodAVICap(LoadLibrary("avicap32"))
+	: mhmodAVICap(VDLoadSystemLibraryW32("avicap32"))
 	, mDriverCount(0)
 {
 }

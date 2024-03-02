@@ -79,7 +79,7 @@ public:
 	virtual void SetSourceSolidColor(uint32 color) = 0;
 
 	virtual void SetReturnFocus(bool enable) = 0;
-	virtual void SetFullScreen(bool fs) = 0;
+	virtual void SetFullScreen(bool fs, uint32 width = 0, uint32 height = 0, uint32 refresh = 0) = 0;
 	virtual void SetDestRect(const vdrect32 *r, uint32 backgroundColor) = 0;
 
 	virtual void PostBuffer(VDVideoDisplayFrame *) = 0;
@@ -104,11 +104,14 @@ public:
 };
 
 void VDVideoDisplaySetFeatures(bool enableDirectX, bool enableOverlays, bool enableTermServ, bool enableOpenGL, bool enableDirect3D, bool enableD3DFX, bool enableHighPrecision);
+void VDVideoDisplaySetD3D9ExEnabled(bool enable);
+void VDVideoDisplaySetDDrawEnabled(bool enable);
 void VDVideoDisplaySetD3DFXFileName(const wchar_t *path);
 void VDVideoDisplaySetDebugInfoEnabled(bool enable);
 void VDVideoDisplaySetBackgroundFallbackEnabled(bool enable);
 void VDVideoDisplaySetSecondaryDXEnabled(bool enable);
 void VDVideoDisplaySetMonitorSwitchingDXEnabled(bool enable);
+void VDVideoDisplaySetTermServ3DEnabled(bool enable);
 
 IVDVideoDisplay *VDGetIVideoDisplay(VDGUIHandle hwnd);
 bool VDRegisterVideoDisplayControl();

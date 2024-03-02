@@ -172,6 +172,22 @@
 					>
 				</File>
 			</Filter>
+			<Filter
+				Name="NoHDBIOS"
+				>
+				<File
+					RelativePath=".\source\NoHDBIOS\main.s"
+					>
+				</File>
+			</Filter>
+			<Filter
+				Name="NoGame"
+				>
+				<File
+					RelativePath=".\source\NoGame\main.s"
+					>
+				</File>
+			</Filter>
 		</Filter>
 		<Filter
 			Name="Header Files"

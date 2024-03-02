@@ -29,6 +29,7 @@
 
 struct ATSymbol;
 struct ATSourceLineInfo;
+class ATDebugExpNode;
 class IATDebuggerClient;
 
 enum ATDebugEvent {
@@ -83,6 +84,7 @@ struct ATCallStackFrame {
 struct ATDebuggerWatchInfo {
 	uint32	mAddress;
 	uint32	mLen;
+	ATDebugExpNode *mpExpr;
 };
 
 class IATDebugger;
@@ -103,6 +105,7 @@ struct ATDebuggerOpenEvent {
 class IATDebugger {
 public:
 	virtual bool IsRunning() const = 0;
+	virtual bool AreCommandsQueued() const = 0;
 
 	virtual void Detach() = 0;
 	virtual void SetSourceMode(ATDebugSrcMode src) = 0;
@@ -110,9 +113,14 @@ public:
 	virtual void Break() = 0;
 	virtual void Run(ATDebugSrcMode sourceMode) = 0;
 	virtual void RunTraced() = 0;
+
+	virtual bool IsDeferredBreakpointSet(const char *fn, uint32 line) = 0;
 	virtual void ClearAllBreakpoints() = 0;
 	virtual void ToggleBreakpoint(uint16 addr) = 0;
 	virtual void ToggleAccessBreakpoint(uint16 addr, bool write) = 0;
+	virtual void ToggleSourceBreakpoint(const char *fn, uint32 line) = 0;
+	virtual uint32 SetSourceBreakpoint(const char *fn, uint32 line, ATDebugExpNode *condexp, const char *command) = 0;
+
 	virtual void StepInto(ATDebugSrcMode sourceMode, uint32 regionStart = 0, uint32 regionSize = 0) = 0;
 	virtual void StepOver(ATDebugSrcMode sourceMode, uint32 rgnStart = 0, uint32 rgnSize = 0) = 0;
 	virtual void StepOut(ATDebugSrcMode sourceMode) = 0;
@@ -147,6 +155,15 @@ public:
 	virtual void GetDirtyStorage(vdfastvector<ATDebuggerStorageId>& ids) const = 0;
 
 	virtual void StartActiveCommand(IATDebuggerActiveCommand *cmd) = 0;
+
+	virtual const char *GetCommandAlias(const char *alias) const = 0;
+	virtual void SetCommandAlias(const char *alias, const char *command) = 0;
+	virtual void ListCommandAliases() = 0;
+	virtual void ClearCommandAliases() = 0;
+
+	virtual void QueueBatchFile(const wchar_t *s) = 0;
+	virtual void QueueCommand(const char *cmd, bool echo) = 0;
+	virtual void QueueCommandFront(const char *s, bool echo) = 0;
 
 	virtual void WriteMemoryCPU(uint16 address, const void *data, uint32 len) = 0;
 

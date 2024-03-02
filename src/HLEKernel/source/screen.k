@@ -64,8 +64,6 @@ ScreenANTICModeTable	dta		2,6,7,8,9,10,11,13,15,15,15,15,4,5,12,14
 ScreenRowCount			dta		24,24,12,24,48,48,96,96,192,192,192,192,24,12,192,192
 						dta		24,20,10,20,40,40,80,80,160,160,160,160,20,10,160,160
 ScreenPRIORTable		dta		0,0,0,0,0,0,0,0,0,$40,$80,$c0,0,0,0,0
-ScreenPageCount			dta		3,1,1,1,3,3,7,15,31,31,31,31,3,1,15,31	;-1
-						dta		3,3,1,1,3,3,7,15,31,31,31,31,3,3,15,31
 						
 ScreenTextSplitOffset:
 	dta		a(40*20)
@@ -107,19 +105,27 @@ ScreenTextRows			dta
 		uint16 alignMask = ((uint16)kPageCountM1[xmode] << 8) + 0xff;
 		
 		uint16 memtop = (uint16)kdb.RAMTOP << 8;
-		uint16 baseAddr = (memtop - (alignMask + 1)) & ~(alignMask & 0xfff);
+		uint16 topAddr = memtop & ~(alignMask & 0xfff);
 		
-		// Set playfield base.
+		// Offset base address.
 		//
-		// Note that for modes that exceed 4K of playfield data (8-11, 15),
-		// we need to ensure that the 4K page split occurs between two
-		// scanlines.
-		static const uint16 kPFBaseOffset[]={
-			32,32,20,32,56,56,104,104,336,336,336,336,32,20,200,336,
-			32,32,22,32,52,52, 92, 92,336,336,336,336,32,24,172,336
+		// For modes that exceed 4K of playfield data (8-11, 15), we need to
+		// ensure that the 4K page split occurs between two scanlines. The other
+		// reason for this is to match addressing with the stock OS ROM, which
+		// various programs depend on; ForemXEP is one of them.
+		//
+		static const uint16 kModeSizes[]={
+			992, 672, 420, 432, 696, 1176, 2184, 4200, 8138, 8138, 8138, 8138, 1152, 660, 4296, 8138,
+			992, 674, 424, 434, 694, 1174, 2174, 4190, 8112, 8112, 8112, 8112, 1154, 664, 4270, 8112
 		};
 		
-		uint16 pfBase = baseAddr + kPFBaseOffset[xmode];
+		static const uint16 kDListSizes[]={
+			32, 32, 24, 32, 56, 56, 104, 200, 282, 282, 282, 282, 32, 20, 296, 282,
+			32, 34, 24, 34, 54, 54, 94, 174, 256, 256, 256, 256, 34, 24, 270, 256,
+		};
+		
+		uint16 baseAddr = topAddr - kModeSizes[xmode];
+		uint16 pfBase = baseAddr + kDListSizes[xmode];
 		kdb.SAVMSC = pfBase;
 		kdb.SAVMSC = pfBase;
 		
@@ -153,8 +159,9 @@ ScreenTextRows			dta
 		// Add remaining mode lines.
 		// Note that for modes 8-11 and 15, we need to insert an LMS instruction
 		// at line 97 in order to cross the 4K boundary.
+		const bool splitRequired = kPageCountM1[xmode] >= 16;
 		for(uint8 i=1; i<rowCount; ++i) {
-			if (i == 94) {
+			if (i == 94 && splitRequired) {
 				mpMemory->WriteByte(dldst++, modeByte | 0x40);
 				mpMemory->WriteByte(dldst++, 0);
 				mpMemory->WriteByte(dldst++, (uint8)(baseAddr >> 8) + 0x10);
@@ -165,29 +172,18 @@ ScreenTextRows			dta
 			
 		// add 4x mode 2 lines for split screen
 		if (isSplit) {
-			for(int i=0; i<4; ++i)
-				mpMemory->WriteByte(dldst++, 0x02);
-				
-			static const uint16 kSplitOffset[]={
-				40*20,
-				20*20,
-				20*10,
-				10*20,
-				10*40,
-				20*40,
-				20*80,
-				40*80,
-				40*160,
-				40*160,
-				40*160,
-				40*160,
-				40*20,
-				40*10,
-				20*160,
-				40*160,
-			};
+			uint16 splitBase = topAddr - 160;
 			
-			kdb.TXTMSC = kdb.SAVMSC + kSplitOffset[mode];
+			// Technically an LMS instruction shouldn't be required, but the stock OS always
+			// does it.
+			mpMemory->WriteByte(dldst++, 0x42);
+			mpMemory->WriteByte(dldst++, (uint8)splitBase);
+			mpMemory->WriteByte(dldst++, (uint8)(splitBase >> 8));
+				
+			for(int i=0; i<3; ++i)
+				mpMemory->WriteByte(dldst++, 0x02);
+							
+			kdb.TXTMSC = splitBase;
 			kdb.BOTSCR = 4;
 		} else {
 			// This is 24 even for a full-screen graphics mode.
@@ -230,6 +226,8 @@ ScreenTextRows			dta
 		else
 			kdb.TXTCOL = 0;
 			
+		kdb.CRSINH = 0;
+			
 		kdb.LOGCOL = 0;
 		kdb.SWPFLG = 0;
 		kdb.BUFSTR = kdb.LMARGN;
@@ -261,7 +259,9 @@ ScreenTextRows			dta
 			ScreenClear();
 		}
 		
+		ScreenSwap(true);
 		ScreenShowCursor();
+		ScreenSwap(false);
 	#}
 
 	;wait for one vertical blank to pass
@@ -284,6 +284,10 @@ vblwait:
 		24,24,12,24,48,48,96,96,192,192,192,192,24,12,192,192,
 		4,20,10,20,40,40,80,80,160,160,160,160,20,10,160,160
 	};
+
+	static const uint32 kScreenPixelsPerRow[]={
+		40, 20, 20, 40, 80, 80, 160, 160, 320, 80, 80, 80, 40, 40, 160, 160
+	};
 #]
 
 .proc ScreenGetByte
@@ -300,7 +304,32 @@ uint8 ScreenRead() {
 	uint32 mode = kdb.DINDEX & 15;
 	uint32 x = kdb.COLCRS;
 	uint32 y = kdb.ROWCRS;
-		
+	
+	uint8 c = ScreenRead2(x, y, mode);		
+	
+	if (mode == 0) {
+		if (++kdb.COLCRS >= kdb.RMARGN) {
+			kdb.COLCRS = kdb.LMARGN;
+			
+			if (++kdb.ROWCRS >= kdb.BOTSCR)
+				kdb.ROWCRS = 0;
+		}
+	} else {
+		if (++kdb.COLCRS >= kScreenPixelsPerRow[mode]) {
+			kdb.COLCRS = 0;
+			if (++kdb.ROWCRS >= kdb.BOTSCR)
+				kdb.ROWCRS = 0;
+		}
+	}
+	
+	kdb.ATACHR = c;
+	
+	return c;
+}
+#>
+
+#<
+uint8 ScreenRead2(uint32 x, uint32 y, uint32 mode) {
 	static const uint8 kBytesPerRow[]={
 		40, 20, 20, 10, 10, 20, 20, 40, 40, 40, 40, 40, 40, 40, 40, 40
 	};
@@ -347,7 +376,7 @@ uint8 ScreenRead() {
 		case 11:
 			mask = 0x0F;
 			rowAddr += x >> 1;
-			shift = (x & 1) << 2;
+			shift = (~x & 1) << 2;
 			break;
 			
 		case 3:
@@ -356,7 +385,7 @@ uint8 ScreenRead() {
 		case 15:
 			mask = 0x03;
 			rowAddr += x >> 2;
-			shift = (x & 3) << 1;
+			shift = (~x & 3) << 1;
 			break;
 		
 		case 4:
@@ -365,7 +394,7 @@ uint8 ScreenRead() {
 		case 14:
 			mask = 0x01;
 			rowAddr += x >> 3;
-			shift = x & 7;
+			shift = ~x & 7;
 			break;
 	}
 			
@@ -377,28 +406,7 @@ uint8 ScreenRead() {
 		c ^= kInternalToATASCIIXorTab[(c >> 5) & 1];
 	else
 		c = (c >> shift) & mask;
-	
-	static const uint16 kPixelsPerRow[]={
-		40, 20, 20, 40, 80, 80, 160, 160, 320, 80, 80, 80, 40, 40, 160, 160
-	};
-			
-	if (mode == 0) {
-		if (++kdb.COLCRS >= kdb.RMARGN) {
-			kdb.COLCRS = kdb.LMARGN;
-			
-			if (++kdb.ROWCRS >= kdb.BOTSCR)
-				kdb.ROWCRS = 0;
-		}
-	} else {
-		if (++kdb.COLCRS >= kPixelsPerRow[mode]) {
-			kdb.COLCRS = 0;
-			if (++kdb.ROWCRS >= kdb.BOTSCR)
-				kdb.ROWCRS = 0;
-		}
-	}
-	
-	kdb.ATACHR = c;
-	
+		
 	return c;
 }
 #>
@@ -424,8 +432,12 @@ void ScreenWrite(uint8 d) {
 	}
 	
 	uint32 mode = kdb.DINDEX & 15;
+	
 	uint32 x = kdb.COLCRS;
 	uint32 y = kdb.ROWCRS;
+	
+	kdb.OLDROW = y;
+	kdb.OLDCOL = x;
 	
 	if (d == 0x9b) {			
 		if (mode == 0)
@@ -439,10 +451,25 @@ void ScreenWrite(uint8 d) {
 		}
 		
 		kdb.ROWCRS = y;
-		kdb.COLCRS = x;
-		return;
+	} else {
+		ScreenWrite2(x, y, d, mode);
+
+		++x;
+		if (mode == 0) {
+			if (x >= kdb.RMARGN)
+				x = kdb.LMARGN;
+		} else {
+			if (x >= kScreenPixelsPerRow[mode])
+				x = 0;
+		}
 	}
 	
+	kdb.COLCRS = x;
+}
+#>
+
+#<
+void ScreenWrite2(uint32 x, uint32 y, uint8 d, uint32 mode) {
 	static const uint8 kBytesPerRow[]={
 		40, 20, 20, 10, 10, 20, 20, 40, 40, 40, 40, 40, 40, 40, 40, 40
 	};
@@ -496,7 +523,7 @@ void ScreenWrite(uint8 d) {
 		case 11:
 			mask = 0x0F;
 			rowAddr += x >> 1;
-			shift = (x & 1) << 2;
+			shift = (~x & 1) << 2;
 			break;
 			
 		case 3:
@@ -505,7 +532,7 @@ void ScreenWrite(uint8 d) {
 		case 15:
 			mask = 0x03;
 			rowAddr += x >> 2;
-			shift = (x & 3) << 1;
+			shift = (~x & 3) << 1;
 			break;
 		
 		case 4:
@@ -514,7 +541,7 @@ void ScreenWrite(uint8 d) {
 		case 14:
 			mask = 0x01;
 			rowAddr += x >> 3;
-			shift = x & 7;
+			shift = ~x & 7;
 			break;
 	}
 			
@@ -526,18 +553,6 @@ void ScreenWrite(uint8 d) {
 	c ^= (c ^ d) & mask;
 	
 	mpMemory->WriteByte(rowAddr, c);
-	
-	static const uint16 kPixelsPerRow[]={
-		40, 20, 20, 40, 80, 80, 160, 160, 320, 80, 80, 80, 40, 40, 160, 160
-	};
-			
-	if (mode == 0) {
-		if (++kdb.COLCRS >= kdb.RMARGN)
-			kdb.COLCRS = kdb.LMARGN;
-	} else {
-		if (++kdb.COLCRS >= kPixelsPerRow[mode])
-			kdb.COLCRS = 0;
-	}
 }
 #>
 
@@ -678,5 +693,113 @@ void ScreenSwapModes() {
 void ScreenSwap(bool swapToText) {
 	if (swapToText ? kdb.DINDEX && !kdb.SWPFLG : (kdb.SWPFLG != 0))
 		ScreenSwapModes();
+}
+#>
+
+.proc ScreenGetStatus
+	ldy		#1
+	rts
+.endp
+
+.proc ScreenSpecial
+	lda		iccomz
+	cmp		#$11		;draw line command
+	bne		not_draw
+	#{
+		ScreenDrawLine(false);
+	#}
+	ldy		#1
+	rts
+not_draw:
+	cmp		#$12		;fill command
+	bne		not_fill
+	#{
+		ScreenDrawLine(true);
+	#}
+	ldy		#1
+	rts
+not_fill:
+	ldy		#CIOStatNotSupported
+	rts
+.endp
+
+#<
+void ScreenDrawLine(bool isFill) {
+	ScreenSwap(false);
+
+	sint32 x1 = kdb.OLDCOL;
+	sint32 y1 = kdb.OLDROW;
+	sint32 x2 = kdb.COLCRS;
+	sint32 y2 = kdb.ROWCRS;
+	
+	const uint8 c = isFill ? (uint8)kdb.FILDAT : (uint8)kdb.ATACHR;
+	
+	sint32 stepx = x1 < x2 ? 1 : -1;
+	sint32 stepy = y1 < y2 ? 1 : -1;
+	uint32 dx = abs(x1 - x2);
+	uint32 dy = abs(y1 - y2);
+	uint32 n;
+	sint32 minstepx;
+	sint32 minstepy;
+	sint32 majstepx;
+	sint32 majstepy;
+	sint32 e;
+	sint32 inc1;
+	sint32 inc2;
+	
+	if (dx >= dy) {
+		majstepx = stepx;
+		majstepy = 0;
+		minstepx = 0;
+		minstepy = stepy;
+		e = 2*dy - dx;
+		inc1 = 2*dy;
+		inc2 = -2*dx;
+		n = dx;
+	} else {
+		majstepx = 0;
+		majstepy = stepy;
+		minstepx = stepx;
+		minstepy = 0;
+		e = 2*dx - dy;
+		inc1 = 2*dx;
+		inc2 = -2*dy;
+		n = dy;
+	}
+	
+	const uint32 mode = kdb.DINDEX & 15;
+	const uint32 width = kScreenPixelsPerRow[mode];
+	
+	for(uint32 i=0; i<n; ++i) {
+		x1 += majstepx;
+		y1 += majstepy;
+		
+		if (e >= 0) {
+			x1 += minstepx;
+			y1 += minstepy;
+			e += inc2;
+		}
+		e += inc1;
+		
+		if (isFill) {
+			uint32 x = x1;
+			for(uint32 j=0; j<width; ++j) {
+				if (ScreenRead2(x, y1, mode))
+					break;
+					
+				ScreenWrite2(x, y1, c, mode);
+					
+				if (++x >= width)
+					x = 0;
+			}
+		} else {
+			ScreenWrite2(x1, y1, c, mode);
+		}
+	}
+	
+	kdb.COLCRS = x1;
+	kdb.ROWCRS = y1;
+	kdb.OLDCOL = x1;
+	kdb.OLDROW = y1;
 }
 #>

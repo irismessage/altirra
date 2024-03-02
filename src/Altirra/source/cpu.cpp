@@ -35,6 +35,9 @@ ATCPUEmulator::ATCPUEmulator()
 	, mpBkptManager(NULL)
 {
 	mSBrk = 0x100;
+	mbTrace = false;
+	mbStep = false;
+	mDebugFlags = 0;
 	mpNextState = NULL;
 	mCPUMode = kATCPUMode_6502;
 	mCPUSubMode = kATCPUSubMode_6502;
@@ -51,6 +54,7 @@ ATCPUEmulator::ATCPUEmulator()
 
 	RebuildDecodeTables();
 
+	VDASSERTCT(kStateStandard_Count <= kStateVerifyJump);
 	VDASSERTCT(kStateCount < 256);
 }
 
@@ -80,6 +84,7 @@ void ATCPUEmulator::SetBreakpointManager(ATBreakpointManager *bkptmanager) {
 void ATCPUEmulator::ColdReset() {
 	mbStep = false;
 	mbTrace = false;
+	mDebugFlags &= ~(kDebugFlag_Step | kDebugFlag_Trace);
 	WarmReset();
 	mNMIIgnoreUnhaltedCycle = 0xFFFFFFFFU;
 }
@@ -87,8 +92,8 @@ void ATCPUEmulator::ColdReset() {
 void ATCPUEmulator::WarmReset() {
 	mpNextState = mStates;
 	mIFlagSetCycle = mpCallbacks->CPUGetUnhaltedCycle();
-	mbIRQReleasePending = false;
-	mbNMIPending = false;
+	mIntFlags = 0;
+	mbNMIForced = false;
 	mbUnusedCycle = false;
 	mbMarkHistoryIRQ = false;
 	mbMarkHistoryNMI = false;
@@ -192,10 +197,6 @@ bool ATCPUEmulator::IsNextCycleWrite() const {
 				return false;
 
 			case kStateWrite:
-			case kStateWriteZpX:
-			case kStateWriteZpY:
-			case kStateWriteAbsX:
-			case kStateWriteAbsY:
 			case kStatePush:
 			case kStatePushPCL:
 			case kStatePushPCH:
@@ -227,6 +228,13 @@ void ATCPUEmulator::SetPC(uint16 pc) {
 	*mpDstState++ = kStateReadOpcodeNoBreak;
 }
 
+void ATCPUEmulator::SetP(uint8 p) {
+	if (mCPUMode != kATCPUMode_65C816 || mCPUSubMode == kATCPUSubMode_65C816_Emulation)
+		p |= 0x30;
+
+	mP = p;
+}
+
 void ATCPUEmulator::SetHook(uint16 pc, bool enable) {
 	if (enable)
 		mInsnFlags[pc] |= kInsnFlagHook;
@@ -244,6 +252,13 @@ sint32 ATCPUEmulator::GetNextBreakpoint(sint32 last) const {
 	}
 
 	return -1;
+}
+
+uint8 ATCPUEmulator::GetHeldCycleValue() {
+	if (mCPUMode == kATCPUMode_65C816)
+		return mpMemory->ExtReadByte(mPC, mK);
+	else
+		return mpMemory->ReadByte(mPC);
 }
 
 void ATCPUEmulator::SetCPUMode(ATCPUMode mode) {
@@ -468,9 +483,7 @@ void ATCPUEmulator::LoadState(ATSaveStateReader& reader) {
 	mS		= reader.ReadUint8();
 	mP		= reader.ReadUint8();
 	SetPC(reader.ReadUint16());
-	mbIRQActive = reader.ReadBool();
-	mbIRQPending = reader.ReadBool();
-	mbNMIPending = reader.ReadBool();
+	mIntFlags = reader.ReadUint8();
 	mHLEDelay		= 0;
 }
 
@@ -482,10 +495,7 @@ void ATCPUEmulator::SaveState(ATSaveStateWriter& writer) {
 	writer.WriteUint8(mP);
 	writer.WriteUint16(mPC);
 
-	writer.WriteBool(mbIRQPending);
-	writer.WriteBool(mbIRQActive);
-
-	writer.WriteBool(mbNMIPending);
+	writer.WriteUint8(mIntFlags);
 
 	mIRQAssertTime = mpCallbacks->CPUGetUnhaltedCycle() - 10;
 	mIRQAcknowledgeTime = mIRQAssertTime;
@@ -493,7 +503,7 @@ void ATCPUEmulator::SaveState(ATSaveStateWriter& writer) {
 
 void ATCPUEmulator::InjectOpcode(uint8 op) {
 	mOpcode = op;
-	mpNextState = mpDecodePtrs[mOpcode];
+	mpNextState = mDecodeHeap + mDecodePtrs[mOpcode];
 }
 
 void ATCPUEmulator::Push(uint8 v) {
@@ -523,27 +533,27 @@ void ATCPUEmulator::Ldy(uint8 v) {
 }
 
 void ATCPUEmulator::AssertIRQ(int cycleOffset) {
-	if (!mbIRQActive) {
-		if (mbIRQPending)
+	if (!(mIntFlags & kIntFlag_IRQActive)) {
+		if (mIntFlags & kIntFlag_IRQPending)
 			UpdatePendingIRQState();
 
-		mbIRQActive = true;
+		mIntFlags |= kIntFlag_IRQActive;
 		mIRQAssertTime = mpCallbacks->CPUGetUnhaltedCycle() + cycleOffset;
 	}
 }
 
 void ATCPUEmulator::NegateIRQ() {
-	if (mbIRQActive) {
-		if (!mbIRQPending)
+	if (mIntFlags & kIntFlag_IRQActive) {
+		if (!(mIntFlags & kIntFlag_IRQPending))
 			UpdatePendingIRQState();
 
-		mbIRQActive = false;
+		mIntFlags &= ~kIntFlag_IRQActive;
 	}
 }
 
 void ATCPUEmulator::AssertNMI() {
-	if (!mbNMIPending) {
-		mbNMIPending = true;
+	if (!(mIntFlags & kIntFlag_NMIPending)) {
+		mIntFlags |= kIntFlag_NMIPending;
 		mNMIAssertTime = mpCallbacks->CPUGetUnhaltedCycle();
 	}
 }
@@ -584,18 +594,133 @@ int ATCPUEmulator::Advance65816WithBusTracking() {
 }
 #undef AT_CPU_RECORD_BUS_ACTIVITY
 
+uint8 ATCPUEmulator::ProcessDebugging() {
+	if (mbStep && (mPC - mStepRegionStart) >= mStepRegionSize) {
+		if (mStepStackLevel >= 0 && (sint8)(mS - mStepStackLevel) <= 0) {
+			// do nothing -- stepping through subroutine
+		} else {
+			mStepStackLevel = -1;
+
+			if (mpStepCallback && mpStepCallback(this, mPC, mpStepCallbackData)) {
+				mStepStackLevel = mS;
+			} else {
+				mbStep = false;
+				mbUnusedCycle = true;
+				RedecodeInsnWithoutBreak();
+				return kATSimEvent_CPUSingleStep;
+			}
+		}
+	}
+
+	if (mS >= mSBrk) {
+		mSBrk = 0x100;
+		mbUnusedCycle = true;
+		RedecodeInsnWithoutBreak();
+		return kATSimEvent_CPUStackBreakpoint;
+	}
+
+	if (mbTrace)
+		DumpStatus();
+
+	return 0;
+}
+
+bool ATCPUEmulator::ProcessInterrupts() {
+	if (mIntFlags & kIntFlag_NMIPending) {
+		uint32 t = mpCallbacks->CPUGetUnhaltedCycle();
+
+		if (t - mNMIAssertTime >= (t == mNMIIgnoreUnhaltedCycle ? 3U : 2U)) {
+			if (mbTrace)
+				ATConsoleWrite("CPU: Jumping to NMI vector\n");
+
+			mIntFlags &= ~kIntFlag_NMIPending;
+			mbMarkHistoryNMI = true;
+
+			mpNextState = mpDecodePtrNMI;
+			return true;
+		}
+	}
+
+	if (mIntFlags & kIntFlag_IRQReleasePending) {
+		mIntFlags &= ~kIntFlag_IRQReleasePending;
+	} else if ((mIntFlags & (kIntFlag_IRQActive | kIntFlag_IRQPending)) && (!(mP & kFlagI) || mIFlagSetCycle == mpCallbacks->CPUGetUnhaltedCycle() - 1)) {
+		if (mNMIIgnoreUnhaltedCycle == mIRQAssertTime + 1) {
+			++mIRQAssertTime;
+		} else {
+			switch(mIntFlags & (kIntFlag_IRQPending | kIntFlag_IRQActive)) {
+				case kIntFlag_IRQPending:
+				case kIntFlag_IRQActive:
+					UpdatePendingIRQState();
+					break;
+			}
+
+			// If an IRQ is pending, check if it was just acknowledged this cycle. If so,
+			// bypass it as it's too late to interrupt this instruction.
+			if ((mIntFlags & kIntFlag_IRQPending) && (mpCallbacks->CPUGetUnhaltedCycle() - mIRQAcknowledgeTime > 0)) {
+				if (mbTrace)
+					ATConsoleWrite("CPU: Jumping to IRQ vector\n");
+
+				mbMarkHistoryIRQ = true;
+
+				mpNextState = mpDecodePtrIRQ;
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+void ATCPUEmulator::AddHistoryEntry(bool is816) {
+	HistoryEntry& he = mHistory[mHistoryIndex++ & 131071];
+
+	he.mCycle = (uint16)mpCallbacks->CPUGetCycle();
+	he.mUnhaltedCycle = (uint16)mpCallbacks->CPUGetUnhaltedCycle();
+	he.mTimestamp = mpCallbacks->CPUGetTimestamp();
+	he.mEA = 0xFFFFFFFFUL;
+	he.mPC = mPC - 1;
+	he.mS = mS;
+	he.mP = mP;
+	he.mA = mA;
+	he.mX = mX;
+	he.mY = mY;
+	he.mOpcode[0] = mOpcode;
+	if (is816) {
+		he.mOpcode[1] = mpMemory->DebugExtReadByte(mPC, mK);
+		he.mOpcode[2] = mpMemory->DebugExtReadByte(mPC+1, mK);
+		he.mOpcode[3] = mpMemory->DebugExtReadByte(mPC+2, mK);
+	} else {
+		he.mOpcode[1] = mpMemory->DebugReadByte(mPC);
+		he.mOpcode[2] = mpMemory->DebugReadByte(mPC+1);
+		he.mOpcode[3] = mpMemory->DebugReadByte(mPC+2);
+	}
+	he.mbIRQ = mbMarkHistoryIRQ;
+	he.mbNMI = mbMarkHistoryNMI;
+	he.mbEmulation = mbEmulationFlag;
+	he.mSH = mSH;
+	he.mAH = mAH;
+	he.mXH = mXH;
+	he.mYH = mYH;
+	he.mB = mB;
+	he.mK = mK;
+	he.mD = mDP;
+
+	mbMarkHistoryIRQ = false;
+	mbMarkHistoryNMI = false;
+}
+
 void ATCPUEmulator::UpdatePendingIRQState() {
-	VDASSERT(mbIRQActive != mbIRQPending);
+	VDASSERT(((mIntFlags & kIntFlag_IRQActive) != 0) != ((mIntFlags & kIntFlag_IRQPending) != 0));
 
 	const uint32 cycle = mpCallbacks->CPUGetUnhaltedCycle();
 
-	if (mbIRQActive) {
+	if (mIntFlags & kIntFlag_IRQActive) {
 		// IRQ line is pulled down, but no IRQ acknowledge has happened. Check if the IRQ
 		// line has been down for a minimum of three cycles; if so, set the pending
 		// IRQ flag.
 
 		if (cycle - mIRQAssertTime >= 3) {
-			mbIRQPending = true;
+			mIntFlags |= kIntFlag_IRQPending;
 			mIRQAcknowledgeTime = mIRQAssertTime + 3;
 		}
 	} else {
@@ -603,7 +728,7 @@ void ATCPUEmulator::UpdatePendingIRQState() {
 		// one cycle has passed by. If so, kill the acknowledged IRQ.
 
 		if (cycle - mIRQAcknowledgeTime >= 2)
-			mbIRQPending = false;
+			mIntFlags &= ~kIntFlag_IRQPending;
 	}
 }
 
@@ -658,7 +783,7 @@ void ATCPUEmulator::RebuildDecodeTables() {
 
 	mpDstState = mDecodeHeap;
 	for(int i=0; i<256; ++i) {
-		mpDecodePtrs[i] = mpDstState;
+		mDecodePtrs[i] = mpDstState - mDecodeHeap;
 
 		if (mbPathfindingEnabled)
 			*mpDstState++ = kStateAddToPath;

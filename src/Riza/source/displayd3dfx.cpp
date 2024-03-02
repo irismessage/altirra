@@ -37,10 +37,10 @@
 class VDD3D9TextureGeneratorFullSizeRTT : public vdrefcounted<IVDD3D9TextureGenerator> {
 public:
 	bool GenerateTexture(VDD3D9Manager *pManager, IVDD3D9Texture *pTexture) {
-		const D3DPRESENT_PARAMETERS& parms = pManager->GetPresentParms();
+		const D3DDISPLAYMODE& dmode = pManager->GetDisplayMode();
 
-		int w = parms.BackBufferWidth;
-		int h = parms.BackBufferHeight;
+		int w = dmode.Width;
+		int h = dmode.Height;
 
 		pManager->AdjustTextureSize(w, h);
 
@@ -69,10 +69,10 @@ bool VDCreateD3D9TextureGeneratorFullSizeRTT(IVDD3D9TextureGenerator **ppGenerat
 class VDD3D9TextureGeneratorFullSizeRTT16F : public vdrefcounted<IVDD3D9TextureGenerator> {
 public:
 	bool GenerateTexture(VDD3D9Manager *pManager, IVDD3D9Texture *pTexture) {
-		const D3DPRESENT_PARAMETERS& parms = pManager->GetPresentParms();
+		const D3DDISPLAYMODE& dmode = pManager->GetDisplayMode();
 
-		int w = parms.BackBufferWidth;
-		int h = parms.BackBufferHeight;
+		int w = dmode.Width;
+		int h = dmode.Height;
 
 		pManager->AdjustTextureSize(w, h);
 
@@ -259,7 +259,7 @@ protected:
 	bool IsValid();
 	bool IsFramePending() { return mbSwapChainPresentPending; }
 	void SetFilterMode(FilterMode mode);
-	void SetFullScreen(bool fs);
+	void SetFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh);
 
 	bool Tick(int id);
 	void Poll();
@@ -349,6 +349,9 @@ protected:
 	bool				mbSwapChainImageValid;
 	bool				mbFirstPresent;
 	bool				mbFullScreen;
+	uint32				mFullScreenWidth;
+	uint32				mFullScreenHeight;
+	uint32				mFullScreenRefreshRate;
 	bool				mbClipToMonitor;
 
 	VDAtomicInt			mTickPending;
@@ -441,6 +444,9 @@ VDVideoDisplayMinidriverD3DFX::VDVideoDisplayMinidriverD3DFX(bool clipToMonitor)
 	, mbSwapChainPresentPolling(false)
 	, mbFirstPresent(false)
 	, mbFullScreen(false)
+	, mFullScreenWidth(0)
+	, mFullScreenHeight(0)
+	, mFullScreenRefreshRate(0)
 	, mbClipToMonitor(clipToMonitor)
 	, mTickPending(0)
 	, mpD3DTempTexture(NULL)
@@ -517,14 +523,14 @@ bool VDVideoDisplayMinidriverD3DFX::Init(HWND hwnd, HMONITOR hmonitor, const VDV
 	}
 
 	// attempt to initialize D3D9
-	mpManager = VDInitDirect3D9(this, hmonitor);
+	mpManager = VDInitDirect3D9(this, hmonitor, false);
 	if (!mpManager) {
 		Shutdown();
 		return false;
 	}
 
 	if (mbFullScreen)
-		mpManager->AdjustFullScreen(true);
+		mpManager->AdjustFullScreen(true, mFullScreenWidth, mFullScreenHeight, mFullScreenRefreshRate);
 
 	mpD3DDevice = mpManager->GetDevice();
 
@@ -743,7 +749,7 @@ bool VDVideoDisplayMinidriverD3DFX::Init(HWND hwnd, HMONITOR hmonitor, const VDV
 		return false;
 	}
 
-	if (!mpUploadContext->Init(hmonitor, info.pixmap, info.bAllowConversion, false, mhPrevSrc2Texture ? 3 : mhPrevSrcTexture ? 2 : 1)) {
+	if (!mpUploadContext->Init(hmonitor, false, info.pixmap, info.bAllowConversion, false, mhPrevSrc2Texture ? 3 : mhPrevSrcTexture ? 2 : 1)) {
 		Shutdown();
 		return false;
 	}
@@ -799,7 +805,7 @@ void VDVideoDisplayMinidriverD3DFX::Shutdown() {
 
 	if (mpManager) {
 		if (mbFullScreen)
-			mpManager->AdjustFullScreen(false);
+			mpManager->AdjustFullScreen(false, 0, 0, 0);
 		VDDeinitDirect3D9(mpManager, this);
 		mpManager = NULL;
 	}
@@ -826,12 +832,15 @@ void VDVideoDisplayMinidriverD3DFX::SetFilterMode(FilterMode mode) {
 	mPreferredFilter = mode;
 }
 
-void VDVideoDisplayMinidriverD3DFX::SetFullScreen(bool fs) {
+void VDVideoDisplayMinidriverD3DFX::SetFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh) {
 	if (mbFullScreen != fs) {
 		mbFullScreen = fs;
+		mFullScreenWidth = w;
+		mFullScreenHeight = h;
+		mFullScreenRefreshRate = refresh;
 
 		if (mpManager)
-			mpManager->AdjustFullScreen(fs);
+			mpManager->AdjustFullScreen(fs, w, h, refresh);
 	}
 }
 
@@ -948,23 +957,46 @@ bool VDVideoDisplayMinidriverD3DFX::UpdateBackbuffer(const RECT& rClient0, Updat
 		return false;
 
 	// Check if we need to create or resize the swap chain.
-	if (mSwapChainW >= rClippedClient.right + 128 || mSwapChainH >= rClippedClient.bottom + 128) {
-		mpSwapChain = NULL;
-		mSwapChainW = 0;
-		mSwapChainH = 0;
-	}
+	if (!mbFullScreen) {
+		if (mpManager->GetDeviceEx()) {
+			if (mSwapChainW != rClippedClient.right || mSwapChainH != rClippedClient.bottom) {
+				mpSwapChain = NULL;
+				mSwapChainW = 0;
+				mSwapChainH = 0;
+			}
 
-	if (!mbFullScreen && (!mpSwapChain || mSwapChainW < rClippedClient.right || mSwapChainH < rClippedClient.bottom)) {
-		int scw = std::min<int>((rClippedClient.right + 127) & ~127, rtw);
-		int sch = std::min<int>((rClippedClient.bottom + 127) & ~127, rth);
+			if (!mpSwapChain || mSwapChainW != rClippedClient.right || mSwapChainH != rClippedClient.bottom) {
+				int scw = std::min<int>(rClippedClient.right, rtw);
+				int sch = std::min<int>(rClippedClient.bottom, rth);
 
-		VDDEBUG("Resizing swap chain to %dx%d\n", scw, sch);
+				VDDEBUG("Resizing swap chain to %dx%d\n", scw, sch);
 
-		if (!mpManager->CreateSwapChain(scw, sch, mbClipToMonitor, ~mpSwapChain))
-			return false;
+				if (!mpManager->CreateSwapChain(mhwnd, scw, sch, mbClipToMonitor, ~mpSwapChain))
+					return false;
 
-		mSwapChainW = scw;
-		mSwapChainH = sch;
+				mSwapChainW = scw;
+				mSwapChainH = sch;
+			}
+		} else {
+			if (mSwapChainW >= rClippedClient.right + 128 || mSwapChainH >= rClippedClient.bottom + 128) {
+				mpSwapChain = NULL;
+				mSwapChainW = 0;
+				mSwapChainH = 0;
+			}
+
+			if ((!mpSwapChain || mSwapChainW < rClippedClient.right || mSwapChainH < rClippedClient.bottom)) {
+				int scw = std::min<int>((rClippedClient.right + 127) & ~127, rtw);
+				int sch = std::min<int>((rClippedClient.bottom + 127) & ~127, rth);
+
+				VDDEBUG("Resizing swap chain to %dx%d\n", scw, sch);
+
+				if (!mpManager->CreateSwapChain(mhwnd, scw, sch, mbClipToMonitor, ~mpSwapChain))
+					return false;
+
+				mSwapChainW = scw;
+				mSwapChainH = sch;
+			}
+		}
 	}
 
 	// Do we need to switch bicubic modes?

@@ -27,11 +27,11 @@ public:
 extern IVDUIWindow *VDCreateUILabel() { return new VDUILabelW32; }
 
 bool VDUILabelW32::Create(IVDUIParameters *pParameters) {
-	return CreateW32(pParameters, "STATIC", SS_CENTERIMAGE|SS_LEFT);
+	return CreateW32(pParameters, "STATIC", pParameters->GetB(nsVDUI::kUIParam_Multiline, false) ? SS_LEFT : SS_CENTERIMAGE|SS_LEFT);
 }
 
 void VDUILabelW32::PreLayoutBaseW32(const VDUILayoutSpecs& parentConstraints) {
-	SIZE siz = SizeText(0, 0, 0);
+	SIZE siz = SizeText(parentConstraints.minsize.w, 0, 0);
 
 	mLayoutSpecs.minsize.w	= siz.cx;
 	mLayoutSpecs.minsize.h	= siz.cy;

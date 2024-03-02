@@ -119,7 +119,7 @@ bool ATContainerSplitterBar::Init(HWND hwndParent, ATContainerDockingPane *pane,
 	mpControlledPane = pane;
 
 	if (!mhwnd) {
-		if (!CreateWindow(MAKEINTATOM(sWndClass), "", WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS, 0, 0, 0, 0, hwndParent, (UINT)0, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this)))
+		if (!CreateWindow(MAKEINTATOM(sWndClass), _T(""), WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS, 0, 0, 0, 0, hwndParent, (UINT)0, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this)))
 			return false;
 	}
 
@@ -257,7 +257,7 @@ ATDragHandleWindow::~ATDragHandleWindow() {
 }
 
 VDGUIHandle ATDragHandleWindow::Create(int x, int y, int cx, int cy, VDGUIHandle parent, int id) {
-	HWND hwnd = CreateWindowEx(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE, (LPCSTR)sWndClass, "", WS_POPUP, x, y, cx, cy, (HWND)parent, (HMENU)id, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
+	HWND hwnd = CreateWindowEx(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE, (LPCTSTR)sWndClass, _T(""), WS_POPUP, x, y, cx, cy, (HWND)parent, (HMENU)id, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
 
 	if (hwnd)
 		ShowWindow(hwnd, SW_SHOWNOACTIVATE);
@@ -452,7 +452,13 @@ void ATContainerDockingPane::Clear() {
 		mChildren.back()->Clear();
 
 	if (mpContent) {
-		DestroyWindow(mpContent->GetHandleW32());
+		HWND hwnd = mpContent->GetHandleW32();
+
+		if (hwnd)
+			DestroyWindow(hwnd);
+
+		// This should happen automatically if we had a window, but just in case, we flush it.
+		mpContent.clear();
 	}
 
 	RemoveEmptyNode();
@@ -601,6 +607,22 @@ void ATContainerDockingPane::SetDockFraction(float frac) {
 		mpDockParent->Relayout(resizer);
 		resizer.Flush();
 	}
+}
+
+ATFrameWindow *ATContainerDockingPane::GetAnyContent() const {
+	if (mpContent)
+		return mpContent;
+
+	Children::const_iterator it(mChildren.begin()), itEnd(mChildren.end());
+	for(; it!=itEnd; ++it) {
+		ATContainerDockingPane *child = *it;
+		ATFrameWindow *content = child->GetAnyContent();
+
+		if (content)
+			return content;
+	}
+
+	return NULL;
 }
 
 ATContainerDockingPane *ATContainerDockingPane::GetCenterPane() const {
@@ -1010,8 +1032,11 @@ void *ATContainerWindow::AsInterface(uint32 id) {
 }
 
 VDGUIHandle ATContainerWindow::Create(int x, int y, int cx, int cy, VDGUIHandle parent, bool visible) {
-//	return (VDGUIHandle)CreateWindowEx(WS_EX_CLIENTEDGE, (LPCSTR)sWndClass, "", WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|(visible ? WS_VISIBLE : 0), x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
-	return (VDGUIHandle)CreateWindowEx(0, (LPCSTR)sWndClass, "", WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|(visible ? WS_VISIBLE : 0), x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
+	return Create(sWndClass, x, y, cx, cy, parent, visible);
+}
+
+VDGUIHandle ATContainerWindow::Create(ATOM wc, int x, int y, int cx, int cy, VDGUIHandle parent, bool visible) {
+	return (VDGUIHandle)CreateWindowEx(0, (LPCTSTR)wc, _T(""), WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|(visible ? WS_VISIBLE : 0), x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
 }
 
 void ATContainerWindow::Destroy() {
@@ -1086,7 +1111,7 @@ ATContainerWindow *ATContainerWindow::GetContainerWindow(HWND hwnd) {
 	if (hwnd) {
 		ATOM a = (ATOM)GetClassLong(hwnd, GCW_ATOM);
 
-		if (a == sWndClass) {
+		if (a == sWndClass || a == sWndClassMain) {
 			VDShaderEditorBaseWindow *w = (VDShaderEditorBaseWindow *)GetWindowLongPtr(hwnd, 0);
 			return vdpoly_cast<ATContainerWindow *>(w);
 		}
@@ -1157,7 +1182,7 @@ ATContainerDockingPane *ATContainerWindow::DockFrame(ATFrameWindow *frame) {
 
 		if (hwndFrame) {
 			HWND hwndActive = ::GetFocus();
-			if (hwndActive && ::GetWindow(hwndActive, GW_OWNER) != hwndFrame)
+			if (hwndActive && ::GetAncestor(hwndActive, GA_ROOT) != hwndFrame)
 				hwndActive = NULL;
 
 			if (::GetForegroundWindow() == hwndFrame) {
@@ -1257,6 +1282,8 @@ void ATContainerWindow::UndockFrame(ATFrameWindow *frame, bool visible) {
 
 		VDASSERT(std::find(mUndockedFrames.begin(), mUndockedFrames.end(), frame) == mUndockedFrames.end());
 		mUndockedFrames.push_back(frame);
+
+		::SetActiveWindow(hwndFrame);
 	}
 }
 
@@ -1393,6 +1420,8 @@ void ATContainerWindow::OnChildDestroy(HWND hwndChild) {
 		if (mpActiveFrame == frame) {
 			mpActiveFrame = NULL;
 
+			ATFrameWindow *frameToActivate = NULL;
+
 			for(ATContainerDockingPane *pane = frame->GetPane(); pane; pane = pane->GetParentPane()) {
 				ATContainerDockingPane *pane2 = pane->GetCenterPane();
 				
@@ -1402,14 +1431,24 @@ void ATContainerWindow::OnChildDestroy(HWND hwndChild) {
 				ATFrameWindow *frame2 = pane2->GetContent();
 
 				if (frame2 && frame2 != frame) {
-					::SetFocus(frame2->GetHandleW32());
-					NotifyFrameActivated(frame2);
+					frameToActivate = frame2;
 					break;
 				}
 			}
+
+			if (!frameToActivate)
+				frameToActivate = mpDockingPane->GetAnyContent();
+
+			if (frameToActivate) {
+				::SetFocus(frameToActivate->GetHandleW32());
+				NotifyFrameActivated(frameToActivate);
+			} else {
+				::SetFocus(mhwnd);
+			}
 		}
 
-		UndockFrame(frame);
+		ShowWindow(hwndChild, SW_HIDE);
+		UndockFrame(frame, false);
 	}
 }
 
@@ -1457,7 +1496,7 @@ void ATContainerWindow::RecreateSystemObjects() {
 	lf.lfItalic = FALSE;
 	lf.lfUnderline = FALSE;
 	lf.lfWeight = 0;
-	vdstrlcpy(lf.lfFaceName, "Marlett", sizeof(lf.lfFaceName)/sizeof(lf.lfFaceName[0]));
+	vdwcslcpy(lf.lfFaceName, L"Marlett", sizeof(lf.lfFaceName)/sizeof(lf.lfFaceName[0]));
 
 	mhfontCaptionSymbol = CreateFontIndirect(&lf);
 }
@@ -1530,15 +1569,15 @@ void ATFrameWindow::SetFullScreen(bool fs) {
 			style &= ~(WS_CAPTION | WS_THICKFRAME | WS_POPUP);
 			if (!(style & WS_CHILD))
 				style |= WS_POPUP;
-			exStyle &= WS_EX_TOOLWINDOW;
+			exStyle &= ~WS_EX_TOOLWINDOW;
 		} else {
 			style &= ~WS_POPUP;
 			style |= WS_CAPTION;
 
-			if (style & WS_CHILD)
-				exStyle |= WS_EX_TOOLWINDOW;
-			else
+			if (!(style & WS_CHILD))
 				style |= WS_THICKFRAME;
+
+			exStyle |= WS_EX_TOOLWINDOW;
 		}
 
 		SetWindowLong(mhwnd, GWL_STYLE, style);
@@ -1587,12 +1626,12 @@ void ATFrameWindow::RecalcFrame() {
 	}
 }
 
-VDGUIHandle ATFrameWindow::Create(const char *title, int x, int y, int cx, int cy, VDGUIHandle parent) {
-	return (VDGUIHandle)CreateWindowEx(WS_EX_TOOLWINDOW, (LPCSTR)sWndClass, title, WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
+VDGUIHandle ATFrameWindow::Create(const wchar_t *title, int x, int y, int cx, int cy, VDGUIHandle parent) {
+	return (VDGUIHandle)CreateWindowExW(WS_EX_TOOLWINDOW, (LPCWSTR)sWndClass, title, WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
 }
 
-VDGUIHandle ATFrameWindow::CreateChild(const char *title, int x, int y, int cx, int cy, VDGUIHandle parent) {
-	return (VDGUIHandle)CreateWindowEx(WS_EX_TOOLWINDOW, (LPCSTR)sWndClass, title, WS_CHILD|WS_CAPTION|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
+VDGUIHandle ATFrameWindow::CreateChild(const wchar_t *title, int x, int y, int cx, int cy, VDGUIHandle parent) {
+	return (VDGUIHandle)CreateWindowExW(WS_EX_TOOLWINDOW, (LPCWSTR)sWndClass, title, WS_CHILD|WS_CAPTION|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
 }
 
 LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -1718,8 +1757,16 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			if (ATContainerWindow *cont = ATContainerWindow::GetContainerWindow(GetAncestor(mhwnd, GA_ROOTOWNER))) {
 				cont->NotifyFrameActivated(this);
 
-				if (msg == WM_MOUSEACTIVATE)
-					::SetFocus(mhwnd);
+				if (msg == WM_MOUSEACTIVATE) {
+					HWND focus = ::GetFocus();
+					HWND hwndTest;
+
+					for(hwndTest = focus; hwndTest && hwndTest != mhwnd; hwndTest = GetAncestor(hwndTest, GA_PARENT))
+						;
+
+					if (hwndTest != mhwnd)
+						::SetFocus(mhwnd);
+				}
 			}
 			break;
 
@@ -1752,31 +1799,36 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 		case WM_NCCALCSIZE:
 			if (mpDockingPane) {
-				NONCLIENTMETRICS ncm = {sizeof(NONCLIENTMETRICS)};
-
-				SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &ncm, FALSE);
-
 				RECT& r = *(RECT *)lParam;
 				const int x = r.left;
 				const int y = r.top;
-				const int h = ncm.iSmCaptionHeight;
 
-				mCaptionRect.set(0, 0, r.right, h);
+				if (mbFullScreen) {
+					mCaptionRect.set(0, 0, 0, 0);
+				} else {
+					NONCLIENTMETRICS ncm = {sizeof(NONCLIENTMETRICS)};
 
-				int bsize = std::min<int>(GetSystemMetrics(SM_CXSMSIZE), GetSystemMetrics(SM_CYSMSIZE));
+					SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &ncm, FALSE);
 
-				mCloseRect.set(r.right - r.left - bsize, 0, r.right - r.left, h);
+					const int h = ncm.iSmCaptionHeight;
 
-				r.top += h;
-				if (r.top > r.bottom)
-					r.top = r.bottom;
+					mCaptionRect.set(0, 0, r.right, h);
 
-				int xe = GetSystemMetrics(SM_CXEDGE);
-				int ye = GetSystemMetrics(SM_CYEDGE);
-				r.left += xe;
-				r.top += ye;
-				r.right -= xe;
-				r.bottom -= ye;
+					int bsize = std::min<int>(GetSystemMetrics(SM_CXSMSIZE), GetSystemMetrics(SM_CYSMSIZE));
+
+					mCloseRect.set(r.right - r.left - bsize, 0, r.right - r.left, h);
+
+					r.top += h;
+					if (r.top > r.bottom)
+						r.top = r.bottom;
+
+					int xe = GetSystemMetrics(SM_CXEDGE);
+					int ye = GetSystemMetrics(SM_CYEDGE);
+					r.left += xe;
+					r.top += ye;
+					r.right -= xe;
+					r.bottom -= ye;
+				}
 
 				mClientRect.set(r.left, r.top, r.right, r.bottom);
 				mClientRect.translate(-x, -y);
@@ -1793,6 +1845,9 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 		case WM_NCHITTEST:
 			if (mpDockingPane) {
+				if (mbFullScreen)
+					return HTCLIENT;
+
 				int x = GET_X_LPARAM(lParam);
 				int y = GET_Y_LPARAM(lParam);
 
@@ -1832,6 +1887,9 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 void ATFrameWindow::PaintCaption(HRGN clipRegion) {
+	if (mbFullScreen)
+		return;
+
 	HDC hdc;
 	
 	if (clipRegion && clipRegion != (HRGN)1)
@@ -1925,9 +1983,9 @@ void ATFrameWindow::PaintCaption(HRGN clipRegion) {
 
 				SetTextColor(hdc, RGB(0, 0, 0));
 				if (mbCloseDown)
-					DrawText(hdc, "r", 1, &r3, DT_NOPREFIX | DT_LEFT | DT_BOTTOM | DT_SINGLELINE);
+					DrawText(hdc, _T("r"), 1, &r3, DT_NOPREFIX | DT_LEFT | DT_BOTTOM | DT_SINGLELINE);
 				else
-					DrawText(hdc, "r", 1, &r3, DT_NOPREFIX | DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+					DrawText(hdc, _T("r"), 1, &r3, DT_NOPREFIX | DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 				SelectObject(hdc, holdfont);
 			}
 		}
@@ -2042,6 +2100,9 @@ namespace {
 	typedef stdext::hash_map<uint32, ATPaneCreator> PaneCreators;
 	PaneCreators g_paneCreatorMap;
 
+	typedef stdext::hash_map<uint32, ATPaneClassCreator> PaneClassCreators;
+	PaneClassCreators g_paneClassCreatorMap;
+
 	typedef stdext::hash_map<uint32, ATUIPane *> ActivePanes;
 	ActivePanes g_activePanes;
 
@@ -2052,12 +2113,25 @@ void ATRegisterUIPaneType(uint32 id, ATPaneCreator creator) {
 	g_paneCreatorMap[id] = creator;
 }
 
+void ATRegisterUIPaneClass(uint32 id, ATPaneClassCreator creator) {
+	g_paneClassCreatorMap[id] = creator;
+}
+
 void ATRegisterActiveUIPane(uint32 id, ATUIPane *w) {
 	g_activePanes[id] = w;
 }
 
 void ATUnregisterActiveUIPane(uint32 id, ATUIPane *w) {
 	g_activePanes.erase(id);
+}
+
+void ATGetUIPanes(vdfastvector<ATUIPane *>& panes) {
+	for(ActivePanes::const_iterator it(g_activePanes.begin()), itEnd(g_activePanes.end());
+		it != itEnd;
+		++it)
+	{
+		panes.push_back(it->second);
+	}
 }
 
 ATUIPane *ATGetUIPane(uint32 id) {
@@ -2091,12 +2165,21 @@ void ATActivateUIPane(uint32 id, bool giveFocus, bool visible) {
 	vdrefptr<ATUIPane> pane(ATGetUIPane(id));
 
 	if (!pane) {
-		PaneCreators::const_iterator it(g_paneCreatorMap.find(id));
-		if (it == g_paneCreatorMap.end())
-			return;
-	
-		if (!it->second(~pane))
-			return;
+		if (id >= 0x100) {
+			PaneClassCreators::const_iterator it(g_paneClassCreatorMap.find(id & 0xff00));
+			if (it == g_paneClassCreatorMap.end())
+				return;
+		
+			if (!it->second(id, ~pane))
+				return;
+		} else {
+			PaneCreators::const_iterator it(g_paneCreatorMap.find(id));
+			if (it == g_paneCreatorMap.end())
+				return;
+		
+			if (!it->second(~pane))
+				return;
+		}
 
 		vdrefptr<ATFrameWindow> frame(new ATFrameWindow);
 		frame->Create(pane->GetUIPaneName(), CW_USEDEFAULT, CW_USEDEFAULT, 300, 200, (VDGUIHandle)g_pMainWindow->GetHandleW32());
@@ -2128,7 +2211,7 @@ void ATActivateUIPane(uint32 id, bool giveFocus, bool visible) {
 	}
 }
 
-ATUIPane::ATUIPane(uint32 paneId, const char *name)
+ATUIPane::ATUIPane(uint32 paneId, const wchar_t *name)
 	: mPaneId(paneId)
 	, mpName(name)
 	, mDefaultWindowStyles(WS_CHILD|WS_CLIPCHILDREN)
@@ -2140,13 +2223,17 @@ ATUIPane::~ATUIPane() {
 }
 
 bool ATUIPane::Create(ATFrameWindow *frame) {
-	HWND hwnd = CreateWindow((LPCSTR)sWndClass, "", mDefaultWindowStyles & ~WS_VISIBLE, 0, 0, 0, 0, frame->GetHandleW32(), (HMENU)100, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
+	HWND hwnd = CreateWindow((LPCTSTR)sWndClass, _T(""), mDefaultWindowStyles & ~WS_VISIBLE, 0, 0, 0, 0, frame->GetHandleW32(), (HMENU)100, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
 
 	if (!hwnd)
 		return false;
 
 	::ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 	return true;
+}
+
+void ATUIPane::SetName(const wchar_t *name) {
+	mpName = name;
 }
 
 LRESULT ATUIPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {

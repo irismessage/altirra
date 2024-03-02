@@ -18,6 +18,7 @@
 #include "stdafx.h"
 #include <windows.h>
 #include <vd2/system/error.h>
+#include <vd2/system/file.h>
 #include <vd2/system/math.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
@@ -41,6 +42,7 @@ protected:
 	VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
 	void UpdateLabel(uint32 id);
 	void UpdateColorImage();
+	void ExportPalette(const wchar_t *s);
 
 	ATColorSettings mSettings;
 	ATColorParams *mpParams;
@@ -59,7 +61,7 @@ ATAdjustColorsDialog::ATAdjustColorsDialog()
 bool ATAdjustColorsDialog::OnLoaded() {
 	mPresetsPopupMenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_COLOR_PRESETS_MENU));
 
-	TBSetRange(IDC_HUESTART, -60, 360);
+	TBSetRange(IDC_HUESTART, -120, 360);
 	TBSetRange(IDC_HUERANGE, 0, 540);
 	TBSetRange(IDC_BRIGHTNESS, -50, 50);
 	TBSetRange(IDC_CONTRAST, 0, 200);
@@ -160,9 +162,15 @@ bool ATAdjustColorsDialog::OnCommand(uint32 id, uint32 extcode) {
 			OnDataExchange(true);
 			UpdateColorImage();
 		}		
+	} else if (id == IDC_EXPORT) {
+		const VDStringW& fn = VDGetSaveFileName('pal ', (VDGUIHandle)mhdlg, L"Export palette", L"Atari800 palette (*.pal)", L"pal");
+
+		if (!fn.empty()) {
+			ExportPalette(fn.c_str());
+		}
 	} else if (id == ID_COLORS_DEFAULTNTSC) {
-		mpParams->mHueStart = -15.0f;
-		mpParams->mHueRange = 360.0f * 15.0f / 14.4f;
+		mpParams->mHueStart = -51.0f;
+		mpParams->mHueRange = 27.9f * 15.0f;
 		mpParams->mBrightness = 0.0f;
 		mpParams->mContrast = 1.0f;
 		mpParams->mSaturation = 75.0f / 255.0f;
@@ -182,6 +190,18 @@ bool ATAdjustColorsDialog::OnCommand(uint32 id, uint32 extcode) {
 		mpParams->mArtifactSat = 2.76f;
 		mpParams->mArtifactBias = 0.35f;
 		mpParams->mbUsePALQuirks = true;
+		OnDataExchange(true);
+		OnDataExchange(false);
+	} else if (id == ID_COLORS_1XNTSC) {
+		mpParams->mHueStart = -15.0f;
+		mpParams->mHueRange = 360.0f * 15.0f / 14.4f;
+		mpParams->mBrightness = 0.0f;
+		mpParams->mContrast = 1.0f;
+		mpParams->mSaturation = 75.0f / 255.0f;
+		mpParams->mArtifactHue = 96.0f;
+		mpParams->mArtifactSat = 2.76f;
+		mpParams->mArtifactBias = 0.35f;
+		mpParams->mbUsePALQuirks = false;
 		OnDataExchange(true);
 		OnDataExchange(false);
 	} else if (id == ID_COLORS_ALTERNATE) {
@@ -396,6 +416,25 @@ void ATAdjustColorsDialog::UpdateColorImage() {
 	// update image
 	HWND hwndColors = GetDlgItem(mhdlg, IDC_COLORS);
 	InvalidateRect(hwndColors, NULL, FALSE);
+}
+
+void ATAdjustColorsDialog::ExportPalette(const wchar_t *s) {
+	ATGTIAEmulator& gtia = g_sim.GetGTIA();
+
+	uint32 pal[256];
+	gtia.GetPalette(pal);
+
+	uint8 pal8[768];
+	for(int i=0; i<256; ++i) {
+		const uint32 c = pal[i];
+
+		pal8[i*3+0] = (uint8)(c >> 16);
+		pal8[i*3+1] = (uint8)(c >>  8);
+		pal8[i*3+2] = (uint8)(c >>  0);
+	}
+
+	VDFile f(s, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
+	f.write(pal8, sizeof pal8);
 }
 
 void ATUIOpenAdjustColorsDialog(VDGUIHandle hParent) {

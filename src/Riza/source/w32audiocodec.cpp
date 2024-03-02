@@ -76,107 +76,141 @@ namespace {
 	}
 }
 
-IVDAudioCodec *VDCreateAudioCompressorW32(const VDWaveFormat *srcFormat, const VDWaveFormat *dstFormat, const char *pShortNameDriverHint) {
+IVDAudioCodec *VDCreateAudioCompressorW32(const VDWaveFormat *srcFormat, const VDWaveFormat *dstFormat, const char *pShortNameDriverHint, bool throwIfNotFound) {
 	vdautoptr<VDAudioCodecW32> codec(new VDAudioCodecW32);
 
-	if (!codec->Init((const WAVEFORMATEX *)srcFormat, (const WAVEFORMATEX *)dstFormat, true, pShortNameDriverHint))
+	if (!codec->Init((const WAVEFORMATEX *)srcFormat, (const WAVEFORMATEX *)dstFormat, true, pShortNameDriverHint, throwIfNotFound))
 		return NULL;
 
 	return codec.release();
 }
 
-IVDAudioCodec *VDCreateAudioDecompressorW32(const VDWaveFormat *srcFormat, const VDWaveFormat *dstFormat, const char *pShortNameDriverHint) {
+IVDAudioCodec *VDCreateAudioDecompressorW32(const VDWaveFormat *srcFormat, const VDWaveFormat *dstFormat, const char *pShortNameDriverHint, bool throwIfNotFound) {
 	vdautoptr<VDAudioCodecW32> codec(new VDAudioCodecW32);
 
-	if (!codec->Init((const WAVEFORMATEX *)srcFormat, (const WAVEFORMATEX *)dstFormat, false, pShortNameDriverHint))
+	if (!codec->Init((const WAVEFORMATEX *)srcFormat, (const WAVEFORMATEX *)dstFormat, false, pShortNameDriverHint, throwIfNotFound))
 		return NULL;
 
 	return codec.release();
 }
 
 VDAudioCodecW32::VDAudioCodecW32()
-	: mhStream(NULL)
+	: mhDriver(NULL)
+	, mhStream(NULL)
 	, mOutputReadPt(0)
 {
 	mDriverName[0] = 0;
 	mDriverFilename[0] = 0;
+
+	memset(&mBufferHdr, 0, sizeof mBufferHdr);	// Do this so we can detect whether the buffer is prepared or not.
 }
 
 VDAudioCodecW32::~VDAudioCodecW32() {
 	Shutdown();
 }
 
-bool VDAudioCodecW32::Init(const WAVEFORMATEX *pSrcFormat, const WAVEFORMATEX *pDstFormat, bool isCompression, const char *pDriverShortNameHint) {
+namespace {
+	struct ACMDriverList {
+		typedef const HACMDRIVERID *const_iterator;
+
+		ACMDriverList(const char *hint)
+			: mpHint(hint)
+		{
+			acmDriverEnum(Callback, (DWORD_PTR)this, 0);
+		}
+
+		const_iterator begin() const { return mDriverIds.begin(); }
+		const_iterator end() const { return mDriverIds.end(); }
+
+	protected:
+		static BOOL CALLBACK Callback(HACMDRIVERID hadid, DWORD_PTR dwInstance, DWORD fdwSupport) {
+			ACMDriverList *pThis = (ACMDriverList *)dwInstance;
+
+			// If we have a hint, check if the driver matches. If so, push it at the front of
+			// the list instead of the back.
+			if (pThis->mpHint) {
+				ACMDRIVERDETAILS add = {sizeof(ACMDRIVERDETAILS)};
+
+				if (!acmDriverDetails(hadid, &add, 0) && !_stricmp(add.szShortName, pThis->mpHint)) {
+					pThis->mDriverIds.insert(pThis->mDriverIds.begin(), hadid);
+					pThis->mpHint = NULL;
+					return TRUE;
+				}
+			}
+
+			pThis->mDriverIds.push_back(hadid);
+			return TRUE;
+		}
+
+		const char *mpHint;
+		vdfastvector<HACMDRIVERID> mDriverIds;
+	};
+}
+
+bool VDAudioCodecW32::Init(const WAVEFORMATEX *pSrcFormat, const WAVEFORMATEX *pDstFormat, bool isCompression, const char *pDriverShortNameHint, bool throwOnError) {
 	Shutdown();
 
 	SafeCopyWaveFormat(mSrcFormat, (const VDWaveFormat *)pSrcFormat);
 
-	if (pDstFormat) {
+	if (pDstFormat)
 		SafeCopyWaveFormat(mDstFormat, (const VDWaveFormat *)pDstFormat);
-	} else {
-		VDASSERT(!isCompression);
 
-		DWORD dwDstFormatSize;
+	// enumerate IDs for all installed codecs
+	ACMDriverList driverList(pDriverShortNameHint);
 
-		VDVERIFY(!acmMetrics(NULL, ACM_METRIC_MAX_SIZE_FORMAT, (LPVOID)&dwDstFormatSize));
+	// try one driver at a time
+	MMRESULT res = 0;
 
-		mDstFormat.resize(dwDstFormatSize);
-		mDstFormat->mTag = WAVE_FORMAT_PCM;
+	for(ACMDriverList::const_iterator it(driverList.begin()), itEnd(driverList.end());
+		it != itEnd;
+		++it)
+	{
+		const HACMDRIVERID driverId = *it;
 
-		if (acmFormatSuggest(NULL, (WAVEFORMATEX *)pSrcFormat, (WAVEFORMATEX *)mDstFormat.data(), dwDstFormatSize, ACM_FORMATSUGGESTF_WFORMATTAG)) {
-			Shutdown();
-			return false;
-		}
+		// open driver
+		HACMDRIVER hDriver = NULL;
+		if (acmDriverOpen(&hDriver, *it, 0))
+			continue;
 
-		// sanitize the destination format a bit
+		if (!pDstFormat) {
+			VDASSERT(!isCompression);
+		
+			DWORD dwDstFormatSize = 0;
 
-		if (mDstFormat->mSampleBits != 8 && mDstFormat->mSampleBits != 16)
-			mDstFormat->mSampleBits = 16;
+			VDVERIFY(!acmMetrics(NULL, ACM_METRIC_MAX_SIZE_FORMAT, (LPVOID)&dwDstFormatSize));
 
-		if (mDstFormat->mChannels != 1 && mDstFormat->mChannels !=2)
-			mDstFormat->mChannels = 2;
+			if (dwDstFormatSize < sizeof(WAVEFORMATEX))
+				dwDstFormatSize = sizeof(WAVEFORMATEX);
 
-		mDstFormat->mBlockSize		= (uint16)((mDstFormat->mSampleBits >> 3) * mDstFormat->mChannels);
-		mDstFormat->mDataRate		= mDstFormat->mBlockSize * mDstFormat->mSamplingRate;
-		mDstFormat->mExtraSize		= 0;
-		mDstFormat.resize(sizeof(WAVEFORMATEX));
-	}
+			mDstFormat.resize(dwDstFormatSize);
+			memset(mDstFormat.data(), 0, dwDstFormatSize);
+			mDstFormat->mTag = WAVE_FORMAT_PCM;
 
-	// try to find the hinted driver, if a hint is provided
-	struct ACMDriverFinder {
-		ACMDriverFinder(const char *hint) : mpHint(hint), mhDriver(NULL) {}
-
-		static BOOL CALLBACK Callback(HACMDRIVERID hadid, DWORD_PTR dwInstance, DWORD fdwSupport) {
-			ACMDriverFinder *pThis = (ACMDriverFinder *)dwInstance;
-
-			ACMDRIVERDETAILS add = {sizeof(ACMDRIVERDETAILS)};
-			if (!pThis->mhDriver && !acmDriverDetails(hadid, &add, 0) && !_stricmp(add.szShortName, pThis->mpHint)) {
-				if (!acmDriverOpen(&pThis->mhDriver, hadid, 0))
-					return FALSE;
+			if (acmFormatSuggest(hDriver, (WAVEFORMATEX *)pSrcFormat, (WAVEFORMATEX *)mDstFormat.data(), dwDstFormatSize, ACM_FORMATSUGGESTF_WFORMATTAG)) {
+				acmDriverClose(hDriver, NULL);
+				continue;
 			}
 
-			return TRUE;
+			// sanitize the destination format a bit
+
+			if (mDstFormat->mSampleBits != 8 && mDstFormat->mSampleBits != 16)
+				mDstFormat->mSampleBits = 16;
+
+			if (mDstFormat->mChannels != 1 && mDstFormat->mChannels !=2)
+				mDstFormat->mChannels = 2;
+
+			mDstFormat->mBlockSize		= (uint16)((mDstFormat->mSampleBits >> 3) * mDstFormat->mChannels);
+			mDstFormat->mDataRate		= mDstFormat->mBlockSize * mDstFormat->mSamplingRate;
+			mDstFormat->mExtraSize		= 0;
+			mDstFormat.resize(sizeof(WAVEFORMATEX));
 		}
 
-		const char *const mpHint;
-		HACMDRIVER mhDriver;
-	};
-
-	ACMDriverFinder drvFinder(pDriverShortNameHint);
-
-	if (pDriverShortNameHint)
-		acmDriverEnum(ACMDriverFinder::Callback, (DWORD_PTR)&drvFinder, 0);
-
-	// open conversion stream
-
-	MMRESULT res;
-
-	memset(&mBufferHdr, 0, sizeof mBufferHdr);	// Do this so we can detect whether the buffer is prepared or not.
-
-	for(;;) {
-		res = acmStreamOpen(&mhStream, drvFinder.mhDriver, (WAVEFORMATEX *)pSrcFormat, (WAVEFORMATEX *)mDstFormat.data(), NULL, 0, 0, ACM_STREAMOPENF_NONREALTIME);
-		if (!res)
+		// open conversion stream
+		res = acmStreamOpen(&mhStream, hDriver, (WAVEFORMATEX *)pSrcFormat, (WAVEFORMATEX *)mDstFormat.data(), NULL, 0, 0, ACM_STREAMOPENF_NONREALTIME);
+		if (!res) {
+			mhDriver = hDriver;
 			break;
+		}
 
 		// Aud-X accepts PCM/6ch but not WAVE_FORMAT_EXTENSIBLE/PCM/6ch. Argh. We attempt to work
 		// around this by trying a PCM version if WFE doesn't work.
@@ -204,53 +238,45 @@ bool VDAudioCodecW32::Init(const WAVEFORMATEX *pSrcFormat, const WAVEFORMATEX *p
 					vdstructex<VDWaveFormat> srcFormat2(mSrcFormat.data(), sizeof(VDWaveFormat));
 					srcFormat2->mExtraSize	= 0;
 					srcFormat2->mTag		= WAVE_FORMAT_PCM;
-					MMRESULT res2 = acmStreamOpen(&mhStream, drvFinder.mhDriver, (WAVEFORMATEX *)srcFormat2.data(), (WAVEFORMATEX *)mDstFormat.data(), NULL, 0, 0, ACM_STREAMOPENF_NONREALTIME);
+					MMRESULT res2 = acmStreamOpen(&mhStream, hDriver, (WAVEFORMATEX *)srcFormat2.data(), (WAVEFORMATEX *)mDstFormat.data(), NULL, 0, 0, ACM_STREAMOPENF_NONREALTIME);
 
 					if (!res2) {
 						res = res2;
 						mSrcFormat = srcFormat2;
 						pSrcFormat = (WAVEFORMATEX *)mSrcFormat.data();
+
+						mhDriver = hDriver;
 						break;
 					}
 				}
 			}
 		}
 
-		if (!drvFinder.mhDriver)
-			break;
-
-		acmDriverClose(drvFinder.mhDriver, 0);
-		drvFinder.mhDriver = NULL;
+		acmDriverClose(hDriver, 0);
 	}
 
-	if (drvFinder.mhDriver)
-		acmDriverClose(drvFinder.mhDriver, 0);
-
-	if (res) {
+	if (!mhStream) {
 		Shutdown();
+		
+		if (!throwOnError)
+			return false;
 
 		if (isCompression) {
-			if (res == ACMERR_NOTPOSSIBLE) {
 				throw MyError(
 							"Error initializing audio stream compression:\n"
-							"The audio codec cannot compress the source audio to the desired format.\n"
+							"No installed audio codec could compress the source audio to the desired format.\n"
 							"\n"
 							"Check that the sampling rate and number of channels in the source is compatible with the selected compressed audio format."
 						);
-			} else
-				throw MyError("Error initializing audio stream compression.");
 		} else {
-			if (res == ACMERR_NOTPOSSIBLE) {
-				throw MyError(
-							"Error initializing audio stream decompression:\n"
-							"No installed audio codec could be found to decompress the compressed source audio.\n"
-							"\n"
-							"Check to make sure you have the required codec%s."
-							,
-							(pSrcFormat->wFormatTag&~1)==0x160 ? " (Microsoft Audio Codec)" : ""
-						);
-			} else
-				throw MyError("Error initializing audio stream decompression.");
+			throw MyError(
+						"Error initializing audio stream decompression:\n"
+						"No installed audio codec could be found to decompress the compressed source audio.\n"
+						"\n"
+						"Check to make sure you have the required codec%s."
+						,
+						(pSrcFormat->wFormatTag&~1)==0x160 ? " (Microsoft Audio Codec)" : ""
+					);
 		}
 	}
 
@@ -270,7 +296,7 @@ bool VDAudioCodecW32::Init(const WAVEFORMATEX *pSrcFormat, const WAVEFORMATEX *p
 	dwDstBufferSize -= dwDstBufferSize % mDstFormat->mBlockSize;
 
 	if (acmStreamSize(mhStream, dwSrcBufferSize, &dwDstBufferSize, ACM_STREAMSIZEF_SOURCE)) {
-		memset(&mBufferHdr, 0, sizeof mBufferHdr);
+		Shutdown();
 		throw MyError("Error initializing audio stream output size.");
 	}
 
@@ -284,7 +310,10 @@ bool VDAudioCodecW32::Init(const WAVEFORMATEX *pSrcFormat, const WAVEFORMATEX *p
 	mBufferHdr.cbDstLength	= mOutputBuffer.size();
 
 	if (acmStreamPrepareHeader(mhStream, &mBufferHdr, 0)) {
+		// make sure buffer header is invalidated so we don't try to unprepare it
 		memset(&mBufferHdr, 0, sizeof mBufferHdr);
+
+		Shutdown();
 		throw MyError("Error preparing audio decompression buffers.");
 	}
 
@@ -313,9 +342,17 @@ void VDAudioCodecW32::Shutdown() {
 			mBufferHdr.cbSrcLength = mInputBuffer.size();
 			mBufferHdr.cbDstLength = mOutputBuffer.size();
 			acmStreamUnprepareHeader(mhStream, &mBufferHdr, 0);
+
+			memset(&mBufferHdr, 0, sizeof mBufferHdr);
 		}
+
 		acmStreamClose(mhStream, 0);
 		mhStream = NULL;
+	}
+
+	if (mhDriver) {
+		acmDriverClose(mhDriver, 0);
+		mhDriver = NULL;
 	}
 
 	mDriverName[0] = 0;
@@ -487,7 +524,7 @@ IVDAudioCodec *VDLocateAudioDecompressor(const VDWaveFormat *srcFormat, const VD
 			return codec;
 	}
 
-	codec = VDCreateAudioDecompressorW32(srcFormat, dstFormat, pShortNameDriverHint);
+	codec = VDCreateAudioDecompressorW32(srcFormat, dstFormat, pShortNameDriverHint, false);
 	if (codec)
 		return codec;
 

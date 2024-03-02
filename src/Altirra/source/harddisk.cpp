@@ -232,7 +232,8 @@ void ATHardDiskEmulator::DoOpen(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem) {
 			write = true;
 			break;
 
-		case 0x06:
+		case 0x06:	// open directory
+		case 0x07:	// open directory, showing extended (Atari DOS 2.5)
 			break;
 
 		default:
@@ -254,7 +255,7 @@ void ATHardDiskEmulator::DoOpen(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem) {
 	if (mpUIRenderer)
 		mpUIRenderer->SetHActivity(false);
 
-	if (mode == 0x06) {
+	if (mode == 0x06 || mode == 0x07) {
 		ch.mbOpen = true;
 		ch.mbUsingRawData = true;
 		ch.mData.clear();
@@ -262,6 +263,11 @@ void ATHardDiskEmulator::DoOpen(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem) {
 
 		try {
 			VDDirectoryIterator it(mSearchPattern.c_str());
+
+			// <---------------> 17 bytes
+			//   DOS     SYS 037   (Normal)
+			// * DOS     SYS 037   (Locked)
+			//  <DOS     SYS>037   (DOS 2.5 extended)
 
 			while(GetNextMatch(it)) {
 				uint8 *s = ch.mData.alloc(18);
@@ -397,33 +403,37 @@ void ATHardDiskEmulator::DoGetByte(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem)
 	try {
 		// check if we can do a burst read
 		if (mbBurstIOEnabled && kdb.ICCOMZ == 0x07) {
-			uint16 addr = kdb.ICBAZ;
 			uint16 len = kdb.ICBLZ;
 
-			int tc = len;
+			// zero bytes is a special case meaning to return one byte in the A register
+			if (len) {
+				uint16 addr = kdb.ICBAZ;
 
-			if (tc > 1024)
-				tc = 1024;
+				int tc = len;
 
-			uint8 buf[1024];
+				if (tc > 1024)
+					tc = 1024;
 
-			int actual = ch.mFile.readData(buf, tc);
+				uint8 buf[1024];
 
-			if (!actual) {
-				cpu->SetY(CIOStatEndOfFile);
-			} else {
-				int actualm1 = actual - 1;
-				for(int i=0; i<actualm1; ++i)
-					mem->WriteByte(addr + i, buf[i]);
+				int actual = ch.mFile.readData(buf, tc);
 
-				kdb.ICBAZ = (uint16)(addr + actualm1);
-				kdb.ICBLZ = (uint16)(len - actualm1);
+				if (!actual) {
+					cpu->SetY(CIOStatEndOfFile);
+				} else {
+					int actualm1 = actual - 1;
+					for(int i=0; i<actualm1; ++i)
+						mem->WriteByte(addr + i, buf[i]);
 
-				cpu->SetA(buf[actualm1]);
-				cpu->SetY(1);
+					kdb.ICBAZ = (uint16)(addr + actualm1);
+					kdb.ICBLZ = (uint16)(len - actualm1);
+
+					cpu->SetA(buf[actualm1]);
+					cpu->SetY(1);
+				}
+
+				return;
 			}
-
-			return;
 		}
 
 		uint8 buf;
@@ -461,26 +471,30 @@ void ATHardDiskEmulator::DoPutByte(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem)
 		// check if we can do a burst write
 		ATKernelDatabase kdb(mem);
 		if (mbBurstIOEnabled && kdb.ICCOMZ == 0x0B) {
-			uint16 addr = kdb.ICBAZ;
 			uint16 len = kdb.ICBLZ;
 
-			int tc = len;
+			// zero bytes is a special case meaning to write one byte from the A register
+			if (len) {
+				uint16 addr = kdb.ICBAZ;
 
-			if (tc > 1024)
-				tc = 1024;
+				int tc = len;
 
-			uint8 buf[1024];
+				if (tc > 1024)
+					tc = 1024;
 
-			buf[0] = cpu->GetA();
+				uint8 buf[1024];
 
-			for(int i=1; i<tc; ++i)
-				buf[i] = mem->ReadByte(addr + i);
+				buf[0] = cpu->GetA();
 
-			ch.mFile.write(buf, tc);
+				for(int i=1; i<tc; ++i)
+					buf[i] = mem->ReadByte(addr + i);
 
-			int tcm1 = tc - 1;
-			kdb.ICBAZ = (uint16)(addr + tcm1);
-			kdb.ICBLZ = (uint16)(len - tcm1);
+				ch.mFile.write(buf, tc);
+
+				int tcm1 = tc - 1;
+				kdb.ICBAZ = (uint16)(addr + tcm1);
+				kdb.ICBLZ = (uint16)(len - tcm1);
+			}
 		} else {
 			uint8 buf = cpu->GetA();
 			ch.mFile.write(&buf, 1);

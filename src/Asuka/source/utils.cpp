@@ -60,6 +60,7 @@ void help() {
 	puts("Asuka snapsetup    Temporarily change windows settings for screencaps");
 	puts("Asuka verinc       Increment version file");
 	puts("Asuka psa          Assemble Direct3D pixel shader");
+	puts("Asuka checkimports Check DLL/EXE imports");
 	exit(5);
 }
 

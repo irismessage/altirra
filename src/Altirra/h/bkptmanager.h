@@ -39,6 +39,8 @@ struct ATBreakpointInfo {
 
 struct ATBreakpointEvent {
 	uint32	mIndex;
+	uint32	mAddress;
+	uint8	mValue;
 	bool	mbBreak;
 	bool	mbSilentBreak;
 };

@@ -60,10 +60,16 @@ failmsg:
 	jmp		BootDisk
 
 loaddone:
+	;Restore load address; this is necessary for the smb demo (1.atr) to load.
+	;The standard OS does this because it has a buggy SIO handler and always
+	;loads into and copies from $0400. Most boot loaders, like the DOS 2.0
+	;loader, don't have this problem because they don't rely on the value
+	;of DBYTLO.
+	mwa		#$0400 dbuflo
+
 	mva		#1 boot?
 	jsr		multiboot
-	jsr		appinit
-	jmp		(dosvec)
+	jmp		appinit
 	
 multiboot:
 	lda		bootad

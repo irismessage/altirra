@@ -52,6 +52,7 @@ IATSourceWindow *ATOpenSourceWindow(const wchar_t *s);
 class ATUIPane;
 class ATFrameWindow;
 
+void ATGetUIPanes(vdfastvector<ATUIPane *>& panes);
 ATUIPane *ATGetUIPane(uint32 id);
 ATUIPane *ATGetUIPaneByFrame(ATFrameWindow *frame);
 void ATActivateUIPane(uint32 id, bool giveFocus, bool visible = true);
@@ -71,6 +72,12 @@ enum {
 	kATUIPaneId_Memory,
 	kATUIPaneId_PrinterOutput,
 	kATUIPaneId_Profiler,
+	kATUIPaneId_DebugDisplay,
+
+	kATUIPaneId_IndexMask = 0xFF,
+	kATUIPaneId_MemoryN = 0x100,
+	kATUIPaneId_WatchN = 0x200,
+
 	kATUIPaneId_Count
 };
 

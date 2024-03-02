@@ -250,6 +250,7 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::TINDEX> TINDEX;
 		ATWordAdapter<ATKernelSymbols::TXTMSC> TXTMSC;
 		ATByteAdapter<ATKernelSymbols::TXTOLD> TXTOLD;
+		ATByteAdapter<ATKernelSymbols::ESCFLG> ESCFLG;
 		ATByteAdapter<ATKernelSymbols::LOGMAP> LOGMAP;
 		ATByteAdapter<ATKernelSymbols::BOTSCR> BOTSCR;
 		ATByteAdapter<ATKernelSymbols::PCOLR0> PCOLR0;
@@ -267,6 +268,7 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::CHACT > CHACT;
 		ATByteAdapter<ATKernelSymbols::CHBAS > CHBAS;
 		ATByteAdapter<ATKernelSymbols::ATACHR> ATACHR;
+		ATByteAdapter<ATKernelSymbols::FILDAT> FILDAT;
 		ATByteAdapter<ATKernelSymbols::DSPFLG> DSPFLG;
 		ATByteAdapter<ATKernelSymbols::DDEVIC> DDEVIC;
 		ATByteAdapter<ATKernelSymbols::DUNIT > DUNIT;

@@ -20,7 +20,9 @@
 	jsr		ScreenOpen
 	
 	mva		#$ff bufcnt
-	mva		#$00 dspflg
+	lda		#$00
+	sta		dspflg
+	sta		escflg
 	rts
 .endp
 
@@ -52,6 +54,7 @@ haveLine:
 			ScreenShowCursor();
 			EditorResetLogicalLineStart();
 		}
+		ScreenSwap(false);
 		
 		mpCPU->SetA(rval);
 		mpCPU->Ldy(0);
@@ -139,6 +142,8 @@ isEOL:
 		// reset cursor to start of line
 		kdb.COLCRS = x1;
 		kdb.ROWCRS = y1;
+
+		ScreenSwap(false);
 	#}
 	
 	lda		#$9b
@@ -260,10 +265,14 @@ suspendloop:
 		}
 
 		// check if display of control codes is desired
-		if (!kdb.DSPFLG) {
+		if (!kdb.DSPFLG && !kdb.ESCFLG) {
 			bool moveexit = false;
 			
 			switch(c) {
+				case 0x1B:	// escape
+					kdb.ESCFLG = 0xFF;
+					return;
+					
 				case 0x1C:	// up
 					if (kdb.ROWCRS)
 						--kdb.ROWCRS;
@@ -467,9 +476,8 @@ suspendloop:
 		kdb.LOGCOL = logcol;
 		
 		ScreenShowCursor();
+		ScreenSwap(false);
 	#}
-		
-	ldy		#0
 	rts
 .endp
 	
@@ -478,6 +486,7 @@ suspendloop:
 .endp
 
 .proc	EditorSpecial
+	ldy		#CIOStatNotSupported
 	rts
 .endp
 

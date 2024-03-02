@@ -73,7 +73,7 @@ void VDCaptureAudioCompFilter::SetSourceSplit(bool enable) {
 }
 
 void VDCaptureAudioCompFilter::Init(const WAVEFORMATEX *srcFormat, const WAVEFORMATEX *dstFormat, const char *pShortNameHint) {
-	mCodec.Init(srcFormat, dstFormat, true, pShortNameHint);
+	mCodec.Init(srcFormat, dstFormat, true, pShortNameHint, true);
 }
 
 void VDCaptureAudioCompFilter::GetStatus(VDCaptureAudioCompStatus& status) {

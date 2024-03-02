@@ -922,6 +922,10 @@
 				</FileConfiguration>
 			</File>
 			<File
+				RelativePath=".\source\process.cpp"
+				>
+			</File>
+			<File
 				RelativePath="source\profile.cpp"
 				>
 				<FileConfiguration
@@ -1611,6 +1615,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\h\vd2\system\process.h"
+				>
+			</File>
+			<File
 				RelativePath="..\h\vd2\system\profile.h"
 				>
 			</File>
@@ -1738,6 +1746,10 @@
 				Name="win32"
 				>
 				<File
+					RelativePath="..\h\vd2\system\win32\intrin.h"
+					>
+				</File>
+				<File
 					RelativePath="..\h\vd2\system\win32\miniwindows.h"
 					>
 				</File>
@@ -1791,6 +1803,26 @@
 		<Filter
 			Name="Assembly Files (AMD64)"
 			>
+			<File
+				RelativePath=".\source\a64_cpuaccel.asm"
+				>
+				<FileConfiguration
+					Name="Release|Win32"
+					ExcludedFromBuild="true"
+					>
+					<Tool
+						Name="YASM"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Debug|Win32"
+					ExcludedFromBuild="true"
+					>
+					<Tool
+						Name="YASM"
+					/>
+				</FileConfiguration>
+			</File>
 			<File
 				RelativePath="source\a64_fraction.asm"
 				>

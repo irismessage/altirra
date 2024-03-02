@@ -51,6 +51,8 @@ enum ATMemoryPriority {
 	kATMemoryPri_Cartridge2	= 16,
 	kATMemoryPri_Cartridge1	= 24,
 	kATMemoryPri_CartridgeOverlay	= 32,
+	kATMemoryPri_PBI		= 48,
+	kATMemoryPri_PBISelect	= 51,
 	kATMemoryPri_Hardware	= 56,
 	kATMemoryPri_HardwareOverlay,
 	kATMemoryPri_AccessBP	= 64
@@ -79,6 +81,7 @@ public:
 
 	uint8 AnticReadByte(uint32 address);
 	uint8 DebugAnticReadByte(uint16 address);
+	void DebugAnticReadMemory(void *dst, uint16 address, uint32 len);
 	uint8 CPUReadByte(uint32 address);
 	uint8 CPUExtReadByte(uint16 address, uint8 bank);
 	uint8 CPUDebugReadByte(uint16 address);
@@ -123,15 +126,18 @@ protected:
 	static sint32 DummyReadHandler(void *thisptr, uint32 addr);
 	static bool DummyWriteHandler(void *thisptr, uint32 addr, uint8 value);
 
-	uintptr mCPUReadPageMap[256];
-	uintptr mCPUWritePageMap[256];
-	uintptr mAnticReadPageMap[256];
-
 	typedef vdfastvector<MemoryLayer *> Layers;
 	Layers mLayers;
+	Layers mLayerTempList;
+
+	bool	mbSimple_4000_7FFF[3];
 
 	MemoryNode *mpFreeNodes;
 	VDLinearAllocator mAllocator;
+
+	__declspec(align(32)) uintptr mCPUReadPageMap[256];
+	uintptr mCPUWritePageMap[256];
+	uintptr mAnticReadPageMap[256];
 
 	const uintptr	*mReadBankTable[256];
 	uintptr			*mWriteBankTable[256];

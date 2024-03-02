@@ -96,6 +96,11 @@ protected:
 	uint32	mLastUpdate;
 	uint32	mCycleAccum;
 
+	uint8	mMultiplierMode;
+	uint8	mMultiplierArg1[2];
+	uint8	mMultiplierArg2[2];
+	uint8	mMultiplierResult[4];
+
 	Channel mChannels[8];
 
 	enum {

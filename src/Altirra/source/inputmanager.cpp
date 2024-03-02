@@ -69,6 +69,8 @@ bool ATInputMap::UsesPhysicalPort(int portIdx) const {
 			case kATInputControllerType_KoalaPad:
 			case kATInputControllerType_AmigaMouse:
 			case kATInputControllerType_Keypad:
+			case kATInputControllerType_Trackball_CX80_V1:
+			case kATInputControllerType_5200Trackball:
 				if (c.mIndex == portIdx)
 					return true;
 				break;
@@ -270,6 +272,13 @@ void ATInputManager::Select5200Controller(int index, bool potsEnabled) {
 		mb5200PotsEnabled = potsEnabled;
 		Update5200Controller();
 	}
+}
+
+void ATInputManager::SelectMultiJoy(int multiIndex) {
+	if (multiIndex < 0)
+		mpPorts[0]->SetMultiMask(0xFF);
+	else
+		mpPorts[0]->SetMultiMask(1 << multiIndex);
 }
 
 void ATInputManager::Update5200Controller() {
@@ -992,10 +1001,13 @@ void ATInputManager::RebuildMappings() {
 			} else {
 				switch(c.mType) {
 					case kATInputControllerType_Joystick:
-						if (c.mIndex < 4) {
+						if (c.mIndex < 12) {
 							ATJoystickController *joy = new ATJoystickController;
 
-							joy->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0);
+							if (c.mIndex >= 4)
+								joy->Attach(mpPorts[0], false, c.mIndex - 4);
+							else
+								joy->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0, -1);
 
 							pic = joy;
 						}
@@ -1033,8 +1045,9 @@ void ATInputManager::RebuildMappings() {
 						break;
 
 					case kATInputControllerType_5200Controller:
+					case kATInputControllerType_5200Trackball:
 						if (c.mIndex < 4) {
-							AT5200ControllerController *ctrl = new AT5200ControllerController(c.mIndex);
+							AT5200ControllerController *ctrl = new AT5200ControllerController(c.mIndex, c.mType == kATInputControllerType_5200Trackball);
 							ctrl->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0);
 							pic = ctrl;
 						}
@@ -1087,6 +1100,17 @@ void ATInputManager::RebuildMappings() {
 							pic = kpc;
 						}
 						break;
+
+					case kATInputControllerType_Trackball_CX80_V1:
+						if (c.mIndex < 4) {
+							ATTrackballController *trakball = new ATTrackballController;
+
+							trakball->Init(mpSlowScheduler);
+							trakball->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0);
+
+							pic = trakball;
+						}
+						break;
 				}
 
 				if (pic)
@@ -1100,6 +1124,9 @@ void ATInputManager::RebuildMappings() {
 		for(uint32 i=0; i<mappingCount; ++i) {
 			const ATInputMap::Mapping& m = imap->GetMapping(i);
 			ATPortInputController *pic = controllerTable[m.mControllerId];
+
+			if (!pic)
+				continue;
 
 			int32 triggerIdx = -1;
 			for(uint32 j=0; j<triggerCount; ++j) {

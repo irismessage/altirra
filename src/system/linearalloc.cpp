@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include <vd2/system/error.h>
 #include <vd2/system/linearalloc.h>
 
 VDLinearAllocator::VDLinearAllocator(uint32 blockSize)
@@ -10,6 +11,10 @@ VDLinearAllocator::VDLinearAllocator(uint32 blockSize)
 }
 
 VDLinearAllocator::~VDLinearAllocator() {
+	Clear();
+}
+
+void VDLinearAllocator::Clear() {
 	Block *p = mpBlocks;
 
 	while(p) {
@@ -19,6 +24,8 @@ VDLinearAllocator::~VDLinearAllocator() {
 
 		p = next;
 	}
+
+	mpBlocks = NULL;
 }
 
 void *VDLinearAllocator::AllocateSlow(size_t bytes) {
@@ -27,19 +34,31 @@ void *VDLinearAllocator::AllocateSlow(size_t bytes) {
 
 	if ((bytes + bytes) >= mBlockSize) {
 		block = (Block *)malloc(sizeof(Block) + bytes);
+		if (!block)
+			throw MyMemoryError();
 
-		p = block + 1;
+        mAllocLeft = 0;
 
 	} else {
 		block = (Block *)malloc(sizeof(Block) + mBlockSize);
 
-		p = block + 1;
-		mpAllocPtr = (char *)p + bytes;
+		if (!block)
+			throw MyMemoryError();
+
 		mAllocLeft = mBlockSize - bytes;
+
 	}
+
+	p = block + 1;
+	mpAllocPtr = (char *)p + bytes;
 
 	block->mpNext = mpBlocks;
 	mpBlocks = block;
 
 	return p;
 }
+
+void VDFixedLinearAllocator::ThrowException() {
+	throw MyMemoryError();
+}
+

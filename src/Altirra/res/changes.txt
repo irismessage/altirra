@@ -1,6 +1,143 @@
 Altirra Change Log
 
-Version 1.9:
+Version 2.00 [December 24, 2011]:
+   [breaking changes]
+   * Debugger: The step over command has been changed from s to o.
+
+   [features added]
+   * UI: Added OS Screen size setting.
+   * UI: Added support for gzip compressed images (*.gz, *.atz).
+   * UI: Arrow key behavior is now configurable.
+   * UI: Added speed options.
+   * UI: Added option to control whether emulation sees the Shift key pressed after a Shift+F5 cold reset.
+   * UI: Added MRU list for booted images.
+   * UI: Color settings can now be exported as a palette file (*.pal).
+   * UI: Display API options can now be changed through the GUI (not just cmdline).
+   * UI: Added full screen resolution options.
+   * UI: Added single instance option.
+   * UI: Request 1ms system timer precision only when unpaused.
+   * UI: Added option to bind file associations in Windows for image types.
+   * UI: Added /run, /disk, /tape, and /cart switches to force load types on the command line.
+   * UI: Added mute option.
+   * Debugger: Added command aliases (ac, al, as, a8).
+   * Debugger: Added watch expression (wx) command.
+   * Debugger: Added multiple memory panes.
+   * Debugger: Added watch panes.
+   * Debugger: Initial version of debug display.
+   * Debugger: Disassembler can now display offsets from symbols.
+   * Debugger: Profiler now distinguishes between VBIs and DLIs in function sampling mode.
+   * Debugger: Profiler now shows unhalted cycle counts and DMA contention rates.
+   * Debugger: Added call graph profiling support.
+   * Debugger: Mouse wheel is now position-based instead of focus-based.
+   * Debugger: Address range breakpoints can now trigger commands.
+   * Debugger: Added log output filter commands (lfd/lfe/lfl/lft).
+   * Debugger: Added .ide command.
+   * Debugger: Enter (e) command now takes expressions.
+   * Debugger: Added bitwise/low-byte/high-byte operators and address/value variables to expression evaluator.
+   * Debugger: Break on expression command (bx) can now include address ranges.
+   * Debugger: Added dump double words (dd) command.
+   * Debugger: Go (g) command now has options to preserve and force source mode.
+   * Debugger: Added batch (.batch) command.
+   * Debugger: Added source mode control (.sourcemode) command.
+   * Debugger: Commands can now be queued to run when an EXE loads or runs.
+   * Debugger: Source line breakpoints can now be set prior to line debug information being available.
+   * Debugger: A matching .atdbg file is now processed when an executable loads.
+   * Debugger: startup.atdbg in the program directory is now processed on startup if present.
+   * Debugger: Ctrl+Up/Down from output window command line now scrolls log pane by single lines.
+   * Debugger: Added fill (f), search (s), and move (m) commands.
+   * Debugger: Register (r) command can now set individual flags.
+   * Debugger: Improved output of .pia command.
+   * Debugger: Call, loop, and interrupt collapsing in history window can now be toggled.
+   * Debugger: History window can now show timestamps in cycles, unhalted cycles, and microseconds from an anchor point.
+   * Debugger: Extended memory syntax now allows access to hidden RAM (r: prefix).
+   * Debugger: Added .tape and .tapedata commands.
+   * Disk: Added support for Write PERCOM Block command.
+   * Disk: Added option to auto-detect firmware overrides of disk accesses and automatically disable SIO patch for those drives.
+   * Disk: Live disk images can now be explored directly from the disk drive entry rather than requiring an unmount and remount.
+   * Disk: Disk explorer shows timestamps.
+   * Disk: .ARC compressed archives can now be explored.
+   * Disk: Fixed a couple of bugs with DCM disk image decoding.
+   * Cartridge: Added another Atrax 128K cartridge variant used for SpartaDOS X.
+   * Cartridge: Added support for OSS 8K, Blizzard 4K, AST 32K, Atrax SDX 64K, Turbosoft 64K, and Turbosoft 128K types.
+   * Cartridge: Added support for newer MaxFlash 1MB cartridges that power up in bank 0 instead of bank 127.
+   * Cartridge: Added support for 1M Megacart (different type with similar name).
+   * Cartridge: Added support for a 5200 64K cartridge with 32K banks.
+   * Input: MultiJoy8 support.
+   * Input: CX-80 and 5200 trackball support.
+   * Input: 1200XL F1-F4 keys can now be enabled in keyboard options.
+   * Input: ~ key is now an alternate mapping for the inverse key.
+   * IDE: KMK/JZ IDE / IDEPlus 2.0 emulation support.
+   * IDE: Initial SIDE emulation support.
+   * IDE: Solid-state mode supports up through PIO mode 6.
+   * IDE: Read-only physical disk access.
+   * GTIA: SECAM support.
+   * GTIA: Optimizations to mode 9 and mode 10 rendering.
+   * MMU: Added 800 8K/24K/32K/40K configurations.
+   * MMU: Added 320K and 576K Compy Shop configurations.
+   * MMU: Sped up extended bank switching.
+   * Simulator: Added XEGS support.
+   * SoundBoard: Multiplier support.
+   * POKEY: Rewrote sound core to defer repeating events whenever possible for extra speed.
+
+   [bugs fixed]
+   * ANTIC: Added emulation of bus data displaying at the very right border of a wide scrolled playfield.
+   * ANTIC: Improved accuracy of mid scan line changes to HSCROL and DMACTL.
+   * ANTIC: Fixed phantom DMA data during WSYNC.
+   * ANTIC: Implemented phantom DMA artifacts along right side of wide playfield.
+   * ANTIC: Fixed NMIs not being reactivated after a write to NMIRES on cycle 7.
+   * Disk: PERCOM block is now initialized for a drive without a disk.
+   * Disk: Fixed errors in PERCOM block track and sectors per track counts.
+   * Disk: Switching a disk from R/W to VirtRW mode now clears pending flush errors.
+   * Disk: Fixed incorrect serial transfer rates for XF551 high speed Put/Write and Write PERCOM commands.
+   * Disk: Fixed H: device not handling zero-byte get/puts properly with burst I/O enabled (affected GET/PUT from BASIC).
+   * Disk: H: device now supports OPEN with AUX1=7 to fix directory listing from DOS 2.5.
+   * Disk: Disk explorer now properly increments volume sequence number when modifying SpartaDOS X images.
+   * Disk: DSKINV hook now supports writes to sectors bigger than 128 bytes.
+   * Disk: Fixed crash with very short disk images.
+   * CPU: Fixed undocumented $BB opcode using abs instead of abs,Y addressing mode.
+   * CPU: Undocumented $6B opcode now supports decimal mode.
+   * Debugger: Profiler sometimes lost track of intermediate call frames during function sampling.
+   * Debugger: Mouse wheel now uses system wheel scroll setting.
+   * Debugger: Improved parsing of MADS listings.
+   * Debugger: Fixed command escaping so that escapes are no longer processed unless enabled, i.e. \"foo\nbar".
+   * Debugger: Register (r) can no longer clear bits 4 and 5 of P when unsupported by current CPU mode.
+   * Debugger: _ and . are now accepted as part of symbol names in expressions.
+   * Debugger: Fixed crash when attempting to load empty file as symbol file.
+   * Debugger: Source path matching now allows partial path matches both ways and has improved behavior with duplicate filenames in different directories.
+   * Debugger: Fixed wrapping of frame counter in history window.
+   * Debugger: Built-in kernel symbols now take priority over loaded symbols.
+   * Debugger: Fixed page scrolling in history window after enabling CPU history tracking.
+   * IDE: Added mandatory Recalibrate, Read Verify, Read Multiple, Write Multiple, Seek, Set Multiple Mode, and Initialize Device Parameters commands.
+   * IDE: Fixed response from device 1 status register.
+   * IDE: Improved response from Identify Drive command.
+   * IDE: Set transfer mode command is now supported.
+   * Cartridge: Reverted OSS 034M mapper back to original bank order and added OSS 043M mapper mode for alternate bank layout.
+   * Input: Fixed crash when activating triggers to unavailable controllers.
+   * PIA: Implemented IRQB and control bit 6.
+   * HLE: Fixed escape handling in display handler.
+   * HLE: Screen setup now matches the display list and playfield addressing of the stock OS ROM.
+   * HLE: Fixed cartridge handling so that cartridges are run after disk boot completes.
+   * HLE: Added known RTS instruction at $E4C0.
+   * HLE: CIO now allows SPECIAL commands to be issued on a closed IOCB.
+   * HLE: Boot loader now sets DBYTLO/DBYTHI to $0400 before launching.
+   * HLE: Fixed crash in CIO on OPEN command with unknown device.
+   * HLE: S: now supports the Get Status, line, and fill commands.
+   * UI: Disk sector display was incorrect for accelerated writes.
+   * UI: Fixed crash if DirectX 9 is not installed.
+   * UI: Display window can no longer be undocked in full screen mode.
+   * UI: Adjusted default NTSC color preset. The old preset is still available.
+   * UI: Command-line processing now better matches standard VC++ escaping rules.
+   * UI: Direct3D9/OpenGL rendering now works over Remote Desktop with Windows Vista/7.
+   * SoundBoard: Restricted $D5/D6xx mapping to $D500-D53F and $D600-D63F.
+   * POKEY: Fixed incorrect latching on IRQST bit 4 (serial output ready IRQ).
+   * POKEY: Fixed deassert timing for IRQST bit 3 (serial output complete IRQ).
+   * POKEY: Added partial emulation of SKSTAT bit 4 (direct input) during disk transfers.
+   * Cassette: Fixed data blocks being silently dropped when reading some .cas files.
+   * Cassette: Fixed inaccuracy in data rate produced from loading .cas files.
+   * GTIA: Fixed incorrect color for %%1000 pattern in mode 10 with lores ANTIC input.
+   * VBXE: Warm reset no longer resets all registers like a cold reset.
+
+Version 1.9 [May 15, 2011]:
    [features added]
    * Debugger: Multiple memory access breakpoints can now be placed.
    * Debugger: Added option to break on run address of loaded executable.
@@ -144,6 +281,7 @@ Version 1.8 [December 22, 2010]:
    * VBXE: 5200 support added.
    * IDE: Added option to switch between short and long BSY-to-DRQ delays to simulate platter and solid-state media.
    * Serial: Added support for 850 R: and basic virtual-modem-over-TCP emulation.
+   * Serial: Added stub loader emulation of 850 SIO boot process.
    * Cheats: Added simple cheat finder and value locker.
    * Recording: Added options to tweak the frame rate and to record at half rate.
 

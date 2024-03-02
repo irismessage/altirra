@@ -99,11 +99,11 @@
 				>
 			</File>
 			<File
-				RelativePath=".\source\hardware-status.xml"
+				RelativePath=".\source\index.xml"
 				>
 			</File>
 			<File
-				RelativePath=".\source\index.xml"
+				RelativePath=".\source\indicators.xml"
 				>
 			</File>
 			<File

@@ -33,6 +33,19 @@
 template<class K, class Hash = vdhash<K>, class Pred = std::equal_to<K>, class A = std::allocator<vdhashtable_node<K> > >
 class vdhashset : public vdhashtable<K> {
 public:
+	typedef typename vdhashtable<K>::node_type node_type;
+	typedef typename vdhashtable<K>::value_type value_type;
+	typedef typename vdhashtable<K>::size_type size_type;
+	typedef typename vdhashtable<K>::difference_type difference_type;
+	typedef typename vdhashtable<K>::pointer pointer;
+	typedef typename vdhashtable<K>::const_pointer const_pointer;
+	typedef typename vdhashtable<K>::reference reference;
+	typedef typename vdhashtable<K>::const_reference const_reference;
+	typedef typename vdhashtable<K>::iterator iterator;
+	typedef typename vdhashtable<K>::const_iterator const_iterator;
+	typedef typename vdhashtable<K>::local_iterator local_iterator;
+	typedef typename vdhashtable<K>::const_local_iterator const_local_iterator;
+
 	typedef K key_type;
 	typedef Hash hasher;
 	typedef Pred key_equal;

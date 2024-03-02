@@ -34,8 +34,8 @@ ATUIWindowCaptionUpdater::ATUIWindowCaptionUpdater()
 	, mLastHardwareMode(kATHardwareModeCount)
 	, mLastKernelMode(kATKernelModeCount)
 	, mLastMemoryMode(kATMemoryModeCount)
+	, mLastVideoStd(kATVideoStandardCount)
 	, mbLastBASICState(false)
-	, mbLastPALState(false)
 	, mbLastVBXEState(false)
 	, mbLastSoundBoardState(false)
 	, mbLastDebugging(false)
@@ -43,11 +43,15 @@ ATUIWindowCaptionUpdater::ATUIWindowCaptionUpdater()
 {
 	mBasePrefix =
 #if defined(VD_CPU_AMD64)
-		"Altirra/x64 "
+		L"Altirra/x64 "
 #else
-		"Altirra "
+		L"Altirra "
 #endif
-		AT_VERSION AT_VERSION_DEBUG;
+		_T(AT_VERSION) _T(AT_VERSION_DEBUG)
+#if AT_VERSION_PRERELEASE
+		L" [prerelease]"
+#endif
+		;
 }
 
 ATUIWindowCaptionUpdater::~ATUIWindowCaptionUpdater() {
@@ -79,12 +83,12 @@ void ATUIWindowCaptionUpdater::Update(HWND hwnd, bool running, int ticks, float 
 		mbForceUpdate = false;
 
 		if (mbShowFps)
-			mBuffer.append_sprintf(" - %d (%.3f fps) (%.1f%% CPU)", ticks, fps, cpu);
+			mBuffer.append_sprintf(L" - %d (%.3f fps) (%.1f%% CPU)", ticks, fps, cpu);
 
 		if (mbCaptured)
-			mBuffer += " (mouse captured - right Alt to release)";
+			mBuffer += L" (mouse captured - right Alt to release)";
 
-		SetWindowText(hwnd, mBuffer.c_str());
+		SetWindowTextW(hwnd, mBuffer.c_str());
 	}
 }
 
@@ -115,9 +119,9 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 		change = true;
 	}
 
-	bool pal = mpSim->IsPALMode();
-	if (mbLastPALState != pal) {
-		mbLastPALState = pal;
+	ATVideoStandard vs = mpSim->GetVideoStandard();
+	if (mLastVideoStd != vs) {
+		mLastVideoStd = vs;
 		change = true;
 	}
 
@@ -151,106 +155,144 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 
 	if (ATIsDebugConsoleActive()) {
 		if (mbLastRunning)
-			mPrefix += " [running]";
+			mPrefix += L" [running]";
 		else
-			mPrefix += " [stopped]";
+			mPrefix += L" [stopped]";
 	}
 
 	bool showBasic = true;
 	switch(mpSim->GetHardwareMode()) {
 		case kATHardwareMode_800:
-			mPrefix += ": 800";
+			mPrefix += L": 800";
 			break;
 
 		case kATHardwareMode_800XL:
-			mPrefix += ": XL/XE";
+			mPrefix += L": XL/XE";
+			break;
+
+		case kATHardwareMode_XEGS:
+			mPrefix += L": XEGS";
 			break;
 
 		case kATHardwareMode_5200:
-			mPrefix += ": 5200";
+			mPrefix += L": 5200";
 			showBasic = false;
 			break;
 	}
 
 	switch(mpSim->GetActualKernelMode()) {
 		case kATKernelMode_OSA:
-			mPrefix += " OS-A";
+			mPrefix += L" OS-A";
 			break;
 
 		case kATKernelMode_OSB:
-			mPrefix += " OS-B";
+			mPrefix += L" OS-B";
 			break;
 
 		case kATKernelMode_XL:
 			break;
 
 		case kATKernelMode_Other:
-			mPrefix += " Other";
+			mPrefix += L" Other";
 			break;
 
 		case kATKernelMode_5200:
-			mPrefix += " 5200";
+			mPrefix += L" 5200";
 			break;
 
 		case kATKernelMode_HLE:
-			mPrefix += " HLE";
+			mPrefix += L" HLE";
 			break;
 
 		case kATKernelMode_LLE:
 		case kATKernelMode_5200_LLE:
-			mPrefix += " LLE";
+			mPrefix += L" LLE";
 			break;
 	}
 
-	if (pal)
-		mPrefix += " PAL";
-	else
-		mPrefix += " NTSC";
+	switch(mLastVideoStd) {
+		case kATVideoStandard_NTSC:
+		default:
+			mPrefix += L" NTSC";
+			break;
+
+		case kATVideoStandard_PAL:
+			mPrefix += L" PAL";
+			break;
+
+		case kATVideoStandard_SECAM:
+			mPrefix += L" SECAM";
+			break;
+	}
 
 	if (vbxe)
-		mPrefix += "-VBXE";
+		mPrefix += L"-VBXE";
 
 	if (sb)
-		mPrefix += "-SB";
+		mPrefix += L"-SB";
 
-	mPrefix += " / ";
+	mPrefix += L" / ";
 
 	switch(mpSim->GetMemoryMode()) {
+		case kATMemoryMode_8K:
+			mPrefix += L"8K";
+			break;
+
 		case kATMemoryMode_16K:
-			mPrefix += "16K";
+			mPrefix += L"16K";
+			break;
+
+		case kATMemoryMode_24K:
+			mPrefix += L"24K";
+			break;
+
+		case kATMemoryMode_32K:
+			mPrefix += L"32K";
+			break;
+
+		case kATMemoryMode_40K:
+			mPrefix += L"40K";
 			break;
 
 		case kATMemoryMode_48K:
-			mPrefix += "48K";
+			mPrefix += L"48K";
 			break;
 
 		case kATMemoryMode_52K:
-			mPrefix += "52K";
+			mPrefix += L"52K";
 			break;
 
 		case kATMemoryMode_64K:
-			mPrefix += "64K";
+			mPrefix += L"64K";
 			break;
 
 		case kATMemoryMode_128K:
-			mPrefix += "128K";
+			mPrefix += L"128K";
 			break;
 
 		case kATMemoryMode_320K:
-			mPrefix += "320K";
+			mPrefix += L"320K Rambo";
+			break;
+
+		case kATMemoryMode_320K_Compy:
+			mPrefix += L"320K Compy";
 			break;
 
 		case kATMemoryMode_576K:
-			mPrefix += "576K";
+			mPrefix += L"576K";
+			break;
+
+		case kATMemoryMode_576K_Compy:
+			mPrefix += L"576K Compy";
 			break;
 
 		case kATMemoryMode_1088K:
-			mPrefix += "1088K";
+			mPrefix += L"1088K";
 			break;
 	}
 
 	if (basic && showBasic)
-		mPrefix += " / BASIC";
+		mPrefix += L" / BASIC";
 
 	mbForceUpdate = true;
 }

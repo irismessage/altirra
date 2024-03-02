@@ -26,6 +26,10 @@
 #define VDFORCEINLINE __forceinline
 #endif
 
+#ifndef VDNOINLINE
+#define VDNOINLINE __declspec(noinline)
+#endif
+
 #include <vd2/system/vdtypes.h>
 #include "scheduler.h"
 
@@ -46,6 +50,7 @@ public:
 	virtual void AnticEndFrame() = 0;
 	virtual void AnticEndScanline() = 0;
 	virtual bool AnticIsNextCPUCycleWrite() = 0;
+	virtual uint8 AnticGetCPUHeldCycleValue() = 0;
 
 protected:
 	const uintptr *mpAnticReadPageMap;
@@ -101,7 +106,8 @@ public:
 		uint8	mHVScroll;
 		uint8	mDMACTL;
 		uint8	mControl;
-		bool	mbValid;
+		uint8	mCHBASE : 7;
+		uint8	mbValid : 1;
 	};
 
 	const DLHistoryEntry *GetDLHistory() const { return mDLHistory; }
@@ -113,12 +119,12 @@ public:
 	void RequestNMI();
 
 	bool IsPhantomDMARequired() const { return mbPhantomPMDMA && mX < 8; }
-	void SetPhantomDMAData(uint8 byte) { if (mX < 8) mPhantomDMAData[mX] = byte; }
+	void SetPhantomDMAData(uint8 byte) { mPhantomDMAData[mX] = byte; }
 
 	void SetLightPenPosition(bool phase);
 	void SetLightPenPosition(int x, int y);
 
-	VDFORCEINLINE bool Advance();
+	VDFORCEINLINE uint8 Advance();
 	void SyncWithGTIA(int offset);
 	void Decode(int offset);
 
@@ -137,9 +143,10 @@ protected:
 	template<class T>
 	void	ExchangeState(T& io);
 
-	bool	AdvanceSpecial();
+	uint8	AdvanceSpecial();
 	void	AdvanceScanline();
-	void	UpdateDMAPattern(int dmaStart, int dmaEnd, uint8 mode);
+	void	UpdateDMAPattern(int dmaStart, int dmaEnd, int dmaVEnd, uint8 mode);
+	void	LatchPlayfieldEdges();
 	void	UpdateCurrentCharRow();
 	void	UpdatePlayfieldTiming();
 	void	UpdatePlayfieldDataPointers();
@@ -148,8 +155,20 @@ protected:
 	void	QueueRegisterUpdate(uint32 delay, uint8 reg, uint8 value);
 	void	ExecuteQueuedUpdates();
 
+	// critical fields written in Advance()
 	uint32	mHaltedCycles;
 	uint32	mX;
+	uint16	mPFRowDMAPtrOffset;
+
+	// critical fields read in Advance()
+	ATAnticEmulatorConnections *mpConn;
+	uint8	*mpPFDataWrite;
+	uint8	*mpPFDataRead;
+	uint32	mPFCharFetchPtr;
+	uint8	mPFCharMask;
+	bool	mbWSYNCActive;
+	uint16	mPFRowDMAPtrBase;
+
 	uint32	mY;
 	uint32	mFrame;
 	uint32	mScanlineLimit;
@@ -164,8 +183,8 @@ protected:
 	int		mPFDMALastCheckX;
 	bool	mbPFDMAEnabled;
 	bool	mbPFDMAActive;
-	bool	mbWSYNCActive;
 	bool	mbWSYNCRelease;
+	uint8	mWSYNCHoldValue;
 	bool	mbHScrollEnabled;
 	bool	mbHScrollDelay;
 	bool	mbRowStopUseVScroll;
@@ -183,14 +202,7 @@ protected:
 	uint8	mLatchedVScroll2;		// latched VSCROL at cycle 6 from current scanline -- used to control DLI
 
 	uint16	mPFDMAPtr;
-	uint16	mPFRowDMAPtrBase;
-	uint16	mPFRowDMAPtrOffset;
 	uint32	mPFPushCycleMask;
-
-	uint32	mPFCharFetchPtr;
-	uint8	mPFCharMask;
-	uint8	*mpPFDataWrite;
-	uint8	*mpPFDataRead;
 
 	int		mPFWidthShift;
 	int		mPFHScrollDMAOffset;
@@ -212,16 +224,16 @@ protected:
 	
 	PFWidthMode	mPFWidth;
 	PFWidthMode	mPFFetchWidth;
-	PFWidthMode	mPFFetchWidthLatchedStart;
-	PFWidthMode	mPFFetchWidthLatchedEnd;
-
-	uint8	mPFCharSave;
 
 	uint32	mPFDisplayStart;
 	uint32	mPFDisplayEnd;
 	uint32	mPFDMAStart;
+	uint8	*mpPFCharFetchPtr;
+	uint32	mPFDMAVEnd;
+	uint32	mPFDMAVEndWide;
 	uint32	mPFDMAEnd;
 	uint32	mPFDMALatchedStart;
+	uint32	mPFDMALatchedVEnd;
 	uint32	mPFDMALatchedEnd;
 	uint32	mPFDMAPatternCacheKey;
 
@@ -269,10 +281,9 @@ protected:
 	uint32	mGTIAHSyncOffset;
 	uint32	mVSyncShiftTime;
 
-	uint8	mPhantomDMAData[8];
+	uint8	mPhantomDMAData[114];
 
 	ATGTIAEmulator *mpGTIA;
-	ATAnticEmulatorConnections *mpConn;
 	ATScheduler *mpScheduler;
 
 	struct QueuedRegisterUpdate {
@@ -286,61 +297,56 @@ protected:
 	uint32	mRegisterUpdateHeadIdx;
 
 	ATEvent *mpRegisterUpdateEvent;
+	ATEvent *mpEventWSYNC;
 
-	bool	mbDMAPattern[114];
-	uint8	mDMAPFFetchPattern[114];
+	__declspec(align(16)) uint8	mDMAPattern[115 + 13];
 
-	uint8	mPFDataBuffer[114];
-	uint8	mPFCharBuffer[114];
+	__declspec(align(16)) uint8	mPFDataBuffer[114 + 14];
+	__declspec(align(16)) uint8	mPFCharBuffer[114 + 14];
 
-	uint8	mPFDecodeBuffer[228];
+	__declspec(align(16)) uint8	mPFDecodeBuffer[228 + 12];
 
 	DLHistoryEntry	mDLHistory[312];
 	uint8	mActivityMap[312][114];
 };
 
-VDFORCEINLINE bool ATAnticEmulator::Advance() {
-	bool busActive = false;
+VDFORCEINLINE uint8 ATAnticEmulator::Advance() {
+	uint8 fetchMode = mDMAPattern[++mX];
 
-	if (mWSYNCPending && !--mWSYNCPending) {
-		// The 6502 doesn't respond to RDY for write cycles, so if the next CPU cycle is a write,
-		// we cannot pull RDY yet.
-		if (mpConn->AnticIsNextCPUCycleWrite())
-			++mWSYNCPending;
-		else
-			mbWSYNCActive = true;
-	}
-
-	if (++mX >= 114)
-		AdvanceScanline();
-
-	busActive = mbDMAPattern[mX];
-	uint8 fetchMode = mDMAPFFetchPattern[mX];
-
-	if (fetchMode & 0x80) {
-		if (AdvanceSpecial())
-			busActive = true;
-
-		fetchMode = mDMAPFFetchPattern[mX];
-	}
+	if (fetchMode & 0x80)
+		fetchMode = AdvanceSpecial();
 
 	int xoff = mX;
-	switch(fetchMode & 0x7f) {
-	case 1:
-		mpPFDataWrite[xoff] = mpConn->AnticReadByteFast(mPFRowDMAPtrBase + ((mPFRowDMAPtrOffset++) & 0x0fff));
-		break;
-	case 2:
-		{
-			uint8 c = mpPFDataRead[xoff];
-			mPFCharBuffer[xoff - mPFDMAStart] = mpConn->AnticReadByteFast(mPFCharFetchPtr + ((uint32)(c & mPFCharMask) << 3));
+
+	if (fetchMode) {
+		switch(fetchMode) {
+		case 1:
+			break;
+		case 3:
+			mpPFDataWrite[xoff] = mpConn->AnticReadByteFast(mPFRowDMAPtrBase + ((mPFRowDMAPtrOffset++) & 0x0fff));
+			break;
+		case 5:
+			{
+				uint8 c = mpPFDataRead[xoff];
+				mpPFCharFetchPtr[xoff] = mpConn->AnticReadByteFast(mPFCharFetchPtr + ((uint32)(c & mPFCharMask) << 3));
+			}
+			break;
+		case 6:
+			mpPFDataWrite[xoff - 1] = mPhantomDMAData[xoff - 1];
+			++mPFRowDMAPtrOffset;
+			break;
+		case 8:
+			mpPFCharFetchPtr[xoff - 1] = mPhantomDMAData[xoff - 1];
+			break;
+		default:
+			VDNEVERHERE;
 		}
-		break;
 	}
 
-	busActive |= mbWSYNCActive;
+	uint8 busActive = fetchMode & 1;
+	busActive |= (uint8)mbWSYNCActive;
 
-	if (busActive)
-		++mHaltedCycles;
+	mHaltedCycles += busActive;
 
 	return busActive;
 }

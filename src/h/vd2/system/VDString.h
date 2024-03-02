@@ -736,6 +736,45 @@ public:
 		return p ? (size_type)((const value_type *)p - mpBegin) : npos;
 	}
 
+	int compare(const VDStringSpanW& s) const {
+		size_type l1 = (size_type)(mpEnd - mpBegin);
+		size_type l2 = (size_type)(s.mpEnd - s.mpBegin);
+		size_type lm = l1 < l2 ? l1 : l2;
+
+		for(size_type i = 0; i < lm; ++i) {
+			if (mpBegin[i] != s.mpBegin[i])
+				return mpBegin[i] < s.mpBegin[i] ? -1 : +1;
+		}
+
+		if (l1 == l2)
+			return 0;
+
+		return l1 < l2 ? -1 : +1;
+	}
+
+	int comparei(const wchar_t *s) const {
+		return comparei(VDStringSpanW(s));
+	}
+
+	int comparei(const VDStringSpanW& s) const {
+		size_type l1 = (size_type)(mpEnd - mpBegin);
+		size_type l2 = (size_type)(s.mpEnd - s.mpBegin);
+		size_type lm = l1 < l2 ? l1 : l2;
+
+		for(size_type i = 0; i < lm; ++i) {
+			wint_t c = towlower(mpBegin[i]);
+			wint_t d = towlower(s.mpBegin[i]);
+
+			if (c != d)
+				return c < d ? -1 : +1;
+		}
+
+		if (l1 == l2)
+			return 0;
+
+		return l1 < l2 ? -1 : +1;
+	}
+
 	// extensions
 	const VDStringSpanW subspan(size_type pos, size_type n) const {
 		size_type len = (size_type)(mpEnd - mpBegin);
@@ -750,6 +789,7 @@ public:
 	}
 
 protected:
+	friend class VDStringW;
 	friend bool operator==(const VDStringSpanW& x, const VDStringSpanW& y);
 	friend bool operator==(const VDStringSpanW& x, const wchar_t *y);
 
@@ -766,6 +806,22 @@ inline bool operator==(const wchar_t *x, const VDStringSpanW& y) { return y == x
 inline bool operator!=(const VDStringSpanW& x, const VDStringSpanW& y) { return !(x == y); }
 inline bool operator!=(const VDStringSpanW& x, const wchar_t *y) { return !(x == y); }
 inline bool operator!=(const wchar_t *x, const VDStringSpanW& y) { return !(y == x); }
+
+inline bool operator<(const VDStringSpanW& x, const VDStringSpanW& y) {
+	return x.compare(y) < 0;
+}
+
+inline bool operator>(const VDStringSpanW& x, const VDStringSpanW& y) {
+	return x.compare(y) > 0;
+}
+
+inline bool operator<=(const VDStringSpanW& x, const VDStringSpanW& y) {
+	return x.compare(y) <= 0;
+}
+
+inline bool operator>=(const VDStringSpanW& x, const VDStringSpanW& y) {
+	return x.compare(y) >= 0;
+}
 
 class VDStringRefW : public VDStringSpanW {
 public:
@@ -1013,11 +1069,11 @@ public:
 		*mpEnd = 0;
 	}
 
-	this_type& assign(const this_type& str) {
+	this_type& assign(const VDStringSpanW& str) {
 		return assign(str.mpBegin, str.mpEnd);
 	}
 
-	this_type& assign(const this_type& str, size_type pos, size_type n) {
+	this_type& assign(const VDStringSpanW& str, size_type pos, size_type n) {
 		size_type len = (size_type)(str.mpEnd - str.mpBegin);
 		VDASSERT(pos <= len);
 

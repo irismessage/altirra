@@ -5,7 +5,9 @@
 IATDiskFS *ATDiskMountImageDOS2(IATDiskImage *image, bool readOnly);
 IATDiskFS *ATDiskMountImageSDX2(IATDiskImage *image, bool readOnly);
 
-ATDiskFSException::ATDiskFSException(ATDiskFSError error) {
+ATDiskFSException::ATDiskFSException(ATDiskFSError error)
+	: mErrorCode(error)
+{
 	switch(error) {
 		case kATDiskFSError_InvalidFileName:
 			assign("The file name is not allowed by this file system.");
@@ -50,6 +52,18 @@ ATDiskFSException::ATDiskFSException(ATDiskFSError error) {
 		case kATDiskFSError_DirectoryNotEmpty:
 			assign("The directory is not empty.");
 			break;
+
+		case kATDiskFSError_UnsupportedCompressionMode:
+			assign("The file uses an unsupported compression mode.");
+			break;
+
+		case kATDiskFSError_DecompressionError:
+			assign("An error was encountered while decompressing the file.");
+			break;
+
+		case kATDiskFSError_CRCError:
+			assign("A CRC error was encountered while decompressing the file.");
+			break;
 	}
 }
 
@@ -59,7 +73,8 @@ IATDiskFS *ATDiskMountImage(IATDiskImage *image, bool readOnly) {
 	if (image->ReadVirtualSector(0, secbuf, 128) < 128)
 		return NULL;
 
-	if (secbuf[7] == 0x80)
+	// $80 is the signature byte for SDX SD/DD disks; $40 is for DD 512.
+	if (secbuf[7] == 0x80 || secbuf[7] == 0x40)
 		return ATDiskMountImageSDX2(image, readOnly);
 	else 
 		return ATDiskMountImageDOS2(image, readOnly);

@@ -41,9 +41,15 @@ const uint32 ATUIDialogROMImages::kPathControlIds[kATROMImageCount] = {
 	IDC_PATH_OSA,
 	IDC_PATH_OSB,
 	IDC_PATH_XL,
+	IDC_PATH_XEGS,
 	IDC_PATH_OTHER,
 	IDC_PATH_5200,
-	IDC_PATH_BASIC
+	IDC_PATH_BASIC,
+	IDC_PATH_GAME,
+	IDC_PATH_KMKJZIDE,
+	IDC_PATH_KMKJZIDEV2,
+	IDC_PATH_KMKJZIDEV2_SDX,
+	IDC_PATH_SIDE_SDX
 };
 
 ATUIDialogROMImages::ATUIDialogROMImages(ATSimulator& sim)
@@ -85,6 +91,10 @@ bool ATUIDialogROMImages::OnCommand(uint32 id, uint32 extcode) {
 			Browse(kATROMImage_XL);
 			break;
 
+		case IDC_BROWSE_XEGS:
+			Browse(kATROMImage_XEGS);
+			break;
+
 		case IDC_BROWSE_OTHER:
 			Browse(kATROMImage_Other);
 			break;
@@ -95,6 +105,26 @@ bool ATUIDialogROMImages::OnCommand(uint32 id, uint32 extcode) {
 
 		case IDC_BROWSE_BASIC:
 			Browse(kATROMImage_Basic);
+			break;
+
+		case IDC_BROWSE_GAME:
+			Browse(kATROMImage_Game);
+			break;
+
+		case IDC_BROWSE_KMKJZIDE:
+			Browse(kATROMImage_KMKJZIDE);
+			break;
+
+		case IDC_BROWSE_KMKJZIDEV2:
+			Browse(kATROMImage_KMKJZIDEV2);
+			break;
+
+		case IDC_BROWSE_KMKJZIDEV2_SDX:
+			Browse(kATROMImage_KMKJZIDEV2_SDX);
+			break;
+
+		case IDC_BROWSE_SIDE_SDX:
+			Browse(kATROMImage_SIDE_SDX);
 			break;
 	}
 

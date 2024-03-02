@@ -1,5 +1,5 @@
-//	Altirra - Atari 800/800XL emulator
-//	Copyright (C) 2009 Avery Lee
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2011 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -16,11 +16,29 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include <vd2/system/cpuaccel.h>
 #include "gtiarenderer.h"
 #include "gtiatables.h"
 #include "savestate.h"
 
 using namespace ATGTIA;
+
+#ifdef VD_CPU_X86
+extern "C" void atasm_gtia_render_lores_fast_ssse3(
+	void *dst,
+	const uint8 *src,
+	uint32 n,
+	const uint8 *color_table
+);
+
+extern "C" void atasm_gtia_render_mode8_fast_ssse3(
+	void *dst,
+	const uint8 *src,
+	const uint8 *lumasrc,
+	uint32 n,
+	const uint8 *color_table
+);
+#endif
 
 ATGTIARenderer::ATGTIARenderer()
 	: mpMergeBuffer(NULL)
@@ -31,6 +49,7 @@ ATGTIARenderer::ATGTIARenderer()
 	, mRCCount(0)
 	, mbHiresMode(false)
 	, mbVBlank(true)
+	, mbSECAMMode(false)
 	, mPRIOR(0)
 	, mpPriTable(NULL)
 	, mpColorTable(NULL)
@@ -62,10 +81,13 @@ void ATGTIARenderer::BeginScanline(uint8 *dst, const uint8 *mergeBuffer, const u
 	mpMergeBuffer = mergeBuffer;
 	mpAnticBuffer = anticBuffer;
 
+	VDASSERT(((uintptr)mpDst & 15) == 0);
+	VDASSERT(((uintptr)mpMergeBuffer & 7) == 0);
+
 	memset(mpDst, mpColorTable[kColorBAK], 68);
 }
 
-void ATGTIARenderer::RenderScanline(int xend, bool pmgraphics) {
+void ATGTIARenderer::RenderScanline(int xend, bool pmgraphics, bool mixed) {
 	int x1 = mX;
 
 	if (x1 >= xend)
@@ -167,11 +189,17 @@ void ATGTIARenderer::RenderScanline(int xend, bool pmgraphics) {
 				break;
 
 			case 0x40:
-				RenderMode9(x1, x2);
+				if (pmgraphics)
+					RenderMode9(x1, x2);
+				else
+					RenderMode9Fast(x1, x2);
 				break;
 
 			case 0x80:
-				RenderMode10(x1, x2);
+				if (pmgraphics || mixed)
+					RenderMode10(x1, x2);
+				else
+					RenderMode10Fast(x1, x2);
 				break;
 
 			case 0xC0:
@@ -388,6 +416,19 @@ void ATGTIARenderer::RenderLoresFast(int x1, int x2) {
 	uint8 *dst = mpDst + x1*2;
 	const uint8 *src = mpMergeBuffer + x1;
 
+#ifdef VD_CPU_X86
+	if (CPUGetEnabledExtensions() & CPUF_SUPPORTS_SSSE3) {
+		atasm_gtia_render_lores_fast_ssse3(
+			dst,
+			src,
+			x2 - x1,
+			colorTable
+		);
+
+		return;
+	}
+#endif
+
 	int w = x2 - x1;
 	int w4 = w >> 2;
 
@@ -459,6 +500,20 @@ void ATGTIARenderer::RenderMode8Fast(int x1, int x2) {
 	uint8 *dst = mpDst + x1*2;
 	const uint8 *src = mpMergeBuffer + x1;
 
+#ifdef VD_CPU_X86
+	if (CPUGetEnabledExtensions() & CPUF_SUPPORTS_SSSE3) {
+		atasm_gtia_render_mode8_fast_ssse3(
+			dst,
+			src,
+			lumasrc,
+			x2 - x1,
+			colorTable
+		);
+
+		return;
+	}
+#endif
+
 	const uint8 luma1 = mpColorTable[5] & 0xf;
 
 	const uint32 andtab[4]={
@@ -492,6 +547,7 @@ void ATGTIARenderer::RenderMode8Fast(int x1, int x2) {
 
 void ATGTIARenderer::RenderMode9(int x1, int x2) {
 	static const uint8 kPlayerMaskLookup[16]={0xff};
+	static const uint8 kPlayerMaskLookupSECAM[16]={0xfe};
 
 	const uint8 *__restrict colorTable = mpColorTable;
 	const uint8 *__restrict priTable = mpPriTable;
@@ -509,17 +565,96 @@ void ATGTIARenderer::RenderMode9(int x1, int x2) {
 
 	int w = x2 - x1;
 
-	while(w--) {
-		uint8 code0 = *src++ & (P0|P1|P2|P3|PF3);
-		uint8 pri0 = colorTable[priTable[code0]];
+	if (mbSECAMMode) {
+		while(w--) {
+			uint8 code0 = *src++ & (P0|P1|P2|P3|PF3);
+			uint8 pri0 = colorTable[priTable[code0]];
 
-		const uint8 *lumasrc = &mpAnticBuffer[x1++ & ~1];
-		uint8 l1 = (lumasrc[0] << 2) + lumasrc[1];
+			const uint8 *lumasrc = &mpAnticBuffer[x1++ & ~1];
+			uint8 l1 = (lumasrc[0] << 2) + lumasrc[1];
 
-		uint8 c4 = pri0 | (l1 & kPlayerMaskLookup[code0 >> 4]);
+			uint8 c4 = pri0 | (l1 & kPlayerMaskLookupSECAM[code0 >> 4]);
 
-		dst[0] = dst[1] = c4;
-		dst += 2;
+			dst[0] = dst[1] = c4;
+			dst += 2;
+		}
+	} else {
+		while(w--) {
+			uint8 code0 = *src++ & (P0|P1|P2|P3|PF3);
+			uint8 pri0 = colorTable[priTable[code0]];
+
+			const uint8 *lumasrc = &mpAnticBuffer[x1++ & ~1];
+			uint8 l1 = (lumasrc[0] << 2) + lumasrc[1];
+
+			uint8 c4 = pri0 | (l1 & kPlayerMaskLookup[code0 >> 4]);
+
+			dst[0] = dst[1] = c4;
+			dst += 2;
+		}
+	}
+}
+
+void ATGTIARenderer::RenderMode9Fast(int x1, int x2) {
+	const uint8 *__restrict colorTable = mpColorTable;
+	uint8 *__restrict dst = mpDst + x1*2;
+	const uint8 *__restrict anticSrc = mpAnticBuffer;
+
+	// 1 color / 16 luma mode
+	//
+	// In this mode, PF0-PF3 are forced off, so no playfield collisions ever register
+	// and the playfield always registers as the background color. Luminance is
+	// ORed in after the priority logic, but its substitution is gated by all P/M bits
+	// and so it does not affect players or missiles. It does, however, affect PF3 if
+	// the fifth player is enabled.
+
+	int w = x2 - x1;
+	if (!w)
+		return;
+
+	const uint8 pfbak = colorTable[kColorBAK];
+
+	if (mbSECAMMode) {
+		while(w--) {
+			const uint8 *lumasrc = &anticSrc[x1++ & ~1];
+			uint8 l1 = (lumasrc[0] << 2) + lumasrc[1];
+
+			uint8 c4 = pfbak | (l1 & 0xfe);
+
+			dst[0] = dst[1] = c4;
+			dst += 2;
+		}
+	} else {
+		const uint8 *lumasrc = &anticSrc[x1];
+
+		if (x1 & 1) {
+			uint8 l1 = (lumasrc[-1] << 2) + lumasrc[0];
+
+			uint8 c4 = pfbak | l1;
+
+			dst[0] = dst[1] = c4;
+			dst += 2;
+			--w;
+			++lumasrc;
+		}
+
+		int w2 = w >> 1;
+		while(w2--) {
+			uint8 l1 = (lumasrc[0] << 2) + lumasrc[1];
+			lumasrc += 2;
+
+			uint8 c4 = pfbak | l1;
+
+			dst[0] = dst[1] = dst[2] = dst[3] = c4;
+			dst += 4;
+		}
+
+		if (w & 1) {
+			uint8 l1 = (lumasrc[0] << 2) + lumasrc[1];
+
+			uint8 c4 = pfbak | l1;
+
+			dst[0] = dst[1] = c4;
+		}
 	}
 }
 
@@ -590,8 +725,8 @@ void ATGTIARenderer::RenderMode10(int x1, int x2) {
 	const uint8 *__restrict colorTable = mpColorTable;
 	const uint8 *__restrict priTable = mpPriTable;
 
-	uint8 *dst = mpDst + x1*2;
-	const uint8 *src = mpMergeBuffer + x1;
+	uint8 *__restrict dst = mpDst + x1*2;
+	const uint8 *__restrict src = mpMergeBuffer + x1;
 
 	// 9 colors
 	//
@@ -619,16 +754,117 @@ void ATGTIARenderer::RenderMode10(int x1, int x2) {
 		PF3
 	};
 
+	// If the second pixel sent on the ANx bus is background, it prevents the playfields
+	// from activating.
+	static const uint8 kPFMask[16]={
+		0xF0, 0xFF, 0xFF, 0xFF,
+		0xFF, 0xFF, 0xFF, 0xFF,
+		0xFF, 0xFF, 0xFF, 0xFF,
+		0xFF, 0xFF, 0xFF, 0xFF,
+	};
+
 	int w = x2 - x1;
+	if (!w)
+		return;
 
-	while(w--) {
-		const uint8 *lumasrc = &mpAnticBuffer[(x1++ - 1) & ~1];
+	const uint8 *__restrict lumasrc = &mpAnticBuffer[(x1 - 1) & ~1];
+	if (!(x1 & 1)) {
 		uint8 l1 = lumasrc[0]*4 + lumasrc[1];
+		lumasrc += 2;
 
-		uint8 c4 = kMode10Lookup[l1];
+		uint8 c4 = kMode10Lookup[l1] & kPFMask[*src & 15];
 
 		dst[0] = dst[1] = colorTable[priTable[c4 | (*src++ & 0xf8)]];
 		dst += 2;
+	}
+
+	int w2 = w >> 1;
+	while(w2--) {
+		uint8 l1 = lumasrc[0]*4 + lumasrc[1];
+		lumasrc += 2;
+
+		uint8 c4 = kMode10Lookup[l1] & kPFMask[src[1] & 15];
+
+		dst[0] = dst[1] = colorTable[priTable[c4 | (src[0] & 0xf8)]];
+		dst[2] = dst[3] = colorTable[priTable[c4 | (src[1] & 0xf8)]];
+		dst += 4;
+		src += 2;
+	}
+
+	if (w & 1) {
+		uint8 l1 = lumasrc[0]*4 + lumasrc[1];
+
+		uint8 c4 = kMode10Lookup[l1] & kPFMask[src[1] & 15];
+
+		dst[0] = dst[1] = colorTable[priTable[c4 | (*src & 0xf8)]];
+	}
+}
+
+void ATGTIARenderer::RenderMode10Fast(int x1, int x2) {
+	const uint8 *__restrict colorTable = mpColorTable;
+	uint8 *__restrict dst = mpDst + x1*2;
+
+	// 9 colors
+	//
+	// This mode works by using AN0-AN1 to trigger either the playfield or the player/missle
+	// bits going into the priority logic. This means that when player colors are used, the
+	// playfield takes the same priority as that player. Playfield collisions are triggered
+	// only for PF0-PF3; P0-P3 colors coming from the playfield do not trigger collisions.
+
+	const uint8 colorLookup[16]={
+		colorTable[kColorP0],
+		colorTable[kColorP1],
+		colorTable[kColorP2],
+		colorTable[kColorP3],
+		colorTable[kColorPF0],
+		colorTable[kColorPF1],
+		colorTable[kColorPF2],
+		colorTable[kColorPF3],
+		colorTable[kColorBAK],
+		colorTable[kColorBAK],
+		colorTable[kColorBAK],
+		colorTable[kColorBAK],
+		colorTable[kColorPF0],
+		colorTable[kColorPF1],
+		colorTable[kColorPF2],
+		colorTable[kColorPF3]
+	};
+
+	const uint8 *__restrict lumasrc = &mpAnticBuffer[(x1 - 1) & ~1];
+
+	int w = x2 - x1;
+	if (!w)
+		return;
+
+	if (!(x1 & 1)) {
+		uint8 l1 = lumasrc[0]*4 + lumasrc[1];
+		lumasrc += 2;
+		uint8 c4 = colorLookup[l1];
+
+		dst[0] = dst[1] = c4;
+		dst += 2;
+		--w;
+	}
+
+	int w2 = w >> 1;
+	while(w2--) {
+		uint8 l1 = lumasrc[0]*4 + lumasrc[1];
+		lumasrc += 2;
+
+		uint8 c4 = colorLookup[l1];
+
+		dst[0] = dst[1] = dst[2] = dst[3] = c4;
+		dst += 4;
+	}
+
+	if (w & 1) {
+		uint8 l1 = lumasrc[0]*4 + lumasrc[1];
+		lumasrc += 2;
+		uint8 c4 = colorLookup[l1];
+
+		dst[0] = dst[1] = c4;
+		dst += 2;
+		--w;
 	}
 }
 

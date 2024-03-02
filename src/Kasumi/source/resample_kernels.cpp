@@ -61,6 +61,24 @@ void VDResamplerAxis::Compute(sint32 count, sint32 u0, sint32 w, sint32 kernel_w
 	dx_postcopy = 0;
 	dx_dualclip	= 0;
 
+	if (dudx == 0) {
+		if (u < -du_kern)
+			dx_precopy = w;
+		else if (u >= u_limit)
+			dx_postcopy = w;
+		else if (u < 0) {
+			if (u + du_kern < u_limit)
+				dx_preclip = w;
+			else
+				dx_dualclip = w;
+		} else if (u + du_kern >= u_limit)
+			dx_postclip = w;
+		else
+			dx_active = w;
+
+		return;
+	}
+
 	sint32 dx_temp = dx;
 	sint32 u_start = u;
 

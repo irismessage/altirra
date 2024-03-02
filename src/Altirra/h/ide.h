@@ -24,6 +24,7 @@
 
 class ATScheduler;
 class IATUIRenderer;
+class ATIDEPhysicalDisk;
 
 class ATIDEEmulator {
 	ATIDEEmulator(const ATIDEEmulator&);
@@ -44,7 +45,14 @@ public:
 	uint32 GetHeadCount() const { return mHeadCount; }
 	uint32 GetSectorsPerTrack() const { return mSectorsPerTrack; }
 
+	void SetReset(bool asserted);
+
 	void ColdReset();
+
+	void DumpStatus() const;
+
+	uint32 ReadDataLatch(bool advance);
+	void  WriteDataLatch(uint8 lo, uint8 hi);
 
 	uint8 DebugReadByte(uint8 address);
 	uint8 ReadByte(uint8 address);
@@ -53,6 +61,7 @@ public:
 protected:
 	struct DecodedCHS;
 
+	void ResetDevice();
 	void UpdateStatus();
 	void StartCommand(uint8 cmd);
 	void BeginReadTransfer(uint32 bytes);
@@ -61,6 +70,8 @@ protected:
 	void AbortCommand(uint8 cmd);
 	bool ReadLBA(uint32& lba);
 	void WriteLBA(uint32 lba);
+	void ResetCHSTranslation();
+	void AdjustCHSTranslation();
 	DecodedCHS DecodeCHS(uint32 lba);
 
 	union {
@@ -87,6 +98,9 @@ protected:
 	uint32 mSectorsPerTrack;
 	uint32 mHeadCount;
 	uint32 mCylinderCount;
+	uint32 mCurrentSectorsPerTrack;
+	uint32 mCurrentHeadCount;
+	uint32 mCurrentCylinderCount;
 	uint32 mIODelaySetting;
 	uint32 mTransferIndex;
 	uint32 mTransferLength;
@@ -99,9 +113,11 @@ protected:
 	bool mbTransfer16Bit;
 	bool mbWriteEnabled;
 	bool mbFastDevice;
+	bool mbReset;
 
 	vdfastvector<uint8> mTransferBuffer;
 
+	ATIDEPhysicalDisk *mpPhysDisk;
 	VDFile mFile;
 	VDStringW mPath;
 };

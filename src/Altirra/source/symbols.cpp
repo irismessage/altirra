@@ -54,7 +54,7 @@ public:
 	bool	LookupSymbol(uint32 moduleOffset, uint32 flags, ATSymbol& symbol);
 	sint32	LookupSymbol(const char *s);
 	const wchar_t *GetFileName(uint16 fileid);
-	uint16	GetFileId(const wchar_t *fileName);
+	uint16	GetFileId(const wchar_t *fileName, int *matchQuality);
 	void	GetLines(uint16 fileId, vdfastvector<ATSourceLineInfo>& lines);
 	bool	GetLineForOffset(uint32 moduleOffset, bool searchUp, ATSourceLineInfo& lineInfo);
 	bool	GetOffsetForLine(const ATSourceLineInfo& lineInfo, uint32& moduleOffset);
@@ -69,6 +69,8 @@ protected:
 	void LoadLabels(VDTextStream& ifile);
 	void LoadMADSListing(VDTextStream& ifile);
 	void LoadKernelListing(VDTextStream& ifile);
+
+	void CanonicalizeFileName(VDStringW& s);
 
 	struct Symbol {
 		uint32	mNameOffset;
@@ -120,7 +122,8 @@ protected:
 	typedef vdfastvector<Symbol> Symbols;
 	Symbols					mSymbols;
 	vdfastvector<char>		mNameBytes;
-	vdfastvector<const wchar_t *>	mFileNames;
+	vdfastvector<wchar_t>	mWideNameBytes;
+	vdfastvector<uint32>	mFileNameOffsets;
 
 	typedef vdfastvector<Directive> Directives;
 	Directives	mDirectives;
@@ -139,10 +142,6 @@ ATSymbolStore::ATSymbolStore()
 }
 
 ATSymbolStore::~ATSymbolStore() {
-	while(!mFileNames.empty()) {
-		delete mFileNames.back();
-		mFileNames.pop_back();
-	}
 }
 
 void ATSymbolStore::Load(const wchar_t *filename) {
@@ -153,18 +152,20 @@ void ATSymbolStore::Load(const wchar_t *filename) {
 
 		const char *line = ts.GetNextLine();
 
-		if (!strncmp(line, "mads ", 5) || !strncmp(line, "xasm ", 5)) {
-			LoadMADSListing(ts);
-			return;
-		}
+		if (line) {
+			if (!strncmp(line, "mads ", 5) || !strncmp(line, "xasm ", 5)) {
+				LoadMADSListing(ts);
+				return;
+			}
 
-		if (!strncmp(line, "Altirra symbol file", 19)) {
-			LoadSymbols(ts);
-			return;
-		}
+			if (!strncmp(line, "Altirra symbol file", 19)) {
+				LoadSymbols(ts);
+				return;
+			}
 
-		if (!strncmp(line, "ca65 ", 5))
-			throw MyError("CA65 listings are not supported.");
+			if (!strncmp(line, "ca65 ", 5))
+				throw MyError("CA65 listings are not supported.");
+		}
 	}
 
 	fs.Seek(0);
@@ -228,19 +229,20 @@ void ATSymbolStore::AddReadWriteRegisterSymbol(uint32 offset, const char *writen
 
 uint16 ATSymbolStore::AddFileName(const wchar_t *filename) {
 	VDStringW tempName(filename);
-	VDStringW::size_type pos = 0;
-	while((pos = tempName.find(L'/', pos)) != VDStringW::npos) {
-		tempName[pos] = L'\\';
-		++pos;
-	}
 
-	size_t n = mFileNames.size();
+	CanonicalizeFileName(tempName);
+
+	const wchar_t *fnbase = mWideNameBytes.data();
+	size_t n = mFileNameOffsets.size();
 	for(size_t i=0; i<n; ++i)
-		if (!_wcsicmp(mFileNames[i], tempName.c_str()))
+		if (!vdwcsicmp(fnbase + mFileNameOffsets[i], tempName.c_str()))
 			return i+1;
 
-	mFileNames.push_back(_wcsdup(tempName.c_str()));
-	return (uint16)mFileNames.size();
+	mFileNameOffsets.push_back(mWideNameBytes.size());
+
+	const wchar_t *pTempName = tempName.c_str();
+	mWideNameBytes.insert(mWideNameBytes.end(), pTempName, pTempName + wcslen(pTempName) + 1);
+	return (uint16)mFileNameOffsets.size();
 }
 
 void ATSymbolStore::AddSourceLine(uint16 fileId, uint16 line, uint32 moduleOffset) {
@@ -263,7 +265,7 @@ bool ATSymbolStore::LookupSymbol(uint32 moduleOffset, uint32 flags, ATSymbol& sy
 		const Symbol& sym = *it;
 
 		if (sym.mFlags & flags) {
-			if (sym.mOffset && (moduleOffset - sym.mOffset) >= sym.mSize)
+			if (sym.mSize && (moduleOffset - sym.mOffset) >= sym.mSize)
 				return false;
 
 			symout.mpName	= mNameBytes.data() + sym.mNameOffset;
@@ -295,44 +297,60 @@ const wchar_t *ATSymbolStore::GetFileName(uint16 fileid) {
 		return NULL;
 
 	--fileid;
-	if (fileid >= mFileNames.size())
+	if (fileid >= mFileNameOffsets.size())
 		return NULL;
 
-	return mFileNames[fileid];
+	return mWideNameBytes.data() + mFileNameOffsets[fileid];
 }
 
-uint16 ATSymbolStore::GetFileId(const wchar_t *fileName) {
+uint16 ATSymbolStore::GetFileId(const wchar_t *fileName, int *matchQuality) {
 	VDStringW tempName(fileName);
-	VDStringW::size_type pos = 0;
-	while((pos = tempName.find(L'/', pos)) != VDStringW::npos) {
-		tempName[pos] = L'\\';
-		++pos;
-	}
 
-	bool fullyQualified = (tempName.find(L'\\') != VDStringW::npos || tempName.find(L':') != VDStringW::npos);
+	CanonicalizeFileName(tempName);
 
 	const wchar_t *fullPath = tempName.c_str();
 	size_t l1 = wcslen(fullPath);
 
-	size_t n = mFileNames.size();
+	size_t n = mFileNameOffsets.size();
+	int bestq = 0;
+	uint16 bestidx = 0;
+
 	for(size_t i=0; i<n; ++i) {
-		const wchar_t *fn = mFileNames[i];
+		const wchar_t *fn = mWideNameBytes.data() + mFileNameOffsets[i];
 
-		if (fullyQualified && wcschr(fn, L':')) {
-			if (!_wcsicmp(fn, fullPath))
-				return (uint16)(i+1);
-		} else {
-			size_t l2 = wcslen(fn);
-			size_t lm = l1 > l2 ? l2 : l1;
+		size_t l2 = wcslen(fn);
+		size_t lm = l1 > l2 ? l2 : l1;
 
-			if (!_wcsnicmp(fn+l2-lm, fullPath+l1-lm, lm)) {
-				if ((l1 <= lm || wcschr(L"\\/:", fullPath[l1-lm-1])) && (l2 <= lm || wcschr(L"\\/:", fn[l2-lm-1])))
-					return (uint16)(i+1);
+		// check for partial match length
+		for(size_t j=1; j<=lm; ++j) {
+			if (towlower(fullPath[l1 - j]) != towlower(fn[l2 - j]))
+				break;
+
+			if ((j == l1 || fullPath[l1 - j - 1] == L'\\') &&
+				(j == l2 || fn[l2 - j - 1] == L'\\'))
+			{
+				// We factor two things into the quality score, in priority order:
+				//
+				// 1) How long of a suffix was matched.
+				// 2) How short the original path was.
+				//
+				// #2 is a hack, but makes the debugger prefer foo.s over f1/foo.s
+				// and f2/foo.s.
+
+				int q = j * 10000 - l2;
+
+				if (q > bestq) {
+					bestq = q;
+					bestidx = i + 1;
+				}
 			}
 		}
 	}
 
-	return 0;
+	if (matchQuality)
+		*matchQuality = bestq;
+
+	return bestidx;
 }
 
 void ATSymbolStore::GetLines(uint16 matchFileId, vdfastvector<ATSourceLineInfo>& lines) {
@@ -374,9 +392,9 @@ bool ATSymbolStore::GetLineForOffset(uint32 moduleOffset, bool searchUp, ATSourc
 bool ATSymbolStore::GetOffsetForLine(const ATSourceLineInfo& lineInfo, uint32& moduleOffset) {
 	uint32 key = ((uint32)lineInfo.mFileId << 16) + lineInfo.mLine;
 
-	OffsetToLine::const_iterator it(mOffsetToLine.find(key));
+	OffsetToLine::const_iterator it(mLineToOffset.find(key));
 
-	if (it == mOffsetToLine.end())
+	if (it == mLineToOffset.end())
 		return false;
 
 	moduleOffset = it->second;
@@ -674,6 +692,7 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 
 				// 105 1088 8D ...
 				// 131 2000-201F> 00 ...
+				//   4 FFFF> 2000-2006> EA              nop
 				if (7 == sscanf(line, "%c%5d%c%4x%c%2x%c", &space0, &origline, &space1, &address, &space2, &op, &space3)
 					&& space0 == ' '
 					&& space1 == ' '
@@ -686,6 +705,14 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 					&& space1 == ' '
 					&& space2 == ' '
 					&& (space3 == ' ' || space3 == '\t'))
+				{
+					valid = true;
+				} else if (9 == sscanf(line, "%c%5d%cFFFF>%c%4x-%4x>%c%2x%c", &space0, &origline, &space1, &space2, &address, &address2, &space3, &op, &space4)
+					&& space0 == ' '
+					&& space1 == ' '
+					&& space2 == ' '
+					&& space3 == ' '
+					&& (space4 == ' ' || space4 == '\t'))
 				{
 					valid = true;
 				} else {
@@ -924,6 +951,27 @@ fail:
 	}
 }
 
+void ATSymbolStore::CanonicalizeFileName(VDStringW& s) {
+	VDStringW::size_type pos = 0;
+	while((pos = s.find(L'/', pos)) != VDStringW::npos) {
+		s[pos] = L'\\';
+		++pos;
+	}
+
+	// strip duplicate backslashes, except for front (may be UNC path)
+	pos = 0;
+	while(pos < s.size() && s[pos] == L'\\')
+		++pos;
+
+	++pos;
+	while(pos < s.size()) {
+		if (s[pos - 1] == L'\\' && s[pos] == L'\\')
+			s.erase(pos);
+		else
+			++pos;
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
@@ -932,17 +980,26 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->Init(0x0000, 0x0400);
 
 	using namespace ATKernelSymbols;
+	symstore->AddSymbol(CASINI, "CASINI", 2);
 	symstore->AddSymbol(WARMST, "WARMST", 1);
-	symstore->AddSymbol(DOSVEC, "DOSVEC", 1);
-	symstore->AddSymbol(DOSINI, "DOSINI", 1);
+	symstore->AddSymbol(DOSVEC, "DOSVEC", 2);
+	symstore->AddSymbol(DOSINI, "DOSINI", 2);
 	symstore->AddSymbol(POKMSK, "POKMSK", 1);
 	symstore->AddSymbol(BRKKEY, "BRKKEY", 1);
-	symstore->AddSymbol(RTCLOK, "RTCLOK", 1);
+	symstore->AddSymbol(RTCLOK, "RTCLOK", 3);
+	symstore->AddSymbol(ICHIDZ, "ICHIDZ", 1);
 	symstore->AddSymbol(ICDNOZ, "ICDNOZ", 1);
+	symstore->AddSymbol(ICCOMZ, "ICCOMZ", 1);
+	symstore->AddSymbol(ICSTAZ, "ICSTAZ", 1);
 	symstore->AddSymbol(ICBALZ, "ICBALZ", 1);
 	symstore->AddSymbol(ICBAHZ, "ICBAHZ", 1);
+	symstore->AddSymbol(ICBLLZ, "ICBLLZ", 1);
+	symstore->AddSymbol(ICBLHZ, "ICBLHZ", 1);
 	symstore->AddSymbol(ICAX1Z, "ICAX1Z", 1);
 	symstore->AddSymbol(ICAX2Z, "ICAX2Z", 1);
+	symstore->AddSymbol(ICAX3Z, "ICAX3Z", 1);
+	symstore->AddSymbol(ICAX4Z, "ICAX4Z", 1);
+	symstore->AddSymbol(ICAX5Z, "ICAX5Z", 1);
 	symstore->AddSymbol(STATUS, "STATUS", 1);
 	symstore->AddSymbol(CHKSUM, "CHKSUM", 1);
 	symstore->AddSymbol(BUFRLO, "BUFRLO", 1);
@@ -972,25 +1029,25 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbol(CIX, "CIX", 1);
 	symstore->AddSymbol(INBUFF, "INBUFF", 1);
 	symstore->AddSymbol(FLPTR, "FLPTR", 1);
-	symstore->AddSymbol(VDSLST, "VDSLST", 1);
-	symstore->AddSymbol(VPRCED, "VPRCED", 1);
-	symstore->AddSymbol(VINTER, "VINTER", 1);
-	symstore->AddSymbol(VBREAK, "VBREAK", 1);
-	symstore->AddSymbol(VKEYBD, "VKEYBD", 1);
-	symstore->AddSymbol(VSERIN, "VSERIN", 1);
-	symstore->AddSymbol(VSEROR, "VSEROR", 1);
-	symstore->AddSymbol(VSEROC, "VSEROC", 1);
-	symstore->AddSymbol(VTIMR1, "VTIMR1", 1);
-	symstore->AddSymbol(VTIMR2, "VTIMR2", 1);
-	symstore->AddSymbol(VTIMR4, "VTIMR4", 1);
-	symstore->AddSymbol(VIMIRQ, "VIMIRQ", 1);
-	symstore->AddSymbol(CDTMV1, "CDTMV1", 1);
-	symstore->AddSymbol(CDTMV2, "CDTMV2", 1);
-	symstore->AddSymbol(CDTMV3, "CDTMV3", 1);
-	symstore->AddSymbol(CDTMV4, "CDTMV4", 1);
-	symstore->AddSymbol(CDTMV5, "CDTMV5", 1);
-	symstore->AddSymbol(VVBLKI, "VVBLKI", 1);
-	symstore->AddSymbol(VVBLKD, "VVBLKD", 1);
+	symstore->AddSymbol(VDSLST, "VDSLST", 2);
+	symstore->AddSymbol(VPRCED, "VPRCED", 2);
+	symstore->AddSymbol(VINTER, "VINTER", 2);
+	symstore->AddSymbol(VBREAK, "VBREAK", 2);
+	symstore->AddSymbol(VKEYBD, "VKEYBD", 2);
+	symstore->AddSymbol(VSERIN, "VSERIN", 2);
+	symstore->AddSymbol(VSEROR, "VSEROR", 2);
+	symstore->AddSymbol(VSEROC, "VSEROC", 2);
+	symstore->AddSymbol(VTIMR1, "VTIMR1", 2);
+	symstore->AddSymbol(VTIMR2, "VTIMR2", 2);
+	symstore->AddSymbol(VTIMR4, "VTIMR4", 2);
+	symstore->AddSymbol(VIMIRQ, "VIMIRQ", 2);
+	symstore->AddSymbol(CDTMV1, "CDTMV1", 2);
+	symstore->AddSymbol(CDTMV2, "CDTMV2", 2);
+	symstore->AddSymbol(CDTMV3, "CDTMV3", 2);
+	symstore->AddSymbol(CDTMV4, "CDTMV4", 2);
+	symstore->AddSymbol(CDTMV5, "CDTMV5", 2);
+	symstore->AddSymbol(VVBLKI, "VVBLKI", 2);
+	symstore->AddSymbol(VVBLKD, "VVBLKD", 2);
 	symstore->AddSymbol(CDTMA1, "CDTMA1", 1);
 	symstore->AddSymbol(CDTMA2, "CDTMA2", 1);
 	symstore->AddSymbol(CDTMF3, "CDTMF3", 1);
@@ -1001,10 +1058,22 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbol(SDLSTH, "SDLSTH", 1);
 	symstore->AddSymbol(COLDST, "COLDST", 1);
 	symstore->AddSymbol(GPRIOR, "GPRIOR", 1);
+	symstore->AddSymbol(PADDL0, "PADDL0", 1);
+	symstore->AddSymbol(PADDL1, "PADDL1", 1);
+	symstore->AddSymbol(PADDL2, "PADDL2", 1);
+	symstore->AddSymbol(PADDL3, "PADDL3", 1);
+	symstore->AddSymbol(PADDL4, "PADDL4", 1);
+	symstore->AddSymbol(PADDL5, "PADDL5", 1);
+	symstore->AddSymbol(PADDL6, "PADDL6", 1);
+	symstore->AddSymbol(PADDL7, "PADDL7", 1);
 	symstore->AddSymbol(STICK0, "STICK0", 1);
 	symstore->AddSymbol(STICK1, "STICK1", 1);
 	symstore->AddSymbol(STICK2, "STICK2", 1);
 	symstore->AddSymbol(STICK3, "STICK3", 1);
+	symstore->AddSymbol(PTRIG0, "PTRIG0", 1);
+	symstore->AddSymbol(PTRIG1, "PTRIG1", 1);
+	symstore->AddSymbol(PTRIG2, "PTRIG2", 1);
+	symstore->AddSymbol(PTRIG3, "PTRIG3", 1);
 	symstore->AddSymbol(STRIG0, "STRIG0", 1);
 	symstore->AddSymbol(STRIG1, "STRIG1", 1);
 	symstore->AddSymbol(STRIG2, "STRIG2", 1);
@@ -1021,16 +1090,42 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbol(COLOR4, "COLOR4", 1);
 	symstore->AddSymbol(MEMTOP, "MEMTOP", 1);
 	symstore->AddSymbol(MEMLO, "MEMLO", 1);
-	symstore->AddSymbol(CHACT, "CHACT", 1);
+	symstore->AddSymbol(CRSINH, "CRSINH", 1);
 	symstore->AddSymbol(KEYDEL, "KEYDEL", 1);
 	symstore->AddSymbol(CH1, "CH1", 1);
+	symstore->AddSymbol(CHACT, "CHACT", 1);
 	symstore->AddSymbol(CHBAS, "CHBAS", 1);
+	symstore->AddSymbol(ATACHR, "ATACHR", 1);
 	symstore->AddSymbol(CH, "CH", 1);
+	symstore->AddSymbol(FILDAT, "FILDAT", 1);
+	symstore->AddSymbol(DSPFLG, "DSPFLG", 1);
 	symstore->AddSymbol(DDEVIC, "DDEVIC", 1);
 	symstore->AddSymbol(DUNIT, "DUNIT", 1);
+	symstore->AddSymbol(DCOMND, "DCOMND", 1);
+	symstore->AddSymbol(DSTATS, "DSTATS", 1);
+	symstore->AddSymbol(DBUFLO, "DBUFLO", 1);
+	symstore->AddSymbol(DBUFHI, "DBUFHI", 1);
+	symstore->AddSymbol(DTIMLO, "DTIMLO", 1);
+	symstore->AddSymbol(DBYTLO, "DBYTLO", 1);
+	symstore->AddSymbol(DBYTHI, "DBYTHI", 1);
+	symstore->AddSymbol(DAUX1, "DAUX1", 1);
+	symstore->AddSymbol(DAUX2, "DAUX2", 1);
+	symstore->AddSymbol(TIMER1, "TIMER1", 2);
+	symstore->AddSymbol(TIMER2, "TIMER2", 2);
 	symstore->AddSymbol(TIMFLG, "TIMFLG", 1);
-	symstore->AddSymbol(HATABS, "HATABS", 1);
-	symstore->AddSymbol(LBUFF, "LBUFF", 1);
+	symstore->AddSymbol(STACKP, "STACKP", 1);
+	symstore->AddSymbol(HATABS, "HATABS", 38);
+	symstore->AddSymbol(ICHID, "ICHID", 1);
+	symstore->AddSymbol(ICDNO, "ICDNO", 1);
+	symstore->AddSymbol(ICCMD, "ICCMD", 1);
+	symstore->AddSymbol(ICSTA, "ICSTA", 1);
+	symstore->AddSymbol(ICBAL, "ICBAL", 1);
+	symstore->AddSymbol(ICBAH, "ICBAH", 1);
+	symstore->AddSymbol(ICPTL, "ICPTL", 1);
+	symstore->AddSymbol(ICPTH, "ICPTH", 1);
+	symstore->AddSymbol(ICBLL, "ICBLL", 1);
+	symstore->AddSymbol(ICAX1, "ICAX1", 1);
+	symstore->AddSymbol(LBUFF, "LBUFF", 128);
 
 	*ppStore = symstore.release();
 	return true;
@@ -1059,20 +1154,20 @@ bool ATCreateDefaultVariableSymbolStore5200(IATSymbolStore **ppStore) {
 	symstore->AddSymbol(COLOR3, "COLOR3", 1);
 	symstore->AddSymbol(COLOR4, "COLOR4", 1);
 
-	symstore->AddSymbol(VIMIRQ, "VIMIRQ", 1);
-	symstore->AddSymbol(VVBLKI, "VVBLKI", 1);
-	symstore->AddSymbol(VVBLKD, "VVBLKD", 1);
-	symstore->AddSymbol(VDSLST, "VDSLST", 1);
-	symstore->AddSymbol(VTRIGR, "VTRIGR", 1);
-	symstore->AddSymbol(VBRKOP, "VBRKOP", 1);
-	symstore->AddSymbol(VKYBDI, "VKYBDI", 1);
-	symstore->AddSymbol(VKYBDF, "VKYBDF", 1);
-	symstore->AddSymbol(VSERIN, "VSERIN", 1);
-	symstore->AddSymbol(VSEROR, "VSEROR", 1);
-	symstore->AddSymbol(VSEROC, "VSEROC", 1);
-	symstore->AddSymbol(VTIMR1, "VTIMR1", 1);
-	symstore->AddSymbol(VTIMR2, "VTIMR2", 1);
-	symstore->AddSymbol(VTIMR4, "VTIMR4", 1);
+	symstore->AddSymbol(VIMIRQ, "VIMIRQ", 2);
+	symstore->AddSymbol(VVBLKI, "VVBLKI", 2);
+	symstore->AddSymbol(VVBLKD, "VVBLKD", 2);
+	symstore->AddSymbol(VDSLST, "VDSLST", 2);
+	symstore->AddSymbol(VTRIGR, "VTRIGR", 2);
+	symstore->AddSymbol(VBRKOP, "VBRKOP", 2);
+	symstore->AddSymbol(VKYBDI, "VKYBDI", 2);
+	symstore->AddSymbol(VKYBDF, "VKYBDF", 2);
+	symstore->AddSymbol(VSERIN, "VSERIN", 2);
+	symstore->AddSymbol(VSEROR, "VSEROR", 2);
+	symstore->AddSymbol(VSEROC, "VSEROC", 2);
+	symstore->AddSymbol(VTIMR1, "VTIMR1", 2);
+	symstore->AddSymbol(VTIMR2, "VTIMR2", 2);
+	symstore->AddSymbol(VTIMR4, "VTIMR4", 2);
 
 	*ppStore = symstore.release();
 	return true;
@@ -1194,10 +1289,10 @@ namespace {
 	};
 
 	static const HardwareSymbol kPIASymbols[]={
-		{ 0x00, "PORTA" },
-		{ 0x01, "PORTB" },
-		{ 0x02, "PACTL" },
-		{ 0x03, "PBCTL" },
+		{ 0x00, "PORTA", "PORTA" },
+		{ 0x01, "PORTB", "PORTB" },
+		{ 0x02, "PACTL", "PACTL" },
+		{ 0x03, "PBCTL", "PBCTL" },
 	};
 
 	static const HardwareSymbol kANTICSymbols[]={

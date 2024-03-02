@@ -130,6 +130,7 @@ public:
 
 	ATContainerDockingPane *GetParentPane() const { return mpDockParent; }
 	ATFrameWindow *GetContent() const { return mpContent; }
+	ATFrameWindow *GetAnyContent() const;
 
 	ATContainerDockingPane *GetCenterPane() const;
 
@@ -192,6 +193,7 @@ public:
 	void *AsInterface(uint32 id);
 
 	VDGUIHandle Create(int x, int y, int cx, int cy, VDGUIHandle parent, bool visible);
+	VDGUIHandle Create(ATOM wndClass, int x, int y, int cx, int cy, VDGUIHandle parent, bool visible);
 	void Destroy();
 
 	void Clear();
@@ -280,8 +282,8 @@ public:
 	bool GetIdealSize(vdsize32& sz);
 	void RecalcFrame();
 
-	VDGUIHandle Create(const char *title, int x, int y, int cx, int cy, VDGUIHandle parent);
-	VDGUIHandle CreateChild(const char *title, int x, int y, int cx, int cy, VDGUIHandle parent);
+	VDGUIHandle Create(const wchar_t *title, int x, int y, int cx, int cy, VDGUIHandle parent);
+	VDGUIHandle CreateChild(const wchar_t *title, int x, int y, int cx, int cy, VDGUIHandle parent);
 
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
@@ -312,21 +314,23 @@ protected:
 	ATContainerWindow *mpContainer;
 	vdrefptr<ATContainerWindow> mpDragContainer;
 
-	VDStringA	mTitle;
+	VDStringW	mTitle;
 };
 
 class ATUIPane : public VDShaderEditorBaseWindow {
 public:
-	ATUIPane(uint32 paneId, const char *name);
+	ATUIPane(uint32 paneId, const wchar_t *name);
 	~ATUIPane();
 
 	uint32 GetUIPaneId() const { return mPaneId; }
-	const char *GetUIPaneName() const { return mpName; }
+	const wchar_t *GetUIPaneName() const { return mpName; }
 	int GetPreferredDockCode() const { return mPreferredDockCode; }
 
 	bool Create(ATFrameWindow *w);
 
 protected:
+	void SetName(const wchar_t *name);
+
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
 
 	virtual bool OnCreate();
@@ -339,14 +343,16 @@ protected:
 	void RegisterUIPane();
 	void UnregisterUIPane();
 
-	const char *const	mpName;
+	const wchar_t *		mpName;
 	uint32 const		mPaneId;
 	uint32				mDefaultWindowStyles;
 	int					mPreferredDockCode;
 };
 
 typedef bool (*ATPaneCreator)(ATUIPane **);
+typedef bool (*ATPaneClassCreator)(uint32 id, ATUIPane **);
 
 void ATRegisterUIPaneType(uint32 id, ATPaneCreator creator);
+void ATRegisterUIPaneClass(uint32 id, ATPaneClassCreator creator);
 
 #endif

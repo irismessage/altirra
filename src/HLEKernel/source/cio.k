@@ -142,10 +142,16 @@ dispatch:
 	lda		iccomz
 	cmp		#CIOCmdClose
 	beq		ignoreOpen
+	cmp		#CIOCmdSpecial
+	bcs		preOpen				;closed IOCB is OK for special
 	ldy		#CIOStatNotOpen
 ignoreOpen:
 	jmp		xit
 	
+preOpen:
+	;If the device is not open when a SPECIAL command is issued, parse the path
+	;and soft-open the device in the zero page IOCB.
+	jsr		parsePath
 isOpen:
 	;check for special command
 	lda		iccomz
@@ -178,59 +184,8 @@ cmdOpen:
 	jmp		xit
 	
 notAlreadyOpen:
-	;pull first character of filename
-	ldy		#0
-	lda		(icbalz),y
+	jsr		parsePath
 
-	;search for handler
-	ldx		#11*3
-findHandler:
-	cmp		hatabs,x
-	beq		foundHandler
-	dex
-	dex
-	dex
-	bpl		findHandler
-	
-	;return unknown device error
-	ldy		#CIOStatUnkDevice
-	jmp		xit
-	
-foundHandler:
-
-	;store handler ID
-	stx		ichidz
-	
-	;default to device #1
-	mva		#1 icdnoz
-	
-	;check for a device number
-	iny
-	lda		(icbalz),y
-	sec
-	sbc		#'0'
-	beq		nodevnum
-	cmp		#4
-	bcs		nodevnum
-	
-	sta		icdnoz
-	iny
-	
-nodevnum:
-
-; We don't validate the colon anymore -- Atari OS allows opening just "C" to get
-; to the cassette.
-;
-;	;check for ':'
-;	lda		(icbalz),y
-;	cmp		#':'
-;	beq		foundColon
-;	
-;	;invalid filename
-;	ldy		#CIOStatFileNameErr
-;	jmp		xit
-	
-foundColon:
 	;request open
 	ldy		#1
 	jsr		invoke
@@ -417,6 +372,64 @@ cmdGetStatus:
 	ldy		#9
 	jsr		invoke
 	jmp		xit
+
+parsePath:
+	;pull first character of filename
+	ldy		#0
+	lda		(icbalz),y
+
+	;search for handler
+	ldx		#11*3
+findHandler:
+	cmp		hatabs,x
+	beq		foundHandler
+	dex
+	dex
+	dex
+	bpl		findHandler
+	
+	;return unknown device error
+	ldy		#CIOStatUnkDevice
+	pla
+	pla
+	jmp		xit
+	
+foundHandler:
+
+	;store handler ID
+	stx		ichidz
+	
+	;default to device #1
+	mva		#1 icdnoz
+	
+	;check for a device number
+	iny
+	lda		(icbalz),y
+	sec
+	sbc		#'0'
+	beq		nodevnum
+	cmp		#4
+	bcs		nodevnum
+	
+	sta		icdnoz
+	iny
+	
+nodevnum:
+
+; We don't validate the colon anymore -- Atari OS allows opening just "C" to get
+; to the cassette.
+;
+;	;check for ':'
+;	lda		(icbalz),y
+;	cmp		#':'
+;	beq		foundColon
+;	
+;	;invalid filename
+;	ldy		#CIOStatFileNameErr
+;	jmp		xit
+	
+foundColon:
+	rts
 
 commandTable:
 	dta		a(cmdInvalid-1)		;$04

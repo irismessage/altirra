@@ -81,7 +81,8 @@ public:
 };
 
 struct ATCPUHistoryEntry {
-	uint32	mCycle;
+	uint16	mCycle;
+	uint16	mUnhaltedCycle;
 	uint32	mTimestamp;
 	uint32	mEA;
 	uint16	mPC;
@@ -124,6 +125,7 @@ public:
 
 	bool	IsInstructionInProgress() const;
 	bool	IsNextCycleWrite() const;
+	uint8	GetHeldCycleValue();
 
 	bool	GetEmulationFlag() const { return mbEmulationFlag; }
 	uint16	GetInsnPC() const { return mInsnPC; }
@@ -136,7 +138,7 @@ public:
 	uint8	GetY() const { return mY; }
 
 	void	SetPC(uint16 pc);
-	void	SetP(uint8 p) { mP = p; }
+	void	SetP(uint8 p);
 	void	SetA(uint8 a) { mA = a; }
 	void	SetX(uint8 x) { mX = x; }
 	void	SetY(uint8 y) { mY = y; }
@@ -155,9 +157,18 @@ public:
 
 	void	SetHook(uint16 pc, bool enable);
 	void	SetStep(bool step) {
-		mbStep = step; mStepRegionStart = 0; mStepRegionSize = 0; mpStepCallback = NULL;
+		mbStep = step;
+		mStepRegionStart = 0;
+		mStepRegionSize = 0;
+		mpStepCallback = NULL;
 		mStepStackLevel = -1;
+
+		if (step)
+			mDebugFlags |= kDebugFlag_Step;
+		else
+			mDebugFlags &= ~kDebugFlag_Step;
 	}
+
 	void	SetStepRange(uint32 regionStart, uint32 regionSize, ATCPUStepCallback stepcb, void *stepcbdata) {
 		mbStep = true;
 		mStepRegionStart = regionStart;
@@ -165,11 +176,19 @@ public:
 		mpStepCallback = stepcb;
 		mpStepCallbackData = stepcbdata;
 		mStepStackLevel = -1;
+
+		mDebugFlags |= kDebugFlag_Step;
 	}
 
-	void	SetTrace(bool trace) { mbTrace = trace; }
-	void	SetRTSBreak() { mSBrk = 0x100; }
-	void	SetRTSBreak(uint8 sp) { mSBrk = sp; }
+	void	SetTrace(bool trace) {
+		mbTrace = trace;
+		if (trace)
+			mDebugFlags |= kDebugFlag_Trace;
+		else
+			mDebugFlags &= ~kDebugFlag_Trace;
+	}
+	void	SetRTSBreak() { mSBrk = 0x100; mDebugFlags &= ~kDebugFlag_SBrk; }
+	void	SetRTSBreak(uint8 sp) { mSBrk = sp; mDebugFlags |= kDebugFlag_SBrk; }
 
 	void	SetCPUMode(ATCPUMode mode);
 	ATCPUMode GetCPUMode() const { return mCPUMode; }
@@ -238,6 +257,9 @@ public:
 	int		Advance65816WithBusTracking();
 
 protected:
+	uint8	ProcessDebugging();
+	bool	ProcessInterrupts();
+	void	AddHistoryEntry(bool is816);
 	void	UpdatePendingIRQState();
 	void	RedecodeInsnWithoutBreak();
 	void	Update65816DecodeTable();
@@ -297,13 +319,29 @@ protected:
 	uint16	mDP;
 
 	uint32	mIFlagSetCycle;
-	bool	mbIRQReleasePending;
-	bool	mbIRQActive;
-	bool	mbIRQPending;
-	bool	mbNMIPending;
+
+	// These are in bitfields so the insn fetch code can check them all at once.
+	enum {
+		kIntFlag_IRQReleasePending = 0x01,
+		kIntFlag_IRQActive = 0x02,
+		kIntFlag_IRQPending = 0x04,
+		kIntFlag_NMIPending = 0x08
+	};
+
+	uint8	mIntFlags;
+
 	bool	mbNMIForced;
-	bool	mbTrace;
-	bool	mbStep;
+
+	bool	mbTrace;			// must also affect mDebugFlags
+	bool	mbStep;				// must also affect mDebugFlags
+
+	enum {
+		kDebugFlag_Step = 0x01,		// mbStep is set
+		kDebugFlag_SBrk = 0x02,		// mSBrk is active
+		kDebugFlag_Trace = 0x04		// mbTrace is set
+	};
+
+	uint8	mDebugFlags;
 
 	uint32	mStepRegionStart;
 	uint32	mStepRegionSize;
@@ -317,7 +355,7 @@ protected:
 	uint32	mNMIAssertTime;
 	uint32	mIRQAssertTime;
 	uint32	mIRQAcknowledgeTime;
-	uint32	mSBrk;
+	uint32	mSBrk;				// must also affect mDebugFlags
 	ATCPUMode	mCPUMode;
 	ATCPUSubMode	mCPUSubMode;
 
@@ -353,7 +391,7 @@ protected:
 
 	const uint8 *mpDecodePtrIRQ;
 	const uint8 *mpDecodePtrNMI;
-	const uint8 *mpDecodePtrs[256];
+	uint16 mDecodePtrs[256];
 	uint8	mDecodeHeap[4096];
 	uint8	mInsnFlags[65536];
 

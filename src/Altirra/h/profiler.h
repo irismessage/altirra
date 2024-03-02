@@ -18,6 +18,7 @@
 #ifndef f_AT_PROFILER_H
 #define f_AT_PROFILER_H
 
+#include <vd2/system/linearalloc.h>
 #include "scheduler.h"
 
 class ATCPUEmulator;
@@ -29,11 +30,27 @@ struct ATProfileRecord {
 	uint32 mCalls;
 	uint32 mInsns;
 	uint32 mCycles;
+	uint32 mUnhaltedCycles;
+};
+
+struct ATProfileCallGraphRecord {
+	uint32	mParent;
+	uint32	mAddress;
+	uint32	mInsns;
+	uint32	mCycles;
+	uint32	mUnhaltedCycles;
+	uint32	mCalls;
+	uint32	mInclusiveCycles;
+	uint32	mInclusiveUnhaltedCycles;
+	uint32	mInclusiveInsns;
 };
 
 struct ATProfileSession {
 	typedef vdfastvector<ATProfileRecord> Records;
 	Records mRecords;
+
+	typedef vdfastvector<ATProfileCallGraphRecord> CallGraphRecords;
+	CallGraphRecords mCallGraphRecords;
 
 	uint32	mTotalCycles;
 	uint32	mTotalInsns;
@@ -42,6 +59,7 @@ struct ATProfileSession {
 enum ATProfileMode {
 	kATProfileMode_Insns,
 	kATProfileMode_Functions,
+	kATProfileMode_CallGraph,
 	kATProfileMode_BasicLines,
 	kATProfileModeCount
 };
@@ -64,6 +82,7 @@ public:
 protected:
 	void OnScheduledEvent(uint32 id);
 	void Update();
+	void UpdateCallGraph();
 	void ClearSamples();
 
 	ATCPUEmulator *mpCPU;
@@ -81,13 +100,25 @@ protected:
 	bool mbAdjustStackNext;
 	uint8 mLastS;
 	sint32	mCurrentFrameAddress;
+	sint32	mCurrentContext;
 
 	struct HashLink {
 		HashLink *mpNext;
 		ATProfileRecord mRecord;
 	};
 
+	struct CallGraphHashLink {
+		CallGraphHashLink *mpNext;
+		uint32	mParentContext;
+		uint32	mScope;
+		uint32	mContext;
+	};
+
+	VDLinearAllocator mHashLinkAllocator;
+	ATProfileSession mSession;
+
 	HashLink *mpHashTable[256];
+	CallGraphHashLink *mpCGHashTable[256];
 
 	sint32	mStackTable[256];
 };

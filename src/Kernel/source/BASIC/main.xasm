@@ -85,12 +85,9 @@ nmires	equ	$d40f
 	org		$a000
 	
 ;==========================================================================
-.proc	init
-	rts
-.endp
-
-;==========================================================================
-
+; main() must be at $A000. The AST cartridge jumps directly to $A000 to
+; attempt to run BASIC.
+;
 .proc	main
 	;disable all interrupts and ANTIC DMA
 	sei
@@ -134,6 +131,11 @@ nmires	equ	$d40f
 	jmp		*
 .endp
 	
+;==========================================================================
+.proc	init
+	rts
+.endp
+
 ;==========================================================================
 
 	org		$be00

@@ -44,10 +44,12 @@ ref class Program {
 	String^ mOutputPath;
 	Regex^ mXslInsnRegex;
 	List<String^>^ mOutputFiles;
+	Dictionary<String^, bool>^ mImages;
 
 public:
 	Program() {
 		mOutputFiles = gcnew List<String^>();
+		mImages = gcnew Dictionary<String^, bool>();
 	}
 
 	void Run(cli::array<String^>^ args) {
@@ -136,6 +138,8 @@ private:
 		File::Copy(cssFile, cssFileOut, true);
 		File::SetAttributes(cssFile, FileAttributes::Normal);
 
+		CopyImages();
+
 		BuildHelpFile();
 	}
 
@@ -172,12 +176,50 @@ private:
 			System::Console::WriteLine("[xslt {0}] {1} -> {2}", xslPath, file, resultPath);
 
 			XslCompiledTransform xslt;
-			XsltArgumentList argList;
 
 			xslt.Load(xslPath);
 
-			StreamWriter writer(resultPath);
-			xslt.Transform(%doc, %argList, %writer);
+			// transform to HTML
+			{
+				StreamWriter writer(resultPath);
+				xslt.Transform(%doc, nullptr, %writer);
+			}
+
+			// transform to XML and scan for IMG tags
+			{
+				XmlDocument resultDoc;
+
+				{
+					XmlWriter^ writer = resultDoc.CreateNavigator()->AppendChild();
+					xslt.Transform(%doc, nullptr, writer);
+					writer->Close();
+				}
+
+				for each(XmlAttribute^ srcAttr in resultDoc.SelectNodes("//img[@src]/@src")) {
+					String^ path = srcAttr->InnerText;
+
+					if (!path->StartsWith("http:"))
+						mImages->Add(path, false);
+				}
+			}	
+		}
+	}
+
+	void CopyImages() {
+		List<String^> images(mImages->Keys);
+		images.Sort();
+
+		for each(String^ s in images) {
+			System::Console::WriteLine("[copying image] {0}", s);
+
+			String^ relPath = s->Replace('/', '\\');
+			String^ relDir = Path::GetDirectoryName(relPath);
+
+			Directory::CreateDirectory(Path::Combine(mOutputPath, relDir));
+
+			String^ outPath = Path::Combine(mOutputPath, relPath);
+			File::Copy(Path::Combine(mSourcePath, relPath), outPath, true);
+			File::SetAttributes(outPath, FileAttributes::Normal);
 		}
 	}
 

@@ -17,8 +17,11 @@ namespace {
 	}
 
 	enum {
-		kNodePrecAnd,
 		kNodePrecOr,
+		kNodePrecAnd,
+		kNodePrecBitOr,
+		kNodePrecBitXor,
+		kNodePrecBitAnd,
 		kNodePrecRel,
 		kNodePrecAdd,
 		kNodePrecMul,
@@ -202,6 +205,36 @@ public:
 		return false;
 	}
 
+	bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) {
+		vdautoptr<ATDebugExpNode> rem;
+
+		if (mpLeft->ExtractRelConst(type, extracted, ~rem, relop)) {
+			if (rem) {
+				*remainder = new ATDebugExpNodeAnd(rem, mpRight);
+				rem.release();
+			} else
+				*remainder = mpRight;
+
+			mpLeft.reset();
+			mpRight.release();
+			return true;
+		}
+
+		if (mpRight->ExtractRelConst(type, extracted, ~rem, relop)) {
+			if (rem) {
+				*remainder = new ATDebugExpNodeAnd(mpLeft, rem);
+				rem.release();
+			} else
+				*remainder = mpLeft;
+
+			mpLeft.release();
+			mpRight.reset();
+			return true;
+		}
+
+		return false;
+	}
+
 	int GetAssociativity() const { return 0; }
 	int GetPrecedence() const { return kNodePrecAnd; }
 	void EmitBinaryOp(VDStringA& s) {
@@ -234,6 +267,90 @@ public:
 	int GetPrecedence() const { return kNodePrecOr; }
 	void EmitBinaryOp(VDStringA& s) {
 		s += " or ";
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeBitwiseAnd : public ATDebugExpNodeBinary {
+public:
+	ATDebugExpNodeBitwiseAnd(ATDebugExpNode *x, ATDebugExpNode *y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_BitwiseAnd, x, y)
+	{
+	}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		sint32 x;
+		sint32 y;
+
+		if (!mpLeft->Evaluate(x, context) ||
+			!mpRight->Evaluate(y, context))
+			return false;
+
+		result = x & y;
+		return true;
+	}
+
+	int GetAssociativity() const { return 0; }
+	int GetPrecedence() const { return kNodePrecBitAnd; }
+	void EmitBinaryOp(VDStringA& s) {
+		s += " & ";
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeBitwiseOr : public ATDebugExpNodeBinary {
+public:
+	ATDebugExpNodeBitwiseOr(ATDebugExpNode *x, ATDebugExpNode *y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_BitwiseOr, x, y)
+	{
+	}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		sint32 x;
+		sint32 y;
+
+		if (!mpLeft->Evaluate(x, context) ||
+			!mpRight->Evaluate(y, context))
+			return false;
+
+		result = x | y;
+		return true;
+	}
+
+	int GetAssociativity() const { return 0; }
+	int GetPrecedence() const { return kNodePrecBitOr; }
+	void EmitBinaryOp(VDStringA& s) {
+		s += " | ";
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeBitwiseXor : public ATDebugExpNodeBinary {
+public:
+	ATDebugExpNodeBitwiseXor(ATDebugExpNode *x, ATDebugExpNode *y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_BitwiseXor, x, y)
+	{
+	}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		sint32 x;
+		sint32 y;
+
+		if (!mpLeft->Evaluate(x, context) ||
+			!mpRight->Evaluate(y, context))
+			return false;
+
+		result = x ^ y;
+		return true;
+	}
+
+	int GetAssociativity() const { return 0; }
+	int GetPrecedence() const { return kNodePrecBitXor; }
+	void EmitBinaryOp(VDStringA& s) {
+		s += " ^ ";
 	}
 };
 
@@ -371,6 +488,28 @@ public:
 		return true;
 	}
 
+	bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) {
+		if (mpLeft->mType == type && mpRight->mType == kATDebugExpNodeType_Const) {
+			*remainder = NULL;
+			*extracted = mpRight;
+			*relop = kATDebugExpNodeType_LT;
+			mpLeft.reset();
+			mpRight.release();
+			return true;
+		}
+
+		if (mpRight->mType == type && mpLeft->mType == kATDebugExpNodeType_Const) {
+			*remainder = NULL;
+			*extracted = mpLeft;
+			*relop = kATDebugExpNodeType_GT;
+			mpLeft.release();
+			mpRight.reset();
+			return true;
+		}
+
+		return false;
+	}
+
 	int GetPrecedence() const { return kNodePrecRel; }
 	void EmitBinaryOp(VDStringA& s) {
 		s += '<';
@@ -396,6 +535,28 @@ public:
 
 		result = x <= y;
 		return true;
+	}
+
+	bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) {
+		if (mpLeft->mType == type && mpRight->mType == kATDebugExpNodeType_Const) {
+			*remainder = NULL;
+			*extracted = mpRight;
+			*relop = kATDebugExpNodeType_LE;
+			mpLeft.reset();
+			mpRight.release();
+			return true;
+		}
+
+		if (mpRight->mType == type && mpLeft->mType == kATDebugExpNodeType_Const) {
+			*remainder = NULL;
+			*extracted = mpLeft;
+			*relop = kATDebugExpNodeType_GE;
+			mpLeft.release();
+			mpRight.reset();
+			return true;
+		}
+
+		return false;
 	}
 
 	int GetPrecedence() const { return kNodePrecRel; }
@@ -425,6 +586,28 @@ public:
 		return true;
 	}
 
+	bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) {
+		if (mpLeft->mType == type && mpRight->mType == kATDebugExpNodeType_Const) {
+			*remainder = NULL;
+			*extracted = mpRight;
+			*relop = kATDebugExpNodeType_GT;
+			mpLeft.reset();
+			mpRight.release();
+			return true;
+		}
+
+		if (mpRight->mType == type && mpLeft->mType == kATDebugExpNodeType_Const) {
+			*remainder = NULL;
+			*extracted = mpLeft;
+			*relop = kATDebugExpNodeType_LT;
+			mpLeft.release();
+			mpRight.reset();
+			return true;
+		}
+
+		return false;
+	}
+
 	int GetPrecedence() const { return kNodePrecRel; }
 	void EmitBinaryOp(VDStringA& s) {
 		s += '>';
@@ -450,6 +633,28 @@ public:
 
 		result = x >= y;
 		return true;
+	}
+
+	bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) {
+		if (mpLeft->mType == type && mpRight->mType == kATDebugExpNodeType_Const) {
+			*remainder = NULL;
+			*extracted = mpRight;
+			*relop = kATDebugExpNodeType_GE;
+			mpLeft.reset();
+			mpRight.release();
+			return true;
+		}
+
+		if (mpRight->mType == type && mpLeft->mType == kATDebugExpNodeType_Const) {
+			*remainder = NULL;
+			*extracted = mpLeft;
+			*relop = kATDebugExpNodeType_LE;
+			mpLeft.release();
+			mpRight.reset();
+			return true;
+		}
+
+		return false;
 	}
 
 	int GetPrecedence() const { return kNodePrecRel; }
@@ -585,7 +790,7 @@ public:
 class ATDebugExpNodeDerefByte : public ATDebugExpNodeUnary {
 public:
 	ATDebugExpNodeDerefByte(ATDebugExpNode *x)
-		: ATDebugExpNodeUnary(kATDebugExpNodeType_Negate, x)
+		: ATDebugExpNodeUnary(kATDebugExpNodeType_DerefByte, x)
 	{
 	}
 
@@ -612,7 +817,7 @@ public:
 class ATDebugExpNodeDerefWord : public ATDebugExpNodeUnary {
 public:
 	ATDebugExpNodeDerefWord(ATDebugExpNode *x)
-		: ATDebugExpNodeUnary(kATDebugExpNodeType_Negate, x)
+		: ATDebugExpNodeUnary(kATDebugExpNodeType_DerefWord, x)
 	{
 	}
 
@@ -632,6 +837,54 @@ public:
 
 	void EmitUnaryOp(VDStringA& s) {
 		s += "dw ";
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeLoByte : public ATDebugExpNodeUnary {
+public:
+	ATDebugExpNodeLoByte(ATDebugExpNode *x)
+		: ATDebugExpNodeUnary(kATDebugExpNodeType_LoByte, x)
+	{
+	}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		sint32 x;
+
+		if (!mpArg->Evaluate(x, context))
+			return false;
+
+		result = x & 0xff;
+		return true;
+	}
+
+	void EmitUnaryOp(VDStringA& s) {
+		s += '<';
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeHiByte : public ATDebugExpNodeUnary {
+public:
+	ATDebugExpNodeHiByte(ATDebugExpNode *x)
+		: ATDebugExpNodeUnary(kATDebugExpNodeType_HiByte, x)
+	{
+	}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		sint32 x;
+
+		if (!mpArg->Evaluate(x, context))
+			return false;
+
+		result = (x & 0xff00) >> 8;
+		return true;
+	}
+
+	void EmitUnaryOp(VDStringA& s) {
+		s += '>';
 	}
 };
 
@@ -807,6 +1060,44 @@ public:
 	}
 };
 
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeAddress : public ATDebugExpNode {
+public:
+	ATDebugExpNodeAddress() : ATDebugExpNode(kATDebugExpNodeType_Address) {}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		if (!context.mbAccessValid)
+			return false;
+
+		result = context.mAccessAddress;
+		return true;
+	}
+
+	void ToString(VDStringA& s, int prec) {
+		s += "address";
+	}
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeValue : public ATDebugExpNode {
+public:
+	ATDebugExpNodeValue() : ATDebugExpNode(kATDebugExpNodeType_Value) {}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		if (!context.mbAccessValid)
+			return false;
+
+		result = context.mAccessValue;
+		return true;
+	}
+
+	void ToString(VDStringA& s, int prec) {
+		s += "value";
+	}
+};
+
 //////////////////////////////////////////////////////
 
 ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
@@ -816,6 +1107,9 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 		kOpCloseParen,
 		kOpOr,
 		kOpAnd,
+		kOpBitwiseOr,
+		kOpBitwiseXor,
+		kOpBitwiseAnd,
 		kOpLT,
 		kOpLE,
 		kOpGT,
@@ -830,6 +1124,8 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 		kOpNegate,
 		kOpDerefByte,
 		kOpDerefWord,
+		kOpLoByte,
+		kOpHiByte
 	};
 
 	static const uint8 kOpPrecedence[]={
@@ -847,17 +1143,26 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 		// and
 		3,
 
+		// bitwise or
+		4,
+
+		// bitwise xor
+		5,
+
+		// bitwise and
+		6,
+
 		// comparisons
-		4,4,4,4,4,4,
+		7,7,7,7,7,7,
 
 		// additive
-		5,5,
+		8,8,
 
 		// multiplicative
-		6,6,
+		9,9,
 
 		// unary
-		7,7,7,7
+		10,10,10,10
 	};
 
 	enum {
@@ -882,7 +1187,9 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 		kTokRead,
 		kTokWrite,
 		kTokHpos,
-		kTokVpos
+		kTokVpos,
+		kTokAddress,
+		kTokValue
 	};
 
 	vdfastvector<ATDebugExpNode *> valstack;
@@ -899,7 +1206,7 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 		if (c == ' ')
 			continue;
 
-		if (!strchr("+-*/()", c)) {
+		if (!strchr("+-*/()&|^", c)) {
 			if (!c) {
 				tok = kTokEOL;
 			} else if (c == '<') {
@@ -916,9 +1223,12 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 					tok = kTokGT;
 			} else if (c == '=') {
 				tok = kTokEQ;
-			} else if (c == '!' && *s == '=') {
-				++s;
-				tok = kTokNE;
+			} else if (c == '!') {
+				if (*s == '=') {
+					++s;
+					tok = kTokNE;
+				}
+				// fall through if just !
 			} else if (c == '$') {
 				c = *s;
 
@@ -964,10 +1274,10 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 				intVal = v;
 				tok = kTokInt;
 				hexVal = false;
-			} else if (isalpha((unsigned char)c)) {
+			} else if (isalpha((unsigned char)c) || c == '_') {
 				const char *idstart = s-1;
 
-				while(*s && isalnum((unsigned char)*s))
+				while(*s && (isalnum((unsigned char)*s) || *s == '_' || *s == '.'))
 					++s;
 
 				VDStringSpanA ident(idstart, s);
@@ -1000,6 +1310,10 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 					tok = kTokHpos;
 				else if (ident == "vpos")
 					tok = kTokVpos;
+				else if (ident == "address")
+					tok = kTokAddress;
+				else if (ident == "value")
+					tok = kTokValue;
 				else {
 					IATDebuggerSymbolLookup *symlookup = ATGetDebuggerSymbolLookup();
 
@@ -1108,6 +1422,24 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 				node.release();
 
 				needValue = false;
+			} else if (tok == kTokLT) {
+				opstack.push_back(kOpLoByte);
+			} else if (tok == kTokGT) {
+				opstack.push_back(kOpHiByte);
+			} else if (tok == kTokAddress) {
+				vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeAddress);
+
+				valstack.push_back(node);
+				node.release();
+
+				needValue = false;
+			} else if (tok == kTokValue) {
+				vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeValue);
+
+				valstack.push_back(node);
+				node.release();
+
+				needValue = false;
 			} else {
 				throw ATDebuggerExprParseException("Expected value");
 			}
@@ -1117,6 +1449,18 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 			switch(tok) {
 				case ')':
 					op = kOpCloseParen;
+					break;
+
+				case '&':
+					op = kOpBitwiseAnd;
+					break;
+
+				case '|':
+					op = kOpBitwiseOr;
+					break;
+
+				case '^':
+					op = kOpBitwiseXor;
 					break;
 
 				case kTokEOL:
@@ -1278,6 +1622,28 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 						node = new ATDebugExpNodeDerefWord(sp[0]);
 						argcount = 1;
 						break;
+
+					case kOpLoByte:
+						node = new ATDebugExpNodeLoByte(sp[0]);
+						argcount = 1;
+						break;
+
+					case kOpHiByte:
+						node = new ATDebugExpNodeHiByte(sp[0]);
+						argcount = 1;
+						break;
+
+					case kOpBitwiseAnd:
+						node = new ATDebugExpNodeBitwiseAnd(sp[-1], sp[0]);
+						break;
+
+					case kOpBitwiseOr:
+						node = new ATDebugExpNodeBitwiseOr(sp[-1], sp[0]);
+						break;
+
+					case kOpBitwiseXor:
+						node = new ATDebugExpNodeBitwiseXor(sp[-1], sp[0]);
+						break;
 				}
 
 				while(argcount--)
@@ -1311,5 +1677,5 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 }
 
 ATDebugExpNode *ATDebuggerInvertExpression(ATDebugExpNode *node) {
-	return new ATDebugExpNodeNegate(node);
+	return new ATDebugExpNodeInvert(node);
 }

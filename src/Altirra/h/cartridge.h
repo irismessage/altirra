@@ -79,6 +79,17 @@ enum ATCartridgeMode {
 	kATCartridgeMode_Phoenix_8K,
 	kATCartridgeMode_Blizzard_16K,
 	kATCartridgeMode_SIC,
+	kATCartridgeMode_Atrax_SDX_128K,
+	kATCartridgeMode_OSS_043M,
+	kATCartridgeMode_OSS_8K,
+	kATCartridgeMode_Blizzard_4K,
+	kATCartridgeMode_AST_32K,
+	kATCartridgeMode_Atrax_SDX_64K,
+	kATCartridgeMode_Turbosoft_64K,
+	kATCartridgeMode_Turbosoft_128K,
+	kATCartridgeMode_MaxFlash_1024K_Bank0,
+	kATCartridgeMode_Megacart_1M_2,			// Hardware by Bernd for ABBUC JHV 2009
+	kATCartridgeMode_5200_64K_32KBanks,		// Used by M.U.L.E. 64K conversion
 	kATCartridgeModeCount
 };
 
@@ -129,7 +140,7 @@ public:
 	void LoadSuperCharger3D();
 	void Load5200Default();
 	void LoadFlash1Mb(bool altbank);
-	void LoadFlash8Mb();
+	void LoadFlash8Mb(bool newer);
 	void LoadFlashSIC();
 	bool Load(const wchar_t *fn, ATCartLoadContext *loadCtx);
 	bool Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, ATCartLoadContext *loadCtx);
@@ -203,10 +214,26 @@ protected:
 	static sint32 ReadByte_CCTL_OSS_034M(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_OSS_034M(void *thisptr0, uint32 address, uint8 value);
 
+	static sint32 ReadByte_CCTL_OSS_043M(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_OSS_043M(void *thisptr0, uint32 address, uint8 value);
+
 	static sint32 ReadByte_CCTL_OSS_M091(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_OSS_M091(void *thisptr0, uint32 address, uint8 value);
 
+	static sint32 ReadByte_CCTL_OSS_8K(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_OSS_8K(void *thisptr0, uint32 address, uint8 value);
+	
 	static bool WriteByte_CCTL_Corina(void *thisptr0, uint32 address, uint8 value);
+	
+	static bool WriteByte_CCTL_AST_32K(void *thisptr0, uint32 address, uint8 value);
+	
+	static sint32 ReadByte_CCTL_Turbosoft_64K(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_Turbosoft_64K(void *thisptr0, uint32 address, uint8 value);
+	static sint32 ReadByte_CCTL_Turbosoft_128K(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_Turbosoft_128K(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_CCTL_5200_64K_32KBanks(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_5200_64K_32KBanks(void *thisptr0, uint32 address, uint8 value);
 
 	void InitMemoryLayers();
 	void ShutdownMemoryLayers();
@@ -245,11 +272,14 @@ protected:
 	uint8	mSC3D[4];
 
 	vdfastvector<uint8> mCARTROM;
+	uint32	mCartSize;
+
 	vdfastvector<uint8> mCARTRAM;
 	VDStringW mImagePath;
 };
 
 int ATGetCartridgeModeForMapper(int mapper);
+int ATGetCartridgeMapperForMode(int mode);
 bool ATIsCartridgeModeHWCompatible(ATCartridgeMode cartmode, int hwmode);
 
 #endif	// f_AT_CARTRIDGE_H

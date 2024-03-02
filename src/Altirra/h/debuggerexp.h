@@ -21,6 +21,9 @@ enum ATDebugExpNodeType {
 	kATDebugExpNodeType_P,
 	kATDebugExpNodeType_Or,
 	kATDebugExpNodeType_And,
+	kATDebugExpNodeType_BitwiseOr,
+	kATDebugExpNodeType_BitwiseXor,
+	kATDebugExpNodeType_BitwiseAnd,
 	kATDebugExpNodeType_LT,
 	kATDebugExpNodeType_LE,
 	kATDebugExpNodeType_GT,
@@ -39,13 +42,21 @@ enum ATDebugExpNodeType {
 	kATDebugExpNodeType_Read,
 	kATDebugExpNodeType_Write,
 	kATDebugExpNodeType_HPOS,
-	kATDebugExpNodeType_VPOS
+	kATDebugExpNodeType_VPOS,
+	kATDebugExpNodeType_LoByte,
+	kATDebugExpNodeType_HiByte,
+	kATDebugExpNodeType_Address,
+	kATDebugExpNodeType_Value
 };
 
 struct ATDebugExpEvalContext {
 	ATCPUEmulator *mpCPU;
 	ATCPUEmulatorMemory *mpMemory;
 	ATAnticEmulator *mpAntic;
+
+	bool mbAccessValid;
+	sint32 mAccessAddress;
+	uint8 mAccessValue;
 };
 
 class ATDebugExpNode {
@@ -61,9 +72,14 @@ public:
 
 	virtual bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const = 0;
 
-	/// Attempt to extract out a (node == const) clause; returns the constant and the
-	/// remainder expression.
+	/// Attempt to extract out a (node == const) clause from an AND sequence; returns
+	/// the constant and the remainder expression.
 	virtual bool ExtractEqConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder) { return false; }
+
+	/// Attempt to extract out less than / less equal / greater than / greater equal
+	/// expressions of the form (type relop const). These will capture flips as well,
+	/// i.e. a request to capture GT will match both (type > const) and (const < type).
+	virtual bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) { return false; }
 
 	virtual bool Optimize(ATDebugExpNode **result) { return false; }
 

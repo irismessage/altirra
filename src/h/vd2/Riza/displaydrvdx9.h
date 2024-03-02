@@ -52,13 +52,13 @@ class VDINTERFACE IVDVideoUploadContextD3D9 : public IVDRefCount {
 public:
 	virtual IDirect3DTexture9 *GetD3DTexture(int i) = 0;
 
-	virtual bool Init(void *hmonitor, const VDPixmap& source, bool allowConversion, bool preserveYCbCr, int buffers) = 0;
+	virtual bool Init(void *hmonitor, bool use9ex, const VDPixmap& source, bool allowConversion, bool preserveYCbCr, int buffers) = 0;
 	virtual void Shutdown() = 0;
 
 	virtual bool Update(const VDPixmap& source, int fieldMask) = 0;
 };
 
 bool VDCreateVideoUploadContextD3D9(IVDVideoUploadContextD3D9 **);
-bool VDInitDisplayDX9(IVDVideoDisplayDX9Manager **ppManager);
+bool VDInitDisplayDX9(HMONITOR hmonitor, bool use9ex, IVDVideoDisplayDX9Manager **ppManager);
 
 #endif

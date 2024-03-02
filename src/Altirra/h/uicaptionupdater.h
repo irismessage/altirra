@@ -42,15 +42,15 @@ protected:
 	bool mbShowFps;
 	bool mbCaptured;
 
-	VDStringA	mBasePrefix;
-	VDStringA	mPrefix;
-	VDStringA	mBuffer;
+	VDStringW	mBasePrefix;
+	VDStringW	mPrefix;
+	VDStringW	mBuffer;
 
 	ATHardwareMode	mLastHardwareMode;
 	ATKernelMode	mLastKernelMode;
 	ATMemoryMode	mLastMemoryMode;
+	ATVideoStandard	mLastVideoStd;
 	bool			mbLastBASICState;
-	bool			mbLastPALState;
 	bool			mbLastVBXEState;
 	bool			mbLastSoundBoardState;
 	bool			mbForceUpdate;

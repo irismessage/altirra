@@ -136,11 +136,21 @@ bool ATUIDialogEditControllerMapping::OnLoaded() {
 	CBAddString(IDC_CONTROLLER, L"Tablet (Atari touch tablet)");
 	CBAddString(IDC_CONTROLLER, L"Tablet (KoalaPad)");
 	CBAddString(IDC_CONTROLLER, L"CX-85 Numerical Keypad");
+	CBAddString(IDC_CONTROLLER, L"CX-80 Trackball (V1)");
+	CBAddString(IDC_CONTROLLER, L"5200 Trackball");
 
 	CBAddString(IDC_PORT, L"Port 1");
 	CBAddString(IDC_PORT, L"Port 2");
 	CBAddString(IDC_PORT, L"Port 3 (800 only)");
 	CBAddString(IDC_PORT, L"Port 4 (800 only)");
+	CBAddString(IDC_PORT, L"MultiJoy #1");
+	CBAddString(IDC_PORT, L"MultiJoy #2");
+	CBAddString(IDC_PORT, L"MultiJoy #3");
+	CBAddString(IDC_PORT, L"MultiJoy #4");
+	CBAddString(IDC_PORT, L"MultiJoy #5");
+	CBAddString(IDC_PORT, L"MultiJoy #6");
+	CBAddString(IDC_PORT, L"MultiJoy #7");
+	CBAddString(IDC_PORT, L"MultiJoy #8");
 
 	OnDataExchange(false);
 	SetFocusToControl(IDC_SOURCE);
@@ -202,6 +212,14 @@ void ATUIDialogEditControllerMapping::OnDataExchange(bool write) {
 				break;
 			case 11:
 				mControllerType = kATInputControllerType_Keypad;
+				mControllerIndex = index;
+				break;
+			case 12:
+				mControllerType = kATInputControllerType_Trackball_CX80_V1;
+				mControllerIndex = index;
+				break;
+			case 13:
+				mControllerType = kATInputControllerType_5200Trackball;
 				mControllerIndex = index;
 				break;
 		}
@@ -274,6 +292,14 @@ void ATUIDialogEditControllerMapping::OnDataExchange(bool write) {
 				break;
 			case kATInputControllerType_Keypad:
 				CBSetSelectedIndex(IDC_CONTROLLER, 11);
+				CBSetSelectedIndex(IDC_PORT, mControllerIndex);
+				break;
+			case kATInputControllerType_Trackball_CX80_V1:
+				CBSetSelectedIndex(IDC_CONTROLLER, 12);
+				CBSetSelectedIndex(IDC_PORT, mControllerIndex);
+				break;
+			case kATInputControllerType_5200Trackball:
+				CBSetSelectedIndex(IDC_CONTROLLER, 13);
 				CBSetSelectedIndex(IDC_PORT, mControllerIndex);
 				break;
 		}
@@ -371,6 +397,8 @@ protected:
 	static const uint32 kTargetCodesLightPen[];
 	static const uint32 kTargetCodesTablet[];
 	static const uint32 kTargetCodesKeypad[];
+	static const uint32 kTargetCodesTrackballCX80V1[];
+	static const uint32 kTargetCodes5200Trackball[];
 	static const uint32 kTargetModes[];
 };
 
@@ -660,6 +688,38 @@ const uint32 ATUIDialogEditInputMapping::kTargetCodesKeypad[] = {
 	kATInputTrigger_Button0+16,
 };
 
+const uint32 ATUIDialogEditInputMapping::kTargetCodesTrackballCX80V1[] = {
+	kATInputTrigger_Axis0,
+	kATInputTrigger_Axis0+1,
+	kATInputTrigger_Button0,
+};
+
+const uint32 ATUIDialogEditInputMapping::kTargetCodes5200Trackball[] = {
+	kATInputTrigger_Button0,
+	kATInputTrigger_Button0+1,
+	kATInputTrigger_Up,
+	kATInputTrigger_Down,
+	kATInputTrigger_Left,
+	kATInputTrigger_Right,
+	kATInputTrigger_Axis0,
+	kATInputTrigger_Axis0+1,
+	kATInputTrigger_5200_0,
+	kATInputTrigger_5200_1,
+	kATInputTrigger_5200_2,
+	kATInputTrigger_5200_3,
+	kATInputTrigger_5200_4,
+	kATInputTrigger_5200_5,
+	kATInputTrigger_5200_6,
+	kATInputTrigger_5200_7,
+	kATInputTrigger_5200_8,
+	kATInputTrigger_5200_9,
+	kATInputTrigger_5200_Star,
+	kATInputTrigger_5200_Pound,
+	kATInputTrigger_5200_Start,
+	kATInputTrigger_5200_Reset,
+	kATInputTrigger_5200_Pause
+};
+
 const uint32 ATUIDialogEditInputMapping::kTargetModes[] = {
 	kATInputTriggerMode_Default,
 	kATInputTriggerMode_AutoFire,
@@ -714,6 +774,12 @@ const vdspan<const uint32> ATUIDialogEditInputMapping::GetTargetCodes(ATInputCon
 
 		case kATInputControllerType_Keypad:
 			return vdspan<const uint32>(kTargetCodesKeypad);
+
+		case kATInputControllerType_Trackball_CX80_V1:
+			return vdspan<const uint32>(kTargetCodesTrackballCX80V1);
+
+		case kATInputControllerType_5200Trackball:
+			return vdspan<const uint32>(kTargetCodes5200Trackball);
 	}
 }
 
@@ -1011,7 +1077,10 @@ void ATUIDialogInputMapControllerItem::RemoveAllItems() {
 void ATUIDialogInputMapControllerItem::GetText(VDStringW& s) const {
 	switch(mControllerType) {
 		case kATInputControllerType_Joystick:
-			s.sprintf(L"Joystick (port %d)", mControllerUnit + 1);
+			if (mControllerUnit >= 4)
+				s.sprintf(L"Joystick (MultiJoy #%d)", mControllerUnit - 3);
+			else
+				s.sprintf(L"Joystick (port %d)", mControllerUnit + 1);
 			break;
 
 		case kATInputControllerType_Paddle:
@@ -1052,6 +1121,14 @@ void ATUIDialogInputMapControllerItem::GetText(VDStringW& s) const {
 
 		case kATInputControllerType_Keypad:
 			s.sprintf(L"CX-85 Numerical Keypad (port %d)", mControllerUnit + 1);
+			break;
+
+		case kATInputControllerType_Trackball_CX80_V1:
+			s.sprintf(L"CX-80 Trackball V1 (port %d)", mControllerUnit + 1);
+			break;
+
+		case kATInputControllerType_5200Trackball:
+			s.sprintf(L"5200 Trackball (port %d)", mControllerUnit + 1);
 			break;
 	}
 
@@ -1692,7 +1769,8 @@ namespace {
 }
 
 void ATUIDialogInput::SortItems() {
-	mListView.Sort(InputMapComparer());
+	InputMapComparer comparer;
+	mListView.Sort(comparer);
 }
 
 void ATUIDialogInput::OnItemCheckedChanged(VDUIProxyListView *source, int index) {

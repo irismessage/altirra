@@ -119,7 +119,9 @@ VDStringA& VDStringA::append_vsprintf(const value_type *format, va_list val) {
 }
 
 void VDStringA::move_from(VDStringA& src) {
-	delete[] mpBegin;
+	if (mpBegin != sNull)
+		delete[] mpBegin;
+
 	mpBegin = src.mpBegin;
 	mpEnd = src.mpEnd;
 	mpEOS = src.mpEOS;

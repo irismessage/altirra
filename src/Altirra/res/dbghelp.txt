@@ -1,3 +1,13 @@
++ `    Bypass aliases
+
+    Executes a command without checking the alias table.
+    
+      `<command>
+      
+    Allows access to commands that are blocked by aliases. This also provides an
+    escape hatch if you somehow manage to alias over both the alias set (as) and
+    alias clear (ac) commands.
+
 + ?    Evaluate expression
 
     Prints the value of an expression.
@@ -15,15 +25,17 @@
       p        P register
       hpos     ANTIC horizontal position counter
       vpos     ANTIC vertical position counter
+      address  PC or memory address from current breakpoint
+      value    Value written from current access write breakpoint
       db addr  Read memory byte
       dw addr  Read memory word
       +        Add / unary plus
       -        Subtract / unary minus
       *        Multiply
       /        Divide
-      <        Less-than
+      <        Less-than / unary low byte
       <=       Less-equal
-      >        Greater-than
+      >        Greater-than / unary high byte
       >=       Greater-equal
       =        Equal
       !=       Not equal
@@ -31,6 +43,13 @@
     Symbol names may also be used in expressions, but care should be taken
     to distinguish between "symbol", which evaluates to the symbol's address,
     and "db symbol" or "dw symbol", which reads a byte or word at the address.
+    
+    Examples:
+    
+      vdslst              Address of DLI vector ($0200)
+      dw vdslst           DLI routine address
+      dw vdslst+2         DLI routine address + 2
+      dw (vdslst+2)       SIO proceed IRQ routine address
 
 + a    Assemble
 
@@ -57,18 +76,67 @@
         Scc:<insn> -> Bcc next / <insn> / next:
         INW/DEW -> INC/DEC / BNE / INC/DEC
 
+> a8   Set Atari800-compatible command aliases
+
+    Sets compatibility aliases for commands from the Atari800 emulator debugger.
+    
+      a8
+    
+    The following commands are mapped:
+    
+        cont      g            Continue (go)
+        show      r            Show registers
+        stack     k            Show stack
+        c         e            Change (enter)
+        d         u            Disassemble (unassemble)
+        m         db           Memory list (display bytes)
+        bpc       bp           Set PC breakpoint
+        history   h            Show CPU history
+        g         t            Go one insn (trace)
+        r         gr           Execute until return
+        antic     .antic       Display ANTIC status
+        gtia      .gtia        Display GTIA status
+        pia       .pia         Display PIA status
+        pokey     .pokey       Display POKEY status
+        dlist     .dumpdlist   Show display list
+        coldstart .restart     Cold-reset the simulation
+        help      .help        Display command help
+
+^ ac, al, as  Manage command aliases
+> ac   Clear all command aliases
+> al   List command aliases
+> as   Set or unset command alias
+
+    Set, clear, or list aliases for debugger commands.
+    
+        ac                    (Clear all aliases)
+        al                    (List aliases)
+        as <alias> <command>  (Set an alias)
+        as <alias>            (Unset an alias)
+        
+    Allows you to set alternate name aliases for commands. If an alias is set
+    with the same name as a standard debugger command, the alias takes
+    precedence. An alias always redirects to a standard command; an alias
+    cannot point to another alias.
+    
+    To access a command that is blocked by an alias, prefix the command name
+    with a backtick (`).
+
 + ba   Break on memory access
 
     Set or clear a memory access breakpoint.
     
-      ba r <address> [L<length>]  (Break on memory read)
-      ba w <address> [L<length>]  (Break on memory write)
+      ba r <address> [L<length>] ["cmd"] (Break on memory read)
+      ba w <address> [L<length>] ["cmd"] (Break on memory write)
       ba r/w *         (Clear memory read/write access breakpoints)
       
     Memory access breakpoints cause the emulator to stop whenever the CPU
     core reads or writes a particular address. There can be an unlimited
     number of both read and write breakpoints. If a length greater than 1
     byte is specified, a range breakpoint is created.
+    
+    If a quoted string is supplied, it is run as a command whenever the
+    breakpoint is hit.
     
     DMA accesses, such as by ANTIC or VBXE, do not trip access breakpoints.
     All breakpoints are by CPU address and trip regardless of any
@@ -103,8 +171,13 @@
 
       bl             (List breakpoints)
       
-    Displays a list of all breakpoints. This displayed breakpoint indices
+    Displays a list of all breakpoints. The displayed breakpoint indices
     can be used in other commands such as bc (breakpoint clear).
+    
+    Deferred breakpoints are also listed and are ones that haven't been
+    bound to an actual address yet. These remain inactive until symbols
+    have been loaded that contain an entry for the source file/line
+    reference.
     
     See also: bc, bl, bp, bx
 
@@ -113,6 +186,7 @@
     Set a breakpoint at a PC address.
     
       bp <address> ["command"]
+      bp `file:line` ["command"]
       
     Sets a PC breakpoint in the CPU core, which cause the emulator to stop
     when the PC is equal to the address of a breakpoint. There are no
@@ -127,6 +201,14 @@
     to continue execution. This can be used to implement tracepoints.
     
     Example: bp pc "? db(rtclok); g"
+
+    Breakpoints can also be set on source lines using source notation:
+    
+      bp `library.s:207`
+      
+    The breakpoint is set immediately if symbols are available. Otherwise,
+    a deferred breakpoint is created and the breakpoint is bound to the
+    code address when the symbols are loaded.    
     
     See also: ba, bs
 
@@ -142,9 +224,12 @@
     
       read=<address>    Read access to address
       write=<address>   Write access to address
+      read >[=] <lo> and read <[=] <hi>      Read access to address range
+      write >[=] <lo> and write <[=] <hi>    Write access to address range
       
     The expression must have an identifiable PC, read access, or write
-    access check, and only one read or write access may be included.
+    access check, and only one read or write access or access range may
+    be included.
     
     If there are no other clauses other than a single PC or access check,
     the result is the same as the equivalent bp or ba command.
@@ -154,9 +239,15 @@
       bx "pc=$4000 and y=4"
       bx "write=rtclok+2 and db(rtclok+2)=$04"
       bx "write=rtclok+2 and pc>$c000"
+      bx "write = consol and value != $08"
+      bx "read<$fffa and db(pc)!=$20 and db(pc)!=$60 and read>=$d800"
       
     If a command is specified, it is executed when the breakpoint trips;
     see the bp (breakpoint) command for details.
+    
+    Example:
+    
+      bx "pc=ciov and x=$10" "r; g"
     
     See also: ? (evaluate expression), bp (breakpoint)
 
@@ -170,9 +261,10 @@
     Stops emulation when the first disk drive (D1:) receives a request
     to read a particular virtual disk sector.
 
-^ da, db, df, di, dw   Display memory
+^ da, db, dd, df, di, dw   Display memory
 > da   Display ATASCII string
 > db   Display bytes
+> dd   Display double words
 > df   Display decimal float
 > di   Display INTERNAL string
 > dw   Display words
@@ -181,23 +273,60 @@
     
       da <xaddress> [L<length>]   (Display ATASCII string)
       db <xaddress> [L<length>]   (Display bytes)
+      dd <xaddress> [L<length>]   (Display 32-bit double words)
       df <xaddress> [L<length>]   (Display decimal float)
       di <xaddress> [L<length>]   (Display INTERNAL string)
-      dw <xaddress> [L<length>]   (Display words)
+      dw <xaddress> [L<length>]   (Display 16-bit words)
       
     Length specifies the number of elements to display.
+    
+    The display commands read memory in debug mode and do not trigger side
+    effects that would normally be caused by a CPU read, such as clearing
+    PIA interrupts or switching cartridge banks.
 
 + e    Enter (alter) data in memory
 
     Modifies a block of memory with new data.
     
-      e <xaddress> <byte> [<bytes...]
+      e <xaddress> <expr> [<expr>...]
+
+    Each successive byte is set to the value of an expression. Expressions
+    must evaluate to unsigned byte range (0-255); use the low byte (<)
+    operator if necessary to forcibly truncate values.
+    
+    Writes by the enter (e) command have the same effect as CPU writes,
+    including triggering side effects when hardware registers are accessed.
+    
+    See also: f (fill memory)
+
++ f    Fill memory
+
+    Fills a block of memory with a pattern.
+    
+      f <xaddress> L<length> <value>...
+      
+    Each successive byte is set to the value of an expression until <length>
+    bytes have been filled. Expressions must evaluate to unsigned byte range
+    (0-255); use the low byte (<) operator if necessary to forcibly truncate
+    values. The pattern repeats until the specified length is filled.
+    
+    Examples:
+      f 2000 L1000 aa 55
+      f 2000 L400 8d <serout >serout
+      f $01:0000 L10000 0
+    
+    See also: e (enter)
 
 + g    Go
 
     Resume execution.
     
-      g
+      g [-n] [-s]
+      
+    By default, the g (Go) command disables source mode debugging. The -n
+    switch preserves the current mode and the -s switch forces source mode.
+    
+    See also: .sourcemode
 
 + gf   Go until frame end
 
@@ -267,38 +396,104 @@
     will not show parent call sites to children that never return in
     normal execution.
 
+^ lfd, lfe, lfl, lft   Logging filter control
+> lfd  Disable logging channel
+> lfe  Enable logging channel
+> lfl  List logging filter settings
+
+    Display or modify logging filter settings.
+    
+      lfd <channel>|*   Disable logging channel
+      lfe <channel>|*   Enable logging channel without timestamps
+      lfl               List logging channels
+      
+    The logging filter controls which events from the simulation are shown
+    in the debug output window during execution.
+
+> lft  Enable logging channel with tagging
+
+      lft [-t] [-c] <channel>|*
+      
+    Enables a logging channel with prefixes indicating running status:
+    
+      -t   Include beam position timestamp.
+      -c   Include cassette tape position.
+      
+    If no switches are supplied, -t is assumed.
+
 + lm   List modules
 
-    Displays a list of currently known modules and any loaded symbols.
+    Display a list of currently known modules and any loaded symbols.
     
       lm
 
 + ln   List nearest symbol
 
-    Displays the closest symbol to a given address.
+    Display the closest symbol to a given address.
     
       ln <address>
       
     The closest symbol is the one with the highest address that is equal to
     or lower than the given address.
 
++ m    Move memory
+
+    Move a block of memory to another location.
+    
+      m <address> L<length> <dest-address>
+      
+    Memory in the source block is copied to a new block starting at the
+    destination address. If the source and destination blocks overlap, a
+    descending copy is used if needed to copy correctly. This is not
+    guaranteed if aliased memory windows are used, such as copying from
+    $4000 to x:$100 with the CPU extended memory window active.
+
++ o    Step over
+
+    Execute one instruction, stepping over any subroutine calls.
+    
+      o
+      
+    This is the same as (t)race, except that if a JSR or an interrupt is
+    encountered, execution continues until the subroutine exits.
+
 + r    Registers
 
-    Display or modify register values
+    Display or modify register values.
     
       r                (Display registers)
       r <reg> <value>  (Modify register)
       
-    Registers that can be modified are: PC, A, X, Y, S, and P.
-
-+ s    Step over
-
-    Execute one instruction, stepping over any subroutine calls.
+    Registers that can be modified are: PC, A, X, Y, S, and P. The flags in
+    the P register can also be individually toggled:
     
-      s
+	  p.n    Negative (sign) flag
+	  p.v    Overflow flag
+	  p.m    Accumulator size flag (65C816 mode only)
+	  p.x    Index size flag (65C816 mode only)
+	  p.d    Decimal mode flag
+	  p.i    Interrupt mask flag
+	  p.z    Zero flag
+	  p.c    Carry flag
+	  
+	The break flag cannot be modified as it does not exist in the P register,
+	only in the image of P pushed on the stack during interrupt entry.
+
++ s    Search memory
+
+    Searches memory for a specific pattern.
+    
+      s <xaddress> L<length> <value>...
       
-    This is the same as (t)race, except that if a JSR or an interrupt is
-    encountered, execution continues until the subroutine exits.
+    All starting addresses of blocks of memory that contain the given byte
+    pattern are reported. Expressions must evaluate to unsigned byte range
+    (0-255); use the low byte (<) operator if necessary to forcibly truncate
+    values.
+    
+    Examples:
+    
+      s 0 L10000 00 04 A5
+      s E800 L2800 <vimirq >vimirq
 
 + t    Trace (step one instruction) (F11)
 
@@ -334,21 +529,25 @@
     that self-modifies its code with a vector address. The vt* commands allow
     the target list to be modified to exclude valid targets from detection.
 
-^ wb, wc, wl, ww   Watch data
+^ wb, wc, wl, ww, wx   Watch data
 > wb   Watch byte
 > wc   Watch clear
 > wl   Watch list
 > ww   Watch word
+> wx   Watch expression
 
     Continuously display the value of a memory location on-screen.
     
       wb <address>     (Watch byte)
       ww <address>     (Watch word)
+      wx <expr>        (Watch expression)
       wl               (Watch list)
       wc               (Clear all watches)
       
     Watched values are sampled and displayed each frame. Up to eight watches
     can be active at any one time.
+    
+    See also: ? (evaluate expression)
 
 ^ ya, yc, yd, yr, yw   Manage manual symbol table
 > ya   Add manual symbol
@@ -386,9 +585,42 @@
       
     The token and name of each variable is displayed.
 
++ .batch       Run debugger batch script
+
+    Runs the contents of a text file as a series of debugger commands.
+    
+      .batch <filename>
+
 + .beam        Show ANTIC scan position
 + .caslogdata  Toggle verbose cassette data read logging
 + .diskorder   Set forced phantom sector ordering
+
+    Overrides default phantom sector ordering with a predefined order.
+    
+      .diskorder <sector>               (Restore default sector ordering)
+      .diskorder <sector> <indices...>  (Override sector ordering)
+      
+    By default, phantom sectors within a disk track are returned either
+    by their storage order in the disk image (.pro format) or according
+    to sector timing (.atx format). The .diskorder command allows the
+    ordering to be overridden in order to diagnose or correct load
+    failures due to incorrect sector order.
+    
+    Phantom sector indices start with 1 and correspond to the Nth physical
+    sector within the disk image. This command causes virtual sector 43
+    to load its four phantom sectors in stored order:
+    
+      .diskorder 43 1 2 3 4
+      
+    This command reverses the load order:
+    
+      .diskorder 43 4 3 2 1
+      
+    The DISK logging channel is useful for examining the sector load order
+    initiated by a program.
+    
+    See also: lfe (enable log channel), lft (enable tagged log channel)
+
 + .dlhistory   Show ANTIC display list execution history
 
     Displays history of display list instructions executed by ANTIC.
@@ -401,7 +633,25 @@
     HSCROL, VSCROL, and DMACTL states when the display list instructions
     were executed.
 
++ .ds1305      Show DS1305 real-time clock status
+
+    Displays status of the DS1305 real-time clock chip in the SIDE
+    interface.
+    
+      .side
+
 + .dma         Show current ANTIC DMA pattern
+
+    Displays the pattern of DMA cycles performed by ANTIC for the current
+    scan line.
+    
+      .dma
+      
+    The DMA pattern can change in the middle of the scan line depending
+    on when certain critical cycles are passed and if any pertinent
+    registers are rewritten. For instance, a mid-line write to DMACTL
+    that changes the playfield width can change the DMA pattern.
+
 + .dumpdlist   Dump ANTIC display list
 
     Disassemble an ANTIC display list stored in memory.
@@ -431,7 +681,36 @@
     should be taken at the beginning of the NMI handler for the vertical
     blank interrupt.
 
++ .echo        Display message to console
+
+    Writes a string to the console window.
+    
+      .echo <strings...>
+      
+    Quoted strings are displayed without quotes. To display a string with
+    a quotation mark in it ("), use escaped string syntax. Escaped strings
+    are quoted strings that are prefixed with \ and have \n, \", or \\
+    escapes inside them.
+    
+    Example:
+    
+       .echo foo             prints: foo
+       .echo foo  bar        prints: foo bar
+       .echo "foo  bar"      prints: foo  bar
+       .echo \"\"foo  bar\"" prints: "foo  bar"
+       .echo \"x\ny"         prints: x
+                                     y
+                                     
+    See also: .printf
+
 + .gtia        Display GTIA status
+
++ .ide         Display IDE emulator status
+
+    Displays the current state of the emulated IDE device.
+    
+      .ide
+
 + .iocb        Display CIO I/O control blocks
 + .loadksym    Load kernel symbols
 + .loadsym     Load module symbols
@@ -446,6 +725,36 @@
     and multiple sets of symbols can also be loaded.
 
 + .map         Show memory map layers
+
+    Displays memory layers active in the memory mapper
+    
+      .map
+      
+    This displays the memory layers that are being tracked internally in
+    the emulator.
+
+^ .onexeclear, .onexelist, .onexeload, .onexerun   Executable command triggers
+> .onexeclear  Clear queued on-executable commands
+> .onexelist   List queued on-executable commands
+> .onexeload   Queue command on executable load
+> .onexerun    Queue command on executable run
+
+    Queue commands for when an executable loads or runs.
+    
+      .onexeclear          (Clear queued commands)
+      .onexelist           (List queued commands)
+      .onexeload <command> (Queue command prior to executable load)
+      .onexerun <command>  (Queue command prior to executable run)
+      
+    This allows debugger commands to be automatically issued when
+    an executable loads or runs. The on-load commands are issued
+    before the first segment is loaded, while the on-run commands
+    are issued before the run vector is activated. Commands are
+    removed from the queue after they are run.
+    
+    The on-exe commands only trigger when an executable is loaded
+    by the simulator itself. They do not activate when an executable
+    is loaded by DOS, which is invisible to the simulator.
 
 ^ .pathdump, .pathrecord, .pathreset, .pathbreak   Manage execution path recording
 > .pathdump    Dump disassembly of recorded paths to a file
@@ -474,6 +783,56 @@
 
 + .pclink      Display PCLink status
 + .pokey       Display POKEY status
+
++ .printf      Display message with formatted fields
+
+    Writes a string to the console window with formatted fields.
+    
+      .printf "format-string" [field...]
+
+    Format-string can contain formatted fields like the C library
+    function printf(). Formatting specifiers are of the form:
+    
+      %[flags][width][.precision][length]type
+
+    Flags:
+      
+      0        Apply zero padding to right-justified string
+      #        Prefix %x strings with 0x and %X strings with 0X
+      +        Always display +/- sign on numbers
+      <space>  Prefix positive numbers with a space
+      -        Left-justify formatted field
+      
+    Width is a positive number specifying the minimum characters to
+    display for the field. If the formatted field is shorter than
+    the width, the field is padded according to flags, with right
+    justification with spaces being the default. Variable width
+    parameters (*) are not supported.
+    
+    Precision is a non-negative number specifying minimum number of
+    digits to display for numeric types. Zeroes are prepended to
+    the number if it has fewer digits than the specified precision.
+    Variable precision parameters (*) are not supported.
+    
+    Length specifies the size of the field:
+    
+      hh       Byte (8-bit)
+      h        Word (16-bit)
+      l        Long (32-bit) (default)
+    
+    Type specifies the field type:
+    
+      %b       Binary number
+      %d, %i   Signed decimal
+      %u       Unsigned decimal
+      %x       Hexadecimal (lowercase)
+      %X       Hexadecimal (uppercase)
+
+    Unlike the C function printf(), .printf always prints a newline
+    after the formatted string.
+
+    See also: .echo
+
 + .restart     Restart emulated system
 
     Performs a cold reset.
@@ -492,6 +851,51 @@
     If this module exists, it is cleared before being reloaded.
 
 + .sio         Dump SIO parameter block
+
++ .sourcemode  Switch between source and disassembly level debugging
+
+    Selects or displays the current source debugging mode.
+    
+      .sourcemode [on|off]
+      
+    The debugger can optionally jump to source code whenever appropriate
+    symbols are available. By default, this happens only when single
+    stepping or resuming execution from a source code window. By using
+    the .sourcemode command and the -n option of the g (Go) command,
+    however, you can force source mode debugging. This is most useful
+    in scripts.
+    
+    See also: g (Go)
+
++ .tape        Display cassette tape deck status
+
++ .tapedata    Display cassette tape data
+
+    Displays data from the currently loaded cassette tape.
+    
+      .tapedata                 (Display raw tape bits)
+      .tapedata -t              (Display raw tape bit transitions)
+      .tapedata -b <baud>       (Display decoded data at baud rate)
+      .tapedata -b <baud> -d    (Display only decoded bytes at baud rate)
+      
+    The .tapedata command displays the data near the current tape
+    position. By default, the raw internally stored data bits are
+    displayed at 4Kbaud. If the -t flag is specified, only the locations
+    of transitions are displayed.
+    
+    The -b flag specifies byte decoding at a specified baud rate and
+    causes the debugger to attempt to identify byte locations through
+    start and stop bits. The -d flag causes only decoded bytes and not
+    intermediate data bits to be displayed.
+    
+    The decoding algorithm is similar but not the same as that which
+    actually occurs during simulation, which has an additional low pass
+    filter on the serial input based on the serial rate. The debugger
+    can also misdecode the initial bytes due to starting from ground
+    state.
+    
+    See also: .tape
+
 + .tracecio    Toggle CIO call tracing
 + .traceser    Toggle serial I/O port tracing
 + .unloadsym   Unload module symbols
@@ -516,6 +920,7 @@
 .   $01:0000   CPU view, 65C816 high memory
 .   n:$0000    ANTIC view of primary memory
 .   v:$00000   VBXE memory
+.   r:$0000    Main memory
 .   x:$00000   Extended memory
 . 
 . Some commands support length syntax:

@@ -431,6 +431,17 @@ const char *ATGetSymbolName(uint16 addr, bool write) {
 	return sym.mpName;
 }
 
+const char *ATGetSymbolNameOffset(uint16 addr, bool write, sint32& offset) {
+	IATDebuggerSymbolLookup *symlookup = ATGetDebuggerSymbolLookup();
+
+	ATSymbol sym;
+	if (!symlookup->LookupSymbol(addr, write ? kATSymbol_Write : kATSymbol_Read | kATSymbol_Execute, sym))
+		return NULL;
+
+	offset = addr - (sint32)sym.mOffset;
+	return sym.mpName;
+}
+
 void ATDisassembleCaptureRegisterContext(ATCPUHistoryEntry& hent) {
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 	hent.mP = cpu.GetP();
@@ -812,13 +823,20 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 		}
 
 		const char *name = NULL;
+		sint32 offset;
 		
 		if (dolabel)
-			name = ATGetSymbolName(base, write);
+			name = ATGetSymbolNameOffset(base, write, offset);
 
-		if (name)
-			line.append(name);
-		else if (addr24)
+		if (name) {
+			uint32 absOffset = abs(offset);
+			if (!absOffset)
+				line.append(name);
+			else if (absOffset < 10)
+				line.append_sprintf("%s%+d", name, offset);
+			else
+				line.append_sprintf("%s%c$%02x", name, offset < 0 ? '-' : '+', absOffset);
+		} else if (addr24)
 			line.append_sprintf("$%06X", base & 0xffffff);
 		else if (addr16)
 			line.append_sprintf("$%04X", base & 0xffff);

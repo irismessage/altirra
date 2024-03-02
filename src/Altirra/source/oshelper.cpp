@@ -16,7 +16,7 @@
 bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size) {
 	HMODULE hmod = VDGetLocalModuleHandleW32();
 
-	HRSRC hrsrc = FindResourceA(hmod, MAKEINTRESOURCE(id), "KERNEL");
+	HRSRC hrsrc = FindResourceA(hmod, MAKEINTRESOURCEA(id), "KERNEL");
 	if (!hrsrc)
 		return false;
 
@@ -39,7 +39,7 @@ bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size) {
 bool ATLoadMiscResource(int id, vdfastvector<uint8>& data) {
 	HMODULE hmod = VDGetLocalModuleHandleW32();
 
-	HRSRC hrsrc = FindResourceA(hmod, MAKEINTRESOURCE(id), "STUFF");
+	HRSRC hrsrc = FindResourceA(hmod, MAKEINTRESOURCEA(id), "STUFF");
 	if (!hrsrc)
 		return false;
 
@@ -205,7 +205,7 @@ void ATShowHelp(void *hwnd, const wchar_t *filename) {
 			VDStringW helpFileADS(helpFile);
 			helpFileADS += L":Zone.Identifier";
 			if (VDDoesPathExist(helpFileADS.c_str())) {
-				int rv = MessageBox((HWND)hwnd, "Altirra has detected that its help file, Altirra.chm, has an Internet Explorer download location marker on it. This may prevent the help file from being displayed properly, resulting in \"Action canceled\" errors being displayed. Would you like to remove it?", "VirtualDub warning", MB_YESNO|MB_ICONEXCLAMATION);
+				int rv = MessageBox((HWND)hwnd, _T("Altirra has detected that its help file, Altirra.chm, has an Internet Explorer download location marker on it. This may prevent the help file from being displayed properly, resulting in \"Action canceled\" errors being displayed. Would you like to remove it?"), _T("Altirra warning"), MB_YESNO|MB_ICONEXCLAMATION);
 
 				if (rv == IDYES)
 					DeleteFileW(helpFileADS.c_str());
@@ -244,4 +244,31 @@ void ATShowHelp(void *hwnd, const wchar_t *filename) {
 	} catch(const MyError& e) {
 		e.post((HWND)hwnd, "Altirra Error");
 	}
+}
+
+bool ATIsUserAdministrator() {
+	if (LOBYTE(LOWORD(::GetVersion())) < 6)
+		return TRUE;
+
+	BOOL isAdmin = FALSE;
+
+	HMODULE hmodAdvApi = LoadLibraryW(L"advapi32");
+
+	if (hmodAdvApi) {
+		typedef BOOL (WINAPI *tpCreateWellKnownSid)(WELL_KNOWN_SID_TYPE WellKnownSidType, PSID DomainSid, PSID pSid, DWORD *cbSid);
+		tpCreateWellKnownSid pCreateWellKnownSid = (tpCreateWellKnownSid)GetProcAddress(hmodAdvApi, "CreateWellKnownSid");
+
+		if (pCreateWellKnownSid) {
+			DWORD sidLen = SECURITY_MAX_SID_SIZE;
+			BYTE localAdminsGroupSid[SECURITY_MAX_SID_SIZE];
+
+			if (pCreateWellKnownSid(WinBuiltinAdministratorsSid, NULL, localAdminsGroupSid, &sidLen)) {
+				CheckTokenMembership(NULL, localAdminsGroupSid, &isAdmin);
+			}
+		}
+
+		FreeLibrary(hmodAdvApi);
+	}
+
+	return isAdmin != 0;
 }

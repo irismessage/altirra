@@ -20,8 +20,10 @@ BASIC_SRCFILES = source\basic\main.xasm
 SUPERKERNEL_SRCFILES = source\superkernel\main.xasm source\superkernel\includes.xasm
 NOCARTRIDGE_SRCFILES = source\nocartridge\main.xasm
 ATDISKLOADER_SRCFILES = source\ATDiskLoader\main.s
+NOHDBIOS_SRCFILES = source\NoHDBIOS\main.s
+NOGAME_SRCFILES = source\NoGame\main.s
 
-all: kernel nokernel basic superkernel nocartridge atdiskloader64 atdiskloader128
+all: kernel nokernel basic superkernel nocartridge atdiskloader64 atdiskloader128 nohdbios nogame
 
 clean:
 	if exist "$(OUT)\kernel.rom" del "$(OUT)\kernel.rom"
@@ -31,6 +33,8 @@ clean:
 	if exist "$(OUT)\nocartridge.rom" del "$(OUT)\nocartridge.rom"
 	if exist "$(OUT)\atdiskload64.rom" del "$(OUT)\atdiskload64.rom"
 	if exist "$(OUT)\atdiskload128.rom" del "$(OUT)\atdiskload128.rom"
+	if exist "$(OUT)\nohdbios.rom" del "$(OUT)\nohdbios.rom"
+	if exist "$(OUT)\nogame.rom" del "$(OUT)\nogame.rom"
 
 kernel: $(OUT)\kernel.rom
 
@@ -45,6 +49,10 @@ nocartridge: $(OUT)\nocartridge.rom
 atdiskloader64: $(OUT)\atdiskloader64.bin
 
 atdiskloader128: $(OUT)\atdiskloader128.bin
+
+nohdbios: $(OUT)\nohdbios.rom
+
+nogame: $(OUT)\nogame.rom
 
 $(OUT)\kernel.rom: $(SRCFILES)
 	@$(MADS) -s -p -b:$$c000 -l:$(OUT)\kernel.lst -o:$(OUT)\kernel.rom source\main.xasm
@@ -66,3 +74,9 @@ $(OUT)\atdiskloader128.bin: $(ATDISKLOADER_SRCFILES)
 
 $(OUT)\atdiskloader64.bin: $(ATDISKLOADER_SRCFILES)
 	@$(MADS) -d:MEMORY=64 -s -p -b:$$0800 -l:$(OUT)\atdiskloader64.lst -o:$(OUT)\atdiskloader64.bin source\ATDiskLoader\main.s
+
+$(OUT)\nohdbios.rom: $(NOHDBIOS_SRCFILES)
+	@$(MADS) -s -p -b:$$d800 -l:$(OUT)\nohdbios.lst -o:$(OUT)\nohdbios.rom source\NoHDBIOS\main.s
+
+$(OUT)\nogame.rom: $(NOGAME_SRCFILES)
+	@$(MADS) -s -p -b:$$a000 -l:$(OUT)\nogame.lst -o:$(OUT)\nogame.rom source\nogame\main.s

@@ -26,6 +26,10 @@
 #ifndef f_VD2_SYSTEM_DATE_H
 #define f_VD2_SYSTEM_DATE_H
 
+#include <vd2/system/vdtypes.h>
+
+class VDStringW;
+
 struct VDDate {
 	uint64	mTicks;
 
@@ -50,5 +54,7 @@ struct VDExpandedDate {
 
 VDDate VDGetCurrentDate();
 VDExpandedDate VDGetLocalDate(const VDDate& date);
+void VDAppendLocalDateString(VDStringW& dst, const VDExpandedDate& date);
+void VDAppendLocalTimeString(VDStringW& dst, const VDExpandedDate& date);
 
 #endif	// f_VD2_SYSTEM_DATE_H

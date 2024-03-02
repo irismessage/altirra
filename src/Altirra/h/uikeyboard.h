@@ -18,8 +18,22 @@
 #ifndef f_AT_UIKEYBOARD_H
 #define f_AT_UIKEYBOARD_H
 
+struct ATUIKeyboardOptions {
+	enum ArrowKeyMode {
+		kAKM_InvertCtrl,	// Ctrl state is inverted between host and emulation
+		kAKM_AutoCtrl,		// Ctrl state is injected only for unmodded case
+		kAKM_DefaultCtrl,	// Shift/Ctrl states are passed through
+		kAKMCount
+	};
+
+	bool mbRawKeys;
+	bool mbEnableFunctionKeys;
+	bool mbAllowShiftOnColdReset;
+	ArrowKeyMode mArrowKeyMode;
+};
+
 bool ATUIGetScanCodeForCharacter(char c, uint8& ch);
-void ATUIInitVirtualKeyMap();
+void ATUIInitVirtualKeyMap(const ATUIKeyboardOptions& options);
 bool ATUIGetScanCodeForVirtualKey(uint32 virtKey, bool alt, bool ctrl, bool shift, uint8& scanCode);
 
 #endif

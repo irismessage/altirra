@@ -41,7 +41,23 @@ protected:
 
 	struct MapSorter {
 		bool operator()(int x, int y) const {
-			return ATGetCartridgeModeForMapper(x) < ATGetCartridgeModeForMapper(y);
+			// The terminology is a bit screwed here -- need to clean up mapper vs. mode.
+			int xm = ATGetCartridgeMapperForMode(x);
+			int ym = ATGetCartridgeMapperForMode(y);
+
+			if (!xm)
+				xm = 1000;
+
+			if (!ym)
+				ym = 1000;
+
+			if (xm < ym)
+				return true;
+
+			if (xm == ym && xm == 1000 && wcscmp(GetModeName(x), GetModeName(y)) < 0)
+				return true;
+
+			return false;
 		}
 	};
 };
@@ -69,6 +85,12 @@ bool ATUIDialogCartridgeMapper::OnLoaded() {
 			valid = true;
 		} else if (i == kATCartridgeMode_SIC && (mCartSize == 0x20000 || mCartSize == 0x40000)) {
 			// We allow 128K and 256K for SIC!.
+			valid = true;
+		} else if (i == kATCartridgeMode_MaxFlash_1024K_Bank0 && (mCartSize == 0x40000 || mCartSize == 0x80000)) {
+			// We allow 256K and 512K for the new 8Mbit MaxFlash carts.
+			valid = true;
+		} else if (i == kATCartridgeMode_Megacart_1M_2 && (mCartSize == 0x40000 || mCartSize == 0x80000)) {
+			// We allow 256K and 512K for the 1M Megacart.
 			valid = true;
 		}
 
@@ -143,6 +165,7 @@ uint32 ATUIDialogCartridgeMapper::GetModeSize(int mode) {
 		case kATCartridgeMode_MaxFlash_128K:		return 131072;
 		case kATCartridgeMode_MaxFlash_128K_MyIDE:	return 131072;
 		case kATCartridgeMode_MaxFlash_1024K:		return 1048576;
+		case kATCartridgeMode_MaxFlash_1024K_Bank0:	return 1048576;
 		case kATCartridgeMode_5200_32K:				return 32768;
 		case kATCartridgeMode_5200_16K_TwoChip:		return 16384;
 		case kATCartridgeMode_5200_16K_OneChip:		return 16384;
@@ -161,7 +184,18 @@ uint32 ATUIDialogCartridgeMapper::GetModeSize(int mode) {
 		case kATCartridgeMode_Atrax_128K:			return 131072;
 		case kATCartridgeMode_Williams_32K:			return 32768;
 		case kATCartridgeMode_Phoenix_8K:			return 8192;
+		case kATCartridgeMode_Blizzard_4K:			return 4096;
+		case kATCartridgeMode_Blizzard_16K:			return 16384;
 		case kATCartridgeMode_SIC:					return 524288;
+		case kATCartridgeMode_Atrax_SDX_64K:		return 65536;
+		case kATCartridgeMode_Atrax_SDX_128K:		return 131072;
+		case kATCartridgeMode_OSS_043M:				return 16384;
+		case kATCartridgeMode_OSS_8K:				return 8192;
+		case kATCartridgeMode_AST_32K:				return 32768;
+		case kATCartridgeMode_Turbosoft_64K:		return 65536;
+		case kATCartridgeMode_Turbosoft_128K:		return 131072;
+		case kATCartridgeMode_Megacart_1M_2:		return 1048576;
+		case kATCartridgeMode_5200_64K_32KBanks:	return 65536;
 		default:
 			return 0;
 	}
@@ -209,14 +243,25 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeName(int mode) {
 		case kATCartridgeMode_Switchable_XEGS_1M:	return L"38: 1M Switchable XEGS";
 		case kATCartridgeMode_Phoenix_8K:			return L"39: Phoenix 8K";
 		case kATCartridgeMode_Blizzard_16K:			return L"40: Blizzard 16K";
-		case kATCartridgeMode_MaxFlash_128K:		return L"41: MaxFlash 128K";
-		case kATCartridgeMode_MaxFlash_1024K:		return L"42: MaxFlash 1M";
+		case kATCartridgeMode_MaxFlash_128K:		return L"41: MaxFlash 128K / 1Mbit";
+		case kATCartridgeMode_MaxFlash_1024K:		return L"42: MaxFlash 1M / 8Mbit - older (bank 127)";
 		case kATCartridgeMode_SpartaDosX_128K:		return L"43: SpartaDOS X 128K";
+		case kATCartridgeMode_OSS_8K:				return L"44: OSS 8K";
+		case kATCartridgeMode_OSS_043M:				return L"45: OSS '043M'";
+		case kATCartridgeMode_Blizzard_4K:			return L"46: Blizzard 4K";
+		case kATCartridgeMode_AST_32K:				return L"47: AST 32K";
+		case kATCartridgeMode_Atrax_SDX_64K:		return L"48: Atrax SDX 64K";
+		case kATCartridgeMode_Atrax_SDX_128K:		return L"49: Atrax SDX 128K";
+		case kATCartridgeMode_Turbosoft_64K:		return L"50: Turbosoft 64K";
+		case kATCartridgeMode_Turbosoft_128K:		return L"51: Turbosoft 128K";
 		case kATCartridgeMode_MaxFlash_128K_MyIDE:	return L"MaxFlash 128K + MyIDE";
 		case kATCartridgeMode_Corina_1M_EEPROM:		return L"Corina 1M + 8K EEPROM";
 		case kATCartridgeMode_Corina_512K_SRAM_EEPROM:	return L"Corina 512K + 512K SRAM + 8K EEPROM";
 		case kATCartridgeMode_TelelinkII:			return L"8K Telelink II";
 		case kATCartridgeMode_SIC:					return L"SIC!";
+		case kATCartridgeMode_MaxFlash_1024K_Bank0:	return L"MaxFlash 1M / 8Mbit - newer (bank 0)";
+		case kATCartridgeMode_Megacart_1M_2:		return L"Megacart 1M (2)";
+		case kATCartridgeMode_5200_64K_32KBanks:	return L"5200 64K cartridge (32K banks)";
 		default:
 			return L"";
 	}

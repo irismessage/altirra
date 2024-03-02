@@ -842,6 +842,29 @@ VDStringW VDGetProgramPath() {
 	return VDGetModulePathW32(NULL);
 }
 
+VDStringW VDGetProgramFilePath() {
+	union {
+		wchar_t w[MAX_PATH];
+		char a[MAX_PATH];
+	} buf;
+
+	VDStringW wstr;
+
+	if (VDIsWindowsNT()) {
+		if (!GetModuleFileNameW(NULL, buf.w, MAX_PATH))
+			throw MyWin32Error("Unable to get program path: %%s", GetLastError());
+
+		wstr = buf.w;
+	} else {
+		if (GetModuleFileNameA(NULL, buf.a, MAX_PATH))
+			throw MyWin32Error("Unable to get program path: %%s", GetLastError());
+
+		wstr = VDTextAToW(buf.a, -1);
+	}
+
+	return wstr;
+}
+
 VDStringW VDGetSystemPath9x() {
 	char path[MAX_PATH];
 

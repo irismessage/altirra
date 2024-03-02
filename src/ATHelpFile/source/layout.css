@@ -57,6 +57,15 @@ td {
 	margin: 0;
 }
 
+dt {
+	font-weight: bold;
+}
+
+dd {
+	margin-top: 5pt;
+	margin-bottom: 5pt;
+}
+
 .main {
 	margin: 12pt;
 	padding-bottom: 1px;

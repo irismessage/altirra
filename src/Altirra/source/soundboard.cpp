@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include <vd2/system/binary.h>
 #include "soundboard.h"
 #include "scheduler.h"
 #include "audiooutput.h"
@@ -75,6 +76,16 @@ void ATSoundBoardEmulator::ColdReset() {
 	mLastUpdate = ATSCHEDULER_GETTIME(mpScheduler);
 	mCycleAccum = 0;
 
+	mMultiplierMode = 0;
+	mMultiplierArg1[0] = 0xFF;
+	mMultiplierArg1[1] = 0xFF;
+	mMultiplierArg2[0] = 0xFF;
+	mMultiplierArg2[1] = 0xFF;
+	mMultiplierResult[0] = 0xFF;
+	mMultiplierResult[1] = 0xFF;
+	mMultiplierResult[2] = 0xFF;
+	mMultiplierResult[3] = 0xFF;
+
 	if (mpMemLayerControl) {
 		mpMemMan->DeleteLayer(mpMemLayerControl);
 		mpMemLayerControl = NULL;
@@ -97,8 +108,8 @@ void ATSoundBoardEmulator::ColdReset() {
 
 		case 0xD500:
 			handlers.mbPassAnticReads = false;
-			handlers.mbPassReads = false;
-			handlers.mbPassWrites = false;
+			handlers.mbPassReads = true;
+			handlers.mbPassWrites = true;
 			handlers.mpDebugReadHandler = StaticDebugReadD5xxControl;
 			handlers.mpReadHandler = StaticReadD5xxControl;
 			handlers.mpWriteHandler = StaticWriteD5xxControl;
@@ -107,8 +118,8 @@ void ATSoundBoardEmulator::ColdReset() {
 
 		case 0xD600:
 			handlers.mbPassAnticReads = false;
-			handlers.mbPassReads = false;
-			handlers.mbPassWrites = false;
+			handlers.mbPassReads = true;
+			handlers.mbPassWrites = true;
 			handlers.mpDebugReadHandler = StaticDebugReadD5xxControl;
 			handlers.mpReadHandler = StaticReadD5xxControl;
 			handlers.mpWriteHandler = StaticWriteD5xxControl;
@@ -130,24 +141,11 @@ void ATSoundBoardEmulator::WarmReset() {
 
 uint8 ATSoundBoardEmulator::DebugReadControl(uint8 addr) const {
 	switch(addr & 0x1F) {
-		case 0x00:
-			return 0x53;
-
-		case 0x01:
-			return 0x42;
-
-		case 0x02:		// major version
-			return 0x01;
-
-		case 0x03:		// minor version
-			return 0x02;
-
 		case 0x13:
 			return mpMemory[mLoadAddress & 0x7ffff];
-
-		default:
-			return 0xFF;
 	}
+
+	return const_cast<ATSoundBoardEmulator *>(this)->ReadControl(addr);
 }
 
 uint8 ATSoundBoardEmulator::ReadControl(uint8 addr) {
@@ -166,6 +164,18 @@ uint8 ATSoundBoardEmulator::ReadControl(uint8 addr) {
 
 		case 0x13:
 			return mpMemory[mLoadAddress++ & 0x7ffff];
+
+		case 0x1A:
+			return mMultiplierResult[0];
+
+		case 0x1B:
+			return mMultiplierResult[1];
+
+		case 0x1C:
+			return mMultiplierResult[2];
+
+		case 0x1D:
+			return mMultiplierResult[3];
 
 		default:
 			return 0xFF;
@@ -262,6 +272,63 @@ void ATSoundBoardEmulator::WriteControl(uint8 addr, uint8 value) {
 
 		case 0x14:	// channel select
 			mpCurChan = &mChannels[value & 7];
+			break;
+
+		case 0x15:	// multiplier accumulation mode
+			mMultiplierMode = value;
+			break;
+
+		case 0x16:	// multiplier arg1 lo
+			mMultiplierArg1[0] = value;
+			break;
+
+		case 0x17:	// multiplier arg1 hi
+			mMultiplierArg1[1] = value;
+			break;
+
+		case 0x18:	// multiplier arg2 lo
+			mMultiplierArg2[0] = value;
+			break;
+
+		case 0x19:	// multiplier arg2 hi and go strobe
+			mMultiplierArg2[1] = value;
+
+			{
+				const sint32 arg1 = VDReadUnalignedLES16(mMultiplierArg1);
+				const sint32 arg2 = VDReadUnalignedLES16(mMultiplierArg2);
+				sint32 result = VDReadUnalignedLES32(mMultiplierResult);
+
+				switch(mMultiplierMode) {
+					case 0:		// 16x16 -> 32 signed multiplication
+						result = arg1 * arg2;
+						break;
+
+					case 1:		// 16x16 -> 32 signed mul-add
+						result += arg1 * arg2;
+						break;
+
+					case 2:		// 16/16 -> 16:16 fixed point signed division
+						if (!arg2) {
+							// Division by zero produces +/-inf.
+							result = (arg1 >> 31) ^ 0x7FFFFFFF;
+						} else if (arg1 == -0x8000 && arg2 == -1) {
+							// This is the singular possible case for integer division overflow.
+							result = 0x7FFFFFFF;
+						} else {
+							result = (arg1 << 16) / arg2;
+						}
+						break;
+
+					case 4:		// 16/16 -> 16:16 fixed point unsigned division
+						if (arg2)
+							result = ((uint32)arg1 << 16) / ((uint32)arg2 & 0xffff);
+						else
+							result = 0xFFFFFFFFU;
+						break;
+				}
+
+				VDWriteUnalignedLES32(mMultiplierResult, result);
+			}
 			break;
 	}
 }
@@ -512,14 +579,26 @@ bool ATSoundBoardEmulator::StaticWriteD2xxControl(void *thisptr, uint32 addr, ui
 }
 
 sint32 ATSoundBoardEmulator::StaticDebugReadD5xxControl(void *thisptr, uint32 addr) {
-	return ((const ATSoundBoardEmulator *)thisptr)->DebugReadControl((uint8)addr);
+	uint8 addr8 = (uint8)addr;
+	if (addr8 >= 0x40)
+		return -1;
+
+	return ((const ATSoundBoardEmulator *)thisptr)->DebugReadControl(addr8);
 }
 
 sint32 ATSoundBoardEmulator::StaticReadD5xxControl(void *thisptr, uint32 addr) {
-	return ((ATSoundBoardEmulator *)thisptr)->ReadControl((uint8)addr);
+	uint8 addr8 = (uint8)addr;
+	if (addr8 >= 0x40)
+		return -1;
+
+	return ((ATSoundBoardEmulator *)thisptr)->ReadControl(addr8);
 }
 
 bool ATSoundBoardEmulator::StaticWriteD5xxControl(void *thisptr, uint32 addr, uint8 value) {
-	((ATSoundBoardEmulator *)thisptr)->WriteControl((uint8)addr, value);
+	uint8 addr8 = (uint8)addr;
+	if (addr8 >= 0x40)
+		return false;
+
+	((ATSoundBoardEmulator *)thisptr)->WriteControl(addr8, value);
 	return true;
 }

@@ -594,15 +594,13 @@ void ATArtifactingEngine::ArtifactPALHi(uint32 dst[N*2], const uint8 src[N], boo
 
 #if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
 	if (SSE2_enabled) {
-		if (scanlineHasHiRes) {
+		if (scanlineHasHiRes)
 			ATArtifactPALLuma_SSE2(ybuf, src, N, &mPal8x.mPalToY[oddLine][0][0][0]);
-			ATArtifactPALChroma_SSE2(ubuf, src, N, &mPal8x.mPalToU[oddLine][0][0][0]);
-			ATArtifactPALChroma_SSE2(vbuf, src, N, &mPal8x.mPalToV[oddLine][0][0][0]);
-		} else {
+		else
 			ATArtifactPALLumaTwin_SSE2(ybuf, src, N, &mPal8x.mPalToYTwin[oddLine][0][0][0]);
-			ATArtifactPALChromaTwin_SSE2(ubuf, src, N, &mPal8x.mPalToUTwin[oddLine][0][0][0]);
-			ATArtifactPALChromaTwin_SSE2(vbuf, src, N, &mPal8x.mPalToVTwin[oddLine][0][0][0]);
-		}
+
+		ATArtifactPALChromaTwin_SSE2(ubuf, src, N, &mPal8x.mPalToUTwin[oddLine][0][0][0]);
+		ATArtifactPALChromaTwin_SSE2(vbuf, src, N, &mPal8x.mPalToVTwin[oddLine][0][0][0]);
 
 		ATArtifactPALFinal_SSE2(dst, ybuf, ubuf, vbuf, ulbuf, vlbuf, N);
 		return;
@@ -611,15 +609,13 @@ void ATArtifactingEngine::ArtifactPALHi(uint32 dst[N*2], const uint8 src[N], boo
 	
 #ifdef VD_CPU_X86
 	if (MMX_enabled) {
-		if (scanlineHasHiRes) {
+		if (scanlineHasHiRes)
 			ATArtifactPALLuma_MMX(ybuf, src, N, &mPal4x.mPalToY[oddLine][0][0][0]);
-			ATArtifactPALChroma_MMX(ubuf, src, N, &mPal4x.mPalToU[oddLine][0][0][0]);
-			ATArtifactPALChroma_MMX(vbuf, src, N, &mPal4x.mPalToV[oddLine][0][0][0]);
-		} else {
+		else
 			ATArtifactPALLumaTwin_MMX(ybuf, src, N, &mPal4x.mPalToYTwin[oddLine][0][0][0]);
-			ATArtifactPALChromaTwin_MMX(ubuf, src, N, &mPal4x.mPalToUTwin[oddLine][0][0][0]);
-			ATArtifactPALChromaTwin_MMX(vbuf, src, N, &mPal4x.mPalToVTwin[oddLine][0][0][0]);
-		}
+
+		ATArtifactPALChromaTwin_MMX(ubuf, src, N, &mPal4x.mPalToUTwin[oddLine][0][0][0]);
+		ATArtifactPALChromaTwin_MMX(vbuf, src, N, &mPal4x.mPalToVTwin[oddLine][0][0][0]);
 
 		ATArtifactPALFinal_MMX(dst, ybuf, ubuf, vbuf, ulbuf, vlbuf, N);
 		return;

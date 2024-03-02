@@ -28,7 +28,8 @@ ATCPUProfiler::ATCPUProfiler()
 	, mpFastScheduler(NULL)
 	, mpSlowScheduler(NULL)
 {
-	std::fill(mpHashTable, mpHashTable + 256, (HashLink *)NULL);
+	memset(mpHashTable, 0, sizeof mpHashTable);
+	memset(mpCGHashTable, 0, sizeof mpCGHashTable);
 }
 
 ATCPUProfiler::~ATCPUProfiler() {
@@ -53,12 +54,27 @@ void ATCPUProfiler::Start(ATProfileMode mode) {
 	mTotalCycles = 0;
 	mbAdjustStackNext = false;
 	mLastS = mpCPU->GetS();
-	mCurrentFrameAddress = mpCPU->GetPC();
+	mCurrentFrameAddress = mpCPU->GetInsnPC();
 
 	if (mode == kATProfileMode_BasicLines)
 		mpUpdateEvent = mpSlowScheduler->AddEvent(2, this, 2);
 	else
 		mpUpdateEvent = mpSlowScheduler->AddEvent(32, this, 1);
+
+	if (mode == kATProfileMode_CallGraph) {
+		mSession.mCallGraphRecords.resize(4);
+
+		for(int i=0; i<4; ++i) {
+			ATProfileCallGraphRecord& rmain = mSession.mCallGraphRecords[i];
+			memset(&rmain, 0, sizeof rmain);
+		}
+
+		mSession.mCallGraphRecords[1].mAddress = 0x20000;
+		mSession.mCallGraphRecords[2].mAddress = 0x30000;
+		mSession.mCallGraphRecords[3].mAddress = 0x40000;
+
+		mCurrentContext = 0;
+	}
 
 	std::fill(mStackTable, mStackTable+256, -1);
 }
@@ -72,21 +88,39 @@ void ATCPUProfiler::End() {
 	}
 
 	mTotalCycles = mpCallbacks->CPUGetCycle() - mStartCycleTime;
+
+	if (mProfileMode == kATProfileMode_CallGraph) {
+		for(uint32 i = mSession.mCallGraphRecords.size(); i; --i) {
+			ATProfileCallGraphRecord& cgr = mSession.mCallGraphRecords[i - 1];
+			cgr.mInclusiveCycles += cgr.mCycles;
+			cgr.mInclusiveUnhaltedCycles += cgr.mUnhaltedCycles;
+			cgr.mInclusiveInsns += cgr.mInsns;
+
+			if (cgr.mParent) {
+				ATProfileCallGraphRecord& cgp = mSession.mCallGraphRecords[cgr.mParent];
+				cgp.mInclusiveCycles += cgr.mInclusiveCycles;
+				cgp.mInclusiveUnhaltedCycles += cgr.mInclusiveUnhaltedCycles;
+				cgp.mInclusiveInsns += cgr.mInclusiveInsns;
+			}
+		}
+	}
 }
 
 void ATCPUProfiler::GetSession(ATProfileSession& session) {
 	Update();
 	session.mRecords.clear();
+	session.mCallGraphRecords.clear();
 
-	session.mTotalCycles = 0;
-	session.mTotalInsns = 0;
+	session.mTotalCycles = mTotalCycles;
+	session.mTotalInsns = mTotalSamples;
+
+	if (mProfileMode == kATProfileMode_CallGraph) {
+		session.mCallGraphRecords = mSession.mCallGraphRecords;
+	}
 
 	for(int i=0; i<256; ++i) {
-		for(HashLink *hl = mpHashTable[i]; hl; hl = hl->mpNext) {
+		for(HashLink *hl = mpHashTable[i]; hl; hl = hl->mpNext)
 			session.mRecords.push_back(hl->mRecord);
-			session.mTotalCycles += hl->mRecord.mCycles;
-			session.mTotalInsns += hl->mRecord.mInsns;
-		}
 	}
 }
 
@@ -103,6 +137,11 @@ void ATCPUProfiler::OnScheduledEvent(uint32 id) {
 }
 
 void ATCPUProfiler::Update() {
+	if (mProfileMode == kATProfileMode_CallGraph) {
+		UpdateCallGraph();
+		return;
+	}
+
 	uint32 nextHistoryCounter = mpCPU->GetHistoryCounter();
 	uint32 counter = mLastHistoryCounter;
 	uint32 count = (nextHistoryCounter - mLastHistoryCounter) & (mpCPU->GetHistoryLength() - 1);
@@ -126,7 +165,8 @@ void ATCPUProfiler::Update() {
 	const ATCPUHistoryEntry *hentp = &mpCPU->GetHistory(count);
 	for(uint32 i=count; i; --i) {
 		const ATCPUHistoryEntry *hentn = &mpCPU->GetHistory(i - 1);
-		uint32 cycles = hentn->mCycle - hentp->mCycle;
+		uint32 cycles = (uint16)(hentn->mCycle - hentp->mCycle);
+		uint32 unhaltedCycles = (uint16)(hentn->mUnhaltedCycle - hentp->mUnhaltedCycle);
 		uint32 addr = hentp->mPC;
 		bool isCall = false;
 
@@ -150,9 +190,12 @@ void ATCPUProfiler::Update() {
 			}
 
 			if (adjustStack) {
-				uint32 newFrameMode = mCurrentFrameAddress & 0x30000;
+				uint32 newFrameMode = mCurrentFrameAddress & 0x70000;
 				if (hentp->mbNMI) {
-					newFrameMode = 0x30000;
+					if ((hentp->mTimestamp & 0xfff00) < (248 << 8))
+						newFrameMode = 0x30000;
+					else
+						newFrameMode = 0x40000;
 				} else if (hentp->mbIRQ) {
 					newFrameMode = 0x20000;
 				} else if (!(hentp->mP & AT6502::kFlagI)) {
@@ -172,9 +215,9 @@ void ATCPUProfiler::Update() {
 					} while(++mLastS != hentp->mS);
 				} else if (sdir < 0) {
 					// push
-					do {
+					while(--mLastS != hentp->mS) {
 						mStackTable[mLastS] = -1;
-					} while(--mLastS != hentp->mS);
+					}
 
 					mStackTable[mLastS] = mCurrentFrameAddress;
 					mCurrentFrameAddress = hentp->mPC | newFrameMode;
@@ -198,16 +241,18 @@ void ATCPUProfiler::Update() {
 		}
 
 		if (!hl) {
-			hl = new HashLink;
+			hl = mHashLinkAllocator.Allocate<HashLink>();
 			hl->mpNext = hh;
 			hl->mRecord.mAddress = addr;
 			hl->mRecord.mCycles = 0;
+			hl->mRecord.mUnhaltedCycles = 0;
 			hl->mRecord.mInsns = 0;
 			hl->mRecord.mCalls = 0;
 			mpHashTable[hc] = hl;
 		}
 
 		hl->mRecord.mCycles += cycles;
+		hl->mRecord.mUnhaltedCycles += unhaltedCycles;
 		++hl->mRecord.mInsns;
 
 		if (isCall)
@@ -219,20 +264,140 @@ void ATCPUProfiler::Update() {
 	mTotalSamples += count;
 }
 
-void ATCPUProfiler::ClearSamples() {
-	for(int i=0; i<256; ++i) {
-		HashLink *hl = mpHashTable[i];
+void ATCPUProfiler::UpdateCallGraph() {
+	uint32 nextHistoryCounter = mpCPU->GetHistoryCounter();
+	uint32 counter = mLastHistoryCounter;
+	uint32 count = (nextHistoryCounter - mLastHistoryCounter) & (mpCPU->GetHistoryLength() - 1);
+	mLastHistoryCounter = nextHistoryCounter;
 
-		if (hl) {
-			do {
-				HashLink *hn = hl->mpNext;
+	if (!count)
+		return;
 
-				delete hl;
-
-				hl = hn;
-			} while(hl);
-
-			mpHashTable[i] = NULL;
-		}
+	if (!mTotalSamples) {
+		if (!--count)
+			return;
 	}
+
+	uint32 lineNo = 0;
+
+	const ATCPUHistoryEntry *hentp = &mpCPU->GetHistory(count);
+	for(uint32 i=count; i; --i) {
+		const ATCPUHistoryEntry *hentn = &mpCPU->GetHistory(i - 1);
+		uint32 cycles = (uint16)(hentn->mCycle - hentp->mCycle);
+		uint32 unhaltedCycles = (uint16)(hentn->mUnhaltedCycle - hentp->mUnhaltedCycle);
+
+		bool adjustStack = mbAdjustStackNext || hentp->mbIRQ || hentp->mbNMI;
+		mbAdjustStackNext = false;
+
+		uint8 opcode = hentp->mOpcode[0];
+		switch(opcode) {
+			case 0x20:		// JSR
+			case 0x60:		// RTS
+			case 0x40:		// RTI
+			case 0x6C:		// JMP (abs)
+				mbAdjustStackNext = true;
+				break;
+		}
+
+		if (adjustStack) {
+			sint8 sdir = hentp->mS - mLastS;
+			if (sdir > 0) {
+				// pop
+				do {
+					sint32 prevContext = mStackTable[mLastS];
+
+					if (prevContext >= 0) {
+						mCurrentContext = prevContext;
+						mStackTable[mLastS] = -1;
+					}
+				} while(++mLastS != hentp->mS);
+			} else {
+				if (sdir < 0) {
+					// push
+					while(--mLastS != hentp->mS) {
+						mStackTable[mLastS] = -1;
+					}
+
+					mStackTable[mLastS] = mCurrentContext;
+				}
+
+				if (hentp->mbNMI) {
+					if ((hentp->mTimestamp & 0xfff00) < (248 << 8))
+						mCurrentContext = 2;
+					else
+						mCurrentContext = 3;
+				} else if (hentp->mbIRQ)
+					mCurrentContext = 1;
+
+				const uint32 newScope = hentp->mPC;
+				const uint32 hc = newScope & 0xFF;
+				CallGraphHashLink *hh = mpCGHashTable[hc];
+				CallGraphHashLink *hl = hh;
+
+				for(; hl; hl = hl->mpNext) {
+					if (hl->mScope == newScope && hl->mParentContext == mCurrentContext)
+						break;
+				}
+
+				if (!hl) {
+					hl = mHashLinkAllocator.Allocate<CallGraphHashLink>();
+					hl->mpNext = hh;
+					hl->mContext = (uint32)mSession.mCallGraphRecords.size();
+					hl->mParentContext = mCurrentContext;
+					hl->mScope = newScope;
+					mpCGHashTable[hc] = hl;
+
+					ATProfileCallGraphRecord& cgr = mSession.mCallGraphRecords.push_back();
+					memset(&cgr, 0, sizeof cgr);
+					cgr.mAddress = newScope;
+					cgr.mParent = mCurrentContext;
+				}
+
+				mCurrentContext = hl->mContext;
+				++mSession.mCallGraphRecords[mCurrentContext].mCalls;
+			}
+		}
+
+		mSession.mCallGraphRecords[mCurrentContext].mCycles += cycles;
+		++mSession.mCallGraphRecords[mCurrentContext].mInsns;
+
+		uint32 addr = hentp->mPC;
+		uint32 hc = addr & 0xFF;
+		HashLink *hh = mpHashTable[hc];
+		HashLink *hl = hh;
+
+		for(; hl; hl = hl->mpNext) {
+			if (hl->mRecord.mAddress == addr)
+				break;
+		}
+
+		if (!hl) {
+			hl = mHashLinkAllocator.Allocate<HashLink>();
+			hl->mpNext = hh;
+			hl->mRecord.mAddress = addr;
+			hl->mRecord.mCycles = 0;
+			hl->mRecord.mUnhaltedCycles = 0;
+			hl->mRecord.mInsns = 0;
+			hl->mRecord.mCalls = 0;
+			mpHashTable[hc] = hl;
+		}
+
+		hl->mRecord.mCycles += cycles;
+		hl->mRecord.mUnhaltedCycles += unhaltedCycles;
+		++hl->mRecord.mInsns;
+
+		hentp = hentn;
+	}
+
+	mTotalSamples += count;
+}
+
+void ATCPUProfiler::ClearSamples() {
+	memset(mpHashTable, 0, sizeof mpHashTable);
+	memset(mpCGHashTable, 0, sizeof mpCGHashTable);
+
+	mHashLinkAllocator.Clear();
+
+	mSession.mRecords.clear();
+	mSession.mCallGraphRecords.clear();
 }

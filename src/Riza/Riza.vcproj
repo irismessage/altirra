@@ -794,6 +794,10 @@
 				</FileConfiguration>
 			</File>
 			<File
+				RelativePath=".\source\displayd3d101.cpp"
+				>
+			</File>
+			<File
 				RelativePath="source\displayd3dfx.cpp"
 				>
 				<FileConfiguration
@@ -1233,6 +1237,50 @@
 				</FileConfiguration>
 			</File>
 			<File
+				RelativePath=".\source\displayd3d10.fx"
+				>
+				<FileConfiguration
+					Name="Release|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description=""
+						CommandLine="&quot;$(VDBaseDir)\out\$(VDConfigDirTag)\asuka&quot; fxc10 &quot;$(InputPath)&quot; VS vs_4_0_level_9_1 &quot;$(InputDir)\..\h\$(InputName)_vertexshader.inl&quot; g_VDD3D10_VertexShader&#x0D;&#x0A;&quot;$(VDBaseDir)\out\$(VDConfigDirTag)\asuka&quot; fxc10 &quot;$(InputPath)&quot; PS ps_4_0_level_9_1 &quot;$(InputDir)\..\h\$(InputName)_pixelshader.inl&quot; g_VDD3D10_PixelShader&#x0D;&#x0A;"
+						Outputs="&quot;$(InputDir)\..\h\$(InputName)_vertexshader.inl&quot;;&quot;$(InputDir)\..\h\$(InputName)_pixelshader.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Release|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description=""
+						CommandLine="&quot;$(VDBaseDir)\out\$(VDConfigDirTag)\asuka&quot; fxc10 &quot;$(InputPath)&quot; VS vs_4_0_level_9_1 &quot;$(InputDir)\..\h\$(InputName)_vertexshader.inl&quot; g_VDD3D10_VertexShader&#x0D;&#x0A;&quot;$(VDBaseDir)\out\$(VDConfigDirTag)\asuka&quot; fxc10 &quot;$(InputPath)&quot; PS ps_4_0_level_9_1 &quot;$(InputDir)\..\h\$(InputName)_pixelshader.inl&quot; g_VDD3D10_PixelShader&#x0D;&#x0A;"
+						Outputs="&quot;$(InputDir)\..\h\$(InputName)_vertexshader.inl&quot;;&quot;$(InputDir)\..\h\$(InputName)_pixelshader.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Debug|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description=""
+						CommandLine="&quot;$(VDBaseDir)\out\$(VDConfigDirTag)\asuka&quot; fxc10 &quot;$(InputPath)&quot; VS vs_4_0_level_9_1 &quot;$(InputDir)\..\h\$(InputName)_vertexshader.inl&quot; g_VDD3D10_VertexShader&#x0D;&#x0A;&quot;$(VDBaseDir)\out\$(VDConfigDirTag)\asuka&quot; fxc10 &quot;$(InputPath)&quot; PS ps_4_0_level_9_1 &quot;$(InputDir)\..\h\$(InputName)_pixelshader.inl&quot; g_VDD3D10_PixelShader&#x0D;&#x0A;"
+						Outputs="&quot;$(InputDir)\..\h\$(InputName)_vertexshader.inl&quot;;&quot;$(InputDir)\..\h\$(InputName)_pixelshader.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Debug|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description=""
+						CommandLine="&quot;$(VDBaseDir)\out\$(VDConfigDirTag)\asuka&quot; fxc10 &quot;$(InputPath)&quot; VS vs_4_0_level_9_1 &quot;$(InputDir)\..\h\$(InputName)_vertexshader.inl&quot; g_VDD3D10_VertexShader&#x0D;&#x0A;&quot;$(VDBaseDir)\out\$(VDConfigDirTag)\asuka&quot; fxc10 &quot;$(InputPath)&quot; PS ps_4_0_level_9_1 &quot;$(InputDir)\..\h\$(InputName)_pixelshader.inl&quot; g_VDD3D10_PixelShader&#x0D;&#x0A;"
+						Outputs="&quot;$(InputDir)\..\h\$(InputName)_vertexshader.inl&quot;;&quot;$(InputDir)\..\h\$(InputName)_pixelshader.inl&quot;"
+					/>
+				</FileConfiguration>
+			</File>
+			<File
 				RelativePath=".\source\displaydx9.fx"
 				>
 				<FileConfiguration
@@ -1354,6 +1402,14 @@
 			>
 			<File
 				RelativePath=".\h\cap_screen_glshaders.inl"
+				>
+			</File>
+			<File
+				RelativePath=".\h\displayd3d10_pixelshader.inl"
+				>
+			</File>
+			<File
+				RelativePath=".\h\displayd3d10_vertexshader.inl"
 				>
 			</File>
 			<File

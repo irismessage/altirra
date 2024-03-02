@@ -187,7 +187,9 @@ enum ATInputControllerType {
 	kATInputControllerType_Tablet,
 	kATInputControllerType_KoalaPad,
 	kATInputControllerType_AmigaMouse,
-	kATInputControllerType_Keypad
+	kATInputControllerType_Keypad,
+	kATInputControllerType_Trackball_CX80_V1,
+	kATInputControllerType_5200Trackball
 };
 
 struct atfixedhash_basenode {
@@ -220,7 +222,7 @@ public:
 	typedef const value_type *const_pointer;
 	typedef value_type& reference;
 	typedef const value_type& const_reference;
-	typedef typename athash<K> hasher;
+	typedef athash<K> hasher;
 
 	typedef pointer iterator;
 	typedef const_pointer const_iterator;
@@ -405,6 +407,7 @@ public:
 	void SetConsoleCallback(IATInputConsoleCallback *cb) { mpCB = cb; }
 
 	void Select5200Controller(int index, bool potsEnabled);
+	void SelectMultiJoy(int multiIndex);
 
 	void Poll();
 

@@ -24,8 +24,15 @@
 #include "harddisk.h"
 #include "ide.h"
 #include "simulator.h"
+#include "oshelper.h"
+
+#ifndef BCM_SETSHIELD
+#define BCM_SETSHIELD	0x160C
+#endif
 
 extern ATSimulator g_sim;
+
+VDStringW ATUIShowDialogBrowsePhysicalDisks(VDGUIHandle hParent);
 
 class ATUIDialogHardDisk : public VDDialogFrameW32 {
 public:
@@ -57,6 +64,13 @@ ATUIDialogHardDisk::~ATUIDialogHardDisk() {
 }
 
 bool ATUIDialogHardDisk::OnLoaded() {
+	if (LOBYTE(LOWORD(GetVersion())) >= 6) {
+		HWND hwndItem = GetDlgItem(mhdlg, IDC_IDE_DISKBROWSE);
+
+		if (hwndItem)
+			SendMessage(hwndItem, BCM_SETSHIELD, 0, TRUE);
+	}
+
 	return VDDialogFrameW32::OnLoaded();
 }
 
@@ -90,9 +104,12 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 
 			UpdateCapacity();
 
-			bool d5xx = g_sim.IsIDEUsingD5xx();
-			CheckButton(IDC_IDE_D1XX, !d5xx);
-			CheckButton(IDC_IDE_D5XX, d5xx);
+			ATIDEHardwareMode hwmode = g_sim.GetIDEHardwareMode();
+			CheckButton(IDC_IDE_D1XX, hwmode == kATIDEHardwareMode_MyIDE_D1xx);
+			CheckButton(IDC_IDE_D5XX, hwmode == kATIDEHardwareMode_MyIDE_D5xx);
+			CheckButton(IDC_IDE_KMKJZV1, hwmode == kATIDEHardwareMode_KMKJZ_V1);
+			CheckButton(IDC_IDE_KMKJZV2, hwmode == kATIDEHardwareMode_KMKJZ_V2);
+			CheckButton(IDC_IDE_SIDE, hwmode == kATIDEHardwareMode_SIDE);
 
 			bool fast = ide->IsFastDevice();
 			CheckButton(IDC_SPEED_FAST, fast);
@@ -121,7 +138,16 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 
 		ATIDEEmulator *ide = g_sim.GetIDEEmulator();
 		if (IsButtonChecked(IDC_IDE_ENABLE)) {
-			const bool d5xx = IsButtonChecked(IDC_IDE_D5XX);
+			ATIDEHardwareMode hwmode = kATIDEHardwareMode_MyIDE_D5xx;
+			if (IsButtonChecked(IDC_IDE_D1XX))
+				hwmode = kATIDEHardwareMode_MyIDE_D1xx;
+			else if (IsButtonChecked(IDC_IDE_KMKJZV1))
+				hwmode = kATIDEHardwareMode_KMKJZ_V1;
+			else if (IsButtonChecked(IDC_IDE_KMKJZV2))
+				hwmode = kATIDEHardwareMode_KMKJZ_V2;
+			else if (IsButtonChecked(IDC_IDE_SIDE))
+				hwmode = kATIDEHardwareMode_SIDE;
+
 			const bool write = !IsButtonChecked(IDC_IDEREADONLY);
 			const bool fast = IsButtonChecked(IDC_SPEED_FAST);
 
@@ -131,9 +157,9 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 			uint32 heads = 0;
 			uint32 sectors = 0;
 
-			ExchangeControlValueUint32(true, IDC_IDE_CYLINDERS, cylinders, 1, 65536);
+			ExchangeControlValueUint32(true, IDC_IDE_CYLINDERS, cylinders, 1, 16777216);
 			ExchangeControlValueUint32(true, IDC_IDE_HEADS, heads, 1, 16);
-			ExchangeControlValueUint32(true, IDC_IDE_SPT, sectors, 1, 63);
+			ExchangeControlValueUint32(true, IDC_IDE_SPT, sectors, 1, 255);
 
 			if (!mbValidationFailed) {
 				bool changed = true;
@@ -145,7 +171,7 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 						changed = true;
 					else if (ide->IsWriteEnabled() != write)
 						changed = true;
-					else if (g_sim.IsIDEUsingD5xx() != d5xx)
+					else if (g_sim.GetIDEHardwareMode() != hwmode)
 						changed = true;
 					else if (ide->GetCylinderCount() != cylinders)
 						changed = true;
@@ -159,7 +185,7 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 
 				if (changed) {
 					try {
-						g_sim.LoadIDE(d5xx, write, fast, cylinders, heads, sectors, path.c_str());
+						g_sim.LoadIDE(hwmode, write, fast, cylinders, heads, sectors, path.c_str());
 						reset = true;
 					} catch(const MyError& e) {
 						e.post(mhdlg, "Altirra Error");
@@ -207,6 +233,32 @@ bool ATUIDialogHardDisk::OnCommand(uint32 id, uint32 extcode) {
 			}
 			return true;
 
+		case IDC_IDE_DISKBROWSE:
+			if (!ATIsUserAdministrator()) {
+				ShowError(L"You must run Altirra with local administrator access in order to mount a physical disk for emulation.", L"Altirra Error");
+				return true;
+			} else {
+				ShowWarning(
+					L"This option uses a physical disk for IDE emulation. You can either map the entire disk or a partition within the disk. However, only read only access is supported.\n"
+					L"\n"
+					L"You can use a partition that is currently mounted by Windows. However, changes to the file system in Windows may not be reflected consistently in the emulator.",
+					L"Altirra Warning");
+			}
+
+			{
+				const VDStringW& path = ATUIShowDialogBrowsePhysicalDisks((VDGUIHandle)mhdlg);
+
+				if (!path.empty()) {
+					SetControlText(IDC_IDE_IMAGEPATH, path.c_str());
+					CheckButton(IDC_READONLY, true);
+					SetControlText(IDC_IDE_CYLINDERS, L"1");
+					SetControlText(IDC_IDE_HEADS, L"15");
+					SetControlText(IDC_IDE_SPT, L"255");
+					UpdateCapacity();
+				}
+			}
+			return true;
+
 		case IDC_ENABLE:
 		case IDC_IDE_ENABLE:
 			if (extcode == BN_CLICKED)
@@ -242,6 +294,7 @@ void ATUIDialogHardDisk::UpdateEnables() {
 	EnableControl(IDC_STATIC_IDE_IMAGEPATH, ideenable);
 	EnableControl(IDC_IDE_IMAGEPATH, ideenable);
 	EnableControl(IDC_IDE_IMAGEBROWSE, ideenable);
+	EnableControl(IDC_IDE_DISKBROWSE, ideenable);
 	EnableControl(IDC_IDEREADONLY, ideenable);
 	EnableControl(IDC_STATIC_IDE_GEOMETRY, ideenable);
 	EnableControl(IDC_STATIC_IDE_CYLINDERS, ideenable);
@@ -255,6 +308,12 @@ void ATUIDialogHardDisk::UpdateEnables() {
 	EnableControl(IDC_STATIC_IDE_IOREGION, ideenable);
 	EnableControl(IDC_IDE_D1XX, ideenable);
 	EnableControl(IDC_IDE_D5XX, ideenable);
+	EnableControl(IDC_IDE_KMKJZV1, ideenable);
+	EnableControl(IDC_IDE_KMKJZV2, ideenable);
+	EnableControl(IDC_IDE_SIDE, ideenable);
+	EnableControl(IDC_STATIC_IDE_SPEED, ideenable);
+	EnableControl(IDC_SPEED_SLOW, ideenable);
+	EnableControl(IDC_SPEED_FAST, ideenable);
 }
 
 void ATUIDialogHardDisk::UpdateGeometry() {
@@ -275,8 +334,8 @@ void ATUIDialogHardDisk::UpdateGeometry() {
 			cylinders = (imageSizeMB * 128 + 31) / 63;
 		}
 
-		if (cylinders > 65536)
-			cylinders = 65536;
+		if (cylinders > 16777216)
+			cylinders = 16777216;
 
 		++mInhibitUpdateLocks;
 		SetControlTextF(IDC_IDE_CYLINDERS, L"%u", cylinders);

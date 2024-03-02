@@ -107,6 +107,21 @@
     instead.
   </p>
 
+  <h3>How come Ctrl+Shift+0 doesn't work in Windows Vista/7?</h3>
+  <p>
+    By default, Windows Vista/7 assign Ctrl+Shift+<i>digit</i> keyboard shortcuts for switching
+    keyboard layouts. To disable this shortcut:
+  </p>
+  <ul>
+    <li>Open <b>Control Panel</b>.</li>
+    <li>Select <b>Region and Language</b>.</li>
+    <li>Select the <b>Keyboards and Languages</b> tab.</li>
+    <li>Click <b>Change Keyboards</b>.</li>
+    <li>Select the <b>Advanced Key Settings</b> tab.</li>
+    <li>Click <b>Change Key Sequence</b>.</li>
+    <li>Under <b>Switch Keyboard Layout</b>, select <b>Not Assigned</b>.</li>
+  </ul>
+
   <h3>How do I make the arrow keys work?</h3>
   <p>
     If you have an input map enabled that maps the arrow keys to a controller, the emulation won't

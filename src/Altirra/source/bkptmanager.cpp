@@ -448,6 +448,8 @@ int ATBreakpointManager::CheckPCBreakpoints(uint32 pc, const BreakpointIndices& 
 
 		ATBreakpointEvent ev;
 		ev.mIndex = idx;
+		ev.mAddress = pc;
+		ev.mValue = 0;
 		ev.mbBreak = false;
 		ev.mbSilentBreak = false;
 
@@ -485,6 +487,8 @@ sint32 ATBreakpointManager::OnAccessTrapRead(void *thisptr0, uint32 addr) {
 
 			ATBreakpointEvent ev;
 			ev.mIndex = idx;
+			ev.mAddress = addr;
+			ev.mValue = 0;
 			ev.mbBreak = false;
 			ev.mbSilentBreak = false;
 
@@ -512,6 +516,8 @@ sint32 ATBreakpointManager::OnAccessTrapRead(void *thisptr0, uint32 addr) {
 
 				ATBreakpointEvent ev;
 				ev.mIndex = idx;
+				ev.mAddress = addr;
+				ev.mValue = 0;
 				ev.mbBreak = false;
 				ev.mbSilentBreak = false;
 
@@ -557,6 +563,8 @@ bool ATBreakpointManager::OnAccessTrapWrite(void *thisptr0, uint32 addr, uint8 v
 
 			ATBreakpointEvent ev;
 			ev.mIndex = idx;
+			ev.mAddress = addr;
+			ev.mValue = value;
 			ev.mbBreak = false;
 			ev.mbSilentBreak = false;
 
@@ -584,6 +592,8 @@ bool ATBreakpointManager::OnAccessTrapWrite(void *thisptr0, uint32 addr, uint8 v
 
 				ATBreakpointEvent ev;
 				ev.mIndex = idx;
+				ev.mAddress = addr;
+				ev.mValue = 0;
 				ev.mbBreak = false;
 				ev.mbSilentBreak = false;
 

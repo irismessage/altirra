@@ -51,8 +51,11 @@ void VDVideoDisplayClient::Detach(VDVideoDisplayManager *pManager) {
 }
 
 void VDVideoDisplayClient::SetPreciseMode(bool enabled) {
-	if (mbPreciseMode == enabled)
+	if (mbPreciseMode == enabled) {
+		if (enabled)
+			mpManager->ReaffirmPreciseMode();
 		return;
+	}
 
 	mbPreciseMode = enabled;
 	mpManager->ModifyPreciseMode(enabled);
@@ -91,6 +94,7 @@ VDVideoDisplayManager::VDVideoDisplayManager()
 	: mTicksEnabledCount(0)
 	, mPreciseModeCount(0)
 	, mPreciseModePeriod(0)
+	, mPreciseModeLastUse(0)
 	, mhPalette(NULL)
 	, mWndClass(NULL)
 	, mhwnd(NULL)
@@ -205,28 +209,27 @@ void VDVideoDisplayManager::RemoveClient(VDVideoDisplayClient *pClient) {
 
 void VDVideoDisplayManager::ModifyPreciseMode(bool enabled) {
 	VDASSERT(VDGetCurrentThreadID() == mThreadID);
+
+	if (!mbMultithreaded) {
+		return;
+	}
+
 	if (enabled) {
 		int rc = ++mPreciseModeCount;
 		VDASSERT(rc < 100000);
 		if (rc == 1) {
-			TIMECAPS tc;
-			if (!mPreciseModePeriod &&
-				TIMERR_NOERROR == ::timeGetDevCaps(&tc, sizeof tc) &&
-				TIMERR_NOERROR == ::timeBeginPeriod(tc.wPeriodMin))
-			{
-				mPreciseModePeriod = tc.wPeriodMin;
-				SetThreadPriority(getThreadHandle(), THREAD_PRIORITY_HIGHEST);
+			if (mbMultithreaded)
+				EnterPreciseMode();
+			else {
+				ReaffirmPreciseMode();
+				PostThreadMessage(getThreadID(), WM_NULL, 0, 0);
 			}
 		}
 	} else {
 		int rc = --mPreciseModeCount;
 		VDASSERT(rc >= 0);
-		if (!rc) {
-			if (mPreciseModePeriod) {
-				timeEndPeriod(mPreciseModePeriod);
-				mPreciseModePeriod = 0;
-			}
-		}
+		if (!rc)
+			ExitPreciseMode();
 	}
 }
 
@@ -327,7 +330,22 @@ void VDVideoDisplayManager::ThreadRunTimerOnly() {
 	PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE);
 	mStarted.signal();
 
+	bool precise = false;
 	for(;;) {
+		uint32 timeSinceLastPrecise = ::GetTickCount() - mPreciseModeLastUse;
+
+		if (precise) {
+			if (timeSinceLastPrecise > 1000) {
+				precise = false;
+				ExitPreciseMode();
+			}
+		} else {
+			if (timeSinceLastPrecise < 500) {
+				precise = true;
+				EnterPreciseMode();
+			}
+		}
+
 		DWORD ret = MsgWaitForMultipleObjects(0, NULL, TRUE, 1, QS_ALLINPUT);
 
 		if (ret == WAIT_OBJECT_0) {
@@ -355,6 +373,9 @@ void VDVideoDisplayManager::ThreadRunTimerOnly() {
 		} else
 			break;
 	}
+
+	if (precise)
+		ExitPreciseMode();
 }
 
 void VDVideoDisplayManager::DispatchTicks() {
@@ -382,6 +403,28 @@ void VDVideoDisplayManager::DispatchRemoteCalls() {
 			rcn->mSignal.signal();
 		}
 	}
+}
+
+void VDVideoDisplayManager::EnterPreciseMode() {
+	TIMECAPS tc;
+	if (!mPreciseModePeriod &&
+		TIMERR_NOERROR == ::timeGetDevCaps(&tc, sizeof tc) &&
+		TIMERR_NOERROR == ::timeBeginPeriod(tc.wPeriodMin))
+	{
+		mPreciseModePeriod = tc.wPeriodMin;
+		SetThreadPriority(getThreadHandle(), THREAD_PRIORITY_HIGHEST);
+	}
+}
+
+void VDVideoDisplayManager::ExitPreciseMode() {
+	if (mPreciseModePeriod) {
+		timeEndPeriod(mPreciseModePeriod);
+		mPreciseModePeriod = 0;
+	}
+}
+
+void VDVideoDisplayManager::ReaffirmPreciseMode() {
+	mPreciseModeLastUse = ::GetTickCount();
 }
 
 ///////////////////////////////////////////////////////////////////////////////

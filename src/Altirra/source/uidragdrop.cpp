@@ -27,7 +27,8 @@
 extern HWND g_hwnd;
 extern ATSimulator g_sim;
 
-extern void DoLoad(VDGUIHandle h, const wchar_t *path, bool vrw, bool rw, int cartmapper);
+extern void DoLoad(VDGUIHandle h, const wchar_t *path, bool vrw, bool rw, int cartmapper, ATLoadType loadType = kATLoadType_Other);
+extern void DoBootWithConfirm(const wchar_t *path, bool vrw, bool rw, int cartmapper);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -154,19 +155,16 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 
 			vdfastvector<wchar_t> buf(len+1, 0);
 			if (DragQueryFileW(hdrop, 0, buf.data(), len+1)) {
-				try {
-					bool coldBoot = !(grfKeyState & MK_SHIFT);
-					if (coldBoot)
-						g_sim.UnloadAll();
+				const bool coldBoot = !(grfKeyState & MK_SHIFT);
 
-					DoLoad((VDGUIHandle)g_hwnd, buf.data(), false, false, 0);
-
-					if (coldBoot) {
-						g_sim.ColdReset();
-						g_sim.Resume();
+				if (coldBoot) {
+					DoBootWithConfirm(buf.data(), false, false, 0);
+				} else {
+					try {
+						DoLoad((VDGUIHandle)g_hwnd, buf.data(), false, false, 0);
+					} catch(const MyError& e) {
+						e.post(g_hwnd, "Altirra Error");
 					}
-				} catch(const MyError& e) {
-					e.post(g_hwnd, "Altirra Error");
 				}
 			}
 		}

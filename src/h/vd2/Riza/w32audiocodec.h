@@ -32,7 +32,7 @@ public:
 	VDAudioCodecW32();
 	~VDAudioCodecW32();
 
-	bool Init(const WAVEFORMATEX *pSrcFormat, const WAVEFORMATEX *pDstFormat = NULL, bool isCompression = false, const char *pShortNameDriverHint = NULL);
+	bool Init(const WAVEFORMATEX *pSrcFormat, const WAVEFORMATEX *pDstFormat, bool isCompression, const char *pShortNameDriverHint, bool throwOnError);
 	void Shutdown();
 
 	bool IsEnded() const { return mbEnded; }
@@ -53,6 +53,7 @@ public:
 	unsigned	CopyOutput(void *dst, unsigned bytes);
 
 protected:
+	HACMDRIVER		mhDriver;
 	HACMSTREAM		mhStream;
 	vdstructex<VDWaveFormat>	mSrcFormat;
 	vdstructex<VDWaveFormat>	mDstFormat;

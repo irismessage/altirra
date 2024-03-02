@@ -131,12 +131,13 @@ public:
 	~ATPortController();
 
 	void Init(ATGTIAEmulator *gtia, ATPokeyEmulator *pokey, ATLightPenPort *lightPen, int index);
+	void SetMultiMask(uint8 mask);
 
 	ATGTIAEmulator& GetGTIA() const { return *mpGTIA; }
 	ATPokeyEmulator& GetPokey() const { return *mpPokey; }
 	uint8 GetPortValue() const { return mPortValue; }
 
-	int AllocatePortInput(bool port2);
+	int AllocatePortInput(bool port2, int multiIndex);
 	void FreePortInput(int index);
 
 	void SetPortInput(int index, uint32 portBits);
@@ -147,6 +148,7 @@ protected:
 	uint8 mPortValue;
 	bool mbTrigger1;
 	bool mbTrigger2;
+	uint32 mMultiMask;
 
 	ATGTIAEmulator *mpGTIA;
 	ATPokeyEmulator *mpPokey;
@@ -168,7 +170,7 @@ public:
 	ATPortInputController();
 	~ATPortInputController();
 
-	void Attach(ATPortController *pc, bool port2);
+	void Attach(ATPortController *pc, bool port2, int multiIndex = -1);
 	void Detach();
 
 	virtual void Tick() {}
@@ -229,6 +231,43 @@ protected:
 	uint32	mAccumY;
 	bool	mbButtonState[2];
 	bool	mbAmigaMode;
+
+	ATEvent *mpUpdateEvent;
+	ATScheduler *mpScheduler;
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATTrackballController : public ATPortInputController, public IATSchedulerCallback {
+	ATTrackballController(const ATTrackballController&);
+	ATTrackballController& operator=(const ATTrackballController&);
+public:
+	ATTrackballController();
+	~ATTrackballController();
+
+	void Init(ATScheduler *scheduler);
+
+	void SetPosition(int x, int y);
+	void AddDelta(int dx, int dy);
+
+	void SetButtonState(int button, bool state);
+
+	virtual void SetDigitalTrigger(uint32 trigger, bool state);
+	virtual void ApplyImpulse(uint32 trigger, int ds);
+
+protected:
+	void OnScheduledEvent(uint32 id);
+	void Update();
+
+	void OnAttach();
+	void OnDetach();
+
+	uint32	mPortBits;
+	uint32	mTargetX;
+	uint32	mTargetY;
+	uint32	mAccumX;
+	uint32	mAccumY;
+	bool	mbButtonState;
 
 	ATEvent *mpUpdateEvent;
 	ATScheduler *mpScheduler;
@@ -342,7 +381,7 @@ class AT5200ControllerController : public ATPortInputController {
 	AT5200ControllerController(const AT5200ControllerController&);
 	AT5200ControllerController& operator=(const AT5200ControllerController&);
 public:
-	AT5200ControllerController(int index);
+	AT5200ControllerController(int index, bool trackball);
 	~AT5200ControllerController();
 
 	virtual bool Select5200Controller(int index, bool potsEnabled);
@@ -361,6 +400,7 @@ protected:
 
 	bool mbActive;
 	bool mbPotsEnabled;
+	bool mbTrackball;
 	int mIndex;
 	int mPot[2];
 	int mJitter[2];

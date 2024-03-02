@@ -97,7 +97,7 @@ protected:
 	void SetSourceSubrect(const vdrect32 *r);
 	void SetSourceSolidColor(uint32 color);
 	void SetReturnFocus(bool fs);
-	void SetFullScreen(bool fs);
+	void SetFullScreen(bool fs, uint32 width, uint32 height, uint32 refresh);
 	void SetDestRect(const vdrect32 *r, uint32 backgroundColor);
 	void PostBuffer(VDVideoDisplayFrame *);
 	bool RevokeBuffer(bool allowFrameSkip, VDVideoDisplayFrame **ppFrame);
@@ -174,6 +174,7 @@ protected:
 
 	IVDVideoDisplayMinidriver *mpMiniDriver;
 	bool	mbMiniDriverSecondarySensitive;
+	bool	mbMiniDriverClearOtherMonitors;
 	UINT	mReinitDisplayTimer;
 
 	IVDVideoDisplayCallback		*mpCB;
@@ -188,6 +189,9 @@ protected:
 	bool		mbUseSubrect;
 	bool		mbReturnFocus;
 	bool		mbFullScreen;
+	uint32		mFullScreenWidth;
+	uint32		mFullScreenHeight;
+	uint32		mFullScreenRefreshRate;
 	bool		mbDestRectEnabled;
 	vdrect32	mSourceSubrect;
 	vdrect32	mDestRect;
@@ -207,6 +211,7 @@ public:
 	static bool		sbEnableDXOverlay;
 	static bool		sbEnableD3D;
 	static bool		sbEnableD3DFX;
+	static bool		sbEnableD3D101;
 	static bool		sbEnableOGL;
 	static bool		sbEnableTS;
 	static bool		sbEnableDebugInfo;
@@ -214,6 +219,9 @@ public:
 	static bool		sbEnableBackgroundFallback;
 	static bool		sbEnableSecondaryMonitorDX;
 	static bool		sbEnableMonitorSwitchingDX;
+	static bool		sbEnableD3D9Ex;
+	static bool		sbEnableDDraw;
+	static bool		sbEnableTS3D;
 };
 
 ATOM									VDVideoDisplayWindow::sChildWindowClass;
@@ -221,6 +229,7 @@ bool VDVideoDisplayWindow::sbEnableDX = true;
 bool VDVideoDisplayWindow::sbEnableDXOverlay = true;
 bool VDVideoDisplayWindow::sbEnableD3D;
 bool VDVideoDisplayWindow::sbEnableD3DFX;
+bool VDVideoDisplayWindow::sbEnableD3D101;
 bool VDVideoDisplayWindow::sbEnableOGL;
 bool VDVideoDisplayWindow::sbEnableTS;
 bool VDVideoDisplayWindow::sbEnableDebugInfo;
@@ -228,6 +237,9 @@ bool VDVideoDisplayWindow::sbEnableHighPrecision;
 bool VDVideoDisplayWindow::sbEnableBackgroundFallback;
 bool VDVideoDisplayWindow::sbEnableSecondaryMonitorDX;
 bool VDVideoDisplayWindow::sbEnableMonitorSwitchingDX;
+bool VDVideoDisplayWindow::sbEnableD3D9Ex;
+bool VDVideoDisplayWindow::sbEnableDDraw = true;
+bool VDVideoDisplayWindow::sbEnableTS3D = false;
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -250,6 +262,10 @@ void VDVideoDisplaySetMonitorSwitchingDXEnabled(bool enable) {
 	VDVideoDisplayWindow::sbEnableMonitorSwitchingDX = enable;
 }
 
+void VDVideoDisplaySetTermServ3DEnabled(bool enable) {
+	VDVideoDisplayWindow::sbEnableTS3D = enable;
+}
+
 void VDVideoDisplaySetFeatures(bool enableDirectX, bool enableDirectXOverlay, bool enableTermServ, bool enableOpenGL, bool enableDirect3D, bool enableDirect3DFX, bool enableHighPrecision) {
 	VDVideoDisplayWindow::sbEnableDX = enableDirectX;
 	VDVideoDisplayWindow::sbEnableDXOverlay = enableDirectXOverlay;
@@ -258,6 +274,18 @@ void VDVideoDisplaySetFeatures(bool enableDirectX, bool enableDirectXOverlay, bo
 	VDVideoDisplayWindow::sbEnableOGL = enableOpenGL;
 	VDVideoDisplayWindow::sbEnableTS = enableTermServ;
 	VDVideoDisplayWindow::sbEnableHighPrecision = enableHighPrecision;
+}
+
+void VDVideoDisplaySetD3D9ExEnabled(bool enable) {
+	VDVideoDisplayWindow::sbEnableD3D9Ex = enable;
+}
+
+void VDVideoDisplaySetD3D101Enabled(bool enable) {
+	VDVideoDisplayWindow::sbEnableD3D101 = enable;
+}
+
+void VDVideoDisplaySetDDrawEnabled(bool enable) {
+	VDVideoDisplayWindow::sbEnableDDraw = enable;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -314,6 +342,7 @@ VDVideoDisplayWindow::VDVideoDisplayWindow(HWND hwnd, const CREATESTRUCT& create
 	, mhOldPalette(0)
 	, mpMiniDriver(0)
 	, mbMiniDriverSecondarySensitive(false)
+	, mbMiniDriverClearOtherMonitors(false)
 	, mReinitDisplayTimer(0)
 	, mpCB(0)
 	, mInhibitRefresh(0)
@@ -324,6 +353,9 @@ VDVideoDisplayWindow::VDVideoDisplayWindow(HWND hwnd, const CREATESTRUCT& create
 	, mbUseSubrect(false)
 	, mbReturnFocus(false)
 	, mbFullScreen(false)
+	, mFullScreenWidth(0)
+	, mFullScreenHeight(0)
+	, mFullScreenRefreshRate(0)
 	, mbDestRectEnabled(false)
 	, mDestRect(0, 0, 0, 0)
 	, mBackgroundColor(0)
@@ -435,10 +467,13 @@ void VDVideoDisplayWindow::SetReturnFocus(bool enable) {
 	mbReturnFocus = enable;
 }
 
-void VDVideoDisplayWindow::SetFullScreen(bool fs) {
+void VDVideoDisplayWindow::SetFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh) {
 	mbFullScreen = fs;
+	mFullScreenWidth = w;
+	mFullScreenHeight = h;
+	mFullScreenRefreshRate = refresh;
 	if (mpMiniDriver)
-		mpMiniDriver->SetFullScreen(fs);
+		mpMiniDriver->SetFullScreen(fs, w, h, refresh);
 	SetRequiresFullScreen(fs);
 }
 
@@ -692,7 +727,7 @@ LRESULT VDVideoDisplayWindow::ChildWndProc(UINT msg, WPARAM wParam, LPARAM lPara
 			return HTTRANSPARENT;
 		break;
 	case WM_ERASEBKGND:
-		if (!mbMiniDriverSecondarySensitive)
+		if (!mbMiniDriverClearOtherMonitors)
 			return TRUE;
 		return FALSE;
 
@@ -759,9 +794,9 @@ void VDVideoDisplayWindow::OnChildPaint() {
 		if (mpMiniDriver && mpMiniDriver->IsValid()) {
 			VerifyDriverResult(mpMiniDriver->Paint(hdc, r, IVDVideoDisplayMinidriver::kModeAllFields));
 
-			if (mbMiniDriverSecondarySensitive && ps.fErase) {
+			if (mbMiniDriverClearOtherMonitors && ps.fErase) {
 				// Fill portions of the window on other monitors.
-				RECT rMon(mLastMonitorCheckRect);
+				RECT rMon(mMonitorRect);
 				MapWindowPoints(NULL, mhwndChild, (LPPOINT)&rMon, 2);
 				ExcludeClipRect(hdc, rMon.left, rMon.top, rMon.right, rMon.bottom);
 				FillRect(hdc, &r, (HBRUSH)(COLOR_WINDOW + 1));
@@ -953,6 +988,8 @@ bool VDVideoDisplayWindow::SyncSetSource(bool bAutoUpdate, const VDVideoDisplayS
 				}
 			}
 		}
+
+		VDDEBUG_DISP("VideoDisplay: Monitor switch detected -- reinitializing display.\n");
 	}
 
 	SyncReset();
@@ -991,15 +1028,25 @@ bool VDVideoDisplayWindow::SyncInit(bool bAutoRefresh, bool bAllowNonpersistentS
 
 	VDASSERT(!mpMiniDriver);
 	mbMiniDriverSecondarySensitive = false;
+	mbMiniDriverClearOtherMonitors = false;
 
 	bool bIsForeground = VDIsForegroundTaskW32();
 
 	do {
-		if (sbEnableTS || !VDIsTerminalServicesClient()) {
+		bool isTermServ = (sbEnableTS || sbEnableTS3D) && VDIsTerminalServicesClient();
+
+		if (!sbEnableTS || !sbEnableTS3D || !isTermServ) {
 			if (mAccelMode != kAccelOnlyInForeground || !mSource.bAllowConversion || bIsForeground) {
 				// The 3D drivers don't currently support subrects.
 				if (sbEnableDX) {
-					if (!mbUseSubrect && sbEnableOGL) {
+					if (!mbUseSubrect && sbEnableD3D101 && (sbEnableTS3D || !isTermServ)) {
+						mpMiniDriver = VDCreateVideoDisplayMinidriverD3D101();
+						if (InitMiniDriver())
+							break;
+						SyncReset();
+					}
+
+					if (!mbUseSubrect && sbEnableOGL && (sbEnableTS3D || !isTermServ)) {
 						mpMiniDriver = VDCreateVideoDisplayMinidriverOpenGL();
 						if (InitMiniDriver())
 							break;
@@ -1007,26 +1054,30 @@ bool VDVideoDisplayWindow::SyncInit(bool bAutoRefresh, bool bAllowNonpersistentS
 					}
 
 					if (sbEnableSecondaryMonitorDX || sbEnableMonitorSwitchingDX || !(CheckForMonitorChange(), IsOnSecondaryMonitor())) {
-						if (!mbUseSubrect && sbEnableD3D) {
+						if (!mbUseSubrect && sbEnableD3D && (sbEnableTS3D || !isTermServ)) {
 							if (sbEnableD3DFX)
-								mpMiniDriver = VDCreateVideoDisplayMinidriverD3DFX(!sbEnableSecondaryMonitorDX);
+								mpMiniDriver = VDCreateVideoDisplayMinidriverD3DFX(!sbEnableSecondaryMonitorDX || sbEnableMonitorSwitchingDX);
 							else
-								mpMiniDriver = VDCreateVideoDisplayMinidriverDX9(!sbEnableSecondaryMonitorDX);
+								mpMiniDriver = VDCreateVideoDisplayMinidriverDX9(!sbEnableSecondaryMonitorDX || sbEnableMonitorSwitchingDX, sbEnableD3D9Ex);
 
 							if (InitMiniDriver()) {
 								mbMiniDriverSecondarySensitive = !sbEnableSecondaryMonitorDX;
+								mbMiniDriverClearOtherMonitors = sbEnableSecondaryMonitorDX || sbEnableMonitorSwitchingDX;
 								break;
 							}
 
 							SyncReset();
 						}
 
-						mpMiniDriver = VDCreateVideoDisplayMinidriverDirectDraw(sbEnableDXOverlay, sbEnableSecondaryMonitorDX);
-						if (InitMiniDriver()) {
-							mbMiniDriverSecondarySensitive = !sbEnableSecondaryMonitorDX;
-							break;
+						if (sbEnableDDraw && (sbEnableTS || !isTermServ)) {
+							mpMiniDriver = VDCreateVideoDisplayMinidriverDirectDraw(sbEnableDXOverlay, sbEnableSecondaryMonitorDX);
+							if (InitMiniDriver()) {
+								mbMiniDriverSecondarySensitive = !sbEnableSecondaryMonitorDX;
+								mbMiniDriverClearOtherMonitors = sbEnableSecondaryMonitorDX || sbEnableMonitorSwitchingDX;
+								break;
+							}
+							SyncReset();
 						}
-						SyncReset();
 					}
 				}
 
@@ -1227,7 +1278,7 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 	mpMiniDriver->SetFilterMode((IVDVideoDisplayMinidriver::FilterMode)mFilterMode);
 	mpMiniDriver->SetSubrect(mbUseSubrect ? &mSourceSubrect : NULL);
 	mpMiniDriver->SetDisplayDebugInfo(sbEnableDebugInfo);
-	mpMiniDriver->SetFullScreen(mbFullScreen);
+	mpMiniDriver->SetFullScreen(mbFullScreen, mFullScreenWidth, mFullScreenHeight, mFullScreenRefreshRate);
 	mpMiniDriver->SetHighPrecision(sbEnableHighPrecision);
 	mpMiniDriver->SetDestRect(mbDestRectEnabled ? &mDestRect : NULL, mBackgroundColor);
 	mpMiniDriver->Resize(r.right, r.bottom);
@@ -1329,6 +1380,8 @@ bool VDVideoDisplayWindow::CheckForMonitorChange() {
 	hmon = spMonitorFromRect(&r, MONITOR_DEFAULTTONEAREST);
 	if (hmon == mhLastMonitor)
 		return false;
+
+	VDDEBUG_DISP("VideoDisplay: Current monitor update: %p -> %p.\n", mhLastMonitor, hmon);
 
 	mhLastMonitor = hmon;
 	return true;

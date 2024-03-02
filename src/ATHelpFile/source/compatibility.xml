@@ -113,6 +113,20 @@
   <!-- *************************************************** -->
 
   <h2>Applications</h2>
+  <h3>FoReM XL/XE/XE Pro</h3>
+  <p>
+    FoReM relies on particular short response values for CONNECT messages from the modem.
+    These were not standardized for higher baud rates. Altirra's emulated modem returns the Conexant
+    code for 9600 baud (12), while FoReM by default expects the value returned by U.S. Robotics
+    modems (13). Either lower the connection speed limit to 2400 baud or follow the directions in the FXL/FXE
+    documentation to change the expected code.
+  </p>
+  <p>
+    The clock in FoReM XL/XE also tends to lose a couple of seconds per day because it is
+    written to expect exactly 60 or 50 frames per second, whereas the actual Atari runs slightly
+    slower than that (59.92 fps / 49.87 fps). A workaround is to adjust the emulator speed to
+    50/60Hz in Speed Options.
+  </p>
   <h3>Ice-T XE 2.72</h3>
   <p>
     The keyboard click feature of this program has a bug: it calls directly into the OS K:
@@ -133,11 +147,34 @@
   <p>
     There is also a bug in MyDOS that prevents wildcarded copies from working when using H: as
     the source: MyDOS passes the wrong flags when enumerating files from non-disk devices, causing
-    the copy to fail.
+    the copy to fail. Specifically, it attempts to read a directory listing using an <tt>AUX1</tt> mode
+    of <tt>$04</tt> (open file) instead of <tt>$06</tt> (open directory).
   </p>
-  <h3>SpartaDOS X</h3>
+  <h3>SpartaDOS 3.2</h3>
+  <p>
+    While the emulator's H: device can be accessed by SpartaDOS 3, there is a bug in its COPY
+    command that causes it to malfunction when copying from H: to a destination path:
+  </p>
+  <blockquote>
+    <tt>D1:>COPY H:FILE.BIN D2:</tt>
+  </blockquote>
+  <p>
+    This fails with <tt>163 Illegal wildcard in name</tt> because COPY attempts to create a file
+    called <tt>*.*</tt> on the destination drive. It works for copies from the regular <tt>D:</tt>
+    device because there it issues a directory search to get the source name. The workaround is
+    to specify a full destination filename:
+  </p>
+  <blockquote>
+    <tt>D1:>COPY H:FILE.BIN D2:FILE.BIN</tt>
+  </blockquote>
+  <h3>SpartaDOS X</h3>  
   <p>
     SpartaDOS X uses a polling loop for SIO transfers, so regular burst I/O mode does not work
     with it. Use the burst (polled) mode instead.
+  </p>
+  <p>
+    The H: device is not supported at all by the SDX kernel, so specific drivers or tools must
+    be used to copy to and from the emulator devices. <a href="pclink.html">PCLink</a> is the
+    recommended alternative for SDX 4.44 and above.
   </p>
 </topic>

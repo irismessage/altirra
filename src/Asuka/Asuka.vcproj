@@ -387,6 +387,10 @@
 			Filter="cpp;c;cxx;rc;def;r;odl;idl;hpj;bat"
 			>
 			<File
+				RelativePath=".\source\checkimports.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\filecreator.cpp"
 				>
 			</File>
@@ -400,6 +404,10 @@
 			</File>
 			<File
 				RelativePath=".\source\fxc.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\fxc10.cpp"
 				>
 			</File>
 			<File

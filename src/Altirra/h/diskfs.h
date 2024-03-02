@@ -1,6 +1,7 @@
 #ifndef f_AT_DISKFS_H
 #define f_AT_DISKFS_H
 
+#include <vd2/system/date.h>
 #include <vd2/system/error.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
@@ -19,6 +20,8 @@ struct ATDiskFSEntryInfo {
 	uint32	mBytes;
 	uintptr	mKey;
 	bool	mbIsDirectory;
+	bool	mbDateValid;
+	VDExpandedDate	mDate;
 };
 
 struct ATDiskFSValidationReport {
@@ -37,19 +40,26 @@ enum ATDiskFSError {
 	kATDiskFSError_ReadError,
 	kATDiskFSError_WriteError,
 	kATDiskFSError_CannotReadSparseFile,
-	kATDiskFSError_DirectoryNotEmpty
+	kATDiskFSError_DirectoryNotEmpty,
+	kATDiskFSError_UnsupportedCompressionMode,
+	kATDiskFSError_DecompressionError,
+	kATDiskFSError_CRCError
 };
 
 class ATDiskFSException : public MyError {
 public:
 	ATDiskFSException(ATDiskFSError error);
+
+	ATDiskFSError GetErrorCode() const { return mErrorCode; }
+
+protected:
+	const ATDiskFSError mErrorCode;
 };
 
 class VDINTERFACE IATDiskFS {
 public:
 	virtual ~IATDiskFS() {}
 
-	virtual void Init(IATDiskImage *image, bool readOnly) = 0;
 	virtual void GetInfo(ATDiskFSInfo& info) = 0;
 
 	virtual bool IsReadOnly() = 0;
@@ -74,6 +84,7 @@ public:
 };
 
 IATDiskFS *ATDiskMountImage(IATDiskImage *image, bool readOnly);
+IATDiskFS *ATDiskMountImageARC(const wchar_t *path);
 IATDiskFS *ATDiskMountImageSDX2(IATDiskImage *image, bool readOnly);
 
 #endif	// f_AT_DISKFS_H

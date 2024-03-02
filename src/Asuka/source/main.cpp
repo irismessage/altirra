@@ -19,6 +19,7 @@
 
 #include "stdafx.h"
 #include <windows.h>
+#include <objbase.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +40,7 @@ void tool_verinc(bool amd64);
 void tool_lookup(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches, bool amd64);
 void tool_mapconv(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches, bool amd64);
 void tool_fxc(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches, bool amd64);
+void tool_fxc10(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches, bool amd64);
 void tool_makearray(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_glc(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_fontextract(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
@@ -47,6 +49,7 @@ void tool_snapsetup();
 void tool_filecreate(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_maketables(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_psa(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
+void tool_checkimports(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 
 int main(int argc, char **argv) {
 	--argc;
@@ -74,6 +77,8 @@ int main(int argc, char **argv) {
 
 	args.erase(args.begin());
 
+	CoInitialize(NULL);
+
 	try {
 		if (!_stricmp(s, "verinc")) {
 			read_version();
@@ -85,6 +90,8 @@ int main(int argc, char **argv) {
 			tool_mapconv(args, switches, amd64);
 		} else if (!_stricmp(s, "fxc")) {
 			tool_fxc(args, switches, amd64);
+		} else if (!_stricmp(s, "fxc10")) {
+			tool_fxc10(args, switches, amd64);
 		} else if (!_stricmp(s, "makearray")) {
 			tool_makearray(args, switches);
 		} else if (!_stricmp(s, "glc")) {
@@ -101,6 +108,8 @@ int main(int argc, char **argv) {
 			tool_maketables(args, switches);
 		} else if (!_stricmp(s, "psa")) {
 			tool_psa(args, switches);
+		} else if (!_stricmp(s, "checkimports")) {
+			tool_checkimports(args, switches);
 		} else
 			help();
 	} catch(const char *s) {
@@ -109,5 +118,6 @@ int main(int argc, char **argv) {
 		fail("%s", e.gets());
 	}
 
+	CoUninitialize();
 	return 0;
 }

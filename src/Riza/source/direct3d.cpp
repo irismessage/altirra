@@ -45,6 +45,66 @@ using namespace nsVDD3D9;
 
 ///////////////////////////////////////////////////////////////////////////
 
+class VDD3D9InitTexture : public vdrefcounted<IVDD3D9InitTexture> {
+public:
+	VDD3D9InitTexture();
+	~VDD3D9InitTexture();
+
+	bool Init(VDD3D9Manager *pManager, UINT width, UINT height, UINT levels, D3DFORMAT format);
+
+	bool Lock(int level, VDD3D9LockInfo& lockInfo);
+	void Unlock(int level);
+
+protected:
+	friend class VDD3D9Texture;
+
+	vdrefptr<IDirect3DTexture9> mpTexture;
+	UINT mWidth;
+	UINT mHeight;
+	UINT mLevels;
+	D3DFORMAT mFormat;
+};
+
+VDD3D9InitTexture::VDD3D9InitTexture() {
+}
+
+VDD3D9InitTexture::~VDD3D9InitTexture() {
+}
+
+bool VDD3D9InitTexture::Init(VDD3D9Manager *pManager, UINT width, UINT height, UINT levels, D3DFORMAT format) {
+	D3DPOOL pool = D3DPOOL_MANAGED;
+
+	if (pManager->GetDeviceEx())
+		pool = D3DPOOL_SYSTEMMEM;
+
+	HRESULT hr = pManager->GetDevice()->CreateTexture(width, height, levels, 0, format, pool, ~mpTexture, NULL);
+	if (FAILED(hr))
+		return false;
+
+	mWidth = width;
+	mHeight = height;
+	mLevels = levels;
+	mFormat = format;
+	return true;
+}
+
+bool VDD3D9InitTexture::Lock(int level, VDD3D9LockInfo& lockInfo) {
+	D3DLOCKED_RECT lr;
+	HRESULT hr = mpTexture->LockRect(level, &lr, NULL, 0);
+	if (FAILED(hr))
+		return false;
+
+	lockInfo.mpData = lr.pBits;
+	lockInfo.mPitch = lr.Pitch;
+	return true;
+}
+
+void VDD3D9InitTexture::Unlock(int level) {
+	mpTexture->UnlockRect(level);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 class VDD3D9Texture : public IVDD3D9Texture, public vdlist_node {
 public:
 	VDD3D9Texture();
@@ -64,6 +124,8 @@ public:
 
 	int GetWidth();
 	int GetHeight();
+
+	bool Init(IVDD3D9InitTexture *pInitTexture);
 
 	void SetD3DTexture(IDirect3DTexture9 *pTexture);
 	IDirect3DTexture9 *GetD3DTexture();
@@ -164,6 +226,29 @@ int VDD3D9Texture::GetHeight() {
 	return mHeight;
 }
 
+bool VDD3D9Texture::Init(IVDD3D9InitTexture *pInitTexture) {
+	VDD3D9InitTexture *p = static_cast<VDD3D9InitTexture *>(pInitTexture);
+
+	if (!p->mpTexture)
+		return false;
+
+	if (!mpManager->GetDeviceEx()) {
+		mpD3DTexture = p->mpTexture;
+		mpD3DTexture->AddRef();
+	} else {
+		IDirect3DDevice9Ex *pDevEx = mpManager->GetDeviceEx();
+		HRESULT hr = pDevEx->CreateTexture(p->mWidth, p->mHeight, p->mLevels, 0, p->mFormat, D3DPOOL_DEFAULT, &mpD3DTexture, NULL);
+		if (FAILED(hr))
+			return false;
+
+		hr = pDevEx->UpdateTexture(p->mpTexture, mpD3DTexture);
+		if (FAILED(hr))
+			return false;
+	}
+
+	return true;
+}
+
 void VDD3D9Texture::SetD3DTexture(IDirect3DTexture9 *pTexture) {
 	if (mpD3DTexture)
 		mpD3DTexture->Release();
@@ -216,7 +301,7 @@ VDD3D9SwapChain::~VDD3D9SwapChain() {
 static VDCriticalSection g_csVDDirect3D9Managers;
 static vdlist<VDD3D9Manager> g_VDDirect3D9Managers;
 
-VDD3D9Manager *VDInitDirect3D9(VDD3D9Client *pClient, HMONITOR hmonitor) {
+VDD3D9Manager *VDInitDirect3D9(VDD3D9Client *pClient, HMONITOR hmonitor, bool use9ex) {
 	VDD3D9Manager *pMgr = NULL;
 	bool firstClient = false;
 
@@ -228,14 +313,14 @@ VDD3D9Manager *VDInitDirect3D9(VDD3D9Client *pClient, HMONITOR hmonitor) {
 		for(; it != itEnd; ++it) {
 			VDD3D9Manager *mgr = *it;
 
-			if (mgr->GetThreadID() == tid && mgr->GetMonitor() == hmonitor) {
+			if (mgr->GetThreadID() == tid && mgr->GetMonitor() == hmonitor && mgr->IsD3D9ExEnabled() == use9ex) {
 				pMgr = mgr;
 				break;
 			}
 		}
 
 		if (!pMgr) {
-			pMgr = new_nothrow VDD3D9Manager(hmonitor);
+			pMgr = new_nothrow VDD3D9Manager(hmonitor, use9ex);
 			if (!pMgr)
 				return NULL;
 
@@ -250,9 +335,15 @@ VDD3D9Manager *VDInitDirect3D9(VDD3D9Client *pClient, HMONITOR hmonitor) {
 		return pMgr;
 
 	if (firstClient) {
+		// We need to synchronize here because the list is shared. However, we don't need to
+		// synchronize on the manager itself because it's thread specific -- no one else can
+		// be trying to attach to the same instance as we are occupying the only thread that
+		// can access it.
 		vdsynchronized(g_csVDDirect3D9Managers) {
 			g_VDDirect3D9Managers.erase(pMgr);
 		}
+
+		delete pMgr;
 	}
 
 	return NULL;
@@ -267,15 +358,18 @@ void VDDeinitDirect3D9(VDD3D9Manager *p, VDD3D9Client *pClient) {
 	}
 }
 
-VDD3D9Manager::VDD3D9Manager(HMONITOR hmonitor)
+VDD3D9Manager::VDD3D9Manager(HMONITOR hmonitor, bool use9ex)
 	: mhmodDX9(NULL)
 	, mpD3D(NULL)
+	, mpD3DEx(NULL)
 	, mpD3DDevice(NULL)
+	, mpD3DDeviceEx(NULL)
 	, mpD3DRTMain(NULL)
 	, mhMonitor(hmonitor)
 	, mDevWndClass(NULL)
 	, mhwndDevice(NULL)
 	, mThreadID(0)
+	, mbUseD3D9Ex(use9ex)
 	, mbDeviceValid(false)
 	, mbInScene(false)
 	, mFullScreenCount(0)
@@ -298,7 +392,6 @@ bool VDD3D9Manager::Attach(VDD3D9Client *pClient) {
 	bool bSuccess = false;
 
 	VDASSERT(mClients.find(pClient) == mClients.end());
-	mClients.push_back(pClient);
 
 	if (++mRefCount == 1)
 		bSuccess = Init();
@@ -307,8 +400,14 @@ bool VDD3D9Manager::Attach(VDD3D9Client *pClient) {
 		bSuccess = CheckDevice();
 	}
 
-	if (!bSuccess)
-		Detach(pClient);
+	if (!bSuccess) {
+		if (!--mRefCount)
+			Shutdown();
+
+		return false;
+	}
+
+	mClients.push_back(pClient);
 
 	return bSuccess;
 }
@@ -362,23 +461,45 @@ bool VDD3D9Manager::Init() {
 	}
 
 	// attempt to load D3D9.DLL
-	mhmodDX9 = LoadLibrary("d3d9.dll");
+	mhmodDX9 = VDLoadSystemLibraryW32("d3d9.dll");
 	if (!mhmodDX9) {
 		Shutdown();
 		return false;
 	}
 
-	IDirect3D9 *(APIENTRY *pDirect3DCreate9)(UINT) = (IDirect3D9 *(APIENTRY *)(UINT))GetProcAddress(mhmodDX9, "Direct3DCreate9");
-	if (!pDirect3DCreate9) {
-		Shutdown();
-		return false;
+	if (mbUseD3D9Ex) {
+		DWORD osver = ::GetVersion();
+
+		// FLIPEX support requires at least Windows 7.
+		if (osver < 0x80000000) {
+			uint8 osmajorver = LOBYTE(LOWORD(osver));
+			uint8 osminorver = HIBYTE(LOWORD(osver));
+
+			if (osmajorver >= 7 || (osmajorver == 6 && osminorver >= 1)) {
+				HRESULT (APIENTRY *pDirect3DCreate9Ex)(UINT, IDirect3D9Ex **) = (HRESULT (APIENTRY *)(UINT, IDirect3D9Ex **))GetProcAddress(mhmodDX9, "Direct3DCreate9Ex");
+				if (pDirect3DCreate9Ex) {
+					HRESULT hr = pDirect3DCreate9Ex(D3D_SDK_VERSION, &mpD3DEx);
+
+					if (SUCCEEDED(hr))
+						mpD3D = mpD3DEx;
+				}
+			}
+		}
 	}
 
-	// create Direct3D9 object
-	mpD3D = pDirect3DCreate9(D3D_SDK_VERSION);
 	if (!mpD3D) {
-		Shutdown();
-		return false;
+		IDirect3D9 *(APIENTRY *pDirect3DCreate9)(UINT) = (IDirect3D9 *(APIENTRY *)(UINT))GetProcAddress(mhmodDX9, "Direct3DCreate9");
+		if (!pDirect3DCreate9) {
+			Shutdown();
+			return false;
+		}
+
+		// create Direct3D9 object
+		mpD3D = pDirect3DCreate9(D3D_SDK_VERSION);
+		if (!mpD3D) {
+			Shutdown();
+			return false;
+		}
 	}
 
 	// create device
@@ -396,6 +517,7 @@ bool VDD3D9Manager::Init() {
 	DWORD dwFlags = D3DCREATE_FPU_PRESERVE | D3DCREATE_NOWINDOWCHANGES;
 	UINT adapter = D3DADAPTER_DEFAULT;
 	D3DDEVTYPE type = D3DDEVTYPE_HAL;
+	bool perfHudActive = false;
 
 	for(UINT n=0; n<adapters; ++n) {
 		D3DADAPTER_IDENTIFIER9 ident;
@@ -404,6 +526,7 @@ bool VDD3D9Manager::Init() {
 			if (strstr(ident.Description, "PerfHUD")) {
 				adapter = n;
 				type = D3DDEVTYPE_REF;
+				perfHudActive = true;
 				break;
 			}
 		}
@@ -431,8 +554,16 @@ bool VDD3D9Manager::Init() {
 		return false;
 	}
 
-	mPresentParms.BackBufferWidth	= mode.Width;
-	mPresentParms.BackBufferHeight	= mode.Height;
+	if (perfHudActive) {
+		mPresentParms.BackBufferWidth	= mode.Width;
+		mPresentParms.BackBufferHeight	= mode.Height;
+	} else {
+		mPresentParms.BackBufferWidth	= 32;
+		mPresentParms.BackBufferHeight	= 32;
+	}
+
+	if (mpD3DDeviceEx)
+		mPresentParms.Flags |= D3DPRESENTFLAG_UNPRUNEDMODE;
 
 	// Make sure we have at least X8R8G8B8 for a texture format
 	hr = mpD3D->CheckDeviceFormat(adapter, type, D3DFMT_X8R8G8B8, 0, D3DRTYPE_TEXTURE, D3DFMT_X8R8G8B8);
@@ -470,12 +601,19 @@ bool VDD3D9Manager::Init() {
 		dwFlags |= D3DCREATE_SOFTWARE_VERTEXPROCESSING;
 
 	// Create the device.
-	hr = mpD3D->CreateDevice(adapter, type, mhwndDevice, dwFlags, &mPresentParms, &mpD3DDevice);
+	if (mpD3DEx)
+		hr = mpD3DEx->CreateDeviceEx(adapter, type, mhwndDevice, dwFlags, &mPresentParms, NULL, &mpD3DDeviceEx);
+	else
+		hr = mpD3D->CreateDevice(adapter, type, mhwndDevice, dwFlags, &mPresentParms, &mpD3DDevice);
+
 	if (FAILED(hr)) {
 		VDDEBUG_D3D("VideoDisplay/DX9: Failed to create device.\n");
 		Shutdown();
 		return false;
 	}
+
+	if (mpD3DDeviceEx)
+		mpD3DDevice = mpD3DDeviceEx;
 
 	mbDeviceValid = true;
 
@@ -508,6 +646,11 @@ bool VDD3D9Manager::Init() {
 		return false;
 	}
 
+	if (!UpdateCachedDisplayMode()) {
+		Shutdown();
+		return false;
+	}
+
 	if (!InitVRAMResources()) {
 		Shutdown();
 		return false;
@@ -516,13 +659,7 @@ bool VDD3D9Manager::Init() {
 }
 
 bool VDD3D9Manager::InitVRAMResources() {
-	// retrieve display mode
-	HRESULT hr = mpD3D->GetAdapterDisplayMode(mAdapter, &mDisplayMode);
-	if (FAILED(hr)) {
-		VDDEBUG_D3D("VideoDisplay/DX9: Failed to get current adapter mode.\n");
-		Shutdown();
-		return false;
-	}
+	HRESULT hr;
 
 	// retrieve back buffer
 	if (!mpD3DRTMain) {
@@ -675,10 +812,14 @@ void VDD3D9Manager::Shutdown() {
 		mpD3DDevice = NULL;
 	}
 
+	mpD3DDeviceEx = NULL;
+
 	if (mpD3D) {
 		mpD3D->Release();
 		mpD3D = NULL;
 	}
+
+	mpD3DEx = NULL;
 
 	if (mhmodDX9) {
 		FreeLibrary(mhmodDX9);
@@ -696,7 +837,18 @@ void VDD3D9Manager::Shutdown() {
 	}
 }
 
-void VDD3D9Manager::AdjustFullScreen(bool fs) {
+bool VDD3D9Manager::UpdateCachedDisplayMode() {
+	// retrieve display mode
+	HRESULT hr = mpD3D->GetAdapterDisplayMode(mAdapter, &mDisplayMode);
+	if (FAILED(hr)) {
+		VDDEBUG_D3D("VideoDisplay/DX9: Failed to get current adapter mode.\n");
+		return false;
+	}
+
+	return true;
+}
+
+void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh) {
 	if (fs) {
 		++mFullScreenCount;
 	} else {
@@ -706,51 +858,74 @@ void VDD3D9Manager::AdjustFullScreen(bool fs) {
 
 	bool newState = mFullScreenCount != 0;
 
-	if ((!mPresentParms.Windowed) != newState) {
-		D3DDISPLAYMODE dm;
-		mpD3DDevice->GetDisplayMode(0, &dm);
-		if (newState) {
-			UINT count = mpD3D->GetAdapterModeCount(mAdapter, D3DFMT_X8R8G8B8);
+	if ((!mPresentParms.Windowed) == newState)
+		return;
 
-			D3DDISPLAYMODE dm2;
-			D3DDISPLAYMODE dmbest={0};
-			int bestindex = -1;
-			
-			for(UINT mode=0; mode<count; ++mode) {
-				HRESULT hr = mpD3D->EnumAdapterModes(mAdapter, D3DFMT_X8R8G8B8, mode, &dm2);
-				if (FAILED(hr))
-					break;
+	D3DDISPLAYMODE dm;
+	mpD3DDevice->GetDisplayMode(0, &dm);
+	if (newState) {
+		UINT count = mpD3D->GetAdapterModeCount(mAdapter, D3DFMT_X8R8G8B8);
 
+		D3DDISPLAYMODE dm2;
+		D3DDISPLAYMODE dmbest={0};
+		int bestindex = -1;
+		int bestwidtherr = 0;
+		int bestheighterr = 0;
+		int bestrefresherr = 0;
+		const int targetwidth = w && h ? w : dm.Width;
+		const int targetheight = w && h ? h : dm.Height;
+		const int targetrefresh = w && h ? refresh : dm.RefreshRate;
+		
+		for(UINT mode=0; mode<count; ++mode) {
+			HRESULT hr = mpD3D->EnumAdapterModes(mAdapter, D3DFMT_X8R8G8B8, mode, &dm2);
+			if (FAILED(hr))
+				break;
 
-				if (dmbest.Width == 0 || abs((int)dm2.Width - (int)dm.Width) + abs((int)dm2.Height - (int)dm.Height) < abs((int)dmbest.Width - (int)dm.Width) + abs((int)dmbest.Height - (int)dm.Height)) {
-					dmbest = dm2;
-					bestindex = (int)mode;
+			const int widtherr = abs((int)dm2.Width - targetwidth);
+			const int heighterr = abs((int)dm2.Height - targetheight);
+			const int refresherr = abs((int)dm2.RefreshRate - targetrefresh);
+
+			if (dmbest.Width != 0) {
+				if (refresherr > bestrefresherr)
+					continue;
+
+				if (refresherr == bestrefresherr) {
+					if (widtherr + heighterr >= bestwidtherr + bestheighterr)
+						continue;
 				}
 			}
 
-			if (bestindex < 0) {
-				mPresentParms.BackBufferWidth = dm.Width;
-				mPresentParms.BackBufferHeight = dm.Height;
-				mPresentParms.BackBufferFormat = D3DFMT_X8R8G8B8;
-			} else {
-				mPresentParms.BackBufferWidth = dmbest.Width;
-				mPresentParms.BackBufferHeight = dmbest.Height;
-				mPresentParms.BackBufferFormat = D3DFMT_X8R8G8B8;
-			}
-		} else {
-			mPresentParms.BackBufferWidth = dm.Width;
-			mPresentParms.BackBufferHeight = dm.Height;
-			mPresentParms.BackBufferFormat = D3DFMT_UNKNOWN;
+			dmbest = dm2;
+			bestindex = (int)mode;
+			bestwidtherr = widtherr;
+			bestheighterr = heighterr;
+			bestrefresherr = refresherr;
 		}
 
-		mPresentParms.Windowed = !newState;
-		mPresentParms.SwapEffect = newState ? D3DSWAPEFFECT_DISCARD : D3DSWAPEFFECT_COPY;
-		mPresentParms.BackBufferCount = newState ? 1 : 1;
-		mPresentParms.PresentationInterval = newState ? D3DPRESENT_INTERVAL_ONE : D3DPRESENT_INTERVAL_IMMEDIATE;
-		mPresentParms.FullScreen_RefreshRateInHz = newState ? 60 : 0;
-
-		Reset();
+		if (bestindex < 0) {
+			mPresentParms.BackBufferWidth = dm.Width;
+			mPresentParms.BackBufferHeight = dm.Height;
+			mPresentParms.FullScreen_RefreshRateInHz = dm.RefreshRate;
+			mPresentParms.BackBufferFormat = D3DFMT_X8R8G8B8;
+		} else {
+			mPresentParms.BackBufferWidth = dmbest.Width;
+			mPresentParms.BackBufferHeight = dmbest.Height;
+			mPresentParms.FullScreen_RefreshRateInHz = dmbest.RefreshRate;
+			mPresentParms.BackBufferFormat = D3DFMT_X8R8G8B8;
+		}
+	} else {
+		mPresentParms.BackBufferWidth = dm.Width;
+		mPresentParms.BackBufferHeight = dm.Height;
+		mPresentParms.BackBufferFormat = D3DFMT_UNKNOWN;
+		mPresentParms.FullScreen_RefreshRateInHz = 0;
 	}
+
+	mPresentParms.Windowed = !newState;
+	mPresentParms.SwapEffect = newState ? D3DSWAPEFFECT_DISCARD : D3DSWAPEFFECT_COPY;
+	mPresentParms.BackBufferCount = newState ? 1 : 1;
+	mPresentParms.PresentationInterval = newState ? D3DPRESENT_INTERVAL_ONE : D3DPRESENT_INTERVAL_IMMEDIATE;
+	
+	Reset();
 }
 
 bool VDD3D9Manager::Reset() {
@@ -779,13 +954,33 @@ bool VDD3D9Manager::Reset() {
 
 	ShutdownVRAMResources();
 
-	HRESULT hr = mpD3DDevice->Reset(&mPresentParms);
+	HRESULT hr;
+	D3DPRESENT_PARAMETERS tmp(mPresentParms);
+	
+	if (mpD3DDeviceEx && !mPresentParms.Windowed) {
+		D3DDISPLAYMODEEX mode;
+		mode.Width = mPresentParms.BackBufferWidth;
+		mode.Height = mPresentParms.BackBufferHeight;
+		mode.Format = D3DFMT_X8R8G8B8;
+		mode.RefreshRate = mPresentParms.FullScreen_RefreshRateInHz;
+		mode.Size = sizeof(D3DDISPLAYMODEEX);
+		mode.ScanLineOrdering = D3DSCANLINEORDERING_PROGRESSIVE;
+		hr = mpD3DDeviceEx->ResetEx(&tmp, &mode);
+	} else
+		hr = mpD3DDevice->Reset(&tmp);
+
 	if (FAILED(hr)) {
 		mbDeviceValid = false;
 		return false;
 	}
 
 	mbInScene = false;
+
+	if (!UpdateCachedDisplayMode()) {
+		ShutdownVRAMResources();
+		return false;
+	}
+
 	if (!InitVRAMResources())
 		return false;
 
@@ -1286,6 +1481,23 @@ bool VDD3D9Manager::Is3DCardLame() {
 	return false;
 }
 
+bool VDD3D9Manager::CreateInitTexture(UINT width, UINT height, UINT levels, D3DFORMAT format, IVDD3D9InitTexture **ppInitTexture) {
+	VDD3D9InitTexture *p = new_nothrow VDD3D9InitTexture;
+
+	if (!p)
+		return false;
+
+	p->AddRef();
+
+	if (!p->Init(this, width, height, levels, format)) {
+		p->Release();
+		return false;
+	}
+
+	*ppInitTexture = p;
+	return true;
+}
+
 bool VDD3D9Manager::CreateSharedTexture(const char *name, SharedTextureFactory factory, IVDD3D9Texture **ppTexture) {
 	SharedTextures::iterator it(mSharedTextures.begin()), itEnd(mSharedTextures.end());
 	for(; it!=itEnd; ++it) {
@@ -1319,17 +1531,25 @@ bool VDD3D9Manager::CreateSharedTexture(const char *name, SharedTextureFactory f
 	return true;
 }
 
-bool VDD3D9Manager::CreateSwapChain(int width, int height, bool clipToMonitor, IVDD3D9SwapChain **ppSwapChain) {
+bool VDD3D9Manager::CreateSwapChain(HWND hwnd, int width, int height, bool clipToMonitor, IVDD3D9SwapChain **ppSwapChain) {
 	D3DPRESENT_PARAMETERS pparms={};
 
 	pparms.Windowed			= TRUE;
 	pparms.SwapEffect		= D3DSWAPEFFECT_COPY;
 	pparms.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+	pparms.BackBufferCount	= 1;
+
+	if (mpD3DDeviceEx) {
+		pparms.SwapEffect = D3DSWAPEFFECT_FLIPEX;
+		pparms.PresentationInterval = D3DPRESENT_INTERVAL_ONE;
+		pparms.BackBufferCount	= 3;
+	}
+
 	pparms.BackBufferWidth	= width;
 	pparms.BackBufferHeight	= height;
-	pparms.BackBufferCount	= 1;
 	pparms.BackBufferFormat	= mPresentParms.BackBufferFormat;
-	pparms.Flags = clipToMonitor ? D3DPRESENTFLAG_DEVICECLIP : 0;
+	pparms.hDeviceWindow = hwnd;
+	pparms.Flags = clipToMonitor && !mpD3DDeviceEx ? D3DPRESENTFLAG_DEVICECLIP : 0;
 
 	vdrefptr<IDirect3DSwapChain9> pD3DSwapChain;
 	HRESULT hr = mpD3DDevice->CreateAdditionalSwapChain(&pparms, ~pD3DSwapChain);
@@ -1371,6 +1591,37 @@ HRESULT VDD3D9Manager::PresentSwapChain(IVDD3D9SwapChain *pSwapChain, const RECT
 
 	IDirect3DSwapChain9 *pD3DSwapChain = static_cast<VDD3D9SwapChain *>(pSwapChain)->GetD3DSwapChain();
 	HRESULT hr;
+
+	if (mpD3DDeviceEx) {
+		DWORD flags = 0;
+
+		if (!history.mbPresentPending)
+			history.mPresentStartTime = VDGetPreciseTick();
+
+		if (donotwait)
+			flags |= D3DPRESENT_DONOTWAIT;
+
+//		if (!vsync)
+//			flags |= D3DPRESENT_FORCEIMMEDIATE | D3DPRESENT_DONOTWAIT;
+
+		for(;;) {
+			hr = pD3DSwapChain->Present(NULL, NULL, NULL, NULL, flags);
+
+			if (hr != D3DERR_WASSTILLDRAWING)
+				break;
+			
+			if (donotwait) {
+				history.mbPresentPending = true;
+				return S_FALSE;
+			}
+
+			::Sleep(1);
+		}
+
+		history.mAveragePresentTime += ((VDGetPreciseTick() - history.mPresentStartTime)*VDGetPreciseSecondsPerTick() - history.mAveragePresentTime) * 0.01f;
+		history.mbPresentPending = false;
+		return hr;
+	}
 
 	if (!vsync || !(mDevCaps.Caps & D3DCAPS_READ_SCANLINE)) {
 		if (!newframe)

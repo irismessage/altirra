@@ -34,9 +34,9 @@ uint32 ATExecuteAutotestCommand(const wchar_t *cmd, IATAutotestReplyPort *replyP
 			const VDStringSpanW& t = cmdLine(i);
 
 			if (t == L"ntsc")
-				g_sim.SetPALMode(false);
+				g_sim.SetVideoStandard(kATVideoStandard_NTSC);
 			else if (t == L"pal")
-				g_sim.SetPALMode(true);
+				g_sim.SetVideoStandard(kATVideoStandard_PAL);
 			else if (t == L"800") {
 				g_sim.SetHardwareMode(kATHardwareMode_800);
 				g_sim.SetKernelMode(kATKernelMode_OSB);

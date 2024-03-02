@@ -102,6 +102,11 @@ void ATUISerialPortsDialog::OnDataExchange(bool write) {
 		mConfig.mbDisableThrottling = IsButtonChecked(IDC_DISABLE_THROTTLING);
 		mConfig.mbRequireMatchedDTERate = IsButtonChecked(IDC_REQUIRE_MATCHED_DTE_RATE);
 
+		if (IsButtonChecked(IDC_SIOLEVEL_NONE))
+			mConfig.m850SIOLevel = kAT850SIOEmulationLevel_None;
+		else if (IsButtonChecked(IDC_SIOLEVEL_STUBLOADER))
+			mConfig.m850SIOLevel = kAT850SIOEmulationLevel_StubLoader;
+
 		int selIdx = mComboConnectSpeed.GetSelection();
 		mConfig.mConnectionSpeed = selIdx >= 0 ? kConnectionSpeeds[selIdx] : 9600;
 
@@ -143,6 +148,9 @@ void ATUISerialPortsDialog::OnDataExchange(bool write) {
 		mComboConnectSpeed.SetSelection(it - begin);
 
 		CheckButton(IDC_REQUIRE_MATCHED_DTE_RATE, mConfig.mbRequireMatchedDTERate);
+
+		CheckButton(IDC_SIOLEVEL_NONE, mConfig.m850SIOLevel == kAT850SIOEmulationLevel_None);
+		CheckButton(IDC_SIOLEVEL_STUBLOADER, mConfig.m850SIOLevel == kAT850SIOEmulationLevel_StubLoader);
 
 		UpdateEnables();
 	}
@@ -192,6 +200,8 @@ void ATUISerialPortsDialog::UpdateEnables() {
 	EnableControl(IDC_DISABLE_THROTTLING, enabled);
 	EnableControl(IDC_CONNECTION_SPEED, enabled && accept);
 	EnableControl(IDC_EXTENDED_BAUD_RATES, enabled);
+	EnableControl(IDC_REQUIRE_MATCHED_DTE_RATE, enabled);
+	EnableControl(IDC_STATIC_SIOLEVEL, enabled);
 }
 
 void ATUIShowSerialPortsDialog(VDGUIHandle h) {

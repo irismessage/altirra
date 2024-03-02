@@ -65,6 +65,8 @@ protected:
 	void	LoadBitmapSector(uint32 sector);
 	void	FlushBitmapSector();
 
+	void	MarkVolumeChanged();
+
 	static void WriteFileName(uint8 fn[11], const char *filename);
 	static bool IsValidFileName(const char *filename);
 
@@ -314,6 +316,25 @@ void ATDiskFSSDX2::GetFileInfo(const uint8 *rawde, uintptr key, ATDiskFSEntryInf
 	info.mSectors	= info.mBytes ? ((info.mBytes - 1) >> mSectorShift) + 1 : 0;
 	info.mKey		= key;
 	info.mbIsDirectory = (rawde[0] & 0x20) != 0;
+	info.mbDateValid = false;
+
+	if (rawde[17] |
+		rawde[18] |
+		rawde[19] |
+		rawde[20] |
+		rawde[21] |
+		rawde[22])
+	{
+		info.mbDateValid = true;
+		info.mDate.mDay = rawde[17];
+		info.mDate.mMonth = rawde[18];
+		info.mDate.mYear = rawde[19] >= 50 ? rawde[19] + 1900 : rawde[19] + 2000;
+		info.mDate.mHour = rawde[20];
+		info.mDate.mMinute = rawde[21];
+		info.mDate.mSecond = rawde[22];
+		info.mDate.mDayOfWeek = 0;
+		info.mDate.mMilliseconds = 0;
+	}
 }
 
 uintptr ATDiskFSSDX2::LookupFile(uintptr parentKey, const char *filename) {
@@ -422,6 +443,8 @@ void ATDiskFSSDX2::DeleteFile(uintptr key) {
 
 		FreeSector(sectorToFree);
 	}
+
+	MarkVolumeChanged();
 }
 
 void ATDiskFSSDX2::ReadFile(uintptr key, vdfastvector<uint8>& dst) {
@@ -536,6 +559,8 @@ void ATDiskFSSDX2::WriteEntry(uintptr parentKey, const char *filename, const voi
 	SeekFile(fh, dirLen - 23, true);
 	WriteFile(fh, dirEnt2, 23);
 	FlushFile(fh);
+
+	MarkVolumeChanged();
 }
 
 void ATDiskFSSDX2::RenameFile(uintptr key, const char *filename) {
@@ -849,6 +874,13 @@ void ATDiskFSSDX2::FlushBitmapSector() {
 		const_cast<ATDiskFSSDX2 *>(this)->WriteSector(mBitmapSector, mBitmapBuffer);
 		mbBitmapSectorDirty = false;
 	}
+}
+
+void ATDiskFSSDX2::MarkVolumeChanged() {
+	// Increment volume sequence counter.
+	++mSuperBlock[38];
+	mbSuperBlockDirty = true;
+	mbDirty = true;
 }
 
 void ATDiskFSSDX2::WriteFileName(uint8 fn[11], const char *filename) {

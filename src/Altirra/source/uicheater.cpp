@@ -458,7 +458,9 @@ void ATUIDialogCheater::OnCheatDblClk(VDUIProxyListView *sender, int index) {
 		if (dlg.ShowDialog((VDGUIHandle)mhdlg)) {
 			mpEngine->UpdateCheat(ai->mIndex, cheat);
 			mActiveView.RefreshItem(ai->mIndex);
-			mActiveView.Sort(AItemSorter());
+
+			AItemSorter sorter;
+			mActiveView.Sort(sorter);
 		}
 	}
 }
@@ -519,7 +521,8 @@ void ATUIDialogCheater::UpdateActiveView() {
 		mActiveView.SetItemChecked(i, mpEngine->GetCheatByIndex(i).mbEnabled);
 	}
 
-	mActiveView.Sort(AItemSorter());
+	AItemSorter sorter;
+	mActiveView.Sort(sorter);
 
 	mActiveView.AutoSizeColumns();
 }

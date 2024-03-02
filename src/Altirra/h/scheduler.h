@@ -23,6 +23,7 @@
 #endif
 
 #include <vd2/system/vdstl.h>
+#include <vd2/system/linearalloc.h>
 
 #define ATSCHEDULER_ADVANCE(pThis) if(++(pThis)->mNextEventCounter);else((pThis)->ProcessNextEvent()); VDASSERT((pThis)->mNextEventCounter < 0);
 #define ATSCHEDULER_GETTIME(pThis) ((pThis)->mNextEventCounter + (pThis)->mTimeBase)
@@ -62,6 +63,7 @@ public:
 protected:
 	ATEventLink mActiveEvents;
 	ATEventLink *mpFreeEvents;
+	VDLinearAllocator mAllocator;
 };
 
 #endif

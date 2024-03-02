@@ -58,10 +58,14 @@ public:
 	bool IsDiskLoaded() const { return mTotalSectorCount > 0; }
 	bool IsDiskBacked() const { return mbHasDiskSource; }
 	const wchar_t *GetPath() const { return mPath.empty() ? NULL : mPath.c_str(); }
+	IATDiskImage *GetDiskImage() const { return mpDiskImage; }
 
 	bool IsWriteEnabled() const { return mbWriteEnabled; }
 	bool IsAutoFlushEnabled() const { return mbAutoFlush; }
 	void SetWriteFlushMode(bool writeEnabled, bool autoFlush);
+
+	void ClearAccessedFlag();
+	bool IsAccessed() const { return mbAccessed; }
 
 	void Flush();
 	void Reset();
@@ -89,18 +93,13 @@ public:
 
 public:
 	void PokeyAttachDevice(ATPokeyEmulator *pokey);
-	void PokeyWriteSIO(uint8 c);
+	void PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit);
 	void PokeyBeginCommand();
 	void PokeyEndCommand();
 	void PokeySerInReady();
 
 protected:
-	void LoadDiskDCM(IVDRandomAccessStream& file, uint32 len, const wchar_t *origPath, const uint8 *header);
-	void LoadDiskATX(IVDRandomAccessStream& file, uint32 len, const uint8 *header);
-	void LoadDiskP2(IVDRandomAccessStream& file, uint32 len, const uint8 *header);
-	void LoadDiskP3(IVDRandomAccessStream& file, uint32 len, const uint8 *header);
-	void LoadDiskATR(IVDRandomAccessStream& file, uint32 len, const wchar_t *origPath, const uint8 *header);
-
+	void InitSectorInfoArrays();
 	void BeginTransfer(uint32 length, uint32 cyclesToFirstByte, bool useRotationalDelay, bool useHighSpeedFirstByte, bool useHighSpeed);
 	void UpdateRotationalCounter();
 	void QueueAutoSave();
@@ -111,6 +110,7 @@ protected:
 	void ProcessCommandTransmitCompleted();
 	void ProcessCommandData();
 	void ComputeSectorsPerTrack();
+	void ComputePERCOMBlock();
 
 	ATPokeyEmulator	*mpPokey;
 	IATDiskActivity *mpActivity;
@@ -131,6 +131,7 @@ protected:
 	uint32	mTransferCyclesPerBitFirstByte;
 	uint8	mFDCStatus;
 	uint8	mActiveCommand;
+	bool	mbActiveCommandHighSpeed;
 	uint8	mActiveCommandState;
 	uint32	mActiveCommandPhysSector;
 	uint32	mPhantomSectorCounter;
@@ -140,16 +141,14 @@ protected:
 	uint32	mCurrentTrack;
 	uint32	mSectorsPerTrack;
 
-	sint32	mReWriteOffset;
 	bool	mbWriteEnabled;
 	bool	mbWriteRotationalDelay;
 	bool	mbWriteHighSpeedFirstByte;
 	bool	mbWriteHighSpeed;
 	bool	mbAutoFlush;
-	bool	mbDirty;
-	bool	mbDiskFormatDirty;
 	bool	mbHasDiskSource;
 	bool	mbErrorIndicatorPhase;
+	bool	mbAccessed;
 
 	bool	mbWriteMode;
 	bool	mbCommandMode;
@@ -165,33 +164,28 @@ protected:
 	int		mSectorBreakpoint;
 	uint32	mLastSector;
 
+	uint8	mPERCOM[12];
+	int		mFormatSectorSize;
+	int		mFormatSectorCount;
+	int		mFormatBootSectorCount;
+
 	uint8	mSendPacket[528];
 	uint8	mReceivePacket[528];
 
-	vdfastvector<uint8>		mDiskImage;
+	vdautoptr<IATDiskImage> mpDiskImage;
 
-	struct PhysSectorInfo {
-		uint32	mOffset;
-		uint16	mSize;
-		bool	mbDirty;
-		float	mRotPos;
-		uint8	mFDCStatus;
+	struct ExtPhysSector {
 		sint8	mForcedOrder;
-		sint16	mWeakDataOffset;
 	};
 
-	struct SortDirtySectors;
+	typedef vdfastvector<ExtPhysSector> ExtPhysSectors;
+	ExtPhysSectors mExtPhysSectors;
 
-	typedef vdfastvector<PhysSectorInfo> PhysSectors;
-	PhysSectors mPhysSectorInfo;
-
-	struct VirtSectorInfo {
-		uint32	mStartPhysSector;
-		uint32	mNumPhysSectors;
+	struct ExtVirtSector {
 		uint32	mPhantomSectorCounter;
 	};
-	typedef vdfastvector<VirtSectorInfo> VirtSectors;
-	VirtSectors mVirtSectorInfo;
+	typedef vdfastvector<ExtVirtSector> ExtVirtSectors;
+	ExtVirtSectors mExtVirtSectors;
 
 	uint32	mWeakBitLFSR;
 };

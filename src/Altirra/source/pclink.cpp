@@ -27,6 +27,9 @@
 #include "cpu.h"
 #include "kerneldb.h"
 #include "uirender.h"
+#include "debuggerlog.h"
+
+ATDebuggerLogChannel g_ATLCPCLink(false, false, "PCLINK", "PCLink activity");
 
 uint8 ATTranslateWin32ErrorToSIOError(uint32 err);
 
@@ -564,7 +567,7 @@ uint8 ATPCLinkFileHandle::Read(void *dst, uint32 len, uint32& actual) {
 
 	actual = (uint32)act;
 
-	ATConsolePrintf("PCLINK: Read at pos %d/%d, len %d, actual %d\n", mPos, mLength, len, actual);
+	g_ATLCPCLink("Read at pos %d/%d, len %d, actual %d\n", mPos, mLength, len, actual);
 
 	mPos += actual;
 
@@ -597,7 +600,7 @@ uint8 ATPCLinkFileHandle::Write(const void *dst, uint32 len) {
 		}
 	}
 
-	ATConsolePrintf("PCLINK: Write at pos %d/%d, len %d, actual %d\n", mPos, mLength, len, actual);
+	g_ATLCPCLink("Write at pos %d/%d, len %d, actual %d\n", mPos, mLength, len, actual);
 
 	mPos += actual;
 	if (mPos > mLength)
@@ -639,7 +642,7 @@ public:
 
 public:
 	void PokeyAttachDevice(ATPokeyEmulator *pokey);
-	void PokeyWriteSIO(uint8 c);
+	void PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit);
 	void PokeyBeginCommand();
 	void PokeyEndCommand();
 	void PokeySerInReady();
@@ -878,7 +881,7 @@ bool ATPCLinkDevice::TryAccelSIO(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem, A
 			mStatusLengthHi
 		};
 
-		ATConsolePrintf("PCLINK: Sending status: Flags=$%02x, Error=%3d, Length=%02x%02x\n", mStatusFlags, mStatusError, mStatusLengthHi, mStatusLengthLo);
+		g_ATLCPCLink("Sending status: Flags=$%02x, Error=%3d, Length=%02x%02x\n", mStatusFlags, mStatusError, mStatusLengthHi, mStatusLengthLo);
 		for(int i=0; i<4; ++i)
 			mem.WriteByte((bufadr + i) & 0xffff, data[i]);
 
@@ -980,7 +983,7 @@ bool ATPCLinkDevice::TryAccelSIO(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem, A
 void ATPCLinkDevice::PokeyAttachDevice(ATPokeyEmulator *pokey) {
 }
 
-void ATPCLinkDevice::PokeyWriteSIO(uint8 c) {
+void ATPCLinkDevice::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) {
 	if (mbCommandLine) {
 		if (mTransferIndex < 5)
 			mTransferBuffer[mTransferIndex++] = c;
@@ -997,7 +1000,7 @@ void ATPCLinkDevice::PokeyWriteSIO(uint8 c) {
 			const uint8 d = ATComputeSIOChecksum(mTransferBuffer, mTransferLength);
 
 			if (c != d) {
-				ATConsolePrintf("PCLINK: Checksum error detected while receiving %u bytes.\n", mTransferLength);
+				g_ATLCPCLink("Checksum error detected while receiving %u bytes.\n", mTransferLength);
 				mbTransferError = true;
 			}
 
@@ -1093,7 +1096,7 @@ void ATPCLinkDevice::ProcessCommand() {
 		return;
 	}
 
-	ATConsolePrintf("PCLINK: Unsupported command $%02x\n", cmd);
+	g_ATLCPCLink("Unsupported command $%02x\n", cmd);
 	BeginCommand(kCommandNAK);
 }
 
@@ -1127,7 +1130,7 @@ void ATPCLinkDevice::AdvanceCommand() {
 			break;
 
 		case kCommandGetHiSpeedIndex:
-			ATConsolePrintf("PCLINK: Sending high-speed index\n");
+			g_ATLCPCLink("Sending high-speed index\n");
 			switch(mCommandPhase) {
 				case 0:	BeginTransmitACK();
 				case 1: break;
@@ -1143,7 +1146,7 @@ void ATPCLinkDevice::AdvanceCommand() {
 
 		case kCommandStatus:
 			switch(mCommandPhase) {
-				case 0:	ATConsolePrintf("PCLINK: Sending status: Flags=$%02x, Error=%3d, Length=%02x%02x\n", mStatusFlags, mStatusError, mStatusLengthHi, mStatusLengthLo);
+				case 0:	g_ATLCPCLink("Sending status: Flags=$%02x, Error=%3d, Length=%02x%02x\n", mStatusFlags, mStatusError, mStatusLengthHi, mStatusLengthLo);
 						BeginTransmitACK();
 				case 1:	break;
 				case 2:	BeginTransmitComplete(0);
@@ -1213,7 +1216,7 @@ bool ATPCLinkDevice::OnPut() {
 		case 0:		// fread
 			{
 				uint32 bufLen = mParBuf.mF1 + 256*mParBuf.mF2;
-				ATConsolePrintf("PCLINK: Received fread($%02x,%d) command.\n", mParBuf.mHandle, bufLen);
+				g_ATLCPCLink("Received fread($%02x,%d) command.\n", mParBuf.mHandle, bufLen);
 
 				if (CheckValidFileHandle(true)) {
 					ATPCLinkFileHandle& fh = mFileHandles[mParBuf.mHandle - 1];
@@ -1252,7 +1255,7 @@ bool ATPCLinkDevice::OnPut() {
 
 			{
 				uint32 bufLen = mParBuf.mF1 + 256*mParBuf.mF2;
-				ATConsolePrintf("PCLINK: Received fwrite($%02x,%d) command.\n", mParBuf.mHandle, bufLen);
+				g_ATLCPCLink("Received fwrite($%02x,%d) command.\n", mParBuf.mHandle, bufLen);
 
 				if (CheckValidFileHandle(true)) {
 					ATPCLinkFileHandle& fh = mFileHandles[mParBuf.mHandle - 1];
@@ -1284,7 +1287,7 @@ bool ATPCLinkDevice::OnPut() {
 		case 2:		// fseek
 			{
 				const uint32 pos = mParBuf.mF1 + ((uint32)mParBuf.mF2 << 8) + ((uint32)mParBuf.mF3 << 16);
-				ATConsolePrintf("PCLINK: Received fseek($%02x,%d) command.\n", mParBuf.mHandle, pos);
+				g_ATLCPCLink("Received fseek($%02x,%d) command.\n", mParBuf.mHandle, pos);
 
 				if (CheckValidFileHandle(true)) {
 					ATPCLinkFileHandle& fh = mFileHandles[mParBuf.mHandle - 1];
@@ -1300,7 +1303,7 @@ bool ATPCLinkDevice::OnPut() {
 			return true;
 
 		case 3:		// ftell
-			ATConsolePrintf("PCLINK: Received ftell($%02x) command.\n", mParBuf.mHandle);
+			g_ATLCPCLink("Received ftell($%02x) command.\n", mParBuf.mHandle);
 
 			if (!CheckValidFileHandle(true))
 				return true;
@@ -1323,7 +1326,7 @@ bool ATPCLinkDevice::OnPut() {
 			return true;
 
 		case 6:		// fnext
-			ATConsolePrintf("PCLINK: Received fnext($%02x) command.\n", mParBuf.mHandle);
+			g_ATLCPCLink("Received fnext($%02x) command.\n", mParBuf.mHandle);
 			if (!CheckValidFileHandle(true))
 				return true;
 
@@ -1331,7 +1334,7 @@ bool ATPCLinkDevice::OnPut() {
 			return true;
 
 		case 7:		// fclose
-			ATConsolePrintf("PCLINK: Received close($%02x) command.\n", mParBuf.mHandle);
+			g_ATLCPCLink("Received close($%02x) command.\n", mParBuf.mHandle);
 			if (CheckValidFileHandle(false))
 				mFileHandles[mParBuf.mHandle - 1].Close();
 
@@ -1339,7 +1342,7 @@ bool ATPCLinkDevice::OnPut() {
 			return true;
 
 		case 8:		// init
-			ATConsolePrintf("PCLINK: Received init command.\n");
+			g_ATLCPCLink("Received init command.\n");
 			for(size_t i = 0; i < sizeof(mFileHandles)/sizeof(mFileHandles[0]); ++i)
 				mFileHandles[i].Close();
 
@@ -1354,9 +1357,9 @@ bool ATPCLinkDevice::OnPut() {
 		case 9:		// fopen
 		case 10:	// ffirst
 			if (mParBuf.mFunction == 9)
-				ATConsolePrintf("PCLINK: Received fopen() command.\n");
+				g_ATLCPCLink("Received fopen() command.\n");
 			else
-				ATConsolePrintf("PCLINK: Received ffirst() command.\n");
+				g_ATLCPCLink("Received ffirst() command.\n");
 
 			OnReadActivity();
 			{
@@ -1529,7 +1532,7 @@ bool ATPCLinkDevice::OnPut() {
 			return true;
 
 		case 11:	// rename
-			ATConsolePrintf("PCLINK: Received rename() command.\n");
+			g_ATLCPCLink("Received rename() command.\n");
 
 			if (mbReadOnly) {
 				mStatusError = ATCIOSymbols::CIOStatReadOnly;
@@ -1606,7 +1609,7 @@ bool ATPCLinkDevice::OnPut() {
 			return true;
 
 		case 12:	// remove
-			ATConsolePrintf("PCLINK: Received remove() command.\n");
+			g_ATLCPCLink("Received remove() command.\n");
 
 			if (mbReadOnly) {
 				mStatusError = ATCIOSymbols::CIOStatReadOnly;
@@ -1697,7 +1700,7 @@ bool ATPCLinkDevice::OnPut() {
 			return true;
 
 		case 13:	// chmod
-			ATConsolePrintf("PCLINK: Received chmod() command.\n");
+			g_ATLCPCLink("Received chmod() command.\n");
 
 			if (mbReadOnly) {
 				mStatusError = ATCIOSymbols::CIOStatReadOnly;
@@ -1783,7 +1786,7 @@ bool ATPCLinkDevice::OnPut() {
 			return true;
 
 		case 14:	// mkdir
-			ATConsolePrintf("PCLINK: Received mkdir() command.\n");
+			g_ATLCPCLink("Received mkdir() command.\n");
 
 			if (mbReadOnly) {
 				mStatusError = ATCIOSymbols::CIOStatReadOnly;
@@ -1825,7 +1828,7 @@ bool ATPCLinkDevice::OnPut() {
 			return true;
 
 		case 15:	// rmdir
-			ATConsolePrintf("PCLINK: Received rmdir() command.\n");
+			g_ATLCPCLink("Received rmdir() command.\n");
 
 			if (mbReadOnly) {
 				mStatusError = ATCIOSymbols::CIOStatReadOnly;
@@ -1867,7 +1870,7 @@ bool ATPCLinkDevice::OnPut() {
 			return true;
 
 		case 16:	// chdir
-			ATConsolePrintf("PCLINK: Received chdir() command.\n");
+			g_ATLCPCLink("Received chdir() command.\n");
 			{
 				VDStringA resultPath;
 
@@ -1909,7 +1912,7 @@ bool ATPCLinkDevice::OnPut() {
 			return true;
 	}
 
-	ATConsolePrintf("PCLINK: Unsupported put for function $%02x\n", mParBuf.mFunction);
+	g_ATLCPCLink("Unsupported put for function $%02x\n", mParBuf.mFunction);
 	mStatusError = ATCIOSymbols::CIOStatNotSupported;
 	return true;
 }

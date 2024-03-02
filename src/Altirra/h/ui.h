@@ -27,6 +27,7 @@ public:
 	virtual ~VDShaderEditorBaseWindow();
 
 	static ATOM Register();
+	static ATOM RegisterCustom(const WNDCLASS& wc);
 	static void Unregister();
 
 	int AddRef();
@@ -43,6 +44,7 @@ protected:
 	HWND mhwnd;
 
 	static ATOM sWndClass;
+	static ATOM sWndClassMain;
 };
 
 class VDShaderEditorSplitterBar : public VDShaderEditorBaseWindow {

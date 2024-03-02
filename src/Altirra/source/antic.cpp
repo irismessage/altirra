@@ -23,7 +23,8 @@
 #include "scheduler.h"
 
 enum {
-	kATAnticEvent_UpdateRegisters = 1
+	kATAnticEvent_UpdateRegisters = 1,
+	kATAnticEvent_WSYNC = 2
 };
 
 ATAnticEmulator::ATAnticEmulator()
@@ -34,6 +35,7 @@ ATAnticEmulator::ATAnticEmulator()
 	, mAnalysisMode(kAnalyzeOff)
 	, mpRegisterUpdateEvent(NULL)
 	, mRegisterUpdateHeadIdx(0)
+	, mpEventWSYNC(NULL)
 {
 	SetPALMode(false);
 }
@@ -101,6 +103,8 @@ void ATAnticEmulator::ColdReset() {
 		mpScheduler->RemoveEvent(mpRegisterUpdateEvent);
 		mpRegisterUpdateEvent = NULL;
 	}
+
+	mpScheduler->UnsetEvent(mpEventWSYNC);
 }
 
 void ATAnticEmulator::WarmReset() {
@@ -116,6 +120,8 @@ void ATAnticEmulator::WarmReset() {
 		mpScheduler->RemoveEvent(mpRegisterUpdateEvent);
 		mpRegisterUpdateEvent = NULL;
 	}
+
+	mpScheduler->UnsetEvent(mpEventWSYNC);
 }
 
 void ATAnticEmulator::RequestNMI() {
@@ -132,9 +138,22 @@ void ATAnticEmulator::SetLightPenPosition(int x, int y) {
 	mPENV = y >> 1;
 }
 
-bool ATAnticEmulator::AdvanceSpecial() {
-	bool busActive = false;
+uint8 ATAnticEmulator::AdvanceSpecial() {
+	uint8 busActive = false;
+
+	if (mX == 114) {
+		AdvanceScanline();
+
+		uint8 fetchModeX0 = mDMAPattern[0];
+
+		if (!(fetchModeX0 & 0x80))
+			return fetchModeX0;
+
+		goto x_0;
+	}
+
 	if (mX == 0) {		// missile DMA
+x_0:
 		if ((mDMACTL & 0x0C) && (uint32)(mY - 8) < 240) {	// player DMA also forces missile DMA (Run For the Money requires this).
 			if (mDMACTL & 0x10) {
 				uint8 byte = mpConn->AnticReadByte(((mPMBASE & 0xf8) << 8) + 0x0300 + mY);
@@ -154,10 +173,10 @@ bool ATAnticEmulator::AdvanceSpecial() {
 		mbDLExtraLoadsPending = false;
 		mbPFDMAEnabled = false;
 		mbPFDMAActive = false;
+		mPFDMALastCheckX = 0;
 		mPFDMALatchedStart = 0;
 		mPFDMALatchedEnd = 0;
-		mPFFetchWidthLatchedStart = kPFDisabled;
-		mPFFetchWidthLatchedEnd = kPFDisabled;
+		mPFDMALatchedVEnd = 0;
 		mPFDisplayStart = 110;
 		mPFDisplayEnd = 110;
 		mDLHistory[mY].mbValid = false;
@@ -194,6 +213,7 @@ bool ATAnticEmulator::AdvanceSpecial() {
 				ent.mPFAddress = mPFDMAPtr;
 				ent.mHVScroll = mHSCROL + (mVSCROL << 4);
 				ent.mDMACTL = mDMACTL;
+				ent.mCHBASE = mCHBASE >> 1;
 				ent.mbValid = true;
 
 				if (mbDLDMAEnabledInTime) {
@@ -482,13 +502,12 @@ bool ATAnticEmulator::AdvanceSpecial() {
 		mPFDecodeCounter = 0;
 		mPFDisplayCounter = 0;
 		mPFDMALastCheckX = 0;
-
-		// Since we just changed playfield timing, this cycle may now be occupied!
-		busActive = mbDMAPattern[mX];
 	} else if (mX == 16) {
 		mpGTIA->BeginScanline(mY, mPFPushMode == k320);
 	} else if (mX == 105) {
 		mbWSYNCActive = false;
+		mPhantomDMAData[105] = 0xFF;
+		mPhantomDMAData[106] = 0xFF;
 	} else if (mX == 109) {
 		mLatchedVScroll = mVSCROL;
 	} else if (mX == 111) {
@@ -496,16 +515,15 @@ bool ATAnticEmulator::AdvanceSpecial() {
 		// may be DMA cycles blocked after this point.
 
 		if (mPFDMAEnd < 127 && mbPFDMAEnabled) {
-			PFWidthMode effectiveStart	= mPFFetchWidthLatchedStart	? mPFFetchWidthLatchedStart : mbPFDMAActive ? mPFFetchWidth : kPFDisabled;
-			PFWidthMode effectiveEnd	= mPFFetchWidthLatchedEnd	? mPFFetchWidthLatchedEnd	: mPFFetchWidth ? mPFFetchWidth : kPFWide;
+			LatchPlayfieldEdges();
 
-			if (effectiveStart) {
+			if (mPFDMALatchedStart) {
 				// The baseline width in bytes is 8 for narrow, 10 for normal, and 12 for wide. However,
 				// it is possible to get into weird cases where the playfield starts and ends with
 				// different widths.
-				uint32 bytes = 6 + effectiveStart + effectiveEnd;
+				uint32 bytes = ((mPFDMALatchedVEnd ? mPFDMALatchedVEnd : mPFDMAVEndWide) - mPFDMALatchedStart) >> (3 - mPFWidthShift);
 
-				mPFDMAPtr = (mPFDMAPtr & 0xf000) + ((mPFDMAPtr + (bytes << mPFWidthShift)) & 0xfff);
+				mPFDMAPtr = (mPFDMAPtr & 0xf000) + ((mPFDMAPtr + bytes) & 0xfff);
 			}
 		}
 
@@ -525,7 +543,7 @@ bool ATAnticEmulator::AdvanceSpecial() {
 		}
 	}
 
-	return busActive;
+	return busActive | (mDMAPattern[mX] & 0x7f);
 }
 
 void ATAnticEmulator::AdvanceScanline() {
@@ -534,6 +552,9 @@ void ATAnticEmulator::AdvanceScanline() {
 	mpGTIA->EndScanline(mDLControl);
 
 	mX = 0;
+
+	if (mbWSYNCActive)
+		memset(mPhantomDMAData, mWSYNCHoldValue, sizeof mPhantomDMAData);
 
 	if (++mY >= mScanlineLimit) {
 		mY = 0;
@@ -606,8 +627,8 @@ void ATAnticEmulator::SyncWithGTIA(int offset) {
 					mpGTIA->UpdatePlayfield320(xoff2*2, ((a << 2) + (b >> 2)) & 15);
 				}
 			} else {
-				for(; xoff2 < limit; ++xoff2)
-					mpGTIA->UpdatePlayfield320(xoff2*2, *src++);
+				mpGTIA->UpdatePlayfield320(xoff2*2, src, limit - xoff2);
+				xoff2 = limit;
 			}
 		} else {
 			if (mbHScrollDelay) {
@@ -619,8 +640,8 @@ void ATAnticEmulator::SyncWithGTIA(int offset) {
 					mpGTIA->UpdatePlayfield160(xoff2, (a << 4) + (b >> 4));
 				}
 			} else {
-				for(; xoff2 < limit; ++xoff2)
-					mpGTIA->UpdatePlayfield160(xoff2, *src++);
+				mpGTIA->UpdatePlayfield160(xoff2, src, limit - xoff2);
+				xoff2 = limit;
 			}
 		}
 	}
@@ -634,8 +655,8 @@ void ATAnticEmulator::Decode(int offset) {
 	if (!(mDLControl & 8))
 		limit -= 3;
 
-	if (limit > (int)mPFDMAEnd)
-		limit = (int)mPFDMAEnd;
+	if (limit > (int)mPFDMAVEnd)
+		limit = (int)mPFDMAVEnd;
 
 	static const uint8 kExpand160[16]={
 		0x00, 0x01, 0x02, 0x04,
@@ -902,23 +923,7 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 				// Ugh. We need to check whether we have crossed the current start or stop boundaries
 				// and latch PF start/end as necessary. This reflects the fact that you can't change
 				// the DMA start and stop boundaries once you already cross them.
-				if (mPFWidth) {
-					uint32 cycleRange = mX - mPFDMALastCheckX;
-
-					const int offset = (mDLControl & 15) < 8 ? 26-23 : 28-23;
-
-					if ((uint32)((mPFDMAStart - offset) - mPFDMALastCheckX) <= cycleRange) {
-						mPFDMALatchedStart = mPFDMAStart;
-						mPFFetchWidthLatchedStart = mPFFetchWidth;
-					}
-
-					if ((uint32)((mPFDMAEnd - offset) - mPFDMALastCheckX) <= cycleRange) {
-						mPFDMALatchedEnd = mPFDMAEnd;
-						mPFFetchWidthLatchedEnd = mPFFetchWidth;
-					}
-				}
-
-				mPFDMALastCheckX = mX;
+				LatchPlayfieldEdges();
 
 				SyncWithGTIA(0);
 				mDMACTL = value;
@@ -957,8 +962,33 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 			break;
 
 		case 0x04:
-			SyncWithGTIA(0);
-			mHSCROL = value & 15;
+			value &= 15;
+
+			// If we are changing the LSB, we are toggling the color clock delay on and off. This
+			// takes place immediately. A change to upper bits, however, only shifts the playfield
+			// stop and start locations, and doesn't take place immediately.
+			if (mHSCROL != value) {
+				if (mbHScrollEnabled) {
+					uint8 delta = mHSCROL ^ value;
+
+					if (delta & 1) {
+						SyncWithGTIA(0);
+
+						mbHScrollDelay = (value & 1) != 0;
+					}
+
+					// If there is a change to bits 1-3, then we are shifting the playfield timing.
+					if (delta & 14) {
+						LatchPlayfieldEdges();
+
+						mPFHScrollDMAOffset = (value & 14) >> 1;
+
+						UpdatePlayfieldTiming();
+					}
+				}
+
+				mHSCROL = value;
+			}
 			break;
 
 		case 0x05:
@@ -976,6 +1006,9 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 		case 0x0A:	// $D40A WSYNC
 			if (!mWSYNCPending || (mWSYNCPending == 1 && mX == 104)) {
 				mWSYNCPending = 2;
+
+				if (!mpEventWSYNC)
+					mpScheduler->SetEvent(1, this, kATAnticEvent_WSYNC, mpEventWSYNC);
 			}
 			break;
 
@@ -984,7 +1017,11 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 			break;
 
 		case 0x0F:	// NMIRES
+			// Check if we have a pending NMI and are exactly at cycle 7. If so, we should NOT
+			// reset the pending NMI, as it is set for both cycles.
 			mNMIST = 0x1F;
+			if (mX == 7 && mPendingNMIs)
+				mNMIST |= mPendingNMIs;
 			break;
 
 		default:
@@ -1015,7 +1052,7 @@ void ATAnticEmulator::DumpStatus() {
 	ATConsolePrintf("HSCROL = %02x\n", mHSCROL);
 	ATConsolePrintf("VSCROL = %02x\n", mVSCROL);
 	ATConsolePrintf("PMBASE = %02x\n", mPMBASE);
-	ATConsolePrintf("CHBASE = %02x\n", mCHBASE);
+ 	ATConsolePrintf("CHBASE = %02x\n", mCHBASE);
 	ATConsolePrintf("NMIEN  = %02x  :%s%s\n"
 		, mNMIEN
 		, mNMIEN & 0x80 ? " dli" : ""
@@ -1051,21 +1088,22 @@ void ATAnticEmulator::DumpDMAPattern() {
 	ATConsoleWrite(buf);
 
 	for(int i=0; i<114; ++i) {
-		if (mbDMAPattern[i]) {
-			switch(mDMAPFFetchPattern[i] & 0x7f) {
-				case 0:
-					buf[i] = 'R';
-					break;
-				case 1:
-					buf[i] = 'F';
-					break;
-				case 2:
-				case 3:
-					buf[i] = 'C';
-					break;
-			}
-		} else {
-			buf[i] = '.';
+		buf[i] = '.';
+
+		switch(mDMAPattern[i] & 0x7f) {
+			case 1:
+				buf[i] = 'R';
+				break;
+			case 3:
+				buf[i] = 'F';
+				break;
+			case 5:
+				buf[i] = 'C';
+				break;
+			case 6:
+			case 8:
+				buf[i-1] = 'V';
+				break;
 		}
 	}
 
@@ -1085,7 +1123,7 @@ void ATAnticEmulator::DumpDMAPattern() {
 
 	ATConsoleWrite(buf);
 	ATConsoleWrite("\n");
-	ATConsoleWrite("Legend: (M)issile (P)layer (D)isplayList (R)efresh Play(F)ield (C)haracter\n");
+	ATConsoleWrite("Legend: (M)issile (P)layer (D)isplayList (R)efresh Play(F)ield (C)haracter (V)irtual\n");
 	ATConsoleWrite("\n");
 }
 
@@ -1135,16 +1173,15 @@ void ATAnticEmulator::ExchangeState(T& io) {
 
 	io != mPFWidth;
 	io != mPFFetchWidth;
-	io != mPFFetchWidthLatchedStart;
-	io != mPFFetchWidthLatchedEnd;
-
-	io != mPFCharSave;
 
 	io != mPFDisplayStart;
 	io != mPFDisplayEnd;
 	io != mPFDMAStart;
+	io != mPFDMAVEnd;
+	io != mPFDMAVEndWide;
 	io != mPFDMAEnd;
 	io != mPFDMALatchedStart;
+	io != mPFDMALatchedVEnd;
 	io != mPFDMALatchedEnd;
 	io != mPFDMAPatternCacheKey;
 
@@ -1152,8 +1189,7 @@ void ATAnticEmulator::ExchangeState(T& io) {
 	io != mDLControl;
 	io != mDLNext;
 
-	io != mbDMAPattern;
-	io != mDMAPFFetchPattern;
+	io != mDMAPattern;
 
 	io != mPFDataBuffer;
 	io != mPFCharBuffer;
@@ -1178,6 +1214,10 @@ void ATAnticEmulator::LoadState(ATSaveStateReader& reader) {
 
 	ExchangeState(reader);
 
+	mpPFCharFetchPtr = mPFCharBuffer;
+	if (mPFDMAStart < 127)
+		mpPFCharFetchPtr -= mPFDMAStart;
+
 	if (mpRegisterUpdateEvent) {
 		mpScheduler->RemoveEvent(mpRegisterUpdateEvent);
 		mpRegisterUpdateEvent = NULL;
@@ -1185,6 +1225,16 @@ void ATAnticEmulator::LoadState(ATSaveStateReader& reader) {
 
 	mRegisterUpdates.clear();
 	mRegisterUpdateHeadIdx = 0;
+
+	if (mWSYNCPending) {
+		if (!mpEventWSYNC)
+			mpEventWSYNC = mpScheduler->AddEvent(1, this, kATAnticEvent_WSYNC);
+	} else {
+		if (mpEventWSYNC) {
+			mpScheduler->RemoveEvent(mpEventWSYNC);
+			mpEventWSYNC = NULL;
+		}
+	}
 
 	uint32 updateCount = reader.ReadUint32();
 	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
@@ -1258,8 +1308,8 @@ void ATAnticEmulator::GetRegisterState(ATAnticRegisterState& state) const {
 	state.mNMIEN	= mNMIEN;
 }
 
-void ATAnticEmulator::UpdateDMAPattern(int dmaStart, int dmaEnd, uint8 mode) {
-	uint32 key = (dmaStart << 16) + (dmaEnd << 8) + mode + (mbPFDMAActive ? 0x8000 : 0x0000) + (mbPFDMAEnabled ? 0x4000 : 0x0000);
+void ATAnticEmulator::UpdateDMAPattern(int dmaStart, int dmaEnd, int dmaVEnd, uint8 mode) {
+	uint32 key = (dmaStart << 16) + (dmaVEnd << 8) + mode + (mbPFDMAActive ? 0x8000 : 0x0000) + (mbPFDMAEnabled ? 0x4000 : 0x0000);
 
 	if (key != mPFDMAPatternCacheKey) {
 		mPFDMAPatternCacheKey = key;
@@ -1272,12 +1322,11 @@ void ATAnticEmulator::UpdateDMAPattern(int dmaStart, int dmaEnd, uint8 mode) {
 			case 5:
 			case 6:
 			case 7:
-				textFetchMode = 2;
+				textFetchMode = 5;
 				break;
 		}
 
-		memset(mbDMAPattern, 0, sizeof(mbDMAPattern));
-		memset(mDMAPFFetchPattern, 0, sizeof(mDMAPFFetchPattern));
+		memset(mDMAPattern, 0, sizeof(mDMAPattern));
 
 		// Playfield DMA
 		//
@@ -1293,9 +1342,16 @@ void ATAnticEmulator::UpdateDMAPattern(int dmaStart, int dmaEnd, uint8 mode) {
 
 		if (mbPFDMAActive) {
 			if (mbPFDMAEnabled) {
-				for(int x=mPFDMAStart; x<(int)mPFDMAEnd; x += cycleStep) {
-					mbDMAPattern[x] = true;
-					mDMAPFFetchPattern[x] = 1;
+				int x = mPFDMAStart;
+
+				for(; x<(int)mPFDMAEnd; x += cycleStep)
+					mDMAPattern[x] = 3;
+
+				for(; x<(int)mPFDMAVEnd; x += cycleStep) {
+					if (x >= 113)
+						break;
+
+					mDMAPattern[x + 1] = 6;
 				}
 			}
 
@@ -1307,12 +1363,21 @@ void ATAnticEmulator::UpdateDMAPattern(int dmaStart, int dmaEnd, uint8 mode) {
 			// The character fetch always occurs 3 clocks after the playfield fetch.
 
 			if (textFetchMode) {
-				int textFetchDMAEnd = mPFDMAEnd + 3;
+				int textFetchDMAVEnd = mPFDMAEnd + 3;
+				int textFetchDMAEnd = textFetchDMAVEnd;
 				if (textFetchDMAEnd > 106)
 					textFetchDMAEnd = 106;
-				for(int x=mPFDMAStart + 3; x<textFetchDMAEnd; x += cycleStep) {
-					mDMAPFFetchPattern[x] = textFetchMode;
-					mbDMAPattern[x] = true;
+
+				int x=mPFDMAStart + 3;
+
+				for(; x<textFetchDMAEnd; x += cycleStep)
+					mDMAPattern[x] = textFetchMode;
+
+				for(; x<textFetchDMAVEnd; x += cycleStep) {
+					if (x >= 113)
+						break;
+
+					mDMAPattern[x + 1] = 8;
 				}
 			}
 		}
@@ -1332,8 +1397,8 @@ void ATAnticEmulator::UpdateDMAPattern(int dmaStart, int dmaEnd, uint8 mode) {
 			r = x;
 
 			while(r < 107) {
-				if (!mbDMAPattern[r++]) {
-					mbDMAPattern[r-1] = true;
+				if (!mDMAPattern[r++]) {
+					mDMAPattern[r-1] = 1;
 					break;
 				}
 			}
@@ -1341,29 +1406,49 @@ void ATAnticEmulator::UpdateDMAPattern(int dmaStart, int dmaEnd, uint8 mode) {
 
 		// Mark off special cycles.
 
-		mDMAPFFetchPattern[  0] |= 0x80;	// Missile DMA
-		mDMAPFFetchPattern[  1] |= 0x80;	// Display list DMA
-		mDMAPFFetchPattern[  2] |= 0x80;	// Player DMA
-		mDMAPFFetchPattern[  3] |= 0x80;	// Player DMA
-		mDMAPFFetchPattern[  4] |= 0x80;	// Player DMA
-		mDMAPFFetchPattern[  5] |= 0x80;	// Player DMA
-		mDMAPFFetchPattern[  6] |= 0x80;	// Display list DMA
-		mDMAPFFetchPattern[  7] |= 0x80;	// Display list DMA
-		mDMAPFFetchPattern[  8] |= 0x80;	// NMI
-		mDMAPFFetchPattern[  9] |= 0x80;	// NMI
-		mDMAPFFetchPattern[ 10] |= 0x80;	// NMI
-		mDMAPFFetchPattern[ 16] |= 0x80;	// end HBLANK
-		mDMAPFFetchPattern[105] |= 0x80;	// WSYNC end
-		mDMAPFFetchPattern[109] |= 0x80;
-		mDMAPFFetchPattern[111] |= 0x80;
+		mDMAPattern[  0] |= 0x80;	// Missile DMA
+		mDMAPattern[  1] |= 0x80;	// Display list DMA
+		mDMAPattern[  2] |= 0x80;	// Player DMA
+		mDMAPattern[  3] |= 0x80;	// Player DMA
+		mDMAPattern[  4] |= 0x80;	// Player DMA
+		mDMAPattern[  5] |= 0x80;	// Player DMA
+		mDMAPattern[  6] |= 0x80;	// Display list DMA
+		mDMAPattern[  7] |= 0x80;	// Display list DMA
+		mDMAPattern[  8] |= 0x80;	// NMI
+		mDMAPattern[  9] |= 0x80;	// NMI
+		mDMAPattern[ 10] |= 0x80;	// NMI
+		mDMAPattern[ 16] |= 0x80;	// end HBLANK
+		mDMAPattern[105] |= 0x80;	// WSYNC end
+		mDMAPattern[109] |= 0x80;
+		mDMAPattern[111] |= 0x80;
+		mDMAPattern[114] = 0x80;
 	}
 
 	if (mAnalysisMode == kAnalyzeDMATiming) {
 		for(int i=16; i<114; ++i) {
-			if (mbDMAPattern[i])
+			if (mDMAPattern[i] & 1)
 				mActivityMap[mY][i] |= 1;
 		}
 	}
+}
+
+
+void ATAnticEmulator::LatchPlayfieldEdges() {
+	if (mPFWidth) {
+		uint32 cycleRange = mX - mPFDMALastCheckX;
+		const int offset = (mDLControl & 15) < 8 ? 24-23 : 26-23;
+
+		if ((uint32)((mPFDMAStart - offset) - mPFDMALastCheckX) <= cycleRange) {
+			mPFDMALatchedStart = mPFDMAStart;
+		}
+
+		if ((uint32)((mPFDMAEnd - offset) - mPFDMALastCheckX) <= cycleRange) {
+			mPFDMALatchedVEnd = mPFDMAVEnd;
+			mPFDMALatchedEnd = mPFDMAEnd;
+		}
+	}
+
+	mPFDMALastCheckX = mX;
 }
 
 void ATAnticEmulator::UpdateCurrentCharRow() {
@@ -1411,7 +1496,7 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 			break;
 		case kPFWide:
 			mPFDisplayStart = 22;
-			mPFDisplayEnd = 110;
+			mPFDisplayEnd = 112;
 			break;
 	}
 
@@ -1420,6 +1505,8 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 
 	mPFDMAStart = 127;
 	mPFDMAEnd = 127;
+
+	mpPFCharFetchPtr = mPFCharBuffer;
 
 	uint8 mode = mDLControl & 15;
 
@@ -1441,6 +1528,8 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 				break;
 		}
 
+		mPFDMAVEndWide = mode < 8 ? 106 : 108;
+
 		mPFDMAStart += mPFHScrollDMAOffset;
 		mPFDMAEnd += mPFHScrollDMAOffset;
 
@@ -1450,7 +1539,13 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 
 			if (mPFDMALatchedEnd)
 				mPFDMAEnd = mPFDMALatchedEnd;
+
+			if (mPFDMALatchedVEnd)
+				mPFDMAVEnd = mPFDMALatchedVEnd;
 		}
+
+		if (mPFDMAStart < 127)
+			mpPFCharFetchPtr = mPFCharBuffer - mPFDMAStart;
 
 		// Timing in the plasma section of RayOfHope is very critical... it expects to
 		// be able to change the DLI pointer between WSYNC and the next DLI.
@@ -1458,6 +1553,8 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 		// Update: According to Bennet's graph, DMA is not allowed to extend beyond clock
 		// cycle 105. Playfield DMA is terminated past that point.
 		//
+
+		mPFDMAVEnd = mPFDMAEnd;
 		if (mPFDMAEnd > 106)
 			mPFDMAEnd = 106;
 	}
@@ -1472,7 +1569,7 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 	// Note that this check must be <= because we can be hit on cycle 10.
 	mbPFDMAActive = mPFDMALatchedStart || mX <= std::max<uint32>(10, mPFDMAStart - 4);
 
-	UpdateDMAPattern(mPFDMAStart, mPFDMAEnd, mDLControl & 15);
+	UpdateDMAPattern(mPFDMAStart, mPFDMAEnd, mPFDMAVEnd, mDLControl & 15);
 }
 
 void ATAnticEmulator::UpdatePlayfieldDataPointers() {
@@ -1485,6 +1582,32 @@ void ATAnticEmulator::OnScheduledEvent(uint32 id) {
 		mpRegisterUpdateEvent = NULL;
 
 		ExecuteQueuedUpdates();
+	} else if (id == kATAnticEvent_WSYNC) {
+		mpEventWSYNC = NULL;
+
+		if (!--mWSYNCPending) {
+			// The 6502 doesn't respond to RDY for write cycles, so if the next CPU cycle is a write,
+			// we cannot pull RDY yet.
+			if (mpConn->AnticIsNextCPUCycleWrite())
+				++mWSYNCPending;
+			else {
+				mbWSYNCActive = true;
+
+				// We're relying on the fact that with the standard setup, the only cycles
+				// that can follow the last write cycle is an instruction fetch -- the next
+				// CPU cycle is always either the opcode fetch, the second insn byte fetch,
+				// or a dummy insn fetch. This is, however, too early if the next cycle(s)
+				// are DMA cycles. Hopefully this is not too bad of a transgression (doing
+				// this properly requires implementing half memory cycles on the CPU core).
+				mWSYNCHoldValue = mpConn->AnticGetCPUHeldCycleValue();
+
+				if (mX < 113)
+				memset(mPhantomDMAData + mX + 1, mWSYNCHoldValue, 113 - mX);
+			}
+		}
+
+		if (mWSYNCPending)
+			mpEventWSYNC = mpScheduler->AddEvent(1, this, kATAnticEvent_WSYNC);
 	}
 }
 
@@ -1500,6 +1623,8 @@ void ATAnticEmulator::QueueRegisterUpdate(uint32 delay, uint8 reg, uint8 value) 
 
 		if (ru.mTime - t <= delay)
 			break;
+
+		--j;
 	}
 
 	QueuedRegisterUpdate ru;

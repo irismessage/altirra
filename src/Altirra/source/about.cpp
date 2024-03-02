@@ -26,6 +26,7 @@
 #include <vd2/system/profile.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
+#include <vd2/system/w32assist.h>
 
 extern HINSTANCE g_hInst;
 
@@ -75,7 +76,9 @@ namespace {
 
 				const ptrdiff_t len = s - varbase;
 
-				VDASSERT(false);
+				VDASSERT(len == 0);
+
+				stream.push_back('%');
 
 				if (s != stringEnd)
 					++s;
@@ -103,7 +106,7 @@ namespace {
 	}
 
 	void TextToRichTextControl(LPCTSTR resName, HWND hdlg, HWND hwndText) {
-		HRSRC hResource = FindResource(NULL, resName, "STUFF");
+		HRSRC hResource = FindResource(NULL, resName, _T("STUFF"));
 
 		if (!hResource)
 			return;
@@ -125,7 +128,7 @@ namespace {
 
 		while(*s!='\r') ++s;
 
-		SetWindowText(hdlg, VDString(title, s-title).c_str());
+		SetWindowTextA(hdlg, VDString(title, s-title).c_str());
 		s+=2;
 
 		tTextStream rtf;
@@ -242,7 +245,7 @@ INT_PTR CALLBACK ATShowChangeLogDlgProcW32(HWND hdlg, UINT msg, WPARAM wParam, L
 }
 
 void ATShowChangeLog(VDGUIHandle hParent) {
-	HMODULE hmod = LoadLibrary("riched32.dll");
+	HMODULE hmod = VDLoadSystemLibraryW32("riched32.dll");
 	DialogBoxParam(g_hInst, MAKEINTRESOURCE(IDD_CHANGE_LOG), (HWND)hParent, ATShowChangeLogDlgProcW32, (LPARAM)MAKEINTRESOURCE(IDR_CHANGES));
 	FreeLibrary(hmod);
 }

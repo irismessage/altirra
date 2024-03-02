@@ -68,7 +68,7 @@ public:
 	virtual bool	LookupSymbol(uint32 moduleOffset, uint32 flags, ATSymbol& symbol) = 0;
 	virtual sint32	LookupSymbol(const char *name) = 0;
 	virtual const wchar_t *GetFileName(uint16 fileid) = 0;
-	virtual uint16	GetFileId(const wchar_t *fileName) = 0;
+	virtual uint16	GetFileId(const wchar_t *fileName, int *matchQuality) = 0;
 
 	virtual void	GetLines(uint16 fileId, vdfastvector<ATSourceLineInfo>& lines) = 0;
 	virtual bool	GetLineForOffset(uint32 moduleOffset, bool searchUp, ATSourceLineInfo& lineInfo) = 0;

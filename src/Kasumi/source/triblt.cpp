@@ -1466,27 +1466,49 @@ bool VDPixmapTriFill(VDPixmap& dst, const VDTriColorVertex *pVertices, int nVert
 		pxCb.format = nsVDPixmap::kPixFormat_Y8;
 		pxCb.data = dst.data2;
 		pxCb.pitch = dst.pitch2;
+		pxCb.w = dst.w;
 		pxCb.h = dst.h;
 
 		pxCr.format = nsVDPixmap::kPixFormat_Y8;
 		pxCr.data = dst.data3;
 		pxCr.pitch = dst.pitch3;
+		pxCr.w = dst.w;
 		pxCr.h = dst.h;
 
-		if (dst.format == nsVDPixmap::kPixFormat_YUV410_Planar) {
-			pxCr.w = pxCb.w = dst.w >> 2;
-			pxCr.h = pxCb.h = dst.h >> 2;
-			ycbcr_xoffset = 0.75f / (float)pxCr.w;
-		} else if (dst.format == nsVDPixmap::kPixFormat_YUV420_Planar) {
-			pxCr.w = pxCb.w = dst.w >> 1;
-			pxCr.h = pxCb.h = dst.h >> 1;
-			ycbcr_xoffset = 0.5f / (float)pxCr.w;
-		} else if (dst.format == nsVDPixmap::kPixFormat_YUV422_Planar) {
-			pxCr.w = pxCb.w = dst.w >> 1;
-			ycbcr_xoffset = 0.5f / (float)pxCr.w;
-		} else if (dst.format == nsVDPixmap::kPixFormat_YUV444_Planar) {
-			pxCr.w = pxCb.w = dst.w;
-			ycbcr_xoffset = 0.0f;
+		switch(dst.format) {
+			case nsVDPixmap::kPixFormat_YUV410_Planar:
+			case nsVDPixmap::kPixFormat_YUV410_Planar_FR:
+			case nsVDPixmap::kPixFormat_YUV410_Planar_709:
+			case nsVDPixmap::kPixFormat_YUV410_Planar_709_FR:
+				pxCr.w = pxCb.w = dst.w >> 2;
+				pxCr.h = pxCb.h = dst.h >> 2;
+				ycbcr_xoffset = 0.75f / (float)pxCr.w;
+				break;
+
+			case nsVDPixmap::kPixFormat_YUV420_Planar:
+			case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
+			case nsVDPixmap::kPixFormat_YUV420_Planar_709:
+			case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
+				pxCr.w = pxCb.w = dst.w >> 1;
+				pxCr.h = pxCb.h = dst.h >> 1;
+				ycbcr_xoffset = 0.5f / (float)pxCr.w;
+				break;
+
+			case nsVDPixmap::kPixFormat_YUV422_Planar:
+			case nsVDPixmap::kPixFormat_YUV422_Planar_FR:
+			case nsVDPixmap::kPixFormat_YUV422_Planar_709:
+			case nsVDPixmap::kPixFormat_YUV422_Planar_709_FR:
+				pxCr.w = pxCb.w = dst.w >> 1;
+				ycbcr_xoffset = 0.5f / (float)pxCr.w;
+				break;
+
+			case nsVDPixmap::kPixFormat_YUV444_Planar:
+			case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
+			case nsVDPixmap::kPixFormat_YUV444_Planar_709:
+			case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
+				pxCr.w = pxCb.w = dst.w;
+				ycbcr_xoffset = 0.0f;
+				break;
 		}
 
 		ycbcr = true;

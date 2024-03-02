@@ -35,7 +35,6 @@
 #include <objbase.h>
 #include <dshow.h>
 #include <windows.h>
-#include <qedit.h>
 #include <guiddef.h>
 #include <dvdmedia.h>		// VIDEOINFOHEADER2
 #include <ks.h>
@@ -55,7 +54,7 @@ extern HINSTANCE g_hInst;
 #ifdef _DEBUG
 	#define DS_VERIFY(exp, msg) if (FAILED(hr = (exp))) { VDDEBUG("Failed: " msg " [%08lx : %s]\n", hr, GetDXErrorName(hr)); VDDumpFilterGraphDShow(mpGraph); TearDownGraph(); return false; } else
 #else
-	#define DS_VERIFY(exp, msg) if (FAILED(hr = (exp))) { VDLog(kVDLogWarning, VDStringW(L"CapDShow: Failed to build filter graph: " L##msg L"\n")); TearDownGraph(); return false; } else
+	#define DS_VERIFY(exp, msg) if (FAILED(hr = (exp))) { VDLogF(kVDLogWarning, L"CapDShow: Failed to build filter graph: " L##msg L"(error code: %08x)\n", hr); TearDownGraph(); return false; } else
 #endif
 
 //#define VD_DSHOW_VERBOSE_LOGGING 1
@@ -67,6 +66,66 @@ extern HINSTANCE g_hInst;
 	#define DS_VERBOSE_LOG(msg) ((void)0)
 	#define DS_VERBOSE_LOGF(...) ((void)0)
 #endif
+///////////////////////////////////////////////////////////////////////////
+// qedit.h replacement
+//
+// Microsoft dropped <qedit.h> when DirectShow was moved from the DirectX
+// SDK to the Platform/Windows SDK, and they never put it back. Doing a
+// straight #import throws a buttload of duplicate definition errors, so
+// we copy the specifically needed interfaces here.
+//
+// #import "libid:78530B68-61F9-11D2-8CAD-00A024580902" raw_interfaces_only no_namespace named_guids
+
+extern "C" const GUID __declspec(selectany) CLSID_SampleGrabber =
+    {0xc1f400a0,0x3f08,0x11d3,{0x9f,0x0b,0x00,0x60,0x08,0x03,0x9e,0x37}};
+extern "C" const GUID __declspec(selectany) CLSID_NullRenderer =
+    {0xc1f400a4,0x3f08,0x11d3,{0x9f,0x0b,0x00,0x60,0x08,0x03,0x9e,0x37}};
+
+extern "C" const GUID __declspec(selectany) IID_ISampleGrabberCB =
+    {0x0579154a,0x2b53,0x4994,{0xb0,0xd0,0xe7,0x73,0x14,0x8e,0xff,0x85}};
+extern "C" const GUID __declspec(selectany) IID_ISampleGrabber =
+    {0x6b652fff,0x11fe,0x4fce,{0x92,0xad,0x02,0x66,0xb5,0xd7,0xc7,0x8f}};
+
+struct __declspec(uuid("0579154a-2b53-4994-b0d0-e773148eff85"))
+ISampleGrabberCB : IUnknown
+{
+    //
+    // Raw methods provided by interface
+    //
+
+      virtual HRESULT __stdcall SampleCB (
+        double SampleTime,
+        struct IMediaSample * pSample ) = 0;
+      virtual HRESULT __stdcall BufferCB (
+        double SampleTime,
+        unsigned char * pBuffer,
+        long BufferLen ) = 0;
+};
+
+struct __declspec(uuid("6b652fff-11fe-4fce-92ad-0266b5d7c78f"))
+ISampleGrabber : IUnknown
+{
+    //
+    // Raw methods provided by interface
+    //
+
+      virtual HRESULT __stdcall SetOneShot (
+        long OneShot ) = 0;
+      virtual HRESULT __stdcall SetMediaType (
+        struct _AMMediaType * pType ) = 0;
+      virtual HRESULT __stdcall GetConnectedMediaType (
+        struct _AMMediaType * pType ) = 0;
+      virtual HRESULT __stdcall SetBufferSamples (
+        long BufferThem ) = 0;
+      virtual HRESULT __stdcall GetCurrentBuffer (
+        /*[in,out]*/ long * pBufferSize,
+        /*[out]*/ long * pBuffer ) = 0;
+      virtual HRESULT __stdcall GetCurrentSample (
+        /*[out,retval]*/ struct IMediaSample * * ppSample ) = 0;
+      virtual HRESULT __stdcall SetCallback (
+        struct ISampleGrabberCB * pCallback,
+        long WhichMethodToCallback ) = 0;
+};
 
 ///////////////////////////////////////////////////////////////////////////
 //
@@ -3394,7 +3453,65 @@ bool VDCaptureDriverDS::BuildGraph(bool bNeedCapture, bool bEnableAudio) {
 
 		DS_VERIFY(mpCapGraphBuilder2->FindPin(pVideoPullFilt, PINDIR_INPUT, NULL, NULL, TRUE, 0, ~pPinSGIn), "find sample grabber input");
 		DS_VERIFY(mpCapGraphBuilder2->FindPin(pVideoPullFilt, PINDIR_OUTPUT, NULL, NULL, TRUE, 0, ~pPinSGOut), "find sample grabber output");
-		DS_VERIFY(mpGraphBuilder->Connect(pCapturePin, pPinSGIn), "connect capture -> grabber");
+
+		hr = mpGraphBuilder->Connect(pCapturePin, pPinSGIn);
+
+		if (FAILED(hr)) {
+			VDLogF(kVDLogWarning, L"CapDShow: Failed to build filter graph: cannot connect sample grabber filter to capture filter (error code: %08x)\n", hr);
+
+			// see if we can tell what formats are supported by the pin
+			vdrefptr<IEnumMediaTypes> pEnumMediaTypes;
+			if (SUCCEEDED(pCapturePin->EnumMediaTypes(~pEnumMediaTypes))) {
+				for(;;) {
+					AM_MEDIA_TYPE *pMediaType = NULL;
+					if (S_OK != pEnumMediaTypes->Next(1, &pMediaType, NULL))
+						break;
+
+					VDLogF(kVDLogInfo, L"Supported media type: major {%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x} subtype {%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x} formattype {%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}\n"
+						, pMediaType->majortype.Data1
+						, pMediaType->majortype.Data2
+						, pMediaType->majortype.Data3
+						, pMediaType->majortype.Data4[0]
+						, pMediaType->majortype.Data4[1]
+						, pMediaType->majortype.Data4[2]
+						, pMediaType->majortype.Data4[3]
+						, pMediaType->majortype.Data4[4]
+						, pMediaType->majortype.Data4[5]
+						, pMediaType->majortype.Data4[6]
+						, pMediaType->majortype.Data4[7]
+						, pMediaType->subtype.Data1
+						, pMediaType->subtype.Data2
+						, pMediaType->subtype.Data3
+						, pMediaType->subtype.Data4[0]
+						, pMediaType->subtype.Data4[1]
+						, pMediaType->subtype.Data4[2]
+						, pMediaType->subtype.Data4[3]
+						, pMediaType->subtype.Data4[4]
+						, pMediaType->subtype.Data4[5]
+						, pMediaType->subtype.Data4[6]
+						, pMediaType->subtype.Data4[7]
+						, pMediaType->formattype.Data1
+						, pMediaType->formattype.Data2
+						, pMediaType->formattype.Data3
+						, pMediaType->formattype.Data4[0]
+						, pMediaType->formattype.Data4[1]
+						, pMediaType->formattype.Data4[2]
+						, pMediaType->formattype.Data4[3]
+						, pMediaType->formattype.Data4[4]
+						, pMediaType->formattype.Data4[5]
+						, pMediaType->formattype.Data4[6]
+						, pMediaType->formattype.Data4[7]
+						);
+
+					RizaDeleteMediaType(pMediaType);
+				}
+			}
+
+			pEnumMediaTypes.clear();
+
+			TearDownGraph();
+			return false;
+		}
 
 		pCapturePin = pPinSGOut;
 	}
@@ -3554,7 +3671,64 @@ bool VDCaptureDriverDS::BuildGraph(bool bNeedCapture, bool bEnableAudio) {
 				}
 			}
 
-			DS_VERIFY(mpGraphBuilder->Connect(pAudioPin, pPinSGIn), "connect capture -> grabber");
+			hr = mpGraphBuilder->Connect(pAudioPin, pPinSGIn);
+			if (FAILED(hr)) {
+				VDLogF(kVDLogWarning, L"CapDShow: Failed to build filter graph: cannot connect sample grabber filter to audio capture filter (error code: %08x)\n", hr);
+
+				// see if we can tell what formats are supported by the pin
+				vdrefptr<IEnumMediaTypes> pEnumMediaTypes;
+				if (SUCCEEDED(pAudioPin->EnumMediaTypes(~pEnumMediaTypes))) {
+					for(;;) {
+						AM_MEDIA_TYPE *pMediaType = NULL;
+						if (S_OK != pEnumMediaTypes->Next(1, &pMediaType, NULL))
+							break;
+
+						VDLogF(kVDLogInfo, L"Supported media type: major {%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x} subtype {%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x} formattype {%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}\n"
+							, pMediaType->majortype.Data1
+							, pMediaType->majortype.Data2
+							, pMediaType->majortype.Data3
+							, pMediaType->majortype.Data4[0]
+							, pMediaType->majortype.Data4[1]
+							, pMediaType->majortype.Data4[2]
+							, pMediaType->majortype.Data4[3]
+							, pMediaType->majortype.Data4[4]
+							, pMediaType->majortype.Data4[5]
+							, pMediaType->majortype.Data4[6]
+							, pMediaType->majortype.Data4[7]
+							, pMediaType->subtype.Data1
+							, pMediaType->subtype.Data2
+							, pMediaType->subtype.Data3
+							, pMediaType->subtype.Data4[0]
+							, pMediaType->subtype.Data4[1]
+							, pMediaType->subtype.Data4[2]
+							, pMediaType->subtype.Data4[3]
+							, pMediaType->subtype.Data4[4]
+							, pMediaType->subtype.Data4[5]
+							, pMediaType->subtype.Data4[6]
+							, pMediaType->subtype.Data4[7]
+							, pMediaType->formattype.Data1
+							, pMediaType->formattype.Data2
+							, pMediaType->formattype.Data3
+							, pMediaType->formattype.Data4[0]
+							, pMediaType->formattype.Data4[1]
+							, pMediaType->formattype.Data4[2]
+							, pMediaType->formattype.Data4[3]
+							, pMediaType->formattype.Data4[4]
+							, pMediaType->formattype.Data4[5]
+							, pMediaType->formattype.Data4[6]
+							, pMediaType->formattype.Data4[7]
+							);
+
+						RizaDeleteMediaType(pMediaType);
+					}
+				}
+
+				pEnumMediaTypes.clear();
+
+				TearDownGraph();
+				return false;
+			}
+
 			pAudioPin = pPinSGOut;
 			VDASSERT(!VDIsPinConnectedDShow(pAudioPin));
 		}

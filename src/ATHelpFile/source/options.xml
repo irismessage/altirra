@@ -108,10 +108,20 @@
     this mode also takes an additional bit in PORTB.
   </p>
   <h2>Video options</h2>
+  <h3>NTSC</h3>
+  <p>
+    Selects NTSC ANTIC/GTIA operation, including aspect ratio and a 60Hz refresh rate. This is the configuration used by the original
+    8-bit Ataris and is recommended for most commercial software.
+  </p>
   <h3>PAL</h3>
   <p>
     Selects PAL ANTIC/GTIA operation, including aspect ratio and a 50Hz refresh rate. This is recommended for demos since many
     are written in Europe.
+  </p>
+  <h3>SECAM</h3>
+  <p>
+    Selects PAL ANTIC operation with a SECAM GTIA (FGTIA), including aspect ratio and a 50Hz refresh rate. This is used for verifying
+    compatibility against SECAM systems, which have a couple of quirks in GTIA mode 9 rendering and in cartridge sensing.
   </p>
   <h3>Frame blending</h3>
   <p>
@@ -166,6 +176,16 @@
     speeds up disk access in the emulated programs.
   </p>
   <p>Some demos or protected apps may not be compatible with the SIO patch, however.</p>
+  <h3>SIO override detection</h3>
+  <p>
+    Enables detection for custom OS or PBI device firmware that override disk drive accesses. When this option is
+    enabled, SIO patch based acceleration does not activate for a drive after reset until that disk drive has received a command.
+    If firmware is intercepting accesses to the disk, this will prevent the hook from activating. This allows
+    some disks to be handled by firmware while others use SIO patch acceleration.
+  </p>
+  <p>
+    Activating this option will disable the nonexistent disk acceleration of the <i>Fast Boot</i> option.
+  </p>
   <h3>Burst (standard)</h3>
   <p>
     When enabled, the disk drive sends data across the SIO bus as fast as the program can accept it. This is useful for speeding

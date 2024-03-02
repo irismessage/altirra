@@ -31,6 +31,8 @@ class ATPokeyEmulator;
 class ATSaveStateReader;
 class ATSaveStateWriter;
 class ATAudioFilter;
+struct ATPokeyTables;
+class ATPokeyRenderer;
 class IATSoundBoardEmulator;
 
 class IATPokeyEmulatorConnections {
@@ -46,7 +48,7 @@ public:
 class IATPokeySIODevice {
 public:
 	virtual void PokeyAttachDevice(ATPokeyEmulator *pokey) = 0;
-	virtual void PokeyWriteSIO(uint8 c) = 0;
+	virtual void PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) = 0;
 	virtual void PokeyBeginCommand() = 0;
 	virtual void PokeyEndCommand() = 0;
 	virtual void PokeySerInReady() = 0;
@@ -77,7 +79,7 @@ public:
 	ATPokeyEmulator(bool isSlave);
 	~ATPokeyEmulator();
 
-	void	Init(IATPokeyEmulatorConnections *mem, ATScheduler *sched, IATAudioOutput *output);
+	void	Init(IATPokeyEmulatorConnections *mem, ATScheduler *sched, IATAudioOutput *output, ATPokeyTables *tables);
 	void	ColdReset();
 
 	void	SetSlave(ATPokeyEmulator *slave);
@@ -103,21 +105,14 @@ public:
 	void	AddSIODevice(IATPokeySIODevice *device);
 	void	RemoveSIODevice(IATPokeySIODevice *device);
 
-	void	ReceiveSIOByte(uint8 byte, uint32 cyclesPerByte);
+	void	ReceiveSIOByte(uint8 byte, uint32 cyclesPerByte, bool simulateInputPort = false);
 
-	void	SetAudioLine(int v);		// used for audio from tape
 	void	SetAudioLine2(int v);		// used for audio from motor control line
 	void	SetDataLine(bool newState);
 	void	SetCommandLine(bool newState);
-	void	SetSpeaker(bool newState) {
-		if (mbSpeakerState != newState) {
-			mbSpeakerState = newState;
-			mbSpeakerActive = true;
-			UpdateOutput();
-		}
-	}
+	void	SetSpeaker(bool newState);
 
-	bool	IsChannelEnabled(uint32 channel) const { return mbChannelEnabled[channel]; }
+	bool	IsChannelEnabled(uint32 channel) const;
 	void	SetChannelEnabled(uint32 channel, bool enabled);
 
 	bool	IsNonlinearMixingEnabled() const { return mbNonlinearMixingEnabled; }
@@ -166,21 +161,29 @@ protected:
 	void	DoFullTick();
 	void	OnScheduledEvent(uint32 id);
 
-	void	GenerateSample(uint32 pos, uint32 t);
-	void	UpdatePolynomialCounters() const;
-	void	FireTimers(uint8 activeChannels);
-	void	OnSerialOutputTick(bool cpuBased);
+	template<uint8 channel>
+	void	FireTimer();
+
+	void	OnSerialOutputTick();
 	uint32	GetSerialCyclesPerBit() const;
-	void	UpdateOutput();
-	void	FlushBlock();
-	void	UpdateTimerCounters(uint8 channels);
+
+	void	RecomputeAllowedDeferredTimers();
+
+	template<int channel>
+	void	RecomputeTimerPeriod();
+
+	template<int channel>
+	void	UpdateTimerCounter();
+
 	void	SetupTimers(uint8 channels);
+	void	FlushDeferredTimerEvents(int channel);
+	void	SetupDeferredTimerEvents(int channel, uint32 t0, uint32 period);
+	void	SetupDeferredTimerEventsLinked(int channel, uint32 t0, uint32 period, uint32 hit0, uint32 hiperiod, uint32 hilooffset);
 
 	void	DumpStatus(bool isSlave);
 
 	void	UpdateMixTable();
 
-	void	UnpackAUDCx(int index);
 	void	TryPushNextKey();
 
 protected:
@@ -188,24 +191,9 @@ protected:
 	void	SetLast15KHzTime(uint32 t) { mLast15KHzTime = t; }
 
 protected:
-	float	mAccum;
-	int		mSampleCounter;
-	float	mOutputLevel;
-	int		mLastOutputTime;
-	int		mAudioInput;
-	int		mAudioInput2;
-	int		mExternalInput;
-
-	int		mTicksAccumulated;
+	ATPokeyRenderer *mpRenderer;
 
 	int		mTimerCounters[4];
-
-	int		mOutputs[4];
-	int		mChannelVolume[4];
-	bool	mNoiseFF[4];
-	bool	mHighPassFF[2];
-
-	bool	mbChannelEnabled[4];
 
 	bool	mbCommandLineState;
 	bool	mbPal;
@@ -246,27 +234,37 @@ protected:
 
 	ATPokeyRegisterState mState;
 
+	// countdown timer values
+	int		mAUDFP1[4];		// AUDF values, plus 1 (we use these everywhere)
 	int		mCounter[4];
+	int		mCounterBorrow[4];
+	uint32	mTimerPeriod[4];
+	uint32	mTimerFullPeriod[2];		// time for timer to count off 256 in linked mode (#1 and #3 only)
 
 	mutable uint32	mLastPolyTime;
 	mutable uint32	mPoly17Counter;
 	mutable uint32	mPoly9Counter;
-	mutable uint32	mPoly5Counter;
-	mutable uint32	mPoly4Counter;
 
 	uint8	mSerialInputShiftRegister;
 	uint8	mSerialOutputShiftRegister;
 	uint8	mSerialInputCounter;
 	uint8	mSerialOutputCounter;
 	bool	mbSerOutValid;
+	bool	mbSerShiftValid;
 	bool	mbSerialOutputState;
-	bool	mbSpeakerState;
 	bool	mbSpeakerActive;
 	bool	mbSerialRateChanged;
 	bool	mbSerialWaitingForStartBit;
 	bool	mbSerInBurstPending;
+
+	uint32	mSerialSimulateInputBaseTime;
+	uint32	mSerialSimulateInputCyclesPerBit;
+	uint32	mSerialSimulateInputData;
+	bool	mbSerialSimulateInputPort;
+
 	SerialBurstMode	mSerBurstMode;
 
+	ATPokeyTables *mpTables;
 	ATPokeyAudioLog	*mpAudioLog;
 
 	// AUDCTL breakout
@@ -276,6 +274,8 @@ protected:
 	bool	mbLinkedTimers34;
 	bool	mbUse15KHzClock;
 
+	bool	mbAllowDeferredTimer[4];
+
 	uint32	mLast15KHzTime;
 	uint32	mLast64KHzTime;
 
@@ -284,13 +284,17 @@ protected:
 	uint32	mPotScanStartTime;
 
 	ATEvent *mpPotScanEvent[8];
-	ATEvent	*mp64KHzEvent;
 	ATEvent	*mp15KHzEvent;
 	ATEvent	*mpAudioEvent;
 	ATEvent	*mpStartBitEvent;
 	ATEvent	*mpResetTimersEvent;
-	ATEvent	*mpTimerEvents[4];
+	ATEvent *mpEventSerialOutput;
 	ATEvent	*mpTimerBorrowEvents[4];
+
+	bool	mbDeferredTimerEvents[4];
+	uint32	mDeferredTimerStarts[4];
+	uint32	mDeferredTimerPeriods[4];
+
 	ATScheduler *mpScheduler;
 
 	IATPokeyEmulatorConnections *mpConn;
@@ -311,23 +315,6 @@ protected:
 	uint8	mKeyScanState;
 	uint8	mKeyScanCode;
 	uint8	mKeyScanLatch;
-
-	float	mMixTable[61];
-
-	enum {
-		// 1271 samples is the max (35568 cycles/frame / 28 cycles/sample + 1). We add a little bit here
-		// to round it out. We need a 16 sample holdover in order to run the FIR filter.
-		kBufferSize = 1536
-	};
-
-	uint32	mOutputSampleCount;
-
-	float	mRawOutputBuffer[kBufferSize];
-
-	uint8	mPoly4Buffer[15];
-	uint8	mPoly5Buffer[31];
-	uint8	mPoly9Buffer[511];
-	uint8	mPoly17Buffer[131071];
 };
 
 #endif

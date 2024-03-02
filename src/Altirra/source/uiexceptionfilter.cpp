@@ -16,8 +16,10 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include <tchar.h>
 #include <windows.h>
 #include <dbghelp.h>
+#include <vd2/system/w32assist.h>
 
 extern HWND g_hwnd;
 
@@ -25,9 +27,9 @@ int ATExceptionFilter(DWORD code, EXCEPTION_POINTERS *exp) {
 	if (IsDebuggerPresent())
 		return EXCEPTION_CONTINUE_SEARCH;
 
-	char buf[1024];
+	TCHAR buf[1024];
 
-	HMODULE hmodDbgHelp = LoadLibrary("dbghelp");
+	HMODULE hmodDbgHelp = VDLoadSystemLibraryW32("dbghelp");
 	if (hmodDbgHelp) {
 		typedef BOOL (WINAPI *tpMiniDumpWriteDump)(
 			  HANDLE hProcess,
@@ -48,21 +50,21 @@ int ATExceptionFilter(DWORD code, EXCEPTION_POINTERS *exp) {
 			exInfo.ExceptionPointers = exp;
 			exInfo.ClientPointers = TRUE;
 
-			static const char kFilename[] = "AltirraCrash.mdmp";
+			static const TCHAR kFilename[] = _T("AltirraCrash.mdmp");
 			if (GetModuleFileName(NULL, buf, sizeof buf / sizeof buf[0])) {
-				size_t len = strlen(buf);
+				size_t len = _tcslen(buf);
 
 				while(len > 0) {
-					char c = buf[len - 1];
+					TCHAR c = buf[len - 1];
 
-					if (c == ':' || c == '\\' || c == '/')
+					if (c == _T(':') || c == _T('\\') || c == _T('/'))
 						break;
 
 					--len;
 				}
 
 				if (len < MAX_PATH - sizeof(kFilename)) {
-					strcpy(buf + len, kFilename);
+					_tcscpy(buf + len, kFilename);
 
 					HANDLE hFile = CreateFile(buf, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 
@@ -90,14 +92,14 @@ int ATExceptionFilter(DWORD code, EXCEPTION_POINTERS *exp) {
 		SetWindowLongPtr(g_hwnd, GWLP_WNDPROC, (LONG_PTR)(IsWindowUnicode(g_hwnd) ? DefWindowProcW : DefWindowProcA));
 	}
 
-	wsprintf(buf, "A fatal error has occurred in the emulator. A minidump file called AltirraCrash.mdmp has been written for diagnostic purposes.\n"
-		"\n"
+	wsprintf(buf, _T("A fatal error has occurred in the emulator. A minidump file called AltirraCrash.mdmp has been written for diagnostic purposes.\n")
+		_T("\n")
 #ifdef VD_CPU_X86
-		"Exception code: %08x  PC: %08x", code, exp->ContextRecord->Eip);
+		_T("Exception code: %08x  PC: %08x"), code, exp->ContextRecord->Eip);
 #else
-		"Exception code: %08x  PC: %08x`%08x", code, (uint32)(exp->ContextRecord->Rip >> 32), (uint32)exp->ContextRecord->Rip);
+		_T("Exception code: %08x  PC: %08x`%08x"), code, (uint32)(exp->ContextRecord->Rip >> 32), (uint32)exp->ContextRecord->Rip);
 #endif
-	MessageBox(g_hwnd, buf, "Altirra Program Failure", MB_OK | MB_ICONERROR);
+	MessageBox(g_hwnd, buf, _T("Altirra Program Failure"), MB_OK | MB_ICONERROR);
 
 	TerminateProcess(GetCurrentProcess(), code);
 	return 0;

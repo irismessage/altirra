@@ -132,6 +132,9 @@ public:
 	void	skip(sint64 delta);
 	sint64	tell();
 
+	bool	flushNT();
+	void	flush();
+
 	bool	isOpen();
 	VDFileHandle	getRawHandle();
 
@@ -165,7 +168,7 @@ public:
 
 	pointer			allocate(size_type n, void *p = 0)	{ return (pointer)VDFile::AllocUnbuffer(n * sizeof(T)); }
 	void			deallocate(pointer p, size_type n)	{ VDFile::FreeUnbuffer(p); }
-	size_type		max_size() const throw()			{ return MAX_INT; }
+	size_type		max_size() const throw()			{ return INT_MAX; }
 
 	void			construct(pointer p, const T& val)	{ new((void *)p) T(val); }
 	void			destroy(pointer p)					{ ((T*)p)->~T(); }

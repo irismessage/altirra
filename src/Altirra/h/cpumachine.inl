@@ -17,15 +17,21 @@
 
 #ifdef AT_CPU_RECORD_BUS_ACTIVITY
 	#define AT_CPU_READ_BYTE(addr) (mpCallbacks->CPURecordBusActivity(mpMemory->ReadByte((addr))))
+	#define AT_CPU_READ_BYTE_ADDR16(addr) (mpCallbacks->CPURecordBusActivity(mpMemory->ReadByteAddr16((addr))))
+	#define AT_CPU_DUMMY_READ_BYTE(addr) (mpCallbacks->CPURecordBusActivity(mpMemory->ReadByte((addr))))
 	#define AT_CPU_READ_BYTE_HL(addrhi, addrlo) (mpCallbacks->CPURecordBusActivity(mpMemory->ReadByte((((uint32)addrhi) << 8) + (addrlo))))
 	#define AT_CPU_EXT_READ_BYTE(addr, bank) (mpCallbacks->CPURecordBusActivity(mpMemory->ExtReadByte((addr), (bank))))
+	#define AT_CPU_DUMMY_EXT_READ_BYTE(addr, bank) (mpCallbacks->CPURecordBusActivity(mpMemory->ExtReadByte((addr), (bank))))
 	#define AT_CPU_WRITE_BYTE(addr, value) (mpMemory->WriteByte((addr), mpCallbacks->CPURecordBusActivity((value))))
 	#define AT_CPU_WRITE_BYTE_HL(addrhi, addrlo, value) (mpMemory->WriteByte(((uint32)(addrhi) << 8) + (addrlo), mpCallbacks->CPURecordBusActivity((value))))
 	#define AT_CPU_EXT_WRITE_BYTE(addr, bank, value) (mpMemory->ExtWriteByte((addr), (bank), mpCallbacks->CPURecordBusActivity((value))))
 #else
 	#define AT_CPU_READ_BYTE(addr) (mpMemory->ReadByte((addr)))
+	#define AT_CPU_READ_BYTE_ADDR16(addr) (mpMemory->ReadByteAddr16((addr)))
+	#define AT_CPU_DUMMY_READ_BYTE(addr) (mpMemory->DummyReadByte((addr)))
 	#define AT_CPU_READ_BYTE_HL(addrhi, addrlo) (mpMemory->ReadByte(((uint32)(addrhi) << 8) + (addrlo)))
 	#define AT_CPU_EXT_READ_BYTE(addr, bank) (mpMemory->ExtReadByte((addr), (bank)))
+	#define AT_CPU_DUMMY_EXT_READ_BYTE(addr, bank) (mpMemory->DummyExtReadByte((addr), (bank)))
 	#define AT_CPU_WRITE_BYTE(addr, value) (mpMemory->WriteByte((addr), (value)))
 	#define AT_CPU_WRITE_BYTE_HL(addrhi, addrlo, value) (mpMemory->WriteByte(((uint32)(addrhi) << 8) + (addrlo), (value)))
 	#define AT_CPU_EXT_WRITE_BYTE(addr, bank, value) (mpMemory->ExtWriteByte((addr), (bank), (value)))
@@ -33,11 +39,13 @@
 
 #ifdef AT_CPU_MACHINE_65C816
 	#define INSN_FETCH() AT_CPU_EXT_READ_BYTE(mPC++, mK)
+	#define INSN_DUMMY_FETCH_NOINC() AT_CPU_DUMMY_EXT_READ_BYTE(mPC, mK)
 	#define INSN_FETCH_NOINC() AT_CPU_EXT_READ_BYTE(mPC, mK)
 #else
 	uint32 tpc;
 
-	#define INSN_FETCH() ((tpc = mPC), (mPC = (uint16)(tpc + 1)), AT_CPU_READ_BYTE(tpc))
+	#define INSN_FETCH() ((tpc = mPC), (mPC = (uint16)(tpc + 1)), AT_CPU_READ_BYTE_ADDR16(tpc))
+	#define INSN_DUMMY_FETCH_NOINC() AT_CPU_DUMMY_READ_BYTE(mPC)
 	#define INSN_FETCH_NOINC() AT_CPU_READ_BYTE(mPC)
 #endif
 
@@ -62,36 +70,21 @@ for(;;) {
 				}
 			}
 
-			if (mbStep && (mPC - mStepRegionStart) >= mStepRegionSize) {
-				if (mStepStackLevel >= 0 && (sint8)(mS - mStepStackLevel) <= 0) {
-					// do nothing -- stepping through subroutine
-				} else {
-					mStepStackLevel = -1;
+			if (mDebugFlags) {
+				uint8 stat = ProcessDebugging();
 
-					if (mpStepCallback && mpStepCallback(this, mPC, mpStepCallbackData)) {
-						mStepStackLevel = mS;
-					} else {
-						mbStep = false;
-						mbUnusedCycle = true;
-						RedecodeInsnWithoutBreak();
-						return kATSimEvent_CPUSingleStep;
-					}
-				}
+				if (stat)
+					return stat;
 			}
-
-			if (mS >= mSBrk) {
-				mSBrk = 0x100;
-				mbUnusedCycle = true;
-				RedecodeInsnWithoutBreak();
-				return kATSimEvent_CPUStackBreakpoint;
-			}
-
-			if (mbTrace)
-				DumpStatus();
 
 			// fall through
 
 		case kStateReadOpcodeNoBreak:
+			if (mIntFlags) {
+				if (ProcessInterrupts())
+					continue;
+			}
+
 			{
 				uint8 iflags = mInsnFlags[mPC];
 
@@ -105,127 +98,24 @@ for(;;) {
 					if (op) {
 						++mPC;
 						mOpcode = op;
-						mpNextState = mpDecodePtrs[mOpcode];
+						mpNextState = mDecodeHeap + mDecodePtrs[mOpcode];
 						return kATSimEvent_None;
 					}
 				}
 			}
 
-			if (mbNMIPending) {
-				uint32 t = mpCallbacks->CPUGetUnhaltedCycle();
-
-				if (t - mNMIAssertTime >= (t == mNMIIgnoreUnhaltedCycle ? 3U : 2U)) {
-					if (mbTrace)
-						ATConsoleWrite("CPU: Jumping to NMI vector\n");
-
-					mbNMIPending = false;
-					mbMarkHistoryNMI = true;
-
-					mpNextState = mpDecodePtrNMI;
-					continue;
-				}
-			}
-
-			if (mbIRQReleasePending)
-				mbIRQReleasePending = false;
-			else if ((mbIRQActive || mbIRQPending) && (!(mP & kFlagI) || mIFlagSetCycle == mpCallbacks->CPUGetUnhaltedCycle() - 1)) {
-				if (mNMIIgnoreUnhaltedCycle == mIRQAssertTime + 1) {
-					++mIRQAssertTime;
-				} else {
-					if (mbIRQPending != mbIRQActive)
-						UpdatePendingIRQState();
-
-					// If an IRQ is pending, check if it was just acknowledged this cycle. If so,
-					// bypass it as it's too late to interrupt this instruction.
-					if (mbIRQPending && (mpCallbacks->CPUGetUnhaltedCycle() - mIRQAcknowledgeTime > 0)) {
-						if (mbTrace)
-							ATConsoleWrite("CPU: Jumping to IRQ vector\n");
-
-						mbMarkHistoryIRQ = true;
-
-						mpNextState = mpDecodePtrIRQ;
-						continue;
-					}
-				}
-			}
-
 			mOpcode = INSN_FETCH();
+			mpNextState = mDecodeHeap + mDecodePtrs[mOpcode];
 
 			if (mbHistoryOrProfilingEnabled) {
-				HistoryEntry& he = mHistory[mHistoryIndex++ & 131071];
-
-				he.mCycle = mpCallbacks->CPUGetCycle();
-				he.mTimestamp = mpCallbacks->CPUGetTimestamp();
-				he.mEA = 0xFFFFFFFFUL;
-				he.mPC = mPC - 1;
-				he.mS = mS;
-				he.mP = mP;
-				he.mA = mA;
-				he.mX = mX;
-				he.mY = mY;
-				he.mOpcode[0] = mOpcode;
 #ifdef AT_CPU_MACHINE_65C816
-				he.mOpcode[1] = mpMemory->DebugExtReadByte(mPC, mK);
-				he.mOpcode[2] = mpMemory->DebugExtReadByte(mPC+1, mK);
-				he.mOpcode[3] = mpMemory->DebugExtReadByte(mPC+2, mK);
+				AddHistoryEntry(true);
 #else
-				he.mOpcode[1] = mpMemory->DebugReadByte(mPC);
-				he.mOpcode[2] = mpMemory->DebugReadByte(mPC+1);
-				he.mOpcode[3] = mpMemory->DebugReadByte(mPC+2);
+				AddHistoryEntry(false);
 #endif
-				he.mbIRQ = mbMarkHistoryIRQ;
-				he.mbNMI = mbMarkHistoryNMI;
-				he.mbEmulation = mbEmulationFlag;
-				he.mSH = mSH;
-				he.mAH = mAH;
-				he.mXH = mXH;
-				he.mYH = mYH;
-				he.mB = mB;
-				he.mK = mK;
-				he.mD = mDP;
-
-				mbMarkHistoryIRQ = false;
-				mbMarkHistoryNMI = false;
 			}
 
-			mpNextState = mpDecodePtrs[mOpcode];
 			return kATSimEvent_None;
-
-		case kStateAddEAToHistory:
-			{
-				HistoryEntry& he = mHistory[(mHistoryIndex - 1) & 131071];
-
-				he.mEA = mAddr;
-			}
-			break;
-
-		case kStateReadDummyOpcode:
-			INSN_FETCH_NOINC();
-			return kATSimEvent_None;
-
-		case kStateAddAsPathStart:
-			if (!(mInsnFlags[mPC] & kInsnFlagPathStart)) {
-				mInsnFlags[mPC] |= kInsnFlagPathStart;
-			}
-			break;
-
-		case kStateAddToPath:
-			{
-				uint16 adjpc = mPC - 1;
-				if (!(mInsnFlags[adjpc] & kInsnFlagPathExecuted)) {
-					mInsnFlags[adjpc] |= kInsnFlagPathExecuted;
-
-					if (mbPathBreakEnabled) {
-						mbUnusedCycle = true;
-						return kATSimEvent_CPUNewPath;
-					}
-				}
-			}
-			break;
-
-		case kStateBreakOnUnsupportedOpcode:
-			mbUnusedCycle = true;
-			return kATSimEvent_CPUIllegalInsn;
 
 		case kStateReadImm:
 			mData = INSN_FETCH();
@@ -237,6 +127,29 @@ for(;;) {
 
 		case kStateReadAddrH:
 			mAddr += INSN_FETCH() << 8;
+			return kATSimEvent_None;
+
+		case kStateRead:
+			mData = AT_CPU_READ_BYTE_ADDR16(mAddr);
+			return kATSimEvent_None;
+
+		case kStateReadSetSZToA:
+			{
+				mA = AT_CPU_READ_BYTE_ADDR16(mAddr);
+
+				uint8 p = mP & ~(kFlagN | kFlagZ);
+
+				p += (mA & 0x80);	// N
+
+				if (!mA)
+					p += kFlagZ;
+
+				mP = p;
+			}
+			return kATSimEvent_None;
+
+		case kStateReadDummyOpcode:
+			INSN_FETCH_NOINC();
 			return kATSimEvent_None;
 
 		case kStateReadAddrHX:
@@ -305,32 +218,32 @@ for(;;) {
 			mAddr = mAddr + mY;
 			return kATSimEvent_None;
 
-		case kStateRead:
-			mData = AT_CPU_READ_BYTE(mAddr);
-			return kATSimEvent_None;
-
 		case kStateReadAddX:
-			mData = AT_CPU_READ_BYTE(mAddr);
+			mData = AT_CPU_READ_BYTE_ADDR16(mAddr);
 			mAddr = (uint8)(mAddr + mX);
 			return kATSimEvent_None;
 
 		case kStateReadAddY:
-			mData = AT_CPU_READ_BYTE(mAddr);
+			mData = AT_CPU_READ_BYTE_ADDR16(mAddr);
 			mAddr = (uint8)(mAddr + mY);
 			return kATSimEvent_None;
 
 		case kStateReadCarry:
-			mData = AT_CPU_READ_BYTE(mAddr2);
+			mData = AT_CPU_READ_BYTE_ADDR16(mAddr2);
 			if (mAddr == mAddr2)
 				++mpNextState;
 			return kATSimEvent_None;
 
 		case kStateReadCarryForced:
-			mData = AT_CPU_READ_BYTE(mAddr2);
+			mData = AT_CPU_READ_BYTE_ADDR16(mAddr2);
 			return kATSimEvent_None;
 
 		case kStateWrite:
 			AT_CPU_WRITE_BYTE(mAddr, mData);
+			return kATSimEvent_None;
+
+		case kStateWriteA:
+			AT_CPU_WRITE_BYTE(mAddr, mA);
 			return kATSimEvent_None;
 
 		case kStateReadAbsIndAddr:
@@ -370,6 +283,7 @@ for(;;) {
 			return kATSimEvent_None;
 
 		case kStateWait:
+			INSN_DUMMY_FETCH_NOINC();
 			return kATSimEvent_None;
 
 		case kStateAtoD:
@@ -425,7 +339,7 @@ for(;;) {
 				if (mData & kFlagI)
 					mIFlagSetCycle = mpCallbacks->CPUGetUnhaltedCycle();
 				else
-					mbIRQReleasePending = true;
+					mIntFlags |= kIntFlag_IRQReleasePending;
 			}
 
 			mP = mData | 0x30;
@@ -436,11 +350,29 @@ for(;;) {
 			break;
 
 		case kStateDSetSZ:
-			mP &= ~(kFlagN | kFlagZ);
-			if (mData & 0x80)
-				mP |= kFlagN;
-			if (!mData)
-				mP |= kFlagZ;
+			{
+				uint8 p = mP & ~(kFlagN | kFlagZ);
+
+				p += (mData & 0x80);	// N
+
+				if (!mData)
+					p |= kFlagZ;
+
+				mP = p;
+			}
+			break;
+
+		case kStateDSetSZToA:
+			{
+				uint8 p = mP & ~(kFlagN | kFlagZ);
+
+				p |= (mData & 0x80);	// copy N
+				if (!mData)
+					p |= kFlagZ;
+
+				mP = p;
+				mA = mData;
+			}
 			break;
 
 		case kStateDSetSV:
@@ -455,8 +387,8 @@ for(;;) {
 		case kStateCheckNMIBlocked:
 			mbNMIForced = false;
 
-			if (mbNMIPending) {
-				mbNMIPending = false;
+			if (mIntFlags & kIntFlag_NMIPending) {
+				mIntFlags &= ~kIntFlag_NMIPending;
 
 				if (mNMIAssertTime != mpCallbacks->CPUGetUnhaltedCycle())
 					mbNMIForced = true;
@@ -473,15 +405,15 @@ for(;;) {
 
 		case kStateIRQVecToPCBlockNMIs:
 			if (mNMIAssertTime + 1 == mpCallbacks->CPUGetUnhaltedCycle())
-				mbNMIPending = false;
+				mIntFlags &= ~kIntFlag_NMIPending;
 
 			mPC = 0xFFFE;
 			break;
 
 		case kStateNMIOrIRQVecToPC:
-			if (mbNMIPending) {
+			if (mIntFlags & kIntFlag_NMIPending) {
 				mPC = 0xFFFA;
-				mbNMIPending = false;
+				mIntFlags &= ~kIntFlag_NMIPending;
 			} else
 				mPC = 0xFFFE;
 			break;
@@ -494,10 +426,10 @@ for(;;) {
 			break;
 
 		case kStateDelayInterrupts:
-			if (mbNMIPending)
+			if (mIntFlags & kIntFlag_NMIPending)
 				mNMIAssertTime = mpCallbacks->CPUGetUnhaltedCycle();
 
-			if (mbIRQPending)
+			if (mIntFlags & kIntFlag_IRQPending)
 				mIRQAssertTime = mpCallbacks->CPUGetUnhaltedCycle();
 			break;
 
@@ -552,40 +484,41 @@ for(;;) {
 
 				uint32 highResult = (mA & 0xf0) + (mData & 0xf0) + lowResult;
 
-				mP &= ~(kFlagC | kFlagN | kFlagZ | kFlagV);
+				uint8 p = mP & ~(kFlagC | kFlagN | kFlagZ | kFlagV);
 
-				mP |= (((highResult ^ mA) & ~(mData ^ mA)) >> 1) & kFlagV;
+				p += (((highResult ^ mA) & ~(mData ^ mA)) >> 1) & kFlagV;
 
-				if (highResult & 0x80)
-					mP |= kFlagN;
+				p += (highResult & 0x80);	// N
 
 				if (highResult >= 0xA0)
 					highResult += 0x60;
 
 				if (highResult >= 0x100)
-					mP |= kFlagC;
+					p += kFlagC;
 
 				if (!(uint8)(mA + mData + carry))
-					mP |= kFlagZ;
+					p += kFlagZ;
 
 				mA = (uint8)highResult;
+				mP = p;
 			} else {
-				uint32 carry7 = (mA & 0x7f) + (mData & 0x7f) + (mP & kFlagC);
-				uint32 result = carry7 + (mA & 0x80) + (mData & 0x80);
+				uint32 carry =  (mP & kFlagC);
+				uint32 carry7 = (mA & 0x7f) + (mData & 0x7f) + carry;
+				uint32 result = mA + mData + carry;
 
-				mP &= ~(kFlagC | kFlagN | kFlagZ | kFlagV);
+				uint8 p = mP & ~(kFlagC | kFlagN | kFlagZ | kFlagV);
 
-				if (result & 0x80)
-					mP |= kFlagN;
+				p += (result & 0x80);	// N
 
 				if (result >= 0x100)
-					mP |= kFlagC;
+					p += kFlagC;
 
 				if (!(result & 0xff))
-					mP |= kFlagZ;
+					p += kFlagZ;
 
-				mP |= ((result >> 2) ^ (carry7 >> 1)) & kFlagV;
+				p += ((result >> 2) ^ (carry7 >> 1)) & kFlagV;
 
+				mP = p;
 				mA = (uint8)result;
 			}
 			break;
@@ -614,38 +547,39 @@ for(;;) {
 				if (highResult < 0x100)
 					highResult -= 0x60;
 
-				mP &= ~(kFlagC | kFlagN | kFlagZ | kFlagV);
+				uint8 p = mP & ~(kFlagC | kFlagN | kFlagZ | kFlagV);
 
-				if (result & 0x80)
-					mP |= kFlagN;
+				p += (result & 0x80);	// N
 
 				if (result >= 0x100)
-					mP |= kFlagC;
+					p += kFlagC;
 
 				if (!(result & 0xff))
-					mP |= kFlagZ;
+					p += kFlagZ;
 
-				mP |= ((result >> 2) ^ (carry7 >> 1)) & kFlagV;
+				p += ((result >> 2) ^ (carry7 >> 1)) & kFlagV;
 
+				mP = p;
 				mA = (uint8)highResult;
 			} else {
 				mData ^= 0xff;
-				uint32 carry7 = (mA & 0x7f) + (mData & 0x7f) + (mP & kFlagC);
-				uint32 result = carry7 + (mA & 0x80) + (mData & 0x80);
+				uint32 carry = (mP & kFlagC);
+				uint32 carry7 = (mA & 0x7f) + (mData & 0x7f) + carry;
+				uint32 result = mData + mA + carry;
 
-				mP &= ~(kFlagC | kFlagN | kFlagZ | kFlagV);
+				uint8 p = mP & ~(kFlagC | kFlagN | kFlagZ | kFlagV);
 
-				if (result & 0x80)
-					mP |= kFlagN;
+				p += (result & 0x80);	// N
 
 				if (result >= 0x100)
-					mP |= kFlagC;
+					p += kFlagC;
 
 				if (!(result & 0xff))
-					mP |= kFlagZ;
+					p += kFlagZ;
 
-				mP |= ((result >> 2) ^ (carry7 >> 1)) & kFlagV;
+				p += ((result >> 2) ^ (carry7 >> 1)) & kFlagV;
 
+				mP = p;
 				mA = (uint8)result;
 			}
 			break;
@@ -655,16 +589,15 @@ for(;;) {
 				// must leave data alone to not break DCP
 				uint32 result = mA + (mData ^ 0xff) + 1;
 
-				mP &= ~(kFlagC | kFlagN | kFlagZ);
+				uint8 p = (mP & ~(kFlagC | kFlagN | kFlagZ));
 
-				if (result & 0x80)
-					mP |= kFlagN;
-
-				if (result >= 0x100)
-					mP |= kFlagC;
+				p += (result & 0x80);	// N
+				p += (result >> 8);
 
 				if (!(result & 0xff))
-					mP |= kFlagZ;
+					p += kFlagZ;
+
+				mP = p;
 			}
 			break;
 
@@ -675,8 +608,7 @@ for(;;) {
 
 				mP &= ~(kFlagC | kFlagN | kFlagZ);
 
-				if (result & 0x80)
-					mP |= kFlagN;
+				mP |= (result & 0x80);	// N
 
 				if (result >= 0x100)
 					mP |= kFlagC;
@@ -693,8 +625,7 @@ for(;;) {
 
 				mP &= ~(kFlagC | kFlagN | kFlagZ);
 
-				if (result & 0x80)
-					mP |= kFlagN;
+				mP |= (result & 0x80);	// N
 
 				if (result >= 0x100)
 					mP |= kFlagC;
@@ -705,22 +636,61 @@ for(;;) {
 			break;
 
 		case kStateInc:
-			++mData;
-			mP &= ~(kFlagN | kFlagZ);
-			if (mData & 0x80)
-				mP |= kFlagN;
-			if (!mData)
-				mP |= kFlagZ;
+			{
+				++mData;
+
+				uint8 p = mP & ~(kFlagN | kFlagZ);
+				p += (mData & 0x80);	// N
+
+				if (!mData)
+					p += kFlagZ;
+
+				mP = p;
+			}
 			break;
 
+		case kStateIncXWait:
+			{
+				uint8 p = mP & ~(kFlagN | kFlagZ);
+
+				++mX;
+				if (!mX)
+					p += kFlagZ;
+
+				p += (mX & 0x80);	// N
+
+				mP = p;
+			}
+			INSN_DUMMY_FETCH_NOINC();
+			return kATSimEvent_None;
+
 		case kStateDec:
-			--mData;
-			mP &= ~(kFlagN | kFlagZ);
-			if (mData & 0x80)
-				mP |= kFlagN;
-			if (!mData)
-				mP |= kFlagZ;
+			{
+				--mData;
+				uint8 p = mP & ~(kFlagN | kFlagZ);
+				p += (mData & 0x80);	// N
+
+				if (!mData)
+					p += kFlagZ;
+
+				mP = p;
+			}
 			break;
+
+		case kStateDecXWait:
+			{
+				uint8 p = mP & ~(kFlagN | kFlagZ);
+
+				--mX;
+				if (!mX)
+					p += kFlagZ;
+
+				p += (mX & 0x80);	// N
+
+				mP = p;
+			}
+			INSN_DUMMY_FETCH_NOINC();
+			return kATSimEvent_None;
 
 		case kStateDecC:
 			--mData;
@@ -730,12 +700,18 @@ for(;;) {
 			break;
 
 		case kStateAnd:
-			mData &= mA;
-			mP &= ~(kFlagN | kFlagZ);
-			if (mData & 0x80)
-				mP |= kFlagN;
-			if (!mData)
-				mP |= kFlagZ;
+			{
+				mData &= mA;
+
+				uint8 p = mP & ~(kFlagN | kFlagZ);
+
+				p += (mData & 0x80);	// N
+
+				if (!mData)
+					p += kFlagZ;
+
+				mP = p;
+			}
 			break;
 
 		case kStateAnd_SAX:
@@ -775,28 +751,47 @@ for(;;) {
 			if (mX >= mData)
 				mP |= kFlagC;
 			mX -= mData;
-			if (mX & 0x80)
-				mP |= kFlagN;
+			mP |= (mX & 0x80);	// N
 			if (!mX)
 				mP |= kFlagZ;
 			break;
 
 		case kStateArr:
-			mA &= mData;
-			mA = (mA >> 1) + (mP << 7);
-			mP &= ~(kFlagN | kFlagZ | kFlagC | kFlagV);
+			{
+				mA &= mData;
 
-			switch(mA & 0x60) {
-				case 0x00:	break;
-				case 0x20:	mP += kFlagV; break;
-				case 0x40:	mP += kFlagC | kFlagV; break;
-				case 0x60:	mP += kFlagC; break;
+				// stash off AND result for decimal correction
+				uint8 andres = mA;
+
+				mA = (mA >> 1) + (mP << 7);
+				mP &= ~(kFlagN | kFlagZ | kFlagC | kFlagV);
+
+				switch(mA & 0x60) {
+					case 0x00:	break;
+					case 0x20:	mP += kFlagV; break;
+					case 0x40:	mP += kFlagC | kFlagV; break;
+					case 0x60:	mP += kFlagC; break;
+				}
+
+				mP += (mA & 0x80);
+
+				if (!mA)
+					mP |= kFlagZ;
+
+				// perform BCD adjustment and correct C if in decimal mode
+				if (mP & kFlagD) {
+					// low adjust
+					if ((andres & 15) >= 5)
+						mA = (mA & 0xf0) + ((mA + 6) & 15);
+
+					// high adjust and carry out
+					mP &= ~kFlagC;
+					if (andres >= 0x50) {
+						mA += 0x60;
+						mP |= kFlagC;
+					}
+				}
 			}
-
-			mP += (mA & 0x80);
-
-			if (!mA)
-				mP |= kFlagZ;
 			break;
 
 		case kStateXas:
@@ -807,8 +802,7 @@ for(;;) {
 		case kStateOr:
 			mA |= mData;
 			mP &= ~(kFlagN | kFlagZ);
-			if (mA & 0x80)
-				mP |= kFlagN;
+			mP |= (mA & 0x80);	// N
 			if (!mA)
 				mP |= kFlagZ;
 			break;
@@ -816,8 +810,7 @@ for(;;) {
 		case kStateXor:
 			mA ^= mData;
 			mP &= ~(kFlagN | kFlagZ);
-			if (mA & 0x80)
-				mP |= kFlagN;
+			mP |= (mA & 0x80);	// N
 			if (!mA)
 				mP |= kFlagZ;
 			break;
@@ -827,8 +820,7 @@ for(;;) {
 			if (mData & 0x80)
 				mP |= kFlagC;
 			mData += mData;
-			if (mData & 0x80)
-				mP |= kFlagN;
+			mP |= (mData & 0x80);	// N
 			if (!mData)
 				mP |= kFlagZ;
 			break;
@@ -890,7 +882,7 @@ for(;;) {
 		case kStateCLI:
 			if (mP & kFlagI) {
 				mP &= ~kFlagI;
-				mbIRQReleasePending = true;
+				mIntFlags |= kIntFlag_IRQReleasePending;
 			}
 			break;
 
@@ -1276,10 +1268,14 @@ for(;;) {
 			return kATSimEvent_None;
 
 		case kStateWaitForInterrupt:
-			if (mbIRQPending != mbIRQActive)
-				UpdatePendingIRQState();
+			switch(mIntFlags & (kIntFlag_IRQPending | kIntFlag_IRQActive)) {
+				case kIntFlag_IRQPending:
+				case kIntFlag_IRQActive:
+					UpdatePendingIRQState();
+					break;
+			}
 
-			if (!mbIRQPending && !mbNMIPending)
+			if (!(mIntFlags & (kIntFlag_IRQPending | kIntFlag_NMIPending)))
 				--mpNextState;
 			return kATSimEvent_None;
 
@@ -1441,6 +1437,38 @@ for(;;) {
 				++mpNextState;
 			}
 			break;
+
+		case kStateAddEAToHistory:
+			{
+				HistoryEntry& he = mHistory[(mHistoryIndex - 1) & 131071];
+
+				he.mEA = mAddr;
+			}
+			break;
+
+		case kStateAddAsPathStart:
+			if (!(mInsnFlags[mPC] & kInsnFlagPathStart)) {
+				mInsnFlags[mPC] |= kInsnFlagPathStart;
+			}
+			break;
+
+		case kStateAddToPath:
+			{
+				uint16 adjpc = mPC - 1;
+				if (!(mInsnFlags[adjpc] & kInsnFlagPathExecuted)) {
+					mInsnFlags[adjpc] |= kInsnFlagPathExecuted;
+
+					if (mbPathBreakEnabled) {
+						mbUnusedCycle = true;
+						return kATSimEvent_CPUNewPath;
+					}
+				}
+			}
+			break;
+
+		case kStateBreakOnUnsupportedOpcode:
+			mbUnusedCycle = true;
+			return kATSimEvent_CPUIllegalInsn;
 
 		////////// 65C816 states
 
@@ -1613,7 +1641,7 @@ for(;;) {
 
 		case kStateDtoPNative:
 			if ((mP & ~mData) & kFlagI)
-				mbIRQReleasePending = true;
+				mIntFlags |= kIntFlag_IRQReleasePending;
 			mP = mData;
 			Update65816DecodeTable();
 			break;
@@ -2091,7 +2119,7 @@ for(;;) {
 
 		case kStateRep:
 			if (mData & kFlagI)
-				mbIRQReleasePending = true;
+				mIntFlags |= kIntFlag_IRQReleasePending;
 
 			if (mbEmulationFlag)
 				mP &= ~(mData & 0xcf);		// m and x are off-limits
@@ -2229,11 +2257,15 @@ for(;;) {
 }
 
 #undef AT_CPU_READ_BYTE
+#undef AT_CPU_READ_BYTE_ADDR16
+#undef AT_CPU_DUMMY_READ_BYTE
 #undef AT_CPU_READ_BYTE_HL
 #undef AT_CPU_EXT_READ_BYTE
+#undef AT_CPU_DUMMY_EXT_READ_BYTE
 #undef AT_CPU_WRITE_BYTE
 #undef AT_CPU_WRITE_BYTE_HL
 #undef AT_CPU_EXT_WRITE_BYTE
 
 #undef INSN_FETCH
 #undef INSN_FETCH_NOINC
+#undef INSN_DUMMY_FETCH_NOINC

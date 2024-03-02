@@ -5,6 +5,18 @@ if {%1}=={} (
 	exit /b 0
 )
 
+@where /q devenv.exe >nul
+if errorlevel 1 (
+	echo Unable to find Visual C++ IDE ^(devenv.exe^) in current path.
+	exit /b 0
+)
+
+@where /q zip.exe >nul
+if errorlevel 1 (
+	echo Unable to find Info-Zip ^(zip.exe^) in current path.
+	exit /b 0
+)
+
 set _verid=%1
 
 setlocal enabledelayedexpansion
@@ -26,6 +38,14 @@ devenv src\Altirra.sln /Clean Release
 echo #ifndef AT_VERSION_H >%_abverfile%
 echo #define AT_VERSION_H >>%_abverfile%
 echo #define AT_VERSION "%_verid%" >>%_abverfile%
+
+echo "%_verid%" | find "-" >nul
+if errorlevel 1 (
+	echo #define AT_VERSION_PRERELEASE 0 >>%_abverfile%
+) else (
+	echo #define AT_VERSION_PRERELEASE 1 >>%_abverfile%
+)
+
 echo #endif >>%_abverfile%
 
 devenv src\Altirra.sln /Build Debug /Project Kernel /Out publish\build-debug.log

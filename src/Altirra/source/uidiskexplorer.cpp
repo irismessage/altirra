@@ -25,6 +25,7 @@
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/strutil.h>
+#include <vd2/system/thunk.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
@@ -41,6 +42,8 @@ public:
 	uint32 mSectors;
 	uint32 mBytes;
 	bool mbIsDirectory;
+	bool mbDateValid;
+	VDExpandedDate mDate;
 
 	void InitFrom(const ATDiskFSEntryInfo& einfo) {
 		mFileName = einfo.mFileName;
@@ -48,6 +51,8 @@ public:
 		mBytes = einfo.mBytes;
 		mFileKey = einfo.mKey;
 		mbIsDirectory = einfo.mbIsDirectory;
+		mbDateValid = einfo.mbDateValid;
+		mDate = einfo.mDate;
 	}
 };
 
@@ -135,7 +140,7 @@ namespace {
 	HRESULT STDMETHODCALLTYPE DropTarget::DragEnter(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
 		mDropEffect = DROPEFFECT_NONE;
 
-		if (!(GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED) && mpFS) {
+		if (!(GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED) && mpFS && !mpFS->IsReadOnly()) {
 			FORMATETC etc;
 			etc.cfFormat = CF_HDROP;
 			etc.dwAspect = DVASPECT_CONTENT;
@@ -184,7 +189,7 @@ namespace {
 	}
 
 	HRESULT STDMETHODCALLTYPE DropTarget::Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
-		if ((GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED) || !mpFS)
+		if ((GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED) || !mpFS || mpFS->IsReadOnly())
 			return S_OK;
 
 		// pull filenames
@@ -368,12 +373,14 @@ namespace {
 
 class ATUIDialogDiskExplorer : public VDDialogFrameW32, public IATDropTargetNotify {
 public:
-	ATUIDialogDiskExplorer();
+	ATUIDialogDiskExplorer(IATDiskImage *image = NULL, const wchar_t *imageName = NULL, bool writeEnabled = true, bool autoFlush = true);
 	~ATUIDialogDiskExplorer();
 
 protected:
 	bool OnLoaded();
 	void OnDestroy();
+	void OnSize();
+	bool OnErase(VDZHDC hdc);
 	bool OnCommand(uint32 id, uint32 extcode);
 
 	void OnItemBeginDrag(VDUIProxyListView *sender, int item);
@@ -385,9 +392,20 @@ protected:
 
 	void RefreshList();
 
+	LRESULT ListViewSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 	class FileListEntry : public vdrefcounted<IVDUIListViewVirtualItem>, public ATUIDiskExplorerFileEntry {
 	public:
 		void GetText(int subItem, VDStringW& s) const;
+	};
+
+	struct FileListEntrySort {
+		bool operator()(const FileListEntry *x, const FileListEntry *y) const {
+			if (x->mbIsDirectory != y->mbIsDirectory)
+				return x->mbIsDirectory;
+
+			return x->mFileName.comparei(y->mFileName) < 0;
+		}
 	};
 
 	HMENU	mhMenuItemContext;
@@ -395,18 +413,29 @@ protected:
 	uint32	mIconFile;
 	uint32	mIconFolder;
 	uintptr	mCurrentDirKey;
+	bool	mbWriteEnabled;
+	bool	mbAutoFlush;
 
-	vdautoptr<IATDiskImage> mpImage;
+	IATDiskImage *mpImage;
+	vdautoptr<IATDiskImage> mpImageAlloc;
+	const wchar_t *mpImageName;
+
 	vdautoptr<IATDiskFS> mpFS;
 	VDUIProxyListView mList;
 
 	vdrefptr<DropTarget> mpDropTarget;
+
+	HWND	mhwndList;
+	VDFunctionThunk *mpListViewThunk;
+	WNDPROC mListViewWndProc;
 
 	VDDelegate mDelBeginDrag;
 	VDDelegate mDelBeginRDrag;
 	VDDelegate mDelContextMenu;
 	VDDelegate mDelLabelChanged;
 	VDDelegate mDelDoubleClick;
+
+	VDDialogResizerW32 mResizer;
 };
 
 void ATUIDialogDiskExplorer::FileListEntry::GetText(int subItem, VDStringW& s) const {
@@ -425,12 +454,31 @@ void ATUIDialogDiskExplorer::FileListEntry::GetText(int subItem, VDStringW& s) c
 		case 2:
 			s.sprintf(L"%u", mBytes);
 			break;
+
+		case 3:
+			if (mbDateValid) {
+				s.sprintf(L"%02u/%02u/%02u %02u:%02u:%02u"
+					, mDate.mMonth
+					, mDate.mDay
+					, mDate.mYear % 100
+					, mDate.mHour
+					, mDate.mMinute
+					, mDate.mSecond
+					);
+			}
+			break;
 	}
 }
 
-ATUIDialogDiskExplorer::ATUIDialogDiskExplorer()
+ATUIDialogDiskExplorer::ATUIDialogDiskExplorer(IATDiskImage *image, const wchar_t *imageName, bool writeEnabled, bool autoFlush)
 	: VDDialogFrameW32(IDD_DISK_EXPLORER)
 	, mhMenuItemContext(NULL)
+	, mbWriteEnabled(writeEnabled)
+	, mbAutoFlush(autoFlush)
+	, mpImage(image)
+	, mpImageName(imageName)
+	, mhwndList(NULL)
+	, mpListViewThunk(NULL)
 {
 	mList.OnItemBeginDrag() += mDelBeginDrag.Bind(this, &ATUIDialogDiskExplorer::OnItemBeginDrag);
 	mList.OnItemBeginRDrag() += mDelBeginRDrag.Bind(this, &ATUIDialogDiskExplorer::OnItemBeginDrag);
@@ -443,12 +491,38 @@ ATUIDialogDiskExplorer::~ATUIDialogDiskExplorer() {
 }
 
 bool ATUIDialogDiskExplorer::OnLoaded() {
+	SetCurrentSizeAsMinSize();
+
+	HINSTANCE hInst = VDGetLocalModuleHandleW32();
+	HICON hIcon = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED);
+	if (hIcon)
+		SendMessage(mhdlg, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
+
+	HICON hSmallIcon = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
+	if (hSmallIcon)
+		SendMessage(mhdlg, WM_SETICON, ICON_SMALL, (LPARAM)hSmallIcon);
+
+	mResizer.Init(mhdlg);
+	mResizer.Add(IDC_FILENAME, VDDialogResizerW32::kTC);
+	mResizer.Add(IDC_BROWSE, VDDialogResizerW32::kTR);
+	mResizer.Add(IDC_DISK_CONTENTS, VDDialogResizerW32::kMC | VDDialogResizerW32::kAvoidFlicker);
+	mResizer.Add(IDC_STATUS, VDDialogResizerW32::kBC);
+
+	mhwndList = GetDlgItem(mhdlg, IDC_DISK_CONTENTS);
+	if (mhwndList) {
+		mListViewWndProc = (WNDPROC)GetWindowLongPtr(mhwndList, GWLP_WNDPROC);
+		mpListViewThunk = VDCreateFunctionThunkFromMethod(this, &ATUIDialogDiskExplorer::ListViewSubclassProc, true);
+		if (mpListViewThunk)
+			SetWindowLongPtr(mhwndList, GWLP_WNDPROC, (LONG_PTR)mpListViewThunk);
+	}
+
 	AddProxy(&mList, IDC_DISK_CONTENTS);
 
 	mList.SetFullRowSelectEnabled(true);
 	mList.InsertColumn(0, L"Filename", 0);
 	mList.InsertColumn(1, L"Sectors", 0);
 	mList.InsertColumn(2, L"Size", 0);
+	mList.InsertColumn(3, L"Date", 0);
 
 	mhMenuItemContext = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_DISK_EXPLORER_CONTEXT_MENU));
 
@@ -466,7 +540,50 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 
 	ListView_SetImageList(mList.GetHandle(), hil, LVSIL_SMALL);
 
-	return VDDialogFrameW32::OnLoaded();
+	if (mpImageName) {
+		try {
+			SetControlText(IDC_FILENAME, mpImageName);
+			SendDlgItemMessage(mhdlg, IDC_FILENAME, EM_SETREADONLY, TRUE, FALSE);
+			SendDlgItemMessage(mhdlg, IDC_FILENAME, EM_SETSEL, -1, -1);
+			EnableControl(IDC_BROWSE, false);
+
+			vdautoptr<IATDiskFS> fs(ATDiskMountImage(mpImage, !mbWriteEnabled));
+
+			if (!fs)
+				throw MyError("Unable to detect the file system on the disk image.");
+
+			mpFS.from(fs);
+			mpDropTarget->SetFS(mpFS);
+
+			mCurrentDirKey = 0;
+
+			RefreshList();
+
+			if (mbWriteEnabled) {
+				if (mpFS->IsReadOnly()) {
+					ShowWarning(L"This disk format is only supported in read-only mode.", L"Altirra Warning");
+				} else {
+					ATDiskFSValidationReport validationReport;
+					if (!mpFS->Validate(validationReport)) {
+						mpFS->SetReadOnly(true);
+
+						ShowWarning(L"The file system on this disk is damaged and has been mounted as read-only to prevent further damage.", L"Altirra Warning");
+					}
+				}
+			}
+
+			SetFocusToControl(IDC_DISK_CONTENTS);
+		} catch(const MyError& e) {
+			ShowError(VDTextAToW(e.gets()).c_str(), L"Disk load error");
+			End(false);
+			return true;
+		}
+	} else {
+		SetFocusToControl(IDC_BROWSE);
+	}
+
+	VDDialogFrameW32::OnLoaded();
+	return true;
 }
 
 void ATUIDialogDiskExplorer::OnDestroy() {
@@ -479,30 +596,66 @@ void ATUIDialogDiskExplorer::OnDestroy() {
 		mhMenuItemContext = NULL;
 	}
 
+	if (mhwndList) {
+		DestroyWindow(mhwndList);
+		mhwndList = NULL;
+	}
+
+	if (mpListViewThunk) {
+		VDDestroyFunctionThunk(mpListViewThunk);
+		mpListViewThunk = NULL;
+	}
+
 	VDDialogFrameW32::OnDestroy();
+}
+
+void ATUIDialogDiskExplorer::OnSize() {
+	mResizer.Relayout();
+}
+
+bool ATUIDialogDiskExplorer::OnErase(VDZHDC hdc) {
+	mResizer.Erase(&hdc);
+	return true;
 }
 
 bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 	if (id == IDC_BROWSE) {
+		if (mpImageName)
+			return true;
+
 		const VDStringW fn(VDGetLoadFileName(VDMAKEFOURCC('d', 'i', 's', 'k'),
 			(VDGUIHandle)mhdlg,
 			L"Choose disk image to browse",
+			L"All supported images\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.arc\0"
 			L"Atari disk image (*.atr,*.xfd,*.dcm)\0*.atr;*.xfd;*.dcm\0"
 			L"Protected disk image (*.pro)\0*.pro\0"
 			L"VAPI disk image (*.atx)\0*.atx\0"
+			L"Compressed archive (*.arc)\0*.arc\0"
 			L"All files\0*.*\0",
 			NULL
 			));
 
 		if (!fn.empty()) {
 			try {
-				vdautoptr<IATDiskImage> image(ATLoadDiskImage(fn.c_str()));
-				vdautoptr<IATDiskFS> fs(ATDiskMountImage(image, false));
+				vdautoptr<IATDiskImage> image;
+				vdautoptr<IATDiskFS> fs;
+				
+				const wchar_t *const fnp = fn.c_str();
+				const bool isArc = !vdwcsicmp(VDFileSplitExt(fnp), L".arc");
 
-				if (!fs)
-					throw MyError("Unable to detect the file system on the disk image.");
+				if (isArc) {
+					fs = ATDiskMountImageARC(fnp);
+				} else {
+					image = ATLoadDiskImage(fnp);
+					fs = ATDiskMountImage(image, false);
 
-				mpImage.from(image);
+					if (!fs)
+						throw MyError("Unable to detect the file system on the disk image.");
+
+					mpImageAlloc.from(image);
+					mpImage = mpImageAlloc;
+				}
+
 				mpFS.from(fs);
 				mpDropTarget->SetFS(mpFS);
 
@@ -512,7 +665,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 
 				RefreshList();
 
-				if (mpFS->IsReadOnly()) {
+				if (!isArc && mpFS->IsReadOnly()) {
 					ShowWarning(L"This disk format is only supported in read-only mode.", L"Altirra Warning");
 				} else {
 					ATDiskFSValidationReport validationReport;
@@ -889,8 +1042,21 @@ namespace {
 
 			try {
 				mpFS->ReadFile(fle->mFileKey, buf);
+			} catch(const ATDiskFSException& ex) {
+				switch(ex.GetErrorCode()) {
+					case kATDiskFSError_CorruptedFileSystem:
+						return HRESULT_FROM_WIN32(ERROR_DISK_CORRUPT);
+
+					case kATDiskFSError_DecompressionError:
+						return HRESULT_FROM_WIN32(ERROR_FILE_CORRUPT);
+
+					case kATDiskFSError_CRCError:
+						return HRESULT_FROM_WIN32(ERROR_CRC);
+				}
+
+				return STG_E_READFAULT;
 			} catch(const MyError&) {
-				return E_FAIL;
+				return STG_E_READFAULT;
 			}
 
 			stream->Write(buf.data(), buf.size(), NULL);
@@ -967,8 +1133,21 @@ namespace {
 
 			try {
 				mpFS->ReadFile(fle->mFileKey, buf);
+			} catch(const ATDiskFSException& ex) {
+				switch(ex.GetErrorCode()) {
+					case kATDiskFSError_CorruptedFileSystem:
+						return HRESULT_FROM_WIN32(ERROR_DISK_CORRUPT);
+
+					case kATDiskFSError_DecompressionError:
+						return HRESULT_FROM_WIN32(ERROR_FILE_CORRUPT);
+
+					case kATDiskFSError_CRCError:
+						return HRESULT_FROM_WIN32(ERROR_CRC);
+				}
+
+				return STG_E_READFAULT;
 			} catch(const MyError&) {
-				return E_FAIL;
+				return STG_E_READFAULT;
 			}
 
 			stream->Write(buf.data(), buf.size(), NULL);
@@ -1042,7 +1221,7 @@ namespace {
 
 		for(uint32 i=0; i<n; ++i) {
 			const ATUIDiskExplorerFileEntry *fle = mFiles[i];
-			FILEDESCRIPTOR *fd = &group->fgd[i];
+			FILEDESCRIPTORA *fd = &group->fgd[i];
 
 			memset(fd, 0, sizeof *fd);
 			
@@ -1146,14 +1325,17 @@ void ATUIDialogDiskExplorer::OnItemDoubleClick(VDUIProxyListView *sender, int it
 
 void ATUIDialogDiskExplorer::OnFSModified() {
 	mpFS->Flush();
-	mpImage->Flush();
+
+	if (mbAutoFlush && mpImage)
+		mpImage->Flush();
+
 	RefreshList();
 }
 
 void ATUIDialogDiskExplorer::RefreshList() {
 	mList.Clear();
 
-	if (!mpImage)
+	if (!mpFS)
 		return;
 
 	if (mCurrentDirKey) {
@@ -1173,19 +1355,39 @@ void ATUIDialogDiskExplorer::RefreshList() {
 
 	uintptr searchKey = mpFS->FindFirst(mCurrentDirKey, einfo);
 
-	if (searchKey) {
-		do {
-			vdrefptr<FileListEntry> fle(new FileListEntry);
+	vdfastvector<FileListEntry *> fles;
 
-			fle->InitFrom(einfo);
+	try {
+		if (searchKey) {
+			do {
+				vdrefptr<FileListEntry> fle(new FileListEntry);
+
+				fle->InitFrom(einfo);
+
+				fles.push_back(fle.release());
+			} while(mpFS->FindNext(searchKey, einfo));
+
+			mpFS->FindEnd(searchKey);
+		}
+
+		std::sort(fles.begin(), fles.end(), FileListEntrySort());
+
+		for(vdfastvector<FileListEntry *>::const_iterator it(fles.begin()), itEnd(fles.end());
+			it != itEnd;
+			++it)
+		{
+			FileListEntry *fle = *it;
 
 			int item = mList.InsertVirtualItem(-1, fle);
 			if (item >= 0)
-				mList.SetItemImage(item, einfo.mbIsDirectory ? mIconFolder : mIconFile);
-		} while(mpFS->FindNext(searchKey, einfo));
-
-		mpFS->FindEnd(searchKey);
+				mList.SetItemImage(item, fle->mbIsDirectory ? mIconFolder : mIconFile);
+		}
+	} catch(...) {
+		VDReleaseObjects(fles);
+		throw;
 	}
+
+	VDReleaseObjects(fles);
 
 	mList.AutoSizeColumns();
 
@@ -1198,10 +1400,23 @@ void ATUIDialogDiskExplorer::RefreshList() {
 	SetControlText(IDC_STATUS, s.c_str());
 }
 
+LRESULT ATUIDialogDiskExplorer::ListViewSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+	if (msg == WM_MOUSEACTIVATE)
+		return MA_NOACTIVATE;
+
+	return CallWindowProc(mListViewWndProc, hwnd, msg, wParam, lParam);
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void ATUIShowDialogDiskExplorer(VDGUIHandle h) {
 	ATUIDialogDiskExplorer dlg;
+
+	dlg.ShowDialog(h);
+}
+
+void ATUIShowDialogDiskExplorer(VDGUIHandle h, IATDiskImage *image, const wchar_t *imageName, bool writeEnabled, bool autoFlush) {
+	ATUIDialogDiskExplorer dlg(image, imageName, writeEnabled, autoFlush);
 
 	dlg.ShowDialog(h);
 }

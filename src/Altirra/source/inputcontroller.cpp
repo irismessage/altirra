@@ -73,6 +73,7 @@ ATPortController::ATPortController()
 	: mPortValue(0xFF)
 	, mbTrigger1(false)
 	, mbTrigger2(false)
+	, mMultiMask(0x0F000000)
 {
 }
 
@@ -86,11 +87,23 @@ void ATPortController::Init(ATGTIAEmulator *gtia, ATPokeyEmulator *pokey, ATLigh
 	mpLightPen = lightPen;
 }
 
-int ATPortController::AllocatePortInput(bool port2) {
+void ATPortController::SetMultiMask(uint8 mask) {
+	mMultiMask = (uint32)mask << 24;
+
+	UpdatePortValue();
+}
+
+int ATPortController::AllocatePortInput(bool port2, int multiIndex) {
 	PortInputs::iterator it(std::find(mPortInputs.begin(), mPortInputs.end(), 0));
 	int index = it - mPortInputs.begin();
 
 	uint32 v = port2 ? 0xC0000000 : 0x80000000;
+
+	if (multiIndex >= 0)
+		v |= 0x01000000 << multiIndex;
+	else
+		v |= 0x0F000000;
+
 	if (it != mPortInputs.end())
 		*it = v;
 	else
@@ -118,7 +131,7 @@ void ATPortController::FreePortInput(int index) {
 void ATPortController::SetPortInput(int index, uint32 portBits) {
 	uint32 oldVal = mPortInputs[index];
 	if (oldVal != portBits) {
-		mPortInputs[index] = (oldVal & 0xf0000000) + portBits;
+		mPortInputs[index] = (oldVal & 0xff000000) + portBits;
 		UpdatePortValue();
 	}
 }
@@ -138,6 +151,9 @@ void ATPortController::UpdatePortValue() {
 	uint32 portval = 0;
 	while(it != itEnd) {
 		uint32 pv = *it++;
+
+		if (!(pv & mMultiMask))
+			continue;
 
 		if (pv & 0x40000000)
 			pv <<= 4;
@@ -180,9 +196,9 @@ ATPortInputController::~ATPortInputController() {
 	Detach();
 }
 
-void ATPortInputController::Attach(ATPortController *pc, bool port2) {
+void ATPortInputController::Attach(ATPortController *pc, bool port2, int multiIndex) {
 	mpPortController = pc;
-	mPortInputIndex = pc->AllocatePortInput(port2);
+	mPortInputIndex = pc->AllocatePortInput(port2, multiIndex);
 	mbPort2 = port2;
 
 	OnAttach();
@@ -337,6 +353,135 @@ void ATMouseController::OnAttach() {
 }
 
 void ATMouseController::OnDetach() {
+	if (mpUpdateEvent) {
+		mpScheduler->RemoveEvent(mpUpdateEvent);
+		mpUpdateEvent = NULL;
+		mpScheduler = NULL;
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+ATTrackballController::ATTrackballController()
+	: mPortBits(0)
+	, mTargetX(0)
+	, mTargetY(0)
+	, mAccumX(0)
+	, mAccumY(0)
+	, mpUpdateEvent(NULL)
+	, mpScheduler(NULL)
+{
+	mbButtonState = false;
+}
+
+ATTrackballController::~ATTrackballController() {
+}
+
+void ATTrackballController::Init(ATScheduler *scheduler) {
+	mpScheduler = scheduler;
+}
+
+void ATTrackballController::SetPosition(int x, int y) {
+	mTargetX = x;
+	mTargetY = y;
+}
+
+void ATTrackballController::AddDelta(int dx, int dy) {
+	mTargetX += dx;
+	mTargetY += dy;
+}
+
+void ATTrackballController::SetButtonState(int button, bool state) {
+	mbButtonState = state;
+}
+
+void ATTrackballController::SetDigitalTrigger(uint32 trigger, bool state) {
+	switch(trigger) {
+		case kATInputTrigger_Button0:
+			if (mbButtonState != state) {
+				mbButtonState = state;
+
+				uint32 newBits = (mPortBits & ~0x100) + (state ? 0x100 : 0);
+
+				if (mPortBits != newBits) {
+					mPortBits = newBits;
+					SetPortOutput(mPortBits);
+				}
+			}
+			break;
+	}
+}
+
+void ATTrackballController::ApplyImpulse(uint32 trigger, int ds) {
+	ds <<= 5;
+
+	switch(trigger) {
+		case kATInputTrigger_Axis0:
+			mTargetX += ds;
+			break;
+		case kATInputTrigger_Axis0+1:
+			mTargetY += ds;
+			break;
+	}
+}
+
+void ATTrackballController::OnScheduledEvent(uint32 id) {
+	mpUpdateEvent = mpScheduler->AddEvent(7, this, 1);
+	Update();
+}
+
+void ATTrackballController::Update() {
+	bool changed = false;
+	uint8 dirBits = mPortBits & 5;
+
+	const uint32 posX = mTargetX >> 16;
+	if (mAccumX != posX) {
+		if ((sint16)(mAccumX - posX) < 0) {
+			dirBits &= 0xFE;
+			++mAccumX;
+		} else {
+			dirBits |= 0x01;
+			--mAccumX;
+		}
+
+		mAccumX &= 0xffff;
+
+		changed = true;
+	}
+
+	const int posY = mTargetY >> 16;
+	if (mAccumY != posY) {
+		if ((sint16)(mAccumY - posY) < 0) {
+			++mAccumY;
+			dirBits &= 0xFB;
+		} else {
+			--mAccumY;
+			dirBits |= 0x04;
+		}
+
+		mAccumY &= 0xffff;
+
+		changed = true;
+	}
+
+	if (changed) {
+		uint32 val = dirBits + ((mAccumX << 1) & 0x02) + ((mAccumY << 3) & 0x08);
+
+		uint32 newPortBits = (mPortBits & ~15) + val;
+
+		if (mPortBits != newPortBits) {
+			mPortBits = newPortBits;
+			SetPortOutput(mPortBits);
+		}
+	}
+}
+
+void ATTrackballController::OnAttach() {
+	if (!mpUpdateEvent)
+		mpUpdateEvent = mpScheduler->AddEvent(32, this, 1);
+}
+
+void ATTrackballController::OnDetach() {
 	if (mpUpdateEvent) {
 		mpScheduler->RemoveEvent(mpUpdateEvent);
 		mpUpdateEvent = NULL;
@@ -645,9 +790,10 @@ void ATInputStateController::SetDigitalTrigger(uint32 trigger, bool state) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-AT5200ControllerController::AT5200ControllerController(int index)
+AT5200ControllerController::AT5200ControllerController(int index, bool trackball)
 	: mbActive(false)
 	, mbPotsEnabled(false)
+	, mbTrackball(trackball)
 	, mIndex(index)
 	, mbUp(false)
 	, mbDown(false)
@@ -926,12 +1072,24 @@ void AT5200ControllerController::UpdatePot(int index) {
 	// breaks.
 
 	int& pot = mPot[index];
-	if (pot < (1 << 16))
-		pot = (1 << 16);
-	else if (pot > (227 << 16))
-		pot = (227 << 16);
 
-	SetPotPosition(index != 0, mbPotsEnabled ? pot >> 16 : 228);
+	if (mbTrackball) {
+		// Pengo barfs if the trackball returns values that are more than 80
+		// units from the center position.
+		if (pot < (38 << 16))
+			pot = (38 << 16);
+		else if (pot > (189 << 16))
+			pot = (189 << 16);
+
+		SetPotPosition(index != 0, mbPotsEnabled ? pot >> 16 : 114);
+	} else {
+		if (pot < (1 << 16))
+			pot = (1 << 16);
+		else if (pot > (227 << 16))
+			pot = (227 << 16);
+
+		SetPotPosition(index != 0, mbPotsEnabled ? pot >> 16 : 228);
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////

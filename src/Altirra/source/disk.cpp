@@ -27,6 +27,11 @@
 #include "console.h"
 #include "cpu.h"
 #include "simulator.h"
+#include "debuggerlog.h"
+
+ATDebuggerLogChannel g_ATLCDiskImage(false, false, "DISKIMAGE", "Disk image load details");
+ATDebuggerLogChannel g_ATLCDisk(false, false, "DISK", "Disk activity");
+ATDebuggerLogChannel g_ATLCDiskCmd(false, false, "DISKCMD", "Disk commands");
 
 extern ATSimulator g_sim;
 
@@ -101,6 +106,10 @@ namespace {
 	};
 
 	static const int kAutoSaveDelay = 3579545;		// 2 seconds
+
+	static const uint8 kDefaultPERCOM[]={
+		0x28, 0x01, 0x00, 0x12, 0x00, 0x00, 0x00, 0x80, 0xFF, 0x00, 0x00, 0x00
+	};
 }
 
 ATDiskEmulator::ATDiskEmulator()
@@ -127,14 +136,15 @@ void ATDiskEmulator::Init(int unit, IATDiskActivity *act, ATScheduler *sched) {
 	mSectorBreakpoint = -1;
 	mpRotationalEvent = mpScheduler->AddEvent(kCyclesPerDiskRotation, this, kATDiskEventRotation);
 	mbWriteEnabled = false;
-	mbDirty = false;
-	mbDiskFormatDirty = false;
 	mbErrorIndicatorPhase = false;
+	mbAccessed = false;
 	mbHasDiskSource = false;
+
+	memcpy(mPERCOM, kDefaultPERCOM, 12);
 }
 
 bool ATDiskEmulator::IsDirty() const {
-	return mbDirty;
+	return mpDiskImage && mpDiskImage->IsDirty();
 }
 
 void ATDiskEmulator::SetWriteFlushMode(bool writeEnabled, bool autoFlush) {
@@ -142,14 +152,19 @@ void ATDiskEmulator::SetWriteFlushMode(bool writeEnabled, bool autoFlush) {
 	mbAutoFlush = autoFlush;
 
 	if (writeEnabled && autoFlush) {
-		if (mbDirty)
+		if (IsDirty())
 			QueueAutoSave();
 	} else {
-		if (mpAutoSaveEvent) {
-			mpScheduler->RemoveEvent(mpAutoSaveEvent);
-			mpAutoSaveEvent = NULL;
-		}
+		mpScheduler->UnsetEvent(mpAutoSaveEvent);
+		mpScheduler->UnsetEvent(mpAutoSaveErrorEvent);
+
+		mbErrorIndicatorPhase = false;
+		mpActivity->OnDiskActivity(mUnit + 1, false, 0);
 	}
+}
+
+void ATDiskEmulator::ClearAccessedFlag() {
+	mbAccessed = false;
 }
 
 void ATDiskEmulator::Flush() {
@@ -184,13 +199,18 @@ void ATDiskEmulator::Reset() {
 	mFDCStatus = 0xFF;
 	mActiveCommand = 0;
 
-	for(VirtSectors::iterator it(mVirtSectorInfo.begin()), itEnd(mVirtSectorInfo.end()); it!=itEnd; ++it) {
-		VirtSectorInfo& vsi = *it;
+	for(ExtVirtSectors::iterator it(mExtVirtSectors.begin()), itEnd(mExtVirtSectors.end()); it!=itEnd; ++it) {
+		ExtVirtSector& vsi = *it;
 
 		vsi.mPhantomSectorCounter = 0;
 	}
 
 	mWeakBitLFSR = 1;
+
+	if (IsDiskLoaded())
+		ComputePERCOMBlock();
+	else
+		memcpy(mPERCOM, kDefaultPERCOM, 12);
 }
 
 void ATDiskEmulator::LoadDisk(const wchar_t *s) {
@@ -203,63 +223,9 @@ void ATDiskEmulator::LoadDisk(const wchar_t *origPath, const wchar_t *imagePath,
 	UnloadDisk();
 
 	try {
-		sint64 fileSize = stream.Length();
+		mpDiskImage = ATLoadDiskImage(origPath, imagePath, stream);
 
-		if (fileSize <= 65535 * 128 && !vdwcsicmp(VDFileSplitExt(imagePath), L".xfd")) {
-			sint32 len = (sint32)fileSize;
-
-			mDiskImage.resize(len);
-			stream.Read(mDiskImage.data(), len);
-
-			mBootSectorCount = 3;
-			mSectorSize = 128;
-			mTotalSectorCount = len >> 7;
-			mReWriteOffset = 0;
-
-			mPhysSectorInfo.resize(mTotalSectorCount);
-			mVirtSectorInfo.resize(mTotalSectorCount);
-
-			for(int i=0; i<mTotalSectorCount; ++i) {
-				PhysSectorInfo& psi = mPhysSectorInfo[i];
-				VirtSectorInfo& vsi = mVirtSectorInfo[i];
-
-				vsi.mStartPhysSector = i;
-				vsi.mNumPhysSectors = 1;
-				vsi.mPhantomSectorCounter = 0;
-
-				psi.mOffset		= 128*i;
-				psi.mSize		= 128;
-				psi.mFDCStatus	= 0xFF;
-				psi.mRotPos		= (float)kTrackInterleave18[i % 18] / 18.0f;
-				psi.mForcedOrder = -1;
-				psi.mWeakDataOffset = -1;
-				psi.mbDirty		= false;
-			}
-		} else {
-			sint32 len = VDClampToSint32(stream.Length()) - 16;
-			
-			uint8 header[16];
-
-			mDiskImage.resize(len);
-			stream.Read(header, 16);
-			stream.Read(mDiskImage.data(), len);
-
-			mbAccurateSectorPrediction = false;
-
-			if (header[0] == 0xF9 || header[0] == 0xFA) {
-				LoadDiskDCM(stream, len, origPath, header);
-			} else if (header[0] == 'A' && header[1] == 'T' && header[2] == '8' && header[3] == 'X') {
-				LoadDiskATX(stream, len, header);
-			} else if (header[2] == 'P' && header[3] == '2') {
-				LoadDiskP2(stream, len, header);
-			} else if (header[2] == 'P' && header[3] == '3') {
-				LoadDiskP3(stream, len, header);
-			} else if (header[0] == 0x96 && header[1] == 0x02) {
-				LoadDiskATR(stream, len, origPath, header);
-			} else {
-				throw MyError("Disk image \"%ls\" is corrupt or uses an unsupported format.", VDFileSplitPath(origPath));
-			}
-		}
+		InitSectorInfoArrays();
 
 		mPath = origPath;
 	} catch(const MyError&) {
@@ -269,750 +235,23 @@ void ATDiskEmulator::LoadDisk(const wchar_t *origPath, const wchar_t *imagePath,
 
 	mCurrentTrack = 0;
 	ComputeSectorsPerTrack();
+	ComputePERCOMBlock();
 	mbEnabled = true;
 	mbWriteEnabled = false;
 	mbAutoFlush = false;
-	mbDirty = false;
-	mbDiskFormatDirty = false;
 	mbHasDiskSource = true;
 }
 
-class ATInvalidDiskFormatException : public MyError {
-public:
-	ATInvalidDiskFormatException(const wchar_t *path)
-		: MyError("Disk image \"%ls\" is corrupt or uses an unsupported format.", VDFileSplitPath(path))
-	{
-	}
-};
-
-void ATDiskEmulator::LoadDiskDCM(IVDRandomAccessStream& stream, uint32 len, const wchar_t *origPath, const uint8 *header) {
-	stream.Seek(0);
-	mDiskImage.clear();
-
-	// read passes
-	uint8 sectorBuffer[256] = {0};
-
-	VirtSectorInfo dummySector;
-	dummySector.mNumPhysSectors = 0;
-	dummySector.mPhantomSectorCounter = 0;
-	dummySector.mStartPhysSector = 0;
-
-	uint32 mainSectorSize = 128;
-	uint32 mainSectorCount = 0;
-
-	enum {
-		kInterleaveSD,
-		kInterleaveDD,
-		kInterleaveED
-	};
-
-	uint8 interleaveMode = kInterleaveSD;
-
-	for(;;) {
-		struct PassHeader {
-			uint8 mArchiveType;
-			uint8 mPassInfo;
-			uint8 mSectorLo;
-			uint8 mSectorHi;
-		} passHeader;
-
-		stream.Read(&passHeader, sizeof(PassHeader));
-
-		if (passHeader.mArchiveType != 0xF9 && passHeader.mArchiveType != 0xFA)
-			throw ATInvalidDiskFormatException(origPath);
-
-		uint32 sectorSize = (passHeader.mPassInfo & 0x60) == 0x20 ? 256 : 128;
-		uint32 sectorNum = passHeader.mSectorLo + 256*passHeader.mSectorHi;
-
-		switch(passHeader.mPassInfo & 0x60) {
-			case 0x00:
-				mainSectorCount = 720;
-				interleaveMode = kInterleaveSD;
-				break;
-			case 0x40:
-				mainSectorCount = 1040;
-				interleaveMode = kInterleaveED;
-				break;
-			case 0x20:
-				mainSectorCount = 720;
-				interleaveMode = kInterleaveDD;
-				break;
-		}
-
-		mainSectorSize = sectorSize;
-
-		for(;;) {
-			if (!sectorNum)
-				throw ATInvalidDiskFormatException(origPath);
-
-			uint8 contentType;
-			stream.Read(&contentType, 1);
-
-			if ((contentType & 0x7F) == 0x45)
-				break;
-
-			uint8 c;
-			switch(contentType & 0x7F) {
-				case 0x41:		// modify begin
-					stream.Read(&c, 1);
-					stream.Read(sectorBuffer, c + 1);
-					for(uint32 i=0, j=c; i < j; ++i, --j) {
-						std::swap(sectorBuffer[i], sectorBuffer[j]);
-					}
-					break;
-				case 0x42:		// 128 byte DOS sector
-					stream.Read(sectorBuffer + 123, 5);
-					memset(sectorBuffer, sectorBuffer[123], 123);
-					break;
-				case 0x43:		// compressed sector
-					{
-						uint32 pos = 0;
-						uint8 offset;
-						bool compressed = false;
-						bool first = true;
-						while(pos < sectorSize) {
-							stream.Read(&offset, 1);
-
-							// offset cannot exceed sectorSize, ever.
-							if (offset > sectorSize)
-								throw ATInvalidDiskFormatException(origPath);
-
-							// offset cannot go backwards, except in two specific cases:
-							//  - offset is 0, pos is 0 (null span)
-							//  - offset is 0, sectorSize is 256 (fill to end of DD sector)
-							if (offset < pos && (offset || (pos && sectorSize != 256)))
-								throw ATInvalidDiskFormatException(origPath);
-
-							uint32 spanLen = (offset || first ? offset : sectorSize) - pos;
-							if (compressed) {
-								stream.Read(&c, 1);
-								memset(sectorBuffer + pos, c, spanLen);
-							} else if (spanLen) {
-								stream.Read(sectorBuffer + pos, spanLen);
-							}
-
-							pos += spanLen;
-							compressed = !compressed;
-							first = false;
-						}
-					}
-					break;
-				case 0x44:		// modify end
-					stream.Read(&c, 1);
-					if (c >= sectorSize)
-						throw ATInvalidDiskFormatException(origPath);
-					stream.Read(sectorBuffer + c, sectorSize - c);
-					break;
-				case 0x46:		// repeat last sector
-					break;
-				case 0x47:		// uncompressed sector
-					stream.Read(sectorBuffer, sectorSize);
-					break;
-
-				default:
-					throw ATInvalidDiskFormatException(origPath);
-			}
-
-			// create entry for sector
-			if (mVirtSectorInfo.size() <= sectorNum)
-				mVirtSectorInfo.resize(sectorNum + 1, dummySector);
-
-			VirtSectorInfo& vsi = mVirtSectorInfo[sectorNum - 1];
-			vsi.mNumPhysSectors = 1;
-			vsi.mPhantomSectorCounter = 0;
-			vsi.mStartPhysSector = mPhysSectorInfo.size();
-
-			PhysSectorInfo& psi =  mPhysSectorInfo.push_back();
-			psi.mOffset = mDiskImage.size();
-			psi.mSize = sectorNum <= 3 ? 128 : sectorSize;
-			psi.mRotPos = 0;
-			psi.mFDCStatus = 0xFF;
-			psi.mForcedOrder = -1;
-			psi.mWeakDataOffset = -1;
-			psi.mbDirty = false;
-
-			switch(interleaveMode) {
-				case kInterleaveSD:
-					psi.mRotPos = (float)kTrackInterleave18[(sectorNum - 1) % 18] / 18.0f;
-					break;
-
-				case kInterleaveDD:
-					psi.mRotPos = (float)kTrackInterleaveDD[(sectorNum - 1) % 18] / 18.0f;
-					break;
-
-				case kInterleaveED:
-					psi.mRotPos = (float)kTrackInterleave26[(sectorNum - 1) % 26] / 26.0f;
-					break;
-			}
-
-			mDiskImage.insert(mDiskImage.end(), sectorBuffer, sectorBuffer + psi.mSize);
-
-			// increment sector number if sequential flag is set, else read new sector number
-			if (contentType & 0x80) {
-				++sectorNum;
-			} else {
-				uint8 newSec[2];
-				stream.Read(newSec, 2);
-				sectorNum = VDReadUnalignedLEU16(newSec);
-			}
-		}
-
-		if (passHeader.mPassInfo & 0x80)
-			break;
-	}
-
-	// fill in any missing sectors
-	if (mVirtSectorInfo.size() < mainSectorCount)
-		mVirtSectorInfo.resize(mainSectorCount, dummySector);
-
-	for(VirtSectors::iterator it(mVirtSectorInfo.begin()), itEnd(mVirtSectorInfo.end()); it != itEnd; ++it) {
-		VirtSectorInfo& vsi = *it;
-
-		if (!vsi.mNumPhysSectors) {
-			vsi.mNumPhysSectors = 1;
-			vsi.mStartPhysSector = mPhysSectorInfo.size();
-
-			uint32 secNum = (it - mVirtSectorInfo.begin()) + 1;
-
-			PhysSectorInfo& psi =  mPhysSectorInfo.push_back();
-			psi.mOffset = mDiskImage.size();
-			psi.mSize = secNum <= 3 ? 128 : mainSectorSize;
-			psi.mFDCStatus = 0xFF;
-			psi.mForcedOrder = -1;
-			psi.mWeakDataOffset = -1;
-			psi.mbDirty = false;
-
-			switch(interleaveMode) {
-				case kInterleaveSD:
-					psi.mRotPos = (float)kTrackInterleave18[(secNum - 1) % 18] / 18.0f;
-					break;
-
-				case kInterleaveDD:
-					psi.mRotPos = (float)kTrackInterleaveDD[(secNum - 1) % 18] / 18.0f;
-					break;
-
-				case kInterleaveED:
-					psi.mRotPos = (float)kTrackInterleave26[(secNum - 1) % 26] / 26.0f;
-					break;
-			}
-
-			mDiskImage.resize(mDiskImage.size() + psi.mSize, 0);
-		}
-	}
-
-	mBootSectorCount = 3;
-	mSectorSize = mainSectorSize;
-	mTotalSectorCount = mVirtSectorInfo.size();
-	mReWriteOffset = -1;
-}
-
-namespace {
-	struct ATXHeader {
-		uint8	mSignature[4];
-		uint16	mVersionMajor;
-		uint16	mVersionMinor;
-		uint16	mFlags;
-		uint16	mMysteryDataCount;
-		uint8	mFill1[16];
-		uint32	mTrackDataOffset;
-		uint32	mMysteryDataOffset;
-		uint8	mFill2[12];
-	};
-
-	struct ATXTrackHeader {
-		uint32	mSize;
-		uint16	mType;
-		uint16	mReserved06;
-		uint8	mTrackNum;
-		uint8	mReserved09;
-		uint16	mNumSectors;
-		uint8	mFill2[5];
-		uint8	mMysteryIndex;
-		uint8	mFill3[2];
-		uint32	mDataOffset;
-		uint8	mFill4[8];
-	};
-
-	struct ATXSectorListHeader {
-		uint32	mSize;
-		uint8	mType;
-		uint8	mReserved05[3];
-	};
-
-	struct ATXSectorHeader {
-		uint8	mIndex;
-		uint8	mFDCStatus;		// not inverted
-		uint16	mTimingOffset;
-		uint32	mDataOffset;
-	};
-
-	struct ATXSectorExtraData {
-		enum {
-			kFlagWeakBits = 0x00000008
-		};
-
-		uint32	mFlags;
-		uint8	mUnknown2;
-		uint8	mSectorIndex;
-		uint16	mWeakDataOffset;	// starting byte at which to inject garbage
-	};
-}
-
-void ATDiskEmulator::LoadDiskATX(IVDRandomAccessStream& stream, uint32 len, const uint8 *header) {
-	ATXHeader atxhdr;
-	stream.Seek(0);
-	stream.Read(&atxhdr, sizeof atxhdr);
-
-	stream.Seek(atxhdr.mTrackDataOffset);
-
-	mDiskImage.clear();
-	mBootSectorCount = 3;
-	mSectorSize = 128;
-	mTotalSectorCount = 720;
-
-	sint64 imageSize = stream.Length();
-
-	vdfastvector<ATXSectorHeader> sectorHeaders;
-	vdfastvector<int> phySectorLookup;
-	for(uint32 i=0; i<40; ++i) {
-		ATXTrackHeader trkhdr;
-		sint64 trackBaseOffset = stream.Pos();
-
-		stream.Read(&trkhdr, sizeof trkhdr);
-		ATConsolePrintf("track %d [%d] at %04x\n", i, trkhdr.mTrackNum, (uint32)trackBaseOffset);
-
-		// validate track
-		if (trackBaseOffset + trkhdr.mSize > imageSize)
-			throw MyError("Invalid ATX image: Track header at %08x extends beyond end of file.", (uint32)trackBaseOffset);
-
-		if (trkhdr.mType != 0)
-			throw MyError("Invalid ATX image: Track header at %08x has the wrong type.", (uint32)trackBaseOffset);
-
-		// read sector list header
-		const sint64 sectorListOffset = trackBaseOffset + trkhdr.mDataOffset;
-		stream.Seek(sectorListOffset);
-
-		ATXSectorListHeader sectorListHeader;
-		stream.Read(&sectorListHeader, sizeof sectorListHeader);
-
-		if (sectorListHeader.mType != 1)
-			throw MyError("Invalid ATX image: Sector list header at %08x has the wrong type.", (uint32)sectorListOffset);
-
-		// read sector headers
-		sectorHeaders.resize(trkhdr.mNumSectors);
-		stream.Read(sectorHeaders.data(), sizeof(sectorHeaders[0])*trkhdr.mNumSectors);
-
-		phySectorLookup.clear();
-		phySectorLookup.resize(trkhdr.mNumSectors, -1);
-
-		uint32 secDataOffset = mDiskImage.size();
-		uint32 sectorsWithExtraData = 0;
-		uint32 highestEnd = 0;
-		for(uint32 j=0; j<18; ++j) {
-			mVirtSectorInfo.push_back();
-			VirtSectorInfo& vsi = mVirtSectorInfo.back();
-
-			vsi.mStartPhysSector = mPhysSectorInfo.size();
-			vsi.mNumPhysSectors = 0;
-			vsi.mPhantomSectorCounter = 0;
-
-			for(uint32 k=0; k<trkhdr.mNumSectors; ++k) {
-				const ATXSectorHeader& sechdr = sectorHeaders[k];
-
-				if (sechdr.mIndex != j + 1)
-					continue;
-
-				if (sechdr.mFDCStatus & 0x40)
-					++sectorsWithExtraData;
-
-				// Missing sectors do not have data.
-				if (!(sechdr.mFDCStatus & 0x10)) {
-					uint32 dataEnd = sechdr.mDataOffset + 128;
-					if (dataEnd > trkhdr.mSize)
-						throw MyError("Invalid protected disk: sector extends outside of track.");
-
-					if (highestEnd < dataEnd)
-						highestEnd = dataEnd;
-				}
-
-				phySectorLookup[k] = mPhysSectorInfo.size();
-
-				mPhysSectorInfo.push_back();
-				PhysSectorInfo& psi = mPhysSectorInfo.back();
-
-				psi.mFDCStatus = ~sechdr.mFDCStatus | 0xc0;		// purpose of bit 7 is unknown
-				psi.mOffset = secDataOffset + sechdr.mDataOffset;
-				psi.mSize = sechdr.mFDCStatus & 0x10 ? 0 : 128;
-				psi.mRotPos = (float)sechdr.mTimingOffset / (float)kBytesPerTrack;
-				psi.mForcedOrder = -1;
-				psi.mWeakDataOffset = -1;
-				psi.mbDirty = false;
-				++vsi.mNumPhysSectors;
-
-				ATConsolePrintf("Track %2d sector %2d (vsec=%3d) (%d): %02x %02x %04x %04x\n", i, k, i*18 + sechdr.mIndex, sechdr.mIndex
-					, sechdr.mIndex
-					, sechdr.mFDCStatus
-					, sechdr.mTimingOffset
-					, sechdr.mDataOffset
-				);
-			}
-		}
-
-		// read sector data
-		stream.Seek(trackBaseOffset);
-		size_t offset = mDiskImage.size();
-		mDiskImage.resize(offset + highestEnd);
-		stream.Read(mDiskImage.data() + offset, highestEnd);
-
-		// read extra sector data
-		ATXSectorExtraData extraData;
-		for(uint32 j=0; j<sectorsWithExtraData; ++j) {
-			stream.Read(&extraData, sizeof extraData);
-			ATConsolePrintf("    extra sector data %08X %02X | sector %d | weak offset %04x\n", extraData.mFlags, extraData.mUnknown2, extraData.mSectorIndex, extraData.mWeakDataOffset);
-
-			if (extraData.mSectorIndex >= trkhdr.mNumSectors)
-				continue;
-
-			int phyIndex = phySectorLookup[extraData.mSectorIndex];
-			if (phyIndex < 0) {
-				VDASSERT(phyIndex >= 0);
-				continue;
-			}
-
-			PhysSectorInfo& psi = mPhysSectorInfo[phyIndex];
-			if (extraData.mFlags & ATXSectorExtraData::kFlagWeakBits) {
-				if (extraData.mWeakDataOffset < psi.mSize)
-					psi.mWeakDataOffset = extraData.mWeakDataOffset;
-			}
-		}
-
-		stream.Seek(trackBaseOffset + trkhdr.mSize);
-	}
-
-	mbAccurateSectorPrediction = true;
-	mReWriteOffset = -1;
-}
-
-void ATDiskEmulator::LoadDiskP2(IVDRandomAccessStream& stream, uint32 len, const uint8 *header) {
-	mBootSectorCount = 3;
-	mSectorSize = 128;
-	mReWriteOffset = -1;
-
-	mTotalSectorCount = VDReadUnalignedBEU16(&header[0]);
-	ATConsolePrintf("total sector count: %d\n", mTotalSectorCount);
-
-	// read sector headers
-	for(int i=0; i<mTotalSectorCount; ++i) {
-		const uint8 *sectorhdr = &mDiskImage[(128+12) * i];
-
-		ATConsolePrintf("sector(%d) header: %02x %02x %02x %02x %02x %02x %02x %02x\n", i+1, sectorhdr[0], sectorhdr[1], sectorhdr[2], sectorhdr[3], sectorhdr[4], sectorhdr[5], sectorhdr[6], sectorhdr[7]);
-
-		mPhysSectorInfo.push_back();
-		PhysSectorInfo& psi = mPhysSectorInfo.back();
-
-		psi.mOffset		= (128+12)*i+12;
-		psi.mSize		= 128;
-		psi.mFDCStatus	= sectorhdr[1];
-		psi.mRotPos		= (float)kTrackInterleave18[i % 18] / 18.0f;
-		psi.mForcedOrder = -1;
-		psi.mWeakDataOffset = -1;
-		psi.mbDirty		= false;
-
-		if (!(psi.mFDCStatus & 0x10)) {
-			psi.mSize = 0;
-		}
-
-		mVirtSectorInfo.push_back();
-		VirtSectorInfo& vsi = mVirtSectorInfo.back();
-
-		vsi.mStartPhysSector = mPhysSectorInfo.size() - 1;
-		vsi.mNumPhysSectors = 1;
-		vsi.mPhantomSectorCounter = 0;
-
-		uint16 phantomSectorCount = sectorhdr[5];
-		if (phantomSectorCount) {
-			vsi.mNumPhysSectors = phantomSectorCount + 1;
-
-			mTotalSectorCount -= phantomSectorCount;
-
-			for(uint32 j=0; j<phantomSectorCount; ++j) {
-				uint32 phantomSectorOffset = mTotalSectorCount + sectorhdr[7 + j] - 1;
-				uint32 phantomSectorByteOffset = (128+12) * phantomSectorOffset;
-				if (phantomSectorByteOffset + 128 > mDiskImage.size())
-					throw MyError("Invalid protected disk.");
-				const uint8 *sectorhdr2 = &mDiskImage[phantomSectorByteOffset];
-
-				mPhysSectorInfo.push_back();
-				PhysSectorInfo& psi = mPhysSectorInfo.back();
-
-				psi.mOffset		= phantomSectorByteOffset+12;
-				psi.mSize		= 128;
-				psi.mFDCStatus	= sectorhdr2[1];
-				psi.mRotPos		= (float)kTrackInterleave18[i % 18] / 18.0f + (1.0f / ((float)phantomSectorCount + 1)) * (j+1);
-				psi.mForcedOrder = -1;
-				psi.mWeakDataOffset = -1;
-				psi.mbDirty		= false;
-
-				if (!(psi.mFDCStatus & 0x10)) {
-					psi.mSize = 0;
-				}
-			}
-		}
-	}
-}
-
-void ATDiskEmulator::LoadDiskP3(IVDRandomAccessStream& stream, uint32 len, const uint8 *header) {
-	mBootSectorCount = 3;
-	mSectorSize = 128;
-	mReWriteOffset = -1;
-
-	mTotalSectorCount = VDReadUnalignedBEU16(&header[6]);
-
-	// read sector headers
-	for(int i=0; i<mTotalSectorCount; ++i) {
-		const uint8 *sectorhdr = &mDiskImage[(128+12) * i];
-		uint32 phantomSectorCount = sectorhdr[5];
-
-		ATConsolePrintf("sector(%d) header: %02x %02x %02x %02x %02x | %02x: %02x %02x %02x %02x %02x %02x\n"
-			, i+1
-			, sectorhdr[0]
-			, sectorhdr[1]
-			, sectorhdr[2]
-			, sectorhdr[3]
-			, sectorhdr[4]
-			, sectorhdr[5]
-			, sectorhdr[6]
-			, sectorhdr[7]
-			, sectorhdr[8]
-			, sectorhdr[9]
-			, sectorhdr[10]
-			, sectorhdr[12]
-			);
-
-		float rotationalPosition = (float)kTrackInterleave18[i % 18] / 18.0f; 
-		float rotationalIncrement = phantomSectorCount ? (1.0f / (int)phantomSectorCount) : 0.0f;
-
-		mVirtSectorInfo.push_back();
-		VirtSectorInfo& vsi = mVirtSectorInfo.back();
-
-		vsi.mStartPhysSector = mPhysSectorInfo.size();
-		vsi.mNumPhysSectors = phantomSectorCount + 1;
-		vsi.mPhantomSectorCounter = 0;
-
-		for(uint32 j=0; j<=phantomSectorCount; ++j) {
-			uint8 idx = sectorhdr[6 + j];
-
-			uint32 phantomSectorOffset = idx ? mTotalSectorCount + idx - 1 : i;
-			uint32 phantomSectorByteOffset = (128+12) * phantomSectorOffset;
-			if (phantomSectorByteOffset + 128 > mDiskImage.size())
-				throw MyError("Invalid protected disk.");
-			const uint8 *sectorhdr2 = &mDiskImage[phantomSectorByteOffset];
-
-			mPhysSectorInfo.push_back();
-			PhysSectorInfo& psi = mPhysSectorInfo.back();
-
-			psi.mOffset		= phantomSectorByteOffset+12;
-			psi.mSize		= 128;
-			psi.mFDCStatus	= sectorhdr2[1];
-			psi.mRotPos		= rotationalPosition;
-			psi.mForcedOrder = -1;
-			psi.mWeakDataOffset = -1;
-			psi.mbDirty		= false;
-
-			if (!(psi.mFDCStatus & 0x10)) {
-				psi.mSize = 0;
-			}
-
-			rotationalPosition += rotationalIncrement;
-		}
-	}
-}
-
-void ATDiskEmulator::LoadDiskATR(IVDRandomAccessStream& stream, uint32 len, const wchar_t *origPath, const uint8 *header) {
-	mSectorSize = header[4] + 256*header[5];
-
-	int imageBootSectorCount = 0;
-	bool packedBootSectors = false;
-
-	if (mSectorSize <= 256) {
-		mBootSectorCount = 3;
-		imageBootSectorCount = 3;
-
-		// Check if this is a FUBARed DD disk where the boot sectors are 256 bytes.
-		// We assume this is the case if the paragraphs count works out for that.
-		if (mSectorSize == 256) {
-			uint32 headerParas = header[2] + 256*header[3];
-
-			if (!(headerParas & 0x0f)) {
-				imageBootSectorCount = 0;
-
-				// Okay, now we need to check for REALLY screwed up images where the
-				// first three sectors are stored back to back, followed by a 192 byte
-				// section of nulls.
-				bool slotTwoEmpty = true;
-
-				for(int i=0; i<128; ++i) {
-					if (mDiskImage[16 + 128 + i]) {
-						slotTwoEmpty = false;
-						break;
-					}
-				}
-
-				bool slotFiveEmpty = true;
-
-				for(int i=0; i<128; ++i) {
-					if (mDiskImage[16 + 128*4 + i]) {
-						slotFiveEmpty = false;
-						break;
-					}
-				}
-
-				if (!slotTwoEmpty && slotFiveEmpty)
-					packedBootSectors = true;
-			}
-		}
-	} else
-		mBootSectorCount = 0;
-
-	if (mSectorSize > 512)
-		throw MyError("Disk image \"%ls\" uses an unsupported sector size of %u bytes.", VDFileSplitPath(origPath), mSectorSize);
-
-	mReWriteOffset = 16;
-
-	mTotalSectorCount = (len - 128*imageBootSectorCount) / mSectorSize + imageBootSectorCount;
-
-	ComputeSectorsPerTrack();	// needed earlier for interleave
-
-	mPhysSectorInfo.resize(mTotalSectorCount);
-	mVirtSectorInfo.resize(mTotalSectorCount);
-
-	for(int i=0; i<mTotalSectorCount; ++i) {
-		PhysSectorInfo& psi = mPhysSectorInfo[i];
-		VirtSectorInfo& vsi = mVirtSectorInfo[i];
-
-		vsi.mStartPhysSector = i;
-		vsi.mNumPhysSectors = 1;
-		vsi.mPhantomSectorCounter = 0;
-
-		if (packedBootSectors && i < 3) {
-			psi.mOffset		= 128*i;
-		} else {
-			psi.mOffset		= i < imageBootSectorCount ? 128*i : 128*imageBootSectorCount + mSectorSize*(i-imageBootSectorCount);
-		}
-		psi.mSize		= i < mBootSectorCount ? 128 : mSectorSize;
-		psi.mFDCStatus	= 0xFF;
-		psi.mRotPos		= mSectorSize >= 256 ? (float)kTrackInterleaveDD[i % 18] / 18.0f
-			: mSectorsPerTrack >= 26 ? (float)kTrackInterleave26[i % 26] / 26.0f
-			: (float)kTrackInterleave18[i % 18] / 18.0f;
-		psi.mForcedOrder = -1;
-		psi.mWeakDataOffset = -1;
-		psi.mbDirty		= false;
-	}
-}
-
-struct ATDiskEmulator::SortDirtySectors {
-	bool operator()(const PhysSectorInfo *x, const PhysSectorInfo *y) const {
-		return x->mOffset < y->mOffset;
-	}
-};
-
 void ATDiskEmulator::UpdateDisk() {
-	if (mReWriteOffset < 0 || !mbHasDiskSource)
+	if (!mpDiskImage->Flush())
 		throw MyError("The current disk image cannot be updated.");
-
-	if (mbDiskFormatDirty) {
-		SaveDisk(VDStringW(mPath).c_str());
-		return;
-	}
-
-	// build a list of dirty sectors
-	typedef vdfastvector<PhysSectorInfo *> DirtySectors;
-	DirtySectors dirtySectors;
-
-	for(PhysSectors::iterator it(mPhysSectorInfo.begin()), itEnd(mPhysSectorInfo.end()); it != itEnd; ++it) {
-		PhysSectorInfo *psi = &*it;
-
-		if (psi->mbDirty)
-			dirtySectors.push_back(psi);
-	}
-
-	std::sort(dirtySectors.begin(), dirtySectors.end(), SortDirtySectors());
-
-	VDFile f(mPath.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kOpenExisting);
-
-	DirtySectors::const_iterator it(dirtySectors.begin()), itEnd(dirtySectors.end());
-	while(it != itEnd) {
-		PhysSectorInfo *psi = *it;
-		uint32 writeOffset = psi->mOffset;
-		uint32 writeLen = psi->mSize;
-
-		while(++it != itEnd) {
-			psi = *it;
-
-			if (psi->mOffset != writeOffset + writeLen)
-				break;
-
-			writeLen += psi->mSize;
-		}
-
-		f.seek(writeOffset + mReWriteOffset);
-		f.write(&mDiskImage[writeOffset], writeLen);
-	}
-
-	for(it = dirtySectors.begin(); it != itEnd; ++it) {
-		PhysSectorInfo *psi = *it;
-
-		psi->mbDirty = false;
-	}
-
-	mbDirty = false;
 }
 
 void ATDiskEmulator::SaveDisk(const wchar_t *s) {
-	// scan for virtual sectors with errors or phantoms -- we can't handle that.
-	for(int i=0; i<mTotalSectorCount; ++i) {
-		const VirtSectorInfo& vsi = mVirtSectorInfo[i];
-
-		if (vsi.mNumPhysSectors != 1)
-			throw MyError("Cannot save a disk which contains phantom or missing sectors.");
-	}
-
-	uint32 physCount = mPhysSectorInfo.size();
-	for(uint32 i=0; i<physCount; ++i) {
-		const PhysSectorInfo& psi = mPhysSectorInfo[i];
-
-		if (psi.mFDCStatus != 0xFF)
-			throw MyError("Cannot save a disk which contains deliberate sector errors.");
-	}
-
-	// create ATR header
-	uint8 header[16] = {0};
-	uint32 paras = mDiskImage.size() >> 4;
-	VDWriteUnalignedLEU16(header+0, 0x0296);
-	VDWriteUnalignedLEU16(header+2, (uint16)paras);
-	VDWriteUnalignedLEU16(header+4, mSectorSize);
-	header[6] = (uint8)(paras >> 16);
-
-	VDFile f(s, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
-	f.write(header, 16);
-
-	for(int i=0; i<mTotalSectorCount; ++i) {
-		const VirtSectorInfo& vsi = mVirtSectorInfo[i];
-		const PhysSectorInfo& psi = mPhysSectorInfo[vsi.mStartPhysSector];
-
-		f.write(&mDiskImage[psi.mOffset], psi.mSize);
-	}
-
-	for(uint32 i=0; i<physCount; ++i) {
-		PhysSectorInfo& psi = mPhysSectorInfo[i];
-		psi.mbDirty = false;
-	}
+	mpDiskImage->SaveATR(s);
 
 	mPath = s;
-	mbDirty = false;
-	mbDiskFormatDirty = false;
 	mbHasDiskSource = true;
-	mReWriteOffset = 16;
 }
 
 void ATDiskEmulator::CreateDisk(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize) {
@@ -1025,36 +264,16 @@ void ATDiskEmulator::CreateDisk(uint32 sectorCount, uint32 bootSectorCount, uint
 }
 
 void ATDiskEmulator::FormatDisk(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize) {
-	mBootSectorCount = bootSectorCount;
-	mSectorSize = sectorSize;
-	mTotalSectorCount = sectorCount;
+	mpDiskImage.reset();
 
-	mDiskImage.clear();
-	mDiskImage.resize(128 * bootSectorCount + sectorSize * (sectorCount - bootSectorCount), 0);
+	mpDiskImage = ATCreateDiskImage(sectorCount, bootSectorCount, sectorSize);
 
-	mPhysSectorInfo.resize(mTotalSectorCount);
-	mVirtSectorInfo.resize(mTotalSectorCount);
+	if (mbHasDiskSource)
+		mpDiskImage->SetPathATR(mPath.c_str());
 
+	InitSectorInfoArrays();
 	ComputeSectorsPerTrack();
-
-	for(int i=0; i<mTotalSectorCount; ++i) {
-		PhysSectorInfo& psi = mPhysSectorInfo[i];
-		VirtSectorInfo& vsi = mVirtSectorInfo[i];
-
-		vsi.mStartPhysSector = i;
-		vsi.mNumPhysSectors = 1;
-		vsi.mPhantomSectorCounter = 0;
-
-		psi.mOffset		= i < mBootSectorCount ? 128*i : 128*mBootSectorCount + mSectorSize*(i-mBootSectorCount);
-		psi.mSize		= i < mBootSectorCount ? 128 : + mSectorSize;
-		psi.mFDCStatus	= 0xFF;
-		psi.mRotPos		= mSectorSize >= 256 ? (float)kTrackInterleaveDD[i % 18] / 18.0f
-			: mSectorsPerTrack >= 26 ? (float)kTrackInterleave26[i % 26] / 26.0f
-			: (float)kTrackInterleave18[i % 18] / 18.0f;
-	}
-
-	mbDirty = true;
-	mbDiskFormatDirty = true;
+	ComputePERCOMBlock();
 
 	if (mbAutoFlush)
 		QueueAutoSave();
@@ -1063,13 +282,14 @@ void ATDiskEmulator::FormatDisk(uint32 sectorCount, uint32 bootSectorCount, uint
 void ATDiskEmulator::UnloadDisk() {
 	Flush();
 
+	mpDiskImage.reset();
+
 	mBootSectorCount = 0;
 	mSectorSize = 128;
 	mTotalSectorCount = 0;
 	mSectorsPerTrack = 1;
-	mDiskImage.clear();
-	mPhysSectorInfo.clear();
-	mVirtSectorInfo.clear();
+	mExtPhysSectors.clear();
+	mExtVirtSectors.clear();
 	mPath.clear();
 
 	SetAutoSaveError(false);
@@ -1097,18 +317,35 @@ uint32 ATDiskEmulator::GetSectorSize(uint16 sector) const {
 }
 
 uint32 ATDiskEmulator::GetSectorPhantomCount(uint16 sector) const {
-	return sector && sector <= mTotalSectorCount ? mVirtSectorInfo[sector - 1].mNumPhysSectors : 0;
+	if (!mpDiskImage)
+		return 0;
+
+	if (!sector || sector > mpDiskImage->GetVirtualSectorCount())
+		return 0;
+
+	ATDiskVirtualSectorInfo vsi;
+	mpDiskImage->GetVirtualSectorInfo(sector - 1, vsi);
+
+	return vsi.mNumPhysSectors;
 }
 
 float ATDiskEmulator::GetSectorTiming(uint16 sector, int phantomIdx) const {
-	if (!sector || sector > mTotalSectorCount)
+	if (!mpDiskImage)
 		return -1;
 
-	const VirtSectorInfo& vsi = mVirtSectorInfo[sector - 1];
+	if (!sector || sector > mpDiskImage->GetVirtualSectorCount())
+		return -1;
+
+	ATDiskVirtualSectorInfo vsi;
+	mpDiskImage->GetVirtualSectorInfo(sector - 1, vsi);
+
 	if (phantomIdx < 0 || (uint32)phantomIdx >= vsi.mNumPhysSectors)
 		return -1;
 
-	return mPhysSectorInfo[vsi.mStartPhysSector + phantomIdx].mRotPos;
+	ATDiskPhysicalSectorInfo psi;
+	mpDiskImage->GetPhysicalSectorInfo(vsi.mStartPhysSector + phantomIdx, psi);
+
+	return psi.mRotPos;
 }
 
 uint8 ATDiskEmulator::ReadSector(uint16 bufadr, uint16 len, uint16 sector, ATCPUEmulatorMemory *mpMem) {
@@ -1242,13 +479,15 @@ uint8 ATDiskEmulator::WriteSector(uint16 bufadr, uint16 len, uint16 sector, ATCP
 	}
 
 	// Look up physical sector and check length
-	const VirtSectorInfo& vsi = mVirtSectorInfo[sector - 1];
+	ATDiskVirtualSectorInfo vsi;
+	mpDiskImage->GetVirtualSectorInfo(sector - 1, vsi);
 	if (!vsi.mNumPhysSectors) {
 		// report device error
 		return 0x90;
 	}
 
-	PhysSectorInfo& psi = mPhysSectorInfo[vsi.mStartPhysSector];
+	ATDiskPhysicalSectorInfo psi;
+	mpDiskImage->GetPhysicalSectorInfo(vsi.mStartPhysSector, psi);
 
 	if (len > psi.mSize) {
 		// expected size is too long -- report timeout
@@ -1261,12 +500,19 @@ uint8 ATDiskEmulator::WriteSector(uint16 bufadr, uint16 len, uint16 sector, ATCP
 	}
 
 	// commit memory to disk
-	uint8 *dst = &mDiskImage[psi.mOffset];
-	for(uint32 i=0; i<len; ++i)
-		dst[i] = mpMem->ReadByte(bufadr+i);
+	uint8 buf[512];
 
-	psi.mbDirty = true;
-	mbDirty = true;
+	for(uint32 i=0; i<len; ++i)
+		buf[i] = mpMem->ReadByte(bufadr+i);
+
+	mpDiskImage->WritePhysicalSector(vsi.mStartPhysSector, buf, len);
+
+	mLastSector = sector;
+
+	if (mpActivity) {
+		mpActivity->OnDiskActivity(mUnit + 1, true, mLastSector);
+		mpActivity->OnDiskActivity(mUnit + 1, false, mLastSector);
+	}
 
 	if (mbAutoFlush)
 		QueueAutoSave();
@@ -1284,83 +530,30 @@ void ATDiskEmulator::ReadStatus(uint8 dst[5]) {
 }
 
 void ATDiskEmulator::ReadPERCOMBlock(uint8 dst[13]) {
-	// track count
-	dst[0] = 1;
-
-	// sectors per track
-	dst[2] = (uint8)(mTotalSectorCount >> 8);
-	dst[3] = (uint8)(mTotalSectorCount);
-
-	// handle special cases of actual disks
-	if (mBootSectorCount > 0) {
-		if (mSectorSize == 128) {
-			if (mTotalSectorCount == 720) {
-				// track count
-				dst[0] = 40;
-
-				// sectors per track
-				dst[2] = 18;
-				dst[3] = 0;
-			} else if (mTotalSectorCount == 1040) {
-				// track count
-				dst[0] = (uint8)((mTotalSectorCount + 25) / 26);
-
-				// sectors per track
-				dst[2] = 26;
-				dst[3] = 0;
-			}
-		} else if (mSectorSize == 256) {
-			if (mTotalSectorCount == 1440) {
-				// track count
-				dst[0] = (uint8)((mTotalSectorCount + 17) / 18);
-
-				// sectors per track
-				dst[2] = 18;
-				dst[3] = 0;
-			}
-		}
-	}
-
-	// step rate
-	dst[1] = 0;
-
-	// sides minus one
-	dst[4] = 0;
-
-	// record method
-	dst[5] = mSectorSize > 128 ? 4 : 0;
-
-	// bytes per sector
-	dst[6] = (uint8)(mSectorSize >> 8);
-	dst[7] = (uint8)mSectorSize;
-
-	// drive online
-	dst[8] = 0xFF;
-
-	// unused
-	dst[9] = 0;
-	dst[10] = 0;
-	dst[11] = 0;
+	memcpy(dst, mPERCOM, 12);
 	dst[12] = Checksum(dst, 12);
 }
 
 void ATDiskEmulator::SetForcedPhantomSector(uint16 sector, uint8 index, int order) {
-	if (!sector || sector >= mVirtSectorInfo.size())
+	if (!sector || sector >= mExtVirtSectors.size())
 		return;
 
-	const VirtSectorInfo& vsi = mVirtSectorInfo[sector - 1];
-	mPhysSectorInfo[vsi.mStartPhysSector + index].mForcedOrder = (sint8)order;
+	ATDiskVirtualSectorInfo vsi;
+	mpDiskImage->GetVirtualSectorInfo(sector - 1, vsi);
+
+	mExtPhysSectors[vsi.mStartPhysSector + index].mForcedOrder = (sint8)order;
 }
 
 int ATDiskEmulator::GetForcedPhantomSector(uint16 sector, uint8 index) {
-	if (!sector || sector >= mVirtSectorInfo.size())
+	if (!sector || sector >= mExtVirtSectors.size())
 		return -1;
 
-	const VirtSectorInfo& vsi = mVirtSectorInfo[sector - 1];
+	ATDiskVirtualSectorInfo vsi;
+	mpDiskImage->GetVirtualSectorInfo(sector - 1, vsi);
 	if (index >= vsi.mNumPhysSectors)
 		return -1;
 
-	return mPhysSectorInfo[vsi.mStartPhysSector + index].mForcedOrder;
+	return mExtPhysSectors[vsi.mStartPhysSector + index].mForcedOrder;
 }
 
 void ATDiskEmulator::OnScheduledEvent(uint32 id) {
@@ -1373,7 +566,7 @@ void ATDiskEmulator::OnScheduledEvent(uint32 id) {
 		if (mTransferOffset >= mTransferLength)
 			return;
 
-		mpPokey->ReceiveSIOByte(mSendPacket[mTransferOffset], mTransferOffset == 0 ? mTransferCyclesPerBitFirstByte : mTransferCyclesPerBit);
+		mpPokey->ReceiveSIOByte(mSendPacket[mTransferOffset], mTransferOffset == 0 ? mTransferCyclesPerBitFirstByte : mTransferCyclesPerBit, true);
 		++mTransferOffset;
 
 		// SIO barfs if the third byte is sent too quickly
@@ -1413,10 +606,11 @@ void ATDiskEmulator::OnScheduledEvent(uint32 id) {
 		if (mTransferOffset >= mTransferLength) {
 			UpdateRotationalCounter();
 
+			g_ATLCDisk("Disk transmit finished. (len=%u, rot=%.2f)\n", mTransferLength, (float)mRotations + (float)mRotationalCounter / (float)kCyclesPerDiskRotation);
+
 			mTransferOffset = 0;
 			mTransferLength = 0;
 			mbWriteMode = false;
-			ATConsolePrintf("DISK: Disk transmit finished. (rot=%.2f)\n", (float)mRotations + (float)mRotationalCounter / (float)kCyclesPerDiskRotation);
 			mpActivity->OnDiskActivity(mUnit + 1, false, mLastSector);
 
 			if (mActiveCommand)
@@ -1431,19 +625,19 @@ void ATDiskEmulator::OnScheduledEvent(uint32 id) {
 	} else if (id == kATDiskEventWriteCompleted) {
 		mpOperationEvent = NULL;
 		mSendPacket[0] = 'C';
-		BeginTransfer(1, kCyclesToACKSent, false, false, false);
+		BeginTransfer(1, kCyclesToACKSent, false, mbActiveCommandHighSpeed, mbActiveCommandHighSpeed);
 	} else if (id == kATDiskEventFormatCompleted) {
 		mpOperationEvent = NULL;
 		mSendPacket[0] = 'C';
-		memset(mSendPacket+1, 0xFF, 128);
-		mSendPacket[129] = Checksum(mSendPacket+1, 128);
-		BeginTransfer(130, kCyclesToACKSent, false, false, false);
+		memset(mSendPacket+1, 0xFF, mSectorSize);
+		mSendPacket[mSectorSize + 1] = Checksum(mSendPacket+1, mSectorSize);
+		BeginTransfer(mSectorSize + 2, kCyclesToACKSent, false, false, false);
 	} else if (id == kATDiskEventAutoSave) {
 		mpAutoSaveEvent = NULL;
 
 		AutoSave();
 	} else if (id == kATDiskEventAutoSaveError) {
-		mpActivity->OnDiskActivity(mUnit + 1, mbErrorIndicatorPhase, mLastSector);
+		mpActivity->OnDiskActivity(mUnit + 1, mbErrorIndicatorPhase, mUnit + 1);
 		mbErrorIndicatorPhase = !mbErrorIndicatorPhase;
 
 		mpAutoSaveErrorEvent = mpScheduler->AddEvent(894886, this, kATDiskEventAutoSaveError);
@@ -1454,7 +648,7 @@ void ATDiskEmulator::PokeyAttachDevice(ATPokeyEmulator *pokey) {
 	mpPokey = pokey;
 }
 
-void ATDiskEmulator::PokeyWriteSIO(uint8 c) {
+void ATDiskEmulator::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) {
 	if (!mbEnabled)
 		return;
 
@@ -1480,6 +674,32 @@ void ATDiskEmulator::PokeyWriteSIO(uint8 c) {
 
 	if (mTransferOffset < 16)
 		mReceivePacket[mTransferOffset++] = c;
+}
+
+void ATDiskEmulator::InitSectorInfoArrays() {
+	const uint32 physCount = mpDiskImage->GetPhysicalSectorCount();
+	mExtPhysSectors.resize(physCount);
+
+	for(uint32 i = 0; i < physCount; ++i) {
+		ExtPhysSector& psi = mExtPhysSectors[i];
+
+		psi.mForcedOrder = -1;
+	}
+
+	const uint32 virtCount = mpDiskImage->GetVirtualSectorCount();
+	mExtVirtSectors.resize(virtCount);
+
+	mTotalSectorCount = virtCount;
+
+	for(uint32 i=0; i<virtCount; ++i) {
+		ExtVirtSector& vsi = mExtVirtSectors[i];
+
+		vsi.mPhantomSectorCounter = 0;
+	}
+
+	mBootSectorCount = mpDiskImage->GetBootSectorCount();
+	mSectorSize = mpDiskImage->GetSectorSize();
+	mbAccurateSectorPrediction = (mpDiskImage->GetTimingMode() == kATDiskTimingMode_UsePrecise);
 }
 
 void ATDiskEmulator::BeginTransfer(uint32 length, uint32 cyclesToFirstByte, bool rotationalDelay, bool useHighSpeedFirstByte, bool useHighSpeed) {
@@ -1527,7 +747,7 @@ void ATDiskEmulator::AutoSave() {
 		mpAutoSaveEvent = NULL;
 	}
 
-	if (!mbHasDiskSource || mReWriteOffset < 0)
+	if (!mpDiskImage->IsUpdatable())
 		SetAutoSaveError(true);
 	else {
 		try {
@@ -1560,9 +780,16 @@ void ATDiskEmulator::ProcessCommandPacket() {
 	UpdateRotationalCounter();
 
 	// interpret the command
-//		ATConsoleTaggedPrintf("DISK: Processing command %02X\n", mReceivePacket[1]);
+	g_ATLCDiskCmd("Processing command: Unit %02X, Command %02X, Aux data %02X %02X\n"
+		, mReceivePacket[0]
+		, mReceivePacket[1]
+		, mReceivePacket[2]
+		, mReceivePacket[3]
+	);
 	const uint8 command = mReceivePacket[1];
 	const bool highSpeed = (command & 0x80) != 0;
+
+	mbActiveCommandHighSpeed = highSpeed;
 
 	switch(command) {
 		case 0x53:	// status
@@ -1592,12 +819,15 @@ void ATDiskEmulator::ProcessCommandPacket() {
 
 					mbLastOpError = true;
 					BeginTransfer(1, kCyclesToACKSent, false, false, false);
-					ATConsolePrintf("DISK: Error reading sector %d.\n", sector);
+					g_ATLCDisk("Error reading sector %d.\n", sector);
 					break;
 				}
 
 				// get virtual sector information
-				VirtSectorInfo& vsi = mVirtSectorInfo[sector - 1];
+				ATDiskVirtualSectorInfo vsi;
+				mpDiskImage->GetVirtualSectorInfo(sector - 1, vsi);
+
+				ExtVirtSector& evs = mExtVirtSectors[sector - 1];
 
 				// choose a physical sector
 				bool missingSector = false;
@@ -1623,7 +853,7 @@ void ATDiskEmulator::ProcessCommandPacket() {
 						mRotationalCounter += kCyclesPerDiskRotation >> 1;
 						UpdateRotationalCounter();
 
-						ATConsolePrintf("DISK: Reporting missing sector %d.\n", sector);
+						g_ATLCDisk("Reporting missing sector %d.\n", sector);
 						break;
 					}
 
@@ -1635,17 +865,20 @@ void ATDiskEmulator::ProcessCommandPacket() {
 					physSector = vsi.mStartPhysSector;
 
 					for(uint32 i=0; i<vsi.mNumPhysSectors; ++i) {
-						const PhysSectorInfo& psi = mPhysSectorInfo[vsi.mStartPhysSector + i];
+						ATDiskPhysicalSectorInfo psi;
+						mpDiskImage->GetPhysicalSectorInfo(vsi.mStartPhysSector + i, psi);
+
+						const ExtPhysSector& eps = mExtPhysSectors[vsi.mStartPhysSector + i];
 						uint32 time = VDRoundToInt(psi.mRotPos * kCyclesPerDiskRotation);
 						uint32 delay = time < mRotationalCounter ? time + kCyclesPerDiskRotation - mRotationalCounter : time - mRotationalCounter;
 						uint8 status = psi.mFDCStatus;
 
-						if (psi.mForcedOrder == vsi.mPhantomSectorCounter) {
+						if (eps.mForcedOrder == evs.mPhantomSectorCounter) {
 							physSector = vsi.mStartPhysSector + i;
 							mPhantomSectorCounter = i;
 
-							if (++vsi.mPhantomSectorCounter >= vsi.mNumPhysSectors)
-								vsi.mPhantomSectorCounter = 0;
+							if (++evs.mPhantomSectorCounter >= vsi.mNumPhysSectors)
+								evs.mPhantomSectorCounter = 0;
 							break;
 						}
 
@@ -1658,13 +891,14 @@ void ATDiskEmulator::ProcessCommandPacket() {
 						}
 					}
 				} else {
-					physSector = vsi.mStartPhysSector + vsi.mPhantomSectorCounter;
+					physSector = vsi.mStartPhysSector + evs.mPhantomSectorCounter;
 
-					if (++vsi.mPhantomSectorCounter >= vsi.mNumPhysSectors)
-						vsi.mPhantomSectorCounter = 0;
+					if (++evs.mPhantomSectorCounter >= vsi.mNumPhysSectors)
+						evs.mPhantomSectorCounter = 0;
 				}
 
-				const PhysSectorInfo& psi = mPhysSectorInfo[physSector];
+				ATDiskPhysicalSectorInfo psi;
+				mpDiskImage->GetPhysicalSectorInfo(physSector, psi);
 
 				// Set FDC status.
 				//
@@ -1688,7 +922,7 @@ void ATDiskEmulator::ProcessCommandPacket() {
 					BeginTransfer(131, kCyclesToACKSent, true, false, highSpeed);
 					mbLastOpError = true;
 
-					ATConsolePrintf("DISK: Reporting missing sector %d.\n", sector);
+					g_ATLCDisk("Reporting missing sector %d.\n", sector);
 					break;
 				}
 
@@ -1696,7 +930,7 @@ void ATDiskEmulator::ProcessCommandPacket() {
 
 				mbLastOpError = (mFDCStatus != 0xFF);
 
-				memcpy(mSendPacket+2, mDiskImage.data() + psi.mOffset, psi.mSize);
+				mpDiskImage->ReadPhysicalSector(physSector, mSendPacket + 2, psi.mSize);
 
 				// check for CRC error
 				// must return data on CRC error -- Koronis Rift requires this
@@ -1717,7 +951,7 @@ void ATDiskEmulator::ProcessCommandPacket() {
 				const uint32 transferLength = psi.mSize + 3;
 
 				BeginTransfer(transferLength, kCyclesToACKSent, true, false, highSpeed);
-				ATConsolePrintf("DISK: Reading vsec=%3d (%d/%d) (trk=%d), psec=%3d, chk=%02x, rot=%.2f >> %.2f%s.\n"
+				g_ATLCDisk("Reading vsec=%3d (%d/%d) (trk=%d), psec=%3d, chk=%02x, rot=%.2f >> %.2f%s.\n"
 						, sector
 						, physSector - vsi.mStartPhysSector + 1
 						, vsi.mNumPhysSectors
@@ -1744,7 +978,7 @@ void ATDiskEmulator::ProcessCommandPacket() {
 #endif
 		case 0x21:	// format
 			if (!mbWriteEnabled) {
-				ATConsolePrintf("DISK: FORMAT COMMAND RECEIVED. Blocking due to read-only disk!\n");
+				g_ATLCDisk("FORMAT COMMAND RECEIVED. Blocking due to read-only disk!\n");
 				mSendPacket[0] = 'N';
 				mbLastOpError = true;
 				BeginTransfer(1, kCyclesToACKSent, false, false, false);
@@ -1753,8 +987,12 @@ void ATDiskEmulator::ProcessCommandPacket() {
 				mbLastOpError = false;
 				BeginTransfer(1, kCyclesToACKSent, false, false, false);
 
-				ATConsolePrintf("DISK: FORMAT COMMAND RECEIVED. Reformatting disk as single density.\n");
-				FormatDisk(720, 3, 128);
+				int formatSectorSize = VDReadUnalignedBEU16(&mPERCOM[6]);
+				int formatSectorCount = mPERCOM[0] * (sint32)VDReadUnalignedBEU16(&mPERCOM[2]) * (mPERCOM[4] + 1);
+				int formatBootSectorCount = formatSectorSize == 512 ? 0 : 3;
+
+				g_ATLCDisk("FORMAT COMMAND RECEIVED. Reformatting disk as %u sectors of %u bytes each.\n", formatSectorCount, formatSectorSize);
+				FormatDisk(formatSectorCount, formatBootSectorCount, formatSectorSize);
 
 				if (mpOperationEvent)
 					mpScheduler->RemoveEvent(mpOperationEvent);
@@ -1764,7 +1002,7 @@ void ATDiskEmulator::ProcessCommandPacket() {
 
 		case 0x22:	// format disk medium density
 			if (!mbWriteEnabled) {
-				ATConsolePrintf("DISK: FORMAT COMMAND RECEIVED. Blocking due to read-only disk!\n");
+				g_ATLCDisk("FORMAT COMMAND RECEIVED. Blocking due to read-only disk!\n");
 				mSendPacket[0] = 'N';
 				mbLastOpError = true;
 				BeginTransfer(1, kCyclesToACKSent, false, false, false);
@@ -1773,8 +1011,10 @@ void ATDiskEmulator::ProcessCommandPacket() {
 				mbLastOpError = false;
 				BeginTransfer(1, kCyclesToACKSent, false, false, false);
 
-				ATConsolePrintf("DISK: FORMAT COMMAND RECEIVED. Reformatting disk as enhanced density.\n");
+				g_ATLCDisk("FORMAT COMMAND RECEIVED. Reformatting disk as enhanced density.\n");
 				FormatDisk(1040, 3, 128);
+
+				ComputePERCOMBlock();
 
 				if (mpOperationEvent)
 					mpScheduler->RemoveEvent(mpOperationEvent);
@@ -1802,16 +1042,17 @@ void ATDiskEmulator::ProcessCommandPacket() {
 					mSendPacket[0] = 0x4E;		// error
 
 					mbLastOpError = true;
-					BeginTransfer(1, kCyclesToACKSent, false, false, false);
-					ATConsolePrintf("DISK: Error writing sector %d.\n", sector);
+					BeginTransfer(1, kCyclesToACKSent, false, false, highSpeed);
+					g_ATLCDisk("Error writing sector %d.\n", sector);
 					break;
 				}
 
 				mbLastOpError = false;
-				BeginTransfer(1, kCyclesToACKSent, false, false, false);
+				BeginTransfer(1, kCyclesToACKSent, false, false, highSpeed);
 
 				// get virtual sector information
-				VirtSectorInfo& vsi = mVirtSectorInfo[sector - 1];
+				ATDiskVirtualSectorInfo vsi;
+				mpDiskImage->GetVirtualSectorInfo(sector - 1, vsi);
 
 				mActiveCommand = 'W';
 				mActiveCommandState = 0;
@@ -1821,13 +1062,24 @@ void ATDiskEmulator::ProcessCommandPacket() {
 			break;
 
 		case 0x4E:	// read PERCOM block
+		case 0xCE:	// read PERCOM block (XF551 high speed)
 			{
 				mSendPacket[0] = 'A';
 				mSendPacket[1] = 'C';
 
 				ReadPERCOMBlock(mSendPacket + 2);
 
-				BeginTransfer(15, 2500, false, false, false);
+				BeginTransfer(15, 2500, false, false, highSpeed);
+			}
+			break;
+
+		case 0x4F:	// write PERCOM block
+		case 0xCF:	// write PERCOM block (XF551 high speed)
+			{
+				mSendPacket[0] = 'A';
+				BeginTransfer(1, kCyclesToACKSent, false, false, highSpeed);
+				mActiveCommand = 0x4F;
+				mActiveCommandState = 0;
 			}
 			break;
 
@@ -1866,7 +1118,7 @@ void ATDiskEmulator::ProcessCommandPacket() {
 						break;
 				}
 
-				ATConsolePrintf("DISK: Unsupported command %02X (%s)\n", command, desc);
+				g_ATLCDisk("Unsupported command %02X (%s)\n", command, desc);
 			}
 			break;
 
@@ -1877,20 +1129,21 @@ void ATDiskEmulator::ProcessCommandPacket() {
 
 void ATDiskEmulator::ProcessCommandTransmitCompleted() {
 	if (mActiveCommand == 'W') {
-		PhysSectorInfo& psi = mPhysSectorInfo[mActiveCommandPhysSector];
+		ATDiskPhysicalSectorInfo psi;
+		mpDiskImage->GetPhysicalSectorInfo(mActiveCommandPhysSector, psi);
+
 		if (mActiveCommandState == 0) {
 			// wait for remaining data
 			mTransferOffset = 0;
 			mTransferLength = psi.mSize + 1;
 
-			ATConsolePrintf("DISK: Sent ACK, now waiting for write data.\n", mActiveCommandPhysSector);
+			g_ATLCDisk("Sent ACK, now waiting for write data.\n", mActiveCommandPhysSector);
 			mActiveCommandState = 1;
 		} else {
 			// commit data to physical sector
-			memcpy(&mDiskImage[psi.mOffset], mReceivePacket, psi.mSize);
-			psi.mbDirty = true;
+			mpDiskImage->WritePhysicalSector(mActiveCommandPhysSector, mReceivePacket, psi.mSize);
 
-			ATConsolePrintf("DISK: Writing psec=%3d.\n", mActiveCommandPhysSector);
+			g_ATLCDisk("Writing psec=%3d.\n", mActiveCommandPhysSector);
 
 			// set FDC status
 			mFDCStatus = 0xFF;
@@ -1905,7 +1158,6 @@ void ATDiskEmulator::ProcessCommandTransmitCompleted() {
 			rotDelay += 10000;	// fudge factor
 
 			mActiveCommand = 0;
-			mbDirty = true;
 
 			if (mbAutoFlush)
 				QueueAutoSave();
@@ -1914,27 +1166,93 @@ void ATDiskEmulator::ProcessCommandTransmitCompleted() {
 				mpScheduler->RemoveEvent(mpOperationEvent);
 			mpOperationEvent = mpScheduler->AddEvent(rotDelay, this, kATDiskEventWriteCompleted);
 		}
+	} else if (mActiveCommand == 0x4F) {		// write PERCOM block
+		if (mActiveCommandState == 0) {
+			// wait for remaining data
+			mTransferOffset = 0;
+			mTransferLength = 13;
+
+			g_ATLCDisk("Sent ACK, now waiting for PERCOM block data.\n");
+			mActiveCommandState = 1;
+		} else {
+
+			mFDCStatus = 0xFF;
+			mbLastOpError = false;
+
+			mActiveCommand = 0;
+
+			mpScheduler->SetEvent(1000, this, kATDiskEventWriteCompleted, mpOperationEvent);
+		}
 	}
 }
 
 void ATDiskEmulator::ProcessCommandData() {
 	if (mActiveCommand == 'W') {
-		const PhysSectorInfo& psi = mPhysSectorInfo[mActiveCommandPhysSector];
+		ATDiskPhysicalSectorInfo psi;
+		mpDiskImage->GetPhysicalSectorInfo(mActiveCommandPhysSector, psi);
 
 		// test checksum
 		uint8 chk = Checksum(mReceivePacket, psi.mSize);
 
 		if (chk != mReceivePacket[psi.mSize]) {
-			ATConsolePrintf("DISK: Checksum error detected while receiving write data.\n");
+			g_ATLCDisk("Checksum error detected while receiving write data.\n");
 
 			mSendPacket[0] = 'E';
-			BeginTransfer(1, kCyclesToACKSent, false, false, false);
+			BeginTransfer(1, kCyclesToACKSent, false, mbActiveCommandHighSpeed, mbActiveCommandHighSpeed);
 			mActiveCommand = 0;
 			return;
 		}
 
 		mSendPacket[0] = 'A';
-		BeginTransfer(1, kCyclesToACKSent, false, false, false);
+		BeginTransfer(1, kCyclesToACKSent, false, mbActiveCommandHighSpeed, mbActiveCommandHighSpeed);
+	} else if (mActiveCommand == 0x4F) {
+		// test checksum
+		uint8 chk = Checksum(mReceivePacket, 12);
+
+		if (chk != mReceivePacket[12]) {
+			g_ATLCDisk("Checksum error detected while receiving PERCOM data.\n");
+
+			mSendPacket[0] = 'E';
+			BeginTransfer(1, kCyclesToACKSent, false, mbActiveCommandHighSpeed, mbActiveCommandHighSpeed);
+			mActiveCommand = 0;
+			return;
+		}
+
+		// validate PERCOM data
+		bool valid = true;
+		uint16 sectorSize = VDReadUnalignedBEU16(&mReceivePacket[6]);
+		uint32 sectorCount = mReceivePacket[0] * (sint32)VDReadUnalignedBEU16(&mReceivePacket[2]) * (mReceivePacket[4] + 1);
+
+		if (mReceivePacket[0] == 0) {
+			g_ATLCDisk("Invalid PERCOM data: tracks per sector = 0\n");
+			valid = false;
+		} else if (mReceivePacket[1] == 0 && mReceivePacket[2] == 0) {
+			g_ATLCDisk("Invalid PERCOM data: sectors per track = 0\n");
+			valid = false;
+		} else if (mReceivePacket[4] >= 2) {
+			g_ATLCDisk("Invalid PERCOM data: invalid sides encoded value %02x\n", mReceivePacket[4]);
+			valid = false;
+		} else if (sectorCount > 65535) {
+			g_ATLCDisk("Invalid PERCOM data: total sectors > 65535\n");
+			valid = false;
+		} else if (sectorSize != 128 && sectorSize != 256 && sectorSize != 512) {
+			g_ATLCDisk("Invalid PERCOM data: unsupported sector size (%u)\n", sectorSize);
+			valid = false;
+		}
+
+		if (!valid) {
+			mSendPacket[0] = 'E';
+			BeginTransfer(1, kCyclesToACKSent, false, mbActiveCommandHighSpeed, mbActiveCommandHighSpeed);
+			mActiveCommand = 0;
+			return;
+		}
+
+		memcpy(mPERCOM, mReceivePacket, 12);
+
+		g_ATLCDisk("Setting PERCOM data: %u sectors of %u bytes each, %u boot sectors\n", sectorCount, sectorSize, sectorSize > 256 ? 0 : 3);
+
+		mSendPacket[0] = 'A';
+		BeginTransfer(1, kCyclesToACKSent, false, mbActiveCommandHighSpeed, mbActiveCommandHighSpeed);
 	}
 }
 
@@ -1971,6 +1289,8 @@ void ATDiskEmulator::PokeyEndCommand() {
 			return;
 		}
 
+		mbAccessed = true;
+
 		ProcessCommandPacket();
 	}
 }
@@ -1987,4 +1307,92 @@ void ATDiskEmulator::PokeySerInReady() {
 
 void ATDiskEmulator::ComputeSectorsPerTrack() {
 	mSectorsPerTrack = mSectorSize >= 256 ? 18 : mTotalSectorCount > 720 && !(mTotalSectorCount % 26) ? 26 : 18;
+}
+
+void ATDiskEmulator::ComputePERCOMBlock() {
+	// track count
+	mPERCOM[0] = 1;
+
+	// sectors per track
+	mPERCOM[2] = (uint8)(mTotalSectorCount >> 8);
+	mPERCOM[3] = (uint8)(mTotalSectorCount);
+
+	// handle special cases of actual disks
+	bool mfm = mSectorSize > 128;
+	uint8 sides = 0;
+
+	if (mBootSectorCount > 0) {
+		if (mSectorSize == 128) {
+			switch(mTotalSectorCount) {
+				case 720:
+				case 1440:
+				case 2880:
+					// track count
+					mPERCOM[0] = (uint8)((mTotalSectorCount + 17) / 18);
+
+					// sectors per track
+					mPERCOM[2] = 0;
+					mPERCOM[3] = 18;
+
+					sides = 1;
+					if (mTotalSectorCount > 720) {
+						sides = 2;
+						mPERCOM[0] >>= 1;
+					}
+					break;
+
+				case 1040:
+					// track count
+					mPERCOM[0] = (uint8)((mTotalSectorCount + 25) / 26);
+
+					// sectors per track
+					mPERCOM[2] = 0;
+					mPERCOM[3] = 26;
+
+					mfm = true;
+					sides = 1;
+					break;
+			}
+		} else if (mSectorSize == 256) {
+			switch(mTotalSectorCount) {
+				case 720:
+				case 1440:
+				case 2880:
+					// track count
+					mPERCOM[0] = (uint8)((mTotalSectorCount + 17) / 18);
+
+					// sectors per track
+					mPERCOM[2] = 0;
+					mPERCOM[3] = 18;
+
+					sides = 1;
+					if (mTotalSectorCount > 720) {
+						sides = 2;
+						mPERCOM[0] >>= 1;
+					}
+					break;
+			}
+		}
+	}
+
+	// step rate
+	mPERCOM[1] = 0x01;
+
+	// sides minus one
+	mPERCOM[4] = sides ? sides - 1 : 0;
+
+	// record method
+	mPERCOM[5] = mfm ? 4 : 0;
+
+	// bytes per sector
+	mPERCOM[6] = (uint8)(mSectorSize >> 8);
+	mPERCOM[7] = (uint8)mSectorSize;
+
+	// drive online
+	mPERCOM[8] = 0xFF;
+
+	// unused
+	mPERCOM[9] = 0;
+	mPERCOM[10] = 0;
+	mPERCOM[11] = 0;
 }

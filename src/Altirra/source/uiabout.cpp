@@ -18,21 +18,55 @@
 #include "stdafx.h"
 #include "dialog.h"
 #include "resource.h"
+#include <windows.h>
+#include "oshelper.h"
 
-class ATAboutDialog : public VDDialogFrameW32 {
+class ATUIDialogAbout : public VDDialogFrameW32 {
 public:
-	ATAboutDialog();
-	~ATAboutDialog();
+	ATUIDialogAbout();
+	~ATUIDialogAbout();
+
+protected:
+	bool OnLoaded();
+	void OnSize();
+	bool OnErase(VDZHDC hdc);
+
+	VDDialogResizerW32 mResizer;
 };
 
-ATAboutDialog::ATAboutDialog()
+ATUIDialogAbout::ATUIDialogAbout()
 	: VDDialogFrameW32(IDD_ABOUT)
 {
 }
 
-ATAboutDialog::~ATAboutDialog() {
+ATUIDialogAbout::~ATUIDialogAbout() {
+}
+
+bool ATUIDialogAbout::OnLoaded() {
+	vdfastvector<uint8> text;
+	ATLoadMiscResource(IDR_ABOUT, text);
+
+	text.push_back(0);
+	text.push_back(0);
+
+	SetControlText(IDC_EDIT, (const wchar_t *)text.data());
+
+	mResizer.Init(mhdlg);
+	mResizer.Add(IDC_EDIT, VDDialogResizerW32::kMC | VDDialogResizerW32::kAvoidFlicker);
+	mResizer.Add(IDOK, VDDialogResizerW32::kAnchorX1_C | VDDialogResizerW32::kAnchorX2_C | VDDialogResizerW32::kB);
+
+	return VDDialogFrameW32::OnLoaded();
+}
+
+void ATUIDialogAbout::OnSize() {
+	mResizer.Relayout();
+}
+
+bool ATUIDialogAbout::OnErase(VDZHDC hdc) {
+	mResizer.Erase(&hdc);
+	return true;
 }
 
 void ATUIShowDialogAbout(VDGUIHandle h) {
-	ATAboutDialog().ShowDialog(h);
+	ATUIDialogAbout().ShowDialog(h);
 }

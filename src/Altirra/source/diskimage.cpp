@@ -27,16 +27,22 @@ namespace {
 
 class ATDiskImage : public IATDiskImage {
 public:
+	void Init(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize);
 	void Load(const wchar_t *s);
 	void Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream);
 
+	ATDiskTimingMode GetTimingMode() const;
+
 	bool IsDirty() const;
+	bool IsUpdatable() const;
 	bool Flush();
 
+	void SetPathATR(const wchar_t *path);
 	void SaveATR(const wchar_t *path);
 
 	uint32 GetSectorSize() const { return mSectorSize; }
 	uint32 GetSectorSize(uint32 virtIndex) const { return virtIndex < mBootSectorCount ? 128 : mSectorSize; }
+	uint32 GetBootSectorCount() const { return mBootSectorCount; }
 
 	uint32 GetPhysicalSectorCount() const;
 	void GetPhysicalSectorInfo(uint32 index, ATDiskPhysicalSectorInfo& info) const;
@@ -85,6 +91,42 @@ protected:
 	vdfastvector<uint8>		mImage;
 };
 
+void ATDiskImage::Init(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize) {
+	mBootSectorCount = bootSectorCount;
+	mSectorSize = sectorSize;
+
+	mImage.clear();
+	mImage.resize(128 * bootSectorCount + sectorSize * (sectorCount - bootSectorCount), 0);
+
+	mPhysSectors.resize(sectorCount);
+	mVirtSectors.resize(sectorCount);
+
+	ComputeSectorsPerTrack();
+
+	for(uint32 i=0; i<sectorCount; ++i) {
+		PhysSectorInfo& psi = mPhysSectors[i];
+		VirtSectorInfo& vsi = mVirtSectors[i];
+
+		vsi.mStartPhysSector = i;
+		vsi.mNumPhysSectors = 1;
+
+		psi.mOffset		= i < mBootSectorCount ? 128*i : 128*mBootSectorCount + mSectorSize*(i-mBootSectorCount);
+		psi.mSize		= i < mBootSectorCount ? 128 : + mSectorSize;
+		psi.mbDirty		= true;
+		psi.mRotPos		= mSectorSize >= 256 ? (float)kTrackInterleaveDD[i % 18] / 18.0f
+			: mSectorsPerTrack >= 26 ? (float)kTrackInterleave26[i % 26] / 26.0f
+			: (float)kTrackInterleave18[i % 18] / 18.0f;
+		psi.mFDCStatus	= 0xFF;
+		psi.mWeakDataOffset = -1;
+	}
+
+	mbDirty = true;
+	mbDiskFormatDirty = true;
+
+	mPath = L"(New disk)";
+	mbHasDiskSource = false;
+}
+
 void ATDiskImage::Load(const wchar_t *s) {
 	VDFileStream f(s);
 
@@ -114,13 +156,11 @@ void ATDiskImage::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRan
 
 			vsi.mStartPhysSector = i;
 			vsi.mNumPhysSectors = 1;
-			vsi.mPhantomSectorCounter = 0;
 
 			psi.mOffset		= 128*i;
 			psi.mSize		= 128;
 			psi.mFDCStatus	= 0xFF;
 			psi.mRotPos		= (float)kTrackInterleave18[i % 18] / 18.0f;
-			psi.mForcedOrder = -1;
 			psi.mWeakDataOffset = -1;
 			psi.mbDirty		= false;
 		}
@@ -174,7 +214,6 @@ void ATDiskImage::LoadDCM(IVDRandomAccessStream& stream, uint32 len, const wchar
 
 	VirtSectorInfo dummySector;
 	dummySector.mNumPhysSectors = 0;
-	dummySector.mPhantomSectorCounter = 0;
 	dummySector.mStartPhysSector = 0;
 
 	uint32 mainSectorSize = 128;
@@ -222,14 +261,16 @@ void ATDiskImage::LoadDCM(IVDRandomAccessStream& stream, uint32 len, const wchar
 		mainSectorSize = sectorSize;
 
 		for(;;) {
-			if (!sectorNum)
-				throw ATInvalidDiskFormatException(origPath);
-
 			uint8 contentType;
 			stream.Read(&contentType, 1);
 
 			if ((contentType & 0x7F) == 0x45)
 				break;
+
+			// This check has to be after the 0x45 token check, as it's legal to have a sector number of
+			// 0 before it.
+			if (!sectorNum)
+				throw ATInvalidDiskFormatException(origPath);
 
 			uint8 c;
 			switch(contentType & 0x7F) {
@@ -294,12 +335,11 @@ void ATDiskImage::LoadDCM(IVDRandomAccessStream& stream, uint32 len, const wchar
 			}
 
 			// create entry for sector
-			if (mVirtSectors.size() <= sectorNum)
-				mVirtSectors.resize(sectorNum + 1, dummySector);
+			if (mVirtSectors.size() < sectorNum)
+				mVirtSectors.resize(sectorNum, dummySector);
 
 			VirtSectorInfo& vsi = mVirtSectors[sectorNum - 1];
 			vsi.mNumPhysSectors = 1;
-			vsi.mPhantomSectorCounter = 0;
 			vsi.mStartPhysSector = (uint32)mPhysSectors.size();
 
 			PhysSectorInfo& psi =  mPhysSectors.push_back();
@@ -307,7 +347,6 @@ void ATDiskImage::LoadDCM(IVDRandomAccessStream& stream, uint32 len, const wchar
 			psi.mSize = sectorNum <= 3 ? 128 : sectorSize;
 			psi.mRotPos = 0;
 			psi.mFDCStatus = 0xFF;
-			psi.mForcedOrder = -1;
 			psi.mWeakDataOffset = -1;
 			psi.mbDirty = false;
 
@@ -358,7 +397,6 @@ void ATDiskImage::LoadDCM(IVDRandomAccessStream& stream, uint32 len, const wchar
 			psi.mOffset = (uint32)mImage.size();
 			psi.mSize = secNum <= 3 ? 128 : mainSectorSize;
 			psi.mFDCStatus = 0xFF;
-			psi.mForcedOrder = -1;
 			psi.mWeakDataOffset = -1;
 			psi.mbDirty = false;
 
@@ -491,7 +529,6 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 
 			vsi.mStartPhysSector = (uint32)mPhysSectors.size();
 			vsi.mNumPhysSectors = 0;
-			vsi.mPhantomSectorCounter = 0;
 
 			for(uint32 k=0; k<trkhdr.mNumSectors; ++k) {
 				const ATXSectorHeader& sechdr = sectorHeaders[k];
@@ -521,7 +558,6 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 				psi.mOffset = secDataOffset + sechdr.mDataOffset;
 				psi.mSize = sechdr.mFDCStatus & 0x10 ? 0 : 128;
 				psi.mRotPos = (float)sechdr.mTimingOffset / (float)kBytesPerTrack;
-				psi.mForcedOrder = -1;
 				psi.mWeakDataOffset = -1;
 				psi.mbDirty = false;
 				++vsi.mNumPhysSectors;
@@ -581,7 +617,6 @@ void ATDiskImage::LoadP2(IVDRandomAccessStream& stream, uint32 len, const uint8 
 		psi.mSize		= 128;
 		psi.mFDCStatus	= sectorhdr[1];
 		psi.mRotPos		= (float)kTrackInterleave18[i % 18] / 18.0f;
-		psi.mForcedOrder = -1;
 		psi.mWeakDataOffset = -1;
 		psi.mbDirty		= false;
 
@@ -594,7 +629,6 @@ void ATDiskImage::LoadP2(IVDRandomAccessStream& stream, uint32 len, const uint8 
 
 		vsi.mStartPhysSector = (uint32)mPhysSectors.size() - 1;
 		vsi.mNumPhysSectors = 1;
-		vsi.mPhantomSectorCounter = 0;
 
 		uint16 phantomSectorCount = sectorhdr[5];
 		if (phantomSectorCount) {
@@ -616,7 +650,6 @@ void ATDiskImage::LoadP2(IVDRandomAccessStream& stream, uint32 len, const uint8 
 				psi.mSize		= 128;
 				psi.mFDCStatus	= sectorhdr2[1];
 				psi.mRotPos		= (float)kTrackInterleave18[i % 18] / 18.0f + (1.0f / ((float)phantomSectorCount + 1)) * (j+1);
-				psi.mForcedOrder = -1;
 				psi.mWeakDataOffset = -1;
 				psi.mbDirty		= false;
 
@@ -649,7 +682,6 @@ void ATDiskImage::LoadP3(IVDRandomAccessStream& stream, uint32 len, const uint8 
 
 		vsi.mStartPhysSector = (uint32)mPhysSectors.size();
 		vsi.mNumPhysSectors = phantomSectorCount + 1;
-		vsi.mPhantomSectorCounter = 0;
 
 		for(uint32 j=0; j<=phantomSectorCount; ++j) {
 			uint8 idx = sectorhdr[6 + j];
@@ -667,7 +699,6 @@ void ATDiskImage::LoadP3(IVDRandomAccessStream& stream, uint32 len, const uint8 
 			psi.mSize		= 128;
 			psi.mFDCStatus	= sectorhdr2[1];
 			psi.mRotPos		= rotationalPosition;
-			psi.mForcedOrder = -1;
 			psi.mWeakDataOffset = -1;
 			psi.mbDirty		= false;
 
@@ -731,6 +762,12 @@ void ATDiskImage::LoadATR(IVDRandomAccessStream& stream, uint32 len, const wchar
 
 	mReWriteOffset = 16;
 
+	if (len < 128*imageBootSectorCount) {
+		imageBootSectorCount = len >> 7;
+		if (mBootSectorCount > imageBootSectorCount)
+			mBootSectorCount = imageBootSectorCount;
+	}
+
 	uint32 sectorCount = (len - 128*imageBootSectorCount) / mSectorSize + imageBootSectorCount;
 
 	ComputeSectorsPerTrack();	// needed earlier for interleave
@@ -744,7 +781,6 @@ void ATDiskImage::LoadATR(IVDRandomAccessStream& stream, uint32 len, const wchar
 
 		vsi.mStartPhysSector = i;
 		vsi.mNumPhysSectors = 1;
-		vsi.mPhantomSectorCounter = 0;
 
 		if (packedBootSectors && i < 3) {
 			psi.mOffset		= 128*i;
@@ -756,21 +792,28 @@ void ATDiskImage::LoadATR(IVDRandomAccessStream& stream, uint32 len, const wchar
 		psi.mRotPos		= mSectorSize >= 256 ? (float)kTrackInterleaveDD[i % 18] / 18.0f
 						: mSectorsPerTrack >= 26 ? (float)kTrackInterleave26[i % 26] / 26.0f
 						: (float)kTrackInterleave18[i % 18] / 18.0f;
-		psi.mForcedOrder = -1;
 		psi.mWeakDataOffset = -1;
 		psi.mbDirty		= false;
 	}
+}
+
+ATDiskTimingMode ATDiskImage::GetTimingMode() const {
+	return mTimingMode;
 }
 
 bool ATDiskImage::IsDirty() const {
 	return mbDirty;
 }
 
+bool ATDiskImage::IsUpdatable() const {
+	return mbHasDiskSource && mReWriteOffset >= 0;
+}
+
 bool ATDiskImage::Flush() {
 	if (!mbDirty)
 		return true;
 
-	if (!mbHasDiskSource || mReWriteOffset < 0)
+	if (!IsUpdatable())
 		return false;
 
 	if (mbDiskFormatDirty) {
@@ -820,6 +863,13 @@ bool ATDiskImage::Flush() {
 
 	mbDirty = false;
 	return true;
+}
+
+void ATDiskImage::SetPathATR(const wchar_t *path) {
+	mbDirty = true;
+	mbDiskFormatDirty = true;
+	mbHasDiskSource = true;
+	mPath = path;
 }
 
 void ATDiskImage::SaveATR(const wchar_t *s) {
@@ -961,6 +1011,22 @@ IATDiskImage *ATLoadDiskImage(const wchar_t *path) {
 	vdautoptr<ATDiskImage> diskImage(new ATDiskImage);
 
 	diskImage->Load(path);
+
+	return diskImage.release();
+}
+
+IATDiskImage *ATLoadDiskImage(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream) {
+	vdautoptr<ATDiskImage> diskImage(new ATDiskImage);
+
+	diskImage->Load(origPath, imagePath, stream);
+
+	return diskImage.release();
+}
+
+IATDiskImage *ATCreateDiskImage(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize) {
+	vdautoptr<ATDiskImage> diskImage(new ATDiskImage);
+
+	diskImage->Init(sectorCount, bootSectorCount, sectorSize);
 
 	return diskImage.release();
 }

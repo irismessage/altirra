@@ -1,10 +1,6 @@
 <?xml version='1.0' standalone='yes'?>
 <?xml-stylesheet type="text/xsl" href="index.xsl" ?>
 <topic title="Source-level debugging">
-  <style>
-    dt { font-weight: bold; }
-    dd { margin-top: 5pt; margin-bottom: 5pt; }
-  </style>
   <p>
     While it is possible to debug a program via disassembly, doing so is an arduous task, particularly
     with large programs. Altirra supports both symbolic and source level debugging to make it easier

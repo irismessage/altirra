@@ -34,22 +34,6 @@ ATScheduler::ATScheduler()
 }
 
 ATScheduler::~ATScheduler() {
-	ATEventLink *ev = mpFreeEvents;
-	while(ev) {
-		ATEventLink *next = ev->mpNext;
-		delete static_cast<ATEvent *>(ev);
-		ev = next;
-	}
-	mpFreeEvents = NULL;
-
-	ev = mActiveEvents.mpNext;
-	while(ev != &mActiveEvents) {
-		ATEventLink *next = ev->mpNext;
-		delete static_cast<ATEvent *>(ev);
-		ev = next;
-	}
-
-	mActiveEvents.mpPrev = mActiveEvents.mpNext = &mActiveEvents;
 }
 
 void ATScheduler::ProcessNextEvent() {
@@ -111,7 +95,7 @@ ATEvent *ATScheduler::AddEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id
 		ev = static_cast<ATEvent *>(mpFreeEvents);
 		mpFreeEvents = ev->mpNext;
 	} else {
-		ev = new ATEvent;
+		ev = mAllocator.Allocate<ATEvent>();
 		ev->mId = 0;
 	}
 

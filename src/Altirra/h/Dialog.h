@@ -22,6 +22,7 @@ public:
 
 	bool	Create(VDGUIHandle hwndParent);
 	void	Destroy();
+	void	Close();
 
 	void	Show();
 	void	Hide();
@@ -56,6 +57,7 @@ protected:
 	void EnableControl(uint32 id, bool enabled);
 	void ShowControl(uint32 id, bool visible);
 
+	vdrect32 GetControlPos(uint32 id);
 	vdrect32 GetControlScreenPos(uint32 id);
 
 	void SetCaption(uint32 id, const wchar_t *format);
@@ -94,6 +96,7 @@ protected:
 	bool Confirm(const wchar_t *message, const wchar_t *caption);
 
 	int ActivateMenuButton(uint32 id, const wchar_t *const *items);
+	int ActivatePopupMenu(int x, int y, const wchar_t *const *items);
 
 	// listbox
 	void LBClear(uint32 id);
@@ -124,6 +127,7 @@ protected:
 	virtual bool OnOK();
 	virtual bool OnCancel();
 	virtual void OnSize();
+	virtual bool OnClose();
 	virtual void OnDestroy();
 	virtual bool OnTimer(uint32 id);
 	virtual bool OnErase(VDZHDC hdc);
@@ -132,6 +136,8 @@ protected:
 	virtual void OnDropFiles(IVDUIDropFileList *dropFileList);
 	virtual void OnHScroll(uint32 id, int code);
 	virtual void OnVScroll(uint32 id, int code);
+	virtual void OnHelp();
+	virtual void OnContextMenu(uint32 id, int x, int y);
 	virtual bool PreNCDestroy();
 
 	bool	mbValidationFailed;
@@ -196,7 +202,7 @@ public:
 	void Relayout(int width, int height);
 	void Add(uint32 id, int alignment);
 
-	void Erase();
+	void Erase(const VDZHDC *phdc);
 
 protected:
 	struct ControlEntry {

@@ -583,7 +583,7 @@ xloop:
 
 void VDResamplerSeparableTableRowStage8MMX::Process(void *dst, const void *src, uint32 w) {
 	int byteOffset = (int)(ptrdiff_t)src & 3;
-	const sint16 *ksrc = &mRowKernels[mRowKernelSize * byteOffset];
+	const sint16 *ksrc = mRowKernels.data() + (mRowKernelSize * byteOffset);
 #if 0
 	int kwidth = mAlignedKernelWidth;
 	uint8 *dst2 = (uint8 *)dst;
@@ -713,7 +713,7 @@ void VDResamplerSeparableTableRowStage8MMX::Process(void *dst, const void *src, 
 
 		if (w & 3)
 			vdasm_resize_table_row_8_MMX((char *)dst + (w & ~3), src, w & 3, ksrc + mTailOffset[byteOffset], ksize);
-	} else {
+	} else if (w) {
 		vdasm_resize_table_row_8_MMX(dst, src, w, ksrc, ksize);
 	}
 #endif
@@ -1216,7 +1216,7 @@ void VDResamplerSeparableTableRowStage8SSE41::RedoRowFilters(const VDResamplerAx
 
 void VDResamplerSeparableTableRowStage8SSE41::Process(void *dst, const void *src, uint32 w) {
 	int byteOffset = (int)(ptrdiff_t)src & 7;
-	const sint16 *ksrc = &mRowKernels[mRowKernelSize * byteOffset];
+	const sint16 *ksrc = mRowKernels.data() + (mRowKernelSize * byteOffset);
 
 	int ksize = mKernelSizeByOffset[byteOffset];
 	if (mbQuadOptimizationEnabled[byteOffset]) {
@@ -1229,7 +1229,7 @@ void VDResamplerSeparableTableRowStage8SSE41::Process(void *dst, const void *src
 
 		if (w & 3)
 			vdasm_resize_table_row_8_SSE41((char *)dst + (w & ~3), src, w & 3, ksrc + mTailOffset[byteOffset], ksize);
-	} else {
+	} else if (w) {
 		vdasm_resize_table_row_8_SSE41(dst, src, w, ksrc, ksize);
 	}
 }

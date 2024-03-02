@@ -53,6 +53,7 @@
 
 		#if _MSC_VER >= 1400
 			#define VD_COMPILER_MSVC_VC8		1
+			#define VD_COMPILER_MSVC_VC8_OR_LATER 1
 
 			#if _MSC_FULL_VER == 140040310
 				#define VD_COMPILER_MSVC_VC8_PSDK 1
@@ -294,12 +295,18 @@ extern void VDDebugPrint(const char *format, ...);
 
 		template<int lineno>
 		bool VDAssertHelper<lineno>::sbAssertDisabled;
+
+		template<int lineno>
+		struct VDAssertHelper2 { static bool sDisabled; };
+
+		template<int lineno>
+		bool VDAssertHelper2<lineno>::sDisabled;
 	}
 
-	#define VDASSERT(exp)		if (static bool active = true) if (exp); else switch(VDAssert   (#exp, __FILE__, __LINE__)) { case kVDAssertBreak: VDBREAK; break; case kVDAssertIgnore: active = false; } else ((void)0)
-	#define VDASSERTPTR(exp) 	if (static bool active = true) if (exp); else switch(VDAssertPtr(#exp, __FILE__, __LINE__)) { case kVDAssertBreak: VDBREAK; break; case kVDAssertIgnore: active = false; } else ((void)0)
-	#define VDVERIFY(exp)		if (exp); else if (static bool active = true) switch(VDAssert   (#exp, __FILE__, __LINE__)) { case kVDAssertBreak: VDBREAK; break; case kVDAssertIgnore: active = false; } else ((void)0)
-	#define VDVERIFYPTR(exp) 	if (exp); else if (static bool active = true) switch(VDAssertPtr(#exp, __FILE__, __LINE__)) { case kVDAssertBreak: VDBREAK; break; case kVDAssertIgnore: active = false; } else ((void)0)
+	#define VDASSERT(exp)		if (!VDAssertHelper2<__LINE__>::sDisabled) if (exp); else switch(VDAssert   (#exp, __FILE__, __LINE__)) { case kVDAssertBreak: VDBREAK; break; case kVDAssertIgnore: VDAssertHelper2<__LINE__>::sDisabled = false; } else ((void)0)
+	#define VDASSERTPTR(exp) 	if (!VDAssertHelper2<__LINE__>::sDisabled) if (exp); else switch(VDAssertPtr(#exp, __FILE__, __LINE__)) { case kVDAssertBreak: VDBREAK; break; case kVDAssertIgnore: VDAssertHelper2<__LINE__>::sDisabled = false; } else ((void)0)
+	#define VDVERIFY(exp)		if (exp); else if (!VDAssertHelper2<__LINE__>::sDisabled) switch(VDAssert   (#exp, __FILE__, __LINE__)) { case kVDAssertBreak: VDBREAK; break; case kVDAssertIgnore: VDAssertHelper2<__LINE__>::sDisabled = false; } else ((void)0)
+	#define VDVERIFYPTR(exp) 	if (exp); else if (!VDAssertHelper2<__LINE__>::sDisabled) switch(VDAssertPtr(#exp, __FILE__, __LINE__)) { case kVDAssertBreak: VDBREAK; break; case kVDAssertIgnore: VDAssertHelper2<__LINE__>::sDisabled = false; } else ((void)0)
 	#define VDASSERTCT(exp)		(void)sizeof(int[(exp)?1:-1])
 
 	#define VDINLINEASSERT(exp)			((exp)||(VDAssertHelper<__LINE__>(#exp, __FILE__),false))

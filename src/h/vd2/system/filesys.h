@@ -193,6 +193,7 @@ bool VDFileIsPathEqual(const wchar_t *path1, const wchar_t *path2);
 void VDFileFixDirPath(VDStringW& path);
 VDStringW VDGetLocalModulePath();
 VDStringW VDGetProgramPath();
+VDStringW VDGetProgramFilePath();
 VDStringW VDGetSystemPath();
 
 /////////////////////////////////////////////////////////////////////////////

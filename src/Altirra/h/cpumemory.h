@@ -48,9 +48,27 @@ public:
 		return ATCPUMEMISSPECIAL(readPage) ? CPUReadByte(address) : *(const uint8 *)(readPage + (address & 0xffff));
 	}
 
+	VDFORCEINLINE uint8 ReadByteAddr16(uint32 address) {
+		uintptr readPage = mpCPUReadPageMap[address >> 8];
+		return ATCPUMEMISSPECIAL(readPage) ? CPUReadByte(address) : *(const uint8 *)(readPage + (address & 0xffff));
+	}
+
+	VDFORCEINLINE void DummyReadByte(uint32 address) {
+		uintptr readPage = mpCPUReadPageMap[(uint8)(address >> 8)];
+
+		if (ATCPUMEMISSPECIAL(readPage))
+			CPUReadByte(address);
+	}
+
 	uint8 DebugExtReadByte(uint16 address, uint8 bank) {
 		uintptr readPage = mpCPUReadBankMap[bank][address >> 8];
 		return ATCPUMEMISSPECIAL(readPage) ? CPUDebugExtReadByte(address, bank) : *(const uint8 *)(readPage + address);
+	}
+
+	void DummyExtReadByte(uint16 address, uint8 bank) {
+		uintptr readPage = mpCPUReadBankMap[bank][address >> 8];
+		if (ATCPUMEMISSPECIAL(readPage))
+			CPUExtReadByte(address, bank);
 	}
 
 	uint8 ExtReadByte(uint16 address, uint8 bank) {

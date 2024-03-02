@@ -20,6 +20,9 @@
 #include "scheduler.h"
 #include "uirender.h"
 #include "console.h"
+#include "debuggerlog.h"
+
+ATDebuggerLogChannel g_ATLCModem(false, false, "MODEM", "Modem activity");
 
 namespace {
 	enum {
@@ -538,7 +541,7 @@ void ATModemEmulator::ParseCommand() {
 	// in which case A/ also replays the error
 	mLastCommand.assign((const char *)mCommandBuffer, (const char *)mCommandBuffer + len);
 
-	ATConsolePrintf("MODEM: Executing command: [%s]\n", mLastCommand.c_str());
+	g_ATLCModem("Executing command: [%s]\n", mLastCommand.c_str());
 
 	const char *s = (const char *)mCommandBuffer;
 	const char *t = (const char *)mCommandBuffer + len;
@@ -1024,7 +1027,7 @@ void ATModemEmulator::SendResponse(int response) {
 	VDASSERT((unsigned)response < sizeof(kResponses)/sizeof(kResponses[0]));
 
 	if (mRegisters.mbShortResponses) {
-		ATConsolePrintf("MODEM: Sending short response: %d (%s)\n", response, kResponses[response]);
+		g_ATLCModem("Sending short response: %d (%s)\n", response, kResponses[response]);
 
 		size_t len = response >= 10 ? 4 : 3;
 
@@ -1042,7 +1045,7 @@ void ATModemEmulator::SendResponse(int response) {
 
 		mTransmitLength += len;
 	} else {
-		ATConsolePrintf("MODEM: Sending response: %s\n", kResponses[response]);
+		g_ATLCModem("Sending response: %s\n", kResponses[response]);
 
 		const char *resp = kResponses[response];
 		size_t len = strlen(resp);

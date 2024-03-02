@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include <vd2/system/cpuaccel.h>
 #include <vd2/system/math.h>
 #include <vd2/Riza/display.h>
 #include <vd2/Kasumi/pixmap.h>
@@ -31,6 +32,14 @@
 #include "vbxe.h"
 
 using namespace ATGTIA;
+
+#ifdef VD_CPU_X86
+extern "C" void atasm_update_playfield_160_sse2(
+	void *dst,
+	const uint8 *src,
+	uint32 n
+);
+#endif
 
 class ATFrameTracker : public vdrefcounted<IVDRefCount> {
 public:
@@ -61,6 +70,8 @@ ATGTIAEmulator::ATGTIAEmulator()
 	: mpConn(NULL)
 	, mpVideoTap(NULL)
 	, mpFrameTracker(new ATFrameTracker)
+	, mbPALMode(false)
+	, mbSECAMMode(false)
 	, mArtifactMode(kArtifactNone)
 	, mOverscanMode(kOverscanExtended)
 	, mVBlankMode(kVBlankModeOn)
@@ -74,7 +85,7 @@ ATGTIAEmulator::ATGTIAEmulator()
 	, mbFieldPolarity(false)
 	, mbLastFieldPolarity(false)
 	, mbPostProcessThisFrame(false)
-	, mPreArtifactFrameBuffer(456*312)
+	, mPreArtifactFrameBuffer(464*312+16)
 	, mpArtifactingEngine(new ATArtifactingEngine)
 	, mpRenderer(new ATGTIARenderer)
 	, mpUIRenderer(NULL)
@@ -85,7 +96,7 @@ ATGTIAEmulator::ATGTIAEmulator()
 	ResetColors();
 
 	mPreArtifactFrame.data = mPreArtifactFrameBuffer.data();
-	mPreArtifactFrame.pitch = 456;
+	mPreArtifactFrame.pitch = 464;
 	mPreArtifactFrame.palette = mPalette;
 	mPreArtifactFrame.data2 = NULL;
 	mPreArtifactFrame.data3 = NULL;
@@ -101,14 +112,14 @@ ATGTIAEmulator::ATGTIAEmulator()
 	mSwitchInput = 15;
 	mForcedSwitchInput = 15;
 	mPRIOR = 0;
-	mTRIG[0] = 0x01;
-	mTRIG[1] = 0x01;
-	mTRIG[2] = 0x01;
-	mTRIG[3] = 0x01;
-	mTRIGLatched[0] = 0x01;
-	mTRIGLatched[1] = 0x01;
-	mTRIGLatched[2] = 0x01;
-	mTRIGLatched[3] = 0x01;
+
+	for(int i=0; i<4; ++i) {
+		mTRIG[i] = 0x01;
+		mTRIGLatched[i] = 0x01;
+		mTRIGSECAM[i] = 0x01;
+		mTRIGSECAMLastUpdate[i] = 0;
+	}
+
 	SetAnalysisMode(kAnalyzeNone);
 	memset(mPlayerCollFlags, 0, sizeof mPlayerCollFlags);
 	memset(mMissileCollFlags, 0, sizeof mMissileCollFlags);
@@ -193,8 +204,8 @@ void ATGTIAEmulator::SetColorSettings(const ATColorSettings& settings) {
 void ATGTIAEmulator::ResetColors() {
 	{
 		ATColorParams& colpa = mColorSettings.mNTSCParams;
-		colpa.mHueStart = -15.0f;
-		colpa.mHueRange = 360.0f * 15.0f / 14.4f;
+		colpa.mHueStart = -51.0f;
+		colpa.mHueRange = 27.9f * 15.0f;
 		colpa.mBrightness = 0.0f;
 		colpa.mContrast = 1.0f;
 		colpa.mSaturation = 75.0f / 255.0f;
@@ -274,6 +285,11 @@ void ATGTIAEmulator::GetRawFrameFormat(int& w, int& h, bool& rgb32) const {
 			else
 				h = 240;
 			break;
+
+		case kOverscanOSScreen:
+			w = 320;
+			h = 192;
+			break;
 	}
 
 	if (mbInterlaceEnabled)
@@ -315,6 +331,11 @@ void ATGTIAEmulator::GetFrameSize(int& w, int& h) const {
 				h = 288;
 			else
 				h = 240;
+			break;
+
+		case kOverscanOSScreen:
+			w = 320;
+			h = 192;
 			break;
 	}
 
@@ -371,6 +392,12 @@ void ATGTIAEmulator::SetPALMode(bool enabled) {
 	mbPALMode = enabled;
 
 	RecomputePalette();
+}
+
+void ATGTIAEmulator::SetSECAMMode(bool enabled) {
+	mbSECAMMode = enabled;
+
+	mpRenderer->SetSECAMMode(enabled);
 }
 
 void ATGTIAEmulator::SetConsoleSwitch(uint8 c, bool set) {
@@ -651,7 +678,13 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 			height *= 2;
 
 		if (mpFrame->mPixmap.format != format || mpFrame->mPixmap.w != width || mpFrame->mPixmap.h != height) {
-			fb->mBuffer.init(width, height, format);
+			VDPixmapLayout layout;
+			VDPixmapCreateLinearLayout(layout, format, width, height, 16);
+
+			// Add a little extra width on the end so we can go over slightly with MASKMOVDQU on SSE2
+			// routines.
+			fb->mBuffer.init(layout, 32);
+
 			memset(fb->mBuffer.base(), 0, fb->mBuffer.size());
 		}
 
@@ -668,24 +701,32 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 			omode = kOverscanFull;
 
 		if (omode != kOverscanFull) {
-			ptrdiff_t offset = (omode == kOverscanExtended ? 34*2 : 44*2);
+			ptrdiff_t rawoffset = (omode == kOverscanExtended ? 34*2 : omode == kOverscanNormal ? 44*2 : 48*2);
+			ptrdiff_t offset = rawoffset;
 
 			if (use14MHz)
 				offset *= 8;
 			else if (mbPostProcessThisFrame)
 				offset *= 4;
 
-			if (!mbOverscanPALExtendedThisFrame)
-				offset += fb->mPixmap.pitch * (mbInterlaceEnabledThisFrame ? 16 : 8);
+			ptrdiff_t scanPitch = fb->mPixmap.pitch;
+
+			if (mbInterlaceEnabledThisFrame)
+				scanPitch *= 2;
+
+			if (omode == kOverscanOSScreen)
+				offset += scanPitch * 32;
+			else if (!mbOverscanPALExtendedThisFrame)
+				offset += scanPitch * 8;
 
 			fb->mPixmap.data = (char *)fb->mPixmap.data + offset;
-			fb->mPixmap.w = ((omode == kOverscanExtended) ? (222 - 34)*2 : (212 - 44)*2) * (use14MHz ? 2 : 1);
-			fb->mPixmap.h = mbOverscanPALExtendedThisFrame ? 288 : 240;
+			fb->mPixmap.w = ((omode == kOverscanExtended) ? 376 : (omode == kOverscanNormal) ? 336 : 320) * (use14MHz ? 2 : 1);
+			fb->mPixmap.h = (omode == kOverscanOSScreen) ? 192 : mbOverscanPALExtendedThisFrame ? 288 : 240;
 
-			mPreArtifactFrameVisibleY1 = mbOverscanPALExtendedThisFrame ? 0 : 8;
+			mPreArtifactFrameVisibleY1 = omode == kOverscanOSScreen ? 32 : mbOverscanPALExtendedThisFrame ? 0 : 8;
 			mPreArtifactFrameVisibleY2 = mPreArtifactFrameVisibleY1 + fb->mPixmap.h;
 
-			mPreArtifactFrameVisible.data = (char *)mPreArtifactFrameVisible.data + (omode == kOverscanExtended ? 34*2 : 44*2) * (use14MHz ? 2 : 1) + mPreArtifactFrameVisibleY1*mPreArtifactFrameVisible.pitch;
+			mPreArtifactFrameVisible.data = (char *)mPreArtifactFrameVisible.data + rawoffset * (use14MHz ? 2 : 1) + mPreArtifactFrameVisibleY1*mPreArtifactFrameVisible.pitch;
 			mPreArtifactFrameVisible.w = fb->mPixmap.w;
 			mPreArtifactFrameVisible.h = fb->mPixmap.h;
 
@@ -707,6 +748,7 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 	mRCCount = 0;
 	mRCIndex = 0;
 
+	mbMixedRendering = false;
 	mbANTICHiresMode = hires;
 	mbHiresMode = hires && !(mPRIOR & 0xc0);
 	mbGTIADisableTransition = false;
@@ -748,7 +790,7 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 
 		if (yw < h) {
 			if (mbPostProcessThisFrame)
-				mpDst = &mPreArtifactFrameBuffer[yw * 456];
+				mpDst = &mPreArtifactFrameBuffer[yw * 464];
 			else if (!mbInterlaceEnabledThisFrame)
 				mpDst = (uint8 *)fb->mBuffer.data + yw * fb->mBuffer.pitch;
 			else
@@ -795,7 +837,7 @@ void ATGTIAEmulator::EndScanline(uint8 dlControl) {
 		if (mpVBXE)
 			mpVBXE->RenderScanline(222);
 		else
-			mpRenderer->RenderScanline(222, mbPMRendered);
+			mpRenderer->RenderScanline(222, mbPMRendered, mbMixedRendering);
 	}
 
 	if (mpVBXE)
@@ -857,13 +899,34 @@ void ATGTIAEmulator::UpdateMissile(bool odd, uint8 byte) {
 }
 
 void ATGTIAEmulator::UpdatePlayfield160(uint32 x, uint8 byte) {
+	VDASSERT(x < 114);
+
 	uint8 *dst = &mMergeBuffer[x*2];
 
 	dst[0] = (byte >>  4) & 15;
 	dst[1] = (byte      ) & 15;
+}
+
+void ATGTIAEmulator::UpdatePlayfield160(uint32 x, const uint8 *__restrict src, uint32 n) {
+	if (!n)
+		return;
 
 	VDASSERT(x < 114);
+	uint8 *__restrict dst = &mMergeBuffer[x*2];
 
+#ifdef VD_CPU_X86
+	if (SSE2_enabled) {
+		atasm_update_playfield_160_sse2(dst, src, n);
+		return;
+	}
+#endif
+
+	do {
+		const uint8 byte = *src++;
+		dst[0] = (byte >>  4) & 15;
+		dst[1] = (byte      ) & 15;
+		dst += 2;
+	} while(--n);
 }
 
 void ATGTIAEmulator::UpdatePlayfield320(uint32 x, uint8 byte) {
@@ -876,6 +939,20 @@ void ATGTIAEmulator::UpdatePlayfield320(uint32 x, uint8 byte) {
 	uint8 *dst = &mAnticData[x];
 	dst[0] = (byte >> 2) & 3;
 	dst[1] = (byte >> 0) & 3;
+}
+
+void ATGTIAEmulator::UpdatePlayfield320(uint32 x, const uint8 *src, uint32 n) {
+	VDASSERT(x < 228);
+
+	memset(&mMergeBuffer[x], PF2, n*2);
+	
+	uint8 *dst = &mAnticData[x];
+	do {
+		const uint8 byte = *src++;
+		dst[0] = (byte >> 2) & 3;
+		dst[1] = (byte >> 0) & 3;
+		dst += 2;
+	} while(--n);
 }
 
 void ATGTIAEmulator::EndPlayfield() {
@@ -1015,28 +1092,82 @@ void ATGTIAEmulator::SyncTo(int x1, int x2) {
 	// convert modes if necessary
 	bool needHires = mbHiresMode || (mPRIOR & 0xC0);
 	if (needHires != mbANTICHiresMode) {
+		mbMixedRendering = true;
+
 		if (mbANTICHiresMode)
 			Convert320To160(x1, x2, mMergeBuffer, mAnticData);
 		else
 			Convert160To320(x1, x2, mAnticData, mMergeBuffer);
 	}
 
-	static const uint8 kPFTable[8]={
-		0, 0, 0, 0,
-		PF0, PF1, PF2, PF3,
+	static const uint8 kPFTable[16]={
+		0, 0, 0, 0, PF0, PF1, PF2, PF3,
+		0, 0, 0, 0, PF0, PF1, PF2, PF3,
+	};
+
+	static const uint8 kPFMask[16]={
+		0xF0, 0xFF, 0xFF, 0xFF,
+		0xFF, 0xFF, 0xFF, 0xFF,
+		0xFF, 0xFF, 0xFF, 0xFF,
+		0xFF, 0xFF, 0xFF, 0xFF,
 	};
 
 	switch(mPRIOR & 0xC0) {
 		case 0x00:
 			break;
 		case 0x80:
-			{
-				for(int x=x1; x<x2; ++x) {
-					const uint8 *ad = &mAnticData[(x - 1) & ~1];
+			if (mbANTICHiresMode) {
+				const uint8 *__restrict ad = &mAnticData[(x1 - 1) & ~1];
+				uint8 *__restrict dst = &mMergeBuffer[x1];
 
+				int w = x2 - x1;
+				if (!(x1 & 1)) {
 					uint8 c = ad[0]*4 + ad[1];
+					ad += 2;
 
-					mMergeBuffer[x] = kPFTable[c & 7];
+					*dst++ = kPFTable[c];
+					--w;
+				}
+
+				int w2 = w >> 1;
+				while(w2--) {
+					uint8 c = ad[0]*4 + ad[1];
+					ad += 2;
+
+					dst[0] = dst[1] = kPFTable[c];
+					dst += 2;
+				}
+
+				if (w & 1) {
+					uint8 c = ad[0]*4 + ad[1];
+					*dst++ = kPFTable[c];
+				}
+			} else {
+				const uint8 *__restrict ad = &mAnticData[(x1 - 1) & ~1];
+				uint8 *__restrict dst = &mMergeBuffer[x1];
+
+				int w = x2 - x1;
+				if (!(x1 & 1)) {
+					uint8 c = ad[0]*4 + ad[1];
+					ad += 2;
+
+					*dst = kPFTable[c] & kPFMask[dst[-1] & 15];
+					++dst;
+					--w;
+				}
+
+				int w2 = w >> 1;
+				while(w2--) {
+					uint8 c = ad[0]*4 + ad[1];
+					ad += 2;
+
+					dst[0] = dst[1] = kPFTable[c] & kPFMask[dst[0] & 15];
+					dst += 2;
+				}
+
+				if (w & 1) {
+					uint8 c = ad[0]*4 + ad[1];
+					*dst = kPFTable[c] & kPFMask[dst[0] & 15];
 				}
 			}
 			break;
@@ -1290,7 +1421,7 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 			if (mpVBXE)
 				mpVBXE->RenderScanline(x);
 			else
-				mpRenderer->RenderScanline(x, mbPMRendered);
+				mpRenderer->RenderScanline(x, mbPMRendered, mbMixedRendering);
 		}
 
 		uint32 y = mY + 1;
@@ -1320,7 +1451,7 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 				VDMemset32(row + x*4*4, 0xFFFF00, 912 - 4*x);
 			} else {
 				VDMemset8(row, 0x00, 2*x);
-				VDMemset8(row + x*2, 0xFF, 456 - 2*x);
+				VDMemset8(row + x*2, 0xFF, 464 - 2*x);
 			}
 		}
 
@@ -1461,6 +1592,9 @@ uint8 ATGTIAEmulator::ReadByte(uint8 reg) {
 		case 0x11:
 		case 0x12:
 		case 0x13:
+			if (mbSECAMMode)
+				UpdateSECAMTriggerLatch(reg - 0x10);
+
 			return (mGRACTL & 4) ? mTRIGLatched[reg - 0x10] : mTRIG[reg - 0x10];
 		case 0x14:
 			return mbPALMode ? 0x01 : 0x0F;
@@ -1565,6 +1699,11 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 			// We actually need to sync the latches when latching is *enabled*, since they
 			// are always updated but only read when latching is enabled.
 			if (~mGRACTL & value & 4) {
+				if (mbSECAMMode) {
+					for(int i=0; i<4; ++i)
+						UpdateSECAMTriggerLatch(i);
+				}
+
 				mTRIGLatched[0] = mTRIG[0];
 				mTRIGLatched[1] = mTRIG[1];
 				mTRIGLatched[2] = mTRIG[2];
@@ -1833,5 +1972,19 @@ void ATGTIAEmulator::UpdateRegisters(const RegisterChange *rc, int count) {
 		}
 
 		++rc;
+	}
+}
+
+void ATGTIAEmulator::UpdateSECAMTriggerLatch(int index) {
+	// The 107 is a guess. The triggers start shifting into FGTIA on the
+	// third cycle of horizontal blank according to the FGTIA doc.
+	uint32 t = mpConn->GTIAGetLineEdgeTimingId(107 + index);
+
+	if (mTRIGSECAMLastUpdate[index] != t) {
+		mTRIGSECAMLastUpdate[index] = t;
+
+		const uint8 v = mTRIGSECAM[index];
+		mTRIG[index] = v;
+		mTRIGLatched[index] &= v;
 	}
 }

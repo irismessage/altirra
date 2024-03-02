@@ -185,6 +185,7 @@ public:
 
 	void SetModemConnection(const char *str) { mModemConnection = str; }
 
+	void ClearWatchedValue(int index);
 	void SetWatchedValue(int index, uint32 value, int len);
 	void SetAudioStatus(ATUIAudioStatus *status);
 	void SetAudioMonitor(ATAudioMonitor *monitor);
@@ -214,7 +215,7 @@ protected:
 	VDStringA	mModemConnection;
 
 	uint32	mWatchedValues[8];
-	uint8	mWatchedValueLens[8];
+	sint8	mWatchedValueLens[8];
 
 	bool	mbShowAudioStatus;
 	ATUIAudioStatus mAudioStatus;
@@ -251,7 +252,7 @@ ATUIRenderer::ATUIRenderer()
 	}
 
 	for(int i=0; i<8; ++i)
-		mWatchedValueLens[i] = 0;
+		mWatchedValueLens[i] = -1;
 }
 
 ATUIRenderer::~ATUIRenderer() {
@@ -299,6 +300,11 @@ void ATUIRenderer::SetCassettePosition(float pos) {
 	mCassettePos = pos;
 }
 
+void ATUIRenderer::ClearWatchedValue(int index) {
+	if (index >= 0 && index < 8)
+		mWatchedValueLens[index] = -1;
+}
+
 void ATUIRenderer::SetWatchedValue(int index, uint32 value, int len) {
 	if (index >= 0 && index < 8) {
 		mWatchedValues[index] = value;
@@ -341,6 +347,29 @@ void ATUIRenderer::Render(const VDPixmap& pxdst, const uint32 *palette) {
 		DrawString8(pxdst, palette, 16, 48, 0x0F, 0x00, buf);
 		sprintf(buf, "Incoming data rate: %.2f samples/sec", mAudioStatus.mIncomingRate);
 		DrawString8(pxdst, palette, 16, 56, 0x0F, 0x00, buf);
+		sprintf(buf, "Expected data rate: %.2f samples/sec", mAudioStatus.mExpectedRate);
+		DrawString8(pxdst, palette, 16, 64, 0x0F, 0x00, buf);
+	}
+
+	const bool showAllIndicators = false;
+	if (showAllIndicators) {
+		statusFlags = 0x10000;
+		mShowCassetteIndicatorCounter = 1;
+		mRecordingPos = 10000;
+		mHReadCounter = 4;
+		mHWriteCounter = 4;
+		mPCLinkReadCounter = 4;
+		mPCLinkWriteCounter = 4;
+		mFlashWriteCounter = 30;
+		mbHardDiskRead = true;
+		mbHardDiskWrite = true;
+		mHardDiskLBA = 1000000;
+		mModemConnection = "Connected to 192.168.0.1:8000";
+
+		for(int i=0; i<15; ++i)
+			mStatusCounter[i] = i + 1;
+
+		statusFlags = 0x7fff;
 	}
 
 	for(int i = 14; i >= 0; --i) {
@@ -353,19 +382,6 @@ void ATUIRenderer::Render(const VDPixmap& pxdst, const uint32 *palette) {
 		} else {
 			x -= 5;
 		}
-	}
-
-	const bool showAllIndicators = false;
-	if (showAllIndicators) {
-		statusFlags = 0x10000;
-		mShowCassetteIndicatorCounter = 1;
-		mRecordingPos = 10000;
-		mHReadCounter = 4;
-		mHWriteCounter = 4;
-		mFlashWriteCounter = 30;
-		mbHardDiskRead = true;
-		mbHardDiskWrite = true;
-		mHardDiskLBA = 1000000;
 	}
 
 	if (statusFlags & 0x10000) {
@@ -457,12 +473,15 @@ void ATUIRenderer::Render(const VDPixmap& pxdst, const uint32 *palette) {
 	// draw watched values
 	for(int i=0; i<8; ++i) {
 		int len = mWatchedValueLens[i];
-		if (!len)
+		if (len < 0)
 			continue;
 
 		int y = pxdst.h - 6*12 + i*8;
 
 		switch(len) {
+			case 0:
+				sprintf(buf, "%d", (int)mWatchedValues[i]);
+				break;
 			case 1:
 				sprintf(buf, "%02X", mWatchedValues[i]);
 				break;

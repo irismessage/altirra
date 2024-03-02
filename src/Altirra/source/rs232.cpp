@@ -20,9 +20,14 @@
 #include "cpu.h"
 #include "cpumemory.h"
 #include "cio.h"
+#include "sio.h"
 #include "ksyms.h"
 #include "scheduler.h"
 #include "modem.h"
+#include "pokey.h"
+#include "debuggerlog.h"
+
+ATDebuggerLogChannel g_ATLC850SIO(false, false, "850", "850 interface SIO activity");
 
 //////////////////////////////////////////////////////////////////////////
 
@@ -567,14 +572,17 @@ void ATRS232Channel::PollDevice() {
 
 //////////////////////////////////////////////////////////////////////////
 
-class ATRS232Emulator : public IATRS232Emulator {
+class ATRS232Emulator : public IATRS232Emulator
+					, public IATPokeySIODevice
+					, public IATSchedulerCallback
+{
 	ATRS232Emulator(const ATRS232Emulator&);
 	ATRS232Emulator& operator=(const ATRS232Emulator&);
 public:
 	ATRS232Emulator();
 	~ATRS232Emulator();
 
-	void Init(ATCPUEmulatorMemory *mem, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir);
+	void Init(ATCPUEmulatorMemory *mem, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir, ATPokeyEmulator *pokey);
 	void Shutdown();
 
 	void ColdReset();
@@ -584,16 +592,45 @@ public:
 
 	void OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, int offset);
 
+public:
+	void PokeyAttachDevice(ATPokeyEmulator *pokey);
+	void PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit);
+	void PokeyBeginCommand();
+	void PokeyEndCommand();
+	void PokeySerInReady();
+
+public:
+	void BeginTransfer(uint32 length, bool write);
+	void OnScheduledEvent(uint32 id);
+
 protected:
+	void OnCommandReceived();
+
+	ATScheduler *mpScheduler;
+	ATEvent		*mpTransferEvent;
+
 	ATRS232Channel mChannels[4];
 	ATRS232Config mConfig;
+
+	ATPokeyEmulator *mpPokey;
+	bool	mbCommandState;
+	uint32	mTransferIndex;
+	uint32	mTransferLength;
+	uint8	mTransferBuffer[16];
 };
 
 IATRS232Emulator *ATCreateRS232Emulator() {
 	return new ATRS232Emulator;
 }
 
-ATRS232Emulator::ATRS232Emulator() {
+ATRS232Emulator::ATRS232Emulator()
+	: mpScheduler(NULL)
+	, mpTransferEvent(NULL)
+	, mpPokey(NULL)
+	, mbCommandState(false)
+	, mTransferIndex(0)
+	, mTransferLength(0)
+{
 	mConfig.mbTelnetEmulation = true;
 }
 
@@ -601,13 +638,27 @@ ATRS232Emulator::~ATRS232Emulator() {
 	Shutdown();
 }
 
-void ATRS232Emulator::Init(ATCPUEmulatorMemory *mem, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir) {
+void ATRS232Emulator::Init(ATCPUEmulatorMemory *mem, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir, ATPokeyEmulator *pokey) {
 	for(int i=0; i<4; ++i) {
 		mChannels[i].Init(i, mem, sched, slowsched, i ? NULL : uir);
 	}
+
+	mpScheduler = sched;
+	mpPokey = pokey;
+	pokey->AddSIODevice(this);
 }
 
 void ATRS232Emulator::Shutdown() {
+	if (mpScheduler) {
+		mpScheduler->UnsetEvent(mpTransferEvent);
+		mpScheduler = NULL;
+	}
+
+	if (mpPokey) {
+		mpPokey->RemoveSIODevice(this);
+		mpPokey = NULL;
+	}
+
 	for(int i=0; i<4; ++i) {
 		mChannels[i].Shutdown();
 	}
@@ -617,6 +668,12 @@ void ATRS232Emulator::ColdReset() {
 	for(int i=0; i<4; ++i) {
 		mChannels[i].ColdReset();
 	}
+
+	mbCommandState = false;
+	mTransferIndex = 0;
+	mTransferLength = 0;
+
+	mpScheduler->UnsetEvent(mpTransferEvent);
 }
 
 void ATRS232Emulator::GetConfig(ATRS232Config& config) {
@@ -752,5 +809,111 @@ void ATRS232Emulator::OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, 
 
 			cpu->Ldy(ATCIOSymbols::CIOStatSuccess);
 			return;
+	}
+}
+
+void ATRS232Emulator::PokeyAttachDevice(ATPokeyEmulator *pokey) {
+}
+
+void ATRS232Emulator::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) {
+	if (mTransferIndex < mTransferLength) {
+		mTransferBuffer[mTransferIndex++] = c;
+
+		if (mTransferIndex >= mTransferLength) {
+			if (mbCommandState)
+				OnCommandReceived();
+		}
+	}
+}
+
+void ATRS232Emulator::PokeyBeginCommand() {
+	mbCommandState = true;
+	mTransferIndex = 0;
+	mTransferLength = 5;
+}
+
+void ATRS232Emulator::PokeyEndCommand() {
+	mbCommandState = false;
+}
+
+void ATRS232Emulator::PokeySerInReady() {
+}
+
+void ATRS232Emulator::BeginTransfer(uint32 length, bool write) {
+	mTransferIndex = 0;
+	mTransferLength = length;
+
+	mpScheduler->SetEvent(2000, this, 1, mpTransferEvent);
+}
+
+void ATRS232Emulator::OnScheduledEvent(uint32 id) {
+	mpTransferEvent = NULL;
+
+	if (mTransferIndex < mTransferLength) {
+		mpPokey->ReceiveSIOByte(mTransferBuffer[mTransferIndex++], 93);
+
+		if (mTransferIndex < mTransferLength)
+			mpTransferEvent = mpScheduler->AddEvent(mTransferIndex == 1 ? 5000 : 930, this, 1);
+	}
+}
+
+void ATRS232Emulator::OnCommandReceived() {
+	if (!mConfig.m850SIOLevel)
+		return;
+
+	// check device ID
+	const uint32 index = mTransferBuffer[0] - 0x50;
+	const uint8 cmd = mTransferBuffer[1];
+	if (cmd != 0x3F && index >= 4)
+		return;
+
+	g_ATLC850SIO("Unit %d | Command %02x %02x %02x\n", index + 1, mTransferBuffer[1], mTransferBuffer[2], mTransferBuffer[3]);
+
+	if (cmd == 0x3F) {
+		// Poll command -- send back SIO command for booting. This
+		// is an 12 byte + chk block that is meant to be written to
+		// the SIO parameter block starting at DDEVIC ($0300).
+		//
+		// The boot block MUST start at $0500. There are both BASIC-
+		// based and cart-based loaders that use JSR $0506 to run the
+		// loader.
+
+		static const uint8 kBootBlock[12]={
+			0x50,		// DDEVIC
+			0x01,		// DUNIT
+			0x21,		// DCOMND = '!' (boot)
+			0x40,		// DSTATS
+			0x00, 0x05,	// DBUFLO, DBUFHI == $0500
+			0x08,		// DTIMLO = 8 vblanks
+			0x00,		// not used
+			0x00, 0x00,	// DBYTLO, DBYTHI
+			0x00,		// DAUX1
+			0x00,		// DAUX2
+		};
+
+		mTransferBuffer[0] = 0x41;
+		mTransferBuffer[1] = 0x43;
+		memcpy(mTransferBuffer+2, kBootBlock, 12);
+		mTransferBuffer[10] = 7;
+		mTransferBuffer[11] = 0;
+		mTransferBuffer[14] = ATComputeSIOChecksum(mTransferBuffer+2, 12);
+		BeginTransfer(15, true);
+		return;
+	} else if (cmd == 0x21) {
+		// Boot command -- send back boot loader.
+		static const uint8 kLoaderBlock[7]={
+			0x00,		// flags
+			0x01,		// sector count
+			0x00, 0x05,	// load address
+			0x06, 0x05,	// init address
+			0x60
+		};
+
+		mTransferBuffer[0] = 0x41;
+		mTransferBuffer[1] = 0x43;
+		memcpy(mTransferBuffer+2, kLoaderBlock, 7);
+		mTransferBuffer[9] = ATComputeSIOChecksum(mTransferBuffer+2, 7);
+		BeginTransfer(10, true);
+		return;
 	}
 }

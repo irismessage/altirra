@@ -23,6 +23,7 @@
 #endif
 
 class IATUIRenderer;
+class IATSyncAudioSource;
 
 class IATAudioTap {
 public:
@@ -49,8 +50,13 @@ public:
 	virtual IATUIRenderer *GetStatusRenderer() = 0;
 	virtual void SetStatusRenderer(IATUIRenderer *uir) = 0;
 
-	virtual void SetPal(bool pal) = 0;
-	virtual void SetTurbo(bool turbo) = 0;
+	virtual void AddSyncAudioSource(IATSyncAudioSource *src) = 0;
+	virtual void RemoveSyncAudioSource(IATSyncAudioSource *src) = 0;
+
+	virtual void SetCyclesPerSecond(double cps, double repeatfactor) = 0;
+
+	virtual bool GetMute() = 0;
+	virtual void SetMute(bool mute) = 0;
 
 	virtual float GetVolume() = 0;
 	virtual void SetVolume(float vol) = 0;

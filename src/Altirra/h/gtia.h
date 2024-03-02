@@ -33,6 +33,7 @@ public:
 	virtual void GTIASetSpeaker(bool state) = 0;
 	virtual void GTIASelectController(uint8 index, bool potsEnabled) = 0;
 	virtual void GTIARequestAnticSync() = 0;
+	virtual uint32 GTIAGetLineEdgeTimingId(uint32 offset) const = 0;
 };
 
 class IATGTIAVideoTap {
@@ -102,6 +103,7 @@ public:
 		kOverscanNormal,
 		kOverscanExtended,
 		kOverscanFull,
+		kOverscanOSScreen,
 		kOverscanCount
 	};
 
@@ -141,6 +143,9 @@ public:
 	bool IsPALMode() const { return mbPALMode; }
 	void SetPALMode(bool enabled);
 
+	bool IsSECAMMode() const { return mbSECAMMode; }
+	void SetSECAMMode(bool enabled);
+
 	ArtifactMode GetArtifactingMode() const { return mArtifactMode; }
 	void SetArtifactingMode(ArtifactMode mode) { mArtifactMode = mode; }
 
@@ -155,8 +160,13 @@ public:
 	void SetControllerTrigger(int index, bool state) {
 		uint8 v = state ? 0x00 : 0x01;
 
-		mTRIG[index] = v;
-		mTRIGLatched[index] &= v;
+		if (mbSECAMMode) {
+			UpdateSECAMTriggerLatch(index);
+			mTRIGSECAM[index] = v;
+		} else {
+			mTRIG[index] = v;
+			mTRIGLatched[index] &= v;
+		}
 	}
 
 	void SetVideoTap(IATGTIAVideoTap *vtap);
@@ -192,7 +202,9 @@ public:
 	void UpdatePlayer(bool odd, int index, uint8 byte);
 	void UpdateMissile(bool odd, uint8 byte);
 	void UpdatePlayfield160(uint32 x, uint8 byte);
+	void UpdatePlayfield160(uint32 x, const uint8 *src, uint32 n);
 	void UpdatePlayfield320(uint32 x, uint8 byte);
+	void UpdatePlayfield320(uint32 x, const uint8 *src, uint32 n);
 	void EndPlayfield();
 	void Sync();
 
@@ -217,6 +229,7 @@ protected:
 	void ApplyArtifacting();
 	void AddRegisterChange(uint8 pos, uint8 addr, uint8 value);
 	void UpdateRegisters(const RegisterChange *rc, int count);
+	void UpdateSECAMTriggerLatch(int index);
 
 	IATGTIAEmulatorConnections *mpConn; 
 	IVDVideoDisplay *mpDisplay;
@@ -278,6 +291,8 @@ protected:
 
 	uint8	mTRIG[4];
 	uint8	mTRIGLatched[4];
+	uint8	mTRIGSECAM[4];
+	uint32	mTRIGSECAMLastUpdate[4];
 
 	uint8	mPlayerCollFlags[4];
 	uint8	mMissileCollFlags[4];
@@ -287,24 +302,26 @@ protected:
 	vdrefptr<VDVideoDisplayFrame>	mpFrame;
 	uint32	mFrameTimestamp;
 	ATFrameTracker *mpFrameTracker;
+	bool	mbMixedRendering;	// GTIA mode with non-hires or pseudo mode E
 	bool	mbANTICHiresMode;
 	bool	mbHiresMode;
 	bool	mbGTIADisableTransition;
 	bool	mbTurbo;
 	bool	mbPALMode;
+	bool	mbSECAMMode;
 	bool	mbForcedBorder;
 
 	const uint8 *mpPriTable;
 	const uint8 *mpColorTable;
 
-	uint8	mMergeBuffer[228];
-	uint8	mAnticData[228];
+	__declspec(align(16))	uint8	mMergeBuffer[228];
+	__declspec(align(16))	uint8	mAnticData[228];
 	uint32	mPalette[256];
 	bool	mbScanlinesWithHiRes[240];
 
 	ATColorSettings mColorSettings;
 
-	vdfastvector<uint8>		mPreArtifactFrameBuffer;
+	vdfastvector<uint8, vdaligned_alloc<uint8> > mPreArtifactFrameBuffer;
 	VDPixmap	mPreArtifactFrame;
 	VDPixmap	mPreArtifactFrameVisible;
 	uint32		mPreArtifactFrameVisibleY1;

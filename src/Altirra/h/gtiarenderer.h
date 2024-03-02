@@ -18,6 +18,7 @@
 #ifndef f_AT_GTIARENDER_H
 #define f_AT_GTIARENDER_H
 
+#include <vd2/system/memory.h>
 #include <vd2/system/vdstl.h>
 
 class ATSaveStateReader;
@@ -72,7 +73,7 @@ struct ATGTIAColorRegisters {
 	uint8 mCOLBK;
 };
 
-class ATGTIARenderer {
+class ATGTIARenderer : public VDAlignedObject<16> {
 	ATGTIARenderer(const ATGTIARenderer&);
 	ATGTIARenderer& operator=(const ATGTIARenderer&);
 public:
@@ -81,9 +82,10 @@ public:
 
 	void SetAnalysisMode(bool analysisMode);
 	void SetVBlank(bool vblank);
+	void SetSECAMMode(bool secam) { mbSECAMMode = secam; }
 
 	void BeginScanline(uint8 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires);
-	void RenderScanline(int x2, bool pmgraphics);
+	void RenderScanline(int x2, bool pmgraphics, bool mixed);
 	void EndScanline();
 
 	void AddRegisterChange(uint8 pos, uint8 addr, uint8 value);
@@ -108,9 +110,11 @@ protected:
 	void RenderMode8Fast(int x1, int x2);
 	void RenderMode8Transition(int x1);
 	void RenderMode9(int x1, int x2);
+	void RenderMode9Fast(int x1, int x2);
 	void RenderMode9Transition1(int x1);
 	void RenderMode9Transition2(int x1);
 	void RenderMode10(int x1, int x2);
+	void RenderMode10Fast(int x1, int x2);
 	void RenderMode10Transition1(int x1);
 	void RenderMode10Transition2(int x1);
 	void RenderMode10Transition3(int x1);
@@ -128,6 +132,7 @@ protected:
 	bool mbGTIAEnableTransition;
 	uint8 mTransitionPhase;
 	bool mbVBlank;
+	bool mbSECAMMode;
 	uint8 mPRIOR;
 
 	const uint8 *mpPriTable;
@@ -136,7 +141,7 @@ protected:
 	typedef vdfastvector<RegisterChange> RegisterChanges;
 	RegisterChanges mRegisterChanges;
 
-	uint8	mColorTable[24];
+	__declspec(align(16)) uint8	mColorTable[24];
 	uint8	mPriorityTables[32][256];
 };
 

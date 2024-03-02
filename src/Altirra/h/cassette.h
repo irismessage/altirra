@@ -24,6 +24,7 @@
 
 #include "pokey.h"
 #include "scheduler.h"
+#include "audiosource.h"
 
 class VDFile;
 
@@ -46,19 +47,28 @@ protected:
 
 class ATCPUEmulatorMemory;
 class IVDRandomAccessStream;
+class IATAudioOutput;
+class IATCassetteImage;
 
-class ATCassetteEmulator : public IATSchedulerCallback, public IATPokeyCassetteDevice {
+class ATCassetteEmulator : public IATSchedulerCallback, public IATPokeyCassetteDevice, public IATSyncAudioSource {
 public:
 	ATCassetteEmulator();
 	~ATCassetteEmulator();
 
+	IATCassetteImage *GetImage() const { return mpImage; }
+
 	float GetLength() const;
 	float GetPosition() const;
+	uint32 GetSampleLen() const { return mLength; }
+	uint32 GetSamplePos() const { return mPosition; }
 
-	void Init(ATPokeyEmulator *pokey, ATScheduler *sched);
+	void Init(ATPokeyEmulator *pokey, ATScheduler *sched, IATAudioOutput *audioOut);
+	void Shutdown();
 	void ColdReset();
 
 	bool IsLoaded() const { return mLength || mAudioLength; }
+	bool IsPlayEnabled() const { return mbPlayEnable; }
+	bool IsMotorEnabled() const { return mbMotorEnable; }
 	bool IsMotorRunning() const { return mpPlayEvent != NULL; }
 	bool IsLogDataEnabled() const { return mbLogData; }
 	bool IsLoadDataAsAudioEnabled() const { return mbLoadDataAsAudio; }
@@ -86,6 +96,10 @@ public:
 protected:
 	void PokeyChangeSerialRate(uint32 divisor);
 	void PokeyResetSerialInput();
+	bool PokeyReadSerialInput();
+
+protected:
+	void WriteAudio(uint32 startTime, float *dstLeft, float *dstRightOpt, uint32 n);
 
 protected:
 	void UpdateMotorState();
@@ -102,6 +116,10 @@ protected:
 	void ParseCAS(IVDRandomAccessStream& stream);
 
 	void ConvertDataToAudio();
+
+	void StartAudio();
+	void StopAudio();
+	void SeekAudio(uint32 pos);
 
 	uint32	mAudioPosition;
 	uint32	mAudioLength;
@@ -125,16 +143,22 @@ protected:
 	uint32	mAveragingPeriod;
 
 	ATEvent *mpPlayEvent;
-	ATEvent *mpAudioEvent;
 
 	ATPokeyEmulator *mpPokey;
 	ATScheduler *mpScheduler;
+	IATAudioOutput *mpAudioOutput;
 
-	typedef vdfastvector<uint8> Bitstream;
-	Bitstream	mBitstream;
+	IATCassetteImage *mpImage;
 
-	typedef vdfastvector<uint8> AudioStream;
-	AudioStream	mAudioStream;
+	struct AudioEvent {
+		uint32	mStartTime;
+		uint32	mStopTime;
+		uint32	mPosition;
+	};
+
+	typedef vdfastvector<AudioEvent> AudioEvents;
+	AudioEvents mAudioEvents;
+	bool mbAudioEventOpen;
 };
 
 #endif

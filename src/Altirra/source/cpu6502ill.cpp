@@ -480,8 +480,8 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			*mpDstState++ = kStateDtoA;
 			break;
 
-		case 0xBB:	// LAS abs
-			DecodeReadAbs();
+		case 0xBB:	// LAS abs,Y
+			DecodeReadAbsY();
 			*mpDstState++ = kStateLas;
 			break;
 

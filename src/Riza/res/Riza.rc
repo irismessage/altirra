@@ -8,6 +8,9 @@
 // Generated from the TEXTINCLUDE 2 resource.
 //
 #include "winresrc.h"
+#ifndef IDC_STATIC
+#define IDC_STATIC (-1)
+#endif
 
 /////////////////////////////////////////////////////////////////////////////
 #undef APSTUDIO_READONLY_SYMBOLS
@@ -35,6 +38,9 @@ END
 2 TEXTINCLUDE 
 BEGIN
     "#include ""winresrc.h""\r\n"
+	"#ifndef IDC_STATIC\r\n"
+	"#define IDC_STATIC (-1)\r\n"
+	"#endif\r\n"
     "\0"
 END
 
@@ -57,20 +63,20 @@ STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSM
 CAPTION "Screen capture settings"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    GROUPBOX        "Position",IDC_STATIC_HEIGHT,7,7,124,66
+    GROUPBOX        "Position",IDC_STATIC,7,7,124,66
     CONTROL         "Track &mouse pointer",IDC_POSITION_TRACKMOUSE,"Button",BS_AUTORADIOBUTTON | WS_GROUP,12,17,81,10
     CONTROL         "Use &fixed offset",IDC_POSITION_FIXED,"Button",BS_AUTORADIOBUTTON,12,27,67,10
-    LTEXT           "&X:",IDC_STATIC_HEIGHT,24,38,11,12,SS_CENTERIMAGE
+    LTEXT           "&X:",IDC_STATIC,24,38,11,12,SS_CENTERIMAGE
     EDITTEXT        IDC_POSITION_X,37,38,40,12,ES_AUTOHSCROLL
-    LTEXT           "&Y:",IDC_STATIC_HEIGHT,24,52,11,12,SS_CENTERIMAGE
+    LTEXT           "&Y:",IDC_STATIC,24,52,11,12,SS_CENTERIMAGE
     EDITTEXT        IDC_POSITION_Y,37,52,40,12,ES_AUTOHSCROLL
-    GROUPBOX        "Panning area",IDC_STATIC_HEIGHT,138,7,155,66
+    GROUPBOX        "Panning area",IDC_STATIC,138,7,155,66
     CONTROL         "&Entire desktop",IDC_PANNING_DESKTOP,"Button",BS_AUTORADIOBUTTON | WS_GROUP,143,17,62,10
     CONTROL         "&Active top-level window",IDC_PANNING_ACTIVEWINDOW,
                     "Button",BS_AUTORADIOBUTTON,143,27,92,10
     CONTROL         "Active top-level c&lient area",IDC_PANNING_ACTIVECLIENT,
                     "Button",BS_AUTORADIOBUTTON,143,37,101,10
-    GROUPBOX        "Capture options",IDC_STATIC_HEIGHT,7,73,286,128
+    GROUPBOX        "Capture options",IDC_STATIC,7,73,286,128
     CONTROL         "&Capture mouse pointer image",IDC_DRAW_CURSOR,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,12,83,110,10
     CONTROL         "Use &OpenGL hardware acceleration",IDC_USE_OPENGL,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,12,94,129,10

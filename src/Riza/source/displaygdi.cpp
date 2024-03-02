@@ -26,6 +26,7 @@ public:
 	bool ModifySource(const VDVideoDisplaySourceInfo& info);
 
 	bool IsValid() { return mbValid; }
+	void SetDestRect(const vdrect32 *r, uint32 color);
 
 	bool Update(UpdateMode);
 	void Refresh(UpdateMode);
@@ -395,6 +396,12 @@ bool VDVideoDisplayMinidriverGDI::ModifySource(const VDVideoDisplaySourceInfo& i
 
 	mSource = info;
 	return true;
+}
+
+void VDVideoDisplayMinidriverGDI::SetDestRect(const vdrect32 *r, uint32 color) {
+	VDVideoDisplayMinidriver::SetDestRect(r, color);
+	if (mhwnd)
+		InvalidateRect(mhwnd, NULL, FALSE);
 }
 
 bool VDVideoDisplayMinidriverGDI::Update(UpdateMode mode) {

@@ -59,8 +59,8 @@ public:
 	void DumpXDL();
 
 	// ANTIC/RAM interface
-	uint8 ReadControl(uint8 addrLo);
-	void WriteControl(uint8 addrLo, uint8 value);
+	sint32 ReadControl(uint8 addrLo);
+	bool WriteControl(uint8 addrLo, uint8 value);
 
 	// GTIA interface
 	void BeginFrame();
@@ -79,8 +79,8 @@ protected:
 	};
 
 	static bool StaticGTIAWrite(void *thisptr, uint32 reg, uint8 value);
-	static sint32 StaticReadControl(void *thisptr, uint32 reg) { return (uint8)((ATVBXEEmulator *)thisptr)->ReadControl((uint8)reg); }
-	static bool StaticWriteControl(void *thisptr, uint32 reg, uint8 value) { ((ATVBXEEmulator *)thisptr)->WriteControl((uint8)reg, value); return true; }
+	static sint32 StaticReadControl(void *thisptr, uint32 reg) { return ((ATVBXEEmulator *)thisptr)->ReadControl((uint8)reg); }
+	static bool StaticWriteControl(void *thisptr, uint32 reg, uint8 value) { return ((ATVBXEEmulator *)thisptr)->WriteControl((uint8)reg, value); }
 
 	void InitMemoryMaps();
 	void ShutdownMemoryMaps();

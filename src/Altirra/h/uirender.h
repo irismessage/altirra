@@ -32,6 +32,7 @@ struct ATUIAudioStatus {
 	int mTargetMin;
 	int mTargetMax;
 	double mIncomingRate;
+	double mExpectedRate;
 };
 
 class IATUIRenderer : public IVDRefCount {
@@ -56,6 +57,7 @@ public:
 
 	virtual void SetModemConnection(const char *str) = 0;
 
+	virtual void ClearWatchedValue(int index) = 0;
 	virtual void SetWatchedValue(int index, uint32 value, int len) = 0;
 
 	virtual void SetAudioStatus(ATUIAudioStatus *status) = 0;

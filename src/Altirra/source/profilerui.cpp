@@ -42,7 +42,7 @@ public:
 	void Destroy();
 
 	void SetTargetAddress(uint32 addr);
-	void SetColumnWidths(int widths[3]);
+	void SetColumnWidths(int widths[5]);
 
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
@@ -50,7 +50,12 @@ protected:
 	void OnSize();
 	void OnPaint();
 	void OnVScroll(int code);
+	void ScrollLines(int delta);
 	void RemakeView();
+
+	enum {
+		kScrollMarginLines = 5
+	};
 
 	typedef vdfastvector<ATProfileRecord> Records;
 	Records		mRecords;
@@ -60,8 +65,9 @@ protected:
 	uint32		mLinesVisible;
 	HFONT		mFont;
 	VDStringA	mBuffer;
+	int			mWheelAccum;
 
-	int			mColumnWidths[3];
+	int			mColumnWidths[5];
 
 	typedef vdfastvector<uint32> Lines;
 	Lines mLines;
@@ -84,6 +90,7 @@ protected:
 ATUIProfilerSourceTextView::ATUIProfilerSourceTextView(const ATProfileSession& profsess)
 	: mRecords(profsess.mRecords)
 	, mTargetAddress(0)
+	, mWheelAccum(0)
 {
 	for(Records::iterator it(mRecords.begin()), itEnd(mRecords.end()); it != itEnd; ++it) {
 		ATProfileRecord& r = *it;
@@ -147,10 +154,12 @@ void ATUIProfilerSourceTextView::SetTargetAddress(uint32 addr) {
 	RemakeView();
 }
 
-void ATUIProfilerSourceTextView::SetColumnWidths(int widths[2]) {
+void ATUIProfilerSourceTextView::SetColumnWidths(int widths[5]) {
 	mColumnWidths[0] = widths[0];
 	mColumnWidths[1] = widths[0] + widths[1];
 	mColumnWidths[2] = mColumnWidths[1] + widths[2];
+	mColumnWidths[3] = mColumnWidths[2] + widths[3];
+	mColumnWidths[4] = mColumnWidths[3] + widths[4];
 
 	if (mhwnd)
 		InvalidateRect(mhwnd, NULL, TRUE);
@@ -172,6 +181,24 @@ LRESULT ATUIProfilerSourceTextView::WndProc(UINT msg, WPARAM wParam, LPARAM lPar
 
 		case WM_VSCROLL:
 			OnVScroll(LOWORD(wParam));
+			return 0;
+
+		case WM_MOUSEWHEEL:
+			{
+				UINT linesPerDelta = 3;
+
+				::SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &linesPerDelta, FALSE);
+
+				mWheelAccum += (int)GET_WHEEL_DELTA_WPARAM(wParam) * linesPerDelta;
+
+				int linesToScroll = mWheelAccum / WHEEL_DELTA;
+
+				if (linesToScroll) {
+					mWheelAccum -= linesToScroll * WHEEL_DELTA;
+
+					ScrollLines(-linesToScroll);
+				}
+			}
 			return 0;
 
 		case WM_KEYDOWN:
@@ -237,11 +264,12 @@ void ATUIProfilerSourceTextView::OnPaint() {
 		return;
 
 	SelectObject(hdc, mFont);
-	SetTextAlign(hdc, TA_LEFT | TA_TOP);
 	SetTextColor(hdc, GetSysColor(COLOR_WINDOWTEXT));
 	SetBkMode(hdc, TRANSPARENT);
 
 	Lines::const_iterator itLines(mLines.begin()), itLinesEnd(mLines.end());
+
+	std::advance(itLines, std::min<int>(mLines.size(), kScrollMarginLines));
 
 	int y1 = 0;
 	while(y1 < ps.rcPaint.bottom && itLines != itLinesEnd) {
@@ -255,24 +283,35 @@ void ATUIProfilerSourceTextView::OnPaint() {
 			if (it != mRecords.end() && it->mAddress == addr) {
 				const ATProfileRecord& r = *it;
 
+				SetTextAlign(hdc, TA_RIGHT | TA_TOP);
+
 				mBuffer.sprintf(" %u", r.mCycles);
 				RECT rc1 = {0, y1, mColumnWidths[0], y2};
-				ExtTextOutA(hdc, rc1.left, y1, ETO_CLIPPED, &rc1, mBuffer.data(), mBuffer.size(), NULL);
+				ExtTextOutA(hdc, rc1.right, y1, ETO_CLIPPED, &rc1, mBuffer.data(), mBuffer.size(), NULL);
 
 				mBuffer.sprintf(" %u", r.mInsns);
 				RECT rc2 = {mColumnWidths[0], y1, mColumnWidths[1], y2};
-				ExtTextOutA(hdc, rc2.left, y1, ETO_CLIPPED, &rc2, mBuffer.data(), mBuffer.size(), NULL);
+				ExtTextOutA(hdc, rc2.right, y1, ETO_CLIPPED, &rc2, mBuffer.data(), mBuffer.size(), NULL);
 
 				mBuffer.sprintf(" %.1f", r.mInsns ? (float)r.mCycles / (float)r.mInsns : 0.0f);
 				RECT rc3 = {mColumnWidths[1], y1, mColumnWidths[2], y2};
-				ExtTextOutA(hdc, rc3.left, y1, ETO_CLIPPED, &rc3, mBuffer.data(), mBuffer.size(), NULL);
+				ExtTextOutA(hdc, rc3.right, y1, ETO_CLIPPED, &rc3, mBuffer.data(), mBuffer.size(), NULL);
+
+				mBuffer.sprintf(" %.1f", r.mInsns ? (float)r.mUnhaltedCycles / (float)r.mInsns : 0.0f);
+				RECT rc4 = {mColumnWidths[2], y1, mColumnWidths[3], y2};
+				ExtTextOutA(hdc, rc4.right, y1, ETO_CLIPPED, &rc4, mBuffer.data(), mBuffer.size(), NULL);
+
+				mBuffer.sprintf(" %.1f%%", r.mCycles ? 100.0f * (1.0f - (float)r.mUnhaltedCycles / (float)r.mCycles) : 0.0f);
+				RECT rc5 = {mColumnWidths[3], y1, mColumnWidths[4], y2};
+				ExtTextOutA(hdc, rc5.right, y1, ETO_CLIPPED, &rc5, mBuffer.data(), mBuffer.size(), NULL);
 			}
 
 			// render line
 			mBuffer = " ";
 			ATDisassembleInsn(mBuffer, addr, false);
 
-			ExtTextOutA(hdc, mColumnWidths[2], y1, 0, NULL, mBuffer.data(), mBuffer.size(), NULL);
+			SetTextAlign(hdc, TA_LEFT | TA_TOP);
+			ExtTextOutA(hdc, mColumnWidths[4], y1, 0, NULL, mBuffer.data(), mBuffer.size(), NULL);
 		}
 
 		y1 += mLineHeight;
@@ -298,16 +337,16 @@ void ATUIProfilerSourceTextView::OnVScroll(int code) {
 			newPos = si.nMax - si.nPage;
 			break;
 		case SB_LINEUP:
-			newPos = mLines[(mLinesVisible >> 1) - 1];
+			newPos = mLines[(mLinesVisible >> 1) - 1 + kScrollMarginLines];
 			break;
 		case SB_LINEDOWN:
-			newPos = mLines[(mLinesVisible >> 1) + 1];
+			newPos = mLines[(mLinesVisible >> 1) + 1 + kScrollMarginLines];
 			break;
 		case SB_PAGEUP:
-			newPos = mLines.front();
+			newPos = mLines[std::min<int>(mLines.size(), kScrollMarginLines + 1) - 1];
 			break;
 		case SB_PAGEDOWN:
-			newPos = mLines.back();
+			newPos = mLines[std::max<int>(mLines.size(), kScrollMarginLines + 1) - (kScrollMarginLines + 1)];
 			break;
 		case SB_THUMBPOSITION:
 			newPos = si.nTrackPos;
@@ -332,9 +371,37 @@ void ATUIProfilerSourceTextView::OnVScroll(int code) {
 	}
 }
 
+void ATUIProfilerSourceTextView::ScrollLines(int delta) {
+	SCROLLINFO si={sizeof(SCROLLINFO)};
+	si.fMask = SIF_POS | SIF_TRACKPOS | SIF_RANGE;
+	if (!GetScrollInfo(mhwnd, SB_VERT, &si))
+		return;
+
+	int idx = std::min<int>(kScrollMarginLines + (mLinesVisible >> 1) + delta, (int)mLines.size() - 1);
+
+	if (idx < 0)
+		idx = 0;
+
+	int newPos = mLines[idx];
+
+	if (newPos > (int)(si.nMax - si.nPage))
+		newPos = si.nMax - si.nPage;
+	else if (newPos < 0)
+		newPos = 0;
+
+	if (newPos != si.nPos) {
+		si.cbSize = sizeof(SCROLLINFO);
+		si.fMask = SIF_POS;
+		si.nPos = newPos;
+		SetScrollInfo(mhwnd, SB_VERT, &si, TRUE);
+		mTargetAddress = newPos;
+		RemakeView();
+	}
+}
+
 void ATUIProfilerSourceTextView::RemakeView() {
-	uint32 linesAbove = mLinesVisible >> 1;
-	uint32 nextAddr = mTargetAddress - linesAbove*3;
+	uint32 linesAbove = (mLinesVisible >> 1) + kScrollMarginLines;
+	uint32 nextAddr = (mTargetAddress - linesAbove*3) & 0xffff;
 	uint32 stepAddr = nextAddr;
 
 	mLines.clear();
@@ -352,6 +419,7 @@ void ATUIProfilerSourceTextView::RemakeView() {
 		}
 
 		nextAddr += ATGetOpcodeLength(g_sim.DebugReadByte(nextAddr));
+		nextAddr &= 0xffff;
 
 		mLines.push_back(stepAddr);
 
@@ -368,7 +436,7 @@ void ATUIProfilerSourceTextView::RemakeView() {
 	}
 
 	// fill out remaining lines
-	while(n < mLinesVisible) {
+	while(n < mLinesVisible + kScrollMarginLines*2) {
 		if (nextAddr != stepAddr) {
 			Records::const_iterator it(std::lower_bound(mRecords.begin(), mRecords.end(), stepAddr, RecordSort()));
 
@@ -380,6 +448,7 @@ void ATUIProfilerSourceTextView::RemakeView() {
 		}
 
 		nextAddr += ATGetOpcodeLength(g_sim.DebugReadByte(nextAddr));
+		nextAddr &= 0xffff;
 
 		mLines.push_back(stepAddr);
 		++n;
@@ -477,15 +546,19 @@ void ATUIProfilerSourcePane::OnCreate() {
 	HDITEM hdi;
 	hdi.mask = HDI_TEXT | HDI_WIDTH | HDI_FORMAT;
 	hdi.cxy = 50;
-	hdi.pszText = "Cycles";
+	hdi.pszText = _T("Cycles");
 	hdi.fmt = HDF_LEFT | HDF_STRING;
 	SendMessage(mhwndHeader, HDM_INSERTITEM, 0, (LPARAM)&hdi);
-	hdi.pszText = "Insns";
+	hdi.pszText = _T("Insns");
 	SendMessage(mhwndHeader, HDM_INSERTITEM, 1, (LPARAM)&hdi);
-	hdi.pszText = "CPI";
+	hdi.pszText = _T("CPI");
 	SendMessage(mhwndHeader, HDM_INSERTITEM, 2, (LPARAM)&hdi);
-	hdi.pszText = "Text";
+	hdi.pszText = _T("CCPI");
 	SendMessage(mhwndHeader, HDM_INSERTITEM, 3, (LPARAM)&hdi);
+	hdi.pszText = _T("DMA%");
+	SendMessage(mhwndHeader, HDM_INSERTITEM, 4, (LPARAM)&hdi);
+	hdi.pszText = _T("Text");
+	SendMessage(mhwndHeader, HDM_INSERTITEM, 5, (LPARAM)&hdi);
 
 	mpSourceView = new ATUIProfilerSourceTextView(mSession);
 	mpSourceView->Create(mhwnd);
@@ -543,11 +616,11 @@ void ATUIProfilerSourcePane::OnSize() {
 }
 
 void ATUIProfilerSourcePane::UpdateViewColumnWidths() {
-	int widths[3] = {0};
+	int widths[5] = {0};
 
 	HDITEM hdi = {0};
 	hdi.mask = HDI_WIDTH;
-	for(int i=0; i<3; ++i) {
+	for(int i=0; i<5; ++i) {
 		if (SendMessage(mhwndHeader, HDM_GETITEM, i, (LPARAM)&hdi))
 			widths[i] = hdi.cxy;
 	}
@@ -571,15 +644,20 @@ protected:
 	bool OnNotify(uint32 id, uint32 code, const void *hdr, LRESULT& result);
 	void OnColumnClicked(VDUIProxyListView *lv, int column);
 	void OnItemDoubleClicked(VDUIProxyListView *lv, int item);
+	void OnItemSelectionChanged(VDUIProxyListView *lv, int item);
+	void OnTreeItemDoubleClicked(VDUIProxyTreeViewControl *tv, bool *handled);
 	void UpdateRunButtonEnables();
 
 	void LoadProfile();
 	void RemakeView();
 
 	void VLGetText(int item, int subItem, VDStringW& s) const;
+	void VTGetText(int item, VDStringW& s) const;
 
 	HWND mhwndToolbar;
 	HWND mhwndList;
+	HWND mhwndTree;
+	HWND mhwndStatus;
 	HMENU mhmenuMode;
 	HIMAGELIST mToolbarImageList;
 	ATProfileMode mProfileMode;
@@ -587,6 +665,7 @@ protected:
 	ATProfileSession mSession;
 
 	VDUIProxyListView	mListView;
+	VDUIProxyTreeViewControl	mTreeView;
 	VDUIProxyMessageDispatcherW32	mDispatcher;
 
 	friend class VLItem;
@@ -636,7 +715,7 @@ protected:
 
 				switch(j) {
 					case 0:
-						diff = (((int)(r.mAddress & 0x10000) - (int)(s.mAddress & 0x10000)) ^ inv) - inv;
+						diff = (((int)(r.mAddress & 0x70000) - (int)(s.mAddress & 0x70000)) ^ inv) - inv;
 						break;
 
 					case 1:
@@ -688,23 +767,49 @@ protected:
 		sint8 mDescending[5];
 	};
 
+	friend class VTItem;
+	class VTItem : public IVDUITreeViewVirtualItem {
+	public:
+		int AddRef() { return 2; }
+		int Release() { return 1; }
+
+		void *AsInterface(uint32) { return NULL; }
+
+		void Init(int index, ATUIProfilerPane *parent) {
+			mIndex = index;
+			mpParent = parent;
+		}
+
+		void GetText(VDStringW& s) const;
+
+		int mIndex;
+		ATUIProfilerPane *mpParent;
+	};
+
 	VLComparer mComparer;
 	vdvector<VLItem> mVLItems;
+	vdvector<VTItem> mVTItems;
 
 	VDDelegate mDelegateColumnClicked;
 	VDDelegate mDelegateItemDoubleClicked;
+	VDDelegate mDelegateItemSelectionChanged;
+	VDDelegate mDelegateTreeItemDoubleClicked;
 };
 
 ATUIProfilerPane::ATUIProfilerPane()
-	: ATUIPane(kATUIPaneId_Profiler, "Profile View")
+	: ATUIPane(kATUIPaneId_Profiler, L"Profile View")
 	, mhwndToolbar(NULL)
 	, mhwndList(NULL)
+	, mhwndTree(NULL)
+	, mhwndStatus(NULL)
 	, mhmenuMode(NULL)
 	, mToolbarImageList(NULL)
 	, mProfileMode(kATProfileMode_Insns)
 {
 	mListView.OnColumnClicked() += mDelegateColumnClicked.Bind(this, &ATUIProfilerPane::OnColumnClicked);
 	mListView.OnItemDoubleClicked() += mDelegateItemDoubleClicked.Bind(this, &ATUIProfilerPane::OnItemDoubleClicked);
+	mListView.OnItemSelectionChanged() += mDelegateItemSelectionChanged.Bind(this, &ATUIProfilerPane::OnItemSelectionChanged);
+	mTreeView.OnItemDoubleClicked() += mDelegateTreeItemDoubleClicked.Bind(this, &ATUIProfilerPane::OnTreeItemDoubleClicked);
 }
 
 ATUIProfilerPane::~ATUIProfilerPane() {
@@ -724,6 +829,17 @@ LRESULT ATUIProfilerPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			return res;
 
 		return mDispatcher.Dispatch_WM_NOTIFY(wParam, lParam);
+	} else if (msg == WM_USER + 100) {
+		const VTItem *vti = static_cast<VTItem *>(mTreeView.GetSelectedVirtualItem());
+
+		if (vti) {
+			int idx = vti->mIndex;
+
+			vdrefptr<ATUIProfilerSourcePane> srcPane(new ATUIProfilerSourcePane(mSession, mSession.mCallGraphRecords[idx].mAddress));
+			srcPane->Create(mhwnd);
+		}
+
+		return 0;
 	}
 
 	return ATUIPane::WndProc(msg, wParam, lParam);
@@ -739,9 +855,16 @@ bool ATUIProfilerPane::OnCreate() {
 		return false;
 
 	mhwndList = CreateWindowEx(WS_EX_CLIENTEDGE | WS_EX_NOPARENTNOTIFY, WC_LISTVIEW, _T(""), WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SHOWSELALWAYS, 0, 0, 0, 0, mhwnd, (HMENU)101, VDGetLocalModuleHandleW32(), NULL);
+
+	mhwndTree = CreateWindowEx(WS_EX_CLIENTEDGE | WS_EX_NOPARENTNOTIFY, WC_TREEVIEW, _T(""), WS_CHILD | WS_VISIBLE | TVS_FULLROWSELECT | TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS, 0, 0, 0, 0, mhwnd, (HMENU)103, VDGetLocalModuleHandleW32(), NULL);
+
+	mhwndStatus = CreateWindowEx(0, STATUSCLASSNAME, _T(""), WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, mhwnd, (HMENU)102, VDGetLocalModuleHandleW32(), NULL);
+	SendMessage(mhwndStatus, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
+	SetWindowPos(mhwndStatus, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 	
 	SendMessage(mhwndToolbar, TB_SETEXTENDEDSTYLE, 0, TBSTYLE_EX_DRAWDDARROWS);
 	SendMessage(mhwndToolbar, TB_SETIMAGELIST, 0, (LPARAM)mToolbarImageList);
+	SendMessage(mhwndToolbar, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
 
 	TBBUTTON tbb[3] = {0};
 	tbb[0].iBitmap = 0;
@@ -773,17 +896,25 @@ bool ATUIProfilerPane::OnCreate() {
 	mListView.InsertColumn(0, L"Thread", 0);
 	mListView.AutoSizeColumns();
 
+	mTreeView.Attach(mhwndTree);
+	mDispatcher.AddControl(&mTreeView);
+
 	UpdateRunButtonEnables();
 
 	return ATUIPane::OnCreate();
 }
 
 void ATUIProfilerPane::OnDestroy() {
-	mDispatcher.RemoveAllControls();
+	mDispatcher.RemoveAllControls(true);
 
 	if (mhmenuMode) {
 		::DestroyMenu(mhmenuMode);
 		mhmenuMode = NULL;
+	}
+
+	if (mhwndTree) {
+		::DestroyWindow(mhwndTree);
+		mhwndTree = NULL;
 	}
 
 	if (mhwndList) {
@@ -794,6 +925,11 @@ void ATUIProfilerPane::OnDestroy() {
 	if (mhwndToolbar) {
 		::DestroyWindow(mhwndToolbar);
 		mhwndToolbar = NULL;
+	}
+
+	if (mhwndStatus) {
+		::DestroyWindow(mhwndStatus);
+		mhwndStatus = NULL;
 	}
 
 	if (mToolbarImageList) {
@@ -820,14 +956,27 @@ void ATUIProfilerPane::OnSize() {
 		y = th;
 	}
 
-	if (mhwndList) {
-		int lh = r.bottom - y;
+	int statusY = 0;
+	if (mhwndStatus) {
+		RECT rs;
+		if (GetWindowRect(mhwndStatus, &rs)) {
+			int statusH = rs.bottom - rs.top;
+			statusY = std::max<int>(0, r.bottom - statusH);
 
-		if (lh < 0)
-			lh = 0;
-
-		SetWindowPos(mhwndList, NULL, 0, y, r.right, lh, SWP_NOZORDER | SWP_NOACTIVATE);
+			SetWindowPos(mhwndStatus, NULL, 0, statusY, r.right, statusH, SWP_NOZORDER | SWP_NOACTIVATE);
+		}
 	}
+
+	int lh = statusY - y;
+
+	if (lh < 0)
+		lh = 0;
+
+	if (mhwndList)
+		SetWindowPos(mhwndList, NULL, 0, y, r.right, lh, SWP_NOZORDER | SWP_NOACTIVATE);
+
+	if (mhwndTree)
+		SetWindowPos(mhwndTree, NULL, 0, y, r.right, lh, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 bool ATUIProfilerPane::OnCommand(uint32 id, uint32 extcode) {
@@ -835,8 +984,8 @@ bool ATUIProfilerPane::OnCommand(uint32 id, uint32 extcode) {
 		case 1000:
 			g_sim.Suspend();
 			if (ATCPUProfiler *prof = g_sim.GetProfiler()) {
-				LoadProfile();
 				prof->End();
+				LoadProfile();
 				g_sim.SetProfilingEnabled(false);
 			}
 			UpdateRunButtonEnables();
@@ -870,6 +1019,11 @@ bool ATUIProfilerPane::OnCommand(uint32 id, uint32 extcode) {
 		case ID_PROFMODE_SAMPLEFNS:
 			SendMessage(mhwndToolbar, TB_CHANGEBITMAP, 1002, 3);
 			mProfileMode = kATProfileMode_Functions;
+			return true;
+
+		case ID_PROFMODE_CALLGRAPH:
+			SendMessage(mhwndToolbar, TB_CHANGEBITMAP, 1002, 5);
+			mProfileMode = kATProfileMode_CallGraph;
 			return true;
 
 		case ID_PROFMODE_SAMPLEBASIC:
@@ -918,6 +1072,53 @@ void ATUIProfilerPane::OnItemDoubleClicked(VDUIProxyListView *lv, int item) {
 	}
 }
 
+void ATUIProfilerPane::OnItemSelectionChanged(VDUIProxyListView *lv, int item) {
+	vdfastvector<int> selectedIndices;
+
+	lv->GetSelectedIndices(selectedIndices);
+
+	if (selectedIndices.empty()) {
+		if (mhwndStatus)
+			SetWindowText(mhwndStatus, _T(""));
+
+		return;
+	}
+
+	uint32 insns = 0;
+	uint32 cycles = 0;
+	uint32 count = selectedIndices.size();
+	while(!selectedIndices.empty()) {
+		int lvIndex = selectedIndices.back();
+		selectedIndices.pop_back();
+
+		VLItem *vli = static_cast<VLItem *>(lv->GetVirtualItem(lvIndex));
+
+		if (!vli)
+			continue;
+
+		ATProfileRecord& rec = mSession.mRecords[vli->mIndex];
+		insns += rec.mInsns;
+		cycles += rec.mCycles;
+	}
+
+	VDSetWindowTextFW32(mhwndStatus
+		, L"Selected %u item%ls: %u cycles (%.2f%%), %u insns (%.2f%%)"
+		, count
+		, count == 1 ? L"" : L"s"
+		, cycles
+		, mSession.mTotalCycles ? (float)cycles * 100.0f / (float)mSession.mTotalCycles : 0
+		, insns
+		, mSession.mTotalInsns ? (float)insns * 100.0f / (float)mSession.mTotalInsns : 0
+		);
+}
+
+void ATUIProfilerPane::OnTreeItemDoubleClicked(VDUIProxyTreeViewControl *tv, bool *handled) {
+	*handled = true;
+
+	// We can't open the window here as the tree view steals focus afterward.
+	::PostMessage(mhwnd, WM_USER + 100, 0, 0);
+}
+
 void ATUIProfilerPane::UpdateRunButtonEnables() {
 	ATCPUProfiler *profiler = g_sim.GetProfiler();
 	bool active = profiler && profiler->IsRunning();
@@ -932,37 +1133,108 @@ void ATUIProfilerPane::LoadProfile() {
 	RemakeView();
 }
 
+namespace {
+	struct CallGraphRecordSorter {
+		CallGraphRecordSorter(ATProfileCallGraphRecord *records)
+			: mpRecords(records) {}
+
+		bool operator()(uint32 idx1, uint32 idx2) const {
+			return mpRecords[idx1].mInclusiveCycles > mpRecords[idx2].mInclusiveCycles;
+		}
+
+		ATProfileCallGraphRecord *const mpRecords;
+	};
+}
+
 void ATUIProfilerPane::RemakeView() {
+	mListView.SetRedraw(false);
+	mTreeView.SetRedraw(false);
 	mListView.Clear();
+	mTreeView.Clear();
 	mVLItems.clear();
+	mVTItems.clear();
 	mListView.ClearExtraColumns();
 
-	switch(mProfileMode) {
-		case kATProfileMode_Insns:
-		case kATProfileMode_Functions:
-			mListView.InsertColumn(1, L"Address", 0);
-			break;
-		case kATProfileMode_BasicLines:
-			mListView.InsertColumn(1, L"Line", 0);
-			break;
+	if (mProfileMode == kATProfileMode_CallGraph) {
+		::ShowWindow(mhwndList, SW_HIDE);
+		::ShowWindow(mhwndTree, SW_SHOWNOACTIVATE);
+
+		const uint32 n = mSession.mCallGraphRecords.size();
+
+		VDStringW s;
+		vdfastvector<VDUIProxyTreeViewControl::NodeRef> nodes(n, VDUIProxyTreeViewControl::kNodeRoot);
+		vdfastvector<uint32> nextSibling(n, 0);
+		vdfastvector<uint32> firstChild(n, 0);
+		for(uint32 i = 4; i < n; ++i) {
+			const ATProfileCallGraphRecord& cgr = mSession.mCallGraphRecords[i];
+
+			nextSibling[i] = firstChild[cgr.mParent];
+			firstChild[cgr.mParent] = i;
+		}
+
+		vdfastvector<uint32> stack(4);
+		stack[0] = 0;
+		stack[1] = 1;
+		stack[2] = 2;
+		stack[3] = 3;
+		std::sort(stack.begin(), stack.end(), CallGraphRecordSorter(mSession.mCallGraphRecords.data()));
+
+		mVTItems.resize(n);
+
+		while(!stack.empty()) {
+			uint32 i = stack.back();
+			stack.pop_back();
+
+			const ATProfileCallGraphRecord& cgr = mSession.mCallGraphRecords[i];
+
+			VTItem *pvi = &mVTItems[i];
+			pvi->Init(i, this);
+			nodes[i] = mTreeView.AddVirtualItem(i < 4 ? VDUIProxyTreeViewControl::kNodeRoot : nodes[cgr.mParent], VDUIProxyTreeViewControl::kNodeFirst, pvi);
+
+			uint32 childBase = stack.size();
+
+			for(uint32 j = firstChild[i]; j; j = nextSibling[j])
+				stack.push_back(j);
+
+			std::sort(stack.begin() + childBase, stack.end(), CallGraphRecordSorter(mSession.mCallGraphRecords.data()));
+		}
+	} else {
+		::ShowWindow(mhwndList, SW_SHOWNOACTIVATE);
+		::ShowWindow(mhwndTree, SW_HIDE);
+
+		switch(mProfileMode) {
+			case kATProfileMode_Insns:
+			case kATProfileMode_Functions:
+				mListView.InsertColumn(1, L"Address", 0);
+				break;
+			case kATProfileMode_BasicLines:
+				mListView.InsertColumn(1, L"Line", 0);
+				break;
+		}
+
+		mListView.InsertColumn(2, L"Calls", 0, true);
+		mListView.InsertColumn(3, L"Clocks", 0, true);
+		mListView.InsertColumn(4, L"Insns", 0, true);
+		mListView.InsertColumn(5, L"Clocks%", 0, true);
+		mListView.InsertColumn(6, L"Insns%", 0, true);
+		mListView.InsertColumn(7, L"CPUClocks", 0, true);
+		mListView.InsertColumn(8, L"DMA%", 0, true);
+		mListView.InsertColumn(9, L"", 0, false);		// crude hack to fix full justified column
+
+		uint32 n = mSession.mRecords.size();
+		mVLItems.resize(n);
+
+		for(uint32 i=0; i<n; ++i) {
+			mVLItems[i].Init(i, this);
+			mListView.InsertVirtualItem(i, &mVLItems[i]);
+		}
+
+		mListView.AutoSizeColumns();
+		mListView.Sort(mComparer);
 	}
 
-	mListView.InsertColumn(2, L"Calls", 0);
-	mListView.InsertColumn(3, L"Clocks", 0);
-	mListView.InsertColumn(4, L"Insns", 0);
-	mListView.InsertColumn(5, L"Clocks%", 0);
-	mListView.InsertColumn(6, L"Insns%", 0);
-
-	uint32 n = mSession.mRecords.size();
-	mVLItems.resize(n);
-
-	for(uint32 i=0; i<n; ++i) {
-		mVLItems[i].Init(i, this);
-		mListView.InsertVirtualItem(i, &mVLItems[i]);
-	}
-
-	mListView.AutoSizeColumns();
-	mListView.Sort(mComparer);
+	mTreeView.SetRedraw(true);
+	mListView.SetRedraw(true);
 }
 
 void ATUIProfilerPane::VLGetText(int item, int subItem, VDStringW& s) const {
@@ -970,9 +1242,13 @@ void ATUIProfilerPane::VLGetText(int item, int subItem, VDStringW& s) const {
 
 	switch(subItem) {
 		case 0:
-			switch(record.mAddress & 0x30000) {
+			switch(record.mAddress & 0x70000) {
+				case 0x40000:
+					s = L"VBI";
+					break;
+
 				case 0x30000:
-					s = L"NMI";
+					s = L"DLI";
 					break;
 
 				case 0x20000:
@@ -1018,19 +1294,79 @@ void ATUIProfilerPane::VLGetText(int item, int subItem, VDStringW& s) const {
 			break;
 
 		case 5:
-			s.sprintf(L"%.1f%%", (float)record.mCycles / (float)mSession.mTotalCycles * 100.0f);
+			s.sprintf(L"%.2f%%", (float)record.mCycles / (float)mSession.mTotalCycles * 100.0f);
 			break;
 
 		case 6:
-			s.sprintf(L"%.1f%%", (float)record.mInsns / (float)mSession.mTotalInsns * 100.0f);
+			s.sprintf(L"%.2f%%", (float)record.mInsns / (float)mSession.mTotalInsns * 100.0f);
+			break;
+
+		case 7:
+			s.sprintf(L"%u", record.mUnhaltedCycles);
+			break;
+
+		case 8:
+			if (record.mCycles)
+				s.sprintf(L"%.2f%%", 100.0f * (1.0f - (float)record.mUnhaltedCycles / (float)record.mCycles));
 			break;
 	}
+}
+
+void ATUIProfilerPane::VTGetText(int item, VDStringW& s) const {
+	const ATProfileCallGraphRecord& cgr = mSession.mCallGraphRecords[item];
+
+	switch(item) {
+		case 0:
+			s = L"Main";
+			break;
+
+		case 1:
+			s = L"IRQ";
+			break;
+
+		case 2:
+			s = L"NMI (DLI)";
+			break;
+
+		case 3:
+			s = L"NMI (VBI)";
+			break;
+
+		default:
+			{
+				sint32 addr = cgr.mAddress & 0xffff;
+				s.sprintf(L"%04X", addr);
+
+				ATSymbol sym;
+				if (ATGetDebuggerSymbolLookup()->LookupSymbol(addr, kATSymbol_Execute, sym) && sym.mOffset == addr)
+					s.append_sprintf(L" (%hs)", sym.mpName);
+
+				s.append_sprintf(L" [x%u]", cgr.mCalls);
+			}
+			break;
+	}
+
+	const float cyclesToPercent = mSession.mTotalCycles ? 100.0f / (float)mSession.mTotalCycles : 0;
+	const float insnsToPercent = mSession.mTotalInsns ? 100.0f / (float)mSession.mTotalInsns : 0;
+
+	s.append_sprintf(L": %u cycles (%.2f%%), %u insns (%.2f%%)"
+		, cgr.mInclusiveCycles
+		, (float)cgr.mInclusiveCycles * cyclesToPercent
+		, cgr.mInclusiveInsns
+		, (float)cgr.mInclusiveInsns * insnsToPercent
+		);
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
 void ATUIProfilerPane::VLItem::GetText(int subItem, VDStringW& s) const {
 	mpParent->VLGetText(mIndex, subItem, s);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+void ATUIProfilerPane::VTItem::GetText(VDStringW& s) const {
+	mpParent->VTGetText(mIndex, s);
 }
 
 ///////////////////////////////////////////////////////////////////////////

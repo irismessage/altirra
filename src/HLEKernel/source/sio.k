@@ -581,7 +581,7 @@ waitdone:
 		int counts = vbldelta * lines + linedelta;
 		int divisor = counts * 114 / 19 - 7;
 		
-		VDDEBUG2("%d counts (divisor %d)", counts, divisor);
+		VDDEBUG("%d counts (divisor %d)", counts, divisor);
 		
 		kdb.AUDF3 = (uint8)divisor;
 		kdb.AUDF4 = (uint8)(divisor >> 8);

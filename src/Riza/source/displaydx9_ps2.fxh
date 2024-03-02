@@ -126,24 +126,25 @@ VertexOutputBicubic_2_0 VertexShaderBicubic_2_0_B(VertexInput IN, out float2 dit
 	return OUT;
 }
 
+float4 PixelShaderBicubic_2_0_Filter(VertexOutputBicubic_2_0 IN) {
+	float4 weights = tex2D(samp0, IN.uvfilt);
+
+	float4 p1 = tex2D(samp1, IN.uvsrc0);
+	float4 p2 = tex2D(samp2, IN.uvsrc1);
+	float4 p3 = tex2D(samp1, IN.uvsrc1);
+	float4 p4 = tex2D(samp1, IN.uvsrc2);
+	
+	float4 c1 = lerp(p4, p1, weights.b);
+	float4 c2 = lerp(p3, p2, weights.g);
+	return (c2 - c1) * weights.r + c2;
+}
+
 float4 PixelShaderBicubic_2_0_A(VertexOutputBicubic_2_0 IN) : COLOR0 {		
-	float4 weights = tex2D(samp0, IN.uvfilt) * float4(0.5, 1.0, -0.25, -0.25) + float4(0, 127.0f / 255.0f, 0, 0);
-		
-	float4 c = tex2D(samp2, IN.uvsrc1) * weights.g
-			 + tex2D(samp1, IN.uvsrc0) * weights.b
-			 + tex2D(samp1, IN.uvsrc2) * weights.a
-			 + tex2D(samp1, IN.uvsrc1) * weights.r;
-			 
-	return c;
+	return float4(PixelShaderBicubic_2_0_Filter(IN).rgb, 0);
 }
 
 float4 PixelShaderBicubic_2_0_B(VertexOutputBicubic_2_0 IN, float2 ditherUV : TEXCOORD4) : COLOR0 {
-	float4 weights = tex2D(samp0, IN.uvfilt) * float4(0.5, 1.0, -0.25, -0.25) + float4(0, 127.0f / 255.0f, 0, 0);
-	
-	float3 c = tex2D(samp2, IN.uvsrc1).rgb * weights.g
-			 + tex2D(samp1, IN.uvsrc0).rgb * weights.b
-			 + tex2D(samp1, IN.uvsrc2).rgb * weights.a
-			 + tex2D(samp1, IN.uvsrc1).rgb * weights.r;
+	float3 c = PixelShaderBicubic_2_0_Filter(IN).rgb;
 			 			 
 	return float4(c * (254.0f / 255.0f), 0) + tex2D(samp3, ditherUV) / 256.0f;
 }

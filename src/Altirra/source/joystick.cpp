@@ -135,7 +135,7 @@ bool ATController::Init(LPCDIDEVICEINSTANCE devInst, HWND hwnd, ATInputManager *
 	mpInputManager = inputMan;
 
 	memcpy(&mId, &devInst->guidInstance, sizeof mId);
-	mUnit = inputMan->RegisterInputUnit(mId, VDTextAToW(devInst->tszInstanceName).c_str());
+	mUnit = inputMan->RegisterInputUnit(mId, devInst->tszInstanceName);
 
 	return true;
 }
@@ -355,6 +355,7 @@ ATJoystickManager::ATJoystickManager()
 }
 
 ATJoystickManager::~ATJoystickManager() {
+	Shutdown();
 }
 
 bool ATJoystickManager::Init(void *hwnd, ATInputManager *inputMan) {
@@ -398,10 +399,7 @@ void ATJoystickManager::Shutdown() {
 		delete ctrl;
 	}
 
-	if (mpDI) {
-		mpDI->Release();
-		mpDI = NULL;
-	}
+	mpDI.clear();
 
 	mpInputManager = NULL;
 

@@ -20,4 +20,6 @@ void ATUIRestoreWindowPlacement(void *hwnd, const char *name, int nCmdShow);
 VDStringW ATGetHelpPath();
 void ATShowHelp(void *hwnd, const wchar_t *filename);
 
+bool ATIsUserAdministrator();
+
 #endif

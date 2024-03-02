@@ -99,6 +99,12 @@ protected:
 	};
 
 	struct HashedStringSpanAI : public VDStringSpanA {
+		HashedStringSpanAI()
+			: VDStringSpanA()
+			, mHash(VDHashString32I(mpBegin, mpEnd - mpBegin))
+		{
+		}
+
 		HashedStringSpanAI(const char *s)
 			: VDStringSpanA(s)
 			, mHash(VDHashString32I(mpBegin, mpEnd - mpBegin))

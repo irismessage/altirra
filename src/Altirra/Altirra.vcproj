@@ -20,6 +20,9 @@
 		/>
 	</Platforms>
 	<ToolFiles>
+		<ToolFile
+			RelativePath="..\YASM.rules"
+		/>
 	</ToolFiles>
 	<Configurations>
 		<Configuration
@@ -27,13 +30,16 @@
 			OutputDirectory="..\..\out\$(ConfigurationName)"
 			IntermediateDirectory="..\..\obj\$(ConfigurationName)\$(ProjectName)"
 			ConfigurationType="1"
-			CharacterSet="2"
+			CharacterSet="1"
 			>
 			<Tool
 				Name="VCPreBuildEventTool"
 			/>
 			<Tool
 				Name="VCCustomBuildTool"
+			/>
+			<Tool
+				Name="YASM"
 			/>
 			<Tool
 				Name="VCXMLDataGeneratorTool"
@@ -110,13 +116,16 @@
 			OutputDirectory="..\..\out\$(ConfigurationName)AMD64"
 			IntermediateDirectory="..\..\obj\$(ConfigurationName)AMD64\$(ProjectName)"
 			ConfigurationType="1"
-			CharacterSet="2"
+			CharacterSet="1"
 			>
 			<Tool
 				Name="VCPreBuildEventTool"
 			/>
 			<Tool
 				Name="VCCustomBuildTool"
+			/>
+			<Tool
+				Name="YASM"
 			/>
 			<Tool
 				Name="VCXMLDataGeneratorTool"
@@ -171,6 +180,7 @@
 			/>
 			<Tool
 				Name="VCManifestTool"
+				AdditionalManifestFiles="manifest\win7.manifest;manifest\comctl6_x64.manifest"
 			/>
 			<Tool
 				Name="VCXDCMakeTool"
@@ -196,7 +206,7 @@
 			OutputDirectory="..\..\out\$(ConfigurationName)"
 			IntermediateDirectory="..\..\obj\$(ConfigurationName)\$(ProjectName)"
 			ConfigurationType="1"
-			CharacterSet="2"
+			CharacterSet="1"
 			WholeProgramOptimization="1"
 			>
 			<Tool
@@ -204,6 +214,9 @@
 			/>
 			<Tool
 				Name="VCCustomBuildTool"
+			/>
+			<Tool
+				Name="YASM"
 			/>
 			<Tool
 				Name="VCXMLDataGeneratorTool"
@@ -282,7 +295,7 @@
 			OutputDirectory="..\..\out\$(ConfigurationName)AMD64"
 			IntermediateDirectory="..\..\obj\$(ConfigurationName)AMD64\$(ProjectName)"
 			ConfigurationType="1"
-			CharacterSet="2"
+			CharacterSet="1"
 			WholeProgramOptimization="1"
 			>
 			<Tool
@@ -290,6 +303,9 @@
 			/>
 			<Tool
 				Name="VCCustomBuildTool"
+			/>
+			<Tool
+				Name="YASM"
 			/>
 			<Tool
 				Name="VCXMLDataGeneratorTool"
@@ -336,6 +352,8 @@
 				AdditionalLibraryDirectories="..\..\lib\$(ConfigurationName)AMD64"
 				GenerateManifest="false"
 				GenerateDebugInformation="true"
+				GenerateMapFile="true"
+				MapFileName="$(OutDir)\Altirra64.map"
 				SubSystem="2"
 				OptimizeReferences="2"
 				EnableCOMDATFolding="2"
@@ -346,6 +364,7 @@
 			/>
 			<Tool
 				Name="VCManifestTool"
+				AdditionalManifestFiles="manifest\win7.manifest;manifest\comctl6_x64.manifest"
 			/>
 			<Tool
 				Name="VCXDCMakeTool"
@@ -371,7 +390,7 @@
 			OutputDirectory="..\..\out\$(ConfigurationName)"
 			IntermediateDirectory="..\..\obj\$(ConfigurationName)\$(ProjectName)"
 			ConfigurationType="1"
-			CharacterSet="2"
+			CharacterSet="1"
 			WholeProgramOptimization="0"
 			>
 			<Tool
@@ -379,6 +398,9 @@
 			/>
 			<Tool
 				Name="VCCustomBuildTool"
+			/>
+			<Tool
+				Name="YASM"
 			/>
 			<Tool
 				Name="VCXMLDataGeneratorTool"
@@ -457,7 +479,7 @@
 			OutputDirectory="..\..\out\$(ConfigurationName)AMD64"
 			IntermediateDirectory="..\..\obj\$(ConfigurationName)AMD64\$(ProjectName)"
 			ConfigurationType="1"
-			CharacterSet="2"
+			CharacterSet="1"
 			WholeProgramOptimization="0"
 			>
 			<Tool
@@ -465,6 +487,9 @@
 			/>
 			<Tool
 				Name="VCCustomBuildTool"
+			/>
+			<Tool
+				Name="YASM"
 			/>
 			<Tool
 				Name="VCXMLDataGeneratorTool"
@@ -521,6 +546,7 @@
 			/>
 			<Tool
 				Name="VCManifestTool"
+				AdditionalManifestFiles="manifest\win7.manifest;manifest\comctl6_x64.manifest"
 			/>
 			<Tool
 				Name="VCXDCMakeTool"
@@ -552,6 +578,10 @@
 			>
 			<File
 				RelativePath=".\source\about.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\allocator.cpp"
 				>
 			</File>
 			<File
@@ -627,6 +657,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\cassetteimage.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\cheatengine.cpp"
 				>
 			</File>
@@ -659,11 +693,19 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\debugdisplay.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\debugger.cpp"
 				>
 			</File>
 			<File
 				RelativePath=".\source\debuggerexp.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\debuggerlog.cpp"
 				>
 			</File>
 			<File
@@ -687,6 +729,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\diskfsarc.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\diskfsdos2.cpp"
 				>
 			</File>
@@ -700,6 +746,10 @@
 			</File>
 			<File
 				RelativePath=".\source\encode_png.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\flash.cpp"
 				>
 			</File>
 			<File
@@ -727,6 +777,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\idephysdisk.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\inputcontroller.cpp"
 				>
 			</File>
@@ -736,6 +790,10 @@
 			</File>
 			<File
 				RelativePath=".\source\joystick.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\kmkjzide.cpp"
 				>
 			</File>
 			<File
@@ -759,7 +817,19 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\myide.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\options.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\oshelper.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\pbi.cpp"
 				>
 			</File>
 			<File
@@ -772,6 +842,14 @@
 			</File>
 			<File
 				RelativePath=".\source\pokey.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\pokeyrenderer.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\pokeytables.cpp"
 				>
 			</File>
 			<File
@@ -791,6 +869,14 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\rtcds1305.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\rtcv3021.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\rtime8.cpp"
 				>
 			</File>
@@ -803,7 +889,15 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\side.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\simulator.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\sio.cpp"
 				>
 			</File>
 			<File
@@ -883,6 +977,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uifileassoc.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uiframe.cpp"
 				>
 			</File>
@@ -903,7 +1001,19 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uikeyboardoptions.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uilightpen.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uimrulist.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uioptions.cpp"
 				>
 			</File>
 			<File
@@ -911,7 +1021,15 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uiphysdisk.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uiportmenus.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uiprogress.cpp"
 				>
 			</File>
 			<File
@@ -985,6 +1103,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\audiosource.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\audiowriter.h"
 				>
 			</File>
@@ -1006,6 +1128,10 @@
 			</File>
 			<File
 				RelativePath=".\h\cassette.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\cassetteimage.h"
 				>
 			</File>
 			<File
@@ -1041,11 +1167,19 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\debugdisplay.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\debugger.h"
 				>
 			</File>
 			<File
 				RelativePath=".\h\debuggerexp.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\debuggerlog.h"
 				>
 			</File>
 			<File
@@ -1077,6 +1211,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\flash.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\gtia.h"
 				>
 			</File>
@@ -1101,6 +1239,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\idephysdisk.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\inputcontroller.h"
 				>
 			</File>
@@ -1118,6 +1260,10 @@
 			</File>
 			<File
 				RelativePath=".\h\kerneldb.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\kmkjzide.h"
 				>
 			</File>
 			<File
@@ -1141,7 +1287,19 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\myide.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\options.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\oshelper.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\pbi.h"
 				>
 			</File>
 			<File
@@ -1150,6 +1308,14 @@
 			</File>
 			<File
 				RelativePath=".\h\pokey.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\pokeyrenderer.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\pokeytables.h"
 				>
 			</File>
 			<File
@@ -1169,6 +1335,14 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\rtcds1305.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\rtcv3021.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\rtime8.h"
 				>
 			</File>
@@ -1181,7 +1355,15 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\side.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\simulator.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\sio.h"
 				>
 			</File>
 			<File
@@ -1221,7 +1403,15 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\uimrulist.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\uiportmenus.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uiprogress.h"
 				>
 			</File>
 			<File
@@ -1250,6 +1440,10 @@
 			Filter="rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav"
 			UniqueIdentifier="{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}"
 			>
+			<File
+				RelativePath=".\res\about.txt"
+				>
+			</File>
 			<File
 				RelativePath=".\res\Altirra.rc"
 				>
@@ -1303,6 +1497,10 @@
 				</FileConfiguration>
 			</File>
 			<File
+				RelativePath=".\res\AltirraExtIcons.res"
+				>
+			</File>
+			<File
 				RelativePath="..\..\out\release\atdiskloader128.bin"
 				>
 			</File>
@@ -1311,11 +1509,11 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\release\basic.rom"
+				RelativePath="..\..\out\debug\basic.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\basic.rom"
+				RelativePath="..\..\out\release\basic.rom"
 				>
 			</File>
 			<File
@@ -1327,15 +1525,11 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\release\hlekernel.rom"
-				>
-			</File>
-			<File
 				RelativePath="..\..\out\debug\hlekernel.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\release\kernel.rom"
+				RelativePath="..\..\out\release\hlekernel.rom"
 				>
 			</File>
 			<File
@@ -1343,11 +1537,23 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\Debug\nocartridge.rom"
+				RelativePath="..\..\out\release\kernel.rom"
 				>
 			</File>
 			<File
 				RelativePath="..\..\out\Release\nocartridge.rom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\Debug\nocartridge.rom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\debug\nohdbios.rom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\release\nohdbios.rom"
 				>
 			</File>
 			<File
@@ -1367,11 +1573,11 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\Release\superkernel.rom"
+				RelativePath="..\..\out\Debug\superkernel.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\Debug\superkernel.rom"
+				RelativePath="..\..\out\Release\superkernel.rom"
 				>
 			</File>
 			<File
@@ -1737,6 +1943,75 @@
 				>
 			</File>
 		</Filter>
+		<Filter
+			Name="Assembly Files"
+			Filter="asm"
+			>
+			<File
+				RelativePath=".\source\gtia_sse2.asm"
+				>
+				<FileConfiguration
+					Name="Debug|x64"
+					ExcludedFromBuild="true"
+					>
+					<Tool
+						Name="YASM"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Release|x64"
+					ExcludedFromBuild="true"
+					>
+					<Tool
+						Name="YASM"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|x64"
+					ExcludedFromBuild="true"
+					>
+					<Tool
+						Name="YASM"
+					/>
+				</FileConfiguration>
+			</File>
+			<File
+				RelativePath=".\source\gtiarenderer_ssse3.asm"
+				>
+				<FileConfiguration
+					Name="Debug|x64"
+					ExcludedFromBuild="true"
+					>
+					<Tool
+						Name="YASM"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Release|x64"
+					ExcludedFromBuild="true"
+					>
+					<Tool
+						Name="YASM"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|x64"
+					ExcludedFromBuild="true"
+					>
+					<Tool
+						Name="YASM"
+					/>
+				</FileConfiguration>
+			</File>
+		</Filter>
+		<File
+			RelativePath="..\..\out\debug\nogame.rom"
+			>
+		</File>
+		<File
+			RelativePath="..\..\out\release\nogame.rom"
+			>
+		</File>
 	</Files>
 	<Globals>
 	</Globals>

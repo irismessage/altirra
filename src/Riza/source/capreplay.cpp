@@ -52,7 +52,7 @@ protected:
 		}
 	};
 
-	std::vector<Event> mEvents;
+	vdfastvector<Event> mEvents;
 	vdblock<char> mDummyData;
 };
 

@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include "uikeyboard.h"
 #include <windows.h>
 
 struct ATUICookedKeyMap {
@@ -165,6 +166,9 @@ ATUIDefaultCookedKeyMap::ATUIDefaultCookedKeyMap() {
 
 	mScanCode[(uint8)'a'] = 0x3F;
 	mScanCode[(uint8)'A'] = 0x7F;
+
+	mScanCode[(uint8)'`'] = 0x27;
+	mScanCode[(uint8)'~'] = 0x67;
 }
 
 ATUIDefaultCookedKeyMap g_ATCookedKeyMap;
@@ -187,9 +191,11 @@ namespace {
 		kCtrl = 0x20000,
 		kAlt = 0x40000
 	};
+
+	const uint8 kInvalidKeyCode = 0x24;
 }
 
-static uint32 g_ATVKeyMap[]={
+static uint8 g_ATVKeyMap[256*8];
 
 #define VKEYMAP(vkey, mods, sc) { ((vkey) << 8) + (mods) + (sc) }
 #define VKEYMAP_CSALL(vkey, sc) \
@@ -202,42 +208,7 @@ static uint32 g_ATVKeyMap[]={
 	VKEYMAP((vkey), kCtrl, (sc) + 0x80),	\
 	VKEYMAP((vkey), kCtrl + kShift, (sc) + 0xC0)
 
-	VKEYMAP(VK_UP, 0,						0x8E),
-	VKEYMAP(VK_UP, kCtrl,					0x0E),
-	VKEYMAP(VK_UP, kAlt,					0x8E),
-	VKEYMAP(VK_UP, kAlt + kCtrl,			0x0E),
-	VKEYMAP(VK_UP, kShift,					0xCE),
-	VKEYMAP(VK_UP, kCtrl + kShift,			0x4E),
-	VKEYMAP(VK_UP, kAlt + kShift,			0xCE),
-	VKEYMAP(VK_UP, kAlt + kCtrl + kShift,	0x4E),
-
-	VKEYMAP(VK_DOWN, 0,						0x8F),
-	VKEYMAP(VK_DOWN, kCtrl,					0x0F),
-	VKEYMAP(VK_DOWN, kAlt,					0x8F),
-	VKEYMAP(VK_DOWN, kAlt + kCtrl,			0x0F),
-	VKEYMAP(VK_DOWN, kShift,				0xCF),
-	VKEYMAP(VK_DOWN, kCtrl + kShift,		0x4F),
-	VKEYMAP(VK_DOWN, kAlt + kShift,			0xCF),
-	VKEYMAP(VK_DOWN, kAlt + kCtrl + kShift,	0x4F),
-
-	VKEYMAP(VK_LEFT, 0,						0x86),
-	VKEYMAP(VK_LEFT, kCtrl,					0x06),
-	VKEYMAP(VK_LEFT, kAlt,					0x86),
-	VKEYMAP(VK_LEFT, kAlt + kCtrl,			0x06),
-	VKEYMAP(VK_LEFT, kShift,				0xC6),
-	VKEYMAP(VK_LEFT, kCtrl + kShift,		0x46),
-	VKEYMAP(VK_LEFT, kAlt + kShift,			0xC6),
-	VKEYMAP(VK_LEFT, kAlt + kCtrl + kShift,	0x46),
-
-	VKEYMAP(VK_RIGHT, 0,					0x87),
-	VKEYMAP(VK_RIGHT, kCtrl,				0x07),
-	VKEYMAP(VK_RIGHT, kAlt,					0x87),
-	VKEYMAP(VK_RIGHT, kAlt + kCtrl,			0x07),
-	VKEYMAP(VK_RIGHT, kShift,				0xC7),
-	VKEYMAP(VK_RIGHT, kCtrl + kShift,		0x47),
-	VKEYMAP(VK_RIGHT, kAlt + kShift,		0xC7),
-	VKEYMAP(VK_RIGHT, kAlt + kCtrl + kShift,0x47),
-
+static const uint32 g_ATDefaultVKeyMap[]={
 	VKEYMAP_CSALL(VK_TAB,		0x2C),	// Tab
 	VKEYMAP_CSALL(VK_BACK,		0x34),	// Backspace
 	VKEYMAP_CSALL(VK_RETURN,	0x0C),	// Enter
@@ -311,30 +282,80 @@ static uint32 g_ATVKeyMap[]={
 	VKEYMAP_C_SALL('9', 0x30),
 };
 
-void ATUIInitVirtualKeyMap() {
-	std::sort(g_ATVKeyMap, g_ATVKeyMap + sizeof(g_ATVKeyMap)/sizeof(g_ATVKeyMap[0]));
+static const uint32 g_ATDefaultVKeyMapFKey[]={
+	VKEYMAP_CSALL(VK_F1, 0x03),
+	VKEYMAP_CSALL(VK_F2, 0x04),
+	VKEYMAP_CSALL(VK_F3, 0x13),
+	VKEYMAP_CSALL(VK_F4, 0x14),
+};
+
+void ATUIRegisterVirtualKeyMappings(const uint32 *mappings, uint32 n) {
+	while(n--) {
+		const uint32 code = *mappings++;
+
+		g_ATVKeyMap[code >> 8] = (uint8)code;
+	}
+}
+
+template<size_t N>
+void ATUIRegisterVirtualKeyMappings(const uint32 (&mappings)[N]) {
+	ATUIRegisterVirtualKeyMappings(mappings, N);
+}
+
+void ATUIInitVirtualKeyMap(const ATUIKeyboardOptions& options) {
+	memset(g_ATVKeyMap, kInvalidKeyCode, sizeof g_ATVKeyMap);
+
+	ATUIRegisterVirtualKeyMappings(g_ATDefaultVKeyMap);
+
+	if (options.mbEnableFunctionKeys)
+		ATUIRegisterVirtualKeyMappings(g_ATDefaultVKeyMapFKey);
+
+	// set up arrow keys
+	static const uint8 kArrowVKs[4]={ VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT };
+	static const uint8 kArrowKCs[4]={ 0x0E, 0x0F, 0x06, 0x07 };
+
+	static const uint8 kCtrlShiftMasks[][4]={
+		//              N     S     C     C+S
+		/* invert */  { 0x80, 0xC0, 0x00, 0x40 },
+		/* auto */    { 0x80, 0x40, 0x80, 0xC0 },
+		/* default */ { 0x00, 0x40, 0x80, 0xC0 },
+	};
+
+	VDASSERTCT(sizeof(kCtrlShiftMasks)/sizeof(kCtrlShiftMasks[0]) == ATUIKeyboardOptions::kAKMCount);
+
+	const uint8 *csmasks = kCtrlShiftMasks[options.mArrowKeyMode];
+
+	for(int i=0; i<4; ++i) {
+		uint8 *dst = &g_ATVKeyMap[kArrowVKs[i]];
+		const uint8 kbcode = kArrowKCs[i];
+
+		for(int j=0; j<4; ++j) {
+			dst[0] = dst[1024] = kbcode | csmasks[j];
+			dst += 256;
+		}
+	}
 }
 
 bool ATUIGetScanCodeForVirtualKey(uint32 virtKey, bool alt, bool ctrl, bool shift, uint8& scanCode) {
-	const uint32 *begin = g_ATVKeyMap;
-	const uint32 *end = g_ATVKeyMap + sizeof(g_ATVKeyMap)/sizeof(g_ATVKeyMap[0]);
+	uint32 vkindex = virtKey;
 
-	uint32 vkcode = virtKey << 8;
-
-	if (alt)
-		vkcode += kAlt;
-
-	if (ctrl)
-		vkcode += kCtrl;
-
-	if (shift)
-		vkcode += kShift;
-
-	const uint32 *it = std::lower_bound(begin, end, vkcode);
-
-	if (it == end || ((*it) & 0xffffff00) != vkcode)
+	if (virtKey >= 0x100)
 		return false;
 
-	scanCode = (uint8)*it;
+	if (alt)
+		vkindex += kAlt >> 8;
+
+	if (ctrl)
+		vkindex += kCtrl >> 8;
+
+	if (shift)
+		vkindex += kShift >> 8;
+
+	const uint8 kbcode = g_ATVKeyMap[vkindex];
+
+	if (kbcode == kInvalidKeyCode)
+		return false;
+
+	scanCode = kbcode;
 	return true;
 }

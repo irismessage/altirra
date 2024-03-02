@@ -22,6 +22,12 @@ class ATCPUEmulator;
 class ATCPUEmulatorMemory;
 class ATScheduler;
 class IATUIRenderer;
+class ATPokeyEmulator;
+
+enum AT850SIOEmulationLevel {
+	kAT850SIOEmulationLevel_None,
+	kAT850SIOEmulationLevel_StubLoader
+};
 
 struct ATRS232Config {
 	bool	mbTelnetEmulation;
@@ -33,6 +39,7 @@ struct ATRS232Config {
 	bool	mbDisableThrottling;
 	uint32	mListenPort;
 	uint32	mConnectionSpeed;
+	AT850SIOEmulationLevel	m850SIOLevel;
 
 	ATRS232Config()
 		: mbTelnetEmulation(true)
@@ -44,6 +51,7 @@ struct ATRS232Config {
 		, mbDisableThrottling(false)
 		, mListenPort(0)
 		, mConnectionSpeed(9600)
+		, m850SIOLevel(kAT850SIOEmulationLevel_None)
 	{
 	}
 };
@@ -52,7 +60,7 @@ class IATRS232Emulator {
 public:
 	virtual ~IATRS232Emulator() {}
 
-	virtual void Init(ATCPUEmulatorMemory *mem, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir) = 0;
+	virtual void Init(ATCPUEmulatorMemory *mem, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir, ATPokeyEmulator *pokey) = 0;
 	virtual void Shutdown() = 0;
 
 	virtual void ColdReset() = 0;

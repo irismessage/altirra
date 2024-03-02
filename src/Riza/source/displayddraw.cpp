@@ -4,6 +4,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/time.h>
 #include <vd2/system/math.h>
+#include <vd2/system/w32assist.h>
 #include <vd2/Kasumi/blitter.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmapops.h>
@@ -196,7 +197,7 @@ bool VDDirectDrawManager::Init(IVDDirectDrawClient *pClient) {
 		}
 	}
 
-	mhmodDD = LoadLibrary("ddraw");
+	mhmodDD = VDLoadSystemLibraryW32("ddraw");
 	if (!mhmodDD)
 		return false;
 

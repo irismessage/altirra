@@ -220,6 +220,7 @@ wmode	= $0289			;Cassette: Write mode (00 = read, 80 = write)
 blim	= $028a			;Cassette: Buffer limit
 txtmsc	= $0294			;text window pointer
 		; $0295
+escflg	= $02a2			;display next character verbatim if non-EOL
 logmap	= $02b2			;line logical map
 shflok	= $02be			;shift/control lock flags
 botscr	= $02bf			;number of text rows in text window
@@ -247,6 +248,7 @@ chact	= $02f3			;shadow for CHACTL ($D401)
 chbas	= $02f4			;shadow for CHBASE ($D409)
 atachr	= $02fb			;
 ch		= $02fc			;keyboard FIFO byte
+fildat	= $02fd			;color for screen XIO fill operation
 dspflg	= $02fe			;enable/disable of control codes by screen editor (E:)
 ssflag	= $02ff			;display/screen editor suspend flag
 ddevic	= $0300			;serial bus ID
@@ -331,8 +333,8 @@ screnv	dta		a(ScreenOpen-1)
 		dta		a(ScreenClose-1)
 		dta		a(ScreenGetByte-1)
 		dta		a(ScreenPutByte-1)
-		dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
+		dta		a(ScreenGetStatus-1)
+		dta		a(ScreenSpecial-1)
 		jsr		BugCheck
 		dta		$00
 
@@ -395,7 +397,20 @@ HandlerTable:
 		dta		c'E',a(editrv)
 		dta		c'S',a(screnv)
 		dta		c'K',a(keybdv)
+		
+;==============================================================================
+; $E4C0  Known RTS instruction
+;
+; The Atari 850 handler uses this as a "known RTS" instruction, as does
+; Altirra's internal R: handler emulation.
+;
+		org		$e4c0
+		
+.nowarn .proc KnownRTS
+		rts
+.endp
 
+;==============================================================================
 ;HDM requires SIO and interrupt handlers to be within either $C000-CFFF
 ;or $DFF0-EFFF.
 #include <sio.k>

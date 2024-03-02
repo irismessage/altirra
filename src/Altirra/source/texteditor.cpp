@@ -225,7 +225,7 @@ TextEditor::~TextEditor() {
 }
 
 VDGUIHandle TextEditor::Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id) {
-	return (VDGUIHandle)CreateWindowEx(exStyle, (LPCSTR)sWndClass, "", style, x, y, cx, cy, (HWND)parent, (HMENU)id, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
+	return (VDGUIHandle)CreateWindowEx(exStyle, (LPCTSTR)sWndClass, _T(""), style, x, y, cx, cy, (HWND)parent, (HMENU)id, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
 }
 
 void TextEditor::SetCallback(IVDTextEditorCallback *pCB) {
@@ -1074,7 +1074,7 @@ void TextEditor::OnPaint() {
 							xp = xpnew;
 						} else {
 							SIZE siz;
-							GetTextExtentPoint32(hdc, s + xpos, xrend - xpos, &siz);
+							GetTextExtentPoint32A(hdc, s + xpos, xrend - xpos, &siz);
 
 							RECT r;
 							r.left = xp;
@@ -1083,7 +1083,7 @@ void TextEditor::OnPaint() {
 							r.bottom = yp + ln.mHeight;
 
 							OffsetRect(&r, mGutterX, mGutterY);
-							ExtTextOut(hdc, mGutterX + xp, mGutterY + yp, ETO_OPAQUE, &r, s + xpos, xrend - xpos, NULL);
+							ExtTextOutA(hdc, mGutterX + xp, mGutterY + yp, ETO_OPAQUE, &r, s + xpos, xrend - xpos, NULL);
 							xp += siz.cx;
 						}
 
@@ -1307,10 +1307,16 @@ void TextEditor::OnMouseMove(WPARAM modifiers, int x, int y) {
 
 void TextEditor::OnMouseWheel(int wheelClicks, WPARAM modifiers, int x, int y) {
 	mMouseWheelAccum += wheelClicks * mFontHeight;
-	int lines = mMouseWheelAccum / 120;
+	int clicks = mMouseWheelAccum / 120;
 
-	if (lines) {
-		mMouseWheelAccum -= lines*120;
+	if (clicks) {
+		mMouseWheelAccum -= clicks*120;
+
+		UINT linesPerClick = 1;
+		::SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &linesPerClick, FALSE);
+
+		int lines = clicks * linesPerClick;
+
 		ScrollTo(mScrollY - lines, true);
 	}
 }
@@ -1709,7 +1715,7 @@ void TextEditor::PosToPixel(int& xp, int& yp, const Iterator& pos) {
 			}
 
 			SIZE sz;
-			if (GetTextExtentPoint32(hdc, s + index, spanend - index, &sz))
+			if (GetTextExtentPoint32A(hdc, s + index, spanend - index, &sz))
 				xp += sz.cx;
 
 			index = spanend;
@@ -1784,7 +1790,7 @@ Iterator TextEditor::PixelToPos(int px, int py) {
 					SIZE sz;
 					INT fit;
 					int sublen = spanend - index;
-					if (GetTextExtentExPoint(hdc, s + index, sublen, px - xp, &fit, NULL, &sz)) {
+					if (GetTextExtentExPointA(hdc, s + index, sublen, px - xp, &fit, NULL, &sz)) {
 						if (fit < sublen) {
 							offset = index + fit;
 							break;
@@ -1888,7 +1894,7 @@ void TextEditor::ReflowPara(int paraIdx, const Paragraph& para) {
 			while(s < sEnd) {
 				INT n;
 				SIZE sz;
-				if (!GetTextExtentExPoint(hdc, s, sEnd - s, mReflowWidth, &n, NULL, &sz))
+				if (!GetTextExtentExPointA(hdc, s, sEnd - s, mReflowWidth, &n, NULL, &sz))
 					break;
 
 				if (sz.cx > mReflowWidth)

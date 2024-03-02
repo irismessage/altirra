@@ -174,6 +174,31 @@ void VDAppendMenuW32(HMENU hmenu, UINT flags, UINT id, const wchar_t *text){
 	}
 }
 
+void VDAppendMenuSeparatorW32(HMENU hmenu) {
+	int pos = GetMenuItemCount(hmenu);
+	if (pos < 0)
+		return;
+
+	if (VDIsWindowsNT()) {
+		MENUITEMINFOW mmiW;
+		vdfastfixedvector<wchar_t, 256> bufW;
+
+		mmiW.cbSize		= MENUITEMINFO_SIZE_VERSION_400W;
+		mmiW.fMask		= MIIM_TYPE;
+		mmiW.fType		= MFT_SEPARATOR;
+
+		InsertMenuItemW(hmenu, pos, TRUE, &mmiW);
+	} else {
+		MENUITEMINFOA mmiA;
+
+		mmiA.cbSize		= MENUITEMINFO_SIZE_VERSION_400A;
+		mmiA.fMask		= MIIM_TYPE;
+		mmiA.fType		= MFT_SEPARATOR;
+
+		InsertMenuItemA(hmenu, pos, TRUE, &mmiA);
+	}
+}
+
 void VDCheckMenuItemByPositionW32(HMENU hmenu, uint32 pos, bool checked) {
 	CheckMenuItem(hmenu, pos, checked ? MF_BYPOSITION|MF_CHECKED : MF_BYPOSITION|MF_UNCHECKED);
 }
@@ -616,4 +641,59 @@ bool VDPatchModuleExportTableW32(HMODULE hmod, const char *name, void *pCompareV
 	}
 
 	return false;
+}
+
+HMODULE VDLoadSystemLibraryW32(const char *name) {
+	if (VDIsWindowsNT()) {
+		vdfastvector<wchar_t> pathW(MAX_PATH, 0);
+
+		size_t len = GetSystemDirectoryW(pathW.data(), MAX_PATH);
+
+		if (!len)
+			return NULL;
+
+		if (len > MAX_PATH) {
+			pathW.resize(len + 1, 0);
+
+			len = GetSystemDirectoryW(pathW.data(), len);
+			if (!len || len >= pathW.size())
+				return NULL;
+		}
+
+		pathW.resize(len);
+
+		if (pathW.back() != '\\')
+			pathW.push_back('\\');
+
+		while(const char c = *name++)
+			pathW.push_back(c);
+
+		pathW.push_back(0);
+
+		return LoadLibraryW(pathW.data());
+	} else {
+		vdfastvector<char> pathA(MAX_PATH, 0);
+		size_t len = GetSystemDirectoryA(pathA.data(), MAX_PATH);
+
+		if (!len)
+			return NULL;
+
+		if (len > MAX_PATH) {
+			pathA.resize(len + 1, 0);
+
+			len = GetSystemDirectoryA(pathA.data(), len);
+			if (!len || len >= pathA.size())
+				return NULL;
+		}
+
+		pathA.resize(len);
+
+		if (pathA.back() != '\\')
+			pathA.push_back('\\');
+
+		pathA.insert(pathA.end(), name, name + strlen(name));
+		pathA.push_back(0);
+
+		return LoadLibraryA(pathA.data());
+	}
 }

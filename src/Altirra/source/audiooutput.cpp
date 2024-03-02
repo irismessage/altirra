@@ -16,12 +16,14 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include <vd2/system/math.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/time.h>
 #include <vd2/Riza/audioout.h>
 #include <vd2/Riza/audioformat.h>
-#include "audiooutput.h"
 #include "audiofilters.h"
+#include "audiosource.h"
+#include "audiooutput.h"
 #include "uirender.h"
 
 class ATAudioOutput : public IATAudioOutput {
@@ -41,8 +43,13 @@ public:
 	virtual IATUIRenderer *GetStatusRenderer() { return mpUIRenderer; }
 	virtual void SetStatusRenderer(IATUIRenderer *uir);
 
-	virtual void SetPal(bool pal);
-	virtual void SetTurbo(bool turbo);
+	virtual void AddSyncAudioSource(IATSyncAudioSource *src);
+	virtual void RemoveSyncAudioSource(IATSyncAudioSource *src);
+
+	virtual void SetCyclesPerSecond(double cps, double repeatfactor);
+
+	virtual bool GetMute();
+	virtual void SetMute(bool mute);
 
 	virtual float GetVolume();
 	virtual void SetVolume(float vol);
@@ -88,12 +95,15 @@ protected:
 	sint64	mResampleRate;
 	int		mSamplingRate;
 	ATAudioApi	mApi;
-	bool	mbPal;
 	uint32	mPauseCount;
 	uint32	mLatencyTargetMin;
 	uint32	mLatencyTargetMax;
 	int		mLatency;
 	int		mExtraBuffer;
+	bool	mbMute;
+
+	uint32	mRepeatAccum;
+	uint32	mRepeatInc;
 
 	uint32	mCheckCounter;
 	uint32	mMinLevel;
@@ -116,6 +126,9 @@ protected:
 
 	ATAudioFilter	mFilters[2];
 
+	typedef vdfastvector<IATSyncAudioSource *> SyncAudioSources;
+	SyncAudioSources mSyncAudioSources;
+
 	float	mSourceBuffer[2][kBufferSize];
 	sint16	mOutputBuffer[kBufferSize * 2];
 };
@@ -125,6 +138,9 @@ ATAudioOutput::ATAudioOutput()
 	, mPauseCount(0)
 	, mLatency(100)
 	, mExtraBuffer(100)
+	, mbMute(false)
+	, mRepeatAccum(0)
+	, mRepeatInc(0)
 	, mpAudioOut()
 	, mpAudioTap(NULL)
 	, mpUIRenderer(NULL)
@@ -163,7 +179,7 @@ void ATAudioOutput::Init() {
 	RecomputeBuffering();
 	ReinitAudio();
 
-	SetPal(false);
+	SetCyclesPerSecond(1789772.5, 1.0);
 }
 
 ATAudioApi ATAudioOutput::GetApi() {
@@ -191,16 +207,30 @@ void ATAudioOutput::SetStatusRenderer(IATUIRenderer *uir) {
 	}
 }
 
-void ATAudioOutput::SetPal(bool pal) {
-	mbPal = pal;
-
-	if (pal)
-		mResampleRate = (sint64)(0.5 + 4294967296.0 * 63337.4 / (double)mSamplingRate);
-	else
-		mResampleRate = (sint64)(0.5 + 4294967296.0 * 63920.4 / (double)mSamplingRate);
+void ATAudioOutput::AddSyncAudioSource(IATSyncAudioSource *src) {
+	mSyncAudioSources.push_back(src);
 }
 
-void ATAudioOutput::SetTurbo(bool turbo) {
+void ATAudioOutput::RemoveSyncAudioSource(IATSyncAudioSource *src) {
+	SyncAudioSources::iterator it(std::find(mSyncAudioSources.begin(), mSyncAudioSources.end(), src));
+
+	if (it != mSyncAudioSources.end())
+		mSyncAudioSources.erase(it);
+}
+
+void ATAudioOutput::SetCyclesPerSecond(double cps, double repeatfactor) {
+	mAudioStatus.mExpectedRate = cps / 28.0;
+	mResampleRate = (sint64)(0.5 + 4294967296.0 * mAudioStatus.mExpectedRate / (double)mSamplingRate);
+
+	mRepeatInc = VDRoundToInt(repeatfactor * 65536.0);
+}
+
+bool ATAudioOutput::GetMute() {
+	return mbMute;
+}
+
+void ATAudioOutput::SetMute(bool mute) {
+	mbMute = mute;
 }
 
 float ATAudioOutput::GetVolume() {
@@ -288,11 +318,28 @@ void ATAudioOutput::InternalWriteAudio(const float *left, const float *right, ui
 
 	const int channels = right ? 2 : 1;
 
-	for(int i=0; i<channels; ++i) {
-		float *dst = &mSourceBuffer[i][mBufferLevel];
+	// copy in samples
+	float *const dstLeft = &mSourceBuffer[0][mBufferLevel];
+	float *const dstRight = right ? &mSourceBuffer[1][mBufferLevel] : NULL;
 
-		// Copy in new samples.
-		memcpy(dst + kPreFilterOffset, i ? right : left, sizeof(float) * count);
+	memcpy(dstLeft + kPreFilterOffset, left, sizeof(float) * count);
+
+	if (right)
+		memcpy(dstRight + kPreFilterOffset, right, sizeof(float) * count);
+
+	// run audio sources
+	for(SyncAudioSources::const_iterator it(mSyncAudioSources.begin()), itEnd(mSyncAudioSources.end());
+		it != itEnd;
+		++it)
+	{
+		IATSyncAudioSource *src = *it;
+
+		src->WriteAudio(timestamp, dstLeft + kPreFilterOffset, dstRight ? dstRight + kPreFilterOffset : NULL, count);
+	}
+
+	// filter channels
+	for(int i=0; i<channels; ++i) {
+		float *dst = i ? dstRight : dstLeft;
 
 		// Run prefilter.
 		mFilters[i].PreFilter(dst + kPreFilterOffset, count);
@@ -322,7 +369,16 @@ void ATAudioOutput::InternalWriteAudio(const float *left, const float *right, ui
 		resampleCount = (uint32)((limit - mResampleAccum) / mResampleRate + 1);
 
 		if (resampleCount) {
-			if (right)
+			if (resampleCount > (sizeof(mOutputBuffer)/sizeof(mOutputBuffer[0]) >> 1)) {
+				VDASSERT(!"Resample count too high.");
+
+				resampleCount = sizeof(mOutputBuffer)/sizeof(mOutputBuffer[0]) >> 1;
+			}
+
+			if (mbMute) {
+				mResampleAccum += mResampleRate * resampleCount;
+				memset(mOutputBuffer, 0, sizeof(mOutputBuffer[0]) * resampleCount * 2);
+			} else if (right)
 				mResampleAccum = ATFilterResampleStereo(mOutputBuffer, mSourceBuffer[0], mSourceBuffer[1], resampleCount, mResampleAccum, mResampleRate);
 			else
 				mResampleAccum = ATFilterResampleMonoToStereo(mOutputBuffer, mSourceBuffer[0], resampleCount, mResampleAccum, mResampleRate);
@@ -419,8 +475,18 @@ void ATAudioOutput::InternalWriteAudio(const float *left, const float *right, ui
 		++mAudioStatus.mDropCount;
 	} else {
 		if (bytes < mLatencyTargetMin + mLatencyTargetMax) {
-			if (pushAudio || true)
-				mpAudioOut->Write(mOutputBuffer, resampleCount * 4);
+			if (pushAudio || true) {
+				mRepeatAccum += mRepeatInc;
+
+				uint32 count = mRepeatAccum >> 16;
+				mRepeatAccum &= 0xffff;
+
+				if (count > 10)
+					count = 10;
+
+				while(count--)
+					mpAudioOut->Write(mOutputBuffer, resampleCount * 4);
+			}
 		} else {
 			++mOverflowCount;
 			++mAudioStatus.mOverflowCount;

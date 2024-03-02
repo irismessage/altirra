@@ -76,6 +76,7 @@ public:
 	void	AddClient(VDVideoDisplayClient *pClient);
 	void	RemoveClient(VDVideoDisplayClient *pClient);
 	void	ModifyPreciseMode(bool enabled);
+	void	ReaffirmPreciseMode();
 	void	ModifyTicksEnabled(bool enabled);
 
 	void RemapPalette();
@@ -99,6 +100,9 @@ protected:
 	void	DestroyDitheringPalette();
 	void	CheckForegroundState();
 
+	void	EnterPreciseMode();
+	void	ExitPreciseMode();
+
 	static LRESULT CALLBACK StaticWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -113,6 +117,7 @@ protected:
 
 	int		mPreciseModeCount;
 	uint32	mPreciseModePeriod;
+	VDAtomicInt	mPreciseModeLastUse;
 
 	HPALETTE	mhPalette;
 	ATOM		mWndClass;

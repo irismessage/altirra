@@ -17,6 +17,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <vd2/system/error.h>
 #include <vd2/system/vdtypes.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/system/memory.h>
@@ -414,17 +415,25 @@ void VDPixmapBuffer::init(sint32 width, sint32 height, int f) {
 	sint32		subh		= -(-height >> srcinfo.auxhbits);
 	ptrdiff_t	mainpitch	= (srcinfo.qsize * qw + 15) & ~15;
 	ptrdiff_t	subpitch	= (srcinfo.auxsize * subw + 15) & ~15;
-	size_t		mainsize	= mainpitch * qh;
-	size_t		subsize		= subpitch * subh;
-	size_t		totalsize	= mainsize + subsize*srcinfo.auxbufs + 4 * srcinfo.palsize;
+	uint64		mainsize	= (uint64)mainpitch * qh;
+	uint64		subsize		= (uint64)subpitch * subh;
+	uint64		totalsize64	= mainsize + subsize*srcinfo.auxbufs + 4 * srcinfo.palsize;
 
 #ifdef _DEBUG
-	totalsize += 28;
+	totalsize64 += 28;
 #endif
+
+	size_t totalsize = (uint32)totalsize64;
+
+	// reject huge allocations
+	if (totalsize > (size_t)-1 - 4096)
+		throw MyMemoryError();
 
 	if (mLinearSize != totalsize) {
 		clear();
-		mpBuffer = new char[totalsize + 15];
+		mpBuffer = new_nothrow char[totalsize + 15];
+		if (!mpBuffer)
+			throw MyMemoryError(totalsize + 15);
 		mLinearSize = totalsize;
 	}
 
@@ -474,7 +483,7 @@ void VDPixmapBuffer::init(sint32 width, sint32 height, int f) {
 #endif
 }
 
-void VDPixmapBuffer::init(const VDPixmapLayout& layout) {
+void VDPixmapBuffer::init(const VDPixmapLayout& layout, uint32 additionalPadding) {
 	const VDPixmapFormatInfo& srcinfo = VDPixmapGetInfo(layout.format);
 	sint32		qw			= (layout.w + srcinfo.qw - 1) / srcinfo.qw;
 	sint32		qh			= -(-layout.h >> srcinfo.qhbits);
@@ -513,7 +522,7 @@ void VDPixmapBuffer::init(const VDPixmapLayout& layout) {
 
 	ptrdiff_t linsize = ((maxo - mino + 3) & ~(uintptr)3);
 
-	ptrdiff_t totalsize = linsize + 4*srcinfo.palsize;
+	ptrdiff_t totalsize = linsize + 4*srcinfo.palsize + additionalPadding;
 
 #ifdef _DEBUG
 	totalsize += 28;
@@ -521,7 +530,9 @@ void VDPixmapBuffer::init(const VDPixmapLayout& layout) {
 
 	if (mLinearSize != totalsize) {
 		clear();
-		mpBuffer = new char[totalsize + 15];
+		mpBuffer = new_nothrow char[totalsize + 15];
+		if (!mpBuffer)
+			throw MyMemoryError();
 		mLinearSize = totalsize;
 	}
 

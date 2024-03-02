@@ -470,6 +470,8 @@ public:
 	T height() const;
 	T area() const;
 	VDSize<T> size() const;
+	VDPoint<T> top_left() const;
+	VDPoint<T> bottom_right() const;
 
 	bool contains(const VDPoint<T>& pt) const;
 
@@ -581,6 +583,12 @@ T VDRect<T>::height() const { return bottom-top; }
 
 template<class T>
 T VDRect<T>::area() const { return (right-left)*(bottom-top); }
+
+template<class T>
+VDPoint<T> VDRect<T>::top_left() const { return VDPoint<T>(left, top); }
+
+template<class T>
+VDPoint<T> VDRect<T>::bottom_right() const { return VDPoint<T>(right, bottom); }
 
 template<class T>
 VDSize<T> VDRect<T>::size() const { return VDSize<T>(right-left, bottom-top); }

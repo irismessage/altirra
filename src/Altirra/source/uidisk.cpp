@@ -26,6 +26,8 @@
 
 extern ATSimulator g_sim;
 
+void ATUIShowDialogDiskExplorer(VDGUIHandle h, IATDiskImage *image, const wchar_t *imageName, bool writeEnabled, bool autoFlush);
+
 class ATNewDiskDialog : public VDDialogFrameW32 {
 public:
 	ATNewDiskDialog();
@@ -249,6 +251,7 @@ void ATDiskDriveDialog::OnDataExchange(bool write) {
 		ShowControl(IDC_EJECT8, !mbHighDrives);
 		ShowControl(IDC_NEWDISK8, !mbHighDrives);
 		ShowControl(IDC_SAVEAS8, !mbHighDrives);
+		ShowControl(IDC_EXPLORE8, !mbHighDrives);
 
 		for(int i=0; i<8; ++i) {
 			int driveIdx = i;
@@ -317,11 +320,12 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 					driveIndex += 8;
 
 				VDStringW s(VDGetLoadFileName('disk', (VDGUIHandle)mhdlg, L"Load disk image",
-					L"All supported types\0*.atr;*.pro;*.atx;*.xfd;*.zip\0"
-					L"Atari disk image (*.atr, *.xfd)\0*.atr;*.xfd\0"
+					L"All supported types\0*.atr;*.pro;*.atx;*.xfd;*.dcm;*.zip\0"
+					L"Atari disk image (*.atr, *.xfd)\0*.atr;*.xfd;*.dcm\0"
 					L"Protected disk image (*.pro)\0*.pro\0"
 					L"VAPI disk image (*.atx)\0*.atx\0"
 					L"Zip archive (*.zip)\0*.zip\0"
+					L"Gzip archive (*.gz;*.atz)\0*.gz;*.atz\0"
 					L"All files\0*.*\0"
 					, L"atr"));
 
@@ -436,6 +440,32 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 				} else {
 					disk.SetEnabled(true);
 					disk.SetWriteFlushMode(mode > 1, mode == 3);
+				}
+			}
+			return true;
+
+		case IDC_EXPLORE8:		++index;
+		case IDC_EXPLORE7:		++index;
+		case IDC_EXPLORE6:		++index;
+		case IDC_EXPLORE5:		++index;
+		case IDC_EXPLORE4:		++index;
+		case IDC_EXPLORE3:		++index;
+		case IDC_EXPLORE2:		++index;
+		case IDC_EXPLORE1:
+			{
+				int driveIndex = index;
+				if (mbHighDrives)
+					driveIndex += 8;
+
+				ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIndex);
+				IATDiskImage *image = disk.GetDiskImage();
+
+				if (image) {
+					VDStringW imageName;
+
+					imageName.sprintf(L"Mounted disk on D%u:", driveIndex + 1);
+
+					ATUIShowDialogDiskExplorer((VDGUIHandle)mhdlg, image, imageName.c_str(), disk.IsWriteEnabled(), disk.IsAutoFlushEnabled());
 				}
 			}
 			return true;

@@ -5,8 +5,10 @@
 
 class VDLinearAllocator {
 public:
-	VDLinearAllocator(uint32 blockSize = 4096);
+	explicit VDLinearAllocator(uint32 blockSize = 4096);
 	~VDLinearAllocator();
+	
+	void Clear();
 
 	void *Allocate(size_t bytes) {
 		void *p = mpAllocPtr;
@@ -53,6 +55,32 @@ protected:
 	char *mpAllocPtr;
 	size_t mAllocLeft;
 	size_t mBlockSize;
+};
+
+class VDFixedLinearAllocator {
+public:
+	VDFixedLinearAllocator(void *mem, size_t size)
+		: mpAllocPtr((char *)mem)
+		, mAllocLeft(size)
+	{
+	}
+
+	void *Allocate(size_t bytes) {
+		void *p = mpAllocPtr;
+
+		if (mAllocLeft < bytes)
+			ThrowException();
+
+		mAllocLeft -= bytes;
+		mpAllocPtr += bytes;
+		return p;
+	}
+
+protected:
+	void ThrowException();
+
+	char *mpAllocPtr;
+	size_t mAllocLeft;
 };
 
 #endif

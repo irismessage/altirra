@@ -20,6 +20,7 @@
 
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 ATOM VDShaderEditorBaseWindow::sWndClass;
+ATOM VDShaderEditorBaseWindow::sWndClassMain;
 
 VDShaderEditorBaseWindow::VDShaderEditorBaseWindow()
 	: mRefCount(0)
@@ -34,21 +35,29 @@ ATOM VDShaderEditorBaseWindow::Register() {
 	if (sWndClass)
 		return sWndClass;
 
-	WNDCLASS wc;
+	WNDCLASS wc = {};
+	wc.lpszClassName	= _T("VDShaderEditorBaseWindow");
+	sWndClass = RegisterCustom(wc);
+	return sWndClass;
+}
 
-	wc.style			= CS_DBLCLKS;
+ATOM VDShaderEditorBaseWindow::RegisterCustom(const WNDCLASS& wc0) {
+	WNDCLASS wc(wc0);
+
+	wc.style			|= CS_DBLCLKS;
 	wc.lpfnWndProc		= StaticWndProc;
 	wc.cbClsExtra		= 0;
 	wc.cbWndExtra		= sizeof(VDShaderEditorBaseWindow *);
 	wc.hInstance		= (HINSTANCE)&__ImageBase;
-	wc.hIcon			= NULL;
-	wc.hCursor			= LoadCursor(NULL, IDC_ARROW);
-	wc.hbrBackground	= (HBRUSH)(COLOR_WINDOW + 1);
-	wc.lpszMenuName		= NULL;
-	wc.lpszClassName	= "VDShaderEditorBaseWindow";
 
-	sWndClass = RegisterClass(&wc);
-	return sWndClass;
+	if (!wc.hCursor)
+		wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+
+	if (!wc.hbrBackground)
+		wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+
+	sWndClassMain = RegisterClass(&wc);
+	return sWndClassMain;
 }
 
 void VDShaderEditorBaseWindow::Unregister() {

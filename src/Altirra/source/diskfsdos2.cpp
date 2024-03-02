@@ -356,6 +356,7 @@ bool ATDiskFSDOS2::FindNext(uintptr searchKey, ATDiskFSEntryInfo& info) {
 		info.mBytes		= de.mBytes;
 		info.mKey		= h->mPos;
 		info.mbIsDirectory = false;
+		info.mbDateValid = false;	
 		return true;
 	}
 
@@ -374,6 +375,7 @@ void ATDiskFSDOS2::GetFileInfo(uintptr key, ATDiskFSEntryInfo& info) {
 	info.mBytes		= de.mBytes;
 	info.mKey		= key;
 	info.mbIsDirectory = false;
+	info.mbDateValid = false;
 }
 
 uintptr ATDiskFSDOS2::GetParentDirectory(uintptr dirKey) {

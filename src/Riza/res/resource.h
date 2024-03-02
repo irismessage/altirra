@@ -19,7 +19,7 @@
 #define IDC_POSITION_X                  1016
 #define IDC_POSITION_Y                  1017
 #define IDD_SCREENCAP_OPTS              28444
-#define IDC_STATIC_HEIGHT               -1
+#define IDC_STATIC_HEIGHT               1018
 
 // Next default values for new objects
 // 
@@ -28,7 +28,7 @@
 #define _APS_NO_MFC                     1
 #define _APS_NEXT_RESOURCE_VALUE        102
 #define _APS_NEXT_COMMAND_VALUE         40001
-#define _APS_NEXT_CONTROL_VALUE         1018
+#define _APS_NEXT_CONTROL_VALUE         1019
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif
