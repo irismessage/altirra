@@ -55,6 +55,8 @@
 //
 
 #include <stdafx.h>
+#include <vd2/system/binary.h>
+#include <vd2/system/bitmath.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/scheduler.h>
 #include <at/atcore/wraptime.h>
@@ -74,20 +76,19 @@ ATPokeyRenderer::ATPokeyRenderer()
 	, mpTables(NULL)
 	, mAccum(0)
 	, mHighPassAccum(0)
-	, mSpeakerAccum(0)
 	, mOutputLevel(0)
-	, mSpeakerLevel(0)
 	, mLastOutputTime2(0)
 	, mLastOutputSampleTime2(0)
 	, mExternalInput(0)
 	, mbSpeakerState(false)
-	, mAUDCTL(0)
 	, mOutputSampleCount(0)
+	, mpEdgeBuffer(new ATSyncAudioEdgeBuffer)
 {
+	mpEdgeBuffer->mVolume = 56.0f;
+
 	for(int i=0; i<4; ++i) {
 		mbChannelEnabled[i] = true;
 		mChannelVolume[i] = 0;
-		mAUDC[i] = 0;
 	}
 }
 
@@ -101,7 +102,7 @@ void ATPokeyRenderer::Init(ATScheduler *sch, ATPokeyTables *tables) {
 	mLastOutputTime2 = ATSCHEDULER_GETTIME(mpScheduler) * 2;
 	mLastOutputSampleTime2 = mLastOutputTime2;
 
-	mSerialPulse = 200;
+	mSerialPulse = 0.12f;
 
 	ColdReset();
 }
@@ -119,8 +120,9 @@ void ATPokeyRenderer::ColdReset() {
 	}
 
 	mOutputLevel = 0;
-	mSpeakerLevel = 0;
 	mOutputSampleCount = 0;
+	mAccum = 0;
+	mHighPassAccum = 0;
 
 	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 	mLastFlushTime = t;
@@ -135,16 +137,25 @@ void ATPokeyRenderer::ColdReset() {
 	mPolyState.mPoly5Counter = 0;
 	mPolyState.mPoly4Counter = 0;
 
-	for(ChannelEdges& edges : mChannelEdges) {
+	for(ChannelEdges& edges : mChannelEdges)
 		edges.clear();
-	}
+
+	for(uint32& base : mChannelEdgeBases)
+		base = 0;
+
+	mChangeQueue.clear();
 
 	// This must be done after everything else is inited, as it will start recomputing
 	// derived values.
-	SetAUDCTL(0);
+	mArchState = {};
+	mRenderState = {};
+
+	mChannelOutputMask = 0x30;
 
 	for(int i=0; i<4; ++i)
-		SetAUDCx(i, 0);
+		UpdateVolume(i);
+
+	UpdateOutput(t);
 }
 
 void ATPokeyRenderer::SyncTo(const ATPokeyRenderer& src) {
@@ -156,28 +167,54 @@ void ATPokeyRenderer::SyncTo(const ATPokeyRenderer& src) {
 	memset(mRawOutputBuffer, 0, sizeof(mRawOutputBuffer[0]) * mOutputSampleCount);
 }
 
-void ATPokeyRenderer::GetAudioState(ATPokeyAudioState& state) {
-	Flush(ATSCHEDULER_GETTIME(mpScheduler));
-
-	uint8 outputMask = (mChannelOutputMask ^ (mChannelOutputMask >> 4)) | mVolumeOnlyMask;
-	for(int ch=0; ch<4; ++ch) {
-		int level = outputMask & (1 << ch) ? mChannelVolume[ch] : 0;
-
-		state.mChannelOutputs[ch] = level;
-	}
-}
-
 void ATPokeyRenderer::SetChannelEnabled(int channel, bool enabled) {
 	VDASSERT(channel < 4);
 	if (mbChannelEnabled[channel] != enabled) {
 		const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 		Flush(t);
 
+		if (mpAudioLog)
+			LogOutputChange(t*2);
+
 		mbChannelEnabled[channel] = enabled;
 
 		UpdateVolume(channel);
 		UpdateOutput(t);
 	}
+}
+
+void ATPokeyRenderer::SetAudioLog(ATPokeyAudioLog *log) {
+	mpAudioLog = log;
+
+	if (log) {
+		log->mTicksPerSample = log->mCyclesPerSample * 2;
+		log->mFullScaleValue = log->mTicksPerSample * 15;
+		log->mSampleIndex = 0;
+		log->mLastOutputMask = 0;
+		log->mNumMixedSamples = 0;
+
+		RestartAudioLog(true);
+	}
+}
+
+void ATPokeyRenderer::RestartAudioLog(bool initial) {
+	if (!mpAudioLog)
+		return;
+
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+	if (!initial) {
+		// finish remaining samples in log for this frame (note that the current sample has already
+		// been cleared and may be partially populated)
+		LogOutputChange(t*2);
+	}
+
+	// restart sample buffer for new frame
+	const uint32 t2 = t*2;
+	mpAudioLog->mLastFrameSampleCount = mpAudioLog->mSampleIndex;
+	mpAudioLog->mStartingAudioTick = t2;
+	mpAudioLog->mLastAudioTick = t2;
+	mpAudioLog->mAccumulatedAudioTicks = 0;
+	mpAudioLog->mSampleIndex = 0;
 }
 
 void ATPokeyRenderer::SetFiltersEnabled(bool enable) {
@@ -189,102 +226,67 @@ void ATPokeyRenderer::SetInitMode(bool init) {
 	if (init == mbInitMode)
 		return;
 
-	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	Flush(t);
-
 	mbInitMode = init;
-	mPolyState.mInitMask = init ? 0 : UINT32_C(0xFFFFFFFF);
 
-	// These offsets are specifically set so that the audio output patterns
-	// are correctly timed.
-	mPolyState.mPoly4Counter = 8 - kAudioDelay;
-	mPolyState.mPoly5Counter = 22 - kAudioDelay;
-	mPolyState.mPoly9Counter = 507 - kAudioDelay;
-	mPolyState.mPoly17Counter = 131067 - kAudioDelay;
-	mPolyState.mLastPoly17Time = t;
-	mPolyState.mLastPoly9Time = t;
-	mPolyState.mLastPoly5Time = t;
-	mPolyState.mLastPoly4Time = t;
+	QueueChangeEvent(ChangeType::Init, init ? 1 : 0);
 }
 
 bool ATPokeyRenderer::SetSpeaker(bool newState) {
 	if (mbSpeakerState == newState)
 		return false;
 
-	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	Flush(t);
-
 	mbSpeakerState = newState;
-	UpdateOutput(t);
+
+	// The XL/XE speaker is about as loud peak-to-peak as a channel at volume 6.
+	// However, it is added in later in the output circuitry and has different
+	// audio characteristics, so we must treat it separately.
+	float delta = mpTables->mMixTable[6];
+
+	if (newState)
+		delta = -delta;
+
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+	mpEdgeBuffer->mEdges.push_back(ATSyncAudioEdge { t, delta });
 	return true;
 }
 
 void ATPokeyRenderer::SetAudioLine2(int v) {
 	if (mExternalInput != v) {
 		const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-		Flush(t);
+
+		mpEdgeBuffer->mEdges.push_back(ATSyncAudioEdge { t, (float)(v - mExternalInput) / (60.0f * 56.0f) });
 
 		mExternalInput = v;
-		UpdateOutput(t);
 	}
 }
 
 void ATPokeyRenderer::ResetTimers() {
-	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	Flush(t);
-
-	// preset all noise flip/flops
-	mNoiseFlipFlops = 0xF;
-	mChannelOutputMask |= 0xF;
-
-	UpdateOutput(t);
+	QueueChangeEvent(ChangeType::ResetOutputs, 0);
 }
 
 void ATPokeyRenderer::SetAUDCx(int index, uint8 value) {
-	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	Flush(t);
+	if (mArchState.mAUDC[index] == value)
+		return;
 
-	mAUDC[index] = value;
+	mArchState.mAUDC[index] = value;
 
-	UpdateVolume(index);
-
-	UpdateOutput(t);
+	QueueChangeEvent((ChangeType)((int)ChangeType::Audc0 + index), value);
 }
 
 void ATPokeyRenderer::SetAUDCTL(uint8 value) {
-	const uint8 delta = mAUDCTL ^ value;
-	if (!delta)
+	if (mArchState.mAUDCTL == value)
 		return;
 
-	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	Flush(t);
+	mArchState.mAUDCTL = value;
 
-	mAUDCTL = value;
-
-	bool outputsChanged = false;
-	if ((delta & 0x04) && !(mAUDCTL & 0x04)) {
-		if (!(mChannelOutputMask & 0x10)) {
-			mChannelOutputMask |= 0x10;
-			outputsChanged = true;
-		}
-	}
-
-	if ((delta & 0x02) && !(mAUDCTL & 0x02)) {
-		if (!(mChannelOutputMask & 0x20)) {
-			mChannelOutputMask |= 0x20;
-			outputsChanged = true;
-		}
-	}
-
-	if (outputsChanged)
-		UpdateOutput(t);
+	QueueChangeEvent(ChangeType::Audctl, value);
 }
 
 void ATPokeyRenderer::AddChannelEvent(int channel) {
 	ChannelEdges& ce = mChannelEdges[channel];
 	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 
-	VDASSERT(ce.empty() || t - ce.back() < 0x80000000);
+	VDASSERT(ce.size() == mChannelEdgeBases[channel] || t - ce.back() < 0x80000000);
 	ce.push_back(t);
 }
 
@@ -333,12 +335,25 @@ void ATPokeyRenderer::AddSerialNoisePulse(uint32 t) {
 	mSerialPulseTimes.push_back(t);
 }
 
-uint32 ATPokeyRenderer::EndBlock() {
+ATPokeyRenderer::EndBlockInfo ATPokeyRenderer::EndBlock(IATSyncAudioEdgePlayer *edgePlayer) {
 	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 
 	Flush(t);
 
-	// Merge noise samples
+	// copy mixed samples to the audio log
+	if (mpAudioLog) {
+		uint32 samplesToCopy = mpAudioLog->mMaxMixedSamples - mpAudioLog->mNumMixedSamples;
+
+		if (samplesToCopy > mOutputSampleCount)
+			samplesToCopy = mOutputSampleCount;
+
+		if (samplesToCopy) {
+			std::copy_n(mRawOutputBuffer, samplesToCopy, mpAudioLog->mpMixedSamples + mpAudioLog->mNumMixedSamples);
+			mpAudioLog->mNumMixedSamples += samplesToCopy;
+		}
+	}
+
+	// merge noise samples
 	const uint32 sampleCount = mOutputSampleCount;
 
 	if (!mSerialPulseTimes.empty()) {
@@ -371,13 +386,22 @@ uint32 ATPokeyRenderer::EndBlock() {
 
 	mOutputSampleCount = 0;
 
-	VDASSERT(t*2 - mLastOutputSampleTime2 <= 56);
+	const uint32 t2 = t*2;
+	VDASSERT(t2 - mLastOutputSampleTime2 <= 56);
 
 	// prevent denormals
 	if (fabsf(mHighPassAccum) < 1e-20)
 		mHighPassAccum = 0;
 
-	return sampleCount;
+	if (edgePlayer)
+		edgePlayer->AddEdgeBuffer(mpEdgeBuffer);
+	else
+		mpEdgeBuffer->mEdges.clear();
+
+	return EndBlockInfo {
+		t - ((t2 - mLastOutputSampleTime2) >> 1) - 28 * sampleCount,
+		sampleCount
+	};
 }
 
 void ATPokeyRenderer::LoadState(ATSaveStateReader& reader) {
@@ -416,32 +440,112 @@ void ATPokeyRenderer::ResetState() {
 	mChannelOutputMask = 0x3F;
 }
 
-void ATPokeyRenderer::SaveState(ATSaveStateWriter& writer) {
+ATPokeyRenderer::SavedState ATPokeyRenderer::SaveState() const {
 	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+	SavedState state {};
 
 	// Careful -- we can't update polynomial counters here like we do in the
 	// main POKEY module. That's because the polynomial counters have to be
 	// advanced by sound rendering and not by the simulation.
 
-	writer.WriteUint8 ((mPolyState.mPoly4Counter  + (mPolyState.mInitMask & (mPolyState.mLastPoly4Time  - t))) % 15);
-	writer.WriteUint8 ((mPolyState.mPoly5Counter  + (mPolyState.mInitMask & (mPolyState.mLastPoly5Time  - t))) % 31);
-	writer.WriteUint16((mPolyState.mPoly9Counter  + (mPolyState.mInitMask & (mPolyState.mLastPoly9Time  - t))) % 511);
-	writer.WriteUint32((mPolyState.mPoly17Counter + (mPolyState.mInitMask & (mPolyState.mLastPoly17Time - t))) % 131071);
-
-	for(int i=0; i<4; ++i) {
-		writer.WriteUint8((mNoiseFlipFlops >> i) & 1);
-	}
-
-	for(int i=0; i<2; ++i)
-		writer.WriteUint8((mChannelOutputMask >> (4 + i)) & 1);
-
-	const uint8 outputs = (mChannelOutputMask ^ (mChannelOutputMask >> 4)) | mVolumeOnlyMask;
-	for(int i=0; i<4; ++i)
-		writer.WriteUint8((outputs >> i) & 1);
+	state.mPoly4Offset = (mPolyState.mPoly4Counter  + (mPolyState.mInitMask & (mPolyState.mLastPoly4Time  - t))) % 15;
+	state.mPoly5Offset = (mPolyState.mPoly5Counter  + (mPolyState.mInitMask & (mPolyState.mLastPoly5Time  - t))) % 31;
+	state.mPoly9Offset = (mPolyState.mPoly9Counter  + (mPolyState.mInitMask & (mPolyState.mLastPoly9Time  - t))) % 511;
+	state.mPoly17Offset = (mPolyState.mPoly17Counter + (mPolyState.mInitMask & (mPolyState.mLastPoly17Time - t))) % 131071;
+	state.mOutputFlipFlops = mNoiseFlipFlops + (mChannelOutputMask & 0x30);
 
 	// mbInitMode is restored by the POKEY emulator.
 	// AUDCTL is restored by the POKEY emulator.
 	// AUDCx are restored by the POKEY emulator.
+
+	return state;
+}
+
+void ATPokeyRenderer::QueueChangeEvent(ChangeType type, uint8 value) {
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+	mChangeQueue.push_back(ChangeEvent { t, type, value });
+
+	if (mChangeQueue.size() >= 40000)
+		Flush(t);
+}
+
+void ATPokeyRenderer::ProcessChangeEvents(uint32 t) {
+	bool outputChanged = false;
+
+	while(!mChangeQueue.empty()) {
+		const ChangeEvent& ce = mChangeQueue.front();
+
+		if ((uint32)(t - ce.mTime) >= UINT32_C(0x80000000))
+			break;
+
+		switch(ce.mType) {
+			case ChangeType::Audc0:
+			case ChangeType::Audc1:
+			case ChangeType::Audc2:
+			case ChangeType::Audc3:
+				mRenderState.mAUDC[(int)ce.mType - (int)ChangeType::Audc0] = ce.mValue;
+				UpdateVolume((int)ce.mType - (int)ChangeType::Audc0);
+
+				outputChanged = true;
+				break;
+
+			case ChangeType::Audctl:
+				{
+					const uint8 delta = mRenderState.mAUDCTL ^ ce.mValue;
+
+					mRenderState.mAUDCTL = ce.mValue;
+
+					if ((delta & 0x04) && !(mRenderState.mAUDCTL & 0x04)) {
+						if (!(mChannelOutputMask & 0x10)) {
+							mChannelOutputMask |= 0x10;
+							outputChanged = true;
+						}
+					}
+
+					if ((delta & 0x02) && !(mRenderState.mAUDCTL & 0x02)) {
+						if (!(mChannelOutputMask & 0x20)) {
+							mChannelOutputMask |= 0x20;
+							outputChanged = true;
+						}
+					}
+				}
+				break;
+
+			case ChangeType::Init:
+				mPolyState.mInitMask = ce.mValue ? 0 : UINT32_C(0xFFFFFFFF);
+
+				// These offsets are specifically set so that the audio output patterns
+				// are correctly timed.
+				mPolyState.mPoly4Counter = 8 - kAudioDelay;
+				mPolyState.mPoly5Counter = 22 - kAudioDelay;
+				mPolyState.mPoly9Counter = 507 - kAudioDelay;
+				mPolyState.mPoly17Counter = 131067 - kAudioDelay;
+				mPolyState.mLastPoly17Time = t;
+				mPolyState.mLastPoly9Time = t;
+				mPolyState.mLastPoly5Time = t;
+				mPolyState.mLastPoly4Time = t;
+				break;
+
+			case ChangeType::ResetOutputs:
+				// preset all noise flip/flops
+				mNoiseFlipFlops = 0xF;
+				mChannelOutputMask |= 0xF;
+				outputChanged = true;
+				break;
+
+			case ChangeType::Flush:
+				break;
+		}
+
+		mChangeQueue.pop_front();
+	}
+
+	if (outputChanged) {
+		UpdateOutput(t);
+
+		if (mpAudioLog)
+			LogOutputChange(t*2);
+	}
 }
 
 void ATPokeyRenderer::FlushDeferredEvents(int channel, uint32 t) {
@@ -451,7 +555,7 @@ void ATPokeyRenderer::FlushDeferredEvents(int channel, uint32 t) {
 
 	ChannelEdges& ce = mChannelEdges[channel];
 
-	VDASSERT(ce.empty() || de.mNextTime - ce.back() < 0x80000000);		// wrap(nextTime >= back) -> nextTime - back >= 0
+	VDASSERT(ce.size() == mChannelEdgeBases[channel] || de.mNextTime - ce.back() < 0x80000000);		// wrap(nextTime >= back) -> nextTime - back >= 0
 
 	if (de.mbLinked) {
 		while((sint32)(de.mNextTime - t) < 0) {
@@ -474,12 +578,21 @@ void ATPokeyRenderer::FlushDeferredEvents(int channel, uint32 t) {
 }
 
 void ATPokeyRenderer::Flush(const uint32 t) {
-	for(;;) {
-		uint32 dt = t - mLastFlushTime;
-		if (!dt)
-			break;
+	mChangeQueue.push_back(ChangeEvent { t, ChangeType::Flush });
 
-		Flush2(mLastFlushTime + std::min<uint32>(dt, 0xC000));
+	while(!mChangeQueue.empty()) {
+		const uint32 changeTime = mChangeQueue.front().mTime;
+
+		while(mLastFlushTime != changeTime) {
+			uint32 dt = changeTime - mLastFlushTime;
+			if (dt)
+				Flush2(mLastFlushTime + std::min<uint32>(dt, 0xC000));
+		}
+
+		if (mpAudioLog)
+			LogOutputChange(changeTime*2);
+
+		ProcessChangeEvents(changeTime);
 	}
 
 	GenerateSamples(t * 2);
@@ -493,7 +606,7 @@ void ATPokeyRenderer::Flush2(const uint32 t) {
 		if (mDeferredEvents[i].mbEnabled)
 			FlushDeferredEvents(i, t);
 
-		if (!mChannelEdges[i].empty())
+		if (mChannelEdgeBases[i] != mChannelEdges[i].size())
 			haveAnyEvents = true;
 	}
 
@@ -508,10 +621,15 @@ void ATPokeyRenderer::Flush2(const uint32 t) {
 	if (dirtyOutputs) {
 		mChannelOutputMask ^= dirtyOutputs;
 		UpdateOutput2(mLastOutputTime2);
+
+		if (mpAudioLog)
+			LogOutputChange(mLastOutputTime2);
 	}
 
 	const uint32 baseTime = mLastFlushTime;
 	mLastFlushTime = t;
+
+	g_ATLCPokeyTEv("=== processing %08X:%08X ===\n", baseTime, t);
 
 	// early out if we have no events to process
 	if (!haveAnyEvents)
@@ -537,25 +655,33 @@ void ATPokeyRenderer::Flush2(const uint32 t) {
 
 	for(int i=0; i<4; ++i) {
 		auto& srcEdges = mChannelEdges[i];
+		uint32 srcBegin = mChannelEdgeBases[i];
+		uint32 srcEnd = srcEdges.size();
 
 		// We should not have any edges in the future. We may have some edges slightly in the
 		// past since we keep a couple of cycles back to delay the audio output.
-		if (!srcEdges.empty()) {
-			VDASSERT(ATWrapTime{srcEdges.front()} >= baseTime - kAudioDelay);
-			VDASSERT(ATWrapTime{srcEdges.back()} <= t);
+		if (srcBegin != srcEnd) {
+			VDASSERT(ATWrapTime{srcEdges[srcBegin]} >= baseTime - kAudioDelay);
 		}
 
 		auto& dstEdges = mSortedEdgesTemp[i];
-		const uint32 numEdges = srcEdges.size();
-		uint32 numAudioEdges = numEdges;
-		
-		while(numAudioEdges && ATWrapTime{srcEdges[numAudioEdges - 1]} >= t - kAudioDelay)
-			--numAudioEdges;
+		const uint32 numEdges = srcEnd - srcBegin;
 
 		dstEdges.resize(numEdges + 1);
 
 		uint32 *dst = dstEdges.data();
-		uint32 *dst2 = (this->*GetFireTimerRoutine(i))(dst, srcEdges.data(), numAudioEdges, baseTime - kAudioDelay);
+
+		srcEdges.push_back(baseTime ^ UINT32_C(0x80000000));
+
+		const uint32 * const VDRESTRICT src = srcEdges.data() + srcBegin;
+		auto [dst2, src2] = (this->*GetFireTimerRoutine(i))(dst, src, baseTime - kAudioDelay, t - baseTime);
+		srcEdges.pop_back();
+
+		uint32 numSrcEdgesInRange = (uint32)(src2 - src);
+		uint32 numAudioEdges = numSrcEdgesInRange;
+		
+		while(numAudioEdges && ATWrapTime{src[numAudioEdges - 1]} >= t - kAudioDelay)
+			--numAudioEdges;
 
 		*dst2++ = UINT32_C(0xFFFFFFFF);
 
@@ -566,34 +692,46 @@ void ATPokeyRenderer::Flush2(const uint32 t) {
 			// ch1/2, we need to insert all of the events from ch3/4; otherwise, we only need the last
 			// event, if any.
 			uint32 hpClockStart = 0;
-			uint32 hpClockEnd = numEdges;
+			uint32 hpClockEnd = numSrcEdgesInRange;
 
-			while(hpClockStart != hpClockEnd && ATWrapTime{srcEdges[hpClockStart]} < baseTime)
+			// push ending bound forward to encompass events that may have been skipped by the main
+			// audio update due to audio delay, but which are in scope for the high-pass since HP
+			// processing runs two cycles ahead
+			while(hpClockEnd != numEdges && ATWrapTime{src[hpClockEnd]} < t)
+				++hpClockEnd;
+
+			// push starting bound forward, for same reason
+			while(hpClockStart != hpClockEnd && ATWrapTime{src[hpClockStart]} < baseTime)
 				++hpClockStart;
 
-			while(hpClockStart != hpClockEnd && ATWrapTime{srcEdges[hpClockEnd - 1]} >= t)
-				--hpClockEnd;
-
 			if (hpClockStart != hpClockEnd) {
-				const bool hpEnabled = (mAUDCTL & (4 >> (i - 2))) != 0;
-				auto& hpTargetEdges = mSortedEdgesTemp[i - 2];
-				const uint32 hpUpdateCoding = 0x3F00 - (0x400 << i) + (4 << i);
+				const bool hpEnabled = (mRenderState.mAUDCTL & (4 >> (i - 2))) != 0;
 
 				if (hpEnabled) {
+					auto& hpTargetEdges = mSortedEdgesTemp[i - 2];
+
 					// high-pass is enabled -- offset events by audio delay, convert to HP update events, and merge
 					// into ch1/2 list
 					const uint32 numHpEvents = hpClockEnd - hpClockStart;
 
 					mSortedEdgesHpTemp1.resize(numHpEvents + 1);
 
-					for(uint32 i=0; i<numHpEvents; ++i) {
-						const uint32 evTime = srcEdges[hpClockStart + i];
+					// Compute update offset: +1 half cycle, clear high-pass bit, and rebias time.
+					//
+					// Add one half cycle to the high pass update so it's a half cycle earlier than
+					// the output flip/flop. On real hardware, HP never updates at the same time;
+					// it's either one half clock earlier or late, so there is no phase offset at
+					// which high pass is fully effective or ineffective.
 
-						// Add one half cycle to the high pass update so it's a half cycle earlier than
-						// the output flip/flop. On real hardware, HP never updates at the same time;
-						// it's either one half clock earlier or late, so there is no phase offset at
-						// which high pass is fully effective or ineffective.
-						mSortedEdgesHpTemp1[i] = ((evTime - baseTime) << 15) + (1 << 14) + hpUpdateCoding;
+					const uint32 hpUpdateCoding = 0x4000 + 0x3F00 - (0x400 << i) + (4 << i) - (baseTime << 15);
+
+					{
+						uint32 *VDRESTRICT hpDest = mSortedEdgesHpTemp1.data();
+						for(uint32 j=0; j<numHpEvents; ++j) {
+							const uint32 evTime = src[hpClockStart + j];
+
+							hpDest[j] = (evTime << 15) + hpUpdateCoding;
+						}
 					}
 
 					mSortedEdgesHpTemp1.back() = 0xFFFFFFFF;
@@ -607,7 +745,12 @@ void ATPokeyRenderer::Flush2(const uint32 t) {
 			}
 		}
 
-		srcEdges.erase(srcEdges.begin(), srcEdges.begin() + numAudioEdges);
+		mChannelEdgeBases[i] += numAudioEdges;
+
+		if (mChannelEdgeBases[i] >= 16 && mChannelEdgeBases[i]*4 >= srcEnd) {
+			srcEdges.erase(srcEdges.begin(), srcEdges.begin() + mChannelEdgeBases[i]);
+			mChannelEdgeBases[i] = 0;
+		}
 	}
 
 	const uint32 n0 = (uint32)mSortedEdgesTemp[0].size() - 1;
@@ -647,14 +790,16 @@ void ATPokeyRenderer::Flush2(const uint32 t) {
 		mSortedEdges.data());
 
 	if (g_ATLCPokeyTEv.IsEnabled()) {
-		static uint8 kBitLookup[16]={
-			0,0,1,1,2,2,2,2,3,3,3,3,3,3,3,3
-		};
+		for(uint32 i=0; i<n; ++i) {
+			const uint32 edge = mSortedEdges[i];
 
-		for(const auto& edge : mSortedEdges) {
-			g_ATLCPokeyTEv("%08X:%u\n", (edge >> 14) + baseTime, kBitLookup[(edge >> 8) & 15]);
+			g_ATLCPokeyTEv("%08X.%c:%u\n", (edge >> 15) + baseTime, edge & 0x4000 ? '5' : '0', VDFindLowestSetBitFast(~(edge >> 8) & 63));
 		}
 	}
+
+	// if we have logging, we must log the edges before ProcessOutputEdges() updates the channel output state
+	if (mpAudioLog)
+		LogOutputEdges(baseTime*2, mSortedEdges.data(), n);
 
 	ProcessOutputEdges(baseTime, mSortedEdges.data(), n);
 	mSortedEdges.clear();
@@ -772,23 +917,26 @@ ATPokeyRenderer::FireTimerRoutine ATPokeyRenderer::GetFireTimerRoutine(int ch) c
 
 template<int activeChannel>
 ATPokeyRenderer::FireTimerRoutine ATPokeyRenderer::GetFireTimerRoutine() const {
-	// For ch1/2, if high pass is enabled we must generate output events even if volume
+	static_assert(activeChannel >= 0 && activeChannel < 4);
+
+	// If high pass is enabled we must generate output events even if volume
 	// is zero so we can latch the noise flip/flop into the high-pass flip/flop.
-	const bool highPassEnabled = (activeChannel == 0 && (mAUDCTL & 0x04)) || (activeChannel == 1 && (mAUDCTL & 0x02));
-	const bool nonZeroVolume = mChannelVolume[activeChannel] || (highPassEnabled && mChannelVolume[activeChannel & 1]);
+	// We need both the low channel and the high channel.
+	const bool highPassEnabled = (mRenderState.mAUDCTL & (activeChannel & 1 ? 0x02 : 0x04)) != 0;
+	const bool nonZeroVolume = mChannelVolume[activeChannel] || highPassEnabled;
 
 	using FireTimerTable = FireTimerRoutine[2][16];
 	const FireTimerTable *tab[2] = {
 		&kFireRoutines<activeChannel, false>,
 		&kFireRoutines<activeChannel, true>,
 	};
-	const bool usePoly9 = (mAUDCTL & 0x80) != 0;
+	const bool usePoly9 = (mRenderState.mAUDCTL & 0x80) != 0;
 
-	return (*tab[usePoly9])[nonZeroVolume][mAUDC[activeChannel] >> 4];
+	return (*tab[usePoly9])[nonZeroVolume][mRenderState.mAUDC[activeChannel] >> 4];
 }
 
 template<int activeChannel, uint8 audcn, bool outputAffectsSignal, bool T_UsePoly9>
-uint32 *ATPokeyRenderer::FireTimer(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 n, uint32 timeBase) {
+std::pair<uint32 *, const uint32 *> ATPokeyRenderer::FireTimer(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 timeBase, uint32 timeLimit) {
 	static constexpr bool noiseEnabled = !(audcn & 0x20);
 	static constexpr bool poly5Enabled = !(audcn & 0x80);
 	static constexpr int polyOffset = 3 - activeChannel;
@@ -813,8 +961,13 @@ uint32 *ATPokeyRenderer::FireTimer(uint32 *VDRESTRICT dst, const uint32 *VDRESTR
 		baseMaskCode + channelBit
 	};
 
-	while(n--) {
-		const uint32 timeOffset = (*src++) - timeBase;
+	for(;;) {
+		const uint32 timeOffset = (*src) - timeBase;
+
+		if (timeOffset >= timeLimit)
+			break;
+
+		++src;
 
 		if constexpr (poly5Enabled) {
 			uint8 poly5 = *(const uint8 *)(poly5Base + timeOffset);
@@ -870,26 +1023,95 @@ uint32 *ATPokeyRenderer::FireTimer(uint32 *VDRESTRICT dst, const uint32 *VDRESTR
 	else
 		mNoiseFlipFlops &= ~channelBit;
 
-	return dst;
+	return { dst, src };
 }
 
 void ATPokeyRenderer::ProcessOutputEdges(uint32 timeBase, const uint32 *edges, uint32 n) {
+#if VD_CPU_X86 || VD_CPU_X64
+	union {
+		uint8 b[64];
+		uint32 d[16];
+		__m128i v[4];
+	} v;
+
+	// VC++ auto-vectorizer does a poor job on the below, so we'll have to do it
+	// ourselves.
+
+	const uint8 vol0 = mChannelVolume[0];
+	const uint8 vol1 = mChannelVolume[1];
+	const uint8 vol2 = mChannelVolume[2];
+	const uint8 vol3 = mChannelVolume[3];
+
+	const uint32 d01
+		= (uint32)vol0 * (mVolumeOnlyMask & 1 ? 0x01010101 : VDFromLE32(0x01000100))
+		+ (uint32)vol1 * (mVolumeOnlyMask & 2 ? 0x01010101 : VDFromLE32(0x01010000));
+
+	const uint32 d2 = (uint32)vol2 * 0x01010101;
+	const uint32 d3 = (uint32)vol3 * 0x01010101;
+
+	__m128i v01 = _mm_shuffle_epi32(_mm_cvtsi32_si128(d01), 0);
+	__m128i v2 = _mm_shuffle_epi32(_mm_cvtsi32_si128(d2), 0x11);
+	__m128i v3 = _mm_shuffle_epi32(_mm_cvtsi32_si128(d3), 0x05);
+
+	if (mVolumeOnlyMask & 4)
+		v2 = _mm_shuffle_epi32(v2, 0xFF);
+
+	if (mVolumeOnlyMask & 8)
+		v3 = _mm_shuffle_epi32(v3, 0xFF);
+
+	__m128i v0123 = _mm_add_epi8(_mm_add_epi8(v01, v2), v3);
+
+	v.v[0] = v0123;
+	v.v[1] = _mm_or_si128(_mm_slli_epi16(v0123, 8), _mm_srli_epi16(v0123, 8));
+	v.v[2] = _mm_shufflehi_epi16(_mm_shufflelo_epi16(v0123, 0xB1), 0xB1);
+	v.v[3] = _mm_or_si128(_mm_slli_epi16(v.v[2], 8), _mm_srli_epi16(v.v[2], 8));
+
+#else
 	const uint8 v0 = mChannelVolume[0];
 	const uint8 v1 = mChannelVolume[1];
 	const uint8 v2 = mChannelVolume[2];
 	const uint8 v3 = mChannelVolume[3];
-	uint8 v[16];
 
-	v[0] = 0;
-	v[1] = v0;
-	v[2] = v1;
-	v[3] = v0 + v1;
+	union {
+		uint8 b[64];
+		uint32 d[16];
+	} v;
 
-	for(int i=0; i<4; ++i)
-		v[i+4] = v[i] + v2;
+	v.d[0]  = (uint32)v0 * (mVolumeOnlyMask & 1 ? 0x01010101 : VDFromLE32(0x01000100));
+	v.d[0] += (uint32)v1 * (mVolumeOnlyMask & 2 ? 0x01010101 : VDFromLE32(0x01010000));
 
-	for(int i=0; i<8; ++i)
-		v[i+8] = v[i] + v3;
+	const uint32 d2 = (uint32)v2 * 0x01010101;
+	const uint32 d3 = (uint32)v3 * 0x01010101;
+
+	v.d[1] = v.d[0] + d2;
+	if (mVolumeOnlyMask & 4)
+		v.d[0] += d2;
+
+	v.d[2] = v.d[0] + d3;
+	v.d[3] = v.d[1] + d3;
+
+	if (mVolumeOnlyMask & 8) {
+		v.d[0] += d3;
+		v.d[1] += d3;
+	}
+
+	// permute for high-pass XOR states
+	{
+		const uint32 * VDRESTRICT hp0 = &v.d[0];
+		uint32 * VDRESTRICT hp1 = &v.d[4];
+		uint32 * VDRESTRICT hp2 = &v.d[8];
+		uint32 * VDRESTRICT hp3 = &v.d[12];
+
+		for(int i=0; i<4; ++i)
+			hp1[i] = ((hp0[i] & 0xFF00FF00) >> 8) + ((hp0[i] & 0x00FF00FF) << 8);
+
+		for(int i=0; i<4; ++i)
+			hp2[i] = ((hp0[i] & 0xFFFF0000) >> 16) + ((hp0[i] & 0x0000FFFF) << 16);
+
+		for(int i=0; i<4; ++i)
+			hp3[i] = ((hp1[i] & 0xFFFF0000) >> 16) + ((hp1[i] & 0x0000FFFF) << 16);
+	}
+#endif
 
 	uint32 timeBase2 = timeBase * 2;
 	uint8 outputMask = mChannelOutputMask;
@@ -900,24 +1122,25 @@ void ATPokeyRenderer::ProcessOutputEdges(uint32 timeBase, const uint32 *edges, u
 
 		// apply AND mask to clear the bits we're about to update
 		outputMask &= (uint8)((code >> 8) & 0x3F); 
+
+		// update channel and high-pass flip flops
 		outputMask += (uint8)(code & ((outputMask << 4) + 15));
 
-		uint8 idx = outputMask ^ (outputMask >> 4);
-		UpdateOutput2(t2, v[(idx & 15) | mVolumeOnlyMask]);
+		UpdateOutput2(t2, v.b[outputMask]);
 	}
 
 	mChannelOutputMask = outputMask;
 }
 
 void ATPokeyRenderer::UpdateVolume(int index) {
-	mChannelVolume[index] = mbChannelEnabled[index] ? mAUDC[index] & 15 : 0;
+	mChannelVolume[index] = mbChannelEnabled[index] ? mRenderState.mAUDC[index] & 15 : 0;
 
-	if (mAUDC[index] & 0x10)
+	if (mRenderState.mAUDC[index] & 0x10)
 		mVolumeOnlyMask |= (1 << index);
 	else
 		mVolumeOnlyMask &= ~(1 << index);
 
-	if (mAUDC[index] & 0x0F)
+	if (mRenderState.mAUDC[index] & 0x0F)
 		mNonZeroVolumeMask |= (1 << index);
 	else
 		mNonZeroVolumeMask &= ~(1 << index);
@@ -948,22 +1171,13 @@ void ATPokeyRenderer::UpdateOutput2(uint32 t2, int vpok) {
 	GenerateSamples(t2);
 
 	int oc = t2 - mLastOutputTime2;
+	mAccum += mOutputLevel * (float)oc;
 
-	float delta = mOutputLevel - mHighPassAccum;
-	mAccum += delta * mpTables->mHPIntegralTable[oc];
-	mHighPassAccum += delta * mpTables->mHPTable[oc];
-
-	mSpeakerAccum += mSpeakerLevel * ((float)oc * 0.5f);
 	mLastOutputTime2 = t2;
 
 	VDASSERT(t2 - mLastOutputSampleTime2 <= 56);
 
 	mOutputLevel	= mpTables->mMixTable[vpok];
-
-	// The XL/XE speaker is about as loud peak-to-peak as a channel at volume 6.
-	// However, it is added in later in the output circuitry and has different
-	// audio characteristics, so we must treat it separately.
-	mSpeakerLevel	= (mbSpeakerState ? -mpTables->mMixTable[6] : 0.0f) + mExternalInput;
 }
 
 void ATPokeyRenderer::GenerateSamples(uint32 t2) {
@@ -972,23 +1186,30 @@ void ATPokeyRenderer::GenerateSamples(uint32 t2) {
 	if (!delta)
 		return;
 
+	const float vmin = mpTables->mReferenceClampLo;
+	const float vmax = mpTables->mReferenceClampHi;
+
 	if (delta >= 56) {
 		mLastOutputSampleTime2 += 56;
 
 		int oc = mLastOutputSampleTime2 - mLastOutputTime2;
 		VDASSERT((unsigned)oc <= 56);
 
-		float delta = mOutputLevel - mHighPassAccum;
-		mAccum += delta * mpTables->mHPIntegralTable[oc];
-		mHighPassAccum += delta * mpTables->mHPTable[oc];
+		mAccum += mOutputLevel * (float)oc;
 
-		mSpeakerAccum += mSpeakerLevel * ((float)oc * 0.5f);
 		mLastOutputTime2 = mLastOutputSampleTime2;
 
-		float v = mAccum + mSpeakerAccum;
+		float delta = mAccum - mHighPassAccum;
+		mHighPassAccum += delta * mpTables->mReferenceDecayPerSample;
+
+		if (delta < vmin)
+			delta = vmin;
+		if (delta > vmax)
+			delta = vmax;
+
+		float v = delta;
 
 		mAccum = 0;
-		mSpeakerAccum = 0;
 		mRawOutputBuffer[mOutputSampleCount] = v;
 
 		if (++mOutputSampleCount >= kBufferSize) {
@@ -1005,34 +1226,129 @@ void ATPokeyRenderer::GenerateSamples(uint32 t2) {
 	if ((t2 - mLastOutputSampleTime2) < 56)
 		return;
 
-//	const float v1 = mOutputLevel * 56;
-	const float coeff1 = mpTables->mHPIntegralTable[56];
-	const float coeff2 = mpTables->mHPTable[56];
-	const float v2 = mSpeakerLevel * (56 * 0.5f);
+	const float coeff2 = mpTables->mReferenceDecayPerSample;
+	const float v1 = mOutputLevel * 56.0f;
 	mAccum = 0;
-	mSpeakerAccum = 0;
 
-	while((t2 - mLastOutputSampleTime2) >= 56) {
-		mLastOutputSampleTime2 += 56;
+	auto hpAccum = mHighPassAccum;
+	auto outputCount = mOutputSampleCount;
+	auto lastTime2 = mLastOutputSampleTime2;
 
-		float delta = mOutputLevel - mHighPassAccum;
-		mRawOutputBuffer[mOutputSampleCount] = delta * coeff1 + v2;
-		mHighPassAccum += delta * coeff2;
+	while((t2 - lastTime2) >= 56) {
+		lastTime2 += 56;
 
-		if (++mOutputSampleCount >= kBufferSize) {
-			mOutputSampleCount = kBufferSize - 1;
+		float delta = v1 - hpAccum;
+		hpAccum += delta * coeff2;
 
-			VDASSERT(t2 - mLastOutputSampleTime2 < 56000000);
+		if (delta < vmin)
+			delta = vmin;
+		if (delta > vmax)
+			delta = vmax;
 
-			while((t2 - mLastOutputSampleTime2) >= 56)
-				mLastOutputSampleTime2 += 56;
+		mRawOutputBuffer[outputCount] = delta;
+
+		if (++outputCount >= kBufferSize) {
+			outputCount = kBufferSize - 1;
+
+			VDASSERT(t2 - lastTime2 < 56000000);
+
+			while((t2 - lastTime2) >= 56)
+				lastTime2 += 56;
 			break;
 		}
 	}
 
+	mHighPassAccum = hpAccum;
+	mOutputSampleCount = outputCount;
+	mLastOutputSampleTime2 = lastTime2;
+
 	mLastOutputTime2 = mLastOutputSampleTime2;
 
 	VDASSERT(t2 - mLastOutputSampleTime2 <= 56);
+}
+
+void ATPokeyRenderer::LogOutputChange(uint32 t2) const {
+	const uint32 nullEdge = 0x3F00;
+	LogOutputEdges(t2, &nullEdge, 1);
+}
+
+void ATPokeyRenderer::LogOutputEdges(uint32 timeBase2, const uint32 *edges, uint32 n) const {
+	if (mpAudioLog->mSampleIndex >= mpAudioLog->mMaxSamples)
+		return;
+
+	VDASSERT(ATWrapTime{timeBase2} >= mpAudioLog->mLastAudioTick);
+
+	const uint8 v0 = mChannelVolume[0];
+	const uint8 v1 = mChannelVolume[1];
+	const uint8 v2 = mChannelVolume[2];
+	const uint8 v3 = mChannelVolume[3];
+
+	uint8 outputMask = mChannelOutputMask;
+	uint8 lastOutputMask = mpAudioLog->mLastOutputMask;
+	uint32 tickAccum = mpAudioLog->mAccumulatedAudioTicks;
+	uint32 lastTick = mpAudioLog->mLastAudioTick;
+	uint32 sampleIndex = mpAudioLog->mSampleIndex;
+	const uint32 maxSamples = mpAudioLog->mMaxSamples;
+	const uint32 ticksPerSample = mpAudioLog->mTicksPerSample;
+	ATPokeyAudioState *VDRESTRICT samplePtr = &mpAudioLog->mpStates[sampleIndex];
+
+	while(n--) {
+		const uint32 code = *edges++;
+		const uint32 t2 = timeBase2 + (code >> 14);
+
+		// apply AND mask to clear the bits we're about to update
+		outputMask &= (uint8)((code >> 8) & 0x3F); 
+		outputMask += (uint8)(code & ((outputMask << 4) + 15));
+
+		uint32 dt = t2 - lastTick;
+
+		// we need to generate samples up to the current point with the _last_ output
+		// mask, since the new value is for past this edge
+		int ch0 = lastOutputMask & 1 ? v0 : 0;
+		int ch1 = lastOutputMask & 2 ? v1 : 0;
+		int ch2 = lastOutputMask & 4 ? v2 : 0;
+		int ch3 = lastOutputMask & 8 ? v3 : 0;
+		lastOutputMask = (outputMask ^ (outputMask >> 4)) | mVolumeOnlyMask;
+
+		VDASSERT((lastTick - mpAudioLog->mStartingAudioTick) - (sampleIndex * mpAudioLog->mTicksPerSample) < mpAudioLog->mTicksPerSample);
+
+		if ((uint32)(dt - 1) < UINT32_C(0x80000000)) {
+			lastTick = t2;
+
+			do {
+				uint32 sampleTicks = ticksPerSample - tickAccum;
+
+				if (sampleTicks > dt)
+					sampleTicks = dt;
+
+				if (tickAccum == 0)
+					*samplePtr = {};
+
+				tickAccum += sampleTicks;
+				dt -= sampleTicks;
+
+				samplePtr->mChannelOutputs[0] += ch0 * sampleTicks;
+				samplePtr->mChannelOutputs[1] += ch1 * sampleTicks;
+				samplePtr->mChannelOutputs[2] += ch2 * sampleTicks;
+				samplePtr->mChannelOutputs[3] += ch3 * sampleTicks;
+
+				if (tickAccum == ticksPerSample) {
+					tickAccum = 0;
+
+					++samplePtr;
+
+					if (++sampleIndex >= maxSamples)
+						goto log_full;
+				}
+			} while(dt);
+		}
+	}
+
+log_full:
+	mpAudioLog->mAccumulatedAudioTicks = tickAccum;
+	mpAudioLog->mLastAudioTick = lastTick;
+	mpAudioLog->mSampleIndex = sampleIndex;
+	mpAudioLog->mLastOutputMask = lastOutputMask;
 }
 
 void ATPokeyRenderer::PolyState::UpdatePoly17Counter(uint32 t) {

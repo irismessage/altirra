@@ -27,6 +27,15 @@
     .support td {
       background: #eee;
     }
+
+    body.dark .support th {
+      background: #232;
+    }
+
+    body.dark .support td {
+      background: #111;
+    }
+
   </style>
   
   <p>

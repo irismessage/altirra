@@ -101,10 +101,6 @@ enum ATUIDockMode {
 	kATUIDockMode_Right,
 	kATUIDockMode_Top,
 	kATUIDockMode_Bottom,
-	kATUIDockMode_LeftFloat,
-	kATUIDockMode_RightFloat,
-	kATUIDockMode_TopFloat,
-	kATUIDockMode_BottomFloat,
 	kATUIDockMode_Fill
 };
 
@@ -147,6 +143,18 @@ struct ATUITriggerBinding {
 	uint32	mTargetInstanceId;
 };
 
+struct ATUIWidgetMetrics {
+	// The minimum size for the control. Auto-layout will not use a size below this threshold. Ignored for manual size.
+	vdsize32 mMinSize { 0, 0 };
+
+	// The maximum size for the control. Auto-layout will not use a size below this threshold. Ignored for manual size.
+	// If max < min, min has precedence.
+	vdsize32 mMaxSize { INT32_MAX / 8, INT32_MAX / 8 };
+
+	// Desired size of the control, if auto-size is used. Subject to min/max limits.
+	vdsize32 mDesiredSize { 0, 0 };
+};
+
 class ATUIWidget : public vdrefcount {
 public:
 	enum {
@@ -167,26 +175,93 @@ public:
 	void SetOwner(ATUIWidget *w);
 	ATUIWidget *GetParentOrOwner() const;
 
+	// === Activation ===
+	// A widget is activated if the entire UI system is in the foreground and the widget is either
+	// the focused widget or a descendant of the focus widget. Activation is nested up the hierarchy,
+	// so more than one widget may be activated.
+	//
 	bool IsActivated() const { return mbActivated; }
 
+	// === Focus ===
+	// The focused widget is the widget that receives keyboard input and is considered the 'active' widget.
+	// There is at most one focused widget in the whole UI system. When a modal widget is active, the
+	// focus is constrained to be within the modal hierarchy.
+	//
 	bool HasFocus() const;
+
+	// === Mouse cursor ===
+	// The mouse cursor is contained within one widget at a time, determined by the topmost widget that
+	// passes hit test for the current location. Capturing the cursor forces the cursor to remain within
+	// the widget regardless of position, typically used for dragging operations.
 	bool HasCursor() const;
 	bool IsCursorCaptured() const;
 	void CaptureCursor(bool motionMode = false, bool constrained = false);
 	void ReleaseCursor();
 
+	// === Cursor image ===
+	// The cursor image determines the shape of the mouse cursor when it is over the widget. This state is
+	// set per widget and the UI system automatically switches images as the cursor switches between widgets.
+	// A widget will inherit the image from its parent if it is set to do so (default).
+	uint32 GetCursorImage() const { return mCursorImage; }
+	void SetCursorImage(uint32 id);
+
 	void SetFillColor(uint32 color);
 	void SetAlphaFillColor(uint32 color);
 	void SetFrameMode(ATUIFrameMode frameMode);
 
-	uint32 GetCursorImage() const { return mCursorImage; }
-	void SetCursorImage(uint32 id);
-
+	// Return the current area of the widget in parent coordinates.
+	// NOTE: This may not be up to date if layout is pending for the widget. GetArea() returns the current size
+	// of the widget; it will only reflect layout parameter changes on the next layout cycle, upon which OnSize()
+	// is also dispatched. For this reason, manual positioning with GetArea() is now discouraged.
 	const vdrect32& GetArea() const { return mArea; }
+
+	// Return the current area of the widget in client coordinates. By default, the origin of the client area is
+	// (0,0).
 	vdrect32 GetClientArea() const;
+
+	// === Positioning ===
+	// Anchors create a framing rectangle from parent space in normalized 0-1 coordinates, with (0,0) top left
+	// and (1,1) bottom right. The pivot is another normalized 0-1 point within the widget that is aligned
+	// between the framing rect and the widget rect, with size differences applied proportionally according
+	// to the pivot. This includes the size offset if one has been set, and the desired size otherwise, subject
+	// to measured min/max limits. The overall effect of this is that the system attempts to respect the framing
+	// rect size, and if it has to use a different size the pivot specifies the fixed point to preserve.
+	//
+	// The fixed positioning functions like SetPosition(), SetSize(), and SetArea() force a fixed position
+	// by hardcoding layout parameters.
+
+	// Set the absolute top-left position of the widget. This also forces the anchors and pivot to top-left.
 	void SetPosition(const vdpoint32& pt);
+
+	// Unsets the size offset, causing the widget's desired size to be used.
+	void SetAutoSize();
+
+	// Sets a fixed size offset, applied on top of the framing rect size.
+	void SetSizeOffset(const vdsize32& sz);
+
+	// Set a fixed size. This forces the anchor rect to the top-left anchor point.
 	void SetSize(const vdsize32& sz);
+
+	// Set a fixed rect. This forces anchoring and pivot to top-left and overrides the position and size offsets.
 	void SetArea(const vdrect32& r);
+
+	const vdrect32f& GetAnchors() const { return mAnchors; }
+	const vdpoint32& GetOffset() const { return mOffset; }
+	const vdsize32& GetSizeOffset() const { return mSizeOffset; }
+	const vdfloat2& GetPivot() const { return mPivot; }
+
+	bool IsFixedPositioned() const { return mbFixedPosition && !mpAnchor && mDockMode == kATUIDockMode_None; }
+	bool IsAutoSize() const { return mbAutoSize; }
+	bool IsForcedSize() const { return mbForcedSize; }
+
+	void SetAnchors(const vdrect32f& anchors);
+	void SetOffset(const vdpoint32& offset);
+	void SetPivot(const vdfloat2& pivot);
+	void SetPlacement(const vdrect32f& anchors, const vdpoint32& offset, const vdfloat2& pivot);
+	void SetPlacementFill();
+
+	const ATUIWidgetMetrics& Measure();
+	void Arrange(const vdrect32& r);
 
 	virtual void UpdateLayout() {}
 
@@ -197,6 +272,7 @@ public:
 
 	IATUIAnchor *GetAnchor() const { return mpAnchor; }
 	void SetAnchor(IATUIAnchor *anchor);
+	void InvalidateCachedAnchor();
 
 	// Control visibility.
 	//
@@ -205,6 +281,9 @@ public:
 
 	bool IsVisible() const { return mbVisible; }
 	void SetVisible(bool visible);
+
+	bool IsEnabled() const { return mbEnabled; }
+	void SetEnabled(bool enabled);
 
 	// Hit transparency.
 	//
@@ -224,12 +303,14 @@ public:
 	ATUIManager *GetManager() const { return mpManager; }
 	ATUIContainer *GetParent() const { return mpParent; }
 
+	// Return true if the current widget is the same as or an ancestor of the given
+	// widget. False is returned for null.
 	bool IsSameOrAncestorOf(ATUIWidget *w) const;
 
 	virtual ATUIWidget *HitTest(vdpoint32 pt);
 
 	// Gets/sets the (x,y) point in the client coordinate system that corresponds to the
-	// upper-left corner of the client rect.
+	// upper-left corner of the client rect. This is used to scroll.
 	vdpoint32 GetClientOrigin() const { return mClientOrigin; }
 	void SetClientOrigin(vdpoint32 pt);
 
@@ -271,6 +352,7 @@ public:
 	virtual void OnCreate();
 	virtual void OnDestroy();
 	virtual void OnSize();
+	virtual ATUIWidgetMetrics OnMeasure();
 
 	virtual void OnKillFocus();
 	virtual void OnSetFocus();
@@ -279,6 +361,8 @@ public:
 
 	virtual void OnActivate();
 	virtual void OnDeactivate();
+	
+	virtual void OnEnableChanged();
 
 	virtual void OnTrackCursorChanges(ATUIWidget *w);
 
@@ -318,6 +402,8 @@ public:
 
 protected:
 	void Invalidate();
+	void InvalidateMeasure();
+	void InvalidateArrange();
 
 	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) = 0;
 	void RecomputeClientArea();
@@ -337,16 +423,27 @@ protected:
 	uint32 mOwnerId;
 
 	bool mbActivated;
+	bool mbEnabled;
 	bool mbVisible;
 	bool mbDropTarget;
 	bool mbFastClip;
 	bool mbHitTransparent;
 	uint8 mPointersOwned;
 
+	vdsize32 mSizeOffset;
+	vdrect32f mAnchors;
+	vdpoint32 mOffset;
+	vdfloat2 mPivot;
+	bool mbFixedPosition;
+	bool mbForcedSize;
+	bool mbAutoSize;
+
 	typedef vdfastvector<ATUITriggerBinding> ActionMap;
 	ActionMap mActionMap;
 
 	VDDisplaySubRenderCache mRenderCache;
+	ATUIWidgetMetrics mMeasureCache;
+	bool mbMeasureCacheValid = false;
 };
 
 #endif

@@ -199,10 +199,10 @@ void ATDebuggerCmdAutotestCmd(ATDebuggerCmdParser& parser) {
 }
 
 void ATDebuggerCmdAutotestBootImage(ATDebuggerCmdParser& parser) {
-	ATDebuggerCmdPath pathArg(true);
+	ATDebuggerCmdPath pathArg(true, false);
 	parser >> pathArg >> 0;
 
-	ATUIBootImage(VDTextAToW(pathArg->c_str()).c_str());
+	ATUIBootImage(pathArg->c_str());
 }
 
 class ATDebuggerActiveCmdCheckWaitScreen final : public vdrefcounted<IATDebuggerActiveCommand> {

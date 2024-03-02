@@ -19,6 +19,7 @@
 #include <vd2/system/binary.h>
 #include <vd2/system/bitmath.h>
 #include <at/atcore/scheduler.h>
+#include <at/atcore/snapshotimpl.h>
 #include "pia.h"
 #include "irqcontroller.h"
 #include "console.h"
@@ -27,7 +28,6 @@
 
 ATPIAEmulator::ATPIAEmulator()
 	: mpScheduler(nullptr)
-	, mpIRQController(nullptr)
 	, mpFloatingInputs(nullptr)
 	, mInput(0xFFFFFFFF)
 	, mOutput(0xFFFFFFFF)
@@ -38,6 +38,7 @@ ATPIAEmulator::ATPIAEmulator()
 	, mbPIAEdgeA(false)
 	, mbPIAEdgeB(false)
 	, mbCA1(true)
+	, mbCA2(true)
 	, mbCB1(true)
 	, mPIACB2(kPIACS_Floating)
 	, mOutputReportMask(0)
@@ -85,7 +86,12 @@ void ATPIAEmulator::SetInput(int index, uint32 rval) {
 		uint32 v = mInputs[0] & mInputs[1] & mInputs[2] & mInputs[3];
 
 		if (mInput != v) {
+			const uint32 delta = mInput ^ v;
+
 			mInput = v;
+
+			if (delta & 0xFF)
+				UpdateTraceInputA();
 
 			UpdateOutput();
 		}
@@ -150,6 +156,7 @@ void ATPIAEmulator::SetTraceContext(ATTraceContext *context) {
 
 		mpTraceCRA = group->AddFormattedChannel(context->mBaseTime, context->mBaseTickScale, L"CRA");
 		mpTraceCRB = group->AddFormattedChannel(context->mBaseTime, context->mBaseTickScale, L"CRB");
+		mpTraceInputA = group->AddFormattedChannel(context->mBaseTime, context->mBaseTickScale, L"Input A");
 	} else {
 		const uint64 t = mpScheduler->GetTick64();
 
@@ -162,11 +169,19 @@ void ATPIAEmulator::SetTraceContext(ATTraceContext *context) {
 			mpTraceCRB->TruncateLastEvent(t);
 			mpTraceCRB = nullptr;
 		}
+
+		if (mpTraceInputA) {
+			mpTraceInputA->TruncateLastEvent(t);
+			mpTraceInputA = nullptr;
+		}
 	}
 }
 
-void ATPIAEmulator::Init(ATIRQController *irqcon, ATScheduler *scheduler) {
-	mpIRQController = irqcon;
+void ATPIAEmulator::SetIRQHandler(vdfunction<void(uint32, bool)> fn) {
+	mpIRQHandler = std::move(fn);
+}
+
+void ATPIAEmulator::Init(ATScheduler *scheduler) {
 	mpScheduler = scheduler;
 }
 
@@ -217,8 +232,36 @@ void ATPIAEmulator::SetCA1(bool level) {
 	SetCRA(mPORTACTL | 0x80);
 
 	// assert IRQ if enabled
-	if ((mPORTACTL & 0x01) && mpIRQController)
+	if ((mPORTACTL & 0x01) && mpIRQHandler)
 		AssertIRQs(kATIRQSource_PIAA1);
+}
+
+void ATPIAEmulator::SetCA2(bool level) {
+	if (mbCA2 == level)
+		return;
+
+	mbCA2 = level;
+
+	// check that the interrupt isn't already active and that input mode is
+	// enabled
+	if (mPORTACTL & 0x60)
+		return;
+
+	// check if we have the correct transition
+	if (mPORTACTL & 0x10) {
+		if (!level)
+			return;
+	} else {
+		if (level)
+			return;
+	}
+
+	// set interrupt flag
+	SetCRA(mPORTACTL | 0x40);
+
+	// assert IRQ if enabled
+	if ((mPORTACTL & 0x08) && mpIRQHandler)
+		AssertIRQs(kATIRQSource_PIAA2);
 }
 
 void ATPIAEmulator::SetCB1(bool level) {
@@ -244,7 +287,7 @@ void ATPIAEmulator::SetCB1(bool level) {
 	SetCRB(mPORTBCTL | 0x80);
 
 	// assert IRQ if enabled
-	if ((mPORTBCTL & 0x01) && mpIRQController)
+	if ((mPORTBCTL & 0x01) && mpIRQHandler)
 		AssertIRQs(kATIRQSource_PIAB1);
 }
 
@@ -399,7 +442,7 @@ void ATPIAEmulator::WriteByte(uint8 addr, uint8 value) {
 			SetCRA((cra & 0xc0) + (value & 0x3f));
 		}
 
-		if (mpIRQController) {
+		if (mpIRQHandler) {
 			if ((mPORTACTL & 0x68) == 0x48)
 				AssertIRQs(kATIRQSource_PIAA2);
 			else
@@ -458,7 +501,7 @@ void ATPIAEmulator::WriteByte(uint8 addr, uint8 value) {
 			SetCRB((crb & 0xc0) + (value & 0x3f));
 		}
 
-		if (mpIRQController) {
+		if (mpIRQHandler) {
 			if ((mPORTBCTL & 0x68) == 0x48)
 				AssertIRQs(kATIRQSource_PIAB2);
 			else
@@ -547,30 +590,50 @@ void ATPIAEmulator::LoadStateArch(ATSaveStateReader& reader) {
 }
 
 void ATPIAEmulator::EndLoadState(ATSaveStateReader& reader) {
+	PostLoadState();
+}
+
+class ATSaveStatePia final : public ATSnapExchangeObject<ATSaveStatePia> {
+public:
+	template<typename T>
+	void Exchange(T& rw) {
+		rw.Transfer("ora", &mState.mORA);
+		rw.Transfer("orb", &mState.mORB);
+		rw.Transfer("ddra", &mState.mDDRA);
+		rw.Transfer("ddrb", &mState.mDDRB);
+		rw.Transfer("cra", &mState.mCRA);
+		rw.Transfer("crb", &mState.mCRB);
+	}
+
+	ATPIAState mState;
+};
+
+ATSERIALIZATION_DEFINE(ATSaveStatePia);
+
+void ATPIAEmulator::SaveState(IATObjectState **pp) const {
+	vdrefptr<ATSaveStatePia> obj(new ATSaveStatePia);
+
+	GetState(obj->mState);
+
+	*pp = obj.release();
+}
+
+void ATPIAEmulator::LoadState(IATObjectState& state) {
+	ATSaveStatePia& piastate = atser_cast<ATSaveStatePia&>(state);
+
+	mPortOutput = ((uint32)piastate.mState.mORB << 8) + piastate.mState.mORA;
+	mPortDirection = ((uint32)piastate.mState.mDDRB << 8) + piastate.mState.mDDRA + kATPIAOutput_CA2 + kATPIAOutput_CB2;
+	mPORTACTL = piastate.mState.mCRA;
+	mPORTBCTL = piastate.mState.mCRB;
+}
+
+void ATPIAEmulator::PostLoadState() {
 	UpdateCA2();
 	UpdateCB2();
 	UpdateOutput();
 
 	if (mpFloatingInputs)
 		memset(mpFloatingInputs->mFloatTimers, 0, sizeof mpFloatingInputs->mFloatTimers);
-}
-
-void ATPIAEmulator::BeginSaveState(ATSaveStateWriter& writer) {
-	writer.RegisterHandlerMethod(kATSaveStateSection_Arch, this, &ATPIAEmulator::SaveStateArch);
-}
-
-void ATPIAEmulator::SaveStateArch(ATSaveStateWriter& writer) {
-	ATPIAState state;
-	GetState(state);
-
-	writer.BeginChunk(VDMAKEFOURCC('P', 'I', 'A', ' '));
-	writer.WriteUint8(state.mORA);
-	writer.WriteUint8(state.mORB);
-	writer.WriteUint8(state.mDDRA);
-	writer.WriteUint8(state.mDDRB);
-	writer.WriteUint8(state.mCRA);
-	writer.WriteUint8(state.mCRB);
-	writer.EndChunk();
 }
 
 void ATPIAEmulator::UpdateCA2() {
@@ -676,17 +739,17 @@ bool ATPIAEmulator::SetPortBDirection(uint8 value) {
 }
 
 void ATPIAEmulator::NegateIRQs(uint32 mask) {
-	if (!mpIRQController)
+	if (!mpIRQHandler)
 		return;
 
-	mpIRQController->Negate(mask, true);
+	mpIRQHandler(mask, false);
 }
 
 void ATPIAEmulator::AssertIRQs(uint32 mask) {
-	if (!mpIRQController)
+	if (!mpIRQHandler)
 		return;
 
-	mpIRQController->Assert(mask, true);
+	mpIRQHandler(mask, true);
 }
 
 void ATPIAEmulator::SetCRA(uint8 v) {
@@ -723,4 +786,13 @@ void ATPIAEmulator::UpdateTraceCRB() {
 	const uint64 t = mpScheduler->GetTick64();
 	mpTraceCRB->TruncateLastEvent(t);
 	mpTraceCRB->AddOpenTickEventF(t, kATTraceColor_Default, L"%02X", mPORTBCTL);
+}
+
+void ATPIAEmulator::UpdateTraceInputA() {
+	if (!mpTraceInputA)
+		return;
+
+	const uint64 t = mpScheduler->GetTick64();
+	mpTraceInputA->TruncateLastEvent(t);
+	mpTraceInputA->AddOpenTickEventF(t, kATTraceColor_Default, L"%02X", mInput & 0xFF);
 }

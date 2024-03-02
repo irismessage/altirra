@@ -23,6 +23,7 @@
 	#pragma once
 #endif
 
+#include <vd2/system/function.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
@@ -79,6 +80,13 @@
 // holds dpi X/Y as in WM_DPICHANGED. The sender does not iterate
 // over the child hierarchy; the receiver must propagate if desired.
 #define ATWM_INHERIT_DPICHANGED		(WM_APP + 213)
+
+// Sent by frame windows when the program theme changes. This is
+// typically sent when system colors are altered, but may also be
+// sent for program-local changes (dark theme).
+#define ATWM_THEMEUPDATED	(WM_APP + 214)
+
+#define ATWM_SUBCLASS_PRIVATE		(WM_APP + 250)
 
 void ATInitUIFrameSystem();
 void ATShutdownUIFrameSystem();
@@ -207,6 +215,7 @@ public:
 	bool	Undock(ATFrameWindow *pane);
 
 	void	NotifyFontsUpdated();
+	void	NotifyThemeUpdated();
 	void	NotifyDpiChanged(uint32 dpi);
 
 	void	RecalcFrame();
@@ -349,6 +358,7 @@ protected:
 
 	void RecreateSystemObjects();
 	void DestroySystemObjects();
+	void OnThemeChanged();
 
 	void UpdateMonitorDpi();
 	virtual void UpdateMonitorDpi(unsigned dpiY);
@@ -378,6 +388,7 @@ protected:
 	UndockedFrames mUndockedFrames;
 
 	vdfastvector<ATFrameWindow *> mTrackingNotifyFrames;
+	vdfunction<void()> mpOnThemeChanged;
 };
 
 class ATFrameWindow final : public ATUINativeWindow {
@@ -421,6 +432,7 @@ public:
 	void EnableEndTrackNotification();
 
 	void NotifyFontsUpdated();
+	void NotifyThemeUpdated();
 	void NotifyDpiChanged(uint32 dpi);
 	void NotifyEndTracking();
 
@@ -493,6 +505,7 @@ protected:
 	virtual void OnSize();
 	virtual void OnSetFocus();
 	virtual void OnFontsUpdated();
+	virtual void OnThemeUpdated();
 	virtual bool OnCommand(uint32 id, uint32 extcode);
 
 	void RegisterUIPane();

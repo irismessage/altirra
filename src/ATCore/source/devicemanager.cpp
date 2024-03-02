@@ -63,6 +63,8 @@ void ATDeviceManager::AddDevice(IATDevice *dev, bool child, bool hidden) {
 	try {
 		mInterfaceListCache.clear();
 
+		dev->SetManager(this);
+
 		for(const auto& fn : mInitHandlers)
 			fn(*dev);
 
@@ -79,6 +81,7 @@ void ATDeviceManager::AddDevice(IATDevice *dev, bool child, bool hidden) {
 		} catch(...) {
 			mDevices.pop_back();
 			dev->Release();
+			dev->SetManager(nullptr);
 			throw;
 		}
 	} catch(...) {
@@ -149,6 +152,7 @@ void ATDeviceManager::RemoveDevice(IATDevice *dev) {
 				}
 			}
 
+			dev->SetManager(nullptr);
 			dev->Release();
 			break;
 		}
@@ -460,6 +464,12 @@ void ATDeviceManager::MarkAndSweep(IATDevice *const *pExcludedDevs, size_t numEx
 	}
 }
 
+void *ATDeviceManager::GetService(uint32 iid) {
+	auto it = mServices.find(iid);
+
+	return it != mServices.end() ? it->second : nullptr;
+}
+
 auto ATDeviceManager::GetInterfaceList(uint32 iid, bool rootOnly, bool visibleOnly) const -> const InterfaceList * {
 	auto r = mInterfaceListCache.insert(iid + (rootOnly ? UINT64_C(1) << 32 : UINT64_C(0)) + (visibleOnly ? UINT64_C(1) << 33 : UINT64_C(0)));
 	InterfaceList& ilist = r.first->second;
@@ -735,10 +745,8 @@ void ATDeviceManager::DeserializeDevice(IATDeviceParent *parent, IATDeviceBus *b
 	if (devParent) {
 		auto buses = node["buses"];
 		if (buses.IsObject()) {
-			auto busEnum = buses.AsObject();
-
-			while(busEnum.IsValid()) {
-				const wchar_t *busIndexStr = busEnum.GetName();
+			for(const auto& busEntry : buses.AsObject()) {
+				const wchar_t *busIndexStr = busEntry.GetName();
 				unsigned busIndex;
 				wchar_t dummy;
 
@@ -746,7 +754,7 @@ void ATDeviceManager::DeserializeDevice(IATDeviceParent *parent, IATDeviceBus *b
 					IATDeviceBus *deviceBus = devParent->GetDeviceBus(busIndex);
 
 					if (deviceBus) {
-						auto busNode = busEnum.GetValue();
+						auto busNode = busEntry.GetValue();
 
 						if (busNode.IsObject()) {
 							auto children = busNode["children"];
@@ -759,8 +767,6 @@ void ATDeviceManager::DeserializeDevice(IATDeviceParent *parent, IATDeviceBus *b
 						}
 					}
 				}
-
-				++busEnum;
 			}
 		} else {
 			auto children = node["children"];
@@ -785,10 +791,9 @@ void ATDeviceManager::DeserializeProps(ATPropertySet& props, const wchar_t *str)
 }
 
 void ATDeviceManager::DeserializeProps(ATPropertySet& pset, const VDJSONValueRef& val) {
-	auto params = val.AsObject();
-	while (params.IsValid()) {
-		const VDStringA& name = VDTextWToA(params.GetName());
-		const auto& value = params.GetValue();
+	for(const auto& propEntry : val.AsObject()) {
+		const VDStringA& name = VDTextWToA(propEntry.GetName());
+		const auto& value = propEntry.GetValue();
 
 		switch(value->mType) {
 			case VDJSONValue::kTypeBool:
@@ -807,7 +812,13 @@ void ATDeviceManager::DeserializeProps(ATPropertySet& pset, const VDJSONValueRef
 				pset.SetString(name.c_str(), value.AsString());
 				break;
 		}
-
-		++params;
 	}
+}
+
+void ATDeviceManager::RegisterService(uint32 iid, void *p) {
+	mServices[iid] = p;
+}
+
+void ATDeviceManager::UnregisterService(uint32 iid) {
+	mServices.erase(iid);
 }

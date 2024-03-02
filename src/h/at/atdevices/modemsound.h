@@ -26,6 +26,7 @@ enum class ATSoundId : uint32;
 class ATSoundSourceSingleTone;
 class ATSoundSourceDualTone;
 class ATSoundSourceModemData;
+class IATAudioSoundGroup;
 
 class ATModemSoundEngine final
 	: public IATSyncAudioSource
@@ -78,6 +79,8 @@ private:
 
 	ATSoundSourceSingleTone *mpSingleToneSource = nullptr;
 	ATSoundSourceDualTone *mpDualToneSource = nullptr;
+
+	vdrefptr<IATAudioSoundGroup> mpSoundGroup;
 };
 
 #endif

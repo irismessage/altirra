@@ -92,7 +92,7 @@ ATImageType ATDetectImageType(const wchar_t *imagePath, IVDRandomAccessStream& s
 	if (header[0] == 0x1f && header[1] == 0x8b)
 		return kATImageType_GZip;
 
-	else if (header[0] == 'P' && header[1] == 'K' && header[2] == 0x03 && header[3] == 0x04)
+	if (header[0] == 'P' && header[1] == 'K' && header[2] == 0x03 && header[3] == 0x04)
 		return kATImageType_Zip;
 
 	if (header[0] == 0xFF && header[1] == 0xFF)
@@ -228,8 +228,8 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 		if (canUpdate)
 			*canUpdate = false;
 
-		return ATImageLoadAuto(vfsPath.c_str(), newPath, ms, loadCtx, resultPath, false, ppImage);
-	} else if (intermediateLoadType == kATImageType_Zip) {
+		return ATImageLoadAuto(vfsPath.c_str(), newPath, ms, loadCtx, resultPath, nullptr, ppImage);
+	} else if (intermediateLoadType == kATImageType_Zip || intermediateLoadType == kATImageType_SaveState2) {
 		VDZipArchive ziparch;
 
 		ziparch.Init(&stream);
@@ -237,48 +237,74 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 		sint32 n = ziparch.GetFileCount();
 
 		VDStringW extBuf;
+		bool haveImage = false;
 
 		for(sint32 i=0; i<n; ++i) {
 			const VDZipArchive::FileInfo& info = ziparch.GetFileInfo(i);
-			const VDStringA& name = info.mFileName;
-			const char *ext = VDFileSplitExt(name.c_str());
-
-			// Just translate A->W directly by code point. If it has loc chars, it isn't
-			// going to match anyway.
-			extBuf.clear();
-
-			for(const char *s = ext; *s; ++s) {
-				extBuf += (wchar_t)(unsigned char)*s;
-			}
-
-			auto detectedType = ATGetImageTypeForFileExtension(extBuf.c_str());
-			if (detectedType != kATImageType_None && (!loadType || loadType == detectedType)) {
-				IVDStream& innerStream = *ziparch.OpenRawStream(i);
-				vdfastvector<uint8> data;
-
-				vdautoptr<VDZipStream> zs(new VDZipStream(&innerStream, info.mCompressedSize, !info.mbPacked));
-
-				data.resize(info.mUncompressedSize);
-				zs->Read(data.data(), info.mUncompressedSize);
-
-				VDMemoryStream ms(data.data(), (uint32)data.size());
-
-				VDStringW vfsPath;
+			if (info.mFileName == "savestate.json") {
+				vdrefptr<IATSaveStateImage2> saveState2;
 				
-				if (origPath)
-					vfsPath = ATMakeVFSPathForZipFile(origPath, VDTextU8ToW(name).c_str());
+				ATReadSaveState2(ziparch, ~saveState2);
 
-				if (canUpdate)
-					*canUpdate = false;
-
-				return ATImageLoadAuto(origPath ? vfsPath.c_str() : nullptr, VDTextU8ToW(name).c_str(), ms, loadCtx, resultPath, nullptr, ppImage);
+				*ppImage = saveState2.release();
+				loadType = kATImageType_SaveState2;
+				haveImage = true;
 			}
 		}
 
-		if (origPath)
-			throw MyError("The zip file \"%ls\" does not contain a recognized file type.", origPath);
-		else
-			throw MyError("The zip file does not contain a recognized file type.");
+		if (!haveImage) {
+			if (intermediateLoadType == kATImageType_SaveState2)
+				throw MyError("The selected file does not contain a save state.");
+
+			for(sint32 i=0; i<n; ++i) {
+				const VDZipArchive::FileInfo& info = ziparch.GetFileInfo(i);
+				const VDStringA& name = info.mFileName;
+				const char *ext = VDFileSplitExt(name.c_str());
+
+				// Just translate A->W directly by code point. If it has loc chars, it isn't
+				// going to match anyway.
+				extBuf.clear();
+
+				for(const char *s = ext; *s; ++s) {
+					extBuf += (wchar_t)(unsigned char)*s;
+				}
+
+				auto detectedType = ATGetImageTypeForFileExtension(extBuf.c_str());
+				if (detectedType != kATImageType_None && (!loadType || loadType == detectedType)) {
+					IVDStream& innerStream = *ziparch.OpenRawStream(i);
+					vdfastvector<uint8> data;
+
+					if (info.mUncompressedSize > 384 * 1024 * 1024)
+						throw MyError("Zip file item is too large (%llu bytes).", (unsigned long long)info.mUncompressedSize);
+
+					vdautoptr<VDZipStream> zs(new VDZipStream(&innerStream, info.mCompressedSize, !info.mbPacked));
+					zs->EnableCRC();
+
+					data.resize(info.mUncompressedSize);
+					zs->Read(data.data(), info.mUncompressedSize);
+
+					if (zs->CRC() != info.mCRC32)
+						throw MyError("Zip file item could not be decompressed (CRC error).");
+
+					VDMemoryStream ms(data.data(), (uint32)data.size());
+
+					VDStringW vfsPath;
+				
+					if (origPath)
+						vfsPath = ATMakeVFSPathForZipFile(origPath, VDTextU8ToW(name).c_str());
+
+					if (canUpdate)
+						*canUpdate = false;
+
+					return ATImageLoadAuto(origPath ? vfsPath.c_str() : nullptr, VDTextU8ToW(name).c_str(), ms, loadCtx, resultPath, nullptr, ppImage);
+				}
+			}
+
+			if (origPath)
+				throw MyError("The zip file \"%ls\" does not contain a recognized file type.", origPath);
+			else
+				throw MyError("The zip file does not contain a recognized file type.");
+		}
 	}
 
 	// Stash off the detected type (or None if we failed).
@@ -286,7 +312,6 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 		loadCtx->mLoadType = loadType;
 
 	// Load the resource.
-	vdrefptr<IATImage> image;
 	if (loadType == kATImageType_Program) {
 		vdrefptr<IATBlobImage> programImage;
 		ATLoadBlobImage(kATImageType_Program, stream, ~programImage);
@@ -305,7 +330,7 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 		*ppImage = cartImage.release();
 	} else if (loadType == kATImageType_Tape) {
 		vdrefptr<IATCassetteImage> tapeImage;
-		ATLoadCassetteImage(stream, nullptr, ~tapeImage);
+		ATLoadCassetteImage(stream, nullptr, loadCtx->mpCassetteLoadContext ? *loadCtx->mpCassetteLoadContext : ATCassetteLoadContext(), ~tapeImage);
 
 		*ppImage = tapeImage.release();
 	} else if (loadType == kATImageType_Disk) {
@@ -323,7 +348,7 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 		ATLoadBlobImage(kATImageType_SAP, stream, ~sapImage);
 
 		*ppImage = sapImage.release();
-	} else {
+	} else if (loadType != kATImageType_SaveState2) {
 		if (origPath)
 			throw MyError("Unable to identify type of file: %ls.", origPath);
 		else

@@ -618,7 +618,7 @@ void ATSoundBoardEmulator::Run(uint32 cycles) {
 			const sint16 *ssrc = mSampleBuffer + mAccumOffset;
 			float *dstLeft = mAccumBufferLeft + mAccumLevel;
 			float *dstRight = mAccumBufferRight + mAccumLevel;
-			float volf = (float)vol * (1.0f / 255.0f / 64.0f);
+			float volf = (float)vol;
 			float volPanLeft = volf * (float)panleft;
 			float volPanRight = volf * (float)panright;
 
@@ -692,10 +692,18 @@ void ATSoundBoardEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 		mAccumLevel = count;
 	}
 
+	// 3/14 corrects for sample accumulation factor incurred with different clocks.
+	// 1/255 for uint8 volume normalization.
+	// 1/255 for uint8 panning normalization.
+	// 1/127 for signed to normalized sample conversion.
+	// 1/4 for channel mixing (taking some clipping, vs. worst case 1/8)
+	static constexpr float kChannelScale = (3.0f / 14.0f) / 255.0f / 255.0f / 127.0f / 4.0f;
+	const float volume = mixInfo.mpMixLevels[kATAudioMix_Other] * kChannelScale;
+
 	// add output buffers to output stream
 	for(uint32 i=0; i<count; ++i) {
-		mixInfo.mpLeft[i] += mAccumBufferLeft[i];
-		mixInfo.mpRight[i] += mAccumBufferRight[i];
+		mixInfo.mpLeft[i] += mAccumBufferLeft[i] * volume;
+		mixInfo.mpRight[i] += mAccumBufferRight[i] * volume;
 	}
 
 	// shift down accumulation buffers
@@ -746,7 +754,7 @@ void ATSoundBoardEmulator::UpdateControlLayer() {
 			break;
 
 		case 0xD500:
-			handlers.mbPassAnticReads = false;
+			handlers.mbPassAnticReads = true;
 			handlers.mbPassReads = true;
 			handlers.mbPassWrites = true;
 			handlers.mpDebugReadHandler = StaticDebugReadD5xxControl;
@@ -756,7 +764,7 @@ void ATSoundBoardEmulator::UpdateControlLayer() {
 			break;
 
 		case 0xD600:
-			handlers.mbPassAnticReads = false;
+			handlers.mbPassAnticReads = true;
 			handlers.mbPassReads = true;
 			handlers.mbPassWrites = true;
 			handlers.mpDebugReadHandler = StaticDebugReadD5xxControl;

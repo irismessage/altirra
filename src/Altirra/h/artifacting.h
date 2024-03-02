@@ -22,15 +22,23 @@
 #include "gtia.h"
 
 class vdfloat3x3;
+namespace nsVDVecMath {
+	struct vdfloat32x3;
+}
 
-class ATArtifactingEngine final : public VDAlignedObject<16> {
+class ATPaletteCorrector {
+public:
+	uint32 CorrectSingleColor(uint32 c, bool colorCorrectionEnabled, bool signedEncoding) const;
+};
+
+class ATArtifactingEngine final : public VDAlignedObject<16>, public ATPaletteCorrector {
 	ATArtifactingEngine(const ATArtifactingEngine&) = delete;
 	ATArtifactingEngine& operator=(const ATArtifactingEngine&) = delete;
 public:
 	ATArtifactingEngine();
 	~ATArtifactingEngine();
 
-	void SetColorParams(const ATColorParams& params, const vdfloat3x3 *matrix);
+	void SetColorParams(const ATColorParams& params, const vdfloat3x3 *matrix, const nsVDVecMath::vdfloat32x3 *tintColor);
 
 	ATArtifactingParams GetArtifactingParams() const { return mArtifactingParams; }
 	void SetArtifactingParams(const ATArtifactingParams& params);
@@ -45,12 +53,14 @@ public:
 	void SuspendFrame();
 	void ResumeFrame();
 
-	void BeginFrame(bool pal, bool chromaArtifact, bool chromaArtifactHi, bool blendIn, bool blendOut, bool bypassOutputCorrection);
+	void BeginFrame(bool pal, bool chromaArtifact, bool chromaArtifactHi, bool blendIn, bool blendOut, bool blendLinear, bool bypassOutputCorrection, bool useSignedPalette);
 	void Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool temporaryUpdate, bool includeBlanking);
 	void Artifact32(uint32 y, uint32 *dst, uint32 width, bool temporaryUpdate, bool includeBlanking);
 	void InterpolateScanlines(uint32 *dst, const uint32 *src1, const uint32 *src2, uint32 n);
 
-protected:
+private:
+	friend class ATPaletteCorrector;
+
 	void ArtifactPAL8(uint32 dst[N], const uint8 src[N]);
 	void ArtifactPAL32(uint32 *dst, uint32 width);
 
@@ -76,12 +86,14 @@ protected:
 	bool mbHighPALTablesInited;
 	bool mbChromaArtifacts;
 	bool mbChromaArtifactsHi;
-	bool mbBlendActive;
-	bool mbBlendCopy;
-	bool mbScanlineDelayValid;
-	bool mbGammaIdentity;
+	bool mbBlendActive = false;
+	bool mbBlendCopy = false;
+	bool mbBlendLinear = false;
+	bool mbScanlineDelayValid = false;
+	bool mbGammaIdentity = false;
 	bool mbEnableColorCorrection = false;
 	bool mbBypassOutputCorrection = false;
+	bool mbUseSignedPalette = false;
 
 	bool mbSavedPAL = false;
 	bool mbSavedChromaArtifacts = false;
@@ -89,6 +101,11 @@ protected:
 	bool mbSavedBypassOutputCorrection = false;
 	bool mbSavedBlendActive = false;
 	bool mbSavedBlendCopy = false;
+	bool mbSavedBlendLinear = false;
+	bool mbSavedUseSignedPalette = false;
+
+	bool mbTintColorEnabled = false;
+	vdfloat3 mTintColor {};
 
 	vdfloat3x3 mColorMatchingMatrix {};
 	sint16 mColorMatchingMatrix16[3][3] {};
@@ -104,7 +121,9 @@ protected:
 	sint16 mCorrectLinearTable[256];
 	uint8 mCorrectGammaTable[1024];
 	uint32 mPalette[256];
+	uint32 mSignedPalette[256];
 	uint32 mCorrectedPalette[256];
+	uint32 mMonoTable[256];
 
 	union {
 		uint8 mPALDelayLine[N];

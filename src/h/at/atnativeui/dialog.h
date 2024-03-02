@@ -56,23 +56,33 @@ public:
 	~VDDialogResizerW32();
 
 	enum : uint32 {
+		kAnchorX1_L	= 0x00,
 		kAnchorX1_C	= 0x01,
 		kAnchorX1_R	= 0x02,
+		kAnchorX2_L	= 0x00,
 		kAnchorX2_C	= 0x04,
 		kAnchorX2_R	= 0x08,
+		kAnchorY1_T	= 0x00,
 		kAnchorY1_M	= 0x10,
 		kAnchorY1_B	= 0x20,
+		kAnchorY2_T	= 0x00,
 		kAnchorY2_M	= 0x40,
 		kAnchorY2_B	= 0x80,
 
 		kL		= 0,
 		kC		= kAnchorX2_R,
 		kR		= kAnchorX2_R | kAnchorX1_R,
+		kHCenter = kAnchorX2_C | kAnchorX1_C,
+		kHLeftHalf = kAnchorX2_C | kAnchorX1_L,
+		kHRightHalf = kAnchorX2_R | kAnchorX1_C,
 		kHMask	= 0x0F,
 
 		kT		= 0,
 		kM		= kAnchorY2_B,
 		kB		= kAnchorY2_B | kAnchorY1_B,
+		kVMiddle = kAnchorY2_M | kAnchorY1_M,
+		kVTopHalf = kAnchorY2_M | kAnchorY1_T,
+		kVBottomHalf = kAnchorY2_B | kAnchorY1_M,
 		kVMask	= 0xF0,
 
 		kX1Y1Mask = 0x33,
@@ -175,6 +185,7 @@ public:
 	void ShowError(const wchar_t *message, const wchar_t *caption = nullptr);
 	void ShowError(const MyError&);
 	void ShowError2(const wchar_t *message, const wchar_t *title = nullptr);
+	void ShowError2(const MyError&, const wchar_t *title = nullptr);
 	bool Confirm(const wchar_t *message, const wchar_t *caption = nullptr);
 	bool Confirm2(const char *ignoreTag, const wchar_t *message, const wchar_t *title = nullptr);
 
@@ -228,7 +239,7 @@ protected:
 	bool EndValidation();
 
 	void FailValidation(uint32 id);
-	void FailValidation(uint32 id, const wchar_t *msg);
+	void FailValidation(uint32 id, const wchar_t *msg, const wchar_t *title = nullptr);
 	void SignalFailedValidation(uint32 id);
 
 	void SetPeriodicTimer(uint32 id, uint32 msperiod);
@@ -334,6 +345,7 @@ private:
 	const wchar_t *mpDialogResourceName;
 	uint32	mFailedId;
 	VDStringW mFailedMsg;
+	VDStringW mFailedTitle;
 
 	VDGUIHandle mhPrevProgressParent = nullptr;
 	bool mbProgressParentHooked = false;

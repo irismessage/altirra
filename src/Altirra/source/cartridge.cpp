@@ -17,11 +17,13 @@
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <vd2/system/zip.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/vdstl.h>
 #include <at/atcore/address.h>
 #include <at/atcore/checksum.h>
+#include <at/atcore/snapshotimpl.h>
 #include <at/atcore/vfs.h>
 #include "cartridge.h"
 #include "savestate.h"
@@ -36,6 +38,587 @@ bool ATIsCartridgeModeHWCompatible(ATCartridgeMode cartmode, int hwmode) {
 
 	return ATIsCartridge5200Mode(cartmode) == modeIs5200;
 }
+
+///////////////////////////////////////////////////////////////////////////
+
+struct ATCartridgeModeInfo {
+	sint32 mInitialBank = -1;
+	sint32 mInitialBank2 = -1;
+
+	sint32 mBank1Min = -1;
+	sint32 mBank1Max = -1;
+	sint32 mBank2Min = -1;
+	sint32 mBank2Max = -1;
+
+	// fixed memory window #1
+	uint8 mFixed1Base = 0;
+	uint8 mFixed1Size = 0;
+	uint8 mFixed1Mask = 0;
+	uint32 mFixed1Offset = 0;
+
+	// fixed memory window #2
+	uint8 mFixed2Base = 0;
+	uint8 mFixed2Size = 0;
+	uint8 mFixed2Mask = 0;
+	uint32 mFixed2Offset = 0;
+	bool mFixed2Ram = false;
+
+	// banked window #1
+	uint8 mBank1Base = 0;
+	uint8 mBank1Size = 0;
+	uint8 mBank1Mask = 0;
+
+	// banked window #2
+	uint32 mBank2Base = 0;
+	uint32 mBank2Size = 0;
+
+	uint8 mSpec1Base = 0;
+	uint8 mSpec1Size = 0;
+	ATMemoryReadHandler mpSpec1DebugRead = nullptr;
+	ATMemoryReadHandler mpSpec1Read = nullptr;
+	ATMemoryWriteHandler mpSpec1Write = nullptr;
+
+	bool mUseCctl = false;
+	bool mUseCctlRead = false;
+	bool mUseCctlWrite = false;
+	ATMemoryReadHandler mpCctlDebugRead = nullptr;
+	ATMemoryReadHandler mpCctlRead = nullptr;
+	ATMemoryWriteHandler mpCctlWrite = nullptr;
+
+	uint32 mRamSize = 0;
+	uint8 mRamFillByte = 0;
+
+	bool mSuppressBasicDisable = false;
+};
+
+struct ATCartridgeModeTable {
+	ATCartridgeModeInfo m[kATCartridgeModeCount] {};
+
+	constexpr ATCartridgeModeTable();
+};
+
+struct ATCartridgeModeBuilder {
+	ATCartridgeModeInfo& m;
+
+	constexpr auto& InitBank(sint32 bank, sint32 minBank, sint32 maxBank) {
+		m.mInitialBank = bank;
+		m.mBank1Min = minBank;
+		m.mBank1Max = maxBank;
+		return *this;
+	}
+
+	constexpr auto& InitBank2(sint32 bank2, sint32 minBank, sint32 maxBank) {
+		m.mInitialBank2 = bank2;
+		m.mBank2Min = minBank;
+		m.mBank2Max = maxBank;
+		return *this;
+	}
+
+	constexpr auto& MapFixed1(uint8 base, uint8 size, uint8 mask = 0xFF, uint32 offset = 0) {
+		if (base >= 0x100 || 0x100 - base < size) {
+			throw 0;
+		}
+
+		m.mFixed1Base = base;
+		m.mFixed1Size = size;
+		m.mFixed1Mask = mask;
+		m.mFixed1Offset = offset;
+
+		return *this;
+	}
+
+	constexpr auto& MapFixed2(uint8 base, uint8 size, uint8 mask = 0xFF, uint32 offset = 0) {
+		if (base >= 0x100 || 0x100 - base < size) {
+			throw 0;
+		}
+
+		m.mFixed2Base = base;
+		m.mFixed2Size = size;
+		m.mFixed2Mask = mask;
+		m.mFixed2Offset = offset;
+
+		return *this;
+	}
+
+	constexpr auto& MapBank1_CCTLWrite(uint8 base, uint8 size, ATMemoryWriteHandler write) {
+		m.mBank1Base = base;
+		m.mBank1Size = size;
+		m.mBank1Mask = 0xFF;
+		m.mUseCctl = true;
+		m.mUseCctlWrite = true;
+		m.mpCctlWrite = write;
+
+		return *this;
+	}
+	
+	constexpr auto& MapBank1_CCTLReadWrite(uint8 base, uint8 size, ATMemoryReadHandler debugRead, ATMemoryReadHandler read, ATMemoryWriteHandler write) {
+		m.mBank1Base = base;
+		m.mBank1Size = size;
+		m.mBank1Mask = 0xFF;
+		m.mUseCctl = true;
+		m.mUseCctlRead = true;
+		m.mUseCctlWrite = true;
+		m.mpCctlDebugRead = debugRead;
+		m.mpCctlRead = read;
+		m.mpCctlWrite = write;
+
+		return *this;
+	}
+
+	constexpr auto& MapSpec1(uint8 base, uint8 size, ATMemoryReadHandler debugRead, ATMemoryReadHandler read, ATMemoryWriteHandler write) {
+		m.mSpec1Base = base;
+		m.mSpec1Size = size;
+		m.mpSpec1DebugRead = debugRead;
+		m.mpSpec1Read = read;
+		m.mpSpec1Write = write;
+		return *this;
+	}
+
+	constexpr auto& HasRam(uint32 size, uint8 fillByte) {
+		m.mRamSize = size;
+		m.mRamFillByte = fillByte;
+		return *this;
+	}
+
+	constexpr auto& NoBasicDisable() {
+		m.mSuppressBasicDisable = true;
+		return *this;
+	}
+};
+
+struct ATCartridgeModeTableBuilder {
+	ATCartridgeModeTable& m;
+
+	constexpr ATCartridgeModeBuilder operator[](ATCartridgeMode mode) const {
+		return ATCartridgeModeBuilder{m.m[mode]};
+	}
+};
+
+constexpr ATCartridgeModeTable::ATCartridgeModeTable() {
+	typedef ATCartridgeEmulator CE;
+
+	ATCartridgeModeTableBuilder m{*this};
+
+	m[kATCartridgeMode_5200_4K]
+		// 4K ROM mapped to $4000-BFFF
+		.InitBank(0, 0, 0)
+		.MapFixed1(0x40, 0x80, 0x0F)
+		;
+
+	m[kATCartridgeMode_5200_8K]
+		// 8K ROM mapped to $4000-BFFF
+		.InitBank(0, 0, 0)
+		.MapFixed1(0x40, 0x80, 0x1F)
+		;
+
+	m[kATCartridgeMode_5200_16K_TwoChip]
+		// 16K ROM mapped to $4000-BFFF with A14 selecting 8K half
+		.InitBank(0, 0, 0)
+		.MapFixed1(0x40, 0x40, 0x1F, 0)
+		.MapFixed2(0x80, 0x40, 0x1F, 0x2000)
+		;
+
+	m[kATCartridgeMode_5200_16K_OneChip]
+		// 16K ROM mapped to $4000-BFFF with A13 selecting 8K half
+		.InitBank(0, 0, 0)
+		.MapFixed1(0x40, 0x80, 0x3F)
+		;
+
+	m[kATCartridgeMode_5200_32K]
+		// 32K ROM mapped to $4000-BFFF
+		.InitBank(0, 0, 0)
+		.MapFixed1(0x40, 0x80)
+		;
+
+	m[kATCartridgeMode_2K]
+		// 2K ROM mapped to $A000-BFFF; $A000-B7FF open
+		.InitBank(0, 0, 0)
+		.MapFixed1(0xA0, 0x20)
+		;
+
+	m[kATCartridgeMode_4K]
+		// 4K ROM mapped to $B000-BFFF; $A000-AFFF open
+		.InitBank(0, 0, 0)
+		.MapFixed1(0xA0, 0x20)
+		;
+
+	m[kATCartridgeMode_8K]
+		// 8K ROM mapped to $A000-BFFF
+		.InitBank(0, 0, 0)
+		.MapFixed1(0xA0, 0x20)
+		;
+
+	m[kATCartridgeMode_16K]
+		// 16K ROM mapped to $8000-BFFF
+		.InitBank(0, 0, 0)
+		.MapFixed1(0x80, 0x40)
+		;
+
+	m[kATCartridgeMode_RightSlot_4K]
+		// 4K ROM mapped to $8000-9FFF (expanded to 8K on load)
+		.InitBank(0, 0, 0)
+		.MapFixed1(0x80, 0x20)
+		;
+
+	m[kATCartridgeMode_RightSlot_8K]
+		// 8K ROM mapped to $8000-9FFF
+		.InitBank(0, 0, 0)
+		.MapFixed1(0x80, 0x20)
+		;
+
+	m[kATCartridgeMode_TelelinkII]
+		.InitBank(0, 0, 0)
+		.HasRam(256, 0xFF)
+		;
+
+	m[kATCartridgeMode_XEGS_32K]
+		// 4 x 8K banks mapped to $8000-9FFF by D0-D1 written to CCTL
+		// Last 8K bank mapped to $A000-BFFF
+		.InitBank(0, 0, 3)
+		.MapFixed1(0xA0, 0x20, 0xFF, 0x6000)
+		.MapBank1_CCTLWrite(0x80, 0x20, CE::WriteByte_CCTL_DataToBank<0x03>)
+		;
+
+	m[kATCartridgeMode_XEGS_64K]
+		// 8 x 8K banks mapped to $8000-9FFF by D0-D2 written to CCTL
+		// Last 8K bank mapped to $A000-BFFF
+		.InitBank(0, 0, 7)
+		.MapFixed1(0xA0, 0x20, 0xFF, 0xE000)
+		.MapBank1_CCTLWrite(0x80, 0x20, CE::WriteByte_CCTL_DataToBank<0x07>)
+		;
+
+	m[kATCartridgeMode_XEGS_64K_Alt]
+		// Similar to XEGS 64K except with 4-bit banking instead of
+		// 3-bit (essentially, 64K of ROM in a 128K cart).
+		// Reference: Atari800 4.0.0 CART.txt, type 67
+		.InitBank(0, 0, 7)
+		.MapFixed1(0xA0, 0x20, 0xFF, 0xE000)
+		.MapBank1_CCTLWrite(0x80, 0x20, CE::WriteByte_CCTL_XEGS_64K_Alt)
+		.MapSpec1(0x80, 0x20, CE::ReadByte_Unmapped, CE::ReadByte_Unmapped, CE::WriteByte_Unmapped)
+		;
+
+	m[kATCartridgeMode_XEGS_128K]
+		// 16 x 8K banks mapped to $8000-9FFF by D0-D3 written to CCTL
+		// Last 8K bank mapped to $A000-BFFF
+		.InitBank(0, 0, 15)
+		.MapFixed1(0xA0, 0x20, 0xFF, 0x1E000)
+		.MapBank1_CCTLWrite(0x80, 0x20, CE::WriteByte_CCTL_DataToBank<0x0F>)
+		;
+
+	m[kATCartridgeMode_XEGS_256K]
+		// 32 x 8K banks mapped to $8000-9FFF by D0-D4 written to CCTL
+		// Last 8K bank mapped to $A000-BFFF
+		.InitBank(0, 0, 31)
+		.MapFixed1(0xA0, 0x20, 0xFF, 0x3E000)
+		.MapBank1_CCTLWrite(0x80, 0x20, CE::WriteByte_CCTL_DataToBank<0x1F>)
+		;
+
+	m[kATCartridgeMode_XEGS_512K]
+		// 64 x 8K banks mapped to $8000-9FFF by D0-D5 written to CCTL
+		// Last 8K bank mapped to $A000-BFFF
+		.InitBank(0, 0, 63)
+		.MapFixed1(0xA0, 0x20, 0xFF, 0x7E000)
+		.MapBank1_CCTLWrite(0x80, 0x20, CE::WriteByte_CCTL_DataToBank<0x3F>)
+		;
+
+	m[kATCartridgeMode_XEGS_1M]
+		// 128 x 8K banks mapped to $8000-9FFF by D0-D6 written to CCTL
+		// Last 8K bank mapped to $A000-BFFF
+		.InitBank(0, 0, 127)
+		.MapFixed1(0xA0, 0x20, 0xFF, 0xFE000)
+		.MapBank1_CCTLWrite(0x80, 0x20, CE::WriteByte_CCTL_DataToBank<0x7F>)
+		;
+
+	m[kATCartridgeMode_Switchable_XEGS_32K]
+		// 128 x 8K banks mapped to $8000-9FFF by D0-D6 written to CCTL, D7=1 disables cartridge (including fixed bank)
+		// Last 8K bank mapped to $A000-BFFF
+		.InitBank(0, -1, 3)
+		.MapFixed1(0xA0, 0x20, 0xFF, 0x6000)
+		.MapBank1_CCTLWrite(0x80, 0x20, CE::WriteByte_CCTL_DataToBank_Switchable<0x03>)
+		;
+
+	m[kATCartridgeMode_Switchable_XEGS_64K]
+		// 128 x 8K banks mapped to $8000-9FFF by D0-D6 written to CCTL, D7=1 disables cartridge (including fixed bank)
+		// Last 8K bank mapped to $A000-BFFF
+		.InitBank(0, -1, 7)
+		.MapFixed1(0xA0, 0x20, 0xFF, 0xE000)
+		.MapBank1_CCTLWrite(0x80, 0x20, CE::WriteByte_CCTL_DataToBank_Switchable<0x07>)
+		;
+
+	m[kATCartridgeMode_Switchable_XEGS_128K]
+		// 128 x 8K banks mapped to $8000-9FFF by D0-D6 written to CCTL, D7=1 disables cartridge (including fixed bank)
+		// Last 8K bank mapped to $A000-BFFF
+		.InitBank(0, -1, 15)
+		.MapFixed1(0xA0, 0x20, 0xFF, 0x1E000)
+		.MapBank1_CCTLWrite(0x80, 0x20, CE::WriteByte_CCTL_DataToBank_Switchable<0x0F>)
+		;
+
+	m[kATCartridgeMode_Switchable_XEGS_256K]
+		// 128 x 8K banks mapped to $8000-9FFF by D0-D6 written to CCTL, D7=1 disables cartridge (including fixed bank)
+		// Last 8K bank mapped to $A000-BFFF
+		.InitBank(0, -1, 31)
+		.MapFixed1(0xA0, 0x20, 0xFF, 0x3E000)
+		.MapBank1_CCTLWrite(0x80, 0x20, CE::WriteByte_CCTL_DataToBank_Switchable<0x1F>)
+		;
+
+	m[kATCartridgeMode_Switchable_XEGS_512K]
+		// 128 x 8K banks mapped to $8000-9FFF by D0-D6 written to CCTL, D7=1 disables cartridge (including fixed bank)
+		// Last 8K bank mapped to $A000-BFFF
+		.InitBank(0, -1, 63)
+		.MapFixed1(0xA0, 0x20, 0xFF, 0x7E000)
+		.MapBank1_CCTLWrite(0x80, 0x20, CE::WriteByte_CCTL_DataToBank_Switchable<0x3F>)
+		;
+
+	m[kATCartridgeMode_Switchable_XEGS_1M]
+		// 128 x 8K banks mapped to $8000-9FFF by D0-D6 written to CCTL, D7=1 disables cartridge (including fixed bank)
+		// Last 8K bank mapped to $A000-BFFF
+		.InitBank(0, -1, 127)
+		.MapFixed1(0xA0, 0x20, 0xFF, 0xFE000)
+		.MapBank1_CCTLWrite(0x80, 0x20, CE::WriteByte_CCTL_DataToBank_Switchable<0x7F>)
+		;
+
+	m[kATCartridgeMode_MaxFlash_128K].InitBank(0, -1, 15);
+	m[kATCartridgeMode_MaxFlash_128K_MyIDE].InitBank(0, -1, 15);
+
+	m[kATCartridgeMode_MegaCart_16K]
+		.InitBank(0, -1, 0)
+		.MapBank1_CCTLWrite(0x80, 0x40, CE::WriteByte_CCTL_DataToBank_Switchable<0x00>)
+		;
+	m[kATCartridgeMode_MegaCart_32K]
+		.InitBank(0, -1, 1)
+		.MapBank1_CCTLWrite(0x80, 0x40, CE::WriteByte_CCTL_DataToBank_Switchable<0x01>)
+		;
+	m[kATCartridgeMode_MegaCart_64K]
+		.InitBank(0, -1, 3)
+		.MapBank1_CCTLWrite(0x80, 0x40, CE::WriteByte_CCTL_DataToBank_Switchable<0x03>)
+		;
+	m[kATCartridgeMode_MegaCart_128K]
+		.InitBank(0, -1, 7)
+		.MapBank1_CCTLWrite(0x80, 0x40, CE::WriteByte_CCTL_DataToBank_Switchable<0x07>)
+		;
+	m[kATCartridgeMode_MegaCart_256K]
+		.InitBank(0, -1, 15)
+		.MapBank1_CCTLWrite(0x80, 0x40, CE::WriteByte_CCTL_DataToBank_Switchable<0x0F>)
+		;
+	m[kATCartridgeMode_MegaCart_512K]
+		.InitBank(0, -1, 31)
+		.MapBank1_CCTLWrite(0x80, 0x40, CE::WriteByte_CCTL_DataToBank_Switchable<0x1F>)
+		;
+	m[kATCartridgeMode_MegaCart_1M]
+		.InitBank(0, -1, 63)
+		.MapBank1_CCTLWrite(0x80, 0x40, CE::WriteByte_CCTL_DataToBank_Switchable<0x3F>)
+		;
+
+	m[kATCartridgeMode_MegaCart_2M]
+		.InitBank(0, -1, 127)
+		.MapBank1_CCTLWrite(0x80, 0x40, CE::WriteByte_CCTL_DataToBank_Switchable<0x7F>)
+		;
+	
+	m[kATCartridgeMode_MaxFlash_1024K].InitBank(127, -1, 127);
+	m[kATCartridgeMode_MaxFlash_1024K_Bank0].InitBank(0, -1, 127);
+	m[kATCartridgeMode_BountyBob800]
+		.InitBank(0, 0, 3)
+		.InitBank2(0, 0, 3)
+		;
+
+	m[kATCartridgeMode_BountyBob5200]
+		.InitBank(0, 0, 3)
+		.InitBank2(0, 0, 3)
+		;
+
+	m[kATCartridgeMode_BountyBob5200Alt]
+		.InitBank(0, 0, 3)
+		.InitBank2(0, 0, 3)
+		;
+
+	m[kATCartridgeMode_OSS_034M]
+		.InitBank(2, -1, 6)
+		.InitBank2(0, -1, 0)
+		;
+
+	m[kATCartridgeMode_OSS_043M]
+		.InitBank(2, -1, 6)
+		.InitBank2(0, -1, 0)
+		;
+
+	m[kATCartridgeMode_OSS_M091]
+		.InitBank(3, -1, 6)
+		.InitBank2(0, -1, 0);
+
+	m[kATCartridgeMode_OSS_8K]
+		.InitBank(1, -1, 1)
+		.InitBank2(0, -1, 0);
+
+	m[kATCartridgeMode_Corina_1M_EEPROM]
+		.InitBank(0, -1, 64)
+		;
+
+	m[kATCartridgeMode_Corina_512K_SRAM_EEPROM]
+		.InitBank(0, -1, 64)
+		.HasRam(524288, 0)
+		;
+
+	m[kATCartridgeMode_SpartaDosX_64K]
+		.InitBank(0, -1, 7)
+		;
+
+	m[kATCartridgeMode_Atrax_SDX_64K]
+		.InitBank(0, -1, 7)
+		;
+
+	m[kATCartridgeMode_SpartaDosX_128K]
+		.InitBank(0, -1, 15)
+		;
+	
+	m[kATCartridgeMode_Atrax_SDX_128K]
+		.InitBank(0, -1, 15)
+		;
+
+	m[kATCartridgeMode_Williams_64K]
+		.InitBank(0, -1, 7)
+		;
+
+	m[kATCartridgeMode_Williams_32K]
+		.InitBank(0, -1, 3)
+		;
+
+	m[kATCartridgeMode_Diamond_64K]
+		.InitBank(0, 0, 7)
+		;
+
+	m[kATCartridgeMode_Express_64K]
+		.InitBank(0, 0, 7)
+		;
+
+	m[kATCartridgeMode_DB_32K]
+		// Fixed bank 3 mapped to $A000-BFFF.
+		// Variable banks 0-3 mapped to $8000-9FFF, switched by address of write to CCTL.
+		.InitBank(0, 0, 3)
+		;
+
+	m[kATCartridgeMode_Atrax_128K]
+		.InitBank(0, -1, 15)
+		;
+
+	m[kATCartridgeMode_Atrax_128K_Raw]
+		.InitBank(0, -1, 15)
+		;
+
+	m[kATCartridgeMode_Phoenix_8K]
+		.InitBank(0, -1, 0)
+		;
+
+	m[kATCartridgeMode_Blizzard_4K]
+		.InitBank(0, -1, 0)
+		;
+
+	m[kATCartridgeMode_Blizzard_16K]
+		.InitBank(0, -1, 0)
+		;
+
+	m[kATCartridgeMode_Blizzard_32K]
+		.InitBank(0, -1, 3)
+		;
+
+	m[kATCartridgeMode_SIC]
+		.InitBank(0, 0, 31)
+		;
+
+	m[kATCartridgeMode_AST_32K]
+		// $A000-BFFF initially mapped and becomes unmapped on CCTL write.
+		// $D500-D5FF mapps successive pages on CCTL write.
+		.InitBank(0, -1, 0)
+		.InitBank2(0, 0, 127)
+		;
+
+	m[kATCartridgeMode_Turbosoft_64K]
+		.InitBank(0, -1, 7)
+		;
+
+	m[kATCartridgeMode_Turbosoft_128K]
+		.InitBank(0, -1, 15)
+		;
+
+	m[kATCartridgeMode_MegaCart_1M_2]
+		// 64 banks of 8K mapped to $A000-BFFF.
+		// Write to CCTL switches bank by D0-D5, D7=1 disables.
+		.InitBank(0, -1, 63)
+		;
+
+	m[kATCartridgeMode_MegaCart_512K_3]
+		// 32 banks of 16K mapped to $8000-BFFF switched by write to CCTL.
+		// Writing $FF disables. Read from CCTL returns current bank.
+		.InitBank(0, -1, 254)
+		;
+
+	m[kATCartridgeMode_MegaCart_4M_3]
+		// 255 banks of 16K mapped to $8000-BFFF switched by write to CCTL.
+		// Writing $FF disables. Read from CCTL returns current bank.
+		.InitBank(0xFE, -1, 254)
+		;
+
+	m[kATCartridgeMode_5200_64K_32KBanks]
+		// Access to $BFE0-BFFF resets to home bank 1.
+		// Access to $BFD0-BFDF selects bank according to A2.
+		.InitBank(0, 0, 1)
+		;
+
+	m[kATCartridgeMode_5200_512K_32KBanks]
+		// Access to $BFE0-BFFF resets to home bank 1.
+		// Access to $BFD0-BFDF changes lower two bank bits by A2-A3.
+		// Access to $BFC0-BFCF changes upper two bank bits by A2-A3.
+		.InitBank(0, 0, 15)
+		;
+
+	m[kATCartridgeMode_MicroCalc]
+		.InitBank(0, -1, 3)
+		;
+
+	m[kATCartridgeMode_TheCart_32M]
+		.InitBank(0, -1, 0x3FFFF)
+		.InitBank2(-1, -1, 0x3FFFF)
+		.HasRam(524288, 0)
+		;
+
+	m[kATCartridgeMode_TheCart_64M]
+		.InitBank(0, -1, 0x3FFFF)
+		.InitBank2(-1, -1, 0x3FFFF)
+		.HasRam(524288, 0)
+		;
+
+	m[kATCartridgeMode_TheCart_128M]
+		.InitBank(0, -1, 0x3FFFF)
+		.InitBank2(-1, -1, 0x3FFFF)
+		.HasRam(524288, 0)
+		;
+
+	m[kATCartridgeMode_MegaMax_2M]
+		.InitBank(0, -1, 127)
+		;
+
+	m[kATCartridgeMode_aDawliah_32K]
+		.InitBank(0, 0, 3)
+		;
+
+	m[kATCartridgeMode_aDawliah_64K]
+		.InitBank(0, 0, 7)
+		;
+
+	m[kATCartridgeMode_JRC_64K_RAM]
+		.InitBank(7, -1, 7)
+		.InitBank2(0, 0, 2047)
+		.HasRam(262144, 0)
+		.MapBank1_CCTLReadWrite(0xA0, 0x20, CE::ReadByte_CCTL_JRC_64K_RAM, CE::ReadByte_CCTL_JRC_64K_RAM, CE::WriteByte_CCTL_JRC_64K_RAM)
+		;
+
+	// Suppress automatic internal BASIC disable for the MaxFlash cartridges since their
+	// default loaders launch early in OS init and bypass cart boot on OPTION.
+	m[kATCartridgeMode_MaxFlash_128K].NoBasicDisable();
+	m[kATCartridgeMode_MaxFlash_1024K].NoBasicDisable();
+	m[kATCartridgeMode_MaxFlash_1024K_Bank0].NoBasicDisable();
+}
+
+constexpr ATCartridgeModeTable kATCartridgeModeTable {};
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -102,14 +685,7 @@ void ATCartridgeEmulator::SetFastBus(bool fastBus) {
 }
 
 bool ATCartridgeEmulator::IsBASICDisableAllowed() const {
-	switch(mCartMode) {
-		case kATCartridgeMode_MaxFlash_128K:
-		case kATCartridgeMode_MaxFlash_1024K:
-		case kATCartridgeMode_MaxFlash_1024K_Bank0:
-			return false;
-	}
-
-	return true;
+	return !kATCartridgeModeTable.m[mCartMode].mSuppressBasicDisable;
 }
 
 const wchar_t *ATCartridgeEmulator::GetPath() const {
@@ -130,7 +706,14 @@ std::optional<uint32> ATCartridgeEmulator::GetImageFileCRC() const {
 	if (!mpImage)
 		return {};
 	
-	return mpImage->GetFileCRC();
+	return mpImage->GetImageFileCRC();
+}
+
+std::optional<ATChecksumSHA256> ATCartridgeEmulator::GetImageFileSHA256() const {
+	if (!mpImage)
+		return {};
+	
+	return mpImage->GetImageFileSHA256();
 }
 
 void ATCartridgeEmulator::Load5200Default() {
@@ -173,250 +756,11 @@ void ATCartridgeEmulator::InitFromImage() {
 	mCartMode = mpImage->GetMode();
 
 	// set initial bank and alloc size
-	switch(mCartMode) {
-		case kATCartridgeMode_5200_4K:
-			mInitialCartBank = 0;
-			break;
 
-		case kATCartridgeMode_8K:
-		case kATCartridgeMode_5200_8K:
-		case kATCartridgeMode_RightSlot_8K:
-			mInitialCartBank = 0;
-			break;
+	const auto& modeInfo = kATCartridgeModeTable.m[mCartMode];
 
-		case kATCartridgeMode_TelelinkII:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_16K:
-		case kATCartridgeMode_5200_16K_TwoChip:
-		case kATCartridgeMode_5200_16K_OneChip:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_5200_32K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_XEGS_32K:
-		case kATCartridgeMode_Switchable_XEGS_32K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_XEGS_64K:
-		case kATCartridgeMode_XEGS_64K_Alt:
-		case kATCartridgeMode_Switchable_XEGS_64K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_XEGS_128K:
-		case kATCartridgeMode_Switchable_XEGS_128K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_XEGS_256K:
-		case kATCartridgeMode_Switchable_XEGS_256K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_XEGS_512K:
-		case kATCartridgeMode_Switchable_XEGS_512K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_XEGS_1M:
-		case kATCartridgeMode_Switchable_XEGS_1M:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_MaxFlash_128K:
-		case kATCartridgeMode_MaxFlash_128K_MyIDE:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_MegaCart_16K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_MegaCart_32K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_MegaCart_64K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_MegaCart_128K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_MegaCart_256K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_MegaCart_512K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_MegaCart_1M:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_MaxFlash_1024K:
-			mInitialCartBank = 127;
-			break;
-
-		case kATCartridgeMode_MaxFlash_1024K_Bank0:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_BountyBob800:
-		case kATCartridgeMode_BountyBob5200:
-		case kATCartridgeMode_BountyBob5200Alt:
-			mInitialCartBank = 0;
-			mInitialCartBank2 = 0;
-			break;
-
-		case kATCartridgeMode_OSS_034M:
-			mInitialCartBank = 2;
-			mInitialCartBank2 = 3;
-			break;
-
-		case kATCartridgeMode_OSS_M091:
-			mInitialCartBank = 3;
-			mInitialCartBank2 = 0;
-			break;
-
-		case kATCartridgeMode_Corina_1M_EEPROM:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_Corina_512K_SRAM_EEPROM:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_SpartaDosX_128K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_Williams_64K:
-		case kATCartridgeMode_Diamond_64K:
-		case kATCartridgeMode_Express_64K:
-		case kATCartridgeMode_SpartaDosX_64K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_DB_32K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_Atrax_128K:
-		case kATCartridgeMode_Atrax_128K_Raw:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_Williams_32K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_Phoenix_8K:
-			mInitialCartBank = 0;
-			mInitialCartBank2 = 0;
-			break;
-
-		case kATCartridgeMode_Blizzard_4K:
-		case kATCartridgeMode_Blizzard_16K:
-		case kATCartridgeMode_Blizzard_32K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_SIC:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_Atrax_SDX_64K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_Atrax_SDX_128K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_OSS_043M:
-			mInitialCartBank = 2;
-			mInitialCartBank2 = 3;
-			break;
-
-		case kATCartridgeMode_OSS_8K:
-			mInitialCartBank = 1;
-			mInitialCartBank2 = 0;
-			break;
-
-		case kATCartridgeMode_AST_32K:
-			mInitialCartBank = 0;
-			mInitialCartBank2 = 0;
-			break;
-
-		case kATCartridgeMode_Turbosoft_64K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_Turbosoft_128K:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_MegaCart_1M_2:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_MegaCart_512K_3:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_MegaCart_2M:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_MegaCart_4M_3:
-			mInitialCartBank = 0xFE;
-			break;
-
-		case kATCartridgeMode_5200_64K_32KBanks:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_5200_512K_32KBanks:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_MicroCalc:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_TheCart_32M:
-			mInitialCartBank = 0;
-			mInitialCartBank2 = -1;
-			break;
-
-		case kATCartridgeMode_TheCart_64M:
-			mInitialCartBank = 0;
-			mInitialCartBank2 = -1;
-			break;
-
-		case kATCartridgeMode_TheCart_128M:
-			mInitialCartBank = 0;
-			mInitialCartBank2 = -1;
-			break;
-
-		case kATCartridgeMode_MegaMax_2M:
-			mInitialCartBank = 0;
-			break;
-
-		case kATCartridgeMode_aDawliah_32K:
-		case kATCartridgeMode_aDawliah_64K:
-			mInitialCartBank = 0;
-			break;
-	}
+	mInitialCartBank = modeInfo.mInitialBank;
+	mInitialCartBank2 = modeInfo.mInitialBank2;
 
 	mCartBank = mInitialCartBank;
 	mCartBank2 = mInitialCartBank2;
@@ -425,22 +769,8 @@ void ATCartridgeEmulator::InitFromImage() {
 	mpROM = (uint8 *)mpImage->GetBuffer();
 
 	// initialize RAM
-	switch(mCartMode) {
-		case kATCartridgeMode_Corina_512K_SRAM_EEPROM:
-			mCARTRAM.resize(524288, 0);
-			break;
-		case kATCartridgeMode_TelelinkII:
-			mCARTRAM.clear();
-			mCARTRAM.resize(256, 0xFF);
-			break;
-
-		case kATCartridgeMode_TheCart_32M:
-		case kATCartridgeMode_TheCart_64M:
-		case kATCartridgeMode_TheCart_128M:
-			mCARTRAM.clear();
-			mCARTRAM.resize(524288, 0);
-			break;
-	}
+	mCARTRAM.clear();
+	mCARTRAM.resize(modeInfo.mRamSize, modeInfo.mRamFillByte);
 
 	InitDebugBankMap();
 	InitMemoryLayers();
@@ -1632,6 +1962,39 @@ bool ATCartridgeEmulator::WriteByte_CCTL_aDawliah_64K(void *thisptr0, uint32 add
 	return true;
 }
 
+sint32 ATCartridgeEmulator::ReadByte_CCTL_JRC_64K_RAM(void *thisptr0, uint32 address) {
+	ATCartridgeEmulator *const thisptr = (ATCartridgeEmulator *)thisptr0;
+
+	if ((uint8)address >= 0x80)
+		return thisptr->mCARTRAM[((uint32)thisptr->mCartBank2 << 7) + (address & 0x7F)];
+
+	return -1;
+}
+
+bool ATCartridgeEmulator::WriteByte_CCTL_JRC_64K_RAM(void *thisptr0, uint32 address, uint8 value) {
+	ATCartridgeEmulator *const thisptr = (ATCartridgeEmulator *)thisptr0;
+	const uint8 addr8 = (uint8)address;
+
+	// See also: https://atariwiki.org/wiki/Wiki.jsp?page=Cartridges#section-Cartridges-JRCCartridges
+
+	if (addr8 >= 0x80) {
+		thisptr->mCARTRAM[((uint32)thisptr->mCartBank2 << 7) + (address & 0x7F)] = value;
+	} else {
+		if (value & 0x80) {
+			thisptr->SetCartBank(-1);
+
+			if (value >= 0xF0)
+				thisptr->SetCartBank2(((uint32)(value & 0x0F) << 8) + (uint8)address);
+		} else {
+			static constexpr uint8 kBankLookup[] = { 7, 3, 5, 1, 6, 2, 4, 0 };
+
+			thisptr->SetCartBank(kBankLookup[(value >> 4) & 7]);
+		}
+	}
+
+	return false;
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void ATCartridgeEmulator::BeginLoadState(ATSaveStateReader& reader) {
@@ -1647,14 +2010,76 @@ void ATCartridgeEmulator::EndLoadState(ATSaveStateReader& reader) {
 	UpdateCartBank2();
 }
 
-void ATCartridgeEmulator::BeginSaveState(ATSaveStateWriter& writer) {
-	writer.RegisterHandlerMethod(kATSaveStateSection_Private, this, &ATCartridgeEmulator::SaveStatePrivate);	
+class ATSaveStateCartridge : public ATSnapExchangeObject<ATSaveStateCartridge> {
+public:
+	template<typename T>
+	void Exchange(T& rw) {
+		rw.Transfer("bank", &mBank);
+		rw.Transfer("bank2", &mBank2);
+		rw.Transfer("image_crc32", &mImageCrc32);
+		rw.Transfer("image_crc32_valid", &mImageCrc32Valid);
+		rw.Transfer("rom_crc32", &mRomCrc32);
+		rw.Transfer("ram", &mpRam);
+	}
+
+	sint32 mBank {};
+	sint32 mBank2 {};
+	uint32 mImageCrc32 {};
+	bool mImageCrc32Valid {};
+	uint32 mRomCrc32 {};
+	vdrefptr<ATSaveStateMemoryBuffer> mpRam;
+};
+
+ATSERIALIZATION_DEFINE(ATSaveStateCartridge);
+
+void ATCartridgeEmulator::LoadState(IATObjectState& state) {
+	auto& cartState = atser_cast<const ATSaveStateCartridge&>(state);
+	const auto& cartInfo = kATCartridgeModeTable.m[mCartMode];
+
+	const sint32 clampedBank = std::clamp(cartState.mBank, cartInfo.mBank1Min, cartInfo.mBank1Max);
+	const sint32 clampedBank2 = std::clamp(cartState.mBank2, cartInfo.mBank2Min, cartInfo.mBank2Max);
+
+	VDASSERT(clampedBank == cartState.mBank);
+	VDASSERT(clampedBank2 == cartState.mBank2);
+
+	SetCartBank(clampedBank);
+	SetCartBank2(clampedBank2);
+
+	if (!mCARTRAM.empty()) {
+		const size_t len = mCARTRAM.size() * sizeof(mCARTRAM[0]);
+
+		memset(mCARTRAM.data(), 0xFF, len);
+
+		if (cartState.mpRam) {
+			memcpy(mCARTRAM.data(), cartState.mpRam->mBuffer.data(), std::min<size_t>(len, cartState.mpRam->mBuffer.size()));
+		}
+	}
 }
 
-void ATCartridgeEmulator::SaveStatePrivate(ATSaveStateWriter& writer) {
-	writer.BeginChunk(VDMAKEFOURCC('C', 'A', 'R', 'T'));
-	ExchangeState(writer);
-	writer.EndChunk();
+void ATCartridgeEmulator::SaveState(IATObjectState **pp) {
+	vdrefptr<ATSaveStateCartridge> obj(new ATSaveStateCartridge);
+
+	obj->mBank = mCartBank;
+	obj->mBank2 = mCartBank2;
+
+	const auto imagecrc = GetImageFileCRC();
+	obj->mImageCrc32Valid = imagecrc.has_value();
+	obj->mImageCrc32 = imagecrc.value_or(0);
+
+	obj->mRomCrc32 = VDCRCTable::CRC32.CRC(mpROM, mCartSize);
+
+	if (!mCARTRAM.empty()) {
+		vdrefptr<ATSaveStateMemoryBuffer> savedRam(new ATSaveStateMemoryBuffer);
+
+		const size_t len = mCARTRAM.size() * sizeof(mCARTRAM[0]);
+		savedRam->mBuffer.resize(len);
+		savedRam->mpDirectName = L"cart-ram.bin";
+		memcpy(savedRam->mBuffer.data(), mCARTRAM.data(), len);
+
+		obj->mpRam = std::move(savedRam);
+	}
+
+	*pp = obj.release();
 }
 
 uint8 ATCartridgeEmulator::DebugReadLinear(uint32 offset) const {
@@ -1752,6 +2177,50 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 	cctlhd.mbPassWrites = true;
 	cctlhd.mpThis = this;
 
+	const auto& modeInfo = kATCartridgeModeTable.m[mCartMode];
+
+	if (modeInfo.mFixed1Size) {
+		fixedBase = modeInfo.mFixed1Base;
+		fixedSize = modeInfo.mFixed1Size;
+		fixedMask = modeInfo.mFixed1Mask == 0xFF ? UINT32_C(0)-1 : modeInfo.mFixed1Mask;
+		fixedOffset = modeInfo.mFixed1Offset;
+	}
+
+	if (modeInfo.mFixed2Size) {
+		fixed2Base = modeInfo.mFixed2Base;
+		fixed2Size = modeInfo.mFixed2Size;
+		fixed2Mask = modeInfo.mFixed2Mask == 0xFF ? UINT32_C(0)-1 : modeInfo.mFixed2Mask;
+		fixed2Offset = modeInfo.mFixed2Offset;
+	}
+
+	if (modeInfo.mBank1Size) {
+		bank1Base = modeInfo.mBank1Base;
+		bank1Size = modeInfo.mBank1Size;
+		bank1Mask = modeInfo.mBank1Mask == 0xFF ? UINT32_C(0)-1 : modeInfo.mBank1Mask;
+	}
+
+	if (modeInfo.mBank2Size) {
+		bank2Base = modeInfo.mBank2Base;
+		bank2Size = modeInfo.mBank2Size;
+	}
+
+	if (modeInfo.mUseCctl) {
+		usecctl = true;
+		usecctlread = modeInfo.mUseCctlRead;
+		usecctlwrite = modeInfo.mUseCctlWrite;
+		cctlhd.mpDebugReadHandler = modeInfo.mpCctlDebugRead;
+		cctlhd.mpReadHandler = modeInfo.mpCctlRead;
+		cctlhd.mpWriteHandler = modeInfo.mpCctlWrite;
+	}
+
+	if (modeInfo.mSpec1Size) {
+		spec1Base = modeInfo.mSpec1Base;
+		spec1Size = modeInfo.mSpec1Size;
+		spec1hd.mpDebugReadHandler = modeInfo.mpSpec1DebugRead;
+		spec1hd.mpReadHandler = modeInfo.mpSpec1Read;
+		spec1hd.mpWriteHandler = modeInfo.mpSpec1Write;
+	}
+
 	switch(mCartMode) {
 		case kATCartridgeMode_SuperCharger3D:
 			usecctl = true;
@@ -1760,39 +2229,6 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			cctlhd.mpDebugReadHandler = ReadByte_CCTL_SC3D;
 			cctlhd.mpReadHandler = ReadByte_CCTL_SC3D;
 			cctlhd.mpWriteHandler = WriteByte_CCTL_SC3D;
-			break;
-
-		case kATCartridgeMode_5200_4K:
-			fixedBase	= 0x40;
-			fixedSize	= 0x80;
-			fixedMask	= 0x0F;
-			break;
-
-		case kATCartridgeMode_5200_8K:
-			fixedBase	= 0x40;
-			fixedSize	= 0x80;
-			fixedMask	= 0x1F;
-			break;
-
-		case kATCartridgeMode_5200_16K_TwoChip:
-			fixedBase	= 0x40;
-			fixedSize	= 0x40;
-			fixedMask	= 0x1F;
-			fixed2Base	= 0x80;
-			fixed2Size	= 0x40;
-			fixed2Offset= 0x2000;
-			fixed2Mask	= 0x1F;
-			break;
-
-		case kATCartridgeMode_5200_16K_OneChip:
-			fixedBase	= 0x40;
-			fixedSize	= 0x80;
-			fixedMask	= 0x3F;
-			break;
-
-		case kATCartridgeMode_5200_32K:
-			fixedBase	= 0x40;
-			fixedSize	= 0x80;
 			break;
 
 		case kATCartridgeMode_BountyBob5200:
@@ -1866,177 +2302,6 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			spec2Enabled = true;
 			break;
 
-		case kATCartridgeMode_2K:
-		case kATCartridgeMode_4K:
-		case kATCartridgeMode_8K:
-			fixedBase	= 0xA0;
-			fixedSize	= 0x20;
-			break;
-
-		case kATCartridgeMode_16K:
-			fixedBase	= 0x80;
-			fixedSize	= 0x40;
-			break;
-
-		case kATCartridgeMode_RightSlot_4K:
-		case kATCartridgeMode_RightSlot_8K:
-			fixedBase	= 0x80;
-			fixedSize	= 0x20;
-			break;
-
-		case kATCartridgeMode_XEGS_32K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x20;
-			fixedBase	= 0xA0;
-			fixedSize	= 0x20;
-			fixedOffset	= 0x006000;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank<0x03>;
-			break;
-
-		case kATCartridgeMode_XEGS_64K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x20;
-			fixedBase	= 0xA0;
-			fixedSize	= 0x20;
-			fixedOffset	= 0x00E000;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank<0x07>;
-			break;
-
-		case kATCartridgeMode_XEGS_64K_Alt:
-			// Similar to XEGS 64K except with 4-bit banking instead of
-			// 3-bit (essentially, 64K of ROM in a 128K cart).
-			// Reference: Atari800 4.0.0 CART.txt, type 67
-			bank1Base	= 0x80;
-			bank1Size	= 0x20;
-			fixedBase	= 0xA0;
-			fixedSize	= 0x20;
-			fixedOffset	= 0x00E000;
-			spec1Base	= 0x80;
-			spec1Size	= 0x20;
-			spec1hd.mpDebugReadHandler = ReadByte_Unmapped;
-			spec1hd.mpReadHandler = ReadByte_Unmapped;
-			spec1hd.mpWriteHandler = WriteByte_Unmapped;
-			spec1ReadEnabled = false;
-			spec1WriteEnabled = false;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_XEGS_64K_Alt;
-			break;
-
-		case kATCartridgeMode_XEGS_128K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x20;
-			fixedBase	= 0xA0;
-			fixedSize	= 0x20;
-			fixedOffset	= 0x01E000;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank<0x0F>;
-			break;
-
-		case kATCartridgeMode_XEGS_256K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x20;
-			fixedBase	= 0xA0;
-			fixedSize	= 0x20;
-			fixedOffset	= 0x03E000;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank<0x1F>;
-			break;
-
-		case kATCartridgeMode_XEGS_512K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x20;
-			fixedBase	= 0xA0;
-			fixedSize	= 0x20;
-			fixedOffset	= 0x07E000;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank<0x3F>;
-			break;
-
-		case kATCartridgeMode_XEGS_1M:
-			bank1Base	= 0x80;
-			bank1Size	= 0x20;
-			fixedBase	= 0xA0;
-			fixedSize	= 0x20;
-			fixedOffset	= 0x0FE000;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank<0x7F>;
-			break;
-
-		case kATCartridgeMode_Switchable_XEGS_32K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x20;
-			fixedBase	= 0xA0;
-			fixedSize	= 0x20;
-			fixedOffset	= 0x006000;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x03>;
-			break;
-
-		case kATCartridgeMode_Switchable_XEGS_64K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x20;
-			fixedBase	= 0xA0;
-			fixedSize	= 0x20;
-			fixedOffset	= 0x00E000;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x07>;
-			break;
-
-		case kATCartridgeMode_Switchable_XEGS_128K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x20;
-			fixedBase	= 0xA0;
-			fixedSize	= 0x20;
-			fixedOffset	= 0x01E000;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x0F>;
-			break;
-
-		case kATCartridgeMode_Switchable_XEGS_256K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x20;
-			fixedBase	= 0xA0;
-			fixedSize	= 0x20;
-			fixedOffset	= 0x03E000;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x1F>;
-			break;
-
-		case kATCartridgeMode_Switchable_XEGS_512K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x20;
-			fixedBase	= 0xA0;
-			fixedSize	= 0x20;
-			fixedOffset	= 0x07E000;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x3F>;
-			break;
-
-		case kATCartridgeMode_Switchable_XEGS_1M:
-			bank1Base	= 0x80;
-			bank1Size	= 0x20;
-			fixedBase	= 0xA0;
-			fixedSize	= 0x20;
-			fixedOffset	= 0x0FE000;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x7F>;
-			break;
-
 		case kATCartridgeMode_DB_32K:
 			bank1Base	= 0x80;
 			bank1Size	= 0x20;
@@ -2046,62 +2311,6 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			usecctl = true;
 			usecctlwrite = true;
 			cctlhd.mpWriteHandler = WriteByte_CCTL_AddressToBank<0x03>;
-			break;
-
-		case kATCartridgeMode_MegaCart_16K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x40;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x00>;
-			break;
-
-		case kATCartridgeMode_MegaCart_32K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x40;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x01>;
-			break;
-
-		case kATCartridgeMode_MegaCart_64K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x40;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x03>;
-			break;
-
-		case kATCartridgeMode_MegaCart_128K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x40;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x07>;
-			break;
-
-		case kATCartridgeMode_MegaCart_256K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x40;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x0F>;
-			break;
-
-		case kATCartridgeMode_MegaCart_512K:
-			bank1Base	= 0x80;
-			bank1Size	= 0x40;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x1F>;
-			break;
-
-		case kATCartridgeMode_MegaCart_1M:
-			bank1Base	= 0x80;
-			bank1Size	= 0x40;
-			usecctl = true;
-			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x3F>;
 			break;
 
 		case kATCartridgeMode_MegaCart_2M:
@@ -2857,6 +3066,7 @@ void ATCartridgeEmulator::UpdateCartBank() {
 		case kATCartridgeMode_Blizzard_32K:
 		case kATCartridgeMode_aDawliah_32K:
 		case kATCartridgeMode_aDawliah_64K:
+		case kATCartridgeMode_JRC_64K_RAM:
 			// 8K banks
 			mpMemMan->SetLayerMemory(mpMemLayerVarBank1, cartbase + (mCartBank << 13));
 			break;
@@ -2941,6 +3151,7 @@ void ATCartridgeEmulator::UpdateCartBank() {
 void ATCartridgeEmulator::UpdateCartBank2() {
 	switch(mCartMode) {
 		case kATCartridgeMode_SIC:
+		case kATCartridgeMode_JRC_64K_RAM:
 			return;
 
 		case kATCartridgeMode_TheCart_32M:
@@ -3434,6 +3645,16 @@ void ATCartridgeEmulator::InitDebugBankMap() {
 
 		case kATCartridgeMode_MaxFlash_128K:
 			for(uint32 i=0; i<16; ++i) {
+				auto& bank = mDebugBankMap[i];
+
+				const sint32 baseOffset = i << 13;
+				bank[2] = baseOffset;
+				bank[3] = baseOffset + 0x1000;
+			}
+			break;
+
+		case kATCartridgeMode_JRC_64K_RAM:
+			for(uint32 i=0; i<8; ++i) {
 				auto& bank = mDebugBankMap[i];
 
 				const sint32 baseOffset = i << 13;

@@ -23,7 +23,12 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <shlwapi.h>
+
+#pragma warning(push)
+#pragma warning(disable: 4091)		// shlobj.h(1151): warning C4091: 'typedef ': ignored on left of 'tagGPFIDL_FLAGS' when no variable is declared (compiling source file source\uifileassoc.cpp)
 #include <shlobj.h>
+#pragma warning(pop)
+
 #include "resource.h"
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/uiproxies.h>

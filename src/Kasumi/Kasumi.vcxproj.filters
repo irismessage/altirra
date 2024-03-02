@@ -154,6 +154,9 @@
     <ClCompile Include="source\stdafx.cpp">
       <Filter>Precompiled Header Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\uberblit_ycbcr_sse2_intrin.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\bitutils.h">
@@ -272,6 +275,9 @@
     </ClInclude>
     <ClInclude Include="h\stdafx.h">
       <Filter>Precompiled Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uberblit_ycbcr_sse2_intrin.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

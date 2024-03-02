@@ -36,9 +36,12 @@ void ATAudioMonitor::Init(ATPokeyEmulator *pokey, IATUIRenderer *uir, bool secon
 	mpUIRenderer = uir;
 	mbSecondary = secondary;
 
+	memset(mAudioStates, 0, sizeof mAudioStates);
+
+	mLog = {};
 	mLog.mpStates = mAudioStates;
-	mLog.mRecordedCount = 0;
-	mLog.mMaxCount = sizeof(mAudioStates)/sizeof(mAudioStates[0]);
+	mLog.mMaxSamples = vdcountof(mAudioStates);
+	mLog.mCyclesPerSample = 114;
 
 	pokey->SetAudioLog(&mLog);
 	uir->SetAudioMonitor(mbSecondary, this);
@@ -57,13 +60,20 @@ void ATAudioMonitor::Shutdown() {
 	}
 }
 
+void ATAudioMonitor::SetMixedSampleCount(uint32 len) {
+	mMixedSampleBuffer.resize(len);
+
+	mLog.mpMixedSamples = mMixedSampleBuffer.data();
+
+	if (mLog.mNumMixedSamples > len)
+		mLog.mNumMixedSamples = len;
+
+	mLog.mMaxMixedSamples = len;
+}
+
 void ATAudioMonitor::Update(ATPokeyAudioLog **log, ATPokeyRegisterState **rstate) {
 	mpPokey->GetRegisterState(mRegisterState);
 
 	*log = &mLog;
 	*rstate = &mRegisterState;
-}
-
-void ATAudioMonitor::Reset() {
-	mLog.mRecordedCount = 0;
 }

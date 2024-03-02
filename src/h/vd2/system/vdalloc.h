@@ -88,6 +88,7 @@ public:
 	vdautoptr(const vdautoptr&) = delete;
 	vdautoptr& operator=(vdautoptr&) = delete;
 
+	vdnothrow vdautoptr(std::nullptr_t) noexcept : ptr(nullptr) {}
 	vdnothrow explicit vdautoptr(T *p = nullptr) noexcept : ptr(p) {}
 
 	vdnothrow vdautoptr(vdautoptr&& src) noexcept : ptr(src.ptr) {

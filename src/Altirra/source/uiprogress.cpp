@@ -23,6 +23,7 @@
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/progress.h>
 #include "resource.h"
+#include "uiaccessors.h"
 #include "uiprogress.h"
 
 ///////////////////////////////////////////////////////////////////////////
@@ -33,6 +34,8 @@ public:
 
 	void Init(const wchar_t *desc, const wchar_t *statusFormat, uint32 total, VDGUIHandle parent);
 	void Update(uint32 value);
+	bool CheckForCancellationOrStatus();
+	void UpdateStatus(const wchar_t *msg);
 	void Shutdown();
 
 	bool OnLoaded();
@@ -121,6 +124,33 @@ void ATUIProgressDialogW32::Update(uint32 value) {
 	}
 }
 
+bool ATUIProgressDialogW32::CheckForCancellationOrStatus() {
+	if (mbAborted)
+		throw MyUserAbortError();
+
+	DWORD t = GetTickCount();
+	bool shouldUpdate = false;
+
+	if (t - mLastUpdateTime >= 100) {
+		shouldUpdate = true;
+		mLastUpdateTime = t;
+	}
+
+	MSG msg;
+	while(!mbAborted && PeekMessage(&msg, NULL, 0, 0, PM_REMOVE | PM_NOYIELD)) {
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
+	}
+
+	return shouldUpdate;
+}
+
+void ATUIProgressDialogW32::UpdateStatus(const wchar_t *msg) {
+	mStatusFormat.clear();
+
+	SetWindowTextW(mhwndStatus, msg);
+}
+
 void ATUIProgressDialogW32::Shutdown() {
 	Close();
 }
@@ -159,6 +189,222 @@ bool ATUIProgressDialogW32::OnClose() {
 
 /////////////////////////////////////////////////////////////////////////////
 
+class ATUIProgressBackgroundTaskDialogW32 final : public VDDialogFrameW32, public IATTaskProgressContext, public VDThread {
+public:
+	ATUIProgressBackgroundTaskDialogW32(const wchar_t *desc,  const vdfunction<void(IATTaskProgressContext&)>& fn);
+
+	MyError& GetPendingError() { return mPendingError; }
+
+	bool OnLoaded() override;
+	void OnDestroy() override;
+	bool OnClose() override;
+	bool OnTimer(uint32 id) override;
+
+	void OnCancelClicked();
+
+public:
+	bool CheckForCancellationOrStatus() override;
+	void SetProgress(double progress) override;
+	void SetProgressF(double progress, const wchar_t *format, ...) override;
+
+public:
+	void ThreadRun() override;
+
+protected:
+	void SetProgressInternal(double progress);
+	void UpdateProgressAndStatus();
+
+	VDUIProxyButtonControl mCancelButton;
+	ATUINativeWindowProxy mDescLabel;
+	ATUINativeWindowProxy mStatusLabel;
+	VDStringW mDesc;
+	VDStringW mStatusTextPending;
+	int mLastIntProgress = 0;
+	HWND mhwndProgress = nullptr;
+
+	const vdfunction<void(IATTaskProgressContext&)>& mpFn;
+	MyError mPendingError;
+
+	VDAtomicInt mUpdateRequested;
+	VDAtomicInt mCancellationRequested;
+
+	VDCriticalSection mMutex;
+	bool mbProgressUpdatePending = false;
+	bool mbStatusUpdatePending = false;
+	double mProgress = 0;
+	VDStringW mStatusText;
+};
+
+ATUIProgressBackgroundTaskDialogW32::ATUIProgressBackgroundTaskDialogW32(const wchar_t *desc, const vdfunction<void(IATTaskProgressContext&)>& fn)
+	: VDDialogFrameW32(IDD_PROGRESS)
+	, mDesc(desc)
+	, mpFn(fn)
+{
+	mCancelButton.SetOnClicked([this] { OnCancelClicked(); });
+}
+
+bool ATUIProgressBackgroundTaskDialogW32::OnLoaded() {
+	mbProgressUpdatePending = false;
+	mbStatusUpdatePending = false;
+	mProgress = -1;
+	mUpdateRequested = 0;
+	mCancellationRequested = 0;
+	mLastIntProgress = -1;
+
+	AddProxy(&mCancelButton, IDCANCEL);
+	mhwndProgress = GetControl(IDC_PROGRESS);
+
+	if (mhwndProgress) {
+		SendMessage(mhwndProgress, PBM_SETMARQUEE, TRUE, 0);
+	}
+
+	mDescLabel = ATUINativeWindowProxy(GetControl(IDC_STATIC_DESC));
+	mStatusLabel = ATUINativeWindowProxy(GetControl(IDC_STATIC_STATUS));
+
+	SetPeriodicTimer(1, 100);
+
+	mDescLabel.SetCaption(mDesc.c_str());
+
+	if (!ThreadStart()) {
+		mCancellationRequested = 1;
+		mpFn(*this);
+	}
+
+	return false;
+}
+
+void ATUIProgressBackgroundTaskDialogW32::OnDestroy() {
+	mCancellationRequested = 1;
+	ThreadWait();
+}
+
+bool ATUIProgressBackgroundTaskDialogW32::OnClose() {
+	mCancellationRequested = 1;
+	return true;
+}
+
+bool ATUIProgressBackgroundTaskDialogW32::OnTimer(uint32 id) {
+	if (id == 1) {
+		mUpdateRequested = 1;
+		return true;
+	}
+
+	return false;
+}
+
+void ATUIProgressBackgroundTaskDialogW32::OnCancelClicked() {
+	mCancellationRequested = true;
+}
+
+bool ATUIProgressBackgroundTaskDialogW32::CheckForCancellationOrStatus() {
+	if (mCancellationRequested)
+		throw MyUserAbortError();
+
+	return mUpdateRequested.compareExchange(0, 1) == 1;
+}
+
+void ATUIProgressBackgroundTaskDialogW32::SetProgress(double progress) {
+	vdsynchronized(mMutex) {
+		SetProgressInternal(progress);
+	}
+}
+
+void ATUIProgressBackgroundTaskDialogW32::SetProgressF(double progress, const wchar_t *format, ...) {
+	va_list val;
+	va_start(val, format);
+
+	vdsynchronized(mMutex) {
+		SetProgressInternal(progress);
+
+		mStatusText.clear();
+		mStatusText.append_vsprintf(format, val);
+
+		if (!mbStatusUpdatePending) {
+			mbStatusUpdatePending = true;
+
+			if (!mbProgressUpdatePending)
+				PostCall([this] { UpdateProgressAndStatus(); });
+		}
+	}
+
+	va_end(val);
+}
+
+void ATUIProgressBackgroundTaskDialogW32::ThreadRun() {
+	try {
+		mpFn(*this);
+	} catch(const MyUserAbortError&) {
+	} catch(MyError& e) {
+		mPendingError.TransferFrom(e);
+	}
+
+	PostCall([this] { End(1); });
+}
+
+void ATUIProgressBackgroundTaskDialogW32::SetProgressInternal(double progress) {
+	if (mProgress != progress) {
+		mProgress = progress;
+
+		if (!mbProgressUpdatePending) {
+			mbProgressUpdatePending = true;
+
+			if (!mbStatusUpdatePending)
+				PostCall([this] { UpdateProgressAndStatus(); });
+		}
+	}
+}
+
+void ATUIProgressBackgroundTaskDialogW32::UpdateProgressAndStatus() {
+	bool statusUpdate = false;
+	bool progressUpdate = false;
+	double progress;
+
+	vdsynchronized(mMutex) {
+		if (mbProgressUpdatePending) {
+			mbProgressUpdatePending = false;
+
+			progressUpdate = true;
+			progress = mProgress;
+		}
+
+		if (mbStatusUpdatePending) {
+			mbStatusUpdatePending = false;
+
+			statusUpdate = true;
+			mStatusTextPending.swap(mStatusText);
+		}
+	}
+
+	if (progressUpdate && mhwndProgress) {
+		int ipos = -1;
+
+		if (progress >= 0) {
+			ipos = (int)(std::min<double>(progress, 1.0) * 4096.0 + 0.5);
+		}
+
+		if (mLastIntProgress != ipos) {
+			if (ipos < 0) {
+				SendMessage(mhwndProgress, PBM_SETMARQUEE, TRUE, 0);
+			} else {
+				if (mLastIntProgress < 0) {
+					SendMessage(mhwndProgress, PBM_SETMARQUEE, FALSE, 0);
+					SendMessage(mhwndProgress, PBM_SETRANGE32, 0, MAKELONG(0, 4096));
+				}
+
+				SendMessage(mhwndProgress, PBM_SETPOS, ipos, 0);
+			}
+
+			mLastIntProgress = ipos;
+		}
+	}
+
+	if (statusUpdate) {
+		mStatusLabel.SetCaption(mStatusTextPending.c_str());
+	}
+}
+
+/////////////////////////////////////////////////////////////////////////////
+
 class ATUIProgressHandler final : public IATProgressHandler {
 public:
 	ATUIProgressHandler();
@@ -166,7 +412,11 @@ public:
 	void Begin(uint32 total, const wchar_t *status, const wchar_t *desc) override;
 	void BeginF(uint32 total, const wchar_t *status, const wchar_t *descFormat, va_list descArgs) override;
 	void Update(uint32 value) override;
+	bool CheckForCancellationOrStatus() override;
+	void UpdateStatus(const wchar_t *statusMessage) override;
 	void End() override;
+
+	bool RunTask(const wchar_t *desc, const vdfunction<void(IATTaskProgressContext&)>&) override;
 
 private:
 	ATUIProgressDialogW32 *mpDialog = nullptr;
@@ -197,6 +447,15 @@ void ATUIProgressHandler::Update(uint32 value) {
 		mpDialog->Update(value);
 }
 
+bool ATUIProgressHandler::CheckForCancellationOrStatus() {
+	return mpDialog && mNestingCount == 1 && mpDialog->CheckForCancellationOrStatus();
+}
+
+void ATUIProgressHandler::UpdateStatus(const wchar_t *statusMessage) {
+	if (mpDialog && mNestingCount == 1)
+		mpDialog->UpdateStatus(statusMessage);
+}
+
 void ATUIProgressHandler::End() {
 	VDASSERT(mNestingCount > 0);
 
@@ -209,6 +468,20 @@ void ATUIProgressHandler::End() {
 			delete p;
 		}
 	}
+}
+
+bool ATUIProgressHandler::RunTask(const wchar_t *desc, const vdfunction<void(IATTaskProgressContext&)>& fn) {
+	ATUIProgressBackgroundTaskDialogW32 dlg(desc, fn);
+
+	if (!dlg.ShowDialog(ATUIGetNewPopupOwner()))
+		return false;
+
+	MyError& e = dlg.GetPendingError();
+
+	if (!e.empty())
+		throw e;
+
+	return true;
 }
 
 /////////////////////////////////////////////////////////////////////////////

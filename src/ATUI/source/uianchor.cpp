@@ -9,14 +9,14 @@ public:
 
 	virtual void *AsInterface(uint32 typeId) { return NULL; }
 
-	virtual vdrect32 Position(const vdrect32& containerArea, const vdsize32& size);
+	virtual vdrect32 Position(const vdrect32& containerArea, const vdsize32& size, const ATUIWidgetMetrics& m);
 
 protected:
 	const float mFractionX;
 	const float mFractionY;
 };
 
-vdrect32 ATUITranslationAnchor::Position(const vdrect32& containerArea, const vdsize32& size) {
+vdrect32 ATUITranslationAnchor::Position(const vdrect32& containerArea, const vdsize32& size, const ATUIWidgetMetrics& m) {
 	const sint32 dx = containerArea.width() - size.w;
 	const sint32 dy = containerArea.height() - size.h;
 
@@ -42,33 +42,84 @@ void ATUICreateTranslationAnchor(float fractionX, float fractionY, IATUIAnchor *
 	*anchor = p;
 }
 
-class ATUIProportionAnchor : public vdrefcounted<IATUIAnchor> {
+class ATUIProportionAnchor : public vdrefcounted<IATUIProportionAnchor> {
 public:
-	ATUIProportionAnchor(const vdrect32f& area) : mArea(area) {}
+	ATUIProportionAnchor(const vdrect32f& area, const vdrect32& offsets) : mArea(area), mOffsets(offsets) {}
 
-	void *AsInterface(uint32 typeId) override { return NULL; }
+public:
+	vdrect32f GetArea() const override;
+	vdrect32 GetOffsets() const override;
+	vdfloat2 GetPivot() const override;
+	void SetArea(const vdrect32f& area) override;
+	void SetOffsets(const vdrect32& offset) override;
+	void SetPivot(const vdfloat2& pt) override;
 
-	vdrect32 Position(const vdrect32& containerArea, const vdsize32& size) override;
+public:
+	void *AsInterface(uint32 typeId) override;
+
+public:
+	vdrect32 Position(const vdrect32& containerArea, const vdsize32& size, const ATUIWidgetMetrics& m) override;
+
 
 protected:
 	vdrect32f mArea;
+	vdrect32 mOffsets;
+	vdfloat2 mPivot;
 };
 
-vdrect32 ATUIProportionAnchor::Position(const vdrect32& containerArea, const vdsize32& size) {
+void *ATUIProportionAnchor::AsInterface(uint32 typeId) {
+	if (typeId == IATUIProportionAnchor::kTypeID)
+		return static_cast<IATUIProportionAnchor *>(this);
+
+	return nullptr;
+}
+
+vdrect32f ATUIProportionAnchor::GetArea() const {
+	return mArea;
+}
+
+vdrect32 ATUIProportionAnchor::GetOffsets() const {
+	return mOffsets;
+}
+
+vdfloat2 ATUIProportionAnchor::GetPivot() const {
+	return mPivot;
+}
+
+void ATUIProportionAnchor::SetArea(const vdrect32f& area) {
+	mArea = area;
+}
+
+void ATUIProportionAnchor::SetOffsets(const vdrect32& offset) {
+	mOffsets = offset;
+}
+
+void ATUIProportionAnchor::SetPivot(const vdfloat2& pivot) {
+	mPivot = pivot;
+}
+
+vdrect32 ATUIProportionAnchor::Position(const vdrect32& containerArea, const vdsize32& size, const ATUIWidgetMetrics& m) {
 	const float w = (float)containerArea.width();
 	const float h = (float)containerArea.height();
 
 	vdrect32 r;
-	r.left = VDRoundToInt32(w * mArea.left);
-	r.top = VDRoundToInt32(h * mArea.top);
-	r.right = VDRoundToInt32(w * mArea.right);
-	r.bottom = VDRoundToInt32(h * mArea.bottom);
+	r.left = VDRoundToInt32(w * mArea.left) + mOffsets.left;
+	r.top = VDRoundToInt32(h * mArea.top) + mOffsets.top;
+	r.right = std::max<sint32>(r.left, VDRoundToInt32(w * mArea.right) + mOffsets.right);
+	r.bottom = std::max<sint32>(r.top, VDRoundToInt32(h * mArea.bottom) + mOffsets.bottom);
 
 	return r;
 }
 
 void ATUICreateProportionAnchor(const vdrect32f& area, IATUIAnchor **anchor) {
-	IATUIAnchor *p = new ATUIProportionAnchor(area);
+	IATUIAnchor *p = new ATUIProportionAnchor(area, vdrect32(0, 0, 0, 0));
+
+	p->AddRef();
+	*anchor = p;
+}
+
+void ATUICreateProportionAnchor(const vdrect32f& area, const vdrect32& offsets, IATUIAnchor **anchor) {
+	IATUIAnchor *p = new ATUIProportionAnchor(area, offsets);
 
 	p->AddRef();
 	*anchor = p;

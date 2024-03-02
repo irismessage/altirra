@@ -18,6 +18,7 @@
 #include <stdafx.h>
 #include <vd2/system/math.h>
 #include <vd2/system/memory.h>
+#include <vd2/system/registry.h>
 #include <vd2/system/time.h>
 #include <vd2/system/VDString.h>
 #include <vd2/Kasumi/pixmap.h>
@@ -32,11 +33,14 @@
 #include "uirender.h"
 #include "audiomonitor.h"
 #include "slightsid.h"
-#include <at/atui/uiwidget.h>
-#include <at/atuicontrols/uilabel.h>
-#include "uikeyboard.h"
+#include <at/atui/uianchor.h>
 #include <at/atui/uicontainer.h>
 #include <at/atui/uimanager.h>
+#include <at/atui/uiwidget.h>
+#include <at/atuicontrols/uibutton.h>
+#include <at/atuicontrols/uilabel.h>
+#include "uikeyboard.h"
+#include "settings.h"
 
 namespace {
 	void Shade(IVDDisplayRenderer& rdr, int x1, int y1, int dx, int dy) {
@@ -50,7 +54,839 @@ namespace {
 }
 
 ///////////////////////////////////////////////////////////////////////////
-class ATUIAudioStatusDisplay : public ATUIWidget {
+class ATUIOverlayCustomization final : public ATUIContainer {
+public:
+	void Init();
+	void Shutdown();
+
+	void AddCustomizableWidget(const char *tag, ATUIWidget *w, const wchar_t *mpLabel);
+	void BindCustomizableWidget(const char *tag, ATUIWidget *w);
+	void RemoveCustomizableWidget(ATUIWidget *w);
+
+	void SetDefaultPlacement(const char *tag, const vdrect32f& anchors, const vdpoint32& offset, const vdfloat2& pivot, const vdsize32& sizeOffset, bool autoSize);
+
+private:
+	void OnCreate() override;
+	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) override;
+	void OnSetFocus() override;
+	bool OnKeyDown(const ATUIKeyEvent& event) override;
+	void OnMouseMove(sint32 x, sint32 y) override;
+	void OnMouseDownL(sint32 x, sint32 y) override;
+	void OnMouseUpL(sint32 x, sint32 y) override;
+	void OnMouseLeave() override;
+
+	void SetSelectedIndex(sint32 idx);
+	void UpdateSelectionLabel();
+	void SetHoveredIndex(sint32 idx);
+	void SetSelectionAnchor(sint32 x, sint32 y);
+	void UpdateSelectedAnchor();
+	void RepositionAnchorPanel();
+	static vdint2 AnchorsToAlignment(const vdrect32f& anchors);
+	static std::pair<vdrect32f, vdfloat2> AlignmentToAnchorsAndPivot(const vdint2& alignment);
+
+	void LoadSettings(ATSettingsCategory categoryMask, VDRegistryKey& key);
+	void SaveSettings(ATSettingsCategory categoryMask, VDRegistryKey& key);
+
+	struct CWidgetInfo {
+		ATUIWidget *mpWidget;
+		const char *mpTag;
+		const wchar_t *mpLabel;
+		vdrect32f mAnchors;
+		vdpoint32 mOffset;
+		vdfloat2 mPivot;
+		vdsize32 mSizeOffset;
+		bool mbAutoSize;
+		vdrect32f mDefaultAnchors;
+		vdpoint32 mDefaultOffset;
+		vdfloat2 mDefaultPivot;
+		vdsize32 mDefaultSizeOffset;
+		bool mbDefaultAutoSize;
+		bool mbUsingDefault;
+	};
+
+	vdfastvector<CWidgetInfo> mCustomizableWidgets;
+	sint32 mSelectedIndex = -1;
+	sint32 mHoveredIndex = -1;
+
+	bool mbSelectionLockedX = false;
+	bool mbSelectionLockedY = false;
+	ATUIWidgetMetrics mSelectionConstraints;
+	bool mbDragging = false;
+	bool mbDragMoving = false;
+
+	struct DragFactor {
+		sint32 mAxisScale;
+		sint32 mAxisOffset;
+	};
+
+	DragFactor mDragOffsetOX;
+	DragFactor mDragOffsetOY;
+	DragFactor mDragOffsetSX;
+	DragFactor mDragOffsetSY;
+
+	vdrefptr<ATUIContainer> mpAnchorPanel;
+	vdrefptr<ATUIButton> mpAnchorButtons[4][4];
+	vdrefptr<ATUILabel> mpSelectionLabel;
+
+	ATSettingsLoadSaveCallback mLoadCallback;
+	ATSettingsLoadSaveCallback mSaveCallback;
+};
+
+void ATUIOverlayCustomization::Init() {
+	mLoadCallback = [this](ATSettingsCategory categoryMask, VDRegistryKey& key) {
+		LoadSettings(categoryMask, key);
+	};
+
+	mSaveCallback = [this](ATSettingsCategory categoryMask, VDRegistryKey& key) {
+		SaveSettings(categoryMask, key);
+	};
+
+	ATSettingsRegisterLoadCallback(&mLoadCallback);
+	ATSettingsRegisterSaveCallback(&mSaveCallback);
+}
+
+void ATUIOverlayCustomization::Shutdown() {
+	for(auto& cwi : mCustomizableWidgets) {
+		vdsaferelease <<= cwi.mpWidget;
+	}
+
+	ATSettingsUnregisterLoadCallback(&mLoadCallback);
+	ATSettingsUnregisterSaveCallback(&mSaveCallback);
+}
+
+void ATUIOverlayCustomization::AddCustomizableWidget(const char *tag, ATUIWidget *w, const wchar_t *label) {
+	if (w)
+		w->AddRef();
+
+	CWidgetInfo& cwi = mCustomizableWidgets.push_back();
+	cwi.mpWidget = w;
+	cwi.mpTag = tag;
+	cwi.mpLabel = label;
+	
+	if (w) {
+		cwi.mDefaultAnchors = w->GetAnchors();
+		cwi.mDefaultOffset = w->GetOffset();
+		cwi.mDefaultPivot = w->GetPivot();
+		cwi.mDefaultSizeOffset = w->GetSizeOffset();
+		cwi.mbDefaultAutoSize = w->IsAutoSize();
+	} else {
+		cwi.mDefaultAnchors = vdrect32f(0, 0, 0, 0);
+		cwi.mDefaultOffset = vdpoint32(0, 0);
+		cwi.mDefaultPivot = vdfloat2{0, 0};
+		cwi.mDefaultSizeOffset = vdsize32(0, 0);
+		cwi.mbDefaultAutoSize = true;
+	}
+
+	cwi.mAnchors = cwi.mDefaultAnchors;
+	cwi.mOffset = cwi.mDefaultOffset;
+	cwi.mPivot = cwi.mDefaultPivot;
+	cwi.mSizeOffset = cwi.mDefaultSizeOffset;
+	cwi.mbAutoSize = cwi.mbDefaultAutoSize;
+	cwi.mbUsingDefault = true;
+
+	if (w)
+		Invalidate();
+}
+
+void ATUIOverlayCustomization::BindCustomizableWidget(const char *tag, ATUIWidget *w) {
+	sint32 index = 0;
+
+	for(auto& cwi : mCustomizableWidgets) {
+		if (!strcmp(cwi.mpTag, tag)) {
+			if (cwi.mpWidget != w) {
+				if (!w && mSelectedIndex == index)
+					SetSelectedIndex(-1);
+
+				if (cwi.mpWidget)
+					cwi.mpWidget->Release();
+
+				if (w)
+					w->AddRef();
+
+				cwi.mpWidget = w;
+
+				if (w) {
+					w->SetPlacement(cwi.mAnchors, cwi.mOffset, cwi.mPivot);
+					if (cwi.mbAutoSize)
+						w->SetAutoSize();
+					else
+						w->SetSizeOffset(cwi.mSizeOffset);
+				}
+			}
+			break;
+		}
+
+		++index;
+	}
+}
+
+void ATUIOverlayCustomization::RemoveCustomizableWidget(ATUIWidget *w) {
+	if (!w)
+		return;
+
+	auto it = std::find_if(mCustomizableWidgets.begin(), mCustomizableWidgets.end(),
+		[=](const CWidgetInfo& ci) {
+			return ci.mpWidget == w;
+		}
+	);
+
+	if (it == mCustomizableWidgets.end())
+		return;
+
+	const sint32 pos = (sint32)(it - mCustomizableWidgets.begin());
+
+	if (mSelectedIndex == pos)
+		SetSelectedIndex(-1);
+	else if (mSelectedIndex > pos)
+		--mSelectedIndex;
+
+	if (mHoveredIndex == pos)
+		mHoveredIndex = -1;
+	else if (mHoveredIndex > pos)
+		--mHoveredIndex;
+
+	mCustomizableWidgets.erase(it);
+
+	w->Release();
+	Invalidate();
+}
+
+void ATUIOverlayCustomization::SetDefaultPlacement(const char *tag, const vdrect32f& anchors, const vdpoint32& offset, const vdfloat2& pivot, const vdsize32& sizeOffset, bool autoSize) {
+	for (auto& cwi : mCustomizableWidgets) {
+		if (!strcmp(cwi.mpTag, tag)) {
+			cwi.mDefaultAnchors = anchors;
+			cwi.mDefaultOffset = offset;
+			cwi.mDefaultPivot = pivot;
+			cwi.mDefaultSizeOffset = sizeOffset;
+			cwi.mbDefaultAutoSize = autoSize;
+
+			if (cwi.mbUsingDefault) {
+				cwi.mAnchors = cwi.mDefaultAnchors;
+				cwi.mOffset = cwi.mDefaultOffset;
+				cwi.mPivot = cwi.mDefaultPivot;
+				cwi.mSizeOffset = cwi.mDefaultSizeOffset;
+				cwi.mbAutoSize = cwi.mbDefaultAutoSize;
+
+				if (cwi.mpWidget) {
+					cwi.mpWidget->SetPlacement(anchors, offset, pivot);
+
+					if (cwi.mbAutoSize)
+						cwi.mpWidget->SetAutoSize();
+					else
+						cwi.mpWidget->SetSizeOffset(cwi.mSizeOffset);
+				}
+			}
+			break;
+		}
+	}
+}
+
+void ATUIOverlayCustomization::OnCreate() {
+	mpAnchorPanel = new ATUIContainer;
+	mpAnchorPanel->SetVisible(false);
+	AddChild(mpAnchorPanel);
+
+	static constexpr const wchar_t *kLabels[4][4] = {
+		{ L"TL", L"TC", L"TR", L"T*" },
+		{ L"ML", L"MC", L"MR", L"M*" },
+		{ L"BL", L"BC", L"BR", L"B*" },
+		{ L"*L", L"*C", L"*R", L"**" },
+	};
+
+	vdsize32 maxSize(0, 0);
+
+	for(int i=0; i<4; ++i) {
+		for(int j=0; j<4; ++j) {
+			vdrefptr<ATUIButton> button(new ATUIButton);
+
+			button->SetText(kLabels[i][j]);
+			mpAnchorPanel->AddChild(button);
+
+			maxSize.include(button->Measure().mMinSize);
+
+			button->OnPressedEvent() = [=] {
+				SetSelectionAnchor(j, i);
+			};
+
+			button->SetToggleMode(true);
+
+			mpAnchorButtons[i][j] = std::move(button);
+		}
+	}
+
+	for(int i=0; i<4; ++i) {
+		for(int j=0; j<4; ++j) {
+			vdrect32 r;
+
+			r.left = j * maxSize.w;
+			r.top = i * maxSize.h;
+			r.right = r.left + maxSize.w;
+			r.bottom = r.top + maxSize.h;
+			mpAnchorButtons[i][j]->SetArea(r);
+		}
+	}
+
+	mpAnchorPanel->SetSize(vdsize32(maxSize.w * 4, maxSize.h * 4));
+
+	vdrefptr<ATUIContainer> infoContainer{new ATUIContainer};
+	AddChild(infoContainer);
+	infoContainer->SetHitTransparent(true);
+	infoContainer->SetAlphaFillColor(0xE0000000);
+	infoContainer->SetAnchors(vdrect32f(0.05f, 0.05f, 0.05f, 0.05f));
+
+	vdrefptr<ATUILabel> label;
+	label = new ATUILabel;
+	infoContainer->AddChild(label);
+	label->SetHitTransparent(true);
+	label->SetDockMode(kATUIDockMode_Top);
+	label->SetFont(GetManager()->GetThemeFont(kATUIThemeFont_Header));
+	label->SetText(
+		L"Press Esc to exit customization mode.\n"
+		L"\n"
+		L"[Shift]+Tab - cycle selected item\n"
+		L"R - reset layout for selected item"
+	);
+	label->SetAlphaFillColor(0);
+	label->SetTextColor(0xFFFFFF);
+
+	mpSelectionLabel = new ATUILabel;
+	infoContainer->AddChild(mpSelectionLabel);
+	mpSelectionLabel->SetHitTransparent(true);
+	mpSelectionLabel->SetFont(GetManager()->GetThemeFont(kATUIThemeFont_Header));
+	mpSelectionLabel->SetAlphaFillColor(0);
+	mpSelectionLabel->SetTextColor(0xFFFFFF);
+	mpSelectionLabel->SetDockMode(kATUIDockMode_Top);
+
+	UpdateSelectionLabel();
+}
+
+void ATUIOverlayCustomization::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
+	sint32 index = 0;
+
+	for(const auto& cwi : mCustomizableWidgets) {
+		ATUIWidget *widget = cwi.mpWidget;
+		if (!widget)
+			continue;
+
+		vdrect32 r = widget->GetArea();
+
+		if (r.width() <= 0) {
+			r.right = r.left + 1;
+			--r.left;
+		}
+
+		if (r.height() <= 0) {
+			r.bottom = r.top + 1;
+			--r.top;
+		}
+
+		const uint32 c = (index == mSelectedIndex) ? 0xFF0000 : (index == mHoveredIndex) ? 0x4080FF : 0x808080;
+		++index;
+
+		rdr.SetColorRGB(c);
+
+		const sint32 rw = r.width();
+		const sint32 rh = r.height();
+
+		if (rw > 2 && rh > 2) {
+			rdr.FillRect(r.left, r.top, rw, 1);
+			rdr.FillRect(r.left, r.top+1, 1, rh-2);
+			rdr.FillRect(r.right-1, r.top+1, 1, rh-2);
+			rdr.FillRect(r.left, r.bottom-1, rw, 1);
+		} else {
+			rdr.FillRect(r.left, r.top, rw, rh);
+		}
+	}
+
+	ATUIContainer::Paint(rdr, w, h);
+}
+
+void ATUIOverlayCustomization::OnSetFocus() {
+}
+
+bool ATUIOverlayCustomization::OnKeyDown(const ATUIKeyEvent& event) {
+	if (event.mVirtKey == kATUIVK_Escape) {
+		GetParent()->Focus();
+
+		SetSelectedIndex(-1);
+		SetVisible(false);
+		return true;
+	} else if (event.mVirtKey == kATUIVK_Tab) {
+		sint32 n = (sint32)mCustomizableWidgets.size();
+		sint32 i = mSelectedIndex;
+
+		if (GetManager()->IsKeyDown(kATUIVK_Shift)) {
+			for(sint32 j = 0; j < n; ++j) {
+				if (--i < 0)
+					i = n - 1;
+
+				if (mCustomizableWidgets[i].mpWidget) {
+					SetSelectedIndex(i);
+					break;
+				}
+			}
+		} else {
+			if (i < 0)
+				i = -1;
+
+			for(sint32 j = 0; j < n; ++j) {
+				if (++i >= n)
+					i = 0;
+
+				if (mCustomizableWidgets[i].mpWidget) {
+					SetSelectedIndex(i);
+					break;
+				}
+			}
+		}
+		return true;
+	} else if (event.mVirtKey == kATUIVK_A + ('R' - 'A')) {
+		if ((size_t)mSelectedIndex < mCustomizableWidgets.size()) {
+			auto& cwi = mCustomizableWidgets[mSelectedIndex];
+
+			if (!cwi.mbUsingDefault) {
+				cwi.mbUsingDefault = true;
+
+				cwi.mAnchors = cwi.mDefaultAnchors;
+				cwi.mOffset = cwi.mDefaultOffset;
+				cwi.mPivot = cwi.mDefaultPivot;
+				cwi.mSizeOffset = cwi.mDefaultSizeOffset;
+				cwi.mbAutoSize = cwi.mbDefaultAutoSize;
+
+				cwi.mpWidget->SetPlacement(cwi.mDefaultAnchors, cwi.mDefaultOffset, cwi.mDefaultPivot);
+
+				if (cwi.mbAutoSize)
+					cwi.mpWidget->SetAutoSize();
+				else
+					cwi.mpWidget->SetSizeOffset(cwi.mSizeOffset);
+
+				cwi.mpWidget->GetParent()->UpdateLayout();
+				RepositionAnchorPanel();
+			}
+		}
+
+		return true;
+	}
+
+	return false;
+}
+
+void ATUIOverlayCustomization::OnMouseMove(sint32 x, sint32 y) {
+	if (mbDragging) {
+		auto& cwi = mCustomizableWidgets[mSelectedIndex];
+		ATUIWidget *widget = cwi.mpWidget;
+
+		vdpoint32 offset;
+		offset.x = (x * mDragOffsetOX.mAxisScale)/2 + mDragOffsetOX.mAxisOffset;
+		offset.y = (y * mDragOffsetOY.mAxisScale)/2 + mDragOffsetOY.mAxisOffset;
+		widget->SetOffset(offset);
+
+		cwi.mOffset = offset;
+
+		vdsize32 sz;
+		sz.w = (x * mDragOffsetSX.mAxisScale)/2 + mDragOffsetSX.mAxisOffset;
+		sz.h = (y * mDragOffsetSY.mAxisScale)/2 + mDragOffsetSY.mAxisOffset;
+		widget->SetSizeOffset(sz);
+
+		cwi.mSizeOffset = sz;
+		cwi.mbAutoSize = false;
+
+		widget->GetParent()->UpdateLayout();
+
+		RepositionAnchorPanel();
+
+		mCustomizableWidgets[mSelectedIndex].mbUsingDefault = false;
+	} else {
+		const vdpoint32 pt{x, y};
+
+		sint32 n = (sint32)mCustomizableWidgets.size();
+		sint32 offset = mSelectedIndex >= 0 ? mSelectedIndex + 1 : 0;
+
+		const sint32 edgeWidth = std::max<sint32>(1, (sint32)(0.5f + 4.0f * mpManager->GetThemeScaleFactor()));
+
+		sint32 foundIndex = -1;
+		for(sint32 i = 0; i < n; ++i) {
+			sint32 j = (i + offset) % n;
+			ATUIWidget *widget = mCustomizableWidgets[j].mpWidget;
+			if (!widget)
+				continue;
+
+			vdrect32 r = widget->GetArea();
+			vdrect32 r2 = r;
+
+			r2.left -= edgeWidth;
+			r2.top -= edgeWidth;
+			r2.right += edgeWidth;
+			r2.bottom += edgeWidth;
+
+			if (r2.contains(pt)) {
+				foundIndex = j;
+
+				sint32 axisx1 = 0;
+				sint32 axisx2 = 0;
+				sint32 axisy1 = 0;
+				sint32 axisy2 = 0;
+
+				if (x < r.right - edgeWidth)
+					axisx1 = -1;
+
+				if (x > r.left + edgeWidth)
+					axisx2 = -1;
+
+				if (y < r.bottom - edgeWidth)
+					axisy1 = -1;
+
+				if (y > r.top + edgeWidth)
+					axisy2 = -1;
+
+				// kill move axes unless both are moving
+				sint32 xMove = axisx1 & axisx2;
+				sint32 yMove = axisy1 & axisy2;
+
+				mbDragMoving = xMove && yMove;
+
+				if (xMove != yMove) {
+					axisx1 &= ~xMove;
+					axisx2 &= ~xMove;
+					axisy1 &= ~yMove;
+					axisy2 &= ~yMove;
+				}
+
+				// kill resizing for locked axes
+				if (mbSelectionLockedX && !xMove) {
+					axisx1 = 0;
+					axisx2 = 0;
+				}
+
+				if (mbSelectionLockedY && !yMove) {
+					axisy1 = 0;
+					axisy2 = 0;
+				}
+
+				vdpoint32 startingOffset = widget->GetOffset();
+				vdsize32 startingSizeOffset = widget->GetSizeOffset();
+				vdfloat2 pivot = widget->GetPivot();
+
+				if (!widget->IsForcedSize()) {
+					const vdrect32f& anchors = widget->GetAnchors();
+					const vdsize32& csize = GetArea().size();
+					const vdsize32& wsize = r.size();
+
+					startingSizeOffset.w = wsize.w - anchors.width() * (float)csize.w;
+					startingSizeOffset.h = wsize.h - anchors.height() * (float)csize.h;
+				}
+
+				const sint32 posAxisX = 1 + axisx1 - axisx2;
+				const sint32 posAxisY = 1 + axisy1 - axisy2;
+
+				if (mbDragMoving) {
+					mDragOffsetOX.mAxisScale = 2;
+					mDragOffsetOY.mAxisScale = 2;
+					mDragOffsetSX.mAxisScale = 0;
+					mDragOffsetSY.mAxisScale = 0;
+				} else {
+					// alignment				min-drag		max-drag
+					// ---------------------------------------------------
+					// align left/top			off,-size		size
+					// align middle/center		off/2,-size		off/2,size
+					// align right/bottom		-size			off,size
+
+					const sint32 anchorX = VDRoundToInt32(pivot.x * 2.0f);
+					const sint32 anchorY = VDRoundToInt32(pivot.y * 2.0f);
+
+					mDragOffsetOX.mAxisScale = posAxisX > 1 ? anchorX : posAxisX < 1 ? 2 - anchorX : 0;
+					mDragOffsetOY.mAxisScale = posAxisY > 1 ? anchorY : posAxisY < 1 ? 2 - anchorY : 0;
+					mDragOffsetSX.mAxisScale = posAxisX > 1 ? 2 : posAxisX < 1 ? -2 : 0;
+					mDragOffsetSY.mAxisScale = posAxisY > 1 ? 2 : posAxisY < 1 ? -2 : 0;
+
+				}
+
+				mDragOffsetOX.mAxisOffset = startingOffset.x - (x * mDragOffsetOX.mAxisScale)/2;
+				mDragOffsetOY.mAxisOffset = startingOffset.y - (y * mDragOffsetOY.mAxisScale)/2;
+				mDragOffsetSX.mAxisOffset = startingSizeOffset.w - (x * mDragOffsetSX.mAxisScale)/2;
+				mDragOffsetSY.mAxisOffset = startingSizeOffset.h - (y * mDragOffsetSY.mAxisScale)/2;
+
+				static constexpr ATUICursorImage kCursorLookup[3][3] = {
+					{
+						kATUICursorImage_SizeDiagRev,
+						kATUICursorImage_SizeVert,
+						kATUICursorImage_SizeDiagFwd,
+					},
+					{
+						kATUICursorImage_SizeHoriz,
+						kATUICursorImage_Move,
+						kATUICursorImage_SizeHoriz,
+					},
+					{
+						kATUICursorImage_SizeDiagFwd,
+						kATUICursorImage_SizeVert,
+						kATUICursorImage_SizeDiagRev,
+					},
+				};
+
+				SetCursorImage(kCursorLookup[1 + axisy1 - axisy2][1 + axisx1 - axisx2]);
+				break;
+			}
+		}
+
+		if (foundIndex < 0)
+			SetCursorImage(kATUICursorImage_Arrow);
+
+		SetHoveredIndex(foundIndex);
+	}
+}
+
+void ATUIOverlayCustomization::OnMouseDownL(sint32 x, sint32 y) {
+	mbDragging = false;
+	OnMouseMove(x, y);
+
+	SetSelectedIndex(mHoveredIndex);
+	Focus();
+
+	if (mSelectedIndex >= 0) {
+		mbDragging = true;
+		CaptureCursor();
+	}
+}
+
+void ATUIOverlayCustomization::OnMouseUpL(sint32 x, sint32 y) {
+	mbDragging = false;
+	ReleaseCursor();
+}
+
+void ATUIOverlayCustomization::OnMouseLeave() {
+	SetHoveredIndex(-1);
+}
+
+void ATUIOverlayCustomization::SetSelectedIndex(sint32 idx) {
+	if (mSelectedIndex == idx)
+		return;
+
+	mSelectedIndex = idx;
+
+	if (mSelectedIndex >= 0) {
+		ATUIWidget *w = mCustomizableWidgets[mSelectedIndex].mpWidget;
+
+		const auto& m = w->Measure();
+		mSelectionConstraints = m;
+		mbSelectionLockedX = (m.mMinSize.w == m.mMaxSize.w);
+		mbSelectionLockedY = (m.mMinSize.h == m.mMaxSize.h);
+
+		for(int i=0; i<3; ++i)
+			mpAnchorButtons[i][3]->SetEnabled(!mbSelectionLockedX);
+
+		for(int i=0; i<3; ++i)
+			mpAnchorButtons[3][i]->SetEnabled(!mbSelectionLockedY);
+
+		mpAnchorButtons[3][3]->SetEnabled(!mbSelectionLockedX && !mbSelectionLockedY);
+	}
+
+	mbDragging = false;
+	Invalidate();
+	RepositionAnchorPanel();
+	UpdateSelectionLabel();
+	UpdateSelectedAnchor();
+}
+
+void ATUIOverlayCustomization::UpdateSelectionLabel() {
+	mpSelectionLabel->SetTextF(L"Selected item: %ls", mSelectedIndex >= 0 ? mCustomizableWidgets[mSelectedIndex].mpLabel : L"none");
+}
+
+void ATUIOverlayCustomization::SetHoveredIndex(sint32 idx) {
+	if (mHoveredIndex == idx)
+		return;
+
+	mHoveredIndex = idx;
+	Invalidate();
+}
+
+void ATUIOverlayCustomization::SetSelectionAnchor(sint32 x, sint32 y) {
+	if (mSelectedIndex < 0)
+		return;
+
+	auto& cwi = mCustomizableWidgets[mSelectedIndex];
+	ATUIWidget *w = cwi.mpWidget;
+	const vdrect32 origArea = w->GetArea();
+
+	// set the anchors and pivot
+	auto [newAnchors, newPivot] = AlignmentToAnchorsAndPivot(vdint2{x, y});
+
+	cwi.mAnchors = newAnchors;
+	w->SetAnchors(newAnchors);
+
+	cwi.mPivot = newPivot;
+	w->SetPivot(newPivot);
+
+	// compute new anchored area
+	const vdrect32 rc = GetClientArea();
+	vdrect32 r;
+	r.left = rc.left + VDRoundToInt32((float)rc.width() * newAnchors.left);
+	r.top = rc.top + VDRoundToInt32((float)rc.height() * newAnchors.top);
+	r.right = rc.left + VDRoundToInt32((float)rc.width() * newAnchors.right);
+	r.bottom = rc.top + VDRoundToInt32((float)rc.height() * newAnchors.bottom);
+
+	// apply offset and size corrections
+	float dx1 = (float)(origArea.left   - r.left);
+	float dy1 = (float)(origArea.top    - r.top);
+	float dx2 = (float)(origArea.right  - r.right);
+	float dy2 = (float)(origArea.bottom - r.bottom);
+
+	const vdpoint32 offset(
+		VDRoundToInt32(dx1 + (dx2 - dx1)*newPivot.x),
+		VDRoundToInt32(dy1 + (dy2 - dy1)*newPivot.y)
+	);
+
+	cwi.mOffset = offset;
+	w->SetOffset(offset);
+
+	if (!w->IsForcedSize()) {
+		const vdsize32 sizeOffset(dx2 - dx1, dy2 - dy1);
+
+		cwi.mSizeOffset = sizeOffset;
+
+		w->SetSizeOffset(sizeOffset);
+	}
+
+	UpdateSelectedAnchor();
+}
+
+void ATUIOverlayCustomization::UpdateSelectedAnchor() {
+	if (mSelectedIndex < 0)
+		return;
+
+	ATUIWidget *w = mCustomizableWidgets[mSelectedIndex].mpWidget;
+	const vdrect32f& anchors = w->GetAnchors();
+
+	auto [anchorX, anchorY] = AnchorsToAlignment(anchors);
+
+	for(int i=0; i<4; ++i) {
+		for(int j=0; j<4; ++j) {
+			mpAnchorButtons[i][j]->SetDepressed(i == anchorY && j == anchorX);
+		}
+	}
+}
+
+void ATUIOverlayCustomization::RepositionAnchorPanel() {
+	if (mSelectedIndex < 0) {
+		mpAnchorPanel->SetVisible(false);
+		return;
+	}
+
+	// position panel on sides where there is the most space
+	const sint32 margin = 8;
+	ATUIWidget *w = mCustomizableWidgets[mSelectedIndex].mpWidget;
+	vdrect32 r = w->GetArea();
+	vdrect32 rc = GetClientArea();
+	vdrect32 rp = mpAnchorPanel->GetArea();
+
+	if (r.left - rc.left > rc.right - r.right)
+		rp.translate((r.left - margin) - rp.right, 0);
+	else
+		rp.translate((r.right + margin) - rp.left, 0);
+
+	if (r.top - rc.top > rc.bottom - r.bottom)
+		rp.translate(0, (r.top - margin) - rp.bottom);
+	else
+		rp.translate(0, (r.bottom + margin) - rp.top);
+
+	mpAnchorPanel->SetArea(rp);
+	mpAnchorPanel->SetVisible(true);
+}
+
+vdint2 ATUIOverlayCustomization::AnchorsToAlignment(const vdrect32f& anchors) {
+	sint32 anchorX = 3;
+	sint32 anchorY = 3;
+
+	if (anchors.width() < 0.5f)
+		anchorX = VDRoundToInt32(anchors.left * 2.0f);
+
+	if (anchors.width() < 0.5f)
+		anchorY = VDRoundToInt32(anchors.top * 2.0f);
+
+	return vdint2{anchorX, anchorY};
+}
+
+std::pair<vdrect32f, vdfloat2> ATUIOverlayCustomization::AlignmentToAnchorsAndPivot(const vdint2& alignment) {
+	static constexpr float kAnchorLookup1[4] = { 0.0f, 0.5f, 1.0f, 0.0f };
+	static constexpr float kAnchorLookup2[4] = { 0.0f, 0.5f, 1.0f, 1.0f };
+
+	const vdrect32f newAnchors(
+		kAnchorLookup1[alignment.x & 3],
+		kAnchorLookup1[alignment.y & 3],
+		kAnchorLookup2[alignment.x & 3],
+		kAnchorLookup2[alignment.y & 3]
+	);
+	static constexpr float kPivotLookup[4] = { 0.0f, 0.5f, 1.0f, 0.5f };
+	const vdfloat2 newPivot{kPivotLookup[alignment.x & 3], kPivotLookup[alignment.y & 3]};
+
+	return { newAnchors, newPivot };
+}
+
+void ATUIOverlayCustomization::LoadSettings(ATSettingsCategory categoryMask, VDRegistryKey& key) {
+	VDRegistryKey subKey(key, "HUD", false);
+
+	for (CWidgetInfo& cwi : mCustomizableWidgets) {
+		cwi.mbUsingDefault = true;
+		cwi.mAnchors = cwi.mDefaultAnchors;
+		cwi.mOffset = cwi.mDefaultOffset;
+		cwi.mPivot = cwi.mDefaultPivot;
+		cwi.mSizeOffset = cwi.mDefaultSizeOffset;
+		cwi.mbAutoSize = cwi.mbDefaultAutoSize;
+
+		VDStringA s;
+		if (subKey.getString(cwi.mpTag, s)) {
+			int alignmentX, alignmentY, offsetX, offsetY, sizeOffsetX, sizeOffsetY, autoSize;
+
+			if (7 == sscanf(s.c_str(), "%d,%d:%d,%d:%d,%d:%d", &alignmentX, &alignmentY, &offsetX, &offsetY, &sizeOffsetX, &sizeOffsetY, &autoSize)) {
+				cwi.mbUsingDefault = false;
+
+				auto [anchors, pivot] = AlignmentToAnchorsAndPivot(vdint2{alignmentX, alignmentY});
+
+				cwi.mAnchors = anchors;
+				cwi.mPivot = pivot;
+				cwi.mOffset = vdpoint32{offsetX, offsetY};
+				cwi.mSizeOffset = vdsize32{sizeOffsetX, sizeOffsetY};
+				cwi.mbAutoSize = autoSize != 0;
+			}
+		}
+
+		if (cwi.mpWidget) {
+			cwi.mpWidget->SetPlacement(cwi.mAnchors, cwi.mOffset, cwi.mPivot);
+
+			if (cwi.mbAutoSize)
+				cwi.mpWidget->SetAutoSize();
+			else
+				cwi.mpWidget->SetSizeOffset(cwi.mSizeOffset);
+		}
+	}
+}
+
+void ATUIOverlayCustomization::SaveSettings(ATSettingsCategory categoryMask, VDRegistryKey& key) {
+	VDRegistryKey subKey(key, "HUD", true);
+
+	VDStringA s;
+	for (const CWidgetInfo& cwi : mCustomizableWidgets) {
+		if (cwi.mbUsingDefault) {
+			subKey.removeValue(cwi.mpTag);
+		} else {
+			const vdint2& alignment = AnchorsToAlignment(cwi.mAnchors);
+
+			s.sprintf("%d,%d:%d,%d:%d,%d:%d"
+				, alignment.x
+				, alignment.y
+				, cwi.mOffset.x
+				, cwi.mOffset.y
+				, cwi.mSizeOffset.w
+				, cwi.mSizeOffset.h
+				, cwi.mbAutoSize ? 1 : 0);
+
+			subKey.setString(cwi.mpTag, s.c_str());
+		}
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+class ATUIAudioStatusDisplay final : public ATUIWidget {
 public:
 	void SetFont(IVDDisplayFont *font);
 	void Update(const ATUIAudioStatus& status);
@@ -183,10 +1019,10 @@ public:
 	void SetBigFont(IVDDisplayFont *font);
 	void SetSmallFont(IVDDisplayFont *font);
 
-	void AutoSize();
 	void Update() { Invalidate(); }
 
 protected:
+	ATUIWidgetMetrics OnMeasure() override;
 	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
 	void PaintSID(IVDDisplayRenderer& rdr, VDDisplayTextRenderer& tr, sint32 w, sint32 h);
 	void PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer& tr, sint32 w, sint32 h);
@@ -247,11 +1083,15 @@ void ATUIAudioDisplay::SetSmallFont(IVDDisplayFont *font) {
 	mSmallFontH = size.h;
 }
 
-void ATUIAudioDisplay::AutoSize() {
+ATUIWidgetMetrics ATUIAudioDisplay::OnMeasure() {
 	const int chanht = 5 + mBigFontH + mSmallFontH;
 	const int chanw = (std::max<int>(11*mSmallFontW, 8*mBigFontW) + 4) * 4;
 
-	SetArea(vdrect32(mArea.left, mArea.top, mArea.left + chanw, mArea.top + chanht * 4));
+	ATUIWidgetMetrics m;
+	m.mMinSize = { chanw, chanht * 4 };
+	m.mMaxSize.h = m.mMinSize.h;
+	m.mDesiredSize = m.mMinSize;
+	return m;
 }
 
 void ATUIAudioDisplay::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
@@ -389,6 +1229,9 @@ void ATUIAudioDisplay::PaintSID(IVDDisplayRenderer& rdr, VDDisplayTextRenderer& 
 }
 
 void ATUIAudioDisplay::PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer& tr, sint32 w, sint32 h) {
+	if (!mpAudioMonitor)
+		return;
+
 	const int fontw = mBigFontW;
 	const int fonth = mBigFontH;
 	const int fontsmw = mSmallFontW;
@@ -399,18 +1242,21 @@ void ATUIAudioDisplay::PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer
 
 	mpAudioMonitor->Update(&log, &rstate);
 
-	uint8 audctl = rstate->mReg[8];
+	const uint8 audctl = rstate->mReg[8];
+	const uint8 skctl = rstate->mReg[15];
 
 	int slowRate = audctl & 0x01 ? 114 : 28;
 	int divisors[4];
 
-	divisors[0] = (audctl & 0x40) ? (int)rstate->mReg[0] + 4 : ((int)rstate->mReg[0] + 1) * slowRate;
+	const int borrowOffset12 = (skctl & 8) ? 6 : 4;
+
+	divisors[0] = (audctl & 0x40) ? (int)rstate->mReg[0] + borrowOffset12 : ((int)rstate->mReg[0] + 1) * slowRate;
 
 	divisors[1] = (audctl & 0x10)
-		? (audctl & 0x40) ? rstate->mReg[0] + ((int)rstate->mReg[2] << 8) + 7 : (rstate->mReg[0] + ((int)rstate->mReg[2] << 8) + 1) * slowRate
+		? (audctl & 0x40) ? rstate->mReg[0] + ((int)rstate->mReg[2] << 8) + borrowOffset12 + 3 : (rstate->mReg[0] + ((int)rstate->mReg[2] << 8) + 1) * slowRate
 		: ((int)rstate->mReg[2] + 1) * slowRate;
 
-	divisors[2] = (audctl & 0x20) ? (int)rstate->mReg[4] + 4 : ((int)rstate->mReg[4] + 1) * slowRate;
+	divisors[2] = (audctl & 0x20) ? (int)rstate->mReg[4] + borrowOffset12 : ((int)rstate->mReg[4] + 1) * slowRate;
 
 	divisors[3] = (audctl & 0x08)
 		? (audctl & 0x20) ? rstate->mReg[4] + ((int)rstate->mReg[6] << 8) + 7 : (rstate->mReg[4] + ((int)rstate->mReg[6] << 8) + 1) * slowRate
@@ -426,16 +1272,19 @@ void ATUIAudioDisplay::PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer
 	const int x_clock = x + 1*fontsmw;
 	const int x_highpass = x + 5*fontsmw + (fontsmw >> 1);
 	const int x_mode = x + 7*fontsmw;
-	const int x_noise = x + 9*fontsmw;
 	const int x_waveform = x + std::max<int>(11*fontsmw, 8*fontw) + 4;
 
-	const int chanw = (x_waveform - x) * 4;
+	const int chanw = w;
 
-	sint32 hstep = log->mRecordedCount ? ((chanw - x_waveform - 4) << 16) / log->mRecordedCount : 0;
+	const float hstepf = log->mLastFrameSampleCount ? (float)(chanw - x_waveform - 4) / (float)log->mLastFrameSampleCount : 0;
+	const sint32 hstep = (sint32)(0.5f + hstepf * 0x10000);
 
 	Shade(rdr, x, y, chanw, chanht * 4);
 
 	wchar_t buf[128];
+	vdfastvector<vdfloat2> fpts;
+	vdfastvector<vdpoint32> pts;
+
 	for(int ch=0; ch<4; ++ch) {
 		const int chy = y + chanht*ch;
 		const int chanfreqy = chy + 4;
@@ -469,14 +1318,28 @@ void ATUIAudioDisplay::PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer
 		if (ctl & 0x10)
 			tr.DrawTextLine(x_mode, chandetaily, L"V");
 		else {
-			tr.DrawTextLine(x_mode, chandetaily, (ctl & 0x80) ? L"L" : L"5");
+			buf[0] = (ctl & 0x80) ? L'L' : L'5';
+
+			if (ch < 2)
+				buf[1] = (skctl & 0x08) ? L'2' : L' ';
+			else
+				buf[1] = (skctl & 0x10) ? L'A' : L' ';
+
+			buf[3] = L' ';
+			buf[4] = 0;
 
 			if (ctl & 0x20)
-				tr.DrawTextLine(x_noise, chandetaily, L"T");
+				buf[2] = L'T';
 			else if (ctl & 0x40)
-				tr.DrawTextLine(x_noise, chandetaily, L"4");
-			else
-				tr.DrawTextLine(x_noise, chandetaily, (audctl & 0x80) ? L"9" : L"17");
+				buf[2] = L'4';
+			else if (audctl & 0x80)
+				buf[2] = L'9';
+			else {
+				buf[2] = L'1';
+				buf[3] = L'7';
+			}
+
+			tr.DrawTextLine(x_mode, chandetaily, buf);
 		}
 
 		// draw volume indicator
@@ -485,28 +1348,330 @@ void ATUIAudioDisplay::PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer
 		rdr.SetColorRGB(0xFFFFFF);
 		rdr.FillRect(x_waveform, chy + chanht - 1 - vol, 1, vol);
 
-		const uint32 n = log->mRecordedCount;
+		// draw waveform -- note that the log starts at scan 248, so we must rotate it around
+		const uint32 n = log->mLastFrameSampleCount;
 
-		if (n >= 2) {
-			uint32 hpos = 0x8000 + ((x_waveform + 2) << 16);
-			int pybase = chy + chanht - 1;
+		if (n > 248) {
+			const int waveformHeight = chanht - 3;
+			const int pybase = chy + chanht - 1;
+			const float waveformScale = -(float)waveformHeight / (float)log->mFullScaleValue;
+			const float waveformOffset = (float)pybase + 0.5f;
 
-			vdfastvector<vdpoint32> pts(n);
+			if (rdr.GetCaps().mbSupportsPolyLineF) {
+				float px = (float)x_waveform + 2.0f + 0.5f;
 
-			for(uint32 pos = 0; pos < n; ++pos) {
-				int px = hpos >> 16;
-				int py = pybase - log->mpStates[pos].mChannelOutputs[ch] * (chanht - 3) / 15;
+				fpts.resize(n);
+				for(uint32 pos = 0; pos < n; ++pos) {
+					float py = log->mpStates[pos].mChannelOutputs[ch] * waveformScale + waveformOffset;
+					fpts[pos] = vdfloat2{px, py};
 
-				pts[pos] = vdpoint32(px, py);
+					px += hstepf;
+				}
 
-				hpos += hstep;
+				rdr.PolyLineF(fpts.data(), n - 1, true);
+			} else {
+				uint32 hpos = 0x8000 + ((x_waveform + 2) << 16);
+				pts.resize(n);
+				for(uint32 pos = 0; pos < n; ++pos) {
+					int px = hpos >> 16;
+					hpos += hstep;
+
+					int py = (int)(log->mpStates[pos].mChannelOutputs[ch] * waveformScale + waveformOffset);
+
+					pts[pos] = vdpoint32(px, py);
+				}
+
+				rdr.PolyLine(pts.data(), n - 1);
+			}
+		}
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+class ATUIAudioScope final : public ATUIContainer {
+public:
+	ATUIAudioScope();
+
+	void SetAudioMonitor(bool secondary, ATAudioMonitor *mon);
+
+	void Update();
+
+protected:
+	void OnCreate() override;
+	void OnSize() override;
+	ATUIWidgetMetrics OnMeasure() override;
+	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
+	void AdjustRate(int delta);
+	void UpdateRateLabel();
+	void UpdateSampleCounts(int i);
+
+	ATAudioMonitor *mpAudioMonitors[2] {};
+
+	vdfastvector<float> mWaveforms[2];
+	vdfastvector<vdpoint32> mLineData;
+	vdfastvector<vdfloat2> mLineDataF;
+	vdrefptr<ATUILabel> mpRateLabel;
+
+	static constexpr float kUsPerDiv[] = {
+		100.0f,
+		200.0f,
+		500.0f,
+		1000.0f,
+		2000.0f,
+		5000.0f,
+		10000.0f,
+		20000.0f,
+		50000.0f,
+		100000.0f,
+		200000.0f,
+	};
+
+	uint32 mRateIndex = 3;
+	uint32 mSamplesRequested = 0;
+	uint32 mSampleScale = 1;
+};
+
+ATUIAudioScope::ATUIAudioScope() {
+	SetHitTransparent(true);
+}
+
+void ATUIAudioScope::SetAudioMonitor(bool secondary, ATAudioMonitor *mon) {
+	const int i = secondary ? 1 : 0;
+	if (mpAudioMonitors[i] == mon)
+		return;
+
+	if (mpAudioMonitors[i])
+		mpAudioMonitors[i]->SetMixedSampleCount(0);
+
+	mpAudioMonitors[i] = mon;
+
+	UpdateSampleCounts(i);
+}
+
+namespace {
+	template<size_t T_Step>
+	static void Downsample(float * VDRESTRICT dst, const float * VDRESTRICT src, sint32 n) {
+		constexpr float scale = 1.0f / (float)T_Step;
+
+		for (sint32 j = 0; j < n; ++j) {
+			float v = 0;
+
+			// need to use a loop here to autovectorize -- fold expression won't work
+			for(size_t k = 0; k < T_Step; ++k)
+				v += src[k];
+
+			*dst++ = v * scale;
+
+			src += T_Step;
+		}
+	}
+}
+
+void ATUIAudioScope::Update() {
+	ATPokeyAudioLog *logs[2] {};
+
+	for(int i=0; i<2; ++i) {
+		ATAudioMonitor *mon = mpAudioMonitors[i];
+		if (!mon)
+			continue;
+
+		ATPokeyRegisterState *rstate;
+		mon->Update(&logs[i], &rstate);
+
+		if (logs[i]->mNumMixedSamples < logs[i]->mMaxMixedSamples)
+			return;
+	}
+
+	sint32 w = GetArea().width();
+	sint32 n = (sint32)mSamplesRequested;
+
+	mSampleScale = 1;
+
+	while(mSampleScale < 64 && n > w*2) {
+		mSampleScale += mSampleScale;
+		n >>= 1;
+	}
+
+	for(int i=0; i<2; ++i) {
+		ATPokeyAudioLog *log = logs[i];
+		if (!log)
+			continue;
+
+		auto& wf = mWaveforms[i];
+		wf.resize(n);
+
+		const float *src = log->mpMixedSamples;
+		float *dst = wf.data();
+
+		     if (mSampleScale <=  1)	Downsample< 1>(dst, src, n);
+		else if (mSampleScale <=  2)	Downsample< 2>(dst, src, n);
+		else if (mSampleScale <=  4)	Downsample< 4>(dst, src, n);
+		else if (mSampleScale <=  8)	Downsample< 8>(dst, src, n);
+		else if (mSampleScale <= 16)	Downsample<16>(dst, src, n);
+		else if (mSampleScale <= 32)	Downsample<32>(dst, src, n);
+		else							Downsample<64>(dst, src, n);
+
+		log->mNumMixedSamples = 0;
+
+		Invalidate();
+	}
+}
+
+void ATUIAudioScope::OnCreate() {
+	vdrefptr<ATUIContainer> tray{new ATUIContainer};
+	AddChild(tray);
+	tray->SetPlacement(vdrect32f(1,1,1,1), vdpoint32(0, 0), vdfloat2{1,1});
+
+	vdrefptr<ATUIButton> button;
+
+	button = new ATUIButton;
+	tray->AddChild(button);
+	button->SetText(L" < ");
+	button->SetDockMode(kATUIDockMode_Right);
+
+	button->OnPressedEvent() = [this] {
+		AdjustRate(-1);
+	};
+
+	mpRateLabel = new ATUILabel;
+	tray->AddChild(mpRateLabel);
+	mpRateLabel->SetDockMode(kATUIDockMode_Right);
+	mpRateLabel->SetFillColor(0);
+	mpRateLabel->SetTextColor(0xE0E0E0);
+	mpRateLabel->SetTextAlign(ATUILabel::kAlignCenter);
+	mpRateLabel->SetTextVAlign(ATUILabel::kVAlignMiddle);
+	mpRateLabel->SetMinSizeText(L"99999 ms/div");
+
+	UpdateRateLabel();
+
+	button = new ATUIButton;
+	tray->AddChild(button);
+	button->SetText(L" > ");
+	button->SetDockMode(kATUIDockMode_Right);
+
+	button->OnPressedEvent() = [this] {
+		AdjustRate(+1);
+	};
+}
+
+void ATUIAudioScope::OnSize() {
+	ATUIContainer::OnSize();
+
+	UpdateSampleCounts(0);
+	UpdateSampleCounts(1);
+}
+
+ATUIWidgetMetrics ATUIAudioScope::OnMeasure() {
+	ATUIWidgetMetrics m;
+	m.mDesiredSize = { 512, 128 };
+	return m;
+}
+
+void ATUIAudioScope::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
+	if (h <= 0 || w <= 0)
+		return;
+
+	float divsPerView = 10.0f;
+	float usPerDiv = kUsPerDiv[mRateIndex];
+	float usPerView = usPerDiv * divsPerView;
+	float secsPerView = usPerView / 1000000.0f;
+	float samplesPerSec = 63920.8f;
+	float samplesPerViewF = samplesPerSec * secsPerView;
+
+	sint32 ymid = (h - 1) >> 1;
+	float yscale = -(float)ymid;
+	float yoffset = -yscale;
+	float xscale = w / samplesPerViewF * (float)mSampleScale;
+	float xoffset = xscale * 0.5f - 0.5f;
+
+	if (rdr.GetCaps().mbSupportsAlphaBlending) {
+		for(int i=1; i<10; ++i) {
+			sint32 x = (w * i + 5) / 10;
+
+			rdr.AlphaFillRect(x, 0, 1, h, 0x80808080);
+		}
+
+		rdr.AlphaFillRect(0, ymid, w, 1, 0x80808080);
+	} else {
+		rdr.SetColorRGB(0x80808080);
+		for(int i=1; i<10; ++i) {
+			sint32 x = (w * i + 5) / 10;
+
+			rdr.FillRect(x, 0, 1, h);
+		}
+
+		rdr.FillRect(0, ymid, w, 1);
+	}
+
+	for(int i=0; i<2; ++i) {
+		ATAudioMonitor *mon = mpAudioMonitors[i];
+		if (!mon)
+			continue;
+
+		const vdfastvector<float>& waveform = mWaveforms[i];
+		if (waveform.empty())
+			continue;
+
+		size_t n = waveform.size();
+
+		rdr.SetColorRGB(i ? 0x008A00 : 0xFF0000);
+
+		if (rdr.GetCaps().mbSupportsPolyLineF) {
+			float xoffset2 = xoffset + 0.5f;
+			float yoffset2 = yoffset + 0.5f;
+
+			mLineDataF.resize(n);
+
+			for(size_t j=0; j<n; ++j) {
+				mLineDataF[j] = vdfloat2{(float)j * xscale + xoffset2, waveform[j] * yscale + yoffset2};
 			}
 
-			rdr.PolyLine(pts.data(), n - 1);
+			rdr.PolyLineF(mLineDataF.data(), n - 1, true);
+		} else {
+			mLineData.resize(n);
+
+			for(size_t j=0; j<n; ++j) {
+				mLineData[j] = vdpoint32(VDRoundToInt32((float)j * xscale + xoffset), VDRoundToInt32(waveform[j] * yscale + yoffset));
+			}
+
+			rdr.PolyLine(mLineData.data(), n - 1);
 		}
 	}
 
-	mpAudioMonitor->Reset();
+	ATUIContainer::Paint(rdr, w, h);
+}
+
+void ATUIAudioScope::AdjustRate(int delta) {
+	mRateIndex = (uint32)std::clamp<int>((int)mRateIndex + delta, 0, (int)vdcountof(kUsPerDiv) - 1);
+
+	UpdateSampleCounts(0);
+	UpdateSampleCounts(1);
+	UpdateRateLabel();
+}
+
+void ATUIAudioScope::UpdateRateLabel() {
+	float usPerDiv = kUsPerDiv[mRateIndex];
+
+	if (usPerDiv < 1000.0f)
+		mpRateLabel->SetTextF(L"%.1f ms/div", usPerDiv / 1000.0f);
+	else
+		mpRateLabel->SetTextF(L"%.0f ms/div", usPerDiv / 1000.0f);
+}
+
+void ATUIAudioScope::UpdateSampleCounts(int i) {
+	float divsPerView = 10.0f;
+	float usPerDiv = kUsPerDiv[mRateIndex];
+	float usPerView = usPerDiv * divsPerView;
+	float secsPerView = usPerView / 1000000.0f;
+	float samplesPerSec = 63920.8f;
+	float samplesPerViewF = samplesPerSec * secsPerView;
+
+	uint32 n = (uint32)VDCeilToInt(samplesPerViewF);
+
+	mSamplesRequested = n;
+
+	if (mpAudioMonitors[i])
+		mpAudioMonitors[i]->SetMixedSampleCount(n);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -519,7 +1684,6 @@ public:
 	int Release() { return vdrefcount::Release(); }
 
 	bool IsVisible() const;
-	bool SetVisible() const;
 	void SetVisible(bool visible);
 
 	void SetStatusFlags(uint32 flags) { mStatusFlags |= flags; mStickyStatusFlags |= flags; }
@@ -548,7 +1712,8 @@ public:
 
 	void SetModemConnection(const char *str);
 
-	void SetStatusMessage(const wchar_t *s);
+	void SetStatusMessage(const wchar_t *s) override;
+	void ReportError(const wchar_t *s) override;
 
 	void SetLedStatus(uint8 ledMask);
 	void SetHeldButtonStatus(uint8 consolMask);
@@ -559,7 +1724,9 @@ public:
 	void ClearWatchedValue(int index);
 	void SetWatchedValue(int index, uint32 value, int len);
 	void SetAudioStatus(ATUIAudioStatus *status);
-	void SetAudioMonitor(bool secondary, ATAudioMonitor *monitor);
+	void SetAudioMonitor(bool secondary, ATAudioMonitor *monitor) override;
+	void SetAudioDisplayEnabled(bool secondary, bool enable) override;
+	void SetAudioScopeEnabled(bool enable) override;
 	void SetSlightSID(ATSlightSIDEmulator *emu);
 
 	void SetFpsIndicator(float fps);
@@ -578,14 +1745,17 @@ public:
 	void AddIndicatorSafeHeightChangedHandler(const vdfunction<void()> *pfn);
 	void RemoveIndicatorSafeHeightChangedHandler(const vdfunction<void()> *pfn);
 
+	void BeginCustomization() override;
+
 public:
 	virtual void TimerCallback();
 
 protected:
 	void InvalidateLayout();
+	void RelayoutStatic();
 
 	void UpdatePendingHoldLabel();
-	void RelayoutPendingKeyLabels();
+	void RelayoutErrors();
 	void UpdateHostDeviceLabel();
 	void UpdatePCLinkLabel();
 	void UpdateHoverTipPos();
@@ -675,6 +1845,16 @@ protected:
 	vdrefptr<ATUILabel> mpPendingHeldKeyLabel;
 	vdrefptr<ATUIAudioStatusDisplay> mpAudioStatusDisplay;
 	vdrefptr<ATUIAudioDisplay> mpAudioDisplays[2];
+	vdrefptr<ATUIAudioScope> mpAudioScope;
+	vdrefptr<ATUIOverlayCustomization> mpOverlayCustomization;
+
+	struct ErrorEntry {
+		vdrefptr<ATUILabel> mpLabel;
+		uint32 mExpirationTime;
+	};
+
+	static constexpr size_t kMaxErrors = 10;
+	vdvector<ErrorEntry> mErrors;
 
 	vdrefptr<ATUILabel> mpHoverTip;
 	int mHoverTipX = 0;
@@ -683,9 +1863,13 @@ protected:
 	VDLazyTimer mStatusTimer;
 
 	static const uint32 kDiskColors[8][2];
+
+	static constexpr char kTagAudioDisplay[] = "audio_display";
+	static constexpr char kTagAudioDisplay2[] = "audio_display_2";
+	static constexpr char kTagAudioScope[] = "audio_scope";
 };
 
-const uint32 ATUIRenderer::kDiskColors[8][2]={
+constexpr uint32 ATUIRenderer::kDiskColors[8][2]={
 	{ 0x91a100, 0xffff67 },
 	{ 0xd37040, 0xffe7b7 },
 	{ 0xd454cf, 0xffcbff },
@@ -711,7 +1895,8 @@ ATUIRenderer::ATUIRenderer() {
 		mWatchedValueLens[i] = -1;
 
 	mpContainer = new ATUIContainer;
-	mpContainer->SetDockMode(kATUIDockMode_Fill);
+	mpContainer->SetPlacement(vdrect32f(0, 0, 1, 1), vdpoint32(0, 0), vdfloat2{0, 0});
+	mpContainer->SetSizeOffset(vdsize32(0, 0));
 	mpContainer->SetHitTransparent(true);
 
 	for(int i=0; i<15; ++i) {
@@ -748,13 +1933,10 @@ ATUIRenderer::ATUIRenderer() {
 	mpAudioStatusDisplay = new ATUIAudioStatusDisplay;
 	mpAudioStatusDisplay->SetVisible(false);
 	mpAudioStatusDisplay->SetAlphaFillColor(0x80000000);
-	mpAudioStatusDisplay->AutoSize();
 
 	for(auto& disp : mpAudioDisplays) {
-		disp = new ATUIAudioDisplay;
-		disp->SetVisible(false);
-		disp->SetAlphaFillColor(0x80000000);
-		disp->SetSmallFont(mpSmallMonoSysFont);
+		if (disp)
+			disp->SetSmallFont(mpSmallMonoSysFont);
 	}
 
 	mpHardDiskDeviceLabel = new ATUILabel;
@@ -847,9 +2029,18 @@ ATUIRenderer::ATUIRenderer() {
 	mpPendingHeldKeyLabel->SetTextOffset(2, 2);
 	mpPendingHeldKeyLabel->SetTextColor(0xffffff);
 	mpPendingHeldKeyLabel->SetFillColor(0xa44050);
+
+	mpOverlayCustomization = new ATUIOverlayCustomization;
+	mpOverlayCustomization->Init();
+	mpOverlayCustomization->SetVisible(false);
+	mpOverlayCustomization->SetSizeOffset(vdsize32(0,0));
+
+	RelayoutStatic();
 }
 
 ATUIRenderer::~ATUIRenderer() {
+	if (mpOverlayCustomization)
+		mpOverlayCustomization->Shutdown();
 }
 
 bool ATUIRenderer::IsVisible() const {
@@ -863,8 +2054,10 @@ void ATUIRenderer::SetVisible(bool visible) {
 void ATUIRenderer::SetCyclesPerSecond(double rate) {
 	mCyclesPerSecond = rate;
 
-	mpAudioDisplays[0]->SetCyclesPerSecond(rate);
-	mpAudioDisplays[1]->SetCyclesPerSecond(rate);
+	for(ATUIAudioDisplay *disp : mpAudioDisplays) {
+		if (disp)
+			disp->SetCyclesPerSecond(rate);
+	}
 }
 
 void ATUIRenderer::SetStatusCounter(uint32 index, uint32 value) {
@@ -944,7 +2137,6 @@ void ATUIRenderer::SetIDEActivity(bool write, uint32 lba) {
 
 	mpHardDiskDeviceLabel->SetVisible(true);
 	mpHardDiskDeviceLabel->SetTextF(L"%lc%u", mbHardDiskWrite ? L'W' : L'R', mHardDiskLBA);
-	mpHardDiskDeviceLabel->AutoSize();
 }
 
 void ATUIRenderer::SetFlashWriteActivity() {
@@ -959,6 +2151,9 @@ namespace {
 
 	const uint32 kStatusMessageBkColor = 0x303850;
 	const uint32 kStatusMessageFgColor = 0xffffff;
+
+	const uint32 kErrorMessageBkColor = 0x4a0500;
+	const uint32 kErrorMessageFgColor = 0xffc080;
 }
 
 void ATUIRenderer::SetModemConnection(const char *str) {
@@ -971,7 +2166,6 @@ void ATUIRenderer::SetModemConnection(const char *str) {
 			mpStatusMessageLabel->SetTextColor(kModemMessageFgColor);
 			mpStatusMessageLabel->SetBorderColor(kModemMessageFgColor);
 			mpStatusMessageLabel->SetText(mModemConnection.c_str());
-			mpStatusMessageLabel->AutoSize();
 		}
 	} else {
 		mModemConnection.clear();
@@ -991,7 +2185,35 @@ void ATUIRenderer::SetStatusMessage(const wchar_t *s) {
 	mpStatusMessageLabel->SetTextColor(kStatusMessageFgColor);
 	mpStatusMessageLabel->SetBorderColor(kStatusMessageFgColor);
 	mpStatusMessageLabel->SetText(mStatusMessage.c_str());
-	mpStatusMessageLabel->AutoSize();
+
+	mpContainer->UpdateLayout();
+	RelayoutErrors();
+}
+
+void ATUIRenderer::ReportError(const wchar_t *s) {
+	if (mErrors.size() >= kMaxErrors) {
+		mErrors.front().mpLabel->Destroy();
+		mErrors.erase(mErrors.begin());
+	}
+
+	vdrefptr<ATUILabel> label(new ATUILabel);
+	mpContainer->AddChild(label);
+	label->SetFont(mpSysFont);
+	label->SetVisible(true);
+	label->SetFillColor(kErrorMessageBkColor);
+	label->SetTextColor(kErrorMessageFgColor);
+	label->SetBorderColor(kErrorMessageFgColor);
+	label->SetTextOffset(6, 2);
+	label->SetText(s);
+	label->AutoSize();
+
+	ErrorEntry& ee = mErrors.emplace_back();
+	ee.mpLabel = std::move(label);
+
+	const uint32 kErrorTimeout = 8000;
+	ee.mExpirationTime = VDGetCurrentTick() + kErrorTimeout;
+
+	RelayoutErrors();
 }
 
 void ATUIRenderer::SetRecordingPosition() {
@@ -1028,7 +2250,6 @@ void ATUIRenderer::SetRecordingPosition(float time, sint64 size) {
 	else
 		mpRecordingLabel->SetTextF(L"R%02u:%02u:%02u (%uK)", hours, mins, secs, csize / 10);
 
-	mpRecordingLabel->AutoSize();
 	mpRecordingLabel->SetVisible(true);
 }
 
@@ -1039,7 +2260,6 @@ void ATUIRenderer::SetTracingSize(sint64 size) {
 		if (size >= 0) {
 			if ((mTracingSize ^ size) >> 18) {
 				mpTracingLabel->SetTextF(L"Tracing %.1fM", (double)size / 1048576.0);
-				mpTracingLabel->AutoSize();
 			}
 		}
 
@@ -1104,7 +2324,6 @@ void ATUIRenderer::SetCassettePosition(float pos, float len, bool recordMode, bo
 	const float frac = len > 0.01f ? pos / len : 0.0f;
 
 	mpCassetteTimeLabel->SetTextF(L"%02u:%02u:%02u [%d%%] %ls%ls", hours, mins, secs, (int)(frac * 100.0f), fskMode ? L"" : L"T-", recordMode ? L"REC" : L"Play");
-	mpCassetteTimeLabel->AutoSize();
 }
 
 void ATUIRenderer::ClearWatchedValue(int index) {
@@ -1134,18 +2353,72 @@ void ATUIRenderer::SetAudioStatus(ATUIAudioStatus *status) {
 void ATUIRenderer::SetAudioMonitor(bool secondary, ATAudioMonitor *monitor) {
 	mpAudioMonitors[secondary] = monitor;
 
+	if (mpAudioDisplays[secondary])
+		mpAudioDisplays[secondary]->SetAudioMonitor(monitor);
+
+	if (mpAudioScope)
+		mpAudioScope->SetAudioMonitor(secondary, monitor);
+}
+
+void ATUIRenderer::SetAudioDisplayEnabled(bool secondary, bool enable) {
 	ATUIAudioDisplay *disp = mpAudioDisplays[secondary];
-	disp->SetAudioMonitor(monitor);
-	disp->AutoSize();
-	disp->SetVisible(monitor != NULL);
-	InvalidateLayout();
+
+	if (enable) {
+		if (!disp) {
+			disp = new ATUIAudioDisplay;
+			mpAudioDisplays[secondary] = disp;
+			mpContainer->AddChild(disp);
+			disp->SetCyclesPerSecond(mCyclesPerSecond);
+			disp->SetAlphaFillColor(0x80000000);
+			disp->SetBigFont(mpSysMonoFont);
+			disp->SetSmallFont(mpSmallMonoSysFont);
+
+			if (!secondary)
+				disp->SetSlightSID(mpSlightSID);
+			
+			disp->SetAudioMonitor(mpAudioMonitors[secondary]);
+
+			mpOverlayCustomization->BindCustomizableWidget(secondary ? kTagAudioDisplay2 : kTagAudioDisplay, disp);
+		}
+	} else {
+		if (disp) {
+			mpOverlayCustomization->BindCustomizableWidget(secondary ? kTagAudioDisplay2 : kTagAudioDisplay, nullptr);
+			disp->SetAudioMonitor(nullptr);
+			disp->Destroy();
+			mpAudioDisplays[secondary] = nullptr;
+		}
+	}
+}
+
+void ATUIRenderer::SetAudioScopeEnabled(bool enable) {
+	if (enable) {
+		if (mpAudioScope)
+			return;
+
+		mpAudioScope = new ATUIAudioScope;
+		mpContainer->AddChild(mpAudioScope);
+		mpAudioScope->SetAlphaFillColor(0xC0000000);
+		mpAudioScope->SetAudioMonitor(false, mpAudioMonitors[0]);
+		mpAudioScope->SetAudioMonitor(true, mpAudioMonitors[1]);
+
+		mpOverlayCustomization->BindCustomizableWidget(kTagAudioScope, mpAudioScope);
+	} else {
+		if (!mpAudioScope)
+			return;
+
+		mpOverlayCustomization->BindCustomizableWidget(kTagAudioScope, nullptr);
+		mpAudioScope->SetAudioMonitor(false, nullptr);
+		mpAudioScope->SetAudioMonitor(true, nullptr);
+		mpAudioScope->Destroy();
+		mpAudioScope = nullptr;
+	}
 }
 
 void ATUIRenderer::SetSlightSID(ATSlightSIDEmulator *emu) {
 	mpSlightSID = emu;
 
-	mpAudioDisplays[0]->SetSlightSID(emu);
-	mpAudioDisplays[0]->AutoSize();
+	if (mpAudioDisplays[0])
+		mpAudioDisplays[0]->SetSlightSID(emu);
 	InvalidateLayout();
 }
 
@@ -1158,7 +2431,6 @@ void ATUIRenderer::SetFpsIndicator(float fps) {
 		} else {
 			mpFpsLabel->SetVisible(true);
 			mpFpsLabel->SetTextF(L"%.3f fps", fps);
-			mpFpsLabel->AutoSize();
 		}
 	}
 }
@@ -1214,11 +2486,15 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 		for(int i=0; i<8; ++i)
 			c->AddChild(mpWatchLabels[i]);
 
-		c->AddChild(mpAudioDisplays[0]);
-		c->AddChild(mpAudioDisplays[1]);
 		c->AddChild(mpAudioStatusDisplay);
 		c->AddChild(mpPausedLabel);
 		c->AddChild(mpHoverTip);
+
+		m->GetMainWindow()->AddChild(mpOverlayCustomization);
+		mpOverlayCustomization->AddCustomizableWidget(kTagAudioDisplay, mpAudioDisplays[0], L"Audio display (left/mono channel)");
+		mpOverlayCustomization->AddCustomizableWidget(kTagAudioDisplay2, mpAudioDisplays[1], L"Audio display (right channel)");
+		mpOverlayCustomization->AddCustomizableWidget(kTagAudioScope, mpAudioScope, L"Audio scope");
+		mpOverlayCustomization->SetPlacement(vdrect32f(0, 0, 1, 1), vdpoint32(0, 0), vdfloat2{0, 0});
 
 		// update fonts
 		mpSysFont = m->GetThemeFont(kATUIThemeFont_Header);
@@ -1257,55 +2533,96 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 			mpWatchLabels[i]->SetFont(mpSysFont);
 
 		mpStatusMessageLabel->SetFont(mpSysFont);
+
+		for(const ErrorEntry& ee : mErrors) {
+			ee.mpLabel->SetFont(mpSysFont);
+			ee.mpLabel->AutoSize();
+		}
+
 		mpFpsLabel->SetFont(mpSysFont);
 		mpAudioStatusDisplay->SetFont(mpSysFont);
 		mpAudioStatusDisplay->AutoSize();
 
 		for(ATUIAudioDisplay *disp : mpAudioDisplays) {
-			disp->SetBigFont(mpSysMonoFont);
-			disp->SetSmallFont(mpSmallMonoSysFont);
+			if (disp) {
+				disp->SetBigFont(mpSysMonoFont);
+				disp->SetSmallFont(mpSmallMonoSysFont);
+			}
 		}
+
+		const sint32 audioDisplayMargin = mSysFontDigitHeight * 4;
+
+		mpOverlayCustomization->SetDefaultPlacement(kTagAudioDisplay,
+			vdrect32f(0, 1, 0, 1), vdpoint32(8, -audioDisplayMargin), vdfloat2{0, 1}, vdsize32(), true);
+		mpOverlayCustomization->SetDefaultPlacement(kTagAudioDisplay2,
+			vdrect32f(1, 1, 1, 1), vdpoint32(-8, -audioDisplayMargin), vdfloat2{1, 1}, vdsize32(), true);
+		mpOverlayCustomization->SetDefaultPlacement(kTagAudioScope,
+			vdrect32f(0, 0, 0, 0), vdpoint32(32, 32), vdfloat2{0, 0}, vdsize32(), true);
 
 		mpHardDiskDeviceLabel->SetFont(mpSysFont);
 		mpRecordingLabel->SetFont(mpSysFont);
 		mpTracingLabel->SetFont(mpSysFont);
 		mpFlashWriteLabel->SetFont(mpSysFont);
-		mpFlashWriteLabel->AutoSize();
 
 		for(int i=0; i<2; ++i) {
 			mpLedLabels[i]->SetFont(mpSysFont);
-			mpLedLabels[i]->AutoSize();
 		}
 
 		for(auto&& p : mpHeldButtonLabels) {
 			p->SetFont(mpSysFont);
-			p->AutoSize();
 		}
 
 		mpPendingHeldKeyLabel->SetFont(mpSysFont);
-		mpPendingHeldKeyLabel->AutoSize();
 
 		mpPCLinkLabel->SetFont(mpSysFont);
 		mpHostDeviceLabel->SetFont(mpSysFont);
 		mpCassetteLabel->SetFont(mpSysFont);
-		mpCassetteLabel->AutoSize();
 		mpCassetteTimeLabel->SetFont(mpSysFont);
 		mpPausedLabel->SetFont(mpSysFont);
-		mpPausedLabel->AutoSize();
 		mpHoverTip->SetFont(mpSysHoverTipFont);
 		mpHoverTip->SetBoldFont(mpSysBoldHoverTipFont);
 
 		// update layout
+		RelayoutStatic();
 		InvalidateLayout();
 	}
 }
 
 void ATUIRenderer::Update() {
+	const bool showAllIndicators = false;
+	if (showAllIndicators) {
+		SetStatusFlags(0x7FFF);
+		for(int i=0; i<15; ++i) {
+			SetStatusCounter(i, 720);
+			SetDiskMotorActivity(i, true);
+		}
+
+		SetHActivity(true);
+		SetIDEActivity(true, 0xFFFFFF);
+		SetPCLinkActivity(true);
+		SetFlashWriteActivity();
+		SetCassetteIndicatorVisible(true);
+		SetCassettePosition(3600.0f, 3600.0f, true, true);
+		SetRecordingPosition(3600.0f, 0xFFFFFFF);
+		SetStatusMessage(L"(Status message)");
+		ReportError(L"(Error message)");
+
+		SetLedStatus(3);
+		SetHeldButtonStatus(7);
+		SetPendingHoldMode(true);
+		SetPendingHeldKey(0x00);
+		SetPendingHeldButtons(7);
+		for(int i=0; i<7; ++i)
+			SetWatchedValue(0, 0xFFFF, 2);
+		SetTracingSize(0xFFFFFFFF);
+		SetFpsIndicator(60.0f);
+		SetPaused(true);
+	}
+
 	uint32 statusFlags = mStatusFlags | mStickyStatusFlags;
 	mStickyStatusFlags = mStatusFlags;
 
-	int x = mPrevLayoutWidth;
-	int y = mPrevLayoutHeight - mSysFontDigitHeight;
+	int x = 0;
 
 	const uint32 diskErrorFlags = (VDGetCurrentTick() % 1000) >= 500 ? mDiskErrorFlags : 0;
 	VDStringW s;
@@ -1330,11 +2647,10 @@ void ATUIRenderer::Update() {
 			} else {
 				label.SetTextF(L"%u", mStatusCounter[i]);
 			}
-
-			label.AutoSize(x, mPrevLayoutHeight - mSysFontDigitHeight);
-
-			x -= label.GetArea().width();
-			label.SetPosition(vdpoint32(x, y));
+			
+			label.SetPlacement(vdrect32f(1, 1, 1, 1), vdpoint32(x, 0), vdfloat2{1, 1});
+			const auto& m = label.Measure();
+			x -= m.mDesiredSize.w;
 
 			label.SetTextColor(0xFF000000);
 			label.SetFillColor(kDiskColors[i & 7][isActive]);
@@ -1434,13 +2750,16 @@ void ATUIRenderer::Update() {
 				label.SetTextF(L"%04X", mWatchedValues[i]);
 				break;
 		}
-
-		label.AutoSize();
 	}
 
 	// update audio monitor
-	for(ATUIAudioDisplay *disp : mpAudioDisplays)
-		disp->Update();
+	for(ATUIAudioDisplay *disp : mpAudioDisplays) {
+		if (disp)
+			disp->Update();
+	}
+
+	if (mpAudioScope)
+		mpAudioScope->Update();
 
 	// update indicator safe area
 	sint32 ish = mSysFontDigitHeight * 2 + 6;
@@ -1449,6 +2768,17 @@ void ATUIRenderer::Update() {
 		mIndicatorSafeHeight = ish;
 
 		mIndicatorSafeAreaListeners.Notify([](const vdfunction<void()> *pfn) { (*pfn)(); return false; });
+	}
+
+	// tick errors
+	while(!mErrors.empty()) {
+		ErrorEntry& ee = mErrors.front();
+
+		if (VDGetCurrentTick() - ee.mExpirationTime >= UINT32_C(0x80000000))
+			break;
+
+		ee.mpLabel->Destroy();
+		mErrors.erase(mErrors.begin());
 	}
 }
 
@@ -1464,6 +2794,11 @@ void ATUIRenderer::RemoveIndicatorSafeHeightChangedHandler(const vdfunction<void
 	mIndicatorSafeAreaListeners.Remove(pfn);
 }
 
+void ATUIRenderer::BeginCustomization() {
+	mpOverlayCustomization->SetVisible(true);
+	mpOverlayCustomization->Focus();
+}
+
 void ATUIRenderer::TimerCallback() {
 	mStatusMessage.clear();
 
@@ -1475,7 +2810,6 @@ void ATUIRenderer::TimerCallback() {
 		mpStatusMessageLabel->SetTextColor(kModemMessageFgColor);
 		mpStatusMessageLabel->SetBorderColor(kModemMessageFgColor);
 		mpStatusMessageLabel->SetText(mModemConnection.c_str());
-		mpStatusMessageLabel->AutoSize();
 	}
 }
 
@@ -1483,58 +2817,61 @@ void ATUIRenderer::InvalidateLayout() {
 	Relayout(mPrevLayoutWidth, mPrevLayoutHeight);
 }
 
-void ATUIRenderer::Relayout(int w, int h) {
-	mPrevLayoutWidth = w;
-	mPrevLayoutHeight = h;
+void ATUIRenderer::RelayoutStatic() {
+	const vdrect32f kAnchorTL{0, 0, 0, 0};
+	const vdrect32f kAnchorTC{0.5f, 0, 0.5f, 0};
+	const vdrect32f kAnchorTR{1, 0, 1, 0};
+	const vdrect32f kAnchorBL{0, 1, 0, 1};
+	const vdrect32f kAnchorBR{1, 1, 1, 1};
 
-	mpFpsLabel->SetPosition(vdpoint32(w - 10 * mSysFontDigitWidth, 10));
-	mpStatusMessageLabel->SetPosition(vdpoint32(1, h - mSysFontDigitHeight * 2 - 4));
-
-	const vdrect32 rdisp0 = mpAudioDisplays[0]->GetArea();
-	mpAudioDisplays[0]->SetPosition(vdpoint32(8, h - rdisp0.height() - mSysFontDigitHeight * 4));
-
-	const vdrect32 rdisp1 = mpAudioDisplays[1]->GetArea();
-	mpAudioDisplays[1]->SetPosition(vdpoint32(std::max(rdisp0.right, w - rdisp1.width()), h - rdisp1.height() - mSysFontDigitHeight * 4));
+	mpFpsLabel->SetPlacement(kAnchorTR, vdpoint32(-10, 10), vdfloat2{1, 0});
+	mpStatusMessageLabel->SetPlacement(kAnchorBL, vdpoint32(1, -mSysFontDigitHeight*2 - 4), vdfloat2{0, 1});
 
 	for(int i=0; i<8; ++i) {
 		ATUILabel& label = *mpWatchLabels[i];
 
-		int y = h - 4*mSysFontDigitHeight - (7 - i)*mSysMonoFontHeight;
+		int y = -4*mSysFontDigitHeight - (7 - i)*mSysMonoFontHeight;
 
-		label.SetPosition(vdpoint32(64, y));
+		label.SetPlacement(kAnchorBL, vdpoint32(64, - 4*mSysFontDigitHeight - (7 - i)*mSysMonoFontHeight), vdfloat2{0, 1});
 	}
 
-	int ystats = h - mSysFontDigitHeight;
+	int ystats = 0;
 
-	mpHardDiskDeviceLabel->SetPosition(vdpoint32(mSysFontDigitWidth * 36, ystats));
-	mpRecordingLabel->SetPosition(vdpoint32(mSysFontDigitWidth * 27, ystats));
-	mpTracingLabel->SetPosition(vdpoint32(mSysFontDigitWidth * 37, ystats));
-	mpFlashWriteLabel->SetPosition(vdpoint32(mSysFontDigitWidth * 47, ystats));
-	mpPCLinkLabel->SetPosition(vdpoint32(mSysFontDigitWidth * 19, ystats));
-	mpHostDeviceLabel->SetPosition(vdpoint32(mSysFontDigitWidth * 19, ystats));
+	mpHardDiskDeviceLabel->SetPlacement(kAnchorBL, vdpoint32(mSysFontDigitWidth * 36, ystats), vdfloat2{0, 1});
+	mpRecordingLabel->SetPlacement(kAnchorBL, vdpoint32(mSysFontDigitWidth * 27, ystats), vdfloat2{0, 1});
+	mpTracingLabel->SetPlacement(kAnchorBL, vdpoint32(mSysFontDigitWidth * 37, ystats), vdfloat2{0, 1});
+	mpFlashWriteLabel->SetPlacement(kAnchorBL, vdpoint32(mSysFontDigitWidth * 47, ystats), vdfloat2{0, 1});
+	mpPCLinkLabel->SetPlacement(kAnchorBL, vdpoint32(mSysFontDigitWidth * 19, ystats), vdfloat2{0, 1});
+	mpHostDeviceLabel->SetPlacement(kAnchorBL, vdpoint32(mSysFontDigitWidth * 19, ystats), vdfloat2{0, 1});
 
 	for(int i=0; i<2; ++i)
-		mpLedLabels[i]->SetPosition(vdpoint32(mSysFontDigitWidth * (11+i), ystats));
+		mpLedLabels[i]->SetPlacement(kAnchorBL, vdpoint32(mSysFontDigitWidth * (24+i), ystats), vdfloat2{0, 1});
 
-	mpCassetteLabel->SetPosition(vdpoint32(0, ystats));
-	mpCassetteTimeLabel->SetPosition(vdpoint32(mpCassetteLabel->GetArea().width(), ystats));
+	mpCassetteLabel->SetPlacement(kAnchorBL, vdpoint32(0, ystats), vdfloat2{0, 1});
+	mpCassetteTimeLabel->SetPlacement(kAnchorBL, vdpoint32(mpCassetteLabel->Measure().mDesiredSize.w, ystats), vdfloat2{0, 1});
 
 	const int ystats2 = ystats - (mSysFontDigitHeight * 5) / 4;
 	const int ystats3 = ystats2 - (mSysFontDigitHeight * 5) / 4;
-	int x = w;
+	int x = 0;
 
 	for(int i=(int)vdcountof(mpHeldButtonLabels)-1; i>=0; --i) {
 		ATUILabel& label = *mpHeldButtonLabels[i];
 
-		x -= label.GetArea().width();
-		label.SetPosition(vdpoint32(x, ystats2));
+		x -= label.Measure().mDesiredSize.w;
+		label.SetPlacement(kAnchorBR, vdpoint32(x, ystats2), vdfloat2{0, 1});
 	}
+	
+	mpPendingHeldKeyLabel->SetPlacement(kAnchorBR, vdpoint32(0, ystats3), vdfloat2{1,1});
 
-	RelayoutPendingKeyLabels();
+	mpAudioStatusDisplay->SetPlacement(kAnchorTL, vdpoint32(16, 16), vdfloat2{0, 0});
+	mpPausedLabel->SetPlacement(kAnchorTC, vdpoint32(0, 64), vdfloat2{0.5f, 0});
+}
 
-	mpAudioStatusDisplay->SetPosition(vdpoint32(16, 16));
+void ATUIRenderer::Relayout(int w, int h) {
+	mPrevLayoutWidth = w;
+	mPrevLayoutHeight = h;
 
-	mpPausedLabel->SetPosition(vdpoint32((w - mpPausedLabel->GetArea().width()) >> 1, 64));
+	RelayoutErrors();
 
 	UpdateHoverTipPos();
 }
@@ -1568,24 +2905,28 @@ void ATUIRenderer::UpdatePendingHoldLabel() {
 			s.pop_back();
 
 		mpPendingHeldKeyLabel->SetText(s.c_str());
-
-		mpPendingHeldKeyLabel->AutoSize();
 		mpPendingHeldKeyLabel->SetVisible(true);
-
-		RelayoutPendingKeyLabels();
 	} else {
 		mpPendingHeldKeyLabel->SetVisible(false);
 	}
 }
 
-void ATUIRenderer::RelayoutPendingKeyLabels() {
-	const int h = mPrevLayoutHeight;
-	const int ystats3 = h - mSysFontDigitHeight - ((mSysFontDigitHeight * 5) / 4) * 2;
-	int x = mPrevLayoutWidth;
+void ATUIRenderer::RelayoutErrors() {
+	vdrect32 r = mpStatusMessageLabel->GetArea();
+	int x = r.left;
+	int y = mpStatusMessageLabel->IsVisible() ? r.top : r.bottom;
 
-	if (mpPendingHeldKeyLabel->IsVisible()) {
-		x -= mpPendingHeldKeyLabel->GetArea().width();
-		mpPendingHeldKeyLabel->SetPosition(vdpoint32(x, ystats3));
+	for(auto it = mErrors.rbegin(), itEnd = mErrors.rend(); it != itEnd; ++it) {
+		const ErrorEntry& ee = *it;
+
+		vdrect32 er = ee.mpLabel->GetArea();
+		int dy = y - er.bottom;
+		er.top += dy;
+		er.bottom += dy;
+
+		ee.mpLabel->SetArea(er);
+
+		y -= er.height();
 	}
 }
 
@@ -1605,7 +2946,6 @@ void ATUIRenderer::UpdateHostDeviceLabel() {
 		mHWriteCounter >= 25 ? 0xFFFFFF : mHWriteCounter ? 0x000000 : 0x007920,
 		L"W");
 
-	mpHostDeviceLabel->AutoSize();
 	mpHostDeviceLabel->SetVisible(true);
 }
 
@@ -1625,7 +2965,6 @@ void ATUIRenderer::UpdatePCLinkLabel() {
 		mPCLinkWriteCounter >= 25 ? 0xFFFFFF : mPCLinkWriteCounter ? 0x000000 : 0x007920,
 		L"W");
 
-	mpPCLinkLabel->AutoSize();
 	mpPCLinkLabel->SetVisible(true);
 }
 

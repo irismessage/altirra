@@ -106,17 +106,15 @@ void ATUIFileBrowser::Ascend() {
 void ATUIFileBrowser::OnCreate() {
 	mpListView = new ATUIListView;
 	AddChild(mpListView);
-	mpListView->SetDockMode(kATUIDockMode_Fill);
+	mpListView->SetPlacementFill();
 	mpListView->OnItemSelectedEvent() = [this](auto index) { OnItemSelected(index); };
 	mpListView->OnItemActivatedEvent() = [this](auto index) { OnItemActivated(index); };
 	mpListView->SetFrameMode(kATUIFrameMode_Sunken);
 
 	mpRootListView = new ATUIListView;
 	AddChild(mpRootListView);
-	mpRootListView->SetDockMode(kATUIDockMode_Left);
 	mpRootListView->OnItemActivatedEvent() = [this](auto index) { OnRootItemActivated(index); };
 //	mpRootListView->SetFrameMode(kATUIFrameMode_Sunken);
-	mpRootListView->SetArea(vdrect32(0, 0, 100, 0));
 
 	vdvector<VDStringW> rootPaths;
 	VDGetRootPaths(rootPaths);
@@ -152,17 +150,15 @@ void ATUIFileBrowser::OnCreate() {
 
 	mpTopContainer = new ATUIContainer;
 	AddChild(mpTopContainer);
-	mpTopContainer->SetDockMode(kATUIDockMode_Top);
 
 	mpTextEditPath = new ATUITextEdit;
 	mpTopContainer->AddChild(mpTextEditPath);
-	mpTextEditPath->SetDockMode(kATUIDockMode_Fill);
+	mpTextEditPath->SetPlacementFill();
 	mpTextEditPath->SetFrameMode(kATUIFrameMode_Sunken);
 	mpTextEditPath->OnReturnPressed() = [this] { OnNewPathEntered(); };
 
 	const sint32 rowHt = mpTextEditPath->GetIdealHeight();
 	const sint32 buttonWidth = VDRoundToInt32((float)rowHt * (75.0f / 20.0f));
-	mpTopContainer->SetArea(vdrect32(0, 0, 0, rowHt));
 
 	mpButtonUp = new ATUIButton;
 	mpTopContainer->AddChild(mpButtonUp);
@@ -173,14 +169,11 @@ void ATUIFileBrowser::OnCreate() {
 
 	mpBottomContainer = new ATUIContainer;
 	AddChild(mpBottomContainer);
-	mpBottomContainer->SetDockMode(kATUIDockMode_Bottom);
 
 	mpTextEdit = new ATUITextEdit;
 	mpBottomContainer->AddChild(mpTextEdit);
-	mpTextEdit->SetDockMode(kATUIDockMode_Fill);
+	mpTextEdit->SetPlacementFill();
 	mpTextEdit->SetFrameMode(kATUIFrameMode_Sunken);
-
-	mpBottomContainer->SetArea(vdrect32(0, 0, 0, mpTextEdit->GetIdealHeight()));
 
 	mpButtonOK = new ATUIButton;
 	mpBottomContainer->AddChild(mpButtonOK);
@@ -239,6 +232,15 @@ void ATUIFileBrowser::OnCreate() {
 	mpButtonOK->BindAction(kATUIVK_Tab, ATUIWidget::kActionFocus, 0, mpButtonCancel->GetInstanceId());
 	mpButtonCancel->BindAction(kATUIVK_Tab, ATUIWidget::kActionFocus, 0, mpTextEditPath->GetInstanceId());
 
+	mpTopContainer->SetPlacement(vdrect32f(0, 0, 1, 0), vdpoint32(0, 0), vdfloat2{0, 0});
+	mpTopContainer->SetSizeOffset(vdsize32(0, rowHt));
+	mpBottomContainer->SetPlacement(vdrect32f(0, 1, 1, 1), vdpoint32(0, 0), vdfloat2{0, 1});
+	mpBottomContainer->SetSizeOffset(vdsize32(0, mpTextEdit->GetIdealHeight()));
+	mpRootListView->SetPlacement(vdrect32f(0, 0, 0.2f, 1), vdpoint32(0, rowHt), vdfloat2{0, 0});
+	mpRootListView->SetSizeOffset(vdsize32(0, -rowHt - mpTextEdit->GetIdealHeight()));
+	mpListView->SetPlacement(vdrect32f(0.2f, 0, 1, 1), vdpoint32(0, rowHt), vdfloat2{1, 0});
+	mpListView->SetSizeOffset(vdsize32(0, -rowHt - mpTextEdit->GetIdealHeight()));
+
 	Repopulate();
 }
 
@@ -255,18 +257,6 @@ void ATUIFileBrowser::OnDestroy() {
 	mpButtonCancel.clear();
 
 	RemoveAllChildren();
-}
-
-void ATUIFileBrowser::OnSize() {
-	if (mpRootListView) {
-		vdrect32 r = mpRootListView->GetArea();
-
-		r.right = r.left + GetClientArea().width() / 5;
-
-		mpRootListView->SetArea(r);
-
-		InvalidateLayout();
-	}
 }
 
 void ATUIFileBrowser::OnGoUpPressed() {

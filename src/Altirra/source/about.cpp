@@ -18,6 +18,7 @@
 #include <stdafx.h>
 
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/theme.h>
 #include <at/atnativeui/uiproxies.h>
 #include <windows.h>
 #include <richedit.h>
@@ -30,40 +31,7 @@
 #include <vd2/system/w32assist.h>
 
 namespace {
-	struct StreamInData {
-		const char *pos;
-		int len;
-	};
-
-#pragma pack(push, 4)
-	struct EDITSTREAM_fixed {
-		DWORD_PTR	dwCookie;
-		DWORD	dwError;
-		EDITSTREAMCALLBACK pfnCallback;		// WinXP x64 build 1290 calls this at [rax+0Ch]!
-	};
-#pragma pack(pop)
-
-	DWORD CALLBACK TextToRichTextControlCallback(DWORD_PTR dwCookie, LPBYTE pbBuff, LONG cb, LONG *pcb) {
-		StreamInData& sd = *(StreamInData *)dwCookie;
-
-		if (cb > sd.len)
-			cb = sd.len;
-
-		memcpy(pbBuff, sd.pos, cb);
-		sd.pos += cb;
-		sd.len -= cb;
-
-		*pcb = cb;
-		return 0;
-	}
-
-	typedef vdfastvector<char> tTextStream;
-
-	void append(tTextStream& stream, const char *string) {
-		stream.insert(stream.end(), string, string+strlen(string));
-	}
-
-	void append_cooked(tTextStream& stream, const char *string, const char *stringEnd, bool rtfEscape) {
+	void append_cooked(VDStringA& stream, const char *string, const char *stringEnd, bool rtfEscape) {
 		while(string != stringEnd) {
 			const char *s = string;
 
@@ -99,12 +67,12 @@ namespace {
 					++s;
 			}
 
-			stream.insert(stream.end(), string, s);
+			stream.append(string, s);
 			string = s;
 		}
 	}
 
-	void TextToRichTextControl(LPCTSTR resName, HWND hdlg, HWND hwndText) {
+	void TextToRichTextControl(LPCTSTR resName, ATUINativeWindowProxy& dialog, VDUIProxyRichEditControl& richedit) {
 		HRSRC hResource = FindResource(NULL, resName, _T("STUFF"));
 
 		if (!hResource)
@@ -127,25 +95,34 @@ namespace {
 
 		while(*s!='\r') ++s;
 
-		SetWindowTextA(hdlg, VDString(title, (uint32)(s-title)).c_str());
+		dialog.SetCaption(VDTextU8ToW(VDStringSpanA(title, s)).c_str());
+
 		s+=2;
 
-		tTextStream rtf;
+		VDStringA rtf;
 
-		static const char header[]=
-					"{\\rtf"
-					"{\\fonttbl"
-						"{\\f0\\fswiss MS Shell Dlg;}"
-						"{\\f1\\fnil\\fcharset2 Symbol;}"
-					"}"
-					"{\\colortbl;\\red0\\green64\\blue128;}"
-					"\\fs20 "
-					;
+		rtf = 
+			"{\\rtf"
+			"{\\fonttbl"
+				"{\\f0\\fswiss MS Shell Dlg;}"
+				"{\\f1\\fnil\\fcharset2 Symbol;}"
+			"}";
+
+		const auto& tc = ATUIGetThemeColors();
+		rtf.append_sprintf("{\\colortbl;\\red%u\\green%u\\blue%u;\\red%u\\green%u\\blue%u;}"
+			, (tc.mContentFg >> 16) & 0xFF
+			, (tc.mContentFg >>  8) & 0xFF
+			, (tc.mContentFg      ) & 0xFF
+			, (tc.mHeadingText >> 16) & 0xFF
+			, (tc.mHeadingText >>  8) & 0xFF
+			, (tc.mHeadingText      ) & 0xFF
+		);
+
+		rtf += "\\fs18\\cf1 ";
 		static const char listStart[]="{\\*\\pn\\pnlvlblt\\pnindent0{\\pntxtb\\'B7}}\\fi-240\\li540 ";
 
-		append(rtf, header);
-
 		bool list_active = false;
+		bool firstLine = true;
 
 		while(*s) {
 			// parse line
@@ -166,38 +143,48 @@ namespace {
 				while(t != end && *t != ']')
 					++t;
 
-				append(rtf, "\\cf1\\li300\\i ");
+				rtf += "\\li300{\\cf2\\b ";
 				append_cooked(rtf, s, t, true);
-				append(rtf, "\\i0\\cf0\\par ");
+				rtf +=  "}\\par ";
+
+				firstLine = false;
 			} else {
 				if (*s == '*') {
 					if (!list_active) {
 						list_active = true;
-						append(rtf, listStart);
+						rtf += listStart;
 					} else
-						append(rtf, "\\par ");
+						rtf += "\\par ";
 
 					append_cooked(rtf, s + 2, end, true);
-				} else {
+
+					firstLine = false;
+				} else if (!firstLine || s != end) {
+					firstLine = false;
+
 					if (list_active) {
 						rtf.push_back(' ');
 						if (s == end) {
 							list_active = false;
-							append(rtf, "\\par\\pard");
+							rtf += "\\par\\pard";
 						}
 					}
 
 					if (!list_active) {
 						if (spaces)
-							append(rtf, "\\li300 ");
+							rtf += "\\li300 ";
 						else
-							append(rtf, "\\li0 ");
+							rtf += "\\li0{\\fs23 ";
 					}
 
 					append_cooked(rtf, s, end, true);
 
-					if (!list_active)
-						append(rtf, "\\par ");
+					if (!list_active) {
+						if (spaces == 0)
+							rtf += "}";
+
+						rtf += "\\par ";
+					}
 				}
 			}
 
@@ -212,19 +199,9 @@ namespace {
 
 		rtf.push_back('}');
 
-		SendMessage(hwndText, EM_EXLIMITTEXT, 0, (LPARAM)rtf.size());
-
-		EDITSTREAM_fixed es;
-
-		StreamInData sd={rtf.data(), (int)rtf.size()};
-
-		es.dwCookie = (DWORD_PTR)&sd;
-		es.dwError = 0;
-		es.pfnCallback = (EDITSTREAMCALLBACK)TextToRichTextControlCallback;
-
-		SendMessage(hwndText, EM_STREAMIN, SF_RTF, (LPARAM)&es);
-		SendMessage(hwndText, EM_SETSEL, 0, 0);
-		SetFocus(hwndText);
+		richedit.SetTextRTF(rtf.c_str());
+		richedit.SetCaretPos(0, 0);
+		richedit.Focus();
 	}
 }
 
@@ -235,11 +212,13 @@ public:
 private:
 	bool OnLoaded();
 	void OnDataExchange(bool write);
+
+	VDUIProxyRichEditControl mTextView;
 };
 
 void ATUIDialogChangeLog::OnDataExchange(bool write) {
 	if (!write) {
-		TextToRichTextControl(MAKEINTRESOURCE(IDR_CHANGES), mhdlg, GetDlgItem(mhdlg, IDC_TEXT));
+		TextToRichTextControl(MAKEINTRESOURCE(IDR_CHANGES), *this, mTextView);
 	}
 }
 
@@ -249,7 +228,9 @@ ATUIDialogChangeLog::ATUIDialogChangeLog()
 }
 
 bool ATUIDialogChangeLog::OnLoaded() {
-	mResizer.Add(IDC_TEXT, mResizer.kMC | mResizer.kAvoidFlicker | mResizer.kSuppressFontChange);
+	AddProxy(&mTextView, IDC_TEXT);
+
+	mResizer.Add(mTextView.GetHandle(), mResizer.kMC | mResizer.kAvoidFlicker | mResizer.kSuppressFontChange);
 	mResizer.Add(IDOK, mResizer.kBR);
 
 	return VDResizableDialogFrameW32::OnLoaded();

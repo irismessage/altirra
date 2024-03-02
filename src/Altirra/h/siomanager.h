@@ -72,6 +72,11 @@ public:
 	void ColdReset();
 	void WarmReset();
 
+	void SetReadyState(bool ready);
+
+	void PreLoadState();
+	void PostLoadState();
+
 	void ReinitHooks();
 	void UninitHooks();
 
@@ -88,7 +93,7 @@ public:
 	virtual void PokeyEndCommand() override;
 	virtual void PokeySerInReady() override;
 
-public:
+public:		// IATDeviceSIOManager
 	virtual void AddDevice(IATDeviceSIO *dev) override;
 	virtual void RemoveDevice(IATDeviceSIO *dev) override;
 	virtual void BeginCommand() override;
@@ -110,6 +115,9 @@ public:
 	virtual uint32 GetCyclesPerBitRecv() const override;
 	virtual uint32 GetRecvResetCounter() const override;
 
+	virtual void SaveActiveCommandState(const IATDeviceSIO *device, IATObjectState **state) const;
+	virtual void LoadActiveCommandState(IATDeviceSIO *device, IATObjectState *state);
+
 	virtual void AddRawDevice(IATDeviceRawSIO *dev) override;
 	virtual void RemoveRawDevice(IATDeviceRawSIO *dev) override;
 	virtual void SendRawByte(uint8 byte, uint32 cyclesPerBit, bool synchronous, bool forceFramingError, bool simulateInput) override;
@@ -117,6 +125,7 @@ public:
 
 	bool IsSIOCommandAsserted() const override;
 	bool IsSIOMotorAsserted() const override;
+	bool IsSIOReadyAsserted() const override;
 
 	virtual void SetSIOInterrupt(IATDeviceRawSIO *dev, bool state) override;
 	virtual void SetSIOProceed(IATDeviceRawSIO *dev, bool state) override;
@@ -126,6 +135,24 @@ public:
 public:
 	virtual void OnScheduledEvent(uint32 id) override;
 
+public:
+	enum StepType : uint8 {
+		kStepType_None,
+		kStepType_Delay,
+		kStepType_Send,
+		kStepType_SendAutoProtocol,
+		kStepType_Receive,
+		kStepType_ReceiveAutoProtocol,
+		kStepType_SetTransferRate,
+		kStepType_SetSynchronousTransmit,
+		kStepType_Fence,
+		kStepType_EndCommand,
+		kStepType_AccelSendACK,
+		kStepType_AccelSendNAK,
+		kStepType_AccelSendComplete,
+		kStepType_AccelSendError,
+	};
+
 private:
 	enum {
 		kEventId_Delay = 1,
@@ -134,6 +161,7 @@ private:
 
 	class RawDeviceListLock;
 	friend class RawDeviceListLock;
+	friend class ATSaveStateSioCommandStep;
 
 	uint8 OnHookDSKINV(uint16);
 	uint8 OnHookSIOV(uint16);
@@ -142,6 +170,8 @@ private:
 	void ExecuteNextStep();
 	void ShiftTransmitBuffer();
 	void ResetTransfer();
+	void UpdateActiveDeviceDerivedValues();
+	void UpdateTransferRateDerivedValues();
 	void OnMotorStateChanged(bool asserted);
 	void TraceReceive(uint8 c, uint32 cyclesPerBit);
 	void UpdatePollState(uint8 cmd, uint8 aux1, uint8 aux2);
@@ -172,6 +202,7 @@ private:
 	bool	mbTransmitSynchronous = false;
 	bool	mbCommandState = false;
 	bool	mbMotorState = false;
+	bool	mbReadyState = false;
 	bool	mbSIOPatchEnabled = false;
 	bool	mbOtherSIOAccelEnabled = false;
 	bool	mbDiskSIOAccelEnabled = false;
@@ -186,8 +217,11 @@ private:
 	ATEvent *mpTransferEvent = nullptr;
 	IATDeviceSIO *mpActiveDevice = nullptr;
 	bool	mbActiveDeviceDisk = false;
+	uint8	mActiveDeviceId = 0;
 
 	uint32	mAccessedDisks = 0;
+
+	bool	mbLoadingState = false;
 
 	vdfastvector<IATDeviceSIO *> mSIODevices;
 	vdfastvector<IATDeviceRawSIO *> mSIORawDevices;
@@ -204,23 +238,6 @@ private:
 	};
 
 	vdfastvector<ExternalClock> mExternalClocks;
-
-	enum StepType {
-		kStepType_None,
-		kStepType_Delay,
-		kStepType_Send,
-		kStepType_SendAutoProtocol,
-		kStepType_Receive,
-		kStepType_ReceiveAutoProtocol,
-		kStepType_SetTransferRate,
-		kStepType_SetSynchronousTransmit,
-		kStepType_Fence,
-		kStepType_EndCommand,
-		kStepType_AccelSendACK,
-		kStepType_AccelSendNAK,
-		kStepType_AccelSendComplete,
-		kStepType_AccelSendError,
-	};
 
 	struct Step {
 		StepType mType;

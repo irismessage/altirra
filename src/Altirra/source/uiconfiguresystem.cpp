@@ -18,6 +18,7 @@
 #include <array>
 #include <vd2/system/filesys.h>
 #include <at/atui/uicommandmanager.h>
+#include <at/atnativeui/theme.h>
 #include <at/atcore/devicemanager.h>
 #include "uiaccessors.h"
 #include "uicaptionupdater.h"
@@ -246,10 +247,13 @@ void ATUIDialogSysConfigPage::CmdComboBinding::Read() {
 	if (mActiveEntries != newEntries) {
 		mActiveEntries = newEntries;
 
+		mpControl->SetRedraw(false);
 		mpControl->Clear();
 
 		for(uint32 idx : mActiveEntries)
 			mpControl->AddItem(mLookupTable[idx].mpLabel);
+
+		mpControl->SetRedraw(true);
 	}
 
 	mpControl->SetEnabled(!mActiveEntries.empty());
@@ -267,7 +271,11 @@ void ATUIDialogSysConfigPage::CmdComboBinding::Write() {
 
 	if (cmd) {
 		if (!cmd->mpTestFn || cmd->mpTestFn()) {
-			cmd->mpExecuteFn();
+			try {
+				cmd->mpExecuteFn();
+			} catch(const MyError&) {
+				// eat command errors
+			}
 
 			// Some commands may fail, so we need to re-read in case the change got rolled back.
 			Read();
@@ -307,7 +315,12 @@ void ATUIDialogSysConfigPage::CmdRadioBinding::Write() {
 		if (entry.mpControl->GetChecked()) {
 			const ATUICommand *cmd = cm.GetCommand(entry.mpCommand);
 			if (cmd && (!cmd->mpTestFn || cmd->mpTestFn())) {
-				cmd->mpExecuteFn();
+				try {
+					cmd->mpExecuteFn();
+				} catch(const MyError&) {
+					// eat command errors
+				}
+
 				Read();
 			}
 			break;
@@ -358,7 +371,12 @@ void ATUIDialogSysConfigPage::CmdBoolBinding::Write() {
 			const ATUICommand *cmd2 = newState || !mpDisableCmd ? cmd : cm.GetCommand(mpDisableCmd);
 
 			if (cmd2) {
-				cmd2->mpExecuteFn();
+				try {
+					cmd2->mpExecuteFn();
+				} catch(const MyError&) {
+					// eat command errors
+				}
+
 				Read();
 			}
 		}
@@ -393,7 +411,12 @@ void ATUIDialogSysConfigPage::CmdTriggerBinding::Write() {
 
 	if (!cmd->mpTestFn || cmd->mpTestFn()) {
 		if (cmd) {
-			cmd->mpExecuteFn();
+			try {
+				cmd->mpExecuteFn();
+			} catch(const MyError&) {
+				// eat command errors
+			}
+
 			Read();
 		}
 	}
@@ -453,7 +476,14 @@ void ATUIDialogSysConfigOverview::RemakeOverview() {
 	// This is a hack to prevent the caret from showing up on the rich edit control.
 	Focus();
 
-	mRtfBuffer = R"---({\rtf1\deftab1920{\colortbl;\red0\green0\blue255;})---";
+	mRtfBuffer = R"---({\rtf1\deftab1920{\colortbl)---";
+
+	const auto& tc = ATUIGetThemeColors();
+	mRtfBuffer.append_sprintf(R"---(;\red%u\green%u\blue%u;})---"
+		, (tc.mHyperlinkText >> 16) & 0xFF
+		, (tc.mHyperlinkText >>  8) & 0xFF
+		, (tc.mHyperlinkText      ) & 0xFF
+	);
 
 	mRtfBuffer.append("\\pard\\li1920\\fi-1920 ");
 	mResultView.AppendEscapedRTF(mRtfBuffer, L"Base system");
@@ -765,7 +795,14 @@ void ATUIDialogSysConfigAssessment::Reassess() {
 	// This is a hack to prevent the caret from showing up on the rich edit control.
 	mTargetView.Focus();
 
-	mRtfBuffer = R"---({\rtf1{\colortbl;\red0\green0\blue255;})---";
+	mRtfBuffer = R"---({\rtf1{\colortbl)---";
+
+	const auto& tc = ATUIGetThemeColors();
+	mRtfBuffer.append_sprintf(R"---(;\red%u\green%u\blue%u;})---"
+		, (tc.mHyperlinkText >> 16) & 0xFF
+		, (tc.mHyperlinkText >>  8) & 0xFF
+		, (tc.mHyperlinkText      ) & 0xFF
+	);
 
 	mRtfBuffer.append("{\\*\\pn\\pnlvlblt\\pnindent0{\\pntxtb\\'B7}}\\fi-240\\li340 ");
 
@@ -945,7 +982,12 @@ bool ATUIDialogSysConfigAssessment::AddAutoStateEntry(const wchar_t *s, const wc
 }
 
 void ATUIDialogSysConfigAssessment::ExecuteCommand(const char *s) {
-	ATUIGetCommandManager().ExecuteCommand(s);
+	try {
+		ATUIGetCommandManager().ExecuteCommand(s);
+	} catch(const MyError& e) {
+		ShowError(e);
+	}
+
 	Reassess();
 }
 
@@ -1352,12 +1394,13 @@ protected:
 	bool OnLoaded() override;
 
 	VDUIProxyComboBoxControl mArtifactModeView;
+	VDUIProxyComboBoxControl mMonitorModeView;
 	VDUIProxyButtonControl mEnhTextNoneView;
 	VDUIProxyButtonControl mEnhTextHWView;
 	VDUIProxyButtonControl mEnhTextSWView;
 	VDUIProxyButtonControl mEnhTextFontView;
 	
-	static constexpr CmdMapEntry sArtifactModeOptions[] = {
+	static constexpr CmdMapEntry kArtifactModeOptions[] = {
 		{ "Video.ArtifactingNone",		L"None" },
 		{ "Video.ArtifactingNTSC",		L"NTSC artifacting" },
 		{ "Video.ArtifactingNTSCHi",	L"NTSC high artifacting" },
@@ -1367,17 +1410,28 @@ protected:
 		{ "Video.ArtifactingAutoHi",	L"NTSC/PAL high artifacting (auto-switch)" },
 	};
 
-	CmdComboBinding mArtifactModeBinding { sArtifactModeOptions };
+	static constexpr CmdMapEntry kMonitorModeOptions[] = {
+		{ "Video.MonitorModeColor",		L"Color" },
+		{ "Video.MonitorModeMonoGreen",	L"Monochrome (green phosphor)" },
+		{ "Video.MonitorModeMonoAmber",	L"Monochrome (amber phosphor)" },
+		{ "Video.MonitorModeMonoBluishWhite",	L"Monochrome (bluish white phosphor)" },
+		{ "Video.MonitorModePERITEL",	L"RGB through PERITEL/SCART CA061034 adapter" },
+	};
+
+	CmdComboBinding mArtifactModeBinding { kArtifactModeOptions };
+	CmdComboBinding mMonitorModeBinding { kMonitorModeOptions };
 	CmdRadioBinding mEnhTextModeBinding;
 	CmdTriggerBinding mEnhTextFontBinding { "Video.EnhancedTextFontDialog" };
 };
 
-constexpr ATUIDialogSysConfigVideo::CmdMapEntry ATUIDialogSysConfigVideo::sArtifactModeOptions[];
+constexpr ATUIDialogSysConfigVideo::CmdMapEntry ATUIDialogSysConfigVideo::kArtifactModeOptions[];
+constexpr ATUIDialogSysConfigVideo::CmdMapEntry ATUIDialogSysConfigVideo::kMonitorModeOptions[];
 
 ATUIDialogSysConfigVideo::ATUIDialogSysConfigVideo()
 	: ATUIDialogSysConfigPage(IDD_CONFIGURE_VIDEO)
 {
 	mArtifactModeView.SetOnSelectionChanged([this](int) { mArtifactModeBinding.Write(); });
+	mMonitorModeView.SetOnSelectionChanged([this](int) { mMonitorModeBinding.Write(); });
 	mEnhTextNoneView.SetOnClicked([this] { mEnhTextModeBinding.Write(); });
 	mEnhTextHWView.SetOnClicked([this] { mEnhTextModeBinding.Write(); });
 	mEnhTextSWView.SetOnClicked([this] { mEnhTextModeBinding.Write(); });
@@ -1386,28 +1440,44 @@ ATUIDialogSysConfigVideo::ATUIDialogSysConfigVideo()
 
 bool ATUIDialogSysConfigVideo::OnLoaded() {
 	AddProxy(&mArtifactModeView, IDC_ARTIFACTMODE);
+	AddProxy(&mMonitorModeView, IDC_MONITORMODE);
 	AddProxy(&mEnhTextNoneView, IDC_ENHTEXT_NONE);
 	AddProxy(&mEnhTextHWView, IDC_ENHTEXT_HW);
 	AddProxy(&mEnhTextSWView, IDC_ENHTEXT_SW);
 	AddProxy(&mEnhTextFontView, IDC_ENHTEXTFONT);
 
-	BindCheckbox(IDC_FRAMEBLENDING, "Video.ToggleFrameBlending");
+	auto& blendBinding = *BindCheckbox(IDC_FRAMEBLENDING, "Video.ToggleFrameBlending");
+	auto& blendLinearBinding = *BindCheckbox(IDC_FRAMEBLENDINGLINEAR, "Video.ToggleLinearFrameBlending");
+
+	blendBinding.GetView().SetOnClicked(
+		[&] {
+			blendBinding.Write();
+			blendLinearBinding.Read();
+		}
+	);
+
 	BindCheckbox(IDC_INTERLACE, "Video.ToggleInterlace");
 	BindCheckbox(IDC_SCANLINES, "Video.ToggleScanlines");
 
 	mArtifactModeBinding.Bind(&mArtifactModeView);
+	mMonitorModeBinding.Bind(&mMonitorModeView);
 	mEnhTextModeBinding.Bind("Video.EnhancedModeNone", &mEnhTextNoneView);
 	mEnhTextModeBinding.Bind("Video.EnhancedModeHardware", &mEnhTextHWView);
 	mEnhTextModeBinding.Bind("Video.EnhancedModeCIO", &mEnhTextSWView);
 	mEnhTextFontBinding.Bind(&mEnhTextFontView);
 
 	AddAutoReadBinding(&mArtifactModeBinding);
+	AddAutoReadBinding(&mMonitorModeBinding);
 	AddAutoReadBinding(&mEnhTextModeBinding);
 	AddAutoReadBinding(&mEnhTextFontBinding);
 
 	AddHelpEntry(IDC_FRAMEBLENDING, L"Frame blending",
 		L"Blend adjacent frames together to eliminate flickering from frame alternation effects."
-);
+	);
+
+	AddHelpEntry(IDC_FRAMEBLENDINGLINEAR, L"Blend frames in linear color space",
+		L"Use linear color blending for more accurate colors when blending frames (slower)."
+	);
 
 	AddHelpEntry(IDC_INTERLACE, L"Interlace",
 		L"Enable support for display video as interlaced fields instead of frames. This requires using software \
@@ -1430,6 +1500,12 @@ better editing capabilities, but only works with software that uses OS facilites
 	LinkHelpEntry(IDC_ENHTEXT_SW, IDC_ENHTEXT_NONE);
 	LinkHelpEntry(IDC_ENHTEXT_HW, IDC_ENHTEXT_NONE);
 	LinkHelpEntry(IDC_ENHTEXTFONT, IDC_ENHTEXT_NONE);
+
+	AddHelpEntry(IDC_MONITORMODE, L"Monitor mode",
+		L"Selects the monitor (screen) type. Monochrome types only display one color. RGB PERITEL emulates "
+		L"the CA061034 PERITEL adapter for PERITEL/SCART RGB output. Artifacting processing must be disabled "
+		L"to use this setting."
+	);
 
 	OnDataExchange(false);
 
@@ -1501,11 +1577,16 @@ bool ATUIDialogSysConfigAudio::OnLoaded() {
 	BindCheckbox(IDC_NONLINEARMIXING, "Audio.ToggleNonlinearMixing");
 	BindCheckbox(IDC_SERIALNOISE, "Audio.ToggleSerialNoise");
 	BindCheckbox(IDC_AUDIOMONITOR, "Audio.ToggleMonitor");
+	BindCheckbox(IDC_AUDIOSCOPE, "Audio.ToggleScope");
 	BindCheckbox(IDC_MUTEALL, "Audio.ToggleMute");
 	BindCheckbox(IDC_AUDIO_CH1, "Audio.ToggleChannel1");
 	BindCheckbox(IDC_AUDIO_CH2, "Audio.ToggleChannel2");
 	BindCheckbox(IDC_AUDIO_CH3, "Audio.ToggleChannel3");
 	BindCheckbox(IDC_AUDIO_CH4, "Audio.ToggleChannel4");
+	BindCheckbox(IDC_AUDIO_SCH1, "Audio.ToggleSecondaryChannel1");
+	BindCheckbox(IDC_AUDIO_SCH2, "Audio.ToggleSecondaryChannel2");
+	BindCheckbox(IDC_AUDIO_SCH3, "Audio.ToggleSecondaryChannel3");
+	BindCheckbox(IDC_AUDIO_SCH4, "Audio.ToggleSecondaryChannel4");
 
 	mHostAudioView.SetOnClicked([this] { mHostAudioBinding.Write(); });
 
@@ -1537,6 +1618,10 @@ emulates quiet high-pitched noise heard during disk loads when normal beep-beep 
 	LinkHelpEntry(IDC_AUDIO_CH2, IDC_MUTEALL);
 	LinkHelpEntry(IDC_AUDIO_CH3, IDC_MUTEALL);
 	LinkHelpEntry(IDC_AUDIO_CH4, IDC_MUTEALL);
+	LinkHelpEntry(IDC_AUDIO_SCH1, IDC_MUTEALL);
+	LinkHelpEntry(IDC_AUDIO_SCH2, IDC_MUTEALL);
+	LinkHelpEntry(IDC_AUDIO_SCH3, IDC_MUTEALL);
+	LinkHelpEntry(IDC_AUDIO_SCH4, IDC_MUTEALL);
 
 	OnDataExchange(false);
 
@@ -1591,6 +1676,7 @@ bool ATUIDialogSysConfigCassette::OnLoaded() {
 	BindCheckbox(IDC_LOADDATAASAUDIO, "Cassette.ToggleLoadDataAsAudio");
 	BindCheckbox(IDC_RANDOMIZESTARTPOS, "Cassette.ToggleRandomizeStartPosition");
 	CmdBoolBinding *turboInvertBinding = BindCheckbox(IDC_TURBOINVERT, "Cassette.TogglePolarity");
+	BindCheckbox(IDC_TURBOPREFILTER, "Cassette.ToggleTurboPrefilter");
 
 	AddProxy(&mTurboTypeView, IDC_TURBOTYPE);
 	mTurboTypeBinding.Bind(&mTurboTypeView);
@@ -1649,6 +1735,11 @@ with an inverted signal, since some turbo tape loaders are sensitive to the data
 	AddHelpEntry(IDC_DIRECTSENSE, L"Direct read filter (FSK only)",
 		L"Selects the bandwidth of filter used when reading data bits directly. Lower bandwidth filters limit max baud rate but \
 improve noise immunity. This filter is not used with turbo decoding."
+		);
+
+	AddHelpEntry(IDC_TURBOPREFILTER, L"Prefilter before turbo decoding",
+		L"Apply high-pass filtering before decoding turbo data to reduce phase shifts from noise reduction \
+in audio-oriented tape players. This only takes effect when a raw tape in WAV format is loaded."
 		);
 
 	OnDataExchange(false);
@@ -2212,6 +2303,9 @@ bool ATUIDialogSysConfigDebugger::OnLoaded() {
 	AddAutoReadBinding(&mPostStartMapBinding);
 	AddAutoReadBinding(&mScriptMapBinding);
 
+	BindCheckbox(IDC_AUTOLOADSYSTEMSYMBOLS, "Debug.ToggleAutoLoadSystemSymbols");
+	BindCheckbox(IDC_AUTOLOADOSROMSYMBOLS, "Debug.ToggleAutoLoadKernelSymbols");
+
 	AddHelpEntry(IDC_SYMBOLLOAD_PRESTART, L"Pre-start symbol load mode",
 		L"Whether symbols and scripts are loaded for images that are loaded while the debugger is disabled. The default "
 		L"is Deferred, which tracks but does not load symbols until explicitly triggered."
@@ -2225,6 +2319,14 @@ bool ATUIDialogSysConfigDebugger::OnLoaded() {
 	AddHelpEntry(IDC_SCRIPTAUTOLOAD, L"Script auto-loading",
 		L"Controls when debugger script (.atdbg) files are auto-loaded when an image is loaded. Note that this only "
 		L"happens if symbol loading is set to Enabled or Deferred."
+	);
+
+	AddHelpEntry(IDC_AUTOLOADSYSTEMSYMBOLS, L"Auto-load standard system symbols",
+		L"Automatically load symbols for standard system variables, entry points, and hardware registers. If disabled, these must be loaded manually with .loadsym."
+	);
+
+	AddHelpEntry(IDC_AUTOLOADOSROMSYMBOLS, L"Auto-load OS ROM symbols",
+		L"Automatically load symbols for the currently selected operating system ROM image, if present next to the image file."
 	);
 
 	OnDataExchange(false);
@@ -2257,6 +2359,8 @@ bool ATUIDialogSysConfigDisplay::OnLoaded() {
 	});
 
 	BindCheckbox(IDC_HWACCEL_SCREENFX, "View.ToggleAccelScreenFX");
+	BindCheckbox(IDC_AUTOHIDEPOINTER, "View.ToggleAutoHidePointer");
+	BindCheckbox(IDC_HIDETARGETPOINTER, "View.ToggleTargetPointer");
 
 	AddHelpEntry(IDC_SHOW_INDICATORS, L"Show indicators",
 		L"Draw on-screen overlays for device status.");
@@ -2268,6 +2372,16 @@ bool ATUIDialogSysConfigDisplay::OnLoaded() {
 		L"Use hardware acceleration for screen effects",
 		L"Accelerate screen effects like scanlines and color correction with shaders. This requires "
 			L"a shader-capable graphics card and Direct3D 9 or 11 to be enabled in Options."
+	);
+
+	AddHelpEntry(IDC_AUTOHIDEPOINTER,
+		L"Auto-hide mouse pointer after short delay",
+		L"Automatically hide the mouse pointer whenever it stops in the Display window."
+	);
+
+	AddHelpEntry(IDC_HIDETARGETPOINTER,
+		L"Auto-hide target pointer for absolute mouse input",
+		L"Hide the target reticle pointer that is normally displayed for mouse position based input maps, like ones for light pens and guns."
 	);
 
 	OnDataExchange(false);

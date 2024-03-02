@@ -38,8 +38,12 @@ bool ATUIConfDevKMKJZIDE2(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevCovox(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevDiskDriveFull(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevATR8000(VDGUIHandle hParent, ATPropertySet& props);
-bool ATUIConfDevPercom(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevPercomRFD(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevPercomAT(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevVBXE(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevAMDC(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevXEP80(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevCustom(VDGUIHandle hParent, ATPropertySet& props);
 
 void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("harddisk", ATUIConfDevHardDisk);
@@ -61,8 +65,12 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("kmkjzide2", ATUIConfDevKMKJZIDE2);
 	dev.AddDeviceConfigurer("covox", ATUIConfDevCovox);
 	dev.AddDeviceConfigurer("diskdriveatr8000", ATUIConfDevATR8000);
-	dev.AddDeviceConfigurer("diskdrivepercom", ATUIConfDevPercom);
+	dev.AddDeviceConfigurer("diskdrivepercom", ATUIConfDevPercomRFD);
+	dev.AddDeviceConfigurer("diskdrivepercomat", ATUIConfDevPercomAT);
+	dev.AddDeviceConfigurer("diskdriveamdc", ATUIConfDevAMDC);
 	dev.AddDeviceConfigurer("vbxe", ATUIConfDevVBXE);
+	dev.AddDeviceConfigurer("xep80", ATUIConfDevXEP80);
+	dev.AddDeviceConfigurer("custom", ATUIConfDevCustom);
 
 	static const char *const kDiskDriveFullTypes[]={
 		"diskdrive810",
@@ -81,6 +89,7 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 		"diskdriveisplate",
 		"diskdriveindusgt",
 		"diskdrivexf551",
+		"diskdrive810turbo",
 	};
 
 	for(const char *s : kDiskDriveFullTypes) {

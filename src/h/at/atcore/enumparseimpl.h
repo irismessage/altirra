@@ -67,12 +67,28 @@ constexpr ATEnumLookupTableImpl<T, N> ATCreateEnumLookupTable(const ATEnumEntry<
 	return outputTable;
 }
 
-#define AT_DEFINE_ENUM_TABLE_BEGIN(enumName) static constexpr const ATEnumEntry<enumName> g_ATEnumTableEntries_##enumName[] = {
+//=========================================================================
+// Enum table definition
+//
+// In a header file:
+//
+//	AT_DECLARE_ENUM_TABLE(MyEnumType)
+//
+// In a .cpp file:
+//
+//	AT_DEFINE_ENUM_TABLE_BEGIN(MyEnumType)
+//		{ MyEnumType::value, "value_string" },
+//		...
+//	AT_DEFINE_ENUM_TABLE_END(MyEnumType)
+//
+
+#define AT_DEFINE_ENUM_TABLE_BEGIN(enumName)	\
+	template<> const ATEnumLookupTable& ATGetEnumLookupTable<enumName>() {	\
+		static constexpr ATEnumEntry<enumName> kTable[] = {
 
 #define AT_DEFINE_ENUM_TABLE_END(enumName, defaultValue)	\
-};	\
-template<> const ATEnumLookupTable& ATGetEnumLookupTable<enumName>() {	\
-	constexpr static const auto s_enumTable = ATCreateEnumLookupTable(g_ATEnumTableEntries_##enumName);	\
+		};	\
+	constexpr static const auto s_enumTable = ATCreateEnumLookupTable(kTable);	\
 	constexpr static const ATEnumLookupTable s_enumLookupTable = ATEnumLookupTable { &s_enumTable.mHashEntries[0], vdcountof(s_enumTable.mHashEntries), (uint32)(defaultValue) };	\
 		\
 	return s_enumLookupTable;	\

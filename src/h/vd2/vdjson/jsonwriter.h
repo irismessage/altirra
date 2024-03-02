@@ -45,12 +45,16 @@ public:
 	void WriteNull();
 	void WriteBool(bool value);
 	void WriteInt(sint64 value);
+	void WriteIntAsString(sint64 value);
+	void WriteIntSafe(sint64 value);
 	void WriteReal(double value);
+	void WriteStringASCII(const char *s);
 	void WriteString(const wchar_t *s);
 	void WriteString(const wchar_t *s, size_t len);
 
 protected:
 	void BeginValue();
+	void WriteRawStringASCII(const char *s, size_t len);
 	void WriteRawString(const wchar_t *s, size_t len);
 	void Write(const wchar_t *s, size_t len);
 	void WriteLine();

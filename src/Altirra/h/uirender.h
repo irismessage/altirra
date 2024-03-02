@@ -65,6 +65,8 @@ public:
 	virtual void SetAudioStatus(ATUIAudioStatus *status) = 0;
 
 	virtual void SetAudioMonitor(bool secondary, ATAudioMonitor *monitor) = 0;
+	virtual void SetAudioDisplayEnabled(bool secondary, bool enable) = 0;
+	virtual void SetAudioScopeEnabled(bool enable) = 0;
 
 	virtual void SetSlightSID(ATSlightSIDEmulator *emu) = 0;
 
@@ -84,6 +86,8 @@ public:
 
 	virtual void AddIndicatorSafeHeightChangedHandler(const vdfunction<void()> *pfn) = 0;
 	virtual void RemoveIndicatorSafeHeightChangedHandler(const vdfunction<void()> *pfn) = 0;
+
+	virtual void BeginCustomization() = 0;
 };
 
 void ATCreateUIRenderer(IATUIRenderer **r);

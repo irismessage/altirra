@@ -84,6 +84,7 @@ void OnCommandCassetteTurboModeProceedSense();
 void OnCommandCassetteTurboModeInterruptSense();
 void OnCommandCassetteTurboModeAlways();
 void OnCommandCassetteTogglePolarity();
+void OnCommandCassetteToggleTurboPrefilter();
 void OnCommandCassettePolarityModeNormal();
 void OnCommandCassettePolarityModeInverted();
 void OnCommandCassetteDirectSenseNormal();
@@ -187,6 +188,7 @@ void OnCommandConsoleIndusGTError();
 void OnCommandConsoleIndusGTId();
 void OnCommandConsoleIndusGTTrack();
 void OnCommandConsoleIndusGTBootCPM();
+void OnCommandConsoleIndusGTChangeDensity();
 void OnCommandConsoleHappyToggleFastSlow();
 void OnCommandConsoleHappyToggleWriteProtect();
 void OnCommandConsoleHappyToggleWriteEnable();
@@ -227,12 +229,14 @@ void OnCommandVideoStandard(ATVideoStandard mode);
 void OnCommandVideoToggleStandardNTSCPAL();
 void OnCommandVideoToggleCTIA();
 void OnCommandVideoToggleFrameBlending();
+void OnCommandVideoToggleLinearFrameBlending();
 void OnCommandVideoToggleInterlace();
 void OnCommandVideoToggleScanlines();
+void OnCommandVideoMonitorMode(ATMonitorMode mode);
 void OnCommandVideoToggleXEP80();
 void OnCommandVideoAdjustColorsDialog();
 void OnCommandVideoAdjustScreenEffectsDialog();
-void OnCommandVideoArtifacting(ATGTIAEmulator::ArtifactMode mode);
+void OnCommandVideoArtifacting(ATArtifactMode mode);
 void OnCommandVideoArtifactingNext();
 void OnCommandVideoEnhancedModeNone();
 void OnCommandVideoEnhancedModeHardware();
@@ -240,11 +244,13 @@ void OnCommandVideoEnhancedModeCIO();
 void OnCommandVideoEnhancedTextFontDialog();
 void OnCommandAudioToggleStereo();
 void OnCommandAudioToggleMonitor();
+void OnCommandAudioToggleScope();
 void OnCommandAudioToggleMute();
 void OnCommandAudioOptionsDialog();
 void OnCommandAudioToggleNonlinearMixing();
 void OnCommandAudioToggleSerialNoise();
 void OnCommandAudioToggleChannel(int channel);
+void OnCommandAudioToggleSecondaryChannel(int channel);
 void OnCommandAudioToggleSlightSid();
 void OnCommandAudioToggleCovox();
 void OnCommandInputCaptureMouse();
@@ -395,7 +401,7 @@ namespace ATCommands {
 		return g_sim.GetVideoStandard() == T_Standard;
 	}
 
-	template<ATGTIAEmulator::ArtifactMode T_Mode>
+	template<ATArtifactMode T_Mode>
 	bool VideoArtifactingModeIs() {
 		return g_sim.GetGTIA().GetArtifactingMode() == T_Mode;
 	}
@@ -489,7 +495,7 @@ namespace ATCommands {
 
 	bool IsDiskDriveEnabledAny() {
 		for(int i=0; i<15; ++i) {
-			if (g_sim.GetDiskDrive(i).IsEnabled())
+			if (g_sim.GetDiskDrive(i).IsEnabled() || g_sim.GetDiskInterface(i).GetClientCount() > 1)
 				return true;
 		}
 
@@ -544,7 +550,7 @@ namespace ATCommands {
 	}
 
 	bool IsVideoFrameAvailable() {
-		return g_sim.GetGTIA().GetLastFrameBuffer() != NULL;
+		return g_sim.GetGTIA().IsLastFrameBufferAvailable();
 	}
 
 	bool IsRecording() {
@@ -572,6 +578,11 @@ namespace ATCommands {
 	template<int Index>
 	bool PokeyChannelEnabled() {
 		return g_sim.GetPokey().IsChannelEnabled(Index);
+	}
+
+	template<int Index>
+	bool PokeySecondaryChannelEnabled() {
+		return g_sim.GetPokey().IsSecondaryChannelEnabled(Index);
 	}
 
 	template<bool (ATGTIAEmulator::*T_Method)() const>
@@ -801,6 +812,11 @@ namespace ATCommands {
 			[] { return ATUIGetDeviceButtonSupported(kATDeviceButton_IndusGTBootCPM); },
 			[] { return ATUIGetDeviceButtonDepressed(kATDeviceButton_IndusGTBootCPM) ? kATUICmdState_Checked : kATUICmdState_None; }
 		},
+		{ "Console.IndusGTChangeDensity",
+			OnCommandConsoleIndusGTBootCPM,
+			[] { return ATUIGetDeviceButtonSupported(kATDeviceButton_IndusGTChangeDensity); },
+			[] { return ATUIGetDeviceButtonDepressed(kATDeviceButton_IndusGTChangeDensity) ? kATUICmdState_Checked : kATUICmdState_None; }
+		},
 		{ "Console.HappyToggleFastSlow",
 			OnCommandConsoleHappyToggleFastSlow,
 			[] { return ATUIGetDeviceButtonSupported(kATDeviceButton_HappySlow); },
@@ -1027,19 +1043,26 @@ namespace ATCommands {
 
 		{ "Video.ToggleCTIA", OnCommandVideoToggleCTIA, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsCTIAMode> > },
 		{ "Video.ToggleFrameBlending", OnCommandVideoToggleFrameBlending, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsBlendModeEnabled> > },
+		{ "Video.ToggleLinearFrameBlending", OnCommandVideoToggleLinearFrameBlending, GTIATest<&ATGTIAEmulator::IsBlendModeEnabled>, CheckedIf<GTIATest<&ATGTIAEmulator::IsLinearBlendEnabled> > },
 		{ "Video.ToggleInterlace", OnCommandVideoToggleInterlace, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsInterlaceEnabled> > },
 		{ "Video.ToggleScanlines", OnCommandVideoToggleScanlines, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::AreScanlinesEnabled> > },
 		{ "Video.ToggleXEP80", OnCommandVideoToggleXEP80, NULL, CheckedIf<IsXEP80Enabled> },
 		{ "Video.AdjustColorsDialog", OnCommandVideoAdjustColorsDialog },
 		{ "Video.AdjustScreenEffectsDialog", OnCommandVideoAdjustScreenEffectsDialog },
 
-		{ "Video.ArtifactingNone",		[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactNone); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactNone> > },
-		{ "Video.ArtifactingNTSC",		[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactNTSC); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactNTSC> > },
-		{ "Video.ArtifactingNTSCHi",	[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactNTSCHi); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactNTSCHi> > },
-		{ "Video.ArtifactingPAL",		[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactPAL); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactPAL> > },
-		{ "Video.ArtifactingPALHi",		[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactPALHi); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactPALHi> > },
-		{ "Video.ArtifactingAuto",		[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactAuto); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactAuto> > },
-		{ "Video.ArtifactingAutoHi",	[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactAutoHi); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactAutoHi> > },
+		{ "Video.MonitorModeColor",		[] { OnCommandVideoMonitorMode(ATMonitorMode::Color); }, NULL, [] { return ToRadio(g_sim.GetGTIA().GetMonitorMode() == ATMonitorMode::Color); } },
+		{ "Video.MonitorModePERITEL",	[] { OnCommandVideoMonitorMode(ATMonitorMode::Peritel); }, NULL, [] { return ToRadio(g_sim.GetGTIA().GetMonitorMode() == ATMonitorMode::Peritel); } },
+		{ "Video.MonitorModeMonoAmber",	[] { OnCommandVideoMonitorMode(ATMonitorMode::MonoAmber); }, NULL, [] { return ToRadio(g_sim.GetGTIA().GetMonitorMode() == ATMonitorMode::MonoAmber); } },
+		{ "Video.MonitorModeMonoGreen",	[] { OnCommandVideoMonitorMode(ATMonitorMode::MonoGreen); }, NULL, [] { return ToRadio(g_sim.GetGTIA().GetMonitorMode() == ATMonitorMode::MonoGreen); } },
+		{ "Video.MonitorModeMonoBluishWhite",	[] { OnCommandVideoMonitorMode(ATMonitorMode::MonoBluishWhite); }, NULL, [] { return ToRadio(g_sim.GetGTIA().GetMonitorMode() == ATMonitorMode::MonoBluishWhite); } },
+
+		{ "Video.ArtifactingNone",		[]() { OnCommandVideoArtifacting(ATArtifactMode::None);		}, nullptr, RadioCheckedIf<VideoArtifactingModeIs<ATArtifactMode::None> > },
+		{ "Video.ArtifactingNTSC",		[]() { OnCommandVideoArtifacting(ATArtifactMode::NTSC);		}, nullptr, RadioCheckedIf<VideoArtifactingModeIs<ATArtifactMode::NTSC> > },
+		{ "Video.ArtifactingNTSCHi",	[]() { OnCommandVideoArtifacting(ATArtifactMode::NTSCHi);	}, nullptr, RadioCheckedIf<VideoArtifactingModeIs<ATArtifactMode::NTSCHi> > },
+		{ "Video.ArtifactingPAL",		[]() { OnCommandVideoArtifacting(ATArtifactMode::PAL);		}, nullptr, RadioCheckedIf<VideoArtifactingModeIs<ATArtifactMode::PAL> > },
+		{ "Video.ArtifactingPALHi",		[]() { OnCommandVideoArtifacting(ATArtifactMode::PALHi);	}, nullptr, RadioCheckedIf<VideoArtifactingModeIs<ATArtifactMode::PALHi> > },
+		{ "Video.ArtifactingAuto",		[]() { OnCommandVideoArtifacting(ATArtifactMode::Auto);		}, nullptr, RadioCheckedIf<VideoArtifactingModeIs<ATArtifactMode::Auto> > },
+		{ "Video.ArtifactingAutoHi",	[]() { OnCommandVideoArtifacting(ATArtifactMode::AutoHi);	}, nullptr, RadioCheckedIf<VideoArtifactingModeIs<ATArtifactMode::AutoHi> > },
 		{ "Video.ArtifactingNextMode",	OnCommandVideoArtifactingNext },
 
 		{ "Video.EnhancedModeNone", OnCommandVideoEnhancedModeNone, NULL, RadioCheckedIf<VideoEnhancedTextModeIs<0> > },
@@ -1049,6 +1072,7 @@ namespace ATCommands {
 
 		{ "Audio.ToggleStereo", OnCommandAudioToggleStereo, NULL, CheckedIf<SimTest<&ATSimulator::IsDualPokeysEnabled> > },
 		{ "Audio.ToggleMonitor", OnCommandAudioToggleMonitor, NULL, CheckedIf<SimTest<&ATSimulator::IsAudioMonitorEnabled> > },
+		{ "Audio.ToggleScope", OnCommandAudioToggleScope, NULL, CheckedIf<SimTest<&ATSimulator::IsAudioScopeEnabled> > },
 		{ "Audio.ToggleMute", OnCommandAudioToggleMute, NULL, CheckedIf<IsAudioMuted> },
 		{ "Audio.OptionsDialog", OnCommandAudioOptionsDialog },
 		{ "Audio.ToggleNonlinearMixing", OnCommandAudioToggleNonlinearMixing, NULL, CheckedIf<PokeyTest<&ATPokeyEmulator::IsNonlinearMixingEnabled> > },
@@ -1057,6 +1081,10 @@ namespace ATCommands {
 		{ "Audio.ToggleChannel2", []() { OnCommandAudioToggleChannel(1); }, NULL, CheckedIf<PokeyChannelEnabled<1> > },
 		{ "Audio.ToggleChannel3", []() { OnCommandAudioToggleChannel(2); }, NULL, CheckedIf<PokeyChannelEnabled<2> > },
 		{ "Audio.ToggleChannel4", []() { OnCommandAudioToggleChannel(3); }, NULL, CheckedIf<PokeyChannelEnabled<3> > },
+		{ "Audio.ToggleSecondaryChannel1", []() { OnCommandAudioToggleSecondaryChannel(0); }, SimTest<&ATSimulator::IsDualPokeysEnabled>, CheckedIf<PokeySecondaryChannelEnabled<0>> },
+		{ "Audio.ToggleSecondaryChannel2", []() { OnCommandAudioToggleSecondaryChannel(1); }, SimTest<&ATSimulator::IsDualPokeysEnabled>, CheckedIf<PokeySecondaryChannelEnabled<1>> },
+		{ "Audio.ToggleSecondaryChannel3", []() { OnCommandAudioToggleSecondaryChannel(2); }, SimTest<&ATSimulator::IsDualPokeysEnabled>, CheckedIf<PokeySecondaryChannelEnabled<2>> },
+		{ "Audio.ToggleSecondaryChannel4", []() { OnCommandAudioToggleSecondaryChannel(3); }, SimTest<&ATSimulator::IsDualPokeysEnabled>, CheckedIf<PokeySecondaryChannelEnabled<3>> },
 
 		{ "Audio.ToggleSlightSid", OnCommandAudioToggleSlightSid, IsNot5200, CheckedIf<IsSlightSidEnabled> },
 		{ "Audio.ToggleCovox", OnCommandAudioToggleCovox, IsNot5200, CheckedIf<IsCovoxEnabled> },

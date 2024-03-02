@@ -19,17 +19,21 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
+#include <vd2/system/binary.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/thunk.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/system/vdalloc.h>
+#include <at/atcore/wraptime.h>
 #include <at/atcpu/execstate.h>
 #include <at/atcpu/history.h>
 #include <at/atdebugger/historytree.h>
 #include <at/atdebugger/historytreebuilder.h>
 #include <at/atdebugger/target.h>
+#include <at/atnativeui/theme.h>
 #include <at/atnativeui/uinativewindow.h>
 #include "cpu.h"
+#include "debuggersettings.h"
 #include "disasm.h"
 #include "oshelper.h"
 #include "resource.h"
@@ -54,6 +58,8 @@ public:
 	void ClearInsns() override;
 	void UpdateInsns(uint32 historyStart, uint32 historyEnd) override;
 	void RefreshAll() override;
+
+	bool JumpToCycle(uint32 cycle) override;
 
 protected:
 	LRESULT EditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -86,9 +92,11 @@ protected:
 	void UpdateScrollMax();
 	void UpdateScrollBar();
 	void UpdateHScrollBar();
+	void UpdateThemeColors();
 	bool GetLineHistoryIndex(const ATHTLineIterator& it, uint32& index) const;
 	const ATCPUHistoryEntry *GetLineHistoryEntry(const ATHTLineIterator& it) const;
 	const ATCPUHistoryEntry *GetSelectedLineHistoryEntry() const;
+	uint32 GetHistoryAddress(const ATCPUHistoryEntry& he) const;
 
 	void Reset();
 	void ReloadOpcodes();
@@ -150,17 +158,19 @@ protected:
 	bool	mbDirtyScrollBar = false;
 	bool	mbDirtyHScrollBar = false;
 	bool	mbSearchActive = false;
-	bool	mbShowPCAddress = false;
-	bool	mbShowGlobalPCAddress = false;
-	bool	mbShowRegisters = false;
-	bool	mbShowSpecialRegisters = false;
-	bool	mbShowFlags = false;
-	bool	mbShowCodeBytes = false;
-	bool	mbShowLabels = false;
-	bool	mbShowLabelNamespaces = false;
-	bool	mbCollapseLoops = false;
-	bool	mbCollapseCalls = false;
-	bool	mbCollapseInterrupts = false;
+
+	ATDebuggerSettingView<bool> mbShowPCAddress;
+	ATDebuggerSettingView<bool> mbShowGlobalPCAddress;
+	ATDebuggerSettingView<bool> mbShowRegisters;
+	ATDebuggerSettingView<bool> mbShowSpecialRegisters;
+	ATDebuggerSettingView<bool> mbShowFlags;
+	ATDebuggerSettingView<bool> mbShowCodeBytes;
+	ATDebuggerSettingView<bool> mbShowLabels;
+	ATDebuggerSettingView<bool> mbShowLabelNamespaces;
+
+	ATDebuggerSettingView<bool> mbCollapseLoops;
+	ATDebuggerSettingView<bool> mbCollapseCalls;
+	ATDebuggerSettingView<bool> mbCollapseInterrupts;
 
 	uint32	mTimeBaseCycles = 0;
 	uint32	mTimeBaseUnhaltedCycles = 0;
@@ -212,10 +222,19 @@ protected:
 	sint32 mFontPropHeight = 1;
 	sint32 mFontMonoHeight = 1;
 
+	COLORREF mColorBg = 0;
+	COLORREF mColorBgHi = 0;
+	COLORREF mColorBgHiInactive = 0;
+	COLORREF mColorFg = 0;
+	COLORREF mColorFgHi = 0;
+	COLORREF mColorFgHiInactive = 0;
+
 	uint32 mSubCycles = 0;
 	ATDebugDisasmMode mDisasmMode = {};
 	bool mbDecodeAnticNMI = false;
 	IATUIHistoryModel *mpHistoryModel = nullptr;
+
+	vdfunction<void()> mpFnNotifyThemeChanged;
 
 	ATHistoryTreeBuilder mHistoryTreeBuilder;
 };
@@ -224,15 +243,6 @@ ATUIHistoryView::ATUIHistoryView()
 	: mMenu(LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_HISTORY_CONTEXT_MENU)))
 	, mPageItems(1)
 	, mTimestampMode(kTsMode_Beam)
-	, mbCollapseLoops(true)
-	, mbCollapseCalls(true)
-	, mbCollapseInterrupts(true)
-	, mbShowPCAddress(true)
-	, mbShowRegisters(true)
-	, mbShowFlags(true)
-	, mbShowCodeBytes(true)
-	, mbShowLabels(true)
-	, mbShowLabelNamespaces(true)
 	, mpPanel(new Panel(this))
 {
 	SetTouchMode(kATUITouchMode_2DPanSmooth);
@@ -244,6 +254,32 @@ ATUIHistoryView::ATUIHistoryView()
 
 	mTextSearch = L"Search";
 	mTextClear = L"Clear";
+
+	mpFnNotifyThemeChanged = [this] { UpdateThemeColors(); };
+
+	const auto redraw = [this] {
+		if (mhwnd)
+			InvalidateRect(mhwnd, nullptr, TRUE);
+	};
+
+	mbShowPCAddress.Attach(g_ATDbgSettingHistoryShowPC, redraw);
+	mbShowGlobalPCAddress.Attach(g_ATDbgSettingHistoryShowGlobalPC, redraw);
+	mbShowRegisters.Attach(g_ATDbgSettingHistoryShowRegisters, redraw);
+	mbShowSpecialRegisters.Attach(g_ATDbgSettingHistoryShowSpecialRegisters, redraw);
+	mbShowFlags.Attach(g_ATDbgSettingHistoryShowFlags, redraw);
+
+	mbShowLabels.Attach(g_ATDbgSettingShowLabels, redraw);
+	mbShowLabelNamespaces.Attach(g_ATDbgSettingShowLabelNamespaces, redraw);
+	mbShowCodeBytes.Attach(g_ATDbgSettingShowCodeBytes, redraw);
+
+	const auto reload = [this] {
+		if (mhwnd)
+			ReloadOpcodes();
+	};
+
+	mbCollapseLoops.Attach(g_ATDbgSettingCollapseLoops, reload);
+	mbCollapseCalls.Attach(g_ATDbgSettingCollapseCalls, reload);
+	mbCollapseInterrupts.Attach(g_ATDbgSettingCollapseInterrupts, reload);
 }
 
 ATUIHistoryView::~ATUIHistoryView() {
@@ -388,6 +424,20 @@ void ATUIHistoryView::RefreshAll() {
 		InvalidateRect(mhwnd, NULL, TRUE);
 }
 
+bool ATUIHistoryView::JumpToCycle(uint32 cycle) {
+	if (mInsnBuffer.empty())
+		return false;
+
+	auto it = std::lower_bound(mInsnBuffer.cbegin(), mInsnBuffer.cend(), cycle,
+		[](const ATCPUHistoryEntry& he, uint32 cycle) {
+			return ATWrapTime{he.mCycle} < cycle;
+		}
+	);
+
+	SelectInsn(std::min<uint32>((uint32)(it - mInsnBuffer.cbegin()), (uint32)mInsnBuffer.size()));
+	return true;
+}
+
 LRESULT ATUIHistoryView::EditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 	if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
 		if (wParam == VK_ESCAPE) {
@@ -497,56 +547,45 @@ LRESULT ATUIHistoryView::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					{
 						const ATCPUHistoryEntry *p = GetSelectedLineHistoryEntry();
 						if (p)
-							mpHistoryModel->JumpToSource(p->mPC);
+							mpHistoryModel->JumpToSource(GetHistoryAddress(*p));
 					}
 					return true;
 
 				case ID_HISTORYCONTEXTMENU_SHOWPCADDRESS:
 					mbShowPCAddress = !mbShowPCAddress;
-					InvalidateRect(mhwnd, NULL, TRUE);
 					return true;
 				case ID_HISTORYCONTEXTMENU_SHOWGLOBALPCADDRESS:
 					mbShowGlobalPCAddress = !mbShowGlobalPCAddress;
-					InvalidateRect(mhwnd, NULL, TRUE);
 					return true;
 				case ID_HISTORYCONTEXTMENU_SHOWREGISTERS:
 					mbShowRegisters = !mbShowRegisters;
-					InvalidateRect(mhwnd, NULL, TRUE);
 					return true;
 				case ID_HISTORYCONTEXTMENU_SHOWSPECIALREGISTERS:
 					mbShowSpecialRegisters = !mbShowSpecialRegisters;
-					InvalidateRect(mhwnd, NULL, TRUE);
 					return true;
 				case ID_HISTORYCONTEXTMENU_SHOWFLAGS:
 					mbShowFlags = !mbShowFlags;
-					InvalidateRect(mhwnd, NULL, TRUE);
 					return true;
 				case ID_HISTORYCONTEXTMENU_SHOWCODEBYTES:
 					mbShowCodeBytes = !mbShowCodeBytes;
-					InvalidateRect(mhwnd, NULL, TRUE);
 					return true;
 				case ID_HISTORYCONTEXTMENU_SHOWLABELS:
 					mbShowLabels = !mbShowLabels;
-					InvalidateRect(mhwnd, NULL, TRUE);
 					return true;
 				case ID_HISTORYCONTEXTMENU_SHOWLABELNAMESPACES:
 					mbShowLabelNamespaces = !mbShowLabelNamespaces;
-					InvalidateRect(mhwnd, NULL, TRUE);
 					return true;
 
 				case ID_HISTORYCONTEXTMENU_COLLAPSELOOPS:
 					mbCollapseLoops = !mbCollapseLoops;
-					ReloadOpcodes();
 					return true;
 
 				case ID_HISTORYCONTEXTMENU_COLLAPSECALLS:
 					mbCollapseCalls = !mbCollapseCalls;
-					ReloadOpcodes();
 					return true;
 
 				case ID_HISTORYCONTEXTMENU_COLLAPSEINTERRUPTS:
 					mbCollapseInterrupts = !mbCollapseInterrupts;
-					ReloadOpcodes();
 					return true;
 
 				case ID_HISTORYCONTEXTMENU_SHOWBEAMPOSITION:
@@ -635,12 +674,15 @@ bool ATUIHistoryView::OnCreate() {
 	SendMessageW(mhwndEdit, EM_SETCUEBANNER, FALSE, (LPARAM)L"substring");
 
 	OnFontsUpdated();
+	UpdateThemeColors();
 
 	VDSetWindowTextW32(mhwndClear, mTextSearch.c_str());
 
 	mpEditThunk = VDCreateFunctionThunkFromMethod(this, &ATUIHistoryView::EditWndProc, true);
 	mEditProc = (WNDPROC)GetWindowLongPtr(mhwndEdit, GWLP_WNDPROC);
 	SetWindowLongPtr(mhwndEdit, GWLP_WNDPROC, (LONG_PTR)VDGetThunkFunction<WNDPROC>(mpEditThunk));
+
+	ATUIRegisterThemeChangeNotification(&mpFnNotifyThemeChanged);
 
 	OnSize();
 	Reset();
@@ -649,6 +691,8 @@ bool ATUIHistoryView::OnCreate() {
 }
 
 void ATUIHistoryView::OnDestroy() {
+	ATUIUnregisterThemeChangeNotification(&mpFnNotifyThemeChanged);
+
 	if (mpPanel) {
 		mpPanel->mpParent = NULL;
 		mpPanel = NULL;
@@ -798,7 +842,7 @@ void ATUIHistoryView::OnLButtonDblClk(int x, int y, int mods) {
 
 		const ATCPUHistoryEntry *p = GetLineHistoryEntry(it);
 		if (p)
-			mpHistoryModel->JumpToInsn(p->mPC);
+			mpHistoryModel->JumpToInsn(GetHistoryAddress(*p));
 	} else if (x >= (level - 1)*(int)mItemHeight && it.mpNode->mpFirstChild) {
 		if (it.mpNode->mbExpanded)
 			CollapseNode(it.mpNode);
@@ -1073,6 +1117,7 @@ void ATUIHistoryView::OnPaint() {
 
 		SetBkMode(hdc, OPAQUE);
 		SetTextAlign(hdc, TA_LEFT | TA_TOP);
+		SelectObject(hdc, GetStockObject(DC_PEN));
 
 		ATHTNode *root = mHistoryTree.GetRootNode();
 		if (root->mpFirstChild) {
@@ -1080,7 +1125,7 @@ void ATUIHistoryView::OnPaint() {
 		}
 
 		if (itemEnd > root->mHeight - 1) {
-			SetBkColor(hdc, GetSysColor(COLOR_WINDOW));
+			SetBkColor(hdc, mColorBg);
 
 			RECT r = ps.rcPaint;
 			r.top = (root->mHeight - 1) * mItemHeight - mScrollY + mHeaderHeight;
@@ -1091,7 +1136,6 @@ void ATUIHistoryView::OnPaint() {
 		if constexpr(kShowRedraws) {
 			static unsigned cycle = 0;
 
-			SelectObject(hdc, GetStockObject(DC_PEN));
 			SelectObject(hdc, GetStockObject(NULL_BRUSH));
 
 			static constexpr COLORREF kColors[3] = { RGB(255,0,0), RGB(0,255,0), RGB(0,0,255) };
@@ -1141,11 +1185,11 @@ void ATUIHistoryView::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 				if (nodeSelected && mSelectedLine.mLineIndex == lineIndex) {
 					selected = true;
 					
-					bgc = GetSysColor(mbFocus ? COLOR_HIGHLIGHT : COLOR_3DFACE);
-					fgc = GetSysColor(mbFocus ? COLOR_HIGHLIGHTTEXT : COLOR_WINDOWTEXT);
+					bgc = mbFocus ? mColorBgHi : mColorBgHiInactive;
+					fgc = mbFocus ? mColorFgHi : mColorFgHiInactive;
 				} else {
-					bgc = GetSysColor(COLOR_WINDOW);
-					fgc = GetSysColor(COLOR_WINDOWTEXT);
+					bgc = mColorBg;
+					fgc = mColorFg;
 				}
 
 				SetBkColor(hdc, bgc);
@@ -1167,10 +1211,11 @@ void ATUIHistoryView::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 				rPad.right = x;
 				rPad.bottom = y + mItemHeight;
 
-				FillRect(hdc, &rPad, (HBRUSH)(COLOR_WINDOW + 1));
+				SetBkColor(hdc, mColorBg);
+				ExtTextOut(hdc, rPad.left, rPad.top, ETO_OPAQUE, &rPad, L"", 0, nullptr);
 
 				if (node->mpFirstChild) {
-					SelectObject(hdc, selected && mbFocus ? GetStockObject(WHITE_PEN) : GetStockObject(BLACK_PEN));
+					SetDCPenColor(hdc, fgc);
 
 					int boxsize = (mItemHeight - 3) & ~1;
 					int x1 = x + 1;
@@ -1779,6 +1824,19 @@ void ATUIHistoryView::UpdateHScrollBar() {
 	mbDirtyHScrollBar = false;
 }
 
+void ATUIHistoryView::UpdateThemeColors() {
+	const auto& tc = ATUIGetThemeColors();
+
+	mColorBg			= VDSwizzleU32(tc.mContentBg) >> 8;
+	mColorBgHi			= VDSwizzleU32(tc.mHighlightedBg) >> 8;
+	mColorBgHiInactive	= VDSwizzleU32(tc.mInactiveHiBg) >> 8;
+	mColorFg			= VDSwizzleU32(tc.mContentFg) >> 8;
+	mColorFgHi			= VDSwizzleU32(tc.mHighlightedFg) >> 8;
+	mColorFgHiInactive	= VDSwizzleU32(tc.mInactiveHiFg) >> 8;
+
+	InvalidateRect(mhwnd, nullptr, TRUE);
+}
+
 bool ATUIHistoryView::GetLineHistoryIndex(const ATHTLineIterator& it, uint32& index) const {
 	if (it.mpNode->mNodeType != kATHTNodeType_Insn)
 		return false;
@@ -1821,6 +1879,19 @@ const ATCPUHistoryEntry *ATUIHistoryView::GetLineHistoryEntry(const ATHTLineIter
 
 const ATCPUHistoryEntry *ATUIHistoryView::GetSelectedLineHistoryEntry() const {
 	return GetLineHistoryEntry(mSelectedLine);
+}
+
+uint32 ATUIHistoryView::GetHistoryAddress(const ATCPUHistoryEntry& he) const {
+	uint32 addr = he.mPC;
+
+	if (mbShowGlobalPCAddress) {
+		if (mDisasmMode == kATDebugDisasmMode_6502 || mDisasmMode == kATDebugDisasmMode_65C02)
+			addr += he.mGlobalPCBase;
+		else if (mDisasmMode == kATDebugDisasmMode_65C816)
+			addr += (uint32)he.mK << 16;
+	}
+
+	return addr;
 }
 
 void ATUIHistoryView::UpdateScrollMax() {
@@ -1991,6 +2062,9 @@ void ATUIHistoryView::UpdateOpcodes(uint32 historyStart, uint32 historyEnd) {
 		} else {
 			if (!last)
 				last = mHistoryTree.GetBackNode();
+
+			while(last && last->mNodeType == kATHTNodeType_Repeat)
+				last = last->mpParent;
 
 			mpPreviewNode = InsertNode(last ? last->mpParent : mHistoryTree.GetRootNode(), last, 0, kATHTNodeType_InsnPreview);
 			heightChanged = true;

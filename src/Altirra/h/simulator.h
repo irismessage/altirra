@@ -62,7 +62,6 @@ enum ATMediaWriteMode : uint8;
 struct ATMediaLoadContext;
 
 class ATSaveStateReader;
-class ATSaveStateWriter;
 class ATCassetteEmulator;
 class IATJoystickManager;
 class ATCartridgeEmulator;
@@ -84,6 +83,8 @@ struct ATImageLoadContext;
 class IATBlobImage;
 class IATCartridgeImage;
 struct ATTraceContext;
+
+class IATSerializable;
 
 enum ATCPUMode : uint8;
 
@@ -157,6 +158,9 @@ public:
 
 	IATPrinterOutput *GetPrinterOutput() { return mpPrinterOutput; }
 	void SetPrinterOutput(IATPrinterOutput *p);
+
+	ATPortController *GetPortControllerA() { return mpPortAController; }
+	ATPortController *GetPortControllerB() { return mpPortBController; }
 
 	bool IsTurboModeEnabled() const { return mbTurbo; }
 	bool IsFrameSkipEnabled() const { return mbFrameSkip; }
@@ -300,8 +304,11 @@ public:
 	ATCheatEngine *GetCheatEngine() { return mpCheatEngine; }
 	void SetCheatEngineEnabled(bool enable);
 
-	bool IsAudioMonitorEnabled() const { return mpAudioMonitors[0] != NULL; }
+	bool IsAudioMonitorEnabled() const { return mbAudioMonitorEnabled; }
 	void SetAudioMonitorEnabled(bool enable);
+
+	bool IsAudioScopeEnabled() const { return mbAudioScopeEnabled; }
+	void SetAudioScopeEnabled(bool enable);
 
 	bool IsVirtualScreenEnabled() const { return mpVirtualScreenHandler != NULL; }
 	void SetVirtualScreenEnabled(bool enable);
@@ -337,6 +344,11 @@ public:
 
 	void FlushDeferredEvents();
 
+	// The wake function is used to alert the event processing loop that the simulator needs a
+	// main thread call back to the OnWake() function. It must be thread-safe.
+	void SetWakeFunction(vdfunction<void()> fn);
+	void OnWake();
+
 	void GetDirtyStorage(vdfastvector<ATStorageId>& ids, uint32 storageTypeMask = ~(uint32)0) const;
 	bool IsStorageDirty(ATStorageId mediaId) const;
 	bool IsStoragePresent(ATStorageId mediaId) const;
@@ -371,7 +383,7 @@ public:
 	AdvanceResult AdvanceUntilInstructionBoundary();
 	AdvanceResult Advance(bool dropFrame);
 
-	uint32 GetCpuCycleCounter() const { return const_cast<ATSimulator *>(this)->CPUGetUnhaltedCycle(); }
+	uint32 GetCpuCycleCounter() const;
 	uint32 GetTimestamp() const;
 	ATCPUTimestampDecoder GetTimestampDecoder() const;
 
@@ -392,11 +404,14 @@ public:
 
 	uint32 ComputeKernelChecksum() const;
 	uint32 ComputeKernelCRC32() const;
+	uint32 ComputeBasicCRC32() const;
 
 	uint32 GetConfigChangeCounter() const { return mConfigChangeCounter; }
 
 	bool LoadState(ATSaveStateReader& reader, ATStateLoadContext *context);
-	void SaveState(ATSaveStateWriter& writer);
+
+	void CreateSnapshot(IATSerializable**);
+	bool ApplySnapshot(const IATSerializable& snapshot, ATStateLoadContext *context);
 
 	void UpdateXLCartridgeLine();
 	void UpdateKeyboardPresentLine();
@@ -427,6 +442,7 @@ private:
 
 	uint32 CPUGetCycle() override;
 	uint32 CPUGetUnhaltedCycle() override;
+	uint32 CPUGetUnhaltedAndRDYCycle() override;
 	void CPUGetHistoryTimes(ATCPUHistoryEntry * VDRESTRICT he) const override;
 
 	uint8 AnticReadByte(uint32 address) override;
@@ -453,6 +469,8 @@ private:
 	bool PokeyIsInInterrupt() const override;
 	bool PokeyIsKeyPushOK(uint8 c, bool cooldownExpired) const override;
 
+	void BeginFrame();
+
 	void ReinitHookPage();
 	void SetupPendingHeldButtons();
 	void ResetAutoHeldButtons();
@@ -462,9 +480,12 @@ private:
 	void InitDevice(IVDUnknown& dev);
 
 	void ResetMemoryBuffer(void *dst, size_t len, uint32 seed);
+	void ApplyVideoStandard();
 
 	void InitCassetteAutoBasicBoot();
 	bool SupportsInternalBasic() const;
+
+	void UpdateAudioMonitors();
 
 	bool mbRunning;
 	bool mbRunSingleCycle = false;
@@ -498,6 +519,8 @@ private:
 	bool mbPreserveExtRAM;
 	bool mbShadowROM;
 	bool mbShadowCartridge;
+	bool mbAudioMonitorEnabled = false;
+	bool mbAudioScopeEnabled = false;
 	int mBreakOnScanline;
 	ATHLEProgramLoadMode mProgramLoadMode {};
 
@@ -578,7 +601,7 @@ private:
 	const uint8 *mpKernelLowerROM;
 	const uint8 *mpKernelSelfTestROM;
 	const uint8 *mpKernel5200ROM;
-	uint32	mKernelSymbolsModuleIds[2];
+	uint32	mKernelSymbolsModuleIds[3];
 
 	uint32		mCartModuleIds[3];
 

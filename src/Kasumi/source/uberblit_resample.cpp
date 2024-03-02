@@ -28,7 +28,16 @@
 #include <vd2/Kasumi/resample.h>
 
 #include <vd2/Kasumi/resample_kernels.h>
-#include "resample_stages_x86.h"
+#include "resample_stages.h"
+
+#if VD_CPU_X86
+	#include "resample_stages_x86.h"
+#elif VD_CPU_X64
+	#include "resample_stages_x64.h"
+#else
+	#include "resample_stages_reference.h"
+#endif
+
 #include "uberblit_resample.h"
 
 namespace {
@@ -44,6 +53,11 @@ namespace {
 	template<class T>
 	IVDResamplerSeparableRowStage *RowFactoryLinear(double cutoff, float filterFactor) {
 		return new T(VDResamplerLinearFilter(cutoff));
+	}
+
+	template<class T>
+	IVDResamplerSeparableRowStage *RowFactorySharpLinear(double cutoff, float filterFactor) {
+		return new T(VDResamplerSharpLinearFilter(filterFactor));
 	}
 
 	template<class T>
@@ -69,6 +83,11 @@ namespace {
 	template<class T>
 	IVDResamplerSeparableColStage *ColFactoryLinear(double cutoff, float filterFactor) {
 		return new T(VDResamplerLinearFilter(cutoff));
+	}
+
+	template<class T>
+	IVDResamplerSeparableColStage *ColFactorySharpLinear(double cutoff, float filterFactor) {
+		return new T(VDResamplerSharpLinearFilter(filterFactor));
 	}
 
 	template<class T>
@@ -191,11 +210,20 @@ void VDPixmapGenResampleRow::Init(IVDPixmapGen *src, uint32 srcIndex, uint32 wid
 			{ kVDPixType_8,			false,	nsVDPixmap::kFilterLanczos3,	CPUF_SUPPORTS_MMX,	RowFactoryLanczos3<VDResamplerSeparableTableRowStage8MMX> },
 			{ kVDPixType_8888,		false,	nsVDPixmap::kFilterLanczos3,	CPUF_SUPPORTS_SSE2,	RowFactoryLanczos3<VDResamplerSeparableTableRowStageSSE2> },
 			{ kVDPixType_8888,		false,	nsVDPixmap::kFilterLanczos3,	CPUF_SUPPORTS_MMX,	RowFactoryLanczos3<VDResamplerSeparableTableRowStageMMX> },
+			{ kVDPixType_8,			false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_SSE41,	RowFactorySharpLinear<VDResamplerSeparableTableRowStage8SSE41> },
+			{ kVDPixType_8,			false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_MMX,	RowFactorySharpLinear<VDResamplerSeparableTableRowStage8MMX> },
+			{ kVDPixType_8888,		false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_SSE2,	RowFactorySharpLinear<VDResamplerSeparableTableRowStageSSE2> },
+			{ kVDPixType_8888,		false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_MMX,	RowFactorySharpLinear<VDResamplerSeparableTableRowStageMMX> },
 #elif defined _M_AMD64
 			// AMD64
+			{ kVDPixType_8,			false,	nsVDPixmap::kFilterLinear,		CPUF_SUPPORTS_SSE2,	RowFactoryLinear<VDResamplerSeparableTableRowStage8SSE2> },
 			{ kVDPixType_8888,		false,	nsVDPixmap::kFilterLinear,		CPUF_SUPPORTS_SSE2,	RowFactoryLinear<VDResamplerSeparableTableRowStageSSE2> },
+			{ kVDPixType_8,			false,	nsVDPixmap::kFilterCubic,		CPUF_SUPPORTS_SSE2,	RowFactoryCubic<VDResamplerSeparableTableRowStage8SSE2> },
 			{ kVDPixType_8888,		false,	nsVDPixmap::kFilterCubic,		CPUF_SUPPORTS_SSE2,	RowFactoryCubic<VDResamplerSeparableTableRowStageSSE2> },
+			{ kVDPixType_8,			false,	nsVDPixmap::kFilterLanczos3,	CPUF_SUPPORTS_SSE2,	RowFactoryLanczos3<VDResamplerSeparableTableRowStage8SSE2> },
 			{ kVDPixType_8888,		false,	nsVDPixmap::kFilterLanczos3,	CPUF_SUPPORTS_SSE2,	RowFactoryLanczos3<VDResamplerSeparableTableRowStageSSE2> },
+			{ kVDPixType_8,			false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_SSE2,	RowFactorySharpLinear<VDResamplerSeparableTableRowStage8SSE2> },
+			{ kVDPixType_8888,		false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_SSE2,	RowFactorySharpLinear<VDResamplerSeparableTableRowStageSSE2> },
 #endif
 			// Generic
 			{ kVDPixType_8,			false,	nsVDPixmap::kFilterPoint,		0,					RowFactory<VDResamplerRowStageSeparablePoint8> },
@@ -214,6 +242,10 @@ void VDPixmapGenResampleRow::Init(IVDPixmapGen *src, uint32 srcIndex, uint32 wid
 			{ kVDPixType_8888,		false,	nsVDPixmap::kFilterLanczos3,	0,					RowFactoryLanczos3<VDResamplerRowStageSeparableTable32> },
 			{ kVDPixType_32F_LE,	false,	nsVDPixmap::kFilterLanczos3,	0,					RowFactoryLanczos3<VDResamplerRowStageSeparableTable32F> },
 			{ kVDPixType_32Fx4_LE,	false,	nsVDPixmap::kFilterLanczos3,	0,					RowFactoryLanczos3<VDResamplerRowStageSeparableTable32Fx4> },
+			{ kVDPixType_8,			false,	nsVDPixmap::kFilterSharpLinear,	0,					RowFactorySharpLinear<VDResamplerRowStageSeparableTable8> },
+			{ kVDPixType_8888,		false,	nsVDPixmap::kFilterSharpLinear,	0,					RowFactorySharpLinear<VDResamplerRowStageSeparableTable32> },
+			{ kVDPixType_32F_LE,	false,	nsVDPixmap::kFilterSharpLinear,	0,					RowFactorySharpLinear<VDResamplerRowStageSeparableTable32F> },
+			{ kVDPixType_32Fx4_LE,	false,	nsVDPixmap::kFilterSharpLinear,	0,					RowFactorySharpLinear<VDResamplerRowStageSeparableTable32Fx4> },
 		};
 
 		for(int i=0; i<sizeof(kSpanRoutines)/sizeof(kSpanRoutines[0]); ++i) {
@@ -531,11 +563,20 @@ void VDPixmapGenResampleCol::Init(IVDPixmapGen *src, uint32 srcIndex, uint32 hei
 		{ kVDPixType_8,			false,	nsVDPixmap::kFilterLanczos3,	CPUF_SUPPORTS_MMX,	ColFactoryLanczos3<VDResamplerSeparableTableColStage8MMX> },
 		{ kVDPixType_8888,		false,	nsVDPixmap::kFilterLanczos3,	CPUF_SUPPORTS_SSE2,	ColFactoryLanczos3<VDResamplerSeparableTableColStageSSE2> },
 		{ kVDPixType_8888,		false,	nsVDPixmap::kFilterLanczos3,	CPUF_SUPPORTS_MMX,	ColFactoryLanczos3<VDResamplerSeparableTableColStageMMX> },
+		{ kVDPixType_8,			false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_SSE41,	ColFactorySharpLinear<VDResamplerSeparableTableColStage8SSE41> },
+		{ kVDPixType_8,			false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_MMX,	ColFactorySharpLinear<VDResamplerSeparableTableColStage8MMX> },
+		{ kVDPixType_8888,		false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_SSE2,	ColFactorySharpLinear<VDResamplerSeparableTableColStageSSE2> },
+		{ kVDPixType_8888,		false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_MMX,	ColFactorySharpLinear<VDResamplerSeparableTableColStageMMX> },
 #elif defined _M_AMD64
 		// AMD64
+		{ kVDPixType_8,			false,	nsVDPixmap::kFilterLinear,		CPUF_SUPPORTS_SSE2,	ColFactoryLinear<VDResamplerSeparableTableColStage8SSE2> },
 		{ kVDPixType_8888,		false,	nsVDPixmap::kFilterLinear,		CPUF_SUPPORTS_SSE2,	ColFactoryLinear<VDResamplerSeparableTableColStageSSE2> },
+		{ kVDPixType_8,			false,	nsVDPixmap::kFilterCubic,		CPUF_SUPPORTS_SSE2,	ColFactoryCubic<VDResamplerSeparableTableColStage8SSE2> },
 		{ kVDPixType_8888,		false,	nsVDPixmap::kFilterCubic,		CPUF_SUPPORTS_SSE2,	ColFactoryCubic<VDResamplerSeparableTableColStageSSE2> },
+		{ kVDPixType_8,			false,	nsVDPixmap::kFilterLanczos3,	CPUF_SUPPORTS_SSE2,	ColFactoryLanczos3<VDResamplerSeparableTableColStage8SSE2> },
 		{ kVDPixType_8888,		false,	nsVDPixmap::kFilterLanczos3,	CPUF_SUPPORTS_SSE2,	ColFactoryLanczos3<VDResamplerSeparableTableColStageSSE2> },
+		{ kVDPixType_8,			false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_SSE2,	ColFactorySharpLinear<VDResamplerSeparableTableColStage8SSE2> },
+		{ kVDPixType_8888,		false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_SSE2,	ColFactorySharpLinear<VDResamplerSeparableTableColStageSSE2> },
 #endif
 		// Generic
 		{ kVDPixType_8,			true,	nsVDPixmap::kFilterLinear,		0,					ColFactory<VDResamplerColStageSeparableLinear8> },
@@ -552,6 +593,10 @@ void VDPixmapGenResampleCol::Init(IVDPixmapGen *src, uint32 srcIndex, uint32 hei
 		{ kVDPixType_8888,		false,	nsVDPixmap::kFilterLanczos3,	0,					ColFactoryLanczos3<VDResamplerColStageSeparableTable32> },
 		{ kVDPixType_32F_LE,	false,	nsVDPixmap::kFilterLanczos3,	0,					ColFactoryLanczos3<VDResamplerColStageSeparableTable32F> },
 		{ kVDPixType_32Fx4_LE,	false,	nsVDPixmap::kFilterLanczos3,	0,					ColFactoryLanczos3<VDResamplerColStageSeparableTable32Fx4> },
+		{ kVDPixType_8,			false,	nsVDPixmap::kFilterSharpLinear,	0,					ColFactorySharpLinear<VDResamplerColStageSeparableTable8> },
+		{ kVDPixType_8888,		false,	nsVDPixmap::kFilterSharpLinear,	0,					ColFactorySharpLinear<VDResamplerColStageSeparableTable32> },
+		{ kVDPixType_32F_LE,	false,	nsVDPixmap::kFilterSharpLinear,	0,					ColFactorySharpLinear<VDResamplerColStageSeparableTable32F> },
+		{ kVDPixType_32Fx4_LE,	false,	nsVDPixmap::kFilterSharpLinear,	0,					ColFactorySharpLinear<VDResamplerColStageSeparableTable32Fx4> },
 	};
 
 	long flags = CPUGetEnabledExtensions();

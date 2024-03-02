@@ -285,6 +285,7 @@ uint32 ATGetImageSizeForCartridgeType(ATCartridgeMode mode) {
 		case kATCartridgeMode_Atrax_128K_Raw:		return 0x20000;
 		case kATCartridgeMode_aDawliah_32K:			return 0x8000;
 		case kATCartridgeMode_aDawliah_64K:			return 0x10000;
+		case kATCartridgeMode_JRC_64K_RAM:			return 0x10000;
 
 		default:
 			return 0;

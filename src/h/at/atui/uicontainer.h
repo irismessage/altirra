@@ -15,7 +15,7 @@ public:
 	void SendToBack(ATUIWidget *w);
 	void BringToFront(ATUIWidget *w);
 
-	void InvalidateLayout();
+	void InvalidateLayout(ATUIWidget *w);
 	void UpdateLayout();
 
 	ATUIWidget *HitTest(vdpoint32 pt) override;
@@ -28,6 +28,7 @@ public:
 	ATUIWidget *DragHitTest(vdpoint32 pt) override;
 
 protected:
+	virtual ATUIWidgetMetrics OnMeasure() override;
 	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) override;
 
 	bool mbLayoutInvalid;

@@ -49,6 +49,11 @@ public:
 
 	virtual void Init(IATSyncAudioSamplePlayer *samplePlayer) = 0;
 
+	// Create the native audio device. This must be done before writing audio. This is a separate call
+	// to allow the audio engine to be pre-configured and only init the native audio once afterward, since
+	// doing so is expensive time-wise.
+	virtual void InitNativeAudio() = 0;
+
 	virtual ATAudioApi GetApi() = 0;
 	virtual void SetApi(ATAudioApi api) = 0;
 

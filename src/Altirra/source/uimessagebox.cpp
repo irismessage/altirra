@@ -49,15 +49,17 @@ void ATUIMessageBox::ShowModal() {
 	mpManager->BeginModal(this);
 }
 
-void ATUIMessageBox::AutoSize() {
-	mpMessageLabel->AutoSize();
+ATUIWidgetMetrics ATUIMessageBox::OnMeasure() {
+	ATUIWidgetMetrics m;
 
-	const vdrect32& r = mpMessageLabel->GetArea();
+	const auto& labelm = mpMessageLabel->Measure();
 
-	sint32 messageWidth = r.width() + 12;
+	sint32 messageWidth = labelm.mDesiredSize.w + 12;
 	sint32 captionWidth = mpCaptionFont->MeasureString(mCaption.data(), mCaption.size(), true).w + 16;
 
-	SetSize(vdsize32(std::max<sint32>(messageWidth, captionWidth), mCaptionHeight + 52 + r.height()));
+	m.mDesiredSize = vdsize32(std::max<sint32>(messageWidth, captionWidth), mCaptionHeight + 52 + m.mDesiredSize.h);
+
+	return m;
 }
 
 void ATUIMessageBox::OnCreate() {
@@ -110,7 +112,7 @@ void ATUIMessageBox::OnSize() {
 	sint32 h = mClientArea.height();
 	sint32 wh = w >> 1;
 
-	mpMessageLabel->SetArea(vdrect32(4, mCaptionHeight + 4, w - 4, h - (2+24+4)));
+	mpMessageLabel->SetPlacement(vdrect32f(0.5f, 0.0f, 0.5f, 0.0f), vdpoint32(0, mCaptionHeight + 4), vdfloat2{0.5f, 0.0f});
 
 	if (mbQueryMode) {
 		mpButtonOK->SetPosition(vdpoint32(wh - (4+75), h - (2+24)));

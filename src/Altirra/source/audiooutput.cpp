@@ -26,6 +26,137 @@
 #include "audiooutput.h"
 #include "uirender.h"
 
+class ATSyncAudioEdgePlayer final : public IATSyncAudioEdgePlayer {
+public:
+	// We need one sample extra for the triangle filter, one to accommodate frame start cycle-to-sample
+	// jitter, and another to accommodate end jitter.
+	static constexpr int kTailLength = 3;
+
+	// Render edges to the given buffer. Right is optional; if both are given, then the edges are added
+	// to both left and right channels.
+	//
+	// Important: This requires kTailLength entries after both buffers as temporary space.
+	//
+	void RenderEdges(float *dstLeft, float *dstRight, uint32 n, uint32 timestamp);
+
+	void AddEdges(const ATSyncAudioEdge *edges, size_t numEdges, float volume) override;
+	void AddEdgeBuffer(ATSyncAudioEdgeBuffer *buffer) override;
+
+protected:
+	void RenderEdgeBuffer(float *dstLeft, float *dstRight, uint32 n, uint32 timestamp, const ATSyncAudioEdge *edges, size_t numEdges, float volume);
+
+	template<bool T_RightEnabled>
+	void RenderEdgeBuffer2(float *dstLeft, float *dstRight, uint32 n, uint32 timestamp, const ATSyncAudioEdge *edges, size_t numEdges, float volume);
+
+	vdfastvector<ATSyncAudioEdge> mEdges;
+	vdfastvector<ATSyncAudioEdgeBuffer *> mBuffers;
+
+	float mTail[kTailLength] {};
+};
+
+void ATSyncAudioEdgePlayer::RenderEdges(float *dstLeft, float *dstRight, uint32 n, uint32 timestamp) {
+	// zero the tail at the end of the current buffer
+	memset(dstLeft + n, 0, sizeof(*dstLeft) * kTailLength);
+
+	// add the previous tail at the start (which may overlap the current tail!)
+	for(int i=0; i<kTailLength; ++i)
+		dstLeft[i] += mTail[i];
+	
+	if (dstRight) {
+		memset(dstRight + n, 0, sizeof(*dstRight) * kTailLength);
+
+		for(int i=0; i<kTailLength; ++i)
+			dstRight[i] += mTail[i];
+	}
+
+	// render loose edges
+	RenderEdgeBuffer(dstLeft, dstRight, n, timestamp, mEdges.data(), mEdges.size(), 1.0f);
+	mEdges.clear();
+
+	// render buffered edges
+	while(!mBuffers.empty()) {
+		ATSyncAudioEdgeBuffer *buf = mBuffers.back();
+		mBuffers.pop_back();
+
+		RenderEdgeBuffer(dstLeft, dstRight, n, timestamp, buf->mEdges.data(), buf->mEdges.size(), buf->mVolume);
+
+		buf->mEdges.clear();
+		buf->Release();
+	}
+
+	// save off the new tail (they are identical, we only need left)
+	for(int i=0; i<kTailLength; ++i)
+		mTail[i] = dstLeft[n + i];
+}
+
+void ATSyncAudioEdgePlayer::AddEdges(const ATSyncAudioEdge *edges, size_t numEdges, float volume) {
+	if (!numEdges)
+		return;
+
+	mEdges.resize(mEdges.size() + numEdges);
+
+	const ATSyncAudioEdge *VDRESTRICT src = edges;
+	ATSyncAudioEdge *VDRESTRICT dst = &*(mEdges.end() - numEdges);
+
+	while(numEdges--) {
+		dst->mTime = src->mTime;
+		dst->mDeltaValue = src->mDeltaValue * volume;
+		++dst;
+		++src;
+	}
+}
+
+void ATSyncAudioEdgePlayer::AddEdgeBuffer(ATSyncAudioEdgeBuffer *buffer) {
+	mBuffers.push_back(buffer);
+	buffer->AddRef();
+}
+
+void ATSyncAudioEdgePlayer::RenderEdgeBuffer(float *dstLeft, float *dstRight, uint32 n, uint32 timestamp, const ATSyncAudioEdge *edges, size_t numEdges, float volume) {
+	if (dstRight)
+		RenderEdgeBuffer2<true>(dstLeft, dstRight, n, timestamp, edges, numEdges, volume);
+	else
+		RenderEdgeBuffer2<false>(dstLeft, dstRight, n, timestamp, edges, numEdges, volume);
+}
+
+template<bool T_RightEnabled>
+void ATSyncAudioEdgePlayer::RenderEdgeBuffer2(float *dstLeft, float *dstRight, uint32 n, uint32 timestamp, const ATSyncAudioEdge *edges, size_t numEdges, float volume) {
+	const ATSyncAudioEdge *VDRESTRICT src = edges;
+	float *VDRESTRICT dstL2 = dstLeft;
+	float *VDRESTRICT dstR2 = dstRight;
+
+	// We allow two additional samples to accommodate timing jitter during the mixing -- we allow samples
+	// to be written during the frame's cycle window, but the sample window may be up to one sample earlier
+	// and one sample short. These extra samples get premixed into the tail, which is then carried forward
+	// to the next frame.
+	const uint32 timestampEnd = timestamp + (n+2) * 28;
+
+	while(numEdges--) {
+		const uint32 cycleOffset = src->mTime - timestamp;
+		if (cycleOffset < timestampEnd) {
+			const uint32 sampleOffset = cycleOffset / 28;
+			const uint32 phaseOffset = cycleOffset % 28;
+			const float shift = (float)phaseOffset * (1.0f / 28.0f);
+			const float delta = src->mDeltaValue * volume;
+			const float v1 = delta * shift;
+			const float v0 = delta - v1;
+
+			dstL2[sampleOffset+0] += v0;
+			dstL2[sampleOffset+1] += v1;
+
+			if constexpr (T_RightEnabled) {
+				dstR2[sampleOffset+0] += v0;
+				dstR2[sampleOffset+1] += v1;
+			}
+		} else {
+			VDFAIL("Edge player has sample outside of allowed frame window.");
+		}
+
+		++src;
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 class ATAudioOutput final : public IATAudioOutput, public IATAudioMixer, public VDAlignedObject<16> {
 	ATAudioOutput(ATAudioOutput&) = delete;
 	ATAudioOutput& operator=(const ATAudioOutput&) = delete;
@@ -35,6 +166,7 @@ public:
 	virtual ~ATAudioOutput() override;
 
 	void Init(IATSyncAudioSamplePlayer *samplePlayer) override;
+	void InitNativeAudio() override;
 
 	ATAudioApi GetApi() override;
 	void SetApi(ATAudioApi api) override;
@@ -81,6 +213,7 @@ public:
 
 public:
 	IATSyncAudioSamplePlayer& GetSamplePlayer() override { return *mpSamplePlayer; }
+	IATSyncAudioEdgePlayer& GetEdgePlayer() override { return *mpEdgePlayer; }
 
 protected:
 	void InternalWriteAudio(const float *left, const float *right, uint32 count, bool pushAudio, uint64 timestamp);
@@ -105,7 +238,10 @@ protected:
 		// The prefilter needs to run ahead by the FIR kernel width (nominally 16 + 1 samples).
 		kPreFilterOffset = kFilterOffset + ATAudioFilter::kFilterOverlap * 2,
 
-		kSourceBufferSize = (kBufferSize + kPreFilterOffset + 15) & ~15,
+		// The edge renderer wants a little extra room at the end to temporarily hold overlapped data.
+		kEdgeRenderOverlap = ATSyncAudioEdgePlayer::kTailLength,
+
+		kSourceBufferSize = (kBufferSize + kPreFilterOffset + kEdgeRenderOverlap + 15) & ~15,
 	};
 
 	uint32	mBufferLevel = 0;
@@ -122,6 +258,7 @@ protected:
 	int		mLatency = 100;
 	int		mExtraBuffer = 100;
 	bool	mbMute = false;
+	bool	mbNativeAudioEnabled = false;
 
 	bool	mbFilterStereo = false;
 	uint32	mFilterMonoSamples = 0;
@@ -146,6 +283,7 @@ protected:
 	IATAudioTap *mpAudioTap = nullptr;
 	IATUIRenderer *mpUIRenderer = nullptr;
 	IATSyncAudioSamplePlayer *mpSamplePlayer = nullptr;
+	vdautoptr<ATSyncAudioEdgePlayer> mpEdgePlayer;
 
 	ATUIAudioStatus	mAudioStatus = {};
 
@@ -153,21 +291,26 @@ protected:
 
 	typedef vdfastvector<IATSyncAudioSource *> SyncAudioSources;
 	SyncAudioSources mSyncAudioSources;
+	SyncAudioSources mSyncAudioSourcesStereo;
 	
 	float mMixLevels[kATAudioMixCount];
 
-	alignas(16) float	mSourceBuffer[2][kBufferSize] {};
+	alignas(16) float	mSourceBuffer[2][kSourceBufferSize] {};
 	alignas(16) float	mMonoMixBuffer[kBufferSize] {};
 
 	vdblock<sint16> mOutputBuffer16;
 };
 
 ATAudioOutput::ATAudioOutput() {
-	mMixLevels[kATAudioMix_Drive] = 0.8f;
-	mMixLevels[kATAudioMix_Covox] = 1.0f;
+	mpEdgePlayer = new ATSyncAudioEdgePlayer;
 
-	// Starting with Modem we supply the scaling factor in the mix level.
-	mMixLevels[kATAudioMix_Modem] = 1680.0f * 0.7f;
+	mMixLevels[kATAudioMix_Drive] = 0.8f;
+
+	// These paths have been updated to use normalized mix levels with any necessary scaling factors included.
+	mMixLevels[kATAudioMix_Other] = 1.0f;
+	mMixLevels[kATAudioMix_Covox] = 1.0f;
+	mMixLevels[kATAudioMix_Cassette] =  0.5f;
+	mMixLevels[kATAudioMix_Modem] = 0.7f;
 }
 
 ATAudioOutput::~ATAudioOutput() {
@@ -204,6 +347,14 @@ void ATAudioOutput::Init(IATSyncAudioSamplePlayer *samplePlayer) {
 	ReinitAudio();
 
 	SetCyclesPerSecond(1789772.5, 1.0);
+}
+
+void ATAudioOutput::InitNativeAudio() {
+	if (!mbNativeAudioEnabled) {
+		mbNativeAudioEnabled = true;
+
+		ReinitAudio();
+	}
 }
 
 ATAudioApi ATAudioOutput::GetApi() {
@@ -312,13 +463,17 @@ void ATAudioOutput::SetExtraBuffer(int ms) {
 }
 
 void ATAudioOutput::Pause() {
-	if (!mPauseCount++)
-		mpAudioOut->Stop();
+	if (!mPauseCount++) {
+		if (mpAudioOut)
+			mpAudioOut->Stop();
+	}
 }
 
 void ATAudioOutput::Resume() {
-	if (!--mPauseCount)
-		mpAudioOut->Start();
+	if (!--mPauseCount) {
+		if (mpAudioOut)
+			mpAudioOut->Start();
+	}
 }
 
 void ATAudioOutput::WriteAudio(
@@ -413,6 +568,8 @@ void ATAudioOutput::InternalWriteAudio(
 		mixInfo.mpMixLevels = mMixLevels;
 
 		if (mbFilterStereo) {		// mixed mono/stereo mixing
+			mSyncAudioSourcesStereo.clear();
+
 			// mix mono first
 			if (needMono) {
 				// clear mono buffer
@@ -425,6 +582,11 @@ void ATAudioOutput::InternalWriteAudio(
 				for(IATSyncAudioSource *src : mSyncAudioSources) {
 					if (!src->RequiresStereoMixingNow())
 						src->WriteAudio(mixInfo);
+					else {
+						// We need to create a temporary list for this as WriteAudio() may change the
+						// mixing state for a source and we don't want to double-mix a source.
+						mSyncAudioSourcesStereo.push_back(src);
+					}
 				}
 
 				// mix mono buffer into stereo buffers
@@ -442,9 +604,8 @@ void ATAudioOutput::InternalWriteAudio(
 			mixInfo.mpLeft = dstLeft + kPreFilterOffset;
 			mixInfo.mpRight = dstRight + kPreFilterOffset;
 
-			for(IATSyncAudioSource *src : mSyncAudioSources) {
-				if (src->RequiresStereoMixingNow())
-					src->WriteAudio(mixInfo);
+			for(IATSyncAudioSource *src : needMono ? mSyncAudioSourcesStereo : mSyncAudioSources) {
+				src->WriteAudio(mixInfo);
 			}
 		} else {					// mono mixing
 			mixInfo.mpLeft = dstLeft + kPreFilterOffset;
@@ -454,9 +615,22 @@ void ATAudioOutput::InternalWriteAudio(
 				src->WriteAudio(mixInfo);
 		}
 
+		// prediff channels
+		const int nch = mbFilterStereo ? 2 : 1;
+		const ptrdiff_t prefilterPos = mBufferLevel + kPreFilterOffset;
+		for(int ch=0; ch<nch; ++ch) {
+			mFilters[ch].PreFilterDiff(&mSourceBuffer[ch][prefilterPos], count);
+		}
+
+		// render edges
+		if (nch > 1)
+			mpEdgePlayer->RenderEdges(&mSourceBuffer[0][prefilterPos], &mSourceBuffer[1][prefilterPos], count, (uint32)timestamp);
+		else
+			mpEdgePlayer->RenderEdges(&mSourceBuffer[0][prefilterPos], nullptr, count, (uint32)timestamp);
+
 		// filter channels
-		for(int ch=0; ch<(mbFilterStereo ? 2 : 1); ++ch) {
-			mFilters[ch].PreFilter(&mSourceBuffer[ch][mBufferLevel + kPreFilterOffset], count, dcLevels[ch]);
+		for(int ch=0; ch<nch; ++ch) {
+			mFilters[ch].PreFilterEdges(&mSourceBuffer[ch][prefilterPos], count, dcLevels[ch]);
 			mFilters[ch].Filter(&mSourceBuffer[ch][mBufferLevel + kFilterOffset], count);
 		}
 	}
@@ -663,6 +837,9 @@ void ATAudioOutput::ReinitAudio() {
 }
 
 bool ATAudioOutput::ReinitAudio(ATAudioApi api) {
+	if (!mbNativeAudioEnabled)
+		return true;
+
 	if (api == kATAudioApi_WASAPI)
 		mpAudioOut = VDCreateAudioOutputWASAPIW32();
 	else if (api == kATAudioApi_XAudio2)
@@ -695,6 +872,9 @@ bool ATAudioOutput::ReinitAudio(ATAudioApi api) {
 		success = false;
 
 	RecomputeBuffering();
+
+	if (mPauseCount)
+		mpAudioOut->Stop();
 
 	return success;
 }

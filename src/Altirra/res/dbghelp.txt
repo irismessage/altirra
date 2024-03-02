@@ -56,6 +56,7 @@
       @clk     Clock cycle counter
       @cclk    CPU clock cycle counter
       @xpc     Extended PC (banked memory)
+      @tapepos Tape position in samples
      
      Grouping
       (exp)    Subexpression
@@ -1364,7 +1365,6 @@
       .batch <filename>
 
 + .beam        Show ANTIC scan position
-+ .caslogdata  Toggle verbose cassette data read logging
 
 + .ciodevs     Dump Central Input/Output (CIO) device list
 
@@ -1475,7 +1475,7 @@
     
     See also: .diskorder (set phantom sector ordering), 
 
-+ .diskwritesec Read sector from floppy disk
++ .diskwritesec Write sector to floppy disk
 
     Writes a sector from memory to a floppy disk.
     
@@ -2135,7 +2135,7 @@
     memory.
 
 . 
-. Some commands support extended memory syntax:
+. Commands <xaddress> accept extended addresses:
 .   $0000      CPU view of primary memory
 .   $01:0000   CPU view, 65C816 high memory
 .   $EF'4000   CPU view, extended memory ($4000 with PORTB=$EF)
@@ -2148,5 +2148,7 @@
 . Some commands support length syntax:
 .   db siov L100
 .   db 4000 L>5FFF
+.
+. Commands taking <path> also accept ? to interactively select the file.
 .
 . Use .help <command> for detailed help on that command.

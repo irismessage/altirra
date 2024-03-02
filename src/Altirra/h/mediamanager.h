@@ -47,10 +47,12 @@ struct ATMediaLoadContext {
 
 	bool mbStopOnModeIncompatibility = false;
 	bool mbStopOnMemoryConflictBasic = false;
+	bool mbStopOnIncompatibleDiskFormat = false;
 	bool mbModeIncompatible = false;
 	bool mbMemoryConflictBasic = false;
 	bool mbModeComputerRequired = false;
 	bool mbMode5200Required = false;
+	bool mbIncompatibleDiskFormat = false;
 };
 
 #endif

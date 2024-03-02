@@ -18,7 +18,7 @@ void VDLaunchProgram(const wchar_t *path, const wchar_t *args) {
 		cmdLine += args;
 	}
 
-	PROCESS_INFORMATION processInfo;
+	PROCESS_INFORMATION processInfo {};
 	const DWORD createFlags = CREATE_NEW_PROCESS_GROUP | CREATE_DEFAULT_ERROR_MODE;
 	BOOL success;
 
@@ -32,6 +32,9 @@ void VDLaunchProgram(const wchar_t *path, const wchar_t *args) {
 	if (success)
 		success = CreateProcessW(path, (LPWSTR)cmdLine.c_str(), NULL, NULL, FALSE, createFlags, NULL, winDir, &startupInfoW, &processInfo);
 
-	if (!success)
+	if (success) {
+		VDVERIFY(CloseHandle(processInfo.hProcess));
+		VDVERIFY(CloseHandle(processInfo.hThread));
+	} else
 		throw MyWin32Error("Unable to launch process: %%s", GetLastError());
 }

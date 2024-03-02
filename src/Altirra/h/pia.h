@@ -18,15 +18,15 @@
 #ifndef f_AT_PIA_H
 #define f_AT_PIA_H
 
+#include <vd2/system/function.h>
 #include <at/atcore/deviceport.h>
 
 class ATScheduler;
-class ATIRQController;
 class ATSaveStateReader;
-class ATSaveStateWriter;
 class ATScheduler;
 struct ATTraceContext;
 class ATTraceChannelFormatted;
+class IATObjectState;
 
 struct ATPIAState {
 	uint8 mORA;
@@ -53,6 +53,8 @@ struct ATPIAFloatingInputs {
 
 class ATPIAEmulator final : public IATDevicePortManager {
 public:
+	enum : uint32 { kTypeID = 'PIA ' };
+
 	ATPIAEmulator();
 
 	uint8 GetPortBOutput() const { return (uint8)(mOutput >> 8); }
@@ -67,12 +69,14 @@ public:
 	void FreeOutput(int index) override;
 
 	void SetTraceContext(ATTraceContext *context);
+	void SetIRQHandler(vdfunction<void(uint32, bool)> fn);
 
-	void Init(ATIRQController *irqcon, ATScheduler *scheduler);
+	void Init(ATScheduler *scheduler);
 	void ColdReset();
 	void WarmReset();
 
 	void SetCA1(bool level);		// Proceed
+	void SetCA2(bool level);
 	void SetCB1(bool level);		// Interrupt
 
 	uint8 DebugReadByte(uint8 addr) const;
@@ -100,8 +104,9 @@ public:
 	void LoadStateArch(ATSaveStateReader& reader);
 	void EndLoadState(ATSaveStateReader& reader);
 
-	void BeginSaveState(ATSaveStateWriter& writer);
-	void SaveStateArch(ATSaveStateWriter& writer);
+	void SaveState(IATObjectState **pp) const;
+	void LoadState(IATObjectState& state);
+	void PostLoadState();
 
 protected:
 	void UpdateCA2();
@@ -117,10 +122,11 @@ protected:
 
 	void UpdateTraceCRA();
 	void UpdateTraceCRB();
+	void UpdateTraceInputA();
 
 	ATScheduler *mpScheduler;
-	ATIRQController *mpIRQController;
 	ATPIAFloatingInputs *mpFloatingInputs;
+	vdfunction<void(uint32, bool)> mpIRQHandler;
 
 	uint32	mInput;
 	uint32	mOutput;
@@ -133,6 +139,7 @@ protected:
 	bool	mbPIAEdgeA;
 	bool	mbPIAEdgeB;
 	bool	mbCA1;
+	bool	mbCA2;
 	bool	mbCB1;
 	uint8	mPIACB2;
 
@@ -159,6 +166,7 @@ protected:
 	ATTraceContext *mpTraceContext = nullptr;
 	ATTraceChannelFormatted *mpTraceCRA = nullptr;
 	ATTraceChannelFormatted *mpTraceCRB = nullptr;
+	ATTraceChannelFormatted *mpTraceInputA = nullptr;
 };
 
 #endif

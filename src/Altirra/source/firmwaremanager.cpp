@@ -74,6 +74,9 @@ const char *ATGetFirmwareTypeName(ATFirmwareType type) {
 		"rapidus_corepbi",
 		"isplate",
 		"warpos",
+		"810turbo",
+		"amdc",
+		"percom_at",
 	};
 
 	VDASSERTCT(vdcountof(kTypeNames) == kATFirmwareTypeCount);
@@ -125,6 +128,9 @@ ATFirmwareType ATGetFirmwareTypeFromName(const char *type) {
 	else if (!strcmp(type, "rapidus_corepbi")) return kATFirmwareType_RapidusCorePBI;
 	else if (!strcmp(type, "isplate")) return kATFirmwareType_ISPlate;
 	else if (!strcmp(type, "warpos")) return kATFirmwareType_WarpOS;
+	else if (!strcmp(type, "810turbo")) return kATFirmwareType_810Turbo;
+	else if (!strcmp(type, "amdc")) return kATFirmwareType_AMDC;
+	else if (!strcmp(type, "percom_at")) return kATFirmwareType_PercomAT;
 	else return kATFirmwareType_Unknown;
 }
 
@@ -500,7 +506,7 @@ uint64 ATFirmwareManager::GetFirmwareOfType(ATFirmwareType type, bool allowInter
 
 	uint64 bestId = GetDefaultFirmware(type);
 
-	if (bestId)
+	if (bestId && std::find_if(firmwares.begin(), firmwares.end(), [bestId](const ATFirmwareInfo& info) { return info.mId == bestId; }) != firmwares.end())
 		return bestId;
 
 	for(Firmwares::const_iterator it(firmwares.begin()), itEnd(firmwares.end());

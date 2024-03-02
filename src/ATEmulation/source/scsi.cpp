@@ -226,16 +226,30 @@ void ATSCSIBusEmulator::UpdateBusState() {
 	} else {
 		switch(mBusPhase) {
 			case kBusPhase_BusFree:
-				if (busState & kATSCSICtrlState_SEL)
-					SetBusPhase(kBusPhase_Selection);
-				break;
+				if (!(busState & kATSCSICtrlState_SEL))
+					break;
+
+				SetBusPhase(kBusPhase_Selection);
+
+				// We need to immediately check selection state in case the target device ID
+				// is already set. We don't do this from SetBusPhase() to avoid undesirable
+				// recursion.
+				[[fallthrough]];
 
 			case kBusPhase_Selection:
-				if (!(busState & kATSCSICtrlState_SEL)) {
-					if (busData && !(busData & 0x7F & (busData - 1))) {
-						mpTargetDevice = mpDevices[VDFindLowestSetBitFast(busData)];
-					}
+				if (busState & kATSCSICtrlState_SEL) {
+					// +SEL & valid target ID bit & -BSY & -IO -> device selected, assert BSY
+					if (!(busState & (kATSCSICtrlState_BSY | kATSCSICtrlState_IO))) {
+						if (busData && !(busData & 0x7F & (busData - 1))) {
+							mpTargetDevice = mpDevices[VDFindLowestSetBitFast(busData)];
 
+							// if target is valid, have it assert +BSY
+							if (mpTargetDevice)
+								SetControl(1, kATSCSICtrlState_BSY, kATSCSICtrlState_BSY);
+						}
+					}
+				} else {
+					// -SEL -> COMMAND or BUSFREE, depending on whether target selected
 					if (mpTargetDevice)
 						SetBusPhase(kBusPhase_Command);
 					else
@@ -405,7 +419,6 @@ void ATSCSIBusEmulator::SetBusPhase(BusPhase phase) {
 
 		case kBusPhase_Selection:
 			g_ATLCSCSIBus <<= "Entering state: SELECTION\n";
-			SetControl(1, kATSCSICtrlState_BSY);
 			break;
 
 		case kBusPhase_Command:

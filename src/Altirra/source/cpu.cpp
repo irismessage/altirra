@@ -17,6 +17,8 @@
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <at/atcore/serialization.h>
+#include <at/atcore/snapshotimpl.h>
 #include <at/atdebugger/target.h>
 #include "cpu.h"
 #include "cpustates.h"
@@ -78,6 +80,20 @@ using namespace AT6502;
 	#define ATCPU_PROFILE_OPCODE(pc, opcode) ((void)0)
 #endif
 
+struct ATCPUEmulator::ExtOpcodeAnchorPred {
+	bool operator()(const ExtOpcodeAnchor& x, const ExtOpcodeAnchor& y) const {
+		return x.mOffset < y.mOffset;
+	}
+
+	bool operator()(const ExtOpcodeAnchor& x, uint16 y) const {
+		return x.mOffset < y;
+	}
+
+	bool operator()(uint16 x, const ExtOpcodeAnchor& y) const {
+		return x < y.mOffset;
+	}
+};
+
 ATCPUEmulator::ATCPUEmulator()
 	: mpMemory(NULL)
 	, mpHookMgr(NULL)
@@ -90,7 +106,8 @@ ATCPUEmulator::ATCPUEmulator()
 	mbTrace = false;
 	mbStep = false;
 	mDebugFlags = 0;
-	mpNextState = NULL;
+	mpNextState = mStates;
+	mStates[0] = kStateReadOpcode;
 	mCPUMode = kATCPUMode_6502;
 	mSubCycles = 1;
 	mSubCyclesLeft = 1;
@@ -110,7 +127,7 @@ ATCPUEmulator::ATCPUEmulator()
 	mBreakpointCount = 0;
 
 	RebuildDecodeTables();
-
+	
 	VDASSERTCT(kStateCount < 256);
 	
 	VDASSERTCT((int)kATCPUMode_6502 == (int)kATDebugDisasmMode_6502);
@@ -148,7 +165,7 @@ void ATCPUEmulator::ColdReset() {
 }
 
 void ATCPUEmulator::WarmReset() {
-	mpNextState = mStates;
+	mpNextState = mDecodeHeap + mDecodePtrs[(uint16)ExtOpcode::Reset];
 	mIntFlags = 0;
 	mbNMIForced = false;
 	mbUnusedCycle = false;
@@ -157,10 +174,6 @@ void ATCPUEmulator::WarmReset() {
 	mInsnPC = 0xFFFC;
 	mPC = 0xFFFC;
 	mP = 0x30 | kFlagI;
-	mStates[0] = kStateReadAddrL;
-	mStates[1] = kStateReadAddrH;
-	mStates[2] = kStateAddrToPC;
-	mStates[3] = kStateReadOpcode;
 	mbEmulationFlag = true;
 
 	// 65C816 initialization
@@ -739,7 +752,7 @@ void ATCPUEmulator::LoadState65C816(ATSaveStateReader& reader) {
 }
 
 void ATCPUEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
-	const uint32 t = mpCallbacks->CPUGetUnhaltedCycle();
+	const uint32 t = mpCallbacks->CPUGetUnhaltedAndRDYCycle();
 
 	mbUnusedCycle = reader.ReadBool();
 	mIntFlags = reader.ReadUint8();
@@ -749,7 +762,7 @@ void ATCPUEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
 }
 
 void ATCPUEmulator::LoadStateResetPrivate(ATSaveStateReader& reader) {
-	mIRQAssertTime = mpCallbacks->CPUGetUnhaltedCycle() - 10;
+	mIRQAssertTime = mpCallbacks->CPUGetUnhaltedAndRDYCycle() - 10;
 	mIRQAcknowledgeTime = mIRQAssertTime;
 	mbUnusedCycle	= false;
 }
@@ -757,47 +770,538 @@ void ATCPUEmulator::LoadStateResetPrivate(ATSaveStateReader& reader) {
 void ATCPUEmulator::EndLoadState(ATSaveStateReader& reader) {
 }
 
-void ATCPUEmulator::BeginSaveState(ATSaveStateWriter& writer) {
-	writer.RegisterHandlerMethod(kATSaveStateSection_Arch, this, &ATCPUEmulator::SaveStateArch);
-	writer.RegisterHandlerMethod(kATSaveStateSection_Private, this, &ATCPUEmulator::SaveStatePrivate);
-}
+class ATSaveStateCPU816 final : public ATSnapExchangeObject<ATSaveStateCPU816> {
+public:
+	template<typename T>
+	void Exchange(T& rw) {
+		rw.Transfer("ah", &mAH);
+		rw.Transfer("xh", &mXH);
+		rw.Transfer("yh", &mYH);
+		rw.Transfer("sh", &mSH);
+		rw.Transfer("b", &mB);
+		rw.Transfer("k", &mK);
+		rw.Transfer("e", &mbEmulationFlag);
+	}
 
-void ATCPUEmulator::SaveStateArch(ATSaveStateWriter& writer) {
-	writer.BeginChunk(VDMAKEFOURCC('6','5','0','2'));
+	uint8 mAH;
+	uint8 mXH;
+	uint8 mYH;
+	uint8 mSH;
+	uint16 mDP;
+	uint8 mB;
+	uint8 mK;
+	bool mbEmulationFlag;
+};
 
-	// We write PC and not InsnPC here because the opcode fetch hasn't happened yet.
-	writer.WriteUint16(mPC);
-	writer.WriteUint8(mA);
-	writer.WriteUint8(mX);
-	writer.WriteUint8(mY);
-	writer.WriteUint8(mS);
-	writer.WriteUint8(mP);
-	writer.EndChunk();
+class ATSaveStateCPU final : public ATSnapExchangeObject<ATSaveStateCPU> {
+public:
+	template<typename T>
+	void Exchange(T& rw) {
+		rw.Transfer("pc", &mPC);
+		rw.Transfer("insn_pc", &mInsnPC);
+		rw.Transfer("a", &mA);
+		rw.Transfer("x", &mX);
+		rw.Transfer("y", &mY);
+		rw.Transfer("p", &mP);
+		rw.Transfer("s", &mS);
+		rw.Transfer("ext816", &mp816);
+		rw.Transfer("unused_cycle", &mbUnusedCycle);
+		rw.Transfer("irq_assert_time", &mIrqAssertTime);
+		rw.Transfer("irq_acknowledge_time", &mIrqAcknowledgeTime);
+		rw.Transfer("nmi_assert_time", &mNmiAssertTime);
+		rw.Transfer("current_ext_opcode", &mCurrentExtOpcode);
+		rw.Transfer("current_ext_opcode_phase", &mCurrentExtOpcodePhase);
+		rw.Transfer("int_addr", &mAddr);
+		rw.Transfer("int_addr2", &mAddr2);
+		rw.Transfer("int_addr_bank", &mAddrBank);
+		rw.Transfer("int_rel_offset", &mRelOffset);
+		rw.Transfer("int_data", &mData);
+		rw.Transfer("int_data16", &mData16);
 
-	if (mCPUMode == kATCPUMode_65C816) {
-		writer.BeginChunk(VDMAKEFOURCC('C', '8', '1', '6'));
-		writer.WriteUint16(mDP);
-		writer.WriteUint8(mAH);
-		writer.WriteUint8(mXH);
-		writer.WriteUint8(mYH);
-		writer.WriteUint8(mSH);
-		writer.WriteUint8(mbEmulationFlag ? 1 : 0);
-		writer.WriteUint8(mB);
-		writer.WriteUint8(mK);
-		writer.EndChunk();
+		if constexpr (!rw.IsWriter) {
+			if (mCurrentExtOpcode >= ATCPUEmulator::kNumExtOpcodes)
+				throw ATInvalidSaveStateException();
+		}
+	}
+
+	uint8 mA = 0;
+	uint8 mX = 0;
+	uint8 mY = 0;
+	uint8 mP = 0;
+	uint8 mS = 0;
+	uint16 mPC = 0;
+	uint16 mInsnPC = 0;
+	uint8 mAH = 0;
+	uint8 mXH = 0;
+	uint8 mYH = 0;
+	uint8 mSH = 0;
+	uint16 mDP = 0;
+	uint8 mB = 0;
+	uint8 mK = 0;
+	vdrefptr<ATSaveStateCPU816> mp816;
+	bool mbUnusedCycle = false;
+	uint8 mIntFlags = 0;
+	uint32 mIrqAssertTime = 0;
+	uint32 mIrqAcknowledgeTime = 0;
+	uint32 mNmiAssertTime = 0;
+	uint16 mCurrentExtOpcode = 0;
+	uint8 mCurrentExtOpcodePhase = 0;
+	uint16 mAddr = 0;
+	uint16 mAddr2 = 0;
+	uint8 mRelOffset = 0;
+	uint8 mData = 0;
+	uint16 mData16 = 0;
+	uint8 mAddrBank = 0;
+};
+
+ATSERIALIZATION_DEFINE(ATSaveStateCPU);
+ATSERIALIZATION_DEFINE(ATSaveStateCPU816);
+
+namespace {
+	bool IsCycleEndingState(ATCPUState state) {
+		switch(state) {
+			case kStateNop:
+				return false;
+
+			case kStateReadOpcode:
+			case kStateReadOpcodeNoBreak:
+			case kStateReadImm:
+			case kStateReadAddrL:
+			case kStateReadAddrH:
+			case kStateRead:
+			case kStateReadSetSZToA:
+			case kStateReadDummyOpcode:
+			case kStateReadAddrHX:
+			case kStateReadAddrHX_SHY:
+			case kStateReadAddrHY_SHA:
+			case kStateReadAddrHY_SHX:
+			case kStateReadAddrHY:
+			case kStateReadAddX:
+			case kStateReadAddY:
+			case kStateReadCarry:
+			case kStateReadCarryForced:
+			case kStateWrite:
+			case kStateWriteA:
+			case kStateReadAbsIndAddr:
+			case kStateReadAbsIndAddrBroken:
+			case kStateReadIndAddr:
+			case kStateReadIndYAddr:
+			case kStateReadIndYAddr_SHA:
+			case kStateWait:
+				return true;
+
+			case kStateAtoD:
+			case kStateXtoD:
+			case kStateYtoD:
+			case kStateStoD:
+			case kStatePtoD:
+			case kStatePtoD_B0:
+			case kStatePtoD_B1:
+			case kState0toD:
+			case kStateDtoA:
+			case kStateDtoX:
+			case kStateDtoY:
+			case kStateDtoS:
+			case kStateDtoP:
+			case kStateDtoP_noICheck:
+			case kStateDSetSZ:
+			case kStateDSetSZToA:
+			case kStateDSetSZToX:
+			case kStateDSetSZToY:
+			case kStateAddrToPC:
+			case kStateCheckNMIBlocked:
+			case kStateNMIVecToPC:
+			case kStateRESVecToPC:
+			case kStateIRQVecToPC:
+			case kStateNMIOrIRQVecToPC:
+			case kStateNMIOrIRQVecToPCBlockable:
+			case kStateDelayInterrupts:
+				return false;
+
+			case kStatePush:
+			case kStatePushPCL:
+			case kStatePushPCH:
+			case kStatePushPCLM1:
+			case kStatePushPCHM1:
+			case kStatePop:
+			case kStatePopPCL:
+			case kStatePopPCH:
+			case kStatePopPCHP1:
+				return true;
+
+			case kStateAdc:
+			case kStateSbc:
+			case kStateCmp:
+			case kStateCmpX:
+			case kStateCmpY:
+			case kStateInc:
+				return false;
+
+			case kStateIncXWait:
+				return true;
+
+			case kStateDec:
+				return false;
+
+			case kStateDecXWait:
+				return true;
+
+			case kStateDecC:
+			case kStateAnd:
+			case kStateAnd_SAX:
+			case kStateAnc:
+			case kStateXaa:
+			case kStateLas:
+			case kStateSbx:
+			case kStateArr:
+			case kStateXas:
+			case kStateOr:
+			case kStateXor:
+			case kStateAsl:
+			case kStateLsr:
+			case kStateRol:
+			case kStateRor:
+			case kStateBitSetSV:
+			case kStateSEI:
+			case kStateCLI:
+			case kStateSEC:
+			case kStateCLC:
+			case kStateSED:
+			case kStateCLD:
+			case kStateCLV:
+				return false;
+
+			case kStateJs:
+			case kStateJns:
+			case kStateJc:
+			case kStateJnc:
+			case kStateJz:
+			case kStateJnz:
+			case kStateJo:
+			case kStateJno:
+			case kStateJsAddToPath:
+			case kStateJnsAddToPath:
+			case kStateJcAddToPath:
+			case kStateJncAddToPath:
+			case kStateJzAddToPath:
+			case kStateJnzAddToPath:
+			case kStateJoAddToPath:
+			case kStateJnoAddToPath:
+			case kStateJccFalseRead:
+				return true;
+
+			case kStateStepOver:
+			case kStateResetBit:
+			case kStateSetBit:
+				return false;
+
+			case kStateReadRel:
+			case kStateJ0:
+			case kStateJ1:
+			case kStateJ0AddToPath:
+			case kStateJ1AddToPath:
+				return true;
+
+			case kStateWaitForInterrupt:
+			case kStateStop:
+			case kStateJ:
+			case kStateJAddToPath:
+				return true;
+
+			case kStateTrb:
+			case kStateTsb:
+			case kStateC02_Adc:
+			case kStateC02_Sbc:
+			case kStateAddEAToHistory:
+			case kStateAddAsPathStart:
+			case kStateAddToPath:
+				return false;
+
+			case kStateBreakOnUnsupportedOpcode:
+				return true;
+
+			case kStateReadImmL16:
+			case kStateReadImmH16:
+			case kStateReadAddrDp:
+			case kStateReadAddrDpX:
+			case kStateReadAddrDpXInPage:
+			case kStateReadAddrDpY:
+			case kStateReadAddrDpYInPage:
+			case kState816ReadIndAddrDpInPage:
+			case kStateReadIndAddrDp:
+			case kStateReadIndAddrDpY:
+			case kStateReadIndAddrDpLongH:
+			case kStateReadIndAddrDpLongB:
+			case kStateReadAddrAddY:
+			case kState816ReadAddrL:
+			case kState816ReadAddrH:
+			case kState816ReadAddrHX:
+			case kState816ReadAddrAbsXSpec:
+			case kState816ReadAddrAbsXAlways:
+			case kState816ReadAddrAbsYSpec:
+			case kState816ReadAddrAbsYAlways:
+			case kState816ReadAddrAbsInd:
+			case kStateRead816AddrAbsLongL:
+			case kStateRead816AddrAbsLongH:
+			case kStateRead816AddrAbsLongB:
+			case kStateReadAddrB:
+			case kStateReadAddrBX:
+			case kStateReadAddrSO:
+			case kState816ReadAddrSO_AddY:
+				return true;
+
+			case kStateBtoD:
+			case kStateKtoD:
+			case kState0toD16:
+			case kStateAtoD16:
+			case kStateXtoD16:
+			case kStateYtoD16:
+			case kStateStoD16:
+			case kStateDPtoD16:
+			case kStateDtoB:
+			case kStateDtoA16:
+			case kStateDtoX16:
+			case kStateDtoY16:
+			case kStateDtoPNative:
+			case kStateDtoPNative_noICheck:
+			case kStateDtoS16:
+			case kStateDtoDP16:
+			case kStateDSetSZ16:
+			case kStateBitSetSV16:
+				return false;
+
+			case kState816WriteByte:
+			case kStateWriteL16:
+			case kStateWriteH16:
+			case kStateWriteH16_DpBank:
+			case kState816ReadByte:
+			case kState816ReadByte_PBK:
+			case kStateReadL16:
+			case kStateReadH16:
+			case kStateReadH16_DpBank:
+				return true;
+
+			case kStateAnd16:
+			case kStateOr16:
+			case kStateXor16:
+			case kStateAdc16:
+			case kStateSbc16:
+			case kStateCmp16:
+			case kStateInc16:
+			case kStateDec16:
+			case kStateRol16:
+			case kStateRor16:
+			case kStateAsl16:
+			case kStateLsr16:
+			case kStateTrb16:
+			case kStateTsb16:
+			case kStateCmpX16:
+			case kStateCmpY16:
+			case kStateXba:
+			case kStateXce:
+				return false;
+
+			case kStatePushNative:
+			case kStatePushL16:
+			case kStatePushH16:
+			case kStatePushPBKNative:
+			case kStatePushPCLNative:
+			case kStatePushPCHNative:
+			case kStatePushPCLM1Native:
+			case kStatePushPCHM1Native:
+			case kStatePopNative:
+			case kStatePopL16:
+			case kStatePopH16:
+			case kStatePopPCLNative:
+			case kStatePopPCHNative:
+			case kStatePopPCHP1Native:
+			case kStatePopPBKNative:
+			case kStateRep:
+			case kStateSep:
+			case kStateJ16:
+			case kStateJ16AddToPath:
+				return true;
+
+			case kState816_NatCOPVecToPC:
+			case kState816_EmuCOPVecToPC:
+			case kState816_NatNMIVecToPC:
+			case kState816_NatIRQVecToPC:
+			case kState816_NatBRKVecToPC:
+			case kState816_ABORT:
+			case kState816_SetI_ClearD:
+			case kState816_LongAddrToPC:
+				return false;
+
+			case kState816_MoveRead:
+			case kState816_MoveWriteP:
+			case kState816_MoveWriteN:
+				return true;
+
+			case kState816_Per:
+			case kState816_SetBank0:
+			case kState816_SetBankPBR:
+			case kStateUpdateHeatMap:
+			case kStateVerifyInsn:
+			case kStateVerifyIRQEntry:
+			case kStateVerifyNMIEntry:
+				return false;
+
+			default:
+				VDFAIL("Invalid state found.");
+				return false;
+		}
 	}
 }
 
-void ATCPUEmulator::SaveStatePrivate(ATSaveStateWriter& writer) {
-	const uint32 t = mpCallbacks->CPUGetUnhaltedCycle();
+void ATCPUEmulator::SaveState(IATObjectState **result) {
+	const uint32 t = mpCallbacks->CPUGetUnhaltedAndRDYCycle();
 
-	writer.BeginChunk(VDMAKEFOURCC('6','5','0','2'));
-	writer.WriteUint8(mbUnusedCycle);
-	writer.WriteUint8(mIntFlags);
-	writer.WriteUint32(mIRQAssertTime - t);
-	writer.WriteUint32(mIRQAcknowledgeTime - t);
-	writer.WriteUint32(mNMIAssertTime - t);
-	writer.EndChunk();
+	vdrefptr<ATSaveStateCPU> obj(new ATSaveStateCPU);
+
+	obj->mA = mA;
+	obj->mX = mX;
+	obj->mY = mY;
+	obj->mP = mP;
+	obj->mS = mS;
+
+	// If we're at an opcode fetch, InsnPC may not have been updated yet and should be
+	// overridden with the current PC. Un-overriding happens below.
+	obj->mPC = mPC;
+	obj->mInsnPC = mPC;
+	
+	if (mCPUMode == kATCPUMode_65C816) {
+		obj->mp816 = new ATSaveStateCPU816();
+		obj->mp816->mAH = mAH;
+		obj->mp816->mXH = mXH;
+		obj->mp816->mYH = mYH;
+		obj->mp816->mSH = mSH;
+		obj->mp816->mDP = mDP;
+		obj->mp816->mB = mB;
+		obj->mp816->mK = mK;
+		obj->mp816->mbEmulationFlag = mbEmulationFlag;
+	}
+
+	obj->mbUnusedCycle = mbUnusedCycle;
+	obj->mIntFlags = mIntFlags;
+	obj->mIrqAssertTime = mIRQAssertTime - t;
+	obj->mIrqAcknowledgeTime = mIRQAcknowledgeTime - t;
+	obj->mNmiAssertTime = mNMIAssertTime - t;
+
+	obj->mAddr = mAddr;
+	obj->mAddr2 = mAddr2;
+	obj->mRelOffset = mRelOffset;
+	obj->mData = mData;
+	obj->mData16 = mData16;
+	obj->mAddrBank = mAddrBank;
+
+	obj->mCurrentExtOpcode = 0;
+	obj->mCurrentExtOpcodePhase = 0;
+
+	if (*mpNextState != kStateReadOpcode && *mpNextState != kStateReadOpcodeNoBreak) {
+		uint16 insnOffset = 0;
+
+		if ((uintptr)mpNextState - (uintptr)mDecodeHeap < sizeof(mDecodeHeap))
+			insnOffset = (uint16)(mpNextState - mDecodeHeap);
+		else
+			insnOffset = (uint16)(mStateRelocOffset + (mpNextState - mStates));
+
+		auto it = std::upper_bound(mExtOpcodeAnchors, mExtOpcodeAnchors + mNumExtOpcodeAnchors, insnOffset, ExtOpcodeAnchorPred());
+		VDASSERT(it != mExtOpcodeAnchors);
+
+		obj->mInsnPC = mInsnPC;
+		obj->mCurrentExtOpcode = it[-1].mExtOpcode;
+
+		uint32 insnStartOffset = it[-1].mOffset;
+		for(uint32 i = insnStartOffset; i < insnOffset; ++i) {
+			const auto state = mDecodeHeap[i];
+
+			if (IsCycleEndingState((ATCPUState)state))
+				++obj->mCurrentExtOpcodePhase;
+		}
+
+		++obj->mCurrentExtOpcodePhase;
+	}
+
+	*result = obj.release();
+}
+
+bool ATCPUEmulator::LoadState(const IATObjectState& state) {
+	const ATSaveStateCPU& cpustate = atser_cast<const ATSaveStateCPU&>(state);
+	const uint32 t = mpCallbacks->CPUGetUnhaltedAndRDYCycle();
+
+	SetPC(cpustate.mPC);			// also resets next state
+	mInsnPC = cpustate.mInsnPC;
+	mA = cpustate.mA;
+	mX = cpustate.mX;
+	mY = cpustate.mY;
+	mP = cpustate.mP;
+	mS = cpustate.mS;
+	mbUnusedCycle = cpustate.mbUnusedCycle;
+	mIntFlags = cpustate.mIntFlags;
+	mIRQAssertTime = cpustate.mIrqAssertTime + t;
+	mIRQAcknowledgeTime = cpustate.mIrqAcknowledgeTime + t;
+	mNMIAssertTime = cpustate.mNmiAssertTime + t;
+
+	mOpcode = (uint8)cpustate.mCurrentExtOpcode;
+
+	mAddr = cpustate.mAddr;
+	mAddr2 = cpustate.mAddr2;
+	mRelOffset = cpustate.mRelOffset;
+	mData = cpustate.mData;
+	mData16 = cpustate.mData16;
+	mAddrBank = cpustate.mAddrBank;
+
+
+	if (mCPUMode == kATCPUMode_65C816) {
+		if (!cpustate.mp816)
+			throw ATInvalidSaveStateException();
+
+		const ATSaveStateCPU816& cpustate816 = *cpustate.mp816;
+		mAH = cpustate816.mAH;
+		mXH = cpustate816.mXH;
+		mYH = cpustate816.mYH;
+		mSH = cpustate816.mSH;
+		mDP = cpustate816.mDP;
+		mB = cpustate816.mB;
+		mK = cpustate816.mK;
+		mbEmulationFlag = cpustate816.mbEmulationFlag;
+	} else {
+		mbEmulationFlag = true;
+		mB = 0;
+		mK = 0;
+	}
+
+	if (mbEmulationFlag) {
+		mSH = 1;
+		mP |= 0x30;
+	}
+
+	mStates[0] = kStateReadOpcode;
+	mpNextState = mStates;
+	mStateRelocOffset = 0;
+
+	if (cpustate.mCurrentExtOpcodePhase) {
+		if (mCPUMode == kATCPUMode_65C816)
+			Update65816DecodeTable();
+
+		const uint8 *insnStates = mDecodeHeap + mDecodePtrs[cpustate.mCurrentExtOpcode];
+
+		mpNextState = insnStates;
+
+		for(uint32 i=1; i<cpustate.mCurrentExtOpcodePhase; ++i) {
+			const uint8 state = insnStates[i];
+
+			if (state == kStateReadOpcode)
+				break;
+
+			if (IsCycleEndingState((ATCPUState)state)) {
+				mpNextState = &insnStates[i + 1];
+				break;
+			}
+		}
+	}
+
+	return true;
 }
 
 void ATCPUEmulator::InjectOpcode(uint8 op) {
@@ -842,7 +1346,7 @@ void ATCPUEmulator::AssertIRQ(int cycleOffset) {
 			UpdatePendingIRQState();
 
 		mIntFlags |= kIntFlag_IRQActive;
-		mIRQAssertTime = mpCallbacks->CPUGetUnhaltedCycle() + cycleOffset;
+		mIRQAssertTime = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + cycleOffset;
 	}
 }
 
@@ -858,18 +1362,18 @@ void ATCPUEmulator::NegateIRQ() {
 void ATCPUEmulator::AssertNMI() {
 	if (!(mIntFlags & kIntFlag_NMIPending)) {
 		mIntFlags |= kIntFlag_NMIPending;
-		mNMIAssertTime = mpCallbacks->CPUGetUnhaltedCycle();
+		mNMIAssertTime = mpCallbacks->CPUGetUnhaltedAndRDYCycle();
 	}
 }
 
 void ATCPUEmulator::AssertABORT() {
-	if (mpDecodePtrABORT)
-		mpNextState = mpDecodePtrABORT;
+	if (mDecodePtrs[(uint32)ExtOpcode::Abort])
+		mpNextState = mDecodeHeap + mDecodePtrs[(uint32)ExtOpcode::Abort];
 }
 
 void ATCPUEmulator::PeriodicCleanup() {
 	// check if we need to bump the interrupt assert times forward to avoid wrapping
-	const uint32 t = mpCallbacks->CPUGetUnhaltedCycle();
+	const uint32 t = mpCallbacks->CPUGetUnhaltedAndRDYCycle();
 
 	if (((t - mNMIAssertTime) >> 30) == 2)
 		mNMIAssertTime += 0x40000000;
@@ -1005,7 +1509,7 @@ void ATCPUEmulator::ProcessStepOver() {
 template<bool T_Accel>
 bool ATCPUEmulator::ProcessInterrupts() {
 	if (mIntFlags & kIntFlag_NMIPending) {
-		uint32 t = mpCallbacks->CPUGetUnhaltedCycle();
+		uint32 t = mpCallbacks->CPUGetUnhaltedAndRDYCycle();
 
 		if (T_Accel || t - mNMIAssertTime >= (t == mNMIIgnoreUnhaltedCycle ? 3U : 2U)) {
 			if (mbTrace)
@@ -1014,7 +1518,7 @@ bool ATCPUEmulator::ProcessInterrupts() {
 			mIntFlags &= ~kIntFlag_NMIPending;
 			mbMarkHistoryNMI = true;
 
-			mpNextState = mpDecodePtrNMI;
+			mpNextState = mDecodeHeap + mDecodePtrs[(uint32)ExtOpcode::Nmi];
 
 			if (mDebugFlags & kDebugFlag_StepNMI) {
 				mDebugFlags &= ~kDebugFlag_StepNMI;
@@ -1041,13 +1545,13 @@ bool ATCPUEmulator::ProcessInterrupts() {
 
 				// If an IRQ is pending, check if it was just acknowledged this cycle. If so,
 				// bypass it as it's too late to interrupt this instruction.
-				if ((mIntFlags & kIntFlag_IRQPending) && mpCallbacks->CPUGetUnhaltedCycle() - mIRQAcknowledgeTime > 0) {
+				if ((mIntFlags & kIntFlag_IRQPending) && mpCallbacks->CPUGetUnhaltedAndRDYCycle() - mIRQAcknowledgeTime > 0) {
 					if (mbTrace)
 						ATConsoleWrite("CPU: Jumping to IRQ vector\n");
 
 					mbMarkHistoryIRQ = true;
 
-					mpNextState = mpDecodePtrIRQ;
+					mpNextState = mDecodeHeap + mDecodePtrs[(uint32)ExtOpcode::Irq];
 					return true;
 				}
 			}
@@ -1176,7 +1680,7 @@ void ATCPUEmulator::AddHistoryEntry(bool slowFlag) {
 void ATCPUEmulator::UpdatePendingIRQState() {
 	VDASSERT(((mIntFlags & kIntFlag_IRQActive) != 0) != ((mIntFlags & kIntFlag_IRQPending) != 0));
 
-	const uint32 cycle = mpCallbacks->CPUGetUnhaltedCycle();
+	const uint32 cycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle();
 
 	if (mIntFlags & kIntFlag_IRQActive) {
 		// IRQ line is pulled down, but no IRQ acknowledge has happened. Check if the IRQ
@@ -1227,15 +1731,13 @@ void ATCPUEmulator::Update65816DecodeTable() {
 	if (mDecodeTableMode816 != decMode) {
 		mDecodeTableMode816 = decMode;
 		memcpy(mDecodePtrs, mDecodePtrs816[decMode], sizeof mDecodePtrs);
-
-		mpDecodePtrNMI = mDecodeHeap + mDecodePtrs816[decMode][256];
-		mpDecodePtrIRQ = mDecodeHeap + mDecodePtrs816[decMode][257];
-		mpDecodePtrABORT = mDecodeHeap + mDecodePtrs816[decMode][258];
 	}
 }
 
 void ATCPUEmulator::RebuildDecodeTables() {
-	if (mpNextState && !(mpNextState >= mStates && mpNextState < mStates + sizeof(mStates)/sizeof(mStates[0]))) {
+	if (((uintptr)mpNextState - (uintptr)mDecodeHeap) < sizeof(mDecodeHeap)) {
+		mStateRelocOffset = mpNextState - mDecodeHeap;
+
 		uint8 *dst = mStates;
 		for(int i=0; i<15; ++i) {
 			if (mpNextState[i] == kStateReadOpcode)
@@ -1266,7 +1768,7 @@ void ATCPUEmulator::RebuildDecodeTables() {
 			break;
 	}
 
-	VDASSERT(mpDstState <= mDecodeHeap + sizeof mDecodeHeap / sizeof mDecodeHeap[0]);
+	VDASSERT(mpDstState <= mDecodeHeap + vdcountof(mDecodeHeap));
 }
 
 void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
@@ -1294,7 +1796,7 @@ void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
 
 	mpDstState = mDecodeHeap;
 	for(int i=0; i<256; ++i) {
-		uint8 c = kStorageOrder[i];
+		const uint8 c = kStorageOrder[i];
 
 		mDecodePtrs[c] = (uint16)(mpDstState - mDecodeHeap);
 
@@ -1318,7 +1820,9 @@ void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
 	}
 
 	// predecode NMI sequence
-	mpDecodePtrNMI = mpDstState;
+	const uint16 nmiOffset = (uint16)(mpDstState - mDecodeHeap);
+	mDecodePtrs[(uint32)ExtOpcode::Nmi] = nmiOffset;
+
 	*mpDstState++ = kStateReadDummyOpcode;
 	*mpDstState++ = kStateReadDummyOpcode;
 
@@ -1349,7 +1853,8 @@ void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
 	*mpDstState++ = kStateReadOpcode;
 
 	// predecode IRQ sequence
-	mpDecodePtrIRQ = mpDstState;
+	const uint16 irqOffset = (uint16)(mpDstState - mDecodeHeap);
+	mDecodePtrs[(uint32)ExtOpcode::Irq] = irqOffset;
 	*mpDstState++ = kStateReadDummyOpcode;
 	*mpDstState++ = kStateReadDummyOpcode;
 
@@ -1388,7 +1893,22 @@ void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
 
 	*mpDstState++ = kStateReadOpcode;
 
-	mpDecodePtrABORT = nullptr;
+	mDecodePtrs[(uint32)ExtOpcode::Reset] = (uint16)(mpDstState - mDecodeHeap);
+
+	*mpDstState++ = kStateRESVecToPC;
+	*mpDstState++ = kStateReadAddrL;
+	*mpDstState++ = kStateReadAddrH;
+	*mpDstState++ = kStateAddrToPC;
+	*mpDstState++ = kStateReadOpcode;
+
+	mDecodePtrs[(uint32)ExtOpcode::Abort] = 0;
+
+	for(uint32 i=0; i<(uint32)ExtOpcode::Abort; ++i) {
+		mExtOpcodeAnchors[i] = ExtOpcodeAnchor { mDecodePtrs[i], (uint16)i };
+	}
+
+	mNumExtOpcodeAnchors = (uint32)ExtOpcode::Abort;
+	std::sort(mExtOpcodeAnchors, &mExtOpcodeAnchors[mNumExtOpcodeAnchors], ExtOpcodeAnchorPred());
 }
 
 void ATCPUEmulator::RebuildDecodeTables65816() {
@@ -1437,7 +1957,7 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 		}
 
 		// predecode NMI sequence
-		mDecodePtrs816[i][256] = (uint16)(mpDstState - mDecodeHeap);
+		mDecodePtrs816[i][(uint32)ExtOpcode::Nmi] = (uint16)(mpDstState - mDecodeHeap);
 		*mpDstState++ = kStateReadDummyOpcode;
 		*mpDstState++ = kStateReadDummyOpcode;
 
@@ -1477,7 +1997,7 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 		*mpDstState++ = kStateReadOpcode;
 
 		// predecode IRQ sequence
-		mDecodePtrs816[i][257] = (uint16)(mpDstState - mDecodeHeap);
+		mDecodePtrs816[i][(uint32)ExtOpcode::Irq] = (uint16)(mpDstState - mDecodeHeap);
 		*mpDstState++ = kStateReadDummyOpcode;
 		*mpDstState++ = kStateReadDummyOpcode;
 
@@ -1516,8 +2036,21 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 
 		*mpDstState++ = kStateReadOpcode;
 
+		// predecode RESET sequence
+		if (i == 0) {
+			mDecodePtrs816[0][(uint32)ExtOpcode::Reset] = (uint16)(mpDstState - mDecodeHeap);
+
+			*mpDstState++ = kStateRESVecToPC;
+			*mpDstState++ = kStateReadAddrL;
+			*mpDstState++ = kStateReadAddrH;
+			*mpDstState++ = kStateAddrToPC;
+			*mpDstState++ = kStateReadOpcode;
+		} else {
+			mDecodePtrs816[i][(uint32)ExtOpcode::Reset] = mDecodePtrs816[0][(uint32)ExtOpcode::Reset];
+		}
+
 		// predecode ABORT sequence
-		mDecodePtrs816[i][258] = (uint16)(mpDstState - mDecodeHeap);
+		mDecodePtrs816[i][(uint32)ExtOpcode::Abort] = (uint16)(mpDstState - mDecodeHeap);
 		*mpDstState++ = kStateReadDummyOpcode;
 		*mpDstState++ = kStateReadDummyOpcode;
 
@@ -1551,6 +2084,15 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 
 		*mpDstState++ = kStateReadOpcode;
 	}
+
+	uint32 numExtOpcodeAnchors = 0;
+	for(uint32 i=0; i<10; ++i) {
+		for(uint32 j=0; j<kNumExtOpcodes; ++j)
+			mExtOpcodeAnchors[numExtOpcodeAnchors++] = ExtOpcodeAnchor { mDecodePtrs816[i][j], (uint16)j };
+	}
+
+	mNumExtOpcodeAnchors = numExtOpcodeAnchors;
+	std::sort(mExtOpcodeAnchors, &mExtOpcodeAnchors[mNumExtOpcodeAnchors], ExtOpcodeAnchorPred());
 }
 
 void ATCPUEmulator::DecodeReadZp() {
@@ -1583,11 +2125,23 @@ void ATCPUEmulator::DecodeReadAbsX() {
 	*mpDstState++ = kStateRead;				// (5)
 }
 
+void ATCPUEmulator::DecodeWriteAddrAbsX() {
+	*mpDstState++ = kStateReadAddrL;		// 2
+	*mpDstState++ = kStateReadAddrHX;		// 3
+	*mpDstState++ = kStateReadCarryForced;	// 4
+}
+
 void ATCPUEmulator::DecodeReadAbsY() {
 	*mpDstState++ = kStateReadAddrL;		// 2
 	*mpDstState++ = kStateReadAddrHY;		// 3
 	*mpDstState++ = kStateReadCarry;		// 4
 	*mpDstState++ = kStateRead;				// (5)
+}
+
+void ATCPUEmulator::DecodeWriteAddrAbsY() {
+	*mpDstState++ = kStateReadAddrL;		// 2
+	*mpDstState++ = kStateReadAddrHY;		// 3
+	*mpDstState++ = kStateReadCarryForced;	// 4
 }
 
 void ATCPUEmulator::DecodeReadIndX() {
@@ -1610,6 +2164,13 @@ void ATCPUEmulator::DecodeReadIndY() {
 
 	if (mbHistoryEnabled)
 		*mpDstState++ = kStateAddEAToHistory;
+}
+
+void ATCPUEmulator::DecodeWriteAddrIndY() {
+	*mpDstState++ = kStateReadAddrL;		// 2
+	*mpDstState++ = kStateRead;				// 3
+	*mpDstState++ = kStateReadIndYAddr;		// 4
+	*mpDstState++ = kStateReadCarryForced;	// 5
 }
 
 void ATCPUEmulator::DecodeReadInd() {

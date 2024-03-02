@@ -38,6 +38,7 @@ public:
 	uint32 GetTimeBase() const { return mCyclesBase; }
 
 	uint16 GetS() const { return mS; }
+	uint32 GetStepStackLevel() const { return (uint32)mS << 16; }
 
 	void SetCC(uint8 cc);
 
@@ -95,6 +96,8 @@ private:
 	bool		mbFirqAsserted = false;
 	bool		mbNmiAsserted = false;
 	bool		mbNmiArmed = false;
+	bool		mbHistoryPendingIRQ = false;
+	bool		mbHistoryPendingNMI = false;
 
 	const bool	*mpBreakpointMap = nullptr;
 	IATCPUBreakpointHandler *mpBreakpointHandler = nullptr;

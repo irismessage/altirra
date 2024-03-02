@@ -18,6 +18,7 @@
 #include "stdafx.h"
 #include <set>
 #include <unordered_map>
+#include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/linearalloc.h>
@@ -25,28 +26,64 @@
 #include <vd2/vdjson/jsonoutput.h>
 #include <vd2/vdjson/jsonwriter.h>
 #include <vd2/vdjson/jsonreader.h>
+#include <at/atcore/checksum.h>
 #include "compatdb.h"
 #include "compatedb.h"
 
 VDStringW ATCompatEDBAliasRule::ToDisplayString() const {
 	VDStringW s;
+	bool appendHash256 = false;
 
 	switch(mRuleType) {
 		case kATCompatRuleType_CartChecksum:
-			s.sprintf(L"Cartridge:[%016llX]", (unsigned long long)mChecksum);
+			s.sprintf(L"Cartridge:[%016llX]", (unsigned long long)mValue[0]);
 			break;
 
 		case kATCompatRuleType_DiskChecksum:
-			s.sprintf(L"Disk:[%016llX]", (unsigned long long)mChecksum);
+			s.sprintf(L"Disk:[%016llX]", (unsigned long long)mValue[0]);
 			break;
 
 		case kATCompatRuleType_DOSBootChecksum:
-			s.sprintf(L"Disk DOS:[%016llX]", (unsigned long long)mChecksum);
+			s.sprintf(L"Disk DOS:[%016llX]", (unsigned long long)mValue[0]);
 			break;
 
 		case kATCompatRuleType_ExeChecksum:
-			s.sprintf(L"Exe:[%016llX]", (unsigned long long)mChecksum);
+			s.sprintf(L"Exe:[%016llX]", (unsigned long long)mValue[0]);
 			break;
+
+		case kATCompatRuleType_CartFileSHA256:
+			s = L"Cartridge File SHA256";
+			appendHash256 = true;
+			break;
+
+		case kATCompatRuleType_DiskFileSHA256:
+			s = L"Disk File SHA256";
+			appendHash256 = true;
+			break;
+
+		case kATCompatRuleType_DOSBootFileSHA256:
+			s = L"Disk DOS File SHA256";
+			appendHash256 = true;
+			break;
+
+		case kATCompatRuleType_ExeFileSHA256:
+			s = L"Exe File SHA256";
+			appendHash256 = true;
+			break;
+
+		case kATCompatRuleType_TapeFileSHA256:
+			s = L"Tape File SHA256";
+			appendHash256 = true;
+			break;
+	}
+
+	if (appendHash256) {
+		s += L": [";
+
+		for(uint64 v : mValue)
+			s.append_sprintf(L"%016llX", (unsigned long long)VDFromBE64(v));
+
+		s += L"]";
 	}
 
 	return s;
@@ -142,17 +179,35 @@ void ATLoadCompatEDB(const wchar_t *path, ATCompatEDB& edb) {
 						rule.mRuleType = kATCompatRuleType_DOSBootChecksum;
 					else if (typeSpan == L"exe")
 						rule.mRuleType = kATCompatRuleType_ExeChecksum;
+					else if (typeSpan == L"cartfilesha256")
+						rule.mRuleType = kATCompatRuleType_CartFileSHA256;
+					else if (typeSpan == L"diskfilesha256")
+						rule.mRuleType = kATCompatRuleType_DiskFileSHA256;
+					else if (typeSpan == L"dosbootfilesha256")
+						rule.mRuleType = kATCompatRuleType_DOSBootFileSHA256;
+					else if (typeSpan == L"exefilesha256")
+						rule.mRuleType = kATCompatRuleType_ExeFileSHA256;
+					else if (typeSpan == L"tapefilesha256")
+						rule.mRuleType = kATCompatRuleType_TapeFileSHA256;
 					else
 						throw VDParseException("Unsupported alias rule type: %ls", typeStr);
 
 					const wchar_t *valueStr = ruleNode.GetRequiredString("value");
 
 					wchar_t c;
-					unsigned long long v;
-					if (1 != swscanf(valueStr, L"%llx%lc", &v, &c))
-						throw VDParseException();
+					unsigned long long v[4] {};
 
-					rule.mChecksum = (uint64)v;
+					if (ATCompatIsLargeRuleType(rule.mRuleType)) {
+						if (4 != swscanf(valueStr, L"%16llx%16llx%16llx%16llx%lc", &v[0], &v[1], &v[2], &v[3], &c))
+							throw VDParseException();
+					} else {
+						if (1 != swscanf(valueStr, L"%llx%lc", &v[0], &c))
+							throw VDParseException();
+					}
+
+					for(int i=0; i<4; ++i) {
+						rule.mValue[i] = VDToBE64((uint64)v[i]);
+					}
 				}
 			}
 
@@ -202,6 +257,9 @@ void ATSaveCompatEDB(const wchar_t *path, const ATCompatEDB& edb) {
 			for(auto&& rule : alias.mRules) {
 				writer.OpenObject();
 				writer.WriteMemberName(L"type");
+
+				bool hash256 = false;
+
 				switch(rule.mRuleType) {
 					case kATCompatRuleType_CartChecksum:
 						writer.WriteString(L"cart");
@@ -215,12 +273,37 @@ void ATSaveCompatEDB(const wchar_t *path, const ATCompatEDB& edb) {
 					case kATCompatRuleType_ExeChecksum:
 						writer.WriteString(L"exe");
 						break;
+					case kATCompatRuleType_CartFileSHA256:
+						writer.WriteString(L"cartfilesha256");
+						hash256 = true;
+						break;
+					case kATCompatRuleType_DiskFileSHA256:
+						writer.WriteString(L"diskfilesha256");
+						hash256 = true;
+						break;
+					case kATCompatRuleType_DOSBootFileSHA256:
+						writer.WriteString(L"dosbootfilesha256");
+						hash256 = true;
+						break;
+					case kATCompatRuleType_ExeFileSHA256:
+						writer.WriteString(L"exefilesha256");
+						hash256 = true;
+						break;
+					case kATCompatRuleType_TapeFileSHA256:
+						writer.WriteString(L"tapefilesha256");
+						hash256 = true;
+						break;
 					default:
 						writer.WriteNull();
 						break;
 				}
 				writer.WriteMemberName(L"value");
-				s.sprintf(L"%llX", (unsigned long long)rule.mChecksum);
+				if (hash256) {
+					s.clear();
+					for(uint64 v : rule.mValue)
+						s.append_sprintf(L"%016llX", VDFromBE64((unsigned long long)v));
+				} else
+					s.sprintf(L"%llX", (unsigned long long)rule.mValue[0]);
 				writer.WriteString(s.c_str());
 				writer.Close();
 			}
@@ -407,6 +490,7 @@ void ATCompileCompatEDB(vdblock<char>& dst, const ATCompatEDB& edb) {
 	const uint32 segAliases = builder.AddSegment(alignof(ATCompatDBAlias));
 	const uint32 segTags = builder.AddSegment(alignof(ATCompatDBTag));
 	const uint32 segTagIds = builder.AddSegment(alignof(uint32));
+	const uint32 segLargeRuleBlobs = builder.AddSegment(alignof(uint32));
 	const uint32 segText = builder.AddSegment(1);
 
 	// build lists of used aliases and tags
@@ -437,13 +521,29 @@ void ATCompileCompatEDB(vdblock<char>& dst, const ATCompatEDB& edb) {
 		}
 	}
 
-	// build list of rule types
+	// build list of rule types and all large rule blobs
 	std::set<uint32> ruleTypes;
+	vdfastvector<const uint64 *> largeRuleBlobs;
 
 	for(const auto *alias : usedAliases) {
-		for(const auto& rule : alias->mRules)
+		for(const auto& rule : alias->mRules) {
 			ruleTypes.insert(rule.mRuleType);
+
+			if (ATCompatIsLargeRuleType(rule.mRuleType))
+				largeRuleBlobs.push_back(&rule.mValue[0]);
+		}
 	}
+
+	// distill sorted unique list of large rule blobs
+	const auto largeRuleBlobPred = [](const uint64 *p, const uint64 *q) -> bool {
+			if (p[0] != q[0]) return VDFromBEU64(p[0]) < VDFromBEU64(q[0]);
+			if (p[1] != q[1]) return VDFromBEU64(p[1]) < VDFromBEU64(q[1]);
+			if (p[2] != q[2]) return VDFromBEU64(p[2]) < VDFromBEU64(q[2]);
+			if (p[3] != q[3]) return VDFromBEU64(p[3]) < VDFromBEU64(q[3]);
+			return false;
+		};
+
+	std::sort(largeRuleBlobs.begin(), largeRuleBlobs.end(), largeRuleBlobPred);
 
 	// process each rule type
 	vdfastvector<ATCompatDBRule *> allRules;
@@ -451,23 +551,31 @@ void ATCompileCompatEDB(vdblock<char>& dst, const ATCompatEDB& edb) {
 
 	for(const uint32 ruleType : ruleTypes) {
 		// compile inverted index for rules
-		struct Rule {
-			const ATCompatEDBAliasRule *mpRule;
-			uint32 mTitleIndex;
-		};
-
 		vdfastvector<ATCompatDBRule> rules;
 
-		for(uint32 i = 0; i < numUsedAliases; ++i) {
-			for(const auto& rule : usedAliases[i]->mRules) {
-				if (rule.mRuleType == ruleType)
-					rules.push_back( { (uint32)rule.mChecksum, (uint32)(rule.mChecksum >> 32), i } );
+		if (ATCompatIsLargeRuleType((ATCompatRuleType)ruleType)) {
+			for(uint32 i = 0; i < numUsedAliases; ++i) {
+				for(const auto& rule : usedAliases[i]->mRules) {
+					if (rule.mRuleType == ruleType) {
+						const uint32 index = (uint32)(std::lower_bound(largeRuleBlobs.begin(), largeRuleBlobs.end(), &rule.mValue[0], largeRuleBlobPred) - largeRuleBlobs.begin());
+						const uint32 offset = index * 32;
+
+						rules.push_back( { offset, 0, i } );
+					}
+				}
+			}
+		} else {
+			for(uint32 i = 0; i < numUsedAliases; ++i) {
+				for(const auto& rule : usedAliases[i]->mRules) {
+					if (rule.mRuleType == ruleType)
+						rules.push_back( { (uint32)rule.mValue[0], (uint32)(rule.mValue[0] >> 32), i } );
+				}
 			}
 		}
 
 		// sort rules for binary search
 		std::sort(rules.begin(), rules.end(),
-			[](auto x, auto y) {
+			[](const auto& x, const auto& y) {
 				return (((uint64)x.mValueHi << 32) + x.mValueLo) < (((uint64)y.mValueHi << 32) + y.mValueLo);
 			}
 		);
@@ -570,6 +678,13 @@ void ATCompileCompatEDB(vdblock<char>& dst, const ATCompatEDB& edb) {
 		dstTag->mKey.mOffset = (sint32)builder.Store(segText, srcTag->mKey.c_str(), srcTag->mKey.size() + 1);
 	}
 
+	// process large rule blobs
+	for(const uint64 *largeRuleBlob : largeRuleBlobs) {
+		uint32 *dst = builder.AllocateArray<uint32>(segLargeRuleBlobs, 8);
+
+		memcpy(dst, largeRuleBlob, 32);
+	}
+
 	// compute linear layout
 	uint32 requiredSize = builder.Layout(sizeof(ATCompatDBHeader));
 
@@ -581,7 +696,7 @@ void ATCompileCompatEDB(vdblock<char>& dst, const ATCompatEDB& edb) {
 	ATCompatDBHeader& hdr = *(ATCompatDBHeader *)base;
 	memset(&hdr, 0, sizeof hdr);
 	memcpy(hdr.mSignature, hdr.kSignature, sizeof hdr.mSignature);
-	hdr.mVersion = 0x0100;
+	hdr.mVersion = 0x0200;
 	hdr.mRuleSetTable.retarget(builder.GetSerializedSegment(segRuleSets));
 	hdr.mRuleSetTable.mSize = builder.GetSegmentSize(segRuleSets) / sizeof(ATCompatDBRuleSet);
 	hdr.mRuleTable.retarget(builder.GetSerializedSegment(segRules));
@@ -596,6 +711,8 @@ void ATCompileCompatEDB(vdblock<char>& dst, const ATCompatEDB& edb) {
 	hdr.mTagIdTable.mSize = builder.GetSegmentSize(segTagIds) / sizeof(uint32);
 	hdr.mCharTable.retarget(builder.GetSerializedSegment(segText));
 	hdr.mCharTable.mSize = builder.GetSegmentSize(segText);
+	hdr.mLargeRuleDataTable.retarget(builder.GetSerializedSegment(segLargeRuleBlobs));
+	hdr.mLargeRuleDataTable.mSize = builder.GetSegmentSize(segLargeRuleBlobs) / sizeof(uint32);
 
 	// convert links to offsets
 	for(auto& ruleSet : hdr.mRuleSetTable)

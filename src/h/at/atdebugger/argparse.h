@@ -229,22 +229,25 @@ protected:
 
 class ATDebuggerCmdPath {
 public:
-	ATDebuggerCmdPath(bool required)
+	ATDebuggerCmdPath(bool required, bool forWrite)
 		: mbValid(false)
 		, mbRequired(required)
+		, mbForWrite(forWrite)
 	{
 	}
 
 	bool IsValid() const { return mbValid; }
+	bool IsForWrite() const { return mbForWrite; }
 
-	const VDStringA *operator->() const { return &mPath; }
+	const VDStringW *operator->() const { return &mPath; }
 
 protected:
 	friend class ATDebuggerCmdParser;
 
-	VDStringA mPath;
+	VDStringW mPath;
 	bool mbRequired;
 	bool mbValid;
+	bool mbForWrite;
 };
 
 class ATDebuggerCmdString {
@@ -293,7 +296,7 @@ class ATDebuggerCmdExpr {
 public:
 	ATDebuggerCmdExpr(bool required)
 		: mbRequired(required)
-		, mpExpr(NULL)
+		, mpExpr(nullptr)
 	{
 	}
 

@@ -19,12 +19,20 @@
 #define f_AT_POKEYTABLES_H
 
 struct ATPokeyTables {
-	float	mMixTable[61];
+	// Rate of decay per sample (28 cycles) for the first stage amplifier output. This
+	// affects POKEY output but not GTIA (CONSOL) output.
+	float	mReferenceDecayPerSample;
 
-	// Integral of c*e^-kx for 0-56 steps, to simulate the first high pass
-	// filter.
-	float	mHPTable[57];
-	float	mHPIntegralTable[57];
+	// Min/max clamps for first stage amplifier output. These are in terms of final output
+	// polarity, so negated from volume values.
+	float	mReferenceClampLo;
+	float	mReferenceClampHi;
+
+	// Volume table for sums of all four audio channels (0-15). This ranges from [0,-1/56]
+	// because it is divided by 56 to account for 56 half-cycles being accumulated in the
+	// POKEY renderer, and inverted to account for POKEY's inverted output (it pulls down
+	// its output harder as volume is increased).
+	float	mMixTable[61];
 
 	// Bit 0 = 17-bit polynomial
 	// Bit 1 = 9-bit polynomial

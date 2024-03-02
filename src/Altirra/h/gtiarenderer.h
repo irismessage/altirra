@@ -20,9 +20,10 @@
 
 #include <vd2/system/memory.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/system/vdstl_vectorview.h>
 
 class ATSaveStateReader;
-class ATSaveStateWriter;
+class IATSerializable;
 
 namespace ATGTIA {
 	const uint8 PF0		= 0x01;
@@ -96,7 +97,9 @@ public:
 
 	void LoadState(ATSaveStateReader& reader);
 	void ResetState();
-	void SaveState(ATSaveStateWriter& writer);
+
+	void SaveState(IATSerializable **ser) const;
+	void LoadState(IATSerializable *ser);
 
 protected:
 	struct RegisterChange {
@@ -113,14 +116,12 @@ protected:
 	void RenderLoresFast(int x1, int x2);
 	void RenderMode8(int x1, int x2);
 	void RenderMode8Fast(int x1, int x2);
-	void RenderMode8Transition(int x1);
 	void RenderMode9(int x1, int x2);
 	void RenderMode9Fast(int x1, int x2);
 	void RenderMode9Transition1(int x1);
 	void RenderMode9Transition2(int x1);
 	void RenderMode10(int x1, int x2);
 	void RenderMode10Fast(int x1, int x2);
-	void RenderMode10Transition1(int x1);
 	void RenderMode10Transition2(int x1);
 	void RenderMode10Transition3(int x1);
 	void RenderMode11(int x1, int x2);

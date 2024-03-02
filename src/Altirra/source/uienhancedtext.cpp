@@ -21,8 +21,9 @@
 #include <windows.h>
 #include "uienhancedtext.h"
 #include <at/atui/uiwidget.h>
-#include "gtia.h"
 #include "antic.h"
+#include "gtia.h"
+#include "ksyms.h"
 #include "simulator.h"
 #include "virtualscreen.h"
 
@@ -68,6 +69,7 @@ protected:
 	void AddToHistory(const char *s);
 	void OnInputReady();
 	void ProcessPastedInput();
+	void ResetAttractTimeout();
 
 	IATUIEnhancedTextOutput *mpOutput = nullptr;
 	HDC		mhdc = nullptr;
@@ -387,6 +389,8 @@ void ATUIEnhancedTextEngine::OnSize(uint32 w, uint32 h) {
 }
 
 void ATUIEnhancedTextEngine::OnChar(int ch) {
+	ResetAttractTimeout();
+
 	if (ch >= 0x20 && ch < 0x7F) {
 		IATVirtualScreenHandler *vs = mpSim->GetVirtualScreenHandler();
 		if (vs) {
@@ -405,6 +409,8 @@ void ATUIEnhancedTextEngine::OnChar(int ch) {
 bool ATUIEnhancedTextEngine::OnKeyDown(uint32 keyCode) {
 	if (IsRawInputEnabled())
 		return false;
+
+	ResetAttractTimeout();
 
 	switch(keyCode) {
 		case kATUIVK_Left:
@@ -1230,6 +1236,10 @@ void ATUIEnhancedTextEngine::ProcessPastedInput() {
 		} else if (c >= 0x20 && c < 0x7F)
 			OnChar(c);
 	}
+}
+
+void ATUIEnhancedTextEngine::ResetAttractTimeout() {
+	mpSim->GetMemoryManager()->WriteByte(ATKernelSymbols::ATRACT, 0);
 }
 
 ///////////////////////////////////////////////////////////////////////////

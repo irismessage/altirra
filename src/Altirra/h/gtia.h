@@ -29,6 +29,7 @@
 class IVDVideoDisplay;
 class VDVideoDisplayFrame;
 class IATUIRenderer;
+class VDPixmapBuffer;
 
 class IATGTIAEmulatorConnections {
 public:
@@ -51,7 +52,7 @@ using ATGTIARawFrameFn = vdfunction<void(const VDPixmap& px)>;
 class ATFrameTracker;
 class ATArtifactingEngine;
 class ATSaveStateReader;
-class ATSaveStateWriter;
+class IATObjectState;
 class ATGTIARenderer;
 class ATVBXEEmulator;
 
@@ -60,6 +61,8 @@ enum ATLumaRampMode : uint8 {
 	kATLumaRampMode_XL,
 	kATLumaRampModeCount
 };
+
+AT_DECLARE_ENUM_TABLE(ATLumaRampMode);
 
 enum class ATColorMatchingMode : uint8 {
 	None,
@@ -70,10 +73,10 @@ enum class ATColorMatchingMode : uint8 {
 AT_DECLARE_ENUM_TABLE(ATColorMatchingMode);
 
 struct ATColorParams {
-	float mHueStart;
-	float mHueRange;
-	float mBrightness;
-	float mContrast;
+	float mHueStart;			// I-Q plane angle of hue 1
+	float mHueRange;			// I-Q plane cumulative angle for 15 hue steps (disregarding PAL uneven steps)
+	float mBrightness;			// Luma 0 output level
+	float mContrast;			// Luma 0->15 output range
 	float mSaturation;
 	float mGammaCorrect;
 	float mIntensityScale;
@@ -124,6 +127,76 @@ struct ATArtifactingParams {
 	static ATArtifactingParams GetDefault();
 };
 
+enum class ATArtifactMode : uint8 {
+	None,
+	NTSC,
+	PAL,
+	NTSCHi,
+	PALHi,
+	Auto,
+	AutoHi,
+	Count
+};
+
+enum class ATMonitorMode : uint8 {
+	Color,
+	Peritel,
+	MonoGreen,
+	MonoAmber,
+	MonoBluishWhite,
+	Count
+};
+
+AT_DECLARE_ENUM_TABLE(ATMonitorMode);
+
+struct ATVideoFrameProperties {
+	ATArtifactMode mArtifactMode;
+
+	bool mbPAL;
+	bool mbOverscanPALExtended;
+	bool mbInterlaced;
+	bool mbIncludeHBlank;
+
+	// True if rendering is at twice ANTIC F resolution / 640x / 14MHz dot clock. This is true for
+	// VBXE, but not for high artifacting since in that case the 2x expansion is after rendering.
+	bool mbRenderHoriz2x;
+
+	// True if GTIA rendering is occurring to 32-bit RGB instead of 8-bit indexed. This is true when
+	// VBXE is active. It is NOT true when VBXE is off and soft postprocessing is enabled -- in that
+	// case, rendering is to P8 and the post-fx engine then transforms that to RGB32.
+	bool mbRenderRgb32;
+
+	// True if the output is at twice ANTIC F resolution / 640x / 14MHz dot clock. This is true for
+	// VBXE and when high artifacting is active.
+	bool mbOutputHoriz2x;
+
+	// True if the output is 32-bit RGB instead of Pal8.
+	bool mbOutputRgb32;
+
+	// True if the output is using a signed output where 0-1 maps to 64-191 instead of 0-255. This
+	// provides additional headroom for PAL artifacting. In 8-bit mode, this is in the palette, and
+	// in 32-bit mode, in the framebuffer. Currently this is synonymous with mbAccelPalArtifacting.
+	bool mbOutputSigned;
+
+	// Color correction is being performed through the palette.
+	bool mbPaletteOutputCorrection;
+
+	// The software postprocessing engine is active.
+	bool mbSoftPostProcess;
+
+	// The software postprocessing engine is active in 8-bit mode, and so the pre-artifact framebuffer
+	// is in use. For 32-bit RGB (false), the framebuffer is used directly.
+	bool mbSoftPostProcess8;
+
+	bool mbSoftScanlines;
+	bool mbSoftOutputCorrection;
+
+	bool mbAccelPostProcess;
+	bool mbAccelScanlines;
+	bool mbAccelPalArtifacting;
+	bool mbAccelOutputCorrection;
+};
+
 uint32 ATGetColorPresetCount();
 const char *ATGetColorPresetTagByIndex(uint32 i);
 sint32 ATGetColorPresetIndexByTag(const char *tags);
@@ -153,17 +226,6 @@ public:
 		kAnalyzeCount
 	};
 
-	enum ArtifactMode {
-		kArtifactNone,
-		kArtifactNTSC,
-		kArtifactPAL,
-		kArtifactNTSCHi,
-		kArtifactPALHi,
-		kArtifactAuto,
-		kArtifactAutoHi,
-		kArtifactCount
-	};
-
 	enum OverscanMode {
 		kOverscanNormal,		// 168cc
 		kOverscanExtended,		// 192cc
@@ -182,6 +244,7 @@ public:
 		kVerticalOverscanCount
 	};
 
+	ATColorSettings GetDefaultColorSettings() const;
 	ATColorSettings GetColorSettings() const;
 	void SetColorSettings(const ATColorSettings& settings);
 
@@ -210,6 +273,9 @@ public:
 	bool IsOverscanPALExtended() const { return mbOverscanPALExtended; }
 	void SetOverscanPALExtended(bool extended);
 
+	ATMonitorMode GetMonitorMode() const { return mMonitorMode; }
+	void SetMonitorMode(ATMonitorMode mode);
+
 	vdrect32 GetFrameScanArea() const;
 	void GetRawFrameFormat(int& w, int& h, bool& rgb32) const;
 	void GetFrameSize(int& w, int& h) const;
@@ -235,11 +301,14 @@ public:
 	bool IsSECAMMode() const { return mbSECAMMode; }
 	void SetSECAMMode(bool enabled);
 
-	ArtifactMode GetArtifactingMode() const { return mArtifactMode; }
-	void SetArtifactingMode(ArtifactMode mode) { mArtifactMode = mode; }
+	ATArtifactMode GetArtifactingMode() const { return mArtifactMode; }
+	void SetArtifactingMode(ATArtifactMode mode) { mArtifactMode = mode; }
 
 	bool IsBlendModeEnabled() const { return mbBlendMode; }
 	void SetBlendModeEnabled(bool enable) { mbBlendMode = enable; }
+
+	bool IsLinearBlendEnabled() const { return mbBlendLinear; }
+	void SetLinearBlendEnabled(bool enable) { mbBlendLinear = enable; }
 
 	bool IsInterlaceEnabled() const { return mbInterlaceEnabled; }
 	void SetInterlaceEnabled(bool enable) { mbInterlaceEnabled = enable; }
@@ -274,7 +343,8 @@ public:
 	void AddRawFrameCallback(const ATGTIARawFrameFn *fn);
 	void RemoveRawFrameCallback(const ATGTIARawFrameFn *fn);
 
-	const VDPixmap *GetLastFrameBuffer() const;
+	bool IsLastFrameBufferAvailable() const;
+	bool GetLastFrameBuffer(VDPixmapBuffer& pxbuf, VDPixmap& px) const;
 
 	uint32 GetBackgroundColor24() const { return mPalette[mPFBAK]; }
 	uint32 GetPlayfieldColor24(int index) const { return mPalette[mPFColor[index]]; }
@@ -291,9 +361,10 @@ public:
 	void LoadStatePrivate(ATSaveStateReader& reader);
 	void LoadStateResetPrivate(ATSaveStateReader& reader);
 	void EndLoadState(ATSaveStateReader& reader);
-	void BeginSaveState(ATSaveStateWriter& writer);
-	void SaveStateArch(ATSaveStateWriter& writer);
-	void SaveStatePrivate(ATSaveStateWriter& writer);
+
+	void SaveState(IATObjectState **pp);
+	void LoadState(const IATObjectState& state);
+	void PostLoadState();
 
 	void GetRegisterState(ATGTIARegisterState& state) const;
 
@@ -305,7 +376,7 @@ public:
 
 	void SetFieldPolarity(bool polarity);
 	void SetVBLANK(VBlankMode vblMode);
-	bool BeginFrame(bool force, bool drop);
+	bool BeginFrame(uint32 y, bool force, bool drop);
 	void BeginScanline(int y, bool hires);
 	void EndScanline(uint8 dlControl, bool pfRendered);
 	void UpdatePlayer(bool odd, int index, uint8 byte);
@@ -378,6 +449,8 @@ protected:
 	SpriteImage *AllocSpriteImage();
 	VerticalOverscanMode DeriveVerticalOverscanMode() const;
 
+	void SetFrameProperties();
+
 	// critical variables - sync
 	IATGTIAEmulatorConnections *mpConn; 
 	int		mLastSyncX;
@@ -405,27 +478,23 @@ protected:
 	uint32	mY;
 
 	AnalysisMode	mAnalysisMode;
-	ArtifactMode	mArtifactMode;
+	ATArtifactMode	mArtifactMode;
 	OverscanMode	mOverscanMode;
 	VerticalOverscanMode	mVerticalOverscanMode;
 	bool	mbVsyncEnabled = false;
+	ATMonitorMode	mMonitorMode = ATMonitorMode::Color;
 	bool	mbBlendMode = false;
 	bool	mbBlendModeLastFrame = false;
+	bool	mbBlendLinear = true;				// frame blending operates in linear color
 	bool	mbFrameCopiedFromPrev = false;
 	bool	mbOverscanPALExtended = false;
-	bool	mbOverscanPALExtendedThisFrame = false;
-	bool	mbPALThisFrame = false;
 	bool	mbInterlaceEnabled = false;
-	bool	mbInterlaceEnabledThisFrame = false;
 	bool	mbScanlinesEnabled = false;
-	bool	mbSoftScanlinesEnabledThisFrame = false;
-	bool	mbIncludeHBlankThisFrame = false;
 	bool	mbFieldPolarity = false;
 	bool	mbLastFieldPolarity = false;
-	bool	mbPostProcessThisFrame = false;
-	bool	mb14MHzThisFrame = false;
 	bool	mbAccelScreenFX = false;
-	bool	mbScreenFXEnabledThisFrame = false;
+
+	ATVideoFrameProperties mFrameProperties {};
 
 	ATGTIARegisterState	mState;
 

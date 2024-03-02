@@ -819,57 +819,90 @@ struct EffectInfo {
 						isd3d10 = true;
 					}
 
-					const D3D10_SHADER_MACRO macros[]={
-						{ "PROFILE_D3D9", isd3d9 ? "1" : "0" },
-						{ "PROFILE_D3D10", isd3d10 ? "1" : "0" },
-						{ NULL, NULL },
-					};
+					for(int pass = 0; pass < 2; ++pass) {
+						vdfastvector<D3D10_SHADER_MACRO> macros;
 
-					FXC10IncludeHandler includeHandler(VDFileSplitPathLeft(VDStringA(filename)).c_str());
+						macros.push_back(D3D10_SHADER_MACRO { "PROFILE_D3D9", isd3d9 ? "1" : "0" });
+						macros.push_back(D3D10_SHADER_MACRO { "PROFILE_D3D10", isd3d10 ? "1" : "0" });
 
-					vdrefptr<ID3D10Blob> shader;
-					vdrefptr<ID3D10Blob> errors;
-					HRESULT hr = g_pD3DCompile(buf.data(), len, filename, macros, &includeHandler, function_name.c_str(), compile_target.c_str(), 0, 0, ~shader, ~errors);
+						bool minprec = false;
+						if (isd3d10) {
+							if (pass == 0) {
+								minprec = true;
 
-					if (FAILED(hr)) {
-						printf("Effect compilation failed for \"%s\" with target %s (hr=%08x)\n", filename, compile_target.c_str(), (unsigned)hr);
-
-						if (errors)
-							puts((const char *)errors->GetBufferPointer());
-
-						shader.clear();
-						errors.clear();
-						fclose(fo);
-						remove(args[1]);
-						exit(10);
-					}
-
-					const uint8 *compile_data = (const uint8 *)shader->GetBufferPointer();
-					const uint32 compile_len = shader->GetBufferSize();
-
-					vdrefptr<ID3D10Blob> disasm;
-					hr = g_pD3DDisassemble(compile_data, compile_len, 0, NULL, ~disasm);
-					if (SUCCEEDED(hr)) {
-						VDMemoryStream ms(disasm->GetBufferPointer(), disasm->GetBufferSize());
-						VDTextStream ts(&ms);
-
-						fprintf(fo, "/* -- %s --\n", compile_target.c_str());
-
-						while(const char *line = ts.GetNextLine()) {
-							fprintf(fo, "\t%s\n", line);
+								macros.push_back(D3D10_SHADER_MACRO { "half", "min16float" });
+								macros.push_back(D3D10_SHADER_MACRO { "half2", "min16float2" });
+								macros.push_back(D3D10_SHADER_MACRO { "half3", "min16float3" });
+								macros.push_back(D3D10_SHADER_MACRO { "half4", "min16float4" });
+								macros.push_back(D3D10_SHADER_MACRO { "half2x2", "min16float2x2" });
+								macros.push_back(D3D10_SHADER_MACRO { "half2x3", "min16float2x3" });
+								macros.push_back(D3D10_SHADER_MACRO { "half2x4", "min16float2x4" });
+								macros.push_back(D3D10_SHADER_MACRO { "half3x2", "min16float3x2" });
+								macros.push_back(D3D10_SHADER_MACRO { "half3x3", "min16float3x3" });
+								macros.push_back(D3D10_SHADER_MACRO { "half3x4", "min16float3x4" });
+								macros.push_back(D3D10_SHADER_MACRO { "half4x2", "min16float4x2" });
+								macros.push_back(D3D10_SHADER_MACRO { "half4x3", "min16float4x3" });
+								macros.push_back(D3D10_SHADER_MACRO { "half4x4", "min16float4x4" });
+							}
+						} else {
+							// single-pass when minimum precision not supported
+							if (pass == 1)
+								break;
 						}
 
-						fputs("*/\n", fo);
+						macros.push_back(D3D10_SHADER_MACRO { nullptr, nullptr });
+
+						FXC10IncludeHandler includeHandler(VDFileSplitPathLeft(VDStringA(filename)).c_str());
+
+						vdrefptr<ID3D10Blob> shader;
+						vdrefptr<ID3D10Blob> errors;
+						HRESULT hr = g_pD3DCompile(buf.data(), len, filename, macros.data(), &includeHandler, function_name.c_str(), compile_target.c_str(), 0, 0, ~shader, ~errors);
+
+						if (FAILED(hr)) {
+							printf("Effect compilation failed for \"%s\" with target %s (hr=%08x)\n", filename, compile_target.c_str(), (unsigned)hr);
+
+							if (errors)
+								puts((const char *)errors->GetBufferPointer());
+
+							shader.clear();
+							errors.clear();
+							fclose(fo);
+							remove(args[1]);
+							exit(10);
+						}
+
+						const uint8 *compile_data = (const uint8 *)shader->GetBufferPointer();
+						const uint32 compile_len = shader->GetBufferSize();
+
+						vdrefptr<ID3D10Blob> disasm;
+						hr = g_pD3DDisassemble(compile_data, compile_len, 0, NULL, ~disasm);
+						if (SUCCEEDED(hr)) {
+							VDMemoryStream ms(disasm->GetBufferPointer(), disasm->GetBufferSize());
+							VDTextStream ts(&ms);
+
+							fprintf(fo, "/* -- %s%s --\n", compile_target.c_str(), minprec ? " (minimum precision enabled)" : "");
+
+							while(const char *line = ts.GetNextLine()) {
+								fprintf(fo, "\t%s\n", line);
+							}
+
+							fputs("*/\n", fo);
+						}
+
+						disasm.clear();
+
+						uint32 targetHash = VDHashString32I(compile_target.c_str());
+
+						if (minprec)
+							targetHash ^= 1;
+
+						shadermetadata.push_back(targetHash);
+						shadermetadata.push_back(shaderdata.size());
+						shadermetadata.push_back(compile_len);
+						++target_count;
+
+						shaderdata.insert(shaderdata.end(), compile_data, compile_data + compile_len);
 					}
-
-					disasm.clear();
-
-					shadermetadata.push_back(VDHashString32I(compile_target.c_str()));
-					shadermetadata.push_back(shaderdata.size());
-					shadermetadata.push_back(compile_len);
-					++target_count;
-
-					shaderdata.insert(shaderdata.end(), compile_data, compile_data + compile_len);
 				}
 
 				if (multitarget) {

@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/cpuaccel.h>
+#include <at/atcore/snapshotimpl.h>
 #include "gtiarenderer.h"
 #include "gtiatables.h"
 #include "savestate.h"
@@ -329,17 +330,71 @@ void ATGTIARenderer::ResetState() {
 	mX = 0;
 }
 
-void ATGTIARenderer::SaveState(ATSaveStateWriter& writer) {
-	ExchangeState(writer);
-
-	// write register changes
-	for(int i=0; i<mRCCount; ++i) {
-		const RegisterChange& rc = mRegisterChanges[i];
-
-		writer.WriteUint8(rc.mPos);
-		writer.WriteUint8(rc.mReg);
-		writer.WriteUint8(rc.mValue);
+class ATSaveStateGtiaRenderer final : public ATSnapExchangeObject<ATSaveStateGtiaRenderer> {
+public:
+	template<typename T>
+	void Exchange(T& rw) {
+		rw.Transfer("internal_state", &mRegisterChanges);
+		rw.Transfer("active_prior", &mPRIOR);
+		rw.Transfer("hires_mode", &mbHiresMode);
+		rw.Transfer("render_x", &mX);
 	}
+
+	vdfastvector<uint8> mRegisterChanges;
+	bool mbHiresMode;
+	uint8 mX;
+	uint8 mPRIOR;
+};
+
+ATSERIALIZATION_DEFINE(ATSaveStateGtiaRenderer);
+
+void ATGTIARenderer::SaveState(IATSerializable **ser) const {
+	vdrefptr<ATSaveStateGtiaRenderer> data { new ATSaveStateGtiaRenderer };
+
+	data->mbHiresMode = mbHiresMode;
+	data->mPRIOR = mPRIOR;
+	data->mX = mX;
+	data->mRegisterChanges.resize(mRCCount * 3);
+
+	for(int i=0; i<mRCCount; ++i) {
+		const auto& rc = mRegisterChanges[mRCIndex + i];
+
+		data->mRegisterChanges[i*3 + 0] = rc.mPos;
+		data->mRegisterChanges[i*3 + 1] = rc.mReg;
+		data->mRegisterChanges[i*3 + 2] = rc.mValue;
+	}
+
+	*ser = data.release();
+}
+
+void ATGTIARenderer::LoadState(IATSerializable *ser) {
+	mRCIndex = 0;
+	mRCCount = 0;
+	mRegisterChanges.clear();
+
+	if (ser) {
+		const ATSaveStateGtiaRenderer& data = atser_cast<const ATSaveStateGtiaRenderer&>(*ser);
+
+		mbHiresMode = data.mbHiresMode;
+		mPRIOR = data.mPRIOR;
+		mX = data.mX;
+
+		mRCIndex = 0;
+		mRCCount = data.mRegisterChanges.size() / 3;
+
+		mRegisterChanges.resize(mRCCount);
+
+		for(int i=0; i < mRCCount; ++i) {
+			mRegisterChanges[i] = RegisterChange {
+				data.mRegisterChanges[i*3 + 0],
+				data.mRegisterChanges[i*3 + 1],
+				data.mRegisterChanges[i*3 + 2],
+				0
+			};
+		}
+	}
+
+	UpdatePriorityTable();
 }
 
 void ATGTIARenderer::UpdateRegisters(const RegisterChange *rc, int count) {

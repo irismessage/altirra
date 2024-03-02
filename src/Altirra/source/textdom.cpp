@@ -770,8 +770,12 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 		splitRequired = true;
 	}
 
+	// validate iterators
+	for(Iterator *itp : mIterators)
+		itp->Validate();
+
 	// insert text into paragraph
-	int lastAdded = (int)len;
+	int lastAdded = 0;
 	if (s > text) {
 		if (splitRequired) {
 			lastPara = new Paragraph;
@@ -790,14 +794,18 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 
 			if (it2 > it)
 				it2.mOffset += (int)(s - text);
+
+			it2.Validate();
+
 		}
+
 		len -= (s-text);
 		text = s;
 
 		ReflowPara(paraIdx);
 	}
 	
-	// generate new lines
+	// generate new paragraphs
 	while(s = (const char *)memchr(text, '\n', len)) {
 		++s;
 
@@ -833,7 +841,9 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 	// bump paragraphs
 	int parasAdded = (int)newParas.size();
 	if (parasAdded) {
-		mParagraphs.insert(mParagraphs.begin() + it.mPara + 1, newParas.begin(), newParas.end());
+		const uint32 insertY = it.mPara + 1 >= (int)mParagraphs.size() ? mTotalHeight : mParagraphs[it.mPara + 1]->mYPos;
+
+		const auto itParaInsert = mParagraphs.insert(mParagraphs.begin() + it.mPara + 1, newParas.begin(), newParas.end());
 
 		for(int i=0; i<parasAdded; ++i)
 			ReflowPara(paraIdx + i + 1);
@@ -865,9 +875,11 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 			it2.mLine -= it.mLine;
 			if (atEndOfLine)
 				--it2.mLine;
+
+			it2.Validate();
 		}
 
-		RecomputeParaPositions();
+		RecomputeParaPositions(insertY, itParaInsert);
 
 		if (after) {
 			// Note: *after may alias it!
@@ -884,6 +896,8 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 
 			if (it2.mPara == it.mPara && it2.mLine == it.mLine && it2.mOffset > it.mOffset)
 				it2.mOffset += lastAdded;
+
+			it2.Validate();
 		}
 
 		if (after) {
@@ -914,42 +928,28 @@ void Document::Delete(const Iterator& it1, const Iterator& it2) {
 	else if (it2 == it1)
 		return;
 
-	int paraIdx1 = it1.mPara;
-	int paraIdx2 = it2.mPara;
-	int lineIdx1 = it1.mLine;
-	int lineIdx2 = it2.mLine;
-	int offset1 = it1.mOffset;
-	int offset2 = it2.mOffset;
+	const int paraIdx1 = it1.mPara;
+	const int paraIdx2 = it2.mPara;
+	const int lineIdx1 = it1.mLine;
+	const int lineIdx2 = it2.mLine;
+	const int offset1 = it1.mOffset;
+	const int offset2 = it2.mOffset;
 
-	int topY = mParagraphs[paraIdx1]->mYPos;
-	int bottomYOld = mParagraphs[paraIdx2]->GetYBottom();
+	const int topY = mParagraphs[paraIdx1]->mYPos;
+	const int bottomYOld = mParagraphs[paraIdx2]->GetYBottom();
+
+	// validate iterators before we begin mucking with paragraphs
+	for(Iterator *itp : mIterators)
+		itp->Validate();
+
+	// check for simpler case of deletion within paragraph
+	Paragraph& para1 = *mParagraphs[it1.mPara];
 
 	if (it1.mPara == it2.mPara) {
-		Paragraph& para = *mParagraphs[it1.mPara];
-
-		para.DeleteRange(it1.mLine, it1.mOffset, it2.mLine, it2.mOffset);
-
-		// fixup iterators
-		for(Iterators::iterator itI(mIterators.begin()), itIEnd(mIterators.end()); itI!=itIEnd; ++itI) {
-			Iterator& it = **itI;
-
-			if (it >= it1) {
-				if (it.mPara == paraIdx2) {
-					if (it.mLine > lineIdx2) {
-						it.mLine += lineIdx1 - lineIdx2;
-					} else if (it.mLine < lineIdx2) {
-						it = it1;
-					} else if (it.mOffset > offset2) {
-						it.mOffset += offset1 - offset2;
-					} else {
-						it = it1;
-					}
-				}
-			}
-
-			it.Validate();
-		}
+		// deletion within paragraph
+		para1.DeleteRange(it1.mLine, it1.mOffset, it2.mLine, it2.mOffset);
 	} else {
+		// deletion across paragraphs
 		Paragraph& para1 = *mParagraphs[it1.mPara];
 		Paragraph& para2 = *mParagraphs[it2.mPara];
 
@@ -964,27 +964,35 @@ void Document::Delete(const Iterator& it1, const Iterator& it2) {
 		}
 
 		mParagraphs.erase(mParagraphs.begin() + it1.mPara + 1, mParagraphs.begin() + it2.mPara + 1);
+	}
 
-		// fixup iterators
-		for(Iterators::iterator itI(mIterators.begin()), itIEnd(mIterators.end()); itI!=itIEnd; ++itI) {
-			Iterator& it = **itI;
+	// fixup iterators
+	for(Iterators::iterator itI(mIterators.begin()), itIEnd(mIterators.end()); itI!=itIEnd; ++itI) {
+		Iterator& it = **itI;
 
-			if (it >= it1) {		// note that this also excludes it1 itself
-				if (it.mPara > paraIdx2) {
-					it.mPara += (paraIdx1 - paraIdx2);
-				} else if (it.mPara < paraIdx2 || it.mLine < lineIdx2) {
-					it = it1;
-				} else if (it.mLine > lineIdx2 || it.mOffset < offset2) {
-					it.mLine += lineIdx1 - lineIdx2;
-					it.mOffset += offset1 - offset2;
-					it.mPara = it1.mPara;
-				} else {
-					it = it1;
-				}
+		if (it >= it1) {		// note that this also excludes it1 itself
+			if (it.mPara > paraIdx2) {
+				// beyond last affected para -- rebias paragraph index
+				it.mPara += (paraIdx1 - paraIdx2);
+			} else if (it.mPara < paraIdx2 || it.mLine < lineIdx2) {
+				// within wholly deleted paragraphs or lines -- reset to deletion point
+				it = it1;
+			} else if (it.mLine > lineIdx2) {			// para equal
+				// beyond lines covered by deletion -- rebias paragraph and line index
+				it.mPara = it1.mPara;
+				it.mLine += lineIdx1 - lineIdx2;
+			} else if (it.mOffset > offset2) {			// para and line equal
+				// past deleted range but within ending line -- rebias offset
+				it.mOffset += offset1 - offset2;
+				it.mLine = it1.mLine;
+				it.mPara = it1.mPara;
+			} else {
+				// within deletion -- reset to deletion point
+				it = it1;
 			}
-
-			it.Validate();
 		}
+
+		it.Validate();
 	}
 
 	ReflowPara(paraIdx1);
@@ -1047,9 +1055,11 @@ void Document::RecolorPara(int paraIdx) {
 }
 
 void Document::RecomputeParaPositions() {
-	int y = 0;
+	RecomputeParaPositions(0, mParagraphs.begin());
+}
 
-	for(Paragraphs::iterator itP(mParagraphs.begin()), itPEnd(mParagraphs.end()); itP!=itPEnd; ++itP) {
+void Document::RecomputeParaPositions(int y, Paragraphs::iterator itP) {
+	for(Paragraphs::iterator itPEnd(mParagraphs.end()); itP!=itPEnd; ++itP) {
 		Paragraph *para = *itP;
 
 		int ht = 0;

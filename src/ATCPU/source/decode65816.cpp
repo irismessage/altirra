@@ -211,7 +211,7 @@ bool ATCPUDecoderGenerator65816::DecodeInsn(uint8 opcode, bool unalignedDP, bool
 				break;
 
 			case 0x12:
-				Decode65816AddrDpInd(unalignedDP);
+				Decode65816AddrDpInd(unalignedDP, emu);
 				break;
 
 			case 0x13:
@@ -867,7 +867,7 @@ bool ATCPUDecoderGenerator65816::DecodeInsn(uint8 opcode, bool unalignedDP, bool
 			break;
 
 		case 0x42:	// WDM
-			*mpDstState++ = kStateWait;		// 2
+			*mpDstState++ = kStateReadImm;		// 2
 			break;
 
 		case 0x44:	// MVP
@@ -2119,7 +2119,7 @@ void ATCPUDecoderGenerator65816::Decode65816AddrDpY(bool unalignedDP, bool emu) 
 		*mpDstState++ = kStateWait;
 }
 
-void ATCPUDecoderGenerator65816::Decode65816AddrDpInd(bool unalignedDP) {
+void ATCPUDecoderGenerator65816::Decode65816AddrDpInd(bool unalignedDP, bool emu) {
 	using namespace ATCPUStates;
 
 	*mpDstState++ = kStateReadAddrDp;
@@ -2128,7 +2128,7 @@ void ATCPUDecoderGenerator65816::Decode65816AddrDpInd(bool unalignedDP) {
 		*mpDstState++ = kStateWait;
 
 	*mpDstState++ = kState816ReadByte;	
-	*mpDstState++ = kStateReadIndAddrDp;
+	*mpDstState++ = unalignedDP || !emu ? kStateReadIndAddrDp : kState816ReadIndAddrDpInPage;
 }
 
 void ATCPUDecoderGenerator65816::Decode65816AddrDpIndX(bool unalignedDP, bool emu) {
@@ -2141,7 +2141,10 @@ void ATCPUDecoderGenerator65816::Decode65816AddrDpIndX(bool unalignedDP, bool em
 
 	*mpDstState++ = kStateWait;
 	*mpDstState++ = kState816ReadByte;	
-	*mpDstState++ = unalignedDP || !emu ? kStateReadIndAddrDp : kState816ReadIndAddrDpInPage;
+
+	// In emulation mode, (dp,X) wraps when reading its second byte even if DP is
+	// unaligned.
+	*mpDstState++ = !emu ? kStateReadIndAddrDp : kState816ReadIndAddrDpInPage;
 }
 
 void ATCPUDecoderGenerator65816::Decode65816AddrDpIndY(bool unalignedDP, bool emu, bool forceCycle) {

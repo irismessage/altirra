@@ -1,5 +1,107 @@
 Altirra Change Log
 
+Version 3.90:
+   [features added]
+   * AltirraOS: The boot screen in the XL/XE version now continues boot on disk insertion rather than forcing a reboot.
+   * AltirraOS: Extended memory scan limit for 800 version to $D000 to support 52K expanded configurations.
+   * Audio: Individual channels on the secondary POKEY can now be muted.
+   * Cartridge: Added JRC 64K + RAM cartridge type.
+   * Cassette: Optimized cassette tape emulation routines.
+   * Cassette: Added option for high-pass prefiltering before the turbo tape decoder.
+   * Debugger: Improved loop detector in history view to more precisely capture loop.
+   * Debugger: Added @tapepos pseudovariable.
+   * Debugger: Specifying ? for a path argument now opens a file dialog to select the path.
+   * Debugger: The disassembly window now has support for showing procedure dividers, previewing called procedures, and jumping to call targets.
+   * Debugger: Disassembly and History views now save their disassembly settings.
+   * Debugger: Added option to disable automatic system symbols.
+   * Debugger: Alt+Shift+click on the display jumps to History at the corresponding beam position.
+   * Debugger: Verifier supports detecting access to non-canonical hardware addresses.
+   * Debugger: .caslogdata command superceded by updated CASDATA/CASDATA2 logging channels.
+   * Devices: XEP80 can now be switched to different controller ports.
+   * Disk: Added full emulation for 810 Turbo, Amdek AMDC-I/II, and Percom AT-88 disk drives.
+   * Disk: A warning is now displayed when attempting to insert a disk into a drive that doesn't support it (e.g. double-density disk into an 810).
+   * Disk: Detailed errors are displayed when a disk image write fails on the host and is remounted virtual read/write.
+   * Disk Explorer: Added Import File and Export File commands so that drag and drop is not needed to copy files.
+   * Display: Added option for frame blending in linear color space for better accuracy.
+   * Display: Color settings can be saved and loaded from external files.
+   * Display: Added new default preset for PAL.
+   * Display: The Hue Start slider in color settings now has the same I-Q angle definition in PAL quirks mode and works in PAL high artifacting mode.
+   * Firmware: Add Firmware now detects OS ROM images even if the specific image is not recognized.
+   * Firmware: Added detection for more MIO firmware images and support for auto-trimming padded 16K images down to 8K.
+   * Input: The keyboard layout editor now warns if the key mapping being added conflicts with a keyboard shortcut.
+   * Recorder: Added options for pixel aspect ratio and frame scaling.
+   * Recorder: Added support for recording to WMV and H.264 through Media Foundation on Windows 7 and later.
+   * SaveStates: Save state format rewritten to v2 (*.atstate2), now based on JSON within a .zip file for better accessibility and versioning.
+   * SaveStates: CPU state can now be saved mid-instruction.
+   * Simulator: Reordered frame wait and device poll timing around VBLANK to reduce input and output latency.
+   * UI: Added experimental dark theme support.
+   * UI: Added /reset command-line switch to selectively reset settings.
+   * UI: Audio monitor now shows modified frequencies for two-tone mode, indicators for two-tone mode and asynchronous receive mode, and better shows ultrasonic effects.
+   * UI: Added audio scope for viewing raw POKEY output.
+   * UI: Added options for controlling mouse pointer visibility.
+   * UI: Audio monitor positioning can now be customized.
+   * Video: Added PERITEL adapter and monochrome monitor emulation.
+
+   [bugs fixed]
+   * AltirraOS: Audio configuration is reset more often on tape reads to produce familiar sounds.
+   * AltirraOS: Disk boot can now occur after cassette boot and right cartridge non-boot.
+   * AltirraOS: OLDADR usage adjusted for compatibility with SDX QUICKED.SYS.
+   * AltirraOS: SIO transmit operations can now be interrupted by User Break.
+   * AltirraOS: The Display Handler now properly sets the default background color (COLOR4) to $06 when opening a GR.11 screen.
+   * AltirraOS: KRPDEL is now set and keyboard repeat rates are NTSC/PAL adjusted on the XL/XE/XEGS version.
+   * AltirraOS: Fixed an SIO issue with an out-of-spec short delay from asserting the command line to first command byte.
+   * AltirraOS: Fixed disk boot issues if a PBI device or cartridge init routine issued an SIO request with DAUX2 > 0 before the disk boot.
+   * AltirraOS: The boot screen now resets the Break key state properly after a boot is interrupted by the Break key.
+   * AltirraOS: Improved native mode compatibility of 816 version.
+   * ANTIC: RNMI (400/800 System Reset) is now always synchronized to VBI.
+   * Audio: Fixed stereo mixing being twice as loud as mono mixing.
+   * CPU: Fixed cycle timing for indexed illegal read-modify-write instructions and ARR #imm ($6B).
+   * CPU: Fixed extra instruction being run occasionally for a DLI delayed by WSYNC.
+   * CPU: 65C816 (dp,X) addressing mode now always wraps in emulation mode when accessing high byte regardless of DP.
+   * CPU: 65C816 (dp) addressing mode properly wraps in emulation mode with DP aligned, except for PEI (dp).
+   * CPU: 65C816 WDM instruction now properly fetches two bytes.
+   * Debugger: .dumpdsm -s option now interprets 6809 instructions.
+   * Debugger: Line number information is now updated properly when using cartridge bank mapping in MADS listings.
+   * Debugger: Disassembly window now accepts cartridge bank addresses.
+   * Debugger: Fixed broken option to auto-load kernel ROM symbols.
+   * Debugger: Reduced frequency of stale memory in the disassembly window.
+   * Debugger: Fixed incorrect call nesting in history window in Z80 mode.
+   * Debugger: Fixed some disassembly errors in 6809 mode.
+   * Debugger: Input byte (ib) now correctly issues read cycles with side effects in the main CPU address space.
+   * Devices: Fixed crash on ANTIC reading from SoundBoard hardware registers.
+   * Devices: 65C816 emulation fixes for Veronica.
+   * Disk: Fixed some illegal indexed RMW instructions taking too few cycles for 6502 coprocessors in full disk emulators.
+   * Disk: Full drive emulation FDC now allows Write Track commands to proceed immediately when the index signal is already active.
+   * Disk: Improved accuracy of RIOT interval timer.
+   * Disk: Corrected FDC head load and initial DRQ timings for Write Track command.
+   * Disk: Implemented FDC Write Track quirk for back-to-back CRC ($F7) tokens.
+   * Disk: Fixed some 6809 coprocessor emulation bugs.
+   * Disk: Corrected side 2 sector mappings for ATR8000, Percom, and XF551 full drive emulators.
+   * Disk: Fixed case where drive timing could be disrupted after hitting a drive coprocessor breakpoint.
+   * Disk: Seek sounds no longer overlap when disk access is accelerated.
+   * Disk: Fixed crash when ejecting disk at specific point during disk read command.
+   * Disk: FD1771 FDC now properly times out in two revolutions instead of five in 810 full drive mode.
+   * Disk: Fixed bogus FDC interrupts from Force Interrupt commands.
+   * Disk: Indus GT ignores ready status to match hardware.
+   * Disk Explorer: Fixed a filename validation bug with DOS 2 disks where duplicate files could be written if the original filename had extra characters after the extension.
+   * Disk Explorer: Modifying a mounted disk image now forces a disk change to flush caches on emulated full drives that do track buffering.
+   * Display: Fixed an issue with color profiles having the wrong color matching setting when initially established.
+   * Display: Fixed crash when pasting into enhanced text display in CIO mode.
+   * Display: Typing in enhanced text display (CIO mode) now clears the attract mode counter.
+   * Firmware: Fall back to next available firmware if default firmware for a type is removed.
+   * Input: Character mappings in custom keyboard layouts didn't work for non-ASCII extended characters.
+   * Input: Changes to custom keyboard layouts didn't take effect immediately.
+   * PerfAnalyzer: Joystick state (PIA port A) is now captured in traces.
+   * POKEY: Improved accuracy of two-tone mode timing at 1.79MHz.
+   * Recorder: Fixed SAP type R initial silence detector checking AUDFx registers instead of AUDCx registers.
+   * SaveStates: POKEY serial input state is now saved.
+   * SCSI: Fixed BSY being asserted in selection phase even for non-existent devices.
+   * Simulator: Improved accuracy of power-up values for POKEY and GTIA registers.
+   * Simulator: Display message via placeholder ROM if kernel ROM file could not be loaded.
+   * VBXE: Fixed a crash when toggling shared memory option.
+   * VBXE: Fixed double correction of display with gamma or color correction options enabled.
+   * VFS: Fixed zip/gz paths with non-ASCII characters not being encoded properly and getting dropped on restart.
+
 Version 3.20: [June 23, 2019]
    [changes]
    * Debugging symbols and debugger scripts are no longer automatically loaded by default unless the debugger is active. This can be changed in the Debugger section of Configure System.

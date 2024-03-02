@@ -102,8 +102,25 @@ long CPUCheckForExtensions() {
 
 			// check OSXSAVE and AVX bits
 			if ((cpuInfo[2] & ((1 << 27) | (1 << 28))) == ((1 << 27) | (1 << 28))) {
-				if (VDIsAVXSupportedByOS())
+				if (VDIsAVXSupportedByOS()) {
 					flags |= CPUF_SUPPORTS_AVX;
+
+					if (cpuInfo[0] >= 7) {
+						int cpuInfo7_0[4];
+
+						__cpuidex(cpuInfo7_0, 7, 0);
+
+						// EBX[5] = AVX2
+						if (cpuInfo7_0[1] & (1 << 5)) {
+							flags |= CPUF_SUPPORTS_AVX2;
+
+							// EBX[5] = SHA
+							if (cpuInfo7_0[1] & (1 << 29)) {
+								flags |= CPUF_SUPPORTS_SHA;
+							}
+						}
+					}
+				}
 			}
 		}
 	}

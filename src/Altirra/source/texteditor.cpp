@@ -23,14 +23,23 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/w32assist.h>
 #include <windows.h>
+#include <at/atnativeui/theme.h>
 #include <at/atnativeui/uinativewindow.h>
 #include "textdom.h"
 
 using namespace nsVDTextDOM;
 
 ///////////////////////////////////////////////////////////////////////////
+// Text editor conventions
+//
+// Coordinate systems:
+//	- Client: Window client coordinates. (0,0) is top left of client area.
+//	- Pixel: Content pixel coordinates. (0,0) is top left of content,
+//	  regardless of current scroll position.
+//	- Pos: Character position, tracked by active Iterator.
+//
 
-class TextEditor : public ATUINativeWindow, public IVDTextEditor, public IDocumentCallback {
+class TextEditor final : public ATUINativeWindow, public IVDTextEditor, public IDocumentCallback {
 public:
 	TextEditor();
 	~TextEditor();
@@ -40,58 +49,60 @@ public:
 
 	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
 
-	void	SetCallback(IVDTextEditorCallback *pCB);
-	void	SetColorizer(IVDTextEditorColorizer *pColorizer);
-	void	SetMsgFilter(IVDUIMessageFilterW32 *pFilter);
+	void	SetCallback(IVDTextEditorCallback *pCB) override;
+	void	SetColorizer(IVDTextEditorColorizer *pColorizer) override;
+	void	SetMsgFilter(IVDUIMessageFilterW32 *pFilter) override;
 
 	void	SetGutters(int x, int y);
 
-	bool	IsSelectionPresent();
-	bool	IsCutPossible();
-	bool	IsCopyPossible();
-	bool	IsPastePossible();
-	bool	IsUndoPossible();
-	bool	IsRedoPossible();
+	bool	IsSelectionPresent() override;
+	bool	IsCutPossible() override;
+	bool	IsCopyPossible() override;
+	bool	IsPastePossible() override;
+	bool	IsUndoPossible() override;
+	bool	IsRedoPossible() override;
 
-	int		GetLineCount();
-	bool	GetLineText(int line, vdfastvector<char>& buf);
+	int		GetLineCount() override;
+	bool	GetLineText(int line, vdfastvector<char>& buf) override;
 
-	void	SetReadOnly(bool enable);
-	void	SetWordWrap(bool enable);
+	void	SetReadOnly(bool enable) override;
+	void	SetWordWrap(bool enable) override;
 
-	int		GetCursorLine();
-	void	SetCursorPos(int line, int offset);
-	void	SetCursorPixelPos(int x, int y);
+	int		GetCursorLine() override;
+	void	SetCursorPos(int line, int offset) override;
+	void	SetCursorPixelPos(int x, int y) override;
 
-	void	RecolorLine(int line);
-	void	RecolorAll();
+	void	RecolorLine(int line) override;
+	void	RecolorAll() override;
 
-	bool	Find(const char *text, int len, bool caseSensitive, bool wholeWord, bool searchUp);
+	bool	Find(const char *text, int len, bool caseSensitive, bool wholeWord, bool searchUp) override;
 
-	int		GetVisibleHeight();
-	int		GetParagraphForYPos(int y);
-	int		GetVisibleLineCount();
-	void	MakeLineVisible(int line);
-	void	CenterViewOnLine(int line);
+	int		GetVisibleHeight() override;
+	int		GetParagraphForYPos(int y) override;
+	int		GetVisibleLineCount() override;
+	void	MakeLineVisible(int line) override;
+	void	CenterViewOnLine(int line) override;
 	
-	void	SetUpdateEnabled(bool updateEnabled);
+	void	SetUpdateEnabled(bool updateEnabled) override;
 
-	void	Undo();
-	void	Redo();
-	void	Clear();
-	void	Cut();
-	void	Copy();
-	void	Paste();
-	void	Delete();
-	void	DeleteSelection();
-	void	SelectAll();
+	void	Undo() override;
+	void	Redo() override;
+	void	Clear() override;
+	void	Cut() override;
+	void	Copy() override;
+	void	Paste() override;
+	void	Delete() override;
+	void	DeleteSelection() override;
+	void	SelectAll() override;
 
-	void	Append(const char *s);
+	void	Append(const char *s) override;
+	void	InsertAt(int para, int offset, const char *s) override;
+	void	RemoveAt(int para1, int offset1, int para2, int offset2) override;
 
 	void	Load(IVDStream& stream);
 	void	Save(IVDTextEditorStreamOut& streamout);
 
-protected:
+private:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
 
 	void OnCreate();
@@ -106,15 +117,19 @@ protected:
 	void OnLButtonUp(WPARAM modifiers, int x, int y);
 	void OnMouseMove(WPARAM modifiers, int x, int y);
 	void OnMouseWheel(int wheelClicks, WPARAM modifiers, int x, int y);
+	void OnCaptureChanged(HWND hwndNewCapture);
+	bool OnSetCursor(HWND hwnd, UINT hitTestCode, UINT msg);
 	void OnVScroll(int cmd);
 	int OnGetText(uint32 length, char *s);
 	int OnGetText(uint32 length, wchar_t *s);
 	int OnGetTextLength();
 	bool OnSetText(const char *s);
+	void OnLazyCaretUpdate();
 
 	void MoveCaret(const Iterator& pos, bool anchor, bool sendScrollUpdate);
 	void ScrollTo(int y, bool sendScrollUpdate);
 
+	void LazyUpdateCaretPos();
 	void UpdateCaretPos(bool autoscroll, bool sendScrollUpdate);
 	void UpdateScrollPos();
 	void UpdateScrollRange();
@@ -124,21 +139,26 @@ protected:
 	void RecalcFontMetrics();
 	void RecalcRelativeFontMetrics();
 	void Reflow(bool force);
-	void Load(const wchar_t *fn);
 	void CutCopy(bool doCut);
 	void ReloadColors();
+	void OnThemeChanged();
 
 	void PosToPixel(int& px, int& py, const Iterator& it);
+	Iterator ClientToPos(int x, int y);
 	Iterator PixelToPos(int px, int py);
 
-protected:
-	void InvalidateRows(int ystart, int yend);
-	void VerticalShiftRows(int ysrc, int ydst);
-	void ReflowPara(int paraIdx, const Paragraph& para);
-	void RecolorParagraph(int paraIdx, Paragraph& para);
-	void ChangeTotalHeight(int y);
+	uint32 GetSelectionCode(const Iterator& it);
 
-protected:
+private:	// IDocumentCallback
+	void InvalidateRows(int ystart, int yend) override;
+	void VerticalShiftRows(int ysrc, int ydst) override;
+	void ReflowPara(int paraIdx, const Paragraph& para) override;
+	void RecolorParagraph(int paraIdx, Paragraph& para) override;
+	void ChangeTotalHeight(int y) override;
+
+private:
+	static constexpr UINT MYWM_LAZYCARETUPDATE = WM_USER + 100;
+
 	HFONT	mhfont;
 	int		mFontHeight;
 	int		mVisibleWidth;
@@ -154,6 +174,8 @@ protected:
 	int		mGutterY;
 	bool	mbCaretPresent;
 	bool	mbCaretVisible;
+	bool	mbCaretLazyUpdatePending = false;
+	bool	mbCaretLazyUpdateMsgPending = false;
 	bool	mbReadOnly;
 	bool	mbWordWrap;
 	bool	mbDragging;
@@ -177,6 +199,8 @@ protected:
 	Document	mDocument;
 	Iterator	mCaretPos;
 	Iterator	mSelectionAnchor;
+
+	vdfunction<void()> mpOnThemeChanged;
 };
 
 bool VDCreateTextEditor(IVDTextEditor **ppTextEditor) {
@@ -219,6 +243,8 @@ TextEditor::TextEditor()
 	, mColorTextHiBack(0)
 {
 	mDocument.SetCallback(this);
+
+	mpOnThemeChanged = [this] { OnThemeChanged(); };
 }
 
 TextEditor::~TextEditor() {
@@ -306,7 +332,7 @@ void TextEditor::SetWordWrap(bool enable) {
 
 	mbWordWrap = enable;
 	Reflow(true);
-	UpdateCaretPos(false, false);
+	LazyUpdateCaretPos();
 }
 
 int TextEditor::GetCursorLine() {
@@ -342,7 +368,7 @@ void TextEditor::SetCursorPos(int line, int offset) {
 }
 
 void TextEditor::SetCursorPixelPos(int x, int y) {
-	MoveCaret(PixelToPos(x - mGutterX, y + mScrollY - mGutterY), false, false);
+	MoveCaret(ClientToPos(x, y), false, false);
 }
 
 namespace {
@@ -672,6 +698,26 @@ void TextEditor::Append(const char *s) {
 	Iterator it(mDocument);
 	it.MoveToEnd();
 	mDocument.Insert(it, s, strlen(s), NULL);
+	LazyUpdateCaretPos();
+}
+
+void TextEditor::InsertAt(int para, int offset, const char *s) {
+	Iterator it(mDocument);
+
+	it.MoveToParaOffset(para, offset);
+
+	mDocument.Insert(it, s, strlen(s), nullptr);
+	LazyUpdateCaretPos();
+}
+
+void TextEditor::RemoveAt(int para1, int offset1, int para2, int offset2) {
+	Iterator it1(mDocument), it2(mDocument);
+
+	it1.MoveToParaOffset(para1, offset1);
+	it2.MoveToParaOffset(para2, offset2);
+
+	mDocument.Delete(it1, it2);
+	LazyUpdateCaretPos();
 }
 
 void TextEditor::Load(IVDStream& stream) {
@@ -820,6 +866,7 @@ LRESULT TextEditor::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		OnChar((int)wParam);
 		break;
 	case WM_LBUTTONDOWN:
+	case WM_LBUTTONDBLCLK:
 		::SetFocus(mhwnd);
 		OnLButtonDown(wParam, (SHORT)LOWORD(lParam), (SHORT)HIWORD(lParam));
 		return 0;
@@ -827,8 +874,11 @@ LRESULT TextEditor::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		OnLButtonUp(wParam, (SHORT)LOWORD(lParam), (SHORT)HIWORD(lParam));
 		return 0;
 	case WM_MBUTTONDOWN:
+	case WM_MBUTTONDBLCLK:
 	case WM_RBUTTONDOWN:
+	case WM_RBUTTONDBLCLK:
 	case WM_XBUTTONDOWN:
+	case WM_XBUTTONDBLCLK:
 		::SetFocus(mhwnd);
 		break;
 	case WM_MOUSEMOVE:
@@ -837,6 +887,16 @@ LRESULT TextEditor::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	case WM_MOUSEWHEEL:
 		OnMouseWheel((SHORT)HIWORD(wParam), LOWORD(wParam), (SHORT)LOWORD(lParam), (SHORT)HIWORD(lParam));
 		return 0;
+
+	case WM_CAPTURECHANGED:
+		OnCaptureChanged((HWND)lParam);
+		return 0;
+
+	case WM_SETCURSOR:
+		if (OnSetCursor((HWND)wParam, LOWORD(lParam), HIWORD(lParam)))
+			return TRUE;
+		break;
+
 	case WM_VSCROLL:
 		if (!lParam) {
 			OnVScroll(LOWORD(wParam));
@@ -891,11 +951,9 @@ LRESULT TextEditor::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	case WM_GETDLGCODE:
 		return DLGC_WANTALLKEYS;
 
-	case WM_SYSCOLORCHANGE:
-		ReloadColors();
-		InvalidateRect(mhwnd, NULL, FALSE);
-		break;
-
+	case MYWM_LAZYCARETUPDATE:
+		OnLazyCaretUpdate();
+		return 0;
 	}
 
 	return ATUINativeWindow::WndProc(msg, wParam, lParam);
@@ -913,9 +971,12 @@ void TextEditor::OnCreate() {
 	mbCaretVisible = false;
 
 	ReloadColors();
+
+	ATUIRegisterThemeChangeNotification(&mpOnThemeChanged);
 }
 
 void TextEditor::OnDestroy() {
+	ATUIUnregisterThemeChangeNotification(&mpOnThemeChanged);
 }
 
 void TextEditor::OnPaint() {
@@ -1287,18 +1348,32 @@ void TextEditor::OnChar(int ch) {
 }
 
 void TextEditor::OnLButtonDown(WPARAM modifiers, int x, int y) {
-	MoveCaret(PixelToPos(x - mGutterX, y + mScrollY - mGutterY), GetKeyState(VK_SHIFT) < 0, false);
-	mbDragging = true;
+	Iterator it = ClientToPos(x, y);
+	const uint32 selectionCode = GetSelectionCode(it);
+
+	if (selectionCode) {
+		if (mpCB)
+			mpCB->OnLinkSelected(selectionCode, it.mPara, it.mOffset);
+	} else {
+		MoveCaret(it, GetKeyState(VK_SHIFT) < 0, false);
+		mbDragging = true;
+
+		SetCapture(mhwnd);
+	}
 }
 
 void TextEditor::OnLButtonUp(WPARAM modifiers, int x, int y) {
-	mbDragging = false;
+	if (mbDragging) {
+		mbDragging = false;
+
+		ReleaseCapture();
+	}
 }
 
 void TextEditor::OnMouseMove(WPARAM modifiers, int x, int y) {
 	if (modifiers & MK_LBUTTON) {
 		if (mbDragging) {
-			Iterator newPos(PixelToPos(x - mGutterX, y + mScrollY - mGutterY));
+			Iterator newPos(ClientToPos(x, y));
 			MoveCaret(newPos, true, false);
 		}
 	} else {
@@ -1320,6 +1395,30 @@ void TextEditor::OnMouseWheel(int wheelClicks, WPARAM modifiers, int x, int y) {
 
 		ScrollTo(mScrollY - lines, true);
 	}
+}
+
+void TextEditor::OnCaptureChanged(HWND hwndNewCapture) {
+	if (mbDragging && hwndNewCapture != mhwnd) {
+		mbDragging = false;
+	}
+}
+
+bool TextEditor::OnSetCursor(HWND hwnd, UINT hitTestCode, UINT msg) {
+	if (hitTestCode != HTCLIENT)
+		return false;
+
+	const DWORD mousePos = GetMessagePos();
+	POINT pt { (SHORT)LOWORD(mousePos), (SHORT)HIWORD(mousePos) };
+
+	ScreenToClient(mhwnd, &pt);
+
+	const uint32 selectionCode = GetSelectionCode(ClientToPos(pt.x, pt.y));
+
+	if (!selectionCode)
+		return false;
+
+	SetCursor(LoadCursor(nullptr, IDC_HAND));
+	return true;
 }
 
 void TextEditor::OnVScroll(int cmd) {
@@ -1453,6 +1552,15 @@ bool TextEditor::OnSetText(const char *s) {
 	return true;
 }
 
+void TextEditor::OnLazyCaretUpdate() {
+	mbCaretLazyUpdateMsgPending = false;
+
+	if (mbCaretLazyUpdatePending) {
+		// this will clear the lazy update flag
+		UpdateCaretPos(false, false);
+	}
+}
+
 void TextEditor::MoveCaret(const Iterator& newPos, bool anchor, bool sendScrollUpdate) {
 	if (anchor) {
 		if (!mSelectionAnchor)
@@ -1498,8 +1606,21 @@ void TextEditor::ScrollTo(int y, bool sendUpdate) {
 	}
 }
 
+void TextEditor::LazyUpdateCaretPos() {
+	if (!mbCaretLazyUpdatePending && !mbCaretLazyUpdateMsgPending) {
+		mbCaretLazyUpdatePending = true;
+		mbCaretLazyUpdateMsgPending = true;
+
+		PostMessage(mhwnd, MYWM_LAZYCARETUPDATE, 0, 0);
+	}
+}
+
 void TextEditor::UpdateCaretPos(bool autoscroll, bool sendScrollUpdate) {
 	int xp, yp;
+
+	// since we're forcing an immediate update, we don't need a lazy update that's
+	// pending -- but we can't suppress the message, so leave that flag set.
+	mbCaretLazyUpdatePending = false;
 
 	PosToPixel(xp, yp, mCaretPos);
 
@@ -1653,7 +1774,7 @@ void TextEditor::Reflow(bool force) {
 	mDocument.RecomputeParaPositions();
 
 	InvalidateRect(mhwnd, NULL, FALSE);
-	UpdateCaretPos(false, false);
+	LazyUpdateCaretPos();
 }
 
 void TextEditor::CutCopy(bool doCut) {
@@ -1707,10 +1828,17 @@ void TextEditor::CutCopy(bool doCut) {
 }
 
 void TextEditor::ReloadColors() {
-	mColorTextBack = GetSysColor(COLOR_WINDOW);
-	mColorTextFore = GetSysColor(COLOR_WINDOWTEXT);
-	mColorTextHiBack = GetSysColor(COLOR_HIGHLIGHT);
-	mColorTextHiFore = GetSysColor(COLOR_HIGHLIGHTTEXT);
+	const ATUIThemeColors& tc = ATUIGetThemeColors();
+
+	mColorTextBack = VDSwizzleU32(tc.mContentBg) >> 8;
+	mColorTextFore = VDSwizzleU32(tc.mContentFg) >> 8;
+	mColorTextHiBack = VDSwizzleU32(tc.mHighlightedBg) >> 8;
+	mColorTextHiFore = VDSwizzleU32(tc.mHighlightedFg) >> 8;
+}
+
+void TextEditor::OnThemeChanged() {
+	ReloadColors();
+	InvalidateRect(mhwnd, NULL, FALSE);
 }
 
 void TextEditor::PosToPixel(int& xp, int& yp, const Iterator& pos) {
@@ -1763,6 +1891,10 @@ void TextEditor::PosToPixel(int& xp, int& yp, const Iterator& pos) {
 	}
 
 	ReleaseDC(mhwnd, hdc);
+}
+
+Iterator TextEditor::ClientToPos(int x, int y) {
+	return PixelToPos(x - mGutterX, y + mScrollY - mGutterY);
 }
 
 Iterator TextEditor::PixelToPos(int px, int py) {
@@ -1850,6 +1982,20 @@ Iterator TextEditor::PixelToPos(int px, int py) {
 	return Iterator(mDocument, paraIdx, lineIdx, offset);
 }
 
+uint32 TextEditor::GetSelectionCode(const Iterator& it) {
+	const nsVDTextDOM::Paragraph *para = mDocument.GetParagraph(it.mPara);
+	if (!para)
+		return 0;
+
+	int spanIndex = para->GetSpanIndexFromOffset(it.mOffset);
+	if ((unsigned)spanIndex >= para->mSpans.size())
+		return 0;
+
+	const auto selectionCode = para->mSpans[spanIndex].mSelectionCode;
+
+	return selectionCode;
+}
+
 void TextEditor::InvalidateRows(int ystart, int yend) {
 	RECT r;
 	r.left = 0;
@@ -1869,7 +2015,7 @@ void TextEditor::InvalidateRows(int ystart, int yend) {
 
 void TextEditor::VerticalShiftRows(int ysrc, int ydst) {
 	// check for scroll below bottom of window; we can ignore those
-	if (std::min(ysrc, ydst) - mScrollY < mVisibleHeight)
+	if (std::min(ysrc, ydst) - mScrollY >= mVisibleHeight)
 		return;
 
 	// check for scroll bigger than screen
@@ -1885,9 +2031,9 @@ void TextEditor::VerticalShiftRows(int ysrc, int ydst) {
 	r.bottom = mVisibleHeight;
 
 	if (ysrc < ydst)
-		r.top = ysrc - mScrollY;
+		r.top = ysrc - mScrollY + mGutterY;
 	else
-		r.top = ydst - mScrollY;
+		r.top = ydst - mScrollY + mGutterY;
 
 	if (r.top < 0)
 		r.top = 0;
@@ -2006,7 +2152,7 @@ namespace {
 	public:
 		ParagraphColorization(int limit);
 
-		void AddTextColorPoint(int start, sint32 fore, sint32 back);
+		void AddTextColorPoint(int start, sint32 fore, sint32 back, uint32 selectionCode);
 
 		void Finalize(Paragraph& dst);
 
@@ -2020,25 +2166,27 @@ namespace {
 	ParagraphColorization::ParagraphColorization(int limit)
 		: mLimit(limit)
 	{
-		Span sp;
+		Span sp {};
 		sp.mStart = 0;
 		sp.mForeColor = -1;
 		sp.mBackColor = -1;
+		sp.mSelectionCode = 0;
 
 		mSpans.push_back(sp);
 	}
 
-	void ParagraphColorization::AddTextColorPoint(int start, sint32 fore, sint32 back) {
+	void ParagraphColorization::AddTextColorPoint(int start, sint32 fore, sint32 back, uint32 selectionCode) {
 		if (start > mLimit)
 			start = mLimit;
 
 		if (start < 0)
 			start = 0;
 
-		Span sp;
+		Span sp {};
 		sp.mStart = start;
 		sp.mForeColor = fore < 0 ? -1 : VDSwizzleU32(fore) >> 8;
 		sp.mBackColor = back < 0 ? -1 : VDSwizzleU32(back) >> 8;
+		sp.mSelectionCode = selectionCode;
 		mSpans.push_back(sp);
 	}
 
@@ -2075,10 +2223,11 @@ void TextEditor::RecolorParagraph(int paraIdx, Paragraph& para) {
 
 		cz.Finalize(para);
 	} else {
-		Span sp[1];
+		Span sp[1] {};
 		sp[0].mStart = 0;
 		sp[0].mForeColor = -1;
 		sp[0].mBackColor = -1;
+		sp[0].mSelectionCode = 0;
 
 		para.mSpans.assign(sp, sp+1);
 	}

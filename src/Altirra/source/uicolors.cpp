@@ -23,16 +23,88 @@
 #include <vd2/system/math.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
+#include <at/atcore/snapshotimpl.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/messageloop.h>
 #include <at/atnativeui/uinativewindow.h>
 #include "resource.h"
 #include "gtia.h"
 #include "oshelper.h"
+#include "savestateio.h"
 #include "simulator.h"
 #include "uiaccessors.h"
 
 extern ATSimulator g_sim;
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATSaveStateColorParameters final : public ATSnapExchangeObject<ATSaveStateColorParameters> {
+public:
+	ATSaveStateColorParameters();
+	ATSaveStateColorParameters(const ATNamedColorParams& params);
+
+	template<typename T>
+	void Exchange(T& rw) {
+		rw.Transfer("profile_name", &mParams.mPresetTag);
+
+		rw.Transfer("hue_start", &mParams.mHueStart);
+		rw.Transfer("hue_range", &mParams.mHueRange);
+		rw.Transfer("brightness", &mParams.mBrightness);
+		rw.Transfer("contrast", &mParams.mContrast);
+		rw.Transfer("saturation", &mParams.mSaturation);
+		rw.Transfer("gamma", &mParams.mGammaCorrect);
+		rw.Transfer("intensity_scale", &mParams.mIntensityScale);
+		rw.Transfer("artifacting_hue", &mParams.mArtifactHue);	
+		rw.Transfer("artifacting_saturation", &mParams.mArtifactSat);
+		rw.Transfer("artifacting_sharpness", &mParams.mArtifactSharpness);
+		rw.Transfer("matrix_red_shift", &mParams.mRedShift);
+		rw.Transfer("matrix_red_scale", &mParams.mRedScale);
+		rw.Transfer("matrix_green_shift", &mParams.mGrnShift);
+		rw.Transfer("matrix_green_scale", &mParams.mGrnScale);
+		rw.Transfer("matrix_blue_shift", &mParams.mBluShift);
+		rw.Transfer("matrix_blue_scale", &mParams.mBluScale);
+		rw.Transfer("use_pal_quirks", &mParams.mbUsePALQuirks);
+		rw.TransferEnum("luma_ramp", &mParams.mLumaRampMode);
+		rw.TransferEnum("color_correction", &mParams.mColorMatchingMode);
+	}
+
+	ATNamedColorParams mParams;
+};
+
+ATSERIALIZATION_DEFINE(ATSaveStateColorParameters);
+
+ATSaveStateColorParameters::ATSaveStateColorParameters() {
+	mParams.mPresetTag = ATGetColorPresetTagByIndex(0);
+	static_cast<ATColorParams&>(mParams) = ATGetColorPresetByIndex(0);
+}
+
+ATSaveStateColorParameters::ATSaveStateColorParameters(const ATNamedColorParams& params) {
+	mParams = params;
+}
+
+class ATSaveStateColorSettings final : public ATSnapExchangeObject<ATSaveStateColorSettings> {
+public:
+	ATSaveStateColorSettings() = default;
+	ATSaveStateColorSettings(const ATColorSettings& settings);
+
+	template<typename T>
+	void Exchange(T& rw) {
+		rw.Transfer("ntsc_params", &mpNTSCParams);
+		rw.Transfer("pal_params", &mpPALParams);
+	}
+
+	vdrefptr<ATSaveStateColorParameters> mpNTSCParams;
+	vdrefptr<ATSaveStateColorParameters> mpPALParams;
+};
+
+ATSERIALIZATION_DEFINE(ATSaveStateColorSettings);
+
+ATSaveStateColorSettings::ATSaveStateColorSettings(const ATColorSettings& settings) {
+	mpNTSCParams = new ATSaveStateColorParameters(settings.mNTSCParams);
+
+	if (settings.mbUsePALParams)
+		mpPALParams = new ATSaveStateColorParameters(settings.mPALParams);
+}
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -84,6 +156,9 @@ ATUIColorReferenceControl::ATUIColorReferenceControl() {
 	mColors.emplace_back(ColorEntry { VDStringW(L"$B8: Star Raiders map FG"), 0xB8 });
 	mColors.emplace_back(ColorEntry { VDStringW(L"$AA: Pole Position sky"), 0xAA });
 	mColors.emplace_back(ColorEntry { VDStringW(L"$D8: Pole Position grass"), 0xD8 });
+
+	for(ColorEntry& ce : mColors)
+		ce.mBgColor = ~0U;
 }
 
 void ATUIColorReferenceControl::UpdateFromPalette(const uint32 *palette) {
@@ -573,6 +648,7 @@ bool ATAdjustColorsDialog::OnCommand(uint32 id, uint32 extcode) {
 
 		OnDataExchange(true);
 		UpdateColorImage();
+		return true;
 	} else if (id == ID_VIEW_SHOWRGBSHIFTS) {
 		if (mbShowRelativeOffsets) {
 			mbShowRelativeOffsets = false;
@@ -582,19 +658,69 @@ bool ATAdjustColorsDialog::OnCommand(uint32 id, uint32 extcode) {
 			UpdateLabel(IDC_GRN_SHIFT);
 			UpdateLabel(IDC_GRN_SCALE);
 		}
+		return true;
 	} else if (id == ID_VIEW_SHOWRGBRELATIVEOFFSETS) {
 		if (!mbShowRelativeOffsets) {
 			mbShowRelativeOffsets = true;
 
 			UpdateLabel(IDC_RED_SHIFT);
+			UpdateLabel(IDC_RED_SCALE);
 			UpdateLabel(IDC_GRN_SHIFT);
+			UpdateLabel(IDC_GRN_SCALE);
 		}
-	} else if (id == IDC_EXPORT) {
+		return true;
+	} else if (id == ID_FILE_EXPORTPALETTE) {
 		const VDStringW& fn = VDGetSaveFileName('pal ', (VDGUIHandle)mhdlg, L"Export palette", L"Atari800 palette (*.pal)\0*.pal", L"pal");
 
 		if (!fn.empty()) {
 			ExportPalette(fn.c_str());
 		}
+		return true;
+	} else if (id == ID_FILE_LOAD) {
+		const VDStringW& fn = VDGetLoadFileName('colr', (VDGUIHandle)mhdlg, L"Load color settings", L"Altirra color settings (*.atcolors)\0*.atcolors", L"atcolors");
+
+		if (!fn.empty()) {
+			vdrefptr<IATSerializable> rawData;
+
+			{
+				vdautoptr<IATSaveStateDeserializer> deser{ATCreateSaveStateDeserializer()};
+				VDFileStream fs(fn.c_str());
+				deser->Deserialize(fs, ~rawData);
+			}
+
+			ATSaveStateColorSettings *cs = atser_cast<ATSaveStateColorSettings *>(rawData);
+			if (!cs || !cs->mpNTSCParams)
+				throw MyError("File is not a supported color settings file.");
+
+			mSettings.mNTSCParams = cs->mpNTSCParams->mParams;
+
+			if (cs->mpPALParams) {
+				mSettings.mPALParams = cs->mpPALParams->mParams;
+				mSettings.mbUsePALParams = true;
+			} else {
+				mSettings.mPALParams = mSettings.mNTSCParams;
+				mSettings.mbUsePALParams = false;
+			}
+
+			// write into GTIA and then read back into UI
+			OnDataExchange(true);
+			OnDataExchange(false);
+		}
+	} else if (id == ID_FILE_SAVE) {
+		const VDStringW& fn = VDGetSaveFileName('colr', (VDGUIHandle)mhdlg, L"Save color settings", L"Altirra color settings (*.atcolors)\0*.atcolors", L"atcolors");
+
+		if (!fn.empty()) {
+			vdrefptr<ATSaveStateColorSettings> cs(new ATSaveStateColorSettings(mSettings));
+
+			vdautoptr<IATSaveStateSerializer> ser(ATCreateSaveStateSerializer());
+			VDFileStream fs(fn.c_str(), nsVDFile::kWrite | nsVDFile::kCreateAlways | nsVDFile::kSequential);
+			VDBufferedWriteStream bs(&fs, 4096);
+
+			ser->Serialize(bs, *cs, L"ATColorSettings");
+			bs.Flush();
+			fs.close();
+		}
+		return true;
 	}
 
 	return false;

@@ -13,6 +13,7 @@ ATUIButton::ATUIButton()
 	, mTextX(0)
 	, mTextY(0)
 	, mTextColor(0)
+	, mTextColorDisabled(0x808080)
 	, mActivatedEvent()
 	, mPressedEvent()
 {
@@ -39,6 +40,7 @@ void ATUIButton::SetText(const wchar_t *s) {
 
 		Relayout();
 		Invalidate();
+		InvalidateMeasure();
 	}
 }
 
@@ -46,7 +48,17 @@ void ATUIButton::SetTextColor(uint32 color) {
 	if (mTextColor != color) {
 		mTextColor = color;
 
-		Invalidate();
+		if (IsEnabled())
+			Invalidate();
+	}
+}
+
+void ATUIButton::SetTextColorDisabled(uint32 color) {
+	if (mTextColorDisabled != color) {
+		mTextColorDisabled = color;
+
+		if (!IsEnabled())
+			Invalidate();
 	}
 }
 
@@ -78,10 +90,14 @@ void ATUIButton::SetFrameEnabled(bool enabled) {
 
 		Relayout();
 		Invalidate();
+		InvalidateMeasure();
 	}
 }
 
 void ATUIButton::OnMouseDownL(sint32 x, sint32 y) {
+	if (!IsEnabled())
+		return;
+
 	SetHeld(true);
 	CaptureCursor();
 	Focus();
@@ -124,6 +140,36 @@ void ATUIButton::OnCreate() {
 
 void ATUIButton::OnSize() {
 	Relayout();
+}
+
+ATUIWidgetMetrics ATUIButton::OnMeasure() {
+	ATUIWidgetMetrics m;
+
+	if (mStockImageIdx >= 0) {
+		ATUIStockImage& image = mpManager->GetStockImage((ATUIStockImageIdx)mStockImageIdx);
+
+		m.mMinSize.w = image.mWidth;
+		m.mMinSize.h = image.mHeight;
+	} else if (mpFont) {
+		VDDisplayFontMetrics fm;
+		mpFont->GetMetrics(fm);
+
+		m.mMinSize = mpFont->MeasureString(mText.data(), mText.size(), false);
+		m.mMinSize.h = fm.mAscent + 2*fm.mDescent;
+	}
+
+	if (mbFrameEnabled) {
+		m.mMinSize.w += 4;
+		m.mMinSize.h += 4;
+	}
+
+	m.mDesiredSize = m.mMinSize;
+
+	return m;
+}
+
+void ATUIButton::OnEnableChanged() {
+	Invalidate();
 }
 
 void ATUIButton::OnSetFocus() {
@@ -188,14 +234,14 @@ void ATUIButton::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 			blt.mWidth = image.mWidth;
 			blt.mHeight = image.mHeight;
 
-			rdr.SetColorRGB(mTextColor);
+			rdr.SetColorRGB(IsEnabled() ? mTextColor : mTextColorDisabled);
 			rdr.MultiBlt(&blt, 1, image.mImageView, IVDDisplayRenderer::kBltMode_Color);
 		} else if (mpFont) {
 			VDDisplayTextRenderer *tr = rdr.GetTextRenderer();
 
 			tr->SetFont(mpFont);
 			tr->SetAlignment(VDDisplayTextRenderer::kAlignLeft, VDDisplayTextRenderer::kVertAlignTop);
-			tr->SetColorRGB(mTextColor);
+			tr->SetColorRGB(IsEnabled() ? mTextColor : mTextColorDisabled);
 			tr->DrawTextLine(mTextX, mTextY, mText.c_str());
 		}
 

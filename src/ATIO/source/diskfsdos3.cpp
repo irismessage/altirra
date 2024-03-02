@@ -337,7 +337,7 @@ ATDiskFSFindHandle ATDiskFSDOS3::FindFirst(ATDiskFSKey key, ATDiskFSEntryInfo& i
 bool ATDiskFSDOS3::FindNext(ATDiskFSFindHandle searchKey, ATDiskFSEntryInfo& info) {
 	FindHandle *h = (FindHandle *)searchKey;
 
-	while(h->mPos < 64) {
+	while(h->mPos < vdcountof(mDirectory)) {
 		const DirEnt& de = mDirectory[h->mPos++];
 
 		if (!de.mFlags)
@@ -464,7 +464,7 @@ void ATDiskFSDOS3::ReadFile(ATDiskFSKey key, vdfastvector<uint8>& dst) {
 	dst.clear();
 
 	const uint32 sectorSize = mpImage->GetSectorSize();
-	bool clustersSeen[128] = {false};
+	bool clustersSeen[256] = {false};
 	uint32 cluster = de.mClusterStart;
 	uint32 bytesLeft = de.mByteSize;
 

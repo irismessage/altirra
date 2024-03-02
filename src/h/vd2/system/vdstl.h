@@ -242,9 +242,38 @@ public:
 
 	vdblock(const A& alloc = A()) : A(alloc), mpBlock(NULL), mSize(0) {}
 	vdblock(size_type s, const A& alloc = A()) : A(alloc), mpBlock(A::allocate(s, 0)), mSize(s) {}
+
+	vdblock(const vdblock& src) = delete;
+
+	vdnothrow vdblock(vdblock&& src) vdnoexcept
+		: A(static_cast<A&&>(src))
+		, mpBlock(src.mpBlock)
+		, mSize(src.mSize)
+	{
+		src.mpBlock = nullptr;
+		src.mSize = 0;
+	}
+
 	~vdblock() {
 		if (mpBlock)
 			A::deallocate(mpBlock, mSize);
+	}
+
+	vdblock& operator=(const vdblock&) = delete;
+
+	vdnothrow vdblock& operator=(vdblock&& src) vdnoexcept {
+		if (&src != this) {
+			if (mpBlock)
+				A::deallocate(mpBlock, mSize);
+
+			static_cast<A&>(*this) = static_cast<A&&>(src);
+			mpBlock = src.mpBlock;
+			mSize = src.mSize;
+			src.mpBlock = nullptr;
+			src.mSize = 0;
+		}
+
+		return *this;
 	}
 
 	reference				operator[](size_type n)			{ return mpBlock[n]; }

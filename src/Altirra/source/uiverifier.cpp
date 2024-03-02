@@ -48,6 +48,7 @@ const ATUIVerifierDialog::FlagInfo ATUIVerifierDialog::kVerifierFlags[] = {
 	{ kATVerifierFlag_CallingConventionViolations, L"OS calling convention violations" },
 	{ kATVerifierFlag_LoadingOverDisplayList, L"Loading over active display list" },
 	{ kATVerifierFlag_AddressZero, L"Loading absolute address zero" },
+	{ kATVerifierFlag_NonCanonicalHardwareAddress, L"Non-canonical hardware address" },
 };
 
 ATUIVerifierDialog::ATUIVerifierDialog(ATSimulator& sim)

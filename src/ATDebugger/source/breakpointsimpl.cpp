@@ -26,6 +26,8 @@ ATDebugTargetBreakpointsBase::ATDebugTargetBreakpointsBase(uint32 addressLimit, 
 {
 	std::fill(mpBreakpointMap, mpBreakpointMap + mAddressLimit, false);
 	std::fill(mpStepBreakpointMap, mpStepBreakpointMap + mAddressLimit, true);
+
+	mpBPsChanged = [](const uint16 *) {};
 }
 
 void ATDebugTargetBreakpointsBase::SetStepActive(bool active) {
@@ -46,6 +48,10 @@ void ATDebugTargetBreakpointsBase::SetBPHandler(vdfunction<void(const bool *, IA
 	mpSetBPTable = std::move(fn);
 }
 
+void ATDebugTargetBreakpointsBase::SetBPsChangedHandler(vdfunction<void(const uint16 *)> fn) {
+	mpBPsChanged = std::move(fn);
+}
+
 void ATDebugTargetBreakpointsBase::SetBreakpointHandler(IATCPUBreakpointHandler *handler) {
 	mpBreakpointHandler = handler;
 }
@@ -59,6 +65,8 @@ void ATDebugTargetBreakpointsBase::ClearBreakpoint(uint16 pc) {
 
 		if (!--mBreakpointCount && !mbStepActive)
 			mpSetBPTable(nullptr, nullptr);
+
+		mpBPsChanged(&pc);
 	}
 }
 
@@ -71,6 +79,8 @@ void ATDebugTargetBreakpointsBase::SetBreakpoint(uint16 pc) {
 
 		if (!mBreakpointCount++ && !mbStepActive)
 			mpSetBPTable(mpBreakpointMap, mpBreakpointHandler);
+
+		mpBPsChanged(&pc);
 	}
 }
 
@@ -82,6 +92,8 @@ void ATDebugTargetBreakpointsBase::ClearAllBreakpoints() {
 
 		if (!mbStepActive)
 			mpSetBPTable(nullptr, nullptr);
+
+		mpBPsChanged(nullptr);
 	}
 }
 
@@ -92,5 +104,7 @@ void ATDebugTargetBreakpointsBase::SetAllBreakpoints() {
 
 		if (!mbStepActive)
 			mpSetBPTable(mpBreakpointMap, mpBreakpointHandler);
+
+		mpBPsChanged(nullptr);
 	}
 }

@@ -11,6 +11,7 @@
 #include <at/atio/diskimage.h>
 #include <at/atio/diskfssdx2util.h>
 #include "directorywatcher.h"
+#include "diskvirtimagebase.h"
 #include "debuggerlog.h"
 #include "hostdeviceutils.h"
 
@@ -127,30 +128,11 @@ extern ATDebuggerLogChannel g_ATLCVDisk;
 // affected data structures would have been seen by DOS.
 //
 
-class ATDiskImageVirtualFolderSDFS final : public vdrefcounted<IATDiskImage>, public IVDTimerCallback {
+class ATDiskImageVirtualFolderSDFS final : public ATDiskImageVirtualFolderBase, public IVDTimerCallback {
 public:
 	ATDiskImageVirtualFolderSDFS();
 
 	void Init(const wchar_t *path, uint64 unique);
-
-	void *AsInterface(uint32 id) override;
-
-	ATImageType GetImageType() const override { return kATImageType_Tape; }
-
-	ATDiskTimingMode GetTimingMode() const override { return kATDiskTimingMode_Any; }
-
-	bool IsDirty() const override { return false; }
-	bool IsUpdatable() const override { return false; }
-	bool IsDynamic() const override { return true; }
-	ATDiskImageFormat GetImageFormat() const override { return kATDiskImageFormat_None; }
-
-	uint64 GetImageChecksum() const override { return 0; }
-	std::optional<uint32> GetImageFileCRC() const override { return {}; }
-
-	bool Flush() override { return true; }
-
-	void SetPath(const wchar_t *path, ATDiskImageFormat format) override;
-	void Save(const wchar_t *path, ATDiskImageFormat format) override;
 
 	ATDiskGeometryInfo GetGeometry() const override;
 	uint32 GetSectorSize() const override;
@@ -398,20 +380,6 @@ void ATDiskImageVirtualFolderSDFS::Init(const wchar_t *path, uint64 uniquenessVa
 	} catch(const MyError&) {
 		// eat it
 	}
-}
-
-void *ATDiskImageVirtualFolderSDFS::AsInterface(uint32 id) {
-	switch(id) {
-		case IATDiskImage::kTypeID: return static_cast<IATDiskImage *>(this);
-	}
-
-	return nullptr;
-}
-
-void ATDiskImageVirtualFolderSDFS::SetPath(const wchar_t *path, ATDiskImageFormat format) {
-}
-
-void ATDiskImageVirtualFolderSDFS::Save(const wchar_t *path, ATDiskImageFormat format) {
 }
 
 ATDiskGeometryInfo ATDiskImageVirtualFolderSDFS::GetGeometry() const {

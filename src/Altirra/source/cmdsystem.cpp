@@ -252,6 +252,12 @@ void OnCommandVideoToggleFrameBlending() {
 	gtia.SetBlendModeEnabled(!gtia.IsBlendModeEnabled());
 }
 
+void OnCommandVideoToggleLinearFrameBlending() {
+	ATGTIAEmulator& gtia = g_sim.GetGTIA();
+
+	gtia.SetLinearBlendEnabled(!gtia.IsLinearBlendEnabled());
+}
+
 void OnCommandVideoToggleInterlace() {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
@@ -266,6 +272,12 @@ void OnCommandVideoToggleScanlines() {
 	ATUIResizeDisplay();
 }
 
+void OnCommandVideoMonitorMode(ATMonitorMode mode) {
+	ATGTIAEmulator& gtia = g_sim.GetGTIA();
+
+	gtia.SetMonitorMode(mode);
+}
+
 void OnCommandVideoToggleXEP80() {
 	g_sim.GetDeviceManager()->ToggleDevice("xep80");
 }
@@ -278,7 +290,7 @@ void OnCommandVideoAdjustScreenEffectsDialog() {
 	ATUIOpenAdjustScreenEffectsDialog(ATUIGetMainWindow());
 }
 
-void OnCommandVideoArtifacting(ATGTIAEmulator::ArtifactMode mode) {
+void OnCommandVideoArtifacting(ATArtifactMode mode) {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
 	gtia.SetArtifactingMode(mode);
@@ -295,7 +307,7 @@ void OnCommandVideoArtifactingNext() {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
 	auto mode = gtia.GetArtifactingMode();
-	gtia.SetArtifactingMode((ATGTIAEmulator::ArtifactMode)((mode + 1) % ATGTIAEmulator::kArtifactCount));
+	gtia.SetArtifactingMode((ATArtifactMode)(((int)mode + 1) % (int)ATArtifactMode::Count));
 
 	// We have to adjust the display filter if it is in sharp bilinear
 	// mode, since the horizontal crisping is disabled if high artifacting

@@ -35,8 +35,11 @@ public:
 ATScheduler::ATScheduler()
 	: mNextEventCounter(0U-1000)
 	, mTimeBase(0xFFF00000 + 1000)
+	, mActiveEvents{&mActiveEvents, &mActiveEvents}
+	, mpFreeEvents(nullptr)
+	, mbStopTimeValid(false)
+	, mStopTime(0)
 	, mTick64Floor(mTimeBase + mNextEventCounter)
-	, mpFreeEvents(NULL)
 {
 	mActiveEvents.mpNext = mActiveEvents.mpPrev = &mActiveEvents;
 }
@@ -45,8 +48,8 @@ ATScheduler::~ATScheduler() {
 }
 
 void ATScheduler::ProcessNextEvent() {
-
 	uint32 timeToNext = 100000;
+
 	while(mActiveEvents.mpNext != &mActiveEvents) {
 		ATEvent *ev = static_cast<ATEvent *>(mActiveEvents.mpNext);
 		uint32 timeToNextEvent = ev->mNextTime - (mTimeBase + mNextEventCounter);
@@ -78,6 +81,19 @@ void ATScheduler::ProcessNextEvent() {
 	mTimeBase += mNextEventCounter;
 	mNextEventCounter = 0U - timeToNext;
 	mTimeBase -= mNextEventCounter;
+
+	if (mbStopTimeValid) {
+		VDASSERT(mStopTime - mNextEventCounter - mTimeBase < 0x80000000);
+
+		uint32 delta = mTimeBase - mStopTime;
+
+		if ((delta - 1) < UINT32_C(0x7FFFFFFF)) {
+			mTimeBase -= delta;
+			mNextEventCounter += delta;
+		}
+
+		VDASSERT(mStopTime - mTimeBase < 0x80000000);
+	}
 }
 
 void ATScheduler::SetEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id, ATEvent *&ptr) {
@@ -133,6 +149,19 @@ ATEvent *ATScheduler::AddEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id
 		mNextEventCounter = 0U - ticks;
 		mTimeBase -= mNextEventCounter;
 		VDASSERT((uint32)0-mNextEventCounter < 100000000);
+
+		if (mbStopTimeValid) {
+			VDASSERT(mStopTime - mNextEventCounter - mTimeBase < 0x80000000);
+
+			uint32 delta = mTimeBase - mStopTime;
+
+			if ((delta - 1) < UINT32_C(0x7FFFFFFF)) {
+				mTimeBase -= delta;
+				mNextEventCounter += delta;
+			}
+
+			VDASSERT(mStopTime - mTimeBase < 0x80000000);
+		}
 	}
 
 	ATEventLink *prev = it->mpPrev;
@@ -186,4 +215,21 @@ void ATScheduler::UpdateTick64() {
 
 uint32 ATScheduler::GetTicksToNextEvent() const {
 	return uint32(0) - mNextEventCounter;
+}
+
+void ATScheduler::SetStopTime(uint32 t) {
+	if (!mbStopTimeValid || mStopTime != t) {
+		mbStopTimeValid = true;
+		mStopTime = t;
+
+		ProcessNextEvent();
+	}
+}
+
+void ATScheduler::ClearStopTime() {
+	if (mbStopTimeValid) {
+		mbStopTimeValid = false;
+
+		ProcessNextEvent();
+	}
 }

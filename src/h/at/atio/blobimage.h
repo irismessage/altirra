@@ -19,7 +19,9 @@
 #ifndef f_AT_ATIO_BLOBIMAGE_H
 #define f_AT_ATIO_BLOBIMAGE_H
 
+#include <optional>
 #include <vd2/system/refcount.h>
+#include <at/atcore/checksum.h>
 #include <at/atio/image.h>
 
 class IVDRandomAccessStream;

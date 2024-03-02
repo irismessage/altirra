@@ -16,13 +16,16 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/registry.h>
 #include <at/atcore/media.h>
 #include <at/atcore/vfs.h>
 #include <at/atio/blobimage.h>
+#include <at/atio/cassetteimage.h>
 #include "oshelper.h"
+#include "cassette.h"
 #include "compatdb.h"
 #include "compatengine.h"
 #include "disk.h"
@@ -50,14 +53,14 @@ void ATCompatInit() {
 	const void *data = ATLockResource(IDR_COMPATDB, len);
 
 	if (data) {
-		if (len < sizeof(ATCompatDBHeader))
-			return;
-
-		auto *hdr = (const ATCompatDBHeader *)data;
-		if (!hdr->Validate(len))
-			return;
-
-		g_ATCompatDBView = ATCompatDBView(hdr);
+		if (len >= sizeof(ATCompatDBHeader)) {
+			auto *hdr = (const ATCompatDBHeader *)data;
+			if (hdr->Validate(len)) {
+				g_ATCompatDBView = ATCompatDBView(hdr);
+			} else {
+				VDFAIL("Internal compatibility database failed to validate.");
+			}
+		}
 	}
 
 	ATOptionsAddUpdateCallback(true,
@@ -91,7 +94,7 @@ void ATCompatLoadExtDatabase(const wchar_t *path, bool testOnly) {
 
 	auto& stream = fileView->GetStream();
 
-	auto len = stream.Length();;
+	auto len = stream.Length();
 
 	if (len > 0x8000000)
 		throw MyError("Compatibility engine '%ls' is too big (%llu bytes).", path, (unsigned long long)len);
@@ -121,6 +124,14 @@ void ATCompatLoadExtDatabase(const wchar_t *path, bool testOnly) {
 void ATCompatReloadExtDatabase() {
 	if (!g_ATCompatDBPath.empty() && g_pATCompatDBExt)
 		ATCompatLoadExtDatabase(g_ATCompatDBPath.c_str(), false);
+}
+
+bool ATCompatIsExtDatabaseLoaded() {
+	return g_pATCompatDBExt != nullptr;
+}
+
+VDStringW ATCompatGetExtDatabasePath() {
+	return g_ATCompatDBPath;
 }
 
 bool ATCompatIsAllMuted() {
@@ -211,25 +222,26 @@ bool ATHasInternalBASIC(ATHardwareMode hwmode) {
 }
 
 bool ATCompatIsTagApplicable(ATCompatKnownTag knownTag) {
+	const auto needsBasic = [] {
+		return ATHasInternalBASIC(g_sim.GetHardwareMode())
+			? !g_sim.IsBASICEnabled()
+			: !g_sim.IsCartridgeAttached(0);
+	};
+
 	switch(knownTag) {
 		case kATCompatKnownTag_BASIC:
-			if (ATHasInternalBASIC(g_sim.GetHardwareMode())) {
-				if (!g_sim.IsBASICEnabled())
-					return true;
-			} else {
-				if (!g_sim.IsCartridgeAttached(0))
-					return true;
-			}
+			if (needsBasic())
+				return true;
 			break;
 
 		case kATCompatKnownTag_BASICRevA:
-			return g_sim.GetActualBasicId() != g_sim.GetFirmwareManager()->GetSpecificFirmware(kATSpecificFirmwareType_BASICRevA);
+			return needsBasic() || g_sim.GetActualBasicId() != g_sim.GetFirmwareManager()->GetSpecificFirmware(kATSpecificFirmwareType_BASICRevA);
 
 		case kATCompatKnownTag_BASICRevB:
-			return g_sim.GetActualBasicId() != g_sim.GetFirmwareManager()->GetSpecificFirmware(kATSpecificFirmwareType_BASICRevB);
+			return needsBasic() || g_sim.GetActualBasicId() != g_sim.GetFirmwareManager()->GetSpecificFirmware(kATSpecificFirmwareType_BASICRevB);
 
 		case kATCompatKnownTag_BASICRevC:
-			return g_sim.GetActualBasicId() != g_sim.GetFirmwareManager()->GetSpecificFirmware(kATSpecificFirmwareType_BASICRevC);
+			return needsBasic() || g_sim.GetActualBasicId() != g_sim.GetFirmwareManager()->GetSpecificFirmware(kATSpecificFirmwareType_BASICRevC);
 
 		case kATCompatKnownTag_NoBASIC:
 			if (ATHasInternalBASIC(g_sim.GetHardwareMode())) {
@@ -286,6 +298,16 @@ bool ATCompatIsTagApplicable(ATCompatKnownTag knownTag) {
 					return true;
 			}
 			break;
+
+		case kATCompatKnownTag_50Hz:
+			if (!g_sim.IsVideo50Hz())
+				return true;
+			break;
+
+		case kATCompatKnownTag_60Hz:
+			if (g_sim.IsVideo50Hz())
+				return true;
+			break;
 	}
 
 	return false;
@@ -302,45 +324,82 @@ bool ATCompatCheckTitleTags(ATCompatDBView& view, const ATCompatDBTitle *title, 
 	return !tags.empty();
 }
 
-const ATCompatDBTitle *ATCompatFindTitle(const ATCompatDBView& view, const vdvector_view<const ATCompatMarker>& markers, vdfastvector<ATCompatKnownTag>& tags) {
+const ATCompatDBTitle *ATCompatFindTitle(const ATCompatDBView& view, const vdvector_view<const ATCompatMarker>& markers, vdfastvector<ATCompatKnownTag>& tags, bool applicableTagsOnly) {
 	vdfastvector<const ATCompatDBRule *> matchingRules;
 	matchingRules.reserve(markers.size());
 
 	for(const auto& marker : markers) {
-		const auto *rule = view.FindMatchingRule(marker.mRuleType, marker.mValue);
+		uint64 ruleValue;
 
-		if (rule)
-			matchingRules.push_back(rule);
+		if (ATCompatIsLargeRuleType((ATCompatRuleType)marker.mRuleType)) {
+			ruleValue = view.FindLargeRuleBlob(marker.mValue);
+		} else {
+			ruleValue = marker.mValue[0];
+		}
+
+		// Find the range of matching rules. More than one will match if the same rule is used by more than one
+		// alias; each rule points to a different one.
+		const auto matchingRange = view.FindMatchingRules(marker.mRuleType, ruleValue);
+
+		for(auto it = matchingRange.first; it != matchingRange.second; ++it)
+			matchingRules.push_back(it);
 	}
 
-	const auto *title = view.FindMatchingTitle(matchingRules.data(), matchingRules.size());
+	vdfastvector<const ATCompatDBTitle *> matchingTitles;
+	view.FindMatchingTitles(matchingTitles, matchingRules.data(), matchingRules.size());
 
-	if (!title || ATCompatIsTitleMuted(title))
-		return nullptr;
+	for(const ATCompatDBTitle *title : matchingTitles) {
+		if (ATCompatIsTitleMuted(title))
+			continue;
 
-	for(const auto& tagId : title->mTagIds) {
-		const ATCompatKnownTag knownTag = view.GetKnownTag(tagId);
+		for(const auto& tagId : title->mTagIds) {
+			const ATCompatKnownTag knownTag = view.GetKnownTag(tagId);
 
-		tags.push_back(knownTag);
+			if (applicableTagsOnly && !ATCompatIsTagApplicable(knownTag))
+				continue;
+
+			tags.push_back(knownTag);
+		}
+
+		if (!tags.empty())
+			return title;
 	}
 
-	return !tags.empty() ? title : nullptr;
+	return nullptr;
 }
 
-const ATCompatDBTitle *ATCompatFindTitle(const vdvector_view<const ATCompatMarker>& markers, vdfastvector<ATCompatKnownTag>& tags) {
+void ATCompatMarker::SetSHA256(const ATChecksumSHA256& checksum) {
+	memcpy(mValue, checksum.mDigest, 32);
+}
+
+ATChecksumSHA256 ATCompatMarker::GetSHA256() const {
+	ATChecksumSHA256 checksum;
+	memcpy(checksum.mDigest, mValue, 32);
+	return checksum;
+}
+
+ATCompatMarker ATCompatMarker::FromSHA256(ATCompatRuleType ruleType, const ATChecksumSHA256& checksum) {
+	ATCompatMarker marker;
+	marker.mRuleType = ruleType;
+	marker.SetSHA256(checksum);
+
+	return marker;
+}
+
+const ATCompatDBTitle *ATCompatFindTitle(const vdvector_view<const ATCompatMarker>& markers, vdfastvector<ATCompatKnownTag>& tags, bool applicableTagsOnly) {
 	if (ATCompatIsAllMuted())
 		return nullptr;
 
 	const ATCompatDBTitle *title;
 
-	if (g_ATOptions.mbCompatEnableExternalDB && g_ATCompatDBView.IsValid()) {
-		title = ATCompatFindTitle(g_ATCompatDBViewExt, markers, tags);
+	if (g_ATOptions.mbCompatEnableExternalDB && g_ATCompatDBViewExt.IsValid()) {
+		title = ATCompatFindTitle(g_ATCompatDBViewExt, markers, tags, applicableTagsOnly);
 		if (title)
 			return title;
 	}
 
 	if (g_ATOptions.mbCompatEnableInternalDB && g_ATCompatDBView.IsValid()) {
-		title = ATCompatFindTitle(g_ATCompatDBView, markers, tags);
+		title = ATCompatFindTitle(g_ATCompatDBView, markers, tags, applicableTagsOnly);
 		if (title)
 			return title;
 	}
@@ -348,23 +407,26 @@ const ATCompatDBTitle *ATCompatFindTitle(const vdvector_view<const ATCompatMarke
 	return nullptr;
 }
 
+// Given one or more rules, check if there are any aliases that are matched by those rules
+// and return the corresponding title. Returns nullptr if no rules are given. Matching an
+// alias only requires all of the rules in the alias to be present; additional rules can be
+// ignored.
+const ATCompatDBTitle *ATCompatCheckTitle(ATCompatDBView& view, const ATCompatMarker *markers, size_t numMarkers, vdfastvector<ATCompatKnownTag>& tags) {
+	if (!numMarkers)
+		return nullptr;
+
+	return ATCompatFindTitle(view, vdvector_view<const ATCompatMarker>(markers, numMarkers), tags, true);
+}
+
 const ATCompatDBTitle *ATCompatCheckDB(ATCompatDBView& view, vdfastvector<ATCompatKnownTag>& tags) {
-	const auto& diskIf = g_sim.GetDiskInterface(0);
-	const auto *pImage = diskIf.GetDiskImage();
+	vdfastvector<ATCompatMarker> markers;
 
-	if (pImage && !pImage->IsDynamic()) {
-		uint64 checksum = pImage->GetImageChecksum();
+	if (IATDiskImage *pImage = g_sim.GetDiskInterface(0).GetDiskImage(); pImage && !pImage->IsDynamic()) {
+		markers.clear();
+		ATCompatGetMarkersForImage(markers, pImage, true);
 
-		const auto *rule = view.FindMatchingRule(kATCompatRuleType_DiskChecksum, checksum);
-
-		if (rule) {
-			auto *title = view.FindMatchingTitle(&rule, 1);
-
-			if (title && !ATCompatIsTitleMuted(title)) {
-				if (ATCompatCheckTitleTags(view, title, tags))
-					return title;
-			}
-		}
+		if (auto *title = ATCompatCheckTitle(view, markers.data(), markers.size(), tags))
+			return title;
 	}
 
 	for(int i=0; i<2; ++i) {
@@ -373,36 +435,28 @@ const ATCompatDBTitle *ATCompatCheckDB(ATCompatDBView& view, vdfastvector<ATComp
 		if (!cart)
 			continue;
 
-		uint64 checksum = cart->GetChecksum();
+		markers.clear();
+		ATCompatGetMarkersForImage(markers, cart->GetImage(), true);
 
-		const auto *rule = view.FindMatchingRule(kATCompatRuleType_CartChecksum, checksum);
+		if (auto *title = ATCompatCheckTitle(view, markers.data(), markers.size(), tags))
+			return title;
+	}
 
-		if (rule) {
-			auto *title = view.FindMatchingTitle(&rule, 1);
+	if (IATCassetteImage *tapeImage = g_sim.GetCassette().GetImage()) {
+		markers.clear();
+		ATCompatGetMarkersForImage(markers, tapeImage, true);
 
-			if (title && !ATCompatIsTitleMuted(title)) {
-				if (ATCompatCheckTitleTags(view, title, tags))
-					return title;
-			}
-		}
+		if (auto *title = ATCompatCheckTitle(view, markers.data(), markers.size(), tags))
+			return title;
 	}
 
 	auto *programLoader = g_sim.GetProgramLoader();
 	if (programLoader) {
-		auto *pgimage = programLoader->GetCurrentImage();
+		markers.clear();
+		ATCompatGetMarkersForImage(markers, programLoader->GetCurrentImage(), true);
 
-		if (pgimage) {
-			auto *rule = view.FindMatchingRule(kATCompatRuleType_ExeChecksum, pgimage->GetChecksum());
-
-			if (rule) {
-				auto *title = view.FindMatchingTitle(&rule, 1);
-
-				if (title && !ATCompatIsTitleMuted(title)) {
-					if (ATCompatCheckTitleTags(view, title, tags))
-						return title;
-				}
-			}
-		}
+		if (auto *title = ATCompatCheckTitle(view, markers.data(), markers.size(), tags))
+			return title;
 	}
 
 	return nullptr;
@@ -414,7 +468,7 @@ const ATCompatDBTitle *ATCompatCheck(vdfastvector<ATCompatKnownTag>& tags) {
 
 	const ATCompatDBTitle *title;
 
-	if (g_ATOptions.mbCompatEnableExternalDB && g_ATCompatDBView.IsValid()) {
+	if (g_ATOptions.mbCompatEnableExternalDB && g_ATCompatDBViewExt.IsValid()) {
 		title = ATCompatCheckDB(g_ATCompatDBViewExt, tags);
 		if (title)
 			return title;
@@ -496,29 +550,9 @@ void ATCompatAdjust(VDGUIHandle h, const ATCompatKnownTag *tags, size_t numTags)
 	bool basic = false;
 	bool nobasic = false;
 
-	while(numTags--) {
-		switch(*tags++) {
-			case kATCompatKnownTag_BASIC:
-				// Handle this last, as it has to be done after the hardware mode is known.
-				basic = true;
-				break;
-
-			case kATCompatKnownTag_BASICRevA:
-				ATCompatSwitchToSpecificBASIC(kATSpecificFirmwareType_BASICRevA);
-				break;
-
-			case kATCompatKnownTag_BASICRevB:
-				ATCompatSwitchToSpecificBASIC(kATSpecificFirmwareType_BASICRevB);
-				break;
-
-			case kATCompatKnownTag_BASICRevC:
-				ATCompatSwitchToSpecificBASIC(kATSpecificFirmwareType_BASICRevC);
-				break;
-
-			case kATCompatKnownTag_NoBASIC:
-				nobasic = true;
-				break;
-
+	// handle tags that can switch profile first
+	for(size_t i=0; i<numTags; ++i) {
+		switch(tags[i]) {
 			case kATCompatKnownTag_OSA:
 				ATCompatSwitchToSpecificKernel(h, kATSpecificFirmwareType_OSA);
 				break;
@@ -529,6 +563,53 @@ void ATCompatAdjust(VDGUIHandle h, const ATCompatKnownTag *tags, size_t numTags)
 
 			case kATCompatKnownTag_XLOS:
 				ATCompatSwitchToSpecificKernel(h, kATSpecificFirmwareType_XLOSr2);
+				break;
+
+			case kATCompatKnownTag_NoFloatingDataBus:
+				switch(g_sim.GetHardwareMode()) {
+					case kATHardwareMode_130XE:
+					case kATHardwareMode_XEGS:
+						ATUISwitchHardwareMode(h, kATHardwareMode_800XL, true);
+						break;
+				}
+				break;
+
+			default:
+				break;
+		}
+	}
+	
+	for(size_t i=0; i<numTags; ++i) {
+		switch(tags[i]) {
+			case kATCompatKnownTag_OSA:
+			case kATCompatKnownTag_OSB:
+			case kATCompatKnownTag_XLOS:
+			case kATCompatKnownTag_NoFloatingDataBus:
+				// handled in earlier pass
+				break;
+
+			case kATCompatKnownTag_BASIC:
+				// Handle this last, as it has to be done after the hardware mode is known.
+				basic = true;
+				break;
+
+			case kATCompatKnownTag_BASICRevA:
+				ATCompatSwitchToSpecificBASIC(kATSpecificFirmwareType_BASICRevA);
+				basic = true;
+				break;
+
+			case kATCompatKnownTag_BASICRevB:
+				ATCompatSwitchToSpecificBASIC(kATSpecificFirmwareType_BASICRevB);
+				basic = true;
+				break;
+
+			case kATCompatKnownTag_BASICRevC:
+				ATCompatSwitchToSpecificBASIC(kATSpecificFirmwareType_BASICRevC);
+				basic = true;
+				break;
+
+			case kATCompatKnownTag_NoBASIC:
+				nobasic = true;
 				break;
 
 			case kATCompatKnownTag_AccurateDiskTiming:
@@ -562,15 +643,6 @@ void ATCompatAdjust(VDGUIHandle h, const ATCompatKnownTag *tags, size_t numTags)
 				}
 				break;
 
-			case kATCompatKnownTag_NoFloatingDataBus:
-				switch(g_sim.GetHardwareMode()) {
-					case kATHardwareMode_130XE:
-					case kATHardwareMode_XEGS:
-						g_sim.SetHardwareMode(kATHardwareMode_800XL);
-						break;
-				}
-				break;
-
 			case kATCompatKnownTag_Cart52008K:
 			case kATCompatKnownTag_Cart520016KOneChip:
 			case kATCompatKnownTag_Cart520016KTwoChip:
@@ -578,6 +650,17 @@ void ATCompatAdjust(VDGUIHandle h, const ATCompatKnownTag *tags, size_t numTags)
 				// We ignore these tags at compat checking time. They're used to feed the
 				// mapper detection instead.
 				break;
+
+			case kATCompatKnownTag_60Hz:
+				if (g_sim.IsVideo50Hz())
+					g_sim.SetVideoStandard(kATVideoStandard_NTSC);
+				break;
+
+			case kATCompatKnownTag_50Hz:
+				if (!g_sim.IsVideo50Hz())
+					g_sim.SetVideoStandard(kATVideoStandard_PAL);
+				break;
+
 		}
 	}
 
@@ -600,4 +683,35 @@ void ATCompatAdjust(VDGUIHandle h, const ATCompatKnownTag *tags, size_t numTags)
 	}
 
 	g_sim.ColdReset();
+}
+
+void ATCompatGetMarkersForImage(vdfastvector<ATCompatMarker>& markers, IATImage *image, bool includeLegacyChecksums) {
+	if (auto *diskImage = vdpoly_cast<IATDiskImage *>(image); diskImage && !diskImage->IsDynamic()) {
+		if (const auto& sha256 = diskImage->GetImageFileSHA256(); sha256.has_value())
+			markers.push_back(ATCompatMarker::FromSHA256(kATCompatRuleType_DiskFileSHA256, sha256.value()));
+
+		if (includeLegacyChecksums)
+			markers.push_back(ATCompatMarker { kATCompatRuleType_DiskChecksum, { diskImage->GetImageChecksum() } });
+	}
+
+	if (auto *cartImage = vdpoly_cast<IATCartridgeImage *>(image)) {
+		if (const auto& sha256 = cartImage->GetImageFileSHA256(); sha256.has_value())
+			markers.push_back(ATCompatMarker::FromSHA256(kATCompatRuleType_CartFileSHA256, sha256.value()));
+
+		if (includeLegacyChecksums)
+			markers.push_back(ATCompatMarker { kATCompatRuleType_CartChecksum, { cartImage->GetChecksum() } });
+	}
+
+	if (auto *tapeImage = vdpoly_cast<IATCassetteImage *>(image)) {
+		if (const auto& sha256 = image->GetImageFileSHA256(); sha256.has_value())
+			markers.push_back(ATCompatMarker::FromSHA256(kATCompatRuleType_TapeFileSHA256, sha256.value()));
+	}
+
+	if (auto *programImage = vdpoly_cast<IATBlobImage *>(image); programImage && programImage->GetImageType() == kATImageType_Program) {
+		if (const auto& sha256 = programImage->GetImageFileSHA256(); sha256.has_value())
+			markers.push_back(ATCompatMarker::FromSHA256(kATCompatRuleType_ExeFileSHA256, sha256.value()));
+
+		if (includeLegacyChecksums)
+			markers.push_back(ATCompatMarker { kATCompatRuleType_ExeChecksum, { programImage->GetChecksum() } });
+	}
 }

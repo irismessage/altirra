@@ -20,6 +20,8 @@
 #include <vd2/system/registry.h>
 #include <vd2/system/VDString.h>
 #include <vd2/Dita/accel.h>
+#include "uiaccessors.h"
+#include "uicommondialogs.h"
 #include "uikeyboard.h"
 #include <at/atui/uicommandmanager.h>
 #include <windows.h>
@@ -196,8 +198,8 @@ bool ATUIGetScanCodeForKeyInput(uint32 keyInputCode, uint32& ch) {
 	return true;
 }
 
-bool ATUIGetScanCodeForCharacter(char c, uint32& ch) {
-	return ATUIGetScanCodeForKeyInput(ATUIPackKeyboardMapping(0, c, kATUIKeyboardMappingModifier_Cooked), ch);
+bool ATUIGetScanCodeForCharacter32(uint32 c32, uint32& ch) {
+	return c32 < 0x10000 && ATUIGetScanCodeForKeyInput(ATUIPackKeyboardMapping(0, c32, kATUIKeyboardMappingModifier_Cooked), ch);
 }
 
 bool ATUIGetDefaultScanCodeForCharacter(char c, uint8& ch) {
@@ -647,12 +649,13 @@ void ATUIGetDefaultKeyMap(const ATUIKeyboardOptions& options, vdfastvector<uint3
 }
 
 void ATUIInitVirtualKeyMap(const ATUIKeyboardOptions& options) {
-	if (options.mLayoutMode == ATUIKeyboardOptions::kLM_Custom)
-		g_ATDefaultKeyMap = g_ATCustomKeyMap;
-	else {
+	if (options.mLayoutMode == ATUIKeyboardOptions::kLM_Custom) {
+		g_ATUICustomKeyMapEnabled = true;
+	} else {
 		g_ATDefaultKeyMap.clear();
 		g_ATDefaultKeyMap.reserve(2048);
 		ATUIGetDefaultKeyMap(options, g_ATDefaultKeyMap);
+		g_ATUICustomKeyMapEnabled = false;
 	}
 }
 
@@ -1085,7 +1088,7 @@ const VDAccelTableEntry *ATUIGetAccelByCommand(ATUIAccelContext context, const c
 	return NULL;
 }
 
-bool ATUIActivateVirtKeyMapping(uint32 vk, bool alt, bool ctrl, bool shift, bool ext, bool up, ATUIAccelContext context) {
+uint8 ATUIGetVirtKeyMappingFlags( bool alt, bool ctrl, bool shift, bool ext, bool up) {
 	uint8 flags = 0;
 
 	if (ctrl)
@@ -1103,6 +1106,39 @@ bool ATUIActivateVirtKeyMapping(uint32 vk, bool alt, bool ctrl, bool shift, bool
 	if (up)
 		flags += VDUIAccelerator::kModUp;
 
+	return flags;
+}
+
+const VDAccelTableEntry *ATUIFindConflictingVirtKeyMapping(uint32 vk, bool alt, bool ctrl, bool shift, bool ext, ATUIAccelContext context) {
+	const uint8 flags = ATUIGetVirtKeyMappingFlags(alt, ctrl, shift, ext, false);
+
+	for(;;) {
+		const VDAccelTableDefinition& table = g_ATUIAccelTables[context];
+
+		VDUIAccelerator accel;
+		accel.mVirtKey = vk;
+		accel.mModifiers = flags;
+	
+		if (const VDAccelTableEntry *entry = table(accel))
+			return entry;
+
+		accel.mModifiers |= VDUIAccelerator::kModUp;
+
+		if (const VDAccelTableEntry *entry = table(accel))
+			return entry;
+
+		if (context == kATUIAccelContext_Global)
+			break;
+
+		context = kATUIAccelContext_Global;
+	}
+
+	return nullptr;
+}
+
+bool ATUIActivateVirtKeyMapping(uint32 vk, bool alt, bool ctrl, bool shift, bool ext, bool up, ATUIAccelContext context) {
+	const uint8 flags = ATUIGetVirtKeyMappingFlags(alt, ctrl, shift, ext, up);
+
 	for(;;) {
 		VDUIAccelerator accel;
 		accel.mVirtKey = vk;
@@ -1112,7 +1148,12 @@ bool ATUIActivateVirtKeyMapping(uint32 vk, bool alt, bool ctrl, bool shift, bool
 		const VDAccelTableEntry *entry = table(accel);
 
 		if (entry) {
-			g_ATUICommandMgr.ExecuteCommand(entry->mpCommand);
+			try {
+				g_ATUICommandMgr.ExecuteCommand(entry->mpCommand);
+			} catch(const MyError& e) {
+				ATUIShowError(ATUIGetNewPopupOwner(), e);
+			}
+
 			return true;
 		}
 

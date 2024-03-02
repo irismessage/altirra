@@ -20,6 +20,7 @@ public:
 	void SetStockImage(sint32 id);
 	void SetText(const wchar_t *s);
 	void SetTextColor(uint32 color);
+	void SetTextColorDisabled(uint32 color);
 	void SetDepressed(bool depressed);
 	void SetToggleMode(bool enabled);
 	void SetFrameEnabled(bool enabled);
@@ -30,17 +31,20 @@ public:
 	vdfunction<void(bool)>& OnHeldEvent() { return mHeldEvent; }
 
 public:
-	virtual void OnMouseDownL(sint32 x, sint32 y);
-	virtual void OnMouseUpL(sint32 x, sint32 y);
+	void OnMouseDownL(sint32 x, sint32 y) override;
+	void OnMouseUpL(sint32 x, sint32 y) override;
 
-	virtual void OnActionStart(uint32 id);
-	virtual void OnActionStop(uint32 id);
+	void OnActionStart(uint32 id) override;
+	void OnActionStop(uint32 id) override;
 
-	virtual void OnCreate();
-	virtual void OnSize();
+	void OnCreate() override;
+	void OnSize() override;
+	ATUIWidgetMetrics OnMeasure() override;
 
-	virtual void OnSetFocus();
-	virtual void OnKillFocus();
+	void OnEnableChanged() override;
+
+	void OnSetFocus() override;
+	void OnKillFocus() override;
 
 protected:
 	void SetHeld(bool held);
@@ -54,6 +58,7 @@ protected:
 	bool mbToggleNextState;
 	bool mbFrameEnabled;
 	uint32 mTextColor;
+	uint32 mTextColorDisabled;
 	sint32 mTextX;
 	sint32 mTextY;
 	VDStringW mText;

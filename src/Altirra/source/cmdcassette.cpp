@@ -159,6 +159,12 @@ void OnCommandCassetteDirectSenseMaxSpeed() {
 	g_sim.GetCassette().SetDirectSenseMode(ATCassetteDirectSenseMode::MaxSpeed);
 }
 
+void OnCommandCassetteToggleTurboPrefilter() {
+	auto& cas = g_sim.GetCassette();
+
+	cas.SetTurboPrefilterEnabled(!cas.IsTurboPrefilterEnabled());
+}
+
 namespace ATCommands {	
 	bool IsCassetteLoaded() {
 		return g_sim.GetCassette().IsLoaded();
@@ -207,6 +213,7 @@ namespace ATCommands {
 		{ "Cassette.DirectSenseLowSpeed", OnCommandCassetteDirectSenseLowSpeed, nullptr, [] { return ToChecked(g_sim.GetCassette().GetDirectSenseMode() == ATCassetteDirectSenseMode::LowSpeed); } },
 		{ "Cassette.DirectSenseHighSpeed", OnCommandCassetteDirectSenseHighSpeed, nullptr, [] { return ToChecked(g_sim.GetCassette().GetDirectSenseMode() == ATCassetteDirectSenseMode::HighSpeed); } },
 		{ "Cassette.DirectSenseMaxSpeed", OnCommandCassetteDirectSenseMaxSpeed, nullptr, [] { return ToChecked(g_sim.GetCassette().GetDirectSenseMode() == ATCassetteDirectSenseMode::MaxSpeed); } },
+		{ "Cassette.ToggleTurboPrefilter", OnCommandCassetteToggleTurboPrefilter, Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>, [] { return ATCommands::ToChecked(g_sim.GetCassette().IsTurboPrefilterEnabled()); } },
 	};
 }
 

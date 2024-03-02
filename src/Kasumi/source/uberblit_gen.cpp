@@ -41,6 +41,10 @@
 	#include "uberblit_resample_special_x86.h"
 #endif
 
+#if VD_CPU_X86 || VD_CPU_X64
+	#include "uberblit_ycbcr_sse2_intrin.h"
+#endif
+
 void VDPixmapGenerate(void *dst, ptrdiff_t pitch, sint32 bpr, sint32 height, IVDPixmapGen *gen, int genIndex) {
 	for(sint32 y=0; y<height; ++y) {
 		memcpy(dst, gen->GetRow(y, genIndex), bpr);
@@ -761,6 +765,43 @@ void VDPixmapUberBlitterGenerator::pointv(float yoffset, float yfactor, uint32 h
 	}
 }
 
+
+void VDPixmapUberBlitterGenerator::sharplinearh(float xoffset, float xfactor, uint32 w, float sharpness) {
+	StackEntry *args = &mStack.back();
+	IVDPixmapGen *src = args[0].mpSrc;
+	int srcIndex = args[0].mSrcIndex;
+
+	sint32 srcw = src->GetWidth(srcIndex);
+	if (xoffset == 0.5f && xfactor == 1.0f && srcw == w)
+		return;
+
+	VDPixmapGenResampleRow *out = new VDPixmapGenResampleRow;
+
+	out->Init(args[0].mpSrc, args[0].mSrcIndex, w, xoffset, xfactor, nsVDPixmap::kFilterSharpLinear, sharpness, true);
+
+	mGenerators.push_back(out);
+	MarkDependency(out, src);
+	args[0] = StackEntry(out, 0);
+}
+
+void VDPixmapUberBlitterGenerator::sharplinearv(float yoffset, float yfactor, uint32 h, float sharpness) {
+	StackEntry *args = &mStack.back();
+	IVDPixmapGen *src = args[0].mpSrc;
+	int srcIndex = args[0].mSrcIndex;
+
+	sint32 srch = src->GetHeight(srcIndex);
+	if (yoffset == 0.5f && yfactor == 1.0f && srch == h)
+		return;
+
+	VDPixmapGenResampleCol *out = new VDPixmapGenResampleCol;
+
+	out->Init(src, srcIndex, h, yoffset, yfactor, nsVDPixmap::kFilterSharpLinear, sharpness, true);
+
+	mGenerators.push_back(out);
+	MarkDependency(out, src);
+	args[0] = StackEntry(out, 0);
+}
+
 void VDPixmapUberBlitterGenerator::linearh(float xoffset, float xfactor, uint32 w, bool interpOnly) {
 	StackEntry *args = &mStack.back();
 	IVDPixmapGen *src = args[0].mpSrc;
@@ -1388,9 +1429,20 @@ void VDPixmapUberBlitterGenerator::rgb32_to_ycbcr601() {
 
 void VDPixmapUberBlitterGenerator::rgb32_to_ycbcr709() {
 	StackEntry *args = &mStack.back();
-	VDPixmapGenRGB32ToYCbCr709 *src = new VDPixmapGenRGB32ToYCbCr709;
 
-	src->Init(args[0].mpSrc, args[0].mSrcIndex);
+	IVDPixmapGen *src = nullptr;
+
+#if VD_CPU_X86 || VD_CPU_X64
+	VDPixmapGenRGB32ToYCbCr709_SSE2 *src2 = new VDPixmapGenRGB32ToYCbCr709_SSE2;
+	src2->Init(args[0].mpSrc, args[0].mSrcIndex);
+	src = src2;
+#endif
+
+	if (!src) {
+		VDPixmapGenRGB32ToYCbCr709 *src2 = new VDPixmapGenRGB32ToYCbCr709;
+		src2->Init(args[0].mpSrc, args[0].mSrcIndex);
+		src = src2;
+	}
 
 	mGenerators.push_back(src);
 	MarkDependency(src, args[0].mpSrc);

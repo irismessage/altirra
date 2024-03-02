@@ -18,9 +18,13 @@
 #include <stdafx.h>
 #include <windows.h>
 #include <shellapi.h>
+#include <uxtheme.h>
+#include <vd2/system/binary.h>
 #include <vd2/system/registry.h>
 #include <vd2/system/w32assist.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/theme.h>
+#include <at/atnativeui/theme_win32.h>
 #include <at/atnativeui/genericdialog.h>
 #include "resource.h"
 
@@ -483,6 +487,100 @@ namespace {
 			child.mpObject->Arrange(r3);
 		}
 	}
+
+	HICON ChangeIconBackground(HICON hIcon, uint32 newBgColor) {
+		ICONINFO iconInfo {};
+		if (!GetIconInfo(hIcon, &iconInfo))
+			return hIcon;
+
+		BITMAP bm {};
+
+		if (GetObject(iconInfo.hbmMask, sizeof bm, &bm) && iconInfo.hbmColor) {
+			// color icon -- blit onto black/white background, then create new icon
+			LONG w = bm.bmWidth;
+			LONG h = bm.bmHeight;
+
+			if (HDC hdc = CreateCompatibleDC(nullptr)) {
+				BITMAPINFO bi {};
+				bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+				bi.bmiHeader.biWidth = w;
+				bi.bmiHeader.biHeight = h;
+				bi.bmiHeader.biPlanes = 1;
+				bi.bmiHeader.biCompression = BI_RGB;
+				bi.bmiHeader.biSizeImage = w * h * 4;
+				bi.bmiHeader.biBitCount = 32;
+
+				void *bits = nullptr;
+				if (HBITMAP hbm = CreateDIBSection(hdc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0)) {
+					if (HGDIOBJ hgo = SelectObject(hdc, hbm)) {
+						// draw top half over black, bottom half over white
+						vdblock<uint32> overBlack(w*h);
+						vdblock<uint32> overWhite(w*h);
+
+						RECT r1 { 0, 0, w, h };
+						FillRect(hdc, &r1, (HBRUSH)GetStockObject(BLACK_BRUSH));
+						DrawIcon(hdc, 0, 0, hIcon);
+						GdiFlush();
+
+						memcpy(overBlack.data(), bits, bi.bmiHeader.biSizeImage);
+
+						RECT r2 { 0, 0, w, h };
+						FillRect(hdc, &r2, (HBRUSH)GetStockObject(WHITE_BRUSH));
+						DrawIcon(hdc, 0, 0, hIcon);
+						GdiFlush();
+
+						memcpy(overWhite.data(), bits, bi.bmiHeader.biSizeImage);
+
+						// check if the entire bitmap is opaque -- this requires B&W overlays
+						// to be the same
+						if (!memcmp(overBlack.data(), overWhite.data(), bi.bmiHeader.biSizeImage)) {
+							// yes -- flood fill white to our new desired color (we're lazy)
+							COLORREF fillColor = VDSwizzleU32(newBgColor) >> 8;
+							COLORREF areaColor = RGB(255, 255, 255);
+
+							SetDCBrushColor(hdc, fillColor);
+							SelectObject(hdc, GetStockObject(DC_BRUSH));
+
+							ExtFloodFill(hdc, 0, 0, fillColor, FLOODFILLSURFACE);
+							ExtFloodFill(hdc, w-1, 0, fillColor, FLOODFILLSURFACE);
+							ExtFloodFill(hdc, 0, h-1, fillColor, FLOODFILLSURFACE);
+							ExtFloodFill(hdc, w-1, h-1, fillColor, FLOODFILLSURFACE);
+
+							// create new icon
+							if (HBITMAP hbmMask = CreateCompatibleBitmap(hdc, w, h)) {
+								ICONINFO newIconInfo = iconInfo;
+
+								newIconInfo.hbmColor = hbm;
+								newIconInfo.hbmMask = hbmMask;
+
+								if (HICON hNewIcon = CreateIconIndirect(&newIconInfo)) {
+									DestroyIcon(hIcon);
+
+									hIcon = hNewIcon;
+								}
+
+								DeleteObject(hbmMask);
+							}
+						}
+
+						SelectObject(hdc, hgo);
+					}
+
+					DeleteObject(hbm);
+				}
+
+				DeleteDC(hdc);
+			}
+		}
+
+		if (iconInfo.hbmColor)
+			DeleteObject(iconInfo.hbmColor);
+
+		if (iconInfo.hbmMask)
+			DeleteObject(iconInfo.hbmMask);
+
+		return hIcon;
+	}
 }
 
 class ATGenericDialogW32 : public VDDialogFrameW32 {
@@ -558,13 +656,34 @@ VDZINT_PTR ATGenericDialogW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM 
 	switch(msg) {
 		case WM_CTLCOLORSTATIC:
 			if ((HWND)lParam == mhwndTitle) {
-				const uint32 c1 = GetSysColor(COLOR_HIGHLIGHT);
-				const uint32 c2 = GetSysColor(COLOR_WINDOWTEXT);
-				SetTextColor((HDC)wParam, (c1 | c2) - (((c1 ^ c2) & 0xfefefe) >> 1));
+				const auto& tc = ATUIGetThemeColors();
+
+				SetTextColor((HDC)wParam, VDSwizzleU32(tc.mHeadingText) >> 8);
+			} else if (ATUIIsDarkThemeActive()) {
+				const auto& tcw32 = ATUIGetThemeColorsW32();
+
+				SetTextColor((HDC)wParam, tcw32.mStaticFgCRef);
 			}
 
-			if ((HWND)lParam != mhwndDisableButton)
-				return (INT_PTR)GetSysColorBrush(COLOR_WINDOW);
+			if ((HWND)lParam != mhwndDisableButton) {
+				const auto& tcw32 = ATUIGetThemeColorsW32();
+				HDC hdc = (HDC)wParam;
+
+				SetBkColor(hdc, tcw32.mContentBgCRef);
+
+				// we need to specifically avoid returning DC_BRUSH -- it fails
+				// on static controls with icons, where the DC brush color is overridden
+				// internally in DrawIconEx() before the fill takes place
+				return (INT_PTR)tcw32.mContentBgBrush;
+			} else if (ATUIIsDarkThemeActive()) {
+				const auto& tcw32 = ATUIGetThemeColorsW32();
+				HDC hdc = (HDC)wParam;
+
+				SetTextColor(hdc, tcw32.mStaticFgCRef);
+				SetBkColor(hdc, tcw32.mStaticBgCRef);
+				return (INT_PTR)tcw32.mStaticBgBrush;
+			}
+
 			break;
 	}
 
@@ -723,14 +842,16 @@ bool ATGenericDialogW32::PreNCDestroy() {
 bool ATGenericDialogW32::OnErase(VDZHDC hdc) {
 	RECT r;
 	if (GetClientRect(mhdlg, &r)) {
+		const auto& tc = ATUIGetThemeColors();
+
 		SetBkMode(hdc, OPAQUE);
-		SetBkColor(hdc, GetSysColor(COLOR_WINDOW));
+		SetBkColor(hdc, VDSwizzleU32(tc.mContentBg) >> 8);
 
 		const RECT r1 { 0, 0, r.right, mSplitY };
 		ExtTextOutW(hdc, 0, 0, ETO_OPAQUE, &r1, L"", 0, nullptr);
 
 		const RECT r2 { 0, mSplitY, r.right, r.bottom };
-		SetBkColor(hdc, GetSysColor(COLOR_3DFACE));
+		SetBkColor(hdc, VDSwizzleU32(tc.mStaticBg) >> 8);
 		ExtTextOutW(hdc, 0, 0, ETO_OPAQUE, &r2, L"", 0, nullptr);
 	}
 	return true;
@@ -883,6 +1004,9 @@ void ATGenericDialogW32::ReinitLayout() {
 			}
 		}
 
+		if (ATUIIsDarkThemeActive())
+			hIcon = ChangeIconBackground(hIcon, ATUIGetThemeColors().mContentBg);
+
 		int iconWidth = 0;
 		int iconHeight = 0;
 
@@ -898,6 +1022,12 @@ void ATGenericDialogW32::ReinitLayout() {
 					if (!iconInfo.hbmColor)
 						iconHeight >>= 1;
 				}
+
+				if (iconInfo.hbmColor)
+					DeleteObject(iconInfo.hbmColor);
+
+				if (iconInfo.hbmMask)
+					DeleteObject(iconInfo.hbmMask);
 			}
 		}
 
@@ -937,9 +1067,16 @@ void ATGenericDialogW32::ReinitLayout() {
 	mLayoutText.Init(hwndMessage, vdrect32f(0, 0, 1, 1));
 	mLayoutTitle.Init(mhwndTitle, vdrect32f(0, 0, 1, 1));
 
-	if (mOptions.mpIgnoreTag)
-		mLayoutDisable.Init(mhwndDisableButton, vdrect32f(0, 0.5f, 0, 0.5f));
-	else
+	if (mOptions.mpIgnoreTag) {
+		if (mhwndDisableButton) {
+			mLayoutDisable.Init(mhwndDisableButton, vdrect32f(0, 0.5f, 0, 0.5f));
+
+			// disable the theme on the disable button if dark mode is enabled so we
+			// can change the colors on it
+			if (ATUIIsDarkThemeActive())
+				SetWindowTheme(mhwndDisableButton, L"", L"");
+		}
+	} else
 		ShowControl(IDC_DISABLE, false);
 
 	mLayoutYes.Init(GetControl(IDYES), vdrect32f(0.5f, 0.5f, 0.5f, 0.5f));

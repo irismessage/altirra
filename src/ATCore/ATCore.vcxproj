@@ -3,6 +3,8 @@
   <Import Project="../Build/ProjectConfigurations.props" />
   <ItemGroup>
     <ClInclude Include="..\h\at\atcore\address.h" />
+    <ClInclude Include="..\h\at\atcore\asyncdispatcher.h" />
+    <ClInclude Include="..\h\at\atcore\asyncdispatcherimpl.h" />
     <ClInclude Include="..\h\at\atcore\audiomixer.h" />
     <ClInclude Include="..\h\at\atcore\audiosource.h" />
     <ClInclude Include="..\h\at\atcore\blockdevice.h" />
@@ -10,6 +12,7 @@
     <ClInclude Include="..\h\at\atcore\cio.h" />
     <ClInclude Include="..\h\at\atcore\consoleoutput.h" />
     <ClInclude Include="..\h\at\atcore\constants.h" />
+    <ClInclude Include="..\h\at\atcore\decmath.h" />
     <ClInclude Include="..\h\at\atcore\deferredevent.h" />
     <ClInclude Include="..\h\at\atcore\device.h" />
     <ClInclude Include="..\h\at\atcore\devicecart.h" />
@@ -19,6 +22,7 @@
     <ClInclude Include="..\h\at\atcore\deviceimpl.h" />
     <ClInclude Include="..\h\at\atcore\devicemanager.h" />
     <ClInclude Include="..\h\at\atcore\bussignal.h" />
+    <ClInclude Include="..\h\at\atcore\devicesavestate.h" />
     <ClInclude Include="..\h\at\atcore\devicesystemcontrol.h" />
     <ClInclude Include="..\h\at\atcore\deviceparent.h" />
     <ClInclude Include="..\h\at\atcore\deviceparentimpl.h" />
@@ -42,16 +46,26 @@
     <ClInclude Include="..\h\at\atcore\progress.h" />
     <ClInclude Include="..\h\at\atcore\propertyset.h" />
     <ClInclude Include="..\h\at\atcore\scheduler.h" />
+    <ClInclude Include="..\h\at\atcore\serializable.h" />
+    <ClInclude Include="..\h\at\atcore\serialization.h" />
     <ClInclude Include="..\h\at\atcore\sioutils.h" />
+    <ClInclude Include="..\h\at\atcore\snappable.h" />
+    <ClInclude Include="..\h\at\atcore\snapshot.h" />
+    <ClInclude Include="..\h\at\atcore\snapshotimpl.h" />
     <ClInclude Include="..\h\at\atcore\vfs.h" />
     <ClInclude Include="..\h\at\atcore\wraptime.h" />
+    <ClInclude Include="h\at\atcore\internal\checksum.h" />
     <ClInclude Include="h\stdafx.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\address.cpp" />
+    <ClCompile Include="source\asyncdispatcherimpl.cpp" />
     <ClCompile Include="source\bussignal.cpp" />
     <ClCompile Include="source\checksum.cpp" />
+    <ClCompile Include="source\checksum_arm64.cpp" />
+    <ClCompile Include="source\checksum_intrin.cpp" />
     <ClCompile Include="source\consoleoutput.cpp" />
+    <ClCompile Include="source\decmath.cpp" />
     <ClCompile Include="source\deferredevent.cpp" />
     <ClCompile Include="source\deviceimpl.cpp" />
     <ClCompile Include="source\devicemanager.cpp" />
@@ -64,7 +78,9 @@
     <ClCompile Include="source\progress.cpp" />
     <ClCompile Include="source\propertyset.cpp" />
     <ClCompile Include="source\scheduler.cpp" />
+    <ClCompile Include="source\serialization.cpp" />
     <ClCompile Include="source\sioutils.cpp" />
+    <ClCompile Include="source\snapshotimpl.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
@@ -79,7 +95,6 @@
     <ProjectGuid>{B3C54D9A-6CBC-4A10-93EE-7A88B1B6E5AF}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>ATCore</RootNamespace>
-    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="..\Build\PlatformSetup.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />

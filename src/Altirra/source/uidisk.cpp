@@ -22,6 +22,7 @@
 
 #pragma warning(push)
 #pragma warning(disable: 4768)		// ShlObj.h(1065): warning C4768: __declspec attributes before linkage specification are ignored
+#pragma warning(disable: 4091)		// shlobj.h(1151): warning C4091: 'typedef ': ignored on left of 'tagGPFIDL_FLAGS' when no variable is declared (compiling source file source\uidisk.cpp)
 #include <shlobj.h>
 #pragma warning(pop)
 
@@ -50,7 +51,7 @@
 
 extern ATSimulator g_sim;
 
-void ATUIShowDialogDiskExplorer(VDGUIHandle h, IATDiskImage *image, const wchar_t *imageName, bool writeEnabled, bool autoFlush);
+void ATUIShowDialogDiskExplorer(VDGUIHandle h, IATDiskImage *image, const wchar_t *imageName, bool writeEnabled, bool autoFlush, ATDiskInterface *di);
 
 enum ATDiskFormatFileSystem {
 	kATDiskFFS_None,
@@ -1099,7 +1100,8 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 							const auto writeMode = diskIf.GetWriteMode();
 							ATUIShowDialogDiskExplorer(ATUIGetNewPopupOwner(), image, imageName.c_str(),
 								(writeMode & kATMediaWriteMode_AllowWrite) != 0,
-								(writeMode & kATMediaWriteMode_AutoFlush) != 0);
+								(writeMode & kATMediaWriteMode_AutoFlush) != 0,
+								&diskIf);
 
 							// invalidate the path widget in case the disk has been dirtied
 							RefreshDriveColor(driveIndex);

@@ -100,9 +100,9 @@ sint32 ATDebuggerDefaultTarget::GetTimeSkew() {
 
 uint8 ATDebuggerDefaultTarget::ReadByte(uint32 address) {
 	if (address < 0x1000000)
-		return g_sim.DebugExtReadByte(address);
+		return g_sim.GetMemoryManager()->ExtReadByte((uint16)address, (uint8)(address >> 16));
 
-	return 0;
+	return g_sim.DebugGlobalReadByte(address);
 }
 
 void ATDebuggerDefaultTarget::ReadMemory(uint32 address, void *dst, uint32 n) {

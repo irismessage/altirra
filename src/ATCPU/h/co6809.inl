@@ -240,7 +240,7 @@ void ATCoProc6809::Run() {
 				break;
 
 			case k6809StateIndexed5BitOffset:
-				mAddr += ((mData & 0x1F) - 0x20) ^ (UINT32_C(0) - 0x20);
+				mAddr += ((mData & 0x1F) - 0x10) ^ (UINT32_C(0) - 0x10);
 				--mCyclesLeft;
 				break;
 
@@ -822,8 +822,7 @@ void ATCoProc6809::Run() {
 				break;
 
 			case k6809StateCwai_SetE:
-				mCC &= mData;
-				mCC |= E;
+				SetCC((mCC & mData) | E);
 				mData = 0xFF;
 				break;
 
@@ -1669,8 +1668,10 @@ void ATCoProc6809::Run() {
 					he->mExt.mYH = (uint8)(mY >> 8);
 					he->mS = (uint8)mS;
 					he->mExt.mSH = (uint8)(mS >> 8);
-					he->mbIRQ = false;
-					he->mbNMI = false;
+					he->mbIRQ = mbHistoryPendingIRQ;
+					mbHistoryPendingIRQ = false;
+					he->mbNMI = mbHistoryPendingNMI;
+					mbHistoryPendingNMI = false;
 					he->mSubCycle = 0;
 					he->mbEmulation = true;
 					he->mK = mDP;

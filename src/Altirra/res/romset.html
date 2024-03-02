@@ -4,9 +4,10 @@
     <style>
       body {
         background: #fff;
-        color: #000;  
+        color: #000;
         font-family: sans-serif;
         font-size: 10pt;
+		margin: 8pt;
       }
 
       tt {
@@ -17,6 +18,9 @@
       h1 {
         font-weight: 400;
         font-size: 250%;
+		background: linear-gradient(to right, #acf, #eee);
+		padding: 4pt;
+		margin: -4pt;
       }
 
       h2 {
@@ -109,6 +113,10 @@
         without any warranty.
       </p>
     </div>
+    <h2>Manuals</h2>
+    <p>
+      Visit the <a href="http://virtualdub.org/altirra.html">Altirra home page</a> for the Altirra 8K BASIC manual.
+    </p>
     <h2>Source code</h2>
     <p>
       The source code for these files is included in the source of the <a href="http://virtualdub.org/altirra.html">Altirra emulator</a>.
@@ -119,7 +127,53 @@
     </p>
     <h2>Version history</h2>
     <h3>AltirraOS</h3>
+	<p>
+		In current versions, the version string for AltirraOS 400/800, XL/XE/XEGS, and 65C816 can be read programmatically
+		from the ROM image. For the 16K images, the version string is stored at the end of the self-test region, at offsets
+		$17F8-17FF in the image ($57F8-57FF in memory), and for the 10K image, it is at $0CB0 in the image ($E4B0 in memory)
+		as part of the memo pad banner.
+	</p>
     <ul class="verhistory">
+	  <li>Version 3.26</li>
+    <ul>
+      <li>Line draws in GR.0 no longer restore the cursor, which was causing screen corruption in Worms of Bemer.</li>
+    </ul>
+
+	  <li>Version 3.25</li>
+    <ul>
+      <li>Fixed an issue with screen clears overwriting memory above RAMTOP.</li>
+    </ul>
+
+	  <li>Version 3.24</li>
+      <ul>
+        <li>65C816 build: Fixed system device (@:) returning bogus data.</li>
+        <li>65C816 build: Fixed SIO crashing when called in native mode.</li>
+        <li>65C816 build: Fixed memory corruption in screen editor due to incompletely ported QUICKED.SYS fix.</li>
+        <li>65C816 build: Modified native VBI dispatching to work around bug in SpartaDOS X 4.48 BogoMIPS calibration loop.</li>
+      </ul>
+	  <li>Version 3.23</li>
+    <ul>
+      <li>Fixed an SIO issue with an out-of-spec short delay from asserting the command line to first command byte.</li>
+      <li>Fixed disk boot issues if a PBI device or cartridge init routine issued an SIO request with DAUX2 &gt; 0 before the disk boot.</li>
+      <li>XL/XE/XEGS: The boot screen now resets the Break key state properly after a boot is interrupted by the Break key.</li>
+    </ul>
+    <li>Version 3.22</li>
+	  <ul>
+		  <li>800 build: Raise memory scan limit from $C000 to $D000 to allow 52K memory configurations.</li>
+	  </ul>
+      <li>Version 3.21</li>
+	  <ul>
+		  <li>XL/XE/XEGS build: KRPDEL is now set/used, and keyboard repeat rates are adjusted properly for PAL/SECAM.</li>
+	  </ul>
+      <li>Version 3.20</li>
+	  <ul>
+		<li>Modified OLDADR usage to fix compatibility issue with SDX QUICKED.SYS.</li>
+		<li>SIO transmit operations can now be interrupted by user break (Break key). This fixes a hang with some older versions of the SIDE Loader, which accidentally rely on being able to force-exit SIO via the Break key IRQ.</li>
+		<li>Fixed audio configuration when loading from tape.</li>
+		<li>Disk boot is now attempted after tape boot and a right cart not requesting cart start. This fixes a random crash when booting the tape version of Fun With Spelling With Heathcliff, which relies on the VBI synchronization from a failed SIO poll to avoid a race condition on boot.</li>
+		<li>The boot screen no longer forces a cold boot when invoked as part of the boot process. It now resumes the boot after successfully reading sector 1, so that internal BASIC disable state is preserved. A cold boot is still forced when invoking the boot screen via the self-test vector after initial boot.</li>
+		<li>The Display Handler now properly sets the default background color (COLOR4) to $06 when opening a GR.11 screen.</li>
+	  </ul>
       <li>Version 3.17</li>
 	  <ul>
 		<li>Fixed regression in 3.16 where fine scrolling was set up too often on screen opens.</li>

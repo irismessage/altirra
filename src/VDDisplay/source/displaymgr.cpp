@@ -92,7 +92,8 @@ void VDVideoDisplayClient::RemapPalette() {
 ///////////////////////////////////////////////////////////////////////////
 
 VDVideoDisplayManager::VDVideoDisplayManager()
-	: mTicksEnabledCount(0)
+	: VDThread("Video display manager")
+	, mTicksEnabledCount(0)
 	, mPreciseModeCount(0)
 	, mPreciseModePeriod(0)
 	, mPreciseModeLastUse(0)

@@ -28,7 +28,19 @@
 
 // Advances the scheduler time by one cycle and executes pending events.
 #define ATSCHEDULER_ADVANCE(pThis) if(++static_cast<ATScheduler *>(pThis)->mNextEventCounter);else((pThis)->ProcessNextEvent()); VDASSERT((pThis)->mNextEventCounter >= 0x80000000);
-#define ATSCHEDULER_ADVANCE_N(pThis, amount) if(static_cast<ATScheduler *>(pThis)->mNextEventCounter += static_cast<uint32>((amount)));else((pThis)->ProcessNextEvent()); VDASSERT((pThis)->mNextEventCounter >= 0x80000000);
+#define ATSCHEDULER_ADVANCE_N(pThis, amount) if(static_cast<ATScheduler *>(pThis)->mNextEventCounter += static_cast<uint32>((amount)));else((pThis)->ProcessNextEvent()); VDASSERT((pThis)->mNextEventCounter >= 0x80000000 || ((pThis)->mTimeBase == (pThis)->mStopTime));
+
+#define ATSCHEDULER_ADVANCE_STOPCHECK(pThis)	\
+	(++static_cast<ATScheduler *>(pThis)->mNextEventCounter	|| \
+		((pThis)->mTimeBase == (pThis)->mStopTime	\
+			? (--static_cast<ATScheduler *>(pThis)->mNextEventCounter, false)	\
+			: ((pThis)->ProcessNextEvent(), true)	\
+		)	\
+	)
+
+#define ATSCHEDULER_TRYSKIP(pThis, cycles)	\
+	const uint32 tmp = static_cast<ATScheduler *>(pThis)->mNextEventCounter + (cycles);	\
+		tmp >= UINT32_C(0x80000000) ? ((pThis)->mNextEventCounter = tmp),true : false
 
 // Returns the number of cycles to next event
 #define ATSCHEDULER_GETTIMETONEXT(pThis) (uint32(0)-static_cast<ATScheduler *>(pThis)->mNextEventCounter)
@@ -119,17 +131,38 @@ public:
 
 	uint32	GetTicksToNextEvent() const;
 
+	// Sets the rate at which the scheduler counts, in ticks per second. The scheduler
+	// doesn't use this other than to return it to whoever asks.
 	void SetRate(const VDFraction& f) { mRate = f; }
 	VDFraction GetRate() const { return mRate; }
 
+	// Set the maximum delay between requested calls to ProcessNextEvent(). This ensures
+	// that the simulator cycles periodically even with no events or very long event
+	// delays. Changing this on the fly can cause the next event counter to be
+	// re-evaluated.
+	void SetStopTime(uint32 stopTime);
+	void ClearStopTime();
+
 public:
+	// Counter until next nearest event. Note that this is always unsigned _negative_
+	// as it counts up to 0.
 	uint32	mNextEventCounter;
+
+	// Time of next event processing cycle. This will be the time of either the next
+	// event or the max delay from the previous cycle, whichever is closer. The current
+	// time is the time base + next event counter.
 	uint32	mTimeBase;
 
 protected:
 	ATEventLink mActiveEvents;
 	ATEventLink *mpFreeEvents;
 
+public:
+	bool		mbStopTimeValid;
+	uint32		mStopTime;
+
+
+protected:
 	uint64		mTick64Floor;
 	VDFraction	mRate;
 

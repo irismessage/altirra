@@ -31,6 +31,7 @@
     <ClCompile Include="source\messagedispatcher.cpp" />
     <ClCompile Include="source\messageloop.cpp" />
     <ClCompile Include="source\syncwait.cpp" />
+    <ClCompile Include="source\theme.cpp" />
     <ClCompile Include="source\uiframe.cpp" />
     <ClCompile Include="source\uinativewindow.cpp" />
     <ClCompile Include="source\progress.cpp" />
@@ -46,6 +47,8 @@
     <ClInclude Include="..\h\at\atnativeui\messagedispatcher.h" />
     <ClInclude Include="..\h\at\atnativeui\messageloop.h" />
     <ClInclude Include="..\h\at\atnativeui\syncwait.h" />
+    <ClInclude Include="..\h\at\atnativeui\theme.h" />
+    <ClInclude Include="..\h\at\atnativeui\theme_win32.h" />
     <ClInclude Include="..\h\at\atnativeui\uiframe.h" />
     <ClInclude Include="..\h\at\atnativeui\uinativewindow.h" />
     <ClInclude Include="..\h\at\atnativeui\progress.h" />

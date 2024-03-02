@@ -46,7 +46,7 @@ enum ATFirmwareId {
 	kATFirmwareId_Custom = 0x10000
 };
 
-enum ATFirmwareType {
+enum ATFirmwareType : uint32 {
 	kATFirmwareType_Unknown,
 	kATFirmwareType_Kernel800_OSA,
 	kATFirmwareType_Kernel800_OSB,
@@ -91,6 +91,9 @@ enum ATFirmwareType {
 	kATFirmwareType_RapidusCorePBI,
 	kATFirmwareType_ISPlate,
 	kATFirmwareType_WarpOS,
+	kATFirmwareType_810Turbo,
+	kATFirmwareType_AMDC,
+	kATFirmwareType_PercomAT,
 	kATFirmwareTypeCount
 };
 

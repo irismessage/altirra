@@ -64,8 +64,15 @@ uint32 ATHistoryTreeBuilder::EndUpdate(ATHTNode *&last) {
 	return mEarliestUpdatePos;
 }
 
-void ATHistoryTreeBuilder::Update(const ATHistoryTraceInsn *VDRESTRICT htab, uint32 n) {	
+void ATHistoryTreeBuilder::Update(const ATHistoryTraceInsn *VDRESTRICT htab, uint32 n) {
+	if (mbCollapseLoops)
+		Update2<true>(htab, n);
+	else
+		Update2<false>(htab, n);
+}
 
+template<bool T_CollapseLoops>
+void ATHistoryTreeBuilder::Update2(const ATHistoryTraceInsn *VDRESTRICT htab, uint32 n) {
 	while(n--) {
 		const ATHistoryTraceInsn& hent = *htab++;
 		const uint32 insnOffset = mRepeatHead - 1;
@@ -77,10 +84,10 @@ void ATHistoryTreeBuilder::Update(const ATHistoryTraceInsn *VDRESTRICT htab, uin
 		// If we're higher on the stack than before (pop/return), pop entries off the tree parent stack.
 		// Note that we try to gracefully handle wrapping here. The idea is that generally the stack
 		// won't go down by more than 8 entries or so (JSL+interrupt), whereas it may go up way more
-		// than that when TXS is used.
+		// than that when TXS is used. We need at least 12 for a full stack push on 6809.
 
 		if (mLastS != s) {
-			if ((uint8)(mLastS - s) >= 8) {		// s > mLastS, with some wraparound slop
+			if ((uint8)(mLastS - s) >= 14) {		// s > mLastS, with some wraparound slop
 				while(s != mLastS) {				// note that mLastS is a uint8 and will wrap
 					mStackLevels[mLastS++] = { nullptr, 0 };
 				}
@@ -97,7 +104,7 @@ void ATHistoryTreeBuilder::Update(const ATHistoryTraceInsn *VDRESTRICT htab, uin
 
 		if (!parent) {
 			uint8 s2 = s + 1;
-			for(int i=0; i<8; ++i, ++s2) {
+			for(int i=0; i<14; ++i, ++s2) {
 				parent = mStackLevels[s2].mpTreeNode;
 
 				if (parent) {
@@ -197,20 +204,55 @@ void ATHistoryTreeBuilder::Update(const ATHistoryTraceInsn *VDRESTRICT htab, uin
 		mpHistoryTree->VerifyNode(parent, 2);
 #endif
 
-		// check if we have a match on the repeat window
-		int repeatOffset = -1;
+		if constexpr (T_CollapseLoops) {
+			// check if we have a match on the repeat window
+			int repeatOffset = -1;
 
-		typedef uint16 repeatHasher;
+			typedef uint16 repeatHasher;
 
-		const uint32 repeatData = hent.mPC + ((uint32)hent.mOpcode << 24);
-		const uint16 repeatHash = repeatHasher(repeatData);
-		ATHTNode *repeatFirstInsnNode = nullptr;
-		ATHTNode *repeatNode = nullptr;
+			const uint32 repeatData = hent.mPC + ((uint32)hent.mOpcode << 24);
+			const uint16 repeatHash = repeatHasher(repeatData);
+			ATHTNode *repeatFirstInsnNode = nullptr;
+			ATHTNode *repeatNode = nullptr;
+		
+			const uint32 repeatIndex = mRepeatHead & kRepeatWindowMask;
+			mRepeatDataSum[repeatIndex] = mRepeatSumAccum;
 
-		if (mbCollapseLoops) {
 			uint32 pos = mRepeatHashStart[repeatHash];
 			const uint32 basePos = mRepeatHead > mRepeatTail + (kRepeatWindowSize / 3) ? mRepeatHead - (kRepeatWindowSize / 3) : mRepeatTail;
 
+			// Loop detector.
+			//
+			// Loop detection for large loops is involved because the brute force method of trying all
+			// loops of possible sizes at each instruction is impractically slow. Therefore, we use
+			// a bit more refined of an algorithm:
+			//
+			// - A rolling hash table is maintained of instruction anchors (PC,opcode pairs). This is
+			//   used to efficiently find initial possible repeat points. The search is limited to
+			//   16 nodes to limit the worst case, which can get really bad with an irregular loop.
+			//   The hash chain is always sorted in reverse execution order, so a plain loop will
+			//   always be found first as long as there are no excessive collisions. The hash function
+			//   guarantees this for uninterrupted simple loops less than 4K in size.
+			//   
+			// - For each successful hit, a telescoping check is made on the next instance of that
+			//   hit for the corresponding loop size. IOW, if we have found A--A, a check is made for
+			//   a match at twice the distance for the pattern A--A--A.
+			//
+			// - Assuming that check works, an additional check is made to see if rolling checksums
+			//   for the two sub-blocks, i.e. for abcABC we verify that hash(abc) == hash(ABC). The
+			//   rolling checksums are produced in O(1) from a rolling partial sum array.
+			//
+			// - The two loop iterations are then exhaustively verified against each other. This check
+			//   is skipped when we just found a repeat loop of comparable size and just need to roll
+			//   the match forward one insn; this happens constantly and is a big gain for large loops.
+			//
+			// - If the loop is new, a third loop iteration is checked. Since the first loop iteration
+			//   is not included within the repeat node, this is necessary to ensure that the loop node
+			//   always has at least two iterations.
+			//
+			// - Each time a loop iteration is folded, the corresponding nodes are backed out of the
+			//   hash table to speed up the search. The last instruction in the
+			//
 			for(int limit=0; limit<16 && pos >= basePos; ++limit) {
 				const uint32 winPos = pos & kRepeatWindowMask;
 
@@ -268,24 +310,26 @@ void ATHistoryTreeBuilder::Update(const ATHistoryTraceInsn *VDRESTRICT htab, uin
 							goto reject_match;
 					}
 
-					uint32 cleanupLen = blockSize - 1;
+					const uint32 blockSizem1 = blockSize - 1;
+					uint32 cleanupLen = blockSizem1;
 					if (!repeatNode || repeatNode->mRepeat.mSize != blockSize) {
 						// Hmm, there's no repeat node. We don't want to create a repeated section
 						// unless we have at least three iterations (2 repeats). That means we need
 						// to check another section.
-						const uint32 winPos3 = (winPos2 - blockSize) & kRepeatWindowMask;
-						const uint32 rollingSum3 = mRepeatDataSum[winPos2] - mRepeatDataSum[winPos3];
+						const uint32 winPos3a = (winPos2 - blockSize + 1) & kRepeatWindowMask;
+						const uint32 winPos2a = (winPos2 + 1) & kRepeatWindowMask;
+						const uint32 winPos1a = (winPos + 1) & kRepeatWindowMask;
 
-						if (rollingSum2 != rollingSum3)
+						if (mRepeatDataSum[winPos3a] + mRepeatDataSum[winPos1a] != 2*mRepeatDataSum[winPos2a])
 							goto reject_match;
 
-						for(uint32 i=0; i<blockSize; ++i) {
-							if (mRepeatData[(winPos2 + i) & kRepeatWindowMask] != mRepeatData[(winPos3 + i) & kRepeatWindowMask])
+						for(uint32 i=0; i<blockSizem1; ++i) {
+							if (mRepeatData[(winPos3a + i) & kRepeatWindowMask] != mRepeatData[(winPos2a + i) & kRepeatWindowMask])
 								goto reject_match;
 						}
 
 						const uint32 repeatBase = mRepeatHead - blockSize * 2 + 1;
-						repeatFirstInsnNode = mRepeatTreeInsnNode[(mRepeatHead - blockSize * 2 + 1) & kRepeatWindowMask];
+						repeatFirstInsnNode = mRepeatTreeInsnNode[repeatBase & kRepeatWindowMask];
 
 						// Block match if the first instruction node is at a different nesting level than where
 						// we are currently adding instructions. This happens if the detected loop is a recursion
@@ -297,15 +341,18 @@ void ATHistoryTreeBuilder::Update(const ATHistoryTraceInsn *VDRESTRICT htab, uin
 						if (repeatFirstInsnNode->mNodeType == kATHTNodeType_Insn) {
 							const uint32 splitOffset = (repeatBase - 1) - repeatFirstInsnNode->mInsn.mOffset;
 
-							VDASSERT(splitOffset < repeatFirstInsnNode->mInsn.mCount);
-
 							if (splitOffset > 0) {
+								if (splitOffset < repeatFirstInsnNode->mInsn.mCount) {
+									repeatFirstInsnNode = mpHistoryTree->SplitInsnNode(repeatFirstInsnNode, splitOffset);
+								} else {
+									VDASSERT(splitOffset <= repeatFirstInsnNode->mInsn.mCount);
 
-								repeatFirstInsnNode = mpHistoryTree->SplitInsnNode(repeatFirstInsnNode, splitOffset);
+									repeatFirstInsnNode = repeatFirstInsnNode->mpNextSibling;
+								}
 
-	#if VERIFY_HISTORY_TREE
+#if VERIFY_HISTORY_TREE
 								mpHistoryTree->VerifyNode(repeatFirstInsnNode->mpParent, 2);
-	#endif
+#endif
 							}
 						}
 
@@ -314,10 +361,14 @@ void ATHistoryTreeBuilder::Update(const ATHistoryTraceInsn *VDRESTRICT htab, uin
 						repeatNode->mRepeat.mCount = 1;
 
 						cleanupLen = blockSize * 2 - 1;
+					} else {
+						VDASSERT(repeatFirstInsnNode->mpPrevSibling == repeatNode);
 					}
 
 					// Scan the hash chains and delink all nodes that we've found as part of the repeating
-					// section; these can no longer start a repeat.
+					// section; these can no longer start a repeat. This is one short of the added loop body
+					// size as the current insn is always added at the end of the insn loop. This must be done
+					// in reverse in order to back out the changes to the hash table.
 					{
 						uint32 cleanupPos = mRepeatHead - 1;
 						uint32 cleanupWindowPos = (cleanupPos & kRepeatWindowMask) + kRepeatWindowSize;
@@ -343,64 +394,67 @@ reject_match:
 
 				pos = nextPos;
 			}
-		}
 
-		const uint32 repeatIndex = mRepeatHead & kRepeatWindowMask;
+			bool hashNode = true;
 
-		if (repeatOffset >= 0) {
-			if (repeatNode->mpParent == parent) {
-				mRepeatTreeRepeatNode[(mRepeatHead - repeatOffset) & kRepeatWindowMask] = repeatNode;
+			if (repeatOffset >= 0) {
+				if (repeatNode->mpParent == parent) {
+					mRepeatTreeRepeatNode[(mRepeatHead - repeatOffset) & kRepeatWindowMask] = repeatNode;
 
-				++repeatNode->mRepeat.mCount;
+					++repeatNode->mRepeat.mCount;
 
-				RefreshNode(repeatNode);
+					RefreshNode(repeatNode);
 
-				// splice lines into repeat node
-				VDASSERT(repeatFirstInsnNode->mpPrevSibling == repeatNode);
+					// splice lines into repeat node
+					VDASSERT(repeatFirstInsnNode->mpPrevSibling == repeatNode);
 
 #if VERIFY_HISTORY_TREE
-				mpHistoryTree->VerifyNode(repeatNode->mpParent, 2);
+					mpHistoryTree->VerifyNode(repeatNode->mpParent, 2);
 #endif
 
-				ATHTNode *insertAfter = repeatNode->mpLastChild;
-				mpHistoryTree->SpliceNodes(repeatFirstInsnNode, repeatFirstInsnNode->mpParent->mpLastChild, repeatNode, insertAfter);
+					ATHTNode *insertAfter = repeatNode->mpLastChild;
+					mpHistoryTree->SpliceNodes(repeatFirstInsnNode, repeatFirstInsnNode->mpParent->mpLastChild, repeatNode, insertAfter);
 
-				// see if we can fuse nodes
-				if (insertAfter && insertAfter->mNodeType == kATHTNodeType_Insn && !insertAfter->mpFirstChild
-					&& repeatFirstInsnNode->mNodeType == kATHTNodeType_Insn && !repeatFirstInsnNode->mpFirstChild)
-				{
-					insertAfter->mInsn.mCount += repeatFirstInsnNode->mInsn.mCount;
-					insertAfter->mHeight += repeatFirstInsnNode->mHeight;
-					insertAfter->mVisibleLines += repeatFirstInsnNode->mVisibleLines;
-					repeatFirstInsnNode->mInsn.mCount = 0;
-					repeatFirstInsnNode->mHeight = 0;
-					repeatFirstInsnNode->mVisibleLines = 0;
+					// see if we can fuse nodes
+					if (insertAfter && insertAfter->mNodeType == kATHTNodeType_Insn && !insertAfter->mpFirstChild
+						&& repeatFirstInsnNode->mNodeType == kATHTNodeType_Insn && !repeatFirstInsnNode->mpFirstChild)
+					{
+						insertAfter->mInsn.mCount += repeatFirstInsnNode->mInsn.mCount;
+						insertAfter->mHeight += repeatFirstInsnNode->mHeight;
+						insertAfter->mVisibleLines += repeatFirstInsnNode->mVisibleLines;
+						repeatFirstInsnNode->mInsn.mCount = 0;
+						repeatFirstInsnNode->mHeight = 0;
+						repeatFirstInsnNode->mVisibleLines = 0;
 
-					mpHistoryTree->RemoveNode(repeatFirstInsnNode);
+						mpHistoryTree->RemoveNode(repeatFirstInsnNode);
+					}
+
+#if VERIFY_HISTORY_TREE
+					mpHistoryTree->VerifyNode(repeatNode->mpParent, 2);
+#endif
+
+					mpLastNode = repeatNode;
+
+					// necessary to ensure that last repeat insn node is consistent with the rest of the nodes in the
+					// loop section
+					insnNode = repeatNode;
 				}
 
-#if VERIFY_HISTORY_TREE
-				mpHistoryTree->VerifyNode(repeatNode->mpParent, 2);
-#endif
-
-				mpLastNode = repeatNode;
+				mRepeatLastBlockSize = (uint32)repeatOffset;
+			} else {
+				mRepeatLastBlockSize = 0;
 			}
 
-			mRepeatLastBlockSize = (uint32)repeatOffset;
-		} else {
-			mRepeatLastBlockSize = 0;
+			// shift in new instruction into repeat window
+			mRepeatHashNext[repeatIndex] = mRepeatHashStart[repeatHash];
+			mRepeatHashStart[repeatHash] = mRepeatHead;
+			mRepeatTreeInsnNode[repeatIndex] = insnNode;
+			mRepeatTreeRepeatNode[repeatIndex] = nullptr;
+			mRepeatSumAccum += repeatData;
+			mRepeatData[repeatIndex] = repeatData;
+			mRepeatData[repeatIndex + kRepeatWindowSize] = repeatData;
+			++mRepeatHead;
 		}
-
-		// shift in new instruction into repeat window
-		mRepeatHashNext[repeatIndex] = mRepeatHashStart[repeatHash];
-		mRepeatHashStart[repeatHash] = mRepeatHead;
-		mRepeatTreeInsnNode[repeatIndex] = insnNode;
-		mRepeatTreeRepeatNode[repeatIndex] = nullptr;
-		mRepeatDataSum[repeatIndex] = mRepeatSumAccum;
-		mRepeatSumAccum += repeatData;
-		mRepeatData[repeatIndex] = repeatData;
-		mRepeatData[repeatIndex + kRepeatWindowSize] = repeatData;
-		++mRepeatHead;
 	}
 }
 
@@ -515,7 +569,7 @@ void ATHistoryTranslateInsnZ80(ATHistoryTraceInsn *dst, const ATCPUHistoryEntry 
 		dst->mPC = he->mPC;
 		dst->mbInterrupt = he->mbIRQ != he->mbNMI;
 		dst->mbCall = false;
-		dst->mS = he->mS;
+		dst->mS = (uint8)he->mZ80_SP;
 		dst->mOpcode = he->mOpcode[0];
 		dst->mPushCount = 0;
 
@@ -559,21 +613,13 @@ void ATHistoryTranslateInsn6809(ATHistoryTraceInsn *dst, const ATCPUHistoryEntry
 	while(n--) {
 		const ATCPUHistoryEntry *he = *hep++;
 		dst->mPC = he->mPC;
-		dst->mbInterrupt = he->mbIRQ != he->mbNMI;
+		dst->mbInterrupt = he->mbIRQ || he->mbNMI;
 		dst->mbCall = false;
 		dst->mS = he->mS;
 		dst->mOpcode = he->mOpcode[0];
 		dst->mPushCount = 0;
 
-		if (he->mbIRQ || he->mbNMI) {
-			if (he->mP & 0x80) {
-				// E=1: push all registers (12 bytes)
-				dst->mPushCount = 12;
-			} else {
-				// E=0: push CC and PC only (3 bytes)
-				dst->mPushCount = 3;
-			}
-		} else {
+		if (!dst->mbInterrupt) {
 			switch(he->mOpcode[0]) {
 				case 0x34: {		// PSHS
 					const uint8 mask = he->mOpcode[1];
@@ -596,8 +642,7 @@ void ATHistoryTranslateInsn6809(ATHistoryTraceInsn *dst, const ATCPUHistoryEntry
 					break;
 				}
 
-				case 0x3C:		// CWAI
-					dst->mPushCount = 12;
+				default:
 					break;
 			}
 		}

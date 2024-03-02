@@ -27,11 +27,11 @@
 
 class ATGTIAEmulator;
 class ATSaveStateReader;
-class ATSaveStateWriter;
 class ATScheduler;
 class ATSimulatorEventManager;
 struct ATTraceContext;
 class ATTraceChannelSimple;
+class IATObjectState;
 
 #ifdef VD_COMPILER_MSVC
 #pragma runtime_checks("scu", off)
@@ -85,12 +85,25 @@ public:
 	};
 
 	uint16	GetDisplayListPointer() const { return mDLIST; }
-	uint32	GetTimestamp() const { return (mFrame << 20) + (mY << 8) + mX; }
-	uint32	GetFrameStartTime() const { return mFrameStart; }
-	uint32	GetFrameCounter() const { return mFrame; }
+	uint32	GetTimestamp() const { return (mRawFrame << 20) + (mY << 8) + mX; }
+	uint32	GetRawFrameStartTime() const { return mRawFrameStart; }
+	uint32	GetRawFrameCounter() const { return mRawFrame; }
+	uint32	GetPresentedFrameCounter() const { return mPresentedFrame; }
+
+	// Number of scanlines per frame (262 for NTSC/PAL60, 312 for PAL/SECAM/NTSC50).
+	uint32	GetScanlineCount() const { return mScanlineLimit; }
+
 	uint32	GetBeamX() const { return mX; }
 	uint32	GetBeamY() const { return mY; }
-	uint32	GetHaltedCycleCount() const { return mHaltedCycles; }
+	uint32	GetHALTCycleCount() const { return mHALTCycles; }
+	uint32	GetHaltedCycleCount() const {
+		uint32 cyc = mHALTCycles + mRDYCycleOffset;
+
+		if (mWSYNCPending)
+			cyc += (mX >= 105 ? mX - 105 - 114 : mX - 105);
+
+		return cyc;
+	}
 
 	AnalysisMode	GetAnalysisMode() const { return mAnalysisMode; }
 	void			SetAnalysisMode(AnalysisMode mode) { mAnalysisMode = mode; }
@@ -153,33 +166,40 @@ public:
 	void	LoadStatePrivate(ATSaveStateReader& reader);
 	void	EndLoadState(ATSaveStateReader& reader);
 
-	void	BeginSaveState(ATSaveStateWriter& writer);
-	void	SaveStateArch(ATSaveStateWriter& writer);
-	void	SaveStatePrivate(ATSaveStateWriter& writer);
+	void	SaveState(IATObjectState **p);
+	void	LoadState(const IATObjectState& state);
 
 	void	GetRegisterState(ATAnticRegisterState& state) const;
 
 	void	SetTraceContext(ATTraceContext *context);
 
-protected:
+private:
+	friend class ATSaveStateAnticInternal;
+
+	enum ATAnticEvent : uint32;
+
 	template<class T>
 	void	ExchangeState(T& io);
+	template<bool write, typename T>
+	void	TransferInternalState(T& obj2);
+
+	void	EndLoadStateInternal();
 
 	uint8	AdvanceSpecial();
 	void	AdvanceScanline();
 	void	AdvanceFrame();
 	void	UpdateDMAPattern();
 	void	LatchPlayfieldEdges();
+	void	UpdateFont();
 	void	UpdateCurrentCharRow();
 	void	UpdatePlayfieldTiming();
-	void	UpdatePlayfieldDataPointers();
 
 	void	OnScheduledEvent(uint32 id);
 	void	QueueRegisterUpdate(uint32 delay, uint8 reg, uint8 value);
 	void	ExecuteQueuedUpdates();
 
 	// critical fields written in Advance()
-	uint32	mHaltedCycles = 0;
+	uint32	mHALTCycles = 0;
 	uint32	mX = 0;
 	uint16	mPFRowDMAPtrOffset = 0;
 
@@ -193,11 +213,13 @@ protected:
 	uint16	mPFRowDMAPtrBase = 0;
 
 	uint32	mY = 0;
-	uint32	mFrame = 0;
-	uint32	mFrameStart = 0;
+	uint32	mPresentedFrame = 0;
+	uint32	mRawFrame = 0;
+	uint32	mRawFrameStart = 0;
 	uint32	mScanlineLimit = 0;
 	uint32	mScanlineMax = 0;
 	uint32	mVSyncStart = 0;
+	uint32	mRDYCycleOffset = 0;
 
 	bool	mbDLExtraLoadsPending = false;
 	bool	mbDLActive = false;
@@ -333,6 +355,10 @@ protected:
 
 	ATEvent *mpRegisterUpdateEvent = nullptr;
 	ATEvent *mpEventWSYNC = nullptr;
+
+	// Signifies that /RNMI has been pulled and a reset NMI is pending. This
+	// triggers at scanline 249.
+	ATEvent *mpEventRNMI = nullptr;
 
 	ATTraceContext *mpTraceContext = nullptr;
 	ATTraceChannelSimple *mpTraceChannelFrames = nullptr;
@@ -545,9 +571,9 @@ VDFORCEINLINE void ATAnticEmulator::PostAdvance(uint8 fetchMode) {
 	}
 
 	uint8 busActive = fetchMode & 1;
-	busActive |= (uint8)mbWSYNCActive;
+	mHALTCycles += busActive;
 
-	mHaltedCycles += busActive;
+	busActive |= (uint8)mbWSYNCActive;
 }
 
 #ifdef VD_COMPILER_MSVC

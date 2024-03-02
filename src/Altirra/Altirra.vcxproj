@@ -179,6 +179,23 @@
       <AdditionalManifestFiles>manifest\win7.manifest;manifest\comctl6_arm64.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
     </Manifest>
   </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Analysis|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+    <Link>
+      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;atuicontrols.lib;atemulation.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(VDLibPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <SubSystem>Windows</SubSystem>
+    </Link>
+    <Manifest>
+      <AdditionalManifestFiles>manifest\win7.manifest;manifest\comctl6_x64.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
+    </Manifest>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="h\audiorawsource.h" />
     <ClInclude Include="h\browser.h" />
@@ -189,7 +206,13 @@
     <ClInclude Include="h\compatengine.h" />
     <ClInclude Include="h\constants.h" />
     <ClInclude Include="h\cputracer.h" />
+    <ClInclude Include="h\customdevice.h" />
+    <ClInclude Include="h\customdevicecompiler.h" />
+    <ClInclude Include="h\customdevicevm.h" />
+    <ClInclude Include="h\customdevice_win32.h" />
+    <ClInclude Include="h\debuggersettings.h" />
     <ClInclude Include="h\decode_png.h" />
+    <ClInclude Include="h\diskdriveamdc.h" />
     <ClInclude Include="h\diskdriveatr8000.h" />
     <ClInclude Include="h\diskdrivefull.h" />
     <ClInclude Include="h\diskdrivefullbase.h" />
@@ -197,6 +220,7 @@
     <ClInclude Include="h\diskdrivepercom.h" />
     <ClInclude Include="h\diskdrivexf551.h" />
     <ClInclude Include="h\diskinterface.h" />
+    <ClInclude Include="h\diskvirtimagebase.h" />
     <ClInclude Include="h\fdc.h" />
     <ClInclude Include="h\mediamanager.h" />
     <ClInclude Include="h\pbidisk.h" />
@@ -204,6 +228,7 @@
     <ClInclude Include="h\rapidus.h" />
     <ClInclude Include="h\sapconverter.h" />
     <ClInclude Include="h\sapwriter.h" />
+    <ClInclude Include="h\savestateio.h" />
     <ClInclude Include="h\settings.h" />
     <ClInclude Include="h\sio2sd.h" />
     <ClCompile Include="source\1030.cpp" />
@@ -212,46 +237,28 @@
     <ClCompile Include="source\antic.cpp" />
     <ClCompile Include="source\artifacting.cpp" />
     <ClCompile Include="source\artifacting_neon.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Platform)'=='x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="source\artifacting_ntsc_neon.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Platform)'=='x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="source\artifacting_ntsc_sse2.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="source\artifacting_ntsc_sse2_intrin.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="source\artifacting_pal_scalar.cpp" />
     <ClCompile Include="source\artifacting_pal_sse2.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="source\artifacting_pal_sse2_intrin.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="source\artifacting_sse2_intrin.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="source\assembler.cpp" />
     <ClCompile Include="source\audiofilters.cpp" />
@@ -296,11 +303,16 @@
     <ClCompile Include="source\cpuhookmanager.cpp" />
     <ClCompile Include="source\cputracer.cpp" />
     <ClCompile Include="source\cs8900a.cpp" />
+    <ClCompile Include="source\customdevice.cpp" />
+    <ClCompile Include="source\customdevicecompiler.cpp" />
+    <ClCompile Include="source\customdevicevm.cpp" />
+    <ClCompile Include="source\customdevice_win32.cpp" />
     <ClCompile Include="source\debugdisplay.cpp" />
     <ClCompile Include="source\debugger.cpp" />
     <ClCompile Include="source\debuggerautotest.cpp" />
     <ClCompile Include="source\debuggerexp.cpp" />
     <ClCompile Include="source\debuggerlog.cpp" />
+    <ClCompile Include="source\debuggersettings.cpp" />
     <ClCompile Include="source\debugtarget.cpp" />
     <ClCompile Include="source\decmath.cpp" />
     <ClCompile Include="source\decode_png.cpp" />
@@ -308,6 +320,7 @@
     <ClCompile Include="source\directorywatcher.cpp" />
     <ClCompile Include="source\disasm.cpp" />
     <ClCompile Include="source\disk.cpp" />
+    <ClCompile Include="source\diskdriveamdc.cpp" />
     <ClCompile Include="source\diskdriveatr8000.cpp" />
     <ClCompile Include="source\diskdrivefull.cpp" />
     <ClCompile Include="source\diskdrivefullbase.cpp" />
@@ -316,6 +329,7 @@
     <ClCompile Include="source\diskdrivexf551.cpp" />
     <ClCompile Include="source\diskinterface.cpp" />
     <ClCompile Include="source\diskvirtimage.cpp" />
+    <ClCompile Include="source\diskvirtimagebase.cpp" />
     <ClCompile Include="source\diskvirtimagesdfs.cpp" />
     <ClCompile Include="source\dragoncart.cpp" />
     <ClCompile Include="source\encode_png.cpp" />
@@ -373,6 +387,8 @@
     <ClCompile Include="source\sapconverter.cpp" />
     <ClCompile Include="source\sapwriter.cpp" />
     <ClCompile Include="source\savestate.cpp" />
+    <ClCompile Include="source\savestateio.cpp" />
+    <ClCompile Include="source\savestatetypes.cpp" />
     <ClCompile Include="source\scsidisk.cpp" />
     <ClCompile Include="source\sdrive.cpp" />
     <ClCompile Include="source\settings.cpp" />
@@ -404,10 +420,12 @@
     <ClCompile Include="source\uicompatdb.cpp" />
     <ClCompile Include="source\uiconf850.cpp" />
     <ClCompile Include="source\uiconfblackbox.cpp" />
+    <ClCompile Include="source\uiconfdevamdc.cpp" />
     <ClCompile Include="source\uiconfdev1030.cpp" />
     <ClCompile Include="source\uiconfdevatr8000.cpp" />
     <ClCompile Include="source\uiconfdevcorvus.cpp" />
     <ClCompile Include="source\uiconfdevcovox.cpp" />
+    <ClCompile Include="source\uiconfdevcustom.cpp" />
     <ClCompile Include="source\uiconfdevdongle.cpp" />
     <ClCompile Include="source\uiconfdevkmkjzide.cpp" />
     <ClCompile Include="source\uiconfdevkmkjzide2.cpp" />
@@ -415,6 +433,7 @@
     <ClCompile Include="source\uiconfdevpocketmodem.cpp" />
     <ClCompile Include="source\uiconfdevsx212.cpp" />
     <ClCompile Include="source\uiconfdevvbxe.cpp" />
+    <ClCompile Include="source\uiconfdevxep80.cpp" />
     <ClCompile Include="source\uiconfdiskdrivefull.cpp" />
     <ClCompile Include="source\uiconfharddisk.cpp" />
     <ClCompile Include="source\uiconfiguresystem.cpp" />
@@ -482,29 +501,15 @@
     <ClCompile Include="source\videowriter.cpp" />
     <ClCompile Include="source\virtualscreen.cpp" />
     <ClCompile Include="source\vs2013x64crashfix.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">true</ExcludedFromBuild>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">NotUsing</PrecompiledHeader>
+      <ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild>
+      <PrecompiledHeader Condition="'$(Platform)'=='x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Platform)'=='ARM64'">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="source\warpos.cpp" />
     <ClCompile Include="source\xelcf.cpp" />
     <ClCompile Include="source\xep80.cpp" />
     <ClCompile Include="source\stdafx.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">Create</PrecompiledHeader>
+      <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -648,75 +653,27 @@
   <ItemGroup>
     <PackResource Include="..\..\obj\Release\Kernel\playsap-r.xex">
       <FileType>Document</FileType>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATSapPlayerTypeR</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATSapPlayerTypeR</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATSapPlayerTypeR</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATSapPlayerTypeR</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">g_ATSapPlayerTypeR</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATSapPlayerTypeR</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">g_ATSapPlayerTypeR</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATSapPlayerTypeR</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">g_ATSapPlayerTypeR</SymbolName>
+      <SymbolName>g_ATSapPlayerTypeR</SymbolName>
     </PackResource>
     <PackResource Include="..\..\obj\Release\Kernel\playsap-b.xex">
       <FileType>Document</FileType>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATSapPlayerTypeB</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATSapPlayerTypeB</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATSapPlayerTypeB</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATSapPlayerTypeB</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">g_ATSapPlayerTypeB</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATSapPlayerTypeB</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">g_ATSapPlayerTypeB</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATSapPlayerTypeB</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">g_ATSapPlayerTypeB</SymbolName>
+      <SymbolName>g_ATSapPlayerTypeB</SymbolName>
     </PackResource>
     <PackResource Include="..\..\obj\Release\Kernel\playsap-c.xex">
       <FileType>Document</FileType>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATSapPlayerTypeC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATSapPlayerTypeC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATSapPlayerTypeC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATSapPlayerTypeC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">g_ATSapPlayerTypeC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATSapPlayerTypeC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">g_ATSapPlayerTypeC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATSapPlayerTypeC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">g_ATSapPlayerTypeC</SymbolName>
+      <SymbolName>g_ATSapPlayerTypeC</SymbolName>
     </PackResource>
     <PackResource Include="..\..\obj\Release\Kernel\playsap-d-ntsc.xex">
       <FileType>Document</FileType>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATSapPlayerTypeDNTSC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATSapPlayerTypeDNTSC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATSapPlayerTypeDNTSC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATSapPlayerTypeDNTSC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">g_ATSapPlayerTypeDNTSC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATSapPlayerTypeDNTSC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">g_ATSapPlayerTypeDNTSC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATSapPlayerTypeDNTSC</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">g_ATSapPlayerTypeDNTSC</SymbolName>
+      <SymbolName>g_ATSapPlayerTypeDNTSC</SymbolName>
     </PackResource>
     <PackResource Include="..\..\obj\Release\Kernel\playsap-d-pal.xex">
       <FileType>Document</FileType>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATSapPlayerTypeDPAL</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATSapPlayerTypeDPAL</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATSapPlayerTypeDPAL</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATSapPlayerTypeDPAL</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">g_ATSapPlayerTypeDPAL</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATSapPlayerTypeDPAL</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">g_ATSapPlayerTypeDPAL</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATSapPlayerTypeDPAL</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">g_ATSapPlayerTypeDPAL</SymbolName>
+      <SymbolName>g_ATSapPlayerTypeDPAL</SymbolName>
     </PackResource>
     <PackResource Include="..\..\obj\Release\Kernel\pbidisk.bin">
       <FileType>Document</FileType>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATPBIDiskFirmware</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATPBIDiskFirmware</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATPBIDiskFirmware</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATPBIDiskFirmware</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">g_ATPBIDiskFirmware</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATPBIDiskFirmware</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">g_ATPBIDiskFirmware</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATPBIDiskFirmware</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">g_ATPBIDiskFirmware</SymbolName>
+      <SymbolName>g_ATPBIDiskFirmware</SymbolName>
     </PackResource>
     <None Include="..\..\obj\Release\Kernel\rapidflash.lzrom" />
     <None Include="..\..\out\release\1030firmware.bin" />
@@ -786,204 +743,37 @@
     <None Include="..\..\out\debug\ultimate.lzrom" />
     <None Include="..\..\out\release\ultimate.lzrom" />
     <CompileRawFont Include="data\xep80_font_internal.bmp">
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">9</Ascent>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">7</Advance>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATXEP80Font_Internal</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</RawFont>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">16</CellHeight>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">16</GridColumns>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">8</GridRows>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">9</Ascent>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">9</Ascent>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">7</Advance>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">7</Advance>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATXEP80Font_Internal</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">g_ATXEP80Font_Internal</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</RawFont>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</RawFont>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">9</Ascent>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">7</Advance>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATXEP80Font_Internal</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">true</RawFont>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">16</CellHeight>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">16</GridColumns>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">8</GridRows>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">9</Ascent>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">9</Ascent>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">7</Advance>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">7</Advance>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATXEP80Font_Internal</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">g_ATXEP80Font_Internal</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">true</RawFont>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">true</RawFont>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">9</Ascent>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">7</Advance>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATXEP80Font_Internal</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</RawFont>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Release|x64'">16</CellHeight>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Release|x64'">16</GridColumns>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Release|x64'">8</GridRows>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">9</Ascent>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">9</Ascent>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Release|x64'">7</Advance>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">7</Advance>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATXEP80Font_Internal</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">g_ATXEP80Font_Internal</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</RawFont>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</RawFont>
+      <CellHeight>16</CellHeight>
+      <GridColumns>16</GridColumns>
+      <GridRows>8</GridRows>
+      <Ascent>9</Ascent>
+      <Advance>7</Advance>
+      <SymbolName>g_ATXEP80Font_Internal</SymbolName>
+      <RawFont>true</RawFont>
     </CompileRawFont>
     <CompileRawFont Include="data\xep80_font_intl.bmp">
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">9</Ascent>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">7</Advance>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATXEP80Font_Intl</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</RawFont>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">16</CellHeight>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">16</GridColumns>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">8</GridRows>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">9</Ascent>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">9</Ascent>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">7</Advance>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">7</Advance>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATXEP80Font_Intl</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">g_ATXEP80Font_Intl</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</RawFont>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</RawFont>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">9</Ascent>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">7</Advance>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATXEP80Font_Intl</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">true</RawFont>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">16</CellHeight>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">16</GridColumns>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">8</GridRows>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">9</Ascent>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">9</Ascent>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">7</Advance>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">7</Advance>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATXEP80Font_Intl</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">g_ATXEP80Font_Intl</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">true</RawFont>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">true</RawFont>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">9</Ascent>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">7</Advance>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATXEP80Font_Intl</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</RawFont>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Release|x64'">16</CellHeight>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Release|x64'">16</GridColumns>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Release|x64'">8</GridRows>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">9</Ascent>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">9</Ascent>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Release|x64'">7</Advance>
-      <Advance Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">7</Advance>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATXEP80Font_Intl</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">g_ATXEP80Font_Intl</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</RawFont>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</RawFont>
+      <CellHeight>16</CellHeight>
+      <GridColumns>16</GridColumns>
+      <GridRows>8</GridRows>
+      <Ascent>9</Ascent>
+      <Advance>7</Advance>
+      <SymbolName>g_ATXEP80Font_Intl</SymbolName>
+      <RawFont>true</RawFont>
     </CompileRawFont>
     <CompileRawFont Include="data\xep80_font_normal.bmp">
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">9</Ascent>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATXEP80Font_Normal</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</RawFont>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">16</CellHeight>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">16</GridColumns>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">8</GridRows>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">9</Ascent>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">9</Ascent>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATXEP80Font_Normal</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">g_ATXEP80Font_Normal</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</RawFont>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</RawFont>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">9</Ascent>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATXEP80Font_Normal</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">true</RawFont>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">16</CellHeight>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">16</GridColumns>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">8</GridRows>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">9</Ascent>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">9</Ascent>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATXEP80Font_Normal</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">g_ATXEP80Font_Normal</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">true</RawFont>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">true</RawFont>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">9</Ascent>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATXEP80Font_Normal</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</RawFont>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Release|x64'">16</CellHeight>
-      <CellHeight Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">16</CellHeight>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Release|x64'">16</GridColumns>
-      <GridColumns Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">16</GridColumns>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Release|x64'">8</GridRows>
-      <GridRows Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">8</GridRows>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">9</Ascent>
-      <Ascent Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">9</Ascent>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATXEP80Font_Normal</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">g_ATXEP80Font_Normal</SymbolName>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</RawFont>
-      <RawFont Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</RawFont>
+      <CellHeight>16</CellHeight>
+      <GridColumns>16</GridColumns>
+      <GridRows>8</GridRows>
+      <Ascent>9</Ascent>
+      <SymbolName>g_ATXEP80Font_Normal</SymbolName>
+      <RawFont>true</RawFont>
     </CompileRawFont>
     <None Include="res\TrackStep3.pcm" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="res\Altirra.rc">
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Configuration)'=='Debug'">DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Configuration)'!='Debug'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ResourceCompile>
     <ResourceCompile Include="..\ATNativeUI\res\atnativeui.rc" />
   </ItemGroup>
@@ -1007,21 +797,13 @@
   <ItemGroup>
     <YASM Include="source\gtia_sse2.asm">
       <FileType>Document</FileType>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Platform)'=='x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
     </YASM>
     <YASM Include="source\gtiarenderer_ssse3.asm">
       <FileType>Document</FileType>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Platform)'=='x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
     </YASM>
   </ItemGroup>
   <ItemGroup>

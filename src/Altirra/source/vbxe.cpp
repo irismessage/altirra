@@ -27,6 +27,7 @@
 #include "memorymanager.h"
 #include "irqcontroller.h"
 #include "trace.h"
+#include "artifacting.h"
 
 using namespace ATGTIA;
 
@@ -223,8 +224,12 @@ void ATVBXEEmulator::Shutdown() {
 }
 
 void ATVBXEEmulator::ColdReset() {
-	memcpy(mPalette[0], mDefaultPalette, sizeof mPalette[0]);
-	memset(mPalette[1], 0, sizeof(uint32)*256*3);
+	memcpy(mArchPalette[0], mDefaultPalette, sizeof mPalette[0]);
+	memset(mArchPalette[1], 0, sizeof(uint32)*256*3);
+
+	mbRenderPaletteChanged = false;
+
+	RecorrectPalettes();
 
 	mPsel			= 0;
 	mCsel			= 0;
@@ -356,8 +361,17 @@ void ATVBXEEmulator::SetAnalysisMode(bool enable) {
 	}
 }
 
-void ATVBXEEmulator::SetDefaultPalette(const uint32 pal[256]) {
-	memcpy(mDefaultPalette, pal, sizeof mDefaultPalette);
+void ATVBXEEmulator::SetDefaultPalette(const uint32 pal[256], ATPaletteCorrector *palcorr) {
+	if (pal) {
+		memcpy(mDefaultPalette, pal, sizeof mDefaultPalette);
+
+		if (!mbRenderPaletteChanged)
+			memcpy(mArchPalette[0], mDefaultPalette, sizeof mArchPalette[0]);
+	}
+
+	mpPaletteCorrector = palcorr;
+
+	RecorrectPalettes();
 }
 
 void ATVBXEEmulator::SetTraceContext(ATTraceContext *context) {
@@ -751,15 +765,21 @@ bool ATVBXEEmulator::WriteControl(uint8 addrLo, uint8 value) {
 			break;
 
 		case 0x46:	// CR
-			mPalette[mPsel][mCsel] = (mPalette[mPsel][mCsel] & 0x00FFFF) + ((uint32)(value & 0xFE) << 16) + (((uint32)(value & 0x80) << 9));
+			mArchPalette[mPsel][mCsel] = (mArchPalette[mPsel][mCsel] & 0x00FFFF) + ((uint32)(value & 0xFE) << 16) + (((uint32)(value & 0x80) << 9));
+			mPalette[mPsel][mCsel] = mpPaletteCorrector->CorrectSingleColor(mArchPalette[mPsel][mCsel], mRenderPaletteCorrectionMode, mbRenderPaletteSigned);
+			mbRenderPaletteChanged = true;
 			break;
 
 		case 0x47:	// CG
-			mPalette[mPsel][mCsel] = (mPalette[mPsel][mCsel] & 0xFF00FF) + ((uint32)(value & 0xFE) << 8) + (((uint32)(value & 0x80) << 1));
+			mArchPalette[mPsel][mCsel] = (mArchPalette[mPsel][mCsel] & 0xFF00FF) + ((uint32)(value & 0xFE) << 8) + (((uint32)(value & 0x80) << 1));
+			mPalette[mPsel][mCsel] = mpPaletteCorrector->CorrectSingleColor(mArchPalette[mPsel][mCsel], mRenderPaletteCorrectionMode, mbRenderPaletteSigned);
+			mbRenderPaletteChanged = true;
 			break;
 
 		case 0x48:	// CB
-			mPalette[mPsel][mCsel] = (mPalette[mPsel][mCsel] & 0xFFFF00) + (value & 0xFE) + (value >> 7);
+			mArchPalette[mPsel][mCsel] = (mArchPalette[mPsel][mCsel] & 0xFFFF00) + (value & 0xFE) + (value >> 7);
+			mPalette[mPsel][mCsel] = mpPaletteCorrector->CorrectSingleColor(mArchPalette[mPsel][mCsel], mRenderPaletteCorrectionMode, mbRenderPaletteSigned);
+			mbRenderPaletteChanged = true;
 			++mCsel;
 			break;
 
@@ -900,9 +920,10 @@ void ATVBXEEmulator::InitMemoryMaps() {
 	ShutdownMemoryMaps();
 
 	// Window A has priority over window B
-	mpMemLayerMEMACA = mpMemMan->CreateLayer(kATMemoryPri_Extsel+1, NULL, 0xD8, 0x10, false);
+	uint8 *dummyRam = &mPriorityTables[0][0][0];
+	mpMemLayerMEMACA = mpMemMan->CreateLayer(kATMemoryPri_Extsel+1, dummyRam, 0xD8, 0x10, false);
 	mpMemMan->SetLayerName(mpMemLayerMEMACA, "VBXE MEMAC A");
-	mpMemLayerMEMACB = mpMemMan->CreateLayer(kATMemoryPri_Extsel, NULL, 0x40, 0x40, false);
+	mpMemLayerMEMACB = mpMemMan->CreateLayer(kATMemoryPri_Extsel, dummyRam, 0x40, 0x40, false);
 	mpMemMan->SetLayerName(mpMemLayerMEMACB, "VBXE MEMAC B");
 
 	ATMemoryHandlerTable handler;
@@ -1017,9 +1038,15 @@ void ATVBXEEmulator::UpdateMemoryMaps() {
 	}
 }
 
-void ATVBXEEmulator::BeginFrame() {
+void ATVBXEEmulator::BeginFrame(int correctionMode, bool signedPalette) {
 	if (mpTraceChannelOverlay)
 		mpTraceChannelOverlay->TruncateLastEvent(mpScheduler->GetTick64());
+
+	mRenderPaletteCorrectionMode = correctionMode;
+	if (mRenderPaletteCorrectedMode != correctionMode || mbRenderPaletteSigned != signedPalette) {
+		mbRenderPaletteSigned = signedPalette;
+		RecorrectPalettes();
+	}
 
 	mbXdlActive = mbXdlEnabled;
 	mXdlAddr = mXdlBaseAddr;
@@ -3485,6 +3512,18 @@ void ATVBXEEmulator::UpdateColorTable() {
 	mpColorTable = mbAnalysisMode ? kATAnalysisColorTable : mbExtendedColor ? mColorTableExt : mColorTable;
 }
 
+void ATVBXEEmulator::RecorrectPalettes() {
+	if (!mpPaletteCorrector)
+		return;
+
+	mRenderPaletteCorrectedMode = mRenderPaletteCorrectionMode;
+
+	for(int i=0; i<4; ++i) {
+		for(int j=0; j<256; ++j)
+			mPalette[i][j] = mpPaletteCorrector->CorrectSingleColor(mArchPalette[i][j], mRenderPaletteCorrectionMode, mbRenderPaletteSigned);
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void ATCreateDeviceVBXE(const ATPropertySet& pset, IATDevice **dev);
@@ -3636,12 +3675,9 @@ void ATVBXEDevice::SetSharedMemoryMode(bool enabled) {
 
 		mEmulator.SetSharedMemoryMode(enabled);
 
-		if (enabled)
-			AllocVBXEMemory();
-
 		UpdateMemoryMapping();
 
-		if (!enabled)
+		if (enabled)
 			FreeVBXEMemory();
 	}
 }

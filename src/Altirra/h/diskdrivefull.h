@@ -40,17 +40,11 @@
 class ATIRQController;
 
 class ATDeviceDiskDriveFull final : public ATDevice
-	, public IATDeviceScheduling
 	, public IATDeviceFirmware
 	, public IATDeviceDiskDrive
 	, public ATDeviceSIO
 	, public IATDeviceButtons
-	, public IATDeviceDebugTarget
-	, public IATDebugTarget
-	, public IATDebugTargetHistory
-	, public IATDebugTargetExecutionControl
-	, public IATCPUBreakpointHandler
-	, public IATSchedulerCallback
+	, public ATDiskDriveDebugTargetControl
 	, public IATDeviceRawSIO
 	, public IATDiskInterfaceClient
 {
@@ -70,6 +64,7 @@ public:
 		kDeviceType_1050Turbo,
 		kDeviceType_1050TurboII,
 		kDeviceType_ISPlate,
+		kDeviceType_810Turbo,
 		kDeviceTypeCount,
 	};
 
@@ -89,9 +84,6 @@ public:
 	void ComputerColdReset() override;
 	void PeripheralColdReset() override;
 
-public:
-	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
-
 public:		// IATDeviceFirmware
 	void InitFirmware(ATFirmwareManager *fwman) override;
 	bool ReloadFirmware() override;
@@ -102,6 +94,7 @@ public:		// IATDeviceFirmware
 
 public:		// IATDeviceDiskDrive
 	void InitDiskDrive(IATDiskDriveManager *ddm) override;
+	ATDeviceDiskDriveInterfaceClient GetDiskInterfaceClient(uint32 index) override;
 
 public:		// ATDeviceSIO
 	void InitSIO(IATDeviceSIOManager *mgr) override;
@@ -110,47 +103,6 @@ public:		// IATDeviceButtons
 	uint32 GetSupportedButtons() const;
 	bool IsButtonDepressed(ATDeviceButton idx) const;
 	void ActivateButton(ATDeviceButton idx, bool state);
-
-public:	// IATDeviceDebugTarget
-	IATDebugTarget *GetDebugTarget(uint32 index) override;
-
-public:	// IATDebugTarget
-	const char *GetName() override;
-	ATDebugDisasmMode GetDisasmMode() override;
-
-	void GetExecState(ATCPUExecState& state) override;
-	void SetExecState(const ATCPUExecState& state) override;
-
-	sint32 GetTimeSkew() override;
-
-	uint8 ReadByte(uint32 address) override;
-	void ReadMemory(uint32 address, void *dst, uint32 n) override;
-
-	uint8 DebugReadByte(uint32 address) override;
-	void DebugReadMemory(uint32 address, void *dst, uint32 n) override;
-
-	void WriteByte(uint32 address, uint8 value) override;
-	void WriteMemory(uint32 address, const void *src, uint32 n) override;
-
-public:	// IATDebugTargetHistory
-	bool GetHistoryEnabled() const override;
-	void SetHistoryEnabled(bool enable) override;
-
-	std::pair<uint32, uint32> GetHistoryRange() const override;
-	uint32 ExtractHistory(const ATCPUHistoryEntry **hparray, uint32 start, uint32 n) const override;
-	uint32 ConvertRawTimestamp(uint32 rawTimestamp) const override;
-	double GetTimestampFrequency() const override { return mb1050 ? 1000000.0 : 500000.0; }
-
-public:	// IATDebugTargetExecutionControl
-	void Break() override;
-	bool StepInto(const vdfunction<void(bool)>& fn) override;
-	bool StepOver(const vdfunction<void(bool)>& fn) override;
-	bool StepOut(const vdfunction<void(bool)>& fn) override;
-	void StepUpdate() override;
-	void RunUntilSynced() override;
-
-public:	// IATCPUBreakpointHandler
-	bool CheckBreakpoint(uint32 pc) override;
 
 public:	// IATSchedulerCallback
 	void OnScheduledEvent(uint32 id) override;
@@ -166,16 +118,12 @@ public:	// IATDiskInterfaceClient
 	void OnWriteModeChanged() override;
 	void OnTimingModeChanged() override;
 	void OnAudioModeChanged() override;
+	bool IsImageSupported(const IATDiskImage& image) const;
 
 protected:
-	void CancelStep();
-
 	void Sync();
-	void AccumSubCycles();
 
-	void OnTransmitEvent();
-	void QueueNextTransmitEvent();
-	void AddTransmitEdge(uint32 polarity);
+	void AddTransmitEdge(bool polarity);
 
 	void OnRIOTRegisterWrite(uint32 addr, uint8 val);
 
@@ -196,18 +144,11 @@ protected:
 	void UpdateSlowSwitch();
 
 	enum {
-		kEventId_Run = 1,
-		kEventId_Transmit,
-		kEventId_DriveReceiveBit,
+		kEventId_DriveReceiveBit = kEventId_FirstCustom,
 		kEventId_DriveDiskChange,
 	};
 
-	ATScheduler *mpScheduler = nullptr;
-	ATScheduler *mpSlowScheduler = nullptr;
-	ATEvent *mpRunEvent = nullptr;
-	ATEvent *mpTransmitEvent = nullptr;
 	ATEvent *mpEventDriveReceiveBit = nullptr;
-	ATEvent *mpEventDriveTransmitBit = nullptr;
 	ATEvent *mpEventDriveDiskChange = nullptr;
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
 	IATDiskDriveManager *mpDiskDriveManager = nullptr;
@@ -221,26 +162,13 @@ protected:
 	uint32 mReceiveTimingAccum = 0;
 	uint32 mReceiveTimingStep = 0;
 
-	uint32 mTransmitResetCounter = 0;
-	uint32 mTransmitCyclesPerBit = 0;
-	uint8 mTransmitShiftRegister = 0;
-	uint8 mTransmitPhase = 0;
-	bool mbTransmitCurrentBit = true;
-
 	uint32 mCurrentTrack = 0;
 	bool mbROMBankAlt = false;
 	uint8 mROMBank = 0;
 
-	uint32 mLastSync = 0;
-	uint32 mLastSyncDriveTime = 0;
-	uint32 mLastSyncDriveTimeSubCycles = 0;
-	uint32 mSubCycleAccum = 0;
-	uint8 *mpCoProcWinBase = nullptr;
-
 	const bool mb1050;
 	const DeviceType mDeviceType;
 	uint8 mDriveId = 0;
-	uint32 mClockDivisor = 0;
 
 	bool mbFirmwareUsable = false;
 	bool mbSoundsEnabled = false;
@@ -269,43 +197,28 @@ protected:
 	ATCoProcWriteMemNode mWriteNodeFastSlowToggle {};
 	ATCoProcWriteMemNode mWriteNodeWriteProtectToggle {};
 
-	ATScheduler mDriveScheduler;
 	ATCoProc6502 mCoProc;
+
+	struct TargetProxy final : public ATDiskDriveDebugTargetProxyBaseT<ATCoProc6502> {
+		uint32 GetTime() const override {
+			return ATSCHEDULER_GETTIME(mpDriveScheduler);
+		}
+
+		ATScheduler *mpDriveScheduler;
+	} mTargetProxy;
 
 	ATFDCEmulator mFDC;
 	ATRIOT6532Emulator mRIOT;
 
 	vdfastvector<ATCPUHistoryEntry> mHistory;
 
-	struct TransmitEvent {
-		uint32 mTime : 31;
-		uint32 mBit : 1;
-	};
-
-	// How long of a delay there is in computer cycles between the drive sending SIO data
-	// and the computer receiving it. This is non-realistic but allows us to batch drive
-	// execution.
-	static constexpr uint32 kTransmitLatency = 128;
-
-	uint32 mTransmitHead = 0;
-	uint32 mTransmitTail = 0;
-
-	static constexpr uint32 kTransmitQueueSize = kTransmitLatency;
-	static constexpr uint32 kTransmitQueueMask = kTransmitQueueSize - 1;
-	TransmitEvent mTransmitQueue[kTransmitQueueSize] = {};
+	ATDiskDriveSerialBitTransmitQueue mSerialXmitQueue;
 
 	VDALIGN(4) uint8 mRAM[0x4100] = {};
 	VDALIGN(4) uint8 mROM[0x4000] = {};
 	VDALIGN(4) uint8 mDummyWrite[0x100] = {};
 	VDALIGN(4) uint8 mDummyRead[0x100] = {};
 	
-	vdfunction<void(bool)> mpStepHandler = {};
-	bool mbStepOut = false;
-	bool mbStepNotifyPending = false;
-	bool mbStepNotifyPendingBP = false;
-	uint32 mStepStartSubCycle = 0;
-	uint16 mStepOutS = 0;
-
 	ATDebugTargetBreakpointsImpl mBreakpointsImpl;
 };
 

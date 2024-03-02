@@ -38,6 +38,8 @@ enum ATMemoryMode : uint32 {
 	kATMemoryModeCount
 };
 
+AT_DECLARE_ENUM_TABLE(ATMemoryMode);
+
 enum ATHardwareMode : uint32 {
 	kATHardwareMode_800,
 	kATHardwareMode_800XL,
@@ -47,6 +49,8 @@ enum ATHardwareMode : uint32 {
 	kATHardwareMode_130XE,
 	kATHardwareModeCount
 };
+
+AT_DECLARE_ENUM_TABLE(ATHardwareMode);
 
 enum ATROMImage {
 	kATROMImage_OSA,
@@ -105,6 +109,8 @@ enum ATVideoStandard : uint32 {
 	kATVideoStandard_NTSC50,
 	kATVideoStandardCount
 };
+
+AT_DECLARE_ENUM_TABLE(ATVideoStandard);
 
 enum ATMemoryClearMode : uint8 {
 	kATMemoryClearMode_Zero,

@@ -37,6 +37,10 @@ VDJSONReader::~VDJSONReader() {
 		delete[] mNameBuffer;
 }
 
+void VDJSONReader::SetMemberNameFilter(vdfunction<bool(const wchar_t *)> fn) {
+	mpMemberFilter = std::move(fn);
+}
+
 bool VDJSONReader::Parse(const void *buf, size_t len, VDJSONDocument& doc) {
 	mpNameTable = &doc.mNameTable;
 	mpDocument = &doc;
@@ -51,9 +55,8 @@ bool VDJSONReader::Parse(const void *buf, size_t len, VDJSONDocument& doc) {
 	mInputLineNext = 0;
 	mInputChar = 0;
 	mInputCharNext = 0;
-	mErrorLine = 0;
-	mErrorChar = 0;
 	mbPendingCR = false;
+	mbSuppressAdvanceLine = false;
 
 	mbUTF16Mode = false;
 	mbUTF32Mode = false;
@@ -148,7 +151,9 @@ bool VDJSONReader::ParseDocument() {
 
 bool VDJSONReader::ParseObject(VDJSONValue& obj) {
 	obj.mType = VDJSONValue::kTypeObject;
-	obj.mpObject = NULL;
+	obj.mpObject = nullptr;
+
+	VDJSONMember *tail = nullptr;
 
 	wchar_t c = GetNonWhitespaceChar();
 	if (c != L'{') {
@@ -169,15 +174,21 @@ bool VDJSONReader::ParseObject(VDJSONValue& obj) {
 			if (GetNonWhitespaceChar() != L':')
 				return false;
 
+			wchar_t c = GetNonWhitespaceChar();
+
+			// add entry now to lock in current line number
+			std::pair<Lookup::iterator, bool> result(lookup.insert(Lookup::value_type(nameToken, (VDJSONValue *)nullptr)));
+			if (result.second) {
+				if (!mpMemberFilter || mpMemberFilter(mpDocument->mNameTable.GetName(nameToken)))
+					result.first->second = mpDocument->mPool.AddObjectMember(obj, nameToken, tail);
+			}
+
 			VDJSONValue val;
-			if (!ParseValue(val))
+			if (!ParseValue(c, val))
 				return false;
 
-			std::pair<Lookup::iterator, bool> result(lookup.insert(Lookup::value_type(nameToken, (VDJSONValue *)NULL)));
-			if (result.second)
-				result.first->second = mpDocument->mPool.AddObjectMember(obj, nameToken);
-
-			*result.first->second = val;
+			if (result.first->second)
+				*result.first->second = val;
 
 			c = GetNonWhitespaceChar();
 			if (c == L'}')
@@ -197,41 +208,41 @@ bool VDJSONReader::ParseArray(VDJSONValue& arr) {
 
 	wchar_t c = GetNonWhitespaceChar();
 	if (c != L']') {
-		UngetChar();
-
 		for(;;) {
-			mArrayStack.resize(++arrayLen);
+			VDJSONValue *val = mpDocument->mPool.AddValue();
 
-			VDJSONValue val;
-			if (!ParseValue(val))
+			mArrayStack.push_back(val);
+			++arrayLen;
+
+			if (!ParseValue(c, *val))
 				return false;
 
-			// must delay this as ParseValue() may parse an array
-			mArrayStack.back() = val;
-
-			wchar_t c = GetNonWhitespaceChar();
+			c = GetNonWhitespaceChar();
 			if (c == L']')
 				break;
 
 			if (c != L',')
 				return false;
+
+			c = GetNonWhitespaceChar();
 		}
 	}
 
-	mpDocument->mPool.AddArray(arr, arrayLen - arrayBase);
 
 	if (arrayLen != arrayBase) {
-		memcpy(arr.mpArray->mpElements, &mArrayStack[arrayBase], sizeof(VDJSONValue) * (arrayLen - arrayBase));
-
+		mpDocument->mPool.AddArray(arr, &mArrayStack[arrayBase], arrayLen - arrayBase);
 		mArrayStack.resize(arrayBase);
-	}
+	} else
+		mpDocument->mPool.AddArray(arr, nullptr, 0);
 
 	return true;
 }
 
 bool VDJSONReader::ParseValue(VDJSONValue& val) {
-	wchar_t c = GetNonWhitespaceChar();
+	return ParseValue(GetNonWhitespaceChar(), val);
+}
 
+bool VDJSONReader::ParseValue(wchar_t c, VDJSONValue& val) {
 	if (c == L'{') {
 		if (!ParseObject(val))
 			return false;
@@ -442,8 +453,11 @@ bool VDJSONReader::IsWhitespaceChar(wchar_t c) {
 }
 
 void VDJSONReader::UngetChar() {
-	if (mpInputNext != mpInputBase)
+	if (mpInputNext != mpInputBase) {
 		--mpInputNext;
+		if (*mpInputNext == '\n')
+			mbSuppressAdvanceLine = true;
+	}
 }
 
 wchar_t VDJSONReader::GetNonWhitespaceChar() {
@@ -461,7 +475,13 @@ wchar_t VDJSONReader::GetChar() {
 
 	wchar_t c = *mpInputNext++;
 
-	//putchar(c);
+	if (c == '\n') {
+		if (mbSuppressAdvanceLine)
+			mbSuppressAdvanceLine = false;
+		else
+			mpDocument->mPool.AdvanceLine();
+	}
+
 	return c;
 }
 

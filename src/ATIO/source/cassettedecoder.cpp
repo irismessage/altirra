@@ -19,6 +19,7 @@
 #include <stdafx.h>
 #include <complex>
 #include <at/atio/cassettedecoder.h>
+#include <at/atio/cassetteimage.h>		// for constants
 
 ATCassetteDecoderFSK::ATCassetteDecoderFSK() {
 	Reset();
@@ -161,16 +162,28 @@ ATCassetteDecoderDirect::ATCassetteDecoderDirect() {
 void ATCassetteDecoderDirect::Reset() {
 	mPrevLevel = 0;
 	mAGC = 0;
+	mPrefilterState = 0;
 }
 
-template<bool T_DoAnalysis>
+template<bool T_DoAnalysis, bool T_EnablePreFilter>
 void ATCassetteDecoderDirect::Process(const sint16 *samples, uint32 n, uint32 *bitfield, uint32 bitoffset, float *adest) {
 	uint32 bitaccum = 0;
 	uint32 bitcounter = 32 - bitoffset;
 
 	do {
-		const float x = *samples;
+		float x = *samples;
 		samples += 2;
+
+		if constexpr (T_EnablePreFilter) {
+			// To combat high-frequency attenuation ostensibly from Dolby-B decoding being
+			// improperly applied and to also cancel out low frequency components we don't
+			// care about, apply a high-pass filter at ~3.8KHz. This is just a
+			// simple single-pole filter with soft falloff so it doesn't distort too much.
+			static constexpr float kHPCoeff = 0.382f;
+
+			x -= mPrefilterState;
+			mPrefilterState += kHPCoeff * x;
+		}
 
 		float y = x - mPrevLevel;
 		mPrevLevel = x;
@@ -181,7 +194,7 @@ void ATCassetteDecoderDirect::Process(const sint16 *samples, uint32 n, uint32 *b
 		if (edge)
 			mbCurrentState = (y > 0);
 
-		if (T_DoAnalysis) {
+		if constexpr (T_DoAnalysis) {
 			// slots 0-3 reserved for FSK decoder
 			adest[4] = mAGC * (1.0f / 32767.0f);
 			adest[5] = mbCurrentState ? 0.8f : -0.8f;
@@ -207,5 +220,16 @@ void ATCassetteDecoderDirect::Process(const sint16 *samples, uint32 n, uint32 *b
 		*bitfield++ |= bitaccum << bitcounter;
 }
 
-template void ATCassetteDecoderDirect::Process<false>(const sint16 *samples, uint32 n, uint32 *bitfield, uint32 bitoffset, float *adest);
-template void ATCassetteDecoderDirect::Process<true>(const sint16 *samples, uint32 n, uint32 *bitfield, uint32 bitoffset, float *adest);
+void ATCassetteDecoderDirect::Process(bool enablePrefilter, const sint16 *samples, uint32 n, uint32 *bitfield, uint32 bitoffset, float *adest) {
+	if (adest) {
+		if (enablePrefilter)
+			Process<true, true>(samples, n, bitfield, bitoffset, adest);
+		else
+			Process<true, false>(samples, n, bitfield, bitoffset, adest);
+	} else {
+		if (enablePrefilter)
+			Process<false, true>(samples, n, bitfield, bitoffset, nullptr);
+		else
+			Process<false, false>(samples, n, bitfield, bitoffset, nullptr);
+	}
+}

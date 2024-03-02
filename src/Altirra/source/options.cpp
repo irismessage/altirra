@@ -31,6 +31,7 @@ ATOptions::ATOptions()
 	, mbPauseDuringMenu(false)
 	, mbLaunchAutoProfile(true)
 	, mThemeScale(100)
+	, mbDarkTheme(false)
 	, mErrorMode(kATErrorMode_Dialog)
 	, mbFullScreenBorderless(false)
 	, mFullScreenWidth(0)
@@ -104,6 +105,7 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "Flash: Ultimate1MB flash mode", opts.mU1MBFlashChip);
 	ATOptionsExchange(key, write, "Flash: Maxflash 8Mb flash mode", opts.mMaxflash8MbFlashChip);
 	ATOptionsExchange(key, write, "UI: Theme scale factor", opts.mThemeScale);
+	ATOptionsExchange(key, write, "UI: Use dark theme", opts.mbDarkTheme);
 	ATOptionsExchange(key, write, "UI: Pause during menus", opts.mbPauseDuringMenu);
 	ATOptionsExchange(key, write, "UI: Launch with automatic profile", opts.mbLaunchAutoProfile);
 	ATOptionsExchangeEnum(key, write, "Media: Default write mode", opts.mDefaultWriteMode, (ATMediaWriteMode)(kATMediaWriteMode_All + 1));

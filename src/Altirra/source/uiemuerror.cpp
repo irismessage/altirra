@@ -250,7 +250,7 @@ public:
 	virtual void RunInner() {
 		switch(mStage) {
 			case 0:
-				mpResult = ATUIShowAlert(L"The emulated system has stopped due to a program error.", L"Altirra Error");
+				mpResult = ATUIShowAlertError(L"The emulated system has stopped due to a program error.", L"Crash in emulation");
 				Wait(mpResult);
 				mStage = 1;
 				break;

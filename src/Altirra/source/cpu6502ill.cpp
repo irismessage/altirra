@@ -60,7 +60,8 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			break;
 
 		case 0x13:	// SLO (zp),Y
-			DecodeReadIndY();
+			DecodeWriteAddrIndY();
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateAsl;
 			*mpDstState++ = kStateWrite;
@@ -143,7 +144,8 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			break;
 
 		case 0x33:	// RLA (zp),Y
-			DecodeReadIndY();
+			DecodeWriteAddrIndY();
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateRol;
 			*mpDstState++ = kStateWrite;
@@ -169,7 +171,8 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			break;
 
 		case 0x3B:	// RLA abs,Y
-			DecodeReadAbsY();
+			DecodeWriteAddrAbsY();
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateRol;
 			*mpDstState++ = kStateWrite;
@@ -182,7 +185,8 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			break;
 
 		case 0x3F:	// RLA abs,X
-			DecodeReadAbsX();
+			DecodeWriteAddrAbsX();
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateRol;
 			*mpDstState++ = kStateWrite;
@@ -226,7 +230,8 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			break;
 
 		case 0x53:	// SRE (zp),Y
-			DecodeReadIndY();
+			DecodeWriteAddrIndY();
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateLsr;
 			*mpDstState++ = kStateWrite;
@@ -250,7 +255,8 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			break;
 
 		case 0x5B:	// SRE abs,Y
-			DecodeReadAbsY();
+			DecodeWriteAddrAbsY();
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateLsr;
 			*mpDstState++ = kStateWrite;
@@ -295,7 +301,6 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 		case 0x6B:	// ARR #imm
 			*mpDstState++ = kStateReadImm;
 			*mpDstState++ = kStateArr;
-			*mpDstState++ = kStateWait;
 			break;
 
 		case 0x6F:	// RRA abs
@@ -307,7 +312,8 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			break;
 
 		case 0x73:	// RRA (zp),Y
-			DecodeReadIndY();
+			DecodeWriteAddrIndY();
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateRor;
 			*mpDstState++ = kStateAdc;
@@ -331,7 +337,8 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			break;
 
 		case 0x7B:	// RRA abs,Y
-			DecodeReadAbsY();
+			DecodeWriteAddrAbsY();
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateRor;
 			*mpDstState++ = kStateAdc;
@@ -343,7 +350,8 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			break;
 
 		case 0x7F:	// RRA abs,X
-			DecodeReadAbsX();
+			DecodeWriteAddrAbsX();
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateRor;
 			*mpDstState++ = kStateAdc;
@@ -525,7 +533,8 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			break;
 
 		case 0xD3:	// DCP (zp),Y
-			DecodeReadIndY();
+			DecodeWriteAddrIndY();
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateDec;
 			*mpDstState++ = kStateCmp;
@@ -549,7 +558,8 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			break;
 
 		case 0xDB:	// DCP abs,Y
-			DecodeReadAbsY();
+			DecodeWriteAddrAbsY();
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateDec;
 			*mpDstState++ = kStateCmp;
@@ -605,7 +615,8 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			break;
 
 		case 0xF3:	// ISB (zp),Y
-			DecodeReadIndY();
+			DecodeWriteAddrIndY();
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateInc;
 			*mpDstState++ = kStateWrite;
@@ -629,7 +640,8 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 			break;
 
 		case 0xFB:	// ISB abs,Y
-			DecodeReadAbsY();
+			DecodeWriteAddrAbsY();
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateInc;
 			*mpDstState++ = kStateWrite;

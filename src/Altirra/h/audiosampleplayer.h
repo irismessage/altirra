@@ -40,14 +40,16 @@ public:
 	void Shutdown();
 
 public:
-	ATSoundId AddSound(ATAudioMix mix, uint32 delay, ATAudioSampleId sampleId, float volume) override;
-	ATSoundId AddLoopingSound(ATAudioMix mix, uint32 delay, ATAudioSampleId sampleId, float volume) override;
+	ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, ATAudioSampleId sampleId, float volume) override;
+	ATSoundId AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, ATAudioSampleId sampleId, float volume) override;
 
-	ATSoundId AddSound(ATAudioMix mix, uint32 delay, const sint16 *sample, uint32 len, float volume) override;
-	ATSoundId AddLoopingSound(ATAudioMix mix, uint32 delay, const sint16 *sample, uint32 len, float volume) override;
+	ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, const sint16 *sample, uint32 len, float volume) override;
+	ATSoundId AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, const sint16 *sample, uint32 len, float volume) override;
 
-	ATSoundId AddSound(ATAudioMix mix, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, uint32 len, float volume) override;
-	ATSoundId AddLoopingSound(ATAudioMix mix, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, float volume) override;
+	ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, uint32 len, float volume) override;
+	ATSoundId AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, float volume) override;
+
+	vdrefptr<IATAudioSoundGroup> CreateGroup(const ATAudioGroupDesc& desc) override;
 
 	void ForceStopSound(ATSoundId id) override;
 	void StopSound(ATSoundId id) override;
@@ -57,24 +59,14 @@ public:
 	bool RequiresStereoMixingNow() const override { return false; }
 	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 
-protected:
-	struct Sound {
-		ATSoundId mId {};
-		float mVolume {};
-		uint64 mStartTime {};
-		uint64 mEndTime {};
-		uint32 mLoopPeriod {};
-		uint32 mLength {};
-		ATAudioMix mMix {};
-		bool mbEndValid {};
-		const sint16 *mpSample {};
-		IATAudioSampleSource *mpSource {};
-		IVDRefCount *mpOwner {};
-	};
+private:
+	class SoundGroup;
+	struct Sound;
 
-	struct SoundPred;
-
+	ATSoundId StartSound(Sound *s, IATAudioSoundGroup& soundGroup, uint64 startTime);
 	void FreeSound(Sound *s);
+	void CleanupGroup(SoundGroup& group);
+	void StopGroupSounds(SoundGroup& group);
 
 	ATScheduler *mpScheduler;
 	uint32 mNextSoundId;
@@ -82,6 +74,8 @@ protected:
 	typedef vdfastvector<Sound *> Sounds;
 	Sounds mSounds;
 	Sounds mFreeSounds;
+
+	vdlist<SoundGroup> mGroups;
 
 	ATAudioSampleDesc mSamples[5];
 

@@ -17,6 +17,8 @@
 
 #include <stdafx.h>
 #include <at/atcore/logging.h>
+#include <at/atcore/serialization.h>
+#include <at/atcore/snapshotimpl.h>
 #include "pokey.h"
 #include "pokeyrenderer.h"
 #include "pokeytables.h"
@@ -36,17 +38,22 @@
 ATLogChannel g_ATLCSIOData(false, false, "SIODATA", "Serial I/O bus data");
 
 namespace {
-	enum {
-		kATPokeyEventKeyboardIRQ = 2,
-		kATPokeyEventKeyboardScan = 3,
-		kATPokeyEventTimer1Borrow = 7,
-		kATPokeyEventTimer2Borrow = 8,
-		kATPokeyEventTimer3Borrow = 9,
-		kATPokeyEventTimer4Borrow = 10,
-		kATPokeyEventResetTimers = 11,
-		kATPokeyEventSerialOutput = 12,
-		kATPokeyEventSerialInput = 13,
-		kATPokeyEventPot0ScanComplete = 16	// x8
+	enum : uint32 {
+		kATPokeyEventKeyboardIRQ = 1,
+		kATPokeyEventKeyboardScan,
+		kATPokeyEventTimer1Borrow,
+		kATPokeyEventTimer2Borrow,
+		kATPokeyEventTimer3Borrow,
+		kATPokeyEventTimer4Borrow,
+
+		// There are two separate events for this because both timers 1 and 2 can initiate this
+		// reset in close proximity, and we need both events to effectively take place.
+		kATPokeyEventResetTwoTones1,
+		kATPokeyEventResetTwoTones2,
+
+		kATPokeyEventResetTimers,
+		kATPokeyEventSerialOutput,
+		kATPokeyEventSerialInput,
 	};
 
 	const bool kForceActiveTimers = false;
@@ -104,7 +111,6 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mbSerialSimulateInputPort(false)
 	, mSerialExtBaseTime(0)
 	, mSerialExtPeriod(0)
-	, mpAudioLog(NULL)
 	, mbFastTimer1(false)
 	, mbFastTimer3(false)
 	, mbLinkedTimers12(false)
@@ -114,7 +120,6 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mLast64KHzTime(0)
 	, mpKeyboardScanEvent(NULL)
 	, mpKeyboardIRQEvent(NULL)
-	, mpStartBitEvent(NULL)
 	, mpResetTimersEvent(NULL)
 	, mpEventSerialInput(NULL)
 	, mpEventSerialOutput(NULL)
@@ -163,7 +168,7 @@ void ATPokeyEmulator::ColdReset() {
 	memset(&mState, 0, sizeof mState);
 
 	mKBCODE = 0;
-	mSKSTAT = mbShiftKeyState ? 0xF7 : 0xFF;
+	mSKSTAT = mbShiftKeyState ? 0x77 : 0x7F;
 	mSKCTL = 0;
 	mKeyCodeTimer = 0;
 	mKeyCooldownTimer = 0;
@@ -194,10 +199,11 @@ void ATPokeyEmulator::ColdReset() {
 
 	mpScheduler->UnsetEvent(mpKeyboardScanEvent);
 	mpScheduler->UnsetEvent(mpKeyboardIRQEvent);
-	mpScheduler->UnsetEvent(mpStartBitEvent);
 	mpScheduler->UnsetEvent(mpResetTimersEvent);
 	mpScheduler->UnsetEvent(mpEventSerialOutput);
 	mpScheduler->UnsetEvent(mpEventSerialInput);
+	mpScheduler->UnsetEvent(mpEventResetTwoTones1);
+	mpScheduler->UnsetEvent(mpEventResetTwoTones2);
 
 	mpRenderer->ColdReset();
 
@@ -227,9 +233,10 @@ void ATPokeyEmulator::ColdReset() {
 
 	mALLPOT = 0;
 
-	for(int i=0; i<8; ++i) {
-		mPotLatches[i] = 228;
-	}
+	// On power-up, this can either be $00 or $E4 on XL/XE machines.
+	// $00 is much more common.
+	for(auto& v : mPotLatches)
+		v = 0;
 
 	mPotLastTimeFast = ATSCHEDULER_GETTIME(mpScheduler);
 	mPotLastTimeSlow = mPotLastTimeFast;
@@ -284,7 +291,7 @@ void ATPokeyEmulator::SetCassette(IATPokeyCassetteDevice *dev) {
 }
 
 void ATPokeyEmulator::SetAudioLog(ATPokeyAudioLog *log) {
-	mpAudioLog = log;
+	mpRenderer->SetAudioLog(log);
 }
 
 void ATPokeyEmulator::Set5200Mode(bool enable) {
@@ -340,7 +347,7 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 			ATConsoleTaggedPrintf("POKEY: Dropping byte due to initialization mode.\n");
 
 		if (g_ATLCSIOData) {
-			sioDataInfo += " [dropped - init mode]";
+			sioDataInfo += " [dropped - init mode]\n";
 			g_ATLCSIOData <<= sioDataInfo.c_str();
 		}
 		return;
@@ -426,11 +433,6 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 
 		mbSerialWaitingForStartBit = false;
 		SetupTimers(0x0c);
-
-		if (mpStartBitEvent) {
-			mpScheduler->RemoveEvent(mpStartBitEvent);
-			mpStartBitEvent = NULL;
-		}
 	}
 
 	if (g_ATLCSIOData) {
@@ -524,6 +526,15 @@ bool ATPokeyEmulator::IsChannelEnabled(uint32 channel) const {
 
 void ATPokeyEmulator::SetChannelEnabled(uint32 channel, bool enabled) {
 	mpRenderer->SetChannelEnabled(channel, enabled);
+}
+
+bool ATPokeyEmulator::IsSecondaryChannelEnabled(uint32 channel) const {
+	return !mpSlave || mpSlave->mpRenderer->IsChannelEnabled(channel);
+}
+
+void ATPokeyEmulator::SetSecondaryChannelEnabled(uint32 channel, bool enabled) {
+	if (mpSlave)
+		mpSlave->mpRenderer->SetChannelEnabled(channel, enabled);
 }
 
 void ATPokeyEmulator::SetNonlinearMixingEnabled(bool enable) {
@@ -749,10 +760,7 @@ void ATPokeyEmulator::FireTimer() {
 
 		// two tone
 		if ((mSKCTL & 8) && mbSerialOutputState && !(mSKCTL & 0x80)) {
-			// resync timer 2 to timer 1
-			mCounter[1] = mAUDFP1[1];
-			mCounterBorrow[1] = 0;
-			SetupTimers(0x02);
+			mpScheduler->SetEvent(2, this, kATPokeyEventResetTwoTones1, mpEventResetTwoTones1);
 		}
 	}
 
@@ -765,10 +773,7 @@ void ATPokeyEmulator::FireTimer() {
 
 		// two tone
 		if (mSKCTL & 8) {
-			// resync timer 1 to timer 2
-			mCounter[0] = mAUDFP1[0];
-			mCounterBorrow[0] = 0;
-			SetupTimers(0x01);
+			mpScheduler->SetEvent(2, this, kATPokeyEventResetTwoTones2, mpEventResetTwoTones2);
 		}
 
 		if (mSerialOutputCounter) {
@@ -1113,17 +1118,15 @@ void ATPokeyEmulator::AdvanceScanLine() {
 		}
 	}
 
-	if (mpAudioLog) {
-		if (mpAudioLog->mRecordedCount < mpAudioLog->mMaxCount)
-			GetAudioState(mpAudioLog->mpStates[mpAudioLog->mRecordedCount++]);
-	}
-
 	if (mpSlave)
 		mpSlave->AdvanceScanLine();
 }
 
 void ATPokeyEmulator::AdvanceFrame(bool pushAudio, uint64 timestamp) {
 	UpdatePots(0);
+
+	if (mpSlave)
+		mpSlave->UpdatePots(0);
 
 	if (mKeyCodeTimer) {
 		if (!--mKeyCodeTimer) {
@@ -1145,12 +1148,22 @@ void ATPokeyEmulator::AdvanceFrame(bool pushAudio, uint64 timestamp) {
 
 	FlushAudio(pushAudio, timestamp);
 
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+
+	PostFrameUpdate(t);
+
+	if (mpSlave)
+		mpSlave->PostFrameUpdate(t);
+}
+
+void ATPokeyEmulator::PostFrameUpdate(uint32 t) {
+	mpRenderer->RestartAudioLog();
+
 	// Scan all of the deferred timers and push any that are too far behind. We need to do this to
 	// prevent any of the timers from getting too far behind the clock (>30 bits). This calculation
 	// is wrong for the low timer of a linked timer pair, but it turns out we don't use the start
 	// value in that case; this module uses the high timer delay, and only the renderer does the
 	// funky linked step.
-	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 
 	for(int i=0; i<4; ++i) {
 		if (!mbDeferredTimerEvents[i])
@@ -1397,6 +1410,28 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 				SetupTimers(0x08);
 			break;
 
+		case kATPokeyEventResetTwoTones1:
+			mpEventResetTwoTones1 = nullptr;
+
+			// resync timers 1 and 2
+			mCounter[0] = mAUDFP1[0];
+			mCounter[1] = mAUDFP1[1];
+			mCounterBorrow[0] = 0;
+			mCounterBorrow[1] = 0;
+			SetupTimers(0x03);
+			break;
+
+		case kATPokeyEventResetTwoTones2:
+			mpEventResetTwoTones2 = nullptr;
+
+			// resync timers 1 and 2
+			mCounter[0] = mAUDFP1[0];
+			mCounter[1] = mAUDFP1[1];
+			mCounterBorrow[0] = 0;
+			mCounterBorrow[1] = 0;
+			SetupTimers(0x03);
+			break;
+
 		case kATPokeyEventResetTimers:
 			mpResetTimersEvent = NULL;
 			mCounter[0] = mAUDFP1[0];
@@ -1436,6 +1471,7 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 
 template<int channel>
 void ATPokeyEmulator::RecomputeTimerPeriod() {
+	static_assert(channel >= 0 && channel <= 3);
 
 	const bool fastTimer = (channel == 0) ? mbFastTimer1 : (channel == 2) ? mbFastTimer3 : false;
 	const bool hiLinkedTimer = channel == 1 ? mbLinkedTimers12 : channel == 3 ? mbLinkedTimers34 : false;
@@ -1443,9 +1479,10 @@ void ATPokeyEmulator::RecomputeTimerPeriod() {
 
 	uint32 period;
 	if (hiLinkedTimer) {
+		constexpr int loChannel = channel & ~1;
 		const bool fastLinkedTimer = (channel == 1) ? mbFastTimer1 : (channel == 3) ? mbFastTimer3 : false;
 
-		period = ((uint32)mAUDF[channel] << 8) + mAUDFP1[channel - 1];
+		period = ((uint32)mAUDF[channel] << 8) + mAUDFP1[loChannel];
 
 		if (fastLinkedTimer) {
 			period += 6;
@@ -1520,6 +1557,8 @@ void ATPokeyEmulator::RecomputeAllowedDeferredTimers() {
 
 template<int channel>
 void ATPokeyEmulator::UpdateTimerCounter() {
+	static_assert(channel >= 0 && channel <= 3);
+
 	VDASSERT(mCounter[0] > 0);
 	VDASSERT(mCounterBorrow[0] >= 0);
 
@@ -1533,7 +1572,7 @@ void ATPokeyEmulator::UpdateTimerCounter() {
 	const bool loLinkedTimer = channel == 0 ? mbLinkedTimers12 : channel == 2 ? mbLinkedTimers34 : false;
 
 	if (loLinkedTimer) {
-		const int hiChannel = channel + 1;
+		constexpr int hiChannel = channel | 1;
 
 		// Compute the number of ticks until the next borrow event. The borrow occurs three cycles after
 		// the timer channel underflows; 16-bit channels take 6 cycles because the borrows from the two
@@ -2588,6 +2627,9 @@ void ATPokeyEmulator::BeginLoadState(ATSaveStateReader& reader) {
 	reader.RegisterHandlerMethod(kATSaveStateSection_ResetPrivate, 0, this, &ATPokeyEmulator::LoadStateResetPrivate);
 	reader.RegisterHandlerMethod(kATSaveStateSection_End, 0, this, &ATPokeyEmulator::EndLoadState);
 
+	mpScheduler->UnsetEvent(mpEventResetTwoTones1);
+	mpScheduler->UnsetEvent(mpEventResetTwoTones2);
+
 	if (mpSlave)
 		mpSlave->BeginLoadState(reader);
 }
@@ -2648,6 +2690,249 @@ void ATPokeyEmulator::LoadStateResetPrivate(ATSaveStateReader& reader) {
 }
 
 void ATPokeyEmulator::EndLoadState(ATSaveStateReader& reader) {
+	PostLoadState();
+}
+
+class ATSaveStatePokeyInternal : public ATSnapExchangeObject<ATSaveStatePokeyInternal> {
+public:
+	template<typename T>
+	void Exchange(T& rw) {
+		rw.Transfer("clock15_offset", &mClock15Offset);
+		rw.Transfer("clock64_offset", &mClock64Offset);
+		rw.Transfer("poly9_offset", &mPoly9Offset);
+		rw.Transfer("poly17_offset", &mPoly17Offset);
+		rw.Transfer("polyoff_offset", &mPolyShutOffTime);
+		rw.TransferArray("timer_counters", mTimerCounters);
+		rw.TransferArray("timer_borrow_counters", mTimerBorrowCounters);
+		rw.TransferArray("two_tone_reset_counters", mTwoToneResetCounters);
+		rw.Transfer("serin_counter", &mSerInCounter);
+		rw.Transfer("serin_shift_register", &mSerInShiftRegister);
+		rw.Transfer("serin_deferred_load", &mbSerInDeferredLoad);
+		rw.Transfer("serin_waiting_for_start_bit", &mbSerInWaitingForStartBit);
+
+		rw.Transfer("renderer_poly4_offset", &mRendererState.mPoly4Offset);
+		rw.Transfer("renderer_poly5_offset", &mRendererState.mPoly5Offset);
+		rw.Transfer("renderer_poly9_offset", &mRendererState.mPoly9Offset);
+		rw.Transfer("renderer_poly17_offset", &mRendererState.mPoly17Offset);
+		rw.Transfer("output_flip_flops", &mRendererState.mOutputFlipFlops);
+
+		if constexpr (rw.IsReader) {
+			if (mClock15Offset >= 114)
+				throw ATInvalidSaveStateException();
+
+			if (mClock64Offset >= 28)
+				throw ATInvalidSaveStateException();
+
+			if (mPoly9Offset >= 511)
+				throw ATInvalidSaveStateException();
+
+			if (mPoly17Offset >= 131071)
+				throw ATInvalidSaveStateException();
+
+			if (mRendererState.mPoly4Offset >= 15)
+				throw ATInvalidSaveStateException();
+
+			if (mRendererState.mPoly5Offset >= 31)
+				throw ATInvalidSaveStateException();
+
+			if (mRendererState.mPoly9Offset >= 511)
+				throw ATInvalidSaveStateException();
+
+			if (mRendererState.mPoly17Offset >= 131071)
+				throw ATInvalidSaveStateException();
+
+			for(const auto& c : mTimerCounters) {
+				if (!c || c > 256)
+					throw ATInvalidSaveStateException();
+			}
+
+			for(const auto& c : mTimerBorrowCounters) {
+				if (c > 3)
+					throw ATInvalidSaveStateException();
+			}
+
+			for(const auto& c : mTwoToneResetCounters) {
+				if (c > 2)
+					throw ATInvalidSaveStateException();
+			}
+		}
+	}
+
+	uint32 mClock15Offset = 0;
+	uint32 mClock64Offset = 0;
+	uint32 mPoly9Offset = 0;
+	uint32 mPoly17Offset = 0;
+	uint32 mPolyShutOffTime = 0;
+	uint32 mTimerCounters[4] {};
+	uint32 mTimerBorrowCounters[4] {};
+	uint32 mTwoToneResetCounters[2] {};
+	uint8 mSerInCounter = 0;
+	uint8 mSerInShiftRegister = 0;
+	bool mbSerInDeferredLoad = false;
+	bool mbSerInWaitingForStartBit = false;
+
+	ATPokeyRenderer::SavedState mRendererState {};
+};
+
+class ATSaveStatePokey : public ATSnapExchangeObject<ATSaveStatePokey> {
+public:
+	template<typename T>
+	void Exchange(T& rw) {
+		rw.TransferArray("audf", mAUDF);
+		rw.TransferArray("audc", mAUDC);
+		rw.Transfer("audctl", &mAUDCTL);
+		rw.Transfer("irqen", &mIRQEN);
+		rw.Transfer("irqst", &mIRQST);
+		rw.Transfer("skctl", &mSKCTL);
+		rw.Transfer("allpot", &mALLPOT);
+		rw.Transfer("kbcode", &mKBCODE);
+		rw.Transfer("internal_state", &mpInternalState);
+		rw.Transfer("stereo_pair", &mpStereoPair);
+	}
+
+	uint8 mAUDF[4];
+	uint8 mAUDC[4];
+	uint8 mAUDCTL;
+	uint8 mIRQEN;
+	uint8 mIRQST;
+	uint8 mSKCTL;
+	uint8 mSKSTAT;
+	uint8 mALLPOT;
+	uint8 mKBCODE;
+	vdrefptr<ATSaveStatePokeyInternal> mpInternalState;
+	vdrefptr<IATObjectState> mpStereoPair;
+};
+
+ATSERIALIZATION_DEFINE(ATSaveStatePokey);
+ATSERIALIZATION_DEFINE(ATSaveStatePokeyInternal);
+
+void ATPokeyEmulator::SaveState(IATObjectState **pp) {
+	UpdateTimerCounter<0>();
+	UpdateTimerCounter<1>();
+	UpdateTimerCounter<2>();
+	UpdateTimerCounter<3>();
+
+	vdrefptr<ATSaveStatePokey> obj(new ATSaveStatePokey);
+	vdrefptr<ATSaveStatePokeyInternal> obj2(new ATSaveStatePokeyInternal);
+
+	for(int i=0; i<4; ++i) {
+		obj->mAUDF[i] = mAUDF[i];
+		obj->mAUDC[i] = mAUDC[i];
+	}
+
+	obj->mAUDCTL = mAUDCTL;
+	obj->mIRQEN = mIRQEN;
+	obj->mIRQST = mIRQST;
+	obj->mSKCTL = mSKCTL;
+	obj->mSKSTAT = mSKSTAT;
+	obj->mALLPOT = mALLPOT;
+	obj->mKBCODE = mKBCODE;
+
+	for(int i=0; i<4; ++i)
+		obj2->mTimerCounters[i] = mCounter[i];
+
+	for(int i=0; i<4; ++i)
+		obj2->mTimerBorrowCounters[i] = mCounterBorrow[i];
+
+	obj2->mTwoToneResetCounters[0] = mpEventResetTwoTones1 ? mpScheduler->GetTicksToEvent(mpEventResetTwoTones1) : 0;
+	obj2->mTwoToneResetCounters[1] = mpEventResetTwoTones2 ? mpScheduler->GetTicksToEvent(mpEventResetTwoTones2) : 0;
+
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+	obj2->mClock15Offset = t - UpdateLast15KHzTime(t);
+	VDASSERT(obj2->mClock15Offset < 114);
+
+	obj2->mClock64Offset = t - UpdateLast64KHzTime(t);
+	VDASSERT(obj2->mClock64Offset < 28);
+
+	int polyDelta = t - mLastPolyTime;
+	obj2->mPoly9Offset = (mPoly9Counter + polyDelta) % 511;
+	obj2->mPoly17Offset = (mPoly17Counter + polyDelta) % 131071;
+	obj2->mPolyShutOffTime = mpScheduler->GetTick64() - mPolyShutOffTime;
+	obj2->mSerInCounter = mSerialInputCounter;
+	obj2->mSerInShiftRegister = mSerialInputShiftRegister;
+	obj2->mbSerInDeferredLoad = mbSerInDeferredLoad;
+	obj2->mbSerInWaitingForStartBit = mbSerialWaitingForStartBit;
+
+	obj2->mRendererState = mpRenderer->SaveState();
+
+	obj->mpInternalState = std::move(obj2);
+
+	if (mpSlave)
+		mpSlave->SaveState(~obj->mpStereoPair);
+
+	*pp = obj.release();
+}
+
+void ATPokeyEmulator::LoadState(IATObjectState& state) {
+	const ATSaveStatePokey& pstate = atser_cast<const ATSaveStatePokey&>(state);
+
+	for(int i=0; i<4; ++i) {
+		mAUDF[i] = pstate.mAUDF[i];
+		mAUDC[i] = pstate.mAUDC[i];
+	}
+
+	mAUDCTL = pstate.mAUDCTL;
+	mIRQEN = pstate.mIRQEN;
+	mIRQST = pstate.mIRQST;
+	mSKCTL = pstate.mSKCTL;
+	mSKSTAT = pstate.mSKSTAT;
+	mALLPOT = pstate.mALLPOT;
+	mKBCODE = pstate.mKBCODE;
+
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+	mLastPolyTime = t;
+
+	mpScheduler->UnsetEvent(mpEventResetTwoTones1);
+	mpScheduler->UnsetEvent(mpEventResetTwoTones2);
+
+	if (pstate.mpInternalState) {
+		const ATSaveStatePokeyInternal& pistate = *pstate.mpInternalState;
+
+		for(int i=0; i<4; ++i)
+			mCounter[i] = pistate.mTimerCounters[i];
+
+		for(int i=0; i<4; ++i)
+			mCounterBorrow[i] = pistate.mTimerBorrowCounters[i];
+
+		mLast15KHzTime = t - pistate.mClock15Offset;
+		mLast64KHzTime = t - pistate.mClock64Offset;
+
+		mPoly9Counter = pistate.mPoly9Offset;
+		mPoly17Counter = pistate.mPoly17Offset;
+		mPolyShutOffTime = mpScheduler->GetTick64() - pistate.mPolyShutOffTime;
+
+		mSerialInputCounter = pistate.mSerInCounter;
+		mSerialInputShiftRegister = pistate.mSerInShiftRegister;
+		mbSerInDeferredLoad = pistate.mbSerInDeferredLoad;
+		mbSerialWaitingForStartBit = pistate.mbSerInWaitingForStartBit;
+
+		if (pistate.mTwoToneResetCounters[0])
+			mpScheduler->SetEvent(pistate.mTwoToneResetCounters[0], this, kATPokeyEventResetTwoTones1, mpEventResetTwoTones1);
+
+		if (pistate.mTwoToneResetCounters[1])
+			mpScheduler->SetEvent(pistate.mTwoToneResetCounters[1], this, kATPokeyEventResetTwoTones2, mpEventResetTwoTones2);
+	} else {
+		for(auto& c : mCounter)
+			c = 1;
+
+		for(auto& c : mCounterBorrow)
+			c = 0;
+
+		mLast15KHzTime = t - 1;
+		mLast64KHzTime = t - 1;
+		mPoly9Counter = 0;
+		mPoly17Counter = 0;
+		mPolyShutOffTime = mpScheduler->GetTick64() - 1000;
+		mbSerInDeferredLoad = false;
+		mbSerialWaitingForStartBit = true;
+		mSerialInputCounter = 0;
+		mSerialInputShiftRegister = 0;
+	}
+
+	PostLoadState();
+}
+
+void ATPokeyEmulator::PostLoadState() {
 	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 
 	mbFastTimer1 = (mAUDCTL & 0x40) != 0;
@@ -2690,74 +2975,11 @@ void ATPokeyEmulator::EndLoadState(ATSaveStateReader& reader) {
 	SetupTimers(0x0f);
 
 	if (mpSlave)
-		mpSlave->EndLoadState(reader);
-}
-
-void ATPokeyEmulator::BeginSaveState(ATSaveStateWriter& writer) {
-	UpdateTimerCounter<0>();
-	UpdateTimerCounter<1>();
-	UpdateTimerCounter<2>();
-	UpdateTimerCounter<3>();
-
-	writer.RegisterHandlerMethod(kATSaveStateSection_Arch, this, &ATPokeyEmulator::SaveStateArch);
-	writer.RegisterHandlerMethod(kATSaveStateSection_Private, this, &ATPokeyEmulator::SaveStatePrivate);
-}
-
-void ATPokeyEmulator::SaveStateArch(ATSaveStateWriter& writer) {
-	writer.BeginChunk(VDMAKEFOURCC('P', 'O', 'K', 'Y'));
-
-	for(int i=0; i<4; ++i) {
-		writer.WriteUint8(mAUDF[i]);
-		writer.WriteUint8(mAUDC[i]);
-	}
-
-	writer.WriteUint8(mAUDCTL);
-	writer.WriteUint8(mIRQEN);
-	writer.WriteUint8(mIRQST);
-	writer.WriteUint8(mSKCTL);
-
-	writer.EndChunk();
-
-	if (mpSlave)
-		mpSlave->SaveStateArch(writer);
-}
-
-void ATPokeyEmulator::SaveStatePrivate(ATSaveStateWriter& writer) {
-	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-
-	writer.BeginChunk(VDMAKEFOURCC('P', 'O', 'K', 'Y'));
-
-	writer.WriteUint8(mALLPOT);
-	writer.WriteUint8(mKBCODE);
-
-	for(int i=0; i<4; ++i)
-		writer != mCounter[i];
-
-	for(int i=0; i<4; ++i)
-		writer != mCounterBorrow[i];
-
-	writer.WriteUint8(t - UpdateLast15KHzTime(t));
-	writer.WriteUint8(t - UpdateLast64KHzTime(t));
-
-	int polyDelta = t - mLastPolyTime;
-	writer.WriteUint16((mPoly9Counter + polyDelta) % 511);
-	writer.WriteUint32((mPoly17Counter + polyDelta) % 131071);
-	writer.WriteUint64(mpScheduler->GetTick64() - mPolyShutOffTime);
-
-	mpRenderer->SaveState(writer);
-
-	writer.EndChunk();
-
-	if (mpSlave)
-		mpSlave->SaveStatePrivate(writer);
+		mpSlave->PostLoadState();
 }
 
 void ATPokeyEmulator::GetRegisterState(ATPokeyRegisterState& state) const {
 	state = mState;
-}
-
-void ATPokeyEmulator::GetAudioState(ATPokeyAudioState& state) const {
-	mpRenderer->GetAudioState(state);
 }
 
 void ATPokeyEmulator::DumpStatus(bool isSlave) {
@@ -2864,23 +3086,30 @@ void ATPokeyEmulator::DumpStatus(bool isSlave) {
 }
 
 void ATPokeyEmulator::FlushAudio(bool pushAudio, uint64 timestamp) {
-	const uint32 outputSampleCount = mpRenderer->EndBlock();
+	IATSyncAudioEdgePlayer *edgePlayer = mpAudioOut ? &mpAudioOut->AsMixer().GetEdgePlayer() : nullptr;
+	const auto endBlockResult = mpRenderer->EndBlock(edgePlayer);
 
 	if (mpSlave) {
-		const uint32 slaveOutputSampleCount = mpSlave->mpRenderer->EndBlock();
+		const auto slaveEndBlockResult = mpSlave->mpRenderer->EndBlock(edgePlayer);
 
-		VDASSERT(outputSampleCount == slaveOutputSampleCount);
+		VDASSERT(endBlockResult.mSamples == slaveEndBlockResult.mSamples);
+		VDASSERT(endBlockResult.mTimestamp == slaveEndBlockResult.mTimestamp);
 	}
 
 	if (mpAudioOut) {
-		uint64 startingTimestamp = timestamp - 28 * outputSampleCount;
+		// convert 32-bit timestamp to 64-bit
+		const uint64 now64 = mpScheduler->GetTick64();
+		uint64 t64 = (now64 & ~UINT64_C(0xFFFFFFFF)) + endBlockResult.mTimestamp;
+
+		if (t64 > now64 + UINT64_C(0x80000000))
+			t64 -= UINT64_C(1) << 32;
 
 		mpAudioOut->WriteAudio(
 			mpRenderer->GetOutputBuffer(),
 			mpSlave && mbStereoSoftEnable ? mpSlave->mpRenderer->GetOutputBuffer() : NULL,
-			outputSampleCount,
+			endBlockResult.mSamples,
 			pushAudio,
-			startingTimestamp);
+			t64);
 	}
 }
 
@@ -2898,56 +3127,43 @@ void ATPokeyEmulator::SetTraceContext(ATTraceContext *context) {
 }
 
 void ATPokeyEmulator::UpdateMixTable() {
+	static constexpr float kNormalizationFactor = 1.0f;
+
 	if (mbNonlinearMixingEnabled) {
-		// This table is an average of all volumes measured on a real 800XL
-		// at a frequency of 314Hz. It's not entirely accurate because the
-		// output of each channel has uneven volume steps and the effect
-		// varies by frequency, but it's reasonable enough.
+		// This is an approximate fit to raw sample data obtained from a scope on POKEY's output
+		// pin, tapped off before the amplifiers to avoid AC coupling effects. It's a simple
+		// exponential curve resulting in gradual saturation, normalized to hit almost [-1, 1]
+		// with the saturation clamp below and the x56 half-cycle oversampling.
+		static constexpr float kHalfCycleAccumulationFactor = (1.0f / 56.0f);
 
-		static const float kMixTable[61]={
-			0.0f,					2.2531377552f,			4.2472153279f,			6.500391935f,
-			8.9508990534f,			11.4574264806f,			13.9021746199f,			16.4639482412f,
-			19.0064170324f,			21.4960784166f,			23.9395872707f,			26.3295307579f,
-			28.6392299848f,			30.9133574054f,			33.1163210469f,			35.2267639589f,
-			37.2167441749f,			39.0864696084f,			40.8392802498f,			42.4828246319f,
-			44.0230000906f,			45.4666953783f,			46.8220599132f,			48.097146906f,
-			49.2958623121f,			50.4211078033f,			51.4695404841f,			52.438465135f,
-			53.325178072f,			54.1314833312f,			54.8585846028f,			55.5051873239f,
-			56.0743392951f,			56.5677964414f,			56.9906057796f,			57.3499814438f,
-			57.6534805767f,			57.9095660775f,			58.1255653166f,			58.3064356456f,
-			58.4579355164f,			58.5826773523f,			58.6861268801f,			58.7720420762f,
-			58.8434313481f,			58.9031757296f,			58.9563884057f,			59.0092500513f,
-			59.0631705296f,			59.1201462142f,			59.1800746579f,			59.2422604549f,
-			59.3062129126f,			59.3766274524f,			59.4493321676f,			59.5218792178f,
-			59.5968984698f,			59.6788381494f,			59.77366993f,			59.8727379928f,
-			60.0f
-		};
-
-		VDASSERTCT(sizeof(mpTables->mMixTable) == sizeof(kMixTable));
-
-		memcpy(mpTables->mMixTable, kMixTable, sizeof mpTables->mMixTable);
-
-		const float alpha = 0.01f;
-		float timeConstant = (1.0f - alpha) / (alpha * 63920.0f);
-		float rc = timeConstant * 1789772.5f;
-		float neg_inv_rc = -1.0f / rc;
-
-		// integral(e^-t/RC) = -RC*e^-t/RC + C
-		mpTables->mHPTable[0] = 0.0f;
-		mpTables->mHPIntegralTable[0] = 0.0f;
-
-		for(int i=1; i<=56; ++i) {
-			mpTables->mHPTable[i] = 1.0f - expf((float)i * neg_inv_rc * 0.5f);
-			mpTables->mHPIntegralTable[i] = rc - rc*expf((float)i * neg_inv_rc * 0.5f);
+		for(int i=0; i<=60; ++i) {
+			mpTables->mMixTable[i] = -(1.0f - expf(-2.9f * ((float)i / 60.0f))) / (1.0f - expf(-2.9f)) * kHalfCycleAccumulationFactor * kNormalizationFactor;
 		}
+
+		// Exponential decay tables
+		//
+		// POKEY's output is fed through an AC-coupled output circuit. The decay rate for this
+		// circuit is 50% after 1.8ms on actual hardware measurements, giving a time constant
+		// of 2.6ms. With our 28 cycle update rate, this means a decay of 0.6% per sample.
+		// This is small enough that we can ignore on a cycle basis and just update it per sample.
+		//
+		static constexpr float kTau = 0.0025968510736001341332478644258f;
+
+		mpTables->mReferenceDecayPerSample = 1.0f - expf(-(1.0f / 63920.0f) / kTau);
+
+		// The amplifier in the analog audio circuit clamps out when the difference on its inputs
+		// is too great, until the reference voltage slews enough to reduce the delta. Relative to
+		// POKEY's max level, the clamp range is [-0.65, 0.5].
+
+		mpTables->mReferenceClampLo = -0.65f / kNormalizationFactor;
+		mpTables->mReferenceClampHi = 0.5f / kNormalizationFactor;
 	} else {
 		for(int i=0; i<61; ++i)
-			mpTables->mMixTable[i] = (float)i;
+			mpTables->mMixTable[i] = -(float)i * (1.0f / (56.0f * 60.0f)) * kNormalizationFactor;
 
-		for(int i=0; i<=56; ++i) {
-			mpTables->mHPTable[i] = 0.0f;
-			mpTables->mHPIntegralTable[i] = (float)i * 0.5f;
-		}
+		mpTables->mReferenceDecayPerSample = 0.0f;
+		mpTables->mReferenceClampLo = -1.0f;
+		mpTables->mReferenceClampHi = 1.0f;
 	}
 }
 

@@ -16,8 +16,10 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <vd2/system/binary.h>
 #include <vd2/system/zip.h>
 #include "firmwaremanager.h"
+#include "firmwaredetect.h"
 
 struct ATKnownFirmware {
 	uint32 mCRC;
@@ -45,6 +47,8 @@ struct ATKnownFirmware {
 	{ 0xa8953874, 16384, kATFirmwareType_BlackBox, L"Black Box ver. 1.34" },
 	{ 0x91175314, 16384, kATFirmwareType_BlackBox, L"Black Box ver. 1.41" },
 	{ 0x7cafd9a8, 65536, kATFirmwareType_BlackBox, L"Black Box ver. 2.16" },
+	{ 0x7d68f07b, 16384, kATFirmwareType_MIO, L"MIO ver. 1.1k (128Kbit)" },
+	{ 0x00694A74, 16384, kATFirmwareType_MIO, L"MIO ver. 1.1m (128Kbit)" },
 	{ 0xa6a9e3d6,  8192, kATFirmwareType_MIO, L"MIO ver. 1.41 (64Kbit)" },
 	{ 0x1d400131, 16384, kATFirmwareType_MIO, L"MIO ver. 1.41 (128Kbit)" },
 	{ 0xe2f4b3a8, 32768, kATFirmwareType_MIO, L"MIO ver. 1.41 (256Kbit)" },
@@ -61,6 +65,13 @@ struct ATKnownFirmware {
 	{ 0xd125caad,  4096, kATFirmwareType_IndusGT, L"Indus GT firmware ver. 1.1" },
 	{ 0xd8504b4a,  4096, kATFirmwareType_IndusGT, L"Indus GT firmware ver. 1.2" },
 	{ 0x605b7153,  4096, kATFirmwareType_USDoubler, L"US Doubler firmware" },
+	{ 0x0126A511,  2048, kATFirmwareType_810Turbo, L"810 Turbo firmware V1.2" },
+	{ 0x5A396459,  2048, kATFirmwareType_Percom, L"Percom RFD V1.00" },
+	{ 0xE2D4A05C,  2048, kATFirmwareType_Percom, L"Percom RFD V1.10" },
+	{ 0xC6C73D23,  2048, kATFirmwareType_Percom, L"Percom RFD V1.20" },
+	{ 0x2AB65122,  2048, kATFirmwareType_Percom, L"Astra 1001/1620 (based on Percom RFD V1.10)" },
+	{ 0x2372FAE6,  2048, kATFirmwareType_PercomAT, L"Percom AT-88 V1.2 (460-0066-001)" },
+	{ 0xFD13A674,  2048, kATFirmwareType_PercomAT, L"Percom AT-88 V1.2 (damaged) (460-0066-001)" },
 };
 
 bool ATFirmwareAutodetectCheckSize(uint64 fileSize) {
@@ -83,28 +94,88 @@ bool ATFirmwareAutodetectCheckSize(uint64 fileSize) {
 	}
 }
 
-bool ATFirmwareAutodetect(const void *data, uint32 len, ATFirmwareInfo& info, ATSpecificFirmwareType& specificType) {
+ATFirmwareDetection ATFirmwareAutodetect(const void *data, uint32 len, ATFirmwareInfo& info, ATSpecificFirmwareType& specificType) {
 	specificType = kATSpecificFirmwareType_None;
 
 	if (!ATFirmwareAutodetectCheckSize(len))
-		return false;
+		return ATFirmwareDetection::None;
 
-	VDCRCChecker crcChecker(VDCRCTable::CRC32);
-	crcChecker.Process(data, len);
-	const uint32 crc32 = crcChecker.CRC();
+	const uint32 crc32 = VDCRCTable::CRC32.CRC(data, len);
 
-	for(size_t i=0; i<vdcountof(kATKnownFirmwares); ++i) {
-		ATKnownFirmware& kfw = kATKnownFirmwares[i];
-
+	// try to match a specific known firmware
+	for(const ATKnownFirmware& kfw : kATKnownFirmwares) {
 		if (len == kfw.mSize && crc32 == kfw.mCRC) {
 			info.mName = kfw.mpDesc;
 			info.mType = kfw.mType;
 			info.mbVisible = true;
 			info.mFlags = 0;
 			specificType = kfw.mSpecificType;
-			return true;
+			return ATFirmwareDetection::SpecificImage;
 		}
 	}
 
-	return false;
+	// we weren't able to match a specific one -- check for specific types
+	const auto isPossibleOSROM = [](const uint8 *data, uint16 baseAddr) {
+		const auto isWithinROM = [=](uint16 addr) {
+			return addr >= baseAddr && (addr < 0xD000 || addr >= 0xD800);
+		};
+
+		// Reset vectors must be within the ROM.
+		for(int hwVecOffset = 0; hwVecOffset < 6; hwVecOffset += 2) {
+			const uint16 hwVec = VDReadUnalignedLEU16(&data[0xFFFA - 0xD800 + hwVecOffset]);
+
+			if (!isWithinROM(hwVec))
+				return false;
+		}
+
+		// The device handlers at $E400-E44F must all have six valid OS vectors
+		// within the OS ROM.
+		for(int deviceOffset=0; deviceOffset<0x50; deviceOffset += 0x10) {
+			for(int handlerOffset = 0; handlerOffset < 12; handlerOffset += 2) {
+				// The CIO device table holds an RTS return address, so we must add 1 to it.
+				const uint16 addr = VDReadUnalignedLEU16(data + (0xE400 - 0xD800) + deviceOffset + handlerOffset) + 1;
+
+				// reject handler if not in OS ROM
+				if (!isWithinROM(addr))
+					return false;
+			}
+		}
+
+		// Starting at $E450, there must be at least 16 JMP vectors within the ROM.
+		for(int vectorAddr = 0xE450; vectorAddr < 0xE480; vectorAddr += 3) {
+			const uint8 *vec = &data[vectorAddr - 0xD800];
+
+			if (vec[0] != 0x4C)
+				return false;
+
+			const uint16 jmpTarget = VDReadUnalignedLEU16(vec + 1);
+			if (!isWithinROM(jmpTarget))
+				return false;
+		}
+
+		// We don't check the font exactly to allow for variant fonts, but we do
+		// check that the space is correct (ATASCII $20, internal $00).
+		const uint8 *font = &data[0xE000 - 0xD800];
+		if (VDReadUnalignedU64(font))
+			return false;
+
+		// Verdict: Plausible
+		return true;
+	};
+
+	if (len == 10*1024) {
+		// 10K -- possible 800 OS ROM
+		if (isPossibleOSROM((const uint8 *)data, 0xD800)) {
+			info.mType = kATFirmwareType_Kernel800_OSB;
+			return ATFirmwareDetection::TypeOnly;
+		}
+	} else if (len == 16*1024) {
+		// 16K -- possible XL/XE OS ROM
+		if (isPossibleOSROM((const uint8 *)data + 6 * 1024, 0xC000)) {
+			info.mType = kATFirmwareType_KernelXL;
+			return ATFirmwareDetection::TypeOnly;
+		}
+	}
+
+	return ATFirmwareDetection::None;
 }

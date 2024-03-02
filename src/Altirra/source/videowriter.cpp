@@ -1,4 +1,7 @@
 #include <stdafx.h>
+
+#define INITGUID
+
 #include <numeric>
 
 #if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
@@ -8,15 +11,35 @@
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/error.h>
 #include <vd2/system/fraction.h>
+#include <vd2/system/int128.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdalloc.h>
+#include <vd2/Kasumi/blitter.h>
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
+#include <vd2/Kasumi/resample.h>
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
+	#include <at/atcore/intrin_sse2.h>
+#endif
+
 #include <at/atio/wav.h>
 #include "videowriter.h"
 #include "audiofilters.h"
+#include "audiooutput.h"
 #include "aviwriter.h"
+#include "gtia.h"
 #include "uirender.h"
+
+#include <vd2/system/w32assist.h>
+
+#include <windows.h>
+#include <mfidl.h>
+#include <mfapi.h>
+#include <mferror.h>
+#include <mfreadwrite.h>
+#include <mftransform.h>
+#include <uuids.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -1992,101 +2015,49 @@ void ATVideoEncoderZMBV::CompressInter8(bool encodeAll) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-class ATVideoWriter final : public IATVideoWriter {
+class IATMediaEncoder {
 public:
-	ATVideoWriter();
-	~ATVideoWriter();
+	virtual ~IATMediaEncoder() = default;
 
-	void CheckExceptions();
+	virtual sint64 GetCurrentSize() = 0;
 
-	void Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, bool encodeAllFrames, IATUIRenderer *r);
-	void Shutdown();
-
-	void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd) override;
-	void WriteRawAudio(const float *left, const float *right, uint32 count, uint32 timestamp);
-
-protected:
-	void RaiseError(const MyError& e);
-
-	uint32	mKeyCounter;
-	uint32	mKeyInterval;
-	bool mbStereo;
-	bool mbHalfRate;
-	bool mbErrorState;
-	bool mbEncodeAllFrames;
-
-	bool	mbVideoTimestampSet;
-	bool	mbAudioPreskipSet;
-	uint64	mFirstVideoTimestamp;
-	sint32	mAudioPreskip;
-	uint32	mVideoPreskip;
-	double	mFrameRate;
-	double	mSamplingRate;
-	double	mTimestampRate;
-
-	IATUIRenderer	*mpUIRenderer;
-
-	vdautoptr<IVDMediaOutputAVIFile>	mFile;
-	IVDMediaOutputStream				*mVideoStream;
-	IVDMediaOutputStream				*mAudioStream;
-
-	vdautoptr<IATVideoEncoder>	mpVideoEncoder;
-
-	MyError	mError;
-
-	enum { kResampleBufferSize = 4096 };
-
-	uint32	mResampleLevel;
-	uint64	mResampleAccum;
-	uint64	mResampleRate;
-	float	mResampleBuffers[2][4096];
+	virtual void WriteVideo(const VDPixmap& px) = 0;
+	virtual void BeginAudioFrame(uint32 bytes, uint32 samples) = 0;
+	virtual void WriteAudio(const sint16 *data, uint32 bytes) = 0;
+	virtual void EndAudioFrame() = 0;
+	virtual bool Finalize(MyError& e) = 0;
 };
 
-ATVideoWriter::ATVideoWriter()
-	: mpUIRenderer(NULL)
-	, mVideoStream(NULL)
-{
-}
+class ATAVIEncoder final : public IATMediaEncoder {
+public:
+	ATAVIEncoder(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, bool encodeAllFrames);
 
-ATVideoWriter::~ATVideoWriter() {
-}
+	sint64 GetCurrentSize() override;
 
-void ATVideoWriter::CheckExceptions() {
-	if (!mbErrorState)
-		return;
+	void WriteVideo(const VDPixmap& px) override;
+	void BeginAudioFrame(uint32 bytes, uint32 samples) override;
+	void WriteAudio(const sint16 *data, uint32 bytes) override;
+	void EndAudioFrame() override;
 
-	if (!mError.empty()) {
-		MyError e;
+	bool Finalize(MyError& e) override;
 
-		e.TransferFrom(mError);
-		throw e;
-	}
-}
+private:
+	uint32 mKeyCounter = 0;
+	uint32 mKeyInterval = 0;
+	bool mbEncodeAllFrames = false;
 
-void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, bool encodeAllFrames, IATUIRenderer *r) {
-	if (!palette && venc == kATVideoEncoding_RLE)
-		throw MyError("RLE encoding is not available as the current emulator video settings require 24-bit video.");
+	vdautoptr<IVDMediaOutputAVIFile> mFile;
+	vdautoptr<IATVideoEncoder> mpVideoEncoder;
+	IVDMediaOutputStream *mVideoStream = nullptr;
+	IVDMediaOutputStream *mAudioStream = nullptr;
+};
 
-	mFile = VDCreateMediaOutputAVIFile();
-	mbStereo = stereo;
-	mbHalfRate = halfRate;
-	mbErrorState = false;
+ATAVIEncoder::ATAVIEncoder(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, bool encodeAllFrames) {
 	mbEncodeAllFrames = encodeAllFrames;
-	mbVideoTimestampSet = false;
-	mbAudioPreskipSet = false;
-	mFrameRate = frameRate.asDouble();
-	mSamplingRate = samplingRate;
-	mTimestampRate = timestampRate;
-	mAudioPreskip = 0;
-	mVideoPreskip = 0;
 	mKeyCounter = 0;
 	mKeyInterval = 60;
 
-	mResampleLevel = 0;
-	mResampleAccum = 0;
-	mResampleRate = VDRoundToInt64(4294967296.0 / 48000.0 * samplingRate);
-
-	mpUIRenderer = r;
+	mFile = VDCreateMediaOutputAVIFile();
 
 	mVideoStream = mFile->createVideoStream();
 	mAudioStream = mFile->createAudioStream();
@@ -2131,19 +2102,14 @@ void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w
 	} else
 		mVideoStream->setFormat(&bmf.hdr, sizeof bmf.hdr);
 
-	VDFraction recordingFrameRate = frameRate;
-
-	if (halfRate)
-		recordingFrameRate /= 2;
-
 	AVIStreamHeader_fixed hdr;
 	hdr.fccType					= VDMAKEFOURCC('v', 'i', 'd', 's');
     hdr.dwFlags					= 0;
     hdr.wPriority				= 0;
     hdr.wLanguage				= 0;
     hdr.dwInitialFrames			= 0;
-    hdr.dwScale					= recordingFrameRate.getLo();
-    hdr.dwRate					= recordingFrameRate.getHi();
+    hdr.dwScale					= frameRate.getLo();
+    hdr.dwRate					= frameRate.getHi();
     hdr.dwStart					= 0;
     hdr.dwLength				= 0;
     hdr.dwSuggestedBufferSize	= 0;
@@ -2172,7 +2138,7 @@ void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w
 
 	nsVDWinFormats::WaveFormatEx wf;
 	wf.mFormatTag = nsVDWinFormats::kWAVE_FORMAT_PCM;
-	wf.mChannels = mbStereo ? 2 : 1;
+	wf.mChannels = stereo ? 2 : 1;
 	wf.SetSamplesPerSec(48000);
 	wf.mBlockAlign = 2 * wf.mChannels;
 	wf.SetAvgBytesPerSec(48000 * wf.mBlockAlign);
@@ -2218,33 +2184,1234 @@ void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w
 	}
 }
 
+sint64 ATAVIEncoder::GetCurrentSize() {
+	return mFile->GetCurrentSize();
+}
+
+void ATAVIEncoder::WriteVideo(const VDPixmap& px) {
+	bool intra = false;
+
+	if (!mKeyCounter) {
+		mKeyCounter = mKeyInterval;
+		intra = true;
+	}
+
+	--mKeyCounter;
+
+	mpVideoEncoder->Compress(px, intra, mbEncodeAllFrames);
+
+	uint32 len = mpVideoEncoder->GetEncodedLength();
+	mVideoStream->write(len && intra ? IVDMediaOutputStream::kFlagKeyFrame : 0, mpVideoEncoder->GetEncodedData(), len, 1);
+}
+
+void ATAVIEncoder::BeginAudioFrame(uint32 bytes, uint32 samples) {
+	mAudioStream->partialWriteBegin(IVDMediaOutputStream::kFlagKeyFrame, bytes, samples);
+}
+
+void ATAVIEncoder::WriteAudio(const sint16 *data, uint32 bytes) {
+	mAudioStream->partialWrite(data, bytes);
+}
+
+void ATAVIEncoder::EndAudioFrame() {
+	mAudioStream->partialWriteEnd();
+}
+
+bool ATAVIEncoder::Finalize(MyError& error) {
+	if (mVideoStream) {
+		try {
+			mVideoStream->finish();
+		} catch(MyError e) {
+			if (e.empty())
+				error.TransferFrom(e);
+		}
+
+		mVideoStream = nullptr;
+	}
+
+	if (mFile) {
+		try {
+			mFile->finalize();
+		} catch(MyError e) {
+			if (e.empty())
+				error.TransferFrom(e);
+		}
+
+		mFile.reset();
+	}
+
+	mpVideoEncoder.reset();
+
+	return error.empty();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+class ATMFSampleAllocatorW32 final : public IMFSinkWriterCallback {
+public:
+	LPVOID AddSample(IMFSample *sampleAdoptRef);
+	bool AllocateCachedSample(IMFSample **sample);
+	HRESULT WaitForFinalize();
+	void Shutdown();
+
+public: // IUnknown
+	DWORD STDMETHODCALLTYPE AddRef() override;
+	DWORD STDMETHODCALLTYPE Release() override;
+	HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void **ppvObj) override;
+
+public:	// IMFSinkWriterCallback
+	HRESULT STDMETHODCALLTYPE OnFinalize(HRESULT hrStatus) override;
+	HRESULT STDMETHODCALLTYPE OnMarker(DWORD dwStreamIndex, LPVOID pvContext) override;
+
+private:
+	uint32 mSampleQueueMax = 32;
+
+	VDAtomicInt mRefCount { 0 };
+	VDSignal mFinalized;
+	HRESULT mFinalizationResult = S_OK;
+
+	VDCriticalSection mMutex;
+	uint32 mSampleQueueBeginId = 0;
+	uint32 mSampleQueueNextInUseId = 0;
+	uint32 mSampleQueueEndId = 0;
+	vdfastdeque<IMFSample *> mSamples;
+};
+
+LPVOID ATMFSampleAllocatorW32::AddSample(IMFSample *sampleAdoptRef) {
+	sampleAdoptRef->AddRef();
+
+	IMFSample *sampleToDrop = nullptr;
+	uint32 fenceId = 0;
+	vdsynchronized(mMutex) {
+		VDASSERT(mSampleQueueEndId == (uint32)(mSampleQueueBeginId + mSamples.size()));
+		VDASSERT((uint32)(mSampleQueueNextInUseId - mSampleQueueBeginId) <= (uint32)(mSampleQueueEndId - mSampleQueueBeginId));
+
+		mSamples.push_back(sampleAdoptRef);
+
+		if (mSamples.size() > mSampleQueueMax) {
+			sampleToDrop = mSamples.front();
+			mSamples.pop_front();
+
+			++mSampleQueueBeginId;
+			++mSampleQueueNextInUseId;
+		}
+
+		fenceId = ++mSampleQueueEndId;
+	}
+
+	if (sampleToDrop)
+		sampleToDrop->Release();
+
+	return (LPVOID)(uintptr)fenceId;
+}
+
+bool ATMFSampleAllocatorW32::AllocateCachedSample(IMFSample **sample) {
+	IMFSample *reclaimedSample = nullptr;
+
+	vdsynchronized(mMutex) {
+		VDASSERT(mSampleQueueEndId == (uint32)(mSampleQueueBeginId + mSamples.size()));
+		VDASSERT((uint32)(mSampleQueueNextInUseId - mSampleQueueBeginId) <= (uint32)(mSampleQueueEndId - mSampleQueueBeginId));
+
+		if (mSampleQueueNextInUseId != mSampleQueueBeginId) {
+			reclaimedSample = mSamples.front();
+			mSamples.pop_front();
+
+			++mSampleQueueBeginId;
+		}
+	}
+
+	if (!reclaimedSample)
+		return false;
+
+	*sample = reclaimedSample;
+	return true;
+}
+
+HRESULT ATMFSampleAllocatorW32::WaitForFinalize() {
+	WaitForSingleObjectEx((HANDLE)mFinalized.getHandle(), INFINITE, TRUE);
+
+	return mFinalizationResult;
+}
+
+void ATMFSampleAllocatorW32::Shutdown() {
+	vdfastdeque<IMFSample *> samples;
+
+	vdsynchronized(mMutex) {
+		samples.swap(mSamples);
+	}
+
+	for(IMFSample *sample : samples)
+		sample->Release();
+}
+
+DWORD STDMETHODCALLTYPE ATMFSampleAllocatorW32::AddRef() {
+	VDASSERT(mRefCount < 1000000);
+	return ++mRefCount;
+}
+
+DWORD STDMETHODCALLTYPE ATMFSampleAllocatorW32::Release() {
+	uint32 rc = --mRefCount;
+	VDASSERT(rc >= 0 && rc < 1000000);
+
+	if (!rc)
+		delete this;
+
+	return rc;
+}
+
+HRESULT STDMETHODCALLTYPE ATMFSampleAllocatorW32::QueryInterface(REFIID iid, void **ppvObj) {
+	if (!ppvObj)
+		return E_POINTER;
+
+	if (iid == IID_IUnknown) {
+		*ppvObj = static_cast<IUnknown *>(this);
+	} else if (iid == __uuidof(IMFSinkWriterCallback)) {
+		*ppvObj = static_cast<IMFSinkWriterCallback *>(this);
+	} else {
+		*ppvObj = nullptr;
+		return E_NOINTERFACE;
+	}
+
+	AddRef();
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE ATMFSampleAllocatorW32::OnFinalize(HRESULT hrStatus) {
+	mFinalizationResult = hrStatus;
+
+	mFinalized.signal();
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE ATMFSampleAllocatorW32::OnMarker(DWORD dwStreamIndex, LPVOID pvContext) {
+	uint32 sampleFenceId = (uint32)(uintptr)pvContext;
+
+	vdsynchronized(mMutex) {
+		uint32 newOffset = sampleFenceId - mSampleQueueBeginId;
+
+		// It is legitimate for the fence offset to be outside of the current sample queue window.
+		// This happens if Media Foundation decides to buffer more samples than we care to track in
+		// our queue, which has a safety limit to prevent a perpetual memory leak if fencing fails.
+		// In that case, we will have preemptively advanced the beginning of the queue past submitted
+		// fences.
+
+		if (newOffset <= mSampleQueueEndId - mSampleQueueBeginId) {
+			uint32 oldOffset = mSampleQueueNextInUseId - mSampleQueueBeginId;
+
+			if (newOffset > oldOffset) {
+				mSampleQueueNextInUseId = sampleFenceId;
+				VDASSERT((uint32)(mSampleQueueNextInUseId - mSampleQueueBeginId) <= (uint32)(mSampleQueueEndId - mSampleQueueBeginId));
+			}
+		}
+	}
+
+	return S_OK;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+class ATMediaFoundationEncoderW32 final : public IATMediaEncoder {
+public:
+	ATMediaFoundationEncoderW32(const wchar_t *filename, ATVideoEncoding venc, uint32 videoBitRate, uint32 audioBitRate, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, bool useYUV);
+	~ATMediaFoundationEncoderW32();
+
+	sint64 GetCurrentSize() override;
+
+	void WriteVideo(const VDPixmap& px) override;
+	void BeginAudioFrame(uint32 bytes, uint32 samples) override;
+	void WriteAudio(const sint16 *data, uint32 bytes) override;
+	void EndAudioFrame() override;
+
+	bool Finalize(MyError& e) override;
+
+private:
+	void Init(const wchar_t *filename, ATVideoEncoding venc, uint32 videoBitRate, uint32 audioBitRate, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, bool useYUV);
+	void Shutdown();
+
+	bool mbMFInited = false;
+	vdrefptr<IMFSinkWriter> mpSinkWriter;
+
+	VDPixmapLayout mVideoFrameLayout {};
+	uint32 mVideoFrameSize = 0;
+	uint32 mVideoFrameCount = 0;
+	VDFraction mVideoFrameRate { 0, 0 };
+	LONGLONG mVideoNextSampleTime = 0;
+
+	VDPixmapCachedBlitter mVideoBlitter;
+
+	vdrefptr<IMFMediaBuffer> mpAudioBuffer;
+	BYTE *mpAudioDst = nullptr;
+	BYTE *mpAudioDstEnd = nullptr;
+	uint64 mAudioSamplesWritten = 0;
+	LONGLONG mAudioNextSampleTime = 0;
+	bool mbAudioConvertToStereo = false;
+	uint32 mAudioSampleSize = 0;
+
+	vdrefptr<ATMFSampleAllocatorW32> mpVideoSampleAllocator;
+
+	DWORD mVideoStreamIndex = 0;
+	DWORD mAudioStreamIndex = 0;
+
+	HMODULE mhmodMFPlat = nullptr;
+	HMODULE mhmodMFReadWrite = nullptr;
+
+	decltype(&MFStartup) mpfnMFStartup = nullptr;
+	decltype(&MFShutdown) mpfnMFShutdown = nullptr;
+	decltype(&MFCreateMemoryBuffer) mpfnMFCreateMemoryBuffer = nullptr;
+	decltype(&MFCreateAlignedMemoryBuffer) mpfnMFCreateAlignedMemoryBuffer = nullptr;
+	decltype(&MFCreateMediaType) mpfnMFCreateMediaType = nullptr;
+	decltype(&MFCreateSample) mpfnMFCreateSample = nullptr;
+	decltype(&MFCreateAttributes) mpfnMFCreateAttributes = nullptr;
+	decltype(&MFCreateSinkWriterFromURL) mpfnMFCreateSinkWriterFromURL = nullptr;
+
+	class HRVerify {
+	public:
+		void operator+=(HRESULT hr) const {
+			if (FAILED(hr))
+				throw MyWin32Error("Media encoding failed: %%s", hr);
+		}
+	};
+};
+
+ATMediaFoundationEncoderW32::ATMediaFoundationEncoderW32(const wchar_t *filename, ATVideoEncoding venc, uint32 videoBitRate, uint32 audioBitRate, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, bool useYUV) {
+	try {
+		Init(filename, venc, videoBitRate, audioBitRate, w, h, frameRate, palette, samplingRate, stereo, useYUV);
+	} catch(...) {
+		MyError e;
+		Finalize(e);
+		throw;
+	}
+}
+
+ATMediaFoundationEncoderW32::~ATMediaFoundationEncoderW32() {
+	Shutdown();
+}
+
+void ATMediaFoundationEncoderW32::Init(const wchar_t *filename, ATVideoEncoding venc,
+	uint32 videoBitRate, uint32 audioBitRate,
+	uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo,
+	bool useYUV)
+{
+	HRVerify verify;
+
+	if (!VDIsAtLeastVistaW32())
+		throw MyError("Cannot encode in this format as Media Foundation services are not available on this version of Windows.");
+
+	mhmodMFPlat = VDLoadSystemLibraryW32("MFPlat.dll");
+	if (!mhmodMFPlat)
+		throw MyWin32Error("Unable to load MFPlat.dll: %%s", GetLastError());
+
+	mhmodMFReadWrite = VDLoadSystemLibraryW32("MFReadWrite.dll");
+	if (!mhmodMFReadWrite)
+		throw MyWin32Error("Unable to load MFReadWrite.dll: %%s", GetLastError());
+
+	const auto ResolveImport = [](auto*& fnptr, HMODULE hmod, const char *name) {
+		fnptr = (std::remove_reference_t<decltype(fnptr)>)GetProcAddress(hmod, name);
+		if (!fnptr)
+			throw MyError("Unable to initialize Media Foundation: could not resolve function %s().", name);
+	};
+	
+	ResolveImport(mpfnMFStartup,					mhmodMFPlat, "MFStartup");
+	ResolveImport(mpfnMFShutdown,					mhmodMFPlat, "MFShutdown");
+	ResolveImport(mpfnMFCreateMemoryBuffer,			mhmodMFPlat, "MFCreateMemoryBuffer");
+	ResolveImport(mpfnMFCreateAlignedMemoryBuffer,	mhmodMFPlat, "MFCreateAlignedMemoryBuffer");
+	ResolveImport(mpfnMFCreateMediaType,			mhmodMFPlat, "MFCreateMediaType");
+	ResolveImport(mpfnMFCreateSample,				mhmodMFPlat, "MFCreateSample");
+	ResolveImport(mpfnMFCreateAttributes,			mhmodMFPlat, "MFCreateAttributes");
+	ResolveImport(mpfnMFCreateSinkWriterFromURL,	mhmodMFReadWrite, "MFCreateSinkWriterFromURL");
+
+	mVideoFrameRate = frameRate;
+
+	if (useYUV) {
+		// We alias NV12 as Y8 in our layout -- we'll be using a custom blitter for this anyway.
+		mVideoFrameSize = VDPixmapCreateLinearLayout(mVideoFrameLayout, nsVDPixmap::kPixFormat_Y8, w, h + (h >> 1), 1);
+
+		// Round the frame size up to a multiple of 16 and add another 32 bytes. This lets us
+		// safely overwrite up to a whole xmmword during the chroma conversion process for speed.
+		mVideoFrameSize = (mVideoFrameSize + 15 + 32) & ~15;
+	} else {
+		mVideoFrameSize = VDPixmapCreateLinearLayout(mVideoFrameLayout, nsVDPixmap::kPixFormat_XRGB8888, w, h, 4);
+		VDPixmapLayoutFlipV(mVideoFrameLayout);
+	}
+
+	verify += mpfnMFStartup(MF_VERSION, MFSTARTUP_LITE);
+	mbMFInited = true;
+
+	vdrefptr<IMFAttributes> sinkWriterAttributes;
+
+	verify += mpfnMFCreateAttributes(~sinkWriterAttributes, 1);
+
+	// Enable hardware encoders if possible as they are MUCH faster. Note that it is critical that we pass
+	// YUV input in this case. The RGB32>YV12 converter in msvproc.dll is somewhat OK, but the RGB32>NV12
+	// converter is unvectorized and very slow, and it is hit if the Intel hardware encoder is used. We
+	// can do this much faster as we can convert to YUV pre-upscale with SSE2 code.
+	//
+	verify += sinkWriterAttributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, 1);
+
+	// force the container type regardless of extension
+	verify += sinkWriterAttributes->SetGUID(MF_TRANSCODE_CONTAINERTYPE,
+		venc == kATVideoEncoding_H264_AAC || venc == kATVideoEncoding_H264_MP3 ? MFTranscodeContainerType_MPEG4 : MFTranscodeContainerType_ASF);
+
+	// create our sample allocator and bind it as a callback
+	mpVideoSampleAllocator = new ATMFSampleAllocatorW32;
+
+	verify += sinkWriterAttributes->SetUnknown(MF_SINK_WRITER_ASYNC_CALLBACK, mpVideoSampleAllocator);
+
+	// create a sink writer
+	verify += mpfnMFCreateSinkWriterFromURL(filename, nullptr, sinkWriterAttributes, ~mpSinkWriter);
+	sinkWriterAttributes.clear();
+
+	vdrefptr<IMFMediaType> mediaTypeOut;
+	verify += mpfnMFCreateMediaType(~mediaTypeOut);
+
+	verify += mediaTypeOut->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+
+	switch(venc) {
+		case kATVideoEncoding_WMV7:
+			verify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_WMV1);
+			break;
+
+		case kATVideoEncoding_WMV9:
+			verify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_WMV3);
+			break;
+
+		case kATVideoEncoding_H264_AAC:
+		case kATVideoEncoding_H264_MP3:
+			verify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
+			break;
+	}
+
+	verify += mediaTypeOut->SetUINT32(MF_MT_AVG_BITRATE, std::clamp<uint32>(videoBitRate, 500000, 8000000));
+	verify += mediaTypeOut->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+	verify += MFSetAttributeSize(mediaTypeOut, MF_MT_FRAME_SIZE, w, h);
+	verify += MFSetAttributeRatio(mediaTypeOut, MF_MT_FRAME_RATE, frameRate.getHi(), frameRate.getLo());
+	verify += MFSetAttributeRatio(mediaTypeOut, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+
+	verify += mpSinkWriter->AddStream(mediaTypeOut, &mVideoStreamIndex);
+	mediaTypeOut.clear();
+
+	vdrefptr<IMFMediaType> mediaTypeIn;
+	verify += mpfnMFCreateMediaType(~mediaTypeIn);
+
+	verify += mediaTypeIn->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+
+	if (useYUV) {
+		verify += mediaTypeIn->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
+		verify += mediaTypeIn->SetUINT32(MF_MT_VIDEO_CHROMA_SITING, MFVideoChromaSubsampling_MPEG2);
+		verify += mediaTypeIn->SetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235);
+		verify += mediaTypeIn->SetUINT32(MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709);
+	} else {
+		verify += mediaTypeIn->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
+	}
+
+	verify += mediaTypeIn->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+	verify += mediaTypeIn->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
+
+	// This shouldn't be necessary since RGB32 defaults to bottom-up, but the WMV encoder flips the
+	// video if it is not explicitly set.
+	verify += mediaTypeIn->SetUINT32(MF_MT_DEFAULT_STRIDE, useYUV ? w : (UINT32)0 - w*4);
+
+	verify += MFSetAttributeSize(mediaTypeIn, MF_MT_FRAME_SIZE, w, h);
+	verify += MFSetAttributeRatio(mediaTypeIn, MF_MT_FRAME_RATE, frameRate.getHi(), frameRate.getLo());
+	verify += MFSetAttributeRatio(mediaTypeIn, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+
+	verify += mpSinkWriter->SetInputMediaType(mVideoStreamIndex, mediaTypeIn, nullptr);
+	mediaTypeIn.clear();
+
+	////////////////////////////////////////
+
+	// WMAv8 has few mono-only modes, so force stereo
+	mbAudioConvertToStereo = false;
+
+	if (venc != kATVideoEncoding_H264_AAC && venc != kATVideoEncoding_H264_MP3 && !stereo) {
+		mbAudioConvertToStereo = true;
+		stereo = true;
+	}
+
+	const uint32 samplesPerSecond = 48000;
+	const uint32 numChannels = stereo ? 2 : 1;
+
+	mAudioSampleSize = numChannels * sizeof(sint16);
+
+	verify += mpfnMFCreateMediaType(~mediaTypeOut);
+
+	verify += mediaTypeOut->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+	verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, samplesPerSecond);
+	verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, numChannels);
+
+	if (venc == kATVideoEncoding_H264_AAC) {
+		verify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_AAC);
+		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+
+		// The AAC encoder only accepts 12000, 16000, 20000, and 24000.
+		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, ((std::clamp<uint32>(audioBitRate, 96000, 192000) + 16000) / 32000) * 4000);
+	} else if (venc == kATVideoEncoding_H264_MP3) {
+		verify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_MP3);
+
+		// The MP3 Encoder MF filter only supports up to 128kbps in mono.
+		const uint32 bitrate = ((std::clamp<uint32>(audioBitRate, 64000, numChannels > 1 ? 256000 : 128000) + 16000) / 32000) * 32000;
+		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, bitrate >> 3);
+
+		MPEGLAYER3WAVEFORMAT wf;
+
+		wf.wID = MPEGLAYER3_ID_MPEG;
+		wf.fdwFlags = MPEGLAYER3_FLAG_PADDING_OFF;
+		wf.nBlockSize = (144 * bitrate) / samplesPerSecond;
+		wf.nFramesPerBlock = 1;
+		wf.nCodecDelay = 0;
+
+		verify += mediaTypeOut->SetBlob(MF_MT_USER_DATA, (const UINT8 *)&wf.wID, 12);
+		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_PREFER_WAVEFORMATEX, 1);
+		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, 1);
+	} else {
+		verify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_WMAudioV8);
+		verify += mediaTypeOut->SetUINT32(MF_MT_FIXED_SIZE_SAMPLES, TRUE);
+		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+
+		// The WMA codecs are very picky about byte rate and block alignment. These values were
+		// determined by checking the output types from the filter. Unfortunately, we can't do this
+		// with Sink Writer as it creates the transform and sets the output type first on stream add.
+		static constexpr struct WMAProfile {
+			uint32 mByteRate;
+			uint32 mBlockAlignment;
+		} kWMAProfiles[] = {
+			{ 24000, 8192 },
+			{ 20001, 6827 },
+			{ 16002, 5462 },
+			{ 12000, 4096 },
+		};
+
+		const auto& profile = kWMAProfiles[(std::clamp<uint32>(audioBitRate, 96000, 192000) - 96000 + 16000) / 32000];
+
+		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, profile.mByteRate);
+		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, profile.mBlockAlignment);
+	}
+
+	verify += mpSinkWriter->AddStream(mediaTypeOut, &mAudioStreamIndex);
+	mediaTypeOut.clear();
+
+	verify += mpfnMFCreateMediaType(~mediaTypeIn);
+
+	verify += mediaTypeIn->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+	verify += mediaTypeIn->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
+	verify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+	verify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, samplesPerSecond);
+	verify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, samplesPerSecond * mAudioSampleSize);
+	verify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, numChannels);
+	verify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, mAudioSampleSize);
+
+	if (venc == kATVideoEncoding_H264_MP3)
+		verify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_PREFER_WAVEFORMATEX, 1);
+
+	verify += mpSinkWriter->SetInputMediaType(mAudioStreamIndex, mediaTypeIn, nullptr);
+	mediaTypeIn.clear();
+
+	////////////////////////////////////////
+
+	verify += mpSinkWriter->BeginWriting();
+}
+
+void ATMediaFoundationEncoderW32::Shutdown() {
+	if (mpSinkWriter) {
+		HRESULT hr = mpSinkWriter->Finalize();
+
+		// Since the video sample allocator registers as a callback on the sink writer, the finalize
+		// is synchronous and we must wait for it.
+		if (SUCCEEDED(hr) && mpVideoSampleAllocator)
+			mpVideoSampleAllocator->WaitForFinalize();
+
+		mpSinkWriter.clear();
+	}
+
+	mpAudioBuffer.clear();
+
+	if (mbMFInited) {
+		mbMFInited = false;
+		mpfnMFShutdown();
+	}
+
+	if (mhmodMFReadWrite) {
+		FreeLibrary(mhmodMFReadWrite);
+		mhmodMFReadWrite = nullptr;
+	}
+
+	if (mhmodMFPlat) {
+		FreeLibrary(mhmodMFPlat);
+		mhmodMFPlat = nullptr;
+	}
+}
+
+bool ATMediaFoundationEncoderW32::Finalize(MyError& e) {
+	if (mpSinkWriter) {
+		try {
+			HRVerify verify;
+			verify += mpSinkWriter->Finalize();
+
+			// Since the video sample allocator registers as a callback on the sink writer, the finalize
+			// is synchronous and we must wait for it.
+			if (mpVideoSampleAllocator)
+				verify += mpVideoSampleAllocator->WaitForFinalize();
+
+		} catch(MyError error) {
+			e.TransferFrom(error);
+		}
+
+		mpSinkWriter.clear();
+	}
+
+	return e.empty();
+}
+
+sint64 ATMediaFoundationEncoderW32::GetCurrentSize() {
+	if (mpSinkWriter) {
+		MF_SINK_WRITER_STATISTICS stats { sizeof(MF_SINK_WRITER_STATISTICS) };
+
+		HRESULT hr = mpSinkWriter->GetStatistics(MF_SINK_WRITER_ALL_STREAMS, &stats);
+		if (SUCCEEDED(hr))
+			return stats.qwByteCountProcessed;
+	}
+
+	return 0;
+}
+
+namespace {
+	void BlitChroma444ToNV12_Reference(void *uvdst, ptrdiff_t uvpitch, const void *usrc, ptrdiff_t upitch, const void *vsrc, ptrdiff_t vpitch, uint32 w, uint32 h) {
+		uint8 *uvdst8 = (uint8 *)uvdst;
+		const uint8 *usrc8 = (uint8 *)usrc;
+		const uint8 *vsrc8 = (uint8 *)vsrc;
+
+		while(h--) {
+			uint8 *VDRESTRICT uvdst2 = uvdst8;
+			uvdst8 += uvpitch;
+
+			const uint8 *VDRESTRICT usrca2 = usrc8;
+			usrc8 += upitch;
+			const uint8 *VDRESTRICT usrcb2 = usrc8;
+			usrc8 += upitch;
+			const uint8 *VDRESTRICT vsrca2 = vsrc8;
+			vsrc8 += vpitch;
+			const uint8 *VDRESTRICT vsrcb2 = vsrc8;
+			vsrc8 += vpitch;
+
+			*uvdst2++ = (uint8)(((usrca2[0] + usrcb2[0])*3 + usrca2[1] + usrcb2[1] + 4) >> 3);
+			usrca2 += 1;
+			usrcb2 += 1;
+
+			*uvdst2++ = (uint8)(((vsrca2[0] + vsrcb2[0])*3 + vsrca2[1] + vsrcb2[1] + 4) >> 3);
+			vsrca2 += 1;
+			vsrcb2 += 1;
+
+			for(uint32 i=1; i<w; ++i) {
+				*uvdst2++ = (uint8)(((usrca2[0] + usrcb2[0]) + (usrca2[1] + usrcb2[1])*2 + (usrca2[2] + usrcb2[2]) + 4) >> 3);
+				usrca2 += 2;
+				usrcb2 += 2;
+
+				*uvdst2++ = (uint8)(((vsrca2[0] + vsrcb2[0]) + (vsrca2[1] + vsrcb2[1])*2 + (vsrca2[2] + vsrcb2[2]) + 4) >> 3);
+				vsrca2 += 2;
+				vsrcb2 += 2;
+			}
+		}
+	}
+
+#if VD_CPU_X86 || VD_CPU_X64
+	void BlitChroma444ToNV12_SSE2(void *uvdst, ptrdiff_t uvpitch, const void *usrc, ptrdiff_t upitch, const void *vsrc, ptrdiff_t vpitch, uint32 w, uint32 h) {
+		uint8 *uvdst8 = (uint8 *)uvdst;
+		const uint8 *usrc8 = (uint8 *)usrc;
+		const uint8 *vsrc8 = (uint8 *)vsrc;
+
+		uint32 w8 = w >> 3;
+
+		__m128i umask = _mm_set1_epi16(0x00FF);
+		__m128i rightAndMask = ATIntrinGetEndMask_SSE2(2 * (w & 7));
+		__m128i rightOrMask = _mm_andnot_si128(rightAndMask, _mm_set1_epi8(-0x80));
+
+		while(h--) {
+			uint8 *VDRESTRICT uvdst2 = uvdst8;
+			uvdst8 += uvpitch;
+
+			const uint8 *VDRESTRICT usrca2 = usrc8;
+			usrc8 += upitch;
+			const uint8 *VDRESTRICT usrcb2 = usrc8;
+			usrc8 += upitch;
+			const uint8 *VDRESTRICT vsrca2 = vsrc8;
+			vsrc8 += vpitch;
+			const uint8 *VDRESTRICT vsrcb2 = vsrc8;
+			vsrc8 += vpitch;
+
+			// We take advantage of our known layout here, which is 16-byte aligned chroma scanlines with 16 bytes before
+			// and after. This means that the first and last segments might just need some extra masking.
+			__m128i prevU = _mm_avg_epu8(_mm_loadu_si128((const __m128i *)(usrca2 - 1)), _mm_loadu_si128((const __m128i *)(usrcb2 - 1)));
+			__m128i prevV = _mm_avg_epu8(_mm_loadu_si128((const __m128i *)(vsrca2 - 2)), _mm_loadu_si128((const __m128i *)(vsrcb2 - 2)));
+			prevU = _mm_insert_epi16(prevU, 0x8080, 0);
+			prevV = _mm_insert_epi16(prevV, 0x8080, 0);
+
+			__m128i curU  = _mm_avg_epu8(_mm_load_si128 ((const __m128i *)(usrca2 + 0)), _mm_load_si128 ((const __m128i *)(usrcb2 + 0)));
+			__m128i curV  = _mm_avg_epu8(_mm_loadu_si128((const __m128i *)(vsrca2 - 1)), _mm_loadu_si128((const __m128i *)(vsrcb2 - 1)));
+			__m128i nextU = _mm_avg_epu8(_mm_loadu_si128((const __m128i *)(usrca2 + 1)), _mm_loadu_si128((const __m128i *)(usrcb2 + 1)));
+			__m128i nextV = _mm_avg_epu8(_mm_load_si128 ((const __m128i *)(vsrca2 + 0)), _mm_load_si128 ((const __m128i *)(vsrcb2 + 0)));
+			usrca2 += 16;
+			usrcb2 += 16;
+			vsrca2 += 16;
+			vsrcb2 += 16;
+
+			__m128i u = _mm_avg_epu8(_mm_avg_epu8(prevU, nextU), curU);
+			__m128i v = _mm_avg_epu8(_mm_avg_epu8(prevV, nextV), curV);
+
+			__m128i uv = _mm_or_si128(_mm_and_si128(umask, u), _mm_andnot_si128(umask, v));
+
+			_mm_store_si128((__m128i *)uvdst2, uv);
+			uvdst2 += 16;
+
+			for(uint32 i = 1; i < w8; ++i) {
+				__m128i prevU = _mm_avg_epu8(_mm_loadu_si128((const __m128i *)(usrca2 - 1)), _mm_loadu_si128((const __m128i *)(usrcb2 - 1)));
+				__m128i prevV = _mm_avg_epu8(_mm_loadu_si128((const __m128i *)(vsrca2 - 2)), _mm_loadu_si128((const __m128i *)(vsrcb2 - 2)));
+				__m128i curU  = _mm_avg_epu8(_mm_load_si128 ((const __m128i *)(usrca2 + 0)), _mm_load_si128 ((const __m128i *)(usrcb2 + 0)));
+				__m128i curV  = _mm_avg_epu8(_mm_loadu_si128((const __m128i *)(vsrca2 - 1)), _mm_loadu_si128((const __m128i *)(vsrcb2 - 1)));
+				__m128i nextU = _mm_avg_epu8(_mm_loadu_si128((const __m128i *)(usrca2 + 1)), _mm_loadu_si128((const __m128i *)(usrcb2 + 1)));
+				__m128i nextV = _mm_avg_epu8(_mm_load_si128 ((const __m128i *)(vsrca2 + 0)), _mm_load_si128 ((const __m128i *)(vsrcb2 + 0)));
+				usrca2 += 16;
+				usrcb2 += 16;
+				vsrca2 += 16;
+				vsrcb2 += 16;
+
+				__m128i u = _mm_avg_epu8(_mm_avg_epu8(prevU, nextU), curU);
+				__m128i v = _mm_avg_epu8(_mm_avg_epu8(prevV, nextV), curV);
+
+				__m128i uv = _mm_or_si128(_mm_and_si128(umask, u), _mm_andnot_si128(umask, v));
+
+				_mm_store_si128((__m128i *)uvdst2, uv);
+				uvdst2 += 16;
+			}
+
+			// do leftover bytes
+			if (w & 7) {
+				__m128i prevU = _mm_avg_epu8(_mm_loadu_si128((const __m128i *)(usrca2 - 1)), _mm_loadu_si128((const __m128i *)(usrcb2 - 1)));
+				__m128i prevV = _mm_avg_epu8(_mm_loadu_si128((const __m128i *)(vsrca2 - 2)), _mm_loadu_si128((const __m128i *)(vsrcb2 - 2)));
+				__m128i curU  = _mm_avg_epu8(_mm_load_si128 ((const __m128i *)(usrca2 + 0)), _mm_load_si128 ((const __m128i *)(usrcb2 + 0)));
+				__m128i curV  = _mm_avg_epu8(_mm_loadu_si128((const __m128i *)(vsrca2 - 1)), _mm_loadu_si128((const __m128i *)(vsrcb2 - 1)));
+				__m128i nextU = _mm_avg_epu8(_mm_loadu_si128((const __m128i *)(usrca2 + 1)), _mm_loadu_si128((const __m128i *)(usrcb2 + 1)));
+				__m128i nextV = _mm_avg_epu8(_mm_load_si128 ((const __m128i *)(vsrca2 + 0)), _mm_load_si128 ((const __m128i *)(vsrcb2 + 0)));
+
+				nextU = _mm_or_si128(_mm_and_si128(nextU, rightAndMask), rightOrMask);
+				nextV = _mm_or_si128(_mm_and_si128(nextV, rightAndMask), rightOrMask);
+
+				usrca2 += 16;
+				usrcb2 += 16;
+				vsrca2 += 16;
+				vsrcb2 += 16;
+
+				__m128i u = _mm_avg_epu8(_mm_avg_epu8(prevU, nextU), curU);
+				__m128i v = _mm_avg_epu8(_mm_avg_epu8(prevV, nextV), curV);
+
+				__m128i uv = _mm_or_si128(_mm_and_si128(umask, u), _mm_andnot_si128(umask, v));
+
+				_mm_store_si128((__m128i *)uvdst2, uv);
+				uvdst2 += 16;
+			}
+		}
+	}
+#endif
+
+	void BlitChroma420ToNV12_Reference(void *uvdst, ptrdiff_t uvpitch, const void *usrc, ptrdiff_t upitch, const void *vsrc, ptrdiff_t vpitch, uint32 w, uint32 h) {
+		uint8 *uvdst8 = (uint8 *)uvdst;
+		const uint8 *usrc8 = (uint8 *)usrc;
+		const uint8 *vsrc8 = (uint8 *)vsrc;
+
+		while(h--) {
+			uint8 *VDRESTRICT uvdst2 = (uint8 *)uvdst8;
+			uvdst8 += uvpitch;
+
+			const uint8 *VDRESTRICT usrc2 = (const uint8 *)usrc8;
+			usrc8 += upitch;
+			const uint8 *VDRESTRICT vsrc2 = (const uint8 *)usrc8;
+			vsrc8 += vpitch;
+
+			for(uint32 i=w; i; --i) {
+				*uvdst2++ = *usrc2++;
+				*uvdst2++ = *vsrc2++;
+			}
+		}
+	}
+
+#if VD_CPU_X86 || VD_CPU_X64
+	void BlitChroma420ToNV12_SSE2(void *uvdst, ptrdiff_t uvpitch, const void *usrc, ptrdiff_t upitch, const void *vsrc, ptrdiff_t vpitch, uint32 w, uint32 h) {
+		uint8 *uvdst8 = (uint8 *)uvdst;
+		const uint8 *usrc8 = (uint8 *)usrc;
+		const uint8 *vsrc8 = (uint8 *)vsrc;
+
+		uint32 w16 = (w + 15) >> 4;
+
+		while(h--) {
+			__m128i *VDRESTRICT uvdst2 = (__m128i *)uvdst8;
+			uvdst8 += uvpitch;
+
+			const __m128i *VDRESTRICT usrc2 = (const __m128i *)usrc8;
+			usrc8 += upitch;
+			const __m128i *VDRESTRICT vsrc2 = (const __m128i *)vsrc8;
+			vsrc8 += vpitch;
+
+			for(uint32 i=w16; i; --i) {
+				__m128i u = *usrc2++;
+				__m128i v = *vsrc2++;
+
+				// This may overwrite up to 30 bytes, but we've guaranteed that we have this
+				// padding at the end of the buffer.
+				_mm_storeu_si128(uvdst2++, _mm_unpacklo_epi8(u, v));
+				_mm_storeu_si128(uvdst2++, _mm_unpackhi_epi8(u, v));
+			}
+		}
+	}
+#endif
+
+	void BlitChroma444ToNV12(void *uvdst, ptrdiff_t uvpitch, const void *usrc, ptrdiff_t upitch, const void *vsrc, ptrdiff_t vpitch, uint32 w, uint32 h) {
+#if VD_CPU_X86 || VD_CPU_X64
+		if (w >= 32 && SSE2_enabled) {
+			BlitChroma444ToNV12_SSE2(uvdst, uvpitch, usrc, upitch, vsrc, vpitch, w, h);
+			return;
+		}
+#endif
+
+		BlitChroma444ToNV12_Reference(uvdst, uvpitch, usrc, upitch, vsrc, vpitch, w, h);
+	}
+
+	void BlitChroma420ToNV12(void *uvdst, ptrdiff_t uvpitch, const void *usrc, ptrdiff_t upitch, const void *vsrc, ptrdiff_t vpitch, uint32 w, uint32 h) {
+#if VD_CPU_X86 || VD_CPU_X64
+		if (SSE2_enabled) {
+			BlitChroma420ToNV12_SSE2(uvdst, uvpitch, usrc, upitch, vsrc, vpitch, w, h);
+			return;
+		}
+#endif
+
+		BlitChroma420ToNV12_Reference(uvdst, uvpitch, usrc, upitch, vsrc, vpitch, w, h);
+	}
+}
+
+void ATMediaFoundationEncoderW32::WriteVideo(const VDPixmap& px) {
+	// sanity check the input buffer
+	if (mVideoFrameLayout.format == nsVDPixmap::kPixFormat_Y8) {
+		if (px.format != nsVDPixmap::kPixFormat_YUV444_Planar_709 && px.format != nsVDPixmap::kPixFormat_YUV420_Planar_709)
+			return;
+
+		if (px.w != mVideoFrameLayout.w || px.h + (px.h >> 1) != mVideoFrameLayout.h)
+			return;
+	}
+
+	HRVerify verify;
+
+	vdrefptr<IMFSample> sample;
+	vdrefptr<IMFMediaBuffer> buf;
+
+	// try to reclaim a sample from the allocator, to reduce memory allocation overhead -- this
+	// is significant due to VM remapping
+	if (mpVideoSampleAllocator->AllocateCachedSample(~sample)) {
+		// we got one -- sanitize it
+		DWORD bufferCount = 0;
+		verify += sample->GetBufferCount(&bufferCount);
+
+		if (bufferCount > 0) {
+			verify += sample->GetBufferByIndex(0, ~buf);
+
+			if (buf) {
+				DWORD existingMaxLen = 0;
+				verify += buf->GetMaxLength(&existingMaxLen);
+
+				if (existingMaxLen < mVideoFrameSize)
+					buf.clear();
+			}
+		}
+
+		// wipe the sample of buffers and attributes so we start clean -- note that we are
+		// holding the buffer so we can reuse it
+		sample->RemoveAllBuffers();
+		sample->DeleteAllItems();
+	}
+
+	if (!buf)
+		verify += mpfnMFCreateAlignedMemoryBuffer(mVideoFrameSize, MF_64_BYTE_ALIGNMENT, ~buf);
+
+	BYTE *data = nullptr;
+	verify += buf->Lock(&data, nullptr, nullptr);
+
+	if (mVideoFrameLayout.format == nsVDPixmap::kPixFormat_Y8) {
+		// Special case for YUV444/YUV420 -> NV12 -- blit the luma plane, then use a custom blitter for the chroma plane.
+		VDMemcpyRect(data + mVideoFrameLayout.data, mVideoFrameLayout.pitch, px.data, px.pitch, mVideoFrameLayout.w, mVideoFrameLayout.h);
+
+		if (px.format == nsVDPixmap::kPixFormat_YUV444_Planar_709) {
+			BlitChroma444ToNV12(
+				data + mVideoFrameLayout.data + mVideoFrameLayout.pitch * ((mVideoFrameLayout.h * 2) / 3),
+				mVideoFrameLayout.pitch,
+				px.data2,
+				px.pitch2,
+				px.data3,
+				px.pitch3,
+				mVideoFrameLayout.w >> 1,
+				mVideoFrameLayout.h / 3
+			);
+		} else {
+			BlitChroma420ToNV12(
+				data + mVideoFrameLayout.data + mVideoFrameLayout.pitch * ((mVideoFrameLayout.h * 2) / 3),
+				mVideoFrameLayout.pitch,
+				px.data2,
+				px.pitch2,
+				px.data3,
+				px.pitch3,
+				mVideoFrameLayout.w >> 1,
+				mVideoFrameLayout.h / 3
+			);
+		}
+	} else {
+		mVideoBlitter.Blit(VDPixmapFromLayout(mVideoFrameLayout, data), px);
+	}
+
+	verify += buf->Unlock();
+
+	verify += buf->SetCurrentLength(mVideoFrameSize);
+
+	if (!sample)
+		verify += mpfnMFCreateSample(~sample);
+
+	verify += sample->AddBuffer(buf);
+	buf.clear();
+
+	++mVideoFrameCount;
+	LONGLONG endTime = (LONGLONG)(sint64)((vduint128((uint64)mVideoFrameCount * 10000000U) * vduint128(mVideoFrameRate.getLo()) + vduint128(mVideoFrameRate.getHi() >> 1)) / mVideoFrameRate.getHi());
+
+	verify += sample->SetSampleTime(mVideoNextSampleTime);
+	verify += sample->SetSampleDuration(endTime - mVideoNextSampleTime);
+
+	mVideoNextSampleTime = endTime;
+
+	verify += mpSinkWriter->WriteSample(mVideoStreamIndex, sample);
+
+	LPVOID fenceId = mpVideoSampleAllocator->AddSample(sample);
+	sample.release();
+
+	mpSinkWriter->PlaceMarker(mVideoStreamIndex, fenceId);
+}
+
+void ATMediaFoundationEncoderW32::BeginAudioFrame(uint32 bytes, uint32 samples) {
+	HRVerify verify;
+
+	VDASSERT(!mpAudioDst);
+
+	if (mbAudioConvertToStereo)
+		bytes *= 2;
+
+	if (bytes > 0) {
+		verify += mpfnMFCreateMemoryBuffer(bytes, ~mpAudioBuffer);
+		verify += mpAudioBuffer->SetCurrentLength(bytes);
+		verify += mpAudioBuffer->Lock(&mpAudioDst, nullptr, nullptr);
+		mpAudioDstEnd = mpAudioDst + bytes;
+	}
+
+	mAudioSamplesWritten += samples;
+}
+
+void ATMediaFoundationEncoderW32::WriteAudio(const sint16 *data, uint32 bytes) {
+	if (mbAudioConvertToStereo) {
+		VDASSERT((bytes & 1) == 0);
+
+		const sint16 *VDRESTRICT src = data;
+		sint16 *VDRESTRICT dst = (sint16 *)mpAudioDst;
+
+		for(uint32 i = bytes >> 1; i; --i) {
+			dst[0] = dst[1] = *src++;
+			dst += 2;
+		}
+
+		mpAudioDst = (BYTE *)dst;
+	} else {
+		memcpy(mpAudioDst, data, bytes);
+		mpAudioDst += bytes;
+	}
+}
+
+void ATMediaFoundationEncoderW32::EndAudioFrame() {
+	if (!mpAudioDst)
+		return;
+
+	HRVerify verify;
+
+	VDASSERT(mpAudioDst == mpAudioDstEnd);
+
+	verify += mpAudioBuffer->Unlock();
+
+	vdrefptr<IMFSample> sample;
+
+	verify += mpfnMFCreateSample(~sample);
+
+	verify += sample->AddBuffer(mpAudioBuffer);
+	mpAudioBuffer.clear();
+
+	LONGLONG sampleEndTime = (sint64)(((vduint128(mAudioSamplesWritten) * vduint128(10000000)) + vduint128(24000)) / (uint32)48000);
+
+	verify += sample->SetSampleTime(mAudioNextSampleTime);
+	verify += sample->SetSampleDuration(sampleEndTime - mAudioNextSampleTime);
+
+	mAudioNextSampleTime = sampleEndTime;
+
+	verify += mpSinkWriter->WriteSample(mAudioStreamIndex, sample);
+
+	mpAudioDst = nullptr;
+	mpAudioDstEnd = nullptr;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+class ATVideoWriter final : public IATVideoWriter, public IATGTIAVideoTap, public IATAudioTap {
+public:
+	ATVideoWriter();
+	~ATVideoWriter();
+
+	IATGTIAVideoTap *AsVideoTap() override { return this; }
+	IATAudioTap *AsAudioTap() override { return this; }
+
+	void CheckExceptions() override;
+
+	void Init(const wchar_t *filename, ATVideoEncoding venc,
+		uint32 videoBitRate, uint32 audioBitRate,
+		uint32 w, uint32 h, const VDFraction& frameRate, double pixelAspectRatio,
+		ATVideoRecordingResamplingMode resamplingMode,
+		ATVideoRecordingScalingMode scalingMode,
+		const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, bool encodeAllFrames, IATUIRenderer *r) override;
+	void Shutdown() override;
+
+	void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd) override;
+	void WriteRawAudio(const float *left, const float *right, uint32 count, uint32 timestamp);
+
+protected:
+	void RaiseError(const MyError& e);
+
+	bool mbStereo;
+	bool mbHalfRate;
+	bool mbErrorState;
+
+	bool	mbVideoTimestampSet;
+	bool	mbAudioPreskipSet;
+	uint64	mFirstVideoTimestamp;
+	sint32	mAudioPreskip;
+	uint32	mVideoPreskip;
+	double	mFrameRate;
+	double	mSamplingRate;
+	double	mTimestampRate;
+
+	IATUIRenderer	*mpUIRenderer;
+
+	vdautoptr<IATMediaEncoder> mpMediaEncoder;
+
+	VDPixmapCachedBlitter mVideoColorConversionBlitter;
+	vdautoptr<IVDPixmapResampler> mpVideoResampler;
+	VDPixmapCachedBlitter mVideoPostResampleCcBlitter;
+	VDPixmapBuffer mVideoColorConversionBuffer;
+	VDPixmapBuffer mVideoResampleBuffer;
+	VDPixmapBuffer mVideoPostResampleCcBuffer;
+
+	MyError	mError;
+
+	enum { kResampleBufferSize = 4096 };
+
+	uint32	mResampleLevel;
+	uint64	mResampleAccum;
+	uint64	mResampleRate;
+	float	mResampleBuffers[2][4096];
+};
+
+ATVideoWriter::ATVideoWriter() {
+}
+
+ATVideoWriter::~ATVideoWriter() {
+}
+
+void ATVideoWriter::CheckExceptions() {
+	if (!mbErrorState)
+		return;
+
+	if (!mError.empty()) {
+		MyError e;
+
+		e.TransferFrom(mError);
+		throw e;
+	}
+}
+
+void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc,
+	uint32 videoBitRate,
+	uint32 audioBitRate,
+	uint32 w, uint32 h, const VDFraction& frameRate, double pixelAspectRatio,
+	ATVideoRecordingResamplingMode resamplingMode,
+	ATVideoRecordingScalingMode scalingMode,
+	const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, bool encodeAllFrames, IATUIRenderer *r)
+{
+	mbStereo = stereo;
+	mbHalfRate = halfRate;
+	mbErrorState = false;
+	mbVideoTimestampSet = false;
+	mbAudioPreskipSet = false;
+	mFrameRate = frameRate.asDouble();
+	mSamplingRate = samplingRate;
+	mTimestampRate = timestampRate;
+	mAudioPreskip = 0;
+	mVideoPreskip = 0;
+
+	mResampleLevel = 0;
+	mResampleAccum = 0;
+	mResampleRate = VDRoundToInt64(4294967296.0 / 48000.0 * samplingRate);
+
+	mpUIRenderer = r;
+
+	VDFraction encodingFrameRate = frameRate;
+
+	if (halfRate)
+		encodingFrameRate /= 2;
+
+	float aspectCorrectionRatio = pixelAspectRatio;
+
+	if (fabsf(aspectCorrectionRatio - 1.0f) < 1e-4f)
+		aspectCorrectionRatio = 1.0f;
+
+	float dstwf = (float)w * aspectCorrectionRatio;
+	float dsthf = (float)h;
+	uint32 framew = w;
+	uint32 frameh = h;
+
+	switch(scalingMode) {
+		case ATVideoRecordingScalingMode::None:
+			framew = (uint32)VDCeilToInt(dstwf);
+			frameh = (uint32)VDCeilToInt(dsthf);
+			break;
+
+		case ATVideoRecordingScalingMode::Scale480Narrow:
+			framew = 640;
+			frameh = 480;
+			break;
+
+		case ATVideoRecordingScalingMode::Scale480Wide:
+			framew = 854;
+			frameh = 480;
+			break;
+
+		case ATVideoRecordingScalingMode::Scale720Narrow:
+			framew = 960;
+			frameh = 720;
+			break;
+
+		case ATVideoRecordingScalingMode::Scale720Wide:
+			framew = 1280;
+			frameh = 720;
+			break;
+	}
+	
+	bool useYUV = false;
+
+	switch(venc) {
+		case kATVideoEncoding_WMV7:
+		case kATVideoEncoding_WMV9:
+		case kATVideoEncoding_H264_AAC:
+		case kATVideoEncoding_H264_MP3:
+			useYUV = true;
+			break;
+
+		default:
+			break;
+	}
+
+	if (useYUV) {
+		// Ensure even/odd frame size for 4:2:0 since odd support is not guaranteed in MF (much less defined, really).
+		framew = (framew + 1) & ~1;
+		frameh = (frameh + 1) & ~1;
+	}
+
+	if (framew != w || frameh != h || (uint32)(0.5f + dstwf) != w || (uint32)(0.5f + dsthf) != h) {
+		mpVideoResampler = VDCreatePixmapResampler();
+
+		if (useYUV) {
+			VDPixmapLayout layout;
+			VDPixmapCreateLinearLayout(layout, nsVDPixmap::kPixFormat_YUV444_Planar_709, framew, frameh, 16);
+			mVideoResampleBuffer.init(layout, 16);
+		} else {
+			mVideoResampleBuffer.init(framew, frameh, nsVDPixmap::kPixFormat_XRGB8888);
+		}
+
+		memset(mVideoResampleBuffer.base(), 0, mVideoResampleBuffer.size());
+
+		if (useYUV) {
+			VDMemset8Rect(mVideoResampleBuffer.data2, mVideoResampleBuffer.pitch2, 0x80, framew, frameh);
+			VDMemset8Rect(mVideoResampleBuffer.data3, mVideoResampleBuffer.pitch3, 0x80, framew, frameh);
+		}
+
+		float scale = 1.0f;
+		
+		if (scalingMode != ATVideoRecordingScalingMode::None)
+			scale = std::min<float>((float)framew / dstwf, (float)frameh / dsthf);
+
+		dstwf *= scale;
+		dsthf *= scale;
+
+		const float dstxf = ((float)framew - dstwf) * 0.5f;
+		const float dstyf = ((float)frameh - dsthf) * 0.5f;
+		vdrect32f dstrect(dstxf, dstyf, (float)framew - dstxf, (float)frameh - dstyf);
+
+		IVDPixmapResampler::FilterMode filterMode;
+		switch(resamplingMode) {
+			case ATVideoRecordingResamplingMode::Nearest:
+				filterMode = IVDPixmapResampler::kFilterPoint;
+				break;
+
+			case ATVideoRecordingResamplingMode::SharpBilinear:
+				filterMode = IVDPixmapResampler::kFilterSharpLinear;
+				mpVideoResampler->SetSharpnessFactors(2.0f, 2.0f);
+				break;
+
+			case ATVideoRecordingResamplingMode::Bilinear:
+				filterMode = IVDPixmapResampler::kFilterLinear;
+				break;
+		}
+
+		mpVideoResampler->SetFilters(filterMode, filterMode, false);
+		VDVERIFY(mpVideoResampler->Init(dstrect, framew, frameh, mVideoResampleBuffer.format, vdrect32f(0, 0, (float)w, (float)h), w, h, mVideoResampleBuffer.format));
+
+		w = framew;
+		h = frameh;
+
+		palette = nullptr;
+	} else if (useYUV) {
+		mVideoPostResampleCcBuffer.init(w, h, nsVDPixmap::kPixFormat_YUV420_Planar_709);
+	}
+
+	if (!palette && venc == kATVideoEncoding_RLE)
+		throw MyError("RLE encoding is not available as the current emulation video and recording settings require 24-bit video.");
+
+	switch(venc) {
+		case kATVideoEncoding_Raw:
+		case kATVideoEncoding_RLE:
+		case kATVideoEncoding_ZMBV:
+			mpMediaEncoder = new ATAVIEncoder(filename, venc, w, h, encodingFrameRate, palette, samplingRate, stereo, encodeAllFrames);
+			break;
+
+		case kATVideoEncoding_WMV7:
+		case kATVideoEncoding_WMV9:
+		case kATVideoEncoding_H264_AAC:
+		case kATVideoEncoding_H264_MP3:
+			mpMediaEncoder = new ATMediaFoundationEncoderW32(filename, venc, videoBitRate, audioBitRate, w, h, encodingFrameRate, palette, samplingRate, stereo, useYUV);
+			break;
+
+		default:
+			throw MyError("Unimplemented compression mode.");
+	}
+}
+
 void ATVideoWriter::Shutdown() {
 	if (mpUIRenderer) {
 		mpUIRenderer->SetRecordingPosition();
 		mpUIRenderer = NULL;
 	}
 
-	if (mVideoStream) {
-		try {
-			mVideoStream->finish();
-		} catch(const MyError& e) {
+	if (mpMediaEncoder) {
+		MyError e;
+		if (!mpMediaEncoder->Finalize(e))
 			RaiseError(e);
-		}
 
-		mVideoStream = NULL;
+		mpMediaEncoder.reset();
 	}
-
-	if (mFile) {
-		try {
-			mFile->finalize();
-		} catch(const MyError& e) {
-			RaiseError(e);
-		}
-
-		mFile = NULL;
-	}
-
-	mpVideoEncoder = NULL;
 }
 
 void ATVideoWriter::WriteFrame(const VDPixmap& px, uint64 timestamp, uint64 timestampEnd) {
@@ -2263,22 +3430,30 @@ void ATVideoWriter::WriteFrame(const VDPixmap& px, uint64 timestamp, uint64 time
 	}
 
 	if (mpUIRenderer)
-		mpUIRenderer->SetRecordingPosition((float)((double)(timestamp - mFirstVideoTimestamp) / mTimestampRate), mFile->GetCurrentSize());
+		mpUIRenderer->SetRecordingPosition((float)((double)(timestamp - mFirstVideoTimestamp) / mTimestampRate), mpMediaEncoder->GetCurrentSize());
+
+	const VDPixmap *pxlast = &px;
 
 	try {
-		bool intra = false;
+		if (mpVideoResampler) {
+			if (pxlast->format != mVideoResampleBuffer.format) {
+				if (!mVideoColorConversionBuffer.format)
+					mVideoColorConversionBuffer.init(pxlast->w, pxlast->h, mVideoResampleBuffer.format);
 
-		if (!mKeyCounter) {
-			mKeyCounter = mKeyInterval;
-			intra = true;
+				mVideoColorConversionBlitter.Blit(mVideoColorConversionBuffer, *pxlast);
+				pxlast = &mVideoColorConversionBuffer;
+			}
+
+			mpVideoResampler->Process(mVideoResampleBuffer, *pxlast);
+			pxlast = &mVideoResampleBuffer;
 		}
 
-		--mKeyCounter;
+		if (mVideoPostResampleCcBuffer.format) {
+			mVideoPostResampleCcBlitter.Blit(mVideoPostResampleCcBuffer, *pxlast);
+			pxlast = &mVideoPostResampleCcBuffer;
+		}
 
-		mpVideoEncoder->Compress(px, intra, mbEncodeAllFrames);
-
-		uint32 len = mpVideoEncoder->GetEncodedLength();
-		mVideoStream->write(len && intra ? IVDMediaOutputStream::kFlagKeyFrame : 0, mpVideoEncoder->GetEncodedData(), len, 1);
+		mpMediaEncoder->WriteVideo(*pxlast);
 
 		if (mbHalfRate)
 			mVideoPreskip = 1;
@@ -2343,7 +3518,7 @@ void ATVideoWriter::WriteRawAudio(const float *left, const float *right, uint32 
 	sint16 buf[1024];
 	try {
 		if (outputSamples)
-			mAudioStream->partialWriteBegin(IVDMediaOutputStream::kFlagKeyFrame, outputSamples*(mbStereo ? 4 : 2), outputSamples);
+			mpMediaEncoder->BeginAudioFrame(outputSamples*(mbStereo ? 4 : 2), outputSamples);
 
 		uint32 outputSamplesLeft = outputSamples;
 		for(;;) {
@@ -2402,13 +3577,13 @@ void ATVideoWriter::WriteRawAudio(const float *left, const float *right, uint32 
 
 					mResampleAccum = ATFilterResampleStereo16(buf, mResampleBuffers[0], mResampleBuffers[1], tcOut, mResampleAccum, mResampleRate);
 
-					mAudioStream->partialWrite(buf, 2*sizeof(sint16)*tcOut);
+					mpMediaEncoder->WriteAudio(buf, 2*sizeof(sint16)*tcOut);
 				} else {
 					if (tcOut > 1024)
 						tcOut = 1024;
 
 					mResampleAccum = ATFilterResampleMono16(buf, mResampleBuffers[0], tcOut, mResampleAccum, mResampleRate);
-					mAudioStream->partialWrite(buf, sizeof(sint16)*tcOut);
+					mpMediaEncoder->WriteAudio(buf, sizeof(sint16)*tcOut);
 				}
 
 				outputSamplesLeft -= tcOut;
@@ -2430,7 +3605,7 @@ void ATVideoWriter::WriteRawAudio(const float *left, const float *right, uint32 
 		}
 
 		if (outputSamples)
-			mAudioStream->partialWriteEnd();
+			mpMediaEncoder->EndAudioFrame();
 
 		VDASSERT(!count);
 

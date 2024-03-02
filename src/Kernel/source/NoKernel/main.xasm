@@ -171,7 +171,6 @@ display_list:
 	dta		$02
 	dta		$02
 	dta		$02
-	dta		$02
 	dta		$30
 	dta		$02
 	dta		$41,a(display_list)
@@ -182,10 +181,9 @@ message:
 	dta		"This is a placeholder for the normal    "
 	dta		"Atari kernel ROM; it means that you have"
 	dta		"selected a kernel ROM that is not       "
-	dta		"present. Switch to the Default or HLE   "
-	dta		"setting, or see the README for instruct-"
-	dta		"ions on how to use a real Atari kernel  "
-	dta		"ROM image.                              "
+	dta		"present. Check Firmware settings in     "
+	dta		"Configure System to fix the kernel ROM  "
+	dta		"setting.                                "
 	dta		"System halted                           "
 
 ;==============================================================================

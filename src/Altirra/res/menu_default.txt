@@ -117,6 +117,7 @@
 	&Auto-switch XEP80 View		{View.ToggleXEP80ViewAutoswitching}
 	Adjust Colors...			{Video.AdjustColorsDialog}
 	Adjust Screen Effects...	{Video.AdjustScreenEffectsDialog}
+	Customize HUD...			{View.CustomizeHUD}
 	---
 	&Display					{Pane.Display}
 	&Printer Output				{Pane.PrinterOutput}
@@ -168,6 +169,7 @@ S&ystem
 		Indus GT: Track Button			{Console.IndusGTTrack}
 		Indus GT: Drive Type Button		{Console.IndusGTId}
 		Indus GT: Boot CP/M				{Console.IndusGTBootCPM}
+		Indus GT: Change Density		{Console.IndusGTChangeDensity}
 		Happy: Slow Switch				{Console.HappyToggleFastSlow}
 		Happy 1050: Write protect disk	{Console.HappyToggleWriteProtect}
 		Happy 1050: Write enable disk	{Console.HappyToggleWriteEnable}
@@ -223,7 +225,6 @@ Debu&g
 		
 	Options
 		Auto-Reload ROMs on Cold Reset	{Debug.ToggleAutoReloadRoms}
-		Auto-Load Kernel Symbols		{Debug.ToggleAutoLoadKernelSymbols}
 		&Randomize Memory On EXE Load	{System.ToggleMemoryRandomizationEXE}
 		&Break at EXE Run Address		{Debug.ToggleBreakAtExeRun}
 		---

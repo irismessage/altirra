@@ -100,7 +100,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				break;
 
 			case 0x12:
-				Decode65816AddrDpInd(unalignedDP);
+				Decode65816AddrDpInd(unalignedDP, emu);
 				break;
 
 			case 0x13:
@@ -761,7 +761,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			break;
 
 		case 0x42:	// WDM
-			*mpDstState++ = kStateWait;
+			*mpDstState++ = kStateReadImm;
 			break;
 
 		case 0x44:	// MVP
@@ -1725,9 +1725,10 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			break;
 
 		case 0xD4:	// PEI (dp)
+			// PEI (dp) must cross pages regardless of the emulation flag or DP page alignment.
 			Decode65816AddrDp(unalignedDP);
 			*mpDstState++ = kStateReadL16;
-			*mpDstState++ = kStateReadH16_DpBank;
+			*mpDstState++ = kStateReadH16_DpBankNoWrap;
 			*mpDstState++ = kStatePushH16;
 			*mpDstState++ = kStatePushL16;
 			break;
@@ -2044,14 +2045,14 @@ void ATCPUEmulator::Decode65816AddrDpY(bool unalignedDP, bool emu) {
 		*mpDstState++ = kStateWait;
 }
 
-void ATCPUEmulator::Decode65816AddrDpInd(bool unalignedDP) {
+void ATCPUEmulator::Decode65816AddrDpInd(bool unalignedDP, bool emu) {
 	*mpDstState++ = kStateReadAddrDp;
 	
 	if (unalignedDP)
 		*mpDstState++ = kStateWait;
 
 	*mpDstState++ = kState816ReadByte;	
-	*mpDstState++ = kStateReadIndAddrDp;
+	*mpDstState++ = unalignedDP || !emu ? kStateReadIndAddrDp : kState816ReadIndAddrDpInPage;
 }
 
 void ATCPUEmulator::Decode65816AddrDpIndX(bool unalignedDP, bool emu) {
@@ -2062,7 +2063,10 @@ void ATCPUEmulator::Decode65816AddrDpIndX(bool unalignedDP, bool emu) {
 
 	*mpDstState++ = kStateWait;
 	*mpDstState++ = kState816ReadByte;	
-	*mpDstState++ = unalignedDP || !emu ? kStateReadIndAddrDp : kState816ReadIndAddrDpInPage;
+
+	// In emulation mode, (dp,X) wraps when reading its second byte even if DP is
+	// unaligned.
+	*mpDstState++ = !emu ? kStateReadIndAddrDp : kState816ReadIndAddrDpInPage;
 }
 
 void ATCPUEmulator::Decode65816AddrDpIndY(bool unalignedDP, bool emu, bool forceCycle) {

@@ -61,6 +61,9 @@ bool g_ATProfileBootstrap = false;
 
 uint32 g_ATDefaultProfileIds[kATDefaultProfileCount];
 
+ATNotifyList<const ATSettingsLoadSaveCallback *> g_ATSettingsLoadCallbacks;
+ATNotifyList<const ATSettingsLoadSaveCallback *> g_ATSettingsSaveCallbacks;
+
 void ATSyncCPUHistoryState();
 void ATUIUpdateSpeedTiming();
 void ATUIResizeDisplay();
@@ -371,7 +374,7 @@ void ATSettingsExchangeEnum(bool write, VDRegistryKey& key, const char *name, T 
 	if (write)
 		key.setInt(name, (int)getter());
 	else
-		setter((T)key.getEnumInt(name, count, (int)getter()));
+		setter((T)key.getEnumInt(name, (int)count, (int)getter()));
 }
 
 float ATSettingsGetFloat(VDRegistryKey& key, const char *name, float defaultValue) {
@@ -392,6 +395,8 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 	ATSettingsExchangeEnum<ATDisplayStretchMode>(write, key, "Display: Stretch mode", kATDisplayStretchModeCount, ATUIGetDisplayStretchMode, ATUISetDisplayStretchMode);
 	ATSettingsExchangeBool(write, key, "Display: Show indicators", ATUIGetDisplayIndicators, ATUISetDisplayIndicators);
 	ATSettingsExchangeBool(write, key, "Display: Indicator margin", ATUIGetDisplayPadIndicators, ATUISetDisplayPadIndicators);
+	ATSettingsExchangeBool(write, key, "Display: Auto-hide pointer", ATUIGetPointerAutoHide, ATUISetPointerAutoHide);
+	ATSettingsExchangeBool(write, key, "Display: Show target pointer", ATUIGetTargetPointerVisible, ATUISetTargetPointerVisible);
 
 	if (write) {
 		key.setString("Display: Custom effect path", g_ATUIManager.GetCustomEffectPath());
@@ -408,9 +413,9 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 	ATSettingsExchangeBool(write, key, "View: 80-column view enabled", ATUIGetXEPViewEnabled, ATUISetXEPViewEnabled);
 	ATSettingsExchangeBool(write, key, "View: 80-column view autoswitching enabled", ATUIGetXEPViewAutoswitchingEnabled, ATUISetXEPViewAutoswitchingEnabled);
 
-	ATSettingsExchangeEnum<ATGTIAEmulator::ArtifactMode>(write, key, "GTIA: Artifacting mode", ATGTIAEmulator::kArtifactCount,
+	ATSettingsExchangeEnum<ATArtifactMode>(write, key, "GTIA: Artifacting mode", ATArtifactMode::Count,
 		[&]() { return gtia.GetArtifactingMode(); },
-		[&](ATGTIAEmulator::ArtifactMode mode) { gtia.SetArtifactingMode(mode); });
+		[&](ATArtifactMode mode) { gtia.SetArtifactingMode(mode); });
 
 	ATSettingsExchangeEnum<ATGTIAEmulator::OverscanMode>(write, key, "GTIA: Overscan mode", ATGTIAEmulator::kOverscanCount,
 		[&]() { return gtia.GetOverscanMode(); },
@@ -428,6 +433,10 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 		[&]() { return gtia.IsBlendModeEnabled(); },
 		[&](bool en) { gtia.SetBlendModeEnabled(en); });
 
+	ATSettingsExchangeBool(write, key, "GTIA: Linear frame blending",
+		[&]() { return gtia.IsLinearBlendEnabled(); },
+		[&](bool en) { gtia.SetLinearBlendEnabled(en); });
+
 	ATSettingsExchangeBool(write, key, "GTIA: Interlace",
 		[&]() { return gtia.IsInterlaceEnabled(); },
 		[&](bool en) { gtia.SetInterlaceEnabled(en); });
@@ -435,6 +444,10 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 	ATSettingsExchangeBool(write, key, "GTIA: Scanlines",
 		[&]() { return gtia.AreScanlinesEnabled(); },
 		[&](bool en) { gtia.SetScanlinesEnabled(en); });
+
+	ATSettingsExchangeEnum<ATMonitorMode>(write, key, "GTIA: Monitor mode", ATMonitorMode::Count,
+		[&] { return gtia.GetMonitorMode(); },
+		[&](ATMonitorMode mode) { gtia.SetMonitorMode(mode); });
 
 	if (write) {
 		key.setBool("Disk: Sector counter enabled", g_sim.IsDiskSectorCounterEnabled());
@@ -755,6 +768,7 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 		key.setString("Cassette: Turbo mode", ATEnumToString(g_sim.GetCassette().GetTurboMode()));
 		key.setString("Cassette: Polarity mode", ATEnumToString(g_sim.GetCassette().GetPolarityMode()));
 		key.setString("Cassette: Direct sense mode", ATEnumToString(g_sim.GetCassette().GetDirectSenseMode()));
+		key.setBool("Cassette: Turbo prefilter enabled", g_sim.GetCassette().IsTurboPrefilterEnabled());
 
 		key.setBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled());
 		key.setBool("Kernel: Fast boot enabled", g_sim.IsFastBootEnabled());
@@ -795,6 +809,8 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 		VDStringA polarityMode;
 		key.getString("Cassette: Polarity mode", polarityMode);
 		cassette.SetPolarityMode(ATParseEnum<ATCassettePolarityMode>(polarityMode).mValue);
+		
+		cassette.SetTurboPrefilterEnabled(key.getBool("Cassette: Turbo prefilter enabled", cassette.IsTurboPrefilterEnabled()));
 
 		VDStringA directSenseMode;
 		key.getString("Cassette: Direct sense mode", directSenseMode);
@@ -835,33 +851,45 @@ void LoadColorParams(VDRegistryKey& key, ATNamedColorParams& colpa) {
 	if (presetIndex >= 0) {
 		static_cast<ATColorParams&>(colpa) = ATGetColorPresetByIndex(presetIndex);
 	} else {
-		colpa.mHueStart = ATSettingsGetFloat(key, "Hue Start", colpa.mHueStart);
-		colpa.mHueRange = ATSettingsGetFloat(key, "Hue Range", colpa.mHueRange);
-		colpa.mBrightness = ATSettingsGetFloat(key, "Brightness", colpa.mBrightness);
-		colpa.mContrast = ATSettingsGetFloat(key, "Contrast", colpa.mContrast);
-		colpa.mSaturation = ATSettingsGetFloat(key, "Saturation", colpa.mSaturation);
-		colpa.mGammaCorrect = ATSettingsGetFloat(key, "Gamma Correction2", colpa.mGammaCorrect);
+		const float kUnsetFloat = -1e+10;
 
-		// Artifact hue is stored negated for compatibility reasons.
-		colpa.mArtifactHue = -ATSettingsGetFloat(key, "Artifact Hue", -colpa.mArtifactHue);
+		const float hueStart = ATSettingsGetFloat(key, "Hue Start", kUnsetFloat);
 
-		colpa.mArtifactSat = ATSettingsGetFloat(key, "Artifact Saturation", colpa.mArtifactSat);
-		colpa.mArtifactSharpness = ATSettingsGetFloat(key, "Artifact Sharpness", colpa.mArtifactSharpness);
+		if (hueStart > kUnsetFloat) {
+			colpa.mHueStart = hueStart;
+			colpa.mHueRange = ATSettingsGetFloat(key, "Hue Range", colpa.mHueRange);
+			colpa.mBrightness = ATSettingsGetFloat(key, "Brightness", colpa.mBrightness);
+			colpa.mContrast = ATSettingsGetFloat(key, "Contrast", colpa.mContrast);
+			colpa.mSaturation = ATSettingsGetFloat(key, "Saturation", colpa.mSaturation);
+			colpa.mGammaCorrect = ATSettingsGetFloat(key, "Gamma Correction2", colpa.mGammaCorrect);
 
-		colpa.mIntensityScale = ATSettingsGetFloat(key, "Intensity Scale", colpa.mIntensityScale);
-		colpa.mRedShift = ATSettingsGetFloat(key, "Red Shift", colpa.mRedShift);
-		colpa.mRedScale = ATSettingsGetFloat(key, "Red Scale", colpa.mRedScale);
-		colpa.mGrnShift = ATSettingsGetFloat(key, "Green Shift", colpa.mGrnShift);
-		colpa.mGrnScale = ATSettingsGetFloat(key, "Green Scale", colpa.mGrnScale);
-		colpa.mBluShift = ATSettingsGetFloat(key, "Blue Shift", colpa.mBluShift);
-		colpa.mBluScale = ATSettingsGetFloat(key, "Blue Scale", colpa.mBluScale);
+			// Artifact hue is stored negated for compatibility reasons.
+			colpa.mArtifactHue = -ATSettingsGetFloat(key, "Artifact Hue", -colpa.mArtifactHue);
 
-		colpa.mbUsePALQuirks = key.getBool("PAL quirks", colpa.mbUsePALQuirks);
-		colpa.mLumaRampMode = (ATLumaRampMode)key.getEnumInt("Luma ramp mode", (int)kATLumaRampModeCount, (int)colpa.mLumaRampMode);
+			colpa.mArtifactSat = ATSettingsGetFloat(key, "Artifact Saturation", colpa.mArtifactSat);
+			colpa.mArtifactSharpness = ATSettingsGetFloat(key, "Artifact Sharpness", colpa.mArtifactSharpness);
 
-		VDStringA s;
-		key.getString("Color matching mode", s);
-		colpa.mColorMatchingMode = ATParseEnum<ATColorMatchingMode>(s).mValue;
+			colpa.mIntensityScale = ATSettingsGetFloat(key, "Intensity Scale", colpa.mIntensityScale);
+			colpa.mRedShift = ATSettingsGetFloat(key, "Red Shift", colpa.mRedShift);
+			colpa.mRedScale = ATSettingsGetFloat(key, "Red Scale", colpa.mRedScale);
+			colpa.mGrnShift = ATSettingsGetFloat(key, "Green Shift", colpa.mGrnShift);
+			colpa.mGrnScale = ATSettingsGetFloat(key, "Green Scale", colpa.mGrnScale);
+			colpa.mBluShift = ATSettingsGetFloat(key, "Blue Shift", colpa.mBluShift);
+			colpa.mBluScale = ATSettingsGetFloat(key, "Blue Scale", colpa.mBluScale);
+
+			colpa.mbUsePALQuirks = key.getBool("PAL quirks", colpa.mbUsePALQuirks);
+			colpa.mLumaRampMode = (ATLumaRampMode)key.getEnumInt("Luma ramp mode", (int)kATLumaRampModeCount, (int)colpa.mLumaRampMode);
+
+			VDStringA s;
+			key.getString("Color matching mode", s);
+			colpa.mColorMatchingMode = ATParseEnum<ATColorMatchingMode>(s).mValue;
+
+			// Convert from old PAL quirks hue start values to new encoding
+			if (colpa.mbUsePALQuirks) {
+				colpa.mHueStart += colpa.mHueRange * (2.0f / 15.0f) - 33.0f;
+				colpa.mHueStart = roundf(colpa.mHueStart * 1000.0f) / 1000.0f;
+			}
+		}
 
 		if (!presetNameValid) {
 			for(uint32 i=0, n = ATGetColorPresetCount(); i<n; ++i) {
@@ -876,7 +904,15 @@ void LoadColorParams(VDRegistryKey& key, ATNamedColorParams& colpa) {
 
 void SaveColorParams(VDRegistryKey& key, const ATNamedColorParams& colpa) {
 	key.setString("Preset Tag", colpa.mPresetTag.c_str());
-	key.setInt("Hue Start", VDGetFloatAsInt(colpa.mHueStart));
+
+	// Convert from new PAL quirks hue start values to old encoding
+	float encodedHueStart = colpa.mHueStart;
+	if (colpa.mbUsePALQuirks) {
+		encodedHueStart += 33.0f - colpa.mHueRange * (2.0f / 15.0f);
+		encodedHueStart = roundf(encodedHueStart * 1000.0f) / 1000.0f;
+	}
+
+	key.setInt("Hue Start", VDGetFloatAsInt(encodedHueStart));
 	key.setInt("Hue Range", VDGetFloatAsInt(colpa.mHueRange));
 	key.setInt("Brightness", VDGetFloatAsInt(colpa.mBrightness));
 	key.setInt("Contrast", VDGetFloatAsInt(colpa.mContrast));
@@ -918,7 +954,7 @@ void ATSettingsExchangeColor(bool write, VDRegistryKey& key) {
 		colKey.setBool("Use separate color profiles", cols.mbUsePALParams);
 	} else {
 		VDRegistryKey colKey(key, "Colors", false);
-		ATColorSettings cols(gtia.GetColorSettings());
+		ATColorSettings cols(gtia.GetDefaultColorSettings());
 
 		VDRegistryKey ntscRegKey(colKey, "NTSC", false);
 		LoadColorParams(ntscRegKey, cols.mNTSCParams);
@@ -944,6 +980,7 @@ void ATSettingsExchangeSound(bool write, VDRegistryKey& key) {
 		key.setBool("Audio: Show debug info", audioOut->GetStatusRenderer() != NULL);
 
 		key.setBool("Audio: Monitor enabled", g_sim.IsAudioMonitorEnabled());
+		key.setBool("Audio: Scope enabled", g_sim.IsAudioScopeEnabled());
 
 		key.setBool("Audio: Non-linear mixing", pokey.IsNonlinearMixingEnabled());
 		key.setBool("Audio: Serial noise enabled", pokey.IsSerialNoiseEnabled());
@@ -971,6 +1008,7 @@ void ATSettingsExchangeSound(bool write, VDRegistryKey& key) {
 			audioOut->SetStatusRenderer(NULL);
 
 		g_sim.SetAudioMonitorEnabled(key.getBool("Audio: Monitor enabled", false));
+		g_sim.SetAudioScopeEnabled(key.getBool("Audio: Scope enabled", false));
 
 		pokey.SetNonlinearMixingEnabled(key.getBool("Audio: Non-linear mixing", pokey.IsNonlinearMixingEnabled()));
 		pokey.SetSerialNoiseEnabled(key.getBool("Audio: Serial noise enabled", true));
@@ -1043,6 +1081,7 @@ void ATSettingsExchangeDebugging(bool write, VDRegistryKey& key) {
 		key.setBool("CPU: History enabled", cpu.IsHistoryEnabled());
 		key.setBool("CPU: Pathfinding enabled", cpu.IsPathfindingEnabled());
 		key.setBool("CPU: Stop on BRK", cpu.GetStopOnBRK());
+		key.setBool("Debugger: Auto-load OS ROM symbols", g_sim.IsAutoLoadKernelSymbolsEnabled());
 
 		IATDebugger *dbg = ATGetDebugger();
 		if (dbg) {
@@ -1050,12 +1089,14 @@ void ATSettingsExchangeDebugging(bool write, VDRegistryKey& key) {
 			key.setString("Debugger: Pre-start symbol load mode", ATEnumToString(dbg->GetSymbolLoadMode(false)));
 			key.setString("Debugger: Post-start symbol load mode", ATEnumToString(dbg->GetSymbolLoadMode(true)));
 			key.setString("Debugger: Script auto-load mode", ATEnumToString(dbg->GetScriptAutoLoadMode()));
+			key.setBool("Debugger: Auto-load system symbols", dbg->IsAutoLoadSystemSymbolsEnabled());
 		}
 	} else {
 		g_sim.SetRandomFillEXEEnabled(key.getBool("Memory: Randomize on EXE load", g_sim.IsRandomFillEXEEnabled()));
 		cpu.SetHistoryEnabled(key.getBool("CPU: History enabled", cpu.IsHistoryEnabled()));
 		cpu.SetPathfindingEnabled(key.getBool("CPU: Pathfinding enabled", cpu.IsPathfindingEnabled()));
 		cpu.SetStopOnBRK(key.getBool("CPU: Stop on BRK", cpu.GetStopOnBRK()));
+		g_sim.SetAutoLoadKernelSymbolsEnabled(key.getBool("Debugger: Auto-load OS ROM symbols", g_sim.IsAutoLoadKernelSymbolsEnabled()));
 
 		ATSyncCPUHistoryState();
 
@@ -1074,6 +1115,9 @@ void ATSettingsExchangeDebugging(bool write, VDRegistryKey& key) {
 			s.clear();
 			key.getString("Debugger: Script auto-load mode", s);
 			dbg->SetScriptAutoLoadMode(ATParseEnum<ATDebuggerScriptAutoLoadMode>(s).mValue);
+
+
+			dbg->SetAutoLoadSystemSymbols(key.getBool("Debugger: Auto-load system symbols", dbg->IsAutoLoadSystemSymbolsEnabled()));
 		}
 	}
 }
@@ -1296,9 +1340,11 @@ void LoadMountedImages(VDRegistryKey& rootKey) {
 		VDStringW casPath;
 		key.getString("Cassette", casPath);
 
-		if (!casPath.empty())
-			cas.Load(casPath.c_str());
-		else
+		if (!casPath.empty()) {
+			ATImageLoadContext ctx {};
+			ctx.mLoadType = kATImageType_Tape;
+			g_sim.Load(casPath.c_str(), kATMediaWriteMode_VRW, &ctx);
+		} else
 			cas.Unload();
 	} catch(const MyError&) {
 	}
@@ -1471,6 +1517,26 @@ void ATExchangeSettings(bool write, ATSettingsCategory mask) {
 		profileId = ATSettingsProfileGetParent(profileId);
 	}
 
+	for(const auto& profileMask : profileMasks) {
+		const uint32 profileId = profileMask.first;
+
+		ProfileKey key(profileId, write);
+
+		if (write) {
+			g_ATSettingsSaveCallbacks.NotifyAll(
+				[&](const ATSettingsLoadSaveCallback *cb) {
+					(*cb)((ATSettingsCategory)profileMask.second, key);
+				}
+			);
+		} else {
+			g_ATSettingsLoadCallbacks.NotifyAll(
+				[&](const ATSettingsLoadSaveCallback *cb) {
+					(*cb)((ATSettingsCategory)profileMask.second, key);
+				}
+			);
+		}
+	}
+
 	for(const auto& entry : kHandlers) {
 		if (!(mask & entry.mCategory))
 			continue;
@@ -1499,6 +1565,22 @@ void ATSaveSettings(ATSettingsCategory mask) {
 		return;
 
 	ATExchangeSettings(true, mask);
+}
+
+void ATSettingsRegisterLoadCallback(const ATSettingsLoadSaveCallback *fn) {
+	g_ATSettingsLoadCallbacks.Add(fn);
+}
+
+void ATSettingsUnregisterLoadCallback(const ATSettingsLoadSaveCallback *fn) {
+	g_ATSettingsLoadCallbacks.Remove(fn);
+}
+
+void ATSettingsRegisterSaveCallback(const ATSettingsLoadSaveCallback *fn) {
+	g_ATSettingsSaveCallbacks.Add(fn);
+}
+
+void ATSettingsUnregisterSaveCallback(const ATSettingsLoadSaveCallback *fn) {
+	g_ATSettingsSaveCallbacks.Remove(fn);
 }
 
 uint32 ATSettingsGetCurrentProfileId() {

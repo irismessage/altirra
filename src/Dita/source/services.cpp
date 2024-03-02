@@ -812,7 +812,7 @@ const VDStringW VDGetDirectory(long nKey, VDGUIHandle ctxParent, const wchar_t *
 				if (pSHBrowseForFolderW && pSHGetPathFromIDListW) {
 					if (wchar_t *pszBuffer = (wchar_t *)pMalloc->Alloc(MAX_PATH * sizeof(wchar_t))) {
 						BROWSEINFOW bi;
-						ITEMIDLIST *pidlBrowse;
+						LPITEMIDLIST pidlBrowse;
 
 						bi.hwndOwner		= (HWND)ctxParent;
 						bi.pidlRoot			= NULL;

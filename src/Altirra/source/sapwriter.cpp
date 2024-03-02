@@ -181,7 +181,7 @@ void ATSAPWriter::OnVBlank() {
 	mpPokey->GetRegisterState(rstate);
 
 	if (!mbSilencePassed) {
-		const uint8 volumes = rstate.mReg[0] | rstate.mReg[2] | rstate.mReg[4] | rstate.mReg[6];
+		const uint8 volumes = rstate.mReg[1] | rstate.mReg[3] | rstate.mReg[5] | rstate.mReg[7];
 
 		if (!(volumes & 15))
 			return;

@@ -65,7 +65,48 @@ struct ATCoProcWriteMemNode {
 	}
 };
 
+void ATCoProcDebugReadMemory(const uintptr *readMap, void *dst, uint32 start, uint32 len);
 void ATCoProcReadMemory(const uintptr *readMap, void *dst, uint32 start, uint32 len);
 void ATCoProcWriteMemory(const uintptr *writeMap, const void *src, uint32 start, uint32 len);
+
+class ATCoProcMemoryMapView {
+public:
+	ATCoProcMemoryMapView(uintptr *readMap, uintptr *writeMap, uint32 *traceMap = nullptr)
+		: mpReadMap(readMap), mpWriteMap(writeMap), mpTraceMap(traceMap) {}
+
+	// Fill the entire memory map with read and write pages (nominally the open bus and
+	// dummy write pages). Both must be 256 bytes.
+	void Clear(const void *readPage, void *writePage);
+
+	// Set the read, write, or both read/write mappings for a range of pages to the given
+	// memory block. The memory block must be aligned to 2 and size 256*n.
+	void SetMemory(uint32 basePage, uint32 n, void *mem);
+	void SetReadMem(uint32 basePage, uint32 n, const void *mem);
+	void SetReadMemTraceable(uint32 basePage, uint32 n, const void *mem);
+	void SetWriteMem(uint32 basePage, uint32 n, void *mem);
+
+	// Set the rw/r/w mappings for a range of pages to the given handlers.
+	void SetHandlers(uint32 basePage, uint32 n, const ATCoProcReadMemNode& readNode, const ATCoProcWriteMemNode& writeNode);
+	void SetReadHandler(uint32 basePage, uint32 n, const ATCoProcReadMemNode& node);
+	void SetWriteHandler(uint32 basePage, uint32 n, const ATCoProcWriteMemNode& node);
+
+	// Repeat the same 256 byte page of memory for a range of pages.
+	void RepeatPage(uint32 basePage, uint32 n, void *mem);
+	void RepeatReadPage(uint32 basePage, uint32 n, const void *mem);
+	void RepeatWritePage(uint32 basePage, uint32 n, void *mem);
+
+	// Copy the mappings from a source range to a destination range. The
+	// copy is ascending, starting at the given pages, so replication is
+	// possible.
+	void MirrorFwd(uint32 basePage, uint32 n, uint32 srcBasePage);
+
+private:
+	static void Fill(uintptr *p, uint32 n, uintptr key);
+	static void FillInc(uintptr *p, uint32 n, uintptr key, uintptr keyInc);
+
+	uintptr *mpReadMap;
+	uintptr *mpWriteMap;
+	uint32 *mpTraceMap;
+};
 
 #endif	// f_ATCOPROC_MEMORYMAP_H

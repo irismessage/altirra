@@ -56,6 +56,8 @@ extern bool g_fullscreen;
 extern bool g_mouseClipped;
 extern bool g_mouseCaptured;
 extern bool g_mouseAutoCapture;
+extern bool g_ATUIPointerAutoHide;
+extern bool g_ATUITargetPointerVisible;
 extern ATUIKeyboardOptions g_kbdOpts;
 extern bool g_xepViewEnabled;
 extern bool g_xepViewAutoswitchingEnabled;
@@ -417,6 +419,7 @@ void ATUIVideoDisplayWindow::Copy(bool enableEscaping) {
 }
 
 void ATUIVideoDisplayWindow::CopySaveFrame(bool saveFrame, bool trueAspect, const wchar_t *path) {
+	VDPixmapBuffer frameStorage;
 	VDPixmap frameView;
 	double par = 1;
 
@@ -428,9 +431,8 @@ void ATUIVideoDisplayWindow::CopySaveFrame(bool saveFrame, bool trueAspect, cons
 		frameView = framebuffer;
 	} else {
 		ATGTIAEmulator& gtia = g_sim.GetGTIA();
-		const VDPixmap *frame = gtia.GetLastFrameBuffer();
 
-		if (!frame)
+		if (!gtia.GetLastFrameBuffer(frameStorage, frameView))
 			return;
 
 		int px = 2;
@@ -438,7 +440,6 @@ void ATUIVideoDisplayWindow::CopySaveFrame(bool saveFrame, bool trueAspect, cons
 		gtia.GetPixelAspectMultiple(px, py);
 
 		par = (double)py / (double)px;
-		frameView = *frame;
 
 		const bool pal = g_sim.GetVideoStandard() != kATVideoStandard_NTSC && g_sim.GetVideoStandard() != kATVideoStandard_PAL60;
 		par *= (pal ? 1.03964f : 0.857141f);
@@ -922,10 +923,28 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 					}
 				}
 			} else if (!g_sim.IsRunning() && ATIsDebugConsoleActive()) {
-				mbCoordIndicatorEnabled = true;
-				CaptureCursor();
-				SetCoordinateIndicator(x, y);
-				SetCursorImage(kATUICursorImage_Cross);
+				if (mpManager->IsKeyDown(kATUIVK_Shift)) {
+					int hcyc, vcyc;
+
+					if (MapPixelToBeamPosition(x, y, hcyc, vcyc, false)) {
+						const auto& antic = g_sim.GetAntic();
+						uint32 frame = antic.GetRawFrameCounter();
+
+						// switch from color cycles to machine cycles
+						hcyc >>= 1;
+
+						if (vcyc >= (int)antic.GetBeamY() || (vcyc == (int)antic.GetBeamY() && hcyc >= (int)antic.GetBeamX()))
+							--frame;
+
+						ATConsolePingBeamPosition(frame, vcyc < 0 ? 0 : vcyc, hcyc < 0 ? 0 : hcyc);
+					}
+
+				} else {
+					mbCoordIndicatorEnabled = true;
+					CaptureCursor();
+					SetCoordinateIndicator(x, y);
+					SetCursorImage(kATUICursorImage_Cross);
+				}
 			} else if (MapPixelToBeamPosition(x, y, xc, yc, false)) {
 				// attempt to copy out text
 				auto [xmode, ymode] = GetModeLineXYPos(xc, yc, true);
@@ -1118,7 +1137,7 @@ void ATUIVideoDisplayWindow::OnMouseHover(sint32 x, sint32 y) {
 	if (g_mouseCaptured)
 		return;
 
-	if (!mpManager->IsKeyDown(kATUIVK_Alt)) {
+	if (g_ATUIPointerAutoHide && !mpManager->IsKeyDown(kATUIVK_Alt)) {
 		SetCursorImage(kATUICursorImage_Hidden);
 		mbMouseHidden = true;
 		mMouseHideX = x;
@@ -1186,13 +1205,13 @@ bool ATUIVideoDisplayWindow::OnChar(const ATUICharEvent& event) {
 	}
 
 	int code = event.mCh;
-	if (code <= 0 || code > 127)
+	if (code <= 0)
 		return false;
 
 	if (g_kbdOpts.mbRawKeys) {
 		uint32 ch;
 
-		if (!event.mbIsRepeat && ATUIGetScanCodeForCharacter(code, ch)) {
+		if (!event.mbIsRepeat && ATUIGetScanCodeForCharacter32(code, ch)) {
 			if (ch >= 0x100)
 				ProcessVirtKey(0, event.mScanCode, ch, false);
 			else if (mbHoldKeys)
@@ -1213,7 +1232,7 @@ bool ATUIVideoDisplayWindow::OnChar(const ATUICharEvent& event) {
 	} else {
 		uint32 ch;
 
-		if (ATUIGetScanCodeForCharacter(event.mCh, ch)) {
+		if (ATUIGetScanCodeForCharacter32(code, ch)) {
 			if (ch >= 0x100)
 				ProcessVirtKey(0, event.mScanCode, ch, false);
 			else
@@ -1298,10 +1317,7 @@ void ATUIVideoDisplayWindow::OnCreate() {
 	mpUILabelBadSignal->SetFillColor(0xFF204050);
 	mpUILabelBadSignal->SetTextColor(0xFFFFFFFF);
 	mpUILabelBadSignal->SetTextOffset(8, 8);
-
-	vdrefptr<IATUIAnchor> anchor;
-	ATUICreateTranslationAnchor(0.5f, 0.5f, ~anchor);
-	mpUILabelBadSignal->SetAnchor(anchor);
+	mpUILabelBadSignal->SetPlacement(vdrect32f(0.5f, 0.5f, 0.5f, 0.5f), vdpoint32(0, 0), vdfloat2{0.5f, 0.5f});
 
 	AddChild(mpUILabelBadSignal);
 }
@@ -1323,7 +1339,7 @@ void ATUIVideoDisplayWindow::OnSize() {
 	if (mpOSK) {
 		mpOSK->AutoSize();
 
-		const vdsize32& osksz = mpOSK->GetArea().size();
+		const vdsize32& osksz = mpOSK->GetSizeOffset();
 		mpOSK->SetPosition(vdpoint32((csz.w - osksz.w) >> 1, 0));
 
 		mpOSKPanel->SetArea(vdrect32(0, csz.h - osksz.h, csz.w, csz.h));
@@ -1450,8 +1466,6 @@ void ATUIVideoDisplayWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) 
 			mpUILabelBadSignal->SetVisible(true);
 			mpUILabelBadSignal->SetTextAlign(ATUILabel::kAlignCenter);
 			mpUILabelBadSignal->SetTextF(L"Unsupported video mode\n%.3fKHz, %.1fHz", vi.mHorizScanRate / 1000.0f, vi.mVertScanRate);
-			mpUILabelBadSignal->AutoSize();
-			mpUILabelBadSignal->SetArea(mpUILabelBadSignal->GetAnchor()->Position(vdrect32(0, 0, w, h), mpUILabelBadSignal->GetArea().size()));
 		} else {
 			const vdrect32& dst = GetAltDisplayArea();
 
@@ -1570,6 +1584,8 @@ void ATUIVideoDisplayWindow::UpdateAltDisplay() {
 		// do force a change event next frame
 		mAltVOChangeCount = vi.mFrameBufferChangeCount - 1;
 		mAltVOLayoutChangeCount = vi.mFrameBufferLayoutChangeCount - 1;
+
+		Invalidate();
 	}
 }
 
@@ -1815,7 +1831,7 @@ uint32 ATUIVideoDisplayWindow::ComputeCursorImage(const vdpoint32& pt) const {
 			// aimed at screen or otherwise not a light pen/gun).
 
 			if (g_sim.GetInputManager()->IsMouseActiveTarget())
-				return kATUICursorImage_Target;
+				return g_ATUITargetPointerVisible ? kATUICursorImage_Target : kATUICursorImage_Hidden;
 			else
 				return kATUICursorImage_TargetOff;
 
@@ -2388,7 +2404,7 @@ void ATUIVideoDisplayWindow::SetCoordinateIndicator(int x, int y) {
 	if (uir) {
 		VDStringW s;
 
-		s.sprintf(L"<b>Pos:</b> (%u,%u)\n", hcyc, vcyc);
+		s.sprintf(L"<b>Pos:</b> (%u,%u) [frame %u]\n", hcyc, vcyc, g_sim.GetAntic().GetRawFrameCounter());
 
 		ATAnticEmulator& antic = g_sim.GetAntic();
 		const ATAnticEmulator::DLHistoryEntry *dlhist = antic.GetDLHistory();
@@ -2572,20 +2588,17 @@ void ATUIVideoDisplayWindow::UpdateEnhTextSize() {
 					mpUILabelEnhTextSize = new ATUILabel;
 					mpUILabelEnhTextSize->AddRef();
 
-					vdrefptr<IATUIAnchor> anchor;
-					ATUICreateTranslationAnchor(0.5f, 0.5f, ~anchor);
 					mpUILabelEnhTextSize->SetFont(mpManager->GetThemeFont(kATUIThemeFont_Default));
-					mpUILabelEnhTextSize->SetAnchor(anchor);
 					mpUILabelEnhTextSize->SetTextOffset(8, 8);
 					mpUILabelEnhTextSize->SetTextColor(0xFFFFFF);
 					mpUILabelEnhTextSize->SetBorderColor(0xFFFFFF);
 					mpUILabelEnhTextSize->SetFillColor(0x404040);
+					mpUILabelEnhTextSize->SetPlacement(vdrect32f(0.5f, 0.5f, 0.5f, 0.5f), vdpoint32(0, 0), vdfloat2{0.5f, 0.5f});
 
 					AddChild(mpUILabelEnhTextSize);
 				}
 
 				mpUILabelEnhTextSize->SetTextF(L"%ux%u", videoInfoNext.mTextColumns, videoInfoNext.mTextRows);
-				mpUILabelEnhTextSize->AutoSize();
 			}
 		}
 	}

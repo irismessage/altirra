@@ -56,6 +56,7 @@ namespace ATKernelSymbols {
 		BFENHI = 0X0035,
 		BUFRFL = 0X0038,
 		RECVDN = 0X0039,
+		XMTDON = 0x003A,
 		CHKSNT = 0x003B,
 		BPTR   = 0x003D,
 		FTYPE  = 0x003E,

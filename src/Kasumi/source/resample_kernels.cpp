@@ -185,6 +185,53 @@ void VDResamplerLinearFilter::GenerateFilterBank(float *dst) const {
 
 ///////////////////////////////////////////////////////////////////////////
 //
+// VDResamplerSharpLinearFilter
+//
+///////////////////////////////////////////////////////////////////////////
+
+VDResamplerSharpLinearFilter::VDResamplerSharpLinearFilter(double factor)
+	: mScale(factor)
+{
+}
+
+int VDResamplerSharpLinearFilter::GetFilterWidth() const {
+	return 2;
+}
+
+double VDResamplerSharpLinearFilter::EvaluateFilter(double t) const {
+	t = (0.5f - fabs(t)) * mScale + 0.5f;
+
+	if (t < 0.0f)
+		t = 0.0f;
+
+	if (t > 1.0f)
+		t = 1.0f;
+
+	return t;
+}
+
+void VDResamplerSharpLinearFilter::GenerateFilter(float *dst, double offset) const {
+	double t = (0.5 - fabs(offset)) * mScale + 0.5f;
+
+	if (t < 0.0f)
+		t = 0.0f;
+
+	if (t > 1.0f)
+		t = 1.0f;
+
+	dst[0] = (float)t;
+	dst[1] = 1.0f - (float)t;
+}
+
+void VDResamplerSharpLinearFilter::GenerateFilterBank(float *dst) const {
+	for(int offset=0; offset<256; ++offset) {
+		GenerateFilter(dst, offset * (1.0f / 256.0f));
+		dst += 2;
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+//
 // VDResamplerCubicFilter
 //
 ///////////////////////////////////////////////////////////////////////////

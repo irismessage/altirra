@@ -5,7 +5,6 @@
     <ProjectGuid>{E6FA3718-4AD2-4B58-903A-45F35CCD2FDE}</ProjectGuid>
     <RootNamespace>vdjson</RootNamespace>
     <Keyword>Win32Proj</Keyword>
-    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="..\Build\PlatformSetup.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />

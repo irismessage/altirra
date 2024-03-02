@@ -6,7 +6,7 @@
 
 class VDDisplayCachedImageGDI;
 
-class VDDisplayRendererGDI : public IVDDisplayRenderer {
+class VDDisplayRendererGDI final : public IVDDisplayRenderer {
 public:
 	VDDisplayRendererGDI();
 	~VDDisplayRendererGDI();
@@ -33,6 +33,7 @@ public:
 	void MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode);
 
 	void PolyLine(const vdpoint32 *points, uint32 numLines);
+	void PolyLineF(const vdfloat2 *points, uint32 numLines, bool antialiased) override {}
 
 	virtual bool PushViewport(const vdrect32& r, sint32 x, sint32 y);
 	virtual void PopViewport();

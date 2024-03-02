@@ -20,6 +20,7 @@
 #define f_VD2_VDJSON_JSONREADER_H
 
 #include <vd2/system/vdstl.h>
+#include <vd2/system/function.h>
 
 class VDJSONNameTable;
 class VDJSONDocument;
@@ -31,6 +32,8 @@ public:
 	VDJSONReader();
 	~VDJSONReader();
 
+	void SetMemberNameFilter(vdfunction<bool(const wchar_t *)> fn);
+
 	bool Parse(const void *buf, size_t len, VDJSONDocument& doc);
 	void GetErrorLocation(int& line, int& offset) const;
 
@@ -39,13 +42,13 @@ protected:
 	bool ParseObject(VDJSONValue& obj);
 	bool ParseArray(VDJSONValue& arr);
 	bool ParseValue(VDJSONValue& val);
+	bool ParseValue(wchar_t c, VDJSONValue& val);
 	bool ParseString();
 	bool Expect(wchar_t c);
 
 	void ClearNameBuffer();
 	bool AddNameChar(wchar_t c);
 	bool EndName();
-	bool IsNameEqual(const wchar_t *s) const;
 
 	static bool IsWhitespaceChar(wchar_t c);
 
@@ -55,8 +58,6 @@ protected:
 	wchar_t GetCharSlow();
 
 	uint32 GetTokenForName();
-
-	void SetError();
 
 	VDJSONNameTable *mpNameTable;
 	VDJSONDocument *mpDocument;
@@ -83,10 +84,10 @@ protected:
 	const uint8 *mpSrc;
 	const uint8 *mpSrcEnd;
 	bool mbSrcError;
-	uint32 mErrorLine;
-	uint32 mErrorChar;
+	bool mbSuppressAdvanceLine;
 
-	vdfastvector<VDJSONValue> mArrayStack;
+	vdfunction<bool(const wchar_t *)> mpMemberFilter;
+	vdfastvector<const VDJSONValue *> mArrayStack;
 };
 
 #endif

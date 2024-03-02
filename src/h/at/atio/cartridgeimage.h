@@ -22,6 +22,7 @@
 #include <optional>
 #include <vd2/system/refcount.h>
 #include <vd2/system/vdstl.h>
+#include <at/atcore/checksum.h>
 #include <at/atio/cartridgetypes.h>
 #include <at/atio/image.h>
 
@@ -39,6 +40,7 @@ struct ATCartLoadContext {
 	int mCartMapper = -1;
 	uint32 mCartSize = 0;
 	uint64 mRawImageChecksum = 0;
+	std::optional<ATChecksumSHA256> mFileSHA256 {};
 
 	ATCartLoadStatus mLoadStatus = kATCartLoadStatus_Ok;
 
@@ -56,7 +58,6 @@ public:
 	virtual void *GetBuffer() = 0;
 
 	virtual uint64 GetChecksum() = 0;
-	virtual std::optional<uint32> GetFileCRC() const = 0;
 
 	virtual bool IsDirty() const = 0;
 	virtual void SetClean() = 0;

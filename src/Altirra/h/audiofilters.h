@@ -23,7 +23,7 @@ public:
 	}
 
 	bool CloseTo(const ATAudioFilter& src, float threshold) {
-		return fabsf(src.mHiPassAccum - mHiPassAccum) < threshold;
+		return fabsf(src.mHiPassAccum - mHiPassAccum) < threshold && fabsf(src.mDiffHistory - mDiffHistory) < threshold;
 	}
 
 	float GetScale() const;
@@ -32,14 +32,22 @@ public:
 	void SetActiveMode(bool active);
 
 	void PreFilter(float * VDRESTRICT dst, uint32 count, float dcLevel);
+
+	// Run a high-pass filter on adjacent differences rather than normal samples. This takes advantage
+	// of Direct Form I by cancelling the adjacent difference operation on the input with a running sum
+	// operation of a previous stage; this avoids the need to expand edges to pulses. PreFilter1()
+	// is the optional pre-differencing step, while PreFilter2() is the integration step.
+	void PreFilterDiff(float * VDRESTRICT dst, uint32 count);
+	void PreFilterEdges(float * VDRESTRICT dst, uint32 count, float dcLevel);
+
 	void Filter(float *dst, const float *src, uint32 count);
 	void Filter(float *dst, uint32 count);
 
 protected:
-	float	mHiPassAccum;
-	float	mHiCoeff;
-	float	mScale;
-	float	mRawScale;
+	float	mHiPassAccum = 0;
+	float	mHiCoeff = 0;
+	float	mScale = 0;
+	float	mDiffHistory = 0;
 
 	float	mLoPassCoeffs[kFilterOverlap];
 };

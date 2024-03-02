@@ -41,7 +41,6 @@ enum ATSaveStateSection {
 };
 
 class ATSaveStateReader;
-class ATSaveStateWriter;
 
 class ATInvalidSaveStateException : public MyError {
 public:
@@ -69,25 +68,6 @@ struct ATSaveStateMethodReadHandler {
 		ATSaveStateMethodReadHandler *thisptr = (ATSaveStateMethodReadHandler *)handler;
 
 		((thisptr->mpThis)->*(thisptr->mpMethod))(reader);
-	}
-};
-
-///////////////////////////////////////////////////////////////////////////
-struct ATSaveStateWriteHandler {
-	size_t mSize;
-	void (*mpDispatchFn)(ATSaveStateWriter& writer, const ATSaveStateWriteHandler *handler);
-};
-
-template<class T, class M>
-struct ATSaveStateMethodWriteHandler {
-	ATSaveStateWriteHandler mHandler;
-	T *mpThis;
-	M mpMethod;
-
-	static void DispatchFn(ATSaveStateWriter& writer, const ATSaveStateWriteHandler *handler) {
-		ATSaveStateMethodWriteHandler *thisptr = (ATSaveStateMethodWriteHandler *)handler;
-
-		((thisptr->mpThis)->*(thisptr->mpMethod))(writer);
 	}
 };
 
@@ -155,61 +135,4 @@ protected:
 	VDLinearAllocator mLinearAlloc;
 };
 
-///////////////////////////////////////////////////////////////////////////
-class ATSaveStateWriter {
-	ATSaveStateWriter(const ATSaveStateWriter&) = delete;
-	ATSaveStateWriter& operator=(const ATSaveStateWriter&) = delete;
-public:
-	typedef vdfastvector<uint8> Storage;
-
-	ATSaveStateWriter(Storage& dst);
-	~ATSaveStateWriter();
-
-	void RegisterHandler(ATSaveStateSection section, const ATSaveStateWriteHandler& handler);
-
-	template<class T, typename M>
-	void RegisterHandlerMethod(ATSaveStateSection section, T *thisptr, M method) {
-		const ATSaveStateMethodWriteHandler<T,M> handler = {
-			{ sizeof(ATSaveStateMethodWriteHandler<T,M>), ATSaveStateMethodWriteHandler<T,M>::DispatchFn },
-			thisptr,
-			method
-		};
-
-		RegisterHandler(section, handler.mHandler);
-	}
-
-	void WriteSection(ATSaveStateSection section);
-
-	void BeginChunk(uint32 id);
-	void EndChunk();
-
-	void WriteBool(bool b);
-	void WriteSint8(sint8 v);
-	void WriteSint16(sint16 v);
-	void WriteSint32(sint32 v);
-	void WriteUint8(uint8 v);
-	void WriteUint16(uint16 v);
-	void WriteUint32(uint32 v);
-	void WriteUint64(uint64 v);
-	void WriteString(const wchar_t *s);
-
-	template<class T>
-	void operator!=(const T& val) {
-		WriteData(&val, sizeof val);
-	}
-
-	void WriteData(const void *src, uint32 count);
-
-protected:
-
-	Storage& mDst;
-
-	vdfastvector<size_t> mChunkStack;
-
-	typedef vdfastvector<const ATSaveStateWriteHandler *> HandlerList;
-	HandlerList mHandlers[kATSaveStateSectionCount];
-
-	VDLinearAllocator mLinearAlloc;
-};
-
-#endif	// f_AT_SAVESTATE_H
+#endif

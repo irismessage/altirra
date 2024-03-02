@@ -370,6 +370,7 @@ void vdvector<T,A>::push_back(const T& x) {
 
 template <class T, class A>
 void vdvector<T,A>::pop_back() {
+	VDASSERT(m.mpEnd != m.mpBegin);
 	--m.mpEnd;
 	m.mpEnd->~T();
 }

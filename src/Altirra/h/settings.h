@@ -18,9 +18,11 @@
 #ifndef f_AT_SETTINGS_H
 #define f_AT_SETTINGS_H
 
+#include <vd2/system/function.h>
 #include <vd2/system/vdstl.h>
 
 class VDStringW;
+class VDRegistryKey;
 
 enum ATSettingsCategory : uint32 {
 	kATSettingsCategory_None			= 0x00000000,
@@ -74,6 +76,12 @@ void ATSetDefaultProfileId(ATDefaultProfile profile, uint32 profileId);
 
 void ATLoadSettings(ATSettingsCategory categories);
 void ATSaveSettings(ATSettingsCategory categories);
+
+typedef vdfunction<void(ATSettingsCategory, VDRegistryKey&)> ATSettingsLoadSaveCallback;
+void ATSettingsRegisterLoadCallback(const ATSettingsLoadSaveCallback *fn);
+void ATSettingsUnregisterLoadCallback(const ATSettingsLoadSaveCallback *fn);
+void ATSettingsRegisterSaveCallback(const ATSettingsLoadSaveCallback *fn);
+void ATSettingsUnregisterSaveCallback(const ATSettingsLoadSaveCallback *fn);
 
 void ATSettingsProfileEnum(vdfastvector<uint32>& profileIds);
 bool ATSettingsIsValidProfile(uint32 profileId);

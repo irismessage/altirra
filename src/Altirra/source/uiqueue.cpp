@@ -62,7 +62,7 @@ bool ATUIQueue::Run() {
 	try {
 		step();
 	} catch(const MyError& e) {
-		PushStep(ATUIShowAlert(VDTextAToW(e.gets()).c_str(), L"Altirra Error")->GetStep());
+		PushStep(ATUIShowAlertError(VDTextAToW(e.gets()).c_str(), nullptr)->GetStep());
 	}
 
 	return true;

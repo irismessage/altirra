@@ -27,11 +27,12 @@
 struct ATCPUDecoderTables6502 {
 	uint16	mInsnPtrs[258];
 	uint8	mDecodeHeap[0x5000];
+	uint32	mDecodeHeapLimit;
 };
 
 class ATCPUDecoderGenerator6502 {
 public:
-	void	RebuildTables(ATCPUDecoderTables6502& dst, bool stopOnBRK, bool historyTracing, bool enableBreakpoints, bool isC02);
+	void	RebuildTables(ATCPUDecoderTables6502& dst, bool stopOnBRK, bool historyTracing, bool enableBreakpoints, bool isC02, bool enableTracing);
 
 private:
 	bool	DecodeInsn6502(uint8 opcode);

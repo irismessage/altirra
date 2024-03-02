@@ -60,61 +60,67 @@ const uint32 kATCassetteDataLimit = UINT32_C(0x1FFFFFFF);
 /// At 1 baud, it takes 10 seconds to write out a byte. 
 const uint32 kATCassetteDataWriteByteBuffer = (uint32)(kATCassetteDataSampleRate * 12);
 
+struct ATCassetteLoadContext {
+	bool mbUseTurboPrefilter = false;
+};
 
 class IATCassetteImage : public IATImage {
 public:
 	enum : uint32 { kTypeID = 'csim' };
 
-	/// Returns length of data track, in data samples.
+	// Returns length of data track, in data samples.
 	virtual uint32 GetDataLength() const = 0;
 
-	/// Returns length of audio track, in audio samples.
+	// Returns length of audio track, in audio samples.
 	virtual uint32 GetAudioLength() const = 0;
 
-	/// Returns true if the audio track was created from the data track.
+	// Returns true if the audio track was created from the data track.
 	virtual bool IsAudioCreated() const = 0;
 
-	/// Decodes a bit from the tape.
-	///
-	/// pos: Center data sample position for decoding.
-	/// averagingPeriod: Number of data samples over which to extract a bit.
-	/// threshold: Threshold for 0/1 detection, relative to count (averaging period).
-	/// prevBit: Previous bit to reuse if sum doesn't exceed hysteresis threshold.
-	///
-	/// Returns the decoded bit.
-	///
+	// Decodes a bit from the tape.
+	//
+	// pos: Center data sample position for decoding.
+	// averagingPeriod: Number of data samples over which to extract a bit.
+	// threshold: Threshold for 0/1 detection, relative to count (averaging period).
+	// prevBit: Previous bit to reuse if sum doesn't exceed hysteresis threshold.
+	//
+	// Returns the decoded bit.
+	//
 	virtual bool GetBit(uint32 pos, uint32 averagingPeriod, uint32 threshold, bool prevBit, bool bypassFSK) const = 0;
 
-	/// Decodes a bit from the tape without averaging and bypassing FSK decoding.
-	virtual bool GetTurboBit(uint32 pos) const = 0;
+	// Decodes a bit from the tape without averaging.
+	virtual bool GetBit(uint32 pos, bool bypassFSK) const = 0;
 
-	/// Return the first position at or after the given position that is a low data bit.
-	/// Does no low-pass filtering. Particularly optimized for skipping blocks that
-	/// are already marked as silence internally. Always uses FSK if both FSK and turbo
-	/// encodings are available.
-	virtual uint32 GetNearestLowBitPos(uint32 pos) const = 0;
+	virtual uint32 GetBitSum(uint32 pos, uint32 period, bool bypassFSK) const = 0;
 
-	/// Read signal peaks.
-	///
-	/// t0: First sample requested, in seconds.
-	/// dt: Time between samples, in seconds.
-	/// n: Number of samples requested.
-	/// data: Receives [n] min/max pairs for data track.
-	/// audio: Receives [n] min/max pairs for audio track.
-	///
-	/// Peaks are returned as min/max pairs with values in [-1, 1] range.
-	///
+	struct NextBitInfo {
+		uint32 mPos;
+		bool mBit;
+	};
+
+	virtual NextBitInfo FindNextBit(uint32 pos, uint32 limit, bool level, bool bypassFSK) const = 0;
+
+	// Read signal peaks.
+	//
+	// t0: First sample requested, in seconds.
+	// dt: Time between samples, in seconds.
+	// n: Number of samples requested.
+	// data: Receives [n] min/max pairs for data track.
+	// audio: Receives [n] min/max pairs for audio track.
+	//
+	// Peaks are returned as min/max pairs with values in [-1, 1] range.
+	//
 	virtual void ReadPeakMap(float t0, float dt, uint32 n, float *data, float *audio) = 0;
 
-	/// Read audio.
-	///
-	/// dst: Auto-incremented dest pointer to output channel.
-	/// posSample/posCycle: Auto-incremented integer/fractional audio sample position.
-	/// n: Number of samples requested.
-	///
-	/// Returns number of samples provided. If the end of the audio track is hit,
-	/// fewer than requested samples may be returned.
-	virtual void AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const = 0;
+	// Read audio.
+	//
+	// dst: Auto-incremented dest pointer to output channel.
+	// posSample/posCycle: Auto-incremented integer/fractional audio sample position.
+	// n: Number of samples requested.
+	//
+	// Returns number of samples provided. If the end of the audio track is hit,
+	// fewer than requested samples may be returned.
+	virtual void AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const = 0;
 
 	virtual uint32 GetWriteCursor() const = 0;
 	virtual void SetWriteCursor(uint32 pos) = 0;
@@ -124,7 +130,7 @@ public:
 };
 
 void ATCreateNewCassetteImage(IATCassetteImage **ppImage);
-void ATLoadCassetteImage(IVDRandomAccessStream& file, IVDRandomAccessStream *analysisOutput, IATCassetteImage **ppImage);
+void ATLoadCassetteImage(IVDRandomAccessStream& file, IVDRandomAccessStream *analysisOutput, const ATCassetteLoadContext& ctx, IATCassetteImage **ppImage);
 void ATSaveCassetteImageCAS(IVDRandomAccessStream& file, IATCassetteImage *image);
 void ATSaveCassetteImageWAV(IVDRandomAccessStream& file, IATCassetteImage *image);
 

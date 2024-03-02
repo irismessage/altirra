@@ -101,6 +101,7 @@ enum ATCartridgeMode : uint32 {
 	kATCartridgeMode_Atrax_128K_Raw,		// (type 68)
 	kATCartridgeMode_aDawliah_32K,			// (type 69)
 	kATCartridgeMode_aDawliah_64K,			// (type 70)
+	kATCartridgeMode_JRC_64K_RAM,			// (unofficial type 160 used by AVGCart)
 	kATCartridgeModeCount
 };
 

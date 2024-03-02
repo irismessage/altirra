@@ -31,7 +31,7 @@ namespace {
 	// 1/128 for mapping unsigned 8-bit PCM to [-1, 1] (well, almost)
 	// 1/2 for two source channels summed on each output channel
 	// 1/28 for crude box filtering to mix rate
-	const float kOutputScale = 1.0f / 128.0f / 2.0f * 60.0f;
+	const float kOutputScale = 1.0f / 128.0f / 2.0f / 28.0f;
 
 	// Two channels, for the full 28 ticks per sample, at a value of 0x80.
 	const float kOutputBias = -128.0f * 2.0f * 28.0f;

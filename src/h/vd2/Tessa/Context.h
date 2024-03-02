@@ -84,6 +84,11 @@ public:
 
 	virtual bool ResizeBuffers(uint32 width, uint32 height) = 0;
 
+	// Check for occlusion. If the swap chain output is fully covered, returns true to
+	// indicate that rendering can be skipped; otherwise, returns false. May return a
+	// conservative result (typically based on the last present).
+	virtual bool CheckOcclusion() = 0;
+
 	virtual void Present() = 0;
 	virtual void PresentVSync(void *monitor, IVDTAsyncPresent *callback) = 0;
 	virtual void PresentVSyncComplete() = 0;

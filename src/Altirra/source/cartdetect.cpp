@@ -89,7 +89,16 @@ namespace {
 	};
 }
 
-static const struct ATCartDetectInfo {
+enum class ATCartDetectFlags : uint32 {
+	None = 0,
+	DontRecommend = 1
+};
+
+ATCartDetectFlags operator&(ATCartDetectFlags x, ATCartDetectFlags y) {
+	return (ATCartDetectFlags)((uint32)x & (uint32)y);
+}
+
+static constexpr struct ATCartDetectInfo {
 	ATCartridgeMode		mMode;
 	SystemType			mSystemType;
 	uint32				mSizeTypes;
@@ -97,6 +106,7 @@ static const struct ATCartDetectInfo {
 	BankingType			mBankingType;
 	InitRange			mInitRange;
 	HeaderType			mHeaderType;
+	ATCartDetectFlags	mFlags;
 } kATCartDetectInfo[] = {
 {	kATCartridgeMode_2K,						kType800,	kSize2K,	kWrsNone,	kBankNone,		kInit2K,	kHeaderLast16B,					},
 {	kATCartridgeMode_4K,						kType800,	kSize4K,	kWrsNone,	kBankNone,		kInit4K,	kHeaderLast16B,					},
@@ -106,6 +116,7 @@ static const struct ATCartDetectInfo {
 {	kATCartridgeMode_16K,						kType800,	kSize16K,	kWrsNone,	kBankNone,		kInit16K,	kHeaderLast16B,					},
 {	kATCartridgeMode_XEGS_32K,					kType800,	kSize32K,	kWrsNone,	kBankData,		kInit8K,	kHeaderLast16B,					},
 {	kATCartridgeMode_XEGS_64K,					kType800,	kSize64K,	kWrsNone,	kBankData,		kInit8K,	kHeaderLast16B,					},
+{	kATCartridgeMode_XEGS_64K_Alt,				kType800,	kSize64K,	kWrsNone,	kBankData,		kInit8K,	kHeaderLast16B,					},
 {	kATCartridgeMode_XEGS_128K,					kType800,	kSize128K,	kWrsNone,	kBankData,		kInit8K,	kHeaderLast16B,					},
 {	kATCartridgeMode_XEGS_256K,					kType800,	kSize256K,	kWrsNone,	kBankData,		kInit8K,	kHeaderLast16B,					},
 {	kATCartridgeMode_XEGS_512K,					kType800,	kSize512K,	kWrsNone,	kBankData,		kInit8K,	kHeaderLast16B,					},
@@ -152,6 +163,7 @@ static const struct ATCartDetectInfo {
 {	kATCartridgeMode_RightSlot_8K,				kType800,	kSize8K,	kWrsNone,	kBankNone,		kInit8KR,	kHeaderLast16B,					},
 {	kATCartridgeMode_DB_32K,					kType800,	kSize32K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderLast16B,					},
 {	kATCartridgeMode_Atrax_128K,				kType800,	kSize128K,	kWrsNone,	kBankData,		kInit8K,	kHeaderFirst8K,					},
+{	kATCartridgeMode_Atrax_128K_Raw,			kType800,	kSize128K,	kWrsNone,	kBankData,		kInit8K,	kHeaderFirst8K,					ATCartDetectFlags::DontRecommend },
 {	kATCartridgeMode_Phoenix_8K,				kType800,	kSize8K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderLast16B,					},
 {	kATCartridgeMode_Blizzard_16K,				kType800,	kSize16K,	kWrsNone,	kBankAny,		kInit16K,	kHeaderLast16B,					},
 {	kATCartridgeMode_Blizzard_4K,				kType800,	kSize4K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderLast16B,					},
@@ -171,6 +183,10 @@ static const struct ATCartDetectInfo {
 {	kATCartridgeMode_TheCart_32M,				kType800,	kSize32M,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_TheCart_64M,				kType800,	kSize64M,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_TheCart_128M,				kType800,	kSize128M,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					},
+
+{	kATCartridgeMode_aDawliah_32K,				kType800,	kSize32K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					ATCartDetectFlags::DontRecommend },
+{	kATCartridgeMode_aDawliah_64K,				kType800,	kSize64K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					ATCartDetectFlags::DontRecommend },
+{	kATCartridgeMode_JRC_64K_RAM,				kType800,	kSize64K,	kWrsNone,	kBankData,		kInit8K,	kHeaderLast16B,					ATCartDetectFlags::DontRecommend },
 
 // 5200 carts
 //
@@ -608,6 +624,10 @@ not_recommended:
 			}
 		}
 
+		if ((detInfo.mFlags & ATCartDetectFlags::DontRecommend) != ATCartDetectFlags::None) {
+			score = -10000;
+		}
+
 		cartModes.push_back(detInfo.mMode - (score << 16));
 	}
 
@@ -725,6 +745,11 @@ not_recommended:
 
 		*it &= 0xffff;
 	}
+
+	// if we have more than one recommended type and the high score is 0, none of them
+	// are really recommended
+	if (!hiscore && recommendedCount > 1)
+		recommendedCount = 0;
 
 	return recommendedCount;
 }

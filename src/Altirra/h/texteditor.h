@@ -37,11 +37,12 @@ class IVDTextEditorCallback {
 public:
 	virtual void OnTextEditorUpdated() = 0;
 	virtual void OnTextEditorScrolled(int firstVisiblePara, int lastVisiblePara, int visibleParaCount, int totalParaCount) = 0;
+	virtual void OnLinkSelected(uint32 selectionCode, int para, int offset) = 0;
 };
 
 class IVDTextEditorColorization {
 public:
-	virtual void AddTextColorPoint(int start, sint32 fore, sint32 back) = 0;
+	virtual void AddTextColorPoint(int start, sint32 fore, sint32 back, uint32 selectionCode = 0) = 0;
 };
 
 class IVDTextEditorColorizer {
@@ -103,6 +104,8 @@ public:
 	virtual void SelectAll() = 0;
 
 	virtual void Append(const char *s) = 0;
+	virtual void InsertAt(int para, int offset, const char *s) = 0;
+	virtual void RemoveAt(int para1, int offset1, int para2, int offset2) = 0;
 
 	virtual void Load(IVDStream& stream) = 0;
 	virtual void Save(IVDTextEditorStreamOut& streamout) = 0;

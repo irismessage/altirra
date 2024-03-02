@@ -131,6 +131,8 @@ public:
 
 	void pointh(float xoffset, float xfactor, uint32 w);
 	void pointv(float yoffset, float yfactor, uint32 h);
+	void sharplinearh(float xoffset, float xfactor, uint32 w, float sharpness);
+	void sharplinearv(float yoffset, float yfactor, uint32 h, float sharpness);
 	void linearh(float xoffset, float xfactor, uint32 w, bool interpOnly);
 	void linearv(float yoffset, float yfactor, uint32 h, bool interpOnly);
 	void linear(float xoffset, float xfactor, uint32 w, float yoffset, float yfactor, uint32 h);

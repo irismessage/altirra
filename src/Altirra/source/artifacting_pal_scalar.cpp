@@ -173,3 +173,79 @@ void ATArtifactPALFinal(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, con
 		dst += 2;
 	}
 }
+
+void ATArtifactPALFinalMono(uint32 *dst, const uint32 *ybuf, uint32 n, const uint32 *monoTable) {
+	for(uint32 i=0; i<n; ++i) {
+		const uint32 y = ybuf[i + 1];
+
+		sint32 y1 = (y & 0xffff) - 0x4000;
+		sint32 y2 = (y >> 16) - 0x4000;
+
+		if (y1 < 0) y1 = 0; else if (y1 > 0x3FFF) y1 = 0x3FFF;
+		if (y2 < 0) y2 = 0; else if (y2 > 0x3FFF) y2 = 0x3FFF;
+
+		dst[0] = monoTable[(uint32)y1 >> 6];
+		dst[1] = monoTable[(uint32)y2 >> 6];
+		dst += 2;
+	}
+}
+
+template<bool T_UseSignedPalette>
+void ATArtifactPAL32(void *dst, void *delayLine, uint32 n) {
+	// For this path, we assume that the alpha channel holds precomputed luminance. This works because
+	// the only source of raw RGB32 input is VBXE, and though it outputs 21-bit RGB, it can only do so
+	// from 4 x 256 palettes. All we need to do is average the YRGB pixels between the delay line and
+	// the current line, and then recorrect the luminance back.
+
+	uint8 *VDRESTRICT dst8 = (uint8 *)dst;
+	uint8 *VDRESTRICT delay8 = (uint8 *)delayLine;
+
+	for(uint32 i=0; i<n; ++i) {
+		int b1 = delay8[0];
+		int g1 = delay8[1];
+		int r1 = delay8[2];
+		int y1 = delay8[3];
+
+		int b2 = dst8[0];
+		int g2 = dst8[1];
+		int r2 = dst8[2];
+		int y2 = dst8[3];
+		delay8[0] = b2;
+		delay8[1] = g2;
+		delay8[2] = r2;
+		delay8[3] = y2;
+		delay8 += 4;
+
+		int adj = y2 - y1;
+		int rf = ((r1 + r2 + adj + 1) >> 1);
+		int gf = ((g1 + g2 + adj + 1) >> 1);
+		int bf = ((b1 + b2 + adj + 1) >> 1);
+
+		if (T_UseSignedPalette) {
+			rf = rf + rf - 128;
+			gf = gf + gf - 128;
+			bf = bf + bf - 128;
+		}
+
+		if ((unsigned)rf >= 256)
+			rf = (~rf >> 31);
+
+		if ((unsigned)gf >= 256)
+			gf = (~gf >> 31);
+
+		if ((unsigned)bf >= 256)
+			bf = (~bf >> 31);
+
+		dst8[0] = (uint8)bf;
+		dst8[1] = (uint8)gf;
+		dst8[2] = (uint8)rf;
+		dst8 += 4;
+	}
+}
+
+void ATArtifactPAL32(void *dst, void *delayLine, uint32 n, bool useSignedPalette) {
+	if (useSignedPalette)
+		ATArtifactPAL32<true>(dst, delayLine, n);
+	else
+		ATArtifactPAL32<false>(dst, delayLine, n);
+}

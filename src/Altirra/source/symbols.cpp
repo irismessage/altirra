@@ -1303,6 +1303,17 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 			directive.mOffset += bankOffsetMap[(directive.mOffset >> 16) & 0xFF];
 		}
 
+		for(auto& lineOffset : mLineToOffset) {
+			lineOffset.second += bankOffsetMap[(lineOffset.second >> 16) & 0xFF];
+		}
+
+		decltype(mOffsetToLine) tempOffsetToLine;
+		mOffsetToLine.swap(tempOffsetToLine);
+
+		for(const auto& offsetLine : tempOffsetToLine) {
+			mOffsetToLine.insert_or_assign(offsetLine.first + bankOffsetMap[(offsetLine.first >> 16) & 0xFF], offsetLine.second);
+		}
+
 		mbSymbolsNeedSorting = true;
 	}
 
@@ -1441,6 +1452,7 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 		{ BFENHI, "BFENHI", 1 },
 		{ BUFRFL, "BUFRFL", 1 },
 		{ RECVDN, "RECVDN", 1 },
+		{ XMTDON, "XMTDON", 1 },
 		{ CHKSNT, "CHKSNT", 1 },
 		{ SOUNDR, "SOUNDR", 1 },
 		{ CRITIC, "CRITIC", 1 },

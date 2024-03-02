@@ -19,6 +19,14 @@
 #define f_AT_GTIATABLES_H
 
 extern const VDALIGN(16) uint8 kATAnalysisColorTable[24];
+struct ATPALPhaseInfo {
+	float mEvenPhase;		// delays relative to even line colorburst
+	float mEvenInvert;		// even line color signal inversion
+	float mOddPhase;		// delays relative to odd line colorburst
+	float mOddInvert;		// odd line color signal inversion
+};
+
+extern const ATPALPhaseInfo kATPALPhaseLookup[15];
 
 void ATInitGTIAPriorityTables(uint8 priorityTables[32][256]);
 

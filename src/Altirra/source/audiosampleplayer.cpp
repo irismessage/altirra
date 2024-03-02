@@ -20,14 +20,76 @@
 #include "oshelper.h"
 #include "resource.h"
 
-struct ATAudioSamplePlayer::SoundPred {
-	SoundPred(uint32 t) : mTimeBase(t + 0x80000000U) {}
+///////////////////////////////////////////////////////////////////////////
 
-	bool operator()(const Sound& x, const Sound& y) const {
-		return (x.mStartTime - mTimeBase) < (y.mStartTime - mTimeBase);
+class ATAudioSamplePlayer::SoundGroup final : public IATAudioSoundGroup, public vdlist_node {
+public:
+	SoundGroup(ATAudioSamplePlayer& parent) : mpParent(&parent) {}
+
+	int AddRef() override;
+	int Release() override;
+
+	bool IsAnySoundQueued() const override;
+	void StopAllSounds() override;
+
+	int mRefCount = 0;
+	ATAudioSamplePlayer *mpParent;
+
+	ATAudioGroupDesc mDesc;
+
+	// List of active sounds in the group. This is an unsorted list unless supercede
+	// mode is enabled, in which case that policy results in this being sorted.
+	vdlist<Sound> mSounds;
+};
+
+int ATAudioSamplePlayer::SoundGroup::AddRef() {
+	VDASSERT(mRefCount >= 0);
+
+	return ++mRefCount;
+}
+
+int ATAudioSamplePlayer::SoundGroup::Release() {
+	int rc = --mRefCount;
+	VDASSERT(rc >= 0);
+
+	if (!rc) {
+		if (mpParent)
+			mpParent->CleanupGroup(*this);
+
+		delete this;
 	}
 
-	uint32 mTimeBase;
+	return rc;
+}
+
+bool ATAudioSamplePlayer::SoundGroup::IsAnySoundQueued() const {
+	return !mSounds.empty();
+}
+
+void ATAudioSamplePlayer::SoundGroup::StopAllSounds() {
+	if (mpParent)
+		mpParent->StopGroupSounds(*this);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+struct ATAudioSamplePlayer::Sound final : public vdlist_node {
+	ATSoundId mId {};
+	float mVolume = 0;
+	uint64 mStartTime = 0;
+	uint64 mEndTime = 0;
+	uint32 mLoopPeriod = 0;
+	uint32 mLength = 0;
+	ATAudioMix mMix {};
+	bool mbEndValid = false;
+	const sint16 *mpSample = nullptr;
+	IATAudioSampleSource *mpSource = nullptr;
+	vdrefptr<IVDRefCount> mpOwner;
+
+	// This needs to be a weak pointer; all sounds in a group are implicitly
+	// soft-stopped when the group is released. It will be null between when
+	// the group is released and the soft-stop completes.
+	SoundGroup *mpGroup = nullptr;
 };
 
 ATAudioSamplePlayer::ATAudioSamplePlayer()
@@ -80,6 +142,12 @@ void ATAudioSamplePlayer::Init(ATScheduler *sch) {
 }
 
 void ATAudioSamplePlayer::Shutdown() {
+	for(SoundGroup *group : mGroups) {
+		group->mpParent = nullptr;
+	}
+
+	mGroups.clear();
+
 	for(ATAudioSampleDesc& desc : mSamples)
 		desc = {};
 
@@ -94,27 +162,27 @@ void ATAudioSamplePlayer::Shutdown() {
 	mpScheduler = NULL;
 }
 
-ATSoundId ATAudioSamplePlayer::AddSound(ATAudioMix mix, uint32 delay, ATAudioSampleId sampleId, float volume) {
+ATSoundId ATAudioSamplePlayer::AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, ATAudioSampleId sampleId, float volume) {
 	const uint32 index = (uint32)((uint32)sampleId - 1);
 	
 	if (index >= vdcountof(mSamples))
 		return ATSoundId::Invalid;
 
 	const auto& sample = mSamples[index];
-	return AddSound(mix, delay, sample.mpData, sample.mLength, sample.mBaseVolume * volume);
+	return AddSound(soundGroup, delay, sample.mpData, sample.mLength, sample.mBaseVolume * volume);
 }
 
-ATSoundId ATAudioSamplePlayer::AddLoopingSound(ATAudioMix mix, uint32 delay, ATAudioSampleId sampleId, float volume) {
+ATSoundId ATAudioSamplePlayer::AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, ATAudioSampleId sampleId, float volume) {
 	const uint32 index = (uint32)((uint32)sampleId - 1);
 	
 	if (index >= vdcountof(mSamples))
 		return ATSoundId::Invalid;
 
 	const auto& sample = mSamples[index];
-	return AddLoopingSound(mix, delay, sample.mpData, sample.mLength, sample.mBaseVolume * volume);
+	return AddLoopingSound(soundGroup, delay, sample.mpData, sample.mLength, sample.mBaseVolume * volume);
 }
 
-ATSoundId ATAudioSamplePlayer::AddSound(ATAudioMix mix, uint32 delay, const sint16 *sample, uint32 len, float volume) {
+ATSoundId ATAudioSamplePlayer::AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, const sint16 *sample, uint32 len, float volume) {
 	const uint64 t = mpScheduler->GetTick64() + delay;
 
 	if (mFreeSounds.empty())
@@ -122,24 +190,18 @@ ATSoundId ATAudioSamplePlayer::AddSound(ATAudioMix mix, uint32 delay, const sint
 
 	Sound *s = mFreeSounds.back();
 	mFreeSounds.pop_back();
-	
-	s->mId = (ATSoundId)mNextSoundId;
-	mNextSoundId += 2;
 
-	s->mStartTime = t;
 	s->mLoopPeriod = 0;
 	s->mEndTime = t + kATCyclesPerSyncSample * len;
 	s->mLength = len;
-	s->mVolume = volume * (60.0f * 28.0f / 32767.0f);
-	s->mMix = mix;
+	s->mVolume = volume * (1.0f / 32767.0f);
 	s->mpSample = sample;
 	s->mbEndValid = true;
 
-	mSounds.push_back(s);
-	return s->mId;
+	return StartSound(s, soundGroup, t);
 }
 
-ATSoundId ATAudioSamplePlayer::AddLoopingSound(ATAudioMix mix, uint32 delay, const sint16 *sample, uint32 len, float volume) {
+ATSoundId ATAudioSamplePlayer::AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, const sint16 *sample, uint32 len, float volume) {
 	const uint64 t = mpScheduler->GetTick64() + delay;
 
 	if (mFreeSounds.empty())
@@ -148,23 +210,17 @@ ATSoundId ATAudioSamplePlayer::AddLoopingSound(ATAudioMix mix, uint32 delay, con
 	Sound *s = mFreeSounds.back();
 	mFreeSounds.pop_back();
 
-	s->mId = (ATSoundId)mNextSoundId;
-	mNextSoundId += 2;
-
-	s->mStartTime = t;
 	s->mLoopPeriod = len;
 	s->mEndTime = 0;
 	s->mLength = len;
-	s->mVolume = volume * (60.0f * 28.0f / 32767.0f);
-	s->mMix = mix;
+	s->mVolume = volume * (1.0f / 32767.0f);
 	s->mpSample = sample;
 	s->mbEndValid = false;
 
-	mSounds.push_back(s);
-	return s->mId;
+	return StartSound(s, soundGroup, t);
 }
 
-ATSoundId ATAudioSamplePlayer::AddSound(ATAudioMix mix, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, uint32 len, float volume) {
+ATSoundId ATAudioSamplePlayer::AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, uint32 len, float volume) {
 	const uint64 t = mpScheduler->GetTick64() + delay;
 
 	if (mFreeSounds.empty())
@@ -173,30 +229,19 @@ ATSoundId ATAudioSamplePlayer::AddSound(ATAudioMix mix, uint32 delay, IATAudioSa
 	Sound *s = mFreeSounds.back();
 	mFreeSounds.pop_back();
 	
-	s->mId = (ATSoundId)mNextSoundId;
-	mNextSoundId += 2;
-
-	s->mStartTime = t;
 	s->mLoopPeriod = 0;
 	s->mEndTime = t + kATCyclesPerSyncSample * len;
 	s->mLength = len;
 	s->mVolume = volume;
-	s->mMix = mix;
-	s->mpSample = nullptr;
 	s->mpSource = src;
-
-	if (owner)
-		owner->AddRef();
-
 	s->mpOwner = owner;
 
 	s->mbEndValid = true;
 
-	mSounds.push_back(s);
-	return s->mId;
+	return StartSound(s, soundGroup, t);
 }
 
-ATSoundId ATAudioSamplePlayer::AddLoopingSound(ATAudioMix mix, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, float volume) {
+ATSoundId ATAudioSamplePlayer::AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, float volume) {
 	const uint64 t = mpScheduler->GetTick64() + delay;
 
 	if (mFreeSounds.empty())
@@ -205,27 +250,25 @@ ATSoundId ATAudioSamplePlayer::AddLoopingSound(ATAudioMix mix, uint32 delay, IAT
 	Sound *s = mFreeSounds.back();
 	mFreeSounds.pop_back();
 
-	s->mId = (ATSoundId)mNextSoundId;
-	mNextSoundId += 2;
-
-	s->mStartTime = t;
 	s->mLoopPeriod = 0;
 	s->mEndTime = t;
 	s->mLength = 0;
 	s->mVolume = volume;
-	s->mMix = mix;
-	s->mpSample = nullptr;
 	s->mpSource = src;
-
-	if (owner)
-		owner->AddRef();
-
 	s->mpOwner = owner;
 
 	s->mbEndValid = false;
 
-	mSounds.push_back(s);
-	return s->mId;
+	return StartSound(s, soundGroup, t);
+}
+
+vdrefptr<IATAudioSoundGroup> ATAudioSamplePlayer::CreateGroup(const ATAudioGroupDesc& desc) {
+	vdrefptr<IATAudioSoundGroup> group(new SoundGroup(*this));
+
+	static_cast<SoundGroup *>(group.get())->mDesc = desc;
+	mGroups.push_back(static_cast<SoundGroup *>(group.get()));
+
+	return group;
 }
 
 void ATAudioSamplePlayer::ForceStopSound(ATSoundId id) {
@@ -400,14 +443,71 @@ void ATAudioSamplePlayer::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 	}
 }
 
+ATSoundId ATAudioSamplePlayer::StartSound(Sound *s, IATAudioSoundGroup& soundGroup, uint64 startTime) {
+	s->mId = (ATSoundId)mNextSoundId;
+	mNextSoundId += 2;
+
+	SoundGroup& soundGroupImpl = static_cast<SoundGroup&>(soundGroup);
+	auto& sounds = soundGroupImpl.mSounds;
+
+	// If the remove-superceded-sounds option is enabled on the group, stop any sounds that would start
+	// on or after this sound's start time.
+	if (soundGroupImpl.mDesc.mbRemoveSupercededSounds) {
+		while(!sounds.empty()) {
+			Sound& lastSound = *sounds.back();
+			if (lastSound.mStartTime < startTime)
+				break;
+
+			// Force stop is fine here as we're guaranteed that the conflicting sound hasn't started
+			// yet (the start time for the new sound can't be in the past).
+			ForceStopSound(lastSound.mId);
+		}
+	}
+
+	soundGroupImpl.mSounds.push_back(s);
+
+	s->mpGroup = &soundGroupImpl;
+	s->mMix = soundGroupImpl.mDesc.mAudioMix;
+	s->mStartTime = startTime;
+
+	try {
+		mSounds.push_back(s);
+	} catch(...) {
+		FreeSound(s);
+		throw;
+	}
+
+	return s->mId;
+}
+
 void ATAudioSamplePlayer::FreeSound(Sound *s) {
 	s->mpSample = nullptr;
 	s->mpSource = nullptr;
+	s->mpOwner = nullptr;
 
-	if (s->mpOwner) {
-		s->mpOwner->Release();
-		s->mpOwner = nullptr;
+	if (s->mpGroup) {
+		s->mpGroup->mSounds.erase(s);
+		s->mpGroup = nullptr;
 	}
 
 	mFreeSounds.push_back(s);
+}
+
+void ATAudioSamplePlayer::CleanupGroup(SoundGroup& group) {
+	group.mpParent = nullptr;
+	mGroups.erase(&group);
+
+	StopGroupSounds(group);
+}
+
+void ATAudioSamplePlayer::StopGroupSounds(SoundGroup& group) {
+	for(Sound *sound : group.mSounds) {
+		// must remove the sound from the group before we try to soft-stop it, so that
+		// StopSound() doesn't invalidate our iterators
+		sound->mpGroup = nullptr;
+
+		StopSound(sound->mId);
+	}
+
+	group.mSounds.clear();
 }

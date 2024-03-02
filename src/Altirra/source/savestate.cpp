@@ -1,5 +1,5 @@
-//	Altirra - Atari 800/800XL emulator
-//	Copyright (C) 2009 Avery Lee
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2019 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -11,9 +11,8 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
@@ -189,99 +188,4 @@ void ATSaveStateReader::ReadData(void *dst, uint32 count) {
 
 	memcpy(dst, mpSrc + mPosition, count);
 	mPosition += count;
-}
-
-///////////////////////////////////////////////////////////////////////////
-
-ATSaveStateWriter::ATSaveStateWriter(Storage& dst)
-	: mDst(dst)
-{
-}
-
-ATSaveStateWriter::~ATSaveStateWriter() {
-}
-
-void ATSaveStateWriter::RegisterHandler(ATSaveStateSection section, const ATSaveStateWriteHandler& handler) {
-	void *p = mLinearAlloc.Allocate(handler.mSize);
-	memcpy(p, &handler, handler.mSize);
-
-	mHandlers[section].push_back((const ATSaveStateWriteHandler *)p);
-}
-
-void ATSaveStateWriter::WriteSection(ATSaveStateSection section) {
-	HandlerList::const_iterator it(mHandlers[section].begin()), itEnd(mHandlers[section].end());
-	for(; it != itEnd; ++it) {
-		const ATSaveStateWriteHandler *h = *it;
-
-		h->mpDispatchFn(*this, h);
-	}
-}
-
-void ATSaveStateWriter::BeginChunk(uint32 id) {
-	WriteUint32(id);
-	mChunkStack.push_back(mDst.size());
-	WriteUint32(0);
-}
-
-void ATSaveStateWriter::EndChunk() {
-	size_t prevPos = mChunkStack.back();
-	mChunkStack.pop_back();
-
-	VDWriteUnalignedLEU32(&mDst[prevPos], (uint32)(mDst.size() - (prevPos + 4)));
-}
-
-void ATSaveStateWriter::WriteBool(bool b) {
-	uint8 v = b ? 1 : 0;
-	WriteData(&v, 1);
-}
-
-void ATSaveStateWriter::WriteSint8(sint8 v) {
-	WriteData(&v, 1);
-}
-
-void ATSaveStateWriter::WriteSint16(sint16 v) {
-	WriteData(&v, 2);
-}
-
-void ATSaveStateWriter::WriteSint32(sint32 v) {
-	WriteData(&v, 4);
-}
-
-void ATSaveStateWriter::WriteUint8(uint8 v) {
-	WriteData(&v, 1);
-}
-
-void ATSaveStateWriter::WriteUint16(uint16 v) {
-	WriteData(&v, 2);
-}
-
-void ATSaveStateWriter::WriteUint32(uint32 v) {
-	WriteData(&v, 4);
-}
-
-void ATSaveStateWriter::WriteUint64(uint64 v) {
-	WriteData(&v, 8);
-}
-
-void ATSaveStateWriter::WriteString(const wchar_t *s) {
-	const VDStringA& s8 = VDTextWToU8(s, (uint32)wcslen(s));
-	size_t len = s8.size();
-
-	do {
-		uint8 val = (uint8)len;
-
-		len >>= 7;
-		if (len)
-			val |= 0x80;
-
-		WriteData(&val, 1);
-	} while(len);
-
-	WriteData(s8.data(), s8.size());
-}
-
-void ATSaveStateWriter::WriteData(const void *src, uint32 count) {
-	const uint8 *p = (const uint8 *)src;
-
-	mDst.insert(mDst.end(), p, p+count);
 }

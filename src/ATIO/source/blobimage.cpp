@@ -37,6 +37,8 @@ public:
 	ATImageType GetImageType() const override;
 
 	uint64 GetChecksum() const override;
+	std::optional<uint32> GetImageFileCRC() const override;
+	std::optional<ATChecksumSHA256> GetImageFileSHA256() const override;
 
 	uint32 GetSize() const override { return (uint32)mProgram.size(); }
 	const void *GetBuffer() const override { return mProgram.data(); }
@@ -47,7 +49,9 @@ private:
 	vdfastvector<uint8> mProgram;
 
 	mutable uint64 mChecksum = 0;
+	mutable ATChecksumSHA256 mSHA256 {};
 	mutable bool mbChecksumDirty = true;
+	mutable bool mbSHA256Dirty = true;
 };
 
 void *ATBlobImage::AsInterface(uint32 id) {
@@ -71,8 +75,22 @@ uint64 ATBlobImage::GetChecksum() const {
 	return mChecksum;
 }
 
+std::optional<uint32> ATBlobImage::GetImageFileCRC() const {
+	return {};
+}
+
+std::optional<ATChecksumSHA256> ATBlobImage::GetImageFileSHA256() const {
+	if (mbSHA256Dirty) {
+		mSHA256 = ATComputeChecksumSHA256(mProgram.data(), mProgram.size());
+		mbSHA256Dirty = false;
+	}
+
+	return mSHA256;
+}
+
 void ATBlobImage::Load(IVDRandomAccessStream& stream) {
 	mbChecksumDirty = true;
+	mbSHA256Dirty = true;
 
 	auto len = stream.Length();
 
@@ -97,6 +115,7 @@ void ATBlobImage::Load(IVDRandomAccessStream& stream) {
 
 void ATBlobImage::Load(const void *src, uint32 len) {
 	mbChecksumDirty = true;
+	mbSHA256Dirty = true;
 
 	const uint8 *src8 = (const uint8 *)src;
 	mProgram.assign(src8, src8 + len);

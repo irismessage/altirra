@@ -26,38 +26,49 @@ enum ATCassetteImageBlockType {
 	kATCassetteImageBlockType_RawAudio
 };
 
-/// Base class for all in-memory cassette image blocks.
+// Base class for all in-memory cassette image blocks.
 class ATCassetteImageBlock {
 public:
 	virtual ~ATCassetteImageBlock() = default;
 
 	virtual ATCassetteImageBlockType GetBlockType() const = 0;
 
-	/// Retrieve sum of bits starting at the given block-local offset. The
-	/// count must be >0 and the range must fit within the block.
+	// Retrieve a bit at the given block-local offset. The position must be within
+	// the block.
+	virtual bool GetBit(uint32 pos, bool bypassFSK) const;
+
+	// Retrieve sum of bits starting at the given block-local offset. The
+	// count must be >0 and the range must fit within the block.
 	virtual uint32 GetBitSum(uint32 pos, uint32 n, bool bypassFSK) const;
 
-	/// Retrieve audio sync samples.
-	///
-	/// dst: Auto-incremented pointer to output buffer.
-	/// posSample: Auto-incremented integer audio sample counter.
-	/// posCycle: Auto-updated fractional audio sample counter.
-	/// n: Number of sync samples requested.
-	///
-	/// Returns number of sync samples produced.
-	///
-	/// The audio samples in the block are resampled to the sync mixer sample
-	/// rate, with (posSample,posCycle) as the fractional audio sample position.
-	/// The resulting sync mixer samples are added into the left and right
-	/// channel buffers. The right channel buffer, if provided, receives the
-	/// same audio as the left buffer. The buffer must be initialized on entry
-	/// such that the buffers need not be touched if there is no audio.
-	///
-	virtual uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const;
+	struct FindBitResult {
+		uint32 mPos;
+		bool mFound;
+	};
+
+	virtual FindBitResult FindBit(uint32 pos, uint32 limit, bool polarity, bool bypassFSK) const;
+
+	// Retrieve audio sync samples.
+	//
+	// dst: Auto-incremented pointer to output buffer.
+	// posSample: Auto-incremented integer audio sample counter.
+	// posCycle: Auto-updated fractional audio sample counter.
+	// n: Number of sync samples requested.
+	//
+	// Returns number of sync samples produced.
+	//
+	// The audio samples in the block are resampled to the sync mixer sample
+	// rate, with (posSample,posCycle) as the fractional audio sample position.
+	// The resulting sync mixer samples are added into the left and right
+	// channel buffers. The right channel buffer, if provided, receives the
+	// same audio as the left buffer. The buffer must be initialized on entry
+	// such that the buffers need not be touched if there is no audio.
+	//
+	virtual uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const;
 };
 
-/// Cassette image block type for standard framed bytes with 8-bits of data stored
-/// in FSK encoding.
+// Cassette image block type for standard framed bytes with 8-bits of data stored
+// in FSK encoding.
 class ATCassetteImageDataBlockStd final : public ATCassetteImageBlock {
 public:
 	ATCassetteImageDataBlockStd();
@@ -77,8 +88,14 @@ public:
 	uint32 GetDataSampleCount() const;
 	uint64 GetDataSampleCount64() const;
 
+	bool GetBit(uint32 pos, bool bypassFSK) const override;
 	uint32 GetBitSum(uint32 pos, uint32 n, bool bypassFSK) const override;
-	uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const override;
+
+	FindBitResult FindBit(uint32 pos, uint32 limit, bool polarity, bool bypassFSK) const override;
+
+	// Note that volume here differs from the cassette image as it applies to signed samples, not normalized
+	// samples.
+	uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const override;
 
 private:
 	uint64 mDataSamplesPerByteF32 = 0;
@@ -116,7 +133,10 @@ public:
 	// Extract pairs of 0/1 pulse lengths.
 	void ExtractPulses(vdfastvector<uint32>& pulses, bool bypassFSK) const;
 
+	bool GetBit(uint32 pos, bool bypassFSK) const override;
 	uint32 GetBitSum(uint32 pos, uint32 n, bool bypassFSK) const override;
+
+	FindBitResult FindBit(uint32 pos, uint32 limit, bool polarity, bool bypassFSK) const override;
 
 	void SetBits(bool fsk, uint32 startPos, uint32 n, bool polarity);
 
@@ -135,7 +155,7 @@ public:
 		return kATCassetteImageBlockType_RawAudio;
 	}
 
-	uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const override;
+	uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const override;
 
 	vdfastvector<uint8> mAudio;
 	uint32 mAudioLength;
@@ -148,7 +168,7 @@ public:
 		return kATCassetteImageBlockType_Blank;
 	}
 
-	uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const override;
+	uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const override;
 };
 
 

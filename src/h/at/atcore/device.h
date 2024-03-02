@@ -38,6 +38,7 @@ class IATDeviceCartridge;
 class IATDevicePortManager;
 class IATDeviceIndicatorManager;
 struct ATTraceContext;
+class IATDeviceManager;
 
 typedef void (*ATDeviceFactoryFn)(const ATPropertySet& pset, IATDevice **);
 
@@ -139,6 +140,7 @@ enum ATDeviceButton : uint32 {
 	kATDeviceButton_IndusGTId,
 	kATDeviceButton_IndusGTError,
 	kATDeviceButton_IndusGTBootCPM,
+	kATDeviceButton_IndusGTChangeDensity,
 	kATDeviceButton_HappySlow,
 	kATDeviceButton_HappyWPEnable,
 	kATDeviceButton_HappyWPDisable,
@@ -187,6 +189,7 @@ class IATDevice : public IVDRefUnknown {
 public:
 	enum { kTypeID = 'adev' };
 
+	virtual void SetManager(IATDeviceManager *devMgr) = 0;
 	virtual IATDeviceParent *GetParent() = 0;
 	virtual uint32 GetParentBusIndex() = 0;
 	virtual void SetParent(IATDeviceParent *parent, uint32 busIndex) = 0;
@@ -208,6 +211,18 @@ public:
 	virtual void PeripheralColdReset() = 0;
 
 	virtual void SetTraceContext(ATTraceContext *context) = 0;
+
+	virtual bool GetErrorStatus(uint32 idx, VDStringW& error) = 0;
+};
+
+class IATDeviceManager {
+public:
+	virtual void *GetService(uint32 iid) = 0;
+
+	template<typename T>
+	T *GetService() {
+		return (T *)GetService(T::kTypeID);
+	}
 };
 
 #endif

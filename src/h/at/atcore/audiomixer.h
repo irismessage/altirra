@@ -33,15 +33,21 @@
 #define f_AT_ATCORE_AUDIOMIXER_H
 
 #include <vd2/system/vdtypes.h>
+#include <vd2/system/refcount.h>
+#include <vd2/system/vdstl.h>
 
 class IATSyncAudioSource;
 class IATSyncAudioSamplePlayer;
+class IATSyncAudioEdgePlayer;
 class IVDRefCount;
 
+// The audio mix a sound participates in. Currently selects the mix volume used for the sound.
 enum ATAudioMix {
 	kATAudioMix_Drive,
 	kATAudioMix_Covox,
 	kATAudioMix_Modem,
+	kATAudioMix_Cassette,
+	kATAudioMix_Other,
 	kATAudioMixCount
 };
 
@@ -64,6 +70,7 @@ public:
 	virtual void RemoveSyncAudioSource(IATSyncAudioSource *src) = 0;
 
 	virtual IATSyncAudioSamplePlayer& GetSamplePlayer() = 0;
+	virtual IATSyncAudioEdgePlayer& GetEdgePlayer() = 0;
 };
 
 class IATAudioSampleSource {
@@ -74,16 +81,42 @@ public:
 	virtual void MixAudio(float *dst, uint32 len, float volume, uint64 offset, float mixingRate) = 0;
 };
 
+struct ATAudioGroupDesc {
+	// Audio mix that sounds in the group should participate in.
+	ATAudioMix mAudioMix = kATAudioMix_Other;
+
+	// If true, each new sound that is queued stops any previously queued sounds that would begin
+	// on or after the same start time -- the new sound supercedes previous sounds queued past that point.
+	// This is used to allow sound sequences to be pre-queued and then preempted. Sounds that have
+	// already started by that point are not affected.
+	bool mbRemoveSupercededSounds = false;
+
+	ATAudioGroupDesc&& Mix(ATAudioMix mix) && { mAudioMix = mix; return static_cast<ATAudioGroupDesc&&>(*this); }
+	ATAudioGroupDesc&& RemoveSupercededSounds() && { mbRemoveSupercededSounds = true; return static_cast<ATAudioGroupDesc&&>(*this); }
+};
+
+class IATAudioSoundGroup : public IVDRefCount {
+public:
+	virtual bool IsAnySoundQueued() const = 0;
+
+	virtual void StopAllSounds() = 0;
+};
+
 class IATSyncAudioSamplePlayer {
 public:
-	virtual ATSoundId AddSound(ATAudioMix mix, uint32 delay, ATAudioSampleId sampleId, float volume) = 0;
-	virtual ATSoundId AddLoopingSound(ATAudioMix mix, uint32 delay, ATAudioSampleId sampleId, float volume) = 0;
+	virtual ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, ATAudioSampleId sampleId, float volume) = 0;
+	virtual ATSoundId AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, ATAudioSampleId sampleId, float volume) = 0;
 
-	virtual ATSoundId AddSound(ATAudioMix mix, uint32 delay, const sint16 *sample, uint32 len, float volume) = 0;
-	virtual ATSoundId AddLoopingSound(ATAudioMix mix, uint32 delay, const sint16 *sample, uint32 len, float volume) = 0;
+	virtual ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, const sint16 *sample, uint32 len, float volume) = 0;
+	virtual ATSoundId AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, const sint16 *sample, uint32 len, float volume) = 0;
 
-	virtual ATSoundId AddSound(ATAudioMix mix, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, uint32 len, float volume) = 0;
-	virtual ATSoundId AddLoopingSound(ATAudioMix mix, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, float volume) = 0;
+	virtual ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, uint32 len, float volume) = 0;
+	virtual ATSoundId AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, float volume) = 0;
+
+	// Create a sound group. All sounds placed into the group are subject to the policies of that group.
+	// All sounds in a group are automatically stopped when the last reference to the group is released,
+	// so the group must be actively held to keep the sounds alive (this is a safety mechanism).
+	virtual vdrefptr<IATAudioSoundGroup> CreateGroup(const ATAudioGroupDesc& desc) = 0;
 
 	// Stop a sound immediately in real time. This may stop it up to one
 	// mixing frame before the current simulated time.
@@ -96,6 +129,53 @@ public:
 	// sound is stopped immediately. Otherwise, the sound will be truncated
 	// to the given time.
 	virtual void StopSound(ATSoundId id, uint64 time) = 0;
+};
+
+struct ATSyncAudioEdge {
+	uint32 mTime;
+	float mDeltaValue;
+};
+
+class ATSyncAudioEdgeBuffer final : public vdrefcount {
+public:
+	vdfastvector<ATSyncAudioEdge> mEdges;
+	float mVolume = 0;
+};
+
+// Audio edge player
+//
+// The audio edge player converts a series of edge transitions into a normal audio waveform.
+// This has several advantages over direct mixing:
+//
+//	- It is single pass for all sources, instead of each source having to individually fill
+//	  in pulses.
+//
+//	- Edges do not have to be sorted.
+//
+//	- The edge player takes care of downsampling from 1.7MHz to 64KHz.
+//
+// Unlike the sample player, the edge player does not allow future buffering of edges. Edges
+// can only be submitted during the mixing process within the current frame. The edge player
+// will accommodate edges slightly beyond the mixing window but beyond the cycle window,
+// automatically carrying them over to the next mixing frame. This avoids the need for
+// callers to buffer edges between the end of the mixing frame and the end of the simulation
+// frame.
+//
+// The edge player takes advantage of the fact that the end of the mixing pipeline has a
+// high-pass filter which normally consists of a differencing stage followed by an
+// integration stage. The edge player is inserted between the two, allowing it to take
+// advantage of 'free' integration.
+//
+class IATSyncAudioEdgePlayer {
+public:
+	// Add edges to be mixed in. The edges are copied.
+	virtual void AddEdges(const ATSyncAudioEdge *edges, size_t numEdges, float volume) = 0;
+
+	// Submit a buffer of edges to be mixed in. The edges in the buffer will be mixed in
+	// at the end of the next or current in-progress mixing phase, and then cleared. The
+	// edge player will hold a reference on the buffer until this happens. The buffer
+	// can be reused afterward but will need to be resubmitted.
+	virtual void AddEdgeBuffer(ATSyncAudioEdgeBuffer *buffer) = 0;
 };
 
 #endif

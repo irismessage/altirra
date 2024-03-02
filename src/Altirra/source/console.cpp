@@ -23,7 +23,9 @@
 #include <malloc.h>
 #include <stdio.h>
 #include <map>
+#include <array>
 #include <vd2/Dita/services.h>
+#include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
@@ -39,6 +41,7 @@
 #include <at/atui/constants.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/genericdialog.h>
+#include <at/atnativeui/theme.h>
 #include <at/atnativeui/uiframe.h>
 #include <at/atnativeui/uiproxies.h>
 #include <at/atcore/address.h>
@@ -49,12 +52,14 @@
 #include <at/atio/cassetteimage.h>
 #include "console.h"
 #include "uiaccessors.h"
+#include "uicommondialogs.h"
 #include "uikeyboard.h"
 #include "uihistoryview.h"
 #include "texteditor.h"
 #include "simulator.h"
 #include "debugger.h"
 #include "debuggerexp.h"
+#include "debuggersettings.h"
 #include "resource.h"
 #include "disasm.h"
 #include "symbols.h"
@@ -115,7 +120,7 @@ namespace {
 }
 
 ///////////////////////////////////////////////////////////////////////////
-bool ATConsoleShowSource(uint16 addr) {
+bool ATConsoleShowSource(uint32 addr) {
 	uint32 moduleId;
 	ATSourceLineInfo lineInfo;
 	IATDebuggerSymbolLookup *lookup = ATGetDebuggerSymbolLookup();
@@ -191,6 +196,18 @@ LRESULT ATUIDebuggerPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					return TRUE;
 			}
 			break;
+
+		case WM_CTLCOLORLISTBOX:
+			if (ATUIIsDarkThemeActive()) {
+				const ATUIThemeColors& tc = ATUIGetThemeColors();
+				HDC hdc = (HDC)wParam;
+
+				SetTextColor(hdc, VDSwizzleU32(tc.mContentFg) >> 8);
+				SetDCBrushColor(hdc, VDSwizzleU32(tc.mContentBg) >> 8);
+
+				return (LRESULT)GetStockObject(DC_BRUSH);
+			}
+			break;
 	}
 
 	return ATUIPane::WndProc(msg, wParam, lParam);
@@ -198,7 +215,7 @@ LRESULT ATUIDebuggerPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDisassemblyWindow : public ATUIDebuggerPane,
+class ATDisassemblyWindow final : public ATUIDebuggerPane,
 							public IATDebuggerClient,
 							public IVDTextEditorCallback,
 							public IVDTextEditorColorizer,
@@ -211,17 +228,30 @@ public:
 	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
 	void OnDebuggerEvent(ATDebugEvent eventId);
 
-	void OnTextEditorUpdated();
-	void OnTextEditorScrolled(int firstVisiblePara, int lastVisiblePara, int visibleParaCount, int totalParaCount);
+	void OnTextEditorUpdated() override;
+	void OnTextEditorScrolled(int firstVisiblePara, int lastVisiblePara, int visibleParaCount, int totalParaCount) override;
+	void OnLinkSelected(uint32 selectionCode, int para, int offset) override;
+
 	void RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *colorization);
 
 	void SetPosition(uint32 addr);
 
-protected:
-	virtual bool OnPaneCommand(ATUIPaneCommandId id);
+private:
+	bool OnPaneCommand(ATUIPaneCommandId id) override;
 
-protected:
-	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
+private:
+	enum : uint32 {
+		kID_TextView = 100,
+		kID_Address,
+		kID_ButtonPrev,
+		kID_ButtonNext,
+	};
+
+	enum : uint8 {
+		kSelCode_JumpTarget = 1,
+		kSelCode_Expand = 2
+	};
+
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
 
 	bool OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result);
@@ -232,48 +262,88 @@ protected:
 	void OnSetFocus();
 	void OnFontsUpdated();
 	bool OnCommand(UINT cmd);
+	void PushAndJump(uint32 fromXAddr, uint32 toXAddr);
+	void GoPrev();
+	void GoNext();
 	void RemakeView(uint16 focusAddr);
 
-	vdrefptr<IVDTextEditor> mpTextEditor;
-	HWND	mhwndTextEditor;
-	HWND	mhwndAddress;
-	HMENU	mhmenu;
+	struct DisasmResult {
+		uint32 mEndingPC;
+	};
 
-	uint32	mViewStart;
-	uint32	mViewLength;
-	uint8	mViewBank;
-	uint32	mViewAddrBank;
-	uint16	mFocusAddr;
-	int		mPCLine;
-	uint32	mPCAddr;
-	int		mFramePCLine;
-	uint32	mFramePCAddr;
-	ATCPUSubMode	mLastSubMode;
-	bool	mbShowCodeBytes;
-	bool	mbShowLabels;
+	struct LineInfo {
+		uint32 mXAddress;
+		uint32 mTargetXAddr;
+		uint8 mNestingLevel;
+		uint8 mP;
+		bool mbEmulation;
+		bool mbIsComment;
+		bool mbIsExpandable;
+		uint8 mOperandSelCode;
+		uint32 mOperandStart;
+		uint32 mOperandEnd;
+		uint32 mCommentPos;
+	};
+
+	DisasmResult Disassemble(VDStringA& buf,
+		vdfastvector<LineInfo>& lines,
+		uint32 nestingLevel,
+		const ATCPUHistoryEntry& initialState,
+		uint32 startAddr,
+		uint32 focusAddr,
+		uint32 maxBytes,
+		uint32 maxLines,
+		bool stopOnProcedureEnd);
+
+	uint32 ComputeViewChecksum() const;
+
+	vdrefptr<IVDTextEditor> mpTextEditor;
+	HWND	mhwndTextEditor = nullptr;
+	HWND	mhwndAddress = nullptr;
+	HWND	mhwndButtonPrev = nullptr;
+	HWND	mhwndButtonNext = nullptr;
+	HMENU	mhmenu = nullptr;
+
+	uint16	mViewStart = 0;
+	uint32	mViewLength = 0;
+	uint8	mViewBank = 0;
+	uint32	mViewAddrBank = 0;
+	uint32	mViewChecksum = 0;
+	uint16	mFocusAddr = 0;
+	int		mPCLine = -1;
+	uint32	mPCAddr = 0;
+	int		mFramePCLine = -1;
+	uint32	mFramePCAddr = 0;
+	ATCPUSubMode	mLastSubMode = kATCPUSubMode_6502;
+
+	ATDebuggerSettingView<bool> mbShowCodeBytes;
+	ATDebuggerSettingView<bool> mbShowLabels;
+	ATDebuggerSettingView<bool> mbShowLabelNamespaces;
+	ATDebuggerSettingView<bool> mbShowProcedureBreaks;
+	ATDebuggerSettingView<bool> mbShowCallPreviews;
 	
 	ATDebuggerSystemState mLastState = {};
 
-	vdfastvector<uint16> mAddressesByLine;
+	vdfastvector<LineInfo> mLines;
+
+	uint32	mHistory[32];
+	uint8	mHistoryNext = 0;
+	uint8	mHistoryLenForward = 0;
+	uint8	mHistoryLenBack = 0;
 };
 
 ATDisassemblyWindow::ATDisassemblyWindow()
 	: ATUIDebuggerPane(kATUIPaneId_Disassembly, L"Disassembly")
-	, mhwndTextEditor(NULL)
-	, mhwndAddress(NULL)
-	, mhmenu(LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_DISASM_CONTEXT_MENU)))
-	, mViewStart(0)
-	, mViewLength(0)
-	, mFocusAddr(0)
-	, mPCLine(-1)
-	, mPCAddr(0)
-	, mFramePCLine(-1)
-	, mFramePCAddr(0)
-	, mLastSubMode(kATCPUSubMode_6502)
-	, mbShowCodeBytes(true)
-	, mbShowLabels(true)
 {
+	mhmenu = LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_DISASM_CONTEXT_MENU));
 	mPreferredDockCode = kATContainerDockRight;
+
+	const auto refresh = [this] { RemakeView(mFocusAddr); };
+	mbShowCodeBytes.Attach(g_ATDbgSettingShowCodeBytes, refresh);
+	mbShowLabels.Attach(g_ATDbgSettingShowLabels, refresh);
+	mbShowLabelNamespaces.Attach(g_ATDbgSettingShowLabelNamespaces, refresh);
+	mbShowProcedureBreaks.Attach(g_ATDbgSettingShowProcedureBreaks, refresh);
+	mbShowCallPreviews.Attach(g_ATDbgSettingShowCallPreviews, refresh);
 }
 
 ATDisassemblyWindow::~ATDisassemblyWindow() {
@@ -287,8 +357,8 @@ bool ATDisassemblyWindow::OnPaneCommand(ATUIPaneCommandId id) {
 			{
 				size_t line = (size_t)mpTextEditor->GetCursorLine();
 
-				if (line < mAddressesByLine.size())
-					ATGetDebugger()->ToggleBreakpoint(mAddressesByLine[line] + mViewBank);
+				if (line < mLines.size())
+					ATGetDebugger()->ToggleBreakpoint(mLines[line].mXAddress);
 
 				return true;
 			}
@@ -314,7 +384,7 @@ LRESULT ATDisassemblyWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 						sint32 addr = ATGetDebugger()->ResolveSymbol(VDTextWToA(info->szText).c_str(), true);
 
-						if (addr < 0)
+						if (addr == -1)
 							MessageBeep(MB_ICONERROR);
 						else
 							SetPosition(addr);
@@ -378,6 +448,9 @@ bool ATDisassemblyWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lPa
 				HMENU menu = GetSubMenu(mhmenu, 0);
 				VDCheckMenuItemByCommandW32(menu, ID_CONTEXT_SHOWCODEBYTES, mbShowCodeBytes);
 				VDCheckMenuItemByCommandW32(menu, ID_CONTEXT_SHOWLABELS, mbShowLabels);
+				VDCheckMenuItemByCommandW32(menu, ID_CONTEXT_SHOWLABELNAMESPACES, mbShowLabelNamespaces);
+				VDCheckMenuItemByCommandW32(menu, ID_CONTEXT_SHOWPROCEDUREBREAKS, mbShowProcedureBreaks);
+				VDCheckMenuItemByCommandW32(menu, ID_CONTEXT_SHOWCALLPREVIEWS, mbShowCallPreviews);
 
 				if (x >= 0 && y >= 0) {
 					POINT pt = {x, y};
@@ -403,9 +476,12 @@ bool ATDisassemblyWindow::OnCreate() {
 	if (!VDCreateTextEditor(~mpTextEditor))
 		return false;
 
-	mhwndAddress = CreateWindowEx(0, WC_COMBOBOXEX, _T(""), WS_VISIBLE|WS_CHILD|WS_CLIPSIBLINGS|CBS_DROPDOWN|CBS_HASSTRINGS|CBS_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)101, g_hInst, NULL);
+	mhwndAddress = CreateWindowEx(0, WC_COMBOBOXEX, _T(""), WS_VISIBLE|WS_CHILD|WS_TABSTOP|WS_CLIPSIBLINGS|CBS_DROPDOWN|CBS_HASSTRINGS|CBS_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)kID_Address, g_hInst, NULL);
 
-	mhwndTextEditor = (HWND)mpTextEditor->Create(WS_EX_NOPARENTNOTIFY, WS_CHILD|WS_VISIBLE, 0, 0, 0, 0, (VDGUIHandle)mhwnd, 100);
+	mhwndButtonPrev = CreateWindowEx(0, WC_BUTTON, _T("<"), WS_VISIBLE|WS_CHILD|WS_TABSTOP|BS_PUSHBUTTON, 0, 0, 0, 0, mhwnd, (HMENU)kID_ButtonPrev, g_hInst, nullptr);
+	mhwndButtonNext = CreateWindowEx(0, WC_BUTTON, _T(">"), WS_VISIBLE|WS_CHILD|WS_TABSTOP|BS_PUSHBUTTON, 0, 0, 0, 0, mhwnd, (HMENU)kID_ButtonNext, g_hInst, nullptr);
+
+	mhwndTextEditor = (HWND)mpTextEditor->Create(WS_EX_NOPARENTNOTIFY, WS_CHILD|WS_TABSTOP|WS_VISIBLE, 0, 0, 0, 0, (VDGUIHandle)mhwnd, kID_TextView);
 
 	OnFontsUpdated();
 
@@ -429,12 +505,21 @@ void ATDisassemblyWindow::OnSize() {
 	if (GetClientRect(mhwnd, &r)) {
 		RECT rAddr = {0};
 		int comboHt = 0;
+		int comboX = 0;
 
 		if (mhwndAddress) {
 			GetWindowRect(mhwndAddress, &rAddr);
 
 			comboHt = rAddr.bottom - rAddr.top;
-			VDVERIFY(SetWindowPos(mhwndAddress, NULL, 0, 0, r.right, comboHt, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE));
+			VDVERIFY(SetWindowPos(mhwndAddress, NULL, comboHt * 2, 0, r.right - comboHt * 2, comboHt, SWP_NOZORDER|SWP_NOACTIVATE));
+		}
+
+		if (mhwndButtonNext) {
+			VDVERIFY(SetWindowPos(mhwndButtonNext, NULL, comboHt, 0, comboHt, comboHt, SWP_NOZORDER|SWP_NOACTIVATE));
+		}
+
+		if (mhwndButtonPrev) {
+			VDVERIFY(SetWindowPos(mhwndButtonPrev, NULL, 0, 0, comboHt, comboHt, SWP_NOZORDER|SWP_NOACTIVATE));
 		}
 
 		if (mhwndTextEditor) {
@@ -448,71 +533,141 @@ void ATDisassemblyWindow::OnSetFocus() {
 }
 
 bool ATDisassemblyWindow::OnCommand(UINT cmd) {
+	const auto UnsafeTruncateAddress = [](uint32 addr) { return (uint16)addr; };
+
 	switch(cmd) {
 		case ID_CONTEXT_GOTOSOURCE:
 			{
 				int line = mpTextEditor->GetCursorLine();
-				bool error = true;
 
-				if ((uint32)line < mAddressesByLine.size()) {
-					uint16 addr = mAddressesByLine[line];
+				if ((uint32)line < mLines.size()) {
+					uint32 xaddr = mLines[line].mXAddress;
 
-					error = !ATConsoleShowSource(addr);
+					if (!ATConsoleShowSource(xaddr)) {
+						VDStringW s;
+						s.sprintf(L"There is no source line associated with the address: %hs.", ATGetDebugger()->GetAddressText(xaddr, true).c_str());
+						ATUIShowError((VDGUIHandle)mhwnd, s.c_str());
+					}
 				}
-				
-				if (error)
-					MessageBox(mhwnd, _T("There is no source line associated with that location."), _T("Altirra Error"), MB_ICONERROR | MB_OK);
 			}
-			break;
+			return true;
 		case ID_CONTEXT_SHOWNEXTSTATEMENT:
 			SetPosition(ATGetDebugger()->GetExtPC());
-			break;
+			return true;
 		case ID_CONTEXT_SETNEXTSTATEMENT:
 			{
 				int line = mpTextEditor->GetCursorLine();
 
-				if ((uint32)line < mAddressesByLine.size())
-					ATGetDebugger()->SetPC(mAddressesByLine[line]);
-				else
+				if ((uint32)line < mLines.size()) {
+					ATGetDebugger()->SetPC(UnsafeTruncateAddress(mLines[line].mXAddress));
+				} else
 					MessageBeep(MB_ICONEXCLAMATION);
 			}
-			break;
+			return true;
 		case ID_CONTEXT_TOGGLEBREAKPOINT:
 			{
 				int line = mpTextEditor->GetCursorLine();
 
-				if ((uint32)line < mAddressesByLine.size())
-					ATGetDebugger()->ToggleBreakpoint(mAddressesByLine[line] + ((uint32)mViewBank << 16));
+				if ((uint32)line < mLines.size())
+					ATGetDebugger()->ToggleBreakpoint(mLines[line].mXAddress);
 				else
 					MessageBeep(MB_ICONEXCLAMATION);
 			}
-			break;
+			return true;
 		case ID_CONTEXT_SHOWCODEBYTES:
 			mbShowCodeBytes = !mbShowCodeBytes;
-			RemakeView(mFocusAddr);
-			break;
+			return true;
 		case ID_CONTEXT_SHOWLABELS:
 			mbShowLabels = !mbShowLabels;
-			RemakeView(mFocusAddr);
-			break;
+			return true;
+		case ID_CONTEXT_SHOWLABELNAMESPACES:
+			mbShowLabelNamespaces = !mbShowLabelNamespaces;
+			return true;
+		case ID_CONTEXT_SHOWPROCEDUREBREAKS:
+			mbShowProcedureBreaks = !mbShowProcedureBreaks;
+			return true;
+		case ID_CONTEXT_SHOWCALLPREVIEWS:
+			mbShowCallPreviews = !mbShowCallPreviews;
+			return true;
+
+		case kID_ButtonPrev:
+			GoPrev();
+			return true;
+
+		case kID_ButtonNext:
+			GoNext();
+			return true;
 	}
 
 	return false;
 }
 
 void ATDisassemblyWindow::OnFontsUpdated() {
+	if (mhwndButtonPrev)
+		SendMessage(mhwndButtonPrev, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+
+	if (mhwndButtonNext)
+		SendMessage(mhwndButtonNext, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+
 	if (mhwndTextEditor)
 		SendMessage(mhwndTextEditor, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+}
+
+void ATDisassemblyWindow::PushAndJump(uint32 fromXAddr, uint32 toXAddr) {
+	mHistory[mHistoryNext] = fromXAddr;
+	if (++mHistoryNext >= vdcountof(mHistory))
+		mHistoryNext = 0;
+
+	if (mHistoryLenBack < vdcountof(mHistory))
+		++mHistoryLenBack;
+
+	mHistoryLenForward = 0;
+
+	SetPosition(toXAddr);
+}
+
+void ATDisassemblyWindow::GoPrev() {
+	if (!mHistoryLenBack)
+		return;
+
+	++mHistoryLenForward;
+	--mHistoryLenBack;
+
+	if (mHistoryNext == 0)
+		mHistoryNext = (uint32)vdcountof(mHistory);
+
+	--mHistoryNext;
+
+	const uint32 nextXAddr = mHistory[mHistoryNext];
+
+	mHistory[mHistoryNext] = mFocusAddr;
+
+	SetPosition(nextXAddr);
+}
+
+void ATDisassemblyWindow::GoNext() {
+	if (!mHistoryLenForward)
+		return;
+
+	++mHistoryLenBack;
+	--mHistoryLenForward;
+
+	const uint32 nextXAddr = mHistory[mHistoryNext];
+	if (++mHistoryNext >= (uint32)vdcountof(mHistory))
+		mHistoryNext = 0;
+
+	mHistory[mHistoryNext] = mFocusAddr;
+
+	SetPosition(nextXAddr);
 }
 
 void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 	mFocusAddr = focusAddr;
 
 	uint16 pc = mViewStart;
-	VDStringA buf;
 
 	mpTextEditor->Clear();
-	mAddressesByLine.clear();
+	mLines.clear();
 
 	mPCLine = -1;
 	mFramePCLine = -1;
@@ -521,67 +676,53 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 
 	if (mLastState.mpDebugTarget) {
 		IATDebugTarget *target = mLastState.mpDebugTarget;
+
+		// checksum a small area around the focus address
+		mViewChecksum = ComputeViewChecksum();
+
 		ATCPUHistoryEntry hent0;
 		ATDisassembleCaptureRegisterContext(target, hent0);
-
-		ATCPUHistoryEntry hent(hent0);
-
-		const ATDebugDisasmMode disasmMode = target->GetDisasmMode();
-		bool autoModeSwitching = false;
-
-		if (disasmMode == kATDebugDisasmMode_65C816)
-			autoModeSwitching = true;
 
 		uint32 viewLength = mpTextEditor->GetVisibleLineCount() * 24;
 
 		if (viewLength < 0x100)
 			viewLength = 0x100;
 
-		int line = 0;
+		VDStringA buf;
+		const auto& result = Disassemble(buf,
+			mLines,
+			0,
+			hent0,
+			mViewStart + mViewAddrBank,
+			focusAddr + mViewAddrBank,
+			viewLength,
+			viewLength,
+			false);
+
+		pc = (uint16)result.mEndingPC;
+
+		size_t n = mLines.size();
+		for(uint32 i = 0; i < n; ++i) {
+			const LineInfo& li = mLines[i];
+
+			if (li.mbIsComment)
+				continue;
+
+			if (li.mXAddress == mPCAddr)
+				mPCLine = i;
+			else if (li.mXAddress == mFramePCAddr)
+				mFramePCLine = i;
+
+			// Set focus line to earliest line that reaches the focus address.
+			// Note that we must be wrap-safe here, thus the modulo comparison.
+			if ((uint16)(li.mXAddress - focusAddr - 1) >= 0x8000)
+				focusLine = (int)i;
+		}
 
 		mpTextEditor->SetUpdateEnabled(false);
-
-		while((uint32)(pc - mViewStart) < viewLength) {
-			if (pc == (uint16)mPCAddr)
-				mPCLine = line;
-			else if (pc == (uint16)mFramePCAddr)
-				mFramePCLine = line;
-
-			if (pc <= focusAddr)
-				focusLine = line;
-
-			++line;
-
-			if (autoModeSwitching && pc == (uint16)mPCAddr)
-				hent = hent0;
-
-			mAddressesByLine.push_back(pc);
-
-			if (disasmMode == kATDebugDisasmMode_6502)
-				ATDisassembleCaptureInsnContext(target, mViewAddrBank + pc, hent);
-			else
-				ATDisassembleCaptureInsnContext(target, pc, mViewBank, hent);
-
-			buf.clear();
-			uint16 newpc = ATDisassembleInsn(buf, target, disasmMode, hent, false, false, true, mbShowCodeBytes, mbShowLabels, false, false, true, true, true);
-			buf += '\n';
-
-			// auto-switch mode if necessary
-			if (autoModeSwitching) {
-				ATDisassemblePredictContext(hent, disasmMode);
-			}
-
-			// don't allow disassembly to skip the desired PC
-			if (newpc > focusAddr && pc < focusAddr)
-				newpc = focusAddr;
-
-			pc = newpc;
-
-			mpTextEditor->Append(buf.c_str());
-		}
+		mpTextEditor->Append(buf.c_str());
+		mpTextEditor->SetUpdateEnabled(true);
 	}
-
-	mpTextEditor->SetUpdateEnabled(true);
 
 	mLastSubMode = g_sim.GetCPU().GetCPUSubMode();
 
@@ -592,6 +733,295 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 
 	mViewLength = (uint16)(pc - mViewStart);
 	mpTextEditor->RecolorAll();
+}
+
+ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
+	VDStringA& buf,
+	vdfastvector<LineInfo>& lines,
+	uint32 nestingLevel,
+	const ATCPUHistoryEntry& initialState,
+	uint32 startAddr,
+	uint32 focusAddr,
+	uint32 maxBytes,
+	uint32 maxLines,
+	bool stopOnProcedureEnd)
+{
+	ATCPUHistoryEntry hent(initialState);
+
+	IATDebugTarget *target = mLastState.mpDebugTarget;
+	const ATDebugDisasmMode disasmMode = target->GetDisasmMode();
+	bool autoModeSwitching = false;
+
+	if (disasmMode == kATDebugDisasmMode_65C816)
+		autoModeSwitching = true;
+
+	const uint32 bankBase = startAddr & UINT32_C(0xFFFF0000);
+	const uint8 bank = (uint8)(bankBase >> 16);
+	const uint16 pc0 = (uint16)startAddr;
+	uint16 pc = pc0;
+	bool procedureOpen = stopOnProcedureEnd;
+	const uint32 indent = nestingLevel * 2;
+
+	enum : uint8 {
+		kBM_ExpandNone = 0x00,
+		kBM_ExpandAbs16 = 0x01,
+		kBM_ExpandAbs16BE = 0x02,
+		kBM_ExpandAbs24 = 0x03,
+		kBM_ExpandRel8 = 0x04,
+		kBM_ExpandRel16BE = 0x05,
+		kBM_ExpandMask = 0x07,
+
+		kBM_EndBlock = 0x08,
+		kBM_Special = 0x10
+	};
+
+	struct BreakMap {
+		uint8 fl[256];
+	};
+
+	static constexpr std::array<uint8, 256> kBreakMap6502 = [] {
+		std::array<uint8, 256> breakMap {};
+
+		// JSR abs
+		breakMap[0x20] |= kBM_ExpandAbs16;
+
+		// JMP abs
+		breakMap[0x4C] |= kBM_ExpandAbs16 | kBM_EndBlock;
+
+		// JMP (abs)
+		breakMap[0x6C] |= kBM_EndBlock;
+
+		// RTI
+		breakMap[0x40] |= kBM_EndBlock;
+
+		// RTS
+		breakMap[0x60] |= kBM_EndBlock;
+
+		return breakMap;
+	}();
+
+	static constexpr std::array<uint8, 256> kBreakMap65C02 = [] {
+		std::array<uint8, 256> breakMap = kBreakMap6502;
+
+		// BRA rel8
+		breakMap[0x80] |= kBM_EndBlock;
+
+		// JMP (abs,X)
+		breakMap[0x7C] |= kBM_EndBlock;
+
+		return breakMap;
+	}();
+
+	static constexpr std::array<uint8, 256> kBreakMap65C816 = [] {
+		std::array<uint8, 256> breakMap = kBreakMap65C02;
+
+		// JSL al
+		breakMap[0x22] |= kBM_ExpandAbs24;
+
+		// JML al
+		breakMap[0x5C] |= kBM_EndBlock | kBM_ExpandAbs24;
+
+		// JSR (abs,X)
+		breakMap[0xFC] |= kBM_EndBlock;
+
+		return breakMap;
+	}();
+
+	static constexpr std::array<uint8, 256> kBreakMap6809 = [] {
+		std::array<uint8, 256> breakMap {};
+
+		breakMap[0x16] |= kBM_EndBlock;		// LBRA
+		breakMap[0x17] |= kBM_ExpandRel16BE;		// LBSR rel16
+		breakMap[0x20] |= kBM_EndBlock;		// BRA
+		breakMap[0x39] |= kBM_EndBlock;		// RTS
+		breakMap[0x6E] |= kBM_EndBlock;		// JMP indexed
+		breakMap[0x7E] |= kBM_EndBlock | kBM_ExpandAbs16BE;		// JMP extended
+		breakMap[0x8D] |= kBM_ExpandRel8;			// BSR rel8
+		breakMap[0xBD] |= kBM_ExpandAbs16BE;		// JSR extended
+
+		breakMap[0x35] |= kBM_Special;		// PULS PC
+		breakMap[0x37] |= kBM_Special;		// PULU PC
+
+		return breakMap;
+	}();
+
+	const uint8 *VDRESTRICT breakMap = nullptr;
+	uint8 (*breakMapSpecialHandler)(const uint8 *insn) = nullptr;
+
+	switch(disasmMode) {
+		case kATDebugDisasmMode_6502:
+			breakMap = kBreakMap6502.data();
+			break;
+
+		case kATDebugDisasmMode_65C02:
+			breakMap = kBreakMap65C02.data();
+			break;
+
+		case kATDebugDisasmMode_65C816:
+			breakMap = kBreakMap65C816.data();
+			break;
+
+		case kATDebugDisasmMode_6809:
+			breakMap = kBreakMap6809.data();
+			breakMapSpecialHandler = [](const uint8 *insn) -> uint8 {
+				switch(insn[0]) {
+					case 0x35:	// PULS
+					case 0x37:	// PULU
+						return insn[1] & 0x80 ? kBM_EndBlock : 0;
+				}
+
+				return 0;
+			};
+			break;
+	}
+
+	while((uint16)(pc - pc0) < maxBytes) {
+		if (!maxLines--)
+			break;
+
+		if (autoModeSwitching && pc == (uint16)mPCAddr)
+			hent = initialState;
+
+		LineInfo li {};
+		li.mXAddress = bankBase + pc;
+		li.mNestingLevel = nestingLevel;
+		li.mP = hent.mP;
+		li.mbEmulation = hent.mbEmulation;
+		li.mbIsComment = false;
+
+		if (disasmMode == kATDebugDisasmMode_6502)
+			ATDisassembleCaptureInsnContext(target, bankBase + pc, hent);
+		else
+			ATDisassembleCaptureInsnContext(target, pc, bank, hent);
+
+		buf.append(indent, ' ');
+		size_t lineStart = buf.size();
+		const ATDisasmResult& result = ATDisassembleInsn(buf, target, disasmMode, hent, false, false, true, mbShowCodeBytes, mbShowLabels, false, false, mbShowLabelNamespaces, true, true);
+
+		uint16 newpc = result.mNextPC;
+
+		bool procBreak = false;
+		bool procSep = false;
+
+		if (breakMap) {
+			const uint8 opcode = hent.mOpcode[0];
+			uint8 breakInfo = breakMap[opcode];
+
+			if (breakInfo & kBM_Special)
+				breakInfo = breakMapSpecialHandler(hent.mOpcode);
+
+			if (breakInfo & kBM_ExpandMask) {
+				switch(breakInfo & kBM_ExpandMask) {
+					case kBM_ExpandAbs16:
+						li.mTargetXAddr = bankBase + VDReadUnalignedLEU16(&hent.mOpcode[1]);
+						break;
+
+					case kBM_ExpandAbs16BE:
+						li.mTargetXAddr = bankBase + VDReadUnalignedBEU16(&hent.mOpcode[1]);
+						break;
+
+					case kBM_ExpandAbs24:
+						li.mTargetXAddr = hent.mOpcode[1] + ((uint32)hent.mOpcode[2] << 8) + ((uint32)hent.mOpcode[3] << 16);
+						break;
+
+					case kBM_ExpandRel8:
+						li.mTargetXAddr = bankBase + ((newpc + (sint8)hent.mOpcode[1]) & 0xFFFF);
+						break;
+
+					case kBM_ExpandRel16BE:
+						li.mTargetXAddr = bankBase + ((newpc + VDReadUnalignedBES16(&hent.mOpcode[1])) & 0xFFFF);
+						break;
+				}
+
+				li.mOperandSelCode = kSelCode_JumpTarget;
+				li.mOperandStart = (uint32)(result.mOperandStart - lineStart) + indent;
+				li.mOperandEnd = (uint32)(result.mOperandEnd - lineStart) + indent;
+
+				if (mbShowCallPreviews) {
+					auto len = buf.size() - lineStart;
+
+					if (len < 50)
+						buf.append(50 - len, ' ');
+
+					li.mCommentPos = (uint32)(buf.size() - lineStart) + indent + 1;
+					li.mbIsExpandable = true;
+					buf += " ;[expand]";
+				}
+			}
+
+			bool isProcEnd = false;
+			if (breakInfo & kBM_EndBlock) {
+				if (stopOnProcedureEnd)
+					procBreak = true;
+				else
+					procSep = mbShowProcedureBreaks;
+			}
+		}
+
+		lines.push_back(li);
+
+		buf += '\n';
+
+		if (procSep) {
+			LineInfo sepLI {};
+			sepLI.mbIsComment = true;
+			lines.push_back(sepLI);
+
+			buf.append(indent, ' ');
+			buf += ';';
+			buf.append(50, '-');
+			buf += '\n';
+		}
+
+		// auto-switch mode if necessary
+		if (autoModeSwitching) {
+			ATDisassemblePredictContext(hent, disasmMode);
+		}
+
+		// don't allow disassembly to skip the desired PC
+		if (newpc > (uint16)focusAddr && pc < (uint16)focusAddr) {
+			newpc = (uint16)focusAddr;
+
+			buf.append(indent, ' ');
+			buf.append_sprintf("; reverse disassembly mismatch -- address forced from $%04X to $%04X\n", pc, newpc);
+
+			li.mbIsComment = true;
+			li.mbIsExpandable = false;
+			lines.push_back(li);
+		}
+
+		pc = newpc;
+
+		if (procBreak) {
+			procedureOpen = false;
+			break;
+		}
+	}
+
+	if (procedureOpen) {
+		LineInfo li {};
+		li.mNestingLevel = nestingLevel;
+		li.mbIsComment = true;
+		lines.push_back(li);
+
+		buf.append(indent, ' ');
+		buf.append("    ...\n");
+	}
+
+	return DisasmResult { (startAddr & ~UINT32_C(0xFFFF)) + pc };
+}
+
+uint32 ATDisassemblyWindow::ComputeViewChecksum() const {
+	if (!mLastState.mpDebugTarget)
+		return 0;
+
+	uint32 buf[4] {};
+	mLastState.mpDebugTarget->DebugReadMemory(mViewAddrBank + ((mViewStart + mViewLength / 2) & 0xFFFF), buf, 16);
+
+	return buf[0]
+		+ (uint32)(buf[1] << 2) + (uint32)(buf[1] << (32 - 2))
+		+ (uint32)(buf[2] << 4) + (uint32)(buf[2] << (32 - 4))
+		+ (uint32)(buf[3] << 6) + (uint32)(buf[3] << (32 - 6));
 }
 
 void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
@@ -605,14 +1035,28 @@ void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemStat
 		return;
 	}
 
-	bool targetChanged = false;
+	bool memoryViewChanged = false;
 	bool changed = false;
 
 	if (mLastState.mpDebugTarget != state.mpDebugTarget) {
 		changed = true;
-		targetChanged = true;
+		memoryViewChanged = true;
 	} else if (mLastState.mPC != state.mPC || mLastState.mFramePC != state.mFramePC || mLastState.mPCBank != state.mPCBank)
 		changed = true;
+
+	if (changed && !memoryViewChanged) {
+		if ((uint16)(state.mFramePC - mViewStart) >= mViewLength || state.mPCBank != mViewBank || g_sim.GetCPU().GetCPUSubMode() != mLastSubMode)
+			memoryViewChanged = true;
+	}
+
+	// if we haven't detected a full change and cycles have gone by, check whether the memory we last scanned is still the
+	// same
+	if (!memoryViewChanged && mLastState.mCycle != state.mCycle) {
+		if (mViewChecksum != ComputeViewChecksum()) {
+			changed = true;
+			memoryViewChanged = true;
+		}
+	}
 
 	mLastState = state;
 
@@ -621,23 +1065,22 @@ void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemStat
 	mFramePCAddr = (uint32)state.mFramePC + ((uint32)state.mPCBank << 16);
 	mFramePCLine = -1;
 
-	if (state.mbRunning) {
-		mPCAddr = (uint32)-1;
-		mFramePCAddr = (uint32)-1;
-	}
-
-	if (changed && ((state.mFramePC - mViewStart) >= mViewLength || state.mPCBank != mViewBank || g_sim.GetCPU().GetCPUSubMode() != mLastSubMode || targetChanged)) {
+	if (changed && memoryViewChanged) {
 		SetPosition(mFramePCAddr);
 	} else {
-		const int n = (int)mAddressesByLine.size();
+		const int n = (int)mLines.size();
 
 		for(int line = 0; line < n; ++line) {
-			uint16 addr = mAddressesByLine[line];
+			const LineInfo& li = mLines[line];
 
-			if (addr == (uint16)mPCAddr)
-				mPCLine = line;
-			else if (addr == (uint16)mFramePCAddr)
-				mFramePCLine = line;
+			if (li.mNestingLevel == 0) {
+				uint32 addr = li.mXAddress;
+
+				if (addr == mPCAddr)
+					mPCLine = line;
+				else if (addr == mFramePCAddr)
+					mFramePCLine = line;
+			}
 		}
 
 		if (changed) {
@@ -671,40 +1114,156 @@ void ATDisassemblyWindow::OnTextEditorScrolled(int firstVisiblePara, int lastVis
 	if (mpTextEditor->IsSelectionPresent())
 		return;
 
-	if (!mAddressesByLine.empty()) {
+	if (!mLines.empty()) {
 		bool prev = (firstVisiblePara < visibleParaCount);
 		bool next = (lastVisiblePara >= totalParaCount - visibleParaCount);
 
 		if (prev ^ next) {
 			int cenIdx = mpTextEditor->GetParagraphForYPos(mpTextEditor->GetVisibleHeight() >> 1);
 			
-			if (cenIdx < 0)
-				cenIdx = 0;
-			else if ((uint32)cenIdx >= mAddressesByLine.size())
-				cenIdx = (int)mAddressesByLine.size() - 1;
+			cenIdx = std::clamp(cenIdx, 0, (int)mLines.size() - 1);
 
-			SetPosition(mAddressesByLine[cenIdx] + ((uint32)mViewBank << 16));
+			SetPosition(mLines[cenIdx].mXAddress);
+		}
+	}
+}
+
+void ATDisassemblyWindow::OnLinkSelected(uint32 selectionCode, int para, int offset) {
+	if (para < 0)
+		return;
+
+	const uint32 line = (uint32)para;
+	const uint32 n = mLines.size();
+	if (line >= n)
+		return;
+
+	const LineInfo& li = mLines[line];
+
+	if (selectionCode == kSelCode_JumpTarget) {
+		PushAndJump(li.mXAddress, li.mTargetXAddr);
+	} else if (selectionCode == kSelCode_Expand) {
+		VDASSERT(li.mbIsExpandable);
+
+		bool expanded = false;
+
+		if (line + 1 < n) {
+			if (mLines[line + 1].mNestingLevel > li.mNestingLevel)
+				expanded = true;
+		}
+
+		if (expanded) {
+			// [contract] -> [expand]
+			mpTextEditor->RemoveAt(line, li.mCommentPos + 2, line, li.mCommentPos + 10);
+			mpTextEditor->InsertAt(line, li.mCommentPos + 2, "expand");
+
+			uint32 rangeStart = line + 1;
+			uint32 rangeEnd = rangeStart;
+
+			while(rangeEnd < n && mLines[rangeEnd].mNestingLevel > li.mNestingLevel)
+				++rangeEnd;
+
+			const int rangeLen = (int)(rangeEnd - rangeStart);
+
+			if (mPCLine >= (int)rangeEnd)
+				mPCLine -= rangeLen;
+
+			if (mFramePCLine >= (int)rangeEnd)
+				mFramePCLine -= rangeLen;
+
+			mLines.erase(mLines.begin() + rangeStart, mLines.begin() + rangeEnd);
+			mpTextEditor->RemoveAt(rangeStart, 0, rangeEnd, 0);
+		} else {
+			// [expand] -> [contract]
+			mpTextEditor->RemoveAt(line, li.mCommentPos + 2, line, li.mCommentPos + 8);
+			mpTextEditor->InsertAt(line, li.mCommentPos + 2, "contract");
+
+			IATDebugTarget *target = mLastState.mpDebugTarget;
+			ATCPUHistoryEntry initialState;
+			ATDisassembleCaptureRegisterContext(target, initialState);
+
+			initialState.mP = li.mP;
+			initialState.mbEmulation = li.mbEmulation;
+
+			vdfastvector<LineInfo> newLines;
+			VDStringA buf;
+
+			Disassemble(buf,
+				newLines,
+				li.mNestingLevel + 1,
+				initialState,
+				li.mTargetXAddr,
+				li.mTargetXAddr,
+				200,
+				20,
+				true);
+
+			const uint32 rangeLen = (uint32)newLines.size();
+
+			if (mPCLine > (int)line)
+				mPCLine += rangeLen;
+
+			if (mFramePCLine > (int)line)
+				mFramePCLine += rangeLen;
+
+			// mLines[] must be updated first as the colorizer will get invoked as
+			// soon as we insert the text.
+			mLines.insert(mLines.begin() + line + 1, newLines.begin(), newLines.end());
+			mpTextEditor->InsertAt(line + 1, 0, buf.c_str());
 		}
 	}
 }
 
 void ATDisassemblyWindow::RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *cl) {
 	int next = 0;
+	sint32 bg = -1;
+	sint32 fg = -1;
+	const LineInfo *li = nullptr;
+	const auto& tc = ATUIGetThemeColors();
 
-	if ((size_t)line < mAddressesByLine.size()) {
-		auto *dbg = ATGetDebugger();
-		uint32 addr = mAddressesByLine[line] + ((uint32)mViewBank << 16);
+	if ((size_t)line < mLines.size()) {
+		li = &mLines[line];
 
-		if (dbg->IsBreakpointAtPC(addr)) {
+		if (li->mNestingLevel)
+			bg = tc.mStaticBg;
+
+		if (li->mbIsComment) {
+			cl->AddTextColorPoint(0, tc.mCommentText, bg);
+			return;
+		}
+
+		uint32 addr = li->mXAddress;
+
+		if (auto *dbg = ATGetDebugger(); dbg->IsBreakpointAtPC(addr)) {
 			cl->AddTextColorPoint(next, 0x000000, 0xFF8080);
 			next += 4;
 		}
 	}
 
-	if (line == mPCLine)
-		cl->AddTextColorPoint(next, 0x000000, 0xFFFF80);
-	else if (line == mFramePCLine)
-		cl->AddTextColorPoint(next, 0x000000, 0x80FF80);
+	bool suppressLinkHighlights = false;
+	if (line == mPCLine) {
+		bg = tc.mDirectLocationBg;
+		fg = tc.mDirectLocationFg;
+		suppressLinkHighlights = true;
+	} else if (line == mFramePCLine) {
+		bg = tc.mIndirectLocationBg;
+		fg = tc.mIndirectLocationFg;
+		suppressLinkHighlights = true;
+	}
+
+	if (bg >= 0)
+		cl->AddTextColorPoint(next, fg, bg);
+
+	if (li) {
+		const sint32 linkColor = suppressLinkHighlights ? fg : ATUIGetThemeColors().mHyperlinkText;
+
+		if (li->mOperandSelCode) {
+			cl->AddTextColorPoint(li->mOperandStart, linkColor, bg, li->mOperandSelCode);
+			cl->AddTextColorPoint(li->mOperandEnd, fg, bg);
+		}
+
+		if (li->mbIsExpandable)
+			cl->AddTextColorPoint(li->mCommentPos, linkColor, bg, kSelCode_Expand);
+	}
 }
 
 void ATDisassemblyWindow::SetPosition(uint32 addr) {
@@ -739,10 +1298,11 @@ protected:
 	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
 
-	bool OnCreate();
-	void OnDestroy();
-	void OnSize();
-	void OnFontsUpdated();
+	bool OnCreate() override;
+	void OnDestroy() override;
+	void OnSize() override;
+	void OnFontsUpdated() override;
+	void OnThemeUpdated() override;
 
 	HWND	mhwndEdit;
 	VDStringA	mState;
@@ -763,6 +1323,20 @@ LRESULT ATRegistersWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case WM_SIZE:
 			OnSize();
 			break;
+
+		case WM_CTLCOLORSTATIC:
+			{
+				const auto& tc = ATUIGetThemeColors();
+				HDC hdc = (HDC)wParam;
+				const COLORREF bg = VDSwizzleU32(tc.mContentBg) >> 8;
+
+				SetBkColor(hdc, bg);
+				SetDCBrushColor(hdc, bg);
+				SetTextColor(hdc, VDSwizzleU32(tc.mContentFg) >> 8);
+
+				return (LRESULT)(HBRUSH)GetStockObject(DC_BRUSH);
+			}
+			break;
 	}
 
 	return ATUIDebuggerPane::WndProc(msg, wParam, lParam);
@@ -772,7 +1346,7 @@ bool ATRegistersWindow::OnCreate() {
 	if (!ATUIDebuggerPane::OnCreate())
 		return false;
 
-	mhwndEdit = CreateWindowEx(0, _T("EDIT"), _T(""), WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|ES_AUTOVSCROLL|ES_MULTILINE, 0, 0, 0, 0, mhwnd, (HMENU)100, VDGetLocalModuleHandleW32(), NULL);
+	mhwndEdit = CreateWindowEx(0, _T("EDIT"), _T(""), WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|ES_AUTOVSCROLL|ES_MULTILINE|ES_READONLY, 0, 0, 0, 0, mhwnd, (HMENU)100, VDGetLocalModuleHandleW32(), NULL);
 	if (!mhwndEdit)
 		return false;
 
@@ -802,7 +1376,13 @@ void ATRegistersWindow::OnSize() {
 }
 
 void ATRegistersWindow::OnFontsUpdated() {
-	SendMessage(mhwndEdit, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+	if (mhwndEdit)
+		SendMessage(mhwndEdit, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+}
+
+void ATRegistersWindow::OnThemeUpdated() {
+	if (mhwndEdit)
+		InvalidateRect(mhwndEdit, NULL, TRUE);
 }
 
 void ATRegistersWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
@@ -1113,9 +1693,11 @@ protected:
 	void OnFontsUpdated();
 	bool OnCommand(UINT cmd);
 
-	void OnTextEditorUpdated();
-	void OnTextEditorScrolled(int firstVisiblePara, int lastVisiblePara, int visibleParaCount, int totalParaCount);
-	void RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *colorization);
+	void OnTextEditorUpdated() override;
+	void OnTextEditorScrolled(int firstVisiblePara, int lastVisiblePara, int visibleParaCount, int totalParaCount) override;
+	void OnLinkSelected(uint32 selectionCode, int para, int offset) override;
+
+	void RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *colorization) override;
 
 	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
 	void OnDebuggerEvent(ATDebugEvent eventId);
@@ -1480,7 +2062,7 @@ bool ATSourceWindow::OnCommand(UINT cmd) {
 			{
 				sint32 addr = GetCurrentLineAddress();
 
-				if (addr >= 0) {
+				if (addr != -1) {
 					ATActivateUIPane(kATUIPaneId_Disassembly, true);
 					ATDisassemblyWindow *disPane = static_cast<ATDisassemblyWindow *>(ATGetUIPane(kATUIPaneId_Disassembly));
 					if (disPane) {
@@ -1496,7 +2078,7 @@ bool ATSourceWindow::OnCommand(UINT cmd) {
 			{
 				sint32 addr = GetCurrentLineAddress();
 
-				if (addr >= 0) {
+				if (addr != -1) {
 					ATGetDebugger()->SetPC((uint16)addr);
 				}
 			}
@@ -1511,17 +2093,22 @@ void ATSourceWindow::OnTextEditorUpdated() {
 void ATSourceWindow::OnTextEditorScrolled(int firstVisiblePara, int lastVisiblePara, int visibleParaCount, int totalParaCount) {
 }
 
+void ATSourceWindow::OnLinkSelected(uint32 selectionCode, int para, int offset) {
+}
+
 void ATSourceWindow::RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *cl) {
 	int next = 0;
 
 	AddressLookup::const_iterator it(mLineToAddressLookup.find(line));
 	bool addressMapped = false;
 
+	const auto& tc = ATUIGetThemeColors();
+
 	if (it != mLineToAddressLookup.end()) {
 		uint32 addr = it->second;
 
 		if (ATGetDebugger()->IsBreakpointAtPC(addr)) {
-			cl->AddTextColorPoint(next, 0x000000, 0xFF8080);
+			cl->AddTextColorPoint(next, tc.mHiMarkedFg, tc.mHiMarkedBg);
 			next += 4;
 		}
 
@@ -1529,16 +2116,16 @@ void ATSourceWindow::RecolorLine(int line, const char *text, int length, IVDText
 	}
 
 	if (!addressMapped && ATGetDebugger()->IsDeferredBreakpointSet(mModulePath.c_str(), line + 1)) {
-		cl->AddTextColorPoint(next, 0x000000, 0xFFA880);
+		cl->AddTextColorPoint(next, tc.mPendingHiMarkedFg, tc.mPendingHiMarkedBg);
 		next += 4;
 		addressMapped = true;
 	}
 
 	if (line == mPCLine) {
-		cl->AddTextColorPoint(next, 0x000000, 0xFFFF80);
+		cl->AddTextColorPoint(next, tc.mDirectLocationFg, tc.mDirectLocationBg);
 		return;
 	} else if (line == mFramePCLine) {
-		cl->AddTextColorPoint(next, 0x000000, 0x80FF80);
+		cl->AddTextColorPoint(next, tc.mIndirectLocationFg, tc.mIndirectLocationBg);
 		return;
 	}
 
@@ -1549,7 +2136,7 @@ void ATSourceWindow::RecolorLine(int line, const char *text, int length, IVDText
 
 	sint32 backColor = -1;
 	if (!addressMapped) {
-		backColor = 0xf0f0f0;
+		backColor = tc.mInactiveTextBg;
 		cl->AddTextColorPoint(next, -1, backColor);
 	}
 
@@ -1557,7 +2144,7 @@ void ATSourceWindow::RecolorLine(int line, const char *text, int length, IVDText
 		char c = text[i];
 
 		if (c == ';') {
-			cl->AddTextColorPoint(0, 0x008000, backColor);
+			cl->AddTextColorPoint(0, tc.mCommentText, backColor);
 			return;
 		} else if (c == '.') {
 			int j = i + 1;
@@ -1576,7 +2163,7 @@ void ATSourceWindow::RecolorLine(int line, const char *text, int length, IVDText
 			}
 
 			if (j > i+1) {
-				cl->AddTextColorPoint(i, 0x0000FF, backColor);
+				cl->AddTextColorPoint(i, tc.mKeywordText, backColor);
 				cl->AddTextColorPoint(j, -1, backColor);
 			}
 
@@ -1939,6 +2526,8 @@ public:
 	ATHistoryWindow();
 	~ATHistoryWindow();
 
+	bool JumpToCycle(uint32 cycle);
+
 private:
 	double DecodeTapeSample(uint32 cycle) override;
 	double DecodeTapeSeconds(uint32 cycle) override;
@@ -1982,8 +2571,6 @@ private:
 	uint32 mLastHistoryCounter = 0;
 
 	vdfastvector<uint32> mFilteredInsnLookup;
-
-	ATHistoryTree mHistoryTree;
 };
 
 ATHistoryWindow::ATHistoryWindow()
@@ -1993,6 +2580,10 @@ ATHistoryWindow::ATHistoryWindow()
 }
 
 ATHistoryWindow::~ATHistoryWindow() {
+}
+
+bool ATHistoryWindow::JumpToCycle(uint32 cycle) {
+	return mpHistoryView && mpHistoryView->JumpToCycle(cycle);
 }
 
 double ATHistoryWindow::DecodeTapeSample(uint32 cycle) {
@@ -2132,10 +2723,16 @@ void ATHistoryWindow::OnEsc() {
 
 void ATHistoryWindow::JumpToInsn(uint32 pc) {
 	ATGetDebugger()->SetFramePC(pc);
+
+	ATActivateUIPane(kATUIPaneId_Disassembly, true);
 }
 
 void ATHistoryWindow::JumpToSource(uint32 pc) {
-	ATConsoleShowSource(pc);
+	if (!ATConsoleShowSource(pc)) {
+		VDStringW s;
+		s.sprintf(L"There is no source line associated with the address: %hs.", ATGetDebugger()->GetAddressText(pc, true).c_str());
+		ATUIShowError((VDGUIHandle)mhwnd, s.c_str());
+	}
 }
 
 LRESULT ATHistoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -2325,10 +2922,11 @@ protected:
 	LRESULT LogWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	LRESULT CommandEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-	bool OnCreate();
-	void OnDestroy();
-	void OnSize();
-	void OnFontsUpdated();
+	bool OnCreate() override;
+	void OnDestroy() override;
+	void OnSize() override;
+	void OnFontsUpdated() override;
+	void OnThemeUpdated() override;
 
 	void OnPromptChanged(IATDebugger *target, const char *prompt);
 	void OnRunStateChanged(IATDebugger *target, bool runState);
@@ -2367,6 +2965,8 @@ protected:
 	int		mHistoryCurrent;
 
 	VDStringW	mAppendBuffer;
+
+	vdfunction<void()> mpFnThemeUpdated;
 };
 
 ATConsoleWindow *g_pConsoleWindow;
@@ -2450,7 +3050,20 @@ LRESULT ATConsoleWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					}
 
 					SendMessage(mhwndEdit, EM_SETREADONLY, TRUE, 0);
-					SendMessage(mhwndEdit, EM_SETBKGNDCOLOR, FALSE, GetSysColor(COLOR_3DFACE));
+
+					if (ATUIIsDarkThemeActive()) {
+						CHARFORMAT2 cf = {};
+						cf.cbSize = sizeof cf;
+						cf.dwMask = CFM_COLOR | CFM_BACKCOLOR | CFM_EFFECTS;
+						cf.dwEffects = 0;
+						cf.crTextColor = RGB(216, 216, 216);
+						cf.crBackColor = RGB(128, 128, 128);
+
+						SendMessage(mhwndEdit, EM_SETCHARFORMAT, SCF_ALL | SCF_DEFAULT, (LPARAM)&cf);
+						SendMessage(mhwndEdit, EM_SETBKGNDCOLOR, FALSE, RGB(128, 128, 128));
+					} else {
+						SendMessage(mhwndEdit, EM_SETBKGNDCOLOR, FALSE, GetSysColor(COLOR_3DFACE));
+					}
 				}
 			}
 
@@ -2515,6 +3128,7 @@ bool ATConsoleWindow::OnCreate() {
 	mbEditShownDisabled = false;		// deliberately wrong
 	mbRunState = false;
 	OnRunStateChanged(NULL, d->IsRunning());
+
 	return true;
 }
 
@@ -2581,24 +3195,47 @@ void ATConsoleWindow::OnSize() {
 }
 
 void ATConsoleWindow::OnFontsUpdated() {
+	OnThemeUpdated();
+}
+
+void ATConsoleWindow::OnThemeUpdated() {
 	// RichEdit50W tries to be cute and retransforms the font given in WM_SETFONT to the
 	// current DPI. Unfortunately, this just makes a mess of the font size, so we have to
 	// bypass it and send EM_SETCHARFORMAT instead to get the size we actually specified
 	// to stick.
+
+	const bool useDark = ATUIIsDarkThemeActive();
 
 	CHARFORMAT2 cf = {};
 	cf.cbSize = sizeof cf;
 	cf.dwMask = CFM_SIZE;
 	cf.yHeight = g_monoFontPtSizeTenths * 2;
 
+	if (useDark) {
+		cf.dwMask |= CFM_COLOR | CFM_BACKCOLOR | CFM_EFFECTS;
+		cf.dwEffects = 0;
+		cf.crTextColor = RGB(216, 216, 216);
+		cf.crBackColor = RGB(32, 32, 32);
+	}
+
 	if (mhwndLog) {
 		SendMessage(mhwndLog, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
 		SendMessage(mhwndLog, EM_SETCHARFORMAT, SCF_ALL | SCF_DEFAULT, (LPARAM)&cf);
+
+		if (useDark)
+			SendMessage(mhwndLog, EM_SETBKGNDCOLOR, FALSE, cf.crBackColor);
+		else
+			SendMessage(mhwndLog, EM_SETBKGNDCOLOR, TRUE, RGB(255, 255, 255));
 	}
 
 	if (mhwndEdit) {
 		SendMessage(mhwndEdit, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
 		SendMessage(mhwndEdit, EM_SETCHARFORMAT, SCF_ALL | SCF_DEFAULT, (LPARAM)&cf);
+
+		if (useDark)
+			SendMessage(mhwndEdit, EM_SETBKGNDCOLOR, FALSE, cf.crBackColor);
+		else
+			SendMessage(mhwndEdit, EM_SETBKGNDCOLOR, TRUE, RGB(255, 255, 255));
 	}
 
 	if (mhwndPrompt)
@@ -2623,7 +3260,21 @@ void ATConsoleWindow::OnRunStateChanged(IATDebugger *target, bool rs) {
 			if (mbEditShownDisabled) {
 				mbEditShownDisabled = false;
 				SendMessage(mhwndEdit, EM_SETREADONLY, FALSE, 0);
-				SendMessage(mhwndEdit, EM_SETBKGNDCOLOR, TRUE, GetSysColor(COLOR_WINDOW));
+
+				if (ATUIIsDarkThemeActive()) {
+					SendMessage(mhwndEdit, EM_SETBKGNDCOLOR, FALSE, RGB(32, 32, 32));
+
+					CHARFORMAT2 cf = {};
+					cf.cbSize = sizeof cf;
+					cf.dwMask = CFM_COLOR | CFM_BACKCOLOR | CFM_EFFECTS;
+					cf.dwEffects = 0;
+					cf.crTextColor = RGB(216, 216, 216);
+					cf.crBackColor = RGB(32, 32, 32);
+
+					SendMessage(mhwndEdit, EM_SETCHARFORMAT, SCF_ALL | SCF_DEFAULT, (LPARAM)&cf);
+				} else {
+					SendMessage(mhwndEdit, EM_SETBKGNDCOLOR, TRUE, GetSysColor(COLOR_WINDOW));
+				}
 
 				// Check if the display currently has the focus. If so, take focus.
 				auto *p = ATUIGetActivePane();
@@ -2915,6 +3566,7 @@ protected:
 	void OnDestroy();
 	void OnSize();
 	void OnFontsUpdated();
+	void OnThemeUpdated();
 	void OnPaint();
 	void RemakeView(uint32 focusAddr);
 	bool GetAddressFromPoint(int x, int y, uint32& addr) const;
@@ -2986,6 +3638,9 @@ LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				}
 			}
 			break;
+
+		case WM_ERASEBKGND:
+			return FALSE;
 
 		case WM_PAINT:
 			OnPaint();
@@ -3103,6 +3758,10 @@ void ATMemoryWindow::OnFontsUpdated() {
 	InvalidateRect(mhwnd, NULL, TRUE);
 }
 
+void ATMemoryWindow::OnThemeUpdated() {
+	InvalidateRect(mhwnd, NULL, TRUE);
+}
+
 void ATMemoryWindow::OnPaint() {
 	PAINTSTRUCT ps;
 	HDC hdc = ::BeginPaint(mhwnd, &ps);
@@ -3113,13 +3772,15 @@ void ATMemoryWindow::OnPaint() {
 	if (saveHandle) {
 		uint8 data[16];
 
-		COLORREF normalTextColor = GetSysColor(COLOR_WINDOWTEXT);
-		COLORREF changedTextColor = GetSysColor(COLOR_WINDOWTEXT) | 0x0000ff;
+		const ATUIThemeColors& tc = ATUIGetThemeColors();
+
+		COLORREF normalTextColor = VDSwizzleU32(tc.mContentFg) >> 8;
+		COLORREF changedTextColor = ((normalTextColor & 0xFEFEFE) >> 1) | 0x0000FF;
 
 		::SelectObject(hdc, g_monoFont);
 		::SetTextAlign(hdc, TA_TOP | TA_LEFT);
 		::SetBkMode(hdc, TRANSPARENT);
-		::SetBkColor(hdc, GetSysColor(COLOR_WINDOW));
+		::SetBkColor(hdc, VDSwizzleU32(tc.mContentBg) >> 8);
 
 		int rowStart	= (ps.rcPaint.top - mTextArea.top) / mLineHeight;
 		int rowEnd		= (ps.rcPaint.bottom - mTextArea.top + mLineHeight - 1) / mLineHeight;
@@ -4344,8 +5005,16 @@ bool ATConsoleConfirmScriptLoad() {
 	return result;
 }
 
+void ATConsoleRequestFile(ATDebuggerRequestFileEvent& event) {
+	if (event.mbSave)
+		event.mPath = VDGetSaveFileName('dbgr', ATUIGetNewPopupOwner(), L"Select file to write for debugger command", L"All files\0*.*\0", nullptr);
+	else
+		event.mPath = VDGetLoadFileName('dbgr', ATUIGetNewPopupOwner(), L"Select file to read for debugger command", L"All files\0*.*\0", nullptr);
+}
+
 void ATInitUIPanes() {
 	ATGetDebugger()->SetScriptAutoLoadConfirmFn(ATConsoleConfirmScriptLoad);
+	ATGetDebugger()->SetOnRequestFile(ATConsoleRequestFile);
 
 	VDLoadSystemLibraryW32("msftedit");
 
@@ -4841,7 +5510,7 @@ void ATConsoleTaggedPrintf(const char *format, ...) {
 		ATAnticEmulator& antic = g_sim.GetAntic();
 		char buf[3072];
 
-		unsigned prefixLen = (unsigned)snprintf(buf, vdcountof(buf), "(%3d:%3d,%3d) ", antic.GetFrameCounter(), antic.GetBeamY(), antic.GetBeamX());
+		unsigned prefixLen = (unsigned)snprintf(buf, vdcountof(buf), "(%3d:%3d,%3d) ", antic.GetRawFrameCounter(), antic.GetBeamY(), antic.GetBeamX());
 		if (prefixLen < vdcountof(buf)) {
 			va_list val;
 
@@ -4857,4 +5526,21 @@ void ATConsoleTaggedPrintf(const char *format, ...) {
 
 bool ATConsoleCheckBreak() {
 	return GetAsyncKeyState(VK_CONTROL) < 0 && (GetAsyncKeyState(VK_CANCEL) < 0 || GetAsyncKeyState(VK_PAUSE) < 0 || GetAsyncKeyState('A' + 2) < 0);
+}
+
+void ATConsolePingBeamPosition(uint32 frame, uint32 vpos, uint32 hpos) {
+	ATHistoryWindow *historyPane = static_cast<ATHistoryWindow *>(ATGetUIPane(kATUIPaneId_History));
+	
+	if (!historyPane)
+		return;
+
+	const auto& decoder = g_sim.GetTimestampDecoder();
+
+	// note that we're deliberately using unsigned wrapping here, to avoid naughty signed conversions
+	const uint32 cycle = decoder.mFrameTimestampBase + (frame - decoder.mFrameCountBase) * decoder.mCyclesPerFrame + 114 * vpos + hpos;
+
+	if (historyPane->JumpToCycle(cycle))
+		return;
+
+	ATActivateUIPane(kATUIPaneId_History, true);
 }

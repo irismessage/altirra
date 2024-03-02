@@ -395,7 +395,7 @@ void ATUIDialogOptionsPageDisplayEffects::OnDataExchange(bool write) {
 
 bool ATUIDialogOptionsPageDisplayEffects::OnCommand(uint32 id, uint32 extcode) {
 	if (id == IDC_BROWSE) {
-		const VDStringW& s = VDGetLoadFileName('ceff', (VDGUIHandle)mhdlg, L"Load custom effect", L"CG program (*.cgp)", nullptr);
+		const VDStringW& s = VDGetLoadFileName('ceff', (VDGUIHandle)mhdlg, L"Load custom effect", L"CG program (*.cgp)\0*.cgp\0", nullptr);
 
 		if (!s.empty())
 			SetControlText(IDC_PATH, s.c_str());
@@ -672,8 +672,10 @@ ATUIDialogOptionsPageUI::ATUIDialogOptionsPageUI(ATOptions& opts)
 
 bool ATUIDialogOptionsPageUI::OnLoaded() {
 	AddHelpEntry(IDC_SCALE, L"Scale factor", L"Scale factor in percent for on-screen UI in the display window.");
-	AddHelpEntry(IDC_SCALE, L"Pause when menus are open",
+	AddHelpEntry(IDC_PAUSE_ON_MENU, L"Pause when menus are open",
 		L"Pause the simulation temporarily when a menu is opened.");
+	AddHelpEntry(IDC_USE_DARK_THEME, L"Use dark theme (EXPERIMENTAL)",
+		L"Use an overall darker color scheme. NOTE: Some UI will still display as light due to limitations in Windows.");
 
 	return ATUIDialogOptionsPage::OnLoaded();
 }
@@ -691,6 +693,7 @@ bool ATUIDialogOptionsPageUI::OnCommand(uint32 id, uint32 mode) {
 void ATUIDialogOptionsPageUI::OnDataExchange(bool write) {
 	ExchangeControlValueSint32(write, IDC_SCALE, mOptions.mThemeScale, 10, 1000);
 	ExchangeControlValueBoolCheckbox(write, IDC_PAUSE_ON_MENU, mOptions.mbPauseDuringMenu);
+	ExchangeControlValueBoolCheckbox(write, IDC_USE_DARK_THEME, mOptions.mbDarkTheme);
 }
 
 ///////////////////////////////////////////////////////////////////////////

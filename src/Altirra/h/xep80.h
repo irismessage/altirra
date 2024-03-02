@@ -28,6 +28,8 @@ public:
 	void SoftReset();
 
 	void InitFonts();
+	
+	void SetPortIndex(uint8 portIndex);
 
 	bool IsVideoSignalValid() const { return mbValidSignal; }
 	float GetVideoHorzRate() const { return mHorzRate; }
@@ -128,6 +130,8 @@ private:
 	void RebuildActiveFont();
 	void RecomputeBaudRate();
 	void RecomputeVideoTiming();
+	void UpdatePIABits();
+	void UpdatePIAInput();
 
 	uint8 *GetRowPtr(int y) { return &mVRAM[(mRowPtrs[y] & 0x1F) << 8]; }
 
@@ -214,6 +218,9 @@ private:
 	IATDevicePortManager *mpPIA;
 	int mPIAInput;
 	int mPIAOutput;
+	uint32 mPIAInputBit;		// XEP80 -> Computer
+	uint32 mPIAOutputBit;		// Computer -> XEP80
+	uint8 mPortIndex;
 
 	ATScheduler *mpScheduler;
 	ATEvent *mpReadBitEvent;

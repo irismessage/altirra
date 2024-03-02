@@ -106,6 +106,8 @@ Usage: Altirra [switches] <disk/cassette/cartridge images...>
                      -- Program operation options --
 
   /resetall   Reset all settings to default
+  /reset:display,windowlayouts, ...
+              Reset specific categories of settings to default
   /hostcpu:none|mmx|sse|sse2|sse2|sse3|ssse3|sse41
               Override host CPU detection
   /portable   Create Altirra.ini file and switch to portable mode
@@ -119,5 +121,6 @@ Usage: Altirra [switches] <disk/cassette/cartridge images...>
   /fullheapdump
               Generate full memory heap dump on crash
   /skipsetup  Skip first-run setup process
+  /startuplog Log early startup phases to the console
 
 (end)

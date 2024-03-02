@@ -46,6 +46,9 @@ struct ATDebugExpEvalContext {
 	uint32 (*mpXPCFn)(void *p);
 	void *mpXPCFnData;
 
+	uint32 (*mpTapePosFn)(void *p);
+	void *mpTapePosData;
+
 	bool mbAccessValid;
 	bool mbAccessReadValid;
 	bool mbAccessWriteValid;

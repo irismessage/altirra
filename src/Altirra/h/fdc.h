@@ -40,8 +40,11 @@ public:
 		// 1771 (810): FM only, head load
 		kType_1771,
 
-		// 2793/2797 (1050, Indus GT): MFM, head load
-		kType_279X,
+		// 1793/2793 (1050, Indus GT): MFM, head load
+		kType_2793,
+
+		// 1797/2797 (1050, Indus GT): MFM, head load, side select out
+		kType_2797,
 
 		// 1770 (XF551, Indus GT), MFM, motor on
 		kType_1770,
@@ -80,7 +83,7 @@ public:
 	bool GetIrqStatus() const { return mbIrqPending; }
 	bool GetDrqStatus() const { return mbDataReadPending || mbDataWritePending; }
 
-	void Init(ATScheduler *sch, float rpm, Type type);
+	void Init(ATScheduler *sch, float rpm, float periodAdjustFactor, Type type);
 	void Shutdown();
 
 	void DumpStatus(ATConsoleOutput& out);
@@ -92,22 +95,32 @@ public:
 	void SetCurrentTrack(uint32 halfTracks, bool track0);
 	void SetSide(bool side2);
 	void SetDensity(bool mfm);
-	void SetSpeeds(float rpm, float baserpm, bool doubleClock);
+	void SetSpeeds(float rpm, float periodAdjustFactor, bool doubleClock);
 
 	// Force write protect sense on even if the disk is write enabled.
 	// This is used to emulate the obscuring of the write protect sector while a
 	// disk is being changed. It is later affected by the second override.
 	void SetWriteProtectOverride(bool override) { mbWriteProtectOverride = override; }
+	void SetWriteProtectOverride(std::optional<bool> override) { mbWriteProtectOverride = override; }
 
 	// Second write protect override, used for override at the drive level.
 	// This used to emulate the Happy 1050's write/protect/normal switch.
-	// The value is -1/0/1 for off, force false, and force true.
 	ATFDCWPOverride GetWriteProtectOverride2() const { return mWriteProtectOverride2; }
 	void SetWriteProtectOverride2(ATFDCWPOverride mode) { mWriteProtectOverride2 = mode; }
 
 	void SetAutoIndexPulse(bool enabled);
 	void SetDiskImage(IATDiskImage *image, bool diskReady);
+	void SetDiskImage(IATDiskImage *image);
+	void SetDiskImageReady(std::optional<bool> diskReady);
 	void SetDiskInterface(ATDiskInterface *diskIf);
+
+	enum class SideMapping : uint32 {
+		Side2Reversed,
+		Side2ReversedOffByOne,
+		Side2Forward,
+	};
+
+	void SetSideMapping(SideMapping mapping, uint32 numTracks);
 
 	uint8 DebugReadByte(uint8 address) const;
 	uint8 ReadByte(uint8 address);
@@ -145,8 +158,10 @@ protected:
 		kState_ReadTrack,
 		kState_WriteTrack,
 		kState_WriteTrack_WaitHeadLoad,
-		kState_WriteTrack_WaitIndexMarks,
+		kState_WriteTrack_InitialDrq,
+		kState_WriteTrack_WaitIndexPulse,
 		kState_WriteTrack_TransferByte,
+		kState_WriteTrack_TransferByteAfterCRC,
 		kState_WriteTrack_InitialDrqTimeout,
 		kState_WriteTrack_Complete,
 		kState_ForceInterrupt,
@@ -163,6 +178,14 @@ protected:
 	void UpdateDensity();
 	void FinalizeWriteTrack();
 	uint32 GetSelectedVSec(uint32 sector) const;
+
+	struct PSecAddress {
+		uint8 mTrack;
+		uint8 mSide;
+		uint8 mSector;
+	};
+	PSecAddress VSecToPSec(uint32 vsec) const;
+
 	bool ModifyWriteProtect(bool wp) const;
 
 	enum : uint32 {
@@ -214,7 +237,7 @@ protected:
 	bool mbDiskReady = false;
 	bool mbMFM = false;
 	bool mbDoubleClock = false;
-	bool mbWriteProtectOverride = false;
+	std::optional<bool> mbWriteProtectOverride;
 	ATFDCWPOverride mWriteProtectOverride2 = {};
 
 	uint32 mWeakBitLFSR = 1;
@@ -224,6 +247,9 @@ protected:
 
 	ATDiskGeometryInfo mDiskGeometry {};
 
+	SideMapping mSideMapping = SideMapping::Side2Reversed;
+	uint32 mSideMappingTrackCount = 40;
+
 	bool mbUseAccurateTiming = false;
 	Type mType = {};
 	uint32 mCyclesPerRotation = 0;
@@ -232,6 +258,8 @@ protected:
 	uint32 mCyclesPerByte = 1;
 	uint32 mCyclesPerIndexPulse = 1;
 	uint32 mCycleStepTable[4] = {};
+	uint32 mCyclesHeadLoadDelay = 1;
+	uint32 mCyclesWriteTrackFastDelay = 1;
 
 	vdfunction<void(bool)> mpFnDrqChange;
 	vdfunction<void(bool)> mpFnIrqChange;

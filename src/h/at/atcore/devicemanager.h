@@ -21,6 +21,7 @@
 #include <vd2/system/function.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vdstl_hashset.h>
+#include <at/atcore/device.h>
 
 class IATDevice;
 class IATDeviceParent;
@@ -126,7 +127,7 @@ private:
 	void *const *mq;
 };
 
-class ATDeviceManager {
+class ATDeviceManager final : public IATDeviceManager {
 	ATDeviceManager(const ATDeviceManager&) = delete;
 	ATDeviceManager& operator=(const ATDeviceManager&) = delete;
 public:
@@ -193,6 +194,22 @@ public:
 	void SerializeProps(const ATPropertySet& props, VDStringW& str) const;
 	void DeserializeProps(ATPropertySet& props, const wchar_t *str);
 
+	void RegisterService(uint32 iid, void *p);
+	void UnregisterService(uint32 iid);
+
+	template<typename T>
+	void RegisterService(T *p) {
+		RegisterService(T::kTypeID, p);
+	}
+
+	template<typename T>
+	void UnregisterService(T *p) {
+		UnregisterService(T::kTypeID);
+	}
+
+public:		// IATDeviceManager
+	void *GetService(uint32 iid) override;
+
 protected:
 	typedef vdfastvector<void *> InterfaceList;
 
@@ -228,6 +245,8 @@ protected:
 	vdhashmap<uint32, vdfastvector<IATDeviceChangeCallback *>> mChangeCallbacks;
 
 	vdvector<vdfunction<void(IATDevice&)>> mInitHandlers;
+
+	vdhashmap<uint32, void *> mServices;
 };
 
 #endif

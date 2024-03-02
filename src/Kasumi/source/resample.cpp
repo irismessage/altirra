@@ -41,6 +41,7 @@ public:
 	~VDPixmapResampler();
 
 	void SetSplineFactor(double A) { mSplineFactor = A; }
+	void SetSharpnessFactors(float x, float y) { mSharpnessFactorX = x; mSharpnessFactorY = y; }
 	void SetFilters(FilterMode h, FilterMode v, bool interpolationOnly);
 	bool Init(uint32 dw, uint32 dh, int dstformat, uint32 sw, uint32 sh, int srcformat);
 	bool Init(const vdrect32f& dstrect, uint32 dw, uint32 dh, int dstformat, const vdrect32f& srcrect, uint32 sw, uint32 sh, int srcformat);
@@ -54,6 +55,8 @@ protected:
 	vdautoptr<IVDPixmapBlitter> mpBlitter;
 	vdautoptr<IVDPixmapBlitter> mpBlitter2;
 	double				mSplineFactor;
+	float				mSharpnessFactorX = 1.0f;
+	float				mSharpnessFactorY = 1.0f;
 	FilterMode			mFilterH;
 	FilterMode			mFilterV;
 	bool				mbInterpOnly;
@@ -95,6 +98,9 @@ bool VDPixmapResampler::Init(const vdrect32f& dstrect0, uint32 dw, uint32 dh, in
 			srcformat != nsVDPixmap::kPixFormat_XRGB8888 &&
 			srcformat != nsVDPixmap::kPixFormat_Y8 &&
 			srcformat != nsVDPixmap::kPixFormat_YUV444_Planar &&
+			srcformat != nsVDPixmap::kPixFormat_YUV444_Planar_FR &&
+			srcformat != nsVDPixmap::kPixFormat_YUV444_Planar_709 &&
+			srcformat != nsVDPixmap::kPixFormat_YUV444_Planar_709_FR &&
 			srcformat != nsVDPixmap::kPixFormat_YUV422_Planar &&
 			srcformat != nsVDPixmap::kPixFormat_YUV420_Planar &&
 			srcformat != nsVDPixmap::kPixFormat_YUV411_Planar &&
@@ -175,6 +181,9 @@ bool VDPixmapResampler::Init(const vdrect32f& dstrect0, uint32 dw, uint32 dh, in
 
 		switch(srcformat) {
 		case nsVDPixmap::kPixFormat_YUV444_Planar:
+		case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
+		case nsVDPixmap::kPixFormat_YUV444_Planar_709:
+		case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
 			break;
 		case nsVDPixmap::kPixFormat_YUV422_Planar:
 			srcrect2.translate(0.25f, 0.0f);
@@ -217,6 +226,9 @@ bool VDPixmapResampler::Init(const vdrect32f& dstrect0, uint32 dw, uint32 dh, in
 			break;
 
 		case nsVDPixmap::kPixFormat_YUV444_Planar:
+		case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
+		case nsVDPixmap::kPixFormat_YUV444_Planar_709:
+		case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
 		case nsVDPixmap::kPixFormat_YUV422_Planar:
 		case nsVDPixmap::kPixFormat_YUV420_Planar:
 		case nsVDPixmap::kPixFormat_YUV411_Planar:
@@ -262,6 +274,9 @@ void VDPixmapResampler::Process(const VDPixmap& dst, const VDPixmap& src) {
 			break;
 
 		case nsVDPixmap::kPixFormat_YUV444_Planar:
+		case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
+		case nsVDPixmap::kPixFormat_YUV444_Planar_709:
+		case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
 		case nsVDPixmap::kPixFormat_YUV422_Planar:
 		case nsVDPixmap::kPixFormat_YUV420_Planar:
 		case nsVDPixmap::kPixFormat_YUV411_Planar:
@@ -315,6 +330,10 @@ void VDPixmapResampler::ApplyFilters(VDPixmapUberBlitterGenerator& gen, uint32 d
 		case kFilterLanczos3:
 			gen.lanczos3h(xoffset, xfactor, dw);
 			break;
+
+		case kFilterSharpLinear:
+			gen.sharplinearh(xoffset, xfactor, dw, mSharpnessFactorX);
+			break;
 	}
 
 	switch(mFilterV) {
@@ -332,6 +351,10 @@ void VDPixmapResampler::ApplyFilters(VDPixmapUberBlitterGenerator& gen, uint32 d
 
 		case kFilterLanczos3:
 			gen.lanczos3v(yoffset, yfactor, dh);
+			break;
+
+		case kFilterSharpLinear:
+			gen.sharplinearv(yoffset, yfactor, dh, mSharpnessFactorY);
 			break;
 	}
 }

@@ -61,7 +61,7 @@ constexpr ATAudioResamplingKernel32x8 ATComputeAudioResamplingKernel(float scale
 }
 
 constexpr ATAudioResamplingKernel32x8 g_ATAudioResamplingKernel1 = ATComputeAudioResamplingKernel(1.0f / 16384.0f);
-constexpr ATAudioResamplingKernel32x8 g_ATAudioResamplingKernel2 = ATComputeAudioResamplingKernel(2.0f);
+constexpr ATAudioResamplingKernel32x8 g_ATAudioResamplingKernel2 = ATComputeAudioResamplingKernel(32767.0f / 16384.0f);
 
 extern "C" VDALIGN(16) const sint16 gATAudioResamplingKernel63To44[65][64] = {
 {9,10,-86,-74,249,266,-486,-680,761,1444,-971,-2691,940,4547,-384,-7089,-1087,10317,4006,-14122,-9069,18286,17314,-22484,-956,823,1674,-919,-3214,983,10339,15375,10339,983,-3214,-919,1674,823,-956,-702,17314,18286,-9069,-14122,4006,10317,-1087,-7089,-384,4547,940,-2691,-971,1444,761,-680,-486,266,249,-74,-86,10,9,0},
@@ -260,11 +260,11 @@ uint64 ATFilterResampleMonoToStereo16(sint16 *d, const float *s, uint32 count, u
 	return ATFilterResampleMonoToStereo16_Scalar(d, s, count, accum, inc);
 }
 
-uint64 ATFilterResampleStereo16(sint16 *d, const float *s1, const float *s2, uint32 count, uint64 accum, sint64 inc) {
+uint64 ATFilterResampleStereo16_Reference(sint16 *d, const float *s1, const float *s2, uint32 count, uint64 accum, sint64 inc) {
 	do {
-		const float *r1 = s1 + (accum >> 32);
-		const float *r2 = s2 + (accum >> 32);
-		const float *f = g_ATAudioResamplingKernel1.kernel[(uint32)accum >> 27];
+		const float *VDRESTRICT r1 = s1 + (accum >> 32);
+		const float *VDRESTRICT r2 = s2 + (accum >> 32);
+		const float *VDRESTRICT f = g_ATAudioResamplingKernel1.kernel[(uint32)accum >> 27];
 
 		accum += inc;
 
@@ -292,6 +292,48 @@ uint64 ATFilterResampleStereo16(sint16 *d, const float *s1, const float *s2, uin
 	} while(--count);
 
 	return accum;
+}
+
+#if VD_CPU_X86 || VD_CPU_X64
+uint64 ATFilterResampleStereo16_SSE2(sint16 *d0, const float *s1, const float *s2, uint32 count, uint64 accum, sint64 inc) {
+	sint16 *VDRESTRICT d = d0;
+	do {
+		const __m128 *VDRESTRICT r1 = (const __m128 *)(s1 + (accum >> 32));
+		const __m128 *VDRESTRICT r2 = (const __m128 *)(s2 + (accum >> 32));
+		const __m128 *VDRESTRICT f = (const __m128 *)&g_ATAudioResamplingKernel2.kernel[(uint32)accum >> 27];
+		accum += inc;
+
+		const __m128 f0 = f[0];
+		const __m128 f1 = f[1];
+
+		const __m128 l = _mm_add_ps(_mm_mul_ps(r1[0], f0), _mm_mul_ps(r1[1], f1));
+		const __m128 r = _mm_add_ps(_mm_mul_ps(r2[0], f0), _mm_mul_ps(r2[1], f1));
+
+		// fold horizontally -> llrr
+		const __m128 lr1 = _mm_add_ps(_mm_shuffle_ps(l, r, 0b01'00'01'00), _mm_shuffle_ps(l, r, 0b11'10'11'10));
+
+		// fold again -> lr
+		const __m128 lr2 = _mm_add_ps(_mm_shuffle_ps(lr1, lr1, 0b10'00'10'00), _mm_shuffle_ps(lr1, lr1, 0b11'01'11'01));
+
+		// convert to integer
+		const __m128i ilr = _mm_cvtps_epi32(lr2);
+
+		// pack to sint16[2] and write
+		_mm_storeu_si32(d, _mm_packs_epi32(ilr, ilr));
+		d += 2;
+	} while(--count);
+
+	return accum;
+}
+#endif
+
+uint64 ATFilterResampleStereo16(sint16 *d, const float *s1, const float *s2, uint32 count, uint64 accum, sint64 inc) {
+#if VD_CPU_X86 || VD_CPU_X64
+	if (SSE2_enabled)
+		return ATFilterResampleStereo16_SSE2(d, s1, s2, count, accum, inc);
+#endif
+
+	return ATFilterResampleStereo16_Reference(d, s1, s2, count, accum, inc);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -572,9 +614,7 @@ void ATFilterComputeSymmetricFIR_8_32F(float *dst, size_t n, const float *kernel
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATAudioFilter::ATAudioFilter()
-	: mHiPassAccum(0)
-{
+ATAudioFilter::ATAudioFilter() {
 	SetScale(1.0f);
 	SetActiveMode(true);
 
@@ -602,20 +642,19 @@ ATAudioFilter::ATAudioFilter()
 }
 
 float ATAudioFilter::GetScale() const {
-	return mRawScale;
+	return mScale;
 }
 
 void ATAudioFilter::SetScale(float scale) {
-	// We accumulate 28 cycles worth of output per sample, and each output can
-	// be from 0-60 (4*15). We ignore the speaker and cassette inputs in order
-	// to get a little more range.
-	mRawScale = scale;
-	mScale = scale * (1.0f / (60.0f * 28.0f));
+	mScale = scale;
 }
 
 void ATAudioFilter::SetActiveMode(bool active) {
+	// Actual measurement from an NTSC 800XL is that CONSOL output decays to 2/3 in
+	// 10ms, or a time constant of 0.024663 (-0.01/ln(2/3)). 
+
 	if (active)
-		mHiCoeff = 0.003f;
+		mHiCoeff = 0.00063413100049954767179657139255229f;
 	else
 		mHiCoeff = 0.0001f;
 }
@@ -623,6 +662,21 @@ void ATAudioFilter::SetActiveMode(bool active) {
 void ATAudioFilter::PreFilter(float * VDRESTRICT dst, uint32 count, float dcLevel) {
 	if (!count)
 		return;
+
+	// The below implements a high-pass filter with Direct Form II (ignoring final scale):
+	//
+	// v[i] = v[i-1]*(1-k) + x[i]
+	// y[i] = v[i] - v[i-1]
+	//
+	// We can scale the input and divide the output by k:
+	//
+	// v[i] = v[i-1]*(1-k) + x[i]*k
+	// y[i] = v[i]/k - v[i-1]/k
+	//
+	// ...and then do a bit of substitution and rearranging to get the nicer form:
+	//
+	// v[i] = v[i-1] + (x[i] - v[i-1])*k
+	// y[i] = x[i] - v[i-1]
 
 	const float scale = mScale;
 	const float hiCoeff = mHiCoeff;
@@ -641,6 +695,57 @@ void ATAudioFilter::PreFilter(float * VDRESTRICT dst, uint32 count, float dcLeve
 		hiAccum = 0;
 
 	mHiPassAccum = hiAccum;
+}
+
+void ATAudioFilter::PreFilterDiff(float * VDRESTRICT dst, uint32 count) {
+	float last = mDiffHistory;
+
+	while(count--) {
+		float x = *dst;
+		*dst++ = x - last;
+
+		last = x;
+	}
+
+	mDiffHistory = last;
+}
+
+void ATAudioFilter::PreFilterEdges(float * VDRESTRICT dst, uint32 count, float dcLevel) {
+	if (!count)
+		return;
+
+	// Flipping the order of the stages to switch from Direct Form II to Direct Form I
+	// gives:
+	//
+	// v[i] = x[i] - x[i-1]
+	// y[i] = y[i-1]*(1-k) + v[i]
+	//
+	// At first glance, this doesn't look interesting as it requires another delay element.
+	// The advantage of this form is that we can cancel the differentiating stage against a
+	// previous integrating stage. Instead of integrating edges to form pulses and then
+	// differentiating the pulses back to edges in the high-pass filter, we can simply
+	// take the edges directly in the high-pass filter, reducing it to just an exponential
+	// decay calculation. Besides being faster, this avoids instability from accumulated
+	// floating-point integration error.
+	//
+	// Note that mHiPassAccum stores y[i-1]*(1-k), to simplify the inner loop and for
+	// compatibility with the normal path.
+
+	const float scale = mScale;
+	const float decay = 1.0f - mHiCoeff;
+	float y = mHiPassAccum - dcLevel;
+
+	do {
+		y += *dst;
+		*dst++ = y * scale;
+		y *= decay;
+	} while(--count);
+
+	// prevent denormals
+	if (fabsf(y) < 1e-20f)
+		y = 0;
+
+	mHiPassAccum = y;
 }
 
 void ATAudioFilter::Filter(float *dst, const float *src, uint32 count) {

@@ -621,7 +621,8 @@ void ATUITraceViewerCPUProfileView::OnSize() {
 	mToolbar.AutoSize();
 	const vdrect32 toolbarArea = mToolbar.GetArea();
 
-	mpProfileView->AsUINativeWindow()->SetArea(vdrect32(0, toolbarArea.bottom, sz.w, sz.h));
+	if (mpProfileView)
+		mpProfileView->AsUINativeWindow()->SetArea(vdrect32(0, toolbarArea.bottom, sz.w, sz.h));
 }
 
 void ATUITraceViewerCPUProfileView::OnFontsChanged() {
@@ -1429,7 +1430,7 @@ bool ATUITraceViewerEventView::OnPaint() {
 								const sint32 blity = channelh / 6;
 								const sint32 blith = channelh - blity*2;
 								const uint32 prevPos = (uint32)((pos32 - posinc32) >> 32);
-								bool lastBit = pos32 < posinc32 || (turbo ? image->GetTurboBit(prevPos) : image->GetBit(prevPos, 1, 1, false, false));
+								bool lastBit = pos32 < posinc32 || image->GetBit(prevPos, turbo);
 
 								while(x1 < x2) {
 									const sint32 blitw = std::min<sint32>(x2 - x1, 4096);
@@ -1446,7 +1447,7 @@ bool ATUITraceViewerEventView::OnPaint() {
 
 									for(sint32 x=0; x<blitw; ++x) {
 										const uint32 pos = (uint32)(pos32 >> 32);
-										bool bit = turbo ? image->GetTurboBit(pos) : image->GetBit(pos, 1, 1, false, false);
+										const bool bit = image->GetBit(pos, turbo);
 										pos32 += posinc32;
 
 										if (bit != lastBit) {

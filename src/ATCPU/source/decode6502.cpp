@@ -16,10 +16,11 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <vd2/system/vdstl_vectorview.h>
 #include <at/atcpu/decode6502.h>
 #include <at/atcpu/states6502.h>
 
-void ATCPUDecoderGenerator6502::RebuildTables(ATCPUDecoderTables6502& dst, bool stopOnBRK, bool historyTracing, bool enableBreakpoints, bool isC02) {
+void ATCPUDecoderGenerator6502::RebuildTables(ATCPUDecoderTables6502& dst, bool stopOnBRK, bool historyTracing, bool enableBreakpoints, bool isC02, bool enableTracing) {
 	using namespace ATCPUStates6502;
 
 	mbStopOnBRK = stopOnBRK;
@@ -81,6 +82,15 @@ void ATCPUDecoderGenerator6502::RebuildTables(ATCPUDecoderTables6502& dst, bool 
 	*mpDstState++ = kStateReadAddrH;
 	*mpDstState++ = kStateAddrToPC;
 	*mpDstState++ = stateReadOpcode;
+
+	dst.mDecodeHeapLimit = (uint32)(mpDstState - dst.mDecodeHeap);
+
+	if (enableTracing) {
+		for(uint8& state : vdvector_view(dst.mDecodeHeap, dst.mDecodeHeapLimit)) {
+			if (state == kStateAddrToPC)
+				state = kStateTraceAddrToPC;
+		}
+	}
 }
 
 bool ATCPUDecoderGenerator6502::DecodeInsn6502(uint8 opcode) {
@@ -203,8 +213,8 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502(uint8 opcode) {
 			*mpDstState++ = kStateReadAddrH;
 			*mpDstState++ = kStatePushPCHM1;
 			*mpDstState++ = kStatePushPCLM1;
-			*mpDstState++ = kStateAddrToPC;
 			*mpDstState++ = kStateWait;
+			*mpDstState++ = kStateAddrToPC;
 			break;
 
 		case 0x21:	// AND (zp,X)
@@ -1065,10 +1075,18 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502Ill(uint8 opcode) {
 			break;
 
 		case 0x13:	// SLO (zp),Y
-			DecodeReadIndY();
-			*mpDstState++ = kStateWrite;
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateRead;				// 3
+			*mpDstState++ = kStateReadIndYAddr;		// 4
+			*mpDstState++ = kStateReadCarryForced;	// 5
+
+			if (mbHistoryEnabled)
+				*mpDstState++ = kStateAddEAToHistory;
+
+			*mpDstState++ = kStateRead;				// 6
+			*mpDstState++ = kStateWrite;			// 7
 			*mpDstState++ = kStateAsl;
-			*mpDstState++ = kStateWrite;
+			*mpDstState++ = kStateWrite;			// 8
 			*mpDstState++ = kStateOr;
 			break;
 
@@ -1148,7 +1166,15 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502Ill(uint8 opcode) {
 			break;
 
 		case 0x33:	// RLA (zp),Y
-			DecodeReadIndY();
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateRead;				// 3
+			*mpDstState++ = kStateReadIndYAddr;		// 4
+			*mpDstState++ = kStateReadCarryForced;	// 5
+
+			if (mbHistoryEnabled)
+				*mpDstState++ = kStateAddEAToHistory;
+
+			*mpDstState++ = kStateRead;				// 6
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateRol;
 			*mpDstState++ = kStateWrite;
@@ -1174,7 +1200,10 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502Ill(uint8 opcode) {
 			break;
 
 		case 0x3B:	// RLA abs,Y
-			DecodeReadAbsY();
+			*mpDstState++ = kStateReadAddrL;
+			*mpDstState++ = kStateReadAddrHY;
+			*mpDstState++ = kStateReadCarryForced;
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateRol;
 			*mpDstState++ = kStateWrite;
@@ -1187,7 +1216,10 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502Ill(uint8 opcode) {
 			break;
 
 		case 0x3F:	// RLA abs,X
-			DecodeReadAbsX();
+			*mpDstState++ = kStateReadAddrL;
+			*mpDstState++ = kStateReadAddrHX;
+			*mpDstState++ = kStateReadCarryForced;
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateRol;
 			*mpDstState++ = kStateWrite;
@@ -1231,7 +1263,15 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502Ill(uint8 opcode) {
 			break;
 
 		case 0x53:	// SRE (zp),Y
-			DecodeReadIndY();
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateRead;				// 3
+			*mpDstState++ = kStateReadIndYAddr;		// 4
+			*mpDstState++ = kStateReadCarryForced;	// 5
+
+			if (mbHistoryEnabled)
+				*mpDstState++ = kStateAddEAToHistory;
+
+			*mpDstState++ = kStateRead;				// 6
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateLsr;
 			*mpDstState++ = kStateWrite;
@@ -1255,7 +1295,10 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502Ill(uint8 opcode) {
 			break;
 
 		case 0x5B:	// SRE abs,Y
-			DecodeReadAbsY();
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateReadAddrHY;		// 3
+			*mpDstState++ = kStateReadCarryForced;	// 4
+			*mpDstState++ = kStateRead;				// 5
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateLsr;
 			*mpDstState++ = kStateWrite;
@@ -1300,7 +1343,6 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502Ill(uint8 opcode) {
 		case 0x6B:	// ARR #imm
 			*mpDstState++ = kStateReadImm;
 			*mpDstState++ = kStateArr;
-			*mpDstState++ = kStateWait;
 			break;
 
 		case 0x6F:	// RRA abs
@@ -1312,7 +1354,15 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502Ill(uint8 opcode) {
 			break;
 
 		case 0x73:	// RRA (zp),Y
-			DecodeReadIndY();
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateRead;				// 3
+			*mpDstState++ = kStateReadIndYAddr;		// 4
+			*mpDstState++ = kStateReadCarryForced;	// 5
+
+			if (mbHistoryEnabled)
+				*mpDstState++ = kStateAddEAToHistory;
+
+			*mpDstState++ = kStateRead;				// 6
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateRor;
 			*mpDstState++ = kStateAdc;
@@ -1336,7 +1386,10 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502Ill(uint8 opcode) {
 			break;
 
 		case 0x7B:	// RRA abs,Y
-			DecodeReadAbsY();
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateReadAddrHY;		// 3
+			*mpDstState++ = kStateReadCarryForced;	// 4
+			*mpDstState++ = kStateRead;				// 5
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateRor;
 			*mpDstState++ = kStateAdc;
@@ -1348,7 +1401,10 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502Ill(uint8 opcode) {
 			break;
 
 		case 0x7F:	// RRA abs,X
-			DecodeReadAbsX();
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateReadAddrHX;		// 3
+			*mpDstState++ = kStateReadCarryForced;	// 4
+			*mpDstState++ = kStateRead;				// 5
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateRor;
 			*mpDstState++ = kStateAdc;
@@ -1530,7 +1586,15 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502Ill(uint8 opcode) {
 			break;
 
 		case 0xD3:	// DCP (zp),Y
-			DecodeReadIndY();
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateRead;				// 3
+			*mpDstState++ = kStateReadIndYAddr;		// 4
+			*mpDstState++ = kStateReadCarryForced;	// 5
+
+			if (mbHistoryEnabled)
+				*mpDstState++ = kStateAddEAToHistory;
+
+			*mpDstState++ = kStateRead;				// 6
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateDec;
 			*mpDstState++ = kStateCmp;
@@ -1554,7 +1618,10 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502Ill(uint8 opcode) {
 			break;
 
 		case 0xDB:	// DCP abs,Y
-			DecodeReadAbsY();
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateReadAddrHY;		// 3
+			*mpDstState++ = kStateReadCarryForced;	// 4
+			*mpDstState++ = kStateRead;				// 5
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateDec;
 			*mpDstState++ = kStateCmp;
@@ -1610,7 +1677,15 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502Ill(uint8 opcode) {
 			break;
 
 		case 0xF3:	// ISB (zp),Y
-			DecodeReadIndY();
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateRead;				// 3
+			*mpDstState++ = kStateReadIndYAddr;		// 4
+			*mpDstState++ = kStateReadCarryForced;	// 5
+
+			if (mbHistoryEnabled)
+				*mpDstState++ = kStateAddEAToHistory;
+
+			*mpDstState++ = kStateRead;				// 6
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateInc;
 			*mpDstState++ = kStateWrite;
@@ -1634,7 +1709,10 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502Ill(uint8 opcode) {
 			break;
 
 		case 0xFB:	// ISB abs,Y
-			DecodeReadAbsY();
+			*mpDstState++ = kStateReadAddrL;		// 2
+			*mpDstState++ = kStateReadAddrHY;		// 3
+			*mpDstState++ = kStateReadCarryForced;	// 4
+			*mpDstState++ = kStateRead;				// 5
 			*mpDstState++ = kStateWrite;
 			*mpDstState++ = kStateInc;
 			*mpDstState++ = kStateWrite;

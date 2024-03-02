@@ -40,7 +40,7 @@ void ATUIContainer::AddChild(ATUIWidget *w) {
 	if (w->IsVisible())
 		Invalidate();
 
-	InvalidateLayout();
+	InvalidateLayout(w);
 }
 
 void ATUIContainer::RemoveChild(ATUIWidget *w) {
@@ -52,7 +52,7 @@ void ATUIContainer::RemoveChild(ATUIWidget *w) {
 			mWidgets.erase(it);
 			w->SetParent(NULL, NULL);
 			w->Release();
-			InvalidateLayout();
+			InvalidateLayout(nullptr);
 			break;
 		}
 	}
@@ -105,11 +105,14 @@ void ATUIContainer::BringToFront(ATUIWidget *w) {
 	}
 }
 
-void ATUIContainer::InvalidateLayout() {
+void ATUIContainer::InvalidateLayout(ATUIWidget *w) {
 	if (mbLayoutInvalid)
 		return;
 
 	mbLayoutInvalid = true;
+
+	if (!IsForcedSize())
+		InvalidateMeasure();
 
 	for(ATUIContainer *p = mpParent; p; p = p->mpParent) {
 		if (p->mbDescendantLayoutInvalid)
@@ -150,71 +153,85 @@ void ATUIContainer::UpdateLayout() {
 		++it)
 	{
 		ATUIWidget *w = *it;
+		const ATUIWidgetMetrics& metrics = w->Measure();
 
 		switch(w->GetDockMode()) {
 			case kATUIDockMode_None:
-				{
-					IATUIAnchor *anchor = w->GetAnchor();
+				if (IATUIAnchor *anchor = w->GetAnchor()) {
+					w->SetArea(anchor->Position(r, w->GetArea().size(), metrics));
+				} else {
+					const vdrect32f& anchors = w->GetAnchors();
+					const vdpoint32& offset = w->GetOffset();
+					const vdsize32& sizeOffset = w->GetSizeOffset();
+					const vdfloat2& pivot = w->GetPivot();
 
-					if (anchor)
-						w->SetArea(anchor->Position(r, w->GetArea().size()));
+					vdsize32 anchoredSize;
+					anchoredSize.w = VDRoundToInt32(((float)r.right - (float)r.left) * (anchors.right - anchors.left));
+					anchoredSize.h = VDRoundToInt32(((float)r.bottom - (float)r.top) * (anchors.bottom - anchors.top));
+
+					vdsize32 childSize;
+
+					if (!w->IsAutoSize()) {
+						childSize = anchoredSize;
+						childSize += sizeOffset;
+					} else {
+						childSize = metrics.mDesiredSize;
+					}
+
+					if (!w->IsForcedSize()) {
+						if (childSize.w > metrics.mMaxSize.w)
+							childSize.w = metrics.mMaxSize.w;
+
+						if (childSize.h > metrics.mMaxSize.h)
+							childSize.h = metrics.mMaxSize.h;
+
+						if (childSize.w < metrics.mMinSize.w)
+							childSize.w = metrics.mMinSize.w;
+
+						if (childSize.h < metrics.mMinSize.h)
+							childSize.h = metrics.mMinSize.h;
+					}
+
+					vdrect32 rChild;
+					rChild.left = VDRoundToInt32((float)r.left * (1.0f - anchors.left) + (float)r.right * anchors.left + (float)(anchoredSize.w - childSize.w)*pivot.x) + offset.x;
+					rChild.top = VDRoundToInt32((float)r.top * (1.0f - anchors.top) + (float)r.bottom * anchors.top + (float)(anchoredSize.h - childSize.h)*pivot.y) + offset.y;
+					rChild.right = rChild.left + childSize.w;
+					rChild.bottom = rChild.top + childSize.h;
+
+					w->Arrange(rChild);
 				}
 				break;
 
 			case kATUIDockMode_Left:
 				r2 = r;
-				r2.right = r2.left + w->GetArea().width();
+				r2.right = r2.left + metrics.mDesiredSize.w;
 				r.left += r2.width();
-				w->SetArea(r2);
+				w->Arrange(r2);
 				break;
 
 			case kATUIDockMode_Right:
 				r2 = r;
-				r2.left = r2.right - w->GetArea().width();
+				r2.left = r2.right - metrics.mDesiredSize.w;
 				r.right -= r2.width();
-				w->SetArea(r2);
+				w->Arrange(r2);
 				break;
 
 			case kATUIDockMode_Top:
 				r2 = r;
-				r2.bottom = r2.top + w->GetArea().height();
+				r2.bottom = r2.top + metrics.mDesiredSize.h;
 				r.top += r2.height();
-				w->SetArea(r2);
+				w->Arrange(r2);
 				break;
 
 			case kATUIDockMode_Bottom:
 				r2 = r;
-				r2.top = r2.bottom - w->GetArea().height();
+				r2.top = r2.bottom - metrics.mDesiredSize.h;
 				r.bottom -= r2.height();
-				w->SetArea(r2);
-				break;
-
-			case kATUIDockMode_LeftFloat:
-				r2 = r;
-				r2.right = r2.left + w->GetArea().width();
-				w->SetArea(r2);
-				break;
-
-			case kATUIDockMode_RightFloat:
-				r2 = r;
-				r2.left = r2.right - w->GetArea().width();
-				w->SetArea(r2);
-				break;
-
-			case kATUIDockMode_TopFloat:
-				r2 = r;
-				r2.bottom = r2.top + w->GetArea().height();
-				w->SetArea(r2);
-				break;
-
-			case kATUIDockMode_BottomFloat:
-				r2 = r;
-				r2.top = r2.bottom - w->GetArea().height();
-				w->SetArea(r2);
+				w->Arrange(r2);
 				break;
 
 			case kATUIDockMode_Fill:
-				w->SetArea(r);
+				w->Arrange(r);
 				break;
 		}
 
@@ -257,6 +274,41 @@ void ATUIContainer::OnDestroy() {
 void ATUIContainer::OnSize() {
 	mbLayoutInvalid = true;
 	UpdateLayout();
+}
+
+ATUIWidgetMetrics ATUIContainer::OnMeasure() {
+	ATUIWidgetMetrics m;
+
+	if (!IsForcedSize()) {
+		for(ATUIWidget *w : mWidgets) {
+			const auto& wm = w->Measure();
+
+			switch(w->GetDockMode()) {
+				case kATUIDockMode_Left:
+				case kATUIDockMode_Right:
+					m.mMinSize.h = std::max<sint32>(m.mMinSize.h, wm.mMinSize.h);
+					m.mMinSize.w += wm.mMinSize.w;
+					m.mDesiredSize.h = std::max<sint32>(m.mDesiredSize.h, wm.mDesiredSize.h);
+					m.mDesiredSize.w += wm.mDesiredSize.w;
+					break;
+				case kATUIDockMode_Top:
+				case kATUIDockMode_Bottom:
+					m.mMinSize.w = std::max<sint32>(m.mMinSize.w, wm.mMinSize.w);
+					m.mMinSize.h += wm.mMinSize.h;
+					m.mDesiredSize.w = std::max<sint32>(m.mDesiredSize.w, wm.mDesiredSize.w);
+					m.mDesiredSize.h += wm.mDesiredSize.h;
+					break;
+				default:
+					m.mMinSize.w = std::max<sint32>(m.mMinSize.w, wm.mMinSize.w);
+					m.mMinSize.h = std::max<sint32>(m.mMinSize.h, wm.mMinSize.h);
+					m.mDesiredSize.w = std::max<sint32>(m.mDesiredSize.w, wm.mDesiredSize.w);
+					m.mDesiredSize.h = std::max<sint32>(m.mDesiredSize.h, wm.mDesiredSize.h);
+					break;
+			}
+		}
+	}
+
+	return m;
 }
 
 void ATUIContainer::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {

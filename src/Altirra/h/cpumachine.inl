@@ -502,7 +502,7 @@ for(;;) {
 			if (mIntFlags & kIntFlag_NMIPending) {
 				mIntFlags &= ~kIntFlag_NMIPending;
 
-				if (mNMIAssertTime != mpCallbacks->CPUGetUnhaltedCycle())
+				if (mNMIAssertTime != mpCallbacks->CPUGetUnhaltedAndRDYCycle())
 					mbNMIForced = true;
 			}
 			break;
@@ -518,6 +518,24 @@ for(;;) {
 			mIntFlags &= ~kIntFlag_IRQSetPending;
 			break;
 
+		case kStateRESVecToPC:
+			mPC = 0xFFFC;
+			mP |= kFlagI;
+
+#ifdef AT_CPU_MACHINE_65C816
+			mP |= kFlagM | kFlagX;
+			mP &= ~kFlagD;
+			mK = 0;
+			mB = 0;
+			mDP = 0;
+			mSH = 1;
+			mXH = 0;
+			mYH = 0;
+			mbEmulationFlag = true;
+			Update65816DecodeTable();
+#endif
+			break;
+
 		case kStateIRQVecToPC:
 			mPC = 0xFFFE;
 
@@ -527,13 +545,6 @@ for(;;) {
 
 			mP |= kFlagI;
 			mIntFlags &= ~kIntFlag_IRQSetPending;
-			break;
-
-		case kStateIRQVecToPCBlockNMIs:
-			if (mNMIAssertTime + 1 == mpCallbacks->CPUGetUnhaltedCycle())
-				mIntFlags &= ~kIntFlag_NMIPending;
-
-			mPC = 0xFFFE;
 			break;
 
 		case kStateNMIOrIRQVecToPC:
@@ -557,10 +568,10 @@ for(;;) {
 
 		case kStateDelayInterrupts:
 			if (mIntFlags & kIntFlag_NMIPending)
-				mNMIAssertTime = mpCallbacks->CPUGetUnhaltedCycle();
+				mNMIAssertTime = mpCallbacks->CPUGetUnhaltedAndRDYCycle();
 
 			if (mIntFlags & kIntFlag_IRQPending)
-				mIRQAssertTime = mpCallbacks->CPUGetUnhaltedCycle();
+				mIRQAssertTime = mpCallbacks->CPUGetUnhaltedAndRDYCycle();
 			break;
 
 		case kStatePush:
@@ -1049,7 +1060,7 @@ for(;;) {
 			mPC += (sint16)(sint8)mData;
 			mAddr += mPC & 0xff;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1065,7 +1076,7 @@ for(;;) {
 			mPC += (sint16)(sint8)mData;
 			mAddr += mPC & 0xff;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1081,7 +1092,7 @@ for(;;) {
 			mPC += (sint16)(sint8)mData;
 			mAddr += mPC & 0xff;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1097,7 +1108,7 @@ for(;;) {
 			mPC += (sint16)(sint8)mData;
 			mAddr += mPC & 0xff;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1113,7 +1124,7 @@ for(;;) {
 			mPC += (sint16)(sint8)mData;
 			mAddr += mPC & 0xff;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1129,7 +1140,7 @@ for(;;) {
 			mPC += (sint16)(sint8)mData;
 			mAddr += mPC & 0xff;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1145,7 +1156,7 @@ for(;;) {
 			mPC += (sint16)(sint8)mData;
 			mAddr += mPC & 0xff;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1161,7 +1172,7 @@ for(;;) {
 			mPC += (sint16)(sint8)mData;
 			mAddr += mPC & 0xff;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1179,7 +1190,7 @@ for(;;) {
 			mAddr += mPC & 0xff;
 			mInsnFlags[mPC] |= kInsnFlagPathStart;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1196,7 +1207,7 @@ for(;;) {
 			mAddr += mPC & 0xff;
 			mInsnFlags[mPC] |= kInsnFlagPathStart;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1213,7 +1224,7 @@ for(;;) {
 			mAddr += mPC & 0xff;
 			mInsnFlags[mPC] |= kInsnFlagPathStart;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1230,7 +1241,7 @@ for(;;) {
 			mAddr += mPC & 0xff;
 			mInsnFlags[mPC] |= kInsnFlagPathStart;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1247,7 +1258,7 @@ for(;;) {
 			mAddr += mPC & 0xff;
 			mInsnFlags[mPC] |= kInsnFlagPathStart;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1264,7 +1275,7 @@ for(;;) {
 			mAddr += mPC & 0xff;
 			mInsnFlags[mPC] |= kInsnFlagPathStart;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1281,7 +1292,7 @@ for(;;) {
 			mAddr += mPC & 0xff;
 			mInsnFlags[mPC] |= kInsnFlagPathStart;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1298,7 +1309,7 @@ for(;;) {
 			mAddr += mPC & 0xff;
 			mInsnFlags[mPC] |= kInsnFlagPathStart;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1391,7 +1402,7 @@ for(;;) {
 
 			if (mIntFlags & kIntFlag_NMIPending) {
 				mNMIAssertTime -= 3;
-			} else if (!(mIntFlags & kIntFlag_IRQPending) || mpCallbacks->CPUGetUnhaltedCycle() - mIRQAcknowledgeTime <= 0)
+			} else if (!(mIntFlags & kIntFlag_IRQPending) || mpCallbacks->CPUGetUnhaltedAndRDYCycle() - mIRQAcknowledgeTime <= 0)
 				--mpNextState;
 			END_SUB_CYCLE();
 
@@ -1405,7 +1416,7 @@ for(;;) {
 			mPC += (sint16)(sint8)mData;
 			mAddr += mPC & 0xff;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1417,7 +1428,7 @@ for(;;) {
 			mAddr += mPC & 0xff;
 			mInsnFlags[mPC] |= kInsnFlagPathStart;
 			if (mAddr == mPC) {
-				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedCycle() + 1;
+				mNMIIgnoreUnhaltedCycle = mpCallbacks->CPUGetUnhaltedAndRDYCycle() + 1;
 				++mpNextState;
 			}
 			END_SUB_CYCLE();
@@ -1946,6 +1957,11 @@ for(;;) {
 				mData16 += ((uint32)readData << 8);
 			}
 
+			END_SUB_CYCLE();
+
+		case kStateReadH16_DpBankNoWrap:
+			AT_CPU_EXT_READ_BYTE(mAddr + 1, mAddrBank);
+			mData16 += ((uint32)readData << 8);
 			END_SUB_CYCLE();
 
 		case kStateAnd16:

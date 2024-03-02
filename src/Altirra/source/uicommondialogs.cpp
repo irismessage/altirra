@@ -1,10 +1,28 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2019 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #include <stdafx.h>
 #include <windows.h>
 #include <vd2/system/error.h>
 #include <vd2/system/text.h>
 #include <vd2/Dita/services.h>
+#include <at/atnativeui/genericdialog.h>
 #include <at/atui/uianchor.h>
 #include <at/atui/uimanager.h>
+#include "uiaccessors.h"
 #include "uicommondialogs.h"
 #include "uifilebrowser.h"
 #include "uimessagebox.h"
@@ -33,29 +51,55 @@ void ATUIShowWarning(VDGUIHandle h, const wchar_t *text, const wchar_t *caption)
 	MessageBoxW((HWND)h, text, caption, MB_OK | MB_ICONWARNING);
 }
 
-bool ATUIShowWarningConfirm(VDGUIHandle h, const wchar_t *text) {
-	return IDOK == MessageBoxW((HWND)h, text, L"Altirra Warning", MB_OKCANCEL | MB_ICONEXCLAMATION);
+bool ATUIShowWarningConfirm(VDGUIHandle h, const wchar_t *text, const wchar_t *title) {
+	ATUIGenericDialogOptions opts;
+	opts.mhParent = h;
+	opts.mpCaption = L"Altirra Warning";
+	opts.mpMessage = text;
+	opts.mpTitle = title;
+	opts.mResultMask = kATUIGenericResultMask_OKCancel;
+	opts.mIconType = kATUIGenericIconType_Warning;
+
+	return ATUIShowGenericDialog(opts) == kATUIGenericResult_OK;
+}
+
+void ATUIShowError2(VDGUIHandle h, const wchar_t *text, const wchar_t *title) {
+	ATUIGenericDialogOptions opts;
+	opts.mhParent = h;
+	opts.mpCaption = L"Altirra Error";
+	opts.mpMessage = text;
+	opts.mpTitle = title;
+	opts.mResultMask = kATUIGenericResultMask_OK;
+	opts.mIconType = kATUIGenericIconType_Error;
+
+	ATUIShowGenericDialog(opts);
 }
 
 void ATUIShowError(VDGUIHandle h, const wchar_t *text) {
-	MessageBoxW((HWND)h, text, L"Altirra Error", MB_OK | MB_ICONERROR);
+	ATUIShowError2(h, text, nullptr);
 }
 
 void ATUIShowError(VDGUIHandle h, const MyError& e) {
 	ATUIShowError(h, VDTextAToW(e.c_str()).c_str());
 }
 
+void ATUIShowError(const MyError& e) {
+	ATUIShowError(ATUIGetNewPopupOwner(), e);
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 class ATUIStageAlert : public ATUIFutureWithResult<bool> {
 public:
-	void Start(const wchar_t *text, const wchar_t *caption) {
+	void Start(const wchar_t *text, const wchar_t *title, bool allowChoice) {
 		if (ATUIGetNativeDialogMode()) {
 
-			if (IDOK == MessageBoxW(g_hwnd, text, caption, MB_OKCANCEL | MB_ICONERROR))
+			if (allowChoice) {
+				mResult = ATUIShowWarningConfirm(ATUIGetNewPopupOwner(), text, title);
+			} else {
+				ATUIShowError2(ATUIGetNewPopupOwner(), text, title);
 				mResult = true;
-			else
-				mResult = false;
+			}
 
 			MarkCompleted();
 			return;
@@ -67,14 +111,12 @@ public:
 		g_ATUIManager.GetMainWindow()->AddChild(mbox);
 
 		mbox->OnCompletedEvent() = ATBINDCALLBACK(this, &ATUIStageAlert::OnResult);
-		mbox->SetCaption(caption);
+		mbox->SetCaption(allowChoice ? L"Altirra Warning" : L"Altirra Error");
 		mbox->SetText(text);
 		mbox->SetFrameMode(kATUIFrameMode_Raised);
-		mbox->AutoSize();
+		mbox->SetQueryMode(allowChoice);
 
-		vdrefptr<IATUIAnchor> anchor;
-		ATUICreateTranslationAnchor(0.5f, 0.5f, ~anchor);
-		mbox->SetAnchor(anchor);
+		mbox->SetPlacement(vdrect32f(0.5f, 0.5f, 0.5f, 0.5f), vdpoint32(0, 0), vdfloat2{0.5f, 0.5f});
 
 		mbox->ShowModal();
 		mbox->Release();
@@ -86,10 +128,18 @@ public:
 	}
 };
 
-vdrefptr<ATUIFutureWithResult<bool> > ATUIShowAlert(const wchar_t *text, const wchar_t *caption) {
+vdrefptr<ATUIFutureWithResult<bool> > ATUIShowAlertWarningConfirm(const wchar_t *text, const wchar_t *caption) {
 	vdrefptr<ATUIStageAlert> future(new ATUIStageAlert);
 
-	future->Start(text, caption);
+	future->Start(text, caption, true);
+
+	return vdrefptr<ATUIFutureWithResult<bool> >(&*future);
+}
+
+vdrefptr<ATUIFutureWithResult<bool> > ATUIShowAlertError(const wchar_t *text, const wchar_t *caption) {
+	vdrefptr<ATUIStageAlert> future(new ATUIStageAlert);
+
+	future->Start(text, caption, false);
 
 	return vdrefptr<ATUIFutureWithResult<bool> >(&*future);
 }
@@ -110,7 +160,7 @@ public:
 			fb->AddRef();
 			g_ATUIManager.GetMainWindow()->AddChild(fb);
 			fb->SetTitle(title);
-			fb->SetDockMode(kATUIDockMode_Fill);
+			fb->SetPlacementFill();
 			fb->SetOwner(g_ATUIManager.GetFocusWindow());
 			fb->SetCompletionFn([this, fb](bool succeeded) { OnCompleted(fb, succeeded); });
 			fb->LoadPersistentData(id);
@@ -157,7 +207,7 @@ public:
 			fb->AddRef();
 			g_ATUIManager.GetMainWindow()->AddChild(fb);
 			fb->SetTitle(title);
-			fb->SetDockMode(kATUIDockMode_Fill);
+			fb->SetPlacementFill();
 			fb->SetOwner(g_ATUIManager.GetFocusWindow());
 			fb->SetCompletionFn([this, fb](bool succeeded) { OnCompleted(fb, succeeded); });
 			fb->LoadPersistentData(id);

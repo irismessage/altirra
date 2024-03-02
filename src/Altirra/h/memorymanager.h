@@ -140,6 +140,7 @@ public:
 	void SetLayerMemory(ATMemoryLayer *layer, const uint8 *base, uint32 pageOffset, uint32 pages, uint32 addrMask = 0xFFFFFFFFU, int readOnly = -1);
 	void SetLayerMemoryAndAddressSpace(ATMemoryLayer *layer, const uint8 *base, uint32 addressSpace);
 	void SetLayerMemoryAndAddressSpace(ATMemoryLayer *layer, const uint8 *base, uint32 pageOffset, uint32 pages, uint32 addressSpace, uint32 addrMask = 0xFFFFFFFFU, int readOnly = -1);
+	void SetLayerReadOnly(ATMemoryLayer *layer, bool readOnly);
 	void SetLayerAddressRange(ATMemoryLayer *layer0, uint32 pageOffset, uint32 pageCount);
 	void SetLayerName(ATMemoryLayer *layer, const char *name);
 	void SetLayerTag(ATMemoryLayer *layer, const void *tag);

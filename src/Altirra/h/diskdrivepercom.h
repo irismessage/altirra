@@ -34,26 +34,21 @@
 #include <at/atdebugger/target.h>
 #include <at/atemulation/acia6850.h>
 #include "fdc.h"
+#include "irqcontroller.h"
+#include "pia.h"
 #include "diskdrivefullbase.h"
 #include "diskinterface.h"
 
 class ATIRQController;
 
 class ATDeviceDiskDrivePercom final : public ATDevice
-	, public IATDeviceScheduling
-	, public IATDeviceFirmware
 	, public IATDeviceDiskDrive
 	, public ATDeviceSIO
-	, public IATDeviceDebugTarget
-	, public IATDebugTarget
-	, public IATDebugTargetHistory
-	, public IATDebugTargetExecutionControl
-	, public IATCPUBreakpointHandler
-	, public IATSchedulerCallback
+	, public ATDiskDriveDebugTargetControl
 	, public IATDeviceRawSIO
 {
 public:
-	ATDeviceDiskDrivePercom();
+	ATDeviceDiskDrivePercom(bool at88);
 	~ATDeviceDiskDrivePercom();
 
 	void *AsInterface(uint32 iid) override;
@@ -69,63 +64,12 @@ public:
 	void ComputerColdReset() override;
 	void PeripheralColdReset() override;
 
-public:
-	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
-
-public:		// IATDeviceFirmware
-	void InitFirmware(ATFirmwareManager *fwman) override;
-	bool ReloadFirmware() override;
-	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override;
-	bool IsWritableFirmwareDirty(uint32 idx) const override;
-	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
-	ATDeviceFirmwareStatus GetFirmwareStatus() const override;
-
 public:		// IATDeviceDiskDrive
 	void InitDiskDrive(IATDiskDriveManager *ddm) override;
+	ATDeviceDiskDriveInterfaceClient GetDiskInterfaceClient(uint32 index) override;
 
 public:		// ATDeviceSIO
 	void InitSIO(IATDeviceSIOManager *mgr) override;
-
-public:	// IATDeviceDebugTarget
-	IATDebugTarget *GetDebugTarget(uint32 index) override;
-
-public:	// IATDebugTarget
-	const char *GetName() override;
-	ATDebugDisasmMode GetDisasmMode() override;
-
-	void GetExecState(ATCPUExecState& state) override;
-	void SetExecState(const ATCPUExecState& state) override;
-
-	sint32 GetTimeSkew() override;
-
-	uint8 ReadByte(uint32 address) override;
-	void ReadMemory(uint32 address, void *dst, uint32 n) override;
-
-	uint8 DebugReadByte(uint32 address) override;
-	void DebugReadMemory(uint32 address, void *dst, uint32 n) override;
-
-	void WriteByte(uint32 address, uint8 value) override;
-	void WriteMemory(uint32 address, const void *src, uint32 n) override;
-
-public:	// IATDebugTargetHistory
-	bool GetHistoryEnabled() const override;
-	void SetHistoryEnabled(bool enable) override;
-
-	std::pair<uint32, uint32> GetHistoryRange() const override;
-	uint32 ExtractHistory(const ATCPUHistoryEntry **hparray, uint32 start, uint32 n) const override;
-	uint32 ConvertRawTimestamp(uint32 rawTimestamp) const override;
-	double GetTimestampFrequency() const override { return 1000000.0; }
-
-public:	// IATDebugTargetExecutionControl
-	void Break() override;
-	bool StepInto(const vdfunction<void(bool)>& fn) override;
-	bool StepOver(const vdfunction<void(bool)>& fn) override;
-	bool StepOut(const vdfunction<void(bool)>& fn) override;
-	void StepUpdate() override;
-	void RunUntilSynced() override;
-
-public:	// IATCPUBreakpointHandler
-	bool CheckBreakpoint(uint32 pc) override;
 
 public:	// IATSchedulerCallback
 	void OnScheduledEvent(uint32 id) override;
@@ -143,34 +87,27 @@ public:
 	void OnAudioModeChanged(uint32 index);
 
 protected:
-	void CancelStep();
+	void Sync() override final;
 
-	void Sync();
-	void AccumSubCycles();
+	uint8 OnHardwareDebugReadAT(uint32 addr);
+	uint8 OnHardwareReadAT(uint32 addr);
+	void OnHardwareWriteAT(uint32 addr, uint8 value);
 
-	void OnCommandChangeEvent();
-	void QueueNextCommandEvent();
-	void AddCommandEdge(uint32 polarity);
-
-	uint8 OnHardwareDebugRead(uint32 addr);
-	uint8 OnHardwareRead(uint32 addr);
-	void OnHardwareWrite(uint32 addr, uint8 value);
+	uint8 OnHardwareDebugReadRFD(uint32 addr);
+	uint8 OnHardwareReadRFD(uint32 addr);
+	void OnHardwareWriteRFD(uint32 addr, uint8 value);
 
 	void OnFDCDataRequest(bool asserted);
 	void OnFDCInterruptRequest(bool asserted);
 	void OnFDCStep(bool inward);
 
 	void OnACIATransmit(uint8 v, uint32 cyclesPerBit);
-
-	void OnTransmitEvent();
-	void AddTransmitByte(uint8 value, uint32 cyclesPerBit);
-	void QueueNextTransmitEvent();
+	void OnPIAPortBChanged(uint32 outputState);
 
 	void SetMotorEnabled(bool enabled);
 	void PlayStepSound();
 	void UpdateRotationStatus();
 	void UpdateDiskStatus();
-	void UpdateWriteProtectStatus();
 	
 	void SelectDrive(int index);
 
@@ -179,29 +116,15 @@ protected:
 
 	static constexpr uint32 kNumDrives = 4;
 
-	enum {
-		kEventId_Run = 1,
-		kEventId_Transmit,
-		kEventId_DriveTimeout,
-		kEventId_DriveCommandChange,
-		kEventId_DriveDiskChange0,		// 4 events, one per drive
+	enum : uint32 {
+		kEventId_DriveTimeout = kEventId_FirstCustom,
 	};
 
-	ATScheduler *mpScheduler = nullptr;
-	ATScheduler *mpSlowScheduler = nullptr;
-	ATEvent *mpRunEvent = nullptr;
-	ATEvent *mpTransmitEvent = nullptr;
 	ATEvent *mpEventDriveTimeout = nullptr;
-	ATEvent *mpEventDriveCommandChange = nullptr;
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
 	IATDiskDriveManager *mpDiskDriveManager = nullptr;
 
-	ATFirmwareManager *mpFwMgr = nullptr;
-
-	static constexpr uint32 kDiskChangeStepMS = 50;
-
 	bool mbCommandState = false;
-	bool mbDriveCommandState = false;
 	bool mbNmiState = false;
 	bool mbNmiTimeoutEnabled = false;
 	bool mbNmiTimeout = false;
@@ -209,23 +132,14 @@ protected:
 	int mSelectedDrive = -1;
 	uint8 mAvailableDrives = 0;
 
-	uint32 mLastSync = 0;
-	uint32 mLastSyncDriveTime = 0;
-	uint32 mLastSyncDriveTimeSubCycles = 0;
-	uint32 mSubCycleAccum = 0;
-	uint8 *mpCoProcWinBase = nullptr;
-
-	uint32 mClockDivisor = 0;
-
-	bool mbFirmwareUsable = false;
 	bool mbSoundsEnabled = false;
-	bool mbForcedIndexPulse = false;
 	bool mbMotorRunning = false;
-	bool mbExtendedRAMEnabled = false;
 	uint32 mLastStepSoundTime = 0;
 	uint32 mLastStepPhase = 0;
-	uint8 mDiskChangeState = 0;
 	uint8 mDriveId = 0;
+	bool mbIsAT88 = false;
+	bool mbIsAT88DoubleDensity = true;
+	bool mbSelectFDC2 = false;
 
 	ATDiskDriveAudioPlayer mAudioPlayer;
 
@@ -240,61 +154,34 @@ protected:
 		uint32 mIndex = 0;
 
 		ATDiskInterface *mpDiskInterface = nullptr;
-		ATEvent *mpEventDriveDiskChange = nullptr;
 		uint32 mCurrentTrack = 0;
 		uint32 mMaxTrack = 0;
-		uint8 mDiskChangeState = 0;
 
 		DriveType mType = kDriveType_None;
+
+		ATDiskDriveChangeHandler mDiskChangeHandler;
 
 		void OnDiskChanged(bool mediaRemoved) override;
 		void OnWriteModeChanged() override;
 		void OnTimingModeChanged() override;
 		void OnAudioModeChanged() override;
+		bool IsImageSupported(const IATDiskImage& image) const override;
 	} mDrives[kNumDrives];
 
 	ATCoProcReadMemNode mReadNodeHardware {};
 	ATCoProcWriteMemNode mWriteNodeHardware {};
 
-	ATScheduler mDriveScheduler;
-
 	ATFDCEmulator mFDC;
+	ATFDCEmulator mFDC2;
 	ATACIA6850Emulator mACIA;
+	ATPIAEmulator mPIA;
+	ATIRQController mIRQController;
 
-	vdfastvector<ATCPUHistoryEntry> mHistory;
+	ATDiskDriveSerialByteTransmitQueue mSerialXmitQueue;
+	ATDiskDriveSerialCommandQueue mSerialCmdQueue;
+
+	ATDiskDriveDebugTargetProxyT<ATCoProc6809> mTargetHistoryProxy;
 	
-	struct TransmitEvent {
-		uint32 mTime;
-		uint8 mData;
-		uint32 mCyclesPerBit;
-	};
-
-	// How long of a delay there is in computer cycles between the drive sending SIO data
-	// and the computer receiving it. This is non-realistic but allows us to batch drive
-	// execution.
-	static constexpr uint32 kTransmitLatency = 128;
-
-	uint32 mTransmitHead = 0;
-	uint32 mTransmitTail = 0;
-
-	static constexpr uint32 kTransmitQueueSize = kTransmitLatency;
-	static constexpr uint32 kTransmitQueueMask = kTransmitQueueSize - 1;
-	TransmitEvent mTransmitQueue[kTransmitQueueSize] = {};
-
-	struct CommandEvent {
-		uint32 mTime : 31;
-		uint32 mBit : 1;
-	};
-
-	vdfastdeque<CommandEvent> mCommandQueue;
-	
-	vdfunction<void(bool)> mpStepHandler = {};
-	bool mbStepOut = false;
-	bool mbStepNotifyPending = false;
-	bool mbStepNotifyPendingBP = false;
-	uint32 mStepStartSubCycle = 0;
-	uint16 mStepOutSP = 0;
-
 	ATCoProc6809 mCoProc;
 
 	uint8 mROM[0x800] = {};
@@ -302,7 +189,10 @@ protected:
 	uint8 mDummyRead[256] = {};
 	uint8 mDummyWrite[256] = {};
 
+	ATDiskDriveFirmwareControl mFirmwareControl;
 	ATDebugTargetBreakpointsImpl mBreakpointsImpl;
+
+	static const uint8 kPIALookup[4];
 };
 
 #endif

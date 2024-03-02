@@ -46,7 +46,6 @@
     <ProjectGuid>{27BE11EC-E0BE-4E86-AC21-69EC426B48FC}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>ATCPU</RootNamespace>
-    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="..\Build\PlatformSetup.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />

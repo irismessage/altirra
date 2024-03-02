@@ -4,7 +4,6 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{0D252872-7542-4232-8D02-53F9182AEE15}</ProjectGuid>
     <RootNamespace>Kasumi</RootNamespace>
-    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="..\Build\PlatformSetup.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -58,6 +57,7 @@
     </ClCompile>
     <ClCompile Include="source\uberblit_v210.cpp" />
     <ClCompile Include="source\uberblit_ycbcr_generic.cpp" />
+    <ClCompile Include="source\uberblit_ycbcr_sse2_intrin.cpp" />
     <ClCompile Include="source\uberblit_ycbcr_x86.cpp">
       <ExcludedFromBuild Condition="'$(Platform)'!='Win32'">true</ExcludedFromBuild>
     </ClCompile>
@@ -116,6 +116,7 @@
     <ClInclude Include="h\uberblit_v210.h" />
     <ClInclude Include="h\uberblit_ycbcr.h" />
     <ClInclude Include="h\uberblit_ycbcr_generic.h" />
+    <ClInclude Include="h\uberblit_ycbcr_sse2_intrin.h" />
     <ClInclude Include="h\uberblit_ycbcr_x86.h" />
     <ClInclude Include="..\h\vd2\Kasumi\blitter.h" />
     <ClInclude Include="..\h\vd2\Kasumi\resample_kernels.h" />

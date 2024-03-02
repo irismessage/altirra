@@ -13,6 +13,7 @@
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Riza/bitmap.h>
 #include <at/atnativeui/uiframe.h>
+#include <at/atnativeui/theme.h>
 #include "decode_png.h"
 #include "encode_png.h"
 
@@ -21,7 +22,7 @@ const void *ATLockResource(uint32 id, size_t& size) {
 
 	HRSRC hrsrc = FindResourceA(hmod, MAKEINTRESOURCEA(id), "STUFF");
 	if (!hrsrc)
-		return false;
+		return nullptr;
 
 	size = SizeofResource(hmod, hrsrc);
 
@@ -435,10 +436,18 @@ void ATShowHelp(void *hwnd, const wchar_t *filename) {
 			}
 		}
 
+		const bool useDarkAnchor = (!filename || !wcschr(filename, L'#')) && ATUIIsDarkThemeActive();
+
+		if (!filename && useDarkAnchor)
+			filename = L"index.html";
+
 		if (filename) {
 			helpFile.append(L"::/");
 			helpFile.append(filename);
 		}
+
+		if (useDarkAnchor)
+			helpFile.append(L"#dark-theme");
 
 		VDStringW helpCommand(VDStringW(L"\"hh.exe\" \"") + helpFile + L'"');
 

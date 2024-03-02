@@ -23,6 +23,13 @@ struct ATFirmwareInfo;
 enum ATSpecificFirmwareType : uint32;
 
 bool ATFirmwareAutodetectCheckSize(uint64 fileSize);
-bool ATFirmwareAutodetect(const void *data, uint32 len, ATFirmwareInfo& info, ATSpecificFirmwareType& specificFirmware);
+
+enum class ATFirmwareDetection : uint32 {
+	None,
+	TypeOnly,
+	SpecificImage
+};
+
+ATFirmwareDetection ATFirmwareAutodetect(const void *data, uint32 len, ATFirmwareInfo& info, ATSpecificFirmwareType& specificFirmware);
 
 #endif

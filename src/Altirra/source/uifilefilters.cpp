@@ -43,12 +43,12 @@ extern const wchar_t g_ATUIFileFilter_Cheats[]=
 			L"All files\0*.*\0";
 
 extern const wchar_t g_ATUIFileFilter_LoadState[]=
-			L"All supported types\0*.altstate\0"
-			L"Altirra save state\0*.altstate\0"
+			L"All supported types\0*.altstate;*.atstate2\0"
+			L"Altirra save state\0*.altstate;*.atstate2\0"
 			L"All files\0*.*\0";
 
 extern const wchar_t g_ATUIFileFilter_SaveState[]=
-			L"Altirra save state (*.altstate)\0*.altstate\0";
+			L"Altirra save state v2 (*.atstate2)\0*.atstate2\0";
 
 extern const wchar_t g_ATUIFileFilter_LoadCartridge[]=
 			L"All supported types\0*.bin;*.car;*.rom;*.a52;*.zip\0"

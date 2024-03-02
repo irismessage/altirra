@@ -109,7 +109,14 @@ enum ATCompatRuleType {
 	kATCompatRuleType_DiskChecksum,
 	kATCompatRuleType_DOSBootChecksum,
 	kATCompatRuleType_ExeChecksum,
+	kATCompatRuleType_CartFileSHA256,
+	kATCompatRuleType_DiskFileSHA256,
+	kATCompatRuleType_DOSBootFileSHA256,
+	kATCompatRuleType_ExeFileSHA256,
+	kATCompatRuleType_TapeFileSHA256,
 };
+
+bool ATCompatIsLargeRuleType(ATCompatRuleType type);
 
 struct ATCompatDBRule {
 	uint32 mValueLo;
@@ -142,6 +149,7 @@ struct ATCompatDBHeader {
 	ATDBVector<ATCompatDBTag> mTagTable;
 	ATDBVector<uint32> mTagIdTable;
 	ATDBVector<char> mCharTable;
+	ATDBVector<uint32> mLargeRuleDataTable;
 
 	bool Validate(size_t len) const;
 
@@ -171,6 +179,8 @@ enum ATCompatKnownTag {
 	kATCompatKnownTag_Cart520016KTwoChip,
 	kATCompatKnownTag_Cart520016KOneChip,
 	kATCompatKnownTag_Cart520032K,
+	kATCompatKnownTag_60Hz,
+	kATCompatKnownTag_50Hz,
 	kATCompatKnownTagCount,	
 };
 
@@ -184,11 +194,14 @@ public:
 
 	bool IsValid() const { return mpHeader != nullptr; }
 
-	const ATCompatDBRule *FindMatchingRule(ATCompatRuleType type, uint64 value) const;
+	std::pair<const ATCompatDBRule *, const ATCompatDBRule *> FindMatchingRules(ATCompatRuleType type, uint64 value) const;
 	bool HasRelatedRuleOfType(const ATCompatDBRule *baseRule, ATCompatRuleType type) const;
 
 	const ATCompatDBTitle *FindMatchingTitle(const ATCompatDBRule *const *rules, size_t numRules) const;
+	void FindMatchingTitles(vdfastvector<const ATCompatDBTitle *>& titles, const ATCompatDBRule *const *rules, size_t numRules) const;
 	ATCompatKnownTag GetKnownTag(uint32 tagId) const;
+
+	uint32 FindLargeRuleBlob(const void *blob256) const;
 
 private:
 	const ATCompatDBHeader *mpHeader = nullptr;

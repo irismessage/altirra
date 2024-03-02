@@ -42,5 +42,5 @@ void OnCommandToolsAnalyzeTapeDecoding() {
 	VDFileStream f2(fn2.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kSequential | nsVDFile::kCreateAlways);
 
 	vdrefptr<IATCassetteImage> image;
-	ATLoadCassetteImage(f1, &f2, ~image);
+	ATLoadCassetteImage(f1, &f2, {}, ~image);
 }

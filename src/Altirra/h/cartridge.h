@@ -21,22 +21,26 @@
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
+#include <at/atcore/checksum.h>
 #include <at/atcore/devicecart.h>
 #include <at/atio/cartridgeimage.h>
 #include <at/atemulation/flash.h>
 #include <at/atemulation/eeprom.h>
 
 class ATSaveStateReader;
-class ATSaveStateWriter;
 class IVDRandomAccessStream;
 class IATUIRenderer;
 class ATMemoryManager;
 class ATMemoryLayer;
 class ATScheduler;
+class IATObjectState;
+struct ATCartridgeModeTable;
 
 class ATCartridgeEmulator final
 	: public IATDeviceCartridge
 {
+	friend struct ATCartridgeModeTable;
+
 	ATCartridgeEmulator(const ATCartridgeEmulator&) = delete;
 	ATCartridgeEmulator& operator=(const ATCartridgeEmulator&) = delete;
 
@@ -58,9 +62,11 @@ public:
 	const wchar_t *GetPath() const;
 
 	ATCartridgeMode GetMode() const { return mCartMode; }
+	IATCartridgeImage *GetImage() const { return mpImage; }
 
 	uint64 GetChecksum();
 	std::optional<uint32> GetImageFileCRC() const;
+	std::optional<ATChecksumSHA256> GetImageFileSHA256() const;
 
 	void Load5200Default();
 	void LoadNewCartridge(ATCartridgeMode mode);
@@ -76,8 +82,9 @@ public:
 	void BeginLoadState(ATSaveStateReader& reader);
 	void LoadStatePrivate(ATSaveStateReader& reader);
 	void EndLoadState(ATSaveStateReader& reader);
-	void BeginSaveState(ATSaveStateWriter& writer);
-	void SaveStatePrivate(ATSaveStateWriter& writer);
+
+	void LoadState(IATObjectState& state);
+	void SaveState(IATObjectState **pp);
 
 	uint8 DebugReadLinear(uint32 offset) const;
 	uint8 DebugReadBanked(uint32 globalAddress) const;
@@ -218,6 +225,9 @@ protected:
 	static sint32 ReadByte_CCTL_aDawliah_64K(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_aDawliah_32K(void *thisptr0, uint32 address, uint8 value);
 	static bool WriteByte_CCTL_aDawliah_64K(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_CCTL_JRC_64K_RAM(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_JRC_64K_RAM(void *thisptr0, uint32 address, uint8 value);
 
 	void InitFromImage();
 	void InitMemoryLayers();

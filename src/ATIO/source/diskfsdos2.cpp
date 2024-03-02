@@ -1322,9 +1322,12 @@ bool ATDiskFSDOS2::IsValidFileName(const char *filename) const {
 	for(;;) {
 		uint8 c = *filename++;
 
+		if (!c)
+			break;
+
 		if ((uint8)(c - 0x30) >= 10 && (uint8)((c & 0xdf) - 0x41) >= 26) {
 			if ((mbStrictNames && !mbMyDOS) || (c != '@' && c != '_'))
-				break;
+				return false;
 		}
 
 		if (++count > 3)

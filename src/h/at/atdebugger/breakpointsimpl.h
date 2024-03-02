@@ -43,6 +43,7 @@ public:
 	}
 
 	void SetBPHandler(vdfunction<void(const bool *, IATCPUBreakpointHandler *)> fn);
+	void SetBPsChangedHandler(vdfunction<void(const uint16 *)> fn);
 
 public:
 	void SetBreakpointHandler(IATCPUBreakpointHandler *handler) override final;
@@ -55,6 +56,7 @@ public:
 
 private:
 	vdfunction<void(const bool *, IATCPUBreakpointHandler *)> mpSetBPTable;
+	vdfunction<void(const uint16 *)> mpBPsChanged;
 	const uint32 mAddressLimit;
 	uint32 mBreakpointCount = 0;
 	bool mbStepActive = false;

@@ -50,6 +50,9 @@ public:
 	virtual VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
 	virtual void OnFontChanged();
 
+	virtual void OnRedrawSuspend();
+	virtual void OnRedrawResume();
+
 protected:
 	int mRedrawInhibitCount;
 };
@@ -203,9 +206,11 @@ public:
 		return mEventItemBeginRDrag;
 	}
 
-protected:
-	void Detach();
+public:
+	void Attach(VDZHWND hwnd) override;
+	void Detach() override;
 
+protected:
 	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) override;
 	void OnFontChanged() override;
 
@@ -346,7 +351,7 @@ protected:
 
 /////////////////////////////////////////////////////////////////////////////
 
-class VDUIProxyComboBoxControl : public VDUIProxyControl {
+class VDUIProxyComboBoxControl final : public VDUIProxyControl {
 public:
 	VDUIProxyComboBoxControl();
 	~VDUIProxyComboBoxControl();
@@ -364,10 +369,15 @@ public:
 	}
 
 protected:
-	VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
+	VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) override;
+
+	void OnRedrawSuspend() override;
+	void OnRedrawResume() override;
 
 	VDEvent<VDUIProxyComboBoxControl, int> mSelectionChanged;
 	vdfunction<void(int)> mpOnSelectionChangedFn;
+
+	static const uint32 kDefaultMinVisibleCount;
 };
 
 /////////////////////////////////////////////////////////////////////////////
@@ -403,8 +413,8 @@ public:
 	VDUIProxyTreeViewControl();
 	~VDUIProxyTreeViewControl();
 
-	virtual void Attach(VDZHWND hwnd);
-	virtual void Detach();
+	virtual void Attach(VDZHWND hwnd) override;
+	virtual void Detach() override;
 
 	void SetIndexedProvider(IVDUITreeViewIndexedProvider *p);
 

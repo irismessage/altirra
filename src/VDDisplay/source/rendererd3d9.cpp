@@ -38,7 +38,7 @@ namespace nsVDDisplay {
 	extern const TechniqueInfo g_technique_boxlinear_2_0;
 }
 
-class VDDisplayRendererD3D9 : public vdrefcounted<IVDDisplayRendererD3D9> {
+class VDDisplayRendererD3D9 final : public vdrefcounted<IVDDisplayRendererD3D9> {
 public:
 	virtual bool Init(VDD3D9Manager *d3dmgr, IVDVideoDisplayDX9Manager *vidmgr);
 	virtual void Shutdown();
@@ -63,7 +63,8 @@ public:
 	virtual void StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 sw, sint32 sh, const VDDisplayBltOptions& opts);
 	virtual void MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode);
 
-	virtual void PolyLine(const vdpoint32 *points, uint32 numLines);
+	void PolyLine(const vdpoint32 *points, uint32 numLines) override;
+	void PolyLineF(const vdfloat2 *points, uint32 numLines, bool antialiased) override;
 
 	virtual bool PushViewport(const vdrect32& r, sint32 x, sint32 y);
 	virtual void PopViewport();
@@ -169,8 +170,12 @@ void VDDisplayRendererD3D9::End() {
 }
 
 const VDDisplayRendererCaps& VDDisplayRendererD3D9::GetCaps() {
-	static const VDDisplayRendererCaps kCaps = {
-		true
+	static constexpr VDDisplayRendererCaps kCaps = {
+		true,		// alpha blending
+		true,		// color blt
+		false,		// color blt 2
+		true,		// polyLineF
+		false		// polyLineF AA
 	};
 
 	return kCaps;
@@ -717,6 +722,49 @@ void VDDisplayRendererD3D9::PolyLine(const vdpoint32 *points, uint32 numLines) {
 		__try {
 			for(uint32 i=0; i<=c; ++i) {
 				pvx[i].SetFF2((float)points[i].x + mOffsetX + 0.5f, (float)points[i].y + mOffsetY + 0.5f, mColor, 0, 0, 0, 0);
+			}
+
+			points += c;
+
+			valid = true;
+		} __except(1) {
+			// lost device -> invalid dynamic pointer on XP - skip draw below
+		}
+
+		mpD3DManager->UnlockVertices();
+
+		if (!valid)
+			break;
+
+		mpD3DManager->DrawArrays(D3DPT_LINESTRIP, 0, c);
+	}
+}
+
+void VDDisplayRendererD3D9::PolyLineF(const vdfloat2 *points, uint32 numLines, bool antialiased) {
+	if (!numLines)
+		return;
+
+	IDirect3DDevice9 *dev = mpD3DManager->GetDevice();
+	dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_CURRENT);
+	dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+	dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_CURRENT);
+	dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+
+	const float offsetxf = (float)mOffsetX;
+	const float offsetyf = (float)mOffsetY;
+
+	while(numLines) {
+		uint32 c = std::min<uint32>(numLines, 100);
+		numLines -= c;
+
+		nsVDD3D9::Vertex *pvx = mpD3DManager->LockVertices(c + 1);
+		if (!pvx)
+			break;
+
+		bool valid = false;
+		__try {
+			for(uint32 i=0; i<=c; ++i) {
+				pvx[i].SetFF2(points[i].x + offsetxf, points[i].y + offsetyf, mColor, 0, 0, 0, 0);
 			}
 
 			points += c;

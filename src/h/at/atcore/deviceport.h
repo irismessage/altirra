@@ -56,6 +56,10 @@ public:
 	// -1 is returned if no more output slots are available.
 	virtual int AllocOutput(ATPortOutputFn fn, void *ptr, uint32 changeMask) = 0;
 
+	// Modify the change mask used to filter output change notifications to an
+	// output.
+	virtual void ModifyOutputMask(int index, uint32 changeMask) = 0;
+
 	// Free an output allocated by AllocOutput(). It is OK to call this with
 	// the invalid output ID (-1).
 	virtual void FreeOutput(int index) = 0;

@@ -23,6 +23,7 @@
 #include <vd2/system/w32assist.h>
 #include <at/atappbase/exceptionfilter.h>
 #include <at/atnativeui/messageloop.h>
+#include <at/atnativeui/theme.h>
 #include <at/atnativeui/uiframe.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/media.h>
@@ -228,6 +229,15 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 			}
 
 			break;
+
+		case WM_SYSCOLORCHANGE:
+			ATUIUpdateThemeColors();
+			ATUINotifyThemeChanged();
+			break;
+
+		case ATWM_SUBCLASS_PRIVATE:
+			g_sim.OnWake();
+			return 0;
 	}
 
 	return ATContainerWindow::WndProc(msg, wParam, lParam);
@@ -359,4 +369,12 @@ void ATUICreateMainWindow(ATContainerWindow **pp) {
 	p->AddRef();
 
 	*pp = p;
+}
+
+void ATUILinkMainWindowToSimulator(ATContainerWindow& w) {
+	g_sim.SetWakeFunction([hwnd = w.GetWindowHandle()] { PostMessage(hwnd, ATWM_SUBCLASS_PRIVATE, 0, 0); });
+}
+
+void ATUIUnlinkMainWindowFromSimulator() {
+	g_sim.SetWakeFunction(nullptr);
 }

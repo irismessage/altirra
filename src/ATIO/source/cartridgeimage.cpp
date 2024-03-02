@@ -229,7 +229,8 @@ public:
 	void *GetBuffer() override { return mCARTROM.data(); }
 
 	uint64 GetChecksum() override;
-	std::optional<uint32> GetFileCRC() const override { return mFileCRC; }
+	std::optional<uint32> GetImageFileCRC() const override { return mFileCRC; }
+	std::optional<ATChecksumSHA256> GetImageFileSHA256() const override { return mFileSHA256; }
 
 	bool IsDirty() const override { return mbDirty; }
 	void SetClean() { mbDirty = false; }
@@ -237,6 +238,7 @@ public:
 		mbDirty = true;
 		mbCartChecksumValid = false;
 		mFileCRC = {};
+		mFileSHA256 = {};
 	}
 
 private:
@@ -252,6 +254,7 @@ private:
 	bool mbCartChecksumValid = false;
 	bool mbDirty = false;
 	std::optional<uint32> mFileCRC {};
+	std::optional<ATChecksumSHA256> mFileSHA256 {};
 };
 
 void ATCartridgeImage::Init(ATCartridgeMode mode) {
@@ -262,6 +265,7 @@ void ATCartridgeImage::Init(ATCartridgeMode mode) {
 	mbCartChecksumValid = false;
 	mbDirty = false;
 	mFileCRC = {};
+	mFileSHA256 = {};
 }
 
 bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, ATCartLoadContext *loadCtx) {
@@ -271,6 +275,7 @@ bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, 
 		throw MyError("Unsupported cartridge size.");
 
 	mFileCRC = {};
+	mFileSHA256 = {};
 
 	// check for header
 	char buf[16];
@@ -305,11 +310,20 @@ bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, 
 
 			mCartMode = (ATCartridgeMode)mode;
 
-			VDCRCChecker crcChecker(VDCRCTable::CRC32);
+			{
+				VDCRCChecker crcChecker(VDCRCTable::CRC32);
 
-			crcChecker.Process(buf, 16);
-			crcChecker.Process(mCARTROM.data(), size32);
-			mFileCRC = crcChecker.CRC();
+				crcChecker.Process(buf, 16);
+				crcChecker.Process(mCARTROM.data(), size32);
+				mFileCRC = crcChecker.CRC();
+			}
+
+			if (size32 <= 32 * 1024 * 1024) {
+				ATChecksumEngineSHA256 sha256;
+				sha256.Process(buf, 16);
+				sha256.Process(mCARTROM.data(), size32);
+				mFileSHA256 = sha256.Finalize();
+			}
 		}
 	}
 
@@ -328,6 +342,7 @@ bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, 
 				stream.Seek(0);
 
 				loadCtx->mRawImageChecksum = ComputeChecksum(loadCtx->mpCaptureBuffer->data(), size32);
+				loadCtx->mFileSHA256 = ATComputeChecksumSHA256(loadCtx->mpCaptureBuffer->data(), size32);
 			}
 			return false;
 		}
@@ -361,6 +376,9 @@ bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, 
 		}
 
 		mFileCRC = VDCRCTable::CRC32.CRC(mCARTROM.data(), size32);
+
+		if (size32 <= 32*1024*1024)
+			mFileSHA256 = ATComputeChecksumSHA256(mCARTROM.data(), size32);
 	}
 
 	if (loadCtx) {

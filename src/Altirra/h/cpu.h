@@ -31,10 +31,12 @@ class ATCPUProfiler;
 class ATCPUVerifier;
 class ATCPUHeatMap;
 class ATSaveStateReader;
-class ATSaveStateWriter;
 class ATCPUEmulatorMemory;
 class ATBreakpointManager;
 struct ATCPUHistoryEntry;
+class IATSnappable;
+class ATSnapEncoder;
+class IATObjectState;
 
 enum ATDebugDisasmMode : uint8;
 
@@ -42,6 +44,7 @@ class ATCPUEmulatorCallbacks {
 public:
 	virtual uint32 CPUGetCycle() = 0;
 	virtual uint32 CPUGetUnhaltedCycle() = 0;
+	virtual uint32 CPUGetUnhaltedAndRDYCycle() = 0;
 	virtual void CPUGetHistoryTimes(ATCPUHistoryEntry * VDRESTRICT he) const = 0;
 };
 
@@ -92,6 +95,8 @@ namespace AT6502 {
 }
 
 class ATCPUEmulator {
+	ATCPUEmulator(const ATCPUEmulator&) = delete;
+	ATCPUEmulator& operator=(const ATCPUEmulator&) = delete;
 public:
 	ATCPUEmulator();
 	~ATCPUEmulator();
@@ -263,10 +268,10 @@ public:
 	void	LoadStateResetPrivate(ATSaveStateReader& reader);
 	void	EndLoadState(ATSaveStateReader& reader);
 
-	void	BeginSaveState(ATSaveStateWriter& writer);
-	void	SaveStateArch(ATSaveStateWriter& writer);
-	void	SaveStatePrivate(ATSaveStateWriter& writer);
-	void	EndSaveState(ATSaveStateWriter& writer);
+	void	SaveState(IATObjectState **result);
+	bool	LoadState(const IATObjectState& state);
+
+	IATSnappable *AsSnappable();
 
 	void	InjectOpcode(uint8 op);
 	void	Push(uint8 v);
@@ -290,10 +295,12 @@ public:
 	int		Advance65816HiSpeed(bool dma);
 
 protected:
-	__declspec(noinline) uint8 ProcessDebugging();
-	__declspec(noinline) void ProcessStepOver();
-	__declspec(noinline) uint8 ProcessHook();
-	__declspec(noinline) uint8 ProcessHook816();
+	friend class ATSaveStateCPU;
+
+	VDNOINLINE uint8 ProcessDebugging();
+	VDNOINLINE void ProcessStepOver();
+	VDNOINLINE uint8 ProcessHook();
+	VDNOINLINE uint8 ProcessHook816();
 
 	template<bool T_Accel>
 	bool	ProcessInterrupts();
@@ -317,15 +324,18 @@ protected:
 	void	DecodeReadZpY();
 	void	DecodeReadAbs();
 	void	DecodeReadAbsX();
+	void	DecodeWriteAddrAbsX();
 	void	DecodeReadAbsY();
+	void	DecodeWriteAddrAbsY();
 	void	DecodeReadIndX();
 	void	DecodeReadIndY();
+	void	DecodeWriteAddrIndY();
 	void	DecodeReadInd();
 
 	void	Decode65816AddrDp(bool unalignedDP);
 	void	Decode65816AddrDpX(bool unalignedDP, bool emu);
 	void	Decode65816AddrDpY(bool unalignedDP, bool emu);
-	void	Decode65816AddrDpInd(bool unalignedDP);
+	void	Decode65816AddrDpInd(bool unalignedDP, bool emu);
 	void	Decode65816AddrDpIndX(bool unalignedDP, bool emu);
 	void	Decode65816AddrDpIndY(bool unalignedDP, bool emu, bool forceCycle);
 	void	Decode65816AddrDpLongInd(bool unalignedDP);
@@ -353,7 +363,7 @@ protected:
 	uint16	mPC;
 	uint16	mAddr;
 	uint16	mAddr2;
-	sint16	mRelOffset;
+	uint8	mRelOffset;
 	uint8	mData;
 	uint8	mOpcode;
 	uint16	mData16;
@@ -424,8 +434,11 @@ protected:
 	ATCPUVerifier	*mpVerifier;
 	ATCPUHeatMap	*mpHeatMap;
 
+	int mHistoryIndex;
+
 	uint8 *mpDstState;
 	uint8	mStates[16];
+	uint16	mStateRelocOffset = 0;
 
 	enum HistoryEnableFlags : uint8 {
 		kHistoryEnableFlag_None = 0x00,
@@ -453,17 +466,32 @@ protected:
 		kInsnFlagPathExecuted	= 0x20
 	};
 
-	const uint8 *mpDecodePtrIRQ;
-	const uint8 *mpDecodePtrNMI;
-	const uint8 *mpDecodePtrABORT;
-	uint16	mDecodePtrs[256];
-	uint16	mDecodePtrs816[10][259];
+	enum class ExtOpcode : uint16 {
+		Irq = 256,
+		Nmi,
+		Reset,
+		Abort,
+	};
+
+	static constexpr uint32 kNumExtOpcodes = 260;
+
+	uint16	mDecodePtrs[kNumExtOpcodes];
+	uint16	mDecodePtrs816[10][kNumExtOpcodes];
 	uint8	mDecodeHeap[0x5000];
 	uint8	mInsnFlags[65536];
 
 	typedef ATCPUHistoryEntry HistoryEntry;
 	HistoryEntry mHistory[131072];
-	int mHistoryIndex;
+
+	struct ExtOpcodeAnchor {
+		uint16 mOffset;
+		uint16 mExtOpcode;
+	};
+
+	struct ExtOpcodeAnchorPred;
+
+	uint32 mNumExtOpcodeAnchors;
+	ExtOpcodeAnchor	mExtOpcodeAnchors[10 * kNumExtOpcodes];
 };
 
 #endif

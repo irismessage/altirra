@@ -42,6 +42,7 @@ public:
 	void SetExecState(const ATCPUExecState& state);
 
 	uint16 GetSP() const { return mSP; }
+	uint32 GetStepStackLevel() const { return (uint32)mSP << 16; }
 
 	bool IsHalted() const;
 

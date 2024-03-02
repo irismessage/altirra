@@ -382,18 +382,18 @@ public:
 		es = new ATUIEnumSetting(
 			L"Artifacting",
 			{
-				{ ATGTIAEmulator::kArtifactNone, L"Off" },
-				{ ATGTIAEmulator::kArtifactNTSC, L"NTSC" },
-				{ ATGTIAEmulator::kArtifactNTSCHi, L"NTSC High" },
-				{ ATGTIAEmulator::kArtifactPAL, L"PAL" },
-				{ ATGTIAEmulator::kArtifactPALHi, L"PAL High" },
-				{ ATGTIAEmulator::kArtifactAuto, L"NTSC/PAL (auto-switch)" },
-				{ ATGTIAEmulator::kArtifactAutoHi, L"NTSC/PAL High (auto-switch)" },
+				{ (sint32)ATArtifactMode::None, L"Off" },
+				{ (sint32)ATArtifactMode::NTSC, L"NTSC" },
+				{ (sint32)ATArtifactMode::NTSCHi, L"NTSC High" },
+				{ (sint32)ATArtifactMode::PAL, L"PAL" },
+				{ (sint32)ATArtifactMode::PALHi, L"PAL High" },
+				{ (sint32)ATArtifactMode::Auto, L"NTSC/PAL (auto-switch)" },
+				{ (sint32)ATArtifactMode::AutoHi, L"NTSC/PAL High (auto-switch)" },
 			}
 		);
 
-		es->SetGetter([]() { return g_sim.GetGTIA().GetArtifactingMode(); });
-		es->SetImmediateSetter([](sint32 val) { g_sim.GetGTIA().SetArtifactingMode((ATGTIAEmulator::ArtifactMode)val); });
+		es->SetGetter([]() { return (sint32)g_sim.GetGTIA().GetArtifactingMode(); });
+		es->SetImmediateSetter([](sint32 val) { g_sim.GetGTIA().SetArtifactingMode((ATArtifactMode)val); });
 		target->AddSetting(es);
 		es.release();
 

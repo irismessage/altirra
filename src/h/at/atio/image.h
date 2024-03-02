@@ -19,9 +19,13 @@
 #ifndef f_AT_ATIO_IMAGE_H
 #define f_AT_ATIO_IMAGE_H
 
+#include <optional>
+#include <at/atcore/checksum.h>
 #include <vd2/system/unknown.h>
 
+class VDStringW;
 struct ATCartLoadContext;
+struct ATCassetteLoadContext;
 class IVDRandomAccessStream;
 
 enum ATImageType {
@@ -34,7 +38,8 @@ enum ATImageType {
 	kATImageType_SaveState,
 	kATImageType_Zip,
 	kATImageType_GZip,
-	kATImageType_SAP
+	kATImageType_SAP,
+	kATImageType_SaveState2
 };
 
 struct ATStateLoadContext {
@@ -47,12 +52,21 @@ struct ATImageLoadContext {
 	ATImageType mLoadType = kATImageType_None;
 	ATCartLoadContext *mpCartLoadContext = nullptr;
 	ATStateLoadContext *mpStateLoadContext = nullptr;
+	ATCassetteLoadContext *mpCassetteLoadContext = nullptr;
 	int mLoadIndex = -1;
 };
 
 class IATImage : public IVDRefUnknown {
 public:
 	virtual ATImageType GetImageType() const = 0;
+
+	// Try to retrieve the CRC32 checksum or SHA256 digest associated with the image file
+	// for the image. May be absent if the image does not have a backing file associated with
+	// it, has been modified, or the calculation was skipped due to the image being too big.
+	// CRC32 is the same as Zip and PNG and useful for quick ID in UI; SHA256 is preferred
+	// for signature matching.
+	virtual std::optional<uint32> GetImageFileCRC() const = 0;
+	virtual std::optional<ATChecksumSHA256> GetImageFileSHA256() const = 0;
 };
 
 ATImageType ATGetImageTypeForFileExtension(const wchar_t *s);

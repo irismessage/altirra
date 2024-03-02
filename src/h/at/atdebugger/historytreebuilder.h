@@ -50,6 +50,8 @@ public:
 	void Update(const ATHistoryTraceInsn *VDRESTRICT htab, uint32 n);
 
 private:
+	template<bool T_CollapseLoops>
+	void Update2(const ATHistoryTraceInsn *VDRESTRICT htab, uint32 n);
 	void ResetStack();
 	void RefreshNode(ATHTNode *node);
 

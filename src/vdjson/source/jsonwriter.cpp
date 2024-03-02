@@ -107,9 +107,38 @@ void VDJSONWriter::WriteInt(sint64 value) {
 	wchar_t buf[64];
 
 	buf[0] = 0;
-	unsigned len = (unsigned)swprintf(buf, 64, L"%lld", value);
+	unsigned len = (unsigned)swprintf(buf, 64, L"%lld", (long long)value);
 	if (len < 64)
 		Write(buf, len);
+}
+
+void VDJSONWriter::WriteIntAsString(sint64 value) {
+	BeginValue();
+
+	wchar_t buf[64];
+
+	buf[0] = 0;
+	unsigned len = (unsigned)swprintf(buf, 64, L"\"%lld\"", (long long)value);
+	if (len < 64)
+		Write(buf, len);
+}
+
+void VDJSONWriter::WriteIntSafe(sint64 value) {
+	// JSON does not impose or require specific ranges on numbers, but common implementations
+	// including the JavaScript language that it was based on use IEEE doubles. This limits
+	// the safe representable integer range to +/-2^53. (For some reason RFC 7159 omits 2^53
+	// exactly from its safe range, but powers of two within range are are always exactly
+	// representable in IEEE FP.)
+	//
+	// Occasionally, however, programs may substitute single-precision for double-precision
+	// math. To be safe, we only consider the single-precision integer range. The reader of
+	// our format has to be able to handle string form anyway for values beyond +/-2^53, so
+	// this is not a big demand.
+
+	if (value < -(1 << 24)+1 || value > (1 << 24)-1)
+		WriteIntAsString(value);
+	else
+		WriteInt(value);
 }
 
 void VDJSONWriter::WriteReal(double value) {
@@ -121,6 +150,10 @@ void VDJSONWriter::WriteReal(double value) {
 	unsigned len = (unsigned)swprintf(buf, 64, L"%.17g", value);
 	if (len < 64)
 		Write(buf, len);
+}
+
+void VDJSONWriter::WriteStringASCII(const char *s) {
+	WriteRawStringASCII(s, strlen(s));
 }
 
 void VDJSONWriter::WriteString(const wchar_t *s) {
@@ -143,6 +176,56 @@ void VDJSONWriter::BeginValue() {
 	if (!mStack.empty())
 		WriteLine();
 	WriteIndent();
+}
+
+void VDJSONWriter::WriteRawStringASCII(const char *s, size_t len) {
+	Write(L"\"", 1);
+
+	wchar_t buf[128];
+
+	while(len) {
+		size_t maxBlock = len > 128 ? 128 : len;
+		size_t tc = 0;
+		wchar_t c;
+		while(tc < maxBlock) {
+			c = s[tc];
+
+			if ((uint32)c < 0x20 || c == L'"' || c == L'\\')
+				break;
+
+			buf[tc++] = (wchar_t)c;
+		}
+
+		Write(buf, tc);
+		len -= tc;
+		s += tc;
+
+		if (!len)
+			break;
+
+		if (c == L'"') {
+			Write(L"\\\"", 2);
+		} else if (c == L'\\') {
+			Write(L"\\\\", 2);
+		} else {
+			wchar_t buf[6];
+			const wchar_t sHexDigits[16] = { L'0', L'1', L'2', L'3', L'4', L'5', L'6', L'7', L'8', L'9', L'A', L'B', L'C', L'D', L'E', L'F' };
+			uint32 ci = c;
+
+			buf[0] = L'\\';
+			buf[1] = L'u';
+			buf[2] = sHexDigits[(ci >> 12) & 15];
+			buf[3] = sHexDigits[(ci >>  8) & 15];
+			buf[4] = sHexDigits[(ci >>  4) & 15];
+			buf[5] = sHexDigits[(ci >>  0) & 15];
+			Write(buf, 6);
+		}
+
+		++s;
+		--len;
+	}
+
+	Write(L"\"", 1);
 }
 
 void VDJSONWriter::WriteRawString(const wchar_t *s, size_t len) {
@@ -254,7 +337,7 @@ void VDJSONWriteValue(VDJSONWriter& writer, const VDJSONValue& value, const VDJS
 				const VDJSONArray arr(*value.mpArray);
 
 				for(uint32 i=0; i<arr.mLength; ++i)
-					VDJSONWriteValue(writer, arr.mpElements[i], nameTable);
+					VDJSONWriteValue(writer, *arr.mpElements[i], nameTable);
 			}
 			writer.Close();
 			break;

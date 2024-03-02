@@ -38,6 +38,8 @@ public:
 
 	void SetHTMLText(const wchar_t *s);
 
+	void SetMinSizeText(const wchar_t *);
+
 	void Clear();
 	void AppendFormattedText(uint32 color, const wchar_t *s);
 	void AppendFormattedTextF(uint32 color, const wchar_t *format, ...);
@@ -46,8 +48,9 @@ public:
 	void AutoSize(int x, int y);
 
 protected:
-	virtual void OnCreate();
-	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
+	void OnCreate() override;
+	ATUIWidgetMetrics OnMeasure() override;
+	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) override;
 
 	void Reflow();
 
@@ -63,6 +66,9 @@ protected:
 	sint32 mBorderColor;
 	vdsize32 mTextSize;
 	bool mbReflowPending;
+
+	VDStringW mMinSizeText;
+	vdsize32 mMinTextSize;
 
 	struct Span {
 		sint32 mX;

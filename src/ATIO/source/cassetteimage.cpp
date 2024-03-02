@@ -23,6 +23,7 @@
 #include <vd2/system/file.h>
 #include <vd2/system/math.h>
 #include <vd2/system/refcount.h>
+#include <vd2/system/zip.h>
 #include <at/atcore/audiosource.h>
 #include <at/atcore/progress.h>
 #include <at/atio/cassetteblock.h>
@@ -317,17 +318,21 @@ public:
 	void *AsInterface(uint32 id) override;
 
 	ATImageType GetImageType() const override { return kATImageType_Tape; }
+	std::optional<uint32> GetImageFileCRC() const { return mImageFileCRC; }
+	std::optional<ATChecksumSHA256> GetImageFileSHA256() const { return mImageFileSHA256; }
 
 	uint32 GetDataLength() const override { return mDataLength; }
 	uint32 GetAudioLength() const override { return mAudioLength; }
 	bool IsAudioCreated() const override { return mbAudioCreated; }
 
 	bool GetBit(uint32 pos, uint32 averagingPeriod, uint32 threshold, bool prevBit, bool bypassFSK) const override;
-	bool GetTurboBit(uint32 pos) const override;
-	uint32 GetNearestLowBitPos(uint32 pos) const override;
+	bool GetBit(uint32 pos, bool bypassFSK) const override;
+
+	uint32 GetBitSum(uint32 pos, uint32 averagingPeriod, bool bypassFSK) const override;
+	NextBitInfo FindNextBit(uint32 pos, uint32 limit, bool level, bool bypassFSK) const override;
 
 	void ReadPeakMap(float t0, float dt, uint32 n, float *data, float *audio) override;
-	void AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const override;
+	void AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const override;
 
 	uint32 GetWriteCursor() const override;
 	void SetWriteCursor(uint32 writePos) override;
@@ -336,7 +341,7 @@ public:
 	void WriteFSKPulse(bool polarity, uint32 samples) override;
 
 	void InitNew();
-	void Load(IVDRandomAccessStream& file, IVDRandomAccessStream *afile);
+	void Load(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, const ATCassetteLoadContext& ctx);
 	void SaveCAS(IVDRandomAccessStream& file);
 	void SaveWAV(IVDRandomAccessStream& file);
 
@@ -347,17 +352,17 @@ protected:
 		ATCassetteImageBlock *mpImageBlock;
 	};
 
-	uint32 GetBitSum(uint32 pos, uint32 averagingPeriod, bool bypassFSK) const;
 	uint32 GetSortedDataBlock(uint32 pos) const;
 
 	uint32 SplitBlock(uint32 startBlockIdx, uint32 splitPt);
 
 	void Validate();
 
-	void ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStream *afile);
+	void ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, bool usePrefilter);
 	void ParseCAS(IVDRandomAccessStream& file);
 	void ConvertDataToPeaks();
 	void RefreshPeaksFromData(uint32 startSample, uint32 endSample);
+	void InvalidateSignatures();
 
 	uint32 mDataLength = 0;
 	uint32 mAudioLength = 0;
@@ -381,6 +386,9 @@ protected:
 
 	uint32 mPeakDirtyStart = (uint32)0 - 1;
 	uint32 mPeakDirtyEnd = 0;
+
+	std::optional<uint32> mImageFileCRC;
+	std::optional<ATChecksumSHA256> mImageFileSHA256;
 
 	static constexpr int kDataSamplesPerPeakSample = 1024;
 	static constexpr float kPeakSamplesPerSecond = kATCassetteDataSampleRate / (float)kDataSamplesPerPeakSample;
@@ -428,7 +436,7 @@ uint32 ATCassetteImage::GetBitSum(uint32 pos, uint32 len, bool bypassFSK) const 
 
 		sum += p->mpImageBlock->GetBitSum(offset + p->mOffset, sectionLen, bypassFSK);
 
-		len-= sectionLen;
+		len -= sectionLen;
 		if (!len)
 			break;
 
@@ -436,7 +444,7 @@ uint32 ATCassetteImage::GetBitSum(uint32 pos, uint32 len, bool bypassFSK) const 
 		pos += sectionLen;
 	}
 
-	return sum;
+	return sum + len;
 }
 
 bool ATCassetteImage::GetBit(uint32 pos, uint32 averagingPeriod, uint32 threshold, bool prevBit, bool bypassFSK) const {
@@ -450,7 +458,7 @@ bool ATCassetteImage::GetBit(uint32 pos, uint32 averagingPeriod, uint32 threshol
 		return prevBit;
 }
 
-bool ATCassetteImage::GetTurboBit(uint32 pos) const {
+bool ATCassetteImage::GetBit(uint32 pos, bool bypassFSK) const {
 	if (pos >= mDataLength)
 		return true;
 
@@ -464,7 +472,7 @@ bool ATCassetteImage::GetTurboBit(uint32 pos) const {
 		uint32 sectionLen = p[1].mStart - pos;
 
 		if (sectionLen)
-			return p->mpImageBlock->GetBitSum(offset + p->mOffset, 1, true) > 0;
+			return p->mpImageBlock->GetBitSum(offset + p->mOffset, 1, bypassFSK) > 0;
 
 		offset = 0;
 	}
@@ -472,34 +480,47 @@ bool ATCassetteImage::GetTurboBit(uint32 pos) const {
 	return true;
 }
 
-uint32 ATCassetteImage::GetNearestLowBitPos(uint32 pos) const {
+ATCassetteImage::NextBitInfo ATCassetteImage::FindNextBit(uint32 pos, uint32 limit, bool level, bool bypassFSK) const {
 	if (pos >= mDataLength)
-		return mDataLength;
+		return { UINT32_C(0) - 1, true };
 
-	uint32 idx = GetSortedDataBlock(pos);
-	const auto *block = &mDataBlocks[idx];
+	int idx = GetSortedDataBlock(pos);
+	const auto *p = &mDataBlocks[idx];
+	if (!p->mpImageBlock)
+		return { UINT32_C(0) - 1, true };
 
-	for(; block->mpImageBlock; ++block) {
-		// if this is a blank block, we can just skip it outright
-		const auto& imageBlock = *block->mpImageBlock;
-		if (imageBlock.GetBlockType() == kATCassetteImageBlockType_Blank) {
-			pos = block[1].mStart;
-			continue;
+	const uint32 levelValue = level ? 1 : 0;
+	uint32 offset = pos - p->mStart;
+	for(const auto *p = &mDataBlocks[idx]; p->mpImageBlock; ++p) {
+		uint32 sectionEnd = p[1].mStart;
+		uint32 sectionOffset = p->mOffset - p->mStart;
+		ATCassetteImageBlock& imageBlock = *p->mpImageBlock;
+
+		if (pos < sectionEnd) {
+			const uint32 searchLimit = std::min(limit, sectionEnd - 1) + 1;
+
+			const auto findResult = imageBlock.FindBit(pos + sectionOffset, searchLimit + sectionOffset, level, bypassFSK);
+			const uint32 foundPos = findResult.mPos - sectionOffset;
+
+			if (findResult.mFound && findResult.mPos < searchLimit + sectionOffset) {
+				VDASSERT(GetBit(foundPos, bypassFSK) == level);
+				return { foundPos, level };
+			}
+
+			if (searchLimit < sectionEnd) {
+				VDASSERT(GetBit(pos, bypassFSK) == !level);
+
+				return { searchLimit, !level };
+			}
+
+			pos = sectionEnd;
 		}
 
-		// scan the block looking for a low bit
-		uint32 relOffset = block->mOffset - block->mStart;
-		uint32 nextPos = block[1].mStart;
-
-		while(pos < nextPos) {
-			if (!imageBlock.GetBitSum(pos + relOffset, 1, false))
-				return pos;
-
-			++pos;
-		}
+		offset = 0;
 	}
 
-	return mDataLength;
+	// after end of tape is all mark bits
+	return { UINT32_C(0) - 1, true };
 }
 
 void ATCassetteImage::ReadPeakMap(float t0, float dt, uint32 n, float *data, float *audio) {
@@ -563,7 +584,7 @@ void ATCassetteImage::ReadPeakMap(float t0, float dt, uint32 n, float *data, flo
 	}
 }
 
-void ATCassetteImage::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const {
+void ATCassetteImage::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const {
 	if (!n)
 		return;
 
@@ -594,6 +615,10 @@ void ATCassetteImage::AccumulateAudio(float *&dst, uint32& posSample, uint32& po
 	VDASSERT(posSample >= p->mStart);
 	VDASSERT(!p->mpImageBlock || posSample <= p[1].mStart);
 
+	// Cassette blocks require volume in terms of signed samples instead of normalized
+	// samples, so adjust volume here.
+	const float sampleVolume = (float)volume / 127.0f;
+
 	while(n && p->mpImageBlock) {
 		const uint32 audioSampleLimit = ((p[1].mStart - posSample) * kATCassetteCyclesPerAudioSample - posCycle + kATCyclesPerSyncSample - 1) / kATCyclesPerSyncSample;
 
@@ -606,7 +631,7 @@ void ATCassetteImage::AccumulateAudio(float *&dst, uint32& posSample, uint32& po
 		if (tc > audioSampleLimit)
 			tc = audioSampleLimit;
 
-		n -= p->mpImageBlock->AccumulateAudio(dst, posSample, posCycle, tc);
+		n -= p->mpImageBlock->AccumulateAudio(dst, posSample, posCycle, tc, sampleVolume);
 
 		posSample -= p->mOffset;
 		posSample += p->mStart;
@@ -635,6 +660,8 @@ void ATCassetteImage::WriteBlankData(uint32 len) {
 	// check if write would go beyond end and clamp
 	if (mWriteCursor >= kATCassetteDataLimit)
 		return;
+
+	InvalidateSignatures();
 
 	if (len > kATCassetteDataLimit - mWriteCursor)
 		len = kATCassetteDataLimit - mWriteCursor;
@@ -750,6 +777,8 @@ void ATCassetteImage::WriteStdData(uint8 byte, uint32 baudRate) {
 		return;
 
 	AT_CASSETTE_VALIDATE();
+
+	InvalidateSignatures();
 
 	// check if we have a prev block
 	if (mCurrentWriteBlockIndex < 0) {
@@ -981,6 +1010,8 @@ void ATCassetteImage::WriteFSKPulse(bool polarity, uint32 samples) {
 		mDataBlocks.erase(mDataBlocks.begin() + nextIndex);
 		--mDataBlockCount;
 	}
+
+	InvalidateSignatures();
 }
 
 void ATCassetteImage::InitNew() {
@@ -997,7 +1028,7 @@ void ATCassetteImage::InitNew() {
 	mAudioBlockCount = 1;
 }
 
-void ATCassetteImage::Load(IVDRandomAccessStream& file, IVDRandomAccessStream *afile) {
+void ATCassetteImage::Load(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, const ATCassetteLoadContext& ctx) {
 	uint32 basehdr;
 	if (file.ReadData(&basehdr, 4) != 4)
 		basehdr = 0;
@@ -1010,7 +1041,7 @@ void ATCassetteImage::Load(IVDRandomAccessStream& file, IVDRandomAccessStream *a
 
 	uint32 baseid = VDFromLE32(basehdr);
 	if (baseid == VDMAKEFOURCC('R', 'I', 'F', 'F'))
-		return ParseWAVE(file, afile);
+		return ParseWAVE(file, afile, ctx.mbUseTurboPrefilter);
 
 	if (afile)
 		throw MyError("Cannot write analysis file for this cassette format.");
@@ -1494,7 +1525,7 @@ namespace {
 	}
 }
 
-void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStream *afile) {
+void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, bool enablePrefilter) {
 	WaveFormatEx wf = {0};
 	sint64 limit = file.Length();
 	sint64 datapos = -1;
@@ -1750,10 +1781,7 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 
 				// run the direct decoder 12 samples behind the FSK decoder
 				uint32 *dstRaw = ExtendBitfield(pDataBlock->mDataRaw, bitfieldOffset, samplesToProcess);
-				if (afile)
-					directDecoder.Process<true>(&outputBuffer[outputBufferIdx][1], samplesToProcess, dstRaw, bitfieldOffset, analysisBuffer.data());
-				else
-					directDecoder.Process<false>(&outputBuffer[outputBufferIdx][1], samplesToProcess, dstRaw, bitfieldOffset, nullptr);
+				directDecoder.Process(enablePrefilter, &outputBuffer[outputBufferIdx][1], samplesToProcess, dstRaw, bitfieldOffset, analysisBuffer.data());
 
 				if (afile) {
 					const float *src = analysisBuffer.data();
@@ -1821,12 +1849,100 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 	}
 }
 
-void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file) {
+namespace {
+	class ChecksumStream final {
+		static constexpr uint32 kBufferSize = 65536;
+	public:
+		ChecksumStream(IVDRandomAccessStream& parent)
+			: mParent(parent)
+			, mBuffer(new char[kBufferSize])
+		{
+		}
+
+		uint32 GetCRC() { return mCRC.CRC(); }
+		ATChecksumSHA256 GetSHA256() { return mSHA256.Finalize(); }
+		sint64 Pos() { return mPos; }
+
+		void Read(void *buffer, uint32 bytes);
+		sint32 ReadData(void *buffer, uint32 bytes);
+
+		std::pair<const void *, uint32> LockRead(uint32 bytes);
+
+		sint64 Length() { return mParent.Length(); }
+
+	private:
+		bool Refill();
+
+		IVDRandomAccessStream& mParent;
+		vdautoarrayptr<char> mBuffer;
+		uint32 mBufferLevel = 0;
+		uint32 mBufferPos = 0;
+		sint64 mPos = 0;
+		VDCRCChecker mCRC{VDCRCTable::CRC32};
+		ATChecksumEngineSHA256 mSHA256;
+	};
+
+	void ChecksumStream::Read(void *buffer, uint32 bytes) {
+		sint64 pos = mPos;
+		if (bytes != ReadData(buffer, bytes))
+			throw MyError("Failed to read %u bytes at position %lld in file.", bytes, pos);
+	}
+
+	sint32 ChecksumStream::ReadData(void *buffer, uint32 bytes) {
+		uint32 remaining = bytes;
+
+		while(remaining) {
+			auto [ p, len ] = LockRead(remaining);
+
+			if (!len)
+				break;
+
+			if (buffer) {
+				memcpy(buffer, p, len);
+				buffer = (char *)buffer + len;
+			}
+
+			remaining -= len;
+		}
+
+		return bytes - remaining;
+	}
+
+	std::pair<const void *, uint32> ChecksumStream::LockRead(uint32 bytes) {
+		if (mBufferPos == mBufferLevel)
+			Refill();
+
+		uint32 offset = mBufferPos;
+		uint32 len = std::min<uint32>(mBufferLevel - mBufferPos, bytes);
+
+		mBufferPos += len;
+
+		return { mBuffer.get() + offset, len };
+	}
+
+	bool ChecksumStream::Refill() {
+		sint32 actual = mParent.ReadData(mBuffer.get(), kBufferSize);
+
+		if (actual <= 0)
+			return false;
+
+		mBufferPos = 0;
+		mBufferLevel = (uint32)actual;
+
+		mCRC.Process(mBuffer.get(), mBufferLevel);
+		mSHA256.Process(mBuffer.get(), mBufferLevel);
+		return true;
+	}
+
+}
+
+void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 	uint32 baudRate = 600;
-	uint8 buf[128];
+
+	ChecksumStream cs(file0);
 
 	ATProgress progress;
-	progress.InitF((uint32)((uint64)file.Length() >> 10), L"Processing %uK of %uK", L"Processing CAS file");
+	progress.InitF((uint32)((uint64)cs.Length() >> 10), L"Processing %uK of %uK", L"Processing CAS file");
 
 	mDataLength = 0;
 
@@ -1859,7 +1975,7 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file) {
 	float minGap = 10.0f;
 
 	for(;;) {
-		progress.Update((uint32)((uint64)file.Pos() >> 10));
+		progress.Update((uint32)((uint64)cs.Pos() >> 10));
 
 		struct {
 			uint32 id;
@@ -1868,7 +1984,7 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file) {
 			uint8 aux2;
 		} hdr;
 
-		if (file.ReadData(&hdr, 8) != 8)
+		if (cs.ReadData(&hdr, 8) != 8)
 			break;
 
 		uint32 len = VDFromLE16(hdr.len);
@@ -1881,7 +1997,7 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file) {
 				baudRate = hdr.aux1 + ((uint32)hdr.aux2 << 8);
 
 				if (!baudRate)
-					throw MyError("The cassette image contains an invalid baud rate in the data block at offset %lld.", file.Pos() - 8);
+					throw MyError("The cassette image contains an invalid baud rate in the data block at offset %lld.", cs.Pos() - 8);
 
 				break;
 
@@ -1921,13 +2037,9 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file) {
 					}
 
 					while(len > 0) {
-						uint32 tc = sizeof(buf);
-						if (tc > len)
-							tc = len;
+						auto [p, tc] = cs.LockRead(len);
 
-						file.Read(buf, tc);
-
-						dataBlock->AddData(buf, tc);
+						dataBlock->AddData((const uint8 *)p, tc);
 
 						len -= tc;
 					}
@@ -1945,7 +2057,7 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file) {
 			case VDMAKEFOURCC('f', 's', 'k', ' '):{
 				// length must be even or chunk is malformed
 				if (len & 1)
-					throw MyError("Broken FSK chunk found at offset %lld.", file.Pos() - 8);
+					throw MyError("Broken FSK chunk found at offset %lld.", cs.Pos() - 8);
 
 				const sint32 gapms = hdr.aux1 + ((uint32)hdr.aux2 << 8);
 
@@ -1980,7 +2092,7 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file) {
 
 					while(len > 0) {
 						uint16 rawPulseWidth;
-						file.Read(&rawPulseWidth, 2);
+						cs.Read(&rawPulseWidth, 2);
 
 						fskBlock->AddFSKPulse(polarity, VDFromLE16(rawPulseWidth));
 
@@ -2020,7 +2132,9 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file) {
 				throw MyError("Cannot load tape: turbo encoded (PWM) data exists in image.");
 		}
 
-		file.Seek(file.Pos() + len);
+		// we need to do a null read through the buffer to ensure that the checksum
+		// updates occur
+		cs.Read(nullptr, cs.Pos() + len);
 	}
 
 	// add two second footer
@@ -2047,6 +2161,9 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file) {
 	mAudioLength = mDataLength * kATCassetteAudioSamplesPerDataSample;
 
 	mPeakMaps[1] = mPeakMaps[0];
+
+	mImageFileCRC = cs.GetCRC();
+	mImageFileSHA256 = cs.GetSHA256();
 }
 
 void ATCassetteImage::ConvertDataToPeaks() {
@@ -2078,6 +2195,11 @@ void ATCassetteImage::RefreshPeaksFromData(uint32 startSample, uint32 endSample)
 	}
 }
 
+void ATCassetteImage::InvalidateSignatures() {
+	mImageFileCRC.reset();
+	mImageFileSHA256.reset();
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void ATCreateNewCassetteImage(IATCassetteImage **ppImage) {
@@ -2086,12 +2208,12 @@ void ATCreateNewCassetteImage(IATCassetteImage **ppImage) {
 	*ppImage = pImage.release();
 }
 
-void ATLoadCassetteImage(IVDRandomAccessStream& stream, IVDRandomAccessStream *analysisOutput, IATCassetteImage **ppImage) {
+void ATLoadCassetteImage(IVDRandomAccessStream& stream, IVDRandomAccessStream *analysisOutput, const ATCassetteLoadContext& ctx, IATCassetteImage **ppImage) {
 	vdrefptr<ATCassetteImage> pImage(new ATCassetteImage);
 
 	VDBufferedStream bs(&stream, 65536);
 
-	pImage->Load(bs, analysisOutput);
+	pImage->Load(bs, analysisOutput, ctx);
 
 	*ppImage = pImage.release();
 }

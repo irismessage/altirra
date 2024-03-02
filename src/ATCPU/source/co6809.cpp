@@ -61,14 +61,15 @@ void ATCoProc6809::SetHistoryBuffer(ATCPUHistoryEntry buffer[131072]) {
 }
 
 void ATCoProc6809::SetCC(uint8 cc) {
+	uint8 prevCC = mCC;
 	mCC = cc;
 
 	if (!mbIntAttention) {
-		const uint8 setBits = cc & ~mCC;
+		const uint8 clearedBits = ~cc & prevCC;
 
-		if ((setBits & 0x40) && mbFirqAsserted)
+		if ((clearedBits & 0x40) && mbFirqAsserted)
 			mbIntAttention = true;
-		else if ((setBits & 0x10) && mbIrqAsserted)
+		else if ((clearedBits & 0x10) && mbIrqAsserted)
 			mbIntAttention = true;
 	}
 }
@@ -162,7 +163,7 @@ void ATCoProc6809::AssertIrq() {
 	if (!mbIrqAsserted) {
 		mbIrqAsserted = true;
 
-		if (mCC & 0x10)
+		if (!(mCC & 0x10))
 			mbIntAttention = true;
 	}
 }
@@ -175,7 +176,7 @@ void ATCoProc6809::AssertFirq() {
 	if (!mbFirqAsserted) {
 		mbFirqAsserted = true;
 
-		if (mCC & 0x40)
+		if (!(mCC & 0x40))
 			mbIntAttention = true;
 	}
 }
@@ -236,28 +237,8 @@ void ATCoProc6809::RecordInterrupt(bool irq, bool nmi) {
 	if (!mpHistory)
 		return;
 
-	ATCPUHistoryEntry * VDRESTRICT he = &mpHistory[mHistoryIndex++ & 131071];
-
-	he->mCycle = mCyclesBase - mCyclesLeft;
-	he->mUnhaltedCycle = mCyclesBase - mCyclesLeft;
-	he->mEA = 0xFFFFFFFFUL;
-	he->mPC = mPC - 1;
-	he->mP = mCC;
-	he->mA = mA;
-	he->mExt.mAH = mB;
-	he->mX = (uint8)mX;
-	he->mExt.mXH = (uint8)(mX >> 8);
-	he->mY = (uint8)mY;
-	he->mExt.mYH = (uint8)(mY >> 8);
-	he->mS = (uint8)mS;
-	he->mExt.mSH = (uint8)(mS >> 8);
-	he->mbIRQ = irq;
-	he->mbNMI = nmi;
-	he->mSubCycle = 0;
-	he->mbEmulation = true;
-	he->mK = mDP;
-	he->mB = 0;
-	he->mD = mU;
+	mbHistoryPendingIRQ = irq;
+	mbHistoryPendingNMI = nmi;
 }
 
 const uint8 *ATCoProc6809::RegenerateDecodeTables() {

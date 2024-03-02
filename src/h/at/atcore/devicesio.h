@@ -138,6 +138,7 @@
 
 class IATDeviceSIO;
 class IATDeviceRawSIO;
+class IATObjectState;
 
 struct ATDeviceSIOCommand {
 	uint8 mDevice;
@@ -228,6 +229,15 @@ public:
 	// Changes every time the serial input register in POKEY is reset.
 	virtual uint32 GetRecvResetCounter() const = 0;
 
+	// Saves active command state for the given device. Returns null if no command is
+	// active for the given device, or if the current active command is for another
+	// device.
+	virtual void SaveActiveCommandState(const IATDeviceSIO *device, IATObjectState **state) const = 0;
+
+	// Loads active command state for the current device. Any other active command is
+	// aborted.
+	virtual void LoadActiveCommandState(IATDeviceSIO *device, IATObjectState *state) = 0;
+
 	virtual void AddRawDevice(IATDeviceRawSIO *dev) = 0;
 	virtual void RemoveRawDevice(IATDeviceRawSIO *dev) = 0;
 	virtual void SendRawByte(uint8 byte, uint32 cyclesPerBit, bool synchronous = false, bool forceFramingError = false, bool simulateInput = true) = 0;
@@ -237,6 +247,10 @@ public:
 	// so true (asserted) means low and active, and false (negated) means high and not active.
 	virtual bool IsSIOCommandAsserted() const = 0;
 	virtual bool IsSIOMotorAsserted() const = 0;
+
+	// Returns true if the SIO ready line is asserted (high), which means that the computer
+	// is turned on.
+	virtual bool IsSIOReadyAsserted() const = 0;
 
 	// Control SIO interrupt and proceed lines. These lines are normally high and active
 	// low if any device is pulling them low.

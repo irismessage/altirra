@@ -106,11 +106,15 @@ HWND ATFindOtherInstance() {
 	return helper.Run();
 }
 
-bool ATNotifyOtherInstance(const VDCommandLine& cmdLine) {
+bool ATNotifyOtherInstance(VDCommandLine& cmdLine) {
 	HWND hwndOther = ATFindOtherInstance();
 
 	if (!hwndOther)
 		return false;
+
+	// remove switches normally handled in instance init and which won't be handled
+	// here, but we don't want to cause an error
+	cmdLine.FindAndRemoveSwitch(L"dark");
 
 	VDStringW s;
 

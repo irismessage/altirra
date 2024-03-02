@@ -56,6 +56,12 @@ void OnCommandDebugToggleAutoLoadKernelSymbols() {
 	g_sim.SetAutoLoadKernelSymbolsEnabled(!g_sim.IsAutoLoadKernelSymbolsEnabled());
 }
 
+void OnCommandDebugToggleAutoLoadSystemSymbols() {
+	IATDebugger *dbg = ATGetDebugger();
+
+	dbg->SetAutoLoadSystemSymbols(!dbg->IsAutoLoadSystemSymbolsEnabled());
+}
+
 void OnCommandDebugChangeFontDialog() {
 	ATUIShowDialogDebugFont(ATUIGetMainWindow());
 }
@@ -202,6 +208,7 @@ namespace ATCommands {
 
 		{ "Debug.ToggleAutoReloadRoms", OnCommandDebugToggleAutoReloadRoms, nullptr, [] { return ToChecked(g_sim.IsROMAutoReloadEnabled()); } },
 		{ "Debug.ToggleAutoLoadKernelSymbols", OnCommandDebugToggleAutoLoadKernelSymbols, nullptr, [] { return ToChecked(g_sim.IsAutoLoadKernelSymbolsEnabled()); } },
+		{ "Debug.ToggleAutoLoadSystemSymbols", OnCommandDebugToggleAutoLoadSystemSymbols, nullptr, [] { return ToChecked(ATGetDebugger()->IsAutoLoadSystemSymbolsEnabled()); } },
 
 		MakeSymbolLoadCommand<false, ATDebuggerSymbolLoadMode::Disabled>("Debug.PreStartSymbolLoadDisabled"),
 		MakeSymbolLoadCommand<false, ATDebuggerSymbolLoadMode::Deferred>("Debug.PreStartSymbolLoadDeferred"),

@@ -6,8 +6,14 @@
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="source\TestCoProc_6502.cpp" />
+    <ClCompile Include="source\TestCore_Checksum.cpp" />
+    <ClCompile Include="source\TestCore_VFS.cpp" />
+    <ClCompile Include="source\TestDebugger_HistoryTree.cpp" />
     <ClCompile Include="source\TestSystem_Function.cpp" />
     <ClCompile Include="source\TestSystem_Int128.cpp" />
+    <ClCompile Include="source\TestSystem_Math.cpp" />
+    <ClCompile Include="source\TestSystem_Zip.cpp" />
     <ClCompile Include="source\utils.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -37,7 +43,7 @@
   <ItemDefinitionGroup>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>$(VDLibPath)\system.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(VDLibPath)\system.lib;$(VDLibPath)\atcore.lib;$(VDLibPath)\atcpu.lib;$(VDLibPath)\atdebugger.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

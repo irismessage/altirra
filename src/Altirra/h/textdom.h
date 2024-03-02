@@ -41,9 +41,10 @@ namespace nsVDTextDOM {
 		int		mStart;
 		sint32	mForeColor;
 		sint32	mBackColor;
+		uint32	mSelectionCode;
 
 		static Span MakeSpan(int start, sint32 fore, sint32 back) {
-			Span sp = { start, fore, back };
+			Span sp = { start, fore, back, 0 };
 			return sp;
 		}
 	};
@@ -160,10 +161,12 @@ namespace nsVDTextDOM {
 		void RecomputeParaPositions();
 
 	protected:
+		typedef vdfastvector<Paragraph *> Paragraphs;
+		void RecomputeParaPositions(int y, Paragraphs::iterator it);
+
 		int mTotalHeight;
 		IDocumentCallback *mpCB;
 
-		typedef vdfastvector<Paragraph *> Paragraphs;
 		Paragraphs	mParagraphs;
 
 		typedef vdlist<Iterator> Iterators;

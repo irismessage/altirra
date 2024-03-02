@@ -1013,7 +1013,7 @@ namespace AT6809Dsm {
 /*50*/	NEGB,	{},		{},		COMB,	LSRB,	{},		RORB,	ASRB,	ASLB,	ROLB,	DECB,	{},		INCB,	TSTB,	{},		CLRB,
 /*60*/	NEG-x,	{},		{},		COM-x,	LSR-x,	{},		ROR-x,	ASR-x,	ASL-x,	ROL-x,	DEC-x,	{},		INC-x,	TST-x,	JMP-x,	CLR-x,
 /*70*/	NEG-e,	{},		{},		COM-e,	LSR-e,	{},		ROR-e,	ASR-e,	ASL-e,	ROL-e,	DEC-e,	{},		INC-e,	TST-e,	JMP-e,	CLR-e,
-/*80*/	SUBA-i,	CMPA-i,	SBCA-i,	SUBD-il,ANDA-i,	BITA-i,	LDA-i,	{},		EORA-i,	ADCA-i,	ORA-i,	ADDA-i,	CMPX-i,	BSR-r,	LDX-il,	{},
+/*80*/	SUBA-i,	CMPA-i,	SBCA-i,	SUBD-il,ANDA-i,	BITA-i,	LDA-i,	{},		EORA-i,	ADCA-i,	ORA-i,	ADDA-i,	CMPX-il,BSR-r,	LDX-il,	{},
 /*90*/	SUBA-d,	CMPA-d,	SBCA-d,	SUBD-d,	ANDA-d,	BITA-d,	LDA-d,	STA-d,	EORA-d,	ADCA-d,	ORA-d,	ADDA-d,	CMPX-d,	JSR-d,	LDX-d,	STX-d,
 /*A0*/	SUBA-x,	CMPA-x,	SBCA-x,	SUBD-x,	ANDA-x,	BITA-x,	LDA-x,	STA-x,	EORA-x,	ADCA-x,	ORA-x,	ADDA-x,	CMPX-x,	JSR-x,	LDX-x,	STX-x,
 /*B0*/	SUBA-e,	CMPA-e,	SBCA-e,	SUBD-e,	ANDA-e,	BITA-e,	LDA-e,	STA-e,	EORA-e,	ADCA-e,	ORA-e,	ADDA-e,	CMPX-e,	JSR-e,	LDX-e,	STX-e,
@@ -1220,25 +1220,13 @@ void ATDisassembleCaptureInsnContext(IATDebugTarget *target, uint32 globalAddr, 
 		hent.mOpcode[i] = target->DebugReadByte(hent.mGlobalPCBase + ((globalAddr + i) & 0xffff));
 }
 
-uint16 ATDisassembleInsn(char *buf, uint16 addr, bool decodeReferences) {
-	VDStringA line;
-
-	addr = ATDisassembleInsn(line, addr, decodeReferences);
-
-	line += '\n';
-	line += (char)0;
-	line.copy(buf, VDStringA::npos);
-
-	return addr;
-}
-
 uint16 ATDisassembleInsn(VDStringA& line, uint16 addr, bool decodeReferences) {
 	ATCPUHistoryEntry hent;
 	ATDisassembleCaptureRegisterContext(hent);
 	ATDisassembleCaptureInsnContext(addr, hent.mK, hent);
 
 	const ATCPUEmulator& cpu = g_sim.GetCPU();
-	return ATDisassembleInsn(line, g_sim.GetDebugTarget(), cpu.GetDisasmMode(), hent, decodeReferences, false, true, true, true);
+	return ATDisassembleInsn(line, g_sim.GetDebugTarget(), cpu.GetDisasmMode(), hent, decodeReferences, false, true, true, true).mNextPC;
 }
 
 namespace {
@@ -1285,7 +1273,7 @@ namespace {
 	}
 }
 
-uint16 ATDisassembleInsnZ80(VDStringA& line, const ATCPUHistoryEntry& hent, bool showCodeBytes, bool lowercaseOps) {
+ATDisasmResult ATDisassembleInsnZ80(VDStringA& line, const ATCPUHistoryEntry& hent, bool showCodeBytes, bool lowercaseOps) {
 	// Valid patterns:
 	//	xx
 	//	DD/FD xx
@@ -1296,6 +1284,7 @@ uint16 ATDisassembleInsnZ80(VDStringA& line, const ATCPUHistoryEntry& hent, bool
 	// DD/FD must be the first; only the last one is used. We have to validate
 	// this due to the possibility of endless prefixes.
 
+	ATDisasmResult result {};
 	const uint8 op0 = hent.mOpcode[0];
 	const Z80Insn *insn = &kZ80Insns[op0];
 	unsigned oplen = 1;
@@ -1362,6 +1351,8 @@ uint16 ATDisassembleInsnZ80(VDStringA& line, const ATCPUHistoryEntry& hent, bool
 
 	if (!s) {
 		line.append(lowercaseOps ? "defb    " : "DEFB    ");
+
+		result.mOperandStart = (uint32)line.size();
 		AppendIntelHex8(line, op0, lowercaseOps);
 	} else {
 		for(int i=0; i<2; ++i) {
@@ -1390,6 +1381,9 @@ uint16 ATDisassembleInsnZ80(VDStringA& line, const ATCPUHistoryEntry& hent, bool
 
 			if (token) {
 				s += 2;
+
+				if (!result.mOperandStart)
+					result.mOperandStart = (uint32)line.size();
 
 				switch(token) {
 					case kATZ80TokenMode_None:
@@ -1441,10 +1435,16 @@ uint16 ATDisassembleInsnZ80(VDStringA& line, const ATCPUHistoryEntry& hent, bool
 		line += s;
 	}
 
-	return (uint16)(hent.mPC + oplen);
+	if (result.mOperandStart)
+		result.mOperandEnd = (uint32)line.size();
+
+	result.mNextPC = (uint16)(hent.mPC + oplen);
+	return result;
 }
 
-uint16 ATDisassembleInsn8048(VDStringA& line, const ATCPUHistoryEntry& hent, bool showCodeBytes, bool lowercaseOps) {
+ATDisasmResult ATDisassembleInsn8048(VDStringA& line, const ATCPUHistoryEntry& hent, bool showCodeBytes, bool lowercaseOps) {
+	ATDisasmResult result {};
+
 	const uint8 op0 = hent.mOpcode[0];
 	const MCS48Insn *insn = &kMCS48Insns[op0];
 	unsigned oplen = 1;
@@ -1481,7 +1481,12 @@ uint16 ATDisassembleInsn8048(VDStringA& line, const ATCPUHistoryEntry& hent, boo
 
 	if (!s) {
 		line.append(lowercaseOps ? "defb    " : "DEFB    ");
+
+		result.mOperandStart = (uint32)line.size();
+
 		AppendIntelHex8(line, op0, lowercaseOps);
+
+		result.mOperandEnd = (uint32)line.size();
 	} else {
 		const size_t firstLen = insn->prefixLen;
 		const char *split = (const char *)memchr(s, ' ', firstLen);
@@ -1507,6 +1512,8 @@ uint16 ATDisassembleInsn8048(VDStringA& line, const ATCPUHistoryEntry& hent, boo
 		if (insn->token) {
 			s += 2;
 
+			result.mOperandStart = (uint32)line.size();
+
 			switch(insn->token) {
 				case kATMCS48TokenMode_None:
 					break;
@@ -1523,16 +1530,21 @@ uint16 ATDisassembleInsn8048(VDStringA& line, const ATCPUHistoryEntry& hent, boo
 					AppendIntelHex8(line, hent.mOpcode[oplen - 1], lowercaseOps);
 					break;
 			}
+
+			result.mOperandEnd = (uint32)line.size();
 		}
 
 		line += s;
 	}
 
-	return (uint16)(hent.mPC + oplen);
+	result.mNextPC = (uint16)(hent.mPC + oplen);
+	return result;
 }
 
-uint16 ATDisassembleInsn6809(VDStringA& line, const ATCPUHistoryEntry& hent, bool decodeRefsHistory, bool showCodeBytes, bool lowercaseOps) {
+ATDisasmResult ATDisassembleInsn6809(VDStringA& line, const ATCPUHistoryEntry& hent, bool decodeRefsHistory, bool showCodeBytes, bool lowercaseOps) {
 	using AT6809Dsm::Insn;
+
+	ATDisasmResult result {};
 
 	const uint8 insnBuf[5]={
 		hent.mOpcode[0],
@@ -1580,11 +1592,16 @@ uint16 ATDisassembleInsn6809(VDStringA& line, const ATCPUHistoryEntry& hent, boo
 			switch(arg[0] & 0b0'10011111) {
 				case 0b1'00'01000:		// 8-bit offset
 				case 0b1'00'01100:		// 8-bit PC relative
+				case 0b1'00'11000:		// 8-bit offset indirect
+				case 0b1'00'11100:		// 8-bit PC relative indirect
 					oplen += 2;
 					break;
 
 				case 0b1'00'01001:		// 16-bit register relative
 				case 0b1'00'01101:		// 16-bit PC relative
+				case 0b1'00'11001:		// 16-bit register relative indirect
+				case 0b1'00'11101:		// 16-bit PC relative indirect
+				case 0b1'00'11111:		// 16-bit extended indirect
 					oplen += 3;
 					break;
 
@@ -1626,6 +1643,9 @@ uint16 ATDisassembleInsn6809(VDStringA& line, const ATCPUHistoryEntry& hent, boo
 	if (!s) {
 		line.append(lowercaseOps ? "fcb     $  " : "FCB     $  ");
 		WriteHex8(line, 2, op0);
+
+		result.mOperandEnd = (uint32)line.size();
+		result.mOperandStart = result.mOperandEnd - 3;
 	} else {
 		const auto startLen = line.size();
 
@@ -1639,6 +1659,8 @@ uint16 ATDisassembleInsn6809(VDStringA& line, const ATCPUHistoryEntry& hent, boo
 		if (insn->mMode) {
 			sint32 ea = -1;
 			line.append(8-strlen(s), ' ');
+
+			result.mOperandStart = (uint32)line.size();
 
 			switch(insn->mMode) {
 				case AT6809Dsm::i:
@@ -1660,7 +1682,7 @@ uint16 ATDisassembleInsn6809(VDStringA& line, const ATCPUHistoryEntry& hent, boo
 					break;
 
 				case AT6809Dsm::r:
-					line.append_sprintf("$%04X", hent.mPC + oplen + (sint8)arg[0]);
+					line.append_sprintf("$%04X", (hent.mPC + oplen + (sint8)arg[0]) & 0xFFFF);
 					break;
 
 				case AT6809Dsm::rl:
@@ -1821,6 +1843,8 @@ uint16 ATDisassembleInsn6809(VDStringA& line, const ATCPUHistoryEntry& hent, boo
 				}
 			}
 
+			result.mOperandEnd = (uint32)line.size();
+
 			if (decodeRefsHistory && ea >= 0) {
 				line.append(2 + 42 - std::min<size_t>(42, line.size() - lineStart), ' ');
 				line.append_sprintf(";$%04X", ea);
@@ -1828,10 +1852,11 @@ uint16 ATDisassembleInsn6809(VDStringA& line, const ATCPUHistoryEntry& hent, boo
 		}
 	}
 
-	return (uint16)(hent.mPC + oplen);
+	result.mNextPC = (uint16)(hent.mPC + oplen);
+	return result;
 }
 
-uint16 ATDisassembleInsn(VDStringA& line,
+ATDisasmResult ATDisassembleInsn(VDStringA& line,
 	IATDebugTarget *target,
 	ATDebugDisasmMode disasmMode,
 	const ATCPUHistoryEntry& hent,
@@ -1855,6 +1880,7 @@ uint16 ATDisassembleInsn(VDStringA& line,
 	if (disasmMode == kATDebugDisasmMode_6809)
 		return ATDisassembleInsn6809(line, hent, decodeRefsHistory, showCodeBytes, lowercaseOps);
 
+	ATDisasmResult result {};
 	ATCPUSubMode subMode = kATCPUSubMode_6502;
 
 	switch(disasmMode) {
@@ -2039,10 +2065,14 @@ uint16 ATDisassembleInsn(VDStringA& line,
 			--opnamepad;
 	}
 
-	while(opnamepad-- > 0)
-		line += ' ';
+	if (opnamepad > 0)
+		line.append((uint32)opnamepad, ' ');
 
-	if (mode == kModeImm) {
+	result.mOperandStart = (uint32)line.size() + 1;
+
+	if (mode == kModeInvalid || mode == kModeImplied) {
+		result.mOperandStart = 0;
+	} else if (mode == kModeImm) {
 		line.append(" #$FF");
 		WriteHex8(line, 2, byte1);
 	} else if (mode == kModeImmMode16 || mode == kModeImmIndex16) {
@@ -2056,7 +2086,7 @@ uint16 ATDisassembleInsn(VDStringA& line,
 		line.append_sprintf(" $%02X", byte1);
 	} else if (mode == kModeMove) {
 		line.append_sprintf(" $%02X,$%02X", byte2, byte1);
-	} else if (mode != kModeInvalid && mode != kModeImplied) {
+	} else {
 		line += ' ';
 
 		switch(mode) {
@@ -2455,6 +2485,8 @@ uint16 ATDisassembleInsn(VDStringA& line,
 				break;
 		}
 
+		result.mOperandEnd = (uint32)line.size();
+
 		if (decodeRefsHistory && ea != 0xFFFFFFFFUL) {
 			switch(mode) {
 				case kModeZpX:			// bank 0
@@ -2560,7 +2592,11 @@ uint16 ATDisassembleInsn(VDStringA& line,
 		}
 	}
 
-	return addr + opsize;
+	if (result.mOperandStart && !result.mOperandEnd)
+		result.mOperandEnd = (uint32)line.size();
+
+	result.mNextPC = addr + opsize;
+	return result;
 }
 
 uint16 ATDisassembleInsn(uint16 addr, uint8 bank) {
@@ -2571,7 +2607,7 @@ uint16 ATDisassembleInsn(uint16 addr, uint8 bank) {
 	const ATCPUEmulator& cpu = g_sim.GetCPU();
 
 	VDStringA buf;
-	addr = ATDisassembleInsn(buf, g_sim.GetDebugTarget(), cpu.GetDisasmMode(), hent, true, false, true, true, true);
+	addr = ATDisassembleInsn(buf, g_sim.GetDebugTarget(), cpu.GetDisasmMode(), hent, true, false, true, true, true).mNextPC;
 	buf += '\n';
 	ATConsoleWrite(buf.c_str());
 

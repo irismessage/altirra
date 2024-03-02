@@ -31,14 +31,16 @@
 
 extern ATLogChannel g_ATLCDiskEmu;
 
+template<bool T_AT88>
 void ATCreateDeviceDiskDrivePercom(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDeviceDiskDrivePercom> p(new ATDeviceDiskDrivePercom);
+	vdrefptr<ATDeviceDiskDrivePercom> p(new ATDeviceDiskDrivePercom(T_AT88));
 	p->SetSettings(pset);
 
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercom = { "diskdrivepercom", "diskdrivepercom", L"Percom disk drive (full emulation)", ATCreateDeviceDiskDrivePercom };
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercomRFD = { "diskdrivepercom", "diskdrivepercom", L"Percom RFD disk drive (full emulation)", ATCreateDeviceDiskDrivePercom<false> };
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercomAT = { "diskdrivepercomat", "diskdrivepercomat", L"Percom AT disk drive (full emulation)", ATCreateDeviceDiskDrivePercom<true> };
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -58,11 +60,28 @@ void ATDeviceDiskDrivePercom::Drive::OnAudioModeChanged() {
 	mpParent->OnAudioModeChanged(mIndex);
 }
 
+bool ATDeviceDiskDrivePercom::Drive::IsImageSupported(const IATDiskImage& image) const {
+	return true;
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
-ATDeviceDiskDrivePercom::ATDeviceDiskDrivePercom() {
+ATDeviceDiskDrivePercom::ATDeviceDiskDrivePercom(bool at88)
+	: mbIsAT88(at88)
+{
 	mBreakpointsImpl.BindBPHandler(mCoProc);
 	mBreakpointsImpl.SetStepHandler(this);
+
+	mSerialCmdQueue.SetOnDriveCommandStateChanged(
+		[this](bool asserted) {
+			mACIA.SetCTS(asserted);
+		}
+	);
+
+	mTargetHistoryProxy.Init(mCoProc);
+	InitTargetControl(mTargetHistoryProxy, 1000000.0, kATDebugDisasmMode_6809, &mBreakpointsImpl);
+
+	mFirmwareControl.Init(mROM, sizeof mROM, mbIsAT88 ? kATFirmwareType_PercomAT : kATFirmwareType_Percom);
 }
 
 ATDeviceDiskDrivePercom::~ATDeviceDiskDrivePercom() {
@@ -71,22 +90,19 @@ ATDeviceDiskDrivePercom::~ATDeviceDiskDrivePercom() {
 void *ATDeviceDiskDrivePercom::AsInterface(uint32 iid) {
 	switch(iid) {
 		case IATDeviceScheduling::kTypeID: return static_cast<IATDeviceScheduling *>(this);
-		case IATDeviceFirmware::kTypeID: return static_cast<IATDeviceFirmware *>(this);
+		case IATDeviceFirmware::kTypeID: return static_cast<IATDeviceFirmware *>(&mFirmwareControl);
 		case IATDeviceDiskDrive::kTypeID: return static_cast<IATDeviceDiskDrive *>(this);
 		case IATDeviceSIO::kTypeID: return static_cast<IATDeviceSIO *>(this);
 		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(&mAudioPlayer);
-		case IATDeviceDebugTarget::kTypeID: return static_cast<IATDeviceDebugTarget *>(this);
-		case IATDebugTargetBreakpoints::kTypeID: return static_cast<IATDebugTargetBreakpoints *>(&mBreakpointsImpl);
-		case IATDebugTargetHistory::kTypeID: return static_cast<IATDebugTargetHistory *>(this);
-		case IATDebugTargetExecutionControl::kTypeID: return static_cast<IATDebugTargetExecutionControl *>(this);
 		case ATFDCEmulator::kTypeID: return &mFDC;
+		case ATPIAEmulator::kTypeID: return mbIsAT88 ? &mPIA : nullptr;
 	}
 
-	return nullptr;
+	return ATDiskDriveDebugTargetControl::AsInterface(iid);
 }
 
 void ATDeviceDiskDrivePercom::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mpDef = &g_ATDeviceDefDiskDrivePercom;
+	info.mpDef = mbIsAT88 ? &g_ATDeviceDefDiskDrivePercomAT : &g_ATDeviceDefDiskDrivePercomRFD;
 }
 
 void ATDeviceDiskDrivePercom::GetSettingsBlurb(VDStringW& buf) {
@@ -105,7 +121,10 @@ void ATDeviceDiskDrivePercom::GetSettingsBlurb(VDStringW& buf) {
 }
 
 void ATDeviceDiskDrivePercom::GetSettings(ATPropertySet& settings) {
-	settings.SetUint32("id", mDriveId);
+	if (mbIsAT88)
+		settings.SetBool("ddcapable", mbIsAT88DoubleDensity);
+	else
+		settings.SetUint32("id", mDriveId);
 
 	VDStringA s;
 	for(uint32 i=0; i<kNumDrives; ++i) {
@@ -138,50 +157,108 @@ bool ATDeviceDiskDrivePercom::SetSettings(const ATPropertySet& settings) {
 		}
 	}
 
-	uint32 newDriveId = settings.GetUint32("id", mDriveId) & 7;
+	if (mbIsAT88) {
+		bool dd = settings.GetBool("ddcapable", true);
 
-	if (mDriveId != newDriveId) {
-		mDriveId = newDriveId;
-		change = true;
+		if (mbIsAT88DoubleDensity != dd) {
+			mbIsAT88DoubleDensity = dd;
+			change = true;
+		}
+	} else {
+		uint32 newDriveId = settings.GetUint32("id", mDriveId) & 7;
+
+		if (mDriveId != newDriveId) {
+			mDriveId = newDriveId;
+			change = true;
+		}
 	}
 
 	return !change;
 }
 
 void ATDeviceDiskDrivePercom::Init() {
+	mSerialCmdQueue.Init(&mDriveScheduler, mpSIOMgr);
+	mSerialXmitQueue.Init(mpScheduler, mpSIOMgr);
+
 	uintptr *readmap = mCoProc.GetReadMap();
 	uintptr *writemap = mCoProc.GetWriteMap();
 
+	ATCoProcMemoryMapView mmap(readmap, writemap);
+
 	// initialize memory map
-	for(int i=0; i<256; ++i) {
-		readmap[i] = (uintptr)mDummyRead - (i << 8);
-		writemap[i] = (uintptr)mDummyWrite - (i << 8);
-	}
+	mmap.Clear(mDummyRead, mDummyWrite);
 
-	// Map hardware registers to $D000-D3FF. The individual sections are selected
-	// by A2-A5, so all page mappings are the same here.
-	mReadNodeHardware.mpThis = this;
-	mReadNodeHardware.mpRead = [](uint32 addr, void *thisPtr) { return ((ATDeviceDiskDrivePercom *)thisPtr)->OnHardwareRead(addr); };
-	mReadNodeHardware.mpDebugRead = [](uint32 addr, void *thisPtr) { return ((ATDeviceDiskDrivePercom *)thisPtr)->OnHardwareDebugRead(addr); };
+	if (mbIsAT88) {
+		// AT-88 memory map:
+		//
+		//	$0000-0FFF		Hardware registers
+		//		$04-07			1771/1795 FDC
+		//		$08-0B			6821 PIA
+		//		$0C-0F			6851 ACIA
+		//	$5000-53FF		1K static RAM
+		//	$F800-FFFF		2K ROM
 
-	mWriteNodeHardware.mpThis = this;
-	mWriteNodeHardware.mpWrite = [](uint32 addr, uint8 value, void *thisPtr) { ((ATDeviceDiskDrivePercom *)thisPtr)->OnHardwareWrite(addr, value); };
+		mReadNodeHardware.mpThis = this;
+		mReadNodeHardware.mpRead = [](uint32 addr, void *thisPtr) { return ((ATDeviceDiskDrivePercom *)thisPtr)->OnHardwareReadAT(addr); };
+		mReadNodeHardware.mpDebugRead = [](uint32 addr, void *thisPtr) { return ((ATDeviceDiskDrivePercom *)thisPtr)->OnHardwareDebugReadAT(addr); };
 
-	for(int i=0; i<4; ++i) {
-		readmap[i+0xD0] = mReadNodeHardware.AsBase();
-		writemap[i+0xD0] = mWriteNodeHardware.AsBase();
-	}
+		mWriteNodeHardware.mpThis = this;
+		mWriteNodeHardware.mpWrite = [](uint32 addr, uint8 value, void *thisPtr) { ((ATDeviceDiskDrivePercom *)thisPtr)->OnHardwareWriteAT(addr, value); };
 
-	// map RAM to $DC00-DFFF
-	for(int i=0; i<4; ++i) {
-		readmap[i+0xDC] = (uintptr)mRAM - 0xDC00;
-		writemap[i+0xDC] = (uintptr)mRAM - 0xDC00;
-	}
+		mmap.SetReadHandler(0x00, 0x10, mReadNodeHardware);
+		mmap.SetWriteHandler(0x00, 0x10, mWriteNodeHardware);
+		mmap.SetMemory(0x10, 0x04, mRAM);
+		mmap.MirrorFwd(0x14, 0x0C, 0x10);
+		mmap.SetReadMem(0x30, 0x08, mROM);
+		mmap.SetReadMem(0x38, 0x08, mROM);
+		mmap.MirrorFwd(0x40, 0xC0, 0x00);
 
-	// map ROM to $F000-FFFF (mirrored)
-	for(int i=0; i<8; ++i) {
-		readmap[i+0xF0] = (uintptr)mROM - 0xF000;
-		readmap[i+0xF8] = (uintptr)mROM - 0xF800;
+		mPIA.SetIRQHandler(
+			[this](uint32 mask, bool asserted) {
+				if (mask & kATIRQSource_PIAA2) {
+					if (asserted)
+						mCoProc.AssertIrq();
+					else
+						mCoProc.NegateIrq();
+				}
+			}
+		);
+		mPIA.Init(&mDriveScheduler);
+		mPIA.AllocInput();
+		mPIA.AllocOutput(
+			[](void *thisptr, uint32 state) {
+				((ATDeviceDiskDrivePercom *)thisptr)->OnPIAPortBChanged(state);
+			},
+			this, 0xFF00
+		);
+
+		mPIA.SetCA2(false);
+	} else {
+		// RFD memory map:
+		//
+		//	$D000-D3FF		Hardware registers
+		//	$DC00-DFFF		1K static RAM
+		//	$F000-F7FF		2K ROM (mirror)
+		//	$F800-FFFF		2K ROM
+
+		// Map hardware registers to $D000-D3FF. The individual sections are selected
+		// by A2-A5, so all page mappings are the same here.
+		mReadNodeHardware.mpThis = this;
+		mReadNodeHardware.mpRead = [](uint32 addr, void *thisPtr) { return ((ATDeviceDiskDrivePercom *)thisPtr)->OnHardwareReadRFD(addr); };
+		mReadNodeHardware.mpDebugRead = [](uint32 addr, void *thisPtr) { return ((ATDeviceDiskDrivePercom *)thisPtr)->OnHardwareDebugReadRFD(addr); };
+
+		mWriteNodeHardware.mpThis = this;
+		mWriteNodeHardware.mpWrite = [](uint32 addr, uint8 value, void *thisPtr) { ((ATDeviceDiskDrivePercom *)thisPtr)->OnHardwareWriteRFD(addr, value); };
+
+		mmap.SetReadHandler(0xD0, 0x04, mReadNodeHardware);
+		mmap.SetWriteHandler(0xD0, 0x04, mWriteNodeHardware);
+
+		// map RAM to $DC00-DFFF
+		mmap.SetMemory(0xDC, 0x04, mRAM);
+
+		// map ROM to $F000-FFFF (mirrored)
+		mmap.SetReadMem(0xF0, 0x08, mROM);
+		mmap.SetReadMem(0xF8, 0x08, mROM);
 	}
 
 	mDriveScheduler.SetRate(VDFraction(1000000, 1));
@@ -191,21 +268,78 @@ void ATDeviceDiskDrivePercom::Init() {
 	mACIA.SetMasterClockPeriod(13 * 16);
 	mACIA.SetTransmitFn([this](uint8 v, uint32 cyclesPerBit) { OnACIATransmit(v, cyclesPerBit); });
 
-	mFDC.Init(&mDriveScheduler, 288.0f, ATFDCEmulator::kType_279X);
+	mFDC.Init(&mDriveScheduler, 288.0f, 2.0f, ATFDCEmulator::kType_2793);
 	mFDC.SetAutoIndexPulse(true);
-	mFDC.SetOnDrqChange([this](bool drq) { OnFDCDataRequest(drq); });
-	mFDC.SetOnIrqChange([this](bool irq) { OnFDCInterruptRequest(irq); });
+	mFDC.SetOnDrqChange(
+		[this](bool drq) {
+			if (!mbSelectFDC2)
+				OnFDCDataRequest(drq);
+		}
+	);
+	mFDC.SetOnIrqChange(
+		[this](bool irq) {
+			if (!mbSelectFDC2)
+				OnFDCInterruptRequest(irq);
+		}
+	);
+
 	mFDC.SetOnStep([this](bool inward) { OnFDCStep(inward); });
 
+	if (mbIsAT88) {
+		mFDC.SetDensity(true);
+		mFDC.SetAutoIndexPulse(false);
+
+		mFDC2.Init(&mDriveScheduler, 288.0f, 2.0f, ATFDCEmulator::kType_1771);
+		mFDC2.SetAutoIndexPulse(false);
+		mFDC2.SetOnDrqChange(
+			[this](bool drq) {
+				if (mbSelectFDC2)
+					OnFDCDataRequest(drq);
+			}
+		);
+		mFDC2.SetOnIrqChange(
+			[this](bool irq) {
+				if (mbSelectFDC2)
+					OnFDCInterruptRequest(irq);
+			}
+		);
+
+		mFDC2.SetOnStep([this](bool inward) { OnFDCStep(inward); });
+	}
+
+	int driveIndex = 0;
 	for(auto& drive : mDrives) {
-		mDriveScheduler.UnsetEvent(drive.mpEventDriveDiskChange);
-		drive.mDiskChangeState = 0;
+		drive.mDiskChangeHandler.Init(mpScheduler);
+		drive.mDiskChangeHandler.SetOutputStateFns(
+			[&drive, driveIndex, this](std::optional<bool> wpState) {
+				if (mSelectedDrive == driveIndex) {
+					mFDC.SetWriteProtectOverride(wpState);
+
+					if (mbIsAT88) {
+						mFDC2.SetWriteProtectOverride(wpState);
+
+						// write protect -> PA6
+						mPIA.SetInput(0, wpState.value_or(false) ? ~UINT32_C(0x40) : 0);
+					}
+				}
+			},
+			[&drive, driveIndex, this](std::optional<bool> readyState) {
+				if (mSelectedDrive == driveIndex) {
+					mFDC.SetDiskImageReady(readyState);
+
+					if (mbIsAT88)
+						mFDC2.SetDiskImageReady(readyState);
+				}
+			}
+		);
 
 		drive.OnDiskChanged(false);
 
 		drive.OnWriteModeChanged();
 		drive.OnTimingModeChanged();
 		drive.OnAudioModeChanged();
+
+		++driveIndex;
 	}
 
 	UpdateRotationStatus();
@@ -213,18 +347,11 @@ void ATDeviceDiskDrivePercom::Init() {
 
 void ATDeviceDiskDrivePercom::Shutdown() {
 	mAudioPlayer.Shutdown();
+	mSerialCmdQueue.Shutdown();
+	mSerialXmitQueue.Shutdown();
 
-	if (mpSlowScheduler) {
-		mpSlowScheduler->UnsetEvent(mpRunEvent);
-		mpSlowScheduler = nullptr;
-	}
-
-	if (mpScheduler) {
-		mpScheduler->UnsetEvent(mpTransmitEvent);
-		mpScheduler = nullptr;
-	}
-
-	mpFwMgr = nullptr;
+	ShutdownTargetControl();
+	mFirmwareControl.Shutdown();
 
 	if (mpSIOMgr) {
 		mpSIOMgr->RemoveRawDevice(this);
@@ -232,6 +359,8 @@ void ATDeviceDiskDrivePercom::Shutdown() {
 	}
 
 	for(auto& drive : mDrives) {
+		drive.mDiskChangeHandler.Shutdown();
+
 		if (drive.mpDiskInterface) {
 			drive.mpDiskInterface->RemoveClient(&drive);
 			drive.mpDiskInterface = nullptr;
@@ -246,9 +375,6 @@ uint32 ATDeviceDiskDrivePercom::GetComputerPowerOnDelay() const {
 }
 
 void ATDeviceDiskDrivePercom::WarmReset() {
-	mLastSync = ATSCHEDULER_GETTIME(mpScheduler);
-	mLastSyncDriveTime = ATSCHEDULER_GETTIME(&mDriveScheduler);
-	mLastSyncDriveTimeSubCycles = 0;
 }
 
 void ATDeviceDiskDrivePercom::ComputerColdReset() {
@@ -261,83 +387,52 @@ void ATDeviceDiskDrivePercom::PeripheralColdReset() {
 	mACIA.Reset();
 	mFDC.Reset();
 
-	mCommandQueue.clear();
+	if (mbIsAT88)
+		mFDC2.Reset();
+
+	mSerialCmdQueue.Reset();
+	mSerialXmitQueue.Reset();
 
 	mbNmiState = false;
 	mbNmiTimeout = false;
 	mbNmiTimeoutEnabled = false;
 	mDriveScheduler.UnsetEvent(mpEventDriveTimeout);
 
-	mbDriveCommandState = false;
-	mDriveScheduler.UnsetEvent(mpEventDriveCommandChange);
-
-	mpScheduler->UnsetEvent(mpTransmitEvent);
+	ResetTargetControl();
 
 	SelectDrive(-1);
 
-	mTransmitHead = 0;
-	mTransmitTail = 0;
-	
-	mbForcedIndexPulse = false;
-
 	// start the disk drive on a track other than 0/20/39, just to make things interesting
-	for(Drive& drive : mDrives)
+	for(Drive& drive : mDrives) {
 		drive.mCurrentTrack = 20;
-
-	mFDC.SetCurrentTrack(20, false);
+		drive.mDiskChangeHandler.Reset();
+	}
 
 	mbMotorRunning = false;
+
+	mFDC.SetCurrentTrack(20, false);
 	mFDC.SetMotorRunning(false);
-	mFDC.SetDensity(false);
 	mFDC.SetWriteProtectOverride(false);
-	mFDC.SetAutoIndexPulse(true);
 	mFDC.SetSide(false);
 
-	mbExtendedRAMEnabled = false;
+	if (mbIsAT88) {
+		mFDC.OnIndexPulse(true);
+
+		mFDC2.OnIndexPulse(true);
+		mFDC2.SetCurrentTrack(20, false);
+		mFDC2.SetMotorRunning(false);
+		mFDC2.SetWriteProtectOverride(false);
+		mFDC2.SetSide(false);
+
+		mPIA.ColdReset();
+	} else {
+		mFDC.SetAutoIndexPulse(true);
+		mFDC.SetDensity(false);
+	}
 
 	mCoProc.ColdReset();
 
-	mClockDivisor = VDRoundToInt(512.0 * mDriveScheduler.GetRate().AsInverseDouble() * mpScheduler->GetRate().asDouble());
-
 	WarmReset();
-}
-
-void ATDeviceDiskDrivePercom::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
-	mpScheduler = sch;
-	mpSlowScheduler = slowsch;
-
-	mpSlowScheduler->SetEvent(1, this, 1, mpRunEvent);
-}
-
-void ATDeviceDiskDrivePercom::InitFirmware(ATFirmwareManager *fwman) {
-	mpFwMgr = fwman;
-
-	ReloadFirmware();
-}
-
-bool ATDeviceDiskDrivePercom::ReloadFirmware() {
-	const uint64 id = mpFwMgr->GetFirmwareOfType(kATFirmwareType_Percom, true);
-	
-	uint32 len = 0;
-	bool changed = false;
-	mpFwMgr->LoadFirmware(id, mROM, 0, sizeof mROM, &changed, &len, nullptr, nullptr, &mbFirmwareUsable);
-
-	return changed;
-}
-
-const wchar_t *ATDeviceDiskDrivePercom::GetWritableFirmwareDesc(uint32 idx) const {
-	return nullptr;
-}
-
-bool ATDeviceDiskDrivePercom::IsWritableFirmwareDirty(uint32 idx) const {
-	return false;
-}
-
-void ATDeviceDiskDrivePercom::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
-}
-
-ATDeviceFirmwareStatus ATDeviceDiskDrivePercom::GetFirmwareStatus() const {
-	return mbFirmwareUsable ? ATDeviceFirmwareStatus::OK : ATDeviceFirmwareStatus::Missing;
 }
 
 void ATDeviceDiskDrivePercom::InitDiskDrive(IATDiskDriveManager *ddm) {
@@ -359,199 +454,22 @@ void ATDeviceDiskDrivePercom::InitDiskDrive(IATDiskDriveManager *ddm) {
 	}
 }
 
+ATDeviceDiskDriveInterfaceClient ATDeviceDiskDrivePercom::GetDiskInterfaceClient(uint32 index) {
+	for(uint32 i=0; i<kNumDrives; ++i) {
+		if (mDrives[i].mType && !index--)
+			return { &mDrives[i], mDriveId + i };
+	}
+
+	return {};
+}
+
 void ATDeviceDiskDrivePercom::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
 	mpSIOMgr->AddRawDevice(this);
 }
 
-IATDebugTarget *ATDeviceDiskDrivePercom::GetDebugTarget(uint32 index) {
-	if (index == 0)
-		return this;
-
-	return nullptr;
-}
-
-const char *ATDeviceDiskDrivePercom::GetName() {
-	return "Disk Drive CPU";
-}
-
-ATDebugDisasmMode ATDeviceDiskDrivePercom::GetDisasmMode() {
-	return kATDebugDisasmMode_6809;
-}
-
-void ATDeviceDiskDrivePercom::GetExecState(ATCPUExecState& state) {
-	mCoProc.GetExecState(state);
-}
-
-void ATDeviceDiskDrivePercom::SetExecState(const ATCPUExecState& state) {
-	mCoProc.SetExecState(state);
-}
-
-sint32 ATDeviceDiskDrivePercom::GetTimeSkew() {
-	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	const uint32 cycles = (t - mLastSync) + ((mCoProc.GetCyclesLeft() * mClockDivisor + mSubCycleAccum + 511) >> 9);
-
-	return -(sint32)cycles;
-}
-
-uint8 ATDeviceDiskDrivePercom::ReadByte(uint32 address) {
-	return DebugReadByte(address);
-}
-
-void ATDeviceDiskDrivePercom::ReadMemory(uint32 address, void *dst, uint32 n) {
-	return DebugReadMemory(address, dst, n);
-}
-
-uint8 ATDeviceDiskDrivePercom::DebugReadByte(uint32 address) {
-	uint8 v;
-	ATCoProcReadMemory(mCoProc.GetReadMap(), &v, address, 1);
-
-	return v;
-}
-
-void ATDeviceDiskDrivePercom::DebugReadMemory(uint32 address, void *dst, uint32 n) {
-	ATCoProcReadMemory(mCoProc.GetReadMap(), dst, address, n);
-}
-
-void ATDeviceDiskDrivePercom::WriteByte(uint32 address, uint8 value) {
-	ATCoProcWriteMemory(mCoProc.GetWriteMap(), &value, address, 1);
-}
-
-void ATDeviceDiskDrivePercom::WriteMemory(uint32 address, const void *src, uint32 n) {
-	ATCoProcWriteMemory(mCoProc.GetWriteMap(), src, address, n);
-}
-
-bool ATDeviceDiskDrivePercom::GetHistoryEnabled() const {
-	return !mHistory.empty();
-}
-
-void ATDeviceDiskDrivePercom::SetHistoryEnabled(bool enable) {
-	if (enable) {
-		if (mHistory.empty()) {
-			mHistory.resize(131072, ATCPUHistoryEntry());
-			mCoProc.SetHistoryBuffer(mHistory.data());
-		}
-	} else {
-		if (!mHistory.empty()) {
-			decltype(mHistory) tmp;
-			tmp.swap(mHistory);
-			mHistory.clear();
-			mCoProc.SetHistoryBuffer(nullptr);
-		}
-	}
-}
-
-std::pair<uint32, uint32> ATDeviceDiskDrivePercom::GetHistoryRange() const {
-	const uint32 hcnt = mCoProc.GetHistoryCounter();
-
-	return std::pair<uint32, uint32>(hcnt - 131072, hcnt);
-}
-
-uint32 ATDeviceDiskDrivePercom::ExtractHistory(const ATCPUHistoryEntry **hparray, uint32 start, uint32 n) const {
-	if (!n || mHistory.empty())
-		return 0;
-
-	const ATCPUHistoryEntry *hstart = mHistory.data();
-	const ATCPUHistoryEntry *hend = hstart + 131072;
-	const ATCPUHistoryEntry *hsrc = hstart + (start & 131071);
-
-	for(uint32 i=0; i<n; ++i) {
-		*hparray++ = hsrc;
-
-		if (++hsrc == hend)
-			hsrc = hstart;
-	}
-
-	return n;
-}
-
-uint32 ATDeviceDiskDrivePercom::ConvertRawTimestamp(uint32 rawTimestamp) const {
-	// mLastSync is the machine cycle at which all sub-cycles have been pushed into the
-	// coprocessor, and the coprocessor's time base is the sub-cycle corresponding to
-	// the end of that machine cycle.
-	return mLastSync - (((mCoProc.GetTimeBase() - rawTimestamp) * mClockDivisor + mSubCycleAccum + 511) >> 9);
-}
-
-void ATDeviceDiskDrivePercom::Break() {
-	CancelStep();
-}
-
-bool ATDeviceDiskDrivePercom::StepInto(const vdfunction<void(bool)>& fn) {
-	CancelStep();
-
-	mpStepHandler = fn;
-	mbStepOut = false;
-	mStepStartSubCycle = mCoProc.GetTime();
-	mBreakpointsImpl.SetStepActive(true);
-	Sync();
-	return true;
-}
-
-bool ATDeviceDiskDrivePercom::StepOver(const vdfunction<void(bool)>& fn) {
-	CancelStep();
-
-	mpStepHandler = fn;
-	mbStepOut = true;
-	mStepStartSubCycle = mCoProc.GetTime();
-	mStepOutSP = mCoProc.GetS();
-	mBreakpointsImpl.SetStepActive(true);
-	Sync();
-	return true;
-}
-
-bool ATDeviceDiskDrivePercom::StepOut(const vdfunction<void(bool)>& fn) {
-	CancelStep();
-
-	mpStepHandler = fn;
-	mbStepOut = true;
-	mStepStartSubCycle = mCoProc.GetTime();
-	mStepOutSP = mCoProc.GetS() + 1;
-	mBreakpointsImpl.SetStepActive(true);
-	Sync();
-	return true;
-}
-
-void ATDeviceDiskDrivePercom::StepUpdate() {
-	Sync();
-}
-
-void ATDeviceDiskDrivePercom::RunUntilSynced() {
-	CancelStep();
-	Sync();
-}
-
-bool ATDeviceDiskDrivePercom::CheckBreakpoint(uint32 pc) {
-	if (mCoProc.GetTime() == mStepStartSubCycle)
-		return false;
-
-	const bool bpHit = mBreakpointsImpl.CheckBP(pc);
-
-	if (!bpHit) {
-		if (mbStepOut) {
-			// Keep stepping if wrapped(s < s0).
-			if ((mCoProc.GetS() - mStepOutSP) & 0x8000)
-				return false;
-		}
-	}
-
-	mBreakpointsImpl.SetStepActive(false);
-
-	mbStepNotifyPending = true;
-	mbStepNotifyPendingBP = bpHit;
-	return true;
-}
-
 void ATDeviceDiskDrivePercom::OnScheduledEvent(uint32 id) {
-	if (id == kEventId_Run) {
-		mpRunEvent = mpSlowScheduler->AddEvent(1, this, 1);
-
-		mDriveScheduler.UpdateTick64();
-		Sync();
-	} else if (id == kEventId_Transmit) {
-		mpTransmitEvent = nullptr;
-
-		OnTransmitEvent();
-	} else if (id == kEventId_DriveTimeout) {
+	if (id == kEventId_DriveTimeout) {
 		mpEventDriveTimeout = nullptr;
 
 		if (!mbNmiTimeout) {
@@ -559,36 +477,26 @@ void ATDeviceDiskDrivePercom::OnScheduledEvent(uint32 id) {
 
 			UpdateNmi();
 		}
-	} else if (id >= kEventId_DriveDiskChange0 && id < kEventId_DriveDiskChange0 + kNumDrives) {
-		const uint32 index = id - kEventId_DriveDiskChange0;
-		Drive& drive = mDrives[index];
-
-		drive.mpEventDriveDiskChange = nullptr;
-
-		switch(++drive.mDiskChangeState) {
-			case 1:		// disk being removed (write protect covered)
-			case 2:		// disk removed (write protect clear)
-			case 3:		// disk being inserted (write protect covered)
-				mDriveScheduler.SetEvent(kDiskChangeStepMS, this, kEventId_DriveDiskChange0 + index, drive.mpEventDriveDiskChange);
-				break;
-
-			case 4:		// disk inserted (write protect normal)
-				drive.mDiskChangeState = 0;
-				break;
-		}
-
-		UpdateDiskStatus();
-	} else if (id == kEventId_DriveCommandChange) {
-		mpEventDriveCommandChange = nullptr;
-		OnCommandChangeEvent();
-	}
+	} else
+		return ATDiskDriveDebugTargetControl::OnScheduledEvent(id);
 }
 
 void ATDeviceDiskDrivePercom::OnCommandStateChanged(bool asserted) {
 	if (mbCommandState != asserted) {
 		mbCommandState = asserted;
 
-		AddCommandEdge(asserted);
+		// Convert computer time to device time.
+		//
+		// We have a problem here because transmission is delayed by a byte time but we don't
+		// necessarily know that delay when the command line is dropped. The XF551 has strict
+		// requirements for the command line pulse because it needs about 77 machine cycles
+		// from command asserted to start bit, but more importantly requires it to still be
+		// asserted after the end of the last byte. To solve this, we assert /COMMAND
+		// immediately but stretch the deassert a bit.
+
+		const uint32 commandLatency = asserted ? 0 : 400;
+
+		mSerialCmdQueue.AddCommandEdge(MasterTimeToDriveTime() + commandLatency, asserted);
 	}
 }
 
@@ -607,17 +515,14 @@ void ATDeviceDiskDrivePercom::OnSendReady() {
 void ATDeviceDiskDrivePercom::OnDiskChanged(uint32 index, bool mediaRemoved) {
 	Drive& drive = mDrives[index];
 
-	if (mediaRemoved) {
-		drive.mDiskChangeState = 0;
-		mDriveScheduler.SetEvent(1, this, kEventId_DriveDiskChange0 + index, drive.mpEventDriveDiskChange);
-	}
+	if (mediaRemoved)
+		drive.mDiskChangeHandler.ChangeDisk();
 
 	UpdateDiskStatus();
 }
 
 void ATDeviceDiskDrivePercom::OnWriteModeChanged(uint32 index) {
-	if (mSelectedDrive == (int)index)
-		UpdateWriteProtectStatus();
+	// FDC polls write protect state directly, so no action needed
 }
 
 void ATDeviceDiskDrivePercom::OnTimingModeChanged(uint32 index) {
@@ -625,6 +530,9 @@ void ATDeviceDiskDrivePercom::OnTimingModeChanged(uint32 index) {
 		const bool accurateTiming = mDrives[index].mpDiskInterface->IsAccurateSectorTimingEnabled();
 
 		mFDC.SetAccurateTimingEnabled(accurateTiming);
+
+		if (mbIsAT88)
+			mFDC2.SetAccurateTimingEnabled(accurateTiming);
 	}
 }
 
@@ -638,27 +546,13 @@ void ATDeviceDiskDrivePercom::OnAudioModeChanged(uint32 index) {
 	}
 }
 
-void ATDeviceDiskDrivePercom::CancelStep() {
-	if (mpStepHandler) {
-		mBreakpointsImpl.SetStepActive(false);
-
-		auto p = std::move(mpStepHandler);
-		mpStepHandler = nullptr;
-
-		p(false);
-	}
-}
-
-
 void ATDeviceDiskDrivePercom::Sync() {
-	AccumSubCycles();
+	const uint32 limit = AccumSubCycles();
 
 	for(;;) {
 		if (!mCoProc.GetCyclesLeft()) {
-			if (mSubCycleAccum < mClockDivisor)
+			if (ATSCHEDULER_GETTIME(&mDriveScheduler) - limit < UINT32_C(0x80000000))
 				break;
-
-			mSubCycleAccum -= mClockDivisor;
 
 			ATSCHEDULER_ADVANCE(&mDriveScheduler);
 
@@ -667,129 +561,22 @@ void ATDeviceDiskDrivePercom::Sync() {
 
 		mCoProc.Run();
 
-		if (mCoProc.GetCyclesLeft())
-			break;
-	}
-
-	if (mbStepNotifyPending) {
-		mbStepNotifyPending = false;
-
-		auto p = std::move(mpStepHandler);
-		mpStepHandler = nullptr;
-
-		if (p)
-			p(!mbStepNotifyPendingBP);
-	}
-}
-
-void ATDeviceDiskDrivePercom::AccumSubCycles() {
-	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	const uint32 cycles = t - mLastSync;
-
-	mLastSync = t;
-
-	mSubCycleAccum += cycles << 9;
-
-	mLastSyncDriveTime = ATSCHEDULER_GETTIME(&mDriveScheduler);
-	mLastSyncDriveTimeSubCycles = mSubCycleAccum;
-}
-
-void ATDeviceDiskDrivePercom::QueueNextCommandEvent() {
-	// exit if we already have an event queued
-	if (mpEventDriveCommandChange)
-		return;
-
-	// exit if transmit queue is empty
-	if (mCommandQueue.empty())
-		return;
-
-	const auto& nextEvent = mCommandQueue.front();
-	uint32 delta = nextEvent.mTime - ATSCHEDULER_GETTIME(&mDriveScheduler);
-
-	mpEventDriveCommandChange = mDriveScheduler.AddEvent((uint32)(delta - 1) & UINT32_C(0x80000000) ? 1 : delta, this, kEventId_DriveCommandChange);
-}
-
-void ATDeviceDiskDrivePercom::OnCommandChangeEvent() {
-	// drain command queue entries until we're up to date
-	const uint32 t = ATSCHEDULER_GETTIME(&mDriveScheduler);
-
-	while(!mCommandQueue.empty()) {
-		const auto& nextEdge = mCommandQueue.front();
-
-		if ((t - nextEdge.mTime) & UINT32_C(0x80000000))
-			break;
-
-		bool bit = (nextEdge.mBit != 0);
-
-		if (mbDriveCommandState != bit) {
-			mbDriveCommandState = bit;
-
-			mACIA.SetCTS(bit);
-		}
-
-		mCommandQueue.pop_front();
-	}
-
-	// if we still have events, queue another event
-	if (!mCommandQueue.empty()) {
-		mpScheduler->SetEvent(mCommandQueue.front().mTime - t, this, kEventId_DriveCommandChange, mpEventDriveCommandChange);
-	}
-}
-
-void ATDeviceDiskDrivePercom::AddCommandEdge(uint32 polarity) {
-	// Convert computer time to device time.
-	//
-	// We have a problem here because transmission is delayed by a byte time but we don't
-	// necessarily know that delay when the command line is dropped. The XF551 has strict
-	// requirements for the command line pulse because it needs about 77 machine cycles
-	// from command asserted to start bit, but more importantly requires it to still be
-	// asserted after the end of the last byte. To solve this, we assert /COMMAND
-	// immediately but stretch the deassert a bit.
-
-	const uint32 kCommandLatency = polarity ? 0 : 400;
-	const uint32 ct = (ATSCHEDULER_GETTIME(mpScheduler) - mLastSync) * 512;
-	const uint32 dt = mLastSyncDriveTime + ct / mClockDivisor + kCommandLatency;
-
-	// check if previous transition is at same time
-	while(!mCommandQueue.empty()) {
-		auto& prevEdge = mCommandQueue.back();
-
-		// check if this event is at or before the last event in the queue
-		if ((prevEdge.mTime - dt) & UINT32_C(0x80000000)) {
-			// The previous edge is before the time of this edge, so we're good.
+		if (mCoProc.GetCyclesLeft()) {
+			ScheduleImmediateResume();
 			break;
 		}
-
-		// check if we've gone backwards in time and drop event if so
-		if (prevEdge.mTime == dt) {
-			// same time -- overwrite event and exit
-			prevEdge.mBit = polarity;
-			return;
-		}
-			
-		if (polarity && !prevEdge.mBit) {
-			// If we're asserting /COMMAND, allow it to supercede earlier deassert events.
-			mCommandQueue.pop_back();
-		} else {
-			VDASSERT(!"Dropping new event earlier than tail in command change queue.");
-			return;
-		}
 	}
 
-	// add the new event
-	mCommandQueue.push_back( { dt, polarity } );
-
-	// queue next event if needed
-	QueueNextCommandEvent();
+	FlushStepNotifications();
 }
 
-uint8 ATDeviceDiskDrivePercom::OnHardwareDebugRead(uint32 addr) {
+uint8 ATDeviceDiskDrivePercom::OnHardwareDebugReadRFD(uint32 addr) {
 	// To access the hardware registers, A4 must be high and A5 must be low.
 	// A2-A3 select the unit and A0-A1 the subunit (ACIA/FDC). A6-A9 don't
 	// matter.
 	switch(addr & 0x3C) {
 		case 0x10:
-			return mFDC.DebugReadByte(addr);
+			return ~mFDC.DebugReadByte(addr);
 
 		case 0x14:
 			return (mDriveId & 3) + (mDriveId & 4 ? 0x10 : 0x00) + 0xE0;
@@ -801,7 +588,7 @@ uint8 ATDeviceDiskDrivePercom::OnHardwareDebugRead(uint32 addr) {
 	return 0xFF;
 }
 
-uint8 ATDeviceDiskDrivePercom::OnHardwareRead(uint32 addr) {
+uint8 ATDeviceDiskDrivePercom::OnHardwareReadRFD(uint32 addr) {
 	// To access the hardware registers, A4 must be high and A5 must be low.
 	// A2-A3 select the unit and A0-A1 the subunit (ACIA/FDC). A6-A9 don't
 	// matter.
@@ -812,7 +599,7 @@ uint8 ATDeviceDiskDrivePercom::OnHardwareRead(uint32 addr) {
 			return ~mFDC.ReadByte(addr);
 
 		case 0x14:
-			return OnHardwareDebugRead(addr);
+			return OnHardwareDebugReadRFD(addr);
 
 		case 0x30:
 			return mACIA.ReadByte(addr);
@@ -821,7 +608,72 @@ uint8 ATDeviceDiskDrivePercom::OnHardwareRead(uint32 addr) {
 	return 0xFF;
 }
 
-void ATDeviceDiskDrivePercom::OnHardwareWrite(uint32 addr, uint8 value) {
+// The drive uses conventional PIA addressing, not Atari's permuted addressing.
+const uint8 ATDeviceDiskDrivePercom::kPIALookup[4] = { 0, 2, 1, 3 };
+
+void ATDeviceDiskDrivePercom::OnHardwareWriteAT(uint32 addr, uint8 value) {
+	switch(addr & 0x0C) {
+		case 0x00:
+		case 0x04:
+			if (mbSelectFDC2)
+				mFDC2.WriteByte(addr, ~value);
+			else
+				mFDC.WriteByte(addr, ~value);
+			break;
+
+		case 0x08:
+			mPIA.WriteByte(kPIALookup[addr & 3], value);
+			break;
+
+		case 0x0C:
+			mACIA.WriteByte(addr, value);
+			break;
+	}
+}
+
+uint8 ATDeviceDiskDrivePercom::OnHardwareDebugReadAT(uint32 addr) {
+	switch(addr & 0x0C) {
+		case 0x00:
+		case 0x04:
+			if (mbSelectFDC2)
+				return ~mFDC2.DebugReadByte(addr);
+			else
+				return ~mFDC.DebugReadByte(addr);
+
+		case 0x08:
+			return mPIA.DebugReadByte(kPIALookup[addr & 3]);
+
+		case 0x0C:
+			return mACIA.DebugReadByte(addr);
+
+		default:
+			VDNEVERHERE;
+			return 0xFF;
+	}
+}
+
+uint8 ATDeviceDiskDrivePercom::OnHardwareReadAT(uint32 addr) {
+	switch(addr & 0x0C) {
+		case 0x00:
+		case 0x04:
+			if (mbSelectFDC2)
+				return ~mFDC2.ReadByte(addr);
+			else
+				return ~mFDC.ReadByte(addr);
+
+		case 0x08:
+			return mPIA.ReadByte(kPIALookup[addr & 3]);
+
+		case 0x0C:
+			return mACIA.ReadByte(addr);
+
+		default:
+			VDNEVERHERE;
+			return 0xFF;
+	}
+}
+
+void ATDeviceDiskDrivePercom::OnHardwareWriteRFD(uint32 addr, uint8 value) {
 	// To access the hardware registers, A4 must be high and A5 must be low.
 	// A2-A3 select the unit and A0-A1 the subunit (ACIA/FDC). A6-A9 don't
 	// matter.
@@ -875,7 +727,10 @@ void ATDeviceDiskDrivePercom::OnFDCDataRequest(bool asserted) {
 }
 
 void ATDeviceDiskDrivePercom::OnFDCInterruptRequest(bool asserted) {
-	UpdateNmi();
+	if (mbIsAT88)
+		mPIA.SetCA2(asserted);
+	else
+		UpdateNmi();
 }
 
 void ATDeviceDiskDrivePercom::OnFDCStep(bool inward) {
@@ -890,6 +745,9 @@ void ATDeviceDiskDrivePercom::OnFDCStep(bool inward) {
 			drive.mCurrentTrack += 2;
 
 			mFDC.SetCurrentTrack(drive.mCurrentTrack, drive.mCurrentTrack == 0);
+
+			if (mbIsAT88)
+				mFDC2.SetCurrentTrack(drive.mCurrentTrack, drive.mCurrentTrack == 0);
 		}
 
 		PlayStepSound();
@@ -900,94 +758,38 @@ void ATDeviceDiskDrivePercom::OnFDCStep(bool inward) {
 
 			mFDC.SetCurrentTrack(drive.mCurrentTrack, drive.mCurrentTrack == 0);
 
+			if (mbIsAT88)
+				mFDC2.SetCurrentTrack(drive.mCurrentTrack, drive.mCurrentTrack == 0);
+
 			PlayStepSound();
 		}
 	}
 }
 
 void ATDeviceDiskDrivePercom::OnACIATransmit(uint8 v, uint32 cyclesPerBit) {
-	AddTransmitByte(v, (cyclesPerBit * 179 + 50) / 100);
+	mSerialXmitQueue.AddTransmitByte(DriveTimeToMasterTime() + mSerialXmitQueue.kTransmitLatency, v, (cyclesPerBit * 179 + 50) / 100);
 }
 
-void ATDeviceDiskDrivePercom::OnTransmitEvent() {
-	// drain transmit queue entries until we're up to date
-	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+void ATDeviceDiskDrivePercom::OnPIAPortBChanged(uint32 outputState) {
+	//	PB7			Index control
+	//	PB6			Density select (1771/1795 select)
+	//	PB5			Side select (1=side2)
+	//	PB4			Motor enable (1=on)
+	//	PB0-PB3		Drive select signals (1 = selected)
 
-	while((mTransmitHead ^ mTransmitTail) & kTransmitQueueMask) {
-		const auto& nextEdge = mTransmitQueue[mTransmitHead & kTransmitQueueMask];
+	SetMotorEnabled((outputState & 0x1000) != 0);
 
-		if ((t - nextEdge.mTime) & UINT32_C(0x80000000))
-			break;
+	static const sint8 kDriveLookup[] = { -1, 0, 1, -1, 2, -1, -1, -1, 3, -1, -1, -1, -1, -1, -1, -1 };
+	static_assert(vdcountof(kDriveLookup) == 16);
 
-		mpSIOMgr->SendRawByte(nextEdge.mData, nextEdge.mCyclesPerBit, false, false, true);
+	SelectDrive(kDriveLookup[(outputState >> 8) & 15]);
 
-		++mTransmitHead;
-	}
+	mbSelectFDC2 = !mbIsAT88DoubleDensity || (outputState & 0x4000) != 0;
 
-	QueueNextTransmitEvent();
-}
+	auto& fdc = mbSelectFDC2 ? mFDC2 : mFDC;
 
-void ATDeviceDiskDrivePercom::AddTransmitByte(uint8 data, uint32 cyclesPerBit) {
-	VDASSERT(cyclesPerBit);
-	static_assert(!(kTransmitQueueSize & (kTransmitQueueSize - 1)), "mTransmitQueue size not pow2");
-
-	// convert device time to computer time
-	uint32 dt = (mLastSyncDriveTime - ATSCHEDULER_GETTIME(&mDriveScheduler)) * mClockDivisor + mLastSyncDriveTimeSubCycles;
-
-	dt >>= 7;
-
-	const uint32 t = mLastSync + kTransmitLatency - dt;
-
-	// check if previous transition is at same time
-	const uint32 queueLen = (mTransmitTail - mTransmitHead) & kTransmitQueueMask;
-	if (queueLen) {
-		auto& prevEdge = mTransmitQueue[(mTransmitTail - 1) & kTransmitQueueMask];
-
-		// check if this event is at or before the last event in the queue
-		if (!((prevEdge.mTime - t) & UINT32_C(0x80000000))) {
-			// check if we've gone backwards in time and drop event if so
-			if (prevEdge.mTime == t) {
-				// same time -- overwrite event
-				prevEdge.mData = data;
-				prevEdge.mCyclesPerBit = cyclesPerBit;
-			} else {
-				VDASSERT(!"Dropping new event earlier than tail in transmit queue.");
-			}
-
-			return;
-		}
-	}
-
-	// check if we have room for a new event
-	if (queueLen >= kTransmitQueueMask) {
-		VDASSERT(!"Transmit queue full.");
-		return;
-	}
-
-	// add the new event
-	auto& newEdge = mTransmitQueue[mTransmitTail++ & kTransmitQueueMask];
-
-	newEdge.mTime = t;
-	newEdge.mData = data;
-	newEdge.mCyclesPerBit = cyclesPerBit;
-
-	// queue next event if needed
-	QueueNextTransmitEvent();
-}
-
-void ATDeviceDiskDrivePercom::QueueNextTransmitEvent() {
-	// exit if we already have an event queued
-	if (mpTransmitEvent)
-		return;
-
-	// exit if transmit queue is empty
-	if (!((mTransmitHead ^ mTransmitTail) & kTransmitQueueMask))
-		return;
-
-	const auto& nextEvent = mTransmitQueue[mTransmitHead & kTransmitQueueMask];
-	const uint32 delta = nextEvent.mTime - ATSCHEDULER_GETTIME(mpScheduler);
-
-	mpTransmitEvent = mpScheduler->AddEvent((uint32)(delta - 1) & UINT32_C(0x80000000) ? 1 : delta, this, kEventId_Transmit);
+	fdc.SetSide((outputState & 0x2000) != 0);
+	fdc.OnIndexPulse((outputState & 0x8000) == 0);
 }
 
 void ATDeviceDiskDrivePercom::SetMotorEnabled(bool enabled) {
@@ -995,6 +797,10 @@ void ATDeviceDiskDrivePercom::SetMotorEnabled(bool enabled) {
 		mbMotorRunning = enabled;
 
 		mFDC.SetMotorRunning(enabled);
+
+		if (mbIsAT88)
+			mFDC2.SetMotorRunning(enabled);
+
 		UpdateRotationStatus();
 	}
 }
@@ -1033,20 +839,18 @@ void ATDeviceDiskDrivePercom::UpdateDiskStatus() {
 		const Drive& drive = mDrives[mSelectedDrive];
 		IATDiskImage *image = drive.mpDiskInterface->GetDiskImage();
 
-		mFDC.SetDiskImage(image, (image != nullptr && drive.mDiskChangeState == 0));
-	} else
+		mFDC.SetDiskImage(image);
+
+		if (mbIsAT88)
+			mFDC2.SetDiskImage(image);
+
+		drive.mDiskChangeHandler.ForceOutputUpdate();
+	} else {
 		mFDC.SetDiskImage(nullptr, false);
 
-	UpdateWriteProtectStatus();
-}
-
-void ATDeviceDiskDrivePercom::UpdateWriteProtectStatus() {
-	bool wpoverride = false;
-
-	if (mSelectedDrive >= 0)
-		wpoverride = (mDrives[mSelectedDrive].mDiskChangeState & 1) != 0;
-
-	mFDC.SetWriteProtectOverride(wpoverride);
+		if (mbIsAT88)
+			mFDC2.SetDiskImage(nullptr, false);
+	}
 }
 
 void ATDeviceDiskDrivePercom::SelectDrive(int index) {
@@ -1068,6 +872,13 @@ void ATDeviceDiskDrivePercom::SelectDrive(int index) {
 		Drive& drive = mDrives[index];
 		mFDC.SetDiskInterface(drive.mpDiskInterface);
 		mFDC.SetCurrentTrack(drive.mCurrentTrack, drive.mCurrentTrack == 0);
+		mFDC.SetSideMapping(ATFDCEmulator::SideMapping::Side2ReversedOffByOne, drive.mType == kDriveType_5_25_80Track ? 80 : 40);
+
+		if (mbIsAT88) {
+			mFDC2.SetDiskInterface(drive.mpDiskInterface);
+			mFDC2.SetCurrentTrack(drive.mCurrentTrack, drive.mCurrentTrack == 0);
+			mFDC2.SetSideMapping(ATFDCEmulator::SideMapping::Side2ReversedOffByOne, drive.mType == kDriveType_5_25_80Track ? 80 : 40);
+		}
 
 		OnWriteModeChanged(index);
 		OnTimingModeChanged(index);
@@ -1075,6 +886,13 @@ void ATDeviceDiskDrivePercom::SelectDrive(int index) {
 	} else {
 		mFDC.SetDiskInterface(nullptr);
 		mFDC.SetCurrentTrack(20, false);
+
+		if (mbIsAT88) {
+			mFDC2.SetDiskInterface(nullptr);
+			mFDC2.SetCurrentTrack(20, false);
+
+			mPIA.SetInput(0, ~UINT32_C(0));
+		}
 	}
 
 	UpdateDiskStatus();

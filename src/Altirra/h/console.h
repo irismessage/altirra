@@ -132,4 +132,6 @@ int ATConsoleGetPropFontLineHeightW32();
 void ATConsoleAddFontNotification(const vdfunction<void()> *callback);
 void ATConsoleRemoveFontNotification(const vdfunction<void()> *callback);
 
+void ATConsolePingBeamPosition(uint32 frame, uint32 vpos, uint32 hpos);
+
 #endif

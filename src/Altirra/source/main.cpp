@@ -40,6 +40,7 @@
 #include <vd2/system/thunk.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/strutil.h>
+#include <vd2/system/zip.h>
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/VDDisplay/display.h>
@@ -54,6 +55,7 @@
 #include <at/atcore/enumparseimpl.h>
 #include <at/atcore/media.h>
 #include <at/atcore/profile.h>
+#include <at/atcore/serializable.h>
 #include <at/atdevices/devices.h>
 #include <at/atio/atfs.h>
 #include <at/atio/cassetteimage.h>
@@ -65,6 +67,7 @@
 #include <at/atnativeui/hotkeyexcontrol.h>
 #include <at/atnativeui/messageloop.h>
 #include <at/atnativeui/progress.h>
+#include <at/atnativeui/theme.h>
 #include <at/atnativeui/uiframe.h>
 #include <at/atcore/device.h>
 #include <at/atcore/propertyset.h>
@@ -117,6 +120,7 @@
 #include "uicompat.h"
 #include "trace.h"
 #include "mediamanager.h"
+#include "savestateio.h"
 
 #include "firmwaremanager.h"
 #include <at/atcore/devicemanager.h>
@@ -146,7 +150,14 @@ void ATUIShowDialogAbout(VDGUIHandle h);
 bool ATUIShowDialogKeyboardOptions(VDGUIHandle hParent, ATUIKeyboardOptions& opts);
 void ATUIShowDialogSetFileAssociations(VDGUIHandle parent, bool allowElevation, bool userOnly);
 void ATUIShowDialogRemoveFileAssociations(VDGUIHandle parent, bool allowElevation, bool userOnly);
-bool ATUIShowDialogVideoEncoding(VDGUIHandle parent, bool hz50, ATVideoEncoding& encoding, ATVideoRecordingFrameRate& frameRate, bool& halfRate, bool& encodeAll);
+bool ATUIShowDialogVideoEncoding(VDGUIHandle parent, bool hz50, ATVideoEncoding& encoding,
+	uint32& videoBitRate,
+	uint32& audioBitRate,
+	ATVideoRecordingFrameRate& frameRate,
+	ATVideoRecordingAspectRatioMode& aspectRatioMode,
+	ATVideoRecordingResamplingMode& resamplingMode,
+	ATVideoRecordingScalingMode& scalingMode,
+	bool& halfRate, bool& encodeAll);
 void ATUIShowDialogSetupWizard(VDGUIHandle hParent);
 
 void ATUILoadRegistry(const wchar_t *path);
@@ -167,6 +178,9 @@ void ATUIFlushDisplay();
 void ATUIInitFirmwareMenuCallbacks(ATFirmwareManager *fwmgr);
 void ATUIInitProfileMenuCallbacks();
 
+void ATSaveRegisterTypes();
+void ATInitSaveStateDeserializer();
+
 ///////////////////////////////////////////////////////////////////////////////
 
 void ATInitDebugger();
@@ -185,6 +199,8 @@ void DoBootWithConfirm(const wchar_t *path, const ATMediaWriteMode *writeMode, i
 void LoadBaselineSettings();
 
 void ATUICreateMainWindow(ATContainerWindow **);
+void ATUILinkMainWindowToSimulator(ATContainerWindow& w);
+void ATUIUnlinkMainWindowFromSimulator();
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -218,6 +234,8 @@ uint32 g_ATWindowPreFSDpi;
 bool g_mouseCaptured = false;
 bool g_mouseClipped = false;
 bool g_mouseAutoCapture = true;
+bool g_ATUIPointerAutoHide = true;
+bool g_ATUITargetPointerVisible = true;
 bool g_pauseInactive = true;
 bool g_winActive = true;
 bool g_showFps = false;
@@ -231,7 +249,7 @@ int g_dispFilterSharpness = +1;
 int g_enhancedText = 0;
 LOGFONTW g_enhancedTextFont;
 
-ATSaveStateWriter::Storage g_quickSave;
+vdrefptr<IATSerializable> g_pATQuickState;
 
 uint32 g_ATUIBootUnloadStorageMask = 0;
 
@@ -397,6 +415,22 @@ void ATUISetMouseAutoCapture(bool enabled) {
 	g_mouseAutoCapture = enabled;
 }
 
+bool ATUIGetPointerAutoHide() {
+	return g_ATUIPointerAutoHide;
+}
+
+void ATUISetPointerAutoHide(bool enabled) {
+	g_ATUIPointerAutoHide = enabled;
+}
+
+bool ATUIGetTargetPointerVisible() {
+	return g_ATUITargetPointerVisible;
+}
+
+void ATUISetTargetPointerVisible(bool enabled) {
+	g_ATUITargetPointerVisible = enabled;
+}
+
 bool ATUIGetTurbo() {
 	return (g_speedFlags & kATUISpeedFlags_Turbo) != 0;
 }
@@ -480,14 +514,14 @@ void ATInputConsoleCallback::SetConsoleTrigger(uint32 id, bool state) {
 			break;
 		case kATInputTrigger_ColdReset:
 			if (state)
-				g_ATUICommandMgr.ExecuteCommand("System.ColdReset");
+				g_ATUICommandMgr.ExecuteCommandNT("System.ColdReset");
 			break;
 		case kATInputTrigger_WarmReset:
 			if (state)
-				g_ATUICommandMgr.ExecuteCommand("System.WarmReset");
+				g_ATUICommandMgr.ExecuteCommandNT("System.WarmReset");
 			break;
 		case kATInputTrigger_Turbo:
-			g_ATUICommandMgr.ExecuteCommand(state ? "System.PulseWarpOn" : "System.PulseWarpOff");
+			g_ATUICommandMgr.ExecuteCommandNT(state ? "System.PulseWarpOn" : "System.PulseWarpOff");
 			break;
 		case kATInputTrigger_KeySpace:
 			if (g_kbdOpts.mbRawKeys) {
@@ -665,7 +699,7 @@ vdrefptr<ATUIFutureWithResult<bool> > ATUIConfirmDiscardAllStorage(const wchar_t
 	if (ATUIGetNativeDialogMode())
 		return vdmakerefptr(new ATUIFutureWithResult<bool>(ATUIConfirm(ATUIGetMainWindow(), "DiscardStorage", msg.c_str(), L"Unsaved Items")));
 
-	return ATUIShowAlert(msg.c_str(), L"Altirra Warning");
+	return ATUIShowAlertWarningConfirm(msg.c_str(), L"Discarding modified storage");
 }
 
 bool ATUISwitchHardwareMode(VDGUIHandle h, ATHardwareMode mode, bool switchProfiles) {
@@ -973,6 +1007,7 @@ void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageNa
 	mctx.mbStopOnModeIncompatibility = true;
 	mctx.mbStopAfterImageLoaded = true;
 	mctx.mbStopOnMemoryConflictBasic = true;
+	mctx.mbStopOnIncompatibleDiskFormat = true;
 	mctx.mpImageLoadContext = &ctx;
 
 	int safetyCounter = 10;
@@ -987,17 +1022,29 @@ void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageNa
 			mctx.mbStopAfterImageLoaded = false;
 
 		if (mctx.mbMode5200Required) {
-			if (!ATUISwitchHardwareMode5200(h))
+			if (!ATUISwitchHardwareMode5200(h)) {
+				if (suppressColdReset)
+					*suppressColdReset = true;
+
 				return;
+			}
 
 			continue;
 		} else if (mctx.mbModeComputerRequired) {
 			if (autoProfile) {
-				if (!ATUISwitchHardwareMode(h, kATHardwareMode_800XL, true))
+				if (!ATUISwitchHardwareMode(h, kATHardwareMode_800XL, true)) {
+					if (suppressColdReset)
+						*suppressColdReset = true;
+
 					return;
+				}
 			} else {
-				if (!ATUISwitchHardwareModeComputer(h))
+				if (!ATUISwitchHardwareModeComputer(h)) {
+					if (suppressColdReset)
+						*suppressColdReset = true;
+
 					return;
+				}
 			}
 
 			continue;
@@ -1014,22 +1061,50 @@ void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageNa
 			opts.mValidIgnoreMask = kATUIGenericResultMask_Yes | kATUIGenericResultMask_No;
 			const auto result = ATUIShowGenericDialogAutoCenter(opts);
 
-			if (result == kATUIGenericResult_Cancel)
+			if (result == kATUIGenericResult_Cancel) {
+				if (suppressColdReset)
+					*suppressColdReset = true;
 				return;
+			}
 
 			if (result == kATUIGenericResult_Yes)
 				g_sim.SetBASICEnabled(false);
 
 			continue;
+		} else if (mctx.mbIncompatibleDiskFormat) {
+			mctx.mbIncompatibleDiskFormat = false;
+
+			ATUIGenericDialogOptions opts {};
+			opts.mhParent = h;
+			opts.mpTitle = L"Incompatible Disk Format";
+			opts.mpMessage = L"The current disk drive model can't read the type of disk being inserted into it. Mount the disk anyway?";
+			opts.mpIgnoreTag = "IncompatibleDiskFormat";
+			opts.mIconType = kATUIGenericIconType_Warning;
+			opts.mResultMask = kATUIGenericResultMask_OKCancel;
+			opts.mValidIgnoreMask = kATUIGenericResultMask_OKCancel;
+			const auto result = ATUIShowGenericDialogAutoCenter(opts);
+
+			if (result == kATUIGenericResult_Cancel) {
+				if (suppressColdReset)
+					*suppressColdReset = true;
+				return;
+			}
+
+			mctx.mbStopOnIncompatibleDiskFormat = false;
+			continue;
 		}
 
 		if (ctx.mLoadType == kATImageType_Cartridge) {
 			vdfastvector<ATCompatKnownTag> tags;
-			const auto markers = {
-				ATCompatMarker { kATCompatRuleType_CartChecksum, cartctx.mRawImageChecksum }
-			};
+			ATCompatMarker markers[2];
+			size_t numMarkers = 1;
 
-			ATCompatFindTitle(markers, tags);
+			markers[0] = ATCompatMarker { kATCompatRuleType_CartChecksum, cartctx.mRawImageChecksum };
+
+			if (cartctx.mFileSHA256.has_value())
+				markers[numMarkers++] = ATCompatMarker::FromSHA256(kATCompatRuleType_CartFileSHA256, cartctx.mFileSHA256.value());
+
+			ATCompatFindTitle(vdvector_view<ATCompatMarker>(markers, numMarkers), tags, false);
 
 			int mapper = -1;
 			for(auto&& tag : tags) {
@@ -1060,7 +1135,7 @@ void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageNa
 
 			cartctx.mbReturnOnUnknownMapper = false;
 			cartctx.mCartMapper = mapper;
-		} else if (ctx.mLoadType == kATImageType_SaveState) {
+		} else if (ctx.mLoadType == kATImageType_SaveState || ctx.mLoadType == kATImageType_SaveState2) {
 			if (statectx.mbKernelMismatchDetected) {
 				if (IDOK != MessageBoxW((HWND)h,
 					L"The currently loaded kernel ROM image doesn't match the one referenced by the saved state. This may cause the simulated program to fail when resumed. Proceed anyway?",
@@ -1077,6 +1152,9 @@ void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageNa
 			MessageBoxW((HWND)h, L"The save state loaded successfully, but detailed emulation state could not be loaded as it was produced by a different program version. Some glitches may appear in the simulation.", L"Altirra Warning", MB_ICONWARNING | MB_OK);
 		}
 
+		if (suppressColdReset)
+			*suppressColdReset = true;
+	} else if (ctx.mLoadType == kATImageType_SaveState2) {
 		if (suppressColdReset)
 			*suppressColdReset = true;
 	}
@@ -1198,9 +1276,10 @@ public:
 					if (mbColdBoot)
 						ATUIUnloadStorageForBoot();
 
-					DoLoad((VDGUIHandle)g_hwnd, mpFileDialogResult->mPath.c_str(), nullptr, 0);
+					bool suppressColdReset = false;
+					DoLoad((VDGUIHandle)g_hwnd, mpFileDialogResult->mPath.c_str(), nullptr, 0, kATImageType_None, &suppressColdReset);
 
-					if (mbColdBoot)
+					if (mbColdBoot && !suppressColdReset)
 						g_sim.ColdReset();
 
 					ATAddMRUListItem(mpFileDialogResult->mPath.c_str());
@@ -1541,7 +1620,7 @@ void Paste(const wchar_t *s, size_t len, bool useCooldown) {
 	if (g_enhancedText == 2) {
 		IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
 		if (pane)
-			pane->Paste(s, len);
+			pane->Paste(pasteChars.data(), pasteChars.size());
 
 		return;
 	}
@@ -1670,7 +1749,7 @@ void StopAudioRecording() {
 
 void StopVideoRecording() {
 	if (g_pVideoWriter) {
-		g_sim.GetGTIA().RemoveVideoTap(g_pVideoWriter);
+		g_sim.GetGTIA().RemoveVideoTap(g_pVideoWriter->AsVideoTap());
 		g_pVideoWriter->Shutdown();
 		g_sim.GetAudioOutput()->SetAudioTap(NULL);
 		g_pVideoWriter = NULL;
@@ -1695,7 +1774,7 @@ void CheckRecordingExceptions() {
 		if (g_pVideoWriter)
 			g_pVideoWriter->CheckExceptions();
 	} catch(const MyError& e) {
-		MyError("Video recording has stopped with an error: %s", e.gets()).post(g_hwnd, "Altirra Error");
+		ATUIShowError2((VDGUIHandle)g_hwnd, VDTextAToW(e.c_str()).c_str(), L"Video recording stopped with an error");
 
 		StopVideoRecording();
 	}
@@ -1704,7 +1783,7 @@ void CheckRecordingExceptions() {
 		if (g_pAudioWriter)
 			g_pAudioWriter->CheckExceptions();
 	} catch(const MyError& e) {
-		MyError("Audio recording has stopped with an error: %s", e.gets()).post(g_hwnd, "Altirra Error");
+		ATUIShowError2((VDGUIHandle)g_hwnd, VDTextAToW(e.c_str()).c_str(), L"Audio recording stopped with an error");
 
 		StopAudioRecording();
 	}
@@ -1713,7 +1792,7 @@ void CheckRecordingExceptions() {
 		if (g_pSapWriter)
 			g_pSapWriter->CheckExceptions();
 	} catch(const MyError& e) {
-		MyError("SAP recording has stopped with an error: %s", e.gets()).post(g_hwnd, "Altirra Error");
+		ATUIShowError2((VDGUIHandle)g_hwnd, VDTextAToW(e.c_str()).c_str(), L"SAP recording stopped with an error");
 
 		StopSapRecording();
 	}
@@ -1730,25 +1809,26 @@ void OnCommandBootImage() {
 }
 
 void OnCommandQuickLoadState() {
-	if (!g_quickSave.empty()) {
-		ATSaveStateReader reader(g_quickSave.data(), (uint32)g_quickSave.size());
-
-		g_sim.LoadState(reader, NULL);
+	try {
+		if (g_pATQuickState)
+			g_sim.ApplySnapshot(*g_pATQuickState, nullptr);
+	} catch(const MyError& e) {
+		e.post(g_hwnd, "Altirra Error");
 	}
 }
 
 void OnCommandQuickSaveState() {
-	g_quickSave.clear();
-
-	ATSaveStateWriter writer(g_quickSave);
-
-	g_sim.SaveState(writer);
+	try {
+		g_sim.CreateSnapshot(~g_pATQuickState);
+	} catch(const MyError& e) {
+		e.post(g_hwnd, "Altirra Error");
+	}
 }
 
 void OnCommandLoadState() {
 	const VDStringW fn(VDGetLoadFileName('save', (VDGUIHandle)g_hwnd, L"Load save state",
 		g_ATUIFileFilter_LoadState,
-		L"altstate"
+		L"atstate2"
 		));
 
 	if (!fn.empty()) {
@@ -1759,18 +1839,27 @@ void OnCommandLoadState() {
 void OnCommandSaveState() {
 	const VDStringW fn(VDGetSaveFileName('save', (VDGUIHandle)g_hwnd, L"Save save state",
 		g_ATUIFileFilter_SaveState,
-		L"altstate"
+		L"atstate2"
 		));
 
 	if (!fn.empty()) {
-		ATSaveStateWriter::Storage storage;
+		try {
+			vdrefptr<IATSerializable> snapshot;
+			g_sim.CreateSnapshot(~snapshot);
 
-		ATSaveStateWriter writer(storage);
-		g_sim.SaveState(writer);
+			vdautoptr<IATSaveStateSerializer> ser(ATCreateSaveStateSerializer());
+			VDFileStream fs(fn.c_str(), nsVDFile::kWrite | nsVDFile::kCreateAlways | nsVDFile::kSequential);
+			VDBufferedWriteStream bs(&fs, 4096);
+			vdautoptr<IVDZipArchiveWriter> zip(VDCreateZipArchiveWriter(bs));
 
-		VDFile f(fn.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
-
-		f.write(storage.data(), (long)storage.size());
+			ser->Serialize(*zip, *snapshot);
+			zip->Finalize();
+			bs.Flush();
+			fs.close();
+		} catch(const MyError& e) {
+			VDRemoveFile(fn.c_str());
+			ATUIShowError((VDGUIHandle)g_hwnd, e);
+		}
 	}
 }
 
@@ -1911,8 +2000,7 @@ void OnCommandEditSaveFrame() {
 }
 
 bool ATUISaveFrame(const wchar_t *path) {
-	const VDPixmap *px = g_sim.GetGTIA().GetLastFrameBuffer();
-	if (!px)
+	if (!g_sim.GetGTIA().IsLastFrameBufferAvailable())
 		return false;
 
 	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
@@ -1989,15 +2077,15 @@ void OnCommandConsoleIDEPlus2SDX() {
 
 void OnCommandConsoleIndusGTId() {
 	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false)) {
-		p->ActivateButton(kATDeviceButton_IndusGTError, true);
-		p->ActivateButton(kATDeviceButton_IndusGTError, false);
+		p->ActivateButton(kATDeviceButton_IndusGTId, true);
+		p->ActivateButton(kATDeviceButton_IndusGTId, false);
 	}
 }
 
 void OnCommandConsoleIndusGTError() {
 	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false)) {
-		p->ActivateButton(kATDeviceButton_IndusGTId, true);
-		p->ActivateButton(kATDeviceButton_IndusGTId, false);
+		p->ActivateButton(kATDeviceButton_IndusGTError, true);
+		p->ActivateButton(kATDeviceButton_IndusGTError, false);
 	}
 }
 
@@ -2011,6 +2099,11 @@ void OnCommandConsoleIndusGTTrack() {
 void OnCommandConsoleIndusGTBootCPM() {
 	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
 		p->ActivateButton(kATDeviceButton_IndusGTBootCPM, true);
+}
+
+void OnCommandConsoleIndusGTChangeDensity() {
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
+		p->ActivateButton(kATDeviceButton_IndusGTChangeDensity, true);
 }
 
 void OnCommandConsoleHappyToggleFastSlow() {
@@ -2093,9 +2186,9 @@ public:
 				if (g_sim.IsStorageDirty(ATStorageId(kATStorageId_Disk + mIndex))) {
 					VDStringW msg;
 
-					msg.sprintf(L"Modified disk image in D%u: has not been saved. Discard it to mount a new image?", mIndex + 1);
+					msg.sprintf(L"Modified disk image in D%u: has not been saved. OK to discard it?", mIndex + 1);
 
-					mpConfirmResult = ATUIShowAlert(msg.c_str(), L"Altirra Warning");
+					mpConfirmResult = ATUIShowAlertWarningConfirm(msg.c_str(), L"Discarding modified storage");
 					Wait(mpConfirmResult);
 				}
 				++mStage;
@@ -2175,7 +2268,7 @@ public:
 
 						msg.sprintf(L"Modified disk image in D%u: has not been saved. Discard it to mount a new image?", mIndex + 1);
 
-						mpConfirmResult = ATUIShowAlert(msg.c_str(), L"Altirra Warning");
+						mpConfirmResult = ATUIShowAlertWarningConfirm(msg.c_str(), L"Discarding modified storage");
 						Wait(mpConfirmResult);
 					}
 				}
@@ -2183,6 +2276,11 @@ public:
 				break;
 
 			case 1:
+				if (mpConfirmResult && !mpConfirmResult->GetResult()) {
+					MarkCompleted();
+					break;
+				}
+
 				if (mIndex < 0) {
 					for(int i=0; i<15; ++i) {
 						ATDiskInterface& diskIf = g_sim.GetDiskInterface(i);
@@ -2365,66 +2463,106 @@ void OnCommandRecordAudio() {
 }
 
 void OnCommandRecordVideo() {
-	if (!g_pAudioWriter && !g_pVideoWriter && !g_pSapWriter) {
-		VDStringW s(VDGetSaveFileName('rvid', (VDGUIHandle)g_hwnd, L"Record raw video", L"Audio/visual interleaved (*.avi)\0*.avi\0", L"avi"));
+	if (g_pAudioWriter || g_pVideoWriter || g_pSapWriter)
+		return;
 
-		if (!s.empty()) {
-			const bool hz50 = g_sim.GetVideoStandard() != kATVideoStandard_NTSC && g_sim.GetVideoStandard() != kATVideoStandard_PAL60;
+	const bool hz50 = g_sim.GetVideoStandard() != kATVideoStandard_NTSC && g_sim.GetVideoStandard() != kATVideoStandard_PAL60;
 
-			ATVideoEncoding encoding;
-			ATVideoRecordingFrameRate frameRateOption;
-			bool halfRate;
-			bool encodeAll;
-			if (ATUIShowDialogVideoEncoding((VDGUIHandle)g_hwnd, hz50, encoding, frameRateOption, halfRate, encodeAll)) {
-				try {
-					ATGTIAEmulator& gtia = g_sim.GetGTIA();
+	ATVideoEncoding encoding;
+	ATVideoRecordingFrameRate frameRateOption;
+	ATVideoRecordingAspectRatioMode aspectRatioMode;
+	ATVideoRecordingResamplingMode resamplingMode;
+	ATVideoRecordingScalingMode scalingMode;
+	uint32 videoBitRate;
+	uint32 audioBitRate;
+	bool halfRate;
+	bool encodeAll;
+	if (!ATUIShowDialogVideoEncoding((VDGUIHandle)g_hwnd, hz50, encoding, videoBitRate, audioBitRate, frameRateOption, aspectRatioMode, resamplingMode, scalingMode, halfRate, encodeAll))
+		return;
 
-					ATCreateVideoWriter(~g_pVideoWriter);
+	VDStringW s;
+	
+	switch(encoding) {
+		case kATVideoEncoding_Raw:
+		case kATVideoEncoding_RLE:
+		case kATVideoEncoding_ZMBV:
+			s = VDGetSaveFileName('rvid', (VDGUIHandle)g_hwnd, L"Record raw video", L"Audio/Visual Interleaved (*.avi)\0*.avi\0", L"avi");
+			break;
 
-					int w;
-					int h;
-					bool rgb32;
-					gtia.GetRawFrameFormat(w, h, rgb32);
+		case kATVideoEncoding_WMV7:
+		case kATVideoEncoding_WMV9:
+			s = VDGetSaveFileName('rvid', (VDGUIHandle)g_hwnd, L"Record raw video", L"Windows Media Video (*.wmv)\0*.wmv\0", L"wmv");
+			break;
 
-					uint32 palette[256];
-					if (!rgb32)
-						gtia.GetPalette(palette);
+		case kATVideoEncoding_H264_AAC:
+		case kATVideoEncoding_H264_MP3:
+			s = VDGetSaveFileName('rvid', (VDGUIHandle)g_hwnd, L"Record raw video", L"MPEG-4/AVC (*.mp4)\0*.mp4\0", L"mp4");
+			break;
+	}
 
-					VDFraction frameRate = hz50 ? VDFraction(1773447, 114*312) : VDFraction(3579545, 2*114*262);
-					double samplingRate = hz50 ? 1773447.0 / 28.0 : 3579545.0 / 56.0;
+	if (s.empty())
+		return;
 
-					switch(frameRateOption) {
-						case kATVideoRecordingFrameRate_NTSCRatio:
-							if (hz50) {
-								samplingRate = samplingRate * (50000.0 / 1001.0) / frameRate.asDouble();
-								frameRate = VDFraction(50000, 1001);
-							} else {
-								samplingRate = samplingRate * (60000.0 / 1001.0) / frameRate.asDouble();
-								frameRate = VDFraction(60000, 1001);
-							}
-							break;
+	try {
+		ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
-						case kATVideoRecordingFrameRate_Integral:
-							if (hz50) {
-								samplingRate = samplingRate * 50.0 / frameRate.asDouble();
-								frameRate = VDFraction(50, 1);
-							} else {
-								samplingRate = samplingRate * 60.0 / frameRate.asDouble();
-								frameRate = VDFraction(60, 1);
-							}
-							break;
-					}
+		ATCreateVideoWriter(~g_pVideoWriter);
 
-					g_pVideoWriter->Init(s.c_str(), encoding, w, h, frameRate, rgb32 ? NULL : palette, samplingRate, g_sim.IsDualPokeysEnabled(), hz50 ? 1773447.0f : 1789772.5f, halfRate, encodeAll, g_sim.GetUIRenderer());
+		int w;
+		int h;
+		bool rgb32;
+		gtia.GetRawFrameFormat(w, h, rgb32);
 
-					g_sim.GetAudioOutput()->SetAudioTap(g_pVideoWriter);
-					gtia.AddVideoTap(g_pVideoWriter);
-				} catch(const MyError& e) {
-					StopRecording();
-					e.post(g_hwnd, "Altirra Error");
+		uint32 palette[256];
+		if (!rgb32)
+			gtia.GetPalette(palette);
+
+		VDFraction frameRate = hz50 ? VDFraction(1773447, 114*312) : VDFraction(3579545, 2*114*262);
+		double samplingRate = hz50 ? 1773447.0 / 28.0 : 3579545.0 / 56.0;
+
+		switch(frameRateOption) {
+			case kATVideoRecordingFrameRate_NTSCRatio:
+				if (hz50) {
+					samplingRate = samplingRate * (50000.0 / 1001.0) / frameRate.asDouble();
+					frameRate = VDFraction(50000, 1001);
+				} else {
+					samplingRate = samplingRate * (60000.0 / 1001.0) / frameRate.asDouble();
+					frameRate = VDFraction(60000, 1001);
 				}
-			}
+				break;
+
+			case kATVideoRecordingFrameRate_Integral:
+				if (hz50) {
+					samplingRate = samplingRate * 50.0 / frameRate.asDouble();
+					frameRate = VDFraction(50, 1);
+				} else {
+					samplingRate = samplingRate * 60.0 / frameRate.asDouble();
+					frameRate = VDFraction(60, 1);
+				}
+				break;
 		}
+
+		int px = 2;
+		int py = 2;
+		gtia.GetPixelAspectMultiple(px, py);
+
+		const bool pal = g_sim.GetVideoStandard() != kATVideoStandard_NTSC && g_sim.GetVideoStandard() != kATVideoStandard_PAL60;
+		double par = 1.0f;
+		
+		if (aspectRatioMode != ATVideoRecordingAspectRatioMode::None) {
+			par = (double)py / (double)px;
+			
+			if (aspectRatioMode == ATVideoRecordingAspectRatioMode::FullCorrection)
+				par *= (hz50 ? 1.03964f : 0.857141f);
+		}
+
+		g_pVideoWriter->Init(s.c_str(), encoding, videoBitRate, audioBitRate, w, h, frameRate, par, resamplingMode, scalingMode, rgb32 ? NULL : palette, samplingRate, g_sim.IsDualPokeysEnabled(), hz50 ? 1773447.0f : 1789772.5f, halfRate, encodeAll, g_sim.GetUIRenderer());
+
+		g_sim.GetAudioOutput()->SetAudioTap(g_pVideoWriter->AsAudioTap());
+		gtia.AddVideoTap(g_pVideoWriter->AsVideoTap());
+	} catch(const MyError& e) {
+		StopRecording();
+		ATUIShowError2(ATUIGetNewPopupOwner(), VDTextAToW(e.c_str()).c_str(), L"Video recording failed");
 	}
 }
 
@@ -2906,15 +3044,15 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 
 		if (cmdLine.FindAndRemoveSwitch(L"artifact", arg)) {
 			if (!vdwcsicmp(arg, L"none"))
-				g_sim.GetGTIA().SetArtifactingMode(ATGTIAEmulator::kArtifactNone);
+				g_sim.GetGTIA().SetArtifactingMode(ATArtifactMode::None);
 			else if (!vdwcsicmp(arg, L"ntsc"))
-				g_sim.GetGTIA().SetArtifactingMode(ATGTIAEmulator::kArtifactNTSC);
+				g_sim.GetGTIA().SetArtifactingMode(ATArtifactMode::NTSC);
 			else if (!vdwcsicmp(arg, L"ntschi"))
-				g_sim.GetGTIA().SetArtifactingMode(ATGTIAEmulator::kArtifactNTSCHi);
+				g_sim.GetGTIA().SetArtifactingMode(ATArtifactMode::NTSCHi);
 			else if (!vdwcsicmp(arg, L"pal"))
-				g_sim.GetGTIA().SetArtifactingMode(ATGTIAEmulator::kArtifactPAL);
+				g_sim.GetGTIA().SetArtifactingMode(ATArtifactMode::PAL);
 			else if (!vdwcsicmp(arg, L"palhi"))
-				g_sim.GetGTIA().SetArtifactingMode(ATGTIAEmulator::kArtifactPALHi);
+				g_sim.GetGTIA().SetArtifactingMode(ATArtifactMode::PALHi);
 			else
 				throw MyError("Command line error: Invalid hardware mode '%ls'", arg);
 		}
@@ -3334,7 +3472,7 @@ int RunMainLoop2(HWND hwnd) {
 	int ticks = 0;
 
 	ATAnticEmulator& antic = g_sim.GetAntic();
-	uint32 lastFrame = antic.GetFrameCounter();
+	uint32 lastFrame = antic.GetPresentedFrameCounter();
 	uint32 frameTimeErrorAccum = 0;
 	sint64 error = 0;
 	uint64 secondTime = VDGetPreciseTicksPerSecondI();
@@ -3384,7 +3522,7 @@ int RunMainLoop2(HWND hwnd) {
 		if (isRunning && (g_winActive || !g_pauseInactive)) {
 			g_ATAutoFrameFlipping = true;
 
-			uint32 frame = antic.GetFrameCounter();
+			uint32 frame = antic.GetPresentedFrameCounter();
 			if (frame != lastFrame) {
 				CheckRecordingExceptions();
 
@@ -3560,7 +3698,7 @@ int RunMainLoop(HWND hwnd) {
 	return rc;
 }
 
-int RunInstance(int nCmdShow);
+int RunInstance(int nCmdShow, class ATStartupLogger&);
 
 void ATUISetCommandLine(const wchar_t *s) {
 	g_ATCmdLine.Init(s);
@@ -3615,6 +3753,46 @@ bool ATInitRegistry() {
 	}
 
 	g_ATRegistryHadAnything = VDRegistryAppKey("", false).isReady();
+
+	const wchar_t *resetTags = nullptr;
+	if (g_ATCmdLine.FindAndRemoveSwitch(L"reset", resetTags)) {
+		VDStringRefW resetTagsRef(resetTags);
+		VDStringRefW resetToken;
+
+		for(;;) {
+			bool didSplit = resetTagsRef.split(L',', resetToken);
+
+			if (!didSplit)
+				resetToken = resetTagsRef;
+
+			if (resetToken == L"windowlayouts") {
+				VDRegistryAppKey appKey;
+				appKey.removeKeyRecursive("Pane layouts 2");
+			} else if (resetToken == L"display") {
+				VDRegistryAppKey appKey("Settings");
+				vdvector<VDStringA> valuesToDelete;
+
+				VDRegistryValueIterator it(appKey);
+
+				while(const char *valueName = it.Next()) {
+					if (!vdstricmp(valueName, "Display:", 8))
+						valuesToDelete.emplace_back(valueName);
+				}
+
+				for(const VDStringA& valueName : valuesToDelete)
+					appKey.removeValue(valueName.c_str());
+			} else {
+				VDStringW msg;
+				msg.sprintf(L"Unknown settings type to reset: '%*ls'", (int)resetToken.size(), resetToken.data());
+
+				MessageBoxW(nullptr, msg.c_str(), L"Altirra Warning", MB_OK | MB_ICONWARNING);
+			}
+
+			if (!didSplit)
+				break;
+		}
+	}
+
 	return true;
 }
 
@@ -3744,12 +3922,55 @@ void ATInitRand() {
 	srand((unsigned)(hash ^ (hash >> 32)));
 }
 
+///////////////////////////////////////////////////////////////////////////
+
+class ATStartupLogger {
+public:
+	void Init() {
+		mbEnabled = true;
+
+		// attach to parent console if we can, otherwise allocate a new one
+		if (!AttachConsole(ATTACH_PARENT_PROCESS))
+			AllocConsole();
+
+		mStartTick = VDGetCurrentTick();
+	}
+
+	void Log(const char *msg) {
+		if (mbEnabled) {
+			DWORD actual;
+			HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+			char buf[32];
+
+			snprintf(buf, 32, "[%6.3f] ", (float)(VDGetCurrentTick() - mStartTick) / 1000.0f);
+			buf[31] = 0;
+
+			WriteFile(h, buf, (DWORD)strlen(buf), &actual, nullptr);
+			WriteFile(h, msg, (DWORD)strlen(msg), &actual, nullptr);
+			WriteFile(h, "\r\n", 2, &actual, nullptr);
+		}
+	}
+
+	bool mbEnabled = false;
+	uint32 mStartTick = 0;
+};
+
 int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
+	ATStartupLogger startupLogger;
+
+	ATSaveRegisterTypes();
+	ATInitSaveStateDeserializer();
+
 	ATInitCRTHooks();
 
 	ATUISetCommandLine(GetCommandLineW());
 
 	::SetUnhandledExceptionFilter(ATUnhandledExceptionFilter);
+
+	if (g_ATCmdLine.FindAndRemoveSwitch(L"startuplog")) {
+		startupLogger.Init();
+		startupLogger.Log("Startup logging enabled.");
+	}
 
 	if (g_ATCmdLine.FindAndRemoveSwitch(L"fullheapdump"))
 		ATExceptionFilterSetFullHeapDump(true);
@@ -3758,6 +3979,7 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 
 	VDInitThunkAllocator();
 
+	startupLogger.Log("Initializing OLE.");
 	OleInitialize(NULL);
 
 	ATInitRand();
@@ -3793,7 +4015,10 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 		if (!ATInitRegistry()) {
 			rval = 5;
 		} else {
+			startupLogger.Log("Loading options");
 			ATOptionsLoad();
+
+			startupLogger.Log("Loading settings");
 			LoadSettingsEarly();
 
 			ATInitDisplayOptions();
@@ -3814,33 +4039,46 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 				if (g_ATCmdLine.FindAndRemoveSwitch(L"lockd3d"))
 					g_d3d9Lock.Lock();
 
-				rval = RunInstance(nCmdShow);
+				startupLogger.Log("Running instance");
+				rval = RunInstance(nCmdShow, startupLogger);
 			}
 
+			startupLogger.Log("Shutting down registry");
 			ATShutdownRegistry();
 		}
 	}
 
+	startupLogger.Log("Shutting down OLE");
 	OleUninitialize();
 
+	startupLogger.Log("Shutting down thunk allocator");
 	VDShutdownThunkAllocator();
 
 	return rval;
 }
 
-int RunInstance(int nCmdShow) {
+int RunInstance(int nCmdShow, ATStartupLogger& startupLogger) {
 	g_hInst = VDGetLocalModuleHandleW32();
 
+	startupLogger.Log("Registering controls");
 	VDRegisterVideoDisplayControl();
 	VDUIRegisterHotKeyExControl();
 	ATUINativeWindow::Register();
 
+	startupLogger.Log("Initializing themes");
+	ATUIInitThemes();
+	
+	startupLogger.Log("Initializing frame system");
 	ATInitUIFrameSystem();
+
+	startupLogger.Log("Initializing commands and accelerators");
 	ATUIInitCommandMappings(g_ATUICommandMgr);
 	ATUIInitDefaultAccelTables();
 	
 	VDDialogFrameW32::SetDefaultCaption(L"Altirra");
 	ATUISetDefaultGenericDialogCaption(L"Altirra");
+
+	startupLogger.Log("Applying options");
 
 	struct local {
 		static void DisplayUpdateFn(ATOptions& opts, const ATOptions *prevOpts, void *) {
@@ -3871,6 +4109,12 @@ int RunInstance(int nCmdShow) {
 		}
 	);
 
+	ATOptionsAddUpdateCallback(true,
+		[](ATOptions& opts, const ATOptions *prevOpts, void *) {
+			ATUISetDarkThemeActive(opts.mbDarkTheme);
+		}
+	);
+
 	VDVideoDisplaySetDebugInfoEnabled(g_ATCmdLine.FindAndRemoveSwitch(L"displaydebug"));
 	VDVideoDisplaySetMonitorSwitchingDXEnabled(true);
 	VDVideoDisplaySetSecondaryDXEnabled(true);
@@ -3879,16 +4123,23 @@ int RunInstance(int nCmdShow) {
 
 	VDDispSetLogHook([](const char *s) { g_ATLCHostDisp("%s\n", s); });
 
+	startupLogger.Log("Initializing filespec system");
 	VDInitFilespecSystem();
 	VDLoadFilespecSystemData();
 
+	startupLogger.Log("Initializing UI panes");
 	ATInitUIPanes();
+
+	startupLogger.Log("Initializing logging");
 	ATInitDebuggerLogging();
+
+	startupLogger.Log("Initializing native UI");
 	ATInitProfilerUI();
 	ATUIRegisterDisplayPane();
 	ATUIInitVirtualKeyMap(g_kbdOpts);
 	ATUILoadAccelTables();
 
+	startupLogger.Log("Creating main window");
 	WNDCLASS wc = {};
 	wc.lpszClassName = _T("AltirraMainWindow");
 	ATOM atom = ATContainerWindow::RegisterCustom(wc);
@@ -3899,6 +4150,7 @@ int RunInstance(int nCmdShow) {
 	ATUIInitProgressDialog();
 	ATUIPushProgressParent((VDGUIHandle)hwnd);
 
+	startupLogger.Log("Restoring main window");
 	ATUIRestoreWindowPlacement(hwnd, "Main window", nCmdShow);
 
 	if (!(GetWindowLong(hwnd, GWL_STYLE) & WS_VISIBLE))
@@ -3911,12 +4163,19 @@ int RunInstance(int nCmdShow) {
 	// attempt to bring up a modem (which LoadSettings or a command prompt can do).
 	bool wsaInited = false;
 
+	startupLogger.Log("Initializing WinSock");
+
 	WSADATA wsa;
 	if (!WSAStartup(MAKEWORD(2, 0), &wsa))
 		wsaInited = true;
 
 	// bring up simulator
+	startupLogger.Log("Initializing simulator");
 	g_sim.Init();
+
+	ATUILinkMainWindowToSimulator(*g_pMainWindow);
+
+	startupLogger.Log("Initializing game controllers");
 	ATInitJoysticks();
 
 	g_sim.GetInputManager()->SetConsoleCallback(&g_inputConsoleCallback);
@@ -3925,6 +4184,7 @@ int RunInstance(int nCmdShow) {
 	ATRegisterDevices(*g_sim.GetDeviceManager());
 
 	// initialize menus (requires simulator)
+	startupLogger.Log("Initializing menus");
 	ATUIInitFirmwareMenuCallbacks(g_sim.GetFirmwareManager());
 	ATUIInitProfileMenuCallbacks();
 
@@ -3938,15 +4198,19 @@ int RunInstance(int nCmdShow) {
 	SetMenu(hwnd, g_hMenu);
 
 	// bring up debugger
+	startupLogger.Log("Initializing debugger");
 	ATInitDebugger();
 
 	// init compatibility database
+	startupLogger.Log("Initializing compatibility system");
 	ATCompatInit();
 
 	// initialize runtime UI (requires simulator)
+	startupLogger.Log("Initializing display UI");
 	ATUIInitManager();
 
 	// load available profile set
+	startupLogger.Log("Loading profiles");
 	if (ATLoadDefaultProfiles())
 		ATUIRebuildDynamicMenu(kATUIDynamicMenu_Profile);
 
@@ -3979,6 +4243,7 @@ int RunInstance(int nCmdShow) {
 		}
 	}
 
+	startupLogger.Log("Loading current profile");
 	if (profileToLoad != kATProfileId_Invalid && ATSettingsIsValidProfile(profileToLoad))
 		ATSettingsLoadProfile(profileToLoad, settingsToLoad);
 	else
@@ -3992,6 +4257,12 @@ int RunInstance(int nCmdShow) {
 
 	if (useHardwareBaseline)
 		LoadBaselineSettings();
+	
+	startupLogger.Log("Initializing native audio");
+
+	g_sim.GetAudioOutput()->InitNativeAudio();
+	
+	startupLogger.Log("Loading ROMs");
 
 	try {
 		g_sim.LoadROMs();
@@ -4004,38 +4275,57 @@ int RunInstance(int nCmdShow) {
 	g_sim.Resume();
 	ATInitEmuErrorHandler((VDGUIHandle)g_hwnd, &g_sim);
 
+	startupLogger.Log("Restoring pane layout");
+
 	if (!ATRestorePaneLayout(NULL))
 		ATActivateUIPane(kATUIPaneId_Display, true);
 
 	if (ATGetUIPane(kATUIPaneId_Display))
 		ATActivateUIPane(kATUIPaneId_Display, true);
 
+	startupLogger.Log("Initiating cold reset");
 	g_sim.ColdReset();
 
 	// we can't go full screen until the display panes have been created
-	if (!g_ATCmdLine.FindAndRemoveSwitch(L"w"))
+	if (!g_ATCmdLine.FindAndRemoveSwitch(L"w")) {
+		startupLogger.Log("Initializing full screen mode");
 		ATLoadSettings(kATSettingsCategory_FullScreen);
+	}
 
+	startupLogger.Log("Running main loop");
 	int returnCode = RunMainLoop(hwnd);
 
+	startupLogger.Log("Saving settings");
 	ATSaveSettings(ATSettingsCategory(kATSettingsCategory_All & ~kATSettingsCategory_FullScreen));
 
+	startupLogger.Log("Exiting fullscreen mode");
 	ATSetFullscreen(false);
 
+	startupLogger.Log("Stopping recording");
 	StopRecording();
 
+	startupLogger.Log("Shutting down filespec system");
 	VDSaveFilespecSystemData();
 
+	startupLogger.Log("Shutting down compat system");
 	ATCompatShutdown();
 
+	startupLogger.Log("Shutting down UI");
 	ATUIShutdownManager();
 
+	startupLogger.Log("Shutting down debugger");
 	ATShutdownEmuErrorHandler();
 	ATShutdownDebugger();
 	ATConsoleCloseLogFileNT();
+
+	startupLogger.Log("Shutting down game controllers");
 	ATShutdownJoysticks();
+
+	startupLogger.Log("Shutting down simulator");
+	ATUIUnlinkMainWindowFromSimulator();
 	g_sim.Shutdown();
 
+	startupLogger.Log("Shutting down native UI");
 	g_d3d9Lock.Unlock();
 
 	ATUIShutdownProgressDialog();
@@ -4053,9 +4343,12 @@ int RunInstance(int nCmdShow) {
 
 	ATShutdownUIPanes();
 	ATShutdownUIFrameSystem();
+	ATUIShutdownThemes();
 
-	if (wsaInited)
+	if (wsaInited) {
+		startupLogger.Log("Shutting down WinSock");
 		WSACleanup();
+	}
 
 	return returnCode;
 }

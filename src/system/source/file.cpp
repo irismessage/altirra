@@ -455,6 +455,16 @@ void VDFile::setCreationTime(const VDDate& date) {
 	}
 }
 
+VDDate VDFile::getLastWriteTime() const {
+	FILETIME lastWriteTime {};
+
+	if (!mhFile || !GetFileTime(mhFile, nullptr, nullptr, &lastWriteTime))
+		return VDDate {};
+
+	const uint64 ticks = ULARGE_INTEGER { { lastWriteTime.dwLowDateTime, lastWriteTime.dwHighDateTime } }.QuadPart;
+	return VDDate { ticks };
+}
+
 void *VDFile::AllocUnbuffer(size_t nBytes) {
 	return VirtualAlloc(NULL, nBytes, MEM_COMMIT, PAGE_READWRITE);
 }

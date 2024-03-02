@@ -34,10 +34,15 @@ void ATDisassembleCaptureInsnContext(uint32 globalAddr, ATCPUHistoryEntry& hent)
 void ATDisassembleCaptureInsnContext(IATDebugTarget *target, uint16 addr, uint8 bank, ATCPUHistoryEntry& hent);
 void ATDisassembleCaptureInsnContext(IATDebugTarget *target, uint32 globalAddr, ATCPUHistoryEntry& hent);
 uint16 ATDisassembleInsn(uint16 addr, uint8 bank = 0);
-uint16 ATDisassembleInsn(char *buf, uint16 addr, bool decodeReferences);
 uint16 ATDisassembleInsn(VDStringA& buf, uint16 addr, bool decodeReferences);
 
-uint16 ATDisassembleInsn(VDStringA& buf,
+struct ATDisasmResult {
+	uint16 mNextPC;
+	uint32 mOperandStart;
+	uint32 mOperandEnd;
+};
+
+ATDisasmResult ATDisassembleInsn(VDStringA& buf,
 	IATDebugTarget *target,
 	ATDebugDisasmMode disasmMode,
 	const ATCPUHistoryEntry& hent,

@@ -39,7 +39,7 @@ private:
 	void	Decode65816AddrDp(bool unalignedDP);
 	void	Decode65816AddrDpX(bool unalignedDP, bool emu);
 	void	Decode65816AddrDpY(bool unalignedDP, bool emu);
-	void	Decode65816AddrDpInd(bool unalignedDP);
+	void	Decode65816AddrDpInd(bool unalignedDP, bool emu);
 	void	Decode65816AddrDpIndX(bool unalignedDP, bool emu);
 	void	Decode65816AddrDpIndY(bool unalignedDP, bool emu, bool forceCycle);
 	void	Decode65816AddrDpLongInd(bool unalignedDP);

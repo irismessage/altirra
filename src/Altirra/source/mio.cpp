@@ -273,13 +273,34 @@ void ATMIOEmulator::InitFirmware(ATFirmwareManager *fwman) {
 }
 
 bool ATMIOEmulator::ReloadFirmware() {
-	vduint128 checksum = VDHash128(mFirmware, sizeof mFirmware);
+	// We only need an 8K firmware (64Kbit), but it's common to see MIO images stored in EPROMs
+	// bigger than that, with only part used. We use a 16K buffer to read and check if the first
+	// 8K is empty; if so, then we use the second 8K instead. MIO11OS.ROM is laid out this way.
+	constexpr uint32 kMaxSize = 16384;
+	vdblock<uint8> tmp(kMaxSize);
 
-	memset(mFirmware, 0xFF, sizeof mFirmware);
+	memset(tmp.data(), 0xFF, kMaxSize);
 
 	uint32 actual = 0;
-	mpFwMan->LoadFirmware(mpFwMan->GetCompatibleFirmware(kATFirmwareType_MIO), mFirmware, 0, sizeof mFirmware, nullptr, &actual, nullptr, nullptr, &mbFirmwareUsable);
+	mpFwMan->LoadFirmware(mpFwMan->GetCompatibleFirmware(kATFirmwareType_MIO), tmp.data(), 0, kMaxSize, nullptr, &actual, nullptr, nullptr, &mbFirmwareUsable);
 
+	// check if the first 8K is blank
+	bool first8KBlank = true;
+	const uint8 c = tmp[0];
+	for(uint32 i=1; i<8192; ++i) {
+		if (tmp[i] != c) {
+			first8KBlank = false;
+			break;
+		}
+	}
+
+	// save off the old firmware checksum
+	vduint128 checksum = VDHash128(mFirmware, sizeof mFirmware);
+
+	// choose the first 8K if it is not blank, else use second 8K
+	memcpy(mFirmware, tmp.data() + (first8KBlank ? 8192 : 0), sizeof mFirmware);
+
+	// re-checksum and check for a change
 	return checksum != VDHash128(mFirmware, sizeof mFirmware);
 }
 

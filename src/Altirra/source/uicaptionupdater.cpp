@@ -620,20 +620,25 @@ ATUIWindowCaptionUpdater::ATUIWindowCaptionUpdater() {
 #if defined(WIN32) && defined(ATNRELEASE)
 	bool pageHeap = false;
 
+	const uint32 FLG_HEAP_PAGE_ALLOCS = 0x02000000;
+	uint32 flags = 0;
+
 	#if defined(VD_CPU_AMD64)
 		uint64 peb = __readgsqword(0x60);
-		uint32 flags = *(const uint32 *)(peb + 0xBC);
-
-		pageHeap = (flags & 0x02000000) != 0;
+		flags = *(const uint32 *)(peb + 0xBC);
 	#elif defined(VD_CPU_X86)
 		uint32 peb = __readfsdword(0x30);
-		uint32 flags = *(const uint32 *)(peb + 0x68);
-
-		pageHeap = (flags & 0x02000000) != 0;
+		flags = *(const uint32 *)(peb + 0x68);
+	#elif defined(VD_CPU_ARM64)
+		// Indirect through TEB in x18 to PEB
+		uint64 peb = *(const uint64 *)(__getReg(18) + 0x60);
+		flags = *(const uint32 *)(peb + 0xBC);
 	#endif
 
-		if (pageHeap)
-			mMainTitle += L" [page heap enabled]";
+	pageHeap = (flags & FLG_HEAP_PAGE_ALLOCS) != 0;
+
+	if (pageHeap)
+		mMainTitle += L" [page heap enabled]";
 #endif
 
 	SetTemplate(nullptr, nullptr);

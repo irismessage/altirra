@@ -7,6 +7,12 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ATHelpBuilder", "ATHelpBuil
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ATHelpFile", "ATHelpFile\ATHelpFile.vcxproj", "{B1076C28-FEB2-40A6-8224-A072C44DD2B8}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "_top", "_top", "{5F9523A3-FC97-4B31-9E70-385241A6C974}"
+	ProjectSection(SolutionItems) = preProject
+		ATHelpFile\readme.txt = ATHelpFile\readme.txt
+		ATHelpFile\StartWebServer.cmd = ATHelpFile\StartWebServer.cmd
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Win32 = Debug|Win32

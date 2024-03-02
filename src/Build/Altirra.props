@@ -2,18 +2,20 @@
 <Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <_ProjectFileVersion>10.0.40219.1</_ProjectFileVersion>
+    <CodeAnalysisRuleSet>..\Build\Altirra.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
   <ImportGroup Label="PropertySheets">
     <Import Project="VCDisableTelemetry.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros">
-    <VDBaseDir>..\..</VDBaseDir>
+    <VDBaseDir>$(MSBuildThisFileDirectory)..\..</VDBaseDir>
     <VDPlatformDirTag Condition="$(Platform)=='x86'"></VDPlatformDirTag>
     <VDPlatformDirTag Condition="$(Platform)=='x64'">AMD64</VDPlatformDirTag>
     <VDPlatformDirTag Condition="$(Platform)=='ARM64'">ARM64</VDPlatformDirTag>
     <VDConfigDirTag>Unknown</VDConfigDirTag>
     <VDConfigDirTag Condition="$(Configuration)=='Debug'">Debug</VDConfigDirTag>
     <VDConfigDirTag Condition="$(Configuration)=='Profile'">Profile</VDConfigDirTag>
+    <VDConfigDirTag Condition="$(Configuration)=='Analysis'">Analysis</VDConfigDirTag>
     <VDConfigDirTag Condition="$(Configuration)=='Release'">Release</VDConfigDirTag>
     <VDToolsConfigDirTag>Release</VDToolsConfigDirTag>
     <VDDirTag>$(VDConfigDirTag)$(VDPlatformDirTag)</VDDirTag>
@@ -22,20 +24,19 @@
     <VDObjPath>$(VDBaseDir)\obj\$(VDDirTag)\$(ProjectName)</VDObjPath>
     <ML Condition="$(Platform)=='x64'">/Dxmmword=qword</ML>
 
-    <ATBuildToolPath Condition="'$(Configuration)'=='Debug'">$(SolutionDir)..\out\debug</ATBuildToolPath>
-    <ATBuildToolPath Condition="'$(Configuration)'!='Debug'">$(SolutionDir)..\out\release</ATBuildToolPath>
-    <ATLibPath Condition="'$(Configuration)'=='Debug'">$(SolutionDir)..\lib\Debug$(VDPlatformDirTag)</ATLibPath>
-    <ATLibPath Condition="'$(Configuration)'=='Profile'">$(SolutionDir)..\lib\Profile$(VDPlatformDirTag)</ATLibPath>
-    <ATLibPath Condition="'$(Configuration)'=='Release'">$(SolutionDir)..\lib\Release$(VDPlatformDirTag)</ATLibPath>
+    <!-- For now, always use Release x86 tools. The 6502 projects don't have a full set of configs and can't match configurations. -->
+    <ATBuildToolConfig>Release</ATBuildToolConfig>
+
+    <!-- Use the same platform as the build, except for ARM64 where we cross-compile and use X64 tools instead. -->
+    <ATBuildToolPath Condition="'$(Platform)'!='ARM64'">$(VDBaseDir)\out\$(ATBuildToolConfig)</ATBuildToolPath>
+    <ATBuildToolPath Condition="'$(Platform)'=='ARM64'">$(VDBaseDir)\out\$(ATBuildToolConfig)AMD64</ATBuildToolPath>
+
+    <ATLibPath>$(VDLibPath)</ATLibPath>
+    <ATObjPath>$(VDObjPath)</ATObjPath>
+    <ATOutPath>$(VDOutputPath)</ATOutPath>
     <ATMadsPath>mads.exe</ATMadsPath>
-    <ATObjPath Condition="'$(Configuration)'=='Debug'">$(SolutionDir)..\obj\Debug$(VDPlatformDirTag)\$(ProjectName)</ATObjPath>
-    <ATObjPath Condition="'$(Configuration)'=='Profile'">$(SolutionDir)..\obj\Profile$(VDPlatformDirTag)\$(ProjectName)</ATObjPath>
-    <ATObjPath Condition="'$(Configuration)'=='Release'">$(SolutionDir)..\obj\Release$(VDPlatformDirTag)\$(ProjectName)</ATObjPath>
-    <ATOutPath Condition="'$(Configuration)'=='Debug'">$(SolutionDir)..\out\Debug$(VDPlatformDirTag)</ATOutPath>
-    <ATOutPath Condition="'$(Configuration)'=='Profile'">$(SolutionDir)..\out\Profile$(VDPlatformDirTag)</ATOutPath>
-    <ATOutPath Condition="'$(Configuration)'=='Release'">$(SolutionDir)..\out\Release$(VDPlatformDirTag)</ATOutPath>
     <ATYasmPath>yasm.exe</ATYasmPath>
-	<XPDeprecationWarning>False</XPDeprecationWarning>  
+    <XPDeprecationWarning>False</XPDeprecationWarning>  
   </PropertyGroup>
   <ItemGroup>
     <BuildMacro Include="ATBuildToolPath">
@@ -44,12 +45,16 @@
     <BuildMacro Include="ATMadsPath">
       <Value>$(ATMadsPath)</Value>
     </BuildMacro>
+    <PropertyPageSchema Include="$(MSBuildThisFileDirectory)Altirra.xml">
+      <Context>Project</Context>
+    </PropertyPageSchema>
   </ItemGroup>
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>h;..\h;autogen;res;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>h;$([MSBuild]::MakeRelative($(ProjectDir),$(MSBuildThisFileDirectory)..\h));autogen;res;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>%(AdditionalOptions) /Zc:inline /permissive-</AdditionalOptions>
       <AdditionalOptions Condition="'$(Configuration)'!='Debug'">%(AdditionalOptions) /Zo</AdditionalOptions>
+      <AdditionalOptions Condition="'$(Configuration)'=='Analysis'">%(AdditionalOptions) /analyze:rulesetdirectory "$(VSInstallDir)Team Tools\Static Analysis Tools\Rule Sets" /analyze:ruleset "$(MSBuildThisFileDirectory)Altirra.ruleset"</AdditionalOptions>
       <BasicRuntimeChecks Condition="'$(Configuration)'=='Debug'">EnableFastChecks</BasicRuntimeChecks>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <CallingConvention Condition="'$(Platform)'!='ARM64'">VectorCall</CallingConvention>
@@ -82,16 +87,20 @@
     <Lib>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <TargetMachine Condition="'$(Platform)'=='Win32'">MachineX86</TargetMachine>
+      <TargetMachine Condition="'$(Platform)'=='x86'">MachineX86</TargetMachine>
       <TargetMachine Condition="'$(Platform)'=='x64'">MachineX64</TargetMachine>
       <TargetMachine Condition="'$(Platform)'=='ARM64'">MachineARM64</TargetMachine>
     </Lib>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <TargetMachine Condition="'$(Platform)'=='Win32'">MachineX86</TargetMachine>
+      <TargetMachine Condition="'$(Platform)'=='x86'">MachineX64</TargetMachine>
       <TargetMachine Condition="'$(Platform)'=='x64'">MachineX64</TargetMachine>
       <TargetMachine Condition="'$(Platform)'=='ARM64'">MachineARM64</TargetMachine>
       <OptimizeReferences Condition="'$(Configuration)'!='Debug'">true</OptimizeReferences>
       <EnableCOMDATFolding Condition="'$(Configuration)'!='Debug'">true</EnableCOMDATFolding>
+
+      <AdditionalLibraryDirectories Condition="$(ATLinkUseLibPath)">%(AdditionalLibraryDirectories);$(ATLibPath)</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
       <PreprocessorDefinitions Condition="'$(Configuration)'!='Debug'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -99,7 +108,7 @@
       <Culture>0x0409</Culture>
     </ResourceCompile>
   </ItemDefinitionGroup>
-  <PropertyGroup>
+  <PropertyGroup Condition="$(ATUseOutputPaths)">
     <IntDir>$(ATObjPath)\</IntDir>
     <OutDir Condition="'$(ConfigurationType)'=='StaticLibrary'">$(ATLibPath)\</OutDir>
     <OutDir Condition="'$(ConfigurationType)'!='StaticLibrary'">$(ATOutPath)\</OutDir>

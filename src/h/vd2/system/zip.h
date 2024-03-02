@@ -35,6 +35,8 @@
 #include <string.h>
 #include <vector>
 
+class VDDeflateEncoder;
+
 class VDDeflateBitReader {
 public:
 	void init(IVDStream *pSrc, uint64 limit) {
@@ -130,7 +132,7 @@ public:
 	};
 
 	VDCRCTable() = default;
-	VDCRCTable(uint32 crc) { Init(crc); }
+	explicit VDCRCTable(uint32 crc) { Init(crc); }
 
 	void Init(uint32 crc);
 
@@ -162,9 +164,9 @@ protected:
 	const VDCRCTable& mTable;
 };
 
-class VDDeflateStream : public IVDStream {
+class VDInflateStream : public IVDStream {
 public:
-	VDDeflateStream() : mCRCChecker(mCRCTable) {}
+	VDInflateStream() : mCRCChecker(mCRCTable) {}
 
 	void	Init(IVDStream *pSrc, uint64 limit, bool bStored);
 	void	EnableCRC(uint32 crc = VDCRCTable::kCRC32) { mCRCTable.Init(crc); mbCRCEnabled = true; }
@@ -235,7 +237,7 @@ protected:
 	IVDRandomAccessStream			*mpStream;
 };
 
-class VDZipStream final : public VDDeflateStream {
+class VDZipStream final : public VDInflateStream {
 public:
 	VDZipStream() = default;
 
@@ -244,7 +246,7 @@ public:
 	}
 };
 
-class VDGUnzipStream final : public VDDeflateStream {
+class VDGUnzipStream final : public VDInflateStream {
 public:
 	VDGUnzipStream() = default;
 	VDGUnzipStream(IVDStream *pSrc, uint64 limit) {
@@ -258,5 +260,78 @@ public:
 protected:
 	VDStringA mFilename;
 };
+
+// Adapter stream for compressing data with the Deflate algorithm, as
+// described in RFC1951. The child stream receives the raw Deflate
+// stream; no header is added. A CRC-32 is computed on the uncompressed
+// data, as needed for gzip and zip, but different than the Adler-32
+// used by zlib and png.
+//
+// The compression heuristics are tuned toward generic binary data.
+// PNG typically uses different heuristics aimed at longer matches,
+// such as Z_FILTERED in zlib.
+//
+class VDDeflateStream final : public IVDStream {
+	VDDeflateStream(const VDDeflateStream&) = delete;
+	VDDeflateStream& operator=(const VDDeflateStream&) = delete;
+public:
+	VDDeflateStream(IVDStream& dest);
+	~VDDeflateStream();
+
+	// Reset the stream state to prepare for compressing another source
+	// stream to the same destination stream. This must be called after
+	// Finalize() for the previous stream.
+	void Reset();
+
+	// Flush any remaining data out, writing a partial block if necessary.
+	// This must be called prior to destruction for the compressed
+	// stream to be valid.
+	void Finalize();
+
+	// Return the CRC-32 of the uncompressed data. Only valid after
+	// Finalize().
+	uint32 GetCRC() const { return mCRCChecker.CRC(); }
+
+public:
+	const wchar_t *GetNameForError() override;
+
+	sint64 Pos() override {
+		return mPos;
+	}
+
+	void	Read(void *buffer, sint32 bytes) override;
+	sint32	ReadData(void *buffer, sint32 bytes) override;
+	void	Write(const void *buffer, sint32 bytes) override;
+
+private:
+	void PreProcessInput(const void *p, uint32 n);
+	void WriteOutput(const void *p, uint32 n);
+
+	IVDStream& mDestStream;
+	VDDeflateEncoder *mpEncoder;
+	sint64 mPos;
+
+	VDCRCChecker mCRCChecker;
+};
+
+class IVDZipArchiveWriter {
+public:
+	virtual ~IVDZipArchiveWriter() = default;
+
+	// Begin writing a new file to the archive using the given path; returns
+	// a reference to stream to use for writing the uncompressed data. Only
+	// one file can be written at a time. EndFile() must be called after the
+	// file data is written. The path may contain subdirectories; the path
+	// is normalized to zip file conventions.
+	virtual VDDeflateStream& BeginFile(const wchar_t *path) = 0;
+
+	// End writing a file and complete the file metadata.
+	virtual void EndFile() = 0;
+
+	// Complete the zip archive by writing the central directory.
+	virtual void Finalize() = 0;
+};
+
+IVDZipArchiveWriter *VDCreateZipArchiveWriter(IVDStream& stream);
 
 #endif

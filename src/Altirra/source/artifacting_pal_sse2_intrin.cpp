@@ -18,10 +18,12 @@
 
 #include <stdafx.h>
 
-#ifdef VD_CPU_AMD64
+#if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
 #include <intrin.h>
 #include <emmintrin.h>
+#endif
 
+#ifdef VD_CPU_AMD64
 void ATArtifactPALLuma_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels) {
 	n >>= 3;
 
@@ -522,6 +524,153 @@ void ATArtifactPALFinal_SSE2(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf
 		*dst128++ = lopixels;
 		*dst128++ = hipixels;
 	} while(--n);
+}
+#endif
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
+template<bool T_UseSignedPalette>
+void ATArtifactPAL32_SSE2(void *dst, void *delayLine, uint32 n) {
+	// For this path, we assume that the alpha channel holds precomputed luminance. This works because
+	// the only source of raw RGB32 input is VBXE, and though it outputs 21-bit RGB, it can only do so
+	// from 4 x 256 palettes. All we need to do is average the YRGB pixels between the delay line and
+	// the current line, and then recorrect the luminance back.
+
+	uint32 *VDRESTRICT dst32 = (uint32 *)dst;
+	uint32 *VDRESTRICT delay32 = (uint32 *)delayLine;
+
+	__m128i signbits = _mm_set1_epi32(0x80808080);
+	__m128i alphamask = _mm_set1_epi32(0xFF000000);
+	__m128i x40b = _mm_set1_epi8(0x40);
+
+	const uint32 n4 = n >> 2;
+	const uint32 n1 = n & 3;
+
+	for(uint32 i=0; i<n4; ++i) {
+		// The delay line can be relied upon for alignment, the destination not so much.
+		// Not that it matters much as VS2017+ force MOVDQU. :(
+		__m128i prev = *(__m128i *)delay32;
+		__m128i next = _mm_loadu_si128((__m128i *)dst32);
+
+		if (_mm_movemask_epi8(_mm_cmpeq_epi8(prev, next)) != 0xFFFF) {
+			*(__m128i *)delay32 = next;
+
+			__m128i avg = _mm_avg_epu8(prev, next);
+			__m128i ydiff = _mm_and_si128(_mm_sub_epi8(next, avg), alphamask);
+			__m128i ydiff2 = _mm_or_si128(ydiff, _mm_srli_epi16(ydiff, 8));
+			__m128i ydiffrgb = _mm_shufflehi_epi16(_mm_shufflelo_epi16(ydiff2, 0xF5), 0xF5);
+
+			__m128i final = _mm_xor_si128(_mm_adds_epi8(_mm_xor_si128(avg, signbits), ydiffrgb), signbits);
+
+			if constexpr (T_UseSignedPalette) {
+				final = _mm_subs_epu8(final, x40b);
+				final = _mm_adds_epu8(final, final);
+			}
+
+			_mm_storeu_si128((__m128i *)dst32, final);
+		} else if constexpr (T_UseSignedPalette) {
+			__m128i final = next;
+
+			final = _mm_subs_epu8(final, x40b);
+			final = _mm_adds_epu8(final, final);
+
+			_mm_storeu_si128((__m128i *)dst32, final);
+		}
+
+		delay32 += 4;
+		dst32 += 4;
+	}
+
+	for(uint32 i=0; i<n1; ++i) {
+		uint32 prev32 = *delay32;
+		uint32 next32 = *dst32;
+
+		if (prev32 != next32) {
+			*delay32 = next32;
+
+			__m128i next = _mm_cvtsi32_si128((int)next32);
+			__m128i prev = _mm_cvtsi32_si128((int)prev32);
+			__m128i avg = _mm_avg_epu8(prev, next);
+			__m128i ydiff = _mm_and_si128(_mm_sub_epi8(next, avg), alphamask);
+			__m128i ydiff2 = _mm_or_si128(ydiff, _mm_srli_epi16(ydiff, 8));
+			__m128i ydiffrgb = _mm_shufflelo_epi16(ydiff2, 0xF5);
+
+			__m128i final = _mm_xor_si128(_mm_adds_epi8(_mm_xor_si128(avg, signbits), ydiffrgb), signbits);
+
+			if constexpr (T_UseSignedPalette) {
+				final = _mm_subs_epu8(final, x40b);
+				final = _mm_adds_epu8(final, final);
+			}
+
+			*dst32 = (uint32)_mm_cvtsi128_si32(final);
+		} else if constexpr (T_UseSignedPalette) {
+			__m128i final = _mm_cvtsi32_si128(next32);
+
+			final = _mm_subs_epu8(final, x40b);
+			final = _mm_adds_epu8(final, final);
+
+			*dst32 = (uint32)_mm_cvtsi128_si32(final);
+		}
+
+		++delay32;
+		++dst32;
+	}
+}
+
+void ATArtifactPAL32_SSE2(void *dst, void *delayLine, uint32 n, bool useSignedPalette) {
+	if (useSignedPalette)
+		ATArtifactPAL32_SSE2<true>(dst, delayLine, n);
+	else
+		ATArtifactPAL32_SSE2<false>(dst, delayLine, n);
+}
+
+void ATArtifactPALFinalMono_SSE2(uint32 *dst, const uint32 *ybuf, uint32 n, const vdfloat3& monoColor) {
+	const __m128i *VDRESTRICT ysrc = (const __m128i *)ybuf;
+
+	n >>= 2;
+
+	// Compute coefficients.
+	//
+	// Luma is signed 12.6 and we're going to do a high multiply followed by a rounded halving
+	// for a total right shift of 17 bits. This means that we need to convert our tint color to
+	// a normalized 5.11 fraction.
+
+	__m128i rcoeff = _mm_cvtps_epi32(_mm_set1_ps(monoColor.x * 2048.0f));
+	__m128i gcoeff = _mm_cvtps_epi32(_mm_set1_ps(monoColor.y * 2048.0f));
+	__m128i bcoeff = _mm_cvtps_epi32(_mm_set1_ps(monoColor.z * 2048.0f));
+
+	rcoeff = _mm_packs_epi32(rcoeff, rcoeff);
+	gcoeff = _mm_packs_epi32(gcoeff, gcoeff);
+	bcoeff = _mm_packs_epi32(bcoeff, bcoeff);
+
+	__m128i x1FEw = _mm_set1_epi16(0x1FE);
+	__m128i zero = _mm_setzero_si128();
+
+	for(uint32 i=0; i<n; ++i) {
+		const __m128i y = *ysrc++;
+
+		__m128i r = _mm_avg_epu16(_mm_min_epi16(_mm_max_epi16(_mm_mulhi_epi16(y, rcoeff), zero), x1FEw), zero);
+		__m128i g = _mm_avg_epu16(_mm_min_epi16(_mm_max_epi16(_mm_mulhi_epi16(y, gcoeff), zero), x1FEw), zero);
+		__m128i b = _mm_avg_epu16(_mm_min_epi16(_mm_max_epi16(_mm_mulhi_epi16(y, bcoeff), zero), x1FEw), zero);
+
+		// interleave red and blue
+		__m128i rb1 = _mm_unpacklo_epi16(b, r);
+		__m128i rb2 = _mm_unpackhi_epi16(b, r);
+
+		// shift green to high byte
+		__m128i gs = _mm_slli_epi16(g, 8);
+
+		// double up green to alpha/green channels
+		__m128i g1 = _mm_unpacklo_epi16(gs, gs);
+		__m128i g2 = _mm_unpackhi_epi16(gs, gs);
+
+		// merge r/b and g
+		__m128i rgb1 = _mm_or_si128(rb1, g1);
+		__m128i rgb2 = _mm_or_si128(rb2, g2);
+
+		_mm_store_si128((__m128i *)dst + 0, rgb1);
+		_mm_store_si128((__m128i *)dst + 1, rgb2);
+		dst += 8;
+	}
 }
 
 #endif

@@ -27,6 +27,7 @@ class ATIRQController;
 struct ATTraceContext;
 class ATTraceChannelSimple;
 class ATTraceChannelFormatted;
+class ATPaletteCorrector;
 
 class ATVBXEEmulator final : public IATSchedulerCallback {
 	ATVBXEEmulator(const ATVBXEEmulator&) = delete;
@@ -57,7 +58,7 @@ public:
 	void SetVersion(uint32 version);
 
 	void SetAnalysisMode(bool analysisMode);
-	void SetDefaultPalette(const uint32 pal[256]);
+	void SetDefaultPalette(const uint32 pal[256], ATPaletteCorrector *palcorr);
 
 	void SetTraceContext(ATTraceContext *context);
 
@@ -75,7 +76,7 @@ public:
 	bool WriteControl(uint8 addrLo, uint8 value);
 
 	// GTIA interface
-	void BeginFrame();
+	void BeginFrame(int correctionMode, bool signedPalette);
 	void EndFrame();
 	void BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires);
 	void RenderScanline(int x2, bool pfpmrendered);
@@ -128,6 +129,7 @@ private:
 
 	void InitPriorityTables();
 	void UpdateColorTable();
+	void RecorrectPalettes();
 
 	uint8 *mpMemory;
 	ATIRQController *mpIRQController = nullptr;
@@ -278,12 +280,19 @@ private:
 	ATTraceChannelFormatted *mpTraceChannelBlit = nullptr;
 	uint64	mTraceBlitStartTime = 0;
 
+	int		mRenderPaletteCorrectionMode = 0;
+	int		mRenderPaletteCorrectedMode = 0;
+	bool	mbRenderPaletteChanged = false;
+	bool	mbRenderPaletteSigned = false;
+	ATPaletteCorrector *mpPaletteCorrector = nullptr;
+
 	uint8	mColorTable[24];
 	uint8	mColorTableExt[24];
 	uint8	mPriorityTables[32][256][2];
 	uint8	mPriorityTablesHi[32][256][2];
 
-	uint32	mPalette[4][256];
+	uint32	mPalette[4][256];			// render palette (corrected version)
+	uint32	mArchPalette[4][256];		// architectural palette (uncorrected version)
 	uint32	mDefaultPalette[256];
 
 	uint8	mOverlayDecode[912];		// 28MHz (640) - decoded pixels

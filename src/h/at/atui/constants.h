@@ -40,6 +40,11 @@ enum ATUICursorImage : uint32 {
 	kATUICursorImage_IBeam,
 	kATUICursorImage_Cross,
 	kATUICursorImage_Query,
+	kATUICursorImage_Move,
+	kATUICursorImage_SizeHoriz,
+	kATUICursorImage_SizeVert,
+	kATUICursorImage_SizeDiagFwd,
+	kATUICursorImage_SizeDiagRev,
 	kATUICursorImage_Target,
 	kATUICursorImage_TargetOff
 };

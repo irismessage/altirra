@@ -4,7 +4,6 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{C2082189-3ECB-4079-91FA-89D3C8A305C0}</ProjectGuid>
     <RootNamespace>system</RootNamespace>
-    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="..\Build\PlatformSetup.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -113,6 +112,7 @@
     <ClInclude Include="..\h\vd2\system\bitmath.h" />
     <ClInclude Include="..\h\vd2\system\cache.h" />
     <ClInclude Include="..\h\vd2\system\cmdline.h" />
+    <ClInclude Include="..\h\vd2\system\color.h" />
     <ClInclude Include="..\h\VD2\system\cpuaccel.h" />
     <ClInclude Include="..\h\vd2\system\date.h" />
     <ClInclude Include="..\h\vd2\system\debug.h" />
@@ -140,6 +140,7 @@
     <ClInclude Include="..\h\VD2\system\registry.h" />
     <ClInclude Include="..\h\vd2\system\registrymemory.h" />
     <ClInclude Include="..\h\vd2\system\seh.h" />
+    <ClInclude Include="..\h\vd2\system\vecmath.h" />
     <ClInclude Include="..\h\VD2\system\strutil.h" />
     <ClInclude Include="..\h\VD2\system\text.h" />
     <ClInclude Include="..\h\VD2\system\thread.h" />
@@ -163,6 +164,8 @@
     <ClInclude Include="..\h\vd2\system\vdstl_vector.h" />
     <ClInclude Include="..\h\VD2\system\VDString.h" />
     <ClInclude Include="..\h\VD2\system\vdtypes.h" />
+    <ClInclude Include="..\h\vd2\system\vecmath_ref.h" />
+    <ClInclude Include="..\h\vd2\system\vecmath_sse2.h" />
     <ClInclude Include="..\h\vd2\system\vectors.h" />
     <ClInclude Include="..\h\vd2\system\vectors_float.h" />
     <ClInclude Include="..\h\vd2\system\vectors_int.h" />

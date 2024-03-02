@@ -5,9 +5,9 @@
 
 class VDDisplayCachedImageSoft;
 
-class VDDisplayRendererSoft : public IVDDisplayRenderer {
-	VDDisplayRendererSoft(const VDDisplayRendererSoft&);
-	VDDisplayRendererSoft& operator=(const VDDisplayRendererSoft&);
+class VDDisplayRendererSoft final : public IVDDisplayRenderer {
+	VDDisplayRendererSoft(const VDDisplayRendererSoft&) = delete;
+	VDDisplayRendererSoft& operator=(const VDDisplayRendererSoft&) = delete;
 public:
 	VDDisplayRendererSoft();
 	~VDDisplayRendererSoft();
@@ -32,6 +32,7 @@ public:
 	void MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode);
 
 	void PolyLine(const vdpoint32 *points, uint32 numLines);
+	void PolyLineF(const vdfloat2 *points, uint32 numLines, bool antialiased) override {}
 
 	virtual bool PushViewport(const vdrect32& r, sint32 x, sint32 y);
 	virtual void PopViewport();

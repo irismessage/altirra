@@ -39,6 +39,8 @@ public:
 	VDZHWND GetWindowHandle() const { return mhwnd; }
 	VDZHWND GetHandleW32() const { return mhwnd; }
 
+	uint16 GetWindowId() const;
+
 	// Show or hide a window. The window is not activated when shown.
 	bool IsVisible() const;
 	void SetVisible(bool visible);

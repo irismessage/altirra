@@ -540,6 +540,8 @@ _vdasm_resize_table_row_MMX:
 	push	edi
 	push	ebx
 
+	cmp		dword [esp+16+16], 2
+	jz		.accel_2coeff
 	cmp		dword [esp+16+16], 4
 	jz		.accel_4coeff
 	cmp		dword [esp+16+16], 6
@@ -736,6 +738,72 @@ _vdasm_resize_table_row_MMX:
 	pop	ebp
 
 	ret
+
+;----------------------------------------------------------------
+
+.accel_2coeff:
+	mov	eax,[esp + 24 + 16]
+	mov	ebp,[esp + 20 + 16]
+	add	ebp,ebp
+	add	ebp,ebp
+	mov	ebx,[esp + 8 + 16]
+	mov	edi,[esp + 4 + 16]
+	add	edi,ebp
+	neg	ebp
+
+	mov	esi,eax
+	mov	edx,eax
+
+	movq		mm4,[MMX_roundval]
+	pxor		mm5,mm5
+
+	mov		ecx,[esp+12+16]
+
+.pixelloop_2coeff:
+	shr		esi,14
+	and		edx,0000ff00h
+	and		esi,byte -4
+
+	shr		edx,5
+	add		esi,ebx
+	add		eax,[esp+28+16]
+	movq		mm3,[edx+ecx]
+
+	movd		mm0,dword [esi+0]
+	punpcklbw	mm0,[esi+4]		;mm0=[a0][a1][r0][r1][g0][g1][b0][b1]
+
+	movq		mm1,mm0			;mm1=[a0][a1][r0][r1][g0][g1][b0][b1]
+	punpckhbw	mm0,mm5			;mm0=[ a0 ][ a1 ][ r0 ][ r1 ]
+
+	pmaddwd		mm0,mm3			;mm0=[a0*f0+a1*f1][r0*f0+r1*f1]
+	punpcklbw	mm1,mm5			;mm1=[ g0 ][ g1 ][ b0 ][ b1 ]
+
+	pmaddwd		mm1,mm3			;mm1=[g0*f0+g1*f1][b0*f0+b1*f1]
+
+	paddd		mm0,mm4			;accumulate alpha/red (pixels 0/1)
+
+	paddd		mm1,mm4			;accumulate green/blue (pixels 0/1)
+
+	psrad		mm0,14
+	psrad		mm1,14
+
+	packssdw	mm1,mm0
+	mov	esi,eax
+
+	packuswb	mm1,mm1
+	mov	edx,eax
+
+	movd	dword [edi+ebp],mm1
+	add		ebp,4
+	jne		.pixelloop_2coeff
+
+	pop	ebx
+	pop	edi
+	pop	esi
+	pop	ebp
+
+	ret
+
 
 ;----------------------------------------------------------------
 
@@ -1299,6 +1367,8 @@ _vdasm_resize_table_col_SSE2:
 	pxor		xmm7, xmm7
 	movdqa		xmm6, [MMX_roundval]
 
+	cmp			dword [esp+16+16], 2
+	jz			.accel_2coeff
 	cmp			dword [esp+16+16], 4
 	jz			.accel_4coeff
 	cmp			dword [esp+16+16], 6
@@ -1358,6 +1428,64 @@ _vdasm_resize_table_col_SSE2:
 	pop		esi
 	pop		ebp
 	ret
+
+.accel_2coeff:
+	shl			ebp, 2
+	mov			eax, [esp+8+16]			;eax = row pointer table
+	mov			ebx, [eax+4]
+	mov			eax, [eax]
+	lea			edi, [edi+ebp-4]
+	neg			ebp
+
+	;registers:
+	;
+	;EAX	source 0
+	;EBX	source 1
+	;EDI	destination
+	;EBP	counter
+	;
+	movq		xmm4, qword [edx]				;xmm4 = coeff 0/1
+	punpcklqdq	xmm4, xmm4
+
+	add			ebp, 4
+	jz			.oddpixel_2coeff
+
+.pixelloop_2coeff_dualpel:
+	movq		xmm0, qword [eax]
+	movq		xmm1, qword [ebx]
+	add			eax,8
+	add			ebx,8
+	add			ecx,8
+	add			esi,8
+	punpcklbw	xmm0, xmm1
+	movdqa		xmm1, xmm0
+	punpcklbw	xmm0, xmm7
+	punpckhbw	xmm1, xmm7
+	pmaddwd		xmm0, xmm4
+	pmaddwd		xmm1, xmm4
+	paddd		xmm0, xmm6
+	paddd		xmm1, xmm6
+	psrad		xmm0, 14
+	psrad		xmm1, 14
+	packssdw	xmm0, xmm1
+	packuswb	xmm0, xmm0
+	movq		qword [edi+ebp],xmm0
+	add			ebp, 8
+	jae			.pixelloop_2coeff_dualpel
+	jnz			.xit
+
+.oddpixel_2coeff:
+	movd		xmm0, dword [eax]
+	movd		xmm1, dword [ebx]
+	punpcklbw	xmm0, xmm1
+	punpcklbw	xmm0, xmm7
+	pmaddwd		xmm0, xmm4
+	paddd		xmm0, xmm6
+	psrad		xmm0, 14
+	packssdw	xmm0, xmm0
+	packuswb	xmm0, xmm0
+	movd		dword [edi],xmm0
+	jmp			.xit
 
 .accel_4coeff:
 	shl			ebp, 2

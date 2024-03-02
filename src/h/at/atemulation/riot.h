@@ -80,6 +80,8 @@ protected:
 	bool mbIrqActive = false;
 	int mTimerPrescalerShift = 0;
 
+	uint32 mTimerPrescalerOffset = 0;
+	uint32 mTimerPrescalerMask = 0;
 	uint64 mTimerDeadline = 0;
 
 	vdfunction<void(bool)> mpFnIrqChanged;

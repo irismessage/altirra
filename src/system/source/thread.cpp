@@ -87,6 +87,29 @@ void VDSetThreadDebugName(VDThreadID tid, const char *name) {
 	#endif
 }
 
+void VDSetCurrentThreadDebugName(const char *name) {
+	VDSetThreadDebugName(GetCurrentThreadId(), name);
+
+	static const FARPROC s_pSetThreadDescription = GetProcAddress(GetModuleHandleW(L"kernel32"), "SetThreadDescription");
+	if (s_pSetThreadDescription) {
+		wchar_t buf[128];
+		size_t i = 0;
+
+		while(i < 127) {
+			const char c = name[i];
+
+			if (!c)
+				break;
+
+			buf[i++] = (wchar_t)(unsigned char)c;
+		}
+
+		buf[i] = 0;
+
+		((HRESULT (WINAPI *)(HANDLE, PCWSTR))s_pSetThreadDescription)(GetCurrentThread(), buf);
+	}
+}
+
 void VDThreadSleep(int milliseconds) {
 	if (milliseconds > 0)
 		::Sleep(milliseconds);
@@ -177,7 +200,7 @@ unsigned __stdcall VDThread::StaticThreadStart(void *pThisAsVoid) {
 	// We cannot use mThreadID here because it might already have been
 	// invalidated by a detach in the main thread.
 	if (pThis->mpszDebugName)
-		VDSetThreadDebugName(GetCurrentThreadId(), pThis->mpszDebugName);
+		VDSetCurrentThreadDebugName(pThis->mpszDebugName);
 
 	VDInitThreadData(pThis->mpszDebugName);
 

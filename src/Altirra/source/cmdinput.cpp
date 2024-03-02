@@ -102,6 +102,7 @@ void OnCommandInputKeyboardCopyToCustomLayout() {
 	ATUISetCustomKeyMap(mappings.data(), mappings.size());
 
 	g_kbdOpts.mLayoutMode = ATUIKeyboardOptions::kLM_Custom;
+	ATUIInitVirtualKeyMap(g_kbdOpts);
 }
 
 void OnCommandInputKeyboardCustomizeLayout() {

@@ -1684,7 +1684,7 @@ HRESULT VDD3D9Manager::Present(const RECT *src, HWND hwndDest, bool vsync, float
 	if (!mPresentParms.Windowed)
 		return S_OK;
 
-	HRESULT hr;
+	HRESULT hr = E_FAIL;
 
 	if (vsync && (mDevCaps.Caps & D3DCAPS_READ_SCANLINE)) {
 		if (mpD3DQuery) {

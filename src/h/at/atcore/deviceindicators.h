@@ -52,6 +52,7 @@ public:
 	virtual void SetModemConnection(const char *str) = 0;
 
 	virtual void SetStatusMessage(const wchar_t *s) = 0;
+	virtual void ReportError(const wchar_t *s) = 0;
 };
 
 #endif

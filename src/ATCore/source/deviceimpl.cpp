@@ -18,14 +18,12 @@
 #include <stdafx.h>
 #include <at/atcore/deviceimpl.h>
 
-ATDevice::ATDevice()
-	: mpDeviceParent(nullptr)
-	, mDeviceParentBusIndex(0)
-{
+ATDevice::ATDevice() {
 }
 
 ATDevice::~ATDevice() {
 	VDASSERT(!mpDeviceParent);
+	VDASSERT(!mpDeviceManager);
 }
 
 void *ATDevice::AsInterface(uint32 iid) {
@@ -33,6 +31,10 @@ void *ATDevice::AsInterface(uint32 iid) {
 		return static_cast<IATDevice *>(this);
 
 	return nullptr;
+}
+
+void ATDevice::SetManager(IATDeviceManager *devMgr) {
+	mpDeviceManager = devMgr;
 }
 
 IATDeviceParent *ATDevice::GetParent() {
@@ -81,4 +83,8 @@ void ATDevice::PeripheralColdReset() {
 }
 
 void ATDevice::SetTraceContext(ATTraceContext *context) {
+}
+
+bool ATDevice::GetErrorStatus(uint32 idx, VDStringW& error) {
+	return false;
 }

@@ -30,10 +30,11 @@ public:
 	ATCallbackHandler1<void, uint32>& OnCompletedEvent() { return mCompletedEvent; }
 
 public:
-	virtual void OnCreate();
-	virtual void OnDestroy();
-	virtual void OnSize();
-	virtual void OnSetFocus();
+	ATUIWidgetMetrics OnMeasure() override;
+	void OnCreate() override;
+	void OnDestroy() override;
+	void OnSize() override;
+	void OnSetFocus() override;
 
 protected:
 	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);

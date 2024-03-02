@@ -395,9 +395,9 @@
 	void vdint128::setSquare(sint64 v) {
 		uint32 u0 = (uint32)v;
 		uint32 u1 = (uint32)(v >> 32);
-		uint64 m0 = u0*u0;
-		uint64 m1 = u0*u1;		// added twice
-		uint64 m2 = u1*u1;
+		uint64 m0 = (uint64)u0*u0;
+		uint64 m1 = (uint64)u0*u1;		// added twice
+		uint64 m2 = (uint64)u1*u1;
 		uint32 s0  = (uint32)m0;
 		uint32 s1a = (uint32)(m0 >> 32);
 		uint32 s1b = (uint32)m1;

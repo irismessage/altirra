@@ -126,6 +126,82 @@ namespace ATCPUStates6502 {
 		kStateStepOver,
 		kStateRegenerateDecodeTables,
 
+		// === 6502 trace cache states ===
+
+		// Align microcode IP to next cache line boundary (used to prevent
+		// DCU splits). This is only required when a uop would overlap a
+		// cache line. Note that this cannot have args so that it always
+		// fits.
+		kStateTraceBridge,
+
+		// Addr -> PC, check for transition to cached trace
+		kStateTraceAddrToPC,
+
+		// check for transition to cached trace at PC
+		kStateTracePC,
+
+		// Traced instruction start. Must be followed by N-1 stubs for an
+		// insn of N bytes to cover the prefetch in case a VM
+		// exit+resume occurs mid instruction. Prefetch cycles include
+		// instruction and data fetch cycles that we can assume to have no
+		// no side effects and that we do not need the data for.
+		//
+		// Args:
+		//	- Len.B: Additional prefetch byte/cycle count, not including opcode
+		//	- Addr.W: Address latch preload
+		//	- Data.B: Data latch preload
+		//	- Opcode.B: Instruction opcode byte
+		//
+		// Prefetch breakdowns for various patterns:
+		//	2 cycles	implied #imm rel8
+		//	2 cycles	zp zp,X zp,Y
+		//	3 cycles	abs abs,X abs,Y (abs)
+		//	2 cycles	(zp,X) (zp),Y
+		//	3 cycles	zp,X zp,Y with fast ZP
+		//
+		kStateTraceStartInsn,
+
+		// Variant of TraceStartInsn that also adds a history entry.
+		// Args:
+		//	- Len.B: Additional prefetch byte/cycle count, not including opcode
+		//	- Addr.W: Address latch preload
+		//	- Data.B: Data latch preload
+		//	- Opcode.B[3]: Instruction opcode bytes
+		kStateTraceStartInsnWithHistory,
+
+		// Continuation of interrupted instruction, three prefetch cycles left.
+		kStateTraceContInsn3,
+
+		// Continuation of interrupted instruction, two prefetch cycles left.
+		kStateTraceContInsn2,
+
+		// Continuation of interrupted instruction, one prefetch cycle left.
+		kStateTraceContInsn1,
+
+		kStateTraceAddrAddX,
+		kStateTraceAddrAddY,
+		kStateTraceAddrHX_SHY,
+		kStateTraceAddrHY_SHA,
+		kStateTraceAddrHY_SHX,
+
+		// Version of Jcc opcode for use in traces (not to _enter_ traces).
+		// Args:
+		//	- Xor.B, And.B: Xor/And masks for P check (branch if P^X&A != 0).
+		//	- Skip.B: 2 if no page crossing, 3 if. Used to track presence of
+		//	          additional uop for page crossing cycle if taken.
+		kStateTraceFastJcc,
+
+		// Version of Jcc opcode for entering traces.
+		// Args:
+		//	- Xor.B, And.B: Xor/And masks for P check (branch if P^X&A != 0).
+		kStateTraceJcc,
+
+		// Jump to another microcode location in the trace cache. Note that
+		// the offset is from the start of the offset and not the end.
+		// Args:
+		//	- Offset.L: Signed 32-bit offset.
+		kStateTraceUJump,
+
 		// 65C02 states
 		kStateResetBit,
 		kStateSetBit,

@@ -162,10 +162,12 @@ MyWin32Error::MyWin32Error(const char *format, uint32 err, ...)
 			err,
 			MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
 			szError,
-			sizeof szError,
+			sizeof(szError),
 			NULL))
 	{
 		szError[0] = 0;
+		snprintf(szError, sizeof(szError), "Unknown error %08X", err);
+		szError[sizeof(szError) - 1] = 0;
 	}
 
 	if (szError[0]) {

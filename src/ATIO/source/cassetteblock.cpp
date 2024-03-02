@@ -26,11 +26,9 @@
 #include <at/atio/cassetteimage.h>
 
 namespace {
-	enum { kATCyclesPerSyncSample = 28 };
-	enum {
-		kAudioSamplesPerSyncSampleInt = kATCyclesPerSyncSample / kATCassetteCyclesPerAudioSample,
-		kAudioSamplesPerSyncSampleFrac = kATCyclesPerSyncSample % kATCassetteCyclesPerAudioSample,
-	};
+	constexpr uint32 kATCyclesPerSyncSample = 28;
+	constexpr uint32 kAudioSamplesPerSyncSampleInt = kATCyclesPerSyncSample / kATCassetteCyclesPerAudioSample;
+	constexpr uint32 kAudioSamplesPerSyncSampleFrac = kATCyclesPerSyncSample % kATCassetteCyclesPerAudioSample;
 }
 
 uint8 *ATCassetteGetAudioPhaseTable() {
@@ -49,11 +47,22 @@ uint8 *ATCassetteGetAudioPhaseTable() {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+bool ATCassetteImageBlock::GetBit(uint32 pos, bool bypassFSK) const {
+	return true;
+}
+
 uint32 ATCassetteImageBlock::GetBitSum(uint32 pos, uint32 n, bool bypassFSK) const {
 	return n;
 }
 
-uint32 ATCassetteImageBlock::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const {
+ATCassetteImageBlock::FindBitResult ATCassetteImageBlock::FindBit(uint32 pos, uint32 limit, bool polarity, bool bypassFSK) const {
+	if (polarity)
+		return { pos, true };
+	else
+		return { limit, false };
+}
+
+uint32 ATCassetteImageBlock::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const {
 	dst += n;
 
 	posCycle += n * kATCyclesPerSyncSample;
@@ -141,6 +150,13 @@ void ATCassetteImageBlockRawData::ExtractPulses(vdfastvector<uint32>& pulses, bo
 		pulses.push_back(pulseLen);
 }
 
+bool ATCassetteImageBlockRawData::GetBit(uint32 pos, bool bypassFSK) const {
+	VDASSERT(pos < mDataLength);
+
+	const uint32 *bitfield = bypassFSK ? mDataRaw.data() : mDataFSK.data();
+	return (bitfield[pos >> 5] & (1 << (~pos & 31))) != 0;
+}
+
 uint32 ATCassetteImageBlockRawData::GetBitSum(uint32 pos, uint32 n, bool bypassFSK) const {
 	VDASSERT(pos <= mDataLength);
 
@@ -173,6 +189,31 @@ uint32 ATCassetteImageBlockRawData::GetBitSum(uint32 pos, uint32 n, bool bypassF
 	}
 }
 
+ATCassetteImageBlockRawData::FindBitResult ATCassetteImageBlockRawData::FindBit(uint32 pos, uint32 limit, bool polarity, bool bypassFSK) const {
+	// We want to search for 1 bits, so if we are searching for 0s then we should invert
+	// the bitfield.
+	const uint32 polarityMask = polarity ? 0 : ~UINT32_C(0);
+	
+	const uint32 firstWordMask = 0xFFFFFFFFU >> (pos & 31);
+	uint32 idx = pos >> 5;
+
+	const auto& dataSource = bypassFSK ? mDataRaw : mDataFSK;
+
+	if (uint32 firstWord = (dataSource[idx] ^ polarityMask) & firstWordMask)
+		return { (idx << 5) + 31 - VDFindHighestSetBitFast(firstWord), true };
+
+	const uint32 idxLimit = std::min<uint32>((uint32)dataSource.size(), (limit + 31) >> 5);
+
+	while(++idx < idxLimit) {
+		pos += 32;
+
+		if (const uint32 word = dataSource[idx] ^ polarityMask)
+			return { (idx << 5) + 31 - VDFindHighestSetBitFast(word), true };
+	}
+
+	return { (idx << 5), false };
+}
+
 void ATCassetteImageBlockRawData::SetBits(bool fsk, uint32 startPos, uint32 n, bool polarity) {
 	const uint32 pos1 = startPos;
 	const uint32 pos2 = startPos + n - 1;
@@ -199,12 +240,12 @@ void ATCassetteImageBlockRawData::SetBits(bool fsk, uint32 startPos, uint32 n, b
 
 ///////////////////////////////////////////////////////////////////////////////
 
-uint32 ATCassetteImageBlockRawAudio::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const {
+uint32 ATCassetteImageBlockRawAudio::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const {
 	for(uint32 i = 0; i < n; ++i) {
 		if (posSample >= mAudioLength)
 			return i;
 
-		const float v = (float)((int)mAudio[posSample] - 0x80) * (1.0f / 8.0f) * (float)kATCyclesPerSyncSample;
+		const float v = (float)((int)mAudio[posSample] - 0x80) * volume;
 
 		posSample += kAudioSamplesPerSyncSampleInt;
 		posCycle += kAudioSamplesPerSyncSampleFrac;
@@ -278,6 +319,21 @@ uint64 ATCassetteImageDataBlockStd::GetDataSampleCount64() const {
 	return (uint64)((vduint128(mData.size()) * vduint128(mDataSamplesPerByteF32)) >> 32);
 }
 
+bool ATCassetteImageDataBlockStd::GetBit(uint32 pos, bool bypassFSK) const {
+	uint64 bytePosF32 = mBytesPerDataSampleF32 * pos;
+
+	const uint32 limit = (uint32)mData.size();
+	const uint32 byteIndex = (uint32)(bytePosF32 >> 32);
+
+	if (byteIndex >= limit)
+		return true;
+
+	const uint32 byte = (uint32)mData[byteIndex] * 2 + 0x200;
+	const uint32 bit = (uint32)(((uint64)(uint32)bytePosF32 * 10) >> 32);
+
+	return ((byte >> bit) & 1) != 0;
+}
+
 uint32 ATCassetteImageDataBlockStd::GetBitSum(uint32 pos, uint32 n, bool bypassFSK) const {
 	uint32 sum = 0;
 
@@ -302,7 +358,38 @@ uint32 ATCassetteImageDataBlockStd::GetBitSum(uint32 pos, uint32 n, bool bypassF
 	return sum;
 }
 
-uint32 ATCassetteImageDataBlockStd::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const {
+ATCassetteImageDataBlockStd::FindBitResult ATCassetteImageDataBlockStd::FindBit(uint32 pos, uint32 limit, bool polarity, bool bypassFSK) const {
+	// Because std blocks consist of back-to-back bytes using standard framing, FindBit()
+	// can be simplified: every byte has a 0 bit for the start bit and a 1 bit for the stop
+	// bit, so we never have to go farther than 10 bits to find the desired polarity, and
+	// there is never a need to involve more than one source byte. We simply ignore the
+	// supplied limit, as we are allowed to return hits past limit.
+
+	const uint64 bytePosF32 = mBytesPerDataSampleF32 * pos;
+	const uint32 byteIndex = (uint32)(bytePosF32 >> 32);
+	const uint32 bitIndex = (uint32)(((uint64)(uint32)bytePosF32 * 10) >> 32);
+	uint32 bitStream = ((uint32)mData[byteIndex] * 2 + 0x200) >> bitIndex;
+
+	// invert bitstream if necessary so that we are always searching for 1 bits
+	if (!polarity)
+		bitStream = ~bitStream;
+
+	// check if we are already starting in a bit with the desired polarity
+	if (bitStream & 1)
+		return { pos, true };
+
+	// At this point, we are always going to advance by at least one source bit, so find
+	// the matching bit and then back-convert to sample position. Because we always start
+	// somewhere within 10 bits of start-data(8)-stop, we will always stop somewhere within
+	// those 10 bits or the start bit of the next byte.
+	uint32 foundBitIndex = bitIndex + VDFindLowestSetBitFast(bitStream);
+	uint64 foundBytePosF32 = ((uint64)byteIndex << 32) + ((uint64)foundBitIndex << 32) / 10;
+	uint32 foundSamplePos = (foundBytePosF32 - 1) / mBytesPerDataSampleF32 + 1;
+
+	return { foundSamplePos, (foundBytePosF32 >> 32) < mData.size() };
+}
+
+uint32 ATCassetteImageDataBlockStd::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const {
 	// The good news is that we have integral number of audio samples per data bit
 	// and an integral number of sync mixer samples per audio sample. The bad news
 	// is that the phase has to be continuous between bits, so the starting phase
@@ -359,7 +446,7 @@ uint32 ATCassetteImageDataBlockStd::AccumulateAudio(float *&dst, uint32& posSamp
 
 	for(;;) {
 		// Write out a sample.
-		const float sample = (float)((int)phaseTable[phaseAccum >> 22] - 0x80) * (1.0f / 8.0f) * (float)kATCyclesPerSyncSample;
+		const float sample = (float)((int)phaseTable[phaseAccum >> 22] - 0x80) * volume;
 
 		*dst++ += sample;
 		++actual;
@@ -409,7 +496,7 @@ uint32 ATCassetteImageDataBlockStd::AccumulateAudio(float *&dst, uint32& posSamp
 
 ///////////////////////////////////////////////////////////////////////////////
 
-uint32 ATCassetteImageBlockBlank::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const {
+uint32 ATCassetteImageBlockBlank::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const {
 	// The good news is that we have integral number of audio samples per data bit
 	// and an integral number of sync mixer samples per audio sample. The bad news
 	// is that the phase has to be continuous between bits, so the starting phase
@@ -430,7 +517,7 @@ uint32 ATCassetteImageBlockBlank::AccumulateAudio(float *&dst, uint32& posSample
 
 	for(uint32 i=0; i<n; ++i) {
 		// Write out a sample.
-		const float sample = (float)((int)phaseTable[phaseAccum >> 22] - 0x80) * (1.0f / 8.0f) * (float)kATCyclesPerSyncSample;
+		const float sample = (float)((int)phaseTable[phaseAccum >> 22] - 0x80) * volume;
 
 		*dst++ += sample;
 

@@ -169,6 +169,8 @@ public:
 	void FreePortOutput(int index);
 	uint8 GetPortOutputState() const;
 
+	void ReapplyTriggers();
+
 protected:
 	void UpdatePortValue();
 	void UpdatePortOutputRegistration();
@@ -210,7 +212,7 @@ public:
 	friend class ATPortController;
 
 	ATPortInputController();
-	~ATPortInputController();
+	virtual ~ATPortInputController();
 
 	void Attach(ATPortController *pc, bool port2, int multiIndex = -1);
 	void Detach();

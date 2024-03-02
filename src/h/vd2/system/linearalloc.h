@@ -50,9 +50,23 @@ public:
 		return p;
 	}
 
-	template<class T, typename... Args>
+	template<typename T, typename... Args>
 	T *Allocate(Args&&... args) {
 		return new(Allocate(sizeof(T))) T(std::forward<Args>(args)...);
+	}
+
+	template<typename T>
+	T *AllocateArray(size_t n) {
+		static_assert(std::is_nothrow_constructible_v<T>);
+
+		T *p = (T *)Allocate(sizeof(T) * n, alignof(T));
+
+		if constexpr (!std::is_trivially_constructible_v<T>) {
+			for(size_t i=0; i<n; ++i)
+				new(&p[i]) T();
+		}
+
+		return p;
 	}
 
 	bool Contains(const void *addr) const;

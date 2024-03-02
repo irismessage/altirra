@@ -352,7 +352,11 @@ private:
 
 				for each(XmlAttribute^ href in resultDoc.SelectNodes("//a[@href]/@href")) {
 					String^ ref = href->Value;
-					if (!ref->StartsWith("http:") && !ref->StartsWith("#"))
+					if (!ref->StartsWith("http:")
+						&& !ref->StartsWith("https:")
+						&& !ref->StartsWith("data:")
+						&& !ref->StartsWith("javascript:")
+						&& !ref->StartsWith("#"))
 						mReferencedLinks[ref] = true;
 				}
 

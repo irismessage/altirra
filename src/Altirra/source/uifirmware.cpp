@@ -123,7 +123,7 @@ protected:
 		const wchar_t *mpName;
 	};
 
-	const TypeEntry *mpSortedTypes[39];
+	const TypeEntry *mpSortedTypes[42];
 	
 	static const TypeEntry kTypeNames[];
 };
@@ -150,6 +150,7 @@ const ATUIDialogEditFirmwareSettings::TypeEntry ATUIDialogEditFirmwareSettings::
 	{ kATFirmwareType_810, L"810 Disk Drive Firmware" },
 	{ kATFirmwareType_Happy810, L"Happy 810 Disk Drive Firmware" },
 	{ kATFirmwareType_810Archiver, L"810 Archiver Disk Drive Firmware" },
+	{ kATFirmwareType_810Turbo, L"810 Turbo Disk Drive Firmware" },
 	{ kATFirmwareType_1050, L"1050 Disk Drive Firmware" },
 	{ kATFirmwareType_1050Duplicator, L"1050 Duplicator Disk Drive Firmware" },
 	{ kATFirmwareType_USDoubler, L"US Doubler Disk Drive Firmware" },
@@ -164,7 +165,9 @@ const ATUIDialogEditFirmwareSettings::TypeEntry ATUIDialogEditFirmwareSettings::
 	{ kATFirmwareType_ISPlate, L"I.S. Plate Disk Drive Firmware" },
 	{ kATFirmwareType_XF551, L"XF551 Disk Drive Firmware" },
 	{ kATFirmwareType_ATR8000, L"ATR8000 Disk Drive Firmware" },
-	{ kATFirmwareType_Percom, L"PERCOM Disk Drive Firmware" },
+	{ kATFirmwareType_Percom, L"PERCOM RFD Disk Drive Firmware" },
+	{ kATFirmwareType_PercomAT, L"PERCOM AT-88 Disk Drive Firmware" },
+	{ kATFirmwareType_AMDC, L"Amdek AMDC-I/II Disk Drive Firmware" },
 	{ kATFirmwareType_RapidusFlash, L"Rapidus Flash Firmware" },
 	{ kATFirmwareType_RapidusCorePBI, L"Rapidus Core PBI Firmware" },
 	{ kATFirmwareType_WarpOS, L"APE Warp+ OS 32-in-1 Firmware" },
@@ -397,6 +400,7 @@ void ATUIDialogFirmware::OnDataExchange(bool write) {
 			{ kATFirmwareType_810, L"810 Disk Drive Firmware" },
 			{ kATFirmwareType_Happy810, L"Happy 810 Disk Drive Firmware" },
 			{ kATFirmwareType_810Archiver, L"810 Archiver Disk Drive Firmware" },
+			{ kATFirmwareType_810Turbo, L"810 Turbo Disk Drive Firmware" },
 			{ kATFirmwareType_1050, L"1050 Disk Drive Firmware" },
 			{ kATFirmwareType_1050Duplicator, L"1050 Duplicator Disk Drive Firmware" },
 			{ kATFirmwareType_USDoubler, L"US Doubler Disk Drive Firmware" },
@@ -411,7 +415,9 @@ void ATUIDialogFirmware::OnDataExchange(bool write) {
 			{ kATFirmwareType_IndusGT, L"Indus GT Disk Drive Firmware" },
 			{ kATFirmwareType_XF551, L"XF551 Disk Drive Firmware" },
 			{ kATFirmwareType_ATR8000, L"ATR8000 Disk Drive Firmware" },
-			{ kATFirmwareType_Percom, L"PERCOM Disk Drive Firmware" },
+			{ kATFirmwareType_Percom, L"PERCOM RFD Disk Drive Firmware" },
+			{ kATFirmwareType_PercomAT, L"PERCOM AT-88 Disk Drive Firmware" },
+			{ kATFirmwareType_AMDC, L"Amdek AMDC-I/II Disk Drive Firmware" },
 			{ kATFirmwareType_RapidusFlash, L"Rapidus Flash Firmware" },
 			{ kATFirmwareType_RapidusCorePBI, L"Rapidus Core PBI Firmware" },
 			{ kATFirmwareType_WarpOS, L"APE Warp+ OS 32-in-1 Firmware" },
@@ -544,10 +550,19 @@ void ATUIDialogFirmware::Add(const wchar_t *path) {
 			f.read(buf.data(), size32);
 
 			ATFirmwareInfo info;
-			if (ATFirmwareAutodetect(buf.data(), size32, info, specificType)) {
-				newItem->mText = info.mName;
-				newItem->mFlags = info.mFlags;
-				newItem->mType = info.mType;
+			switch (ATFirmwareAutodetect(buf.data(), size32, info, specificType)) {
+				case ATFirmwareDetection::SpecificImage:
+					newItem->mText = info.mName;
+					newItem->mFlags = info.mFlags;
+					newItem->mType = info.mType;
+					break;
+
+				case ATFirmwareDetection::TypeOnly:
+					newItem->mType = info.mType;
+					break;
+
+				case ATFirmwareDetection::None:
+					break;
 			}
 		}
 	} catch(const MyError&) {

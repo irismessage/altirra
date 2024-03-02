@@ -18,11 +18,38 @@
 #ifndef AT_ATCORE_CHECKSUM_H
 #define AT_ATCORE_CHECKSUM_H
 
+#include <vd2/system/vdtypes.h>
+
 // FNV-1 offset.
-const uint64 kATBaseChecksum = 14695981039346656037;
+inline const uint64 kATBaseChecksum = 14695981039346656037;
 
 uint64 ATComputeOffsetChecksum(uint64 offset);
 uint64 ATComputeBlockChecksum(uint64 hash, const void *src, size_t len);
 uint64 ATComputeZeroBlockChecksum(uint64 hash, size_t len);
+
+struct ATChecksumSHA256 {
+	uint8 mDigest[32];
+};
+
+bool operator==(const ATChecksumSHA256& x, const ATChecksumSHA256& y);
+bool operator!=(const ATChecksumSHA256& x, const ATChecksumSHA256& y);
+
+ATChecksumSHA256 ATComputeChecksumSHA256(const void *src, size_t len);
+
+struct ATChecksumStateSHA256 {
+	alignas(16) uint32 H[8];
+};
+
+struct ATChecksumEngineSHA256 {
+	ATChecksumEngineSHA256();
+
+	void Process(const void *src, size_t len);
+	ATChecksumSHA256 Finalize();
+
+	ATChecksumStateSHA256 mState;
+	alignas(16) uint8 mFragmentBuffer[64];
+	size_t mFragmentLen;
+	uint64 mTotalBytes;
+};
 
 #endif	// AT_ATCORE_CHECKSUM_H

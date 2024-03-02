@@ -17,12 +17,19 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <vd2/system/binary.h>
+#include <at/atcore/scheduler.h>
 #include <at/atcpu/breakpoints.h>
 #include <at/atcpu/co6502.h>
 #include <at/atcpu/execstate.h>
 #include <at/atcpu/history.h>
 #include <at/atcpu/memorymap.h>
 #include <at/atcpu/states6502.h>
+
+#define VDDEBUG_CPUEXEC(...) ((void)0)
+//#define VDDEBUG_CPUEXEC(...) VDDEBUG(__VA_ARGS__)
+
+#define VDASSERT_CPUEXEC(...) VDASSERT(__VA_ARGS__)
 
 #define ATCP_DUMMY_READ_BYTE(addr) ((void)(0))
 #define ATCP_DEBUG_READ_BYTE(addr) (tmpaddr = (addr), tmpbase = mReadMap[(uint8)(tmpaddr >> 8)], (tmpbase & 1 ? DebugReadByteSlow(tmpbase, tmpaddr) : *(uint8 *)(tmpbase + tmpaddr)))
@@ -48,7 +55,7 @@
 #define AT_CPU_EXT_WRITE_BYTE(addr, bank, value) AT_CPU_WRITE_BYTE((addr), (value))
 #define END_SUB_CYCLE() goto next_cycle;
 
-void ATCoProc6502::Run() {
+bool ATCoProc6502::Run(ATScheduler& scheduler) {
 	using namespace ATCPUStates6502;
 
 	enum : uint8 {
@@ -63,19 +70,21 @@ void ATCoProc6502::Run() {
 		kFlagC = 0x01,
 	};
 
-	if (mCyclesLeft <= 0)
-		return;
-
 	uint16 tmpaddr;
 	uintptr tmpbase;
 	uint8 tmpval;
 
-	uint32		cyclesLeft = mCyclesLeft;
-	const uint32 cyclesBase = mCyclesBase;
+VDASSERT_CPUEXEC(scheduler.mNextEventCounter >= 0xFF000000);
+VDASSERT_CPUEXEC(scheduler.mStopTime - scheduler.mTimeBase < 0x80000000);
+while(ATSCHEDULER_ADVANCE_STOPCHECK(&scheduler)) {
+	VDASSERT_CPUEXEC(scheduler.mNextEventCounter >= 0xFF000000);
+	VDASSERT_CPUEXEC(scheduler.mStopTime - scheduler.mTimeBase < 0x80000000);
+	VDASSERT_CPUEXEC(scheduler.mStopTime - (scheduler.mTimeBase + scheduler.mNextEventCounter) < 0x80000000);
 
-while(cyclesLeft > 0) {
 	for(;;) {
 		uint8 readData;
+
+		VDDEBUG_CPUEXEC("Executing PC=$%04X  State[%p]=$%02X\n", mPC, mpNextState, *mpNextState);
 
 		switch(*mpNextState++) {
 			case kStateNop:
@@ -83,12 +92,10 @@ while(cyclesLeft > 0) {
 
 			case kStateReadOpcode:
 				if (mpBreakpointMap[mPC]) {
-					mCyclesLeft = cyclesLeft;
 					mInsnPC = mPC;
 
-					if (CheckBreakpoint()) {
-						goto force_exit;
-					}
+					if (CheckBreakpoint())
+						return false;
 				}
 
 				// fall through
@@ -976,7 +983,222 @@ while(cyclesLeft > 0) {
 
 			case kStateJccFalseRead:
 				AT_CPU_READ_BYTE(mAddr);
+				mAddr = mPC;
 				END_SUB_CYCLE();
+
+			// === Trace support ===
+
+			case kStateTraceBridge:
+				mpNextState = (const uint8 *)(((uintptr)mpNextState + kTraceLineSize - 1) & ~(uintptr)(kTraceLineSize - 1));
+				break;
+
+			case kStateTraceAddrToPC:
+				mPC = mAddr;
+			case kStateTracePC:
+				// check if PC is in a trace-friendly page
+				if (uint32 tracePageId = mTraceMap[mPC >> 8]; tracePageId >= 1) {
+					// yes -- try to generate/enter trace
+					TryEnterTrace(tracePageId);
+				}
+				break;
+
+			case kStateTraceStartInsn:
+				{
+					const uint8 additionalPrefetchCount = mpNextState[0];
+					mInsnPC = mPC;
+					mPC += additionalPrefetchCount + 1;
+					mAddr = (uint16)(mpNextState[1] + ((uint16)mpNextState[2] << 8));
+					mData = mpNextState[3];
+					mOpcode = mpNextState[4];
+					mpNextState += 5;
+
+					// > and not >=, since we have not yet ticked off the cycle
+					// for the opcode fetch and the count doesn't include it
+					if (ATSCHEDULER_TRYSKIP(&scheduler, additionalPrefetchCount))
+						mpNextState += additionalPrefetchCount;
+				}
+
+				END_SUB_CYCLE();
+
+			case kStateTraceStartInsnWithHistory:
+				{
+					const uint8 additionalPrefetchCount = mpNextState[0];
+					mInsnPC = mPC;
+					mPC += additionalPrefetchCount + 1;
+					mAddr = (uint16)(mpNextState[1] + ((uint16)mpNextState[2] << 8));
+					mData = mpNextState[3];
+					mOpcode = mpNextState[4];
+
+					{
+						ATCPUHistoryEntry * VDRESTRICT he = &mpHistory[mHistoryIndex++ & 131071];
+
+						// This takes place one cycle earlier than the normal AddToHistory
+						// uop, so the cycle values need to be decremented and the PC value
+						// doesn't need adjustment.
+						he->mCycle = ATSCHEDULER_GETTIME(&scheduler);
+						he->mUnhaltedCycle = he->mCycle;
+						he->mEA = 0xFFFFFFFFUL;
+						he->mPC = mInsnPC;
+						he->mP = mP;
+						he->mA = mA;
+						he->mX = mX;
+						he->mY = mY;
+						he->mS = mS;
+						he->mbIRQ = false;
+						he->mbNMI = false;
+						he->mSubCycle = 0;
+						he->mbEmulation = false;
+						he->mGlobalPCBase = 0;
+						he->mB = 0;
+						he->mK = 0;
+						he->mD = 0;
+
+						he->mOpcode[0] = mpNextState[4];
+						he->mOpcode[1] = mpNextState[5];
+						he->mOpcode[2] = mpNextState[6];
+					}
+
+					mpNextState += 7;
+
+					// > and not >=, since we have not yet ticked off the cycle
+					// for the opcode fetch and the count doesn't include it
+					if (ATSCHEDULER_TRYSKIP(&scheduler, additionalPrefetchCount))
+						mpNextState += additionalPrefetchCount;
+				}
+				
+				END_SUB_CYCLE();
+
+			case kStateTraceContInsn3:
+				if (ATSCHEDULER_TRYSKIP(&scheduler, 2)) {
+					mpNextState += 2;
+				}
+
+				END_SUB_CYCLE();
+
+			case kStateTraceContInsn2:
+				if (ATSCHEDULER_TRYSKIP(&scheduler, 1)) {
+					++mpNextState;
+				}
+
+				END_SUB_CYCLE();
+
+			case kStateTraceContInsn1:
+				END_SUB_CYCLE();
+
+			case kStateTraceAddrAddX:
+				mAddr2 = (mAddr & 0xFF00) + ((mAddr + mX) & 0x00FF);
+				mAddr += mX;
+				break;
+
+			case kStateTraceAddrAddY:
+				mAddr2 = (mAddr & 0xFF00) + ((mAddr + mY) & 0x00FF);
+				mAddr += mY;
+				break;
+
+			case kStateTraceAddrHX_SHY:
+				{
+					uint8 hiByte = (uint8)(mAddr >> 8);
+					uint32 lowSum = (uint32)(uint8)mAddr + mX;
+
+					// compute borked result from page crossing
+					mData = mY & (hiByte + 1);
+
+					// replace high byte if page crossing detected
+					if (lowSum >= 0x100) {
+						hiByte = mData;
+						lowSum &= 0xff;
+					}
+
+					mAddr = (uint16)(lowSum + ((uint32)hiByte << 8));
+				}
+				break;
+
+			case kStateTraceAddrHY_SHA:
+				{
+					uint8 hiByte = (uint8)(mAddr >> 8);
+					uint32 lowSum = (uint32)(uint8)mAddr + mY;
+
+					// compute borked result from page crossing
+					mData = mA & mX & (hiByte + 1);
+
+					// replace high byte if page crossing detected
+					if (lowSum >= 0x100) {
+						hiByte = mData;
+						lowSum &= 0xff;
+					}
+
+					mAddr = (uint16)(lowSum + ((uint32)hiByte << 8));
+				}
+				break;
+
+			case kStateTraceAddrHY_SHX:
+				{
+					uint8 hiByte = (uint8)(mAddr >> 8);
+					uint32 lowSum = (uint32)(uint8)mAddr + mY;
+
+					// compute borked result from page crossing
+					mData = mX & (hiByte + 1);
+
+					// replace high byte if page crossing detected
+					if (lowSum >= 0x100) {
+						hiByte = mData;
+						lowSum &= 0xff;
+					}
+
+					mAddr = (uint16)(lowSum + ((uint32)hiByte << 8));
+				}
+				break;
+
+			case kStateTraceFastJcc:
+				{
+					const uint8 check = (mP ^ mpNextState[0]) & mpNextState[1];
+					const uint8 macroOpLen = mpNextState[2];
+
+					if (!check) {
+						// branch not taken -- skip any extra cycle
+						mpNextState += macroOpLen;
+						break;
+					}
+
+					// branch taken -- advance to next uop, either start of next insn or an extra
+					// cycle for page crossings
+					mpNextState += 3;
+				}
+				break;
+
+			case kStateTraceJcc:
+				{
+					const uint8 check = (mP ^ mpNextState[0]) & mpNextState[1];
+
+					if (check) {
+						// branch not taken -- skip extra cycle and trace check
+						mpNextState += 4;
+						break;
+					}
+
+					// branch taken -- do instruction prefetch
+					INSN_FETCH_NOINC();
+
+					// do low byte addition and check for page crossing
+					mAddr = mPC & 0xff00;
+					mPC += (sint16)(sint8)mData;
+					mAddr += mPC & 0xff;
+
+					if (mAddr == mPC) {
+						// we did not cross a page, so skip the false read
+						++mpNextState;
+					}
+				}
+				END_SUB_CYCLE();
+
+			case kStateTraceUJump:
+				{
+					sint32 offset = VDReadUnalignedS32(mpNextState);
+					mpNextState += offset;
+				}
+				break;
+
+			// === 65C02 support ===
 
 			case kStateResetBit:
 				mData &= ~(1 << ((mOpcode >> 4) & 7));
@@ -1172,8 +1394,8 @@ while(cyclesLeft > 0) {
 				{
 					ATCPUHistoryEntry * VDRESTRICT he = &mpHistory[mHistoryIndex++ & 131071];
 
-					he->mCycle = cyclesBase - cyclesLeft;
-					he->mUnhaltedCycle = cyclesBase - cyclesLeft;
+					he->mCycle = ATSCHEDULER_GETTIME(&scheduler) - 1;
+					he->mUnhaltedCycle = he->mCycle;
 					he->mEA = 0xFFFFFFFFUL;
 					he->mPC = mPC - 1;
 					he->mP = mP;
@@ -1207,6 +1429,10 @@ while(cyclesLeft > 0) {
 
 			case kStateBreakOnUnsupportedOpcode:
 				--mpNextState;
+
+				if (mbBreakOnUnsupportedOpcode)
+					return false;
+
 				END_SUB_CYCLE();
 
 			case kStateRegenerateDecodeTables:
@@ -1225,9 +1451,8 @@ while(cyclesLeft > 0) {
 	}
 
 next_cycle:
-	--cyclesLeft;
+	;
 }
 
-force_exit:
-	mCyclesLeft = (sint32)cyclesLeft;
+	return true;
 }

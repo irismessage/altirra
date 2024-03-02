@@ -26,10 +26,13 @@
 #include <vd2/Dita/services.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <at/atcore/device.h>
+#include <at/atcore/devicediskdrive.h>
 #include <at/atcore/deviceparent.h>
 #include <at/atcore/devicemanager.h>
 #include <at/atcore/propertyset.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/theme.h>
+#include "diskinterface.h"
 #include "oshelper.h"
 #include "resource.h"
 #include "simulator.h"
@@ -58,6 +61,7 @@ protected:
 
 	const vdfunction<bool(const char *)>& mFilter;
 	VDUIProxyTreeViewControl mTreeView;
+	VDUIProxyRichEditControl mHelpView;
 	VDDelegate mDelItemSelChanged;
 	const char *mpDeviceTag;
 	const wchar_t *mpLastHelpText;
@@ -250,6 +254,13 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 					L"double density, however."
 			},
 
+			{ "diskdrive810turbo", L"810 Turbo disk drive (full emulation)",
+				L"Full disk drive emulation for the 810 Turbo Double Density Conversion board, made by Neanderthal Computer Things (NCT). "
+				L"This add-on to the standard 810 disk drive boosts the CPU speed from 500KHz to 1MHz, adds double-density support, "
+				L"and adds 4K of memory.\n"
+				L"Note that the standard 810 Turbo firmware does not support enhanced (medium) disks."
+			},
+
 			{ "diskdrive1050", L"1050 disk drive (full emulation)",
 				L"Full 1050 disk drive emulation, including 6507 CPU.\n"
 					L"The 1050 supports single density and enhanced density disks. True double density (256 bytes/sector) disks are not "
@@ -268,7 +279,8 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 			{ "diskdrivespeedy1050", L"Speedy 1050 disk drive (full emulation)",
 				L"Full Speedy 1050 disk drive emulation, including 65C02 CPU.\n"
 					L"The Speedy 1050 is an enhanced 1050 that supports double density, track buffering, and high speed operation.\n"
-					L"NOTE: The Speedy 1050 may operate erratically in high-speed mode with NTSC computers due to marginal write timing."
+					L"NOTE: The Speedy 1050 may operate erratically in high-speed mode with NTSC computers due to marginal write timing. "
+					L"Version 1.6 or later firmware is needed for reliable high-speed writes in NTSC."
 			},
 
 			{ "diskdrivehappy1050", L"Happy 1050 disk drive (full emulation)",
@@ -288,11 +300,11 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 			},
 
 			{ "diskdrive1050turbo", L"1050 Turbo disk drive (full emulation)",
-				L"Full 1050 Turbo disk drive emulation, including 6507 CPU."
+				L"Full emulation of the 1050 Turbo disk drive modification by Bernhard Engl, including 6507 CPU."
 			},
 
 			{ "diskdrive1050turboii", L"1050 Turbo II disk drive (full emulation)",
-				L"Full 1050 Turbo disk drive emulation, including 6507 CPU. This model is also known as Version 3.5 in some places."
+				L"Full emulation of the 1050 Turbo II disk drive modification by Bernhard Engl, including 6507 CPU. This model is also known as Version 3.5 in some places."
 			},
 
 			{ "diskdriveisplate", L"I.S. Plate disk drive (full emulation)",
@@ -319,7 +331,20 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 			{ "diskdrivepercom", L"Percom RFD-40S1 disk drive (full emulation)",
 				L"Full Percom RFD-40S1 disk drive emulation, including 6809 CPU.\n"
 					L"The RFD-40S1 supports up to four disk drives, which may be either single-sided or double-sided "
-					L"and 40 or 80 track. Both single-density and double-density are supported by the hardware."
+					L"and 40 or 80 track. Both single-density and double-density are supported by the hardware.\n"
+					L"This will also work for the Astra 1001, which has compatible firmware with the RFD-40S1."
+			},
+
+			{ "diskdrivepercomat", L"Percom AT-88S1 disk drive (full emulation)",
+				L"Full Percom AT-88S1 disk drive emulation, including 6809 CPU.\n"
+					L"The AT-81S1 supports up to four disk drives, which may be either single-sided or double-sided "
+					L"and 40 or 80 track. Both single-density and double-density are supported by the hardware.\n"
+					L"This device is the version without the printer interface; SPD firmware will not work on this device."
+			},
+
+			{ "diskdriveamdc", L"Amdek AMDC-I/II disk drive (full emulation)",
+				L"Full Amdek AMDC-I/II emulation, including 6809 CPU.\n"
+					L"The AMDC-I/II has one or two internal 3\" disk drives, along with a port for two more external disk drives."
 			},
 		},
 	},
@@ -409,6 +434,15 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 				L"Adds a B: device that parses HTTP/HTTPS URLs written to it a line at a time and launches them in a web browser."
 			},
 		}
+	},
+	{
+		L"Other devices",
+		"other",
+		{
+			{ "custom", L"Custom device",
+				L"Adds a custom device based on a device description file (*.atdevice). See Help for the custom device specification format."
+			}
+		}
 	}
 };
 
@@ -423,6 +457,7 @@ ATUIDialogDeviceNew::ATUIDialogDeviceNew(const vdfunction<bool(const char *)>& f
 
 bool ATUIDialogDeviceNew::OnLoaded() {
 	AddProxy(&mTreeView, IDC_TREE);
+	AddProxy(&mHelpView, IDC_HELP_INFO);
 
 	mResizer.Add(IDC_HELP_INFO, mResizer.kML | mResizer.kSuppressFontChange);
 	mResizer.Add(IDC_TREE, mResizer.kMC);
@@ -431,19 +466,24 @@ bool ATUIDialogDeviceNew::OnLoaded() {
 
 	ATUIRestoreWindowPlacement(mhdlg, "Add new device", SW_SHOW, true);
 
-	HWND hwndHelp = GetDlgItem(mhdlg, IDC_HELP_INFO);
-	if (hwndHelp) {
-		SendMessage(hwndHelp, EM_SETBKGNDCOLOR, FALSE, GetSysColor(COLOR_3DFACE));
+	mHelpView.SetReadOnlyBackground();
 
-		VDStringA s("{\\rtf{\\fonttbl{\\f0\\fcharset0 MS Shell Dlg;}} \\f0\\sa90\\fs16 ");
-		AppendRTF(s, L"Select a device to add.");
-		s += "}";
+	VDStringA s;
+	
+	s = "{\\rtf";
 
-		SETTEXTEX stex;
-		stex.flags = ST_DEFAULT;
-		stex.codepage = CP_ACP;
-		SendMessageA(hwndHelp, EM_SETTEXTEX, (WPARAM)&stex, (LPARAM)s.c_str());
-	}
+	const uint32 fg = ATUIGetThemeColors().mStaticFg;
+	s.append_sprintf("{\\colortbl;\\red%u\\green%u\\blue%u;}"
+		, (fg >> 16) & 0xFF
+		, (fg >>  8) & 0xFF
+		, fg & 0xFF);
+
+	s += "{\\fonttbl{\\f0\\fcharset0 MS Shell Dlg;}} \\f0\\cf1\\sa90\\fs16 ";
+
+	AppendRTF(s, L"Select a device to add.");
+	s += "}";
+
+	mHelpView.SetTextRTF(s.c_str());
 
 	mTreeView.SetRedraw(false);
 
@@ -511,10 +551,7 @@ void ATUIDialogDeviceNew::UpdateHelpText() {
 		if (mpLastHelpText) {
 			mpLastHelpText = nullptr;
 
-			SETTEXTEX stex;
-			stex.flags = ST_DEFAULT;
-			stex.codepage = CP_ACP;
-			SendDlgItemMessageA(mhdlg, IDC_HELP_INFO, EM_SETTEXTEX, (WPARAM)&stex, (LPARAM)"");
+			mHelpView.SetTextRTF("{\\rtf}");
 		}
 		return;
 	}
@@ -528,16 +565,21 @@ void ATUIDialogDeviceNew::UpdateHelpText() {
 
 	VDStringA s;
 
-	s = "{\\rtf{\\fonttbl{\\f0\\fnil\\fcharset0 MS Shell Dlg;}}\\f0\\sa90\\fs16{\\b ";
+	s = "{\\rtf";
+
+	const uint32 fg = ATUIGetThemeColors().mStaticFg;
+	s.append_sprintf("{\\colortbl;\\red%u\\green%u\\blue%u;}"
+		, (fg >> 16) & 0xFF
+		, (fg >>  8) & 0xFF
+		, fg & 0xFF);
+
+	s += "{\\fonttbl{\\f0\\fnil\\fcharset0 MS Shell Dlg;}}\\cf1\\f0\\sa90\\fs16{\\b ";
 	AppendRTF(s, te.mpText);
 	s += "}\\par ";
 	AppendRTF(s, te.mpHelpText);
 	s += "}";
 
-	SETTEXTEX stex;
-	stex.flags = ST_DEFAULT;
-	stex.codepage = CP_ACP;
-	SendDlgItemMessageA(mhdlg, IDC_HELP_INFO, EM_SETTEXTEX, (WPARAM)&stex, (LPARAM)s.c_str());
+	mHelpView.SetTextRTF(s.c_str());
 }
 
 void ATUIDialogDeviceNew::AppendRTF(VDStringA& rtf, const wchar_t *text) {
@@ -663,7 +705,8 @@ void ATUIControllerDevices::Add() {
 		"internal",
 		"joyport",
 		"sio",
-		"hle"
+		"hle",
+		"other",
 	};
 
 	vdfunction<bool(const char *)> filter;
@@ -917,7 +960,7 @@ void ATUIControllerDevices::Settings() {
 			if (dev->SetSettings(pset)) {
 				mDevMgr.IncrementChangeCounter();
 
-				mTreeView.RefreshNode(p->mNode);
+				OnDataExchange(false);
 			} else {
 				vdfastvector<IATDevice *> childDevices;
 				mDevMgr.MarkAndSweep(&dev, 1, childDevices);
@@ -985,6 +1028,38 @@ void ATUIControllerDevices::CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef p
 			auto node = mTreeView.AddItem(devnode, mTreeView.kNodeLast, status == ATDeviceFirmwareStatus::Invalid ? L"Current device firmware failed validation checks and may not work" : L"Missing firmware for device");
 			mTreeView.SetNodeImage(node, 1);
 		}
+	}
+
+	if (IATDeviceDiskDrive *dd = vdpoly_cast<IATDeviceDiskDrive *>(dev)) {
+		uint32 index = 0;
+
+		for(;;) {
+			const auto& diBinding = dd->GetDiskInterfaceClient(index);
+
+			if (!diBinding.mpClient)
+				break;
+
+			ATDiskInterface& di = g_sim.GetDiskInterface(diBinding.mInterfaceIndex);
+
+			IATDiskImage *image = di.GetDiskImage();
+			if (image && !diBinding.mpClient->IsImageSupported(*image)) {
+				VDStringW msg;
+
+				msg.sprintf(L"Disk drive model cannot read disk format in D%u:", (unsigned)diBinding.mInterfaceIndex + 1);
+
+				auto node = mTreeView.AddItem(devnode, mTreeView.kNodeLast, msg.c_str());
+				mTreeView.SetNodeImage(node, 1);
+				break;
+			}
+
+			++index;
+		}
+	}
+
+	VDStringW err;
+	for(uint32 i=0; dev->GetErrorStatus(i, err); ++i) {
+		auto node = mTreeView.AddItem(devnode, mTreeView.kNodeLast, err.c_str());
+		mTreeView.SetNodeImage(node, 1);
 	}
 
 	IATDeviceParent *devParent = vdpoly_cast<IATDeviceParent *>(dev);

@@ -66,6 +66,24 @@ extern const VDALIGN(16) uint8 kATAnalysisColorTable[]={
 	0x3f,
 };
 
+extern const ATPALPhaseInfo kATPALPhaseLookup[15] = {
+	{  0.0f,  1,  0.0f,  1 },	// !! - swinging colorburst, normalized to 0d
+	{  1.0f,  1,  1.0f,  1 },
+	{ -6.0f, -1,  2.0f,  1 },	// !! - encoded differently on even and odd lines
+	{ -5.0f, -1, -5.0f, -1 },
+	{ -4.0f, -1, -4.0f, -1 },
+	{ -3.0f, -1, -3.0f, -1 },
+	{ -1.0f, -1, -1.0f, -1 },
+	{  0.0f, -1,  0.0f, -1 },
+	{  1.0f, -1,  1.0f, -1 },
+	{ -6.0f,  1,  2.0f, -1 },	// !! - encoded differently on even and odd lines
+	{ -4.0f,  1, -4.0f,  1 },
+	{ -3.0f,  1, -3.0f,  1 },
+	{ -2.0f,  1, -2.0f,  1 },
+	{ -1.0f,  1, -1.0f,  1 },
+	{  0.0f,  1,  0.0f,  1 },
+};
+
 void ATInitGTIAPriorityTables(uint8 priorityTables[32][256]) {
 	// Priority table initialization
 	//

@@ -344,7 +344,7 @@
 
 //	$$technique screenfx_palartifacting
 //		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFX
+//			$$vertex_shader vs_2_0 VP_PALArtifacting
 //			$$pixel_shader ps_2_0 FP_PALArtifacting
 //			$$texture 0 vd_srctexture clamp clamp bilinear
 

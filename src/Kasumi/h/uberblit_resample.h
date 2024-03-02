@@ -17,6 +17,7 @@ namespace nsVDPixmap {
 		kFilterLinear,
 		kFilterCubic,
 		kFilterLanczos3,
+		kFilterSharpLinear,
 		kFilterCount
 	};
 }

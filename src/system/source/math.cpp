@@ -28,21 +28,55 @@
 #include <vd2/system/math.h>
 #include <vd2/system/int128.h>
 
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+int VDRoundToInt(float x) {
+	return (int)_mm_cvtss_si32(_mm_set_ss(x));
+}
+
+int VDRoundToInt(double x) {
+	return (int)_mm_cvtsd_si32(_mm_set_sd(x));
+}
+
+sint32 VDRoundToInt32(float x) {
+	return (sint32)_mm_cvtss_si32(_mm_set_ss(x));
+}
+
+sint32 VDRoundToInt32(double x) {
+	return (sint32)_mm_cvtsd_si32(_mm_set_sd(x));
+}
+
+sint64 VDRoundToInt64(float x) {
+	return (sint64)floorf(x + 0.5f);
+}
+
+sint64 VDRoundToInt64(double x) {
+	return (sint64)floor(x + 0.5);
+}
+#else
+int VDRoundToInt(float x) {
+	return (int)floorf(x + 0.5f);
+}
+
 int VDRoundToInt(double x) {
 	return (int)floor(x + 0.5);
 }
 
-long VDRoundToLong(double x) {
-	return (long)floor(x + 0.5);
+sint32 VDRoundToInt32(float x) {
+	return (sint32)floorf(x + 0.5f);
 }
 
 sint32 VDRoundToInt32(double x) {
 	return (sint32)floor(x + 0.5);
 }
 
+sint64 VDRoundToInt64(float x) {
+	return (sint64)floorf(x + 0.5f);
+}
+
 sint64 VDRoundToInt64(double x) {
 	return (sint64)floor(x + 0.5);
 }
+#endif
 
 #if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC) && !defined(VD_COMPILER_MSVC_CLANG)
 	sint64 __declspec(naked) __stdcall VDFractionScale64(uint64 a, uint32 b, uint32 c, uint32& remainder) {

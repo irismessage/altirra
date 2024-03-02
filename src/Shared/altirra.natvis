@@ -47,6 +47,17 @@
 		</Expand>
 	</Type>
 
+	<Type Name="vdvector_view&lt;*&gt;">
+		<DisplayString>size={mSize,i}</DisplayString>
+		<Expand>
+			<Item Name="[size]">mSize</Item>
+			<ArrayItems>
+				<Size>mSize</Size>
+				<ValuePointer>mpBegin</ValuePointer>
+			</ArrayItems>
+		</Expand>
+	</Type>
+
 	<Type Name="vdfastdeque&lt;*,*&gt;">
 		<DisplayString>size={(m.mapEnd - m.mapStart)*kBlockSize - kBlockSize + 1 + mTails.endIndex - mTails.startIndex}</DisplayString>
 		<Expand>
@@ -73,6 +84,7 @@
 	</Type>
 
 	<Type Name="VDStringSpanW">
+    <DisplayString IncludeView="plain">{mpBegin,sub}</DisplayString>
 		<DisplayString Condition="mpEnd&gt;=mpBegin">len={mpEnd-mpBegin,i} "{mpBegin,[mpEnd-mpBegin]sub}"</DisplayString>
 		<DisplayString Condition="mpEnd&lt;mpBegin">invalid!</DisplayString>
 		<StringView>mpBegin,su</StringView>
@@ -165,8 +177,94 @@
   <Type Name="vdrefptr&lt;*&gt;">
     <SmartPointer Usage="Minimal">ptr</SmartPointer>
   </Type>
+
+  <Type Name="nsVDVecMath::vdmask32x4">
+    <DisplayString>({v.m128_i32[0]!=0}, {v.m128_i32[1]!=0}, {v.m128_i32[2]!=0}, {v.m128_i32[3]!=0})</DisplayString>
+  </Type>
   
-	<Type Name="ATEthernetAddr">
+  <Type Name="nsVDVecMath::vdfloat32x4">
+    <DisplayString>({v.m128_f32[0]}, {v.m128_f32[1]}, {v.m128_f32[2]}, {v.m128_f32[3]})</DisplayString>
+  </Type>
+
+  <Type Name="nsVDVecMath::vdfloat32x4" IncludeView="vec3">
+    <DisplayString>({v.m128_f32[0]}, {v.m128_f32[1]}, {v.m128_f32[2]})</DisplayString>
+  </Type>
+
+  <Type Name="VDColorRGB">
+    <DisplayString>{v,view(vec3)}</DisplayString>
+  </Type>
+  
+  <Type Name="VDJSONValueRef">
+    <Expand>
+      <Item Name="Document">mpDoc</Item>
+      <Item Name="Value ref">*mpRef</Item>
+      <Synthetic Name="Objects" Condition="mpRef-&gt;mType == VDJSONValue::kTypeObject">
+        <Expand>
+          <Synthetic Name="Member Names">
+            <Expand>
+              <CustomListItems>
+                <Variable Name="node" InitialValue="mpRef-&gt;mpObject" />
+                <Variable Name="nt" InitialValue="mpDoc->mNameTable.mNameTable.mpBegin" />
+                <Loop>
+                  <Break Condition="node == nullptr"/>
+                  <Item>*nt[node-&gt;mNameToken - 1],view(plain)</Item>
+                  <Exec>node = node-&gt;mpNext</Exec>
+                </Loop>
+              </CustomListItems>
+            </Expand>
+          </Synthetic>
+
+          <Synthetic Name="Member Values">
+            <Expand>
+              <LinkedListItems>
+                <HeadPointer>mpRef-&gt;mpObject</HeadPointer>
+                <NextPointer>mpNext</NextPointer>
+                <ValueNode>*this</ValueNode>
+              </LinkedListItems>
+            </Expand>
+          </Synthetic>
+        </Expand>
+      </Synthetic>
+    </Expand>
+  </Type>
+
+  <Type Name="VDJSONMember">
+    <DisplayString>{mNameToken,i}: {mValue}</DisplayString>
+  </Type>
+
+  <Type Name="VDJSONValue">
+    <DisplayString Condition="mType==kTypeNull">Null</DisplayString>
+    <DisplayString Condition="mType==kTypeInt">Int: {mIntValue}</DisplayString>
+    <DisplayString Condition="mType==kTypeString">String: {mpString->mpChars,[mpString->mLength]}</DisplayString>
+    <DisplayString Condition="mType==kTypeObject">Object</DisplayString>
+    <DisplayString Condition="mType==kTypeArray">Array [{mpArray->mLength}]</DisplayString>
+    <Expand>      
+      <LinkedListItems Condition="mType==kTypeObject">
+        <HeadPointer>mpObject</HeadPointer>
+        <NextPointer>mpNext</NextPointer>
+        <ValueNode>*this</ValueNode>
+      </LinkedListItems>
+      <ArrayItems Condition="mType==kTypeArray">
+        <Size>mpArray->mLength</Size>
+        <ValuePointer>mpArray->mpElements</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+  
+  <Type Name="VDFraction">
+    <DisplayString>{hi}/{lo} = {(double)hi/(double)lo}</DisplayString>
+  </Type>
+  <Type Name="VDPixmap">
+    <DisplayString Condition="format">{w,i}x{h,i} - {(nsVDPixmap::VDPixmapFormat)format}</DisplayString>
+    <DisplayString>Invalid</DisplayString>
+  </Type>
+
+  <Type Name="VDPixmapLayout">
+    <DisplayString Condition="format">{w,i}x{h,i} - {(nsVDPixmap::VDPixmapFormat)format}</DisplayString>
+    <DisplayString>Invalid</DisplayString>
+  </Type>
+
+  <Type Name="ATEthernetAddr">
 		<DisplayString>{mAddr[0],xb}</DisplayString>
 	</Type>
 	
@@ -290,5 +388,81 @@
   
   <Type Name="ATMemoryLayer">
     <MostDerivedType IgnoreVTable="true">(ATMemoryManager::MemoryLayer*)this</MostDerivedType>
+  </Type>
+
+  <Type Name="ATEvent">
+    <DisplayString>t={mNextTime,x} id={mId} cb={mpCB}</DisplayString>
+  </Type>
+  <Type Name="ATScheduler">
+    <DisplayString>{0-mNextEventCounter,i} cycles to next @ {mTimeBase,x}, now @ {mTimeBase+mNextEventCounter,x}</DisplayString>
+    <Expand>
+      <Synthetic Name="[Events]">
+        <Expand>
+          <CustomListItems>
+            <Variable Name="p" InitialValue="mActiveEvents.mpNext" />
+            <Loop Condition="p">
+              <Break Condition="p==0 || p==&amp;mActiveEvents" />
+              <Item>*(ATEvent *)p</Item>
+              <Exec>p = p-&gt;mpNext</Exec>
+            </Loop>
+          </CustomListItems>
+        </Expand>
+      </Synthetic>
+    </Expand>
+  </Type>
+
+  <Type Name="ATPokeyAudioLog" ExcludeView="itemsOnly">
+    <Expand>
+      <Synthetic Name="[States]">
+        <DisplayString>{mLastFrameSampleCount,i} samples</DisplayString>
+        <Expand>
+          <ArrayItems>
+            <Size>mLastFrameSampleCount</Size>
+            <ValuePointer>mpStates</ValuePointer>
+          </ArrayItems>
+        </Expand>
+      </Synthetic>
+      <ExpandedItem>this,view(itemsOnly)</ExpandedItem>
+    </Expand>
+  </Type>
+
+  <Type Name="ATUIWidget">
+    <DisplayString>{mArea}</DisplayString>
+  </Type>
+
+  <Type Name="ATUILabel">
+    <DisplayString>{*(ATUIWidget*)this,nd} Label {mText}</DisplayString>
+  </Type>
+
+  <Type Name="ATChecksumSHA256">
+    <DisplayString>
+{mDigest[0]*16777216U+mDigest[1]*65536+mDigest[2]*256+mDigest[3],Xb}
+ {mDigest[4]*16777216U+mDigest[5]*65536+mDigest[6]*256+mDigest[7],Xb}
+ {mDigest[8]*16777216U+mDigest[9]*65536+mDigest[10]*256+mDigest[11],Xb}
+ {mDigest[12]*16777216U+mDigest[13]*65536+mDigest[14]*256+mDigest[15],Xb}
+ {mDigest[16]*16777216U+mDigest[17]*65536+mDigest[18]*256+mDigest[19],Xb}
+ {mDigest[20]*16777216U+mDigest[21]*65536+mDigest[22]*256+mDigest[23],Xb}
+ {mDigest[24]*16777216U+mDigest[25]*65536+mDigest[26]*256+mDigest[27],Xb}
+ {mDigest[28]*16777216U+mDigest[29]*65536+mDigest[30]*256+mDigest[31],Xb}
+    </DisplayString>
+  </Type>
+
+  <Type Name="ATCDVMFunction">
+    <DisplayString>{mpName,sb}()</DisplayString>
+    <Expand>
+      <Synthetic Name="[Bytecode]">
+        <Expand>
+          
+          <IndexListItems>
+            <Size>mByteCodeLen</Size>
+            <ValueNode>(ATCDVMOpcode)mpByteCode[$i],x</ValueNode>
+          </IndexListItems>
+        </Expand>
+      </Synthetic>
+    </Expand>
+  </Type>
+
+  <Type Name="__m128i">
+    <DisplayString>{m128i_u32[3],Xb} {m128i_u32[2],Xb} {m128i_u32[1],Xb} {m128i_u32[0],Xb}</DisplayString>
   </Type>
 </AutoVisualizer>

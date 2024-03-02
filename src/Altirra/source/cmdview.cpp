@@ -22,8 +22,11 @@
 #include "gtia.h"
 #include "options.h"
 #include "cmdhelpers.h"
+#include "simulator.h"
+#include "uirender.h"
 
 extern ATUIManager g_ATUIManager;
+extern ATSimulator g_sim;
 
 void ATUISetOverscanMode(ATGTIAEmulator::OverscanMode mode);
 
@@ -165,11 +168,26 @@ void OnCommandViewToggleAccelScreenFX() {
 	ATOptionsRunUpdateCallbacks(&prev);
 }
 
+void OnCommandViewToggleAutoHidePointer() {
+	ATUISetPointerAutoHide(!ATUIGetPointerAutoHide());
+}
+
+void OnCommandViewToggleTargetPointer() {
+	ATUISetTargetPointerVisible(!ATUIGetTargetPointerVisible());
+}
+
+void OnCommandViewCustomizeHud() {
+	g_sim.GetUIRenderer()->BeginCustomization();
+}
+
 namespace ATCommands {
 	static constexpr ATUICommand kATCommandsView[] = {
 		{ "View.ToggleIndicatorMargin", OnCommandViewToggleIndicatorMargin, ATUIGetDisplayIndicators, [] { return ATUIGetDisplayPadIndicators() ? kATUICmdState_Checked : kATUICmdState_None; } },
 		{ "View.ToggleIndicators", OnCommandViewToggleIndicators, nullptr, [] { return ATUIGetDisplayIndicators() ? kATUICmdState_Checked : kATUICmdState_None; } },
 		{ "View.ToggleAccelScreenFX", OnCommandViewToggleAccelScreenFX, NULL, [] { return ToChecked(g_ATOptions.mbDisplayAccelScreenFX); } },
+		{ "View.ToggleAutoHidePointer", OnCommandViewToggleAutoHidePointer, nullptr, [] { return ToChecked(ATUIGetPointerAutoHide()); } },
+		{ "View.ToggleTargetPointer", OnCommandViewToggleTargetPointer, nullptr, [] { return ToChecked(!ATUIGetTargetPointerVisible()); } },
+		{ "View.CustomizeHUD", OnCommandViewCustomizeHud },
 	};
 }
 

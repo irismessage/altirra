@@ -56,6 +56,21 @@ cbuffer PS_ScreenFX {
 	float3x3 colorCorrectMatrix	SCREENFX_REG(ps, c19);
 };
 
+void VP_PALArtifacting(
+	float2 pos : POSITION,
+	float2 uv0 : TEXCOORD0,
+	float2 uv1 : TEXCOORD1,
+	out float4 oPos : SV_Position,
+	out float2 oT0 : TEXCOORD0,
+	out float2 oT1 : TEXCOORD1)
+{
+	oPos = float4(pos.xy, 0.5, 1);
+	oT0 = uv0;
+	oT1 = uv1;
+	
+	VP_APPLY_VIEWPORT(oPos);
+}
+
 half4 FP_PALArtifacting(
 	float4 pos : SV_Position,
 	float2 uv0 : TEXCOORD0,
@@ -342,14 +357,23 @@ half4 FP_Bloom2(
 	float2 uv5 : TEXCOORD5,
 	float2 uv6 : TEXCOORD6) : SV_Target0
 {
-	half3 c;
+	half4 c;
+	half3 s0 = (half3)SCREENFX_SAMPLE_SRC(uv0).rgb;
+	half3 s1 = (half3)SCREENFX_SAMPLE_SRC(uv1).rgb;
+	half3 s2 = (half3)SCREENFX_SAMPLE_SRC(uv2).rgb;
+	half3 s3 = (half3)SCREENFX_SAMPLE_SRC(uv3).rgb;
+	half3 s4 = (half3)SCREENFX_SAMPLE_SRC(uv4).rgb;
+	half3 s5 = (half3)SCREENFX_SAMPLE_SRC(uv5).rgb;
+	half3 s6 = (half3)SCREENFX_SAMPLE_SRC(uv6).rgb;
 
-	c  =  SCREENFX_SAMPLE_SRC(uv0).rgb * fpBloomWeights.x;
-	c += (SCREENFX_SAMPLE_SRC(uv1).rgb + SCREENFX_SAMPLE_SRC(uv2).rgb) * fpBloomWeights.y;
-	c += (SCREENFX_SAMPLE_SRC(uv3).rgb + SCREENFX_SAMPLE_SRC(uv4).rgb) * fpBloomWeights.z;
-	c += (SCREENFX_SAMPLE_SRC(uv5).rgb + SCREENFX_SAMPLE_SRC(uv6).rgb) * fpBloomWeights.w;
+	c.rgb  =  s0 * fpBloomWeights.x;
+	c.rgb += (s1 + s2) * fpBloomWeights.y;
+	c.rgb += (s3 + s4) * fpBloomWeights.z;
+	c.rgb += (s5 + s6) * fpBloomWeights.w;
 
-	return half4(c, 0);
+	c.a = 0;
+
+	return c;
 }
 
 void VP_Bloom3(

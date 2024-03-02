@@ -22,7 +22,9 @@
 #include <vd2/system/strutil.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/Dita/services.h>
+#include <at/atcore/progress.h>
 #include <at/atio/blobimage.h>
+#include <at/atio/cassetteimage.h>
 #include <at/atio/diskimage.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/messageloop.h>
@@ -32,9 +34,11 @@
 #include "uifilefilters.h"
 #include "uicompat.h"
 #include "cartridge.h"
+#include "cassette.h"
 #include "compatedb.h"
 #include "compatengine.h"
 #include "hleprogramloader.h"
+#include "oshelper.h"
 #include "disk.h"
 
 extern ATSimulator g_sim;
@@ -51,6 +55,22 @@ namespace {
 		VDStringW name;
 		name.sprintf(L"[%hs]", s);
 		return name;
+	}
+
+	void ATCompatAddSourcedRulesForImage(vdvector<ATCompatEDBSourcedAliasRule>& sourcedRules, IATImage *image, const wchar_t *sourceName) {
+		if (!image)
+			return;
+
+		vdfastvector<ATCompatMarker> markers;
+
+		ATCompatGetMarkersForImage(markers, image, false);
+
+		for(const ATCompatMarker& marker : markers) {
+			ATCompatEDBSourcedAliasRule& aliasRule = sourcedRules.push_back();
+
+			aliasRule.mRule = marker;
+			aliasRule.mSource = sourceName;
+		}
 	}
 }
 
@@ -138,6 +158,7 @@ public:
 
 	bool OnLoaded() override;
 	void OnDataExchange(bool write) override;
+	bool OnOK() override;
 
 private:
 	void OnAdd();
@@ -176,11 +197,22 @@ ATUIDialogCompatDBEditAlias::~ATUIDialogCompatDBEditAlias() {
 }
 
 bool ATUIDialogCompatDBEditAlias::OnLoaded() {
+	SetCurrentSizeAsMinSize();
+
 	AddProxy(&mAvailableList, IDC_LIST_AVAILABLE);
 	AddProxy(&mActiveList, IDC_LIST_ACTIVE);
 	AddProxy(&mAddButton, IDC_ADD);
 	AddProxy(&mRemoveButton, IDC_REMOVE);
 	AddProxy(&mFromFileButton, IDC_FROM_FILE);
+
+	mResizer.Add(mAvailableList.GetHandle(), mResizer.kC | mResizer.kVTopHalf);
+	mResizer.Add(mAddButton.GetHandle(), mResizer.kHCenter | mResizer.kVMiddle);
+	mResizer.Add(mRemoveButton.GetHandle(), mResizer.kHCenter | mResizer.kVMiddle);
+	mResizer.Add(IDC_STATIC_SIGSINALIAS, mResizer.kL | mResizer.kVMiddle);
+	mResizer.Add(mActiveList.GetHandle(), mResizer.kC | mResizer.kVBottomHalf);
+	mResizer.Add(mFromFileButton.GetHandle(), mResizer.kBL);
+	mResizer.Add(IDOK, mResizer.kBR);
+	mResizer.Add(IDCANCEL, mResizer.kBR);
 
 	RefreshSrcRules();
 
@@ -193,6 +225,11 @@ bool ATUIDialogCompatDBEditAlias::OnLoaded() {
 
 void ATUIDialogCompatDBEditAlias::OnDataExchange(bool write) {
 	if (write) {
+		if (mRules.empty()) {
+			FailValidation(mActiveList.GetWindowId(), L"At least one signature is required for an alias.", L"Invalid alias");
+			return;
+		}
+
 		mAlias.mRules = mRules;
 	} else {
 		mRules = mAlias.mRules;
@@ -201,6 +238,45 @@ void ATUIDialogCompatDBEditAlias::OnDataExchange(bool write) {
 			mActiveList.AddItem(rule.ToDisplayString().c_str());
 		}
 	}
+}
+
+bool ATUIDialogCompatDBEditAlias::OnOK() {
+	// scan the rules and see if we have a duplicate class
+	bool haveChecksum = false;
+	bool haveSHA256 = false;
+	bool haveConflict = false;
+
+	for(const auto& rule : mRules) {
+		switch(rule.mRuleType) {
+			case kATCompatRuleType_CartChecksum:
+			case kATCompatRuleType_DiskChecksum:
+			case kATCompatRuleType_DOSBootChecksum:
+			case kATCompatRuleType_ExeChecksum:
+				if (haveChecksum)
+					haveConflict = true;
+				else
+					haveChecksum = true;
+				break;
+
+			case kATCompatRuleType_CartFileSHA256:
+			case kATCompatRuleType_DiskFileSHA256:
+			case kATCompatRuleType_DOSBootFileSHA256:
+			case kATCompatRuleType_ExeFileSHA256:
+			case kATCompatRuleType_TapeFileSHA256:
+				if (haveSHA256)
+					haveConflict = true;
+				else
+					haveSHA256 = true;
+				break;
+		}
+	}
+
+	if (haveConflict) {
+		if (!Confirm2("CompatDBConflictingAliasSignatures", L"This alias will never be used because it has conflicting signatures that will never match at the same time. Use it anyway?", L"Conflicting signatures"))
+			return true;
+	}
+
+	return VDDialogFrameW32::OnOK();
 }
 
 void ATUIDialogCompatDBEditAlias::OnAdd() {
@@ -245,18 +321,19 @@ void ATUIDialogCompatDBEditAlias::OnFromFile() {
 		ATImageLoadAuto(fn.c_str(), fn.c_str(), fs, &loadCtx, nullptr, nullptr, ~image);
 
 		vdvector<ATCompatEDBSourcedAliasRule> newSrcRules;
-		if (IATDiskImage *diskImage = vdpoly_cast<IATDiskImage *>(image)) {
-			if (!diskImage->IsDynamic()) {
-				uint64 checksum = diskImage->GetImageChecksum();
 
-				newSrcRules.push_back(ATCompatEDBSourcedAliasRule { { kATCompatRuleType_DiskChecksum, checksum }, VDStringW(L"Disk") });
-			}
+		switch(image->GetImageType()) {
+			case kATImageType_Disk:
+				ATCompatAddSourcedRulesForImage(newSrcRules, image, L"Disk");
+				break;
 
-		} else if (IATCartridgeImage *cartImage = vdpoly_cast<IATCartridgeImage *>(image)) {
-			newSrcRules.push_back(ATCompatEDBSourcedAliasRule { { kATCompatRuleType_CartChecksum, cartImage->GetChecksum() }, VDStringW(L"Cart") });
-		} else if (IATBlobImage *blobImage = vdpoly_cast<IATBlobImage *>(image)) {
-			if (blobImage->GetImageType() == kATImageType_Program)
-				newSrcRules.push_back(ATCompatEDBSourcedAliasRule { { kATCompatRuleType_ExeChecksum, blobImage->GetChecksum() }, VDStringW(L"Exe") });
+			case kATImageType_Cartridge:
+				ATCompatAddSourcedRulesForImage(newSrcRules, image, L"Cart");
+				break;
+
+			case kATImageType_Program:
+				ATCompatAddSourcedRulesForImage(newSrcRules, image, L"Exe");
+				break;
 		}
 		
 		if (newSrcRules.empty())
@@ -287,14 +364,14 @@ public:
 
 	bool OnLoaded() override;
 	void OnDestroy() override;
-	bool OnOK() override;
-	bool OnCancel() override;
+	bool OnClose() override;
 	bool OnCommand(uint32 id, uint32 extra) override;
 	bool PreNCDestroy() override { return true; }
 
 private:
 	void OnTitleEdited(int idx, const wchar_t *s);
 	void OnTitleSelectionChanged();
+	void RefreshTitles(ATCompatEDB *src);
 	void OnAddTitle();
 	void OnDeleteTitle();
 	void RefreshAliases();
@@ -304,6 +381,7 @@ private:
 	void RefreshTags();
 	void OnAddTag();
 	void OnDeleteTag();
+	void OnQuickSearchUpdated();
 	void OnExit();
 	void OnNew();
 	void OnLoad();
@@ -311,6 +389,7 @@ private:
 	void OnSaveAs();
 	void OnCompile();
 	void OnCompileTo();
+	void OnUpdateChecksumsToSHA256();
 
 	void Load(const wchar_t *path);
 	void CompileTo(const wchar_t *path);
@@ -321,6 +400,8 @@ private:
 	ATCompatEDB mEDB;
 	bool mbAddingItem = false;
 	bool mbModified = false;
+	bool mbIsExternalDb = false;
+	bool mbNeedsCompile = false;
 
 	ATCompatKnownTag mLastSelectedTag = kATCompatKnownTag_None;
 
@@ -334,6 +415,7 @@ private:
 	VDStringW mPath;
 	VDStringW mCompilePath;
 	VDStringW mBaseCaption;
+	VDStringW mQuickSearchText;
 
 	VDUIProxyListBoxControl mListBoxTitle;
 	VDUIProxyListBoxControl mListBoxAlias;
@@ -345,6 +427,7 @@ private:
 	VDUIProxyButtonControl mButtonEditAlias;
 	VDUIProxyButtonControl mButtonAddTag;
 	VDUIProxyButtonControl mButtonDeleteTag;
+	VDUIProxyEditControl mEditQuickSearch;
 
 	static ATUIDialogCompatDB *spCurrent;
 };
@@ -364,6 +447,7 @@ ATUIDialogCompatDB::ATUIDialogCompatDB(const vdfunction<void(vdvector<ATCompatED
 	mButtonEditAlias.SetOnClicked([this] { OnEditAlias(); });
 	mButtonAddTag.SetOnClicked([this] { OnAddTag(); });
 	mButtonDeleteTag.SetOnClicked([this] { OnDeleteTag(); });
+	mEditQuickSearch.SetOnTextChanged([this](VDUIProxyEditControl *) { OnQuickSearchUpdated(); });
 
 	spCurrent = this;
 }
@@ -375,6 +459,7 @@ ATUIDialogCompatDB::~ATUIDialogCompatDB() {
 void ATUIDialogCompatDB::ShowModeless(VDGUIHandle parent, const vdfunction<void(vdvector<ATCompatEDBSourcedAliasRule>&)>& availRulesFn) {
 	if (spCurrent) {
 		spCurrent->Show();
+		spCurrent->Focus();
 		return;
 	}
 
@@ -389,7 +474,8 @@ void ATUIDialogCompatDB::ShowModeless(VDGUIHandle parent, const vdfunction<void(
 }
 
 bool ATUIDialogCompatDB::OnLoaded() {
-	ATUIUnregisterModelessDialog(mhdlg);
+	SetCurrentSizeAsMinSize();
+	ATUIRegisterModelessDialog(mhdlg);
 
 	mBaseCaption = GetCaption();
 
@@ -405,28 +491,83 @@ bool ATUIDialogCompatDB::OnLoaded() {
 	AddProxy(&mButtonEditAlias, IDC_EDITALIAS);
 	AddProxy(&mButtonAddTag, IDC_ADDTAG);
 	AddProxy(&mButtonDeleteTag, IDC_DELETETAG);
+	AddProxy(&mEditQuickSearch, IDC_QUICKSEARCH);
+	
+	mResizer.Add(mListBoxTitle.GetHandle(), mResizer.kAnchorX1_L | mResizer.kAnchorX2_C | mResizer.kAnchorY1_T | mResizer.kAnchorY2_B);
+	mResizer.Add(IDC_STATIC_ALIASES, mResizer.kAnchorX1_C | mResizer.kAnchorX2_R | mResizer.kAnchorY1_T | mResizer.kAnchorY2_M);
+
+	mResizer.Add(mButtonAddAlias.GetHandle(), mResizer.kAnchorX1_C | mResizer.kAnchorX2_C | mResizer.kAnchorY1_M | mResizer.kAnchorY2_M);
+	mResizer.Add(mButtonDeleteAlias.GetHandle(), mResizer.kAnchorX1_C | mResizer.kAnchorX2_C | mResizer.kAnchorY1_M | mResizer.kAnchorY2_M);
+	mResizer.Add(mButtonEditAlias.GetHandle(), mResizer.kAnchorX1_C | mResizer.kAnchorX2_C | mResizer.kAnchorY1_M | mResizer.kAnchorY2_M);
+
+	mResizer.Add(mListBoxAlias.GetHandle(), mResizer.kAnchorX1_C | mResizer.kAnchorX2_R | mResizer.kAnchorY1_T | mResizer.kAnchorY2_M);
+	mResizer.Add(IDC_STATIC_TAGS, mResizer.kAnchorX1_C | mResizer.kAnchorX2_R | mResizer.kAnchorY1_M | mResizer.kAnchorY2_B);
+	mResizer.Add(mListBoxTag.GetHandle(), mResizer.kAnchorX1_C | mResizer.kAnchorX2_R | mResizer.kAnchorY1_M | mResizer.kAnchorY2_B);
+	mResizer.Add(mButtonAddTag.GetHandle(), mResizer.kAnchorX1_C | mResizer.kAnchorX2_C | mResizer.kAnchorY1_B | mResizer.kAnchorY2_B);
+	mResizer.Add(mButtonDeleteTag.GetHandle(), mResizer.kAnchorX1_C | mResizer.kAnchorX2_C | mResizer.kAnchorY1_B | mResizer.kAnchorY2_B);
+
+
+	mResizer.Add(IDC_STATIC_QUICKSEARCH, mResizer.kBL);
+	mResizer.Add(IDC_QUICKSEARCH, mResizer.kAnchorX1_L | mResizer.kAnchorX2_C | mResizer.kAnchorY1_B | mResizer.kAnchorY2_B);
+	mResizer.Add(mButtonAddTitle.GetHandle(), mResizer.kBL);
+	mResizer.Add(mButtonDeleteTitle.GetHandle(), mResizer.kBL);
+	mResizer.Add(mButtonAddTag.GetHandle(), mResizer.kAnchorX1_C | mResizer.kAnchorX2_C | mResizer.kAnchorY1_B | mResizer.kAnchorY2_B);
+	mResizer.Add(mButtonDeleteTag.GetHandle(), mResizer.kAnchorX1_C | mResizer.kAnchorX2_C | mResizer.kAnchorY1_B | mResizer.kAnchorY2_B);
+
+	ATUIRestoreWindowPlacement(mhdlg, "Compat editor", -1, false);
 
 	LoadAcceleratorTable(IDR_COMPATDBEDITOR_ACCEL);
 
 	SetFocusToControl(IDC_TITLE_LIST);
 	UpdateCaption();
+
+	// If we have an external compat database loaded, see if there is the source beside it, and if so,
+	// auto-load it.
+	if (ATCompatIsExtDatabaseLoaded()) {
+		const VDStringW& path = ATCompatGetExtDatabasePath();
+
+		if (!path.empty()) {
+			try {
+				Load((VDFileSplitExtLeft(path) + L".atcompatdb").c_str());
+				mbIsExternalDb = true;
+
+				mCompilePath = path;
+			} catch(const MyError&) {
+				// eat auto-load exceptions
+			}
+		}
+	}
+
 	return true;
 }
 
 void ATUIDialogCompatDB::OnDestroy() {
+	ATUISaveWindowPlacement(mhdlg, "Compat editor");
 	ATUIUnregisterModelessDialog(mhdlg);
+	VDDialogFrameW32::OnDestroy();
 }
 
-bool ATUIDialogCompatDB::OnOK() {
+bool ATUIDialogCompatDB::OnClose() {
 	if (!ConfirmDiscard())
 		return true;
 
-	End(0);
-	return true;
-}
+	if (!mbModified && mbIsExternalDb && mbNeedsCompile) {
+		if (!Confirm2(
+			"CompatDBExtNeedsCompile",
+			L"The external compatibility database still needs to be compiled before changes will take effect. Compile it before exiting?",
+			L"Changes not compiled"))
+		{
+			try {
+				OnCompile();
+			} catch(const MyError& e) {
+				ShowError2(e, L"Compile failed");
+				return true;
+			}
+		}
+	}
 
-bool ATUIDialogCompatDB::OnCancel() {
-	return OnOK();
+	Destroy();
+	return true;
 }
 
 bool ATUIDialogCompatDB::OnCommand(uint32 id, uint32 extra) {
@@ -457,6 +598,10 @@ bool ATUIDialogCompatDB::OnCommand(uint32 id, uint32 extra) {
 
 		case ID_BUILD_COMPILETO:
 			OnCompileTo();
+			return true;
+
+		case ID_TOOLS_UPDATECHECKSUMSTOSHA256:
+			OnUpdateChecksumsToSHA256();
 			return true;
 	}
 
@@ -531,6 +676,53 @@ void ATUIDialogCompatDB::OnTitleSelectionChanged() {
 	RefreshTags();
 }
 
+void ATUIDialogCompatDB::RefreshTitles(ATCompatEDB *src) {
+	mListBoxAlias.Clear();
+	mListBoxTag.Clear();
+	mListBoxTitle.Clear();
+
+	mpTitleForAliases = nullptr;
+	mDisplayedAliasIndices.clear();
+	mDisplayedTags.clear();
+	mDisplayedTitles.clear();
+
+	if (src)
+		mEDB = std::move(*src);
+
+	mDisplayedTitles.reserve(mEDB.mTitleTable.Size());
+
+	VDStringW searchTmp = mQuickSearchText;
+	for(wchar_t& c : searchTmp)
+		c = towlower(c);
+
+	VDStringW tmp;
+	for(auto *title : mEDB.mTitleTable) {
+		if (!searchTmp.empty()) {
+			tmp = title->mName;
+
+			for(wchar_t& c : tmp)
+				c = towlower(c);
+
+			if (!wcsstr(tmp.c_str(), searchTmp.c_str()))
+				continue;
+		}
+
+		mDisplayedTitles.push_back(title);
+	}
+
+	std::sort(mDisplayedTitles.begin(), mDisplayedTitles.end(),
+		[](const ATCompatEDBTitle *x, const ATCompatEDBTitle *y) {
+			return x->mName.comparei(y->mName) < 0;
+		}
+	);
+
+	mListBoxTitle.SetRedraw(false);
+	for(auto *title : mDisplayedTitles) {
+		mListBoxTitle.AddItem(title->mName.c_str());
+	}
+	mListBoxTitle.SetRedraw(true);
+}
+
 void ATUIDialogCompatDB::OnAddTitle() {
 	const wchar_t *newTitle = L"(New Title)";
 
@@ -572,6 +764,9 @@ void ATUIDialogCompatDB::OnDeleteTitle() {
 	mDisplayedAliasIndices.clear();
 
 	mListBoxTitle.DeleteItem(sel);
+
+	mEDB.mTitleTable.Destroy(mDisplayedTitles[sel]->mId);
+
 	mDisplayedTitles.erase(mDisplayedTitles.begin() + sel);
 
 	mListBoxTitle.SetSelection(sel);
@@ -757,11 +952,19 @@ void ATUIDialogCompatDB::OnDeleteTag() {
 	}
 }
 
-void ATUIDialogCompatDB::OnExit() {
-	if (!ConfirmDiscard())
+void ATUIDialogCompatDB::OnQuickSearchUpdated() {
+	const VDStringW& text = mEditQuickSearch.GetText();
+
+	if (mQuickSearchText.comparei(text) == 0)
 		return;
 
-	End(0);
+	mQuickSearchText = text;
+
+	RefreshTitles(nullptr);
+}
+
+void ATUIDialogCompatDB::OnExit() {
+	OnClose();
 }
 
 void ATUIDialogCompatDB::OnNew() {
@@ -783,6 +986,8 @@ void ATUIDialogCompatDB::OnNew() {
 	mDisplayedTitles.clear();
 
 	mEDB = {};
+	mbIsExternalDb = false;
+	mbNeedsCompile = false;
 }
 
 void ATUIDialogCompatDB::OnLoad() {
@@ -866,42 +1071,185 @@ void ATUIDialogCompatDB::OnCompileTo() {
 	}
 }
 
+void ATUIDialogCompatDB::OnUpdateChecksumsToSHA256() {
+	const VDStringW& path = VDGetDirectory('cpdu', (VDGUIHandle)mhdlg, L"Choose path to scan for file hashes");
+
+	if (path.empty())
+		return;
+
+	ATProgress progress;
+
+	progress.InitF(1, L"", L"Scanning files for matching hashes");
+
+	bool nothingToDo = false;
+	size_t startingCount = 0;
+	size_t remainingCount = 0;
+
+	std::unordered_multimap<uint64, ATCompatEDBAliasRule *> rulesToBeUpdated;
+
+	for(ATCompatEDBTitle *title : mEDB.mTitleTable) {
+		for(ATCompatEDBAlias& alias : title->mAliases) {
+			for(ATCompatEDBAliasRule& rule : alias.mRules) {
+				switch(rule.mRuleType) {
+					case kATCompatRuleType_CartChecksum:
+					case kATCompatRuleType_DiskChecksum:
+					case kATCompatRuleType_DOSBootChecksum:
+					case kATCompatRuleType_ExeChecksum:
+						rulesToBeUpdated.emplace(rule.mValue[0], &rule);
+						break;
+
+					default:
+						break;
+				}
+			}
+		}
+	}
+			
+	startingCount = rulesToBeUpdated.size();
+
+	if (rulesToBeUpdated.empty()) {
+		nothingToDo = true;
+	} else {
+		std::deque<VDStringW> pathStack;
+
+		pathStack.push_back(path);
+
+		vdblock<char> buf(256*1024);
+		const sint64 sizeLimit = 32*1024*1024 + 1024;
+
+		while(!pathStack.empty()) {
+			VDDirectoryIterator it(VDMakePath(pathStack.front().c_str(), L"*.*").c_str());
+
+			if (progress.CheckForCancellationOrStatus()) {
+				progress.UpdateStatus(pathStack.front().c_str());
+			}
+
+			pathStack.pop_front();
+
+			while(it.Next()) {
+				if (it.IsDirectory()) {
+					if (!it.IsDotDirectory())
+						pathStack.push_back(it.GetFullPath());
+				} else if (it.GetSize() <= sizeLimit) {
+					const VDStringW& filePath = it.GetFullPath();
+
+					if (progress.CheckForCancellationOrStatus())
+						progress.UpdateStatus(filePath.c_str());
+
+					ATCartLoadContext cartLoadCtx {};
+					cartLoadCtx.mbIgnoreMapper = true;
+
+					ATImageLoadContext loadCtx {};
+					loadCtx.mpCartLoadContext = &cartLoadCtx;
+
+					uint64 checksum = 0;
+					std::optional<ATChecksumSHA256> sha256;
+
+					try {
+						VDFileStream fs(filePath.c_str());
+						vdrefptr<IATImage> image;
+
+						ATImageLoadAuto(filePath.c_str(), filePath.c_str(), fs, &loadCtx, nullptr, nullptr, ~image);
+
+						if (IATDiskImage *diskImage = vdpoly_cast<IATDiskImage *>(image)) {
+							if (!diskImage->IsDynamic()) {
+								checksum = diskImage->GetImageChecksum();
+								sha256 = diskImage->GetImageFileSHA256();
+							}
+						} else if (IATCartridgeImage *cartImage = vdpoly_cast<IATCartridgeImage *>(image)) {
+							checksum = cartImage->GetChecksum();
+							sha256 = cartImage->GetImageFileSHA256();
+						} else if (IATBlobImage *blobImage = vdpoly_cast<IATBlobImage *>(image)) {
+							if (blobImage->GetImageType() == kATImageType_Program) {
+								checksum = blobImage->GetChecksum();
+								sha256 = blobImage->GetImageFileSHA256();
+							}
+						}
+
+						if (sha256.has_value()) {
+							auto r = rulesToBeUpdated.equal_range(checksum);
+
+							if (r.first != r.second) {
+								for(auto it = r.first; it != r.second; ++it) {
+									ATCompatEDBAliasRule& aliasRule = *it->second;
+
+									switch(aliasRule.mRuleType) {
+										case kATCompatRuleType_CartChecksum:
+											aliasRule.mRuleType = kATCompatRuleType_CartFileSHA256;
+											break;
+
+										case kATCompatRuleType_DiskChecksum:
+											aliasRule.mRuleType = kATCompatRuleType_DiskFileSHA256;
+											break;
+
+										case kATCompatRuleType_DOSBootChecksum:
+											aliasRule.mRuleType = kATCompatRuleType_DOSBootFileSHA256;
+											break;
+
+										case kATCompatRuleType_ExeChecksum:
+											aliasRule.mRuleType = kATCompatRuleType_ExeFileSHA256;
+											break;
+
+										default:
+											VDFAIL("Unexpected rule type");
+											break;
+									}
+
+									aliasRule.SetSHA256(sha256.value());
+								}
+
+								rulesToBeUpdated.erase(r.first, r.second);
+							}
+						}
+					} catch(const MyError&) {
+					}
+				}
+			}
+		}
+
+		remainingCount = rulesToBeUpdated.size();
+	}
+
+	progress.Shutdown();
+
+	VDStringW msg;
+
+	if (nothingToDo) {
+		ShowInfo2(L"All hashes in this database have already been updated.", L"Nothing to do");
+	} else {
+		msg.sprintf(L"Hashes updated: %u/%u", (unsigned)(startingCount - remainingCount), (unsigned)startingCount);
+		ShowInfo2(msg.c_str(),
+			startingCount == remainingCount ? L"No hashes updated"
+			: remainingCount > 0 ? L"Some hashes updated"
+			: L"All hashes updated"
+		);
+
+		if (remainingCount < startingCount)
+			SetModified();
+	}
+}
+
 void ATUIDialogCompatDB::Load(const wchar_t *path) {
 	ATCompatEDB tempEDB;
 	ATLoadCompatEDB(path, tempEDB);
+	
+	// run over the tags on the loaded EDB, and override any known ones with our own display names
+	for(auto& tagEntry : tempEDB.mTagTable) {
+		ATCompatEDBTag& tag = tagEntry.second;
+		auto knownTag = ATCompatGetKnownTagByKey(tag.mKey.c_str());
+
+		if (knownTag)
+			tag.mDisplayName = ATUICompatGetKnownTagDisplayName(knownTag);
+	}
 
 	mPath = path;
 	mCompilePath.clear();
 	mbModified = false;
 	UpdateCaption();
 
-	mListBoxAlias.Clear();
-	mListBoxTag.Clear();
-	mListBoxTitle.Clear();
-
-	mpTitleForAliases = nullptr;
-	mDisplayedAliasIndices.clear();
-	mDisplayedTags.clear();
-	mDisplayedTitles.clear();
-
-	mEDB = std::move(tempEDB);
-
-	mDisplayedTitles.reserve(mEDB.mTitleTable.Size());
-	for(auto *title : mEDB.mTitleTable) {
-		mDisplayedTitles.push_back(title);
-	}
-
-	std::sort(mDisplayedTitles.begin(), mDisplayedTitles.end(),
-		[](const ATCompatEDBTitle *x, const ATCompatEDBTitle *y) {
-			return x->mName.comparei(y->mName) < 0;
-		}
-	);
-
-	mListBoxTitle.SetRedraw(false);
-	for(auto *title : mDisplayedTitles) {
-		mListBoxTitle.AddItem(title->mName.c_str());
-	}
-	mListBoxTitle.SetRedraw(true);
+	RefreshTitles(&tempEDB);
+	mbIsExternalDb = false;
+	mbNeedsCompile = false;
 }
 
 void ATUIDialogCompatDB::CompileTo(const wchar_t *path) {
@@ -913,6 +1261,7 @@ void ATUIDialogCompatDB::CompileTo(const wchar_t *path) {
 	f.close();
 
 	mCompilePath = path;
+	mbNeedsCompile = false;
 
 	ATCompatReloadExtDatabase();
 }
@@ -921,7 +1270,7 @@ bool ATUIDialogCompatDB::ConfirmDiscard() {
 	if (!mbModified)
 		return true;
 
-	return Confirm(L"Some changes have not been saved and will be discarded. Are you sure?");
+	return Confirm2("CompatDBNotSaved", L"Unsaved changes will be lost. Are you sure?", L"Changes not saved");
 }
 
 void ATUIDialogCompatDB::SetModified(bool modified) {
@@ -929,6 +1278,9 @@ void ATUIDialogCompatDB::SetModified(bool modified) {
 		return;
 
 	mbModified = modified;
+
+	if (modified)
+		mbNeedsCompile = true;
 
 	UpdateCaption();
 }
@@ -955,31 +1307,32 @@ void ATUIDialogCompatDB::UpdateCaption() {
 
 void ATUIShowDialogCompatDB(VDGUIHandle hParent) {
 	auto getAvailRules = [](vdvector<ATCompatEDBSourcedAliasRule>& availRules) {
+		VDStringW sourceName;
 		for(int i=0; i<15; ++i) {
 			const auto& diskIf = g_sim.GetDiskInterface(i);
-			const auto *pImage = diskIf.GetDiskImage();
+			auto *pImage = diskIf.GetDiskImage();
 
-			if (pImage && !pImage->IsDynamic()) {
-				uint64 checksum = pImage->GetImageChecksum();
+			if (pImage) {
+				sourceName.sprintf(L"D%u:", i + 1);
 
-				availRules.push_back(ATCompatEDBSourcedAliasRule { { kATCompatRuleType_DiskChecksum, checksum }, VDStringW().sprintf(L"D%u:", i + 1) });
+				ATCompatAddSourcedRulesForImage(availRules, pImage, sourceName.c_str());
 			}
 		}
 
 		for(int i=0; i<2; ++i) {
 			auto *cart = g_sim.GetCartridge(i);
 
-			if (cart) {
-				availRules.push_back(ATCompatEDBSourcedAliasRule { { kATCompatRuleType_CartChecksum, cart->GetChecksum() }, VDStringW(L"Cart") });
-			}
+			if (cart)
+				ATCompatAddSourcedRulesForImage(availRules, cart->GetImage(), L"Cart");
 		}
+
+		ATCompatAddSourcedRulesForImage(availRules, g_sim.GetCassette().GetImage(), L"Tape");
 
 		auto *pl = g_sim.GetProgramLoader();
 		if (pl) {
 			auto *image = pl->GetCurrentImage();
 
-			if (image)
-				availRules.push_back(ATCompatEDBSourcedAliasRule { { kATCompatRuleType_ExeChecksum, image->GetChecksum() }, VDStringW(L"Exe") });
+			ATCompatAddSourcedRulesForImage(availRules, pl->GetCurrentImage(), L"Exe");
 		}
 	};
 

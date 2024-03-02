@@ -33,7 +33,7 @@ void ATConsoleLogWriteTag(ATLogChannel *channel) {
 
 	if (flags & kATLogFlags_Timestamp) {
 		ATAnticEmulator& antic = g_sim.GetAntic();
-		g_ATDebuggerLogBuffer.append_sprintf("(%3d:%3d,%3d) ", antic.GetFrameCounter(), antic.GetBeamY(), antic.GetBeamX());
+		g_ATDebuggerLogBuffer.append_sprintf("(%3d:%3d,%3d) ", antic.GetRawFrameCounter(), antic.GetBeamY(), antic.GetBeamX());
 	}
 
 	if (flags & kATLogFlags_CassettePos) {

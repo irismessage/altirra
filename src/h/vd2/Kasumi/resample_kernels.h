@@ -36,7 +36,7 @@ public:
 	virtual void GenerateFilterBank(float *dst) const = 0;
 };
 
-class VDResamplerLinearFilter : public IVDResamplerFilter {
+class VDResamplerLinearFilter final : public IVDResamplerFilter {
 public:
 	VDResamplerLinearFilter(double twofc);
 
@@ -51,7 +51,21 @@ protected:
 	unsigned	mTaps;
 };
 
-class VDResamplerCubicFilter : public IVDResamplerFilter {
+class VDResamplerSharpLinearFilter final : public IVDResamplerFilter {
+public:
+	VDResamplerSharpLinearFilter(double factor);
+
+	int GetFilterWidth() const;
+
+	double EvaluateFilter(double offset) const;
+	void GenerateFilter(float *dst, double offset) const;
+	void GenerateFilterBank(float *dst) const;
+
+protected:
+	double mScale;
+};
+
+class VDResamplerCubicFilter final : public IVDResamplerFilter {
 public:
 	VDResamplerCubicFilter(double twofc, double A);
 
@@ -73,7 +87,7 @@ protected:
 	unsigned	mTaps;
 };
 
-class VDResamplerLanczos3Filter : public IVDResamplerFilter {
+class VDResamplerLanczos3Filter final : public IVDResamplerFilter {
 public:
 	VDResamplerLanczos3Filter(double twofc);
 

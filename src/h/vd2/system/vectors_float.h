@@ -37,6 +37,10 @@ inline bool operator==(const vdfloat2& a, const vdfloat2& b) {
 	return a.x == b.x && a.y == b.y;
 }
 
+inline bool operator!=(const vdfloat2& a, const vdfloat2& b) {
+	return a.x != b.x || a.y != b.y;
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 class vdfloat3 {

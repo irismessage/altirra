@@ -3,6 +3,7 @@
 #include <commctrl.h>
 #include <richedit.h>
 #include <shellapi.h>
+#include <uxtheme.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/strutil.h>
@@ -11,6 +12,8 @@
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/genericdialog.h>
 #include <at/atnativeui/progress.h>
+#include <at/atnativeui/theme.h>
+#include <at/atnativeui/theme_win32.h>
 #include <at/atnativeui/uiframe.h>
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -615,7 +618,7 @@ void VDDialogFrameW32::FailValidation(uint32 id) {
 	FailValidation(id, nullptr);
 }
 
-void VDDialogFrameW32::FailValidation(uint32 id, const wchar_t *msg) {
+void VDDialogFrameW32::FailValidation(uint32 id, const wchar_t *msg, const wchar_t *title) {
 	if (!mbValidationFailed) {
 		mbValidationFailed = true;
 		mFailedId = id;
@@ -624,6 +627,11 @@ void VDDialogFrameW32::FailValidation(uint32 id, const wchar_t *msg) {
 			mFailedMsg = msg;
 		else
 			mFailedMsg.clear();
+
+		if (title)
+			mFailedTitle = title;
+		else
+			mFailedTitle.clear();
 	}
 }
 
@@ -639,8 +647,16 @@ void VDDialogFrameW32::SignalFailedValidation(uint32 id) {
 	if (hwnd)
 		SetFocus(hwnd);
 
-	if (!mFailedMsg.empty())
-		ShowError(mFailedMsg.c_str(), L"Error");
+	if (!mFailedMsg.empty()) {
+		ATUIGenericDialogOptions opts;
+		opts.mhParent = hwnd ? (VDGUIHandle)hwnd : (VDGUIHandle)mhdlg;
+		opts.mpMessage = mFailedMsg.c_str();
+		opts.mpTitle = mFailedTitle.empty() ? nullptr : mFailedTitle.c_str();
+		opts.mIconType = kATUIGenericIconType_Error;
+		opts.mResultMask = kATUIGenericResultMask_OK;
+
+		ATUIShowGenericDialogAutoCenter(opts);
+	}
 }
 
 void VDDialogFrameW32::SetPeriodicTimer(uint32 id, uint32 msperiod) {
@@ -648,10 +664,14 @@ void VDDialogFrameW32::SetPeriodicTimer(uint32 id, uint32 msperiod) {
 }
 
 void VDDialogFrameW32::ShowInfo(VDGUIHandle hParent, const wchar_t *message, const wchar_t *caption) {
-	if (!caption)
-		caption = spDefaultCaption;
+	ATUIGenericDialogOptions opts;
+	opts.mhParent = hParent;
+	opts.mpMessage = message;
+	opts.mpCaption = caption ? caption : spDefaultCaption;
+	opts.mIconType = kATUIGenericIconType_Info;
+	opts.mResultMask = kATUIGenericResultMask_OK;
 
-	::MessageBoxW((HWND)hParent, message, caption, MB_OK | MB_ICONINFORMATION);
+	ATUIShowGenericDialog(opts);
 }
 
 void VDDialogFrameW32::ShowInfo(const wchar_t *message, const wchar_t *caption) {
@@ -687,7 +707,9 @@ void VDDialogFrameW32::ShowError(const wchar_t *message, const wchar_t *caption)
 }
 
 void VDDialogFrameW32::ShowError(const MyError& e) {
-	ShowError(VDTextAToW(e.c_str()).c_str());
+	// don't show user abort errors
+	if (!e.empty())
+		ShowError(VDTextAToW(e.c_str()).c_str());
 }
 
 void VDDialogFrameW32::ShowError2(const wchar_t *message, const wchar_t *title) {
@@ -699,6 +721,12 @@ void VDDialogFrameW32::ShowError2(const wchar_t *message, const wchar_t *title) 
 	opts.mResultMask = kATUIGenericResultMask_OK;
 
 	ATUIShowGenericDialogAutoCenter(opts);
+}
+
+void VDDialogFrameW32::ShowError2(const MyError& e, const wchar_t *title) {
+	// don't show user abort errors
+	if (!e.empty())
+		ShowError2(VDTextAToW(e.c_str()).c_str(), title);
 }
 
 bool VDDialogFrameW32::Confirm(const wchar_t *message, const wchar_t *caption) {
@@ -925,6 +953,8 @@ void VDDialogFrameW32::OnPreLoaded() {
 	mResizer.SetRefUnits(mDialogUnits.mWidth4, mDialogUnits.mHeight8);
 
 	// Instantiate controls
+	const bool darkMode = ATUIIsDarkThemeActive();
+
 	const char *src = mpTemplateControls;
 	uint32 defId = 0;
 
@@ -937,6 +967,7 @@ void VDDialogFrameW32::OnPreLoaded() {
 
 		// read window class
 		const WCHAR *className = nullptr;
+		bool disableTheming = false;
 
 		if (VDReadUnalignedU16(src) == UINT16_C(0xFFFF)) {
 			src += 2;
@@ -950,6 +981,13 @@ void VDDialogFrameW32::OnPreLoaded() {
 			}
 
 			className = kBuiltinClasses[token - 0x80];
+
+			// disable theming for checkboxes if dark mode is enabled, as we need it for
+			// the button to actually pay attention to color change requests
+			if (darkMode && token == 0x80) {
+				if ((hdr.style & (BS_CHECKBOX | BS_RADIOBUTTON)) || (hdr.style & BS_AUTORADIOBUTTON) == BS_AUTORADIOBUTTON)
+					disableTheming = true;
+			}
 		} else {
 			className = (const WCHAR *)src;
 
@@ -1007,6 +1045,9 @@ void VDDialogFrameW32::OnPreLoaded() {
 
 		if (hdr.helpID)
 			SetWindowContextHelpId(hwnd, hdr.helpID);
+
+		if (disableTheming)
+			SetWindowTheme(hwnd, L"", L"");
 
 		// check if this is a default button
 		if (SendMessageW(hwnd, WM_GETDLGCODE, 0, 0) & DLGC_DEFPUSHBUTTON)
@@ -1206,6 +1247,12 @@ bool VDDialogFrameW32::ShouldSetDialogIcon() const {
 }
 
 sint32 VDDialogFrameW32::GetBackgroundColor() const {
+	if (ATUIIsDarkThemeActive()) {
+		const auto& tc = ATUIGetThemeColors();
+
+		return (sint32)tc.mStaticBg;
+	}
+
 	return -1;
 }
 
@@ -1544,8 +1591,13 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 						return TRUE;
 					}
 				} else {
-					if (OnCommand(id, HIWORD(wParam)))
+					try {
+						if (OnCommand(id, HIWORD(wParam)))
+							return TRUE;
+					} catch(const MyError& e) {
+						ShowError(e);
 						return TRUE;
+					}
 				}
 			}
 
@@ -1719,8 +1771,41 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			return TRUE;
 
 		case ATWM_PRETRANSLATE:
-			if (mAccel && TranslateAccelerator(mhdlg, mAccel, (MSG *)lParam))
+			if (mAccel && TranslateAccelerator(mhdlg, mAccel, (MSG *)lParam)) {
+				SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, TRUE);
 				return TRUE;
+			}
+			break;
+
+		case WM_CTLCOLORSTATIC:
+		case WM_CTLCOLORBTN:
+			if (ATUIIsDarkThemeActive()) {
+				const auto& tcw32 = ATUIGetThemeColorsW32();
+				HDC hdc = (HDC)wParam;
+
+				if (!IsWindowEnabled((HWND)lParam)) {
+					SetTextColor(hdc, tcw32.mDisabledFgCRef);
+				} else {
+					SetTextColor(hdc, tcw32.mStaticFgCRef);
+				}
+
+				SetBkColor(hdc, tcw32.mStaticBgCRef);
+
+				return (INT_PTR)tcw32.mStaticBgBrush;
+			}
+			break;
+
+		case WM_CTLCOLOREDIT:
+		case WM_CTLCOLORLISTBOX:
+			if (ATUIIsDarkThemeActive()) {
+				const auto& tcw32 = ATUIGetThemeColorsW32();
+				HDC hdc = (HDC)wParam;
+
+				SetTextColor(hdc, tcw32.mContentFgCRef);
+				SetBkColor(hdc, tcw32.mContentBgCRef);
+
+				return (INT_PTR)tcw32.mContentBgBrush;
+			}
 			break;
 	}
 
@@ -1967,7 +2052,7 @@ void VDDialogResizerW32::Erase(const VDZHDC *phdc, sint32 backgroundColorOverrid
 				SetDCBrushColor(hdc, VDSwizzleU32(backgroundColorOverride) >> 8);
 				FillRect(hdc, &rClient, (HBRUSH)GetStockObject(DC_BRUSH));
 			} else {
-				FillRect(hdc, &rClient, (HBRUSH)(COLOR_3DFACE + 1));
+				FillRect(hdc, &rClient, ATUIGetThemeColorsW32().mStaticBgBrush);
 			}
 		}
 

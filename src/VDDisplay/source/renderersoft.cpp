@@ -517,7 +517,11 @@ bool VDDisplayRendererSoft::Begin(const VDPixmap& primary) {
 
 const VDDisplayRendererCaps& VDDisplayRendererSoft::GetCaps() {
 	static const VDDisplayRendererCaps kCaps = {
-		false
+		false,		// alpha blending
+		true,		// color blt
+		false,		// color blt 2
+		false,		// polylineF
+		false,		// polylineF AA
 	};
 
 	return kCaps;

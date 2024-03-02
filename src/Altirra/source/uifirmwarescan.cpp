@@ -77,7 +77,7 @@ void ATUIScanForFirmware(VDGUIHandle hParent, ATFirmwareManager& fwmgr) {
 			f.read(buf.data(), (long)buf.size());
 
 			ATSpecificFirmwareType specificType;
-			if (ATFirmwareAutodetect(buf.data(), (uint32)buf.size(), info, specificType)) {
+			if (ATFirmwareAutodetect(buf.data(), (uint32)buf.size(), info, specificType) == ATFirmwareDetection::SpecificImage) {
 				ATFirmwareInfo& info2 = detectedFirmwares.push_back();
 
 				vdmove(info2, info);

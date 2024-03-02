@@ -40,6 +40,7 @@ using namespace nsVDWinFormats;
 
 ATDebuggerLogChannel g_ATLCCas(true, false, "CAS", "Cassette I/O");
 ATDebuggerLogChannel g_ATLCCasData(false, true, "CASDATA", "Cassette data");
+ATDebuggerLogChannel g_ATLCCasData2(false, true, "CASDATA2", "Cassette data (extra verbose)");
 ATDebuggerLogChannel g_ATLCCasDirectData(false, true, "CASDRDATA", "Cassette direct data");
 ATDebuggerLogChannel g_ATLCCasDecoder(false, true, "CASDEC", "Cassette data decoder");
 
@@ -95,6 +96,131 @@ namespace {
 	const uint32 kRecordMaxDelayForBlank = 140000;
 }
 
+///////////////////////////////////////////////////////////////////////////
+
+void ATCassetteEmulator::SlidingWindowCursor::Update(IATCassetteImage& image, uint32 pos) {
+	// Approximate limit to prevent forward searches from being too expensive within a single
+	// tick, i.e. suddenly scan 40 seconds of FSK-encoded tape. This doesn't need to be precise.
+	static constexpr uint32 kSearchLimit = 10000;
+
+	const auto getExtBitSum = [](IATCassetteImage& image, uint32 pos, uint32 offset, uint32 window, bool bypassFSK) -> uint32 {
+		uint32 preroll = 0;
+
+		if (pos < offset) {
+			preroll = offset - pos;
+			pos = offset;
+		}
+
+		return preroll + image.GetBitSum(pos - offset, window - preroll, bypassFSK);
+	};
+
+	bool inited = !mNextTransition;
+
+	while (pos >= mNextTransition) {
+		// check if we need to initialize state after a seek
+		if (!mNextTransition) {
+			const uint32 headOffset = mWindow - mOffset;
+
+			// initialize head cursor
+			mHeadCursor.mCurrentValue = image.GetBit(pos + headOffset, mbFSKBypass);
+
+			const auto nextHead = image.FindNextBit(pos + headOffset + 1, pos + kSearchLimit, !mHeadCursor.mCurrentValue, mbFSKBypass);
+			VDASSERT(nextHead.mPos >= headOffset);
+			mHeadCursor.mNextTransition = nextHead.mPos - headOffset;
+			mHeadCursor.mNextValue = nextHead.mBit;
+
+			// initialize tail cursor -- this may be before the start, in which case we must assume it is mark tone
+			mTailCursor.mCurrentValue = pos < mOffset || image.GetBit(pos - mOffset, mbFSKBypass);
+
+			const auto nextTail = image.FindNextBit(std::max(pos, mOffset) - mOffset, pos + kSearchLimit, !mTailCursor.mCurrentValue, mbFSKBypass);
+			mTailCursor.mNextTransition = nextTail.mPos + mOffset;
+			mTailCursor.mNextValue = nextTail.mBit;
+
+			// initialize decoding state -- just use a simple threshold to start
+			mNextCount = getExtBitSum(image, pos, mOffset, mWindow, mbFSKBypass);
+			mCurrentValue = mNextCount >= (mWindow >> 1);
+			mNextTransition = pos;
+
+			VDASSERT(mHeadCursor.mNextTransition >= pos);
+			VDASSERT(mTailCursor.mNextTransition >= pos);
+		}
+
+		// assert that sum is still correct
+		[[maybe_unused]] uint32 chk;
+		VDASSERT(((chk = getExtBitSum(image, mNextTransition, mOffset, mWindow, mbFSKBypass)), mNextCount == chk));
+
+		// flip decoded bit state if we crossed one of the thresholds
+		if (mNextCount < mThresholdLo)
+			mCurrentValue = false;
+		else if (mNextCount > mThresholdHi)
+			mCurrentValue = true;
+
+		// update next cursor if it has hit a transition
+		if (mNextTransition == mHeadCursor.mNextTransition) {
+			mHeadCursor.mCurrentValue = mHeadCursor.mNextValue;
+			VDASSERT(image.GetBit(mNextTransition + mWindow - mOffset, mbFSKBypass) == mHeadCursor.mCurrentValue);
+
+			const auto nextHead = image.FindNextBit(mNextTransition + mWindow - mOffset + 1, mNextTransition + kSearchLimit, !mHeadCursor.mCurrentValue, mbFSKBypass);
+			VDASSERT(nextHead.mPos >= mWindow - mOffset);
+			mHeadCursor.mNextTransition = nextHead.mPos - mWindow + mOffset;
+			mHeadCursor.mNextValue = nextHead.mBit;
+
+			VDASSERT(image.GetBit(nextHead.mPos, mbFSKBypass) == mHeadCursor.mNextValue);
+		} else {
+			VDASSERT(mNextTransition < mHeadCursor.mNextTransition);
+		}
+
+		// update tail cursor if it has hit a transition
+		if (mNextTransition == mTailCursor.mNextTransition) {
+			mTailCursor.mCurrentValue = mTailCursor.mNextValue;
+			VDASSERT(image.GetBit(mNextTransition - mOffset, mbFSKBypass) == mTailCursor.mCurrentValue);
+
+			const auto nextTail = image.FindNextBit(mNextTransition - mOffset + 1, mNextTransition + kSearchLimit, !mTailCursor.mCurrentValue, mbFSKBypass);
+			mTailCursor.mNextTransition = nextTail.mPos + mOffset;
+
+			// clamp to avoid rolling around if we got +inf
+			if (mTailCursor.mNextTransition < nextTail.mPos)
+				mTailCursor.mNextTransition = ~UINT32_C(0);
+
+			mTailCursor.mNextValue = nextTail.mBit;
+
+			VDASSERT(image.GetBit(nextTail.mPos, mbFSKBypass) == mTailCursor.mNextValue);
+		} else {
+			VDASSERT(mNextTransition < mTailCursor.mNextTransition);
+		}
+
+		// compute current slope and how far we can project until either the head or tail changes polarity
+		const sint32 slope = (mHeadCursor.mCurrentValue ? 1 : 0) - (mTailCursor.mCurrentValue ? 1 : 0);
+		uint32 dist = std::min(mHeadCursor.mNextTransition, mTailCursor.mNextTransition) - mNextTransition;
+
+		// check if the current projection would cross a threshold and truncate it
+		// if so
+		if (mCurrentValue) {
+			if (slope < 0 && mNextCount >= mThresholdLo)
+				dist = std::min(dist, mNextCount - mThresholdLo + 1);
+		} else {
+			if (slope > 0 && mNextCount <= mThresholdHi)
+				dist = std::min(dist, mThresholdHi - mNextCount + 1);
+		}
+
+		// project forward to next transition point
+		VDASSERT(dist <= ~mNextTransition);
+		mNextTransition += dist;
+
+		mNextCount += (uint32)slope * dist;
+		VDASSERT(mNextCount <= mWindow);
+
+		// assert that sum is correct after transition
+		[[maybe_unused]] uint32 chk2;
+		VDASSERT(((chk2 = getExtBitSum(image, mNextTransition, mOffset, mWindow, mbFSKBypass)) == mNextCount));
+	}
+
+	[[maybe_unused]] uint32 chk3;
+	VDASSERT(((chk3 = getExtBitSum(image, pos, mOffset, mWindow, mbFSKBypass)), (mCurrentValue ? chk3 >= mThresholdLo : chk3 <= mThresholdHi)));
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 ATCassetteEmulator::ATCassetteEmulator() {
 	mDirectSenseMode = ATCassetteDirectSenseMode::Normal;
 }
@@ -128,6 +254,10 @@ void ATCassetteEmulator::Init(ATPokeyEmulator *pokey, ATScheduler *sched, ATSche
 
 	mixer->AddSyncAudioSource(this);
 
+	mbFSKDecoderEnabled = true;
+	mBitCursor.mbFSKBypass = false;
+
+	ResetCursors();
 	RewindToStart();
 	ColdReset();
 }
@@ -169,6 +299,8 @@ void ATCassetteEmulator::Shutdown() {
 		mpImage->Release();
 		mpImage = NULL;
 	}
+
+	vdsaferelease <<= mpTraceChannelFSK, mpTraceChannelTurbo;
 }
 
 void ATCassetteEmulator::ColdReset() {
@@ -213,8 +345,11 @@ void ATCassetteEmulator::Load(const wchar_t *fn) {
 
 	UnloadInternal();
 
+	ATCassetteLoadContext ctx;
+	ctx.mbUseTurboPrefilter = mbTurboPrefilterEnabled;
+
 	vdrefptr<IATCassetteImage> image;
-	ATLoadCassetteImage(view->GetStream(), nullptr, ~image);
+	ATLoadCassetteImage(view->GetStream(), nullptr, ctx, ~image);
 
 	Load(image, fn, true);
 }
@@ -272,6 +407,7 @@ void ATCassetteEmulator::UnloadInternal() {
 	UpdateMotorState();
 
 	mNeedBasic.reset();
+	ResetCursors();
 }
 
 void ATCassetteEmulator::SetImagePersistent(const wchar_t *fn) {
@@ -283,10 +419,6 @@ void ATCassetteEmulator::SetImagePersistent(const wchar_t *fn) {
 
 void ATCassetteEmulator::SetImageClean() {
 	mbImageDirty = false;
-}
-
-void ATCassetteEmulator::SetLogDataEnable(bool enable) {
-	mbLogData = enable;
 }
 
 void ATCassetteEmulator::SetLoadDataAsAudioEnable(bool enable) {
@@ -326,7 +458,8 @@ void ATCassetteEmulator::SetTurboMode(ATCassetteTurboMode mode) {
 	}
 
 	mbFSKControlEnabled = mTurboMode == kATCassetteTurboMode_CommandControl;
-	mbFSKDecoderEnabled = (!mbFSKControlEnabled || mbFSKDecoderRequested) && mTurboMode != kATCassetteTurboMode_Always;
+
+	UpdateFSKDecoderEnabled();
 
 	if (mTurboMode != kATCassetteTurboMode_ProceedSense) {
 		if (mbTurboProceedAsserted) {
@@ -391,8 +524,8 @@ void ATCassetteEmulator::SetTraceContext(ATTraceContext *context) {
 				mpTraceChannelTurbo->TruncateLastEvent(t);
 		}
 
-		mpTraceChannelFSK = nullptr;
-		mpTraceChannelTurbo = nullptr;
+
+		vdsaferelease <<= mpTraceChannelFSK, mpTraceChannelTurbo;
 	}
 }
 
@@ -512,6 +645,8 @@ void ATCassetteEmulator::SeekToBitPos(uint32 bitPos) {
 	SeekAudio(newAudioPos);
 	UpdateMotorState();
 
+	ResetCursors();
+
 	if (mbRecordEnable && mpImage)
 		mpImage->SetWriteCursor(mPosition);
 
@@ -552,13 +687,17 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr0, uint16 len, ATCPUEmulatorMem
 
 	uint32 maxPos = std::min<uint32>(mPosition + (uint32)(kATCassetteDataSampleRate * 60), mLength);
 	uint16 bufadr = bufadr0;
+
 	while(offset <= len) {
 		if (mPosition >= maxPos) {
-			g_ATLCCas("Timeout receiving block after receiving %u/%u bytes (pos = %.3fs)\n", offset, len, (float)mPosition / (float)kATCassetteDataSampleRate);
+			g_ATLCCas("Timeout receiving block while waiting for sync mark (pos = %.3fs)\n", (float)mPosition / (float)kATCassetteDataSampleRate);
+			PositionChanged.NotifyDeferred();
+			ResyncAudio();
 			return 0x8A;	// timeout
 		}
 
-		BitResult r = ProcessBit();
+		UpdateDirectSense(0);
+		++mPosition;
 
 		if (syncGapTimeLeft > 0) {
 			if (!mbDataLineState)
@@ -569,62 +708,71 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr0, uint16 len, ATCPUEmulatorMem
 			continue;
 		}
 
-		if (syncBitsLeft > 0) {
-			bool expected = (syncBitsLeft & 1) != 0;
+		bool expected = (syncBitsLeft & 1) != 0;
 
-			if (expected != mbDataLineState) {
-				if (--syncMarkTimeout <= 0) {
-					syncMarkTimeout = kMaxDataBitsPerSyncBit;
-
-					if (syncBitsLeft < 15) {
-						//VDDEBUG("CAS: Sync timeout; restarting.\n");
-						syncGapTimeLeft = kSyncGapTimeout;
-					}
-
-					syncBitsLeft = 20;
-				}
-			} else {
-				if (syncBitsLeft == 20) {
-					syncStart = mPosition;
-				}
-
-				--syncBitsLeft;
+		if (expected != mbDataLineState) {
+			if (--syncMarkTimeout <= 0) {
 				syncMarkTimeout = kMaxDataBitsPerSyncBit;
 
-				if (syncBitsLeft == 0) {
-					uint32 bitDelta = mPosition - syncStart;
-
-					// compute baud rate divisor
-					//
-					// bitDelta / 19 = ticks_per_bit
-					// divisor = cycles_per_bit = 440 * ticks_per_bit
-					//
-					// baud = bits_per_second = cycles_per_second / cycles_per_bit
-					//		= 7159090 / 4 / (440 * ticks_per_bit)
-					//		= 7159090 / (1760 * ticks_per_bit)
-					//
-					// Note that we have to halve the divisor since you're supposed to set the
-					// timer such that the frequency is the intended baud rate, so that it
-					// rolls over TWICE for each bit.
-
-					PokeyChangeSerialRate(VDRoundToInt32(kATCassetteCyclesPerDataSample / 19.0f * 0.5f * (float)bitDelta));
-
-					mSIOPhase = 0;
-					idealBaudRate = kATCassetteDataSampleRate * 19.0f / (float)bitDelta;
-					//VDDEBUG("CAS: Sync mark found. Computed baud rate = %.2f baud\n", idealBaudRate);
-
-					mpMem->WriteByte(bufadr++, 0x55);
-					mpMem->WriteByte(bufadr++, 0x55);
-					sum = 0x55*2;
-					offset = 2;
-					framingErrors = 0;
-					firstFramingError = 0;
-					lastReceivedByte = 0x55;
+				if (syncBitsLeft < 15) {
+					//VDDEBUG("CAS: Sync timeout; restarting.\n");
+					syncGapTimeLeft = kSyncGapTimeout;
 				}
+
+				syncBitsLeft = 20;
+			}
+		} else {
+			if (syncBitsLeft == 20) {
+				syncStart = mPosition;
 			}
 
-			continue;
+			--syncBitsLeft;
+			syncMarkTimeout = kMaxDataBitsPerSyncBit;
+
+			if (syncBitsLeft == 0)
+				break;
 		}
+	}
+
+	// compute baud rate divisor
+	//
+	// bitDelta / 19 = ticks_per_bit
+	// divisor = cycles_per_bit = 440 * ticks_per_bit
+	//
+	// baud = bits_per_second = cycles_per_second / cycles_per_bit
+	//		= 7159090 / 4 / (440 * ticks_per_bit)
+	//		= 7159090 / (1760 * ticks_per_bit)
+	//
+	// Note that we have to halve the divisor since you're supposed to set the
+	// timer such that the frequency is the intended baud rate, so that it
+	// rolls over TWICE for each bit.
+
+	uint32 bitDelta = mPosition - syncStart;
+	PokeyChangeSerialRate(VDRoundToInt32(kATCassetteCyclesPerDataSample / 19.0f * 0.5f * (float)bitDelta));
+
+	mSIOPhase = 0;
+	mbOutputBit = true;
+	idealBaudRate = kATCassetteDataSampleRate * 19.0f / (float)bitDelta;
+	//VDDEBUG("CAS: Sync mark found. Computed baud rate = %.2f baud\n", idealBaudRate);
+
+	mpMem->WriteByte(bufadr++, 0x55);
+	mpMem->WriteByte(bufadr++, 0x55);
+	sum = 0x55*2;
+	offset = 2;
+	framingErrors = 0;
+	firstFramingError = 0;
+	lastReceivedByte = 0x55;
+
+	while(offset <= len) {
+		if (mPosition >= maxPos) {
+			g_ATLCCas("Timeout receiving block after receiving %u/%u bytes (pos = %.3fs)\n", offset, len, (float)mPosition / (float)kATCassetteDataSampleRate);
+			PositionChanged.NotifyDeferred();
+			UpdateDirectSense(-1);
+			ResyncAudio();
+			return 0x8A;	// timeout
+		}
+
+		BitResult r = ProcessBit();
 
 		if (r == kBR_NoOutput)
 			continue;
@@ -640,10 +788,8 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr0, uint16 len, ATCPUEmulatorMem
 		lastReceivedByte = mDataByte;
 
 		if (offset < len) {
-			g_ATLCCasData("CASDATA: Receiving byte: %02x (accelerated) (pos=%.3fs)\n", mDataByte, (float)mPosition / (float)kATCassetteDataSampleRate);
-
-			if (mbLogData)
-				g_ATLCCas("Reading block[%02x] = %02x (pos = %.3fs)\n", offset, mDataByte, (float)mPosition / (float)kATCassetteDataSampleRate);
+			if (g_ATLCCasData.IsEnabled())
+				g_ATLCCasData("Receiving byte[%3d]: %02X (accelerated) (pos=%.3fs)\n", offset - 2, mDataByte, (float)mPosition / (float)kATCassetteDataSampleRate);
 
 			mpMem->WriteByte(bufadr++, mDataByte);
 			sum += mDataByte;
@@ -673,12 +819,15 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr0, uint16 len, ATCPUEmulatorMem
 		}
 	}
 
+	ResetCursors();
+	UpdateDirectSense(-1);
+
 	// set SERIN to the last received byte (needed by Misja + Fred)
 	if (lastReceivedByte >= 0)
 		mpPokey->SetSERIN((uint8)lastReceivedByte);
 
 	// resync audio position
-	SeekAudio(VDRoundToInt((double)mPosition * (double)kATCassetteAudioSamplesPerDataSample));
+	ResyncAudio();
 
 	g_ATLCCas("Completed read with status %02x to buffer $%04X; control=%02X, position=%.2fs (cycle %u), baud=%.2fs, checksum=%02X\n", status, bufadr0, mpMem->ReadByte(bufadr - len + 2), mPosition / kATCassetteDataSampleRate, mPosition, idealBaudRate, actualChecksum);
 
@@ -755,14 +904,16 @@ std::optional<bool> ATCassetteEmulator::AutodetectBasicNeeded() {
 	uint32 pos = (uint32)VDRoundToInt32(kATCassetteDataSampleRate * 2);
 
 	// do a quick scan for the first start bit, and back off by a bit at 600 baud
-	const uint32 kTapeTicks600 = kATCassetteDataSampleRate / 600;
-	pos = std::max<uint32>(mpImage->GetNearestLowBitPos(pos), kTapeTicks600) - kTapeTicks600;
+	constexpr uint32 kTapeTicks600 = (kATCassetteDataSampleRate + 300) / 600;
+	constexpr uint32 kLeaderTimeout = kATCassetteDataSampleRate * 30;
+	pos = std::max<uint32>(mpImage->FindNextBit(pos, kLeaderTimeout, false, false).mPos, kTapeTicks600) - kTapeTicks600;
 
 	// scan forward with decoding at 600 baud and see if we can pull out 7 bytes within
 	// about 150 bit periods (70 nominal required)
-	const uint32 kThresholdZero = kTapeTicks600 / 3;
+	constexpr uint32 kReadTimeout = kTapeTicks600 * 150;
+	constexpr uint32 kThresholdZero = kTapeTicks600 / 3;
 	bool currentBit = true;
-	uint32 posLimit = pos + kTapeTicks600 * 150;
+	uint32 posLimit = std::min<uint32>(pos, ~kReadTimeout) + kReadTimeout;
 	uint32 state = 0;
 	uint8 shiftRegister = 0;
 	bool framingError = false;
@@ -805,10 +956,6 @@ std::optional<bool> ATCassetteEmulator::AutodetectBasicNeeded() {
 					if (bufIdx >= vdcountof(buf))
 						pos = posLimit - 1;
 				}
-				++state;
-				break;
-
-			case kTapeTicks600 * 10:
 				state = 0;
 				break;
 
@@ -851,6 +998,7 @@ void ATCassetteEmulator::OnScheduledEvent(uint32 id) {
 	if (id == kATCassetteEventId_ProcessBit) {
 		mpPlayEvent = nullptr;
 
+		UpdateDirectSense(0);
 		const auto result = ProcessBit();
 		
 		if (mPosition < mLength) {
@@ -875,7 +1023,10 @@ void ATCassetteEmulator::OnScheduledEvent(uint32 id) {
 		if (result == kBR_ByteReceived) {
 			mpPokey->ReceiveSIOByte(mDataByte, 0, false, false, false, false);
 
-			g_ATLCCasData("Receiving byte: %02x (pos=%.3fs)\n", mDataByte, (float)mPosition / (float)kATCassetteDataSampleRate);
+			if (g_ATLCCasData.IsEnabled()) {
+				g_ATLCCasData("Receiving byte[%3d]: %02X (pos=%.3fs)\n", mLogIndex, mDataByte, (float)mPosition / (float)kATCassetteDataSampleRate);
+				mLogIndex = (mLogIndex + 1) % 1000;
+			}
 		}
 
 	} else if (id == kATCassetteEventId_Record) {
@@ -888,27 +1039,41 @@ void ATCassetteEmulator::OnScheduledEvent(uint32 id) {
 }
 
 void ATCassetteEmulator::PokeyChangeSerialRate(uint32 divisor) {
-	mAveragingPeriod = (divisor + (kATCassetteCyclesPerDataSample >> 1)) / kATCassetteCyclesPerDataSample;
-	if (mAveragingPeriod < 1)
-		mAveragingPeriod = 1;
+	uint32 averagingPeriod = (divisor + (kATCassetteCyclesPerDataSample >> 1)) / kATCassetteCyclesPerDataSample;
+	if (averagingPeriod < 1)
+		averagingPeriod = 1;
 
-	mThresholdZeroBit = VDFloorToInt(mAveragingPeriod * 0.45f);
-	if (mThresholdZeroBit < 1)
-		mThresholdZeroBit = 1;
+	if (mAveragingPeriod != averagingPeriod) {
+		mAveragingPeriod = averagingPeriod;
 
-	mThresholdOneBit = mAveragingPeriod - mThresholdZeroBit;
+		ResetCursors();
+
+		mThresholdZeroBit = VDFloorToInt(mAveragingPeriod * 0.45f);
+		if (mThresholdZeroBit < 1)
+			mThresholdZeroBit = 1;
+
+		mThresholdOneBit = mAveragingPeriod - mThresholdZeroBit;
+
+		mBitCursor.mWindow = averagingPeriod;
+		mBitCursor.mOffset = averagingPeriod >> 1;
+		mBitCursor.mThresholdLo = mThresholdZeroBit;
+		mBitCursor.mThresholdHi = mThresholdOneBit;
+	}
 
 	if (mDataBitHalfPeriod != divisor) {
 		mDataBitHalfPeriod = divisor;
 
 		if (mbMotorEnable) {
-			g_ATLCCasData("[%.1f] Setting divisor to %d / %.2f baud (avper = %d, thresholds = %d,%d)\n"
-				, (float)mPosition / 6.77944f
-				, divisor
-				, 1789772.5f / 2.0f / (float)divisor
-				, mAveragingPeriod
-				, mThresholdZeroBit
-				, mThresholdOneBit);
+			if (g_ATLCCasData.IsEnabled())
+				g_ATLCCasData("[%.1f] Setting divisor to %d / %.2f baud (avper = %d, thresholds = %d,%d)\n"
+					, (float)mPosition / 6.77944f
+					, divisor
+					, 1789772.5f / 2.0f / (float)divisor
+					, mAveragingPeriod
+					, mThresholdZeroBit
+					, mThresholdOneBit);
+
+			mLogIndex = 0;
 		}
 	}
 }
@@ -974,6 +1139,8 @@ void ATCassetteEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 	uint32 t2 = t + n * kATCyclesPerSyncSample;
 	AudioEvents::const_iterator it(mAudioEvents.begin()), itEnd(mAudioEvents.end());
 
+	const float sampleScale = mixInfo.mpMixLevels[kATAudioMix_Cassette];
+
 	for(; it != itEnd; ++it) {
 		const AudioEvent& ev = *it;
 
@@ -1019,7 +1186,7 @@ void ATCassetteEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 
 		// render samples
 		if (haveAudio)
-			mpImage->AccumulateAudio(dst, pos, posfrac, toRender);
+			mpImage->AccumulateAudio(dst, pos, posfrac, toRender, sampleScale);
 
 		n -= toRender;
 		t += kATCyclesPerSyncSample * toRender;
@@ -1036,7 +1203,7 @@ void ATCassetteEmulator::OnCommandStateChanged(bool asserted) {
 	mbFSKDecoderRequested = !asserted;
 
 	if (mbFSKControlEnabled) {
-		mbFSKDecoderEnabled = !asserted;
+		UpdateFSKDecoderEnabled();
 		UpdateInvertData();
 	}
 }
@@ -1123,15 +1290,65 @@ void ATCassetteEmulator::UpdateInvertData() {
 	mbInvertData = !mbFSKDecoderEnabled && mbInvertTurboData;
 }
 
-ATCassetteEmulator::BitResult ATCassetteEmulator::ProcessBit() {
+void ATCassetteEmulator::UpdateFSKDecoderEnabled() {
+	bool fskDecoderEnabled = (!mbFSKControlEnabled || mbFSKDecoderRequested) && mTurboMode != kATCassetteTurboMode_Always;
+
+	if (mbFSKDecoderEnabled != fskDecoderEnabled) {
+		mbFSKDecoderEnabled = fskDecoderEnabled;
+
+		mBitCursor.mbFSKBypass = !fskDecoderEnabled;
+		ResetCursors();
+	}
+}
+
+void ATCassetteEmulator::ResetCursors() {
+	mDirectCursor.mWindow = mDirectSenseWindow;
+	mDirectCursor.mOffset = mDirectSenseWindow/2;
+	mDirectCursor.mThresholdLo = mDirectSenseThreshold;
+	mDirectCursor.mThresholdHi = mDirectSenseWindow - mDirectSenseThreshold;
+	mDirectCursor.mbFSKBypass = false;
+
+	mDirectCursor.Reset();
+	mBitCursor.Reset();
+	mTurboCursor.Reset();
+}
+
+void ATCassetteEmulator::UpdateDirectSense(sint32 posOffset) {
+	const uint32 pos = mPosition + (uint32)posOffset;
+
 	// The sync mark has to be read before the baud rate is set, so we force the averaging
 	// period to ~2000 baud.
-	const bool newDataLineState = !mpImage || (mbFSKDecoderEnabled ? mpImage->GetBit(mPosition, mDirectSenseWindow, mDirectSenseThreshold, mbDataLineState, false) : mpImage->GetTurboBit(mPosition)) != mbInvertData;
+	bool newDataLineState = true;
+	bool turboState = true;
+	
+	if (mpImage) {
+		if (mbFSKDecoderEnabled) {
+			mDirectCursor.Update(*mpImage, pos);
+
+			newDataLineState = mDirectCursor.mCurrentValue;
+		} else {
+			if (pos >= mTurboCursor.mNextTransition) {
+				if (!mTurboCursor.mNextTransition)
+					mTurboCursor.mNextValue = mpImage->GetBit(pos, true);
+
+				mTurboCursor.mCurrentValue = mTurboCursor.mNextValue;
+
+				const auto nextTransition = mpImage->FindNextBit(pos + 1, pos + 10000, !mTurboCursor.mCurrentValue, true);
+				mTurboCursor.mNextTransition = nextTransition.mPos;
+				mTurboCursor.mNextValue = nextTransition.mBit;
+			}
+
+			newDataLineState = mTurboCursor.mCurrentValue;
+			turboState = newDataLineState != mbInvertTurboData;
+		}
+	}
 
 	if (mbDataLineState != newDataLineState) {
 		mbDataLineState = newDataLineState;
 
-		g_ATLCCasDirectData("[%.1f] Direct data line is now %d\n", (float)mPosition * kATCassetteMSPerDataSample, mbDataLineState);
+		if (g_ATLCCasDirectData.IsEnabled())
+			g_ATLCCasDirectData("[%.1f] Direct data line is now %d\n", (float)mPosition * kATCassetteMSPerDataSample, mbDataLineState);
+
 		mpPokey->SetDataLine(mbDataLineState);
 	}
 
@@ -1139,7 +1356,7 @@ ATCassetteEmulator::BitResult ATCassetteEmulator::ProcessBit() {
 		switch(mTurboMode) {
 			case kATCassetteTurboMode_ProceedSense:
 				{
-					const bool assertProceed = mpImage->GetTurboBit(mPosition) != mbInvertTurboData;
+					const bool assertProceed = turboState;
 
 					if (mbTurboProceedAsserted != assertProceed) {
 						mbTurboProceedAsserted = assertProceed;
@@ -1151,7 +1368,7 @@ ATCassetteEmulator::BitResult ATCassetteEmulator::ProcessBit() {
 
 			case kATCassetteTurboMode_InterruptSense:
 				{
-					const bool assertInterrupt = mpImage->GetTurboBit(mPosition) != mbInvertTurboData;
+					const bool assertInterrupt = turboState;
 
 					if (mbTurboInterruptAsserted != assertInterrupt) {
 						mbTurboInterruptAsserted = assertInterrupt;
@@ -1165,12 +1382,12 @@ ATCassetteEmulator::BitResult ATCassetteEmulator::ProcessBit() {
 				break;
 		}
 	}
+}
 
-	const uint32 halfPeriod = mAveragingPeriod >> 1;
-	const uint32 startPos = mPosition < halfPeriod ? 0 : mPosition - halfPeriod;
-	const uint32 endPos = mPosition + (mAveragingPeriod - halfPeriod);
+ATCassetteEmulator::BitResult ATCassetteEmulator::ProcessBit() {
+	mBitCursor.Update(*mpImage, mPosition);
+	const bool dataBit = mBitCursor.mCurrentValue != mbInvertData;
 
-	const bool dataBit = mpImage && mpImage->GetBit(startPos, endPos - startPos, mThresholdZeroBit, mbOutputBit != mbInvertData, !mbFSKDecoderEnabled) != mbInvertData;
 	++mPosition;
 
 	PositionChanged.NotifyDeferred();
@@ -1186,8 +1403,8 @@ ATCassetteEmulator::BitResult ATCassetteEmulator::ProcessBit() {
 			mbDataBitEdge = true;
 			mDataBitCounter = mDataBitHalfPeriod - (kATCassetteCyclesPerDataSample >> 1);
 			return kBR_NoOutput;
-		} else if (mSIOPhase > 0) {
-			g_ATLCCasData("Phase error %+d/%d\n"
+		} else if (mSIOPhase > 0 && g_ATLCCasData2.IsEnabled()) {
+			g_ATLCCasData2("Phase error %+d/%d\n"
 				, mbDataBitEdge ? mDataBitHalfPeriod - mDataBitCounter : mDataBitCounter
 				, mDataBitHalfPeriod*2
 			);
@@ -1304,6 +1521,10 @@ void ATCassetteEmulator::SeekAudio(uint32 pos) {
 
 	if (mbAudioEventOpen)
 		StartAudio();
+}
+
+void ATCassetteEmulator::ResyncAudio() {
+	SeekAudio(VDRoundToInt((double)mPosition * (double)kATCassetteAudioSamplesPerDataSample));
 }
 
 void ATCassetteEmulator::FlushRecording(uint32 t, bool force) {

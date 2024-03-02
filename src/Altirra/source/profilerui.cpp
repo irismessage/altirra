@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <numeric>
+#include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/math.h>
 #include <vd2/system/w32assist.h>
@@ -26,6 +27,8 @@
 #include <at/atcore/address.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/messagedispatcher.h>
+#include <at/atnativeui/theme.h>
+#include <at/atnativeui/theme_win32.h>
 #include <at/atnativeui/uiframe.h>
 #include <at/atnativeui/uiproxies.h>
 #include "console.h"
@@ -752,6 +755,18 @@ LRESULT ATUIProfilerSourceTextView::WndProc(UINT msg, WPARAM wParam, LPARAM lPar
 			OnSize();
 			break;
 
+		case WM_ERASEBKGND:
+			{
+				RECT r;
+
+				if (GetClientRect(mhwnd, &r)) {
+					HDC hdc = (HDC)wParam;
+					FillRect(hdc, &r, ATUIGetThemeColorsW32().mContentBgBrush);
+					return TRUE;
+				}
+			}
+			break;
+
 		case WM_PAINT:
 			OnPaint();
 			return 0;
@@ -840,8 +855,10 @@ void ATUIProfilerSourceTextView::OnPaint() {
 	if (!hdc)
 		return;
 
+	const auto& tcw32 = ATUIGetThemeColorsW32();
+
 	SelectObject(hdc, mFont);
-	SetTextColor(hdc, GetSysColor(COLOR_WINDOWTEXT));
+	SetTextColor(hdc, tcw32.mContentFgCRef);
 	SetBkMode(hdc, TRANSPARENT);
 
 	Lines::const_iterator itLines(mLines.begin()), itLinesEnd(mLines.end());
@@ -1796,7 +1813,9 @@ LRESULT ATUIProfileView::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				RECT r;
 
 				if (GetClientRect(mhwnd, &r)) {
-					FillRect((HDC)wParam, &r, (HBRUSH)(COLOR_3DFACE + 1));
+					HDC hdc = (HDC)wParam;
+					SetDCBrushColor(hdc, VDSwizzleU32(ATUIGetThemeColors().mStaticBg) >> 8);
+					FillRect(hdc, &r, (HBRUSH)GetStockObject(DC_BRUSH));
 					return TRUE;
 				}
 			}
@@ -2313,9 +2332,21 @@ LRESULT ATUIProfilerPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		RECT r;
 
 		if (GetClientRect(mhwnd, &r)) {
-			FillRect((HDC)wParam, &r, (HBRUSH)(COLOR_3DFACE + 1));
+			HDC hdc = (HDC)wParam;
+
+			SetDCBrushColor(hdc, VDSwizzleU32(ATUIGetThemeColors().mStaticBg) >> 8);
+			FillRect(hdc, &r, (HBRUSH)GetStockObject(DC_BRUSH));
 			return TRUE;
 		}
+	} else if (msg == WM_CTLCOLORSTATIC) {
+		HDC hdc = (HDC)wParam;
+		COLORREF bg = VDSwizzleU32(ATUIGetThemeColors().mStaticBg) >> 8;
+
+		SetBkColor(hdc, bg);
+		SetDCBrushColor(hdc, bg);
+		SetTextColor(hdc, VDSwizzleU32(ATUIGetThemeColors().mStaticFg) >> 8);
+
+		return (LRESULT)(HBRUSH)GetStockObject(DC_BRUSH);
 	} else if (msg == WM_NOTIFY) {
 		VDZLRESULT result;
 		if (mDispatcher.TryDispatch_WM_NOTIFY(wParam, lParam, result))

@@ -82,25 +82,31 @@ bool ATDecodeVFSPath(VDStringW& dst, const VDStringSpanW& src) {
 					return false;
 
 				// check if we need to emit a surrogate
-				if (c >= 0x10000) {
-					dst += (wchar_t)(0xD800 + ((c - 0x10000) >> 10));
+				if constexpr (sizeof(wchar_t) < 4) {
+					if (unicode >= 0x10000) {
+						dst += (wchar_t)(0xD800 + ((unicode - 0x10000) >> 10));
 
-					c = (wchar_t)(0xDC00 + (c & 0x3FF));
+						c = (wchar_t)(0xDC00 + (unicode & 0x3FF));
+					} else {
+						c = (wchar_t)unicode;
+					}
+				} else {
+					c = (wchar_t)unicode;
 				}
 			} else if (code < 0x80)
 				c = code;
-			else if (c < 0xC0)
+			else if (code < 0xC0)
 				return false;
-			else if (c < 0xE0) {
-				unicode = c & 0x1F;
+			else if (code < 0xE0) {
+				unicode = code & 0x1F;
 				extsleft = 1;
 				continue;
-			} else if (c < 0xF0) {
-				unicode = c & 0x0F;
+			} else if (code < 0xF0) {
+				unicode = code & 0x0F;
 				extsleft = 2;
 				continue;
-			} else if (c < 0xF8) {
-				unicode = c & 0x07;
+			} else if (code < 0xF8) {
+				unicode = code & 0x07;
 				extsleft = 3;
 				continue;
 			} else {
@@ -129,7 +135,7 @@ void ATEncodeVFSPath(VDStringW& dst, const VDStringSpanW& src, bool filepath) {
 	for(wchar_t cw : src) {
 		uint32 c = cw;
 
-		if (sizeof(wchar_t) == 2)
+		if constexpr (sizeof(wchar_t) == 2)
 			c &= 0xFFFF;
 
 		if ((uint32)(c - 0xD800) < 0x800) {
@@ -174,9 +180,9 @@ void ATEncodeVFSPath(VDStringW& dst, const VDStringSpanW& src, bool filepath) {
 
 		if (escapingNeeded) {
 			if (c >= 0x10000) {
-				dst.append_sprintf(L"%%%02X%%%02X%%%02X%%%02X", 0xC0 + ((c >> 18) & 0x07), 0x80 + ((c >> 12) & 0x3F), 0x80 + ((c >> 6) & 0x3F), 0x80 + (c & 0x3F));
+				dst.append_sprintf(L"%%%02X%%%02X%%%02X%%%02X", 0xF0 + ((c >> 18) & 0x07), 0x80 + ((c >> 12) & 0x3F), 0x80 + ((c >> 6) & 0x3F), 0x80 + (c & 0x3F));
 			} else if (c >= 0x800) {
-				dst.append_sprintf(L"%%%02X%%%02X%%%02X", 0xC0 + (c >> 12), 0x80 + ((c >> 6) & 0x3F), 0x80 + (c & 0x3F));
+				dst.append_sprintf(L"%%%02X%%%02X%%%02X", 0xE0 + (c >> 12), 0x80 + ((c >> 6) & 0x3F), 0x80 + (c & 0x3F));
 			} else if (c >= 0x80) {
 				dst.append_sprintf(L"%%%02X%%%02X", 0xC0 + (c >> 6), 0x80 + (c & 0x3F));
 			} else {
@@ -251,6 +257,77 @@ ATVFSProtocol ATParseVFSPath(const wchar_t *s, VDStringW& basePath, VDStringW& s
 	return kATVFSProtocol_None;
 }
 
+VDStringW ATMakeVFSPath(ATVFSProtocol protocol, const wchar_t *basePath, const wchar_t *subPath) {
+	VDStringW path;
+
+	if (protocol == kATVFSProtocol_File) {
+		path = basePath;
+
+		for(wchar_t& c : path) {
+			if (c == '/')
+				c = '\\';
+		}
+	} else if (protocol == kATVFSProtocol_Zip || protocol == kATVFSProtocol_Atfs) {
+		if (protocol == kATVFSProtocol_Zip)
+			path = L"zip://";
+		else
+			path = L"atfs://";
+
+		ATEncodeVFSPath(path, VDStringSpanW(basePath), true);
+		path += L'!';
+
+		ATEncodeVFSPath(path, VDStringSpanW(subPath), true);
+	} else if (protocol == kATVFSProtocol_GZip) {
+		path = L"gz://";
+
+		ATEncodeVFSPath(path, VDStringSpanW(basePath), true);
+	}
+
+	return path;
+}
+
+VDStringW ATMakeVFSPath(const wchar_t *protocolAndBasePath, const wchar_t *relativePath) {
+	// if the relative path has a protocol, we want to resolve its inner base path against the
+	// relative path
+	if (wcsstr(relativePath, L"://")) {
+		// split the relative path into protocol/base/subpath
+		VDStringW relativeBasePath;
+		VDStringW relativeSubPath;
+		ATVFSProtocol protocol = ATParseVFSPath(relativePath, relativeBasePath, relativeSubPath);
+		if (protocol == kATVFSProtocol_None)
+			return VDStringW();
+
+		// recursive call to resolve the base path
+		relativeBasePath = ATMakeVFSPath(protocolAndBasePath, relativeBasePath.c_str());
+
+		// reassemble the path and exit
+		return ATMakeVFSPath(protocol, relativeBasePath.c_str(), relativeSubPath.c_str());
+	}
+
+	if (wcsstr(protocolAndBasePath, L"://")) {
+		VDStringW path(protocolAndBasePath);
+
+		if (path.back() != '/')
+			path += '/';
+
+		ATEncodeVFSPath(path, VDStringSpanW(relativePath), true);
+		return path;
+	} else {
+		return VDMakePath(protocolAndBasePath, relativePath);
+	}
+}
+
+const wchar_t *ATVFSSplitPathFile(const wchar_t *path) {
+	if (!wcsstr(path, L"://"))
+		return VDFileSplitPath(path);
+
+	const wchar_t *split = path + wcslen(path);
+	while(split != path && split[-1] != '/' && split[-1] != '!')
+		--split;
+
+	return split;
+}
+
 bool ATVFSIsFilePath(const wchar_t *s) {
 	VDStringW basePath, subPath;
 
@@ -260,22 +337,11 @@ bool ATVFSIsFilePath(const wchar_t *s) {
 ///////////////////////////////////////////////////////////////////////////
 
 VDStringW ATMakeVFSPathForGZipFile(const wchar_t *path) {
-	VDStringW s(L"gz://");
-
-	ATEncodeVFSPath(s, VDStringSpanW(path), true);
-
-	return s;
+	return ATMakeVFSPath(kATVFSProtocol_GZip, path, nullptr);
 }
 
 VDStringW ATMakeVFSPathForZipFile(const wchar_t *path, const wchar_t *fileName) {
-	VDStringW s(L"zip://");
-
-	ATEncodeVFSPath(s, VDStringSpanW(path), true);
-	s += L'!';
-
-	ATEncodeVFSPath(s, VDStringSpanW(fileName), true);
-
-	return s;
+	return ATMakeVFSPath(kATVFSProtocol_Zip, path, fileName);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -362,9 +428,15 @@ public:
 				IVDStream& innerStream = *ziparch.OpenRawStream(i);
 
 				vdautoptr<VDZipStream> zs(new VDZipStream(&innerStream, info.mCompressedSize, !info.mbPacked));
+				zs->EnableCRC();
+
+				if (info.mUncompressedSize > 384 * 1024 * 1024)
+					throw MyError("Zip file item is too large (%llu bytes).", (unsigned long long)info.mUncompressedSize);
 
 				mBuffer.resize(info.mUncompressedSize);
 				zs->Read(mBuffer.data(), info.mUncompressedSize);
+				if (zs->CRC() != info.mCRC32)
+					throw MyError("Zip file item could not be decompressed (CRC error).");
 
 				mMemoryStream = VDMemoryStream(mBuffer.data(), info.mUncompressedSize);
 				found = true;

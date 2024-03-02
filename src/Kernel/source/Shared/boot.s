@@ -30,11 +30,13 @@
 	stx		daux1
 	dex
 	stx		dbuflo
+	stx		daux2
 	mva		#$52	dcomnd
 	mva		#$04	dbufhi
 	jsr		dskinv
 	bmi		fail
 	
+sector1_ok:
 	ldx		#dosini
 	jsr		BootInitHeaders
 
@@ -66,7 +68,13 @@ xit:
 	
 failmsg:
 .if _KERNEL_USE_BOOT_SCREEN
-	jmp		SelfTestEntry
+st_loop:
+	lda		portb
+	eor		#$80
+	sta		portb
+	bmi		sector1_ok
+	jsr		BootScreen.boot_entry
+	jmp		st_loop
 .else
 	jsr		BootShowError
 	jmp		BootDisk

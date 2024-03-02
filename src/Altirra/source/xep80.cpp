@@ -20,6 +20,7 @@
 #include <vd2/system/binary.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicevideo.h>
+#include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
 #include "xep80.h"
 #include "pia.h"
@@ -124,6 +125,9 @@ ATXEP80Emulator::ATXEP80Emulator()
 	, mpPIA(NULL)
 	, mPIAInput(-1)
 	, mPIAOutput(-1)
+	, mPIAInputBit(0)
+	, mPIAOutputBit(0)
+	, mPortIndex(0)
 	, mpScheduler(NULL)
 	, mpReadBitEvent(NULL)
 	, mpWriteBitEvent(NULL)
@@ -148,6 +152,7 @@ void ATXEP80Emulator::Init(ATScheduler *sched, IATDevicePortManager *pia) {
 
 	ColdReset();
 	InitFonts();
+	UpdatePIABits();
 }
 
 void ATXEP80Emulator::Shutdown() {
@@ -271,6 +276,14 @@ void ATXEP80Emulator::InitFonts() {
 		uint16 c = (uint16)(((uint32)g_ATXEP80Font_Internal[i] << 8) & 0xfe00);
 
 		dst[i] = dst[i + 128*16] = c;
+	}
+}
+
+void ATXEP80Emulator::SetPortIndex(uint8 portIndex) {
+	if (mPortIndex != portIndex) {
+		mPortIndex = portIndex;
+
+		UpdatePIABits();
 	}
 }
 
@@ -808,7 +821,7 @@ void ATXEP80Emulator::OnPIAOutputChanged(uint32 outputState) {
 	// we delay by one-half bit (57 cycles) to read the middle of D0,
 	// then read at 114 bit intervals to capture D1-D8 and the stop bit.
 
-	const bool data = (outputState & 0x10) == 0x10;
+	const bool data = (outputState & mPIAOutputBit) == mPIAOutputBit;
 
 	mCurrentData = (mCurrentData & 0x1ff) + (data ? 0x200 : 0x000);
 
@@ -844,7 +857,7 @@ void ATXEP80Emulator::OnScheduledEvent(uint32 id) {
 	} else if (id == 2) {
 		mpWriteBitEvent = NULL;
 
-		mpPIA->SetInput(mPIAInput, (mCurrentWriteData & (1 << mWriteBitState) ? 0x20 : 0) + ~0x20);
+		UpdatePIAInput();
 
 		++mWriteBitState;
 
@@ -2172,6 +2185,21 @@ void ATXEP80Emulator::RecomputeVideoTiming() {
 	InvalidateFrame();
 }
 
+void ATXEP80Emulator::UpdatePIABits() {
+	mPIAInputBit = 0x02 << (4 * mPortIndex);
+	mPIAOutputBit = 0x01 << (4 * mPortIndex);
+
+	if (mpPIA && mPIAOutput >= 0)
+		mpPIA->ModifyOutputMask(mPIAOutput, mPIAOutputBit);
+
+	UpdatePIAInput();
+}
+
+void ATXEP80Emulator::UpdatePIAInput() {
+	if (mpPIA)
+		mpPIA->SetInput(mPIAInput, (mCurrentWriteData & (1 << mWriteBitState) ? mPIAInputBit : 0) + ~mPIAInputBit);
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 class ATDeviceXEP80 : public ATDevice
@@ -2185,10 +2213,13 @@ public:
 
 	virtual void *AsInterface(uint32 id) override;
 
-	virtual void GetDeviceInfo(ATDeviceInfo& info) override;
-	virtual void ColdReset() override;
-	virtual void Init() override;
-	virtual void Shutdown() override;
+	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void GetSettingsBlurb(VDStringW& buf) override;
+	void GetSettings(ATPropertySet& pset) override;
+	bool SetSettings(const ATPropertySet& pset) override;
+	void ColdReset() override;
+	void Init() override;
+	void Shutdown() override;
 
 public:	// IATDeviceScheduling
 	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
@@ -2219,6 +2250,7 @@ private:
 	ATDeviceVideoInfo mVideoInfo;
 
 	ATXEP80Emulator mXEP80;
+	uint8 mPortIndex = 1;
 };
 
 void ATCreateDeviceXEP80(const ATPropertySet& pset, IATDevice **dev) {
@@ -2227,7 +2259,7 @@ void ATCreateDeviceXEP80(const ATPropertySet& pset, IATDevice **dev) {
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDefXEP80 = { "xep80", nullptr, L"XEP80", ATCreateDeviceXEP80 };
+extern const ATDeviceDefinition g_ATDeviceDefXEP80 = { "xep80", "xep80", L"XEP80", ATCreateDeviceXEP80 };
 
 ATDeviceXEP80::ATDeviceXEP80()
 	: mpScheduler(nullptr)
@@ -2258,11 +2290,32 @@ void ATDeviceXEP80::GetDeviceInfo(ATDeviceInfo& info) {
 	info.mpDef = &g_ATDeviceDefXEP80;
 }
 
+void ATDeviceXEP80::GetSettingsBlurb(VDStringW& buf) {
+	buf.sprintf(L"Port %u", mPortIndex + 1);
+}
+
+void ATDeviceXEP80::GetSettings(ATPropertySet& pset) {
+	pset.SetUint32("port", mPortIndex + 1);
+}
+
+bool ATDeviceXEP80::SetSettings(const ATPropertySet& pset) {
+	const uint8 portIndex = (uint8)((pset.GetUint32("port") - 1) & 3);
+
+	if (mPortIndex != portIndex) {
+		mPortIndex = portIndex;
+
+		mXEP80.SetPortIndex(portIndex);
+	}
+
+	return true;
+}
+
 void ATDeviceXEP80::ColdReset() {
 	mXEP80.ColdReset();
 }
 
 void ATDeviceXEP80::Init() {
+	mXEP80.SetPortIndex(mPortIndex);
 	mXEP80.Init(mpScheduler, mpPIA);
 }
 

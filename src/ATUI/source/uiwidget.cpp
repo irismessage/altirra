@@ -39,10 +39,19 @@ ATUIWidget::ATUIWidget()
 	, mOwnerId(0)
 	, mbActivated(false)
 	, mbVisible(true)
+	, mbEnabled(true)
 	, mbDropTarget(false)
 	, mbFastClip(false)
 	, mbHitTransparent(false)
 	, mPointersOwned(0)
+	, mSizeOffset(-1, -1)
+	, mAnchors(0, 0, 0, 0)
+	, mOffset(0, 0)
+	, mPivot{0, 0}
+	, mbFixedPosition(true)
+	, mbForcedSize(false)
+	, mbAutoSize(true)
+	, mbMeasureCacheValid(false)
 {
 }
 
@@ -132,41 +141,191 @@ void ATUIWidget::SetCursorImage(uint32 id) {
 }
 
 vdrect32 ATUIWidget::GetClientArea() const {
-
 	return vdrect32(mClientOrigin.x, mClientOrigin.y, mClientOrigin.x + mClientArea.width(), mClientOrigin.y + mClientArea.height());
 }
 
 void ATUIWidget::SetPosition(const vdpoint32& pt) {
-	vdrect32 r(mArea);
-	r.translate(pt.x - r.left, pt.y - r.top);
+	SetAnchors(vdrect32f(0, 0, 0, 0));
+	SetOffset(pt);
+	SetPivot(vdfloat2 { 0, 0 });
+}
 
-	SetArea(r);
+void ATUIWidget::SetAutoSize() {
+	if (mSizeOffset.w >= 0 || mbForcedSize || !mbAutoSize) {
+		mSizeOffset.w = -1;
+		mSizeOffset.h = -1;
+		mbForcedSize = false;
+		mbAutoSize = true;
+
+		InvalidateArrange();
+	}
+}
+
+void ATUIWidget::SetSizeOffset(const vdsize32& sz) {
+	vdsize32 sz2(sz);
+
+	if (sz2.w < 0)
+		sz2.w = 0;
+
+	if (sz2.h < 0)
+		sz2.h = 0;
+
+	if (mSizeOffset != sz || mbForcedSize || mbAutoSize) { 
+		mSizeOffset = sz;
+		mbForcedSize = false;
+		mbAutoSize = false;
+
+		InvalidateArrange();
+	}
 }
 
 void ATUIWidget::SetSize(const vdsize32& sz) {
-	vdrect32 r(mArea);
+	vdsize32 sz2(sz);
 
-	r.resize(sz.w, sz.h);
-	SetArea(r);
+	if (sz2.w < 0)
+		sz2.w = 0;
+
+	if (sz2.h < 0)
+		sz2.h = 0;
+
+	if (mSizeOffset != sz || !mbForcedSize || mbAutoSize) {
+		mSizeOffset = sz;
+		mbForcedSize = true;
+		mbAutoSize = true;
+
+		mAnchors.right = mAnchors.left;
+		mAnchors.bottom = mAnchors.top;
+
+		mbFixedPosition = (mAnchors == vdrect32f(0, 0, 0, 0));
+
+		InvalidateArrange();
+	}
 }
 
 void ATUIWidget::SetArea(const vdrect32& r) {
-	if (mArea != r) {
-		vdrect32 r2 = r;
-		if (r2.right < r2.left)
-			r2.right = r2.left;
+	bool changed = false;
 
-		if (r2.bottom < r2.top)
-			r2.bottom = r2.top;
+	if (mAnchors != vdrect32f(0, 0, 0, 0)) {
+		mAnchors = vdrect32f(0, 0, 0, 0);
+		mbFixedPosition = true;
+		changed = true;
+	}
+
+	if (mOffset != r.top_left()) {
+		mOffset = r.top_left();
+		changed = true;
+	}
+
+	vdsize32 size = r.size();
+
+	if (size.w < 0)
+		size.w = 0;
+
+	if (size.h < 0)
+		size.h = 0;
+
+	if (mSizeOffset != size) {
+		mSizeOffset = size;
+
+		InvalidateArrange();
+		changed = true;
+	}
+
+	mbForcedSize = true;
+	mbAutoSize = false;
+
+	if (!changed)
+		return;
+
+	vdrect32 r2(r.left, r.top, r.left + size.w, r.top + size.h);
+
+	Arrange(r2);
+}
+
+void ATUIWidget::SetAnchors(const vdrect32f& anchors) {
+	if (mAnchors != anchors) {
+		mAnchors = anchors;
+
+		mbFixedPosition = (anchors == vdrect32f(0, 0, 0, 0));
+
+		if (mpParent)
+			mpParent->InvalidateLayout(this);
+	}
+}
+
+void ATUIWidget::SetOffset(const vdpoint32& offset) {
+	if (mOffset != offset) {
+		mOffset = offset;
+
+		if (mpParent)
+			mpParent->InvalidateLayout(this);
+	}
+}
+
+void ATUIWidget::SetPivot(const vdfloat2& pivot) {
+	if (mPivot != pivot) {
+		mPivot = pivot;
+
+		if (mpParent)
+			mpParent->InvalidateLayout(this);
+	}
+}
+
+void ATUIWidget::SetPlacement(const vdrect32f& anchors, const vdpoint32& offset, const vdfloat2& pivot) {
+	bool changed = false;
+
+	if (mAnchors != anchors) {
+		mAnchors = anchors;
+		mbFixedPosition = (mAnchors == vdrect32f(0, 0, 0, 0));
+		changed = true;
+	}
+
+	if (mOffset != offset) {
+		mOffset = offset;
+		changed = true;
+	}
+
+	if (mPivot != pivot) {
+		mPivot = pivot;
+		changed = true;
+	}
+
+	if (changed) {
+		if (mpParent)
+			mpParent->InvalidateLayout(this);
+	}
+}
+
+void ATUIWidget::SetPlacementFill() {
+	SetPlacement(vdrect32f(0, 0, 1, 1), vdpoint32(0, 0), vdfloat2{0, 0});
+	SetSizeOffset(vdsize32(0, 0));
+}
+
+const ATUIWidgetMetrics& ATUIWidget::Measure() {
+	if (!mbMeasureCacheValid) {
+		if (IsForcedSize())
+			mMeasureCache.mDesiredSize = mSizeOffset;
+		else
+			mMeasureCache = OnMeasure();
+
+		mbMeasureCacheValid = true;
+	}
+
+	return mMeasureCache;
+}
+
+void ATUIWidget::Arrange(const vdrect32& r) {
+	if (mArea != r) {
+		const bool sizeMismatch = (mArea.size() != r.size());
+
+		mArea = r;
 
 		// We only need to invalidate on a change of size, not position. Otherwise, we only need to
 		// invalidate the parent.
-		if (mArea.size() != r2.size())
+		if (sizeMismatch)
 			Invalidate();
 		else if (mpParent && mbVisible)
 			mpParent->Invalidate();
-
-		mArea = r2;
 
 		RecomputeClientArea();
 	}
@@ -192,7 +351,7 @@ void ATUIWidget::SetDockMode(ATUIDockMode mode) {
 	mDockMode = mode;
 
 	if (mpParent)
-		mpParent->InvalidateLayout();
+		mpParent->InvalidateLayout(this);
 }
 
 void ATUIWidget::SetAnchor(IATUIAnchor *anchor) {
@@ -208,7 +367,12 @@ void ATUIWidget::SetAnchor(IATUIAnchor *anchor) {
 	mpAnchor = anchor;
 
 	if (mpParent)
-		mpParent->InvalidateLayout();
+		mpParent->InvalidateLayout(this);
+}
+
+void ATUIWidget::InvalidateCachedAnchor() {
+	if (mpAnchor && mpParent)
+		mpParent->InvalidateLayout(this);
 }
 
 void ATUIWidget::SetVisible(bool visible) {
@@ -222,6 +386,14 @@ void ATUIWidget::SetVisible(bool visible) {
 
 	if (visible)
 		Invalidate();
+}
+
+void ATUIWidget::SetEnabled(bool enabled) {
+	if (mbEnabled == enabled)
+		return;
+
+	mbEnabled = enabled;
+	OnEnableChanged();
 }
 
 bool ATUIWidget::IsSameOrAncestorOf(ATUIWidget *w) const {
@@ -435,6 +607,10 @@ void ATUIWidget::OnDestroy() {
 void ATUIWidget::OnSize() {
 }
 
+ATUIWidgetMetrics ATUIWidget::OnMeasure() {
+	return {};
+}
+
 void ATUIWidget::OnKillFocus() {
 }
 
@@ -448,6 +624,9 @@ void ATUIWidget::OnActivate() {
 }
 
 void ATUIWidget::OnDeactivate() {
+}
+
+void ATUIWidget::OnEnableChanged() {
 }
 
 void ATUIWidget::OnTrackCursorChanges(ATUIWidget *w) {
@@ -554,6 +733,18 @@ void ATUIWidget::Invalidate() {
 	}
 }
 
+void ATUIWidget::InvalidateMeasure() {
+	mbMeasureCacheValid = false;
+
+	if (mpParent)
+		mpParent->InvalidateLayout(this);
+}
+
+void ATUIWidget::InvalidateArrange() {
+	if (mpParent)
+		mpParent->InvalidateLayout(this);
+}
+
 void ATUIWidget::SetParent(ATUIManager *mgr, ATUIContainer *parent) {
 	if (mpManager) {
 		OnDestroy();
@@ -568,6 +759,7 @@ void ATUIWidget::SetParent(ATUIManager *mgr, ATUIContainer *parent) {
 
 	if (mgr) {
 		mgr->Attach(this);
+		InvalidateMeasure();
 		OnCreate();
 
 		if (mbVisible && !mArea.empty())

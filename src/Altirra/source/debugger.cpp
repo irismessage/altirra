@@ -338,6 +338,9 @@ public:
 	void RemoveClient(IATDebuggerClient *client);
 	void RequestClientUpdate(IATDebuggerClient *client);
 
+	void SetAutoLoadSystemSymbols(bool enable);
+	bool IsAutoLoadSystemSymbolsEnabled() const ;
+
 	ATDebuggerSymbolLoadMode GetSymbolLoadMode(bool whenEnabled) const override;
 	void SetSymbolLoadMode(bool whenEnabled, ATDebuggerSymbolLoadMode mode) override;
 
@@ -509,6 +512,12 @@ public:
 	VDEvent<IATDebugger, bool>& OnRunStateChanged() { return mEventRunStateChanged; }
 	VDEvent<IATDebugger, ATDebuggerOpenEvent *>& OnDebuggerOpen() { return mEventOpen; }
 
+	void SetOnRequestFile(vdfunction<void(ATDebuggerRequestFileEvent&)> fn) override {
+		mpRequestFile = std::move(fn);
+	}
+
+	VDStringW RequestFile(bool forSave);
+
 	void SendRegisterUpdate() {
 		mbClientUpdatePending = true;
 	}
@@ -603,6 +612,7 @@ protected:
 	bool	mbEnabled;
 	bool	mbBannerDisplayed = false;
 	bool	mbSymbolLoadingEnabled = true;
+	bool	mbSystemSymbolsEnabled = true;
 	bool	mbDeferredSymbolLoadingEnabled = false;
 
 	ATDebuggerSymbolLoadMode mSymbolLoadModes[2] {};
@@ -704,6 +714,7 @@ protected:
 	uint32 mCurrentTargetIndex;
 	vdfastvector<IATDebugTarget *> mDebugTargets;
 	vdfunction<bool()> mpScriptAutoLoadConfirmFn;
+	vdfunction<void(ATDebuggerRequestFileEvent&)> mpRequestFile;
 };
 
 ATDebugger g_debugger;
@@ -2917,6 +2928,14 @@ void ATDebugger::SetSymbolLoadMode(bool whenEnabled, ATDebuggerSymbolLoadMode mo
 	}
 }
 
+void ATDebugger::SetAutoLoadSystemSymbols(bool enable) {
+	mbSystemSymbolsEnabled = enable;
+}
+
+bool ATDebugger::IsAutoLoadSystemSymbolsEnabled() const {
+	return mbSystemSymbolsEnabled;
+}
+
 bool ATDebugger::IsSymbolLoadingEnabled() const {
 	return mbSymbolLoadingEnabled;
 }
@@ -3286,9 +3305,12 @@ sint32 ATDebugger::ResolveSymbol(const char *s, bool allowGlobal, bool allowShor
 			s += 2;
 		} else if (!strncmp(s, "rom:", 4)) {
 			addressSpace = kATAddressSpace_ROM;
-			s += 2;
+			s += 4;
 		} else if (!strncmp(s, "cart:", 5)) {
 			addressSpace = kATAddressSpace_CART;
+			s += 5;
+		} else if (!strncmp(s, "t:", 2)) {
+			addressSpace = kATAddressSpace_CB;
 			s += 2;
 		}
 
@@ -3361,6 +3383,16 @@ sint32 ATDebugger::ResolveSymbol(const char *s, bool allowGlobal, bool allowShor
 			return -1;
 
 		return (result << 16) + offset + kATAddressSpace_PORTB;
+	} else if (*t == '\'' && addressSpace == kATAddressSpace_CB && allowGlobal) {
+		if (result > 0xff)
+			return -1;
+
+		s = t+1;
+		uint32 offset = strtoul(s, &t, base);
+		if (offset > 0xffff || *t)
+			return -1;
+
+		return (result << 16) + offset + kATAddressSpace_CB;
 	} else {
 		if (result > addressLimit || *t)
 			return -1;
@@ -3679,6 +3711,7 @@ ATDebugExpEvalContext ATDebugger::GetEvalContextForTarget(uint32 targetIndex) co
 	ctx.mpTemporaries = mExprTemporaries;
 	ctx.mpClockFn = [](void *) -> uint32 { return ATSCHEDULER_GETTIME(g_sim.GetScheduler()); };
 	ctx.mpCpuClockFn = [](void *) -> uint32 { return g_sim.GetCpuCycleCounter(); };
+	ctx.mpTapePosFn = [](void *) -> uint32 { return g_sim.GetCassette().GetSamplePos(); };
 	ctx.mbAccessValid = true;
 	ctx.mbAccessReadValid = false;
 	ctx.mbAccessWriteValid = false;
@@ -4109,6 +4142,17 @@ void ATDebugger::GetTargetList(vdfastvector<IATDebugTarget *>& targets) {
 	targets = mDebugTargets;
 }
 
+VDStringW ATDebugger::RequestFile(bool forSave) {
+	ATDebuggerRequestFileEvent event;
+
+	event.mbSave = forSave;
+		
+	if (mpRequestFile)
+		mpRequestFile(event);
+
+	return event.mPath;
+}
+
 bool ATDebugger::GetSourceFilePath(uint32 moduleId, uint16 fileId, VDStringW& path) {
 	Modules::const_iterator it(mModules.begin()), itEnd(mModules.end());
 	for(; it!=itEnd; ++it) {
@@ -4191,33 +4235,54 @@ bool ATDebugger::LookupLine(uint32 addr, bool searchUp, uint32& moduleId, ATSour
 	if ((addr & kATAddressSpaceMask) == kATAddressSpace_PORTB)
 		addr &= 0xffffff;
 
-	Modules::const_iterator it(mModules.begin()), itEnd(mModules.end());
 	uint32 bestOffset = 0xFFFFFFFFUL;
 	bool valid = false;
 
-	for(; it!=itEnd; ++it) {
-		const Module& mod = *it;
+	for(;;) {
+		for(const Module& mod : mModules) {
+			if (mod.mTargetId != mCurrentTargetIndex)
+				continue;
 
-		if (mod.mTargetId != mCurrentTargetIndex)
-			continue;
+			uint32 offset = addr - mod.mBase;
 
-		uint32 offset = addr - mod.mBase;
+			if (offset >= mod.mSize || !mod.mpSymbols)
+				continue;
 
-		if (offset < mod.mSize && mod.mpSymbols) {
 			ATSourceLineInfo tempLineInfo;
 
-			if (mod.mpSymbols->GetLineForOffset(offset, searchUp, tempLineInfo)) {
-				uint32 lineOffset = tempLineInfo.mOffset - offset;
+			if (!mod.mpSymbols->GetLineForOffset(offset, searchUp, tempLineInfo))
+				continue;
 
-				if (bestOffset > lineOffset) {
-					bestOffset = lineOffset;
+			// reject match in a different bank
+			if (((tempLineInfo.mOffset + mod.mBase) ^ addr) & UINT32_C(0xFFFF0000))
+				continue;
 
-					moduleId = mod.mId;
-					lineInfo = tempLineInfo;
-					valid = true;
-				}
+			uint32 lineOffset = tempLineInfo.mOffset - offset;
+
+			if (bestOffset > lineOffset) {
+				bestOffset = lineOffset;
+
+				moduleId = mod.mId;
+				lineInfo = tempLineInfo;
+				valid = true;
 			}
 		}
+
+		if (!valid) {
+			switch(addr & kATAddressSpaceMask) {
+				case kATAddressSpace_ANTIC:
+				case kATAddressSpace_CB:
+				case kATAddressSpace_ROM:
+				case kATAddressSpace_RAM:
+					addr &= 0xFFFF;
+					continue;
+
+				default:
+					break;
+			}
+		}
+
+		break;
 	}
 
 	return valid;
@@ -4325,15 +4390,17 @@ void ATDebugger::OnSimulatorEvent(ATSimulatorEvent ev) {
 			mSysBPEEXRun = 0;
 		}
 
-		static const wchar_t *const kReloadModules[]={
-			L"kernel", L"kerneldb", L"hardware"
-		};
+		if (mbSystemSymbolsEnabled) {
+			static constexpr const wchar_t *kReloadModules[]={
+				L"kernel", L"kerneldb", L"hardware"
+			};
 
-		for(const wchar_t *modname : kReloadModules) {
-			try {
-				LoadSymbols(modname, false);
-			} catch(const MyError&) {
-				// ignore
+			for(const wchar_t *modname : kReloadModules) {
+				try {
+					LoadSymbols(modname, false);
+				} catch(const MyError&) {
+					// ignore
+				}
 			}
 		}
 
@@ -4649,6 +4716,8 @@ void ATDebugger::UpdateClientSystemState(IATDebuggerClient *client) {
 			sysstate.mPCLine = lineInfo.mLine;
 		}
 	}
+
+	sysstate.mCycle = g_sim.GetScheduler()->GetTick();
 
 	if (client)
 		client->OnDebuggerSystemStateUpdate(sysstate);
@@ -5392,8 +5461,14 @@ ATDebuggerCmdParser& ATDebuggerCmdParser::operator>>(ATDebuggerCmdPath& nm) {
 		if (quoted && t != s && t[-1] == '"')
 			--t;
 
-		nm.mPath.assign(s, t);
+		nm.mPath = VDTextAToW(s, (int)(t - s));
 		nm.mbValid = true;
+
+		if (nm.mPath == L"?") {
+			nm.mPath = g_debugger.RequestFile(nm.IsForWrite());
+			if (nm.mPath.empty())
+				throw MyUserAbortError();
+		}
 
 		mArgs.erase(it);
 		return *this;
@@ -6447,7 +6522,7 @@ void ATConsoleCmdUnassemble(ATDebuggerCmdParser& parser) {
 			ATDisassembleCaptureInsnContext(target, (uint16)addr, bank, hent);
 
 		s.clear();
-		addr = addrSpaceAndBank + (uint16)ATDisassembleInsn(s, target, disasmMode, hent, false, false, true, true, showLabels, false, false, true, showLabels, true);
+		addr = addrSpaceAndBank + ATDisassembleInsn(s, target, disasmMode, hent, false, false, true, true, showLabels, false, false, true, showLabels, true).mNextPC;
 
 		if (predict)
 			ATDisassemblePredictContext(hent, disasmMode);
@@ -7378,19 +7453,19 @@ void ATConsoleCmdSymbolRemove(ATDebuggerCmdParser& parser) {
 }
 
 void ATConsoleCmdSymbolRead(ATDebuggerCmdParser& parser) {
-	ATDebuggerCmdName name(true);
+	ATDebuggerCmdPath path(true, false);
 
-	parser >> name >> 0;
+	parser >> path >> 0;
 
-	g_debugger.LoadCustomSymbols(VDTextAToW(name->c_str()).c_str());
+	g_debugger.LoadCustomSymbols(path->c_str());
 }
 
 void ATConsoleCmdSymbolWrite(ATDebuggerCmdParser& parser) {
-	ATDebuggerCmdName name(true);
+	ATDebuggerCmdPath path(true, true);
 
-	parser >> name >> 0;
+	parser >> path >> 0;
 
-	g_debugger.SaveCustomSymbols(VDTextAToW(name->c_str()).c_str());
+	g_debugger.SaveCustomSymbols(path->c_str());
 }
 
 void ATConsoleCmdEnter(ATDebuggerCmdParser& parser) {
@@ -8450,7 +8525,7 @@ void ATConsoleCmdDumpHistory(ATDebuggerCmdParser& parser) {
 }
 
 void ATConsoleCmdDumpDsm(ATDebuggerCmdParser& parser) {
-	ATDebuggerCmdString filename(true);
+	ATDebuggerCmdPath filename(true, true);
 	ATDebuggerCmdExprAddr addrArg(false, true);
 	ATDebuggerCmdLength lenArg(0, true, &addrArg);
 	ATDebuggerCmdSwitch codeBytesArg("c", false);
@@ -8468,11 +8543,8 @@ void ATConsoleCmdDumpDsm(ATDebuggerCmdParser& parser) {
 	if (addrEnd > 0x1000000)
 		addrEnd = 0x1000000;
 
-	FILE *f = fopen(filename->c_str(), "w");
-	if (!f) {
-		ATConsolePrintf("Unable to open file for write: %s\n", filename->c_str());
-		return;
-	}
+	VDFileStream fsout(filename->c_str(), nsVDFile::kWrite | nsVDFile::kDenyRead | nsVDFile::kCreateAlways);
+	VDTextOutputStream txout(&fsout);
 
 	const bool showLabels = !noLabelsArg;
 	const bool showCodeBytes = codeBytesArg;
@@ -8494,13 +8566,11 @@ void ATConsoleCmdDumpDsm(ATDebuggerCmdParser& parser) {
 		ATDisassembleCaptureInsnContext(target, (uint16)pc, (uint8)(pc >> 16), hent);
 
 		s.clear();
-		uint32 pc2 = ATDisassembleInsn(s, target, disasmMode, hent, false, false, showPCAddress, showCodeBytes, showLabels, lowercaseOps, useTabs);
+		uint32 pc2 = ATDisassembleInsn(s, target, disasmMode, hent, false, false, showPCAddress, showCodeBytes, showLabels, lowercaseOps, useTabs).mNextPC;
 		pc2 += (pc & 0xff0000);
 
 		while(!s.empty() && s.back() == ' ')
 			s.pop_back();
-
-		s += '\n';
 
 		if (useTabs) {
 			// detabify
@@ -8547,15 +8617,39 @@ void ATConsoleCmdDumpDsm(ATDebuggerCmdParser& parser) {
 			s.swap(t);
 		}
 
-		fwrite(s.data(), s.size(), 1, f);
+		txout.PutLine(s.data(), (int)s.size());
 
 		if (separateRoutines) {
-			switch(hent.mOpcode[0]) {
-				case 0x40:	// RTI
-				case 0x60:	// RTS
-				case 0x4C:	// JMP abs
-				case 0x6C:	// JMP (abs)
-					fputc('\n', f);
+			switch(disasmMode) {
+				default:
+					switch(hent.mOpcode[0]) {
+						case 0x40:	// RTI
+						case 0x60:	// RTS
+						case 0x4C:	// JMP abs
+						case 0x6C:	// JMP (abs)
+							txout.PutLine();
+							break;
+					}
+					break;
+
+				case kATDebugDisasmMode_6809:
+					switch(hent.mOpcode[0]) {
+						case 0x16:	// LBRA
+						case 0x20:	// BRA
+						case 0x39:	// RTS
+						case 0x3B:	// RTI
+						case 0x6E:	// JMP indexed
+						case 0x7E:	// JMP extended
+							txout.PutLine();
+							break;
+
+						case 0x35:	// PULS
+						case 0x37:	// PULU
+							// check for PC being pulled
+							if (hent.mOpcode[1] & 0x80)
+								txout.PutLine();
+							break;
+					}
 					break;
 			}
 		}
@@ -8567,9 +8661,10 @@ void ATConsoleCmdDumpDsm(ATDebuggerCmdParser& parser) {
 		pc = pc2;
 	}
 
-	fclose(f);
+	txout.Flush();
+	fsout.close();
 
-	ATConsolePrintf("Disassembled %04X-%04X to %s\n", addr, addrEnd-1, filename->c_str());
+	ATConsolePrintf("Disassembled %04X-%04X to %ls\n", addr, addrEnd-1, filename->c_str());
 }
 
 void ATConsoleCmdRapidus(ATDebuggerCmdParser& parser) {
@@ -8590,7 +8685,7 @@ void ATConsoleCmdRapidus(ATDebuggerCmdParser& parser) {
 void ATConsoleCmdReadMem(ATDebuggerCmdParser& parser) {
 	ATDebuggerCmdExprAddr addressArg(true, true);
 	ATDebuggerCmdLength lengthArg(1, false, &addressArg);
-	ATDebuggerCmdPath filename(true);
+	ATDebuggerCmdPath filename(true, false);
 	parser >> filename >> addressArg >> lengthArg >> 0;
 
 	uint32 addr = addressArg.GetValue();
@@ -8604,11 +8699,8 @@ void ATConsoleCmdReadMem(ATDebuggerCmdParser& parser) {
 	if (len > limit - addr)
 		len = limit - addr;
 
-	FILE *f = fopen(filename->c_str(), "rb");
-	if (!f) {
-		ATConsolePrintf("Unable to open file for read: %s\n", filename->c_str());
-		return;
-	}
+	VDFileStream fsin(filename->c_str());
+	VDBufferedStream bin(&fsin, 4096);
 
 	IATDebugTarget *target = g_debugger.GetTarget();
 
@@ -8619,7 +8711,7 @@ void ATConsoleCmdReadMem(ATDebuggerCmdParser& parser) {
 	uint32 actual = 0;
 	while(remaining) {
 		const uint32 tc = remaining > 256 ? 256 : remaining;
-		int readlen = (int)fread(buf, 1, tc, f);
+		int readlen = bin.ReadData(buf, tc);
 
 		if (readlen <= 0)
 			break;
@@ -8631,9 +8723,9 @@ void ATConsoleCmdReadMem(ATDebuggerCmdParser& parser) {
 		actual += ureadlen;
 	}
 
-	fclose(f);
+	fsin.close();
 
-	ATConsolePrintf("Read %s-%s from %s\n"
+	ATConsolePrintf("Read %s-%s from %ls\n"
 		, g_debugger.GetAddressText(addr, false).c_str()
 		, g_debugger.GetAddressText(addr + actual - 1, false).c_str()
 		, filename->c_str());
@@ -8642,7 +8734,7 @@ void ATConsoleCmdReadMem(ATDebuggerCmdParser& parser) {
 void ATConsoleCmdWriteMem(ATDebuggerCmdParser& parser) {
 	ATDebuggerCmdExprAddr addressArg(true, true);
 	ATDebuggerCmdLength lengthArg(1, true, &addressArg);
-	ATDebuggerCmdPath filename(true);
+	ATDebuggerCmdPath filename(true, true);
 	parser >> filename >> addressArg >> lengthArg >> 0;
 
 	uint32 addr = addressArg.GetValue();
@@ -8655,11 +8747,8 @@ void ATConsoleCmdWriteMem(ATDebuggerCmdParser& parser) {
 	if (len > limit - addr)
 		len = limit - addr;
 
-	FILE *f = fopen(filename->c_str(), "wb");
-	if (!f) {
-		ATConsolePrintf("Unable to open file for write: %s\n", filename->c_str());
-		return;
-	}
+	VDFileStream fsout(filename->c_str(), nsVDFile::kWrite | nsVDFile::kCreateAlways);
+	VDBufferedWriteStream bsout(&fsout, 4096);
 
 	IATDebugTarget *target = g_debugger.GetTarget();
 
@@ -8670,30 +8759,32 @@ void ATConsoleCmdWriteMem(ATDebuggerCmdParser& parser) {
 		const uint32 tc = remaining > 256 ? 256 : remaining;
 
 		target->DebugReadMemory(ptr, buf, tc);
-		fwrite(buf, tc, 1, f);
+
+		bsout.Write(buf, tc);
 
 		remaining -= tc;
 		ptr += tc;
 	}
 
-	fclose(f);
+	bsout.Flush();
+	fsout.close();
 
-	ATConsolePrintf("Wrote %s-%s to %s\n"
+	ATConsolePrintf("Wrote %s-%s to %ls\n"
 		, g_debugger.GetAddressText(addr, false).c_str()
 		, g_debugger.GetAddressText(addr + len - 1, false).c_str()
 		, filename->c_str());
 }
 
 void ATConsoleCmdLoadSymbols(ATDebuggerCmdParser& parser) {
-	ATDebuggerCmdPath pathArg(false);
+	ATDebuggerCmdPath pathArg(false, false);
 
 	parser >> pathArg >> 0;
 
 	if (pathArg.IsValid()) {
-		uint32 idx = ATGetDebugger()->LoadSymbols(VDTextAToW(pathArg->c_str()).c_str(), true, nullptr, true);
+		uint32 idx = ATGetDebugger()->LoadSymbols(pathArg->c_str(), true, nullptr, true);
 
 		if (idx)
-			ATConsolePrintf("Loaded symbol file %s.\n", pathArg->c_str());
+			ATConsolePrintf("Loaded symbol file %ls.\n", pathArg->c_str());
 	} else {
 		ATGetDebugger()->LoadAllDeferredSymbols();
 	}
@@ -8947,7 +9038,7 @@ void ATConsoleCmdPathReset(ATDebuggerCmdParser& parser) {
 }
 
 void ATConsoleCmdPathDump(ATDebuggerCmdParser& parser) {
-	ATDebuggerCmdPath pathArg(true);
+	ATDebuggerCmdPath pathArg(true, true);
 
 	parser >> pathArg >> 0;
 
@@ -8972,28 +9063,32 @@ void ATConsoleCmdPathDump(ATDebuggerCmdParser& parser) {
 
 	const uint32 moduleId = g_debugger.AddModule(0, 0, 0x10000, pSymbolStore, NULL, NULL);
 
-	FILE *f = fopen(pathArg->c_str(), "w");
-	if (!f) {
-		ATConsolePrintf("Unable to open file for write: %s\n", pathArg->c_str());
-		g_debugger.UnloadSymbols(moduleId);
-		return;
-	} else {
+	try {
+		VDFileStream fsout(pathArg->c_str(), nsVDFile::kWrite | nsVDFile::kCreateAlways);
+		VDTextOutputStream txout(&fsout);
+
 		sint32 addr = -1;
-		char buf[256];
+		VDStringA buf;
+
 		for(;;) {
 			addr = cpu.GetNextPathInstruction(addr);
 			if (addr < 0)
 				break;
 
 			ATDisassembleInsn(buf, addr, true);
-			fputs(buf, f);
+			txout.PutLine(buf.data(), (int)buf.size());
 		}
+	
+		txout.Flush();
+		fsout.close();
+	} catch(...) {
+		g_debugger.UnloadSymbols(moduleId);
+		throw;
 	}
-	fclose(f);
 
 	g_debugger.UnloadSymbols(moduleId);
 
-	ATConsolePrintf("Paths dumped to %s\n", pathArg->c_str());
+	ATConsolePrintf("Paths dumped to %ls\n", pathArg->c_str());
 }
 
 void ATConsoleCmdPathBreak(ATDebuggerCmdParser& parser) {
@@ -9021,7 +9116,7 @@ void ATConsoleCmdPathBreak(ATDebuggerCmdParser& parser) {
 }
 
 void ATConsoleCmdLoadKernelSymbols(ATDebuggerCmdParser& parser) {
-	ATDebuggerCmdPath pathArg(false);
+	ATDebuggerCmdPath pathArg(false, false);
 
 	parser >> pathArg >> 0;
 
@@ -9032,13 +9127,13 @@ void ATConsoleCmdLoadKernelSymbols(ATDebuggerCmdParser& parser) {
 
 	vdrefptr<IATSymbolStore> symbols;
 	try {
-		ATLoadSymbols(VDTextAToW(pathArg->c_str()).c_str(), ~symbols);
+		ATLoadSymbols(pathArg->c_str(), ~symbols);
 	} catch(const MyError& e) {
-		throw MyError("Unable to load symbols from %s: %s", pathArg->c_str(), e.gets());
+		throw MyError("Unable to load symbols from %ls: %s", pathArg->c_str(), e.gets());
 	}
 
 	g_debugger.AddModule(0, 0xD800, 0x2800, symbols, "Kernel", NULL);
-	ATConsolePrintf("Kernel symbols loaded: %s\n", pathArg->c_str());
+	ATConsolePrintf("Kernel symbols loaded: %ls\n", pathArg->c_str());
 }
 
 void ATConsoleCmdDiskOrder(ATDebuggerCmdParser& parser) {
@@ -9297,21 +9392,27 @@ void ATConsoleCmdDiskWriteSec(ATDebuggerCmdParser& parser) {
 		g_debugger.GetAddressText(addrhi + ((addrlo - 1) & kATAddressOffsetMask), false).c_str(), sector);
 }
 
-void ATConsoleCmdCasLogData(ATDebuggerCmdParser& parser) {
-	parser >> 0;
-
-	ATCassetteEmulator& cas = g_sim.GetCassette();
-
-	bool newSetting = !cas.IsLogDataEnabled();
-	cas.SetLogDataEnable(newSetting);
-
-	ATConsolePrintf("Verbose cassette read data logging is now %s.\n", newSetting ? "enabled" : "disabled");
-}
-
 void ATConsoleCmdDumpPIAState(ATDebuggerCmdParser& parser) {
 	parser >> 0;
 
 	g_sim.GetPIA().DumpState();
+
+	auto devices = g_sim.GetDeviceManager()->GetDevices(false, false);
+	ATDebuggerConsoleOutput conout;
+
+	for(IATDevice *dev : devices) {
+		ATPIAEmulator *pia = vdpoly_cast<ATPIAEmulator *>(dev);
+
+		if (pia) {
+			conout.WriteLine("");
+
+			ATDeviceInfo info;
+			dev->GetDeviceInfo(info);
+
+			conout("%ls:", info.mpDef->mpName);
+			pia->DumpState();
+		}
+	}
 }
 
 void ATConsoleCmdDumpVBXEState(ATDebuggerCmdParser& parser) {
@@ -11738,10 +11839,10 @@ void ATConsoleCmdIDEWriteSec(ATDebuggerCmdParser& parser) {
 }
 
 void ATConsoleCmdRunBatchFile(ATDebuggerCmdParser& parser) {
-	ATDebuggerCmdPath path(true);
+	ATDebuggerCmdPath path(true, false);
 	parser >> path >> 0;
 
-	g_debugger.QueueBatchFile(VDTextAToW(path->c_str()).c_str());
+	g_debugger.QueueBatchFile(path->c_str());
 }
 
 void ATConsoleCmdOnExeLoad(ATDebuggerCmdParser& parser) {
@@ -12150,7 +12251,7 @@ void ATConsoleCmdNetstat(ATDebuggerCmdParser& parser) {
 }
 
 void ATConsoleCmdNetPCap(ATDebuggerCmdParser& parser) {
-	ATDebuggerCmdPath pathArg(true);
+	ATDebuggerCmdPath pathArg(true, true);
 
 	parser >> pathArg >> 0;
 
@@ -12159,7 +12260,7 @@ void ATConsoleCmdNetPCap(ATDebuggerCmdParser& parser) {
 	if (!dc)
 		throw MyError("No network emulation active.");
 
-	vdpoly_cast<ATDragonCartEmulator *>(dc)->OpenPacketTrace(VDTextAToW(pathArg->c_str()).c_str());
+	vdpoly_cast<ATDragonCartEmulator *>(dc)->OpenPacketTrace(pathArg->c_str());
 
 	ATConsolePrintf("Packet trace opened: %s\n", pathArg->c_str());
 }
@@ -12825,10 +12926,10 @@ void ATConsoleCmdLogClose(ATDebuggerCmdParser& parser) {
 }
 
 void ATConsoleCmdLogOpen(ATDebuggerCmdParser& parser) {
-	ATDebuggerCmdPath path(true);
+	ATDebuggerCmdPath path(true, true);
 	parser >> path >> 0;
 
-	ATConsoleOpenLogFile(VDTextAToW(path->c_str()).c_str());
+	ATConsoleOpenLogFile(path->c_str());
 }
 
 void ATDebuggerInitCommands() {
@@ -12921,7 +13022,6 @@ void ATDebuggerInitCommands() {
 		{ ".basic_vars",		ATConsoleCmdBasicVars },
 		{ ".batch",				ATConsoleCmdRunBatchFile },
 		{ ".beam",				ATConsoleCmdBeam },
-		{ ".caslogdata",		ATConsoleCmdCasLogData },
 		{ ".ciodevs",			ATConsoleCmdCIODevs },
 		{ ".covox",				ATConsoleCmdCovox },
 		{ ".crc",				ATConsoleCmdCRC },

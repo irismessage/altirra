@@ -39,6 +39,7 @@ int ATExceptionFilter(DWORD code, EXCEPTION_POINTERS *exp) {
 		return EXCEPTION_CONTINUE_SEARCH;
 
 	WCHAR buf[1024];
+	bool dumpSucceeded = false;
 
 	HMODULE hmodDbgHelp = VDLoadSystemLibraryW32("dbghelp");
 	if (hmodDbgHelp) {
@@ -80,14 +81,17 @@ int ATExceptionFilter(DWORD code, EXCEPTION_POINTERS *exp) {
 					HANDLE hFile = CreateFile(buf, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 
 					if (hFile != INVALID_HANDLE_VALUE) {
-						pMiniDumpWriteDump(
+						if (pMiniDumpWriteDump(
 								GetCurrentProcess(),
 								GetCurrentProcessId(),
 								hFile,
 								g_ATDumpWithFullHeap ? MiniDumpWithFullMemory : MiniDumpNormal,
 								&exInfo,
 								NULL,
-								NULL);
+								NULL))
+						{
+							dumpSucceeded = true;
+						}
 
 						CloseHandle(hFile);
 					}
@@ -103,17 +107,22 @@ int ATExceptionFilter(DWORD code, EXCEPTION_POINTERS *exp) {
 		SetWindowLongPtr(g_hwnd, GWLP_WNDPROC, (LONG_PTR)(IsWindowUnicode(g_hwnd) ? DefWindowProcW : DefWindowProcA));
 	}
 
-	wsprintf(buf, L"A fatal error has occurred in the emulator. A minidump file called AltirraCrash.mdmp has been written for diagnostic purposes.\n"
+	const WCHAR *writeResult = dumpSucceeded
+		? L"A minidump file called AltirraCrash.mdmp has been written for diagnostic purposes."
+		: L"(Could not write AltirraCrash.mdmp!)";
+
+	wsprintf(buf, L"A fatal error has occurred in the emulator. %ls\n"
 		L"\n"
 #ifdef VD_CPU_X86
-		L"Exception code: %08x  PC: %08x", code, exp->ContextRecord->Eip);
+		L"Exception code: %08X  PC: %08X", writeResult, code, exp->ContextRecord->Eip);
 #elif defined(VD_CPU_AMD64)
-		L"Exception code: %08x  PC: %08x`%08x", code, (uint32)(exp->ContextRecord->Rip >> 32), (uint32)exp->ContextRecord->Rip);
+		L"Exception code: %08X  PC: %08X`%08X", writeResult, code, (uint32)(exp->ContextRecord->Rip >> 32), (uint32)exp->ContextRecord->Rip);
 #elif defined(VD_CPU_ARM64)
-		L"Exception code: %08x  PC: %08x", code, exp->ContextRecord->Pc);
+		L"Exception code: %08X  PC: %08X`%08X", writeResult, code, (uint32)(exp->ContextRecord->Pc >> 32), (uint32)exp->ContextRecord->Pc);
 #else
 	#error Platform not supported
 #endif
+
 	MessageBoxW(g_hwnd, buf, L"Altirra Program Failure", MB_OK | MB_ICONERROR);
 
 	TerminateProcess(GetCurrentProcess(), code);

@@ -2059,7 +2059,7 @@ public:
 		if (!context.mpAntic)
 			return false;
 
-		result = context.mpAntic->GetFrameCounter();
+		result = context.mpAntic->GetRawFrameCounter();
 		return true;
 	}
 
@@ -2139,6 +2139,29 @@ public:
 
 	void ToString(VDStringA& s, int prec) {
 		s += "@xpc";
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeTapePos final : public ATDebugExpNode {
+public:
+	ATDebugExpNodeTapePos() : ATDebugExpNode(kATDebugExpNodeType_TapePos) {}
+
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeTapePos; }
+
+	bool IsAddress() const override { return true; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+		if (!context.mpTapePosFn)
+			return false;
+
+		result = context.mpTapePosFn(context.mpTapePosData);
+		return true;
+	}
+
+	void ToString(VDStringA& s, int prec) {
+		s += "@tapepos";
 	}
 };
 
@@ -2274,7 +2297,8 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup
 		kTokFrame,
 		kTokClock,
 		kTokCpuClock,
-		kTokXPC
+		kTokXPC,
+		kTokTapePos,
 	};
 
 	vdfastvector<ATDebugExpNode *> valstack;
@@ -2628,6 +2652,8 @@ force_ident:
 							tok = kTokXBankCPU;
 						else if (name == "xbankantic")
 							tok = kTokXBankANTIC;
+						else if (name == "tapepos")
+							tok = kTokTapePos;
 						else
 							throw ATDebuggerExprParseException("Unknown special variable '@%.*s'", nameEnd - nameStart, nameStart);
 					}
@@ -2826,6 +2852,12 @@ force_ident:
 					needValue = false;
 				} else if (tok == kTokCpuClock) {
 					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeCpuClock);
+
+					valstack.push_back(node);
+					node.release();
+					needValue = false;
+				} else if (tok == kTokTapePos) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeTapePos);
 
 					valstack.push_back(node);
 					node.release();

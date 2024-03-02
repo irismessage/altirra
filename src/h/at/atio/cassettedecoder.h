@@ -46,14 +46,16 @@ public:
 	ATCassetteDecoderDirect();
 
 	void Reset();
+	void Process(bool enablePrefilter, const sint16 *samples, uint32 n, uint32 *bitfield, uint32 bitoffset, float *adest);
 
-	template<bool T_DoAnalysis>
+private:
+	template<bool T_DoAnalysis, bool T_EnablePreFilter>
 	void Process(const sint16 *samples, uint32 n, uint32 *bitfield, uint32 bitoffset, float *adest);
 
-protected:
 	bool mbCurrentState;
 	float mPrevLevel;
 	float mAGC;
+	float mPrefilterState;
 };
 
 #endif

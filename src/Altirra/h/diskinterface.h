@@ -20,21 +20,15 @@
 
 #include <vd2/system/file.h>
 #include <vd2/system/time.h>
+#include <vd2/system/unknown.h>
 #include <vd2/system/vdtypes.h>
+#include <at/atcore/devicediskdrive.h>
 #include <at/atcore/media.h>
 #include <at/atcore/notifylist.h>
 #include <at/atio/diskimage.h>
 
 class IATUIRenderer;
 class IATDiskImage;
-
-class IATDiskInterfaceClient {
-public:
-	virtual void OnDiskChanged(bool mediaRemoved) = 0;
-	virtual void OnWriteModeChanged() = 0;
-	virtual void OnTimingModeChanged() = 0;
-	virtual void OnAudioModeChanged() = 0;
-};
 
 // ATDiskInterface
 //
@@ -130,9 +124,6 @@ public:
 	// false indicates an in-place change (format).
 	void OnDiskChanged(bool mediaRemoved);
 
-	// Signals that an error has occurred at host level when accessing the disk image.
-	void OnDiskError();
-
 	VDStringW GetMountedImageLabel() const;
 
 	uint32 GetSectorSize(uint16 sector) const;
@@ -147,6 +138,13 @@ public:
 
 	void AddStateChangeHandler(const vdfunction<void()> *fn);
 	void RemoveStateChangeHandler(const vdfunction<void()> *fn);
+	
+	// Returns true if the client(s) attached to this disk interface can support the disk
+	// image, false if none can. (This means that when a full drive emulator is present,
+	// the standard emulator must not veto the image.) Note that unsupported disk images
+	// can still be mounted and all clients have to deal with it -- it's just that the
+	// image may not work in the disk drive.
+	bool IsImageSupported(const IATDiskImage& image) const;
 
 public:
 	size_t GetClientCount() const;

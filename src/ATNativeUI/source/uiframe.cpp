@@ -22,12 +22,15 @@
 #include <commctrl.h>
 #include <tchar.h>
 #include <uxtheme.h>
+#include <vd2/system/binary.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/system/vecmath.h>
 #include <vd2/system/vectors.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/system/math.h>
 #include <at/atui/constants.h>
+#include <at/atnativeui/theme.h>
 #include <at/atnativeui/uiframe.h>
 
 #ifdef NTDDI_WIN10_RS3
@@ -316,10 +319,17 @@ void ATContainerSplitterBar::OnPaint() {
 		RECT r;
 		GetClientRect(mhwnd, &r);
 
-		if (GetCapture() == mhwnd)
-			FillRect(hdc, &r, (HBRUSH)(COLOR_3DSHADOW+1));
-		else
-			FillRect(hdc, &r, (HBRUSH)(COLOR_3DFACE+1));
+		const bool dragging = (GetCapture() == mhwnd);
+
+		if (ATUIIsDarkThemeActive()) {
+			SetDCBrushColor(hdc, dragging ? RGB(192, 192, 192) : RGB(48, 48, 48));
+			FillRect(hdc, &r, (HBRUSH)GetStockObject(DC_BRUSH));
+		} else {
+			if (dragging)
+				FillRect(hdc, &r, (HBRUSH)(COLOR_3DSHADOW+1));
+			else
+				FillRect(hdc, &r, (HBRUSH)(COLOR_3DFACE+1));
+		}
 
 		EndPaint(mhwnd, &ps);
 	}
@@ -1107,6 +1117,14 @@ void ATContainerDockingPane::NotifyFontsUpdated() {
 		child->NotifyFontsUpdated();
 }
 
+void ATContainerDockingPane::NotifyThemeUpdated() {
+	for(ATFrameWindow *frame : mContent)
+		frame->NotifyThemeUpdated();
+
+	for(ATContainerDockingPane *child : mChildren)
+		child->NotifyThemeUpdated();
+}
+
 void ATContainerDockingPane::NotifyDpiChanged(uint32 dpi) {
 	for(ATFrameWindow *frame : mContent)
 		frame->NotifyDpiChanged(dpi);
@@ -1646,6 +1664,8 @@ void ATContainerDockingPane::OnTabChange(HWND hwndSender) {
 ///////////////////////////////////////////////////////////////////////////////
 
 ATContainerWindow::ATContainerWindow() {
+	mpOnThemeChanged = [this] { OnThemeChanged(); };
+
 	mpDockingPane = new ATContainerDockingPane(this);
 	mpDockingPane->AddRef();
 	mpDockingPane->SetPinned(true);
@@ -2174,10 +2194,14 @@ bool ATContainerWindow::OnCreate() {
 	UpdateMonitorDpi();
 	RecreateSystemObjects();
 	OnSize();
+
+	ATUIRegisterThemeChangeNotification(&mpOnThemeChanged);
 	return true;
 }
 
 void ATContainerWindow::OnDestroy() {
+	ATUIUnregisterThemeChangeNotification(&mpOnThemeChanged);
+
 	mpActiveFrame = NULL;
 	Clear();
 	DestroySystemObjects();
@@ -2352,6 +2376,15 @@ void ATContainerWindow::DestroySystemObjects() {
 	}
 }
 
+void ATContainerWindow::OnThemeChanged() {
+	SuspendLayout();
+
+	if (mpDockingPane)
+		mpDockingPane->NotifyThemeUpdated();
+
+	ResumeLayout();
+}
+
 void ATContainerWindow::UpdateMonitorDpi() {
 	uint32 dpi = ATUIGetWindowDpiW32(mhwnd);
 
@@ -2519,6 +2552,20 @@ void ATFrameWindow::NotifyFontsUpdated() {
 
 		if (hwndChild)
 			SendMessage(hwndChild, ATWM_FONTSUPDATED, 0, 0);
+	}
+}
+
+void ATFrameWindow::NotifyThemeUpdated() {
+	if (mhwnd) {
+		// We may have an app-local theme update that is not seen by the system if dark mode
+		// was flipped, so force a redraw of the frame window borders to pick up caption color
+		// changes.
+		RedrawWindow(mhwnd, NULL, NULL, RDW_FRAME | RDW_INVALIDATE);
+
+		HWND hwndChild = GetWindow(mhwnd, GW_CHILD);
+
+		if (hwndChild)
+			SendMessage(hwndChild, ATWM_THEMEUPDATED, 0, 0);
 	}
 }
 
@@ -3056,17 +3103,43 @@ void ATFrameWindow::PaintCaption(HRGN clipRegion) {
 	if (!hdc)
 		return;
 
-	if (mFrameMode == kFrameModeEdge) {
-		int xe = GetSystemMetrics(SM_CXEDGE);
-		int ye = GetSystemMetrics(SM_CYEDGE);
+	int savedDC = SaveDC(hdc);
+	if (!savedDC) {
+		ReleaseDC(mhwnd, hdc);
+		return;
+	}
 
-		RECT rc;
-		rc.left = mClientRect.left - xe;
-		rc.top = mClientRect.top - ye;
-		rc.right = mClientRect.right + xe;
-		rc.bottom = mClientRect.bottom + ye;
-		DrawEdge(hdc, &rc, EDGE_SUNKEN, BF_RECT);
+	const int xe = GetSystemMetrics(SM_CXEDGE);
+	const int ye = GetSystemMetrics(SM_CYEDGE);
+
+	RECT rc;
+	rc.left = mClientRect.left - xe;
+	rc.top = mClientRect.top - ye;
+	rc.right = mClientRect.right + xe;
+	rc.bottom = mClientRect.bottom + ye;
+
+	const ATUIThemeColors& tc = ATUIGetThemeColors();
+
+	if (ATUIIsDarkThemeActive()) {
+		const HBRUSH hbr = (HBRUSH)GetStockObject(DC_BRUSH);
+		SetDCBrushColor(hdc, RGB(32, 32, 32));
+
+		const RECT r1 { rc.left, rc.top, rc.right, rc.top + ye };
+		FillRect(hdc, &r1, hbr);
+		
+		const RECT r2 { rc.left, rc.top + ye, rc.left + xe, rc.bottom - ye };
+		FillRect(hdc, &r2, hbr);
+		
+		const RECT r3 { rc.right - xe, rc.top + ye, rc.right, rc.bottom - ye };
+		FillRect(hdc, &r3, hbr);
+		
+		const RECT r4 { rc.left, rc.bottom - ye, rc.right, rc.bottom };
+		FillRect(hdc, &r4, hbr);
 	} else {
+		DrawEdge(hdc, &rc, EDGE_SUNKEN, BF_RECT);
+	}
+
+	if (mFrameMode != kFrameModeEdge) {
 		RECT r;
 		GetWindowRect(mhwnd, &r);
 		r.right -= r.left;
@@ -3074,26 +3147,14 @@ void ATFrameWindow::PaintCaption(HRGN clipRegion) {
 		r.top = 0;
 		r.left = 0;
 
-		int xe = GetSystemMetrics(SM_CXEDGE);
-		int ye = GetSystemMetrics(SM_CYEDGE);
-
-		RECT rc;
-		rc.left = mClientRect.left - xe;
-		rc.top = mClientRect.top - ye;
-		rc.right = mClientRect.right + xe;
-		rc.bottom = mClientRect.bottom + ye;
-		DrawEdge(hdc, &rc, EDGE_SUNKEN, BF_RECT);
-
 		RECT r2 = r;
 		if (r2.right < 0)
 			r2.right = 0;
 
-		BOOL gradientsEnabled = FALSE;
-		SystemParametersInfo(SPI_GETGRADIENTCAPTIONS, 0, &gradientsEnabled, FALSE);
+		const uint32 c0 = VDSwizzleU32(mbActiveCaption ? tc.mActiveCaption1 : tc.mInactiveCaption1) >> 8;
+		const uint32 c1 = VDSwizzleU32(mbActiveCaption ? tc.mActiveCaption2 : tc.mInactiveCaption2) >> 8;
 
-		if (gradientsEnabled) {
-			const uint32 c0 = GetSysColor(mbActiveCaption ? COLOR_ACTIVECAPTION : COLOR_INACTIVECAPTION);
-			const uint32 c1 = GetSysColor(mbActiveCaption ? COLOR_GRADIENTACTIVECAPTION : COLOR_GRADIENTINACTIVECAPTION);
+		if (c0 != c1) {
 			TRIVERTEX v[2];
 			v[0].x = r.left;
 			v[0].y = r.top;
@@ -3113,7 +3174,8 @@ void ATFrameWindow::PaintCaption(HRGN clipRegion) {
 			gr.LowerRight = 1;
 			GradientFill(hdc, v, 2, &gr, 1, GRADIENT_FILL_RECT_H);
 		} else {
-			FillRect(hdc, &r2, mbActiveCaption ? (HBRUSH)(COLOR_ACTIVECAPTION + 1) : (HBRUSH)(COLOR_INACTIVECAPTION + 1));
+			SetDCBrushColor(hdc, c0);
+			FillRect(hdc, &r2, (HBRUSH)GetStockObject(DC_BRUSH));
 		}
 		
 		if (mpContainer) {
@@ -3122,10 +3184,9 @@ void ATFrameWindow::PaintCaption(HRGN clipRegion) {
 				HGDIOBJ holdfont = SelectObject(hdc, hfont);
 
 				if (holdfont) {
-					//SetBkMode(hdc, OPAQUE);
 					SetBkMode(hdc, TRANSPARENT);
-					SetBkColor(hdc, GetSysColor(mbActiveCaption ? COLOR_ACTIVECAPTION : COLOR_INACTIVECAPTION));
-					SetTextColor(hdc, GetSysColor(mbActiveCaption ? COLOR_CAPTIONTEXT : COLOR_INACTIVECAPTIONTEXT));
+
+					SetTextColor(hdc, VDSwizzleU32(mbActiveCaption ? tc.mActiveCaptionText : tc.mInactiveCaptionText) >> 8);
 					SetTextAlign(hdc, TA_LEFT | TA_TOP);
 
 					RECT rc = { mCaptionRect.left + xe*2, mCaptionRect.top, mCaptionRect.right, mCaptionRect.bottom };
@@ -3145,7 +3206,8 @@ void ATFrameWindow::PaintCaption(HRGN clipRegion) {
 					r3.right = mCloseRect.right;
 					r3.bottom = mCloseRect.bottom;
 
-					SetTextColor(hdc, RGB(0, 0, 0));
+					SetTextColor(hdc, VDSwizzleU32(tc.mCaptionIcon) >> 8);
+
 					if (mbCloseDown)
 						DrawText(hdc, _T("r"), 1, &r3, DT_NOPREFIX | DT_LEFT | DT_BOTTOM | DT_SINGLELINE);
 					else
@@ -3156,6 +3218,7 @@ void ATFrameWindow::PaintCaption(HRGN clipRegion) {
 		}
 	}
 
+	RestoreDC(hdc, savedDC);
 	ReleaseDC(mhwnd, hdc);
 }
 
@@ -3543,6 +3606,10 @@ LRESULT ATUIPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case ATWM_FONTSUPDATED:
 			OnFontsUpdated();
 			break;
+
+		case ATWM_THEMEUPDATED:
+			OnFontsUpdated();
+			break;
 	}
 
 	return ATUINativeWindow::WndProc(msg, wParam, lParam);
@@ -3565,6 +3632,9 @@ void ATUIPane::OnSetFocus() {
 }
 
 void ATUIPane::OnFontsUpdated() {
+}
+
+void ATUIPane::OnThemeUpdated() {
 }
 
 bool ATUIPane::OnCommand(uint32 id, uint32 extcode) {

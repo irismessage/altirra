@@ -61,6 +61,21 @@ bool ATDecodeVFSPath(VDStringW& dst, const VDStringSpanW& src);
 void ATEncodeVFSPath(VDStringW& dst, const VDStringSpanW& src, bool filepath);
 
 ATVFSProtocol ATParseVFSPath(const wchar_t *s, VDStringW& basePath, VDStringW& subPath);
+VDStringW ATMakeVFSPath(ATVFSProtocol protocol, const wchar_t *basePath, const wchar_t *subPath);
+VDStringW ATMakeVFSPath(const wchar_t *protocolAndBasePath, const wchar_t *subPath);
+
+// Given a path, return the path to the parent. Examples:
+//
+//	C:			-> C:
+//	C:\			-> C:\
+//	C:\x		-> C:\
+//	C:\x\		-> C:\
+//	file://x/y	-> file://x/
+//	zip://a/b!	-> zip://a/b!
+//	zip://a/b!c	-> zip://a/b!
+//	zip://a/b!c/d -> zip://a/b!c/
+
+const wchar_t *ATVFSSplitPathFile(const wchar_t *path);
 
 bool ATVFSIsFilePath(const wchar_t *s);
 

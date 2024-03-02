@@ -51,7 +51,7 @@ vdfuncbase& vdfuncbase::operator=(const vdfuncbase& src) {
 	return *this;
 }
 
-vdfuncbase& vdfuncbase::operator=(vdfuncbase&& src) {
+vdnothrow vdfuncbase& vdfuncbase::operator=(vdfuncbase&& src) vdnoexcept {
 	clear();
 
 	mpFn = src.mpFn;

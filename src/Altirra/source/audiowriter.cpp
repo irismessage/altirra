@@ -250,7 +250,7 @@ void ATAudioWriter::WriteRawAudioMix(const float *left, const float *right, uint
 		uint32 tc = std::min<uint32>(count, vdcountof(mixbuf));
 
 		for(uint32 i=0; i<tc; ++i)
-			mixbuf[i] = left[i] + right[i];
+			mixbuf[i] = (left[i] + right[i]) * 0.5f;
 
 		WriteRawAudio(mixbuf, nullptr, tc, 0);
 

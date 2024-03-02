@@ -17,6 +17,59 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <vd2/system/error.h>
+#include <at/atcore/serializable.h>
 #include <at/atio/savestate.h>
 
 extern const uint8 kATSaveStateHeader[12]={'A', 'l', 't', 'S', 'a', 'v', 'e', 0x0D, 0x0A, 0x1A, 0x00, 0x80 };
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATSaveStateImage2 final : public vdrefcounted<IATSaveStateImage2> {
+public:
+	ATSaveStateImage2(IATSerializable *rootObj);
+
+	void *AsInterface(uint32 id);
+
+	ATImageType GetImageType() const override { return kATImageType_SaveState2; }
+	std::optional<uint32> GetImageFileCRC() const { return {}; }
+	std::optional<ATChecksumSHA256> GetImageFileSHA256() const { return {}; }
+
+	const IATSerializable *GetRoot() const override { return mpRoot; }
+
+private:
+	vdrefptr<IATSerializable> mpRoot;
+};
+
+ATSaveStateImage2::ATSaveStateImage2(IATSerializable *rootObj)
+	: mpRoot(rootObj)
+{
+}
+
+void *ATSaveStateImage2::AsInterface(uint32 id) {
+	switch(id) {
+		case IATSaveStateImage2::kTypeID:
+			return static_cast<IATSaveStateImage2 *>(this);
+	}
+
+	return nullptr;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+vdfunction<void(VDZipArchive&, IATSerializable **)> g_ATSaveState2Reader;
+
+void ATSetSaveState2Reader(vdfunction<void(VDZipArchive&, IATSerializable **)> fn) {
+	g_ATSaveState2Reader = std::move(fn);
+}
+
+void ATReadSaveState2(VDZipArchive& zip, IATSaveStateImage2 **saveState) {
+	if (!g_ATSaveState2Reader)
+		throw MyError("Save states are not supported.");
+
+	vdrefptr<IATSerializable> rootObj;
+	g_ATSaveState2Reader(zip, ~rootObj);
+
+	vdrefptr<ATSaveStateImage2> saveStateObj(new ATSaveStateImage2(rootObj));
+	*saveState = saveStateObj.release();
+}

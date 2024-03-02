@@ -432,7 +432,11 @@ bool ATUIHandleMenuCommand(ATUICommandManager& cmdmgr, uint32 id) {
 	uint32 offset = id - 40000;
 
 	if (offset < (uint32)g_ATUIMenuBoundCommands.size()) {
-		cmdmgr.ExecuteCommand(g_ATUIMenuBoundCommands[offset].first);
+		try {
+			cmdmgr.ExecuteCommand(g_ATUIMenuBoundCommands[offset].first);
+		} catch(const MyError& e) {
+			e.post(g_hwnd, "AltirraShell Error");
+		}
 		return true;
 	}
 

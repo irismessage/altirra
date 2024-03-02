@@ -32,10 +32,26 @@
             text-align: left;
             background: #eca;
           }
+
+          body.dark table.compat th {
+            background: #322;
+          }
+
+          body.dark table.compat td.category {
+            background: #281818;
+          }
+
+          body.dark table.compat td {
+            background: #111;
+          }
+
         </style>
       </head>
       <body>
         <div class="header">
+          <div class="header-themetoggle">
+            <a href="javascript:toggle_theme();">Toggle theme</a>
+          </div>
           <div class="header-banner">Altirra Help</div>
           <div class="header-topic">
             <xsl:value-of select="@title"/>
@@ -44,6 +60,26 @@
         <div class="main">
           <xsl:apply-templates/>
         </div>
+        <script>
+          if (window.location.hash == "#dark-theme")
+            window.name = "dark";
+          else if (window.location.hash == "#light-theme")
+            window.name = "";
+
+          function toggle_theme(theme) {
+            window.name = (window.name == "dark" ? "" : "dark");
+            update_theme();
+          }
+
+          function update_theme() {
+            if (window.name == "dark")
+              document.body.className = "dark";
+            else
+              document.body.className = "";
+          }
+
+          update_theme();
+        </script>
       </body>
     </html>
   </xsl:template>

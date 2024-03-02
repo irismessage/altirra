@@ -22,6 +22,7 @@
 #include <optional>
 #include <vd2/system/function.h>
 #include <vd2/system/refcount.h>
+#include <at/atcore/checksum.h>
 #include <at/atio/image.h>
 
 class IVDRandomAccessStream;
@@ -146,11 +147,9 @@ public:
 	// Flush any changes back to the persistent store. Returns true on success or no-op;
 	// false if the image is not updatable. I/O exceptions may be thrown. A dirty image
 	// becomes clean after a successful flush.
-	virtual bool Flush() = 0;
+	virtual void Flush() = 0;
 
 	virtual uint64 GetImageChecksum() const = 0;
-
-	virtual std::optional<uint32> GetImageFileCRC() const = 0;
 
 	virtual void SetPath(const wchar_t *path, ATDiskImageFormat format) = 0;
 	virtual void Save(const wchar_t *path, ATDiskImageFormat format) = 0;

@@ -331,6 +331,13 @@ bool ATCPUDecoderGenerator6809::DecodeInsn(uint8 opcode) {
 			*mpDstState++ = k6809StateWriteByte_1;
 			return true;
 
+		case 0x0D:		// TST direct
+			DecodeAddrDirect_2();
+			*mpDstState++ = k6809StateReadByte_1;
+			*mpDstState++ = k6809StateTest_NZV_1;
+			*mpDstState++ = k6809StateWait_1;
+			return true;
+
 		case 0x0F:		// CLR direct (6)
 			DecodeAddrDirect_2();
 			*mpDstState++ = k6809StateReadByte_1;
@@ -898,6 +905,7 @@ bool ATCPUDecoderGenerator6809::DecodeInsn(uint8 opcode) {
 			return true;
 
 		case 0x7E:		// JMP extended (4)
+			DecodeAddrExtended_3();
 			*mpDstState++ = k6809StateAddrToPC;
 			return true;
 
@@ -1364,6 +1372,7 @@ bool ATCPUDecoderGenerator6809::DecodeInsn(uint8 opcode) {
 		case 0xC9:		// ADCB imm (2)
 			*mpDstState++ = k6809StateReadImm_1;
 			*mpDstState++ = k6809StateAdcB_HNZVC;
+			*mpDstState++ = k6809StateDataToB;
 			return true;
 
 		case 0xCA:		// ORB imm (2)

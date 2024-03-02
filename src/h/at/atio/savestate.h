@@ -24,7 +24,23 @@
 #define f_AT_ATIO_SAVESTATE_H
 
 #include <vd2/system/vdtypes.h>
+#include <vd2/system/refcount.h>
+#include <vd2/system/function.h>
+#include <at/atio/image.h>
+
+class IATSerializable;
+class VDZipArchive;
 
 extern const uint8 kATSaveStateHeader[12];
+
+class IATSaveStateImage2 : public IATImage {
+public:
+	enum : uint32 { kTypeID = 'ssim' };
+	
+	virtual const IATSerializable *GetRoot() const = 0;
+};
+
+void ATSetSaveState2Reader(vdfunction<void (VDZipArchive&, IATSerializable **)> fn);
+void ATReadSaveState2(VDZipArchive& zip, IATSaveStateImage2 **saveState);
 
 #endif	// f_AT_ATIO_SAVESTATE_H

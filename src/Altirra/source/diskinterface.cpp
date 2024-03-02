@@ -362,10 +362,6 @@ void ATDiskInterface::OnDiskChanged(bool mediaRemoved) {
 	NotifyStateResume(true);
 }
 
-void ATDiskInterface::OnDiskError() {
-	SetFlushError(true);
-}
-
 VDStringW ATDiskInterface::GetMountedImageLabel() const {
 	if (!mpDiskImage)
 		return VDStringW(L"(No disk)");
@@ -430,6 +426,15 @@ void ATDiskInterface::RemoveStateChangeHandler(const vdfunction<void()> *fn) {
 	mStateChangeHandlers.Remove(fn);
 }
 
+bool ATDiskInterface::IsImageSupported(const IATDiskImage& image) const {
+	for(auto *client : mClients) {
+		if (!client->IsImageSupported(image))
+			return false;
+	}
+
+	return true;
+}
+
 size_t ATDiskInterface::GetClientCount() const {
 	return mClients.size();
 }
@@ -482,27 +487,30 @@ void ATDiskInterface::Flush(bool ignoreAutoFlush, bool rethrowErrors) {
 	if (!CanFlush(ignoreAutoFlush))
 		return;
 
-	if (!mpDiskImage->IsUpdatable()) {
+	try {
+		mpDiskImage->Flush();
+
+		SetFlushError(false);
+	} catch(const MyError& e) {
 		// remount VRW
 		SetWriteMode((ATMediaWriteMode)(mWriteMode & ~kATMediaWriteMode_AutoFlush));
 
+		// set flush error indicator
 		SetFlushError(true);
-		throw MyError("The current disk image cannot be updated.");
-	} else {
-		try {
-			if (!mpDiskImage->Flush())
-				throw MyError("The current disk image cannot be updated.");
 
-			SetFlushError(false);
-		} catch(const MyError&) {
-			// remount VRW
-			SetWriteMode((ATMediaWriteMode)(mWriteMode & ~kATMediaWriteMode_AutoFlush));
+		if (rethrowErrors)
+			throw;
+		else if (mpUIRenderer) {
+			VDStringW msg = VDTextAToW(e.c_str());
 
-			// set flush error indicator
-			SetFlushError(true);
-
-			if (rethrowErrors)
-				throw;
+			for(wchar_t& c : msg) {
+				if (c == L'\n')
+					c = ' ';
+			}
+			
+			VDStringW s;
+			s.sprintf(L"D%u: remounted virtual read/write due to write error: %ls", mIndex + 1, msg.c_str());
+			mpUIRenderer->ReportError(s.c_str());
 		}
 	}
 

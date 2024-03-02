@@ -5,7 +5,6 @@
     <ProjectGuid>{81ADB599-84B5-4FF3-B781-FB39D5CC63EE}</ProjectGuid>
     <RootNamespace>Tessa</RootNamespace>
     <Keyword>Win32Proj</Keyword>
-    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="..\Build\PlatformSetup.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />

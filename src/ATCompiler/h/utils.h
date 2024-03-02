@@ -19,6 +19,6 @@
 #ifndef f_ATC_UTILS_H
 #define f_ATC_UTILS_H
 
-void fail(const char *msg, ...);
+[[noreturn]] void fail(const char *msg, ...);
 
 #endif

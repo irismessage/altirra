@@ -90,6 +90,8 @@ struct ATDebuggerSystemState {
 	uint16	mFramePC;
 	bool	mbRunning;
 
+	uint32	mCycle;
+
 	IATDebugTarget *mpDebugTarget;
 };
 
@@ -131,6 +133,11 @@ public:
 
 struct ATDebuggerOpenEvent {
 	bool mbAllowOpen;
+};
+
+struct ATDebuggerRequestFileEvent {
+	VDStringW mPath;
+	bool mbSave;
 };
 
 struct ATDebuggerStepRange {
@@ -192,6 +199,9 @@ public:
 	virtual void AddClient(IATDebuggerClient *client, bool requestUpdate = false) = 0;
 	virtual void RemoveClient(IATDebuggerClient *client) = 0;
 	virtual void RequestClientUpdate(IATDebuggerClient *client) = 0;
+	
+	virtual void SetAutoLoadSystemSymbols(bool enable) = 0;
+	virtual bool IsAutoLoadSystemSymbolsEnabled() const = 0;
 
 	virtual ATDebuggerSymbolLoadMode GetSymbolLoadMode(bool whenEnabled) const = 0;
 	virtual void SetSymbolLoadMode(bool whenEnabled, ATDebuggerSymbolLoadMode mode) = 0;
@@ -248,6 +258,8 @@ public:
 	virtual VDEvent<IATDebugger, bool>& OnRunStateChanged() = 0;
 
 	virtual VDEvent<IATDebugger, ATDebuggerOpenEvent *>& OnDebuggerOpen() = 0;
+
+	virtual void SetOnRequestFile(vdfunction<void(ATDebuggerRequestFileEvent&)> fn) = 0;
 };
 
 struct ATDebuggerSymbol {

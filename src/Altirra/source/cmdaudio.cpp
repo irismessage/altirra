@@ -33,6 +33,10 @@ void OnCommandAudioToggleMonitor() {
 	g_sim.SetAudioMonitorEnabled(!g_sim.IsAudioMonitorEnabled());
 }
 
+void OnCommandAudioToggleScope() {
+	g_sim.SetAudioScopeEnabled(!g_sim.IsAudioScopeEnabled());
+}
+
 void OnCommandAudioToggleMute() {
 	IATAudioOutput *out = g_sim.GetAudioOutput();
 
@@ -59,6 +63,11 @@ void OnCommandAudioToggleSerialNoise() {
 void OnCommandAudioToggleChannel(int channel) {
 	ATPokeyEmulator& pokey = g_sim.GetPokey();
 	pokey.SetChannelEnabled(channel, !pokey.IsChannelEnabled(channel));
+}
+
+void OnCommandAudioToggleSecondaryChannel(int channel) {
+	ATPokeyEmulator& pokey = g_sim.GetPokey();
+	pokey.SetSecondaryChannelEnabled(channel, !pokey.IsSecondaryChannelEnabled(channel));
 }
 
 void OnCommandAudioToggleSlightSid() {

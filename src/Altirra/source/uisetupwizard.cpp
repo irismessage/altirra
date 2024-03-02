@@ -277,7 +277,7 @@ ATUIDialogSetupWizardExperience::ATUIDialogSetupWizardExperience()
 }
 
 void ATUIDialogSetupWizardExperience::OnDataExchange(bool write) {
-	const bool isAuthentic = g_sim.GetGTIA().GetArtifactingMode() != ATGTIAEmulator::kArtifactNone;
+	const bool isAuthentic = g_sim.GetGTIA().GetArtifactingMode() != ATArtifactMode::None;
 
 	if (write) {
 		bool selectAuthentic = IsButtonChecked(IDC_TYPE_AUTHENTIC);
@@ -295,7 +295,7 @@ void ATUIDialogSetupWizardExperience::OnDataExchange(bool write) {
 						break;
 				}
 
-				g_sim.GetGTIA().SetArtifactingMode(ATGTIAEmulator::kArtifactAutoHi);
+				g_sim.GetGTIA().SetArtifactingMode(ATArtifactMode::AutoHi);
 
 				g_sim.SetCassetteSIOPatchEnabled(false);
 				g_sim.SetDiskSIOPatchEnabled(false);
@@ -307,7 +307,7 @@ void ATUIDialogSetupWizardExperience::OnDataExchange(bool write) {
 				g_sim.SetCassetteSIOPatchEnabled(true);
 				g_sim.SetDiskSIOPatchEnabled(true);
 				g_sim.SetDiskAccurateTimingEnabled(false);
-				g_sim.GetGTIA().SetArtifactingMode(ATGTIAEmulator::kArtifactNone);
+				g_sim.GetGTIA().SetArtifactingMode(ATArtifactMode::None);
 				ATUISetDisplayFilterMode(kATDisplayFilterMode_SharpBilinear);
 				ATUISetViewFilterSharpness(+1);
 			}

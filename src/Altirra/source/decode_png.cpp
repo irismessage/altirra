@@ -302,10 +302,10 @@ PNGDecodeError VDImageDecoderPNG::Decode(const void *src0, uint32 size) {
 	vdblock<uint8> dstbuf((pngrowbytes + 1) * hdr.height);
 
 	VDMemoryStream packedStream(&packeddata[2], packeddata.size() - 6);
-	VDZipStream unpackedStream(&packedStream, packeddata.size() - 6, false);
+	vdautoptr<VDZipStream> unpackedStream(new VDZipStream(&packedStream, packeddata.size() - 6, false));
 
 	try {
-		unpackedStream.Read(dstbuf.data(), dstbuf.size());
+		unpackedStream->Read(dstbuf.data(), dstbuf.size());
 	} catch(const MyError&) {
 		return kPNGDecodeDecompressionFailed;
 	}

@@ -68,7 +68,9 @@
     </None>
     <None Include="source\common-errors.xml" />
     <None Include="source\compatibility.xml" />
-    <None Include="source\debug-basic.xml" />
+    <None Include="source\debug-basic.xml">
+      <SubType>Designer</SubType>
+    </None>
     <None Include="source\debug-diagnostics.xml" />
     <None Include="source\debug-expressions.xml">
       <SubType>Designer</SubType>
@@ -124,9 +126,13 @@
     <None Include="source\debug-profiling.xml">
       <SubType>Designer</SubType>
     </None>
+    <Xml Include="source\customdev-intro.xml" />
+    <Xml Include="source\customeffect.xml" />
+    <Xml Include="source\debug-symboloptions.xml" />
     <Xml Include="source\devices-blackbox.xml" />
     <Xml Include="source\devices-cassette.xml" />
     <Xml Include="source\devices-corvus.xml" />
+    <Xml Include="source\customdev-spec.xml" />
     <Xml Include="source\devices-fulldisk.xml" />
     <Xml Include="source\devices-ideplus2.xml" />
     <Xml Include="source\devices-indusgt.xml">

@@ -21,6 +21,8 @@
 #include <vd2/system/refcount.h>
 #include <at/atcore/device.h>
 
+class IATDeviceManager;
+
 class ATDevice : public vdrefcounted<IATDevice> {
 	ATDevice(const ATDevice&) = delete;
 	ATDevice& operator=(const ATDevice&) = delete;
@@ -30,6 +32,7 @@ public:
 
 	virtual void *AsInterface(uint32 iid) override;
 
+	virtual void SetManager(IATDeviceManager *devMgr);
 	virtual IATDeviceParent *GetParent() override;
 	virtual uint32 GetParentBusIndex() override;
 	virtual void SetParent(IATDeviceParent *parent, uint32 busIndex) override;
@@ -45,10 +48,12 @@ public:
 	virtual void PeripheralColdReset() override;
 
 	virtual void SetTraceContext(ATTraceContext *context) override;
+	virtual bool GetErrorStatus(uint32 idx, VDStringW& error) override;
 
 protected:
-	IATDeviceParent *mpDeviceParent;
-	uint32 mDeviceParentBusIndex;
+	IATDeviceManager *mpDeviceManager = nullptr;
+	IATDeviceParent *mpDeviceParent = nullptr;
+	uint32 mDeviceParentBusIndex = 0;
 };
 
 #endif

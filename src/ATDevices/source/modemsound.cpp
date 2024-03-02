@@ -288,6 +288,7 @@ void ATModemSoundEngine::Reset() {
 void ATModemSoundEngine::Shutdown() {
 	Reset();
 
+	mpSoundGroup = nullptr;
 	mpAudioMixer = nullptr;
 }
 
@@ -314,7 +315,7 @@ void ATModemSoundEngine::PlayDialTone() {
 	Stop();
 
 	mpDualToneSource->SetTones(350.0f, 440.0f);
-	mSoundId = mpAudioMixer->GetSamplePlayer().AddLoopingSound(kATAudioMix_Modem, 0, mpDualToneSource, mpDualToneSource, 1.0f);
+	mSoundId = mpAudioMixer->GetSamplePlayer().AddLoopingSound(*mpSoundGroup, 0, mpDualToneSource, mpDualToneSource, 1.0f);
 }
 
 void ATModemSoundEngine::PlayDTMFTone(uint32 index) {
@@ -343,7 +344,7 @@ void ATModemSoundEngine::PlayDTMFTone(uint32 index) {
 	};
 
 	mpDualToneSource->SetTones(kTones[index][0], kTones[index][1]);
-	mSoundId = mpAudioMixer->GetSamplePlayer().AddLoopingSound(kATAudioMix_Modem, 0, mpDualToneSource, mpDualToneSource, 1.0f);
+	mSoundId = mpAudioMixer->GetSamplePlayer().AddLoopingSound(*mpSoundGroup, 0, mpDualToneSource, mpDualToneSource, 1.0f);
 }
 
 void ATModemSoundEngine::PlayRingingTone() {
@@ -353,7 +354,7 @@ void ATModemSoundEngine::PlayRingingTone() {
 	Stop();
 
 	mpDualToneSource->SetTones(440.0f, 480.0f);
-	mSoundId = mpAudioMixer->GetSamplePlayer().AddLoopingSound(kATAudioMix_Modem, 0, mpDualToneSource, mpDualToneSource, 1.0f);
+	mSoundId = mpAudioMixer->GetSamplePlayer().AddLoopingSound(*mpSoundGroup, 0, mpDualToneSource, mpDualToneSource, 1.0f);
 }
 
 void ATModemSoundEngine::PlayModemData(float volume) {
@@ -363,7 +364,7 @@ void ATModemSoundEngine::PlayModemData(float volume) {
 	Stop();
 
 	vdrefptr<ATSoundSourceModemData> src { new ATSoundSourceModemData };
-	mSoundId = mpAudioMixer->GetSamplePlayer().AddLoopingSound(kATAudioMix_Modem, 0, src, src, volume);
+	mSoundId = mpAudioMixer->GetSamplePlayer().AddLoopingSound(*mpSoundGroup, 0, src, src, volume);
 }
 
 void ATModemSoundEngine::PlayModemDataV22(bool answering, bool scrambled) {
@@ -381,7 +382,7 @@ void ATModemSoundEngine::PlayModemDataV22(bool answering, bool scrambled) {
 	vdrefptr<ATSoundSourceModemDataV22> src { new ATSoundSourceModemDataV22 };
 	src->SetPitch(answering ? 2400.0f : 1200.0f);
 	src->SetScrambled(scrambled);
-	sid = mpAudioMixer->GetSamplePlayer().AddLoopingSound(kATAudioMix_Modem, 0, src, src, 0.5f);
+	sid = mpAudioMixer->GetSamplePlayer().AddLoopingSound(*mpSoundGroup, 0, src, src, 0.5f);
 }
 
 void ATModemSoundEngine::PlayOriginatingToneBell103() {
@@ -397,7 +398,7 @@ void ATModemSoundEngine::PlayOriginatingToneBell103() {
 
 	vdrefptr<ATSoundSourceSingleTone> src { new ATSoundSourceSingleTone };
 	src->SetTone(1270.0f);
-	mSoundId = mpAudioMixer->GetSamplePlayer().AddLoopingSound(kATAudioMix_Modem, 0, src, src, 0.5f);
+	mSoundId = mpAudioMixer->GetSamplePlayer().AddLoopingSound(*mpSoundGroup, 0, src, src, 0.5f);
 }
 
 void ATModemSoundEngine::PlayOriginatingToneV32() {
@@ -411,7 +412,7 @@ void ATModemSoundEngine::PlayOriginatingToneV32() {
 
 	vdrefptr<ATSoundSourceSingleTone> src { new ATSoundSourceSingleTone };
 	src->SetTone(1800.0f);
-	mSoundId2 = mpAudioMixer->GetSamplePlayer().AddLoopingSound(kATAudioMix_Modem, 0, src, src, 0.5f);
+	mSoundId2 = mpAudioMixer->GetSamplePlayer().AddLoopingSound(*mpSoundGroup, 0, src, src, 0.5f);
 }
 
 void ATModemSoundEngine::PlayTrainingToneV32() {
@@ -422,11 +423,11 @@ void ATModemSoundEngine::PlayTrainingToneV32() {
 
 	vdrefptr<ATSoundSourceSingleTone> src1 { new ATSoundSourceSingleTone };
 	src1->SetTone(1800.0f);
-	mSoundId = mpAudioMixer->GetSamplePlayer().AddLoopingSound(kATAudioMix_Modem, 0, src1, src1, 0.5f);
+	mSoundId = mpAudioMixer->GetSamplePlayer().AddLoopingSound(*mpSoundGroup, 0, src1, src1, 0.5f);
 
 	vdrefptr<ATSoundSourceDualTone> src2 { new ATSoundSourceDualTone };
 	src2->SetTones(600.0f, 3000.0f);
-	mSoundId2 = mpAudioMixer->GetSamplePlayer().AddLoopingSound(kATAudioMix_Modem, 0, src2, src2, 0.5f);
+	mSoundId2 = mpAudioMixer->GetSamplePlayer().AddLoopingSound(*mpSoundGroup, 0, src2, src2, 0.5f);
 }
 
 void ATModemSoundEngine::PlayAnswerTone(bool bell212a) {
@@ -441,7 +442,7 @@ void ATModemSoundEngine::PlayAnswerTone(bool bell212a) {
 	static constexpr float kAnswerToneBell212A = 2225.0f;
 
 	src->SetTone(bell212a ? kAnswerToneBell212A : kAnswerToneV22);
-	mSoundId2 = mpAudioMixer->GetSamplePlayer().AddLoopingSound(kATAudioMix_Modem, 0, src, src, 0.5f);
+	mSoundId2 = mpAudioMixer->GetSamplePlayer().AddLoopingSound(*mpSoundGroup, 0, src, src, 0.5f);
 }
 
 void ATModemSoundEngine::PlayEchoSuppressionTone() {
@@ -456,7 +457,7 @@ void ATModemSoundEngine::PlayEchoSuppressionTone() {
 	}
 
 	mpSingleToneSource->SetTone(2100.0f);
-	mSoundId = mpAudioMixer->GetSamplePlayer().AddLoopingSound(kATAudioMix_Modem, 0, mpSingleToneSource, mpSingleToneSource, 1.0f);
+	mSoundId = mpAudioMixer->GetSamplePlayer().AddLoopingSound(*mpSoundGroup, 0, mpSingleToneSource, mpSingleToneSource, 1.0f);
 }
 
 void ATModemSoundEngine::Stop() {
@@ -486,6 +487,11 @@ void ATModemSoundEngine::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 
 void ATModemSoundEngine::InitAudioOutput(IATAudioMixer *mixer) {
 	mpAudioMixer = mixer;
+
+	if (mixer)
+		mpSoundGroup = mixer->GetSamplePlayer().CreateGroup(ATAudioGroupDesc().Mix(kATAudioMix_Modem));
+	else
+		mpSoundGroup = nullptr;
 
 	UpdateAudioEnabled();
 }

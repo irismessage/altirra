@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <vd2/system/error.h>
 #include <vd2/system/hash.h>
 #include <vd2/Dita/accel.h>
 #include <at/atui/uicommandmanager.h>
@@ -69,6 +70,16 @@ bool ATUICommandManager::ExecuteCommand(const char *str) {
 		return false;
 
 	cmd->mpExecuteFn();
+	return true;
+}
+
+bool ATUICommandManager::ExecuteCommandNT(const char *str) noexcept {
+	try {
+		ExecuteCommand(str);
+	} catch(const MyError&) {
+		return false;
+	}
+
 	return true;
 }
 

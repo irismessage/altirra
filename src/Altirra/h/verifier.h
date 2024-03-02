@@ -32,7 +32,8 @@ enum {
 	kATVerifierFlag_AbnormalDMA = 0x10,
 	kATVerifierFlag_AddressZero = 0x20,
 	kATVerifierFlag_LoadingOverDisplayList = 0x40,
-	kATVerifierFlag_CallingConventionViolations = 0x80
+	kATVerifierFlag_CallingConventionViolations = 0x80,
+	kATVerifierFlag_NonCanonicalHardwareAddress = 0x100
 };
 
 class ATCPUVerifier {

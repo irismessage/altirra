@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2008-2011 Avery Lee
+//	Copyright (C) 2008-2019 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -19,10 +19,13 @@
 #define f_AT_POKEYRENDERER_H
 
 #include <vd2/system/vdstl.h>
+#include <at/atcore/audiomixer.h>
 
 class ATScheduler;
 struct ATPokeyTables;
 struct ATPokeyAudioState;
+class IATSyncAudioEdgePlayer;
+struct ATPokeyAudioLog;
 
 class ATPokeyRenderer {
 	ATPokeyRenderer(const ATPokeyRenderer&) = delete;
@@ -36,12 +39,14 @@ public:
 
 	void SyncTo(const ATPokeyRenderer& src);
 
-	void GetAudioState(ATPokeyAudioState& state);
 	bool GetChannelOutput(int index) const { return (mChannelOutputMask & (1 << index)) != 0; }
 	const float *GetOutputBuffer() const { return mRawOutputBuffer; }
 
 	bool IsChannelEnabled(int channel) const { return mbChannelEnabled[channel]; }
 	void SetChannelEnabled(int channel, bool enable);
+
+	void SetAudioLog(ATPokeyAudioLog *log);
+	void RestartAudioLog(bool initial = false);
 
 	void SetFiltersEnabled(bool enable);
 	void SetInitMode(bool init);
@@ -59,25 +64,53 @@ public:
 
 	void AddSerialNoisePulse(uint32 t);
 
-	uint32 EndBlock();
+	struct EndBlockInfo {
+		uint32 mTimestamp;
+		uint32 mSamples;
+	};
+
+	EndBlockInfo EndBlock(IATSyncAudioEdgePlayer *edgePlayer);
 
 	void LoadState(ATSaveStateReader& reader);
 	void ResetState();
-	void SaveState(ATSaveStateWriter& writer);
+
+	struct SavedState {
+		uint8 mPoly4Offset;
+		uint8 mPoly5Offset;
+		uint16 mPoly9Offset;
+		uint32 mPoly17Offset;
+		uint8 mOutputFlipFlops;
+	};
+
+	SavedState SaveState() const;
 
 protected:
+	enum class ChangeType : uint8 {
+		Audc0,
+		Audc1,
+		Audc2,
+		Audc3,
+		Audctl,
+		Init,
+		ResetOutputs,
+		Flush
+	};
+
+	void QueueChangeEvent(ChangeType type, uint8 value);
+	void ProcessChangeEvents(uint32 t);
+
 	void FlushDeferredEvents(int channel, uint32 t);
 	void Flush(const uint32 t);
 	void Flush2(const uint32 t);
 	static void MergeOutputEvents(const uint32 *VDRESTRICT src1, const uint32 *VDRESTRICT src2, uint32 *VDRESTRICT dst);
 
-	typedef uint32 *(ATPokeyRenderer::*FireTimerRoutine)(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 n, uint32 timeBase);
+	typedef std::pair<uint32 *, const uint32 *> (ATPokeyRenderer::*FireTimerRoutine)(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 timeBase, uint32 timeLimit);
 	FireTimerRoutine GetFireTimerRoutine(int ch) const;
 	template<int activeChannel>
 	FireTimerRoutine GetFireTimerRoutine() const;
 
 	template<int activeChannel, uint8 audcn, bool outputAffectsSignal, bool T_UsePoly9>
-	uint32 *FireTimer(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 n, uint32 timeBase);
+	std::pair<uint32 *, const uint32 *> FireTimer(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 timeBase, uint32 timeLimit);
 
 	void ProcessOutputEdges(uint32 timeBase, const uint32 *edges, uint32 n);
 	void UpdateVolume(int channel);
@@ -86,15 +119,16 @@ protected:
 	void UpdateOutput2(uint32 t2, int vpok);
 	void GenerateSamples(uint32 t2);
 
+	void LogOutputChange(uint32 t2) const;
+	void LogOutputEdges(uint32 timeBase2, const uint32 *edges, uint32 n) const;
+
 	ATScheduler *mpScheduler;
 	ATPokeyTables *mpTables;
 	bool mbInitMode;
 
 	float	mAccum;
 	float	mHighPassAccum;
-	float	mSpeakerAccum;
 	float	mOutputLevel;
-	float	mSpeakerLevel;
 	uint32	mLastFlushTime;
 	uint32	mLastOutputTime2;			// last output update in half-ticks
 	uint32	mLastOutputSampleTime2;		// last output sample boundary in half-ticks
@@ -121,9 +155,13 @@ protected:
 
 	int		mChannelVolume[4];
 
-	// AUDCx broken out fields
-	uint8	mAUDCTL;
-	uint8	mAUDC[4];
+	struct BufferedState {
+		uint8	mAUDC[4];
+		uint8	mAUDCTL;
+	};
+
+	BufferedState mArchState {};
+	BufferedState mRenderState {};
 
 	// True if the channel is enabled for update or muted. This does NOT affect architectural
 	// state; it must not affect whether flip-flops are updated.
@@ -154,6 +192,14 @@ protected:
 
 	DeferredEvent mDeferredEvents[4] {};
 
+	struct ChangeEvent {
+		uint32 mTime;
+		ChangeType mType;
+		uint8 mValue;
+	};
+
+	vdfastdeque<ChangeEvent> mChangeQueue;
+
 	struct PolyState {
 		uint32	mInitMask = 0;
 
@@ -178,6 +224,8 @@ protected:
 	} mPolyState;
 
 	uint32	mOutputSampleCount;
+		
+	ATPokeyAudioLog	*mpAudioLog = nullptr;
 
 	// The sorted edge lists hold ordered output change events. The events are stored as
 	// packed bitfields for fast merging:
@@ -200,9 +248,12 @@ protected:
 	// in system time (from ATScheduler).
 	typedef vdfastvector<uint32> ChannelEdges;
 	ChannelEdges mChannelEdges[4];
+	uint32 mChannelEdgeBases[4] {};
 
 	vdfastvector<uint32> mSerialPulseTimes;
 	float mSerialPulse = 0;
+
+	vdrefptr<ATSyncAudioEdgeBuffer> mpEdgeBuffer;
 
 	enum {
 		// 1271 samples is the max (35568 cycles/frame / 28 cycles/sample + 1). We add a little bit here

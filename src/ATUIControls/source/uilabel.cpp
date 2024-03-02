@@ -12,6 +12,7 @@ ATUILabel::ATUILabel()
 	, mBorderColor(-1)
 	, mTextSize(0, 0)
 	, mbReflowPending(false)
+	, mMinTextSize(-1, -1)
 {
 	SetFillColor(0xD4D0C8);
 }
@@ -19,8 +20,11 @@ ATUILabel::ATUILabel()
 void ATUILabel::SetFont(IVDDisplayFont *font) {
 	if (mpFont != font) {
 		mpFont = font;
+		mMinTextSize.w = -1;
 
+		mbReflowPending = true;
 		Invalidate();
+		InvalidateMeasure();
 	}
 }
 
@@ -28,7 +32,9 @@ void ATUILabel::SetBoldFont(IVDDisplayFont *font) {
 	if (mpBoldFont != font) {
 		mpBoldFont = font;
 
+		mbReflowPending = true;
 		Invalidate();
+		InvalidateMeasure();
 	}
 }
 
@@ -74,6 +80,7 @@ void ATUILabel::SetTextOffset(sint32 x, sint32 y) {
 		mTextY = y;
 
 		Invalidate();
+		InvalidateMeasure();
 	}
 }
 
@@ -108,6 +115,7 @@ void ATUILabel::SetText(const wchar_t *s) {
 
 	mbReflowPending = true;
 	Invalidate();
+	InvalidateMeasure();
 }
 
 void ATUILabel::SetTextF(const wchar_t *format, ...) {
@@ -308,6 +316,15 @@ void ATUILabel::SetHTMLText(const wchar_t *s) {
 	Invalidate();
 }
 
+void ATUILabel::SetMinSizeText(const wchar_t *s) {
+	if (mMinSizeText != s) {
+		mMinSizeText = s;
+
+		mMinTextSize = { -1, -1 };
+		InvalidateMeasure();
+	}
+}
+
 void ATUILabel::Clear() {
 	if (!mText.empty() || !mSpans.empty()) {
 		mText.clear();
@@ -316,6 +333,7 @@ void ATUILabel::Clear() {
 
 		mbReflowPending = true;
 		Invalidate();
+		InvalidateMeasure();
 	}
 }
 
@@ -341,6 +359,7 @@ void ATUILabel::AppendFormattedText(uint32 color, const wchar_t *s) {
 
 	mbReflowPending = true;
 	Invalidate();
+	InvalidateMeasure();
 }
 
 void ATUILabel::AppendFormattedTextF(uint32 color, const wchar_t *format, ...) {
@@ -369,6 +388,27 @@ void ATUILabel::AutoSize(int x, int y) {
 
 void ATUILabel::OnCreate() {
 	mpFont = mpManager->GetThemeFont(kATUIThemeFont_Default);
+}
+
+ATUIWidgetMetrics ATUILabel::OnMeasure() {
+	if (mbReflowPending)
+		Reflow();
+
+	vdrect32 r = ComputeWindowSize(vdrect32(0, 0, mTextSize.w + mTextX * 2, mTextSize.h + mTextY * 2));
+
+	ATUIWidgetMetrics m;
+	m.mDesiredSize = r.size();
+
+	if (mMinTextSize.w < 0) {
+		if (mMinSizeText.empty())
+			mMinTextSize = { 0, 0 };
+		else
+			mMinTextSize = mpFont->MeasureString(mMinSizeText.c_str(), (uint32)mMinSizeText.size(), false);
+	}
+
+	m.mDesiredSize.include(mMinTextSize);
+
+	return m;
 }
 
 void ATUILabel::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {

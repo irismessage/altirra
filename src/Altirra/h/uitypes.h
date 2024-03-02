@@ -50,7 +50,7 @@ enum {
 	kATUISpeedFlags_SlowPulse = 0x08
 };
 
-enum ATVideoRecordingFrameRate {
+enum ATVideoRecordingFrameRate : uint8 {
 	kATVideoRecordingFrameRate_Normal,
 	kATVideoRecordingFrameRate_NTSCRatio,
 	kATVideoRecordingFrameRate_Integral,

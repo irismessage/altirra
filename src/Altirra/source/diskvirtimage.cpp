@@ -1,6 +1,6 @@
 ﻿//	Altirra - Atari 800/800XL/5200 emulator
 //	Atari DOS 2.x virtual filesystem handler
-//	Copyright (C) 2009-2017 Avery Lee
+//	Copyright (C) 2009-2020 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -12,9 +12,8 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 //=========================================================================
 // Virtual DOS 2.x disk handler
@@ -104,32 +103,15 @@
 #include <at/atio/diskfsdos2util.h>
 #include "debuggerlog.h"
 #include "hostdeviceutils.h"
+#include "diskvirtimagebase.h"
 
 ATDebuggerLogChannel g_ATLCVDisk(false, false, "VDISK", "Virtual disk activity");
 
-class ATDiskImageVirtualFolder final : public vdrefcounted<IATDiskImage>, public IVDTimerCallback {
+class ATDiskImageVirtualFolder final : public ATDiskImageVirtualFolderBase, public IVDTimerCallback {
 public:
 	ATDiskImageVirtualFolder();
 
 	void Init(const wchar_t *path);
-
-	void *AsInterface(uint32 id) override;
-
-	ATImageType GetImageType() const override { return kATImageType_Tape; }
-
-	ATDiskTimingMode GetTimingMode() const override { return kATDiskTimingMode_Any; }
-
-	bool IsDirty() const override { return false; }
-	bool IsUpdatable() const override { return false; }
-	bool IsDynamic() const override { return true; }
-	ATDiskImageFormat GetImageFormat() const override { return kATDiskImageFormat_None; }
-
-	bool Flush() override { return true; }
-	virtual uint64 GetImageChecksum() const override { return 0; }
-	virtual std::optional<uint32> GetImageFileCRC() const override { return {}; }
-
-	void SetPath(const wchar_t *path, ATDiskImageFormat format) override;
-	void Save(const wchar_t *path, ATDiskImageFormat format) override;
 
 	ATDiskGeometryInfo GetGeometry() const override;
 	uint32 GetSectorSize() const override;
@@ -268,20 +250,6 @@ void ATDiskImageVirtualFolder::Init(const wchar_t *path) {
 		mFileWatcher.InitDir(path, false, NULL);
 	} catch(const MyError&) {
 	}
-}
-
-void *ATDiskImageVirtualFolder::AsInterface(uint32 id) {
-	switch(id) {
-		case IATDiskImage::kTypeID: return static_cast<IATDiskImage *>(this);
-	}
-
-	return nullptr;
-}
-
-void ATDiskImageVirtualFolder::SetPath(const wchar_t *path, ATDiskImageFormat format) {
-}
-
-void ATDiskImageVirtualFolder::Save(const wchar_t *path, ATDiskImageFormat format) {
 }
 
 ATDiskGeometryInfo ATDiskImageVirtualFolder::GetGeometry() const {

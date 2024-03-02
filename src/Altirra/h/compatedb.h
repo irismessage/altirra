@@ -22,6 +22,9 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vdstl_hashmap.h>
 #include "compatdb.h"
+#include "compatengine.h"
+
+struct ATChecksumSHA256;
 
 template<class T>
 class ATCompatEDBTable {
@@ -185,16 +188,12 @@ size_t ATCompatEDBTable<T>::Find(uint32 id) const {
 
 ///////////////////////////////////////////////////////////////////////////
 
-struct ATCompatEDBAliasRule {
-	ATCompatRuleType mRuleType;
-	uint64 mChecksum;
+struct ATCompatEDBAliasRule : public ATCompatMarker {
+	using ATCompatMarker::ATCompatMarker;
 
-	bool operator==(const ATCompatEDBAliasRule& other) const {
-		return mRuleType == other.mRuleType && mChecksum == other.mChecksum;
-	}
-
-	bool operator!=(const ATCompatEDBAliasRule& other) const {
-		return !operator==(other);
+	ATCompatEDBAliasRule& operator=(const ATCompatMarker& src) {
+		static_cast<ATCompatMarker&>(*this) = src;
+		return *this;
 	}
 
 	VDStringW ToDisplayString() const;

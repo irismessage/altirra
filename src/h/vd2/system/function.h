@@ -26,6 +26,7 @@
 #ifndef f_VD2_SYSTEM_FUNCTION_H
 #define f_VD2_SYSTEM_FUNCTION_H
 
+#include <vd2/system/vdtypes.h>
 #include <functional>
 #include <cstddef>
 
@@ -118,11 +119,11 @@ class vdfuncbase {
 public:
 	vdfuncbase() = default;
 	vdfuncbase(const vdfuncbase&);
-	inline vdfuncbase(vdfuncbase&&);
+	inline vdnothrow vdfuncbase(vdfuncbase&&) vdnoexcept;
 	inline ~vdfuncbase();
 
 	vdfuncbase& operator=(const vdfuncbase&);
-	vdfuncbase& operator=(vdfuncbase&&);
+	vdnothrow vdfuncbase& operator=(vdfuncbase&&) vdnoexcept;
 
 	inline operator bool() const;
 
@@ -147,7 +148,7 @@ public:
 	const vdfunctraits *mpTraits = nullptr;
 };
 
-inline vdfuncbase::vdfuncbase(vdfuncbase&& src)
+inline vdnothrow vdfuncbase::vdfuncbase(vdfuncbase&& src) vdnoexcept
 	: mpFn(src.mpFn)
 	, mData(src.mData)
 	, mpTraits(src.mpTraits)
@@ -291,7 +292,7 @@ vdfunction<R(Args...)>::vdfunction(std::reference_wrapper<F> f) {
 template<class R, class... Args>
 template<class F, typename>
 vdfunction<R(Args...)>::vdfunction(F&& f) {
-	typedef decltype(f((*(typename std::remove_reference<Args>::type *)nullptr)...)) validity_test;
+	typedef std::remove_reference_t<decltype(f((*(typename std::remove_reference<Args>::type *)nullptr)...))> validity_test;
 	(void)sizeof(validity_test*);
 
 	typedef typename std::decay<F>::type BaseF;

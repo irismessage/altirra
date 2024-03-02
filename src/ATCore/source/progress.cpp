@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <vd2/system/error.h>
 #include <at/atcore/progress.h>
 
 IATProgressHandler *g_pATProgressHandler;
@@ -35,6 +36,15 @@ void ATUpdateProgress(uint32 count) {
 		g_pATProgressHandler->Update(count);
 }
 
+bool ATCheckProgressStatusUpdate() {
+	return g_pATProgressHandler && g_pATProgressHandler->CheckForCancellationOrStatus();
+}
+
+void ATUpdateProgressStatus(const wchar_t *message) {
+	if (g_pATProgressHandler)
+		g_pATProgressHandler->UpdateStatus(message);
+}
+
 void ATEndProgress() {
 	if (g_pATProgressHandler)
 		g_pATProgressHandler->End();
@@ -42,4 +52,21 @@ void ATEndProgress() {
 
 void ATSetProgressHandler(IATProgressHandler *h) {
 	g_pATProgressHandler = h;
+}
+
+class ATTaskProgressContextNull final : public IATTaskProgressContext {
+public:
+	bool CheckForCancellationOrStatus() override { return false; }
+	void SetProgress(double progress) {}
+	void SetProgressF(double progress, const wchar_t *format, ...) {}
+};
+
+void ATRunTaskWithProgress(const wchar_t *desc, const vdfunction<void(IATTaskProgressContext&)>& fn) {
+	if (!g_pATProgressHandler || !g_pATProgressHandler->RunTask(desc, fn)) {
+		try {
+			ATTaskProgressContextNull ctx;
+			fn(ctx);
+		} catch(const MyUserAbortError&) {
+		}
+	}
 }

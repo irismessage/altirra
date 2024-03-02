@@ -18,6 +18,7 @@
 
 #include "stdafx.h"
 #include <unordered_map>
+#include <vd2/system/binary.h>
 #include "compatdb.h"
 
 const char ATCompatDBHeader::kSignature[16] = {
@@ -29,7 +30,7 @@ bool ATCompatDBHeader::Validate(size_t len) const {
 	VDASSERT(len >= sizeof(*this));
 
 	// check supported version
-	if ((mVersion & 0xFFFFFF00) != 0x0100)
+	if ((mVersion & 0xFFFFFF00) != 0x0200)
 		return false;
 
 	// validate top-level tables
@@ -42,6 +43,7 @@ bool ATCompatDBHeader::Validate(size_t len) const {
 	if (!mTagTable.validate(tableBase, tableLen)) return false;
 	if (!mTagIdTable.validate(tableBase, tableLen)) return false;
 	if (!mCharTable.validate(tableBase, tableLen)) return false;
+	if (!mLargeRuleDataTable.validate(tableBase, tableLen)) return false;
 
 	// validate data in each table
 	const uint32 numAliases = mAliasTable.size();
@@ -102,24 +104,46 @@ ATCompatDBView::ATCompatDBView(const ATCompatDBHeader *hdr)
 {
 }
 
-const ATCompatDBRule *ATCompatDBView::FindMatchingRule(ATCompatRuleType type, uint64 value) const {
+std::pair<const ATCompatDBRule *, const ATCompatDBRule *> ATCompatDBView::FindMatchingRules(ATCompatRuleType type, uint64 value) const {
 	for(const auto& ruleSet : mpHeader->mRuleSetTable) {
 		if (ruleSet.mRuleType == type) {
 			const auto& rules = ruleSet.mRules;
 
-			auto it = std::lower_bound(rules.begin(), rules.end(), value,
-				[](const auto& rule, uint64 v) {
-					return rule.GetValue() < v;
-			});
+			// Use a custom binary search to ensure that we don't break if the array in the DB wasn't
+			// sorted correctly.
+			auto it = rules.begin();
+			auto n = rules.size();
 
-			if (it != rules.end() && it->GetValue() == value)
-				return &*it;
+			while(n > 0) {
+				uint32 n2 = n >> 1;
+
+				auto it2 = it + n2;
+
+				if (it2->GetValue() < value) {
+					++n2;
+					it += n2;
+					n -= n2;
+				} else {
+					n = n2;
+				}
+			}
+
+			if (it != rules.end() && it->GetValue() == value) {
+				// walk forward and collect the range of matching rules (which may exist when multiple
+				// aliases have the same rule)
+				auto it2 = it + 1;
+
+				while(it2 != rules.end() && it2->GetValue() == value)
+					++it2;
+
+				return {it, it2};
+			}
 
 			break;
 		}
 	}
 
-	return nullptr;
+	return {nullptr, nullptr};
 }
 
 bool ATCompatDBView::HasRelatedRuleOfType(const ATCompatDBRule *baseRule, ATCompatRuleType type) const {
@@ -166,6 +190,22 @@ const ATCompatDBTitle *ATCompatDBView::FindMatchingTitle(const ATCompatDBRule *c
 	return nullptr;
 }
 
+void ATCompatDBView::FindMatchingTitles(vdfastvector<const ATCompatDBTitle *>& titles, const ATCompatDBRule *const *rules, size_t numRules) const {
+	std::unordered_map<uint32, uint32> pendingAliasTable;
+
+	while(numRules--) {
+		const ATCompatDBRule *rule = *rules++;
+
+		auto r = pendingAliasTable.emplace(rule->mAliasId, 0);
+
+		if (r.second)
+			r.first->second = mpHeader->mAliasTable[rule->mAliasId].mRuleCount;
+
+		if (!--r.first->second)
+			titles.push_back(&mpHeader->mTitleTable[mpHeader->mAliasTable[rule->mAliasId].mTitleId]);
+	}
+}
+
 ATCompatKnownTag ATCompatDBView::GetKnownTag(uint32 tagId) const {
 	const auto *tag = &mpHeader->mTagTable[tagId];
 	const char *tagKey = tag->mKey.c_str();
@@ -173,7 +213,61 @@ ATCompatKnownTag ATCompatDBView::GetKnownTag(uint32 tagId) const {
 	return ATCompatGetKnownTagByKey(tagKey);
 }
 
+uint32 ATCompatDBView::FindLargeRuleBlob(const void *blob256) const {
+	const uint32 numBlobs = (uint32)(mpHeader->mLargeRuleDataTable.size() >> 3);
+	if (numBlobs) {
+		uint32 key[8];
+		memcpy(key, blob256, 32);
+
+		// binary search for lower bound on the first dword (as big endian)
+		const uint32 *table = mpHeader->mLargeRuleDataTable.data();
+		const uint32 key0be = VDFromBE32(key[0]);
+		uint32 base = 0;
+		uint32 n = numBlobs;
+
+		while(n > 0) {
+			uint32 n2 = n >> 1;
+
+			uint32 v = VDFromBE32(table[8 * (base + n2)]);
+
+			if (v < key0be) {
+				++n2;
+				base += n2;
+				n -= n2;
+			} else {
+				n = n2;
+			}
+		}
+
+		if (base < numBlobs) {
+			const uint32 *entry = table + (8 * base);
+			do {
+				if (entry[0] != key[0])
+					break;
+
+				if (!memcmp(entry, key, 32))
+					return base * 32;
+			} while(++base < numBlobs);
+		}
+	}
+
+	return ~0;
+}
+
 ///////////////////////////////////////////////////////////////////////////
+
+bool ATCompatIsLargeRuleType(ATCompatRuleType type) {
+	switch(type) {
+		case kATCompatRuleType_CartFileSHA256:
+		case kATCompatRuleType_DiskFileSHA256:
+		case kATCompatRuleType_DOSBootFileSHA256:
+		case kATCompatRuleType_ExeFileSHA256:
+			return true;
+
+		default:
+			return false;
+	}
+}
 
 namespace {
 	const char *kKnownTagNames[] = {
@@ -198,6 +292,8 @@ namespace {
 		"cart520016konechip",
 		"cart520016ktwochip",
 		"cart520032k",
+		"60hz",
+		"50hz",
 	};
 
 	static_assert(vdcountof(kKnownTagNames) == kATCompatKnownTagCount - 1, "Known tag name list out of sync");

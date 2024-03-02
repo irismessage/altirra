@@ -284,8 +284,12 @@ void VDDisplayRenderer3D::End() {
 }
 
 const VDDisplayRendererCaps& VDDisplayRenderer3D::GetCaps() {
-	static const VDDisplayRendererCaps kCaps={
-		true
+	static constexpr VDDisplayRendererCaps kCaps={
+		true,
+		true,
+		true,
+		true,
+		false
 	};
 
 	return kCaps;
@@ -646,6 +650,31 @@ void VDDisplayRenderer3D::PolyLine(const vdpoint32 *points, uint32 numLines) {
 	do {
 		v[i].x = (float)(points->x + mOffsetX + 0.5f);
 		v[i].y = (float)(points->y + mOffsetY + 0.5f);
+		v[i].c = mNativeColor;
+		++i;
+		++points;
+
+		if (i >= vdcountof(v)) {
+			AddLineStrip(v, i - 1, false);
+			v[0] = v[i - 1];
+			i = 1;
+		}
+	} while(numLines--);
+
+	if (i > 1)
+		AddLineStrip(v, i - 1, false);
+}
+
+void VDDisplayRenderer3D::PolyLineF(const vdfloat2 *points, uint32 numLines, bool antialiased) {
+	if (!numLines)
+		return;
+
+	FillVertex v[256];
+	int i = 0;
+
+	do {
+		v[i].x = points->x + mOffsetX;
+		v[i].y = points->y + mOffsetY;
 		v[i].c = mNativeColor;
 		++i;
 		++points;

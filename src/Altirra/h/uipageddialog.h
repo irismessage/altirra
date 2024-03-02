@@ -28,14 +28,8 @@
 class VDFunctionThunk;
 class ATUIPagedDialog;
 
-class ATUIDialogPage : public VDDialogFrameW32 {
+class ATUIContextualHelpProvider {
 public:
-	using VDDialogFrameW32::VDDialogFrameW32;
-
-	virtual ~ATUIDialogPage() = default;
-
-	void SetParentDialog(ATUIPagedDialog *parent) { mpParentPagedDialog = parent; }
-
 	struct HelpEntry {
 		uint32 mId;
 		uint32 mLinkedId;
@@ -44,55 +38,68 @@ public:
 		VDStringW mText;
 	};
 
+	void LinkParent(vdfunction<vdrect32(uint32)> fn);
+	void SetDynamicHelpProvider(vdfunction<const HelpEntry&(const HelpEntry&)> fn);
+
 	const HelpEntry *GetHelpEntryByPoint(const vdpoint32& pt) const;
 	const HelpEntry *GetHelpEntryById(uint32 id) const;
+
+	void AddHelpEntry(uint32 id, const wchar_t *label, const wchar_t *s);
+	void LinkHelpEntry(uint32 commonHelpId, uint32 linkedId);
+	void ClearHelpEntries();
+
+	vdfunction<vdrect32(uint32)> mpfnGetControlPos;
+	vdfunction<const HelpEntry&(const HelpEntry&)> mpfnGetDynamicHelp;
+
+	typedef vdvector<HelpEntry> HelpEntries;
+	HelpEntries mHelpEntries;
+};
+
+class ATUIDialogPage : public VDDialogFrameW32 {
+public:
+	using VDDialogFrameW32::VDDialogFrameW32;
+
+	ATUIDialogPage(uint32 id);
+	virtual ~ATUIDialogPage() = default;
+
+	void SetParentDialog(ATUIPagedDialog *parent) { mpParentPagedDialog = parent; }
 
 	virtual void ExchangeOtherSettings(bool write);
 	virtual const char *GetPageTag() const;
 
 protected:
+	friend class ATUIPagedDialog;
+
 	void AddHelpEntry(uint32 id, const wchar_t *label, const wchar_t *s);
 	void LinkHelpEntry(uint32 commonHelpId, uint32 linkedId);
 	void ClearHelpEntries();
 
-	typedef vdvector<HelpEntry> HelpEntries;
-	HelpEntries mHelpEntries;
+	ATUIContextualHelpProvider mHelpProvider;
 
 	ATUIPagedDialog *mpParentPagedDialog = nullptr;
 };
 
-class ATUIPagedDialog : public VDDialogFrameW32 {
+class ATUIContextualHelpDialog : public VDDialogFrameW32 {
 public:
-	ATUIPagedDialog(uint32 id);
-	~ATUIPagedDialog();
+	using VDDialogFrameW32::VDDialogFrameW32;
 
-	void SetInitialPage(int index);
-	int GetSelectedPage() const { return mSelectedPage; }
-
-	void SwitchToPage(const char *tag);
+	~ATUIContextualHelpDialog();
 
 protected:
 	enum {
 		kTimerID_Help = 10
 	};
 
-	VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
-	bool OnLoaded() override;
-	void OnDataExchange(bool write) override;
-	void OnDestroy() override;
+	virtual VDZHWND GetHelpBaseWindow() const = 0;
+	virtual ATUIContextualHelpProvider *GetHelpProvider() = 0;
+
+	void OnPreLoaded() override;
 	bool OnTimer(uint32 id) override;
-	void OnDpiChanged() override;
 
 	void CheckFocus();
 	void CheckFocus(const vdpoint32& pt);
-	void ShowHelp(const ATUIDialogPage::HelpEntry *he);
-
-	virtual void OnPopulatePages() = 0;
-
-	void PushCategory(const wchar_t *name);
-	void PopCategory();
-	void AddPage(const wchar_t *name, vdautoptr<ATUIDialogPage> page);
-	void SelectPage(int index);
+	void ShowHelp(const ATUIContextualHelpProvider::HelpEntry *he);
+	void RefreshHelp(uint32 id);
 
 	void AppendRTF(VDStringA& rtf, const wchar_t *text);
 
@@ -104,19 +111,9 @@ protected:
 	void UninstallKeyboardHook();
 	VDZLRESULT OnKeyboardEvent(int code, VDZWPARAM wParam, VDZLPARAM lParam);
 
-	void OnTreeSelectedItemChanged();
-
-	struct PageTreeItem;
-
-	int mSelectedPage {};
-	int mInitialPage {};
 	uintptr mLastFocus {};
 	uint32 mLastHelpId {};
 	vdrect32 mLastMouseHelpRect { 0, 0, 0, 0 };
-
-	vdfastvector<ATUIDialogPage *> mPages;
-	vdfastvector<PageTreeItem *> mPageTreeItems;
-	vdfastvector<uintptr> mPageTreeCategories;
 
 	VDFunctionThunkInfo *mpMouseFuncThunk = nullptr;
 	void *mpMouseHook = nullptr;
@@ -125,6 +122,47 @@ protected:
 	void *mpKeyboardHook = nullptr;
 
 	VDUIProxyRichEditControl mHelpView;
+};
+
+class ATUIPagedDialog : public ATUIContextualHelpDialog {
+public:
+	ATUIPagedDialog(uint32 id);
+	~ATUIPagedDialog();
+
+	void SetInitialPage(int index);
+	int GetSelectedPage() const { return mSelectedPage; }
+
+	void SwitchToPage(const char *tag);
+
+protected:
+	VDZHWND GetHelpBaseWindow() const override final;
+	ATUIContextualHelpProvider *GetHelpProvider() override final;
+
+protected:
+	VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
+	bool OnLoaded() override;
+	void OnDataExchange(bool write) override;
+	void OnDestroy() override;
+	void OnDpiChanged() override;
+
+	virtual void OnPopulatePages() = 0;
+
+	void PushCategory(const wchar_t *name);
+	void PopCategory();
+	void AddPage(const wchar_t *name, vdautoptr<ATUIDialogPage> page);
+	void SelectPage(int index);
+
+	void OnTreeSelectedItemChanged();
+
+	struct PageTreeItem;
+
+	int mSelectedPage {};
+	int mInitialPage {};
+
+	vdfastvector<ATUIDialogPage *> mPages;
+	vdfastvector<PageTreeItem *> mPageTreeItems;
+	vdfastvector<uintptr> mPageTreeCategories;
+
 	VDUIProxyListBoxControl mPageListView;
 	VDUIProxyTreeViewControl mPageTreeView;
 	ATUINativeWindowProxy mPageAreaView;

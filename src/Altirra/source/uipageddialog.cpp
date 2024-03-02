@@ -17,10 +17,21 @@
 #include "stdafx.h"
 #include <windows.h>
 #include <vd2/system/thunk.h>
+#include <at/atnativeui/theme.h>
 #include "uipageddialog.h"
 #include "resource.h"
 
-const ATUIDialogPage::HelpEntry *ATUIDialogPage::GetHelpEntryByPoint(const vdpoint32& pt) const {
+///////////////////////////////////////////////////////////////////////////
+
+void ATUIContextualHelpProvider::LinkParent(vdfunction<vdrect32(uint32)> fn) {
+	mpfnGetControlPos = std::move(fn);
+}
+
+void ATUIContextualHelpProvider::SetDynamicHelpProvider(vdfunction<const HelpEntry&(const HelpEntry&)> fn) {
+	mpfnGetDynamicHelp = std::move(fn);
+}
+
+const ATUIContextualHelpProvider::HelpEntry *ATUIContextualHelpProvider::GetHelpEntryByPoint(const vdpoint32& pt) const {
 	for(const HelpEntry& e : mHelpEntries) {
 		if (!e.mArea.contains(pt))
 			continue;
@@ -28,23 +39,265 @@ const ATUIDialogPage::HelpEntry *ATUIDialogPage::GetHelpEntryByPoint(const vdpoi
 		if (e.mLinkedId)
 			return GetHelpEntryById(e.mLinkedId);
 
-		return &e;
+		return mpfnGetDynamicHelp ? &mpfnGetDynamicHelp(e) : &e;
 	}
 
 	return nullptr;
 }
 
-const ATUIDialogPage::HelpEntry *ATUIDialogPage::GetHelpEntryById(uint32 id) const {
+const ATUIContextualHelpProvider::HelpEntry *ATUIContextualHelpProvider::GetHelpEntryById(uint32 id) const {
 	for(const HelpEntry& e : mHelpEntries) {
 		if (e.mId == id) {
 			if (e.mLinkedId)
 				return GetHelpEntryById(e.mLinkedId);
 
-			return &e;
+			return mpfnGetDynamicHelp ? &mpfnGetDynamicHelp(e) : &e;
 		}
 	}
 
 	return nullptr;
+}
+
+void ATUIContextualHelpProvider::AddHelpEntry(uint32 id, const wchar_t *label, const wchar_t *s) {
+	mHelpEntries.push_back(HelpEntry());
+	HelpEntry& e = mHelpEntries.back();
+	e.mId = id;
+	e.mLinkedId = 0;
+	e.mArea = mpfnGetControlPos(id);
+	e.mLabel = label;
+	e.mText = s;
+}
+
+void ATUIContextualHelpProvider::LinkHelpEntry(uint32 id, uint32 linkedId) {
+	mHelpEntries.push_back(HelpEntry());
+	HelpEntry& e = mHelpEntries.back();
+	e.mId = id;
+	e.mLinkedId = linkedId;
+	e.mArea = mpfnGetControlPos(id);
+}
+
+void ATUIContextualHelpProvider::ClearHelpEntries() {
+	mHelpEntries.clear();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+ATUIContextualHelpDialog::~ATUIContextualHelpDialog() {
+	UninstallMouseHook();
+	UninstallKeyboardHook();
+}
+
+void ATUIContextualHelpDialog::OnPreLoaded() {
+	VDDialogFrameW32::OnPreLoaded();
+	AddProxy(&mHelpView, IDC_HELP_INFO);
+	
+	mHelpView.SetReadOnlyBackground();
+
+	InstallMouseHook();
+	InstallKeyboardHook();
+}
+
+bool ATUIContextualHelpDialog::OnTimer(uint32 id) {
+	if (id != kTimerID_Help)
+		return false;
+
+	POINT pt {};
+	GetCursorPos(&pt);
+
+	CheckFocus({ pt.x, pt.y });
+	return true;
+}
+
+void ATUIContextualHelpDialog::CheckFocus() {
+	HWND hwndPage = GetHelpBaseWindow();
+	if (!hwndPage)
+		return;
+
+	ATUIContextualHelpProvider *provider = GetHelpProvider();
+	if (!provider)
+		return;
+
+	HWND hwndFocus = GetFocus();
+
+	if ((uintptr)hwndFocus == mLastFocus)
+		return;
+
+	mLastFocus = (uintptr)hwndFocus;
+
+	while(hwndFocus) {
+		HWND hwndParent = ::GetParent(hwndFocus);
+
+		if (hwndParent == hwndPage) {
+			const ATUIContextualHelpProvider::HelpEntry *he = provider->GetHelpEntryById((uint32)GetWindowLongPtr(hwndFocus, GWLP_ID));
+
+			ShowHelp(he);
+			break;
+		}
+
+		hwndFocus = hwndParent;
+	}
+}
+
+void ATUIContextualHelpDialog::CheckFocus(const vdpoint32& pt) {
+	HWND hwndPage = GetHelpBaseWindow();
+	if (!hwndPage)
+		return;
+
+	if (mLastMouseHelpRect.contains(pt))
+		return;
+
+	// check if there is another window in the way, particularly a combo popup; bypass checks if so
+	HWND hwndCursorOwner = ChildWindowFromPointEx(GetDesktopWindow(), POINT { pt.x, pt.y }, CWP_SKIPINVISIBLE);
+	if (hwndCursorOwner && hwndCursorOwner != mhwnd)
+		return;
+
+	ATUIContextualHelpProvider *provider = GetHelpProvider();
+	if (!provider)
+		return;
+
+	ATUINativeWindowProxy proxy(hwndPage);
+
+	const vdpoint32 pagePt = proxy.TransformScreenToClient(pt);
+
+	const ATUIContextualHelpProvider::HelpEntry *he = provider->GetHelpEntryByPoint(pagePt);
+	if (he) {
+		mLastMouseHelpRect = proxy.TransformClientToScreen(he->mArea);
+		ShowHelp(he);
+	}
+}
+
+void ATUIContextualHelpDialog::ShowHelp(const ATUIContextualHelpProvider::HelpEntry *he) {
+	if (!he)
+		return;
+
+	if (he->mId == mLastHelpId)
+		return;
+
+	mLastHelpId = he->mId;
+
+	VDStringA s;
+
+	s = "{\\rtf1";
+
+	const auto& tc = ATUIGetThemeColors();
+	s.append_sprintf("{\\colortbl;\\red%u\\green%u\\blue%u;}"
+		, (tc.mStaticFg >> 16) & 0xff
+		, (tc.mStaticFg >>  8) & 0xff
+		, (tc.mStaticFg      ) & 0xff
+	);
+
+	s += "{\\fonttbl{\\f0\\fnil\\fcharset0 MS Shell Dlg;}}\\f0\\cf1\\sa90\\fs16{\\b ";
+	AppendRTF(s, he->mLabel.c_str());
+	s += "}\\par ";
+	AppendRTF(s, he->mText.c_str());
+	s += "}";
+
+	mHelpView.SetTextRTF(s.c_str());
+}
+
+void ATUIContextualHelpDialog::RefreshHelp(uint32 id) {
+	if (id != mLastHelpId)
+		return;
+
+	ATUIContextualHelpProvider *hp = GetHelpProvider();
+	if (!hp)
+		return;
+
+	const auto *he = hp->GetHelpEntryById(id);
+	if (!he)
+		return;
+
+	mLastHelpId = 0;
+	ShowHelp(he);
+}
+
+void ATUIContextualHelpDialog::AppendRTF(VDStringA& rtf, const wchar_t *text) {
+	const VDStringA& texta = VDTextWToA(text);
+	for (VDStringA::const_iterator it = texta.begin(), itEnd = texta.end();
+		it != itEnd;
+		++it)
+	{
+		const unsigned char c = *it;
+
+		if (c < 0x20 || c > 0x80 || c == '{' || c == '}' || c == '\\')
+			rtf.append_sprintf("\\'%02x", c);
+		else
+			rtf += c;
+	}
+}
+
+void ATUIContextualHelpDialog::InstallMouseHook() {
+	if (!mpMouseFuncThunk) {
+		mpMouseFuncThunk = VDCreateFunctionThunkFromMethod(this, &ATUIPagedDialog::OnMouseEvent, true);
+
+		if (!mpMouseFuncThunk)
+			return;
+	}
+
+	if (!mpMouseHook)
+		mpMouseHook = SetWindowsHookEx(WH_MOUSE, VDGetThunkFunction<HOOKPROC>(mpMouseFuncThunk), nullptr, GetCurrentThreadId());
+}
+
+void ATUIContextualHelpDialog::UninstallMouseHook() {
+	if (mpMouseHook) {
+		UnhookWindowsHookEx((HHOOK)mpMouseHook);
+		mpMouseHook = nullptr;
+	}
+
+	if (mpMouseFuncThunk) {
+		VDDestroyFunctionThunk(mpMouseFuncThunk);
+		mpMouseFuncThunk = nullptr;
+	}
+}
+
+VDZLRESULT ATUIContextualHelpDialog::OnMouseEvent(int code, VDZWPARAM wParam, VDZLPARAM lParam) {
+	if (code == HC_ACTION && wParam == WM_MOUSEMOVE) {
+		const MOUSEHOOKSTRUCT& mhs = *(const MOUSEHOOKSTRUCT *)lParam;
+
+		CheckFocus({ mhs.pt.x, mhs.pt.y });
+	}
+
+	return CallNextHookEx((HHOOK)mpMouseHook, code, wParam, lParam);
+}
+
+void ATUIContextualHelpDialog::InstallKeyboardHook() {
+	if (!mpKeyboardFuncThunk) {
+		mpKeyboardFuncThunk = VDCreateFunctionThunkFromMethod(this, &ATUIPagedDialog::OnKeyboardEvent, true);
+
+		if (!mpKeyboardFuncThunk)
+			return;
+	}
+
+	if (!mpKeyboardHook)
+		mpKeyboardHook = SetWindowsHookEx(WH_KEYBOARD, VDGetThunkFunction<HOOKPROC>(mpKeyboardFuncThunk), nullptr, GetCurrentThreadId());
+}
+
+void ATUIContextualHelpDialog::UninstallKeyboardHook() {
+	if (mpKeyboardHook) {
+		UnhookWindowsHookEx((HHOOK)mpKeyboardHook);
+		mpKeyboardHook = nullptr;
+	}
+
+	if (mpKeyboardFuncThunk) {
+		VDDestroyFunctionThunk(mpKeyboardFuncThunk);
+		mpKeyboardFuncThunk = nullptr;
+	}
+}
+
+VDZLRESULT ATUIContextualHelpDialog::OnKeyboardEvent(int code, VDZWPARAM wParam, VDZLPARAM lParam) {
+	if (code == HC_ACTION) {
+		CheckFocus();
+	}
+
+	return CallNextHookEx((HHOOK)mpKeyboardHook, code, wParam, lParam);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+ATUIDialogPage::ATUIDialogPage(uint32 id)
+	: VDDialogFrameW32(id)
+{
+	mHelpProvider.LinkParent([this](uint32 id) { return GetControlPos(id); });
 }
 
 void ATUIDialogPage::ExchangeOtherSettings(bool write) {
@@ -55,25 +308,15 @@ const char *ATUIDialogPage::GetPageTag() const {
 }
 
 void ATUIDialogPage::AddHelpEntry(uint32 id, const wchar_t *label, const wchar_t *s) {
-	mHelpEntries.push_back(HelpEntry());
-	HelpEntry& e = mHelpEntries.back();
-	e.mId = id;
-	e.mLinkedId = 0;
-	e.mArea = GetControlPos(id);
-	e.mLabel = label;
-	e.mText = s;
+	mHelpProvider.AddHelpEntry(id, label, s);
 }
 
 void ATUIDialogPage::LinkHelpEntry(uint32 id, uint32 linkedId) {
-	mHelpEntries.push_back(HelpEntry());
-	HelpEntry& e = mHelpEntries.back();
-	e.mId = id;
-	e.mLinkedId = linkedId;
-	e.mArea = GetControlPos(id);
+	mHelpProvider.LinkHelpEntry(id, linkedId);
 }
 
 void ATUIDialogPage::ClearHelpEntries() {
-	mHelpEntries.clear();
+	mHelpProvider.ClearHelpEntries();
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -94,15 +337,13 @@ struct ATUIPagedDialog::PageTreeItem final : public vdrefcounted<IVDUITreeViewVi
 };
 
 ATUIPagedDialog::ATUIPagedDialog(uint32 id)
-	: VDDialogFrameW32(id)
+	: ATUIContextualHelpDialog(id)
 {
 	mPageListView.SetOnSelectionChanged([this](int v) { SelectPage(v); });
 	mPageTreeView.SetOnItemSelectionChanged([this] { OnTreeSelectedItemChanged(); });
 }
 
 ATUIPagedDialog::~ATUIPagedDialog() {
-	UninstallMouseHook();
-	UninstallKeyboardHook();
 }
 
 void ATUIPagedDialog::SetInitialPage(int index) {
@@ -133,6 +374,24 @@ void ATUIPagedDialog::SwitchToPage(const char *tag) {
 	}
 }
 
+VDZHWND ATUIPagedDialog::GetHelpBaseWindow() const {
+	if (mSelectedPage < 0)
+		return nullptr;
+
+	ATUIDialogPage *page = mPages[mSelectedPage];
+
+	return page ? page->GetWindowHandle() : nullptr;
+}
+
+ATUIContextualHelpProvider *ATUIPagedDialog::GetHelpProvider() {
+	if (mSelectedPage < 0)
+		return nullptr;
+
+	ATUIDialogPage *page = mPages[mSelectedPage];
+
+	return page ? &page->mHelpProvider : nullptr;
+}
+
 VDZINT_PTR ATUIPagedDialog::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) {
 	if (msg == WM_NEXTDLGCTL) {
 	}
@@ -141,13 +400,10 @@ VDZINT_PTR ATUIPagedDialog::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lPa
 }
 
 bool ATUIPagedDialog::OnLoaded() {
-	AddProxy(&mHelpView, IDC_HELP_INFO);
 	AddProxy(&mPageListView, IDC_PAGE_LIST);
 	AddProxy(&mPageTreeView, IDC_PAGE_TREE);
 
 	mPageAreaView = GetControl(IDC_PAGE_AREA);
-
-	mHelpView.SetReadOnlyBackground();
 
 	mLastHelpId = 0;
 
@@ -169,8 +425,6 @@ bool ATUIPagedDialog::OnLoaded() {
 	if (mPageTreeView.IsValid() && (unsigned)mInitialPage < mPageTreeItems.size())
 		mPageTreeView.SelectNode(mPageTreeItems[mInitialPage]->mNode);
 
-	InstallMouseHook();
-	InstallKeyboardHook();
 	return VDDialogFrameW32::OnLoaded();
 }
 
@@ -198,89 +452,10 @@ void ATUIPagedDialog::OnDestroy() {
 	mPages.clear();
 }
 
-bool ATUIPagedDialog::OnTimer(uint32 id) {
-	if (id != kTimerID_Help)
-		return false;
-
-	POINT pt {};
-	GetCursorPos(&pt);
-
-	CheckFocus({ pt.x, pt.y });
-	return true;
-}
-
 void ATUIPagedDialog::OnDpiChanged() {
 	for (auto *page : mPages) {
 		page->UpdateChildDpi();
 	}
-}
-
-void ATUIPagedDialog::CheckFocus() {
-	if (mSelectedPage >= 0) {
-		HWND hwndFocus = GetFocus();
-
-		if ((uintptr)hwndFocus != mLastFocus) {
-			mLastFocus = (uintptr)hwndFocus;
-
-			if (hwndFocus) {
-				ATUIDialogPage *page = mPages[mSelectedPage];
-
-				HWND hwndPage = page->GetWindowHandle();
-				do {
-					HWND hwndParent = ::GetParent(hwndFocus);
-
-					if (hwndParent == hwndPage) {
-						const ATUIDialogPage::HelpEntry *he = page->GetHelpEntryById((uint32)GetWindowLongPtr(hwndFocus, GWLP_ID));
-
-						ShowHelp(he);
-						break;
-					}
-
-					hwndFocus = hwndParent;
-				} while(hwndFocus);
-			}
-		}
-	}
-}
-
-void ATUIPagedDialog::CheckFocus(const vdpoint32& pt) {
-	if (mSelectedPage < 0 || mLastMouseHelpRect.contains(pt))
-		return;
-
-	// check if there is another window in the way, particularly a combo popup; bypass checks if so
-	HWND hwndCursorOwner = ChildWindowFromPointEx(GetDesktopWindow(), POINT { pt.x, pt.y }, CWP_SKIPINVISIBLE);
-	if (hwndCursorOwner && hwndCursorOwner != mhwnd)
-		return;
-
-	ATUIDialogPage *page = mPages[mSelectedPage];
-
-	const vdpoint32 pagePt = page->TransformScreenToClient(pt);
-
-	const ATUIDialogPage::HelpEntry *he = page->GetHelpEntryByPoint(pagePt);
-	if (he) {
-		mLastMouseHelpRect = page->TransformClientToScreen(he->mArea);
-		ShowHelp(he);
-	}
-}
-
-void ATUIPagedDialog::ShowHelp(const ATUIDialogPage::HelpEntry *he) {
-	if (!he)
-		return;
-
-	if (he->mId == mLastHelpId)
-		return;
-
-	mLastHelpId = he->mId;
-
-	VDStringA s;
-
-	s = "{\\rtf{\\fonttbl{\\f0\\fnil\\fcharset0 MS Shell Dlg;}}\\f0\\sa90\\fs16{\\b ";
-	AppendRTF(s, he->mLabel.c_str());
-	s += "}\\par ";
-	AppendRTF(s, he->mText.c_str());
-	s += "}";
-
-	mHelpView.SetTextRTF(s.c_str());
 }
 
 void ATUIPagedDialog::PushCategory(const wchar_t *name) {
@@ -362,87 +537,6 @@ void ATUIPagedDialog::SelectPage(int index) {
 			}
 		}
 	}
-}
-
-void ATUIPagedDialog::AppendRTF(VDStringA& rtf, const wchar_t *text) {
-	const VDStringA& texta = VDTextWToA(text);
-	for (VDStringA::const_iterator it = texta.begin(), itEnd = texta.end();
-		it != itEnd;
-		++it)
-	{
-		const unsigned char c = *it;
-
-		if (c < 0x20 || c > 0x80 || c == '{' || c == '}' || c == '\\')
-			rtf.append_sprintf("\\'%02x", c);
-		else
-			rtf += c;
-	}
-}
-
-void ATUIPagedDialog::InstallMouseHook() {
-	if (!mpMouseFuncThunk) {
-		mpMouseFuncThunk = VDCreateFunctionThunkFromMethod(this, &ATUIPagedDialog::OnMouseEvent, true);
-
-		if (!mpMouseFuncThunk)
-			return;
-	}
-
-	if (!mpMouseHook)
-		mpMouseHook = SetWindowsHookEx(WH_MOUSE, VDGetThunkFunction<HOOKPROC>(mpMouseFuncThunk), nullptr, GetCurrentThreadId());
-}
-
-void ATUIPagedDialog::UninstallMouseHook() {
-	if (mpMouseHook) {
-		UnhookWindowsHookEx((HHOOK)mpMouseHook);
-		mpMouseHook = nullptr;
-	}
-
-	if (mpMouseFuncThunk) {
-		VDDestroyFunctionThunk(mpMouseFuncThunk);
-		mpMouseFuncThunk = nullptr;
-	}
-}
-
-VDZLRESULT ATUIPagedDialog::OnMouseEvent(int code, VDZWPARAM wParam, VDZLPARAM lParam) {
-	if (code == HC_ACTION && wParam == WM_MOUSEMOVE) {
-		const MOUSEHOOKSTRUCT& mhs = *(const MOUSEHOOKSTRUCT *)lParam;
-
-		CheckFocus({ mhs.pt.x, mhs.pt.y });
-	}
-
-	return CallNextHookEx((HHOOK)mpMouseHook, code, wParam, lParam);
-}
-
-void ATUIPagedDialog::InstallKeyboardHook() {
-	if (!mpKeyboardFuncThunk) {
-		mpKeyboardFuncThunk = VDCreateFunctionThunkFromMethod(this, &ATUIPagedDialog::OnKeyboardEvent, true);
-
-		if (!mpKeyboardFuncThunk)
-			return;
-	}
-
-	if (!mpKeyboardHook)
-		mpKeyboardHook = SetWindowsHookEx(WH_KEYBOARD, VDGetThunkFunction<HOOKPROC>(mpKeyboardFuncThunk), nullptr, GetCurrentThreadId());
-}
-
-void ATUIPagedDialog::UninstallKeyboardHook() {
-	if (mpKeyboardHook) {
-		UnhookWindowsHookEx((HHOOK)mpKeyboardHook);
-		mpKeyboardHook = nullptr;
-	}
-
-	if (mpKeyboardFuncThunk) {
-		VDDestroyFunctionThunk(mpKeyboardFuncThunk);
-		mpKeyboardFuncThunk = nullptr;
-	}
-}
-
-VDZLRESULT ATUIPagedDialog::OnKeyboardEvent(int code, VDZWPARAM wParam, VDZLPARAM lParam) {
-	if (code == HC_ACTION) {
-		CheckFocus();
-	}
-
-	return CallNextHookEx((HHOOK)mpKeyboardHook, code, wParam, lParam);
 }
 
 void ATUIPagedDialog::OnTreeSelectedItemChanged() {

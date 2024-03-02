@@ -208,6 +208,9 @@ void ATUIManager::SetThemeScaleFactor(float scale) {
 }
 
 void ATUIManager::SetActiveWindow(ATUIWidget *w) {
+	if (mpModalWindow && !mpModalWindow->IsSameOrAncestorOf(w))
+		return;
+
 	if (mpActiveWindow == w)
 		return;
 
@@ -221,11 +224,13 @@ void ATUIManager::SetActiveWindow(ATUIWidget *w) {
 	if (prevFocus)
 		prevFocus->OnKillFocus();
 
-	for(ATUIWidget *p = prevFocus; p && p->IsActivated() && !p->IsSameOrAncestorOf(mpActiveWindow); p = p->GetParent())
-		p->SetActivated(false);
+	if (mbForeground) {
+		for(ATUIWidget *p = prevFocus; p && p->IsActivated() && !p->IsSameOrAncestorOf(mpActiveWindow); p = p->GetParent())
+			p->SetActivated(false);
 
-	for(ATUIWidget *p = mpActiveWindow; p && !p->IsActivated() && mpActiveWindow == w; p = p->GetParent())
-		p->SetActivated(true);
+		for(ATUIWidget *p = mpActiveWindow; p && !p->IsActivated() && mpActiveWindow == w; p = p->GetParent())
+			p->SetActivated(true);
+	}
 
 	if (mpActiveWindow == w)
 		w->OnSetFocus();
@@ -1066,5 +1071,5 @@ void ATUIManager::ReinitTheme() {
 	}
 
 	if (mpMainWindow)
-		mpMainWindow->InvalidateLayout();
+		mpMainWindow->InvalidateLayout(nullptr);
 }

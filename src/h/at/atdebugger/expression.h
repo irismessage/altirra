@@ -73,7 +73,8 @@ enum ATDebugExpNodeType {
 	kATDebugExpNodeType_Frame,
 	kATDebugExpNodeType_Clock,
 	kATDebugExpNodeType_CpuClock,
-	kATDebugExpNodeType_XPC
+	kATDebugExpNodeType_XPC,
+	kATDebugExpNodeType_TapePos
 };
 
 class ATDebugExpNode {

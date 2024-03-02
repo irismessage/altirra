@@ -77,13 +77,17 @@ extern const ATDeviceDefinition g_ATDeviceDefDiskDriveISPlate;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveIndusGT;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveXF551;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveATR8000;
-extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercom;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercomRFD;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercomAT;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrive810Turbo;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDriveAMDC;
 extern const ATDeviceDefinition g_ATDeviceDefBrowser;
 extern const ATDeviceDefinition g_ATDeviceDefVBXE;
 extern const ATDeviceDefinition g_ATDeviceDefXELCF;
 extern const ATDeviceDefinition g_ATDeviceDefXELCF3;
 extern const ATDeviceDefinition g_ATDeviceDefRapidus;
 extern const ATDeviceDefinition g_ATDeviceDefWarpOS;
+extern const ATDeviceDefinition g_ATDeviceDefCustom;
 
 void ATRegisterDevices(ATDeviceManager& dm) {
 	static const ATDeviceDefinition *const kDeviceDefs[]={
@@ -142,13 +146,17 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefDiskDriveIndusGT,
 		&g_ATDeviceDefDiskDriveXF551,
 		&g_ATDeviceDefDiskDriveATR8000,
-		&g_ATDeviceDefDiskDrivePercom,
+		&g_ATDeviceDefDiskDrivePercomRFD,
+		&g_ATDeviceDefDiskDrivePercomAT,
+		&g_ATDeviceDefDiskDrive810Turbo,
+		&g_ATDeviceDefDiskDriveAMDC,
 		&g_ATDeviceDefBrowser,
 		&g_ATDeviceDefVBXE,
 		&g_ATDeviceDefXELCF,
 		&g_ATDeviceDefXELCF3,
 		&g_ATDeviceDefRapidus,
 		&g_ATDeviceDefWarpOS,
+		&g_ATDeviceDefCustom,
 	};
 
 	for(const ATDeviceDefinition *def : kDeviceDefs)

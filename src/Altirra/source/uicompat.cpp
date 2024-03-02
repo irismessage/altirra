@@ -24,29 +24,37 @@
 #include "resource.h"
 
 const wchar_t *ATUICompatGetKnownTagDisplayName(ATCompatKnownTag knownTag) {
-	switch(knownTag) {
-		case kATCompatKnownTag_BASIC: return L"Requires BASIC";
-		case kATCompatKnownTag_BASICRevA: return L"Requires Atari BASIC revision A";
-		case kATCompatKnownTag_BASICRevB: return L"Requires Atari BASIC revision B";
-		case kATCompatKnownTag_BASICRevC: return L"Requires Atari BASIC revision C";
-		case kATCompatKnownTag_NoBASIC: return L"Requires BASIC disabled";
-		case kATCompatKnownTag_OSA: return L"Requires OS-A";
-		case kATCompatKnownTag_OSB: return L"Requires OS-B";
-		case kATCompatKnownTag_XLOS: return L"Requires XL/XE OS";
-		case kATCompatKnownTag_AccurateDiskTiming: return L"Requires accurate disk timing";
-		case kATCompatKnownTag_NoCIODevices: return L"Requires no additional CIO devices";
-		case kATCompatKnownTag_NoExpandedMem: return L"Requires no expanded memory";
-		case kATCompatKnownTag_CTIA: return L"Requires CTIA";
-		case kATCompatKnownTag_NoU1MB: return L"Incompatible with Ultimate1MB";
-		case kATCompatKnownTag_Undocumented6502: return L"Requires 6502 undocumented opcodes";
-		case kATCompatKnownTag_No65C816HighAddressing: return L"Incompatible with 65C816 24-bit addressing";
-		case kATCompatKnownTag_WritableDisk: return L"Requires writable disk";
-		case kATCompatKnownTag_NoFloatingDataBus: return L"Incompatible with floating data bus";
-		case kATCompatKnownTag_Cart52008K: return L"Cart: Use 5200 8K mapper";
-		case kATCompatKnownTag_Cart520016KOneChip: return L"Cart: Use 5200 one-chip 16K mapper";
-		case kATCompatKnownTag_Cart520016KTwoChip: return L"Cart: Use 5200 two-chip 16K mapper";
-		case kATCompatKnownTag_Cart520032K: return L"Cart: Use 5200 32K mapper";
-	}
+	static constexpr const wchar_t *kKnownTagNames[] = {
+		L"Requires BASIC",
+		L"Requires Atari BASIC revision A",
+		L"Requires Atari BASIC revision B",
+		L"Requires Atari BASIC revision C",
+		L"Requires BASIC disabled",
+		L"Requires OS-A",
+		L"Requires OS-B",
+		L"Requires XL/XE OS",
+		L"Requires accurate disk timing",
+		L"Requires no additional CIO devices",
+		L"Requires no expanded memory",
+		L"Requires CTIA",
+		L"Incompatible with Ultimate1MB",
+		L"Requires 6502 undocumented opcodes",
+		L"Incompatible with 65C816 24-bit addressing",
+		L"Requires writable disk",
+		L"Incompatible with floating data bus",
+		L"Cart: Use 5200 8K mapper",
+		L"Cart: Use 5200 one-chip 16K mapper",
+		L"Cart: Use 5200 two-chip 16K mapper",
+		L"Cart: Use 5200 32K mapper",
+		L"Requires 60Hz (NTSC ANTIC)",
+		L"Requires 50Hz (PAL ANTIC)",
+	};
+
+	static_assert(vdcountof(kKnownTagNames) == (size_t)kATCompatKnownTagCount - 1);
+
+	const size_t index = (size_t)knownTag - 1;
+	if (index < vdcountof(kKnownTagNames))
+		return kKnownTagNames[index];
 
 	return L"<Unknown tag>";
 }

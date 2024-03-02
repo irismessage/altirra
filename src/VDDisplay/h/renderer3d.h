@@ -45,7 +45,7 @@ public:
 	vdrect32 mHiBltSrcRect;
 };
 
-class VDDisplayRenderer3D : public IVDDisplayRenderer {
+class VDDisplayRenderer3D final : public IVDDisplayRenderer {
 public:
 	VDDisplayRenderer3D();
 
@@ -72,7 +72,8 @@ public:
 
 	virtual void MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode);
 
-	virtual void PolyLine(const vdpoint32 *points, uint32 numLines);
+	void PolyLine(const vdpoint32 *points, uint32 numLines) override;
+	void PolyLineF(const vdfloat2 *points, uint32 numLines, bool antialiased) override;
 
 	virtual bool PushViewport(const vdrect32& r, sint32 x, sint32 y);
 	virtual void PopViewport();

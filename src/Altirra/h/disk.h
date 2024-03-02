@@ -35,10 +35,11 @@ class ATPokeyEmulator;
 class ATAudioSamplePlayer;
 
 class ATCPUEmulatorMemory;
-class VDFile;
 class IVDRandomAccessStream;
 class IATDeviceIndicatorManager;
 class IATUIRenderer;
+class IATObjectState;
+class IATAudioSoundGroup;
 
 struct ATTraceContext;
 class ATTraceChannelFormatted;
@@ -90,6 +91,9 @@ public:
 
 	void SetTraceContext(ATTraceContext *context);
 
+	void SaveState(IATObjectState **pp) const;
+	void LoadState(const IATObjectState& state);
+
 public:
 	void OnScheduledEvent(uint32 id) override;
 
@@ -106,6 +110,7 @@ public:		// IATDiskInterfaceClient
 	void OnWriteModeChanged() override;
 	void OnTimingModeChanged() override;
 	void OnAudioModeChanged() override;
+	bool IsImageSupported(const IATDiskImage& image) const override;
 
 protected:
 	void UpdateAccelTimeSkew();
@@ -123,6 +128,7 @@ protected:
 	void Wait(uint32 nextState);
 	void EndCommand();
 	void AbortCommand();
+	uint32 GetUpdatedRotationalCounter() const;
 	void UpdateRotationalCounter();
 
 	void ProcessCommand();
@@ -144,6 +150,8 @@ protected:
 	void ProcessCommandGetHighSpeedIndex();
 	void ProcessCommandFormat();
 
+	void ProcessUnhandledCommandState();
+
 	void ComputeGeometry();
 	void ComputePERCOMBlock();
 	void ComputeSupportedProfile();
@@ -156,7 +164,6 @@ protected:
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
 	ATScheduler *mpScheduler = nullptr;
 	ATScheduler *mpSlowScheduler = nullptr;
-	ATAudioSamplePlayer *mpAudioSyncMixer = nullptr;
 	int		mUnit = 0;
 
 	ATEvent		*mpMotorOffEvent = nullptr;
@@ -203,8 +210,6 @@ protected:
 	int		mSectorSize = 0;
 	uint32	mLastSector = 0;
 
-	ATSoundId	mRotationSoundId = {};
-
 	uint8	mPERCOM[12] = {};
 	int		mFormatSectorSize = 0;
 	int		mFormatSectorCount = 0;
@@ -242,6 +247,10 @@ protected:
 	bool	mbSeekHalfTracks = false;
 	bool	mbRetryMode1050 = false;
 	bool	mbReverseOnForwardSeeks = false;
+
+	ATAudioSamplePlayer *mpAudioSyncMixer = nullptr;
+	vdrefptr<IATAudioSoundGroup> mpRotationSoundGroup;
+	vdrefptr<IATAudioSoundGroup> mpStepSoundGroup;
 
 	ATDiskInterface *mpDiskInterface = nullptr;
 	ATTraceContext *mpTraceContext = nullptr;

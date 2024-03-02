@@ -11,20 +11,33 @@
     command, or in hex using a <tt>$</tt> prefix. The default base is <tt>mixed</tt>, which
     selects hex for simple addresses and decimal for numbers in expressions.
   </p>
-  <h3>Extended addressing</h3>
+  <h3>Global addressing</h3>
   <p>
-    For commands that support extended addressing, 24-bit and alternate memory space addresses
+    For commands that support global addressing, 24-bit and alternate memory space addresses
     can be used.
   </p>
   <p>
-    24-bit addresses can be specified in bank+offset form using a <tt>:</tt> to separate
+    65C816 24-bit addresses can be specified in bank+offset form using a <tt>:</tt> to separate
     the bank and offset, e.g. <tt>$01:0000</tt>. A <tt>$</tt> prefix selects hex for both
     the bank and the offset together.
   </p>
   <p>
-    The <tt>n:</tt> prefix selects ANTIC address space, <tt>v:</tt> selects VBXE memory,
-    <tt>x:</tt> selects PORTB-based extended RAM, and <tt>r:</tt> selects primary RAM.
+    PORTB-based extended memory can be addressed in two ways. The <tt>x:</tt> prefix
+    linearly addresses extended memory, while <tt>$xx'yyyy</tt> syntax addresses it using
+    the PORTB value and CPU address. For instance, <tt>$EF'4000</tt> maps to the extended
+    memory visible to the CPU at <tt>$4000</tt> with a PORTB value of <tt>$EF</tt>.
   </p>
+  <p>
+    Additional prefixes:
+  </p>
+  <ul>
+    <li><b><tt>n:</tt></b> selects ANTIC address space</li>
+    <li><b><tt>v:</tt></b> selects VBXE memory by VBXE linear address</li>
+    <li><b><tt>r:</tt></b> selects main memory by CPU address, even if currently shadowed by ROM or hardware</li>
+    <li><b><tt>rom:</tt></b> selects system ROM by CPU address, even if currently disabled or shadowed by hardware</li>
+    <li><b><tt>cart:</tt></b> selects cartridge memory with linear addressing</li>
+    <li><b><tt>t:$xx'yyyy</tt></b> selects cartridge memory with banked addressing, e.g. <tt>t:$02'A000</tt> accesses $A000 with a bank value of $02. (This is currently only supported with the AtariMax cartridge types.)</li>
+  </ul>
   <h2>Expressions</h2>
   <h3>Constants</h3>
   <p>
@@ -85,9 +98,14 @@
   </p>
   <h3>CPU register operators</h3>
   <p>
-    The <tt>pc</tt>, <tt>x</tt>, <tt>y</tt>, <tt>s</tt>, and <tt>p</tt> operators
+    The <tt>pc</tt>, <tt>a</tt>, <tt>x</tt>, <tt>y</tt>, <tt>s</tt>, and <tt>p</tt> operators
     return the values of the corresponding CPU registers. In 65C816 mode, the
     low bytes of the A, X, Y, and S registers are returned.
+  </p>
+  <p>
+    <b>Note:</b> The <tt>a</tt> operator is overridden by the hex value <tt>$a</tt> if mixed base
+    mode is enabled. This only happens in expressions that contain only <tt>a</tt> and nothing else.
+    Use <tt>(a)</tt> or <tt>@a</tt> to force the operator instead.
   </p>
   <h3>ANTIC register operators</h3>
   <p>

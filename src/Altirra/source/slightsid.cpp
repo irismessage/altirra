@@ -287,9 +287,9 @@ void ATSlightSIDEmulator::WriteControl(uint8 addr, uint8 value) {
 
 				mVolumeScale = (float)(mRegisters[0x18] & 15);
 				
-				mVolumeScale *= 60.0f				// to undo POKEY scaling
+				mVolumeScale *= 1.0f
 								/ (128.0f*255.0f)	// waveform * envelope scaling
-								/ 5.0f				// because we accumulate 28*5 counts per sample instead of 28 cycles
+								/ (28.0f*5.0f)		// because we accumulate 28*5 counts per sample
 								/ 15.0f				// for 0-15 global volume scale
 								;
 				break;
@@ -535,7 +535,6 @@ void ATSlightSIDEmulator::Run(uint32 cycles) {
 
 void ATSlightSIDEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 	float *const dstLeft = mixInfo.mpLeft;
-	float *const dstRightOpt = mixInfo.mpRight;
 	const uint32 n = mixInfo.mCount;
 
 	Flush();
@@ -549,16 +548,10 @@ void ATSlightSIDEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 		mOutputLevel = n;
 	}
 
-	if (dstRightOpt) {
-		for(uint32 i=0; i<n; ++i) {
-			float v = mAccumBuffer[i];
-			dstLeft[i] += v;
-			dstRightOpt[i] += v;
-		}
-	} else {
-		for(uint32 i=0; i<n; ++i)
-			dstLeft[i] += mAccumBuffer[i];
-	}
+	const float volume = mixInfo.mpMixLevels[kATAudioMix_Other];
+
+	for(uint32 i=0; i<n; ++i)
+		dstLeft[i] += mAccumBuffer[i] * volume;
 
 	// shift down accumulation buffers
 	uint32 samplesLeft = mOutputLevel - n;

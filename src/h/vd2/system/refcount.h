@@ -175,6 +175,7 @@ public:
 	typedef T			element_type;
 
 	vdrefptr() : ptr(nullptr) {}
+	vdrefptr(std::nullptr_t) : ptr(nullptr) {}
 
 	/// Creates a new smart pointer and obtains a new reference on the
 	/// specified object.

@@ -44,7 +44,9 @@
 	mXH = rXH;	\
 	mYH = rYH;	\
 	mP = rP;	\
+	mDP = rDP;	\
 	UpdateDecodeTable();	\
+	rDP = mDP;	\
 	rP = mP;	\
 	rYH = mYH;	\
 	rXH = mXH;	\
@@ -1499,7 +1501,7 @@ for(;;) {
 
 		case kStatePushPBKNative:
 			AT_CPU_WRITE_BYTE_HL(rSH, rS, rK);
-			if (!rS-- && !mbEmulationFlag)
+			if (!rS--)
 				--rSH;
 			END_SUB_CYCLE();
 
@@ -1517,13 +1519,16 @@ for(;;) {
 
 		case kStatePushPCLM1Native:
 			AT_CPU_WRITE_BYTE_HL(rSH, rS, (rPC - 1) & 0xff);
-			if (!rS-- && !mbEmulationFlag)
+			if (!rS--)
 				--rSH;
+			// last cycle -- must force SH=1 in emu mode
+			if (mbEmulationFlag)
+				rSH = 1;
 			END_SUB_CYCLE();
 
 		case kStatePushPCHM1Native:
 			AT_CPU_WRITE_BYTE_HL(rSH, rS, (rPC - 1) >> 8);
-			if (!rS-- && !mbEmulationFlag)
+			if (!rS--)
 				--rSH;
 			END_SUB_CYCLE();
 

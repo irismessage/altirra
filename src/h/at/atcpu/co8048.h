@@ -32,6 +32,7 @@ public:
 	void SetProgramBanks(const void *p0, const void *p1);
 
 	uint8 GetSP() const { return mPSW & 7; }
+	uint32 GetStepStackLevel() const { return (uint32)mPSW << 29; }
 	uint8 GetPort1Output() const { return mP1; }
 	uint8 GetPort2Output() const { return mP2; }
 
@@ -51,6 +52,8 @@ public:
 	void SetPortWriteHandler(const vdfunction<void(uint8, uint8)>& fn);
 	void SetBreakpointMap(const bool bpMap[65536], IATCPUBreakpointHandler *bphandler);
 
+	const uint8 *GetInternalRAM() const { return mRAM; }
+	uint8 *GetInternalRAM() { return mRAM; }
 	uint8 ReadByte(uint8 addr) const;
 	void WriteByte(uint8 addr, uint8 val);
 
@@ -114,7 +117,7 @@ private:
 	vdfunction<uint8(uint8, uint8)> mpFnReadPort;
 	vdfunction<void(uint8, uint8)> mpFnWritePort;
 	
-	uint8	mRAM[256];
+	alignas(2) uint8	mRAM[256];
 
 	static const uint8 kInitialState;
 	static const uint8 kInitialStateNoBreak;

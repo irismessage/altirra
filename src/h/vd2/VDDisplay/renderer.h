@@ -20,9 +20,11 @@ struct VDDisplayBlt {
 };
 
 struct VDDisplayRendererCaps {
-	bool mbSupportsAlphaBlending;
-	bool mbSupportsColorBlt;
-	bool mbSupportsColorBlt2;
+	bool mbSupportsAlphaBlending;		// non-text alpha blended primitives are supported
+	bool mbSupportsColorBlt;			// Color mode blits are supported (subpixel AA with very approximate gamma correction)
+	bool mbSupportsColorBlt2;			// Color2 mode blits are supported (subpixel AA with slightly better gamma correction)
+	bool mbSupportsPolyLineF;			// PolyLineF() is supported for better precision line points
+	bool mbSupportsPolyLineFAA;			// PolyLineF(antialiasing = true) is supported (ignored otherwise)
 };
 
 class VDDisplaySubRenderCache {
@@ -78,11 +80,17 @@ public:
 		// while black pixels are transparent.
 		kBltMode_Stencil,
 
+		// Do multiple alpha blits from a grayscale bitmap, using the current color. The color channel used
+		// for the blit is unspecified (may be blue).
 		kBltMode_Gray,
 
-		// Do multiple color blits from a bitmap with RGB alpha and using the current color.
+		// Do multiple color blits from a bitmap with RGB alpha and using the current color. This is used
+		// for rendering subpixel text.
 		kBltMode_Color,
 
+		// Do multiple color blits from a bitmap split into halves, the left half containing color for
+		// a=0 and the right half for a=1, with interpolation. The result is multiplied by vertex color
+		// and then blended with vertex alpha. This is used for (very) approximate gamma correction of text.
 		kBltMode_Color2
 	};
 
@@ -90,6 +98,7 @@ public:
 
 	// Draw a connected line strip.
 	virtual void PolyLine(const vdpoint32 *points, uint32 numLines) = 0;
+	virtual void PolyLineF(const vdfloat2 *points, uint32 numLines, bool antialiased) = 0;
 
 	virtual bool PushViewport(const vdrect32& r, sint32 x, sint32 y) = 0;
 	virtual void PopViewport() = 0;

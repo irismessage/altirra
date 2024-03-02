@@ -256,11 +256,12 @@ void ATUIDialogCartridgeMapper::OnDataExchange(bool write) {
 
 				modeItem->mMode = (ATCartridgeMode)*it;
 
-				if (i < mRecommendedMapperIndex && mRecommendedMapperIndex > 1)
-					modeItem->mSuggested = true;
-
-				if (i < mRecommendedMapperIndex && mRecommendedMapperIndex == 1)
-					modeItem->mRecommended = true;
+				if (i < mRecommendedMapperIndex) {
+					if (mRecommendedMapperIndex > 1)
+						modeItem->mSuggested = true;
+					else
+						modeItem->mRecommended = true;
+				}
 
 				mModeList.InsertVirtualItem(-1, modeItem);
 			}
@@ -352,6 +353,7 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeName(int mode) {
 		case kATCartridgeMode_Atrax_128K_Raw:		return L"Atrax 128K (raw order)";
 		case kATCartridgeMode_aDawliah_32K:			return L"aDawliah 32K";
 		case kATCartridgeMode_aDawliah_64K:			return L"aDawliah 64K";
+		case kATCartridgeMode_JRC_64K_RAM:			return L"JRC 64K + RAM";
 
 		// These modes should not be hit
 		case kATCartridgeMode_SuperCharger3D:
@@ -453,6 +455,8 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeDesc(int mode) {
 
 		case kATCartridgeMode_aDawliah_32K:			return L"8K banked by CCTL access (autoincrement)";
 		case kATCartridgeMode_aDawliah_64K:			return L"8K banked by CCTL access (autoincrement)";
+
+		case kATCartridgeMode_JRC_64K_RAM:			return L"8K banked by CCTL $D500-D57F data + RAM";
 
 		// These modes should not be hit
 		case kATCartridgeMode_SuperCharger3D:

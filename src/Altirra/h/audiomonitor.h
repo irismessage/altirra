@@ -24,8 +24,8 @@
 class IATUIRenderer;
 
 class ATAudioMonitor {
-	ATAudioMonitor(const ATAudioMonitor&);
-	ATAudioMonitor& operator=(const ATAudioMonitor&);
+	ATAudioMonitor(const ATAudioMonitor&) = delete;
+	ATAudioMonitor& operator=(const ATAudioMonitor&) = delete;
 public:
 	ATAudioMonitor();
 	~ATAudioMonitor();
@@ -33,8 +33,9 @@ public:
 	void Init(ATPokeyEmulator *pokey, IATUIRenderer *uir, bool secondary);
 	void Shutdown();
 
+	void SetMixedSampleCount(uint32 len);
+
 	void Update(ATPokeyAudioLog **log, ATPokeyRegisterState **rstate);
-	void Reset();
 
 protected:
 	ATPokeyEmulator		*mpPokey;
@@ -45,6 +46,8 @@ protected:
 	ATPokeyRegisterState	mRegisterState;
 
 	ATPokeyAudioState	mAudioStates[312];
+
+	vdfastvector<float>	mMixedSampleBuffer;
 };
 
 #endif	// f_AT_AUDIOMONITOR_H

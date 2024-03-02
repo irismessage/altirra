@@ -20,9 +20,10 @@
 #include <vd2/system/int128.h>
 #include <vd2/system/math.h>
 #include <at/atcore/audiosource.h>
+#include <at/atcore/deviceserial.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/propertyset.h>
-#include <at/atcore/deviceserial.h>
+#include <at/atcore/wraptime.h>
 #include "audiosampleplayer.h"
 #include "diskdrivefull.h"
 #include "memorymanager.h"
@@ -129,6 +130,13 @@ void ATCreateDeviceDiskDriveISPlate(const ATPropertySet& pset, IATDevice **dev) 
 	*dev = p.release();
 }
 
+void ATCreateDeviceDiskDrive810Turbo(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceDiskDriveFull> p(new ATDeviceDiskDriveFull(false, ATDeviceDiskDriveFull::kDeviceType_810Turbo));
+	p->SetSettings(pset);
+
+	*dev = p.release();
+}
+
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive810				= { "diskdrive810",				"diskdrive810",				L"810 disk drive (full emulation)", ATCreateDeviceDiskDrive810 };
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive810Archiver		= { "diskdrive810archiver",		"diskdrive810archiver",		L"810 Archiver disk drive (full emulation)", ATCreateDeviceDiskDrive810Archiver };
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveHappy810			= { "diskdrivehappy810",		"diskdrivehappy810",		L"Happy 810 disk drive (full emulation)", ATCreateDeviceDiskDriveHappy810 };
@@ -143,16 +151,25 @@ extern const ATDeviceDefinition g_ATDeviceDefDiskDriveTygrys1050		= { "diskdrive
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive1050Turbo			= { "diskdrive1050turbo",		"diskdrive1050turbo",		L"1050 Turbo disk drive (full emulation)", ATCreateDeviceDiskDrive1050Turbo };
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive1050TurboII		= { "diskdrive1050turboii",		"diskdrive1050turboii",		L"1050 Turbo II disk drive (full emulation)", ATCreateDeviceDiskDrive1050TurboII };
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveISPlate			= { "diskdriveisplate",			"diskdriveisplate",			L"I.S. Plate disk drive (full emulation)", ATCreateDeviceDiskDriveISPlate };
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrive810Turbo			= { "diskdrive810turbo",		"diskdrive810turbo",		L"810 Turbo disk drive (full emulation)", ATCreateDeviceDiskDrive810Turbo };
 
 ATDeviceDiskDriveFull::ATDeviceDiskDriveFull(bool is1050, DeviceType deviceType)
 	: mb1050(is1050)
 	, mDeviceType(deviceType)
-	, mCoProc(deviceType == kDeviceType_Speedy1050)
+	, mCoProc(deviceType == kDeviceType_Speedy1050, deviceType == kDeviceType_810 || deviceType == kDeviceType_1050)
 {
 	mBreakpointsImpl.BindBPHandler(mCoProc);
 	mBreakpointsImpl.SetStepHandler(this);
+	mBreakpointsImpl.SetBPsChangedHandler([this](const uint16 *pc) { mCoProc.OnBreakpointsChanged(pc); });
 
-	mDriveScheduler.SetRate(is1050 ? VDFraction(1000000, 1) : VDFraction(500000, 1));
+	const VDFraction& clockRate = is1050 || deviceType == kDeviceType_810Turbo ? VDFraction(1000000, 1) : VDFraction(500000, 1);
+	mDriveScheduler.SetRate(clockRate);
+
+	memset(&mDummyRead, 0xFF, sizeof mDummyRead);
+
+	mTargetProxy.mpDriveScheduler = &mDriveScheduler;
+	mTargetProxy.Init(mCoProc);
+	InitTargetControl(mTargetProxy, clockRate.asDouble(), deviceType == kDeviceType_Speedy1050 ? kATDebugDisasmMode_65C02 : kATDebugDisasmMode_6502, &mBreakpointsImpl);
 }
 
 ATDeviceDiskDriveFull::~ATDeviceDiskDriveFull() {
@@ -160,21 +177,16 @@ ATDeviceDiskDriveFull::~ATDeviceDiskDriveFull() {
 
 void *ATDeviceDiskDriveFull::AsInterface(uint32 iid) {
 	switch(iid) {
-		case IATDeviceScheduling::kTypeID: return static_cast<IATDeviceScheduling *>(this);
 		case IATDeviceFirmware::kTypeID: return static_cast<IATDeviceFirmware *>(this);
 		case IATDeviceDiskDrive::kTypeID: return static_cast<IATDeviceDiskDrive *>(this);
 		case IATDeviceSIO::kTypeID: return static_cast<IATDeviceSIO *>(this);
 		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(&mAudioPlayer);
 		case IATDeviceButtons::kTypeID: return static_cast<IATDeviceButtons *>(this);
-		case IATDeviceDebugTarget::kTypeID: return static_cast<IATDeviceDebugTarget *>(this);
-		case IATDebugTargetBreakpoints::kTypeID: return static_cast<IATDebugTargetBreakpoints *>(&mBreakpointsImpl);
-		case IATDebugTargetHistory::kTypeID: return static_cast<IATDebugTargetHistory *>(this);
-		case IATDebugTargetExecutionControl::kTypeID: return static_cast<IATDebugTargetExecutionControl *>(this);
 		case ATRIOT6532Emulator::kTypeID: return &mRIOT;
 		case ATFDCEmulator::kTypeID: return &mFDC;
 	}
 
-	return nullptr;
+	return ATDiskDriveDebugTargetControl::AsInterface(iid);
 }
 
 void ATDeviceDiskDriveFull::GetDeviceInfo(ATDeviceInfo& info) {
@@ -193,6 +205,7 @@ void ATDeviceDiskDriveFull::GetDeviceInfo(ATDeviceInfo& info) {
 		&g_ATDeviceDefDiskDrive1050Turbo,
 		&g_ATDeviceDefDiskDrive1050TurboII,
 		&g_ATDeviceDefDiskDriveISPlate,
+		&g_ATDeviceDefDiskDrive810Turbo,
 	};
 
 	static_assert(vdcountof(kDeviceDefs) == kDeviceTypeCount, "Device def array missized");
@@ -243,6 +256,8 @@ bool ATDeviceDiskDriveFull::SetSettings(const ATPropertySet& settings) {
 }
 
 void ATDeviceDiskDriveFull::Init() {
+	mSerialXmitQueue.Init(mpScheduler, mpSIOMgr);
+
 	// The 810's memory map:
 	//
 	//	000-07F  FDC
@@ -387,534 +402,304 @@ void ATDeviceDiskDriveFull::Init() {
 	}
 
 	// initialize memory map
-	for(int i=0; i<256; ++i) {
-		readmap[i] = (uintptr)mDummyRead - (i << 8);
-		writemap[i] = (uintptr)mDummyWrite - (i << 8);
-	}
+	ATCoProcMemoryMapView mmapView(readmap, writemap, mCoProc.GetTraceMap());
 
-	if (mDeviceType == kDeviceType_TOMS1050 || mDeviceType == kDeviceType_1050Duplicator) {
-		// The TOMS 1050 uses a 6502 instead of a 6507, so no 8K mirroring. Additional mappings:
-		//	$2000-3FFF	RAM
-		//	$E000-FFFF	ROM
-		writemap[0] = (uintptr)mRAM;
-		writemap[1] = (uintptr)mRAM - 0x100;
-		writemap[2] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[3] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[4] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[5] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[6] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[7] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[8] = (uintptr)mRAM - 0x800;
-		writemap[9] = (uintptr)mRAM - 0x900;
-		writemap[10] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[11] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[12] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[13] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[14] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[15] = (uintptr)&mWriteNodeFDCRAM + 1;
+	mmapView.Clear(mDummyRead, mDummyWrite);
 
-		readmap[0] = (uintptr)mRAM;
-		readmap[1] = (uintptr)mRAM - 0x100;
-		readmap[2] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[3] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[4] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[5] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[6] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[7] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[8] = (uintptr)mRAM - 0x800;
-		readmap[9] = (uintptr)mRAM - 0x900;
-		readmap[10] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[11] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[12] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[13] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[14] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[15] = (uintptr)&mReadNodeFDCRAM + 1;
-
-		// map RAM to $2000-3FFF
-		for(int i=0; i<32; ++i) {
-			readmap[i+32] = (uintptr)mRAM + 0x100 - 0x2000;
-			writemap[i+32] = (uintptr)mRAM + 0x100 - 0x2000;
-		}
-
-		// map ROM to $E000-FFFF
-		for(int i=0; i<32; ++i) {
-			readmap[i+0xE0] = (uintptr)mROM - 0xE000;
-		}
-	} else if (mDeviceType == kDeviceType_Happy1050) {
-		// The Happy 1050 uses a 6502 instead of a 6507, so no 8K mirroring.
-
-		writemap[0] = (uintptr)mRAM;
-		writemap[1] = (uintptr)mRAM - 0x100;
-		writemap[2] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[3] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[4] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[5] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[6] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[7] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[8] = (uintptr)mRAM - 0x800;
-		writemap[9] = (uintptr)mRAM - 0x900;
-		writemap[10] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[11] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[12] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[13] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[14] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[15] = (uintptr)&mWriteNodeFDCRAM + 1;
-
-		readmap[0] = (uintptr)mRAM;
-		readmap[1] = (uintptr)mRAM - 0x100;
-		readmap[2] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[3] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[4] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[5] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[6] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[7] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[8] = (uintptr)mRAM - 0x800;
-		readmap[9] = (uintptr)mRAM - 0x900;
-		readmap[10] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[11] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[12] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[13] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[14] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[15] = (uintptr)&mReadNodeFDCRAM + 1;
-
-		// mirror lower 8K to $2000-3FFF
-		for(int i=0; i<32; ++i) {
-			uintptr r = readmap[i];
-			uintptr w = writemap[i];
-			
-			readmap[i+32] = r & 1 ? r : r - 0x2000;
-			writemap[i+32] = w & 1 ? w : w - 0x2000;
-		}
-
-		// mirror lower 16K to $4000-7FFF through write protect toggle shim
-
-		mReadNodeWriteProtectToggle.mpThis = this;
-		mReadNodeWriteProtectToggle.mpDebugRead = [](uint32 addr, void *thisptr0) {
-			auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-			uintptr r = thisptr->mCoProc.GetReadMap()[((addr >> 8) - 0x40) & 0xFF];
-
-			if (r & 1) {
-				const auto& readNode = *(const ATCoProcReadMemNode *)(r - 1);
-
-				return readNode.mpDebugRead(addr, readNode.mpThis);
-			} else {
-				return *(const uint8 *)(r + addr);
-			}
-		};
-		mReadNodeWriteProtectToggle.mpRead = [](uint32 addr, void *thisptr0) {
-			auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-			uintptr r = thisptr->mCoProc.GetReadMap()[((addr >> 8) - 0x40) & 0xFF];
-
-			thisptr->OnToggleWriteProtect();
-
-			if (r & 1) {
-				const auto& readNode = *(const ATCoProcReadMemNode *)(r - 1);
-
-				return readNode.mpRead(addr, readNode.mpThis);
-			} else {
-				return *(const uint8 *)(r + addr);
-			}
-		};
-
-		mWriteNodeWriteProtectToggle.mpThis = this;
-		mWriteNodeWriteProtectToggle.mpWrite = [](uint32 addr, uint8 val, void *thisptr0) {
-			auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-
-			thisptr->OnToggleWriteProtect();
-
-			uintptr w = thisptr->mCoProc.GetWriteMap()[((addr >> 8) - 0x40) & 0xFF];
-
-			if (w & 1) {
-				const auto& writeNode = *(const ATCoProcWriteMemNode *)(w - 1);
-
-				writeNode.mpWrite(addr, val, writeNode.mpThis);
-			} else {
-				*(uint8 *)(w + addr) = val;
-			}
-		};
-
-		for(int i=0; i<64; ++i) {
-			
-			uintptr r = readmap[i];
-			uintptr w = writemap[i];
-			
-			readmap[i+64] = mReadNodeWriteProtectToggle.AsBase();
-			writemap[i+64] = mWriteNodeWriteProtectToggle.AsBase();
-		}
-
-		// map RAM to $8000-9FFF and $A000-BFFF
-		for(int i=0; i<32; ++i) {
-			readmap[i + 0x80] = (uintptr)(mRAM + 0x100) - 0x8000;
-			readmap[i + 0xA0] = (uintptr)(mRAM + 0x100) - 0xA000;
-			writemap[i + 0x80] = (uintptr)(mRAM + 0x100) - 0x8000;
-			writemap[i + 0xA0] = (uintptr)(mRAM + 0x100) - 0xA000;
-		}
-
-		// hook $9800-9FFF and $B800-BFFF for slow/fast switch reading
-		mReadNodeFastSlowToggle.mpDebugRead = [](uint32 addr, void *thisptr0) {
-			auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-			
-			return thisptr->mRAM[0x100 + ((addr - 0x8000) & 0x1FFF)];
-		};
-
-		mReadNodeFastSlowToggle.mpRead = [](uint32 addr, void *thisptr0) {
-			auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-
-			thisptr->OnToggleFastSlow();
-			
-			return thisptr->mRAM[0x100 + ((addr - 0x8000) & 0x1FFF)];
-		};
-
-		mReadNodeFastSlowToggle.mpThis = this;
-
-		mWriteNodeFastSlowToggle.mpThis = this;
-		mWriteNodeFastSlowToggle.mpWrite = [](uint32 addr, uint8 val, void *thisptr0) {
-			auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-
-			thisptr->OnToggleFastSlow();			
-			thisptr->mRAM[0x100 + ((addr - 0x8000) & 0x1FFF)] = val;
-		};
-
-		for(int i=0; i<8; ++i) {
-			readmap[i + 0x98] = mReadNodeFastSlowToggle.AsBase();
-			readmap[i + 0xB8] = mReadNodeFastSlowToggle.AsBase();
-			writemap[i + 0x98] = mWriteNodeFastSlowToggle.AsBase();
-			writemap[i + 0xB8] = mWriteNodeFastSlowToggle.AsBase();
-		}
-
-		// map ROM to $3xxx, $7xxx, $Bxxx, $Fxxx
-		for(int i=0; i<16; ++i) {
-			readmap[i + 0x30] = (uintptr)mROM - 0x3000;
-			readmap[i + 0x70] = (uintptr)mROM - 0x7000;
-			readmap[i + 0xB0] = (uintptr)mROM - 0xB000;
-			readmap[i + 0xF0] = (uintptr)mROM - 0xF000;
-		}
-
-		// set up ROM banking registers
-		mReadNodeROMBankSwitch.mpThis = this;
-		mWriteNodeROMBankSwitch.mpThis = this;
-
-		mReadNodeROMBankSwitch.mpRead = [](uint32 addr, void *thisptr0) -> uint8 {
-			auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-			const uint8 v = thisptr->mbROMBankAlt ? thisptr->mROM[0x1000 + (addr & 0xFFF)] : thisptr->mROM[addr & 0xFFF];
-
-			if ((addr & 0x0FFE) == 0x0FF8) {
-				bool altBank = (addr & 1) != 0;
-
-				if (thisptr->mbROMBankAlt != altBank) {
-					thisptr->mbROMBankAlt = altBank;
-
-					thisptr->UpdateROMBankHappy1050();
-				}
-			}
-
-			return v;
-		};
-
-		mReadNodeROMBankSwitch.mpDebugRead = [](uint32 addr, void *thisptr0) -> uint8 {
-			auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-
-			return thisptr->mbROMBankAlt ? thisptr->mROM[0x1000 + (addr & 0xFFF)] : thisptr->mROM[addr & 0xFFF];
-		};
-
-
-		mWriteNodeROMBankSwitch.mpWrite = [](uint32 addr, uint8 val, void *thisptr0) {
-			auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-
-			if ((addr & 0x0FFE) == 0x0FF8) {
-				bool altBank = (addr & 1) != 0;
-
-				if (thisptr->mbROMBankAlt != altBank) {
-					thisptr->mbROMBankAlt = altBank;
-
-					thisptr->UpdateROMBankHappy1050();
-				}
-			}
-		};
-
-		readmap[0x2F] =
-			readmap[0x3F] =
-			readmap[0x6F] =
-			readmap[0x7F] =
-			readmap[0xAF] =
-			readmap[0xBF] =
-			readmap[0xEF] =
-			readmap[0xFF] = (uintptr)&mReadNodeROMBankSwitch + 1;
-
-		writemap[0x2F] =
-			writemap[0x3F] =
-			writemap[0x6F] =
-			writemap[0x7F] =
-			writemap[0xAF] =
-			writemap[0xBF] =
-			writemap[0xEF] =
-			writemap[0xFF] = (uintptr)&mWriteNodeROMBankSwitch + 1;
-	} else if (mDeviceType == kDeviceType_ISPlate) {
-		// The I.S. Plate uses a 6502 instead of a 6507, so no 8K mirroring:
-		//	$0000-7FFF	I/O (6507 $0000-0FFF mirrored 8x)
-		//	$8000-9FFF	RAM (4K #1)
-		//	$C000-DFFF	RAM (4K #2)
-		//	$E000-FFFF	ROM (4K mirrored)
-
-		for(int i=0; i<0x80; i+=0x10) {
-			const uintptr ramBase = (uintptr)mRAM - (i << 8);
-
-			writemap[i+0] = ramBase;
-			writemap[i+1] = ramBase - 0x100;
-			writemap[i+2] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-			writemap[i+3] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-			writemap[i+4] = (uintptr)&mWriteNodeFDCRAM + 1;
-			writemap[i+5] = (uintptr)&mWriteNodeFDCRAM + 1;
-			writemap[i+6] = (uintptr)&mWriteNodeFDCRAM + 1;
-			writemap[i+7] = (uintptr)&mWriteNodeFDCRAM + 1;
-			writemap[i+8] = ramBase - 0x800;
-			writemap[i+9] = ramBase - 0x900;
-			writemap[i+10] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-			writemap[i+11] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-			writemap[i+12] = (uintptr)&mWriteNodeFDCRAM + 1;
-			writemap[i+13] = (uintptr)&mWriteNodeFDCRAM + 1;
-			writemap[i+14] = (uintptr)&mWriteNodeFDCRAM + 1;
-			writemap[i+15] = (uintptr)&mWriteNodeFDCRAM + 1;
-
-			readmap[i+0] = ramBase;
-			readmap[i+1] = ramBase - 0x100;
-			readmap[i+2] = (uintptr)&mReadNodeRIOTRegisters + 1;
-			readmap[i+3] = (uintptr)&mReadNodeRIOTRegisters + 1;
-			readmap[i+4] = (uintptr)&mReadNodeFDCRAM + 1;
-			readmap[i+5] = (uintptr)&mReadNodeFDCRAM + 1;
-			readmap[i+6] = (uintptr)&mReadNodeFDCRAM + 1;
-			readmap[i+7] = (uintptr)&mReadNodeFDCRAM + 1;
-			readmap[i+8] = ramBase - 0x800;
-			readmap[i+9] = ramBase - 0x900;
-			readmap[i+10] = (uintptr)&mReadNodeRIOTRegisters + 1;
-			readmap[i+11] = (uintptr)&mReadNodeRIOTRegisters + 1;
-			readmap[i+12] = (uintptr)&mReadNodeFDCRAM + 1;
-			readmap[i+13] = (uintptr)&mReadNodeFDCRAM + 1;
-			readmap[i+14] = (uintptr)&mReadNodeFDCRAM + 1;
-			readmap[i+15] = (uintptr)&mReadNodeFDCRAM + 1;
-		}
-
-		// Map 8K of RAM to $8000-9FFF and another 8K to $C000-DFFF.
-		for(int i=0; i<32; ++i) {
-			readmap[i + 0x80] = (uintptr)(mRAM + 0x100) - 0x8000;
-			readmap[i + 0xC0] = (uintptr)(mRAM + 0x2100) - 0xC000;
-			writemap[i + 0x80] = (uintptr)(mRAM + 0x100) - 0x8000;
-			writemap[i + 0xC0] = (uintptr)(mRAM + 0x2100) - 0xC000;
-		}
-
-		// map 8K ROM to $E000-FFFF
-		for(int i=0; i<32; ++i) {
-			readmap[i+0xE0] = (uintptr)mROM - 0xE000;
-		}
-
-	} else if (mDeviceType == kDeviceType_Speedy1050) {
-		// The Speedy 1050 uses a 65C02 instead of a 6507, so no 8K mirroring.
-		// Fortunately, its hardware map is well documented.
-
-		writemap[0] = (uintptr)mRAM;
-		writemap[1] = (uintptr)mRAM - 0x100;
-		writemap[2] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[3] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[4] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[5] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[6] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[7] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[8] = (uintptr)mRAM - 0x800;
-		writemap[9] = (uintptr)mRAM - 0x900;
-		writemap[10] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[11] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[12] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[13] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[14] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[15] = (uintptr)&mWriteNodeFDCRAM + 1;
-
-		readmap[0] = (uintptr)mRAM;
-		readmap[1] = (uintptr)mRAM - 0x100;
-		readmap[2] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[3] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[4] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[5] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[6] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[7] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[8] = (uintptr)mRAM - 0x800;
-		readmap[9] = (uintptr)mRAM - 0x900;
-		readmap[10] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[11] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[12] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[13] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[14] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[15] = (uintptr)&mReadNodeFDCRAM + 1;
-
-		// unmap $1000-DFFF
-		for(int i=16; i<224; ++i) {
-			readmap[i] = (uintptr)mDummyRead - (i << 8);
-			writemap[i] = (uintptr)mDummyWrite - (i << 8);
-		}
-
-		// map RAM to $8000-9FFF
-		for(int i=0; i<32; ++i) {
-			readmap[i + 0x80] = (uintptr)(mRAM + 0x100) - 0x8000;
-			writemap[i + 0x80] = (uintptr)(mRAM + 0x100) - 0x8000;
-		}
-
-		// map ROM to $C000-FFFF
-		for(int i=0; i<64; ++i)
-			readmap[i + 0xC0] = (uintptr)mROM - 0xC000;
-	} else if (mb1050) {
-		memset(&mDummyRead, 0xFF, sizeof mDummyRead);
-
+	if (mb1050) {
+		// == 1050 base hardware ==
+		//
 		// 6532 RIOT: A12=0, A10=0, A7=1
 		//	A9=1 for registers ($280-29F)
 		//	A9=0 for RAM ($80-FF, $180-1FF)
-		// 2332 ROM: A12=1 ($F000-FFFF)
 		// 2793 FDC: A10=1, A12=0 ($400-403)
 		// 6810 RAM: A12=0, A10=0, A9=0, A7=0 ($00-7F, $100-17F)
 
-		writemap[0] = (uintptr)mRAM;
-		writemap[1] = (uintptr)mRAM - 0x100;
-		writemap[2] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[3] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[4] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[5] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[6] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[7] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[8] = (uintptr)mRAM - 0x800;
-		writemap[9] = (uintptr)mRAM - 0x900;
-		writemap[10] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[11] = (uintptr)&mWriteNodeRIOTRegisters + 1;
-		writemap[12] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[13] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[14] = (uintptr)&mWriteNodeFDCRAM + 1;
-		writemap[15] = (uintptr)&mWriteNodeFDCRAM + 1;
+		mmapView.RepeatPage(0x00, 0x02, mRAM);
+		mmapView.SetHandlers(0x02, 0x02, mReadNodeRIOTRegisters, mWriteNodeRIOTRegisters);
+		mmapView.SetHandlers(0x04, 0x04, mReadNodeFDCRAM, mWriteNodeFDCRAM);
+		mmapView.MirrorFwd(0x08, 0x08, 0x00);
 
-		readmap[0] = (uintptr)mRAM;
-		readmap[1] = (uintptr)mRAM - 0x100;
-		readmap[2] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[3] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[4] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[5] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[6] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[7] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[8] = (uintptr)mRAM - 0x800;
-		readmap[9] = (uintptr)mRAM - 0x900;
-		readmap[10] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[11] = (uintptr)&mReadNodeRIOTRegisters + 1;
-		readmap[12] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[13] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[14] = (uintptr)&mReadNodeFDCRAM + 1;
-		readmap[15] = (uintptr)&mReadNodeFDCRAM + 1;
+		if (mDeviceType == kDeviceType_TOMS1050 || mDeviceType == kDeviceType_1050Duplicator) {
+			// The TOMS 1050 uses a 6502 instead of a 6507, so no 8K mirroring. Additional mappings:
+			//	$2000-3FFF	RAM
+			//	$E000-FFFF	ROM
 
-		for(int i=0; i<16; ++i) {
-			readmap[i+16] = (uintptr)mROM - 0x1000;
-			writemap[i+16] = (uintptr)mDummyWrite - 0x1000 - (i << 8);
-		}
+			// map RAM to $2000-3FFF
+			mmapView.SetMemory(0x20, 0x20, mRAM + 0x100);
 
-		if (mDeviceType == kDeviceType_1050Turbo) {
-			// The ROM entries for $1800-1FFF will be overwritten with the correct ones when
-			// we apply the initial ROM banking, but we need to set up the $1000-17FF control
-			// entries here.
-			for(int i=0; i<8; ++i) {
-				std::fill(readmap + i*32 + 0x10, readmap + i*32 + 0x18, (uintptr)&mReadNodeROMBankSwitch + 1);
-			}
+			// map ROM to $E000-FFFF
+			mmapView.SetReadMem(0xE0, 0x20, mROM);
+		} else if (mDeviceType == kDeviceType_Happy1050) {
+			// The Happy 1050 uses a 6502 instead of a 6507, so no 8K mirroring.
 
-			mReadNodeROMBankSwitch.mpThis = this;
-			mReadNodeROMBankSwitch.mpDebugRead = [](uint32 addr, void *thisptr0) -> uint8 {
+			// mirror lower 8K to $2000-3FFF
+			mmapView.MirrorFwd(0x20, 0x20, 0x00);
+
+			// mirror lower 16K to $4000-7FFF through write protect toggle shim
+			mReadNodeWriteProtectToggle.mpThis = this;
+			mReadNodeWriteProtectToggle.mpDebugRead = [](uint32 addr, void *thisptr0) {
 				auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-				
-				return thisptr->mROM[thisptr->mROMBank * 0x0800 + (addr & 0x07FF)];
+				uintptr r = thisptr->mCoProc.GetReadMap()[((addr >> 8) - 0x40) & 0xFF];
+
+				if (r & 1) {
+					const auto& readNode = *(const ATCoProcReadMemNode *)(r - 1);
+
+					return readNode.mpDebugRead(addr, readNode.mpThis);
+				} else {
+					return *(const uint8 *)(r + addr);
+				}
 			};
 
-			mReadNodeROMBankSwitch.mpRead = [](uint32 addr, void *thisptr0) {
+			mReadNodeWriteProtectToggle.mpRead = [](uint32 addr, void *thisptr0) {
 				auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-				
-				const uint8 v = thisptr->mROM[thisptr->mROMBank * 0x0800 + (addr & 0x07FF)];
+				uintptr r = thisptr->mCoProc.GetReadMap()[((addr >> 8) - 0x40) & 0xFF];
 
-				// This definitely needs explanation.
-				//
-				// Bank switching, and the Centronics interface, is controlled by a GAL16V8 sitting
-				// between the data bus and the ROM chip. When the ROM is accessed with $1000-17FF
-				// instead of $1800-1FFF, the *data* coming from the ROM chip is interpreted to either
-				// switch the 2K ROM bank if D7=0 or drive the Centronics printer port if D7=1.
-				//
-				// See Engl, Bernhard, "Technische Dokumentation zur 1050 Turbo", ABBUC, 2004.
+				thisptr->OnToggleWriteProtect();
 
-				if (!(v & 0x80)) {
-					const uint8 newBank = (v & 3);
+				if (r & 1) {
+					const auto& readNode = *(const ATCoProcReadMemNode *)(r - 1);
 
-					if (thisptr->mROMBank != newBank) {
-						thisptr->mROMBank = newBank;
+					return readNode.mpRead(addr, readNode.mpThis);
+				} else {
+					return *(const uint8 *)(r + addr);
+				}
+			};
 
-						thisptr->UpdateROMBank1050Turbo();
+			mWriteNodeWriteProtectToggle.mpThis = this;
+			mWriteNodeWriteProtectToggle.mpWrite = [](uint32 addr, uint8 val, void *thisptr0) {
+				auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
+
+				thisptr->OnToggleWriteProtect();
+
+				uintptr w = thisptr->mCoProc.GetWriteMap()[((addr >> 8) - 0x40) & 0xFF];
+
+				if (w & 1) {
+					const auto& writeNode = *(const ATCoProcWriteMemNode *)(w - 1);
+
+					writeNode.mpWrite(addr, val, writeNode.mpThis);
+				} else {
+					*(uint8 *)(w + addr) = val;
+				}
+			};
+
+			mmapView.SetHandlers(0x40, 0x40, mReadNodeWriteProtectToggle, mWriteNodeWriteProtectToggle);
+
+			// map RAM to $8000-9FFF and $A000-BFFF
+			mmapView.SetMemory(0x80, 0x20, mRAM + 0x100);
+			mmapView.SetMemory(0xA0, 0x20, mRAM + 0x100);
+
+			// hook $9800-9FFF and $B800-BFFF for slow/fast switch reading
+			mReadNodeFastSlowToggle.mpDebugRead = [](uint32 addr, void *thisptr0) {
+				auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
+			
+				return thisptr->mRAM[0x100 + ((addr - 0x8000) & 0x1FFF)];
+			};
+
+			mReadNodeFastSlowToggle.mpRead = [](uint32 addr, void *thisptr0) {
+				auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
+
+				thisptr->OnToggleFastSlow();
+			
+				return thisptr->mRAM[0x100 + ((addr - 0x8000) & 0x1FFF)];
+			};
+
+			mReadNodeFastSlowToggle.mpThis = this;
+
+			mWriteNodeFastSlowToggle.mpThis = this;
+			mWriteNodeFastSlowToggle.mpWrite = [](uint32 addr, uint8 val, void *thisptr0) {
+				auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
+
+				thisptr->OnToggleFastSlow();			
+				thisptr->mRAM[0x100 + ((addr - 0x8000) & 0x1FFF)] = val;
+			};
+
+			mmapView.SetHandlers(0x98, 0x08, mReadNodeFastSlowToggle, mWriteNodeFastSlowToggle);
+			mmapView.SetHandlers(0xB8, 0x08, mReadNodeFastSlowToggle, mWriteNodeFastSlowToggle);
+
+			// map ROM to $3xxx, $7xxx, $Bxxx, $Fxxx
+			mmapView.SetReadMem(0x30, 0x10, mROM);
+			mmapView.SetReadMem(0x70, 0x10, mROM);
+			mmapView.SetReadMem(0xB0, 0x10, mROM);
+			mmapView.SetReadMem(0xF0, 0x10, mROM);
+
+			// set up ROM banking registers
+			mReadNodeROMBankSwitch.mpThis = this;
+			mWriteNodeROMBankSwitch.mpThis = this;
+
+			mReadNodeROMBankSwitch.mpRead = [](uint32 addr, void *thisptr0) -> uint8 {
+				auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
+				const uint8 v = thisptr->mbROMBankAlt ? thisptr->mROM[0x1000 + (addr & 0xFFF)] : thisptr->mROM[addr & 0xFFF];
+
+				if ((addr & 0x0FFE) == 0x0FF8) {
+					bool altBank = (addr & 1) != 0;
+
+					if (thisptr->mbROMBankAlt != altBank) {
+						thisptr->mbROMBankAlt = altBank;
+
+						thisptr->UpdateROMBankHappy1050();
 					}
 				}
 
 				return v;
 			};
-		} else if (mDeviceType == kDeviceType_1050TurboII) {
-			// The ROM entries for $1800-1FFF will be overwritten with the correct ones when
-			// we apply the initial ROM banking, but we need to set up the $1000-17FF control
-			// entries here.
-			for(int i=0; i<8; ++i) {
-				std::fill(readmap + i*32 + 0x10, readmap + i*32 + 0x18, (uintptr)&mReadNodeROMBankSwitch + 1);
-			}
 
-			mReadNodeROMBankSwitch.mpThis = this;
 			mReadNodeROMBankSwitch.mpDebugRead = [](uint32 addr, void *thisptr0) -> uint8 {
 				auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-				
-				return thisptr->mROM[thisptr->mROMBank * 0x0800 + (addr & 0x07FF)];
+
+				return thisptr->mbROMBankAlt ? thisptr->mROM[0x1000 + (addr & 0xFFF)] : thisptr->mROM[addr & 0xFFF];
 			};
 
-			mReadNodeROMBankSwitch.mpRead = [](uint32 addr, void *thisptr0) {
+
+			mWriteNodeROMBankSwitch.mpWrite = [](uint32 addr, uint8 val, void *thisptr0) {
 				auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-				
-				const uint8 v = thisptr->mROM[thisptr->mROMBank * 0x0800 + (addr & 0x07FF)];
 
-				// This definitely needs explanation.
-				//
-				// Bank switching, and the Centronics interface, is controlled by a GAL16V8 sitting
-				// between the data bus and the ROM chip. When the ROM is accessed with $1000-17FF
-				// instead of $1800-1FFF, the *data* coming from the ROM chip is interpreted to either
-				// switch the 2K ROM bank if D7=0 or drive the Centronics printer port if D7=1.
-				//
-				// See Engl, Bernhard, "Technische Dokumentation zur 1050 Turbo II", ABBUC, 2004.
+				if ((addr & 0x0FFE) == 0x0FF8) {
+					bool altBank = (addr & 1) != 0;
 
-				if (!(v & 0x80)) {
-					const uint8 newBank = ((v & 0x50) ? 0x01 : 0x00) + (v & 0x20 ? 0x00 : 0x02);
+					if (thisptr->mbROMBankAlt != altBank) {
+						thisptr->mbROMBankAlt = altBank;
 
-					if (thisptr->mROMBank != newBank) {
-						thisptr->mROMBank = newBank;
-
-						thisptr->UpdateROMBank1050Turbo();
+						thisptr->UpdateROMBankHappy1050();
 					}
 				}
-
-				return v;
 			};
-		} else if (mDeviceType == kDeviceType_SuperArchiver) {
-			// Map 2K of RAM at $1000-17FF, with write through at $1800-1FFF.
-			// Explanation: http://atariage.com/forums/topic/228814-searching-for-super-archiver-rom-dumps
-			for(int i=0; i<8; ++i) {
-				readmap[i+16] = (uintptr)mRAM + 0x100 - 0x1000;
-				writemap[i+16] = (uintptr)mRAM + 0x100 - 0x1000;
-				writemap[i+24] = (uintptr)mRAM + 0x100 - 0x1800;
-			}
-		} else if (mDeviceType == kDeviceType_Tygrys1050) {
-			// Map 2K of RAM at $0800-$0FFF.
-			for(int i=0; i<8; ++i) {
-				readmap[i+8] = (uintptr)mRAM + 0x100 - 0x0800;
-				writemap[i+8] = (uintptr)mRAM + 0x100 - 0x0800;
-			}
-		}
 
-		for(int i=32; i<256; ++i) {
-			uintptr r = readmap[i-32];
-			uintptr w = writemap[i-32];
+			mmapView.SetHandlers(0x2F, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
+			mmapView.SetHandlers(0x3F, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
+			mmapView.SetHandlers(0x6F, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
+			mmapView.SetHandlers(0x7F, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
+			mmapView.SetHandlers(0xAF, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
+			mmapView.SetHandlers(0xBF, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
+			mmapView.SetHandlers(0xEF, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
+			mmapView.SetHandlers(0xFF, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
+		} else if (mDeviceType == kDeviceType_ISPlate) {
+			// The I.S. Plate uses a 6502 instead of a 6507, so no 8K mirroring:
+			//	$0000-7FFF	I/O (6507 $0000-0FFF mirrored 8x)
+			//	$8000-9FFF	RAM (4K #1)
+			//	$C000-DFFF	RAM (4K #2)
+			//	$E000-FFFF	ROM (4K mirrored)
 
-			readmap[i] = r & 1 ? r : r - 0x2000;
-			writemap[i] = w & 1 ? w : w - 0x2000;
+			mmapView.MirrorFwd(0x10, 0x70, 0x00);
+
+			// Map 8K of RAM to $8000-9FFF and another 8K to $C000-DFFF.
+			mmapView.SetMemory(0x80, 0x20, mRAM + 0x100);
+			mmapView.SetMemory(0xC0, 0x20, mRAM + 0x2100);
+
+			// map 8K ROM to $E000-FFFF
+			mmapView.SetReadMem(0xE0, 0x20, mROM);
+		} else if (mDeviceType == kDeviceType_Speedy1050) {
+			// The Speedy 1050 uses a 65C02 instead of a 6507, so no 8K mirroring.
+			// Fortunately, its hardware map is well documented.
+
+			// unmapped $1000-DFFF
+
+			// map RAM to $8000-9FFF
+			mmapView.SetMemory(0x80, 0x20, mRAM + 0x100);
+
+			// map ROM to $C000-FFFF
+			mmapView.SetReadMem(0xC0, 0x40, mROM);
+		} else {
+			// 2332 ROM: A12=1 ($1000-1FFF / $F000-FFFF)
+			mmapView.SetReadMem	(0x10, 0x10, mROM);
+
+			if (mDeviceType == kDeviceType_1050Turbo) {
+				// The ROM entries for $1800-1FFF will be overwritten with the correct ones when
+				// we apply the initial ROM banking, but we need to set up the $1000-17FF control
+				// entries here.
+				mmapView.SetReadHandler(0x10, 0x08, mReadNodeROMBankSwitch);
+
+				mReadNodeROMBankSwitch.mpThis = this;
+				mReadNodeROMBankSwitch.mpDebugRead = [](uint32 addr, void *thisptr0) -> uint8 {
+					auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
+				
+					return thisptr->mROM[thisptr->mROMBank * 0x0800 + (addr & 0x07FF)];
+				};
+
+				mReadNodeROMBankSwitch.mpRead = [](uint32 addr, void *thisptr0) {
+					auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
+				
+					const uint8 v = thisptr->mROM[thisptr->mROMBank * 0x0800 + (addr & 0x07FF)];
+
+					// This definitely needs explanation.
+					//
+					// Bank switching, and the Centronics interface, is controlled by a GAL16V8 sitting
+					// between the data bus and the ROM chip. When the ROM is accessed with $1000-17FF
+					// instead of $1800-1FFF, the *data* coming from the ROM chip is interpreted to either
+					// switch the 2K ROM bank if D7=0 or drive the Centronics printer port if D7=1.
+					//
+					// See Engl, Bernhard, "Technische Dokumentation zur 1050 Turbo", ABBUC, 2004.
+
+					if (!(v & 0x80)) {
+						const uint8 newBank = (v & 3);
+
+						if (thisptr->mROMBank != newBank) {
+							thisptr->mROMBank = newBank;
+
+							thisptr->UpdateROMBank1050Turbo();
+						}
+					}
+
+					return v;
+				};
+			} else if (mDeviceType == kDeviceType_1050TurboII) {
+				// The ROM entries for $1800-1FFF will be overwritten with the correct ones when
+				// we apply the initial ROM banking, but we need to set up the $1000-17FF control
+				// entries here.
+				mmapView.SetReadHandler(0x10, 0x08, mReadNodeROMBankSwitch);
+
+				mReadNodeROMBankSwitch.mpThis = this;
+				mReadNodeROMBankSwitch.mpDebugRead = [](uint32 addr, void *thisptr0) -> uint8 {
+					auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
+				
+					return thisptr->mROM[thisptr->mROMBank * 0x0800 + (addr & 0x07FF)];
+				};
+
+				mReadNodeROMBankSwitch.mpRead = [](uint32 addr, void *thisptr0) {
+					auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
+				
+					const uint8 v = thisptr->mROM[thisptr->mROMBank * 0x0800 + (addr & 0x07FF)];
+
+					// This definitely needs explanation.
+					//
+					// Bank switching, and the Centronics interface, is controlled by a GAL16V8 sitting
+					// between the data bus and the ROM chip. When the ROM is accessed with $1000-17FF
+					// instead of $1800-1FFF, the *data* coming from the ROM chip is interpreted to either
+					// switch the 2K ROM bank if D7=0 or drive the Centronics printer port if D7=1.
+					//
+					// See Engl, Bernhard, "Technische Dokumentation zur 1050 Turbo II", ABBUC, 2004.
+
+					if (!(v & 0x80)) {
+						const uint8 newBank = ((v & 0x50) ? 0x01 : 0x00) + (v & 0x20 ? 0x00 : 0x02);
+
+						if (thisptr->mROMBank != newBank) {
+							thisptr->mROMBank = newBank;
+
+							thisptr->UpdateROMBank1050Turbo();
+						}
+					}
+
+					return v;
+				};
+			} else if (mDeviceType == kDeviceType_SuperArchiver) {
+				// Map 2K of RAM at $1000-17FF, with write through at $1800-1FFF.
+				// Explanation: http://atariage.com/forums/topic/228814-searching-for-super-archiver-rom-dumps
+				mmapView.SetReadMem(0x10, 0x08, mRAM + 0x100);
+				mmapView.SetWriteMem(0x10, 0x08, mRAM + 0x100);
+				mmapView.SetWriteMem(0x18, 0x08, mRAM + 0x100);
+			} else if (mDeviceType == kDeviceType_Tygrys1050) {
+				// Map 2K of RAM at $0800-$0FFF.
+				mmapView.SetMemory(0x08, 0x08, mRAM + 0x100);
+			} else if (mDeviceType == kDeviceType_1050) {
+				// Remap the ROM as traceable since it has a fixed mapping.
+				mmapView.SetReadMemTraceable(0x10, 0x10, mROM);
+			}
+
+			mmapView.MirrorFwd(0x20, 0xE0, 0x00);
 		}
 	} else {
+		// == 810 base hardware ==
+		//
 		// set up lower half of memory map
 		writemap[0] = (uintptr)&mWriteNodeFDCRAM + 1;
 		writemap[2] = (uintptr)&mWriteNodeFDCRAM + 1;
@@ -934,30 +719,19 @@ void ATDeviceDiskDriveFull::Init() {
 		readmap[3] = (uintptr)&mReadNodeRIOTRegisters + 1;
 		readmap[7] = (uintptr)&mReadNodeRIOTRegisters + 1;
 
-		// Replicate read and write maps 16 times (A12 ignored, A13-A15 nonexistent)
-		for(int i=16; i<256; i+=16) {
-			std::copy(readmap + 0, readmap + 8, readmap + i);
-			std::copy(writemap + 0, writemap + 8, writemap + i);
-		}
+		// Replicate read and write maps to $1000-17FF since A12 is ignored
+		mmapView.MirrorFwd(0x10, 0x08, 0x00);
 
 		if (mDeviceType == kDeviceType_Happy810) {
-			for(uint32 mirror = 0; mirror < 256; mirror += 32) {
-				// setup RAM entries ($0800-13FF)
-				for(uint32 i=0; i<12; ++i) {
-					readmap[i+8+mirror] = (uintptr)(mRAM + 0x100) - (0x800 + (mirror << 8));
-					writemap[i+8+mirror] = (uintptr)(mRAM + 0x100) - (0x800 + (mirror << 8));
-				}
+			// setup RAM entries ($0800-13FF)
+			mmapView.SetMemory(0x08, 0x0C, mRAM + 0x100);
 
-				// setup ROM entries ($1400-1FFF), ignore first 2K of ROM (not visible to CPU)
-				for(uint32 i=0; i<12; ++i) {
-					readmap[i+20+mirror] = (uintptr)mROM + 0x1400 - (0x1400 + (mirror << 8));
-					writemap[i+20+mirror] = (uintptr)mDummyWrite - ((i + 20 + mirror) << 8);
-				}
+			// setup ROM entries ($1400-1FFF), ignore first 1K of ROM (not visible to CPU)
+			mmapView.SetReadMem(0x14, 0x0C, mROM + 0x400);
+			mmapView.RepeatWritePage(0x14, 0x0C, mDummyWrite);
 
-				// setup bank switching
-				readmap[0x1F + mirror] = (uintptr)&mReadNodeROMBankSwitch + 1;
-				writemap[0x1F + mirror] = (uintptr)&mWriteNodeROMBankSwitch + 1;
-			}
+			// setup bank switching
+			mmapView.SetHandlers(0x1F, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
 
 			mReadNodeROMBankSwitch.mpThis = this;
 			mWriteNodeROMBankSwitch.mpThis = this;
@@ -999,15 +773,19 @@ void ATDeviceDiskDriveFull::Init() {
 					}
 				}
 			};
+		} else if (mDeviceType == kDeviceType_810Turbo) {
+			// Set RAM at $0800-17FF.
+			// Set ROM at $1800-1FFF.
+			mmapView.SetMemory(0x08, 0x10, mRAM + 0x100);
+			mmapView.SetReadMemTraceable(0x18, 0x08, mROM);
 		} else {
-			// Set ROM entries (they must all be different).
-			for(int i=0; i<256; i+=16) {
-				std::fill(readmap + i + 8, readmap + i + 16, (uintptr)mROM - (0x800 + (i << 8)));
-
-				for(int j=0; j<8; ++j)
-					writemap[i+j+8] = (uintptr)mDummyWrite - ((i+j) << 8);
-			}
+			// Set ROM entries at $0800-0FFF and $1800-1FFF.
+			mmapView.SetReadMemTraceable(0x08, 0x08, mROM);
+			mmapView.SetReadMemTraceable(0x18, 0x08, mROM);
 		}
+
+		// replicate $0000-1FFF upward since 6507 lacks A13-A15
+		mmapView.MirrorFwd(0x20, 0xE0, 0x00);
 	}
 
 	if (mb1050)
@@ -1047,7 +825,10 @@ void ATDeviceDiskDriveFull::Init() {
 		mRIOT.SetInputA(0x40, 0x40);
 	}
 
-	mFDC.Init(&mDriveScheduler, 288.0f, mb1050 ? ATFDCEmulator::kType_279X : ATFDCEmulator::kType_1771);
+	// In general, Atari-compatible disk drives use FDCs that spec timings in their datasheets
+	// for 2MHz, but run them at 1MHz. Therefore, we push in a period factor of 2x to scale all
+	// of the timings appropriately.
+	mFDC.Init(&mDriveScheduler, 288.0f, 2.0f, mb1050 || mDeviceType == kDeviceType_810Turbo ? ATFDCEmulator::kType_2793 : ATFDCEmulator::kType_1771);
 	mFDC.SetDiskInterface(mpDiskInterface);
 	mFDC.SetOnDrqChange([this](bool drq) { mRIOT.SetInputA(drq ? 0x80 : 0x00, 0x80); });
 
@@ -1074,27 +855,14 @@ void ATDeviceDiskDriveFull::Init() {
 
 void ATDeviceDiskDriveFull::Shutdown() {
 	mAudioPlayer.Shutdown();
+	mSerialXmitQueue.Shutdown();
 
 	mDriveScheduler.UnsetEvent(mpEventDriveReceiveBit);
-
-	if (mpSlowScheduler) {
-		mpSlowScheduler->UnsetEvent(mpRunEvent);
-		mpSlowScheduler = nullptr;
-	}
-
-	if (mpScheduler) {
-		mpScheduler->UnsetEvent(mpTransmitEvent);
-		mpScheduler = nullptr;
-	}
+	ShutdownTargetControl();
 
 	mpFwMgr = nullptr;
 
 	if (mpSIOMgr) {
-		if (!mbTransmitCurrentBit) {
-			mbTransmitCurrentBit = true;
-			mpSIOMgr->SetRawInput(true);
-		}
-
 		mpSIOMgr->RemoveRawDevice(this);
 		mpSIOMgr = nullptr;
 	}
@@ -1122,10 +890,6 @@ uint32 ATDeviceDiskDriveFull::GetComputerPowerOnDelay() const {
 }
 
 void ATDeviceDiskDriveFull::WarmReset() {
-	mLastSync = ATSCHEDULER_GETTIME(mpScheduler);
-	mLastSyncDriveTime = ATSCHEDULER_GETTIME(&mDriveScheduler);
-	mLastSyncDriveTimeSubCycles = 0;
-
 	// If the computer resets, its transmission is interrupted.
 	mDriveScheduler.UnsetEvent(mpEventDriveReceiveBit);
 }
@@ -1146,21 +910,7 @@ void ATDeviceDiskDriveFull::PeripheralColdReset() {
 	else
 		mRIOT.SetInputA(0x00, 0xC0);
 
-	// clear transmission
-	mDriveScheduler.UnsetEvent(mpEventDriveTransmitBit);
-
-	mpScheduler->UnsetEvent(mpTransmitEvent);
-
-	if (!mbTransmitCurrentBit) {
-		mbTransmitCurrentBit = true;
-		mpSIOMgr->SetRawInput(true);
-	}
-
-	mTransmitHead = 0;
-	mTransmitTail = 0;
-	mTransmitCyclesPerBit = 0;
-	mTransmitPhase = 0;
-	mTransmitShiftRegister = 0;
+	mSerialXmitQueue.Reset();
 	
 	// start the disk drive on a track other than 0/20/39, just to make things interesting
 	mCurrentTrack = mb1050 ? 20 : 10;
@@ -1181,22 +931,12 @@ void ATDeviceDiskDriveFull::PeripheralColdReset() {
 	
 	mCoProc.ColdReset();
 
-	mClockDivisor = VDRoundToInt((128.0 / 1000000.0) * mpScheduler->GetRate().asDouble());
-
-	if (!mb1050)
-		mClockDivisor *= 2;
+	ResetTargetControl();
 
 	// need to update motor and sound status, since the 810 starts with the motor on
 	UpdateRotationStatus();
 
 	WarmReset();
-}
-
-void ATDeviceDiskDriveFull::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
-	mpScheduler = sch;
-	mpSlowScheduler = slowsch;
-
-	mpSlowScheduler->SetEvent(1, this, 1, mpRunEvent);
 }
 
 void ATDeviceDiskDriveFull::InitFirmware(ATFirmwareManager *fwman) {
@@ -1221,6 +961,7 @@ bool ATDeviceDiskDriveFull::ReloadFirmware() {
 		kATFirmwareType_1050Turbo,
 		kATFirmwareType_1050TurboII,
 		kATFirmwareType_ISPlate,
+		kATFirmwareType_810Turbo,
 	};
 
 	static const uint32 kFirmwareSizes[]={
@@ -1237,7 +978,8 @@ bool ATDeviceDiskDriveFull::ReloadFirmware() {
 		0x2000,
 		0x4000,
 		0x2000,
-		0x1000
+		0x1000,
+		0x800
 	};
 
 	static_assert(vdcountof(kFirmwareTypes) == kDeviceTypeCount, "firmware type array missized");
@@ -1278,6 +1020,8 @@ bool ATDeviceDiskDriveFull::ReloadFirmware() {
 
 	memcpy(mROM, firmware, sizeof mROM);
 
+	mCoProc.InvalidateTraceCache();
+
 	const vduint128 newHash = VDHash128(mROM, sizeof mROM);
 
 	return oldHash != newHash;
@@ -1302,6 +1046,10 @@ void ATDeviceDiskDriveFull::InitDiskDrive(IATDiskDriveManager *ddm) {
 	mpDiskDriveManager = ddm;
 	mpDiskInterface = ddm->GetDiskInterface(mDriveId);
 	mpDiskInterface->AddClient(this);
+}
+
+ATDeviceDiskDriveInterfaceClient ATDeviceDiskDriveFull::GetDiskInterfaceClient(uint32 index) {
+	return index ? ATDeviceDiskDriveInterfaceClient{} : ATDeviceDiskDriveInterfaceClient{ this, mDriveId };
 }
 
 void ATDeviceDiskDriveFull::InitSIO(IATDeviceSIOManager *mgr) {
@@ -1369,254 +1117,8 @@ void ATDeviceDiskDriveFull::ActivateButton(ATDeviceButton idx, bool state) {
 	}
 }
 
-IATDebugTarget *ATDeviceDiskDriveFull::GetDebugTarget(uint32 index) {
-	if (index == 0)
-		return this;
-
-	return nullptr;
-}
-
-const char *ATDeviceDiskDriveFull::GetName() {
-	return "Disk Drive CPU";
-}
-
-ATDebugDisasmMode ATDeviceDiskDriveFull::GetDisasmMode() {
-	return mDeviceType == kDeviceType_Speedy1050 ? kATDebugDisasmMode_65C02 : kATDebugDisasmMode_6502;
-}
-
-void ATDeviceDiskDriveFull::GetExecState(ATCPUExecState& state) {
-	mCoProc.GetExecState(state);
-}
-
-void ATDeviceDiskDriveFull::SetExecState(const ATCPUExecState& state) {
-	mCoProc.SetExecState(state);
-}
-
-sint32 ATDeviceDiskDriveFull::GetTimeSkew() {
-	// The 810's CPU runs at 500KHz, while the computer runs at 1.79MHz. We use
-	// a ratio of 229/64.
-
-	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	const uint32 cycles = (t - mLastSync) + ((mCoProc.GetCyclesLeft() * mClockDivisor + mSubCycleAccum + 127) >> 7);
-
-	return -(sint32)cycles;
-}
-
-uint8 ATDeviceDiskDriveFull::ReadByte(uint32 address) {
-	if (address >= 0x10000)
-		return 0;
-
-	const uintptr pageBase = mCoProc.GetReadMap()[address >> 8];
-
-	if (pageBase & 1) {
-		const auto *node = (const ATCoProcReadMemNode *)(pageBase - 1);
-
-		return node->mpRead(address, node->mpThis);
-	}
-
-	return *(const uint8 *)(pageBase + address);
-}
-
-void ATDeviceDiskDriveFull::ReadMemory(uint32 address, void *dst, uint32 n) {
-	const uintptr *readMap = mCoProc.GetReadMap();
-
-	while(n) {
-		if (address >= 0x10000) {
-			memset(dst, 0, n);
-			break;
-		}
-
-		uint32 tc = 256 - (address & 0xff);
-		if (tc > n)
-			tc = n;
-
-		const uintptr pageBase = readMap[address >> 8];
-
-		if (pageBase & 1) {
-			const auto *node = (const ATCoProcReadMemNode *)(pageBase - 1);
-
-			for(uint32 i=0; i<tc; ++i)
-				((uint8 *)dst)[i] = node->mpRead(address++, node->mpThis);
-		} else {
-			memcpy(dst, (const uint8 *)(pageBase + address), tc);
-
-			address += tc;
-		}
-
-		n -= tc;
-		dst = (char *)dst + tc;
-	}
-}
-
-uint8 ATDeviceDiskDriveFull::DebugReadByte(uint32 address) {
-	if (address >= 0x10000)
-		return 0;
-
-	const uintptr pageBase = mCoProc.GetReadMap()[address >> 8];
-
-	if (pageBase & 1) {
-		const auto *node = (ATCoProcReadMemNode *)(pageBase - 1);
-
-		return node->mpDebugRead(address, node->mpThis);
-	}
-
-	return *(const uint8 *)(pageBase + address);
-}
-
-void ATDeviceDiskDriveFull::DebugReadMemory(uint32 address, void *dst, uint32 n) {
-	ATCoProcReadMemory(mCoProc.GetReadMap(), dst, address, n);
-}
-
-void ATDeviceDiskDriveFull::WriteByte(uint32 address, uint8 value) {
-	if (address >= 0x10000)
-		return;
-
-	const uintptr pageBase = mCoProc.GetWriteMap()[address >> 8];
-
-	if (pageBase & 1) {
-		auto& writeNode = *(ATCoProcWriteMemNode *)(pageBase - 1);
-
-		writeNode.mpWrite(address, value, writeNode.mpThis);
-	} else {
-		*(uint8 *)(pageBase + address) = value;
-	}
-}
-
-void ATDeviceDiskDriveFull::WriteMemory(uint32 address, const void *src, uint32 n) {
-	ATCoProcWriteMemory(mCoProc.GetWriteMap(), src, address, n);
-}
-
-bool ATDeviceDiskDriveFull::GetHistoryEnabled() const {
-	return !mHistory.empty();
-}
-
-void ATDeviceDiskDriveFull::SetHistoryEnabled(bool enable) {
-	if (enable) {
-		if (mHistory.empty()) {
-			mHistory.resize(131072, ATCPUHistoryEntry());
-			mCoProc.SetHistoryBuffer(mHistory.data());
-		}
-	} else {
-		if (!mHistory.empty()) {
-			decltype(mHistory) tmp;
-			tmp.swap(mHistory);
-			mHistory.clear();
-			mCoProc.SetHistoryBuffer(nullptr);
-		}
-	}
-}
-
-std::pair<uint32, uint32> ATDeviceDiskDriveFull::GetHistoryRange() const {
-	const uint32 hcnt = mCoProc.GetHistoryCounter();
-
-	return std::pair<uint32, uint32>(hcnt - 131072, hcnt);
-}
-
-uint32 ATDeviceDiskDriveFull::ExtractHistory(const ATCPUHistoryEntry **hparray, uint32 start, uint32 n) const {
-	if (!n || mHistory.empty())
-		return 0;
-
-	const ATCPUHistoryEntry *hstart = mHistory.data();
-	const ATCPUHistoryEntry *hend = hstart + 131072;
-	const ATCPUHistoryEntry *hsrc = hstart + (start & 131071);
-
-	for(uint32 i=0; i<n; ++i) {
-		*hparray++ = hsrc;
-
-		if (++hsrc == hend)
-			hsrc = hstart;
-	}
-
-	return n;
-}
-
-uint32 ATDeviceDiskDriveFull::ConvertRawTimestamp(uint32 rawTimestamp) const {
-	// mLastSync is the machine cycle at which all sub-cycles have been pushed into the
-	// coprocessor, and the coprocessor's time base is the sub-cycle corresponding to
-	// the end of that machine cycle.
-	return mLastSync - (((mCoProc.GetTimeBase() - rawTimestamp) * mClockDivisor + mSubCycleAccum + 127) >> 7);
-}
-
-void ATDeviceDiskDriveFull::Break() {
-	CancelStep();
-}
-
-bool ATDeviceDiskDriveFull::StepInto(const vdfunction<void(bool)>& fn) {
-	CancelStep();
-
-	mpStepHandler = fn;
-	mbStepOut = false;
-	mStepStartSubCycle = mCoProc.GetTime();
-	mBreakpointsImpl.SetStepActive(true);
-	Sync();
-	return true;
-}
-
-bool ATDeviceDiskDriveFull::StepOver(const vdfunction<void(bool)>& fn) {
-	CancelStep();
-
-	mpStepHandler = fn;
-	mbStepOut = true;
-	mStepStartSubCycle = mCoProc.GetTime();
-	mStepOutS = mCoProc.GetS();
-	mBreakpointsImpl.SetStepActive(true);
-	Sync();
-	return true;
-}
-
-bool ATDeviceDiskDriveFull::StepOut(const vdfunction<void(bool)>& fn) {
-	CancelStep();
-
-	mpStepHandler = fn;
-	mbStepOut = true;
-	mStepStartSubCycle = mCoProc.GetTime();
-	mStepOutS = mCoProc.GetS() + 1;
-	mBreakpointsImpl.SetStepActive(true);
-	Sync();
-	return true;
-}
-
-void ATDeviceDiskDriveFull::StepUpdate() {
-	Sync();
-}
-
-void ATDeviceDiskDriveFull::RunUntilSynced() {
-	CancelStep();
-	Sync();
-}
-
-bool ATDeviceDiskDriveFull::CheckBreakpoint(uint32 pc) {
-	if (mCoProc.GetTime() == mStepStartSubCycle)
-		return false;
-
-	const bool bpHit = mBreakpointsImpl.CheckBP(pc);
-
-	if (!bpHit) {
-		if (mbStepOut) {
-			// Keep stepping if wrapped(s < s0).
-			if ((mCoProc.GetS() - mStepOutS) & 0x80)
-				return false;
-		}
-	}
-
-	mBreakpointsImpl.SetStepActive(false);
-
-	mbStepNotifyPending = true;
-	mbStepNotifyPendingBP = bpHit;
-	return true;
-}
-
 void ATDeviceDiskDriveFull::OnScheduledEvent(uint32 id) {
-	if (id == kEventId_Run) {
-		mpRunEvent = mpSlowScheduler->AddEvent(1, this, 1);
-
-		mDriveScheduler.UpdateTick64();
-		Sync();
-	} else if (id == kEventId_Transmit) {
-		mpTransmitEvent = nullptr;
-
-		OnTransmitEvent();
-	} else if (id == kEventId_DriveReceiveBit) {
+	if (id == kEventId_DriveReceiveBit) {
 		const bool newState = (mReceiveShiftRegister & 1) != 0;
 
 		mReceiveShiftRegister >>= 1;
@@ -1648,7 +1150,8 @@ void ATDeviceDiskDriveFull::OnScheduledEvent(uint32 id) {
 		}
 
 		UpdateDiskStatus();
-	}
+	} else
+		return ATDiskDriveDebugTargetControl::OnScheduledEvent(id);
 }
 
 void ATDeviceDiskDriveFull::OnCommandStateChanged(bool asserted) {
@@ -1671,7 +1174,7 @@ void ATDeviceDiskDriveFull::OnReceiveByte(uint8 c, bool command, uint32 cyclesPe
 	// The conversion fraction we need here is 64/229, but that denominator is awkward.
 	// Approximate it with 286/1024.
 	mReceiveTimingAccum = 0x200;
-	mReceiveTimingStep = mb1050 ? cyclesPerBit * 572 : cyclesPerBit * 286;
+	mReceiveTimingStep = mb1050 || mDeviceType == kDeviceType_810Turbo ? cyclesPerBit * 572 : cyclesPerBit * 286;
 
 	mDriveScheduler.SetEvent(1, this, kEventId_DriveReceiveBit, mpEventDriveReceiveBit);
 }
@@ -1708,192 +1211,41 @@ void ATDeviceDiskDriveFull::OnAudioModeChanged() {
 	UpdateRotationStatus();
 }
 
-void ATDeviceDiskDriveFull::CancelStep() {
-	if (mpStepHandler) {
-		mBreakpointsImpl.SetStepActive(false);
+bool ATDeviceDiskDriveFull::IsImageSupported(const IATDiskImage& image) const {
+	// 810s only support single density, unless it's the 810 Turbo.
+	// 1050s and the 810 Turbo can support double density.
 
-		auto p = std::move(mpStepHandler);
-		mpStepHandler = nullptr;
+	const auto& geo = image.GetGeometry();
 
-		p(false);
+	if (!mb1050 && mDeviceType != kDeviceType_810Turbo) {
+		if (geo.mbMFM)
+			return false;
 	}
-}
 
+	return true;
+}
 
 void ATDeviceDiskDriveFull::Sync() {
-	AccumSubCycles();
+	uint32 newDriveCycleLimit = AccumSubCycles();
 
-	for(;;) {
-		if (!mCoProc.GetCyclesLeft()) {
-			if (mSubCycleAccum < mClockDivisor)
-				break;
+	bool ranToCompletion = true;
 
-			mSubCycleAccum -= mClockDivisor;
+	VDASSERT(mDriveScheduler.mNextEventCounter >= 0xFF000000);
+	if (ATSCHEDULER_GETTIME(&mDriveScheduler) - newDriveCycleLimit >= 0x80000000) {
+		mDriveScheduler.SetStopTime(newDriveCycleLimit);
+		ranToCompletion = mCoProc.Run(mDriveScheduler);
 
-			ATSCHEDULER_ADVANCE(&mDriveScheduler);
-
-			mCoProc.AddCycles(1);
-		}
-
-		mCoProc.Run();
-
-		if (mCoProc.GetCyclesLeft())
-			break;
+		VDASSERT(ATWrapTime{ATSCHEDULER_GETTIME(&mDriveScheduler)} <= newDriveCycleLimit);
 	}
 
-	if (mbStepNotifyPending) {
-		mbStepNotifyPending = false;
+	if (!ranToCompletion)
+		ScheduleImmediateResume();
 
-		auto p = std::move(mpStepHandler);
-		mpStepHandler = nullptr;
-
-		if (p)
-			p(!mbStepNotifyPendingBP);
-	}
+	FlushStepNotifications();
 }
 
-void ATDeviceDiskDriveFull::AccumSubCycles() {
-	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	const uint32 cycles = t - mLastSync;
-
-	mLastSync = t;
-	mSubCycleAccum += cycles << 7;
-
-	mLastSyncDriveTime = ATSCHEDULER_GETTIME(&mDriveScheduler);
-	mLastSyncDriveTimeSubCycles = mSubCycleAccum;
-}
-
-void ATDeviceDiskDriveFull::OnTransmitEvent() {
-	// drain transmit queue entries until we're up to date
-	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-
-	while((mTransmitHead ^ mTransmitTail) & kTransmitQueueMask) {
-		const auto& nextEdge = mTransmitQueue[mTransmitHead & kTransmitQueueMask];
-
-		if ((t - nextEdge.mTime) & UINT32_C(0x40000000))
-			break;
-
-		bool bit = (nextEdge.mBit != 0);
-
-		if (mbTransmitCurrentBit != bit) {
-			mbTransmitCurrentBit = bit;
-			mpSIOMgr->SetRawInput(bit);
-		}
-
-		++mTransmitHead;
-	}
-
-	const uint32 resetCounter = mpSIOMgr->GetRecvResetCounter();
-
-	if (mTransmitResetCounter != resetCounter) {
-		mTransmitResetCounter = resetCounter;
-
-		mTransmitCyclesPerBit = 0;
-	}
-
-	// check if we're waiting for a start bit
-	if (!mTransmitCyclesPerBit) {
-		if (!mbTransmitCurrentBit) {
-			// possible start bit -- reset transmission
-			mTransmitCyclesPerBit = 0;
-			mTransmitShiftRegister = 0;
-			mTransmitPhase = 0;
-
-			const uint32 cyclesPerBit = mpSIOMgr->GetCyclesPerBitRecv();
-
-			// reject transmission speed below ~16000 baud or above ~178Kbaud
-			if (cyclesPerBit < 10 || cyclesPerBit > 114)
-				return;
-
-			mTransmitCyclesPerBit = cyclesPerBit;
-
-			// queue event to half bit in
-			mpScheduler->SetEvent(cyclesPerBit >> 1, this, kEventId_Transmit, mpTransmitEvent);
-		}
-		return;
-	}
-
-	// check for a bogus start bit
-	if (mTransmitPhase == 0 && mbTransmitCurrentBit) {
-		mTransmitCyclesPerBit = 0;
-
-		QueueNextTransmitEvent();
-		return;
-	}
-
-	// send byte to POKEY if done
-	if (++mTransmitPhase == 10) {
-		mpSIOMgr->SendRawByte(mTransmitShiftRegister, mTransmitCyclesPerBit, false, !mbTransmitCurrentBit, false);
-		mTransmitCyclesPerBit = 0;
-		QueueNextTransmitEvent();
-		return;
-	}
-
-	// shift new bit into shift register
-	mTransmitShiftRegister = (mTransmitShiftRegister >> 1) + (mbTransmitCurrentBit ? 0x80 : 0);
-
-	// queue another event one bit later
-	mpScheduler->SetEvent(mTransmitCyclesPerBit, this, kEventId_Transmit, mpTransmitEvent);
-}
-
-void ATDeviceDiskDriveFull::AddTransmitEdge(uint32 polarity) {
-	static_assert(!(kTransmitQueueSize & (kTransmitQueueSize - 1)), "mTransmitQueue size not pow2");
-
-	// convert device time to computer time
-	uint32 dt = (mLastSyncDriveTime - ATSCHEDULER_GETTIME(&mDriveScheduler)) * mClockDivisor + mLastSyncDriveTimeSubCycles;
-
-	dt >>= 7;
-
-	const uint32 t = (mLastSync + kTransmitLatency - dt) & UINT32_C(0x7FFFFFFF);
-
-	// check if previous transition is at same time
-	const uint32 queueLen = (mTransmitTail - mTransmitHead) & kTransmitQueueMask;
-	if (queueLen) {
-		auto& prevEdge = mTransmitQueue[(mTransmitTail - 1) & kTransmitQueueMask];
-
-		// check if this event is at or before the last event in the queue
-		if (!((prevEdge.mTime - t) & UINT32_C(0x40000000))) {
-			// check if we've gone backwards in time and drop event if so
-			if (prevEdge.mTime == t) {
-				// same time -- overwrite event
-				prevEdge.mBit = polarity;
-			} else {
-				VDASSERT(!"Dropping new event earlier than tail in transmit queue.");
-			}
-
-			return;
-		}
-	}
-
-	// check if we have room for a new event
-	if (queueLen >= kTransmitQueueMask) {
-		VDASSERT(!"Transmit queue full.");
-		return;
-	}
-
-	// add the new event
-	auto& newEdge = mTransmitQueue[mTransmitTail++ & kTransmitQueueMask];
-
-	newEdge.mTime = t;
-	newEdge.mBit = polarity;
-
-	// queue next event if needed
-	QueueNextTransmitEvent();
-}
-
-void ATDeviceDiskDriveFull::QueueNextTransmitEvent() {
-	// exit if we already have an event queued
-	if (mpTransmitEvent)
-		return;
-
-	// exit if transmit queue is empty
-	if (!((mTransmitHead ^ mTransmitTail) & kTransmitQueueMask))
-		return;
-
-	const auto& nextEvent = mTransmitQueue[mTransmitHead & kTransmitQueueMask];
-	uint32 delta = (nextEvent.mTime - ATSCHEDULER_GETTIME(mpScheduler)) & UINT32_C(0x7FFFFFFF);
-
-	mpTransmitEvent = mpScheduler->AddEvent((uint32)(delta - 1) & UINT32_C(0x40000000) ? 1 : delta, this, kEventId_Transmit);
+void ATDeviceDiskDriveFull::AddTransmitEdge(bool polarity) {
+	mSerialXmitQueue.AddTransmitBit(DriveTimeToMasterTime() + mSerialXmitQueue.kTransmitLatency, polarity);
 }
 
 void ATDeviceDiskDriveFull::OnRIOTRegisterWrite(uint32 addr, uint8 val) {
@@ -1905,12 +1257,17 @@ void ATDeviceDiskDriveFull::OnRIOTRegisterWrite(uint32 addr, uint8 val) {
 		const uint8 outnext = mRIOT.ReadOutputA();
 
 		// check for density change
-		if (mb1050 && (outprev ^ outnext) & 0x20) {
-			mFDC.SetDensity(!(outnext & 0x20));
+		const uint8 delta = outprev ^ outnext;
+
+		if (mb1050) {
+			if (delta & 0x20)
+				mFDC.SetDensity(!(outnext & 0x20));
+		} else if (mDeviceType == kDeviceType_810Turbo) {
+			if (delta & 0x08)
+				mFDC.SetDensity(!(outnext & 0x08));
 		}
 
 		// check for a spindle motor state change
-		const uint8 delta = outprev ^ outnext;
 		if (delta & (mb1050 ? 8 : 2)) {
 			const bool running = mb1050 ? (outnext & 8) == 0 : (outnext & 2) != 0;
 			mFDC.SetMotorRunning(running);
@@ -1947,7 +1304,7 @@ void ATDeviceDiskDriveFull::OnRIOTRegisterWrite(uint32 addr, uint8 val) {
 
 		// check for transition on PB0 (SIO input)
 		if (outdelta & 1)
-			AddTransmitEdge(outnext & 1);
+			AddTransmitEdge((outnext & 1) != 0);
 
 		// check for stepping transition
 		if (outdelta & 0x3C) {

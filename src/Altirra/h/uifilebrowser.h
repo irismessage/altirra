@@ -33,7 +33,6 @@ public:
 public:
 	void OnCreate() override;
 	void OnDestroy() override;
-	void OnSize() override;
 
 protected:
 	void OnGoUpPressed();

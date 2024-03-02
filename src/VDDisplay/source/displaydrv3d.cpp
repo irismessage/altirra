@@ -152,6 +152,7 @@ bool VDDisplayDriver3D::SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX) 
 		if (!mbCompositionTreeDirty) {
 			if (mScreenFXInfo.mScanlineIntensity != screenFX->mScanlineIntensity
 				|| mScreenFXInfo.mGamma != screenFX->mGamma
+				|| mScreenFXInfo.mPALBlendingOffset != screenFX->mPALBlendingOffset
 				|| mScreenFXInfo.mbColorCorrectAdobeRGB != screenFX->mbColorCorrectAdobeRGB
 				|| memcmp(mScreenFXInfo.mColorCorrectionMatrix, screenFX->mColorCorrectionMatrix, sizeof(mScreenFXInfo.mColorCorrectionMatrix))
 				|| mScreenFXInfo.mDistortionX != screenFX->mDistortionX
@@ -212,6 +213,9 @@ void VDDisplayDriver3D::Refresh(UpdateMode updateMode) {
 	const uint32 h = (uint32)mClientRect.bottom;
 
 	if (!w || !h)
+		return;
+
+	if (mpSwapChain && !mpSwapChain->CheckOcclusion())
 		return;
 
 	VDDisplayCompositeInfo compInfo = {};

@@ -16,6 +16,9 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
+#ifndef f_AT_ATCORE_AUDIOSOURCE_H
+#define f_AT_ATCORE_AUDIOSOURCE_H
+
 //=========================================================================
 //
 // Synchronous audio mixer system
@@ -32,12 +35,13 @@
 // goes through a crude time stretcher if necessary to deal with temporary
 // deltas between audio and video.
 //
-// Levels are a bit weird in the mixbus since the system originally only
-// dealt with POKEY audio -- full scale is [-1680, 1680]. The 1680 comes
-// from 28 * 15 * 4, or four channels at volume 15 accumulated over 28
-// ticks per sample. POKEY is the most active and CPU intensive source to
+// Levels are relative to the output of the POKEY renderer. This is
+// because POKEY is the most active and CPU intensive source to
 // generate, so it sets the scale and all of the other sources just get
-// this factor folded into their gain factors.
+// this factor folded into their gain factors. As of Altirra 3.90, POKEY's
+// output is normalized -- the (28*60) factor is gone and all mix levels
+// are scaled to compensate for any inherent scales so that mixing sources
+// do not have to account for them.
 //
 // Two global filters are applied at the end of the mixbus. One is a DC
 // filter to remove bias. It is OK for audio sources to produce biased
@@ -45,9 +49,6 @@
 // to avoid clicking and unnecessary mix overhead. The second is a low-
 // pass filter at about 15KHz.
 //
-
-#ifndef f_AT_ATCORE_AUDIOSOURCE_H
-#define f_AT_ATCORE_AUDIOSOURCE_H
 
 enum {
 	kATCyclesPerSyncSample = 28
@@ -58,6 +59,13 @@ struct ATSyncAudioMixInfo {
 	// to be monotonic but not necessarily continuous -- the mixer is
 	// allowed to drop samples. This is considered a glitch and sources
 	// do not need to produce perfect audio across such discontinuities.
+	//
+	// Note that this is the start time for the sample window, and not the
+	// frame. Mixing frames are close to sampling frames but not quite the
+	// same since the frame time is not evenly divisible in samples. The
+	// mixing window always contains the start of the frame but may end
+	// slightly short. Sources need to be prepared to carry audio info
+	// into the next frame to accommodate this.
 	uint64 mStartTime;
 
 	// Number of samples to mix. This may vary but is normally about a
@@ -87,7 +95,8 @@ struct ATSyncAudioMixInfo {
 	float *mpDCLeft;
 	float *mpDCRight;
 
-	// Mix levels (see ATAudioMix).
+	// Mix levels (see ATAudioMix). Audio sources are expected to always
+	// use a mix level from this table, Other if nothing else.
 	const float *mpMixLevels;
 };
 

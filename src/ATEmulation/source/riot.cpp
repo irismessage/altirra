@@ -56,6 +56,7 @@ void ATRIOT6532Emulator::DumpStatus(ATConsoleOutput& out) {
 
 void ATRIOT6532Emulator::Reset() {
 	mTimerDeadline = mpScheduler->GetTick64() - 1;
+	mTimerPrescalerOffset = 0;
 	mTimerPrescalerShift = 0;
 
 	mDDRA = 0;
@@ -149,15 +150,44 @@ uint8 ATRIOT6532Emulator::ReadByte(uint8 address) {
 
 		case 4:		// read timer (also clears timer interrupt)
 		case 6: {
-			const uint64 delta = mTimerDeadline - mpScheduler->GetTick64();
+			const uint64 t = mpScheduler->GetTick64();
+			const uint64 delta = mTimerDeadline - t;
 
+			uint8 v;
 			if (mbTimerIrqActive) {
-				// The timer IRQ is not cleared if it is read exactly when the IRQ occurs.
+				// The timer flag is not cleared if it is read exactly when it would be set from the timer
+				// underflowing. Since the interrupt flag is active, we have to be in 1T mode, so we are
+				// looking for N*256 cycles from the last deadline regardless of prescaler setting.
 				if ((delta & (UINT64_C(1) << 63)) && (delta & 255)) {
 					mbTimerIrqActive = false;
+
+					// Recompute the timer deadline. The timer interrupt flag was set, so the timer's
+					// been counting in 1T mode since the deadline. Compute the current timer value as
+					// mod 256 from the deadline, then time to next underflow at prescaler rate. Note
+					// that we must keep the original prescaler offset from when the timer was last
+					// written, which doesn't change no matter how many times it switches between 1T
+					// and prescaled rate.
+					//
+					// Also, the counter's value on the deadline is $FF, not $00, because it just
+					// underflowed last cycle.
+					const uint32 counterValue = ((uint32)delta - 1) & 0xFF;
+
+					// - If the prescaler is 1T and the counter is 0, deadline is next cycle.
+					// - If the prescaler is 8T, the counter is 4, and (t & psMask) == 0, we have 8
+					//   cycles until the next prescaler tick and 8+4*8 = 40 cycles to deadline.
+					// - If the prescaler is 8T, the counter is 4, and (t & psMask) == 2, we have 6
+					//   cycles until the next prescaler tick and 6+4*8 = 38 cycles to deadline.
+					mTimerDeadline = t + (~(t - mTimerPrescalerOffset) & mTimerPrescalerMask) + (counterValue << mTimerPrescalerShift) + 1;
+
 					UpdateIrqStatus();
 					UpdateTimerIrqEvent();
 				}
+
+				// Timer interrupt flag (was) set -- 1T mode
+				v = (uint8)(delta - 1);
+			} else {
+				// Timer interrupt flag not set -- prescaled mode
+				v = (uint8)(((uint32)delta - 1) >> mTimerPrescalerShift);
 			}
 
 			const bool timerIrqEnabled = (address & 8) != 0;
@@ -167,7 +197,7 @@ uint8 ATRIOT6532Emulator::ReadByte(uint8 address) {
 				UpdateIrqStatus();
 			}
 
-			return delta < (UINT64_C(1) << 63) ? (uint8)(delta >> mTimerPrescalerShift) : (uint8)delta;
+			return v;
 		}
 
 		case 5:		// read interrupt flag (also clears PA7 interrupt)
@@ -199,8 +229,15 @@ void ATRIOT6532Emulator::WriteByte(uint8 address, uint8 value) {
 			};
 
 			mTimerPrescalerShift = kPrescalerShifts[address & 3];
+			mTimerPrescalerMask = (1U << mTimerPrescalerShift) - 1;
 			const uint64 t = mpScheduler->GetTick64();
-			mTimerDeadline = t + ((value ? value : 256U) << mTimerPrescalerShift) + 1;
+
+			// Compute deadline to underflow+interrupt. A value of zero triggers next cycle.
+			mTimerDeadline = t + (value << mTimerPrescalerShift) + 1;
+
+			// Compute absolute time base offset for prescaler-driven decrements.
+			mTimerPrescalerOffset = (uint32)mTimerDeadline & mTimerPrescalerMask;
+
 			mbTimerIrqEnabled = (address & 8) != 0;
 			mbTimerIrqActive = false;
 
@@ -250,18 +287,22 @@ void ATRIOT6532Emulator::OnScheduledEvent(uint32 id) {
 
 void ATRIOT6532Emulator::UpdateTimerIrqEvent() {
 	if (mbTimerIrqActive) {
-		// Timer IRQ is disabled or already active, so no need to run ticks to set it some more.
+		// Timer interrupt flag is already set, so no need to run ticks to set it some more.
+		// The counter now counts at 1T down from the last deadline and underflows every 256T, which
+		// we can extrapolate out as necessary if someone reads the timer and clears the interrupt flag
+		// to reset it back to prescaled mode.
 		mpScheduler->UnsetEvent(mpTimerIrqEvent);
 	} else {
-		// Timer IRQ is not active, so we need to set an event until it does. If we are before the
-		// deadline, then use that; otherwise, set a timer to the next multiple of 256 cycles beyond
-		// it, since the timer switches to 1T scaling afterward.
+		// Timer interrupt flag is not set, so we need to set an event until it does. This also means
+		// that we are in prescaled mode, even if the timer has already underflowed once (which means
+		// that someone read the timer and switched it back from 1T mode). If the deadline hasn't passed
+		// yet, we can just use that; otherwise, we're back to 1T mode (again) and should estimate the
+		// next 256T interval from the deadline.
 		uint64 ticksLeft = mTimerDeadline - mpScheduler->GetTick64();
 		uint32 ticksLeft32 = (uint32)ticksLeft;
 
-		if (ticksLeft & (UINT64_C(1) << 63)) {
-			// The low 8 bits are almost what we need, except that we need a delay of 256
-			// when we would have zero.
+		if ((ticksLeft - 1) & (UINT64_C(1) << 63)) {
+			// The deadline is in the past or now. Adjust it to the next deadline 256*N cycles away.
 			ticksLeft32 = ((ticksLeft32 - 1) & 0xFF) + 1;
 		}
 

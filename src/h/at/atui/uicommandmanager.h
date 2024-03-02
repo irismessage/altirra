@@ -56,6 +56,7 @@ public:
 
 	const ATUICommand *GetCommand(const char *str) const;
 	bool ExecuteCommand(const char *str);
+	bool ExecuteCommandNT(const char *str) noexcept;
 
 	void ListCommands(vdfastvector<VDAccelToCommandEntry>& commands) const;
 

@@ -25,11 +25,13 @@
 #include <at/atcore/deviceindicators.h>
 #include <at/atcore/media.h>
 #include <at/atcore/sioutils.h>
+#include <at/atcore/snapshotimpl.h>
 #include <at/atcore/vfs.h>
 #include "disk.h"
 #include "pokey.h"
 #include "console.h"
 #include "cpu.h"
+#include "savestate.h"
 #include "simulator.h"
 #include "debuggerlog.h"
 #include "audiosampleplayer.h"
@@ -204,6 +206,9 @@ void ATDiskEmulator::Init(int unit, ATDiskInterface *dif, ATScheduler *sched, AT
 	dif->AddClient(this);
 
 	mpAudioSyncMixer = mixer;
+	mpRotationSoundGroup = mixer->CreateGroup(ATAudioGroupDesc().Mix(kATAudioMix_Drive));
+	mpStepSoundGroup = mixer->CreateGroup(ATAudioGroupDesc().Mix(kATAudioMix_Drive).RemoveSupercededSounds());
+
 	mLastRotationUpdateCycle = ATSCHEDULER_GETTIME(sched);
 	mUnit = unit;
 	mpScheduler = sched;
@@ -229,6 +234,10 @@ void ATDiskEmulator::Shutdown() {
 		mpDiskInterface->RemoveClient(this);
 		mpDiskInterface = nullptr;
 	}
+
+	mpRotationSoundGroup = nullptr;
+	mpStepSoundGroup = nullptr;
+	mpAudioSyncMixer = nullptr;
 }
 
 void ATDiskEmulator::Rename(int unit) {
@@ -261,12 +270,8 @@ void ATDiskEmulator::Reset() {
 	if (mpSlowScheduler)
 		mpSlowScheduler->UnsetEvent(mpMotorOffEvent);
 
-	if (mpAudioSyncMixer) {
-		if (mRotationSoundId != ATSoundId::Invalid) {
-			mpAudioSyncMixer->StopSound(mRotationSoundId);
-			mRotationSoundId = ATSoundId::Invalid;
-		}
-	}
+	if (mpAudioSyncMixer)
+		mpRotationSoundGroup->StopAllSounds();
 
 	mTransferLength = 0;
 	mPhantomSectorCounter = 0;
@@ -373,6 +378,88 @@ void ATDiskEmulator::SetTraceContext(ATTraceContext *context) {
 	} else {
 		mpTraceChannel = nullptr;
 	}
+}
+
+class ATSaveStateDisk final : public ATSnapExchangeObject<ATSaveStateDisk> {
+public:
+	template<typename T>
+	void Exchange(T& rw) {
+		rw.Transfer("idle_timer", &mIdleTimer);
+		rw.Transfer("active_command_id", &mActiveCommandId);
+		rw.Transfer("active_command_state", &mActiveCommandState);
+		rw.Transfer("active_command_sector", &mActiveCommandSector);
+		rw.Transfer("rotational_pos", &mRotationalPos);
+		rw.Transfer("current_track", &mCurrentTrack);
+		rw.Transfer("active_command", &mpActiveCommand);
+
+		if constexpr (rw.IsReader) {
+			// Allow for up to a ~10 minute idle time -- beyond that consider it broken.
+			if (mIdleTimer >= 0x40000000)
+				throw ATInvalidSaveStateException();
+
+			// Disks can only have 65,535 logical sectors -- so they will never have that
+			// many tracks.
+			if (mCurrentTrack >= 65535)
+				throw ATInvalidSaveStateException();
+		}
+	}
+
+	uint32 mIdleTimer = 0;
+	uint8 mActiveCommandId = 0;
+	uint32 mActiveCommandState = 0;
+	uint16 mActiveCommandSector = 0;
+	float mRotationalPos = 0;
+	uint32 mCurrentTrack = 0;
+
+	vdrefptr<IATObjectState> mpActiveCommand;
+};
+
+ATSERIALIZATION_DEFINE(ATSaveStateDisk);
+
+void ATDiskEmulator::SaveState(IATObjectState **pp) const {
+	vdrefptr<ATSaveStateDisk> state(new ATSaveStateDisk);
+
+	if (mpMotorOffEvent)
+		state->mIdleTimer = mpSlowScheduler->GetTicksToEvent(mpMotorOffEvent) * 114;
+	else
+		state->mIdleTimer = 0;
+
+	state->mRotationalPos = (float)GetUpdatedRotationalCounter() / (float)mCyclesPerDiskRotation;
+	state->mActiveCommandId = mActiveCommand;
+	state->mActiveCommandState = mActiveCommandState;
+	state->mActiveCommandSector = mActiveCommandSector;
+
+	state->mCurrentTrack = mCurrentTrack;
+
+	mpSIOMgr->SaveActiveCommandState(this, ~state->mpActiveCommand);
+
+	*pp = state.release();
+}
+
+void ATDiskEmulator::LoadState(const IATObjectState& state0) {
+	const ATSaveStateDisk& state = atser_cast<const ATSaveStateDisk&>(state0);
+
+	if (state.mIdleTimer >= 57) {
+		TurnOnMotor();
+		mpSlowScheduler->SetEvent((state.mIdleTimer + 57) / 114, this, kATDiskEventMotorOff, mpMotorOffEvent);
+	} else {
+		TurnOffMotor();
+	}
+
+	uint32 rotPosCycles = (uint32)((state.mRotationalPos - floorf(state.mRotationalPos)) * (float)mCyclesPerDiskRotation + 0.5f);
+
+	if (rotPosCycles < mRotationalCounter)
+		++mRotations;
+
+	mRotationalCounter = rotPosCycles;
+	mLastRotationUpdateCycle = ATSCHEDULER_GETTIME(mpScheduler);
+
+	mActiveCommand = state.mActiveCommandId;
+	mActiveCommandState = state.mActiveCommandState;
+	mActiveCommandSector = state.mActiveCommandSector;
+	mCurrentTrack = state.mCurrentTrack;
+
+	mpSIOMgr->LoadActiveCommandState(this, state.mpActiveCommand);
 }
 
 void ATDiskEmulator::OnScheduledEvent(uint32 id) {
@@ -623,12 +710,12 @@ void ATDiskEmulator::OnTimingModeChanged() {
 void ATDiskEmulator::OnAudioModeChanged() {
 	mbDriveSoundsEnabled = mpDiskInterface->AreDriveSoundsEnabled();
 
-	if (!mbDriveSoundsEnabled && mpAudioSyncMixer) {
-		if (mRotationSoundId != ATSoundId::Invalid) {
-			mpAudioSyncMixer->StopSound(mRotationSoundId);
-			mRotationSoundId = ATSoundId::Invalid;
-		}
-	}
+	if (!mbDriveSoundsEnabled && mpRotationSoundGroup)
+		mpRotationSoundGroup->StopAllSounds();
+}
+
+bool ATDiskEmulator::IsImageSupported(const IATDiskImage& image) const {
+	return true;
 }
 
 void ATDiskEmulator::UpdateAccelTimeSkew() {
@@ -785,6 +872,13 @@ void ATDiskEmulator::EndCommand() {
 
 void ATDiskEmulator::AbortCommand() {
 	mActiveCommand = 0;
+}
+
+uint32 ATDiskEmulator::GetUpdatedRotationalCounter() const {
+	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+	uint32 dt = t - mLastRotationUpdateCycle;
+
+	return (mRotationalCounter + dt) % mCyclesPerDiskRotation;
 }
 
 void ATDiskEmulator::UpdateRotationalCounter() {
@@ -985,8 +1079,8 @@ bool ATDiskEmulator::ProcessCommandReadWriteCommon(bool isWrite) {
 			break;
 
 		case 11: {
-			// check if we need to seek
-			uint32 track = (sector - 1) / mSectorsPerTrack;
+			// check if we need to seek (spt=0 may be true if we lost the disk)
+			uint32 track = mSectorsPerTrack ? (sector - 1) / mSectorsPerTrack : 0;
 			int trackDelta = (int)track - (int)mCurrentTrack;
 			uint32 tracksToStep = (uint32)abs(trackDelta);
 
@@ -1697,6 +1791,10 @@ void ATDiskEmulator::ProcessCommandWritePERCOMBlock() {
 			EndCommand();
 			break;
 		}
+
+		default:
+			ProcessUnhandledCommandState();
+			break;
 	}
 }
 
@@ -1820,6 +1918,10 @@ void ATDiskEmulator::ProcessCommandHappyHeadPosTest() {
 			BeginTransferComplete();
 			EndCommand();
 			break;
+
+		default:
+			ProcessUnhandledCommandState();
+			break;
 	}
 }
 
@@ -1848,6 +1950,10 @@ void ATDiskEmulator::ProcessCommandHappyRPMTest() {
 
 			SendResult(true, 128);
 			EndCommand();
+			break;
+
+		default:
+			ProcessUnhandledCommandState();
 			break;
 	}
 }
@@ -2093,6 +2199,10 @@ void ATDiskEmulator::ProcessCommandExecuteIndusGT() {
 			EndCommand();
 			break;
 		}
+
+		default:
+			ProcessUnhandledCommandState();
+			break;
 	}
 }
 
@@ -2259,7 +2369,14 @@ void ATDiskEmulator::ProcessCommandFormat() {
 			EndCommand();
 			break;
 
+		default:
+			ProcessUnhandledCommandState();
+			break;
 	}
+}
+
+void ATDiskEmulator::ProcessUnhandledCommandState() {
+	EndCommand();
 }
 
 void ATDiskEmulator::ComputeGeometry() {
@@ -2712,12 +2829,8 @@ void ATDiskEmulator::TurnOffMotor() {
 
 	mpDiskInterface->SetShowMotorActive(false);
 
-	if (mpAudioSyncMixer) {
-		if (mRotationSoundId != ATSoundId::Invalid) {
-			mpAudioSyncMixer->StopSound(mRotationSoundId);
-			mRotationSoundId = ATSoundId::Invalid;
-		}
-	}
+	if (mpRotationSoundGroup)
+		mpRotationSoundGroup->StopAllSounds();
 
 	if (mEmuMode == kATDiskEmulationMode_810) {
 		uint32 endTrack = mTrackCount ? mTrackCount - 1 : 0;
@@ -2732,8 +2845,8 @@ bool ATDiskEmulator::TurnOnMotor(uint32 delay) {
 	if (spinUpDelay) {
 		mpDiskInterface->SetShowMotorActive(true);
 
-		if (mRotationSoundId == ATSoundId::Invalid && mbDriveSoundsEnabled)
-			mRotationSoundId = mpAudioSyncMixer->AddLoopingSound(kATAudioMix_Drive, delay, kATAudioSampleId_DiskRotation, 1.0f);
+		if (mpAudioSyncMixer && mbDriveSoundsEnabled && !mpRotationSoundGroup->IsAnySoundQueued())
+			mpAudioSyncMixer->AddLoopingSound(*mpRotationSoundGroup, delay, kATAudioSampleId_DiskRotation, 1.0f);
 	}
 
 	mpSlowScheduler->SetEvent(48041, this, kATDiskEventMotorOff, mpMotorOffEvent);
@@ -2758,7 +2871,7 @@ void ATDiskEmulator::PlaySeekSound(uint32 stepDelay, uint32 tracksToStep) {
 
 	if (mbSeekHalfTracks) {
 		for(uint32 i=0; i<tracksToStep; ++i) {
-			mpAudioSyncMixer->AddSound(kATAudioMix_Drive, stepDelay, kATAudioSampleId_DiskStep3, 1.0f);
+			mpAudioSyncMixer->AddSound(*mpStepSoundGroup, stepDelay, kATAudioSampleId_DiskStep3, 1.0f);
 
 			stepDelay += mCyclesPerTrackStep;
 		}
@@ -2770,7 +2883,7 @@ void ATDiskEmulator::PlaySeekSound(uint32 stepDelay, uint32 tracksToStep) {
 		case kATDiskEmulationMode_Generic57600:
 		case kATDiskEmulationMode_FastestPossible:
 			for(uint32 i=0; i<tracksToStep; ++i) {
-				mpAudioSyncMixer->AddSound(kATAudioMix_Drive, stepDelay, kATAudioSampleId_DiskStep1, 0.3f + 0.7f * sinf(i * nsVDMath::kfPi * 0.5f));
+				mpAudioSyncMixer->AddSound(*mpStepSoundGroup, stepDelay, kATAudioSampleId_DiskStep1, 0.3f + 0.7f * sinf(i * nsVDMath::kfPi * 0.5f));
 
 				stepDelay += mCyclesPerTrackStep;
 			}
@@ -2779,9 +2892,9 @@ void ATDiskEmulator::PlaySeekSound(uint32 stepDelay, uint32 tracksToStep) {
 		default:
 			for(uint32 i=0; i<tracksToStep; i += 2) {
 				if (i + 2 > tracksToStep)
-					mpAudioSyncMixer->AddSound(kATAudioMix_Drive, stepDelay, kATAudioSampleId_DiskStep2H, 1.0f);
+					mpAudioSyncMixer->AddSound(*mpStepSoundGroup, stepDelay, kATAudioSampleId_DiskStep2H, 1.0f);
 				else
-					mpAudioSyncMixer->AddSound(kATAudioMix_Drive, stepDelay, kATAudioSampleId_DiskStep2, 1.0f);
+					mpAudioSyncMixer->AddSound(*mpStepSoundGroup, stepDelay, kATAudioSampleId_DiskStep2, 1.0f);
 
 				stepDelay += mCyclesPerTrackStep * 2;
 			}

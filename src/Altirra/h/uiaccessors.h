@@ -78,6 +78,12 @@ bool ATUIIsMouseCaptured();
 bool ATUIGetMouseAutoCapture();
 void ATUISetMouseAutoCapture(bool enabled);
 
+bool ATUIGetPointerAutoHide();
+void ATUISetPointerAutoHide(bool enabled);
+
+bool ATUIGetTargetPointerVisible();
+void ATUISetTargetPointerVisible(bool enabled);
+
 bool ATUIGetTurbo();
 void ATUISetTurbo(bool turbo);
 

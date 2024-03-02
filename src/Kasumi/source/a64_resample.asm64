@@ -139,6 +139,8 @@ end_prolog
 	;r14
 	;r15
 
+	cmp			r9d, 8
+	jz			.accel_2coeff
 	cmp			r9d, 16
 	jz			.accel_4coeff
 	cmp			r9d, 24
@@ -280,6 +282,37 @@ end_prolog
 	VDRESTORE	rbx, rsi, rdi, rbp, r12, r13, r14, r15
 	ret
 
+.accel_2coeff:
+.pixelloop_2coeff:
+	pxor		xmm5, xmm5
+	movdqa		xmm4, xmm6
+
+	mov			eax, 0ff000000h
+	lea			rdx, [rsi*4]
+	and			eax, edi
+	shr			eax, 21
+
+	movd		xmm0, dword [rdx]			;xmm0 = p0
+	movd		xmm1, dword [rdx+4]			;xmm1 = p1
+	punpcklbw	xmm0, xmm1
+	punpcklbw	xmm0, xmm5
+	movq		xmm1, qword [r8+rax]
+	pshufd		xmm1, xmm1, 01000100b
+	pmaddwd		xmm0, xmm1
+	paddd		xmm4, xmm0
+
+	psrad		xmm4, 14
+	packssdw	xmm4, xmm4
+	packuswb	xmm4, xmm4
+
+	add			edi, ebp
+	adc			rsi, r11
+
+	movd		dword [rcx+r10], xmm4
+	add			r10, 4
+	jnz			.pixelloop_2coeff
+	jmp			.xit
+
 .accel_4coeff:
 .pixelloop_4coeff:
 	pxor		xmm5, xmm5
@@ -394,6 +427,8 @@ end_prolog
 	movdqa		xmm4, oword [roundval]
 	xor			rbx, rbx					;rbx = source offset
 
+	cmp			r9d, 2
+	jz			.accel_2coeff
 	cmp			r9d, 4
 	jz			.accel_4coeff
 	cmp			r9d, 6
@@ -445,6 +480,61 @@ end_prolog
 	VDRESTOREXMM128	6, 15
 	VDRESTORE	rbx, rsi, rdi, rbp, r12, r13, r14, r15
 	ret
+
+.accel_2coeff:
+	mov			r12, [rdx]
+	mov			r13, [rdx+8]
+	movq		xmm8, qword [r8]
+	punpcklqdq	xmm8, xmm8
+
+	sub			r10d, 1
+	jc			.oddpixel_2coeff
+.pixelloop_2coeff:
+	movq		xmm0, qword [r12+rbx]
+	movq		xmm1, qword [r13+rbx]
+
+	punpcklbw	xmm0, xmm1
+
+	movdqa		xmm1, xmm0
+
+	punpcklbw	xmm0, xmm5
+	punpckhbw	xmm1, xmm5
+
+	pmaddwd		xmm0, xmm8
+	pmaddwd		xmm1, xmm8
+
+	paddd		xmm0, xmm4
+	paddd		xmm1, xmm4
+
+	psrad		xmm0, 14
+	psrad		xmm1, 14
+	packssdw	xmm0, xmm1
+	packuswb	xmm0, xmm0
+
+	movq		qword [rcx], xmm0
+	add			rcx, 8
+	add			rbx, 8
+	sub			r10d, 2
+	ja			.pixelloop_2coeff
+	jnz			.xit
+.oddpixel_2coeff:
+	movd		xmm0, dword [r12+rbx]
+	movd		xmm1, dword [r13+rbx]
+
+	punpcklbw	xmm0, xmm1
+	punpcklbw	xmm0, xmm5
+
+	pmaddwd		xmm0, xmm8
+
+	paddd		xmm0, xmm4
+
+	psrad		xmm0, 14
+	packssdw	xmm0, xmm0
+	packuswb	xmm0, xmm0
+
+	movd		dword [rcx], xmm0
+
+	jmp			.xit
 
 .accel_4coeff:
 	mov			r12, [rdx]

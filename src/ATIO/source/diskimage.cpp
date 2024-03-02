@@ -192,8 +192,9 @@ public:
 
 	uint64 GetImageChecksum() const override { return mImageChecksum; }
 	std::optional<uint32> GetImageFileCRC() const override { return mImageFileCRC; }
+	std::optional<ATChecksumSHA256> GetImageFileSHA256() const override { return mImageFileSHA256; }
 
-	bool Flush() override;
+	void Flush() override;
 
 	void SetPath(const wchar_t *path, ATDiskImageFormat format) override;
 	void Save(const wchar_t *path, ATDiskImageFormat format) override;
@@ -201,7 +202,7 @@ public:
 	ATDiskGeometryInfo GetGeometry() const override { return mGeometry; }
 	uint32 GetSectorSize() const override { return mSectorSize; }
 	uint32 GetSectorSize(uint32 virtIndex) const override { return virtIndex < mBootSectorCount ? 128 : mSectorSize; }
-	uint32 GetBootSectorCount() const  override{ return mBootSectorCount; }
+	uint32 GetBootSectorCount() const override { return mBootSectorCount; }
 
 	uint32 GetPhysicalSectorCount() const override;
 	void GetPhysicalSectorInfo(uint32 index, ATDiskPhysicalSectorInfo& info) const override;
@@ -255,6 +256,7 @@ protected:
 	ATDiskGeometryInfo	mGeometry = {};
 	uint64	mImageChecksum = 0;
 	std::optional<uint32> mImageFileCRC {};
+	std::optional<ATChecksumSHA256> mImageFileSHA256 {};
 
 	VDStringW	mPath;
 
@@ -306,6 +308,7 @@ void ATDiskImage::Init(uint32 sectorCount, uint32 bootSectorCount, uint32 sector
 	mbDirty = true;
 	mbDiskFormatDirty = true;
 	mImageFileCRC.reset();
+	mImageFileSHA256.reset();
 
 	mPath = L"(New disk)";
 	mbHasDiskSource = false;
@@ -352,6 +355,7 @@ void ATDiskImage::Init(const ATDiskGeometryInfo& geometry) {
 	mbDirty = true;
 	mbDiskFormatDirty = true;
 	mImageFileCRC.reset();
+	mImageFileSHA256.reset();
 
 	mPath = L"(New disk)";
 	mbHasDiskSource = false;
@@ -369,6 +373,7 @@ void ATDiskImage::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRan
 	const wchar_t *ext = VDFileSplitExt(imagePath);
 
 	mImageFileCRC.reset();
+	mImageFileSHA256.reset();
 
 	if (!vdwcsicmp(ext, L".arc")) {
 		LoadARC(stream, origPath);
@@ -383,10 +388,19 @@ void ATDiskImage::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRan
 		mImage.resize(len);
 		stream.Read(mImage.data(), len);
 
-		VDCRCChecker crcChecker(VDCRCTable::CRC32);
-		crcChecker.Process(header, 16);
-		crcChecker.Process(mImage.data(), len);
-		mImageFileCRC = crcChecker.CRC();
+		{
+			VDCRCChecker crcChecker(VDCRCTable::CRC32);
+			crcChecker.Process(header, 16);
+			crcChecker.Process(mImage.data(), len);
+			mImageFileCRC = crcChecker.CRC();
+		}
+
+		if (len <= 32*1024*1024 + 256) {
+			ATChecksumEngineSHA256 sha256;
+			sha256.Process(header, 16);
+			sha256.Process(mImage.data(), len);
+			mImageFileSHA256 = sha256.Finalize();
+		}
 
 		mTimingMode = kATDiskTimingMode_Any;
 
@@ -1146,7 +1160,7 @@ void ATDiskImage::LoadP3(IVDRandomAccessStream& stream, uint32 len, const uint8 
 			if (!(psi.mFDCStatus & 0x10)) {
 				psi.mImageSize = 0;
 			} else {
-				mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(mVirtSectors.size()), &mImage[psi.mDiskOffset], psi.mImageSize);
+				mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(mVirtSectors.size()), &mImage[psi.mOffset], psi.mImageSize);
 			}
 		}
 	}
@@ -1377,16 +1391,16 @@ bool ATDiskImage::IsUpdatable() const {
 	return mbHasDiskSource && mImageFormat != kATDiskImageFormat_None;
 }
 
-bool ATDiskImage::Flush() {
+void ATDiskImage::Flush() {
 	if (!mbDirty)
-		return true;
+		return;
 
 	if (!IsUpdatable())
-		return false;
+		throw MyError("The current disk image does not have an updatable source file.");
 
 	if (mbDiskFormatDirty) {
 		Save(VDStringW(mPath).c_str(), mImageFormat);
-		return true;
+		return;
 	}
 
 	// build a list of dirty sectors
@@ -1401,7 +1415,7 @@ bool ATDiskImage::Flush() {
 				// uh oh... this sector doesn't have a straightforward position on disk. force
 				// a full write
 				Save(VDStringW(mPath).c_str(), mImageFormat);
-				return true;
+				return;
 			}
 
 			dirtySectors.push_back(psi);
@@ -1474,7 +1488,7 @@ bool ATDiskImage::Flush() {
 	mbDirty = false;
 
 	// all done
-	return true;
+	return;
 }
 
 void ATDiskImage::SetPath(const wchar_t *path, ATDiskImageFormat format) {
@@ -1660,6 +1674,7 @@ void ATDiskImage::WritePhysicalSector(uint32 index, const void *data, uint32 len
 	psi.mFDCStatus = fdcStatus;
 	mbDirty = true;
 	mImageFileCRC.reset();
+	mImageFileSHA256.reset();
 }
 
 uint32 ATDiskImage::ReadVirtualSector(uint32 index, void *data, uint32 len) {
@@ -1705,6 +1720,7 @@ bool ATDiskImage::WriteVirtualSector(uint32 index, const void *data, uint32 len)
 	psi.mbDirty = true;
 	mbDirty = true;
 	mImageFileCRC.reset();
+	mImageFileSHA256.reset();
 	return true;
 }
 
@@ -1722,6 +1738,7 @@ void ATDiskImage::Resize(uint32 newSectors) {
 		mbDirty = true;
 		mbDiskFormatDirty = true;
 		mImageFileCRC.reset();
+		mImageFileSHA256.reset();
 
 		// Remove the extra virtual sectors.
 		mVirtSectors.resize(newSectors);
@@ -1869,6 +1886,7 @@ void ATDiskImage::Resize(uint32 newSectors) {
 				mbDirty = true;
 				mbDiskFormatDirty = true;
 				mImageFileCRC.reset();
+				mImageFileSHA256.reset();
 			} catch(...) {
 				mPhysSectors.resize(newPhysStart);
 				throw;
@@ -1974,6 +1992,7 @@ void ATDiskImage::FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskV
 	mbDirty = true;
 	mbDiskFormatDirty = true;
 	mImageFileCRC.reset();
+	mImageFileSHA256.reset();
 
 	// if we overwrote track 0 / sector 1, force the disk geometry MFM flag.
 	if (vsIndexStart == 0 && totalVirtSecs > 0) {

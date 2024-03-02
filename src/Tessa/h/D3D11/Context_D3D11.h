@@ -320,16 +320,18 @@ public:
 
 	bool Restore() { return true; }
 
-	void GetDesc(VDTSwapChainDesc& desc);
-	IVDTSurface *GetBackBuffer();
+	void GetDesc(VDTSwapChainDesc& desc) override;
+	IVDTSurface *GetBackBuffer() override;
 
-	bool ResizeBuffers(uint32 width, uint32 height);
+	bool ResizeBuffers(uint32 width, uint32 height) override;
 
-	void Present();
+	bool CheckOcclusion();
 
-	void PresentVSync(void *monitor, IVDTAsyncPresent *callback);
-	void PresentVSyncComplete();
-	void PresentVSyncAbort();
+	void Present() override;
+
+	void PresentVSync(void *monitor, IVDTAsyncPresent *callback) override;
+	void PresentVSyncComplete() override;
+	void PresentVSyncAbort() override;
 
 protected:
 	friend class VDTContextD3D11;
@@ -340,6 +342,8 @@ protected:
 	IDXGISwapChain1 *mpSwapChain1;
 
 	VDTTexture2DD3D11 *mpTexture;
+	bool	mbAllowTearing = false;
+	bool	mbWasOccluded = false;
 
 	VDTSwapChainDesc mDesc;
 

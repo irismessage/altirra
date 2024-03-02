@@ -29,12 +29,12 @@
 class IATAudioOutput;
 class ATPokeyEmulator;
 class ATSaveStateReader;
-class ATSaveStateWriter;
 class ATAudioFilter;
 struct ATPokeyTables;
 class ATPokeyRenderer;
 struct ATTraceContext;
 class ATTraceChannelSimple;
+class IATObjectState;
 
 class IATPokeyEmulatorConnections {
 public:
@@ -74,9 +74,29 @@ struct ATPokeyAudioState {
 };
 
 struct ATPokeyAudioLog {
+	// Sampling buffer -- receives per-channel output state every N ticks, up to the given max
+	// number of samples per frame. Automatically cleared per frame.
 	ATPokeyAudioState	*mpStates;
-	uint32	mRecordedCount;
-	uint32	mMaxCount;
+	uint32	mMaxSamples;
+	uint32	mCyclesPerSample;
+
+	// Mixed sampling buffer -- receives combined output state every sample, up to the given max
+	// samples per frame. This buffer is NOT automatically cleared and must be manually retriggered.
+	float	*mpMixedSamples;
+	uint32	mMaxMixedSamples;
+
+	// === filled in by audio engine ===
+	uint32	mFullScaleValue;
+	uint32	mTicksPerSample;
+	uint32	mLastFrameSampleCount;
+	uint32	mNumMixedSamples;
+
+	// === for continuous use by audio engine ===
+	uint32	mStartingAudioTick;
+	uint32	mLastAudioTick;
+	uint32	mAccumulatedAudioTicks;
+	uint32	mSampleIndex;
+	uint32	mLastOutputMask;
 };
 
 class ATPokeyEmulator final : public IATSchedulerCallback {
@@ -114,6 +134,9 @@ public:
 
 	bool	IsChannelEnabled(uint32 channel) const;
 	void	SetChannelEnabled(uint32 channel, bool enabled);
+
+	bool	IsSecondaryChannelEnabled(uint32 channel) const;
+	void	SetSecondaryChannelEnabled(uint32 channel, bool enabled);
 
 	bool	IsNonlinearMixingEnabled() const { return mbNonlinearMixingEnabled; }
 	void	SetNonlinearMixingEnabled(bool enable);
@@ -153,12 +176,12 @@ public:
 	void	LoadStatePrivate(ATSaveStateReader& reader);
 	void	LoadStateResetPrivate(ATSaveStateReader& reader);
 	void	EndLoadState(ATSaveStateReader& reader);
-	void	BeginSaveState(ATSaveStateWriter& writer);
-	void	SaveStateArch(ATSaveStateWriter& writer);
-	void	SaveStatePrivate(ATSaveStateWriter& writer);
+
+	void	SaveState(IATObjectState **pp);
+	void	LoadState(IATObjectState& state);
+	void	PostLoadState();
 
 	void	GetRegisterState(ATPokeyRegisterState& state) const;
-	void	GetAudioState(ATPokeyAudioState& state) const;
 
 	void	FlushAudio(bool pushAudio, uint64 timestamp);
 
@@ -166,6 +189,8 @@ public:
 
 protected:
 	void	OnScheduledEvent(uint32 id) override;
+
+	void	PostFrameUpdate(uint32 t);
 
 	template<uint8 channel>
 	void	FireTimer();
@@ -311,7 +336,6 @@ private:
 	uint32	mSerialExtPeriod;
 
 	ATPokeyTables *mpTables;
-	ATPokeyAudioLog	*mpAudioLog;
 
 	// AUDCTL breakout
 	bool	mbFastTimer1;
@@ -328,11 +352,11 @@ private:
 	ATEvent	*mpKeyboardIRQEvent;
 	ATEvent	*mpKeyboardScanEvent;
 	ATEvent	*mpAudioEvent;
-	ATEvent	*mpStartBitEvent;
 	ATEvent	*mpResetTimersEvent;
 	ATEvent *mpEventSerialInput;
 	ATEvent *mpEventSerialOutput;
-	ATEvent *mpEventResetTwoTones;
+	ATEvent *mpEventResetTwoTones1 = nullptr;
+	ATEvent *mpEventResetTwoTones2 = nullptr;
 	ATEvent	*mpTimerBorrowEvents[4];
 
 	bool	mbDeferredTimerEvents[4];

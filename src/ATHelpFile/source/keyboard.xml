@@ -27,6 +27,14 @@
     .keyboard td {
     background: #eee;
     }
+
+    body.dark .keyboard th {
+      background: #232;
+    }
+
+    body.dark .keyboard td {
+      background: #111;
+    }
   </style>
 
   <h2>Atari Keys</h2>

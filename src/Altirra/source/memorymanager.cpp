@@ -435,6 +435,19 @@ void ATMemoryManager::SetLayerMemoryAndAddressSpace(ATMemoryLayer *layer0, const
 	}
 }
 
+void ATMemoryManager::SetLayerReadOnly(ATMemoryLayer *layer0, bool readOnly) {
+	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
+
+	if (layer->mbReadOnly != readOnly) {
+		layer->mbReadOnly = readOnly;
+
+		if (layer->mFlags & kATMemoryAccessMode_W) {
+			if (layer->mEffectiveEnd > layer->mEffectiveStart)
+				RebuildAllNodes(layer->mEffectiveStart, layer->mEffectiveEnd - layer->mEffectiveStart, kATMemoryAccessMode_W);
+		}
+	}
+}
+
 void ATMemoryManager::SetLayerAddressRange(ATMemoryLayer *layer0, uint32 pageOffset, uint32 pageCount) {
 	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
 

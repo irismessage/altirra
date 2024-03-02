@@ -68,6 +68,10 @@ void ATUINativeWindowProxy::SetEnabled(bool enabled) {
 		EnableWindow(mhwnd, enabled);
 }
 
+uint16 ATUINativeWindowProxy::GetWindowId() const {
+	return mhwnd ? (uint16)GetWindowLongPtr(mhwnd, GWL_ID) : 0;
+}
+
 bool ATUINativeWindowProxy::IsVisible() const {
 	return mhwnd && (GetWindowLong(mhwnd, GWL_STYLE) & WS_VISIBLE);
 }

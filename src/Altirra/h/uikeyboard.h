@@ -46,7 +46,7 @@ struct ATUIKeyboardOptions {
 };
 
 bool ATUIGetDefaultScanCodeForCharacter(char c, uint8& ch);
-bool ATUIGetScanCodeForCharacter(char c, uint32& ch);
+bool ATUIGetScanCodeForCharacter32(uint32 c32, uint32& ch);
 void ATUIInitVirtualKeyMap(const ATUIKeyboardOptions& options);
 bool ATUIGetScanCodeForVirtualKey(uint32 virtKey, bool alt, bool ctrl, bool shift, bool extended, uint32& scanCode);
 
@@ -100,6 +100,7 @@ const VDAccelTableDefinition *ATUIGetDefaultAccelTables();
 VDAccelTableDefinition *ATUIGetAccelTables();
 
 const VDAccelTableEntry *ATUIGetAccelByCommand(ATUIAccelContext context, const char *command);
+const VDAccelTableEntry *ATUIFindConflictingVirtKeyMapping(uint32 vk, bool alt, bool ctrl, bool shift, bool ext, ATUIAccelContext context);
 bool ATUIActivateVirtKeyMapping(uint32 vk, bool alt, bool ctrl, bool shift, bool ext, bool up, ATUIAccelContext context);
 
 #endif

@@ -7,6 +7,10 @@
 #include <dxgi1_3.h>
 #endif
 
+#ifdef NTDDI_WIN10_RS1
+#include <dxgi1_5.h>
+#endif
+
 #include <D3D11.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/w32assist.h>
@@ -114,6 +118,19 @@ struct __declspec(uuid("25483823-cd46-4c7d-86ca-47aa95b837bd")) IDXGIFactory3 : 
 	virtual UINT STDMETHODCALLTYPE GetCreationFlags() = 0;
 };
 
+struct IDXGIFactory4 : public IDXGIFactory3 {
+	virtual HRESULT STDMETHODCALLTYPE EnumAdapterByLuid(LUID AdapterLuid, REFIID riid, void *ppvAdapter) = 0;
+	virtual HRESULT STDMETHODCALLTYPE EnumWarpAdapter(REFIID riid, void *ppvAdapter) = 0;
+};
+
+typedef enum DXGI_FEATURE {
+	DXGI_FEATURE_PRESENT_ALLOW_TEARING
+} DXGI_FEATURE;
+
+struct __declspec(uuid("7632e1f5-ee65-4dca-87fd-84cd75f8838d")) IDXGIFactory5 : public IDXGIFactory4 {
+	virtual HRESULT STDMETHODCALLTYPE CheckFeatureSupport(DXGI_FEATURE Feature, void *pFeatureSupportData, UINT FeatureSupportDataSize) = 0;
+};
+
 typedef struct DXGI_MATRIX_3X2_F DXGI_MATRIX_3X2_F;
 
 struct __declspec(uuid("a8be2ac4-199f-4946-b331-79599fb98de7")) IDXGISwapChain2 : public IDXGISwapChain1 {
@@ -126,12 +143,38 @@ struct __declspec(uuid("a8be2ac4-199f-4946-b331-79599fb98de7")) IDXGISwapChain2 
 	virtual HRESULT STDMETHODCALLTYPE GetMatrixTransform(DXGI_MATRIX_3X2_F *pMatrix) = 0;
 };
 
-const GUID IID_IDXGIFactory2 = __uuidof(IDXGIFactory2);
-const GUID IID_IDXGIFactory3 = __uuidof(IDXGIFactory3);
-const GUID IID_IDXGISwapChain1 = __uuidof(IDXGISwapChain1);
-const GUID IID_IDXGISwapChain2 = __uuidof(IDXGISwapChain2);
+extern "C" constexpr GUID IID_IDXGIFactory2 = __uuidof(IDXGIFactory2);
+extern "C" constexpr GUID IID_IDXGIFactory3 = __uuidof(IDXGIFactory3);
+extern "C" constexpr GUID IID_IDXGIFactory5 = __uuidof(IDXGIFactory5);
+extern "C" constexpr GUID IID_IDXGISwapChain1 = __uuidof(IDXGISwapChain1);
+extern "C" constexpr GUID IID_IDXGISwapChain2 = __uuidof(IDXGISwapChain2);
 
-const DXGI_SWAP_EFFECT DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL	= (DXGI_SWAP_EFFECT)3;
+constexpr DXGI_SWAP_EFFECT DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL	= (DXGI_SWAP_EFFECT)3;
+constexpr DXGI_SWAP_EFFECT DXGI_SWAP_EFFECT_FLIP_DISCARD = (DXGI_SWAP_EFFECT)4;
+constexpr DXGI_SWAP_CHAIN_FLAG DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING = (DXGI_SWAP_CHAIN_FLAG)0x800;
+
+#ifndef DXGI_PRESENT_ALLOW_TEARING
+#define DXGI_PRESENT_ALLOW_TEARING 0x200UL
+#endif
+
+typedef struct DXGI_FRAME_STATISTICS_MEDIA DXGI_FRAME_STATISTICS_MEDIA;
+
+struct __declspec(uuid("dd95b90b-f05f-4f6a-bd65-25bfb264bd84")) IDXGISwapChainMedia : public IUnknown {
+public:
+	virtual HRESULT STDMETHODCALLTYPE GetFrameStatisticsMedia(DXGI_FRAME_STATISTICS_MEDIA *pStats) = 0;
+	virtual HRESULT STDMETHODCALLTYPE SetPresentDuration(UINT Duration) = 0;
+	virtual HRESULT STDMETHODCALLTYPE CheckPresentDurationSupport(UINT DesiredPresentDuration, UINT *pClosestSmallerPresentDuration, UINT *pClosestLargerPresentDuration) = 0;
+};
+
+extern "C" constexpr GUID IID_IDXGISwapChainMedia = __uuidof(IDXGISwapChainMedia);
+
+constexpr D3D11_FEATURE D3D11_FEATURE_SHADER_MIN_PRECISION_SUPPORT = (D3D11_FEATURE)8;
+
+typedef struct D3D11_FEATURE_DATA_SHADER_MIN_PRECISION_SUPPORT {
+    UINT PixelShaderMinPrecision;
+    UINT AllOtherShaderStagesMinPrecision;
+} D3D11_FEATURE_DATA_SHADER_MIN_PRECISION_SUPPORT;
+
 #endif
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1407,23 +1450,47 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 	// Note that Windows 7 with the Platform Update does NOT support this, so just checking
 	// for DXGI 1.2 is not sufficient.
 	
-	if (!desc.mbWindowed)
-		scdesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-	else if (VDIsAtLeast8W32()) {
-		scdesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+	bool usingFlipPresentation = false;
+	if (VDIsAtLeast10W32()) {
+		scdesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+
+		usingFlipPresentation = true;
 
 		// We need triple buffering to be able to cancel a flip in progress -- one to
 		// display, a second to be queued, and a third to draw into and cancel the second.
 		scdesc.BufferCount = 3;
-	} else
+	} else if (VDIsAtLeast8W32() && desc.mbWindowed) {
+		scdesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+
+		usingFlipPresentation = true;
+
+		// We need triple buffering to be able to cancel a flip in progress -- one to
+		// display, a second to be queued, and a third to draw into and cancel the second.
+		scdesc.BufferCount = 3;
+	} else if (!desc.mbWindowed)
+		scdesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+	else
 		scdesc.SwapEffect = DXGI_SWAP_EFFECT_SEQUENTIAL;
 
 	scdesc.Flags = mDesc.mbWindowed ? 0 : DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+	mbAllowTearing = false;
+
+	if (mDesc.mbWindowed && usingFlipPresentation) {
+		vdrefptr<IDXGIFactory5> factory5;
+		if (SUCCEEDED(parent->GetDXGIFactory()->QueryInterface(IID_IDXGIFactory5, (void **)~factory5))) {
+			BOOL allowTearing = FALSE;
+
+			if (SUCCEEDED(factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof allowTearing)) && allowTearing) {
+				scdesc.Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+				mbAllowTearing = true;
+			}
+		}
+	}
 
 	bool haveDXGI13 = false;
 	if (!desc.mbWindowed) {
 		scdesc.OutputWindow = ::GetAncestor(scdesc.OutputWindow, GA_ROOT);
-	} else if (mDesc.mbWindowed && scdesc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL) {
+	} else if (mDesc.mbWindowed && usingFlipPresentation) {
 		// See if we have at least DXGI 1.3 and can use waitable objects for vsync. Note that
 		// this can only be used in windowed mode.
 		vdrefptr<IDXGIFactory3> factory3;
@@ -1576,21 +1643,37 @@ bool VDTSwapChainD3D11::ResizeBuffers(uint32 width, uint32 height) {
 	return true;
 }
 
+bool VDTSwapChainD3D11::CheckOcclusion() {
+#if 1
+	// Window occlusion checks are disabled for now since they never seem to trip on Windows 10,
+	// and so nothing good can happen.
+	return true;
+#else
+	if (!mbWasOccluded)
+		return true;
+
+	if (mpSwapChain->Present(0, DXGI_PRESENT_TEST) == S_OK)
+		mbWasOccluded = false;
+
+	return !mbWasOccluded;
+#endif
+}
+
 void VDTSwapChainD3D11::Present() {
 	if (!mpSwapChain)
 		return;
 
 	// If the swap chain is in flip mode, it'll unbind the render target, so we need to
 	// sync that state.
-	if (mDesc.mbWindowed)
-		static_cast<VDTContextD3D11 *>(mpParent)->SetRenderTarget(0, nullptr);
+	static_cast<VDTContextD3D11 *>(mpParent)->SetRenderTarget(0, nullptr);
 
-	mpSwapChain->Present(0, 0);
+	HRESULT hr = mpSwapChain->Present(0, mbAllowTearing ? DXGI_PRESENT_ALLOW_TEARING : 0);
+	mbWasOccluded = (hr == DXGI_STATUS_OCCLUDED);
+
+	mbVSyncPending = false;
 }
 
 void VDTSwapChainD3D11::PresentVSync(void *monitor, IVDTAsyncPresent *callback) {
-	static_cast<VDTContextD3D11 *>(mpParent)->SetRenderTarget(0, nullptr);
-
 	mVSyncMutex.Lock();
 	mbVSyncExit = false;
 	mhVSyncMonitor = monitor;
@@ -1610,28 +1693,32 @@ void VDTSwapChainD3D11::PresentVSync(void *monitor, IVDTAsyncPresent *callback) 
 }
 
 void VDTSwapChainD3D11::PresentVSyncComplete() {
-	if (mbVSyncPending) {
-		mbVSyncPending = false;
+	if (!mbVSyncPending)
+		return;
 
-		if (mpSwapChain) {
-			if (mDesc.mbWindowed) {
-				// We seem to need Present1() here in order for an interval of 0 to actually
-				// skip frames in flip model. Otherwise, eventually the chain gets filled
-				// and lag results.
-				if (mpSwapChain1) {
-					DXGI_PRESENT_PARAMETERS parms = { 0 };
-					mpSwapChain1->Present1(0, 0, &parms);
-				} else
-					mpSwapChain->Present(0, 0);
+	mbVSyncPending = false;
 
-				// If the swap chain is in flip mode, it'll unbind the render target, so we need to
-				// sync that state.
-				if (mDesc.mbWindowed)
-					static_cast<VDTContextD3D11 *>(mpParent)->SetRenderTarget(0, nullptr);
-			} else
-				mpSwapChain->Present(1, 0);
-		}
-	}
+	if (!mpSwapChain)
+		return;
+
+	HRESULT hr {};
+	if (mDesc.mbWindowed) {
+		// We seem to need Present1() here in order for an interval of 0 to actually
+		// skip frames in flip model. Otherwise, eventually the chain gets filled
+		// and lag results.
+		if (mpSwapChain1) {
+			DXGI_PRESENT_PARAMETERS parms = { 0 };
+			hr = mpSwapChain1->Present1(0, 0, &parms);
+		} else
+			hr = mpSwapChain->Present(0, 0);
+	} else
+		hr = mpSwapChain->Present(1, 0);
+
+	// If the swap chain is in flip mode, it'll unbind the render target, so we need to
+	// sync that state.
+	static_cast<VDTContextD3D11 *>(mpParent)->SetRenderTarget(0, nullptr);
+
+	mbWasOccluded = (hr == DXGI_STATUS_OCCLUDED);
 }
 
 void VDTSwapChainD3D11::PresentVSyncAbort() {
@@ -1651,24 +1738,36 @@ void VDTSwapChainD3D11::ThreadRun() {
 	vdrefptr<IDXGIOutput> pOutput;
 
 	HRESULT hr = pHolder->GetCreateDXGIFactoryFn()(IID_IDXGIFactory1, (void **)~pFactory);
-
 	if (SUCCEEDED(hr))
 	{
 		UINT adapterIdx = 0;
 
 		for(;;) {
-			hr = pFactory->EnumAdapters1(adapterIdx++, ~pAdapter);
+			vdrefptr<IDXGIAdapter1> pCurAdapter;
+			hr = pFactory->EnumAdapters1(adapterIdx++, ~pCurAdapter);
 			if (FAILED(hr))
 				break;
 
+			// wine-4.0 has a bug where each DXGI factory instance has its own set of LUIDs, so it is
+			// impossible to match LUIDs between two factory instances. In that case, we try to just
+			// use the first adapter we find so we have something.
+			if (!pAdapter)
+				pAdapter = pCurAdapter;
+
 			DXGI_ADAPTER_DESC adapterDesc;
-			hr = pAdapter->GetDesc(&adapterDesc);
+			hr = pCurAdapter->GetDesc(&adapterDesc);
 
 			if (SUCCEEDED(hr)) {
+				if (!mAdapterLuidLo && !mAdapterLuidHi) {
+					// no adapter LUID -- take the first one
+					break;
+				}
+
 				if (adapterDesc.AdapterLuid.LowPart == mAdapterLuidLo &&
 					adapterDesc.AdapterLuid.HighPart == mAdapterLuidHi)
 				{
 					// got an adapter match
+					pAdapter = pCurAdapter;
 					break;
 				}
 			}
@@ -1677,7 +1776,8 @@ void VDTSwapChainD3D11::ThreadRun() {
 
 	HMONITOR hmonPrev = NULL;
 
-	pAdapter->EnumOutputs(0, ~pOutput);
+	if (pAdapter)
+		pAdapter->EnumOutputs(0, ~pOutput);
 
 	for(;;) {
 		mVSyncPollPendingSema.Wait();
@@ -1699,7 +1799,7 @@ void VDTSwapChainD3D11::ThreadRun() {
 		HMONITOR hmon = (HMONITOR)mhVSyncMonitor;
 		mVSyncMutex.Unlock();
 
-		if (hmon != hmonPrev) {
+		if (hmon != hmonPrev && pAdapter) {
 			UINT outputIdx = 0;
 
 			for(;;) {
@@ -1727,12 +1827,14 @@ void VDTSwapChainD3D11::ThreadRun() {
 			if (WAIT_OBJECT_0 == ::WaitForSingleObject(mWaitHandle, 30)) {
 				::WaitForSingleObject(mWaitHandle, 0);
 			}
-		} else {
-			if (pOutput)
-				pOutput->WaitForVBlank();
+		} else if (pOutput) {
+			pOutput->WaitForVBlank();
 
 			// Delay a bit so that we don't race the DWM on the blit.
 			::Sleep(5);
+		} else {
+			// No output, we'd better just do fake vsync.
+			::Sleep(10);
 		}
 
 		mVSyncMutex.Lock();
@@ -1747,6 +1849,9 @@ void VDTSwapChainD3D11::ThreadRun() {
 ///////////////////////////////////////////////////////////////////////////////
 
 struct VDTContextD3D11::PrivateData {
+	bool mbMinPrecisionSupportedPS = false;
+	bool mbMinPrecisionSupportedOther = false;
+
 	VDTFenceManagerD3D11 mFenceManager;
 };
 
@@ -1846,6 +1951,14 @@ bool VDTContextD3D11::Init(ID3D11Device *dev, ID3D11DeviceContext *devctx, IDXGI
 			mCaps.mbNonPow2 = false;
 			mCaps.mbNonPow2Conditional = true;
 			break;
+	}
+
+	if (VDIsAtLeast8W32()) {
+		D3D11_FEATURE_DATA_SHADER_MIN_PRECISION_SUPPORT support {};
+		if (SUCCEEDED(dev->CheckFeatureSupport(D3D11_FEATURE_SHADER_MIN_PRECISION_SUPPORT, &support, sizeof support))) {
+			mpData->mbMinPrecisionSupportedPS = (support.PixelShaderMinPrecision > 0);
+			mpData->mbMinPrecisionSupportedOther = (support.AllOtherShaderStagesMinPrecision> 0);
+		}
 	}
 
 	mpD3DHolder = pD3DHolder;
@@ -1992,13 +2105,18 @@ bool VDTContextD3D11::CreateVertexProgram(VDTProgramFormat format, VDTData data,
 
 	if (format == kVDTPF_MultiTarget) {
 		static const uint32 kVSTargets[]={
+			0x1b39ae13 ^ 1,	// vs_4_0_level_9_1 (min precision)
+			0x1b39ae11 ^ 1,	// vs_4_0_level_9_3 (min precision)
+			0x62d902b4 ^ 1,	// vs_4_0 (min precision)
+
 			0x1b39ae13,		// vs_4_0_level_9_1
 			0x1b39ae11,		// vs_4_0_level_9_3
 			0x62d902b4,		// vs_4_0
 			0
 		};
 
-		if (!VDTExtractMultiTargetProgram(data, kVSTargets, data))
+
+		if (!VDTExtractMultiTargetProgram(data, mpData->mbMinPrecisionSupportedOther ? kVSTargets : kVSTargets + 3, data))
 			return false;
 
 		format = kVDTPF_D3D11ByteCode;
@@ -2017,13 +2135,17 @@ bool VDTContextD3D11::CreateFragmentProgram(VDTProgramFormat format, VDTData dat
 
 	if (format == kVDTPF_MultiTarget) {
 		static const uint32 kPSTargets[]={
+			0x301bfb89 ^ 1,	// ps_4_0_level_9_1
+			0x301bfb8b ^ 1,	// ps_4_0_level_9_3
+			0x4657d92a ^ 1,	// ps_4_0
+
 			0x301bfb89,		// ps_4_0_level_9_1
 			0x301bfb8b,		// ps_4_0_level_9_3
 			0x4657d92a,		// ps_4_0
 			0
 		};
 
-		if (!VDTExtractMultiTargetProgram(data, kPSTargets, data))
+		if (!VDTExtractMultiTargetProgram(data, mpData->mbMinPrecisionSupportedPS ? kPSTargets : kPSTargets + 3, data))
 			return false;
 	} else if (format != kVDTPF_D3D11ByteCode)
 		return false;

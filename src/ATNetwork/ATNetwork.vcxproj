@@ -5,7 +5,6 @@
     <ProjectGuid>{91051A49-721F-42D7-B542-3192E2E982E2}</ProjectGuid>
     <RootNamespace>ATNetwork</RootNamespace>
     <Keyword>Win32Proj</Keyword>
-    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="..\Build\PlatformSetup.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />

@@ -552,7 +552,36 @@ void ATUIDialogKeyboardCustomize::OnAddClicked() {
 	if ((unsigned)scanCodeIndex >= vdcountof(kScanCodeTable))
 		return;
 
-	uint32 mapping = GetCurrentAccelMapping();
+	if (!mpHotKeyControl)
+		return;
+
+	VDUIAccelerator acc;
+	mpHotKeyControl->GetAccelerator(acc);
+
+	if (!(acc.mModifiers & VDUIAccelerator::kModCooked)) {
+		const VDAccelTableEntry *accelMap = ATUIFindConflictingVirtKeyMapping(acc.mVirtKey,
+			(acc.mModifiers & VDUIAccelerator::kModAlt) != 0,
+			(acc.mModifiers & VDUIAccelerator::kModCtrl) != 0,
+			(acc.mModifiers & VDUIAccelerator::kModShift) != 0,
+			(acc.mModifiers & VDUIAccelerator::kModExtended) != 0,
+			kATUIAccelContext_Display);
+		
+		if (accelMap) {
+			VDStringW msg;
+			msg.sprintf(L"This key is already bound as a keyboard shortcut to the command %hs, which will override this mapping. Bind it anyway?\n\n(Keyboard shortcuts can be edited in Tools, Keyboard Shortcuts.)",
+				accelMap->mpCommand);
+
+			if (!Confirm2(
+				"KeyboardAcceleratorConflict",
+				msg.c_str(),
+				L"Keyboard shortcut conflict"))
+			{
+				return;
+			}
+		}
+	}
+
+	uint32 mapping = GetMappingForAccel(acc);
 	if (!mapping)
 		return;
 

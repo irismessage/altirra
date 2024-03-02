@@ -212,9 +212,55 @@ void ATCPUVerifier::VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ta
 				if (target == 0) {
 					ATConsolePrintf("\n");
 					ATConsolePrintf("VERIFIER: Possibly incorrect direct load of absolute address zero instead of immediate zero.\n");
-					ATConsolePrintf("          PC: %04X   Fault address: %04X\n", mpCPU->GetPC(), target);
+					ATConsolePrintf("          PC: %04X   Fault address: %04X\n", mpCPU->GetInsnPC(), target);
 					ATConsolePrintf("\n");
 					mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
+				}
+			}
+			break;
+
+		case 0x8C:	// STY abs
+		case 0x8D:	// STA abs
+		case 0x8E:	// STX abs
+		case 0xAC:	// LDY abs
+		case 0xAD:	// LDA abs
+		case 0xAE:	// LDX abs
+			if (mFlags & kATVerifierFlag_NonCanonicalHardwareAddress) {
+				if (target >= 0xD000 && target < 0xD800) {
+					bool aliased = false;
+
+					switch(target & 0xFF00) {
+						case 0xD000:
+							if (target >= 0xD020)
+								aliased = true;
+							break;
+
+						case 0xD200:
+							if (target >= 0xD220)
+								aliased = true;
+							break;
+
+						case 0xD300:
+							if (target >= 0xD304)
+								aliased = true;
+							break;
+
+						case 0xD400:
+							if (target >= 0xD410)
+								aliased = true;
+							break;
+
+						default:
+							break;
+					}
+
+					if (aliased) {
+						ATConsolePrintf("\n");
+						ATConsolePrintf("VERIFIER: Access to non-canonical hardware address detected.\n");
+						ATConsolePrintf("          PC: %04X   Fault address: %04X\n", mpCPU->GetInsnPC(), target);
+						ATConsolePrintf("\n");
+						mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
+					}
 				}
 			}
 			break;
@@ -249,7 +295,7 @@ void ATCPUVerifier::VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ta
 					if (mpCPU->GetP() & AT6502::kFlagI) {
 						ATConsolePrintf("\n");
 						ATConsolePrintf("VERIFIER: OS calling convention violation -- calling into SIO with I flag set (will hang)\n");
-						ATConsolePrintf("          PC: %04X   Fault address: %04X\n", mpCPU->GetPC(), target);
+						ATConsolePrintf("          PC: %04X   Fault address: %04X\n", mpCPU->GetInsnPC(), target);
 						ATConsolePrintf("\n");
 						mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
 					}
@@ -270,7 +316,7 @@ void ATCPUVerifier::VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ta
 						if (antic.IsDisplayListEnabled() && ((dlist - ptr) & 0xffff) < len) {
 							ATConsolePrintf("\n");
 							ATConsolePrintf("VERIFIER: Loading over active display list.\n");
-							ATConsolePrintf("          PC: $%04X   Read range: $%04X-%04X  DLIST: $%04X\n", mpCPU->GetPC(), ptr, ptr + len - 1, dlist);
+							ATConsolePrintf("          PC: $%04X   Read range: $%04X-%04X  DLIST: $%04X\n", mpCPU->GetInsnPC(), ptr, ptr + len - 1, dlist);
 							ATConsolePrintf("\n");
 						}
 					}

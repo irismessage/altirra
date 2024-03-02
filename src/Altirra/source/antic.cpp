@@ -18,6 +18,8 @@
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <at/atcore/scheduler.h>
+#include <at/atcore/serialization.h>
+#include <at/atcore/snapshotimpl.h>
 #include "antic.h"
 #include "gtia.h"
 #include "console.h"
@@ -43,9 +45,10 @@ namespace {
 	};
 }
 
-enum {
+enum ATAnticEmulator::ATAnticEvent : uint32 {
 	kATAnticEvent_UpdateRegisters = 1,
-	kATAnticEvent_WSYNC = 2
+	kATAnticEvent_WSYNC = 2,
+	kATAnticEvent_RNMI = 3
 };
 
 ATAnticEmulator::ATAnticEmulator() {
@@ -103,9 +106,16 @@ void ATAnticEmulator::ColdReset() {
 	mEndingDMAPattern = 0;
 	mAbnormalDecodePattern = 0;
 
-	mNMIST = 0x1F;
+	// In theory, VBI and DLI could power up both set in NMIST since the cross-disable
+	// logic is on the inputs to the flip-flops. In practice, VBI + RNMI are seen
+	// active while DLI is negated. This happens even on the XL/XE series where RNMI
+	// is not used. No actual RNMI is triggered as these are only status bits.
+	mNMIST = 0x7F;
+
 	mWSYNCPending = 0;
 	mbWSYNCActive = false;
+
+	mpScheduler->UnsetEvent(mpEventRNMI);
 
 	WarmReset();
 }
@@ -132,11 +142,13 @@ void ATAnticEmulator::WarmReset() {
 	// - DLISTL/H
 	// - Memory scan counter
 	// - NMIST
+	// - RNMI
 
-	++mFrame;
+	++mRawFrame;
+	++mPresentedFrame;
 	mX = 0;
 	mY = 0;
-	mFrameStart = ATSCHEDULER_GETTIME(mpScheduler);
+	mRawFrameStart = ATSCHEDULER_GETTIME(mpScheduler);
 
 	mDMACTL = 0;
 	mNMIEN = 0;
@@ -168,8 +180,32 @@ void ATAnticEmulator::WarmReset() {
 }
 
 void ATAnticEmulator::RequestNMI() {
-	mNMIST |= 0x20;
-	mpConn->AnticAssertNMI_RES();
+	// /RNMI is sampled by ANTIC at the leading edge of vertical blank, checking
+	// if it is held for two consecutive samples (16-20ms). We ignore the debounce
+	// and just pretend it's already been held long enough, but we do need to wait
+	// for the correct time to assert it. It asserts at scanline 249 since logic
+	// prevents it from triggering concurrently with VBI.
+	if (!mpEventRNMI) {
+		// This needs to fire at the same time that the VBI fires; the NMI handler
+		// is expected to give the RNMI priority. Note that RNMI does not have an
+		// NMIEN enable bit, so it is not subject to the late-disable logic we
+		// need to run for DLI/VBI. It is, however, subject to NMI blocking on
+		// the CPU due to the common short NMI pulse.
+
+		sint32 delay = (248 - (sint32)mY) * 114 + (7 - (sint32)mX);
+
+		if (delay <= 0) {
+			delay += mScanlineLimit * 114;
+
+			if (delay <= 0) {
+				VDFAIL("Invalid RNMI delay computed.");
+
+				delay = 1;
+			}
+		}
+
+		mpScheduler->SetEvent((uint32)delay, this, kATAnticEvent_RNMI, mpEventRNMI);
+	}
 }
 
 void ATAnticEmulator::SetLightPenPosition(bool phase) {
@@ -696,6 +732,12 @@ void ATAnticEmulator::AdvanceScanline() {
 	if (++mY >= mScanlineLimit) {
 		AdvanceFrame();
 	} else if (mY >= 248) {
+		if (mY == 248) {
+			++mPresentedFrame;
+			mpConn->AnticEndFrame();
+			mpConn->AnticOnVBlank();
+		}
+
 		mbDLActive = false;		// needed because The Empire Strikes Back has a 259-line display list (!)
 
 		// Don't allow jumps to continue into vertical blank; needed because Spindizzy
@@ -704,9 +746,6 @@ void ATAnticEmulator::AdvanceScanline() {
 
 		// The DMA clock is unconditionally cleared during VBLANK, ending any abnormal DMA condition.
 		mAbnormalDMAPattern = 0;
-		
-		if (mpConn)
-			mpConn->AnticOnVBlank();
 	} else {
 		// Update abnormal DMA pattern.
 		const int mode = mDLControl & 15;
@@ -785,16 +824,14 @@ void ATAnticEmulator::AdvanceFrame() {
 	mY = 0;
 	mbDLActive = false;		// necessary when DL DMA disabled for Joyride ptB
 
-	mpConn->AnticEndFrame();
-
 	// tell GTIA if the next field is an odd field
 	mpGTIA->SetFieldPolarity(!mbInBuggedVBlank || mVSyncShiftTime < 20);
 
 	if (mAnalysisMode)
 		memset(mActivityMap, 0, sizeof mActivityMap);
 
-	++mFrame;
-	mFrameStart = ATSCHEDULER_GETTIME(mpScheduler);
+	++mRawFrame;
+	mRawFrameStart = ATSCHEDULER_GETTIME(mpScheduler);
 
 	if (mpTraceChannelFrames) {
 		const uint64 t64 = mpScheduler->GetTick64();
@@ -2013,6 +2050,8 @@ void ATAnticEmulator::BeginLoadState(ATSaveStateReader& reader) {
 	mPFDecodeOffset = 0;
 	mPFDecodeCharOffset = 0;
 
+	mpScheduler->UnsetEvent(mpEventRNMI);
+
 	reader.RegisterHandlerMethod(kATSaveStateSection_Arch, VDMAKEFOURCC('A', 'N', 'T', 'C'), this, &ATAnticEmulator::LoadStateArch);
 	reader.RegisterHandlerMethod(kATSaveStateSection_Private, VDMAKEFOURCC('A', 'N', 'T', 'C'), this, &ATAnticEmulator::LoadStatePrivate);
 	reader.RegisterHandlerMethod(kATSaveStateSection_End, 0, this, &ATAnticEmulator::EndLoadState);
@@ -2067,15 +2106,25 @@ void ATAnticEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
 	if (dataReadOffset > mX || dataWriteOffset > mX || charWriteOffset > mX)
 		throw ATInvalidSaveStateException();
 
-	mpPFDataRead = mPFDataBuffer + dataReadOffset;
-	mpPFDataWrite = mPFDataBuffer + dataWriteOffset;
-	mpPFCharFetchPtr = mPFCharBuffer + charWriteOffset;
+	mpPFDataRead = mPFDataBuffer + dataReadOffset % 114;
+	mpPFDataWrite = mPFDataBuffer + dataWriteOffset % 114;
+	mpPFCharFetchPtr = mPFCharBuffer + charWriteOffset % 114;
 }
 
 void ATAnticEmulator::EndLoadState(ATSaveStateReader& reader) {
+	EndLoadStateInternal();
+}
+
+void ATAnticEmulator::EndLoadStateInternal() {
+	// Enforce some safety limits for parameters.
+	SetPALMode(mScanlineLimit > 262);
+
+	mX %= 114;
+	mY %= mScanlineLimit;
+
 	// Bump the frame counter in case we went backwards in beam direction.
-	++mFrame;
-	mFrameStart = ATSCHEDULER_GETTIME(mpScheduler) - mX - mY*114;
+	++mRawFrame;
+	mRawFrameStart = ATSCHEDULER_GETTIME(mpScheduler) - mX - mY*114;
 
 	// Synchronize other state.
 	switch(mDMACTL & 3) {
@@ -2095,11 +2144,10 @@ void ATAnticEmulator::EndLoadState(ATSaveStateReader& reader) {
 
 	mCharInvert = (mCHACTL & 0x02) ? 0xFF : 0x00;
 	mCharBlink = (mCHACTL & 0x01) ? 0x00 : 0xFF;
-	mCharBaseAddr128 = (uint32)(mCHBASE & 0xfc) << 8;
-	mCharBaseAddr64 = (uint32)(mCHBASE & 0xfe) << 8;
 
 	mPFDMAPatternCacheKey = 0xFFFFFFFF;
 
+	UpdateFont();
 	UpdateCurrentCharRow();
 
 	mpPFDataWrite = mPFDataBuffer;
@@ -2111,46 +2159,361 @@ void ATAnticEmulator::EndLoadState(ATSaveStateReader& reader) {
 	ExecuteQueuedUpdates();
 }
 
-void ATAnticEmulator::BeginSaveState(ATSaveStateWriter& writer) {
-	writer.RegisterHandlerMethod(kATSaveStateSection_Arch, this, &ATAnticEmulator::SaveStateArch);
-	writer.RegisterHandlerMethod(kATSaveStateSection_Private, this, &ATAnticEmulator::SaveStatePrivate);
-}
+class ATSaveStateAnticInternal : public ATSnapExchangeObject<ATSaveStateAnticInternal> {
+public:
+	template<typename T>
+	void Exchange(T& rw) {
+		rw.Transfer("pf_data_read", &mPFDataRead);
+		rw.Transfer("pf_data_write", &mPFDataWrite);
+		rw.Transfer("pf_char_read", &mPFCharRead);
+		rw.Transfer("register_updates", &mRegisterUpdates);
 
-void ATAnticEmulator::SaveStateArch(ATSaveStateWriter& writer) {
-	writer.BeginChunk(VDMAKEFOURCC('A', 'N', 'T', 'C'));
-	writer.WriteUint8(mDMACTL);
-	writer.WriteUint8(mCHACTL);
-	writer.WriteUint16(mDLIST);
-	writer.WriteUint8(mHSCROL);
-	writer.WriteUint8(mVSCROL);
-	writer.WriteUint8(mPMBASE);
-	writer.WriteUint8(mCHBASE);
-	writer.WriteUint8(mNMIEN);
-	writer.WriteUint8(mNMIST);
-	writer.EndChunk();
-}
+		// mScanlineLimit, mScanlineMax, and mVSyncStart are derived from the current
+		// video mode and not loaded here.
 
-void ATAnticEmulator::SaveStatePrivate(ATSaveStateWriter& writer) {
-	writer.BeginChunk(VDMAKEFOURCC('A', 'N', 'T', 'C'));
-	ExchangeState(writer);
+		rw.Transfer("dl_extra_loads_pending", &mbDLExtraLoadsPending);
+		rw.Transfer("dl_active", &mbDLActive);
+		rw.Transfer("dl_dma_enabled_in_time", &mbDLDMAEnabledInTime);
+		rw.Transfer("pf_display_counter", &mPFDisplayCounter);
+		rw.Transfer("pf_decode_counter", &mPFDecodeCounter);
+		rw.Transfer("pf_decode_offset", &mPFDecodeOffset);
+		rw.Transfer("pf_decode_char_offset", &mPFDecodeCharOffset);
+		rw.Transfer("pf_dma_last_check_x", &mPFDMALastCheckX);
 
-	uint32 i = mRegisterUpdateHeadIdx;
-	uint32 n = (uint32)mRegisterUpdates.size();
-	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	writer.WriteUint32(n - i);
-	for(; i<n; ++i) {
-		const QueuedRegisterUpdate& ru = mRegisterUpdates[i];
+		rw.Transfer("pf_dma_abnormal_char_inv", &mPFDecodeAbCharInv);
+		rw.Transfer("pf_dma_enabled", &mbPFDMAEnabled);
+		rw.Transfer("pf_dma_active", &mbPFDMAActive);
+		rw.Transfer("wsync_active", &mbWSYNCActive);
+		rw.Transfer("wsync_release", &mbWSYNCRelease);
+		rw.Transfer("rnmi_pending", &mbRNMIPending);
+		rw.Transfer("hscroll_enabled", &mbHScrollEnabled);
+		rw.Transfer("hscroll_delay", &mbHScrollDelay);
+		rw.Transfer("row_stop_use_vscroll", &mbRowStopUseVScroll);
+		rw.Transfer("row_advance", &mbRowAdvance);
+		rw.Transfer("pending_nmis", &mPendingNMIs);
+		rw.Transfer("early_nmien", &mEarlyNMIEN);
+		rw.Transfer("early_nmien2", &mEarlyNMIEN2);
+		rw.Transfer("row_counter", &mRowCounter);
+		rw.Transfer("row_count", &mRowCount);
+		rw.Transfer("latched_vscroll", &mLatchedVScroll);
+		rw.Transfer("latched_vscroll2", &mLatchedVScroll2);
 
-		writer.WriteUint32(ru.mTime - t);
-		writer.WriteUint8(ru.mReg);
-		writer.WriteUint8(ru.mValue);
+		rw.Transfer("pf_row_dma_ptr_base", &mPFRowDMAPtrBase);
+		rw.Transfer("pf_row_dma_ptr_offset", &mPFRowDMAPtrOffset);
+		rw.Transfer("pf_push_cycle_mask", &mPFPushCycleMask);
+		rw.Transfer("pf_abnormal_dma_pattern", &mAbnormalDMAPattern);
+		rw.Transfer("pf_ending_dma_pattern", &mEndingDMAPattern);
+		rw.Transfer("pf_abnormal_decode_pattern", &mAbnormalDecodePattern);
+		rw.Transfer("pf_abnormal_decode_shifter", &mAbnormalDecodeShifter);
+
+		rw.Transfer("pf_char_fetch_ptr", &mPFCharFetchPtr);
+
+		rw.Transfer("pf_width_shift", &mPFWidthShift);
+		rw.Transfer("pf_hscroll_dma_offset", &mPFHScrollDMAOffset);
+
+		rw.Transfer("pf_push_mode", &mPFPushMode);
+
+		rw.Transfer("pf_hires_mode", &mPFHiresMode);
+
+		rw.Transfer("pf_width", &mPFWidth);
+		rw.Transfer("pf_fetch_width", &mPFFetchWidth);
+
+		rw.Transfer("pf_display_start", &mPFDisplayStart);
+		rw.Transfer("pf_display_end", &mPFDisplayEnd);
+		rw.Transfer("pf_dma_start", &mPFDMAStart);
+		rw.Transfer("pf_dma_vend", &mPFDMAVEnd);
+		rw.Transfer("pf_dma_vend_wide", &mPFDMAVEndWide);
+		rw.Transfer("pf_dma_end", &mPFDMAEnd);
+		rw.Transfer("pf_dma_latched_start", &mPFDMALatchedStart);
+		rw.Transfer("pf_dma_latched_vend", &mPFDMALatchedVEnd);
+		rw.Transfer("pf_dma_latched_end", &mPFDMALatchedEnd);
+
+		rw.Transfer("dl_control_prev", &mDLControlPrev);
+		rw.Transfer("dl_control", &mDLControl);
+		rw.Transfer("dl_next", &mDLNext);
+
+		// DMA pattern is recomputed.
+
+		rw.TransferArray("pf_data_buffer", mPFDataBuffer);
+		rw.TransferArray("pf_char_buffer", mPFCharBuffer);
+
+		rw.TransferArray("pf_decode_buffer", mPFDecodeBuffer);
+
+		rw.Transfer("dlist_latch", &mDLISTLatch);
+
+		rw.Transfer("wsync_pending", &mWSYNCPending);
+		rw.Transfer("phantom_player_dma", &mbPhantomPlayerDMA);
+		rw.Transfer("missile_dma_disabled_late", &mbMissileDMADisabledLate);
 	}
 
-	writer.WriteUint8((uint8)(mpPFDataRead - mPFDataBuffer));
-	writer.WriteUint8((uint8)(mpPFDataWrite - mPFDataBuffer));
-	writer.WriteUint8((uint8)(mpPFCharFetchPtr - mPFCharBuffer));
+	uint8 mPFDataRead = 0;
+	uint8 mPFDataWrite = 0;
+	uint8 mPFCharRead = 0;
+	vdfastvector<uint32> mRegisterUpdates;
 
-	writer.EndChunk();
+	bool	mbDLExtraLoadsPending = false;
+	bool	mbDLActive = false;
+	bool	mbDLDMAEnabledInTime = false;
+	int		mPFDisplayCounter = 0;
+	int		mPFDecodeCounter = 0;
+	int		mPFDecodeOffset = 0;
+	int		mPFDecodeCharOffset = 0;
+	int		mPFDMALastCheckX = 0;
+	uint8	mPFDecodeAbCharInv = 0;		// character inversion byte (abnormal DMA only)
+	bool	mbPFDMAEnabled = false;
+	bool	mbPFDMAActive = false;
+	bool	mbWSYNCActive = false;
+	bool	mbPFRendered = false;			// true if any pixels have been rendered this scanline by the playfield
+	bool	mbWSYNCRelease = false;
+	bool	mbRNMIPending = false;
+	bool	mbHScrollEnabled = false;
+	bool	mbHScrollDelay = false;
+	bool	mbRowStopUseVScroll = false;
+	bool	mbRowAdvance = false;
+	uint8	mPendingNMIs = 0;
+	uint8	mEarlyNMIEN = 0;
+	uint8	mEarlyNMIEN2 = 0;
+	uint32	mRowCounter = 0;
+	uint32	mRowCount = 0;
+	uint8	mLatchedVScroll = 0;
+	uint8	mLatchedVScroll2 = 0;
+	uint16	mPFRowDMAPtrBase = 0;
+	uint16	mPFRowDMAPtrOffset = 0;
+	uint32	mPFPushCycleMask = 0;
+	uint8	mAbnormalDMAPattern = 0;
+	uint8	mEndingDMAPattern = 0;
+	uint8	mAbnormalDecodePattern = 0;
+	uint8	mAbnormalDecodeShifter = 0;
+	uint32	mPFCharFetchPtr = 0;
+	int		mPFWidthShift = 0;
+	int		mPFHScrollDMAOffset = 0;
+	uint8	mPFPushMode = 0;
+	bool	mPFHiresMode = false;
+	uint8	mPFWidth = 0;
+	uint8	mPFFetchWidth = 0;
+	uint32	mPFDisplayStart = 0;
+	uint32	mPFDisplayEnd = 0;
+	uint32	mPFDMAStart = 0;
+	uint32	mPFDMAVEnd = 0;
+	uint32	mPFDMAVEndWide = 0;
+	uint32	mPFDMAEnd = 0;
+	uint32	mPFDMALatchedStart = 0;
+	uint32	mPFDMALatchedVEnd = 0;
+	uint32	mPFDMALatchedEnd = 0;
+	uint8	mDLControlPrev = 0;
+	uint8	mDLControl = 0;
+	uint8	mDLNext = 0;
+	uint16	mDLISTLatch = 0;	// latched display list pointer
+	int		mWSYNCPending = 0;
+	bool	mbPhantomPlayerDMA = false;
+	bool	mbMissileDMADisabledLate = false;
+
+	uint8	mPFDataBuffer[114] {};
+	uint8	mPFCharBuffer[114] {};
+	uint8	mPFDecodeBuffer[228] {};
+};
+
+class ATSaveStateAntic : public ATSnapExchangeObject<ATSaveStateAntic> {
+public:
+	template<typename T>
+	void Exchange(T& rw) {
+		rw.Transfer("x", &mX);
+		rw.Transfer("y", &mY);
+		rw.Transfer("dmactl", &mDMACTL);
+		rw.Transfer("chactl", &mCHACTL);
+		rw.Transfer("dlist", &mDLIST);
+		rw.Transfer("hscrol", &mHSCROL);
+		rw.Transfer("vscrol", &mVSCROL);
+		rw.Transfer("pmbase", &mPMBASE);
+		rw.Transfer("chbase", &mCHBASE);
+		rw.Transfer("nmien", &mNMIEN);
+		rw.Transfer("nmist", &mNMIST);
+		rw.Transfer("internal_state", &mpInternalState);
+	}
+
+	uint8 mX;
+	uint16 mY;
+	uint8 mDMACTL;
+	uint8 mCHACTL;
+	uint16 mDLIST;
+	uint8 mHSCROL;
+	uint8 mVSCROL;
+	uint8 mPMBASE;
+	uint8 mCHBASE;
+	uint8 mNMIEN;
+	uint8 mNMIST;
+	vdrefptr<ATSaveStateAnticInternal> mpInternalState;
+};
+
+ATSERIALIZATION_DEFINE(ATSaveStateAntic);
+ATSERIALIZATION_DEFINE(ATSaveStateAnticInternal);
+
+template<bool write, typename T>
+void ATAnticEmulator::TransferInternalState(T& obj2) {
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+
+#define TRANSFER(var) if constexpr(write) obj2.var = var; else var = obj2.var
+
+	if constexpr(write) {
+		uint32 i = mRegisterUpdateHeadIdx;
+		uint32 n = (uint32)mRegisterUpdates.size();
+		for(; i<n; ++i) {
+			const QueuedRegisterUpdate& ru = mRegisterUpdates[i];
+
+			obj2.mRegisterUpdates.push_back(ru.mTime - t);
+			obj2.mRegisterUpdates.push_back(ru.mReg);
+			obj2.mRegisterUpdates.push_back(ru.mValue);
+		}
+	} else {
+		mRegisterUpdateHeadIdx = 0;
+
+		const uint32 n = obj2.mRegisterUpdates.size() / 3;
+		mRegisterUpdates.resize(n);
+
+		for(uint32 i=0, j=0; i<n; ++i, j+=3) {
+			mRegisterUpdates[j] = QueuedRegisterUpdate {
+				t + obj2.mRegisterUpdates[j + 0],
+				(uint8)obj2.mRegisterUpdates[j + 1],
+				(uint8)obj2.mRegisterUpdates[j + 2]
+			};
+		}
+	}
+
+	if constexpr(write) {
+		obj2.mbRNMIPending = (mpEventRNMI != nullptr);
+
+		obj2.mPFDataRead = (uint8)(mpPFDataRead - mPFDataBuffer);
+		obj2.mPFDataWrite = (uint8)(mpPFDataWrite - mPFDataBuffer);
+		obj2.mPFCharRead = (uint8)(mpPFCharFetchPtr - mPFCharBuffer);
+	} else {
+		mpPFDataRead = mPFDataBuffer + obj2.mPFDataRead % 114;
+		mpPFDataWrite = mPFDataBuffer + obj2.mPFDataWrite % 114;
+		mpPFCharFetchPtr = mPFCharBuffer + obj2.mPFCharRead % 114;
+	}
+
+	TRANSFER(mbDLExtraLoadsPending);
+	TRANSFER(mbDLActive);
+	TRANSFER(mbDLDMAEnabledInTime);
+	TRANSFER(mPFDisplayCounter);
+	TRANSFER(mPFDecodeCounter);
+	TRANSFER(mPFDecodeOffset);
+	TRANSFER(mPFDecodeCharOffset);
+	TRANSFER(mPFDMALastCheckX);
+	TRANSFER(mPFDecodeAbCharInv);
+	TRANSFER(mbPFDMAEnabled);
+	TRANSFER(mbPFDMAActive);
+	TRANSFER(mbWSYNCActive);
+	TRANSFER(mbPFRendered);
+	TRANSFER(mbWSYNCRelease);
+	TRANSFER(mbHScrollEnabled);
+	TRANSFER(mbHScrollDelay);
+	TRANSFER(mbRowStopUseVScroll);
+	TRANSFER(mbRowAdvance);
+	TRANSFER(mPendingNMIs);
+	TRANSFER(mEarlyNMIEN);
+	TRANSFER(mEarlyNMIEN2);
+	TRANSFER(mRowCounter);
+	TRANSFER(mRowCount);
+	TRANSFER(mLatchedVScroll);
+	TRANSFER(mLatchedVScroll2);
+	TRANSFER(mPFRowDMAPtrBase);
+	TRANSFER(mPFRowDMAPtrOffset);
+	TRANSFER(mPFPushCycleMask);
+	TRANSFER(mAbnormalDMAPattern);
+	TRANSFER(mEndingDMAPattern);
+	TRANSFER(mAbnormalDecodePattern);
+	TRANSFER(mAbnormalDecodeShifter);
+	TRANSFER(mPFCharFetchPtr);
+	TRANSFER(mPFWidthShift);
+	TRANSFER(mPFHScrollDMAOffset);
+
+	if constexpr (write) {
+		obj2.mPFPushMode = (uint8)mPFPushMode;
+	} else {
+		mPFPushMode = (PFPushMode)obj2.mPFPushMode;
+	}
+
+	TRANSFER(mPFHiresMode);
+
+	if constexpr (write) {
+		obj2.mPFWidth = (uint8)mPFWidth;
+		obj2.mPFFetchWidth = (uint8)mPFFetchWidth;
+	} else {
+		mPFWidth = PFWidthMode(obj2.mPFWidth & 3);
+		mPFFetchWidth = PFWidthMode(obj2.mPFFetchWidth & 3);
+	}
+
+	TRANSFER(mPFDisplayStart);
+	TRANSFER(mPFDisplayEnd);
+	TRANSFER(mPFDMAStart);
+	TRANSFER(mPFDMAVEnd);
+	TRANSFER(mPFDMAVEndWide);
+	TRANSFER(mPFDMAEnd);
+	TRANSFER(mPFDMALatchedStart);
+	TRANSFER(mPFDMALatchedVEnd);
+	TRANSFER(mPFDMALatchedEnd);
+	TRANSFER(mDLControlPrev);
+	TRANSFER(mDLControl);
+	TRANSFER(mDLNext);
+	TRANSFER(mDLISTLatch);
+	TRANSFER(mWSYNCPending);
+	TRANSFER(mbPhantomPlayerDMA);
+	TRANSFER(mbMissileDMADisabledLate);
+
+#undef TRANSFER
+}
+
+void ATAnticEmulator::SaveState(IATObjectState **p) {
+	vdrefptr<ATSaveStateAntic> obj(new ATSaveStateAntic);
+	vdrefptr<ATSaveStateAnticInternal> obj2(new ATSaveStateAnticInternal);
+
+	obj->mX = mX;
+	obj->mY = mY;
+	obj->mDMACTL = mDMACTL;
+	obj->mCHACTL = mCHACTL;
+	obj->mDLIST = mDLIST;
+	obj->mHSCROL = mHSCROL;
+	obj->mVSCROL = mVSCROL;
+	obj->mPMBASE = mPMBASE;
+	obj->mCHBASE = mCHBASE;
+	obj->mNMIEN = mNMIEN;
+	obj->mNMIST = mNMIST;
+	
+	TransferInternalState<true>(*obj2);
+
+	obj->mpInternalState = std::move(obj2);
+
+	*p = obj.release();
+}
+
+void ATAnticEmulator::LoadState(const IATObjectState& state) {
+	const ATSaveStateAntic& astate = atser_cast<const ATSaveStateAntic&>(state);
+
+	mX = astate.mX;
+	mY = astate.mY;
+	mDMACTL = astate.mDMACTL;
+	mCHACTL = astate.mCHACTL;
+	mDLIST = astate.mDLIST;
+	mHSCROL = astate.mHSCROL;
+	mVSCROL = astate.mVSCROL;
+	mPMBASE = astate.mPMBASE;
+	mCHBASE = astate.mCHBASE;
+	mNMIEN = astate.mNMIEN & 0xC0;
+	mNMIST = astate.mNMIST | 0x1F;
+
+	vdrefptr<ATSaveStateAnticInternal> tmpInternal;
+
+	if (!astate.mpInternalState)
+		tmpInternal = new ATSaveStateAnticInternal;
+
+	const ATSaveStateAnticInternal& istate = tmpInternal ? *tmpInternal : *astate.mpInternalState;
+
+	TransferInternalState<false>(istate);
+
+	EndLoadStateInternal();
+
+	if (istate.mbRNMIPending)
+		RequestNMI();
 }
 
 void ATAnticEmulator::GetRegisterState(ATAnticRegisterState& state) const {
@@ -2528,6 +2891,11 @@ void ATAnticEmulator::LatchPlayfieldEdges() {
 	mPFDMALastCheckX = mX;
 }
 
+void ATAnticEmulator::UpdateFont() {
+	mCharBaseAddr128 = (uint32)(mCHBASE & 0xfc) << 8;
+	mCharBaseAddr64 = (uint32)(mCHBASE & 0xfe) << 8;
+}
+
 void ATAnticEmulator::UpdateCurrentCharRow() {
 	mPFCharMask = 0x7f;
 
@@ -2655,6 +3023,8 @@ void ATAnticEmulator::OnScheduledEvent(uint32 id) {
 			else {
 				mbWSYNCActive = true;
 
+				mRDYCycleOffset += (mX >= 105 ? 105 - mX + 114 : 105 - mX);
+
 				// We're relying on the fact that with the standard setup, the only cycles
 				// that can follow the last write cycle is an instruction fetch -- the next
 				// CPU cycle is always either the opcode fetch, the second insn byte fetch,
@@ -2670,6 +3040,10 @@ void ATAnticEmulator::OnScheduledEvent(uint32 id) {
 
 		if (mWSYNCPending)
 			mpEventWSYNC = mpScheduler->AddEvent(1, this, kATAnticEvent_WSYNC);
+	} else if (id == kATAnticEvent_RNMI) {
+		mpEventRNMI = nullptr;
+		mNMIST |= 0x20;
+		mpConn->AnticAssertNMI_RES();
 	}
 }
 
@@ -2722,8 +3096,7 @@ void ATAnticEmulator::ExecuteQueuedUpdates() {
 			case 0x09:		// [D409] CHBASE
 				SyncWithGTIA(0);
 				mCHBASE = value;
-				mCharBaseAddr128 = (uint32)(mCHBASE & 0xfc) << 8;
-				mCharBaseAddr64 = (uint32)(mCHBASE & 0xfe) << 8;
+				UpdateFont();
 				UpdateCurrentCharRow();
 				break;
 		}

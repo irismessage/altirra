@@ -42,6 +42,7 @@ struct ATOptions {
 	bool mbLaunchAutoProfile;
 	
 	sint32 mThemeScale;
+	bool mbDarkTheme;
 
 	ATErrorMode mErrorMode;
 

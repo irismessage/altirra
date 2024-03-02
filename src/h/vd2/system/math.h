@@ -103,9 +103,11 @@ inline ptrdiff_t VDAbsPtrdiff(ptrdiff_t v) {
 // Round a double to an int or a long.  Behavior is not specified at
 // int(y)+0.5, if x is NaN or Inf, or if x is out of range.
 
+int VDRoundToInt(float x);
 int VDRoundToInt(double x);
-long VDRoundToLong(double x);
+sint32 VDRoundToInt32(float x);
 sint32 VDRoundToInt32(double x);
+sint64 VDRoundToInt64(float x);
 sint64 VDRoundToInt64(double x);
 
 inline sint32 VDRoundToIntFast(float x) {
@@ -225,7 +227,7 @@ inline sint16 VDClampedRoundFixedToInt16Fast(float x) {
 	union {
 		float f;
 		sint32 i;
-	} u = {x * 65535.0f + 12582912.0f};		// 2^22+2^23
+	} u = {x * 32767.0f + 12582912.0f};		// 2^22+2^23
 
 	sint32 v = (sint32)u.i - 0x4B3F8000;
 

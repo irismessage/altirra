@@ -53,6 +53,8 @@ public:
 	virtual void ClearInsns() = 0;
 	virtual void UpdateInsns(uint32 historyStart, uint32 historyEnd) = 0;
 	virtual void RefreshAll() = 0;
+
+	virtual bool JumpToCycle(uint32 cycle) = 0;
 };
 
 bool ATUICreateHistoryView(VDGUIHandle parent, IATUIHistoryView **ppview);

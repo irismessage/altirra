@@ -2,25 +2,28 @@
 setlocal enableextensions enabledelayedexpansion
 
 rem ---echo banner
-echo Altirra Build Release Utility Version 3.20
+echo Altirra Build Release Utility Version 3.90
 echo Copyright (C) Avery Lee 2014-2019. Licensed under GNU General Public License
 echo.
 
 rem ---parse command line arguments
 set _incremental=false
 set _packonly=false
+set _packopt=true
 set _verid=
 set _anyvc=false
 set _checkvc=false
 set _arm64=false
-set _clversionexp=19.16.27031.1
-set _clversionexpdesc=Visual Studio 2017 Version 15.9.12
+set _clversionexp=19.16.27032.1
+set _clversionexpdesc=Visual Studio 2017 Version 15.9.15
 
 :arglist
 if "%1"=="" goto endargs
 
 if "%1"=="/packonly" (
 	set _packonly=true
+) else if "%1"=="/nopackopt" (
+	set _packopt=false
 ) else if "%1"=="/inc" (
 	set _incremental=true
 ) else if "%1"=="/anyvc" (
@@ -43,7 +46,7 @@ shift /1
 goto :arglist
 
 :usage
-echo Usage: release [/inc] [/packonly] [/anyvc] [/checkvc] [/arm64] ^<version-id^>
+echo Usage: release [/inc] [/packonly] [/nopackopt] [/anyvc] [/checkvc] [/arm64] ^<version-id^>
 echo.
 exit /b 5
 
@@ -244,14 +247,17 @@ if errorlevel 1 (
 	exit /b 0
 )
 
-advzip -z -3 publish\Altirra-!_verid!-src.zip
+if !_packopt!==true (
+	echo Optimizing source archive
+	advzip -z -3 publish\Altirra-!_verid!-src.zip
 
-if errorlevel 1 (
-	echo Packaging step failed.
-	exit /b 0
+	if errorlevel 1 (
+		echo Packaging step failed.
+		exit /b 0
+	)
 )
 
-zip -9 -X -j publish\Altirra-!_verid!.zip ^
+zip -X -j publish\Altirra-!_verid!.zip ^
 	out\release\Altirra.exe ^
 	out\releaseamd64\Altirra64.exe ^
 	Copying ^
@@ -263,18 +269,34 @@ if errorlevel 1 (
 	exit /b 0
 )
 
-advzip -z -3 publish\Altirra-!_verid!.zip
+pushd dist
+
+zip -X -R ..\publish\Altirra-!_verid!.zip ^
+	* ^
+	-x "*/__pycache__/" "*.pyc" "*.pyo"
 
 if errorlevel 1 (
+	popd
 	echo Packaging step failed.
 	exit /b 0
+)
+popd
+
+if !_packopt!==true (
+	echo Optimizing binary archive
+	advzip -z -3 publish\Altirra-!_verid!.zip
+
+	if errorlevel 1 (
+		echo Packaging step failed.
+		exit /b 0
+	)
 )
 
 copy out\release\Altirra.pdb publish\Altirra-!_verid!.pdb
 copy out\releaseamd64\Altirra64.pdb publish\Altirra64-!_verid!.pdb
 
 if !_arm64!==true (
-	zip -9 -X -j publish\Altirra-!_verid!-ARM64.zip ^
+	zip -X -j publish\Altirra-!_verid!-ARM64.zip ^
 		out\releasearm64\AltirraARM64.exe ^
 		Copying ^
 		out\Helpfile\Altirra.chm ^
@@ -285,11 +307,14 @@ if !_arm64!==true (
 		exit /b 0
 	)
 
-	advzip -z -3 publish\Altirra-!_verid!-ARM64.zip
+	if !_packopt!==true (
+		echo Optimizing binary archive
+		advzip -z -3 publish\Altirra-!_verid!-ARM64.zip
 
-	if errorlevel 1 (
-		echo Packaging step failed.
-		exit /b 0
+		if errorlevel 1 (
+			echo Packaging step failed.
+			exit /b 0
+		)
 	)
 
 	copy out\releasearm64\AltirraARM64.pdb publish\AltirraARM64-!_verid!.pdb

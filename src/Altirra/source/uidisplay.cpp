@@ -428,6 +428,26 @@ public:
 				::SetCursor(::LoadCursor(NULL, IDC_HELP));
 				break;
 
+			case kATUICursorImage_Move:
+				::SetCursor(::LoadCursor(NULL, IDC_SIZEALL));
+				break;
+
+			case kATUICursorImage_SizeHoriz:
+				::SetCursor(::LoadCursor(NULL, IDC_SIZEWE));
+				break;
+
+			case kATUICursorImage_SizeVert:
+				::SetCursor(::LoadCursor(NULL, IDC_SIZENS));
+				break;
+
+			case kATUICursorImage_SizeDiagFwd:
+				::SetCursor(::LoadCursor(NULL, IDC_SIZENESW));
+				break;
+
+			case kATUICursorImage_SizeDiagRev:
+				::SetCursor(::LoadCursor(NULL, IDC_SIZENWSE));
+				break;
+
 			case kATUICursorImage_Target:
 				::SetCursor(mhcurTarget);
 				break;
@@ -438,7 +458,17 @@ public:
 		}
 	}
 
-	void SetIgnoreAutoFlipping(bool ignore) { mbIgnoreAutoFlipping = ignore; }
+	void SetIgnoreAutoFlipping(bool ignore) {
+		if (mbIgnoreAutoFlipping != ignore) {
+			mbIgnoreAutoFlipping = ignore;
+
+			// We need to issue an invalidation when turning on this setting in case the manager suppressed an invalidation
+			// that it expected to be handled by the auto-flip. (This doesn't need to happen for pause, where we explicitly
+			// check for this case.)
+			if (ignore)
+				Invalidate();
+		}
+	}
 
 private:
 	HWND mhwnd;
@@ -476,7 +506,7 @@ void ATUIInitManager() {
 	g_pATVideoDisplayWindow->AddRef();
 	g_pATVideoDisplayWindow->Init(*g_sim.GetEventManager(), *g_sim.GetDeviceManager());
 	g_ATUIManager.GetMainWindow()->AddChild(g_pATVideoDisplayWindow);
-	g_pATVideoDisplayWindow->SetDockMode(kATUIDockMode_Fill);
+	g_pATVideoDisplayWindow->SetPlacementFill();
 
 	g_sim.GetUIRenderer()->SetUIManager(&g_ATUIManager);
 
@@ -1150,10 +1180,10 @@ bool ATDisplayPane::OnCreate() {
 	mpMenuBar->SetFont(g_ATUIManager.GetThemeFont(kATUIThemeFont_Menu));
 	mpMenuBar->SetMenu(ATUIGetMenu());
 	mpMenuBar->SetAutoHide(true);
-	mpMenuBar->SetDockMode(kATUIDockMode_TopFloat);
 	mpMenuBar->OnActivatedEvent() = ATBINDCALLBACK(this, &ATDisplayPane::OnMenuActivated);
 	mpMenuBar->OnItemSelected() = ATBINDCALLBACK(this, &ATDisplayPane::OnMenuItemSelected);
-	mpMenuBar->SetArea(vdrect32(0, 0, 0, mpMenuBar->GetIdealHeight()));
+	mpMenuBar->SetPlacement(vdrect32f(0, 0, 1, 0), vdpoint32(0, 0), vdfloat2{0, 0});
+	mpMenuBar->SetSizeOffset(vdsize32(0, mpMenuBar->GetIdealHeight()));
 
 	g_pATVideoDisplayWindow->SetOnAllowContextMenu([this]() { OnAllowContextMenu(); });
 	g_pATVideoDisplayWindow->SetOnDisplayContextMenu([this](const vdpoint32& pt) { OnDisplayContextMenu(pt); });
@@ -1390,7 +1420,7 @@ void ATDisplayPane::UpdateFilterMode() {
 				const float factor = kFactors[std::max(0, std::min(4, g_dispFilterSharpness + 2))];
 
 				const auto afmode = gtia.GetArtifactingMode();
-				const bool isHighArtifacting = afmode == ATGTIAEmulator::kArtifactNTSCHi || afmode == ATGTIAEmulator::kArtifactPALHi || afmode == ATGTIAEmulator::kArtifactAutoHi;
+				const bool isHighArtifacting = afmode == ATArtifactMode::NTSCHi || afmode == ATArtifactMode::PALHi || afmode == ATArtifactMode::AutoHi;
 
 				mpDisplay->SetPixelSharpness(isHighArtifacting ? 1.0f : std::max(1.0f, factor / (float)pw), std::max(1.0f, factor / (float)ph));
 			}

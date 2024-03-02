@@ -14,6 +14,8 @@
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Kasumi/resample.h>
 #include <vd2/Riza/bitmap.h>
+#include <at/atnativeui/theme.h>
+#include <at/atnativeui/theme_win32.h>
 #include <at/atnativeui/uiproxies.h>
 
 #pragma comment(lib, "oleaut32")
@@ -130,13 +132,17 @@ void VDUIProxyControl::Detach() {
 void VDUIProxyControl::SetRedraw(bool redraw) {
 	if (redraw) {
 		if (!--mRedrawInhibitCount) {
-			if (mhwnd)
+			if (mhwnd) {
+				OnRedrawResume();
 				SendMessage(mhwnd, WM_SETREDRAW, TRUE, 0);
+			}
 		}
 	} else {
 		if (!mRedrawInhibitCount++) {
-			if (mhwnd)
+			if (mhwnd) {
+				OnRedrawSuspend();
 				SendMessage(mhwnd, WM_SETREDRAW, FALSE, 0);
+			}
 		}
 	}
 }
@@ -152,6 +158,11 @@ VDZLRESULT VDUIProxyControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
 void VDUIProxyControl::OnFontChanged() {
 }
 
+void VDUIProxyControl::OnRedrawSuspend() {
+}
+
+void VDUIProxyControl::OnRedrawResume() {
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -269,6 +280,20 @@ VDUIProxyControl *VDUIProxyMessageDispatcherW32::GetControl(VDZHWND hwnd) {
 ///////////////////////////////////////////////////////////////////////////////
 
 VDUIProxyListView::VDUIProxyListView() {
+}
+
+void VDUIProxyListView::Attach(VDZHWND hwnd) {
+	VDUIProxyControl::Attach(hwnd);
+
+	if (ATUIIsDarkThemeActive()) {
+		const auto& tc = ATUIGetThemeColors();
+		const COLORREF bg = VDSwizzleU32(tc.mContentBg) >> 8;
+		const COLORREF fg = VDSwizzleU32(tc.mContentFg) >> 8;
+
+		ListView_SetBkColor(mhwnd, bg);
+		ListView_SetTextBkColor(mhwnd, bg);
+		ListView_SetTextColor(mhwnd, fg);
+	}
 }
 
 void VDUIProxyListView::Detach() {
@@ -1374,6 +1399,9 @@ void VDUIProxyListBoxControl::AutoEditTimerProc(VDZHWND, VDZUINT, VDZUINT_PTR, V
 
 ///////////////////////////////////////////////////////////////////////////
 
+// Default for CB_SETMINVISIBLE per MSDN docs
+const uint32 VDUIProxyComboBoxControl::kDefaultMinVisibleCount = 30;
+
 VDUIProxyComboBoxControl::VDUIProxyComboBoxControl() {
 }
 
@@ -1421,6 +1449,16 @@ VDZLRESULT VDUIProxyComboBoxControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM l
 	}
 
 	return 0;
+}
+
+void VDUIProxyComboBoxControl::OnRedrawSuspend() {
+	// Drop SetMinVisible to prevent the combo box from spending time resizing the list box
+	// every time an item is added.
+	SendMessage(mhwnd, CB_SETMINVISIBLE, 1, 0);
+}
+
+void VDUIProxyComboBoxControl::OnRedrawResume() {
+	SendMessage(mhwnd, CB_SETMINVISIBLE, kDefaultMinVisibleCount, 0);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1830,8 +1868,22 @@ void VDUIProxyTreeViewControl::SetDropTargetHighlight(NodeRef item) {
 void VDUIProxyTreeViewControl::Attach(VDZHWND hwnd) {
 	VDUIProxyControl::Attach(hwnd);
 
-	if (mhwnd)
+	if (mhwnd) {
 		SendMessageW(mhwnd, CCM_SETVERSION, 6, 0);
+
+		if (ATUIIsDarkThemeActive()) {
+			const auto& tc = ATUIGetThemeColors();
+			const COLORREF fg = (COLORREF)(VDSwizzleU32(tc.mContentFg) >> 8);
+
+			TreeView_SetBkColor(mhwnd, (COLORREF)(VDSwizzleU32(tc.mContentBg) >> 8));
+			TreeView_SetTextColor(mhwnd, fg);
+			TreeView_SetLineColor(mhwnd, fg);
+		} else {
+			TreeView_SetBkColor(mhwnd, (COLORREF)-1);
+			TreeView_SetTextColor(mhwnd, (COLORREF)-1);
+			TreeView_SetLineColor(mhwnd, CLR_DEFAULT);
+		}
+	}
 }
 
 void VDUIProxyTreeViewControl::Detach() {
@@ -2329,8 +2381,16 @@ void VDUIProxyRichEditControl::SetBackgroundColor(uint32 c) {
 }
 
 void VDUIProxyRichEditControl::SetReadOnlyBackground() {
-	if (mhwnd)
-		SendMessage(mhwnd, EM_SETBKGNDCOLOR, FALSE, GetSysColor(COLOR_3DFACE));
+	if (mhwnd) {
+		COLORREF bg;
+
+		if (ATUIIsDarkThemeActive())
+			bg = ATUIGetThemeColors().mStaticBg;
+		else
+			bg = GetSysColor(COLOR_3DFACE);
+
+		SendMessage(mhwnd, EM_SETBKGNDCOLOR, FALSE, bg);
+	}
 }
 
 void VDUIProxyRichEditControl::SetPlainTextMode() {
@@ -2388,12 +2448,27 @@ void VDUIProxyRichEditControl::UpdateMargins(sint32 xpad, sint32 ypad) {
 void VDUIProxyRichEditControl::Attach(VDZHWND hwnd) {
 	VDUIProxyControl::Attach(hwnd);
 
-	if (mhwnd && !mpTextDoc) {
-		vdrefptr<IUnknown> pUnk;
-		SendMessage(mhwnd, EM_GETOLEINTERFACE, 0, (LPARAM)~pUnk);
+	if (mhwnd) {
+		if (!mpTextDoc) {
+			vdrefptr<IUnknown> pUnk;
+			SendMessage(mhwnd, EM_GETOLEINTERFACE, 0, (LPARAM)~pUnk);
 
-		if (pUnk) {
-			pUnk->QueryInterface<ITextDocument>(&mpTextDoc);
+			if (pUnk) {
+				pUnk->QueryInterface<ITextDocument>(&mpTextDoc);
+			}
+		}
+
+		if (ATUIIsDarkThemeActive()) {
+			const auto& tcw32 = ATUIGetThemeColorsW32();
+
+			CHARFORMAT2 cf = {};
+			cf.cbSize = sizeof cf;
+			cf.dwMask = CFM_COLOR | CFM_EFFECTS;
+			cf.dwEffects = 0;
+			cf.crTextColor = tcw32.mContentFgCRef;
+
+			SendMessage(mhwnd, EM_SETBKGNDCOLOR, FALSE, tcw32.mContentBgCRef);
+			SendMessage(mhwnd, EM_SETCHARFORMAT, SCF_ALL | SCF_DEFAULT, (LPARAM)&cf);
 		}
 	}
 

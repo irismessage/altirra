@@ -215,5 +215,17 @@
     <Xml Include="source\devices-isplate.xml">
       <Filter>Source Files</Filter>
     </Xml>
+    <Xml Include="source\debug-symboloptions.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\customdev-spec.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\customdev-intro.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\customeffect.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
   </ItemGroup>
 </Project>

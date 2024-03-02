@@ -22,6 +22,6 @@ class VDCommandLine;
 
 extern const uint8 kATGUID_CopyDataCmdLine[16];
 
-bool ATNotifyOtherInstance(const VDCommandLine& cmdLine);
+bool ATNotifyOtherInstance(VDCommandLine& cmdLine);
 
 #endif

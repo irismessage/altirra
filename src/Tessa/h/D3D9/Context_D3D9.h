@@ -324,17 +324,19 @@ public:
 	bool Init(VDTContextD3D9 *parent, const VDTSwapChainDesc& desc);
 	void Shutdown();
 
-	virtual void GetDesc(VDTSwapChainDesc& desc);
-	virtual IVDTSurface *GetBackBuffer();
+	void GetDesc(VDTSwapChainDesc& desc) override;
+	IVDTSurface *GetBackBuffer() override;
 
-	virtual bool ResizeBuffers(uint32 width, uint32 height) { return false; }
+	bool ResizeBuffers(uint32 width, uint32 height) override { return false; }
 
-	virtual void Present();
-	virtual void PresentVSync(void *monitor, IVDTAsyncPresent *callback);
-	virtual void PresentVSyncComplete();
-	virtual void PresentVSyncAbort();
+	bool CheckOcclusion() override { return true; }
 
-	virtual bool Restore();
+	void Present() override;
+	void PresentVSync(void *monitor, IVDTAsyncPresent *callback) override;
+	void PresentVSyncComplete() override;
+	void PresentVSyncAbort() override;
+
+	bool Restore() override;
 
 protected:
 	friend class VDTContextD3D9;

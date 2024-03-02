@@ -48,6 +48,62 @@ void ATArtifactBlendExchange_SSE2(uint32 *dst, uint32 *blendDst, uint32 n) {
 	}
 }
 
+template<typename T_BlendSrc>
+void ATArtifactBlendMayExchangeLinear_SSE2(uint32 *dst, T_BlendSrc *blendDst, uint32 n) {
+	__m128i *VDRESTRICT blendDst16 = (__m128i *)blendDst;
+	__m128i *VDRESTRICT dst16      = (__m128i *)dst;
+
+	__m128i rmask = _mm_set1_epi32(0x00FF0000);
+	__m128i gmask = _mm_set1_epi32(0x0000FF00);
+	__m128i bmask = _mm_set1_epi32(0x000000FF);
+	__m128 half = _mm_set1_ps(0.5f);
+	__m128 rround = _mm_set1_ps(0x8000);
+	__m128 ground = _mm_set1_ps(0x80);
+	__m128 tiny = _mm_set1_ps(1e-8f);
+
+	uint32 n2 = n >> 2;
+
+	while(n2--) {
+		const __m128i dc = *dst16;
+		const __m128i sc = *blendDst16;
+
+		if constexpr(!std::is_const_v<T_BlendSrc>) {
+			*blendDst16 = dc;
+		}
+
+		++blendDst16;
+
+		__m128 sr = _mm_cvtepi32_ps(_mm_and_si128(sc, rmask));
+		__m128 sg = _mm_cvtepi32_ps(_mm_and_si128(sc, gmask));
+		__m128 sb = _mm_cvtepi32_ps(_mm_and_si128(sc, bmask));
+		__m128 dr = _mm_cvtepi32_ps(_mm_and_si128(dc, rmask));
+		__m128 dg = _mm_cvtepi32_ps(_mm_and_si128(dc, gmask));
+		__m128 db = _mm_cvtepi32_ps(_mm_and_si128(dc, bmask));
+
+		__m128 fr2 = _mm_mul_ps(_mm_add_ps(_mm_mul_ps(sr, sr), _mm_mul_ps(dr, dr)), half);
+		__m128 fg2 = _mm_mul_ps(_mm_add_ps(_mm_mul_ps(sg, sg), _mm_mul_ps(dg, dg)), half);
+		__m128 fb2 = _mm_mul_ps(_mm_add_ps(_mm_mul_ps(sb, sb), _mm_mul_ps(db, db)), half);
+
+		__m128 fr = _mm_mul_ps(_mm_rsqrt_ps(_mm_max_ps(fr2, tiny)), fr2);
+		__m128 fg = _mm_mul_ps(_mm_rsqrt_ps(_mm_max_ps(fg2, tiny)), fg2);
+		__m128 fb = _mm_mul_ps(_mm_rsqrt_ps(_mm_max_ps(fb2, tiny)), fb2);
+
+		__m128i ir = _mm_and_si128(_mm_cvttps_epi32(_mm_add_ps(fr, rround)), rmask);
+		__m128i ig = _mm_and_si128(_mm_cvttps_epi32(_mm_add_ps(fg, ground)), gmask);
+		__m128i ib = _mm_cvtps_epi32(fb);
+
+		*dst16++ = _mm_or_si128(ir, _mm_or_si128(ig, ib));;
+	}
+}
+
+void ATArtifactBlendLinear_SSE2(uint32 *dst, const uint32 *src, uint32 n) {
+	ATArtifactBlendMayExchangeLinear_SSE2(dst, src, n);
+}
+
+void ATArtifactBlendExchangeLinear_SSE2(uint32 *dst, uint32 *blendDst, uint32 n) {
+	ATArtifactBlendMayExchangeLinear_SSE2(dst, blendDst, n);
+}
+
 template<int T_Intensity>
 void ATArtifactBlendScanlinesN_SSE2(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n) {
 	__m128i *VDRESTRICT dst = (__m128i *)dst0;

@@ -775,6 +775,42 @@
     <ClCompile Include="source\cmdcassette.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\savestatetypes.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\savestateio.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\debuggersettings.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\diskdriveamdc.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevxep80.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\diskvirtimagebase.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevamdc.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\customdevice.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevcustom.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\customdevice_win32.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\customdevicevm.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\customdevicecompiler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\antic.h">
@@ -1261,6 +1297,30 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\warpos.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\savestateio.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\debuggersettings.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\diskdriveamdc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\diskvirtimagebase.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\customdevice.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\customdevice_win32.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\customdevicecompiler.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\customdevicevm.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

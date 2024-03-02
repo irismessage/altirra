@@ -239,6 +239,11 @@ uint8 ATPortController::GetPortOutputState() const {
 	return mTriggerIndex ? (uint8)(state >> 8) : (uint8)state;
 }
 
+void ATPortController::ReapplyTriggers() {
+	mpGTIA->SetControllerTrigger(mTriggerIndex + 0, mbTrigger1);
+	mpGTIA->SetControllerTrigger(mTriggerIndex + 1, mbTrigger2);
+}
+
 void ATPortController::UpdatePortValue() {
 	PortInputs::const_iterator it(mPortInputs.begin()), itEnd(mPortInputs.end());
 	

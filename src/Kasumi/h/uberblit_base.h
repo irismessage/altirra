@@ -70,7 +70,7 @@ public:
 protected:
 	virtual void Compute(void *dst0, sint32 y) = 0;
 
-	vdfastvector<uint8> mWindowBuffer;
+	vdfastvector<uint8, vdaligned_alloc<uint8>> mWindowBuffer;
 	vdfastvector<uint8 *> mWindow;
 	sint32 mWindowPitch;
 	sint32 mWindowIndex;

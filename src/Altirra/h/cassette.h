@@ -96,9 +96,9 @@ public:
 	bool IsPaused() const { return mbPaused; }
 	bool IsMotorEnabled() const { return mbMotorEnable; }
 	bool IsMotorRunning() const { return mbMotorRunning; }
-	bool IsLogDataEnabled() const { return mbLogData; }
 	bool IsLoadDataAsAudioEnabled() const { return mbLoadDataAsAudio; }
 	bool IsAutoRewindEnabled() const { return mbAutoRewind; }
+	bool IsTurboPrefilterEnabled() const { return mbTurboPrefilterEnabled; }
 
 	void LoadNew();
 	void Load(const wchar_t *fn);
@@ -107,10 +107,10 @@ public:
 	void SetImagePersistent(const wchar_t *fn);
 	void SetImageClean();
 
-	void SetLogDataEnable(bool enable);
 	void SetLoadDataAsAudioEnable(bool enable);
 	void SetRandomizedStartEnabled(bool enable);
 	void SetAutoRewindEnabled(bool enable) { mbAutoRewind = enable; }
+	void SetTurboPrefilterEnabled(bool enable) { mbTurboPrefilterEnabled = enable; }
 
 	ATCassetteDirectSenseMode GetDirectSenseMode() const { return mDirectSenseMode; }
 	void SetDirectSenseMode(ATCassetteDirectSenseMode mode);
@@ -171,6 +171,39 @@ private:
 	void UpdateRawSIODevice();
 	void UpdateMotorState();
 	void UpdateInvertData();
+	void UpdateFSKDecoderEnabled();
+
+	struct SampleCursor {
+		uint32 mNextTransition;		// sample position of next transition; 0 = uninitialized
+		bool mCurrentValue;			// current decoded bit, valid until next transition
+		bool mNextValue;			// next decoded bit (at next transition)
+
+		void Reset() { mNextTransition = 0; }
+	};
+
+	struct SlidingWindowCursor {
+		SampleCursor mHeadCursor;	// cursor for sample at window end (first sample after window)
+		SampleCursor mTailCursor;	// cursor for sample at window start (first sample within window)
+		uint32 mNextCount;			// 1-bit sum within window at next transition
+		uint32 mNextTransition;		// sample position of next transition (0 = uninitialized)
+		bool mCurrentValue;			// current decoded bit, valid until next transition
+		bool mbFSKBypass;			// true if FSK decoder should be bypassed (turbo enabled)
+		uint32 mThresholdLo;		// current sample switches to 0 when count < lo
+		uint32 mThresholdHi;		// current sample switches to 1 when count > hi
+		uint32 mWindow;				// number of samples in window
+		uint32 mOffset;				// offset from start of window to center sample
+
+		void Reset() {
+			mHeadCursor.Reset();
+			mTailCursor.Reset();
+			mNextTransition = 0;
+		}
+
+		void Update(IATCassetteImage& image, uint32 pos);
+	};
+
+	void ResetCursors();
+	void UpdateDirectSense(sint32 posOffset);
 
 	enum BitResult {
 		kBR_NoOutput,
@@ -183,6 +216,7 @@ private:
 	void StartAudio();
 	void StopAudio();
 	void SeekAudio(uint32 pos);
+	void ResyncAudio();
 	
 	void FlushRecording(uint32 t, bool force);
 	void UpdateRecordingPosition();
@@ -198,7 +232,10 @@ private:
 	uint32	mJitterPRNG = 0;
 	uint32	mJitterSeed = 0;
 
-	bool	mbLogData = false;
+	SlidingWindowCursor mDirectCursor {};
+	SlidingWindowCursor mBitCursor {};
+	SampleCursor	mTurboCursor {};
+
 	bool	mbLoadDataAsAudio = false;
 	bool	mbAutoRewind = true;
 	bool	mbMotorEnable = false;
@@ -249,6 +286,7 @@ private:
 	ATCassetteTurboMode mTurboMode = kATCassetteTurboMode_None;
 	bool	mbTurboProceedAsserted = false;
 	bool	mbTurboInterruptAsserted = false;
+	bool	mbTurboPrefilterEnabled = false;
 
 	struct AudioEvent {
 		uint32	mStartTime;
@@ -265,6 +303,7 @@ private:
 	ATTraceChannelTape *mpTraceChannelTurbo = nullptr;
 	bool mbTraceMotorRunning = false;
 	bool mbTraceRecord = false;
+	uint32 mLogIndex = 0;
 
 	// Slightly weird optional trinary (we may have cached that we don't know....)
 	std::optional<std::optional<bool>> mNeedBasic;

@@ -5,7 +5,6 @@
     <ProjectGuid>{D2F5C17B-314F-47B9-A4B2-7AE895F7FE33}</ProjectGuid>
     <RootNamespace>ATCompiler</RootNamespace>
     <Keyword>Win32Proj</Keyword>
-    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="..\Build\PlatformSetup.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />

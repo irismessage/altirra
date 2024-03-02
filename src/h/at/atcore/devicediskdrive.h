@@ -30,10 +30,25 @@
 #include <vd2/system/vdtypes.h>
 
 class ATDiskInterface;
+class IATDiskImage;
 
 class IATDiskDriveManager {
 public:
 	virtual ATDiskInterface *GetDiskInterface(uint32 index) = 0;
+};
+
+class IATDiskInterfaceClient {
+public:
+	virtual void OnDiskChanged(bool mediaRemoved) = 0;
+	virtual void OnWriteModeChanged() = 0;
+	virtual void OnTimingModeChanged() = 0;
+	virtual void OnAudioModeChanged() = 0;
+	virtual bool IsImageSupported(const IATDiskImage& image) const = 0;
+};
+
+struct ATDeviceDiskDriveInterfaceClient {
+	IATDiskInterfaceClient *mpClient;
+	uint32 mInterfaceIndex;
 };
 
 class IATDeviceDiskDrive {
@@ -41,6 +56,10 @@ public:
 	enum : uint32 { kTypeID = 'atdd' };
 
 	virtual void InitDiskDrive(IATDiskDriveManager *ddm) = 0;
+
+	// Returns the given bound disk drive interface client on this device. Index ranges from [0,N-1] where
+	// N is the number of bound disk drive interface clients on this device. Higher indices return null.
+	virtual ATDeviceDiskDriveInterfaceClient GetDiskInterfaceClient(uint32 index) = 0;
 };
 
 #endif

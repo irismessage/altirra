@@ -52,6 +52,7 @@ void ATACIA6850Emulator::SetControlFn(const vdfunction<void(bool, bool)>& fn) {
 
 void ATACIA6850Emulator::SetMasterClockPeriod(uint32 cyclesPerByteX64) {
 	mCyclesPerBitX64 = cyclesPerByteX64;
+	UpdateBaudRate();
 }
 
 void ATACIA6850Emulator::SetCTS(bool asserted) {
