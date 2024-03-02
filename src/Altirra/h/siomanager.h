@@ -48,8 +48,17 @@ public:
 	ATSIOManager();
 	~ATSIOManager();
 
-	bool GetSIOPatchEnabled() const { return mbSIOPatchEnabled; }
-	void SetSIOPatchEnabled(bool enabled);
+	bool IsSIOPatchEnabled() const { return mbSIOPatchEnabled; }
+	void SetSIOPatchEnabled(bool enable);
+
+	bool GetDiskSIOAccelEnabled() const { return mbDiskSIOAccelEnabled; }
+	void SetDiskSIOAccelEnabled(bool enabled);
+
+	bool GetOtherSIOAccelEnabled() const { return mbOtherSIOAccelEnabled; }
+	void SetOtherSIOAccelEnabled(bool enabled);
+
+	bool GetDiskBurstTransfersEnabled() const { return mbDiskBurstTransfersEnabled; }
+	void SetDiskBurstTransfersEnabled(bool enabled) { mbDiskBurstTransfersEnabled = enabled; }
 
 	bool GetBurstTransfersEnabled() const { return mbBurstTransfersEnabled; }
 	void SetBurstTransfersEnabled(bool enabled) { mbBurstTransfersEnabled = enabled; }
@@ -58,9 +67,12 @@ public:
 	void Shutdown();
 
 	void ColdReset();
+	void WarmReset();
 
 	void ReinitHooks();
 	void UninitHooks();
+
+	void TryAccelPBIRequest();
 
 	bool TryAccelRequest(const ATSIORequest& req, bool isDSKINV);
 
@@ -78,19 +90,26 @@ public:
 	virtual void SendData(const void *data, uint32 len, bool addChecksum) override;
 	virtual void SendACK() override;
 	virtual void SendNAK() override;
-	virtual void SendComplete() override;
-	virtual void SendError() override;
+	virtual void SendComplete(bool autoDelay = true) override;
+	virtual void SendError(bool autoDelay = true) override;
 	virtual void ReceiveData(uint32 id, uint32 len, bool autoProtocol) override;
 	virtual void SetTransferRate(uint32 cyclesPerBit, uint32 cyclesPerByte) override;
+	virtual void SetSynchronousTransmit(bool enable) override;
 	virtual void Delay(uint32 ticks) override;
 	virtual void InsertFence(uint32 id) override;
+	virtual void FlushQueue() override;
 	virtual void EndCommand() override;
 	virtual bool IsAccelRequest() const override { return mpAccelRequest != nullptr; }
+	virtual uint32 GetAccelTimeSkew() const override { return mAccelTimeSkew; }
 	virtual sint32 GetHighSpeedIndex() const override { return 10; }
 
 	virtual void AddRawDevice(IATDeviceRawSIO *dev) override;
 	virtual void RemoveRawDevice(IATDeviceRawSIO *dev) override;
 	virtual void SendRawByte(uint8 byte, uint32 cyclesPerBit) override;
+
+	bool IsSIOCommandAsserted() const override;
+	bool IsSIOMotorAsserted() const override;
+
 	virtual void SetSIOInterrupt(IATDeviceRawSIO *dev, bool state) override;
 	virtual void SetSIOProceed(IATDeviceRawSIO *dev, bool state) override;
 
@@ -114,46 +133,55 @@ private:
 	void AbortActiveCommand();
 	void ExecuteNextStep();
 	void ShiftTransmitBuffer();
-	void ResetTransferRate();
+	void ResetTransfer();
 	void OnMotorStateChanged(bool asserted);
 
-	ATCPUEmulator *mpCPU;
-	ATCPUEmulatorMemory *mpMemory;
-	ATSimulator *mpSim;
-	IATUIRenderer *mpUIRenderer;
-	ATScheduler *mpScheduler;
-	ATPokeyEmulator *mpPokey;
-	ATPIAEmulator *mpPIA;
-	int mPIAOutput;
+	ATCPUEmulator *mpCPU = nullptr;
+	ATCPUEmulatorMemory *mpMemory = nullptr;
+	ATSimulator *mpSim = nullptr;
+	IATUIRenderer *mpUIRenderer = nullptr;
+	ATScheduler *mpScheduler = nullptr;
+	ATPokeyEmulator *mpPokey = nullptr;
+	ATPIAEmulator *mpPIA = nullptr;
+	int mPIAOutput = 0;
 
-	ATCPUHookNode *mpSIOVHook;
-	ATCPUHookNode *mpDSKINVHook;
+	ATCPUHookNode *mpSIOVHook = nullptr;
+	ATCPUHookNode *mpDSKINVHook = nullptr;
 
-	uint32	mTransferLevel;		// Write pointer for accumulating send data.
-	uint32	mTransferStart;		// Starting offset for current transfer.
-	uint32	mTransferIndex;		// Next byte to send/receive for current transfer.
-	uint32	mTransferEnd;		// Stopping offset for current transfer.
-	uint32	mTransferCyclesPerBit;
-	uint32	mTransferCyclesPerBitRecvMin;
-	uint32	mTransferCyclesPerBitRecvMax;
-	uint32	mTransferCyclesPerByte;
-	bool	mbTransferSend;
-	bool	mbTransferError;
-	bool	mbCommandState;
-	bool	mbMotorState;
-	bool	mbSIOPatchEnabled;
-	bool	mbBurstTransfersEnabled;
-	uint8	mPollCount;
-	uint32	mAccelBufferAddress;
-	const ATDeviceSIORequest *mpAccelRequest;
-	uint8	*mpAccelStatus;
-	ATEvent *mpTransferEvent;
-	IATDeviceSIO *mpActiveDevice;
+	uint32	mTransferLevel = 0;		// Write pointer for accumulating send data.
+	uint32	mTransferStart = 0;		// Starting offset for current transfer.
+	uint32	mTransferIndex = 0;		// Next byte to send/receive for current transfer.
+	uint32	mTransferEnd = 0;		// Stopping offset for current transfer.
+	uint32	mTransferCyclesPerBit = 0;
+	uint32	mTransferCyclesPerBitRecvMin = 0;
+	uint32	mTransferCyclesPerBitRecvMax = 0;
+	uint32	mTransferCyclesPerByte = 0;
+	bool	mbTransferSend = false;
+	bool	mbTransferError = false;
+	bool	mbTransmitSynchronous = false;
+	bool	mbCommandState = false;
+	bool	mbMotorState = false;
+	bool	mbSIOPatchEnabled = false;
+	bool	mbOtherSIOAccelEnabled = false;
+	bool	mbDiskSIOAccelEnabled = false;
+	bool	mbBurstTransfersEnabled = false;
+	bool	mbDiskBurstTransfersEnabled = false;
+	uint8	mPollCount = 0;
+	uint32	mAccelTimeSkew = 0;
+	uint32	mAccelBufferAddress = 0;
+	const ATDeviceSIORequest *mpAccelRequest = nullptr;
+	uint8	*mpAccelStatus = nullptr;
+	ATEvent *mpDelayEvent = nullptr;
+	ATEvent *mpTransferEvent = nullptr;
+	IATDeviceSIO *mpActiveDevice = nullptr;
+	bool	mbActiveDeviceDisk = false;
+
+	uint32	mAccessedDisks = 0;
 
 	vdfastvector<IATDeviceSIO *> mSIODevices;
 	vdfastvector<IATDeviceRawSIO *> mSIORawDevices;
 	vdfastvector<IATDeviceRawSIO *> mSIORawDevicesNew;
-	sint32 mSIORawDevicesBusy;
+	sint32 mSIORawDevicesBusy = 0;
 
 	vdfastvector<IATDeviceRawSIO *> mSIOInterruptActive;
 	vdfastvector<IATDeviceRawSIO *> mSIOProceedActive;
@@ -174,9 +202,12 @@ private:
 		kStepType_Receive,
 		kStepType_ReceiveAutoProtocol,
 		kStepType_SetTransferRate,
+		kStepType_SetSynchronousTransmit,
 		kStepType_Fence,
 		kStepType_EndCommand,
+		kStepType_AccelSendACK,
 		kStepType_AccelSendNAK,
+		kStepType_AccelSendComplete,
 		kStepType_AccelSendError,
 	};
 
@@ -187,6 +218,7 @@ private:
 			uint32 mFenceId;
 			uint32 mDelayTicks;
 			uint32 mTransferCyclesPerBit;
+			bool mbEnable;
 		};
 
 		union {
@@ -195,11 +227,11 @@ private:
 		};
 	};
 
-	Step mCurrentStep;
+	Step mCurrentStep = {};
 
 	vdfastdeque<Step> mStepQueue;
 
-	uint8 mTransferBuffer[65536];
+	uint8 mTransferBuffer[65536] = {};
 };
 
 #endif	// f_AT_SIOMANAGER_H

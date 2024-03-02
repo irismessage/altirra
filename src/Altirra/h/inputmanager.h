@@ -44,7 +44,7 @@ public:
 	virtual bool GetInputCodeName(uint32 id, VDStringW& name) const = 0;
 };
 
-enum ATInputCode {
+enum ATInputCode : uint32 {
 	kATInputCode_None			= 0x00,
 
 	kATInputCode_KeyBack		= 0x08,		// VK_BACK
@@ -194,7 +194,9 @@ enum ATInputControllerType {
 	kATInputControllerType_AmigaMouse,
 	kATInputControllerType_Keypad,
 	kATInputControllerType_Trackball_CX80_V1,
-	kATInputControllerType_5200Trackball
+	kATInputControllerType_5200Trackball,
+	kATInputControllerType_Driving,
+	kATInputControllerType_Keyboard
 };
 
 struct atfixedhash_basenode {
@@ -353,7 +355,7 @@ struct ATInputUnitIdentifier {
 	}
 };
 
-class ATInputMap : public vdrefcounted<IVDRefCount> {
+class ATInputMap final : public vdrefcounted<IVDRefCount> {
 public:
 	struct Controller {
 		ATInputControllerType mType;
@@ -388,12 +390,15 @@ public:
 	}
 
 	uint32 GetControllerCount() const;
+	bool HasControllerType(ATInputControllerType type) const;
 	const Controller& GetController(uint32 i) const;
 	uint32 AddController(ATInputControllerType type, uint32 index);
+	void AddControllers(std::initializer_list<Controller> controllers);
 
 	uint32 GetMappingCount() const;
 	const Mapping& GetMapping(uint32 i) const;
 	void AddMapping(uint32 inputCode, uint32 controllerId, uint32 code);
+	void AddMappings(std::initializer_list<Mapping> mappings);
 
 	bool Load(VDRegistryKey& key, const char *name);
 	void Save(VDRegistryKey& key, const char *name);
@@ -419,6 +424,8 @@ public:
 	void Init(ATScheduler *fastScheduler, ATScheduler *slowScheduler, ATPortController *porta, ATPortController *portb, ATLightPenPort *lightPen);
 	void Shutdown();
 
+	void Set5200Mode(bool is5200);
+
 	void ResetToDefaults();
 
 	IATInputConsoleCallback *GetConsoleCallback() const { return mpCB; }
@@ -427,7 +434,7 @@ public:
 	void Select5200Controller(int index, bool potsEnabled);
 	void SelectMultiJoy(int multiIndex);
 
-	void Poll();
+	void Poll(float dt);
 
 	int GetInputUnitCount() const;
 	const wchar_t *GetInputUnitName(int index) const;
@@ -469,14 +476,16 @@ public:
 	uint32 GetPresetInputMapCount() const;
 	bool GetPresetInputMapByIndex(uint32 index, ATInputMap **imap) const;
 
-	bool Load(VDRegistryKey& key);
-	void Save(VDRegistryKey& key);
+	bool LoadMaps(VDRegistryKey& key);
+	void LoadSelections(VDRegistryKey& key, ATInputControllerType defaultControllerType);
+	void SaveMaps(VDRegistryKey& key);
+	void SaveSelections(VDRegistryKey& key);
 
 protected:
 	struct Mapping;
 	struct Trigger;
+	struct PresetMapDef;
 
-	void ReconfigurePorts();
 	void RebuildMappings();
 	void ActivateMappings(uint32 id, bool state);
 	void ActivateAnalogMappings(uint32 id, int ds, int dsdead);
@@ -484,6 +493,7 @@ protected:
 	void ClearTriggers();
 	void SetTrigger(Mapping& mapping, bool state);
 	void Update5200Controller();
+	void InitPresetMap(const PresetMapDef& def, ATInputMap **ppMap);
 	void InitPresetMaps();
 	bool IsTriggerRestricted(const Trigger& trigger) const;
 
@@ -495,6 +505,7 @@ protected:
 	bool mbRestrictedMode;
 	int m5200ControllerIndex;
 	bool mb5200PotsEnabled;
+	bool mb5200Mode;
 	bool mbMouseAbsMode;
 	bool mbMouseMapped;
 	bool mbMouseActiveTarget;
@@ -513,9 +524,12 @@ protected:
 		bool mbFlagValue2;
 		bool mbMotionActive;
 		bool mbTriggerActivated;
-		int mValue;
-		int mAccel;
-		int mDamping;
+		uint8 mAutoCounter;
+		uint8 mAutoPeriod;
+		uint8 mAutoValue;
+		float mMotionSpeed;
+		float mMotionAccel;
+		float mMotionDrag;
 	};
 
 	typedef vdfastvector<bool> Flags;
@@ -551,6 +565,8 @@ protected:
 
 	typedef vdfastvector<ATInputMap *> PresetMaps;
 	PresetMaps mPresetMaps;
+
+	static const PresetMapDef kPresetMapDefs[];
 };
 
 #endif	// f_AT_INPUTMANAGER_H

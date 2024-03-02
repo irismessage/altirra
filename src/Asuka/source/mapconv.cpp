@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vector>
 #include <algorithm>
 
@@ -237,9 +237,9 @@ void tool_mapconv(const vdfastvector<const char *>& args, const vdfastvector<con
 
 	printf("        Raw statistics:\n");
 	printf("            Disassembler:     %ld bytes\n", disasm_size);
-	printf("            RVA bytes:        %ld\n", rvabuf.size()*4);
-	printf("            Class name bytes: %ld\n", cnambuf.size());
-	printf("            Func name bytes:  %ld\n", fnambuf.size());
+	printf("            RVA bytes:        %ld\n", (long)rvabuf.size()*4);
+	printf("            Class name bytes: %ld\n", (long)cnambuf.size());
+	printf("            Func name bytes:  %ld\n", (long)fnambuf.size());
 
 	printf("    Packing RVA data..."); fflush(stdout);
 
@@ -260,7 +260,7 @@ void tool_mapconv(const vdfastvector<const char *>& args, const vdfastvector<con
 		rvaout.push_back((char)(rvadiff & 0x7F));
 	}
 
-	printf("%ld bytes\n", rvaout.size());
+	printf("%ld bytes\n", (long)rvaout.size());
 
 	// dump data
 

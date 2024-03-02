@@ -81,8 +81,6 @@ inline uint32 ATUIPackKeyboardMapping(uint32 scancode, uint32 vk, uint32 modifie
 	return scancode + (vk << 9) + modifiers;
 }
 
-void ATUIGetKeyboardMapping();
-
 enum ATUIAccelContext {
 	kATUIAccelContext_Global,
 	kATUIAccelContext_Display,

@@ -23,6 +23,9 @@ public:
 	virtual void Reply(uint32 code) = 0;
 };
 
+bool ATGetAutotestEnabled();
+void ATSetAutotestEnabled(bool enabled);
+
 uint32 ATExecuteAutotestCommand(const wchar_t *cmd, IATAutotestReplyPort *replyPort);
 
 #endif

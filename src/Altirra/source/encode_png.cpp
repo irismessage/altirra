@@ -589,7 +589,7 @@ void VDPNGDeflateEncoder::EndBlock(bool term) {
 		}
 
 		*mpCode++ = 256;
-		Flush(mpCode - mCodeBuf, mpDist - mDistBuf, term, false);
+		Flush((int)(mpCode - mCodeBuf), (int)(mpDist - mDistBuf), term, false);
 		mpCode = mCodeBuf;
 		mpDist = mDistBuf;
 		mpLen = mLenBuf;
@@ -787,7 +787,7 @@ void VDPNGDeflateEncoder::Finish() {
 uint32 VDPNGDeflateEncoder::EstimateOutputSize() {
 	Compress(false);
 
-	return mOutput.size() * 8 + mAccBits + Flush(mpCode - mCodeBuf, mpDist - mDistBuf, false, true);
+	return (uint32)mOutput.size() * 8 + mAccBits + Flush((int)(mpCode - mCodeBuf), (int)(mpDist - mDistBuf), false, true);
 }
 
 void VDFORCEINLINE VDPNGDeflateEncoder::PutBits(uint32 encoding, int enclen) {
@@ -1109,7 +1109,7 @@ void VDImageEncoderPNG::Encode(const VDPixmap& px, const void *&p, uint32& len, 
 		uint32	mChunkLength;
 		uint32	mChunkType;
 	} idat;
-	idat.mChunkLength		= VDToBE32(encoutput.size());
+	idat.mChunkLength		= VDToBE32((uint32)encoutput.size());
 	idat.mChunkType			= VDMAKEFOURCC('I', 'D', 'A', 'T');
 
 	mOutput.insert(mOutput.end(), (const uint8 *)&idat, (const uint8 *)&idat + 8);
@@ -1117,7 +1117,7 @@ void VDImageEncoderPNG::Encode(const VDPixmap& px, const void *&p, uint32& len, 
 
 	crc.Init(VDCRCChecker::kCRC32);
 	crc.Process(&idat.mChunkType, 4);
-	crc.Process(encoutput.data(), encoutput.size());
+	crc.Process(encoutput.data(), (sint32)encoutput.size());
 	uint32 idat_crc = VDToBE32(crc.CRC());
 	mOutput.insert(mOutput.end(), (const uint8 *)&idat_crc, (const uint8 *)&idat_crc + 4);
 
@@ -1130,7 +1130,7 @@ void VDImageEncoderPNG::Encode(const VDPixmap& px, const void *&p, uint32& len, 
 	mOutput.insert(mOutput.end(), footer, footer+12);
 
 	p = mOutput.data();
-	len = mOutput.size();
+	len = (uint32)mOutput.size();
 }
 
 IVDImageEncoderPNG *VDCreateImageEncoderPNG() {

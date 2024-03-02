@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -238,7 +238,7 @@ protected:
 	bool	mbShowCodeBytes;
 	bool	mbShowLabels;
 	
-	ATDebuggerSystemState mLastState;
+	ATDebuggerSystemState mLastState = {};
 
 	vdfastvector<uint16> mAddressesByLine;
 };
@@ -260,11 +260,6 @@ ATDisassemblyWindow::ATDisassemblyWindow()
 	, mbShowLabels(true)
 {
 	mPreferredDockCode = kATContainerDockRight;
-
-	mLastState.mPC = 0;
-	mLastState.mInsnPC = 0;
-	mLastState.mFramePC = 0;
-	mLastState.mbRunning = false;
 }
 
 ATDisassemblyWindow::~ATDisassemblyWindow() {
@@ -279,7 +274,7 @@ bool ATDisassemblyWindow::OnPaneCommand(ATUIPaneCommandId id) {
 				size_t line = (size_t)mpTextEditor->GetCursorLine();
 
 				if (line < mAddressesByLine.size())
-					ATGetDebugger()->ToggleBreakpoint(mAddressesByLine[line]);
+					ATGetDebugger()->ToggleBreakpoint(mAddressesByLine[line] + ((uint32)mViewBank << 16));
 
 				return true;
 			}
@@ -473,7 +468,7 @@ bool ATDisassemblyWindow::OnCommand(UINT cmd) {
 				int line = mpTextEditor->GetCursorLine();
 
 				if ((uint32)line < mAddressesByLine.size())
-					ATGetDebugger()->ToggleBreakpoint(mAddressesByLine[line]);
+					ATGetDebugger()->ToggleBreakpoint(mAddressesByLine[line] + ((uint32)mViewBank << 16));
 				else
 					MessageBeep(MB_ICONEXCLAMATION);
 			}
@@ -717,10 +712,10 @@ void ATDisassemblyWindow::RecolorLine(int line, const char *text, int length, IV
 	int next = 0;
 
 	if ((size_t)line < mAddressesByLine.size()) {
-		ATCPUEmulator& cpu = g_sim.GetCPU();
-		uint32 addr = mAddressesByLine[line];
+		auto *dbg = ATGetDebugger();
+		uint32 addr = mAddressesByLine[line] + ((uint32)mViewBank << 16);
 
-		if (cpu.IsBreakpointSet((uint16)addr)) {
+		if (dbg->IsBreakpointAtPC(addr)) {
 			cl->AddTextColorPoint(next, 0x000000, 0xFF8080);
 			next += 4;
 		}
@@ -1480,7 +1475,7 @@ void ATSourceWindow::RecolorLine(int line, const char *text, int length, IVDText
 	if (it != mLineToAddressLookup.end()) {
 		uint32 addr = it->second;
 
-		if (g_sim.GetCPU().IsBreakpointSet(addr)) {
+		if (ATGetDebugger()->IsBreakpointAtPC(addr)) {
 			cl->AddTextColorPoint(next, 0x000000, 0xFF8080);
 			next += 4;
 		}
@@ -1982,6 +1977,7 @@ protected:
 
 	enum { kRepeatWindowSize = 32 };
 	uint32 mRepeatIPs[kRepeatWindowSize];
+	uint8 mRepeatKs[kRepeatWindowSize];
 	uint8 mRepeatOpcodes[kRepeatWindowSize];
 	TreeNode *mpRepeatNode;
 	int mRepeatLoopSize;
@@ -3298,7 +3294,7 @@ void ATHistoryWindow::RefreshNode(TreeNode *node) {
 	uint32 ypos2 = ypos1 + mItemHeight;
 
 	if (ypos2 >= mScrollY && ypos1 < mScrollY + mHeight) {
-		RECT r = { 0, ypos1 - mScrollY, mWidth, ypos2 - mScrollY };
+		RECT r = { 0, (LONG)(ypos1 - mScrollY), (LONG)mWidth, (LONG)(ypos2 - mScrollY) };
 
 		InvalidateRect(mhwnd, &r, TRUE);
 	}
@@ -3457,6 +3453,7 @@ void ATHistoryWindow::Reset() {
 
 	for(int i=0; i<kRepeatWindowSize; ++i) {
 		mRepeatIPs[i] = 0xFFFFFFFFUL;
+		mRepeatKs[i] = 0;
 		mRepeatOpcodes[i] = 0;
 	}
 
@@ -3677,13 +3674,17 @@ void ATHistoryWindow::UpdateOpcodes() {
 		int repeatOffset = -1;
 
 		if (mRepeatLoopSize) {
-			if (mRepeatIPs[mRepeatLoopSize - 1] == hent.mPC && mRepeatOpcodes[mRepeatLoopSize - 1] == hent.mOpcode[0])
+			if (mRepeatIPs[mRepeatLoopSize - 1] == hent.mPC &&
+				mRepeatKs[mRepeatLoopSize - 1] == hent.mK &&
+				mRepeatOpcodes[mRepeatLoopSize - 1] == hent.mOpcode[0])
+			{
 				repeatOffset = mRepeatLoopSize - 1;
+			}
 		}
 
 		if (repeatOffset < 0 && mbCollapseLoops) {
 			for(int i=0; i<kRepeatWindowSize; ++i) {
-				if (mRepeatIPs[i] == hent.mPC && mRepeatOpcodes[i] == hent.mOpcode[0]) {
+				if (mRepeatIPs[i] == hent.mPC && mRepeatKs[i] == hent.mK && mRepeatOpcodes[i] == hent.mOpcode[0]) {
 					repeatOffset = i;
 					break;
 				}
@@ -3749,10 +3750,12 @@ void ATHistoryWindow::UpdateOpcodes() {
 		// shift in new instruction into repeat window
 		for(int i=kRepeatWindowSize - 1; i; --i) {
 			mRepeatIPs[i] = mRepeatIPs[i-1];
+			mRepeatKs[i] = mRepeatKs[i-1];
 			mRepeatOpcodes[i] = mRepeatOpcodes[i - 1];
 		}
 
 		mRepeatIPs[0] = hent.mPC;
+		mRepeatKs[0] = hent.mK;
 		mRepeatOpcodes[0] = hent.mOpcode[0];
 	}
 
@@ -4270,6 +4273,19 @@ LRESULT ATConsoleWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			if (mbRunState && mhwndEdit) {
 				if (!mbEditShownDisabled) {
 					mbEditShownDisabled = true;
+
+					// If we have the focus, hand it off to the display.
+					HWND hwndFocus = GetFocus();
+					while(hwndFocus) {
+						if (hwndFocus == mhwnd) {
+							if (ATGetUIPane(kATUIPaneId_Display))
+								ATActivateUIPane(kATUIPaneId_Display, true);
+							break;
+						}
+
+						hwndFocus = GetAncestor(hwndFocus, GA_PARENT);
+					}
+
 					SendMessage(mhwndEdit, EM_SETREADONLY, TRUE, 0);
 					SendMessage(mhwndEdit, EM_SETBKGNDCOLOR, FALSE, GetSysColor(COLOR_3DFACE));
 				}
@@ -4296,7 +4312,7 @@ bool ATConsoleWindow::OnCreate() {
 	if (!ATUIDebuggerPane::OnCreate())
 		return false;
 
-	mhwndLog = CreateWindowEx(WS_EX_CLIENTEDGE, _T("RICHEDIT"), _T(""), ES_READONLY|ES_MULTILINE|ES_AUTOVSCROLL|WS_VSCROLL|WS_VISIBLE|WS_CHILD, 0, 0, 0, 0, mhwnd, (HMENU)100, g_hInst, NULL);
+	mhwndLog = CreateWindowEx(WS_EX_CLIENTEDGE, RICHEDIT_CLASS, _T(""), ES_READONLY|ES_MULTILINE|ES_AUTOVSCROLL|WS_VSCROLL|WS_VISIBLE|WS_CHILD, 0, 0, 0, 0, mhwnd, (HMENU)100, g_hInst, NULL);
 	if (!mhwndLog)
 		return false;
 
@@ -4304,7 +4320,7 @@ bool ATConsoleWindow::OnCreate() {
 	if (!mhwndPrompt)
 		return false;
 
-	mhwndEdit = CreateWindowEx(WS_EX_CLIENTEDGE, _T("RICHEDIT"), _T(""), WS_VISIBLE|WS_CHILD|ES_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)100, g_hInst, NULL);
+	mhwndEdit = CreateWindowEx(WS_EX_CLIENTEDGE, RICHEDIT_CLASS, _T(""), WS_VISIBLE|WS_CHILD|ES_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)100, g_hInst, NULL);
 	if (!mhwndEdit)
 		return false;
 
@@ -4429,6 +4445,11 @@ void ATConsoleWindow::OnRunStateChanged(IATDebugger *target, bool rs) {
 				mbEditShownDisabled = false;
 				SendMessage(mhwndEdit, EM_SETREADONLY, FALSE, 0);
 				SendMessage(mhwndEdit, EM_SETBKGNDCOLOR, TRUE, GetSysColor(COLOR_WINDOW));
+
+				// Check if the display currently has the focus. If so, take focus.
+				auto *p = ATUIGetActivePane();
+				if (p && p->GetUIPaneId() == kATUIPaneId_Display)
+					ATActivateUIPane(kATUIPaneId_Console, true);
 			}
 		} else
 			SetTimer(mhwnd, kTimerId_DisableEdit, 100, NULL);
@@ -4466,7 +4487,8 @@ void ATConsoleWindow::Write(const char *s) {
 }
 
 void ATConsoleWindow::ShowEnd() {
-	SendMessage(mhwndLog, EM_SCROLLCARET, 0, 0);
+	// With RichEdit 3.0, EM_SCROLLCARET no longer works when the edit control lacks focus.
+	SendMessage(mhwndLog, WM_VSCROLL, SB_BOTTOM, 0);
 }
 
 LRESULT ATConsoleWindow::LogWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -4576,12 +4598,15 @@ LRESULT ATConsoleWindow::CommandEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, 
 				SendMessage(mhwndLog, msg, wParam, lParam);
 				return 0;
 			}
+		} else if (wParam == VK_RETURN) {
+			return 0;
 		}
 	} else if (msg == WM_KEYUP || msg == WM_SYSKEYUP) {
 		switch(wParam) {
 		case VK_ESCAPE:
 		case VK_UP:
 		case VK_DOWN:
+		case VK_RETURN:
 			return 0;
 
 		case VK_PRIOR:
@@ -4681,7 +4706,7 @@ void ATConsoleWindow::FlushAppendBuffer() {
 	SendMessageW(mhwndLog, EM_SETSEL, -1, -1);
 	SendMessageW(mhwndLog, EM_REPLACESEL, FALSE, (LPARAM)mAppendBuffer.data());
 	SendMessageW(mhwndLog, EM_SETSEL, -1, -1);
-	SendMessageW(mhwndLog, EM_SCROLLCARET, 0, 0);
+	ShowEnd();
 
 	mAppendBuffer.clear();
 }
@@ -6074,7 +6099,7 @@ namespace {
 }
 
 void ATInitUIPanes() {
-	VDLoadSystemLibraryW32("riched32");
+	VDLoadSystemLibraryW32("riched20");
 
 	ATRegisterUIPaneType(kATUIPaneId_Registers, VDRefCountObjectFactory<ATRegistersWindow, ATUIPane>);
 	ATRegisterUIPaneType(kATUIPaneId_Console, VDRefCountObjectFactory<ATConsoleWindow, ATUIPane>);

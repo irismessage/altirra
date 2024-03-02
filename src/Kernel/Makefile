@@ -22,7 +22,6 @@ source\Shared\atarifont.inc \
 source\Shared\atariifont.inc \
 source\Shared\boot.s \
 source\Shared\blackboard.s \
-source\Shared\bugcheck.s \
 source\Shared\cio.inc \
 source\Shared\cio.s \
 source\Shared\disk.s \
@@ -52,7 +51,7 @@ source\Shared\printer.s
 NOKERNEL_SRCFILES = source\nokernel\main.xasm
 BASIC_SRCFILES = source\basic\main.xasm
 SUPERKERNEL_SRCFILES = source\superkernel\main.xasm source\superkernel\includes.xasm
-NOCARTRIDGE_SRCFILES = source\nocartridge\main.xasm
+NOCARTRIDGE_SRCFILES = source\nocartridge\main.s
 ATDISKLOADER_SRCFILES = source\ATDiskLoader\main.s
 NOHDBIOS_SRCFILES = source\NoHDBIOS\main.s
 NOGAME_SRCFILES = source\NoGame\main.s
@@ -69,7 +68,8 @@ all: kernel kernelxl kernelxlsoftkick \
 	nogame ultimate bootsecdos2 \
 	r850 fw1030 additions \
 	exeloader \
-	sapplayers
+	sapplayers \
+	pbidisk
 
 clean:
 	if exist "$(OUT)\kernel.rom" del "$(OUT)\kernel.rom"
@@ -132,6 +132,8 @@ exeloader: $(INT)\exeloader.bin $(INT)\exeloader-0700.bin $(INT)\exeloader-hispe
 
 sapplayers: $(INT)\playsap-b.xex $(INT)\playsap-c.xex $(INT)\playsap-d-ntsc.xex $(INT)\playsap-d-pal.xex $(INT)\playsap-r.xex
 
+pbidisk: $(INT)\pbidisk.bin
+
 $(OUT)\Additions.atr: $(INT)\dos.sys source\Additions\filelist.txt $(INT)\boot850.xex $(INT)\rhnd850.xex $(INT)\xep80.sys $(INT)\xep80f.sys $(INT)\boot1030.xex $(INT)\thnd1030.xex $(INT)\autorun.sys $(INT)\atbasicx.xex $(INT)\sx212.xex $(INT)\colormap.xex
 	@$(ATCOMPILER) mkfsdos2 source\Additions\filelist.txt $(INT)\ $(OUT)\Additions.atr
 
@@ -157,7 +159,7 @@ $(OUT)\superkernel.rom: $(SUPERKERNEL_SRCFILES)
 	@$(MADS) -s -p -i:source\shared -b:$$f800 -l:$(OUT)\superkernel.lst -o:$(OUT)\superkernel.rom source\superkernel\main.xasm
 
 $(OUT)\nocartridge.rom: $(NOCARTRIDGE_SRCFILES)
-	@$(MADS) -s -p -b:$$b000 -l:$(OUT)\nocartridge.lst -o:$(OUT)\nocartridge.rom source\nocartridge\main.xasm
+	@$(MADS) -s -p -b:$$b000 -l:$(OUT)\nocartridge.lst -t:$(OUT)\nocartridge.lab -o:$(OUT)\nocartridge.rom source\nocartridge\main.s
 
 $(OUT)\atdiskloader128.bin: $(ATDISKLOADER_SRCFILES)
 	@$(MADS) -d:MEMORY=128 -s -p -b:$$0700 -l:$(OUT)\atdiskloader128.lst -t:$(OUT)\atdiskloader128.lab -o:$(OUT)\atdiskloader128.bin source\ATDiskLoader\main.s
@@ -334,3 +336,6 @@ $(INT)\playsap-d-pal.xex: $(SHARED_SRCFILESINC) source\SAPPlayers\playsap-d.s
 
 $(INT)\playsap-r.xex: $(SHARED_SRCFILESINC) source\SAPPlayers\playsap-r.s
 	$(MADS) -s -p -i:source\Shared -l:$(INT)\playsap-r.lst -t:$(INT)\playsap-r.lab -o:$(INT)\playsap-r.xex source\SAPPlayers\playsap-r.s
+
+$(INT)\pbidisk.bin: $(SHARED_SRCFILESINC) source\PBIDisk\pbidisk.s
+	$(MADS) -s -p -i:source\Shared -l:$(INT)\pbidisk.lst -t:$(INT)\pbidisk.lab -o:$(INT)\pbidisk.bin source\PBIDisk\pbidisk.s

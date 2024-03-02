@@ -40,7 +40,6 @@ enum ATDebugDisasmMode : uint8;
 
 class ATCPUEmulatorCallbacks {
 public:
-	virtual uint32 CPUGetTimestamp() = 0;
 	virtual uint32 CPUGetCycle() = 0;
 	virtual uint32 CPUGetUnhaltedCycle() = 0;
 	virtual void CPUGetHistoryTimes(ATCPUHistoryEntry * VDRESTRICT he) const = 0;
@@ -237,11 +236,11 @@ public:
 	bool	IsNMIBlockingEnabled() const { return mbAllowBlockedNMIs; }
 	void	SetNMIBlockingEnabled(bool enable);
 
+	uint32	GetBreakpointCount() const;
 	bool	IsBreakpointSet(uint16 addr) const;
 	sint32	GetNextBreakpoint(sint32 last) const;
 	void	SetBreakpoint(uint16 addr);
 	void	ClearBreakpoint(uint16 addr);
-	void	ClearAllBreakpoints();
 
 	void	ResetAllPaths();
 	sint32	GetNextPathInstruction(sint32 addr) const;
@@ -369,14 +368,13 @@ protected:
 	uint8	mYH;
 	uint16	mDP;
 
-	uint32	mIFlagSetCycle;
-
 	// These are in bitfields so the insn fetch code can check them all at once.
-	enum {
+	enum : uint8 {
 		kIntFlag_IRQReleasePending = 0x01,
-		kIntFlag_IRQActive = 0x02,
-		kIntFlag_IRQPending = 0x04,
-		kIntFlag_NMIPending = 0x08
+		kIntFlag_IRQSetPending = 0x02,
+		kIntFlag_IRQActive = 0x04,
+		kIntFlag_IRQPending = 0x08,
+		kIntFlag_NMIPending = 0x10
 	};
 
 	uint8	mIntFlags;

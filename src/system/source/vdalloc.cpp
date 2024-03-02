@@ -23,7 +23,7 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/vdalloc.h>
 
 vdsafedelete_t vdsafedelete;

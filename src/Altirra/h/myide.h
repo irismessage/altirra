@@ -18,38 +18,72 @@
 #ifndef f_AT_MYIDE_H
 #define f_AT_MYIDE_H
 
+#include <at/atcore/blockdevice.h>
+#include <at/atcore/deviceimpl.h>
+#include <at/atcore/devicecart.h>
 #include "flash.h"
+#include "ide.h"
 
 class ATMemoryManager;
 class ATMemoryLayer;
 class ATIDEEmulator;
 class ATScheduler;
-class ATSimulator;
-class IATUIRenderer;
 class ATFirmwareManager;
 
-class ATMyIDEEmulator {
+class ATMyIDEEmulator final
+	: public ATDevice
+	, public IATDeviceScheduling
+	, public IATDeviceMemMap
+	, public IATDeviceCartridge
+	, public IATDeviceIndicators
+	, public IATDeviceFirmware
+	, public IATDeviceParent
+{
 	ATMyIDEEmulator(const ATMyIDEEmulator&) = delete;
 	ATMyIDEEmulator& operator=(const ATMyIDEEmulator&) = delete;
 public:
-	ATMyIDEEmulator();
+	ATMyIDEEmulator(bool version2, bool useD5xx);
 	~ATMyIDEEmulator();
 
-	bool IsVersion2() const { return mbVersion2; }
-	bool IsFlashDirty() const { return mFlash.IsDirty(); }
-	bool IsLeftCartEnabled() const;
+	void *AsInterface(uint32 id);
+
 	bool IsUsingD5xx() const { return mbUseD5xx; }
 
-	void Init(ATMemoryManager *memman, IATUIRenderer *uir, ATScheduler *sch, ATSimulator *sim, bool used5xx, bool v2, bool v2ex);
-	void Shutdown();
+	void Init() override;
+	void Shutdown() override;
+	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void GetSettings(ATPropertySet& settings) override;
+	bool SetSettings(const ATPropertySet& settings) override;
+	void ColdReset() override;
 
-	void SetIDEImage(ATIDEEmulator *ide);
+public:		// IATDeviceScheduling
+	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch);
 
-	bool LoadFirmware(const void *ptr, uint32 len);
-	bool LoadFirmware(ATFirmwareManager& fwmgr, uint64 id);
-	void SaveFirmware(const wchar_t *path);
+public:		// IATDeviceMemMap
+	void InitMemMap(ATMemoryManager *memmap);
+	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const;
 
-	void ColdReset();
+public:		// IATDeviceCartridge
+	void InitCartridge(IATDeviceCartridgePort *cartPort) override;
+	bool IsLeftCartActive() const override;
+	void SetCartEnables(bool leftEnable, bool rightEnable, bool cctlEnable) override;
+	void UpdateCartSense(bool leftActive) override;
+
+public:		// IATDeviceIndicators
+	void InitIndicators(IATDeviceIndicatorManager *r) override;
+
+public:		// IATDeviceFirmware
+	void InitFirmware(ATFirmwareManager *fwman) override;
+	bool ReloadFirmware() override;
+	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override;
+	bool IsWritableFirmwareDirty(uint32 idx) const override;
+	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
+
+public:		// IATDeviceParent
+	const char *GetSupportedType(uint32 index) override;
+	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
+	void AddChildDevice(IATDevice *dev) override;
+	void RemoveChildDevice(IATDevice *dev) override;
 
 protected:
 	static sint32 OnDebugReadByte_CCTL(void *thisptr, uint32 addr);
@@ -60,6 +94,7 @@ protected:
 	static sint32 OnReadByte_CCTL_V2(void *thisptr, uint32 addr);
 	static bool OnWriteByte_CCTL_V2(void *thisptr, uint32 addr, uint8 value);
 
+	static sint32 DebugReadByte_Cart_V2(void *thisptr0, uint32 address);
 	static sint32 ReadByte_Cart_V2(void *thisptr0, uint32 address);
 	static bool WriteByte_Cart_V2(void *thisptr0, uint32 address, uint8 value);
 
@@ -71,34 +106,46 @@ protected:
 	void UpdateCartBank();
 	void UpdateCartBank2();
 
-	ATMemoryManager *mpMemMan;
-	ATMemoryLayer *mpMemLayerIDE;
-	ATMemoryLayer *mpMemLayerLeftCart;
-	ATMemoryLayer *mpMemLayerLeftCartFlash;
-	ATMemoryLayer *mpMemLayerRightCart;
-	ATMemoryLayer *mpMemLayerRightCartFlash;
-	ATIDEEmulator *mpIDE;
-	IATUIRenderer *mpUIRenderer;
-	ATSimulator *mpSim;
-	bool mbCFPower;
-	bool mbCFReset;
-	bool mbCFAltReg;
-	bool mbVersion2;
-	bool mbVersion2Ex;
-	bool mbUseD5xx;
+	ATScheduler *mpScheduler = nullptr;
+	ATMemoryManager *mpMemMan = nullptr;
+	ATFirmwareManager *mpFirmwareManager = nullptr;
+	ATMemoryLayer *mpMemLayerIDE = nullptr;
+	ATMemoryLayer *mpMemLayerLeftCart = nullptr;
+	ATMemoryLayer *mpMemLayerLeftCartFlash = nullptr;
+	ATMemoryLayer *mpMemLayerRightCart = nullptr;
+	ATMemoryLayer *mpMemLayerRightCartFlash = nullptr;
+	IATDeviceIndicatorManager *mpUIRenderer = nullptr;
+	bool mbCFPower = false;
+	bool mbCFPowerLatch = false;
+	bool mbCFReset = false;
+	bool mbCFResetLatch = false;
+	bool mbCFAltReg = false;
+	bool mbSelectSlave = false;
+	const bool mbVersion2;
+	bool mbVersion2Ex = false;
+	const bool mbUseD5xx;
+
+	IATDeviceCartridgePort *mpCartridgePort = nullptr;
+	uint32 mCartId = 0;
+	bool mbLeftWindowEnabled = false;
+	bool mbRightWindowEnabled = false;
+	bool mbCCTLEnabled = false;
+
+	vdrefptr<IATBlockDevice> mpBlockDevices[2];
 
 	// MyIDE II control registers
-	int	mCartBank;
-	int	mCartBank2;
-	uint8	mLeftPage;
-	uint8	mRightPage;
-	uint32	mKeyHolePage;
-	uint8	mControl;
+	int	mCartBank = 0;
+	int	mCartBank2 = 0;
+	uint8	mLeftPage = 0;
+	uint8	mRightPage = 0;
+	uint32	mKeyHolePage = 0;
+	uint8	mControl = 0;
 
 	ATFlashEmulator	mFlash;
+	ATIDEEmulator mIDE[2];
 
-	VDALIGN(4) uint8 mFirmware[0x80000];
-	VDALIGN(4) uint8 mRAM[0x80000];
+	VDALIGN(4) uint8 mFirmware[0x80000];	// cleared to 0XFF in ctor
+	VDALIGN(4) uint8 mRAM[0x80000] = {};
 };
 
 #endif

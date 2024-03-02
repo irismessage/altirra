@@ -23,7 +23,7 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/system/seh.h>
 #include <vd2/system/text.h>
@@ -61,6 +61,12 @@ bool VDIsAtLeast8W32() {
 
 bool VDIsAtLeast81W32() {
 	static const bool result = VDTestOSVersionW32(6,3);
+
+	return result;
+}
+
+bool VDIsAtLeast10W32() {
+	static const bool result = VDTestOSVersionW32(10,0);
 
 	return result;
 }
@@ -563,7 +569,7 @@ bool VDPatchModuleExportTableW32(HMODULE hmod, const char *name, void *pCompareV
 				
 				// Reset the protection.
 
-				DWORD newRVA = (DWORD)pNewValue - (DWORD)pBase;
+				DWORD newRVA = (DWORD)(uintptr_t)pNewValue - (DWORD)(uintptr_t)pBase;
 
 				DWORD dwOldProtect;
 				if (VirtualProtect((void *)pRVA, sizeof(DWORD), PAGE_EXECUTE_READWRITE, &dwOldProtect)) {

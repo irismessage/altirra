@@ -1,4 +1,127 @@
 Altirra Change Log
+Version 2.80:
+   [changes]
+   * Devices: MyIDE and KMK/JZ IDE (IDEPlus) have been moved to the Devices tree.
+   * Input: The preset input maps for 5200 mode and the Xbox 360 Controller been changed.
+   * Input: Input mapping speeds have been adjusted; mappings in relative mode may need to be fixed up.
+   * UI: Error message help has been moved from Shift+hover to Alt+click.
+
+   [features added]
+   * Audio: Added emulation of serial I/O noise with audio channels silent.
+   * Cartridge: Added support for alternate image layout of 5200 Bounty Bob cartridge.
+   * Cassette: Added support for recording cassette tapes.
+   * Cassette: Added option to add slight randomized jitter to tape start position to work around load timing issues with deterministic timing.
+   * Covox: Variable base address and mono/4ch. settings added.
+   * Covox: Volume is now adjustable (Audio Options).
+   * Debugger: All special variables in debugger expressions can now be specified with a @ prefix, i.e. @a. The non-prefixed form is now deprecated due to symbol/number conflicts.
+   * Debugger: Focus is now automatically switched between the console and the display when starting and stopping execution.
+   * Debugger: Heat map can now be used to detect accesses to uninitialized memory (hmt command).
+   * Debugger: Expression parser can now optimize +/-0, *0, and *1 patterns.
+   * Debugger: .tapedata command now accepts a length option.
+   * Debugger: .basic_dumpline now has a function to show addresses and byte values for each token (-k).
+   * Debugger: Added db/dbi -c option to dump mode 1/2 strings.
+   * Debugger: Added emulation network packet tracing (.netpcap, .netpcapclose).
+   * Debugger: Added .basic_rebuildvvt command to fix corrupted BASIC variable type/index entries.
+   * Debugger: PC breakpoints and step execution are now supported for Veronica.
+   * Debugger: Added eb (enter byte) and ew (enter word) commands.
+   * Debugger: Fixed disassembly of 65C02 RMBn/SMBn/BBRn/BBSn instructions.
+   * Debugger: Added .kmkjzide command.
+   * Devices: Added Corvus Disk Interface emulation.
+   * Devices: Added Pocket Modem emulation.
+   * Devices: Added simple joystick dongle emulation.
+   * Disk: Added VRWSafe write mode (virtual read/write with format prohibited), and added option to set default write mode.
+   * Disk: Added emulation of Indus GT Synchromesh and SuperSynchromesh firmware modes.
+   * Disk: Added emulation of full format times when accurate timing is enabled.
+   * Disk: Added support for formatting and exploring DOS 1.x disks and for DOS 1.x files on DOS 2.0S disks.
+   * Disk: Partial emulation of built-in Happy drive commands.
+   * Disk: Added command to expand all .ARC files on a SpartaDOS disk.
+   * Disk Explorer: File viewer mode and window position is now persisted.
+   * Disk Explorer: SDFS filesystem handler now validates the full directory tree and allocation bitmap.
+   * Display: Added /w command line switch to force windowed mode.
+   * Display: Added DXGI-based windowed vsync support to D3D9 display driver for reduced CPU usage with DWM composition.
+   * Firmware: Added autodetection of 5200 2-port BIOS, Black Box, and MIO ROMs.
+   * Firmware: Firmware dialog now supports drag-and-drop.
+   * HLE: Program loader now warns on init segment behaviors that may not work with DOS.
+   * HLE: Added PBIDisk device for PBI-based acceleration of disk and serial bus requests.
+   * IDE: MyIDE, KMK/JZ IDE, and IDE Plus 2.0 now support slave devices.
+   * IDE: IDE Plus 2.0 SDX, write protect, and partition switch buttons are now supported.
+   * IDE: IDE Plus 2.0 revision and ID switch are now controllable.
+   * Input: Improved mouse interrupt timing algorithm.
+   * Input: Acceleration can now be adjusted independently of speed for digital-to-analog mappings.
+   * Input: Added driving and keyboard controller support.
+   * Input: Reset system screensaver timeout when controller input changes.
+   * MMU: Added support for 256K Rambo configuration, which aliases 64K with main memory.
+   * Network: Added TCP logging channel for monitoring gateway TCP stack status.
+   * UI: Added /si and /nosi as synonyms for /singleinstance and /nosingleinstance.
+   * UI: Added profile system for switching full or partial configurations.
+   * UI: File associations can now be set user-local as well as system-local.
+   * UI: Added option to reset all settings.
+   * UI: Added option to control whether simulation is paused while menus are open.
+   * UI: Detect files dragged from .zip files in Windows Explorer and use a VFS path to the compressed file if possible.
+   * VFS: Images mounted within .zip and .gz files are now restored on next load.
+
+   [bugs fixed]
+   * AltirraOS: Fixed XEGS game cartridge activation.
+   * AltirraOS: Fixed errors getting dropped in cassette handler.
+   * AltirraOS: Fixed extra initial block and incorrect partial block problems when writing cassette streams.
+   * AltirraOS: Fixed CIO read record when line exactly fits in buffer.
+   * AltirraOS: Fixed broken inverse key.
+   * AltirraOS: S: clear also clears split-screen area.
+   * AltirraOS: Optimized C/E->data frame path in SIO for better robustness when DLIs are active.
+   * AltirraOS: Fixed race condition in SETVBV.
+   * ANTIC: Fix power-up values for PENH and PENV registers.
+   * ATBasic: Added workaround for BASIC programs that have a corrupted function open parens.
+   * ATBasic: Force implicit NEW if LOAD or CLOAD fails.
+   * ATBasic: Fix crash in INT() with certain ranges of large numbers.
+   * ATBasic: Remove added variables when parsing error occurs.
+   * Cartridge: Changed initial bank for XEGS/SXEGS carts to 0.
+   * Cartridge: Fixed flash indicator not always appearing while programming The!Cart cartridges.
+   * CPU: Fix D flag not being cleared on interrupt entry in 65C02/65C816 mode and I not being cleared in 65C816 native mode.
+   * CPU: Fixed second write cycle for read/modify/write instructions in 65C816 emulation mode.
+   * Debugger: Fixed assembly and disassembly of 65C816 COP instruction from COP #n to COP n.
+   * Debugger: Fixed issue with Step Over breaking PC breakpoints.
+   * Debugger: PC breakpoints are now bank sensitive.
+   * Debugger: Fixed assembler giving branch range errors when assembling above bank 0.
+   * Debugger: Fixed disassembly of 65C02 RMBn, SMBn, BBRn, and BBSn instructions.
+   * Display: Fix for intermittent display redraw issues when stopped in debugger with display composition enabled.
+   * Display: Fixed centering of enhanced text mode after switching modes.
+   * Display: Enhanced text mode (hardware) now uses correct colors for Gr.1/2.
+   * Display: Fixed excessive CPU usage with enhanced text mode with debugger open.
+   * Display: Removed broken fixed function bicubic stretching code paths. They were broken and pre-shader cards don't have the fill rate to do 5+ passes at 60fps anyway.
+   * Disk: Fixed density detection issue with Set PERCOM Block command in XF551 mode (again).
+   * Disk: Fixed crash when mounting .ARC file with no decodable files in it.
+   * Disk: Retuned command ACK timings for 1050-based drives.
+   * Disk: 850 and 1050 emulation modes now implement proper respective behavior with long sectors.
+   * Disk: Allow loading of truncated .ATRs with a partial final sector.
+   * Disk: Fixed handling of sectors with bad address field CRCs.
+   * Disk: Fixed record type bits in FDC status in 810 mode.
+   * Disk Explorer: Fixed rename operations on SDFS disks not marking volume changed.
+   * Flash: Toggle bits are now implemented during the multiple sector erase timeout period.
+   * HLE: Improved register return state when accelerating ZFR0/ZF1/ZFL calls.
+   * IDE: Fixed excessive flushing of VHD block bitmap after allocating space.
+   * IDE: Force power and reset states on MyIDE-II when CF card is removed.
+   * IDE: Improved compatibility of CHS mapping behavior.
+   * IDE: IDEPlus 2.0 now supports external cartridge control.
+   * Input: Fixed mouse being able to escape from capture at high speeds.
+   * Input: Digital-to-analog mappings no longer change speeds between NTSC and PAL.
+   * Input: Fixed preset maps sometimes not resetting if they were modified in the same session.
+   * Input: Fixed 5200 CONSOL bits being inconsistent internally after reset (fixes 5200 Pole Position controller input).
+   * Input: Fixed 5200 trackball controller behavior when bound to mouse move inputs.
+   * MMU: Fixed case where MMU was not reset when switching from 400/800 mode to XL/XE mode, causing a power-up crash.
+   * MMU: Axlon memory no longer aliases with PORTB extended memory.
+   * Network: Fixed TCP stack checking wrong sequence number against incoming ACK in some cases.
+   * Network: Improve TCP PSH and ACK handling.
+   * Network: Fix inability to write some CS8900A control registers through PacketPage ports.
+   * PCLink: Fixed incorrect return codes from rename command.
+   * PCLink: Directories are now readable as byte streams.
+   * POKEY: Improved emulation of fast pot scan mode.
+   * POKEY: Improved RANDOM emulation when switching in and out of init mode.
+   * POKEY: Fixed serial output ready IRQ occasionally not triggering when expected.
+   * SIDE2: Implemented CF change detection.
+   * SIDE2: The right cart window of the top cartridge half can now be enabled without the left half.
+   * Simulation: Modified DRAM A randomization pattern in 5200 mode to match 5200's address line mapping.
+   * UI: Disable Shift+hover help when Shift key is bound to an input map.
+   * UI: The kernel firmware menu is now filtered to kernels compatible with the current hardware mode.
 
 Version 2.71 [April 16, 2016]:
    [bugs fixed]

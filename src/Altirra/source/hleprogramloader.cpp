@@ -15,12 +15,13 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
 #include <at/atcore/memoryutils.h>
+#include <at/atcore/vfs.h>
 #include "hleprogramloader.h"
 #include "hleutils.h"
 #include "kerneldb.h"
@@ -107,7 +108,7 @@ void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IVDRandomAcc
 			sympath += kSymExts[i];
 
 			try {
-				if (VDDoesPathExist(sympath.c_str())) {
+				if (!ATVFSIsFilePath(sympath.c_str()) || VDDoesPathExist(sympath.c_str())) {
 					const uint32 target0 = 0;
 					uint32 moduleId = d->LoadSymbols(sympath.c_str(), false, &target0);
 
@@ -196,9 +197,22 @@ uint8 ATHLEProgramLoader::OnDSKINV(uint16) {
 	return OnLoadContinue(0);
 }
 
-uint8 ATHLEProgramLoader::OnLoadContinue(uint16) {
+uint8 ATHLEProgramLoader::OnLoadContinue(uint16 pc) {
 	ATCPUEmulatorMemory *mem = mpCPU->GetMemory();
 	ATKernelDatabase kdb(mem);
+
+	// check for bad init segments
+	bool kernelEnabled = mpSim->IsKernelROMLocation(0xFFFF);
+
+	if (pc) {
+		if (mpCPU->GetP() & AT6502::kFlagI)
+			ATConsoleWrite("EXE: Warning: Init segment returned with I flag set (DOS compatibility hazard).\n");
+
+		if (!kernelEnabled && mbLastKernelEnabledState)
+			ATConsoleWrite("EXE: Warning: Kernel ROM disabled by init segment.\n");
+	}
+
+	mbLastKernelEnabledState = kernelEnabled;
 
 	// set INITAD to known RTS
 	kdb.INITAD = 0xE4C0;

@@ -62,7 +62,7 @@ public:
 	VDPixmapTextureMipmapChain(const VDPixmap& src, bool wrap=false, bool cubic = false, int maxlevels = 16);
 
 	const VDPixmap *const *Mips() const { return mMipMaps.data(); }
-	int Levels() const { return mMipMaps.size(); }
+	int Levels() const { return (int)mMipMaps.size(); }
 
 protected:
 	std::vector<VDPixmapBuffer>		mBuffers;

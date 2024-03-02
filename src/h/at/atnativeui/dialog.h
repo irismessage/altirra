@@ -40,8 +40,18 @@ public:
 
 #define VDWM_APP_POSTEDCALL (WM_APP + 0x400)
 
+#ifndef IDOK
+#define IDOK                1
+#endif
+
+#ifndef IDCANCEL
+#define IDCANCEL            2
+#endif
+
 class VDDialogFrameW32 {
 public:
+	virtual ~VDDialogFrameW32() = default;
+
 	bool IsCreated() const { return mhdlg != NULL; }
 	VDZHWND GetWindowHandle() const { return mhdlg; }
 
@@ -162,6 +172,7 @@ protected:
 protected:
 	virtual VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
 	virtual void OnDataExchange(bool write);
+	virtual void OnPreLoaded();
 	virtual bool OnLoaded();
 	virtual bool OnOK();
 	virtual bool OnCancel();
@@ -175,9 +186,16 @@ protected:
 	virtual void OnDropFiles(IVDUIDropFileList *dropFileList);
 	virtual void OnHScroll(uint32 id, int code);
 	virtual void OnVScroll(uint32 id, int code);
+	virtual void OnMouseMove(int x, int y);
+	virtual void OnMouseDownL(int x, int y);
+	virtual void OnMouseUpL(int x, int y);
+	virtual void OnCaptureLost();
 	virtual void OnHelp();
 	virtual void OnContextMenu(uint32 id, int x, int y);
 	virtual bool PreNCDestroy();
+
+	void SetCapture();
+	void ReleaseCapture();
 
 	bool	mbValidationFailed;
 	bool	mbIsModal;
@@ -194,6 +212,9 @@ private:
 	const char *mpDialogResourceName;
 	uint32	mFailedId;
 	VDStringW mFailedMsg;
+
+	VDGUIHandle mhPrevProgressParent = nullptr;
+	bool mbProgressParentHooked = false;
 
 	VDCriticalSection mMutex;
 	std::list<vdfunction<void()>> mPostedCalls;
@@ -268,6 +289,17 @@ protected:
 
 	typedef vdfastvector<ControlEntry> Controls;
 	Controls mControls;
+};
+
+class VDResizableDialogFrameW32 : public VDDialogFrameW32 {
+protected:
+	VDResizableDialogFrameW32(uint32 dlgid);
+
+	void OnPreLoaded() override;
+	bool OnErase(VDZHDC hdc) override;
+	void OnSize() override;
+
+	VDDialogResizerW32 mResizer;
 };
 
 #endif

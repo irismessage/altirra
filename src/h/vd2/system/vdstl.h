@@ -39,21 +39,6 @@
 #include <vd2/system/memory.h>
 
 ///////////////////////////////////////////////////////////////////////////
-//
-//	glue
-//
-///////////////////////////////////////////////////////////////////////////
-
-template<class Iterator, class T>
-struct vdreverse_iterator {
-#if defined(VD_COMPILER_MSVC) && (VD_COMPILER_MSVC < 1310 || (defined(VD_COMPILER_MSVC_VC8_PSDK) || defined(VD_COMPILER_MSVC_VC8_DDK)))
-	typedef std::reverse_iterator<Iterator, T> type;
-#else
-	typedef std::reverse_iterator<Iterator> type;
-#endif
-};
-
-///////////////////////////////////////////////////////////////////////////
 
 struct vdfalse_type { };
 struct vdtrue_type  { };
@@ -296,8 +281,8 @@ public:
 	typedef	ptrdiff_t							difference_type;
 	typedef	pointer								iterator;
 	typedef	const_pointer						const_iterator;
-	typedef typename vdreverse_iterator<iterator, T>::type			reverse_iterator;
-	typedef typename vdreverse_iterator<const_iterator, const T>::type	const_reverse_iterator;
+	typedef std::reverse_iterator<iterator>			reverse_iterator;
+	typedef std::reverse_iterator<const_iterator>	const_reverse_iterator;
 
 	vdblock(const A& alloc = A()) : A(alloc), mpBlock(NULL), mSize(0) {}
 	vdblock(size_type s, const A& alloc = A()) : A(alloc), mpBlock(A::allocate(s, 0)), mSize(s) {}
@@ -582,8 +567,8 @@ public:
 	typedef	const T*&						const_reference;
 	typedef	vdlist_iterator<T, T>						iterator;
 	typedef vdlist_iterator<const T, T>					const_iterator;
-	typedef typename vdreverse_iterator<iterator, T>::type			reverse_iterator;
-	typedef typename vdreverse_iterator<const_iterator, const T>::type	const_reverse_iterator;
+	typedef std::reverse_iterator<iterator>			reverse_iterator;
+	typedef std::reverse_iterator<const_iterator>	const_reverse_iterator;
 
 	vdlist() {
 		mAnchor.mListNodePrev	= &mAnchor;
@@ -792,8 +777,8 @@ public:
 	typedef	ptrdiff_t			difference_type;
 	typedef	pointer				iterator;
 	typedef const_pointer		const_iterator;
-	typedef typename vdreverse_iterator<iterator, T>::type			reverse_iterator;
-	typedef typename vdreverse_iterator<const_iterator, const T>::type	const_reverse_iterator;
+	typedef std::reverse_iterator<iterator>		reverse_iterator;
+	typedef std::reverse_iterator<const_iterator>	const_reverse_iterator;
 
 	VDTINLINE vdspan();
 
@@ -836,18 +821,18 @@ protected:
 #ifdef VD_ACCELERATE_TEMPLATES
 	#pragma warning(push)
 	#pragma warning(disable: 4231)		//  warning C4231: nonstandard extension used : 'extern' before template explicit instantiation
-	VDTEXTERN template vdspan<char>;
-	VDTEXTERN template vdspan<uint8>;
-	VDTEXTERN template vdspan<uint16>;
-	VDTEXTERN template vdspan<uint32>;
-	VDTEXTERN template vdspan<uint64>;
-	VDTEXTERN template vdspan<sint8>;
-	VDTEXTERN template vdspan<sint16>;
-	VDTEXTERN template vdspan<sint32>;
-	VDTEXTERN template vdspan<sint64>;
-	VDTEXTERN template vdspan<float>;
-	VDTEXTERN template vdspan<double>;
-	VDTEXTERN template vdspan<wchar_t>;
+	VDTEXTERN template class vdspan<char>;
+	VDTEXTERN template class vdspan<uint8>;
+	VDTEXTERN template class vdspan<uint16>;
+	VDTEXTERN template class vdspan<uint32>;
+	VDTEXTERN template class vdspan<uint64>;
+	VDTEXTERN template class vdspan<sint8>;
+	VDTEXTERN template class vdspan<sint16>;
+	VDTEXTERN template class vdspan<sint32>;
+	VDTEXTERN template class vdspan<sint64>;
+	VDTEXTERN template class vdspan<float>;
+	VDTEXTERN template class vdspan<double>;
+	VDTEXTERN template class vdspan<wchar_t>;
 	#pragma warning(pop)
 #endif
 
@@ -931,9 +916,29 @@ public:
 		return mpBegin + offset;
 	}
 
+	void assign(std::initializer_list<T> ilist) {
+		assign(ilist.begin(), ilist.end());
+	}
+
 	void assign(const T *p1, const T *p2) {
-		resize(p2 - p1);
+		resize((size_type)(p2 - p1));
 		memcpy(mpBegin, p1, (char *)p2 - (char *)p1);
+	}
+
+	template<typename RandomAccessIterator, typename =
+		std::enable_if<
+			std::is_same<typename std::iterator_traits<RandomAccessIterator>::iterator_category, std::random_access_iterator_tag>::value
+			&& !std::is_pointer<RandomAccessIterator>::value
+		>::type
+	>
+	void assign(RandomAccessIterator it1, RandomAccessIterator it2) {
+		resize((size_type)(it2 - it1));
+
+		pointer dst = mpBegin;
+		while(it1 != it2) {
+			*dst++ = *it1;
+			++it1;
+		}
 	}
 
 	void clear() {
@@ -986,7 +991,7 @@ public:
 
 		if ((char *)m.eos - (char *)mpEnd < bytesToInsert) {
 			difference_type delta = it - mpBegin;
-			_reserve_always_add(bytesToInsert);
+			_reserve_always_add(n);
 			it = mpBegin + delta;
 		}
 
@@ -1177,10 +1182,11 @@ public:
 		x.m.eos = nullptr;
 	}
 
-	vdfastvector(const value_type *p, const value_type *q) {
+	template<typename InputIterator, typename = std::enable_if<!std::is_integral<InputIterator>::value>::type>
+	vdfastvector(InputIterator it1, InputIterator it2) {
 		m.eos = NULL;
 
-		this->assign(p, q);
+		this->assign(it1, it2);
 	}
 
 	vdfastvector(const std::initializer_list<T>& ilist) {
@@ -1476,8 +1482,8 @@ public:
 	typedef	ptrdiff_t			difference_type;
 	typedef	vdfastdeque_iterator<T, T>			iterator;
 	typedef vdfastdeque_iterator<const T, T>	const_iterator;
-	typedef typename vdreverse_iterator<iterator, T>::type			reverse_iterator;
-	typedef typename vdreverse_iterator<const_iterator, const T>::type	const_reverse_iterator;
+	typedef std::reverse_iterator<iterator>			reverse_iterator;
+	typedef std::reverse_iterator<const_iterator>	const_reverse_iterator;
 
 	vdfastdeque();
 	~vdfastdeque();

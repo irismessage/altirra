@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
@@ -474,7 +474,7 @@ public:
 	void OnCIOAbortAsync() override;
 
 public:
-	void InitIndicators(IATUIRenderer *r) override;
+	void InitIndicators(IATDeviceIndicatorManager *r) override;
 
 protected:
 	uint8 ReadFilename(uint16 bufadr, bool allowDir, bool allowWild);
@@ -498,7 +498,7 @@ protected:
 	bool		mbFakeDisk;
 
 	IATDeviceCIOManager *mpCIOMgr;
-	IATUIRenderer	*mpUIRenderer;
+	IATDeviceIndicatorManager	*mpUIRenderer;
 
 	char		mFilename[128];
 	uint32		mFilenameEnd;
@@ -760,14 +760,14 @@ sint32 ATHostDeviceEmulator::OnCIOOpen(int channel, uint8 deviceNo, uint8 mode, 
 				const char *fn = translatedName.c_str();
 				const char *ext = VDFileSplitExt(fn);
 
-				int flen = ext - fn;
+				int flen = (int)(ext - fn);
 				if (flen > 8)
 					flen = 8;
 
 				if (*ext == '.')
 					++ext;
 
-				int elen = strlen(ext);
+				int elen = (int)strlen(ext);
 				if (elen > 3)
 					elen = 3;
 
@@ -1317,7 +1317,7 @@ sint32 ATHostDeviceEmulator::OnCIOSpecial(int channel, uint8 deviceNo, uint8 com
 void ATHostDeviceEmulator::OnCIOAbortAsync() {
 }
 
-void ATHostDeviceEmulator::InitIndicators(IATUIRenderer *r) {
+void ATHostDeviceEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
 }
 

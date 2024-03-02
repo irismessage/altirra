@@ -129,6 +129,7 @@ public:
 	uint8 ReadUint8();
 	uint16 ReadUint16();
 	uint32 ReadUint32();
+	uint64 ReadUint64();
 	void ReadString(VDStringW& str);
 
 	template<class T>
@@ -158,8 +159,8 @@ protected:
 
 ///////////////////////////////////////////////////////////////////////////
 class ATSaveStateWriter {
-	ATSaveStateWriter(const ATSaveStateWriter&);
-	ATSaveStateWriter& operator=(const ATSaveStateWriter&);
+	ATSaveStateWriter(const ATSaveStateWriter&) = delete;
+	ATSaveStateWriter& operator=(const ATSaveStateWriter&) = delete;
 public:
 	typedef vdfastvector<uint8> Storage;
 
@@ -191,6 +192,7 @@ public:
 	void WriteUint8(uint8 v);
 	void WriteUint16(uint16 v);
 	void WriteUint32(uint32 v);
+	void WriteUint64(uint64 v);
 	void WriteString(const wchar_t *s);
 
 	template<class T>

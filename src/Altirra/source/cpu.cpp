@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <at/atdebugger/target.h>
 #include "cpu.h"
@@ -108,7 +108,6 @@ void ATCPUEmulator::ColdReset() {
 
 void ATCPUEmulator::WarmReset() {
 	mpNextState = mStates;
-	mIFlagSetCycle = mpCallbacks->CPUGetUnhaltedCycle();
 	mIntFlags = 0;
 	mbNMIForced = false;
 	mbUnusedCycle = false;
@@ -332,7 +331,7 @@ void ATCPUEmulator::SetStepRange(uint32 regionStart, uint32 regionSize, ATCPUSte
 	mpStepCallbackData = stepcbdata;
 	mStepStackLevel = -1;
 
-	mDebugFlags &= kDebugFlag_StepNMI;
+	mDebugFlags &= ~kDebugFlag_StepNMI;
 	mDebugFlags |= kDebugFlag_Step;
 
 	if (mbStepOver != stepOver) {
@@ -470,6 +469,10 @@ void ATCPUEmulator::SetNMIBlockingEnabled(bool enable) {
 	}
 }
 
+uint32 ATCPUEmulator::GetBreakpointCount() const {
+	return (mDebugFlags & kDebugFlag_BP) && mBreakpointCount > 0;
+}
+
 bool ATCPUEmulator::IsBreakpointSet(uint16 addr) const {
 	return 0 != (mInsnFlags[addr] & kInsnFlagBreakPt);
 }
@@ -490,13 +493,6 @@ void ATCPUEmulator::ClearBreakpoint(uint16 addr) {
 		if (!--mBreakpointCount)
 			mDebugFlags &= ~kDebugFlag_BP;
 	}
-}
-
-void ATCPUEmulator::ClearAllBreakpoints() {
-	for(uint32 i=0; i<65536; ++i)
-		mInsnFlags[i] &= ~kInsnFlagBreakPt;
-
-	mBreakpointCount = 0;
 }
 
 void ATCPUEmulator::ResetAllPaths() {
@@ -774,9 +770,6 @@ void ATCPUEmulator::PeriodicCleanup() {
 	
 	if (((t - mIRQAcknowledgeTime) >> 30) == 2)
 		mIRQAcknowledgeTime += 0x40000000;
-
-	if (((t - mIFlagSetCycle) >> 30) == 2)
-		mIFlagSetCycle += 0x40000000;
 }
 
 int ATCPUEmulator::Advance() {
@@ -834,7 +827,7 @@ uint8 ATCPUEmulator::ProcessDebugging() {
 	uint8 iflags = mInsnFlags[mPC];
 
 	if (iflags & kInsnFlagBreakPt) {
-		ATSimulatorEvent event = (ATSimulatorEvent)mpBkptManager->TestPCBreakpoint(mPC);
+		ATSimulatorEvent event = (ATSimulatorEvent)mpBkptManager->TestPCBreakpoint((uint32)mPC + ((uint32)mK << 16));
 		if (event) {
 			mbUnusedCycle = true;
 			RedecodeInsnWithoutBreak();
@@ -943,30 +936,34 @@ bool ATCPUEmulator::ProcessInterrupts() {
 
 	if (mIntFlags & kIntFlag_IRQReleasePending) {
 		mIntFlags &= ~kIntFlag_IRQReleasePending;
-	} else if ((mIntFlags & (kIntFlag_IRQActive | kIntFlag_IRQPending)) && (!(mP & kFlagI) || (!T_Accel && mIFlagSetCycle == mpCallbacks->CPUGetUnhaltedCycle() - 1))) {
-		if (mNMIIgnoreUnhaltedCycle == mIRQAssertTime + 1) {
-			++mIRQAssertTime;
-		} else {
-			switch(mIntFlags & (kIntFlag_IRQPending | kIntFlag_IRQActive)) {
-				case kIntFlag_IRQPending:
-				case kIntFlag_IRQActive:
-					UpdatePendingIRQState();
-					break;
-			}
+	} else if (mIntFlags & (kIntFlag_IRQActive | kIntFlag_IRQPending)) {
+		if (!(mP & kFlagI) || (mIntFlags & kIntFlag_IRQSetPending)) {
+			if (!T_Accel && mNMIIgnoreUnhaltedCycle == mIRQAssertTime + 1) {
+				++mIRQAssertTime;
+			} else {
+				switch(mIntFlags & (kIntFlag_IRQPending | kIntFlag_IRQActive)) {
+					case kIntFlag_IRQPending:
+					case kIntFlag_IRQActive:
+						UpdatePendingIRQState();
+						break;
+				}
 
-			// If an IRQ is pending, check if it was just acknowledged this cycle. If so,
-			// bypass it as it's too late to interrupt this instruction.
-			if ((mIntFlags & kIntFlag_IRQPending) && mpCallbacks->CPUGetUnhaltedCycle() - mIRQAcknowledgeTime > 0) {
-				if (mbTrace)
-					ATConsoleWrite("CPU: Jumping to IRQ vector\n");
+				// If an IRQ is pending, check if it was just acknowledged this cycle. If so,
+				// bypass it as it's too late to interrupt this instruction.
+				if ((mIntFlags & kIntFlag_IRQPending) && mpCallbacks->CPUGetUnhaltedCycle() - mIRQAcknowledgeTime > 0) {
+					if (mbTrace)
+						ATConsoleWrite("CPU: Jumping to IRQ vector\n");
 
-				mbMarkHistoryIRQ = true;
+					mbMarkHistoryIRQ = true;
 
-				mpNextState = mpDecodePtrIRQ;
-				return true;
+					mpNextState = mpDecodePtrIRQ;
+					return true;
+				}
 			}
 		}
 	}
+
+	mIntFlags &= ~kIntFlag_IRQSetPending;
 
 	return false;
 }
@@ -1207,6 +1204,10 @@ void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
 	*mpDstState++ = kStatePushPCH;
 	*mpDstState++ = kStatePushPCL;
 	*mpDstState++ = kStatePtoD_B0;
+
+	if (mCPUMode == kATCPUMode_65C02)
+		*mpDstState++ = kStateCLD;
+
 	*mpDstState++ = kStatePush;
 
 	if (mpVerifier)
@@ -1234,6 +1235,9 @@ void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
 	*mpDstState++ = kStatePushPCH;
 	*mpDstState++ = kStatePushPCL;
 	*mpDstState++ = kStatePtoD_B0;
+
+	if (mCPUMode == kATCPUMode_65C02)
+		*mpDstState++ = kStateCLD;
 
 	if (mCPUMode == kATCPUMode_6502 && mbAllowBlockedNMIs)
 		*mpDstState++ = kStateCheckNMIBlocked;
@@ -1327,10 +1331,10 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 			*mpDstState++ = kStatePushNative;
 		}
 
+		*mpDstState++ = kState816_SetI_ClearD;
+
 		if (mpVerifier)
 			*mpDstState++ = kStateVerifyNMIEntry;
-
-		*mpDstState++ = kStateSEI;
 
 		if (emulationMode)
 			*mpDstState++ = kStateNMIVecToPC;
@@ -1367,10 +1371,10 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 			*mpDstState++ = kStatePushNative;
 		}
 
+		*mpDstState++ = kState816_SetI_ClearD;
+
 		if (mpVerifier)
 			*mpDstState++ = kStateVerifyIRQEntry;
-
-		*mpDstState++ = kStateSEI;
 
 		if (emulationMode)
 			*mpDstState++ = kStateIRQVecToPC;

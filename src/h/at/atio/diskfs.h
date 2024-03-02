@@ -37,7 +37,7 @@ struct ATDiskFSEntryInfo {
 	VDStringA mFileName;
 	uint32	mSectors;
 	uint32	mBytes;
-	uintptr	mKey;
+	uint32	mKey;
 	bool	mbIsDirectory;
 	bool	mbDateValid;
 	VDExpandedDate	mDate;
@@ -47,6 +47,7 @@ struct ATDiskFSValidationReport {
 	bool mbBitmapIncorrect;
 	bool mbBrokenFiles;
 	bool mbOpenWriteFiles;
+	bool mbMetadataCorruption;
 };
 
 enum ATDiskFSError {
@@ -65,7 +66,8 @@ enum ATDiskFSError {
 	kATDiskFSError_UnsupportedCompressionMode,
 	kATDiskFSError_DecompressionError,
 	kATDiskFSError_CRCError,
-	kATDiskFSError_NotSupported
+	kATDiskFSError_NotSupported,
+	kATDiskFSError_MediaNotSupported,
 };
 
 class ATDiskFSException : public MyError {
@@ -86,28 +88,30 @@ public:
 
 	virtual bool IsReadOnly() = 0;
 	virtual void SetReadOnly(bool readOnly) = 0;
+	virtual void SetAllowExtend(bool allow) = 0;
 
 	virtual bool Validate(ATDiskFSValidationReport& report) = 0;
 	virtual void Flush() = 0;
 
-	virtual uintptr FindFirst(uintptr key, ATDiskFSEntryInfo& info) = 0;
+	virtual uintptr FindFirst(uint32 key, ATDiskFSEntryInfo& info) = 0;
 	virtual bool FindNext(uintptr searchKey, ATDiskFSEntryInfo& info) = 0;
 	virtual void FindEnd(uintptr searchKey) = 0;
 
-	virtual void GetFileInfo(uintptr key, ATDiskFSEntryInfo& info) = 0;
-	virtual uintptr GetParentDirectory(uintptr dirKey) = 0;
+	virtual void GetFileInfo(uint32 key, ATDiskFSEntryInfo& info) = 0;
+	virtual uint32 GetParentDirectory(uint32 dirKey) = 0;
 
-	virtual uintptr LookupFile(uintptr parentKey, const char *filename) = 0;
+	virtual uint32 LookupFile(uint32 parentKey, const char *filename) = 0;
 
-	virtual void DeleteFile(uintptr key) = 0;
-	virtual void ReadFile(uintptr key, vdfastvector<uint8>& dst) = 0;
-	virtual uintptr WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len) = 0;
-	virtual void RenameFile(uintptr key, const char *newFileName) = 0;
-	virtual void SetFileTimestamp(uintptr key, const VDExpandedDate& date) = 0;
+	virtual void DeleteFile(uint32 key) = 0;
+	virtual void ReadFile(uint32 key, vdfastvector<uint8>& dst) = 0;
+	virtual uint32 WriteFile(uint32 parentKey, const char *filename, const void *src, uint32 len) = 0;
+	virtual void RenameFile(uint32 key, const char *newFileName) = 0;
+	virtual void SetFileTimestamp(uint32 key, const VDExpandedDate& date) = 0;
 
-	virtual void CreateDir(uintptr parentKey, const char *filename) = 0;
+	virtual uint32 CreateDir(uint32 parentKey, const char *filename) = 0;
 };
 
+IATDiskFS *ATDiskFormatImageDOS1(IATDiskImage *image);
 IATDiskFS *ATDiskFormatImageDOS2(IATDiskImage *image);
 IATDiskFS *ATDiskFormatImageDOS3(IATDiskImage *image);
 IATDiskFS *ATDiskFormatImageMyDOS(IATDiskImage *image);

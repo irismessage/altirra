@@ -22,35 +22,19 @@
 	#pragma once
 #endif
 
+#include <at/atcore/deferredevent.h>
 #include <at/atcore/scheduler.h>
 #include "pokey.h"
 #include "audiosource.h"
 
 class VDFile;
 
-class ATBiquadFilter {
-public:
-	void Init(float fc);
-	void Reset();
-
-	float Advance(float x);
-
-protected:
-	float a0;
-	float a1;
-	float a2;
-	float b1;
-	float b2;
-	float w1;
-	float w2;
-};
-
 class ATCPUEmulatorMemory;
 class IVDRandomAccessStream;
 class IATAudioOutput;
 class IATCassetteImage;
 
-class ATCassetteEmulator : public IATSchedulerCallback, public IATPokeyCassetteDevice, public IATSyncAudioSource {
+class ATCassetteEmulator final : public IATSchedulerCallback, public IATPokeyCassetteDevice, public IATSyncAudioSource {
 public:
 	ATCassetteEmulator();
 	~ATCassetteEmulator();
@@ -62,17 +46,21 @@ public:
 	uint32 GetSampleLen() const { return mLength; }
 	uint32 GetSamplePos() const { return mPosition; }
 
-	void Init(ATPokeyEmulator *pokey, ATScheduler *sched, IATAudioOutput *audioOut);
+	void Init(ATPokeyEmulator *pokey, ATScheduler *sched, ATScheduler *slowsched, IATAudioOutput *audioOut, ATDeferredEventManager *defmgr);
 	void Shutdown();
 	void ColdReset();
 
-	bool IsLoaded() const { return mLength || mAudioLength; }
+	bool IsLoaded() const { return mpImage != nullptr; }
+	bool IsStopped() const { return !mbPlayEnable && !mbRecordEnable; }
 	bool IsPlayEnabled() const { return mbPlayEnable; }
+	bool IsRecordEnabled() const { return mbRecordEnable; }
+	bool IsPaused() const { return mbPaused; }
 	bool IsMotorEnabled() const { return mbMotorEnable; }
-	bool IsMotorRunning() const { return mpPlayEvent != NULL; }
+	bool IsMotorRunning() const { return mbMotorRunning; }
 	bool IsLogDataEnabled() const { return mbLogData; }
 	bool IsLoadDataAsAudioEnabled() const { return mbLoadDataAsAudio; }
 
+	void LoadNew();
 	void Load(const wchar_t *fn);
 	void Load(IVDRandomAccessStream& stream);
 	void Unload();
@@ -80,9 +68,12 @@ public:
 	void SetLogDataEnable(bool enable);
 	void SetLoadDataAsAudioEnable(bool enable);
 	void SetMotorEnable(bool enable);
+	void SetRandomizedStartEnabled(bool enable);
 
 	void Stop();
 	void Play();
+	void Record();
+	void SetPaused(bool paused);
 	void RewindToStart();
 
 	void SeekToTime(float seconds);
@@ -90,13 +81,22 @@ public:
 	void SkipForward(float seconds);
 
 	uint8 ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemory *mpMem);
+	uint8 WriteBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemory *mpMem);
 
 	void OnScheduledEvent(uint32 id);
 
+public:
+	ATDeferredEvent PositionChanged;
+	ATDeferredEvent PlayStateChanged;
+	ATDeferredEvent TapeChanging;
+	ATDeferredEvent TapeChanged;
+	ATDeferredEvent TapePeaksUpdated;
+
 protected:
-	void PokeyChangeSerialRate(uint32 divisor);
-	void PokeyResetSerialInput();
-	bool PokeyReadSerialInput();
+	void PokeyChangeSerialRate(uint32 divisor) override;
+	void PokeyResetSerialInput() override;
+	void PokeyBeginCassetteData(uint8 skctl) override;
+	bool PokeyWriteCassetteData(uint8 c, uint32 cyclesPerBit) override;
 
 protected:
 	bool SupportsStereoMixing() const override { return false; }
@@ -104,6 +104,7 @@ protected:
 	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 
 protected:
+	void UnloadInternal();
 	void UpdateMotorState();
 
 	enum BitResult {
@@ -114,43 +115,49 @@ protected:
 
 	BitResult ProcessBit();
 
-	void ParseWAVE(IVDRandomAccessStream& stream);
-	void ParseCAS(IVDRandomAccessStream& stream);
-
-	void ConvertDataToAudio();
-
 	void StartAudio();
 	void StopAudio();
 	void SeekAudio(uint32 pos);
+	
+	void FlushRecording(uint32 t, bool force);
+	void UpdateRecordingPosition();
 
-	uint32	mAudioPosition;
-	uint32	mAudioLength;
-	uint32	mPosition;
-	uint32	mLength;
+	uint32	mAudioPosition = 0;
+	uint32	mAudioLength = 0;
+	uint32	mPosition = 0;
+	uint32	mLength = 0;
 
-	bool	mbLogData;
-	bool	mbLoadDataAsAudio;
-	bool	mbMotorEnable;
-	bool	mbPlayEnable;
-	bool	mbDataLineState;
-	bool	mbOutputBit;
-	int		mSIOPhase;
-	uint8	mDataByte;
-	uint8	mThresholdZeroBit;
-	uint8	mThresholdOneBit;
+	bool	mbLogData = false;
+	bool	mbLoadDataAsAudio = false;
+	bool	mbMotorEnable = false;
+	bool	mbMotorRunning = false;
+	bool	mbPlayEnable = false;
+	bool	mbRecordEnable = false;
+	bool	mbPaused = false;
+	bool	mbDataLineState = false;
+	bool	mbOutputBit = false;
+	int		mSIOPhase = 0;
+	uint8	mDataByte = 0;
+	uint8	mThresholdZeroBit = 0;
+	uint8	mThresholdOneBit = 0;
 
-	bool	mbDataBitEdge;		// True if we are waiting for the edge of a data bit, false if we are sampling.
-	int		mDataBitCounter;
-	int		mDataBitHalfPeriod;
-	uint32	mAveragingPeriod;
+	bool	mbDataBitEdge = false;		// True if we are waiting for the edge of a data bit, false if we are sampling.
+	int		mDataBitCounter = 0;
+	int		mDataBitHalfPeriod = 0;
+	uint32	mAveragingPeriod = 0;
 
-	ATEvent *mpPlayEvent;
+	bool	mbRandomizedStartEnabled = false;
 
-	ATPokeyEmulator *mpPokey;
-	ATScheduler *mpScheduler;
-	IATAudioOutput *mpAudioOutput;
+	ATEvent *mpPlayEvent = nullptr;
+	ATEvent *mpRecordEvent = nullptr;
+	uint32	mRecordLastTime = 0;
 
-	IATCassetteImage *mpImage;
+	ATPokeyEmulator *mpPokey = nullptr;
+	ATScheduler *mpScheduler = nullptr;
+	ATScheduler *mpSlowScheduler = nullptr;
+	IATAudioOutput *mpAudioOutput = nullptr;
+
+	IATCassetteImage *mpImage = nullptr;
 
 	struct AudioEvent {
 		uint32	mStartTime;
@@ -160,7 +167,7 @@ protected:
 
 	typedef vdfastvector<AudioEvent> AudioEvents;
 	AudioEvents mAudioEvents;
-	bool mbAudioEventOpen;
+	bool mbAudioEventOpen = false;
 };
 
 #endif

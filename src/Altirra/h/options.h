@@ -26,6 +26,8 @@ enum ATErrorMode {
 	kATErrorModeCount
 };
 
+enum ATMediaWriteMode : uint8;
+
 struct ATOptions {
 	bool mbDirty;
 	bool mbDisplayDDraw;
@@ -34,6 +36,7 @@ struct ATOptions {
 	bool mbDisplayOpenGL;
 
 	bool mbSingleInstance;
+	bool mbPauseDuringMenu;
 	
 	sint32 mThemeScale;
 
@@ -45,6 +48,8 @@ struct ATOptions {
 
 	VDStringA	mSICFlashChip;
 	VDStringA	mU1MBFlashChip;
+
+	ATMediaWriteMode mDefaultWriteMode;
 
 	ATOptions();
 };

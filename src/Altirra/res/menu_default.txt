@@ -29,9 +29,12 @@
 		Drive 8%			{Disk.Detach8}
 	---
 	Cassette
+		Tape Control...		{Cassette.TapeControlDialog}
+		---
+		New Tape			{Cassette.LoadNew}
 		&Load...			{Cassette.Load}
 		&Unload				{Cassette.Unload}
-		Tape Control...		{Cassette.TapeControlDialog}
+		Save...				{Cassette.Save}
 	---
 	Load State...			{File.LoadState}
 	Save State...			{File.SaveState}
@@ -121,6 +124,11 @@
 	Paste Text					{Edit.PasteText}
 
 &System
+	&Profiles					{$profiles}
+		&Edit Profiles...		{System.EditProfilesDialog}
+		Temporary Profile		{System.ToggleTemporaryProfile}
+		---
+	---
 	Warm Reset					{System.WarmReset}
 	Cold Reset					{System.ColdReset}
 	Pause						{System.TogglePause}
@@ -146,7 +154,7 @@
 			Autoselect				{System.BasicDefault}
 			---
 		---
-		BASIC (Boot Without Option Key)	{System.ToggleBASIC}
+		Internal BASIC (Boot Without Option Key)	{System.ToggleBASIC}
 		---
 		Firmware Images...		{System.ROMImagesDialog}
 	&Acceleration
@@ -160,6 +168,10 @@
 		SIO Burst Transfers
 			Disk (D:)				{Disk.ToggleBurstTransfers}
 			Other (PRT:)			{Devices.ToggleSIOBurstTransfers}
+		SIO Acceleration Mode
+			SIOV Patch Only			{Devices.SIOAccelModePatch}
+			PBI Device Only (ID 7)	{Devices.SIOAccelModePBI}
+			Both SIOV+PBI			{Devices.SIOAccelModeBoth}
 		---
 		&H: (Host device CIO)		{Devices.ToggleCIOPatchH}
 		&P: (Printer CIO)			{Devices.ToggleCIOPatchP}
@@ -184,6 +196,7 @@
 		32K (800)					{System.MemoryMode32K}
 		40K (800)					{System.MemoryMode40K}
 		52K (800)					{System.MemoryMode52K}
+		256K (Rambo)				{System.MemoryMode256K}
 		---
 		Power-up &Pattern
 			&Cleared				{System.MemoryClearZero}
@@ -250,9 +263,11 @@
 	&Cassette
 		&Auto-boot on Startup			{Cassette.ToggleAutoBoot}
 		Load &Data as Audio				{Cassette.ToggleLoadDataAsAudio}
+		&Randomize Starting Position	{Cassette.ToggleRandomizeStartPosition}
 	Audio
 		&Stereo							{Audio.ToggleStereo}
 		&Non-linear Mixing				{Audio.ToggleNonlinearMixing}
+		Se&rial Noise					{Audio.ToggleSerialNoise}
 		Audio &Monitor					{Audio.ToggleMonitor}
 		---
 		M&ute							{Audio.ToggleMute}
@@ -263,7 +278,6 @@
 		---
 		&Options...						{Audio.OptionsDialog}
 	CP&U Options...						{System.CPUOptionsDialog}
-	Ha&rd Disk...						{System.HardDiskDialog}
 	Console Switches
 		Keyboard Present (XEGS)			{System.ToggleKeyboardPresent}
 		Force Self-Test					{System.ToggleForcedSelfTest}
@@ -271,6 +285,9 @@
 		Enable Cart SDX					{Cart.ToggleSwitch}
 		BlackBox: Dump Screen			{Console.BlackBoxDumpScreen}
 		BlackBox: Menu					{Console.BlackBoxMenu}
+		IDE Plus 2.0: Switch Disks		{Console.IDEPlus2SwitchDisks}
+		IDE Plus 2.0: Write Protect		{Console.IDEPlus2WriteProtect}
+		IDE Plus 2.0: SDX Enable		{Console.IDEPlus2SDX}
 
 &Input
 	Input Mappings...					{Input.InputMappingsDialog}
@@ -348,6 +365,8 @@
 &Tools
 	&Disk Explorer...					{Tools.DiskExplorer}
 	Convert SAP to EXE...				{Tools.ConvertSAPToEXE}
+	---
+	First Time Setup...					{Tools.SetupWizard}
 	---
 	&Options...							{Tools.OptionsDialog}
 	&Keyboard Shortcuts...				{Tools.KeyboardShortcutsDialog}

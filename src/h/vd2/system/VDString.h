@@ -49,6 +49,19 @@ template<> struct VDStringPrintfCheck<> : public std::true_type {};
 
 ///////////////////////////////////////////////////////////////////////////
 
+struct VDCharMaskA {
+	explicit VDCharMaskA(const char *s) {
+		memset(flags, 0, sizeof flags);
+
+		while(const char c = *s++)
+			flags[(unsigned char)c] = true;
+	}
+
+	bool flags[256];
+};
+
+///////////////////////////////////////////////////////////////////////////
+
 class VDStringSpanA {
 public:
 	typedef char					value_type;
@@ -119,6 +132,78 @@ public:
 		return p ? (size_type)((const value_type *)p - mpBegin) : npos;
 	}
 
+	size_type find(const value_type *s, size_type pos = 0) const {
+		return find(s, pos, (size_type)strlen(s));
+	}
+
+	size_type find(const value_type *s, size_type pos, size_type count) const {
+		const size_type n = (size_type)(mpEnd - mpBegin);
+
+		if (pos <= n) {
+			size_type charsLeft = n - pos;
+
+			if (charsLeft >= count) {
+				if (!count)
+					return pos;
+
+				size_type stepsLeft = charsLeft - count;
+				const value_type *p = mpBegin + pos;
+
+				for(;;) {
+					if (p[0] == s[0] && memcmp(p, s, count*sizeof(value_type)) == 0)
+						return pos;
+
+					if (!stepsLeft)
+						break;
+
+					--stepsLeft;
+					++p;
+					++pos;
+				}
+			}
+		}
+
+		return npos;
+	}
+
+	size_type find_first_of(const value_type *charSet, size_type pos = 0) {
+		return find_first_of(VDCharMaskA(charSet), pos);
+
+	}
+	size_type find_first_of(const VDCharMaskA& charMask, size_type pos = 0) {
+		const size_type n = (size_type)(mpEnd - mpBegin);
+
+		while(pos < n) {
+			value_type c = mpBegin[pos];
+
+			if (charMask.flags[(unsigned char)c])
+				return pos;
+
+			++pos;
+		}
+
+		return npos;
+	}
+
+	size_type find_first_not_of(const value_type *charSet, size_type pos = 0) {
+		return find_first_not_of(VDCharMaskA(charSet), pos);
+
+	}
+	size_type find_first_not_of(const VDCharMaskA& charMask, size_type pos = 0) {
+		const size_type n = (size_type)(mpEnd - mpBegin);
+
+		while(pos < n) {
+			value_type c = mpBegin[pos];
+
+			if (!charMask.flags[(unsigned char)c])
+				return pos;
+
+			++pos;
+		}
+
+		return npos;
+	}
+
 	size_type find_last_of(value_type c) const {
 		const value_type *s = mpEnd;
 
@@ -169,18 +254,37 @@ public:
 	}
 
 	const VDStringSpanA trim(const value_type *s) const {
-		bool flags[256]={false};
+		return trim(VDCharMaskA(s));
+	}
 
-		while(value_type c = *s++)
-			flags[(unsigned char)c] = true;
+	const VDStringSpanA trim(const VDCharMaskA& charMask) const {
 
+		return trim_start(charMask).trim_end(charMask);
+	}
+
+	const VDStringSpanA trim_start(const value_type *s) const {
+		return trim_start(VDCharMaskA(s));
+	}
+
+	const VDStringSpanA trim_start(const VDCharMaskA& charMask) const {
 		const value_type *p = mpBegin;
 		const value_type *q = mpEnd;
 
-		while(p != q && flags[(unsigned char)*p])
+		while(p != q && charMask.flags[(unsigned char)*p])
 			++p;
 
-		while(p != q && flags[(unsigned char)q[-1]])
+		return VDStringSpanA(p, q);
+	}
+
+	const VDStringSpanA trim_end(const value_type *s) const {
+		return trim_start(VDCharMaskA(s));
+	}
+
+	const VDStringSpanA trim_end(const VDCharMaskA& charMask) const {
+		const value_type *p = mpBegin;
+		const value_type *q = mpEnd;
+
+		while(p != q && charMask.flags[(unsigned char)q[-1]])
 			--q;
 
 		return VDStringSpanA(p, q);
@@ -1198,8 +1302,14 @@ public:
 	iterator erase(iterator first, iterator last) {
 		VDASSERT(last >= first);
 
-		memmove(first, last, ((mpEnd - last) + 1)*sizeof(value_type));
-		mpEnd -= (last - first);
+		// If the string is empty and we're asked to do an empty move, we can't move
+		// the null terminator -- that'll crash. Since we're doing this comparison,
+		// might as well guard against backwards erases.
+		if (first < last) {
+			memmove(first, last, ((mpEnd - last) + 1)*sizeof(value_type));
+			mpEnd -= (last - first);
+		}
+
 		return first;
 	}
 

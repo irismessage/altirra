@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/VDDisplay/textrenderer.h>
 #include <at/atui/uiwidget.h>
 #include <at/atui/uianchor.h>

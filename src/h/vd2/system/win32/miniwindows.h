@@ -44,6 +44,7 @@
 	typedef __int64				VDZLONG_PTR;
 #endif
 
+typedef struct tagMSG	MSG;
 typedef struct HWND__	*VDZHWND;
 typedef struct HDC__	*VDZHDC;
 typedef struct HKEY__	*VDZHKEY;

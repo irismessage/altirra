@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 
 #if defined(_MSC_VER) && defined(_DEBUG)
 
@@ -379,6 +379,8 @@ void ATDumpMemoryLeaksVC() {
 
 #pragma section(".CRT$XPB",long,read)
 
-extern "C" static __declspec(allocate(".CRT$XPB")) void (__cdecl *g_leaktrap)() = ATDumpMemoryLeaksVC;
+extern "C" {
+	static __declspec(allocate(".CRT$XPB")) void (__cdecl *g_leaktrap)() = ATDumpMemoryLeaksVC;
+}
 
 #endif

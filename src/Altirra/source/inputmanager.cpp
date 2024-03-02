@@ -15,9 +15,10 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/hash.h>
+#include <vd2/system/math.h>
 #include <vd2/system/registry.h>
 #include <vd2/system/strutil.h>
 #include <vd2/Dita/accel.h>
@@ -26,18 +27,37 @@
 #include "joystick.h"
 
 namespace {
-	const int kSpeedScaleTable[11]={
-		84,
-		105,
-		131,
-		164,
-		205,
-		256,
-		320,
-		400,
-		500,
-		625,
-		781
+	// digital - controls acceleration
+	// analog - controls speed multiplier
+	// impulse - controls impulse scale
+	const float kSpeedScaleTable[16]={
+		(float)( 0* 0)/25.0f,
+		(float)( 1* 1)/25.0f,
+		(float)( 2* 2)/25.0f,
+		(float)( 3* 3)/25.0f,
+		(float)( 4* 4)/25.0f,
+		(float)( 5* 5)/25.0f,
+		(float)( 6* 6)/25.0f,
+		(float)( 7* 7)/25.0f,
+		(float)( 8* 8)/25.0f,
+		(float)( 9* 9)/25.0f,
+		(float)(10*10)/25.0f
+		// remaining 5 values are protective values
+	};
+
+	const float kAccelScaleTable[16]={
+		(float)( 0* 0)/25.0f,
+		(float)( 1* 1)/25.0f,
+		(float)( 2* 2)/25.0f,
+		(float)( 3* 3)/25.0f,
+		(float)( 4* 4)/25.0f,
+		(float)( 5* 5)/25.0f,
+		(float)( 6* 6)/25.0f,
+		(float)( 7* 7)/25.0f,
+		(float)( 8* 8)/25.0f,
+		(float)( 9* 9)/25.0f,
+		(float)(10*10)/25.0f
+		// remaining 5 values are protective values
 	};
 }
 
@@ -73,6 +93,8 @@ bool ATInputMap::UsesPhysicalPort(int portIdx) const {
 			case kATInputControllerType_Keypad:
 			case kATInputControllerType_Trackball_CX80_V1:
 			case kATInputControllerType_5200Trackball:
+			case kATInputControllerType_Driving:
+			case kATInputControllerType_Keyboard:
 				if (c.mIndex == portIdx)
 					return true;
 				break;
@@ -94,7 +116,12 @@ void ATInputMap::Clear() {
 }
 
 uint32 ATInputMap::GetControllerCount() const {
-	return mControllers.size();
+	return (uint32)mControllers.size();
+}
+
+bool ATInputMap::HasControllerType(ATInputControllerType type) const {
+	return std::find_if(mControllers.begin(), mControllers.end(),
+		[=](const Controller& c) { return c.mType == type; }) != mControllers.end();
 }
 
 const ATInputMap::Controller& ATInputMap::GetController(uint32 i) const {
@@ -102,7 +129,7 @@ const ATInputMap::Controller& ATInputMap::GetController(uint32 i) const {
 }
 
 uint32 ATInputMap::AddController(ATInputControllerType type, uint32 index) {
-	uint32 cindex = mControllers.size();
+	uint32 cindex = (uint32)mControllers.size();
 	Controller& c = mControllers.push_back();
 
 	c.mType = type;
@@ -111,8 +138,12 @@ uint32 ATInputMap::AddController(ATInputControllerType type, uint32 index) {
 	return cindex;
 }
 
+void ATInputMap::AddControllers(std::initializer_list<Controller> controllers) {
+	mControllers.insert(mControllers.end(), controllers.begin(), controllers.end());
+}
+
 uint32 ATInputMap::GetMappingCount() const {
-	return mMappings.size();
+	return (uint32)mMappings.size();
 }
 
 const ATInputMap::Mapping& ATInputMap::GetMapping(uint32 i) const {
@@ -125,6 +156,10 @@ void ATInputMap::AddMapping(uint32 inputCode, uint32 controllerId, uint32 code) 
 	m.mInputCode = inputCode;
 	m.mControllerId = controllerId;
 	m.mCode = code;
+}
+
+void ATInputMap::AddMappings(std::initializer_list<Mapping> mappings) {
+	mMappings.insert(mMappings.end(), mappings.begin(), mappings.end());
 }
 
 bool ATInputMap::Load(VDRegistryKey& key, const char *name) {
@@ -193,11 +228,11 @@ void ATInputMap::Save(VDRegistryKey& key, const char *name) {
 
 	heap.push_back(2);
 	heap.push_back(mName.size());
-	heap.push_back(mControllers.size());
-	heap.push_back(mMappings.size());
+	heap.push_back((uint32)mControllers.size());
+	heap.push_back((uint32)mMappings.size());
 	heap.push_back(mSpecificInputUnit);
 
-	uint32 offset = heap.size();
+	uint32 offset = (uint32)heap.size();
 	heap.resize(heap.size() + ((mName.size() + 1) >> 1), 0);
 
 	mName.copy((wchar_t *)&heap[offset], mName.size());
@@ -217,7 +252,7 @@ void ATInputMap::Save(VDRegistryKey& key, const char *name) {
 		heap.push_back(m.mCode);
 	}
 
-	key.setBinary(name, (const char *)heap.data(), heap.size() * 4);
+	key.setBinary(name, (const char *)heap.data(), (int)heap.size() * 4);
 }
 
 ///////////////////////////////////////////////////////////////////////
@@ -230,6 +265,7 @@ ATInputManager::ATInputManager()
 	, mpCB(NULL)
 	, m5200ControllerIndex(0)
 	, mb5200PotsEnabled(true)
+	, mb5200Mode(false)
 	, mbMouseMapped(false)
 	, mbMouseAbsMode(false)
 	, mbMouseActiveTarget(false)
@@ -257,19 +293,54 @@ void ATInputManager::Init(ATScheduler *fastSched, ATScheduler *slowSched, ATPort
 	mpFastScheduler = fastSched;
 	mpPorts[0] = porta;
 	mpPorts[1] = portb;
-
-	ResetToDefaults();
 }
 
 void ATInputManager::Shutdown() {
 	RemoveAllInputMaps();
 }
 
+void ATInputManager::Set5200Mode(bool is5200) {
+	if (mb5200Mode != is5200) {
+		mb5200Mode = is5200;
+
+		RebuildMappings();
+	}
+}
+
 void ATInputManager::ResetToDefaults() {
 	RemoveAllInputMaps();
 
-	for(PresetMaps::const_iterator it(mPresetMaps.begin()), itEnd(mPresetMaps.end()); it != itEnd; ++it) {
-		AddInputMap(*it);
+	for(ATInputMap *map : mPresetMaps) {
+		const uint32 ccnt = map->GetControllerCount();
+		for(uint32 i=0; i<ccnt; ++i) {
+			const auto& controller = map->GetController(i);
+
+			switch(controller.mType) {
+				case kATInputControllerType_5200Controller:
+				case kATInputControllerType_5200Trackball:
+					if (!mb5200Mode)
+						goto reject;
+					break;
+
+				case kATInputControllerType_Joystick:
+				case kATInputControllerType_Paddle:
+				case kATInputControllerType_STMouse:
+				case kATInputControllerType_Console:
+				case kATInputControllerType_LightPen:
+				case kATInputControllerType_Tablet:
+				case kATInputControllerType_KoalaPad:
+				case kATInputControllerType_AmigaMouse:
+				case kATInputControllerType_Keypad:
+				case kATInputControllerType_Trackball_CX80_V1:
+					if (mb5200Mode)
+						goto reject;
+					break;
+			}
+		}
+
+		AddInputMap(vdmakerefptr(new ATInputMap(*map)));
+reject:
+		;
 	}
 }
 
@@ -302,7 +373,7 @@ void ATInputManager::Update5200Controller() {
 	}
 }
 
-void ATInputManager::Poll() {
+void ATInputManager::Poll(float dt) {
 	uint32 avgres = ((mMouseAvgQueue[0] + mMouseAvgQueue[1] + mMouseAvgQueue[2] + mMouseAvgQueue[3] + 0x00020002) & 0xfffcfffc) >> 2;
 	int avgx = (avgres & 0xffff) - 0x2000;
 	int avgy = (avgres >> 16) - 0x2000;
@@ -350,25 +421,50 @@ void ATInputManager::Poll() {
 		switch(mode) {
 			case kATInputTriggerMode_AutoFire:
 			case kATInputTriggerMode_ToggleAF:
-				if (++mapping.mAccel >= mapping.mDamping) {
-					mapping.mAccel = 0;
+				if (++mapping.mAutoCounter >= mapping.mAutoPeriod) {
+					mapping.mAutoCounter = 0;
 
-					mapping.mValue = !mapping.mValue;
+					mapping.mAutoValue = !mapping.mAutoValue;
 
-					bool newState = (mapping.mValue != 0);
+					bool newState = (mapping.mAutoValue != 0);
 
 					SetTrigger(mapping, newState);
 				}
 				break;
 
 			case kATInputTriggerMode_Relative:
-				if (!mapping.mAccel && !mapping.mValue) {
+				if (fabsf(mapping.mMotionSpeed) < 1e-4f && fabsf(mapping.mMotionAccel) < 1e-4f) {
 					mapping.mbMotionActive = false;
 				} else {
-					mapping.mValue += mapping.mAccel;
-					mapping.mValue = (mapping.mValue * mapping.mDamping + 0x80) >> 8;
+					float impulse = 0;
 
-					trigger.mpController->ApplyImpulse(trigger.mId & kATInputTrigger_Mask, (mapping.mValue + 0x80) >> 8);
+					if (fabsf(mapping.mMotionDrag) < 1e-4f) {
+						// Undamped kinematics (d = vt + at^2)
+						impulse = (0.5f * mapping.mMotionAccel * dt + mapping.mMotionSpeed) * dt;
+
+						mapping.mMotionSpeed += mapping.mMotionAccel * dt;
+
+					} else {
+						// Damped kinematics (exponential decay towards terminal velocity)
+						const float v0 = mapping.mMotionSpeed;
+						const float vt = mapping.mMotionAccel / mapping.mMotionDrag;
+						const float inv_tau = mapping.mMotionDrag;
+
+						impulse = vt * dt + (v0 - vt)*(1.0f - expf(-dt*inv_tau))/inv_tau;
+
+						mapping.mMotionSpeed = v0 + (vt - v0)*(1.0f - expf(-dt*inv_tau));
+					}
+
+					if (impulse < -2)
+						impulse = -2;
+					else if (impulse > 2)
+						impulse = 2;
+
+					trigger.mpController->ApplyImpulse(trigger.mId & kATInputTrigger_Mask, VDRoundToInt32(impulse * (float)0x10000));
+
+					// clamp speed
+					if (!(mapping.mMotionSpeed >= -10.0f && mapping.mMotionSpeed <= 10.0f))
+						mapping.mMotionSpeed = (mapping.mMotionSpeed < 0) ? -10.0f : 10.0f;
 				}
 				break;
 		}
@@ -760,6 +856,21 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 		L"Esc"
 	};
 
+	static const wchar_t *const kKeyboardButtons[]={
+		L"1 Key",
+		L"2 Key",
+		L"3 Key",
+		L"4 Key",
+		L"5 Key",
+		L"6 Key",
+		L"7 Key",
+		L"8 Key",
+		L"9 Key",
+		L"* Key",
+		L"0 Key",
+		L"# Key",
+	};
+
 	static const wchar_t *const kLightPenButtons[]={
 		L"Gun trigger / inverted pen switch",
 		L"Secondary button",
@@ -803,6 +914,13 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 				case kATInputControllerType_LightPen:
 					if (index < sizeof(kLightPenButtons)/sizeof(kLightPenButtons[0])) {
 						name = kLightPenButtons[index];
+						return;
+					}
+					break;
+
+				case kATInputControllerType_Keyboard:
+					if (index < vdcountof(kKeyboardButtons)) {
+						name = kKeyboardButtons[index];
 						return;
 					}
 					break;
@@ -966,7 +1084,9 @@ bool ATInputManager::IsAnalogTrigger(uint32 code, ATInputControllerType type) co
 			return triggerClass == kATInputTrigger_Axis0;
 
 		case kATInputControllerType_Paddle:
+		case kATInputControllerType_Driving:
 		case kATInputControllerType_5200Controller:
+		case kATInputControllerType_5200Trackball:
 		case kATInputControllerType_Tablet:
 		case kATInputControllerType_KoalaPad:
 			return triggerClass == kATInputTrigger_Axis0;
@@ -976,7 +1096,7 @@ bool ATInputManager::IsAnalogTrigger(uint32 code, ATInputControllerType type) co
 }
 
 uint32 ATInputManager::GetInputMapCount() const {
-	return mInputMaps.size();
+	return (uint32)mInputMaps.size();
 }
 
 bool ATInputManager::GetInputMapByIndex(uint32 index, ATInputMap **ppimap) const {
@@ -1073,7 +1193,7 @@ ATInputMap *ATInputManager::CycleQuickMaps() {
 }
 
 uint32 ATInputManager::GetPresetInputMapCount() const {
-	return mPresetMaps.size();
+	return (uint32)mPresetMaps.size();
 }
 
 bool ATInputManager::GetPresetInputMapByIndex(uint32 index, ATInputMap **imap) const {
@@ -1085,61 +1205,128 @@ bool ATInputManager::GetPresetInputMapByIndex(uint32 index, ATInputMap **imap) c
 	return true;
 }
 
-bool ATInputManager::Load(VDRegistryKey& key) {
-	vdfastvector<uint32> bitfield;
-	int len = key.getBinaryLength("Active maps");
-	if (len < 4)
-		return false;
-
-	bitfield.resize((len + 3) >> 2, 0);
-	if (!key.getBinary("Active maps", (char *)bitfield.data(), len))
-		return false;
-
-	vdfastvector<uint32> quickmaps;
-	int qmlen = key.getBinaryLength("Quick maps");
-	if (qmlen > 0 && !(qmlen & 3)) {
-		int qmcount = qmlen >> 2;
-
-		quickmaps.resize(qmcount, 0);
-		key.getBinary("Quick maps", (char *)quickmaps.data(), qmlen);
-	}
-
-	uint32 inputMaps = bitfield[0];
-
-	if (inputMaps >= 0x10000 || len < (int)((inputMaps + 31) >> 5))
-		return false;
-
-	RemoveAllInputMaps();
-
-	VDStringA valName;
-	for(uint32 i=0; i<inputMaps; ++i) {
-		valName.sprintf("Input map %u", i);
-
-		vdrefptr<ATInputMap> imap(new ATInputMap);
-
-		if (imap->Load(key, valName.c_str())) {
-			if (std::find(quickmaps.begin(), quickmaps.end(), VDHashString32(imap->GetName())) != quickmaps.end())
-				imap->SetQuickMap(true);
-
-			AddInputMap(imap);
-
-			if (bitfield[1 + (i >> 5)] & (1 << (i & 31)))
-				ActivateInputMap(imap, true);
-		}
-	}
-
-	return true;
-}
-
 namespace {
 	struct InputMapSorter {
 		bool operator()(const std::pair<ATInputMap *, bool>& x, const std::pair<ATInputMap *, bool>& y) const {
 			return vdwcsicmp(x.first->GetName(), y.first->GetName()) < 0;
 		}
 	};
+
+	const uint32 kMaxInputMaps = 1000;
 }
 
-void ATInputManager::Save(VDRegistryKey& key) {
+bool ATInputManager::LoadMaps(VDRegistryKey& key) {
+	RemoveAllInputMaps();
+
+	VDStringA valName;
+	for(uint32 i=0; i<kMaxInputMaps; ++i) {
+		valName.sprintf("Input map %u", i);
+
+		vdrefptr<ATInputMap> imap(new ATInputMap);
+
+		if (!imap->Load(key, valName.c_str()))
+			break;
+
+		AddInputMap(imap);
+	}
+
+	if (mInputMaps.empty())
+		ResetToDefaults();
+
+	return true;
+}
+
+void ATInputManager::LoadSelections(VDRegistryKey& key, ATInputControllerType defaultControllerType) {
+	const uint8 kIsActive = 1;
+	const uint8 kIsQuick = 2;
+
+	vdhashmap<VDStringW, uint8, vdhash<VDStringW>, vdstringpred> mapStateLookup;
+
+	static const char *const kKeyNames[] = {
+		"Input: Active map names",
+		"Input: Quick map names"
+	};
+
+	bool foundActive = true;
+	bool foundQuick = true;
+
+	for(int mapType = 0; mapType < 2; ++mapType) {
+		VDStringW mapNames;
+		if (!key.getString(kKeyNames[mapType], mapNames)) {
+			if (!mapType)
+				foundActive = false;
+			else
+				foundQuick = false;
+
+			continue;
+		}
+
+		VDStringRefW parser(mapNames);
+		while(!parser.empty()) {
+			VDStringRefW token;
+			if (!parser.split('\n', token)) {
+				token = parser;
+				parser.clear();
+			}
+
+			mapStateLookup[VDStringW(token)] |= (uint8)(1 << mapType);
+		}
+	}
+
+	// Set quick map flags if we found the quick map entry. If not, leave them as-is -- unset if we
+	// loaded maps, defaults if we're grabbing from presets.
+	if (foundQuick) {
+		for(const auto& mapEntry : mInputMaps) {
+			ATInputMap *imap = mapEntry.first;
+			uint8 flags = 0;
+
+			auto it = mapStateLookup.find_as(imap->GetName());
+			if (it != mapStateLookup.end())
+				flags = it->second;
+
+			imap->SetQuickMap((flags & kIsQuick) != 0);
+		}
+	}
+
+	// If there was no setting for active maps, look for the first input map with the specified
+	// default controller type. We sort by name so the result is deterministic.
+	if (!foundActive && defaultControllerType) {
+		vdfastvector<ATInputMap *> sortedMaps;
+		sortedMaps.reserve(mInputMaps.size());
+
+		// filter out maps that match the given controller type
+		for(const auto& mapEntry : mInputMaps) {
+			if (mapEntry.first->HasControllerType(defaultControllerType))
+				sortedMaps.push_back(mapEntry.first);
+		}
+
+		// sort by name
+		std::sort(sortedMaps.begin(), sortedMaps.end(), [](ATInputMap *x, ATInputMap *y) { return vdwcsicmp(x->GetName(), y->GetName()) < 0; });
+
+		// check if we have a quick map... if so, use that
+		auto it = std::find_if(sortedMaps.begin(), sortedMaps.end(), [=](ATInputMap *p) { return p->IsQuickMap(); });
+
+		if (it == sortedMaps.end())
+			it = sortedMaps.begin();
+
+		if (it != sortedMaps.end())
+			mapStateLookup.insert_as((*it)->GetName()).first->second |= kIsActive;
+	}
+
+
+	for(const auto& mapEntry : mInputMaps) {
+		ATInputMap *imap = mapEntry.first;
+		uint8 flags = 0;
+
+		auto it = mapStateLookup.find_as(imap->GetName());
+		if (it != mapStateLookup.end())
+			flags = it->second;
+
+		ActivateInputMap(imap, (flags & kIsActive) != 0);
+	}
+}
+
+void ATInputManager::SaveMaps(VDRegistryKey& key) {
 	vdfastvector<std::pair<ATInputMap *, bool> > sortedMaps;
 
 	for(InputMaps::iterator it(mInputMaps.begin()), itEnd(mInputMaps.end()); it != itEnd; ++it)
@@ -1147,28 +1334,55 @@ void ATInputManager::Save(VDRegistryKey& key) {
 
 	std::sort(sortedMaps.begin(), sortedMaps.end(), InputMapSorter());
 
-	const uint32 n = sortedMaps.size();
-	vdfastvector<uint32> bitfield(1 + ((n + 31) >> 5), 0);
-	vdfastvector<uint32> quickmaps;
-
-	bitfield[0] = n;
-
 	VDStringA valName;
+	const uint32 n = (uint32)sortedMaps.size();
 	for(uint32 i=0; i<n; ++i) {
 		ATInputMap *imap = sortedMaps[i].first;
 
-		if (sortedMaps[i].second)
-			bitfield[1 + (i >> 5)] |= (1 << (i & 31));
-
 		valName.sprintf("Input map %u", i);
 		imap->Save(key, valName.c_str());
-
-		if (imap->IsQuickMap())
-			quickmaps.push_back(VDHashString32(imap->GetName()));
 	}
 
-	key.setBinary("Active maps", (const char *)bitfield.data(), bitfield.size() * 4);
-	key.setBinary("Quick maps", (const char *)quickmaps.data(), quickmaps.size() * 4);
+	// wipe any additional maps
+	for(uint32 i=n; i<kMaxInputMaps; ++i) {
+		valName.sprintf("Input map %u", i);
+
+		if (!key.removeValue(valName.c_str()))
+			break;
+	}
+}
+
+void ATInputManager::SaveSelections(VDRegistryKey& key) {
+	vdfastvector<std::pair<ATInputMap *, bool> > sortedMaps;
+
+	for(InputMaps::iterator it(mInputMaps.begin()), itEnd(mInputMaps.end()); it != itEnd; ++it)
+		sortedMaps.push_back(*it);
+
+	std::sort(sortedMaps.begin(), sortedMaps.end(), InputMapSorter());
+
+	VDStringW activeMapNames;
+	VDStringW quickMapNames;
+
+	for(const auto& entry : sortedMaps) {
+		ATInputMap *imap = entry.first;
+
+		if (entry.second) {
+			if (!activeMapNames.empty())
+				activeMapNames += L'\n';
+
+			activeMapNames.append(imap->GetName());
+		}
+
+		if (imap->IsQuickMap()) {
+			if (!quickMapNames.empty())
+				quickMapNames += L'\n';
+
+			quickMapNames.append(imap->GetName());
+		}
+	}
+	
+	key.setString("Input: Active map names", activeMapNames.c_str());
+	key.setString("Input: Quick map names", quickMapNames.c_str());
 }
 
 void ATInputManager::RebuildMappings() {
@@ -1204,7 +1418,7 @@ void ATInputManager::RebuildMappings() {
 		if (!enabled)
 			continue;
 
-		uint32 flagIndex = mFlags.size();
+		uint32 flagIndex = (uint32)mFlags.size();
 		mFlags.push_back(false);
 		mFlags.push_back(false);
 
@@ -1212,6 +1426,7 @@ void ATInputManager::RebuildMappings() {
 		const uint32 controllerCount = imap->GetControllerCount();
 		int specificUnit = imap->GetSpecificInputUnit();
 
+		controllerTable.clear();
 		controllerTable.resize(controllerCount, -1);
 		for(uint32 i=0; i<controllerCount; ++i) {
 			const ATInputMap::Controller& c = imap->GetController(i);
@@ -1222,6 +1437,19 @@ void ATInputManager::RebuildMappings() {
 			if (itC != controllerMap.end()) {
 				controllerTable[i] = itC->second;
 			} else {
+				bool is5200Controller = false;
+
+				switch(c.mType) {
+					case kATInputControllerType_5200Controller:
+					case kATInputControllerType_5200Trackball:
+						is5200Controller = true;
+						break;
+				}
+
+				// skip controller if it is not compatible with current mode
+				if (is5200Controller != mb5200Mode)
+					continue;
+
 				switch(c.mType) {
 					case kATInputControllerType_Joystick:
 						if (c.mIndex < 12) {
@@ -1334,6 +1562,28 @@ void ATInputManager::RebuildMappings() {
 							pic = trakball;
 						}
 						break;
+
+					case kATInputControllerType_Driving:
+						if (c.mIndex < 12) {
+							ATDrivingController *drv = new ATDrivingController;
+
+							if (c.mIndex >= 4)
+								drv->Attach(mpPorts[0], false, c.mIndex - 4);
+							else
+								drv->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0, -1);
+
+							pic = drv;
+						}
+						break;
+
+					case kATInputControllerType_Keyboard:
+						if (c.mIndex < 4) {
+							ATKeyboardController *kbc = new ATKeyboardController;
+
+							kbc->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0, -1);
+							pic = kbc;
+						}
+						break;
 				}
 
 				if (pic) {
@@ -1369,7 +1619,7 @@ void ATInputManager::RebuildMappings() {
 			}
 
 			if (triggerIdx < 0) {
-				triggerIdx = mTriggers.size();
+				triggerIdx = (int32)mTriggers.size();
 				Trigger& t = mTriggers.push_back();
 
 				t.mId = m.mCode;
@@ -1404,9 +1654,12 @@ void ATInputManager::RebuildMappings() {
 			mapping.mTriggerIdx = triggerIdx;
 			mapping.mbTriggerActivated = false;
 			mapping.mbMotionActive = false;
-			mapping.mValue = 0;
-			mapping.mAccel = 0;
-			mapping.mDamping = 0;
+			mapping.mAutoCounter = 0;
+			mapping.mAutoPeriod = 0;
+			mapping.mAutoValue = 0;
+			mapping.mMotionSpeed = 0;
+			mapping.mMotionAccel = 0;
+			mapping.mMotionDrag = 0;
 
 			if (inputCode & kATInputCode_FlagCheck0) {
 				mapping.mFlagIndex1 = flagIndex + 0;
@@ -1483,8 +1736,8 @@ void ATInputManager::ActivateMappings(uint32 id, bool state) {
 				if (state && !restricted) {
 					if (!mapping.mbMotionActive) {
 						mapping.mbMotionActive = true;
-						mapping.mAccel = 0;
-						mapping.mDamping = 3;
+						mapping.mAutoCounter = 0;
+						mapping.mAutoPeriod = 3;
 
 						SetTrigger(mapping, true);
 					}
@@ -1500,18 +1753,18 @@ void ATInputManager::ActivateMappings(uint32 id, bool state) {
 			case kATInputTriggerMode_Relative:
 				if (state && !restricted) {
 					const int speedIndex = ((trigger.mId & kATInputTriggerSpeed_Mask) >> kATInputTriggerSpeed_Shift);
-					int speedVal = kSpeedScaleTable[speedIndex];
+					const int accelIndex = ((trigger.mId & kATInputTriggerAccel_Mask) >> kATInputTriggerAccel_Shift);
+					const float speedVal = kSpeedScaleTable[speedIndex];
+					const float accelVal = kAccelScaleTable[accelIndex];
 
 					// fall through
 					mapping.mbMotionActive = true;
-					mapping.mAccel = speedVal * 0x90;
-					mapping.mDamping = 0x100;
-
-					if (mapping.mValue < speedVal * 0x80)
-						mapping.mValue = speedVal * 0x80;
+					mapping.mMotionAccel = accelVal;
+					mapping.mMotionSpeed = speedVal;
+					mapping.mMotionDrag = 0;
 				} else {
-					mapping.mAccel = 0;
-					mapping.mDamping = 0x60;
+					mapping.mMotionAccel = 0;
+					mapping.mMotionDrag = 50.0f;
 				}
 				break;
 		}
@@ -1549,16 +1802,20 @@ void ATInputManager::ActivateAnalogMappings(uint32 id, int ds, int dsdead) {
 				break;
 
 			case kATInputTriggerMode_Relative:
-				mapping.mValue = (dsdead * kSpeedScaleTable[((trigger.mId & kATInputTriggerSpeed_Mask) >> kATInputTriggerSpeed_Shift)] + 0x80) >> 3;
-//				mapping.mAccel = mapping.mValue / 8;
+				{
+					const int speedIndex = ((trigger.mId & kATInputTriggerSpeed_Mask) >> kATInputTriggerSpeed_Shift);
+					const float speedVal = kSpeedScaleTable[speedIndex];
 
-				if (dsdead) {
-					mapping.mDamping = 0x100;
-					mapping.mbMotionActive = true;
-				} else {
-					mapping.mDamping = 0;
-					mapping.mbMotionActive = false;
+					mapping.mMotionSpeed = ((float)dsdead / (float)0x10000) * speedVal;
+					mapping.mMotionAccel = 0;
 				}
+
+				mapping.mMotionDrag = 0;
+				if (dsdead)
+					mapping.mbMotionActive = true;
+				else
+					mapping.mbMotionActive = false;
+
 				break;
 		}
 	}
@@ -1590,7 +1847,7 @@ void ATInputManager::ActivateImpulseMappings(uint32 id, int ds) {
 				break;
 
 			case kATInputTriggerMode_Relative:
-				ds = (ds * kSpeedScaleTable[((trigger.mId & kATInputTriggerSpeed_Mask) >> kATInputTriggerSpeed_Shift)] + 0x80) >> 8;
+				ds = VDRoundToInt((float)ds * kSpeedScaleTable[((trigger.mId & kATInputTriggerSpeed_Mask) >> kATInputTriggerSpeed_Shift)]);
 				// fall through
 			case kATInputTriggerMode_Default:
 			default:
@@ -1629,8 +1886,10 @@ void ATInputManager::ActivateFlag(uint32 id, bool state) {
 		// Kill any motion.
 		if (mapping.mbMotionActive) {
 			mapping.mbMotionActive = false;
-			mapping.mValue = 0;
-			mapping.mAccel = 0;
+			mapping.mAutoCounter = 0;
+			mapping.mAutoValue = 0;
+			mapping.mMotionSpeed = 0;
+			mapping.mMotionAccel = 0;
 		}
 	}
 }
@@ -1675,247 +1934,330 @@ void ATInputManager::SetTrigger(Mapping& mapping, bool state) {
 	}
 }
 
+struct ATInputManager::PresetMapDef {
+	bool mbDefault;
+	bool mbDefaultQuick;
+	const wchar_t *mpName;
+	sint8 mUnit;
+
+	std::initializer_list<ATInputMap::Controller> mControllers;
+	std::initializer_list<ATInputMap::Mapping> mMappings;
+};
+
+const ATInputManager::PresetMapDef ATInputManager::kPresetMapDefs[] = {
+	{
+		true, true, L"Arrow Keys -> Joystick (port 1)", -1,
+		{
+			{ kATInputControllerType_Joystick, 0 }
+		},
+		{
+			{ kATInputCode_KeyLeft, 0, kATInputTrigger_Left },
+			{ kATInputCode_KeyRight, 0, kATInputTrigger_Right },
+			{ kATInputCode_KeyUp, 0, kATInputTrigger_Up },
+			{ kATInputCode_KeyDown, 0, kATInputTrigger_Down },
+			{ kATInputCode_KeyLControl, 0, kATInputTrigger_Button0 },
+		}
+	},
+	{
+		true, false, L"Numpad -> Joystick (port 1)", -1,
+		{
+			{ kATInputControllerType_Joystick, 0 }
+		},
+		{
+			{ kATInputCode_KeyNumpad1, 0, kATInputTrigger_Left },
+			{ kATInputCode_KeyNumpad1, 0, kATInputTrigger_Down },
+			{ kATInputCode_KeyNumpad2, 0, kATInputTrigger_Down },
+			{ kATInputCode_KeyNumpad3, 0, kATInputTrigger_Down },
+			{ kATInputCode_KeyNumpad3, 0, kATInputTrigger_Right },
+			{ kATInputCode_KeyNumpad4, 0, kATInputTrigger_Left },
+			{ kATInputCode_KeyNumpad6, 0, kATInputTrigger_Right },
+			{ kATInputCode_KeyNumpad7, 0, kATInputTrigger_Left },
+			{ kATInputCode_KeyNumpad7, 0, kATInputTrigger_Up },
+			{ kATInputCode_KeyNumpad8, 0, kATInputTrigger_Up },
+			{ kATInputCode_KeyNumpad9, 0, kATInputTrigger_Up },
+			{ kATInputCode_KeyNumpad9, 0, kATInputTrigger_Right },
+			{ kATInputCode_KeyNumpad0, 0, kATInputTrigger_Button0 },
+		},
+	},
+	{
+		true, false, L"Mouse -> Paddle A (port 1)", -1,
+		{
+			{ kATInputControllerType_Paddle, 0 },
+		},
+		{
+			{ kATInputCode_MouseHoriz, 0, kATInputTrigger_Axis0 },
+			{ kATInputCode_MouseLMB, 0, kATInputTrigger_Button0 },
+		}
+	},
+	{
+		true, false, L"Mouse -> ST Mouse (port 1)", -1,
+		{
+			{ kATInputControllerType_STMouse, 0 },
+		},
+		{
+			{ kATInputCode_MouseHoriz, 0, kATInputTrigger_Axis0 },
+			{ kATInputCode_MouseVert, 0, kATInputTrigger_Axis0+1 },
+			{ kATInputCode_MouseLMB, 0, kATInputTrigger_Button0 },
+			{ kATInputCode_MouseRMB, 0, kATInputTrigger_Button0+1 },
+		},
+	},
+	{
+		true, true, L"Arrow Keys -> Joystick (port 2)", -1,
+		{
+			{ kATInputControllerType_Joystick, 1 },
+		},
+		{
+			{ kATInputCode_KeyLeft, 0, kATInputTrigger_Left },
+			{ kATInputCode_KeyRight, 0, kATInputTrigger_Right },
+			{ kATInputCode_KeyUp, 0, kATInputTrigger_Up },
+			{ kATInputCode_KeyDown, 0, kATInputTrigger_Down },
+			{ kATInputCode_KeyLControl, 0, kATInputTrigger_Button0 },
+		},
+	},
+	{
+		true, false, L"Mouse -> ST Mouse (port 2)", -1,
+		{
+			{ kATInputControllerType_STMouse, 1 },
+		},
+		{
+			{ kATInputCode_MouseHoriz, 0, kATInputTrigger_Axis0 },
+			{ kATInputCode_MouseVert, 0, kATInputTrigger_Axis0+1 },
+			{ kATInputCode_MouseLMB, 0, kATInputTrigger_Button0 },
+			{ kATInputCode_MouseRMB, 0, kATInputTrigger_Button0+1 },
+		}
+	},
+	{
+		true, false, L"Gamepad -> Joystick (port 1)", -1,
+		{
+			{ kATInputControllerType_Joystick, 0 },
+		},
+		{
+			{ kATInputCode_JoyPOVUp, 0, kATInputTrigger_Up },
+			{ kATInputCode_JoyPOVDown, 0, kATInputTrigger_Down },
+			{ kATInputCode_JoyPOVLeft, 0, kATInputTrigger_Left },
+			{ kATInputCode_JoyPOVRight, 0, kATInputTrigger_Right },
+			{ kATInputCode_JoyStick1Up, 0, kATInputTrigger_Up },
+			{ kATInputCode_JoyStick1Down, 0, kATInputTrigger_Down },
+			{ kATInputCode_JoyStick1Left, 0, kATInputTrigger_Left },
+			{ kATInputCode_JoyStick1Right, 0, kATInputTrigger_Right },
+			{ kATInputCode_JoyButton0, 0, kATInputTrigger_Button0 },
+			{ kATInputCode_JoyButton0+1, 0, kATInputTrigger_Button0 },
+			{ kATInputCode_JoyButton0+2, 0, kATInputTrigger_Button0 },
+			{ kATInputCode_JoyButton0+3, 0, kATInputTrigger_Button0 },
+		}
+	},
+	{
+		true, false, L"Gamepad 1 -> Joystick (port 1)", 0,
+		{
+			{ kATInputControllerType_Joystick, 0 },
+		},
+		{
+			{ kATInputCode_JoyPOVUp, 0, kATInputTrigger_Up },
+			{ kATInputCode_JoyPOVDown, 0, kATInputTrigger_Down },
+			{ kATInputCode_JoyPOVLeft, 0, kATInputTrigger_Left },
+			{ kATInputCode_JoyPOVRight, 0, kATInputTrigger_Right },
+			{ kATInputCode_JoyStick1Up, 0, kATInputTrigger_Up },
+			{ kATInputCode_JoyStick1Down, 0, kATInputTrigger_Down },
+			{ kATInputCode_JoyStick1Left, 0, kATInputTrigger_Left },
+			{ kATInputCode_JoyStick1Right, 0, kATInputTrigger_Right },
+			{ kATInputCode_JoyButton0, 0, kATInputTrigger_Button0 },
+			{ kATInputCode_JoyButton0+1, 0, kATInputTrigger_Button0 },
+			{ kATInputCode_JoyButton0+2, 0, kATInputTrigger_Button0 },
+			{ kATInputCode_JoyButton0+3, 0, kATInputTrigger_Button0 },
+		}
+	},
+	{
+		true, false, L"Gamepad 2 -> Joystick (port 2)", 1,
+		{
+			{ kATInputControllerType_Joystick, 1 },
+		},
+		{
+			{ kATInputCode_JoyPOVUp, 0, kATInputTrigger_Up },
+			{ kATInputCode_JoyPOVDown, 0, kATInputTrigger_Down },
+			{ kATInputCode_JoyPOVLeft, 0, kATInputTrigger_Left },
+			{ kATInputCode_JoyPOVRight, 0, kATInputTrigger_Right },
+			{ kATInputCode_JoyStick1Up, 0, kATInputTrigger_Up },
+			{ kATInputCode_JoyStick1Down, 0, kATInputTrigger_Down },
+			{ kATInputCode_JoyStick1Left, 0, kATInputTrigger_Left },
+			{ kATInputCode_JoyStick1Right, 0, kATInputTrigger_Right },
+			{ kATInputCode_JoyButton0, 0, kATInputTrigger_Button0 },
+			{ kATInputCode_JoyButton0+1, 0, kATInputTrigger_Button0 },
+			{ kATInputCode_JoyButton0+2, 0, kATInputTrigger_Button0 },
+			{ kATInputCode_JoyButton0+3, 0, kATInputTrigger_Button0 },
+		}
+	},
+	{
+		true, true, L"Keyboard -> 5200 Controller (absolute; port 1)", -1,
+		{
+			{ kATInputControllerType_5200Controller, 0 },
+		},
+		{
+			{ kATInputCode_KeyLeft, 0, kATInputTrigger_Left },
+			{ kATInputCode_KeyRight, 0, kATInputTrigger_Right },
+			{ kATInputCode_KeyUp, 0, kATInputTrigger_Up },
+			{ kATInputCode_KeyDown, 0, kATInputTrigger_Down },
+			{ kATInputCode_KeyLControl, 0, kATInputTrigger_Button0 },
+			{ kATInputCode_KeyLShift, 0, kATInputTrigger_Button0+1 },
+			{ kATInputCode_Key0, 0, kATInputTrigger_5200_0 },
+			{ kATInputCode_Key1, 0, kATInputTrigger_5200_1 },
+			{ kATInputCode_Key2, 0, kATInputTrigger_5200_2 },
+			{ kATInputCode_Key3, 0, kATInputTrigger_5200_3 },
+			{ kATInputCode_Key4, 0, kATInputTrigger_5200_4 },
+			{ kATInputCode_Key5, 0, kATInputTrigger_5200_5 },
+			{ kATInputCode_Key6, 0, kATInputTrigger_5200_6 },
+			{ kATInputCode_Key7, 0, kATInputTrigger_5200_7 },
+			{ kATInputCode_Key8, 0, kATInputTrigger_5200_8 },
+			{ kATInputCode_Key9, 0, kATInputTrigger_5200_9 },
+			{ kATInputCode_KeyOemMinus, 0, kATInputTrigger_5200_Star },
+			{ kATInputCode_KeyOemPlus, 0, kATInputTrigger_5200_Pound },
+			{ kATInputCode_KeyF2, 0, kATInputTrigger_5200_Start },
+			{ kATInputCode_KeyF3, 0, kATInputTrigger_5200_Pause },
+			{ kATInputCode_KeyF4, 0, kATInputTrigger_5200_Reset },
+		},
+	},
+	{
+		true, true, L"Keyboard -> 5200 Controller (relative; port 1)", -1,
+		{
+			{ kATInputControllerType_5200Controller, 0 },
+		},
+		{
+			{ kATInputCode_KeyLeft,		0, kATInputTrigger_Left		| kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (6 << kATInputTriggerAccel_Shift)  },
+			{ kATInputCode_KeyRight,	0, kATInputTrigger_Right	| kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (6 << kATInputTriggerAccel_Shift)  },
+			{ kATInputCode_KeyUp,		0, kATInputTrigger_Up		| kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (6 << kATInputTriggerAccel_Shift)  },
+			{ kATInputCode_KeyDown,		0, kATInputTrigger_Down		| kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (6 << kATInputTriggerAccel_Shift)  },
+			{ kATInputCode_KeyLControl, 0, kATInputTrigger_Button0 },
+			{ kATInputCode_KeyLShift, 0, kATInputTrigger_Button0+1 },
+			{ kATInputCode_Key0, 0, kATInputTrigger_5200_0 },
+			{ kATInputCode_Key1, 0, kATInputTrigger_5200_1 },
+			{ kATInputCode_Key2, 0, kATInputTrigger_5200_2 },
+			{ kATInputCode_Key3, 0, kATInputTrigger_5200_3 },
+			{ kATInputCode_Key4, 0, kATInputTrigger_5200_4 },
+			{ kATInputCode_Key5, 0, kATInputTrigger_5200_5 },
+			{ kATInputCode_Key6, 0, kATInputTrigger_5200_6 },
+			{ kATInputCode_Key7, 0, kATInputTrigger_5200_7 },
+			{ kATInputCode_Key8, 0, kATInputTrigger_5200_8 },
+			{ kATInputCode_Key9, 0, kATInputTrigger_5200_9 },
+			{ kATInputCode_KeyOemMinus, 0, kATInputTrigger_5200_Star },
+			{ kATInputCode_KeyOemPlus, 0, kATInputTrigger_5200_Pound },
+			{ kATInputCode_KeyF2, 0, kATInputTrigger_5200_Start },
+			{ kATInputCode_KeyF3, 0, kATInputTrigger_5200_Pause },
+			{ kATInputCode_KeyF4, 0, kATInputTrigger_5200_Reset },
+		}
+	},
+	{
+		true, false, L"Xbox 360 Controller -> Joystick (port 1)", -1,
+		{
+			{ kATInputControllerType_Joystick, 0 },
+			{ kATInputControllerType_Console, 0 },
+		},
+		{
+			// Joystick
+			{ kATInputCode_JoyPOVLeft,		0, kATInputTrigger_Left },
+			{ kATInputCode_JoyPOVRight,		0, kATInputTrigger_Right },
+			{ kATInputCode_JoyPOVUp,		0, kATInputTrigger_Up },
+			{ kATInputCode_JoyPOVDown,		0, kATInputTrigger_Down },
+			{ kATInputCode_JoyStick1Left,	0, kATInputTrigger_Left },
+			{ kATInputCode_JoyStick1Right,	0, kATInputTrigger_Right },
+			{ kATInputCode_JoyStick1Up,		0, kATInputTrigger_Up },
+			{ kATInputCode_JoyStick1Down,	0, kATInputTrigger_Down },
+			{ kATInputCode_JoyButton0,		0, kATInputTrigger_Button0 },
+			{ kATInputCode_JoyButton0+1,	0, kATInputTrigger_Button0 | kATInputTriggerMode_AutoFire | (5 << kATInputTriggerSpeed_Shift) },
+
+			// Console
+			{ kATInputCode_JoyButton0+2,	1, kATInputTrigger_Option },
+			{ kATInputCode_JoyButton0+4,	1, kATInputTrigger_Turbo },
+			{ kATInputCode_JoyButton0+6,	1, kATInputTrigger_Select },
+			{ kATInputCode_JoyButton0+7,	1, kATInputTrigger_Start },
+		}
+	},
+	{
+		true, false, L"Xbox 360 Controller -> Paddle A", -1,
+		{
+			{ kATInputControllerType_Paddle, 0 },
+			{ kATInputControllerType_Console, 0 },
+		},
+		{
+			// Paddle
+			{ kATInputCode_JoyButton0,		0, kATInputTrigger_Button0 },
+			{ kATInputCode_JoyButton0+1,	0, kATInputTrigger_Button0 | kATInputTriggerMode_AutoFire | (5 << kATInputTriggerSpeed_Shift) },
+			{ kATInputCode_JoyHoriz1,		0, kATInputTrigger_Axis0 | kATInputTriggerMode_Relative | (5 << kATInputTriggerSpeed_Shift) },
+			{ kATInputCode_JoyPOVLeft,		0, kATInputTrigger_Left | kATInputTriggerMode_Relative | (5 << kATInputTriggerSpeed_Shift) },
+			{ kATInputCode_JoyPOVRight,		0, kATInputTrigger_Right | kATInputTriggerMode_Relative | (5 << kATInputTriggerSpeed_Shift) },
+			{ kATInputCode_JoyHoriz3,		0, kATInputTrigger_Axis0+1 },
+			{ kATInputCode_JoyVert3,		0, kATInputTrigger_Axis0+2 },
+
+			// Console
+			{ kATInputCode_JoyButton0+2,	1, kATInputTrigger_Option },
+			{ kATInputCode_JoyButton0+4,	1, kATInputTrigger_Turbo },
+			{ kATInputCode_JoyButton0+6,	1, kATInputTrigger_Select },
+			{ kATInputCode_JoyButton0+7,	1, kATInputTrigger_Start },
+		}
+	},
+	{
+		true, false, L"Xbox 360 Controller -> 5200 Controller (relative; port 1)", -1,
+		{
+			{ kATInputControllerType_5200Controller, 0 },
+		},
+		{
+			{ kATInputCode_JoyHoriz1,		0, kATInputTrigger_Right | kATInputTriggerMode_Relative | (5 << kATInputTriggerSpeed_Shift)  },
+			{ kATInputCode_JoyVert1,		0, kATInputTrigger_Down  | kATInputTriggerMode_Relative | (5 << kATInputTriggerSpeed_Shift)  },
+			{ kATInputCode_JoyPOVLeft,		0, kATInputTrigger_Left  | kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (6 << kATInputTriggerAccel_Shift)  },
+			{ kATInputCode_JoyPOVRight,		0, kATInputTrigger_Right | kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (6 << kATInputTriggerAccel_Shift)  },
+			{ kATInputCode_JoyPOVUp,		0, kATInputTrigger_Up    | kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (6 << kATInputTriggerAccel_Shift)  },
+			{ kATInputCode_JoyPOVDown,		0, kATInputTrigger_Down  | kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (6 << kATInputTriggerAccel_Shift)  },
+			{ kATInputCode_JoyButton0+0,	0, kATInputTrigger_Button0 },
+			{ kATInputCode_JoyButton0+1,	0, kATInputTrigger_Button0+1 },
+			{ kATInputCode_JoyButton0+7,	0, kATInputTrigger_5200_Start },
+			{ kATInputCode_JoyButton0+3,	0, kATInputTrigger_5200_Pause },
+			{ kATInputCode_JoyButton0+6,	0, kATInputTrigger_5200_Reset },
+		}
+	},
+	{
+		true, false, L"Xbox 360 Controller -> User interface control", -1,
+		{
+			{ kATInputControllerType_Console, 0 },
+		},
+		{
+			{ kATInputCode_JoyPOVLeft,		0, kATInputTrigger_UILeft },
+			{ kATInputCode_JoyPOVRight,		0, kATInputTrigger_UIRight },
+			{ kATInputCode_JoyPOVUp,		0, kATInputTrigger_UIUp },
+			{ kATInputCode_JoyPOVDown,		0, kATInputTrigger_UIDown },
+			{ kATInputCode_JoyButton0+0,	0, kATInputTrigger_UIAccept },
+			{ kATInputCode_JoyButton0+1,	0, kATInputTrigger_UIReject },
+			{ kATInputCode_JoyButton0+2,	0, kATInputTrigger_UIOption },
+			{ kATInputCode_JoyButton0+3,	0, kATInputTrigger_UIMenu },
+			{ kATInputCode_JoyButton0+4,	0, kATInputTrigger_UISwitchLeft },
+			{ kATInputCode_JoyButton0+5,	0, kATInputTrigger_UISwitchRight },
+			{ kATInputCode_JoyStick2Down,	0, kATInputTrigger_UILeftShift },
+			{ kATInputCode_JoyStick2Up,		0, kATInputTrigger_UIRightShift },
+		}
+	},
+};
+
+void ATInputManager::InitPresetMap(const PresetMapDef& def, ATInputMap **ppMap) {
+	vdrefptr<ATInputMap> imap(new ATInputMap);
+
+	imap->SetName(def.mpName);
+
+	if (def.mUnit >= 0)
+		imap->SetSpecificInputUnit(def.mUnit);
+
+	imap->AddControllers(def.mControllers);
+	imap->AddMappings(def.mMappings);
+
+	*ppMap = imap.release();
+}
+
 void ATInputManager::InitPresetMaps() {
 	vdrefptr<ATInputMap> imap;
 	
-	imap = new ATInputMap;
-	imap->SetName(L"Arrow Keys -> Joystick (port 1)");
-	imap->AddController(kATInputControllerType_Joystick, 0);
-	imap->AddMapping(kATInputCode_KeyLeft, 0, kATInputTrigger_Left);
-	imap->AddMapping(kATInputCode_KeyRight, 0, kATInputTrigger_Right);
-	imap->AddMapping(kATInputCode_KeyUp, 0, kATInputTrigger_Up);
-	imap->AddMapping(kATInputCode_KeyDown, 0, kATInputTrigger_Down);
-	imap->AddMapping(kATInputCode_KeyLControl, 0, kATInputTrigger_Button0);
-	imap->SetQuickMap(true);
-	mPresetMaps.push_back(imap);
-	imap.release();
+	for(const auto& def : kPresetMapDefs) {
+		InitPresetMap(def, ~imap);
 
-	imap = new ATInputMap;
-	imap->SetName(L"Numpad -> Joystick (port 1)");
-	imap->AddController(kATInputControllerType_Joystick, 0);
-	imap->AddMapping(kATInputCode_KeyNumpad1, 0, kATInputTrigger_Left);
-	imap->AddMapping(kATInputCode_KeyNumpad1, 0, kATInputTrigger_Down);
-	imap->AddMapping(kATInputCode_KeyNumpad2, 0, kATInputTrigger_Down);
-	imap->AddMapping(kATInputCode_KeyNumpad3, 0, kATInputTrigger_Down);
-	imap->AddMapping(kATInputCode_KeyNumpad3, 0, kATInputTrigger_Right);
-	imap->AddMapping(kATInputCode_KeyNumpad4, 0, kATInputTrigger_Left);
-	imap->AddMapping(kATInputCode_KeyNumpad6, 0, kATInputTrigger_Right);
-	imap->AddMapping(kATInputCode_KeyNumpad7, 0, kATInputTrigger_Left);
-	imap->AddMapping(kATInputCode_KeyNumpad7, 0, kATInputTrigger_Up);
-	imap->AddMapping(kATInputCode_KeyNumpad8, 0, kATInputTrigger_Up);
-	imap->AddMapping(kATInputCode_KeyNumpad9, 0, kATInputTrigger_Up);
-	imap->AddMapping(kATInputCode_KeyNumpad9, 0, kATInputTrigger_Right);
-	imap->AddMapping(kATInputCode_KeyNumpad0, 0, kATInputTrigger_Button0);
-	mPresetMaps.push_back(imap);
-	imap.release();
-
-	imap = new ATInputMap;
-	imap->SetName(L"Mouse -> Paddle A (port 1)");
-	imap->AddController(kATInputControllerType_Paddle, 0);
-	imap->AddMapping(kATInputCode_MouseHoriz, 0, kATInputTrigger_Axis0);
-	imap->AddMapping(kATInputCode_MouseLMB, 0, kATInputTrigger_Button0);
-	mPresetMaps.push_back(imap);
-	imap.release();
-
-	imap = new ATInputMap;
-	imap->SetName(L"Mouse -> ST Mouse (port 1)");
-	imap->AddController(kATInputControllerType_STMouse, 0);
-	imap->AddMapping(kATInputCode_MouseHoriz, 0, kATInputTrigger_Axis0);
-	imap->AddMapping(kATInputCode_MouseVert, 0, kATInputTrigger_Axis0+1);
-	imap->AddMapping(kATInputCode_MouseLMB, 0, kATInputTrigger_Button0);
-	imap->AddMapping(kATInputCode_MouseRMB, 0, kATInputTrigger_Button0+1);
-	mPresetMaps.push_back(imap);
-	imap.release();
-
-	imap = new ATInputMap;
-	imap->SetName(L"Arrow Keys -> Joystick (port 2)");
-	imap->AddController(kATInputControllerType_Joystick, 1);
-	imap->AddMapping(kATInputCode_KeyLeft, 0, kATInputTrigger_Left);
-	imap->AddMapping(kATInputCode_KeyRight, 0, kATInputTrigger_Right);
-	imap->AddMapping(kATInputCode_KeyUp, 0, kATInputTrigger_Up);
-	imap->AddMapping(kATInputCode_KeyDown, 0, kATInputTrigger_Down);
-	imap->AddMapping(kATInputCode_KeyLControl, 0, kATInputTrigger_Button0);
-	imap->SetQuickMap(true);
-	mPresetMaps.push_back(imap);
-	imap.release();
-
-	imap = new ATInputMap;
-	imap->SetName(L"Mouse -> ST Mouse (port 2)");
-	imap->AddController(kATInputControllerType_STMouse, 1);
-	imap->AddMapping(kATInputCode_MouseHoriz, 0, kATInputTrigger_Axis0);
-	imap->AddMapping(kATInputCode_MouseVert, 0, kATInputTrigger_Axis0+1);
-	imap->AddMapping(kATInputCode_MouseLMB, 0, kATInputTrigger_Button0);
-	imap->AddMapping(kATInputCode_MouseRMB, 0, kATInputTrigger_Button0+1);
-	mPresetMaps.push_back(imap);
-	imap.release();
-
-	imap = new ATInputMap;
-	imap->SetName(L"Gamepad -> Joystick (port 1)");
-	imap->AddController(kATInputControllerType_Joystick, 0);
-	imap->AddMapping(kATInputCode_JoyPOVUp, 0, kATInputTrigger_Up);
-	imap->AddMapping(kATInputCode_JoyPOVDown, 0, kATInputTrigger_Down);
-	imap->AddMapping(kATInputCode_JoyPOVLeft, 0, kATInputTrigger_Left);
-	imap->AddMapping(kATInputCode_JoyPOVRight, 0, kATInputTrigger_Right);
-	imap->AddMapping(kATInputCode_JoyStick1Up, 0, kATInputTrigger_Up);
-	imap->AddMapping(kATInputCode_JoyStick1Down, 0, kATInputTrigger_Down);
-	imap->AddMapping(kATInputCode_JoyStick1Left, 0, kATInputTrigger_Left);
-	imap->AddMapping(kATInputCode_JoyStick1Right, 0, kATInputTrigger_Right);
-	imap->AddMapping(kATInputCode_JoyButton0, 0, kATInputTrigger_Button0);
-	imap->AddMapping(kATInputCode_JoyButton0+1, 0, kATInputTrigger_Button0);
-	imap->AddMapping(kATInputCode_JoyButton0+2, 0, kATInputTrigger_Button0);
-	imap->AddMapping(kATInputCode_JoyButton0+3, 0, kATInputTrigger_Button0);
-	mPresetMaps.push_back(imap);
-	imap.release();
-
-	imap = new ATInputMap;
-	imap->SetName(L"Gamepad 1 -> Joystick (port 1)");
-	imap->SetSpecificInputUnit(0);
-	imap->AddController(kATInputControllerType_Joystick, 0);
-	imap->AddMapping(kATInputCode_JoyPOVUp, 0, kATInputTrigger_Up);
-	imap->AddMapping(kATInputCode_JoyPOVDown, 0, kATInputTrigger_Down);
-	imap->AddMapping(kATInputCode_JoyPOVLeft, 0, kATInputTrigger_Left);
-	imap->AddMapping(kATInputCode_JoyPOVRight, 0, kATInputTrigger_Right);
-	imap->AddMapping(kATInputCode_JoyStick1Up, 0, kATInputTrigger_Up);
-	imap->AddMapping(kATInputCode_JoyStick1Down, 0, kATInputTrigger_Down);
-	imap->AddMapping(kATInputCode_JoyStick1Left, 0, kATInputTrigger_Left);
-	imap->AddMapping(kATInputCode_JoyStick1Right, 0, kATInputTrigger_Right);
-	imap->AddMapping(kATInputCode_JoyButton0, 0, kATInputTrigger_Button0);
-	imap->AddMapping(kATInputCode_JoyButton0+1, 0, kATInputTrigger_Button0);
-	imap->AddMapping(kATInputCode_JoyButton0+2, 0, kATInputTrigger_Button0);
-	imap->AddMapping(kATInputCode_JoyButton0+3, 0, kATInputTrigger_Button0);
-	mPresetMaps.push_back(imap);
-	imap.release();
-
-	imap = new ATInputMap;
-	imap->SetName(L"Gamepad 2 -> Joystick (port 2)");
-	imap->SetSpecificInputUnit(1);
-	imap->AddController(kATInputControllerType_Joystick, 1);
-	imap->AddMapping(kATInputCode_JoyPOVUp, 0, kATInputTrigger_Up);
-	imap->AddMapping(kATInputCode_JoyPOVDown, 0, kATInputTrigger_Down);
-	imap->AddMapping(kATInputCode_JoyPOVLeft, 0, kATInputTrigger_Left);
-	imap->AddMapping(kATInputCode_JoyPOVRight, 0, kATInputTrigger_Right);
-	imap->AddMapping(kATInputCode_JoyStick1Up, 0, kATInputTrigger_Up);
-	imap->AddMapping(kATInputCode_JoyStick1Down, 0, kATInputTrigger_Down);
-	imap->AddMapping(kATInputCode_JoyStick1Left, 0, kATInputTrigger_Left);
-	imap->AddMapping(kATInputCode_JoyStick1Right, 0, kATInputTrigger_Right);
-	imap->AddMapping(kATInputCode_JoyButton0, 0, kATInputTrigger_Button0);
-	imap->AddMapping(kATInputCode_JoyButton0+1, 0, kATInputTrigger_Button0);
-	imap->AddMapping(kATInputCode_JoyButton0+2, 0, kATInputTrigger_Button0);
-	imap->AddMapping(kATInputCode_JoyButton0+3, 0, kATInputTrigger_Button0);
-	mPresetMaps.push_back(imap);
-	imap.release();
-
-	imap = new ATInputMap;
-	imap->SetName(L"Keyboard -> 5200 Controller (port 1)");
-	imap->AddController(kATInputControllerType_5200Controller, 0);
-	imap->AddMapping(kATInputCode_KeyLeft, 0, kATInputTrigger_Left);
-	imap->AddMapping(kATInputCode_KeyRight, 0, kATInputTrigger_Right);
-	imap->AddMapping(kATInputCode_KeyUp, 0, kATInputTrigger_Up);
-	imap->AddMapping(kATInputCode_KeyDown, 0, kATInputTrigger_Down);
-	imap->AddMapping(kATInputCode_KeyLControl, 0, kATInputTrigger_Button0);
-	imap->AddMapping(kATInputCode_KeyLShift, 0, kATInputTrigger_Button0+1);
-	imap->AddMapping(kATInputCode_Key0, 0, kATInputTrigger_5200_0);
-	imap->AddMapping(kATInputCode_Key1, 0, kATInputTrigger_5200_1);
-	imap->AddMapping(kATInputCode_Key2, 0, kATInputTrigger_5200_2);
-	imap->AddMapping(kATInputCode_Key3, 0, kATInputTrigger_5200_3);
-	imap->AddMapping(kATInputCode_Key4, 0, kATInputTrigger_5200_4);
-	imap->AddMapping(kATInputCode_Key5, 0, kATInputTrigger_5200_5);
-	imap->AddMapping(kATInputCode_Key6, 0, kATInputTrigger_5200_6);
-	imap->AddMapping(kATInputCode_Key7, 0, kATInputTrigger_5200_7);
-	imap->AddMapping(kATInputCode_Key8, 0, kATInputTrigger_5200_8);
-	imap->AddMapping(kATInputCode_Key9, 0, kATInputTrigger_5200_9);
-	imap->AddMapping(kATInputCode_KeyOemMinus, 0, kATInputTrigger_5200_Star);
-	imap->AddMapping(kATInputCode_KeyOemPlus, 0, kATInputTrigger_5200_Pound);
-	imap->AddMapping(kATInputCode_KeyF2, 0, kATInputTrigger_5200_Start);
-	imap->AddMapping(kATInputCode_KeyF3, 0, kATInputTrigger_5200_Pause);
-	imap->AddMapping(kATInputCode_KeyF4, 0, kATInputTrigger_5200_Reset);
-	mPresetMaps.push_back(imap);
-	imap.release();
-
-	imap = new ATInputMap;
-	imap->SetName(L"Xbox 360 Controller -> Joystick / Paddle (800/XL)");
-	imap->AddController(kATInputControllerType_Joystick, 0);
-	imap->AddController(kATInputControllerType_Joystick, 1);
-	imap->AddController(kATInputControllerType_Paddle, 0);
-	imap->AddController(kATInputControllerType_InputState, 0);
-	imap->AddController(kATInputControllerType_Console, 0);
-
-	static const uint32 F00 = kATInputCode_FlagCheck0 | kATInputCode_FlagCheck1;
-	static const uint32 F01 = kATInputCode_FlagCheck0 | kATInputCode_FlagCheck1 | kATInputCode_FlagValue0;
-	static const uint32 F10 = kATInputCode_FlagCheck0 | kATInputCode_FlagCheck1 | kATInputCode_FlagValue1;
-	static const uint32 F11 = kATInputCode_FlagCheck0 | kATInputCode_FlagCheck1 | kATInputCode_FlagValue0 | kATInputCode_FlagValue1;
-	static const uint32 F1x = kATInputCode_FlagCheck1 | kATInputCode_FlagValue1;
-
-	// Joystick port 1 (-F1 -F2)
-	imap->AddMapping(F00 | kATInputCode_JoyPOVLeft,		0, kATInputTrigger_Left);
-	imap->AddMapping(F00 | kATInputCode_JoyPOVRight,	0, kATInputTrigger_Right);
-	imap->AddMapping(F00 | kATInputCode_JoyPOVUp,		0, kATInputTrigger_Up);
-	imap->AddMapping(F00 | kATInputCode_JoyPOVDown,		0, kATInputTrigger_Down);
-	imap->AddMapping(F00 | kATInputCode_JoyStick1Left,	0, kATInputTrigger_Left);
-	imap->AddMapping(F00 | kATInputCode_JoyStick1Right,	0, kATInputTrigger_Right);
-	imap->AddMapping(F00 | kATInputCode_JoyStick1Up,	0, kATInputTrigger_Up);
-	imap->AddMapping(F00 | kATInputCode_JoyStick1Down,	0, kATInputTrigger_Down);
-	imap->AddMapping(F00 | kATInputCode_JoyButton0,		0, kATInputTrigger_Button0);
-	imap->AddMapping(F00 | kATInputCode_JoyButton0+1,	0, kATInputTrigger_Button0 | kATInputTriggerMode_AutoFire | (5 << kATInputTriggerSpeed_Shift));
-
-	// Joystick port 2 (+F1 -F2)
-	imap->AddMapping(F01 | kATInputCode_JoyPOVLeft,		1, kATInputTrigger_Left);
-	imap->AddMapping(F01 | kATInputCode_JoyPOVRight,	1, kATInputTrigger_Right);
-	imap->AddMapping(F01 | kATInputCode_JoyPOVUp,		1, kATInputTrigger_Up);
-	imap->AddMapping(F01 | kATInputCode_JoyPOVDown,		1, kATInputTrigger_Down);
-	imap->AddMapping(F01 | kATInputCode_JoyStick1Left,	1, kATInputTrigger_Left);
-	imap->AddMapping(F01 | kATInputCode_JoyStick1Right,	1, kATInputTrigger_Right);
-	imap->AddMapping(F01 | kATInputCode_JoyStick1Up,	1, kATInputTrigger_Up);
-	imap->AddMapping(F01 | kATInputCode_JoyStick1Down,	1, kATInputTrigger_Down);
-	imap->AddMapping(F01 | kATInputCode_JoyButton0,		1, kATInputTrigger_Button0);
-	imap->AddMapping(F01 | kATInputCode_JoyButton0+1,	1, kATInputTrigger_Button0 | kATInputTriggerMode_AutoFire | (5 << kATInputTriggerSpeed_Shift));
-
-	// Paddle common (+F2)
-	imap->AddMapping(F1x | kATInputCode_JoyButton0,		2, kATInputTrigger_Button0);
-	imap->AddMapping(F1x | kATInputCode_JoyButton0+1,	2, kATInputTrigger_Button0 | kATInputTriggerMode_AutoFire | (5 << kATInputTriggerSpeed_Shift));
-
-	// Paddle absolute mode (-F1 +F2)
-	imap->AddMapping(F10 | kATInputCode_JoyHoriz1,		2, kATInputTrigger_Axis0);
-
-	// Paddle relative mode (+F1 +F2)
-	imap->AddMapping(F11 | kATInputCode_JoyHoriz1,		2, kATInputTrigger_Axis0 | kATInputTriggerMode_Relative | (5 << kATInputTriggerSpeed_Shift));
-	imap->AddMapping(F11 | kATInputCode_JoyPOVLeft,		2, kATInputTrigger_Left | kATInputTriggerMode_Relative | (5 << kATInputTriggerSpeed_Shift));
-	imap->AddMapping(F11 | kATInputCode_JoyPOVRight,	2, kATInputTrigger_Right | kATInputTriggerMode_Relative | (5 << kATInputTriggerSpeed_Shift));
-	imap->AddMapping(F11 | kATInputCode_JoyHoriz3,		2, kATInputTrigger_Axis0+1);
-	imap->AddMapping(F11 | kATInputCode_JoyVert3,		2, kATInputTrigger_Axis0+2);
-
-	// Input state
-	imap->AddMapping(kATInputCode_JoyButton0+8,			3, kATInputTrigger_Flag0 | kATInputTriggerMode_Toggle);
-	imap->AddMapping(kATInputCode_JoyButton0+9,			3, kATInputTrigger_Flag0+1 | kATInputTriggerMode_Toggle);
-
-	// Console
-	imap->AddMapping(kATInputCode_JoyButton0+2,	4, kATInputTrigger_Option);
-	imap->AddMapping(kATInputCode_JoyButton0+4,	4, kATInputTrigger_Turbo);
-	imap->AddMapping(kATInputCode_JoyButton0+6,	4, kATInputTrigger_Select);
-	imap->AddMapping(kATInputCode_JoyButton0+7,	4, kATInputTrigger_Start);
-
-	mPresetMaps.push_back(imap);
-	imap.release();
-
-	imap = new ATInputMap;
-	imap->SetName(L"Xbox 360 Controller -> User interface control");
-	imap->AddController(kATInputControllerType_Console, 0);
-
-	imap->AddMapping(kATInputCode_JoyPOVLeft,	0, kATInputTrigger_UILeft);
-	imap->AddMapping(kATInputCode_JoyPOVRight,	0, kATInputTrigger_UIRight);
-	imap->AddMapping(kATInputCode_JoyPOVUp,		0, kATInputTrigger_UIUp);
-	imap->AddMapping(kATInputCode_JoyPOVDown,	0, kATInputTrigger_UIDown);
-	imap->AddMapping(kATInputCode_JoyButton0+0,	0, kATInputTrigger_UIAccept);
-	imap->AddMapping(kATInputCode_JoyButton0+1,	0, kATInputTrigger_UIReject);
-	imap->AddMapping(kATInputCode_JoyButton0+2,	0, kATInputTrigger_UIOption);
-	imap->AddMapping(kATInputCode_JoyButton0+3,	0, kATInputTrigger_UIMenu);
-	imap->AddMapping(kATInputCode_JoyButton0+4,	0, kATInputTrigger_UISwitchLeft);
-	imap->AddMapping(kATInputCode_JoyButton0+5,	0, kATInputTrigger_UISwitchRight);
-	imap->AddMapping(kATInputCode_JoyStick2Down,	0, kATInputTrigger_UILeftShift);
-	imap->AddMapping(kATInputCode_JoyStick2Up,		0, kATInputTrigger_UIRightShift);
-
-	mPresetMaps.push_back(imap);
-	imap.release();
+		imap->SetQuickMap(def.mbDefaultQuick);
+		mPresetMaps.push_back(imap);
+		imap.release();
+	}
 }
 
 bool ATInputManager::IsTriggerRestricted(const Trigger& trigger) const {

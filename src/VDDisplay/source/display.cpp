@@ -86,7 +86,7 @@ int VDVideoDisplayFrame::Release() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class VDVideoDisplayWindow : public IVDVideoDisplay, public IVDVideoDisplayMinidriverCallback, public VDVideoDisplayClient {
+class VDVideoDisplayWindow final : public IVDVideoDisplay, public IVDVideoDisplayMinidriverCallback, public VDVideoDisplayClient {
 public:
 	static ATOM Register();
 
@@ -94,32 +94,32 @@ protected:
 	VDVideoDisplayWindow(HWND hwnd, const CREATESTRUCT& createInfo);
 	~VDVideoDisplayWindow();
 
-	void SetSourceMessage(const wchar_t *msg);
+	void SetSourceMessage(const wchar_t *msg) override;
 	void SetSourcePalette(const uint32 *palette, int count);
-	bool SetSource(bool bAutoUpdate, const VDPixmap& src, void *pSharedObject, ptrdiff_t sharedOffset, bool bAllowConversion, bool bInterlaced);
-	bool SetSourcePersistent(bool bAutoUpdate, const VDPixmap& src, bool bAllowConversion, bool bInterlaced);
-	void SetSourceSubrect(const vdrect32 *r);
-	void SetSourceSolidColor(uint32 color);
-	void SetReturnFocus(bool fs);
-	void SetTouchEnabled(bool enable);
-	void SetFullScreen(bool fs, uint32 width, uint32 height, uint32 refresh);
-	void SetDestRect(const vdrect32 *r, uint32 backgroundColor);
-	void SetPixelSharpness(float xsharpness, float ysharpness);
-	void SetCompositor(IVDDisplayCompositor *comp);
+	bool SetSource(bool bAutoUpdate, const VDPixmap& src, void *pSharedObject, ptrdiff_t sharedOffset, bool bAllowConversion, bool bInterlaced) override;
+	bool SetSourcePersistent(bool bAutoUpdate, const VDPixmap& src, bool bAllowConversion, bool bInterlaced) override;
+	void SetSourceSubrect(const vdrect32 *r) override;
+	void SetSourceSolidColor(uint32 color) override;
+	void SetReturnFocus(bool fs) override;
+	void SetTouchEnabled(bool enable) override;
+	void SetFullScreen(bool fs, uint32 width, uint32 height, uint32 refresh) override;
+	void SetDestRect(const vdrect32 *r, uint32 backgroundColor) override;
+	void SetPixelSharpness(float xsharpness, float ysharpness) override;
+	void SetCompositor(IVDDisplayCompositor *comp) override;
 
-	void PostBuffer(VDVideoDisplayFrame *);
-	bool RevokeBuffer(bool allowFrameSkip, VDVideoDisplayFrame **ppFrame);
-	void FlushBuffers();
-	void Invalidate();
-	void Update(int);
-	void Destroy();
-	void Reset();
-	void Cache();
-	void SetCallback(IVDVideoDisplayCallback *pcb);
-	void SetAccelerationMode(AccelerationMode mode);
-	FilterMode GetFilterMode();
-	void SetFilterMode(FilterMode mode);
-	float GetSyncDelta() const { return mSyncDelta; }
+	void PostBuffer(VDVideoDisplayFrame *) override;
+	bool RevokeBuffer(bool allowFrameSkip, VDVideoDisplayFrame **ppFrame) override;
+	void FlushBuffers() override;
+	void Invalidate() override;
+	void Update(int) override;
+	void Destroy() override;
+	void Reset() override;
+	void Cache() override;
+	void SetCallback(IVDVideoDisplayCallback *pcb) override;
+	void SetAccelerationMode(AccelerationMode mode) override;
+	FilterMode GetFilterMode() override;
+	void SetFilterMode(FilterMode mode) override;
+	float GetSyncDelta() const override { return mSyncDelta; }
 
 	void SetProfileHook(const vdfunction<void(ProfileEvent)>& profileHook) override {
 		mpProfileHook = profileHook;
@@ -127,15 +127,15 @@ protected:
 		g_pVDVideoDisplayManager->SetProfileHook(profileHook);
 	}
 
-	void OnTick() {
+	void OnTick() override {
 		if (mpMiniDriver)
 			mpMiniDriver->Poll();
 	}
 
 protected:
-	void ReleaseActiveFrame();
-	void RequestNextFrame();
-	void QueuePresent();
+	void ReleaseActiveFrame() override;
+	void RequestNextFrame() override;
+	void QueuePresent() override;
 
 	void DispatchNextFrame();
 	bool DispatchActiveFrame();
@@ -159,9 +159,9 @@ protected:
 	void SyncCache();
 	void SyncSetFilterMode(FilterMode mode);
 	void SyncSetSolidColor(uint32 color);
-	void OnDisplayChange();
-	void OnForegroundChange(bool bForeground);
-	void OnRealizePalette();
+	void OnDisplayChange() override;
+	void OnForegroundChange(bool bForeground) override;
+	void OnRealizePalette() override;
 	bool InitMiniDriver();
 	void ShutdownMiniDriver();
 	void RequestUpdate();
@@ -568,7 +568,7 @@ void VDVideoDisplayWindow::PostBuffer(VDVideoDisplayFrame *p) {
 
 	bool wasIdle = false;
 	vdsynchronized(mMutex) {
-		if (!mpMiniDriver || !mpActiveFrame && mPendingFrames.empty())
+		if (!mpMiniDriver || (!mpActiveFrame && mPendingFrames.empty()))
 			wasIdle = true;
 
 		mPendingFrames.push_back(p);
@@ -1296,7 +1296,9 @@ void VDVideoDisplayWindow::SyncUpdate(int mode) {
 				mpMiniDriver->Refresh((IVDVideoDisplayMinidriver::UpdateMode)mode);
 				mSyncDelta = mpMiniDriver->GetSyncDelta();
 
-				if (!mpMiniDriver->IsFramePending())
+				if (mpMiniDriver->IsFramePending())
+					SetTicksEnabled(vsync && mpMiniDriver->AreVSyncTicksNeeded());
+				else
 					RequestNextFrame();
 			}
 		} else {
@@ -1424,7 +1426,7 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 
 	RECT r;
 	GetClientRect(mhwnd, &r);
-	mhwndChild = CreateWindowEx(WS_EX_NOPARENTNOTIFY, (LPCTSTR)sChildWindowClass, "", WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS, 0, 0, r.right, r.bottom, mhwnd, NULL, VDGetLocalModuleHandleW32(), this);
+	mhwndChild = CreateWindowEx(WS_EX_NOPARENTNOTIFY, (LPCTSTR)(uintptr)sChildWindowClass, "", WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS, 0, 0, r.right, r.bottom, mhwnd, NULL, VDGetLocalModuleHandleW32(), this);
 	if (!mhwndChild)
 		return false;
 
@@ -1442,7 +1444,6 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 	mpMiniDriver->SetHighPrecision(sbEnableHighPrecision);
 	mpMiniDriver->SetDestRect(mbDestRectEnabled ? &mDestRect : NULL, mBackgroundColor);
 	mpMiniDriver->SetPixelSharpness(mPixelSharpnessX, mPixelSharpnessY);
-	mpMiniDriver->SetCompositor(mpCompositor);
 	mpMiniDriver->Resize(r.right, r.bottom);
 
 	// The create device hook for PIX for Windows can make COM calls that cause a WM_PAINT to
@@ -1460,6 +1461,9 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 		mhwndChild = NULL;
 		return false;
 	}
+
+	// Must be done after Init().
+	mpMiniDriver->SetCompositor(mpCompositor);
 
 	return true;
 }
@@ -1569,28 +1573,17 @@ bool VDVideoDisplayWindow::IsOnSecondaryMonitor() const {
 	if (!mhLastMonitor)
 		return false;
 
-	typedef BOOL (WINAPI *tpGetMonitorInfo)(HMONITOR, LPMONITORINFO);
-
-	static const tpGetMonitorInfo spGetMonitorInfo = (tpGetMonitorInfo)GetProcAddress(GetModuleHandleA("user32"), "GetMonitorInfoA");
-
-	if (!spGetMonitorInfo)
-		return false;
-
 	MONITORINFO monInfo = {sizeof(MONITORINFO)};
-	if (!spGetMonitorInfo(mhLastMonitor, &monInfo))
+	if (!GetMonitorInfoW(mhLastMonitor, &monInfo))
 		return false;
 
 	return !(monInfo.dwFlags & MONITORINFOF_PRIMARY);
 }
 
 void VDVideoDisplayWindow::GetMonitorRect(RECT *r, HMONITOR hmon) {
-	typedef BOOL (WINAPI *tpGetMonitorInfo)(HMONITOR, LPMONITORINFO);
-
-	static const tpGetMonitorInfo spGetMonitorInfo = (tpGetMonitorInfo)GetProcAddress(GetModuleHandleA("user32"), "GetMonitorInfoA");
-
-	if (spGetMonitorInfo && hmon) {
+	if (hmon) {
 		MONITORINFO monInfo = {sizeof(MONITORINFO)};
-		if (spGetMonitorInfo(hmon, &monInfo)) {
+		if (GetMonitorInfoW(hmon, &monInfo)) {
 			*r = monInfo.rcMonitor;
 			return;
 		}

@@ -89,6 +89,10 @@ void ATDebuggerDefaultTarget::SetExecState(const ATCPUExecState& state) {
 	cpu.SetEmulationFlag(state.mbEmulationFlag);
 }
 
+sint32 ATDebuggerDefaultTarget::GetTimeSkew() {
+	return 0;
+}
+
 uint8 ATDebuggerDefaultTarget::ReadByte(uint32 address) {
 	if (address < 0x1000000)
 		return g_sim.DebugExtReadByte(address);

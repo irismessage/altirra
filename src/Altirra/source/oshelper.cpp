@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include "oshelper.h"
 #include <windows.h>
 #include <shlwapi.h>
@@ -174,7 +174,7 @@ void ATCopyFrameToClipboard(void *hwnd, const VDPixmap& px) {
 			vdstructex<VDAVIBitmapInfoHeader> bih;
 			VDMakeBitmapFormatFromPixmapFormat(bih, nsVDPixmap::kPixFormat_RGB888, 0, px.w, px.h);
 
-			uint32 headerSize = bih.size();
+			uint32 headerSize = (uint32)bih.size();
 
 			if (hMem = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, headerSize + imageSize)) {
 				if (lpvMem = ::GlobalLock(hMem)) {
@@ -334,7 +334,7 @@ void ATShowHelp(void *hwnd, const wchar_t *filename) {
 		{
 			STARTUPINFOW si = {sizeof(STARTUPINFOW)};
 			std::vector<wchar_t> tempbufW(helpCommand.size() + 1, 0);
-			helpCommand.copy(&tempbufW[0], tempbufW.size());
+			helpCommand.copy(&tempbufW[0], (uint32)tempbufW.size());
 			retval = CreateProcessW(NULL, &tempbufW[0], NULL, NULL, FALSE, CREATE_DEFAULT_ERROR_MODE, NULL, NULL, &si, &pi);
 		}
 

@@ -46,9 +46,9 @@ bool VDUIControlW32::CreateW32(IVDUIParameters *pParms, const char *pClass, DWOR
 	const UINT id = mpBase->GetNextNativeID();
 
 	if (VDIsWindowsNT())
-		mhwnd = CreateWindowExW(exflags, VDTextAToW(pClass).c_str(), mCaption.c_str(), flags, 0, 0, 0, 0, hwndParent, (HMENU)id, GetModuleHandle(NULL), NULL);
+		mhwnd = CreateWindowExW(exflags, VDTextAToW(pClass).c_str(), mCaption.c_str(), flags, 0, 0, 0, 0, hwndParent, (HMENU)(UINT_PTR)id, GetModuleHandle(NULL), NULL);
 	else
-		mhwnd = CreateWindowExA(exflags, pClass, VDTextWToA(mCaption).c_str(), flags, 0, 0, 0, 0, hwndParent, (HMENU)id, GetModuleHandle(NULL), NULL);
+		mhwnd = CreateWindowExA(exflags, pClass, VDTextWToA(mCaption).c_str(), flags, 0, 0, 0, 0, hwndParent, (HMENU)(UINT_PTR)id, GetModuleHandle(NULL), NULL);
 
 	if (!mhwnd)
 		return false;
@@ -329,7 +329,7 @@ namespace {
 
 	static BOOL CALLBACK ValidateEnumerator(HWND hwnd, LPARAM pData) {
 		VDUIControlDialogW32ValidateData& data = *(VDUIControlDialogW32ValidateData *)pData;
-		HBRUSH hbrBackground = (HBRUSH)GetClassLong(hwnd, GCLP_HBRBACKGROUND);
+		HBRUSH hbrBackground = (HBRUSH)GetClassLongPtr(hwnd, GCLP_HBRBACKGROUND);
 
 		if (hbrBackground) {
 			RECT r;

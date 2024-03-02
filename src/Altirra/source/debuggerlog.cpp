@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/strutil.h>
 #include "console.h"
 #include "debuggerlog.h"

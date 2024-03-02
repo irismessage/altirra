@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
@@ -368,7 +368,7 @@ uint32 ATCheatEngine::GetOffsetCurrentValue(uint32 offset, bool bit16) const {
 }
 
 uint32 ATCheatEngine::GetCheatCount() const {
-	return mCheats.size();
+	return (uint32)mCheats.size();
 }
 
 const ATCheatEngine::Cheat& ATCheatEngine::GetCheatByIndex(uint32 index) const {
@@ -384,7 +384,7 @@ void ATCheatEngine::AddCheat(uint32 offset, bool bit16) {
 			return;
 	}
 
-	Cheat cheat = { offset, GetOffsetCurrentValue(offset, bit16), bit16, true };
+	Cheat cheat = { offset, (uint16)GetOffsetCurrentValue(offset, bit16), bit16, true };
 	mCheats.push_back(cheat);
 }
 

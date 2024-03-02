@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <at/atio/diskfs.h>
 #include <at/atio/diskimage.h>
 
@@ -90,6 +90,10 @@ ATDiskFSException::ATDiskFSException(ATDiskFSError error)
 		case kATDiskFSError_NotSupported:
 			assign("The operation is not supported on this type of file system.");
 			break;
+
+		case kATDiskFSError_MediaNotSupported:
+			assign("The supplied media is not supported on this type of file system.");
+			break;
 	}
 }
 
@@ -140,9 +144,9 @@ IATDiskFS *ATDiskMountImage(IATDiskImage *image, bool readOnly) {
 		}
 	}
 	
-	// check the VTOC - $00 or $01 in the first byte is not valid for DOS 2.x/MyDOS
+	// check the VTOC - $00 in the first byte is not valid for DOS 2.x/MyDOS; $01 indicates DOS 1.
 	if (image->ReadVirtualSector(359, secbuf, 128) == 128) {
-		if (secbuf[0] < 2)
+		if (secbuf[0] == 0)
 			return NULL;
 	}
 

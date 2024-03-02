@@ -15,54 +15,59 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include "uicaptionupdater.h"
 #include "versioninfo.h"
 #include "console.h"
 #include "firmwaremanager.h"
+#include "settings.h"
 
-ATUIWindowCaptionUpdater::ATUIWindowCaptionUpdater()
-	: mbLastRunning(false)
-	, mbLastCaptured(false)
-	, mbShowFps(false)
-	, mbFullScreen(false)
-	, mbCaptured(false)
-	, mbCaptureMMBRelease(false)
-	, mLastHardwareMode(kATHardwareModeCount)
-	, mLastKernelId(0)
-	, mLastMemoryMode(kATMemoryModeCount)
-	, mLastVideoStd(kATVideoStandardCount)
-	, mbLastBASICState(false)
-	, mbLastVBXEState(false)
-	, mbLastU1MBState(false)
-	, mbLastDebugging(false)
-	, mLastCPUMode(kATCPUModeCount)
-	, mLastCPUSubCycles(0)
-	, mbForceUpdate(false)
-{
+#if defined(WIN32) && defined(ATNRELEASE)
+#include <intrin.h>
+#endif
+
+ATUIWindowCaptionUpdater::ATUIWindowCaptionUpdater() {
 	mBasePrefix = AT_FULL_VERSION_STR;
+
+	// Check the Win32 page heap is enabled. There is no documented way to do this, so
+	// we must crawl TEB -> PEB.NtGlobalFlags and then check for FLG_HEAP_PAGE_ALLOCS.
+	// This isn't useful in Release and it might trip scanners, so it's only enabled
+	// in Debug and Profile builds.
+#if defined(WIN32) && defined(ATNRELEASE)
+	bool pageHeap = false;
+
+	#if defined(VD_CPU_AMD64)
+		uint64 peb = __readgsqword(0x60);
+		uint32 flags = *(const uint32 *)(peb + 0xBC);
+
+		pageHeap = (flags & 0x02000000) != 0;
+	#elif defined(VD_CPU_X86)
+		uint32 peb = __readfsdword(0x30);
+		uint32 flags = *(const uint32 *)(peb + 0x68);
+
+		pageHeap = (flags & 0x02000000) != 0;
+	#endif
+
+		if (pageHeap)
+			mBasePrefix += L" [page heap enabled]";
+#endif
 }
 
 ATUIWindowCaptionUpdater::~ATUIWindowCaptionUpdater() {
 }
 
-void ATUIWindowCaptionUpdater::Init(ATSimulator *sim) {
+void ATUIWindowCaptionUpdater::Init(ATSimulator *sim, const vdfunction<void(const wchar_t *)>& fn) {
 	mpSim = sim;
+	mpUpdateFn = fn;
+
 	CheckForStateChange(true);
 }
 
-void ATUIWindowCaptionUpdater::Update(HWND hwnd, bool running, int ticks, float fps, float cpu) {
+void ATUIWindowCaptionUpdater::Update(bool running, int ticks, float fps, float cpu) {
 	bool forceUpdate = false;
 
-	if (mbLastRunning != running) {
-		mbLastRunning = running;
-		forceUpdate = true;
-	}
-
-	if (mbLastCaptured != mbCaptured) {
-		mbLastCaptured = mbCaptured;
-		forceUpdate = true;
-	}
+	DetectChange(forceUpdate, mbLastRunning, running);
+	DetectChange(forceUpdate, mbLastCaptured, mbCaptured);
 
 	CheckForStateChange(forceUpdate);
 
@@ -81,85 +86,47 @@ void ATUIWindowCaptionUpdater::Update(HWND hwnd, bool running, int ticks, float 
 				mBuffer += L" (mouse captured - right Alt to release)";
 		}
 
-		SetWindowTextW(hwnd, mBuffer.c_str());
+		mpUpdateFn(mBuffer.c_str());
 	}
 }
 
 void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 	bool change = false;
 
-	ATHardwareMode hwmode = mpSim->GetHardwareMode();
-	if (mLastHardwareMode != hwmode) {
-		mLastHardwareMode = hwmode;
-		change = true;
-	}
+	DetectChange(change, mbTemporaryProfile, ATSettingsGetTemporaryProfileMode());
 
-	uint64 kernelId = mpSim->GetActualKernelId();
-	if (mLastKernelId != kernelId) {
-		mLastKernelId = kernelId;
-		change = true;
-	}
-
-	ATMemoryMode mmmode = mpSim->GetMemoryMode();
-	if (mLastMemoryMode != mmmode) {
-		mLastMemoryMode = mmmode;
-		change = true;
-	}
+	DetectChange(change, mLastHardwareMode, mpSim->GetHardwareMode());
+	DetectChange(change, mLastKernelId, mpSim->GetActualKernelId());
+	DetectChange(change, mLastMemoryMode, mpSim->GetMemoryMode());
 
 	bool basic = mpSim->IsBASICEnabled();
 
-	if (hwmode != kATHardwareMode_800XL && hwmode != kATHardwareMode_XEGS && hwmode != kATHardwareMode_130XE)
+	if (mLastHardwareMode != kATHardwareMode_800XL && mLastHardwareMode != kATHardwareMode_XEGS && mLastHardwareMode != kATHardwareMode_130XE)
 		basic = false;
 
-	if (mbLastBASICState != basic) {
-		mbLastBASICState = basic;
-		change = true;
-	}
+	DetectChange(change, mbLastBASICState, basic);
+	DetectChange(change, mLastVideoStd, mpSim->GetVideoStandard());
+	DetectChange(change, mbLastVBXEState, mpSim->GetVBXE() != NULL);
+	DetectChange(change, mbLastU1MBState, mpSim->IsUltimate1MBEnabled());
+	DetectChange(change, mbLastDebugging, ATIsDebugConsoleActive());
 
-	ATVideoStandard vs = mpSim->GetVideoStandard();
-	if (mLastVideoStd != vs) {
-		mLastVideoStd = vs;
-		change = true;
-	}
-
-	bool vbxe = mpSim->GetVBXE() != NULL;
-	if (mbLastVBXEState != vbxe) {
-		mbLastVBXEState = vbxe;
-		change = true;
-	}
-
-	bool u1mb = mpSim->IsUltimate1MBEnabled();
-	if (mbLastU1MBState != u1mb) {
-		mbLastU1MBState = u1mb;
-		change = true;
-	}
-
-	bool debugging = ATIsDebugConsoleActive();
-	if (mbLastDebugging != debugging) {
-		mbLastDebugging = debugging;
-		change = true;
-	}
-
-	ATCPUEmulator& cpu = mpSim->GetCPU();
+	const ATCPUEmulator& cpu = mpSim->GetCPU();
 	ATCPUMode cpuMode = cpu.GetCPUMode();
 	uint32 cpuSubCycles = cpu.GetSubCycles();
 
-	if (mLastCPUMode != cpuMode || mLastCPUSubCycles != cpuSubCycles) {
-		mLastCPUMode = cpuMode;
-		mLastCPUSubCycles = cpuSubCycles;
-
-		change = true;
-	}
-
-	if (mbLastShowFPS != mbShowFps) {
-		mbLastShowFPS = mbShowFps;
-		change = true;
-	}
+	DetectChange(change, mLastCPUMode, cpuMode);
+	DetectChange(change, mLastCPUSubCycles, cpuSubCycles);
+	DetectChange(change, mbLastShowFPS, mbShowFps);
 
 	if (!force && !change)
 		return;
 
-	mPrefix = mBasePrefix;
+	mPrefix.clear();
+
+	if (mbTemporaryProfile)
+		mPrefix += '*';
+
+	mPrefix.append(mBasePrefix);
 
 	if (ATIsDebugConsoleActive()) {
 		if (mbLastRunning)
@@ -169,9 +136,10 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 	}
 
 	bool showBasic = true;
-	switch(hwmode) {
+	switch(mLastHardwareMode) {
 		case kATHardwareMode_800:
 			mPrefix += L": 800";
+			showBasic = false;
 			break;
 
 		case kATHardwareMode_800XL:
@@ -184,6 +152,7 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 
 		case kATHardwareMode_1200XL:
 			mPrefix += L": 1200XL";
+			showBasic = false;
 			break;
 
 		case kATHardwareMode_XEGS:
@@ -196,23 +165,23 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 			break;
 	}
 
-	if (!u1mb) {
+	if (!mbLastU1MBState) {
 		ATFirmwareInfo fwInfo;
-		if (mpSim->GetFirmwareManager()->GetFirmwareInfo(kernelId, fwInfo)) {
+		if (mpSim->GetFirmwareManager()->GetFirmwareInfo(mLastKernelId, fwInfo)) {
 			switch(fwInfo.mId) {
 				case kATFirmwareId_Kernel_HLE:
 					mPrefix += L" ATOS/HLE";
 					break;
 
 				case kATFirmwareId_Kernel_LLE:
-					if (hwmode == kATHardwareMode_800)
+					if (mLastHardwareMode == kATHardwareMode_800)
 						mPrefix += L" ATOS";
 					else
 						mPrefix += L" ATOS/800";
 					break;
 
 				case kATFirmwareId_Kernel_LLEXL:
-					switch(hwmode) {
+					switch(mLastHardwareMode) {
 						case kATHardwareMode_800XL:
 						case kATHardwareMode_1200XL:
 						case kATHardwareMode_XEGS:
@@ -227,7 +196,7 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 					break;
 
 				case kATFirmwareId_5200_LLE:
-					mPrefix += L" ATOS/5200";
+					mPrefix += L" ATOS";
 					break;
 
 				default:
@@ -241,22 +210,22 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 							break;
 
 						case kATFirmwareType_KernelXL:
-							if (hwmode != kATHardwareMode_800XL && hwmode != kATHardwareMode_130XE)
+							if (mLastHardwareMode != kATHardwareMode_800XL && mLastHardwareMode != kATHardwareMode_130XE)
 								mPrefix += L" XL/XE";
 							break;
 
 						case kATFirmwareType_Kernel1200XL:
-							if (hwmode != kATHardwareMode_1200XL)
+							if (mLastHardwareMode != kATHardwareMode_1200XL)
 								mPrefix += L" 1200XL";
 							break;
 
 						case kATFirmwareType_KernelXEGS:
-							if (hwmode != kATHardwareMode_XEGS)
+							if (mLastHardwareMode != kATHardwareMode_XEGS)
 								mPrefix += L" XEGS";
 							break;
 
 						case kATFirmwareType_Kernel5200:
-							if (hwmode != kATHardwareMode_5200)
+							if (mLastHardwareMode != kATHardwareMode_5200)
 								mPrefix += L" 5200";
 							break;
 					}
@@ -265,30 +234,33 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 		}
 	}
 
-	switch(mLastVideoStd) {
-		case kATVideoStandard_NTSC:
-		default:
-			mPrefix += L" NTSC";
-			break;
+	const bool is5200 = (mLastHardwareMode == kATHardwareMode_5200);
+	if (!is5200) {
+		switch(mLastVideoStd) {
+			case kATVideoStandard_NTSC:
+			default:
+				mPrefix += L" NTSC";
+				break;
 
-		case kATVideoStandard_PAL:
-			mPrefix += L" PAL";
-			break;
+			case kATVideoStandard_PAL:
+				mPrefix += L" PAL";
+				break;
 
-		case kATVideoStandard_SECAM:
-			mPrefix += L" SECAM";
-			break;
+			case kATVideoStandard_SECAM:
+				mPrefix += L" SECAM";
+				break;
 
-		case kATVideoStandard_NTSC50:
-			mPrefix += L" NTSC-50";
-			break;
+			case kATVideoStandard_NTSC50:
+				mPrefix += L" NTSC-50";
+				break;
 
-		case kATVideoStandard_PAL60:
-			mPrefix += L" PAL-60";
-			break;
+			case kATVideoStandard_PAL60:
+				mPrefix += L" PAL-60";
+				break;
+		}
 	}
 
-	if (vbxe)
+	if (mbLastVBXEState)
 		mPrefix += L"+VBXE";
 
 	switch(cpuMode) {
@@ -305,13 +277,14 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 		default:
 			break;
 	}
+	
+	if (!is5200)
+		mPrefix += L" / ";
 
-	mPrefix += L" / ";
-
-	if (u1mb) {
+	if (mbLastU1MBState) {
 		mPrefix += L"U1MB";
-	} else {
-		switch(mpSim->GetMemoryMode()) {
+	} else if (!is5200) {
+		switch(mLastMemoryMode) {
 			case kATMemoryMode_8K:
 				mPrefix += L"8K";
 				break;
@@ -348,6 +321,10 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 				mPrefix += L"128K";
 				break;
 
+			case kATMemoryMode_256K:
+				mPrefix += L"256K Rambo";
+				break;
+
 			case kATMemoryMode_320K:
 				mPrefix += L"320K Rambo";
 				break;
@@ -374,4 +351,12 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 		mPrefix += L" / BASIC";
 
 	mbForceUpdate = true;
+}
+
+template<class T>
+void ATUIWindowCaptionUpdater::DetectChange(bool& changed, T& cachedValue, const T& currentValue) {
+	if (cachedValue != currentValue) {
+		cachedValue = currentValue;
+		changed = true;
+	}
 }

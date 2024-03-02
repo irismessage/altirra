@@ -15,16 +15,16 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/date.h>
 #include <vd2/system/error.h>
 #include <vd2/system/math.h>
 #include <at/atcore/propertyset.h>
+#include <at/atcore/progress.h>
 #include "idevhdimage.h"
 #include "oshelper.h"
-#include "uiprogress.h"
 
 namespace {
 	uint32 sumbytes(const uint8 *src, uint32 n) {
@@ -138,7 +138,7 @@ int ATIDEVHDImage::Release() {
 
 void *ATIDEVHDImage::AsInterface(uint32 iid) {
 	switch(iid) {
-		case IATIDEDisk::kTypeID: return static_cast<IATIDEDisk *>(this);
+		case IATBlockDevice::kTypeID: return static_cast<IATBlockDevice *>(this);
 		default:
 			return ATDevice::AsInterface(iid);
 	}
@@ -151,6 +151,7 @@ void ATIDEVHDImage::GetDeviceInfo(ATDeviceInfo& info) {
 void ATIDEVHDImage::GetSettings(ATPropertySet& settings) {
 	settings.SetString("path", mPath.c_str());
 	settings.SetBool("write_enabled", !mbReadOnly);
+	settings.SetBool("solid_state", mbSolidState);
 }
 
 bool ATIDEVHDImage::SetSettings(const ATPropertySet& settings) {
@@ -161,12 +162,21 @@ uint32 ATIDEVHDImage::GetSectorCount() const {
 	return mSectorCount;
 }
 
-void ATIDEVHDImage::Init(const wchar_t *path, bool write) {
+ATBlockDeviceGeometry ATIDEVHDImage::GetGeometry() const {
+	ATBlockDeviceGeometry geo = {};
+
+	geo.mbSolidState = mbSolidState;
+
+	return geo;
+}
+
+void ATIDEVHDImage::Init(const wchar_t *path, bool write, bool solidState) {
 	Shutdown();
 
 	mPath = path;
 	mFile.open(path, write ? nsVDFile::kReadWrite | nsVDFile::kDenyAll | nsVDFile::kOpenAlways : nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting);
 	mbReadOnly = !write;
+	mbSolidState = solidState;
 
 	uint64 size = mFile.size();
 
@@ -271,10 +281,10 @@ void ATIDEVHDImage::Init(const wchar_t *path, bool write) {
 		mBlockAllocTable.resize(blockCount);
 
 		mFile.seek(mDynamicHeader.mTableOffset);
-		mFile.read(mBlockAllocTable.data(), mBlockAllocTable.size() * sizeof(mBlockAllocTable[0]));
+		mFile.read(mBlockAllocTable.data(), (long)mBlockAllocTable.size() * sizeof(mBlockAllocTable[0]));
 
 		// swizzle the BAT
-		ATSwapEndianArray(mBlockAllocTable.data(), mBlockAllocTable.size());
+		ATSwapEndianArray(mBlockAllocTable.data(), (long)mBlockAllocTable.size());
 
 		// validate the BAT
 		for(uint32 i=0; i<blockCount; ++i) {
@@ -303,6 +313,8 @@ void ATIDEVHDImage::InitNew(const wchar_t *path, uint8 heads, uint8 spt, uint32 
 
 	mSectorCount = totalSectorCount;
 	mFile.open(path, nsVDFile::kReadWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways | nsVDFile::kSequential);
+	mbReadOnly = false;
+	mbSolidState = false;
 
 	// set up footer
 	const uint64 vhdEpoch = 0x01bf53eb256d4000ull;	// January 1, 2000 midnight UTC in ticks
@@ -393,7 +405,7 @@ void ATIDEVHDImage::InitNew(const wchar_t *path, uint8 heads, uint8 spt, uint32 
 		uint32 sectorsToClear = mSectorCount;
 		uint32 sectorsCleared = 0;
 
-		ATUIProgress progress;
+		ATProgress progress;
 
 		progress.InitF(((sectorsToClear - 1) >> 11) + 1, L"Initialized %uMB / %uMB", L"Clearing fixed disk image");
 
@@ -435,9 +447,6 @@ void ATIDEVHDImage::Shutdown() {
 
 void ATIDEVHDImage::Flush() {
 	FlushCurrentBlockBitmap();
-}
-
-void ATIDEVHDImage::RequestUpdate() {
 }
 
 void ATIDEVHDImage::ReadSectors(void *data, uint32 lba, uint32 n) {
@@ -583,7 +592,7 @@ void ATIDEVHDImage::SetCurrentBlock(uint32 blockIndex) {
 	} else {
 		// yes it is -- read in the bitmap from the new block
 		mFile.seek((sint64)sectorOffset << 9);
-		mFile.read(mCurrentBlockBitmap.data(), mCurrentBlockBitmap.size() * sizeof(mCurrentBlockBitmap[0]));
+		mFile.read(mCurrentBlockBitmap.data(), (long)(mCurrentBlockBitmap.size() * sizeof(mCurrentBlockBitmap[0])));
 		mbCurrentBlockAllocated = true;
 		mCurrentBlockDataOffset = ((sint64)sectorOffset << 9) + mBlockBitmapSize;
 	}
@@ -596,8 +605,8 @@ void ATIDEVHDImage::FlushCurrentBlockBitmap() {
 	if (mbCurrentBlockBitmapDirty) {
 		uint32 sectorOffset = mBlockAllocTable[mCurrentBlock];
 		mFile.seek((uint64)sectorOffset << 9);
-		mFile.write(mCurrentBlockBitmap.data(), mCurrentBlockBitmap.size() * sizeof(mCurrentBlockBitmap[0]));
-		mbCurrentBlockBitmapDirty = true;
+		mFile.write(mCurrentBlockBitmap.data(), (long)(mCurrentBlockBitmap.size() * sizeof(mCurrentBlockBitmap[0])));
+		mbCurrentBlockBitmapDirty = false;
 	}
 }
 
@@ -632,7 +641,7 @@ void ATIDEVHDImage::AllocateBlock() {
 
 	// Write the new block bitmap.
 	mFile.seek(newBlockBitmapLoc);
-	mFile.write(mCurrentBlockBitmap.data(), mCurrentBlockBitmap.size() * sizeof(mCurrentBlockBitmap[0]));
+	mFile.write(mCurrentBlockBitmap.data(), (long)(mCurrentBlockBitmap.size() * sizeof(mCurrentBlockBitmap[0])));
 
 	// Zero the data; technically not needed with NTFS since the bitmap is always at least
 	// as big as the footer and NTFS zeroes new space, but we might be running on FAT32

@@ -64,15 +64,31 @@ enum ATDiskImageFormat {
 
 class VDINTERFACE IATDiskImage {
 public:
-	virtual ~IATDiskImage() {}
+	virtual ~IATDiskImage() = default;
 
 	virtual ATDiskTimingMode GetTimingMode() const = 0;
 
+	// Returns true if the disk image has been written to since the image was created
+	// or loaded. It is unspecified whether writing a sector with contents identical to
+	// the existing sector sets the dirty flag (other factors like copy-on-write, timestamp,
+	// and sector error flags may require dirty to be set). Flush() is a no-op if the
+	// image is not dirty.
 	virtual bool IsDirty() const = 0;
+
+	// Returns true if the disk image has a persistent backing store that can
+	// be updated from the active image.
 	virtual bool IsUpdatable() const = 0;
+
+	// Returns true if the disk image has dynamic contents based on access pattern
+	// or external updates, and false if the image is statically established on
+	// load.
 	virtual bool IsDynamic() const = 0;
+
 	virtual ATDiskImageFormat GetImageFormat() const = 0;
 
+	// Flush any changes back to the persistent store. Returns true on success or no-op;
+	// false if the image is not updatable. I/O exceptions may be thrown. A dirty image
+	// becomes clean after a successful flush.
 	virtual bool Flush() = 0;
 
 	virtual void SetPath(const wchar_t *path) = 0;
@@ -94,6 +110,14 @@ public:
 
 	virtual uint32 ReadVirtualSector(uint32 index, void *data, uint32 len) = 0;
 	virtual bool WriteVirtualSector(uint32 index, const void *data, uint32 len) = 0;
+
+	// Attempt to resize the disk image to the given number of virtual sectors.
+	// In general, this should be <65536 sectors since that is the limit of the
+	// standard SIO disk protocol, but this is not enforced. New sectors are
+	// filled with $00 and the disk is marked as dirty. The disk geometry is
+	// auto-computed according to inference rules. An exception is thrown if
+	// the disk is dynamic.
+	virtual void Resize(uint32 sectors) = 0;
 };
 
 IATDiskImage *ATLoadDiskImage(const wchar_t *path);

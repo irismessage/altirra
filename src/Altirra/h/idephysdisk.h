@@ -18,41 +18,41 @@
 #ifndef f_AT_IDEPHYSDISK_H
 #define f_AT_IDEPHYSDISK_H
 
+#include <at/atcore/blockdevice.h>
 #include <at/atcore/deviceimpl.h>
-#include "idedisk.h"
 
 bool ATIDEIsPhysicalDiskPath(const wchar_t *path);
 sint64 ATIDEGetPhysicalDiskSize(const wchar_t *path);
 
-class ATIDEPhysicalDisk : public IATIDEDisk, public ATDevice {
-	ATIDEPhysicalDisk(const ATIDEPhysicalDisk&);
-	ATIDEPhysicalDisk& operator=(const ATIDEPhysicalDisk&);
+class ATIDEPhysicalDisk final : public IATBlockDevice, public ATDevice {
+	ATIDEPhysicalDisk(const ATIDEPhysicalDisk&) = delete;
+	ATIDEPhysicalDisk& operator=(const ATIDEPhysicalDisk&) = delete;
 public:
 	ATIDEPhysicalDisk();
 	~ATIDEPhysicalDisk();
 
 public:
-	int AddRef();
-	int Release();
-	void *AsInterface(uint32 iid);
+	int AddRef() override;
+	int Release() override;
+	void *AsInterface(uint32 iid) override;
 
 public:
-	void GetDeviceInfo(ATDeviceInfo& info);
-	void GetSettings(ATPropertySet& settings);
-	bool SetSettings(const ATPropertySet& settings);
-	void Shutdown();
+	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void GetSettings(ATPropertySet& settings) override;
+	bool SetSettings(const ATPropertySet& settings) override;
+	void Shutdown() override;
 
 public:
-	virtual bool IsReadOnly() const override { return true; }
-	uint32 GetSectorCount() const { return mSectorCount; }
+	bool IsReadOnly() const override { return true; }
+	uint32 GetSectorCount() const override { return mSectorCount; }
+	ATBlockDeviceGeometry GetGeometry() const override;
 
 	void Init(const wchar_t *path);
 
-	void Flush();
-	void RequestUpdate();
+	void Flush() override;
 
-	void ReadSectors(void *data, uint32 lba, uint32 n);
-	void WriteSectors(const void *data, uint32 lba, uint32 n);
+	void ReadSectors(void *data, uint32 lba, uint32 n) override;
+	void WriteSectors(const void *data, uint32 lba, uint32 n) override;
 
 protected:
 	void *mhDisk;

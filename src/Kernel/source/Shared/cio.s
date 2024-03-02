@@ -1,20 +1,11 @@
 ;	Altirra - Atari 800/800XL/5200 emulator
 ;	Modular Kernel ROM - Character Input/Output Facility
-;	Copyright (C) 2008-2014 Avery Lee
+;	Copyright (C) 2008-2016 Avery Lee
 ;
-;	This program is free software; you can redistribute it and/or modify
-;	it under the terms of the GNU General Public License as published by
-;	the Free Software Foundation; either version 2 of the License, or
-;	(at your option) any later version.
-;
-;	This program is distributed in the hope that it will be useful,
-;	but WITHOUT ANY WARRANTY; without even the implied warranty of
-;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-;	GNU General Public License for more details.
-;
-;	You should have received a copy of the GNU General Public License
-;	along with this program; if not, write to the Free Software
-;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+;	Copying and distribution of this file, with or without modification,
+;	are permitted in any medium without royalty provided the copyright
+;	notice and this notice are preserved.  This file is offered as-is,
+;	without any warranty.
 
 .proc CIOInit	
 	sec
@@ -268,21 +259,6 @@ cmdSpecial:
 	rts
 	
 ;--------------------------------------------------------------------------
-cmdGetRecordBufferFull2:
-	plp
-cmdGetRecordBufferFull:
-	;read byte to discard
-	jsr		CIOInvoke.invoke_vector
-	cpy		#0
-	bmi		cmdGetRecordXitTrunc
-
-	;exit if EOL
-	cmp		#$9b
-	bne		cmdGetRecordBufferFull
-cmdGetRecordXitTrunc:
-	ldy		#CIOStatTruncRecord
-	jmp		cmdGetRecordXit
-
 cmdGetRecord:
 	;check if buffer is full on entry
 	beq		cmdGetRecordBufferFull
@@ -296,19 +272,36 @@ cmdGetRecordGetByte:
 	;store byte (even if EOL)
 	ldx		#0
 	sta		(icbalz,x)
-	cmp		#$9b
-	php
-	jsr		advance_pointers
-	;check if buffer is full
-	beq		cmdGetRecordBufferFull2
-	plp
-	
-	;loop back for more bytes if not EOL
-	bne		cmdGetRecordLoop
 
-	;update byte count in IOCB
+	;check for EOL
+	eor		#$9b
+	cmp		#1
+
+	;increment buffer pointer and decrement length
+	jsr		advance_pointers
+
+	;skip buffer full check if we had an EOL
+	bcc		cmdGetRecordXit
+
+	;loop back for more bytes if buffer not full
+	bne		cmdGetRecordLoop
+	
+cmdGetRecordBufferFull:
+	;read byte to discard
+	jsr		CIOInvoke.invoke_vector
+	cpy		#0
+	bmi		cmdGetRecordXit
+
+	;continue if not EOL
+	cmp		#$9b
+	bne		cmdGetRecordBufferFull
+
+	;return truncated record
+	ldy		#CIOStatTruncRecord
+
 cmdGetRecordXit:
 cmdGetPutDone:
+	;update byte count in IOCB
 	ldx		icidno
 	sec
 	lda		icbll,x

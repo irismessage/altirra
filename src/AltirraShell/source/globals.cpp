@@ -51,7 +51,7 @@ void ATSInitDeviceManager() {
 }
 
 void ATSShutdownDeviceManager() {
-	g_ATSDeviceManager.RemoveAllDevices();
+	g_ATSDeviceManager.RemoveAllDevices(true);
 }
 
 ATDeviceManager *ATSGetDeviceManager() {

@@ -15,27 +15,29 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vector>
 #include <list>
 #include <string>
 #include <d3d9.h>
 #include <d3dx9.h>
 #include <objbase.h>
+#include <vd2/system/binary.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/math.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/VDDisplay/minid3dx.h>
 
 #pragma comment(lib, "d3dx9")
 
 namespace {
 	void DeleteShaderConstantTable(vdfastvector<uint32>& shader) {
-		LPCVOID data;
-		UINT size;
-		if (D3D_OK == D3DXFindShaderComment((const DWORD *)shader.data(), MAKEFOURCC('C', 'T', 'A', 'B'), &data, &size)) {
+		uint32 size;
+		const void *data = VDD3DXFindShaderComment((const uint32 *)shader.data(), VDD3DXGetShaderSize((const uint32 *)shader.data()), VDMAKEFOURCC('C', 'T', 'A', 'B'), size);
+		if (data) {
 			ptrdiff_t offset = (char *)data - (char *)shader.data();
 
 			VDASSERT(!(offset & 3));
@@ -45,7 +47,7 @@ namespace {
 			offset >>= 2;
 			size = (size + 3) >> 2;
 
-			VDASSERT(offset + size <= shader.size());
+			VDASSERT((size_t)offset + size <= shader.size());
 
 			// erase comment token, fourcc, and comment data
 			shader.erase(shader.begin() + (offset - 2), shader.begin() + offset + size);
@@ -181,7 +183,7 @@ void tool_psa(const vdfastvector<const char *>& args, const vdfastvector<const c
 			}
 		}
 
-		printf("%s(%d,%d): parse error\n", filename, line, (t-s) + 1);
+		printf("%s(%d,%d): parse error\n", filename, line, (int)(t-s) + 1);
 		exit(5);
 	}
 

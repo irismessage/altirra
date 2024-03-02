@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <list>
 #include <windows.h>
 #include <richedit.h>
@@ -23,10 +23,14 @@
 #include <vd2/system/math.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
+#include <at/atcore/media.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/uiproxies.h>
+#include <at/atui/uimanager.h>
 #include "resource.h"
 #include "options.h"
+#include "oshelper.h"
+#include "settings.h"
 
 // This is actually deprecated in earlier SDKs (VS2005) and undeprecated
 // in later ones (Win7). Interesting.
@@ -38,8 +42,10 @@
 #define BCM_SETSHIELD	0x160C
 #endif
 
-void ATUIShowDialogSetFileAssociations(VDGUIHandle parent, bool allowElevation);
-void ATUIShowDialogRemoveFileAssociations(VDGUIHandle parent, bool allowElevation);
+extern ATUIManager g_ATUIManager;
+
+void ATUIShowDialogSetFileAssociations(VDGUIHandle parent, bool allowElevation, bool userOnly);
+void ATUIShowDialogRemoveFileAssociations(VDGUIHandle parent, bool allowElevation, bool userOnly);
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -188,7 +194,7 @@ void ATUIDialogFullScreenMode::OnDataExchange(bool write) {
 		std::sort(modes.begin(), modes.end(), ModeInfoLess());
 		modes.erase(std::unique(modes.begin(), modes.end(), ModeInfoEqual()), modes.end());
 
-		int selectedIndex = std::find_if(modes.begin(), modes.end(), ModeInfoMatch(mSelectedMode)) - modes.begin();
+		int selectedIndex = (int)(std::find_if(modes.begin(), modes.end(), ModeInfoMatch(mSelectedMode)) - modes.begin());
 		if (selectedIndex >= (int)modes.size())
 			selectedIndex = -1;
 
@@ -234,6 +240,8 @@ public:
 	};
 
 	const HelpEntry *GetHelpEntry(const vdpoint32& pt) const;
+
+	virtual void ExchangeOtherSettings(bool write) {}
 
 protected:
 	void AddHelpEntry(uint32 id, const wchar_t *label, const wchar_t *s);
@@ -303,14 +311,14 @@ const ATUIDialogOptionsPage::HelpEntry *ATUIDialogOptionsPage::GetHelpEntry(cons
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIDialogOptionsPageDisplay : public ATUIDialogOptionsPage {
+class ATUIDialogOptionsPageDisplay final : public ATUIDialogOptionsPage {
 public:
 	ATUIDialogOptionsPageDisplay(ATOptions& opts);
 
 protected:
-	bool OnLoaded();
-	void OnDataExchange(bool write);
-	bool OnCommand(uint32 id, uint32 extcode);
+	bool OnLoaded() override;
+	void OnDataExchange(bool write) override;
+	bool OnCommand(uint32 id, uint32 extcode) override;
 };
 
 ATUIDialogOptionsPageDisplay::ATUIDialogOptionsPageDisplay(ATOptions& opts)
@@ -396,6 +404,65 @@ bool ATUIDialogOptionsPageDisplay::OnCommand(uint32 id, uint32 extcode) {
 	}
 
 	return false;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogOptionsPageDisplayEffects final : public ATUIDialogOptionsPage {
+public:
+	ATUIDialogOptionsPageDisplayEffects(ATOptions& opts);
+
+protected:
+	bool OnLoaded() override;
+	void OnDataExchange(bool write) override;
+	bool OnCommand(uint32 id, uint32 extcode) override;
+
+	void ExchangeOtherSettings(bool write) override;
+
+	VDStringW mPath;
+};
+
+ATUIDialogOptionsPageDisplayEffects::ATUIDialogOptionsPageDisplayEffects(ATOptions& opts)
+	: ATUIDialogOptionsPage(IDD_OPTIONS_DISPLAY_EFFECTS, opts)
+{
+}
+
+bool ATUIDialogOptionsPageDisplayEffects::OnLoaded() {
+	AddHelpEntry(IDC_PATH, L"Custom effects path", L"Path to effect file to set up custom display effect. This is only supported by the Direct3D 9 display driver.");
+	LinkHelpEntry(IDC_BROWSE, IDC_PATH);
+
+	ATUIEnableEditControlAutoComplete(GetControl(IDC_PATH));
+
+	return ATUIDialogOptionsPage::OnLoaded();
+}
+
+void ATUIDialogOptionsPageDisplayEffects::OnDataExchange(bool write) {
+	if (write) {
+		GetControlText(IDC_PATH, mPath);
+	} else {
+		SetControlText(IDC_PATH, mPath.c_str());
+	}
+}
+
+bool ATUIDialogOptionsPageDisplayEffects::OnCommand(uint32 id, uint32 extcode) {
+	if (id == IDC_BROWSE) {
+		const VDStringW& s = VDGetLoadFileName('ceff', (VDGUIHandle)mhdlg, L"Load custom effect", L"CG program (*.cgp)", nullptr);
+
+		if (!s.empty())
+			SetControlText(IDC_PATH, s.c_str());
+
+		return true;
+	}
+
+	return false;
+}
+
+void ATUIDialogOptionsPageDisplayEffects::ExchangeOtherSettings(bool write) {
+	if (write) {
+		g_ATUIManager.SetCustomEffectPath(mPath.c_str(), false);
+	} else {
+		mPath = g_ATUIManager.GetCustomEffectPath();
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -511,10 +578,15 @@ bool ATUIDialogOptionsPageFileAssoc::OnLoaded() {
 
 bool ATUIDialogOptionsPageFileAssoc::OnCommand(uint32 id, uint32 extcode) {
 	if (id == IDC_SETFILEASSOC) {
-		ATUIShowDialogSetFileAssociations((VDGUIHandle)mhdlg, true);
+		ATUIShowDialogSetFileAssociations((VDGUIHandle)mhdlg, true, false);
+		return true;
+	} else if (id == IDC_SETUSERFILEASSOC) {
+		ATUIShowDialogSetFileAssociations((VDGUIHandle)mhdlg, true, true);
 		return true;
 	} else if (id == IDC_REMOVEFILEASSOC) {
-		ATUIShowDialogRemoveFileAssociations((VDGUIHandle)mhdlg, true);
+		ATUIShowDialogRemoveFileAssociations((VDGUIHandle)mhdlg, true, false);
+	} else if (id == IDC_REMOVEUSERFILEASSOC) {
+		ATUIShowDialogRemoveFileAssociations((VDGUIHandle)mhdlg, true, true);
 	}
 
 	return false;
@@ -529,7 +601,6 @@ public:
 protected:
 	bool OnLoaded();
 	void OnDataExchange(bool write);
-	bool OnCommand(uint32 id, uint32 extcode);
 };
 
 ATUIDialogOptionsPageFlash::ATUIDialogOptionsPageFlash(ATOptions& opts)
@@ -597,17 +668,6 @@ void ATUIDialogOptionsPageFlash::OnDataExchange(bool write) {
 	}
 }
 
-bool ATUIDialogOptionsPageFlash::OnCommand(uint32 id, uint32 extcode) {
-	if (id == IDC_SETFILEASSOC) {
-		ATUIShowDialogSetFileAssociations((VDGUIHandle)mhdlg, true);
-		return true;
-	} else if (id == IDC_REMOVEFILEASSOC) {
-		ATUIShowDialogRemoveFileAssociations((VDGUIHandle)mhdlg, true);
-	}
-
-	return false;
-}
-
 ///////////////////////////////////////////////////////////////////////////
 
 class ATUIDialogOptionsPageUI : public ATUIDialogOptionsPage {
@@ -626,17 +686,98 @@ ATUIDialogOptionsPageUI::ATUIDialogOptionsPageUI(ATOptions& opts)
 
 bool ATUIDialogOptionsPageUI::OnLoaded() {
 	AddHelpEntry(IDC_SCALE, L"Scale factor", L"Scale factor in percent for on-screen UI in the display window.");
+	AddHelpEntry(IDC_SCALE, L"Pause when menus are open",
+		L"Pause the simulation temporarily when a menu is opened.");
 
 	return ATUIDialogOptionsPage::OnLoaded();
 }
 
 void ATUIDialogOptionsPageUI::OnDataExchange(bool write) {
 	ExchangeControlValueSint32(write, IDC_SCALE, mOptions.mThemeScale, 10, 1000);
+	ExchangeControlValueBoolCheckbox(write, IDC_PAUSE_ON_MENU, mOptions.mbPauseDuringMenu);
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIDialogOptions : public VDDialogFrameW32 {
+class ATUIDialogOptionsPageSettings : public ATUIDialogOptionsPage {
+public:
+	ATUIDialogOptionsPageSettings(ATOptions& opts);
+
+protected:
+	bool OnCommand(uint32 id, uint32 cmd);
+};
+
+ATUIDialogOptionsPageSettings::ATUIDialogOptionsPageSettings(ATOptions& opts)
+	: ATUIDialogOptionsPage(IDD_OPTIONS_SETTINGS, opts)
+{
+}
+
+bool ATUIDialogOptionsPageSettings::OnCommand(uint32 id, uint32 cmd) {
+	if (id == IDC_RESETALL) {
+		if (Confirm(L"This will reset all program settings. Are you sure?")) {
+			ATSettingsScheduleReset();
+
+			ShowInfo(L"All settings will be reset the next time the program is restarted.");
+		}
+		return true;
+	}
+
+	return false;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogOptionsPageMedia : public ATUIDialogOptionsPage {
+public:
+	ATUIDialogOptionsPageMedia(ATOptions& opts);
+
+protected:
+	bool OnLoaded();
+	void OnDataExchange(bool write);
+};
+
+ATUIDialogOptionsPageMedia::ATUIDialogOptionsPageMedia(ATOptions& opts)
+	: ATUIDialogOptionsPage(IDD_OPTIONS_MEDIA, opts)
+{
+}
+
+bool ATUIDialogOptionsPageMedia::OnLoaded() {
+	AddHelpEntry(IDC_WRITEMODE, L"Default write mode", L"Sets the mode used for disks mounted via the Attach/Boot commands, drag-and-drop, or command line.");
+
+	CBAddString(IDC_WRITEMODE, L"Read only");
+	CBAddString(IDC_WRITEMODE, L"Virtual read/write (prohibit format)");
+	CBAddString(IDC_WRITEMODE, L"Virtual read/write");
+	CBAddString(IDC_WRITEMODE, L"Read/write");
+
+	return ATUIDialogOptionsPage::OnLoaded();
+}
+
+void ATUIDialogOptionsPageMedia::OnDataExchange(bool write) {
+	static const ATMediaWriteMode kWriteModes[]={
+		kATMediaWriteMode_RO,
+		kATMediaWriteMode_VRWSafe,
+		kATMediaWriteMode_VRW,
+		kATMediaWriteMode_RW,
+	};
+
+	if (write) {
+		int idx = CBGetSelectedIndex(IDC_WRITEMODE);
+		if ((unsigned)idx < vdcountof(kWriteModes))
+			mOptions.mDefaultWriteMode = kWriteModes[idx];
+	} else {
+		int idx = 0;
+
+		auto it = std::find(std::begin(kWriteModes), std::end(kWriteModes), mOptions.mDefaultWriteMode);
+		if (it != std::end(kWriteModes))
+			idx = (int)(it - std::begin(kWriteModes));
+
+		CBSetSelectedIndex(IDC_WRITEMODE, idx);
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogOptions final : public VDDialogFrameW32 {
 public:
 	ATUIDialogOptions(ATOptions& opts);
 
@@ -646,6 +787,7 @@ protected:
 	};
 
 	bool OnLoaded();
+	void OnDataExchange(bool write);
 	void OnDestroy();
 	bool OnTimer(uint32 id);
 	bool OnCommand(uint32 id, uint32 extcode);
@@ -657,7 +799,7 @@ protected:
 	uint32 mLastHelpId;
 	HWND mhwndHelp;
 
-	ATUIDialogOptionsPage *mpPages[6];
+	ATUIDialogOptionsPage *mpPages[9];
 
 	ATOptions& mOptions;
 };
@@ -683,18 +825,26 @@ bool ATUIDialogOptions::OnLoaded() {
 
 	mpPages[0] = new ATUIDialogOptionsPageStartup(mOptions);
 	mpPages[1] = new ATUIDialogOptionsPageDisplay(mOptions);
-	mpPages[2] = new ATUIDialogOptionsPageErrors(mOptions);
-	mpPages[3] = new ATUIDialogOptionsPageFileAssoc(mOptions);
-	mpPages[4] = new ATUIDialogOptionsPageFlash(mOptions);
-	mpPages[5] = new ATUIDialogOptionsPageUI(mOptions);
+	mpPages[2] = new ATUIDialogOptionsPageDisplayEffects(mOptions);
+	mpPages[3] = new ATUIDialogOptionsPageErrors(mOptions);
+	mpPages[4] = new ATUIDialogOptionsPageFileAssoc(mOptions);
+	mpPages[5] = new ATUIDialogOptionsPageFlash(mOptions);
+	mpPages[6] = new ATUIDialogOptionsPageMedia(mOptions);
+	mpPages[7] = new ATUIDialogOptionsPageUI(mOptions);
+	mpPages[8] = new ATUIDialogOptionsPageSettings(mOptions);
 	mSelectedPage = -1;
+
+	OnDataExchange(false);
 
 	LBAddString(IDC_PAGE_LIST, L"Startup");
 	LBAddString(IDC_PAGE_LIST, L"Display");
+	LBAddString(IDC_PAGE_LIST, L"Display Effects");
 	LBAddString(IDC_PAGE_LIST, L"Error Handling");
 	LBAddString(IDC_PAGE_LIST, L"File Types");
 	LBAddString(IDC_PAGE_LIST, L"Flash Emulation");
+	LBAddString(IDC_PAGE_LIST, L"Media");
 	LBAddString(IDC_PAGE_LIST, L"UI");
+	LBAddString(IDC_PAGE_LIST, L"Settings");
 
 	SelectPage(0);
 	LBSetSelectedIndex(IDC_PAGE_LIST, 0);
@@ -702,11 +852,17 @@ bool ATUIDialogOptions::OnLoaded() {
 	return VDDialogFrameW32::OnLoaded();
 }
 
+void ATUIDialogOptions::OnDataExchange(bool write) {
+	for(auto *page : mpPages) {
+		page->Sync(true);
+		page->ExchangeOtherSettings(write);
+	}
+}
+
 void ATUIDialogOptions::OnDestroy() {
 	for(size_t i = 0; i < sizeof(mpPages)/sizeof(mpPages[0]); ++i) {
 		if (mpPages[i]) {
 			ATUIDialogOptionsPage *page = mpPages[i];
-			page->Sync(true);
 			page->Destroy();
 			delete page;
 			mpPages[i] = NULL;
@@ -806,8 +962,6 @@ void ATUIDialogOptions::AppendRTF(VDStringA& rtf, const wchar_t *text) {
 ///////////////////////////////////////////////////////////////////////////
 
 void ATUIShowDialogOptions(VDGUIHandle hParent) {
-	HMODULE hmodRE20 = LoadLibraryW(L"riched20");
-
 	ATOptions opts(g_ATOptions);
 	ATUIDialogOptions dlg(opts);
 
@@ -818,7 +972,4 @@ void ATUIShowDialogOptions(VDGUIHandle hParent) {
 		ATOptionsSave();
 		ATOptionsRunUpdateCallbacks(&prevOpts);
 	}
-
-	if (hmodRE20)
-		FreeLibrary(hmodRE20);
 }

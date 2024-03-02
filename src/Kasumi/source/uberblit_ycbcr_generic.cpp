@@ -318,25 +318,25 @@ VDPixmapGenYCbCrToYCbCrGeneric::VDPixmapGenYCbCrToYCbCrGeneric(const VDPixmapGen
 	: mColorSpace(colorSpace)
 {
 	vdfloat3x3 dstToRGB;
-	dstToRGB.m[0] = vdfloat3c(1, 1, 1);
-	dstToRGB.m[1] = vdfloat3c(dstBasis.mToRGB[0]);
-	dstToRGB.m[2] = vdfloat3c(dstBasis.mToRGB[1]);
+	dstToRGB.x = vdfloat3 { 1, 1, 1 };
+	dstToRGB.y = vdfloat3 { dstBasis.mToRGB[0][0], dstBasis.mToRGB[0][1], dstBasis.mToRGB[0][2] };
+	dstToRGB.z = vdfloat3 { dstBasis.mToRGB[1][0], dstBasis.mToRGB[1][1], dstBasis.mToRGB[1][2] };
 
 	if (dstLimitedRange) {
-		dstToRGB.m[0] *= (255.0f / 219.0f);
-		dstToRGB.m[1] *= (128.0f / 112.0f);
-		dstToRGB.m[2] *= (128.0f / 112.0f);
+		dstToRGB.x *= (255.0f / 219.0f);
+		dstToRGB.y *= (128.0f / 112.0f);
+		dstToRGB.z *= (128.0f / 112.0f);
 	}
 
 	vdfloat3x3 srcToRGB;
-	srcToRGB.m[0] = vdfloat3c(1, 1, 1);
-	srcToRGB.m[1] = vdfloat3c(srcBasis.mToRGB[0]);
-	srcToRGB.m[2] = vdfloat3c(srcBasis.mToRGB[1]);
+	srcToRGB.x = vdfloat3 { 1, 1, 1 };
+	srcToRGB.y = vdfloat3 { srcBasis.mToRGB[0][0], srcBasis.mToRGB[0][1], srcBasis.mToRGB[0][2] };
+	srcToRGB.z = vdfloat3 { srcBasis.mToRGB[1][0], srcBasis.mToRGB[1][1], srcBasis.mToRGB[1][2] };
 
 	if (srcLimitedRange) {
-		srcToRGB.m[0] *= (255.0f / 219.0f);
-		srcToRGB.m[1] *= (128.0f / 112.0f);
-		srcToRGB.m[2] *= (128.0f / 112.0f);
+		srcToRGB.x *= (255.0f / 219.0f);
+		srcToRGB.y *= (128.0f / 112.0f);
+		srcToRGB.z *= (128.0f / 112.0f);
 	}
 
 	vdfloat3x3 xf(srcToRGB * ~dstToRGB);
@@ -348,22 +348,22 @@ VDPixmapGenYCbCrToYCbCrGeneric::VDPixmapGenYCbCrToYCbCrGeneric(const VDPixmapGen
 	//	            |b d f|
 	//				|x y z|
 
-	VDASSERT(fabsf(xf.m[0].v[1]) < 1e-5f);
-	VDASSERT(fabsf(xf.m[0].v[2]) < 1e-5f);
+	VDASSERT(fabsf(xf.x.y) < 1e-5f);
+	VDASSERT(fabsf(xf.x.z) < 1e-5f);
 
-	mCoYY   = VDRoundToInt32(xf.m[0].v[0] * 65536.0f);
-	mCoYCb  = VDRoundToInt32(xf.m[1].v[0] * 65536.0f);
-	mCoYCr  = VDRoundToInt32(xf.m[2].v[0] * 65536.0f);
-	mCoCbCb = VDRoundToInt32(xf.m[1].v[1] * 65536.0f);
-	mCoCbCr = VDRoundToInt32(xf.m[2].v[1] * 65536.0f);
-	mCoCrCb = VDRoundToInt32(xf.m[1].v[2] * 65536.0f);
-	mCoCrCr = VDRoundToInt32(xf.m[2].v[2] * 65536.0f);
+	mCoYY   = VDRoundToInt32(xf.x.x * 65536.0f);
+	mCoYCb  = VDRoundToInt32(xf.y.x * 65536.0f);
+	mCoYCr  = VDRoundToInt32(xf.z.x * 65536.0f);
+	mCoCbCb = VDRoundToInt32(xf.y.y * 65536.0f);
+	mCoCbCr = VDRoundToInt32(xf.z.y * 65536.0f);
+	mCoCrCb = VDRoundToInt32(xf.y.z * 65536.0f);
+	mCoCrCr = VDRoundToInt32(xf.z.z * 65536.0f);
 
-	vdfloat3c srcBias(0, 128.0f/255.0f, 128.0f/255.0f);
+	vdfloat3 srcBias { 0, 128.0f/255.0f, 128.0f/255.0f };
 	if (srcLimitedRange)
 		srcBias.set(16.0f / 255.0f, 128.0f / 255.0f, 128.0f / 255.0f);
 
-	vdfloat3c dstBias(0, 128.0f/255.0f, 128.0f/255.0f);
+	vdfloat3 dstBias { 0, 128.0f/255.0f, 128.0f/255.0f };
 	if (dstLimitedRange)
 		dstBias.set(16.0f / 255.0f, 128.0f / 255.0f, 128.0f / 255.0f);
 
@@ -439,25 +439,25 @@ VDPixmapGenYCbCrToYCbCrGeneric_32F::VDPixmapGenYCbCrToYCbCrGeneric_32F(const VDP
 	: mColorSpace(colorSpace)
 {
 	vdfloat3x3 dstToRGB;
-	dstToRGB.m[0] = vdfloat3c(1, 1, 1);
-	dstToRGB.m[1] = vdfloat3c(dstBasis.mToRGB[0]);
-	dstToRGB.m[2] = vdfloat3c(dstBasis.mToRGB[1]);
+	dstToRGB.x = vdfloat3 { 1, 1, 1 };
+	dstToRGB.y = vdfloat3 { dstBasis.mToRGB[0][0], dstBasis.mToRGB[0][1], dstBasis.mToRGB[0][2] };
+	dstToRGB.z = vdfloat3 { dstBasis.mToRGB[1][0], dstBasis.mToRGB[1][1], dstBasis.mToRGB[1][2] };
 
 	if (dstLimitedRange) {
-		dstToRGB.m[0] *= (255.0f / 219.0f);
-		dstToRGB.m[1] *= (255.0f / 224.0f);
-		dstToRGB.m[2] *= (255.0f / 224.0f);
+		dstToRGB.x *= (255.0f / 219.0f);
+		dstToRGB.y *= (255.0f / 224.0f);
+		dstToRGB.z *= (255.0f / 224.0f);
 	}
 
 	vdfloat3x3 srcToRGB;
-	srcToRGB.m[0] = vdfloat3c(1, 1, 1);
-	srcToRGB.m[1] = vdfloat3c(srcBasis.mToRGB[0]);
-	srcToRGB.m[2] = vdfloat3c(srcBasis.mToRGB[1]);
+	srcToRGB.x = vdfloat3 { 1, 1, 1 };
+	srcToRGB.y = vdfloat3 { srcBasis.mToRGB[0][0], srcBasis.mToRGB[0][1], srcBasis.mToRGB[0][2] };
+	srcToRGB.z = vdfloat3 { srcBasis.mToRGB[1][0], srcBasis.mToRGB[1][1], srcBasis.mToRGB[1][2] };
 
 	if (srcLimitedRange) {
-		srcToRGB.m[0] *= (255.0f / 219.0f);
-		srcToRGB.m[1] *= (255.0f / 224.0f);
-		srcToRGB.m[2] *= (255.0f / 224.0f);
+		srcToRGB.x *= (255.0f / 219.0f);
+		srcToRGB.y *= (255.0f / 224.0f);
+		srcToRGB.z *= (255.0f / 224.0f);
 	}
 
 	vdfloat3x3 xf(srcToRGB * ~dstToRGB);
@@ -469,22 +469,22 @@ VDPixmapGenYCbCrToYCbCrGeneric_32F::VDPixmapGenYCbCrToYCbCrGeneric_32F(const VDP
 	//	            |b d f|
 	//				|x y z|
 
-	VDASSERT(fabsf(xf.m[0].v[1]) < 1e-5f);
-	VDASSERT(fabsf(xf.m[0].v[2]) < 1e-5f);
+	VDASSERT(fabsf(xf.x.y) < 1e-5f);
+	VDASSERT(fabsf(xf.x.z) < 1e-5f);
 
-	mCoYY   = xf.m[0].v[0];
-	mCoYCb  = xf.m[1].v[0];
-	mCoYCr  = xf.m[2].v[0];
-	mCoCbCb = xf.m[1].v[1];
-	mCoCbCr = xf.m[2].v[1];
-	mCoCrCb = xf.m[1].v[2];
-	mCoCrCr = xf.m[2].v[2];
+	mCoYY   = xf.x.x;
+	mCoYCb  = xf.y.x;
+	mCoYCr  = xf.z.x;
+	mCoCbCb = xf.y.y;
+	mCoCbCr = xf.z.y;
+	mCoCrCb = xf.y.z;
+	mCoCrCr = xf.z.z;
 
-	vdfloat3c srcBias(0, 128.0f/255.0f, 128.0f/255.0f);
+	vdfloat3 srcBias { 0, 128.0f/255.0f, 128.0f/255.0f };
 	if (srcLimitedRange)
 		srcBias.set(16.0f / 255.0f, 128.0f / 255.0f, 128.0f / 255.0f);
 
-	vdfloat3c dstBias(0, 128.0f/255.0f, 128.0f/255.0f);
+	vdfloat3 dstBias { 0, 128.0f/255.0f, 128.0f/255.0f };
 	if (dstLimitedRange)
 		dstBias.set(16.0f / 255.0f, 128.0f / 255.0f, 128.0f / 255.0f);
 

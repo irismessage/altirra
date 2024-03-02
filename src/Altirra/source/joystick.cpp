@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #define DIRECTINPUT_VERSION 0x0800
 #include <dinput.h>
 #include <comutil.h>
@@ -187,7 +187,7 @@ public:
 		mTransforms = transforms;
 	}
 
-	virtual bool Poll() = 0;
+	virtual bool Poll(bool& bigActivity) = 0;
 	virtual bool PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2) = 0;
 	virtual void PollForCapture(ATJoystickState& dst) = 0;
 
@@ -233,7 +233,7 @@ public:
 	ATControllerXInput(ATXInputBinding& xinput, uint32 xid, ATInputManager *inputMan, const ATInputUnitIdentifier& id);
 	~ATControllerXInput();
 
-	virtual bool Poll();
+	virtual bool Poll(bool& bigActivity);
 	virtual bool PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2);
 	virtual void PollForCapture(ATJoystickState& dst);
 
@@ -277,7 +277,7 @@ ATControllerXInput::ATControllerXInput(ATXInputBinding& xinput, uint32 xid, ATIn
 ATControllerXInput::~ATControllerXInput() {
 }
 
-bool ATControllerXInput::Poll() {
+bool ATControllerXInput::Poll(bool& bigActivity) {
 	XINPUT_STATE xis;
 
 	if (ERROR_SUCCESS != mXInput.mpXInputGetState(mXid, &xis))
@@ -311,6 +311,9 @@ bool ATControllerXInput::Poll() {
 				mpInputManager->OnButtonUp(mUnit, kATInputCode_JoyButton0 + i);
 		}
 	}
+
+	if (axisButtonDelta || buttonDelta)
+		bigActivity = true;
 
 	for(int i=0; i<6; ++i) {
 		if (dstate.mAxisVals[i] != mLastState.mAxisVals[i])
@@ -424,7 +427,6 @@ bool ATControllerXInput::GetInputCodeName(uint32 id, VDStringW& name) const {
 		L"Right stick down",
 		NULL,
 		L"Right trigger pressed",
-		NULL,
 		L"D-pad left",
 		L"D-pad right",
 		L"D-pad up",
@@ -586,7 +588,7 @@ public:
 	bool Init(LPCDIDEVICEINSTANCE devInst, HWND hwnd, ATInputManager *inputMan);
 	void Shutdown();
 
-	bool Poll();
+	bool Poll(bool& bigActivity);
 	bool PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2);
 	void PollForCapture(ATJoystickState& dst);
 
@@ -692,7 +694,7 @@ void ATControllerDirectInput::Shutdown() {
 	mpDevice = NULL;
 }
 
-bool ATControllerDirectInput::Poll() {
+bool ATControllerDirectInput::Poll(bool& bigActivity) {
 	DecodedState state;
 	PollState(state);
 
@@ -709,6 +711,9 @@ bool ATControllerDirectInput::Poll() {
 		change = true;
 		UpdateButtons(kATInputCode_JoyStick1Left, state.mAxisButtonStates, axisButtonDelta);
 	}
+
+	if (buttonDelta || axisButtonDelta)
+		bigActivity = true;
 
 	for(int i=0; i<6; ++i) {
 		if (state.mAxisVals[i] != mLastSentState.mAxisVals[i] ||
@@ -877,7 +882,7 @@ void ATControllerDirectInput::PollState(DecodedState& state) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-class ATJoystickManager : public IATJoystickManager {
+class ATJoystickManager final : public IATJoystickManager {
 public:
 	ATJoystickManager();
 	~ATJoystickManager();
@@ -889,6 +894,8 @@ public:
 	void SetTransforms(const ATJoystickTransforms&);
 
 	void SetCaptureMode(bool capture) { mbCaptureMode = capture; }
+
+	void SetOnActivity(const vdfunction<void()>& fn) override { mpActivityFn = fn; }
 
 	void RescanForDevices();
 	PollResult Poll();
@@ -906,6 +913,8 @@ protected:
 	HWND mhwnd = nullptr;
 	vdrefptr<IDirectInput8> mpDI;
 	ATInputManager *mpInputManager = nullptr;
+
+	vdfunction<void()> mpActivityFn;
 
 	ATJoystickTransforms mTransforms = ATJoystickTransforms {
 		0x2666,	// 15%
@@ -1093,11 +1102,17 @@ ATJoystickManager::PollResult ATJoystickManager::Poll() {
 
 	Controllers::const_iterator it(mControllers.begin()), itEnd(mControllers.end());
 	bool change = false;
+	bool bigChange = false;
 
 	for(; it!=itEnd; ++it) {
 		ATController *ctrl = *it;
 
-		change = ctrl->Poll();
+		change = ctrl->Poll(bigChange);
+	}
+
+	if (bigChange) {
+		if (mpActivityFn)
+			mpActivityFn();
 	}
 
 	return change ? kPollResult_OK : kPollResult_NoActivity;

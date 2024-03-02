@@ -321,7 +321,6 @@ void VDUISplitSetW32::PostLayoutBase(const vduirect& r) {
 
 				const vduirect rChild(pWin->GetArea());
 				int w = rChild.width();
-				int h = rChild.height();
 
 				rClient.right -= w;
 
@@ -340,7 +339,6 @@ void VDUISplitSetW32::PostLayoutBase(const vduirect& r) {
 				pWin = *itEnd;
 
 				const vduirect rChild(pWin->GetArea());
-				int w = rChild.width();
 				int h = rChild.height();
 
 				int minh = pWin->GetLayoutSpecs().minsize.h;
@@ -447,12 +445,11 @@ void VDUISplitBarW32::OnPaint() {
 }
 
 void VDUISplitBarW32::OnLButtonDown(WPARAM wParam, int x, int y) {
-	POINT pt={x,y};
-
 	if (mbIsVertical)
 		mDragOffset = x;
 	else
 		mDragOffset = y;
+
 	SetCapture(mhwnd);
 }
 

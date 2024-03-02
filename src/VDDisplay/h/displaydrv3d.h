@@ -15,9 +15,9 @@ class IVDTTexture2D;
 
 ///////////////////////////////////////////////////////////////////////////
 
-class VDDisplayDriver3D final : public VDVideoDisplayMinidriver, public IVDTAsyncPresent {
-	VDDisplayDriver3D(const VDDisplayDriver3D&);
-	VDDisplayDriver3D& operator=(const VDDisplayDriver3D&);
+class VDDisplayDriver3D final : public VDVideoDisplayMinidriver, public IVDDisplayCompositionEngine, public IVDTAsyncPresent {
+	VDDisplayDriver3D(const VDDisplayDriver3D&) = delete;
+	VDDisplayDriver3D& operator=(const VDDisplayDriver3D&) = delete;
 public:
 	VDDisplayDriver3D();
 	~VDDisplayDriver3D();
@@ -41,6 +41,11 @@ public:
 	virtual void PresentQueued();
 
 	virtual bool AreVSyncTicksNeeded() const { return false; }
+
+	IVDDisplayCompositionEngine *GetDisplayCompositionEngine() override { return this; }
+
+public:
+	void LoadCustomEffect(const wchar_t *path) override {}
 
 public:
 	virtual void QueuePresent();

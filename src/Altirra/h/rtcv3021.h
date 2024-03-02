@@ -21,18 +21,23 @@
 /// V3021 real-time clock emulator.
 class ATRTCV3021Emulator {
 public:
+	struct NVState {
+		uint8 mData[10];
+	};
+
 	ATRTCV3021Emulator();
 
 	void Init();
 
-	void Load(const uint8 data[10]);
-	void Save(uint8 data[10]) const;
+	void Load(const NVState& state);
+	void Save(NVState& state) const;
 
 	bool DebugReadBit() const;
 	bool ReadBit();
 	void WriteBit(bool bit);
 
 protected:
+	void CopyRAMToClock();
 	void CopyClockToRAM();
 
 	uint8	mPhase;

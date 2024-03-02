@@ -84,7 +84,7 @@ void ATSUIDevicePanel::EngWriteSettings(const ATPropertySet *pset) {
 	try {
 		if (!dev) {
 			if (pset)
-				dev = ATSGetDeviceManager()->AddDevice(GetDeviceName(), *pset, false);
+				dev = ATSGetDeviceManager()->AddDevice(GetDeviceName(), *pset, false, false);
 		} else {
 			if (pset)
 				dev->SetSettings(*pset);
@@ -231,25 +231,12 @@ bool ATSUIExeLoaderPanel::OnCommand(uint32 id, uint32 extcode) {
 
 IATDevice *ATSUIExeLoaderPanel::EngGetDevice(ATPropertySet *pset) {
 	ATDeviceManager *dm = ATSGetDeviceManager();
-	IATDevice *founddev = nullptr;
+	auto *founddev = dm->GetDeviceByTag("exeloader");
 
-	dm->ForEachDevice(true,
-		[&, this](IATDevice *dev) {
-			if (founddev)
-				return;
-
-			ATDeviceInfo info;
-			dev->GetDeviceInfo(info);
-
-			if (!strcmp(info.mpDef->mpConfigTag, "exeloader")) {
-				founddev = dev;
-				if (pset) {
-					pset->Clear();
-					dev->GetSettings(*pset);
-				}
-			}
-		}
-	);
+	if (founddev && pset) {
+		pset->Clear();
+		founddev->GetSettings(*pset);
+	}
 
 	return founddev;
 }
@@ -322,23 +309,17 @@ void ATSUIPaneDriveOptions::OnDataExchange(bool write) {
 			ATSPostEngineRequest(
 				[=]() {
 					ATDeviceManager *dm = ATSGetDeviceManager();
+					IATDevice *dev = dm->GetDeviceByTag("disk");
 
-					dm->ForEachDevice(true,
-						[&, this](IATDevice *dev) {
-							ATDeviceInfo info;
-							dev->GetDeviceInfo(info);
-
-							if (!strcmp(info.mpDef->mpConfigTag, "disk")) {
-								ATPropertySet pset;
-								dev->GetSettings(pset);
-								pset.SetBool("actiming", ate);
-								try {
-									dev->SetSettings(pset);
-								} catch(const MyError&) {
-								}
-							}
+					if (dev) {
+						ATPropertySet pset;
+						dev->GetSettings(pset);
+						pset.SetBool("actiming", ate);
+						try {
+							dev->SetSettings(pset);
+						} catch(const MyError&) {
 						}
-					);
+					}
 				}
 			);
 		}
@@ -511,30 +492,18 @@ void ATSUIPaneDrive::OnSelectionChanged(VDUIProxyComboBoxControl *sender, int se
 
 IATDevice *ATSUIPaneDrive::EngGetDevice(ATPropertySet *pset) {
 	ATDeviceManager *dm = ATSGetDeviceManager();
-	IATDevice *founddev = nullptr;
+	IATDevice *dev = dm->GetDeviceByTag("disk");
 
-	dm->ForEachDevice(true,
-		[&, this](IATDevice *dev) {
-			if (founddev)
-				return;
+	ATPropertySet psetcur;
+	dev->GetSettings(psetcur);
 
-			ATDeviceInfo info;
-			dev->GetDeviceInfo(info);
+	if (psetcur.GetUint32("index") != mIndex)
+		return nullptr;
 
-			if (!strcmp(info.mpDef->mpConfigTag, "disk")) {
-				ATPropertySet psetcur;
-				dev->GetSettings(psetcur);
+	if (pset)
+		*pset = std::move(psetcur);
 
-				if (psetcur.GetUint32("index") == mIndex) {
-					founddev = dev;
-					if (pset)
-						*pset = std::move(psetcur);
-				}
-			}
-		}
-	);
-
-	return founddev;
+	return dev;
 }
 
 void ATSUIPaneDrive::UpdateSettings(const ATPropertySet *pset) {

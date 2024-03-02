@@ -23,7 +23,7 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <ctype.h>
 #include <string.h>
 
@@ -96,6 +96,47 @@ VDStringW VDFileSplitPathLeft (const VDStringW& s) { return splitimpL(s, VDFileS
 VDString  VDFileSplitPathRight(const VDString&  s) { return splitimpR(s, VDFileSplitPath(s.c_str())); }
 VDStringW VDFileSplitPathRight(const VDStringW& s) { return splitimpR(s, VDFileSplitPath(s.c_str())); }
 
+const char *VDFileSplitPath(const char *s, const char *t) {
+	const char *lastsep = s;
+
+	while(s != t) {
+		++s;
+		if (s[-1] == ':' || s[-1] == '\\' || s[-1] == '/')
+			lastsep = s;
+	}
+
+	return lastsep;
+}
+
+const wchar_t *VDFileSplitPath(const wchar_t *s, const wchar_t *t) {
+	const wchar_t *lastsep = s;
+
+	while(s != t) {
+		++s;
+
+		if (s[-1] == L':' || s[-1] == L'\\' || s[-1] == L'/')
+			lastsep = s;
+	}
+
+	return lastsep;
+}
+
+VDStringSpanA VDFileSplitPathLeftSpan(const VDStringSpanA& s) {
+	return VDStringSpanA(s.begin(), VDFileSplitPath(s.begin(), s.end()));
+}
+
+VDStringSpanA VDFileSplitPathRightSpan(const VDStringSpanA& s) {
+	return VDStringSpanA(VDFileSplitPath(s.begin(), s.end()), s.end());
+}
+
+VDStringSpanW VDFileSplitPathLeftSpan(const VDStringSpanW& s) {
+	return VDStringSpanW(s.begin(), VDFileSplitPath(s.begin(), s.end()));
+}
+
+VDStringSpanW VDFileSplitPathRightSpan(const VDStringSpanW& s) {
+	return VDStringSpanW(VDFileSplitPath(s.begin(), s.end()), s.end());
+}
+
 const char *VDFileSplitRoot(const char *s) {
 	// Test for a UNC path.
 	if (s[0] == '\\' && s[1] == '\\') {
@@ -167,12 +208,7 @@ const wchar_t *VDFileSplitRoot(const wchar_t *s) {
 VDString  VDFileSplitRoot(const VDString&  s) { return splitimpL(s, VDFileSplitRoot(s.c_str())); }
 VDStringW VDFileSplitRoot(const VDStringW& s) { return splitimpL(s, VDFileSplitRoot(s.c_str())); }
 
-const char *VDFileSplitExt(const char *s) {
-	const char *t = s;
-
-	while(*t)
-		++t;
-
+const char *VDFileSplitExt(const char *s, const char *t) {
 	const char *const end = t;
 
 	while(t>s) {
@@ -188,12 +224,7 @@ const char *VDFileSplitExt(const char *s) {
 	return end;
 }
 
-const wchar_t *VDFileSplitExt(const wchar_t *s) {
-	const wchar_t *t = s;
-
-	while(*t)
-		++t;
-
+const wchar_t *VDFileSplitExt(const wchar_t *s, const wchar_t *t) {
 	const wchar_t *const end = t;
 
 	while(t>s) {
@@ -209,10 +240,33 @@ const wchar_t *VDFileSplitExt(const wchar_t *s) {
 	return end;
 }
 
+const char *VDFileSplitExt(const char *s) {
+	const char *t = s;
+
+	while(*t)
+		++t;
+
+	return VDFileSplitExt(s, t);
+}
+
+const wchar_t *VDFileSplitExt(const wchar_t *s) {
+	const wchar_t *t = s;
+
+	while(*t)
+		++t;
+
+	return VDFileSplitExt(s, t);
+}
+
 VDString  VDFileSplitExtLeft (const VDString&  s) { return splitimpL(s, VDFileSplitExt(s.c_str())); }
 VDStringW VDFileSplitExtLeft (const VDStringW& s) { return splitimpL(s, VDFileSplitExt(s.c_str())); }
 VDString  VDFileSplitExtRight(const VDString&  s) { return splitimpR(s, VDFileSplitExt(s.c_str())); }
 VDStringW VDFileSplitExtRight(const VDStringW& s) { return splitimpR(s, VDFileSplitExt(s.c_str())); }
+
+VDStringSpanA VDFileSplitExtLeftSpan (const VDStringSpanA& s) { return VDStringSpanA(s.begin(), VDFileSplitExt(s.begin(), s.end())); }
+VDStringSpanW VDFileSplitExtLeftSpan (const VDStringSpanW& s) { return VDStringSpanW(s.begin(), VDFileSplitExt(s.begin(), s.end())); }
+VDStringSpanA VDFileSplitExtRightSpan(const VDStringSpanA& s) { return VDStringSpanA(VDFileSplitExt(s.begin(), s.end()), s.end()); }
+VDStringSpanW VDFileSplitExtRighSpant(const VDStringSpanW& s) { return VDStringSpanW(VDFileSplitExt(s.begin(), s.end()), s.end()); }
 
 /////////////////////////////////////////////////////////////////////////////
 
@@ -682,7 +736,11 @@ VDStringW VDGetLongPath(const wchar_t *s) {
 }
 
 VDStringW VDMakePath(const wchar_t *base, const wchar_t *file) {
-	if (!*base)
+	return VDMakePath(VDStringSpanW(base), VDStringSpanW(file));
+}
+
+VDStringW VDMakePath(const VDStringSpanW& base, const VDStringSpanW& file) {
+	if (base.empty())
 		return VDStringW(file);
 
 	VDStringW result(base);

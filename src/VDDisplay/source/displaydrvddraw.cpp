@@ -79,9 +79,9 @@ public:
 
 struct VDVideoDisplayDDManagerNode : public vdlist_node {};
 
-class VDDirectDrawManager : public IVDDirectDrawManager, public VDVideoDisplayDDManagerNode {
-	VDDirectDrawManager(const VDDirectDrawManager&);
-	VDDirectDrawManager& operator=(const VDDirectDrawManager&);
+class VDDirectDrawManager final : public IVDDirectDrawManager, public VDVideoDisplayDDManagerNode {
+	VDDirectDrawManager(const VDDirectDrawManager&) = delete;
+	VDDirectDrawManager& operator=(const VDDirectDrawManager&) = delete;
 public:
 	VDDirectDrawManager(VDThreadId tid, HMONITOR hMonitor);
 	~VDDirectDrawManager();
@@ -475,7 +475,7 @@ void VDShutdownDirectDraw(IVDDirectDrawManager *pIMgr, IVDDirectDrawClient *pCli
 
 ///////////////////////////////////////////////////////////////////////////
 
-class VDVideoDisplayMinidriverDirectDraw : public VDVideoDisplayMinidriver, protected IVDDirectDrawClient {
+class VDVideoDisplayMinidriverDirectDraw : public VDVideoDisplayMinidriver, public IVDDisplayCompositionEngine, protected IVDDirectDrawClient {
 public:
 	VDVideoDisplayMinidriverDirectDraw(bool enableOverlays, bool enableOldSecondaryMonitorBehavior);
 	~VDVideoDisplayMinidriverDirectDraw();
@@ -496,6 +496,11 @@ public:
 	bool Paint(HDC hdc, const RECT& rClient, UpdateMode mode);
 	bool SetSubrect(const vdrect32 *r);
 	void SetLogicalPalette(const uint8 *pLogicalPalette) { mpLogicalPalette = pLogicalPalette; }
+
+	IVDDisplayCompositionEngine *GetDisplayCompositionEngine() override { return this; }
+
+public:
+	void LoadCustomEffect(const wchar_t *path) override {}
 
 protected:
 	enum {
@@ -1173,7 +1178,7 @@ bool VDVideoDisplayMinidriverDirectDraw::Update(UpdateMode mode) {
 
 	uint32 fieldmode = mode & kModeFieldMask;
 
-	VDPixmap dstbm = { dst, NULL, ddsd.dwWidth, ddsd.dwHeight, dstpitch, mPrimaryFormat };
+	VDPixmap dstbm = { dst, NULL, (vdpixsize)ddsd.dwWidth, (vdpixsize)ddsd.dwHeight, dstpitch, mPrimaryFormat };
 
 	if (mpddsOverlay)
 		dstbm.format = source.format;
@@ -1475,7 +1480,14 @@ void VDVideoDisplayMinidriverDirectDraw::InternalRefresh(const RECT& rClient, Up
 
 	bool usingCompositorSurface = false;
 
+	VDDisplayCompositeInfo compInfo = {};
+
 	if (mpCompositor) {
+		compInfo.mWidth = rClient.right;
+		compInfo.mHeight = rClient.bottom;
+
+		mpCompositor->PreComposite(compInfo);
+
 		if (mRenderer.Begin(rClient.right, rClient.bottom, (nsVDPixmap::VDPixmapFormat)mPrimaryFormat)) {
 			pDest = mRenderer.GetCompositionSurface();
 			usingCompositorSurface = true;
@@ -1576,10 +1588,6 @@ void VDVideoDisplayMinidriverDirectDraw::InternalRefresh(const RECT& rClient, Up
 		return;
 
 	if (usingCompositorSurface) {
-		VDDisplayCompositeInfo compInfo = {};
-		compInfo.mWidth = rClient.right;
-		compInfo.mHeight = rClient.bottom;
-
 		if (mbDestRectEnabled) {
 			mRenderer.SetColorRGB(mBackgroundColor);
 

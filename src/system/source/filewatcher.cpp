@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/filewatcher.h>

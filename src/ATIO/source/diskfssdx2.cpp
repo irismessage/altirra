@@ -16,7 +16,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <time.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/bitmath.h>
@@ -40,37 +40,39 @@ public:
 
 	bool IsReadOnly() { return mbReadOnly; }
 	void SetReadOnly(bool readOnly);
+	void SetAllowExtend(bool allow) { mbAllowExtend = allow; }
 
 	bool Validate(ATDiskFSValidationReport& report);
+	bool Validate(ATDiskFSValidationReport& report, bool& lastSectorIncluded);
 	void Flush();
 
-	uintptr FindFirst(uintptr key, ATDiskFSEntryInfo& info);
+	uintptr FindFirst(uint32 key, ATDiskFSEntryInfo& info);
 	bool FindNext(uintptr searchKey, ATDiskFSEntryInfo& info);
 	void FindEnd(uintptr searchKey);
 
-	void GetFileInfo(uintptr key, ATDiskFSEntryInfo& info);
-	uintptr GetParentDirectory(uintptr dirKey);
+	void GetFileInfo(uint32 key, ATDiskFSEntryInfo& info);
+	uint32 GetParentDirectory(uint32 dirKey);
 
-	uintptr LookupFile(uintptr parentKey, const char *filename);
+	uint32 LookupFile(uint32 parentKey, const char *filename);
 
-	void DeleteFile(uintptr key);
-	void ReadFile(uintptr key, vdfastvector<uint8>& dst);
-	uintptr WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len);
-	void RenameFile(uintptr key, const char *newFileName);
-	void SetFileTimestamp(uintptr key, const VDExpandedDate& date);
+	void DeleteFile(uint32 key);
+	void ReadFile(uint32 key, vdfastvector<uint8>& dst);
+	uint32 WriteFile(uint32 parentKey, const char *filename, const void *src, uint32 len);
+	void RenameFile(uint32 key, const char *newFileName);
+	void SetFileTimestamp(uint32 key, const VDExpandedDate& date);
 
-	void CreateDir(uintptr parentKey, const char *filename);
+	uint32 CreateDir(uint32 parentKey, const char *filename);
 
 protected:
 	struct DirEnt;
 	struct FileHandle;
 
 	void	GetFileInfo(const uint8 *dirEnt, uintptr key, ATDiskFSEntryInfo& info);
-	uintptr LookupFileByDirHandle(uint32 sectorMapStart, FileHandle& dh, const char *filename, int *freeOffset);
+	uint32 LookupFileByDirHandle(uint32 sectorMapStart, FileHandle& dh, const char *filename, int *freeOffset);
 
-	uintptr	WriteEntry(uintptr parentKey, const char *filename, const void *src, uint32 len, bool isDir);
+	uint32	WriteEntry(uint32 parentKey, const char *filename, const void *src, uint32 len, bool isDir);
 
-	void	OpenFile(FileHandle& fh, uint32 sectorMapStart, uintptr fileKey = 0);
+	void	OpenFile(FileHandle& fh, uint32 sectorMapStart, uint32 fileKey = 0);
 	void	SeekFile(FileHandle& fh, uint32 offset, bool allowExtend);
 	void	ReadFile(FileHandle& fh, void *dst, uint32 len);
 	void	WriteFile(FileHandle& fh, const void *dst, uint32 len);
@@ -85,10 +87,13 @@ protected:
 	uint32	AllocateSector();
 	void	AllocateSector(uint32 sector);
 	void	FreeSector(uint32 sector);
+	void	EnsureFreeSpace(uint32 minFreeSectors);
 	void	LoadBitmapSector(uint32 sector);
 	void	FlushBitmapSector();
 
 	void	MarkVolumeChanged();
+
+	uint32	ComputeBitmapSectorCount(uint32 totalSectors) const;
 
 	static void WriteFileName(uint8 fn[11], const char *filename);
 	static bool IsValidFileName(const char *filename);
@@ -103,6 +108,7 @@ protected:
 	bool	mbDirty;
 	bool	mbSuperBlockDirty;
 	bool	mbReadOnly;
+	bool	mbAllowExtend = false;
 	uint32	mFreeSectors;
 	uint32	mLastAllocSector;
 
@@ -150,6 +156,9 @@ ATDiskFSSDX2::~ATDiskFSSDX2() {
 
 void ATDiskFSSDX2::Init(IATDiskImage *image, bool readOnly) {
 	mpImage = image;
+	if (image->GetVirtualSectorCount() < 3)
+		throw ATDiskFSException(kATDiskFSError_MediaNotSupported);
+
 	mbDirty = false;
 	mbReadOnly = readOnly;
 	mSectorSize = image->GetSectorSize();
@@ -190,7 +199,7 @@ void ATDiskFSSDX2::InitNew(IATDiskImage *image, const char *volNameHint) {
 
 	// init disk layout
 	const uint32 bootSectorCount = 3;
-	const uint32 bitmapSectorCount = (mTotalSectors >> mBitmapSectorShift) + 1;	// (!!) no -1 because sector 0 bit is unused
+	const uint32 bitmapSectorCount = ComputeBitmapSectorCount(mTotalSectors);
 	const uint32 specialSectorCount = bootSectorCount + bitmapSectorCount + 2;
 	const uint32 rootDirMapSector = specialSectorCount - 1;
 	const uint32 rootDirDataSector = specialSectorCount;
@@ -281,7 +290,7 @@ void ATDiskFSSDX2::InitNew(IATDiskImage *image, const char *volNameHint) {
 }
 
 void ATDiskFSSDX2::GetInfo(ATDiskFSInfo& info) {
-	info.mFSType = "SpartaDOS X";
+	info.mFSType = (mSuperBlock[32] < 0x20) ? "SpartaDOS 1.x" : "SpartaDOS X";
 	info.mFreeBlocks = mFreeSectors;
 	info.mBlockSize = mSectorSize;
 }
@@ -291,21 +300,296 @@ void ATDiskFSSDX2::SetReadOnly(bool readOnly) {
 }
 
 bool ATDiskFSSDX2::Validate(ATDiskFSValidationReport& report) {
+	bool tmp;
+	return Validate(report, tmp);
+}
+
+bool ATDiskFSSDX2::Validate(ATDiskFSValidationReport& report, bool& lastSectorIncluded) {
 	bool errorsFound = false;
 
-	report.mbBrokenFiles = false;
-	report.mbBitmapIncorrect = false;
-	report.mbOpenWriteFiles = false;
+	report = {};
+	lastSectorIncluded = false;
 
-	uint32 freeSectors = 0;
+	const uint32 bootSectors = (mSectorSize > 256) ? 1 : 3;
 
-	for(uint32 i = 1; i <= mTotalSectors; ++i)
-		if (!IsSectorAllocated(i))
-			++freeSectors;
+	// verify that bitmap is within total sector range
+	if (mBitmapStartSector <= bootSectors || mBitmapStartSector > mTotalSectors
+		|| (mTotalSectors - mBitmapStartSector) + 1 < mSuperBlock[15])
+	{
+		report.mbMetadataCorruption = true;
+		return false;
+	}
 
-	if (freeSectors != mFreeSectors) {
+	// verify that the filesystem fits within the volume
+	if (mTotalSectors > mpImage->GetVirtualSectorCount()) {
+		report.mbMetadataCorruption = true;
+		return false;
+	}
+
+	// verify that bitmap sectors are allocated in bitmap
+	for (uint32 i = 0; i < mSuperBlock[15]; ++i) {
+		if (!IsSectorAllocated(mBitmapStartSector + i)) {
+			report.mbBitmapIncorrect = true;
+			errorsFound = true;
+			break;
+		}
+	}
+
+	// verify free count
+	if (!report.mbBitmapIncorrect) {
+		uint32 freeSectors = 0;
+
+		for(uint32 i = 1; i <= mTotalSectors; ++i) {
+			if (!IsSectorAllocated(i))
+				++freeSectors;
+		}
+
+		if (freeSectors != mFreeSectors) {
+			report.mbBitmapIncorrect = true;
+			errorsFound = true;
+		}
+	}
+
+	// initialize WIP bitmap
+	vdfastvector<bool> bitmap(mTotalSectors + 1, false);
+
+	// for sanity
+	bitmap[0] = true;
+
+	// mark off boot sectors
+	for(uint32 i = 1; i <= bootSectors; ++i)
+		bitmap[i] = true;
+
+	// mark off bitmap sectors
+	for(uint32 i = 0; i < mSuperBlock[15]; ++i)
+		bitmap[mBitmapStartSector + i] = true;
+
+	// traverse starting at root directory
+	struct TraversalEntry {
+		uint32 mFirstMapSector;
+		uint32 mParentFirstMapSector;
+		uint32 mSize;
+		bool mbIsDirectory;
+	};
+
+	vdfastvector<TraversalEntry> traversalStack(1, TraversalEntry { VDReadUnalignedLEU16(mSuperBlock + 9), 0, 0, true });
+	vdblock<uint8> mapSectorBlock(mSectorSize * 2);
+	uint8 *const mapBuf = mapSectorBlock.data();
+	uint8 *const dataBuf = mapBuf + mSectorSize;
+	uint8 dirEntBuf[23];
+
+	while(!traversalStack.empty()) {
+		const auto traversalEnt = traversalStack.back();
+		uint32 firstMapSector = traversalEnt.mFirstMapSector;
+		traversalStack.pop_back();
+
+		uint32 mapSector = firstMapSector;
+		uint32 prevMapSector = 0;
+		uint32 deLevel = 0;
+		bool firstEntry = true;
+		bool directoryEnded = false;
+		uint32 recordedSize = 0;
+		uint32 computedSize = 0;
+
+		while(mapSector) {
+			if (bitmap[mapSector]) {
+				report.mbBrokenFiles = true;
+				return false;
+			}
+
+			bitmap[mapSector] = true;
+
+			ReadSector(mapSector, mapBuf);
+
+			if (VDReadUnalignedLEU16(mapBuf + 2) != prevMapSector) {
+				report.mbBrokenFiles = true;
+				return false;
+			}
+
+			uint32 nextMapSector = VDReadUnalignedLEU16(mapBuf);
+			if (nextMapSector > mTotalSectors) {
+				report.mbBrokenFiles = true;
+				return false;
+			}
+
+			for(uint32 i = 0; i < mSectorsPerMapPage; ++i) {
+				uint32 dirSector = VDReadUnalignedLEU16(mapBuf + 4 + 2*i);
+
+				if (!dirSector) {
+					// Files can be sparse.
+					if (!traversalEnt.mbIsDirectory)
+						continue;
+
+					// Directories cannot be sparse, so if we hit a zero
+					// entry, it'd better be the end.
+					if (nextMapSector) {
+						report.mbBrokenFiles = true;
+						return false;
+					}
+
+					break;
+				}
+
+				if (dirSector > mTotalSectors) {
+					report.mbBrokenFiles = true;
+					return false;
+				}
+
+				if (bitmap[dirSector]) {
+					report.mbBrokenFiles = true;
+					return false;
+				}
+
+				bitmap[dirSector] = true;
+
+				if (traversalEnt.mbIsDirectory) {
+					ReadSector(dirSector, dataBuf);
+
+					uint32 offset = 0;
+					uint32 left = mSectorSize;
+
+					while(left > 0) {
+						uint32 tc = std::min<uint32>(23 - deLevel, left);
+
+						memcpy(dirEntBuf + deLevel, dataBuf + offset, tc);
+						deLevel += tc;
+						offset += tc;
+						left -= tc;
+
+						if (deLevel >= 23) {
+							deLevel = 0;
+
+							computedSize += 23;
+
+							if (firstEntry) {
+								firstEntry = false;
+
+								// check parent entry
+								uint32 parentRef = VDReadUnalignedLEU16(dirEntBuf + 1);
+								if (parentRef != traversalEnt.mParentFirstMapSector) {
+									report.mbBrokenFiles = true;
+									return false;
+								}
+
+								// stash directory size
+								recordedSize = VDReadUnalignedLEU16(dirEntBuf + 3) + (((uint32)dirEntBuf[5]) << 16);
+								if (recordedSize < 23 || (recordedSize % 23)) {
+									report.mbBrokenFiles = true;
+									return false;
+								}
+							} else if (!directoryEnded) {
+								const uint8 deStatus = dirEntBuf[0];
+
+								if (deStatus == 0) {
+									directoryEnded = true;
+
+									// skip idle or deleted entries
+								} else if (!(deStatus & 0x08)) {
+									// if not in use, must be deleted
+									if (!(deStatus & 0x10)) {
+										report.mbBrokenFiles = true;
+										return false;
+									}
+								} else {
+									// if in use, must not be deleted
+									if (deStatus & 0x10) {
+										report.mbBrokenFiles = true;
+										return false;
+									}
+
+									// check if open for write -- if so, flag it but keep going
+									if (deStatus & 0x80)
+										report.mbOpenWriteFiles = true;
+
+									// push entry to traverse
+									traversalStack.push_back(
+										{
+											VDReadUnalignedLEU16(dirEntBuf+1),
+											firstMapSector,
+											0,
+											(deStatus & 0x20) != 0
+										}
+									);
+								}
+							}
+
+							if (computedSize >= recordedSize) {
+								if (nextMapSector) {
+									report.mbBrokenFiles = true;
+									return false;
+								}
+
+								goto directory_finished;
+							}
+						}
+					}
+				}
+			}
+
+			prevMapSector = mapSector;
+			mapSector = nextMapSector;
+		}
+
+directory_finished:
+		if (traversalEnt.mbIsDirectory) {
+			// check if the directory size matches
+			if (recordedSize != computedSize || !computedSize) {
+				report.mbBrokenFiles = true;
+				return false;
+			}
+		}
+	}
+
+	// If the filesystem is pre-V2.0, allocate the DOS sectors.
+	if (mSuperBlock[0x20] == 0x11) {
+		const uint32 dosSectors = mSuperBlock[37];
+
+		if (dosSectors + bootSectors > mTotalSectors) {
+			report.mbMetadataCorruption = true;
+			return false;
+		}
+
+		for(uint32 i=1; i<=dosSectors; ++i) {
+			if (bitmap[bootSectors + i]) {
+				report.mbBrokenFiles = true;
+				return false;
+			}
+
+			bitmap[bootSectors + i] = true;
+		}
+	}
+
+	// compute free sectors, and check against read total
+	uint32 computedFreeSectors = 0;
+	for(bool allocated : bitmap) {
+		if (!allocated)
+			++computedFreeSectors;
+	}
+
+	// On some SpartaDOS disks, the very last sector is not used. Check if
+	// we have this case, and if so, adjust our computed bitmap to match.
+	lastSectorIncluded = true;
+
+	if (computedFreeSectors != mFreeSectors && !bitmap[mTotalSectors] &&
+		IsSectorAllocated(mTotalSectors))
+	{
+		--computedFreeSectors;
+		bitmap[mTotalSectors] = true;
+		lastSectorIncluded = false;
+	}
+
+	if (computedFreeSectors != mFreeSectors) {
 		report.mbBitmapIncorrect = true;
 		errorsFound = true;
+	} else {
+		// do more exhaustive check
+		for(uint32 i=1; i<=mTotalSectors; ++i) {
+			if (IsSectorAllocated(i) != bitmap[i]) {
+				report.mbBitmapIncorrect = true;
+				errorsFound = true;
+				break;
+			}
+		}
 	}
 
 	return !errorsFound;
@@ -326,7 +610,7 @@ void ATDiskFSSDX2::Flush() {
 	mbDirty = false;
 }
 
-uintptr ATDiskFSSDX2::FindFirst(uintptr key, ATDiskFSEntryInfo& info) {
+uintptr ATDiskFSSDX2::FindFirst(uint32 key, ATDiskFSEntryInfo& info) {
 	uint32 sectorMapStart = GetDirectorySectorMap(key);
 
 	FindHandle *h = new FindHandle;
@@ -374,7 +658,7 @@ void ATDiskFSSDX2::FindEnd(uintptr searchKey) {
 	delete (FindHandle *)searchKey;
 }
 
-void ATDiskFSSDX2::GetFileInfo(uintptr key, ATDiskFSEntryInfo& info) {
+void ATDiskFSSDX2::GetFileInfo(uint32 key, ATDiskFSEntryInfo& info) {
 	uint32 dirSectorMap = key >> 16;
 	uint32 fileIndex = key & 0xffff;
 
@@ -388,7 +672,7 @@ void ATDiskFSSDX2::GetFileInfo(uintptr key, ATDiskFSEntryInfo& info) {
 	GetFileInfo(dirEnt, key, info);
 }
 
-uintptr ATDiskFSSDX2::GetParentDirectory(uintptr dirKey) {
+uint32 ATDiskFSSDX2::GetParentDirectory(uint32 dirKey) {
 	const uint32 dirSectorMapStart = dirKey >> 16;
 
 	FileHandle fh;
@@ -474,7 +758,7 @@ void ATDiskFSSDX2::GetFileInfo(const uint8 *rawde, uintptr key, ATDiskFSEntryInf
 	}
 }
 
-uintptr ATDiskFSSDX2::LookupFile(uintptr parentKey, const char *filename) {
+uint32 ATDiskFSSDX2::LookupFile(uint32 parentKey, const char *filename) {
 	if (!IsValidFileName(filename))
 		return 0;
 
@@ -486,7 +770,7 @@ uintptr ATDiskFSSDX2::LookupFile(uintptr parentKey, const char *filename) {
 	return LookupFileByDirHandle(sectorMapStart, fh, filename, NULL);
 }
 
-uintptr ATDiskFSSDX2::LookupFileByDirHandle(uint32 sectorMapStart, FileHandle& fh, const char *filename, int *freeOffset) {
+uint32 ATDiskFSSDX2::LookupFileByDirHandle(uint32 sectorMapStart, FileHandle& fh, const char *filename, int *freeOffset) {
 	uint8 dirEnt[23];
 	SeekFile(fh, 0, false);
 	ReadFile(fh, dirEnt, 23);
@@ -522,7 +806,7 @@ uintptr ATDiskFSSDX2::LookupFileByDirHandle(uint32 sectorMapStart, FileHandle& f
 	return 0;
 }
 
-void ATDiskFSSDX2::DeleteFile(uintptr key) {
+void ATDiskFSSDX2::DeleteFile(uint32 key) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
@@ -592,7 +876,7 @@ void ATDiskFSSDX2::DeleteFile(uintptr key) {
 	MarkVolumeChanged();
 }
 
-void ATDiskFSSDX2::ReadFile(uintptr key, vdfastvector<uint8>& dst) {
+void ATDiskFSSDX2::ReadFile(uint32 key, vdfastvector<uint8>& dst) {
 	FileHandle fh;
 	OpenFile(fh, key >> 16);
 	SeekFile(fh, (key & 0xffff)*23, false);
@@ -608,11 +892,11 @@ void ATDiskFSSDX2::ReadFile(uintptr key, vdfastvector<uint8>& dst) {
 	ReadFile(fh, dst.data(), len);
 }
 
-uintptr ATDiskFSSDX2::WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len) {
+uint32 ATDiskFSSDX2::WriteFile(uint32 parentKey, const char *filename, const void *src, uint32 len) {
 	return WriteEntry(parentKey, filename, src, len, false);
 }
 
-void ATDiskFSSDX2::CreateDir(uintptr parentKey, const char *filename) {
+uint32 ATDiskFSSDX2::CreateDir(uint32 parentKey, const char *filename) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
@@ -625,10 +909,10 @@ void ATDiskFSSDX2::CreateDir(uintptr parentKey, const char *filename) {
 
 	WriteFileName(dirEnt + 6, filename);
 
-	WriteEntry(parentKey, filename, dirEnt, 23, true);
+	return WriteEntry(parentKey, filename, dirEnt, 23, true);
 }
 
-uintptr ATDiskFSSDX2::WriteEntry(uintptr parentKey, const char *filename, const void *src, uint32 len, bool isDir) {
+uint32 ATDiskFSSDX2::WriteEntry(uint32 parentKey, const char *filename, const void *src, uint32 len, bool isDir) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
@@ -685,8 +969,7 @@ uintptr ATDiskFSSDX2::WriteEntry(uintptr parentKey, const char *filename, const 
 
 	uint32 totalAllocCount = dataSectorCount + mapSectorCount + dirSectorCount;
 
-	if (mFreeSectors < totalAllocCount)
-		throw ATDiskFSException(kATDiskFSError_DiskFull);
+	EnsureFreeSpace(totalAllocCount);
 
 	uint8 dirEnt2[23] = {0x00};
 	const uintptr fileKey = (dirSectorMap << 16) + (dirEntOffset / 23);
@@ -746,7 +1029,7 @@ uintptr ATDiskFSSDX2::WriteEntry(uintptr parentKey, const char *filename, const 
 	return fileKey;
 }
 
-void ATDiskFSSDX2::RenameFile(uintptr key, const char *filename) {
+void ATDiskFSSDX2::RenameFile(uint32 key, const char *filename) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
@@ -791,10 +1074,10 @@ void ATDiskFSSDX2::RenameFile(uintptr key, const char *filename) {
 		FlushFile(sdh);
 	}
 
-	mbDirty = true;
+	MarkVolumeChanged();
 }
 
-void ATDiskFSSDX2::SetFileTimestamp(uintptr key, const VDExpandedDate& date) {
+void ATDiskFSSDX2::SetFileTimestamp(uint32 key, const VDExpandedDate& date) {
 	FileHandle dh;
 
 	const uint32 dirOffset = 23*(key & 0xffff);
@@ -827,7 +1110,7 @@ void ATDiskFSSDX2::SetFileTimestamp(uintptr key, const VDExpandedDate& date) {
 	}
 }
 
-void ATDiskFSSDX2::OpenFile(FileHandle& fh, uint32 sectorMapStart, uintptr fileKey) {
+void ATDiskFSSDX2::OpenFile(FileHandle& fh, uint32 sectorMapStart, uint32 fileKey) {
 	if (!sectorMapStart && fileKey) {
 		sectorMapStart = AllocateSector();
 		memset(fh.mMapBuffer, 0, sizeof fh.mMapBuffer);
@@ -1051,8 +1334,7 @@ bool ATDiskFSSDX2::IsSectorAllocated(uint32 sector) {
 }
 
 uint32 ATDiskFSSDX2::AllocateSector() {
-	if (!mFreeSectors)
-		throw ATDiskFSException(kATDiskFSError_DiskFull);
+	EnsureFreeSpace(1);
 
 	uint32 sec = mLastAllocSector;
 	for(uint32 i=0; i<mTotalSectors; ++i) {
@@ -1081,11 +1363,13 @@ void ATDiskFSSDX2::AllocateSector(uint32 sector) {
 	mbDirty = true;
 
 	mLastAllocSector = sector;
-	mbSuperBlockDirty = true;
+	MarkVolumeChanged();
 	--mFreeSectors;
 }
 
 void ATDiskFSSDX2::FreeSector(uint32 sector) {
+	// This is used from EnsureFreeSpace() when extending the bitmap,
+	// so we deliberately don't check the existing bit.
 	uint32 bitmapSectorOffset = sector >> mBitmapSectorShift;
 
 	LoadBitmapSector(mBitmapStartSector + bitmapSectorOffset);
@@ -1095,7 +1379,111 @@ void ATDiskFSSDX2::FreeSector(uint32 sector) {
 	mbDirty = true;
 
 	++mFreeSectors;
-	mbSuperBlockDirty = true;
+	MarkVolumeChanged();
+}
+
+void ATDiskFSSDX2::EnsureFreeSpace(uint32 minFreeSectors) {
+	if (mFreeSectors >= minFreeSectors)
+		return;
+
+	if (!mbAllowExtend || mpImage->IsDynamic())
+		throw ATDiskFSException(kATDiskFSError_DiskFull);
+
+	// Commit everything to disk.
+	Flush();
+
+	// Validate now. If something's FUBAR, bail immediately.
+	ATDiskFSValidationReport report;
+	bool lastSectorIncluded;
+	if (!Validate(report, lastSectorIncluded))
+		throw ATDiskFSException(kATDiskFSError_CorruptedFileSystem);
+
+	// Compute total number of sectors we need for the new
+	// bitmap.
+	uint32 requiredNewSize = mTotalSectors - mFreeSectors + minFreeSectors;
+	uint32 oldBitmapSectorCount = mSuperBlock[15];
+	uint32 newBitmapSectorCount = ComputeBitmapSectorCount(requiredNewSize);
+
+	// Check if we need to extend the bitmap. If so, make sure the disk is
+	// extended by at least the size of the bitmap; we can't be sure that
+	// enough contiguous sectors are available and we're too lazy to check.
+	bool bitmapRelocationRequired = false;
+
+	if (newBitmapSectorCount > oldBitmapSectorCount) {
+		bitmapRelocationRequired = true;
+
+		// Okay, now here's the icky part... extending the disk to hold
+		// the additional bitmap sectors may require ANOTHER bitmap sector,
+		// since the bitmap is included within itself. Repeat until
+		// convergence.
+		while(requiredNewSize < mTotalSectors + newBitmapSectorCount) {
+			requiredNewSize = mTotalSectors + newBitmapSectorCount;
+
+			newBitmapSectorCount = ComputeBitmapSectorCount(requiredNewSize);
+		}
+	}
+
+	// Make sure we're extending the disk by at least 20%, up to the limit
+	// of 64K-1 sectors. This is so we don't spend all our time resizing the
+	// filesystem by tiny amounts.
+	uint32 minResize = std::min<uint32>(65535, mTotalSectors + (mTotalSectors / 5));
+
+	if (requiredNewSize < minResize) {
+		requiredNewSize = minResize;
+
+		// We can never add more bitmap sectors than we add total sectors and
+		// we aren't depending on the extra sectors here, so no loop required.
+		newBitmapSectorCount = ComputeBitmapSectorCount(requiredNewSize);
+	}
+
+	// Extend the disk.
+	mpImage->Resize(requiredNewSize);
+
+	// Relocate the bitmap.
+	if (bitmapRelocationRequired) {
+		for(uint32 i = 0; i < oldBitmapSectorCount; ++i) {
+			LoadBitmapSector(mBitmapStartSector + i);
+			mbBitmapSectorDirty = true;
+			mBitmapSector = mTotalSectors + i + 1;
+		}
+
+		const uint32 oldBitmapStartSector = mBitmapStartSector;
+		mBitmapStartSector = mTotalSectors + 1;
+
+		// Free the old bitmap.
+		for(uint32 i = 0; i < oldBitmapSectorCount; ++i) {
+			FreeSector(oldBitmapStartSector + i);
+		}
+
+		// Update the superblock with the new bitmap location.
+		VDWriteUnalignedLEU16(mSuperBlock + 16, mBitmapStartSector);
+		MarkVolumeChanged();
+	}
+
+	// Mark all new sectors as free. Note that we have no idea what are in
+	// those bits, so it's important that FreeSector() not check.
+	for(uint32 i = mTotalSectors + 1; i <= requiredNewSize; ++i) {
+		FreeSector(i);
+	}
+
+	// If the last sector on the volume was not previously available in the bitmap,
+	// mark it free now. The validator will tolerate this at the end, but after we
+	// resize, it'll be in the middle where it'll cause a validation error.
+	if (!lastSectorIncluded)
+		FreeSector(mTotalSectors);
+
+	// Update total sector count internally and in superblock.
+	mTotalSectors = requiredNewSize;
+	VDWriteUnalignedLEU16(mSuperBlock + 11, mTotalSectors);
+	MarkVolumeChanged();
+
+	// Flush everything to be safe.
+	Flush();
+
+	// Validate again to make sure we didn't fsck something up (and if we did,
+	// time to run fsck!).
+	if (!Validate(report))
+		throw ATDiskFSException(kATDiskFSError_CorruptedFileSystem);
 }
 
 void ATDiskFSSDX2::LoadBitmapSector(uint32 sector) {
@@ -1117,9 +1505,15 @@ void ATDiskFSSDX2::FlushBitmapSector() {
 
 void ATDiskFSSDX2::MarkVolumeChanged() {
 	// Increment volume sequence counter.
-	++mSuperBlock[38];
-	mbSuperBlockDirty = true;
-	mbDirty = true;
+	if (!mbSuperBlockDirty) {
+		++mSuperBlock[38];
+		mbSuperBlockDirty = true;
+		mbDirty = true;
+	}
+}
+
+uint32 ATDiskFSSDX2::ComputeBitmapSectorCount(uint32 totalSectors) const {
+	return (totalSectors >> mBitmapSectorShift) + 1;	// (!!) no -1 because sector 0 bit is unused
 }
 
 void ATDiskFSSDX2::WriteFileName(uint8 fn[11], const char *filename) {

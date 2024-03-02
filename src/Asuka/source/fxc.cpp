@@ -15,17 +15,21 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vector>
 #include <list>
 #include <string>
 #include <d3d9.h>
 #include <d3dx9.h>
 #include <objbase.h>
+#include <vd2/system/binary.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdstl.h>
+
+// TODO: Fix this
+#include <vd2/VDDisplay/minid3dx.h>
 
 #pragma comment(lib, "d3dx9")
 
@@ -78,9 +82,9 @@ namespace
 
 namespace
 {
-	class DummyD3DVertexShader : public IDirect3DVertexShader9 {
+	class DummyD3DVertexShader final : public IDirect3DVertexShader9 {
 	public:
-		DummyD3DVertexShader(IDirect3DDevice9 *pDevice, const DWORD *pByteCode) : mRefCount(0), mpDevice(pDevice), mByteCode(pByteCode, pByteCode + (D3DXGetShaderSize(pByteCode) >> 2)) {}
+		DummyD3DVertexShader(IDirect3DDevice9 *pDevice, const DWORD *pByteCode) : mRefCount(0), mpDevice(pDevice), mByteCode(pByteCode, pByteCode + (VDD3DXGetShaderSize((const uint32 *)pByteCode) >> 2)) {}
 
 		/*** IUnknown methods ***/
 		HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObj) {
@@ -135,9 +139,9 @@ namespace
 		std::vector<DWORD> mByteCode;
 	};
 
-	class DummyD3DPixelShader : public IDirect3DPixelShader9 {
+	class DummyD3DPixelShader final : public IDirect3DPixelShader9 {
 	public:
-		DummyD3DPixelShader(IDirect3DDevice9 *pDevice, const DWORD *pByteCode) : mRefCount(0), mpDevice(pDevice), mByteCode(pByteCode, pByteCode + (D3DXGetShaderSize(pByteCode) >> 2)) {}
+		DummyD3DPixelShader(IDirect3DDevice9 *pDevice, const DWORD *pByteCode) : mRefCount(0), mpDevice(pDevice), mByteCode(pByteCode, pByteCode + (VDD3DXGetShaderSize((const uint32 *)pByteCode) >> 2)) {}
 
 		/*** IUnknown methods ***/
 		HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObj) {
@@ -192,7 +196,7 @@ namespace
 		std::vector<DWORD> mByteCode;
 	};
 
-	class DummyD3DBaseTexture : public IDirect3DBaseTexture9
+	class DummyD3DBaseTexture final : public IDirect3DBaseTexture9
 	{
 	public:
 		DummyD3DBaseTexture(IDirect3DDevice9 *pDevice, uint32 id) : mRefCount(0), mpDevice(pDevice), mId(id) {}
@@ -258,7 +262,7 @@ namespace
 		uint32 mId;
 	};
 
-	class DummyD3DDevice : public IDirect3DDevice9 {
+	class DummyD3DDevice final : public IDirect3DDevice9 {
 	public:
 		DummyD3DDevice() : mRefCount(0) {}
 
@@ -596,9 +600,9 @@ namespace {
 	};
 
 	void DeleteShaderConstantTable(std::vector<uint32>& shader) {
-		LPCVOID data;
-		UINT size;
-		if (D3D_OK == D3DXFindShaderComment((const DWORD *)&shader[0], MAKEFOURCC('C', 'T', 'A', 'B'), &data, &size)) {
+		uint32 size;
+		const void *data = VDD3DXFindShaderComment((const uint32 *)&shader[0], shader.size() * sizeof(uint32), VDMAKEFOURCC('C', 'T', 'A', 'B'), size);
+		if (data) {
 			ptrdiff_t offset = (char *)data - (char *)&shader[0];
 
 			VDASSERT(!(offset & 3));
@@ -608,81 +612,64 @@ namespace {
 			offset >>= 2;
 			size = (size + 3) >> 2;
 
-			VDASSERT(offset + size <= shader.size());
+			VDASSERT((size_t)offset + size <= shader.size());
 
 			// erase comment token, fourcc, and comment data
 			shader.erase(shader.begin() + (offset - 2), shader.begin() + offset + size);
 		}
 	}
 
-	void EmitShaderConstants(vdfastvector<uint32>& states, ID3DXConstantTable *pConstants, bool pixelShader) {
-		D3DXCONSTANTTABLE_DESC desc;
-		HRESULT hr;
-		hr = pConstants->GetDesc(&desc);
-		if (FAILED(hr)) {
-			printf("ID3DXConstantTable::GetDesc() failed, HRESULT=%08x\n", hr);
-			exit(20);
-		}
-
-		D3DXCONSTANT_DESC descArray[16];
+	void EmitShaderConstants(vdfastvector<uint32>& states, const VDD3DXConstantTable& constants, bool pixelShader) {
 		uint32 baseOffset = pixelShader ? 0x40000000 : 0x00000000;
+		const uint32 n = constants.GetParameterCount();
 
-		for(UINT i=0; i<desc.Constants; ++i) {
-			D3DXHANDLE hConstant = pConstants->GetConstant(NULL, i);
-			UINT count = 16;
+		for(uint32 i=0; i<n; ++i) {
+			const auto param = constants.GetParameter(i);
+			const char *paramName = param.GetName();
+			const uint32 paramReg = param.GetRegisterIndex();
 
-			hr = pConstants->GetConstantDesc(hConstant, descArray, &count);
-			if (FAILED(hr)) {
-				printf("ID3DXConstantTable::GetConstantDesc() failed, HRESULT=%08x\n", hr);
-				exit(20);
-			}
-
-			for(UINT dc=0; dc<count; ++dc) {
-				const D3DXCONSTANT_DESC& desc = descArray[dc];
-
-				switch(desc.RegisterSet) {
-					case D3DXRS_BOOL:
-					case D3DXRS_INT4:
-					case D3DXRS_FLOAT4:
-						{
-							for(int index=0; index<sizeof(kParameterNames)/sizeof(kParameterNames[0]); ++index) {
-								if (!strcmp(kParameterNames[index], desc.Name)) {
-									switch(desc.RegisterSet) {
-									case D3DXRS_BOOL:
-										states.push_back(baseOffset + 0x80000000 + (desc.RegisterIndex << 12) + index);
-										break;
-									case D3DXRS_INT4:
-										states.push_back(baseOffset + 0x90000000 + (desc.RegisterIndex << 12) + index);
-										break;
-									case D3DXRS_FLOAT4:
-										states.push_back(baseOffset + 0xA0000000 + (desc.RegisterIndex << 12) + index);
-										break;
-									}
-									goto param_found;
+			switch(param.GetRegisterSet()) {
+				case kVDD3DXRegisterSet_Bool:
+				case kVDD3DXRegisterSet_Int4:
+				case kVDD3DXRegisterSet_Float4:
+					{
+						for(uint32 index=0; index < (uint32)vdcountof(kParameterNames); ++index) {
+							if (!strcmp(kParameterNames[index], paramName)) {
+								switch(param.GetRegisterSet()) {
+								case kVDD3DXRegisterSet_Bool:
+									states.push_back(baseOffset + 0x80000000 + (paramReg << 12) + index);
+									break;
+								case kVDD3DXRegisterSet_Int4:
+									states.push_back(baseOffset + 0x90000000 + (paramReg << 12) + index);
+									break;
+								case kVDD3DXRegisterSet_Float4:
+									states.push_back(baseOffset + 0xA0000000 + (paramReg << 12) + index);
+									break;
 								}
+								goto param_found;
 							}
-
-							printf("Error: Unknown constant: %s\n", desc.Name);
-							exit(10);
 						}
+
+						printf("Error: Unknown constant: %s\n", paramName);
+						exit(10);
+					}
 param_found:
-						break;
-					case D3DXRS_SAMPLER:
-						if (!strncmp(desc.Name, "vd_", 3)) {
-							for(int index=0; index<sizeof(kTextureNames)/sizeof(kTextureNames[0]); ++index) {
-								if (!strcmp(kTextureNames[index], desc.Name)) {
-									UINT samplerIndex = pConstants->GetSamplerIndex(hConstant);
-									states.push_back(0x30000000 + (samplerIndex << 24) + index + 1);
-									goto texture_found;
-								}
-							}
+					break;
 
-							printf("Error: Unknown texture: %s\n", desc.Name);
-							exit(10);
+				case kVDD3DXRegisterSet_Sampler:
+					if (!strncmp(paramName, "vd_", 3)) {
+						for(uint32 index=0; index<(uint32)vdcountof(kTextureNames); ++index) {
+							if (!strcmp(kTextureNames[index], paramName)) {
+								states.push_back(0x30000000 + (paramReg << 24) + index + 1);
+								goto texture_found;
+							}
 						}
+
+						printf("Error: Unknown texture: %s\n", paramName);
+						exit(10);
+					}
 texture_found:
-						break;
-				}
+					break;
 			}
 		}
 	}
@@ -708,7 +695,7 @@ void tool_fxc(const vdfastvector<const char *>& args, const vdfastvector<const c
 #ifdef D3DXSHADER_USE_LEGACY_D3DX9_31_DLL
 	// The V32 compiler seems to be broken in that it thinks "point" and "linear" are
 	// keywords.
-	flags |= D3DXSHADER_USE_LEGACY_D3DX9_31_DLL;
+//	flags |= D3DXSHADER_USE_LEGACY_D3DX9_31_DLL;
 #endif
 
 	HRESULT hr = D3DXCreateEffectFromFile(pDevice, filename, NULL, NULL, flags, NULL, ~pEffect, ~pErrors);
@@ -829,7 +816,7 @@ void tool_fxc(const vdfastvector<const char *>& args, const vdfastvector<const c
 
 			int psIndex = -1;
 			if (passDesc.pPixelShaderFunction) {
-				std::vector<uint32> ps(passDesc.pPixelShaderFunction, passDesc.pPixelShaderFunction + (D3DXGetShaderSize(passDesc.pPixelShaderFunction) >> 2));
+				std::vector<uint32> ps(passDesc.pPixelShaderFunction, passDesc.pPixelShaderFunction + (VDD3DXGetShaderSize((const uint32 *)passDesc.pPixelShaderFunction) >> 2));
 
 				DeleteShaderConstantTable(ps);
 
@@ -848,9 +835,9 @@ void tool_fxc(const vdfastvector<const char *>& args, const vdfastvector<const c
 					psIndex = mPixelShaders.size() - 1;
 				}
 
-				vdrefptr<ID3DXConstantTable> pConstantTable;
-				if (D3D_OK == D3DXGetShaderConstantTable(passDesc.pPixelShaderFunction, ~pConstantTable))
-					EmitShaderConstants(mStates, pConstantTable, true);
+				VDD3DXConstantTable constantTable;
+				if (VDD3DXGetShaderConstantTable((const uint32 *)passDesc.pPixelShaderFunction, VDD3DXGetShaderSize((const uint32 *)passDesc.pPixelShaderFunction), constantTable))
+					EmitShaderConstants(mStates, constantTable, true);
 
 				uint32 psVersion = passDesc.pPixelShaderFunction[0] & 0xffff;
 				if (psVersion > maxPSVersion)
@@ -859,7 +846,7 @@ void tool_fxc(const vdfastvector<const char *>& args, const vdfastvector<const c
 
 			int vsIndex = -1;
 			if (passDesc.pVertexShaderFunction) {
-				std::vector<uint32> vs(passDesc.pVertexShaderFunction, passDesc.pVertexShaderFunction + (D3DXGetShaderSize(passDesc.pVertexShaderFunction) >> 2));
+				std::vector<uint32> vs(passDesc.pVertexShaderFunction, passDesc.pVertexShaderFunction + (VDD3DXGetShaderSize((const uint32 *)passDesc.pVertexShaderFunction) >> 2));
 
 				DeleteShaderConstantTable(vs);
 
@@ -878,9 +865,9 @@ void tool_fxc(const vdfastvector<const char *>& args, const vdfastvector<const c
 					vsIndex = mVertexShaders.size() - 1;
 				}
 
-				vdrefptr<ID3DXConstantTable> pConstantTable;
-				if (D3D_OK == D3DXGetShaderConstantTable(passDesc.pVertexShaderFunction, ~pConstantTable))
-					EmitShaderConstants(mStates, pConstantTable, false);
+				VDD3DXConstantTable constantTable;
+				if (VDD3DXGetShaderConstantTable((const uint32 *)passDesc.pVertexShaderFunction, VDD3DXGetShaderSize((const uint32 *)passDesc.pVertexShaderFunction), constantTable))
+					EmitShaderConstants(mStates, constantTable, false);
 
 				uint32 vsVersion = passDesc.pVertexShaderFunction[0] & 0xffff;
 				if (vsVersion > maxVSVersion)
@@ -1071,7 +1058,7 @@ void tool_fxc(const vdfastvector<const char *>& args, const vdfastvector<const c
 
 		const D3DCAPS9& caps = pDevice->GetRequiredCaps();
 
-		fprintf(f, "static const TechniqueInfo g_technique_%s={\n", techDesc.Name);
+		fprintf(f, "extern const TechniqueInfo g_technique_%s={\n", techDesc.Name);
 		fprintf(f, "\tg_technique_%s_passes, %d,\n", techDesc.Name, passCount);
 		fprintf(f, "\tD3DPS_VERSION(%d,%d),\n", maxPSVersion >> 8, maxPSVersion & 255);
 		fprintf(f, "\tD3DVS_VERSION(%d,%d),\n", maxVSVersion >> 8, maxVSVersion & 255);
@@ -1143,11 +1130,11 @@ void tool_fxc(const vdfastvector<const char *>& args, const vdfastvector<const c
 	// output effect data
 	fprintf(f, "static const EffectInfo g_effect={\n");
 		fprintf(f, "\tg_shaderData,\n");
-		fprintf(f, "\tg_shaderOffsets+0, %d,\n", mVertexShaderOffsets.size() - 1);
-		fprintf(f, "\tg_shaderOffsets+%d, %d\n", mVertexShaderOffsets.size(), mPixelShaderOffsets.size() - 1);
+		fprintf(f, "\tg_shaderOffsets+0, %d,\n", (int)mVertexShaderOffsets.size() - 1);
+		fprintf(f, "\tg_shaderOffsets+%d, %d\n", (int)mVertexShaderOffsets.size(), (int)mPixelShaderOffsets.size() - 1);
 	fprintf(f, "};\n");
 	fclose(f);
 
-	printf("Asuka: %d techniques, %d shader bytes, %d state bytes.\n", desc.Techniques, mShaderData.size()*4, mStates.size()*4);
+	printf("Asuka: %d techniques, %d shader bytes, %d state bytes.\n", desc.Techniques, (int)mShaderData.size()*4, (int)mStates.size()*4);
 	printf("Asuka: Compilation was successful.\n");
 }

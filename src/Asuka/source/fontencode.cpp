@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 
 #define WINVER 0x0500
 #define _WIN32_WINNT 0x0500
@@ -70,7 +70,7 @@ void tool_fontencode(const vdfastvector<const char *>& args, const vdfastvector<
 	BITMAP bm = {0};
 
 	if (!hbm || !GetObject(hbm, sizeof bm, &bm)) {
-		printf("Asuka: Unable to load font bitmap %s: error code %d.\n", args[0], GetLastError());
+		printf("Asuka: Unable to load font bitmap %s: error code %d.\n", args[0], (int)GetLastError());
 		exit(10);
 	}
 
@@ -91,7 +91,7 @@ void tool_fontencode(const vdfastvector<const char *>& args, const vdfastvector<
 
 	vdfastvector<uint32> pixels(bmWidth * bmHeight);
 
-	BITMAPINFO bi = {0};
+	BITMAPINFO bi = {};
 	bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
 	bi.bmiHeader.biWidth = bmWidth;
 	bi.bmiHeader.biHeight = bmHeight;

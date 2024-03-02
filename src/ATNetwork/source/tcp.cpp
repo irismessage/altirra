@@ -9,8 +9,9 @@ bool ATTcpDecodeHeader(ATTcpHeaderInfo& tcpHdr, const ATIPv4HeaderInfo& iphdr, c
 		return false;
 
 	// check if data offset fits
+	// minimum TCP header size is 5 dwords
 	const uint8 dataOffset = data[12] >> 4;
-	if (len < (uint32)(dataOffset * 4))
+	if (dataOffset < 5 || len < (uint32)(dataOffset * 4))
 		return false;
 
 	// compute checksum

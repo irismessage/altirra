@@ -273,8 +273,8 @@ reduce_done:
 shift:
 		dec		opsp	
 		ldy		opsp
-		;##TRACE "Shift: $%02x" (a)
 		pla
+		;##TRACE "Shift: $%02x" (a)
 		sta		(argstk),y
 		bne		loop					;!! - unconditional (we would never shift a $00 token)
 
@@ -294,7 +294,6 @@ is_variable:
 		ldy		argsp
 		bne		not_lvalue
 		
-		clc
 		lda		varptr
 		adc		#2
 		sta		lvarptr
@@ -348,7 +347,7 @@ not_dimmed:
 		jmp		errorDimError
 
 dispatch:
-		;##TRACE "Reduce: $%02x (%y) by %02x - %u values on stack (%02X%02X%02X%02X%02X%02X %g)" (x) db(functionDispatchTableLo-$12+x)+256*db(functionDispatchTableHi-$12+x)+1 db($100+((s+1)&$ff)) db(argsp)/3 db(dw(argstk)+db(argsp)-3) db(dw(argstk2)+db(argsp)-3) db(dw(argstk)+db(argsp)-2) db(dw(argstk2)+db(argsp)-2) db(dw(argstk)+db(argsp)-1) db(dw(argstk2)+db(argsp)-1) fr0
+		;##TRACE "Reduce: $%02x (%y) by %02x - %u values on stack (%02X%02X%02X%02X%02X%02X %g)" (x) db(functionDispatchTableLo-$1D+x)+256*db(functionDispatchTableHi-$1D+x)+1 db($100+((s+1)&$ff)) db(argsp)/3 db(dw(argstk)+db(argsp)-3) db(dw(argstk2)+db(argsp)-3) db(dw(argstk)+db(argsp)-2) db(dw(argstk2)+db(argsp)-2) db(dw(argstk)+db(argsp)-1) db(dw(argstk2)+db(argsp)-1) fr0
 		lda		functionDispatchTableHi-$1D,x
 		pha
 		lda		functionDispatchTableLo-$1D,x
@@ -408,7 +407,51 @@ PREC_BITWISE	= 22
 PREC_EXP		= 24
 PREC_UNARY		= 26+$80
 PREC_RELSTR		= 28
-PREC_FUNC		= 30
+
+;Normally, making functions right associative wouldn't make sense because
+;there are always parentheses in between -- the closing parens will force
+;reduction to the open parens, which will in turn force reduction of the
+;function operator. However, SYSGEN from the Corvus disk has a uniquely
+;broken statement:
+;
+; $494B: 22001 
+; $494F:    $12 $36   
+; $4950:      $80        DAT$
+; $4951:      $2E        =
+; $4952:      $3E        CHR$
+; $4953:      $3A        (
+; $4954:      $0E        16
+; $495B:      $2C        )
+; $495C:      $14        : 
+; $495E:    $2C $36   
+; $495F:      $80        DAT$
+; $4960:      $37        (
+; $4961:      $0E        2
+; $4968:      $3C        ,
+; $4969:      $0E        2
+; $4970:      $2C        )
+; $4971:      $2E        =
+; $4972:      $3E        CHR$
+; $4973:      $47        SIN
+; $4974:      $9B        DRVNUM
+; $4975:      $2C        )
+; $4976:      $14        : 
+; $4978:    $38 $36   
+; $4979:      $9C        THELEN
+; $497A:      $2D        =
+; $497B:      $0E        2
+; $4982:      $14        : 
+; $4984:    $3C $0C   GOSUB 
+; $4985:      $8A        BCI
+; $4986:      $14        : 
+; $4988:    $3F $24   RETURN  {end $498A}
+;
+;There is a SIN token where there should be a function open token. This
+;happens to work because Atari BASIC computes SIN(DRVNUM) first, which
+;rounds off to be 1 again. To make this work, we have to ensure that the
+;SIN reduces first.
+;
+PREC_FUNC		= 30+$80
 
 .proc	prec_table
 		dta		0				;$12	,
@@ -588,6 +631,7 @@ ExprEvalPopIntPos:
 stack_empty:
 		ldy		#3
 		sty		argsp
+.def :funNoOp
 		rts
 .endp
 
@@ -611,7 +655,7 @@ stack_empty:
 		dta		:1[funOr-1]
 		dta		:1[funAnd-1]
 		dta		:1[funOpenParens-1]
-		dta		:1[funInvalid-1]
+		dta		:1[funNoOp-1]				;Necessary for SYSGEN (see above).
 		dta		:1[funAssignNum-1]
 		dta		:1[funAssignStr-1]
 		dta		:1[funStringCompare-1]

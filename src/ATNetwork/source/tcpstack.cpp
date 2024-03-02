@@ -1,12 +1,33 @@
-#include "stdafx.h"
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Networking emulation library - internal TCP implementation
+//	Copyright (C) 2009-2016 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License
+//	along with this program; if not, write to the Free Software
+//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/int128.h>
 #include <vd2/system/time.h>
 #include <vd2/system/vdalloc.h>
+#include <at/atcore/logging.h>
 #include <at/atnetwork/ethernetframe.h>
 #include <at/atnetwork/tcp.h>
 #include "ipstack.h"
 #include "tcpstack.h"
+
+ATLogChannel g_ATLCTCP(false, false, "TCP", "TCP/IP stack emulation");
 
 ATNetTcpRingBuffer::ATNetTcpRingBuffer()
 	: mReadPtr(0)
@@ -47,7 +68,7 @@ uint32 ATNetTcpRingBuffer::Write(const void *p, uint32 n) {
 	return n;
 }
 
-void ATNetTcpRingBuffer::Read(uint32 offset, void *p, uint32 n) {
+void ATNetTcpRingBuffer::Read(uint32 offset, void *p, uint32 n) const {
 	VDASSERT(offset <= mLevel && mLevel - offset >= n);
 
 	uint32 readPtr = mReadPtr + offset;
@@ -92,7 +113,7 @@ void ATNetTcpStack::Init(ATNetIpStack *ipStack) {
 	mpIpStack = ipStack;
 	mpClock = ipStack->GetClock();
 
-	mXmitInitialSequenceSalt = VDGetCurrentProcessId() ^ (VDGetPreciseTick() / 147);
+	mXmitInitialSequenceSalt = (uint32)(VDGetCurrentProcessId() ^ (VDGetPreciseTick() / 147));
 }
 
 void ATNetTcpStack::Shutdown() {
@@ -254,7 +275,7 @@ void ATNetTcpStack::OnPacket(const ATEthernetPacket& packet, const ATIPv4HeaderI
 	// Socket is listening -- establish a new connection in SYN_RCVD state
 	vdrefptr<ATNetTcpConnection> conn(new ATNetTcpConnection(this, connKey));
 
-	conn->Init(packet, iphdr, tcpHdr);
+	conn->Init(packet, iphdr, tcpHdr, data);
 
 	vdrefptr<IATSocketHandler> socketHandler;
 	if (!listener->OnSocketIncomingConnection(iphdr.mSrcAddr, tcpHdr.mSrcPort, iphdr.mDstAddr, tcpHdr.mDstPort, conn, ~socketHandler)) {
@@ -272,18 +293,19 @@ void ATNetTcpStack::OnPacket(const ATEthernetPacket& packet, const ATIPv4HeaderI
 	conn2->Transmit(true);
 }
 
-uint32 ATNetTcpStack::EncodePacket(uint8 *dst, uint32 len, uint32 srcIpAddr, uint32 dstIpAddr, const ATTcpHeaderInfo& hdrInfo, const void *data, uint32 dataLen) {
+uint32 ATNetTcpStack::EncodePacket(uint8 *dst, uint32 len, uint32 srcIpAddr, uint32 dstIpAddr, const ATTcpHeaderInfo& hdrInfo, const void *data, uint32 dataLen, const void *opts, uint32 optLen) {
 	if (len < 22 + 20 + dataLen)
 		return 0;
 
 	// encode EtherType and IPv4 header
+	const uint32 optLenM4 = (optLen + 3) & ~3;
 	ATIPv4HeaderInfo iphdr;
 	mpIpStack->InitHeader(iphdr);
 	iphdr.mSrcAddr = srcIpAddr;
 	iphdr.mDstAddr = dstIpAddr;
 	iphdr.mProtocol = 6;
 	iphdr.mDataOffset = 0;
-	iphdr.mDataLength = 20 + dataLen;
+	iphdr.mDataLength = 20 + dataLen + optLenM4;
 	VDVERIFY(ATIPv4EncodeHeader(dst, 22, iphdr));
 	dst += 22;
 
@@ -292,7 +314,7 @@ uint32 ATNetTcpStack::EncodePacket(uint8 *dst, uint32 len, uint32 srcIpAddr, uin
 	VDWriteUnalignedBEU16(dst + 2, hdrInfo.mDstPort);
 	VDWriteUnalignedBEU32(dst + 4, hdrInfo.mSequenceNo);
 	VDWriteUnalignedBEU32(dst + 8, hdrInfo.mAckNo);
-	dst[12] = 0x50;
+	dst[12] = 0x50 + (optLenM4 << 2);
 	dst[13] = 0;
 	if (hdrInfo.mbURG) dst[13] |= 0x20;
 	if (hdrInfo.mbACK) dst[13] |= 0x10;
@@ -306,11 +328,23 @@ uint32 ATNetTcpStack::EncodePacket(uint8 *dst, uint32 len, uint32 srcIpAddr, uin
 	dst[17] = 0;	// checksum hi (temp)
 	VDWriteUnalignedBEU16(dst + 18, hdrInfo.mUrgentPtr);
 
-	// compute TCP checksum
+	// add TCP options
+	if (opts) {
+		memcpy(dst + 20, opts, optLen);
+		memset(dst + 20 + optLen, 0, (4 - optLen) & 3);
+	}
+
+	//---- compute TCP checksum
+	//
+	// Note that the Internet checksum is associative, so we can do the sums in
+	// any order.
+
+	// checksum pseudo-header
 	uint64 newSum64 = iphdr.mSrcAddr;
 	newSum64 += iphdr.mDstAddr;
-	newSum64 += VDToBE32(0x60000 + 20 + dataLen);
+	newSum64 += VDToBE32(0x60000 + 20 + dataLen + optLenM4);
 
+	// checksum data payload
 	const uint8 *chksrc = (const uint8 *)data;
 	for(uint32 dataLen4 = dataLen >> 2; dataLen4; --dataLen4) {
 		newSum64 += VDReadUnalignedU32(chksrc);
@@ -325,14 +359,15 @@ uint32 ATNetTcpStack::EncodePacket(uint8 *dst, uint32 len, uint32 srcIpAddr, uin
 	if (dataLen & 1)
 		newSum64 += VDFromLE16(*chksrc);
 
-	VDWriteUnalignedU16(dst + 16, ATIPComputeChecksum(newSum64, dst, 5));
+	// checksum header and write
+	VDWriteUnalignedU16(dst + 16, ATIPComputeChecksum(newSum64, dst, 5 + (optLenM4 >> 2)));
 
-	dst += 20;
+	dst += 20 + optLenM4;
 
 	if (dataLen)
 		memcpy(dst, data, dataLen);
 
-	return 22 + 20 + dataLen;
+	return 22 + 20 + dataLen + optLenM4;
 }
 
 void ATNetTcpStack::SendReset(const ATIPv4HeaderInfo& iphdr, uint16 srcPort, uint16 dstPort, const ATTcpHeaderInfo& origTcpHdr) {
@@ -386,17 +421,6 @@ void ATNetTcpStack::DeleteConnection(const ATNetTcpConnectionKey& connKey) {
 ATNetTcpConnection::ATNetTcpConnection(ATNetTcpStack *stack, const ATNetTcpConnectionKey& connKey)
 	: mpTcpStack(stack)
 	, mConnKey(connKey)
-	, mbLocalOpen(true)
-	, mbSynQueued(false)
-	, mbSynAcked(false)
-	, mbFinQueued(false)
-	, mbFinReceived(false)
-	, mEventClose(0)
-	, mEventTransmit(0)
-	, mEventRetransmit(0)
-	, mXmitNext(0)
-	, mXmitLastAck(0)
-	, mXmitWindowLimit(0)
 {
 	mRecvRing.Init(mRecvBuf, sizeof mRecvBuf);
 	mXmitRing.Init(mXmitBuf, sizeof mXmitBuf);
@@ -404,7 +428,6 @@ ATNetTcpConnection::ATNetTcpConnection(ATNetTcpStack *stack, const ATNetTcpConne
 	PacketTimer& root = mPacketTimers.push_back();
 	root.mNext = 0;
 	root.mPrev = 0;
-	root.mRetransmitTimestamp = 0;
 	root.mSequenceStart = 0;
 	root.mSequenceEnd = 0;
 }
@@ -418,7 +441,7 @@ void ATNetTcpConnection::GetInfo(ATNetTcpConnectionInfo& info) const {
 	info.mConnState = mConnState;
 }
 
-void ATNetTcpConnection::Init(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& ipHdr, const ATTcpHeaderInfo& tcpHdr) {
+void ATNetTcpConnection::Init(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& ipHdr, const ATTcpHeaderInfo& tcpHdr, const uint8 *data) {
 	mConnState = kATNetTcpConnectionState_SYN_RCVD;
 
 	// initialize receive state to received sequence number
@@ -436,6 +459,8 @@ void ATNetTcpConnection::Init(const ATEthernetPacket& packet, const ATIPv4Header
 	mXmitRing.Write("", 1);
 
 	mbSynQueued = true;
+
+	ProcessSynOptions(packet, tcpHdr, data);
 }
 
 void ATNetTcpConnection::InitOutgoing(IATSocketHandler *h, uint32 isnSalt) {
@@ -479,23 +504,32 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 		// if we are in SYN-SENT, the RST is valid if it ACKs the SYN; otherwise, it is
 		// valid if it is within the window
 		if (mConnState == kATNetTcpConnectionState_SYN_SENT) {
-			if (!tcpHdr.mbACK || tcpHdr.mAckNo != mXmitNext)
+			if (!tcpHdr.mbACK || tcpHdr.mAckNo != mXmitNext) {
+				g_ATLCTCP <<= "Rejecting invalid RST during SYN_SENT phase\n";
 				return;
+			}
 		} else {
 			// Note that we may have advertised a zero window. Pretend that the RST takes
 			// no space, so it can fit at the end.
-			if ((uint32)(tcpHdr.mSequenceNo - mRecvRing.GetBaseSeq()) > mRecvRing.GetSpace())
+			if ((uint32)(tcpHdr.mSequenceNo - mRecvRing.GetBaseSeq()) > mRecvRing.GetSpace()) {
+				g_ATLCTCP("Rejecting invalid RST due to bad sequence number: %u not in [%u, %u)\n"
+					, tcpHdr.mSequenceNo
+					, mRecvRing.GetBaseSeq()
+					, mRecvRing.GetBaseSeq() + mRecvRing.GetSpace()
+					);
 				return;
+			}
 		}
 
 		// mark both ends closed so we don't send a RST in response to a RST and so that we
 		// don't respond to a local close
 		mbLocalOpen = false;
 		mbFinReceived = true;
-
 		// delete the connection :-/
 		if (mpSocketHandler)
 			mpSocketHandler->OnSocketError();
+
+		g_ATLCTCP("Closing connection due to RST\n");
 
 		Shutdown();
 		return;
@@ -514,6 +548,8 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 		// - We can also get FIN. One-packet SYN+ACK+FIN is allowed....
 		//
 		if (!tcpHdr.mbSYN) {
+			g_ATLCTCP("Aborting connection due to receiving packet without SYN or RST during SYN_SENT phase.\n");
+
 			if (mpSocketHandler)
 				mpSocketHandler->OnSocketError();
 
@@ -525,6 +561,19 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 
 		// initialize receive state to received sequence number
 		mRecvRing.Reset(tcpHdr.mSequenceNo + 1);
+
+		// process options
+		ProcessSynOptions(packet, tcpHdr, data);
+	}
+
+	if (g_ATLCTCP.IsEnabled()) {
+		g_ATLCTCP("Received packet: seq=%u, ack=%u, xmitbuf=%u:%u(%u)\n"
+			, tcpHdr.mSequenceNo
+			, tcpHdr.mAckNo
+			, mXmitRing.GetBaseSeq()
+			, mXmitRing.GetTailSeq()
+			, mXmitRing.GetLevel()
+			);
 	}
 
 	// update window
@@ -532,6 +581,11 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 		mXmitLastAck = tcpHdr.mAckNo;
 
 	mXmitWindowLimit = mXmitLastAck + tcpHdr.mWindow;
+
+	if (mXmitMaxWindow < tcpHdr.mWindow) {
+		mXmitMaxWindow = tcpHdr.mWindow;
+		mXmitWindowThreshold = std::min<uint32>(mXmitMaxWindow >> 1, 256);
+	}
 
 	// check if data is being ACKed
 	if (tcpHdr.mbACK) {
@@ -545,9 +599,23 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 				const uint32 timerIdx = root.mNext;
 				PacketTimer& timer = mPacketTimers[timerIdx];
 
-				// stop removing packet timers once we reach an entry that isn't fully ACK'd
-				if ((uint32)(timer.mSequenceEnd - tcpHdr.mAckNo - 1) < 0x7FFFFFFFU)
+				// Stop removing packet timers once we reach an entry that isn't fully ACK'd.
+				//
+				// We need to clamp the sequence number in the timer to the current window.
+				// We may either have been probing a zero window or the window may have been
+				// retracted, in which case we should accept the farthest ACK within the
+				// window possible.
+				uint32 packetExpectedAck = timer.mSequenceEnd;
+
+				if ((uint32)(packetExpectedAck - mXmitWindowLimit) < 0x80000000U)		// expectedAck >= windowLimit
+					packetExpectedAck = mXmitWindowLimit;
+
+				if ((uint32)(packetExpectedAck - tcpHdr.mAckNo - 1) < 0x7FFFFFFFU) {
+					g_ATLCTCP("Next packet in retransmit queue: [%u,%u) not cleared by [%u,%u)\n", timer.mSequenceStart, timer.mSequenceEnd, mXmitLastAck, mXmitWindowLimit);
 					break;
+				}
+
+				g_ATLCTCP("Removing packet from retransmit queue: [%u,%u)\n", timer.mSequenceStart, timer.mSequenceEnd);
 
 				if (mEventRetransmit) {
 					mpTcpStack->GetClock()->RemoveClockEvent(mEventRetransmit);
@@ -557,13 +625,15 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 				root.mNext = timer.mNext;
 				mPacketTimers[root.mNext].mPrev = 0;
 
-				timer.mNext = root.mRetransmitTimestamp;
-				root.mRetransmitTimestamp = timerIdx;
+				// link timer into free list
+				timer.mNext = root.mSequenceStart;
+				root.mSequenceStart = timerIdx;
 			}
 
 			if (root.mNext && !mEventRetransmit) {
 				auto *pClock = mpTcpStack->GetClock();
 				mEventRetransmit = pClock->AddClockEvent(pClock->GetTimestamp(3000), this, kEventId_Retransmit);
+				g_ATLCTCP("Resetting retransmit timer\n");
 			}
 
 			if (ackOffset) {
@@ -619,14 +689,14 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 
 	// check if new data is coming in; note that FIN takes a sequence number slot
 	uint32 ackLen = tcpHdr.mDataLength + (tcpHdr.mbFIN ? 1 : 0);
-	bool ackNeeded = false;
+	bool ackNeeded = tcpHdr.mbSYN;
 
 	if (ackLen) {
 		// we always need to reply if data is coming in
 		ackNeeded = true;
 
 		// check if the new data is where we expect it to be
-		if (tcpHdr.mSequenceNo == mRecvRing.GetBaseSeq()) {
+		if (tcpHdr.mSequenceNo == mRecvRing.GetTailSeq()) {
 			// check how much space we have
 			const uint32 recvSpace = mRecvRing.GetSpace();
 			uint32 tc = ackLen;
@@ -649,12 +719,10 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 						switch(mConnState) {
 							case kATNetTcpConnectionState_ESTABLISHED:
 								mConnState = kATNetTcpConnectionState_CLOSE_WAIT;
-								ackNeeded = true;
 								break;
 
 							case kATNetTcpConnectionState_FIN_WAIT_2:
 								mConnState = kATNetTcpConnectionState_TIME_WAIT;
-								ackNeeded = true;
 
 								VDASSERT(!mEventClose);
 								mEventClose = mpTcpStack->GetClock()->AddClockEvent(500, this, kEventId_Close);
@@ -687,28 +755,94 @@ void ATNetTcpConnection::OnPacket(const ATEthernetPacket& packet, const ATIPv4He
 	}
 
 	// check if we need a reply packet or if we received an ACK and can transmit now
-	if (ackNeeded || (tcpHdr.mbACK && CanTransmitMore())) {
-		if (mConnState == kATNetTcpConnectionState_ESTABLISHED && !mbSynAcked) {
-			Transmit(true);
-			mbSynAcked = true;
+	if (ackNeeded)
+		Transmit(true);
+	else if (!mEventTransmit)
+		TryTransmitMore(true);
+}
+
+void ATNetTcpConnection::TryTransmitMore(bool immediate) {
+	auto transmitStatus = GetTransmitStatus();
+	IATEthernetClock *clk = mpTcpStack->GetClock();
+
+	if (transmitStatus == kTransmitStatus_Yes) {
+		if (immediate)
+			Transmit(false);
+		else if (!mEventTransmit) {
+			mEventTransmit = clk->AddClockEvent(clk->GetTimestamp(1), this, kEventId_Transmit);
+		}
+	} else {
+		if (mEventTransmit) {
+			clk->RemoveClockEvent(mEventTransmit);
+			mEventTransmit = 0;
 		}
 
-		Transmit(true);
+		if (transmitStatus == kTransmitStatus_Deferred) {
+			if (!mEventZeroWindowProbe) {
+				clk->RemoveClockEvent(mEventZeroWindowProbe);
+				mEventZeroWindowProbe = 0;
+			}
+
+			// one-second timeout for SWS avoidance
+			mEventWindowProbe = clk->AddClockEvent(clk->GetTimestamp(1000), this, kEventId_WindowProbe);
+		} else if (transmitStatus == kTransmitStatus_DeferredZeroWindow) {
+			if (!mEventWindowProbe) {
+				clk->RemoveClockEvent(mEventWindowProbe);
+				mEventWindowProbe = 0;
+			}
+
+			if (!mEventZeroWindowProbe) {
+				// 30-second timeout for zero window probe
+				mEventZeroWindowProbe = clk->AddClockEvent(clk->GetTimestamp(30000), this, kEventId_ZeroWindowProbe);
+			}
+		}
 	}
 }
 
-void ATNetTcpConnection::Transmit(bool ack) {
+void ATNetTcpConnection::Transmit(bool ack, int retransmitCount, bool enableWindowProbe) {
 	uint8 replyPacket[576];
 	uint8 data[512];
 
-	// check if we are sending a SYN packet
+	VDASSERT(sizeof(data) >= mXmitMaxSegment);
+
+	// Kill the window probe and transmit timers, as we are going to actually send a packet.
+	if (mEventWindowProbe) {
+		mpTcpStack->GetClock()->RemoveClockEvent(mEventWindowProbe);
+		mEventWindowProbe = 0;
+	}
+
+	if (mEventZeroWindowProbe) {
+		mpTcpStack->GetClock()->RemoveClockEvent(mEventZeroWindowProbe);
+		mEventZeroWindowProbe = 0;
+	}
+
+	if (mEventTransmit) {
+		mpTcpStack->GetClock()->RemoveClockEvent(mEventTransmit);
+		mEventTransmit = 0;
+	}
+
+	// Check if we are sending a SYN packet. The SYN occupies a sequence number, which
+	// we fake in the transmit buffer with a dummy byte. However, there is no byte sent
+	// in the payload to correspond to the SYN and we must not send it.
+	//
+	// It is possible to send data with SYN (see RFC 7413 - TCP Fast Open), but it's
+	// unusual and considered suspicious. From Cisco Security
+	// (https://tools.cisco.com/security/center/viewIpsSignature.x?signatureId=1314&signatureSubId=0&softwareVersion=6.0&releaseVersion=S272):
+	//
+	// "This signature will fire when TCP payload is sent in the SYN packet. Sending
+	//  data in the SYN packet has been used as an evasion technique for security
+	//  inspection systems."
+	//
+	// Therefore, we always force the SYN to be sent alone first. Any additional data
+	// is held until we have confirmed that the 3WHS is completed.
+	//
 	const uint32 xmitOffset = mXmitNext - mXmitRing.GetBaseSeq();
 	bool syn = mbSynQueued && xmitOffset == 0;
 	bool fin = false;
 
 	// compute how much data payload to send; we avoid doing so for a SYN packet
 	// because it's considered unusual behavior, although normal
-	uint32 dataLen = syn || !mbSynAcked ? 0 : mXmitRing.GetLevel() - xmitOffset;
+	uint32 dataLen = syn || mbSynQueued ? 0 : mXmitRing.GetLevel() - xmitOffset;
 	bool sendingLast = true;
 
 	// limit data send according to window
@@ -719,14 +853,18 @@ void ATNetTcpConnection::Transmit(bool ack) {
 		windowSpace = 0;
 	}
 
+	// probe with one byte if we have data waiting, window is closed, and we are waiting
+	if (enableWindowProbe && !windowSpace && dataLen > 0 && !syn)
+		dataLen = 1;
+
 	if (dataLen > windowSpace) {
 		dataLen = windowSpace;
 		sendingLast = false;
 	}
 
-	// limit data send according to MSS
-	if (dataLen > 512) {
-		dataLen = 512;
+	// limit data send according to outgoing MSS
+	if (dataLen > mXmitMaxSegment) {
+		dataLen = mXmitMaxSegment;
 		sendingLast = false;
 	} else if (syn) {
 		dataLen = 0;
@@ -742,37 +880,63 @@ void ATNetTcpConnection::Transmit(bool ack) {
 		--dataLen;
 	}
 
+	// compute ending sequence number
+	const uint32 xmitNextNext = mXmitNext + dataLen + (fin ? 1 : 0) + (syn ? 1 : 0);
+
+	// set PSH if we are sending data and have reached the end
+	const bool psh = dataLen && (xmitNextNext == mXmitRing.GetTailSeq() - (fin ? 1 : 0));
+
 	ATTcpHeaderInfo replyTcpHeader = {};
+
+	// ACK must always be sent once the connection is established [RFC793, 3.1].
+	// Linux/BSD will work without it, but the Windows 8/10 TCP stack barfs with
+	// an ACK Invalid error according to the ETW log.
+	if (!syn)
+		ack = true;
 
 	replyTcpHeader.mSrcPort = mConnKey.mLocalPort;
 	replyTcpHeader.mDstPort = mConnKey.mRemotePort;
 	replyTcpHeader.mbACK = ack;
 	replyTcpHeader.mbSYN = syn;
 	replyTcpHeader.mbFIN = fin;
+	replyTcpHeader.mbPSH = psh;
 	replyTcpHeader.mAckNo = ack ? mRecvRing.GetBaseSeq() + mRecvRing.GetLevel() + (mbFinReceived ? 1 : 0) : 0;
-//	replyTcpHeader.mSequenceNo = mXmitNext;
-	replyTcpHeader.mSequenceNo = syn || !mbSynAcked ? mXmitRing.GetBaseSeq() : mXmitNext;
+	replyTcpHeader.mSequenceNo = mXmitNext;
 	replyTcpHeader.mWindow = mRecvRing.GetSpace();
 	
 	if (dataLen)
 		mXmitRing.Read(xmitOffset, data, dataLen);
 
-	uint32 replyLen = mpTcpStack->EncodePacket(replyPacket + 2, sizeof replyPacket - 2, mConnKey.mLocalAddress, mConnKey.mRemoteAddress, replyTcpHeader, data, dataLen);
+	// If we are sending a SYN, include MSS. We do this both for origination and a reply.
+	uint8 optdat[4];
+	const uint8 *opts = nullptr;
+	uint32 optLen = 0;
+
+	if (syn) {
+		optdat[0] = 2;		// Kind=2 (Maximum Segment Size)
+		optdat[1] = 4;		// Length=4
+		VDWriteUnalignedBEU16(optdat + 2, mRecvMaxSegment);
+
+		opts = optdat;
+		optLen = 4;
+	}
+
+	uint32 replyLen = mpTcpStack->EncodePacket(replyPacket + 2, sizeof replyPacket - 2, mConnKey.mLocalAddress, mConnKey.mRemoteAddress, replyTcpHeader, data, dataLen, opts, optLen);
 
 	mpTcpStack->SendFrame(mConnKey.mRemoteAddress, replyPacket + 2, replyLen);
 
-	mXmitNext += dataLen + replyTcpHeader.mbFIN + replyTcpHeader.mbSYN;
+	mXmitNext = xmitNextNext;
 	VDASSERT(mXmitNext - mXmitRing.GetBaseSeq() <= mXmitRing.GetLevel());
 
 	// if we sent data or a FIN, queue a packet timer
 	if (dataLen || replyTcpHeader.mbFIN) {
-		uint32 free = mPacketTimers[0].mRetransmitTimestamp;
+		uint32 free = mPacketTimers[0].mSequenceStart;
 
 		if (!free) {
 			free = (uint32)mPacketTimers.size();
 			mPacketTimers.push_back();
 		} else {
-			mPacketTimers[0].mRetransmitTimestamp = mPacketTimers[free].mNext;
+			mPacketTimers[0].mSequenceStart = mPacketTimers[free].mNext;
 		}
 
 		PacketTimer& root = mPacketTimers[0];
@@ -784,17 +948,16 @@ void ATNetTcpConnection::Transmit(bool ack) {
 		root.mPrev = free;
 
 		IATEthernetClock *clk = mpTcpStack->GetClock();
-		timer.mRetransmitTimestamp = clk->GetTimestamp(3000);
 		timer.mSequenceStart = replyTcpHeader.mSequenceNo;
 		timer.mSequenceEnd = mXmitNext;
+		timer.mRetransmitCount = retransmitCount;
 
 		if (!mEventRetransmit)
-			mEventRetransmit = clk->AddClockEvent(timer.mRetransmitTimestamp, this, kEventId_Retransmit);
-
-		// If we can still transmit more, enable the transmit timer.
-		if (!mEventTransmit)
-			mEventTransmit = clk->AddClockEvent(clk->GetTimestamp(1), this, kEventId_Transmit);
+			mEventRetransmit = clk->AddClockEvent(clk->GetTimestamp(3000), this, kEventId_Retransmit);
 	}
+
+	// queue future transmits as needed
+	TryTransmitMore(false);
 }
 
 void ATNetTcpConnection::OnClockEvent(uint32 eventid, uint32 userid) {
@@ -810,8 +973,7 @@ void ATNetTcpConnection::OnClockEvent(uint32 eventid, uint32 userid) {
 		case kEventId_Transmit:
 			mEventTransmit = 0;
 
-			if (CanTransmitMore())
-				Transmit(true);
+			TryTransmitMore(true);
 			return;
 
 		case kEventId_Retransmit:
@@ -824,6 +986,26 @@ void ATNetTcpConnection::OnClockEvent(uint32 eventid, uint32 userid) {
 				// go back to the first packet
 				PacketTimer& head = mPacketTimers[root.mNext];
 
+				// bump the retransmit count
+				int rtcount = head.mRetransmitCount + 1;
+
+				// check if we've exceeded max
+				if (rtcount >= kMaxRetransmits) {
+					// uh oh -- nuke the connection
+					g_ATLCTCP("Dropping connection due to max retransmit limit being reached.\n");
+
+					mbLocalOpen = false;
+					mbFinReceived = true;
+
+					AddRef();
+					if (mpSocketHandler)
+						mpSocketHandler->OnSocketError();
+
+					Shutdown();
+					Release();
+					return;
+				}
+
 				// check if we've gotten an ACK partway
 				const uint32 xmitBase = mXmitRing.GetBaseSeq();
 
@@ -832,12 +1014,37 @@ void ATNetTcpConnection::OnClockEvent(uint32 eventid, uint32 userid) {
 				else
 					mXmitNext = xmitBase;
 
+				g_ATLCTCP("Retransmitting at %u due to lost or unacknowledged packet: [%u,%u)\n", mXmitNext, head.mSequenceStart, head.mSequenceEnd);
+
 				// clear the ring
-				root.mPrev = root.mNext = root.mRetransmitTimestamp = 0;
+				root.mPrev = root.mNext = root.mSequenceStart = 0;
 				mPacketTimers.resize(1);
 
-				Transmit(true);
+				// retransmit starting at highest found ACK
+				Transmit(true, rtcount);
 			}
+			return;
+
+		case kEventId_WindowProbe:
+			mEventWindowProbe = 0;
+
+			// If we can transmit for any reason, do so.
+			if (GetTransmitStatus() != kTransmitStatus_No) {
+				g_ATLCTCP("Sending window probe\n");
+				Transmit(false, 0, true);
+			}
+
+			return;
+
+		case kEventId_ZeroWindowProbe:
+			mEventZeroWindowProbe = 0;
+
+			// If we can transmit for any reason, do so.
+			if (GetTransmitStatus() != kTransmitStatus_No) {
+				g_ATLCTCP("Sending zero window probe\n");
+				Transmit(false, 0, true);
+			}
+
 			return;
 	}
 }
@@ -845,6 +1052,8 @@ void ATNetTcpConnection::OnClockEvent(uint32 eventid, uint32 userid) {
 void ATNetTcpConnection::Shutdown() {
 	if (!mpTcpStack)
 		return;
+
+	AddRef();
 
 	// If one side hasn't been closed, send an RST.
 	if (mbLocalOpen || !mbFinReceived) {
@@ -857,6 +1066,8 @@ void ATNetTcpConnection::Shutdown() {
 	ClearEvents();
 	mpTcpStack->DeleteConnection(mConnKey);
 	mpTcpStack = nullptr;
+
+	Release();
 }
 
 uint32 ATNetTcpConnection::Read(void *buf, uint32 len) {
@@ -887,10 +1098,7 @@ uint32 ATNetTcpConnection::Write(const void *buf, uint32 len) {
 		VDVERIFY(mXmitRing.Write(buf, len));
 
 		// If this means we can transmit now, enable the transmit timer.
-		if (!mEventTransmit && CanTransmitMore()) {
-			IATEthernetClock *clk = mpTcpStack->GetClock();
-			mEventTransmit = clk->AddClockEvent(clk->GetTimestamp(1), this, kEventId_Transmit);
-		}
+		TryTransmitMore(false);
 	}
 
 	return len;
@@ -912,22 +1120,45 @@ void ATNetTcpConnection::Close() {
 		else if (mConnState == kATNetTcpConnectionState_CLOSE_WAIT)
 			mConnState = kATNetTcpConnectionState_CLOSED;
 
-		Transmit(false);
+		TryTransmitMore(false);
 	}
 }
 
-bool ATNetTcpConnection::CanTransmitMore() const {
+ATNetTcpConnection::TransmitStatus ATNetTcpConnection::GetTransmitStatus() const {
 	// We can transmit if:
 	// - there is space in the window
 	// - there is data waiting to send
+	//
+	// If a SYN is queued, we can only send the SYN. We hold the rest of
+	// the data until the SYN is ack'd, after which it won't be queued.
 	//
 	// Note that it is discouraged but legal to shrink the receive window,
 	// so we must handle the case where the window limit is rewound behind
 	// where we have already sent.
 
-	const uint32 sendLimit = mXmitRing.GetBaseSeq() + mXmitRing.GetLevel();
+	uint32 sendLimit = mXmitRing.GetBaseSeq() + (mbSynQueued ? 1 : mXmitRing.GetLevel());
 
-	return sendLimit != mXmitNext && (uint32)(mXmitWindowLimit - mXmitNext - 1) < 0x20000U;
+	if (sendLimit == mXmitNext) {
+		// We don't have any data to send.
+		return kTransmitStatus_No;
+	}
+
+	// Compute the available window, and block send if the window is closed.
+	// Note that the window may be moved backwards, making this unsigned negative.
+	const uint32 availableWindow = mXmitWindowLimit - mXmitNext;
+
+	if (availableWindow - 1 >= 0x20000U) {
+		// Zero or negative window
+		return kTransmitStatus_DeferredZeroWindow;
+	}
+
+	// Apply Silly Window Syndrome avoidance. We should only send the remaining
+	// data if we can fill either a full segment or at least half the window.
+	if (!mbSynQueued && availableWindow < mXmitWindowThreshold)
+		return kTransmitStatus_Deferred;
+
+	// We have data to send, and we should send it.
+	return kTransmitStatus_Yes;
 }
 
 void ATNetTcpConnection::ClearEvents() {
@@ -949,5 +1180,61 @@ void ATNetTcpConnection::ClearEvents() {
 	if (mEventRetransmit) {
 		clk->RemoveClockEvent(mEventRetransmit);
 		mEventRetransmit = 0;
+	}
+
+	if (mEventWindowProbe) {
+		clk->RemoveClockEvent(mEventWindowProbe);
+		mEventWindowProbe = 0;
+	}
+
+	if (mEventZeroWindowProbe) {
+		clk->RemoveClockEvent(mEventZeroWindowProbe);
+		mEventZeroWindowProbe = 0;
+	}
+}
+
+void ATNetTcpConnection::ProcessSynOptions(const ATEthernetPacket& packet, const ATTcpHeaderInfo& tcpHdr, const uint8 *data) {
+	const uint8 *src = data + 20;
+	const uint8 *end = data + tcpHdr.mDataOffset;
+
+	while(src != end) {
+		const uint8 kind = src[0];
+		if (!kind)
+			return;
+
+		// check for NOP
+		if (kind == 1) {
+			++src;
+			continue;
+		}
+
+		// parse length (includes kind and length)
+		const uint8 len = src[1];
+		if (len < 2 || (uint32)(end - src) > len)
+			break;
+
+		switch(kind) {
+			case 2:		// Maximum Segment Size
+				{
+					uint32 mss = VDReadUnalignedBEU16(src + 2);
+
+					// Check if the MSS is below 256 bytes; if so, just ignore it and hope
+					// for the best. Windows requires at least 536; Linux requires at least
+					// 88-512 depending on the version. We should support at least 512 bytes
+					// since a lot of BSD-derived OSes use it as a default, and at least 536
+					// since that falls out of the IPv4 MTU requirement of 576 octets.
+					//
+					// Note that the MSS value does NOT include IPv4 or TCP header options,
+					// but we don't send any with packets that have data payloads.
+
+					if (mss >= 256) {
+						if (mXmitMaxSegment > mss)
+							mXmitMaxSegment = mss;
+					}
+				}
+				break;
+		}
+
+		src += len;
 	}
 }

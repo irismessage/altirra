@@ -1,37 +1,24 @@
 ;	Altirra - Atari 800/800XL/5200 emulator
 ;	Modular Kernel ROM - Keyboard Handler
-;	Copyright (C) 2008-2012 Avery Lee
+;	Copyright (C) 2008-2016 Avery Lee
 ;
-;	This program is free software; you can redistribute it and/or modify
-;	it under the terms of the GNU General Public License as published by
-;	the Free Software Foundation; either version 2 of the License, or
-;	(at your option) any later version.
-;
-;	This program is distributed in the hope that it will be useful,
-;	but WITHOUT ANY WARRANTY; without even the implied warranty of
-;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-;	GNU General Public License for more details.
-;
-;	You should have received a copy of the GNU General Public License
-;	along with this program; if not, write to the Free Software
-;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+;	Copying and distribution of this file, with or without modification,
+;	are permitted in any medium without royalty provided the copyright
+;	notice and this notice are preserved.  This file is offered as-is,
+;	without any warranty.
 
+;==========================================================================
+; Oddly, the keyboard IRQs are not enabled from the keyboard init
+; routine. It's done by the Display Handler instead on open.
+;
 .proc	KeyboardInit
 	ldx		#$ff
 	stx		ch
 	stx		ch1
 	inx
 	stx		keydel
-	
-	;enable keyboard interrupts
-	php
-	sei
-	lda		pokmsk
-	ora		#$c0
-	sta		pokmsk
-	sta		irqen
-	plp
-	
+	stx		invflg
+		
 	;turn on shift lock
 	mva		#$40	shflok
 	
@@ -45,14 +32,48 @@
 KeyboardOpen = CIOExitSuccess
 KeyboardClose = CIOExitSuccess
 
-.proc	KeyboardGetByte
+;==========================================================================
+; K: GET BYTE handler.
+;
+; Behavior:
+;	- Exits with a Break error when break key is pressed.
+;	- Ctrl-1 does not suspend input here (it is handled by S:/E:).
+;	- Ctrl-3 returns an EOF error.
+;	- Caps Lock sets caps mode on OS-A/B depending on Ctrl and Shift key
+;	  state. On the XL/XE OS, pressing Caps Lock alone will enable shift
+;	  lock if no lock is enabled and disable it otherwise.
+;	- Shift/Control lock is applied by K:, but only on alpha keys.
+;	- Inverse mode is also applied by K:. Control characters are excluded:
+;	  1B-1F/7C-7F/9B-9F/FD-FF.
+;	- Any Ctrl+Shift key code (>=$C0) produces a key click but is otherwise
+;	  ignored.
+;
+.proc	_KeyboardGetByte
+toggle_shift:
+	.if _KERNEL_XLXE
+	;Caps Lock without Shift or Control is a toggle on the XL/XE line:
+	; None -> Shifted
+	; Shifted, Control -> None
+	ldx		shflok
+	bne		caps_off
+	ldy		#$40
+	.endif
+shift_ctrl_on:
+caps_off:
+	tya
+	and		#$c0
+write_shflok:
+	sta		shflok
+
+.def :KeyboardGetByte
 waitForChar:
 	ldx		#$ff
+waitForChar2:
 	lda		brkkey
 	beq		isBreak
 	lda		ch
 	cmp		#$ff
-	beq		waitForChar
+	beq		waitForChar2
 	
 	;invalidate char
 	stx		ch
@@ -68,24 +89,27 @@ waitForChar:
 	;trap Ctrl-3 and return EOF
 	cmp		#$9a
 	beq		isCtrl3
-	
-	;trap Caps Lock and alter shift/caps lock
-	tay
-	and		#$3f
-	cmp		#$3c
-	beq		isCapsLock
-		
+			
 	;translate char
+	tay
+
 	.if _KERNEL_XLXE
 	lda		(keydef),y
 	.else
 	lda		KeyCodeToATASCIITable,y
 	.endif
 	
-	;check for invalid char
-	cmp		#$f0
-	beq		waitForChar
+	;handle special keys (see keytable.s)
+	bpl		valid_key
+	cmp		#$81
+	bcc		waitForChar		;$80 - invalid
+	beq		isInverse		;$81 - inverse video
+	cmp		#$83
+	bcc		toggle_shift	;$82 - caps lock
+	cmp		#$85
+	bcc		shift_ctrl_on	;$83 - shift caps lock / $84 - ctrl caps lock
 	
+valid_key:
 	;check for alpha key
 	cmp		#'a'
 	bcc		notAlpha
@@ -104,11 +128,26 @@ doShiftLock:
 	and		#$df
 
 notAlpha:
+	;check if we should apply inverse flag -- special characters are excluded
+	ldx		#EditorPutByte.special_code_tab_end_2-EditorPutByte.special_code_tab-1
+	jsr		EditorIsSpecial
+	beq		skip_inverse
+
+	;apply inverse flag
+	eor		invflg
+skip_inverse:
+
 	;return char
 	sta		atachr			;required or CON.SYS (SDX 4.46) breaks
 	ldy		#1
 	rts
 	
+isInverse:
+	lda		invflg
+	eor		#$80
+	sta		invflg
+	bcs		waitForChar		;!! - unconditional
+
 isBreak:
 	stx		brkkey
 	ldy		#CIOStatBreak
@@ -117,23 +156,6 @@ isBreak:
 isCtrl3:
 	ldy		#CIOStatEndOfFile
 	rts
-	
-isCapsLock:
-	tya
-	and		#$c0
-
-	.if _KERNEL_XLXE
-	;Caps Lock without Shift or Control is a toggle on the XL/XE line:
-	; None -> Shifted
-	; Shifted, Control -> None
-	bne		notToggle
-	ldx		shflok
-	sne:lda	#$40
-notToggle:
-	.endif
-
-	sta		shflok
-	jmp		waitForChar
 .endp
 
 ;==============================================================================
@@ -161,7 +183,7 @@ debounced:
 
 	;check for Ctrl+1 to toggle display activity
 	cmp		#$9f
-	beq		isctrl_1
+	beq		is_suspend
 
 	;store key
 	sta		ch
@@ -178,8 +200,8 @@ xit:
 	;all done
 	pla
 	rti	
-	
-isctrl_1:
+
+is_suspend:
 	;toggle stop/start flag
 	lda		ssflag
 	eor		#$ff

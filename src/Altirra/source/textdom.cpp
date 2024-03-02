@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include "textdom.h"
 
 namespace nsVDTextDOM {
@@ -85,7 +85,7 @@ int Paragraph::GetLineIndexFromOffset(int offset) const {
 	int lnidx = 0;
 
 	if (it != mLines.begin())
-		lnidx = (it - mLines.begin()) - 1;
+		lnidx = (int)((it - mLines.begin()) - 1);
 
 	return lnidx;
 }
@@ -95,7 +95,7 @@ int Paragraph::GetSpanIndexFromOffset(int offset) const {
 	int spidx = 0;
 
 	if (it != mSpans.begin())
-		spidx = (it - mSpans.begin()) - 1;
+		spidx = (int)((it - mSpans.begin()) - 1);
 
 	return spidx;
 }
@@ -109,16 +109,16 @@ void Paragraph::Insert(int line, int offset, const char *s, size_t len) {
 	VDASSERT((unsigned)offset <= (unsigned)ln.mLength);
 
 	mText.insert(mText.begin() + ln.mStart + offset, s, s+len);
-	ln.mLength += len;
+	ln.mLength += (int)len;
 
 	Spans::iterator itSEnd(mSpans.end());
 	Spans::iterator itS(std::lower_bound(mSpans.begin(), itSEnd, offset + 1, SpansByOffsetPred()));
 	for(; itS!=itSEnd; ++itS)
-		itS->mStart += len;
+		itS->mStart += (int)len;
 
 	Lines::iterator itL(mLines.begin() + line + 1), itLEnd(mLines.end());
 	for(; itL!=itLEnd; ++itL)
-		itL->mStart += len;
+		itL->mStart += (int)len;
 
 	// check if we added a newline
 	if (s[len - 1] == '\n')
@@ -200,7 +200,7 @@ void Paragraph::DeleteToEnd(int line, int offset) {
 	for(int i=0; i<=line; ++i)
 		mHeight += mLines[i].mHeight;
 
-	DeleteOffsetRangeSpans(charPos, mText.size());
+	DeleteOffsetRangeSpans(charPos, (int)mText.size());
 	mText.erase(mText.begin() + charPos, mText.end());
 	Validate();
 }
@@ -537,10 +537,10 @@ void Iterator::MoveToStart() {
 
 void Iterator::MoveToEnd() {
 	if (mpParent) {
-		mPara = mpParent->mParagraphs.size() - 1;
+		mPara = (int)mpParent->mParagraphs.size() - 1;
 
 		const Paragraph *para = mpParent->mParagraphs[mPara];
-		mLine = para->mLines.size() - 1;
+		mLine = (int)para->mLines.size() - 1;
 		mOffset = para->mLines.back().mLength;
 	}
 }
@@ -559,7 +559,7 @@ void Iterator::MoveToPrevChar() {
 				if (mPara > 0) {
 					--mPara;
 					para = mpParent->mParagraphs[mPara];
-					mLine = para->mLines.size() - 1;
+					mLine = (int)para->mLines.size() - 1;
 					mOffset = para->mLines.back().mLength;
 				}
 			}
@@ -611,7 +611,7 @@ void Iterator::MoveToPrevLine() {
 			if (mPara > 0) {
 				--mPara;
 				para = mpParent->mParagraphs[mPara];
-				mLine = para->mLines.size() - 1;
+				mLine = (int)para->mLines.size() - 1;
 			}
 		}
 
@@ -703,7 +703,7 @@ int Document::GetParagraphFromY(int y) {
 	int para = 0;
 
 	if (it != mParagraphs.begin())
-		para = (it - mParagraphs.begin()) - 1;
+		para = (int)(it - mParagraphs.begin()) - 1;
 
 	return para;
 }
@@ -771,7 +771,7 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 	}
 
 	// insert text into paragraph
-	int lastAdded = len;
+	int lastAdded = (int)len;
 	if (s > text) {
 		if (splitRequired) {
 			lastPara = new Paragraph;
@@ -789,7 +789,7 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 				continue;
 
 			if (it2 > it)
-				it2.mOffset += (s - text);
+				it2.mOffset += (int)(s - text);
 		}
 		len -= (s-text);
 		text = s;
@@ -811,7 +811,7 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 		
 		Line ln(para->mLines.back());
 		ln.mStart = 0;
-		ln.mLength = (s - 1) - text;
+		ln.mLength = (int)((s - 1) - text);
 		p->mLines.push_back(ln);
 
 		p->mText.assign(text, s);
@@ -823,7 +823,7 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 	}
 
 	if (lastPara) {
-		lastAdded = len;
+		lastAdded = (int)len;
 		if (len)
 			lastPara->Insert(0, 0, text, len);
 
@@ -831,7 +831,7 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 	}
 
 	// bump paragraphs
-	int parasAdded = newParas.size();
+	int parasAdded = (int)newParas.size();
 	if (parasAdded) {
 		mParagraphs.insert(mParagraphs.begin() + it.mPara + 1, newParas.begin(), newParas.end());
 
@@ -1022,7 +1022,7 @@ void Document::ReflowPara(int paraIdx, const Line *newLines, size_t count) {
 			if (it != newLines)
 				--it;
 
-			textit->mLine = it - newLines;
+			textit->mLine = (int)(it - newLines);
 			textit->mOffset = offset - it->mStart;
 		}
 	}

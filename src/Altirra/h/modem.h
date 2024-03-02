@@ -84,19 +84,19 @@ public:
 	virtual void *AsInterface(uint32 iid) override;
 
 public:
-	virtual void GetDeviceInfo(ATDeviceInfo& info);
-	virtual void GetSettings(ATPropertySet& settings);
-	virtual bool SetSettings(const ATPropertySet& settings);
-	virtual void Init();
-	virtual void Shutdown();
-	virtual void WarmReset();
-	virtual void ColdReset();
+	virtual void GetDeviceInfo(ATDeviceInfo& info) override;
+	virtual void GetSettings(ATPropertySet& settings) override;
+	virtual bool SetSettings(const ATPropertySet& settings) override;
+	virtual void Init() override;
+	virtual void Shutdown() override;
+	virtual void WarmReset() override;
+	virtual void ColdReset() override;
 
 public:
-	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch);
+	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:
-	virtual void InitIndicators(IATUIRenderer *r);
+	virtual void InitIndicators(IATDeviceIndicatorManager *r) override;
 
 public:
 	virtual void SetOnStatusChange(const vdfunction<void(const ATDeviceSerialStatus&)>& fn) override;
@@ -104,21 +104,21 @@ public:
 	virtual ATDeviceSerialStatus GetStatus() override;
 
 public:
-	void Init(ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir);
+	void Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir);
 
-	void SetConfig(const ATRS232Config& config);
+	void SetConfig(const ATRS232Config& config) override;
 
-	bool Read(uint32& baudRate, uint8& c);
-	bool Read(uint32 baudRate, uint8& c, bool& framingError);
-	void Write(uint32 baudRate, uint8 c);
+	bool Read(uint32& baudRate, uint8& c) override;
+	bool Read(uint32 baudRate, uint8& c, bool& framingError) override;
+	void Write(uint32 baudRate, uint8 c) override;
 
 	void Set1030Mode();
 	void SetSX212Mode();
-	void SetToneDialingMode(bool enable);
-	bool IsToneDialingMode() const;
-	void HangUp();
-	void Dial(const char *address, const char *service);
-	void Answer();
+	void SetToneDialingMode(bool enable) override;
+	bool IsToneDialingMode() const override;
+	void HangUp() override;
+	void Dial(const char *address, const char *service) override;
+	void Answer() override;
 
 	void FlushBuffers() override;
 
@@ -170,14 +170,14 @@ protected:
 	bool SetRegisterValue(uint32 reg, uint8 value);
 	void UpdateDerivedRegisters();
 
-	void OnScheduledEvent(uint32 id);
-	void OnReadAvail(IATModemDriver *sender, uint32 len);
-	void OnWriteAvail(IATModemDriver *sender);
-	void OnEvent(IATModemDriver *sender, ATModemPhase phase, ATModemEvent event);
+	void OnScheduledEvent(uint32 id) override;
+	void OnReadAvail(IATModemDriver *sender, uint32 len) override;
+	void OnWriteAvail(IATModemDriver *sender) override;
+	void OnEvent(IATModemDriver *sender, ATModemPhase phase, ATModemEvent event) override;
 
 	ATScheduler *mpScheduler;
 	ATScheduler *mpSlowScheduler;
-	IATUIRenderer *mpUIRenderer;
+	IATDeviceIndicatorManager *mpUIRenderer;
 	IATModemDriver *mpDriver;
 	vdfunction<void(const ATDeviceSerialStatus&)> mpCB;
 	ATEvent *mpEventEnterCommandMode;
@@ -202,7 +202,7 @@ protected:
 	bool	mbListening;					///< True if we are currently listening for a call (not dialing or connected).
 	bool	mbLoggingState;
 	bool	mbHighSpeed;
-	VDAtomicInt	mbRinging;
+	VDAtomicBool	mbRinging;
 
 	enum CommandState {
 		kCommandState_Idle,

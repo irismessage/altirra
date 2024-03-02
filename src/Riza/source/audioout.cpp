@@ -51,25 +51,25 @@ public:
 
 	uint32	GetPreferredSamplingRate(const wchar_t *preferredDevice) const override;
 
-	bool	Init(uint32 bufsize, uint32 bufcount, const tWAVEFORMATEX *wf, const wchar_t *preferredDevice);
-	void	Shutdown();
-	void	GoSilent();
+	bool	Init(uint32 bufsize, uint32 bufcount, const tWAVEFORMATEX *wf, const wchar_t *preferredDevice) override;
+	void	Shutdown() override;
+	void	GoSilent() override;
 
-	bool	IsSilent();
-	bool	IsFrozen();
-	uint32	GetAvailSpace();
-	uint32	GetBufferLevel();
-	uint32	EstimateHWBufferLevel();
-	sint32	GetPosition();
-	sint32	GetPositionBytes();
-	double	GetPositionTime();
+	bool	IsSilent() override;
+	bool	IsFrozen() override;
+	uint32	GetAvailSpace() override;
+	uint32	GetBufferLevel() override;
+	uint32	EstimateHWBufferLevel() override;
+	sint32	GetPosition() override;
+	sint32	GetPositionBytes() override;
+	double	GetPositionTime() override;
 
-	bool	Start();
-	bool	Stop();
-	bool	Flush();
+	bool	Start() override;
+	bool	Stop() override;
+	bool	Flush() override;
 
-	bool	Write(const void *data, uint32 len);
-	bool	Finalize(uint32 timeout);
+	bool	Write(const void *data, uint32 len) override;
+	bool	Finalize(uint32 timeout) override;
 
 private:
 	bool	CheckBuffers();
@@ -135,18 +135,18 @@ uint32 VDAudioOutputWaveOutW32::GetPreferredSamplingRate(const wchar_t *preferre
 	if (deviceID == WAVE_MAPPER) {
 		// The wave mapper will just give us a blank ID, so we must look up the actual device.
 		DWORD statusFlags;
-		waveOutMessage((HWAVEOUT)deviceID, DRVM_MAPPER_PREFERRED_GET, (DWORD_PTR)&deviceID, (DWORD_PTR)&statusFlags);
+		waveOutMessage((HWAVEOUT)(UINT_PTR)deviceID, DRVM_MAPPER_PREFERRED_GET, (DWORD_PTR)&deviceID, (DWORD_PTR)&statusFlags);
 	}
 
 	// retrieve the endpoint ID for the device
 	size_t len = 0;
-	if (MMSYSERR_NOERROR != waveOutMessage((HWAVEOUT)deviceID, DRV_QUERYFUNCTIONINSTANCEIDSIZE, (DWORD_PTR)&len, NULL))
+	if (MMSYSERR_NOERROR != waveOutMessage((HWAVEOUT)(UINT_PTR)deviceID, DRV_QUERYFUNCTIONINSTANCEIDSIZE, (DWORD_PTR)&len, NULL))
 		return 0;
 
 	vdblock<WCHAR> buf(len / sizeof(WCHAR) + 2);
 	memset(buf.data(), 0, sizeof(buf[0]) * buf.size());
 
-	if (MMSYSERR_NOERROR != waveOutMessage((HWAVEOUT)deviceID, DRV_QUERYFUNCTIONINSTANCEID, (DWORD_PTR)buf.data(), len))
+	if (MMSYSERR_NOERROR != waveOutMessage((HWAVEOUT)(UINT_PTR)deviceID, DRV_QUERYFUNCTIONINSTANCEID, (DWORD_PTR)buf.data(), len))
 		return 0;
 
 	HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
@@ -156,22 +156,24 @@ uint32 VDAudioOutputWaveOutW32::GetPreferredSamplingRate(const wchar_t *preferre
 	uint32 samplingRate = 0;
 
 	// enumerate audio endpoints in WASAPI and see if we get a match
-	vdrefptr<IMMDeviceEnumerator> devEnum;
-	hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_INPROC_SERVER, __uuidof(IMMDeviceEnumerator), (LPVOID *)~devEnum);
-	if (SUCCEEDED(hr)) {
-		vdrefptr<IMMDevice> dev;
-		hr = devEnum->GetDevice(buf.data(), ~dev);
+	{
+		vdrefptr<IMMDeviceEnumerator> devEnum;
+		hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_INPROC_SERVER, __uuidof(IMMDeviceEnumerator), (LPVOID *)~devEnum);
 		if (SUCCEEDED(hr)) {
-			vdrefptr<IAudioClient> client;
-			hr = dev->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, NULL, (void **)~client);
+			vdrefptr<IMMDevice> dev;
+			hr = devEnum->GetDevice(buf.data(), ~dev);
 			if (SUCCEEDED(hr)) {
-				WAVEFORMATEX *pwfex = nullptr;
-				hr = client->GetMixFormat(&pwfex);
-				if (pwfex) {
-					if (SUCCEEDED(hr))
-						samplingRate = pwfex->nSamplesPerSec;
+				vdrefptr<IAudioClient> client;
+				hr = dev->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, NULL, (void **)~client);
+				if (SUCCEEDED(hr)) {
+					WAVEFORMATEX *pwfex = nullptr;
+					hr = client->GetMixFormat(&pwfex);
+					if (pwfex) {
+						if (SUCCEEDED(hr))
+							samplingRate = pwfex->nSamplesPerSec;
 
-					CoTaskMemFree(pwfex);
+						CoTaskMemFree(pwfex);
+					}
 				}
 			}
 		}
@@ -584,25 +586,25 @@ public:
 
 	uint32	GetPreferredSamplingRate(const wchar_t *preferredDevice) const override;
 
-	bool	Init(uint32 bufsize, uint32 bufcount, const tWAVEFORMATEX *wf, const wchar_t *preferredDevice);
-	void	Shutdown();
-	void	GoSilent();
+	bool	Init(uint32 bufsize, uint32 bufcount, const tWAVEFORMATEX *wf, const wchar_t *preferredDevice) override;
+	void	Shutdown() override;
+	void	GoSilent() override;
 
-	bool	IsSilent();
-	bool	IsFrozen();
-	uint32	GetAvailSpace();
-	uint32	GetBufferLevel();
-	uint32	EstimateHWBufferLevel();
-	sint32	GetPosition();
-	sint32	GetPositionBytes();
-	double	GetPositionTime();
+	bool	IsSilent() override;
+	bool	IsFrozen() override;
+	uint32	GetAvailSpace() override;
+	uint32	GetBufferLevel() override;
+	uint32	EstimateHWBufferLevel() override;
+	sint32	GetPosition() override;
+	sint32	GetPositionBytes() override;
+	double	GetPositionTime() override;
 
-	bool	Start();
-	bool	Stop();
-	bool	Flush();
+	bool	Start() override;
+	bool	Stop() override;
+	bool	Flush() override;
 
-	bool	Write(const void *data, uint32 len);
-	bool	Finalize(uint32 timeout);
+	bool	Write(const void *data, uint32 len) override;
+	bool	Finalize(uint32 timeout) override;
 
 private:
 	struct Cursors {
@@ -612,7 +614,7 @@ private:
 
 	bool	ReadCursors(Cursors& cursors) const;
 	bool	WriteAudio(uint32 offset, const void *buf, uint32 bytes);
-	void	ThreadRun();
+	void	ThreadRun() override;
 	bool	InitDirectSound();
 	void	ShutdownDirectSound();
 	bool	InitPlayback();
@@ -645,7 +647,6 @@ private:
 	VDCriticalSection	mMutex;
 	uint32				mDSBufferedBytes;
 	uint32				mDSStreamPlayPosition;
-	uint32				mDSStreamWritePosition;
 	vdfastvector<uint8>	mBuffer;
 	uint32				mBufferReadOffset;
 	uint32				mBufferWriteOffset;
@@ -671,7 +672,6 @@ VDAudioOutputDirectSoundW32::VDAudioOutputDirectSoundW32()
 	, mpDSBuffer(NULL)
 	, mDSBufferedBytes(0)
 	, mDSStreamPlayPosition(0)
-	, mDSStreamWritePosition(0)
 	, mBufferReadOffset(0)
 	, mBufferWriteOffset(0)
 	, mBufferLevel(0)
@@ -694,22 +694,24 @@ uint32 VDAudioOutputDirectSoundW32::GetPreferredSamplingRate(const wchar_t *pref
 	uint32 samplingRate = 0;
 
 	// enumerate audio endpoints in WASAPI and see if we get a match
-	vdrefptr<IMMDeviceEnumerator> devEnum;
-	hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_INPROC_SERVER, __uuidof(IMMDeviceEnumerator), (LPVOID *)~devEnum);
-	if (SUCCEEDED(hr)) {
-		vdrefptr<IMMDevice> dev;
-		hr = devEnum->GetDefaultAudioEndpoint(eRender, eConsole, ~dev);
+	{
+		vdrefptr<IMMDeviceEnumerator> devEnum;
+		hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_INPROC_SERVER, __uuidof(IMMDeviceEnumerator), (LPVOID *)~devEnum);
 		if (SUCCEEDED(hr)) {
-			vdrefptr<IAudioClient> client;
-			hr = dev->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, NULL, (void **)~client);
+			vdrefptr<IMMDevice> dev;
+			hr = devEnum->GetDefaultAudioEndpoint(eRender, eConsole, ~dev);
 			if (SUCCEEDED(hr)) {
-				WAVEFORMATEX *pwfex = nullptr;
-				hr = client->GetMixFormat(&pwfex);
-				if (pwfex) {
-					if (SUCCEEDED(hr))
-						samplingRate = pwfex->nSamplesPerSec;
+				vdrefptr<IAudioClient> client;
+				hr = dev->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, NULL, (void **)~client);
+				if (SUCCEEDED(hr)) {
+					WAVEFORMATEX *pwfex = nullptr;
+					hr = client->GetMixFormat(&pwfex);
+					if (pwfex) {
+						if (SUCCEEDED(hr))
+							samplingRate = pwfex->nSamplesPerSec;
 
-					CoTaskMemFree(pwfex);
+						CoTaskMemFree(pwfex);
+					}
 				}
 			}
 		}

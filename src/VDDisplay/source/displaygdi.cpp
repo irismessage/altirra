@@ -18,7 +18,7 @@
 void VDDitherImage(VDPixmap& dst, const VDPixmap& src, const uint8 *pLogPal);
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDVideoDisplayMinidriverGDI : public VDVideoDisplayMinidriver {
+class VDVideoDisplayMinidriverGDI : public VDVideoDisplayMinidriver, public IVDDisplayCompositionEngine {
 public:
 	VDVideoDisplayMinidriverGDI();
 	~VDVideoDisplayMinidriverGDI();
@@ -36,6 +36,11 @@ public:
 	bool Paint(HDC hdc, const RECT& rClient, UpdateMode mode);
 	bool SetSubrect(const vdrect32 *r);
 	void SetLogicalPalette(const uint8 *pLogicalPalette) { mpLogicalPalette = pLogicalPalette; }
+
+	IVDDisplayCompositionEngine *GetDisplayCompositionEngine() override { return this; }
+
+public:
+	void LoadCustomEffect(const wchar_t *path) override {}
 
 protected:
 	void InternalRefresh(HDC hdc, const RECT& rClient, UpdateMode mode);
@@ -576,7 +581,14 @@ void VDVideoDisplayMinidriverGDI::InternalRefresh(HDC hdc, const RECT& rClient, 
 
 	HDC hdcComp = hdc;
 
+	VDDisplayCompositeInfo compInfo = {};
+
 	if (mpCompositor) {
+		compInfo.mWidth = rClient.right;
+		compInfo.mHeight = rClient.bottom;
+
+		mpCompositor->PreComposite(compInfo);
+
 		if (!mhdcCompBuffer || rClient.right != mCompBufferWidth || rClient.bottom != mCompBufferHeight) {
 			ShutdownCompositionBuffer();
 			InitCompositionBuffer();
@@ -648,10 +660,6 @@ void VDVideoDisplayMinidriverGDI::InternalRefresh(HDC hdc, const RECT& rClient, 
 
 	if (mpCompositor) {
 		if (mRenderer.Begin(hdcComp, rClient.right, rClient.bottom)) {
-			VDDisplayCompositeInfo compInfo = {};
-			compInfo.mWidth = rClient.right;
-			compInfo.mHeight = rClient.bottom;
-
 			mpCompositor->Composite(mRenderer, compInfo);
 			mRenderer.End();
 		}

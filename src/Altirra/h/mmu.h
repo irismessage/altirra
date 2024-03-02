@@ -43,10 +43,12 @@ public:
 	ATMMUEmulator();
 	~ATMMUEmulator();
 
-	void Init(int hardwareMode,
+	void Init(ATMemoryManager *memman);
+	void Shutdown();
+
+	void InitMapping(int hardwareMode,
 		int memoryMode,
 		void *extBase,
-		ATMemoryManager *memman,
 		ATMemoryLayer *extLayer,
 		ATMemoryLayer *selfTestLayer,
 		ATMemoryLayer *lowerKernelLayer,
@@ -55,7 +57,7 @@ public:
 		ATMemoryLayer *gameLayer,
 		ATMemoryLayer *hiddenRamLayer,
 		IATHLEKernel *hle);
-	void Shutdown();
+	void ShutdownMapping();
 
 	bool IsKernelROMEnabled() const { return (mCurrentBankInfo & kMapInfo_Kernel) != 0; }
 	bool IsSelfTestROMEnabled() const { return (mCurrentBankInfo & kMapInfo_SelfTest) != 0; }
@@ -64,7 +66,7 @@ public:
 
 	void SetROMMappingHook(const vdfunction<void()>& fn);
 
-	void SetAxlonMemory(uint8 bankbits, bool enableAliasing);
+	void SetAxlonMemory(uint8 bankbits, bool enableAliasing, void *mem);
 
 	void GetMemoryMapState(ATMemoryMapState& state) const;
 
@@ -108,6 +110,7 @@ protected:
 	uint8		mAxlonBank;
 	uint8		mAxlonBankMask;
 	bool		mbAxlonAliasing;
+	void		*mpAxlonMemory = nullptr;
 
 	uint32		mCPUBase;
 	uint32		mAnticBase;

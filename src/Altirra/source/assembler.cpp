@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/hash.h>
 #include "debugger.h"
 #include "console.h"
@@ -33,7 +33,7 @@ public:
 protected:
 	struct OperandInfo {
 		sint32	mOpValue;
-		uint8	mOpMode[5];
+		uint32	mOpModes;
 		int		mPostIncX;
 		int		mPostIncY;
 	};
@@ -41,11 +41,7 @@ protected:
 	struct OperandInfoImplied : public OperandInfo {
 		OperandInfoImplied() {
 			mOpValue = 0;
-			mOpMode[0] = kModeImp;
-			mOpMode[1] = kModeNone;
-			mOpMode[2] = kModeNone;
-			mOpMode[3] = kModeNone;
-			mOpMode[4] = kModeNone;
+			mOpModes = kModeFlag_Imp;
 			mPostIncX = 0;
 			mPostIncY = 0;
 		}
@@ -54,24 +50,16 @@ protected:
 	struct OperandInfoImm : public OperandInfo {
 		OperandInfoImm(uint8 imm) {
 			mOpValue = imm;
-			mOpMode[0] = kModeImm;
-			mOpMode[1] = kModeNone;
-			mOpMode[2] = kModeNone;
-			mOpMode[3] = kModeNone;
-			mOpMode[4] = kModeNone;
+			mOpModes = kModeFlag_Imm;
 			mPostIncX = 0;
 			mPostIncY = 0;
 		}
 	};
 
 	struct OperandInfoBranchTarget : public OperandInfo {
-		OperandInfoBranchTarget(uint16 addr) {
+		OperandInfoBranchTarget(uint32 addr) {
 			mOpValue = addr;
-			mOpMode[0] = kModeRel;
-			mOpMode[1] = kModeRelLong;
-			mOpMode[2] = kModeNone;
-			mOpMode[3] = kModeNone;
-			mOpMode[4] = kModeNone;
+			mOpModes = kModeFlag_Rel | kModeFlag_RelLong;
 			mPostIncX = 0;
 			mPostIncY = 0;
 		}
@@ -108,25 +96,25 @@ protected:
 	struct HashedStringSpanAI : public VDStringSpanA {
 		HashedStringSpanAI()
 			: VDStringSpanA()
-			, mHash(VDHashString32I(mpBegin, mpEnd - mpBegin))
+			, mHash(VDHashString32I(mpBegin, (uint32)(mpEnd - mpBegin)))
 		{
 		}
 
 		HashedStringSpanAI(const char *s)
 			: VDStringSpanA(s)
-			, mHash(VDHashString32I(mpBegin, mpEnd - mpBegin))
+			, mHash(VDHashString32I(mpBegin, (uint32)(mpEnd - mpBegin)))
 		{
 		}
 
 		HashedStringSpanAI(const char *s, const char *t)
 			: VDStringSpanA(s, t)
-			, mHash(VDHashString32I(s, t-s))
+			, mHash(VDHashString32I(s, (uint32)(t-s)))
 		{
 		}
 
 		HashedStringSpanAI(const VDStringSpanA& sp)
 			: VDStringSpanA(sp)
-			, mHash(VDHashString32I(mpBegin, mpEnd - mpBegin))
+			, mHash(VDHashString32I(mpBegin, (uint32)(mpEnd - mpBegin)))
 		{
 		}
 
@@ -144,35 +132,62 @@ protected:
 	};
 
 	enum {
-		kModeNone	= 0x00,
-		kModeImp	= 0x01,		// none/A
-		kModeImm	= 0x02,		// #imm
-		kModeZp		= 0x03,		// zp
-		kModeZpX	= 0x04,		// zp,X
-		kModeZpY	= 0x05,		// zp,Y
-		kModeZpI	= 0x06,		// (zp)
-		kModeAbs	= 0x07,		// abs
-		kModeAbsX	= 0x08,		// abs,X
-		kModeAbsY	= 0x09,		// abs,Y
-		kModeAbsI	= 0x0A,		// (abs)
-		kModeAbsIX	= 0x0B,		// (abs,X)
-		kModeIndX	= 0x0C,		// (zp,X)
-		kModeIndY	= 0x0D,		// (zp),Y
-		kModeRel	= 0x0E,		// branch target
-		kModeAbsLong	= 0x0F,	// al
-		kModeAbsLongX	= 0x10,	// al,X
-		kModeIndLong	= 0x11,	// [dp]
-		kModeIndLongY	= 0x12,	// [dp],Y
-		kModeStack		= 0x13,	// dp,S
-		kModeStackIndY	= 0x14,	// (dp,S),Y
-		kModeRelLong	= 0x15,	// branch target (16-bit)
-		kModeAbsLongI	= 0x16,	// [abs]
-		kModeMove		= 0x17,	// src,dest
+		kModeImp		= 0x00,		// none/A
+		kModeImm		= 0x01,		// #imm
+		kModeIVec		= 0x02,		// ivec
+		kModeZp			= 0x03,		// zp
+		kModeZpX		= 0x04,		// zp,X
+		kModeZpY		= 0x05,		// zp,Y
+		kModeZpI		= 0x06,		// (zp)
+		kModeAbs		= 0x07,		// abs
+		kModeAbsX		= 0x08,		// abs,X
+		kModeAbsY		= 0x09,		// abs,Y
+		kModeAbsI		= 0x0A,		// (abs)
+		kModeAbsIX		= 0x0B,		// (abs,X)
+		kModeIndX		= 0x0C,		// (zp,X)
+		kModeIndY		= 0x0D,		// (zp),Y
+		kModeRel		= 0x0E,		// branch target
+		kModeAbsLong	= 0x0F,		// al
+		kModeAbsLongX	= 0x10,		// al,X
+		kModeIndLong	= 0x11,		// [dp]
+		kModeIndLongY	= 0x12,		// [dp],Y
+		kModeStack		= 0x13,		// dp,S
+		kModeStackIndY	= 0x14,		// (dp,S),Y
+		kModeRelLong	= 0x15,		// branch target (16-bit)
+		kModeAbsLongI	= 0x16,		// [abs]
+		kModeMove		= 0x17,		// src,dest
 		kModeMask		= 0x1F,
 
 		kFlagNone	= 0x00,
 		kFlagEnd	= 0x80,
 		kFlagAll	= 0xFF
+	};
+
+	enum : uint32 {
+		kModeFlag_Imp		= (uint32)1 << kModeImp,
+		kModeFlag_Imm		= (uint32)1 << kModeImm,
+		kModeFlag_IVec		= (uint32)1 << kModeIVec,
+		kModeFlag_Zp		= (uint32)1 << kModeZp,
+		kModeFlag_ZpX		= (uint32)1 << kModeZpX,
+		kModeFlag_ZpY		= (uint32)1 << kModeZpY,
+		kModeFlag_ZpI		= (uint32)1 << kModeZpI,
+		kModeFlag_Abs		= (uint32)1 << kModeAbs,
+		kModeFlag_AbsX		= (uint32)1 << kModeAbsX,
+		kModeFlag_AbsY		= (uint32)1 << kModeAbsY,
+		kModeFlag_AbsI		= (uint32)1 << kModeAbsI,
+		kModeFlag_AbsIX		= (uint32)1 << kModeAbsIX,
+		kModeFlag_IndX		= (uint32)1 << kModeIndX,
+		kModeFlag_IndY		= (uint32)1 << kModeIndY,
+		kModeFlag_Rel		= (uint32)1 << kModeRel,
+		kModeFlag_AbsLong	= (uint32)1 << kModeAbsLong,
+		kModeFlag_AbsLongX	= (uint32)1 << kModeAbsLongX,
+		kModeFlag_IndLong	= (uint32)1 << kModeIndLong,
+		kModeFlag_IndLongY	= (uint32)1 << kModeIndLongY,
+		kModeFlag_Stack		= (uint32)1 << kModeStack,
+		kModeFlag_StackIndY	= (uint32)1 << kModeStackIndY,
+		kModeFlag_RelLong	= (uint32)1 << kModeRelLong,
+		kModeFlag_AbsLongI	= (uint32)1 << kModeAbsLongI,
+		kModeFlag_Move		= (uint32)1 << kModeMove,
 	};
 
 	enum {
@@ -492,7 +507,7 @@ X_OPCODE_BEGIN(CMP)
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(COP)
-	{ 0x02, kModeImm },
+	{ 0x02, kModeIVec },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(CPX)
@@ -1360,7 +1375,7 @@ bool ATDebuggerCmdAssemble::ProcessSubCommand(const char *s) {
 			int skipPatchOffset = -1;
 			for(Commands::const_iterator itC(commands.begin()), itCEnd(commands.end()); itC != itCEnd; ++itC) {
 				const CommandEntry& cmd = **itC;
-				uint32 pc = mAddress + mEmittedBytes.size();
+				uint32 pc = mAddress + (uint32)mEmittedBytes.size();
 
 				static const OpcodeEntry *const kBranchOpcodes[]={
 					kOpcodes_BEQ,
@@ -1412,7 +1427,7 @@ bool ATDebuggerCmdAssemble::ProcessSubCommand(const char *s) {
 						mEmittedBytes.push_back(kBranchOpVals[cmd.mPsuedoOp - kPsuedoOp_SEQ]);
 						mEmittedBytes.push_back(0);
 
-						skipPatchOffset = mEmittedBytes.size();
+						skipPatchOffset = (uint32)mEmittedBytes.size();
 						continue;
 
 					case kPsuedoOp_JEQ:
@@ -1494,7 +1509,7 @@ bool ATDebuggerCmdAssemble::ProcessSubCommand(const char *s) {
 		else
 			output.sprintf("%04X:", mAddress);
 
-		uint32 n = mEmittedBytes.size();
+		uint32 n = (uint32)mEmittedBytes.size();
 		for(uint32 i=0; i<n; ++i) {
 			if (i == 4)
 				break;
@@ -1513,7 +1528,7 @@ bool ATDebuggerCmdAssemble::ProcessSubCommand(const char *s) {
 		ATConsoleWrite(output.c_str());
 
 		if (!mEmittedBytes.empty())
-			mpDebugger->WriteGlobalMemory(mAddress, mEmittedBytes.data(), mEmittedBytes.size());
+			mpDebugger->WriteGlobalMemory(mAddress, mEmittedBytes.data(), (uint32)mEmittedBytes.size());
 
 		mAddress += n;
 		mAddress &= 0xFFFFFF;
@@ -1532,11 +1547,7 @@ bool ATDebuggerCmdAssemble::ProcessSubCommand(const char *s) {
 
 const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opinfo) {
 	opinfo.mOpValue = 0;
-	opinfo.mOpMode[0] = kModeNone;
-	opinfo.mOpMode[1] = kModeNone;
-	opinfo.mOpMode[2] = kModeNone;
-	opinfo.mOpMode[3] = kModeNone;
-	opinfo.mOpMode[4] = kModeNone;
+	opinfo.mOpModes = 0;
 	opinfo.mPostIncX = 0;
 	opinfo.mPostIncY = 0;
 
@@ -1544,7 +1555,7 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 		++s;
 
 	if (!*s || *s == ';') {
-		opinfo.mOpMode[0] = kModeImp;
+		opinfo.mOpModes = kModeFlag_Imp;
 	} else if (*s == '#') {
 		++s;
 		while(*s == ' ')
@@ -1552,7 +1563,7 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 
 		s = ParseExpression(s, opinfo.mOpValue);
 
-		opinfo.mOpMode[0] = kModeImm;
+		opinfo.mOpModes = kModeFlag_Imm;
 	} else if (*s == '(') {	// (zp); (abs); (zp,X); (abs,X); (zp),Y; (d,S),Y
 		s = ParseExpression(s+1, opinfo.mOpValue);
 
@@ -1573,7 +1584,7 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 
 				s += 4;
 
-				opinfo.mOpMode[0] = kModeStackIndY;
+				opinfo.mOpModes = kModeFlag_StackIndY;
 			} else if (*s == 'x' || *s == 'X') {
 				++s;
 
@@ -1594,10 +1605,10 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 
 				++s;
 
-				opinfo.mOpMode[0] = kModeAbsIX;
+				opinfo.mOpModes = kModeFlag_AbsIX;
 
 				if (zpAllowed)
-					opinfo.mOpMode[1] = kModeIndX;
+					opinfo.mOpModes |= kModeFlag_IndX;
 			} else {
 				throw ParseException(s, "S or X index register expected");
 			}
@@ -1630,12 +1641,12 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 				if (!zpAllowed)
 					throw ParseException(s, "Operand exceeds range for zero page addressing");
 
-				opinfo.mOpMode[0] = kModeIndY;
+				opinfo.mOpModes = kModeFlag_IndY;
 			} else if (!*s || *s == ';') {
-				opinfo.mOpMode[0] = kModeAbsI;
+				opinfo.mOpModes = kModeFlag_AbsI;
 
 				if (zpAllowed)
-					opinfo.mOpMode[1] = kModeZpI;
+					opinfo.mOpModes |= kModeFlag_ZpI;
 			} else
 				throw ParseException(s);
 		}
@@ -1659,7 +1670,7 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 			if (!zpAllowed)
 				throw ParseException(s, "Operand exceeds range for direct page long indexed addressing");
 
-			opinfo.mOpMode[0] = kModeIndLongY;
+			opinfo.mOpModes = kModeFlag_IndLongY;
 
 			if (*s == '+') {
 				++s;
@@ -1671,10 +1682,10 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 				}
 			}
 		} else {
-			opinfo.mOpMode[0] = kModeAbsLongI;
+			opinfo.mOpModes = kModeFlag_AbsLongI;
 
 			if (zpAllowed)
-				opinfo.mOpMode[1] = kModeIndLong;
+				opinfo.mOpModes |= kModeFlag_IndLong;
 		}
 	} else {
 		s = ParseExpression(s, opinfo.mOpValue);
@@ -1702,13 +1713,13 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 					}
 				}
 
-				opinfo.mOpMode[0] = kModeAbsLongX;
+				opinfo.mOpModes = kModeFlag_AbsLongX;
 
 				if (absAllowed) {
-					opinfo.mOpMode[1] = kModeAbsX;
+					opinfo.mOpModes |= kModeFlag_AbsX;
 
 					if (zpAllowed)
-						opinfo.mOpMode[2] = kModeZpX;
+						opinfo.mOpModes |= kModeFlag_ZpX;
 				}
 			} else if (*s == 'y' || *s == 'Y') {
 				++s;
@@ -1722,17 +1733,17 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 					}
 				}
 
-				opinfo.mOpMode[0] = kModeAbsY;
+				opinfo.mOpModes = kModeFlag_AbsY;
 
 				if (zpAllowed)
-					opinfo.mOpMode[1] = kModeZpY;
+					opinfo.mOpModes |= kModeFlag_ZpY;
 			} else if (*s == 's' || *s == 'S') {
 				++s;
 
 				if (!zpAllowed)
 					throw ParseException(s, "Operand exceeds range for stack-relative addressing");
 
-				opinfo.mOpMode[0] = kModeStack;
+				opinfo.mOpModes = kModeFlag_Stack;
 			} else {
 				if (!zpAllowed)
 					throw ParseException(s, "Source bank out of range");
@@ -1743,21 +1754,20 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 				if ((uint32)dstBank >= 0x100)
 					throw ParseException(s, "Destination bank out of range");
 
-				opinfo.mOpMode[0] = kModeMove;
+				opinfo.mOpModes = kModeFlag_Move;
 				opinfo.mOpValue += dstBank << 8;
 			}
 		} else {
-			opinfo.mOpMode[0] = kModeAbsLong;
+			opinfo.mOpModes = kModeFlag_AbsLong;
 
 			if (absAllowed) {
-				opinfo.mOpMode[1] = kModeAbs;
+				opinfo.mOpModes |= kModeFlag_Abs;
 
 				if (zpAllowed)
-					opinfo.mOpMode[2] = kModeZp;
+					opinfo.mOpModes |= kModeFlag_Zp | kModeFlag_IVec;
 			}
 
-			opinfo.mOpMode[3] = kModeRel;
-			opinfo.mOpMode[4] = kModeRelLong;
+			opinfo.mOpModes |= kModeFlag_Rel | kModeFlag_RelLong;
 		}
 	}
 
@@ -1946,42 +1956,25 @@ const char *ATDebuggerCmdAssemble::ParseExpression(const char *s, sint32& value)
 }
 
 void ATDebuggerCmdAssemble::MakeOperandShiftable(const char *loc, OperandInfo& opinfo, uint32 len) {
-	bool valid = false;
+	const uint32 kZpModes = kModeFlag_Zp | kModeFlag_ZpX | kModeFlag_ZpY;
 
-	for(int i=0; i<3; ++i) {
-		switch(opinfo.mOpMode[i]) {
-			case kModeImm:
-				valid = true;
-				break;
-
-			case kModeZp:
-			case kModeZpX:
-			case kModeZpY:
-				if (((opinfo.mOpValue + len) & 0xffff) > 0x100)
-					opinfo.mOpMode[i] = kModeNone;
-				else
-					valid = true;
-				break;
-			case kModeAbs:
-			case kModeAbsX:
-			case kModeAbsY:
-				valid = true;
-				break;
-
-			default:
-				opinfo.mOpMode[i] = kModeNone;
-				break;
-		}
+	if (opinfo.mOpModes & kZpModes) {
+		if (((opinfo.mOpValue + len) & 0xffff) > 0x100)
+			opinfo.mOpModes &= ~kZpModes;
 	}
 
-	if (!valid)
+	const uint32 kIncModes = kModeFlag_Imm | kModeFlag_Abs | kModeFlag_AbsX | kModeFlag_AbsY | kModeFlag_AbsLong | kModeFlag_AbsLongX;
+
+	opinfo.mOpModes &= kZpModes | kIncModes;
+
+	if (!opinfo.mOpModes)
 		throw ParseException(loc, "Operand must be incrementable");
 }
 
 void ATDebuggerCmdAssemble::ShiftOperand(const OperandInfo& opinfo, OperandInfo& opdst, uint32 offset) {
 	opdst = opinfo;
 
-	if (opinfo.mOpMode[0] == kModeImm)
+	if (opinfo.mOpModes & kModeFlag_Imm)
 		opdst.mOpValue = (opinfo.mOpValue >> (offset * 8)) & 0xff;
 	else
 		opdst.mOpValue += offset;
@@ -2109,32 +2102,32 @@ const char *ATDebuggerCmdAssemble::EmitCompositeCPx(const char *s, uint32 len) {
 		EmitOpcode(s, kOpcodes_CMP, op2, false, false);
 		EmitPostIncrements(op1, false);
 		EmitPostIncrements(op2, false);
-	}
+	} else {
+		MakeOperandShiftable(s, op1, len);
+		MakeOperandShiftable(s, op2, len);
 
-	MakeOperandShiftable(s, op1, len);
-	MakeOperandShiftable(s, op2, len);
+		size_t patchlocs[4];
 
-	size_t patchlocs[4];
+		// compare high bytes
+		for(uint32 i = len; i; --i) {
+			ShiftOperand(op1, op3, i - 1);
+			ShiftOperand(op2, op4, i - 1);
+			EmitOpcode(s, kOpcodes_LDA, op3, false, false);
+			EmitOpcode(s, kOpcodes_CMP, op4, false, false);
 
-	// compare high bytes
-	for(uint32 i = len; i; --i) {
-		ShiftOperand(op1, op3, i - 1);
-		ShiftOperand(op2, op4, i - 1);
-		EmitOpcode(s, kOpcodes_LDA, op3, false, false);
-		EmitOpcode(s, kOpcodes_CMP, op4, false, false);
-
-		// emit branch
-		if (i > 1) {
-			mEmittedBytes.push_back(0xD0);		// BNE
-			mEmittedBytes.push_back(0);
-			patchlocs[i-1] = mEmittedBytes.size();
+			// emit branch
+			if (i > 1) {
+				mEmittedBytes.push_back(0xD0);		// BNE
+				mEmittedBytes.push_back(0);
+				patchlocs[i-1] = mEmittedBytes.size();
+			}
 		}
-	}
 
-	// patch branches
-	size_t n = mEmittedBytes.size();
-	for(uint32 i = len - 1; i; --i) {
-		mEmittedBytes[patchlocs[i] - 1] = (uint8)(n - patchlocs[i]);
+		// patch branches
+		size_t n = mEmittedBytes.size();
+		for(uint32 i = len - 1; i; --i) {
+			mEmittedBytes[patchlocs[i] - 1] = (uint8)(n - patchlocs[i]);
+		}
 	}
 
 	return s;
@@ -2147,7 +2140,7 @@ void ATDebuggerCmdAssemble::EmitOpcode(const char *loc, const OpcodeEntry *opcod
 	for(const OpcodeEntry *op = opcodes; !(op->mFlags & kFlagEnd); ++op) {
 		uint8 mode = op->mFlags & kModeMask;
 
-		if (mode == opinfo.mOpMode[0] || mode == opinfo.mOpMode[1] || mode == opinfo.mOpMode[2] || mode == opinfo.mOpMode[3] || mode == opinfo.mOpMode[4]) {
+		if (opinfo.mOpModes & ((uint32)1 << mode)) {
 			opBest = op;
 			opBestMode = mode;
 			break;
@@ -2208,6 +2201,13 @@ void ATDebuggerCmdAssemble::EmitOpcode(const char *loc, const OpcodeEntry *opcod
 					mEmittedBytes.push_back((uint8)opinfo.mOpValue);
 				}
 			}
+			break;
+
+		case kModeIVec:
+			if ((uint32)opinfo.mOpValue >= 0x100)
+				throw ParseException(loc, "Immediate value out of range (8-bit mode)");
+
+			mEmittedBytes.push_back((uint8)opinfo.mOpValue);
 			break;
 
 		case kModeZp:
@@ -2276,7 +2276,7 @@ use_rel_long:
 				throw ParseException(loc, "Long branch crosses bank boundary");
 
 			{
-				uint32 offset = opinfo.mOpValue - (mAddress + mEmittedBytes.size() + 2);
+				uint32 offset = opinfo.mOpValue - (mAddress + (uint32)mEmittedBytes.size() + 2);
 
 				mEmittedBytes.push_back((uint8)offset);
 				mEmittedBytes.push_back((uint8)(offset >> 8));

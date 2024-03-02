@@ -27,12 +27,14 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="source\cassetteblock.cpp" />
     <ClCompile Include="source\diskfs.cpp" />
     <ClCompile Include="source\diskfsarc.cpp" />
     <ClCompile Include="source\diskfsdos2.cpp" />
     <ClCompile Include="source\diskfsdos3.cpp" />
     <ClCompile Include="source\diskfssdx2.cpp" />
     <ClCompile Include="source\diskfssdx2util.cpp" />
+    <ClCompile Include="source\diskfsutil.cpp" />
     <ClCompile Include="source\diskimage.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
@@ -44,9 +46,13 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\h\at\atio\cassetteblock.h" />
+    <ClInclude Include="..\h\at\atio\cassettedecoder.h" />
+    <ClInclude Include="..\h\at\atio\cassetteimage.h" />
     <ClInclude Include="..\h\at\atio\diskfs.h" />
     <ClInclude Include="..\h\at\atio\diskfsdos2util.h" />
     <ClInclude Include="..\h\at\atio\diskfssdx2util.h" />
+    <ClInclude Include="..\h\at\atio\diskfsutil.h" />
     <ClInclude Include="..\h\at\atio\diskimage.h" />
     <ClInclude Include="h\stdafx.h" />
   </ItemGroup>

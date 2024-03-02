@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include "memorymanager.h"
 #include "console.h"
 
@@ -177,8 +177,14 @@ void ATMemoryManager::DumpStatus() {
 			s += "hardware";
 		}
 
-		if (layer.mpName)
+		if (layer.mpName) {
+			uint32 len = s.size();
+
+			if (len < 42)
+				s.append(42 - len, ' ');
+
 			s.append_sprintf(" [%s]", layer.mpName);
+		}
 
 		s += '\n';
 		ATConsoleWrite(s.c_str());
@@ -344,14 +350,16 @@ void ATMemoryManager::SetLayerAddressRange(ATMemoryLayer *layer0, uint32 pageOff
 	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
 
 	if (layer->mPageOffset != pageOffset || layer->mPageCount != pageCount) {
-		uint32 oldBegin = layer->mPageOffset;
-		uint32 oldEnd = layer->mPageOffset + layer->mPageCount;
+		uint32 oldBegin = layer->mEffectiveStart;
+		uint32 oldEnd = layer->mEffectiveEnd;
 
 		layer->mPageOffset = pageOffset;
 		layer->mPageCount = pageCount;
+		
+		layer->UpdateEffectiveRange();
 
-		uint32 newBegin = layer->mPageOffset;
-		uint32 newEnd = layer->mPageOffset + layer->mPageCount;
+		uint32 newBegin = layer->mEffectiveStart;
+		uint32 newEnd = layer->mEffectiveEnd;
 
 		uint32 rewriteOffset = std::min<uint32>(oldBegin, newBegin);
 		uint32 rewriteCount = std::max<uint32>(oldEnd, newEnd) - rewriteOffset;

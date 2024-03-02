@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/strutil.h>
 #include <at/atcore/cio.h>
@@ -46,7 +46,7 @@ public:
 	IATDeviceSerial *GetSerialDevice() { return mpDeviceSerial; }
 	void SetSerialDevice(IATDeviceSerial *dev);
 
-	void Init(int index, IATRS232ChannelCallback *cb, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr);
+	void Init(int index, IATRS232ChannelCallback *cb, ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr);
 	void Shutdown();
 
 	void ColdReset();
@@ -219,7 +219,7 @@ void ATRS232Channel850::SetSerialDevice(IATDeviceSerial *dev) {
 	}
 }
 
-void ATRS232Channel850::Init(int index, IATRS232ChannelCallback *cb, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr) {
+void ATRS232Channel850::Init(int index, IATRS232ChannelCallback *cb, ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr) {
 	mIndex = index;
 	mpCB = cb;
 	mpScheduler = sched;
@@ -756,6 +756,9 @@ public:
 public:	// IATDeviceFirmware
 	void InitFirmware(ATFirmwareManager *fwman) override;
 	bool ReloadFirmware() override;
+	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override { return nullptr; }
+	bool IsWritableFirmwareDirty(uint32 idx) const override { return false; }
+	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override {}
 
 public:	// IATDeviceParent
 	const char *GetSupportedType(uint32 index) override;
@@ -767,7 +770,7 @@ public:	// IATDeviceScheduling
 	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:	// IATDeviceIndicators
-	void InitIndicators(IATUIRenderer *r) override;
+	void InitIndicators(IATDeviceIndicatorManager *r) override;
 
 public:	// IATDeviceCIO
 	void InitCIO(IATDeviceCIOManager *mgr) override;
@@ -803,7 +806,7 @@ protected:
 
 	ATScheduler *mpScheduler;
 	ATScheduler *mpSlowScheduler;
-	IATUIRenderer *mpUIRenderer;
+	IATDeviceIndicatorManager *mpUIRenderer;
 	ATFirmwareManager *mpFwMgr;
 	IATDeviceCIOManager *mpCIOMgr;
 	IATDeviceSIOManager *mpSIOMgr;
@@ -1023,7 +1026,7 @@ void ATRS232Emulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 	mpSlowScheduler = slowsch;
 }
 
-void ATRS232Emulator::InitIndicators(IATUIRenderer *r) {
+void ATRS232Emulator::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
 }
 

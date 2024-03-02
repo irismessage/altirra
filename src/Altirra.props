@@ -6,8 +6,9 @@
   <ImportGroup Label="PropertySheets">
     <Import Condition="'$(Platform)'=='Win32'" Project="VirtualDub-VC2005-IX86.props" />
     <Import Condition="'$(Platform)'=='x64'" Project="VirtualDub-VC2005-AMD64.props" />
-    <Import Condition="'$(Configuration)'=='Debug' and '$(Platform)'!='x64'" Project="VirtualDub-VC2005-Debug.props" />
-    <Import Condition="'$(Configuration)'!='Debug' or '$(Platform)'=='x64'" Project="VirtualDub-VC2005-Release.props" />
+    <Import Condition="'$(Configuration)'=='Debug'" Project="VirtualDub-VC2005-Debug.props" />
+    <Import Condition="'$(Configuration)'!='Debug'" Project="VirtualDub-VC2005-Release.props" />
+    <Import Project="Build\VCDisableTelemetry.props" />
     <Import Project="VirtualDub-VC2005.props" />
   </ImportGroup>
   <ItemDefinitionGroup>
@@ -16,6 +17,7 @@
       <RuntimeLibrary Condition="'$(Configuration)'=='Debug'">MultiThreadedDebug</RuntimeLibrary>
       <RuntimeLibrary Condition="'$(Configuration)'!='Debug'">MultiThreaded</RuntimeLibrary>
       <AdditionalOptions Condition="'$(Configuration)'!='Debug'">%(AdditionalOptions) /Zo</AdditionalOptions>
+      <PreprocessorDefinitions Condition="'$(Configuration)'!='Release'">ATNRELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
   <PropertyGroup Label="UserMacros">

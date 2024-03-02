@@ -24,12 +24,13 @@ public:
 	void Reset(uint32 seq);
 
 	uint32 Write(const void *p, uint32 n);
-	void Read(uint32 offset, void *p, uint32 n);
+	void Read(uint32 offset, void *p, uint32 n) const;
 	void Ack(uint32 n);
 
 	uint32 GetSpace() const { return mSize - mLevel; }
 	uint32 GetLevel() const { return mLevel; }
 	uint32 GetBaseSeq() const { return mBaseSeq; }
+	uint32 GetTailSeq() const { return mBaseSeq + mLevel; }
 
 protected:
 	uint32 mReadPtr;
@@ -142,7 +143,7 @@ public:
 public:
 	void OnPacket(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& iphdr, const uint8 *data, const uint32 len);
 
-	uint32 EncodePacket(uint8 *dst, uint32 len, uint32 srcIpAddr, uint32 dstIpAddr, const ATTcpHeaderInfo& hdrInfo, const void *data, uint32 dataLen);
+	uint32 EncodePacket(uint8 *dst, uint32 len, uint32 srcIpAddr, uint32 dstIpAddr, const ATTcpHeaderInfo& hdrInfo, const void *data, uint32 dataLen, const void *opts = nullptr, uint32 optLen = 0);
 	void SendReset(const ATIPv4HeaderInfo& iphdr, uint16 srcPort, uint16 dstPort, const ATTcpHeaderInfo& origTcpHdr);
 	void SendReset(uint32 srcIpAddr, uint32 dstIpAddr, uint16 srcPort, uint16 dstPort, const ATTcpHeaderInfo& origTcpHdr);
 	void SendFrame(uint32 dstIpAddr, const void *data, uint32 len);
@@ -165,63 +166,74 @@ protected:
 	Connections mConnections;
 };
 
-struct ATNetTcpConnection : public vdrefcounted<IATSocket>, public IATEthernetClockEventSink {
+struct ATNetTcpConnection final : public vdrefcounted<IATSocket>, public IATEthernetClockEventSink {
 public:
 	ATNetTcpConnection(ATNetTcpStack *stack, const ATNetTcpConnectionKey& connKey);
 	~ATNetTcpConnection();
 
 	void GetInfo(ATNetTcpConnectionInfo& info) const;
 
-	void Init(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& ipHdr, const ATTcpHeaderInfo& tcpHdr);
+	void Init(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& ipHdr, const ATTcpHeaderInfo& tcpHdr, const uint8 *data);
 	void InitOutgoing(IATSocketHandler *h, uint32 isnSalt);
 
 	void SetSocketHandler(IATSocketHandler *h);
 
 	void OnPacket(const ATEthernetPacket& packet, const ATIPv4HeaderInfo& iphdr, const ATTcpHeaderInfo& tcpHdr, const uint8 *data, const uint32 len);
 
-	void Transmit(bool ack);
+	void TryTransmitMore(bool immediate);
+	void Transmit(bool ack, int retransmitCount = 0, bool enableWindowProbe = false);
 
 public:
-	virtual void OnClockEvent(uint32 eventid, uint32 userid);
+	void OnClockEvent(uint32 eventid, uint32 userid) override;
 
 public:
-	virtual void Shutdown();
-	virtual uint32 Read(void *buf, uint32 len);
-	virtual uint32 Write(const void *buf, uint32 len);
-	virtual void Close();
+	void Shutdown() override;
+	uint32 Read(void *buf, uint32 len) override;
+	uint32 Write(const void *buf, uint32 len) override;
+	void Close() override;
 
-protected:
-	bool CanTransmitMore() const;
+private:
+	enum TransmitStatus {
+		kTransmitStatus_No,
+		kTransmitStatus_Deferred,
+		kTransmitStatus_DeferredZeroWindow,
+		kTransmitStatus_Yes
+	};
+
+	TransmitStatus GetTransmitStatus() const;
 	void ClearEvents();
+	void ProcessSynOptions(const ATEthernetPacket& packet, const ATTcpHeaderInfo& tcpHdr, const uint8 *data);
 
 	enum {
 		kEventId_Close = 1,
 		kEventId_Transmit,
 		kEventId_Retransmit,
+		kEventId_WindowProbe,
+		kEventId_ZeroWindowProbe,
 	};
 
 	const ATNetTcpConnectionKey mConnKey;
-	ATNetTcpStack *mpTcpStack;
+	ATNetTcpStack *mpTcpStack = nullptr;
 	vdrefptr<IATSocketHandler> mpSocketHandler;
-	uintptr_t mSocketHandlerData;
-	bool mbLocalOpen;
-	bool mbSynQueued;
-	bool mbSynAcked;
-	bool mbFinQueued;
-	bool mbFinReceived;
+	bool mbLocalOpen = true;
+	bool mbSynQueued = false;
+	bool mbFinQueued = false;
+	bool mbFinReceived = false;
 
-	ATNetTcpConnectionState mConnState;
+	ATNetTcpConnectionState mConnState = {};
 
-	uint32	mEventClose;
-	uint32	mEventTransmit;
-	uint32	mEventRetransmit;
+	uint32	mEventClose = 0;
+	uint32	mEventTransmit = 0;
+	uint32	mEventRetransmit = 0;
+	uint32	mEventWindowProbe = 0;
+	uint32	mEventZeroWindowProbe = 0;
 
 	struct PacketTimer {
 		uint32 mNext;
 		uint32 mPrev;
-		uint32 mRetransmitTimestamp;
-		uint32 mSequenceStart;
+		uint32 mSequenceStart;		// free next for root
 		uint32 mSequenceEnd;
+		uint32 mRetransmitCount;
 	};
 
 	typedef vdfastvector<PacketTimer> PacketTimers;
@@ -229,12 +241,31 @@ protected:
 
 	ATNetTcpRingBuffer mRecvRing;
 	ATNetTcpRingBuffer mXmitRing;
-	uint32 mXmitLastAck;
-	uint32 mXmitWindowLimit;
-	uint32 mXmitNext;
+	uint32 mXmitLastAck = 0;
+	uint32 mXmitWindowLimit = 0;
+	uint32 mXmitNext = 0;
+
+	// This is the minimum window we require before sending data, to mitigate SWS.
+	// It is set to min(max_window/2, mss).
+	uint32 mXmitWindowThreshold = 0;
+
+	// This is the maximum window size we've ever seen. We need to update this as
+	// we go due to TCP slow start.
+	uint32 mXmitMaxWindow = 0;
+
+	// MSS we can receive on our end. We set this. The max for Ethernet is 1460
+	// (1500 frame - 20 IP header - 20 TCP header).
+	uint32 mRecvMaxSegment = 1460;
+
+	// MSS we can transmit (other side can receive). We get adjust this if the MSS
+	// option arrives. If not, we can only assume 536, the minimum required by the
+	// spec.
+	uint32 mXmitMaxSegment = 512;
 
 	char mRecvBuf[32768];
 	char mXmitBuf[32768];
+
+	static const uint32 kMaxRetransmits = 5;
 };
 
 #endif	// f_ATNETWORK_TCPSTACK_H

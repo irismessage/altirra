@@ -1,7 +1,7 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include "glc.h"
 #include <vd2/system/vdalloc.h>
-#include <vd2/Riza/opengl.h>
+#include <vd2/VDDisplay/opengl.h>
 
 using namespace GLCIL;
 

@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include "cpu.h"
 #include "cpustates.h"
 
@@ -757,9 +757,9 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			*mpDstState++ = emu ? kStatePop : kStatePopNative;
 
 			if (emu)
-				*mpDstState++ = kStateDtoP;
+				*mpDstState++ = kStateDtoP_noICheck;
 			else
-				*mpDstState++ = kStateDtoPNative;
+				*mpDstState++ = kStateDtoPNative_noICheck;
 
 			*mpDstState++ = kStatePopPCLNative;
 			*mpDstState++ = kStatePopPCHNative;
@@ -1180,8 +1180,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kStateWait;
 				*mpDstState++ = kStateRor;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -1653,8 +1656,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kStateWait;
 				*mpDstState++ = kStateDec;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -1716,8 +1722,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kStateWait;
 				*mpDstState++ = kStateDec;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -1748,8 +1757,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kStateWait;
 				*mpDstState++ = kStateDec;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -1797,8 +1809,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kStateWait;
 				*mpDstState++ = kStateDec;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -1844,8 +1859,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kStateWait;
 				*mpDstState++ = kStateInc;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -1899,8 +1917,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kStateWait;
 				*mpDstState++ = kStateInc;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -1930,8 +1951,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kStateWait;
 				*mpDstState++ = kStateInc;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;
@@ -1994,8 +2018,11 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 				*mpDstState++ = kStateWriteL16;
 			} else {
 				*mpDstState++ = kState816ReadByte;
+				if (emu)
+					*mpDstState++ = kState816WriteByte;
+				else
+					*mpDstState++ = kStateWait;
 				*mpDstState++ = kStateInc;
-				*mpDstState++ = kStateWait;
 				*mpDstState++ = kState816WriteByte;
 			}
 			break;

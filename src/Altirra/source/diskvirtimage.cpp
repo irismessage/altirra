@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/math.h>
 #include <vd2/system/error.h>
@@ -20,43 +20,45 @@ namespace {
 	};
 }
 
-class ATDiskImageVirtualFolder : public IATDiskImage, public IVDTimerCallback {
+class ATDiskImageVirtualFolder final : public IATDiskImage, public IVDTimerCallback {
 public:
 	ATDiskImageVirtualFolder();
 
 	void Init(const wchar_t *path);
 
-	virtual ATDiskTimingMode GetTimingMode() const { return kATDiskTimingMode_Any; }
+	ATDiskTimingMode GetTimingMode() const override { return kATDiskTimingMode_Any; }
 
-	virtual bool IsDirty() const { return false; }
-	virtual bool IsUpdatable() const { return false; }
-	virtual bool IsDynamic() const { return true; }
-	virtual ATDiskImageFormat GetImageFormat() const override { return kATDiskImageFormat_None; }
+	bool IsDirty() const override { return false; }
+	bool IsUpdatable() const override { return false; }
+	bool IsDynamic() const override { return true; }
+	ATDiskImageFormat GetImageFormat() const override { return kATDiskImageFormat_None; }
 
-	virtual bool Flush() { return true; }
+	bool Flush() override { return true; }
 
-	virtual void SetPath(const wchar_t *path);
-	virtual void Save(const wchar_t *path, ATDiskImageFormat format);
+	void SetPath(const wchar_t *path) override;
+	void Save(const wchar_t *path, ATDiskImageFormat format) override;
 
-	ATDiskGeometryInfo GetGeometry() const;
-	virtual uint32 GetSectorSize() const;
-	virtual uint32 GetSectorSize(uint32 virtIndex) const;
-	virtual uint32 GetBootSectorCount() const;
+	ATDiskGeometryInfo GetGeometry() const override;
+	uint32 GetSectorSize() const override;
+	uint32 GetSectorSize(uint32 virtIndex) const override;
+	uint32 GetBootSectorCount() const override;
 
-	virtual uint32 GetPhysicalSectorCount() const;
-	virtual void GetPhysicalSectorInfo(uint32 index, ATDiskPhysicalSectorInfo& info) const;
+	uint32 GetPhysicalSectorCount() const override;
+	void GetPhysicalSectorInfo(uint32 index, ATDiskPhysicalSectorInfo& info) const override;
 
-	virtual void ReadPhysicalSector(uint32 index, void *data, uint32 len);
-	virtual void WritePhysicalSector(uint32 index, const void *data, uint32 len);
+	void ReadPhysicalSector(uint32 index, void *data, uint32 len) override;
+	void WritePhysicalSector(uint32 index, const void *data, uint32 len) override;
 
-	virtual uint32 GetVirtualSectorCount() const;
-	virtual void GetVirtualSectorInfo(uint32 index, ATDiskVirtualSectorInfo& info) const;
+	uint32 GetVirtualSectorCount() const override;
+	void GetVirtualSectorInfo(uint32 index, ATDiskVirtualSectorInfo& info) const override;
 
-	virtual uint32 ReadVirtualSector(uint32 index, void *data, uint32 len);
-	virtual bool WriteVirtualSector(uint32 index, const void *data, uint32 len);
+	uint32 ReadVirtualSector(uint32 index, void *data, uint32 len) override;
+	bool WriteVirtualSector(uint32 index, const void *data, uint32 len) override;
+
+	void Resize(uint32 sectors) override;
 
 public:
-	virtual void TimerCallback();
+	void TimerCallback() override;
 
 protected:
 	void UpdateDirectory(bool reportNewFiles);
@@ -375,6 +377,10 @@ bool ATDiskImageVirtualFolder::WriteVirtualSector(uint32 index, const void *data
 	return false;
 }
 
+void ATDiskImageVirtualFolder::Resize(uint32 sectors) {
+	throw MyError("A virtual disk cannot be resized.");
+}
+
 void ATDiskImageVirtualFolder::TimerCallback() {
 	for(size_t i=0; i<vdcountof(mXDirEnt); ++i) {
 		XDirEnt& xd = mXDirEnt[i];
@@ -635,8 +641,8 @@ void ATDiskImageVirtualFolder::UpdateDirectory(bool reportNewFiles) {
 			// also creates the empty data sector but puts a sector count of zero into
 			// the directory entry, which makes VTOCFIX complain.
 
-			VDWriteUnalignedLEU16(de.mSectorCount, std::max<uint16>(1, std::min<uint32>(999, xde.mSectorCount)));
-			de.mFirstSector[0] = 4 + i;
+			VDWriteUnalignedLEU16(de.mSectorCount, std::max<uint16>(1, (uint16)std::min<uint32>(999, xde.mSectorCount)));
+			de.mFirstSector[0] = (uint8)(4 + i);
 			de.mFirstSector[1] = 0;
 			de.mFlags = DirEnt::kFlagDOS2 | DirEnt::kFlagInUse;
 		}

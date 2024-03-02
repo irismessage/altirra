@@ -22,11 +22,6 @@
 #include <at/atcore/scheduler.h>
 #include "audiosource.h"
 
-enum ATAudioMix {
-	kATAudioMix_Drive,
-	kATAudioMixCount
-};
-
 class ATAudioSyncMixer final : public IATSyncAudioSource {
 	ATAudioSyncMixer(const ATAudioSyncMixer&) = delete;
 	ATAudioSyncMixer& operator=(const ATAudioSyncMixer&) = delete;
@@ -36,9 +31,6 @@ public:
 
 	void Init(ATScheduler *sch);
 	void Shutdown();
-
-	float GetMixLevel(ATAudioMix mix) const;
-	void SetMixLevel(ATAudioMix mix, float level);
 
 	uint32 AddSound(ATAudioMix mix, uint32 delay, const sint16 *sample, uint32 len, float volume);
 	uint32 AddLoopingSound(ATAudioMix mix, uint32 delay, const sint16 *sample, uint32 len, float volume);
@@ -61,6 +53,7 @@ protected:
 		uint32 mEndTime;
 		uint32 mLength;
 		float mVolume;
+		ATAudioMix mMix;
 		bool mbEndValid;
 		const sint16 *mpSample;
 	};
@@ -70,8 +63,6 @@ protected:
 	typedef vdfastvector<Sound *> Sounds;
 	Sounds mSounds;
 	Sounds mFreeSounds;
-
-	float mMixLevels[kATAudioMixCount];
 
 	VDLinearAllocator mAllocator;
 };

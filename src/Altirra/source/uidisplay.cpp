@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdalloc.h>
@@ -123,7 +123,6 @@ ATLogChannel g_ATLCHostKeys(false, false, "HOSTKEYS", "Host keyboard activity");
 ATUIManager g_ATUIManager;
 
 void OnCommandEditPasteText();
-bool OnCommand(UINT id);
 
 void ATUIFlushDisplay();
 
@@ -521,6 +520,7 @@ protected:
 	vdrect32	mDisplayRect = { 0, 0, 0, 0 };
 
 	bool	mbTextModeEnabled = false;
+	bool	mbTextModeVirtScreen = false;
 	bool	mbHaveMouse = false;
 	bool	mbEatNextInjectedCaps = false;
 	bool	mbTurnOffCaps = false;
@@ -847,10 +847,14 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			return 0;
 
 		case WM_MOUSELEAVE:
-			g_ATUINativeDisplay.SetCursorImageChangesEnabled(false);
-			mbHaveMouse = false;
+			// We can get mouse leave messages while the mouse is captured. Suppress these
+			// until capture ends.
+			if (::GetCapture() != mhwnd) {
+				g_ATUINativeDisplay.SetCursorImageChangesEnabled(false);
+				mbHaveMouse = false;
 
-			g_ATUIManager.OnMouseLeave();
+				g_ATUIManager.OnMouseLeave();
+			}
 			return 0;
 
 		case WM_SETFOCUS:
@@ -874,6 +878,13 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			if (g_ATUINativeDisplay.IsMouseCaptured()) {
 				g_ATUINativeDisplay.OnCaptureLost();
 				g_ATUIManager.OnCaptureLost();
+			}
+
+			if (mbHaveMouse) {
+				TRACKMOUSEEVENT tme = {sizeof(TRACKMOUSEEVENT)};
+				tme.dwFlags = TME_LEAVE;
+				tme.hwndTrack = mhwnd;
+				::TrackMouseEvent(&tme);
 			}
 			break;
 
@@ -1336,8 +1347,11 @@ void ATDisplayPane::UpdateTextDisplay(bool enabled) {
 	}
 
 	bool forceInvalidate = false;
+	bool virtScreen = (g_sim.GetVirtualScreenHandler() != nullptr);
+
 	if (!mbTextModeEnabled) {
 		mbTextModeEnabled = true;
+		mbTextModeVirtScreen = virtScreen;
 
 		if (!mpEnhTextEngine) {
 			mpEnhTextEngine = ATUICreateEnhancedTextEngine();
@@ -1350,10 +1364,19 @@ void ATDisplayPane::UpdateTextDisplay(bool enabled) {
 		UpdateTextModeFont();
 
 		forceInvalidate = true;
+	} else if (mbTextModeVirtScreen != virtScreen) {
+		mbTextModeVirtScreen = virtScreen;
+
+		g_pATVideoDisplayWindow->UpdateEnhTextSize();
+
+		forceInvalidate = true;
 	}
 
 	if (mpEnhTextEngine)
 		mpEnhTextEngine->Update(forceInvalidate);
+
+	if (forceInvalidate)
+		g_pATVideoDisplayWindow->InvalidateTextOutput();
 }
 
 void ATDisplayPane::UpdateTextModeFont() {
@@ -1372,7 +1395,8 @@ void ATDisplayPane::OnMenuActivated(ATUIMenuList *) {
 }
 
 void ATDisplayPane::OnMenuItemSelected(ATUIMenuList *sender, uint32 id) {
-	::OnCommand(id);
+	// trampoline to top-level window
+	::SendMessage(::GetAncestor(mhwnd, GA_ROOT), WM_COMMAND, id, 0);
 }
 
 void ATDisplayPane::OnAllowContextMenu() {

@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
@@ -478,6 +478,6 @@ void ATConvertSAPToPlayer(const wchar_t *outputPath, const wchar_t *inputPath) {
 
 	VDFile fo;
 	fo.open(outputPath, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
-	fo.write(result.data(), result.size());
+	fo.write(result.data(), (long)result.size());
 	fo.close();
 }

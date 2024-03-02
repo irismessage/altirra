@@ -1,20 +1,11 @@
 ;	Altirra - Atari 800/800XL/5200 emulator
 ;	Modular Kernel ROM - Vertical Blank Interrupt Services
-;	Copyright (C) 2008-2012 Avery Lee
+;	Copyright (C) 2008-2016 Avery Lee
 ;
-;	This program is free software; you can redistribute it and/or modify
-;	it under the terms of the GNU General Public License as published by
-;	the Free Software Foundation; either version 2 of the License, or
-;	(at your option) any later version.
-;
-;	This program is distributed in the hope that it will be useful,
-;	but WITHOUT ANY WARRANTY; without even the implied warranty of
-;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-;	GNU General Public License for more details.
-;
-;	You should have received a copy of the GNU General Public License
-;	along with this program; if not, write to the Free Software
-;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+;	Copying and distribution of this file, with or without modification,
+;	are permitted in any medium without royalty provided the copyright
+;	notice and this notice are preserved.  This file is offered as-is,
+;	without any warranty.
 
 ;==========================================================================
 ; VBIExit - Vertical Blank Interrupt Exit Routine
@@ -379,18 +370,17 @@ still_running:
 	;and another two cycles after that until the DLI fires. The exact cycle timing
 	;looks like this:
 	;
-	;*		sta wsync
-	;*		sta abs,y (1/5)
+	;*		inc wsync
 	;ANTIC halts CPU until cycle 105
 	;105	playfield DMA
 	;106	refresh DMA
-	;107	sta abs,y (2/5)
-	;108	sta abs,y (3/5)
-	;109	sta abs,y (4/5)
-	;110	sta abs,y (5/5)
-	;111	txa (1/2)
-	;112	txa (2/2)
-	;113	sta abs,y (1/5)
+	;107	sta abs,y (1/5)
+	;108	sta abs,y (2/5)
+	;109	sta abs,y (3/5)
+	;110	sta abs,y (4/5)
+	;111	sta abs,y (5/5)
+	;112	txa (1/2)
+	;113	txa (2/2)
 	;0		missiles
 	;1		display list
 	;2		player 0
@@ -399,15 +389,18 @@ still_running:
 	;5		player 3
 	;6		display list address low
 	;7		display list address high
-	;8		sta abs,y (2/5)
-	;9		sta abs,y (3/5)
-	;10		sta abs,y (4/5)
-	;11		sta abs,y (5/5)
+	;8		sta abs,y (1/5)
+	;9		sta abs,y (2/5)
+	;10		sta abs,y (3/5)
+	;11		sta abs,y (4/5)
+	;12		sta abs,y (5/5)
 	;
 	;We rely on the 6502 not being able to service interrupts until the end of an
-	;instruction for this to work.
+	;instruction for this to work. The INC WSYNC is necessary to combat the case
+	;where the NMI is triggered across the WSYNC wait; without it, the VBI could
+	;fire immediately after the first STA.
 	
-	sta		wsync
+	inc		wsync
 	sta		cdtmv1-2,y
 	txa
 	sta		cdtmv1-1,y

@@ -59,6 +59,7 @@ public:
 
 	virtual bool RemoveValue(void *key, const char *name) = 0;
 	virtual bool RemoveKey(void *key, const char *name) = 0;
+	virtual bool RemoveKeyRecursive(void *key, const char *name) = 0;
 
 	virtual void *EnumKeysBegin(void *key) = 0;
 	virtual const char *EnumKeysNext(void *enumerator) = 0;
@@ -110,6 +111,7 @@ public:
 
 	bool removeValue(const char *);
     bool removeKey(const char *);
+    bool removeKeyRecursive(const char *);
 
 private:
 	void *mKey;

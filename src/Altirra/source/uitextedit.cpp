@@ -237,12 +237,12 @@ void ATUITextEdit::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 					mGlyphPlacements2.push_back(*it1);
 			}
 
-			tr->DrawPrearrangedText(0, mFontAscent, mGlyphPlacements.data(), itDst - mGlyphPlacements.begin());
+			tr->DrawPrearrangedText(0, mFontAscent, mGlyphPlacements.data(), (uint32)(itDst - mGlyphPlacements.begin()));
 
 			tr->SetColorRGB(mHighlightTextColor);
-			tr->DrawPrearrangedText(0, mFontAscent, mGlyphPlacements2.data(), mGlyphPlacements2.size());
+			tr->DrawPrearrangedText(0, mFontAscent, mGlyphPlacements2.data(), (uint32)mGlyphPlacements2.size());
 		} else {
-			tr->DrawPrearrangedText(0, mFontAscent, mGlyphPlacements.data(), mGlyphPlacements.size());
+			tr->DrawPrearrangedText(0, mFontAscent, mGlyphPlacements.data(), (uint32)mGlyphPlacements.size());
 		}
 
 		// draw caret

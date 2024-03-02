@@ -1,5 +1,5 @@
 ; Altirra BASIC - Memory handling module
-; Copyright (C) 2014 Avery Lee, All Rights Reserved.
+; Copyright (C) 2014-2016 Avery Lee, All Rights Reserved.
 ;
 ; Copying and distribution of this file, with or without modification,
 ; are permitted in any medium without royalty provided the copyright
@@ -34,7 +34,7 @@
 		lda		memtop2
 		sta		a1
 		adc		a2
-		tax
+		tay
 		lda		memtop2+1
 		sta		a1+1
 		adc		a2+1
@@ -42,17 +42,8 @@
 		;check if we're going to go above MEMTOP with the copy and throw
 		;error 2 if so; note that we are deliberately off by one here to
 		;match FRE(0)
-		bcs		out_of_memory		;dst+N > $FFFF => obviously out of memory
-
-		;out of memory if (dst+N) > memtop
-		cmp		memtop+1
-		bne		test_byte
-		cpx		memtop
-		beq		mem_ok
-test_byte:
-		bcs		out_of_memory
-mem_ok:
-		jsr		copyDescendingDstAX
+		jsr		MemCheckAddrAY
+		jsr		copyDescendingDstAY
 		
 		pla
 		tax
@@ -73,8 +64,21 @@ offset_loop:
 		sta		appmhi
 
 nothing_to_do:
+xit:
 		rts
+.endp
 
+;==========================================================================
+.proc MemCheckAddrAY
+		bcs		out_of_memory		;dst+N > $FFFF => obviously out of memory
+
+		;out of memory if (dst+N) > memtop
+		cmp		memtop+1
+		bne		test_byte
+		cpy		memtop
+		beq		expandTable.xit
+test_byte:
+		bcc		expandTable.xit
 out_of_memory:
 		jmp		errorNoMemory
 .endp
@@ -90,8 +94,8 @@ out_of_memory:
 ;
 ; Preserved:
 ;	A2
-.proc copyDescendingDstAX
-		stx		a0
+.proc copyDescendingDstAY
+		sty		a0
 		sta		a0+1
 .def :copyDescending
 		;##TRACE "Copy descending src=$%04x-$%04x, dst=$%04x-$%04x (len=$%04x)" dw(a0)-dw(a3) dw(a0) dw(a1)-dw(a3) dw(a1) dw(a3)

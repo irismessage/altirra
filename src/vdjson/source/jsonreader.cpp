@@ -16,7 +16,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/vdjson/jsonreader.h>
 #include <vd2/vdjson/jsonnametable.h>
 #include <vd2/vdjson/jsonvalue.h>
@@ -516,7 +516,7 @@ wchar_t VDJSONReader::GetCharSlow() {
 
 						// validate code point
 						if ((c - 0xD800) < 0x0800 || c >= 0x110000) {
-							encodingError;
+							encodingError = true;
 							break;
 						}
 

@@ -78,16 +78,6 @@ tDirspecMap *g_pDirspecMap;
 ///////////////////////////////////////////////////////////////////////////
 
 namespace {
-	int FileFilterLength(const wchar_t *pszFilter) {
-		const wchar_t *s = pszFilter;
-
-		while(*s) {
-			while(*s++);
-			while(*s++);
-		}
-
-		return s - pszFilter;
-	}
 
 #pragma pack(push, 1)
 	struct DialogTemplateHeader {		// DLGTEMPLATEEX psuedo-struct from MSDN
@@ -183,11 +173,11 @@ namespace {
 			0,
 			exStyle,
 			style,
-			x,
-			y,
-			cx,
-			cy,
-			id
+			(short)x,
+			(short)y,
+			(short)cx,
+			(short)cy,
+			(DWORD)id
 		};
 
 		push(&item, sizeof item);

@@ -123,6 +123,7 @@ protected:
 	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
 
 public:
+	void UpdateEnhTextSize();
 	void UpdateAltDisplay();
 
 protected:
@@ -147,6 +148,8 @@ protected:
 	int ReadText(char *dst, int yc, int startChar, int numChars) const;
 	void ClearCoordinateIndicator();
 	void SetCoordinateIndicator(int x, int y);
+
+	void ClearHoverTip();
 
 	bool mbShiftDepressed = false;
 

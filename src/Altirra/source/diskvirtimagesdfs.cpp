@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/math.h>
 #include <vd2/system/error.h>
@@ -133,40 +133,42 @@ namespace {
 // affected data structures would have been seen by DOS.
 //
 
-class ATDiskImageVirtualFolderSDFS : public IATDiskImage, public IVDTimerCallback {
+class ATDiskImageVirtualFolderSDFS final : public IATDiskImage, public IVDTimerCallback {
 public:
 	ATDiskImageVirtualFolderSDFS();
 
 	void Init(const wchar_t *path, uint64 unique);
 
-	virtual ATDiskTimingMode GetTimingMode() const { return kATDiskTimingMode_Any; }
+	ATDiskTimingMode GetTimingMode() const override { return kATDiskTimingMode_Any; }
 
-	virtual bool IsDirty() const { return false; }
-	virtual bool IsUpdatable() const { return false; }
-	virtual bool IsDynamic() const { return true; }
-	virtual ATDiskImageFormat GetImageFormat() const override { return kATDiskImageFormat_None; }
+	bool IsDirty() const override { return false; }
+	bool IsUpdatable() const override { return false; }
+	bool IsDynamic() const override { return true; }
+	ATDiskImageFormat GetImageFormat() const override { return kATDiskImageFormat_None; }
 
-	virtual bool Flush() { return true; }
+	bool Flush() override { return true; }
 
-	virtual void SetPath(const wchar_t *path);
-	virtual void Save(const wchar_t *path, ATDiskImageFormat format);
+	void SetPath(const wchar_t *path) override;
+	void Save(const wchar_t *path, ATDiskImageFormat format) override;
 
-	virtual ATDiskGeometryInfo GetGeometry() const;
-	virtual uint32 GetSectorSize() const;
-	virtual uint32 GetSectorSize(uint32 virtIndex) const;
-	virtual uint32 GetBootSectorCount() const;
+	ATDiskGeometryInfo GetGeometry() const override;
+	uint32 GetSectorSize() const override;
+	uint32 GetSectorSize(uint32 virtIndex) const override;
+	uint32 GetBootSectorCount() const override;
 
-	virtual uint32 GetPhysicalSectorCount() const;
-	virtual void GetPhysicalSectorInfo(uint32 index, ATDiskPhysicalSectorInfo& info) const;
+	uint32 GetPhysicalSectorCount() const override;
+	void GetPhysicalSectorInfo(uint32 index, ATDiskPhysicalSectorInfo& info) const override;
 
-	virtual void ReadPhysicalSector(uint32 index, void *data, uint32 len);
-	virtual void WritePhysicalSector(uint32 index, const void *data, uint32 len);
+	void ReadPhysicalSector(uint32 index, void *data, uint32 len) override;
+	void WritePhysicalSector(uint32 index, const void *data, uint32 len) override;
 
-	virtual uint32 GetVirtualSectorCount() const;
-	virtual void GetVirtualSectorInfo(uint32 index, ATDiskVirtualSectorInfo& info) const;
+	uint32 GetVirtualSectorCount() const override;
+	void GetVirtualSectorInfo(uint32 index, ATDiskVirtualSectorInfo& info) const override;
 
-	virtual uint32 ReadVirtualSector(uint32 index, void *data, uint32 len);
-	virtual bool WriteVirtualSector(uint32 index, const void *data, uint32 len);
+	uint32 ReadVirtualSector(uint32 index, void *data, uint32 len) override;
+	bool WriteVirtualSector(uint32 index, const void *data, uint32 len) override;
+
+	void Resize(uint32 sectors) override;
 
 protected:
 	struct DirEnt;
@@ -242,7 +244,7 @@ protected:
 		uint16 mLRUPrev;
 	};
 
-	enum {
+	enum : uint32 {
 		kSectorKeyOffsetMask	= 0x0001ffff,
 		kSectorKeyMapBit		= 0x00020000,
 		kSectorKeyFileMask		= 0xfffc0000
@@ -643,6 +645,10 @@ bool ATDiskImageVirtualFolderSDFS::WriteVirtualSector(uint32 index, const void *
 	return false;
 }
 
+void ATDiskImageVirtualFolderSDFS::Resize(uint32 sectors) {
+	throw MyError("A virtual disk cannot be resized.");
+}
+
 void ATDiskImageVirtualFolderSDFS::InitRoot() {
 	File& root = mFiles[1];
 	root.mbIsDirectory = true;
@@ -664,7 +670,7 @@ void ATDiskImageVirtualFolderSDFS::InvalidateAll() {
 
 	for(size_t i=0; i<vdcountof(mpFileHash); ++i) {
 		while(mpFileHash[i])
-			UnlinkFile(mpFileHash[i] - mFiles, false);
+			UnlinkFile((uint32)(mpFileHash[i] - mFiles), false);
 	}
 
 	for(uint32 sector = kSectorPoolBase; sector < kSectorPoolLimit; ++sector)
@@ -687,7 +693,7 @@ void ATDiskImageVirtualFolderSDFS::InvalidatePartial() {
 				vdwcsnicmp(relPathPtr, changeBase, changeLen) == 0 &&
 				(relPathPtr[changeLen] == 0 || VDIsPathSeparator(relPathPtr[changeLen]))))
 			{
-				UnlinkFile(i, true);
+				UnlinkFile((uint32)i, true);
 
 				if (i == 1)
 					InitRoot();
@@ -905,7 +911,7 @@ uint32 ATDiskImageVirtualFolderSDFS::ReserveFile(const wchar_t *relPath, bool is
 
 	for(File *f = mpFileHash[hidx]; f; f = f->mpHashNext) {
 		if (f->mHashCode == hc && f->mRelPath == relPath)
-			return f - mFiles;
+			return (uint32)(f - mFiles);
 	}
 
 	// allocate a new file and set it up

@@ -9,9 +9,9 @@
     The following cartridge-based devices are emulated by Altirra:
   </p>
   <ul>
-    <li>
-      <a href="myide.html">MyIDE</a>
-    </li>
+    <li><a href="dragoncart.html">DragonCart</a></li>
+    <li><a href="myide.html">MyIDE</a></li>
+    <li><a href="devices-rtime8.html">R-Time 8</a></li>
   </ul>
   <h2>Conflicts</h2>
   <p>

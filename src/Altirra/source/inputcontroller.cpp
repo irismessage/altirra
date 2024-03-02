@@ -15,7 +15,8 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
+#include <vd2/system/bitmath.h>
 #include <vd2/system/math.h>
 #include <at/atcore/scheduler.h>
 #include "inputcontroller.h"
@@ -71,7 +72,9 @@ void ATLightPenPort::SetPortTriggerState(int index, bool state) {
 ///////////////////////////////////////////////////////////////////////////
 
 ATPortController::ATPortController()
-	: mPortValue(0xFF)
+	: mPIAInputIndex(-1)
+	, mPIAOutputIndex(-1)
+	, mPortValue(0xFF)
 	, mbTrigger1(false)
 	, mbTrigger2(false)
 	, mMultiMask(0x0F000000)
@@ -96,12 +99,18 @@ void ATPortController::Init(ATGTIAEmulator *gtia, ATPokeyEmulator *pokey, ATPIAE
 	mTriggerIndex = index;
 	mpLightPen = lightPen;
 
-	mPIAIndex = mpPIA->AllocInput();
+	mPIAInputIndex = mpPIA->AllocInput();
 }
 
 void ATPortController::Shutdown() {
 	if (mpPIA) {
-		mpPIA->FreeInput(mPIAIndex);
+		mpPIA->FreeInput(mPIAInputIndex);
+
+		if (mPIAOutputIndex >= 0) {
+			mpPIA->FreeOutput(mPIAOutputIndex);
+			mPIAOutputIndex = -1;
+		}
+
 		mpPIA = NULL;
 	}
 }
@@ -114,7 +123,7 @@ void ATPortController::SetMultiMask(uint8 mask) {
 
 int ATPortController::AllocatePortInput(bool port2, int multiIndex) {
 	PortInputs::iterator it(std::find(mPortInputs.begin(), mPortInputs.end(), 0));
-	int index = it - mPortInputs.begin();
+	int index = (int)(it - mPortInputs.begin());
 
 	uint32 v = port2 ? 0xC0000000 : 0x80000000;
 
@@ -156,12 +165,78 @@ void ATPortController::SetPortInput(int index, uint32 portBits) {
 }
 
 void ATPortController::ResetPotPositions() {
-	mpPokey->SetPotPos(mTriggerIndex * 2 + 0, 228);
-	mpPokey->SetPotPos(mTriggerIndex * 2 + 1, 228);
+	mpPokey->SetPotPos(mTriggerIndex * 2 + 0, 229);
+	mpPokey->SetPotPos(mTriggerIndex * 2 + 1, 229);
 }
 
 void ATPortController::SetPotPosition(int offset, uint8 pos) {
 	mpPokey->SetPotPos(mTriggerIndex * 2 + offset, pos);
+}
+
+void ATPortController::SetPotHiPosition(int offset, int hipos, bool grounded) {
+	mpPokey->SetPotPosHires(mTriggerIndex * 2 + offset, hipos, grounded);
+}
+
+int ATPortController::AllocatePortOutput(ATPortInputController *target, uint8 mask) {
+	auto it = std::find_if(mPortOutputs.begin(), mPortOutputs.end(),
+		[](const PortOutput& portOutput) { return !portOutput.mpTarget; });
+
+	int index = (int)(it - mPortOutputs.begin());
+
+	const PortOutput newPortOutput = { target, mask };
+	if (it != mPortOutputs.end())
+		*it = newPortOutput;
+	else
+		mPortOutputs.push_back(newPortOutput);
+
+	UpdatePortOutputRegistration();
+	return index;
+}
+
+void ATPortController::SetPortOutputMask(int index, uint8 mask) {
+	if (index < 0)
+		return;
+
+	if ((unsigned)index >= mPortOutputs.size()) {
+		VDASSERT(false);
+		return;
+	}
+
+	auto& portOutput = mPortOutputs[index];
+	if (!portOutput.mpTarget) {
+		VDASSERT(false);
+		return;
+	}
+
+	if (portOutput.mMask != mask) {
+		portOutput.mMask = mask;
+
+		UpdatePortOutputRegistration();
+	}
+}
+
+void ATPortController::FreePortOutput(int index) {
+	if ((unsigned)index >= mPortOutputs.size()) {
+		VDASSERT(false);
+		return;
+	}
+
+	auto& portOutput = mPortOutputs[index];
+	VDASSERT(portOutput.mpTarget);
+
+	portOutput.mpTarget = nullptr;
+	portOutput.mMask = 0;
+
+	while(!mPortOutputs.empty() && !mPortOutputs.back().mpTarget)
+		mPortOutputs.pop_back();
+
+	UpdatePortOutputRegistration();
+}
+
+uint8 ATPortController::GetPortOutputState() const {
+	const uint32 state = mpPIA->GetOutputState();
+
+	return mTriggerIndex ? (uint8)(state >> 8) : (uint8)state;
 }
 
 void ATPortController::UpdatePortValue() {
@@ -189,9 +264,9 @@ void ATPortController::UpdatePortValue() {
 	mPortValue = ~(uint8)portval;
 
 	if (mTriggerIndex)
-		mpPIA->SetInput(mPIAIndex, ((uint32)mPortValue << 8) | 0xFF);
+		mpPIA->SetInput(mPIAInputIndex, ((uint32)mPortValue << 8) | 0xFF);
 	else
-		mpPIA->SetInput(mPIAIndex, (uint32)mPortValue | 0xFF00);
+		mpPIA->SetInput(mPIAInputIndex, (uint32)mPortValue | 0xFF00);
 
 	bool trigger1 = (portval & 0x100) != 0;
 	bool trigger2 = (portval & 0x1000) != 0;
@@ -209,6 +284,41 @@ void ATPortController::UpdatePortValue() {
 	}
 }
 
+void ATPortController::UpdatePortOutputRegistration() {
+	uint8 totalMask = 0;
+
+	for(const auto& output : mPortOutputs)
+		totalMask |= output.mMask;
+
+	if (totalMask) {
+		uint32 piaChangeMask = totalMask;
+
+		if (mTriggerIndex)
+			piaChangeMask <<= 8;
+
+		if (mPIAOutputIndex < 0)
+			mPIAOutputIndex = mpPIA->AllocOutput(OnPortOutputUpdated, this, piaChangeMask);
+		else
+			mpPIA->ModifyOutputMask(mPIAOutputIndex, piaChangeMask);
+	} else {
+		if (mPIAOutputIndex >= 0) {
+			mpPIA->FreeOutput(mPIAOutputIndex);
+			mPIAOutputIndex = -1;
+		}
+	}
+}
+
+void ATPortController::OnPortOutputUpdated(void *data, uint32 outputState) {
+	auto *const thisPtr = (ATPortController *)data;
+
+	const uint8 portState = thisPtr->mTriggerIndex ? (uint8)(outputState >> 8) : (uint8)outputState;
+
+	for(const auto& output : thisPtr->mPortOutputs) {
+		if (output.mpTarget)
+			output.mpTarget->UpdateOutput(portState);
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 ATPortInputController::ATPortInputController()
@@ -223,6 +333,8 @@ ATPortInputController::~ATPortInputController() {
 void ATPortInputController::Attach(ATPortController *pc, bool port2, int multiIndex) {
 	mpPortController = pc;
 	mPortInputIndex = pc->AllocatePortInput(port2, multiIndex);
+	mPortOutputIndex = -1;
+	mPortOutputMask = 0;
 	mbPort2 = port2;
 
 	OnAttach();
@@ -233,6 +345,12 @@ void ATPortInputController::Detach() {
 		OnDetach();
 
 		mpPortController->FreePortInput(mPortInputIndex);
+
+		if (mPortOutputIndex >= 0) {
+			mpPortController->FreePortOutput(mPortOutputIndex);
+			mPortOutputIndex = -1;
+		}
+
 		mpPortController = NULL;
 	}
 }
@@ -247,6 +365,49 @@ void ATPortInputController::SetPotPosition(bool second, uint8 pos) {
 		mpPortController->SetPotPosition((mbPort2 ? 2 : 0) + (second ? 1 : 0), pos);
 }
 
+void ATPortInputController::SetPotHiPosition(bool second, int pos, bool grounded) {
+	if (mpPortController)
+		mpPortController->SetPotHiPosition((mbPort2 ? 2 : 0) + (second ? 1 : 0), pos, grounded);
+}
+
+void ATPortInputController::SetOutputMonitorMask(uint8 mask) {
+	mask &= 0x0F;
+
+	if (mPortOutputMask != mask) {
+		mPortOutputMask = mask;
+
+		if (mbPort2)
+			mask <<= 4;
+
+		if (mask) {
+			if (mPortOutputIndex < 0)
+				mPortOutputIndex = mpPortController->AllocatePortOutput(this, mask);
+			else
+				mpPortController->SetPortOutputMask(mPortOutputIndex, mask);
+
+			mPortOutputState = mpPortController->GetPortOutputState();
+		} else {
+			if (mPortOutputIndex >= 0) {
+				mpPortController->FreePortOutput(mPortOutputIndex);
+				mPortOutputIndex = -1;
+			}
+		}
+	}
+}
+
+void ATPortInputController::UpdateOutput(uint8 state) {
+	if (mbPort2)
+		state >>= 4;
+
+	state &= 0x0F;
+
+	if (mPortOutputState != state) {
+		mPortOutputState = state;
+
+		OnPortOutputChanged(state);
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 ATMouseController::ATMouseController(bool amigaMode)
@@ -255,7 +416,8 @@ ATMouseController::ATMouseController(bool amigaMode)
 	, mTargetY(0)
 	, mAccumX(0)
 	, mAccumY(0)
-	, mpUpdateEvent(NULL)
+	, mpUpdateXEvent(NULL)
+	, mpUpdateYEvent(NULL)
 	, mpScheduler(NULL)
 	, mbAmigaMode(amigaMode)
 {
@@ -302,7 +464,7 @@ void ATMouseController::SetDigitalTrigger(uint32 trigger, bool state) {
 			if (mbButtonState[1] != state) {
 				mbButtonState[1] = state;
 
-				SetPotPosition(false, state ? 0 : 228);
+				SetPotPosition(false, state ? 0 : 229);
 			}
 			break;
 	}
@@ -314,79 +476,114 @@ void ATMouseController::ApplyImpulse(uint32 trigger, int ds) {
 	switch(trigger) {
 		case kATInputTrigger_Axis0:
 			mTargetX += ds;
+			EnableUpdate();
 			break;
 		case kATInputTrigger_Axis0+1:
 			mTargetY += ds;
+			EnableUpdate();
 			break;
 	}
 }
 
 void ATMouseController::OnScheduledEvent(uint32 id) {
-	mpUpdateEvent = mpScheduler->AddEvent(32, this, 1);
-	Update();
+	if (id == 1) {
+		mpUpdateXEvent = nullptr;
+		Update(true, false);
+		EnableUpdate();
+	} else if (id == 2) {
+		mpUpdateYEvent = nullptr;
+		Update(false, true);
+		EnableUpdate();
+	}
 }
 
-void ATMouseController::Update() {
-	bool changed = false;
+void ATMouseController::EnableUpdate() {
+	if (!mpUpdateXEvent) {
+		const uint32 dx = (mAccumX << 16) - mTargetX;
 
-	const uint32 posX = mTargetX >> 16;
-	if (mAccumX != posX) {
-		if ((sint16)(mAccumX - posX) < 0)
-			++mAccumX;
-		else
-			--mAccumX;
+		if (dx & UINT32_C(0xffff0000)) {
+			uint32 adx = dx & UINT32_C(0x80000000) ? 0-dx : dx;
 
-		mAccumX &= 0xffff;
-
-		changed = true;
+			mpUpdateXEvent = mpScheduler->AddEvent(std::max<sint32>(1, std::min<uint32>(256, 0x1000000 / adx)), this, 1);
+		}
 	}
 
-	const int posY = mTargetY >> 16;
-	if (mAccumY != posY) {
-		if ((sint16)(mAccumY - posY) < 0)
-			++mAccumY;
-		else
-			--mAccumY;
+	if (!mpUpdateYEvent) {
+		const uint32 dy = (mAccumY << 16) - mTargetY;
 
-		mAccumY &= 0xffff;
+		if (dy & UINT32_C(0xffff0000)) {
+			uint32 ady = dy & UINT32_C(0x80000000) ? 0-dy : dy;
 
-		changed = true;
-	}
-
-	if (changed) {
-		static const uint8 kSTTabX[4] = { 0x00, 0x02, 0x03, 0x01 };
-		static const uint8 kSTTabY[4] = { 0x00, 0x08, 0x0c, 0x04 };
-		static const uint8 kAMTabX[4] = { 0x00, 0x02, 0x0A, 0x08 };
-		static const uint8 kAMTabY[4] = { 0x00, 0x01, 0x05, 0x04 };
-
-		uint32 val;
-		
-		if (mbAmigaMode)
-			val = kAMTabX[mAccumX & 3] + kAMTabY[mAccumY & 3];
-		else
-			val = kSTTabX[mAccumX & 3] + kSTTabY[mAccumY & 3];
-
-		uint32 newPortBits = (mPortBits & ~15) + val;
-
-		if (mPortBits != newPortBits) {
-			mPortBits = newPortBits;
-			SetPortOutput(mPortBits);
+			mpUpdateYEvent = mpScheduler->AddEvent(std::max<sint32>(1, std::min<uint32>(256, 0x1000000 / ady)), this, 2);
 		}
 	}
 }
 
+void ATMouseController::Update(bool doX, bool doY) {
+	bool changed = false;
+
+	if (doX) {
+		const uint32 posX = mTargetX >> 16;
+		if (mAccumX != posX) {
+			if ((sint16)(mAccumX - posX) < 0)
+				++mAccumX;
+			else
+				--mAccumX;
+
+			mAccumX &= 0xffff;
+
+			changed = true;
+		}
+	}
+
+	if (doY) {
+		const int posY = mTargetY >> 16;
+		if (mAccumY != posY) {
+			if ((sint16)(mAccumY - posY) < 0)
+				++mAccumY;
+			else
+				--mAccumY;
+
+			mAccumY &= 0xffff;
+
+			changed = true;
+		}
+	}
+
+	if (changed)
+		UpdatePort();
+}
+
+void ATMouseController::UpdatePort() {
+	static const uint8 kSTTabX[4] = { 0x00, 0x02, 0x03, 0x01 };
+	static const uint8 kSTTabY[4] = { 0x00, 0x08, 0x0c, 0x04 };
+	static const uint8 kAMTabX[4] = { 0x00, 0x02, 0x0A, 0x08 };
+	static const uint8 kAMTabY[4] = { 0x00, 0x01, 0x05, 0x04 };
+
+	uint32 val;
+		
+	if (mbAmigaMode)
+		val = kAMTabX[mAccumX & 3] + kAMTabY[mAccumY & 3];
+	else
+		val = kSTTabX[mAccumX & 3] + kSTTabY[mAccumY & 3];
+
+	uint32 newPortBits = (mPortBits & ~15) + val;
+
+	if (mPortBits != newPortBits) {
+		mPortBits = newPortBits;
+		SetPortOutput(mPortBits);
+	}
+}
+
 void ATMouseController::OnAttach() {
-	if (!mpUpdateEvent)
-		mpUpdateEvent = mpScheduler->AddEvent(8, this, 1);
 }
 
 void ATMouseController::OnDetach() {
 	mpPortController->ResetPotPositions();
 
-	if (mpUpdateEvent) {
-		mpScheduler->RemoveEvent(mpUpdateEvent);
-		mpUpdateEvent = NULL;
-		mpScheduler = NULL;
+	if (mpScheduler) {
+		mpScheduler->UnsetEvent(mpUpdateXEvent);
+		mpScheduler->UnsetEvent(mpUpdateYEvent);
 	}
 }
 
@@ -541,20 +738,20 @@ void ATPaddleController::SetHalf(bool second) {
 }
 
 void ATPaddleController::AddDelta(int delta) {
-	int oldPos = mRawPos >> 16;
+	int oldPos = mRawPos;
 
 	mRawPos -= delta * 113;
 
 	if (mRawPos < (0 << 16) + 0x8000)
 		mRawPos = (0 << 16) + 0x8000;
 
-	if (mRawPos > (228 << 16) + 0x8000)
-		mRawPos = (228 << 16) + 0x8000;
+	if (mRawPos > (229 << 16) + 0x8000)
+		mRawPos = (229 << 16) + 0x8000;
 
-	int newPos = mRawPos >> 16;
+	int newPos = mRawPos;
 
 	if (newPos != oldPos)
-		SetPotPosition(mbSecond, newPos);
+		SetPotHiPosition(mbSecond, newPos);
 }
 
 void ATPaddleController::SetTrigger(bool enable) {
@@ -575,7 +772,7 @@ void ATPaddleController::ApplyAnalogInput(uint32 trigger, int ds) {
 	switch(trigger) {
 		case kATInputTrigger_Axis0:
 			{
-				int oldPos = mRawPos >> 16;
+				int oldPos = mRawPos;
 				mRawPos = (114 << 16) + 0x8000 - ds * 114;
 
 				if (mRawPos < (0 << 16) + 0x8000)
@@ -584,10 +781,10 @@ void ATPaddleController::ApplyAnalogInput(uint32 trigger, int ds) {
 				if (mRawPos > (228 << 16) + 0x8000)
 					mRawPos = (228 << 16) + 0x8000;
 
-				int newPos = mRawPos >> 16;
+				int newPos = mRawPos;
 
 				if (newPos != oldPos)
-					SetPotPosition(mbSecond, newPos);
+					SetPotHiPosition(mbSecond, newPos);
 			}
 			break;
 		case kATInputTrigger_Axis0+1:
@@ -625,7 +822,7 @@ void ATPaddleController::Tick() {
 }
 
 void ATPaddleController::OnDetach() {
-	SetPotPosition(mbSecond, 228);
+	SetPotPosition(mbSecond, 229);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -790,6 +987,57 @@ void ATJoystickController::UpdatePortOutput() {
 
 ///////////////////////////////////////////////////////////////////////////
 
+ATDrivingController::ATDrivingController() {
+}
+
+ATDrivingController::~ATDrivingController() {
+}
+
+void ATDrivingController::SetDigitalTrigger(uint32 trigger, bool state) {
+	if (trigger == kATInputTrigger_Button0) {
+		const uint32 mask = 0x100;
+		uint32 bit = state ? mask : 0;
+
+		if ((mPortBits ^ bit) & mask) {
+			mPortBits ^= mask;
+
+			SetPortOutput(mPortBits);
+		}
+	}
+}
+
+void ATDrivingController::ApplyImpulse(uint32 trigger, int ds) {
+	switch(trigger) {
+		case kATInputTrigger_Axis0:
+		case kATInputTrigger_Right:
+			AddDelta(ds);
+			break;
+
+		case kATInputTrigger_Left:
+			AddDelta(-ds);
+			break;
+	}
+}
+
+void ATDrivingController::AddDelta(int delta) {
+	int oldPos = mRawPos;
+
+	// The driving controller does 16 clicks per rotation. We set this to
+	// achieve about the same rotational speed as the paddle.
+	mRawPos -= delta * 0x20000;
+
+	static const uint8 kRotaryEncode[4] = { 0, 1, 3, 2 };
+
+	uint32 dirBits = kRotaryEncode[mRawPos >> 30];
+	uint32 change = (dirBits ^ mPortBits) & 3;
+	if (change) {
+		mPortBits ^= change;
+		SetPortOutput(mPortBits);
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 ATConsoleController::ATConsoleController(ATInputManager *im)
 	: mpParent(im)
 {
@@ -835,11 +1083,6 @@ AT5200ControllerController::AT5200ControllerController(int index, bool trackball
 	, mbPotsEnabled(false)
 	, mbTrackball(trackball)
 	, mIndex(index)
-	, mbUp(false)
-	, mbDown(false)
-	, mbLeft(false)
-	, mbRight(false)
-	, mbTopButton(false)
 {
 	for(int i=0; i<2; ++i) {
 		mPot[i] = 114 << 16;
@@ -855,23 +1098,28 @@ AT5200ControllerController::~AT5200ControllerController() {
 bool AT5200ControllerController::Select5200Controller(int index, bool potsEnabled) {
 	bool active = (index == mIndex);
 
-	if (active != mbActive || potsEnabled != mbPotsEnabled) {
+	if (active != mbActive) {
 		mbActive = active;
-		mbPotsEnabled = potsEnabled;
 
+		ATPokeyEmulator& pokey = mpPortController->GetPokey();
 		if (active) {
-			mpPortController->GetPokey().SetKeyMatrix(mbKeyMatrix);
+			pokey.SetKeyMatrix(mbKeyMatrix);
 			UpdateTopButtonState();
-			if (mpPortController) {
-				UpdatePot(0);
-				UpdatePot(1);
-			}
 		} else {
-			ATPokeyEmulator& pokey = mpPortController->GetPokey();
 			pokey.SetShiftKeyState(false, false);
 			pokey.SetControlKeyState(false);
 			pokey.SetBreakKeyState(false, false);
-			pokey.ReleaseAllRawKeys(false);
+			pokey.SetKeyMatrix(nullptr);
+		}
+
+	}
+
+	if (mbPotsEnabled != potsEnabled) {
+		mbPotsEnabled = potsEnabled;
+
+		if (mpPortController) {
+			UpdatePot(0);
+			UpdatePot(1);
 		}
 	}
 
@@ -883,6 +1131,7 @@ void AT5200ControllerController::SetDigitalTrigger(uint32 trigger, bool state) {
 		case kATInputTrigger_Up:
 			if (mbUp != state) {
 				mbUp = state;
+				mbImpulseMode = false;
 
 				if (mbDown == state)
 					SetPot(1, 114 << 16);
@@ -894,6 +1143,7 @@ void AT5200ControllerController::SetDigitalTrigger(uint32 trigger, bool state) {
 		case kATInputTrigger_Down:
 			if (mbDown != state) {
 				mbDown = state;
+				mbImpulseMode = false;
 
 				if (mbUp == state)
 					SetPot(1, 114 << 16);
@@ -905,6 +1155,7 @@ void AT5200ControllerController::SetDigitalTrigger(uint32 trigger, bool state) {
 		case kATInputTrigger_Left:
 			if (mbLeft != state) {
 				mbLeft = state;
+				mbImpulseMode = false;
 
 				if (mbRight == state)
 					SetPot(0, 114 << 16);
@@ -916,6 +1167,7 @@ void AT5200ControllerController::SetDigitalTrigger(uint32 trigger, bool state) {
 		case kATInputTrigger_Right:
 			if (mbRight != state) {
 				mbRight = state;
+				mbImpulseMode = false;
 
 				if (mbLeft == state)
 					SetPot(0, 114 << 16);
@@ -1014,11 +1266,18 @@ void AT5200ControllerController::ApplyImpulse(uint32 trigger, int ds) {
 			break;
 
 		case kATInputTrigger_Axis0:
-			SetPot(0, mPot[0] + ds * 113);
-			break;
-
 		case kATInputTrigger_Axis0+1:
-			SetPot(1, mPot[1] + ds * 113);
+			{
+				const int index = (int)(trigger - kATInputTrigger_Axis0);
+
+				if (mbTrackball) {
+					mbImpulseMode = true;
+
+					mImpulseAccum[index] += (float)ds * 1e-5f;
+				} else {
+					SetPot(index, mPot[index] + ds * 113);
+				}
+			}
 			break;
 	}
 }
@@ -1026,16 +1285,41 @@ void AT5200ControllerController::ApplyImpulse(uint32 trigger, int ds) {
 void AT5200ControllerController::ApplyAnalogInput(uint32 trigger, int ds) {
 	switch(trigger) {
 		case kATInputTrigger_Axis0:
+			mbImpulseMode = false;
 			SetPot(0, ds * 113 + (114 << 16) + 0x8000);
 			break;
 
 		case kATInputTrigger_Axis0+1:
+			mbImpulseMode = false;
 			SetPot(1, ds * 113 + (114 << 16) + 0x8000);
 			break;
 	}
 }
 
 void AT5200ControllerController::Tick() {
+	if (mbImpulseMode) {
+		for(int i=0; i<2; ++i) {
+			float v = mImpulseAccum[i];
+
+			if (v < -1.0f)
+				v = -1.0f;
+
+			if (v > 1.0f)
+				v = 1.0f;
+
+			mImpulseAccum2[i] += VDRoundToInt((v * 0.70f) * (float)(114 << 16));
+			mImpulseAccum[i] = 0;
+
+			// We have a little bit of a cheat here. 5200 games commonly truncate LSBs, which causes
+			// small deltas to get lost. To work around this issue, we accumulate and only send deltas
+			// once they exceed +/-4 on the POT counter.
+			int idx = (mImpulseAccum2[i] + (1 << 17)) >> 18;
+			mImpulseAccum2[i] -= idx << 18;
+
+			SetPot(i, (idx * 4 + 114 + (idx < 0 ? -2 : idx > 0 ? +2 : 0)) << 16);
+		}
+	}
+
 	for(int i=0; i<2; ++i) {
 		if (mJitter[i]) {
 			mPot[i] += mJitter[i];
@@ -1355,4 +1639,162 @@ void ATKeypadController::OnAttach() {
 
 void ATKeypadController::OnDetach() {
 	mpPortController->ResetPotPositions();
+}
+
+//////////////////////////////////////////////////////////////////////////
+
+ATKeyboardController::ATKeyboardController()
+	: mKeyState(0)
+{
+}
+
+ATKeyboardController::~ATKeyboardController() {
+}
+
+void ATKeyboardController::SetDigitalTrigger(uint32 trigger, bool state) {
+	trigger -= kATInputTrigger_Button0;
+
+	if (trigger >= 12)
+		return;
+
+	const uint32 bit = (1 << trigger);
+	
+	if (state)
+		mKeyState |= bit;
+	else
+		mKeyState &= ~bit;
+
+	UpdatePortOutput();
+}
+
+void ATKeyboardController::OnAttach() {
+	// The four inputs are used as row select lines, so enable output monitoring.
+	SetOutputMonitorMask(15);
+}
+
+void ATKeyboardController::OnDetach() {
+	mpPortController->ResetPotPositions();
+}
+
+void ATKeyboardController::OnPortOutputChanged(uint8 outputState) {
+	UpdatePortOutput();
+}
+
+void ATKeyboardController::UpdatePortOutput() {
+	// The keyboard controller uses a keyboard matrix as follows:
+	//
+	// [1]-[2]-[3]------- pin 1 (up)
+	//  |   |   |
+	// [4]-[5]-[6]------- pin 2 (down)
+	//  |   |   |
+	// [7]-[8]-[9]------- pin 3 (left)
+	//  |   |   |
+	// [*]-[0]-[#]------- pin 4 (right)
+	//  |   |   |
+	//  |   |   +-------- pin 6 (trigger)
+	//  |   |
+	//  |   +------------ pin 9 (paddle A)
+	//  |
+	//  +---------------- pin 5 (paddle B)
+	//
+	// Thus, it is a simple row/column matrix. The switches are
+	// designed to pull down the paddle or trigger lines to ground
+	// (there are pull-ups on the paddle lines). There are no diodes,
+	// so holding down more than one button or pulling down more than
+	// one of the row lines can give phantoms.
+
+	// Check for no rows or no columns.
+	uint8 colState = 0;
+
+	uint8 activeRows = ~mPortOutputState & 15;
+	if (mKeyState && activeRows) {
+		// Check for exactly one row and column.
+		if (!(mKeyState & (mKeyState - 1)) && !(activeRows & (activeRows - 1))) {
+			switch(activeRows) {
+				case 1:
+					colState = mKeyState & 7;
+					break;
+
+				case 2:
+					colState = (mKeyState >> 3) & 7;
+					break;
+
+				case 4:
+					colState = (mKeyState >> 6) & 7;
+					break;
+
+				case 8:
+					colState = (mKeyState >> 9) & 7;
+					break;
+			}
+		} else {
+			// Ugh. Form a unified bitmask with rows and columns, then run over the
+			// matrix until we have the transitive closure.
+			uint8 mergedMask = activeRows << 3;
+
+			static const uint8 kButtonConnections[12]={
+				0x09, 0x0A, 0x0C,
+				0x11, 0x12, 0x14,
+				0x21, 0x22, 0x24,
+				0x41, 0x42, 0x44
+			};
+
+			bool changed;
+			do {
+				changed = false;
+
+				for(int i=0; i<12; ++i) {
+					if (!(mKeyState & (1 << i)))
+						continue;
+
+					// check if some but not all lines connected by this button
+					// are asserted
+					const uint8 conn = kButtonConnections[i];
+					if ((mergedMask & conn) && (~mergedMask & conn)) {
+						// assert all lines and mark a change
+						mergedMask |= conn;
+						changed = true;
+					}
+				}
+			} while(changed);
+
+			colState = mergedMask & 7;
+		}
+	}
+
+	// When buttons are depressed, the pot lines are grounded and are
+	// guaranteed to never charge up to threshold. When they aren't,
+	// pull-up resistors charge the caps. The value in POT0/1 that
+	// results is low but non-zero. Also, the more buttons that are
+	// held down, the faster the charge rate and the lower the POT
+	// values, due to additional current being supplied by the PIA
+	// outputs. Approximate readings in slow and fast pot modes (130XE):
+	//
+	//	Buttons		Slow	Fast
+	//	   1		  2		 AA
+	//	   2		  1		 85
+	//	   3		  1		 63
+	//
+	// If columns are independent, they vary independently. If they
+	// are bridged, then both columns get the average effect. The
+	// trigger column is not involved. However, read timing does in
+	// fast mode due to the caps being charged and discharged. For now, we
+	// approximate it.
+
+	uint32 column1Keys = mKeyState & 0x249;
+	uint32 column2Keys = mKeyState & 0x492;
+	int floorPos1 = 0x20000 - 0x5316 * std::min(2, VDCountBits(column1Keys));
+	int floorPos2 = 0x20000 - 0x5316 * std::min(2, VDCountBits(column2Keys));
+
+	// check if columns are connected
+	if (column1Keys & (column2Keys >> 1)) {
+		const int avg = (floorPos1 + floorPos2) >> 1;
+
+		floorPos1 = avg;
+		floorPos2 = avg;
+	}
+
+	SetPotHiPosition(false, (colState & 2) ? 255 << 16 : floorPos2, (colState & 2) != 0);
+	SetPotHiPosition(true, (colState & 1) ? 255 << 16 : floorPos1, (colState & 1) != 0);
+	SetPortOutput(colState & 4 ? 0x100 : 0);
 }

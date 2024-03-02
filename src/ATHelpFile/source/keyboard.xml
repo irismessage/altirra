@@ -69,7 +69,7 @@
       </tr>
       <tr>
         <td>Break</td>
-        <td>Pause</td>
+        <td>F7/Pause</td>
       </tr>
       <tr>
         <td>Shift+&lt; (Clear)</td>
@@ -189,27 +189,31 @@
       </tr>
       <tr>
         <td>F6</td>
-        <td>Help</td>
+        <td>Help key (computer)</td>
+      </tr>
+      <tr>
+        <td>F7</td>
+        <td>Break key (computer)</td>
       </tr>
       <tr>
         <td>F8</td>
-        <td>Run / Break</td>
+        <td>Run / Break (debugger)</td>
       </tr>
       <tr>
         <td>F9</td>
-        <td>Toggle Breakpoint</td>
+        <td>Toggle Breakpoint (debugger)</td>
       </tr>
       <tr>
         <td>F10</td>
-        <td>Step Over</td>
+        <td>Step Over (debugger)</td>
       </tr>
       <tr>
         <td>F11</td>
-        <td>Step Into</td>
+        <td>Step Into (debugger)</td>
       </tr>
       <tr>
         <td>Pause</td>
-        <td>Break</td>
+        <td>Break key (computer)</td>
       </tr>
       <tr>
         <td>Home</td>

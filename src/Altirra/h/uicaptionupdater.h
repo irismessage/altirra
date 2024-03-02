@@ -18,7 +18,7 @@
 #ifndef f_AT_UICAPTIONUPDATER_H
 #define f_AT_UICAPTIONUPDATER_H
 
-#include <windows.h>
+#include <vd2/system/function.h>
 #include "simulator.h"
 
 class ATUIWindowCaptionUpdater {
@@ -26,42 +26,47 @@ public:
 	ATUIWindowCaptionUpdater();
 	~ATUIWindowCaptionUpdater();
 
-	void Init(ATSimulator *sim);
+	void Init(ATSimulator *sim, const vdfunction<void(const wchar_t *)>& fn);
 
 	void SetShowFps(bool showFps) { mbShowFps = showFps; }
 	void SetFullScreen(bool fs) { mbFullScreen = fs; }
 	void SetMouseCaptured(bool captured, bool mmbRelease) { mbCaptured = captured; mbCaptureMMBRelease = mmbRelease; }
 
-	void Update(HWND hwnd, bool running, int ticks, float fps, float cpu);
+	void Update(bool running, int ticks, float fps, float cpu);
 	void CheckForStateChange(bool force);
 
 protected:
-	ATSimulator *mpSim;
-	bool mbLastRunning;
-	bool mbLastCaptured;
+	template<class T> void DetectChange(bool& changed, T& cachedValue, const T& currentValue);
 
-	bool mbShowFps;
-	bool mbFullScreen;
-	bool mbCaptured;
-	bool mbCaptureMMBRelease;
+	ATSimulator *mpSim = nullptr;
+	bool mbLastRunning = false;
+	bool mbLastCaptured = false;
+
+	bool mbShowFps = false;
+	bool mbFullScreen = false;
+	bool mbCaptured = false;
+	bool mbCaptureMMBRelease = false;
 
 	VDStringW	mBasePrefix;
 	VDStringW	mPrefix;
 	VDStringW	mBuffer;
 
-	ATHardwareMode	mLastHardwareMode;
-	uint64			mLastKernelId;
-	ATMemoryMode	mLastMemoryMode;
-	ATVideoStandard	mLastVideoStd;
-	bool			mbLastBASICState;
-	bool			mbLastVBXEState;
-	bool			mbLastSoundBoardState;
-	bool			mbLastU1MBState;
-	bool			mbForceUpdate;
-	bool			mbLastDebugging;
-	bool			mbLastShowFPS;
-	ATCPUMode		mLastCPUMode;
-	uint32			mLastCPUSubCycles;
+	ATHardwareMode	mLastHardwareMode = kATHardwareModeCount;
+	uint64			mLastKernelId = 0;
+	ATMemoryMode	mLastMemoryMode = kATMemoryModeCount;
+	ATVideoStandard	mLastVideoStd = kATVideoStandardCount;
+	bool			mbLastBASICState = false;
+	bool			mbLastVBXEState = false;
+	bool			mbLastSoundBoardState = false;
+	bool			mbLastU1MBState = false;
+	bool			mbForceUpdate = false;
+	bool			mbLastDebugging = false;
+	bool			mbLastShowFPS = false;;
+	bool			mbTemporaryProfile = false;
+	ATCPUMode		mLastCPUMode = kATCPUModeCount;
+	uint32			mLastCPUSubCycles = 0;
+
+	vdfunction<void(const wchar_t *)> mpUpdateFn;
 };
 
 #endif	// f_AT_UICAPTIONUPDATER_H

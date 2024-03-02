@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/halffloat.h>
 
 uint16 VDConvertFloatToHalf(const void *f) {

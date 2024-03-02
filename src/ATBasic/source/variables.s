@@ -36,10 +36,10 @@
 
 ;==========================================================================
 .proc VarLoadFR0
-		ldy		#7
+		ldy		#2
 .def :VarLoadFR0_OffsetY = *
-		:5 mva (varptr),y- fr0+(5-#)
-		mva (varptr),y fr0
+		:5 mva (varptr),y+ fr0+#
+		mva (varptr),y fr0+5
 		rts
 .endp
 

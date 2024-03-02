@@ -17,6 +17,8 @@
 
 #include <stdafx.h>
 #include <vd2/system/file.h>
+#include <vd2/system/hash.h>
+#include <vd2/system/int128.h>
 #include <vd2/system/registry.h>
 #include "side.h"
 #include "memorymanager.h"
@@ -25,28 +27,18 @@
 #include "simulator.h"
 #include "firmwaremanager.h"
 
-ATSIDEEmulator::ATSIDEEmulator()
-	: mpIDE(NULL)
-	, mpUIRenderer(NULL)
-	, mpMemMan(NULL)
-	, mpSim(NULL)
-	, mpMemLayerIDE(NULL)
-	, mpMemLayerCart(NULL)
-	, mpMemLayerCart2(NULL)
-	, mpMemLayerCartControl(NULL)
-	, mpMemLayerCartControl2(NULL)
-	, mbExternalEnable(false)
-	, mbSDXEnable(true)
-	, mbTopEnable(false)
-	, mbTopRightEnable(false)
-	, mbIDEEnabled(true)
-	, mbVersion2(false)
-	, mSDXBankRegister(0)
-	, mTopBankRegister(0)
-	, mSDXBank(0)
-	, mTopBank(0)
-	, mBankOffset(0)
-	, mBankOffset2(0)
+template<bool T_Ver2>
+void ATCreateDeviceSIDE(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATSIDEEmulator> p(new ATSIDEEmulator(T_Ver2));
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefSIDE = { "side", nullptr, L"SIDE", ATCreateDeviceSIDE<false> };
+extern const ATDeviceDefinition g_ATDeviceDefSIDE2 = { "side2", nullptr, L"SIDE 2", ATCreateDeviceSIDE<true> };
+
+ATSIDEEmulator::ATSIDEEmulator(bool v2)
+	: mbVersion2(v2)
 {
 	memset(mFlash, 0xFF, sizeof mFlash);
 
@@ -59,43 +51,26 @@ ATSIDEEmulator::~ATSIDEEmulator() {
 	SaveNVRAM();
 }
 
-void ATSIDEEmulator::LoadFirmware(const void *ptr, uint32 len) {
-	if (len > sizeof mFlash)
-		len = sizeof mFlash;
-
-	memcpy(mFlash, ptr, len);
-	mFlashCtrl.SetDirty(false);
+void *ATSIDEEmulator::AsInterface(uint32 id) {
+	switch(id) {
+		case IATDeviceScheduling::kTypeID:	return static_cast<IATDeviceScheduling *>(this);
+		case IATDeviceMemMap::kTypeID:		return static_cast<IATDeviceMemMap *>(this);
+		case IATDeviceCartridge::kTypeID:	return static_cast<IATDeviceCartridge *>(this);
+		case IATDeviceIndicators::kTypeID:	return static_cast<IATDeviceIndicators *>(this);
+		case IATDeviceFirmware::kTypeID:	return static_cast<IATDeviceFirmware *>(this);
+		case IATDeviceParent::kTypeID:		return static_cast<IATDeviceParent *>(this);
+		case IATDeviceDiagnostics::kTypeID:	return static_cast<IATDeviceDiagnostics *>(this);
+		case IATDeviceButtons::kTypeID:		return static_cast<IATDeviceButtons *>(this);
+		case ATIDEEmulator::kTypeID:		return static_cast<ATIDEEmulator *>(&mIDE);
+		default:
+			return nullptr;
+	}
 }
 
-void ATSIDEEmulator::LoadFirmware(ATFirmwareManager& fwmgr, uint64 id) {
-	void *flash = mFlash;
-	uint32 flashSize = sizeof mFlash;
+void ATSIDEEmulator::Init() {
+	ReloadFirmware();
 
-	mFlashCtrl.SetDirty(false);
-
-	memset(flash, 0xFF, flashSize);
-
-	fwmgr.LoadFirmware(id, flash, 0, flashSize);
-}
-
-void ATSIDEEmulator::SaveFirmware(const wchar_t *path) {
-	void *flash = mFlash;
-	uint32 flashSize = sizeof mFlash;
-
-	VDFile f;
-	f.open(path, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
-	f.write(flash, flashSize);
-
-	mFlashCtrl.SetDirty(false);
-}
-
-void ATSIDEEmulator::Init(ATScheduler *sch, IATUIRenderer *uir, ATMemoryManager *memman, ATSimulator *sim, bool version2) {
-	mpUIRenderer = uir;
-	mpMemMan = memman;
-	mpSim = sim;
-	mbVersion2 = version2;
-
-	mFlashCtrl.Init(mFlash, kATFlashType_Am29F040B, sch);
+	mFlashCtrl.Init(mFlash, kATFlashType_Am29F040B, mpScheduler);
 
 	ATMemoryHandlerTable handlerTable = {};
 
@@ -135,11 +110,17 @@ void ATSIDEEmulator::Init(ATScheduler *sch, IATUIRenderer *uir, ATMemoryManager 
 	mpMemLayerCartControl2 = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay+1, handlerTable, 0x80, 0x20);
 	mpMemMan->SetLayerName(mpMemLayerCartControl2, "SIDE flash control (right cart window)");
 
-	mbExternalEnable = true;
+	mIDE.Init(mpScheduler, mpUIRenderer);
 }
 
 void ATSIDEEmulator::Shutdown() {
 	mFlashCtrl.Shutdown();
+	mIDE.Shutdown();
+
+	if (mpCartridgePort) {
+		mpCartridgePort->RemoveCartridge(mCartId, this);
+		mpCartridgePort = nullptr;
+	}
 
 	if (mpMemLayerCartControl2) {
 		mpMemMan->DeleteLayer(mpMemLayerCartControl2);
@@ -166,23 +147,14 @@ void ATSIDEEmulator::Shutdown() {
 		mpMemLayerIDE = NULL;
 	}
 
+	if (mpBlockDevice) {
+		vdpoly_cast<IATDevice *>(mpBlockDevice)->SetParent(nullptr);
+		mpBlockDevice = nullptr;
+	}
+
+	mpScheduler = nullptr;
 	mpMemMan = NULL;
 	mpUIRenderer = NULL;
-	mpIDE = NULL;
-	mpSim = NULL;
-}
-
-void ATSIDEEmulator::SetIDEImage(ATIDEEmulator *ide) {
-	mpIDE = ide;
-}
-
-void ATSIDEEmulator::SetExternalEnable(bool enable) {
-	if (mbExternalEnable == enable)
-		return;
-	
-	mbExternalEnable = enable;
-
-	UpdateMemoryLayersCart();
 }
 
 void ATSIDEEmulator::SetSDXEnabled(bool enable) {
@@ -198,7 +170,11 @@ void ATSIDEEmulator::ResetCartBank() {
 	SetSDXBank(0, true);
 
 	mTopBankRegister = 0x00;
-	SetTopBank(0x20, false);
+	SetTopBank(0x20, true, false);
+}
+
+void ATSIDEEmulator::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mpDef = mbVersion2 ? &g_ATDeviceDefSIDE2 : &g_ATDeviceDefSIDE;
 }
 
 void ATSIDEEmulator::ColdReset() {
@@ -207,7 +183,14 @@ void ATSIDEEmulator::ColdReset() {
 
 	ResetCartBank();
 
+	mbIDEReset = true;
 	mbIDEEnabled = true;
+
+	// If the CF card is absent, the removed flag is always set and can't be
+	// cleared. If it's present, the removed flag is cleared on powerup.
+	mbIDERemoved = !mpBlockDevice;
+
+	UpdateIDEReset();
 }
 
 void ATSIDEEmulator::LoadNVRAM() {
@@ -231,8 +214,164 @@ void ATSIDEEmulator::SaveNVRAM() {
 	key.setBinary("SIDE clock", (const char *)buf, 0x72);
 }
 
-void ATSIDEEmulator::DumpRTCStatus() {
+void ATSIDEEmulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
+	mpScheduler = sch;
+}
+
+void ATSIDEEmulator::InitMemMap(ATMemoryManager *memmap) {
+	mpMemMan = memmap;
+}
+
+bool ATSIDEEmulator::GetMappedRange(uint32 index, uint32& lo, uint32& hi) const {
+	if (index == 0) {
+		lo = 0xD5E0;
+		hi = 0xD5FF;
+		return true;
+	}
+
+	return false;
+}
+
+void ATSIDEEmulator::InitCartridge(IATDeviceCartridgePort *cartPort) {
+	mpCartridgePort = cartPort;
+	mpCartridgePort->AddCartridge(this, kATCartridgePriority_Internal, mCartId);
+}
+
+bool ATSIDEEmulator::IsLeftCartActive() const {
+	const bool sdxRead = (mbSDXEnable && mSDXBank >= 0);
+	const bool topRead = (mbTopEnable || !mbSDXEnable) && mbTopLeftEnable;
+
+	return sdxRead || topRead;
+}
+
+void ATSIDEEmulator::SetCartEnables(bool leftEnable, bool rightEnable, bool cctlEnable) {
+	bool changed = false;
+
+	if (mbLeftWindowEnabled != leftEnable) {
+		mbLeftWindowEnabled = leftEnable;
+		changed = true;
+	}
+
+	if (mbRightWindowEnabled != rightEnable) {
+		mbRightWindowEnabled = rightEnable;
+		changed = true;
+	}
+	
+	if (mbCCTLEnabled != cctlEnable) {
+		mbCCTLEnabled = cctlEnable;
+		changed = true;
+	}
+
+	if (changed && mpMemMan && mpMemLayerCart)
+		UpdateMemoryLayersCart();
+}
+
+void ATSIDEEmulator::UpdateCartSense(bool leftActive) {
+}
+
+void ATSIDEEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
+	mpUIRenderer = r;
+}
+
+void ATSIDEEmulator::InitFirmware(ATFirmwareManager *fwman) {
+	mpFirmwareManager = fwman;
+}
+
+bool ATSIDEEmulator::ReloadFirmware() {
+	void *flash = mFlash;
+	uint32 flashSize = sizeof mFlash;
+
+	vduint128 oldHash = VDHash128(flash, flashSize);
+
+	mFlashCtrl.SetDirty(false);
+
+	memset(flash, 0xFF, flashSize);
+
+	const uint64 id = mpFirmwareManager->GetCompatibleFirmware(mbVersion2 ? kATFirmwareType_SIDE2 : kATFirmwareType_SIDE);
+	mpFirmwareManager->LoadFirmware(id, flash, 0, flashSize);
+
+	return oldHash != VDHash128(flash, flashSize);
+}
+
+const wchar_t *ATSIDEEmulator::GetWritableFirmwareDesc(uint32 idx) const {
+	if (idx == 0)
+		return L"Cartridge ROM";
+	else
+		return nullptr;
+}
+
+bool ATSIDEEmulator::IsWritableFirmwareDirty(uint32 idx) const {
+	return idx == 0 && mFlashCtrl.IsDirty();
+}
+
+void ATSIDEEmulator::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
+	if (mbVersion2) {
+		stream.Write(mFlash, sizeof mFlash);
+
+		mFlashCtrl.SetDirty(false);
+	}
+}
+
+const char *ATSIDEEmulator::GetSupportedType(uint32 index) {
+	if (index == 0)
+		return "harddisk";
+
+	return nullptr;
+}
+
+void ATSIDEEmulator::GetChildDevices(vdfastvector<IATDevice *>& devs) {
+	auto *cdev = vdpoly_cast<IATDevice *>(&*mpBlockDevice);
+
+	if (cdev)
+		devs.push_back(cdev);
+}
+
+void ATSIDEEmulator::AddChildDevice(IATDevice *dev) {
+	if (mpBlockDevice)
+		return;
+
+	IATBlockDevice *blockDevice = vdpoly_cast<IATBlockDevice *>(dev);
+
+	if (blockDevice) {
+		mpBlockDevice = blockDevice;
+		dev->SetParent(this);
+
+		mIDE.OpenImage(blockDevice);
+		UpdateIDEReset();
+	}
+}
+
+void ATSIDEEmulator::RemoveChildDevice(IATDevice *dev) {
+	IATBlockDevice *blockDevice = vdpoly_cast<IATBlockDevice *>(dev);
+
+	if (mpBlockDevice == blockDevice) {
+		mIDE.CloseImage();
+		dev->SetParent(nullptr);
+		mpBlockDevice = nullptr;
+
+		mbIDERemoved = true;
+		UpdateIDEReset();
+	}
+}
+
+void ATSIDEEmulator::DumpStatus(ATConsoleOutput& output) {
 	mRTC.DumpStatus();
+}
+
+uint32 ATSIDEEmulator::GetSupportedButtons() const {
+	return (1 << kATDeviceButton_CartridgeResetBank) | (1 << kATDeviceButton_CartridgeSDXEnable);
+}
+
+bool ATSIDEEmulator::IsButtonDepressed(ATDeviceButton idx) const {
+	return idx == kATDeviceButton_CartridgeSDXEnable && mbSDXEnable;
+}
+
+void ATSIDEEmulator::ActivateButton(ATDeviceButton idx, bool state) {
+	if (idx == kATDeviceButton_CartridgeResetBank) {
+		ResetCartBank();
+	} else if (idx == kATDeviceButton_CartridgeSDXEnable) {
+		SetSDXEnabled(state);
+	}
 }
 
 void ATSIDEEmulator::SetSDXBank(sint32 bank, bool topEnable) {
@@ -243,24 +382,25 @@ void ATSIDEEmulator::SetSDXBank(sint32 bank, bool topEnable) {
 	mbTopEnable = topEnable;
 
 	UpdateMemoryLayersCart();
-	mpSim->UpdateXLCartridgeLine();
+	mpCartridgePort->OnLeftWindowChanged(mCartId, IsLeftCartActive());
 }
 
-void ATSIDEEmulator::SetTopBank(sint32 bank, bool topRightEnable) {
+void ATSIDEEmulator::SetTopBank(sint32 bank, bool topLeftEnable, bool topRightEnable) {
 	// If the top cartridge is enabled in 16K mode, the LSB bank bit is ignored.
 	// We force the LSB on in that case so the right cart window is in the right
 	// place and the left cart window is 8K below that (mask LSB back off).
 	if (topRightEnable)
 		bank |= 0x01;
 
-	if (mTopBank == bank && mbTopRightEnable == topRightEnable)
+	if (mTopBank == bank && mbTopRightEnable == topRightEnable && mbTopLeftEnable == topLeftEnable)
 		return;
 
 	mTopBank = bank;
+	mbTopLeftEnable = topLeftEnable;
 	mbTopRightEnable = topRightEnable;
 
 	UpdateMemoryLayersCart();
-	mpSim->UpdateXLCartridgeLine();
+	mpCartridgePort->OnLeftWindowChanged(mCartId, IsLeftCartActive());
 }
 
 sint32 ATSIDEEmulator::OnDebugReadByte(void *thisptr0, uint32 addr) {
@@ -278,8 +418,8 @@ sint32 ATSIDEEmulator::OnDebugReadByte(void *thisptr0, uint32 addr) {
 		case 0xD5F5:
 		case 0xD5F6:
 		case 0xD5F7:
-			if (thisptr->mbIDEEnabled && thisptr->mpIDE)
-				return (uint8)thisptr->mpIDE->DebugReadByte((uint8)addr & 7);
+			if (thisptr->mbIDEEnabled && thisptr->mpBlockDevice)
+				return (uint8)thisptr->mIDE.DebugReadByte((uint8)addr & 7);
 			else
 				return 0xFF;
 	}
@@ -317,7 +457,7 @@ sint32 ATSIDEEmulator::OnReadByte(void *thisptr0, uint32 addr) {
 		case 0xD5F5:
 		case 0xD5F6:
 		case 0xD5F7:
-			return thisptr->mbIDEEnabled && thisptr->mpIDE ? (uint8)thisptr->mpIDE->ReadByte((uint8)addr & 7) : 0xFF;
+			return thisptr->mbIDEEnabled && thisptr->mpBlockDevice ? (uint8)thisptr->mIDE.ReadByte((uint8)addr & 7) : 0xFF;
 
 		case 0xD5F8:
 			if (thisptr->mbVersion2)
@@ -329,7 +469,7 @@ sint32 ATSIDEEmulator::OnReadByte(void *thisptr0, uint32 addr) {
 			if (thisptr->mbVersion2) {
 				// LSB=1 is currently card removed, which we don't support
 				// yet.
-				return 0x00;
+				return thisptr->mbIDERemoved ? 1 : 0;
 			}
 
 			break;
@@ -373,7 +513,7 @@ bool ATSIDEEmulator::OnWriteByte(void *thisptr0, uint32 addr, uint8 value) {
 		case 0xD5E4:	// top cartridge bank switching
 			if (thisptr->mTopBankRegister != value) {
 				thisptr->mTopBankRegister = value;
-				thisptr->SetTopBank(value & 0x80 ? -1 : (value & 0x3f) ^ 0x20, thisptr->mbVersion2 && ((value & 0x40) != 0));
+				thisptr->SetTopBank((value & 0x3f) ^ 0x20, (value & 0x80) == 0, thisptr->mbVersion2 && ((value & 0x40) != 0));
 			}
 			break;
 
@@ -385,8 +525,8 @@ bool ATSIDEEmulator::OnWriteByte(void *thisptr0, uint32 addr, uint8 value) {
 		case 0xD5F5:
 		case 0xD5F6:
 		case 0xD5F7:
-			if (thisptr->mbIDEEnabled && thisptr->mpIDE)
-				thisptr->mpIDE->WriteByte((uint8)addr & 7, value);
+			if (thisptr->mbIDEEnabled && thisptr->mpBlockDevice)
+				thisptr->mIDE.WriteByte((uint8)addr & 7, value);
 			break;
 
 		case 0xD5F8:	// F8-FB: D0 = /reset
@@ -395,18 +535,56 @@ bool ATSIDEEmulator::OnWriteByte(void *thisptr0, uint32 addr, uint8 value) {
 		case 0xD5FB:
 			if (thisptr->mbVersion2) {
 				if (addr == 0xD5F9) {
-					// Strobe to clear CARD_REMOVED (which we don't support yet).
+					// Strobe to clear CARD_REMOVED. This can't be done if there isn't actually a
+					// card.
+					if (thisptr->mpBlockDevice)
+						thisptr->mbIDERemoved = false;
 				}
 
 				thisptr->mbIDEEnabled = !(value & 0x80);
 			}
 
-			if (thisptr->mpIDE)
-				thisptr->mpIDE->SetReset(!(value & 1));
+			// SIDE 1 allows reset on F8-FB; SIDE 2 is only F8
+			if (!thisptr->mbVersion2 || addr == 0xD5F8) {
+				thisptr->mbIDEReset = !(value & 1);
+				thisptr->UpdateIDEReset();
+			}
 			break;
 	}
 
 	return true;
+}
+
+sint32 ATSIDEEmulator::OnCartDebugRead(void *thisptr0, uint32 addr) {
+	ATSIDEEmulator *thisptr = (ATSIDEEmulator *)thisptr0;
+
+	uint8 value;
+	if (thisptr->mFlashCtrl.DebugReadByte(thisptr->mBankOffset + (addr - 0xA000), value)) {
+		if (thisptr->mpUIRenderer) {
+			if (thisptr->mFlashCtrl.CheckForWriteActivity())
+				thisptr->mpUIRenderer->SetFlashWriteActivity();
+		}
+
+		thisptr->UpdateMemoryLayersCart();
+	}
+
+	return value;
+}
+
+sint32 ATSIDEEmulator::OnCartDebugRead2(void *thisptr0, uint32 addr) {
+	ATSIDEEmulator *thisptr = (ATSIDEEmulator *)thisptr0;
+
+	uint8 value;
+	if (thisptr->mFlashCtrl.DebugReadByte(thisptr->mBankOffset2 + (addr - 0x8000), value)) {
+		if (thisptr->mpUIRenderer) {
+			if (thisptr->mFlashCtrl.CheckForWriteActivity())
+				thisptr->mpUIRenderer->SetFlashWriteActivity();
+		}
+
+		thisptr->UpdateMemoryLayersCart();
+	}
+
+	return value;
 }
 
 sint32 ATSIDEEmulator::OnCartRead(void *thisptr0, uint32 addr) {
@@ -474,7 +652,7 @@ bool ATSIDEEmulator::OnCartWrite2(void *thisptr0, uint32 addr, uint8 value) {
 void ATSIDEEmulator::UpdateMemoryLayersCart() {
 	if (mSDXBank >= 0 && mbSDXEnable)
 		mBankOffset = mSDXBank << 13;
-	else if (mTopBank >= 0 && (mbTopEnable || !mbSDXEnable))
+	else if (mbTopEnable || !mbSDXEnable)
 		mBankOffset = mTopBank << 13;
 
 	mBankOffset2 = mBankOffset & ~0x2000;
@@ -490,9 +668,10 @@ void ATSIDEEmulator::UpdateMemoryLayersCart() {
 	//        other => SDX cartridge
 
 	const bool sdxRead = (mbSDXEnable && mSDXBank >= 0);
-	const bool topRead = ((mbTopEnable || !mbSDXEnable) && mTopBank >= 0);
+	const bool topRead = mbTopEnable || !mbSDXEnable;
+	const bool topLeftRead = topRead && mbTopLeftEnable;
 
-	const bool flashRead = mbExternalEnable && (sdxRead || topRead);
+	const bool flashRead = mbLeftWindowEnabled && (sdxRead || topLeftRead);
 	const bool controlRead = flashRead && mFlashCtrl.IsControlReadEnabled();
 
 	mpMemMan->EnableLayer(mpMemLayerCartControl, kATMemoryAccessMode_AnticRead, controlRead);
@@ -501,7 +680,7 @@ void ATSIDEEmulator::UpdateMemoryLayersCart() {
 	mpMemMan->EnableLayer(mpMemLayerCart, flashRead);
 
 	if (mbVersion2) {
-		const bool flashReadRight = mbExternalEnable && topRead && !sdxRead && mbTopRightEnable;
+		const bool flashReadRight = mbRightWindowEnabled && topRead && !sdxRead && mbTopRightEnable;
 		const bool controlReadRight = flashReadRight && mFlashCtrl.IsControlReadEnabled();
 
 		mpMemMan->EnableLayer(mpMemLayerCartControl2, kATMemoryAccessMode_AnticRead, controlReadRight);
@@ -509,4 +688,10 @@ void ATSIDEEmulator::UpdateMemoryLayersCart() {
 		mpMemMan->EnableLayer(mpMemLayerCartControl2, kATMemoryAccessMode_CPUWrite, flashReadRight);
 		mpMemMan->EnableLayer(mpMemLayerCart2, flashReadRight);
 	}
+
+	mpMemMan->EnableLayer(mpMemLayerIDE, mbCCTLEnabled);
+}
+
+void ATSIDEEmulator::UpdateIDEReset() {
+	mIDE.SetReset(mbIDEReset || !mpBlockDevice);
 }

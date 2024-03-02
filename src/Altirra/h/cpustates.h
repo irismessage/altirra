@@ -195,6 +195,7 @@ namespace AT6502States {
 		kStateDtoB,
 		kStateDtoK,
 		kStateDtoPNative,
+		kStateDtoPNative_noICheck,
 		kStateDtoA16,
 		kStateDtoX16,
 		kStateDtoY16,

@@ -251,6 +251,7 @@
     <ClCompile Include="source\syncwait.cpp" />
     <ClCompile Include="source\uiframe.cpp" />
     <ClCompile Include="source\uinativewindow.cpp" />
+    <ClCompile Include="source\progress.cpp" />
     <ClCompile Include="source\uiproxies.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <MinimalRebuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">false</MinimalRebuild>
@@ -272,6 +273,7 @@
     <ClInclude Include="..\h\at\atnativeui\syncwait.h" />
     <ClInclude Include="..\h\at\atnativeui\uiframe.h" />
     <ClInclude Include="..\h\at\atnativeui\uinativewindow.h" />
+    <ClInclude Include="..\h\at\atnativeui\progress.h" />
     <ClInclude Include="res\resource.h" />
     <ClInclude Include="h\stdafx.h" />
     <ClInclude Include="..\h\at\atnativeui\acceleditdialog.h" />

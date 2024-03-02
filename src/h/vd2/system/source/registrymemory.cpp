@@ -23,7 +23,7 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/registrymemory.h>
 #include <vd2/system/hash.h>
@@ -140,9 +140,11 @@ public:
 	void AddRef();
 	void Release();
 
+	void Clear();
 	bool Add(const VDStringA& name, VDRegistryProviderMemory::Value *value);
 	void Remove(VDRegistryProviderMemory::Key *key);
 	bool RemoveKey(const char *name);
+	bool RemoveKeyRecursive(const char *name);
 	bool RemoveValue(const char *name);
 
 	const char *GetKeyName(size_t index) const {
@@ -224,11 +226,42 @@ VDRegistryProviderMemory::Key::~Key() {
 
 void VDRegistryProviderMemory::Key::AddRef() {
 	++mRefCount;
+
+	if (mpParent)
+		mpParent->AddRef();
 }
 
 void VDRegistryProviderMemory::Key::Release() {
+	auto *p = mpParent;
+
 	if (!--mRefCount && mbCondemned)
 		mpParent->Remove(this);
+
+	if (p)
+		p->Release();
+}
+
+void VDRegistryProviderMemory::Key::Clear() {
+	mValueMap.clear();
+
+	for(auto it = mKeyMap.begin(), itEnd = mKeyMap.end();
+		it != itEnd;
+		)
+	{
+		if (it->second.mRefCount == 0) {
+			auto it2 = std::find(mKeyList.begin(), mKeyList.end(), &*it);
+
+			if (it2 != mKeyList.end()) {
+				mKeyList.erase(it2);
+			} else {
+				VDASSERT(false);
+			}
+
+			it = mKeyMap.erase(it);
+		} else {
+			++it;
+		}
+	}
 }
 
 bool VDRegistryProviderMemory::Key::Add(const VDStringA& name, VDRegistryProviderMemory::Value *value) {
@@ -271,6 +304,37 @@ bool VDRegistryProviderMemory::Key::RemoveKey(const char *name) {
 		return false;
 	
 	// if the key is open, we have to condemn it and delete it later
+	if (key.mRefCount) {
+		key.mbCondemned = true;
+		return true;
+	}
+
+	// delete the key
+	mKeyMap.erase(it);
+
+	KeyList::iterator it2(std::find(mKeyList.begin(), mKeyList.end(), &*it));
+	VDASSERT(it2 != mKeyList.end());
+
+	mKeyList.erase(it2);
+	return true;
+}
+
+bool VDRegistryProviderMemory::Key::RemoveKeyRecursive(const char *name) {
+	if (!name)
+		name = "";
+
+	// look up the subkey
+	KeyMap::iterator it(mKeyMap.find_as(name));
+	
+	// fail if not found
+	if (it == mKeyMap.end())
+		return false;
+
+	// try to nuke everything in the key
+	it->second.Clear();
+	
+	// if the key is open, we have to condemn it and delete it later
+	Key& key = it->second;
 	if (key.mRefCount) {
 		key.mbCondemned = true;
 		return true;
@@ -618,6 +682,22 @@ bool VDRegistryProviderMemory::RemoveKey(void *key0, const char *name) {
 			return true;
 
 		success = key->RemoveKey(name);
+	}
+
+	return true;
+}
+
+bool VDRegistryProviderMemory::RemoveKeyRecursive(void *key0, const char *name) {
+	bool success;
+
+	vdsynchronized(mMutex) {
+		Key *key = (Key *)key0;
+
+		// if the key is a root key, silently ignore the request
+		if (!key->mpParent)
+			return true;
+
+		success = key->RemoveKeyRecursive(name);
 	}
 
 	return true;

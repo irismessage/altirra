@@ -24,9 +24,17 @@ class ATUIMenu;
 
 class IATUIDynamicMenuProvider {
 public:
+	virtual bool IsRebuildNeeded() const = 0;
 	virtual void RebuildMenu(ATUIMenu& menu, uint32 idbase) = 0;
 	virtual void UpdateMenu(ATUIMenu& menu, uint32 firstIndex, uint32 n) = 0;
 	virtual void HandleMenuCommand(uint32 index) = 0;
+};
+
+enum ATUIDynamicMenu {
+	kATUIDynamicMenu_OS,
+	kATUIDynamicMenu_BASIC,
+	kATUIDynamicMenu_Profile,
+	kATUIDynamicMenuCount
 };
 
 ATUIMenu *ATUIGetMenu();

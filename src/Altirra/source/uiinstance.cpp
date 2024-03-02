@@ -36,7 +36,7 @@ bool ATGetProcessUser(HANDLE hProcess, vdstructex<TOKEN_USER>& tokenUser) {
 		DWORD actual;
 		if (GetTokenInformation(hToken, TokenUser, NULL, 0, &actual) || GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
 			tokenUser.resize(actual);
-			if (GetTokenInformation(hToken, TokenUser, &*tokenUser, tokenUser.size(), &actual)) {
+			if (GetTokenInformation(hToken, TokenUser, &*tokenUser, (DWORD)tokenUser.size(), &actual)) {
 				success = true;
 			}
 		}
@@ -158,7 +158,7 @@ bool ATNotifyOtherInstance(const VDCommandLine& cmdLine) {
 		if (driveMask & (1 << i)) {
 			wchar_t envVarName[4] = {
 				L'=',
-				L'A' + i,
+				(wchar_t)(L'A' + i),
 				L':',
 				0
 			};
@@ -181,7 +181,7 @@ bool ATNotifyOtherInstance(const VDCommandLine& cmdLine) {
 	COPYDATASTRUCT cds;
 	cds.dwData = 0xA7000001;
 	cds.lpData = rawdata.data();
-	cds.cbData = rawdata.size();
+	cds.cbData = (DWORD)rawdata.size();
 
 	SetForegroundWindow(hwndOther);
 	SendMessage(hwndOther, WM_COPYDATA, (WPARAM)hwndOther, (LPARAM)&cds);

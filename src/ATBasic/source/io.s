@@ -182,6 +182,11 @@ IoDoOpenWithFilename:
 .endp
 
 ;==========================================================================
+IoSetupIOCB7AndEval:
+		jsr		IoSetupIOCB7
+		jmp		evaluate
+
+;==========================================================================
 IoSetupIOCB7:
 		ldx		#$70
 		stx		iocbidx
@@ -216,10 +221,15 @@ with_IOCB_X:
 		ldy		#<devname_c
 .def :IoOpenStockDeviceIOCB7 = *
 		ldx		#$70
+.def :IoOpenStockDeviceX
 		stx		iocbidx
-.def :IoOpenStockDevice = *
+.def :IoOpenStockDevice
+		sty		stScratch4
+		pha
+		jsr		IoCloseX
+		pla
 		sta		icax1,x
-		tya
+		lda		stScratch4
 		ldy		#>devname_c
 		jsr		IoSetupBufferAddress
 		lda		#CIOCmdOpen
@@ -259,9 +269,10 @@ with_IOCB_X:
 		lda		(fr0),y
 		sta		ioTermSave
 		
+		inc		ioTermFlag		;!! - must be first in case reset happens in between
+
 		;stomp it with an EOL
 		lda		#$9b
-		sta		ioTermFlag		;!! - must be first in case reset happens in between
 		sta		(fr0),y
 
 		;copy term address
@@ -285,11 +296,10 @@ with_IOCB_X:
 .proc IoUnterminateString
 		tya
 		pha
-		lda		#0
-		sta		ioTermFlag
 		ldy		ioTermOff
 		lda		ioTermSave
 		sta		(inbuff),y
+		dec		ioTermFlag
 		pla
 		tay
 		rts

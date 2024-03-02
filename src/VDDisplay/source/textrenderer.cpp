@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/system/memory.h>
 #include <vd2/VDDisplay/textrenderer.h>
@@ -137,17 +137,19 @@ void VDDisplayTextRenderer::DrawPrearrangedText(int x, int y, const VDDisplayFon
 			mBlts.clear();
 		}
 
-		VDDisplayBlt& blt = mBlts.push_back();
+		{
+			VDDisplayBlt& blt = mBlts.push_back();
 
-		blt.mDestX = x + glyphPlacements[i].mX;
-		blt.mDestY = y + glyphPlacements[i].mY;
-		blt.mSrcX = node->mX;
-		blt.mSrcY = node->mY;
-		blt.mWidth = node->mWidth;
-		blt.mHeight = node->mHeight;
+			blt.mDestX = x + glyphPlacements[i].mX;
+			blt.mDestY = y + glyphPlacements[i].mY;
+			blt.mSrcX = node->mX;
+			blt.mSrcY = node->mY;
+			blt.mWidth = node->mWidth;
+			blt.mHeight = node->mHeight;
 
-		if (!mbUseColor2Mode && colorIsBright)
-			blt.mSrcX += mWidth;
+			if (!mbUseColor2Mode && colorIsBright)
+				blt.mSrcX += mWidth;
+		}
 
 failed:
 		;

@@ -371,6 +371,9 @@
     <ClInclude Include="..\h\vd2\system\function.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\h\vd2\system\vdstl_vectorview.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <YASM Include="source\a_memory.asm">

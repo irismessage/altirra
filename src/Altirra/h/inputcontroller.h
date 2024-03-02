@@ -26,10 +26,11 @@ class ATPokeyEmulator;
 class ATInputManager;
 class ATAnticEmulator;
 class ATPIAEmulator;
+class ATPortInputController;
 
 ///////////////////////////////////////////////////////////////////////////
 
-enum ATInputTrigger {
+enum ATInputTrigger : uint32 {
 	kATInputTrigger_Button0		= 0x0000,
 	kATInputTrigger_Up			= 0x0100,
 	kATInputTrigger_Down		= 0x0101,
@@ -105,7 +106,9 @@ enum ATInputTrigger {
 
 	kATInputTriggerMode_Mask		= 0x000F0000,
 	kATInputTriggerSpeed_Mask		= 0x00F00000,
-	kATInputTriggerSpeed_Shift		= 20
+	kATInputTriggerSpeed_Shift		= 20,
+	kATInputTriggerAccel_Mask		= 0x0F000000,
+	kATInputTriggerAccel_Shift		= 24
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -159,9 +162,21 @@ public:
 	void SetPortInput(int index, uint32 portBits);
 	void ResetPotPositions();
 	void SetPotPosition(int offset, uint8 pos);
+	void SetPotHiPosition(int offset, int hipos, bool grounded = false);
+
+	int AllocatePortOutput(ATPortInputController *target, uint8 mask);
+	void SetPortOutputMask(int index, uint8 mask);
+	void FreePortOutput(int index);
+	uint8 GetPortOutputState() const;
 
 protected:
-	uint8 mPIAIndex;
+	void UpdatePortValue();
+	void UpdatePortOutputRegistration();
+
+	static void OnPortOutputUpdated(void *data, uint32 outputState);
+
+	int mPIAInputIndex;
+	int mPIAOutputIndex;
 	uint8 mPortValue;
 	bool mbTrigger1;
 	bool mbTrigger2;
@@ -177,15 +192,23 @@ protected:
 	typedef vdfastvector<uint32> PortInputs;
 	PortInputs mPortInputs;
 
-	void UpdatePortValue();
+	struct PortOutput {
+		ATPortInputController *mpTarget;
+		uint8 mMask;
+	};
+
+	typedef vdfastvector<PortOutput> PortOutputs;
+	PortOutputs mPortOutputs;
 };
 
 ///////////////////////////////////////////////////////////////////////////
 
 class ATPortInputController {
-	ATPortInputController(const ATPortInputController&);
-	ATPortInputController& operator=(const ATPortInputController&);
+	ATPortInputController(const ATPortInputController&) = delete;
+	ATPortInputController& operator=(const ATPortInputController&) = delete;
 public:
+	friend class ATPortController;
+
 	ATPortInputController();
 	~ATPortInputController();
 
@@ -210,20 +233,27 @@ public:
 protected:
 	void SetPortOutput(uint32 portBits);
 	void SetPotPosition(bool second, uint8 pos);
+	void SetPotHiPosition(bool second, int pos, bool grounded = false);
+	void SetOutputMonitorMask(uint8 mask);
+	void UpdateOutput(uint8 state);
 
 	virtual void OnAttach() {}
 	virtual void OnDetach() {}
+	virtual void OnPortOutputChanged(uint8 outputState) {}
 
 	ATPortController *mpPortController;
 	int mPortInputIndex;
 	bool mbPort2;
+	uint8 mPortOutputMask;
+	uint8 mPortOutputState;
+	int mPortOutputIndex;
 };
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATMouseController : public ATPortInputController, public IATSchedulerCallback {
-	ATMouseController(const ATMouseController&);
-	ATMouseController& operator=(const ATMouseController&);
+class ATMouseController final : public ATPortInputController, public IATSchedulerCallback {
+	ATMouseController(const ATMouseController&) = delete;
+	ATMouseController& operator=(const ATMouseController&) = delete;
 public:
 	ATMouseController(bool amigaMode);
 	~ATMouseController();
@@ -239,8 +269,11 @@ public:
 	virtual void ApplyImpulse(uint32 trigger, int ds);
 
 protected:
+	void EnableUpdate();
+
 	void OnScheduledEvent(uint32 id);
-	void Update();
+	void Update(bool doX, bool doY);
+	void UpdatePort();
 
 	void OnAttach();
 	void OnDetach();
@@ -253,15 +286,16 @@ protected:
 	bool	mbButtonState[2];
 	bool	mbAmigaMode;
 
-	ATEvent *mpUpdateEvent;
+	ATEvent *mpUpdateXEvent;
+	ATEvent *mpUpdateYEvent;
 	ATScheduler *mpScheduler;
 };
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATTrackballController : public ATPortInputController, public IATSchedulerCallback {
-	ATTrackballController(const ATTrackballController&);
-	ATTrackballController& operator=(const ATTrackballController&);
+class ATTrackballController final : public ATPortInputController, public IATSchedulerCallback {
+	ATTrackballController(const ATTrackballController&) = delete;
+	ATTrackballController& operator=(const ATTrackballController&) = delete;
 public:
 	ATTrackballController();
 	~ATTrackballController();
@@ -296,9 +330,9 @@ protected:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATPaddleController : public ATPortInputController {
-	ATPaddleController(const ATPaddleController&);
-	ATPaddleController& operator=(const ATPaddleController&);
+class ATPaddleController final : public ATPortInputController {
+	ATPaddleController(const ATPaddleController&) = delete;
+	ATPaddleController& operator=(const ATPaddleController&) = delete;
 public:
 	ATPaddleController();
 	~ATPaddleController();
@@ -329,9 +363,9 @@ protected:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATTabletController : public ATPortInputController {
-	ATTabletController(const ATTabletController&);
-	ATTabletController& operator=(const ATTabletController&);
+class ATTabletController final : public ATPortInputController {
+	ATTabletController(const ATTabletController&) = delete;
+	ATTabletController& operator=(const ATTabletController&) = delete;
 public:
 	ATTabletController(int styUpPos, bool invertY);
 	~ATTabletController();
@@ -353,9 +387,9 @@ protected:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATJoystickController : public ATPortInputController {
-	ATJoystickController(const ATJoystickController&);
-	ATJoystickController& operator=(const ATJoystickController&);
+class ATJoystickController final : public ATPortInputController {
+	ATJoystickController(const ATJoystickController&) = delete;
+	ATJoystickController& operator=(const ATJoystickController&) = delete;
 public:
 	ATJoystickController();
 	~ATJoystickController();
@@ -370,9 +404,28 @@ protected:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATConsoleController : public ATPortInputController {
-	ATConsoleController(const ATConsoleController&);
-	ATConsoleController& operator=(const ATConsoleController&);
+class ATDrivingController final : public ATPortInputController {
+	ATDrivingController(const ATDrivingController&) = delete;
+	ATDrivingController& operator=(const ATDrivingController&) = delete;
+public:
+	ATDrivingController();
+	~ATDrivingController();
+
+	void SetDigitalTrigger(uint32 trigger, bool state) override;
+	void ApplyImpulse(uint32 trigger, int ds) override;
+
+protected:
+	void AddDelta(int delta);
+
+	uint32 mPortBits = 0;
+	uint32 mRawPos = 0;
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATConsoleController final : public ATPortInputController {
+	ATConsoleController(const ATConsoleController&) = delete;
+	ATConsoleController& operator=(const ATConsoleController&) = delete;
 public:
 	ATConsoleController(ATInputManager *im);
 	~ATConsoleController();
@@ -385,9 +438,9 @@ protected:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATInputStateController : public ATPortInputController {
-	ATInputStateController(const ATInputStateController&);
-	ATInputStateController& operator=(const ATInputStateController&);
+class ATInputStateController final : public ATPortInputController {
+	ATInputStateController(const ATInputStateController&) = delete;
+	ATInputStateController& operator=(const ATInputStateController&) = delete;
 public:
 	ATInputStateController(ATInputManager *im, uint32 flagBase);
 	~ATInputStateController();
@@ -401,9 +454,9 @@ protected:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class AT5200ControllerController : public ATPortInputController {
-	AT5200ControllerController(const AT5200ControllerController&);
-	AT5200ControllerController& operator=(const AT5200ControllerController&);
+class AT5200ControllerController final : public ATPortInputController {
+	AT5200ControllerController(const AT5200ControllerController&) = delete;
+	AT5200ControllerController& operator=(const AT5200ControllerController&) = delete;
 public:
 	AT5200ControllerController(int index, bool trackball);
 	~AT5200ControllerController();
@@ -429,20 +482,23 @@ protected:
 	int mPot[2];
 	int mJitter[2];
 
-	bool mbUp;
-	bool mbDown;
-	bool mbLeft;
-	bool mbRight;
-	bool mbTopButton;
+	bool mbUp = false;
+	bool mbDown = false;
+	bool mbLeft = false;
+	bool mbRight = false;
+	bool mbTopButton = false;
+	bool mbImpulseMode = false;
+	float mImpulseAccum[2] = {};
+	int mImpulseAccum2[2] = {};
 
 	bool mbKeyMatrix[64];
 };
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATLightPenController : public ATPortInputController, public IATSchedulerCallback {
-	ATLightPenController(const ATLightPenController&);
-	ATLightPenController& operator=(const ATLightPenController&);
+class ATLightPenController final : public ATPortInputController, public IATSchedulerCallback {
+	ATLightPenController(const ATLightPenController&) = delete;
+	ATLightPenController& operator=(const ATLightPenController&) = delete;
 public:
 	ATLightPenController();
 	~ATLightPenController();
@@ -474,9 +530,9 @@ protected:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATKeypadController : public ATPortInputController {
-	ATKeypadController(const ATKeypadController&);
-	ATKeypadController& operator=(const ATKeypadController&);
+class ATKeypadController final : public ATPortInputController {
+	ATKeypadController(const ATKeypadController&) = delete;
+	ATKeypadController& operator=(const ATKeypadController&) = delete;
 public:
 	ATKeypadController();
 	~ATKeypadController();
@@ -488,6 +544,27 @@ protected:
 	virtual void OnDetach();
 
 	uint32	mPortBits;
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATKeyboardController final : public ATPortInputController {
+	ATKeyboardController(const ATKeyboardController&) = delete;
+	ATKeyboardController& operator=(const ATKeyboardController&) = delete;
+public:
+	ATKeyboardController();
+	~ATKeyboardController();
+
+	void SetDigitalTrigger(uint32 trigger, bool state) override;
+
+protected:
+	void OnAttach() override;
+	void OnDetach() override;
+	void OnPortOutputChanged(uint8 outputState) override;
+
+	void UpdatePortOutput();
+
+	uint32	mKeyState;
 };
 
 ///////////////////////////////////////////////////////////////////////////

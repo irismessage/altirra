@@ -17,7 +17,7 @@
 
 #pragma warning(disable: 4786)		// SHUT UP
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <objbase.h>
 

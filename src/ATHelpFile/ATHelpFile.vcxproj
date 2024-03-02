@@ -129,7 +129,20 @@
     <None Include="source\debug-profiling.xml">
       <SubType>Designer</SubType>
     </None>
+    <Xml Include="source\devices-cassette.xml" />
+    <Xml Include="source\devices-corvus.xml" />
+    <Xml Include="source\devices-pocketmodem.xml" />
+    <Xml Include="source\devices-rtime8.xml" />
     <Xml Include="source\dragoncart.xml" />
+    <Xml Include="source\options-accel.xml" />
+    <Xml Include="source\options-firmware.xml">
+      <SubType>Designer</SubType>
+    </Xml>
+    <Xml Include="source\options-hardware.xml" />
+    <Xml Include="source\options-system.xml">
+      <SubType>Designer</SubType>
+    </Xml>
+    <Xml Include="source\profiles.xml" />
     <Xml Include="source\sx212.xml" />
     <Xml Include="source\using-the-emulated-computer.xml">
       <SubType>Designer</SubType>

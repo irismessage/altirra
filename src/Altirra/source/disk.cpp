@@ -15,13 +15,16 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/math.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/strutil.h>
+#include <at/atcore/media.h>
+#include <at/atcore/sioutils.h>
+#include <at/atcore/vfs.h>
 #include "disk.h"
 #include "pokey.h"
 #include "console.h"
@@ -51,13 +54,14 @@ namespace {
 	const int kCyclesPerDiskRotation_300RPM = (kCyclesPerSecond + 2) / 5;
 
 	// 810: 5.3ms step rate.
-	// 1050: 20ms step rate.
+	// 1050/IndusGT: 20ms step rate.
 	// XF551: 6ms step rate.
 	const int kCyclesPerTrackStep_810		= (kCyclesPerSecond *  53 + 5000) / 10000;
 	const int kCyclesPerTrackStep_810_3ms	= (kCyclesPerSecond *  30 + 5000) / 10000;
 	const int kCyclesPerTrackStep_1050		= (kCyclesPerSecond * 200 + 5000) / 10000;
 	const int kCyclesPerTrackStep_Speedy1050= (kCyclesPerSecond *  80 + 5000) / 10000;
 	const int kCyclesPerTrackStep_XF551		= (kCyclesPerSecond *  60 + 5000) / 10000;
+	const int kCyclesPerTrackStep_IndusGT	= (kCyclesPerSecond * 200 + 5000) / 10000;
 
 	// Cycles for a fake rotation as seen by the FDC. Neither the 810 nor the 1050
 	// use the real index pulse; they fake it with the RIOT.
@@ -87,6 +91,11 @@ namespace {
 	// WARNING: KARATEKA IS VERY SENSITIVE TO THESE PARAMETERS AS IT HAS STUPIDLY
 	//			CLOSE PHANTOM SECTORS.
 	//
+	// Actual 1050 numbers (to about 0.13ms, or VCOUNT precision):
+	//	- End of checksum byte to end of ACK byte: ~0.76ms
+	//	- End of complete byte to start of data byte: ~0.5-0.63ms
+	//	- Start of data byte to end of checksum byte: ~70.9ms
+	//
 
 	// The number of cycles per byte sent over the SIO bus -- approximately 19200 baud.
 	//
@@ -98,10 +107,16 @@ namespace {
 	// Speedy 1050 high speed: 18 cycles/bit, 214 cycles/byte @ 1MHz
 	// XF551 low speed: 29 cycles/bit, 290 cycles/byte @ 555.5KHz
 	// XF551 high speed: 14 cycles/bit, 140 cycles/byte @ 555.5KHz
-	// IndusGT is a guess right now.
+	//
+	// IndusGT numbers courtesy of sup8pdct (http://atariage.com/forums/topic/131515-indus-gt-rom-disassembly-pt-2/):
+	//	
+	//	208 t states /19200 $28 pokey divisor 18866-pal
+	//	104 t states 1st version of syncromesh /38400 $10 pokey divisor 38553-pal 38847-ntsc
+	//	76 t states usd version of rom /52631 $A pokey divisor 52160-pal 52558-ntsc
+	//	58 t states 2nd version of syncromesh /68965 $6 pokey divisor 68209-pal 68730-ntsc
 	//
 	static const int kCyclesPerSIOByte_810 = 949;
-	static const int kCyclesPerSIOByte_1050 = 982;
+	static const int kCyclesPerSIOByte_1050 = 984;			// calibrated against real 1050 -- ~70.9ms/129b
 	static const int kCyclesPerSIOByte_PokeyDiv0 = 140;
 	static const int kCyclesPerSIOByte_57600baud = 311;
 	static const int kCyclesPerSIOByte_USDoubler = 956;
@@ -110,10 +125,9 @@ namespace {
 	static const int kCyclesPerSIOByte_Speedy1050_Fast = 383;
 	static const int kCyclesPerSIOByte_XF551 = 934;
 	static const int kCyclesPerSIOByte_XF551_Fast = 450;
-	static const int kCyclesPerSIOByte_IndusGT = 930;
-	static const int kCyclesPerSIOByte_IndusGT_Fast = 260;
-	static const int kCyclesPerSIOByte_Happy = 956;
-	static const int kCyclesPerSIOByte_Happy_Fast = 394;
+	static const int kCyclesPerSIOByte_Happy = 967;						// 540 cycles/byte @ 1MHz
+	static const int kCyclesPerSIOByte_Happy_Native_Fast = 564;			// 315 cycles/byte @ 1MHz
+	static const int kCyclesPerSIOByte_Happy_USD_Fast = 394;
 	static const int kCyclesPerSIOByte_1050Turbo = 982;
 	static const int kCyclesPerSIOByte_1050Turbo_Fast = 260;
 	static const int kCyclesPerSIOBit_810 = 94;
@@ -126,10 +140,21 @@ namespace {
 	static const int kCyclesPerSIOBit_Speedy1050_Fast = 32;
 	static const int kCyclesPerSIOBit_XF551 = 93;
 	static const int kCyclesPerSIOBit_XF551_Fast = 45;
-	static const int kCyclesPerSIOBit_IndusGT = 93;
-	static const int kCyclesPerSIOBit_IndusGT_Fast = 26;
+
+	static const int kCyclesPerSIOBit_IndusGT = 93;						// 19230.8 baud
+	static const int kCyclesPerSIOBit_IndusGT_OrigSynchromesh = 47;		// 38461.5 baud (guess)
+	static const int kCyclesPerSIOBit_IndusGT_Synchromesh = 47;			// 38461.5 baud (104 T-states/bit)
+	static const int kCyclesPerSIOBit_IndusGT_SuperSynchromesh = 26;	// 68965.5 baud
+
+	static const int kCyclesPerSIOByte_IndusGT = 930;
+	static const int kCyclesPerSIOByte_IndusGT_OrigSynchromesh = 520;	// 3439.4 bytes/sec (guess)
+	static const int kCyclesPerSIOByte_IndusGT_Synchromesh = 520;		// 3439.4 bytes/sec (1163 T-states/byte)
+	static const int kCyclesPerSIOByte_IndusGT_SuperSynchromesh = 265;	// 6745.4 bytes/sec (593 T-states/byte)
+
 	static const int kCyclesPerSIOBit_Happy = 95;
-	static const int kCyclesPerSIOBit_Happy_Fast = 34;
+	static const int kCyclesPerSIOBit_Happy_Native_Fast = 47;		// Native high speed (26 cycles/bit @ 1MHz)
+	static const int kCyclesPerSIOBit_Happy_USD_Fast = 34;			// USDoubler emulation
+
 	static const int kCyclesPerSIOBit_1050Turbo = 91;
 	static const int kCyclesPerSIOBit_1050Turbo_Fast = 26;
 
@@ -137,6 +162,7 @@ namespace {
 	//
 	// 810: ~294 cycles @ 500KHz = ~1053 cycles @ 1.79MHz.
 	static const int kCyclesACKDelay = 1053;
+	static const int kCyclesACKDelay_1050 = 500;
 
 	// Delay from end of ACK byte until FDC command is sent.
 	// 810: ~1608 cycles @ 500KHz = ~5756 cycles @ 1.79MHz.
@@ -164,10 +190,7 @@ namespace {
 	};
 
 	enum {
-		kATDiskEventTransferByte = 1,
-		kATDiskEventWriteCompleted,
-		kATDiskEventFormatCompleted,
-		kATDiskEventAutoSave,
+		kATDiskEventAutoSave = 1,
 		kATDiskEventAutoSaveError,
 		kATDiskEventMotorOff
 	};
@@ -175,7 +198,12 @@ namespace {
 	static const int kAutoSaveDelay = 3579545;		// 2 seconds
 
 	static const uint8 kDefaultPERCOM[]={
+	//	trk   step  spt         sd-1  enc   bps         online
 		0x28, 0x01, 0x00, 0x12, 0x00, 0x00, 0x00, 0x80, 0xFF, 0x00, 0x00, 0x00
+	};
+
+	static const uint8 kDefaultPERCOMED[]={
+		0x28, 0x01, 0x00, 0x1A, 0x00, 0x04, 0x00, 0x80, 0xFF, 0x00, 0x00, 0x00
 	};
 }
 
@@ -185,85 +213,7 @@ sint16 g_disksample2[1778 / 2];
 sint16 g_disksample3[11434 / 2];
 sint16 g_diskspin[64024 / 2];
 
-ATDiskEmulator::ATDiskEmulator()
-	: mpPokey(NULL)
-	, mpActivity(NULL)
-	, mpScheduler(NULL)
-	, mpSlowScheduler(NULL)
-	, mpAudioSyncMixer(NULL)
-	, mUnit(0)
-	, mpTransferEvent(NULL)
-	, mpOperationEvent(NULL)
-	, mpAutoSaveEvent(NULL)
-	, mpAutoSaveErrorEvent(NULL)
-	, mpMotorOffEvent(NULL)
-	, mLastRotationUpdateCycle(0)
-	, mTransferOffset(0)
-	, mTransferLength(0)
-	, mTransferRate(0)
-	, mTransferSecondByteDelay(0)
-	, mTransferCyclesPerBit(0)
-	, mTransferCyclesPerBitFirstByte(0)
-	, mTransferCompleteRotPos(0)
-	, mbTransferAdjustRotation(false)
-	, mFDCStatus(0)
-	, mActiveCommand(0)
-	, mbActiveCommandHighSpeed(false)
-	, mActiveCommandState(0)
-	, mActiveCommandPhysSector(0)
-	, mPhantomSectorCounter(0)
-	, mRotationalCounter(0)
-	, mRotations(0)
-	, mRotationalPosition(0)
-	, mCurrentTrack(0)
-	, mSectorsPerTrack(0)
-	, mTrackCount(0)
-	, mSideCount(0)
-	, mbMFM(false)
-	, mbWriteEnabled(false)
-	, mbWriteHighSpeed(false)
-	, mbWriteHighSpeedFirstByte(false)
-	, mbAutoFlush(false)
-	, mbHasDiskSource(false)
-	, mbErrorIndicatorPhase(false)
-	, mbAccessed(false)
-	, mbWriteMode(false)
-	, mbCommandMode(false)
-	, mbCommandValid(false)
-	, mbCommandFrameHighSpeed(false)
-	, mbEnabled(false)
-	, mbBurstTransfersEnabled(false)
-	, mbDriveSoundsEnabled(false)
-	, mbAccurateSectorTiming(false)
-	, mbAccurateSectorPrediction(false)
-	, mbLastOpError(false)
-	, mBootSectorCount(0)
-	, mTotalSectorCount(0)
-	, mSectorSize(0)
-	, mSectorBreakpoint(0)
-	, mLastSector(0)
-	, mRotationSoundId(0)
-	, mFormatSectorSize(0)
-	, mFormatSectorCount(0)
-	, mFormatBootSectorCount(0)
-	, mEmuMode(kATDiskEmulationMode_Generic)
-	, mCyclesPerSIOByte(1)
-	, mCyclesPerSIOBit(1)
-	, mCyclesPerSIOByteHighSpeed(1)
-	, mCyclesPerSIOBitHighSpeed(1)
-	, mCyclesToACKSent(1)
-	, mCyclesToFDCCommand(1)
-	, mCyclesToCompleteAccurate(1)
-	, mCyclesToCompleteFast(1)
-	, mCyclesPerDiskRotation(1)
-	, mCyclesPerTrackStep(1)
-	, mCyclesForHeadSettle(1)
-	, mbSeekHalfTracks(false)
-	, mbRetryMode1050(false)
-	, mbReverseOnForwardSeeks(false)
-{
-	memset(mPERCOM, 0, sizeof mPERCOM);
-
+ATDiskEmulator::ATDiskEmulator() {
 	Reset();
 
 	static bool loaded = false;
@@ -287,6 +237,7 @@ ATDiskEmulator::ATDiskEmulator()
 }
 
 ATDiskEmulator::~ATDiskEmulator() {
+	Shutdown();
 }
 
 void ATDiskEmulator::Init(int unit, IATDiskActivity *act, ATScheduler *sched, ATScheduler *slowsched, ATAudioSyncMixer *mixer) {
@@ -303,12 +254,21 @@ void ATDiskEmulator::Init(int unit, IATDiskActivity *act, ATScheduler *sched, AT
 	mbAccurateSectorPrediction = false;
 	mSectorBreakpoint = -1;
 	mbWriteEnabled = false;
+	mbFormatEnabled = false;
 	mbErrorIndicatorPhase = false;
-	mbAccessed = false;
 	mbHasDiskSource = false;
 	mRotationSoundId = 0;
 
 	memcpy(mPERCOM, kDefaultPERCOM, 12);
+
+	mpSIOMgr->AddDevice(this);
+}
+
+void ATDiskEmulator::Shutdown() {
+	if (mpSIOMgr) {
+		mpSIOMgr->RemoveDevice(this);
+		mpSIOMgr = nullptr;
+	}
 }
 
 void ATDiskEmulator::Rename(int unit) {
@@ -359,8 +319,19 @@ void ATDiskEmulator::SetWriteFlushMode(bool writeEnabled, bool autoFlush) {
 	}
 }
 
-void ATDiskEmulator::ClearAccessedFlag() {
-	mbAccessed = false;
+ATMediaWriteMode ATDiskEmulator::GetWriteMode() const {
+	uint8 flags = 0;
+
+	if (mbWriteEnabled)
+		flags |= kATMediaWriteMode_AllowWrite;
+
+	if (mbFormatEnabled)
+		flags |= kATMediaWriteMode_AllowFormat;
+
+	if (mbAutoFlush)
+		flags |= kATMediaWriteMode_AutoFlush;
+
+	return (ATMediaWriteMode)flags;
 }
 
 void ATDiskEmulator::SetEmulationMode(ATDiskEmulationMode mode) {
@@ -377,11 +348,7 @@ void ATDiskEmulator::Flush() {
 }
 
 void ATDiskEmulator::Reset() {
-	if (mpScheduler)
-		mpScheduler->UnsetEvent(mpTransferEvent);
-
-	if (mpScheduler)
-		mpScheduler->UnsetEvent(mpOperationEvent);
+	AbortCommand();
 
 	if (mpSlowScheduler)
 		mpSlowScheduler->UnsetEvent(mpMotorOffEvent);
@@ -393,16 +360,15 @@ void ATDiskEmulator::Reset() {
 		}
 	}
 
-	mTransferOffset = 0;
 	mTransferLength = 0;
 	mPhantomSectorCounter = 0;
 	mRotationalCounter = 0;
 	mRotations = 0;
-	mbWriteMode = false;
 	mbCommandMode = false;
 	mbLastOpError = false;
 	mFDCStatus = 0xFF;
 	mActiveCommand = 0;
+	mCustomCodeState = 0;
 
 	if (mEmuMode == kATDiskEmulationMode_810)
 		mCurrentTrack = mTrackCount ? mTrackCount - 1 : 0;
@@ -430,6 +396,8 @@ void ATDiskEmulator::Reset() {
 		mpActivity->OnDiskMotorChange(mUnit + 1, false);
 		mpActivity->OnDiskActivity(mUnit + 1, false, 0);
 	}
+
+	memset(mDriveRAM, 0, sizeof mDriveRAM);
 }
 
 void ATDiskEmulator::LoadDisk(const wchar_t *s) {
@@ -445,9 +413,10 @@ void ATDiskEmulator::LoadDisk(const wchar_t *s) {
 		}
 	}
 
-	VDFileStream f(s);
+	vdrefptr<ATVFSFileView> view;
+	ATVFSOpenFileView(s, false, ~view);
 
-	LoadDisk(s, s, f);
+	LoadDisk(s, view->GetFileName(), view->GetStream());
 }
 
 void ATDiskEmulator::MountFolder(const wchar_t *path, bool sdfs) {
@@ -472,6 +441,7 @@ void ATDiskEmulator::MountFolder(const wchar_t *path, bool sdfs) {
 	mCurrentTrack = mTrackCount - 1;
 	mbEnabled = true;
 	mbWriteEnabled = false;
+	mbFormatEnabled = false;
 	mbAutoFlush = false;
 	mbHasDiskSource = true;
 }
@@ -482,7 +452,7 @@ void ATDiskEmulator::LoadDisk(const wchar_t *origPath, const wchar_t *imagePath,
 	try {
 		mpDiskImage = ATLoadDiskImage(origPath, imagePath, stream);
 
-		InitSectorInfoArrays();
+		RefreshDiskImage();
 
 		if (origPath)
 			mPath = origPath;
@@ -495,13 +465,18 @@ void ATDiskEmulator::LoadDisk(const wchar_t *origPath, const wchar_t *imagePath,
 		throw;
 	}
 
+	mbEnabled = true;
+	mbWriteEnabled = false;
+	mbFormatEnabled = false;
+	mbAutoFlush = false;
+	mbHasDiskSource = (origPath != NULL);
+}
+
+void ATDiskEmulator::RefreshDiskImage() {
+	InitSectorInfoArrays();
 	ComputeGeometry();
 	ComputePERCOMBlock();
 	mCurrentTrack = mTrackCount - 1;
-	mbEnabled = true;
-	mbWriteEnabled = false;
-	mbAutoFlush = false;
-	mbHasDiskSource = (origPath != NULL);
 }
 
 void ATDiskEmulator::UpdateDisk() {
@@ -524,6 +499,7 @@ void ATDiskEmulator::CreateDisk(uint32 sectorCount, uint32 bootSectorCount, uint
 	FormatDisk(sectorCount, bootSectorCount, sectorSize);
 	mPath = L"(New disk)";
 	mbWriteEnabled = false;
+	mbFormatEnabled = false;
 	mbHasDiskSource = false;
 	mbEnabled = true;
 }
@@ -633,228 +609,6 @@ bool ATDiskEmulator::GetSectorInfo(uint16 sector, int phantomIdx, SectorInfo& in
 	return true;
 }
 
-uint8 ATDiskEmulator::ReadSector(uint16 bufadr, uint16 len, uint16 sector, ATCPUEmulatorMemory *mpMem) {
-	uint32 desiredPacketLength = 3 + len;
-
-	UpdateRotationalCounter();
-
-	// SIO retries once on a device error and fourteen times on a command error.
-	// Why do we emulate this? Because it makes a difference with phantom sectors.
-	uint8 status;
-	for(int i=0; i<2; ++i) {
-		for(int j=0; j<14; ++j) {
-			// construct read sector packet
-			mReceivePacket[0] = 0x31 + mUnit;		// device ID
-			mReceivePacket[1] = 0x52;				// read command
-			mReceivePacket[2] = sector & 0xff;		// sector to read
-			mReceivePacket[3] = sector >> 8;
-			mReceivePacket[4] = 0;					// checksum (ignored)
-
-			UpdateRotationalCounter();
-
-			uint32 preRotPos = mRotationalCounter + kCyclesToProcessRequest;
-			mRotationalCounter = preRotPos % mCyclesPerDiskRotation;
-			mRotations += preRotPos / mCyclesPerDiskRotation;
-
-			ProcessCommandPacket();
-
-			// fake rotation
-			if (mbTransferAdjustRotation) {
-				mRotationalCounter = mTransferCompleteRotPos + kCyclesToExitSIO;
-				UpdateRotationalCounter();
-			}
-
-			status = mSendPacket[0];
-
-			if (status == 0x41)
-				break;
-		}
-
-		// check if command retries exhausted
-		if (status != 0x41) {
-			if (status == 0x45) {	// ERROR ($45)
-				// report device error ($90)
-				status = 0x90;
-			} else {
-				// report DNACK ($8B)
-				status = 0x8B;
-			}
-			break;
-		}
-
-		// process successful command
-		status = mSendPacket[1];
-
-		if (status == 0x43 || status == 0x45) {		// COMPLT ($43) or ERROR ($45)
-			uint8 checksum;
-
-			if (status == 0x45) {	// ERROR ($45)
-				// report device error ($90)
-				status = 0x90;
-			}
-
-			// check sector length against expected length
-			if (mTransferLength < desiredPacketLength) {
-				// transfer data into user memory -- this is done via ISR, so it will happen
-				// before timeout occurs
-				for(uint32 i=0; i<mTransferLength - 2; ++i)
-					mpMem->WriteByte(bufadr+i, mSendPacket[i+2]);
-
-				// packet too short -- TIMOUT ($8A)
-				status = 0x8A;
-
-				checksum = Checksum(mSendPacket+2, mTransferLength - 2);
-			} else if (mTransferLength >= desiredPacketLength) {
-				// transfer data into user memory -- this is done via ISR, so it will happen
-				// before any checksum error occurs
-				for(uint32 i=0; i<len; ++i)
-					mpMem->WriteByte(bufadr+i, mSendPacket[i+2]);
-
-				checksum = Checksum(mSendPacket+2, len);
-
-				// if the data packet is too long, a data byte will be mistaken for the
-				// checksum
-				if (mTransferLength > desiredPacketLength) {
-					if (Checksum(mSendPacket + 2, len) != mSendPacket[2 + len]) {
-						// bad checksum -- CHKSUM ($8F)
-						status = 0x8F;
-					}
-				}
-			}
-
-			// Karateka is really sneaky: it requests a read into ROM at $F000 and then
-			// checks CHKSUM in page zero.
-			mpMem->WriteByte(0x0031, checksum);
-		} else {
-			// report DNACK ($8B)
-			status = 0x8B;
-		}
-
-		// if status is still OK, stop retries and return success
-		if (status == 0x43) {
-			status = 0x01;
-			break;
-		}
-	}
-
-	// clear transfer
-	mbWriteMode = false;
-	mTransferOffset = 0;
-	mTransferLength = 0;
-	if (mpActivity)
-		mpActivity->OnDiskActivity(mUnit + 1, false, mLastSector);
-
-	if (mpTransferEvent) {
-		mpScheduler->RemoveEvent(mpTransferEvent);
-		mpTransferEvent = NULL;
-	}
-
-	return status;
-}
-
-uint8 ATDiskEmulator::WriteSector(uint16 bufadr, uint16 len, uint16 sector, ATCPUEmulatorMemory *mpMem) {
-	// Check write enable.
-	if (!mbWriteEnabled)
-		return 0x90;	// device error
-
-	// Check sector number.
-	if (sector < 1 || sector > mTotalSectorCount) {
-		// report DNACK
-		return 0x8B;
-	}
-
-	// Look up physical sector and check length
-	ATDiskVirtualSectorInfo vsi;
-	mpDiskImage->GetVirtualSectorInfo(sector - 1, vsi);
-	if (!vsi.mNumPhysSectors) {
-		// report device error
-		return 0x90;
-	}
-
-	ATDiskPhysicalSectorInfo psi;
-	mpDiskImage->GetPhysicalSectorInfo(vsi.mStartPhysSector, psi);
-
-	if (len > psi.mSize) {
-		// expected size is too long -- report timeout
-		return 0x8A;
-	}
-
-	if (len < psi.mSize) {
-		// expected size is too short -- report checksum error
-		return 0x8F;
-	}
-
-	// commit memory to disk
-	uint8 buf[8192];
-
-	for(uint32 i=0; i<len; ++i)
-		buf[i] = mpMem->ReadByte(bufadr+i);
-
-	uint8 status = ATCIOSymbols::CIOStatSuccess;
-
-	try {
-		mpDiskImage->WritePhysicalSector(vsi.mStartPhysSector, buf, len);
-	} catch(const MyError&) {
-		status = ATCIOSymbols::CIOStatDeviceDone;
-	}
-
-	mLastSector = sector;
-
-	if (mpActivity) {
-		mpActivity->OnDiskActivity(mUnit + 1, true, mLastSector);
-		mpActivity->OnDiskActivity(mUnit + 1, false, mLastSector);
-	}
-
-	if (mbAutoFlush)
-		QueueAutoSave();
-
-	// return success
-	return status;
-}
-
-void ATDiskEmulator::ReadStatus(uint8 dst[5]) {
-	uint8 status = 0;
-
-	// We need to check the sector size in the PERCOM block and not the physical
-	// disk for this value. This is required as SmartDOS 8.2D does a Write PERCOM
-	// Block command and then depends on FM/MFM selection being reflected in the
-	// result.
-	if (mPERCOM[6])		// sector size high byte
-		status += 0x20;
-
-	if (mbLastOpError)
-		status += 0x04;
-
-	if (!mbWriteEnabled)
-		status += 0x08;
-
-	if (mSideCount > 1)
-		status += 0x40;
-
-	if (mSectorsPerTrack == 26)
-		status += 0x80;
-
-	if (mpMotorOffEvent)
-		status += 0x10;
-
-	dst[0] = status;
-	dst[1] = mTotalSectorCount > 0 ? mFDCStatus : 0x7F;
-	dst[2] = mEmuMode == kATDiskEmulationMode_XF551 ? 0xfe : 0xe0;
-	dst[3] = 0x00;
-	dst[4] = Checksum(dst, 4);
-}
-
-void ATDiskEmulator::ReadPERCOMBlock(uint8 dst[13]) {
-	memcpy(dst, mPERCOM, 12);
-
-	if (mEmuMode == kATDiskEmulationMode_XF551) {
-		dst[1] = 0;		// step rate 0
-		dst[8] = 1;		// drive active
-	}
-
-	dst[12] = Checksum(dst, 12);
-}
-
 void ATDiskEmulator::SetForcedPhantomSector(uint16 sector, uint8 index, int order) {
 	if (!sector || sector >= mExtVirtSectors.size())
 		return;
@@ -878,64 +632,8 @@ int ATDiskEmulator::GetForcedPhantomSector(uint16 sector, uint8 index) {
 }
 
 void ATDiskEmulator::OnScheduledEvent(uint32 id) {
-	if (id == kATDiskEventTransferByte) {
-		mpTransferEvent = NULL;
-
-		if (!mbWriteMode)
-			return;
-
-		if (mTransferOffset >= mTransferLength)
-			return;
-
-		const uint8 data = mSendPacket[mTransferOffset];
-		const uint32 cyclesPerBit = mTransferOffset == 0 ? mTransferCyclesPerBitFirstByte : mTransferCyclesPerBit;
-		g_ATLCDiskData("Sending byte %u/%u = $%02x (%u cycles/bit)\n", mTransferOffset, mTransferLength, data, cyclesPerBit);
-
-		mpPokey->ReceiveSIOByte(data, cyclesPerBit, true, mbBurstTransfersEnabled);
-		++mTransferOffset;
-
-		// SIO barfs if the third byte is sent too quickly
-		uint32 transferDelay = mTransferRate;
-		if (mTransferOffset == 1) {
-			transferDelay = mTransferSecondByteDelay;
-		}
-
-		// Doc Wire's Solitaire Solution needs a bit more delay between the Complete byte and the first
-		// data byte at high speed.
-		if (mTransferOffset == 2 && mbWriteHighSpeed)
-			transferDelay = kCyclesToFirstDataHighSpeed;
-
-		if (mTransferOffset >= mTransferLength) {
-			if (mbTransferAdjustRotation) {
-				mRotationalCounter = mTransferCompleteRotPos;
-				mLastRotationUpdateCycle = ATSCHEDULER_GETTIME(mpScheduler);
-			}
-
-			UpdateRotationalCounter();
-
-			g_ATLCDisk("Disk transmit finished. (len=%u, rot=%.2f)\n", mTransferLength, (float)mRotations + (float)mRotationalCounter / (float)mCyclesPerDiskRotation);
-
-			mTransferOffset = 0;
-			mTransferLength = 0;
-			mbWriteMode = false;
-			mpActivity->OnDiskActivity(mUnit + 1, false, mLastSector);
-
-			if (mActiveCommand)
-				ProcessCommandTransmitCompleted();
-		} else {
-			mpTransferEvent = mpScheduler->AddEvent(transferDelay, this, kATDiskEventTransferByte);
-		}
-	} else if (id == kATDiskEventWriteCompleted) {
-		mpOperationEvent = NULL;
-		BeginTransferComplete();
-	} else if (id == kATDiskEventFormatCompleted) {
-		mpOperationEvent = NULL;
-		mSendPacket[0] = 'C';
-		memset(mSendPacket+1, 0xFF, mSectorSize);
-		mSendPacket[mSectorSize + 1] = Checksum(mSendPacket+1, mSectorSize);
-		BeginTransfer(mSectorSize + 2, mCyclesToACKSent, 0, mbActiveCommandHighSpeed, mbActiveCommandHighSpeed, false);
-	} else if (id == kATDiskEventAutoSave) {
-		mpAutoSaveEvent = NULL;
+	if (id == kATDiskEventAutoSave) {
+		mpAutoSaveEvent = nullptr;
 
 		AutoSave();
 	} else if (id == kATDiskEventAutoSaveError) {
@@ -944,88 +642,222 @@ void ATDiskEmulator::OnScheduledEvent(uint32 id) {
 
 		mpAutoSaveErrorEvent = mpScheduler->AddEvent(894886, this, kATDiskEventAutoSaveError);
 	} else if (id == kATDiskEventMotorOff) {
-		mpMotorOffEvent = NULL;
+		mpMotorOffEvent = nullptr;
 
-		if (mpActivity)
-			mpActivity->OnDiskMotorChange(mUnit + 1, false);
-
-		if (mpAudioSyncMixer) {
-			if (mRotationSoundId) {
-				mpAudioSyncMixer->StopSound(mRotationSoundId);
-				mRotationSoundId = 0;
-			}
-		}
-
-		if (mEmuMode == kATDiskEmulationMode_810) {
-			uint32 endTrack = mTrackCount ? mTrackCount - 1 : 0;
-			PlaySeekSound(0, abs((int)endTrack - (int)mCurrentTrack));
-			mCurrentTrack = endTrack;
-		}
+		TurnOffMotor();
 	}
 }
 
-void ATDiskEmulator::PokeyAttachDevice(ATPokeyEmulator *pokey) {
-	mpPokey = pokey;
+void ATDiskEmulator::InitSIO(IATDeviceSIOManager *mgr) {
+	mpSIOMgr = mgr;
 }
 
-bool ATDiskEmulator::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) {
+IATDeviceSIO::CmdResponse ATDiskEmulator::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
 	if (!mbEnabled)
-		return false;
+		return kCmdResponse_NotHandled;
 
-	if (mbWriteMode) {
-		mbWriteMode = false;
-		mTransferOffset = 0;
-	}
-
-	if (mActiveCommand) {
-		// Check the cycles per bit and make sure the transmission is at the correct rate.
-		// It must be either 19,200 baud (divisor=$28) or the high speed command rate for
-		// the XF551 and IndusGT. We allow up to a 5% deviation in transfer rate.
-		if (mbActiveCommandHighSpeed) {
-			if (cyclesPerBit < mHighSpeedDataFrameRateLo || cyclesPerBit > mHighSpeedDataFrameRateHi) {
-				g_ATLCDiskCmd("Rejecting data byte $%02X sent at wrong rate (cycles per bit = %d, expected %d-%d)\n", c, cyclesPerBit, mHighSpeedDataFrameRateLo, mHighSpeedDataFrameRateHi);
-
-				// trash the byte
-				++c;
-			}
-		} else {
-			if (cyclesPerBit < 90 || cyclesPerBit > 98) {
-				g_ATLCDiskCmd("Rejecting data byte $%02X sent at wrong rate (cycles per bit = %d, expected standard rate)\n", c, cyclesPerBit);
-
-				// trash the byte
-				++c;
-			}
-		}		
-
-		if (mTransferOffset < mTransferLength)
-			mReceivePacket[mTransferOffset++] = c;
-
-		if (mTransferOffset >= mTransferLength)
-			ProcessCommandData();
-
-		return mbBurstTransfersEnabled;
-	}
-
-	if (!mbCommandMode)
-		return false;
-
-	// Check the cycles per bit and make sure the transmission is at the correct rate.
-	// It must be either 19,200 baud (divisor=$28) or the high speed command rate for
-	// the XF551 and IndusGT. We allow up to a 5% deviation in transfer rate.
-	if (cyclesPerBit < 90 || cyclesPerBit > 98) {
-		if (!mbSupportedCmdFrameHighSpeed || cyclesPerBit < mHighSpeedCmdFrameRateLo || cyclesPerBit > mHighSpeedCmdFrameRateHi) {
-			mbCommandValid = false;
-			g_ATLCDiskCmd("Rejecting command byte $%02X sent at wrong rate (cycles per bit = %d)\n", c, cyclesPerBit);
-			return false;
+	// check if it's us
+	if (cmd.mDevice != (uint8)(0x31 + mUnit))
+		return kCmdResponse_NotHandled;
+			
+	// Check the speed of the command frame and make sure the transmission is at the
+	// correct rate. It must be either 19,200 baud (divisor=$28) or the high speed
+	// command rate for the XF551 and IndusGT. We allow up to a 5% deviation in transfer rate.
+	if (cmd.mbStandardRate) {
+		mbCommandFrameHighSpeed = false;
+	} else {
+		if (!mbSupportedCmdFrameHighSpeed || cmd.mCyclesPerBit < mHighSpeedCmdFrameRateLo || cmd.mCyclesPerBit > mHighSpeedCmdFrameRateHi) {
+			g_ATLCDiskCmd("Rejecting command sent at wrong rate (cycles per bit = %d)\n", cmd.mCyclesPerBit);
+			return kCmdResponse_NotHandled;
 		} else {
 			mbCommandFrameHighSpeed = true;
 		}
 	}
 
-	if (mTransferOffset < 16)
-		mReceivePacket[mTransferOffset++] = c;
+	mpActivity->OnDiskActivity(mUnit + 1, true, mLastSector);
 
-	return mbBurstTransfersEnabled;
+	UpdateRotationalCounter();
+
+	// interpret the command
+	mbCommandFrameHighSpeed = !cmd.mbStandardRate;
+
+	g_ATLCDiskCmd("Processing command: Unit %02X, Command %02X, Aux data %02X %02X%s\n"
+		, cmd.mDevice
+		, cmd.mCommand
+		, cmd.mAUX[0]
+		, cmd.mAUX[1]
+		, mbCommandFrameHighSpeed ? " (high-speed command frame)" : ""
+	);
+	const uint8 command = cmd.mCommand;
+	bool highSpeed = mbCommandFrameHighSpeed || (command & 0x80) != 0;
+
+	// check if this is a 1050 Turbo command
+	mActiveCommandSector = cmd.mAUX[0] + cmd.mAUX[1] * 256;
+
+	if (mEmuMode == kATDiskEmulationMode_1050Turbo && (mActiveCommandSector & 0x8000)) {
+		switch(command) {
+			case 0x4E:	// read PERCOM block
+			case 0x4F:	// write PERCOM block
+			case 0x52:	// read
+			case 0x53:	// status (used by MyPicoDOS to autodetect)
+			case 0x50:	// put (without verify)
+			case 0x57:	// write (with verify)
+				mActiveCommandSector &= 0x7FFF;
+				mbCommandFrameHighSpeed = true;
+				highSpeed = true;
+				break;
+		}
+	}
+
+	mOriginalDevice = cmd.mDevice;
+	mOriginalCommand = command;
+	mbActiveCommandHighSpeed = highSpeed;
+	mActiveCommandState = 0;
+	mbActiveCommandWait = false;
+	mpSIOMgr->BeginCommand();
+
+	// reject all high speed commands if not XF551 or generic
+
+	if (!mbSupportedCmdHighSpeed && (command & 0x80))
+		goto unsupported_command;
+
+	mLastAccelTimeSkew = mpSIOMgr->GetAccelTimeSkew();
+
+	switch(command) {
+		case 0x53:	// status
+		case 0xD3:	// status (XF551 high speed)
+			mActiveCommand = 0x53;
+			break;
+
+		case 0x52:	// read
+		case 0xD2:	// read (XF551 high speed)
+			mActiveCommand = 0x52;
+			break;
+
+		case 0x72:	// read (Happy high speed)
+			mActiveCommand = 0x72;
+			mbActiveCommandHighSpeed = true;
+			break;
+
+		case 0x21:	// format
+		case 0x22:	// format disk medium density
+		case 0x66:	// format disk skewed
+		case 0xA1:	// format (high speed skew, XF551/Synchromesh)
+		case 0xA2:	// format disk medium density (high speed)
+		case 0xA3:	// format boot tracks with normal skew (Synchromesh only)
+		case 0xE6:	// format disk skewed (high speed)
+			mActiveCommand = 0x21;
+			break;
+
+		case 0x50:	// put (without verify)
+		case 0xD0:	// put (without verify) (XF551 high speed)
+			mActiveCommand = 0x50;
+			break;
+
+		case 0x70:	// put (without verify) (Happy high speed)
+			mActiveCommand = 0x50;
+			break;
+
+		case 0x57:	// write (with verify)
+		case 0xD7:	// write (with verify) (XF551 high speed)
+			mActiveCommand = 0x57;
+			break;
+
+		case 0x77:	// write (with verify) (Happy high speed)
+			mActiveCommand = 0x77;
+			mbActiveCommandHighSpeed = true;
+			break;
+
+		case 0x4E:	// read PERCOM block
+		case 0xCE:	// read PERCOM block (XF551 high speed)
+			mActiveCommand = 0x4E;
+			break;
+
+		case 0x4F:	// write PERCOM block
+		case 0xCF:	// write PERCOM block (XF551 high speed)
+			mActiveCommand = 0x4F;
+			break;
+
+		case 0x3F:	// get high speed index
+			mActiveCommand = 0x3F;
+			break;
+
+		case 0x48:
+			mActiveCommand = 0x48;
+			break;
+
+		case 0x58:
+			mActiveCommand = 0x58;
+			break;
+
+		case 0x54:
+			mActiveCommand = 0x54;
+			break;
+
+		case 0x28:	// Happy head positioning test recalibrate
+		case 0x29:	// Happy head positioning test seek
+		case 0x2D:	// Happy RPM test
+		case 0x51:
+			mActiveCommand = command;
+			break;
+
+		default:
+unsupported_command:
+			ProcessUnsupportedCommand();
+			break;
+	}
+
+	if (mActiveCommand)
+		ProcessCommand();
+
+	mpActivity->OnDiskActivity(mUnit + 1, mActiveCommand != 0, mLastSector);
+	return kCmdResponse_Start;
+}
+
+void ATDiskEmulator::OnSerialAbortCommand() {
+	AbortCommand();
+}
+
+void ATDiskEmulator::OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) {
+	if (!checksumOK) {
+		mpSIOMgr->FlushQueue();
+		BeginTransferNAK();
+		EndCommand();
+		return;
+	}
+
+	memcpy(mReceivePacket, data, len);
+	mbReceiveChecksumOK = checksumOK;
+}
+
+void ATDiskEmulator::OnSerialFence(uint32 id) {
+	if (id == (uint32)0 - 1) {
+		UpdateAccelTimeSkew();
+		mpActivity->OnDiskActivity(mUnit + 1, false, mLastSector);
+	} else {
+		mActiveCommandState = id;
+		mbActiveCommandWait = false;
+		ProcessCommand();
+	}
+}
+
+IATDeviceSIO::CmdResponse ATDiskEmulator::OnSerialAccelCommand(const ATDeviceSIORequest& request) {
+	return OnSerialBeginCommand(request);
+}
+
+void ATDiskEmulator::UpdateAccelTimeSkew() {
+	uint32 ats = mpSIOMgr->GetAccelTimeSkew();
+
+	if (mLastAccelTimeSkew != ats) {
+		mRotationalCounter += (ats - mLastAccelTimeSkew);
+
+		if (mRotationalCounter >= mCyclesPerDiskRotation) {
+			mRotationalCounter -= mCyclesPerDiskRotation;
+			++mRotations;
+		}
+
+		mLastAccelTimeSkew = ats;
+	}
 }
 
 void ATDiskEmulator::InitSectorInfoArrays() {
@@ -1054,71 +886,113 @@ void ATDiskEmulator::InitSectorInfoArrays() {
 	mbAccurateSectorPrediction = (mpDiskImage->GetTimingMode() == kATDiskTimingMode_UsePrecise);
 }
 
+void ATDiskEmulator::SetupTransferSpeed(bool highSpeed) {
+	if (highSpeed) {
+		// Special case for Happy commands
+		switch(mActiveCommand) {
+			case 0x70:
+			case 0x72:
+			case 0x77:
+				mpSIOMgr->SetTransferRate(kCyclesPerSIOBit_Happy_Native_Fast, kCyclesPerSIOByte_Happy_Native_Fast);
+				break;
+
+			default:
+				mpSIOMgr->SetTransferRate(mCyclesPerSIOBitHighSpeed, mCyclesPerSIOByteHighSpeed);
+				break;
+		}
+	} else
+		mpSIOMgr->SetTransferRate(mCyclesPerSIOBit, mCyclesPerSIOByte);
+}
+
 void ATDiskEmulator::BeginTransferACKCmd() {
-	mSendPacket[0] = 'A';
-	BeginTransfer(1, mCyclesToACKSent, 0, mbCommandFrameHighSpeed, mbCommandFrameHighSpeed, false);
+	SetupTransferSpeed(mbCommandFrameHighSpeed);
+	mpSIOMgr->Delay(mCyclesToACKSent);
+	mpSIOMgr->SendACK();
 }
 
 void ATDiskEmulator::BeginTransferACK() {
-	mSendPacket[0] = 'A';
-	BeginTransfer(1, mCyclesToACKSent, 0, mbActiveCommandHighSpeed, mbActiveCommandHighSpeed, false);
+	SetupTransferSpeed(mbActiveCommandHighSpeed);
+	mpSIOMgr->Delay(mCyclesToACKSent);
+	mpSIOMgr->SendACK();
 }
 
 void ATDiskEmulator::BeginTransferComplete() {
-	mSendPacket[0] = 'C';
-	BeginTransfer(1, mCyclesToACKSent, 0, mbActiveCommandHighSpeed, mbActiveCommandHighSpeed, false);
+	SetupTransferSpeed(mbActiveCommandHighSpeed);
+	mpSIOMgr->SendComplete(false);
 }
 
 void ATDiskEmulator::BeginTransferError() {
-	mSendPacket[0] = 'E';
-	BeginTransfer(1, mCyclesToACKSent, 0, mbActiveCommandHighSpeed, mbActiveCommandHighSpeed, false);
+	SetupTransferSpeed(mbActiveCommandHighSpeed);
+	mpSIOMgr->SendError(false);
 }
 
 void ATDiskEmulator::BeginTransferNAK() {
 	// NAKs are only sent in response to the command itself and therefore must be sent at
 	// command frame speed.
-	mSendPacket[0] = 'N';
-	BeginTransfer(1, mCyclesToACKSent, 0, mbCommandFrameHighSpeed, mbCommandFrameHighSpeed, false);
+	SetupTransferSpeed(mbCommandFrameHighSpeed);
+	mpSIOMgr->Delay(mCyclesToACKSent);
+	mpSIOMgr->SendNAK();
 }
 
-void ATDiskEmulator::BeginTransfer(uint32 length, uint32 cyclesToFirstByte, uint32 cyclesToSecondByte, bool useHighSpeedFirstByte, bool useHighSpeed, bool enhancedDensity) {
-	mbWriteMode = true;
-	mbWriteHighSpeedFirstByte = useHighSpeedFirstByte;
-	mbWriteHighSpeed = useHighSpeed;
-	mTransferRate = useHighSpeed ? mCyclesPerSIOByteHighSpeed : mCyclesPerSIOByte;
-	mTransferCyclesPerBit = useHighSpeed ? mCyclesPerSIOBitHighSpeed : mCyclesPerSIOBit;
-	mTransferCyclesPerBitFirstByte = useHighSpeedFirstByte ? mCyclesPerSIOBitHighSpeed : mCyclesPerSIOBit;
-	mTransferOffset = 0;
+void ATDiskEmulator::SendResult(bool successful, uint32 length) {
+	if (successful)
+		BeginTransferComplete();
+	else
+		BeginTransferError();
+
+	if (mbActiveCommandHighSpeed)
+		mpSIOMgr->Delay(mCyclesCEToDataFrameHighSpeed + ((length * mCyclesCEToDataFrameHighSpeedPBDiv256 + 128) >> 8));
+	else
+		mpSIOMgr->Delay(mCyclesCEToDataFrame + ((length * mCyclesCEToDataFramePBDiv256 + 128) >> 8));
+
+	Send(length);
+}
+
+void ATDiskEmulator::Send(uint32 length) {
 	mTransferLength = length;
 
-	if (cyclesToSecondByte)
-		mTransferSecondByteDelay = cyclesToSecondByte;
-	else if (!mbAccurateSectorTiming)
-		mTransferSecondByteDelay = mCyclesToCompleteFast;
-	else {
-		mTransferSecondByteDelay = enhancedDensity ? mCyclesToCompleteAccurateED : mCyclesToCompleteAccurate;
-	}
-
-	if (mpTransferEvent)
-		mpScheduler->RemoveEvent(mpTransferEvent);
-
-	mpTransferEvent = mpScheduler->AddEvent(cyclesToFirstByte, this, kATDiskEventTransferByte);
-
-	// We compute the post transfer position but don't actually enable it here; that's
-	// done from the caller site if desired.
-	mbTransferAdjustRotation = false;
-
-	mTransferCompleteRotPos = mRotationalCounter;
 	if (length) {
-		mTransferCompleteRotPos += cyclesToFirstByte;
-		
-		if (length >= 2) {
-			mTransferCompleteRotPos += mTransferSecondByteDelay;
-
-			if (length >= 3)
-				mTransferCompleteRotPos += mTransferRate * (length - 2);
-		}
+		SetupTransferSpeed(mbActiveCommandHighSpeed);
+		mpSIOMgr->SendData(mSendPacket, length, true);
 	}
+
+	++mActiveCommandState;
+}
+
+void ATDiskEmulator::BeginReceive(uint32 len) {
+	SetupTransferSpeed(mbActiveCommandHighSpeed);
+	mpSIOMgr->ReceiveData(0, len, true);
+	++mActiveCommandState;
+}
+
+void ATDiskEmulator::WarpOrDelay(uint32 cycles, uint32 minCycles) {
+	if (!mbAccurateSectorTiming && cycles > minCycles) {
+		mRotationalCounter += cycles - minCycles;
+		if (mRotationalCounter >= mCyclesPerDiskRotation) {
+			mRotationalCounter -= mCyclesPerDiskRotation;
+			++mRotations;
+		}
+
+		cycles = minCycles;
+	}
+
+	mpSIOMgr->Delay(cycles);
+}
+
+void ATDiskEmulator::Wait(uint32 nextState) {
+	mbActiveCommandWait = true;
+	mpSIOMgr->InsertFence(nextState);
+}
+
+void ATDiskEmulator::EndCommand() {
+	mActiveCommand = 0;
+
+	mpSIOMgr->InsertFence((uint32)0 - 1);
+	mpSIOMgr->EndCommand();
+}
+
+void ATDiskEmulator::AbortCommand() {
+	mActiveCommand = 0;
 }
 
 void ATDiskEmulator::UpdateRotationalCounter() {
@@ -1175,675 +1049,722 @@ void ATDiskEmulator::SetAutoSaveError(bool error) {
 	}
 }
 
-void ATDiskEmulator::ProcessCommandPacket() {
-	mpActivity->OnDiskActivity(mUnit + 1, true, mLastSector);
+void ATDiskEmulator::ProcessUnsupportedCommand() {
+	BeginTransferNAK();
 
-	UpdateRotationalCounter();
+	const char *desc = "?";
+	const char *extraDesc = "";
 
-	// interpret the command
-	g_ATLCDiskCmd("Processing command: Unit %02X, Command %02X, Aux data %02X %02X%s\n"
-		, mReceivePacket[0]
-		, mReceivePacket[1]
-		, mReceivePacket[2]
-		, mReceivePacket[3]
-		, mbCommandFrameHighSpeed ? " (high-speed command frame)" : ""
-	);
-	const uint8 command = mReceivePacket[1];
-	bool highSpeed = mbCommandFrameHighSpeed || (command & 0x80) != 0;
+	switch(mOriginalCommand) {
+		case 0x21:
+		case 0x22:
+		case 0x28:
+		case 0x29:
+		case 0x2D:
+		case 0x3F:
+		case 0x48:
+		case 0x4E:
+		case 0x4F:
+		case 0x51:
+		case 0x54:
+		case 0x58:
+		case 0x66:
+		case 0x70:
+		case 0x72:
+		case 0x77:
+			extraDesc = "; not supported by current profile";
+			break;
+	}
 
-	// reject all high speed commands if not XF551 or generic
-	if (!mbSupportedCmdHighSpeed && (command & 0x80))
-		goto unsupported_command;
+	uint8 aux[2];
+	VDWriteUnalignedLEU16(aux, mActiveCommandSector);
+	g_ATLCDisk("Unsupported command %02X (%s%s)\n", mOriginalCommand, ATDecodeSIOCommand(mOriginalDevice, mOriginalCommand, aux), extraDesc);
 
-	// check if this is a 1050 Turbo command
-	if (mEmuMode == kATDiskEmulationMode_1050Turbo && (mReceivePacket[3] & 0x80)) {
-		switch(command) {
-			case 0x4E:	// read PERCOM block
-			case 0x4F:	// write PERCOM block
-			case 0x52:	// read
-			case 0x50:	// put (without verify)
-			case 0x57:	// write (with verify)
-				mReceivePacket[3] &= 0x7f;
-				mbCommandFrameHighSpeed = true;
-				highSpeed = true;
+	EndCommand();
+}
+
+void ATDiskEmulator::ProcessCommand() {
+	while(mActiveCommand && !mbActiveCommandWait) {
+		UpdateAccelTimeSkew();
+
+		switch(mActiveCommand) {
+			case 0x21:
+				ProcessCommandFormat();
+				break;
+
+			case 0x3F:
+				ProcessCommandGetHighSpeedIndex();
+				break;
+
+			case 0x48:
+				ProcessCommandHappy();
+				break;
+
+			case 0x4E:
+				ProcessCommandReadPERCOMBlock();
+				break;
+
+			case 0x4F:
+				ProcessCommandWritePERCOMBlock();
+				break;
+
+			case 0x52:
+			case 0x72:
+				ProcessCommandRead();
+				break;
+
+			case 0x53:
+				ProcessCommandStatus();
+				break;
+
+			case 0x50:		// put
+			case 0x57:		// write
+			case 0x70:		// Happy high-speed put
+			case 0x77:		// Happy high-speed write
+				ProcessCommandWrite();
+				break;
+
+			case 0x58:		// Indus GT execute
+				ProcessCommandExecuteIndusGT();
+				break;
+
+			case 0x51:
+				ProcessCommandHappyQuiet();
+				break;
+
+			case 0x54:
+				ProcessCommandHappyRAMTest();
+				break;
+
+			case 0x28:
+			case 0x29:
+				ProcessCommandHappyHeadPosTest();
+				break;
+
+			case 0x2D:
+				ProcessCommandHappyRPMTest();
 				break;
 		}
 	}
+}
 
-	mbActiveCommandHighSpeed = highSpeed;
+///////////////////////////////////////////////////////////////////////////
+// Status command ($58/$D8)
+//
+// On the 810:
+//		ACK - 322 device cycles
+//		Setup - 155 device cycles
+//		Transmit C + status bytes
+//
+// There is NO delay between C and the status bytes on the 810. The SIO
+// routine must be ready to receive the data frame immediately.
+//
+// The 1050 issues a force interrupt command to the FDC twice before sending
+// the C/E + data frame. We don't currently have timing for this.
+//
+void ATDiskEmulator::ProcessCommandStatus() {
+	BeginTransferACKCmd();
 
-	switch(command) {
-		case 0x53:	// status
-		case 0xD3:	// status (XF551 high speed)
-			mSendPacket[0] = 0x41;
-			mSendPacket[1] = 0x43;
-			ReadStatus(mSendPacket + 2);
-			BeginTransfer(7, 2500, 0, mbCommandFrameHighSpeed, highSpeed, false);
+	switch(mEmuMode) {
+		case kATDiskEmulationMode_Generic:
+		case kATDiskEmulationMode_Generic57600:
+		case kATDiskEmulationMode_FastestPossible:
+		case kATDiskEmulationMode_810:
+		case kATDiskEmulationMode_Happy:
+			mpSIOMgr->Delay(554);		// 155 cycles @ 500KHz
 			break;
 
-		case 0x52:	// read
-		case 0xD2:	// read (XF551 high speed)
-			{
-				uint32 sector = mReceivePacket[2] + mReceivePacket[3] * 256;
+		default:
+			mpSIOMgr->Delay(1500);		// total guess
+			break;
+	}
 
-				mLastSector = sector;
+	uint8 status = 0;
 
-				if (sector == mSectorBreakpoint)
-					g_sim.PostInterruptingEvent(kATSimEvent_DiskSectorBreakpoint);
+	// We need to check the sector size in the PERCOM block and not the physical
+	// disk for this value. This is required as SmartDOS 8.2D does a Write PERCOM
+	// Block command and then depends on FM/MFM selection being reflected in the
+	// result.
+	if (mPERCOM[6])		// sector size high byte
+		status += 0x20;
 
-				// check if we actually have a disk; if not, we still allow sectors 1-720, but
-				// report them as missing
-				if (!mpDiskImage && sector >= 1 && sector <= 720) {
-					mbLastOpError = true;
-					mFDCStatus = 0xF7;
+	if (mbLastOpError)
+		status += 0x04;
 
-					// sector not found....
-					mSendPacket[0] = 0x41;
-					mSendPacket[1] = 0x45;
-					// don't clear the sector buffer!
-					mSendPacket[128+2] = Checksum(mSendPacket + 2, 128);
-					BeginTransfer(131, mCyclesToACKSent, 0, mbCommandFrameHighSpeed, highSpeed, false);
+	if (!mbWriteEnabled)
+		status += 0x08;
 
-					mRotationalCounter += mCyclesPerDiskRotation >> 1;
-					UpdateRotationalCounter();
+	if (mSideCount > 1)
+		status += 0x40;
 
-					g_ATLCDisk("Reporting missing sector %d (no disk in drive).\n", sector);
-					break;
+	if (mSectorsPerTrack == 26)
+		status += 0x80;
+
+	if (mpMotorOffEvent)
+		status += 0x10;
+
+	mSendPacket[0] = status;
+	mSendPacket[1] = mTotalSectorCount > 0 ? mFDCStatus : 0x7F;
+	mSendPacket[2] = mEmuMode == kATDiskEmulationMode_XF551 ? 0xfe : 0xe0;
+	mSendPacket[3] = 0x00;
+
+	SendResult(true, 4);
+	EndCommand();
+}
+
+bool ATDiskEmulator::ProcessCommandReadWriteCommon(bool isWrite) {
+	const uint32 sector = mActiveCommandSector;
+
+	switch(mActiveCommandState) {
+		case 10:
+			// turn on the motor if needed
+			if (TurnOnMotor())
+				WarpOrDelay(7159090/8);
+
+			// delay until FDC command issued
+			WarpOrDelay(kCyclesFDCCommandDelay);
+			Wait(11);
+			break;
+
+		case 11: {
+			// check if we need to seek
+			uint32 track = (sector - 1) / mSectorsPerTrack;
+			int trackDelta = (int)track - (int)mCurrentTrack;
+			uint32 tracksToStep = (uint32)abs(trackDelta);
+
+			mCurrentTrack = track;
+
+			uint32 opDelay = 0;
+			if (tracksToStep) {
+				// The 1050 drive does an extra pair of half steps after a forward seek, one forward
+				// and one backward. This ensures that tracks are always read or written after the
+				// head has seeked backwards. The 810 does not do this.
+				if (trackDelta > 0 && mbReverseOnForwardSeeks) {
+					PlaySeekSound(opDelay, tracksToStep + 1);
+					opDelay += (tracksToStep + 1) * mCyclesPerTrackStep;
+				} else {
+					PlaySeekSound(opDelay, tracksToStep);
+					opDelay += tracksToStep * mCyclesPerTrackStep;
 				}
 
-				if (!sector || sector > (uint32)mTotalSectorCount) {
-					// NAK the command immediately -- the 810 and 1050 both NAK commands
-					// with invalid sector numbers.
+				opDelay += mCyclesForHeadSettle;
+			}
 
-					mbLastOpError = true;
-					BeginTransferNAK();
-					g_ATLCDisk("Error reading sector %d.\n", sector);
-					break;
-				}
+			WarpOrDelay(opDelay);
+			Wait(13);
+			break;
+		}
 
-				// check if we need to turn on the motor, and start computing operation delay
-				uint32 opDelay = mCyclesToFDCCommand;
-				
-				if (TurnOnMotor(mCyclesToACKSent))
-					opDelay += 7159090/8;
+		case 13:
+		case 14:
+		case 15:
+		case 16: {
+			UpdateRotationalCounter();
 
-				// do initial seek
-				uint32 track = (sector - 1) / mSectorsPerTrack;
-				int trackDelta = (int)track - (int)mCurrentTrack;
-				uint32 tracksToStep = (uint32)abs(trackDelta);
-
-				mCurrentTrack = track;
-
-				if (tracksToStep) {
-					// The 1050 drive does an extra pair of half steps after a forward seek, one forward
-					// and one backward. This ensures that tracks are always read or written after the
-					// head has seeked backwards. The 810 does not do this.
-					if (trackDelta > 0 && mbReverseOnForwardSeeks) {
-						PlaySeekSound(opDelay, tracksToStep + 1);
-						opDelay += (tracksToStep + 1) * mCyclesPerTrackStep;
-					} else {
-						PlaySeekSound(opDelay, tracksToStep);
-						opDelay += tracksToStep * mCyclesPerTrackStep;
-					}
-
-					opDelay += mCyclesForHeadSettle;
-				}
-
-				UpdateRotationalCounter();
-
-				// get virtual sector information
-				ATDiskVirtualSectorInfo vsi;
+			// get virtual sector information
+			ATDiskVirtualSectorInfo vsi;
+			if (mpDiskImage)
 				mpDiskImage->GetVirtualSectorInfo(sector - 1, vsi);
 
-				ExtVirtSector& evs = mExtVirtSectors[sector - 1];
+			ExtVirtSector& evs = mExtVirtSectors[sector - 1];
 
-				// check if we have any sectors
-				ATDiskPhysicalSectorInfo psi;
-				bool havePhysSector = false;
-				uint32 postSeekPosition = 0;
-				uint32 physSector;
+			// check if we have any sectors
+			ATDiskPhysicalSectorInfo psi;
+			bool havePhysSector = false;
+			uint32 postSeekPosition = 0;
+			uint32 physSector;
 
-				if (vsi.mNumPhysSectors) {
-					// choose a physical sector
-					if (mbAccurateSectorPrediction || mbAccurateSectorTiming) {
-						// compute post-seek rotational position
-						postSeekPosition = (mRotationalCounter + opDelay) % mCyclesPerDiskRotation;
+			if (vsi.mNumPhysSectors) {
+				// choose a physical sector
+				if (mbAccurateSectorPrediction || mbAccurateSectorTiming) {
+					// compute post-seek rotational position
+					postSeekPosition = mRotationalCounter % mCyclesPerDiskRotation;
 
-						uint32 bestDelay = 0xFFFFFFFFU;
-						uint8 bestStatus = 0;
+					uint32 bestDelay = 0xFFFFFFFFU;
+					uint8 bestStatus = 0;
 
-						physSector = vsi.mStartPhysSector;
+					physSector = vsi.mStartPhysSector;
 
-						for(uint32 i=0; i<vsi.mNumPhysSectors; ++i) {
-							ATDiskPhysicalSectorInfo psi;
-							mpDiskImage->GetPhysicalSectorInfo(vsi.mStartPhysSector + i, psi);
+					for(uint32 i=0; i<vsi.mNumPhysSectors; ++i) {
+						ATDiskPhysicalSectorInfo psi;
+						mpDiskImage->GetPhysicalSectorInfo(vsi.mStartPhysSector + i, psi);
 
-							const ExtPhysSector& eps = mExtPhysSectors[vsi.mStartPhysSector + i];
+						const ExtPhysSector& eps = mExtPhysSectors[vsi.mStartPhysSector + i];
 
-							// compute sector's rotational position in cycles
-							uint32 sectorPos = VDRoundToInt(psi.mRotPos * mCyclesPerDiskRotation);
+						// compute sector's rotational position in cycles
+						uint32 sectorPos = VDRoundToInt(psi.mRotPos * mCyclesPerDiskRotation);
 
-							// compute rotational delay to sector
-							uint32 delay = sectorPos < postSeekPosition ? sectorPos + mCyclesPerDiskRotation - postSeekPosition : sectorPos - postSeekPosition;
+						// compute rotational delay to sector
+						uint32 delay = sectorPos < postSeekPosition ? sectorPos + mCyclesPerDiskRotation - postSeekPosition : sectorPos - postSeekPosition;
 
-							if (eps.mForcedOrder == evs.mPhantomSectorCounter) {
-								physSector = vsi.mStartPhysSector + i;
-								mPhantomSectorCounter = i;
+						if (eps.mForcedOrder == evs.mPhantomSectorCounter) {
+							physSector = vsi.mStartPhysSector + i;
+							mPhantomSectorCounter = i;
 
-								if (++evs.mPhantomSectorCounter >= vsi.mNumPhysSectors)
-									evs.mPhantomSectorCounter = 0;
-								break;
-							}
-
-							if (delay < bestDelay) {
-								bestDelay = delay;
-								bestStatus = psi.mFDCStatus;
-
-								physSector = vsi.mStartPhysSector + i;
-								mPhantomSectorCounter = i;
-							}
-						}
-					} else {
-						uint32 phantomIdx = evs.mPhantomSectorCounter;
-						for(uint32 i=0; i<vsi.mNumPhysSectors; ++i) {
-							const ExtPhysSector& eps = mExtPhysSectors[vsi.mStartPhysSector + i];
-
-							if (eps.mForcedOrder == evs.mPhantomSectorCounter) {
-								phantomIdx = i;
-								break;
-							}
+							if (++evs.mPhantomSectorCounter >= vsi.mNumPhysSectors)
+								evs.mPhantomSectorCounter = 0;
+							break;
 						}
 
-						physSector = vsi.mStartPhysSector + phantomIdx;
+						if (delay < bestDelay) {
+							bestDelay = delay;
+							bestStatus = psi.mFDCStatus;
 
-						if (++evs.mPhantomSectorCounter >= vsi.mNumPhysSectors)
-							evs.mPhantomSectorCounter = 0;
+							physSector = vsi.mStartPhysSector + i;
+							mPhantomSectorCounter = i;
+						}
+					}
+				} else {
+					uint32 phantomIdx = evs.mPhantomSectorCounter;
+					for(uint32 i=0; i<vsi.mNumPhysSectors; ++i) {
+						const ExtPhysSector& eps = mExtPhysSectors[vsi.mStartPhysSector + i];
+
+						if (eps.mForcedOrder == evs.mPhantomSectorCounter) {
+							phantomIdx = i;
+							break;
+						}
 					}
 
-					mpDiskImage->GetPhysicalSectorInfo(physSector, psi);
+					physSector = vsi.mStartPhysSector + phantomIdx;
 
-					// Set FDC status.
-					//
-					// Note that in order to get a lost data condition (bit 2), there must already have
-					// been data pending (bit 1) when more data arrived. The 810 ROM does not clear the
-					// DRQ flag before storing status. The Music Studio requires this.
-					mFDCStatus = psi.mFDCStatus;
-					if (!(mFDCStatus & 0x04))
-						mFDCStatus &= ~0x02;
-
-					// set rotational delay
-					mRotationalPosition = VDRoundToInt(psi.mRotPos * mCyclesPerDiskRotation);
-				} else {
-					// indicate missing track/sector (record not found)
-					mFDCStatus = 0xEF;
+					if (++evs.mPhantomSectorCounter >= vsi.mNumPhysSectors)
+						evs.mPhantomSectorCounter = 0;
 				}
 
-				const bool missingSector = !(mFDCStatus & 0x10);
+				mpDiskImage->GetPhysicalSectorInfo(physSector, psi);
 
-				// compute seek time
-				uint32 secondByteDelay = opDelay - mCyclesToACKSent;
+				// Set FDC status.
+				//
+				// The lost data condition (bit 2) needs to be handled specially here, as it results
+				// from reading a long sector, and the 810 and 1050 differ in behavior. The 810 reads
+				// status immediately after 128 bytes, so it will see DRQ but not lost data, and not
+				// a CRC error as the CRC hasn't been read yet. A 1050, on the other hand, will wait
+				// until the sector has finished reading, so lost data and DRQ won't be on, but
+				// the CRC flag will be correct. The Music Studio and Fight Night are sensitive to
+				// behavior here.
+				if (isWrite) {
+					mFDCStatus = 0xFF;
+				} else {
+					mFDCStatus = psi.mFDCStatus;
 
-				// If we have the sector, add rotational delay from the post seek position to the
-				// sector's position; otherwise, add two revs for the FDC's attempt to find it.
+					// Clone the deleted bit to both record type bits for the 810 for reads, since
+					// currently our FDC status is for the 1050.
+					switch(mEmuMode) {
+						case kATDiskEmulationMode_Generic:
+						case kATDiskEmulationMode_Generic57600:
+						case kATDiskEmulationMode_810:
+							mFDCStatus &= 0xBF;
+							mFDCStatus += (mFDCStatus & 0x20) << 1;
+							break;
+					}
+
+					// Record Not Found + CRC means that the address header had a CRC error. In
+					// that case, we never make it to the data frame, so we need to skip this logic.
+					if (!(mFDCStatus & 0x18)) {
+						// Ignore long sector related errors.
+						mFDCStatus |= 0x06;
+					} else {
+						switch(mEmuMode) {
+							case kATDiskEmulationMode_Generic:
+							case kATDiskEmulationMode_Generic57600:
+							case kATDiskEmulationMode_810:
+								if (!(mFDCStatus & 0x04)) {
+									// assert BSY and DRQ -- read still pending, byte ready
+									mFDCStatus &= ~0x03;
+
+									// negate CRC (not read yet) and lost data (not two bytes passed yet)
+									mFDCStatus |= 0x0C;
+								}
+								break;
+
+							case kATDiskEmulationMode_FastestPossible:
+							case kATDiskEmulationMode_Happy:
+							case kATDiskEmulationMode_1050:
+							case kATDiskEmulationMode_XF551:
+							case kATDiskEmulationMode_USDoubler:
+							case kATDiskEmulationMode_Speedy1050:
+							case kATDiskEmulationMode_IndusGT:
+							case kATDiskEmulationMode_1050Turbo:
+								if (!(mFDCStatus & 0x04)) {
+									// assert DRQ (byte not read)
+									mFDCStatus &= ~0x02;
+
+									// negate BSY (read is completed)
+									mFDCStatus |= 0x01;
+								}
+								break;
+						}
+					}
+				}
+
+				// set rotational delay
+				mTransferCompleteRotPos = VDRoundToInt(psi.mRotPos * mCyclesPerDiskRotation);
+				mActiveCommandPhysSector = physSector;
+			} else {
+				// indicate missing track/sector (record not found)
+				mFDCStatus = 0xEF;
+				mActiveCommandPhysSector = -1;
+				mTransferCompleteRotPos = mRotationalCounter;
+			}
+
+
+			const bool missingSector = !(mFDCStatus & 0x10);
+
+			// compute seek time
+			uint32 secondByteDelay = 0;
+
+			// If we have the sector, add rotational delay from the post seek position to the
+			// sector's position; otherwise, add two revs for the FDC's attempt to find it.
+			if (missingSector) {
+				if (mbRetryMode1050)
+					secondByteDelay += kCyclesPerFakeRot_1050;
+				else
+					secondByteDelay += kCyclesPerFakeRot_810;
+			} else {
+				if (postSeekPosition > mTransferCompleteRotPos)
+					secondByteDelay += mCyclesPerDiskRotation;
+
+				secondByteDelay += mTransferCompleteRotPos - postSeekPosition;
+			}
+
+			// Check if we got an error.
+			const uint32 maxRetryState = (mbRetryMode1050 ? 14 : 16);
+			if (mFDCStatus != 0xFF && mActiveCommandState < maxRetryState) {
+				// Check if we're modeling the 810 or 1050. The 810 does four tries overall
+				// with a possible recalibrate between the first two and second two attempts;
+				// the 1050 does two tries with a recalibrate or restep in between.
+				if (!mbRetryMode1050) {
+					// 810 -- add another (fake) rotation
+					if (missingSector)
+						secondByteDelay += kCyclesPerFakeRot_810;
+					else
+						secondByteDelay += mCyclesPerDiskRotation;
+				}
+
+				// Compute the restep/recalibration delay.
 				if (missingSector) {
+					// Missing sector -- we'll be recalibrating.
+					//
+					// The 1050 has a track 0 sensor, so it only does the necessary number of steps
+					// when recalibrating. The 810, on the other hand, doesn't have one and just
+					// steps back 43 tracks.
+					const uint32 restoreSteps = mbRetryMode1050 ? mCurrentTrack : 43;
+					const uint32 seekTime1 = restoreSteps ? restoreSteps * mCyclesPerTrackStep + mCyclesForHeadSettle : 0;
+
+					if (restoreSteps) {
+						PlaySeekSound(secondByteDelay, restoreSteps);
+						secondByteDelay += seekTime1;
+					}
+
+					// compute time to seek back -- no rotational delay to get back to sector, it
+					// doesn't exist (sectors don't magically reappear in our model).
+					if (mCurrentTrack) {
+						const uint32 tracksToStep = mbReverseOnForwardSeeks ? mCurrentTrack+1 : mCurrentTrack;
+
+						PlaySeekSound(secondByteDelay, tracksToStep);
+						secondByteDelay += tracksToStep * mCyclesPerTrackStep + mCyclesForHeadSettle;
+					}
+
+					// ...and do another fake rotation.
 					if (mbRetryMode1050)
 						secondByteDelay += kCyclesPerFakeRot_1050;
 					else
 						secondByteDelay += kCyclesPerFakeRot_810;
 				} else {
-					if (postSeekPosition > mRotationalPosition)
-						secondByteDelay += mCyclesPerDiskRotation;
+					// Found sector but read with error. For the 810, we'll just fail three
+					// more times. For the 1050, we need to do a half step in and back, then
+					// retry once.
+					if (mbRetryMode1050) {
+						// seek in and out
+						PlaySeekSound(secondByteDelay, 1);
 
-					secondByteDelay += mRotationalPosition - postSeekPosition;
-				}
+						// apply seek delay
+						uint32 reseekDelay = mCyclesPerTrackStep + mCyclesForHeadSettle;
 
-				// Check if we got an error.
-				if (mFDCStatus != 0xFF) {
-					// Check if we're modeling the 810 or 1050. The 810 does four tries overall
-					// with a possible recalibrate between the first two and second two attempts;
-					// the 1050 does two tries with a recalibrate or restep in between.
-					if (!mbRetryMode1050) {
-						// 810 -- add another (fake) rotation
-						if (missingSector)
-							secondByteDelay += kCyclesPerFakeRot_810;
-						else
-							secondByteDelay += mCyclesPerDiskRotation;
-					}
-
-					// Compute the restep/recalibration delay.
-					if (missingSector) {
-						// Missing sector -- we'll be recalibrating.
-						//
-						// The 1050 has a track 0 sensor, so it only does the necessary number of steps
-						// when recalibrating. The 810, on the other hand, doesn't have one and just
-						// steps back 43 tracks.
-						const uint32 restoreSteps = mbRetryMode1050 ? track : 43;
-						const uint32 seekTime1 = restoreSteps ? restoreSteps * mCyclesPerTrackStep + mCyclesForHeadSettle : 0;
-
-						if (restoreSteps) {
-							PlaySeekSound(secondByteDelay, restoreSteps);
-							secondByteDelay += seekTime1;
-						}
-
-						// compute time to seek back -- no rotational delay to get back to sector, it
-						// doesn't exist (sectors don't magically reappear in our model).
-						if (track) {
-							const uint32 tracksToStep = mbReverseOnForwardSeeks ? track+1 : track;
-
-							PlaySeekSound(secondByteDelay, tracksToStep);
-							secondByteDelay += tracksToStep * mCyclesPerTrackStep + mCyclesForHeadSettle;
-						}
-
-						// ...and do another fake rotation.
-						if (mbRetryMode1050)
-							secondByteDelay += kCyclesPerFakeRot_1050;
-						else
-							secondByteDelay += kCyclesPerFakeRot_810;
-					} else {
-						// Found sector but read with error. For the 810, we'll just fail three
-						// more times. For the 1050, we need to do a half step in and back, then
-						// retry once. To do this fully accurately we should be checking for phantom
-						// sectors each time; for now we just assume it's the same sector.
-						if (mbRetryMode1050) {
-							// seek in and out
-							PlaySeekSound(secondByteDelay, 1);
-
-							// apply seek delay + rotational delay to get back to same sector
-							uint32 reseekDelay = mCyclesPerTrackStep + mCyclesForHeadSettle;
-							reseekDelay += (mCyclesPerDiskRotation - (reseekDelay % mCyclesPerDiskRotation)) % mCyclesPerDiskRotation;
-
-							secondByteDelay += reseekDelay;
-						} else {
-							secondByteDelay += mCyclesPerDiskRotation * 3;
-						}
-					}
-
-				}
-
-				// add time to read sector and compute checksum
-				//
-				// sector read: ~130 bytes at 125Kbits/sec = ~8.3ms = ~14891 cycles
-				// FDC reset and checksum: ~2568 cycles @ 500KHz = 9192 cycles
-				if (mbMFM && psi.mSize == 128)
-					secondByteDelay += 12431;
-				else
-					secondByteDelay += 24083;
-
-				// check if accurate sector timing is off
-				if (!mbAccurateSectorTiming) {
-					// yes it is -- shorten the second byte delay to the fast complete time and
-					// warp the disk rotation by the amount of time we removed
-					if (secondByteDelay > mCyclesToCompleteFast) {
-						const uint32 warpTime = secondByteDelay - mCyclesToCompleteFast;
-						secondByteDelay = mCyclesToCompleteFast;
-
-						mRotationalCounter += warpTime;
-
-						UpdateRotationalCounter();
+						secondByteDelay += reseekDelay;
 					}
 				}
 
-				// check for missing sector
-				// note: must send ACK (41) + ERROR (45) -- BeachHead expects to get DERROR from SIO
-				if (missingSector) {
-					mbLastOpError = true;
+				// delay and then retry
+				WarpOrDelay(secondByteDelay);
+				Wait(mActiveCommandState + 1);
+				break;
+			}
 
-					// sector not found....
-					mSendPacket[0] = 0x41;
-					mSendPacket[1] = 0x45;
+			WarpOrDelay(secondByteDelay);
+			Wait(20);
+			break;
+		}
 
-					// don't clear the sector buffer!
-					mSendPacket[128+2] = Checksum(mSendPacket + 2, 128);
-					BeginTransfer(131, mCyclesToACKSent, secondByteDelay, mbCommandFrameHighSpeed, highSpeed, false);
+		default:
+			return false;
+	}
 
-					g_ATLCDisk("Reporting missing sector %d.\n", sector);
-					break;
+	return true;
+}
+
+void ATDiskEmulator::ProcessCommandRead() {
+	if (ProcessCommandReadWriteCommon(false))
+		return;
+
+	const uint32 sector = mActiveCommandSector;
+
+	switch(mActiveCommandState) {
+		case 0:
+			mLastSector = sector;
+
+			if (sector == mSectorBreakpoint)
+				g_sim.PostInterruptingEvent(kATSimEvent_DiskSectorBreakpoint);
+
+			// check if we have a happy drive memory request
+			if (mEmuMode == kATDiskEmulationMode_Happy && sector >= 0x8000) {
+				// Address must be in $8000-97FF.
+				if (sector >= 0x9800) {
+					// NAK the command.
+					BeginTransferNAK();
+					WarpOrDelay(500, 500);
+					SendResult(false, mSectorSize);
+					EndCommand();
+					return;
 				}
 
-				mSendPacket[0] = 0x41;		// ACK
-				mSendPacket[1] = 0x43;		// complete
+				// Copy data from drive RAM.
+				memcpy(mSendPacket, mDriveRAM + (sector - 0x8000), mSectorSize);
+				BeginTransferACKCmd();
+				WarpOrDelay(500, 500);
+				SendResult(true, mSectorSize);
+				EndCommand();
+				return;
+			}
 
-				mbLastOpError = (mFDCStatus != 0xFF);
+			// check if we actually have a disk; if not, we still allow sectors 1-720, but
+			// report them as missing
+			if (!mpDiskImage && sector >= 1 && sector <= 720) {
+				mbLastOpError = true;
 
-				try {
-					mpDiskImage->ReadPhysicalSector(physSector, mSendPacket + 2, psi.mSize);
-				} catch(const MyError&) {
-					// wipe sector and report CRC error
-					memset(mSendPacket + 2, 0, psi.mSize);
-					mFDCStatus = 0xF7;
-					mbLastOpError = true;
-				}
+				// A real 1050 reports 14/94 5F E0 00 when there is no disk in the
+				// drive. Bit 7 of drive status depends on the last FM/MFM state;
+				// bit 4 of drive status and bit 6 of FDC status updates dynamically
+				// based on the write protect sector. Bit 2 of FDC status (lost data)
+				// retains the previous state.
+				mFDCStatus &= 0x7F;
+				mFDCStatus |= 0x32;
 
-				// check for CRC error
-				// must return data on CRC error -- Koronis Rift requires this
-				if (~mFDCStatus & 0x28) {
-					mSendPacket[1] = 0x45;	// error
+				// sector not found....
+				BeginTransferACKCmd();
+				WarpOrDelay(mCyclesPerDiskRotation * 2, 1000);
 
-					// Check if we should emulate weak bits.
-					if (psi.mWeakDataOffset >= 0) {
-						for(int i = psi.mWeakDataOffset; i < (int)psi.mSize; ++i) {
-							mSendPacket[2 + i] ^= (uint8)mWeakBitLFSR;
+				// don't clear the sector buffer!
+				SendResult(false, 128);
 
-							mWeakBitLFSR = (mWeakBitLFSR << 8) + (0xff & ((mWeakBitLFSR >> (28 - 8)) ^ (mWeakBitLFSR >> (31 - 8))));
-						}
+				g_ATLCDisk("Reporting missing sector %d (no disk in drive).\n", sector);
+				EndCommand();
+				return;
+			}
+
+			if (!sector || sector > (uint32)mTotalSectorCount) {
+				// NAK the command immediately -- the 810 and 1050 both NAK commands
+				// with invalid sector numbers.
+
+				mbLastOpError = true;
+				SetupTransferSpeed(mbCommandFrameHighSpeed);
+				mpSIOMgr->SendNAK();
+				g_ATLCDisk("Error reading sector %d.\n", sector);
+				EndCommand();
+				return;
+			}
+
+			BeginTransferACKCmd();
+			mActiveCommandState = 10;
+			break;
+
+		case 20: {
+			if (!mpDiskImage)
+				mActiveCommandPhysSector = -1;
+
+			ATDiskPhysicalSectorInfo psi = {};
+			if (mActiveCommandPhysSector >= 0)
+				mpDiskImage->GetPhysicalSectorInfo((uint32)mActiveCommandPhysSector, psi);
+
+			// Warp disk to beginning of sector, if it isn't already there.
+			UpdateRotationalCounter();
+			mRotationalCounter = mTransferCompleteRotPos;
+
+			// Add time to read sector and compute checksum.
+			//
+			// sector read: ~130 bytes at 125Kbits/sec = ~8.3ms = ~14891 cycles
+			// FDC reset and checksum: ~2568 cycles @ 500KHz = 9192 cycles
+			const uint32 sectorReadDelay = (mbMFM && psi.mSize == 128) ? 7445 : 14891;
+			const uint32 postReadDelay = mbMFM ? 0 : 9192;
+			WarpOrDelay(sectorReadDelay + postReadDelay, 1000);
+
+			// check for missing sector
+			// note: must send ACK (41) + ERROR (45) -- BeachHead expects to get DERROR from SIO
+			if (mActiveCommandPhysSector < 0 || psi.mSize == 0) {
+				mbLastOpError = true;
+
+				// sector not found....
+				// don't clear the sector buffer!
+				SendResult(false, mpDiskImage ? mpDiskImage->GetSectorSize(sector - 1) : 128);
+
+				g_ATLCDisk("Reporting missing sector %d.\n", sector);
+				EndCommand();
+				return;
+			}
+
+			try {
+				mpDiskImage->ReadPhysicalSector((uint32)mActiveCommandPhysSector, mSendPacket, psi.mSize);
+			} catch(const MyError&) {
+				// wipe sector and report CRC error
+				memset(mSendPacket, 0, psi.mSize);
+				mFDCStatus = 0xF7;
+			}
+			
+			mbLastOpError = (mFDCStatus != 0xFF);
+
+			// check for CRC error
+			// must return data on CRC error -- Koronis Rift requires this
+			bool successful = true;
+			if (~mFDCStatus & 0x2E) {
+				successful = false;
+
+				// Check if we should emulate weak bits.
+				if (psi.mWeakDataOffset >= 0) {
+					for(int i = psi.mWeakDataOffset; i < (int)psi.mSize; ++i) {
+						mSendPacket[i] ^= (uint8)mWeakBitLFSR;
+
+						mWeakBitLFSR = (mWeakBitLFSR << 8) + (0xff & ((mWeakBitLFSR >> (28 - 8)) ^ (mWeakBitLFSR >> (31 - 8))));
 					}
 				}
+			}
 
-				mSendPacket[psi.mSize+2] = Checksum(mSendPacket + 2, psi.mSize);
-				const uint32 transferLength = psi.mSize + 3;
+			const uint32 transferLength = psi.mSize;
 
-				BeginTransfer(transferLength, mCyclesToACKSent, secondByteDelay, mbCommandFrameHighSpeed, highSpeed, mbMFM && psi.mSize == 128);
+			SendResult(successful, transferLength);
+
+			if (g_ATLCDisk.IsEnabled()) {
+				Wait(21);
+				break;
+			}
+		}
+		case 21:
+			if (g_ATLCDisk.IsEnabled() && mpDiskImage) {
+				UpdateRotationalCounter();
+
+				ATDiskVirtualSectorInfo vsi = {};
+				mpDiskImage->GetVirtualSectorInfo(mActiveCommandSector - 1, vsi);
+
+				ATDiskPhysicalSectorInfo psi = {};
+				mpDiskImage->GetPhysicalSectorInfo(mActiveCommandPhysSector, psi);
+
 				g_ATLCDisk("Reading vsec=%3d (%d/%d) (trk=%d), psec=%3d, chk=%02x, rot=%.2f >> %.2f >> %.2f%s.\n"
 						, sector
-						, physSector - vsi.mStartPhysSector + 1
+						, (uint32)mActiveCommandPhysSector - vsi.mStartPhysSector + 1
 						, vsi.mNumPhysSectors
 						, (sector - 1) / mSectorsPerTrack
-						, physSector
-						, mSendPacket[mTransferLength - 1]
+						, (uint32)mActiveCommandPhysSector
+						, Checksum(mSendPacket, mTransferLength)
 						, (float)mRotations + (float)mRotationalCounter / (float)mCyclesPerDiskRotation
 						, psi.mRotPos
-						, (mTransferCompleteRotPos % mCyclesPerDiskRotation) / (float)mCyclesPerDiskRotation
+						, (float)mRotationalCounter / (float)mCyclesPerDiskRotation
 						,  psi.mWeakDataOffset >= 0 ? " (w/weak bits)"
-							: !(mFDCStatus & 0x04) ? " (w/long sector)"
+							: !(mFDCStatus & 0x02) ? " (w/long sector)"		// must use DRQ as lost data differs between drives
 							: !(mFDCStatus & 0x08) ? " (w/CRC error)"
 							: !(mFDCStatus & 0x10) ? " (w/missing sector)"
 							: !(mFDCStatus & 0x20) ? " (w/deleted sector)"
 							: ""
 						);
-
-				if (mbAccurateSectorTiming || mbAccurateSectorPrediction)
-					mbTransferAdjustRotation = true;
 			}
+
+			EndCommand();
 			break;
+	}
+}
 
-#if 0	// These commands are documented by Atari in the OS manual but were never implemented.
-		case 0x20:	// download
-			break;
-		case 0x51:	// read spin
-			break;
-		case 0x54:	// readaddr
-			break;
-		case 0x55:	// motor on
-			break;
-		case 0x56:	// verify sector
-			break;
-#endif
+void ATDiskEmulator::ProcessCommandWrite() {
+	if (ProcessCommandReadWriteCommon(true))
+		return;
 
-		case 0x21:	// format
-		case 0xA1:	// format (high speed)
-			TurnOnMotor();
+	switch(mActiveCommandState) {
+		case 0:
+			mLastSector = mActiveCommandSector;
 
-			// Disable high speed operation if we're getting an XF551 command -- the high bit
-			// is used for sector skew and not high speed.
-			if (command == 0xA1)
-				mbActiveCommandHighSpeed = false;
+			if (mActiveCommandSector == mSectorBreakpoint)
+				g_sim.PostInterruptingEvent(kATSimEvent_DiskSectorBreakpoint);
 
-			if (!mbWriteEnabled) {
-				g_ATLCDisk("FORMAT COMMAND RECEIVED. Blocking due to read-only disk!\n");
-
-				// The FORMAT command always sends an ACK first and then sends ERROR instead of
-				// COMPLETE if the disk is write protected. In that case, we need to send a data
-				// frame.
-				mSendPacket[0] = 'A';		// ACK
-				mSendPacket[1] = 'E';		// Error
-				mSendPacket[2] = 0xFF;		// Sector terminator (sector buffer data)
-				mSendPacket[3] = 0xFF;
-				memset(mSendPacket + 4, 0, mSectorSize - 2);
-				mSendPacket[mSectorSize + 2] = 0xFF;
-				mbLastOpError = true;
-
-				// Assert FDC status bit 6 (write protect).
-				mFDCStatus = 0xBF;
-
-				BeginTransfer(mSectorSize + 3, mCyclesToACKSent, 0, mbCommandFrameHighSpeed, false, false);
-			} else {
-				mbLastOpError = false;
-				BeginTransferACKCmd();
-
-				// If we are doing this on an 810 or 1050, reset the PERCOM block to default.
-				switch(mEmuMode) {
-					case kATDiskEmulationMode_810:
-					case kATDiskEmulationMode_1050:
-						memcpy(mPERCOM, kDefaultPERCOM, sizeof mPERCOM);
-						break;
+			// check if we have a happy drive memory request
+			if (mEmuMode == kATDiskEmulationMode_Happy && mActiveCommandSector >= 0x8000) {
+				// Address must be in $8000-97FF.
+				if (mActiveCommandSector >= 0x9800) {
+					// NAK the command.
+					mbLastOpError = true;
+					BeginTransferNAK();
+					SendResult(false, mSectorSize);
+					EndCommand();
+					return;
 				}
 
-				int formatSectorSize = VDReadUnalignedBEU16(&mPERCOM[6]);
-				int formatSectorCount = mPERCOM[0] * (sint32)VDReadUnalignedBEU16(&mPERCOM[2]) * (mPERCOM[4] + 1);
-				int formatBootSectorCount = formatSectorSize >= 512 ? 0 : 3;
-
-				g_ATLCDisk("FORMAT COMMAND RECEIVED. Reformatting disk as %u sectors of %u bytes each.\n", formatSectorCount, formatSectorSize);
-				FormatDisk(formatSectorCount, formatBootSectorCount, formatSectorSize);
-
-				if (mpOperationEvent)
-					mpScheduler->RemoveEvent(mpOperationEvent);
-
-				mpOperationEvent = mpScheduler->AddEvent(1000000, this, kATDiskEventFormatCompleted);
-			}
-			break;
-
-		case 0x22:	// format disk medium density
-		case 0xA2:	// format disk medium density (high speed)
-			if (mEmuMode == kATDiskEmulationMode_810)
-				goto unsupported_command;
-
-			TurnOnMotor();
-
-			if (!mbWriteEnabled) {
-				g_ATLCDisk("FORMAT COMMAND RECEIVED. Blocking due to read-only disk!\n");
-				mSendPacket[0] = 'A';		// ACK
-				mSendPacket[1] = 'E';		// Error
-				mSendPacket[2] = 0xFF;		// Sector terminator (sector buffer data)
-				mSendPacket[3] = 0xFF;
-				memset(mSendPacket + 4, 0, 126);
-				mSendPacket[130] = 0xFF;
-				mbLastOpError = true;
-
-				// Assert FDC status bit 6 (write protect).
-				mFDCStatus = 0xBF;
-
-				BeginTransfer(131, mCyclesToACKSent, 0, mbCommandFrameHighSpeed, highSpeed, false);
-			} else {
 				mbLastOpError = false;
 				BeginTransferACKCmd();
-
-				g_ATLCDisk("FORMAT COMMAND RECEIVED. Reformatting disk as enhanced density.\n");
-				FormatDisk(1040, 3, 128);
-
-				ComputeGeometry();
-				ComputePERCOMBlock();
-
-				if (mpOperationEvent)
-					mpScheduler->RemoveEvent(mpOperationEvent);
-
-				// Disable high speed operation if we're getting an XF551 command -- the high bit
-				// is used for sector skew and not high speed.
-				if (command == 0xA2)
-					mbActiveCommandHighSpeed = false;
-
-				mpOperationEvent = mpScheduler->AddEvent(1000000, this, kATDiskEventFormatCompleted);
+				BeginReceive(mSectorSize);
+				Wait(50);
+				return;
 			}
-			break;
 
-		case 0x66:	// format disk skewed
-		case 0xE6:	// format disk skewed
-			if (!mbSupportedCmdFormatSkewed)
-				goto unsupported_command;
-
-			TurnOnMotor();
+			if (!mpDiskImage || !mActiveCommandSector || mActiveCommandSector > (uint32)mTotalSectorCount) {
+				// NAK the command immediately -- the 810 and 1050 both NAK commands
+				// with invalid sector numbers.
+				mbLastOpError = true;
+				BeginTransferNAK();
+				EndCommand();
+				g_ATLCDisk("Error writing sector %d.\n", mActiveCommandSector);
+				break;
+			}
 
 			mbLastOpError = false;
 			BeginTransferACKCmd();
 
-			mActiveCommand = 0x66;
-			mActiveCommandState = 0;
-			break;
-
-		case 0x50:	// put (without verify)
-		case 0xD0:	// put (without verify) (XF551 high speed)
-		case 0x57:	// write (with verify)
-		case 0xD7:	// write (with verify) (XF551 high speed)
-			{
-				uint32 sector = mReceivePacket[2] + mReceivePacket[3] * 256;
-
-				mLastSector = sector;
-
-				if (sector == mSectorBreakpoint)
-					g_sim.PostInterruptingEvent(kATSimEvent_DiskSectorBreakpoint);
-
-				if (!sector || sector > (uint32)mTotalSectorCount) {
-					// NAK the command immediately -- the 810 and 1050 both NAK commands
-					// with invalid sector numbers.
-					mbLastOpError = true;
-					BeginTransferNAK();
-					g_ATLCDisk("Error writing sector %d.\n", sector);
-					break;
-				}
-
-				TurnOnMotor();
-
-				mbLastOpError = false;
-				BeginTransferACKCmd();
-
-				// get virtual sector information
-				ATDiskVirtualSectorInfo vsi;
-				mpDiskImage->GetVirtualSectorInfo(sector - 1, vsi);
-
-				mActiveCommand = ((command & 0x7f) == 0x50) ? 'P' : 'W';
-				mActiveCommandState = 0;
-				mActiveCommandPhysSector = vsi.mStartPhysSector;
-				break;
-			}
-			break;
-
-		case 0x4E:	// read PERCOM block
-		case 0xCE:	// read PERCOM block (XF551 high speed)
-			if (!mbSupportedCmdPERCOM)
-				goto unsupported_command;
-
-			{
-				mSendPacket[0] = 'A';
-				mSendPacket[1] = 'C';
-
-				ReadPERCOMBlock(mSendPacket + 2);
-
-				const int sectorSize = VDReadUnalignedBEU16(&mPERCOM[6]);
-				const int sectorCount = mPERCOM[0] * (sint32)VDReadUnalignedBEU16(&mPERCOM[2]) * (mPERCOM[4] + 1);
-				g_ATLCDisk("Reading PERCOM data: %u sectors of %u bytes each, %u boot sectors\n", sectorCount, sectorSize, sectorSize > 256 ? 0 : 3);
-
-				BeginTransfer(15, 2500, 0, mbCommandFrameHighSpeed, highSpeed, false);
-			}
-			break;
-
-		case 0x4F:	// write PERCOM block
-		case 0xCF:	// write PERCOM block (XF551 high speed)
-			if (!mbSupportedCmdPERCOM)
-				goto unsupported_command;
-
-			{
-				BeginTransferACKCmd();
-				mActiveCommand = 0x4F;
-				mActiveCommandState = 0;
-			}
-			break;
-
-		case 0x3F:	// get high speed index
-			if (!mbSupportedCmdGetHighSpeedIndex)
-				goto unsupported_command;
-
-			{
-				mSendPacket[0] = 'A';
-				mSendPacket[1] = 'C';
-
-				mSendPacket[2] = mHighSpeedIndex;
-				mSendPacket[3] = Checksum(mSendPacket + 2, 1);
-
-				BeginTransfer(4, 2500, 0, mbCommandFrameHighSpeed, mbCommandFrameHighSpeed, false);
-			}
-			break;
-
-		case 0x48:
-			if (mEmuMode != kATDiskEmulationMode_Happy)
-				goto unsupported_command;
-
-			{
-				mSendPacket[0] = 'A';
-				mSendPacket[1] = 'C';
-
-				BeginTransfer(2, 2500, 0, mbCommandFrameHighSpeed, mbCommandFrameHighSpeed, false);
-			}
-			break;
-
-		default:
-unsupported_command:
-			BeginTransferNAK();
-
-			{
-				const char *desc = "?";
-
-				switch(command) {
-					case 0x21:
-						desc = "Format medium density; not supported by current profile";
-						break;
-
-					case 0x3F:
-						desc = "Get high speed index; not supported by current profile";
-						break;
-
-					case 0x48:
-						desc = "Happy command; not supported by current profile";
-						break;
-
-					case 0x4E:
-						desc = "Read PERCOM block; not supported by current profile";
-						break;
-
-					case 0x4F:
-						desc = "Write PERCOM block; not supported by current profile";
-						break;
-
-					case 0x58:
-						desc = "CA-2001 write/execute";
-						break;
-
-					case 0x66:
-						desc = "Format with sector skew; not supported by current profile";
-						break;
-				}
-
-				g_ATLCDisk("Unsupported command %02X (%s)\n", command, desc);
-			}
-			break;
-
-	}
-
-	mpActivity->OnDiskActivity(mUnit + 1, mbWriteMode, mLastSector);
-}
-
-void ATDiskEmulator::ProcessCommandTransmitCompleted() {
-	if (mActiveCommand == 'W' || mActiveCommand == 'P') {
-		ATDiskPhysicalSectorInfo psi;
-		mpDiskImage->GetPhysicalSectorInfo(mActiveCommandPhysSector, psi);
-
-		if (mActiveCommandState == 0) {
 			// wait for remaining data
-			mTransferOffset = 0;
-			mTransferLength = psi.mSize + 1;
+			BeginReceive(mpDiskImage->GetSectorSize(mActiveCommandSector - 1));
 
-			g_ATLCDisk("Sent ACK, now waiting for write data.\n", mActiveCommandPhysSector);
-			mActiveCommandState = 1;
-		} else if (!mbWriteEnabled) {
-			mFDCStatus = 0xBF;
-			mbLastOpError = true;
-			mActiveCommand = 0;
+			g_ATLCDisk("Sent ACK, now waiting for write data.\n");
+			// enter common path to turn on motor and seek
+			Wait(10);
+			break;
 
-			BeginTransferError();
-		} else {
+		case 20: {
+			// check if we don't have a disk anymore; if so, report record not found
+			if (!mpDiskImage) {
+				mFDCStatus = 0xEF;
+				mbLastOpError = true;
+
+				BeginTransferError();
+				EndCommand();
+				return;
+			}
+
+			// check if disk is write protected -- 810 and 1050 do this post-seek
+			if (!mbWriteEnabled) {
+				mFDCStatus = 0xBF;
+				mbLastOpError = true;
+
+				BeginTransferError();
+				EndCommand();
+				return;
+			}
+
+			// get virtual sector information
+			ATDiskVirtualSectorInfo vsi;
+			mpDiskImage->GetVirtualSectorInfo(mActiveCommandSector - 1, vsi);
+
+			ATDiskPhysicalSectorInfo psi;
+			mpDiskImage->GetPhysicalSectorInfo(vsi.mStartPhysSector, psi);
+
 			// commit data to physical sector
-			g_ATLCDisk("Writing psec=%3d.\n", mActiveCommandPhysSector);
+			g_ATLCDisk("Writing vsec=%3u, psec=%3u.\n", mActiveCommandSector, vsi.mStartPhysSector);
 
 			try {
-				mpDiskImage->WritePhysicalSector(mActiveCommandPhysSector, mReceivePacket, psi.mSize);
+				mpDiskImage->WritePhysicalSector(vsi.mStartPhysSector, mReceivePacket, psi.mSize);
 
 				// set FDC status
 				mFDCStatus = 0xFF;
@@ -1872,182 +1793,626 @@ void ATDiskEmulator::ProcessCommandTransmitCompleted() {
 				rotDelay += 10000;	// fudge factor
 			}
 
-			mActiveCommand = 0;
+			WarpOrDelay(rotDelay);
 
-			mpScheduler->SetEvent(rotDelay, this, kATDiskEventWriteCompleted, mpOperationEvent);
+			if (mbLastOpError)
+				BeginTransferError();
+			else
+				BeginTransferComplete();
+
+			EndCommand();
+			break;
 		}
-	} else if (mActiveCommand == 0x4F) {		// write PERCOM block
-		if (mActiveCommandState == 0) {
-			// wait for remaining data
-			mTransferOffset = 0;
-			mTransferLength = 13;
+
+		case 50:
+			BeginTransferACK();
+			WarpOrDelay(500, 500);
+			BeginTransferComplete();
+
+			// Enable custom commands if the write is >=$9600; hooking requires
+			// writing somewhere within $9600-97FF.
+			if (mActiveCommandSector >= 0x9600)
+				mCustomCodeState = 1;
+
+			memcpy(mDriveRAM + (mActiveCommandSector - 0x8000), mReceivePacket, mSectorSize);
+			EndCommand();
+			break;
+	}
+}
+
+void ATDiskEmulator::ProcessCommandReadPERCOMBlock() {
+	if (!mbSupportedCmdPERCOM)
+		return ProcessUnsupportedCommand();
+
+	BeginTransferACKCmd();
+
+	WarpOrDelay(200, 200);
+
+	memcpy(mSendPacket, mPERCOM, 12);
+
+	if (mEmuMode == kATDiskEmulationMode_XF551) {
+		mSendPacket[1] = 0;		// step rate 0
+		mSendPacket[8] = 1;		// drive active
+	}
+
+	const int sectorSize = VDReadUnalignedBEU16(&mPERCOM[6]);
+	const int sectorCount = mPERCOM[0] * (sint32)VDReadUnalignedBEU16(&mPERCOM[2]) * (mPERCOM[4] + 1);
+	g_ATLCDisk("Reading PERCOM data: %u sectors of %u bytes each, %u boot sectors\n", sectorCount, sectorSize, sectorSize > 256 ? 0 : 3);
+
+	SendResult(true, 12);
+	EndCommand();
+}
+
+void ATDiskEmulator::ProcessCommandWritePERCOMBlock() {
+	switch(mActiveCommandState) {
+		case 0:
+			if (!mbSupportedCmdPERCOM)
+				return ProcessUnsupportedCommand();
+
+			BeginTransferACKCmd();
+			BeginReceive(12);
 
 			g_ATLCDisk("Sent ACK, now waiting for PERCOM block data.\n");
-			mActiveCommandState = 1;
-		} else {
+			Wait(1);
+			break;
+
+		case 1: {
+			// validate PERCOM data
+			bool valid = SetPERCOMData(mReceivePacket);
+
+			if (!valid) {
+				BeginTransferError();
+				EndCommand();
+				return;
+			}
 
 			mFDCStatus = 0xFF;
 			mbLastOpError = false;
 
-			mActiveCommand = 0;
-
-			mpScheduler->SetEvent(1000, this, kATDiskEventWriteCompleted, mpOperationEvent);
+			WarpOrDelay(200, 200);
+			BeginTransferComplete();
+			EndCommand();
+			break;
 		}
-	} else if (mActiveCommand == 0x66) {		// format skewed
-		if (mActiveCommandState == 0) {
+	}
+}
+
+void ATDiskEmulator::ProcessCommandGetHighSpeedIndex() {
+	if (!mbSupportedCmdGetHighSpeedIndex)
+		return ProcessUnsupportedCommand();
+
+	BeginTransferACKCmd();
+
+	mSendPacket[0] = mHighSpeedIndex;
+
+	WarpOrDelay(200, 200);
+
+	SendResult(true, 1);
+	EndCommand();
+}
+
+void ATDiskEmulator::ProcessCommandHappy() {
+	if (mEmuMode != kATDiskEmulationMode_Happy)
+		return ProcessUnsupportedCommand();
+
+	BeginTransferACKCmd();
+
+	WarpOrDelay(200, 200);
+
+	BeginTransferComplete();
+
+	EndCommand();
+}
+
+void ATDiskEmulator::ProcessCommandHappyQuiet() {
+	if (mEmuMode != kATDiskEmulationMode_Happy)
+		return ProcessUnsupportedCommand();
+
+	BeginTransferACKCmd();
+
+	WarpOrDelay(200, 200);
+
+	TurnOffMotor();
+
+	BeginTransferComplete();
+
+	EndCommand();
+}
+
+void ATDiskEmulator::ProcessCommandHappyRAMTest() {
+	if (mEmuMode != kATDiskEmulationMode_Happy || !mCustomCodeState)
+		return ProcessUnsupportedCommand();
+
+	BeginTransferACKCmd();
+
+	WarpOrDelay(200, 200);
+
+	memset(mSendPacket, 0, 128);
+
+	SendResult(true, 128);
+	EndCommand();
+}
+
+void ATDiskEmulator::ProcessCommandHappyHeadPosTest() {
+	switch(mActiveCommandState) {
+		case 0: {
+			if (mEmuMode != kATDiskEmulationMode_Happy || !mCustomCodeState)
+				return ProcessUnsupportedCommand();
+
+			BeginTransferACKCmd();
+
+			WarpOrDelay(200, 200);
+
+			uint32 track = 0;
+			if (mActiveCommand == 0x29)
+				track = ~mActiveCommandSector & 0xff;
+
+			if (track >= 40) {
+				BeginTransferError();
+				EndCommand();
+				break;
+			}
+
+			// motor on
+			if (TurnOnMotor())
+				WarpOrDelay(7159090/8);
+
+			// check if we need to seek
+			int trackDelta = (int)track - (int)mCurrentTrack;
+			uint32 tracksToStep = (uint32)abs(trackDelta);
+
+			mCurrentTrack = track;
+
+			uint32 opDelay = 0;
+			if (tracksToStep) {
+				if (trackDelta > 0) {
+					PlaySeekSound(opDelay, tracksToStep + 1);
+					opDelay += (tracksToStep + 1) * mCyclesPerTrackStep;
+				} else {
+					PlaySeekSound(opDelay, tracksToStep);
+					opDelay += tracksToStep * mCyclesPerTrackStep;
+				}
+
+				opDelay += mCyclesForHeadSettle;
+			}
+
+			WarpOrDelay(opDelay);
+			Wait(1);
+			break;
+		}
+
+		case 1:
+			BeginTransferComplete();
+			EndCommand();
+			break;
+	}
+}
+
+void ATDiskEmulator::ProcessCommandHappyRPMTest() {
+	switch(mActiveCommandState) {
+		case 0:
+			if (mEmuMode != kATDiskEmulationMode_Happy || !mCustomCodeState)
+				return ProcessUnsupportedCommand();
+
+			BeginTransferACKCmd();
+
+			WarpOrDelay(200, 200);
+			Wait(1);
+			break;
+
+		case 1:
+			// Wait for the index mark, then another index mark.
+			UpdateRotationalCounter();
+			WarpOrDelay(mCyclesPerDiskRotation + (mCyclesPerDiskRotation - mRotationalCounter));
+
+			memset(mSendPacket, 0, 128);
+
+			// The return value is related as follows:
+			// rval = 2000000 / (RPM - 0.25)
+			VDWriteUnalignedLEU16(mSendPacket, 6952);
+
+			SendResult(true, 128);
+			EndCommand();
+			break;
+	}
+}
+
+void ATDiskEmulator::ProcessCommandExecuteIndusGT() {
+	switch(mActiveCommandState) {
+		case 0:
+			if (mEmuMode != kATDiskEmulationMode_IndusGT)
+				return ProcessUnsupportedCommand();
+
+			mbLastOpError = false;
+				
+			// There's a lot of voodoo here that needs explaining.
+			//
+			// The Indus GT allows code to be uploaded to the drive at address 7F00h. This is
+			// done by sending AUX1=len, AUX2=odd. The custom code is then called with
+			// AUX2 even.
+			//
+			// Since we don't have actual Z80 emulation, we detect the code fragments uploaded
+			// via AUX1 even and emulate the behavior on AUX1 odd. There are a few code fragments
+			// that we are interested in:
+			//
+			//	Version check:
+			//		Returns the major/minor version of the drive in a two-byte packet. We
+			//		return $01 20 for 1.20.
+			//
+			//	Synchromesh loader:
+			//		Uploads $0367 bytes to the drive at address 7B84h. This is done in ascending
+			//		order, but strangely the first packet is the short packet ($67 bytes) and
+			//		the remaining packets are $100 bytes. The last packet is an empty packet.
+			//
+			//	SuperSynchromesh loader:
+			//		Uploads $0369 bytes to the drive at address 7B84h, similarly to the Synchromesh
+			//		loader. After this, another $02F5 bytes are uploaded at 7840h to support the
+			//		RamCharger.
+			//
+			//	SuperSynchromesh loader (SDX INDUS.SYS version):
+			//		Similar to SuperSynchromesh, but with the RamCharger part omitted.
+
+			if (mActiveCommandSector & 0x100) {
+				BeginTransferACKCmd();
+
+				mActiveCommandSector &= 0xFF;
+
+				// wait for remaining data
+				BeginReceive(mActiveCommandSector);
+
+				g_ATLCDisk("Sent ACK, now waiting for upload data.\n");
+				Wait(3);
+				return;
+			}
+			
+			if (mActiveCommandSector >= 0x100) {
+				BeginTransferNAK();
+				EndCommand();
+				break;
+			}
+
+			switch(mCustomCodeState) {
+				default:
+				case 0:
+					BeginTransferACKCmd();
+					BeginTransferError();
+					EndCommand();
+					return;
+
+				case 1:
+					BeginTransferACKCmd();
+					mSendPacket[0] = 0x20;
+					mSendPacket[1] = 0x01;
+					SendResult(true, 2);
+					mCustomCodeState = 0;
+					EndCommand();
+					return;
+					break;
+
+				case 2:
+				case 3:
+				case 4:
+				case 5:
+				case 7:
+				case 8:
+				case 9:
+				case 10:
+				case 12:
+				case 13:
+				case 14:
+				case 16:
+				case 17:
+				case 18:
+				case 19:
+					BeginTransferACKCmd();
+					mActiveCommandState = 10;
+					mActiveCommandSector = 0x100;
+
+					if (mCustomCodeState == 2)
+						mActiveCommandSector = 0x67;
+					if (mCustomCodeState == 7 || mCustomCodeState == 16)
+						mActiveCommandSector = 0x69;
+					if (mCustomCodeState == 12)
+						mActiveCommandSector = 0xF5;
+					break;
+
+				case 6:
+				case 11:
+				case 15:
+				case 20:
+					BeginTransferACKCmd();
+					mpSIOMgr->Delay(1000);
+					BeginTransferComplete();
+
+					if (mCustomCodeState == 6) {
+						g_ATLCDisk("Firmware upload recognized. Enabling Synchromesh operation.\n");
+						mHighSpeedIndex = 10;
+						mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_IndusGT_Synchromesh;
+						mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_IndusGT_Synchromesh;
+						UpdateHighSpeedTiming();
+					} else if (mCustomCodeState == 11 || mCustomCodeState == 20) {
+						g_ATLCDisk("Firmware upload recognized. Enabling SuperSynchromesh operation.\n");
+
+						mHighSpeedIndex = 6;
+						mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_IndusGT_SuperSynchromesh;
+						mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_IndusGT_SuperSynchromesh;
+						mCyclesCEToDataFrameHighSpeed = 571;
+						mCyclesCEToDataFrameHighSpeedPBDiv256 = 3780;
+						UpdateHighSpeedTiming();
+
+						if (mCustomCodeState == 11)
+							mCustomCodeState = 12;
+						else
+							mCustomCodeState = 0;
+					} else {
+						g_ATLCDisk("Firmware upload recognized. Ignoring RamCharger firmware.\n");
+						mCustomCodeState = 0;
+					}
+
+					EndCommand();
+					return;
+			}
+
 			// wait for remaining data
-			mTransferOffset = 0;
-			mTransferLength = 129;
+			BeginReceive(mActiveCommandSector);
 
-			g_ATLCDisk("Sent ACK, now waiting for PERCOM and sector skew data.\n");
-			mActiveCommandState = 1;
-		} else {
-			mActiveCommand = 0;
+			g_ATLCDisk("Sent ACK, now waiting for upload data (%u bytes).\n", mActiveCommandSector);
+			Wait(10);
 
-			if (!mbWriteEnabled) {
-				g_ATLCDisk("Failing format skewed command ($66/$E6) due to read-only disk!\n");
-				mSendPacket[0] = 0x45;		// error
+			break;
+
+		case 3: {
+			mCustomCodeState = 0;
+
+			bool successful = false;
+
+			// The Indus GT accepts arbitrary code uploads to 7F00h, but we can't
+			// support that since we aren't actually emulating the Z80. Instead, we
+			// cheat and identify+simulate the code upload. The fragments we recognize:
+			//
+			//	Length	Checksum	Desc
+			//	$19		$52			Version check (returns major/minor version)
+			//	$8A		$EB			Synchromesh uploader
+			//	$E5		$45			SuperSynchromesh uploader
+			//	$E5		$F0			SuperSynchromesh uploader w/o RamCharger (used by SDX)
+			const uint8 checksum = Checksum(mReceivePacket, mActiveCommandSector);
+
+			if (mActiveCommandSector == 0x19 && checksum == 0x52) {
+				mCustomCodeState = 1;
+				g_ATLCDisk("Accepting code upload: Indus GT version check.\n");
+				successful = true;
+			} else if (mActiveCommandSector == 0x8A && checksum == 0xEB) {
+				mCustomCodeState = 2;
+				g_ATLCDisk("Accepting code upload: Indus GT Synchromesh firmware loader.\n");
+				successful = true;
+			} else if (mActiveCommandSector == 0xE5 && checksum == 0x45) {
+				mCustomCodeState = 7;
+				g_ATLCDisk("Accepting code upload: Indus GT SuperSynchromesh + RamCharger firmware loader.\n");
+				successful = true;
+			} else if (mActiveCommandSector == 0xE5 && checksum == 0xF0) {
+				mCustomCodeState = 16;
+				g_ATLCDisk("Accepting code upload: Indus GT SuperSynchromesh firmware loader.\n");
+				successful = true;
+			} else {
+				g_ATLCDisk("Rejecting unknown code upload: len=$%04X bytes, checksum=$%02X\n", mActiveCommandSector, checksum);
+			}
+
+			WarpOrDelay(1000);
+			
+			if (successful)
+				BeginTransferComplete();
+			else
+				BeginTransferError();
+
+			EndCommand();
+			break;
+		}
+
+		case 10: {
+			static const uint8 kCodeChecksums[] = {
+				// state 2 - Synchromesh
+				0x49,
+				0x22,
+				0xA0,
+				0xCF,
+				0x00,
+
+				// state 7 - SuperSynchromesh
+				0xDA,
+				0xBA,
+				0x62,
+				0xF5,
+				0x00,
+
+				// state 12 - RamCharger
+				0xA4,
+				0xEE,
+				0x96,
+				0x00,
+
+				// state 16 - SuperSynchromesh patched
+				0x6E,
+				0xBA,
+				0x62,
+				0xF5,
+				0x00,
+			};
+
+			const uint8 checksum = Checksum(mReceivePacket, mActiveCommandSector);
+			const uint8 expected = kCodeChecksums[mCustomCodeState - 2];
+
+			if (checksum != expected) {
+				g_ATLCDisk("Rejecting Synchromesh code upload: state=%d, chksum=$%02X, expected=$%02X\n", mCustomCodeState, checksum, expected);
+
+				mCustomCodeState = 0;
+				WarpOrDelay(1000);
+				BeginTransferError();
+				EndCommand();
+				return;
+			}
+
+			++mCustomCodeState;
+
+			WarpOrDelay(1000);
+			BeginTransferComplete();
+			EndCommand();
+			break;
+		}
+	}
+}
+
+void ATDiskEmulator::ProcessCommandFormat() {
+	switch(mActiveCommandState) {
+		case 0:
+			if (mOriginalCommand == 0xA3) {
+				if (mEmuMode != kATDiskEmulationMode_IndusGT || mHighSpeedIndex < 0)
+					return ProcessUnsupportedCommand();
+			} else if ((mOriginalCommand & 0x7F) == 0x22) {
+				if (mEmuMode == kATDiskEmulationMode_810)
+					return ProcessUnsupportedCommand();
+			} else if ((mOriginalCommand & 0x7F) == 0x66) {
+				if (!mbSupportedCmdFormatSkewed)
+					return ProcessUnsupportedCommand();
+			}
+
+			TurnOnMotor();
+
+			// Disable high speed operation if we're getting an XF551 command -- the high bit
+			// is used for sector skew and not high speed. This must NOT be done for the Indus
+			// GT since the Synchromesh and SuperSynchromesh firmwares use high speed all the
+			// way through.
+			if (mOriginalCommand == 0xA1 && mEmuMode == kATDiskEmulationMode_XF551)
+				mbActiveCommandHighSpeed = false;
+
+			if (!mbWriteEnabled || !mbFormatEnabled) {
+				if (mbWriteEnabled)
+					g_ATLCDisk("FORMAT COMMAND RECEIVED. Blocking due to format-protected disk!\n");
+				else
+					g_ATLCDisk("FORMAT COMMAND RECEIVED. Blocking due to read-only disk!\n");
+
+				// The FORMAT command always sends an ACK first and then sends ERROR instead of
+				// COMPLETE if the disk is write protected. In that case, we need to send a data
+				// frame.
+				const uint32 sectorSize = ((mOriginalCommand & 0x7F) == 0x22) ? 128 : mSectorSize;
+				BeginTransferACK();
+				mSendPacket[0] = 0xFF;		// Sector terminator (sector buffer data)
 				mSendPacket[1] = 0xFF;
-				mSendPacket[2] = 0xFF;
-				memset(mSendPacket + 3, 0, mSectorSize - 2);
-				mSendPacket[mSectorSize + 1] = 0xFF;
+				memset(mSendPacket + 2, 0, sectorSize - 2);
+				mSendPacket[sectorSize] = 0xFF;
+				mbLastOpError = true;
 
 				// Assert FDC status bit 6 (write protect).
 				mFDCStatus = 0xBF;
 
-				mbLastOpError = true;
-				BeginTransfer(mSectorSize + 2, mCyclesToACKSent, 0, mbActiveCommandHighSpeed, mbActiveCommandHighSpeed, false);
-			} else {
-				mFDCStatus = 0xFF;
-				mbLastOpError = false;
-
-				if (mpOperationEvent)
-					mpScheduler->RemoveEvent(mpOperationEvent);
-				mpOperationEvent = mpScheduler->AddEvent(1000000, this, kATDiskEventFormatCompleted);
+				SendResult(false, sectorSize);
+				EndCommand();
+				return;
 			}
-		}
-	}
-}
 
-void ATDiskEmulator::ProcessCommandData() {
-	if (mActiveCommand == 'W' || mActiveCommand == 'P') {
-		ATDiskPhysicalSectorInfo psi;
-		mpDiskImage->GetPhysicalSectorInfo(mActiveCommandPhysSector, psi);
+			mbLastOpError = false;
+			BeginTransferACKCmd();
 
-		// test checksum
-		uint8 chk = Checksum(mReceivePacket, psi.mSize);
+			// Check if we are doing the format skewed command. If so, we must wait for a data frame.
+			if ((mOriginalCommand & 0x7F) == 0x66) {
+				// wait for remaining data
+				BeginReceive(128);
 
-		if (chk != mReceivePacket[psi.mSize]) {
-			g_ATLCDisk("Checksum error detected while receiving write data.\n");
+				g_ATLCDisk("Sent ACK, now waiting for PERCOM and sector skew data.\n");
+				Wait(2);
+			} else {
+				Wait(3);
+			}
+			break;
 
-			BeginTransferNAK();
-			mActiveCommand = 0;
-			return;
-		}
+		case 2:
+			// validate PERCOM data
+			if (!SetPERCOMData(mReceivePacket)) {
+				BeginTransferError();
+				EndCommand();
+			}
 
-		BeginTransferACK();
-	} else if (mActiveCommand == 0x4F) {
-		// test checksum
-		uint8 chk = Checksum(mReceivePacket, 12);
+			Wait(3);
+			break;
 
-		if (chk != mReceivePacket[12]) {
-			g_ATLCDisk("Checksum error detected while receiving PERCOM data.\n");
+		case 3: {
+			// If we are doing this on an 810 or 1050, reset the PERCOM block to default.
+			if ((mOriginalCommand & 0x7F) == 0x22) {
+				memcpy(mPERCOM, kDefaultPERCOMED, sizeof mPERCOM);
+			} else {
+				switch(mEmuMode) {
+					case kATDiskEmulationMode_810:
+					case kATDiskEmulationMode_1050:
+						memcpy(mPERCOM, kDefaultPERCOM, sizeof mPERCOM);
+						break;
+				}
+			}
 
-			BeginTransferNAK();
-			return;
-		}
+			int formatSectorSize = VDReadUnalignedBEU16(&mPERCOM[6]);
+			int formatSectorCount = mPERCOM[0] * (sint32)VDReadUnalignedBEU16(&mPERCOM[2]) * (mPERCOM[4] + 1);
+			int formatBootSectorCount = formatSectorSize >= 512 ? 0 : 3;
 
-		// validate PERCOM data
-		bool valid = SetPERCOMData(mReceivePacket);
+			if (mOriginalCommand == 0xA3) {
+				g_ATLCDisk("Boot track format command received. Silently ignoring as we don't support partially formatted disks.\n");
+			} else {
+				g_ATLCDisk("FORMAT COMMAND RECEIVED. Reformatting disk as %u sectors of %u bytes each.\n", formatSectorCount, formatSectorSize);
+				FormatDisk(formatSectorCount, formatBootSectorCount, formatSectorSize);
+			}
 
-		if (!valid) {
-			BeginTransferError();
-			return;
-		}
+			mActiveCommandSector = 0;
 
-		BeginTransferACK();
-	} else if (mActiveCommand == 0x66) {
-		// test checksum
-		uint8 chk = Checksum(mReceivePacket, 128);
-
-		if (chk != mReceivePacket[128]) {
-			g_ATLCDisk("Checksum error detected while receiving PERCOM and sector skew data.\n");
-
-			BeginTransferNAK();
-			mActiveCommand = 0;
-			return;
-		}
-
-		// validate PERCOM data
-		bool valid = SetPERCOMData(mReceivePacket);
-
-		if (!valid) {
-			BeginTransferError();
-			mActiveCommand = 0;
-			return;
-		}
-
-		BeginTransferACK();
-
-		int formatSectorSize = VDReadUnalignedBEU16(&mPERCOM[6]);
-		int formatSectorCount = mPERCOM[0] * (sint32)VDReadUnalignedBEU16(&mPERCOM[2]) * (mPERCOM[4] + 1);
-		int formatBootSectorCount = formatSectorSize == 512 ? 0 : 3;
-
-		g_ATLCDisk("FORMAT COMMAND RECEIVED. Reformatting disk as %u sectors of %u bytes each.\n", formatSectorCount, formatSectorSize);
-		FormatDisk(formatSectorCount, formatBootSectorCount, formatSectorSize);
-	}
-}
-
-void ATDiskEmulator::PokeyBeginCommand() {
-//	ATConsoleTaggedPrintf("DISK: Beginning command.\n");
-	mbCommandMode = true;
-	mbCommandValid = true;
-	mbCommandFrameHighSpeed = false;
-	mTransferOffset = 0;
-	mbWriteMode = false;
-	mActiveCommand = 0;
-
-	if (mpTransferEvent) {
-		mpScheduler->RemoveEvent(mpTransferEvent);
-		mpTransferEvent = NULL;
-	}
-
-	if (mpOperationEvent) {
-		mpScheduler->RemoveEvent(mpOperationEvent);
-		mpOperationEvent = NULL;
-	}
-}
-
-void ATDiskEmulator::PokeyEndCommand() {
-	mbCommandMode = false;
-	if (!mbCommandValid)
-		return;
-
-	if (mTransferOffset == 5) {
-		// check if it's us
-		if (mReceivePacket[0] != (uint8)(0x31 + mUnit)) {
-			return;
+			if (mbAccurateSectorTiming) {
+				mpSIOMgr->Delay(1000);
+				Wait(4);
+			} else {
+				mpSIOMgr->Delay(1000000);
+				Wait(5);
+			}
+			break;
 		}
 
-		// verify checksum
-		uint8 checksum = Checksum(mReceivePacket, 4);
-		if (checksum != mReceivePacket[4]) {
-			return;
-		}
+		case 4:
+			{
+				// Check if the number of tracks is not realistic; if not, just do a fake format.
+				// Check if we're done.
+				if ((mActiveCommandSector == 0 && (mTrackCount < 40 || mTrackCount > 80)) || mActiveCommandSector >= mTrackCount * 2) {
+					Wait(5);
+					break;
+				}
 
-		mbAccessed = true;
+				// Keep the motor running
+				TurnOnMotor();
 
-		ProcessCommandPacket();
-	}
-}
+				// Seek to track
+				uint32 track = mActiveCommandSector % mTrackCount;
 
-void ATDiskEmulator::PokeySerInReady() {
-	if (!mbEnabled || !mbBurstTransfersEnabled)
-		return;
+				uint32 tracksToStep = (uint32)abs((int)mCurrentTrack - (int)track);
+				PlaySeekSound(0, tracksToStep);
+				mCurrentTrack = track;
 
-	if (mbWriteMode && mTransferOffset > 2 && mpTransferEvent && mpScheduler->GetTicksToEvent(mpTransferEvent) > 50) {
-		mpScheduler->RemoveEvent(mpTransferEvent);
-		mpTransferEvent = mpScheduler->AddEvent(50, this, kATDiskEventTransferByte);
+				// Update activity
+				if (mpActivity)
+					mpActivity->OnDiskActivity(mUnit + 1, true, track);
+
+				// update state for next track
+				++mActiveCommandSector;
+
+				// delay for at least two revs regardless; we are assuming seek delay to blow a rev or more and then index-to-index format
+				uint32 delay = tracksToStep ? mCyclesPerTrackStep * tracksToStep + mCyclesForHeadSettle : 1;
+
+				delay = ((delay - 1) / mCyclesPerDiskRotation + 2) * mCyclesPerDiskRotation;
+
+				mpSIOMgr->Delay(delay);
+				Wait(4);
+			}
+			break;
+
+		case 5:
+			memset(mSendPacket, 0xFF, mSectorSize);
+			SendResult(true, mSectorSize);
+
+			EndCommand();
+			break;
+
 	}
 }
 
@@ -2058,7 +2423,6 @@ void ATDiskEmulator::ComputeGeometry() {
 	mSideCount = info.mSideCount;
 	mbMFM = info.mbMFM;
 	mSectorsPerTrack = info.mSectorsPerTrack;
-	mTrackCount = info.mTrackCount;
 }
 
 void ATDiskEmulator::ComputePERCOMBlock() {
@@ -2095,7 +2459,20 @@ void ATDiskEmulator::ComputePERCOMBlock() {
 }
 
 void ATDiskEmulator::ComputeSupportedProfile() {
-	uint32 highSpeedCmdFrameDivisor = 0;
+	mHighSpeedCmdIndex = 0;
+
+	// We need a small delay here between the end of the complete byte and
+	// the start of the data frame byte at high speed. For the US Doubler,
+	// this is 74 cycles @ 1MHz, or 132 machine cycles. For an Indus GT,
+	// Synchromesh has no such delay, but SuperSynchromesh takes around
+	// 5500/9724 T-cycles @ 4MHz to compute checksums between C/E and
+	// the data frame. The XF551 does not use a delay.
+	mCyclesCEToDataFrame = 0;
+	mCyclesCEToDataFramePBDiv256 = 0;
+	mCyclesCEToDataFrameHighSpeed = 0;
+	mCyclesCEToDataFrameHighSpeedPBDiv256 = 0;
+
+	uint32 ackDelay = kCyclesACKDelay;
 
 	switch(mEmuMode) {
 		case kATDiskEmulationMode_Generic:
@@ -2125,7 +2502,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			mbSupportedCmdFormatSkewed = true;
 			mbSupportedCmdGetHighSpeedIndex = true;
 			mHighSpeedIndex = 8;
-			highSpeedCmdFrameDivisor = 8;
+			mHighSpeedCmdIndex = 8;
 			mCyclesPerSIOByte = kCyclesPerSIOByte_810;
 			mCyclesPerSIOBit = kCyclesPerSIOBit_810;
 			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_57600baud;
@@ -2133,6 +2510,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
 			mCyclesPerTrackStep = kCyclesPerTrackStep_810;
 			mCyclesForHeadSettle = kCyclesForHeadSettle_810;
+			mCyclesCEToDataFrameHighSpeed = 132;
 			mbSeekHalfTracks = false;
 			mbRetryMode1050 = false;
 			mbReverseOnForwardSeeks = false;
@@ -2145,7 +2523,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			mbSupportedCmdFormatSkewed = true;
 			mbSupportedCmdGetHighSpeedIndex = true;
 			mHighSpeedIndex = 0;
-			highSpeedCmdFrameDivisor = 0;
+			mHighSpeedCmdIndex = 0;
 			mCyclesPerSIOByte = kCyclesPerSIOByte_810;
 			mCyclesPerSIOBit = kCyclesPerSIOBit_810;
 			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_PokeyDiv0;
@@ -2153,6 +2531,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
 			mCyclesPerTrackStep = kCyclesPerTrackStep_810_3ms;
 			mCyclesForHeadSettle = kCyclesForHeadSettle_810;
+			mCyclesCEToDataFrameHighSpeed = 132;
 			mbSeekHalfTracks = false;
 			mbRetryMode1050 = false;
 			mbReverseOnForwardSeeks = false;
@@ -2184,6 +2563,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			mbSupportedCmdFormatSkewed = false;
 			mbSupportedCmdGetHighSpeedIndex = false;
 			mHighSpeedIndex = -1;
+			ackDelay = kCyclesACKDelay_1050;
 			mCyclesPerSIOByte = kCyclesPerSIOByte_1050;
 			mCyclesPerSIOBit = kCyclesPerSIOBit_1050;
 			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_1050;
@@ -2203,6 +2583,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			mbSupportedCmdFormatSkewed = false;
 			mbSupportedCmdGetHighSpeedIndex = false;
 			mHighSpeedIndex = 16;
+			ackDelay = kCyclesACKDelay_1050;
 			mCyclesPerSIOByte = kCyclesPerSIOByte_XF551;
 			mCyclesPerSIOBit = kCyclesPerSIOBit_XF551;
 			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_XF551_Fast;
@@ -2221,8 +2602,9 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			mbSupportedCmdPERCOM = true;
 			mbSupportedCmdFormatSkewed = true;
 			mbSupportedCmdGetHighSpeedIndex = true;
-			highSpeedCmdFrameDivisor = 10;
+			mHighSpeedCmdIndex = 10;
 			mHighSpeedIndex = 10;
+			ackDelay = kCyclesACKDelay_1050;
 			mCyclesPerSIOByte = kCyclesPerSIOByte_USDoubler;
 			mCyclesPerSIOBit = kCyclesPerSIOBit_USDoubler;
 			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_USDoubler_Fast;
@@ -2230,6 +2612,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
 			mCyclesPerTrackStep = kCyclesPerTrackStep_1050;
 			mCyclesForHeadSettle = kCyclesForHeadSettle_1050;
+			mCyclesCEToDataFrameHighSpeed = 132;
 			mbSeekHalfTracks = true;
 			mbRetryMode1050 = true;
 			mbReverseOnForwardSeeks = true;
@@ -2241,8 +2624,9 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			mbSupportedCmdPERCOM = true;
 			mbSupportedCmdFormatSkewed = false;
 			mbSupportedCmdGetHighSpeedIndex = true;
-			highSpeedCmdFrameDivisor = 9;
+			mHighSpeedCmdIndex = 9;
 			mHighSpeedIndex = 9;
+			ackDelay = kCyclesACKDelay_1050;
 			mCyclesPerSIOByte = kCyclesPerSIOByte_Speedy1050;
 			mCyclesPerSIOBit = kCyclesPerSIOBit_Speedy1050;
 			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_Speedy1050_Fast;
@@ -2250,6 +2634,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
 			mCyclesPerTrackStep = kCyclesPerTrackStep_Speedy1050;
 			mCyclesForHeadSettle = kCyclesForHeadSettle_1050;
+			mCyclesCEToDataFrameHighSpeed = 132;
 			mbSeekHalfTracks = true;
 			mbRetryMode1050 = true;
 			mbReverseOnForwardSeeks = true;
@@ -2261,18 +2646,18 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			mbSupportedCmdPERCOM = true;
 			mbSupportedCmdFormatSkewed = false;
 			mbSupportedCmdGetHighSpeedIndex = false;
-			highSpeedCmdFrameDivisor = 0;
-			mHighSpeedIndex = 6;
+			mHighSpeedIndex = -1;
+			ackDelay = kCyclesACKDelay_1050;
 			mCyclesPerSIOByte = kCyclesPerSIOByte_IndusGT;
 			mCyclesPerSIOBit = kCyclesPerSIOBit_IndusGT;
-			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_IndusGT_Fast;
-			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_IndusGT_Fast;
+			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_IndusGT_Synchromesh;
+			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_IndusGT_Synchromesh;
 			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
-			mCyclesPerTrackStep = kCyclesPerTrackStep_1050;
+			mCyclesPerTrackStep = kCyclesPerTrackStep_IndusGT;
 			mCyclesForHeadSettle = kCyclesForHeadSettle_1050;
 			mbSeekHalfTracks = true;
 			mbRetryMode1050 = true;
-			mbReverseOnForwardSeeks = true;
+			mbReverseOnForwardSeeks = false;
 			break;
 
 		case kATDiskEmulationMode_Happy:
@@ -2281,15 +2666,17 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			mbSupportedCmdPERCOM = true;
 			mbSupportedCmdFormatSkewed = false;
 			mbSupportedCmdGetHighSpeedIndex = true;
-			highSpeedCmdFrameDivisor = 10;
+			mHighSpeedCmdIndex = 10;
 			mHighSpeedIndex = 10;
+			ackDelay = kCyclesACKDelay_1050;
 			mCyclesPerSIOByte = kCyclesPerSIOByte_Happy;
 			mCyclesPerSIOBit = kCyclesPerSIOBit_Happy;
-			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_Happy_Fast;
-			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_Happy_Fast;
+			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_Happy_USD_Fast;
+			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_Happy_USD_Fast;
 			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
 			mCyclesPerTrackStep = kCyclesPerTrackStep_1050;
 			mCyclesForHeadSettle = kCyclesForHeadSettle_1050;
+			mCyclesCEToDataFrameHighSpeed = 132;
 			mbSeekHalfTracks = true;
 			mbRetryMode1050 = true;
 			mbReverseOnForwardSeeks = true;
@@ -2301,8 +2688,9 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			mbSupportedCmdPERCOM = true;
 			mbSupportedCmdFormatSkewed = false;
 			mbSupportedCmdGetHighSpeedIndex = false;
-			highSpeedCmdFrameDivisor = 6;
+			mHighSpeedCmdIndex = 6;
 			mHighSpeedIndex = 6;
+			ackDelay = kCyclesACKDelay_1050;
 			mCyclesPerSIOByte = kCyclesPerSIOByte_1050Turbo;
 			mCyclesPerSIOBit = kCyclesPerSIOBit_1050Turbo;
 			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_1050Turbo_Fast;
@@ -2310,18 +2698,23 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
 			mCyclesPerTrackStep = kCyclesPerTrackStep_1050;
 			mCyclesForHeadSettle = kCyclesForHeadSettle_1050;
+			mCyclesCEToDataFrameHighSpeed = 132;
 			mbSeekHalfTracks = true;
 			mbRetryMode1050 = true;
 			mbReverseOnForwardSeeks = true;
 			break;
 	}
 
-	mCyclesToACKSent = mCyclesPerSIOByte + kCyclesACKDelay;
+	mCyclesToACKSent = ackDelay;
 	mCyclesToFDCCommand = mCyclesToACKSent + kCyclesFDCCommandDelay;
-	mCyclesToCompleteFast = mCyclesToFDCCommand + kCyclesCompleteDelay_Fast;
-	mCyclesToCompleteAccurate = mCyclesToFDCCommand + kCyclesCompleteDelay_Accurate;
-	mCyclesToCompleteAccurateED = mCyclesToFDCCommand + kCyclesCompleteDelay_Accurate_ED;
+	mCyclesToCompleteFast = kCyclesCompleteDelay_Fast;
+	mCyclesToCompleteAccurate = kCyclesCompleteDelay_Accurate;
+	mCyclesToCompleteAccurateED = kCyclesCompleteDelay_Accurate_ED;
 
+	UpdateHighSpeedTiming();
+}
+
+void ATDiskEmulator::UpdateHighSpeedTiming() {
 	mHighSpeedDataFrameRateLo = mCyclesPerSIOBitHighSpeed - (mCyclesPerSIOBitHighSpeed + 19) / 20;
 	mHighSpeedDataFrameRateHi = mCyclesPerSIOBitHighSpeed + (mCyclesPerSIOBitHighSpeed + 19) / 20;
 
@@ -2329,7 +2722,7 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 	mHighSpeedCmdFrameRateHi = 0;
 
 	if (mbSupportedCmdFrameHighSpeed) {
-		int rate = (highSpeedCmdFrameDivisor + 7) * 2;
+		int rate = (mHighSpeedCmdIndex + 7) * 2;
 		mHighSpeedCmdFrameRateLo = rate - (rate + 19) / 20;
 		mHighSpeedCmdFrameRateHi = rate + (rate + 19) / 20;
 	}
@@ -2351,7 +2744,7 @@ bool ATDiskEmulator::SetPERCOMData(const uint8 *data) {
 			mPERCOM[5] = 4;		// FM/MFM encoding
 			mPERCOM[6] = 0;		// bps high
 			mPERCOM[7] = 128;		// bps low
-		} else if (data[4] == 0) {
+		} else if (data[6] == 0) {
 			// single density
 			mPERCOM[2] = 0;		// spt high
 			mPERCOM[3] = 18;		// spt low
@@ -2364,7 +2757,7 @@ bool ATDiskEmulator::SetPERCOMData(const uint8 *data) {
 				// DSDD
 				mPERCOM[ 4] = 1;		// sides minus one
 			} else {
-				// DSSD
+				// SSDD
 				mPERCOM[ 4] = 0;		// sides minus one
 			}
 
@@ -2419,6 +2812,26 @@ bool ATDiskEmulator::SetPERCOMData(const uint8 *data) {
 
 	g_ATLCDisk("Setting PERCOM data: %u sectors of %u bytes each, %u sides, %u boot sectors\n", sectorCount, sectorSize, mPERCOM[4]+1, sectorSize > 256 ? 0 : 3);
 	return true;
+}
+
+void ATDiskEmulator::TurnOffMotor() {
+	mpScheduler->UnsetEvent(mpMotorOffEvent);
+
+	if (mpActivity)
+		mpActivity->OnDiskMotorChange(mUnit + 1, false);
+
+	if (mpAudioSyncMixer) {
+		if (mRotationSoundId) {
+			mpAudioSyncMixer->StopSound(mRotationSoundId);
+			mRotationSoundId = 0;
+		}
+	}
+
+	if (mEmuMode == kATDiskEmulationMode_810) {
+		uint32 endTrack = mTrackCount ? mTrackCount - 1 : 0;
+		PlaySeekSound(0, abs((int)endTrack - (int)mCurrentTrack));
+		mCurrentTrack = endTrack;
+	}
 }
 
 bool ATDiskEmulator::TurnOnMotor(uint32 delay) {

@@ -430,9 +430,6 @@
     <ClCompile Include="source\uifirmwarescan.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\uiharddisk.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\uihostdevice.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -652,6 +649,75 @@
     <ClCompile Include="source\sapconverter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\devices.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\cmds.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiclipboard.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\cmdview.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\cmdaudio.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\cmdsystem.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\cmdcart.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\cmdwindow.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\cmddebug.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uimainwindow.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\settings.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiprofiles.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiprofilemenu.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\pocketmodem.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevpocketmodem.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevcorvus.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\cartridgeport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfmyide2.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevdongle.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uisetupwizard.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\pbidisk.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevkmkjzide2.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevcovox.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\address.h">
@@ -817,9 +883,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\ide.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\idedisk.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\idephysdisk.h">
@@ -1089,6 +1152,21 @@
     <ClInclude Include="h\sapconverter.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="h\cmdhelpers.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uiclipboard.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\settings.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\cartridgeport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\pbidisk.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="h\cpumachine.inl">
@@ -1324,5 +1402,8 @@
     </PackResource>
     <PackResource Include="..\..\obj\Release\Kernel\playsap-d-ntsc.xex" />
     <PackResource Include="..\..\obj\Release\Kernel\playsap-d-pal.xex" />
+    <PackResource Include="..\..\obj\Release\Kernel\pbidisk.bin">
+      <Filter>Resource Files</Filter>
+    </PackResource>
   </ItemGroup>
 </Project>

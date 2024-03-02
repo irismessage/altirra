@@ -15,12 +15,15 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
+#include <windows.h>
 #include <vd2/system/math.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Riza/bitmap.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/messageloop.h>
+#include <at/atnativeui/uiframe.h>
 #include <at/atnativeui/uinativewindow.h>
 #include "resource.h"
 #include "cassette.h"
@@ -30,12 +33,15 @@
 
 class ATUITapePeakControl : public ATUINativeWindow {
 public:
-	ATUITapePeakControl(IATCassetteImage *image);
+	ATUITapePeakControl();
 	~ATUITapePeakControl();
 
 	virtual LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
 
+	void SetImage(IATCassetteImage *image);
 	void SetPosition(float secs);
+
+	void Refresh();
 
 	VDEvent<ATUITapePeakControl, float>& OnPositionChanged() { return mPositionChangedEvent; }
 
@@ -48,42 +54,36 @@ protected:
 	void UpdateImage();
 	void DrawPeaks(sint32 x1, sint32 x2, float y1, float y2, const float *data, uint32 c);
 
-	IATCassetteImage *mpImage;
-	float mImageLenSecs;
-	HDC mhdc;
-	HBITMAP mhBitmap;
-	HGDIOBJ mhOldBitmap;
-	bool mbImageDirty;
-	sint32 mWidth;
-	sint32 mHeight;
-	float mPositionSecs;
-	sint32 mPositionPx;
+	IATCassetteImage *mpImage = nullptr;
+	float mImageLenSecs = 0;
+	HDC mhdc = nullptr;
+	HBITMAP mhBitmap = nullptr;
+	HGDIOBJ mhOldBitmap = nullptr;
+	bool mbImageDirty = false;
+	sint32 mWidth = 0;
+	sint32 mHeight = 0;
+	float mPositionSecs = 0;
+	sint32 mPositionPx = 0;
 
 	VDPixmapBuffer mPixmapBuffer;
 
 	VDEvent<ATUITapePeakControl, float> mPositionChangedEvent;
 };
 
-ATUITapePeakControl::ATUITapePeakControl(IATCassetteImage *image)
-	: mpImage(image)
-	, mImageLenSecs(0)
-	, mhdc(NULL)
-	, mhBitmap(NULL)
-	, mhOldBitmap(NULL)
-	, mbImageDirty(false)
-	, mWidth(0)
-	, mHeight(0)
-	, mPositionSecs(0)
-	, mPositionPx(0)
-{
-	if (mpImage) {
-		const uint32 n = mpImage->GetDataLength();
-		mImageLenSecs = (float)n / kDataFrequency;
-	}
+ATUITapePeakControl::ATUITapePeakControl() {
 }
 
 ATUITapePeakControl::~ATUITapePeakControl() {
 	Clear();
+}
+
+void ATUITapePeakControl::SetImage(IATCassetteImage *image) {
+	if (mpImage == image)
+		return;
+
+	mpImage = image;
+
+	Refresh();
 }
 
 void ATUITapePeakControl::SetPosition(float secs) {
@@ -92,6 +92,20 @@ void ATUITapePeakControl::SetPosition(float secs) {
 
 		UpdatePositionPx();
 	}
+}
+
+void ATUITapePeakControl::Refresh() {
+	mbImageDirty = true;
+
+	if (mpImage) {
+		const uint32 n = mpImage->GetDataLength();
+		mImageLenSecs = (float)n / kATCassetteDataSampleRate;
+	} else {
+		mImageLenSecs = 0;
+	}
+
+	if (mhwnd)
+		InvalidateRect(mhwnd, NULL, TRUE);
 }
 
 LRESULT ATUITapePeakControl::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -282,11 +296,14 @@ void ATUITapePeakControl::UpdateImage() {
 
 			float hf = (float)mHeight;
 
+			const uint32 red = 0xFFFF0000;
+			const uint32 blue = 0xFF7E7EFF;
+
 			if (mpImage->GetAudioLength()) {
-				DrawPeaks(0, mWidth, 0, hf * 0.5f, buf.data(), 0xFF0000FF);
-				DrawPeaks(0, mWidth, hf * 0.5f, hf, buf.data() + mWidth * 2, 0xFFFF0000);
+				DrawPeaks(0, mWidth, 0, hf * 0.5f, buf.data(), blue);
+				DrawPeaks(0, mWidth, hf * 0.5f, hf, buf.data() + mWidth * 2, red);
 			} else {
-				DrawPeaks(0, mWidth, 0, hf, buf.data(), 0xFF0000FF);
+				DrawPeaks(0, mWidth, 0, hf, buf.data(), blue);
 			}
 		}
 
@@ -341,29 +358,104 @@ class ATTapeControlDialog : public VDDialogFrameW32 {
 public:
 	ATTapeControlDialog(ATCassetteEmulator& tape);
 
+	static void Open(VDGUIHandle parent, ATCassetteEmulator& tape);
+
 public:
 	void OnPositionChanged(ATUITapePeakControl *sender, float pos);
 
 protected:
-	bool OnLoaded();
-	void OnHScroll(uint32 id, int code);
+	void Stop();
+	void TogglePause();
+	void Play();
+	void Record();
+	void SeekStart();
+	void SeekEnd();
+
+	bool OnLoaded() override;
+	void OnDestroy() override;
+	void OnHScroll(uint32 id, int code) override;
+	bool PreNCDestroy() override;
+
 	void UpdateLabelText();
 	void AppendTime(VDStringW& s, float t);
+
+	void OnTapePositionChanged();
+	void OnTapeChanging();
+	void OnTapeChanged();
+	void OnTapePeaksUpdated();
+	void UpdateTapePosLen();
+	void UpdatePlayState();
 
 	ATCassetteEmulator& mTape;
 	VDStringW mLabel;
 	float mPos;
+	uint32 mPosTenthsSec;
 	float mLength;
 	float mSecondsPerTick;
+	float mTicksPerSecond;
+
+	HFONT mhfontWebdings = nullptr;
 
 	vdrefptr<ATUITapePeakControl> mpPeakControl;
 	VDDelegate mDelPositionChanged;
+
+	vdfunction<void()> mFnTapePositionChanged;
+	vdfunction<void()> mFnTapePlayStateChanged;
+	vdfunction<void()> mFnTapeChanging;
+	vdfunction<void()> mFnTapeChanged;
+	vdfunction<void()> mFnTapePeaksUpdated;
+
+	VDUIProxyButtonControl mButtonStop;
+	VDUIProxyButtonControl mButtonPause;
+	VDUIProxyButtonControl mButtonPlay;
+	VDUIProxyButtonControl mButtonRecord;
+	VDUIProxyButtonControl mButtonSeekStart;
+	VDUIProxyButtonControl mButtonSeekEnd;
+
+	static ATTapeControlDialog *spDialog;
+
+	static const UINT kIconButtonIds[];
 };
+
+const UINT ATTapeControlDialog::kIconButtonIds[] = {
+	IDC_RECORD,
+	IDC_PLAY,
+	IDC_SEEK_START,
+	IDC_SEEK_END,
+	IDC_STOP,
+	IDC_PAUSE
+};
+
+ATTapeControlDialog *ATTapeControlDialog::spDialog;
 
 ATTapeControlDialog::ATTapeControlDialog(ATCassetteEmulator& tape)
 	: VDDialogFrameW32(IDD_TAPE_CONTROL)
 	, mTape(tape)
+	, mFnTapePositionChanged([this]() { OnTapePositionChanged(); })
+	, mFnTapePlayStateChanged([this]() { UpdatePlayState(); })
+	, mFnTapeChanging([this]() { OnTapeChanging(); })
+	, mFnTapeChanged([this]() { OnTapeChanged(); })
+	, mFnTapePeaksUpdated([this]() { OnTapePeaksUpdated(); })
 {
+	mButtonStop.SetOnClicked([this](VDUIProxyButtonControl *) { Stop(); });
+	mButtonPause.SetOnClicked([this](VDUIProxyButtonControl *) { TogglePause(); });
+	mButtonPlay.SetOnClicked([this](VDUIProxyButtonControl *) { Play(); });
+	mButtonRecord.SetOnClicked([this](VDUIProxyButtonControl *) { Record(); });
+	mButtonSeekStart.SetOnClicked([this](VDUIProxyButtonControl *) { SeekStart(); });
+	mButtonSeekEnd.SetOnClicked([this](VDUIProxyButtonControl *) { SeekEnd(); });
+}
+
+void ATTapeControlDialog::Open(VDGUIHandle parent, ATCassetteEmulator& tape) {
+	if (spDialog)
+		SetActiveWindow(spDialog->GetWindowHandle());
+	else {
+		ATTapeControlDialog *dlg = new ATTapeControlDialog(tape);
+
+		if (!dlg->Create(parent))
+			delete dlg;
+
+		ATUIRegisterModelessDialog(dlg->GetWindowHandle());
+	}
 }
 
 void ATTapeControlDialog::OnPositionChanged(ATUITapePeakControl *sender, float pos) {
@@ -379,43 +471,88 @@ void ATTapeControlDialog::OnPositionChanged(ATUITapePeakControl *sender, float p
 	}
 }
 
+void ATTapeControlDialog::Stop() {
+	mTape.Stop();
+}
+
+void ATTapeControlDialog::TogglePause() {
+	mTape.SetPaused(!mTape.IsPaused());
+}
+
+void ATTapeControlDialog::Play() {
+	mTape.Play();
+}
+
+void ATTapeControlDialog::Record() {
+	mTape.Record();
+}
+
+void ATTapeControlDialog::SeekStart() {
+	mTape.SeekToTime(0);
+}
+
+void ATTapeControlDialog::SeekEnd() {
+	mTape.SeekToTime(mTape.GetLength());
+}
+
 bool ATTapeControlDialog::OnLoaded() {
+	if (!spDialog)
+		spDialog = this;
+
+	AddProxy(&mButtonStop, IDC_STOP);
+	AddProxy(&mButtonPause, IDC_PAUSE);
+	AddProxy(&mButtonPlay, IDC_PLAY);
+	AddProxy(&mButtonRecord, IDC_RECORD);
+	AddProxy(&mButtonSeekStart, IDC_SEEK_START);
+	AddProxy(&mButtonSeekEnd, IDC_SEEK_END);
+
+	int ptSize = 12;
+	int ht = (ptSize * ATUIGetGlobalDpiW32() + 36) / 72;
+
+	mhfontWebdings = CreateFont(-ht, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FF_DONTCARE | DEFAULT_PITCH,
+		_T("Webdings"));
+
+	if (mhfontWebdings) {
+		for(UINT id : kIconButtonIds)
+			SendDlgItemMessage(mhdlg, id, WM_SETFONT, (WPARAM)mhfontWebdings, TRUE);
+	}
+
 	HWND hwndPeakRect = GetControl(IDC_PEAK_IMAGE);
 	if (hwndPeakRect) {
 		const vdrect32 r = GetControlPos(IDC_PEAK_IMAGE);
 
 		if (!r.empty()) {
-			mpPeakControl = new ATUITapePeakControl(mTape.GetImage());
+			mpPeakControl = new ATUITapePeakControl;
 
-			::DestroyWindow(hwndPeakRect);
-
-			::CreateWindowEx(WS_EX_CLIENTEDGE, MAKEINTATOM(ATUINativeWindow::Register()), _T(""), WS_CHILD | WS_VISIBLE | WS_TABSTOP, r.left, r.top, r.width(), r.height(), mhdlg, (HMENU)IDC_PEAK_IMAGE, VDGetLocalModuleHandleW32(),
+			::CreateWindowEx(WS_EX_CLIENTEDGE, MAKEINTATOM(ATUINativeWindow::Register()), _T(""), WS_CHILD | WS_VISIBLE | WS_TABSTOP, r.left, r.top, r.width(), r.height(), mhdlg, (HMENU)IDC_PEAK_CONTROL, VDGetLocalModuleHandleW32(),
 				static_cast<ATUINativeWindow *>(&*mpPeakControl));
 
 			mpPeakControl->OnPositionChanged() += mDelPositionChanged.Bind(this, &ATTapeControlDialog::OnPositionChanged);
 		}
 	}
 
-	mPos = mTape.GetPosition();
-	mLength = ceilf(mTape.GetLength());
+	OnTapeChanged();
 
-	if (mpPeakControl)
-		mpPeakControl->SetPosition(mPos);
-
-	float r = mLength < 1e-5f ? 0.0f : mPos / mLength;
-	int ticks = 100000;
-
-	if (mLength < 10000.0f)
-		ticks = VDCeilToInt(mLength * 10.0f);
-
-	mSecondsPerTick = mLength / (float)ticks;
-
-	TBSetRange(IDC_POSITION, 0, ticks);
-	TBSetValue(IDC_POSITION, VDRoundToInt(r * (float)ticks));
-	
-	UpdateLabelText();
 	SetFocusToControl(IDC_POSITION);
+
+	mTape.PositionChanged += &mFnTapePositionChanged;
+	mTape.PlayStateChanged += &mFnTapePlayStateChanged;
+	mTape.TapeChanging += &mFnTapeChanging;
+	mTape.TapeChanged += &mFnTapeChanged;
+	mTape.TapePeaksUpdated += &mFnTapePeaksUpdated;
+
+	UpdatePlayState();
 	return true;
+}
+
+void ATTapeControlDialog::OnDestroy() {
+	mTape.TapePeaksUpdated -= &mFnTapePeaksUpdated;
+	mTape.TapeChanged -= &mFnTapeChanged;
+	mTape.TapeChanging -= &mFnTapeChanging;
+	mTape.PlayStateChanged -= &mFnTapePlayStateChanged;
+	mTape.PositionChanged -= &mFnTapePositionChanged;
+
+	VDDialogFrameW32::OnDestroy();
 }
 
 void ATTapeControlDialog::OnHScroll(uint32 id, int code) {
@@ -423,6 +560,7 @@ void ATTapeControlDialog::OnHScroll(uint32 id, int code) {
 
 	if (pos != mPos) {
 		mPos = pos;
+		mPosTenthsSec = VDRoundToInt(pos * 10.0f);
 
 		mTape.SeekToTime(mPos);
 
@@ -431,6 +569,19 @@ void ATTapeControlDialog::OnHScroll(uint32 id, int code) {
 
 		UpdateLabelText();
 	}
+}
+
+bool ATTapeControlDialog::PreNCDestroy() {
+	if (mhfontWebdings) {
+		DeleteObject(mhfontWebdings);
+		mhfontWebdings = nullptr;
+	}
+
+	if (spDialog == this) {
+		ATUIUnregisterModelessDialog(mhdlg);
+		spDialog = nullptr;
+	}
+	return true;
 }
 
 void ATTapeControlDialog::UpdateLabelText() {
@@ -463,8 +614,77 @@ void ATTapeControlDialog::AppendTime(VDStringW& s, float t) {
 	s.append_sprintf(L"%0*d:%02d.%d", minutesWidth, minutes, seconds, ticks);
 }
 
-void ATUIShowTapeControlDialog(VDGUIHandle hParent, ATCassetteEmulator& cassette) {
-	ATTapeControlDialog dlg(cassette);
+void ATTapeControlDialog::OnTapePositionChanged() {
+	float pos = mTape.GetPosition();
 
-	dlg.ShowDialog(hParent);
+	if (mPos != pos) {
+		mPos = pos;
+
+		mpPeakControl->SetPosition(pos);
+
+		TBSetValue(IDC_POSITION, VDRoundToInt(mTicksPerSecond * pos));
+
+		uint32 tenths = VDRoundToInt(pos * 10.0f);
+
+		if (mPosTenthsSec != tenths) {
+			mPosTenthsSec = tenths;
+			UpdateLabelText();
+		}
+	}
+}
+
+void ATTapeControlDialog::OnTapeChanging() {
+	mpPeakControl->SetImage(nullptr);
+}
+
+void ATTapeControlDialog::OnTapeChanged() {
+	auto *image = mTape.GetImage();
+
+	mpPeakControl->SetImage(image);
+
+	ShowControl(IDC_PEAK_IMAGE, image == nullptr);
+	ShowControl(IDC_PEAK_CONTROL, image != nullptr);
+
+	UpdateTapePosLen();
+}
+
+void ATTapeControlDialog::OnTapePeaksUpdated() {
+	mpPeakControl->Refresh();
+	UpdateTapePosLen();
+}
+
+void ATTapeControlDialog::UpdateTapePosLen() {
+	mPos = mTape.GetPosition();
+	mPosTenthsSec = VDRoundToInt(mPos * 10.0f);
+	mLength = ceilf(mTape.GetLength());
+
+	if (mpPeakControl)
+		mpPeakControl->SetPosition(mPos);
+
+	float r = mLength < 1e-5f ? 0.0f : mPos / mLength;
+	int ticks = 100000;
+
+	if (mLength < 10000.0f)
+		ticks = VDCeilToInt(mLength * 10.0f);
+
+	mSecondsPerTick = mLength / (float)ticks;
+	mTicksPerSecond = mLength > 0 ? (float)ticks / mLength : 0;
+
+	TBSetRange(IDC_POSITION, 0, ticks);
+	TBSetValue(IDC_POSITION, VDRoundToInt(r * (float)ticks));
+	
+	UpdateLabelText();
+}
+
+void ATTapeControlDialog::UpdatePlayState() {
+	mButtonPlay.SetChecked(mTape.IsPlayEnabled());
+	mButtonStop.SetChecked(mTape.IsStopped());
+	mButtonPause.SetChecked(mTape.IsPaused());
+	mButtonRecord.SetChecked(mTape.IsRecordEnabled());
+}
+
+////////////////////////////////////////////////////////////////////////////
+
+void ATUIShowTapeControlDialog(VDGUIHandle hParent, ATCassetteEmulator& cassette) {
+	ATTapeControlDialog::Open(hParent, cassette);
 }

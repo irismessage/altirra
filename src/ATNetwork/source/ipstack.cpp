@@ -1,11 +1,11 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/vdstl.h>
 #include <at/atnetwork/ethernetframe.h>
 #include "ipstack.h"
 
-class ATNetIpStack::PendingArpEntry : public IATEthernetClockEventSink {
+class ATNetIpStack::PendingArpEntry final : public IATEthernetClockEventSink {
 public:
 	PendingArpEntry(ATNetIpStack *parent, uint32 ipAddr);
 	~PendingArpEntry();

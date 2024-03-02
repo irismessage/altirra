@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include "mmu.h"
 #include "memorymanager.h"
 #include "simulator.h"
@@ -51,11 +51,21 @@ ATMMUEmulator::ATMMUEmulator()
 
 ATMMUEmulator::~ATMMUEmulator() {
 	Shutdown();
-	SetAxlonMemory(0, false);
+	SetAxlonMemory(0, false, nullptr);
 }
 
-void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
-						 ATMemoryManager *memman,
+void ATMMUEmulator::Init(ATMemoryManager *memman) {
+	mpMemMan = memman;
+}
+
+void ATMMUEmulator::Shutdown() {
+	ShutdownMapping();
+	SetAxlonMemory(0, false, nullptr);
+
+	mpMemMan = nullptr;
+}
+
+void ATMMUEmulator::InitMapping(int hwmode, int memoryMode, void *mem,
 						 ATMemoryLayer *extLayer,
 						 ATMemoryLayer *selfTestLayer,
 						 ATMemoryLayer *lowerKernelLayer,
@@ -67,7 +77,6 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 	mHardwareMode = hwmode;
 	mMemoryMode = memoryMode;
 	mpMemory = (uint8 *)mem;
-	mpMemMan = memman;
 	mpLayerExtRAM = extLayer;
 	mpLayerSelfTest = selfTestLayer;
 	mpLayerLowerKernel = lowerKernelLayer;
@@ -98,6 +107,7 @@ void ATMMUEmulator::RebuildMappingTables() {
 
 		case kATMemoryMode_320K:		// 16 banks * 16K = 256K
 		case kATMemoryMode_320K_Compy:
+		case kATMemoryMode_256K:
 			extbankmask = 0x0F;
 			break;
 
@@ -127,6 +137,7 @@ void ATMMUEmulator::RebuildMappingTables() {
 			anticBankBit = 0x20;
 			break;
 
+		case kATMemoryMode_256K:
 		case kATMemoryMode_320K:
 		case kATMemoryMode_576K:
 		case kATMemoryMode_1088K:
@@ -137,6 +148,10 @@ void ATMMUEmulator::RebuildMappingTables() {
 
 	uint32 extbankoffset = 0x04;
 	switch(memmode) {
+		case kATMemoryMode_256K:
+			extbankoffset = 0;
+			break;
+
 		case kATMemoryMode_128K:
 		case kATMemoryMode_320K:
 		case kATMemoryMode_320K_Compy:
@@ -173,6 +188,7 @@ void ATMMUEmulator::RebuildMappingTables() {
 			// Bank bits:
 			// 128K:		bits 2, 3
 			// 192K:		bits 2, 3, 6
+			// 256K Rambo:	bits 2, 3, 5, 6 -- bits 3 and 2 must be LSBs for main memory aliasing
 			// 320K:		bits 2, 3, 5, 6
 			// 576K:		bits 1, 2, 3, 5, 6
 			// 1088K:		bits 1, 2, 3, 5, 6, 7
@@ -181,6 +197,12 @@ void ATMMUEmulator::RebuildMappingTables() {
 			encodedBankInfo = ((~portb & 0x0c) >> 2);
 
 			switch(memmode) {
+				case kATMemoryMode_256K:
+					// Bank order is crucial here -- %0000 to %0011 must alias main RAM.
+					encodedBankInfo = (portb & 0x0c) >> 2;
+					encodedBankInfo += (portb & 0x60) >> 3;
+					break;
+
 				case kATMemoryMode_320K_Compy:
 				case kATMemoryMode_576K_Compy:
 					encodedBankInfo += (uint32)(~portb & 0xc0) >> 4;
@@ -255,7 +277,7 @@ void ATMMUEmulator::RebuildMappingTables() {
 	SetBankRegister(~mCurrentBank);
 }
 
-void ATMMUEmulator::Shutdown() {
+void ATMMUEmulator::ShutdownMapping() {
 	mpMemory = NULL;
 	mpLayerExtRAM = NULL;
 	mpLayerSelfTest = NULL;
@@ -276,10 +298,10 @@ void ATMMUEmulator::SetROMMappingHook(const vdfunction<void()>& fn) {
 	UpdateROMMappingHook();
 }
 
-void ATMMUEmulator::SetAxlonMemory(uint8 bankbits, bool enableAliasing) {
+void ATMMUEmulator::SetAxlonMemory(uint8 bankbits, bool enableAliasing, void *mem) {
 	const uint8 bankMask = (uint8)((1 << bankbits) - 1);
 
-	if (mAxlonBankMask == bankMask && mbAxlonAliasing == enableAliasing)
+	if (mAxlonBankMask == bankMask && mbAxlonAliasing == enableAliasing && mpAxlonMemory == mem)
 		return;
 
 	if (mpLayerAxlonControl1) {
@@ -295,6 +317,7 @@ void ATMMUEmulator::SetAxlonMemory(uint8 bankbits, bool enableAliasing) {
 	mbAxlonAliasing = enableAliasing;
 	mAxlonBankMask = bankMask;
 	mAxlonBank &= mAxlonBankMask;
+	mpAxlonMemory = mem;
 
 	if (bankbits) {
 		ATMemoryHandlerTable handler = {};
@@ -314,7 +337,7 @@ void ATMMUEmulator::SetAxlonMemory(uint8 bankbits, bool enableAliasing) {
 	}
 
 	if (mpLayerExtRAM)
-		mpMemMan->EnableLayer(mpLayerExtRAM, true);
+		mpMemMan->EnableLayer(mpLayerExtRAM, mAxlonBank != 0);
 
 	if (mpMemory)
 		RebuildMappingTables();
@@ -362,16 +385,19 @@ void ATMMUEmulator::SetBankRegister(uint8 bank) {
 	const uint32 bankOffset = ((bankInfo & kMapInfo_BankMask) << 14);
 	uint8 *bankbase = mpMemory + bankOffset;
 
-	if (bankInfo & (kMapInfo_ExtendedCPU | kMapInfo_ExtendedANTIC))
-		mpMemMan->SetLayerMemory(mpLayerExtRAM, bankbase, 0x40, 0x40);
-	else
+	if (bankInfo & (kMapInfo_ExtendedCPU | kMapInfo_ExtendedANTIC)) {
+		// If settings are in flux, we may temporarily have the mapping mode set to
+		// enable extended memory while not having an extRAM layer.
+		if (mpLayerExtRAM)
+			mpMemMan->SetLayerMemory(mpLayerExtRAM, bankbase, 0x40, 0x40);
+	} else
 		UpdateAxlonBank();
 
 	mCPUBase = 0;
 	mAnticBase = 0;
 
-	bool extcpu = (mAxlonBankMask != 0);
-	bool extantic = (mAxlonBankMask != 0);
+	bool extcpu = (mAxlonBank > 0);
+	bool extantic = (mAxlonBank > 0);
 
 	if (bankInfo & kMapInfo_ExtendedCPU) {
 		mCPUBase = bankOffset;
@@ -445,8 +471,14 @@ void ATMMUEmulator::SetAxlonBank(uint8 bank) {
 }
 
 void ATMMUEmulator::UpdateAxlonBank() {
-	if (mpLayerExtRAM && !(mCurrentBankInfo & (kMapInfo_ExtendedCPU | kMapInfo_ExtendedANTIC)))
-		mpMemMan->SetLayerMemory(mpLayerExtRAM, (uint8 *)mpMemory + 0x10000 + ((uint32)mAxlonBank << 14), 0x40, 0x40);
+	if (mpLayerExtRAM && !(mCurrentBankInfo & (kMapInfo_ExtendedCPU | kMapInfo_ExtendedANTIC))) {
+		if (mAxlonBank > 0) {
+			mpMemMan->SetLayerMemory(mpLayerExtRAM, (uint8 *)mpMemory + 0x10000 + ((uint32)mAxlonBank << 14), 0x40, 0x40);
+			mpMemMan->EnableLayer(mpLayerExtRAM, true);
+		} else {
+			mpMemMan->EnableLayer(mpLayerExtRAM, false);
+		}
+	}
 }
 
 bool ATMMUEmulator::OnAxlonWrite(void *thisptr, uint32 addr, uint8 value) {

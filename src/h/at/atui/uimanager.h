@@ -5,6 +5,7 @@
 #include <vd2/VDDisplay/renderer.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/system/event.h>
+#include <vd2/system/VDString.h>
 #include <at/atui/constants.h>
 
 class ATUIWidget;
@@ -86,8 +87,8 @@ public:
 	ATUIManager();
 	~ATUIManager();
 
-	int AddRef() { return 2; }
-	int Release() { return 1; }
+	int AddRef() override { return 2; }
+	int Release() override { return 1; }
 
 	void Init(IATUINativeDisplay *natDisplay);
 	void Shutdown();
@@ -156,6 +157,9 @@ public:
 
 	const ATUISystemMetrics& GetSystemMetrics() const { return mSystemMetrics; }
 
+	const wchar_t *GetCustomEffectPath() const;
+	void SetCustomEffectPath(const wchar_t *s, bool forceReload);
+
 public:
 	void Attach(ATUIWidget *w);
 	void Detach(ATUIWidget *w);
@@ -163,7 +167,10 @@ public:
 	void UpdateCursorImage(ATUIWidget *w);
 
 public:
-	void Composite(IVDDisplayRenderer& r, const VDDisplayCompositeInfo& compInfo);
+	void AttachCompositor(IVDDisplayCompositionEngine&) override;
+	void DetachCompositor() override;
+	void PreComposite(const VDDisplayCompositeInfo& compInfo) override;
+	void Composite(IVDDisplayRenderer& r, const VDDisplayCompositeInfo& compInfo) override;
 
 protected:
 	class ActiveAction;
@@ -222,11 +229,16 @@ protected:
 
 	vdfastvector<ATUIWidget *> mTrackingWindows;
 
+	IVDDisplayCompositionEngine *mpDisplayCompositionEngine = nullptr;
+
 	ATUISystemMetrics mSystemMetrics;
 
 	IVDDisplayFont *mpThemeFonts[kATUIThemeFontCount];
 
 	ATUIStockImage *mpStockImages[kATUIStockImageIdxCount];
+
+	bool mbPendingCustomEffectPath = false;
+	VDStringW mCustomEffectPath;
 };
 
 #endif

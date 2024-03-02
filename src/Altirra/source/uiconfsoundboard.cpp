@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <at/atcore/propertyset.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/uiproxies.h>
@@ -66,7 +66,7 @@ void ATUIDialogDeviceSoundBoard::OnDataExchange(bool write) {
 			auto it = std::find(std::begin(kBaseAddresses), std::end(kBaseAddresses), base);
 
 			if (it != std::end(kBaseAddresses))
-				mComboVersion.SetSelection(it - std::begin(kBaseAddresses));
+				mComboVersion.SetSelection((int)(it - std::begin(kBaseAddresses)));
 		}
 	}
 }

@@ -346,7 +346,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTContextD3D9 : public IVDTContext, public IVDTProfiler, public VDTResourceManagerD3D9 {
+class VDTContextD3D9 final : public IVDTContext, public IVDTProfiler, public VDTResourceManagerD3D9 {
 public:
 	VDTContextD3D9();
 	~VDTContextD3D9();

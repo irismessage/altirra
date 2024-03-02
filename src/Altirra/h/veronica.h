@@ -18,19 +18,21 @@
 #ifndef f_AT_VERONICA_H
 #define f_AT_VERONICA_H
 
-#include <vd2/system/vdstl.h>
+#include <vd2/system/function.h>
 #include <vd2/system/refcount.h>
+#include <vd2/system/vdstl.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceprinter.h>
 #include <at/atcore/deviceserial.h>
+#include <at/atcore/devicecart.h>
 #include <at/atcpu/co65802.h>
+#include <at/atcpu/breakpoints.h>
 #include <at/atcpu/history.h>
 #include <at/atdebugger/target.h>
 #include <at/atcore/scheduler.h>
 
 class ATMemoryLayer;
 class ATIRQController;
-class IATIDEDisk;
 
 class ATVeronicaEmulator final : public ATDevice
 	, public IATDeviceMemMap
@@ -39,7 +41,10 @@ class ATVeronicaEmulator final : public ATDevice
 	, public IATDeviceCartridge
 	, public IATDebugTarget
 	, public IATDebugTargetHistory
+	, public IATDebugTargetBreakpoints
+	, public IATDebugTargetExecutionControl
 	, public IATSchedulerCallback
+	, public IATCPUBreakpointHandler
 {
 public:
 	ATVeronicaEmulator();
@@ -63,8 +68,10 @@ public:
 	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch);
 
 public:
-	virtual void InitCartridge(IATDeviceCartridgePort *port) override;
-	virtual bool IsRD5Active() const override;
+	void InitCartridge(IATDeviceCartridgePort *port) override;
+	bool IsLeftCartActive() const override;
+	void SetCartEnables(bool leftEnable, bool rightEnable, bool cctlEnable) override;
+	void UpdateCartSense(bool leftActive) override {}
 
 public:	// IATDeviceDebugTarget
 	IATDebugTarget *GetDebugTarget(uint32 index) override;
@@ -75,6 +82,8 @@ public:	// IATDebugTarget
 
 	void GetExecState(ATCPUExecState& state) override;
 	void SetExecState(const ATCPUExecState& state) override;
+
+	sint32 GetTimeSkew() override;
 
 	uint8 ReadByte(uint32 address) override;
 	void ReadMemory(uint32 address, void *dst, uint32 n) override;
@@ -93,10 +102,29 @@ public:	// IATDebugTargetHistory
 	uint32 ExtractHistory(const ATCPUHistoryEntry **hparray, uint32 start, uint32 n) const override;
 	uint32 ConvertRawTimestamp(uint32 rawTimestamp) const override;
 
-public:
-	virtual void OnScheduledEvent(uint32 id);
+public:	// IATDebugTargetBreakpoints
+	virtual void SetBreakpointHandler(IATCPUBreakpointHandler *handler) override;
+
+	virtual void ClearBreakpoint(uint16 pc) override;
+	virtual void SetBreakpoint(uint16 pc) override;
+
+public:	// IATDebugTargetExecutionControl
+	void Break() override;
+	bool StepInto(const vdfunction<void(bool)>& fn) override;
+	bool StepOver(const vdfunction<void(bool)>& fn) override;
+	bool StepOut(const vdfunction<void(bool)>& fn) override;
+	void StepUpdate() override;
+	void RunUntilSynced() override;
+
+public:	// IATCPUBreakpointHandler
+	bool CheckBreakpoint(uint32 pc) override;
+
+public:	// IATSchedulerCallback
+	void OnScheduledEvent(uint32 id) override;
 
 protected:
+	void CancelStep();
+
 	static sint32 OnDebugRead(void *thisptr, uint32 addr);
 	static sint32 OnRead(void *thisptr, uint32 addr);
 	static bool OnWrite(void *thisptr, uint32 addr, uint8 value);
@@ -109,7 +137,11 @@ protected:
 	void UpdateCoProcWindowDormant();
 	void UpdateCoProcWindowActive();
 	void UpdateWindowBase();
+	void UpdateLeftWindowMapping();
+	void UpdateRightWindowMapping();
 	void Sync();
+	void AccumSubCycles();
+	void RunSubCycles(uint32 subCycles);
 	uint32 PeekRand16() const;
 	uint32 Rand16();
 
@@ -120,25 +152,40 @@ protected:
 	ATMemoryLayer *mpMemLayerLeftWindow;
 	ATMemoryLayer *mpMemLayerRightWindow;
 	ATMemoryLayer *mpMemLayerControl;
-	IATDeviceCartridgePort *mpCartridgePort;
 
-	uint32 mLastSync;
-	uint8 mAControl;
-	uint8 mVControl;
-	bool mbVersion1;
-	bool mbCorruptNextCycle;
-	uint8 *mpCoProcWinBase;
+	IATDeviceCartridgePort *mpCartridgePort = nullptr;
+	uint32 mCartId = 0;
+	bool mbLeftWindowEnabled = false;
+	bool mbRightWindowEnabled = false;
+	bool mbCCTLEnabled = false;
 
-	uint32	mPRNG;
+	uint32 mLastSync = 0;
+	uint32 mSubCyclesLeft = 0;
+	uint8 mAControl = 0;
+	uint8 mVControl = 0;
+	bool mbVersion1 = false;
+	bool mbCorruptNextCycle = false;
+	uint8 *mpCoProcWinBase = nullptr;
 
-	ATCoProcWriteMemNode mWriteNode;
-	ATCoProcReadMemNode mCorruptedReadNode;
-	ATCoProcWriteMemNode mCorruptedWriteNode;
+	uint32	mPRNG = 0;
+
+	ATCoProcWriteMemNode mWriteNode = {};
+	ATCoProcReadMemNode mCorruptedReadNode = {};
+	ATCoProcWriteMemNode mCorruptedWriteNode = {};
 	ATCoProc65802 mCoProc;
 
 	vdfastvector<ATCPUHistoryEntry> mHistory;
 
-	VDALIGN(4) uint8 mRAM[0x20000];
+	VDALIGN(4) uint8 mRAM[0x20000] = {};
+	
+	vdfunction<void(bool)> mpStepHandler = {};
+	bool mbStepOut = false;
+	uint32 mStepStartSubCycle = 0;
+	uint16 mStepOutS = 0;
+	uint32 mBreakpointCount = 0;
+	IATCPUBreakpointHandler *mpBreakpointHandler = nullptr;
+	bool mBreakpointMap[0x10000] = {};
+	bool mStepBreakpointMap[0x10000];
 };
 
 #endif

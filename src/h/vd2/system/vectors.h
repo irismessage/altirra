@@ -31,6 +31,7 @@
 #endif
 
 #include <vd2/system/vdtypes.h>
+#include <vd2/system/math.h>
 #include <math.h>
 #include <limits>
 
@@ -47,348 +48,321 @@ bool VDSolveLinearEquation(double *src, int n, ptrdiff_t stride_elements, double
 
 class vdfloat2x2 {
 public:
-	enum zero_type { zero };
-	enum identity_type { identity };
-
-	typedef float			value_type;
-	typedef vdfloat2		vector_type;
-	typedef vdfloat2c		vector_ctor_type;
-	typedef vdfloat2x2		self_type;
-
-	vdfloat2x2() {}
-	vdfloat2x2(zero_type) { m[0] = m[1] = vector_ctor_type(0, 0); }
-	vdfloat2x2(identity_type) {
-		m[0] = vector_ctor_type(1, 0);
-		m[1] = vector_ctor_type(0, 1);
+	static vdfloat2x2 zero() {
+		return vdfloat2x2 {{0,0}, {0,0}};
 	}
 
-	vector_type& operator[](int k) { return m[k]; }
-	const vector_type& operator[](int k) const { return m[k]; }
+	static vdfloat2x2 identity() {
+		return vdfloat2x2 {{1,0}, {0,1}};
+	}
 
-	self_type operator*(const self_type& v) const {
-		self_type result;
-
-#define DO(i,j) result.m[i].v[j] = m[i].v[0]*v.m[0].v[j] + m[i].v[1]*v.m[1].v[j]
-		DO(0,0);
-		DO(0,1);
-		DO(1,0);
-		DO(1,1);
+	vdfloat2x2 operator*(const vdfloat2x2& v) const {
+		return vdfloat2x2 {
+#define DO(i,j) i.x*v.x.j + i.y*v.y.j
+			{ DO(x,x), DO(x,y) },
+			{ DO(y,x), DO(y,y) }
 #undef DO
-
-		return result;
+		};
 	}
 
-	vector_type operator*(const vector_type& r) const {
-		return vector_ctor_type(
-				m[0].v[0]*r.v[0] + m[0].v[1]*r.v[1],
-				m[1].v[0]*r.v[0] + m[1].v[1]*r.v[1]);
+	vdfloat2 operator*(const vdfloat2& r) const {
+		return vdfloat2 {
+				x.x*r.x + x.y*r.y,
+				y.x*r.x + y.y*r.y };
 	}
 
-	self_type transpose() const {
-		self_type res;
-
-		res.m[0].v[0] = m[0].v[0];
-		res.m[0].v[1] = m[1].v[0];
-		res.m[1].v[0] = m[0].v[1];
-		res.m[1].v[1] = m[1].v[1];
-
-		return res;
+	vdfloat2x2 transpose() const {
+		return vdfloat2x2 {
+			vdfloat2 { x.x, y.x },
+			vdfloat2 { x.y, y.y }
+		};
 	}
 
-	self_type adjunct() const {
-		self_type res;
-		
-		res.m[0].set(m[1].v[1], -m[0].v[1]);
-		res.m[1].set(-m[1].v[0], -m[0].v[0]);
-
-		return res;
+	vdfloat2x2 adjunct() const {
+		return vdfloat2x2 {
+			vdfloat2 { y.y, -x.y },
+			vdfloat2 { -y.x, x.x }
+		};
 	}
 
-	value_type det() const {
-		return m[0].v[0]*m[1].v[1] - m[1].v[0]*m[0].v[1];
+	float det() const {
+		return x.x*y.y - x.y*y.x;
 	}
 
-	self_type operator~() const {
+	vdfloat2x2 operator~() const {
 		return adjunct() / det();
 	}
 
-	self_type& operator*=(const value_type factor) {
-		m[0] *= factor;
-		m[1] *= factor;
+	vdfloat2x2& operator*=(float factor) {
+		x *= factor;
+		y *= factor;
 
 		return *this;
 	}
 
-	self_type& operator/=(const value_type factor) {
-		return operator*=(value_type(1)/factor);
+	vdfloat2x2 operator/=(float factor) {
+		float inv = 1.0f / factor;
+		x *= inv;
+		y *= inv;
+		return *this;
 	}
 
-	self_type operator*(const value_type factor) const {
-		return self_type(*this) *= factor;
+	vdfloat2x2 operator*(float factor) const {
+		return vdfloat2x2 { x * factor, y * factor };
 	}
 
-	self_type operator/(const value_type factor) const {
-		return self_type(*this) /= factor;
+	vdfloat2x2 operator/(float factor) const {
+		return vdfloat2x2 { x / factor, y / factor };
 	}
 
-	vector_type m[2];
+	vdfloat2 x;
+	vdfloat2 y;
 };
 
 class vdfloat3x3 {
 public:
-	enum zero_type { zero };
-	enum identity_type { identity };
-	enum rotation_x_type { rotation_x };
-	enum rotation_y_type { rotation_y };
-	enum rotation_z_type { rotation_z };
-
-	typedef float			value_type;
-	typedef vdfloat3		vector_type;
-	typedef vdfloat3c		vector_ctor_type;
-	typedef vdfloat3x3		self_type;
-
-	vdfloat3x3() {}
-	vdfloat3x3(zero_type) { m[0] = m[1] = m[2] = vector_ctor_type(0, 0, 0); }
-	vdfloat3x3(identity_type) {
-		m[0].set(1, 0, 0);
-		m[1].set(0, 1, 0);
-		m[2].set(0, 0, 1);
-	}
-	vdfloat3x3(rotation_x_type, value_type angle) {
-		const value_type s(sin(angle));
-		const value_type c(cos(angle));
-
-		m[0].set( 1, 0, 0);
-		m[1].set( 0, c,-s);
-		m[2].set( 0, s, c);
+	static vdfloat3x3 zero() {
+		return vdfloat3x3 {
+			{ 0, 0, 0 },
+			{ 0, 0, 0 },
+			{ 0, 0, 0 }
+		};
 	}
 
-	vdfloat3x3(rotation_y_type, value_type angle) {
-		const value_type s(sin(angle));
-		const value_type c(cos(angle));
-
-		m[0].set( c, 0, s);
-		m[1].set( 0, 1, 0);
-		m[2].set(-s, 0, c);
-	}
-	vdfloat3x3(rotation_z_type, value_type angle) {
-		const value_type s(sin(angle));
-		const value_type c(cos(angle));
-
-		m[0].set( c,-s, 0);
-		m[1].set( s, c, 0);
-		m[2].set( 0, 0, 1);
+	static vdfloat3x3 identity() {
+		return vdfloat3x3 {
+			{ 1, 0, 0 },
+			{ 0, 1, 0 },
+			{ 0, 0, 1 }
+		};
 	}
 
-	vector_type& operator[](int k) { return m[k]; }
-	const vector_type& operator[](int k) const { return m[k]; }
+	static vdfloat3x3 rotation_x(float angle) {
+		const float s(sinf(angle));
+		const float c(cosf(angle));
 
-	self_type operator*(const self_type& v) const {
-		self_type result;
+		return vdfloat3x3 {
+			{ 1, 0, 0 },
+			{ 0, c,-s },
+			{ 0, s, c }
+		};
+	}
 
-#define DO(i,j) result.m[i].v[j] = m[i].v[0]*v.m[0].v[j] + m[i].v[1]*v.m[1].v[j] + m[i].v[2]*v.m[2].v[j]
-		DO(0,0);
-		DO(0,1);
-		DO(0,2);
-		DO(1,0);
-		DO(1,1);
-		DO(1,2);
-		DO(2,0);
-		DO(2,1);
-		DO(2,2);
+	static vdfloat3x3 rotation_y_type(float angle) {
+		const float s(sinf(angle));
+		const float c(cosf(angle));
+
+		return vdfloat3x3 {
+			{ c, 0, s },
+			{ 0, 1, 0 },
+			{-s, 0, c }
+		};
+	}
+
+	static vdfloat3x3 rotation_z_type(float angle) {
+		const float s(sinf(angle));
+		const float c(cosf(angle));
+
+		return vdfloat3x3 {
+			{ c,-s, 0 },
+			{ s, c, 0 },
+			{ 0, 0, 1 }
+		};
+	}
+
+	vdfloat3x3 operator*(const vdfloat3x3& v) const {
+		return vdfloat3x3 {
+#define DO(i,j) i.x*v.x.j + i.y*v.y.j + i.z*v.z.j
+		{ DO(x,x), DO(x,y), DO(x,z) },
+		{ DO(y,x), DO(y,y), DO(y,z) },
+		{ DO(z,x), DO(z,y), DO(z,z) }
 #undef DO
-
-		return result;
+		};
 	}
 
-	vector_type operator*(const vector_type& r) const {
-		return vector_ctor_type(
-				m[0].v[0]*r.v[0] + m[0].v[1]*r.v[1] + m[0].v[2]*r.v[2],
-				m[1].v[0]*r.v[0] + m[1].v[1]*r.v[1] + m[1].v[2]*r.v[2],
-				m[2].v[0]*r.v[0] + m[2].v[1]*r.v[1] + m[2].v[2]*r.v[2]);
+	vdfloat3 operator*(const vdfloat3& r) const {
+		return vdfloat3 {
+				x.x*r.x + x.y*r.y + x.z*r.z,
+				y.x*r.x + y.y*r.y + y.z*r.z,
+				z.x*r.x + z.y*r.y + z.z*r.z };
 	}
 
-	self_type transpose() const {
-		self_type res;
-
-		res.m[0].v[0] = m[0].v[0];
-		res.m[0].v[1] = m[1].v[0];
-		res.m[0].v[2] = m[2].v[0];
-		res.m[1].v[0] = m[0].v[1];
-		res.m[1].v[1] = m[1].v[1];
-		res.m[1].v[2] = m[2].v[1];
-		res.m[2].v[0] = m[0].v[2];
-		res.m[2].v[1] = m[1].v[2];
-		res.m[2].v[2] = m[2].v[2];
-
-		return res;
+	vdfloat3x3 transpose() const {
+		return vdfloat3x3 {
+			{ x.x, y.x, z.x },
+			{ x.y, y.y, z.y },
+			{ x.z, y.z, z.z },
+		};
 	}
 
-	self_type adjunct() const {
+	vdfloat3x3 adjunct() const {
 		using namespace nsVDMath;
 
-		self_type res;
-
-		res.m[0] = cross(m[1], m[2]);
-		res.m[1] = cross(m[2], m[0]);
-		res.m[2] = cross(m[0], m[1]);
+		vdfloat3x3 res = {
+			cross(y, z),
+			cross(z, x),
+			cross(x, y)
+		};
 
 		return res.transpose();
 	}
 
-	value_type det() const {
-		return	+ m[0].v[0] * m[1].v[1] * m[2].v[2]
-				+ m[1].v[0] * m[2].v[1] * m[0].v[2]
-				+ m[2].v[0] * m[0].v[1] * m[1].v[2]
-				- m[0].v[0] * m[2].v[1] * m[1].v[2]
-				- m[1].v[0] * m[0].v[1] * m[2].v[2]
-				- m[2].v[0] * m[1].v[1] * m[0].v[2];
+	float det() const {
+		return	+ x.x * y.y * z.z
+				+ y.x * z.y * x.z
+				+ z.x * x.y * y.z
+				- x.x * z.y * y.z
+				- y.x * x.y * z.z
+				- z.x * y.y * x.z;
 	}
 
-	self_type operator~() const {
+	vdfloat3x3 operator~() const {
 		return adjunct() / det();
 	}
 
-	self_type& operator*=(const value_type factor) {
-		m[0] *= factor;
-		m[1] *= factor;
-		m[2] *= factor;
+	vdfloat3x3& operator*=(float factor) {
+		x *= factor;
+		y *= factor;
+		z *= factor;
 
 		return *this;
 	}
 
-	self_type& operator/=(const value_type factor) {
-		return operator*=(value_type(1)/factor);
+	vdfloat3x3& operator/=(float factor) {
+		return operator*=(1.0f/factor);
 	}
 
-	self_type operator*(const value_type factor) const {
-		return self_type(*this) *= factor;
+	vdfloat3x3 operator*(float factor) const {
+		return vdfloat3x3 { x*factor, y*factor, z*factor };
 	}
 
-	self_type operator/(const value_type factor) const {
-		return self_type(*this) /= factor;
+	vdfloat3x3 operator/(float factor) const {
+		float inv = 1.0f / factor;
+		return vdfloat3x3 { x*inv, y*inv, z*inv };
 	}
 
-	vector_type m[3];
+	vdfloat3 x;
+	vdfloat3 y;
+	vdfloat3 z;
 };
 
 inline vdfloat3 operator*(const vdfloat3& v, const vdfloat3x3& m) {
-	return v.x * m.m[0] + v.y * m.m[1] + v.z * m.m[2];
+	return v.x * m.x + v.y * m.y + v.z * m.z;
 }
 
 class vdfloat4x4 {
 public:
-	enum zero_type { zero };
-	enum identity_type { identity };
-	enum rotation_x_type { rotation_x };
-	enum rotation_y_type { rotation_y };
-	enum rotation_z_type { rotation_z };
-
-	typedef float			value_type;
-	typedef vdfloat4		vector_type;
-	typedef vdfloat4c		vector_ctor_type;
-
-	vdfloat4x4() {}
-	vdfloat4x4(const vdfloat3x3& v) {
-		m[0].set(v.m[0].x, v.m[0].y, v.m[0].z, 0.0f);
-		m[1].set(v.m[1].x, v.m[1].y, v.m[1].z, 0.0f);
-		m[2].set(v.m[2].x, v.m[2].y, v.m[2].z, 0.0f);
-		m[3].set(0, 0, 0, 1);
+	static vdfloat4x4 from3(const vdfloat3x3& v) {
+		return vdfloat4x4 {
+			{ v.x.x, v.x.y, v.x.z, 0.0f },
+			{ v.y.x, v.y.y, v.y.z, 0.0f },
+			{ v.z.x, v.z.y, v.z.z, 0.0f },
+			{ 0, 0, 0, 1 }
+		};
 	}
 
-	vdfloat4x4(zero_type) {
-		m[0].setzero();
-		m[1].setzero();
-		m[2].setzero();
-		m[3].setzero();
+	static vdfloat4x4 zero() {
+		return vdfloat4x4 {
+			{ 0, 0, 0, 0 },
+			{ 0, 0, 0, 0 },
+			{ 0, 0, 0, 0 },
+			{ 0, 0, 0, 0 }
+		};
 	}
 
-	vdfloat4x4(identity_type) {
-		m[0].set(1, 0, 0, 0);
-		m[1].set(0, 1, 0, 0);
-		m[2].set(0, 0, 1, 0);
-		m[3].set(0, 0, 0, 1);
-	}
-	vdfloat4x4(rotation_x_type, value_type angle) {
-		const value_type s(sin(angle));
-		const value_type c(cos(angle));
-
-		m[0].set( 1, 0, 0, 0);
-		m[1].set( 0, c,-s, 0);
-		m[2].set( 0, s, c, 0);
-		m[3].set( 0, 0, 0, 1);
-	}
-	vdfloat4x4(rotation_y_type, value_type angle) {
-		const value_type s(sin(angle));
-		const value_type c(cos(angle));
-
-		m[0].set( c, 0, s, 0);
-		m[1].set( 0, 1, 0, 0);
-		m[2].set(-s, 0, c, 0);
-		m[3].set( 0, 0, 0, 1);
-	}
-	vdfloat4x4(rotation_z_type, value_type angle) {
-		const value_type s(sin(angle));
-		const value_type c(cos(angle));
-
-		m[0].set( c,-s, 0, 0);
-		m[1].set( s, c, 0, 0);
-		m[2].set( 0, 0, 1, 0);
-		m[3].set( 0, 0, 0, 1);
+	static vdfloat4x4 identity() {
+		return vdfloat4x4 {
+			{ 1, 0, 0, 0 },
+			{ 0, 1, 0, 0 },
+			{ 0, 0, 1, 0 },
+			{ 0, 0, 0, 1 },
+		};
 	}
 
-	const value_type *data() const { return &m[0][0]; }
+	static vdfloat4x4 rotation_x(float angle) {
+		const float s(sinf(angle));
+		const float c(cosf(angle));
 
-	vector_type& operator[](int n) { return m[n]; }
-	const vector_type& operator[](int n) const { return m[n]; }
+		return vdfloat4x4 {
+			{ 1, 0, 0, 0 },
+			{ 0, c,-s, 0 },
+			{ 0, s, c, 0 },
+			{ 0, 0, 0, 1 },
+		};
+	}
+
+	static vdfloat4x4 rotation_y(float angle) {
+		const float s(sinf(angle));
+		const float c(cosf(angle));
+
+		return vdfloat4x4 {
+			{ c, 0, s, 0 },
+			{ 0, 1, 0, 0 },
+			{-s, 0, c, 0 },
+			{ 0, 0, 0, 1 },
+		};
+	}
+
+	static vdfloat4x4 rotation_z(float angle) {
+		const float s(sinf(angle));
+		const float c(cosf(angle));
+
+		return vdfloat4x4 {
+			{ c,-s, 0, 0 },
+			{ s, c, 0, 0 },
+			{ 0, 0, 1, 0 },
+			{ 0, 0, 0, 1 },
+		};
+	}
+
+	const float *data() const { return &x.x; }
 
 	vdfloat4x4 operator*(const vdfloat4x4& v) const {
-		vdfloat4x4 result;
-
-#define DO(i,j) result.m[i].v[j] = m[i].v[0]*v.m[0].v[j] + m[i].v[1]*v.m[1].v[j] + m[i].v[2]*v.m[2].v[j] + m[i].v[3]*v.m[3].v[j]
-		DO(0,0);
-		DO(0,1);
-		DO(0,2);
-		DO(0,3);
-		DO(1,0);
-		DO(1,1);
-		DO(1,2);
-		DO(1,3);
-		DO(2,0);
-		DO(2,1);
-		DO(2,2);
-		DO(2,3);
-		DO(3,0);
-		DO(3,1);
-		DO(3,2);
-		DO(3,3);
+		return vdfloat4x4 {
+#define DO(i,j) i.x*v.x.j + i.y*v.y.j + i.z*v.z.j + i.w*v.w.j
+			{ DO(x,x), DO(x,y), DO(x,z), DO(x,w) },
+			{ DO(y,x), DO(y,y), DO(y,z), DO(y,w) },
+			{ DO(z,x), DO(z,y), DO(z,z), DO(z,w) },
+			{ DO(w,x), DO(w,y), DO(w,z), DO(w,w) },
 #undef DO
-
-		return result;
+		};
 	}
 
 	vdfloat4x4& operator*=(const vdfloat4x4& v) {
 		return operator=(operator*(v));
 	}
 
-	vector_type operator*(const vdfloat3& r) const {
-		return vector_ctor_type(
-				m[0].v[0]*r.v[0] + m[0].v[1]*r.v[1] + m[0].v[2]*r.v[2] + m[0].v[3],
-				m[1].v[0]*r.v[0] + m[1].v[1]*r.v[1] + m[1].v[2]*r.v[2] + m[1].v[3],
-				m[2].v[0]*r.v[0] + m[2].v[1]*r.v[1] + m[2].v[2]*r.v[2] + m[2].v[3],
-				m[3].v[0]*r.v[0] + m[3].v[1]*r.v[1] + m[3].v[2]*r.v[2] + m[3].v[3]);
+	vdfloat4 operator*(const vdfloat4& r) const {
+		return vdfloat4 {
+				x.x*r.x + x.y*r.y + x.z*r.z + x.w*r.w,
+				y.x*r.x + y.y*r.y + y.z*r.z + y.w*r.w,
+				z.x*r.x + z.y*r.y + z.z*r.z + z.w*r.w,
+				w.x*r.x + w.y*r.y + w.z*r.z + w.w*r.w };
 	}
 
-	vector_type operator*(const vector_type& r) const {
-		return vector_ctor_type(
-				m[0].v[0]*r.v[0] + m[0].v[1]*r.v[1] + m[0].v[2]*r.v[2] + m[0].v[3]*r.v[3],
-				m[1].v[0]*r.v[0] + m[1].v[1]*r.v[1] + m[1].v[2]*r.v[2] + m[1].v[3]*r.v[3],
-				m[2].v[0]*r.v[0] + m[2].v[1]*r.v[1] + m[2].v[2]*r.v[2] + m[2].v[3]*r.v[3],
-				m[3].v[0]*r.v[0] + m[3].v[1]*r.v[1] + m[3].v[2]*r.v[2] + m[3].v[3]*r.v[3]);
-	}
-
-	vector_type m[4];
+	vdfloat4 x;
+	vdfloat4 y;
+	vdfloat4 z;
+	vdfloat4 w;
 };
+
+///////////////////////////////////////////////////////////////////////////
+
+namespace nsVDMath {
+	VDFORCEINLINE vdint2 intround(const vdfloat2& v) {
+		return { VDRoundToInt(v.x), VDRoundToInt(v.y) };
+	}
+
+	VDFORCEINLINE vdint3 intround(const vdfloat3& v) {
+		return { VDRoundToInt(v.x), VDRoundToInt(v.y), VDRoundToInt(v.z) };
+	}
+
+	VDFORCEINLINE vdint4 intround(const vdfloat4& v) {
+		return { VDRoundToInt(v.x), VDRoundToInt(v.y), VDRoundToInt(v.z), VDRoundToInt(v.w) };
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
 
 template<class T>
 struct VDSize {

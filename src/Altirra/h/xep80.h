@@ -20,7 +20,7 @@ public:
 	ATXEP80Emulator();
 	~ATXEP80Emulator();
 
-	void Init(ATScheduler *sched, ATPIAEmulator *pia);
+	void Init(ATScheduler *sched, IATDevicePortManager *pia);
 	void Shutdown();
 
 	void ColdReset();
@@ -211,7 +211,7 @@ private:
 	bool mbInvalidBlockGraphics;
 	bool mbInvalidActiveFont;
 	
-	ATPIAEmulator *mpPIA;
+	IATDevicePortManager *mpPIA;
 	int mPIAInput;
 	int mPIAOutput;
 

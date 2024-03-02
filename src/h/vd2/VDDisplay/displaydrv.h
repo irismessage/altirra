@@ -25,11 +25,21 @@
 
 class VDStringA;
 class IVDDisplayCompositor;
+class IVDDisplayCompositionEngine;
 
 class IVDVideoDisplayMinidriverCallback {
 public:
+	// Release the current frame, as it has been rendered.
 	virtual void ReleaseActiveFrame() = 0;
+
+	// Request that the next frame in the queue be dispatched, if there is
+	// one. This is only dispatched after the current call exits; it will
+	// not occur during the call to RequestNextFrame().
 	virtual void RequestNextFrame() = 0;
+
+	// Queue a present. This causes PresentQueued() to be called on the
+	// minidriver on the rendering thread. This method is thread-safe and
+	// may be called asynchronously.
 	virtual void QueuePresent() = 0;
 };
 
@@ -47,7 +57,7 @@ struct VDVideoDisplaySourceInfo {
 
 class VDINTERFACE IVDVideoDisplayMinidriver {
 public:
-	enum UpdateMode {
+	enum UpdateMode : uint32 {
 		kModeNone		= 0x00000000,
 		kModeEvenField	= 0x00000001,
 		kModeOddField	= 0x00000002,
@@ -105,8 +115,8 @@ public:
 };
 
 class VDINTERFACE VDVideoDisplayMinidriver : public IVDVideoDisplayMinidriver {
-	VDVideoDisplayMinidriver(const VDVideoDisplayMinidriver&);
-	VDVideoDisplayMinidriver& operator=(const VDVideoDisplayMinidriver&);
+	VDVideoDisplayMinidriver(const VDVideoDisplayMinidriver&) = delete;
+	VDVideoDisplayMinidriver& operator=(const VDVideoDisplayMinidriver&) = delete;
 public:
 	VDVideoDisplayMinidriver();
 	~VDVideoDisplayMinidriver();
@@ -134,6 +144,9 @@ public:
 	virtual float GetSyncDelta() const;
 
 protected:
+	virtual IVDDisplayCompositionEngine *GetDisplayCompositionEngine() = 0;
+
+protected:
 	static void GetFormatString(const VDVideoDisplaySourceInfo& info, VDStringA& s);
 	void UpdateDrawRect();
 
@@ -158,6 +171,5 @@ IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverOpenGL();
 IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverDirectDraw(bool enableOverlays, bool enableSecondaryDraw);
 IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverGDI();
 IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverDX9(bool clipToMonitor, bool use9ex);
-IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverD3D101();
 
 #endif

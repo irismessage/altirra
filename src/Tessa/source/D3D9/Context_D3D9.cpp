@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <d3d9.h>
 #include <tchar.h>
 #include <vd2/system/bitmath.h>
@@ -282,7 +282,7 @@ bool VDTSurfaceD3D9::Readback(IVDTReadbackBuffer *target) {
 
 void VDTSurfaceD3D9::Load(uint32 dx, uint32 dy, const VDTInitData2D& srcData, uint32 w, uint32 h) {
 	D3DLOCKED_RECT lr;
-	RECT r = { dx, dy, w, h };
+	RECT r = { (LONG)dx, (LONG)dy, (LONG)w, (LONG)h };
 
 	IDirect3DSurface9 *locksurf = mpSurfaceSys ? mpSurfaceSys : mpSurface;
 
@@ -321,8 +321,8 @@ void VDTSurfaceD3D9::Copy(uint32 dx, uint32 dy, IVDTSurface *src0, uint32 sx, ui
 	IDirect3DDevice9 *dev = parent->GetDeviceD3D9();
 	VDTSurfaceD3D9 *src = static_cast<VDTSurfaceD3D9 *>(src0);
 
-	const RECT rSrc = { sx, sy, sx+w, sy+h };
-	const RECT rDst = { dx, dy, dx+w, dy+h };
+	const RECT rSrc = { (LONG)sx, (LONG)sy, (LONG)(sx+w), (LONG)(sy+h) };
+	const RECT rDst = { (LONG)dx, (LONG)dy, (LONG)(dx+w), (LONG)(dy+h) };
 	HRESULT hr = dev->StretchRect(src->mpSurface, &rSrc, mpSurface, &rDst, D3DTEXF_NONE);
 	if (FAILED(hr))
 		parent->ProcessHRESULT(hr);
@@ -1373,8 +1373,8 @@ bool VDTContextD3D9::Init(IDirect3DDevice9 *dev, IDirect3DDevice9Ex *dev9Ex, IVD
 	mpData->mhmodD3D9 = VDLoadSystemLibraryW32("d3d9");
 
 	if (mpData->mhmodD3D9) {
-		mpBeginEvent = GetProcAddress(mpData->mhmodD3D9, "D3DPERF_BeginEvent");
-		mpEndEvent = GetProcAddress(mpData->mhmodD3D9, "D3DPERF_EndEvent");
+		mpBeginEvent = (void *)GetProcAddress(mpData->mhmodD3D9, "D3DPERF_BeginEvent");
+		mpEndEvent = (void *)GetProcAddress(mpData->mhmodD3D9, "D3DPERF_EndEvent");
 	}
 
 	D3DDEVICE_CREATION_PARAMETERS cparms;

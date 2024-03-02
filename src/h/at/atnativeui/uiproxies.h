@@ -323,7 +323,7 @@ public:
 	virtual int Compare(IVDUITreeViewVirtualItem& x, IVDUITreeViewVirtualItem& y) const = 0;
 };
 
-class VDUIProxyTreeViewControl : public VDUIProxyControl {
+class VDUIProxyTreeViewControl final : public VDUIProxyControl {
 public:
 	typedef uintptr NodeRef;
 
@@ -339,6 +339,11 @@ public:
 
 	IVDUITreeViewVirtualItem *GetSelectedVirtualItem() const;
 
+	template<class T>
+	T *GetSelectedVirtualItem() const { return static_cast<T *>(GetSelectedVirtualItem()); }
+
+	IVDUITreeViewVirtualItem *GetVirtualItem(NodeRef ref) const;
+
 	void Clear();
 	void DeleteItem(NodeRef ref);
 	NodeRef AddItem(NodeRef parent, NodeRef insertAfter, const wchar_t *label);
@@ -349,7 +354,9 @@ public:
 	void RefreshNode(NodeRef node);
 	void ExpandNode(NodeRef node, bool expanded);
 	void EditNodeLabel(NodeRef node);
+	bool HasChildren(NodeRef parent) const;
 	void EnumChildren(NodeRef parent, const vdfunction<void(IVDUITreeViewVirtualItem *)>& callback);
+	void EnumChildrenRecursive(NodeRef parent, const vdfunction<void(IVDUITreeViewVirtualItem *)>& callback);
 	void SortChildren(NodeRef parent, IVDUITreeViewVirtualItemComparer& comparer);
 
 	VDEvent<VDUIProxyTreeViewControl, int>& OnItemSelectionChanged() {
@@ -391,6 +398,16 @@ public:
 		return mEventItemGetDisplayAttributes;
 	}
 
+	struct BeginDragEvent {
+		NodeRef mNode;
+		IVDUITreeViewVirtualItem *mpItem;
+		vdpoint32 mPos;
+	};
+
+	void SetOnBeginDrag(const vdfunction<void(const BeginDragEvent& event)>& fn);
+	NodeRef FindDropTarget() const;
+	void SetDropTargetHighlight(NodeRef item);
+
 protected:
 	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
 	VDZLRESULT FixLabelEditWndProcA(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
@@ -410,6 +427,7 @@ protected:
 	VDEvent<VDUIProxyTreeViewControl, BeginEditEvent *> mEventItemBeginEdit;
 	VDEvent<VDUIProxyTreeViewControl, EndEditEvent *> mEventItemEndEdit;
 	VDEvent<VDUIProxyTreeViewControl, GetDispAttrEvent *> mEventItemGetDisplayAttributes;
+	vdfunction<void(const BeginDragEvent& event)> mpOnBeginDrag;
 };
 
 /////////////////////////////////////////////////////////////////////////////
@@ -418,6 +436,9 @@ class VDUIProxyEditControl final : public VDUIProxyControl {
 public:
 	VDUIProxyEditControl();
 	~VDUIProxyEditControl();
+
+	VDStringW GetText() const;
+	void SetText(const wchar_t *s);
 
 	void SetOnTextChanged(vdfunction<void(VDUIProxyEditControl *)> fn);
 
@@ -429,11 +450,38 @@ private:
 
 /////////////////////////////////////////////////////////////////////////////
 
+class VDUIProxyRichEditControl final : public VDUIProxyControl {
+public:
+	VDUIProxyRichEditControl();
+	~VDUIProxyRichEditControl();
+
+	static void AppendEscapedRTF(VDStringA& buf, const wchar_t *str);
+
+	void EnsureCaretVisible();
+
+	void SetCaretPos(int lineIndex, int charIndex);
+
+	void SetText(const wchar_t *s);
+	void SetTextRTF(const char *s);
+
+	void SetReadOnlyBackground();
+
+	void SetOnTextChanged(vdfunction<void()> fn);
+
+private:
+	VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
+
+	vdfunction<void()> mpOnTextChanged;
+};
+
+/////////////////////////////////////////////////////////////////////////////
+
 class VDUIProxyButtonControl final : public VDUIProxyControl {
 public:
 	VDUIProxyButtonControl();
 	~VDUIProxyButtonControl();
 
+	bool GetChecked() const;
 	void SetChecked(bool enable);
 
 	void SetOnClicked(vdfunction<void(VDUIProxyButtonControl *)> fn);

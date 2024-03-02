@@ -332,7 +332,7 @@ protected:
 	//
 	VDALIGN(128) uint8	mDMAPattern[115 + 13];
 
-	VDALIGN(128) uint8	mPFDataBuffer[114 + 14];
+	VDALIGN(256) uint8	mPFDataBuffer[114 + 14];	// MUST be aligned to 256 as we are checking the pointer low byte!
 	VDALIGN(128) uint8	mPFCharBuffer[114 + 14];
 
 	VDALIGN(16) uint8	mPFDecodeBuffer[228 + 12];

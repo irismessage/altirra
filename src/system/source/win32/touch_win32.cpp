@@ -23,12 +23,12 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/win32/touch.h>
 #include <tchar.h>
 
 BOOL WINAPI VDPhysicalToLogicalPointW32(HWND hwnd, LPPOINT lpPoint) {
-	static void *pfn = GetProcAddress(GetModuleHandle(_T("user32")), "PhysicalToLogicalPoint");
+	static auto pfn = GetProcAddress(GetModuleHandle(_T("user32")), "PhysicalToLogicalPoint");
 
 	return pfn && ((BOOL (WINAPI *)(HWND, LPPOINT))pfn)(hwnd, lpPoint);
 }
@@ -55,31 +55,31 @@ BOOL WINAPI VDEvaluateProximityToRectW32(const RECT *controlBoundingBox, const T
 };
 
 BOOL WINAPI VDRegisterTouchWindowW32(HWND hwnd, ULONG flags) {
-	static void *pfn = GetProcAddress(GetModuleHandle(_T("user32")), "RegisterTouchWindow");
+	static auto pfn = GetProcAddress(GetModuleHandle(_T("user32")), "RegisterTouchWindow");
 
 	return pfn && ((BOOL (WINAPI *)(HWND, ULONG))pfn)(hwnd, flags);
 }
 
 BOOL WINAPI VDUnregisterTouchWindowW32(HWND hwnd) {
-	static void *pfn = GetProcAddress(GetModuleHandle(_T("user32")), "UnregisterTouchWindow");
+	static auto pfn = GetProcAddress(GetModuleHandle(_T("user32")), "UnregisterTouchWindow");
 
 	return pfn && ((BOOL (WINAPI *)(HWND))pfn)(hwnd);
 }
 
 BOOL WINAPI VDGetTouchInputInfoW32(HTOUCHINPUT hTouchInput, UINT cInputs, PTOUCHINPUT pInputs, int cbSize) {
-	static void *pfn = GetProcAddress(GetModuleHandle(_T("user32")), "GetTouchInputInfo");
+	static auto pfn = GetProcAddress(GetModuleHandle(_T("user32")), "GetTouchInputInfo");
 
 	return pfn && ((BOOL (WINAPI *)(HTOUCHINPUT, UINT, PTOUCHINPUT, int))pfn)(hTouchInput, cInputs, pInputs, cbSize);
 }
 
 BOOL WINAPI VDCloseTouchInputHandleW32(HTOUCHINPUT hTouchInput) {
-	static void *pfn = GetProcAddress(GetModuleHandle(_T("user32")), "CloseTouchInputHandle");
+	static auto pfn = GetProcAddress(GetModuleHandle(_T("user32")), "CloseTouchInputHandle");
 
 	return pfn && ((BOOL (WINAPI *)(HTOUCHINPUT))pfn)(hTouchInput);
 }
 
 BOOL WINAPI VDSetGestureConfigW32(HWND hwnd, DWORD dwReserved, UINT cIDs, PGESTURECONFIG pGestureConfig, UINT cbSize) {
-	static void *pfn = GetProcAddress(GetModuleHandle(_T("user32")), "SetGestureConfig");
+	static auto pfn = GetProcAddress(GetModuleHandle(_T("user32")), "SetGestureConfig");
 
 	return pfn && ((BOOL (WINAPI *)(HWND, DWORD, UINT, PGESTURECONFIG, UINT))pfn)(hwnd, dwReserved, cIDs, pGestureConfig, cbSize);
 }

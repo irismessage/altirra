@@ -34,7 +34,6 @@ void __declspec(naked) __cdecl ATArtifactNTSCAccum_SSE2(void *rout, const void *
 
 		pxor	xmm0, xmm0
 		pxor	xmm1, xmm1
-		pxor	xmm2, xmm2
 
 		add		esi, 80h
 
@@ -53,8 +52,7 @@ slow_path:
 
 		paddw	xmm0, [eax-80h]
 		paddw	xmm1, [eax-70h]
-		paddw	xmm2, [eax-60h]
-		movdqa	xmm3, [eax-50h]
+		movdqa	xmm2, [eax-60h]
 
 		movzx	eax, byte ptr [ebx+1]
 		shl		eax, 8
@@ -63,7 +61,6 @@ slow_path:
 		paddw	xmm0, [eax-40h]
 		paddw	xmm1, [eax-30h]
 		paddw	xmm2, [eax-20h]
-		paddw	xmm3, [eax-10h]
 
 		movzx	eax, byte ptr [ebx+2]
 		shl		eax, 8
@@ -72,7 +69,6 @@ slow_path:
 		paddw	xmm0, [eax]
 		paddw	xmm1, [eax+10h]
 		paddw	xmm2, [eax+20h]
-		paddw	xmm3, [eax+30h]
 
 		movzx	eax, byte ptr [ebx+3]
 		add		ebx, 4
@@ -81,24 +77,29 @@ slow_path:
 
 		paddw	xmm0, [eax+40h]
 		paddw	xmm1, [eax+50h]
+		psraw	xmm0, 5
 		paddw	xmm2, [eax+60h]
-		paddw	xmm3, [eax+70h]
+		packuswb	xmm0, xmm0
 
-		movdqa	[edx], xmm0
+		movq	qword ptr [edx], xmm0
 		movdqa	xmm0, xmm1
 		movdqa	xmm1, xmm2
-		movdqa	xmm2, xmm3
 
-		add		edx, 16
+		add		edx, 8
 		sub		ebp, 4
 		jnz		xloop1
 
 xit:
-		movdqa	[edx], xmm0
-		movdqa	[edx+10h], xmm1
-		movdqa	[edx+20h], xmm2
-
+		psraw	xmm0, 5
+		packuswb	xmm0, xmm0
+		psraw	xmm1, 5
+		movq	qword ptr [edx], xmm0
+		packuswb	xmm1, xmm1
+		psraw	xmm2, 5
+		movq	qword ptr [edx+8], xmm1
+		packuswb	xmm2, xmm2
 		pop		ebx
+		movq	qword ptr [edx+10h], xmm2
 		pop		esi
 		pop		edi
 		pop		ebp
@@ -119,7 +120,7 @@ fast_path:
 		movdqa	xmm4, [eax-80h+18000h]
 		movdqa	xmm5, [eax-70h+18000h]
 		movdqa	xmm6, [eax-60h+18000h]
-		movdqa	xmm7, [eax-50h+18000h]
+		mov		edi, 3
 		jmp		short fast_accum
 
 		align	16
@@ -132,16 +133,33 @@ fast_accum:
 		add		ebx, 4
 		paddw	xmm0, xmm4
 		paddw	xmm1, xmm5
-		paddw	xmm2, xmm6
+		psraw	xmm0, 5
+		packuswb	xmm0,xmm0
 
-		movdqa	[edx], xmm0
+		movq	qword ptr [edx], xmm0
 		movdqa	xmm0, xmm1
-		movdqa	xmm1, xmm2
-		movdqa	xmm2, xmm7
+		movdqa	xmm1, xmm6
 
-		add		edx, 16
+		add		edx, 8
 		sub		ebp, 4
-		jnz		xloop2
+		jz		xit
+
+		dec		edi
+		jne		xloop2
+
+		;at this point, we know that the last four pixels can be repeated... do so.
+		movq	xmm4, qword ptr [edx-8]
+xloop3:
+		mov		eax, dword ptr [ebx]
+		cmp		eax, ecx
+		jnz		fast_path_reload
+
+		add		ebx, 4
+		movq	qword ptr [edx], xmm4
+		add		edx, 8
+		sub		ebp, 4
+		jnz		xloop3
+
 		jmp		xit
 	}
 }
@@ -160,7 +178,6 @@ void __declspec(naked) __cdecl ATArtifactNTSCAccumTwin_SSE2(void *rout, const vo
 
 		pxor	xmm0, xmm0
 		pxor	xmm1, xmm1
-		pxor	xmm2, xmm2
 
 		align	16
 xloop:
@@ -178,28 +195,32 @@ slow_path:
 
 		paddw	xmm0, [eax]
 		paddw	xmm1, [eax+10h]
-		paddw	xmm2, [eax+20h]
-		movdqa	xmm3, [eax+30h]
+		movdqa	xmm2, [eax+20h]
 
 		paddw	xmm0, [ecx+40h]
+		psraw	xmm0, 5
 		paddw	xmm1, [ecx+50h]
-		movdqa	[edx], xmm0
+		packuswb	xmm0,xmm0
 		paddw	xmm2, [ecx+60h]
+		movq	qword ptr [edx], xmm0
 		movdqa	xmm0, xmm1
-		paddw	xmm3, [ecx+70h]
 		movdqa	xmm1, xmm2
 
-		movdqa	xmm2, xmm3
-		add		edx, 16
+		add		edx, 8
 		sub		ebp, 4
 		jnz		xloop
 
 xit:
-		movdqa	[edx], xmm0
-		movdqa	[edx+10h], xmm1
-		movdqa	[edx+20h], xmm2
+		psraw	xmm0, 5
+		packuswb	xmm0,xmm0
+		psraw	xmm1, 5
 
+		movq	qword ptr [edx], xmm0
+		packuswb	xmm1,xmm1
+
+		movq	qword ptr [edx+8], xmm1
 		pop		ebx
+
 		pop		esi
 		pop		edi
 		pop		ebp
@@ -220,7 +241,7 @@ fast_path:
 		movdqa	xmm4, [eax+8000h]
 		movdqa	xmm5, [eax+8010h]
 		movdqa	xmm6, [eax+8020h]
-		movdqa	xmm7, [eax+8030h]
+		mov		edi, 3
 		jmp		short fast_accum
 
 		align	16
@@ -231,15 +252,31 @@ xloop2:
 fast_accum:
 		paddw	xmm0, xmm4
 		paddw	xmm1, xmm5
-		movdqa	[edx], xmm0
+		psraw	xmm0, 5
+		packuswb	xmm0, xmm0
+		movq	qword ptr [edx], xmm0
 		movdqa	xmm0, xmm1
-		paddw	xmm2, xmm6
-		movdqa	xmm1, xmm2
-		movdqa	xmm2, xmm7
+		movdqa	xmm1, xmm6
 
-		add		edx, 16
+		add		edx, 8
 		sub		ebp, 4
+		jz		xit
+
+		dec		edi
 		jnz		xloop2
+
+		;at this point, we know that the last four pixels can be repeated... do so.
+		movq	xmm4, qword ptr [edx-8]
+xloop3:
+		cmp		ecx, dword ptr [ebx]
+		jnz		fast_path_reload
+		add		ebx, 4
+		movq	qword ptr [edx], xmm4
+
+		add		edx, 8
+		sub		ebp, 4
+		jnz		xloop3
+
 		jmp		xit
 	}
 }

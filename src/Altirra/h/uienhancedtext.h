@@ -18,6 +18,8 @@
 #ifndef f_AT_UIENHANCEDTEXT_H
 #define f_AT_UIENHANCEDTEXT_H
 
+#include <windows.h>
+
 class ATSimulator;
 class IATDeviceVideoOutput;
 

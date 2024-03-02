@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/math.h>
 #include "audiowriter.h"
@@ -211,7 +211,7 @@ void ATAudioWriter::WriteRawAudio(const float *left, const float *right, uint32 
 					right += actual;
 				}
 
-				count -= actual;
+				count -= (uint32)actual;
 
 				size_t outlevel = mLeftFilter.GetOutputLevel();
 
@@ -221,9 +221,9 @@ void ATAudioWriter::WriteRawAudio(const float *left, const float *right, uint32 
 					if (right) {
 						const sint16 *rightout = mRightFilter.Extract();
 
-						WriteInterleaved(leftout, rightout, outlevel);
+						WriteInterleaved(leftout, rightout, (uint32)outlevel);
 					} else {
-						mFile.writeData(leftout, sizeof(sint16)*outlevel);
+						mFile.writeData(leftout, (long)(sizeof(sint16)*outlevel));
 					}
 				}
 			}

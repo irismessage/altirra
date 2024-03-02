@@ -172,6 +172,15 @@ void VDDisplayDriver3D::Refresh(UpdateMode updateMode) {
 	if (!w || !h)
 		return;
 
+	VDDisplayCompositeInfo compInfo = {};
+
+	if (mpCompositor) {
+		compInfo.mWidth = w;
+		compInfo.mHeight = h;
+
+		mpCompositor->PreComposite(compInfo);
+	}
+
 	if (mbCompositionTreeDirty) {
 		if (!RebuildTree())
 			return;
@@ -214,12 +223,8 @@ void VDDisplayDriver3D::Refresh(UpdateMode updateMode) {
 	mpRootNode->Draw(*mpContext, mDisplayNodeContext);
 
 	if (mpCompositor) {
-		VDDisplayCompositeInfo info;
-		info.mWidth = w;
-		info.mHeight = h;
-
 		mRenderer.Begin(w, h, mDisplayNodeContext);
-		mpCompositor->Composite(mRenderer, info);
+		mpCompositor->Composite(mRenderer, compInfo);
 		mRenderer.End();
 	}
 

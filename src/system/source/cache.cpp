@@ -23,7 +23,7 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/cache.h>
 
 ///////////////////////////////////////////////////////////////////////////
@@ -370,9 +370,6 @@ void VDPool::NotifyFree(VDPooledObject *pObject) {
 		// Allocate() to sneak in before we acquire the lock.
 
 		if (pObject->GetRefCount() < 2) {
-			VDPoolState oldState = kVDPoolStateActive;
-			VDPoolState newState = kVDPoolStateFree;
-
 			mLists[kVDPoolStateActive].erase(pObject);
 
 			if (mObjectCount > mObjectLimit) {

@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/math.h>
@@ -347,6 +347,9 @@ void ATGTIAEmulator::ColdReset() {
 	memset(mMissileCollFlags, 0, sizeof mMissileCollFlags);
 
 	ResetSprites();
+
+	mpConn->GTIASelectController(0, false);
+
 }
 
 void ATGTIAEmulator::SetVBXE(ATVBXEEmulator *vbxe) {

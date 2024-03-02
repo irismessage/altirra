@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/math.h>
 #include <at/atnativeui/dialog.h>
 #include "resource.h"
@@ -36,11 +36,13 @@ protected:
 	void OnHScroll(uint32 id, int code);
 	void UpdateVolumeLabel();
 	void UpdateDriveVolumeLabel();
+	void UpdateCovoxVolumeLabel();
 	void UpdateLatencyLabel();
 	void UpdateExtraBufferLabel();
 
 	int mVolumeTick;
 	int mDriveVolTick;
+	int mCovoxVolTick;
 	int mLatencyTick;
 	int mExtraBufferTick;
 };
@@ -56,6 +58,7 @@ ATAudioOptionsDialog::~ATAudioOptionsDialog() {
 bool ATAudioOptionsDialog::OnLoaded() {
 	TBSetRange(IDC_VOLUME, 0, 200);
 	TBSetRange(IDC_DRIVEVOL, 0, 200);
+	TBSetRange(IDC_COVOXVOL, 0, 200);
 	TBSetRange(IDC_LATENCY, 1, 50);
 	TBSetRange(IDC_EXTRABUFFER, 2, 50);
 
@@ -66,11 +69,11 @@ bool ATAudioOptionsDialog::OnLoaded() {
 
 void ATAudioOptionsDialog::OnDataExchange(bool write) {
 	IATAudioOutput *audioOut = g_sim.GetAudioOutput();
-	ATAudioSyncMixer *syncMix = g_sim.GetAudioSyncMixer();
 
 	if (write) {
 		audioOut->SetVolume(powf(10.0f, (mVolumeTick - 200) * 0.01f));
-		syncMix->SetMixLevel(kATAudioMix_Drive, powf(10.0f, (mDriveVolTick - 200) * 0.01f));
+		audioOut->SetMixLevel(kATAudioMix_Drive, powf(10.0f, (mDriveVolTick - 200) * 0.01f));
+		audioOut->SetMixLevel(kATAudioMix_Covox, powf(10.0f, (mCovoxVolTick - 200) * 0.01f));
 		audioOut->SetLatency(mLatencyTick * 10);
 		audioOut->SetExtraBuffer(mExtraBufferTick * 10);
 		audioOut->SetApi(IsButtonChecked(IDC_API_DIRECTSOUND) ? kATAudioApi_DirectSound : kATAudioApi_WaveOut);
@@ -83,8 +86,12 @@ void ATAudioOptionsDialog::OnDataExchange(bool write) {
 		const float volume = audioOut->GetVolume();
 		mVolumeTick = 200 + VDRoundToInt(100.0f * log10(volume));
 
-		const float drivevol = syncMix->GetMixLevel(kATAudioMix_Drive);
+		const float drivevol = audioOut->GetMixLevel(kATAudioMix_Drive);
 		mDriveVolTick = 200 + VDRoundToInt(100.0f * log10(drivevol));
+
+		const float covoxvol = audioOut->GetMixLevel(kATAudioMix_Covox);
+		mCovoxVolTick = 200 + VDRoundToInt(100.0f * log10(covoxvol));
+
 		mLatencyTick = (audioOut->GetLatency() + 5) / 10;
 		mExtraBufferTick = (audioOut->GetExtraBuffer() + 5) / 10;
 
@@ -93,10 +100,12 @@ void ATAudioOptionsDialog::OnDataExchange(bool write) {
 
 		TBSetValue(IDC_VOLUME, mVolumeTick);
 		TBSetValue(IDC_DRIVEVOL, mDriveVolTick);
+		TBSetValue(IDC_COVOXVOL, mCovoxVolTick);
 		TBSetValue(IDC_LATENCY, mLatencyTick);
 		TBSetValue(IDC_EXTRABUFFER, mExtraBufferTick);
 		UpdateVolumeLabel();
 		UpdateDriveVolumeLabel();
+		UpdateCovoxVolumeLabel();
 		UpdateLatencyLabel();
 		UpdateExtraBufferLabel();
 	}
@@ -116,6 +125,13 @@ void ATAudioOptionsDialog::OnHScroll(uint32 id, int code) {
 		if (tick != mDriveVolTick) {
 			mDriveVolTick = tick;
 			UpdateDriveVolumeLabel();
+		}
+	} else if (id == IDC_COVOXVOL) {
+		int tick = TBGetValue(IDC_COVOXVOL);
+
+		if (tick != mCovoxVolTick) {
+			mCovoxVolTick = tick;
+			UpdateCovoxVolumeLabel();
 		}
 	} else if (id == IDC_LATENCY) {
 		int tick = TBGetValue(IDC_LATENCY);
@@ -140,6 +156,10 @@ void ATAudioOptionsDialog::UpdateVolumeLabel() {
 
 void ATAudioOptionsDialog::UpdateDriveVolumeLabel() {
 	SetControlTextF(IDC_STATIC_DRIVEVOL, L"%.1fdB", 0.1f * (mDriveVolTick - 200));
+}
+
+void ATAudioOptionsDialog::UpdateCovoxVolumeLabel() {
+	SetControlTextF(IDC_STATIC_COVOXVOL, L"%.1fdB", 0.1f * (mCovoxVolTick - 200));
 }
 
 void ATAudioOptionsDialog::UpdateLatencyLabel() {

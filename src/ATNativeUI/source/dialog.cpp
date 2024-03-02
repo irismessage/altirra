@@ -1,10 +1,11 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <commctrl.h>
 #include <shellapi.h>
 #include <vd2/system/error.h>
 #include <vd2/system/w32assist.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/progress.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -748,6 +749,9 @@ bool VDDialogFrameW32::PostCall(vdfunction<void()>&& call) {
 void VDDialogFrameW32::OnDataExchange(bool write) {
 }
 
+void VDDialogFrameW32::OnPreLoaded() {
+}
+
 bool VDDialogFrameW32::OnLoaded() {
 	OnDataExchange(false);
 	return false;
@@ -797,6 +801,18 @@ void VDDialogFrameW32::OnHScroll(uint32 code, int id) {
 void VDDialogFrameW32::OnVScroll(uint32 code, int id) {
 }
 
+void VDDialogFrameW32::OnMouseMove(int x, int y) {
+}
+
+void VDDialogFrameW32::OnMouseDownL(int x, int y) {
+}
+
+void VDDialogFrameW32::OnMouseUpL(int x, int y) {
+}
+
+void VDDialogFrameW32::OnCaptureLost() {
+}
+
 void VDDialogFrameW32::OnDropFiles(VDZHDROP hdrop) {
 	VDUIDropFileListW32 dropList(hdrop);
 
@@ -815,6 +831,15 @@ void VDDialogFrameW32::OnContextMenu(uint32 id, int x, int y) {
 
 bool VDDialogFrameW32::PreNCDestroy() {
 	return false;
+}
+
+void VDDialogFrameW32::SetCapture() {
+	if (mhdlg)
+		::SetCapture(mhdlg);
+}
+
+void VDDialogFrameW32::ReleaseCapture() {
+	::ReleaseCapture();
 }
 
 void VDDialogFrameW32::ExecutePostedCalls() {
@@ -882,8 +907,30 @@ VDZINT_PTR VDZCALLBACK VDDialogFrameW32::StaticDlgProc(VDZHWND hwnd, VDZUINT msg
 VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) {
 	switch(msg) {
 		case WM_INITDIALOG:
+			if (mbIsModal) {
+				mbProgressParentHooked = true;
+				mhPrevProgressParent = ATUIPushProgressParent((VDGUIHandle)mhdlg);
+			}
+
 			SetDialogIcon();
+			OnPreLoaded();
 			return !OnLoaded();
+
+		case WM_MOUSEMOVE:
+			OnMouseMove((int)LOWORD(lParam), (int)HIWORD(lParam));
+			break;
+
+		case WM_LBUTTONDOWN:
+			OnMouseDownL((int)LOWORD(lParam), (int)HIWORD(lParam));
+			break;
+
+		case WM_LBUTTONUP:
+			OnMouseUpL((int)LOWORD(lParam), (int)HIWORD(lParam));
+			break;
+
+		case WM_CAPTURECHANGED:
+			OnCaptureLost();
+			break;
 
 		case WM_COMMAND:
 			{
@@ -925,6 +972,11 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 
 		case WM_DESTROY:
 			OnDestroy();
+
+			if (mbProgressParentHooked) {
+				mbProgressParentHooked = false;
+				ATUIPopProgressParent((VDGUIHandle)mhdlg, mhPrevProgressParent);
+			}
 			break;
 
 		case WM_SIZE:
@@ -1117,4 +1169,25 @@ void VDDialogResizerW32::Erase(const VDZHDC *phdc) {
 		if (!phdc)
 			ReleaseDC(mhwndBase, hdc);
 	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+VDResizableDialogFrameW32::VDResizableDialogFrameW32(uint32 id)
+	: VDDialogFrameW32(id)
+{
+}
+
+void VDResizableDialogFrameW32::OnPreLoaded() {
+	SetCurrentSizeAsMinSize();
+	mResizer.Init(mhdlg);
+}
+
+bool VDResizableDialogFrameW32::OnErase(VDZHDC hdc) {
+	mResizer.Erase(&hdc);
+	return true;
+}
+
+void VDResizableDialogFrameW32::OnSize() {
+	mResizer.Relayout();
 }

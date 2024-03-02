@@ -16,11 +16,12 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
 #include <tchar.h>
+#include <uxtheme.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
@@ -28,6 +29,8 @@
 #include <vd2/system/math.h>
 #include <at/atui/constants.h>
 #include <at/atnativeui/uiframe.h>
+
+#pragma comment(lib, "uxtheme")
 
 // Requires Windows XP
 #ifndef WM_THEMECHANGED
@@ -2304,7 +2307,16 @@ void ATFrameWindow::SetVisible(bool vis) {
 }
 
 void ATFrameWindow::SetFrameMode(FrameMode fm) {
-	mFrameMode = fm;
+	if (mFrameMode != fm) {
+		mFrameMode = fm;
+
+		// Disable theming on the window whenever the window is docked. This is
+		// required so we can handle WM_NCACTIVATE properly.
+		if (fm == kFrameModeUndocked)
+			SetWindowTheme(mhwnd, nullptr, nullptr);
+		else
+			SetWindowTheme(mhwnd, L"", L"");
+	}
 
 	if (fm != kFrameModeUndocked)
 		mbActivelyMovingSizing = false;
@@ -2580,13 +2592,16 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 			if (mpDockingPane) {
 				PaintCaption(NULL);
-
-				// Toggle visible flag to prevent DefWindowProc() from painting the caption.
-				DWORD prevFlags = GetWindowLong(mhwnd, GWL_STYLE);
-				SetWindowLong(mhwnd, GWL_STYLE, prevFlags & ~WS_VISIBLE);
-				LRESULT r = ATUINativeWindow::WndProc(msg, wParam, lParam);
-				SetWindowLong(mhwnd, GWL_STYLE, prevFlags);
-				return r;
+				
+				// DefWindowProc(WM_NCACTIVATE) by default redraws the caption directly without going
+				// through WM_NCPAINT, which we need to suppress. We used to toggle WS_VISIBLE around
+				// this call, but it turns out that's a bad thing with the DWM since it causes the
+				// DWM to intermittently fail to paint the window. The Chromium source code indicates
+				// that this is due to a race condition with the GPU painting thread. A workaround we
+				// use is to pass -1 to lParam, which is documented as suppressing the caption redraw
+				// for non-themed windows; to make this stick, we have to disable the theming whenever
+				// frames are docked. That's fine, since we are doing full custom frame anyway.
+				return ATUINativeWindow::WndProc(msg, wParam, -1);
 			}
 			break;
 
@@ -2690,9 +2705,14 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			mTitle = (const TCHAR *)lParam;
 			if (mFrameMode != kFrameModeUndocked) {
 				DWORD prevFlags = GetWindowLong(mhwnd, GWL_STYLE);
-				SetWindowLong(mhwnd, GWL_STYLE, prevFlags & ~WS_VISIBLE);
+				if (prevFlags & WS_CAPTION)
+					SetWindowLong(mhwnd, GWL_STYLE, prevFlags & ~WS_CAPTION);
+
 				LRESULT r = ATUINativeWindow::WndProc(msg, wParam, lParam);
-				SetWindowLong(mhwnd, GWL_STYLE, prevFlags);
+
+				if (prevFlags & WS_CAPTION)
+					SetWindowLong(mhwnd, GWL_STYLE, prevFlags);
+
 				return r;
 			}
 			break;
@@ -2719,9 +2739,23 @@ void ATFrameWindow::PaintCaption(HRGN clipRegion) {
 
 	HDC hdc;
 	
-	if (clipRegion && clipRegion != (HRGN)1)
-		hdc = GetDCEx(mhwnd, clipRegion, DCX_WINDOW | DCX_INTERSECTRGN | 0x10000);
-	else
+	if (clipRegion && clipRegion != (HRGN)1) {
+		HRGN regionCopy = CreateRectRgn(0, 0, 0, 0);
+		if (!regionCopy)
+			return;
+
+		if (ERROR == CombineRgn(regionCopy, clipRegion, nullptr, RGN_COPY)) {
+			DeleteObject(regionCopy);
+			return;
+		}
+
+		hdc = GetDCEx(mhwnd, regionCopy, DCX_WINDOW | DCX_INTERSECTRGN | 0x10000);
+		if (!hdc) {
+			DeleteObject(regionCopy);
+			return;
+		}
+
+	} else
 		hdc = GetDCEx(mhwnd, NULL, DCX_WINDOW | 0x10000);
 
 	if (!hdc)
@@ -2980,6 +3014,12 @@ ATUIPane *ATGetUIPane(uint32 id) {
 	return it != g_activePanes.end() ? it->second : NULL;
 }
 
+void *ATGetUIPaneAs(uint32 id, uint32 iid) {
+	ATUIPane *pane = ATGetUIPane(id);
+
+	return pane ? pane->AsInterface(iid) : nullptr;
+}
+
 ATUIPane *ATGetUIPaneByFrame(ATFrameWindow *frame) {
 	if (!frame)
 		return NULL;
@@ -3113,6 +3153,12 @@ ATUIPane *ATUIGetActivePane() {
 
 	ATUINativeWindow *w = (ATUINativeWindow *)GetWindowLongPtr(hwndChild, 0);
 	return vdpoly_cast<ATUIPane *>(w);
+}
+
+void *ATUIGetActivePaneAs(uint32 iid) {
+	ATUIPane *pane = ATUIGetActivePane();
+
+	return pane ? pane->AsInterface(iid) : nullptr;
 }
 
 uint32 ATUIGetActivePaneId() {

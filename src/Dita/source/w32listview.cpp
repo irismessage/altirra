@@ -114,8 +114,6 @@ bool VDUIListViewW32::Create(IVDUIParameters *pParameters) {
 		if (HBITMAP hbm = CreateBitmap(cx, cy, 1, 1, NULL)) {
 			if (HDC hdc = CreateCompatibleDC(NULL)) {
 				if (HGDIOBJ hbmOld = SelectObject(hdc, hbm)) {
-					bool success = false;
-
 					RECT r = { 0, 0, cx, cy };
 
 					SetBkColor(hdc, PALETTEINDEX(0));
@@ -359,7 +357,7 @@ void VDUIListViewW32::OnNotifyCallback(const NMHDR *pHdr) {
 		} else if (pHdr->code == NM_CLICK || pHdr->code == NM_DBLCLK) {
  			DWORD pos = GetMessagePos();
 
-			LVHITTESTINFO lvhi = {0};
+			LVHITTESTINFO lvhi = {};
 
 			lvhi.pt.x = (SHORT)LOWORD(pos);
 			lvhi.pt.y = (SHORT)HIWORD(pos);

@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <richedit.h>
 #include <vd2/system/error.h>
@@ -93,11 +93,22 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 					L"The built-in firmware is configured by pressing the Black Box's Menu button."
 			},
 			{
+				"kmkjzide",
+				L"KMK/J\u017B IDE v1",
+				L"A PBI-based hard disk interface for parallel ATA hard disk devices.",
+			},
+			{
+				"kmkjzide2",
+				L"KMK/J\u017B IDE v2 (IDEPlus 2.0)",
+				L"A PBI-based hard disk interface for parallel ATA hard disk devices. Version 2 "
+					L"adds expanded firmware and built-in SpartaDOS X capability."
+			},
+			{
 				"mio", L"MIO",
 				L"The ICD Multi-I/O (MIO) is a PBI device that adds SCSI hard disk, RAM disk, "
 					L"parallel printer port, and RS-232 serial port functionality.\n"
 					L"The MIO firmware's built-in menu is accessed with Select+Reset."
-			}
+			},
 		},
 	},
 	{
@@ -108,10 +119,24 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 				L"Adds an Ethernet port to the computer. No firmware is built-in; "
 					L"networking software must be run separately."
 			},
+			{ "myide-d5xx", L"MyIDE (cartridge)",
+				L"IDE adapter attached to cartridge port, using the $D5xx address range."
+			},
+			{ "myide2", L"MyIDE-II",
+				L"Enhanced version of the MyIDE interface, providing a CompactFlash interface with "
+					L"hot-swap support and banked flash memory with three access windows."
+			},
 			{ "rtime8", L"R-Time 8",
 				L"A simple cartridge that provides a real-time clock. It was specifically designed "
 					L"to work in the pass-through port of the SpartaDOS X cartridge. Separate software "
 					L"is required to provide the Z: device handler."
+			},
+			{ "side", L"SIDE",
+				L"Cartridge with 512K of flash and a CompactFlash port for storage."
+			},
+			{ "side2", L"SIDE 2",
+				L"Enhanced version of SIDE with enhanced banking, CompactFlash change detection support, "
+					L"and improved Ultimate1MB compatibility."
 			},
 			{ "slightsid", L"SlightSID",
 				L"A cartridge-shaped adapter for the C64's SID sound chip."
@@ -132,12 +157,24 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 			{ "soundboard", L"SoundBoard",
 				L"Provides multi-channel, wavetable sound capabilities with 512K of internal memory."
 			},
+			{ "myide-d1xx", L"MyIDE (internal)",
+				L"IDE adapter attached to internal port, using the $D1xx address range."
+			},
 		}
 	},
 	{
 		L"Controller port devices",
 		"joyport",
 		{
+			{ "corvus", L"Corvus Disk Interface",
+				L"External hard drive connected to controller ports 3 and 4 of a 400/800. Additional handler software "
+					L"is required to access the disk (not included)."
+			},
+			{ "dongle", L"Joystick port dongle",
+				L"Small device attached to joystick port used to lock software operation to physical posesssion "
+					L"of the dongle device. This form implements a simple mapping function where up to three bits output "
+					L"by the computer produce up to four bits of output from the dongle."
+			},
 			{ "xep80", L"XEP80",
 				L"External 80-column video output that attaches to the joystick port and drives a separate display. "
 					L"Additional handler software is required (provided on Additions disk)."
@@ -182,12 +219,17 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 					L"device can be simulated, or in Full mode the tools from the the Additions disk can be used to load "
 					L"a software T: handler."
 			},
-			{ "sx212", L"SX212 Modem",
-				L"A 1200 baud modem that can be used either by RS-232 or SIO. This emulation is for the "
-				L"SIO port connection.\n"
-					L"An R: handler is needed to use the SX212. Depending on the emulation mode setting, the R: "
-					L"device can be simulated, or in Full mode the tools from the the Additions disk can be used to load "
-					L"a software R: handler."
+			{ "midimate", L"MidiMate",
+				L"An SIO-based adapter for communicating with MIDI devices. This emulation links the MidiMate to the host "
+					L"OS MIDI support. There is no connection to MIDI IN or to the SYNC inputs."
+			},
+			{ "pclink", L"PCLink",
+				L"PC-based file server with SIO bus connection. Requires additional handler software to use, "
+					L"included with recent versions of the SpartaDOS X Toolkit disk."
+			},
+			{ "pocketmodem", L"Pocket Modem",
+				L"SIO-based modem capable of 110, 210, 300, and 500 baud operation. Requires an M: handler to use"
+					L" (not included)."
 			},
 			{ "rverter", L"R-Verter",
 				L"An adapter cable connecting a regular RS-232 serial device to the computer's SIO port.\n"
@@ -202,16 +244,15 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 				L"A hardware disk emulator based on images stored on SD cards.\n"
 				L"Currently, only minimal configuration commands are implemented."
 			},
-			{ "midimate", L"MidiMate",
-				L"An SIO-based adapter for communicating with MIDI devices. This emulation links the MidiMate to the host "
-					L"OS MIDI support. There is no connection to MIDI IN or to the SYNC inputs."
-			},
-			{ "pclink", L"PCLink",
-				L"PC-based file server with SIO bus connection. Requires additional handler software to use, "
-					L"included with recent versions of the SpartaDOS X Toolkit disk."
-			},
 			{ "sioclock", L"SIO Real-Time Clock",
 				L"SIO-based real-time clock. This device implements APE, AspeQt, and SIO2USB RTC protocols."
+			},
+			{ "sx212", L"SX212 Modem",
+				L"A 1200 baud modem that can be used either by RS-232 or SIO. This emulation is for the "
+				L"SIO port connection.\n"
+					L"An R: handler is needed to use the SX212. Depending on the emulation mode setting, the R: "
+					L"device can be simulated, or in Full mode the tools from the the Additions disk can be used to load "
+					L"a software R: handler."
 			},
 			{ "testsiopoll3", L"SIO Type 3 Poll Test Device",
 				L"A fictitious SIO device for testing that implements the XL/XE operating system's boot-time handler "
@@ -354,19 +395,15 @@ void ATUIDialogDeviceNew::UpdateHelpText() {
 }
 
 void ATUIDialogDeviceNew::AppendRTF(VDStringA& rtf, const wchar_t *text) {
-	const VDStringA& texta = VDTextWToA(text);
-	for(VDStringA::const_iterator it = texta.begin(), itEnd = texta.end();
-		it != itEnd;
-		++it)
-	{
-		const unsigned char c = *it;
-
-		if (c < 0x20 || c > 0x80 || c == '{' || c == '}' || c == '\\')
-			rtf.append_sprintf("\\'%02x", c);
-		else if (c == '\n')
+	while(const wchar_t c = *text++) {
+		if (c == '\n')
 			rtf += "\\par ";
+		else if (c < 0x20 || c >= 0x7f)
+			rtf.append_sprintf("\\u%d?", (sint16)c);	// yes, this needs to be negative at times
+		else if (c == '{' || c == '}' || c == '\\')
+			rtf.append_sprintf("\\'%02x", c);
 		else
-			rtf += c;
+			rtf += (char)c;
 	}
 }
 
@@ -383,6 +420,7 @@ protected:
 	bool OnCommand(uint32 id, uint32 extcode);
 	void Add();
 	void Remove();
+	void RemoveAll();
 	void Settings();
 	void CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef parentNode, IATDevice *dev);
 	void SaveSettings(const char *configTag, const ATPropertySet& props);
@@ -450,7 +488,8 @@ void ATUIDialogDevices::OnDataExchange(bool write) {
 
 		auto p = mTreeView.AddItem(mTreeView.kNodeRoot, mTreeView.kNodeLast, L"Computer");
 
-		mDevMgr.ForEachDevice(true, [this, p](IATDevice *dev) { CreateDeviceNode(p, dev); });
+		for(IATDevice *dev : mDevMgr.GetDevices(true, true))
+			CreateDeviceNode(p, dev);
 
 		mTreeView.ExpandNode(p, true);
 
@@ -466,6 +505,10 @@ bool ATUIDialogDevices::OnCommand(uint32 id, uint32 extcode) {
 
 		case IDC_REMOVE:
 			Remove();
+			return true;
+
+		case IDC_REMOVEALL:
+			RemoveAll();
 			return true;
 
 		case IDC_SETTINGS:
@@ -532,7 +575,7 @@ void ATUIDialogDevices::Add() {
 
 		if (!cfn || cfn((VDGUIHandle)mhdlg, props)) {
 			try {
-				IATDevice *dev = mDevMgr.AddDevice(dlg.GetDeviceTag(), props, devParent != nullptr);
+				IATDevice *dev = mDevMgr.AddDevice(dlg.GetDeviceTag(), props, devParent != nullptr, false);
 
 				try {
 					if (devParent)
@@ -604,10 +647,19 @@ void ATUIDialogDevices::Remove() {
 	OnDataExchange(false);
 }
 
+void ATUIDialogDevices::RemoveAll() {
+	if (!Confirm(L"This will remove all devices in the device tree. Are you sure?"))
+		return;
+
+	mDevMgr.RemoveAllDevices(false);
+
+	OnDataExchange(false);
+}
+
 void ATUIDialogDevices::Settings() {
 	auto *p = static_cast<DeviceNode *>(mTreeView.GetSelectedVirtualItem());
 
-	if (!p)
+	if (!p || !p->mpDev)
 		return;
 
 	IATDevice *dev = p->mpDev;
@@ -631,7 +683,9 @@ void ATUIDialogDevices::Settings() {
 	
 	if (fn((VDGUIHandle)mhdlg, pset)) {
 		try {
-			if (!dev->SetSettings(pset)) {
+			if (dev->SetSettings(pset)) {
+				mDevMgr.IncrementChangeCounter();
+			} else {
 				vdfastvector<IATDevice *> childDevices;
 				mDevMgr.MarkAndSweep(&dev, 1, childDevices);
 
@@ -650,9 +704,9 @@ void ATUIDialogDevices::Settings() {
 					mDevMgr.RemoveDevice(child);
 				}
 
-				IATDevice *newChild = mDevMgr.AddDevice(configTag.c_str(), pset, parent != nullptr);
+				IATDevice *newChild = mDevMgr.AddDevice(configTag.c_str(), pset, parent != nullptr, false);
 
-				if (newChild)
+				if (parent && newChild)
 					parent->AddChildDevice(newChild);
 
 				mDevMgr.MarkAndSweep(NULL, 0, childDevices);
@@ -670,6 +724,9 @@ void ATUIDialogDevices::Settings() {
 			SaveSettings(configTag.c_str(), pset);
 		} catch(const MyError& err) {
 			err.post(mhdlg, "Error");
+
+			// We may have lost the previous device, so we need to reinit the tree.
+			OnDataExchange(false);
 			return;
 		}
 	}

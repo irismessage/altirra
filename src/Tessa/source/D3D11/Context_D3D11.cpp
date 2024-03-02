@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <D3D11.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/w32assist.h>
@@ -1797,8 +1797,8 @@ void *VDTContextD3D11::AsInterface(uint32 iid) {
 bool VDTContextD3D11::Init(ID3D11Device *dev, ID3D11DeviceContext *devctx, IDXGIAdapter1 *adapter, IDXGIFactory *factory, VDD3D11Holder *pD3DHolder) {
 	mpData = new PrivateData;
 
-	mpBeginEvent = GetProcAddress(pD3DHolder->GetD3D11(), "D3DPERF_BeginEvent");
-	mpEndEvent = GetProcAddress(pD3DHolder->GetD3D11(), "D3DPERF_EndEvent");
+	mpBeginEvent = (void *)GetProcAddress(pD3DHolder->GetD3D11(), "D3DPERF_BeginEvent");
+	mpEndEvent = (void *)GetProcAddress(pD3DHolder->GetD3D11(), "D3DPERF_EndEvent");
 
 	switch(dev->GetFeatureLevel()) {
 		case D3D_FEATURE_LEVEL_11_0:

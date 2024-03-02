@@ -18,9 +18,9 @@
 #ifndef f_AT_IDEVHDIMAGE_H
 #define f_AT_IDEVHDIMAGE_H
 
+#include <at/atcore/blockdevice.h>
 #include <at/atcore/deviceimpl.h>
 #include <vd2/system/file.h>
-#include "idedisk.h"
 
 struct ATVHDFooter {
 	enum {
@@ -62,9 +62,9 @@ struct ATVHDDynamicDiskHeader {
 	uint8	mReserved2[256];
 };
 
-class ATIDEVHDImage : public IATIDEDisk, public ATDevice {
-	ATIDEVHDImage(const ATIDEVHDImage&);
-	ATIDEVHDImage& operator=(const ATIDEVHDImage&);
+class ATIDEVHDImage final : public IATBlockDevice, public ATDevice {
+	ATIDEVHDImage(const ATIDEVHDImage&) = delete;
+	ATIDEVHDImage& operator=(const ATIDEVHDImage&) = delete;
 public:
 	ATIDEVHDImage();
 	~ATIDEVHDImage();
@@ -82,15 +82,14 @@ public:
 public:
 	virtual bool IsReadOnly() const override { return mbReadOnly; }
 	uint32 GetSectorCount() const;
+	ATBlockDeviceGeometry GetGeometry() const;
 
-	void Init(const wchar_t *path, bool write);
+	void Init(const wchar_t *path, bool write, bool solidState);
 	void InitNew(const wchar_t *path, uint8 heads, uint8 spt, uint32 totalSectorCount, bool dynamic);
 	virtual void Init() {}
 	virtual void Shutdown();
 
 	void Flush();
-
-	void RequestUpdate();
 
 	void ReadSectors(void *data, uint32 lba, uint32 n);
 	void WriteSectors(const void *data, uint32 lba, uint32 n);
@@ -106,6 +105,7 @@ protected:
 	VDFile mFile;
 	VDStringW mPath;
 	bool mbReadOnly;
+	bool mbSolidState;
 	sint64 mFooterLocation;
 	uint32 mSectorCount;
 	int mBlockSizeShift;

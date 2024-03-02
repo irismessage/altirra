@@ -18,45 +18,56 @@
 #ifndef f_AT_KMKJZIDE_H
 #define f_AT_KMKJZIDE_H
 
+#include <at/atcore/deviceimpl.h>
+#include <at/atcore/devicepbi.h>
+#include <at/atcore/deviceindicators.h>
+#include <at/atcore/devicecart.h>
 #include "pbi.h"
+#include "ide.h"
 #include "flash.h"
 #include "rtcv3021.h"
+#include "covox.h"
 
 class ATMemoryManager;
 class ATMemoryLayer;
 class ATIDEEmulator;
-class IATUIRenderer;
 class ATFirmwareManager;
+class IATBlockDevice;
 
-class ATKMKJZIDE : public IATPBIDevice {
-	ATKMKJZIDE(const ATKMKJZIDE&);
-	ATKMKJZIDE& operator=(const ATKMKJZIDE&);
+class ATKMKJZIDE final : public ATDevice
+	, public IATDeviceScheduling
+	, public IATDeviceIndicators
+	, public IATDeviceFirmware
+	, public IATDeviceMemMap
+	, public IATDevicePBIConnection
+	, public IATPBIDevice
+	, public IATDeviceParent
+	, public IATDeviceCartridge
+	, public IATDeviceDiagnostics
+	, public IATDeviceIRQSource
+	, public IATDeviceButtons
+	, public IATDeviceAudioOutput
+{
+	ATKMKJZIDE(const ATKMKJZIDE&) = delete;
+	ATKMKJZIDE& operator=(const ATKMKJZIDE&) = delete;
 
 public:
 	ATKMKJZIDE(bool version2);
 	~ATKMKJZIDE();
 
+	void *AsInterface(uint32 id);
+
 	bool IsVersion2() const { return mbVersion2; }
 	bool IsMainFlashDirty() const { return mFlashCtrl.IsDirty(); }
 	bool IsSDXFlashDirty() const { return mSDXCtrl.IsDirty(); }
 
-	// Load new firmware. Returns true if the firmware changed, false otherwise.
-	bool LoadFirmware(bool sdx, const void *ptr, uint32 len);
-	bool LoadFirmware(bool sdx, ATFirmwareManager& fwmgr, uint64 id);
-	void SaveFirmware(bool sdx, const wchar_t *path);
+	void GetSettings(ATPropertySet& settings);
+	bool SetSettings(const ATPropertySet& settings);
 
-	void Init(ATScheduler *sch, IATUIRenderer *uir);
+	void Init();
 	void Shutdown();
 
-	void SetIDEImage(ATIDEEmulator *ide);
-
-	void AttachDevice(ATMemoryManager *memman);
-	void DetachDevice();
-
-	void GetDeviceInfo(ATPBIDeviceInfo& devInfo) const;
-	void Select(bool enable);
-	
-	bool IsPBIOverlayActive() const;
+	void GetDeviceInfo(ATDeviceInfo& info);
 
 	void ColdReset();
 	void WarmReset();
@@ -64,46 +75,133 @@ public:
 	void LoadNVRAM();
 	void SaveNVRAM();
 
+public:		// IATDeviceScheduling
+	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
+
+public:		// IATDeviceIndicators
+	void InitIndicators(IATDeviceIndicatorManager *indicators) override;
+
+public:		// IATDeviceFirmware
+	void InitFirmware(ATFirmwareManager *fwman) override;
+	bool ReloadFirmware() override;
+	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override;
+	bool IsWritableFirmwareDirty(uint32 idx) const override;
+	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
+
+public:		// IATDeviceMemMap
+	void InitMemMap(ATMemoryManager *memman) override;
+	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const override;
+
+public:		// IATDevicePBIConnection
+	void InitPBI(IATDevicePBIManager *pbi) override;
+
+public:		// IATPBIDevice
+	void GetPBIDeviceInfo(ATPBIDeviceInfo& devInfo) const override;
+	void SelectPBIDevice(bool enable) override;
+	
+	bool IsPBIOverlayActive() const override;
+	uint8 ReadPBIStatus(uint8 busData, bool debugOnly) override;
+
+public:		// IATDeviceParent
+	const char *GetSupportedType(uint32 index) override;
+	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
+	void AddChildDevice(IATDevice *dev) override;
+	void RemoveChildDevice(IATDevice *dev) override;
+
+public:		// IATDeviceCartridge
+	void InitCartridge(IATDeviceCartridgePort *cartPort) override;
+	bool IsLeftCartActive() const override;
+	void SetCartEnables(bool leftEnable, bool rightEnable, bool cctlEnable) override;
+	void UpdateCartSense(bool leftActive) override;
+
+public:		// IATDeviceDiagnostics
+	void DumpStatus(ATConsoleOutput& output) override;
+
+public:		// IATDeviceIrqSource
+	void InitIRQSource(ATIRQController *irqc) override;
+
+public:		// IATDeviceButtons
+	uint32 GetSupportedButtons() const override;
+	bool IsButtonDepressed(ATDeviceButton idx) const override;
+	void ActivateButton(ATDeviceButton idx, bool state) override;
+
+public:		// IATDeviceAudioOutput
+	void InitAudioOutput(IATAudioOutput *output) override;
+
 protected:
 	static sint32 OnControlDebugRead(void *thisptr, uint32 addr);
 	static sint32 OnControlRead(void *thisptr, uint32 addr);
 	static bool OnControlWrite(void *thisptr, uint32 addr, uint8 value);
 
+	static sint32 OnFlashDebugRead(void *thisptr, uint32 addr);
 	static sint32 OnFlashRead(void *thisptr, uint32 addr);
 	static bool OnFlashWrite(void *thisptr, uint32 addr, uint8 value);
 
+	static sint32 OnSDXDebugRead(void *thisptr, uint32 addr);
 	static sint32 OnSDXRead(void *thisptr, uint32 addr);
 	static bool OnSDXWrite(void *thisptr, uint32 addr, uint8 value);
 
 	void UpdateMemoryLayersFlash();
 	void UpdateMemoryLayersSDX();
 
-	ATIDEEmulator	*mpIDE;
-	IATUIRenderer	*mpUIRenderer;
-	ATMemoryManager *mpMemMan;
-	ATMemoryLayer	*mpMemLayerControl;
-	ATMemoryLayer	*mpMemLayerFlash;
-	ATMemoryLayer	*mpMemLayerFlashControl;
-	ATMemoryLayer	*mpMemLayerRAM;
-	ATMemoryLayer	*mpMemLayerSDX;
-	ATMemoryLayer	*mpMemLayerSDXControl;
+	vdrefptr<IATBlockDevice> mpBlockDevices[2];
+	IATDevicePBIManager *mpPBIManager = nullptr;
+	IATDeviceIndicatorManager *mpUIRenderer = nullptr;
+	ATScheduler		*mpScheduler = nullptr;
+	ATFirmwareManager *mpFwManager = nullptr;
+	ATMemoryManager *mpMemMan = nullptr;
+	ATMemoryLayer	*mpMemLayerControl = nullptr;
+	ATMemoryLayer	*mpMemLayerFlash = nullptr;
+	ATMemoryLayer	*mpMemLayerFlashControl = nullptr;
+	ATMemoryLayer	*mpMemLayerRAM = nullptr;
+	ATMemoryLayer	*mpMemLayerSDX = nullptr;
+	ATMemoryLayer	*mpMemLayerSDXControl = nullptr;
 
-	uint8	mHighDataLatch;
-	bool	mbVersion2;
-	bool	mbSDXEnabled;
-	bool	mbSelected;
+	uint8	mHighDataLatch = 0;
+	uint8	mDeviceId = 0x01;
 
-	uint32	mFlashBankOffset;
-	uint32	mSDXBankOffset;
+	enum Revision : uint8 {
+		kRevision_V1,
+		kRevision_V2_C,
+		kRevision_V2_D,
+		kRevision_V2_S,
+		kRevision_V2_E
+	};
+
+	Revision	mRevision = kRevision_V2_D;
+	const bool	mbVersion2;
+	bool	mbSDXSwitchEnabled = true;
+	bool	mbSDXEnabled = false;
+	bool	mbSDXUpstreamEnabled = false;
+	bool	mbWriteProtect = false;
+	bool	mbExternalEnabled = false;
+	bool	mbSelected = false;
+	bool	mbIDESlaveSelected = false;
+
+	uint32	mFlashBankOffset = 0;
+	uint32	mSDXBankOffset = 0;
+
+	IATDeviceCartridgePort *mpCartPort = nullptr;
+	uint32	mCartId = 0;
+
+	ATIRQController *mpIrqController = nullptr;
+	uint32	mIrq = 0;
+	bool	mbIrqEnabled = false;
+	bool	mbIrqActive = false;
+
+	IATAudioOutput *mpAudioOutput = nullptr;
 
 	ATFlashEmulator	mFlashCtrl;
 	ATFlashEmulator	mSDXCtrl;
 
 	ATRTCV3021Emulator mRTC;
+	ATIDEEmulator mIDE[2];
 
-	VDALIGN(4) uint8	mRAM[0x8000];
-	VDALIGN(4) uint8	mFlash[0x20000];
-	VDALIGN(4) uint8	mSDX[0x80000];
+	ATCovoxEmulator mCovox;
+
+	VDALIGN(4) uint8	mRAM[0x8000] = {};
+	VDALIGN(4) uint8	mFlash[0x20000] = {};
+	VDALIGN(4) uint8	mSDX[0x80000] = {};
 };
 
 #endif

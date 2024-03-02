@@ -344,7 +344,7 @@
 
     Lists all currently set breakpoints.
 
-      bl [-a]        (List breakpoints)
+      bl [-a] [-v] [-t]   (List breakpoints)
       
     Displays a list of all breakpoints. The displayed breakpoint indices
     can be used in other commands such as bc (breakpoint clear).
@@ -364,6 +364,12 @@
 
     -a lists breakpoints in all groups. Normally only breakpoints in the
     main group are listed.
+
+    -t lists breakpoints for all targets, instead of just the current
+	target.
+
+    -v shows verbose information about internal system and CPU core
+    breakpoints.
     
     See also: bc, bl, bp, bx
 
@@ -546,6 +552,10 @@
     
     If no address or length is given, memory dumping continues from the
     end of the last continuable operation.
+
+    The db and dbi commands take an optional -c switch, which changes the
+    text dump to interpret the data as it would be displayed on a 20 column
+    text mode display, with the reduced 64 byte character set.
     
 + dy   Display binary
 
@@ -555,19 +565,26 @@
       
       -c: set '1' bit character, or both 0/1 bit chars
 
-+ e    Enter (alter) data in memory
+^ e, eb, ew    Enter (alter) data in memory
+> e, eb  Enter (alter) bytes in memory
+> ew   Enter (alter) words in memory
 
     Modifies a block of memory with new data.
     
-      e <xaddress> <expr> [<expr>...]
+      e <xaddress> <expr> [<expr>...]   (Enter bytes)
+      eb <xaddress> <expr> [<expr>...]  (Enter bytes)
+      ew <xaddress> <expr> [<expr>...]  (Enter words)
 
-    Each successive byte is set to the value of an expression. Expressions
-    must evaluate to unsigned byte range (0-255); use the low byte (<)
-    operator if necessary to forcibly truncate values.
-    
-    Writes by the enter (e) command have the same effect as CPU writes,
+    Each successive byte is set to the value of an expression. For eb,
+    expressions must evaluate to unsigned byte range (0-255); use the
+    low byte (<) operator if necessary to forcibly truncate values. For ew,
+    values must be in word range ($0000-FFFF).
+
+    Writes by the enter commands have the same effect as CPU writes,
     including triggering side effects when hardware registers are accessed.
     
+    The 'e' command is a synonym for 'eb'.
+
     See also: f (fill memory)
 
 + f    Fill memory
@@ -740,6 +757,14 @@
               hmd (dump heat map memory status),
               hmr (heat map register status).
 
++ hmp  Preset heat map range
+
+    Marks a range of memory in the heat map as valid with a preset value.
+
+      hmp <xaddr> L<length>
+
+    See also: hmu (unset heat map range)
+
 + hmr  Show heat map register status
 
     Dump CPU register status being tracked by heat map.
@@ -747,8 +772,80 @@
       hmr
       
     The sources of the data in the A, X, and Y registers is shown if known.
+    Additionally, validity information is shown for the A, X, Y, and P
+    registers, indicating which data bits in each register are sourced
+    from valid data and which are based on uninitialized data.
     
     See also: hmc (heat map clear), hme (heat map enable)
+
++ hmt  View/modify heat map trap options
+
+    Views or modifies which access types detected by the heat map can cause
+    debugger traps.
+
+      hmt                      (View trap options)
+      hmt <type> off|early|on  (Set mode for single trap type)
+      hmt * off|early|on       (Set mode for all trap types)
+
+    The heat map engine can detect when uninitialized data is used by
+    6502 code and force a trap into the debugger when this occurs. The
+    hmt command is used to configure the various trap types:
+
+      load:
+        Activates when uninitialized data is first loaded into the
+        CPU from memory. This traps at the earliest sign of uninitialized
+        memory use, but it can give false positives for some valid cases
+        where uninited memory is merely being copied.
+
+      compute:
+        Activates when uninitialized data is used in computations. This
+        avoids trapping on uninitialized memory copies, but traps when
+        an ALU instruction is used on the data.
+
+      branch:
+        Activates when a branch occurs on a flag state that is undefined
+        due to being based on uninitialized data.
+
+      ea (effective address):
+        Activates when an indexed addressing mode uses an index register
+        with a value based on uninitialized data.
+
+      hwstore:
+        Activates when a store to a hardware register occurs with a
+        value based on uninitialized data.
+
+    Traps can be enabled early or at default time. The default enabled
+    state (on) tracks memory state from reset but only activates traps
+    once the OS has initialized or playfield DMA is enabled, whichever
+    comes first. This avoids false positives on problematic OS code,
+    notably the RAM size test. Alternatively, traps can be enabled early,
+    which enables traps immediately after reset. More complex conditions
+    can be enabled by issuing the hmt command off of breakpoints.
+
+    The heat map engine tracks uninitialized state in registers, flags,
+    and memory on a bit basis. For instance, LSR on an uninitialized
+    location will result in the C flag and bits 0-6 tagged as uninited,
+    but bit 7 and the N flag will be marked valid. Validity state can
+    also be tracked from one memory location to another through registers
+    during a memory copy. However, the engine does not track the memory
+    map state and can be confused by additional hardware, high level
+    emulation, or cartridge ROMs. The 
+
+    The heat map must be enabled for heat map traps to work. Since the
+    heat map traps the source of values, it should be enabled from boot
+    in order to trace all data flows correctly. The hmp and hmu commands
+    can be used to force the validity state of memory to correct mistakes.
+
+    See also: hme (heat map enable), hmp (preset heat map range),
+              hmu (unset heat map range), hmr (show heat map register state)
+
++ hmu  Unset heat map range
+
+    Marks a range of memory in the heat map as invalid.
+
+      hmu <xaddr> L<length>
+
+    See also: hmp (preset heat map range)
 
 + k    Show call stack
 
@@ -1039,7 +1136,7 @@
       .basic
       
     See also: .basic_dumpline, .basic_vars, .basic_dumpstack,
-              .basic_rebuildvnt, .basic_save
+              .basic_rebuildvnt, .basic_rebuildvvt, .basic_save
 
 + .basic_dumpline  Dump BASIC program line
 
@@ -1087,8 +1184,33 @@
     names. The statement table, array table, and runtime stack are relocated
     in the process.
 
+    The type byte in the VVT must be valid for this command to work. You
+    can't rebuild both the VVT and the VNT if both are trashed.
+
     Using this command on a running BASIC program is likely to produce
     fireworks and is not recommended.
+
+    See also: .basic_rebuildvvt
+
++ .basic_rebuildvvt  Rebuild BASIC variable value table
+
+    Reinitializes the BASIC variable value table (VVT) based on the variable
+    name table (VNT).
+
+      .basic_rebuildvvt
+
+    Most of the data in the VVT is ignored after LOAD, but the variable type
+    and index need to be correct. If they are not, BASIC can act erratically.
+    The .basic_rebuildvvt command resets the mode and index bytes on each
+    variable entry based on the order of the names in the VNT and the type
+    characters on each entry, i.e. whether they end in $ or (. The VVT can
+    be rebuilt from scratch even if it is completely corrupted as long as
+    the VNT is intact.
+
+    The names in the VNT must be valid for this command to work. You can't
+    rebuild both the VVT and the VNT if both are trashed.
+
+    See also: .basic_rebuildvnt
 
 + .basic_save  Save BASIC program
 
@@ -1422,6 +1544,12 @@
     
     See also: .tracecio, .ciodevs
 
++ .kmkjzide Display KMK/JZ IDE / IDEPlus 2.0 status
+
+    Displays the status of the KMK/JZ IDE or IDEPlus 2.0 device.
+
+       .kmkjzide
+
 + .loadksym    Load kernel symbols
 
     Loads kernel symbols for the original 10K OS.
@@ -1462,6 +1590,17 @@
       
     This displays the memory layers that are being tracked internally in
     the emulator.
+
+^ .netpcap, .netpcapclose   Capture packet trace from emulation network
+> .netpcap     Begin packet trace from emulation network
+> .netpcapclose  End packet trace from emulation network
+
+      .netpcap <file>      (Begin packet trace to file)
+      .netpcapclose        (End packet trace)
+
+    Begins capturing all packets from the emulation network and logging them
+    to a packet trace file. The file is written in libpcap-compatible format,
+    which can be used with tools such as tcpdump and Wireshark.
 
 + .netstat     Display network connection status
 

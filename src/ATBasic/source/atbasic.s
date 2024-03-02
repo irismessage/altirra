@@ -39,6 +39,7 @@ exLineOffsetNxt	dta		0		;offset of next statement
 exLineEnd		dta		0		;offset of end of current line
 exTrapLine		dta		a(0)	;TRAP line
 exFloatStk		dta		0		;bit 7 set if stack is floating (line numbers)
+parPtrSav:					;[6 bytes] VNTD/VVTP/STMTAB save area for parser rollback
 opsp		dta		0		;operand stack pointer offset
 argsp		dta		0		;argument stack pointer offset
 expCommas	dta		0		;expression evaluator comma count
@@ -153,7 +154,7 @@ lbuff	equ		$0580
 ;
 		.if CART==0
 
-		org		$2800
+		org		$3000
 		opt		o+
 		
 ;==========================================================================
@@ -322,8 +323,8 @@ editor_ok:
 		;reset RUNAD to $A000 so we can be re-invoked
 		mwa		#$a000 runad
 
-		;move $3000-4FFF to $A000-BFFF
-		mva		#$30 fr0+1
+		;move $3800-57FF to $A000-BFFF
+		mva		#$38 fr0+1
 		mva		#$a0 fr1+1
 		ldy		#0
 		sty		fr0
@@ -520,7 +521,7 @@ default_fn_end:
 .endp
 
 		opt		h-
-		dta		a($ffff),a($3000),a($4fff)
+		dta		a($ffff),a($3800),a($57ff)
 
 		.endif
 		
@@ -551,7 +552,7 @@ main:
 ;
 msg_base:
 msg_banner:
-		dta		c'Altirra 8K BASIC 1.48',0
+		dta		c'Altirra 8K BASIC 1.51',0
 
 msg_ready:
 		dta		$9B,c'Ready',$9B,0
@@ -599,12 +600,6 @@ loop2:
 		ldx		iocbexec
 		jsr		IoReadLine
 		beq		eof
-		
-		;check for an empty line
-		jsr		skpspc
-		lda		(inbuff),y
-		cmp		#$9b
-		beq		loop2
 		
 		;float the stack if it isn't already
 		jsr		ExecFloatStack

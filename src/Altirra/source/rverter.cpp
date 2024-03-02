@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/strutil.h>
 #include <at/atcore/cio.h>
@@ -68,7 +68,7 @@ public:	// IATDeviceScheduling
 	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:	// IATDeviceIndicators
-	void InitIndicators(IATUIRenderer *r) override;
+	void InitIndicators(IATDeviceIndicatorManager *r) override;
 
 public:	// IATDeviceSIO
 	void InitSIO(IATDeviceSIOManager *mgr) override;
@@ -94,7 +94,7 @@ protected:
 
 	ATScheduler *mpScheduler;
 	ATScheduler *mpSlowScheduler;
-	IATUIRenderer *mpUIRenderer;
+	IATDeviceIndicatorManager *mpUIRenderer;
 	IATDeviceSIOManager *mpSIOMgr;
 
 	ATEvent	*mpReceiveEvent;
@@ -223,7 +223,7 @@ void ATDeviceRVerter::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 	mpSlowScheduler = slowsch;
 }
 
-void ATDeviceRVerter::InitIndicators(IATUIRenderer *r) {
+void ATDeviceRVerter::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
 }
 

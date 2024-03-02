@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vector>
 #include <list>
 #include <map>
@@ -311,7 +311,7 @@ public:
 class AVIOutputStream : public IVDMediaOutputStream {
 public:
 	virtual void *	getFormat() { return mFormat.data(); }
-	virtual int		getFormatLen() { return mFormat.size(); }
+	virtual int		getFormatLen() { return (int)mFormat.size(); }
 	virtual void	setFormat(const void *pFormat, int len) { mFormat.assign((const char *)pFormat, (const char *)pFormat + len); }
 
 	virtual const AVIStreamHeader_fixed& getStreamInfo() { return streamInfo; }
@@ -462,7 +462,7 @@ IVDMediaOutputStream *AVIOutputFile::createVideoStream() {
 	mStreams.resize(mStreams.size() + 1);
 	StreamInfo& stream = mStreams.back();
 
-	if (!(stream.mpStream = new_nothrow AVIOutputFileStream(this, mStreams.size() - 1)))
+	if (!(stream.mpStream = new_nothrow AVIOutputFileStream(this, (int)mStreams.size() - 1)))
 		throw MyMemoryError();
 
 	stream.mbIsVideo = true;
@@ -477,7 +477,7 @@ IVDMediaOutputStream *AVIOutputFile::createAudioStream() {
 	mStreams.resize(mStreams.size() + 1);
 	StreamInfo& stream = mStreams.back();
 
-	if (!(stream.mpStream = new_nothrow AVIOutputFileStream(this, mStreams.size() - 1)))
+	if (!(stream.mpStream = new_nothrow AVIOutputFileStream(this, (int)mStreams.size() - 1)))
 		throw MyMemoryError();
 
 	stream.mbIsVideo = false;
@@ -594,7 +594,7 @@ bool AVIOutputFile::init(const wchar_t *szFile) {
 	mAVIHeader.dwFlags					= kAVIF_HASINDEX | (mbInterleaved ? kAVIF_ISINTERLEAVED : 0) | (mbCaptureMode ? kAVIF_WASCAPTUREFILE : 0);
 	mAVIHeader.dwTotalFrames			= 0;
 	mAVIHeader.dwInitialFrames			= 0;
-	mAVIHeader.dwStreams				= mStreams.size();
+	mAVIHeader.dwStreams				= (uint32)mStreams.size();
 	mAVIHeader.dwSuggestedBufferSize	= 0;
 	mAVIHeader.dwWidth					= 0;
 	mAVIHeader.dwHeight					= 0;
@@ -692,7 +692,7 @@ bool AVIOutputFile::init(const wchar_t *szFile) {
 	// write out segment hint block
 
 	if (!mSegmentHint.empty())
-		mSegmentHintPos = HeaderWriteChunk(kChunkID_segm, &mSegmentHint[0], mSegmentHint.size());
+		mSegmentHintPos = HeaderWriteChunk(kChunkID_segm, &mSegmentHint[0], (long)mSegmentHint.size());
 
 	HeaderEndList(hdrl_pos);
 
@@ -721,7 +721,7 @@ bool AVIOutputFile::init(const wchar_t *szFile) {
 		}
 	}
 
-	mpFileAsync->FastWrite(&mHeaderBlock.front(), mHeaderBlock.size());
+	mpFileAsync->FastWrite(&mHeaderBlock.front(), (uint32)mHeaderBlock.size());
 	mFilePosition = mHeaderBlock.size();
 
 	// If we're using the fast path, we're aligned to a sector boundary.
@@ -838,7 +838,7 @@ void AVIOutputFile::finalize() {
 
 	if (!mSegmentHint.empty()) {
 		HeaderSeek(mSegmentHintPos+8);
-		HeaderWrite(mSegmentHint.data(), mSegmentHint.size());
+		HeaderWrite(mSegmentHint.data(), (long)mSegmentHint.size());
 	}
 
 	HeaderFlush();
@@ -862,7 +862,7 @@ uint32 AVIOutputFile::bufferStatus(uint32 *lplBufferSize) {
 ////////////////////////////
 
 void AVIOutputFile::HeaderWrite(const void *data, long len) {
-	uint32 cursize = mHeaderBlock.size();
+	uint32 cursize = (uint32)mHeaderBlock.size();
 
 	if (mHeaderPosition < cursize)
 		memcpy(&mHeaderBlock[mHeaderPosition], data, std::min<int>(cursize-mHeaderPosition, len));
@@ -916,7 +916,7 @@ uint32 AVIOutputFile::HeaderWriteChunk(uint32 ckid, const void *data, long len) 
 }
 
 void AVIOutputFile::HeaderFlush() {
-	FileWrite(0, mHeaderBlock.data(), mHeaderBlock.size());
+	FileWrite(0, mHeaderBlock.data(), (uint32)mHeaderBlock.size());
 }
 
 void AVIOutputFile::FastWrite(const void *data, int len) {
@@ -1127,7 +1127,7 @@ void AVIOutputFile::BlockClose() {
 				uint32 ckid;
 				uint32 size;
 				uint32 listid;
-			} infoList = { 'TSIL', mTextInfoListSize, 'OFNI' };
+			} infoList = { (uint32)'TSIL', (uint32)mTextInfoListSize, (uint32)'OFNI' };
 
 			FastWrite(&infoList, 12);
 
@@ -1140,7 +1140,7 @@ void AVIOutputFile::BlockClose() {
 					uint16	wLanguageCode;
 					uint16	wDialect;
 				} csetData = {
-					'TESC',
+					(uint32)'TESC',
 					8,
 					(uint16)mTextInfoCodePage,
 					(uint16)mTextInfoCountryCode,

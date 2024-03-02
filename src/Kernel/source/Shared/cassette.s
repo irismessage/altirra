@@ -1,20 +1,11 @@
 ;	Altirra - Atari 800/800XL/5200 emulator
 ;	Modular Kernel ROM - Cassette tape support
-;	Copyright (C) 2008-2012 Avery Lee
+;	Copyright (C) 2008-2016 Avery Lee
 ;
-;	This program is free software; you can redistribute it and/or modify
-;	it under the terms of the GNU General Public License as published by
-;	the Free Software Foundation; either version 2 of the License, or
-;	(at your option) any later version.
-;
-;	This program is distributed in the hope that it will be useful,
-;	but WITHOUT ANY WARRANTY; without even the implied warranty of
-;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-;	GNU General Public License for more details.
-;
-;	You should have received a copy of the GNU General Public License
-;	along with this program; if not, write to the Free Software
-;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+;	Copying and distribution of this file, with or without modification,
+;	are permitted in any medium without royalty provided the copyright
+;	notice and this notice are preserved.  This file is offered as-is,
+;	without any warranty.
 
 ;==========================================================================
 CassetteInit = CIOExitNotSupported
@@ -72,7 +63,10 @@ found_write_mode:
 	bit		wmode
 	bpl		one_ping_only
 	
+	asl		bptr			;!! - set bptr=0 when starting write
+
 	jsr		CassetteBell
+
 one_ping_only:
 	jsr		CassetteBell
 	
@@ -156,9 +150,8 @@ fetchbyte:
 	
 nobytes:
 	;fetch more bytes
-	ldx		#$40
-	ldy		#'R'
-	jsr		CassetteDoIO
+	jsr		CassetteReadBlock
+	bmi		error
 	
 	;check control byte
 	lda		casbuf+2
@@ -169,6 +162,7 @@ nobytes:
 	sta		feof
 xit_eof:
 	ldy		#CIOStatEndOfFile
+error:
 	rts
 	
 noteofbyte:
@@ -229,16 +223,16 @@ not_partial_block:
 	bne		not_empty		;skip not empty
 	
 	;clear buffer for EOF
-	ldx		#$7f
-	sta:rpl	casbuf+2,x-
-	bmi		is_empty
+	sta:rpl	casbuf+3,y+
+	bmi		is_empty		;!! - unconditional
 	
 not_empty:
-	ldx		#$fa			;load partial code
-	cpy		blim			;check if buffer is full
-	bcc		is_partial		;skip if so
 	ldx		#$fc			;load complete code
-is_partial:
+	cpy		blim			;check if buffer is full
+	bcs		is_complete		;skip if so
+	ldx		#$fa			;load partial code
+	sty		casbuf+130		;store level in last byte
+is_complete:
 is_empty:
 
 	;store code
@@ -253,6 +247,7 @@ is_empty:
 	sta		casbuf+1
 	
 	;issue write request and exit
+	ldx		#$80
 	ldy		#'P'
 	jmp		CassetteDoIO
 .endp
@@ -275,20 +270,20 @@ CassetteReadBlock = _CassetteDoIO.read_block
 
 .proc _CassetteDoIO
 read_block:
+	ldx		#$40
 	ldy		#'R'
 do_io:
 	;start the motor if not already running
 	lda		#$34
 	sta		pactl
 
-rolling_start:
 	;set up SIO read/write
 	stx		dstats
 	sty		dcomnd
 	mwa		#casbuf dbuflo
 	mwa		#131 dbytlo
-	mva		#$5f ddevic
-	mva		#1 dunit
+	mva		#$60 ddevic
+	mva		#0 dunit
 
 	;do it
 	jsr		siov

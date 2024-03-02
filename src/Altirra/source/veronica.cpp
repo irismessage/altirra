@@ -42,11 +42,11 @@ ATVeronicaEmulator::ATVeronicaEmulator()
 	, mpMemMan(nullptr)
 	, mpMemLayerLeftWindow(nullptr)
 	, mpMemLayerRightWindow(nullptr)
-	, mpCartridgePort(nullptr)
 	, mbVersion1(true)
 	, mbCorruptNextCycle(false)
 	, mpCoProcWinBase(nullptr)
 {
+	std::fill(std::begin(mStepBreakpointMap), std::end(mStepBreakpointMap), true);
 }
 
 ATVeronicaEmulator::~ATVeronicaEmulator() {
@@ -58,7 +58,9 @@ void *ATVeronicaEmulator::AsInterface(uint32 iid) {
 		case IATDeviceScheduling::kTypeID: return static_cast<IATDeviceScheduling *>(this);
 		case IATDeviceDebugTarget::kTypeID: return static_cast<IATDeviceDebugTarget *>(this);
 		case IATDeviceCartridge::kTypeID: return static_cast<IATDeviceCartridge *>(this);
+		case IATDebugTargetBreakpoints::kTypeID: return static_cast<IATDebugTargetBreakpoints *>(this);
 		case IATDebugTargetHistory::kTypeID: return static_cast<IATDebugTargetHistory *>(this);
+		case IATDebugTargetExecutionControl::kTypeID: return static_cast<IATDebugTargetExecutionControl *>(this);
 	}
 
 	return nullptr;
@@ -112,7 +114,7 @@ void ATVeronicaEmulator::Init() {
 
 void ATVeronicaEmulator::Shutdown() {
 	if (mpCartridgePort) {
-		mpCartridgePort->RemoveCartridge(this);
+		mpCartridgePort->RemoveCartridge(mCartId, this);
 		mpCartridgePort = nullptr;
 	}
 
@@ -152,6 +154,8 @@ void ATVeronicaEmulator::ColdReset() {
 	mAControl = 0xCC;
 	mVControl = 0x3F;
 
+	mpCartridgePort->OnLeftWindowChanged(mCartId, false);
+
 	mPRNG = ATSCHEDULER_GETTIME(mpScheduler) & 0x7FFFFFFF;
 	if (!mPRNG)
 		mPRNG = 1;
@@ -181,7 +185,7 @@ void ATVeronicaEmulator::InitMemMap(ATMemoryManager *memmap) {
 
 	mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_Cartridge1, handlers, 0xD5, 0x01);
 	mpMemMan->SetLayerName(mpMemLayerControl, "Veronica control");
-	mpMemMan->EnableLayer(mpMemLayerControl, true);
+	mpMemMan->EnableLayer(mpMemLayerControl, mbCCTLEnabled);
 
 	mpMemLayerLeftWindow = mpMemMan->CreateLayer(kATMemoryPri_Cartridge1, mRAM + 0x12000, 0xA0, 0x20, false);
 	mpMemMan->SetLayerName(mpMemLayerLeftWindow, "Veronica left window");
@@ -209,11 +213,31 @@ void ATVeronicaEmulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) 
 
 void ATVeronicaEmulator::InitCartridge(IATDeviceCartridgePort *port) {
 	mpCartridgePort = port;
-	mpCartridgePort->AddCartridge(this);
+	mpCartridgePort->AddCartridge(this, kATCartridgePriority_Default, mCartId);
 }
 
-bool ATVeronicaEmulator::IsRD5Active() const {
+bool ATVeronicaEmulator::IsLeftCartActive() const {
 	return (mAControl & 0x20) != 0;
+}
+
+void ATVeronicaEmulator::SetCartEnables(bool leftEnable, bool rightEnable, bool cctlEnable) {
+	if (mbLeftWindowEnabled != leftEnable) {
+		mbLeftWindowEnabled = leftEnable;
+
+		UpdateLeftWindowMapping();
+	}
+
+	if (mbRightWindowEnabled != rightEnable) {
+		mbRightWindowEnabled = rightEnable;
+
+		UpdateRightWindowMapping();
+	}
+	
+	if (mbCCTLEnabled != cctlEnable) {
+		mbCCTLEnabled = cctlEnable;
+
+		mpMemMan->EnableLayer(mpMemLayerControl, cctlEnable);
+	}
 }
 
 IATDebugTarget *ATVeronicaEmulator::GetDebugTarget(uint32 index) {
@@ -237,6 +261,16 @@ void ATVeronicaEmulator::GetExecState(ATCPUExecState& state) {
 
 void ATVeronicaEmulator::SetExecState(const ATCPUExecState& state) {
 	mCoProc.SetExecState(state);
+}
+
+sint32 ATVeronicaEmulator::GetTimeSkew() {
+	if (!(mAControl & 1))
+		return 0;
+
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+	const uint32 cycles = (t - mLastSync) + ((mCoProc.GetCyclesLeft() + 7) >> 3);
+
+	return -(sint32)cycles;
 }
 
 uint8 ATVeronicaEmulator::ReadByte(uint32 address) {
@@ -353,11 +387,9 @@ uint32 ATVeronicaEmulator::ExtractHistory(const ATCPUHistoryEntry **hparray, uin
 	if (!n || mHistory.empty())
 		return 0;
 
-	const uint32 hcnt = mCoProc.GetHistoryCounter();
-	uint32 hidx = start;
 	const ATCPUHistoryEntry *hstart = mHistory.data();
 	const ATCPUHistoryEntry *hend = hstart + 131072;
-	const ATCPUHistoryEntry *hsrc = hstart + (hidx & 131071);
+	const ATCPUHistoryEntry *hsrc = hstart + (start & 131071);
 
 	for(uint32 i=0; i<n; ++i) {
 		*hparray++ = hsrc;
@@ -370,13 +402,141 @@ uint32 ATVeronicaEmulator::ExtractHistory(const ATCPUHistoryEntry **hparray, uin
 }
 
 uint32 ATVeronicaEmulator::ConvertRawTimestamp(uint32 rawTimestamp) const {
+	// mLastSync is the machine cycle at which all sub-cycles have been pushed into the
+	// coprocessor, and the coprocessor's time base is the sub-cycle corresponding to
+	// the end of that machine cycle.
 	return mLastSync - ((mCoProc.GetTimeBase() - rawTimestamp + 7) >> 3);
+}
+
+void ATVeronicaEmulator::SetBreakpointHandler(IATCPUBreakpointHandler *handler) {
+	mpBreakpointHandler = handler;
+
+	if (mBreakpointCount)
+		mCoProc.SetBreakpointMap(mBreakpointMap, handler);
+}
+
+void ATVeronicaEmulator::ClearBreakpoint(uint16 pc) {
+	if (mBreakpointMap[pc]) {
+		mBreakpointMap[pc] = false;
+
+		if (!--mBreakpointCount && !mpStepHandler)
+			mCoProc.SetBreakpointMap(nullptr, nullptr);
+	}
+}
+
+void ATVeronicaEmulator::SetBreakpoint(uint16 pc) {
+	if (!mBreakpointMap[pc]) {
+		mBreakpointMap[pc] = true;
+
+		if (!mBreakpointCount++ && !mpStepHandler)
+			mCoProc.SetBreakpointMap(mBreakpointMap, mpBreakpointHandler);
+	}
+}
+
+void ATVeronicaEmulator::Break() {
+	CancelStep();
+}
+
+bool ATVeronicaEmulator::StepInto(const vdfunction<void(bool)>& fn) {
+	CancelStep();
+
+	if (!(mAControl & 1))
+		return false;
+
+	mpStepHandler = fn;
+	mbStepOut = false;
+	mStepStartSubCycle = mCoProc.GetTime();
+	mCoProc.SetBreakpointMap(mStepBreakpointMap, this);
+	Sync();
+	return true;
+}
+
+bool ATVeronicaEmulator::StepOver(const vdfunction<void(bool)>& fn) {
+	CancelStep();
+
+	if (!(mAControl & 1))
+		return false;
+
+	mpStepHandler = fn;
+	mbStepOut = true;
+	mStepStartSubCycle = mCoProc.GetTime();
+	mStepOutS = mCoProc.GetS();
+	mCoProc.SetBreakpointMap(mStepBreakpointMap, this);
+	Sync();
+	return true;
+}
+
+bool ATVeronicaEmulator::StepOut(const vdfunction<void(bool)>& fn) {
+	CancelStep();
+
+	if (!(mAControl & 1))
+		return false;
+
+	mpStepHandler = fn;
+	mbStepOut = true;
+	mStepStartSubCycle = mCoProc.GetTime();
+	mStepOutS = mCoProc.GetS() + 1;
+	mCoProc.SetBreakpointMap(mStepBreakpointMap, this);
+	Sync();
+	return true;
+}
+
+void ATVeronicaEmulator::StepUpdate() {
+	Sync();
+}
+
+void ATVeronicaEmulator::RunUntilSynced() {
+	CancelStep();
+	Sync();
+}
+
+bool ATVeronicaEmulator::CheckBreakpoint(uint32 pc) {
+	bool bpHit = false;
+
+	if (mBreakpointCount && mBreakpointMap[(uint16)pc] && mpBreakpointHandler->CheckBreakpoint(pc))
+		bpHit = true;
+
+	if (mBreakpointCount)
+		mCoProc.SetBreakpointMap(mBreakpointMap, mpBreakpointHandler);
+	else {
+		if (mCoProc.GetTime() == mStepStartSubCycle)
+			return false;
+
+		if (mbStepOut) {
+			// Keep stepping if wrapped(s < s0).
+			if ((mCoProc.GetS() - mStepOutS) & 0x80)
+				return false;
+		}
+
+		mCoProc.SetBreakpointMap(nullptr, nullptr);
+	}
+
+	auto p = std::move(mpStepHandler);
+	mpStepHandler = nullptr;
+
+	p(!bpHit);
+
+	return true;
 }
 
 void ATVeronicaEmulator::OnScheduledEvent(uint32 id) {
 	mpRunEvent = mpSlowScheduler->AddEvent(100, this, 1);
 
 	Sync();
+}
+
+void ATVeronicaEmulator::CancelStep() {
+	if (mpStepHandler) {
+		if (mBreakpointCount)
+			mCoProc.SetBreakpointMap(mBreakpointMap, mpBreakpointHandler);
+		else
+			mCoProc.SetBreakpointMap(nullptr, nullptr);
+
+		auto p = std::move(mpStepHandler);
+		mpStepHandler = nullptr;
+
+		p(false);
+	}
 }
 
 sint32 ATVeronicaEmulator::OnDebugRead(void *thisptr0, uint32 addr) {
@@ -452,12 +612,13 @@ bool ATVeronicaEmulator::OnWrite(void *thisptr0, uint32 addr, uint8 value) {
 
 			// D4=1 enables $8000-9FFF window
 			if (delta & 0x10)
-				thisptr->mpMemMan->SetLayerModes(thisptr->mpMemLayerRightWindow, value & 0x10 ? kATMemoryAccessMode_ARW : kATMemoryAccessMode_0);
+				thisptr->UpdateRightWindowMapping();
 
 			// D5=1 enables $A000-BFFF window
 			if (delta & 0x20) {
-				thisptr->mpMemMan->SetLayerModes(thisptr->mpMemLayerLeftWindow, value & 0x20 ? kATMemoryAccessMode_ARW : kATMemoryAccessMode_0);
-				thisptr->mpCartridgePort->UpdateRD5();
+				thisptr->mpCartridgePort->OnLeftWindowChanged(thisptr->mCartId, (value & 0x20) != 0);
+
+				thisptr->UpdateLeftWindowMapping();
 			}
 
 			// check if we are bringing the coprocessor out of reset (must be done after we
@@ -604,53 +765,79 @@ void ATVeronicaEmulator::UpdateWindowBase() {
 	mpMemMan->SetLayerMemory(mpMemLayerLeftWindow, window + 0x2000);
 }
 
+void ATVeronicaEmulator::UpdateLeftWindowMapping() {
+	const bool leftWindowOn = (mAControl & 0x20) != 0;
+
+	if (mpMemLayerLeftWindow)
+		mpMemMan->SetLayerModes(mpMemLayerLeftWindow, leftWindowOn && mbLeftWindowEnabled ? kATMemoryAccessMode_ARW : kATMemoryAccessMode_0);
+}
+
+void ATVeronicaEmulator::UpdateRightWindowMapping() {
+	const bool rightWindowOn = (mAControl & 0x10) != 0;
+
+	if (mpMemLayerRightWindow)
+		mpMemMan->SetLayerModes(mpMemLayerRightWindow, rightWindowOn && mbRightWindowEnabled ? kATMemoryAccessMode_ARW : kATMemoryAccessMode_0);
+}
+
 void ATVeronicaEmulator::Sync() {
+	AccumSubCycles();
+
+	uint32 vcycles = mSubCyclesLeft;
+	mSubCyclesLeft = 0;
+
+	RunSubCycles(vcycles);
+}
+
+void ATVeronicaEmulator::AccumSubCycles() {
 	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 	const uint32 cycles = t - mLastSync;
 
 	mLastSync = t;
 
-	if (cycles && (mAControl & 1)) {
-		uint32 vcycles = cycles * 8;
+	mSubCyclesLeft += cycles * 8;
+}
 
-		if (mbCorruptNextCycle) {
-			mbCorruptNextCycle = false;
+void ATVeronicaEmulator::RunSubCycles(uint32 subCycles) {
+	if (!(mAControl & 1))
+		return;
 
-			uintptr *VDRESTRICT readmap = mCoProc.GetReadMap();
-			uintptr *VDRESTRICT writemap = mCoProc.GetWriteMap();
+	if (mbCorruptNextCycle) {
+		mbCorruptNextCycle = false;
 
-			if (mVControl & 0x40) {
-				readmap += 0x40;
-				writemap += 0x40;
-			} else {
-				readmap += 0xC0;
-				writemap += 0xC0;
-			}
+		uintptr *VDRESTRICT readmap = mCoProc.GetReadMap();
+		uintptr *VDRESTRICT writemap = mCoProc.GetWriteMap();
 
-			uintptr prevRead = readmap[0];
-			uintptr prevWrite = writemap[0];
-			uintptr tempRead = mCorruptedReadNode.AsBase();
-			uintptr tempWrite = mCorruptedWriteNode.AsBase();
-
-			for(int i=0; i<64; ++i) {
-				readmap[i] = tempRead;
-				writemap[i] = tempWrite;
-			}
-
-			mCoProc.AddCycles(1);
-			mCoProc.Run();
-
-			for(int i=0; i<64; ++i) {
-				readmap[i] = prevRead;
-				writemap[i] = prevWrite;
-			}
-
-			--vcycles;
+		if (mVControl & 0x40) {
+			readmap += 0x40;
+			writemap += 0x40;
+		} else {
+			readmap += 0xC0;
+			writemap += 0xC0;
 		}
 
-		mCoProc.AddCycles(vcycles);
+		uintptr prevRead = readmap[0];
+		uintptr prevWrite = writemap[0];
+		uintptr tempRead = mCorruptedReadNode.AsBase();
+		uintptr tempWrite = mCorruptedWriteNode.AsBase();
+
+		for(int i=0; i<64; ++i) {
+			readmap[i] = tempRead;
+			writemap[i] = tempWrite;
+		}
+
+		mCoProc.AddCycles(1);
 		mCoProc.Run();
+
+		for(int i=0; i<64; ++i) {
+			readmap[i] = prevRead;
+			writemap[i] = prevWrite;
+		}
+
+		--subCycles;
 	}
+
+	mCoProc.AddCycles(subCycles);
+	mCoProc.Run();
 }
 
 uint32 ATVeronicaEmulator::PeekRand16() const {

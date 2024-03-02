@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/VDDisplay/textrenderer.h>
 #include "uilabel.h"
 #include <at/atui/uimanager.h>
@@ -87,8 +87,8 @@ void ATUILabel::SetText(const wchar_t *s) {
 
 		Span& span = mSpans.push_back();
 		span.mbBold = false;
-		span.mStart = t - s;
-		span.mChars = breakpt ? breakpt - t : wcslen(t);
+		span.mStart = (uint32)(t - s);
+		span.mChars = breakpt ? (uint32)(breakpt - t) : (uint32)wcslen(t);
 		span.mColor = mTextColor;
 
 		Line& line = mLines.push_back();
@@ -263,7 +263,7 @@ void ATUILabel::AppendFormattedText(uint32 color, const wchar_t *s) {
 
 	span.mColor = color;
 	span.mStart = mText.size();
-	span.mChars = wcslen(s);
+	span.mChars = (uint32)wcslen(s);
 	span.mbBold = false;
 
 	++mLines.back().mSpanCount;

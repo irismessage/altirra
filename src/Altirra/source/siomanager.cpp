@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include "siomanager.h"
 #include "simulator.h"
@@ -70,41 +70,38 @@ ATSIOManager::RawDeviceListLock::~RawDeviceListLock() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATSIOManager::ATSIOManager()
-	: mpCPU(NULL)
-	, mpMemory(NULL)
-	, mpSim(NULL)
-	, mpUIRenderer(NULL)
-	, mpPokey(nullptr)
-	, mpPIA(nullptr)
-	, mpSIOVHook(NULL)
-	, mpDSKINVHook(NULL)
-	, mTransferLevel(0)
-	, mTransferStart(0)
-	, mTransferIndex(0)
-	, mTransferEnd(0)
-	, mTransferCyclesPerBit(0)
-	, mTransferCyclesPerByte(0)
-	, mbTransferSend(false)
-	, mbCommandState(false)
-	, mbMotorState(false)
-	, mbSIOPatchEnabled(false)
-	, mbBurstTransfersEnabled(false)
-	, mPollCount(0)
-	, mpAccelRequest(nullptr)
-	, mpAccelStatus(nullptr)
-	, mpTransferEvent(nullptr)
-	, mpActiveDevice(nullptr)
-	, mSIORawDevicesBusy(0)
-{
+ATSIOManager::ATSIOManager() {
 	mCurrentStep.mType = kStepType_None;
 }
 
 ATSIOManager::~ATSIOManager() {
 }
 
-void ATSIOManager::SetSIOPatchEnabled(bool enabled) {
-	mbSIOPatchEnabled = enabled;
+void ATSIOManager::SetSIOPatchEnabled(bool enable) {
+	if (mbSIOPatchEnabled == enable)
+		return;
+
+	mbSIOPatchEnabled = enable;
+
+	if (mpCPU)
+		ReinitHooks();
+}
+
+void ATSIOManager::SetDiskSIOAccelEnabled(bool enabled) {
+	if (mbDiskSIOAccelEnabled == enabled)
+		return;
+
+	mbDiskSIOAccelEnabled = enabled;
+
+	if (mpCPU)
+		ReinitHooks();
+}
+
+void ATSIOManager::SetOtherSIOAccelEnabled(bool enabled) {
+	if (mbOtherSIOAccelEnabled == enabled)
+		return;
+
+	mbOtherSIOAccelEnabled = enabled;
 
 	if (mpCPU)
 		ReinitHooks();
@@ -144,6 +141,7 @@ void ATSIOManager::Shutdown() {
 	}
 
 	if (mpScheduler) {
+		mpScheduler->UnsetEvent(mpDelayEvent);
 		mpScheduler->UnsetEvent(mpTransferEvent);
 		mpScheduler = nullptr;
 	}
@@ -165,6 +163,12 @@ void ATSIOManager::ColdReset() {
 	mbCommandState = false;
 	mbMotorState = false;
 	mpActiveDevice = nullptr;
+
+	WarmReset();
+}
+
+void ATSIOManager::WarmReset() {
+	mAccessedDisks = 0;
 }
 
 void ATSIOManager::ReinitHooks() {
@@ -172,11 +176,13 @@ void ATSIOManager::ReinitHooks() {
 
 	ATCPUHookManager& hookmgr = *mpCPU->GetHookManager();
 
-	if (mbSIOPatchEnabled || mpSim->IsDiskSIOPatchEnabled() || mpSim->IsCassetteSIOPatchEnabled() || mpSim->IsFastBootEnabled())
-		hookmgr.SetHookMethod(mpSIOVHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::SIOV, 0, this, &ATSIOManager::OnHookSIOV);
+	if (mbSIOPatchEnabled) {
+		if (mbOtherSIOAccelEnabled || mbDiskSIOAccelEnabled || mpSim->IsCassetteSIOPatchEnabled() || mpSim->IsFastBootEnabled())
+			hookmgr.SetHookMethod(mpSIOVHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::SIOV, 0, this, &ATSIOManager::OnHookSIOV);
 
-	if (mpSim->IsDiskSIOPatchEnabled())
-		hookmgr.SetHookMethod(mpDSKINVHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::DSKINV, 0, this, &ATSIOManager::OnHookDSKINV);
+		if (mbDiskSIOAccelEnabled)
+			hookmgr.SetHookMethod(mpDSKINVHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::DSKINV, 0, this, &ATSIOManager::OnHookDSKINV);
+	}
 }
 
 void ATSIOManager::UninitHooks() {
@@ -188,8 +194,22 @@ void ATSIOManager::UninitHooks() {
 	}
 }
 
+void ATSIOManager::TryAccelPBIRequest() {
+	if (OnHookSIOV(0))
+		mpCPU->SetP(mpCPU->GetP() | AT6502::kFlagC);
+	else
+		mpCPU->SetP(mpCPU->GetP() & ~AT6502::kFlagC);
+}
+
 bool ATSIOManager::TryAccelRequest(const ATSIORequest& req, bool isDSKINV) {
-	g_ATLCHookSIOReqs("Checking %s request: device $%02X, command $%02X\n", isDSKINV ? "DSKINV" : "SIOV", req.mDevice, req.mCommand);
+	g_ATLCHookSIOReqs("Checking %s request: Device $%02X | Command $%02X | Mode $%02X | Address $%04X | Length $%04X\n"
+		, isDSKINV ? "DSKINV" : "SIOV"
+		, req.mDevice
+		, req.mCommand
+		, req.mMode
+		, req.mAddress
+		, req.mLength
+		);
 
 	// Check if we already have a command in progress. If so, bail.
 	if (mpActiveDevice || mbCommandState)
@@ -214,7 +234,18 @@ bool ATSIOManager::TryAccelRequest(const ATSIORequest& req, bool isDSKINV) {
 	ATKernelDatabase kdb(mpMemory);
 	uint8 status = 0x01;
 
-	if (mbSIOPatchEnabled) {
+	mbActiveDeviceDisk = (req.mDevice >= 0x31 && req.mDevice <= 0x3F);
+
+	bool allowAccel = mbOtherSIOAccelEnabled;
+
+	if (mbActiveDeviceDisk) {
+		allowAccel = mbDiskSIOAccelEnabled;
+
+		if (allowAccel && mpSim->IsDiskSIOOverrideDetectEnabled() && !(mAccessedDisks & (1 << (req.mDevice - 0x31))))
+			return false;
+	}
+	
+	if (allowAccel) {
 		// Convert the request to a device request.
 		ATDeviceSIORequest devreq = {};
 		devreq.mDevice = req.mDevice;
@@ -229,7 +260,7 @@ bool ATSIOManager::TryAccelRequest(const ATSIORequest& req, bool isDSKINV) {
 		devreq.mLength = req.mLength;
 		devreq.mSector = req.mSector;
 
-		ResetTransferRate();
+		ResetTransfer();
 
 		// Run down the device chain and see if anyone is interested in this request.
 		for(IATDeviceSIO *dev : mSIODevices) {
@@ -277,103 +308,13 @@ bool ATSIOManager::TryAccelRequest(const ATSIORequest& req, bool isDSKINV) {
 
 	// Check hard-coded devices.
 	if (req.mDevice >= 0x31 && req.mDevice <= 0x3F) {
-		ATDiskEmulator& disk = mpSim->GetDiskDrive(req.mDevice - 0x31);
+		const uint32 diskIndex = req.mDevice - 0x31;
+		ATDiskEmulator& disk = mpSim->GetDiskDrive(diskIndex);
 
-		if (mpSim->IsDiskSIOOverrideDetectEnabled()) {
-			if (!disk.IsAccessed())
-				return false;
-		} else {
-			if (!disk.IsEnabled()) {
-				if (mpSim->IsFastBootEnabled())
-					goto fastbootignore;
+		if (!disk.IsEnabled() && mpSim->IsFastBootEnabled())
+			goto fastbootignore;
 
-				return false;
-			}
-		}
-
-		if (!mpSim->IsDiskSIOPatchEnabled())
-			return false;
-
-		if (req.mCommand == 0x52) {		// read
-			if ((req.mMode & 0xc0) != 0x40)
-				return false;
-
-			status = disk.ReadSector(req.mAddress, req.mLength, req.mSector, mpMemory);
-
-			// copy DBUFLO/DBUFHI + size -> BUFRLO/BUFRHI
-			uint32 endAddr = req.mAddress + req.mLength;
-			kdb.BUFRLO_BUFRHI = endAddr;
-
-			g_ATLCHookSIO("Intercepting disk SIO read: buf=%04X, len=%04X, sector=%04X, status=%02X\n", req.mAddress, req.mLength, req.mSector, status);
-
-			mpUIRenderer->PulseStatusFlags(1 << (req.mDevice - 0x31));
-
-			// leave SKCTL set to asynchronous receive
-			kdb.SKCTL = (kdb.SSKCTL & 0x07) | 0x10;
-		} else if (req.mCommand == 0x50 || req.mCommand == 0x57) {
-			if ((req.mMode & 0xc0) != 0x80)
-				return 0;
-
-			status = disk.WriteSector(req.mAddress, req.mLength, req.mSector, mpMemory);
-
-			// copy DBUFLO/DBUFHI + size -> BUFRLO/BUFRHI
-			uint32 endAddr = req.mAddress + req.mLength;
-			kdb.BUFRLO_BUFRHI = endAddr;
-
-			g_ATLCHookSIO("Intercepting disk SIO write: buf=%04X, len=%04X, sector=%04X, status=%02X\n", req.mAddress, req.mLength, req.mSector, status);
-
-			mpUIRenderer->PulseStatusFlags(1 << (req.mDevice - 0x31));
-
-			// leave SKCTL set to asynchronous receive
-			kdb.SKCTL = (kdb.SSKCTL & 0x07) | 0x10;
-		} else if (req.mCommand == 0x53) {
-			if ((req.mMode & 0xc0) != 0x40)
-				return false;
-
-			if (req.mLength != 4)
-				return false;
-
-			uint8 data[5];
-			disk.ReadStatus(data);
-
-			for(int i=0; i<4; ++i)
-				mpMemory->WriteByte(req.mAddress+i, data[i]);
-
-			kdb.CHKSUM = data[4];
-
-			// copy DBUFLO/DBUFHI + size -> BUFRLO/BUFRHI
-			uint32 endAddr = req.mAddress + req.mLength;
-			kdb.BUFRLO_BUFRHI = endAddr;
-
-			g_ATLCHookSIO("Intercepting disk SIO status req.: buf=%04X\n", req.mAddress);
-
-			mpUIRenderer->PulseStatusFlags(1 << (req.mDevice - 0x31));
-
-			ATClearPokeyTimersOnDiskIo(kdb);
-		} else if (req.mCommand == 0x4E) {
-			if ((req.mMode & 0xc0) != 0x40)
-				return false;
-
-			if (req.mLength != 12)
-				return false;
-
-			uint8 data[13];
-			disk.ReadPERCOMBlock(data);
-
-			for(int i=0; i<12; ++i)
-				mpMemory->WriteByte(req.mAddress+i, data[i]);
-
-			mpMemory->WriteByte(ATKernelSymbols::CHKSUM, data[12]);
-
-			// copy DBUFLO/DBUFHI + size -> BUFRLO/BUFRHI
-			uint32 endAddr = req.mAddress + req.mLength;
-			kdb.BUFRLO_BUFRHI = endAddr;
-
-			g_ATLCHookSIO("Intercepting disk SIO read PERCOM req.: buf=%04X\n", req.mAddress);
-
-			mpUIRenderer->PulseStatusFlags(1 << (req.mDevice - 0x31));
-		} else
-			return false;
+		return false;
 	} else if (req.mDevice == 0x4F) {
 		if (!mpSim->IsFastBootEnabled())
 			return false;
@@ -388,19 +329,34 @@ fastbootignore:
 		ATCassetteEmulator& cassette = mpSim->GetCassette();
 
 		// Check if a read or write is requested
-		if (req.mMode & 0x80)
-			return false;
+		if (req.mMode == 0x40) {
+			status = cassette.ReadBlock(req.mAddress, req.mLength, mpMemory);
 
-		status = cassette.ReadBlock(req.mAddress, req.mLength, mpMemory);
+			mpUIRenderer->PulseStatusFlags(1 << 16);
 
-		mpUIRenderer->PulseStatusFlags(1 << 16);
+			g_ATLCHookSIO("Intercepted cassette SIO read: buf=%04X, len=%04X, status=%02X\n", req.mAddress, req.mLength, status);
+		} else {
+			status = cassette.WriteBlock(req.mAddress, req.mLength, mpMemory);
 
-		g_ATLCHookSIO("Intercepting cassette SIO read: buf=%04X, len=%04X, status=%02X\n", req.mAddress, req.mLength, status);
+			mpUIRenderer->PulseStatusFlags(1 << 16);
+
+			g_ATLCHookSIO("Intercepted cassette SIO write: buf=%04X, len=%04X, status=%02X\n", req.mAddress, req.mLength, status);
+		}
 	} else {
 		return false;
 	}
 
 handled:
+	// If this is anything other than a cassette request, reset timers 3+4 to 19200 baud and set
+	// asynchronous receive mode. Wayout needs this to not play garbage on channels 3+4 on the
+	// title screen.
+	if (req.mDevice != 0x5F) {
+		kdb.AUDF3 = 0x28;
+		kdb.AUDF4 = 0;
+		kdb.SKCTL = 0x13;
+		kdb.SSKCTL = 0x13;
+	}
+
 	ATClearPokeyTimersOnDiskIo(kdb);
 
 	// Set CDTMA1 to dummy address (KnownRTS) if it is not already set -- SIO is documented as setting
@@ -481,7 +437,7 @@ bool ATSIOManager::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) {
 		}
 	}
 
-	return mbBurstTransfersEnabled;
+	return mbActiveDeviceDisk ? mbDiskBurstTransfersEnabled : mbBurstTransfersEnabled;
 }
 
 void ATSIOManager::PokeyBeginCommand() {
@@ -546,15 +502,20 @@ void ATSIOManager::PokeyEndCommand() {
 		mTransferLevel = 0;
 
 		if (g_ATLCSIOCmd.IsEnabled())
-			g_ATLCSIOCmd("Device %02X | Command %02X | %02X %02X (%s)\n", cmd.mDevice, cmd.mCommand, cmd.mAUX[0], cmd.mAUX[1], ATDecodeSIOCommand(cmd.mDevice, cmd.mCommand, cmd.mAUX));
+			g_ATLCSIOCmd("Device %02X | Command %02X | %02X %02X (%s)%s\n", cmd.mDevice, cmd.mCommand, cmd.mAUX[0], cmd.mAUX[1], ATDecodeSIOCommand(cmd.mDevice, cmd.mCommand, cmd.mAUX), cmd.mbStandardRate ? "" : " (high-speed command frame)");
 
-		ResetTransferRate();
+		ResetTransfer();
+
+		mbActiveDeviceDisk = (cmd.mDevice >= 0x31 && cmd.mDevice <= 0x3F);
 
 		for(IATDeviceSIO *dev : mSIODevices) {
 			mpActiveDevice = dev;
 
 			const IATDeviceSIO::CmdResponse response = dev->OnSerialBeginCommand(cmd);
 			if (response) {
+				if (mbActiveDeviceDisk)
+					mAccessedDisks |= (1 << (cmd.mDevice - 0x31));
+
 				switch(response) {
 					case IATDeviceSIO::kCmdResponse_Start:
 						break;
@@ -590,7 +551,7 @@ void ATSIOManager::PokeyEndCommand() {
 }
 
 void ATSIOManager::PokeySerInReady() {
-	if (!mbBurstTransfersEnabled)
+	if (!(mbActiveDeviceDisk ? mbDiskBurstTransfersEnabled : mbBurstTransfersEnabled))
 		return;
 
 	{
@@ -611,8 +572,12 @@ void ATSIOManager::PokeySerInReady() {
 	if (mTransferIndex - mTransferStart < 2)
 		return;
 
-	if (mpScheduler->GetTicksToEvent(mpTransferEvent) > 50)
+	uint32 existingDelay = mpScheduler->GetTicksToEvent(mpTransferEvent);
+	if (existingDelay > 50) {
+		mAccelTimeSkew += (existingDelay - 50);
+
 		mpScheduler->SetEvent(50, this, kEventId_Send, mpTransferEvent);
+	}
 }
 
 void ATSIOManager::AddDevice(IATDeviceSIO *dev) {
@@ -678,11 +643,25 @@ void ATSIOManager::SendData(const void *data, uint32 len, bool addChecksum) {
 }
 
 void ATSIOManager::SendACK() {
-	if (!mpAccelRequest)
+	// This command, and all other commands, need to silently ignore when no device
+	// is active. We need to support this to allow an EndCommand() to be preemptively
+	// inserted into a command stream off of a receive callback. In that case, surrounding
+	// code that is being unwound may still attempt to push a couple of additional commands.
+	if (!mpActiveDevice)
+		return;
+
+	if (mpAccelRequest) {
+		Step& step = mStepQueue.push_back();
+		step.mType = kStepType_AccelSendACK;
+	} else {
 		SendData("A", 1, false);
+	}
 }
 
 void ATSIOManager::SendNAK() {
+	if (!mpActiveDevice)
+		return;
+
 	if (mpAccelRequest) {
 		Step& step = mStepQueue.push_back();
 		step.mType = kStepType_AccelSendNAK;
@@ -691,26 +670,42 @@ void ATSIOManager::SendNAK() {
 	}
 }
 
-void ATSIOManager::SendComplete() {
-	if (!mpAccelRequest) {
-		// SIO protocol requires minimum 250us delay here.
+void ATSIOManager::SendComplete(bool autoDelay) {
+	if (!mpActiveDevice)
+		return;
+
+	// SIO protocol requires minimum 250us delay here.
+	if (autoDelay)
 		Delay(450);
+
+	if (mpAccelRequest) {
+		Step& step = mStepQueue.push_back();
+		step.mType = kStepType_AccelSendComplete;
+	} else {
 		SendData("C", 1, false);
 	}
 }
 
-void ATSIOManager::SendError() {
+void ATSIOManager::SendError(bool autoDelay) {
+	if (!mpActiveDevice)
+		return;
+
+	// SIO protocol requires minimum 250us delay here.
+	if (autoDelay)
+		Delay(450);
+
 	if (mpAccelRequest) {
 		Step& step = mStepQueue.push_back();
 		step.mType = kStepType_AccelSendError;
 	} else {
-		// SIO protocol requires minimum 250us delay here.
-		Delay(450);
 		SendData("E", 1, false);
 	}
 }
 
 void ATSIOManager::ReceiveData(uint32 id, uint32 len, bool autoProtocol) {
+	if (!mpActiveDevice)
+		return;
+
 	if (autoProtocol)
 		++len;
 
@@ -742,6 +737,9 @@ void ATSIOManager::ReceiveData(uint32 id, uint32 len, bool autoProtocol) {
 }
 
 void ATSIOManager::SetTransferRate(uint32 cyclesPerBit, uint32 cyclesPerByte) {
+	if (!mpActiveDevice)
+		return;
+
 	Step& step = mStepQueue.push_back();
 	step.mType = kStepType_SetTransferRate;
 	step.mTransferCyclesPerBit = cyclesPerBit;
@@ -750,8 +748,22 @@ void ATSIOManager::SetTransferRate(uint32 cyclesPerBit, uint32 cyclesPerByte) {
 	ExecuteNextStep();
 }
 
+void ATSIOManager::SetSynchronousTransmit(bool enable) {
+	if (!mpActiveDevice)
+		return;
+
+	Step& step = mStepQueue.push_back();
+	step.mType = kStepType_SetSynchronousTransmit;
+	step.mbEnable = enable;
+
+	ExecuteNextStep();
+}
+
 void ATSIOManager::Delay(uint32 ticks) {
-	if (!ticks || mpAccelRequest)
+	if (!mpActiveDevice)
+		return;
+
+	if (!ticks)
 		return;
 
 	Step& step = mStepQueue.push_back();
@@ -762,12 +774,22 @@ void ATSIOManager::Delay(uint32 ticks) {
 }
 
 void ATSIOManager::InsertFence(uint32 id) {
+	if (!mpActiveDevice)
+		return;
+
 	Step& step = mStepQueue.push_back();
 	step.mType = kStepType_Fence;
 	step.mFenceId = id;
 }
 
+void ATSIOManager::FlushQueue() {
+	mStepQueue.clear();
+}
+
 void ATSIOManager::EndCommand() {
+	if (!mpActiveDevice)
+		return;
+
 	Step& step = mStepQueue.push_back();
 	step.mType = kStepType_EndCommand;
 }
@@ -810,7 +832,15 @@ void ATSIOManager::RemoveRawDevice(IATDeviceRawSIO *dev) {
 }
 
 void ATSIOManager::SendRawByte(uint8 byte, uint32 cyclesPerBit) {
-	mpPokey->ReceiveSIOByte(byte, cyclesPerBit, true, mbBurstTransfersEnabled);
+	mpPokey->ReceiveSIOByte(byte, cyclesPerBit, true, (mbActiveDeviceDisk ? mbDiskBurstTransfersEnabled : mbBurstTransfersEnabled), mbTransmitSynchronous);
+}
+
+bool ATSIOManager::IsSIOCommandAsserted() const {
+	return mbCommandState;
+}
+
+bool ATSIOManager::IsSIOMotorAsserted() const {
+	return mbMotorState;
 }
 
 void ATSIOManager::SetSIOInterrupt(IATDeviceRawSIO *dev, bool state) {
@@ -907,19 +937,19 @@ void ATSIOManager::SetExternalClock(IATDeviceRawSIO *dev, uint32 initialOffset, 
 }
 
 void ATSIOManager::OnScheduledEvent(uint32 id) {
-	mpTransferEvent = nullptr;
-
 	switch(id) {
 		case kEventId_Delay:
+			mpDelayEvent = nullptr;
 			mCurrentStep.mType = kStepType_None;
 			ExecuteNextStep();
 			break;
 
 		case kEventId_Send:
+			mpTransferEvent = nullptr;
 			if (mTransferIndex < mTransferEnd) {
 				uint8 c = mTransferBuffer[mTransferIndex++];
 
-				mpPokey->ReceiveSIOByte(c, mTransferCyclesPerBit, true, mbBurstTransfersEnabled);
+				mpPokey->ReceiveSIOByte(c, mTransferCyclesPerBit, true, mbActiveDeviceDisk ? mbDiskBurstTransfersEnabled : mbBurstTransfersEnabled, false);
 
 				mpScheduler->SetEvent(mTransferCyclesPerByte, this, kEventId_Send, mpTransferEvent);
 			} else {
@@ -1020,6 +1050,11 @@ void ATSIOManager::AbortActiveCommand() {
 		mpActiveDevice = nullptr;
 	}
 
+	if (mpScheduler) {
+		mpScheduler->UnsetEvent(mpTransferEvent);
+		mpScheduler->UnsetEvent(mpDelayEvent);
+	}
+
 	mStepQueue.clear();
 	mCurrentStep.mType = kStepType_None;
 }
@@ -1041,31 +1076,35 @@ void ATSIOManager::ExecuteNextStep() {
 				VDASSERT(mTransferEnd <= vdcountof(mTransferBuffer));
 
 				if (mpAccelRequest) {
-					const uint32 len = mCurrentStep.mTransferLength + (mCurrentStep.mType == kStepType_SendAutoProtocol ? -1 : 0);
-					const uint32 reqLen = (mpAccelRequest->mMode & 0x40) ? mpAccelRequest->mLength : 0;
-					const uint32 minLen = std::min<uint32>(len, reqLen);
-					const uint8 *src = mTransferBuffer + mTransferIndex;
+					if (mpAccelRequest->mMode & 0x40) {
+						const uint32 len = mCurrentStep.mTransferLength + (mCurrentStep.mType == kStepType_SendAutoProtocol ? -1 : 0);
+						const uint32 reqLen = mpAccelRequest->mLength;
+						const uint32 minLen = std::min<uint32>(len, reqLen);
+						const uint8 *src = mTransferBuffer + mTransferIndex;
 
-					for(uint32 i=0; i<minLen; ++i)
-						mpMemory->WriteByte(mAccelBufferAddress + i, src[i]);
+						for(uint32 i=0; i<minLen; ++i)
+							mpMemory->WriteByte(mAccelBufferAddress + i, src[i]);
 
-					uint8 checksum = ATComputeSIOChecksum(src, minLen);
+						mAccelTimeSkew += (minLen + 1) * mTransferCyclesPerByte;
 
-					if (len < reqLen) {
-						// We sent less data than SIO was expecting. This will cause a timeout.
-						*mpAccelStatus = 0x8A;
-					} else if (len > reqLen) {
-						// We sent more data than SIO was expecting. This may cause a checksum
-						// error.
-						if (checksum != src[reqLen])
-							*mpAccelStatus = 0x8F;
+						uint8 checksum = ATComputeSIOChecksum(src, minLen);
+
+						if (len < reqLen) {
+							// We sent less data than SIO was expecting. This will cause a timeout.
+							*mpAccelStatus = 0x8A;
+						} else if (len > reqLen) {
+							// We sent more data than SIO was expecting. This may cause a checksum
+							// error.
+							if (checksum != src[reqLen])
+								*mpAccelStatus = 0x8F;
+						}
+
+						mpMemory->WriteByte(ATKernelSymbols::CHKSUM, checksum);
+
+						const uint32 endAddr = mAccelBufferAddress + minLen;
+						mpMemory->WriteByte(ATKernelSymbols::BUFRLO, (uint8)endAddr);
+						mpMemory->WriteByte(ATKernelSymbols::BUFRHI, (uint8)(endAddr >> 8));
 					}
-
-					mpMemory->WriteByte(ATKernelSymbols::CHKSUM, checksum);
-
-					const uint32 endAddr = mAccelBufferAddress + minLen;
-					mpMemory->WriteByte(ATKernelSymbols::BUFRLO, (uint8)endAddr);
-					mpMemory->WriteByte(ATKernelSymbols::BUFRHI, (uint8)(endAddr >> 8));
 
 					mTransferIndex = mTransferEnd;
 					mCurrentStep.mType = kStepType_None;
@@ -1096,6 +1135,8 @@ void ATSIOManager::ExecuteNextStep() {
 					for(uint32 i=0; i<minLen; ++i)
 						mTransferBuffer[mTransferStart + i] = mpMemory->ReadByte(mAccelBufferAddress + i);
 
+					mAccelTimeSkew += (minLen + 1) * (mTransferCyclesPerBit * 10);
+
 					if (reqLen < len) {
 						// SIO provided less data than we were expecting. Hmm. On an 810,
 						// this will hang the drive indefinitely until the expected bytes
@@ -1124,11 +1165,21 @@ void ATSIOManager::ExecuteNextStep() {
 				mCurrentStep.mType = kStepType_None;
 				break;
 
-			case kStepType_Delay:
-				g_ATLCSIOSteps("Delaying for %u ticks\n", mCurrentStep.mDelayTicks);
+			case kStepType_SetSynchronousTransmit:
+				mbTransmitSynchronous = mCurrentStep.mbEnable;
+				mCurrentStep.mType = kStepType_None;
+				break;
 
+			case kStepType_Delay:
 				VDASSERT(mCurrentStep.mDelayTicks);
-				mpScheduler->SetEvent(mCurrentStep.mDelayTicks, this, kEventId_Delay, mpTransferEvent);
+
+				if (mpAccelRequest) {
+					mAccelTimeSkew += mCurrentStep.mDelayTicks;
+					mCurrentStep.mType = kStepType_None;
+				} else {
+					g_ATLCSIOSteps("Delaying for %u ticks\n", mCurrentStep.mDelayTicks);
+					mpScheduler->SetEvent(mCurrentStep.mDelayTicks, this, kEventId_Delay, mpDelayEvent);
+				}
 				break;
 
 			case kStepType_Fence:
@@ -1141,16 +1192,25 @@ void ATSIOManager::ExecuteNextStep() {
 					g_ATLCSIOSteps <<= "Ending command\n";
 				mpActiveDevice = nullptr;
 				mCurrentStep.mType = kStepType_None;
+				mStepQueue.clear();
+				break;
+
+			case kStepType_AccelSendACK:
+			case kStepType_AccelSendComplete:
+				mAccelTimeSkew += mTransferCyclesPerByte;
+				mCurrentStep.mType = kStepType_None;
 				break;
 
 			case kStepType_AccelSendNAK:
 				*mpAccelStatus = 0x8B;		// NAK error
 				mCurrentStep.mType = kStepType_None;
+				mAccelTimeSkew += mTransferCyclesPerByte;
 				break;
 
 			case kStepType_AccelSendError:
 				*mpAccelStatus = 0x90;		// Device error
 				mCurrentStep.mType = kStepType_None;
+				mAccelTimeSkew += mTransferCyclesPerByte;
 				break;
 
 			default:
@@ -1171,9 +1231,10 @@ void ATSIOManager::ShiftTransmitBuffer() {
 	}
 }
 
-void ATSIOManager::ResetTransferRate() {
+void ATSIOManager::ResetTransfer() {
 	mTransferCyclesPerByte = 932;
 	mTransferCyclesPerBit = 93;
+	mbTransmitSynchronous = false;
 }
 
 void ATSIOManager::OnMotorStateChanged(bool asserted) {

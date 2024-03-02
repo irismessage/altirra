@@ -18,9 +18,9 @@
 #ifndef f_AT_BKPTMANAGER_H
 #define f_AT_BKPTMANAGER_H
 
-#include <map>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/event.h>
+#include <at/atdebugger/target.h>
 
 class ATCPUEmulator;
 class ATMemoryManager;
@@ -30,6 +30,7 @@ class ATSimulator;
 typedef vdfastvector<uint32> ATBreakpointIndices;
 
 struct ATBreakpointInfo {
+	uint32	mTargetIndex;
 	sint32	mAddress;
 	uint32	mLength;
 	bool	mbBreakOnPC;
@@ -39,6 +40,7 @@ struct ATBreakpointInfo {
 
 struct ATBreakpointEvent {
 	uint32	mIndex;
+	uint32	mTargetIndex;
 	uint32	mAddress;
 	uint8	mValue;
 	bool	mbBreak;
@@ -46,24 +48,29 @@ struct ATBreakpointEvent {
 };
 
 class ATBreakpointManager {
-	ATBreakpointManager(const ATBreakpointManager&);
-	ATBreakpointManager& operator=(const ATBreakpointManager&);
-public:
+	ATBreakpointManager(const ATBreakpointManager&) = delete;
+	ATBreakpointManager& operator=(const ATBreakpointManager&) = delete;
 
+public:
 	ATBreakpointManager();
 	~ATBreakpointManager();
 
 	void Init(ATCPUEmulator *cpu, ATMemoryManager *memmgr, ATSimulator *sim);
 	void Shutdown();
 
+	bool AreBreakpointsSupported(uint32 targetIndex) const {
+		return mTargets[targetIndex].mpBreakpoints != nullptr;
+	}
+
+	void AttachTarget(uint32 targetIndex, IATDebugTarget *target);
+	void DetachTarget(uint32 targetIndex);
+
 	void GetAll(ATBreakpointIndices& indices) const;
-	void GetAtPC(uint16 pc, ATBreakpointIndices& indices) const;
+	void GetAtPC(uint32 pc, ATBreakpointIndices& indices) const;
 	void GetAtAccessAddress(uint32 addr, ATBreakpointIndices& indices) const;
 	bool GetInfo(uint32 idx, ATBreakpointInfo& info) const;
 
-	bool IsSetAtPC(uint16 pc) const;
-	void ClearAtPC(uint16 pc);
-	uint32 SetAtPC(uint16 pc);
+	uint32 SetAtPC(uint32 targetIndex, uint32 pc);
 	uint32 SetAccessBP(uint16 address, bool read, bool write);
 	uint32 SetAccessRangeBP(uint16 address, uint32 len, bool read, bool write);
 	bool Clear(uint32 id);
@@ -71,12 +78,18 @@ public:
 
 	VDEvent<ATBreakpointManager, ATBreakpointEvent *>& OnBreakpointHit() { return mEventBreakpointHit; }
 
-	inline int TestPCBreakpoint(uint16 pc);
-	inline bool TestReadBreakpoint(uint16 addr);
-	inline bool TestWriteBreakpoint(uint16 addr);
+	inline int TestPCBreakpoint(uint32 pc);
 
 protected:
 	typedef ATBreakpointIndices BreakpointIndices;
+
+	class TargetBPHandler;
+
+	struct TargetInfo {
+		IATDebugTarget *mpTarget;
+		IATDebugTargetBreakpoints *mpBreakpoints;
+		TargetBPHandler *mpBPHandler;
+	};
 
 	enum BreakpointType {
 		kBPT_PC			= 0x01,
@@ -122,6 +135,7 @@ protected:
 	void RegisterAccessPage(uint32 address, bool read, bool write);
 	void UnregisterAccessPage(uint32 address, bool read, bool write);
 
+	void OnTargetPCBreakpoint(int code);
 	int CheckPCBreakpoints(uint32 pc, const BreakpointIndices& bps);	
 	static sint32 OnAccessTrapRead(void *thisptr, uint32 addr);
 	static bool OnAccessTrapWrite(void *thisptr, uint32 addr, uint8 value);
@@ -129,6 +143,8 @@ protected:
 	ATCPUEmulator *mpCPU;
 	ATMemoryManager *mpMemMgr;
 	ATSimulator *mpSim;
+
+	vdfastvector<TargetInfo> mTargets;
 
 	typedef vdfastvector<BreakpointEntry> Breakpoints;
 	Breakpoints mBreakpoints;
@@ -161,12 +177,12 @@ protected:
 	uint8 mAttrib[0x10000];
 };
 
-inline int ATBreakpointManager::TestPCBreakpoint(uint16 pc) {
-	BreakpointsByAddress::const_iterator it(mCPUBreakpoints.find((uint32)pc));
+inline int ATBreakpointManager::TestPCBreakpoint(uint32 bpc) {
+	BreakpointsByAddress::const_iterator it(mCPUBreakpoints.find(bpc & 0xFF00FFFF));
 	if (it == mCPUBreakpoints.end())
 		return 0;
 
-	return CheckPCBreakpoints(pc, it->second);
+	return CheckPCBreakpoints(bpc, it->second);
 }
 
 #endif	// f_AT_BKPTMANAGER_H

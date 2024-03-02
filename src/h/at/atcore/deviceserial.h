@@ -34,6 +34,7 @@ struct ATDeviceSerialStatus {
 	bool mbClearToSend;
 	bool mbDataSetReady;
 	bool mbHighSpeed;
+	bool mbRinging;
 };
 
 class IATDeviceSerial : public IVDRefUnknown {

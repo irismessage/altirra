@@ -20,6 +20,7 @@
 
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
+#include <at/atcore/devicecart.h>
 #include "flash.h"
 #include "eeprom.h"
 
@@ -105,51 +106,45 @@ enum ATCartridgeMode {
 	kATCartridgeMode_TheCart_64M,
 	kATCartridgeMode_TheCart_128M,
 	kATCartridgeMode_MegaMax_2M,
+	kATCartridgeMode_BountyBob5200Alt,		// Same as cart mapper 7 except that the fixed bank is first.
 	kATCartridgeModeCount
 };
 
 enum ATCartLoadStatus {
 	kATCartLoadStatus_Ok,
-	kATCartLoadStatus_UnknownMapper
+	kATCartLoadStatus_UnknownMapper,
+	kATCartLoadStatus_HardwareMismatch
 };
 
 struct ATCartLoadContext {
-	bool mbReturnOnUnknownMapper;
-	int mCartMapper;
-	uint32 mCartSize;
+	bool mbReturnOnUnknownMapper = false;
+	int mCartMapper = -1;
+	int mHardwareModeCheck = -1;
+	uint32 mCartSize = 0;
 
-	ATCartLoadStatus mLoadStatus;
+	ATCartLoadStatus mLoadStatus = kATCartLoadStatus_Ok;
 
 	vdfastvector<uint8> *mpCaptureBuffer;
 };
 
-class IATCartridgeCallbacks {
-public:
-	virtual void CartSetAxxxMapped(bool mapped) = 0;
-};
-
-class ATCartridgeEmulator {
-	ATCartridgeEmulator(const ATCartridgeEmulator&);
-	ATCartridgeEmulator& operator=(const ATCartridgeEmulator&);
+class ATCartridgeEmulator final
+	: public IATDeviceCartridge
+{
+	ATCartridgeEmulator(const ATCartridgeEmulator&) = delete;
+	ATCartridgeEmulator& operator=(const ATCartridgeEmulator&) = delete;
 
 public:
 	ATCartridgeEmulator();
 	~ATCartridgeEmulator();
 
-	void Init(ATMemoryManager *memman, ATScheduler *sch, int basePriority, bool fastBus);
+	void Init(ATMemoryManager *memman, ATScheduler *sch, int basePriority, ATCartridgePriority cartPri, bool fastBus);
 	void Shutdown();
 
 	void SetUIRenderer(IATUIRenderer *r);
-	void SetCallbacks(IATCartridgeCallbacks *cb) { mpCB = cb; }
 
 	void SetFastBus(bool fastBus);
 
-	// Enables or disables gates on the RD4 and RD5 signals of the cartridge. RD4
-	// controls the $8000-9FFF window, while RD5 controls $A000-BFFF.
-	void SetRD45Enables(bool rd4, bool rd5);
-
 	int GetCartBank() const { return mCartBank; }
-	bool IsABxxMapped() const;
 	bool IsBASICDisableAllowed() const;		// Cleared if we have a cart type that doesn't want OPTION pressed (AtariMax).
 	bool IsDirty() const { return mbDirty; }
 	
@@ -175,6 +170,12 @@ public:
 	void BeginSaveState(ATSaveStateWriter& writer);
 	void SaveStatePrivate(ATSaveStateWriter& writer);
 
+public:		// IATDeviceCartridge
+	void InitCartridge(IATDeviceCartridgePort *cartPort) override;
+	bool IsLeftCartActive() const override;
+	void SetCartEnables(bool leftEnable, bool rightEnable, bool cctlEnable) override;
+	void UpdateCartSense(bool leftActive) override;
+
 protected:
 	struct LayerEnables {
 		bool mbRead;
@@ -194,12 +195,16 @@ protected:
 	static sint32 ReadByte_BB800_2(void *thisptr0, uint32 address);
 	static bool WriteByte_BB800_1(void *thisptr0, uint32 address, uint8 value);
 	static bool WriteByte_BB800_2(void *thisptr0, uint32 address, uint8 value);
+	static sint32 DebugReadByte_SIC(void *thisptr0, uint32 address);
 	static sint32 ReadByte_SIC(void *thisptr0, uint32 address);
 	static bool WriteByte_SIC(void *thisptr0, uint32 address, uint8 value);
+	static sint32 DebugReadByte_TheCart(void *thisptr0, uint32 address);
 	static sint32 ReadByte_TheCart(void *thisptr0, uint32 address);
 	static bool WriteByte_TheCart(void *thisptr0, uint32 address, uint8 value);
+	static sint32 DebugReadByte_MegaCart3(void *thisptr0, uint32 address);
 	static sint32 ReadByte_MegaCart3(void *thisptr0, uint32 address);
 	static bool WriteByte_MegaCart3(void *thisptr0, uint32 address, uint8 value);
+	static sint32 DebugReadByte_MaxFlash(void *thisptr0, uint32 address);
 	static sint32 ReadByte_MaxFlash(void *thisptr0, uint32 address);
 	static bool WriteByte_MaxFlash(void *thisptr0, uint32 address, uint8 value);
 	static bool WriteByte_Corina1M(void *thisptr0, uint32 address, uint8 value);
@@ -310,11 +315,13 @@ protected:
 	bool mbDirty;
 	bool mbRD4Gate;
 	bool mbRD5Gate;
+	bool mbCCTLGate;
 	bool mbFastBus;
 	IATUIRenderer *mpUIRenderer;
-	IATCartridgeCallbacks *mpCB;
 	ATMemoryManager *mpMemMan;
 	ATScheduler *mpScheduler;
+	IATDeviceCartridgePort *mpCartridgePort = nullptr;
+	uint32 mCartId = 0;
 
 	LayerEnables mLayerEnablesFixedBank1;
 	LayerEnables mLayerEnablesFixedBank2;
@@ -368,6 +375,7 @@ protected:
 
 int ATGetCartridgeModeForMapper(int mapper);
 int ATGetCartridgeMapperForMode(int mode, uint32 size);
+bool ATIsCartridge5200Mode(ATCartridgeMode cartmode);
 bool ATIsCartridgeModeHWCompatible(ATCartridgeMode cartmode, int hwmode);
 
 #endif	// f_AT_CARTRIDGE_H

@@ -172,7 +172,7 @@ bool VDNOINLINE VDPixmapBltTwoStage(const VDPixmap& dst, const VDPixmap& src, vd
 	VDPixmap linetmp = {};
 
 	if (w < 1024) {
-		linetmp.data = alloca(sizeof(uint32) * w);
+		linetmp.data = _alloca(sizeof(uint32) * w);
 	} else {
 		tempBuf.resize(w + 1);
 		linetmp.data = tempBuf.data();

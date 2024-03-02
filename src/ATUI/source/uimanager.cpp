@@ -11,7 +11,7 @@
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIManager::ActiveAction : public IVDTimerCallback {
+class ATUIManager::ActiveAction final : public IVDTimerCallback {
 public:
 	virtual void TimerCallback();
 
@@ -679,6 +679,17 @@ void ATUIManager::OnCaptureLost() {
 	}
 }
 
+const wchar_t *ATUIManager::GetCustomEffectPath() const {
+	return mCustomEffectPath.c_str();
+}
+
+void ATUIManager::SetCustomEffectPath(const wchar_t *s, bool forceReload) {
+	if (forceReload || mCustomEffectPath != s) {
+		mCustomEffectPath = s;
+		mbPendingCustomEffectPath = true;
+	}
+}
+
 void ATUIManager::Attach(ATUIWidget *w) {
 	do {
 		++mNextInstanceId;
@@ -768,6 +779,23 @@ void ATUIManager::Invalidate(ATUIWidget *w) {
 void ATUIManager::UpdateCursorImage(ATUIWidget *w) {
 	if (w->IsSameOrAncestorOf(mpCursorWindow))
 		UpdateCursorImage();
+}
+
+void ATUIManager::AttachCompositor(IVDDisplayCompositionEngine& dce) {
+	mpDisplayCompositionEngine = &dce;
+	mbPendingCustomEffectPath = true;
+}
+
+void ATUIManager::DetachCompositor() {
+	mpDisplayCompositionEngine = nullptr;
+}
+
+void ATUIManager::PreComposite(const VDDisplayCompositeInfo& compInfo) {
+	if (mbPendingCustomEffectPath) {
+		mbPendingCustomEffectPath = false;
+
+		mpDisplayCompositionEngine->LoadCustomEffect(mCustomEffectPath.c_str());
+	}
 }
 
 void ATUIManager::Composite(IVDDisplayRenderer& r, const VDDisplayCompositeInfo& compInfo) {

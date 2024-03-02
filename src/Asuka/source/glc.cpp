@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <stdio.h>
 #include <exception>
 #include <unordered_map>
@@ -65,7 +65,7 @@ public:
 	void EnableForeignCode(bool enable) { mbReturnForeignCode = enable; }
 
 	GLCCodeLocation GetLocation() const {
-		GLCCodeLocation loc = { mpSourceName, mLine, mpSrc - mpLineStart };
+		GLCCodeLocation loc = { mpSourceName, mLine, (int)(mpSrc - mpLineStart) };
 		return loc;
 	}
 
@@ -432,7 +432,7 @@ void GLCCompiler::Compile(const char *sourceName, const char *src, uint32 len, F
 	}
 
 
-	printf("Asuka: %d techniques, %d fragment shaders.\n", mTechniques.size(), mFragmentShaders.size());
+	printf("Asuka: %d techniques, %d fragment shaders.\n", (int)mTechniques.size(), (int)mFragmentShaders.size());
 }
 
 namespace {

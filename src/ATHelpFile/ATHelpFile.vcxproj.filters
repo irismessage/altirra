@@ -126,6 +126,7 @@
     <None Include="source\athelp.hhc" />
     <None Include="source\athelp.hhp" />
     <None Include="source\athelp.hhw" />
+    <None Include="source\debug-profiling.xml" />
   </ItemGroup>
   <ItemGroup>
     <Xml Include="source\1030.xml">
@@ -137,10 +138,34 @@
     <Xml Include="source\sx212.xml">
       <Filter>Source Files</Filter>
     </Xml>
-    <Xml Include="source\debug-profiling.xml">
+    <Xml Include="source\dragoncart.xml">
       <Filter>Source Files</Filter>
     </Xml>
-    <Xml Include="source\dragoncart.xml">
+    <Xml Include="source\devices-cassette.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\devices-rtime8.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\devices-corvus.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\devices-pocketmodem.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\options-system.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\options-firmware.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\options-hardware.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\options-accel.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\profiles.xml">
       <Filter>Source Files</Filter>
     </Xml>
   </ItemGroup>

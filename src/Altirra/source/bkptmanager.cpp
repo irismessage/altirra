@@ -15,11 +15,35 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
+#include <at/atcpu/breakpoints.h>
 #include "bkptmanager.h"
 #include "cpu.h"
 #include "memorymanager.h"
 #include "simulator.h"
+
+class ATBreakpointManager::TargetBPHandler : public IATCPUBreakpointHandler {
+public:
+	TargetBPHandler(ATBreakpointManager *parent, uint32 targetOffset)
+		: mpParent(parent)
+		, mTargetOffset(targetOffset)
+	{
+	}
+
+	bool CheckBreakpoint(uint32 pc) override {
+		int code = mpParent->TestPCBreakpoint(pc + mTargetOffset);
+		if (code) {
+			mpParent->OnTargetPCBreakpoint(code);
+			return true;
+		}
+
+		return false;
+	}
+
+private:
+	ATBreakpointManager *mpParent;
+	uint32 mTargetOffset;
+};
 
 ATBreakpointManager::ATBreakpointManager()
 	: mpMemMgr(NULL)
@@ -38,6 +62,13 @@ void ATBreakpointManager::Init(ATCPUEmulator *cpu, ATMemoryManager *memmgr, ATSi
 }
 
 void ATBreakpointManager::Shutdown() {
+	for(auto& entry : mTargets) {
+		if (entry.mpBreakpoints)
+			entry.mpBreakpoints->SetBreakpointHandler(nullptr);
+
+		delete entry.mpBPHandler;
+	}
+
 	if (mpMemMgr) {
 		for(AccessBPLayers::const_iterator it(mAccessBPLayers.begin()), itEnd(mAccessBPLayers.end()); it != itEnd; ++it) {
 			mpMemMgr->DeleteLayer(it->second.mpMemLayer);
@@ -54,6 +85,32 @@ void ATBreakpointManager::Shutdown() {
 	}
 }
 
+void ATBreakpointManager::AttachTarget(uint32 targetIndex, IATDebugTarget *target) {
+	if (mTargets.size() <= targetIndex)
+		mTargets.resize(targetIndex + 1, {});
+
+	auto *bps = vdpoly_cast<IATDebugTargetBreakpoints *>(target);
+	mTargets[targetIndex] = { target, bps, new TargetBPHandler(this, targetIndex << 24) };
+
+	if (bps)
+		bps->SetBreakpointHandler(mTargets[targetIndex].mpBPHandler);
+}
+
+void ATBreakpointManager::DetachTarget(uint32 targetIndex) {
+	if (targetIndex < mTargets.size()) {
+		auto& entry = mTargets[targetIndex];
+
+		if (entry.mpBreakpoints)
+			entry.mpBreakpoints->SetBreakpointHandler(nullptr);
+
+		vdsafedelete <<= entry.mpBPHandler;
+
+		mTargets[targetIndex] = {};
+	} else {
+		VDASSERT(!"Target out of range.");
+	}
+}
+
 void ATBreakpointManager::GetAll(ATBreakpointIndices& indices) const {
 	uint32 idx = 0;
 
@@ -61,21 +118,30 @@ void ATBreakpointManager::GetAll(ATBreakpointIndices& indices) const {
 		const BreakpointEntry& be = *it;
 
 		if (be.mType)
-			indices.push_back(idx);
+			indices.push_back(idx + 1);
 
 		++idx;
 	}
 }
 
-void ATBreakpointManager::GetAtPC(uint16 pc, ATBreakpointIndices& indices) const {
-	BreakpointsByAddress::const_iterator it(mCPUBreakpoints.find(pc));
+void ATBreakpointManager::GetAtPC(uint32 pc, ATBreakpointIndices& indices) const {
+	BreakpointsByAddress::const_iterator it(mCPUBreakpoints.find(pc & 0xFFFF));
 
 	if (it == mCPUBreakpoints.end()) {
 		indices.clear();
 		return;
 	}
 	
-	indices = it->second;
+	const auto& srcIndices = it->second;
+	indices.clear();
+	indices.reserve(srcIndices.size());
+
+	for(const auto& idx : srcIndices) {
+		const BreakpointEntry& be = mBreakpoints[idx - 1];
+
+		if (be.mAddress == pc)
+			indices.push_back(idx);
+	}
 }
 
 void ATBreakpointManager::GetAtAccessAddress(uint32 addr, ATBreakpointIndices& indices) const {
@@ -98,7 +164,8 @@ bool ATBreakpointManager::GetInfo(uint32 idx, ATBreakpointInfo& info) const {
 	if (!be.mType)
 		return false;
 
-	info.mAddress = be.mAddress;
+	info.mTargetIndex = be.mAddress >> 24;
+	info.mAddress = be.mAddress & 0xFFFFFF;
 	info.mLength = 1;
 	info.mbBreakOnPC = (be.mType & kBPT_PC) != 0;
 	info.mbBreakOnRead = (be.mType & kBPT_Read) != 0;
@@ -120,26 +187,10 @@ bool ATBreakpointManager::GetInfo(uint32 idx, ATBreakpointInfo& info) const {
 	return true;
 }
 
-bool ATBreakpointManager::IsSetAtPC(uint16 pc) const {
-	return mCPUBreakpoints.find(pc) != mCPUBreakpoints.end();
-}
+uint32 ATBreakpointManager::SetAtPC(uint32 targetIndex, uint32 pc) {
+	pc = (pc & 0xFFFFFF) + (targetIndex << 24);
 
-void ATBreakpointManager::ClearAtPC(uint16 pc) {
-	BreakpointsByAddress::iterator it(mCPUBreakpoints.find(pc));
-
-	if (it == mCPUBreakpoints.end())
-		return;
-
-	ATBreakpointIndices indices(it->second);
-
-	while(!indices.empty()) {
-		Clear(indices.back());
-		indices.pop_back();
-	}
-}
-
-uint32 ATBreakpointManager::SetAtPC(uint16 pc) {
-	uint32 idx = std::find_if(mBreakpoints.begin(), mBreakpoints.end(), BreakpointFreePred()) - mBreakpoints.begin();
+	uint32 idx = (uint32)(std::find_if(mBreakpoints.begin(), mBreakpoints.end(), BreakpointFreePred()) - mBreakpoints.begin());
 
 	if (idx >= mBreakpoints.size())
 		mBreakpoints.push_back();
@@ -148,10 +199,15 @@ uint32 ATBreakpointManager::SetAtPC(uint16 pc) {
 	be.mAddress = pc;
 	be.mType = kBPT_PC;
 
-	BreakpointsByAddress::insert_return_type r(mCPUBreakpoints.insert(pc));
+	const uint32 encodedBPC = pc & 0xFF00FFFF;
+	BreakpointsByAddress::insert_return_type r(mCPUBreakpoints.insert(encodedBPC));
 
-	if (r.second)
-		mpCPU->SetBreakpoint(pc);
+	if (r.second) {
+		if (targetIndex)
+			mTargets[targetIndex].mpBreakpoints->SetBreakpoint((uint16)pc);
+		else
+			mpCPU->SetBreakpoint((uint16)pc);
+	}
 
 	r.first->second.push_back(idx);
 	return idx;
@@ -160,7 +216,7 @@ uint32 ATBreakpointManager::SetAtPC(uint16 pc) {
 uint32 ATBreakpointManager::SetAccessBP(uint16 address, bool read, bool write) {
 	VDASSERT(read || write);
 
-	uint32 idx = std::find_if(mBreakpoints.begin(), mBreakpoints.end(), BreakpointFreePred()) - mBreakpoints.begin();
+	uint32 idx = (uint32)(std::find_if(mBreakpoints.begin(), mBreakpoints.end(), BreakpointFreePred()) - mBreakpoints.begin());
 
 	if (idx >= mBreakpoints.size())
 		mBreakpoints.push_back();
@@ -194,7 +250,7 @@ uint32 ATBreakpointManager::SetAccessRangeBP(uint16 address, uint32 len, bool re
 		len = 0x10000 - address;
 
 	// create breakpoint entry
-	uint32 idx = std::find_if(mBreakpoints.begin(), mBreakpoints.end(), BreakpointFreePred()) - mBreakpoints.begin();
+	uint32 idx = (uint32)(std::find_if(mBreakpoints.begin(), mBreakpoints.end(), BreakpointFreePred()) - mBreakpoints.begin());
 
 	if (idx >= mBreakpoints.size())
 		mBreakpoints.push_back();
@@ -340,7 +396,7 @@ bool ATBreakpointManager::Clear(uint32 id) {
 	}
 
 	if (be.mType & kBPT_PC) {
-		BreakpointsByAddress::iterator it(mCPUBreakpoints.find(address));
+		BreakpointsByAddress::iterator it(mCPUBreakpoints.find(address & 0xFF00FFFF));
 		VDASSERT(it != mCPUBreakpoints.end());
 
 		BreakpointIndices& indices = it->second;
@@ -351,7 +407,11 @@ bool ATBreakpointManager::Clear(uint32 id) {
 
 		if (indices.empty()) {
 			mCPUBreakpoints.erase(it);
-			mpCPU->ClearBreakpoint(address);
+
+			if (address >= 0x01000000)
+				mTargets[address >> 24].mpBreakpoints->ClearBreakpoint((uint16)address);
+			else
+				mpCPU->ClearBreakpoint((uint16)address);
 		}
 	}
 
@@ -361,7 +421,7 @@ bool ATBreakpointManager::Clear(uint32 id) {
 }
 
 void ATBreakpointManager::ClearAll() {
-	uint32 n = mBreakpoints.size();
+	uint32 n = (uint32)mBreakpoints.size();
 
 	for(uint32 i=0; i<n; ++i) {
 		if (mBreakpoints[i].mType)
@@ -438,15 +498,25 @@ void ATBreakpointManager::UnregisterAccessPage(uint32 address, bool read, bool w
 	}
 }
 
-int ATBreakpointManager::CheckPCBreakpoints(uint32 pc, const BreakpointIndices& bpidxs) {
+void ATBreakpointManager::OnTargetPCBreakpoint(int code) {
+	mpSim->PostInterruptingEvent((ATSimulatorEvent)code);
+}
+
+int ATBreakpointManager::CheckPCBreakpoints(uint32 bpc, const BreakpointIndices& bpidxs) {
 	bool shouldBreak = false;
 	bool noisyBreak = false;
 
+	const uint32 pc = bpc & 0xFFFFFF;
 	for(BreakpointIndices::const_iterator it(bpidxs.begin()), itEnd(bpidxs.end()); it != itEnd; ++it) {
 		const uint32 idx = *it;
 
+		const BreakpointEntry& bpe = mBreakpoints[idx - 1];
+		if (bpe.mAddress != bpc)
+			continue;
+
 		ATBreakpointEvent ev;
 		ev.mIndex = idx;
+		ev.mTargetIndex = bpc >> 24;
 		ev.mAddress = pc;
 		ev.mValue = 0;
 		ev.mbBreak = false;
@@ -486,6 +556,7 @@ sint32 ATBreakpointManager::OnAccessTrapRead(void *thisptr0, uint32 addr) {
 
 			ATBreakpointEvent ev;
 			ev.mIndex = idx;
+			ev.mTargetIndex = 0;
 			ev.mAddress = addr;
 			ev.mValue = 0;
 			ev.mbBreak = false;
@@ -514,6 +585,7 @@ sint32 ATBreakpointManager::OnAccessTrapRead(void *thisptr0, uint32 addr) {
 
 				ATBreakpointEvent ev;
 				ev.mIndex = idx;
+				ev.mTargetIndex = 0;
 				ev.mAddress = addr;
 				ev.mValue = 0;
 				ev.mbBreak = false;
@@ -561,6 +633,7 @@ bool ATBreakpointManager::OnAccessTrapWrite(void *thisptr0, uint32 addr, uint8 v
 
 			ATBreakpointEvent ev;
 			ev.mIndex = idx;
+			ev.mTargetIndex = 0;
 			ev.mAddress = addr;
 			ev.mValue = value;
 			ev.mbBreak = false;
@@ -589,6 +662,7 @@ bool ATBreakpointManager::OnAccessTrapWrite(void *thisptr0, uint32 addr, uint8 v
 
 				ATBreakpointEvent ev;
 				ev.mIndex = idx;
+				ev.mTargetIndex = 0;
 				ev.mAddress = addr;
 				ev.mValue = value;
 				ev.mbBreak = false;

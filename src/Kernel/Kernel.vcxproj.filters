@@ -61,6 +61,9 @@
     <Filter Include="Source Files\SAPPlayers">
       <UniqueIdentifier>{66bdecc0-48d4-431f-81e5-afce5ec74a24}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\PBIDisk">
+      <UniqueIdentifier>{93e8b816-9a5d-4358-b38c-984644856998}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="source\loader.xasm">
@@ -83,9 +86,6 @@
     </None>
     <None Include="source\SuperKernel\main.xasm">
       <Filter>Source Files\SuperKernel</Filter>
-    </None>
-    <None Include="source\NoCartridge\main.xasm">
-      <Filter>Source Files\NoCartridge</Filter>
     </None>
     <None Include="source\ATDiskLoader\main.s">
       <Filter>Source Files\ATDiskLoader</Filter>
@@ -118,9 +118,6 @@
       <Filter>Source Files\Shared</Filter>
     </None>
     <None Include="source\Shared\bootscreen.s">
-      <Filter>Source Files\Shared</Filter>
-    </None>
-    <None Include="source\Shared\bugcheck.s">
       <Filter>Source Files\Shared</Filter>
     </None>
     <None Include="source\Shared\cassette.s">
@@ -276,6 +273,12 @@
     </None>
     <None Include="source\SAPPlayers\playsap-d.s">
       <Filter>Source Files\SAPPlayers</Filter>
+    </None>
+    <None Include="source\NoCartridge\main.s">
+      <Filter>Source Files\NoCartridge</Filter>
+    </None>
+    <None Include="source\PBIDisk\pbidisk.s">
+      <Filter>Source Files\PBIDisk</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>

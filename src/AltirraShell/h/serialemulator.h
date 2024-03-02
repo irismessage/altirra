@@ -56,19 +56,26 @@ public:
 	void SendData(const void *data, uint32 len, bool addChecksum) override;
 	void SendACK() override;
 	void SendNAK() override;
-	void SendComplete() override;
-	void SendError() override;
+	void SendComplete(bool autoDelay = true) override;
+	void SendError(bool autoDelay = true) override;
 	void ReceiveData(uint32 id, uint32 len, bool autoProtocol) override;
 	void SetTransferRate(uint32 cyclesPerBit, uint32 cyclesPerByte) override;
+	void SetSynchronousTransmit(bool) override {}
 	void Delay(uint32 ticks) override;
 	void InsertFence(uint32 id) override;
+	void FlushQueue() override;
 	void EndCommand() override;
 	bool IsAccelRequest() const override { return false; }
+	uint32 GetAccelTimeSkew() const override { return 0; }
 	sint32 GetHighSpeedIndex() const override { return mHighSpeedBaudRate ? mHighSpeedDivisor : -1; }
 
 	void AddRawDevice(IATDeviceRawSIO *dev) override;
 	void RemoveRawDevice(IATDeviceRawSIO *dev) override;
 	void SendRawByte(uint8 byte, uint32 cyclesPerBit) override;
+
+	bool IsSIOCommandAsserted() const override { return mbCommandState; }
+	bool IsSIOMotorAsserted() const override { return mbMotorState; }
+
 	void SetSIOInterrupt(IATDeviceRawSIO *dev, bool state) override;
 	void SetSIOProceed(IATDeviceRawSIO *dev, bool state) override;
 

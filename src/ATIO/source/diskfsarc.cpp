@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/file.h>
 #include <vd2/system/strutil.h>
@@ -70,35 +70,29 @@ public:
 
 	bool IsReadOnly() { return true; }
 	void SetReadOnly(bool readOnly) {}
+	void SetAllowExtend(bool allow) {}
 
 	bool Validate(ATDiskFSValidationReport& report);
 	void Flush();
 
-	uintptr FindFirst(uintptr key, ATDiskFSEntryInfo& info);
+	uintptr FindFirst(uint32 key, ATDiskFSEntryInfo& info);
 	bool FindNext(uintptr searchKey, ATDiskFSEntryInfo& info);
 	void FindEnd(uintptr searchKey);
 
-	void GetFileInfo(uintptr key, ATDiskFSEntryInfo& info);
-	uintptr GetParentDirectory(uintptr dirKey);
+	void GetFileInfo(uint32 key, ATDiskFSEntryInfo& info);
+	uint32 GetParentDirectory(uint32 dirKey);
 
-	uintptr LookupFile(uintptr parentKey, const char *filename);
+	uint32 LookupFile(uint32 parentKey, const char *filename);
 
-	void DeleteFile(uintptr key);
-	void ReadFile(uintptr key, vdfastvector<uint8>& dst);
-	uintptr WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len);
-	void RenameFile(uintptr key, const char *newFileName);
-	void SetFileTimestamp(uintptr key, const VDExpandedDate& date);
-	void CreateDir(uintptr parentKey, const char *filename);
+	void DeleteFile(uint32 key);
+	void ReadFile(uint32 key, vdfastvector<uint8>& dst);
+	uint32 WriteFile(uint32 parentKey, const char *filename, const void *src, uint32 len);
+	void RenameFile(uint32 key, const char *newFileName);
+	void SetFileTimestamp(uint32 key, const VDExpandedDate& date);
+	uint32 CreateDir(uint32 parentKey, const char *filename);
 
 protected:
 	struct DirEnt;
-
-	bool IsSectorAllocated(uint32 sector) const;
-	void AllocateSector(uint32 sector);
-	void FreeSector(uint32 sector);
-
-	static void WriteFileName(DirEnt& de, const char *filename);
-	static bool IsValidFileName(const char *filename);
 
 	static bool DecompressMode3(uint8 *dst, uint32 dstlen, const uint8 *src, uint32 srclen);
 	static bool DecompressMode4(uint8 *dst, uint32 dstlen, const uint8 *src, uint32 srclen);
@@ -195,16 +189,14 @@ void ATDiskFSARC::GetInfo(ATDiskFSInfo& info) {
 }
 
 bool ATDiskFSARC::Validate(ATDiskFSValidationReport& report) {
-	report.mbBrokenFiles = false;
-	report.mbBitmapIncorrect = false;
-
+	report = {};
 	return true;
 }
 
 void ATDiskFSARC::Flush() {
 }
 
-uintptr ATDiskFSARC::FindFirst(uintptr key, ATDiskFSEntryInfo& info) {
+uintptr ATDiskFSARC::FindFirst(uint32 key, ATDiskFSEntryInfo& info) {
 	if (key)
 		return 0;
 
@@ -233,7 +225,7 @@ void ATDiskFSARC::FindEnd(uintptr searchKey) {
 	delete (FindHandle *)searchKey;
 }
 
-void ATDiskFSARC::GetFileInfo(uintptr key, ATDiskFSEntryInfo& info) {
+void ATDiskFSARC::GetFileInfo(uint32 key, ATDiskFSEntryInfo& info) {
 	const DirEnt& de = mDirectory[key - 1];
 
 	int nameLen = 0;
@@ -259,11 +251,11 @@ void ATDiskFSARC::GetFileInfo(uintptr key, ATDiskFSEntryInfo& info) {
 	}
 }
 
-uintptr ATDiskFSARC::GetParentDirectory(uintptr dirKey) {
+uint32 ATDiskFSARC::GetParentDirectory(uint32 dirKey) {
 	return 0;
 }
 
-uintptr ATDiskFSARC::LookupFile(uintptr parentKey, const char *filename) {
+uint32 ATDiskFSARC::LookupFile(uint32 parentKey, const char *filename) {
 	if (parentKey)
 		return 0;
 
@@ -272,17 +264,17 @@ uintptr ATDiskFSARC::LookupFile(uintptr parentKey, const char *filename) {
 		const DirEnt& de = mDirectory[i];
 
 		if (!strcmp(de.mName, filename))
-			return (uintptr)(i + 1);
+			return i + 1;
 	}
 
 	return 0;
 }
 
-void ATDiskFSARC::DeleteFile(uintptr key) {
+void ATDiskFSARC::DeleteFile(uint32 key) {
 	throw ATDiskFSException(kATDiskFSError_ReadOnly);
 }
 
-void ATDiskFSARC::ReadFile(uintptr key, vdfastvector<uint8>& dst) {
+void ATDiskFSARC::ReadFile(uint32 key, vdfastvector<uint8>& dst) {
 	VDASSERT(key >= 1 && key <= mDirectory.size());
 
 	const uint8 fileId = (uint8)key - 1;
@@ -329,19 +321,19 @@ void ATDiskFSARC::ReadFile(uintptr key, vdfastvector<uint8>& dst) {
 		throw ATDiskFSException(kATDiskFSError_CRCError);
 }
 
-uintptr ATDiskFSARC::WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len) {
+uint32 ATDiskFSARC::WriteFile(uint32 parentKey, const char *filename, const void *src, uint32 len) {
 	throw ATDiskFSException(kATDiskFSError_ReadOnly);
 }
 
-void ATDiskFSARC::RenameFile(uintptr key, const char *filename) {
+void ATDiskFSARC::RenameFile(uint32 key, const char *filename) {
 	throw ATDiskFSException(kATDiskFSError_ReadOnly);
 }
 
-void ATDiskFSARC::SetFileTimestamp(uintptr key, const VDExpandedDate& date) {
+void ATDiskFSARC::SetFileTimestamp(uint32 key, const VDExpandedDate& date) {
 	throw ATDiskFSException(kATDiskFSError_ReadOnly);
 }
 
-void ATDiskFSARC::CreateDir(uintptr parentKey, const char *filename) {
+uint32 ATDiskFSARC::CreateDir(uint32 parentKey, const char *filename) {
 	throw ATDiskFSException(kATDiskFSError_NotSupported);
 }
 

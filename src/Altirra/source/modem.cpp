@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/scheduler.h>
@@ -203,11 +203,11 @@ void ATModemEmulator::InitScheduling(ATScheduler *sched, ATScheduler *slowsched)
 	mpSlowScheduler = slowsched;
 }
 
-void ATModemEmulator::InitIndicators(IATUIRenderer *r) {
+void ATModemEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
 }
 
-void ATModemEmulator::Init(ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir) {
+void ATModemEmulator::Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir) {
 	InitScheduling(sched, slowsched);
 	InitIndicators(uir);
 	Init();
@@ -302,6 +302,7 @@ void ATModemEmulator::ColdReset() {
 	mCommandRate = 9600;
 
 	mControlState.mbHighSpeed = false;
+	mControlState.mbRinging = false;
 
 	mSavedRegisters = ATModemRegisters();
 	mRegisters = mSavedRegisters;
@@ -664,6 +665,7 @@ void ATModemEmulator::Poll() {
 					}
 
 					UpdateUIStatus();
+					UpdateControlState();
 				} else {
 					mbRinging = false;
 					UpdateUIStatus();
@@ -699,6 +701,7 @@ void ATModemEmulator::Poll() {
 							SendResponse(kResponseRing);
 
 						mbRinging = !mbRinging;
+						UpdateControlState();
 					}
 				}
 			}
@@ -1367,7 +1370,7 @@ void ATModemEmulator::SendResponse(int response) {
 		*dst++ = (uint8)('0' + response);
 		*dst++ = mRegisters.mLineTermChar;
 
-		mTransmitLength += len;
+		mTransmitLength += (uint32)len;
 	} else {
 		g_ATLCModem("Sending response: %s\n", kResponses[response]);
 
@@ -1386,7 +1389,7 @@ void ATModemEmulator::SendResponse(int response) {
 		*dst++ = mRegisters.mLineTermChar;
 		*dst++ = mRegisters.mRespFormatChar;
 
-		mTransmitLength += len + 4;
+		mTransmitLength += (uint32)len + 4;
 	}
 }
 
@@ -1397,7 +1400,7 @@ void ATModemEmulator::SendResponse(const char *s) {
 		return;
 
 	memcpy(mTransmitBuffer + mTransmitLength, s, len);
-	mTransmitLength += len;
+	mTransmitLength += (uint32)len;
 
 	if (mTransmitLength < sizeof mTransmitBuffer)
 		mTransmitBuffer[mTransmitLength++] = mRegisters.mLineTermChar;
@@ -1511,6 +1514,11 @@ void ATModemEmulator::UpdateControlState() {
 
 	mControlState.mbClearToSend = true;
 	mControlState.mbDataSetReady = true;
+
+	if (mControlState.mbRinging != mbRinging) {
+		mControlState.mbRinging = mbRinging;
+		changed = true;
+	}
 
 	if (changed && mpCB)
 		mpCB(mControlState);

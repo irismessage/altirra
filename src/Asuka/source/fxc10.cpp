@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vector>
 #include <list>
 #include <string>
@@ -231,7 +231,7 @@ void tool_fxc10(const vdfastvector<const char *>& args, const vdfastvector<const
 				HRESULT hr = D3DCompile(buf.data(), len, filename, macros, &includeHandler, function_name.c_str(), compile_target.c_str(), 0, 0, ~shader, ~errors);
 
 				if (FAILED(hr)) {
-					printf("Effect compilation failed for \"%s\" with target %s (hr=%08x)\n", filename, compile_target.c_str(), hr);
+					printf("Effect compilation failed for \"%s\" with target %s (hr=%08x)\n", filename, compile_target.c_str(), (unsigned)hr);
 
 					if (errors)
 						puts((const char *)errors->GetBufferPointer());

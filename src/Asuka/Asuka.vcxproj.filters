@@ -16,6 +16,9 @@
     <Filter Include="Precompiled Header Files">
       <UniqueIdentifier>{562285e7-4a57-4a95-ab54-0bcccd9822b4}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Borrowed Files">
+      <UniqueIdentifier>{24770376-abae-47fb-93f7-ef2a2d7c9bd0}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\checkimports.cpp">
@@ -83,6 +86,9 @@
     </ClCompile>
     <ClCompile Include="source\stdafx.cpp">
       <Filter>Precompiled Header Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\VDDisplay\source\minid3dx.cpp">
+      <Filter>Borrowed Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

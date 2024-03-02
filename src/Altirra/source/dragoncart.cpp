@@ -15,8 +15,9 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <vd2/system/date.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdalloc.h>
 #include <at/atcore/consoleoutput.h>
@@ -30,21 +31,49 @@
 #include "dragoncart.h"
 #include "memorymanager.h"
 
-class ATEthernetSimClock : public IATSchedulerCallback, public IATEthernetClock {
+// libpcap format. Reference: https://wiki.wireshark.org/Development/LibpcapFileFormat
+struct ATPCapHeader {
+	uint32	magic_number;
+	uint16	version_major;
+	uint16	version_minor;
+	sint32	thiszone;
+	uint32	sigfigs;
+	uint32	snaplen;
+	uint32	network;
+
+	enum : uint32 {
+		kMagic = 0xa1b2c3d4,
+		kVersionMajor = 2,
+		kVersionMinor = 4,
+		kNetworkEthernet = 1
+	};
+};
+
+struct ATPCapRecordHeader {
+	uint32 ts_sec;
+	uint32 ts_usec;
+	uint32 incl_len;
+	uint32 orig_len;
+};
+
+class ATEthernetSimClock final : public IATSchedulerCallback, public IATEthernetClock {
 public:
+	static const float kTicksPerSecond;
+	static const float kSecondsPerTick;
+
 	ATEthernetSimClock();
 	~ATEthernetSimClock();
 
 	void Init(ATScheduler *slowSched);
 	void Shutdown();
 
-	virtual uint32 GetTimestamp(sint32 offsetMS);
-	virtual sint32 SubtractTimestamps(uint32 t1, uint32 t2);
-	virtual uint32 AddClockEvent(uint32 timestamp, IATEthernetClockEventSink *sink, uint32 userid);
-	virtual void RemoveClockEvent(uint32 eventid);
+	uint32 GetTimestamp(sint32 offsetMS) override;
+	sint32 SubtractTimestamps(uint32 t1, uint32 t2) override;
+	uint32 AddClockEvent(uint32 timestamp, IATEthernetClockEventSink *sink, uint32 userid) override;
+	void RemoveClockEvent(uint32 eventid) override;
 
 public:
-	virtual void OnScheduledEvent(uint32 id);
+	void OnScheduledEvent(uint32 id) override;
 
 protected:
 	void DispatchEvents();
@@ -67,9 +96,6 @@ protected:
 
 	vdfastvector<Event> mEvents;
 	uint32 mEventFreeChain;
-
-	static const float kTicksPerSecond;
-	static const float kSecondsPerTick;
 };
 
 const float ATEthernetSimClock::kTicksPerSecond = 15699.75877192982456140350877193f;
@@ -113,7 +139,7 @@ uint32 ATEthernetSimClock::AddClockEvent(uint32 timestamp, IATEthernetClockEvent
 	const uint32 t = ATSCHEDULER_GETTIME(mpSlowScheduler);
 	uint32 relativeDelay = timestamp - t;
 
-	if (relativeDelay >= 0x100000) {
+	if (relativeDelay >= 0x1000000) {
 		relativeDelay = 1;
 		timestamp = t+1;
 	}
@@ -224,7 +250,7 @@ void ATEthernetSimClock::OnScheduledEvent(uint32 id) {
 
 		VDASSERT(relDelay > 0);
 
-		mpSlowScheduler->AddEvent(relDelay, this, 1);
+		mpSlowScheduler->SetEvent(relDelay, this, 1, mpNextEvent);
 	}
 }
 
@@ -395,6 +421,8 @@ void ATDragonCartEmulator::Init(ATMemoryManager *memmgr, ATScheduler *slowSched,
 }
 
 void ATDragonCartEmulator::Shutdown() {
+	ClosePacketTrace();
+
 	mCS8900A.Shutdown();
 
 	vdsaferelease <<= mpNetSockVxlanTunnel;
@@ -452,6 +480,85 @@ namespace {
 
 		}
 	};
+}
+
+void ATDragonCartEmulator::OpenPacketTrace(const wchar_t *path) {
+	ClosePacketTrace();
+
+	vdautoptr<VDFileStream> fs(new VDFileStream);
+	fs->open(path, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways | nsVDFile::kSequential);
+
+	vdautoptr<VDBufferedWriteStream> bs(new VDBufferedWriteStream(fs, 4096));
+
+	mPacketTraceFile = std::move(fs);
+	mPacketTraceStream = std::move(bs);
+
+	ATPCapHeader hdr = {};
+	hdr.magic_number = hdr.kMagic;
+	hdr.version_major = hdr.kVersionMajor;
+	hdr.version_minor = hdr.kVersionMinor;
+	hdr.thiszone = 0;
+	hdr.sigfigs = 0;
+	hdr.snaplen = 65535;
+	hdr.network = hdr.kNetworkEthernet;
+
+	mPacketTraceStream->Write(&hdr, sizeof hdr);
+
+	mPacketTraceEndpointId = mpEthernetBus->AddEndpoint(this);
+	mPacketTraceStartTime = VDGetDateAsTimeT(VDGetCurrentDate());
+	mPacketTraceStartTimestamp = mpEthernetClock->GetTimestamp(0);
+}
+
+void ATDragonCartEmulator::ClosePacketTrace() {
+	if (mPacketTraceEndpointId) {
+		mpEthernetBus->RemoveEndpoint(mPacketTraceEndpointId);
+		mPacketTraceEndpointId = 0;
+	}
+
+	if (mPacketTraceStream) {
+		try {
+			mPacketTraceStream->Flush();
+		} catch(...) {
+		}
+
+		mPacketTraceStream.reset();
+	}
+
+	mPacketTraceFile.reset();
+}
+
+void ATDragonCartEmulator::ReceiveFrame(const ATEthernetPacket& packet, ATEthernetFrameDecodedType decType, const void *decInfo) {
+	const double deltaSeconds = (double)(mpEthernetClock->GetTimestamp(0) - mPacketTraceStartTimestamp) * mpEthernetClock->kSecondsPerTick;
+	const double wholeDeltaSeconds = floor(deltaSeconds);
+	sint32 fracDeltaSeconds = VDRoundToInt((deltaSeconds - wholeDeltaSeconds) * 1000000.0);
+	sint64 intSeconds = (sint64)wholeDeltaSeconds + mPacketTraceStartTime;
+
+	if (fracDeltaSeconds >= 1000000) {
+		fracDeltaSeconds -= 1000000;
+		++intSeconds;
+	}
+
+	ATPCapRecordHeader hdr = {};
+	hdr.ts_sec = 0;
+	hdr.ts_usec = 0;
+
+	if (intSeconds >= 0) {
+		if (intSeconds >= UINT64_C(0x100000000)) {
+			hdr.ts_sec = UINT64_C(0xFFFFFFFF);
+			hdr.ts_usec = 999999;
+		} else {
+			hdr.ts_sec = (uint32)intSeconds;
+			hdr.ts_usec = fracDeltaSeconds;
+		}
+	}
+
+	hdr.incl_len = packet.mLength + 12;
+	hdr.orig_len = packet.mLength + 12;
+
+	mPacketTraceStream->Write(&hdr, sizeof hdr);
+	mPacketTraceStream->Write(packet.mDstAddr.mAddr, 6);
+	mPacketTraceStream->Write(packet.mSrcAddr.mAddr, 6);
+	mPacketTraceStream->Write(packet.mpData, packet.mLength);
 }
 
 void ATDragonCartEmulator::DumpConnectionInfo(ATConsoleOutput& output) {
@@ -560,9 +667,6 @@ public:	// IATDeviceDiagnostics
 	virtual void DumpStatus(ATConsoleOutput& output) override;
 
 private:
-	static sint32 ReadByte(void *thisptr0, uint32 addr);
-	static bool WriteByte(void *thisptr0, uint32 addr, uint8 value);
-
 	ATMemoryManager *mpMemMan;
 	ATScheduler *mpSlowScheduler;
 	ATDragonCartSettings mSettings;
@@ -597,6 +701,9 @@ void *ATDeviceDragonCart::AsInterface(uint32 id) {
 
 		case IATDeviceDiagnostics::kTypeID:
 			return static_cast<IATDeviceDiagnostics *>(this);
+
+		case ATDragonCartEmulator::kTypeID:
+			return &mDragonCart;
 
 		default:
 			return ATDevice::AsInterface(id);

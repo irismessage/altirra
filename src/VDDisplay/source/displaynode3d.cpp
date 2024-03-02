@@ -1410,7 +1410,7 @@ bool VDDisplayStretchBicubicNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3
 	VDDisplayCreateBicubicTexture(texData.data(), dstw, srcw, swapRB);
 	VDDisplayCreateBicubicTexture(texData.data() + filterTexWidth, dsth, srch, swapRB);
 
-	VDTInitData2D texFiltInitData = { texData.data(), filterTexWidth * sizeof(uint32) };
+	VDTInitData2D texFiltInitData = { texData.data(), (ptrdiff_t)(filterTexWidth * sizeof(uint32)) };
 	if (!ctx.CreateTexture2D(filterTexWidth, 2, dctx.mBGRAFormat, 1, kVDTUsage_Default, &texFiltInitData, &mpFilterTex)) {
 		Shutdown();
 		return false;

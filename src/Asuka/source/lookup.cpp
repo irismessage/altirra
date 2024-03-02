@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/text.h>
@@ -53,7 +53,7 @@ void tool_lookup(const vdfastvector<const char *>& args, const vdfastvector<cons
 	int line;
 
 	if (pss->LookupLine(addr, fn, line))
-		printf("%08I64x   %s + %x [%s:%d]\n", addr, sym->name, (unsigned)addr-sym->rva, fn, line);
+		printf("%08I64x   %s + %x [%s:%d]\n", addr, sym->name, (unsigned)(addr - sym->rva), fn, line);
 	else
-		printf("%08I64x   %s + %x\n", addr, sym->name, (unsigned)addr-sym->rva);
+		printf("%08I64x   %s + %x\n", addr, sym->name, (unsigned)(addr - sym->rva));
 }

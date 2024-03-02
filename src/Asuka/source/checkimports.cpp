@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <math.h>
 #include <windows.h>
 #include <vd2/system/vdstl.h>
@@ -62,11 +62,11 @@ HMODULE LoadPECOFF(const wchar_t *s) {
 		}
 		break;
 	default:		// reject PE32+
-		return false;
+		return NULL;
 	}
 
 	if (imageSize < sizeof hdrpage)
-		return false;
+		return NULL;
 
 	HMODULE hmod = (HMODULE)VirtualAlloc(NULL, imageSize, MEM_COMMIT, PAGE_READWRITE);
 	if (!hmod)
@@ -152,8 +152,6 @@ static bool ExtractExports(HMODULE hmod, vdvector<VDStringA>& exports) {
 	// Scan for the export name.
 	DWORD nameCount = pExportDir->NumberOfNames;
 	const DWORD *nameRVAs = (const DWORD *)(pBase + pExportDir->AddressOfNames);
-	const WORD *nameOrdinals = (const WORD *)(pBase + pExportDir->AddressOfNameOrdinals);
-	DWORD *functionTable = (DWORD *)(pBase + pExportDir->AddressOfFunctions);
 
 	for(DWORD i=0; i<nameCount; ++i) {
 		DWORD nameRVA = nameRVAs[i];

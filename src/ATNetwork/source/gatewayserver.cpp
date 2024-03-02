@@ -54,6 +54,8 @@ void ATTestServer::OnSocketOpen() {
 }
 
 void ATTestServer::OnSocketReadReady(uint32 len) {
+	AddRef();
+
 	uint32 len0 = (uint32)mHeaderBuffer.size();
 	mHeaderBuffer.resize(len0 + len);
 
@@ -89,6 +91,8 @@ void ATTestServer::OnSocketReadReady(uint32 len) {
 
 	mHeaderHead = head;
 	mHeaderTail = tail;
+
+	Release();
 }
 
 void ATTestServer::OnSocketWriteReady(uint32 len) {
@@ -273,22 +277,22 @@ public:
 	ATEthernetGatewayServer();
 	~ATEthernetGatewayServer();
 
-	void Init(IATEthernetSegment *seg, uint32 clockIndex, uint32 netaddr, uint32 netmask);
-	void Shutdown();
+	void Init(IATEthernetSegment *seg, uint32 clockIndex, uint32 netaddr, uint32 netmask) override;
+	void Shutdown() override;
 
-	void ColdReset();
+	void ColdReset() override;
 
 	IATNetUdpStack *GetUdpStack() override { return &mUdpStack; }
 	IATNetTcpStack *GetTcpStack() override { return &mTcpStack; }
 
-	void SetBridgeListener(IATSocketListener *tcp, IATUdpSocketListener *udp);
-	void GetConnectionInfo(vdfastvector<ATNetConnectionInfo>& connInfo) const;
+	void SetBridgeListener(IATSocketListener *tcp, IATUdpSocketListener *udp) override;
+	void GetConnectionInfo(vdfastvector<ATNetConnectionInfo>& connInfo) const override;
 
 	void Listen(IATSocketListener *listener, uint16 port);
 	void Unlisten(IATSocketListener *listener, uint16 port);
 
 public:
-	virtual void ReceiveFrame(const ATEthernetPacket& packet, ATEthernetFrameDecodedType decType, const void *decInfo);
+	void ReceiveFrame(const ATEthernetPacket& packet, ATEthernetFrameDecodedType decType, const void *decInfo) override;
 
 protected:
 	void OnArpPacket(const ATEthernetPacket& packet, const ATEthernetArpFrameInfo& decInfo);
@@ -481,6 +485,10 @@ void ATEthernetGatewayServer::OnIPv4Datagram(const ATEthernetPacket& packet, con
 			return;
 	} else if ((decInfo.mDstAddr & VDToBE32(0xF0000000)) == VDToBE32(0xE0000000)) {
 		// drop all multicast packets
+		return;
+	} else if (!decInfo.mDstAddr) {
+		// Drop 0.0.0.0 -- invalid as a destination address per RFC1700 since it refers to
+		// localhost
 		return;
 	} else {
 		// drop if packet destination isn't us but is on our subnet (we accept other addresses for gateway reasons)

@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include "audiosyncmixer.h"
 
 struct ATAudioSyncMixer::SoundPred {
@@ -31,7 +31,6 @@ struct ATAudioSyncMixer::SoundPred {
 ATAudioSyncMixer::ATAudioSyncMixer()
 	: mNextSoundId(1)
 {
-	mMixLevels[kATAudioMix_Drive] = 0.8f;
 }
 
 ATAudioSyncMixer::~ATAudioSyncMixer() {
@@ -43,14 +42,6 @@ void ATAudioSyncMixer::Init(ATScheduler *sch) {
 
 void ATAudioSyncMixer::Shutdown() {
 	mpScheduler = NULL;
-}
-
-float ATAudioSyncMixer::GetMixLevel(ATAudioMix mix) const {
-	return mMixLevels[mix];
-}
-
-void ATAudioSyncMixer::SetMixLevel(ATAudioMix mix, float level) {
-	mMixLevels[mix] = level;
 }
 
 uint32 ATAudioSyncMixer::AddSound(ATAudioMix mix, uint32 delay, const sint16 *sample, uint32 len, float volume) {
@@ -69,7 +60,8 @@ uint32 ATAudioSyncMixer::AddSound(ATAudioMix mix, uint32 delay, const sint16 *sa
 	s->mLoopPeriod = kATCyclesPerSyncSample * len;
 	s->mEndTime = t + s->mLoopPeriod;
 	s->mLength = len;
-	s->mVolume = volume * (60.0f * 28.0f / 32767.0f) * mMixLevels[mix];
+	s->mVolume = volume * (60.0f * 28.0f / 32767.0f);
+	s->mMix = mix;
 	s->mpSample = sample;
 	s->mbEndValid = true;
 
@@ -93,7 +85,8 @@ uint32 ATAudioSyncMixer::AddLoopingSound(ATAudioMix mix, uint32 delay, const sin
 	s->mLoopPeriod = kATCyclesPerSyncSample * len;
 	s->mEndTime = t + s->mLoopPeriod;
 	s->mLength = len;
-	s->mVolume = volume * (60.0f * 28.0f / 32767.0f) * mMixLevels[mix];
+	s->mVolume = volume * (60.0f * 28.0f / 32767.0f);
+	s->mMix = mix;
 	s->mpSample = sample;
 	s->mbEndValid = false;
 
@@ -204,7 +197,7 @@ void ATAudioSyncMixer::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 		}
 
 		// add samples
-		const float vol = s->mVolume;
+		const float vol = s->mVolume * mixInfo.mpMixLevels[s->mMix];
 		float *VDRESTRICT dl = dstLeft + dstoffset;
 		if (dstRightOpt) {
 			float *VDRESTRICT dr = dstRightOpt + dstoffset;

@@ -23,7 +23,7 @@
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicesio.h>
 
-class IATIDEDisk;
+class IATBlockDevice;
 class IATDeviceSIOManager;
 
 class ATSIO2SDEmulator final : public ATDevice
@@ -45,7 +45,7 @@ public:
 	virtual void ColdReset();
 
 public:
-	virtual void InitIndicators(IATUIRenderer *r) override;
+	virtual void InitIndicators(IATDeviceIndicatorManager *r) override;
 
 public:
 	virtual void InitSIO(IATDeviceSIOManager *mgr) override;
@@ -62,7 +62,7 @@ protected:
 	CmdResponse DoNAKCommand();
 
 	IATDeviceSIOManager *mpSIOMgr;
-	IATUIRenderer *mpUIRenderer;
+	IATDeviceIndicatorManager *mpUIRenderer;
 
 	uint32 mHighSpeedCPSLo;
 	uint32 mHighSpeedCPSHi;

@@ -19,10 +19,10 @@
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/math.h>
+#include <at/atcore/blockdevice.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/devicesio.h>
 #include "sdrive.h"
-#include "idedisk.h"
 #include "uirender.h"
 
 void ATCreateDeviceSDrive(const ATPropertySet& pset, IATDevice **dev) {
@@ -116,7 +116,7 @@ void ATSDriveEmulator::GetChildDevices(vdfastvector<IATDevice *>& devs) {
 }
 
 void ATSDriveEmulator::AddChildDevice(IATDevice *dev) {
-	IATIDEDisk *disk = vdpoly_cast<IATIDEDisk *>(dev);
+	IATBlockDevice *disk = vdpoly_cast<IATBlockDevice *>(dev);
 	if (disk) {
 		VDASSERT(vdpoly_cast<IATDevice *>(disk));
 
@@ -128,7 +128,7 @@ void ATSDriveEmulator::AddChildDevice(IATDevice *dev) {
 }
 
 void ATSDriveEmulator::RemoveChildDevice(IATDevice *dev) {
-	IATIDEDisk *disk = vdpoly_cast<IATIDEDisk *>(dev);
+	IATBlockDevice *disk = vdpoly_cast<IATBlockDevice *>(dev);
 
 	if (disk && mpDisk == disk) {
 		dev->SetParent(nullptr);
@@ -136,7 +136,7 @@ void ATSDriveEmulator::RemoveChildDevice(IATDevice *dev) {
 	}
 }
 
-void ATSDriveEmulator::InitIndicators(IATUIRenderer *r) {
+void ATSDriveEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
 }
 

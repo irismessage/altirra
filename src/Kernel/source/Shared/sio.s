@@ -1,20 +1,11 @@
 ;	Altirra - Atari 800/800XL/5200 emulator
 ;	Modular Kernel ROM - Serial Input/Output Routines
-;	Copyright (C) 2008-2012 Avery Lee
+;	Copyright (C) 2008-2016 Avery Lee
 ;
-;	This program is free software; you can redistribute it and/or modify
-;	it under the terms of the GNU General Public License as published by
-;	the Free Software Foundation; either version 2 of the License, or
-;	(at your option) any later version.
-;
-;	This program is distributed in the hope that it will be useful,
-;	but WITHOUT ANY WARRANTY; without even the implied warranty of
-;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-;	GNU General Public License for more details.
-;
-;	You should have received a copy of the GNU General Public License
-;	along with this program; if not, write to the Free Software
-;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+;	Copying and distribution of this file, with or without modification,
+;	are permitted in any medium without royalty provided the copyright
+;	notice and this notice are preserved.  This file is offered as-is,
+;	without any warranty.
 
 .proc SIOInit
 	;turn off POKEY init mode so polynomial counters and audio run
@@ -51,10 +42,11 @@
 	;previously. This is guaranteed by the OS Manual in Appendix L, H27.
 	jsr		SIOSetTimeoutVector
 
-	;check for cassette
+	;check for cassette -- needs to match $60 or else Prisma: Alien Ambush
+	;fails to load.
 	ldx		#0
 	lda		ddevic
-	cmp		#$5f
+	cmp		#$60
 	sne:dex
 	stx		casflg
 
@@ -63,7 +55,7 @@
 
 	;go do cassette now
 	bit		casflg
-	beq		retry_command
+	bpl		retry_command
 	jmp		SIOCassette	
 	
 retry_command:
@@ -102,6 +94,7 @@ retry_command_2:
 	bpl		ackOK
 	
 command_error:
+	jsr		SIOReceiveStop
 	dec		cretry
 	bpl		retry_command_2
 	bmi		transfer_error
@@ -145,7 +138,13 @@ no_send_frame:
 	lda		#1
 	jsr		setvbv
 
-	mwa		#temp		bufrlo
+	ldx		#<temp
+	stx		bufrlo
+	inx
+	stx		bfenlo
+	ldx		#>temp
+	stx		bufrhi
+	stx		bfenhi
 	jsr		SIOReceive
 	bmi		transfer_error
 	
@@ -163,6 +162,8 @@ device_error:
 	ldy		#SIOErrorDeviceError
 	
 transfer_error:
+	jsr		SIOReceiveStop
+
 	dec		dretry
 	bmi		device_retries_exhausted
 	jmp		retry_command
@@ -188,19 +189,22 @@ xit_pbi:
 	sty		status
 	rts
 
-completeOK:
-
-	;setup buffer pointers
-	jsr		SIOSetupBufferPointers
-		
+completeOK:		
 	;check if we should read a data frame
 	bit		dstats
 	bvc		no_receive_frame
 	
+	;setup buffer pointers
+	jsr		SIOSetupBufferPointers
+
+	;receive the rest of the frame
 	jsr		SIOReceive
 	bmi		transfer_error
 
 no_receive_frame:
+	;now we can finally shut off the receive IRQ
+	jsr		SIOReceiveStop
+
 	;Now check whether we got a device error earlier. If we did, return
 	;that instead of success.
 	lda		temp
@@ -415,7 +419,13 @@ error:
 .endp
 
 ;==============================================================================
-;SIO receive routine
+; SIO receive routine
+;
+; The exit and entry paths of this routine are time critical when receiving
+; the Complete/Error byte and data frame since there may be no delay at all
+; in between. The exit path needs to exit with the receive IRQ hot but IRQs
+; masked; the entry path in turn needs to keep the IRQ enabled but not unmask
+; IRQs until ready to receive.
 ;
 .proc SIOReceive
 	lda		#0
@@ -455,25 +465,34 @@ wait:
 	bmi		error			;bail if so
 	lda		recvdn			;check for receive complete
 	beq		wait			;keep waiting if not
-
-	ldy		status
+	tya						;set flags from status
 	
-	;shut off receive IRQs
 error:
+	;Mask interrupts, but exit with them masked. We do this in order to
+	;handle the transition from Complete to data frame during receive. There
+	;is no guaranteed device delay in between these and some disk drives
+	;send back-to-back bytes. In addition, there are demos that have DLIs
+	;active during SIO loads. Therefore, we avoid turning off the receive
+	;interrupt and instead hold it off to give us the best chance of snagging
+	;the first and second bytes successfully, even if delayed.
 	sei
+	rts
+	
+timeout:
+	ldy		#SIOErrorTimeout
+	sei
+	rts
+.endp
+
+;==============================================================================
+.proc SIOReceiveStop
+	;shut off receive IRQs
 	lda		pokmsk
 	and		#$d7
 	sta		pokmsk
 	sta		irqen
 	cli
-	
-	;we're done
-	tya
 	rts
-	
-timeout:
-	ldy		#SIOErrorTimeout
-	bne		error
 .endp
 
 ;==============================================================================
@@ -503,6 +522,10 @@ timeout:
 	adc		chksum
 	adc		#$00
 	sta		chksum
+
+	;restore Y now
+	pla
+	tay
 	
 	;bump buffer pointer
 	inw		bufrlo
@@ -510,10 +533,16 @@ timeout:
 	;check for EOB
 	lda		bufrlo
 	cmp		bfenlo
-	beq		possiblyEnd
+	lda		bufrhi
+	sbc		bfenhi
+	bcc		xit
+
+	dec		bufrfl					;!! - this was $00 coming in
+	
+	;should there be a checksum?
+	lda		nocksm
+	bne		skipChecksum
 xit:
-	pla
-	tay
 	pla
 	rti
 	
@@ -521,30 +550,21 @@ receiveChecksum:
 	;read and compare checksum
 	lda		serin
 	cmp		chksum
-	beq		checksumOK
+	bne		checksum_fail
 	
-	mva		#SIOErrorChecksum	status
-checksumOK:
-	
+signal_end:
 	;set receive done flag
 	mva		#$ff	recvdn
 
 	;exit
 	pla
 	rti
-	
-possiblyEnd:	
-	lda		bufrhi
-	cmp		bfenhi
-	bne		xit
 
-	mva		#$ff	bufrfl
+checksum_fail:
+	lda		#SIOErrorChecksum
+	sta		status
+	bne		signal_end				;!! - unconditional
 	
-	;should there be a checksum?
-	lda		nocksm
-	bne		skipChecksum
-	jmp		xit
-
 skipChecksum:
 	;set receive done flag
 	sta		recvdn
@@ -552,7 +572,8 @@ skipChecksum:
 	;clear no checksum flag
 	lda		#0
 	sta		nocksm
-	jmp		xit
+	pla
+	rti
 .endp
 
 ;==============================================================================
@@ -854,7 +875,8 @@ aaloop:
 	lda		#$aa
 	sta		chksum
 	
-	jmp		SIOReceive.use_checksum
+	jsr		SIOReceive.use_checksum
+	jmp		SIOReceiveStop
 
 ;-------------------------------------------------------------------------
 ; We have to be VERY careful when reading (RTCLOK+2, VCOUNT), because

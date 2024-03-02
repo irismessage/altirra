@@ -48,6 +48,9 @@
     <ClCompile Include="source\syncwait.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\progress.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="res\resource.h">
@@ -78,6 +81,9 @@
       <Filter>Interface Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\at\atnativeui\syncwait.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atnativeui\progress.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
   </ItemGroup>

@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/refcount.h>
 #include <d3d11.h>
 #include "D3D11/FenceManager_D3D11.h"

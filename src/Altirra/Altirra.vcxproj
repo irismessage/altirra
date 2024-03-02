@@ -79,53 +79,53 @@
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
     <Import Project="..\DirectXSDK.props" />
-    <Import Project="..\Altirra-ReleaseBuildTools.props" />
+    <Import Project="..\Altirra.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
     <Import Project="..\DirectXSDK.props" />
-    <Import Project="..\Altirra-ReleaseBuildTools.props" />
+    <Import Project="..\Altirra.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
     <Import Project="..\DirectXSDK.props" />
-    <Import Project="..\Altirra-DebugBuildTools.props" />
+    <Import Project="..\Altirra.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Profile|x64'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
     <Import Project="..\DirectXSDK.props" />
-    <Import Project="..\Altirra-ReleaseBuildTools.props" />
+    <Import Project="..\Altirra.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
     <Import Project="..\DirectXSDK.props" />
-    <Import Project="..\Altirra-ReleaseBuildTools.props" />
+    <Import Project="..\Altirra.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
     <Import Project="..\DirectXSDK.props" />
-    <Import Project="..\Altirra-ReleaseBuildTools.props" />
+    <Import Project="..\Altirra.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
     <_ProjectFileVersion>10.0.40219.1</_ProjectFileVersion>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\..\out\$(Configuration)\</OutDir>
-    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\..\obj\$(Configuration)\$(ProjectName)\</IntDir>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(ATOutPath)\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(ATObjPath)\</IntDir>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</LinkIncremental>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">..\..\out\$(Configuration)AMD64\</OutDir>
-    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">..\..\obj\$(Configuration)AMD64\$(ProjectName)\</IntDir>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ATOutPath)\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ATObjPath)\</IntDir>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</LinkIncremental>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\out\$(Configuration)\</OutDir>
-    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\obj\$(Configuration)\$(ProjectName)\</IntDir>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(ATOutPath)\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(ATObjPath)\</IntDir>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">false</LinkIncremental>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">..\..\out\$(Configuration)AMD64\</OutDir>
-    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">..\..\obj\$(Configuration)AMD64\$(ProjectName)\</IntDir>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ATOutPath)\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ATObjPath)\</IntDir>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkIncremental>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">..\..\out\$(Configuration)\</OutDir>
-    <IntDir Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">..\..\obj\$(Configuration)\$(ProjectName)\</IntDir>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">$(ATOutPath)\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">$(ATObjPath)\</IntDir>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">false</LinkIncremental>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">..\..\out\$(Configuration)AMD64\</OutDir>
-    <IntDir Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">..\..\obj\$(Configuration)AMD64\$(ProjectName)\</IntDir>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">$(ATOutPath)\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">$(ATObjPath)\</IntDir>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">false</LinkIncremental>
     <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Altirra64</TargetName>
     <TargetName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">Altirra64</TargetName>
@@ -338,8 +338,12 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="h\cartridgeport.h" />
+    <ClInclude Include="h\cmdhelpers.h" />
+    <ClInclude Include="h\pbidisk.h" />
     <ClInclude Include="h\sapconverter.h" />
     <ClInclude Include="h\sapwriter.h" />
+    <ClInclude Include="h\settings.h" />
     <ClInclude Include="h\sio2sd.h" />
     <ClCompile Include="source\1030.cpp" />
     <ClCompile Include="source\about.cpp" />
@@ -367,9 +371,17 @@
     <ClCompile Include="source\blackbox.cpp" />
     <ClCompile Include="source\cartdetect.cpp" />
     <ClCompile Include="source\cartridge.cpp" />
+    <ClCompile Include="source\cartridgeport.cpp" />
     <ClCompile Include="source\cassette.cpp" />
     <ClCompile Include="source\cassetteimage.cpp" />
     <ClCompile Include="source\cheatengine.cpp" />
+    <ClCompile Include="source\cmdaudio.cpp" />
+    <ClCompile Include="source\cmdcart.cpp" />
+    <ClCompile Include="source\cmddebug.cpp" />
+    <ClCompile Include="source\cmds.cpp" />
+    <ClCompile Include="source\cmdsystem.cpp" />
+    <ClCompile Include="source\cmdview.cpp" />
+    <ClCompile Include="source\cmdwindow.cpp" />
     <ClCompile Include="source\common_png.cpp" />
     <ClCompile Include="source\console.cpp" />
     <ClCompile Include="source\covox.cpp" />
@@ -387,6 +399,7 @@
     <ClCompile Include="source\debuggerlog.cpp" />
     <ClCompile Include="source\debugtarget.cpp" />
     <ClCompile Include="source\decmath.cpp" />
+    <ClCompile Include="source\devices.cpp" />
     <ClCompile Include="source\directorywatcher.cpp" />
     <ClCompile Include="source\disasm.cpp" />
     <ClCompile Include="source\disk.cpp" />
@@ -432,9 +445,11 @@
     <ClCompile Include="source\options.cpp" />
     <ClCompile Include="source\oshelper.cpp" />
     <ClCompile Include="source\pbi.cpp" />
+    <ClCompile Include="source\pbidisk.cpp" />
     <ClCompile Include="source\pclink.cpp" />
     <ClCompile Include="source\pclink_win32.cpp" />
     <ClCompile Include="source\pia.cpp" />
+    <ClCompile Include="source\pocketmodem.cpp" />
     <ClCompile Include="source\pokey.cpp" />
     <ClCompile Include="source\pokeyrenderer.cpp" />
     <ClCompile Include="source\pokeytables.cpp" />
@@ -452,6 +467,7 @@
     <ClCompile Include="source\scsi.cpp" />
     <ClCompile Include="source\scsidisk.cpp" />
     <ClCompile Include="source\sdrive.cpp" />
+    <ClCompile Include="source\settings.cpp" />
     <ClCompile Include="source\side.cpp" />
     <ClCompile Include="source\simeventmanager.cpp" />
     <ClCompile Include="source\simulator.cpp" />
@@ -473,14 +489,21 @@
     <ClCompile Include="source\uicaptionupdater.cpp" />
     <ClCompile Include="source\uicartmapper.cpp" />
     <ClCompile Include="source\uicheater.cpp" />
+    <ClCompile Include="source\uiclipboard.cpp" />
     <ClCompile Include="source\uicolors.cpp" />
     <ClCompile Include="source\uicommondialogs.cpp" />
     <ClCompile Include="source\uiconf850.cpp" />
     <ClCompile Include="source\uiconfblackbox.cpp" />
     <ClCompile Include="source\uiconfdev1030.cpp" />
+    <ClCompile Include="source\uiconfdevcorvus.cpp" />
+    <ClCompile Include="source\uiconfdevcovox.cpp" />
+    <ClCompile Include="source\uiconfdevdongle.cpp" />
+    <ClCompile Include="source\uiconfdevkmkjzide2.cpp" />
+    <ClCompile Include="source\uiconfdevpocketmodem.cpp" />
     <ClCompile Include="source\uiconfdevsx212.cpp" />
     <ClCompile Include="source\uiconfharddisk.cpp" />
     <ClCompile Include="source\uiconfmodem.cpp" />
+    <ClCompile Include="source\uiconfmyide2.cpp" />
     <ClCompile Include="source\uiconfregister.cpp" />
     <ClCompile Include="source\uiconfsoundboard.cpp" />
     <ClCompile Include="source\uiconfveronica.cpp" />
@@ -500,7 +523,6 @@
     <ClCompile Include="source\uifirmware.cpp" />
     <ClCompile Include="source\uifirmwaremenu.cpp" />
     <ClCompile Include="source\uifirmwarescan.cpp" />
-    <ClCompile Include="source\uiharddisk.cpp" />
     <ClCompile Include="source\uihostdevice.cpp" />
     <ClCompile Include="source\uiinput.cpp" />
     <ClCompile Include="source\uiinputrebind.cpp" />
@@ -512,6 +534,7 @@
     <ClCompile Include="source\uilabel.cpp" />
     <ClCompile Include="source\uilightpen.cpp" />
     <ClCompile Include="source\uilistview.cpp" />
+    <ClCompile Include="source\uimainwindow.cpp" />
     <ClCompile Include="source\uimenu.cpp" />
     <ClCompile Include="source\uimessagebox.cpp" />
     <ClCompile Include="source\uimrulist.cpp" />
@@ -520,13 +543,16 @@
     <ClCompile Include="source\uipclink.cpp" />
     <ClCompile Include="source\uiphysdisk.cpp" />
     <ClCompile Include="source\uiportmenus.cpp" />
+    <ClCompile Include="source\uiprofilemenu.cpp" />
     <ClCompile Include="source\uiprofiler.cpp" />
+    <ClCompile Include="source\uiprofiles.cpp" />
     <ClCompile Include="source\uiprogress.cpp" />
     <ClCompile Include="source\uiqueue.cpp" />
     <ClCompile Include="source\uiregistry.cpp" />
     <ClCompile Include="source\uirender.cpp" />
     <ClCompile Include="source\uisettingsmain.cpp" />
     <ClCompile Include="source\uisettingswindow.cpp" />
+    <ClCompile Include="source\uisetupwizard.cpp" />
     <ClCompile Include="source\uislider.cpp" />
     <ClCompile Include="source\uispeedoptions.cpp" />
     <ClCompile Include="source\uitapecontrol.cpp" />
@@ -618,7 +644,6 @@
     <ClInclude Include="h\hostdevice.h" />
     <ClInclude Include="h\hostdeviceutils.h" />
     <ClInclude Include="h\ide.h" />
-    <ClInclude Include="h\idedisk.h" />
     <ClInclude Include="h\idephysdisk.h" />
     <ClInclude Include="h\iderawimage.h" />
     <ClInclude Include="h\idevhdimage.h" />
@@ -650,6 +675,7 @@
     <ClInclude Include="h\scsidisk.h" />
     <ClInclude Include="h\sdrive.h" />
     <ClInclude Include="h\uiaccessors.h" />
+    <ClInclude Include="h\uiclipboard.h" />
     <ClInclude Include="h\uifilefilters.h" />
     <ClInclude Include="h\uisettingswindow.h" />
     <ClInclude Include="h\veronica.h" />
@@ -753,6 +779,15 @@
       <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATSapPlayerTypeDPAL</SymbolName>
       <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATSapPlayerTypeDPAL</SymbolName>
       <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATSapPlayerTypeDPAL</SymbolName>
+    </PackResource>
+    <PackResource Include="..\..\obj\Release\Kernel\pbidisk.bin">
+      <FileType>Document</FileType>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATPBIDiskFirmware</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATPBIDiskFirmware</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATPBIDiskFirmware</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATPBIDiskFirmware</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATPBIDiskFirmware</SymbolName>
+      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATPBIDiskFirmware</SymbolName>
     </PackResource>
     <None Include="..\..\out\release\1030firmware.bin" />
     <None Include="..\..\out\release\1030handler.bin" />

@@ -25,6 +25,8 @@
 
 #ifdef _DEBUG
 	#define AT_VERSION_DEBUG_STR L"-debug"
+#elif defined(ATNRELEASE)
+	#define AT_VERSION_DEBUG_STR L"-profile"
 #else
 	#define AT_VERSION_DEBUG_STR L""
 #endif

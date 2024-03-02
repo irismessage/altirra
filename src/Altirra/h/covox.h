@@ -33,6 +33,10 @@ class ATCovoxEmulator final : public VDAlignedObject<16>, public IATSyncAudioSou
 public:
 	ATCovoxEmulator();
 	~ATCovoxEmulator();
+	
+	bool IsFourChannels() const { return mbFourCh; }
+	void SetFourChannels(bool ch4) { mbFourCh = ch4; }
+	void SetAddressRange(uint32 lo, uint32 hi, bool passWrites);
 
 	void Init(ATMemoryManager *memMan, ATScheduler *sch, IATAudioOutput *audioOut);
 	void Shutdown();
@@ -43,35 +47,42 @@ public:
 	void DumpStatus(ATConsoleOutput&);
 
 	void WriteControl(uint8 addr, uint8 value);
+	void WriteMono(uint8 value);
 
 	void Run(int cycles);
 
 public:
 	bool SupportsStereoMixing() const override { return true; }
-	bool RequiresStereoMixingNow() const override { return mbUnbalanced; }
+	bool RequiresStereoMixingNow() const override { return mbUnbalancedSticky; }
 	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 
 protected:
 	void Flush();
+	void InitMapping();
 
 	static sint32 StaticReadControl(void *thisptr, uint32 addr);
 	static bool StaticWriteControl(void *thisptr, uint32 addr, uint8 value);
 
-	ATMemoryLayer *mpMemLayerControl;
-	ATScheduler *mpScheduler;
-	ATMemoryManager *mpMemMan;
-	IATAudioOutput *mpAudioOut;
+	ATMemoryLayer *mpMemLayerControl = nullptr;
+	ATScheduler *mpScheduler = nullptr;
+	ATMemoryManager *mpMemMan = nullptr;
+	IATAudioOutput *mpAudioOut = nullptr;
 
-	uint8	mVolume[4];
+	uint8	mVolume[4] = {};
 
-	float	mOutputAccumLeft;
-	float	mOutputAccumRight;
-	uint32	mOutputCount;
-	uint32	mOutputLevel;
-	bool	mbUnbalanced;
-	bool	mbUnbalancedSticky;
+	float	mOutputAccumLeft = 0;
+	float	mOutputAccumRight = 0;
+	uint32	mOutputCount = 0;
+	uint32	mOutputLevel = 0;
+	bool	mbUnbalanced = false;
+	bool	mbUnbalancedSticky = false;
 
-	uint32	mLastUpdate;
+	uint32	mAddrLo = 0xD600;
+	uint32	mAddrHi = 0xD6FF;
+	bool	mbFourCh = false;
+	bool	mbPassWrites = true;
+
+	uint32	mLastUpdate = 0;
 
 	enum {
 		kAccumBufferSize = 1536

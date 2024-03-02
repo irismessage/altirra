@@ -18,6 +18,7 @@
 #include <stdafx.h>
 #define INITGUID
 #include <vd2/system/filesys.h>
+#include <vd2/system/process.h>
 #include <vd2/system/w32assist.h>
 #include <windows.h>
 #include <shellapi.h>
@@ -51,7 +52,7 @@ DEFINE_GUID(CLSID_ApplicationAssociationRegistrationUI, 0x1968106d, 0xf3b5, 0x44
 
 namespace {
 	bool WriteRegistryStringValue(HKEY hkey, const wchar_t *valueName, const wchar_t *s) {
-		return ERROR_SUCCESS == RegSetValueExW(hkey, valueName, 0, REG_SZ, (const BYTE *)s, (wcslen(s) + 1) * sizeof(WCHAR));
+		return ERROR_SUCCESS == RegSetValueExW(hkey, valueName, 0, REG_SZ, (const BYTE *)s, (DWORD)((wcslen(s) + 1) * sizeof(WCHAR)));
 	}
 
 	bool ReadRegistryStringValue(HKEY hkey, const wchar_t *valueName, VDStringW& s) {
@@ -125,16 +126,17 @@ struct ATFileAssociation {
 	},
 };
 
-void ATRegisterForDefaultPrograms() {
+void ATRegisterForDefaultPrograms(bool userOnly) {
+	const HKEY hkeyRoot = userOnly ? HKEY_CURRENT_USER : HKEY_LOCAL_MACHINE;
 	HKEY hkey;
 
-	LONG err = RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\RegisteredApplications", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hkey, NULL);
+	LONG err = RegCreateKeyExW(hkeyRoot, L"SOFTWARE\\RegisteredApplications", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hkey, NULL);
 	if (err == ERROR_SUCCESS) {
 		WriteRegistryStringValue(hkey, L"Altirra", L"Software\\virtualdub.org\\Altirra\\Capabilities");
 		RegCloseKey(hkey);
 	}
 
-	err = RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"Software\\virtualdub.org\\Altirra\\Capabilities", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hkey, NULL);
+	err = RegCreateKeyExW(hkeyRoot, L"Software\\virtualdub.org\\Altirra\\Capabilities", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hkey, NULL);
 	if (err == ERROR_SUCCESS) {
 		WriteRegistryStringValue(hkey, L"ApplicationDescription", L"Altirra 8-bit computer emulator");
 
@@ -166,7 +168,7 @@ void ATRegisterForDefaultPrograms() {
 	}
 }
 
-void ATCreateFileAssociationProgId(uint32 index) {
+void ATCreateFileAssociationProgId(uint32 index, bool userOnly) {
 	HKEY hkey;
 
 	if (index >= sizeof(g_ATFileAssociations)/sizeof(g_ATFileAssociations[0]))
@@ -174,10 +176,10 @@ void ATCreateFileAssociationProgId(uint32 index) {
 
 	const ATFileAssociation& assoc = g_ATFileAssociations[index];
 
-	LONG err = RegCreateKeyExW(HKEY_CLASSES_ROOT, assoc.mpProgId, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hkey, NULL);
+	LONG err = RegCreateKeyExW(userOnly ? HKEY_CURRENT_USER : HKEY_LOCAL_MACHINE, (VDStringW(L"Software\\Classes\\") + assoc.mpProgId).c_str(), 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hkey, NULL);
 	if (err == ERROR_SUCCESS) {
 		// set file type description
-		RegSetValueExW(hkey, NULL, 0, REG_SZ, (const BYTE *)assoc.mpDesc, (wcslen(assoc.mpDesc) + 1) * sizeof(wchar_t));
+		RegSetValueExW(hkey, NULL, 0, REG_SZ, (const BYTE *)assoc.mpDesc, (DWORD)((wcslen(assoc.mpDesc) + 1) * sizeof(wchar_t)));
 
 		// set default icon
 		HKEY hkey2;
@@ -187,6 +189,21 @@ void ATCreateFileAssociationProgId(uint32 index) {
 			iconPath.sprintf(L"%ls,-%u", VDGetProgramFilePath().c_str(), assoc.mIconId);
 			RegSetValueExW(hkey2, NULL, 0, REG_SZ, (const BYTE *)iconPath.c_str(), (iconPath.size() + 1) * sizeof(wchar_t));
 
+			RegCloseKey(hkey2);
+		}
+
+		// Annoyingly, ApplicationCompany and FriendlyAppName are required for user-local registrations to
+		// work. They are not necessary for system-wide registrations. If they are missing, LaunchAdvancedAssociationUI()
+		// will fail with an error.
+		err = RegCreateKeyExW(hkey, L"Application", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hkey2, NULL);
+		if (err == ERROR_SUCCESS) {
+			WriteRegistryStringValue(hkey2, L"ApplicationCompany", L"virtualdub.org");
+			RegCloseKey(hkey2);
+		}
+
+		err = RegCreateKeyExW(hkey, L"shell\\open", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hkey2, NULL);
+		if (err == ERROR_SUCCESS) {
+			WriteRegistryStringValue(hkey2, L"FriendlyAppName", L"Altirra");
 			RegCloseKey(hkey2);
 		}
 
@@ -209,7 +226,7 @@ void ATCreateFileAssociationProgId(uint32 index) {
 	}
 }
 
-void ATDeleteFileAssociationProgId(uint32 index) {
+void ATDeleteFileAssociationProgId(uint32 index, bool userOnly) {
 	HKEY hkey;
 
 	if (index >= sizeof(g_ATFileAssociations)/sizeof(g_ATFileAssociations[0]))
@@ -217,20 +234,23 @@ void ATDeleteFileAssociationProgId(uint32 index) {
 
 	const ATFileAssociation& assoc = g_ATFileAssociations[index];
 
-	LONG err = RegOpenKeyExW(HKEY_CLASSES_ROOT, assoc.mpProgId, 0, KEY_ALL_ACCESS, &hkey);
+	const HKEY hkeyRoot = userOnly ? HKEY_CURRENT_USER : HKEY_LOCAL_MACHINE;
+	const VDStringW keyName = VDStringW(L"Software\\Classes\\") + assoc.mpProgId;
+	LONG err = RegOpenKeyExW(hkeyRoot, keyName.c_str(), 0, KEY_ALL_ACCESS, &hkey);
 	if (err == ERROR_SUCCESS) {
 		RegCloseKey(hkey);
 
-		SHDeleteKeyW(HKEY_CLASSES_ROOT, assoc.mpProgId);
+		SHDeleteKeyW(hkeyRoot, keyName.c_str());
 	}
 }
 
-void ATSetFileAssociations(uint32 index, uint32 extmask) {
+void ATSetFileAssociations(uint32 index, uint32 extmask, bool userOnly) {
 	HKEY hkey;
 
 	if (index >= sizeof(g_ATFileAssociations)/sizeof(g_ATFileAssociations[0]))
 		return;
 
+	const HKEY hkeyRoot = userOnly ? HKEY_CURRENT_USER : HKEY_LOCAL_MACHINE;
 	const ATFileAssociation& assoc = g_ATFileAssociations[index];
 	const wchar_t *extList = assoc.mpExtList;
 	LONG err;
@@ -244,10 +264,11 @@ void ATSetFileAssociations(uint32 index, uint32 extmask) {
 		VDStringW ext(L".");
 		ext.append(extList, extEnd);
 
+		const VDStringW keyName = VDStringW(L"Software\\Classes\\") + ext;
 		if (extmask & 1) {
-			err = RegCreateKeyExW(HKEY_CLASSES_ROOT, ext.c_str(), 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hkey, NULL);
+			err = RegCreateKeyExW(hkeyRoot, keyName.c_str(), 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hkey, NULL);
 			if (err == ERROR_SUCCESS) {
-				RegSetValueExW(hkey, NULL, 0, REG_SZ, (const BYTE *)assoc.mpProgId, (wcslen(assoc.mpProgId) + 1) * sizeof(wchar_t));
+				RegSetValueExW(hkey, NULL, 0, REG_SZ, (const BYTE *)assoc.mpProgId, (DWORD)((wcslen(assoc.mpProgId) + 1) * sizeof(wchar_t)));
 
 				HKEY hkey2;
 				err = RegCreateKeyExW(hkey, L"OpenWithProgids", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hkey2, NULL);
@@ -259,7 +280,7 @@ void ATSetFileAssociations(uint32 index, uint32 extmask) {
 				RegCloseKey(hkey);
 			}
 		} else {
-			err = RegOpenKeyExW(HKEY_CLASSES_ROOT, ext.c_str(), 0, KEY_ALL_ACCESS, &hkey);
+			err = RegOpenKeyExW(hkeyRoot, keyName.c_str(), 0, KEY_ALL_ACCESS, &hkey);
 			if (err == ERROR_SUCCESS) {
 				VDStringW value;
 				if (ReadRegistryStringValue(hkey, NULL, value) && value == assoc.mpProgId) {
@@ -290,7 +311,7 @@ void ATSetFileAssociations(uint32 index, uint32 extmask) {
 
 class ATUIDialogFileAssociations : public VDDialogFrameW32 {
 public:
-	ATUIDialogFileAssociations();
+	ATUIDialogFileAssociations(bool userOnly);
 
 protected:
 	bool OnLoaded();
@@ -320,10 +341,12 @@ protected:
 	};
 
 	VDUIProxyListView mListView;
+	bool mbUserOnly;
 };
 
-ATUIDialogFileAssociations::ATUIDialogFileAssociations()
+ATUIDialogFileAssociations::ATUIDialogFileAssociations(bool userOnly)
 	: VDDialogFrameW32(IDD_FILE_ASSOC)
+	, mbUserOnly(userOnly)
 {
 }
 
@@ -437,11 +460,11 @@ void ATUIDialogFileAssociations::OnDataExchange(bool write) {
 			}
 
 			if (extMask)
-				ATCreateFileAssociationProgId(item->mAssocIndex);
+				ATCreateFileAssociationProgId(item->mAssocIndex, mbUserOnly);
 			else
-				ATDeleteFileAssociationProgId(item->mAssocIndex);
+				ATDeleteFileAssociationProgId(item->mAssocIndex, mbUserOnly);
 
-			ATSetFileAssociations(item->mAssocIndex, extMask);
+			ATSetFileAssociations(item->mAssocIndex, extMask, mbUserOnly);
 		}
 
 		SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
@@ -450,22 +473,48 @@ void ATUIDialogFileAssociations::OnDataExchange(bool write) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-void ATUIShowDialogFileAssociationsVista() {
+void ATUIShowDialogFileAssociationsVista(bool userOnly) {
 	IApplicationAssociationRegistrationUI *pAARegUI = NULL;
 
-	ATRegisterForDefaultPrograms();
+	ATRegisterForDefaultPrograms(userOnly);
 
 	for(size_t i=0; i<sizeof(g_ATFileAssociations)/sizeof(g_ATFileAssociations[0]); ++i)
-		ATCreateFileAssociationProgId(i);
+		ATCreateFileAssociationProgId((uint32)i, userOnly);
 
-	HRESULT hr = CoCreateInstance(CLSID_ApplicationAssociationRegistrationUI, NULL,
-		CLSCTX_INPROC, IID_IApplicationAssociationRegistrationUI, (void **)&pAARegUI);
+	// If we are on Windows 10 or higher, LaunchAdvancedAssociationUI() is useless because all
+	// it does is display a dialog box telling the user to go to Settings. Worse, the user
+	// can't refer to the dialog because it is modal, and it doesn't mention that the user
+	// needs to click on the small Set Defaults By App link at the bottom, which can be missed
+	// if the window is small enough to require scrolling.
+	//
+	// This annoying change dropped late in the Windows 10 Insider Preview cycle and persists
+	// through Threshold 2, and to this date (Nov 2015) no documentation has actually been
+	// released about how desktop programs are supposed to handle this, besides a patronizing
+	// Windows build 10122 announcement that says that programs will need to be updated to
+	// the Windows 10 way of handling file associations, without actually having any info
+	// for developers describing what that is. /rant
+	//
+	// To work around this brain damaged UI flow while still trying to do "the right thing,"
+	// we launch the Default Programs UI directly, which is all that the Settings link does
+	// anyway, and which is still accessible through Control Panel. The user will still have
+	// to choose the program from the list.
+	//
+	// Note that in order to properly detect Windows 10, the application manifest must be
+	// marked Win10-compatible.
 
-	if (FAILED(hr))
-		return;
+	if (VDIsAtLeast10W32()) {
+		VDLaunchProgram(VDMakePath(VDGetSystemPath().c_str(), L"control.exe").c_str(),
+			L"/name Microsoft.DefaultPrograms /page pageDefaultProgram");
+	} else {
+		HRESULT hr = CoCreateInstance(CLSID_ApplicationAssociationRegistrationUI, NULL,
+			CLSCTX_INPROC, IID_IApplicationAssociationRegistrationUI, (void **)&pAARegUI);
 
-	pAARegUI->LaunchAdvancedAssociationUI(L"Altirra");
-	pAARegUI->Release();
+		if (FAILED(hr))
+			return;
+
+		pAARegUI->LaunchAdvancedAssociationUI(L"Altirra");
+		pAARegUI->Release();
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -507,29 +556,29 @@ void ATRelaunchElevated(VDGUIHandle parent, const wchar_t *params) {
 	}
 }
 
-void ATUIShowDialogSetFileAssociations(VDGUIHandle parent, bool allowElevation) {
-	if (!ATIsUserAdministrator() && allowElevation) {
+void ATUIShowDialogSetFileAssociations(VDGUIHandle parent, bool allowElevation, bool userOnly) {
+	if (!userOnly && !ATIsUserAdministrator() && allowElevation) {
 		VDStringW params;
-		params.sprintf(L"/showfileassocdlg %08x", (unsigned)parent);
+		params.sprintf(L"/showfileassocdlg %llx", (unsigned long long)(uintptr_t)parent);
 
 		ATRelaunchElevated(parent, params.c_str());
 		return;
 	}
 
 	if (VDIsAtLeastVistaW32()) {
-		ATUIShowDialogFileAssociationsVista();
+		ATUIShowDialogFileAssociationsVista(userOnly);
 	} else {
-		ATUIDialogFileAssociations dlg;
+		ATUIDialogFileAssociations dlg(userOnly);
 
 		dlg.ShowDialog(parent);
 	}
 }
 
-void ATUIShowDialogRemoveFileAssociations(VDGUIHandle parent, bool allowElevation) {
-	if (allowElevation) {
+void ATUIShowDialogRemoveFileAssociations(VDGUIHandle parent, bool allowElevation, bool userOnly) {
+	if (!userOnly && allowElevation) {
 		if (!ATIsUserAdministrator()) {
 			VDStringW params;
-			params.sprintf(L"/removefileassocs %08x", (unsigned)parent);
+			params.sprintf(L"/removefileassocs %llx", (unsigned long long)(uintptr_t)parent);
 
 			ATRelaunchElevated(parent, params.c_str());
 			return;
@@ -539,19 +588,21 @@ void ATUIShowDialogRemoveFileAssociations(VDGUIHandle parent, bool allowElevatio
 	if (IDOK != MessageBoxW((HWND)parent, L"Are you sure you want to disable all of this program's file associations?", L"Altirra Warning", MB_ICONEXCLAMATION | MB_OKCANCEL))
 		return;
 
+	const HKEY hkey = userOnly ? HKEY_CURRENT_USER : HKEY_LOCAL_MACHINE;
+
 	// Remove Default Programs registration
-	SHDeleteValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\RegisteredApplications", L"Altirra");
+	SHDeleteValueW(hkey, L"SOFTWARE\\RegisteredApplications", L"Altirra");
 
 	// Remove local machine registration
-	SHDeleteKeyW(HKEY_LOCAL_MACHINE, L"Software\\virtualdub.org\\Altirra\\Capabilities");
-	SHDeleteEmptyKeyW(HKEY_LOCAL_MACHINE, L"Software\\virtualdub.org\\Altirra");
+	SHDeleteKeyW(hkey, L"Software\\virtualdub.org\\Altirra\\Capabilities");
+	SHDeleteEmptyKeyW(hkey, L"Software\\virtualdub.org\\Altirra");
 
 	// Remove all ProgIDs. We purposely leave the extension references dangling as
 	// that is recommended by Microsoft -- the shell handles this.
 	for(size_t i=0; i<sizeof(g_ATFileAssociations)/sizeof(g_ATFileAssociations[0]); ++i) {
 		const ATFileAssociation& assoc = g_ATFileAssociations[i];
 
-		SHDeleteKeyW(HKEY_CLASSES_ROOT, assoc.mpProgId);
+		SHDeleteKeyW(hkey, (VDStringW(L"Software\\Classes\\") + assoc.mpProgId).c_str());
 	}
 
 	SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);

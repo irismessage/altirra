@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <vd2/VDDisplay/textrenderer.h>
 #include <at/atui/uimanager.h>
@@ -52,6 +52,15 @@ void ATUIMenu::AddSeparator() {
 	item.mbSeparator = true;
 
 	AddItem(item);
+}
+
+void ATUIMenu::InsertItem(int pos, const ATUIMenuItem& item) {
+	const size_t n = mItems.size();
+		
+	if (pos < 0 || pos > (int)n)
+		pos = n;
+
+	mItems.insert(mItems.begin() + pos, item);
 }
 
 void ATUIMenu::RemoveItems(uint32 start, uint32 n) {

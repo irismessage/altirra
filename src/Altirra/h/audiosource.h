@@ -31,12 +31,25 @@
 // goes through a crude time stretcher if necessary to deal with temporary
 // deltas between audio and video.
 //
+// Levels are a bit weird in the mixbus since the system originally only
+// dealt with POKEY audio -- full scale is [-1680, 1680]. The 1680 comes
+// from 28 * 15 * 4, or four channels at volume 15 accumulated over 28
+// ticks per sample. POKEY is the most active and CPU intensive source to
+// generate, so it sets the scale and all of the other sources just get
+// this factor folded into their gain factors.
+//
 
 #ifndef f_AT_AUDIOSOURCE_H
 #define f_AT_AUDIOSOURCE_H
 
 enum {
 	kATCyclesPerSyncSample = 28
+};
+
+enum ATAudioMix {
+	kATAudioMix_Drive,
+	kATAudioMix_Covox,
+	kATAudioMixCount
 };
 
 struct ATSyncAudioMixInfo {
@@ -49,6 +62,9 @@ struct ATSyncAudioMixInfo {
 	// Mix buffers.
 	float *mpLeft;
 	float *mpRight;
+
+	// Mix levels (see ATAudioMix).
+	const float *mpMixLevels;
 };
 
 class IATSyncAudioSource {

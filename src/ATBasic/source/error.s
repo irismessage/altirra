@@ -33,6 +33,9 @@ errorNoMemory		inc		errno		;2
 		
 		;clear BREAK flag in case that's what caused us to stop
 		stx		brkkey
+
+		;re-terminate or force new if required
+		jsr		IoCheckBusy
 				
 		;set stop line
 		ldy		#0

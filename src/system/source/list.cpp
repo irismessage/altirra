@@ -31,7 +31,7 @@
 //	doubly-linked lists.
 //
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <algorithm>
 #include <vd2/system/list.h>
 

@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/zip.h>
 #include "firmwaremanager.h"
 
@@ -25,7 +25,8 @@ struct ATKnownFirmware {
 	ATFirmwareType mType;
 	const wchar_t *mpDesc;
 } kATKnownFirmwares[]={
-	{ 0x4248d3e3,  2048, kATFirmwareType_Kernel5200, L"Atari 5200 OS" },
+	{ 0x4248d3e3,  2048, kATFirmwareType_Kernel5200, L"Atari 5200 OS (4-port)" },
+	{ 0xc2ba2613,  2048, kATFirmwareType_Kernel5200, L"Atari 5200 OS (2-port)" },
 	{ 0x4bec4de2,  8192, kATFirmwareType_Basic, L"Atari BASIC rev. A" },
 	{ 0xf0202fb3,  8192, kATFirmwareType_Basic, L"Atari BASIC rev. B" },
 	{ 0x7d684184,  8192, kATFirmwareType_Basic, L"Atari BASIC rev. C" },
@@ -38,7 +39,14 @@ struct ATKnownFirmware {
 	{ 0x643bcc98, 16384, kATFirmwareType_KernelXL, L"Atari XL/XE OS ver.1" },
 	{ 0x1f9cd270, 16384, kATFirmwareType_KernelXL, L"Atari XL/XE OS ver.2" },
 	{ 0x29f133f7, 16384, kATFirmwareType_KernelXL, L"Atari XL/XE OS ver.3" },
-	{ 0x1eaf4002, 16384, kATFirmwareType_KernelXEGS, L"Atari XL/XE/XEGS OS ver.4" }
+	{ 0x1eaf4002, 16384, kATFirmwareType_KernelXEGS, L"Atari XL/XE/XEGS OS ver.4" },
+	{ 0xbdca01fb,  8192, kATFirmwareType_Game, L"Atari XEGS Missile Command" },
+	{ 0xa8953874, 16384, kATFirmwareType_BlackBox, L"Black Box ver. 1.34" },
+	{ 0x91175314, 16384, kATFirmwareType_BlackBox, L"Black Box ver. 1.41" },
+	{ 0x7cafd9a8, 65536, kATFirmwareType_BlackBox, L"Black Box ver. 2.16" },
+	{ 0xa6a9e3d6,  8192, kATFirmwareType_MIO, L"MIO ver. 1.41 (64Kbit)" },
+	{ 0x1d400131, 16384, kATFirmwareType_MIO, L"MIO ver. 1.41 (128Kbit)" },
+	{ 0xe2f4b3a8, 32768, kATFirmwareType_MIO, L"MIO ver. 1.41 (256Kbit)" },
 };
 
 bool ATFirmwareAutodetectCheckSize(uint64 fileSize) {
@@ -48,9 +56,11 @@ bool ATFirmwareAutodetectCheckSize(uint64 fileSize) {
 
 	switch(fileSize32) {
 		case 2048:		// 5200
-		case 8192:		// BASIC
+		case 8192:		// BASIC, MIO
 		case 10240:		// 800
-		case 16384:		// XL, XEGS, 1200XL
+		case 16384:		// XL, XEGS, 1200XL, MIO
+		case 32768:		// MIO
+		case 65536:		// Black Box
 			return true;
 
 		default:

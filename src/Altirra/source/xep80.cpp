@@ -136,7 +136,7 @@ ATXEP80Emulator::ATXEP80Emulator()
 ATXEP80Emulator::~ATXEP80Emulator() {
 }
 
-void ATXEP80Emulator::Init(ATScheduler *sched, ATPIAEmulator *pia) {
+void ATXEP80Emulator::Init(ATScheduler *sched, IATDevicePortManager *pia) {
 	mpScheduler = sched;
 	mpPIA = pia;
 
@@ -339,7 +339,7 @@ void ATXEP80Emulator::UpdateFrame() {
 	//	D0	Reverse video
 	//
 	const uint8 attrMask = charBlinkState ? 0 : 0x04;
-	const uint8 attrs[2] = { mAttrA | attrMask, mAttrB | attrMask };
+	const uint8 attrs[2] = { (uint8)(mAttrA | attrMask), (uint8)(mAttrB | attrMask) };
 
 	if (mbGraphicsMode) {
 		uint32 vramaddr = mHomeAddr;
@@ -1874,10 +1874,10 @@ void ATXEP80Emulator::RebuildBlockGraphics() {
 
 	uint16 *VDRESTRICT dst = mFonts[3];
 	for(int c=0; c<256; ++c) {
-		uint16 masks[3] = {
-			((c & 0x01) ? leftMask + rightMask : 0) + ((c & 0x02) ? centerMask : 0),
-			((c & 0x04) ? leftMask : 0) + ((c & 0x08) ? centerMask : 0) + ((c & 0x10) ? rightMask : 0),
-			((c & 0x20) ? leftMask + rightMask : 0) + ((c & 0x40) ? centerMask : 0)
+		const uint16 masks[3] = {
+			(uint16)(((c & 0x01) ? leftMask + rightMask : 0) + ((c & 0x02) ? centerMask : 0)),
+			(uint16)(((c & 0x04) ? leftMask : 0) + ((c & 0x08) ? centerMask : 0) + ((c & 0x10) ? rightMask : 0)),
+			(uint16)(((c & 0x20) ? leftMask + rightMask : 0) + ((c & 0x40) ? centerMask : 0))
 		};
 
 		for(int i=0; i<16; ++i) {
@@ -2187,7 +2187,7 @@ public:	// IATDeviceScheduling
 	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:
-	virtual void InitPortInput(ATPIAEmulator *pia) override;
+	virtual void InitPortInput(IATDevicePortManager *pia) override;
 
 public:	// IATDeviceVideoOutput
 	virtual void Tick(uint32 hz300ticks) override;
@@ -2207,7 +2207,7 @@ private:
 	static bool WriteByte(void *thisptr0, uint32 addr, uint8 value);
 
 	ATScheduler *mpScheduler;
-	ATPIAEmulator *mpPIA;
+	IATDevicePortManager *mpPIA;
 
 	ATDeviceVideoInfo mVideoInfo;
 
@@ -2270,7 +2270,7 @@ void ATDeviceXEP80::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 	mpScheduler = sch;
 }
 
-void ATDeviceXEP80::InitPortInput(ATPIAEmulator *pia) {
+void ATDeviceXEP80::InitPortInput(IATDevicePortManager *pia) {
 	mpPIA = pia;
 }
 

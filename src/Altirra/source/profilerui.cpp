@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <numeric>
 #include <vd2/system/error.h>
 #include <vd2/system/math.h>
@@ -1830,7 +1830,7 @@ void ATUIProfilerPane::OnSize() {
 	if (mhwndMessage) {
 		int edge = GetSystemMetrics(SM_CXEDGE) * 2;
 
-		SetWindowPos(mhwndMessage, NULL, edge, y+edge, std::max<int>(0, r.right - 2*edge), std::max<int>(0, lh - 2*edge), SWP_NOZORDER | SWP_NOACTIVATE);
+		SetWindowPos(mhwndMessage, NULL, edge, y+edge, std::max<int>(0, r.right - 2*edge), std::max<int>(0, lh - 2*edge), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
 	}
 }
 

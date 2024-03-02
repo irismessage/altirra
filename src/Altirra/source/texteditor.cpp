@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #define _WIN32_WINNT 0x0500
 #include "texteditor.h"
 
@@ -225,7 +225,7 @@ TextEditor::~TextEditor() {
 }
 
 VDGUIHandle TextEditor::Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id) {
-	return (VDGUIHandle)CreateWindowEx(exStyle, (LPCTSTR)sWndClass, _T(""), style, x, y, cx, cy, (HWND)parent, (HMENU)id, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
+	return (VDGUIHandle)CreateWindowEx(exStyle, (LPCTSTR)sWndClass, _T(""), style, x, y, cx, cy, (HWND)parent, (HMENU)(UINT_PTR)id, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
 }
 
 void TextEditor::SetCallback(IVDTextEditorCallback *pCB) {
@@ -379,7 +379,7 @@ bool TextEditor::Find(const char *text, int len, bool caseSensitive, bool wholeW
 	if (searchUp) {
 		for(int i=0; i<=paraCount; ++i) {
 			const Paragraph& para = *mDocument.GetParagraph(paraIdx);
-			int paraLen = para.mText.size();
+			int paraLen = (int)para.mText.size();
 
 			int x1 = 0;
 			int x2 = paraLen;
@@ -431,7 +431,7 @@ bool TextEditor::Find(const char *text, int len, bool caseSensitive, bool wholeW
 	} else {
 		for(int i=0; i<=paraCount; ++i) {
 			const Paragraph& para = *mDocument.GetParagraph(paraIdx);
-			int paraLen = para.mText.size();
+			int paraLen = (int)para.mText.size();
 
 			int x1 = 0;
 			int x2 = paraLen;
@@ -754,7 +754,7 @@ namespace {
 			memcpy(buf + mLevel, s, tc);
 			s += tc;
 			len -= tc;
-			mLevel += tc;
+			mLevel += (uint32)tc;
 		}
 	}
 
@@ -817,7 +817,7 @@ LRESULT TextEditor::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		OnKeyDown(wParam);
 		break;
 	case WM_CHAR:
-		OnChar(wParam);
+		OnChar((int)wParam);
 		break;
 	case WM_LBUTTONDOWN:
 		::SetFocus(mhwnd);
@@ -880,7 +880,7 @@ LRESULT TextEditor::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		return OnSetText((const char *)lParam);
 
 	case WM_GETTEXT:
-		return OnGetText(wParam, (char *)lParam);
+		return OnGetText((uint32)wParam, (char *)lParam);
 
 	case WM_GETTEXTLENGTH:
 		return OnGetTextLength();
@@ -981,7 +981,7 @@ void TextEditor::OnPaint() {
 						if (selEnd->mPara == paraIdx)
 							paraSelEnd = selEnd->GetParaOffset();
 						else
-							paraSelEnd = para->mText.size();
+							paraSelEnd = (int)para->mText.size();
 					}
 				}
 
@@ -1027,7 +1027,7 @@ void TextEditor::OnPaint() {
 
 						const char *tab = (const char *)memchr(s + xpos, '\t', xrend - xpos);
 						if (tab) {
-							int tabpos = tab - s;
+							int tabpos = (int)(tab - s);
 
 							if (xpos == tabpos)
 								xrend = xpos + 1;
@@ -1377,7 +1377,7 @@ int TextEditor::OnGetText(uint32 buflen, char *s) {
 	for(uint32 i=0; i<paraCount; ++i) {
 		const Paragraph& para = *mDocument.GetParagraph(i);
 		uint32 maxlen = buflen - actual;
-		uint32 paralen = para.mText.size();
+		uint32 paralen = (uint32)para.mText.size();
 
 		if (maxlen > paralen)
 			maxlen = paralen;
@@ -1398,7 +1398,7 @@ int TextEditor::OnGetTextLength() {
 	for(uint32 i=0; i<paraCount; ++i) {
 		const Paragraph& para = *mDocument.GetParagraph(i);
 
-		len += para.mText.size();
+		len += (int)para.mText.size();
 	}
 
 	return len;
@@ -1703,7 +1703,7 @@ void TextEditor::PosToPixel(int& xp, int& yp, const Iterator& pos) {
 			int spanend = end;
 			const char *tab = (const char *)memchr(s + index, '\t', end - index);
 			if (tab) {
-				spanend = (tab - s);
+				spanend = (int)(tab - s);
 				if (spanend == index) {
 					xp += mTabWidth;
 					xp -= xp % mTabWidth;
@@ -1732,7 +1732,7 @@ Iterator TextEditor::PixelToPos(int px, int py) {
 	py -= para.mYPos;
 
 	int lineIdx = 0;
-	int lineCount = para.mLines.size();
+	int lineCount = (int)para.mLines.size();
 	while(lineIdx < lineCount - 1) {
 		int lineHeight = para.mLines[lineIdx].mHeight;
 		if (py >= lineHeight)
@@ -1767,7 +1767,7 @@ Iterator TextEditor::PixelToPos(int px, int py) {
 					int spanend = end;
 					const char *tab = (const char *)memchr(s + index, '\t', end - index);
 					if (tab) {
-						spanend = (tab - s);
+						spanend = (int)(tab - s);
 						if (spanend == index) {
 							int newxp = xp + mTabWidth;
 							newxp -= newxp % mTabWidth;
@@ -1892,7 +1892,7 @@ void TextEditor::ReflowPara(int paraIdx, const Paragraph& para) {
 			while(s < sEnd) {
 				INT n;
 				SIZE sz;
-				if (!GetTextExtentExPointA(hdc, s, sEnd - s, mReflowWidth, &n, NULL, &sz))
+				if (!GetTextExtentExPointA(hdc, s, (int)(sEnd - s), mReflowWidth, &n, NULL, &sz))
 					break;
 
 				if (sz.cx > mReflowWidth)
@@ -1936,8 +1936,8 @@ void TextEditor::ReflowPara(int paraIdx, const Paragraph& para) {
 
 				Line ln;
 
-				ln.mStart = s - sStart;
-				ln.mLength = sBreak - s;
+				ln.mStart = (int)(s - sStart);
+				ln.mLength = (int)(sBreak - s);
 				ln.mHeight = mFontHeight;
 
 				mReflowNewLines.push_back(ln);

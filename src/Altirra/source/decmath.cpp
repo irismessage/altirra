@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/VDString.h>
 #include "decmath.h"
 #include "cpu.h"
@@ -596,7 +596,7 @@ void ATAccelFASC(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 	mem.WriteByte(ATKernelSymbols::INBUFF, (uint8)ATKernelSymbols::LBUFF);
 	mem.WriteByte(ATKernelSymbols::INBUFF+1, (uint8)(ATKernelSymbols::LBUFF >> 8));
 
-	int len = s - buf;
+	int len = (int)(s - buf);
 	bool needPeriod = true;
 	for(int i=0; i<len - 1; ++i) {
 		uint8 c = buf[i];
@@ -1337,6 +1337,8 @@ void ATAccelZFR0(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 
 	// Note: must preserve C for Basic XE compatibility.
 	cpu.SetA(0);
+	cpu.SetX((uint8)(ATKernelSymbols::FR0 + 6));
+	cpu.Ldy(0);
 
 	g_ATLCFPAccel("ZFR0\n");
 }
@@ -1348,6 +1350,8 @@ void ATAccelZF1(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 		mem.WriteByte(addr++, 0);
 
 	cpu.SetA(0);
+	cpu.SetX(addr);
+	cpu.Ldy(0);
 
 	g_ATLCFPAccel("ZF1\n");
 }
@@ -1361,6 +1365,8 @@ void ATAccelZFL(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 	} while(--len);
 
 	cpu.SetA(0);
+	cpu.SetX(addr);
+	cpu.Ldy(0);
 
 	g_ATLCFPAccel("ZFL\n");
 }

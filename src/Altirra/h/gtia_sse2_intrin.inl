@@ -24,11 +24,11 @@ void atasm_update_playfield_160_sse2(void *dst0, const uint8 *src, uint32 n) {
 	// We do unaligned loads from this array, so it's important that we
 	// avoid data cache unit (DCU) split penalties on older CPUs. Minimum
 	// for SSSE3 is Core 2, so we can assume at least 64 byte cache lines.
-	const __declspec(align(64)) uint64 window_table[6] = {
+	static const __declspec(align(64)) uint64 window_table[6] = {
 		0, 0, (uint64)0 - 1, (uint64)0 - 1, 0, 0
 	};
 
-	const __declspec(align(16)) uint64 lowbit_mask[2] = { 0x0f0f0f0f0f0f0f0f, 0x0f0f0f0f0f0f0f0f };
+	static const __declspec(align(16)) uint64 lowbit_mask[2] = { 0x0f0f0f0f0f0f0f0f, 0x0f0f0f0f0f0f0f0f };
 
 	// load and preshuffle color table
 	const __m128i pfMask = *(const __m128i *)lowbit_mask;

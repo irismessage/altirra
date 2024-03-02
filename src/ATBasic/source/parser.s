@@ -1,5 +1,5 @@
 ; Altirra BASIC - Parser module
-; Copyright (C) 2014 Avery Lee, All Rights Reserved.
+; Copyright (C) 2014-2016 Avery Lee, All Rights Reserved.
 ;
 ; Copying and distribution of this file, with or without modification,
 ; are permitted in any medium without royalty provided the copyright
@@ -30,8 +30,9 @@
 ; However, entering a line number that fails FPI (not in 0-65535) causes
 ; error 3. This can also invoke TRAP.
 ;
-; If an error does occur during table expansion, any variables added during
-; parsing are NOT rolled back.
+; If a syntax error occurs during parsing, any variables added during
+; parsing are rolled back. If an error occurs during table expansion, added
+; variables are NOT rolled back.
 ;
 ; Memory usage
 ; ------------
@@ -83,9 +84,10 @@ copyloop:
 done:
 		;exit C=0 for delete/insert/replace, C=1 for immediate
 		asl		stScratch3		;line number bit 15 -> C
+done2:
 		rts
 		
-.def :paFinishLine
+.def :paCmdEOL
 		;remove backtracking sentinel
 		pla
 
@@ -97,6 +99,11 @@ done:
 		
 		;hmm, empty -- we're deleting, then.
 		sty		parout
+
+		;check if we are trying to delete the immediate line -- just
+		;exit C=0 if so.
+		lda		stScratch3
+		bmi		done2
 		
 not_empty:
 		;retrieve line number
@@ -144,7 +151,12 @@ do_contract:
 		
 		;compute bytes to copy (a3 = memtop2-a1)
 		sec
-		sbw		memtop2 a1 a3
+		lda		memtop2
+		sbc		a1
+		sta		a3
+		lda		memtop2+1
+		sbc		a1+1
+		sta		a3+1
 
 		jsr		copyAscending
 
@@ -168,7 +180,7 @@ copy_loop:
 		lda		parout
 		ldy		parStBegin
 		sta		(argstk),y
-		bne		parseLine.parse_loop			;!! - unconditional
+		bne		_parseLine.parse_loop			;!! - unconditional
 .endp
 
 ;============================================================================
@@ -177,8 +189,48 @@ copy_loop:
 ;	C = 0 if deferred edit
 ;	C = 1 if immediate line
 ;
-.proc parseLine
-		;clear last statement marker
+.nowarn .proc _parseLine		
+		;begin parsing loop
+parse_loop_inc:
+		jsr		paFetch
+		dta		{bit $00}
+push_then_restart_parse_loop:
+		pha
+parse_loop:
+		jsr		paFetch
+		;##TRACE "Parse: Executing opcode [$%04x]=$%02x [%y -> %y] @ offset %d (%c); stack(%x)=%x %x %x" dw(parptr) (a) dw(parptr) db(parse_dispatch_table_lo+db(dw(parptr)))+256*db(parse_dispatch_table_hi+db(dw(parptr)))+1 db(cix) db(dw(inbuff)+db(cix)) s db($101+s) db($102+s) db($103+s)
+		bmi		is_state
+		
+		;check if it is a command
+		cmp		#' '
+		bcc		is_command
+		
+		;it's a literal char -- check it against the next char
+		bne		not_space
+		jsr		skpspc
+		jmp		parse_loop
+		
+not_space:
+		ldy		cix
+		cmp		(inbuff),y
+		bne		parseFail
+		inc		cix
+		bne		parse_loop			;!! - unconditional
+
+is_command:
+		tax
+		lda		parse_dispatch_table_hi,x
+		pha
+		lda		parse_dispatch_table_lo,x
+		pha
+		rts
+
+.def :parseLine
+		;save VNTD/VVTP/STMTAB
+		ldx		#5
+		mva:rpl	vntd,x parPtrSav,x-
+
+		;clear last statement marker and first variable added
 		lda		#0
 		sta		parStBegin
 
@@ -217,52 +269,8 @@ lineno_none:
 		ldy		#3
 		sty		parout
 		
-		;check if the line is empty
-		jsr		skpspc
-		lda		(inbuff),y
-		cmp		#$9b
-		beq		finish_line
-		
 		;begin parsing at state 0
 		lda		#$80
-		bne		parseLine.is_state			;!! - unconditional jump
-		
-		;begin parsing loop
-parse_loop_inc:
-		jsr		paFetch
-parse_loop:
-		jsr		paFetch
-		;##TRACE "Parse: Executing opcode [$%04x]=$%02x [%y -> %y] @ offset %d (%c); stack(%x)=%x %x %x" dw(parptr) (a) dw(parptr) db(parse_dispatch_table_lo+db(dw(parptr)))+256*db(parse_dispatch_table_hi+db(dw(parptr)))+1 db(cix) db(dw(inbuff)+db(cix)) s db($101+s) db($102+s) db($103+s)
-		bmi		is_state
-		
-		;check if it is a command
-		cmp		#' '
-		bcc		is_command
-		
-		;it's a literal char -- check it against the next char
-		bne		not_space
-		jsr		skpspc
-		jmp		parse_loop
-		
-.def :paCmdEOL = *
-		lda		#$9b
-not_space:
-		ldy		cix
-		cmp		(inbuff),y
-		bne		parseFail
-		inc		cix
-		tax
-		bpl		parse_loop
-finish_line:
-		jmp		paFinishLine
-
-is_command:
-		tax
-		lda		parse_dispatch_table_hi,x
-		pha
-		lda		parse_dispatch_table_lo,x
-		pha
-		rts
 
 is_state:
 		;extract the call bit and check if we have a call
@@ -291,25 +299,11 @@ load_and_jmp:
 		;clear any backtracking entries from the stack
 btc_loop:
 		pla
-		beq		bt_cleared
+		beq		push_then_restart_parse_loop
 		pla
 		pla
 		pla
-		jmp		btc_loop
-bt_cleared:
-push_then_restart_parse_loop:
-		pha
-		jmp		parseLine.parse_loop
-.endp
-
-;============================================================================
-.proc paCmdRts
-		;remove backtracking indicator
-		pla
-		
-		;remove dummy output val
-		pla
-		jmp		paCmdFail.pop_ip
+		bcc		btc_loop		;!! - C=0 from BCS above
 .endp
 
 ;============================================================================
@@ -319,7 +313,7 @@ entry:
 		;see if we can backtrack
 pop_loop:
 		pla
-		beq		backtrack_fail
+		beq		paEpicFail
 		
 		cmp		#$ff
 		bne		not_jsr
@@ -336,44 +330,22 @@ not_jsr:
 		pla
 		;##TRACE "Parser: Backtracking to IP $%04x, pos $%02x" db($101+s)*256+db($102+s) db(cix)
 		sta		parout
+
+		dta		{bit $0100}		;bit $6868
+
+.def :paCmdRts
+		;remove backtracking indicator
+		pla
+		
+		;remove dummy output val
+		pla
+
 pop_ip:
 		pla
 		sta		parptr+1
 		pla
 		sta		parptr
-		jmp		parseLine.parse_loop
-		
-backtrack_fail:
-		;##TRACE "Parser: No backtrack -- failing."
-		lda		#0
-		sta		parout
-		ldx		#msg_error2-msg_base
-		jsr		IoPrintMessageIOCB0
-		
-		inc		cix
-print_loop:
-		ldx		parout
-		inc		parout
-		lda		lbuff,x
-		pha
-		dec		cix
-		bne		no_invert
-		eor		#$80
-		cmp		#$1b
-		bne		not_eol
-		lda		#$a0
-		jsr		putchar
-		lda		#$9b
-no_invert:
-not_eol:
-		jsr		putchar
-		pla
-		cmp		#$9b
-		bne		print_loop
-		
-		;We use loop2 here because an syntax error does not interrupt
-		;ENTER.
-		jmp		execLoop.loop2
+		jmp		_parseLine.parse_loop
 .endp
 
 ;============================================================================
@@ -424,7 +396,109 @@ parse_end:
 
 		;emit and then branch
 		lda		#TOK_EXP_CHEX
-		jmp		paCmdTryNumber.emit_number
+		bne		paCmdTryNumber.emit_number	;!! - unconditional
+.endp
+
+;============================================================================
+.proc paCmdTryNumber
+		;try to parse
+		lda		cix
+		pha
+		jsr		MathParseFP
+		pla
+		bcc		succeeded
+		sta		cix
+		jmp		_parseLine.parse_loop_inc
+succeeded:
+
+		;emit a constant number token
+		lda		#TOK_EXP_CNUM
+emit_number:
+		;emit the number
+		ldx		#$80-7
+copyloop:
+		jsr		paCmdEmit.doEmitByte
+		lda		fr0+7-$80,x
+		inx
+		bpl		copyloop
+		
+		;all done
+		jmp		paCmdBranch
+.endp
+
+;============================================================================
+.proc paEpicFail
+		;##TRACE "Parser: No backtrack -- failing."
+		lda		#0
+		sta		parout
+		ldx		#msg_error2-msg_base
+		jsr		IoPrintMessageIOCB0		;!! - overwrites INBUFF
+		
+		inc		cix
+print_loop:
+		ldx		parout
+		inc		parout
+		lda		lbuff,x
+		pha
+		dec		cix
+		bne		no_invert
+		eor		#$80
+		cmp		#$1b
+		bne		not_eol
+		lda		#$a0
+		jsr		putchar
+		lda		#$9b
+no_invert:
+not_eol:
+		jsr		putchar
+		pla
+		cmp		#$9b
+		bne		print_loop
+
+		;undo changes to the VNT and VVT
+		ldx		#vntd
+		jsr		adjust_table
+		ldx		#stmtab
+		jsr		adjust_table
+
+		;We use loop2 here because an syntax error does not interrupt
+		;ENTER.
+		jmp		execLoop.loop2
+
+adjust_table:
+		txa
+		pha
+
+		;copy length = MEMTOP2 - source
+		lda		memtop2
+		sec
+		sbc		0,x
+		sta		a3
+		lda		memtop2+1
+		sbc		1,x
+		sta		a3+1
+
+		;dest = prev VNTD/STMTAB
+		;adjustment = dest - source (always negative)
+		lda		parPtrSav-vntd,x
+		sta		a0
+		sbc		0,x
+		sta		a2
+		lda		parPtrSav+1-vntd,x
+		sta		a0+1
+		sbc		1,x
+		sta		a2+1
+		
+		;source = current VNTD/STMTAB
+		ldy		0,x
+		lda		1,x
+
+		;shift tables down and exit
+		jsr		copyAscendingSrcAY
+
+		pla
+		tax
+		jmp		MemAdjustTablePtrs
 .endp
 
 ;============================================================================
@@ -511,7 +585,7 @@ paCmdAccept:
 		pla
 		pla
 		pla
-		jmp		parseLine.parse_loop
+		jmp		_parseLine.parse_loop
 
 ;============================================================================
 .proc paCmdTryFunction
@@ -648,7 +722,7 @@ accept:
 
 do_branch:
 		clc
-		jmp		parseLine.load_and_jmp
+		jmp		_parseLine.load_and_jmp
 
 fail_stcheck:
 		;check for a ., which is a trivial accept -- this is only allowed for
@@ -690,7 +764,7 @@ fail_try:
 		pha
 		lda		cix
 
-		jmp		parseLine.push_then_restart_parse_loop
+		jmp		_parseLine.push_then_restart_parse_loop
 .endp
 
 ;============================================================================
@@ -698,7 +772,7 @@ fail_try:
 		lda		parStrType
 		bmi		paCmdBranch
 next_inc:
-		jmp		parseLine.parse_loop_inc
+		jmp		_parseLine.parse_loop_inc
 .endp
 
 ;============================================================================
@@ -709,7 +783,7 @@ paCmdEmitByteBranch:
 .proc paCmdBranch
 		jsr		paApplyBranch
 next:
-		jmp		parseLine.parse_loop
+		jmp		_parseLine.parse_loop
 .endp
 
 ;============================================================================
@@ -722,7 +796,7 @@ next:
 
 		;skip past branch offset and emit char and continue execution
 		jsr		paFetch
-		jmp		parseLine.parse_loop_inc
+		jmp		_parseLine.parse_loop_inc
 
 char_match:
 		;eat the char
@@ -748,13 +822,13 @@ char_match:
 		beq		paCmdBranch
 
 		;skip past branch offset and continue execution
-		jmp		parseLine.parse_loop_inc
+		jmp		_parseLine.parse_loop_inc
 .endp
 
 ;============================================================================
 .proc paCmdEmit
 		jsr		doEmit
-		jmp		parseLine.parse_loop
+		jmp		_parseLine.parse_loop
 
 doEmit:
 		;get token to emit
@@ -772,33 +846,6 @@ doEmitByte:
 
 overflow:
 		jmp		errorLineTooLong
-.endp
-
-;============================================================================
-.proc paCmdTryNumber
-		;try to parse
-		lda		cix
-		pha
-		jsr		MathParseFP
-		pla
-		bcc		succeeded
-		sta		cix
-		jmp		parseLine.parse_loop_inc
-succeeded:
-
-		;emit a constant number token
-		lda		#TOK_EXP_CNUM
-emit_number:
-		;emit the number
-		ldx		#$80-7
-copyloop:
-		jsr		paCmdEmit.doEmitByte
-		lda		fr0+7-$80,x
-		inx
-		bpl		copyloop
-		
-		;all done
-		jmp		paCmdBranch
 .endp
 
 ;============================================================================
@@ -866,7 +913,7 @@ namelen_loop_end:
 		bpl		not_array
 		
 reject:
-		jmp		parseLine.parse_loop_inc
+		jmp		_parseLine.parse_loop_inc
 
 is_array_var:
 		ror
@@ -929,75 +976,86 @@ no_match:
 		
 create_new:
 		;!! Y = 0 here -- need to maintain until expandTable!
+		
+		;set insertion point for expandTable below (and cache original STMTAB)
+		lda		stmtab+1
+		sta		a0+1
+		pha
+		lda		stmtab
+		sta		a0
+		pha
 
 		;##TRACE "Creating new variable $%02x [%.*s]" db(paCmdTryVariable._index) db(paCmdTryVariable._nameLen) lbuff+db(cix)
 		;bump input pointer to end of name and compute name length
 		lda		_nameEnd
 		tax
 		sec
-		sbc		cix
+		sbc		cix					;!! - C=1 for ADC below
 		stx		cix
 		sta		_nameLen
 		
 		;OK, now we need to make room at the top of the VNT for the new name,
 		;plus add another 8 chars at the top of the VVT. To save some time,
 		;we only make room at the top of the VVT first, then we move just
-		;the VVT. Do NOT adjust stmtab itself.
-		mwx		stmtab a0
+		;the VVT. This optimizes the insert to only one move, and more
+		;importantly, avoids the possibility of running out of memory midway
+		;between two inserts (BAD).
 		adc		#8-1				;!! - carry is set from above!
-		ldx		#stmtab+2
+		ldx		#stmtab
 		jsr		expandTable
 		
-		;now we need to move the VNT sentinel and VVT
+		;now we need to move the VNT sentinel and VVT -- move [VNTD, old STMTAB)
+		;to [-, new STMTAB - 8]
 		;##TRACE "vntp=$%04x, vvtp=$%04x, stmtab=$%04x" dw(vntp) dw(vvtp) dw(stmtab)
 		sec
-		lda		stmtab				;compute count = VVT size + 1
+		pla							;compute count = VVT size + 1
 		sta		a1
 		sbc		vntd
 		sta		a3
-		lda		stmtab+1
-		sta		a1+1				;A1 = dest = stmtab
-		sbc		vntd+1
+		pla
+		sta		a1+1				;A1 = source_end = original stmtab
+		sbc		vntd+1				;!! - C=1 for below
 		sta		a3+1
 
-		;bump stmtab by name length and set A0 = source = stmtab
-		lda		_nameLen
-		ldx		#stmtab
-		jsr		VarAdvancePtrX
-		tax
+		;set dest_end = new stmtab - 8
+		lda		stmtab
+		sbc		#8
+		tay
 		lda		stmtab+1
+		sbc		#0
 
 		;relocate VNT sentinel and VVT
-		jsr		copyDescendingDstAX
+		jsr		copyDescendingDstAY
 		
-		;relocate STMTAB by +8, VNTD and VVTP by +_nameLen
-		lda		#8
-		ldx		#stmtab
+		;copy the name to the previous VNTD location, setting bit 7 on the last byte
+		ldx		cix
+		ldy		_nameLen
+		lda		#$80		;invert last name byte (we're going backwards)
+		dta		{bit $0100}
+name_copy:
+		lda		#0			;leave remaining bytes alone
+		dex
+		eor		lbuff,x
+		dey
+		sta		(vntd),y
+		bne		name_copy
+
+		;relocate VNTD and VVTP by +_nameLen
+		ldx		#vvtp
 reloc_loop:
-		jsr		VarAdvancePtrX
 		lda		_nameLen
+		jsr		VarAdvancePtrX
 		dex
 		dex
 		cpx		#vntd-2
 		bne		reloc_loop
 		
-		;copy the name just below the vvt, complementing the first byte
-		dec		vntd+1		;(!!) temporarily bump this down so we can index
-		ldx		cix
-		ldy		#$ff
-		lda		#$80		;invert last name byte (we're going backwards)
-name_copy:
-		dex
-		eor		lbuff,x
-		sta		(vntd),y-
-		lda		#0			;leave remaining bytes alone
-		dec		_nameLen
-		bne		name_copy
-
-		inc		vntd+1		;(!!) restore vntd
-
 		;zero out remaining bytes and write to VVTP
 		lda		_index
+;		bit		parNewVar
+;		bmi		not_first_new_var
+;		sta		parNewVar
+;not_first_new_var:
 		jsr		VarGetAddr0
 		jsr		zfr0
 		tay
@@ -1044,7 +1102,7 @@ unterminated:
 .def :paCmdNum
 		cpx		#$12
 		ror		parStrType
-		jmp		parseLine.parse_loop
+		jmp		_parseLine.parse_loop
 .endp
 
 ;============================================================================

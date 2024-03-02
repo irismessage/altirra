@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <numeric>
 
 #if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
@@ -73,7 +73,7 @@ void ATVideoEncoderRaw::Compress(const VDPixmap& px, bool intra, bool encodeAll)
 		mEncodedLength = 0;
 		for(uint32 y=0; y<h; ++y) {
 			if (memcmp(src, ref, bpr)) {
-				mEncodedLength = mBuffer.size();
+				mEncodedLength = (uint32)mBuffer.size();
 				break;
 			}
 
@@ -81,7 +81,7 @@ void ATVideoEncoderRaw::Compress(const VDPixmap& px, bool intra, bool encodeAll)
 			ref += pxbuf.pitch;
 		}
 	} else {
-		mEncodedLength = mBuffer.size();
+		mEncodedLength = (uint32)mBuffer.size();
 	}
 }
 
@@ -223,7 +223,7 @@ void ATVideoEncoderRLE::CompressIntra8() {
 	}
 
 	// write frame
-	mEncodedLength = dst - dst0;
+	mEncodedLength = (uint32)(dst - dst0);
 }
 
 void ATVideoEncoderRLE::CompressInter8(bool encodeAll) {
@@ -373,18 +373,10 @@ void ATVideoEncoderRLE::CompressInter8(bool encodeAll) {
 		*dst++ = 1;
 	}
 
-	mEncodedLength = dst - dst0;
+	mEncodedLength = (uint32)(dst - dst0);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-
-#ifndef VDFORCEINLINE
-	#ifdef _MSC_VER
-		#define VDFORCEINLINE __forceinline
-	#else
-		#define VDFORCEINLINE
-	#endif
-#endif
 
 namespace {
 	const unsigned len_tbl[32]={
@@ -889,7 +881,7 @@ namespace {
 			}
 
 			*mpCode++ = 256;
-			Flush(mpCode - mCodeBuf, mpDist - mDistBuf, term, false);
+			Flush((int)(mpCode - mCodeBuf), (int)(mpDist - mDistBuf), term, false);
 			mpCode = mCodeBuf;
 			mpDist = mDistBuf;
 			mpLen = mLenBuf;
@@ -1194,7 +1186,7 @@ namespace {
 	uint32 VDZMBVDeflateEncoder::EstimateOutputSize() {
 		Compress(false);
 
-		return mOutput.size() * 8 + mAccBits + Flush(mpCode - mCodeBuf, mpDist - mDistBuf, false, true);
+		return (uint32)mOutput.size() * 8 + mAccBits + Flush((int)(mpCode - mCodeBuf), (int)(mpDist - mDistBuf), false, true);
 	}
 
 	void VDFORCEINLINE VDZMBVDeflateEncoder::PutBits(uint32 encoding, int enclen) {
@@ -1477,7 +1469,7 @@ ATVideoEncoderZMBV::ATVideoEncoderZMBV(uint32 w, uint32 h, bool rgb32) {
 	mLayout.pitch2 = 0;
 	mLayout.pitch3 = 0;
 
-	uint32 size = mLayout.pitch * (mLayout.h + 32);
+	uint32 size = (uint32)mLayout.pitch * (mLayout.h + 32);
 	mBuffer.resize(size, 0);
 	mBufferRef.resize(size, 0);
 
@@ -1560,7 +1552,7 @@ void ATVideoEncoderZMBV::CompressIntra8(const VDPixmap& px) {
 	mEncoder.SyncEnd();
 
 	// write frame
-	mEncodedLength = dst - dst0;
+	mEncodedLength = (uint32)(dst - dst0);
 }
 
 namespace {
@@ -1995,7 +1987,7 @@ void ATVideoEncoderZMBV::CompressInter8(bool encodeAll) {
 	dst = base + zdata.size();
 	mEncoder.SyncEnd();
 
-	mEncodedLength = dst - dst0;
+	mEncodedLength = (uint32)(dst - dst0);
 }
 
 ///////////////////////////////////////////////////////////////////////////////

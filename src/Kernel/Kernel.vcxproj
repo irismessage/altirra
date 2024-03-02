@@ -64,6 +64,7 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\"</NMakeReBuildCommandLine>
     <None Include="source\ExeLoader\exeloader.s" />
     <None Include="source\loader.xasm" />
     <None Include="source\main.xasm" />
+    <None Include="source\PBIDisk\pbidisk.s" />
     <None Include="source\Placeholders\nomio.s" />
     <None Include="source\SAPPlayers\playsap-b.s" />
     <None Include="source\SAPPlayers\playsap-c.s" />
@@ -75,7 +76,7 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\"</NMakeReBuildCommandLine>
     <None Include="source\NoKernel\main.xasm" />
     <None Include="source\SuperKernel\includes.xasm" />
     <None Include="source\SuperKernel\main.xasm" />
-    <None Include="source\NoCartridge\main.xasm" />
+    <None Include="source\NoCartridge\main.s" />
     <None Include="source\ATDiskLoader\main.s" />
     <None Include="source\NoHDBIOS\main.s" />
     <None Include="source\NoGame\main.s" />
@@ -87,7 +88,6 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\"</NMakeReBuildCommandLine>
     <None Include="source\Shared\blackboard.s" />
     <None Include="source\Shared\boot.s" />
     <None Include="source\Shared\bootscreen.s" />
-    <None Include="source\Shared\bugcheck.s" />
     <None Include="source\Shared\cassette.s" />
     <None Include="source\Shared\cio.inc" />
     <None Include="source\Shared\cio.s" />

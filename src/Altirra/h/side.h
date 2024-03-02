@@ -18,87 +18,144 @@
 #ifndef f_AT_SIDE_H
 #define f_AT_SIDE_H
 
+#include <at/atcore/blockdevice.h>
+#include <at/atcore/devicecart.h>
+#include <at/atcore/deviceimpl.h>
 #include "flash.h"
 #include "rtcds1305.h"
+#include "ide.h"
 
-class IATUIRenderer;
+class IATDeviceIndicatorManager;
 class ATMemoryManager;
 class ATMemoryLayer;
 class ATIDEEmulator;
 class ATSimulator;
 class ATFirmwareManager;
 
-class ATSIDEEmulator {
-	ATSIDEEmulator(const ATSIDEEmulator&);
-	ATSIDEEmulator& operator=(const ATSIDEEmulator&);
+class ATSIDEEmulator
+	: public ATDevice
+	, public IATDeviceScheduling
+	, public IATDeviceMemMap
+	, public IATDeviceCartridge
+	, public IATDeviceIndicators
+	, public IATDeviceFirmware
+	, public IATDeviceParent
+	, public IATDeviceDiagnostics
+	, public IATDeviceButtons
+{
+	ATSIDEEmulator(const ATSIDEEmulator&) = delete;
+	ATSIDEEmulator& operator=(const ATSIDEEmulator&) = delete;
 public:
-	ATSIDEEmulator();
+	ATSIDEEmulator(bool v2);
 	~ATSIDEEmulator();
 
-	bool IsVersion2() const { return mbVersion2; }
-	bool IsCartEnabled() const { return (mbSDXEnable && mSDXBank >= 0) || ((mbTopEnable || !mbSDXEnable) && mTopBank >= 0); }
-	bool IsSDXFlashDirty() const { return mFlashCtrl.IsDirty(); }
+	void *AsInterface(uint32 id) override;
 
-	void LoadFirmware(const void *ptr, uint32 len);
-	void LoadFirmware(ATFirmwareManager& fwmgr, uint64 id);
-	void SaveFirmware(const wchar_t *path);
-
-	void Init(ATScheduler *sch, IATUIRenderer *uir, ATMemoryManager *memman, ATSimulator *sim, bool version2);
-	void Shutdown();
-
-	void SetIDEImage(ATIDEEmulator *ide);
-
-	void SetExternalEnable(bool enable);
+	void Init() override;
+	void Shutdown() override;
+	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void ColdReset() override;
 
 	bool IsSDXEnabled() const { return mbSDXEnable; }
 	void SetSDXEnabled(bool enable);
 
 	void ResetCartBank();
-	void ColdReset();
 
+public:		// IATDeviceScheduling
+	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch);
+
+public:		// IATDeviceMemMap
+	void InitMemMap(ATMemoryManager *memmap);
+	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const;
+
+public:		// IATDeviceCartridge
+	void InitCartridge(IATDeviceCartridgePort *cartPort) override;
+	bool IsLeftCartActive() const override;
+	void SetCartEnables(bool leftEnable, bool rightEnable, bool cctlEnable) override;
+	void UpdateCartSense(bool leftActive) override;
+
+public:		// IATDeviceIndicators
+	void InitIndicators(IATDeviceIndicatorManager *r) override;
+
+public:		// IATDeviceFirmware
+	void InitFirmware(ATFirmwareManager *fwman) override;
+	bool ReloadFirmware() override;
+	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override;
+	bool IsWritableFirmwareDirty(uint32 idx) const override;
+	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
+
+public:		// IATDeviceParent
+	const char *GetSupportedType(uint32 index) override;
+	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
+	void AddChildDevice(IATDevice *dev) override;
+	void RemoveChildDevice(IATDevice *dev) override;
+
+public:		// IATDeviceDiagnostics
+	void DumpStatus(ATConsoleOutput& output) override;
+	
+public:		// IATDeviceButtons
+	uint32 GetSupportedButtons() const override;
+	bool IsButtonDepressed(ATDeviceButton idx) const override;
+	void ActivateButton(ATDeviceButton idx, bool state) override;
+
+protected:
 	void LoadNVRAM();
 	void SaveNVRAM();
 
-	void DumpRTCStatus();
-
-protected:
 	void SetSDXBank(sint32 bank, bool topEnable);
-	void SetTopBank(sint32 bank, bool topRightEnable);
+	void SetTopBank(sint32 bank, bool topLeftEnable, bool topRightEnable);
 
 	static sint32 OnDebugReadByte(void *thisptr, uint32 addr);
 	static sint32 OnReadByte(void *thisptr, uint32 addr);
 	static bool OnWriteByte(void *thisptr, uint32 addr, uint8 value);
 
+	static sint32 OnCartDebugRead(void *thisptr, uint32 addr);
+	static sint32 OnCartDebugRead2(void *thisptr, uint32 addr);
 	static sint32 OnCartRead(void *thisptr, uint32 addr);
 	static sint32 OnCartRead2(void *thisptr, uint32 addr);
 	static bool OnCartWrite(void *thisptr, uint32 addr, uint8 value);
 	static bool OnCartWrite2(void *thisptr, uint32 addr, uint8 value);
 
 	void UpdateMemoryLayersCart();
+	void UpdateIDEReset();
 
-	ATIDEEmulator *mpIDE;
-	IATUIRenderer	*mpUIRenderer;
-	ATMemoryManager *mpMemMan;
-	ATSimulator *mpSim;
-	ATMemoryLayer *mpMemLayerIDE;
-	ATMemoryLayer *mpMemLayerCart;
-	ATMemoryLayer *mpMemLayerCart2;
-	ATMemoryLayer *mpMemLayerCartControl;
-	ATMemoryLayer *mpMemLayerCartControl2;
-	bool	mbExternalEnable;
-	bool	mbSDXEnable;
-	bool	mbTopEnable;
-	bool	mbTopRightEnable;
-	bool	mbIDEEnabled;
-	bool	mbVersion2;
-	uint8	mSDXBankRegister;
-	uint8	mTopBankRegister;
-	sint32	mSDXBank;
-	sint32	mTopBank;
-	sint32	mBankOffset;
-	sint32	mBankOffset2;
+	IATDeviceIndicatorManager *mpUIRenderer = nullptr;
+	ATMemoryManager *mpMemMan = nullptr;
+	ATScheduler *mpScheduler = nullptr;
+	ATMemoryLayer *mpMemLayerIDE = nullptr;
+	ATMemoryLayer *mpMemLayerCart = nullptr;
+	ATMemoryLayer *mpMemLayerCart2 = nullptr;
+	ATMemoryLayer *mpMemLayerCartControl = nullptr;
+	ATMemoryLayer *mpMemLayerCartControl2 = nullptr;
+	bool	mbExternalEnable = false;
+	bool	mbSDXEnable = false;
+	bool	mbTopEnable = false;
+	bool	mbTopLeftEnable = false;
+	bool	mbTopRightEnable = false;
+	bool	mbIDERemoved = true;
+	bool	mbIDEEnabled = false;
+	bool	mbIDEReset = false;
+	const bool mbVersion2;
+	uint8	mSDXBankRegister = 0;
+	uint8	mTopBankRegister = 0;
+	sint32	mSDXBank = 0;
+	sint32	mTopBank = 0;
+	sint32	mBankOffset = 0;
+	sint32	mBankOffset2 = 0;
+
+	vdrefptr<IATBlockDevice> mpBlockDevice;
+
+	ATFirmwareManager *mpFirmwareManager = nullptr;
+
+	IATDeviceCartridgePort *mpCartridgePort = nullptr;
+	uint32	mCartId = 0;
+	bool	mbLeftWindowEnabled = false;
+	bool	mbRightWindowEnabled = false;
+	bool	mbCCTLEnabled = false;
+
 	ATFlashEmulator	mFlashCtrl;
 	ATRTCDS1305Emulator mRTC;
+	ATIDEEmulator mIDE;
 
 	VDALIGN(4) uint8	mFlash[0x80000];
 };

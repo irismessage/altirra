@@ -172,24 +172,61 @@ public:
 	// Send data across the SIO bus. If addChecksum is set, the standard SIO checksum
 	// is computed and added at the end.
 	virtual void SendData(const void *data, uint32 len, bool addChecksum) = 0;
+
+	// Send ACK, NAK, Complete, and Error status bytes. These must be used instead of
+	// explicit sends if acceleration is supported, as any regular sends will be
+	// captured into the transfer buffer. If autoDelay is set, a delay of 450 cycles
+	// will automatically be added prior to C/E bytes to satisfy SIO protocol timing.
+	// Otherwise, this delay must be provided by the device.
 	virtual void SendACK() = 0;
 	virtual void SendNAK() = 0;
-	virtual void SendComplete() = 0;
-	virtual void SendError() = 0;
+	virtual void SendComplete(bool autoDelay = true) = 0;
+	virtual void SendError(bool autoDelay = true) = 0;
+
 	virtual void ReceiveData(uint32 id, uint32 len, bool autoProtocol) = 0;
+
+	// Set timing parameters for the transfer in machine cycles per bit and byte.
+	// A byte is 10 bits including start bit and stop bit, so the byte time should
+	// be at least 10 times the bit time.
 	virtual void SetTransferRate(uint32 cyclesPerBit, uint32 cyclesPerByte) = 0;
+
+	// Enables or disables synchronous transmissions. Normally, POKEY receive operations
+	// in synchronous mode are considered unreliable due to lack of phase synchronization
+	// between the sender and receiver. Enabling the synchronous transmit flag indicates
+	// that the transmission should be synchronized to the receive clock. Currently,
+	// it's assumed that the receive clock is not required and enabling this mode allows
+	// both synchronous and asynchronous reception.
+	virtual void SetSynchronousTransmit(bool enable) = 0;
+
 	virtual void Delay(uint32 ticks) = 0;
 	virtual void InsertFence(uint32 id) = 0;
+
+	// Removes any remaining previously queued commands. Used to abort the remainder of
+	// a command.
+	virtual void FlushQueue() = 0;
+
 	virtual void EndCommand() = 0;
 
 	// Returns true if an acceleration request is currently being processed.
 	virtual bool IsAccelRequest() const = 0;
 
+	// Returns the time skew in cycles due to delays omitted during request acceleration.
+	// This is cumulative and should always be differenced.
+	virtual uint32 GetAccelTimeSkew() const = 0;
+
+	// Returns the high speed index (POKEY divisor) that should be used for high-speed
+	// transfers. This is used for devices that might not otherwise have an inherent high
+	// speed transfer rate. -1 means that standard speed should be used.
 	virtual sint32 GetHighSpeedIndex() const = 0;
 
 	virtual void AddRawDevice(IATDeviceRawSIO *dev) = 0;
 	virtual void RemoveRawDevice(IATDeviceRawSIO *dev) = 0;
 	virtual void SendRawByte(uint8 byte, uint32 cyclesPerBit) = 0;
+
+	// Returns if the SIO command and motor lines are asserted. Both are active low,
+	// so true (asserted) means low and active, and false (negated) means high and not active.
+	virtual bool IsSIOCommandAsserted() const = 0;
+	virtual bool IsSIOMotorAsserted() const = 0;
 
 	// Control SIO interrupt and proceed lines. These lines are normally high and active
 	// low if any device is pulling them low.

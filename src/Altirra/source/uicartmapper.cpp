@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <at/atnativeui/dialog.h>
 #include "resource.h"
 #include "cartridge.h"
@@ -90,8 +90,27 @@ bool ATUIDialogCartridgeMapper::OnLoaded() {
 		LBAddString(IDC_LIST, L"No compatible mappers found.");
 		EnableControl(1 /* IDOK */, false);
 	} else {
-		std::sort(mMappers.begin(), mMappers.begin() + recommended, MapSorter());
-		std::sort(mMappers.begin() + recommended, mMappers.end(), MapSorter());
+		auto it0 = mMappers.begin();
+		auto it1 = it0 + recommended;
+		auto it2 = it1;
+		auto it3 = mMappers.end();
+
+		// sort recommended mappers first
+		std::sort(it0, it1, MapSorter());
+
+		// if we had recommended mappers and all are the same system type, bubble the
+		// non-recommended ones of the same system type to the top
+
+		if (recommended) {
+			const bool firstIs5200 = ATIsCartridge5200Mode((ATCartridgeMode)*it0);
+
+			if (std::find_if(it0+1, it1, [=](uint32 key) { return (firstIs5200 != ATIsCartridge5200Mode((ATCartridgeMode)key)); }) == it1) {
+				it2 = std::partition(it1, it3, [=](uint32 key) { return (firstIs5200 == ATIsCartridge5200Mode((ATCartridgeMode)key)); });
+			}
+		}
+
+		std::sort(it1, it2, MapSorter());
+		std::sort(it2, it3, MapSorter());
 
 		VDStringW s;
 		uint32 i = 0;
@@ -208,6 +227,7 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeName(int mode) {
 		case kATCartridgeMode_MegaCart_2M_3:		return L"64: MegaCart 2M (3)";
 		case kATCartridgeMode_TheCart_32M:			return L"65: The!Cart 32M";
 		case kATCartridgeMode_TheCart_64M:			return L"66: The!Cart 64M";
+		case kATCartridgeMode_BountyBob5200Alt:		return L"Bounty Bob (5200) - Alternate layout";
 		default:
 			return L"";
 	}

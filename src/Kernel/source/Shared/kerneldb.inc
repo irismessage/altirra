@@ -1,20 +1,11 @@
 ;	Altirra - Atari 800/800XL/5200 emulator
 ;	Modular Kernel ROM - Kernel Database Definitions
-;	Copyright (C) 2008-2012 Avery Lee
+;	Copyright (C) 2008-2016 Avery Lee
 ;
-;	This program is free software; you can redistribute it and/or modify
-;	it under the terms of the GNU General Public License as published by
-;	the Free Software Foundation; either version 2 of the License, or
-;	(at your option) any later version.
-;
-;	This program is distributed in the hope that it will be useful,
-;	but WITHOUT ANY WARRANTY; without even the implied warranty of
-;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-;	GNU General Public License for more details.
-;
-;	You should have received a copy of the GNU General Public License
-;	along with this program; if not, write to the Free Software
-;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+;	Copying and distribution of this file, with or without modification,
+;	are permitted in any medium without royalty provided the copyright
+;	notice and this notice are preserved.  This file is offered as-is,
+;	without any warranty.
 
 .ifndef f_KERNELDB_INC
 .def f_KERNELDB_INC
@@ -240,6 +231,7 @@ tmplbt	= $02a1
 escflg	= $02a2			;Display/Editor: Escape next character
 tabmap	= $02a3			;Display/Editor: Bitfield indicating tabs (note reversed bit positions)
 logmap	= $02b2			;Display/Editor: Logical line start map (4 bytes)
+invflg	= $02b6			;Keyboard Handler: inverse flag ($00/$80)
 tmprow	= $02b8			;Screen Editor
 tmpcol	= $02b9			;Screen Editor
 		; $02ba

@@ -36,7 +36,7 @@ enum ATDisplayStretchMode : uint32 {
 	kATDisplayStretchModeCount
 };
 
-enum ATFrameRateMode {
+enum ATFrameRateMode : uint32 {
 	kATFrameRateMode_Hardware,
 	kATFrameRateMode_Broadcast,
 	kATFrameRateMode_Integral,

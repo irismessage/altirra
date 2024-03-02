@@ -31,7 +31,7 @@
 #include <vd2/system/VDString.h>
 #include <vd2/system/vdstl.h>
 
-class VDRegistryProviderMemory : public IVDRegistryProvider {
+class VDRegistryProviderMemory final : public IVDRegistryProvider {
 public:
 	VDRegistryProviderMemory();
 	~VDRegistryProviderMemory();
@@ -58,6 +58,7 @@ public:
 
 	bool RemoveValue(void *key, const char *name);
 	bool RemoveKey(void *key, const char *name);
+	bool RemoveKeyRecursive(void *key, const char *name);
 
 	void *EnumKeysBegin(void *key);
 	const char *EnumKeysNext(void *enumerator);

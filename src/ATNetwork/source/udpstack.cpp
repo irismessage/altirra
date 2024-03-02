@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/vdalloc.h>
 #include <at/atnetwork/ethernetframe.h>
@@ -107,7 +107,7 @@ void ATNetUdpStack::SendDatagram(uint32 srcIpAddr, uint16 srcPort, uint32 dstIpA
 		srcIpAddr = GetIpAddress();
 
 	uint32 frameLen = dataLen + 22 + 8;
-	void *frame = alloca(frameLen + 2);
+	void *frame = _alloca(frameLen + 2);
 	uint8 *dst = (uint8 *)frame + 2;
 
 	// encode EtherType and IPv4 header

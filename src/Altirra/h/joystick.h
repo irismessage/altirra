@@ -18,6 +18,8 @@
 #ifndef AT_JOYSTICK_H
 #define AT_JOYSTICK_H
 
+#include <vd2/system/function.h>
+
 class ATInputManager;
 
 struct ATJoystickState {
@@ -48,6 +50,8 @@ public:
 	virtual void SetTransforms(const ATJoystickTransforms& transforms) = 0;
 
 	virtual void SetCaptureMode(bool capture) = 0;
+
+	virtual void SetOnActivity(const vdfunction<void()>& fn) = 0;
 
 	virtual void RescanForDevices() = 0;
 

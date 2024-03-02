@@ -1,20 +1,11 @@
 ;	Altirra - Atari 800/800XL/5200 emulator
 ;	Modular Kernel ROM - Screen Handler
-;	Copyright (C) 2008-2012 Avery Lee
+;	Copyright (C) 2008-2016 Avery Lee
 ;
-;	This program is free software; you can redistribute it and/or modify
-;	it under the terms of the GNU General Public License as published by
-;	the Free Software Foundation; either version 2 of the License, or
-;	(at your option) any later version.
-;
-;	This program is distributed in the hope that it will be useful,
-;	but WITHOUT ANY WARRANTY; without even the implied warranty of
-;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-;	GNU General Public License for more details.
-;
-;	You should have received a copy of the GNU General Public License
-;	along with this program; if not, write to the Free Software
-;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+;	Copying and distribution of this file, with or without modification,
+;	are permitted in any medium without royalty provided the copyright
+;	notice and this notice are preserved.  This file is offered as-is,
+;	without any warranty.
 
 ;Display list:
 ;	24 blank lines (3 bytes)
@@ -277,11 +268,13 @@ ScreenPixelWidthsLo = ScreenWidths + 1
 ;	- Resets character attributes (CHACT).
 ;	- Resets playfield colors (COLOR0-COLOR4).
 ;	- Resets tab map, even if the mode does not have a text window.
+;	- Resets logical line map, even if the mode does not have a text window.
 ;	- Does NOT reset P/M colors (PCOLR0-PCOLR3).
 ;	- Does NOT reset margins (LMARGN/RMARGN).
 ;	- Sets up fine scrolling if FINE bit 7 is set. Note that this is
 ;	  different than the scroll logic itself, which tests the whole byte.
 ;	- Returns error $80 if BREAK has been pressed.
+;	- If clear is bypassed, ROWCRS and COLCRS are preserved.
 ;
 ; Modified:
 ;	- FRMADR: used for bitflags
@@ -457,9 +450,11 @@ alloc_ok:
 	ldy		#24
 	sty		botscr
 
-	;--- construct display list
-	ldy		#0
-	sty		crsinh
+	;init colors -- note that we do NOT overwrite pcolr0-3!
+	ldy		#5
+	mva:rne	standard_colors-1,y color0-1,y-
+
+	sty		crsinh				;!! - Y=0 for this and for write index
 	
 	;add 24 blank lines
 	lda		#$70
@@ -490,10 +485,7 @@ alloc_ok:
 	ldy		countr
 	jsr		setup_display
 	sty		countr
-	
-	;init cursor to left margin
-	mva		lmargn colcrs
-	
+		
 	;clear the split screen
 	jsr		try_clear
 
@@ -531,10 +523,6 @@ nosplit:
 	ora		#$22
 	sta		sdmctl
 	
-	;init colors -- note that we do NOT overwrite pcolr0-3!
-	ldy		#4
-	mva:rpl	standard_colors,y color0,y-
-
 	;wait for screen to establish (necessary for Timewise splash screen to render)
 	lda		rtclok+2
 	cmp:req	rtclok+2
@@ -612,8 +600,7 @@ nofine:
 	lda		#0
 	sta		(rowac),y+
 	lda		savmsc+1
-	clc
-	adc		#$0f
+	adc		#$0f-1				;!! - C=1 from bcc above
 	sta		(rowac),y+
 	
 	;set up to write 95 fewer lines (note that carry is cleared)
@@ -658,10 +645,7 @@ write_with_zp_address:
 	lda		0,x
 	sta		(rowac),y+
 	lda		1,x
-	sta		(rowac),y+
-	rts
-	
-;--------------------------------------------------------
+	ldx		#1
 write_repeat:
 	sta		(rowac),y+
 	dex
@@ -1092,6 +1076,7 @@ going_right:
 	
 	;set up x fill shift routine
 	lda		shift_lo_tab,y
+	clc
 	adc		#fill_right_8-right_shift_8
 	sta		endpt
 	
@@ -1324,63 +1309,79 @@ no_yinc:
 .endp
 
 ;==========================================================================
+; Clear the screen.
 ;
-;Used:
+; Used:
 ;	ADRESS
 ;	TOADR
 ;
+; Quirks:
+;	Clears the split-screen text area even if the main screen (S:) receives
+;	the clear. The In-Store Demonstration Cart depends on this. The cursor
+;	state of the split screen is NOT reset, so if the cursor was over a
+;	non-blank character, that character will be restored when the cursor
+;	moves.
+;
+;	The logical line map is always reset.
+;
 .proc ScreenClear
-	;first, set up for clearing the split-screen window (4*40 bytes)
-	ldy		#4
+	;first, set up for clearing the split-screen window (4*40 bytes main)
+	ldy		#0
 	
 	;check if we are in the split screen text window
 	ldx		swpflg
-	bne		not_main_screen
+	bne		is_text_window
 	
 	;nope, it's the main screen... compute size
-	ldx		dindex
-	ldy		ScreenHeightShifts,x
-	lda		ScreenHeights,y
-	tay
-not_main_screen:
+	ldy		dindex
+	ldx		ScreenHeightShifts,y
+	ldy		ScreenHeights,x
+is_text_window:
 	jsr		ScreenComputeRangeSize
 
-	;clear memory
+	;add 160 bytes to size if not GR.0 -- important to avoid clearing
+	;beyond GR.0 screen (the font breaks in BIKERDAV.BAS otherwise!)
+	clc
+	ldx		dindex
+	beq		is_gr0
+	adc		#160
+is_gr0:
 	tay
 	lda		adress+1
+	adc		#0
+
 	tax
 	clc
 	adc		savmsc+1
 	sta		toadr+1
 	mva		savmsc toadr
 
-	tya	
-	beq		loop_start
-loop2:
+	;As it turns out, there are no cases where the main screen
+	;is an exact number of pages... so we can simply plow into
+	;the clear loop.
 	lda		#0
 loop:
 	dey
 	sta		(toadr),y
 	bne		loop
-loop_start:
 	dec		toadr+1
 	dex
-	bpl		loop2
+	bpl		loop
 
 	;reset coordinates and cursor (we're going to wipe the cursor)
 	sta		colcrs+1
 	sta		rowcrs
 	sta		oldadr+1
 	
-	;reset logical line map and text window parameters if appropriate
+	;always reset the logical line map
 	ldx		dindex
 	bne		is_graphic_screen
-	jsr		ScreenResetLogicalLineMap
 	lda		lmargn
-
 is_graphic_screen:
 	sta		colcrs
-	rts
+
+	;always reset the logical line map and exit
+	jmp		ScreenResetLogicalLineMap
 .endp
 
 ;==========================================================================

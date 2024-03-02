@@ -482,6 +482,7 @@ void ATRegisterUIPaneClass(uint32 id, ATPaneClassCreator creator);
 
 void ATActivateUIPane(uint32 id, bool giveFocus, bool visible = true, uint32 relid = 0, int reldock = 0);
 
+uint32 ATUIGetGlobalDpiW32();
 uint32 ATUIGetWindowDpiW32(HWND hwnd);
 HFONT ATUICreateDefaultFontForDpiW32(uint32 dpi);
 

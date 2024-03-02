@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <at/atcore/scheduler.h>
 #include "antic.h"
@@ -92,6 +92,8 @@ void ATAnticEmulator::ColdReset() {
 	mVSCROL = 0;
 	mPMBASE = 0;
 	mCHBASE = 0;
+	mPENH = 0;
+	mPENV = 0xFF;				// This powers up as $FF because it is output inverted from the register.
 	mCharBaseAddr128 = 0;
 	mCharBaseAddr64 = 0;
 	mCharInvert = 0;
@@ -216,7 +218,7 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 
 			// character data fetch
 			if (dmaPat & 0x04) {
-				const uint8 c = (uint8)mpPFDataRead >= 48 ? 0xFF : *mpPFDataRead;
+				const uint8 c = (uint8)(uintptr_t)mpPFDataRead >= 48 ? 0xFF : *mpPFDataRead;
 				addressMask &= mPFCharFetchPtr + ((uint32)(c & mPFCharMask) << 3);
 			}
 		}

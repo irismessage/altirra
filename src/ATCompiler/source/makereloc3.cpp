@@ -36,7 +36,6 @@ int cmd_makereloc3(int argc, const char *const *argv) {
 	FILE *fi[2]={0};
 	uint8 *objs[2]={0};
 
-	uint32 initad = 0;
 	uint32 seglen = 0;
 	long srclen;
 

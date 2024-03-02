@@ -16,7 +16,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/strutil.h>
@@ -26,7 +26,7 @@
 
 #include "bootsecdos2.inl"
 
-// DOS 2/MyDOS filesystem.
+// DOS 1/2/MyDOS filesystem.
 //
 // Inode keys are as follows:
 //	- Bits 0-5: File ID (0-63)
@@ -38,45 +38,47 @@ public:
 	~ATDiskFSDOS2();
 
 public:
-	void InitNew(IATDiskImage *image, bool mydos);
+	void InitNew(IATDiskImage *image, bool mydos, bool dos1);
 	void Init(IATDiskImage *image, bool readOnly);
 	void GetInfo(ATDiskFSInfo& info);
 
 	bool IsReadOnly() { return mbReadOnly; }
 	void SetReadOnly(bool readOnly);
+	void SetAllowExtend(bool allow) {}
 
 	bool Validate(ATDiskFSValidationReport& report);
 	void Flush();
 
-	uintptr FindFirst(uintptr key, ATDiskFSEntryInfo& info);
+	uintptr FindFirst(uint32 key, ATDiskFSEntryInfo& info);
 	bool FindNext(uintptr searchKey, ATDiskFSEntryInfo& info);
 	void FindEnd(uintptr searchKey);
 
-	void GetFileInfo(uintptr key, ATDiskFSEntryInfo& info);
-	uintptr GetParentDirectory(uintptr dirKey);
+	void GetFileInfo(uint32 key, ATDiskFSEntryInfo& info);
+	uint32 GetParentDirectory(uint32 dirKey);
 
-	uintptr LookupFile(uintptr parentKey, const char *filename);
+	uint32 LookupFile(uint32 parentKey, const char *filename);
 
-	void DeleteFile(uintptr key);
-	void ReadFile(uintptr key, vdfastvector<uint8>& dst);
-	uintptr WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len);
-	void RenameFile(uintptr key, const char *newFileName);
-	void SetFileTimestamp(uintptr key, const VDExpandedDate& date) {}
+	void DeleteFile(uint32 key);
+	void ReadFile(uint32 key, vdfastvector<uint8>& dst);
+	uint32 WriteFile(uint32 parentKey, const char *filename, const void *src, uint32 len);
+	void RenameFile(uint32 key, const char *newFileName);
+	void SetFileTimestamp(uint32 key, const VDExpandedDate& date) {}
 
-	void CreateDir(uintptr parentKey, const char *filename);
+	uint32 CreateDir(uint32 parentKey, const char *filename);
 
 protected:
 	struct DirEnt;
 	
-	uintptr LookupEntry(const char *filename) const;
+	uint32 LookupEntry(const char *filename) const;
 
 	void DecodeDirEnt(DirEnt& de, const uint8 *src) const;
 
 	bool IsVisible(const DirEnt& de) const;
+	bool IsDOS1File(const DirEnt& de) const;
 	bool IsExtendedAddressingUsed(const DirEnt& de) const;
 
-	uint8 GetSectorDataBytes(const uint8 *secBuf) const;
-	uint32 GetNextSector(bool extendedAddressing, uint8 fileId, const uint8 *secBuf) const;
+	uint8 GetSectorDataBytes(bool isDOS1File, const uint8 *secBuf) const;
+	uint32 GetNextSector(bool isDOS1File, bool extendedAddressing, uint8 fileId, const uint8 *secBuf) const;
 	bool IsSectorAllocated(uint32 sector) const;
 	void AllocateSector(uint32 sector);
 	void FreeSector(uint32 sector);
@@ -97,6 +99,7 @@ protected:
 	IATDiskImage *mpImage;
 	bool mbDirty;
 	bool mbReadOnly;
+	bool mbDOS1;
 	bool mbDOS25;
 	bool mbMyDOS;
 	uint32 mSectorSize;
@@ -125,6 +128,7 @@ protected:
 	};
 
 	uint32	mDirectoryStart;
+	uint32	mDirectoryBaseKey = 0;
 	bool	mbDirectoryDirty;
 	DirEnt	mDirectory[64];
 
@@ -144,13 +148,20 @@ ATDiskFSDOS2::ATDiskFSDOS2() {
 ATDiskFSDOS2::~ATDiskFSDOS2() {
 }
 
-void ATDiskFSDOS2::InitNew(IATDiskImage *image, bool mydos) {
+void ATDiskFSDOS2::InitNew(IATDiskImage *image, bool mydos, bool dos1) {
 	uint32 sectorSize = image->GetSectorSize();
+
+	if (sectorSize != 128 && dos1)
+		throw MyError("Unsupported sector size for DOS 1.x image: %d bytes.", sectorSize);
+
 	if (sectorSize != 128 && sectorSize != 256)
 		throw MyError("Unsupported sector size for DOS 2.x/MyDOS image: %d bytes.", sectorSize);
 
 	const uint32 sectorCount = image->GetVirtualSectorCount();
-	if (mydos) {
+	if (dos1) {
+		if (sectorCount != 720)
+			throw MyError("Unsupported sector count for DOS 1.x image: %u sectors.", sectorCount);
+	} else if (mydos) {
 		if (sectorCount < 720)
 			throw MyError("Unsupported sector count for MyDOS image: %u sectors.", sectorCount);
 	} else {
@@ -161,6 +172,7 @@ void ATDiskFSDOS2::InitNew(IATDiskImage *image, bool mydos) {
 	mpImage = image;
 	mbDirty = true;
 	mbReadOnly = false;
+	mbDOS1 = dos1;
 	mbDOS25 = false;
 	mbMyDOS = mydos;
 	mSectorSize = sectorSize;
@@ -236,7 +248,7 @@ void ATDiskFSDOS2::InitNew(IATDiskImage *image, bool mydos) {
 		mVTOCBitmap[10 + ((sectorCount + 1) >> 3)] = (uint8)(0x100 - (0x100 >> finalSectors));
 
 	// allocate sector 0 (invalid) and sectors 1-3 (boot)
-	for(uint32 i=0; i<4; ++i)
+	for(uint32 i=0; i<(uint32)(dos1 ? 2 : 4); ++i)
 		AllocateSector(i);
 
 	// allocate root directory sectors
@@ -284,6 +296,7 @@ void ATDiskFSDOS2::Init(IATDiskImage *image, bool readOnly) {
 	mbDirty = false;
 	mbReadOnly = readOnly;
 	mbMyDOS = false;
+	mbDOS1 = false;
 	mbDOS25 = false;
 
 	uint32 sectorSize = image->GetSectorSize();
@@ -295,10 +308,12 @@ void ATDiskFSDOS2::Init(IATDiskImage *image, bool readOnly) {
 	// read VTOC
 	mpImage->ReadVirtualSector(359, mSectorBuffer, sectorSize);
 
-	if (mSectorBuffer[0] < 2)
-		throw MyError("Invalid DOS 2.x/MyDOS disk (unrecognized VTOC signature).");
+	if (mSectorBuffer[0] == 0)
+		throw MyError("Invalid DOS 1.x/2.x/MyDOS disk (unrecognized VTOC signature).");
 
-	uint32 numVTOCPages = mSectorBuffer[0] - 2;
+	mbDOS1 = (mSectorBuffer[0] == 1);
+
+	uint32 numVTOCPages = mSectorBuffer[0] >= 2 ? mSectorBuffer[0] - 2 : 0;
 
 	mVTOCBitmap.resize(numVTOCPages ? 256*numVTOCPages : mSectorSize, 0);
 
@@ -325,7 +340,7 @@ void ATDiskFSDOS2::Init(IATDiskImage *image, bool readOnly) {
 	}
 
 	// check for MyDOS
-	if (!mbDOS25) {
+	if (!mbDOS25 && !mbDOS1) {
 		if (mVTOCBitmap[0] > 2)
 			mbMyDOS = true;
 		else if (sectorCount > 720)
@@ -359,7 +374,11 @@ void ATDiskFSDOS2::Init(IATDiskImage *image, bool readOnly) {
 }
 
 void ATDiskFSDOS2::GetInfo(ATDiskFSInfo& info) {
-	info.mFSType = mbMyDOS ? "MyDOS" : mbDOS25 ? "Atari DOS 2.5" : "Atari DOS 2.x";
+	info.mFSType = mbMyDOS ? "MyDOS"
+		: mbDOS25 ? "Atari DOS 2.5"
+		: mbDOS1 ? "Atari DOS 1.x"
+		: mSectorSize == 256 ? "Atari DOS 2.0D"
+		: "Atari DOS 2.0S";
 	info.mFreeBlocks = CountFreeSectors();
 	info.mBlockSize = mSectorSize;
 }
@@ -371,9 +390,7 @@ void ATDiskFSDOS2::SetReadOnly(bool readOnly) {
 bool ATDiskFSDOS2::Validate(ATDiskFSValidationReport& report) {
 	bool errorsFound = false;
 
-	report.mbBrokenFiles = false;
-	report.mbBitmapIncorrect = false;
-	report.mbOpenWriteFiles = false;
+	report = {};
 
 	const uint32 sectorCount = mpImage->GetVirtualSectorCount();
 	const uint32 sectorSize = mpImage->GetSectorSize();
@@ -381,7 +398,7 @@ bool ATDiskFSDOS2::Validate(ATDiskFSValidationReport& report) {
 	vdfastvector<uint8> newVTOC(mVTOCBitmap);
 
 	uint32 totalMaskBits = 720;
-	uint32 sectorsAvailable = 707 + 8;
+	uint32 sectorsAvailable = mbDOS1 ? 709 + 8 : 707 + 8;
 
 	if (mbDOS25) {
 		totalMaskBits = 1024;
@@ -396,14 +413,14 @@ bool ATDiskFSDOS2::Validate(ATDiskFSValidationReport& report) {
 	if (totalMaskBits & 7)
 		newVTOC[10 + (totalMaskBits >> 3)] = (uint8)(0U - (0x100 >> (totalMaskBits & 7)));
 
-	// allocate sectors 0 (reserved) and 1-3 (boot) -> 716
-	newVTOC[10] = 0x0f;
+	// allocate sectors 0 (reserved) and 1-3 (boot) -> 716 (only 1 boot sector for DOS 1.x)
+	newVTOC[10] = mbDOS1 ? 0x3f : 0x0f;
 
 	// allocate sector 360 (VTOC)
 	newVTOC[55] = 0x7f;
 
 	// set signature byte
-	newVTOC[0] = 2;
+	newVTOC[0] = mbDOS1 ? 1 : 2;
 
 	if (mbMyDOS) {
 		// see InitNew() for the logic behind MyDOS VTOC allocation
@@ -419,7 +436,7 @@ bool ATDiskFSDOS2::Validate(ATDiskFSValidationReport& report) {
 			sectorsAvailable -= vtocExtraSectors;
 
 			// set signature byte
-			newVTOC[0] = (mVTOCBitmap.size() >> 8) + 2;
+			newVTOC[0] = (uint8)((mVTOCBitmap.size() >> 8) + 2);
 		}
 	} else if (mbDOS25) {
 		// DOS 2.x can't use sector 720, and DOS 2.5 premarks it as allocated in ED
@@ -494,6 +511,7 @@ bool ATDiskFSDOS2::Validate(ATDiskFSValidationReport& report) {
 				continue;
 			}
 
+			const bool isDOS1File = IsDOS1File(de);
 			const bool extendedAddressing = IsExtendedAddressingUsed(de);
 			uint32 sector = de.mFirstSector;
 
@@ -523,8 +541,8 @@ bool ATDiskFSDOS2::Validate(ATDiskFSValidationReport& report) {
 						break;
 					}
 
-					GetSectorDataBytes(secBuf2);
-					sector = GetNextSector(extendedAddressing, i, secBuf2);
+					GetSectorDataBytes(isDOS1File, secBuf2);
+					sector = GetNextSector(isDOS1File, extendedAddressing, i, secBuf2);
 				}
 			} catch(const ATDiskFSException& ) {
 				report.mbBrokenFiles = true;
@@ -602,7 +620,7 @@ void ATDiskFSDOS2::Flush() {
 	mbDirty = false;
 }
 
-uintptr ATDiskFSDOS2::FindFirst(uintptr key, ATDiskFSEntryInfo& info) {
+uintptr ATDiskFSDOS2::FindFirst(uint32 key, ATDiskFSEntryInfo& info) {
 	// determine the starting sector
 	uint32 directoryStart = 361;
 
@@ -655,7 +673,7 @@ void ATDiskFSDOS2::FindEnd(uintptr searchKey) {
 	delete (FindHandle *)searchKey;
 }
 
-void ATDiskFSDOS2::GetFileInfo(uintptr key, ATDiskFSEntryInfo& info) {
+void ATDiskFSDOS2::GetFileInfo(uint32 key, ATDiskFSEntryInfo& info) {
 	LoadDirectoryByStart(key >> 6);
 
 	const DirEnt& de = mDirectory[key & 63];
@@ -682,7 +700,7 @@ void ATDiskFSDOS2::GetFileInfo(uintptr key, ATDiskFSEntryInfo& info) {
 	}
 }
 
-uintptr ATDiskFSDOS2::GetParentDirectory(uintptr dirKey) {
+uint32 ATDiskFSDOS2::GetParentDirectory(uint32 dirKey) {
 	auto it = mDirStartToKeyMap.find(dirKey >> 6);
 
 	if (it != mDirStartToKeyMap.end())
@@ -691,13 +709,13 @@ uintptr ATDiskFSDOS2::GetParentDirectory(uintptr dirKey) {
 	return 0;
 }
 
-uintptr ATDiskFSDOS2::LookupFile(uintptr parentKey, const char *filename) {
+uint32 ATDiskFSDOS2::LookupFile(uint32 parentKey, const char *filename) {
 	LoadDirectory(parentKey);
 
 	return LookupEntry(filename);
 }
 
-uintptr ATDiskFSDOS2::LookupEntry(const char *filename) const {
+uint32 ATDiskFSDOS2::LookupEntry(const char *filename) const {
 	for(uint32 i=0; i<64; ++i) {
 		const DirEnt& de = mDirectory[i];
 
@@ -715,7 +733,7 @@ uintptr ATDiskFSDOS2::LookupEntry(const char *filename) const {
 	return 0;
 }
 
-void ATDiskFSDOS2::DeleteFile(uintptr key) {
+void ATDiskFSDOS2::DeleteFile(uint32 key) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
@@ -766,6 +784,7 @@ void ATDiskFSDOS2::DeleteFile(uintptr key) {
 		std::fill(mTempSectorMap.begin(), mTempSectorMap.end(), 0);
 
 		const bool extendedAddressing = IsExtendedAddressingUsed(de);
+		const bool isDOS1File = IsDOS1File(de);
 		uint32 sector = de.mFirstSector;
 		while(sector) {
 			if (sector > mTempSectorMap.size())
@@ -784,8 +803,8 @@ void ATDiskFSDOS2::DeleteFile(uintptr key) {
 
 			sectorsToFree.push_back(sector);
 
-			GetSectorDataBytes(mSectorBuffer);
-			sector = GetNextSector(extendedAddressing, fileId, mSectorBuffer);
+			GetSectorDataBytes(isDOS1File, mSectorBuffer);
+			sector = GetNextSector(isDOS1File, extendedAddressing, fileId, mSectorBuffer);
 		}
 	}
 
@@ -807,7 +826,7 @@ void ATDiskFSDOS2::DeleteFile(uintptr key) {
 	mbDirty = true;
 }
 
-void ATDiskFSDOS2::ReadFile(uintptr key, vdfastvector<uint8>& dst) {
+void ATDiskFSDOS2::ReadFile(uint32 key, vdfastvector<uint8>& dst) {
 	VDASSERT(key);
 
 	LoadDirectoryByStart(key >> 6);
@@ -821,6 +840,7 @@ void ATDiskFSDOS2::ReadFile(uintptr key, vdfastvector<uint8>& dst) {
 
 	dst.clear();
 
+	const bool isDOS1File = IsDOS1File(de);
 	const bool extendedAddressing = IsExtendedAddressingUsed(de);
 	while(sector) {
 		if (sector > mTempSectorMap.size())
@@ -834,15 +854,15 @@ void ATDiskFSDOS2::ReadFile(uintptr key, vdfastvector<uint8>& dst) {
 		if (mSectorSize != mpImage->ReadVirtualSector(sector - 1, mSectorBuffer, mSectorSize))
 			throw ATDiskFSException(kATDiskFSError_CorruptedFileSystem);
 
-		const uint8 sectorDataBytes = GetSectorDataBytes(mSectorBuffer);
+		const uint8 sectorDataBytes = GetSectorDataBytes(isDOS1File, mSectorBuffer);
 
 		dst.insert(dst.end(), mSectorBuffer, mSectorBuffer + sectorDataBytes);
 
-		sector = GetNextSector(extendedAddressing, fileId, mSectorBuffer);
+		sector = GetNextSector(isDOS1File, extendedAddressing, fileId, mSectorBuffer);
 	}
 }
 
-uintptr ATDiskFSDOS2::WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len) {
+uint32 ATDiskFSDOS2::WriteFile(uint32 parentKey, const char *filename, const void *src, uint32 len) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
@@ -900,7 +920,7 @@ uintptr ATDiskFSDOS2::WriteFile(uintptr parentKey, const char *filename, const v
 	// check if we should use 16-bit sector addressing
 	bool extFile = mbMyDOS && mVTOCBitmap[0] > 2;
 
-	// write data sectors
+	// write data sectors -- we always use DOS 1 format if this was originally a DOS 1 disk
 	for(uint32 i=0; i<sectorCount; ++i) {
 		uint32 offset = dataBytesPerSector*i;
 		uint32 dataBytes = len - offset;
@@ -919,7 +939,18 @@ uintptr ATDiskFSDOS2::WriteFile(uintptr parentKey, const char *filename, const v
 			mSectorBuffer[sectorSize - 3] = (dirIdx << 2) + (nextSector >> 8);
 
 		mSectorBuffer[sectorSize - 2] = (uint8)nextSector;
-		mSectorBuffer[sectorSize - 1] = dataBytes;
+
+		// For DOS 1.x, the last byte holds either the sector index in the file with bit 7
+		// cleared or the number of bytes in the last sctor with bit 7 set.
+		//
+		// For DOS 2.x/MyDOS, the last byte holds the number of bytes in the sector, up to
+		// either 125 for SD or 253 for DD.
+		if (!mbDOS1)
+			mSectorBuffer[sectorSize - 1] = dataBytes;
+		else if (nextSector)
+			mSectorBuffer[sectorSize - 1] = i & 0x7F;
+		else
+			mSectorBuffer[sectorSize - 1] = dataBytes | 0x80;
 
 		uint32 sector = sectorsToUse[i];
 		mpImage->WriteVirtualSector(sector - 1, mSectorBuffer, sectorSize);
@@ -929,7 +960,7 @@ uintptr ATDiskFSDOS2::WriteFile(uintptr parentKey, const char *filename, const v
 
 	// write directory entry
 	DirEnt& de = mDirectory[dirIdx];
-	de.mFlags = DirEnt::kFlagDOS2 | DirEnt::kFlagInUse;
+	de.mFlags = mbDOS1 ? DirEnt::kFlagInUse : DirEnt::kFlagDOS2 | DirEnt::kFlagInUse;
 
 	if (mbDOS25) {
 		if (highFile)
@@ -948,10 +979,10 @@ uintptr ATDiskFSDOS2::WriteFile(uintptr parentKey, const char *filename, const v
 	mbDirty = true;
 	mbDirectoryDirty = true;
 
-	return dirIdx + 1;
+	return mDirectoryBaseKey + dirIdx;
 }
 
-void ATDiskFSDOS2::RenameFile(uintptr key, const char *filename) {
+void ATDiskFSDOS2::RenameFile(uint32 key, const char *filename) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
@@ -975,7 +1006,7 @@ void ATDiskFSDOS2::RenameFile(uintptr key, const char *filename) {
 	mbDirectoryDirty = true;
 }
 
-void ATDiskFSDOS2::CreateDir(uintptr parentKey, const char *filename) {
+uint32 ATDiskFSDOS2::CreateDir(uint32 parentKey, const char *filename) {
 	if (!mbMyDOS)
 		throw ATDiskFSException(kATDiskFSError_NotSupported);
 
@@ -1047,6 +1078,8 @@ found:
 	// clear first directory sector
 	memset(mSectorBuffer, 0, sizeof mSectorBuffer);
 	mpImage->WriteVirtualSector(start, mSectorBuffer, mSectorSize);
+
+	return mDirectoryBaseKey + dirIdx;
 }
 
 void ATDiskFSDOS2::DecodeDirEnt(DirEnt& de, const uint8 *src) const {
@@ -1116,11 +1149,37 @@ bool ATDiskFSDOS2::IsVisible(const DirEnt& de) const {
 	return true;
 }
 
+bool ATDiskFSDOS2::IsDOS1File(const DirEnt& de) const {
+	return !(de.mFlags & DirEnt::kFlagDOS2);
+}
+
 bool ATDiskFSDOS2::IsExtendedAddressingUsed(const DirEnt& de) const {
 	return mbMyDOS && (de.mFlags & DirEnt::kFlagExtFile);
 }
 
-uint8 ATDiskFSDOS2::GetSectorDataBytes(const uint8 *secBuf) const {
+uint8 ATDiskFSDOS2::GetSectorDataBytes(bool isDOS1File, const uint8 *secBuf) const {
+	// In DOS 1.x, the last byte holds the sector index instead of the byte count for all
+	// but the last sector. However, we can't use the DOS 1 detection for this as DOS 2
+	// can write v2 files onto a DOS 1 disk -- we have to use the flag from the directory.
+	// We also cannot validate the sector index as DOS 1 doesn't either -- which is why
+	// it can almost read DOS 2 files as-is. The sector index can be $7D for all sectors
+	// and neither DOS 1.x won't care.
+	//
+	// The high bit is important as it signals the end of the file, not the sector link --
+	// if the link is 0 and the high bit is not set, DOS 1.x attempts to read sector 0.
+	// This can go unnoticed in BASIC since BASIC does a sized read and thus never causes
+	// DOS 1.x to attempt to read past the end of a DOS 2.x file.
+	if (isDOS1File) {
+		if (!(secBuf[127] & 0x80)) {
+			return 125;
+		} else {
+			if (secBuf[127] > 0xFD)
+				throw ATDiskFSException(kATDiskFSError_CorruptedFileSystem);
+
+			return secBuf[127] & 0x7F;
+		}
+	}
+
 	const uint8 sectorDataBytes = mSectorSize > 128 ? secBuf[mSectorSize - 1] : secBuf[mSectorSize - 1] & 127;
 
 	if (sectorDataBytes > mSectorSize - 3)
@@ -1129,7 +1188,12 @@ uint8 ATDiskFSDOS2::GetSectorDataBytes(const uint8 *secBuf) const {
 	return sectorDataBytes;
 }
 
-uint32 ATDiskFSDOS2::GetNextSector(bool extendedAddressing, uint8 fileId, const uint8 *secBuf) const {
+uint32 ATDiskFSDOS2::GetNextSector(bool isDOS1File, bool extendedAddressing, uint8 fileId, const uint8 *secBuf) const {
+	// On a DOS 1.x file, the file stops if bit 7 is set on the last byte even if
+	// the sector link is 0.
+	if (isDOS1File && (secBuf[127] & 0x80))
+		return 0;
+
 	if (!extendedAddressing) {
 		const uint8 sectorFileId = secBuf[mSectorSize - 3] >> 2;
 
@@ -1359,6 +1423,7 @@ void ATDiskFSDOS2::LoadDirectoryByStart(uint32 directoryStart) {
 			// Recalculate the sector count, since it can be wrong
 			std::fill(mTempSectorMap.begin(), mTempSectorMap.end(), 0);
 
+			const bool isDOS1File = IsDOS1File(de);
 			const bool extendedAddressing = IsExtendedAddressingUsed(de);
 			uint32 sector = de.mFirstSector;
 
@@ -1375,8 +1440,8 @@ void ATDiskFSDOS2::LoadDirectoryByStart(uint32 directoryStart) {
 					if (mSectorSize != mpImage->ReadVirtualSector(sector - 1, secBuf2, mSectorSize))
 						break;
 
-					const uint8 sectorDataBytes = GetSectorDataBytes(secBuf2);
-					sector = GetNextSector(extendedAddressing, fileId, secBuf2);
+					const uint8 sectorDataBytes = GetSectorDataBytes(isDOS1File, secBuf2);
+					sector = GetNextSector(isDOS1File, extendedAddressing, fileId, secBuf2);
 
 					++de.mSectorCount;
 					de.mBytes += sectorDataBytes;
@@ -1388,14 +1453,26 @@ void ATDiskFSDOS2::LoadDirectoryByStart(uint32 directoryStart) {
 
 directory_end:
 	mDirectoryStart = directoryStart;
+
+	// We need to check for the root since we refer to it with a parent starting
+	// sector of 0 rather than the actual location (361).
+	mDirectoryBaseKey = (directoryStart == 361) ? 0 : (directoryStart << 6) + 1;
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
+IATDiskFS *ATDiskFormatImageDOS1(IATDiskImage *image) {
+	vdautoptr<ATDiskFSDOS2> fs(new ATDiskFSDOS2);
+
+	fs->InitNew(image, false, true);
+
+	return fs.release();
+}
+
 IATDiskFS *ATDiskFormatImageDOS2(IATDiskImage *image) {
 	vdautoptr<ATDiskFSDOS2> fs(new ATDiskFSDOS2);
 
-	fs->InitNew(image, false);
+	fs->InitNew(image, false, false);
 
 	return fs.release();
 }
@@ -1403,7 +1480,7 @@ IATDiskFS *ATDiskFormatImageDOS2(IATDiskImage *image) {
 IATDiskFS *ATDiskFormatImageMyDOS(IATDiskImage *image) {
 	vdautoptr<ATDiskFSDOS2> fs(new ATDiskFSDOS2);
 
-	fs->InitNew(image, true);
+	fs->InitNew(image, true, false);
 
 	return fs.release();
 }

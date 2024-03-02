@@ -390,13 +390,24 @@ void VDVideoDisplayMinidriver::SetPixelSharpness(float xfactor, float yfactor) {
 }
 
 void VDVideoDisplayMinidriver::SetCompositor(IVDDisplayCompositor *compositor) {
-	if (compositor)
-		compositor->AddRef();
+	if (mpCompositor == compositor)
+		return;
 
-	if (mpCompositor)
+	auto *dce = GetDisplayCompositionEngine();
+	if (!dce)
+		compositor = nullptr;
+
+	if (mpCompositor) {
+		mpCompositor->DetachCompositor();
 		mpCompositor->Release();
+	}
 
 	mpCompositor = compositor;
+
+	if (compositor) {
+		compositor->AddRef();
+		compositor->AttachCompositor(*dce);
+	}
 }
 
 bool VDVideoDisplayMinidriver::Tick(int id) {

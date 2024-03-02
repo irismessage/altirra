@@ -93,6 +93,7 @@ struct ATDebuggerWatchInfo {
 };
 
 struct ATDebuggerBreakpointInfo {
+	uint32	mTargetIndex;
 	sint32	mNumber;
 	sint32	mAddress;
 	uint32	mLength;
@@ -140,7 +141,8 @@ public:
 
 	virtual bool IsDeferredBreakpointSet(const char *fn, uint32 line) = 0;
 	virtual void ClearAllBreakpoints() = 0;
-	virtual void ToggleBreakpoint(uint16 addr) = 0;
+	virtual bool IsBreakpointAtPC(uint32 addr) const = 0;
+	virtual void ToggleBreakpoint(uint32 addr) = 0;
 	virtual void ToggleAccessBreakpoint(uint16 addr, bool write) = 0;
 	virtual void ToggleSourceBreakpoint(const char *fn, uint32 line) = 0;
 	virtual uint32 SetSourceBreakpoint(const char *fn, uint32 line, ATDebugExpNode *condexp, const char *command, bool continueExecution = false) = 0;

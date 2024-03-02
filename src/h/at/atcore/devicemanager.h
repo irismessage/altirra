@@ -37,51 +37,127 @@ public:
 	virtual void OnDeviceRemoved(uint32 iid, IATDevice *dev, void *iface) = 0;
 };
 
+template<class T>
+class ATDeviceInterfaceIterator {
+public:
+	typedef ptrdiff_t difference_type;
+	typedef T *value_type;
+	typedef value_type* pointer;
+	typedef value_type& reference;
+	typedef std::random_access_iterator_tag iterator_category;
+
+	ATDeviceInterfaceIterator(void *const *p) : mp(p) {}
+
+	bool operator==(const ATDeviceInterfaceIterator& other) const { return mp == other.mp; }
+	bool operator!=(const ATDeviceInterfaceIterator& other) const { return mp != other.mp; }
+	bool operator< (const ATDeviceInterfaceIterator& other) const { return mp <  other.mp; }
+	bool operator<=(const ATDeviceInterfaceIterator& other) const { return mp <= other.mp; }
+	bool operator> (const ATDeviceInterfaceIterator& other) const { return mp >  other.mp; }
+	bool operator>=(const ATDeviceInterfaceIterator& other) const { return mp >= other.mp; }
+
+	ATDeviceInterfaceIterator& operator++() {
+		++mp;
+		return *this;
+	}
+
+	ATDeviceInterfaceIterator& operator--() {
+		--mp;
+		return *this;
+	}
+
+	ATDeviceInterfaceIterator operator++(int) { ATDeviceInterfaceIterator it(*this); ++*this; return it; }
+	ATDeviceInterfaceIterator operator--(int) { ATDeviceInterfaceIterator it(*this); --*this; return it; }
+
+	ATDeviceInterfaceIterator operator+(ptrdiff_t n) { return ATDeviceInterfaceIterator(mp + n); }
+	ATDeviceInterfaceIterator operator-(ptrdiff_t n) { return ATDeviceInterfaceIterator(mp - n); }
+
+	ATDeviceInterfaceIterator& operator+=(ptrdiff_t n) { mp += n; return *this; }
+	ATDeviceInterfaceIterator& operator-=(ptrdiff_t n) { mp -= n; return *this; }
+
+	ptrdiff_t operator-(const ATDeviceInterfaceIterator& other) { return mp - other.mp; }
+
+	T *operator*() const { return (T *)*mp; }
+	T *operator->() const { return (T *)*mp; }
+	T *operator[](ptrdiff_t offset) const { return (T *)mp[offset]; }
+
+private:
+	void *const *mp;
+
+};
+
+template<class T>
+inline ATDeviceInterfaceIterator<T> operator+(ptrdiff_t n, const ATDeviceInterfaceIterator<T>& b) { return b + n; }
+
+template<class T>
+class ATDeviceInterfaceSequence {
+public:
+	typedef size_t size_type;
+	typedef ptrdiff_t difference_type;
+	typedef T* const  value_type;
+	typedef value_type* pointer_type;
+	typedef const value_type* const_pointer_type;
+	typedef value_type& reference_type;
+	typedef const value_type& const_reference_type;
+	typedef ATDeviceInterfaceIterator<T> iterator;
+	typedef ATDeviceInterfaceIterator<T> const_iterator;
+
+	ATDeviceInterfaceSequence(void *const *p, void *const *q) : mp(p), mq(q) {}
+
+	iterator begin() { return iterator(mp); }
+	const_iterator begin() const { return const_iterator(mp); }
+	const_iterator cbegin() const { return const_iterator(mp); }
+	iterator end() { return iterator(mq); }
+	const_iterator end() const { return const_iterator(mq); }
+	const_iterator cend() const { return const_iterator(mq); }
+
+private:
+	void *const *mp;
+	void *const *mq;
+};
+
 class ATDeviceManager {
-	ATDeviceManager(const ATDeviceManager&);
-	ATDeviceManager& operator=(const ATDeviceManager&);
+	ATDeviceManager(const ATDeviceManager&) = delete;
+	ATDeviceManager& operator=(const ATDeviceManager&) = delete;
 public:
 	ATDeviceManager();
 	~ATDeviceManager();
 
+	// Manually increment the change counter; useful when setting
+	// properties, since this bypasses the device manager. If you
+	// are hitting this every frame you are doing it too much.
+	void IncrementChangeCounter() { ++mChangeCounter; }
+	uint32 GetChangeCounter() const { return mChangeCounter; }
+
 	void Init();
 
+	ATDeviceInterfaceSequence<IATDevice> GetDevices(bool nonChildOnly, bool visibleOnly) const {
+		auto ilist = GetInterfaceList(0, nonChildOnly, visibleOnly);
+
+		return ATDeviceInterfaceSequence<IATDevice>(ilist->begin(), ilist->end());
+	}
+
 	template<class T>
-	void ForEachDevice(bool nonChildOnly, const T& fn) const {
-		for(auto it = mDevices.begin(), itEnd = mDevices.end();
-			it != itEnd;
-			++it)
-		{
-			if (!nonChildOnly || !it->mbChild)
-				fn(it->mpDevice);
-		}
+	ATDeviceInterfaceSequence<T> GetInterfaces(bool nonChildOnly, bool visibleOnly) const {
+		auto *ilist = GetInterfaceList(T::kTypeID, nonChildOnly, visibleOnly);
+
+		return ATDeviceInterfaceSequence<T>(ilist->begin(), ilist->end());
 	}
 
-	template<class T_Interface, class T_Fn>
-	void ForEachInterface(bool nonChildOnly, const T_Fn& fn) {
-		for(auto it = mDevices.begin(), itEnd = mDevices.end();
-			it != itEnd;
-			++it)
-		{
-			if (!nonChildOnly || !it->mbChild) {
-				T_Interface *iface = vdpoly_cast<T_Interface *>(it->mpDevice);
+	template<class T>
+	T *GetInterface() { return static_cast<T *>(GetInterface(T::kTypeID)); }
 
-				if (iface)
-					fn(*iface);
-			}
-		}		
-	}
-
-	IATDevice *AddDevice(const char *tag, const ATPropertySet& pset, bool child);
-	void AddDevice(IATDevice *dev, bool child);
+	IATDevice *AddDevice(const char *tag, const ATPropertySet& pset, bool child, bool hidden);
+	void AddDevice(IATDevice *dev, bool child, bool hidden);
 	void RemoveDevice(const char *tag);
 	void RemoveDevice(IATDevice *dev);
-	void RemoveAllDevices();
+	void RemoveAllDevices(bool includeHidden);
 	void ToggleDevice(const char *tag);
 
 	uint32 GetDeviceCount() const;
 	IATDevice *GetDeviceByTag(const char *tag) const;
 	IATDevice *GetDeviceByIndex(uint32 i) const;
+
+	void *GetInterface(uint32 id) const;
 
 	ATDeviceConfigureFn GetDeviceConfigureFn(const char *tag) const;
 
@@ -101,18 +177,27 @@ public:
 	void DeserializeProps(ATPropertySet& props, const wchar_t *str);
 
 protected:
+	typedef vdfastvector<void *> InterfaceList;
+
+	const InterfaceList *GetInterfaceList(uint32 iid, bool rootOnly, bool visibleOnly) const;
 	void Mark(IATDevice *dev, IATDevice *const *pExcludedDevs, size_t numExcludedDevs, vdhashset<IATDevice *>& devSet);
 	void SerializeDevice(IATDevice *dev, VDJSONWriter& writer) const;
 	void DeserializeDevice(IATDeviceParent *parent, const VDJSONValueRef& val);
 	void SerializeProps(const ATPropertySet& props, VDJSONWriter& writer) const;
 	void DeserializeProps(ATPropertySet& props, const VDJSONValueRef& val);
 
+	uint32 mChangeCounter = 0;
+
 	struct DeviceEntry {
 		IATDevice *mpDevice;
+		const char *mpTag;
 		bool mbChild;
+		bool mbHidden;
 	};
 
 	vdfastvector<DeviceEntry> mDevices;
+
+	mutable vdhashmap<uint64, InterfaceList> mInterfaceListCache;
 
 	struct DeviceFactory {
 		const char *mpTag;

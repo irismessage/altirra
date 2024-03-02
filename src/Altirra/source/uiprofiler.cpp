@@ -76,7 +76,7 @@ void ATUIProfilerWindow::OnEvent(ATProfileEvent event) {
 	for(int i=0; i<kATProfileRegionCount; ++i) {
 		vdvector<vdrect32>& v = mRegionRects[i];
 		uint32& regionStart = mRegionRectStarts[i];
-		uint32 n = v.size();
+		uint32 n = (uint32)v.size();
 
 		while(regionStart < n && v[regionStart].left == xdel)
 			++regionStart;
@@ -145,7 +145,7 @@ void ATUIProfilerWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 	VDASSERTCT(vdcountof(kColors) == kATProfileRegionCount);
 
 	for(int i=0; i<kATProfileRegionCount; ++i) {
-		uint32 n = mRegionRects[i].size();
+		uint32 n = (uint32)mRegionRects[i].size();
 		uint32 pos = mRegionRectStarts[i];
 
 		if (pos < n) {
@@ -176,7 +176,7 @@ void ATUIProfilerWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 
 		for(size_t i=0; i<vdcountof(kNames); ++i) {
 			rdr.SetColorRGB(kColors[i]);
-			rdr.FillRect(4, y + (metrics.mAscent + metrics.mDescent)*i, 40, metrics.mAscent + metrics.mDescent);
+			rdr.FillRect(4, y + (metrics.mAscent + metrics.mDescent)*(int)i, 40, metrics.mAscent + metrics.mDescent);
 		}
 
 		tr.SetColorRGB(0xFFFFFF);

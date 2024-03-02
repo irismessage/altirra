@@ -34,17 +34,29 @@ const char *ATDecodeSIOCommand(uint8 device, uint8 command, const uint8 *aux) {
 		switch(command) {
 			case 0x21:	return "Disk: Format";
 			case 0x22:	return "Disk: Format medium-density";
+			case 0x28:	return "Disk: Happy head positioning test recalibrate";
+			case 0x29:	return "Disk: Happy head positioning test seek";
+			case 0x2D:	return "Disk: Happy RPM test";
 			case 0x3F:	return "Disk: Get high-speed index";
+			case 0x48:	return "Disk: Happy drive control";
 			case 0x4E:	return "Disk: Read PERCOM block";
 			case 0x4F:	return "Disk: Write PERCOM block";
 			case 0x50:	return "Disk: Write sector";
+			case 0x51:	return "Disk: Quiet";
 			case 0x52:	return "Disk: Read sector";
 			case 0x53:	return "Disk: Get status";
+			case 0x54:	return "Disk: Happy RAM test";
 			case 0x57:	return "Disk: Write sector with verify";
+			case 0x58:	return "Disk: Execute code (Indus GT)";
 			case 0x66:	return "Disk: Format skewed";
+
+			case 0x70:	return "Disk: Write sector (Happy high speed)";
+			case 0x72:	return "Disk: Read sector (Happy high speed)";
+			case 0x77:	return "Disk: Write sector with verify (Happy high speed)";
 
 			case 0xA1:	return "Disk: Format with high-speed skew";
 			case 0xA2:	return "Disk: Format medium-density (high speed)";
+			case 0xA3:	return "Disk: Format boot tracks with normal skew (Synchromesh)";
 			case 0xD0:	return "Disk: Write sector (high speed)";
 			case 0xD2:	return "Disk: Read sector (high speed)";
 			case 0xD3:	return "Disk: Get status (high speed)";

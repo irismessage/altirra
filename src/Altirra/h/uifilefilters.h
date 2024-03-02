@@ -25,6 +25,7 @@ extern const wchar_t g_ATUIFileFilter_LoadState[];
 extern const wchar_t g_ATUIFileFilter_SaveState[];
 extern const wchar_t g_ATUIFileFilter_LoadCartridge[];
 extern const wchar_t g_ATUIFileFilter_LoadTape[];
+extern const wchar_t g_ATUIFileFilter_SaveTape[];
 extern const wchar_t g_ATUIFileFilter_LoadSAP[];
 extern const wchar_t g_ATUIFileFilter_SaveXEX[];
 

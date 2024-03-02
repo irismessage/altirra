@@ -49,8 +49,6 @@ class ATMemoryManager;
 class ATMMUEmulator;
 class ATPBIManager;
 class ATSIOManager;
-class ATKMKJZIDE;
-class ATSIDEEmulator;
 class ATUltimate1MBEmulator;
 class ATHLEBasicLoader;
 class ATHLEProgramLoader;
@@ -67,6 +65,8 @@ class IATDebugTarget;
 class IATDevice;
 struct ATCPUHookInitNode;
 
+enum ATMediaWriteMode : uint8;
+
 enum ATMemoryMode : uint32 {
 	kATMemoryMode_48K,
 	kATMemoryMode_52K,
@@ -82,6 +82,7 @@ enum ATMemoryMode : uint32 {
 	kATMemoryMode_40K,
 	kATMemoryMode_320K_Compy,
 	kATMemoryMode_576K_Compy,
+	kATMemoryMode_256K,
 	kATMemoryModeCount
 };
 
@@ -121,19 +122,6 @@ enum ATKernelMode {
 	kATKernelMode_XL,
 	kATKernelMode_5200,
 	kATKernelModeCount
-};
-
-enum ATIDEHardwareMode {
-	kATIDEHardwareMode_None,
-	kATIDEHardwareMode_MyIDE_D1xx,
-	kATIDEHardwareMode_MyIDE_D5xx,
-	kATIDEHardwareMode_KMKJZ_V1,
-	kATIDEHardwareMode_KMKJZ_V2,
-	kATIDEHardwareMode_SIDE,
-	kATIDEHardwareMode_MyIDE_V2_D5xx,
-	kATIDEHardwareMode_SIDE2,
-	kATIDEHardwareMode_MyIDE_V2Updated,
-	kATIDEHardwareModeCount
 };
 
 enum ATStorageId {
@@ -176,14 +164,11 @@ class ATVBXEEmulator;
 class ATCPUProfiler;
 class ATCPUVerifier;
 class ATCPUHeatMap;
-class ATIDEEmulator;
-class ATMyIDEEmulator;
 class IATAudioOutput;
 class ATLightPenPort;
 class ATCheatEngine;
 class ATMMUEmulator;
 class ATAudioMonitor;
-class IATPBIDevice;
 class IATVirtualScreenHandler;
 struct ATCPUTimestampDecoder;
 
@@ -207,16 +192,13 @@ struct ATStateLoadContext {
 };
 
 struct ATLoadContext {
-	ATLoadType mLoadType;
-	ATCartLoadContext *mpCartLoadContext;
-	ATStateLoadContext *mpStateLoadContext;
-	int mLoadIndex;
-
-	ATLoadContext()
-		: mLoadType(kATLoadType_Other)
-		, mpCartLoadContext(NULL)
-		, mpStateLoadContext(NULL)
-		, mLoadIndex(-1) {}
+	ATLoadType mLoadType = kATLoadType_Other;
+	ATCartLoadContext *mpCartLoadContext = nullptr;
+	ATStateLoadContext *mpStateLoadContext = nullptr;
+	int mLoadIndex = -1;
+	bool mbReturnOnModeIncompatibility = false;
+	bool mbModeComputerRequired = false;
+	bool mbMode5200Required = false;
 };
 
 class ATSimulator final : ATCPUEmulatorCallbacks,
@@ -272,13 +254,9 @@ public:
 	ATVBXEEmulator *GetVBXE() { return mpVBXE; }
 	ATCartridgeEmulator *GetCartridge(uint32 unit) { return mpCartridge[unit]; }
 	IATUIRenderer *GetUIRenderer() { return mpUIRenderer; }
-	ATIDEEmulator *GetIDEEmulator() { return mpIDE; }
 	IATAudioOutput *GetAudioOutput() { return mpAudioOutput; }
 	ATAudioSyncMixer *GetAudioSyncMixer() { return mpAudioSyncMixer; }
 	ATLightPenPort *GetLightPenPort() { return mpLightPen; }
-	ATKMKJZIDE *GetKMKJZIDE() { return mpKMKJZIDE; }
-	ATSIDEEmulator *GetSIDE() { return mpSIDE; }
-	ATMyIDEEmulator *GetMyIDE() { return mpMyIDE; }
 	ATUltimate1MBEmulator *GetUltimate1MB() { return mpUltimate1MB; }
 	IATVirtualScreenHandler *GetVirtualScreenHandler() { return mpVirtualScreenHandler; }
 	ATIRQController *GetIRQController() { return &mIRQController; }
@@ -301,12 +279,13 @@ public:
 	uint64 GetActualKernelId() const { return mActualKernelId; }
 	uint64 GetBasicId() const { return mBasicId; }
 	ATHardwareMode GetHardwareMode() const { return mHardwareMode; }
-	bool IsDiskSIOPatchEnabled() const { return mbDiskSIOPatchEnabled; }
+	bool IsDiskSIOPatchEnabled() const;
 	bool IsDiskSIOOverrideDetectEnabled() const { return mbDiskSIOOverrideDetectEnabled; }
 	bool IsDiskAccurateTimingEnabled() const;
 	bool IsDiskSectorCounterEnabled() const { return mbDiskSectorCounterEnabled; }
 	bool IsCassetteSIOPatchEnabled() const { return mbCassetteSIOPatchEnabled; }
 	bool IsCassetteAutoBootEnabled() const { return mbCassetteAutoBootEnabled; }
+	bool IsCassetteRandomizedStartEnabled() const { return mbCassetteRandomizedStartEnabled; }
 	bool IsFPPatchEnabled() const { return mbFPPatchEnabled; }
 	bool IsBASICEnabled() const { return mbBASICEnabled; }
 	bool IsROMAutoReloadEnabled() const { return mbROMAutoReloadEnabled; }
@@ -314,7 +293,6 @@ public:
 	bool IsDualPokeysEnabled() const { return mbDualPokeys; }
 	bool IsVBXESharedMemoryEnabled() const { return mbVBXESharedMemory; }
 	bool IsVBXEAltPageEnabled() const { return mbVBXEUseD7xx; }
-	ATIDEHardwareMode GetIDEHardwareMode() const { return mIDEHardwareMode; }
 
 	bool GetDiskBurstTransfersEnabled() const;
 	void SetDiskBurstTransfersEnabled(bool enabled);
@@ -326,6 +304,12 @@ public:
 	bool HasCIODevice(char c) const;
 	bool GetCIOPatchEnabled(char c) const;
 	void SetCIOPatchEnabled(char c, bool enabled) const;
+	
+	bool IsSIOPatchEnabled() const;
+	void SetSIOPatchEnabled(bool enable);
+
+	bool IsPBIPatchEnabled() const;
+	void SetPBIPatchEnabled(bool enable);
 
 	bool GetDeviceSIOPatchEnabled() const;
 	void SetDeviceSIOPatchEnabled(bool enable) const;
@@ -382,6 +366,7 @@ public:
 	void SetDiskSectorCounterEnabled(bool enable);
 	void SetCassetteSIOPatchEnabled(bool enable);
 	void SetCassetteAutoBootEnabled(bool enable);
+	void SetCassetteRandomizedStartEnabled(bool enable);
 	void SetFPPatchEnabled(bool enable);
 	void SetBASICEnabled(bool enable);
 	void SetROMAutoReloadEnabled(bool enable);
@@ -426,34 +411,33 @@ public:
 	void ColdReset();
 	void WarmReset();
 	void Resume();
+	void ResumeSingleCycle();
 	void Suspend();
 	void Pause();
+
+	void FlushDeferredEvents();
 
 	void GetDirtyStorage(vdfastvector<ATStorageId>& ids, ATStorageId mediaId = kATStorageId_None) const;
 	bool IsStorageDirty(ATStorageId mediaId) const;
 	bool IsStoragePresent(ATStorageId mediaId) const;
+	void SaveStorage(ATStorageId storageId, const wchar_t *path);
 
 	void SwapDrives(int src, int dst);
 	void RotateDrives(int count, int delta);
 
 	void UnloadAll();
-	bool Load(const wchar_t *path, bool vrw, bool rw, ATLoadContext *loadCtx);
-	bool Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, bool vrw, bool rw, ATLoadContext *loadCtx);
+	bool Load(const wchar_t *path, ATMediaWriteMode writeMode, ATLoadContext *loadCtx);
+	bool Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, ATMediaWriteMode writeMode, ATLoadContext *loadCtx);
 	void LoadProgram(const wchar_t *symbolHintPath, IVDRandomAccessStream& stream, bool basic);
 
 	bool IsCartridgeAttached(uint32 index) const;
 
 	void UnloadCartridge(uint32 index);
 	bool LoadCartridge(uint32 index, const wchar_t *s, ATCartLoadContext *loadCtx);
-	bool LoadCartridge(uint32 index, const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream&, ATCartLoadContext *loadCtx);
+	bool LoadCartridge(uint32 index, const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream&, ATCartLoadContext *loadCtx, ATLoadContext *loadCtx2);
 	void LoadCartridge5200Default();
 	void LoadNewCartridge(int mode);
 	void LoadCartridgeBASIC();
-
-	void LoadIDE(ATIDEHardwareMode mode);
-	void LoadIDEImage(bool write, bool fast, uint32 cylinders, uint32 heads, uint32 sectors, const wchar_t *path);
-	void UnloadIDEImage();
-	void UnloadIDE();
 
 	enum AdvanceResult {
 		kAdvanceResult_Stopped,
@@ -465,6 +449,7 @@ public:
 	AdvanceResult Advance(bool dropFrame);
 
 	uint32 GetCpuCycleCounter() const { return const_cast<ATSimulator *>(this)->CPUGetUnhaltedCycle(); }
+	uint32 GetTimestamp() const;
 	ATCPUTimestampDecoder GetTimestampDecoder() const;
 
 	uint8 DebugReadByte(uint16 address) const;
@@ -487,7 +472,6 @@ public:
 	bool LoadState(ATSaveStateReader& reader, ATStateLoadContext *context);
 	void SaveState(ATSaveStateWriter& writer);
 
-	void UpdateCartEnable();
 	void UpdateXLCartridgeLine();
 	void UpdateKeyboardPresentLine();
 	void UpdateForcedSelfTestLine();
@@ -503,19 +487,12 @@ private:
 	void LoadStateMemoryArch(ATSaveStateReader& reader);
 
 	bool UpdateKernel(bool trackChanges, bool forceReload = false);
-	bool ReloadIDEFirmware();
 	bool ReloadU1MBFirmware();
 	void InitMemoryMap();
 	void ShutdownMemoryMap();
 
-	ATSimulatorEvent VDNOINLINE AdvancePhantomDMA(int x);
-
-	static sint32 RT8ReadByte(void *thisptr0, uint32 addr);
-	static bool RT8WriteByte(void *thisptr0, uint32 addr, uint8 value);
-
 	uint32 CPUGetCycle() override;
 	uint32 CPUGetUnhaltedCycle() override;
-	uint32 CPUGetTimestamp() override;
 	void CPUGetHistoryTimes(ATCPUHistoryEntry * VDRESTRICT he) const override;
 
 	uint8 AnticReadByte(uint32 address);
@@ -548,14 +525,15 @@ private:
 	void VBXEAssertIRQ();
 	void VBXENegateIRQ();
 
-	void ClearPokeyTimersOnDiskIo();
-
 	void ReinitHookPage();
 	void SetupHeldButtons();
 
 	void InitDevice(IATDevice& dev);
 
+	void ResetMemoryBuffer(void *dst, size_t len, uint32 seed);
+
 	bool mbRunning;
+	bool mbRunSingleCycle = false;
 	bool mbPaused;
 	bool mbBreak;
 	bool mbBreakOnFrameEnd;
@@ -565,11 +543,11 @@ private:
 	ATMemoryClearMode mMemoryClearMode;
 	bool mbFloatingIoBus;
 	bool mbRandomFillEXEEnabled;
-	bool mbDiskSIOPatchEnabled;
 	bool mbDiskSIOOverrideDetectEnabled;
 	bool mbDiskSectorCounterEnabled;
 	bool mbCassetteSIOPatchEnabled;
 	bool mbCassetteAutoBootEnabled;
+	bool mbCassetteRandomizedStartEnabled;
 	bool mbFPPatchEnabled;
 	bool mbBASICEnabled;
 	bool mbROMAutoReloadEnabled;
@@ -584,7 +562,6 @@ private:
 	bool mbMapRAM;
 	bool mbShadowROM;
 	bool mbShadowCartridge;
-	ATIDEHardwareMode mIDEHardwareMode;
 	int mBreakOnScanline;
 
 	int		mStartupDelay;
@@ -625,8 +602,6 @@ private:
 	ATDiskEmulator	*mpDiskDrives[15];
 	ATAudioMonitor	*mpAudioMonitors[2];
 	ATCassetteEmulator	*mpCassette;
-	ATIDEEmulator	*mpIDE;
-	ATMyIDEEmulator	*mpMyIDE;
 	IATJoystickManager	*mpJoysticks;
 	ATCartridgeEmulator	*mpCartridge[2];
 	ATInputManager	*mpInputManager;
@@ -638,8 +613,6 @@ private:
 	void *mpVBXEMemory;
 	ATCheatEngine *mpCheatEngine;
 	IATUIRenderer *mpUIRenderer;
-	ATKMKJZIDE *mpKMKJZIDE;
-	ATSIDEEmulator *mpSIDE;
 	ATUltimate1MBEmulator *mpUltimate1MB;
 	IATVirtualScreenHandler *mpVirtualScreenHandler;
 
@@ -692,6 +665,8 @@ private:
 
 	class DeviceChangeCallback;
 	DeviceChangeCallback *mpDeviceChangeCallback;
+
+	vdblock<uint8> mAxlonMemory;
 
 	////////////////////////////////////
 	VDALIGN(4)	uint8	mKernelROM[0x4000];

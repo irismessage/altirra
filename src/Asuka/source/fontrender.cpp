@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 
 #define WINVER 0x0500
 #define _WIN32_WINNT 0x0500
@@ -127,7 +127,6 @@ void tool_fontrender(const vdfastvector<const char *>& args, const vdfastvector<
 
 	for(int i=0; i<256; ++i) {
 		WCHAR c = i;
-		SIZE sz = {};
 
 		ExtTextOutW(hdc, (maxWidth + 1) * (i & 15), (maxHeight + 1) * (i >> 4), ETO_OPAQUE | ETO_IGNORELANGUAGE, NULL, &c, 1, NULL);
 	}

@@ -21,10 +21,10 @@
 #include <vd2/system/filesys.h>
 #include <vd2/system/thread.h>
 #include <vd2/Dita/services.h>
+#include <at/atcore/progress.h>
 #include <at/atnativeui/dialog.h>
 #include "firmwaremanager.h"
 #include "firmwaredetect.h"
-#include "uiprogress.h"
 
 void ATUIScanForFirmware(VDGUIHandle hParent, ATFirmwareManager& fwmgr) {
 	const VDStringW& path = VDGetDirectory('FMWR', hParent, L"Select folder to scan for firmware");
@@ -32,8 +32,8 @@ void ATUIScanForFirmware(VDGUIHandle hParent, ATFirmwareManager& fwmgr) {
 	if (path.empty())
 		return;
 
-	ATUIProgress progress;
-	progress.InitF(hParent, 100, NULL, L"Scanning for firmware");
+	ATProgress progress;
+	progress.InitF(100, NULL, L"Scanning for firmware");
 
 	VDDirectoryIterator it(VDMakePath(path.c_str(), L"*.*").c_str());
 	vdvector<VDStringW> pathsToScan;
@@ -62,7 +62,7 @@ void ATUIScanForFirmware(VDGUIHandle hParent, ATFirmwareManager& fwmgr) {
 	vdvector<ATFirmwareInfo> detectedFirmwares;
 
 	for(size_t i=0; i<n; ++i) {
-		progress.Update(10 + (i*90)/n);
+		progress.Update((uint32)(10 + (i*90)/n));
 		const VDStringW& fullPath = pathsToScan[i];
 		try {
 			VDFile f(fullPath.c_str());
@@ -74,9 +74,9 @@ void ATUIScanForFirmware(VDGUIHandle hParent, ATFirmwareManager& fwmgr) {
 			uint32 size32 = (uint32)size;
 
 			vdblock<char> buf(size32);
-			f.read(buf.data(), buf.size());
+			f.read(buf.data(), (long)buf.size());
 
-			if (ATFirmwareAutodetect(buf.data(), buf.size(), info)) {
+			if (ATFirmwareAutodetect(buf.data(), (uint32)buf.size(), info)) {
 				ATFirmwareInfo& info2 = detectedFirmwares.push_back();
 
 				vdmove(info2, info);

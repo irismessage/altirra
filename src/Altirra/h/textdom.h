@@ -142,7 +142,7 @@ namespace nsVDTextDOM {
 
 		void SetCallback(IDocumentCallback *pCB);
 
-		int GetParagraphCount() const { return mParagraphs.size(); }
+		int GetParagraphCount() const { return (int)mParagraphs.size(); }
 
 		const Paragraph *GetParagraph(int para) { return (unsigned)para < mParagraphs.size() ? mParagraphs[para] : NULL; }
 		int GetParagraphFromPos(int pos);

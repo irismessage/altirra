@@ -527,8 +527,6 @@ LRESULT ATNetSockWorker::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 		return 0;
 	} else if (msg == MYWM_UDP_SOCKET) {
 		const SOCKET sock = (SOCKET)wParam;
-		const UINT event = LOWORD(lParam);
-		const UINT error = HIWORD(lParam);
 
 		UdpSocketMap::iterator it = mUdpSocketMap.find(sock);
 

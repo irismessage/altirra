@@ -51,23 +51,11 @@
 	#if defined(_MSC_VER)
 		#define VD_COMPILER_MSVC	_MSC_VER
 
-		#if _MSC_VER >= 1400
-			#define VD_COMPILER_MSVC_VC8		1
-			#define VD_COMPILER_MSVC_VC8_OR_LATER 1
-
-			#if _MSC_FULL_VER == 140040310
-				#define VD_COMPILER_MSVC_VC8_PSDK 1
-			#elif _MSC_FULL_VER == 14002207
-				#define VD_COMPILER_MSVC_VC8_DDK 1
-			#endif
-
-		#elif _MSC_VER >= 1310
-			#define VD_COMPILER_MSVC_VC71	1
-		#elif _MSC_VER >= 1300
-			#define VD_COMPILER_MSVC_VC7		1
-		#elif _MSC_VER >= 1200
-			#define VD_COMPILER_MSVC_VC6		1
+		#if _MSC_VER < 1600
+			#error Visual Studio 2010 or newer is required.
 		#endif
+
+		#define VD_COMPILER_MSVC_VC8_OR_LATER 1
 	#elif defined(__GNUC__)
 		#define VD_COMPILER_GCC
 		#if defined(__MINGW32__) || defined(__MINGW64__)
@@ -114,10 +102,7 @@
 		typedef int16_t				int16;
 		typedef int8_t				int8;
 	#else
-		#if defined(_MSC_VER)
-			typedef signed __int64		sint64;
-			typedef unsigned __int64	uint64;
-		#elif defined(__GNUC__)
+		#if defined(__GNUC__)
 			typedef signed long long	sint64;
 			typedef unsigned long long	uint64;
 		#endif
@@ -138,13 +123,8 @@
 		typedef sint64 sintptr;
 		typedef uint64 uintptr;
 	#else
-		#if _MSC_VER >= 1310
-			typedef __w64 sint32 sintptr;
-			typedef __w64 uint32 uintptr;
-		#else
-			typedef sint32 sintptr;
-			typedef uint32 uintptr;
-		#endif
+		typedef __w64 sint32 sintptr;
+		typedef __w64 uint32 uintptr;
 	#endif
 #endif
 
@@ -175,73 +155,7 @@ typedef	struct __VDGUIHandle *VDGUIHandle;
 //
 ///////////////////////////////////////////////////////////////////////////
 
-#if defined(VD_COMPILER_MSVC) && (VD_COMPILER_MSVC < 1300 || (defined(VD_COMPILER_MSVC_VC8_PSDK) || defined(VD_COMPILER_MSVC_VC8_DDK)))
-#define new_nothrow new
-#else
 #define new_nothrow new(std::nothrow)
-#endif
-
-///////////////////////////////////////////////////////////////////////////
-//
-//	STL fixes
-//
-///////////////////////////////////////////////////////////////////////////
-
-#if defined(VD_COMPILER_MSVC_VC6) || defined(VD_COMPILER_MSVC_VC8_DDK) || defined(VD_COMPILER_MSVC_VC8_PSDK)
-	// The VC6 STL was deliberately borked to avoid conflicting with
-	// Windows min/max macros.  We work around this bogosity here.  Note
-	// that NOMINMAX must be defined for these to compile properly.  Also,
-	// there is a bug in the VC6 compiler that sometimes causes long
-	// lvalues to "promote" to int, causing ambiguous override errors.
-	// To avoid this, always explicitly declare which type you are using,
-	// i.e. min<int>(x,0).  None of this is a problem with VC7 or later.
-	namespace std {
-		template<class T>
-		inline const T& min(const T& x, const T& y) {
-			return _cpp_min(x, y);
-		}
-
-		template<class T>
-		inline const T& max(const T& x, const T& y) {
-			return _cpp_max(x, y);
-		}
-	};
-#endif
-
-///////////////////////////////////////////////////////////////////////////
-//
-//	compiler fixes
-//
-///////////////////////////////////////////////////////////////////////////
-
-#if defined(VD_COMPILER_MSVC) && (VD_COMPILER_MSVC < 1400 || (defined(VD_COMPILER_MSVC_VC8_PSDK) || defined(VD_COMPILER_MSVC_VC8_DDK)))
-	inline int vswprintf(wchar_t *dst, size_t bufsize, const wchar_t *format, va_list val) {
-		return _vsnwprintf(dst, bufsize, format, val);
-	}
-
-	inline int swprintf(wchar_t *dst, size_t bufsize, const wchar_t *format, ...) {
-		va_list val;
-
-		va_start(val, format);
-		int r = vswprintf(dst, bufsize, format, val);
-		va_end(val);
-
-		return r;
-	}
-
-	#define _strdup strdup
-	#define _stricmp stricmp
-	#define _strnicmp strnicmp
-	#define _wcsdup wcsdup
-	#define _wcsicmp wcsicmp
-	#define _wcsnicmp wcsnicmp
-#endif
-
-#if defined(VD_COMPILER_MSVC) && VD_COMPILER_MSVC < 1400
-	#define vdfor if(0);else for
-#else
-	#define vdfor for
-#endif
 
 ///////////////////////////////////////////////////////////////////////////
 //
@@ -253,12 +167,7 @@ typedef	struct __VDGUIHandle *VDGUIHandle;
 	#define VDINTERFACE			__declspec(novtable)
 	#define VDNORETURN			__declspec(noreturn)
 	#define VDPUREFUNC
-
-	#if VD_COMPILER_MSVC >= 1400
-		#define VDRESTRICT		__restrict
-	#else
-		#define VDRESTRICT
-	#endif
+	#define VDRESTRICT			__restrict
 
 	#define VDNOINLINE			__declspec(noinline)
 	#define VDFORCEINLINE		__forceinline
@@ -297,11 +206,7 @@ extern VDAssertResult VDAssertPtr(const char *exp, const char *file, int line);
 extern void VDDebugPrint(const char *format, ...);
 
 #if defined(_MSC_VER)
-	#if _MSC_VER >= 1300
-		#define VDBREAK		__debugbreak()
-	#else
-		#define VDBREAK		__asm { int 3 }
-	#endif
+	#define VDBREAK		__debugbreak()
 #elif defined(__GNUC__)
 	#define VDBREAK		__asm__ volatile ("int3" : : )
 #else
@@ -375,6 +280,26 @@ extern void VDDebugPrint(const char *format, ...);
 
 #define VDDEBUG2			VDDebugPrint
 
+#if defined(_MSC_VER) && _MSC_VER < 1900
+	#define vdnoexcept			throw()
+	#define vdnoexcept_(cond)
+	#define	vdnoexcept_false
+	#define vdnoexcept_true		throw()
+#elif defined(_MSC_VER) && _MSC_VER >= 1900 && defined(_M_IX86)
+	// The VC++ x86 compiler has an awful implementation of noexcept that incurs
+	// major runtime costs, so we force the non-standard throw() extension
+	// instead.
+	#define vdnoexcept			throw()
+	#define vdnoexcept_(cond)	noexcept(cond)
+	#define	vdnoexcept_false	noexcept(false)
+	#define vdnoexcept_true		throw()
+#else
+	#define vdnoexcept			noexcept
+	#define vdnoexcept_(cond)	noexcept(cond)
+	#define vdnoexcept_false	noexcept(false)
+	#define vdnoexcept_true		noexcept(true)
+#endif
+
 // TODO macros
 //
 // These produce a diagnostic during compilation that indicate a TODO for
@@ -434,10 +359,6 @@ extern void VDDebugPrint(const char *format, ...);
 // This avoids the conversion operator but unfortunately usually generates
 // an actual loop in the output.
 
-#if defined(VD_COMPILER_MSVC) && (VD_COMPILER_MSVC < 1400 || defined(VD_COMPILER_MSVC_VC8_DDK))
-#define vdobjectscope(object_def) if(object_def) VDNEVERHERE; else
-#else
 #define vdobjectscope(object_def) switch(object_def) case 0: default:
-#endif
 
 #endif

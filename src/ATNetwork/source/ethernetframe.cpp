@@ -152,3 +152,15 @@ uint32 ATIPv4EncodeHeader(uint8 *data, uint32 len, const ATIPv4HeaderInfo& srcIn
 
 	return 22;
 }
+
+bool ATIPv6DecodeHeader(const uint8 *data, uint32 len) {
+	// minimum IP header length is 20 bytes (5 dwords)
+	if (len < 20)
+		return false;
+
+	// check that it's IPv6
+	if ((data[0] & 0xf0) != 0x60)
+		return false;
+
+	return true;
+}

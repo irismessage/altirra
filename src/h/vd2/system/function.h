@@ -29,6 +29,11 @@
 #include <functional>
 #include <cstddef>
 
+#ifdef _MSC_VER
+	#pragma warning(push)
+	#pragma warning(disable: 4521 4522)	// multiple copy/assignment constructors defined
+#endif
+
 //////////////////////////////////////////////////////////////////////////////
 // vdfunction
 //
@@ -49,33 +54,34 @@
 class vdfuncbase;
 
 struct vdfunctraits {
-	void (*mpDestroy)(const vdfuncbase& obj);
-	void (*mpCopy)(vdfuncbase& dst, const vdfuncbase& src);
-	void (*mpMove)(vdfuncbase& dst, vdfuncbase&& src);
+	void (*mpDestroy)(void *obj);
+	void (*mpCopy)(void *dst, const void *src);
+	void (*mpMove)(void *dst, void *src);
 };
 
 template<class F>
 struct vdfunc_ti {
-	static void destroy(const vdfuncbase& obj);
-	static void copy(vdfuncbase& dst, const vdfuncbase& src);
-	static void move(vdfuncbase& dst, vdfuncbase&& src);
+	static void destroy(void *dst);
+	static void copy(void *dst, const void *src);
+	static void move(void *dst, void *src);
 
 	static const vdfunctraits sObject;
 };
 
 template<class F>
-void vdfunc_ti<F>::destroy(const vdfuncbase& obj) {
-	((F *)&obj.mData)->~F();
+void vdfunc_ti<F>::destroy(void *dst) {
+	((F *)dst)->~F();
 }
 
 template<class F>
-void vdfunc_ti<F>::copy(vdfuncbase& dst, const vdfuncbase& src) {
-	new(&dst.mData) F(*(F *)&src.mData);
+void vdfunc_ti<F>::copy(void *dst, const void *src) {
+	new(dst) F(*(F *)src);
 }
 
 template<class F>
-void vdfunc_ti<F>::move(vdfuncbase& dst, vdfuncbase&& src) {
-	new(&dst.mData) F(std::move(*(F *)&src.mData));
+void vdfunc_ti<F>::move(void *dst, void *src) {
+	new(dst) F(std::move(*(F *)src));
+	((F *)src)->~F();
 }
 
 template<class F>
@@ -83,20 +89,20 @@ const vdfunctraits vdfunc_ti<F>::sObject = { destroy, copy, move };
 
 template<class F>
 struct vdfunc_th {
-	static void destroy(const vdfuncbase& obj);
-	static void copy(vdfuncbase& dst, const vdfuncbase& src);
+	static void destroy(void *obj);
+	static void copy(void *dst, const void *src);
 
 	static const vdfunctraits sObject;
 };
 
 template<class F>
-void vdfunc_th<F>::destroy(const vdfuncbase& obj) {
-	delete (F *)obj.mData.p[0];
+void vdfunc_th<F>::destroy(void *dst) {
+	delete (F *)*(void **)dst;
 }
 
 template<class F>
-void vdfunc_th<F>::copy(vdfuncbase& dst, const vdfuncbase& src) {
-	dst.mData.p[0] = new F(*(F *)src.mData.p[0]);
+void vdfunc_th<F>::copy(void *dst, const void *src) {
+	*(void **)dst = new F(*(F *)*(void *const *)src);
 }
 
 template<class F>
@@ -120,6 +126,14 @@ public:
 
 	inline operator bool() const;
 
+	void rebind(const vdfuncbase& src) {
+		operator=(src);
+	}
+
+	void rebind(vdfuncbase&& src) {
+		operator=(std::forward<vdfuncbase>(src));
+	}
+
 protected:
 	void swap(vdfuncbase& other);
 	void clear();
@@ -138,17 +152,18 @@ inline vdfuncbase::vdfuncbase(vdfuncbase&& src)
 	, mData(src.mData)
 	, mpTraits(src.mpTraits)
 {
-	src.mpTraits = nullptr;
-	src.mpFn = nullptr;
 
-	if (mpTraits->mpMove)
-		mpTraits->mpMove(*this, std::move(src));
+	if (mpTraits && mpTraits->mpMove)
+		mpTraits->mpMove(mData.p, src.mData.p);
+
+	src.mpFn = nullptr;
+	src.mpTraits = nullptr;
 }
 
 inline vdfuncbase::~vdfuncbase() {
 	clear();
 	if (mpTraits)
-		mpTraits->mpDestroy(*this);
+		mpTraits->mpDestroy(mData.p);
 }
 
 inline vdfuncbase::operator bool() const {
@@ -184,18 +199,18 @@ struct vdfunc_construct<0> {		// trivial
 
 template<>
 struct vdfunc_construct<1> {		// direct (requires copy/destruction)
-	template<class F>
-	static void go(vdfuncbase& func, const F& f) {
-		new(&func.mData) F(f);
+	template<class F, class Arg>
+	static void go(vdfuncbase& func, Arg&& f) {
+		new(&func.mData) F(std::forward<Arg>(f));
 		func.mpTraits = &vdfunc_ti<F>::sObject;
 	}
 };
 
 template<>
 struct vdfunc_construct<2> {		// indirect (uses heap)
-	template<class F>
-	static void go(vdfuncbase& func, const F& f) {
-		func.mData.p[0] = new F(f);
+	template<class F, class Arg>
+	static void go(vdfuncbase& func, Arg&& f) {
+		func.mData.p[0] = new F(std::forward<Arg>(f));
 		func.mpTraits = &vdfunc_th<F>::sObject;
 	}
 };
@@ -209,14 +224,34 @@ public:
 
 	vdfunction() = default;
 	vdfunction(std::nullptr_t) {}
+	vdfunction(vdfunction&& src) : vdfuncbase(static_cast<vdfuncbase&&>(src)) {}
+	vdfunction(vdfunction& src) : vdfuncbase(src) {}	// needed to avoid invoking (F&&)
 	vdfunction(const vdfunction& src) : vdfuncbase(src) {}
 	template<class F> vdfunction(std::reference_wrapper<F> f);
-	template<class F> vdfunction(F f);
+	template<class F> vdfunction(F&& f);
 
 	vdfunction& operator=(std::nullptr_t) { vdfuncbase::clear(); return *this; }
 
+	vdfunction& operator=(vdfunction&& src) {
+		vdfuncbase::operator=(static_cast<vdfuncbase&&>(src));
+		return *this;
+	}
+
+	vdfunction& operator=(vdfunction& src) {
+		vdfuncbase::operator=(src);
+		return *this;
+	}
+
+	vdfunction& operator=(const vdfunction& src) {
+		vdfuncbase::operator=(src);
+		return *this;
+	}
+
 	template<class F>
-	vdfunction& operator=(F&& f) { vdfunction(std::forward<F>(f)).swap(*this); return *this; }
+	vdfunction& operator=(F&& f) {
+		vdfuncbase::operator=(std::move(vdfunction(std::forward<F>(f))));
+		return *this;
+	}
 
 	template<class F>
 	vdfunction& operator=(std::reference_wrapper<F> f) { vdfunction(f).swap(*this); }
@@ -254,14 +289,23 @@ vdfunction<R(Args...)>::vdfunction(std::reference_wrapper<F> f) {
 
 template<class R, class... Args>
 template<class F>
-vdfunction<R(Args...)>::vdfunction(F f) {
-	typedef decltype(f((*(std::remove_reference<Args>::type *)nullptr)...)) validity_test;
+vdfunction<R(Args...)>::vdfunction(F&& f) {
+	typedef decltype(f((*(typename std::remove_reference<Args>::type *)nullptr)...)) validity_test;
+	(void)sizeof(validity_test*);
 
-	vdfunc_construct<vdfunc_mode<F>::value>::go(*this, f);
-	const auto fn = std::conditional<vdfunc_mode<F>::value == 2, vdfunc_ri, vdfunc_rd>::type::template go<R, F, Args...>;
+	typedef typename std::decay<F>::type BaseF;
+	vdfunc_construct<vdfunc_mode<BaseF>::value>::template go<BaseF>(*this, std::forward<F>(f));
+
+	// We may get invoked with F being a reference, which we must strip to
+	// properly instantiate the worker templates.
+	const auto fn = std::conditional<vdfunc_mode<BaseF>::value == 2, vdfunc_ri, vdfunc_rd>::type::template go<R, BaseF, Args...>;
 	mpFn = reinterpret_cast<void (*)()>(fn);
 }
 
 //////////////////////////////////////////////////////////////////////////////
+
+#ifdef _MSC_VER
+	#pragma warning(pop)
+#endif
 
 #endif

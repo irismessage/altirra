@@ -15,13 +15,14 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/VDString.h>
+#include <at/atcore/vfs.h>
 #include <algorithm>
 #include <ctype.h>
 #include <map>
@@ -146,7 +147,9 @@ ATSymbolStore::~ATSymbolStore() {
 }
 
 void ATSymbolStore::Load(const wchar_t *filename) {
-	VDFileStream fs(filename);
+	vdrefptr<ATVFSFileView> view;
+	ATVFSOpenFileView(filename, false, ~view);
+	auto& fs = view->GetStream();
 
 	{
 		VDTextStream ts(&fs);
@@ -242,9 +245,9 @@ uint16 ATSymbolStore::AddFileName(const wchar_t *filename) {
 	size_t n = mFileNameOffsets.size();
 	for(size_t i=0; i<n; ++i)
 		if (!vdwcsicmp(fnbase + mFileNameOffsets[i], tempName.c_str()))
-			return i+1;
+			return (uint16)(i+1);
 
-	mFileNameOffsets.push_back(mWideNameBytes.size());
+	mFileNameOffsets.push_back((uint32)mWideNameBytes.size());
 
 	const wchar_t *pTempName = tempName.c_str();
 	mWideNameBytes.insert(mWideNameBytes.end(), pTempName, pTempName + wcslen(pTempName) + 1);
@@ -343,11 +346,11 @@ uint16 ATSymbolStore::GetFileId(const wchar_t *fileName, int *matchQuality) {
 				// #2 is a hack, but makes the debugger prefer foo.s over f1/foo.s
 				// and f2/foo.s.
 
-				int q = j * 10000 - l2;
+				int q = (int)(j * 10000 - l2);
 
 				if (q > bestq) {
 					bestq = q;
-					bestidx = i + 1;
+					bestidx = (uint16)(i + 1);
 				}
 			}
 		}
@@ -411,7 +414,7 @@ bool ATSymbolStore::GetOffsetForLine(const ATSourceLineInfo& lineInfo, uint32& m
 }
 
 uint32 ATSymbolStore::GetSymbolCount() const {
-	return mSymbols.size();
+	return (uint32)mSymbols.size();
 }
 
 void ATSymbolStore::GetSymbol(uint32 index, ATSymbolInfo& symbol) {
@@ -424,7 +427,7 @@ void ATSymbolStore::GetSymbol(uint32 index, ATSymbolInfo& symbol) {
 }
 
 uint32 ATSymbolStore::GetDirectiveCount() const {
-	return mDirectives.size();
+	return (uint32)mDirectives.size();
 }
 
 void ATSymbolStore::GetDirective(uint32 index, ATSymbolDirectiveInfo& dirInfo) {
@@ -1055,7 +1058,7 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 								char term = 0;
 								unsigned newlineno;
 								if (2 == sscanf(s, "(%u %c", &newlineno, &term) && term == ')') {
-									fileid = AddFileName(VDTextAToW(fnstart, fnend - fnstart).c_str());
+									fileid = AddFileName(VDTextAToW(fnstart, (int)(fnend - fnstart)).c_str());
 									forcedLine = newlineno;
 								}
 							} else if (!strncmp(s, "ASSERT", 6) && (s[6] == ' ' || s[6] == '\t')) {
@@ -1181,7 +1184,7 @@ void ATSymbolStore::LoadKernelListing(VDTextStream& ifile) {
 	Init(0xD800, 0x2800);
 
 	while(const char *line = ifile.GetNextLine()) {
-		int len = strlen(line);
+		int len = (int)strlen(line);
 		if (len < 33)
 			continue;
 
@@ -1235,7 +1238,7 @@ void ATSymbolStore::LoadKernelListing(VDTextStream& ifile) {
 			++t;
 
 		if (t != s) {
-			AddSymbol(address, VDStringA(s, t-s).c_str());
+			AddSymbol(address, VDStringA(s, (uint32)(t-s)).c_str());
 		}
 
 fail:

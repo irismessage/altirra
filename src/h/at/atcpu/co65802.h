@@ -23,6 +23,7 @@
 
 struct ATCPUExecState;
 struct ATCPUHistoryEntry;
+class IATCPUBreakpointHandler;
 
 struct ATCoProcReadMemNode {
 	uint8 (*mpRead)(uint32 addr, void *thisptr);
@@ -43,7 +44,7 @@ struct ATCoProcWriteMemNode {
 	}
 };
 
-class ATCoProc65802 final {
+class ATCoProc65802 {
 public:
 	ATCoProc65802();
 
@@ -52,21 +53,28 @@ public:
 
 	void SetHistoryBuffer(ATCPUHistoryEntry buffer[131072]);
 	uint32 GetHistoryCounter() const { return mHistoryIndex; }
+	uint32 GetTime() const { return mCyclesBase - mCyclesLeft; }
 	uint32 GetTimeBase() const { return mCyclesBase; }
 
 	void GetExecState(ATCPUExecState& state) const;
 	void SetExecState(const ATCPUExecState& state);
 
+	uint16 GetS() const { return ((uint16)mSH << 8) + mS; }
+
+	void SetBreakpointMap(const bool bpMap[65536], IATCPUBreakpointHandler *bphandler);
+
 	void ColdReset();
 	void WarmReset();
 
-	void AddCycles(sint32 cycles) { mCyclesLeft += cycles; }
+	uint32 GetCyclesLeft() const { return mCyclesLeft; }
+	void AddCycles(sint32 cycles) { mCyclesBase += cycles;  mCyclesLeft += cycles; }
 	void Run();
 
 private:
 	inline uint8 DebugReadByteSlow(uintptr base, uint32 addr);
 	inline uint8 ReadByteSlow(uintptr base, uint32 addr);
 	inline void WriteByteSlow(uintptr base, uint32 addr, uint8 value);
+	bool CheckBreakpoint();
 	void UpdateDecodeTable();
 	const uint8 *RegenerateDecodeTables();
 
@@ -103,9 +111,11 @@ private:
 	uint16		mInsnPC;
 	sint32		mCyclesLeft;
 	uint32		mCyclesBase;
-	const uint8	*mpNextState;
-	const uint16 *mpDecodePtrs;
-	ATCPUHistoryEntry *mpHistory;
+	const uint8	*mpNextState = nullptr;
+	const uint16 *mpDecodePtrs = nullptr;
+	const bool	*mpBreakpointMap = nullptr;
+	IATCPUBreakpointHandler *mpBreakpointHandler = nullptr;
+	ATCPUHistoryEntry *mpHistory = nullptr;
 	uint32		mHistoryIndex;
 
 	uintptr		mReadMap[256];
@@ -114,6 +124,7 @@ private:
 	ATCPUDecoderTables65816 mDecoderTables;
 
 	static const uint8 kInitialState;
+	static const uint8 kInitialStateNoBreak;
 };
 
 #endif	// f_ATCOPROC_CO65802_H

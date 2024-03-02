@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <vd2/Dita/services.h>
 #include <at/atui/uianchor.h>

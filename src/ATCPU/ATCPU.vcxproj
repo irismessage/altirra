@@ -39,6 +39,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\h\at\atcpu\breakpoints.h" />
     <ClInclude Include="..\h\at\atcpu\co65802.h" />
     <ClInclude Include="..\h\at\atcpu\decode65816.h" />
     <ClInclude Include="..\h\at\atcpu\execstate.h" />

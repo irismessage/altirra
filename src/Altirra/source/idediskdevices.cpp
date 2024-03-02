@@ -34,7 +34,14 @@ void ATCreateDeviceHardDiskPhysical(const ATPropertySet& pset, IATDevice **dev) 
 void ATCreateDeviceHardDiskRawImage(const ATPropertySet& pset, IATDevice **dev) {
 	vdrefptr<ATIDERawImage> p(new ATIDERawImage);
 
-	p->Init(pset.GetString("path"), pset.GetBool("write_enabled"));
+	p->Init(
+		pset.GetString("path"),
+		pset.GetBool("write_enabled"),
+		pset.GetBool("solid_state"),
+		pset.GetUint32("sectors"),
+		pset.GetUint32("cylinders"),
+		pset.GetUint32("heads"),
+		pset.GetUint32("sectors_per_track"));
 	p->SetSettings(pset);
 
 	*dev = p;
@@ -44,7 +51,7 @@ void ATCreateDeviceHardDiskRawImage(const ATPropertySet& pset, IATDevice **dev) 
 void ATCreateDeviceHardDiskVHDImage(const ATPropertySet& pset, IATDevice **dev) {
 	vdrefptr<ATIDEVHDImage> p(new ATIDEVHDImage);
 
-	p->Init(pset.GetString("path"), pset.GetBool("write_enabled"));
+	p->Init(pset.GetString("path"), pset.GetBool("write_enabled"), pset.GetBool("solid_state"));
 
 	*dev = p;
 	(*dev)->AddRef();

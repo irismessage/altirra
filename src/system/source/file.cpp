@@ -23,13 +23,14 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 
 #include <vd2/system/error.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/file.h>
+#include <vd2/system/filesys.h>
 
 namespace {
 	bool IsHardDrivePath(const wchar_t *path) {
@@ -40,6 +41,8 @@ namespace {
 		return type == DRIVE_FIXED || type == DRIVE_UNKNOWN || type == DRIVE_REMOVABLE;
 	}
 };
+
+uint32 VDFileGetAttributesFromNativeW32(uint32 nativeAttrs);
 
 ///////////////////////////////////////////////////////////////////////////////
 //
@@ -289,7 +292,6 @@ void VDFile::read(void *buffer, long length) {
 
 long VDFile::writeData(const void *buffer, long length) {
 	DWORD dwActual;
-	bool success = false;
 
 	if (!WriteFile(mhFile, buffer, (DWORD)length, &dwActual, NULL) || dwActual != (DWORD)length)
 		goto found_error;
@@ -404,6 +406,20 @@ bool VDFile::isOpen() {
 
 VDFileHandle VDFile::getRawHandle() {
 	return mhFile;
+}
+
+uint32 VDFile::getAttributes() {
+	if (!mhFile)
+		return 0;
+
+	if (::GetFileType(mhFile) == FILE_TYPE_PIPE)
+		return 0;
+
+	BY_HANDLE_FILE_INFORMATION info = {};
+	if (!::GetFileInformationByHandle(mhFile, &info))
+		return 0;
+
+	return VDFileGetAttributesFromNativeW32(info.dwFileAttributes);
 }
 
 void *VDFile::AllocUnbuffer(size_t nBytes) {

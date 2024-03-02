@@ -2,8 +2,8 @@
 setlocal enableextensions enabledelayedexpansion
 
 rem ---echo banner
-echo Altirra Build Release Utility Version 2.70
-echo Copyright (C) Avery Lee 2014-2015. Licensed under GNU General Public License
+echo Altirra Build Release Utility Version 2.80
+echo Copyright (C) Avery Lee 2014-2016. Licensed under GNU General Public License
 echo.
 
 rem ---parse command line arguments
@@ -11,8 +11,8 @@ set _incremental=false
 set _packonly=false
 set _verid=
 set _anyvc=false
-set _clversionexp=18.00.31101
-set _clversionexpdesc=Visual Studio 2013 Update 4
+set _clversionexp=18.00.40629
+set _clversionexpdesc=Visual Studio 2013 Update 5
 
 :arglist
 if "%1"=="" goto endargs
@@ -54,7 +54,7 @@ if "!_anyvc!"=="false" (
 	set _clversion=unknown
 	for /f "tokens=7 usebackq delims= " %%x in (`cl /? 2^>^&1 ^| findstr "Optimizing Compiler"`) do set _clversion=%%x
 
-	if not "!_clversion!"=="18.00.31101" (
+	if not "!_clversion!"=="!_clversionexp!" (
 		echo Error: Unexpected version of Visual C/C++ compiler.
 		echo.
 		echo   Expected: !_clversionexp! ^(!_clversionexpdesc!^)
@@ -68,6 +68,12 @@ if "!_anyvc!"=="false" (
 @where /q zip.exe >nul
 if errorlevel 1 (
 	echo Unable to find Info-Zip ^(zip.exe^) in current path.
+	exit /b 5
+)
+
+@where /q advzip.exe >nul
+if errorlevel 1 (
+	echo Unable to find advancecomp ^(advzip.exe^) in current path.
 	exit /b 5
 )
 
@@ -212,12 +218,26 @@ if errorlevel 1 (
 	exit /b 0
 )
 
+advzip -z -3 publish\Altirra-!_verid!-src.zip
+
+if errorlevel 1 (
+	echo Packaging step failed.
+	exit /b 0
+)
+
 zip -9 -X -j publish\Altirra-!_verid!.zip ^
 	out\release\Altirra.exe ^
 	out\releaseamd64\Altirra64.exe ^
 	Copying ^
 	out\Helpfile\Altirra.chm ^
 	out\Release\Additions.atr
+
+if errorlevel 1 (
+	echo Packaging step failed.
+	exit /b 0
+)
+
+advzip -z -3 publish\Altirra-!_verid!.zip
 
 if errorlevel 1 (
 	echo Packaging step failed.

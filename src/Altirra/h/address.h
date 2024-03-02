@@ -18,7 +18,7 @@
 #ifndef f_AT_ADDRESS_H
 #define f_AT_ADDRESS_H
 
-enum ATAddressSpace {
+enum ATAddressSpace : uint32 {
 	kATAddressSpace_CPU		= 0x00000000,
 	kATAddressSpace_ANTIC	= 0x10000000,
 	kATAddressSpace_VBXE	= 0x20000000,

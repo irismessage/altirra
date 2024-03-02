@@ -48,8 +48,8 @@ protected:
 	void ArtifactPAL32(uint32 *dst, uint32 width);
 
 	void ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
-	void ArtifactNTSCHi(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
-	void ArtifactPALHi(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool oddline);
+	void ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bool scanlineHasHiRes);
+	void ArtifactPALHi(uint32 dst[N*2], const uint8 src[N], bool scanlineHasHiRes, bool oddline);
 	void BlitNoArtifacts(uint32 dst[N], const uint8 src[N]);
 	void Blend(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 n);
 	void BlendExchange(uint32 *VDRESTRICT dst, uint32 *VDRESTRICT blendDst, uint32 n);

@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/strutil.h>
@@ -57,6 +57,7 @@ protected:
 
 	void SetCookedMode(bool enabled);
 	void ReloadEmuKeyList();
+	void SortMappings();
 	void RebuildMappingList();
 
 	bool CompareMappingOrder(uint32 a, uint32 b) const;
@@ -441,8 +442,7 @@ void ATUIDialogKeyboardCustomize::OnDataExchange(bool write) {
 		mMappings.clear();
 		ATUIGetCustomKeyMap(mMappings);
 
-		std::sort(mMappings.begin(), mMappings.end(), [this](uint32 a, uint32 b) { return CompareMappingOrder(a, b); });
-
+		SortMappings();
 		RebuildMappingList();
 		ReloadEmuKeyList();
 	}
@@ -656,7 +656,7 @@ void ATUIDialogKeyboardCustomize::OnImportClicked() {
 				throw InvalidKeyboardMapFileException();
 
 			sint64 scanCode = scanCodeNode.AsInt64();
-			if (scanCode < 0 || scanCode > 511 || !ATIsValidScanCode((uint8)scanCode))
+			if (scanCode < 0 || scanCode > 511 || !ATIsValidScanCode((uint32)scanCode))
 				continue;
 
 			const auto& charNode = mappingNode["char"];
@@ -709,7 +709,7 @@ void ATUIDialogKeyboardCustomize::OnImportClicked() {
 						throw InvalidKeyboardMapFileException();
 
 					mods = modifiersNode.AsInt64();
-					if (mods <= 0 || mods >= 15)
+					if (mods <= 0 || mods > 15)
 						continue;
 				}
 
@@ -723,6 +723,7 @@ void ATUIDialogKeyboardCustomize::OnImportClicked() {
 
 		// all good!
 		mMappings.swap(mappings);
+		SortMappings();
 		ReloadEmuKeyList();
 		RebuildMappingList();
 	} catch(const MyError& e) {
@@ -766,16 +767,21 @@ void ATUIDialogKeyboardCustomize::OnExportClicked() {
 		writer.WriteMemberName(L"mappings");
 
 		writer.OpenArray();
-		for(uint32 mapping : mMappings) {
+
+		auto sortedMappings = mMappings;
+
+		std::sort(sortedMappings.begin(), sortedMappings.end());
+
+		for(uint32 mapping : sortedMappings) {
 			writer.OpenObject();
 
 			writer.WriteMemberName(L"scancode");
-			writer.WriteInt(mapping & 0xFF);
+			writer.WriteInt(mapping & 0x1FF);
 
 			if (mapping & kATUIKeyboardMappingModifier_Cooked) {
 				writer.WriteMemberName(L"char");
 				
-				uint32 ch = (mapping >> 8) & 0xFFFF;
+				uint32 ch = (mapping >> 9) & 0xFFFF;
 				if (ch >= 0x20 && ch < 0x7F) {
 					wchar_t buf[2] = { (wchar_t)ch, 0 };
 
@@ -785,7 +791,7 @@ void ATUIDialogKeyboardCustomize::OnExportClicked() {
 			} else {
 				writer.WriteMemberName(L"vk");
 
-				uint32 vk = (mapping >> 8) & 0xFFFF;
+				uint32 vk = (mapping >> 9) & 0xFFFF;
 				if ((vk - 0x30) < 10 || (vk - 0x41) < 26) {
 					wchar_t buf[2] = { (wchar_t)vk, 0 };
 
@@ -793,9 +799,9 @@ void ATUIDialogKeyboardCustomize::OnExportClicked() {
 				} else
 					writer.WriteInt(vk);
 
-				if (mapping >> 24) {
+				if (mapping >> 25) {
 					writer.WriteMemberName(L"modifiers");
-					writer.WriteInt(mapping >> 24);
+					writer.WriteInt(mapping >> 25);
 				}
 			}
 
@@ -866,6 +872,10 @@ void ATUIDialogKeyboardCustomize::ReloadEmuKeyList() {
 	}
 
 	mScanCodeList.SetRedraw(true);
+}
+
+void ATUIDialogKeyboardCustomize::SortMappings() {
+	std::sort(mMappings.begin(), mMappings.end(), [this](uint32 a, uint32 b) { return CompareMappingOrder(a, b); });
 }
 
 void ATUIDialogKeyboardCustomize::RebuildMappingList() {

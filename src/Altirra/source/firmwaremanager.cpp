@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
@@ -140,6 +140,7 @@ bool ATFirmwareManager::GetFirmwareInfo(uint64 id, ATFirmwareInfo& fwinfo) const
 			{ true, true, kATFirmwareType_1030Firmware, L"Altirra 1030 Modem Firmware" },
 			{ true, false, kATFirmwareType_MIO, L"Altirra NoFirmware for MIO" },
 			{ true, false, kATFirmwareType_BlackBox, L"Altirra NoFirmware for BlackBox" },
+			{ true, false, kATFirmwareType_Game, L"Altirra placeholder NoGame" },
 		};
 
 		VDASSERTCT(vdcountof(kPredefFirmwares) == kATFirmwareId_PredefCount);
@@ -329,6 +330,7 @@ bool ATFirmwareManager::LoadFirmware(uint64 id, void *dst, uint32 offset, uint32
 			IDR_1030HANDLER,
 			IDR_NOMIO,
 			IDR_NOBLACKBOX,
+			IDR_NOGAME,
 		};
 
 		VDASSERTCT(vdcountof(kResourceIds) == kATFirmwareId_PredefCount);

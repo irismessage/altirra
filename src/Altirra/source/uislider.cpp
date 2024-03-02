@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/math.h>
 #include "uibutton.h"
 #include "uislider.h"

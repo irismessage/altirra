@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <initializer_list>
 #include <vd2/system/math.h>
 #include <vd2/system/vdalloc.h>
@@ -803,7 +803,7 @@ void ATUISettingsWindow::SetSelectedIndex(int index, bool scroll) {
 	if (index < 0)
 		index = -1;
 	else if ((unsigned)index >= mSettings.size())
-		index = mSettings.size() - 1;
+		index = (int)mSettings.size() - 1;
 
 	if (mSelectedIndex == index)
 		return;
@@ -1057,7 +1057,7 @@ void ATUISettingsWindow::OnTrackCursorChanges(ATUIWidget *w) {
 					[](sint32 v, const SettingsEntry& se) { return v < se.mVPos; } );
 
 				if (it != mSettings.begin() && (uint32)(vpos - it[-1].mVPos) < 2)
-					index = (it - 1) - mSettings.begin();
+					index = (sint32)((it - 1) - mSettings.begin());
 			}
 		}
 	}

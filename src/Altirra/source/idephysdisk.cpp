@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <winioctl.h>
 #include <at/atcore/propertyset.h>
@@ -65,7 +65,7 @@ int ATIDEPhysicalDisk::Release() {
 
 void *ATIDEPhysicalDisk::AsInterface(uint32 iid) {
 	switch(iid) {
-		case IATIDEDisk::kTypeID: return static_cast<IATIDEDisk *>(this);
+		case IATBlockDevice::kTypeID: return static_cast<IATBlockDevice *>(this);
 		default:
 			return ATDevice::AsInterface(iid);
 	}
@@ -81,6 +81,10 @@ void ATIDEPhysicalDisk::GetSettings(ATPropertySet& settings) {
 
 bool ATIDEPhysicalDisk::SetSettings(const ATPropertySet& settings) {
 	return false;
+}
+
+ATBlockDeviceGeometry ATIDEPhysicalDisk::GetGeometry() const {
+	return ATBlockDeviceGeometry();
 }
 
 void ATIDEPhysicalDisk::Init(const wchar_t *path) {
@@ -119,11 +123,6 @@ void ATIDEPhysicalDisk::Shutdown() {
 }
 
 void ATIDEPhysicalDisk::Flush() {
-}
-
-void ATIDEPhysicalDisk::RequestUpdate() {
-	if (mhDisk != INVALID_HANDLE_VALUE)
-		FlushFileBuffers(mhDisk);
 }
 
 void ATIDEPhysicalDisk::ReadSectors(void *data, uint32 lba, uint32 n) {

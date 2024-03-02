@@ -47,7 +47,7 @@ namespace nsVDFile {
 		kSeekStart=0, kSeekCur, kSeekEnd
 	};
 
-	enum eFlags {
+	enum eFlags : uint32 {
 		kRead			= 0x00000001,
 		kWrite			= 0x00000002,
 		kReadWrite		= kRead | kWrite,
@@ -139,6 +139,8 @@ public:
 	bool	isOpen();
 	VDFileHandle	getRawHandle();
 
+	uint32	getAttributes();
+
 	const wchar_t *getFilenameForError() const { return mpFilename; }
 
 	// unbuffered I/O requires aligned buffers ("unbuffers")
@@ -196,13 +198,12 @@ public:
 	virtual void	Seek(sint64 offset) = 0;
 };
 
-class VDFileStream : public VDFile, public IVDRandomAccessStream {
-private:
-	VDFileStream(const VDFile&);
-	const VDFileStream& operator=(const VDFileStream& f);
+class VDFileStream final : public VDFile, public IVDRandomAccessStream {
+	VDFileStream(const VDFile&) = delete;
+	const VDFileStream& operator=(const VDFileStream& f) = delete;
 
 public:
-	VDFileStream() {}
+	VDFileStream() = default;
 	VDFileStream(const char *pszFileName, uint32 flags = nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting)
 		: VDFile(pszFileName, flags) {}
 	VDFileStream(const wchar_t *pwszFileName, uint32 flags = nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting)
@@ -219,7 +220,7 @@ public:
 	void	Seek(sint64 offset);
 };
 
-class VDMemoryStream : public IVDRandomAccessStream {
+class VDMemoryStream final : public IVDRandomAccessStream {
 public:
 	VDMemoryStream(const void *pSrc, uint32 len);
 
@@ -233,11 +234,11 @@ public:
 
 protected:
 	const char		*mpSrc;
-	const uint32	mLength;
+	uint32			mLength;
 	uint32			mPos;
 };
 
-class VDBufferedStream : public IVDRandomAccessStream {
+class VDBufferedStream final : public IVDRandomAccessStream {
 public:
 	VDBufferedStream(IVDRandomAccessStream *pSrc, uint32 bufferSize);
 	~VDBufferedStream();
@@ -259,6 +260,32 @@ protected:
 	sint64		mBasePosition;
 	uint32		mBufferOffset;
 	uint32		mBufferValidSize;
+};
+
+class VDBufferedWriteStream final : public IVDRandomAccessStream {
+public:
+	VDBufferedWriteStream(IVDRandomAccessStream *pSrc, uint32 bufferSize);
+	~VDBufferedWriteStream();
+
+	const wchar_t *GetNameForError();
+	sint64	Pos();
+	void	Read(void *buffer, sint32 bytes);
+	sint32	ReadData(void *buffer, sint32 bytes);
+	void	Write(const void *buffer, sint32 bytes);
+
+	sint64	Length();
+	void	Seek(sint64 offset);
+
+	void	Skip(sint64 size);
+
+	void	Flush();
+
+protected:
+	IVDRandomAccessStream *mpSrc;
+	vdblock<char>	mBuffer;
+	sint64		mBasePosition;
+	uint32		mBufferOffset;
+	uint32		mBufferSize;
 };
 
 class VDTextStream {

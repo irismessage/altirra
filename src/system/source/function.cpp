@@ -33,12 +33,20 @@ vdfuncbase::vdfuncbase(const vdfuncbase& src)
 	, mpTraits(src.mpTraits)
 {
 	if (mpTraits)
-		mpTraits->mpCopy(*this, src);
+		mpTraits->mpCopy(mData.p, src.mData.p);
 }
 
 vdfuncbase& vdfuncbase::operator=(const vdfuncbase& src) {
-	if (&src != this)
-		vdfuncbase(src).swap(*this);
+	if (&src != this) {
+		clear();
+
+		mData = src.mData;
+		if (src.mpTraits)
+			src.mpTraits->mpCopy(mData.p, src.mData.p);
+
+		mpFn = src.mpFn;
+		mpTraits = src.mpTraits;
+	}
 
 	return *this;
 }
@@ -48,23 +56,40 @@ vdfuncbase& vdfuncbase::operator=(vdfuncbase&& src) {
 
 	mpFn = src.mpFn;
 	mData = src.mData;
+
+	if (src.mpTraits && src.mpTraits->mpMove)
+		src.mpTraits->mpMove(mData.p, &src.mData.p);
+
+	// must copy instead of moving traits
 	mpTraits = src.mpTraits;
 
-	src.mpTraits = nullptr;
 	src.mpFn = nullptr;
+	src.mpTraits = nullptr;
 
 	return *this;
 }
 
 void vdfuncbase::swap(vdfuncbase& other) {
 	std::swap(mpFn, other.mpFn);
-	std::swap(mData, other.mData);
+
+	Data tmp = mData;
+	if (mpTraits && mpTraits->mpMove)
+		mpTraits->mpMove(tmp.p, mData.p);
+		
+	mData = other.mData;
+	if (other.mpTraits && other.mpTraits->mpMove)
+		other.mpTraits->mpMove(mData.p, other.mData.p);
+
+	other.mData = tmp;
+	if (mpTraits && mpTraits->mpMove)
+		mpTraits->mpMove(other.mData.p, tmp.p);
+
 	std::swap(mpTraits, other.mpTraits);
 }
 
 void vdfuncbase::clear() {
 	if (mpTraits)
-		mpTraits->mpDestroy(*this);
+		mpTraits->mpDestroy(mData.p);
 
 	mpFn = nullptr;
 	mpTraits = nullptr;

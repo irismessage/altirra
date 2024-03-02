@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/time.h>
@@ -54,6 +54,9 @@ public:
 
 	virtual float GetVolume();
 	virtual void SetVolume(float vol);
+
+	float GetMixLevel(ATAudioMix mix) const;
+	void SetMixLevel(ATAudioMix mix, float level);
 
 	virtual int GetLatency();
 	virtual void SetLatency(int ms);
@@ -140,12 +143,16 @@ protected:
 
 	typedef vdfastvector<IATSyncAudioSource *> SyncAudioSources;
 	SyncAudioSources mSyncAudioSources;
+	
+	float mMixLevels[kATAudioMixCount];
 
 	float	mSourceBuffer[2][kBufferSize] = {};
 	sint16	mOutputBuffer[kBufferSize * 2] = {};
 };
 
 ATAudioOutput::ATAudioOutput() {
+	mMixLevels[kATAudioMix_Drive] = 0.8f;
+	mMixLevels[kATAudioMix_Covox] = 1.0f;
 }
 
 ATAudioOutput::~ATAudioOutput() {
@@ -240,6 +247,14 @@ float ATAudioOutput::GetVolume() {
 void ATAudioOutput::SetVolume(float vol) {
 	mFilters[0].SetScale(vol);
 	mFilters[1].SetScale(vol);
+}
+
+float ATAudioOutput::GetMixLevel(ATAudioMix mix) const {
+	return mMixLevels[mix];
+}
+
+void ATAudioOutput::SetMixLevel(ATAudioMix mix, float level) {
+	mMixLevels[mix] = level;
 }
 
 int ATAudioOutput::GetLatency() {
@@ -368,6 +383,7 @@ void ATAudioOutput::InternalWriteAudio(
 		mixInfo.mCount = count;
 		mixInfo.mpLeft = dstLeft + kPreFilterOffset;
 		mixInfo.mpRight = dstRight ? dstRight + kPreFilterOffset : nullptr;
+		mixInfo.mpMixLevels = mMixLevels;
 
 		for(IATSyncAudioSource *src : mSyncAudioSources)
 			src->WriteAudio(mixInfo);

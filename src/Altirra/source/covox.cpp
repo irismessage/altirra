@@ -15,10 +15,11 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
 #include "covox.h"
 #include "audiooutput.h"
@@ -26,20 +27,30 @@
 #include "console.h"
 
 namespace {
-	const float kOutputScale = 1.0f / 128.0f / 4.0f / 28.0f * 200.0f;
-	const float kOutputBias = -128.0f * 4.0f * kOutputScale;
+	// 1/128 for mapping unsigned 8-bit PCM to [-1, 1] (well, almost)
+	// 1/2 for two source channels summed on each output channel
+	// 1/28 for crude box filtering to mix rate
+	const float kOutputScale = 1.0f / 128.0f / 2.0f * 60.0f;
+
+	// Two channels, for the full 28 ticks per sample, at a value of 0x80.
+	const float kOutputBias = -128.0f * 2.0f * 28.0f;
 }
 
-ATCovoxEmulator::ATCovoxEmulator()
-	: mpMemLayerControl(NULL)
-	, mpScheduler(NULL)
-	, mpMemMan(NULL)
-	, mpAudioOut(NULL)
-{
+ATCovoxEmulator::ATCovoxEmulator() {
 }
 
 ATCovoxEmulator::~ATCovoxEmulator() {
 	Shutdown();
+}
+
+void ATCovoxEmulator::SetAddressRange(uint32 addrLo, uint32 addrHi, bool passWrites) {
+	if (mAddrLo != addrLo || mAddrHi != addrHi || mbPassWrites != passWrites) {
+		mAddrLo = addrLo;
+		mAddrHi = addrHi;
+		mbPassWrites = passWrites;
+
+		InitMapping();
+	}
 }
 
 void ATCovoxEmulator::Init(ATMemoryManager *memMan, ATScheduler *sch, IATAudioOutput *audioOut) {
@@ -49,7 +60,11 @@ void ATCovoxEmulator::Init(ATMemoryManager *memMan, ATScheduler *sch, IATAudioOu
 
 	audioOut->AddSyncAudioSource(this);
 
+	InitMapping();
+
 	ColdReset();
+
+	std::fill(std::begin(mVolume), std::end(mVolume), 0x80);
 }
 
 void ATCovoxEmulator::Shutdown() {
@@ -74,24 +89,6 @@ void ATCovoxEmulator::ColdReset() {
 	for(int i=0; i<4; ++i)
 		mVolume[i] = 0x80;
 
-	if (mpMemLayerControl) {
-		mpMemMan->DeleteLayer(mpMemLayerControl);
-		mpMemLayerControl = NULL;
-	}
-
-	ATMemoryHandlerTable handlers = {};
-	handlers.mpThis = this;
-
-	handlers.mbPassAnticReads = true;
-	handlers.mbPassReads = true;
-	handlers.mbPassWrites = true;
-	handlers.mpDebugReadHandler = StaticReadControl;
-	handlers.mpReadHandler = StaticReadControl;
-	handlers.mpWriteHandler = StaticWriteControl;
-	mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay, handlers, 0xD6, 0x01);
-
-	mpMemMan->EnableLayer(mpMemLayerControl, kATMemoryAccessMode_CPUWrite, true);
-
 	WarmReset();
 }
 
@@ -101,8 +98,8 @@ void ATCovoxEmulator::WarmReset() {
 
 	mOutputCount = 0;
 	mOutputLevel = 0;
-	mOutputAccumLeft = 0;
-	mOutputAccumRight = 0;
+	mOutputAccumLeft = kOutputBias;
+	mOutputAccumRight = kOutputBias;
 	mbUnbalanced = false;
 	mbUnbalancedSticky = false;
 }
@@ -133,6 +130,22 @@ void ATCovoxEmulator::WriteControl(uint8 addr, uint8 value) {
 		mbUnbalancedSticky = true;
 }
 
+void ATCovoxEmulator::WriteMono(uint8 value) {
+	if (mVolume[0] != value ||
+		mVolume[1] != value ||
+		mVolume[2] != value ||
+		mVolume[3] != value)
+	{
+		Flush();
+
+		mVolume[0] = value;
+		mVolume[1] = value;
+		mVolume[2] = value;
+		mVolume[3] = value;
+		mbUnbalanced = false;
+	}
+}
+
 void ATCovoxEmulator::Run(int cycles) {
 	float vl = (float)(mVolume[0] + mVolume[3]);
 	float vr = (float)(mVolume[1] + mVolume[2]);
@@ -153,8 +166,8 @@ void ATCovoxEmulator::Run(int cycles) {
 			return;
 
 		if (mOutputLevel < kAccumBufferSize) {
-			mAccumBufferLeft[mOutputLevel] = mOutputAccumLeft * kOutputScale;
-			mAccumBufferRight[mOutputLevel] = mOutputAccumRight * kOutputScale;
+			mAccumBufferLeft[mOutputLevel] = mOutputAccumLeft;
+			mAccumBufferRight[mOutputLevel] = mOutputAccumRight;
 			++mOutputLevel;
 		}
 
@@ -169,8 +182,8 @@ void ATCovoxEmulator::Run(int cycles) {
 			break;
 		}
 
-		mAccumBufferLeft[mOutputLevel] = vl * 28 * kOutputScale;
-		mAccumBufferRight[mOutputLevel] = vr * 28 * kOutputScale;
+		mAccumBufferLeft[mOutputLevel] = vl * 28 + kOutputBias;
+		mAccumBufferRight[mOutputLevel] = vr * 28 + kOutputBias;
 		++mOutputLevel;
 		cycles -= 28;
 	}
@@ -203,14 +216,17 @@ void ATCovoxEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 		mOutputLevel = n;
 	}
 
+	float volume = mixInfo.mpMixLevels[kATAudioMix_Covox] * kOutputScale;
 	if (dstRightOpt) {
 		for(uint32 i=0; i<n; ++i) {
-			dstLeft[i] += mAccumBufferLeft[i];
-			dstRightOpt[i] += mAccumBufferRight[i];
+			dstLeft[i] += mAccumBufferLeft[i] * volume;
+			dstRightOpt[i] += mAccumBufferRight[i] * volume;
 		}
 	} else {
+		volume *= 0.5f;
+
 		for(uint32 i=0; i<n; ++i)
-			dstLeft[i] += (mAccumBufferLeft[i] + mAccumBufferRight[i]) * 0.5f;
+			dstLeft[i] += (mAccumBufferLeft[i] + mAccumBufferRight[i]) * volume;
 	}
 
 	// shift down accumulation buffers
@@ -233,20 +249,57 @@ void ATCovoxEmulator::Flush() {
 	Run(dt);
 }
 
+void ATCovoxEmulator::InitMapping() {
+	if (mpMemMan) {
+		if (mpMemLayerControl) {
+			mpMemMan->DeleteLayer(mpMemLayerControl);
+			mpMemLayerControl = NULL;
+		}
+
+		ATMemoryHandlerTable handlers = {};
+		handlers.mpThis = this;
+
+		handlers.mbPassAnticReads = true;
+		handlers.mbPassReads = true;
+		handlers.mbPassWrites = true;
+		handlers.mpDebugReadHandler = StaticReadControl;
+		handlers.mpReadHandler = StaticReadControl;
+		handlers.mpWriteHandler = StaticWriteControl;
+
+		const uint8 pageLo = (uint8)(mAddrLo >> 8);
+		const uint8 pageHi = (uint8)(mAddrHi >> 8);
+
+		mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay, handlers, pageLo, pageHi - pageLo + 1);
+
+		mpMemMan->EnableLayer(mpMemLayerControl, kATMemoryAccessMode_CPUWrite, true);
+		mpMemMan->SetLayerName(mpMemLayerControl, "Covox");
+	}
+}
+
 sint32 ATCovoxEmulator::StaticReadControl(void *thisptr, uint32 addr) {
 	return -1;
 }
 
-bool ATCovoxEmulator::StaticWriteControl(void *thisptr, uint32 addr, uint8 value) {
-	uint8 addr8 = (uint8)addr;
+bool ATCovoxEmulator::StaticWriteControl(void *thisptr0, uint32 addr, uint8 value) {
+	auto *thisptr = (ATCovoxEmulator *)thisptr0;
 
-	((ATCovoxEmulator *)thisptr)->WriteControl(addr8, value);
+	if (addr >= thisptr->mAddrLo && addr <= thisptr->mAddrHi) {
+		uint8 addr8 = (uint8)addr;
+
+		if (thisptr->mbFourCh)
+			thisptr->WriteControl(addr8, value);
+		else
+			thisptr->WriteMono(value);
+
+		return !thisptr->mbPassWrites;
+	}
+
 	return false;
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDeviceCovox : public VDAlignedObject<16>
+class ATDeviceCovox final : public VDAlignedObject<16>
 					, public ATDevice
 					, public IATDeviceMemMap
 					, public IATDeviceScheduling
@@ -254,13 +307,13 @@ class ATDeviceCovox : public VDAlignedObject<16>
 					, public IATDeviceDiagnostics
 {
 public:
-	ATDeviceCovox();
-
 	virtual void *AsInterface(uint32 id) override;
 
 	virtual void GetDeviceInfo(ATDeviceInfo& info) override;
 	virtual void WarmReset() override;
 	virtual void ColdReset() override;
+	virtual void GetSettings(ATPropertySet& settings) override;
+	virtual bool SetSettings(const ATPropertySet& settings) override;
 	virtual void Init() override;
 	virtual void Shutdown() override;
 
@@ -278,12 +331,12 @@ public:	// IATDeviceDiagnostics
 	virtual void DumpStatus(ATConsoleOutput& output) override;
 
 private:
-	static sint32 ReadByte(void *thisptr0, uint32 addr);
-	static bool WriteByte(void *thisptr0, uint32 addr, uint8 value);
+	ATMemoryManager *mpMemMan = nullptr;
+	ATScheduler *mpScheduler = nullptr;
+	IATAudioOutput *mpAudioOutput = nullptr;
 
-	ATMemoryManager *mpMemMan;
-	ATScheduler *mpScheduler;
-	IATAudioOutput *mpAudioOutput;
+	uint32 mAddrLo = 0xD600;
+	uint32 mAddrHi = 0xD6FF;
 
 	ATCovoxEmulator mCovox;
 };
@@ -294,14 +347,7 @@ void ATCreateDeviceCovox(const ATPropertySet& pset, IATDevice **dev) {
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDefCovox = { "covox", nullptr, L"Covox", ATCreateDeviceCovox };
-
-ATDeviceCovox::ATDeviceCovox()
-	: mpMemMan(nullptr)
-	, mpScheduler(nullptr)
-	, mpAudioOutput(nullptr)
-{
-}
+extern const ATDeviceDefinition g_ATDeviceDefCovox = { "covox", "covox", L"Covox", ATCreateDeviceCovox };
 
 void *ATDeviceCovox::AsInterface(uint32 id) {
 	switch(id) {
@@ -334,7 +380,39 @@ void ATDeviceCovox::ColdReset() {
 	mCovox.ColdReset();
 }
 
+void ATDeviceCovox::GetSettings(ATPropertySet& settings) {
+	settings.SetUint32("base", mAddrLo);
+	settings.SetUint32("channels", mCovox.IsFourChannels() ? 4 : 1);
+}
+
+bool ATDeviceCovox::SetSettings(const ATPropertySet& settings) {
+	uint32 baseAddr = settings.GetUint32("base", 0xD600);
+
+	switch(baseAddr) {
+		case 0xD280:
+			mAddrLo = baseAddr;
+			mAddrHi = baseAddr + 0x7F;
+			mCovox.SetAddressRange(0xD280, 0xD2FF, false);
+			break;
+
+		case 0xD100:
+		case 0xD500:
+		case 0xD600:
+		case 0xD700:
+			mAddrLo = baseAddr;
+			mAddrHi = baseAddr + 0xFF;
+			mCovox.SetAddressRange(baseAddr, baseAddr + 0xFF, true);
+			break;
+	}
+
+	uint32 channels = settings.GetUint32("channels", 4);
+	mCovox.SetFourChannels(channels > 1);
+
+	return true;
+}
+
 void ATDeviceCovox::Init() {
+	mCovox.SetAddressRange(mAddrLo, mAddrHi, mAddrLo != 0xD280);
 	mCovox.Init(mpMemMan, mpScheduler, mpAudioOutput);
 }
 
@@ -352,8 +430,8 @@ void ATDeviceCovox::InitMemMap(ATMemoryManager *memmap) {
 
 bool ATDeviceCovox::GetMappedRange(uint32 index, uint32& lo, uint32& hi) const {
 	if (index == 0) {
-		lo = 0xD600;
-		hi = 0xD700;
+		lo = mAddrLo;
+		hi = mAddrHi + 1;
 		return true;
 	}
 

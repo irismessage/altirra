@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/file.h>
 #include <vd2/system/zip.h>
 #include "symbols.h"

@@ -35,7 +35,7 @@ public:
 	ATDeviceDiskDrive();
 	~ATDeviceDiskDrive();
 	
-	void *AsInterface(uint32 iid);
+	void *AsInterface(uint32 iid) override;
 
 public:
 	void GetDeviceInfo(ATDeviceInfo& info) override;

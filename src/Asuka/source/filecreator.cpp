@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <math.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/file.h>
@@ -371,7 +371,6 @@ int VDCompilerLexer::Token() {
 					case 'n':	c = '\n';	break;
 					case 'r':	c = '\r';	break;
 					case 't':	c = '\t';	break;
-					case 'u':	c = '\u';	break;
 					case 'v':	c = '\v';	break;
 					case 'x':
 						c = 0;

@@ -31,7 +31,7 @@
 // storage; the alarm and timer do not count, and all control bits are
 // ignored.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <time.h>
 #include "rtime8.h"
 #include "memorymanager.h"

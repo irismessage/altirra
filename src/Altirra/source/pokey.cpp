@@ -15,7 +15,8 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
+#include <at/atcore/logging.h>
 #include "pokey.h"
 #include "pokeyrenderer.h"
 #include "pokeytables.h"
@@ -29,6 +30,8 @@
 #include "cpu.h"
 #include "savestate.h"
 #include "audiooutput.h"
+
+ATLogChannel g_ATLCSIOData(false, false, "SIODATA", "Serial I/O bus data");
 
 namespace {
 	enum {
@@ -76,6 +79,7 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mLastPolyTime(0)
 	, mPoly17Counter(0)
 	, mPoly9Counter(0)
+	, mPolyShutOffTime(0)
 	, mSerialInputShiftRegister(0)
 	, mSerialOutputShiftRegister(0)
 	, mSerialInputCounter(0)
@@ -104,8 +108,6 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mbUse15KHzClock(false)
 	, mLast15KHzTime(0)
 	, mLast64KHzTime(0)
-	, mALLPOT(0)
-	, mPotScanStartTime(0)
 	, mpKeyboardScanEvent(NULL)
 	, mpKeyboardIRQEvent(NULL)
 	, mpStartBitEvent(NULL)
@@ -116,15 +118,7 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mpConn(NULL)
 	, mpSlave(NULL)
 	, mbIsSlave(isSlave)
-	, mpAudioOut(NULL)
-	, mpCassette(NULL)
 {
-	for(int i=0; i<8; ++i) {
-		mpPotScanEvent[i] = NULL;
-		mPOT[i] = 228;
-		mPOTLatched[i] = 228;
-	}
-
 	memset(mpTimerBorrowEvents, 0, sizeof(mpTimerBorrowEvents));
 }
 
@@ -143,6 +137,11 @@ void ATPokeyEmulator::Init(IATPokeyEmulatorConnections *mem, ATScheduler *sched,
 
 	VDASSERT(!mpKeyboardScanEvent);
 	VDASSERT(!mpKeyboardIRQEvent);
+
+	for(int i=0; i<8; ++i) {
+		mPotPositions[i] = 228;
+		mPotHiPositions[i] = 228;
+	}
 
 	ColdReset();
 }
@@ -219,14 +218,15 @@ void ATPokeyEmulator::ColdReset() {
 	mLast15KHzTime = ATSCHEDULER_GETTIME(mpScheduler);
 	mLast64KHzTime = ATSCHEDULER_GETTIME(mpScheduler);
 
+	mALLPOT = 0;
+
 	for(int i=0; i<8; ++i) {
-		if (mpPotScanEvent[i]) {
-			mpScheduler->RemoveEvent(mpPotScanEvent[i]);
-			mpPotScanEvent[i] = NULL;
-		}
+		mPotLatches[i] = 228;
 	}
 
-	mALLPOT = 0;
+	mPotLastTimeFast = ATSCHEDULER_GETTIME(mpScheduler);
+	mPotLastTimeSlow = mPotLastTimeFast;
+	mbPotScanActive = false;
 
 	mbCommandLineState = false;
 
@@ -296,15 +296,36 @@ void ATPokeyEmulator::RemoveSIODevice(IATPokeySIODevice *device) {
 		mDevices.erase(it);
 }
 
-void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulateInputPort, bool allowBurst) {
+void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulateInputPort, bool allowBurst, bool synchronous) {
+	if (cyclesPerBit && mbSerialNoiseEnabled) {
+		const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+
+		uint32 pat = c + c + 0x200;
+		pat ^= (pat + pat + 1);
+
+		for (uint32 i = 0; i < 10; ++i) {
+			if (pat & (1 << i))
+				mpRenderer->AddSerialNoisePulse(t + cyclesPerBit * i);
+		}
+	}
+
 	if (mbTraceSIO)
 		ATConsoleTaggedPrintf("POKEY: Receiving byte (c=%02X; %02X %02X) at %u cycles/bit (%.1f baud)\n", c, mSERIN, mSerialInputShiftRegister, cyclesPerBit, 7159090.0f / 4.0f / (float)cyclesPerBit);
+
+	VDStringA sioDataInfo;
+
+	if (g_ATLCSIOData)
+		sioDataInfo.sprintf("Receive      < $%02X     (@ %u cycles/bit / %.1f baud)", c, cyclesPerBit, 7159090.0f / 4.0f / (float)cyclesPerBit);
 
 	// check for attempted read in init mode (partial fix -- audio not emulated)
 	if (!(mSKCTL & 3)) {
 		if (mbTraceSIO)
 			ATConsoleTaggedPrintf("POKEY: Dropping byte due to initialization mode.\n");
 
+		if (g_ATLCSIOData) {
+			sioDataInfo += " [dropped - init mode]";
+			g_ATLCSIOData <<= sioDataInfo.c_str();
+		}
 		return;
 	}
 
@@ -320,6 +341,11 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 		if (mbTraceSIO)
 			ATConsoleTaggedPrintf("POKEY: Dropping byte $%02X due to external receive mode being used with no external clock (SKCTL=$%02X).\n", c, mSKCTL);
 
+		if (g_ATLCSIOData) {
+			sioDataInfo += " [dropped - external mode with no clock]";
+			g_ATLCSIOData <<= sioDataInfo.c_str();
+		}
+
 		return;
 	}
 
@@ -327,12 +353,15 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 
 	// check for attempted read in synchronous mode; note that external clock mode is OK as presumably that
 	// is synchronized
-	if ((mSKCTL & 0x30) == 0x20) {
+	if ((mSKCTL & 0x30) == 0x20 && !synchronous) {
 		// set the framing error bit
 		mSerialInputPendingStatus &= 0x7F;
 
 		if (mbTraceSIO)
 			ATConsoleTaggedPrintf("POKEY: Trashing byte $%02x and signaling framing error due to asynchronous input mode not being enabled (SKCTL=$%02X).\n", c, mSKCTL);
+
+		if (g_ATLCSIOData)
+			sioDataInfo += " [garbled - receiving in synchronous mode]";
 
 		// blown read -- trash the byte by faking a dropped bit
 		c = (c & 0x0f) + ((c & 0xe0) >> 1) + 0x80;
@@ -350,6 +379,9 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 
 			if (mbTraceSIO)
 				ATConsoleTaggedPrintf("POKEY: Signaling framing error due to receive rate mismatch (expected %d cycles/bit, got %d)\n", expectedCPB, cyclesPerBit);
+
+			if (g_ATLCSIOData)
+				sioDataInfo.append_sprintf(" [garbled - expected %u cycles/bit]", expectedCPB);
 		}
 	}
 
@@ -375,6 +407,11 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 			mpScheduler->RemoveEvent(mpStartBitEvent);
 			mpStartBitEvent = NULL;
 		}
+	}
+
+	if (g_ATLCSIOData) {
+		sioDataInfo += '\n';
+		g_ATLCSIOData <<= sioDataInfo.c_str();
 	}
 
 	mSerialInputShiftRegister = c;
@@ -637,22 +674,25 @@ void ATPokeyEmulator::PushBreak() {
 }
 
 void ATPokeyEmulator::SetKeyMatrix(const bool matrix[64]) {
-	uint16 *dst = mKeyMatrix;
-	const bool *src = matrix;
+	if (matrix) {
+		uint16 *dst = mKeyMatrix;
+		const bool *src = matrix;
 
-	for(int i=0; i<8; ++i) {
-		uint16 v	= (src[0] ? 0x01 : 0x00)
-					+ (src[1] ? 0x02 : 0x00)
-					+ (src[2] ? 0x04 : 0x00)
-					+ (src[3] ? 0x08 : 0x00)
-					+ (src[4] ? 0x10 : 0x00)
-					+ (src[5] ? 0x20 : 0x00)
-					+ (src[6] ? 0x40 : 0x00)
-					+ (src[7] ? 0x80 : 0x00);
+		for(int i=0; i<8; ++i) {
+			uint16 v	= (src[0] ? 0x01 : 0x00)
+						+ (src[1] ? 0x02 : 0x00)
+						+ (src[2] ? 0x04 : 0x00)
+						+ (src[3] ? 0x08 : 0x00)
+						+ (src[4] ? 0x10 : 0x00)
+						+ (src[5] ? 0x20 : 0x00)
+						+ (src[6] ? 0x40 : 0x00)
+						+ (src[7] ? 0x80 : 0x00);
 
-		dst[i] = (dst[i] & 0xFF00) + v;
-		src += 8;
-	}
+			dst[i] = (dst[i] & 0xFF00) + v;
+			src += 8;
+		}
+	} else
+		memset(mKeyMatrix, 0, sizeof mKeyMatrix);
 
 	UpdateEffectiveKeyMatrix();
 }
@@ -749,6 +789,20 @@ uint32 ATPokeyEmulator::UpdateLast64KHzTime(uint32 t) {
 	return mLast64KHzTime;
 }
 
+void ATPokeyEmulator::UpdatePolyTime() {
+	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+	int polyDelta = (int)(t - mLastPolyTime);
+	mPoly9Counter += polyDelta;
+	mPoly17Counter += polyDelta;
+	mLastPolyTime = t;
+
+	if (mPoly9Counter >= 511)
+		mPoly9Counter %= 511;
+
+	if (mPoly17Counter >= 131071)
+		mPoly17Counter %= 131071;
+}
+
 void ATPokeyEmulator::OnSerialInputTick() {
 	if (!mSerialInputCounter)
 		return;
@@ -815,6 +869,8 @@ void ATPokeyEmulator::OnSerialOutputTick() {
 					);
 			}
 
+			if (g_ATLCSIOData)
+				g_ATLCSIOData("Send     $%02X >         (@ %u cycles/bit / %.1f baud)\n", mSerialOutputShiftRegister, cyclesPerBit, 7159090.0f / 4.0f / (float)cyclesPerBit);
 
 			bool burstOK = false;
 
@@ -822,6 +878,9 @@ void ATPokeyEmulator::OnSerialOutputTick() {
 				if (dev->PokeyWriteSIO(mSerialOutputShiftRegister, mbCommandLineState, cyclesPerBit))
 					burstOK = true;
 			}
+
+			if (mpCassette)
+				mpCassette->PokeyWriteCassetteData(mSerialOutputShiftRegister, cyclesPerBit);
 
 			if (burstOK)
 				mSerOutBurstDeadline = (ATSCHEDULER_GETTIME(mpScheduler) + cyclesPerBit*10) | 1;
@@ -839,6 +898,9 @@ void ATPokeyEmulator::OnSerialOutputTick() {
 			mSerialOutputShiftRegister = mSEROUT;
 			mbSerOutValid = false;
 			mbSerShiftValid = true;
+
+			if (mpCassette)
+				mpCassette->PokeyBeginCassetteData(mSKCTL);
 
 			// bit 3 is special and doesn't get cleared by IRQEN
 			mIRQST |= 0x08;
@@ -879,7 +941,40 @@ void ATPokeyEmulator::SetPotPos(unsigned idx, int pos) {
 	if (pos < 0)
 		pos = 0;
 
-	mPOT[idx] = (uint8)pos;
+	mPotPositions[idx] = (uint8)pos;
+
+	int hipos = pos * 114;
+	if (hipos > 229)
+		hipos = 229;
+
+	if (hipos < 0)
+		hipos = 0;
+
+	mPotHiPositions[idx] = (uint8)hipos;
+}
+
+void ATPokeyEmulator::SetPotPosHires(unsigned idx, int pos, bool grounded) {
+	int lopos = pos >> 16;
+	if (lopos > 228)
+		lopos = 228;
+
+	if (lopos < 0)
+		lopos = 0;
+
+	mPotPositions[idx] = (uint8)lopos;
+
+	int hipos = 255;
+	if (!grounded) {
+		hipos = (pos * 114) >> 16;
+
+		if (hipos > 229)
+			hipos = 229;
+
+		if (hipos < 0)
+			hipos = 0;
+	}
+
+	mPotHiPositions[idx] = (uint8)hipos;
 }
 
 void ATPokeyEmulator::AdvanceScanLine() {
@@ -903,6 +998,8 @@ void ATPokeyEmulator::AdvanceScanLine() {
 }
 
 void ATPokeyEmulator::AdvanceFrame(bool pushAudio) {
+	UpdatePots(0);
+
 	if (mKeyCodeTimer) {
 		if (!--mKeyCodeTimer) {
 			mSKSTAT |= 0x04;
@@ -957,6 +1054,9 @@ void ATPokeyEmulator::AdvanceFrame(bool pushAudio) {
 	// Catch up 15KHz and 64Khz clocks.
 	UpdateLast15KHzTime();
 	UpdateLast64KHzTime();
+
+	// Catch up poly counters.
+	UpdatePolyTime();
 
 	// Catch up the external clock, to avoid glitches at 2^32
 	if (mSerialExtPeriod) {
@@ -1205,19 +1305,6 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 
 			if (mSerialInputCounter)
 				OnSerialInputTick();
-			break;
-
-		default:
-			{
-				unsigned idx = id - kATPokeyEventPot0ScanComplete;
-
-				if (idx < 8) {
-					mALLPOT &= ~(1 << idx);
-
-					VDASSERT(mpPotScanEvent[idx]);
-					mpPotScanEvent[idx] = NULL;
-				}
-			}
 			break;
 	}
 }
@@ -1783,6 +1870,7 @@ uint8 ATPokeyEmulator::DebugReadByte(uint8 reg) const {
 		case 0x07:	// $D207 POT7
 			return const_cast<ATPokeyEmulator *>(this)->ReadByte(reg);
 		case 0x08:	// $D208 ALLPOT
+			const_cast<ATPokeyEmulator *>(this)->UpdatePots(0);
 			return mALLPOT;
 		case 0x09:	// $D209 KBCODE
 			return mKBCODE;
@@ -1818,49 +1906,50 @@ uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
 		case 0x05:	// $D205 POT5
 		case 0x06:	// $D206 POT6
 		case 0x07:	// $D207 POT7
-			{
-				int index = reg & 7;
-				uint8 val = mPOTLatched[index];
+			UpdatePots(0);
 
-				if (mALLPOT & (1 << index)) {
-					uint32 delay = (uint32)ATSCHEDULER_GETTIME(mpScheduler) - mPotScanStartTime;
+			if (mALLPOT & (1 << reg)) {
+				uint8 count = mPotMasterCounter;
 
-					if (!(mSKCTL & 0x04))
-						delay /= 114;
-					else if (delay < 2)
-						delay = 0;
-					else
-						delay -= 2;
-
-					if (delay > 228)
-						val = 228;
-					else
-						val = (uint8)delay;
+				// If we are in fast pot mode, we need to adjust the value that
+				// comes back. This is because the read occurs at a point where
+				// the count is unstable. The permutation below was determined
+				// on real hardware by reading POT1 at varying cycle offsets.
+				// Note that while all intermediate values read are even, the
+				// final count can be odd, so we must not apply this to latched
+				// values. Latched values can also vary but the mechanism is
+				// TBD.
+				if (mSKCTL & 4) {
+					const uint8 kDeltaVec[16] = { 0, 1, 0, 3, 0, 1, 0, 7, 0, 1, 0, 3, 0, 1, 0, 15 };
+					count ^= kDeltaVec[count & 15];
 				}
 
-				return val;
+				return count;
 			}
 
+			return mPotLatches[reg];
+
 		case 0x08:	// $D208 ALLPOT
+			UpdatePots(0);
 			return mALLPOT;
 		case 0x09:	// $D209 KBCODE
 			return mKBCODE;
 		case 0x0A:	// $D20A RANDOM
 			{
-				if (mSKCTL & 3) {
-					int t = ATSCHEDULER_GETTIME(mpScheduler);
-					int polyDelta = t - mLastPolyTime;
-					mPoly9Counter += polyDelta;
-					mPoly17Counter += polyDelta;
-					mLastPolyTime = t;
+				const bool initMode = !(mSKCTL & 3);
+				uint8 forceMask = 0;
 
-					if (mPoly9Counter >= 511)
-						mPoly9Counter %= 511;
+				if (initMode) {
+					uint64 offset = mpScheduler->GetTick64() - mPolyShutOffTime;
 
-					if (mPoly17Counter >= 131071)
-						mPoly17Counter %= 131071;
+					if (offset > 10)
+						return 0xFF;
 
+					if (offset)
+						forceMask = (uint8)(0xFFE00 >> (int)(uint32)offset);
 				}
+
+				UpdatePolyTime();
 
 				const uint8 *src = mAUDCTL & 0x80 ? &mpTables->mPolyBuffer[mPoly9Counter] : &mpTables->mPolyBuffer[mPoly17Counter];
 				uint8 v = 0;
@@ -1873,7 +1962,7 @@ uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
 						v = (v + v) + (src[i] & 1);
 				}
 
-				return ~v;
+				return ~v | forceMask;
 			}
 		case 0x0D:	// $D20D SERIN
 			{
@@ -2095,29 +2184,7 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 			mSKSTAT |= 0xe0;
 			break;
 		case 0x0B:	// $D20B POTGO
-			mALLPOT = 0xFF;
-
-			if (mSKCTL & 4)
-				mPotScanStartTime = ATSCHEDULER_GETTIME(mpScheduler);
-			else
-				mPotScanStartTime = UpdateLast15KHzTime();
-
-			for(int i=0; i<8; ++i) {
-				if (mpPotScanEvent[i])
-					mpScheduler->RemoveEvent(mpPotScanEvent[i]);
-
-				int delta = mPOT[i];
-
-				mPOTLatched[i] = delta;
-
-				if (!(mSKCTL & 0x04))
-					delta *= 114;
-
-				if (!delta)
-					++delta;
-
-				mpPotScanEvent[i] = mpScheduler->AddEvent(delta, this, kATPokeyEventPot0ScanComplete + i);
-			}
+			StartPotScan();
 			break;
 		case 0x0D:	// $D20D SEROUT
 			if (mbTraceSIO)
@@ -2244,6 +2311,17 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 
 				const uint8 delta = value ^ mSKCTL;
 
+				// update pots if fast pot scan mode has changed
+				if (delta & 0x04) {
+					// A time skew of two cycles is necessary to handle this case properly:
+					//
+					// STA POTGO
+					// STY SKCTL   ;enable fast pot scan mode
+					//
+					// The counter is delayed by two cycles, but so is the change to fast mode.
+					UpdatePots(2);
+				}
+
 				// force serial rate re-evaluation if any clocking mode bits have changed
 				if (delta & 0x70)
 					mbSerialRateChanged = true;
@@ -2255,6 +2333,10 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 					if (newInit) {
 						mpScheduler->UnsetEvent(mpKeyboardScanEvent);
 						mpScheduler->UnsetEvent(mpKeyboardIRQEvent);
+
+						// Don't reset poly counters at this point -- we need to keep them going in
+						// order to emulate the shift-out.
+						mPolyShutOffTime = mpScheduler->GetTick64();
 					} else {
 						VDASSERT(!mpKeyboardScanEvent);
 
@@ -2273,13 +2355,13 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 
 						mLast15KHzTime = ATSCHEDULER_GETTIME(mpScheduler) + 81 - 114;
 						mLast64KHzTime = ATSCHEDULER_GETTIME(mpScheduler) + 22 - 28;
+
+						mPoly9Counter = 0;
+						mPoly17Counter = 0;
+						mLastPolyTime = ATSCHEDULER_GETTIME(mpScheduler) + 1;
 					}
 
 					mpRenderer->SetInitMode(newInit);
-
-					mPoly9Counter = 0;
-					mPoly17Counter = 0;
-					mLastPolyTime = ATSCHEDULER_GETTIME(mpScheduler) + 1;
 
 					mSerialInputShiftRegister = 0;
 					mSerialOutputShiftRegister = 0;
@@ -2388,14 +2470,14 @@ void ATPokeyEmulator::BeginLoadState(ATSaveStateReader& reader) {
 
 void ATPokeyEmulator::LoadStateArch(ATSaveStateReader& reader) {
 	for(int i=0; i<4; ++i) {
-		mAUDF[i] = reader.ReadUint8();
-		mAUDC[i] = reader.ReadUint8();
+		mState.mReg[i*2 + 0] = mAUDF[i] = reader.ReadUint8();
+		mState.mReg[i*2 + 1] = mAUDC[i] = reader.ReadUint8();
 	}
 
-	mAUDCTL = reader.ReadUint8();
-	mIRQEN = reader.ReadUint8();
+	mState.mReg[8] = mAUDCTL = reader.ReadUint8();
+	mState.mReg[0x0E] = mIRQEN = reader.ReadUint8();
 	mIRQST = reader.ReadUint8();
-	mSKCTL = reader.ReadUint8();
+	mState.mReg[0x0F] = mSKCTL = reader.ReadUint8();
 }
 
 void ATPokeyEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
@@ -2415,6 +2497,7 @@ void ATPokeyEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
 
 	mPoly9Counter = reader.ReadUint16() % 511;
 	mPoly17Counter = reader.ReadUint32() % 131071;
+	mPolyShutOffTime = reader.ReadUint64();
 
 	mpRenderer->LoadState(reader);
 }
@@ -2435,6 +2518,7 @@ void ATPokeyEmulator::LoadStateResetPrivate(ATSaveStateReader& reader) {
 
 	mPoly9Counter = 0;
 	mPoly17Counter = 0;
+	mPolyShutOffTime = mpScheduler->GetTick64();
 
 	mpRenderer->ResetState();
 }
@@ -2527,6 +2611,7 @@ void ATPokeyEmulator::SaveStatePrivate(ATSaveStateWriter& writer) {
 	int polyDelta = t - mLastPolyTime;
 	writer.WriteUint16((mPoly9Counter + polyDelta) % 511);
 	writer.WriteUint32((mPoly17Counter + polyDelta) % 131071);
+	writer.WriteUint64(mpScheduler->GetTick64() - mPolyShutOffTime);
 
 	mpRenderer->SaveState(writer);
 
@@ -2642,13 +2727,7 @@ void ATPokeyEmulator::DumpStatus(bool isSlave) {
 		, mIRQST & 0x02 ? "" : ", timer2"
 		, mIRQST & 0x01 ? "" : ", timer1"
 		);
-	ATConsolePrintf("ALLPOT: %02x\n", mALLPOT);
-
-	for(int i=0; i<8; ++i) {
-		if (mpPotScanEvent[i])
-			ATConsolePrintf("  Pot %d will finish in %d cycles\n", i, mpScheduler->GetTicksToEvent(mpPotScanEvent[i]));
-	}
-	
+	ATConsolePrintf("ALLPOT: %02x\n", mALLPOT);	
 
 	ATConsolePrintf("\nCommand line: %s\n", mbCommandLineState ? "asserted" : "negated");
 }
@@ -2884,6 +2963,9 @@ void ATPokeyEmulator::ProcessReceivedSerialByte() {
 	if (mIRQEN & 0x20) {
 		// check for overrun
 		if (!(mIRQST & 0x20)) {
+			if (mSKSTAT & 0x20)
+				g_ATLCSIOData <<= "Signaling first serial input overrun.\n";
+
 			mSKSTAT &= 0xdf;
 
 			if (mbTraceSIO)
@@ -2900,4 +2982,85 @@ void ATPokeyEmulator::ProcessReceivedSerialByte() {
 
 void ATPokeyEmulator::SyncRenderers(ATPokeyRenderer *r) {
 	mpRenderer->SyncTo(*r);
+}
+
+void ATPokeyEmulator::StartPotScan() {
+	// If we're in fast pot mode, update the pots now in case we're interrupting
+	// a scan.
+	if (mSKCTL & 4)
+		UpdatePots(0);
+
+	mbPotScanActive = true;
+	mPotMasterCounter = 0;
+
+	const uint32 fastTime = ATSCHEDULER_GETTIME(mpScheduler);
+	const uint32 slowTime = UpdateLast15KHzTime();
+
+	mPotLastTimeFast = fastTime + 2;
+	mPotLastTimeSlow = slowTime;
+
+	// If we're in slow pot mode, turn on the dumping caps and begin
+	// charging from level 0.
+	//
+	// If we're in fast pot mode, any pot lines that have already reached
+	// threshold will stay there unless they are being drained. For these
+	// lines, ALLPOT will indicate that the pot is done, but the POTn
+	// register will not update. The behavior is different if fast pot
+	// mode is activated *after* the pot scan has started, but we aren't
+	// handling that here.
+	// 
+	if (!(mSKCTL & 4)) {
+		mALLPOT = 0xFF;
+	} else {
+		for(int i=0; i<8; ++i) {
+			if (mPotHiPositions[i] == 0xFF)
+				mALLPOT |= (1 << i);
+		}
+	}
+}
+
+void ATPokeyEmulator::UpdatePots(uint32 timeSkew) {
+	const uint32 fastTime = ATSCHEDULER_GETTIME(mpScheduler) + timeSkew;
+	if ((fastTime - mPotLastTimeFast - 1) >= (uint32)0x7FFFFFFF)		// wrap(fastTime <= mPotLastTimeFast)
+		return;
+
+	const uint32 slowTime = UpdateLast15KHzTime();
+
+	uint32 count = mPotMasterCounter;
+	if (mSKCTL & 4) {		// fast pot scan
+		count += (fastTime - mPotLastTimeFast);
+
+		if (count >= 229) {
+			count = 229;
+
+			mbPotScanActive = false;
+		}
+
+	} else {				// slow pot scan
+		count += (slowTime - mPotLastTimeSlow) / 114; 
+
+		if (count >= 228) {
+			count = 228;
+			mbPotScanActive = false;
+		}
+	}
+
+	mPotMasterCounter = (uint8)count;
+
+	mPotLastTimeFast = fastTime;
+	mPotLastTimeSlow = slowTime;
+
+	if (mALLPOT) {
+		const uint8 (&positions)[8] = *((mSKCTL & 4) ? &mPotHiPositions : &mPotPositions);
+		for(int i=0; i<8; ++i) {
+			if (!(mALLPOT & (1 << i)))
+				continue;
+
+			if (mPotMasterCounter >= positions[i]) {
+				mALLPOT &= ~(1 << i);
+
+				mPotLatches[i] = std::min<uint8>(229, positions[i]);
+			}
+		}
+	}
 }

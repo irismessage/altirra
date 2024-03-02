@@ -6,12 +6,13 @@
 body {
 	background: #fff;
 	color: #000;	
-	font-family: Verdana, sans-serif;
+	font-family: sans-serif;
 	font-size: 10pt;
 }
 
 tt {
 	font-family: Lucida Console, monospace;
+    color: #800;
 }
 
 h1 {
@@ -19,7 +20,13 @@ h1 {
 }
 
 h2 {
-	border-bottom: 2px solid black;
+	border-bottom: 1px solid black;
+    font-weight: normal;
+}
+
+h3 {
+    font-size: 12pt;
+    font-weight: bold;
 }
 </style>
 	</head>
@@ -32,18 +39,24 @@ h2 {
 			Windows 10 x64 have been tested as of this writing. XP and Vista are not
 			supported due to IDE/compiler requirements. Building from an x86 system should
 			work but is not tested or recommended, particularly since the x64 build
-			cannot be used on such a system.
+			cannot be tested on such a system.
 		</p>
 		<h3>Compiler</h3>
 		<p>
-			The official build environment is Visual Studio 2013 Professional Update 4.
-			VS2015 Professional and Community are also supported and can also be used.
+			The official build environment is Visual Studio 2013 Professional Update 5.
+			VS2015 Professional and Community Update 1 are also supported and can also be used.
+            (As of this writing, the dev enviroment is actually VS2015u1 building with the
+            VS2013u4 compiler.)
 		</p>
 		<p>
 			Visual C++ Express for Desktop can be used with a couple of caveats. The Windows SDK
 			is required for the Win32/COM build environment and the resource editor is
-			not available.
+			not available. Note that this is not a tested configuration and Community or Professional
+            Edition is recommended instead.
 		</p>
+        <p>
+            The GCC/MinGW and Clang compilers are not currently supported and will not work.
+        </p>
 		<h3>
 			DirectX SDK
 		</h3>
@@ -78,10 +91,12 @@ h2 {
 		</p>
 		<h3>Platform setup</h3>
         <p>
-            You may get a dialog from Visual Studio upon opening the solution for the first time
-            asking if you want to upgrade the projects to the newest compiler.
-            <b>Do not upgrade the projects through this dialog.</b> This will break the toolchain switching setup
-            in the projects. The projects are set up to switch toolchains through property sheets.
+            The <tt>PlatformSetup.props</tt> file controls the platform toolset that is used to build the
+            programs. The normal Visual Studio dialog to offering to upgrade the projects to the newest
+            compiler has been inhibited to prevent the converter from breaking this setup. If you still
+            receive this dialog, <b>do not upgrade the projects through it.</b> This will break the
+            toolchain switching setup in the projects. The <tt>PlatformSetup.props</tt> file should be
+            used to switch the toolchain instead.
         </p>
 		<p>
 			The build initially comes set to use the VS2013 compiler with XP targeting enabled
@@ -158,6 +173,24 @@ h2 {
 			Runtime is not installed or the version of D3DX associated with the DirectX
 			SDK being used is not installed.
 		</p>
+		<h3>Release script</h3>
+		<p>
+			For shipping builds, the release script (<tt>release.cmd</tt>) automates the process
+			of generating and packaging a clean build. It is invoked in a Visual C++ build environment
+			with the name of the version being released. The release script automatically
+			injects the version string into the source tree, triggers a clean build, and then
+			packages the result in the publish directory.
+		</p>
+		<p>
+			The release script checks the version of <tt>cl.exe</tt> available in the PATH and
+			will fail if it is not VS2013 Update 4. Use <tt>/anyvc</tt> to bypass this check and
+			force the current compiler to be used.
+		</p>
+		<p>
+			The packaging step requires the Info-Zip archiver (<tt>zip.exe</tt>) and the repacking tool
+            advancecomp (<tt>advzip.exe</tt>) to generate the final .zip files.
+		</p>
+        <h2>Deployment</h2>
 		<h3>Licensing</h3>
 		<p>
 			<b>Please note that Altirra is licensed under the GNU General Public License, version 2 or above.
@@ -173,10 +206,11 @@ h2 {
 		</p>
 		<h3>Third party content</h3>
 		<p>
-			The following third party code is present in Altirra with the following licences, believed to be GPL-compatible:
+			The following third party content is present in Altirra with the following licences, believed to be GPL-compatible:
 		</p>
 		<ul>
-			<li><tt>system\source\hash.cpp</tt>: MurmurHash3 (public domain)</li>
+			<li><tt>system\source\hash.cpp</tt>: MurmurHash3 (public domain; see source for reference)</li>
+			<li><tt>Kasumi\data\Tuffy.ttf</tt>: Tuffy TrueType font (public domain; see Tuffy.txt for reference)</li>
 		</ul>
 		<p>
 			In addition, the built-in kernel contains a copy of the Atari system bitmap font. This is believed
@@ -187,22 +221,6 @@ h2 {
 		<p>
 			Altirra does not link with the Microsoft D3DX library. It is used in the build, but only the build
 			tools link to D3DX and the outputs are used without it.
-		</p>
-		<h3>Release script</h3>
-		<p>
-			For shipping builds, the release script (<tt>release.cmd</tt>) automates the process
-			of generating and packaging a clean build. It is invoked in a Visual C++ build environment
-			with the name of the version being released. The release script automatically
-			injects the version string into the source tree, triggers a clean build, and then
-			packages the result in the publish directory.
-		</p>
-		<p>
-			The release script checks the version of <tt>cl.exe</tt> available in the PATH and
-			will fail if it is not VS2013 Update 4. Use <tt>/anyvc</tt> to bypass this check and
-			force the current compiler to be used.
-		</p>
-		<p>
-			The packaging step requires the Info-Zip archiver zip.exe to generate the final .zip files.
 		</p>
 		<h3>Deployment dependencies</h3>
 		<p>

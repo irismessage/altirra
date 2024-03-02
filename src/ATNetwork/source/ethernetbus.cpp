@@ -189,6 +189,8 @@ void ATEthernetBus::OnClockEvent(uint32 eventid, uint32 userid) {
 					if (ATIPv4DecodeHeader(dec.ipv4Info, data + 2, qp->mPacket.mLength - 2)) {
 						decInfo = &dec.ipv4Info;
 						decType = kATEthernetFrameDecodedType_IPv4;
+					} else if (ATIPv6DecodeHeader(data + 2, qp->mPacket.mLength - 2)) {
+						decType = kATEthernetFrameDecodedType_IPv6;
 					}
 					break;
 			}

@@ -60,6 +60,8 @@ class IATPokeyCassetteDevice {
 public:
 	virtual void PokeyChangeSerialRate(uint32 divisor) = 0;
 	virtual void PokeyResetSerialInput() = 0;
+	virtual void PokeyBeginCassetteData(uint8 skctl) = 0;
+	virtual bool PokeyWriteCassetteData(uint8 c, uint32 cyclesPerBit) = 0;
 };
 
 struct ATPokeyRegisterState {
@@ -96,7 +98,7 @@ public:
 	void	AddSIODevice(IATPokeySIODevice *device);
 	void	RemoveSIODevice(IATPokeySIODevice *device);
 
-	void	ReceiveSIOByte(uint8 byte, uint32 cyclesPerBit, bool simulateInputPort, bool allowBurst);
+	void	ReceiveSIOByte(uint8 byte, uint32 cyclesPerBit, bool simulateInputPort, bool allowBurst, bool synchronous);
 
 	void	SetAudioLine2(int v);		// used for audio from motor control line
 	void	SetDataLine(bool newState);
@@ -110,6 +112,9 @@ public:
 
 	bool	IsNonlinearMixingEnabled() const { return mbNonlinearMixingEnabled; }
 	void	SetNonlinearMixingEnabled(bool enable);
+
+	bool	IsSerialNoiseEnabled() const { return mbSerialNoiseEnabled; }
+	void	SetSerialNoiseEnabled(bool enable) { mbSerialNoiseEnabled = enable; }
 
 	bool	GetShiftKeyState() const { return mbShiftKeyState; }
 	void	SetShiftKeyState(bool down, bool immediate);
@@ -125,8 +130,8 @@ public:
 
 	void	SetKeyMatrix(const bool matrix[64]);
 
-	int	GetPotPos(unsigned idx) const { return mPOT[idx]; }
 	void	SetPotPos(unsigned idx, int pos);
+	void	SetPotPosHires(unsigned idx, int pos, bool grounded);
 
 	void	AdvanceScanLine();
 	void	AdvanceFrame(bool pushAudio);
@@ -162,6 +167,8 @@ protected:
 	uint32	UpdateLast64KHzTime();
 	uint32	UpdateLast64KHzTime(uint32 t);
 
+	void	UpdatePolyTime();
+
 	void	OnSerialInputTick();
 	void	OnSerialOutputTick();
 	uint32	GetSerialCyclesPerBitRecv() const;
@@ -196,6 +203,9 @@ protected:
 	void	ProcessReceivedSerialByte();
 	void	SyncRenderers(ATPokeyRenderer *r);
 
+	void	StartPotScan();
+	void	UpdatePots(uint32 timeSkew);
+
 protected:
 	ATPokeyRenderer *mpRenderer;
 
@@ -206,6 +216,7 @@ protected:
 	bool	mb5200Mode;
 	bool	mbTraceSIO;
 	bool	mbNonlinearMixingEnabled;
+	bool	mbSerialNoiseEnabled = true;
 
 	uint8	mKBCODE;
 	uint32	mKeyCodeTimer;
@@ -255,6 +266,7 @@ protected:
 	mutable uint32	mLastPolyTime;
 	mutable uint32	mPoly17Counter;
 	mutable uint32	mPoly9Counter;
+	uint64	mPolyShutOffTime;
 
 	uint8	mSerialInputShiftRegister;
 	uint8	mSerialOutputShiftRegister;
@@ -296,12 +308,6 @@ protected:
 	uint32	mLast15KHzTime;
 	uint32	mLast64KHzTime;
 
-	uint8	mPOT[8];
-	uint8	mPOTLatched[8];
-	uint8	mALLPOT;
-	uint32	mPotScanStartTime;
-
-	ATEvent *mpPotScanEvent[8];
 	ATEvent	*mpKeyboardIRQEvent;
 	ATEvent	*mpKeyboardScanEvent;
 	ATEvent	*mpAudioEvent;
@@ -325,18 +331,27 @@ protected:
 	ATPokeyEmulator	*mpSlave;
 	const bool	mbIsSlave;
 
-	IATAudioOutput *mpAudioOut;
+	IATAudioOutput *mpAudioOut = nullptr;
 
 	typedef vdfastvector<IATPokeySIODevice *> Devices;
 	Devices	mDevices;
 
-	IATPokeyCassetteDevice *mpCassette;
+	IATPokeyCassetteDevice *mpCassette = nullptr;
 
 	vdfastdeque<uint8> mKeyQueue;
 
-	uint8	mKeyScanState;
-	uint8	mKeyScanCode;
-	uint8	mKeyScanLatch;
+	uint8	mKeyScanState = 0;
+	uint8	mKeyScanCode = 0;
+	uint8	mKeyScanLatch = 0;
+
+	uint8	mPotPositions[8] = {};
+	uint8	mPotHiPositions[8] = {};
+	uint8	mPotLatches[8] = {};
+	uint8	mALLPOT = 0;
+	bool	mbPotScanActive = false;
+	uint8	mPotMasterCounter = 0;
+	uint32	mPotLastTimeFast = 0;
+	uint32	mPotLastTimeSlow = 0;
 };
 
 #endif

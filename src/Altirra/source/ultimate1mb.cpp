@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/file.h>
 #include <vd2/system/registry.h>
@@ -64,11 +64,10 @@ ATUltimate1MBEmulator::ATUltimate1MBEmulator()
 	, mpLayerCartControl(NULL)
 	, mpLayerPBIData(NULL)
 	, mpLayerPBIFirmware(NULL)
-	, mCartStateHandler()
-	, mExternalCartStateHandler()
 	, mVBXEPageHandler()
 	, mSBPageHandler()
 {
+	memset(mFirmware, 0xFF, sizeof mFirmware);
 }
 
 ATUltimate1MBEmulator::~ATUltimate1MBEmulator() {
@@ -105,6 +104,11 @@ void ATUltimate1MBEmulator::Init(
 
 	mCurrentPBIID = 0;
 
+	// hook the cartridge port
+	mpCartridgePort->AddCartridge(this, kATCartridgePriority_MMU, mCartId);
+
+	// establish layers
+
 	ATMemoryHandlerTable handlers;
 	handlers.mbPassReads = true;
 	handlers.mbPassAnticReads = true;
@@ -132,7 +136,7 @@ void ATUltimate1MBEmulator::Init(
 	memman->SetLayerName(mpLayerCartControl, "Ultimate1MB CCTL");
 	memman->EnableLayer(mpLayerCartControl, true);
 
-	handlers.mpDebugReadHandler = ReadByteFlash;
+	handlers.mpDebugReadHandler = DebugReadByteFlash;
 	handlers.mpReadHandler = ReadByteFlash;
 	handlers.mpWriteHandler = WriteByteFlash;
 	mpLayerFlashControl = memman->CreateLayer(kATMemoryPri_CartridgeOverlay + 3, handlers, 0xA0, 0x20);
@@ -196,10 +200,10 @@ void ATUltimate1MBEmulator::Shutdown() {
 			&mpMemLayerSelfTestFlash,
 		}) {
 			mpMemMan->DeleteLayer(*layerPtr);
-			*layerPtr = NULL;
+			*layerPtr = nullptr;
 		}
 
-		mpMemMan = NULL;
+		mpMemMan = nullptr;
 
 		// Not really related to the memory manager, but a convenient hook.
 		SaveNVRAM();
@@ -211,18 +215,23 @@ void ATUltimate1MBEmulator::Shutdown() {
 			mCurrentPBIID = -1;
 		}
 
-		mpPBIManager = NULL;
+		mpPBIManager = nullptr;
 	}
 
-	mpUIRenderer = NULL;
+	mpUIRenderer = nullptr;
 
 	if (mpMMU) {
 		mpMMU->ClearModeOverrides();
-		mpMMU = NULL;
+		mpMMU = nullptr;
 	}
 
-	mpMemory = NULL;
-	mpHookMgr = NULL;
+	if (mpCartridgePort) {
+		mpCartridgePort->RemoveCartridge(mCartId, this);
+		mpCartridgePort = nullptr;
+	}
+
+	mpMemory = nullptr;
+	mpHookMgr = nullptr;
 
 	mFlashEmu.Shutdown();
 }
@@ -241,10 +250,6 @@ void ATUltimate1MBEmulator::SetMemoryLayers(
 	mpMemLayerGameROM = layerGameROM;
 
 	UpdateKernelBank();
-}
-
-void ATUltimate1MBEmulator::SetCartActive(bool active) {
-	mbExternalCartActive = active;
 }
 
 bool ATUltimate1MBEmulator::LoadFirmware(ATFirmwareManager& fwmgr, uint64 id) {
@@ -276,18 +281,12 @@ void ATUltimate1MBEmulator::SaveFirmware(const wchar_t *path) {
 	mFlashEmu.SetDirty(false);
 }
 
-void ATUltimate1MBEmulator::AttachDevice(ATMemoryManager *memman) {
-}
-
-void ATUltimate1MBEmulator::DetachDevice() {
-}
-
-void ATUltimate1MBEmulator::GetDeviceInfo(ATPBIDeviceInfo& devInfo) const {
+void ATUltimate1MBEmulator::GetPBIDeviceInfo(ATPBIDeviceInfo& devInfo) const {
 	devInfo.mDeviceId = mCurrentPBIID;
-	devInfo.mpName = L"Ultimate1MB";
+	devInfo.mbHasIrq = false;
 }
 
-void ATUltimate1MBEmulator::Select(bool enable) {
+void ATUltimate1MBEmulator::SelectPBIDevice(bool enable) {
 	if (mbPBISelected == enable)
 		return;
 
@@ -310,6 +309,10 @@ void ATUltimate1MBEmulator::Select(bool enable) {
 
 bool ATUltimate1MBEmulator::IsPBIOverlayActive() const {
 	return mbPBISelected;
+}
+
+uint8 ATUltimate1MBEmulator::ReadPBIStatus(uint8 busData, bool debugOnly) {
+	return busData;
 }
 
 void ATUltimate1MBEmulator::ColdReset() {
@@ -410,6 +413,23 @@ void ATUltimate1MBEmulator::DumpRTCStatus() {
 	mClockEmu.DumpStatus();
 }
 
+void ATUltimate1MBEmulator::InitCartridge(IATDeviceCartridgePort *cartPort) {
+	mpCartridgePort = cartPort;
+}
+
+bool ATUltimate1MBEmulator::IsLeftCartActive() const {
+	return mbSDXEnabled && mbSDXModuleEnabled;
+}
+
+void ATUltimate1MBEmulator::SetCartEnables(bool leftEnable, bool rightEnable, bool cctlEnable) {
+	// U1MB is at the head and really shouldn't be disabled (it's the MMU!).
+	VDASSERT(leftEnable && rightEnable && cctlEnable);
+}
+
+void ATUltimate1MBEmulator::UpdateCartSense(bool leftActive) {
+	mbExternalCartActive = leftActive;
+}
+
 void ATUltimate1MBEmulator::SetKernelBank(uint8 bank) {
 	if (mKernelBank != bank) {
 		mKernelBank = bank;
@@ -466,8 +486,7 @@ void ATUltimate1MBEmulator::UpdateExternalCart() {
 		mbExternalCartEnabledRD4 = extrd4;
 		mbExternalCartEnabledRD5 = extrd5;
 
-		if (mExternalCartStateHandler)
-			mExternalCartStateHandler();
+		mpCartridgePort->EnablePassThrough(mCartId, extrd5, extrd4, true);
 	}
 }
 
@@ -509,8 +528,7 @@ void ATUltimate1MBEmulator::SetSDXEnabled(bool enabled) {
 
 	UpdateCartLayers();
 
-	if (mCartStateHandler)
-		mCartStateHandler();
+	mpCartridgePort->OnLeftWindowChanged(mCartId, IsLeftCartActive());
 }
 
 void ATUltimate1MBEmulator::SetSDXModuleEnabled(bool enabled) {
@@ -528,8 +546,7 @@ void ATUltimate1MBEmulator::SetSDXModuleEnabled(bool enabled) {
 
 	UpdateCartLayers();
 
-	if (mCartStateHandler)
-		mCartStateHandler();
+	mpCartridgePort->OnLeftWindowChanged(mCartId, IsLeftCartActive());
 }
 
 void ATUltimate1MBEmulator::SetIORAMEnabled(bool enabled) {
@@ -542,6 +559,18 @@ void ATUltimate1MBEmulator::SetIORAMEnabled(bool enabled) {
 
 	if (mVBXEPage && mVBXEPageHandler)
 		mVBXEPageHandler();
+}
+
+sint32 ATUltimate1MBEmulator::DebugReadByteFlash(void *thisptr0, uint32 addr) {
+	ATUltimate1MBEmulator *const thisptr = (ATUltimate1MBEmulator *)thisptr0;
+	uint8 value;
+
+	if (thisptr->mFlashEmu.DebugReadByte(thisptr->mCartBankOffset + (addr - 0xA000), value)) {
+		thisptr->UpdateCartLayers();
+		thisptr->UpdateFlashShadows();
+	}
+
+	return value;
 }
 
 sint32 ATUltimate1MBEmulator::ReadByteFlash(void *thisptr0, uint32 addr) {

@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/thread.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
@@ -364,7 +364,7 @@ uint32 ATModemDriverTCP::Write(const void *data, uint32 len, bool escapeChars) {
 			}
 		}
 
-		tc = data8 - (const uint8 *)data;
+		tc = (uint32)(data8 - (const uint8 *)data);
 	} else {
 		tc = sizeof mWriteBuffer - mWriteQueuedBytes;
 
@@ -628,7 +628,7 @@ void ATModemDriverTCP::ThreadRun() {
 
 			mSocket = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
 			if (mSocket != INVALID_SOCKET)
-				cr = connect(mSocket, p->ai_addr, p->ai_addrlen);
+				cr = connect(mSocket, p->ai_addr, (int)p->ai_addrlen);
 
 			if (!cr)
 				break;
@@ -1172,7 +1172,7 @@ void ATModemDriverTCP::OnRead(uint32 bytes) {
 			}
 		}
 
-		bytes = dst - mReadBuffer;
+		bytes = (uint32)(dst - mReadBuffer);
 	}
 
 	mTelnetState = state;
@@ -1318,7 +1318,7 @@ void ATModemDriverTCP::QueueWrite() {
 }
 
 void ATModemDriverTCP::FlushSpecialReplies() {
-	uint32 sn = mSpecialReplies.size();
+	uint32 sn = (uint32)mSpecialReplies.size();
 	uint32 si = mSpecialReplyIndex;
 	if (si < sn) {
 		si += Write(mSpecialReplies.data() + si, sn - si, false);

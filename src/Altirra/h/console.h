@@ -55,10 +55,24 @@ class ATFrameWindow;
 
 void ATGetUIPanes(vdfastvector<ATUIPane *>& panes);
 ATUIPane *ATGetUIPane(uint32 id);
+void *ATGetUIPaneAs(uint32 id, uint32 iid);
+
+template<class T>
+T *ATGetUIPaneAs(uint32 id) {
+	return static_cast<T *>(ATGetUIPaneAs(id, T::kTypeID));
+}
+
 ATUIPane *ATGetUIPaneByFrame(ATFrameWindow *frame);
 void ATCloseUIPane(uint32 id);
 
 ATUIPane *ATUIGetActivePane();
+void *ATUIGetActivePaneAs(uint32 iid);
+
+template<class T>
+T *ATUIGetActivePaneAs() {
+	return static_cast<T *>(ATUIGetActivePaneAs(T::kTypeID));
+}
+
 uint32 ATUIGetActivePaneId();
 
 enum ATUIPaneCommandId {

@@ -19,10 +19,12 @@
 #ifndef f_AT_ATDEBUGGER_TARGET_H
 #define f_AT_ATDEBUGGER_TARGET_H
 
+#include <vd2/system/function.h>
 #include <vd2/system/unknown.h>
 
 struct ATCPUExecState;
 struct ATCPUHistoryEntry;
+class IATCPUBreakpointHandler;
 
 enum ATDebugDisasmMode : uint8 {
 	kATDebugDisasmMode_6502,
@@ -37,6 +39,8 @@ public:
 
 	virtual void GetExecState(ATCPUExecState& state) = 0;
 	virtual void SetExecState(const ATCPUExecState& state) = 0;
+
+	virtual sint32 GetTimeSkew() = 0;
 
 	virtual uint8 ReadByte(uint32 address) = 0;
 	virtual void ReadMemory(uint32 address, void *dst, uint32 n) = 0;
@@ -55,6 +59,16 @@ public:
 	virtual IATDebugTarget *GetDebugTarget(uint32 index) = 0;
 };
 
+class IATDebugTargetBreakpoints {
+public:
+	enum { kTypeID = 'adtb' };
+
+	virtual void SetBreakpointHandler(IATCPUBreakpointHandler *handler) = 0;
+
+	virtual void ClearBreakpoint(uint16 pc) = 0;
+	virtual void SetBreakpoint(uint16 pc) = 0;
+};
+
 class IATDebugTargetHistory {
 public:
 	enum { kTypeID = 'adth' };
@@ -65,6 +79,18 @@ public:
 	virtual std::pair<uint32, uint32> GetHistoryRange() const = 0;
 	virtual uint32 ExtractHistory(const ATCPUHistoryEntry **hparray, uint32 start, uint32 n) const = 0;
 	virtual uint32 ConvertRawTimestamp(uint32 rawTimestamp) const = 0;
+};
+
+class IATDebugTargetExecutionControl {
+public:
+	enum { kTypeID = 'adtx' };
+
+	virtual void Break() = 0;
+	virtual bool StepInto(const vdfunction<void(bool)>& fn) = 0;
+	virtual bool StepOver(const vdfunction<void(bool)>& fn) = 0;
+	virtual bool StepOut(const vdfunction<void(bool)>& fn) = 0;
+	virtual void StepUpdate() = 0;
+	virtual void RunUntilSynced() = 0;
 };
 
 #endif

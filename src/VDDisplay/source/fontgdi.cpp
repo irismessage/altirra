@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Kasumi/pixmap.h>
@@ -282,7 +282,7 @@ bool VDDisplayFontGDI::RenderGlyph(uint32 c, bool inverted, const VDPixmap *dst,
 		::SetTextColor(mhdc, RGB(255, 255, 255));
 	}
 
-	RECT r = {0, 0, mBitmapWidth, mMetrics.tmHeight};
+	RECT r = {0, 0, (LONG)mBitmapWidth, mMetrics.tmHeight};
 	::FillRect(mhdc, &r, hFillBrush);
 
 	WCHAR ch = c;

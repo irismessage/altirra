@@ -23,19 +23,24 @@
 #include <vd2/system/time.h>
 
 class ATScheduler;
-class IATUIRenderer;
+class IATDeviceIndicatorManager;
 class ATIDEPhysicalDisk;
-class IATIDEDisk;
+class IATBlockDevice;
 
 class ATIDEEmulator : protected IVDTimerCallback {
 	ATIDEEmulator(const ATIDEEmulator&);
 	ATIDEEmulator& operator=(const ATIDEEmulator&);
 public:
+	enum : uint32 { kTypeID = 'ata ' };
+
 	ATIDEEmulator();
 	~ATIDEEmulator();
 
-	void Init(ATScheduler *mpScheduler, IATUIRenderer *uirenderer);
-	void OpenImage(bool write, bool fast, uint32 cylinders, uint32 heads, uint32 sectors, const wchar_t *filename);
+	void Init(ATScheduler *mpScheduler, IATDeviceIndicatorManager *uirenderer, bool isSingle = true, bool isSlave = false);
+	void SetIsSingle(bool single);
+	void Shutdown();
+
+	void OpenImage(IATBlockDevice *dev);
 	void CloseImage();
 
 	const wchar_t *GetImagePath() const;
@@ -104,7 +109,7 @@ protected:
 	uint8 mFeatures;
 
 	ATScheduler *mpScheduler;
-	IATUIRenderer *mpUIRenderer;
+	IATDeviceIndicatorManager *mpUIRenderer;
 
 	uint32 mMaxSectorTransferCount;
 	uint32 mSectorCount;
@@ -127,13 +132,15 @@ protected:
 	bool mbTransfer16Bit;
 	bool mbWriteEnabled;
 	bool mbWriteInProgress;
+	bool mbIsSingle;
+	bool mbIsSlave;
 	bool mbFastDevice;
 	bool mbHardwareReset;
 	bool mbSoftwareReset;
 
 	vdfastvector<uint8> mTransferBuffer;
 
-	IATIDEDisk *mpDisk;
+	IATBlockDevice *mpDisk;
 	VDStringW mPath;
 
 	VDLazyTimer mFlushTimer;

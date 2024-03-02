@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/vdalloc.h>
 #include <at/atcore/cio.h>
@@ -99,7 +99,7 @@ protected:
 	uint16	mCassetteCIOOpenHandlerHookAddress;
 	uint16	mEditorCIOGetCharHandlerHookAddress;
 	uint16	mEditorCIOPutCharHandlerHookAddress;
-	uint16	mPrinterHookAddresses[6];
+	uint16	mPrinterHookAddresses[6] = {};
 
 	ATCPUHookInitNode *mpInitHook;
 	ATCPUHookNode *mpDeviceRoutineHooks[24];
@@ -1085,12 +1085,12 @@ uint8 ATHLECIOHook::OnHookCassetteOpen(uint16 pc) {
 	ATKernelDatabase kdb(mpCPU->GetMemory());
 
 	if (pc == mCassetteCIOOpenHandlerHookAddress) {
-		// save ICAX2Z into FTYPE (IRG mode)
-		kdb.ICAX2Z = kdb.FTYPE;
-
 		// abort emulation if it's not an open-for-read request
 		if ((kdb.ICAX1Z & 0x0C) != 0x04)
 			return 0;
+
+		// save ICAX2Z into FTYPE (IRG mode)
+		kdb.FTYPE = kdb.ICAX2Z;
 	}
 
 	// press play on cassette
@@ -1242,7 +1242,7 @@ void ATHLECIOHook::RegisterCIODevices() {
 	// read HATABS
 	auto& mem = *mpCPU->GetMemory();
 	uint8 hatabs[36];
-	for(size_t i=0; i<36; ++i)
+	for(int i=0; i<36; ++i)
 		hatabs[i] = mem.ReadByte(ATKernelSymbols::HATABS + i);
 
 	uint8 iocbIDs[8];
@@ -1361,7 +1361,7 @@ void ATHLECIOHook::RegisterCIODevices() {
 	}
 
 	// write HATABS back to emulated memory
-	for(size_t i=0; i<36; ++i)
+	for(int i=0; i<36; ++i)
 		mem.WriteByte(ATKernelSymbols::HATABS + i, hatabs[i]);
 
 	// update registered devices

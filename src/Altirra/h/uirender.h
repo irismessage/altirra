@@ -19,6 +19,7 @@
 #define f_AT_UIRENDER_H
 
 #include <vd2/system/refcount.h>
+#include <at/atcore/deviceindicators.h>
 
 struct VDPixmap;
 class ATAudioMonitor;
@@ -39,32 +40,8 @@ struct ATUIAudioStatus {
 	bool mbStereoMixing;
 };
 
-class IATUIRenderer : public IVDRefCount {
+class IATUIRenderer : public IVDRefCount, public IATDeviceIndicatorManager {
 public:
-	virtual void SetStatusFlags(uint32 flags) = 0;
-	virtual void ResetStatusFlags(uint32 flags) = 0;
-	virtual void PulseStatusFlags(uint32 flags) = 0;
-
-	virtual void SetStatusCounter(uint32 index, uint32 value) = 0;
-
-	virtual void SetDiskMotorActivity(uint32 index, bool on) = 0;
-
-	virtual void SetHActivity(bool write) = 0;
-	virtual void SetIDEActivity(bool write, uint32 lba) = 0;
-	virtual void SetPCLinkActivity(bool write) = 0;
-
-	virtual void SetFlashWriteActivity() = 0;
-
-	virtual void SetCassetteIndicatorVisible(bool vis) = 0;
-	virtual void SetCassettePosition(float pos) = 0;
-
-	virtual void SetRecordingPosition() = 0;
-	virtual void SetRecordingPosition(float time, sint64 size) = 0;
-
-	virtual void SetModemConnection(const char *str) = 0;
-
-	virtual void SetStatusMessage(const wchar_t *s) = 0;
-
 	virtual void SetLedStatus(uint8 ledMask) = 0;
 	
 	virtual void SetHeldButtonStatus(uint8 consolMask) = 0;

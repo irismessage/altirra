@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/VDString.h>
 #include "hostdeviceutils.h"
 

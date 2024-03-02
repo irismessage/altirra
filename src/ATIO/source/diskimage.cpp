@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
@@ -24,6 +24,7 @@
 #include <vd2/system/strutil.h>
 #include <vd2/system/vdstl.h>
 #include <at/atcore/logging.h>
+#include <at/atcore/vfs.h>
 #include <at/atio/diskimage.h>
 #include <at/atio/diskfs.h>
 
@@ -105,7 +106,7 @@ namespace {
 	};
 }
 
-class ATDiskImage : public IATDiskImage {
+class ATDiskImage final : public IATDiskImage {
 public:
 	ATDiskImage();
 
@@ -113,34 +114,36 @@ public:
 	void Load(const wchar_t *s);
 	void Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream);
 
-	ATDiskTimingMode GetTimingMode() const;
+	ATDiskTimingMode GetTimingMode() const override;
 
-	bool IsDirty() const;
-	bool IsUpdatable() const;
-	bool IsDynamic() const { return false; }
+	bool IsDirty() const override;
+	bool IsUpdatable() const override;
+	bool IsDynamic() const override { return false; }
 	ATDiskImageFormat GetImageFormat() const override { return mImageFormat; }
 
-	bool Flush();
+	bool Flush() override;
 
-	void SetPath(const wchar_t *path);
-	void Save(const wchar_t *path, ATDiskImageFormat format);
+	void SetPath(const wchar_t *path) override;
+	void Save(const wchar_t *path, ATDiskImageFormat format) override;
 
-	ATDiskGeometryInfo GetGeometry() const { return mGeometry; }
-	uint32 GetSectorSize() const { return mSectorSize; }
-	uint32 GetSectorSize(uint32 virtIndex) const { return virtIndex < mBootSectorCount ? 128 : mSectorSize; }
-	uint32 GetBootSectorCount() const { return mBootSectorCount; }
+	ATDiskGeometryInfo GetGeometry() const override { return mGeometry; }
+	uint32 GetSectorSize() const override { return mSectorSize; }
+	uint32 GetSectorSize(uint32 virtIndex) const override { return virtIndex < mBootSectorCount ? 128 : mSectorSize; }
+	uint32 GetBootSectorCount() const  override{ return mBootSectorCount; }
 
-	uint32 GetPhysicalSectorCount() const;
-	void GetPhysicalSectorInfo(uint32 index, ATDiskPhysicalSectorInfo& info) const;
+	uint32 GetPhysicalSectorCount() const override;
+	void GetPhysicalSectorInfo(uint32 index, ATDiskPhysicalSectorInfo& info) const override;
 
-	void ReadPhysicalSector(uint32 index, void *data, uint32 len);
-	void WritePhysicalSector(uint32 index, const void *data, uint32 len);
+	void ReadPhysicalSector(uint32 index, void *data, uint32 len) override;
+	void WritePhysicalSector(uint32 index, const void *data, uint32 len) override;
 
-	uint32 GetVirtualSectorCount() const;
-	void GetVirtualSectorInfo(uint32 index, ATDiskVirtualSectorInfo& info) const;
+	uint32 GetVirtualSectorCount() const override;
+	void GetVirtualSectorInfo(uint32 index, ATDiskVirtualSectorInfo& info) const override;
 
-	uint32 ReadVirtualSector(uint32 index, void *data, uint32 len);
-	bool WriteVirtualSector(uint32 index, const void *data, uint32 len);
+	uint32 ReadVirtualSector(uint32 index, void *data, uint32 len) override;
+	bool WriteVirtualSector(uint32 index, const void *data, uint32 len) override;
+
+	void Resize(uint32 sectors) override;
 
 protected:
 	typedef ATDiskVirtualSectorInfo VirtSectorInfo;
@@ -237,17 +240,19 @@ void ATDiskImage::Init(uint32 sectorCount, uint32 bootSectorCount, uint32 sector
 }
 
 void ATDiskImage::Load(const wchar_t *s) {
-	VDFileStream f(s);
-
-	Load(s, s, f);
+	vdrefptr<ATVFSFileView> view;
+	
+	ATVFSOpenFileView(s, false, ~view);
+	Load(s, view->GetFileName(), view->GetStream());
 }
 
 void ATDiskImage::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream) {
 	sint64 fileSize = stream.Length();
+	const wchar_t *ext = VDFileSplitExt(imagePath);
 
-	if (!vdwcsicmp(VDFileSplitExt(imagePath), L".arc")) {
+	if (!vdwcsicmp(ext, L".arc")) {
 		LoadARC(stream, origPath);
-	} else if (fileSize <= 65535 * 128 && imagePath && !vdwcsicmp(VDFileSplitExt(imagePath), L".xfd")) {
+	} else if (fileSize <= 65535 * 128 && imagePath && !vdwcsicmp(ext, L".xfd")) {
 		LoadXFD(stream, fileSize);
 	} else {
 		
@@ -979,7 +984,15 @@ void ATDiskImage::LoadATR(IVDRandomAccessStream& stream, uint32 len, const wchar
 			mBootSectorCount = imageBootSectorCount;
 	}
 
-	uint32 sectorCount = (len - 128*imageBootSectorCount) / mSectorSize + imageBootSectorCount;
+	uint32 wholeSectors = (len - 128*imageBootSectorCount) / mSectorSize;
+	uint32 partialSector = (len - 128*imageBootSectorCount) % mSectorSize;
+	uint32 sectorCount = wholeSectors + imageBootSectorCount;
+
+	if (partialSector) {
+		++sectorCount;
+
+		mImage.resize(mImage.size() + (mSectorSize - partialSector), 0);
+	}
 
 	mPhysSectors.resize(sectorCount);
 	mVirtSectors.resize(sectorCount);
@@ -1028,20 +1041,22 @@ void ATDiskImage::LoadARC(IVDRandomAccessStream& stream, const wchar_t *origPath
 
 	ATDiskFSEntryInfo entryInfo;
 	uintptr fh = arcfs->FindFirst(0, entryInfo);
-	try {
-		do {
-			uint32 size = entryInfo.mBytes;
-			uint32 secs = ((size + 127) >> 7);
+	if (fh) {
+		try {
+			do {
+				uint32 size = entryInfo.mBytes;
+				uint32 secs = ((size + 127) >> 7);
 
-			dataSectors += secs;
-			mapSectors += (secs + 59) / 60;
-			++fileCount;
-		} while(arcfs->FindNext(fh, entryInfo));
+				dataSectors += secs;
+				mapSectors += (secs + 59) / 60;
+				++fileCount;
+			} while(arcfs->FindNext(fh, entryInfo));
 
-		arcfs->FindEnd(fh);
-	} catch(...) {
-		arcfs->FindEnd(fh);
-		throw;
+			arcfs->FindEnd(fh);
+		} catch(...) {
+			arcfs->FindEnd(fh);
+			throw;
+		}
 	}
 
 	const uint32 bootSectors = 3;
@@ -1072,18 +1087,20 @@ void ATDiskImage::LoadARC(IVDRandomAccessStream& stream, const wchar_t *origPath
 
 	// copy over files
 	uintptr fh2 = arcfs->FindFirst(0, entryInfo);
-	try {
-		vdfastvector<uint8> buf;
-		do {
-			arcfs->ReadFile(entryInfo.mKey, buf);
-			uintptr fileKey = sdfs->WriteFile(0, entryInfo.mFileName.c_str(), buf.data(), (uint32)buf.size());
-			sdfs->SetFileTimestamp(fileKey, entryInfo.mDate);
-		} while(arcfs->FindNext(fh2, entryInfo));
+	if (fh2) {
+		try {
+			vdfastvector<uint8> buf;
+			do {
+				arcfs->ReadFile(entryInfo.mKey, buf);
+				uintptr fileKey = sdfs->WriteFile(0, entryInfo.mFileName.c_str(), buf.data(), (uint32)buf.size());
+				sdfs->SetFileTimestamp(fileKey, entryInfo.mDate);
+			} while(arcfs->FindNext(fh2, entryInfo));
 
-		arcfs->FindEnd(fh2);
-	} catch(...) {
-		arcfs->FindEnd(fh2);
-		throw;
+			arcfs->FindEnd(fh2);
+		} catch(...) {
+			arcfs->FindEnd(fh2);
+			throw;
+		}
 	}
 
 	sdfs->Flush();
@@ -1409,6 +1426,175 @@ bool ATDiskImage::WriteVirtualSector(uint32 index, const void *data, uint32 len)
 	psi.mbDirty = true;
 	mbDirty = true;
 	return true;
+}
+
+void ATDiskImage::Resize(uint32 newSectors) {
+	uint32 curSectors = (uint32)mVirtSectors.size();
+
+	if (curSectors == newSectors)
+		return;
+
+	const uint32 newPhysStart = (uint32)mPhysSectors.size();
+
+	// check if we're shrinking
+	if (newSectors < curSectors) {
+		// Mark the image dirty.
+		mbDirty = true;
+		mbDiskFormatDirty = true;
+
+		// Remove the extra virtual sectors.
+		mVirtSectors.resize(newSectors);
+
+		// Sort virtual sectors by physical sector order.
+		vdfastvector<ATDiskVirtualSectorInfo *> vsptrs(newSectors);
+		for(uint32 i = 0; i < curSectors; ++i)
+			vsptrs[i] = &mVirtSectors[i];
+
+		std::sort(vsptrs.begin(), vsptrs.end(),
+			[](const ATDiskVirtualSectorInfo *p, const ATDiskVirtualSectorInfo *q) { return p->mStartPhysSector < q->mStartPhysSector; }
+		);
+
+		// Compact the physical sector array.
+		uint32 newPhys = 0;
+
+		for(ATDiskVirtualSectorInfo *vs : vsptrs) {
+			const uint32 start = vs->mStartPhysSector;
+			const uint32 count = vs->mNumPhysSectors;
+
+			if (start != newPhys)
+				std::copy(mPhysSectors.begin() + start, mPhysSectors.begin() + start + count, mPhysSectors.begin() + newPhys);
+
+			vs->mStartPhysSector = newPhys;
+			newPhys += count;
+		}
+
+		// Trim the physical sector array.
+		mPhysSectors.resize(newPhys);
+
+		// Image compaction is more tricky because sectors may overlap in the image. They
+		// generally shouldn't, but we don't always do the full checking necessary at load
+		// time to avoid this. Instead, we build a free list and compact by that. It's slower,
+		// but safer.
+
+		typedef std::pair<uint32, uint32> Span;
+		std::vector<Span> imageSpans(newPhys);
+
+		// Extract spans from all remaining physical sectors.
+		for(uint32 i = 0; i < newPhys; ++i) {
+			const auto& ps = mPhysSectors[i];
+			imageSpans[i] = { ps.mOffset, ps.mOffset + ps.mSize };
+		}
+
+		// Sort spans by ascending starting range.
+		std::sort(imageSpans.begin(), imageSpans.end(), [](const Span& a, const Span& b) { return a.first < b.first; });
+
+		// Run through the list and collapse gaps, turning ranges into remapping pairs
+		// as we go.
+		uint32 dstLastStart = 0;
+		uint32 dstLastEnd = 0;
+		uint32 srcLastStart = 0;
+		uint32 srcLastEnd = 0;
+		uint32 imageSizeDelta = 0;
+
+		for(auto& span : imageSpans) {
+			if (span.first > srcLastEnd) {
+				// shift the previous block
+				memmove(&mImage[dstLastStart], &mImage[srcLastStart], dstLastEnd - dstLastStart);
+
+				// remove the gap from the remapping
+				imageSizeDelta += span.first - srcLastEnd;
+
+				// start a new block
+				dstLastStart = dstLastEnd;
+				srcLastStart = span.first;
+				srcLastEnd = span.second;
+			} else if (span.second > srcLastEnd) {
+				srcLastEnd = span.second;
+				dstLastEnd = srcLastEnd - imageSizeDelta;
+			}
+
+			span.second = span.first - imageSizeDelta;
+		}
+
+		// shift the last block
+		memmove(&mImage[dstLastStart], &mImage[srcLastStart], dstLastEnd - dstLastStart);
+
+		// trim the image buffer; note that this won't actually release
+		// memory, but it does prevent us from accumulating cruft on a later
+		// extend
+		mImage.resize(dstLastEnd);
+
+		// relocate all offsets
+		for(auto& ps : mPhysSectors) {
+			ps.mOffset = std::lower_bound(imageSpans.begin(), imageSpans.end(), ps.mOffset,
+				[](const Span& a, uint32 b) { return a.first < b; })->second;
+		}
+	} else {
+		// We're growing. Extend the image first.
+		const uint32 sectorsToAdd = newSectors - curSectors;
+		const uint32 imageOffset = (uint32)mImage.size();
+
+		mImage.resize(imageOffset + mSectorSize * sectorsToAdd, 0);
+		
+		try {
+			// Extend the physical sector array.
+			mPhysSectors.resize(newPhysStart + sectorsToAdd);
+
+			try {
+				// Initialize the new physical sectors.
+				for(uint32 i = 0; i < sectorsToAdd; ++i) {
+					auto& ps = mPhysSectors[newPhysStart + i];
+
+					ps.mbDirty = true;
+					ps.mDiskOffset = -1;
+					ps.mFDCStatus = 0xFF;
+					ps.mOffset = imageOffset + mSectorSize * i;
+					ps.mRotPos = 0;
+					ps.mSize = mSectorSize;
+					ps.mWeakDataOffset = -1;
+				}
+		
+				// Extend the virtual sector array.
+				mVirtSectors.resize(newSectors);
+
+				// At this point, we're clear -- we do no allocation past
+				// this point, so we can commit all arrays.
+
+				// Initialize the new virtual sectors.
+				for(uint32 i = 0; i < sectorsToAdd; ++i) {
+					auto& vs = mVirtSectors[curSectors + i];
+					vs.mNumPhysSectors = 1;
+					vs.mStartPhysSector = newPhysStart + i;
+				}
+
+				ComputeGeometry();
+
+				// Go back and give the new physical sectors some sort of sane
+				// interleave.
+				for(uint32 i = 0; i < sectorsToAdd; ++i) {
+					auto& ps = mPhysSectors[newPhysStart + i];
+					uint32 trackSec = (curSectors + i) % mSectorsPerTrack;
+
+					if (trackSec & 1)
+						trackSec += mSectorsPerTrack;
+
+					trackSec >>= 1;
+
+					ps.mRotPos = (float)trackSec / (float)mSectorsPerTrack;
+				}
+
+				// Mark the disk dirty.
+				mbDirty = true;
+				mbDiskFormatDirty = true;
+			} catch(...) {
+				mPhysSectors.resize(newPhysStart);
+				throw;
+			}
+		} catch(...) {
+			mImage.resize(imageOffset);
+			throw;
+		}
+	}
 }
 
 void ATDiskImage::ComputeGeometry() {
@@ -1932,7 +2118,7 @@ void ATDiskImage::SaveDCM(VDFile& f, PhysSectors& phySecs) {
 }
 
 void ATDiskImage::SaveATX(VDFile& f, PhysSectors& phySecs) {
-	ATXHeader hdr = {0};
+	ATXHeader hdr = {};
 	memcpy(hdr.mSignature, "AT8X", 4);
 	hdr.mVersionMajor = 1;
 	hdr.mVersionMinor = 1;

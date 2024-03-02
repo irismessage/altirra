@@ -415,7 +415,7 @@ IATDeviceSIO::CmdResponse ATDeviceDiskDrive::OnCmdReadSector() {
 
 		mpSIOMgr->SendData(mSectorBuffer, sectorSize, true);
 
-		mpFenceFn = [=, this]() {
+		mpFenceFn = [finalRotationalOffset, this]() {
 			mRotationOffset = finalRotationalOffset;
 			mRotationTime = ATSCHEDULER_GETTIME(mpScheduler);
 		};

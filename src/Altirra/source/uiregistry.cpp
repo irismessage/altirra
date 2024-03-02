@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/file.h>
 #include <vd2/system/registry.h>
 
@@ -178,7 +178,7 @@ stop:
 				s += 3;
 			}
 
-			key->setBinary(token.c_str(), binvalue.data(), binvalue.size());
+			key->setBinary(token.c_str(), binvalue.data(), (int)binvalue.size());
 		}
 	}
 }
@@ -275,7 +275,7 @@ void ATUISaveRegistryPath(VDTextOutputStream& os, VDStringA& path, bool global) 
 
 		ATUISaveRegistryPath(os, path, global);
 
-		path.resize(baseLen);
+		path.resize((uint32)baseLen);
 	}
 }
 

@@ -18,6 +18,7 @@
 #include <stdafx.h>
 #include <vd2/system/hash.h>
 #include <vd2/system/int128.h>
+#include <at/atcore/blockdevice.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/deviceprinter.h>
 #include <at/atcore/deviceserial.h>
@@ -26,7 +27,6 @@
 #include "memorymanager.h"
 #include "firmwaremanager.h"
 #include "irqcontroller.h"
-#include "idedisk.h"
 #include "scsidisk.h"
 
 // HACK
@@ -375,7 +375,7 @@ void ATBlackBoxEmulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) 
 	mACIA.Init(sch, slowsch);
 }
 
-void ATBlackBoxEmulator::InitIndicators(IATUIRenderer *r) {
+void ATBlackBoxEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
 }
 
@@ -383,12 +383,24 @@ void ATBlackBoxEmulator::SetPrinterOutput(IATPrinterOutput *out) {
 	mpPrinterOutput = out;
 }
 
-void ATBlackBoxEmulator::ActivateButton(uint32 idx) {
-	if (idx == 0) {
+uint32 ATBlackBoxEmulator::GetSupportedButtons() const {
+	return (1 << kATDeviceButton_BlackBoxDumpScreen)
+		| (1 << kATDeviceButton_BlackBoxMenu);
+}
+
+bool ATBlackBoxEmulator::IsButtonDepressed(ATDeviceButton idx) const {
+	return false;
+}
+
+void ATBlackBoxEmulator::ActivateButton(ATDeviceButton idx, bool state) {
+	if (!state)
+		return;
+
+	if (idx == kATDeviceButton_BlackBoxDumpScreen) {
 		mActiveIRQs &= ~0x04;
 		mVIA.SetCB1Input(false);
 		mpScheduler->SetEvent(170000, this, 1, mpEventsReleaseButton[0]);
-	} else if (idx == 1) {
+	} else if (idx == kATDeviceButton_BlackBoxMenu) {
 		mActiveIRQs &= ~0x08;
 		mVIA.SetCB1Input(false);
 		mpScheduler->SetEvent(170000, this, 2, mpEventsReleaseButton[1]);
@@ -419,7 +431,7 @@ void ATBlackBoxEmulator::GetChildDevices(vdfastvector<IATDevice *>& devs) {
 }
 
 void ATBlackBoxEmulator::AddChildDevice(IATDevice *dev) {
-	IATIDEDisk *disk = vdpoly_cast<IATIDEDisk *>(dev);
+	IATBlockDevice *disk = vdpoly_cast<IATBlockDevice *>(dev);
 	if (disk) {
 		VDASSERT(vdpoly_cast<IATDevice *>(disk));
 
@@ -469,7 +481,7 @@ void ATBlackBoxEmulator::RemoveChildDevice(IATDevice *dev) {
 		return;
 	}
 
-	IATIDEDisk *disk = vdpoly_cast<IATIDEDisk *>(dev);
+	IATBlockDevice *disk = vdpoly_cast<IATBlockDevice *>(dev);
 
 	if (!disk)
 		return;

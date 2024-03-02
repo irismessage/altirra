@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
@@ -101,7 +101,7 @@ struct ATPCLinkDiskInfo {
 };
 
 struct ATPCLinkDirEnt {
-	enum {
+	enum : uint8 {
 		kFlag_OpenForWrite	= 0x80,
 		kFlag_Directory		= 0x20,
 		kFlag_Deleted		= 0x10,
@@ -109,6 +109,17 @@ struct ATPCLinkDirEnt {
 		kFlag_Archive		= 0x04,
 		kFlag_Hidden		= 0x02,
 		kFlag_Locked		= 0x01
+	};
+
+	enum : uint8 {
+		kAttrMask_NoSubDir		= 0x80,
+		kAttrMask_NoArchived	= 0x40,
+		kAttrMask_NoHidden		= 0x20,
+		kAttrMask_NoLocked		= 0x10,
+		kAttrMask_OnlySubDir	= 0x08,
+		kAttrMask_OnlyArchived	= 0x04,
+		kAttrMask_OnlyHidden	= 0x02,
+		kAttrMask_OnlyLocked	= 0x01,
 	};
 
 	uint8	mFlags;
@@ -126,6 +137,7 @@ struct ATPCLinkDirEnt {
 	uint8	mSec;
 
 	void SetFlagsFromAttributes(uint32 attr);
+	bool TestAttrFilter(uint8 attrFilter) const;
 	void SetDate(const VDDate& date);
 };
 
@@ -143,6 +155,53 @@ void ATPCLinkDirEnt::SetFlagsFromAttributes(uint32 attr) {
 	if (attr & kVDFileAttr_Directory)
 		mFlags |= ATPCLinkDirEnt::kFlag_Directory;
 
+}
+
+bool ATPCLinkDirEnt::TestAttrFilter(uint8 attrFilter) const {
+	if (!attrFilter)
+		return true;
+
+	if (attrFilter & kAttrMask_NoArchived) {
+		if (mFlags & ATPCLinkDirEnt::kFlag_Archive)
+			return false;
+	}
+
+	if (attrFilter & kAttrMask_NoHidden) {
+		if (mFlags & ATPCLinkDirEnt::kFlag_Hidden)
+			return false;
+	}
+
+	if (attrFilter & kAttrMask_NoLocked) {
+		if (mFlags & ATPCLinkDirEnt::kFlag_Locked)
+			return false;
+	}
+
+	if (attrFilter & kAttrMask_NoSubDir) {
+		if (mFlags & ATPCLinkDirEnt::kFlag_Directory)
+			return false;
+	}
+
+	if (attrFilter & kAttrMask_OnlyArchived) {
+		if (!(mFlags & ATPCLinkDirEnt::kFlag_Archive))
+			return false;
+	}
+
+	if (attrFilter & kAttrMask_OnlyHidden) {
+		if (!(mFlags & ATPCLinkDirEnt::kFlag_Hidden))
+			return false;
+	}
+
+	if (attrFilter & kAttrMask_OnlyLocked) {
+		if (!(mFlags & ATPCLinkDirEnt::kFlag_Locked))
+			return false;
+	}
+
+	if (attrFilter & kAttrMask_OnlySubDir) {
+		if (!(mFlags & ATPCLinkDirEnt::kFlag_Directory))
+			return false;
+	}
+
+	return true;
 }
 
 void ATPCLinkDirEnt::SetDate(const VDDate& date) {
@@ -365,11 +424,11 @@ void ATPCLinkFileName::WildMerge(const ATPCLinkFileName& fn) {
 ///////////////////////////////////////////////////////////////////////////
 
 class ATPCLinkFileHandle {
-	ATPCLinkFileHandle(const ATPCLinkFileHandle&);
-	ATPCLinkFileHandle& operator=(const ATPCLinkFileHandle&);
+	ATPCLinkFileHandle(const ATPCLinkFileHandle&) = delete;
+	ATPCLinkFileHandle& operator=(const ATPCLinkFileHandle&) = delete;
 
 public:
-	ATPCLinkFileHandle();
+	ATPCLinkFileHandle() = default;
 	~ATPCLinkFileHandle();
 
 	bool IsOpen() const;
@@ -384,7 +443,7 @@ public:
 
 	void AddDirEnt(const ATPCLinkDirEnt& dirEnt);
 	uint8 OpenFile(const wchar_t *nativePath, uint32 openFlags, bool allowRead, bool allowWrite, bool append);
-	void OpenAsDirectory(const ATPCLinkFileName& dirName);
+	void OpenAsDirectory(const ATPCLinkFileName& dirName, const ATPCLinkFileName& fnextFilter, uint8 attrFilter);
 	void Close();
 	uint8 Seek(uint32 pos);
 	uint8 Read(void *dst, uint32 len, uint32& actual);
@@ -393,25 +452,21 @@ public:
 	bool GetNextDirEnt(ATPCLinkDirEnt& dirEnt);
 
 protected:
-	bool	mbOpen;
-	bool	mbAllowRead;
-	bool	mbAllowWrite;
-	bool	mbIsDirectory;
-	uint32	mPos;
-	uint32	mLength;
+	bool	mbOpen = false;
+	bool	mbAllowRead = false;
+	bool	mbAllowWrite = false;
+	bool	mbIsDirectory = false;
+	uint32	mPos = 0;
+	uint32	mLength = 0;
 
 	vdfastvector<ATPCLinkDirEnt> mDirEnts;
 
-	ATPCLinkDirEnt	mDirEnt;
+	ATPCLinkDirEnt	mDirEnt = {};
+	ATPCLinkFileName mFnextPattern = {};
+	uint8	mFnextAttrFilter = 0;
 
 	VDFile	mFile;
 };
-
-ATPCLinkFileHandle::ATPCLinkFileHandle()
-	: mbOpen(false)
-	, mbIsDirectory(false)
-{
-}
 
 ATPCLinkFileHandle::~ATPCLinkFileHandle() {
 }
@@ -480,13 +535,13 @@ uint8 ATPCLinkFileHandle::OpenFile(const wchar_t *nativePath, uint32 openFlags, 
 	return ATCIOSymbols::CIOStatSuccess;
 }
 
-void ATPCLinkFileHandle::OpenAsDirectory(const ATPCLinkFileName& dirName) {
+void ATPCLinkFileHandle::OpenAsDirectory(const ATPCLinkFileName& dirName, const ATPCLinkFileName& pattern, uint8 attrFilter) {
 	std::sort(mDirEnts.begin(), mDirEnts.end(), ATPCLinkDirEntSort());
 	mbOpen = true;
 	mbIsDirectory = true;
-	mLength = 23 * (mDirEnts.size() + 1);
+	mLength = 23 * ((uint32)mDirEnts.size() + 1);
 	mPos = 23;
-	mbAllowRead = false;
+	mbAllowRead = true;
 	mbAllowWrite = false;
 
 	memset(&mDirEnt, 0, sizeof mDirEnt);
@@ -495,6 +550,11 @@ void ATPCLinkFileHandle::OpenAsDirectory(const ATPCLinkFileName& dirName) {
 	mDirEnt.mLengthMid = (uint8)(mLength >> 8);
 	mDirEnt.mLengthHi = (uint8)(mLength >> 16);
 	memcpy(mDirEnt.mName, dirName.mName, 11);
+
+	mDirEnts.insert(mDirEnts.begin(), mDirEnt);
+
+	mFnextPattern = pattern;
+	mFnextAttrFilter = attrFilter;
 }
 
 void ATPCLinkFileHandle::Close() {
@@ -507,17 +567,19 @@ void ATPCLinkFileHandle::Close() {
 }
 
 uint8 ATPCLinkFileHandle::Seek(uint32 pos) {
-	if (mbIsDirectory || (pos > mLength && !mbAllowRead))
+	if (pos > mLength && !mbAllowRead)
 		return ATCIOSymbols::CIOStatPointDLen;
 
-	try {
-		mFile.seek(pos);
-	} catch(const MyWin32Error& e) {
-		mFile.seekNT(mPos);
-		return ATTranslateWin32ErrorToSIOError(e.GetWin32Error());
-	} catch(const MyError&) {
-		mFile.seekNT(mPos);
-		return ATCIOSymbols::CIOStatSystemError;
+	if (!mbIsDirectory) {
+		try {
+			mFile.seek(pos);
+		} catch(const MyWin32Error& e) {
+			mFile.seekNT(mPos);
+			return ATTranslateWin32ErrorToSIOError(e.GetWin32Error());
+		} catch(const MyError&) {
+			mFile.seekNT(mPos);
+			return ATCIOSymbols::CIOStatSystemError;
+		}
 	}
 
 	mPos = pos;
@@ -533,16 +595,39 @@ uint8 ATPCLinkFileHandle::Read(void *dst, uint32 len, uint32& actual) {
 	if (!mbAllowRead)
 		return ATCIOSymbols::CIOStatWriteOnly;
 
-	uint32 tc = len;
 	long act = 0;
 
 	if (mPos < mLength) {
-		if (mLength - mPos < tc)
-			tc = mLength - mPos;
+		if (mbIsDirectory) {
+			uint32 dirIndex = mPos / 23;
+			uint32 offset = mPos % 23;
+			uint32 left = mLength - mPos;
 
-		act = mFile.readData(dst, tc);
-		if (act < 0)
-			return ATCIOSymbols::CIOStatFatalDiskIO;
+			if (left > len)
+				left = len;
+		
+			while(left > 0) {
+				const uint8 *src = (const uint8 *)&mDirEnts[dirIndex];
+				uint32 tc = 23 - offset;
+				if (tc > left)
+					tc = left;
+
+				memcpy((char *)dst + act, src + offset, tc);
+				left -= tc;
+				act += tc;
+				offset = 0;
+				++dirIndex;
+			}
+		} else {
+			uint32 tc = len;
+
+			if (mLength - mPos < tc)
+				tc = mLength - mPos;
+
+			act = mFile.readData(dst, tc);
+			if (act < 0)
+				return ATCIOSymbols::CIOStatFatalDiskIO;
+		}
 	}
 
 	actual = (uint32)act;
@@ -590,12 +675,17 @@ uint8 ATPCLinkFileHandle::Write(const void *dst, uint32 len) {
 }
 
 bool ATPCLinkFileHandle::GetNextDirEnt(ATPCLinkDirEnt& dirEnt) {
-	if (mDirEnts.empty())
-		return false;
+	uint32 actual;
 
-	dirEnt = mDirEnts.back();
-	mDirEnts.pop_back();
-	return true;
+	while(Read(&dirEnt, 23, actual) == ATCIOSymbols::CIOStatSuccess && actual >= 23) {
+		ATPCLinkFileName name;
+		name.ParseFromNet(dirEnt.mName);
+
+		if (mFnextPattern.WildMatch(name) && dirEnt.TestAttrFilter(mFnextAttrFilter))
+			return true;
+	}
+
+	return false;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -628,7 +718,7 @@ public:
 	virtual void ColdReset() override;
 
 public:
-	virtual void InitIndicators(IATUIRenderer *uir) override;
+	virtual void InitIndicators(IATDeviceIndicatorManager *uir) override;
 
 public:
 	virtual void InitSIO(IATDeviceSIOManager *mgr) override;
@@ -668,7 +758,7 @@ protected:
 	void OnWriteActivity();
 
 	IATDeviceSIOManager *mpSIOMgr;
-	IATUIRenderer *mpUIRenderer;
+	IATDeviceIndicatorManager *mpUIRenderer;
 
 	VDStringW	mBasePathNative;
 	bool	mbReadOnly;
@@ -689,17 +779,6 @@ protected:
 	VDStringA	mCurDir;
 
 	struct ParameterBuffer {
-		enum {
-			kAttrMask_OnlyLocked	= 0x01,
-			kAttrMask_OnlyHidden	= 0x02,
-			kAttrMask_OnlyArchived	= 0x04,
-			kAttrMask_OnlySubDir	= 0x08,
-			kAttrMask_NoLocked		= 0x10,
-			kAttrMask_NoHidden		= 0x20,
-			kAttrMask_NoArchived	= 0x40,
-			kAttrMask_NoSubDir		= 0x80
-		};
-
 		uint8	mFunction;	// function number
 		uint8	mHandle;	// file handle
 		uint8	mF1;
@@ -811,7 +890,7 @@ void ATPCLinkDevice::ColdReset() {
 		fh.Close();
 }
 
-void ATPCLinkDevice::InitIndicators(IATUIRenderer *uir) {
+void ATPCLinkDevice::InitIndicators(IATDeviceIndicatorManager *uir) {
 	mpUIRenderer = uir;
 }
 
@@ -1207,7 +1286,10 @@ bool ATPCLinkDevice::OnPut() {
 					if (!fn.ParseFromNative(it.GetName()))
 						continue;
 
-					if (!pattern.WildMatch(fn))
+					// We can't filter at this point for a directory, because the byte stream
+					// needs to reflect all files while the FNEXT output shouldn't. Therefore,
+					// we need to cache the pattern with the file handle instead.
+					if (!openDir && !pattern.WildMatch(fn))
 						continue;
 
 					sint64 len = it.GetSize();
@@ -1274,7 +1356,7 @@ bool ATPCLinkDevice::OnPut() {
 					if (ext)
 						memcpy(dirName.mName + 8, ext, extlen);
 
-					fh.OpenAsDirectory(dirName);
+					fh.OpenAsDirectory(dirName, pattern, mParBuf.mAttr1);
 
 					mStatusError = ATCIOSymbols::CIOStatSuccess;
 				} else {
@@ -1402,9 +1484,9 @@ bool ATPCLinkDevice::OnPut() {
 					}
 
 					if (matched)
-						mStatusError = ATCIOSymbols::CIOStatFileNotFound;
-					else
 						mStatusError = ATCIOSymbols::CIOStatSuccess;
+					else
+						mStatusError = ATCIOSymbols::CIOStatFileNotFound;
 				} catch(const MyWin32Error& e) {
 					mStatusError = ATTranslateWin32ErrorToSIOError(e.GetWin32Error());
 				} catch(const MyError&) {
@@ -1909,50 +1991,7 @@ bool ATPCLinkDevice::CheckValidFileHandle(bool setError) {
 }
 
 bool ATPCLinkDevice::IsDirEntIncluded(const ATPCLinkDirEnt& dirEnt) const {
-	if (!mParBuf.mAttr1)
-		return true;
-
-	if (mParBuf.mAttr1 & ParameterBuffer::kAttrMask_NoArchived) {
-		if (dirEnt.mFlags & ATPCLinkDirEnt::kFlag_Archive)
-			return false;
-	}
-
-	if (mParBuf.mAttr1 & ParameterBuffer::kAttrMask_NoHidden) {
-		if (dirEnt.mFlags & ATPCLinkDirEnt::kFlag_Hidden)
-			return false;
-	}
-
-	if (mParBuf.mAttr1 & ParameterBuffer::kAttrMask_NoLocked) {
-		if (dirEnt.mFlags & ATPCLinkDirEnt::kFlag_Locked)
-			return false;
-	}
-
-	if (mParBuf.mAttr1 & ParameterBuffer::kAttrMask_NoSubDir) {
-		if (dirEnt.mFlags & ATPCLinkDirEnt::kFlag_Directory)
-			return false;
-	}
-
-	if (mParBuf.mAttr1 & ParameterBuffer::kAttrMask_OnlyArchived) {
-		if (!(dirEnt.mFlags & ATPCLinkDirEnt::kFlag_Archive))
-			return false;
-	}
-
-	if (mParBuf.mAttr1 & ParameterBuffer::kAttrMask_OnlyHidden) {
-		if (!(dirEnt.mFlags & ATPCLinkDirEnt::kFlag_Hidden))
-			return false;
-	}
-
-	if (mParBuf.mAttr1 & ParameterBuffer::kAttrMask_OnlyLocked) {
-		if (!(dirEnt.mFlags & ATPCLinkDirEnt::kFlag_Locked))
-			return false;
-	}
-
-	if (mParBuf.mAttr1 & ParameterBuffer::kAttrMask_OnlySubDir) {
-		if (!(dirEnt.mFlags & ATPCLinkDirEnt::kFlag_Directory))
-			return false;
-	}
-
-	return true;
+	return dirEnt.TestAttrFilter(mParBuf.mAttr1);
 }
 
 bool ATPCLinkDevice::ResolvePath(bool allowDir, VDStringA& resultPath) {

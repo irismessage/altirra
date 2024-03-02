@@ -15,11 +15,12 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include "autotest.h"
 #include <vd2/system/cmdline.h>
 #include <vd2/system/VDString.h>
+#include <at/atcore/media.h>
 #include "simulator.h"
 #include "console.h"
 #include "gtia.h"
@@ -27,6 +28,16 @@
 
 extern ATSimulator g_sim;
 extern HWND g_hwnd;
+
+bool g_autotestEnabled = false;
+
+bool ATGetAutotestEnabled() {
+	return g_autotestEnabled;
+}
+
+void ATSetAutotestEnabled(bool enabled) {
+	g_autotestEnabled = enabled;
+}
 
 uint32 ATExecuteAutotestCommand(const wchar_t *cmd, IATAutotestReplyPort *replyPort) {
 	VDCommandLine cmdLine(cmd);
@@ -83,7 +94,7 @@ uint32 ATExecuteAutotestCommand(const wchar_t *cmd, IATAutotestReplyPort *replyP
 		if (!fn)
 			return 0;
 
-		g_sim.Load(fn, false, false, NULL);
+		g_sim.Load(fn, kATMediaWriteMode_RO, NULL);
 		return 1;
 	} else if (s == L"closedebugger") {
 		ATCloseConsole();

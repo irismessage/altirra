@@ -23,7 +23,7 @@
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicesio.h>
 
-class IATIDEDisk;
+class IATBlockDevice;
 class IATDeviceSIOManager;
 
 class ATSDriveEmulator final : public ATDevice
@@ -52,7 +52,7 @@ public:
 	virtual void RemoveChildDevice(IATDevice *dev) override;
 
 public:
-	virtual void InitIndicators(IATUIRenderer *r) override;
+	virtual void InitIndicators(IATDeviceIndicatorManager *r) override;
 
 public:
 	virtual void InitSIO(IATDeviceSIOManager *mgr) override;
@@ -64,8 +64,8 @@ public:
 
 protected:
 	IATDeviceSIOManager *mpSIOMgr;
-	IATUIRenderer *mpUIRenderer;
-	vdrefptr<IATIDEDisk> mpDisk;
+	IATDeviceIndicatorManager *mpUIRenderer;
+	vdrefptr<IATBlockDevice> mpDisk;
 
 	uint32 mSectorNumber;
 	uint32 mHighSpeedCPSLo;

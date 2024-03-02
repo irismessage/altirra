@@ -61,8 +61,17 @@ int ATPIAEmulator::AllocInput() {
 }
 
 void ATPIAEmulator::FreeInput(int index) {
-	if (index >= 0)
-		mInputAllocBitmap &= ~(1 << index);
+	if (index >= 0) {
+		const uint32 allocBit = UINT32_C(1) << index;
+
+		VDASSERT(mInputAllocBitmap & allocBit);
+
+		if (mInputAllocBitmap & allocBit) {
+			mInputAllocBitmap &= ~allocBit;
+
+			SetInput(index, ~UINT32_C(0));
+		}
+	}
 }
 
 void ATPIAEmulator::SetInput(int index, uint32 rval) {
@@ -81,8 +90,8 @@ void ATPIAEmulator::SetInput(int index, uint32 rval) {
 	}
 }
 
-int ATPIAEmulator::AllocOutput(ATPIAOutputFn fn, void *ptr, uint32 changeMask) {
-	if (mOutputAllocBitmap == 0xFF) {
+int ATPIAEmulator::AllocOutput(ATPortOutputFn fn, void *ptr, uint32 changeMask) {
+	if (mOutputAllocBitmap == (1U << vdcountof(mOutputs))) {
 		VDASSERT(!"PIA outputs exhausted.");
 		return -1;
 	}
@@ -101,6 +110,21 @@ int ATPIAEmulator::AllocOutput(ATPIAOutputFn fn, void *ptr, uint32 changeMask) {
 	return idx;
 }
 
+void ATPIAEmulator::ModifyOutputMask(int index, uint32 changeMask) {
+	if (index < 0)
+		return;
+
+	VDASSERT(mOutputAllocBitmap & (1 << index));
+
+	if (mOutputs[index].mChangeMask != changeMask) {
+		mOutputs[index].mChangeMask = changeMask;
+
+		mOutputReportMask = 0;
+		for(const auto& output : mOutputs)
+			mOutputReportMask |= output.mChangeMask;
+	}
+}
+
 void ATPIAEmulator::FreeOutput(int index) {
 	if (index >= 0) {
 		mOutputAllocBitmap &= ~(1 << index);
@@ -108,9 +132,8 @@ void ATPIAEmulator::FreeOutput(int index) {
 		mOutputs[index].mChangeMask = 0;
 
 		mOutputReportMask = 0;
-
-		for(int i=0; i<8; ++i)
-			mOutputReportMask |= mOutputs[i].mChangeMask;
+		for(const auto& output : mOutputs)
+			mOutputReportMask |= output.mChangeMask;
 	}
 }
 
@@ -547,9 +570,7 @@ void ATPIAEmulator::UpdateOutput() {
 	mOutput = newOutput;
 
 	if (delta & mOutputReportMask) {
-		for(int i=0; i<8; ++i) {
-			const OutputEntry& output = mOutputs[i];
-
+		for(const OutputEntry& output : mOutputs) {
 			if (output.mChangeMask & delta)
 				output.mpFn(output.mpData, mOutput);
 		}

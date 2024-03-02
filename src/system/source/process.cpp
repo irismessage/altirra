@@ -3,7 +3,7 @@
 #include <vd2/system/VDString.h>
 #include <vd2/system/w32assist.h>
 
-void VDLaunchProgram(const wchar_t *path) {
+void VDLaunchProgram(const wchar_t *path, const wchar_t *args) {
 	VDStringW cmdLine(L"\"");
 
 	cmdLine += path;
@@ -12,6 +12,11 @@ void VDLaunchProgram(const wchar_t *path) {
 		cmdLine.push_back(L'\\');
 
 	cmdLine += L"\"";
+
+	if (args) {
+		cmdLine += L' ';
+		cmdLine += args;
+	}
 
 	PROCESS_INFORMATION processInfo;
 	const DWORD createFlags = CREATE_NEW_PROCESS_GROUP | CREATE_DEFAULT_ERROR_MODE;

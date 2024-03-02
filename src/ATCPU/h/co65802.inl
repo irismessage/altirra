@@ -95,6 +95,45 @@ for(;;) {
 			break;
 
 		case kStateReadOpcode:
+			if (mpBreakpointMap[rPC]) {
+				mA	= rA;
+				mAH	= rAH;
+				mB	= rB;
+				mP	= rP;
+				mX	= rX;
+				mXH	= rXH;
+				mY	= rY;
+				mYH	= rYH;
+				mS	= rS;
+				mSH	= rSH;
+				mDP	= rDP;
+				mB	= rB;
+				mK	= rK;
+				mPC	= rPC;
+				mCyclesLeft = cyclesLeft;
+
+				bool shouldExit = CheckBreakpoint();
+
+				rA	= mA;
+				rAH	= mAH;
+				rP	= mP;
+				rX	= mX;
+				rXH	= mXH;
+				rY	= mY;
+				rYH	= mYH;
+				rS	= mS;
+				rSH	= mSH;
+				rDP	= mDP;
+				rB	= mB;
+				rK	= mK;
+				rPC	= mPC;
+
+				if (shouldExit) {
+					nextState = mpNextState;
+					goto force_exit;
+				}
+			}
+		case kStateReadOpcodeNoBreak:
 			mInsnPC = rPC;
 
 			{
@@ -1694,6 +1733,7 @@ next_cycle:
 
 }
 
+force_exit:
 // write locals back to registers
 mA	= rA;
 mAH	= rAH;

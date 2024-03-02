@@ -30,7 +30,7 @@
 
 class ATMemoryLayer;
 class ATIRQController;
-class IATIDEDisk;
+class IATBlockDevice;
 class IATDeviceSerial;
 class IATPrinterOutput;
 
@@ -50,55 +50,58 @@ public:
 	ATBlackBoxEmulator();
 	~ATBlackBoxEmulator();
 
-	void *AsInterface(uint32 iid);
+	void *AsInterface(uint32 iid) override;
 
-	virtual void GetDeviceInfo(ATDeviceInfo& info);
-	virtual void GetSettings(ATPropertySet& settings);
-	virtual bool SetSettings(const ATPropertySet& settings);
-	virtual void Init();
-	virtual void Shutdown();
-	virtual void WarmReset();
-	virtual void ColdReset();
-
-public:
-	virtual void InitMemMap(ATMemoryManager *memmap) override;
-	virtual bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const override;
+	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void GetSettings(ATPropertySet& settings) override;
+	bool SetSettings(const ATPropertySet& settings) override;
+	void Init() override;
+	void Shutdown() override;
+	void WarmReset() override;
+	void ColdReset() override;
 
 public:
-	virtual void InitFirmware(ATFirmwareManager *fwman);
-	virtual bool ReloadFirmware();
+	void InitMemMap(ATMemoryManager *memmap) override;
+	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const override;
 
 public:
-	virtual void InitIRQSource(ATIRQController *fwirq);
+	void InitFirmware(ATFirmwareManager *fwman) override;
+	bool ReloadFirmware() override;
+	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override { return nullptr; }
+	bool IsWritableFirmwareDirty(uint32 idx) const override { return false; }
+	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override {}
 
 public:
-	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch);
+	void InitIRQSource(ATIRQController *fwirq) override;
 
 public:
-	virtual void ActivateButton(uint32 idx);
+	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:
-	virtual const char *GetSupportedType(uint32 index) override;
-	virtual void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
-	virtual void AddChildDevice(IATDevice *dev) override;
-	virtual void RemoveChildDevice(IATDevice *dev) override;
+	uint32 GetSupportedButtons() const override;
+	bool IsButtonDepressed(ATDeviceButton idx) const override;
+	void ActivateButton(ATDeviceButton idx, bool state) override;
 
 public:
-	virtual void InitIndicators(IATUIRenderer *r);
+	const char *GetSupportedType(uint32 index) override;
+	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
+	void AddChildDevice(IATDevice *dev) override;
+	void RemoveChildDevice(IATDevice *dev) override;
+
+public:
+	void InitIndicators(IATDeviceIndicatorManager *r) override;
 
 public:
 	void SetPrinterOutput(IATPrinterOutput *out) override;
 
 public:
-	virtual void OnSCSIControlStateChanged(uint32 state);
+	void OnSCSIControlStateChanged(uint32 state) override;
 
 public:
-	virtual void OnScheduledEvent(uint32 id);
-
-public:
-	void OnControlStateChanged(const ATDeviceSerialStatus& status);
+	void OnScheduledEvent(uint32 id) override;
 
 protected:
+	void OnControlStateChanged(const ATDeviceSerialStatus& status);
 	static sint32 OnDebugRead(void *thisptr, uint32 addr);
 	static sint32 OnRead(void *thisptr, uint32 addr);
 	static bool OnWrite(void *thisptr, uint32 addr, uint8 value);
@@ -125,7 +128,7 @@ protected:
 	bool	mbSCSIBlockSize256;
 
 	ATFirmwareManager *mpFwMan;
-	IATUIRenderer *mpUIRenderer;
+	IATDeviceIndicatorManager *mpUIRenderer;
 
 	ATIRQController *mpIRQController;
 	uint32	mIRQBit;
@@ -142,7 +145,7 @@ protected:
 	struct SCSIDiskEntry {
 		IATDevice *mpDevice;
 		IATSCSIDevice *mpSCSIDevice;
-		IATIDEDisk *mpDisk;
+		IATBlockDevice *mpDisk;
 	};
 
 	vdfastvector<SCSIDiskEntry> mSCSIDisks;

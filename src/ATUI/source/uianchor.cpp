@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/math.h>
 #include <vd2/system/refcount.h>
 #include <at/atui/uianchor.h>

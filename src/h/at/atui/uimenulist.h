@@ -38,6 +38,8 @@ public:
 	void AddItem(const ATUIMenuItem& item) { mItems.push_back(item); }
 	void AddSeparator();
 
+	void InsertItem(int pos, const ATUIMenuItem& item);
+	
 	void RemoveItems(uint32 start, uint32 n);
 	void RemoveAllItems();
 

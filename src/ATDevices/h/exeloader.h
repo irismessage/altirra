@@ -34,12 +34,12 @@ public:
 	ATDeviceExeLoader();
 	~ATDeviceExeLoader();
 	
-	void *AsInterface(uint32 iid);
+	void *AsInterface(uint32 iid) override;
 
 public:
 	void GetDeviceInfo(ATDeviceInfo& info) override;
-	void GetSettings(ATPropertySet& pset);
-	bool SetSettings(const ATPropertySet& pset);
+	void GetSettings(ATPropertySet& pset) override;
+	bool SetSettings(const ATPropertySet& pset) override;
 	void Init() override;
 	void Shutdown() override;
 

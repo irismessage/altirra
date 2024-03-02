@@ -27,6 +27,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="source\crthooks.cpp" />
     <ClCompile Include="source\exceptionfilter.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
@@ -38,6 +39,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\h\at\atappbase\crthooks.h" />
     <ClInclude Include="..\h\at\atappbase\exceptionfilter.h" />
     <ClInclude Include="h\stdafx.h" />
   </ItemGroup>

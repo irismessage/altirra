@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <map>
 #include <vd2/system/atomic.h>

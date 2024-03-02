@@ -1,27 +1,124 @@
 <?xml version="1.0"?>
 <AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
-  <Type Name="vdfastvector&lt;*,*&gt;">
-    <DisplayString>size={mpEnd-mpBegin,i}/{m.eos-mpBegin,i}</DisplayString>
-	<Expand>
-		<Item Name="[size]">mpEnd-mpBegin</Item>
-		<Item Name="[capacity]">m.eos-mpBegin</Item>
-		<ArrayItems>
-			<Size>mpEnd-mpBegin</Size>
-			<ValuePointer>mpBegin</ValuePointer>
-		</ArrayItems>
-	</Expand>
-  </Type>
+	<Type Name="vdfastvector&lt;*,*&gt;">
+		<DisplayString>size={mpEnd-mpBegin,i}/{m.eos-mpBegin,i}</DisplayString>
+		<Expand>
+			<Item Name="[size]">mpEnd-mpBegin</Item>
+			<Item Name="[capacity]">m.eos-mpBegin</Item>
+			<ArrayItems>
+				<Size>mpEnd-mpBegin</Size>
+				<ValuePointer>mpBegin</ValuePointer>
+			</ArrayItems>
+		</Expand>
+	</Type>
 
-  <Type Name="VDStringSpanA">
-	<DisplayString Condition="mpEnd&gt;=mpBegin">len={mpEnd-mpBegin,i} "{mpBegin,[mpEnd-mpBegin]sb}"</DisplayString>
-	<DisplayString Condition="mpEnd&lt;mpBegin">invalid!</DisplayString>
+	<Type Name="vdvector&lt;*,*&gt;">
+		<DisplayString>size={m.mpEnd-m.mpBegin,i}/{m.mpEOS-m.mpBegin,i}</DisplayString>
+		<Expand>
+			<Item Name="[size]">m.mpEnd-m.mpBegin</Item>
+			<Item Name="[capacity]">m.mpEOS-m.mpBegin</Item>
+			<ArrayItems>
+				<Size>m.mpEnd-m.mpBegin</Size>
+				<ValuePointer>m.mpBegin</ValuePointer>
+			</ArrayItems>
+		</Expand>
+	</Type>
 
-	<Expand>
-		<Item Name="[size]">mpEnd-mpBegin</Item>
-		<ArrayItems>
-			<Size>mpEnd-mpBegin</Size>
-			<ValuePointer>mpBegin</ValuePointer>
-		</ArrayItems>
-	</Expand>
+	<Type Name="VDStringSpanA">
+		<DisplayString Condition="mpEnd&gt;=mpBegin">len={mpEnd-mpBegin,i} "{mpBegin,[mpEnd-mpBegin]sb}"</DisplayString>
+		<DisplayString Condition="mpEnd&lt;mpBegin">invalid!</DisplayString>
+		<StringView>mpBegin,s</StringView>
+
+		<Expand>
+			<Item Name="[size]">mpEnd-mpBegin</Item>
+			<ArrayItems>
+				<Size>mpEnd-mpBegin</Size>
+				<ValuePointer>mpBegin</ValuePointer>
+			</ArrayItems>
+		</Expand>
+	</Type>
+
+	<Type Name="VDStringSpanW">
+		<DisplayString Condition="mpEnd&gt;=mpBegin">len={mpEnd-mpBegin,i} "{mpBegin,[mpEnd-mpBegin]sub}"</DisplayString>
+		<DisplayString Condition="mpEnd&lt;mpBegin">invalid!</DisplayString>
+		<StringView>mpBegin,su</StringView>
+
+		<Expand>
+			<Item Name="[size]">mpEnd-mpBegin</Item>
+			<ArrayItems>
+				<Size>mpEnd-mpBegin</Size>
+				<ValuePointer>mpBegin</ValuePointer>
+			</ArrayItems>
+		</Expand>
+	</Type>
+
+	<Type Name="vdlist&lt;*&gt;">
+		<Expand>
+			<CustomListItems MaxItemsPerView="500">
+				<Variable Name="head" InitialValue="&amp;mAnchor" />
+				<Variable Name="node" InitialValue="head-&gt;mListNodeNext" />
+				<Loop>
+					<Break Condition="node==0 || node==head" />
+					<Item><![CDATA[static_cast<$T1*>(node)]]></Item>
+					<Exec>node = node-&gt;mListNodeNext</Exec>
+				</Loop>
+			</CustomListItems>
+		</Expand>
+	</Type>
+	
+	<Type Name="vdhashtable&lt;*&gt;">
+		<DisplayString>size={mElementCount,i}, buckets={mBucketCount,i}</DisplayString>
+		<Expand>
+			<Item Name="[size]">mElementCount</Item>
+			<Item Name="[buckets]">mBucketCount</Item>
+			<Synthetic Name="Items">
+				<Expand>
+					<CustomListItems MaxItemsPerView="500">
+						<Variable Name="bucket" InitialValue="mpBucketStart" />
+						<Variable Name="node" InitialValue="mpBucketStart[0]" />
+						<Size>mElementCount</Size>
+						<Loop>
+							<Break Condition="bucket >= mpBucketEnd" />
+							<Exec>++bucket</Exec>
+							<Exec>node = *bucket</Exec>
+							<Loop>
+								<Break Condition="!node" />
+								<Item>((vdhashtable_node&lt;$T1&gt; *)node)->mData</Item>
+								<Exec>node = node->mpHashNext</Exec>
+							</Loop>
+						</Loop>
+					</CustomListItems>
+				</Expand>
+			</Synthetic>
+			<Synthetic Name="Buckets">
+				<Expand>
+					<ArrayItems>
+						<Size>mBucketCount</Size>
+						<ValuePointer>mpBucketStart</ValuePointer>
+					</ArrayItems>
+				</Expand>
+			</Synthetic>
+		</Expand>
+	</Type>
+
+  <Type Name="vdhashtable_iterator&lt;*&gt;">
+    <DisplayString><![CDATA[{static_cast<vdhashtable_node<$T1 > *>(mpNode)}]]></DisplayString>
+    <Expand>
+      <Item Name="Data"><![CDATA[static_cast<vdhashtable_node<$T1 > *>(mpNode)->mData]]></Item>
+      <Item Name="Next"><![CDATA[mpNode->mpHashNext]]></Item>
+    </Expand>
   </Type>
+  
+	<Type Name="ATEthernetAddr">
+		<DisplayString>{mAddr[0],xb}</DisplayString>
+	</Type>
+	
+	<Type Name="ATNetTcpConnectionKey">
+		<DisplayString>
+			<![CDATA[
+				{mLocalAddress&255,i}.{(mLocalAddress>>8)&255,i}.{(mLocalAddress>>16)&255,i}.{(mLocalAddress>>24)&255,i}:{mLocalPort,i} -> 
+				{mRemoteAddress&255,i}.{(mRemoteAddress>>8)&255,i}.{(mRemoteAddress>>16)&255,i}.{(mRemoteAddress>>24)&255,i}:{mRemotePort,i}
+			]]>
+		</DisplayString>
+	</Type>
 </AutoVisualizer>

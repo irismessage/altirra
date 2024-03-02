@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include "oshelper.h"
 #include "firmwaremanager.h"
 #include "uimenu.h"
@@ -34,21 +34,27 @@ namespace {
 	};
 }
 
-class ATUIFirmwareMenuProvider : public IATUIDynamicMenuProvider {
+class ATUIFirmwareMenuProvider final : public IATUIDynamicMenuProvider {
 public:
 	void Init(bool basic);
 
-	virtual void RebuildMenu(ATUIMenu& menu, uint32 idbase);
-	virtual void UpdateMenu(ATUIMenu& menu, uint32 firstIndex, uint32 n);
-	virtual void HandleMenuCommand(uint32 index);
+	bool IsRebuildNeeded() const override;
+	void RebuildMenu(ATUIMenu& menu, uint32 idbase) override;
+	void UpdateMenu(ATUIMenu& menu, uint32 firstIndex, uint32 n) override;
+	void HandleMenuCommand(uint32 index) override;
 
 protected:
-	bool mbIsBasic;
+	bool mbIsBasic = false;;
+	ATHardwareMode mLastHardwareMode = kATHardwareModeCount;	// deliberately invalid
 	vdfastvector<uint64> mFirmwareIds;
 };
 
 void ATUIFirmwareMenuProvider::Init(bool basic) {
 	mbIsBasic = basic;
+}
+
+bool ATUIFirmwareMenuProvider::IsRebuildNeeded() const {
+	return !mbIsBasic && g_sim.GetHardwareMode() != mLastHardwareMode;
 }
 
 void ATUIFirmwareMenuProvider::RebuildMenu(ATUIMenu& menu, uint32 idbase) {
@@ -62,6 +68,9 @@ void ATUIFirmwareMenuProvider::RebuildMenu(ATUIMenu& menu, uint32 idbase) {
 	typedef vdfastvector<const ATFirmwareInfo *> SortedFirmwares;
 	SortedFirmwares sortedFirmwares;
 
+	if (!mbIsBasic)
+		mLastHardwareMode = g_sim.GetHardwareMode();
+
 	for(Firmwares::const_iterator it(fws.begin()), itEnd(fws.end());
 		it != itEnd;
 		++it)
@@ -74,19 +83,44 @@ void ATUIFirmwareMenuProvider::RebuildMenu(ATUIMenu& menu, uint32 idbase) {
 		switch(fwi.mType) {
 			case kATFirmwareType_Kernel800_OSA:
 			case kATFirmwareType_Kernel800_OSB:
+				if (mbIsBasic)
+					continue;
+
+				if (mLastHardwareMode == kATHardwareMode_5200)
+					continue;
+				break;
+
 			case kATFirmwareType_KernelXL:
 			case kATFirmwareType_KernelXEGS:
-			case kATFirmwareType_Kernel5200:
 			case kATFirmwareType_Kernel1200XL:
-				if (!mbIsBasic)
-					sortedFirmwares.push_back(&fwi);
+				if (mbIsBasic)
+					continue;
+
+				if (mLastHardwareMode != kATHardwareMode_1200XL &&
+					mLastHardwareMode != kATHardwareMode_130XE &&
+					mLastHardwareMode != kATHardwareMode_800XL &&
+					mLastHardwareMode != kATHardwareMode_XEGS)
+					continue;
+				break;
+
+			case kATFirmwareType_Kernel5200:
+				if (mbIsBasic)
+					continue;
+
+				if (mLastHardwareMode != kATHardwareMode_5200)
+					continue;
 				break;
 
 			case kATFirmwareType_Basic:
-				if (mbIsBasic)
-					sortedFirmwares.push_back(&fwi);
+				if (!mbIsBasic)
+					continue;
 				break;
+
+			default:
+				continue;
 		}
+
+		sortedFirmwares.push_back(&fwi);
 	}
 
 	std::sort(sortedFirmwares.begin(), sortedFirmwares.end(), SortFirmwarePtrsByName());

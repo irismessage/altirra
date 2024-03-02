@@ -33,7 +33,7 @@ wchar_t *wcsncpyz(wchar_t *strDest, const wchar_t *strSource, size_t count);
 const char *strskipspace(const char *s);
 
 inline char *strskipspace(char *s) {
-	return const_cast<char *>(strskipspace(s));
+	return const_cast<char *>(strskipspace((const char *)s));
 }
 
 size_t vdstrlcpy(char *dst, const char *src, size_t sizeChars);

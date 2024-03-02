@@ -18,9 +18,9 @@
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
+#include <at/atcore/blockdevice.h>
 #include "scsi.h"
 #include "scsidisk.h"
-#include "idedisk.h"
 #include "uirender.h"
 
 class ATSCSIDiskDevice : public vdrefcounted<IATSCSIDiskDevice> {
@@ -29,11 +29,11 @@ public:
 
 	void *AsInterface(uint32 iid);
 
-	IATIDEDisk *GetDisk() const { return mpDisk; }
+	IATBlockDevice *GetDisk() const { return mpDisk; }
 
-	void Init(IATIDEDisk *disk);
+	void Init(IATBlockDevice *disk);
 
-	void SetUIRenderer(IATUIRenderer *r);
+	void SetUIRenderer(IATDeviceIndicatorManager *r);
 
 	virtual void Attach(ATSCSIBusEmulator *bus);
 	virtual void Detach();
@@ -63,8 +63,8 @@ protected:
 	void DecodeCmdGroup1(const uint8 *command);
 
 	ATSCSIBusEmulator *mpBus;
-	IATUIRenderer *mpUIRenderer;
-	vdrefptr<IATIDEDisk> mpDisk;
+	IATDeviceIndicatorManager *mpUIRenderer;
+	vdrefptr<IATBlockDevice> mpDisk;
 
 	State mState;
 	uint8 mLUN;
@@ -100,11 +100,11 @@ void *ATSCSIDiskDevice::AsInterface(uint32 iid) {
 	return nullptr;
 }
 
-void ATSCSIDiskDevice::Init(IATIDEDisk *disk) {
+void ATSCSIDiskDevice::Init(IATBlockDevice *disk) {
 	mpDisk = disk;
 }
 
-void ATSCSIDiskDevice::SetUIRenderer(IATUIRenderer *r) {
+void ATSCSIDiskDevice::SetUIRenderer(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
 }
 
@@ -337,7 +337,7 @@ void ATSCSIDiskDevice::DecodeCmdGroup1(const uint8 *command) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-void ATCreateSCSIDiskDevice(IATIDEDisk *disk, IATSCSIDiskDevice **dev) {
+void ATCreateSCSIDiskDevice(IATBlockDevice *disk, IATSCSIDiskDevice **dev) {
 	vdrefptr<ATSCSIDiskDevice> p(new ATSCSIDiskDevice);
 	p->Init(disk);
 

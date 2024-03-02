@@ -230,29 +230,6 @@
       <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
-    <ClCompile Include="source\direct3d.cpp" />
-    <ClCompile Include="source\displayd3dfx.cpp">
-      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <ClCompile Include="source\displaydx9.cpp">
-      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <ClCompile Include="source\displaygl.cpp" />
-    <ClCompile Include="source\opengl.cpp" />
     <ClCompile Include="source\vc_dv.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
       <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -309,15 +286,11 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="h\d3dxfx.h" />
     <ClInclude Include="..\h\vd2\Riza\audiocodec.h" />
     <ClInclude Include="..\h\vd2\Riza\audioformat.h" />
     <ClInclude Include="..\h\vd2\Riza\audioout.h" />
     <ClInclude Include="..\h\vd2\Riza\avi.h" />
     <ClInclude Include="..\h\vd2\Riza\bitmap.h" />
-    <ClInclude Include="..\h\vd2\Riza\direct3d.h" />
-    <ClInclude Include="..\h\vd2\Riza\displaydrvdx9.h" />
-    <ClInclude Include="..\h\vd2\Riza\opengl.h" />
     <ClInclude Include="..\h\vd2\Riza\videocodec.h" />
     <ClInclude Include="..\h\vd2\Riza\w32audiocodec.h" />
   </ItemGroup>
@@ -328,40 +301,7 @@
     </YASM>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="source\displaydx9.fx">
-      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-      </Message>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">"$(VDBaseDir)\out\$(VDConfigDirTag)\asuka" fxc "%(FullPath)" "%(RootDir)%(Directory)\..\h\%(Filename)_shader.inl"
-</Command>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(VDBaseDir)\out\$(VDConfigDirTag)\asuka.exe;$(ProjectDir)source\displaydx9_ff.fxh;$(ProjectDir)source\displaydx9_ps1.fxh;$(ProjectDir)source\displaydx9_ps14.fxh;$(ProjectDir)source\displaydx9_ps2.fxh;$(ProjectDir)source\stddefs.fxh;$(ProjectDir)source\utils.fxh;%(AdditionalInputs)</AdditionalInputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(RootDir)%(Directory)\..\h\%(Filename)_shader.inl;%(Outputs)</Outputs>
-      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-      </Message>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">"$(VDBaseDir)\out\$(VDConfigDirTag)\asuka" fxc "%(FullPath)" "%(RootDir)%(Directory)\..\h\%(Filename)_shader.inl"
-</Command>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(VDBaseDir)\out\$(VDConfigDirTag)\asuka.exe;%(AdditionalInputs)</AdditionalInputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(RootDir)%(Directory)\..\h\%(Filename)_shader.inl;%(Outputs)</Outputs>
-      <Message Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-      </Message>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">"$(VDBaseDir)\out\$(VDConfigDirTag)\asuka" fxc "%(FullPath)" "%(RootDir)%(Directory)\..\h\%(Filename)_shader.inl"
-</Command>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(VDBaseDir)\out\$(VDConfigDirTag)\asuka.exe;$(ProjectDir)source\displaydx9_ff.fxh;$(ProjectDir)source\displaydx9_ps1.fxh;$(ProjectDir)source\displaydx9_ps14.fxh;$(ProjectDir)source\displaydx9_ps2.fxh;$(ProjectDir)source\stddefs.fxh;$(ProjectDir)source\utils.fxh;%(AdditionalInputs)</AdditionalInputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(RootDir)%(Directory)\..\h\%(Filename)_shader.inl;%(Outputs)</Outputs>
-      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-      </Message>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">"$(VDBaseDir)\out\$(VDConfigDirTag)\asuka" fxc "%(FullPath)" "%(RootDir)%(Directory)\..\h\%(Filename)_shader.inl"
-</Command>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(VDBaseDir)\out\$(VDConfigDirTag)\asuka.exe;%(AdditionalInputs)</AdditionalInputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(RootDir)%(Directory)\..\h\%(Filename)_shader.inl;%(Outputs)</Outputs>
-    </CustomBuild>
-    <None Include="source\displaydx9_ff.fxh" />
-    <None Include="source\displaydx9_ps1.fxh" />
-    <None Include="source\displaydx9_ps14.fxh" />
-    <None Include="source\displaydx9_ps2.fxh" />
-    <None Include="source\stddefs.fxh" />
-    <None Include="source\utils.fxh" />
     <None Include="h\cap_screen_glshaders.inl" />
-    <None Include="h\displaydx9_shader.inl" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Asuka\Asuka.vcxproj">

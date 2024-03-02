@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <ctype.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
@@ -67,6 +67,7 @@ public:
 
 	bool IsHex() const { return mbHex; }
 	bool IsAddress() const { return mbAddress; }
+	sint32 GetValue() const { return mVal; }
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeConst(mVal, mbHex, mbAddress); }
 
@@ -156,6 +157,32 @@ protected:
 	}
 
 	vdautoptr<ATDebugExpNode> mpArg;
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeNegate final : public ATDebugExpNodeUnary {
+public:
+	ATDebugExpNodeNegate(ATDebugExpNode *x)
+		: ATDebugExpNodeUnary(kATDebugExpNodeType_Negate, x)
+	{
+	}
+
+	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+		sint32 x;
+
+		if (!mpArg->Evaluate(x, context, cache))
+			return false;
+
+		result = -x;
+		return true;
+	}
+
+	void EmitUnaryOp(VDStringA& s) {
+		s += '-';
+	}
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -559,7 +586,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -569,6 +596,31 @@ public:
 
 		result = x + y;
 		return true;
+	}
+
+	bool Optimize(ATDebugExpNode **result) override {
+		if (ATDebugExpNodeBinary::Optimize(result))
+			return true;
+
+		if (mpLeft->mType == kATDebugExpNodeType_Const) {
+			sint32 v = static_cast<ATDebugExpNodeConst *>(&*mpLeft)->GetValue();
+
+			if (v == 0) {
+				*result = mpRight.release();
+				return true;
+			}
+		}
+
+		if (mpRight->mType == kATDebugExpNodeType_Const) {
+			sint32 v = static_cast<ATDebugExpNodeConst *>(&*mpRight)->GetValue();
+
+			if (v == 0) {
+				*result = mpLeft.release();
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	int GetAssociativity() const { return 0; }
@@ -589,7 +641,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -599,6 +651,32 @@ public:
 
 		result = x - y;
 		return true;
+	}
+
+	bool Optimize(ATDebugExpNode **result) override {
+		if (ATDebugExpNodeBinary::Optimize(result))
+			return true;
+
+		if (mpLeft->mType == kATDebugExpNodeType_Const) {
+			sint32 v = static_cast<ATDebugExpNodeConst *>(&*mpLeft)->GetValue();
+
+			if (v == 0) {
+				*result = new ATDebugExpNodeNegate(mpRight);
+				mpRight.release();
+				return true;
+			}
+		}
+
+		if (mpRight->mType == kATDebugExpNodeType_Const) {
+			sint32 v = static_cast<ATDebugExpNodeConst *>(&*mpRight)->GetValue();
+
+			if (v == 0) {
+				*result = mpLeft.release();
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	int GetPrecedence() const { return kNodePrecAdd; }
@@ -628,6 +706,41 @@ public:
 
 		result = x * y;
 		return true;
+	}
+
+	bool Optimize(ATDebugExpNode **result) override {
+		if (ATDebugExpNodeBinary::Optimize(result))
+			return true;
+
+		if (mpLeft->mType == kATDebugExpNodeType_Const) {
+			sint32 v = static_cast<ATDebugExpNodeConst *>(&*mpLeft)->GetValue();
+
+			if (v == 0) {
+				*result = mpLeft.release();
+				return true;
+			}
+
+			if (v == 1) {
+				*result = mpRight.release();
+				return true;
+			}
+		}
+
+		if (mpRight->mType == kATDebugExpNodeType_Const) {
+			sint32 v = static_cast<ATDebugExpNodeConst *>(&*mpRight)->GetValue();
+
+			if (v == 0) {
+				*result = mpRight.release();
+				return true;
+			}
+
+			if (v == 1) {
+				*result = mpLeft.release();
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	int GetAssociativity() const { return 0; }
@@ -1094,32 +1207,6 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugExpNodeNegate final : public ATDebugExpNodeUnary {
-public:
-	ATDebugExpNodeNegate(ATDebugExpNode *x)
-		: ATDebugExpNodeUnary(kATDebugExpNodeType_Negate, x)
-	{
-	}
-
-	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
-
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
-		sint32 x;
-
-		if (!mpArg->Evaluate(x, context, cache))
-			return false;
-
-		result = -x;
-		return true;
-	}
-
-	void EmitUnaryOp(VDStringA& s) {
-		s += '-';
-	}
-};
-
-///////////////////////////////////////////////////////////////////////////
-
 class ATDebugExpNodeDerefByte final : public ATDebugExpNodeUnary {
 public:
 	ATDebugExpNodeDerefByte(ATDebugExpNode *x)
@@ -1340,7 +1427,7 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
-		s += "pc";
+		s += "@pc";
 	}
 };
 
@@ -1362,7 +1449,7 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
-		s += 'a';
+		s += "@a";
 	}
 };
 
@@ -1384,7 +1471,7 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
-		s += 'x';
+		s += "@x";
 	}
 };
 
@@ -1406,7 +1493,7 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
-		s += 'y';
+		s += "@y";
 	}
 };
 
@@ -1428,7 +1515,7 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
-		s += 's';
+		s += "@s";
 	}
 };
 
@@ -1450,7 +1537,7 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
-		s += 'p';
+		s += "@p";
 	}
 };
 
@@ -1471,7 +1558,7 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
-		s += "read";
+		s += "@read";
 	}
 };
 
@@ -1492,7 +1579,7 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
-		s += "write";
+		s += "@write";
 	}
 };
 
@@ -1513,7 +1600,7 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
-		s += "hpos";
+		s += "@hpos";
 	}
 };
 
@@ -1534,7 +1621,7 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
-		s += "vpos";
+		s += "@vpos";
 	}
 };
 
@@ -1555,7 +1642,7 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
-		s += "address";
+		s += "@address";
 	}
 };
 
@@ -1576,7 +1663,7 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
-		s += "value";
+		s += "@value";
 	}
 };
 
@@ -1597,7 +1684,7 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
-		s += "xbankreg";
+		s += "@xbankreg";
 	}
 };
 
@@ -1618,7 +1705,7 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
-		s += "xbankcpu";
+		s += "@xbankcpu";
 	}
 };
 
@@ -1639,7 +1726,7 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
-		s += "xbankantic";
+		s += "@xbankantic";
 	}
 };
 
@@ -2397,7 +2484,38 @@ force_ident:
 							tok = kTokClock;
 						} else if (name == "cclk") {
 							tok = kTokCpuClock;
-						} else throw ATDebuggerExprParseException("Unknown special variable '@%.*s'", nameEnd - nameStart, nameStart);
+						} else if (name == "pc")
+							tok = kTokPC;
+						else if (name == "a")
+							tok = kTokA;
+						else if (name == "x")
+							tok = kTokX;
+						else if (name == "y")
+							tok = kTokY;
+						else if (name == "s")
+							tok = kTokS;
+						else if (name == "p")
+							tok = kTokP;
+						else if (name == "read")
+							tok = kTokRead;
+						else if (name == "write")
+							tok = kTokWrite;
+						else if (name == "hpos")
+							tok = kTokHpos;
+						else if (name == "vpos")
+							tok = kTokVpos;
+						else if (name == "address")
+							tok = kTokAddress;
+						else if (name == "value")
+							tok = kTokValue;
+						else if (name == "xbankreg")
+							tok = kTokXBankReg;
+						else if (name == "xbankcpu")
+							tok = kTokXBankCPU;
+						else if (name == "xbankantic")
+							tok = kTokXBankANTIC;
+						else
+							throw ATDebuggerExprParseException("Unknown special variable '@%.*s'", nameEnd - nameStart, nameStart);
 					}
 				} else
 					throw ATDebuggerExprParseException("Unexpected character '%c'", c);

@@ -28,7 +28,6 @@
 #include "idephysdisk.h"
 #include "idevhdimage.h"
 #include "oshelper.h"
-#include "uiprogress.h"
 #include <at/atnativeui/uiproxies.h>
 #include <at/atcore/propertyset.h>
 
@@ -37,6 +36,7 @@
 #endif
 
 VDStringW ATUIShowDialogBrowsePhysicalDisks(VDGUIHandle hParent);
+void ATCreateDeviceHardDisk(const ATPropertySet& pset, IATDevice **dev);
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -115,24 +115,19 @@ bool ATUIDialogCreateVHDImage2::OnOK() {
 		return true;
 
 	// Okay, let's actually try to create the VHD image!
-	VDZHWND prevProgressParent = ATUISetProgressWindowParentW32(mhdlg);
 
 	try {
 		ATIDEVHDImage vhd;
 		vhd.InitNew(mPath.c_str(), mHeads, mSPT, mSectorCount, mbDynamicDisk);
 		vhd.Flush();
 	} catch(const MyUserAbortError&) {
-		ATUISetProgressWindowParentW32(prevProgressParent);
 		return true;
 	} catch(const MyError& e) {
 		VDStringW msg;
 		msg.sprintf(L"VHD creation failed: %hs", e.gets());
 		ShowError(msg.c_str(), L"Altirra Error");
-		ATUISetProgressWindowParentW32(prevProgressParent);
 		return true;
 	}
-
-	ATUISetProgressWindowParentW32(prevProgressParent);
 
 	ShowInfo(L"VHD creation was successful.", L"Altirra Notice");
 	return false;
@@ -228,15 +223,14 @@ void ATUIDialogCreateVHDImage2::UpdateEnables() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIDialogDeviceHardDisk : public VDDialogFrameW32 {
+class ATUIDialogDeviceHardDisk final : public VDDialogFrameW32 {
 public:
 	ATUIDialogDeviceHardDisk(ATPropertySet& props);
 	~ATUIDialogDeviceHardDisk();
 
-	bool OnLoaded();
-	void OnDataExchange(bool write);
-	bool OnCommand(uint32 id, uint32 extcode);
-	void Update(int id);
+	bool OnLoaded() override;
+	void OnDataExchange(bool write) override;
+	bool OnCommand(uint32 id, uint32 extcode) override;
 
 protected:
 	void UpdateEnables();
@@ -290,7 +284,7 @@ void ATUIDialogDeviceHardDisk::OnDataExchange(bool write) {
 			SetControlTextF(IDC_IDE_SPT, L"%u", spt);
 		}
 
-		bool fast = mProps.GetBool("fast");
+		bool fast = mProps.GetBool("solid_state");
 		CheckButton(IDC_SPEED_FAST, fast);
 		CheckButton(IDC_SPEED_SLOW, !fast);
 
@@ -309,6 +303,11 @@ void ATUIDialogDeviceHardDisk::OnDataExchange(bool write) {
 
 		VDStringW path;
 		GetControlText(IDC_IDE_IMAGEPATH, path);
+
+		if (path.empty()) {
+			FailValidation(IDC_IDE_IMAGEPATH);
+			return;
+		}
 
 		uint32 cylinders = 0;
 		uint32 heads = 0;
@@ -346,7 +345,7 @@ void ATUIDialogDeviceHardDisk::OnDataExchange(bool write) {
 			}
 
 			mProps.SetBool("write_enabled", write);
-			mProps.SetBool("fast", fast);
+			mProps.SetBool("solid_state", fast);
 		}
 	}
 }
@@ -368,7 +367,7 @@ bool ATUIDialogDeviceHardDisk::OnCommand(uint32 id, uint32 extcode) {
 						try {
 							vdrefptr<ATIDEVHDImage> vhdImage(new ATIDEVHDImage);
 
-							vhdImage->Init(s.c_str(), false);
+							vhdImage->Init(s.c_str(), false, false);
 
 							SetCapacityBySectorCount(vhdImage->GetSectorCount());
 						} catch(const MyError& e) {
@@ -390,10 +389,6 @@ bool ATUIDialogDeviceHardDisk::OnCommand(uint32 id, uint32 extcode) {
 						CheckButton(IDC_IDEREADONLY, (attr & kVDFileAttr_ReadOnly) != 0);
 				}
 			}
-			return true;
-
-		case IDC_EJECT:
-			SetControlText(IDC_IDE_IMAGEPATH, L"");
 			return true;
 
 		case IDC_IDE_DISKBROWSE:
@@ -432,11 +427,6 @@ bool ATUIDialogDeviceHardDisk::OnCommand(uint32 id, uint32 extcode) {
 					SetControlText(IDC_IDE_IMAGEPATH, createVHDDlg.GetPath());
 				}
 			}
-			return true;
-
-		case IDC_IDE_ENABLE:
-			if (extcode == BN_CLICKED)
-				UpdateEnables();
 			return true;
 
 		case IDC_IDE_CYLINDERS:

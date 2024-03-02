@@ -276,7 +276,7 @@ public:
 	bool xchg(bool v) {
 		const uint32 mask = ((uint32)0xFF << (int)((size_t)&n & 3));
 		const int andval = (int)~mask; 
-		const int orval = (int)(mask & 0x01010101);
+		const int orval = v ? (int)(mask & 0x01010101) : 0;
 		volatile int *p = (volatile int *)((uintptr)&n & ~(uintptr)3);
 
 		for(;;) {

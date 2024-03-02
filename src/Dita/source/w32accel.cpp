@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/accel.h>
 
@@ -58,10 +58,7 @@ void VDUIExtractAcceleratorTableW32(VDAccelTableDefinition& dst, HACCEL haccel, 
 }
 
 void VDUIGetAcceleratorStringInternal(const VDUIAccelerator& accel, VDStringW& s) {
-	union {
-		wchar_t w[1024];
-		char a[1024];
-	} buf;
+	wchar_t buf[1024];
 
 	UINT scanCode = MapVirtualKey(accel.mVirtKey, 0);
 	if (!scanCode)
@@ -72,13 +69,8 @@ void VDUIGetAcceleratorStringInternal(const VDUIAccelerator& accel, VDStringW& s
 	if (accel.mModifiers & VDUIAccelerator::kModExtended)
 		lParam |= (1 << 24);
 
-	if (VDIsWindowsNT()) {
-		if (GetKeyNameTextW(lParam, buf.w, 1024))
-			s.append(buf.w);
-	} else {
-		if (GetKeyNameTextA(lParam, buf.a, 1024))
-			s.append(VDTextAToW(buf.a));
-	}
+	if (GetKeyNameTextW(lParam, buf, vdcountof(buf)))
+		s.append(buf);
 }
 
 void VDUIGetAcceleratorString(const VDUIAccelerator& accel, VDStringW& s) {

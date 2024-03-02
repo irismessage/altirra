@@ -23,7 +23,7 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <wtypes.h>
 #include <winnt.h>
 #include <vd2/system/win32/intrin.h>
@@ -45,17 +45,7 @@ long CPUCheckForExtensions() {
 namespace {
 #ifdef _M_IX86
 	bool VDIsAVXSupportedByOS() {
-		uint32 xfeature_enabled_mask;
-
-		__asm {
-			xor ecx, ecx
-			__emit 0x0f		;xgetbv
-			__emit 0x01
-			__emit 0xd0
-			mov dword ptr xfeature_enabled_mask, eax
-		}
-
-		return (xfeature_enabled_mask & 0x06) == 0x06;
+		return (_xgetbv(0) & 0x06) == 0x06;
 	}
 #else
 	extern "C" bool VDIsAVXSupportedByOS();
@@ -66,23 +56,8 @@ namespace {
 // suboptimal in Win64 -- for one thing, it doesn't return true for MMX, at least
 // on Vista 64.
 long CPUCheckForExtensions() {
-	// check for CPUID (x86 only)
-#ifdef _M_IX86
-	uint32 id;
-	__asm {
-		pushfd
-		or		dword ptr [esp], 00200000h	;set the ID bit
-		popfd
-		pushfd					;flags -> EAX
-		pop		dword ptr id
-	}
-
-	if (!(id & 0x00200000)) {
-		// if we don't have CPUID, we probably won't want to try FPU optimizations
-		// (80486).
-		return 0;
-	}
-#endif
+	// We no longer check for CPUID support, since we no longer support 80486 CPUs
+	// to any extent.
 
 	// check for features register
 	long flags = CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_CPUID;

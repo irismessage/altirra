@@ -81,8 +81,26 @@ protected:
 	T *ptr;
 
 public:
-	explicit vdautoptr(T *p = 0) : ptr(p) {}
+	vdautoptr(const vdautoptr&) = delete;
+	vdautoptr& operator=(vdautoptr&) = delete;
+
+	explicit vdautoptr(T *p = nullptr) : ptr(p) {}
+
+	vdautoptr(vdautoptr&& src) : ptr(src.ptr) {
+		src.ptr = nullptr;
+	}
+
 	~vdautoptr() { delete ptr; }
+
+	vdautoptr& operator=(vdautoptr&& src) {
+		delete ptr;
+		ptr = nullptr;
+
+		ptr = src.ptr;
+		src.ptr = nullptr;
+
+		return *this;
+	}
 
 	vdautoptr<T>& operator=(T *src) { delete ptr; ptr = src; return *this; }
 
@@ -116,6 +134,9 @@ public:
 		ptr = p;
 	}
 };
+
+template<class T>
+vdautoptr<T> vdmakeautoptr(T *p) { return vdautoptr<T>(p); }
 
 template<class T> class vdautoarrayptr {
 protected:

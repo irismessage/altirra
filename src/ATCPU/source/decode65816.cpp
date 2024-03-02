@@ -19,7 +19,7 @@
 #include <at/atcpu/decode65816.h>
 #include <at/atcpu/states.h>
 
-void ATCPUDecoderGenerator65816::RebuildTables(ATCPUDecoderTables65816& dst, bool stopOnBRK, bool historyTracing) {
+void ATCPUDecoderGenerator65816::RebuildTables(ATCPUDecoderTables65816& dst, bool stopOnBRK, bool historyTracing, bool enableBreakpoints) {
 	using namespace ATCPUStates;
 
 	mbStopOnBRK = stopOnBRK;
@@ -44,6 +44,8 @@ void ATCPUDecoderGenerator65816::RebuildTables(ATCPUDecoderTables65816& dst, boo
 		{ true,  false, false, false },
 	};
 
+	const auto stateReadOpcode = enableBreakpoints ? kStateReadOpcode : kStateReadOpcodeNoBreak;
+
 	for(int i=0; i<10; ++i) {
 		const bool unalignedDP = kModeInfo[i].mbUnalignedDP;
 		const bool emulationMode = kModeInfo[i].mbEmulationMode;
@@ -61,7 +63,7 @@ void ATCPUDecoderGenerator65816::RebuildTables(ATCPUDecoderTables65816& dst, boo
 			if (!DecodeInsn(c, unalignedDP, emulationMode, mode16, index16))
 				*mpDstState++ = kStateBreakOnUnsupportedOpcode;
 
-			*mpDstState++ = kStateReadOpcode;
+			*mpDstState++ = stateReadOpcode;
 		}
 
 		// predecode NMI sequence
@@ -92,7 +94,7 @@ void ATCPUDecoderGenerator65816::RebuildTables(ATCPUDecoderTables65816& dst, boo
 		*mpDstState++ = kStateReadAddrL;
 		*mpDstState++ = kStateReadAddrH;
 		*mpDstState++ = kStateAddrToPC;
-		*mpDstState++ = kStateReadOpcode;
+		*mpDstState++ = stateReadOpcode;
 
 		// predecode IRQ sequence
 		dst.mInsnPtrs[i][257] = mpDstState - dst.mDecodeHeap;
@@ -122,7 +124,7 @@ void ATCPUDecoderGenerator65816::RebuildTables(ATCPUDecoderTables65816& dst, boo
 		*mpDstState++ = kStateReadAddrL;
 		*mpDstState++ = kStateReadAddrH;
 		*mpDstState++ = kStateAddrToPC;
-		*mpDstState++ = kStateReadOpcode;
+		*mpDstState++ = stateReadOpcode;
 	}
 }
 
@@ -869,7 +871,6 @@ bool ATCPUDecoderGenerator65816::DecodeInsn(uint8 opcode, bool unalignedDP, bool
 			*mpDstState++ = kStateReadAddrH;
 			*mpDstState++ = kStateInvokeHLE;
 			*mpDstState++ = kStateHLEDelay;
-			*mpDstState++ = kStateReadOpcode;
 			*mpDstState++ = kStateBreakOnUnsupportedOpcode;
 			break;
 

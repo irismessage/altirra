@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/strutil.h>
 #include <at/atcore/cio.h>
@@ -50,7 +50,7 @@ class ATRS232ChannelSX212 final : public IATSchedulerCallback {
 public:
 	ATRS232ChannelSX212();
 
-	void Init(ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev);
+	void Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev);
 	void Shutdown();
 
 	void ColdReset();
@@ -174,7 +174,7 @@ ATRS232ChannelSX212::ATRS232ChannelSX212()
 	mpDevice->SetSX212Mode();
 }
 
-void ATRS232ChannelSX212::Init(ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev) {
+void ATRS232ChannelSX212::Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev) {
 	mpScheduler = sched;
 	mpCIOMgr = ciomgr;
 	mpSIOMgr = siomgr;
@@ -521,7 +521,7 @@ public:	// IATDeviceScheduling
 	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:	// IATDeviceIndicators
-	void InitIndicators(IATUIRenderer *r) override;
+	void InitIndicators(IATDeviceIndicatorManager *r) override;
 
 public:	// IATDeviceCIO
 	void InitCIO(IATDeviceCIOManager *mgr) override;
@@ -554,7 +554,7 @@ public:
 protected:
 	ATScheduler *mpScheduler;
 	ATScheduler *mpSlowScheduler;
-	IATUIRenderer *mpUIRenderer;
+	IATDeviceIndicatorManager *mpUIRenderer;
 	IATDeviceCIOManager *mpCIOMgr;
 	IATDeviceSIOManager *mpSIOMgr;
 
@@ -684,7 +684,7 @@ void ATDeviceSX212::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 	mpSlowScheduler = slowsch;
 }
 
-void ATDeviceSX212::InitIndicators(IATUIRenderer *r) {
+void ATDeviceSX212::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
 }
 

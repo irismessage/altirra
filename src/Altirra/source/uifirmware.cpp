@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
@@ -107,7 +107,7 @@ protected:
 		const wchar_t *mpName;
 	};
 
-	const TypeEntry *mpSortedTypes[19];
+	const TypeEntry *mpSortedTypes[18];
 	
 	static const TypeEntry kTypeNames[];
 };
@@ -122,7 +122,6 @@ const ATUIDialogEditFirmwareSettings::TypeEntry ATUIDialogEditFirmwareSettings::
 	{ kATFirmwareType_Kernel5200, L"5200 Kernel" },
 	{ kATFirmwareType_Basic, L"Internal BASIC (XL/XE/XEGS)" },
 	{ kATFirmwareType_U1MB, L"Ultimate1MB" },
-	{ kATFirmwareType_MyIDE, L"MyIDE" },
 	{ kATFirmwareType_MyIDE2, L"MyIDE-II" },
 	{ kATFirmwareType_SIDE, L"SIDE" },
 	{ kATFirmwareType_SIDE2, L"SIDE 2" },
@@ -245,20 +244,23 @@ void ATUIDialogEditFirmwareSettings::RedoOptions(ATFirmwareType type) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIDialogFirmware : public VDDialogFrameW32 {
+class ATUIDialogFirmware final : public VDDialogFrameW32 {
 public:
 	ATUIDialogFirmware(ATFirmwareManager& sim);
 
 	bool AnyChanges() const { return mbAnyChanges; }
 
 protected:
-	bool OnLoaded();
-	void OnDestroy();
-	void OnDataExchange(bool write);
-	bool OnCommand(uint32 id, uint32 extcode);
-	void OnSize();
-	bool OnErase(VDZHDC hdc);
+	bool OnLoaded() override;
+	void OnDestroy() override;
+	void OnDataExchange(bool write) override;
+	bool OnCommand(uint32 id, uint32 extcode) override;
+	void OnSize() override;
+	bool OnErase(VDZHDC hdc) override;
+	void OnDropFiles(IVDUIDropFileList *dropFileList) override;
+
 	void Add();
+	void Add(const wchar_t *);
 	void Remove();
 	void EditSettings();
 	void SetAsDefault();
@@ -346,7 +348,6 @@ void ATUIDialogFirmware::OnDataExchange(bool write) {
 			{ kATFirmwareType_Kernel5200, L"5200 Kernel ROMs" },
 			{ kATFirmwareType_Basic, L"Internal BASIC ROMs (XL/XE/XEGS)" },
 			{ kATFirmwareType_U1MB, L"Ultimate1MB ROMs" },
-			{ kATFirmwareType_MyIDE, L"MyIDE ROMs" },
 			{ kATFirmwareType_MyIDE2, L"MyIDE-II ROMs" },
 			{ kATFirmwareType_SIDE, L"SIDE ROMs" },
 			{ kATFirmwareType_SIDE2, L"SIDE 2 ROMs" },
@@ -449,19 +450,34 @@ bool ATUIDialogFirmware::OnErase(VDZHDC hdc) {
 	return true;
 }
 
+void ATUIDialogFirmware::OnDropFiles(IVDUIDropFileList *dropFileList) {
+	VDStringW fn;
+
+	try {
+		if (dropFileList->GetFileName(0, fn))
+			Add(fn.c_str());
+	} catch(const MyError& e) {
+		ShowError(e);
+	}
+}
+
 void ATUIDialogFirmware::Add() {
 	const VDStringW& path = BrowseForFirmware(this);
 
 	if (path.empty())
 		return;
 
-	const uint64 id = ATGetFirmwareIdFromPath(path.c_str());
+	Add(path.c_str());
+}
 
-	vdrefptr<FirmwareItem> newItem(new FirmwareItem(id, kATFirmwareType_Unknown, false, VDFileSplitExtLeft(VDFileSplitPathRight(path)).c_str(), path.c_str()));
+void ATUIDialogFirmware::Add(const wchar_t *path) {
+	const uint64 id = ATGetFirmwareIdFromPath(path);
+
+	vdrefptr<FirmwareItem> newItem(new FirmwareItem(id, kATFirmwareType_Unknown, false, VDFileSplitExtLeft(VDStringW(VDFileSplitPath(path))).c_str(), path));
 
 	// try to autodetect it
 	try {
-		VDFile f(path.c_str());
+		VDFile f(path);
 
 		sint64 size = f.size();
 

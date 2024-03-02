@@ -3,6 +3,8 @@
 // Used by Altirra.rc
 //
 #define IDC_NEXT                        3
+#define IDC_PREV                        4
+#define IDC_NEXT2                       5
 #define IDR_DEBUGGER_MENU               102
 #define IDD_CPU_OPTIONS                 104
 #define IDD_DISK_DRIVES                 105
@@ -12,7 +14,6 @@
 #define IDR_KERNEL                      110
 #define IDR_CHANGES                     112
 #define IDD_CHANGE_LOG                  113
-#define IDD_HARD_DISK                   114
 #define IDR_HLEKERNEL                   116
 #define IDR_DISASM_CONTEXT_MENU         118
 #define IDD_INPUT_MAPPINGS              119
@@ -113,6 +114,17 @@
 #define IDD_KEYBOARD_CUSTOMIZE          205
 #define IDR_PROFILE_OPTIONS_MENU        206
 #define IDD_PROFILER_BOUNDARYRULE       207
+#define IDD_PROFILES                    208
+#define IDD_PROFILE_CATEGORIES          209
+#define IDD_OPTIONS_SETTINGS            210
+#define IDD_DEVICE_POCKETMODEM          211
+#define IDD_DEVICE_CORVUS               212
+#define IDD_OPTIONS_MEDIA               213
+#define IDD_DEVICE_VERONICA1            214
+#define IDD_DEVICE_MYIDE2               214
+#define IDD_DEVICE_DONGLE               215
+#define IDD_WIZARD                      216
+#define IDD_WIZARD_SELECTTYPE           218
 #define IDI_DISK                        500
 #define IDI_TAPE                        501
 #define IDI_XEX                         502
@@ -224,8 +236,10 @@
 #define IDC_HUERANGE                    1036
 #define IDC_NEWDISK6                    1036
 #define IDC_MORE6                       1036
+#define IDC_COVOXVOL                    1036
 #define IDC_BRIGHTNESS                  1037
 #define IDC_EJECT6                      1037
+#define IDC_STATIC_COVOXVOL             1037
 #define IDC_CONTRAST                    1038
 #define IDC_DISKPATH7                   1038
 #define IDC_SATURATION                  1039
@@ -282,7 +296,6 @@
 #define IDC_STATIC_GREEN_ANGLE          1060
 #define IDC_FOLDER4                     1061
 #define IDC_BLUE_ANGLE                  1061
-#define IDC_IDE_ENABLE                  1062
 #define IDC_FOLDER5                     1062
 #define IDC_STATIC_BLUE_ANGLE           1062
 #define IDC_IDE_IMAGEPATH               1063
@@ -294,7 +307,6 @@
 #define IDC_FOLDER8                     1065
 #define IDC_STATIC_HOSTPATH             1068
 #define IDC_STATIC_IDE_IMAGEPATH        1069
-#define IDC_STATIC_IDE_IOREGION         1070
 #define IDC_IDE_SIZE                    1071
 #define IDC_STATIC_IDE_GEOMETRY         1072
 #define IDC_STATIC_IDE_SIZE             1073
@@ -320,7 +332,9 @@
 #define IDC_SPEED                       1089
 #define IDC_STATIC_SPEED                1090
 #define IDC_FLAG1                       1091
+#define IDC_ACCEL                       1091
 #define IDC_FLAG2                       1092
+#define IDC_STATIC_ACCEL                1092
 #define IDC_DRIVES1_8                   1093
 #define IDC_DRIVES9_15                  1094
 #define IDC_STATIC_D1                   1095
@@ -431,7 +445,9 @@
 #define IDC_DIAL_ADDRESS                1180
 #define IDC_EMULATION_LEVEL             1181
 #define IDC_DIAL_SERVICE                1181
+#define IDC_SETUSERFILEASSOC            1181
 #define IDC_DEVICE_850                  1182
+#define IDC_REMOVEUSERFILEASSOC         1182
 #define IDC_STATIC_BAUDRATE             1183
 #define IDC_STATIC_PERMISSIONS          1184
 #define IDC_STATIC_PROTOCOL             1185
@@ -446,7 +462,6 @@
 #define IDC_PATH3                       1194
 #define IDC_STATIC_HOSTPATH4            1195
 #define IDC_PATH4                       1196
-#define IDC_HW_MODE                     1197
 #define IDC_COMBO1                      1198
 #define IDC_FILESYSTEM                  1198
 #define IDC_SIC_FLASH                   1198
@@ -458,9 +473,12 @@
 #define IDC_LUMA_RAMP                   1198
 #define IDC_VIEWMODE                    1198
 #define IDC_VERSION                     1198
+#define IDC_REVISION                    1198
 #define IDC_TYPE_FIXED                  1199
 #define IDC_U1MB_FLASH                  1199
+#define IDC_DEVICE_ID                   1199
 #define IDC_TYPE_DYNAMIC                1200
+#define IDC_PEAK_CONTROL                1200
 #define IDC_SIZE_SECTORS                1201
 #define IDC_SIZE_MB                     1202
 #define IDC_GEOMETRY_AUTO               1203
@@ -478,7 +496,11 @@
 #define IDC_ENCODE_ALL_FRAMES           1217
 #define IDC_QUICKMAP                    1217
 #define IDC_ENDFUNCTION                 1217
+#define IDC_VISIBLE                     1217
+#define IDC_PAUSE_ON_MENU               1217
+#define IDC_ENABLE_SDX                  1217
 #define IDC_ACCESS_NONE                 1218
+#define IDC_WRITE_PROTECT               1218
 #define IDC_ACCESS_HOSTONLY             1219
 #define IDC_ACCESS_NAT                  1220
 #define IDC_NETADDR                     1221
@@ -497,21 +519,34 @@
 #define IDC_SCALE                       1230
 #define IDC_FORWARDING_ADDRESS          1230
 #define IDC_SEARCH                      1230
+#define IDC_MAPPING                     1230
 #define IDC_TREE1                       1231
+#define IDC_PROFILES                    1231
 #define IDC_BUTTON1                     1232
 #define IDC_SCAN                        1232
 #define IDC_EJECT                       1232
 #define IDC_CUSTOMIZE                   1232
+#define IDC_SWITCH                      1232
+#define IDC_RESETALL                    1232
+#define IDC_RECORD                      1232
 #define IDC_BUTTON2                     1233
 #define IDC_REMOVE                      1233
 #define IDC_COPY_TO_CUSTOM              1233
+#define IDC_PLAY                        1233
 #define IDC_BUTTON3                     1234
 #define IDC_SETTINGS                    1234
+#define IDC_SEEK_START                  1234
 #define IDC_CLEAR                       1235
+#define IDC_REMOVEALL                   1235
+#define IDC_SEEK_REWIND                 1235
 #define IDC_EDIT2                       1236
 #define IDC_FORWARDING_PORT             1236
+#define IDC_SEEK_FFWD                   1236
 #define IDC_OPTIONS                     1237
+#define IDC_SEEK_END                    1237
 #define IDC_SETASDEFAULT                1238
+#define IDC_SEEK_STOP                   1238
+#define IDC_PAUSE                       1239
 #define IDC_NTSC_LUMASHARP              1241
 #define IDC_NTSC_CHROMASHARP            1242
 #define IDC_NTSC_LUMANOTCHQ             1243
@@ -553,6 +588,29 @@
 #define IDC_STATIC_ARROWKEYMODE         1270
 #define IDC_STATIC_KEYMODE              1271
 #define IDC_STATIC_ADDRESS2             1273
+#define IDC_SETDEFAULT                  1274
+#define IDC_CATEGORIES                  1275
+#define IDC_STATIC_CATEGORIES           1276
+#define IDC_HELP_TEXT                   1278
+#define IDC_WRITEMODE                   1279
+#define IDC_STEP_AREA                   1284
+#define IDC_MESSAGE                     1285
+#define IDD_WIZARD_MESSAGE              1285
+#define IDD_WIZARD_FIRMWARE             1286
+#define IDD_WIZARD_SELECTVIDEOTYPE      1287
+#define IDD_WIZARD_EXPERIENCE           1288
+#define IDC_TYPE_COMPUTER               1289
+#define IDD_OPTIONS_DISPLAY1            1289
+#define IDD_OPTIONS_DISPLAY_EFFECTS     1289
+#define IDC_TYPE_5200                   1290
+#define IDC_STEPS_LIST                  1290
+#define IDD_DEVICE_KMKJZIDEV2           1290
+#define IDC_TYPE_NTSC                   1291
+#define IDD_DEVICE_COVOX                1291
+#define IDC_TYPE_PAL                    1292
+#define IDC_TYPE_STREAMLINED            1293
+#define IDC_TYPE_AUTHENTIC              1294
+#define IDC_CHANNELS                    1295
 #define ID_FILTERMODE_POINT             40023
 #define ID_FILTERMODE_BILINEAR          40024
 #define ID_FILTERMODE_BICUBIC           40025
@@ -648,6 +706,8 @@
 #define ID_COUNTER_BRANCHNOTTAKEN       40522
 #define ID_COUNTER_PAGECROSSING         40523
 #define ID_COUNTER_REDUNDANTOPERATION   40524
+#define ID_CONTEXT_RECURSIVELYEXPANDALL 40525
+#define ID_CONTEXT_EXPANDARCS           40526
 #define ID_INPUT_PORT1_NONE             45000
 #define ID_INPUT_PORT2_NONE             45100
 #define ID_INPUT_PORT3_NONE             45200
@@ -661,9 +721,9 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
-#define _APS_NEXT_RESOURCE_VALUE        208
-#define _APS_NEXT_COMMAND_VALUE         40525
-#define _APS_NEXT_CONTROL_VALUE         1274
-#define _APS_NEXT_SYMED_VALUE           112
+#define _APS_NEXT_RESOURCE_VALUE        218
+#define _APS_NEXT_COMMAND_VALUE         40527
+#define _APS_NEXT_CONTROL_VALUE         1296
+#define _APS_NEXT_SYMED_VALUE           113
 #endif
 #endif

@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/strutil.h>
 #include <at/atcore/cio.h>
@@ -52,7 +52,7 @@ class ATRS232Channel1030 final : public IATSchedulerCallback {
 public:
 	ATRS232Channel1030();
 
-	void Init(ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev);
+	void Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev);
 	void Shutdown();
 
 	void ColdReset();
@@ -192,7 +192,7 @@ ATRS232Channel1030::ATRS232Channel1030()
 	mpDevice->Set1030Mode();
 }
 
-void ATRS232Channel1030::Init(ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev) {
+void ATRS232Channel1030::Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev) {
 	mpScheduler = sched;
 	mpCIOMgr = ciomgr;
 	mpSIOMgr = siomgr;
@@ -730,13 +730,13 @@ class ATDevice1030Modem final
 	, public IATDeviceSIO
 	, public IATDeviceRawSIO
 {
-	ATDevice1030Modem(const ATDevice1030Modem&);
-	ATDevice1030Modem& operator=(const ATDevice1030Modem&);
+	ATDevice1030Modem(const ATDevice1030Modem&) = delete;
+	ATDevice1030Modem& operator=(const ATDevice1030Modem&) = delete;
 public:
 	ATDevice1030Modem();
 	~ATDevice1030Modem();
 
-	void *AsInterface(uint32 id);
+	void *AsInterface(uint32 id) override;
 
 public:
 	void GetDeviceInfo(ATDeviceInfo& info) override;
@@ -749,12 +749,15 @@ public:
 public:	// IATDeviceFirmware
 	void InitFirmware(ATFirmwareManager *fwman) override;
 	bool ReloadFirmware() override;
+	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override { return nullptr; }
+	bool IsWritableFirmwareDirty(uint32 idx) const override { return false; }
+	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override {}
 
 public:	// IATDeviceScheduling
 	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:	// IATDeviceIndicators
-	void InitIndicators(IATUIRenderer *r) override;
+	void InitIndicators(IATDeviceIndicatorManager *r) override;
 
 public:	// IATDeviceCIO
 	void InitCIO(IATDeviceCIOManager *mgr) override;
@@ -787,7 +790,7 @@ public:
 protected:
 	ATScheduler *mpScheduler;
 	ATScheduler *mpSlowScheduler;
-	IATUIRenderer *mpUIRenderer;
+	IATDeviceIndicatorManager *mpUIRenderer;
 	IATDeviceCIOManager *mpCIOMgr;
 	IATDeviceSIOManager *mpSIOMgr;
 	ATFirmwareManager *mpFwMgr;
@@ -941,7 +944,7 @@ void ATDevice1030Modem::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 	mpSlowScheduler = slowsch;
 }
 
-void ATDevice1030Modem::InitIndicators(IATUIRenderer *r) {
+void ATDevice1030Modem::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
 }
 

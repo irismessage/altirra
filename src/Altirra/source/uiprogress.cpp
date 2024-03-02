@@ -19,18 +19,11 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <vd2/system/error.h>
+#include <at/atcore/progress.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/progress.h>
 #include "resource.h"
 #include "uiprogress.h"
-
-VDZHWND g_hwndATProgressParent;
-
-VDZHWND ATUISetProgressWindowParentW32(VDZHWND hwnd) {
-	HWND prev = g_hwndATProgressParent;
-	g_hwndATProgressParent = hwnd;
-
-	return prev;
-}
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -38,7 +31,7 @@ class ATUIProgressDialogW32 : public VDDialogFrameW32 {
 public:
 	ATUIProgressDialogW32();
 
-	void Init(const wchar_t *desc, const wchar_t *statusFormat, uint32 total, const VDGUIHandle *parent);
+	void Init(const wchar_t *desc, const wchar_t *statusFormat, uint32 total, VDGUIHandle parent);
 	void Update(uint32 value);
 	void Shutdown();
 
@@ -54,8 +47,8 @@ protected:
 	int mValueShift;
 	uint32 mValue;
 	uint32 mTotal;
-	const wchar_t *mpDesc;
-	const wchar_t *mpStatusFormat;
+	VDStringW mDesc;
+	VDStringW mStatusFormat;
 	VDStringW mStatusBuffer;
 	DWORD mLastUpdateTime;
 };
@@ -70,9 +63,11 @@ ATUIProgressDialogW32::ATUIProgressDialogW32()
 {
 }
 
-void ATUIProgressDialogW32::Init(const wchar_t *desc, const wchar_t *statusFormat, uint32 total, const VDGUIHandle *parent) {
-	mpDesc = desc;
-	mpStatusFormat = statusFormat;
+void ATUIProgressDialogW32::Init(const wchar_t *desc, const wchar_t *statusFormat, uint32 total, VDGUIHandle parent) {
+	mDesc = desc;
+
+	if (statusFormat)
+		mStatusFormat = statusFormat;
 
 	mValueShift = 0;
 	for(uint32 t = total; t > 0xFFFF; t >>= 1)
@@ -80,8 +75,9 @@ void ATUIProgressDialogW32::Init(const wchar_t *desc, const wchar_t *statusForma
 
 	mTotal = total;
 	mValue = 0;
+	mhwndParent = (HWND)parent;
 
-	Create(parent ? *parent : (VDGUIHandle)g_hwndATProgressParent);
+	Create(parent);
 }
 
 void ATUIProgressDialogW32::Update(uint32 value) {
@@ -111,8 +107,8 @@ void ATUIProgressDialogW32::Update(uint32 value) {
 			SendMessage(mhwndProgress, PBM_SETPOS, (WPARAM)pos, 0);
 		}
 
-		if (mhwndStatus && mpStatusFormat) {
-			mStatusBuffer.sprintf(mpStatusFormat, mValue, mTotal);
+		if (mhwndStatus && !mStatusFormat.empty()) {
+			mStatusBuffer.sprintf(mStatusFormat.c_str(), mValue, mTotal);
 
 			SetWindowTextW(mhwndStatus, mStatusBuffer.c_str());
 		}
@@ -130,15 +126,12 @@ void ATUIProgressDialogW32::Shutdown() {
 }
 
 bool ATUIProgressDialogW32::OnLoaded() {
-	mhwndParent = g_hwndATProgressParent;
-	g_hwndATProgressParent = mhdlg;
-
 	mbParentWasEnabled = mhwndParent && !(GetWindowLong(mhwndParent, GWL_STYLE) & WS_DISABLED);
 
 	if (mhwndParent)
 		EnableWindow(mhwndParent, FALSE);
 
-	SetControlText(IDC_STATIC_DESC, mpDesc);
+	SetControlText(IDC_STATIC_DESC, mDesc.c_str());
 
 	mhwndProgress = GetControl(IDC_PROGRESS);
 	if (mhwndProgress)
@@ -156,8 +149,6 @@ bool ATUIProgressDialogW32::OnClose() {
 			SetWindowLong(mhdlg, GWL_STYLE, GetWindowLong(mhdlg, GWL_STYLE) | WS_POPUP);
 		}
 
-		VDASSERT(g_hwndATProgressParent == mhdlg);
-		g_hwndATProgressParent = mhwndParent;
 		mhwndParent = NULL;
 	}
 
@@ -166,74 +157,72 @@ bool ATUIProgressDialogW32::OnClose() {
 	return true;
 }
 
-///////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
 
-ATUIProgressDialogW32 *g_pATProgressDialog;
+class ATUIProgressHandler final : public IATProgressHandler {
+public:
+	ATUIProgressHandler();
 
-bool ATUIBeginProgressDialog(const wchar_t *desc, const wchar_t *statusFormat, uint32 total, const VDGUIHandle *parent) {
-	g_pATProgressDialog = new_nothrow ATUIProgressDialogW32;
-	if (!g_pATProgressDialog)
-		return false;
+	void Begin(uint32 total, const wchar_t *status, const wchar_t *desc) override;
+	void BeginF(uint32 total, const wchar_t *status, const wchar_t *descFormat, va_list descArgs) override;
+	void Update(uint32 value) override;
+	void End() override;
 
-	g_pATProgressDialog->Init(desc, statusFormat, total, parent);
-	return true;
+private:
+	ATUIProgressDialogW32 *mpDialog = nullptr;
+	uint32 mNestingCount = 0;
+};
+
+ATUIProgressHandler::ATUIProgressHandler() {
 }
 
-void ATUIUpdateProgressDialog(uint32 count) {
-	if (g_pATProgressDialog)
-		g_pATProgressDialog->Update(count);
-}
-
-void ATUIEndProgressDialog() {
-	if (g_pATProgressDialog) {
-		g_pATProgressDialog->Shutdown();
-		delete g_pATProgressDialog;
-		g_pATProgressDialog = NULL;
+void ATUIProgressHandler::Begin(uint32 total, const wchar_t *status, const wchar_t *desc) {
+	if (!mNestingCount++) {
+		mpDialog = new_nothrow ATUIProgressDialogW32;
+		if (mpDialog) {
+			mpDialog->Init(desc, status, total, ATUIGetProgressParent());
+		}
 	}
 }
-///////////////////////////////////////////////////////////////////////////
 
-ATUIProgress::ATUIProgress()
-	: mbCreated(false)
-{
+void ATUIProgressHandler::BeginF(uint32 total, const wchar_t *status, const wchar_t *descFormat, va_list descArgs) {
+	VDStringW desc;
+	desc.append_vsprintf(descFormat, descArgs);
+
+	Begin(total, status, desc.c_str());
 }
 
-ATUIProgress::~ATUIProgress() {
-	Shutdown();
+void ATUIProgressHandler::Update(uint32 value) {
+	if (mpDialog && mNestingCount == 1)
+		mpDialog->Update(value);
 }
 
-void ATUIProgress::InitF(VDGUIHandle parent, uint32 n, const wchar_t *statusFormat, const wchar_t *descFormat, ...) {
-	Shutdown();
+void ATUIProgressHandler::End() {
+	VDASSERT(mNestingCount > 0);
 
-	va_list val;
-	va_start(val, descFormat);
-	mDesc.append_vsprintf(descFormat, val);
-	va_end(val);
+	if (!--mNestingCount) {
+		if (mpDialog) {
+			auto p = mpDialog;
+			mpDialog = nullptr;
 
-	if (statusFormat)
-		mStatusFormat = statusFormat;
-
-	mbCreated = ATUIBeginProgressDialog(mDesc.c_str(), statusFormat ? mStatusFormat.c_str() : NULL, n, &parent);
-}
-
-void ATUIProgress::InitF(uint32 n, const wchar_t *statusFormat, const wchar_t *descFormat, ...) {
-	Shutdown();
-
-	va_list val;
-	va_start(val, descFormat);
-	mDesc.append_vsprintf(descFormat, val);
-	va_end(val);
-
-	if (statusFormat)
-		mStatusFormat = statusFormat;
-
-	mbCreated = ATUIBeginProgressDialog(mDesc.c_str(), statusFormat ? mStatusFormat.c_str() : NULL, n);
-}
-
-void ATUIProgress::Shutdown() {
-	if (mbCreated) {
-		mbCreated = false;
-
-		ATUIEndProgressDialog();
+			p->Shutdown();
+			delete p;
+		}
 	}
+}
+
+/////////////////////////////////////////////////////////////////////////////
+
+ATUIProgressHandler& ATUIGetProgressHandler() {
+	static ATUIProgressHandler sHandler;
+
+	return sHandler;
+}
+
+void ATUIInitProgressDialog() {
+	ATSetProgressHandler(&ATUIGetProgressHandler());
+}
+
+void ATUIShutdownProgressDialog() {
+	ATSetProgressHandler(nullptr);
 }

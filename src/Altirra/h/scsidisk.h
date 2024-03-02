@@ -3,14 +3,14 @@
 
 #include "scsi.h"
 
-class IATUIRenderer;
-class IATIDEDisk;
+class IATDeviceIndicatorManager;
+class IATBlockDevice;
 
 class IATSCSIDiskDevice : public IATSCSIDevice {
 public:
-	virtual void SetUIRenderer(IATUIRenderer *r) = 0;
+	virtual void SetUIRenderer(IATDeviceIndicatorManager *r) = 0;
 };
 
-void ATCreateSCSIDiskDevice(IATIDEDisk *disk, IATSCSIDiskDevice **dev);
+void ATCreateSCSIDiskDevice(IATBlockDevice *disk, IATSCSIDiskDevice **dev);
 
 #endif

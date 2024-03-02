@@ -16,7 +16,10 @@
 //	Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 #include <stdafx.h>
+#include <vd2/system/binary.h>
+#include <at/atdebugger/target.h>
 #include "cartridge.h"
+#include "disasm.h"
 #include "ksyms.h"
 
 namespace {
@@ -134,6 +137,7 @@ static const struct ATCartDetectInfo {
 {	kATCartridgeMode_Corina_1M_EEPROM,			kType800,	kSize1M,	kWrs8K,		kBankData,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_Corina_512K_SRAM_EEPROM,	kType800,	kSize512K,	kWrs8K,		kBankData,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_BountyBob5200,				kType5200,	kSize40K,	kWrsNone,	kBankOther,		kInit32K,	kHeaderLast16B,					},
+{	kATCartridgeMode_BountyBob5200Alt,			kType5200,	kSize40K,	kWrsNone,	kBankOther,		kInit32K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_Williams_32K,				kType800,	kSize32K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_Williams_64K,				kType800,	kSize64K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_Diamond_64K,				kType800,	kSize64K,	kWrsNone,	kBankAddrDx,	kInit8K,	kHeaderFirst8K,					},
@@ -177,7 +181,7 @@ static const struct ATCartDetectInfo {
 {	kATCartridgeMode_5200_16K_TwoChip,			kType5200,	kSize16K,	kWrsNone,	kBankNone,		kInit32K,	kHeaderLast16B,					},
 {	kATCartridgeMode_5200_16K_OneChip,			kType5200,	kSize16K,	kWrsNone,	kBankNone,		kInit32K,	kHeaderLast16B,					},
 {	kATCartridgeMode_5200_8K,					kType5200,	kSize8K,	kWrsNone,	kBankNone,		kInit32K,	kHeaderLast16B,					},
-{	kATCartridgeMode_5200_4K,					kType5200,	kSize8K,	kWrsNone,	kBankNone,		kInit32K,	kHeaderLast16B,					},
+{	kATCartridgeMode_5200_4K,					kType5200,	kSize4K,	kWrsNone,	kBankNone,		kInit32K,	kHeaderLast16B,					},
 {	kATCartridgeMode_5200_64K_32KBanks,			kType5200,	kSize64K,	kWrsNone,	kBankBF,		kInit32K,	kHeaderLast32K,					},
 {	kATCartridgeMode_5200_512K_32KBanks,		kType5200,	kSize512K,	kWrsNone,	kBankBF,		kInit32K,	kHeaderLast32K,					},
 };
@@ -256,8 +260,21 @@ uint32 ATCartridgeAutodetectMode(const void *data, uint32 size, vdfastvector<int
 	// Consider it a hit if we have at least some accesses and at least a 3:1
 	// ratio over the other mode.
 	const uint32 countAll = count800 + count5200;
-	const bool reject800 = (count800 * 3 < count5200) && (countAll >= 10);
-	const bool reject5200 = (count5200 * 3 < count800) && (countAll >= 10);
+	bool reject800 = (count800 * 3 < count5200) && (countAll >= 10);
+	bool reject5200 = (count5200 * 3 < count800) && (countAll >= 10);
+
+	// If we're still ambiguous, there are a few more tests we can do. We're
+	// particularly interested in 8K carts since these are the most commonly
+	// ambiguous (no banking detection possible).
+	if (!reject800 && !reject5200 && size == 8192) {
+		if (data8[0x1FFD] < 0x08) {
+			// $BFFD is a copyright digit for non-diag 5200 carts and so we would
+			// expect it to be an IR mode 6/7 digit in INTERNAL encoding. However,
+			// it's a flags byte in 800 mode, where only bits 0 and 2 are pertinent.
+			// If we see a low byte, we assume it is an 800 cart.
+			reject5200 = true;
+		}
+	}
 
 	// Loop over all of the modes and filter.
 	for(size_t i=0; i<sizeof(kATCartDetectInfo)/sizeof(kATCartDetectInfo[0]); ++i) {
@@ -270,8 +287,11 @@ uint32 ATCartridgeAutodetectMode(const void *data, uint32 size, vdfastvector<int
 		// check system type
 		switch(detInfo.mSystemType) {
 			case kType800:
-				if (reject800)
-					goto not_recommended;
+				if (reject800) {
+not_recommended:
+					cartModes.push_back(detInfo.mMode);
+					continue;
+				}
 				break;
 
 			case kType5200:
@@ -589,14 +609,104 @@ uint32 ATCartridgeAutodetectMode(const void *data, uint32 size, vdfastvector<int
 		}
 
 		cartModes.push_back(detInfo.mMode - (score << 16));
-		continue;
-
-not_recommended:
-		cartModes.push_back(detInfo.mMode);
 	}
 
 	if (cartModes.empty())
 		return 0;
+
+	// Check if we have both 5200 one-chip and 5200 two-chip.
+	auto itOneChip = std::find_if(cartModes.begin(), cartModes.end(), [](uint32 id) { return (id & 0xffff) == kATCartridgeMode_5200_16K_OneChip; });
+	auto itTwoChip = std::find_if(cartModes.begin(), cartModes.end(), [](uint32 id) { return (id & 0xffff) == kATCartridgeMode_5200_16K_TwoChip; });
+	if (itOneChip != cartModes.end() && itTwoChip != cartModes.end()) {
+		// Do a quick and dirty static trace for 256 bytes starting at the init address
+		// and count the number of instructions that are 'interesting' for init code. If we
+		// have a >2:1 ratio, drop the score on the lower one.
+		uint32 scores[2] = {};
+
+		for(int mode=0; mode<2; ++mode) {
+			uint32 hiMask = mode ? 0x8000 : 0x2000;
+
+			uint32 addr = VDReadUnalignedLEU16(data8 + 0x3FFE);
+
+			uint8 buf[256];
+			for(int i=0; i<256; ++i, ++addr) {
+				uint32 offset = (addr & 0x1FFF) + (addr & hiMask ? 0x2000 : 0);
+
+				buf[i] = data8[offset];
+			}
+
+			for(int offset = 0; offset < 254;) {
+				int ilen = ATGetOpcodeLength(buf[offset], 0x30, true, kATDebugDisasmMode_6502);
+
+				// check for abs store
+				switch(buf[offset]) {
+					case 0x8C:	// STY abs
+					case 0x8D:	// STA abs
+					case 0x8E:	// STX abs
+					case 0x9D:	// STA abs,X
+					case 0x99:	// STA abs,Y
+						{
+							uint32 baseAddr = VDReadUnalignedLEU16(&buf[offset + 1]);
+
+							if ((baseAddr - 0xC000) < 0x20		// GTIA (canonical)
+								|| (baseAddr - 0xE800) < 0x10	// POKEY (canonical)
+								|| (baseAddr - 0xD400) < 0x10	// ANTIC (canonical)
+								|| (baseAddr - 0x0200) < 0x0E	// OS Vectors
+								)
+							{
+								++scores[mode];
+							}
+						}
+						break;
+				}
+
+				offset += ilen;
+			}
+		}
+
+		if (scores[0] > 4 && scores[0] > scores[1]*2) {
+			// We think it's one-chip.
+			*itTwoChip += 0x10000;
+
+		} else if (scores[1] > 4 && scores[1] > scores[0]*2) {
+			// We think it's two-chip.
+			*itOneChip += 0x10000;
+		} else {
+			// Ugh. Okay, the init path didn't work. Let's try to partition based on
+			// bank usage.
+			// CPU			OneChip		TwoChip
+			// $4000-5FFF	$0000-1FFF	$0000-1FFF
+			// $6000-7FFF	$2000-3FFF	$0000-1FFF
+			// $8000-9FFF	$0000-1FFF	$2000-3FFF
+			// $A000-BFFF	$2000-3FFF	$2000-3FFF
+
+			int oneChipScore = 0;
+			int scores[4] = {0};
+
+			for(int i=0; i<0x3FDD; ++i) {
+				const uint8 opcode = data8[i];
+
+				if (opcode != 0x20 && opcode != 0x4C)
+					continue;
+
+				const uint16 addr = VDReadUnalignedLEU16(&data8[i+1]);
+
+				if (addr >= 0x4000 && addr < 0xC000)
+					++scores[(addr - 0x4000) >> 13];
+			}
+
+			if (std::max(scores[0], scores[2]) > std::min(scores[0], scores[2]) * 2
+				&& std::max(scores[1], scores[3]) > std::min(scores[1], scores[3]) * 2) {
+				// We think it's one-chip.
+				*itTwoChip += 0x10000;
+
+			} else if (std::max(scores[0], scores[1]) > std::min(scores[0], scores[1]) * 2
+				&& std::max(scores[2], scores[3]) > std::min(scores[2], scores[3]) * 2) {
+				// We think it's two-chip.
+				*itOneChip += 0x10000;
+			}
+		}
+	}
 
 	// reverse sort
 	std::sort(cartModes.begin(), cartModes.end());

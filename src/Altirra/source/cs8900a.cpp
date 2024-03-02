@@ -400,7 +400,7 @@ void ATCS8900AEmulator::WriteByte(uint8 address, uint8 value) {
 		case 0x0C:	// PacketPage data port 0, low byte
 		case 0x0E:	// PacketPage data port 1, low byte
 			g_ATLCCS8900AW("Write PP[$%03X] = $%02X\n", mPacketPtr & 0xfff, value);
-			mPacketPage[mPacketPtr & 0xfff] = value;
+			WritePacketPage(mPacketPtr, value);
 			if (mPacketPtrAutoInc)
 				++mPacketPtr;
 			break;
@@ -408,7 +408,7 @@ void ATCS8900AEmulator::WriteByte(uint8 address, uint8 value) {
 		case 0x0D:	// PacketPage data port 0, high byte
 		case 0x0F:	// PacketPage data port 1, high byte
 			g_ATLCCS8900AW("Write PP[$%03X] = $%02X\n", (mPacketPtr + 1) & 0xfff, value);
-			mPacketPage[(mPacketPtr + 1) & 0xfff] = value;
+			WritePacketPage(mPacketPtr + 1, value);
 			if (mPacketPtrAutoInc)
 				++mPacketPtr;
 			break;
@@ -484,6 +484,10 @@ namespace {
 
 			// check if it is UDP, TCP, or ICMP
 			switch(ippkt[9]) {
+				case 1:		// ICMP
+					s.append_sprintf(" icmp");
+					break;
+
 				case 2:		// IGMP
 					s.append_sprintf(" igmp");
 					break;
@@ -522,6 +526,8 @@ namespace {
 					s.append_sprintf(" udp len %u", VDReadUnalignedBEU16(&protodata[4]));
 					break;
 			}
+		} else if (decType == kATEthernetFrameDecodedType_IPv6) {
+			s.append(" | ipv6");
 		}
 	}
 
@@ -602,7 +608,7 @@ void ATCS8900AEmulator::ReceiveFrame(const ATEthernetPacket& packet, ATEthernetF
 		return;
 
 	// check if we have room in the receive buffer
-	uint32 reqLen = packet.mLength + 14;
+	uint32 reqLen = packet.mLength + 16;
 	if (mReceiveBufferLevel + reqLen > sizeof mReceiveBuffer) {
 		g_ATLCCS8900AN("Dropping packet due to lack of space!\n");
 		return;
@@ -619,7 +625,7 @@ void ATCS8900AEmulator::ReceiveFrame(const ATEthernetPacket& packet, ATEthernetF
 		pktlen = 48;
 	}
 
-	VDWriteUnalignedLEU16(&rxheader[0], isBroadcast ? 0x0900 : 0x0500);
+	VDWriteUnalignedLEU16(&rxheader[0], isBroadcast ? 0x0904 : 0x0504);
 	VDWriteUnalignedLEU16(&rxheader[2], pktlen + 12);
 
 	WriteToReceiveBuffer(rxheader, 4);
@@ -861,6 +867,8 @@ void ATCS8900AEmulator::TransmitFrame() {
 					if (ATIPv4DecodeHeader(dec.ipv4Info, data + 2, mTransmitWriteLen - 14)) {
 						decInfo = &dec.ipv4Info;
 						decType = kATEthernetFrameDecodedType_IPv4;
+					} else if (ATIPv6DecodeHeader(data + 2, mTransmitWriteLen - 14)) {
+						decType = kATEthernetFrameDecodedType_IPv6;
 					}
 					break;
 			}

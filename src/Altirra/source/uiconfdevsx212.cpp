@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <at/atcore/propertyset.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/uiproxies.h>
@@ -148,7 +148,7 @@ void ATUIDialogDeviceSX212::OnDataExchange(bool write) {
 
 			for(size_t i=0; i<vdcountof(kTerminalTypes); ++i) {
 				if (!wcscmp(termType, kTerminalTypes[i]))
-					termIdx = i + 1;
+					termIdx = (int)(i + 1);
 			}
 
 			if (termIdx)

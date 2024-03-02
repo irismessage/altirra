@@ -23,7 +23,7 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/bitmath.h>
 
 int VDCountBits(uint32 v) {
@@ -33,7 +33,7 @@ int VDCountBits(uint32 v) {
 	return (v * 0x01010101) >> 24;
 }
 
-#ifndef VD_COMPILER_MSVC_VC8
+#ifndef VD_COMPILER_MSVC_VC8_OR_LATER
 
 	int VDFindLowestSetBit(uint32 v) {
 		for(int i=0; i<32; ++i) {

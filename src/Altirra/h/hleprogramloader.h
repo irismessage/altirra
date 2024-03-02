@@ -57,6 +57,8 @@ protected:
 	vdfastvector<uint8>		mProgramToLoad;
 	ptrdiff_t	mProgramLoadIndex;
 
+	bool		mbLastKernelEnabledState;
+
 	bool		mbRandomizeMemoryOnLoad;
 	bool		mbLaunchPending;
 	uint32		mProgramModuleIds[4];

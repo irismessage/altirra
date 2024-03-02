@@ -37,12 +37,12 @@ void ATRTCV3021Emulator::Init() {
 	mAddress = 0;
 }
 
-void ATRTCV3021Emulator::Load(const uint8 data[10]) {
-	memcpy(mRAM, data, 10);
+void ATRTCV3021Emulator::Load(const NVState& state) {
+	memcpy(mRAM, state.mData, 10);
 }
 
-void ATRTCV3021Emulator::Save(uint8 data[10]) const {
-	memcpy(data, mRAM, 10);
+void ATRTCV3021Emulator::Save(NVState& state) const {
+	memcpy(state.mData, mRAM, 10);
 }
 
 bool ATRTCV3021Emulator::DebugReadBit() const {
@@ -83,7 +83,10 @@ void ATRTCV3021Emulator::WriteBit(bool bit) {
 		++mPhase;
 
 		if (mPhase == 4 && mAddress >= 0x0E) {
-			if (mAddress == 0x0F) {
+			if (mAddress == 0x0E) {
+				g_ATLCV3021("RAM -> Clock\n");
+				CopyRAMToClock();
+			} else {
 				g_ATLCV3021("Clock -> RAM\n");
 				CopyClockToRAM();
 			}
@@ -97,15 +100,34 @@ void ATRTCV3021Emulator::WriteBit(bool bit) {
 			mValue += 0x80;
 
 		if (++mPhase == 12) {
-			g_ATLCV3021("RAM[$%x] = $%02x\n", mAddress, mValue);
+			g_ATLCV3021("RAM[$%x] = $%02X | %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\n", mAddress, mValue
+				, mRAM[0]
+				, mRAM[1]
+				, mRAM[2]
+				, mRAM[3]
+				, mRAM[4]
+				, mRAM[5]
+				, mRAM[6]
+				, mRAM[7]
+				, mRAM[8]
+				, mRAM[9]
+				);
 
-			if (mAddress != 1 && mAddress < 10)
+			if (mAddress < 10)
 				mRAM[mAddress] = mValue;
 
 			mAddress = 0;
 			mPhase = 0;
 		}
 	}
+}
+
+void ATRTCV3021Emulator::CopyRAMToClock() {
+	// check time set lock bit
+	if (mRAM[0] & 0x10)
+		return;
+
+	mRAM[1] = 0;
 }
 
 void ATRTCV3021Emulator::CopyClockToRAM() {

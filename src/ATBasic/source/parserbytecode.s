@@ -231,12 +231,12 @@ parse_state_table_functions:
 .endm
 
 .macro PAI_BEQ				;Branch and eat character if match.
-		dta		$06,c:1,$00
+		dta		$06,:1,$00
 		PA_BRANCH_TARGET :2
 .endm
 
 .macro PAI_BEQEMIT			;Branch, emit, and eat character if match.
-		dta		$06,c:1,:2
+		dta		$06,:1,:2
 		PA_BRANCH_TARGET :3
 .endm
 
@@ -474,9 +474,14 @@ var_ok:
 .endp
 
 ;============================================================================
-pa_cont_statement:
-		PAI_STEND
 .proc pa_state0		;initial statement
+		PAI_SPACES
+		PAI_BEQ		$9B, pa_state1.eol
+		PAI_B		first_statement
+
+.def :pa_cont_statement
+		PAI_STEND
+first_statement:
 		PAI_SPACES
 		PAI_TRYSTATEMENT
 		
@@ -510,8 +515,11 @@ string_assign:
 		
 		;check for continuation
 		PAI_BEQEMIT	':', TOK_EOS, pa_cont_statement
-		PAI_EMIT	TOK_EOL
+		PAI_BEQEMIT $9B, TOK_EOL, eos_eol
+		PAI_FAIL
+eos_eol:
 		PAI_STEND
+eol:
 		PAI_EOL
 .endp
 

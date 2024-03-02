@@ -28,6 +28,7 @@ enum ATMemoryMode : uint32;
 enum ATVideoStandard : uint32;
 enum ATDisplayFilterMode : uint32;
 enum ATDisplayStretchMode : uint32;
+enum ATFrameRateMode : uint32;
 
 bool ATUIGetXEPViewEnabled();
 void ATUISetXEPViewEnabled(bool enabled);
@@ -39,7 +40,7 @@ ATDisplayStretchMode ATUIGetDisplayStretchMode();
 void ATUISetDisplayStretchMode(ATDisplayStretchMode mode);
 
 void ATSetVideoStandard(ATVideoStandard vs);
-bool ATUISwitchHardwareMode(VDGUIHandle h, ATHardwareMode mode);
+bool ATUISwitchHardwareMode(VDGUIHandle h, ATHardwareMode mode, bool switchProfile);
 void ATUISwitchMemoryMode(VDGUIHandle h, ATMemoryMode mode);
 
 bool ATUIGetDriveSoundsEnabled();
@@ -58,7 +59,57 @@ void ATUISetShowFPS(bool enabled);
 bool ATUIGetFullscreen();
 void ATSetFullscreen(bool);
 
+bool ATUICanManipulateWindows();
+
+bool ATUIIsMouseCaptured();
+
+bool ATUIGetMouseAutoCapture();
+void ATUISetMouseAutoCapture(bool enabled);
+
 bool ATUIGetTurbo();
 void ATUISetTurbo(bool turbo);
+
+bool ATUIGetTurboPulse();
+void ATUISetTurboPulse(bool turbo);
+
+bool ATUIGetSlowMotion();
+void ATUISetSlowMotion(bool slowmo);
+
+bool ATUIGetPauseWhenInactive();
+void ATUISetPauseWhenInactive(bool enabled);
+
+ATFrameRateMode ATUIGetFrameRateMode();
+void ATUISetFrameRateMode(ATFrameRateMode mode);
+
+float ATUIGetSpeedModifier();
+void ATUISetSpeedModifier(float modifier);
+
+enum ATUIRecordingStatus {
+	kATUIRecordingStatus_None,
+	kATUIRecordingStatus_Video,
+	kATUIRecordingStatus_Audio,
+	kATUIRecordingStatus_RawAudio,
+	kATUIRecordingStatus_Sap
+};
+
+ATUIRecordingStatus ATUIGetRecordingStatus();
+
+enum ATUIEnhancedTextMode {
+	kATUIEnhancedTextMode_None,
+	kATUIEnhancedTextMode_Hardware,
+	kATUIEnhancedTextMode_Software,
+	kATUIEnhancedTextModeCount
+};
+
+ATUIEnhancedTextMode ATUIGetEnhancedTextMode();
+void ATUISetEnhancedTextMode(ATUIEnhancedTextMode mode);
+
+VDGUIHandle ATUIGetMainWindow();
+bool ATUIGetAppActive();
+void ATUISetAppActive(bool active);
+
+bool ATUIGetDeviceButtonSupported(uint32 idx);
+bool ATUIGetDeviceButtonDepressed(uint32 idx);
+void ATUIActivateDeviceButton(uint32 idx, bool state);
 
 #endif	// f_AT_UIACCESSORS_H

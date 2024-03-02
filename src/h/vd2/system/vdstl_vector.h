@@ -43,8 +43,8 @@ public:
 	typedef A allocator_type;
 	typedef typename A::pointer pointer;
 	typedef typename A::const_pointer const_pointer;
-	typedef typename vdreverse_iterator<iterator, T>::type reverse_iterator;
-	typedef typename vdreverse_iterator<const_iterator, T>::type const_reverse_iterator;
+	typedef std::reverse_iterator<iterator>			reverse_iterator;
+	typedef std::reverse_iterator<const_iterator>	const_reverse_iterator;
 	
 	// 23.2.4.1 construct/copy/destroy:
 	explicit vdvector();

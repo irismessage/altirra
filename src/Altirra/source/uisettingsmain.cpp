@@ -15,9 +15,10 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/math.h>
 #include <vd2/system/filesys.h>
+#include <at/atcore/media.h>
 #include "uisettingswindow.h"
 
 #include "audiooutput.h"
@@ -68,7 +69,7 @@ public:
 					ATLoadContext ctx = {};
 					ctx.mLoadType = kATLoadType_Disk;
 					ctx.mLoadIndex = mDriveIndex;
-					g_sim.Load(mFileResult->mPath.c_str(), false, false, &ctx);
+					g_sim.Load(mFileResult->mPath.c_str(), kATMediaWriteMode_RO, &ctx);
 				}
 				break;
 		}
@@ -411,8 +412,8 @@ public:
 		bs.release();
 
 		is = new ATUIIntSetting(L"Drive volume", 0, 200);
-		is->SetGetter([]() { return MapAmplitudeToVolTick(g_sim.GetAudioSyncMixer()->GetMixLevel(kATAudioMix_Drive)); });
-		is->SetImmediateSetter([](sint32 tick) { g_sim.GetAudioSyncMixer()->SetMixLevel(kATAudioMix_Drive, MapVolTickToAmplitude(tick)); });
+		is->SetGetter([]() { return MapAmplitudeToVolTick(g_sim.GetAudioOutput()->GetMixLevel(kATAudioMix_Drive)); });
+		is->SetImmediateSetter([](sint32 tick) { g_sim.GetAudioOutput()->SetMixLevel(kATAudioMix_Drive, MapVolTickToAmplitude(tick)); });
 		target->AddSetting(is);
 		is.release();
 	}
@@ -460,7 +461,7 @@ public:
 		);
 
 		es->SetGetter([]() { return g_sim.GetHardwareMode(); });
-		es->SetSetter([](sint32 mode) { ATUISwitchHardwareMode(nullptr, (ATHardwareMode)mode); });
+		es->SetSetter([](sint32 mode) { ATUISwitchHardwareMode(nullptr, (ATHardwareMode)mode, false); });
 		target->AddSetting(es);
 		es.release();
 
@@ -492,6 +493,7 @@ public:
 				{ kATMemoryMode_52K, L"52K" },
 				{ kATMemoryMode_64K, L"64K" },
 				{ kATMemoryMode_128K, L"128K" },
+				{ kATMemoryMode_256K, L"256K Rambo" },
 				{ kATMemoryMode_320K, L"320K Rambo" },
 				{ kATMemoryMode_320K_Compy, L"320K Compy" },
 				{ kATMemoryMode_576K, L"576K" },

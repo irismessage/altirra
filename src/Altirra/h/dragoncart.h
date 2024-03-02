@@ -18,6 +18,8 @@
 #ifndef f_AT_DRAGONCART_H
 #define f_AT_DRAGONCART_H
 
+#include <vd2/system/file.h>
+#include <at/atnetwork/ethernet.h>
 #include "cs8900a.h"
 
 class ATMemoryManager;
@@ -59,10 +61,12 @@ struct ATDragonCartSettings {
 	bool operator!=(const ATDragonCartSettings&) const;
 };
 
-class ATDragonCartEmulator {
-	ATDragonCartEmulator(const ATDragonCartEmulator&);
-	ATDragonCartEmulator& operator=(const ATDragonCartEmulator&);
+class ATDragonCartEmulator final : public IATEthernetEndpoint {
+	ATDragonCartEmulator(const ATDragonCartEmulator&) = delete;
+	ATDragonCartEmulator& operator=(const ATDragonCartEmulator&) = delete;
 public:
+	enum { kTypeID = 'atdr' };
+
 	ATDragonCartEmulator();
 	~ATDragonCartEmulator();
 
@@ -75,6 +79,11 @@ public:
 	void WarmReset();
 
 	void DumpConnectionInfo(ATConsoleOutput&);
+	void OpenPacketTrace(const wchar_t *path);
+	void ClosePacketTrace();
+
+public:
+	void ReceiveFrame(const ATEthernetPacket& packet, ATEthernetFrameDecodedType decType, const void *decInfo) override;
 
 protected:
 	static sint32 OnDebugRead(void *thisptr, uint32 addr);
@@ -94,6 +103,12 @@ protected:
 	ATDragonCartSettings mSettings;
 
 	ATCS8900AEmulator mCS8900A;
+
+	vdautoptr<VDFileStream> mPacketTraceFile;
+	vdautoptr<VDBufferedWriteStream> mPacketTraceStream;
+	uint32 mPacketTraceEndpointId = 0;
+	uint32 mPacketTraceStartTimestamp = 0;
+	sint64 mPacketTraceStartTime;
 };
 
 #endif

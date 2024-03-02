@@ -77,6 +77,7 @@ enum ATMemoryPriority {
 	kATMemoryPri_Cartridge2	= 16,
 	kATMemoryPri_Cartridge1	= 24,
 	kATMemoryPri_CartridgeOverlay	= 32,
+	kATMemoryPri_PBIIRQ		= 44,
 	kATMemoryPri_PBI		= 48,
 	kATMemoryPri_PBISelect	= 51,
 	kATMemoryPri_Hardware	= 56,

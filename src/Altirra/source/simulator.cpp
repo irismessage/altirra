@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/error.h>
@@ -31,7 +31,10 @@
 #include <at/atcore/deviceprinter.h>
 #include <at/atcore/devicevideo.h>
 #include <at/atcore/deviceu1mb.h>
+#include <at/atcore/media.h>
 #include <at/atcore/memoryutils.h>
+#include <at/atcore/propertyset.h>
+#include <at/atcore/vfs.h>
 #include "simulator.h"
 #include "cassette.h"
 #include "console.h"
@@ -44,6 +47,7 @@
 #include "oshelper.h"
 #include "savestate.h"
 #include "cartridge.h"
+#include "cartridgeport.h"
 #include "resource.h"
 #include "inputcontroller.h"
 #include "inputmanager.h"
@@ -53,16 +57,12 @@
 #include "profiler.h"
 #include "verifier.h"
 #include "uirender.h"
-#include "ide.h"
-#include "myide.h"
 #include "audiomonitor.h"
 #include "audiooutput.h"
 #include "audiosyncmixer.h"
 #include "cheatengine.h"
 #include "mmu.h"
 #include "pbi.h"
-#include "kmkjzide.h"
-#include "side.h"
 #include "ultimate1mb.h"
 #include "virtualscreen.h"
 #include "pokeytables.h"
@@ -110,6 +110,30 @@ namespace {
 			case 0:
 			default:	break;
 		}
+	}
+
+	// 5200 - (A0..A6) <- (A2, A1, A0, A3, A4, A5, A6)
+	void DRAMPatternFillA_5200(void *mem, uint32 len) {
+		static const uint32_t kPattern[4]={
+			UINT32_C(0xFFFFFFFF),
+			UINT32_C(0x00000000),
+			UINT32_C(0xFFFFFFFF),
+			UINT32_C(0x00000000),
+		};
+
+		uint32 len128 = len >> 4;
+		uint32 *dst = (uint32 *)mem;
+
+		while(len128--) {
+			dst[0] = kPattern[0];
+			dst[1] = kPattern[1];
+			dst[2] = kPattern[2];
+			dst[3] = kPattern[3];
+			dst += 4;
+		}
+
+		if (len & 15)
+			memcpy(dst, kPattern, len & 15);
 	}
 
 	// 130XE
@@ -178,9 +202,7 @@ namespace {
 ///////////////////////////////////////////////////////////////////////////
 
 class ATSimulator::PrivateData final
-	: public IATCartridgeCallbacks
-	, public IATDeviceCartridgePort
-	, public IATCPUTimestampDecoderProvider
+	: public IATCPUTimestampDecoderProvider
 {
 public:
 	PrivateData(ATSimulator& parent)
@@ -189,27 +211,8 @@ public:
 		mFloatingInputs.mpScheduler = parent.GetScheduler();
 		mFloatingInputs.mFloatingInputMask = 0;
 		mFloatingInputs.mRandomSeed = 0;
-	}
 
-	void CartSetAxxxMapped(bool mapped) override {
-		mParent.UpdateXLCartridgeLine();
-	}
-
-	void AddCartridge(IATDeviceCartridge *cart) {
-		mCarts.push_back(cart);
-	}
-
-	void RemoveCartridge(IATDeviceCartridge *cart) {
-		auto it = std::find(mCarts.begin(), mCarts.end(), cart);
-		if (it != mCarts.end()) {
-			*it = mCarts.back();
-			mCarts.pop_back();
-			UpdateRD5();
-		}
-	}
-
-	void UpdateRD5() {
-		mParent.UpdateXLCartridgeLine();
+		mCartPort.SetLeftMapChangedHandler([this](bool) { mParent.UpdateXLCartridgeLine(); });
 	}
 
 	ATCPUTimestampDecoder GetTimestampDecoder() const override {
@@ -222,8 +225,9 @@ public:
 	static void PIAChangeBanking(void *thisPtr, uint32 output);
 
 	ATSimulator& mParent;
-	vdfastvector<IATDeviceCartridge *> mCarts;
-	ATPIAFloatingInputs mFloatingInputs;
+	ATCartridgePort mCartPort;
+	ATPIAFloatingInputs mFloatingInputs = {};
+	ATDeferredEventManager mDeferredEventManager;
 };
 
 void ATSimulator::PrivateData::PIAChangeCommandLine(void *thisPtr, uint32 output) {
@@ -271,8 +275,8 @@ public:
 
 			if (uir)
 				uir->SetSlightSID((ATSlightSIDEmulator *)iface);
-		} else if (iid == IATDeviceCartridge::kTypeID) {
-			((IATDeviceCartridge *)iface)->InitCartridge(mpParent->mpPrivateData);
+		} else if (iid == IATDeviceButtons::kTypeID) {
+			mpParent->UpdateCartridgeSwitch();
 		}
 	}
 
@@ -296,26 +300,24 @@ ATSimulator::ATSimulator()
 	, mbPaused(false)
 	, mbShadowROM(true)
 	, mbShadowCartridge(false)
-	, mpPrivateData(new PrivateData(*this))
+	, mpPrivateData(nullptr)
 	, mbROMAutoReloadEnabled(false)
 	, mbAutoLoadKernelSymbols(false)
-	, mpMemMan(new ATMemoryManager)
-	, mpMMU(new ATMMUEmulator)
-	, mpPBIManager(new ATPBIManager)
-	, mpCPUHookManager(new ATCPUHookManager)
-	, mpSimEventManager(new ATSimulatorEventManager)
+	, mpMemMan(nullptr)
+	, mpMMU(nullptr)
+	, mpPBIManager(nullptr)
+	, mpCPUHookManager(nullptr)
+	, mpSimEventManager(nullptr)
 	, mPokey(false)
 	, mPokey2(true)
 	, mpAudioOutput(NULL)
 	, mpAudioSyncMixer(NULL)
-	, mpPokeyTables(new ATPokeyTables)
+	, mpPokeyTables(nullptr)
 	, mpAudioMonitors()
 	, mpCassette(NULL)
-	, mpIDE(NULL)
-	, mpMyIDE(NULL)
 	, mpJoysticks(NULL)
 	, mbDiskSectorCounterEnabled(false)
-	, mpHLEKernel(ATCreateHLEKernel())
+	, mpHLEKernel(nullptr)
 	, mpProfiler(NULL)
 	, mpVerifier(NULL)
 	, mpHeatMap(NULL)
@@ -334,20 +336,18 @@ ATSimulator::ATSimulator()
 	, mpMemLayerPOKEY(NULL)
 	, mpMemLayerPIA(NULL)
 	, mpMemLayerIoBusFloat(nullptr)
-	, mpInputManager(new ATInputManager)
-	, mpPortAController(new ATPortController)
-	, mpPortBController(new ATPortController)
-	, mpLightPen(new ATLightPenPort)
+	, mpInputManager(nullptr)
+	, mpPortAController(nullptr)
+	, mpPortBController(nullptr)
+	, mpLightPen(nullptr)
 	, mpPrinterOutput(nullptr)
 	, mpVBXE(NULL)
 	, mpVBXEMemory(NULL)
 	, mpCheatEngine(NULL)
 	, mpUIRenderer(NULL)
-	, mpKMKJZIDE(NULL)
-	, mpSIDE(NULL)
 	, mpUltimate1MB(NULL)
 	, mpVirtualScreenHandler(NULL)
-	, mpSIOManager(new ATSIOManager)
+	, mpSIOManager(nullptr)
 	, mpHLEBasicLoader(NULL)
 	, mpHLEProgramLoader(NULL)
 	, mpHLEFPAccelerator(NULL)
@@ -356,13 +356,40 @@ ATSimulator::ATSimulator()
 	, mAxlonMemoryBits(0)
 	, mbAxlonAliasingEnabled(false)
 	, mHighMemoryBanks(0)
-	, mpFirmwareManager(new ATFirmwareManager)
-	, mpDeviceManager(new ATDeviceManager)
-	, mpDeviceChangeCallback(new DeviceChangeCallback(this))
+	, mpFirmwareManager(nullptr)
+	, mpDeviceManager(nullptr)
+	, mpDeviceChangeCallback(nullptr)
 {
+}
+
+ATSimulator::~ATSimulator() {
+	Shutdown();
+}
+
+void ATSimulator::Init(void *hwnd) {
+	VDASSERT(!mpPrivateData);
+
+	mpPrivateData = new PrivateData(*this);
+	mpMemMan = new ATMemoryManager;
+	mpMMU = new ATMMUEmulator;
+	mpMMU->Init(mpMemMan);
+	mpPBIManager = new ATPBIManager;
+	mpCPUHookManager = new ATCPUHookManager;
+	mpSimEventManager = new ATSimulatorEventManager;
+	mpPokeyTables = new ATPokeyTables;
+	mpHLEKernel = ATCreateHLEKernel();
+	mpInputManager = new ATInputManager;
+	mpPortAController = new ATPortController;
+	mpPortBController = new ATPortController;
+	mpLightPen = new ATLightPenPort;
+	mpSIOManager = new ATSIOManager;
+	mpFirmwareManager = new ATFirmwareManager;
+	mpDeviceManager = new ATDeviceManager;
+	mpDeviceChangeCallback = new DeviceChangeCallback(this);
+
 	mpDeviceManager->Init();
 	mpDeviceManager->AddDeviceChangeCallback(ATSlightSIDEmulator::kTypeID, mpDeviceChangeCallback);
-	mpDeviceManager->AddDeviceChangeCallback(IATDeviceCartridge::kTypeID, mpDeviceChangeCallback);
+	mpDeviceManager->AddDeviceChangeCallback(IATDeviceButtons::kTypeID, mpDeviceChangeCallback);
 	mpDeviceManager->AddInitCallback([this](IATDevice& dev) { InitDevice(dev); });
 
 	mpAnticBusData = &mpMemMan->mBusValue;
@@ -429,15 +456,16 @@ ATSimulator::ATSimulator()
 	mpPortBController->Init(&mGTIA, &mPokey, &mPIA, mpLightPen, 2);
 
 	mpCassette = new ATCassetteEmulator;
-	mpCassette->Init(&mPokey, &mScheduler, mpAudioOutput);
+	mpCassette->Init(&mPokey, &mScheduler, &mSlowScheduler, mpAudioOutput, &mpPrivateData->mDeferredEventManager);
+	mpCassette->SetRandomizedStartEnabled(false);
 	mPokey.SetCassette(mpCassette);
 
 	mGTIA.SetUIRenderer(mpUIRenderer);
 
 	for(int i=0; i<15; ++i) {
 		mpDiskDrives[i] = new ATDiskEmulator;
+		mpDiskDrives[i]->InitSIO(mpSIOManager);
 		mpDiskDrives[i]->Init(i, this, &mScheduler, &mSlowScheduler, mpAudioSyncMixer);
-		mPokey.AddSIODevice(mpDiskDrives[i]);
 	}
 
 	mPendingEvent = kATSimEvent_None;
@@ -452,10 +480,10 @@ ATSimulator::ATSimulator()
 	mMemoryClearMode = kATMemoryClearMode_DRAM1;
 	mbFloatingIoBus = false;
 	mbRandomFillEXEEnabled = false;
-	mbDiskSIOPatchEnabled = false;
 	mbDiskSIOOverrideDetectEnabled = false;
 	mbCassetteSIOPatchEnabled = false;
 	mbCassetteAutoBootEnabled = false;
+	mbCassetteRandomizedStartEnabled = false;
 	mbBASICEnabled = false;
 	mbFPPatchEnabled = false;
 	mbDualPokeys = false;
@@ -466,7 +494,6 @@ ATSimulator::ATSimulator()
 	mbForcedSelfTest = false;
 	mbCartridgeSwitch = true;
 	mbMapRAM = false;
-	mIDEHardwareMode = kATIDEHardwareMode_None;
 
 	mStartupDelay = 0;
 	mStartupDelay2 = 0;
@@ -478,13 +505,7 @@ ATSimulator::ATSimulator()
 	mBreakOnScanline = -1;
 
 	mpAnticReadPageMap = mpMemMan->GetAnticMemoryMap();
-}
 
-ATSimulator::~ATSimulator() {
-	Shutdown();
-}
-
-void ATSimulator::Init(void *hwnd) {
 	mpInputManager->Init(&mScheduler, &mSlowScheduler, mpPortAController, mpPortBController, mpLightPen);
 
 	mpJoysticks = ATCreateJoystickManager();
@@ -497,13 +518,13 @@ void ATSimulator::Init(void *hwnd) {
 void ATSimulator::Shutdown() {
 	if (mpDeviceChangeCallback) {
 		mpDeviceManager->RemoveDeviceChangeCallback(ATSlightSIDEmulator::kTypeID, mpDeviceChangeCallback);
-		mpDeviceManager->RemoveDeviceChangeCallback(IATDeviceCartridge::kTypeID, mpDeviceChangeCallback);
+		mpDeviceManager->RemoveDeviceChangeCallback(IATDeviceButtons::kTypeID, mpDeviceChangeCallback);
 		delete mpDeviceChangeCallback;
 		mpDeviceChangeCallback = nullptr;
 	}
 
 	if (mpDeviceManager)
-		mpDeviceManager->RemoveAllDevices();
+		mpDeviceManager->RemoveAllDevices(true);
 
 	if (mpHLEFastBootHook) {
 		ATDestroyHLEFastBootHook(mpHLEFastBootHook);
@@ -531,9 +552,6 @@ void ATSimulator::Shutdown() {
 		delete static_cast<ATDebuggerDefaultTarget *>(mpDebugTarget);
 		mpDebugTarget = nullptr;
 	}
-
-	UnloadIDE();
-	UnloadIDEImage();
 
 	for(int i=0; i<15; ++i) {
 		if (mpDiskDrives[i]) {
@@ -616,22 +634,9 @@ void ATSimulator::Shutdown() {
 		mpUltimate1MB = NULL;
 	}
 
-	if (mpSIDE) {
-		mpSIDE->Shutdown();
-		delete mpSIDE;
-		mpSIDE = NULL;
-	}
-
-	if (mpKMKJZIDE) {
-		mpPBIManager->RemoveDevice(mpKMKJZIDE);
-		delete mpKMKJZIDE;
-		mpKMKJZIDE = NULL;
-	}
-
 	vdsafedelete <<= mpAudioMonitors;
 
 	delete mpJoysticks; mpJoysticks = NULL;
-	delete mpIDE; mpIDE = NULL;
 	delete mpHLEKernel; mpHLEKernel = NULL;
 	delete mpInputManager; mpInputManager = NULL;
 	delete mpPortAController; mpPortAController = NULL;
@@ -697,17 +702,10 @@ bool ATSimulator::LoadROMs() {
 	bool changed = UpdateKernel(true, true);
 
 	InitMemoryMap();
-	changed |= ReloadIDEFirmware();
 	changed |= ReloadU1MBFirmware();
 
-	mpDeviceManager->ForEachDevice(false,
-		[&](IATDevice *dev) {
-			IATDeviceFirmware *fw = vdpoly_cast<IATDeviceFirmware *>(dev);
-
-			if (fw)
-				changed |= fw->ReloadFirmware();
-		}
-	);
+	for(IATDeviceFirmware *fw : mpDeviceManager->GetInterfaces<IATDeviceFirmware>(false, false))
+		changed |= fw->ReloadFirmware();
 
 	return changed;
 }
@@ -722,6 +720,10 @@ void ATSimulator::RemoveCallback(IATSimulatorCallback *cb) {
 
 void ATSimulator::NotifyEvent(ATSimulatorEvent ev) {
 	mpSimEventManager->NotifyEvent(ev);
+}
+
+bool ATSimulator::IsDiskSIOPatchEnabled() const {
+	return mpSIOManager->GetDiskSIOAccelEnabled();
 }
 
 bool ATSimulator::IsDiskAccurateTimingEnabled() const {
@@ -748,20 +750,16 @@ void ATSimulator::SetPrinterOutput(IATPrinterOutput *p) {
 
 	mpPrinterOutput = p;
 
-	mpDeviceManager->ForEachInterface<IATDevicePrinter>(false,
-		[=](IATDevicePrinter& pr) {
-			pr.SetPrinterOutput(p);
-		}
-	);
+	for(IATDevicePrinter *pr : mpDeviceManager->GetInterfaces<IATDevicePrinter>(false, false))
+		pr->SetPrinterOutput(p);
 }
 
 bool ATSimulator::GetDiskBurstTransfersEnabled() const {
-	return mpDiskDrives[0]->GetBurstTransfersEnabled();
+	return mpSIOManager->GetDiskBurstTransfersEnabled();
 }
 
 void ATSimulator::SetDiskBurstTransfersEnabled(bool enabled) {
-	for(auto *p : mpDiskDrives)
-		p->SetBurstTransfersEnabled(enabled);
+	mpSIOManager->SetDiskBurstTransfersEnabled(enabled);
 }
 
 bool ATSimulator::GetDeviceCIOBurstTransfersEnabled() const {
@@ -792,12 +790,37 @@ void ATSimulator::SetCIOPatchEnabled(char c, bool enabled) const {
 	mpHLECIOHook->SetCIOPatchEnabled(c, enabled);
 }
 
+bool ATSimulator::IsSIOPatchEnabled() const {
+	return mpSIOManager->IsSIOPatchEnabled();
+}
+
+void ATSimulator::SetSIOPatchEnabled(bool enable) {
+	mpSIOManager->SetSIOPatchEnabled(enable);
+}
+
+
+bool ATSimulator::IsPBIPatchEnabled() const {
+	return mpDeviceManager->GetDeviceByTag("pbidisk") != nullptr;
+}
+
+void ATSimulator::SetPBIPatchEnabled(bool enable) {
+	auto *dev = mpDeviceManager->GetDeviceByTag("pbidisk");
+
+	if (enable) {
+		if (!dev)
+			mpDeviceManager->AddDevice("pbidisk", ATPropertySet(), false, true);
+	} else {
+		if (dev)
+			mpDeviceManager->RemoveDevice(dev);
+	}
+}
+
 bool ATSimulator::GetDeviceSIOPatchEnabled() const {
-	return mpSIOManager->GetSIOPatchEnabled();
+	return mpSIOManager->GetOtherSIOAccelEnabled();
 }
 
 void ATSimulator::SetDeviceSIOPatchEnabled(bool enabled) const {
-	mpSIOManager->SetSIOPatchEnabled(enabled);
+	mpSIOManager->SetOtherSIOAccelEnabled(enabled);
 }
 
 uint8 ATSimulator::GetBankRegister() const {
@@ -952,6 +975,8 @@ void ATSimulator::SetHardwareMode(ATHardwareMode mode) {
 
 	mpLightPen->SetIgnorePort34(mode == kATHardwareMode_800XL || mode == kATHardwareMode_1200XL || mode == kATHardwareMode_XEGS || mode == kATHardwareMode_130XE);
 
+	mpInputManager->Set5200Mode(is5200);
+
 	UpdateXLCartridgeLine();
 	
 	UpdateKernel(false);
@@ -964,14 +989,22 @@ void ATSimulator::SetAxlonMemoryMode(uint8 bits) {
 
 	if (mAxlonMemoryBits != bits) {
 		mAxlonMemoryBits = bits;
-		mpMMU->SetAxlonMemory(bits, mbAxlonAliasingEnabled);
+
+		uint32 reqSize = (UINT32_C(0x4000) << bits) - 0x4000;
+		if (mAxlonMemory.size() != reqSize) {
+			mAxlonMemory.resize(reqSize);
+
+			ResetMemoryBuffer(mAxlonMemory.data(), reqSize, 0xBF1ADAEE);
+		}
+
+		mpMMU->SetAxlonMemory(bits, mbAxlonAliasingEnabled, mAxlonMemory.data());
 	}
 }
 
 void ATSimulator::SetAxlonAliasingEnabled(bool enabled) {
 	if (mbAxlonAliasingEnabled != enabled) {
 		mbAxlonAliasingEnabled = enabled;
-		mpMMU->SetAxlonMemory(mAxlonMemoryBits, enabled);
+		mpMMU->SetAxlonMemory(mAxlonMemoryBits, enabled, mAxlonMemory.data());
 	}
 }
 
@@ -989,12 +1022,7 @@ void ATSimulator::SetHighMemoryBanks(sint32 banks) {
 }
 
 void ATSimulator::SetDiskSIOPatchEnabled(bool enable) {
-	if (mbDiskSIOPatchEnabled == enable)
-		return;
-
-	mbDiskSIOPatchEnabled = enable;
-
-	mpSIOManager->ReinitHooks();
+	mpSIOManager->SetDiskSIOAccelEnabled(enable);
 }
 
 void ATSimulator::SetDiskSIOOverrideDetectEnabled(bool enable) {
@@ -1025,6 +1053,11 @@ void ATSimulator::SetCassetteSIOPatchEnabled(bool enable) {
 
 void ATSimulator::SetCassetteAutoBootEnabled(bool enable) {
 	mbCassetteAutoBootEnabled = enable;
+}
+
+void ATSimulator::SetCassetteRandomizedStartEnabled(bool enable) {
+	mbCassetteRandomizedStartEnabled = enable;
+	mpCassette->SetRandomizedStartEnabled(enable);
 }
 
 void ATSimulator::SetFPPatchEnabled(bool enable) {
@@ -1162,9 +1195,8 @@ void ATSimulator::SetUltimate1MBEnabled(bool enable) {
 		mMemoryMode = kATMemoryMode_1088K;
 
 		mpUltimate1MB = new ATUltimate1MBEmulator;
+		mpUltimate1MB->InitCartridge(&mpPrivateData->mCartPort);
 		mpUltimate1MB->Init(mMemory, mpMMU, mpPBIManager, mpMemMan, mpUIRenderer, &mScheduler, mpCPUHookManager);
-		mpUltimate1MB->SetExternalCartCallback(ATBINDCALLBACK(this, &ATSimulator::UpdateCartEnable));
-		mpUltimate1MB->SetCartCallback(ATBINDCALLBACK(this, &ATSimulator::UpdateXLCartridgeLine));
 		mpUltimate1MB->SetVBXEPageCallback(ATBINDCALLBACK(this, &ATSimulator::UpdateVBXEPage));
 		mpUltimate1MB->SetSBPageCallback(ATBINDCALLBACK(this, &ATSimulator::UpdateSoundBoardPage));
 
@@ -1177,7 +1209,6 @@ void ATSimulator::SetUltimate1MBEnabled(bool enable) {
 		InitMemoryMap();
 		ReinitHookPage();
 
-		UpdateCartEnable();
 		UpdateSoundBoardPage();
 	} else {
 		if (!mpUltimate1MB)
@@ -1201,9 +1232,6 @@ void ATSimulator::SetUltimate1MBEnabled(bool enable) {
 
 		if (mpMemLayerSelfTestROM)
 			mpMemMan->SetLayerMemory(mpMemLayerSelfTestROM, mpKernelSelfTestROM);
-
-		if (mpSIDE)
-			mpSIDE->SetExternalEnable(true);
 
 		ReinitHookPage();
 		UpdateKernel(false, true);
@@ -1314,7 +1342,6 @@ void ATSimulator::ColdReset() {
 
 	for(int i=0; i<15; ++i) {
 		mpDiskDrives[i]->Reset();
-		mpDiskDrives[i]->ClearAccessedFlag();
 	}
 
 	if (mpVirtualScreenHandler)
@@ -1323,51 +1350,25 @@ void ATSimulator::ColdReset() {
 	mpPBIManager->ColdReset();
 
 	// Nuke memory with a deterministic pattern. We used to clear it, but that's not realistic.
-	switch(mMemoryClearMode) {
-		case kATMemoryClearMode_Zero:
-			memset(mMemory, 0, sizeof mMemory);
-
-			if (mpVBXEMemory)
-				memset(mpVBXEMemory, 0, 0x80000);
-
-			memset(mpMemMan->GetHighMemory(), 0, mpMemMan->GetHighMemorySize());
-			break;
-
-		case kATMemoryClearMode_Random:
-			ATRandomizeMemory(mMemory, sizeof mMemory, 0xA702819E);
-
-			ATRandomizeMemory(mpMemMan->GetHighMemory(), mpMemMan->GetHighMemorySize(), 0x324CBA17);
-			break;
-
-		case kATMemoryClearMode_DRAM1:
-			DRAMPatternFillA(mMemory, sizeof mMemory);
-
-			DRAMPatternFillA(mpMemMan->GetHighMemory(), mpMemMan->GetHighMemorySize());
-			break;
-
-		case kATMemoryClearMode_DRAM2:
-			DRAMPatternFillB(mMemory, sizeof mMemory);
-
-			DRAMPatternFillB(mpMemMan->GetHighMemory(), mpMemMan->GetHighMemorySize());
-			break;
-
-		case kATMemoryClearMode_DRAM3:
-			DRAMPatternFillC(mMemory, sizeof mMemory);
-
-			DRAMPatternFillC(mpMemMan->GetHighMemory(), mpMemMan->GetHighMemorySize());
-			break;
-	}
+	ResetMemoryBuffer(mMemory, sizeof mMemory, 0xA702819E);
+	ResetMemoryBuffer(mpMemMan->GetHighMemory(), mpMemMan->GetHighMemorySize(), 0x324CBA17);
+	ResetMemoryBuffer(mAxlonMemory.data(), mAxlonMemory.size(), 0xBF1ADAEE);
 
 	if (mpHeatMap) {
 		mpHeatMap->ResetMemoryRange(0, 0x10000);
-		mpHeatMap->PresetMemoryRange(0xD000, 0x0800);
+		mpHeatMap->MarkMemoryRangeHardware(0xD000, 0x0800);
 		mpHeatMap->PresetMemoryRange(0xC000, 0x1000);
 		mpHeatMap->PresetMemoryRange(0xD800, 0x2800);
+		mpHeatMap->SetEarlyState(true);
 	}
 
 	// The VBXE has static RAM, so we always clear it to noise in non-zero modes.
-	if (mpVBXEMemory && mMemoryClearMode != kATMemoryClearMode_Zero)
-		ATRandomizeMemory((uint8 *)mpVBXEMemory, 0x80000, 0x9B274CA3);
+	if (mpVBXEMemory) {
+		if (mMemoryClearMode != kATMemoryClearMode_Zero)
+			ATRandomizeMemory((uint8 *)mpVBXEMemory, 0x80000, 0x9B274CA3);
+		else
+			memset(mpVBXEMemory, 0, 0x80000);
+	}
 
 	for(int i=0; i<2; ++i) {
 		if (mpCartridge[i])
@@ -1377,16 +1378,8 @@ void ATSimulator::ColdReset() {
 	if (mpVBXE)
 		mpVBXE->ColdReset();
 
-	if (mpIDE)
-		mpIDE->ColdReset();
-
-	if (mpSIDE)
-		mpSIDE->ColdReset();
-
-	if (mpMyIDE)
-		mpMyIDE->ColdReset();
-
-	mpDeviceManager->ForEachDevice(false, [](IATDevice *dev) { dev->ColdReset(); });
+	for(IATDevice *dev : mpDeviceManager->GetDevices(false, false))
+		dev->ColdReset();
 
 	InitMemoryMap();
 
@@ -1407,8 +1400,19 @@ void ATSimulator::ColdReset() {
 	if (mHardwareMode != kATHardwareMode_XEGS)
 		mGTIA.SetControllerTrigger(2, false);
 
-	if (mHardwareMode != kATHardwareMode_800XL && mHardwareMode != kATHardwareMode_1200XL && mHardwareMode != kATHardwareMode_XEGS && mHardwareMode != kATHardwareMode_130XE)
+	if (mHardwareMode != kATHardwareMode_800XL && mHardwareMode != kATHardwareMode_1200XL && mHardwareMode != kATHardwareMode_XEGS && mHardwareMode != kATHardwareMode_130XE) {
 		mPokey.SetPotPos(4, 228);
+	} else {
+		// POT 4 is the forced self-test line.
+		mPokey.SetPotPos(5, 228);
+		mPokey.SetPotPos(6, 228);
+		mPokey.SetPotPos(7, 228);
+
+		// We need to force this in case the MMU was previously in 800 mode. The PIA may be
+		// out of sync with the MMU and won't send an update until a change actually occurs.
+		// It's reset to input mode, so the MMU sees all lines pulled up.
+		mpMMU->SetBankRegister(0xFF);
+	}
 
 	mpHLECIOHook->ColdReset();
 
@@ -1482,10 +1486,12 @@ void ATSimulator::WarmReset() {
 	if (mpUltimate1MB)
 		mpUltimate1MB->WarmReset();
 
+	if (mpHeatMap)
+		mpHeatMap->SetEarlyState(true);
+
 	mpPBIManager->WarmReset();
 
-	for(size_t i=0; i<vdcountof(mpDiskDrives); ++i)
-		mpDiskDrives[i]->ClearAccessedFlag();
+	mpSIOManager->WarmReset();
 
 	mpHLECIOHook->WarmReset();
 
@@ -1502,12 +1508,31 @@ void ATSimulator::WarmReset() {
 		mpCPUHookManager->CallInitHooks(mpKernelLowerROM, mpKernelUpperROM);
 	}
 
-	mpDeviceManager->ForEachDevice(false, [](IATDevice *dev) { dev->WarmReset(); });
+	for(IATDevice *dev : mpDeviceManager->GetDevices(false, false))
+		dev->WarmReset();
 
 	NotifyEvent(kATSimEvent_WarmReset);
 }
 
 void ATSimulator::Resume() {
+	mbRunSingleCycle = false;
+
+	if (mbRunning)
+		return;
+
+	mbRunning = true;
+	mbPaused = false;
+
+	if (mpUIRenderer)
+		mpUIRenderer->SetPaused(false);
+
+	if (mPendingEvent == kATSimEvent_AnonymousInterrupt)
+		mPendingEvent = kATSimEvent_None;
+}
+
+void ATSimulator::ResumeSingleCycle() {
+	mbRunSingleCycle = true;
+
 	if (mbRunning)
 		return;
 
@@ -1536,6 +1561,10 @@ void ATSimulator::Suspend() {
 		if (!mPendingEvent)
 			mPendingEvent = kATSimEvent_AnonymousInterrupt;
 	}
+}
+
+void ATSimulator::FlushDeferredEvents() {
+	mpPrivateData->mDeferredEventManager.FlushPendingEvents();
 }
 
 void ATSimulator::GetDirtyStorage(vdfastvector<ATStorageId>& ids, ATStorageId mediaId) const {
@@ -1598,22 +1627,19 @@ bool ATSimulator::IsStorageDirty(ATStorageId mediaId) const {
 			break;
 
 		case kATStorageId_Firmware:
-			if (mpKMKJZIDE) {
-				switch(unit) {
-					case 0: return mpKMKJZIDE->IsMainFlashDirty();
-					case 1: return mpKMKJZIDE->IsSDXFlashDirty();
-				}
-			} else if (mpSIDE) {
-				if (unit == 0)
-					return mpSIDE->IsSDXFlashDirty();
-			} else if (mpMyIDE) {
-				if (unit == 0)
-					return mpMyIDE->IsFlashDirty();
-			}
-
 			if (unit == 2)
 				return mpUltimate1MB && mpUltimate1MB->IsFirmwareDirty();
 
+			{
+				bool found = false;
+
+				for(IATDeviceFirmware *fw : mpDeviceManager->GetInterfaces<IATDeviceFirmware>(false, false)) {
+					if (fw->IsWritableFirmwareDirty(unit))
+						found = true;
+				}
+
+				return found;
+			}
 			break;
 	}
 
@@ -1638,14 +1664,44 @@ bool ATSimulator::IsStoragePresent(ATStorageId mediaId) const {
 			if (unit == 2)
 				return mpUltimate1MB != NULL;
 
-			if (mpKMKJZIDE)
-				return unit == 0 || (unit == 1 && mpKMKJZIDE->IsVersion2());
-			else if (mpSIDE || mpMyIDE)
-				return unit == 0;
+			{
+				bool found = false;
+
+				for(IATDeviceFirmware *fw : mpDeviceManager->GetInterfaces<IATDeviceFirmware>(false, false)) {
+					if (fw->GetWritableFirmwareDesc(unit))
+						found = true;
+				}
+
+				return found;
+			}
 			break;
 	}
 
 	return false;
+}
+
+void ATSimulator::SaveStorage(ATStorageId storageId, const wchar_t *path) {
+	const uint32 unit = storageId & kATStorageId_UnitMask;
+
+	if (unit == 2)
+		mpUltimate1MB->SaveFirmware(path);
+	else {
+		IATDeviceFirmware *foundfw = nullptr;
+
+		for(IATDeviceFirmware *fw : mpDeviceManager->GetInterfaces<IATDeviceFirmware>(false, false)) {
+			if (fw->GetWritableFirmwareDesc(unit)) {
+				foundfw = fw;
+				break;
+			}
+		}
+
+		if (foundfw) {
+			VDFileStream f;
+			f.open(path, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
+
+			foundfw->SaveWritableFirmware(unit, f);
+		}
+	}
 }
 
 void ATSimulator::SwapDrives(int src, int dst) {
@@ -1685,13 +1741,28 @@ void ATSimulator::UnloadAll() {
 	}
 }
 
-bool ATSimulator::Load(const wchar_t *path, bool vrw, bool rw, ATLoadContext *loadCtx) {
-	VDFileStream stream(path, nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting | nsVDFile::kSequential);
+bool ATSimulator::Load(const wchar_t *path, ATMediaWriteMode writeMode, ATLoadContext *loadCtx) {
+	VDStringW basePath;
+	VDStringW subPath;
+	if (ATParseVFSPath(path, basePath, subPath) == kATVFSProtocol_File) {
+		VDFileStream stream(path, nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting | nsVDFile::kSequential);
 
-	return Load(path, path, stream, vrw, rw, loadCtx);
+		if (stream.getAttributes() & kVDFileAttr_ReadOnly)
+			writeMode = (ATMediaWriteMode)(writeMode & ~kATMediaWriteMode_AutoFlush);
+
+		return Load(path, path, stream, writeMode, loadCtx);
+	} else {
+		vdrefptr<ATVFSFileView> view;
+		
+		ATVFSOpenFileView(path, false, ~view);
+
+		writeMode = (ATMediaWriteMode)(writeMode & ~kATMediaWriteMode_AutoFlush);
+
+		return Load(path, view->GetFileName(), view->GetStream(), writeMode, loadCtx);
+	}
 }
 
-bool ATSimulator::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, bool vrw, bool rw, ATLoadContext *loadCtx) {
+bool ATSimulator::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, ATMediaWriteMode writeMode, ATLoadContext *loadCtx) {
 	uint8 header[16];
 	long actual = stream.ReadData(header, 16);
 	stream.Seek(0);
@@ -1825,8 +1896,10 @@ load_as_gzip:
 
 		if (loadCtx)
 			loadCtx->mLoadType = kATLoadType_Other;
+		
+		VDStringW vfsPath = ATMakeVFSPathForGZipFile(origPath);
 
-		return Load(origPath, newPath, ms, false, false, loadCtx);
+		return Load(vfsPath.c_str(), newPath, ms, (ATMediaWriteMode)(writeMode & ~kATMediaWriteMode_AutoFlush), loadCtx);
 	} else if (loadType == kATLoadType_Zip) {
 load_as_zip:
 		VDZipArchive ziparch;
@@ -1854,7 +1927,8 @@ load_as_zip:
 				!vdstricmp(ext, ".exe") ||
 				!vdstricmp(ext, ".obx") ||
 				!vdstricmp(ext, ".com") ||
-				!vdstricmp(ext, ".a52")
+				!vdstricmp(ext, ".a52") ||
+				!vdstricmp(ext, ".bas")
 				)
 			{
 				IVDStream& innerStream = *ziparch.OpenRawStream(i);
@@ -1870,7 +1944,12 @@ load_as_zip:
 				if (loadCtx)
 					loadCtx->mLoadType = kATLoadType_Other;
 
-				return Load(origPath, VDTextAToW(name).c_str(), ms, false, false, loadCtx);
+				VDStringW vfsPath;
+				
+				if (origPath)
+					vfsPath = ATMakeVFSPathForZipFile(origPath, VDTextU8ToW(name).c_str());
+
+				return Load(origPath ? vfsPath.c_str() : nullptr, VDTextU8ToW(name).c_str(), ms, (ATMediaWriteMode)(writeMode & ~kATMediaWriteMode_AutoFlush), loadCtx);
 			}
 		}
 
@@ -1885,6 +1964,28 @@ load_as_zip:
 		loadCtx->mLoadType = loadType;
 
 	// Load the resource.
+	const bool checkMode = (loadCtx && loadCtx->mbReturnOnModeIncompatibility);
+	const bool isComputer = (mHardwareMode != kATHardwareMode_5200);
+
+	switch(loadType) {
+		case kATLoadType_Disk:
+		case kATLoadType_Tape:
+		case kATLoadType_Program:
+		case kATLoadType_BasicProgram:
+			if (checkMode && !isComputer) {
+				loadCtx->mbModeComputerRequired = true;
+				return false;
+			}
+			break;
+
+		case kATLoadType_Cartridge:
+		case kATLoadType_SaveState:
+		case kATLoadType_Zip:
+		case kATLoadType_GZip:
+		case kATLoadType_SAP:
+			break;
+	}
+
 	if (loadType == kATLoadType_Program) {
 		LoadProgram(origPath, stream, false);
 		return true;
@@ -1895,7 +1996,7 @@ load_as_zip:
 		if (loadIndex >= 2)
 			throw MyError("Invalid cartridge unit %u.\n", loadIndex);
 
-		return LoadCartridge(loadIndex, origPath, imagePath, stream, loadCtx ? loadCtx->mpCartLoadContext : NULL);
+		return LoadCartridge(loadIndex, origPath, imagePath, stream, loadCtx ? loadCtx->mpCartLoadContext : NULL, loadCtx);
 	} else if (loadType == kATLoadType_Tape) {
 		mpCassette->Load(stream);
 		mpCassette->Play();
@@ -1907,10 +2008,8 @@ load_as_zip:
 		ATDiskEmulator& drive = *mpDiskDrives[loadIndex];
 		drive.LoadDisk(origPath, imagePath, stream);
 
-		if (rw)
-			drive.SetWriteFlushMode(true, true);
-		else if (vrw)
-			drive.SetWriteFlushMode(true, false);
+		drive.SetWriteFlushMode((writeMode & kATMediaWriteMode_AllowWrite) != 0, (writeMode & kATMediaWriteMode_AutoFlush) != 0);
+		drive.SetFormatEnabled((writeMode & kATMediaWriteMode_AllowFormat) != 0);
 
 		return true;
 	} else if (loadType == kATLoadType_SaveState) {
@@ -1940,7 +2039,8 @@ load_as_zip:
 		vdfastvector<uint8> exe;
 		ATConvertSAPToPlayer(mem.data(), len32, exe);
 
-		LoadProgram(origPath, VDMemoryStream(exe.data(), (uint32)exe.size()), false);
+		VDMemoryStream ms(exe.data(), (uint32)exe.size());
+		LoadProgram(origPath, ms, false);
 		return true;
 	}
 
@@ -2027,10 +2127,10 @@ bool ATSimulator::LoadCartridge(uint32 unit, const wchar_t *path, ATCartLoadCont
 	ctx.mLoadType = kATLoadType_Cartridge;
 	ctx.mLoadIndex = unit;
 
-	return Load(path, false, false, &ctx);
+	return Load(path, kATMediaWriteMode_RO, &ctx);
 }
 
-bool ATSimulator::LoadCartridge(uint32 unit, const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, ATCartLoadContext *loadCtx) {
+bool ATSimulator::LoadCartridge(uint32 unit, const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, ATCartLoadContext *loadCtx, ATLoadContext *loadCtx2) {
 	UnloadCartridge(unit);
 
 	IATDebugger *d = ATGetDebugger();
@@ -2038,21 +2138,30 @@ bool ATSimulator::LoadCartridge(uint32 unit, const wchar_t *origPath, const wcha
 	// We have to use the mpCartridge variable because the cartridge code will
 	// set up memory mappings during init that will eventually trigger
 	// UpdateXLCartridgeLine().
-	mpCartridge[unit] = new ATCartridgeEmulator;
+	ATCartridgeEmulator *cart = new ATCartridgeEmulator;
+	mpCartridge[unit] = cart;
 	try {
-		mpCartridge[unit]->Init(mpMemMan, &mScheduler, unit ? kATMemoryPri_Cartridge2 : kATMemoryPri_Cartridge1, mbShadowCartridge);
-		mpCartridge[unit]->SetCallbacks(mpPrivateData);
+		cart->InitCartridge(&mpPrivateData->mCartPort);
+		cart->Init(mpMemMan, &mScheduler, unit ? kATMemoryPri_Cartridge2 : kATMemoryPri_Cartridge1, unit ? kATCartridgePriority_PassThrough : kATCartridgePriority_Default, mbShadowCartridge);
 
-		if (!mpCartridge[unit]->Load(origPath, stream, loadCtx)) {
-			ATCartridgeEmulator *tmp = mpCartridge[unit];
+		if (!cart->Load(origPath, stream, loadCtx)) {
+			ATCartridgeEmulator *tmp = cart;
 			mpCartridge[unit] = NULL;
 			delete tmp;
+
+			if (!unit && mHardwareMode == kATHardwareMode_5200)
+				LoadCartridge5200Default();
+
 			return false;
 		}
 	} catch(const MyError&) {
-		ATCartridgeEmulator *tmp = mpCartridge[unit];
+		ATCartridgeEmulator *tmp = cart;
 		mpCartridge[unit] = NULL;
 		delete tmp;
+
+		if (!unit && mHardwareMode == kATHardwareMode_5200)
+			LoadCartridge5200Default();
+
 		throw;
 	}
 
@@ -2075,7 +2184,7 @@ bool ATSimulator::LoadCartridge(uint32 unit, const wchar_t *origPath, const wcha
 			sympath += kSymExts[i];
 
 			try {
-				if (VDDoesPathExist(sympath.c_str())) {
+				if (!ATVFSIsFilePath(sympath.c_str()) || VDDoesPathExist(sympath.c_str())) {
 					uint32 moduleId = d->LoadSymbols(sympath.c_str());
 
 					if (moduleId) {
@@ -2097,8 +2206,8 @@ void ATSimulator::LoadCartridge5200Default() {
 	UnloadCartridge(0);
 
 	mpCartridge[0] = new ATCartridgeEmulator;
-	mpCartridge[0]->Init(mpMemMan, &mScheduler, kATMemoryPri_Cartridge1, mbShadowCartridge);
-	mpCartridge[0]->SetCallbacks(mpPrivateData);
+	mpCartridge[0]->InitCartridge(&mpPrivateData->mCartPort);
+	mpCartridge[0]->Init(mpMemMan, &mScheduler, kATMemoryPri_Cartridge1, kATCartridgePriority_Default, mbShadowCartridge);
 	mpCartridge[0]->SetUIRenderer(mpUIRenderer);
 	mpCartridge[0]->Load5200Default();
 }
@@ -2107,8 +2216,8 @@ void ATSimulator::LoadNewCartridge(int mode) {
 	UnloadCartridge(0);
 
 	mpCartridge[0] = new ATCartridgeEmulator;
-	mpCartridge[0]->Init(mpMemMan, &mScheduler, kATMemoryPri_Cartridge1, mbShadowCartridge);
-	mpCartridge[0]->SetCallbacks(mpPrivateData);
+	mpCartridge[0]->InitCartridge(&mpPrivateData->mCartPort);
+	mpCartridge[0]->Init(mpMemMan, &mScheduler, kATMemoryPri_Cartridge1, kATCartridgePriority_Default, mbShadowCartridge);
 	mpCartridge[0]->SetUIRenderer(mpUIRenderer);
 	mpCartridge[0]->LoadNewCartridge((ATCartridgeMode)mode);
 }
@@ -2118,8 +2227,8 @@ void ATSimulator::LoadCartridgeBASIC() {
 
 	ATCartridgeEmulator *cart = new ATCartridgeEmulator;
 	mpCartridge[0] = cart;
-	cart->Init(mpMemMan, &mScheduler, kATMemoryPri_Cartridge1, mbShadowCartridge);
-	cart->SetCallbacks(mpPrivateData);
+	cart->InitCartridge(&mpPrivateData->mCartPort);
+	cart->Init(mpMemMan, &mScheduler, kATMemoryPri_Cartridge1, kATCartridgePriority_Default, mbShadowCartridge);
 	cart->SetUIRenderer(mpUIRenderer);
 
 	ATCartLoadContext ctx = {};
@@ -2127,109 +2236,6 @@ void ATSimulator::LoadCartridgeBASIC() {
 
 	VDMemoryStream memstream(mBASICROM, sizeof mBASICROM);
 	cart->Load(L"", memstream, &ctx);
-}
-
-void ATSimulator::LoadIDE(ATIDEHardwareMode mode) {
-	try {
-		UnloadIDE();
-		mIDEHardwareMode = mode;
-
-		if (mode == kATIDEHardwareMode_KMKJZ_V1 || mode == kATIDEHardwareMode_KMKJZ_V2) {
-			ATKMKJZIDE *kjide = new ATKMKJZIDE(mode == kATIDEHardwareMode_KMKJZ_V2);
-			mpKMKJZIDE = kjide;
-
-			ReloadIDEFirmware();
-
-			kjide->Init(&mScheduler, mpUIRenderer);
-			mpPBIManager->AddDevice(mpKMKJZIDE);
-
-			kjide->SetIDEImage(mpIDE);
-		} else if (mode == kATIDEHardwareMode_SIDE || mode == kATIDEHardwareMode_SIDE2) {
-			ATSIDEEmulator *side = new ATSIDEEmulator;
-			mpSIDE = side;
-
-			side->Init(&mScheduler, mpUIRenderer, mpMemMan, this, mode == kATIDEHardwareMode_SIDE2);
-			ReloadIDEFirmware();
-
-			UpdateCartEnable();
-			UpdateCartridgeSwitch();
-
-			side->SetIDEImage(mpIDE);
-		} else {
-			mpMyIDE = new ATMyIDEEmulator();
-			mpMyIDE->Init(mpMemMan, mpUIRenderer, &mScheduler, this, mode != kATIDEHardwareMode_MyIDE_D1xx,
-				mode == kATIDEHardwareMode_MyIDE_V2_D5xx || mode == kATIDEHardwareMode_MyIDE_V2Updated,
-				mode == kATIDEHardwareMode_MyIDE_V2Updated
-				);
-
-			ReloadIDEFirmware();
-
-			mpMyIDE->SetIDEImage(mpIDE);
-		}
-	} catch(...) {
-		UnloadIDE();
-		throw;
-	}
-}
-
-void ATSimulator::LoadIDEImage(bool write, bool fast, uint32 cylinders, uint32 heads, uint32 sectors, const wchar_t *path) {
-	try {
-		UnloadIDEImage();
-
-		mpIDE = new ATIDEEmulator;
-		mpIDE->Init(&mScheduler, mpUIRenderer);
-		mpIDE->OpenImage(write, fast, cylinders, heads, sectors, path);
-
-		if (mpKMKJZIDE)
-			mpKMKJZIDE->SetIDEImage(mpIDE);
-
-		if (mpSIDE)
-			mpSIDE->SetIDEImage(mpIDE);
-
-		if (mpMyIDE)
-			mpMyIDE->SetIDEImage(mpIDE);
-	} catch(...) {
-		UnloadIDEImage();
-		throw;
-	}
-}
-
-void ATSimulator::UnloadIDEImage() {
-	if (mpMyIDE)
-		mpMyIDE->SetIDEImage(NULL);
-
-	if (mpSIDE)
-		mpSIDE->SetIDEImage(NULL);
-
-	if (mpKMKJZIDE)
-		mpKMKJZIDE->SetIDEImage(NULL);
-
-	if (mpIDE) {
-		delete mpIDE;
-		mpIDE = NULL;
-	}
-}
-
-void ATSimulator::UnloadIDE() {
-	if (mpMyIDE) {
-		mpMyIDE->Shutdown();
-		delete mpMyIDE;
-		mpMyIDE = NULL;
-	}
-
-	if (mpSIDE) {
-		mpSIDE->Shutdown();
-		delete mpSIDE;
-		mpSIDE = NULL;
-	}
-
-	if (mpKMKJZIDE) {
-		mpPBIManager->RemoveDevice(mpKMKJZIDE);
-		delete mpKMKJZIDE;
-		mpKMKJZIDE = NULL;
-	}
-
-	mIDEHardwareMode = kATIDEHardwareMode_None;
 }
 
 ATSimulator::AdvanceResult ATSimulator::AdvanceUntilInstructionBoundary() {
@@ -2293,6 +2299,9 @@ ATSimulator::AdvanceResult ATSimulator::Advance(bool dropFrame) {
 		int scansLeft = (mVideoStandard == kATVideoStandard_NTSC || mVideoStandard == kATVideoStandard_PAL60 ? 262 : 312) - mAntic.GetBeamY();
 		if (scansLeft > 8)
 			scansLeft = 8;
+
+		if (mbRunSingleCycle)
+			PostInterruptingEvent(kATSimEvent_AnonymousInterrupt);
 
 		for(int scans = 0; scans < scansLeft; ++scans) {
 			int x = mAntic.GetBeamX();
@@ -2367,6 +2376,10 @@ handle_event:
 		NotifyEvent(ev);
 
 	return mbRunning ? kAdvanceResult_Running : kAdvanceResult_Stopped;
+}
+
+uint32 ATSimulator::GetTimestamp() const {
+	return ATSCHEDULER_GETTIME(&mScheduler);
 }
 
 ATCPUTimestampDecoder ATSimulator::GetTimestampDecoder() const {
@@ -2522,6 +2535,9 @@ namespace {
 
 			case kATMemoryMode_128K:
 				return 0x20000;
+
+			case kATMemoryMode_256K:
+				return 0x40000;
 
 			case kATMemoryMode_320K:
 				return 0x50000;
@@ -3042,65 +3058,11 @@ void ATSimulator::SaveState(ATSaveStateWriter& writer) {
 	writer.WriteSection(kATSaveStateSection_End);
 }
 
-void ATSimulator::UpdateCartEnable() {
-	bool rd4 = true;
-	bool rd5 = true;
-
-	if (mpUltimate1MB) {
-		rd4 = mpUltimate1MB->IsExternalCartEnabledRD4();
-		rd5 = mpUltimate1MB->IsExternalCartEnabledRD5();
-	}
-
-	if (mpSIDE)
-		mpSIDE->SetExternalEnable(rd5);
-
-	for(ATCartridgeEmulator *cart : mpCartridge) {
-		if (cart)
-			cart->SetRD45Enables(rd4, rd5);
-	}
-
-	UpdateXLCartridgeLine();
-}
-
 void ATSimulator::UpdateXLCartridgeLine() {
 	if (mHardwareMode == kATHardwareMode_800XL || mHardwareMode == kATHardwareMode_1200XL || mHardwareMode == kATHardwareMode_XEGS || mHardwareMode == kATHardwareMode_130XE) {
 		// TRIG3 indicates a cartridge on XL/XE. MULE fails if this isn't set properly,
 		// because for some bizarre reason it jumps through WARMSV!
-		bool rd5 = false;
-
-		if (mpSIDE && mpSIDE->IsCartEnabled())
-			rd5 = true;
-
-		if (!rd5 && mpMyIDE && mpMyIDE->IsLeftCartEnabled())
-			rd5 = true;
-		
-		if (!rd5) {
-			for(int i=0; i<2; ++i) {
-				if (mpCartridge[i] && mpCartridge[i]->IsABxxMapped()) {
-					rd5 = true;
-					break;
-				}
-			}
-		}
-
-		if (!rd5) {
-			for (IATDeviceCartridge *cart : mpPrivateData->mCarts) {
-				if (cart->IsRD5Active()) {
-					rd5 = true;
-					break;
-				}
-			}
-		}
-
-		if (mpUltimate1MB) {
-			mpUltimate1MB->SetCartActive(rd5);
-
-			if (!mpUltimate1MB->IsExternalCartEnabledRD5())
-				rd5 = false;
-
-			if (mpUltimate1MB->IsCartEnabled())
-				rd5 = true;
-		}
+		const bool rd5 = mpPrivateData->mCartPort.IsLeftMapped();
 
 		mGTIA.SetControllerTrigger(3, !rd5);
 	}
@@ -3117,14 +3079,16 @@ void ATSimulator::UpdateForcedSelfTestLine() {
 		case kATHardwareMode_1200XL:
 		case kATHardwareMode_XEGS:
 		case kATHardwareMode_130XE:
-			mPokey.SetPotPos(4, mbForcedSelfTest ? 0 : 228);
+			mPokey.SetPotPos(4, mbForcedSelfTest ? 0 : 229);
 			break;
 	}
 }
 
 void ATSimulator::UpdateCartridgeSwitch() {
-	if (mpSIDE)
-		mpSIDE->SetSDXEnabled(mbCartridgeSwitch);
+	const bool state = mbCartridgeSwitch;
+
+	for(IATDeviceButtons *devbtn : mpDeviceManager->GetInterfaces<IATDeviceButtons>(false, false))
+		devbtn->ActivateButton(kATDeviceButton_CartridgeSDXEnable, state);
 }
 
 void ATSimulator::UpdateBanking(uint8 currBank) {
@@ -3306,54 +3270,8 @@ void ATSimulator::UpdateVBXEPage() {
 void ATSimulator::UpdateSoundBoardPage() {
 	sint32 baseOverride = mpUltimate1MB ? mpUltimate1MB->IsSoundBoardEnabled() ? 0xD2C0 : 0 : -1;
 
-	mpDeviceManager->ForEachInterface<IATDeviceU1MBControllable>(false,
-		[=](IATDeviceU1MBControllable& dev) {
-			dev.SetU1MBControl(kATU1MBControl_SoundBoardBase, baseOverride);
-		}
-	);
-}
-
-bool ATSimulator::ReloadIDEFirmware() {
-	bool changed = false;
-
-	if (mpKMKJZIDE) {
-		ATKMKJZIDE *kjide = mpKMKJZIDE;
-		const bool ver2 = kjide->IsVersion2();
-
-
-		uint64 id = mpFirmwareManager->GetCompatibleFirmware(ver2 ? kATFirmwareType_KMKJZIDE2 : kATFirmwareType_KMKJZIDE);
-		if (id)
-			changed |= kjide->LoadFirmware(false, *mpFirmwareManager, id);
-		else if (!ver2)
-			changed |= kjide->LoadFirmware(false, *mpFirmwareManager, kATFirmwareId_KMKJZIDE_NoBIOS);
-		else
-			changed |= kjide->LoadFirmware(false, NULL, 0);
-
-		if (ver2) {
-			uint64 id = mpFirmwareManager->GetCompatibleFirmware(kATFirmwareType_KMKJZIDE2_SDX);
-
-			changed |= kjide->LoadFirmware(true, *mpFirmwareManager, id);
-		}
-	}
-
-	if (mpSIDE) {
-		uint64 id = mpFirmwareManager->GetCompatibleFirmware(mpSIDE->IsVersion2() ? kATFirmwareType_SIDE2 : kATFirmwareType_SIDE);
-		if (id)
-			mpSIDE->LoadFirmware(*mpFirmwareManager, id);
-		else
-			mpSIDE->LoadFirmware(NULL, 0);
-	}
-
-	if (mpMyIDE && mpMyIDE->IsVersion2()) {
-		uint64 id = mpFirmwareManager->GetCompatibleFirmware(kATFirmwareType_MyIDE2);
-		
-		if (id)
-			mpMyIDE->LoadFirmware(*mpFirmwareManager, id);
-		else
-			mpMyIDE->LoadFirmware(NULL, 0);
-	}
-
-	return changed;
+	for(IATDeviceU1MBControllable *dev : mpDeviceManager->GetInterfaces<IATDeviceU1MBControllable>(false, false))
+		dev->SetU1MBControl(kATU1MBControl_SoundBoardBase, baseOverride);
 }
 
 bool ATSimulator::ReloadU1MBFirmware() {
@@ -3575,10 +3493,9 @@ void ATSimulator::InitMemoryMap() {
 		mpMemMan->SetLayerIoBus(mpMemLayerPIA, true);
 		mpMemMan->EnableLayer(mpMemLayerPIA, true);
 
-		mpMMU->Init(mHardwareMode,
+		mpMMU->InitMapping(mHardwareMode,
 			mMemoryMode,
 			mMemory,
-			mpMemMan,
 			mpMemLayerExtendedRAM,
 			mpMemLayerSelfTestROM,
 			mpMemLayerLowerKernelROM,
@@ -3675,14 +3592,15 @@ void ATSimulator::InitMemoryMap() {
 	if (!mpUltimate1MB) {
 		switch(mMemoryMode) {
 			case kATMemoryMode_128K:		floatMask &= ~0x0C; break;
-			case kATMemoryMode_320K:		floatMask &= ~0x4C; break;
+			case kATMemoryMode_256K:		floatMask &= ~0x4C; break;
+			case kATMemoryMode_320K:		floatMask &= ~0xCC; break;
 			case kATMemoryMode_576K:		floatMask &= ~0x6C; break;
 			case kATMemoryMode_1088K:		floatMask &= ~0x6E; break;
 			case kATMemoryMode_320K_Compy:	floatMask &= ~0xCC; break;
 			case kATMemoryMode_576K_Compy:	floatMask &= ~0xCE; break;
 		}
 
-		static_assert(kATMemoryModeCount == 14, "Add new memory mode to floating port B bit init");
+		static_assert(kATMemoryModeCount == 15, "Add new memory mode to floating port B bit init");
 	}
 
 	if (mpPrivateData->mFloatingInputs.mFloatingInputMask != floatMask ||
@@ -3704,7 +3622,7 @@ void ATSimulator::ShutdownMemoryMap() {
 		mpUltimate1MB->SetMemoryLayers(NULL, NULL, NULL, NULL, NULL);
 
 	if (mpMMU)
-		mpMMU->Shutdown();
+		mpMMU->ShutdownMapping();
 
 #define X(layer) if (layer) { mpMemMan->DeleteLayer(layer); layer = NULL; }
 	X(mpMemLayerLoRAM)
@@ -3730,10 +3648,6 @@ uint32 ATSimulator::CPUGetCycle() {
 
 uint32 ATSimulator::CPUGetUnhaltedCycle() {
 	return ATSCHEDULER_GETTIME(&mScheduler) - mAntic.GetHaltedCycleCount();
-}
-
-uint32 ATSimulator::CPUGetTimestamp() {
-	return mAntic.GetTimestamp();
 }
 
 void ATSimulator::CPUGetHistoryTimes(ATCPUHistoryEntry * VDRESTRICT he) const {
@@ -3780,19 +3694,19 @@ void ATSimulator::AnticEndFrame() {
 
 	mGTIA.UpdateScreen(false, false);
 
-	const uint32 ticks300Hz = mGTIA.IsPALMode() ? 6 : 5;
-	mpDeviceManager->ForEachInterface<IATDeviceVideoOutput>(false,
-		[=](IATDeviceVideoOutput& vo) {
-			vo.Tick(ticks300Hz);
-		}
-	);
+	const bool palTick = (mVideoStandard != kATVideoStandard_NTSC && mVideoStandard != kATVideoStandard_PAL60);
+	const uint32 ticks300Hz = palTick ? 6 : 5;
+
+	for(IATDeviceVideoOutput *vo : mpDeviceManager->GetInterfaces<IATDeviceVideoOutput>(false, false))
+		vo->Tick(ticks300Hz);
 
 	if (mbBreakOnFrameEnd) {
 		mbBreakOnFrameEnd = false;
 		PostInterruptingEvent(kATSimEvent_EndOfFrame);
 	}
 
-	mpInputManager->Poll();
+	const float dt = palTick ? 1.0f / 50.0f : 1.0f / 60.0f;
+	mpInputManager->Poll(dt);
 
 	// Turn off automatic OPTION key for disabling BASIC once the VBI is enabled.
 	if (mStartupDelay && mAntic.IsPlayfieldDMAEnabled()) {
@@ -3806,6 +3720,9 @@ void ATSimulator::AnticEndFrame() {
 			}
 
 			mStartupDelay2 = 0;
+
+			if (mpHeatMap)
+				mpHeatMap->SetEarlyState(false);
 		}
 	}
 
@@ -3815,12 +3732,17 @@ void ATSimulator::AnticEndFrame() {
 
 		mGTIA.SetForcedConsoleSwitches(0x0F);
 		mpUIRenderer->SetHeldButtonStatus(0);
+
+		if (mpHeatMap)
+			mpHeatMap->SetEarlyState(false);
 	}
 
 	mCPU.PeriodicCleanup();
 
 	mScheduler.UpdateTick64();
 	mSlowScheduler.UpdateTick64();
+
+	mpPrivateData->mDeferredEventManager.FlushPendingEvents();
 }
 
 void ATSimulator::AnticEndScanline() {
@@ -3962,40 +3884,25 @@ void ATSimulator::ReinitHookPage() {
 			hookPagesOccupied |= HookPage::D6;
 	}
 
-	mpDeviceManager->ForEachInterface<IATDeviceMemMap>(false,
-		[&hookPagesOccupied](IATDeviceMemMap& mm) {
-			uint32 lo, hi;
-			for(uint32 i=0; mm.GetMappedRange(i, lo, hi); ++i) {
-				if (hi > 0xD100 && lo < 0xD200)
-					hookPagesOccupied |= HookPage::D1;
+	for(IATDeviceMemMap *mm : mpDeviceManager->GetInterfaces<IATDeviceMemMap>(false, false)) {
+		uint32 lo, hi;
+		for(uint32 i=0; mm->GetMappedRange(i, lo, hi); ++i) {
+			if (hi > 0xD100 && lo < 0xD200)
+				hookPagesOccupied |= HookPage::D1;
 
-				if (hi > 0xD500 && lo < 0xD600)
-					hookPagesOccupied |= HookPage::D5;
+			if (hi > 0xD500 && lo < 0xD600)
+				hookPagesOccupied |= HookPage::D5;
 
-				if (hi > 0xD600 && lo < 0xD700)
-					hookPagesOccupied |= HookPage::D6;
+			if (hi > 0xD600 && lo < 0xD700)
+				hookPagesOccupied |= HookPage::D6;
 
-				if (hi > 0xD700 && lo < 0xD800)
-					hookPagesOccupied |= HookPage::D7;
-			}
+			if (hi > 0xD700 && lo < 0xD800)
+				hookPagesOccupied |= HookPage::D7;
 		}
-	);
+	}
 
 	if (mpUltimate1MB)
 		hookPagesOccupied |= HookPage::D1 | HookPage::D6 | HookPage::D7;
-
-	if (mpKMKJZIDE)
-		hookPagesOccupied |= HookPage::D1;
-
-	if (mpSIDE)
-		hookPagesOccupied |= HookPage::D5;
-
-	if (mpMyIDE) {
-		if (mpMyIDE->IsUsingD5xx())
-			hookPagesOccupied |= HookPage::D5;
-		else
-			hookPagesOccupied |= HookPage::D1;
-	}
 
 	if (mpCartridge[0] || mpCartridge[1])
 		hookPagesOccupied |= HookPage::D5;
@@ -4081,5 +3988,37 @@ void ATSimulator::InitDevice(IATDevice& dev) {
 
 	if (auto devpr = vdpoly_cast<IATDevicePrinter *>(&dev))
 		devpr->SetPrinterOutput(GetPrinterOutput());
+
+	if (auto devpbi = vdpoly_cast<IATDevicePBIConnection *>(&dev))
+		devpbi->InitPBI(mpPBIManager);
+
+	if (auto devcart = vdpoly_cast<IATDeviceCartridge *>(&dev))
+		devcart->InitCartridge(&mpPrivateData->mCartPort);
 }
- 
+
+void ATSimulator::ResetMemoryBuffer(void *dst, size_t len, uint32 seed) {
+	switch(mMemoryClearMode) {
+		case kATMemoryClearMode_Zero:
+			memset(dst, 0, len);
+			break;
+
+		case kATMemoryClearMode_Random:
+			ATRandomizeMemory(dst, len, seed);
+			break;
+
+		case kATMemoryClearMode_DRAM1:
+			if (mHardwareMode == kATHardwareMode_5200)
+				DRAMPatternFillA_5200(dst, len);
+			else
+				DRAMPatternFillA(dst, len);
+			break;
+
+		case kATMemoryClearMode_DRAM2:
+			DRAMPatternFillB(dst, len);
+			break;
+
+		case kATMemoryClearMode_DRAM3:
+			DRAMPatternFillC(dst, len);
+			break;
+	}
+}

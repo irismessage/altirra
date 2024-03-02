@@ -123,9 +123,22 @@ void ATFlashEmulator::ColdReset() {
 
 	mReadMode = kReadMode_Normal;
 	mCommandPhase = 0;
+
+	mToggleBits = 0;
 }
 
-bool ATFlashEmulator::ReadByte(uint32 address, uint8& data) const {
+bool ATFlashEmulator::ReadByte(uint32 address, uint8& data) {
+	bool result = DebugReadByte(address, data);
+
+	if (mReadMode == kReadMode_SectorEraseStatus) {
+		// Toggle DQ2 and DQ6 after the read.
+		mToggleBits ^= 0x44;
+	}
+
+	return result;
+}
+
+bool ATFlashEmulator::DebugReadByte(uint32 address, uint8& data) const {
 	data = 0xFF;
 
 	switch(mReadMode) {
@@ -374,6 +387,16 @@ bool ATFlashEmulator::ReadByte(uint32 address, uint8& data) const {
 		case kReadMode_WriteStatusPending:
 			data = ~mpMemory[address] & 0x80;
 			break;
+
+		case kReadMode_SectorEraseStatus:
+			// During sector erase timeout:
+			//	DQ7 = 0 (complement of erased data)
+			//	DQ6 = toggle
+			//	DQ5 = 0 (not exceeded timing limits)
+			//	DQ3 = 0 (additional commands accepted)
+			//	DQ2 = toggle
+			data = mToggleBits;
+			break;
 	}
 
 	return false;
@@ -394,6 +417,8 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 
 				g_ATLCFlash("Exiting autoselect mode.\n");
 				mReadMode = kReadMode_Normal;
+
+				mpScheduler->UnsetEvent(mpWriteEvent);
 				return true;
 			}
 
@@ -485,7 +510,13 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 							: address15 != 0x5555) {
 				g_ATLCFlash("Unlock: step 3 FAILED [($%05X) = $%02X].\n", address, value);
 				mCommandPhase = 0;
-				break;
+				break;	
+			}
+
+			// A non-erase command aborts a multiple sector erase in timeout phase.
+			if (value != 0x80 && mReadMode == kReadMode_SectorEraseStatus) {
+				mpScheduler->UnsetEvent(mpWriteEvent);
+				mReadMode = kReadMode_Autoselect;
 			}
 
 			switch(value) {
@@ -562,6 +593,12 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 			break;
 
 		case 5:		// 5555[AA] 2AAA[55] 5555[80] 5555[AA] 2AAA[55]
+			// A non-sector-erase command aborts a multiple sector erase in timeout phase.
+			if (value != 0x80 && mReadMode == kReadMode_SectorEraseStatus) {
+				mpScheduler->UnsetEvent(mpWriteEvent);
+				mReadMode = kReadMode_Autoselect;
+			}
+
 			if (value == 0x10 && (mbA12iUnlock ? (address & 0xFFF) == 0xAAA : mbA11Unlock ? address11 == 0x555 : address15 == 0x5555)) {
 				// full chip erase
 				switch(mFlashType) {
@@ -663,6 +700,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 					// only guaranteed to last between 50us and 80us.
 					mpScheduler->SetEvent(mSectorEraseTimeoutCycles, this, 2, mpWriteEvent);
 					mCommandPhase = 14;
+					mReadMode = kReadMode_SectorEraseStatus;
 					return true;
 				}
 			} else {
@@ -885,6 +923,9 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 
 				for(int i=0; i<32; ++i)
 					mpMemory[mPendingWriteAddress + i] &= mWriteBufferData[i];
+
+				mbWriteActivity = true;
+				mbDirty = true;
 			}
 
 			mCommandPhase = 0;
@@ -897,7 +938,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 void ATFlashEmulator::OnScheduledEvent(uint32 id) {
 	mpWriteEvent = NULL;
 
-	g_ATLCFlash("Ending multiple sector tiemout.\n");
+	g_ATLCFlash("Ending multiple sector timeout.\n");
 	mReadMode = kReadMode_Normal;
 
 	switch(mFlashType) {

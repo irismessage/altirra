@@ -18,8 +18,8 @@
 #ifndef f_AT_ULTIMATE1MB_H
 #define f_AT_ULTIMATE1MB_H
 
-#pragma once
-
+#include <at/atcore/devicecart.h>
+#include <at/atcore/devicepbi.h>
 #include "flash.h"
 #include "pbi.h"
 #include "rtcds1305.h"
@@ -34,9 +34,12 @@ class IATUIRenderer;
 class ATCPUHookManager;
 class ATFirmwareManager;
 
-class ATUltimate1MBEmulator : public IATPBIDevice {
-	ATUltimate1MBEmulator(const ATUltimate1MBEmulator&);
-	ATUltimate1MBEmulator& operator=(const ATUltimate1MBEmulator&);
+class ATUltimate1MBEmulator final
+	: public IATPBIDevice
+	, public IATDeviceCartridge
+{
+	ATUltimate1MBEmulator(const ATUltimate1MBEmulator&) = delete;
+	ATUltimate1MBEmulator& operator=(const ATUltimate1MBEmulator&) = delete;
 public:
 	ATUltimate1MBEmulator();
 	~ATUltimate1MBEmulator();
@@ -58,21 +61,9 @@ public:
 		ATMemoryLayer *layerSelfTestROM,
 		ATMemoryLayer *layerGameROM);
 
-	void SetCartActive(bool active);
-	bool IsCartEnabled() const { return mbSDXEnabled && mbSDXModuleEnabled; }
-	bool IsExternalCartEnabledRD4() const { return mbExternalCartEnabledRD4; }
-	bool IsExternalCartEnabledRD5() const { return mbExternalCartEnabledRD5; }
 	bool IsSoundBoardEnabled() const { return mbSoundBoardEnabled; }
 	bool IsFirmwareDirty() const { return mFlashEmu.IsDirty(); }
 	uint8 GetVBXEPage() const { return !mbIORAMEnabled && !mbPBISelected ? mVBXEPage : 0; }
-
-	void SetCartCallback(ATCallbackHandler0<void> h) {
-		mCartStateHandler = h;
-	}
-
-	void SetExternalCartCallback(ATCallbackHandler0<void> h) {
-		mExternalCartStateHandler = h;
-	}
 
 	void SetVBXEPageCallback(ATCallbackHandler0<void> h) {
 		mVBXEPageHandler = h;
@@ -86,13 +77,11 @@ public:
 	bool LoadFirmware(const void *p, uint32 len);
 	void SaveFirmware(const wchar_t *path);
 
-	virtual void AttachDevice(ATMemoryManager *memman);
-	virtual void DetachDevice();
+	void GetPBIDeviceInfo(ATPBIDeviceInfo& devInfo) const override;
+	void SelectPBIDevice(bool enable) override;
 
-	virtual void GetDeviceInfo(ATPBIDeviceInfo& devInfo) const;
-	virtual void Select(bool enable);
-
-	virtual bool IsPBIOverlayActive() const;
+	bool IsPBIOverlayActive() const override;
+	uint8 ReadPBIStatus(uint8 busData, bool debugOnly) override;
 
 	virtual void ColdReset();
 	virtual void WarmReset();
@@ -102,6 +91,12 @@ public:
 
 	void DumpStatus();
 	void DumpRTCStatus();
+
+public:
+	void InitCartridge(IATDeviceCartridgePort *cartPort) override;
+	bool IsLeftCartActive() const override;
+	void SetCartEnables(bool leftEnable, bool rightEnable, bool cctlEnable) override;
+	void UpdateCartSense(bool leftActive) override;
 
 protected:
 	void SetKernelBank(uint8 bank);
@@ -117,6 +112,7 @@ protected:
 	void SetIORAMEnabled(bool enabled);
 	void UpdateFlashShadows();
 
+	static sint32 DebugReadByteFlash(void *thisptr, uint32 addr);
 	static sint32 ReadByteFlash(void *thisptr, uint32 addr);
 	static bool WriteByteFlash(void *thisptr, uint32 addr, uint8 value);
 
@@ -158,6 +154,10 @@ protected:
 	ATPBIManager *mpPBIManager;
 	IATUIRenderer *mpUIRenderer;
 	ATCPUHookManager *mpHookMgr;
+
+	IATDeviceCartridgePort *mpCartridgePort = nullptr;
+	uint32 mCartId = 0;
+
 	ATMemoryManager *mpMemMan;
 	ATMemoryLayer *mpLayerCart;			// $A000-BFFF
 	ATMemoryLayer *mpLayerFlashControl;	// $A000-BFFF
@@ -183,8 +183,6 @@ protected:
 	ATFlashEmulator mFlashEmu;
 	ATRTCDS1305Emulator mClockEmu;
 
-	ATCallbackHandler0<void> mCartStateHandler;
-	ATCallbackHandler0<void> mExternalCartStateHandler;
 	ATCallbackHandler0<void> mVBXEPageHandler;
 	ATCallbackHandler0<void> mSBPageHandler;
 

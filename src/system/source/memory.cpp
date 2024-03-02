@@ -23,7 +23,7 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <malloc.h>
 #include <windows.h>
 #include <vd2/system/atomic.h>
@@ -132,7 +132,7 @@ void VDInvertMemory(void *p, unsigned bytes) {
 	if (!bytes)
 		return;
 
-	while((int)dst & 3) {
+	while((intptr_t)dst & 3) {
 		*dst = ~*dst;
 		++dst;
 

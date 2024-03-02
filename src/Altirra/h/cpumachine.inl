@@ -412,7 +412,7 @@ for(;;) {
 		case kStateDtoP:
 			if ((mP ^ mData) & kFlagI) {
 				if (mData & kFlagI)
-					mIFlagSetCycle = mpCallbacks->CPUGetUnhaltedCycle();
+					mIntFlags |= kIntFlag_IRQSetPending;
 				else
 					mIntFlags |= kIntFlag_IRQReleasePending;
 			}
@@ -472,10 +472,14 @@ for(;;) {
 
 		case kStateNMIVecToPC:
 			mPC = 0xFFFA;
+			mP |= kFlagI;
+			mIntFlags &= ~kIntFlag_IRQSetPending;
 			break;
 
 		case kStateIRQVecToPC:
 			mPC = 0xFFFE;
+			mP |= kFlagI;
+			mIntFlags &= ~kIntFlag_IRQSetPending;
 			break;
 
 		case kStateIRQVecToPCBlockNMIs:
@@ -491,6 +495,8 @@ for(;;) {
 				mIntFlags &= ~kIntFlag_NMIPending;
 			} else
 				mPC = 0xFFFE;
+			mP |= kFlagI;
+			mIntFlags &= ~kIntFlag_IRQSetPending;
 			break;
 
 		case kStateNMIOrIRQVecToPCBlockable:
@@ -498,6 +504,8 @@ for(;;) {
 				mPC = 0xFFFA;
 			else
 				mPC = 0xFFFE;
+			mP |= kFlagI;
+			mIntFlags &= ~kIntFlag_IRQSetPending;
 			break;
 
 		case kStateDelayInterrupts:
@@ -950,7 +958,7 @@ for(;;) {
 			if (!(mP & kFlagI)) {
 				mP |= kFlagI;
 
-				mIFlagSetCycle = mpCallbacks->CPUGetUnhaltedCycle();
+				mIntFlags |= kIntFlag_IRQSetPending;
 			}
 			break;
 
@@ -1819,6 +1827,11 @@ for(;;) {
 			Update65816DecodeTable();
 			break;
 
+		case kStateDtoPNative_noICheck:
+			mP = mData;
+			Update65816DecodeTable();
+			break;
+
 		case kStateDtoS16:
 			mS = (uint8)mData16;
 			if (!mbEmulationFlag)
@@ -2353,7 +2366,7 @@ for(;;) {
 
 		case kStateSep:
 			if (~mP & mData & kFlagI)
-				mIFlagSetCycle = mpCallbacks->CPUGetUnhaltedCycle();
+				mIntFlags |= kIntFlag_IRQSetPending;
 
 			if (mbEmulationFlag)
 				mP |= mData & 0xcf;		// m and x are off-limits

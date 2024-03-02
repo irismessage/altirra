@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/hash.h>
@@ -91,75 +91,84 @@ ATIDEEmulator::ATIDEEmulator()
 }
 
 ATIDEEmulator::~ATIDEEmulator() {
-	CloseImage();
+	Shutdown();
 }
 
-void ATIDEEmulator::Init(ATScheduler *scheduler, IATUIRenderer *uirenderer) {
+void ATIDEEmulator::Init(ATScheduler *scheduler, IATDeviceIndicatorManager *uirenderer, bool isSingle, bool isSlave) {
 	mpScheduler = scheduler;
 	mpUIRenderer = uirenderer;
+	mbIsSingle = isSingle;
+	mbIsSlave = isSlave;
 }
 
-void ATIDEEmulator::OpenImage(bool write, bool fast, uint32 cylinders, uint32 heads, uint32 sectors, const wchar_t *filename) {
+void ATIDEEmulator::SetIsSingle(bool single) {
+	mbIsSingle = single;
+}
+
+void ATIDEEmulator::Shutdown() {
 	CloseImage();
 
-	// validate geometry
-	if (!cylinders || !heads || !sectors || cylinders > 16777216 || heads > 16 || sectors > 255)
-		throw MyError("Invalid IDE geometry: %u cylinders / %u heads / %u sectors", cylinders, heads, sectors);
+	mpScheduler = nullptr;
+	mpUIRenderer = nullptr;
+}
 
-	try {
-		mbWriteEnabled = write;
+void ATIDEEmulator::OpenImage(IATBlockDevice *dev) {
+	CloseImage();
 
-		if (ATIDEIsPhysicalDiskPath(filename)) {
-			vdrefptr<ATIDEPhysicalDisk> physDisk(new ATIDEPhysicalDisk);
-			physDisk->Init(filename);
+	mpDisk = dev;
+	dev->AddRef();
 
-			mpDisk = physDisk.release();
-			mSectorCount = mpDisk->GetSectorCount();
-			mHeadCount = heads;
-			mSectorsPerTrack = sectors;
-			mCylinderCount = mSectorCount / (mHeadCount * mSectorsPerTrack);
-			mbWriteEnabled = false;
-		} else {
-			size_t pathlen = wcslen(filename);
+	mPath.clear();
 
-			if (pathlen > 4 && !vdwcsicmp(filename + pathlen - 4, L".vhd")) {
-				vdrefptr<ATIDEVHDImage> vhd(new ATIDEVHDImage);
-				vhd->Init(filename, write);
+	mbWriteEnabled = !mpDisk->IsReadOnly();
+	mSectorCount = mpDisk->GetSectorCount();
 
-				mpDisk = vhd.release();
-				mSectorCount = mpDisk->GetSectorCount();
-				mHeadCount = heads;
-				mSectorsPerTrack = sectors;
-				mCylinderCount = mSectorCount / (mHeadCount * mSectorsPerTrack);
-			} else {
-				vdrefptr<ATIDERawImage> rawImage(new ATIDERawImage);
+	ATBlockDeviceGeometry geo = mpDisk->GetGeometry();
 
-				rawImage->Init(filename, write);
+	// Check if the geometry is IDE and BIOS compatible.
+	//
+	// IDE compatibility requires:
+	//	cylinders <= 16777216
+	//	heads <= 16
+	//	sectors <= 255
+	//
+	// BIOS compatibility requires:
+	//	cylinders <= 65535
+	//	heads <= 16
+	//	sectors <= 63
+	//
+	if (mSectorCount > 16514064) {			// >16*63*16383 - advertise max to BIOS
+		mSectorsPerTrack = 63;
+		mHeadCount = 15;					// ATA-4 B.2.2 -- yes, we switch to 15 for BIGGER drives.
+		mCylinderCount = 16383;
+	} else if (geo.mCylinders && geo.mHeads && geo.mSectorsPerTrack && geo.mCylinders <= 1024 && geo.mHeads <= 16 && geo.mSectorsPerTrack <= 63) {
+		// BIOS compatible - use geometry directly
+		mCylinderCount = geo.mCylinders;
+		mHeadCount = geo.mHeads;
+		mSectorsPerTrack = geo.mSectorsPerTrack;
+	} else {
+		// create alternate geometry (see ATA-4 Annex B)
+		mSectorsPerTrack = 63;
 
-				mpDisk = rawImage.release();
+		if (mSectorCount < 8257536 || !geo.mHeads || geo.mHeads > 16)
+			mHeadCount = 16;
+		else
+			mHeadCount = geo.mHeads;
 
-				mSectorCount = cylinders * heads * sectors;
+		mCylinderCount = mSectorCount / (mSectorsPerTrack * mHeadCount);
+		if (mCylinderCount < 1)
+			mCylinderCount = 1;
 
-				if (sectors > 63)
-					sectors = 63;
-
-				mCylinderCount = cylinders;
-				mHeadCount = heads;
-				mSectorsPerTrack = sectors;
-			}
-		}
-
-		ResetCHSTranslation();
-
-		mPath = filename;
-		mIODelaySetting = fast ? kIODelayFast : kIODelaySlow;
-		mbFastDevice = fast;
-
-		ColdReset();
-	} catch(const MyError&) {
-		CloseImage();
-		throw;
+		if (mCylinderCount > 16383)
+			mCylinderCount = 16383;
 	}
+
+	ResetCHSTranslation();
+
+	mIODelaySetting = geo.mbSolidState ? kIODelayFast : kIODelaySlow;
+	mbFastDevice = geo.mbSolidState;
+
+	ColdReset();
 }
 
 void ATIDEEmulator::CloseImage() {
@@ -187,17 +196,21 @@ void ATIDEEmulator::ColdReset() {
 	mbHardwareReset = false;
 	mbSoftwareReset = false;
 	ResetDevice();
-
-	if (mpDisk)
-		mpDisk->RequestUpdate();
 }
 
 void ATIDEEmulator::DumpStatus() const {
 	ATConsoleWrite("IDE status:\n");
 	ATConsolePrintf("Path:            %ls\n", mPath.c_str());
 	ATConsolePrintf("Raw size:        %u sectors (%.1f MB)\n", mSectorCount, (float)mSectorCount / 2048.0f);
-	ATConsolePrintf("Native geometry: %u cylinders, %u heads, %u sectors/track\n", mCylinderCount, mHeadCount, mSectorsPerTrack);
-	ATConsolePrintf("CHS translation: %u cylinders, %u heads, %u sectors/track\n", mCurrentCylinderCount, mCurrentHeadCount, mCurrentSectorsPerTrack);
+
+	if (mpDisk) {
+		ATBlockDeviceGeometry geo = mpDisk->GetGeometry();
+
+		ATConsolePrintf("Native geometry: %u cylinders, %u heads, %u sectors/track\n", geo.mCylinders, geo.mHeads, geo.mSectorsPerTrack);
+	}
+
+	ATConsolePrintf("Default CHS:     %u cylinders, %u heads, %u sectors/track (%u sectors)\n", mCylinderCount, mHeadCount, mSectorsPerTrack, mCylinderCount * mHeadCount * mSectorsPerTrack);
+	ATConsolePrintf("CHS translation: %u cylinders, %u heads, %u sectors/track (%u sectors)\n", mCurrentCylinderCount, mCurrentHeadCount, mCurrentSectorsPerTrack, mCurrentCylinderCount * mCurrentHeadCount * mCurrentSectorsPerTrack);
 	ATConsolePrintf("Active command:  $%02x\n", mActiveCommand);
 	ATConsolePrintf("Transfer mode:   %d-bit\n", mbTransfer16Bit ? 16 : 8);
 	ATConsolePrintf("Block size:      %u sectors\n", mSectorsPerBlock);
@@ -288,9 +301,11 @@ uint8 ATIDEEmulator::DebugReadByte(uint8 address) {
 	// ATA/ATAPI-4 9.16.0 -- when device 1 is selected with only device 0 present,
 	// status and alternate status return 00h, while all other reads are the same as
 	// device 0.
-	if (mRFile.mHead & 0x10) {
-		if (idx == 7)
-			return 0;
+	if (mbIsSingle && mbIsSlave) {
+		if (mRFile.mHead & 0x10) {
+			if (idx == 7)
+				return 0;
+		}
 	}
 
 	// ATA-1 7.2.13 - if BSY=1, all reads of the command block return the status register
@@ -317,9 +332,11 @@ uint8 ATIDEEmulator::ReadByte(uint8 address) {
 	// ATA/ATAPI-4 9.16.0 -- when device 1 is selected with only device 0 present,
 	// status and alternate status return 00h, while all other reads are the same as
 	// device 0.
-	if (mRFile.mHead & 0x10) {
-		if (idx == 7)
-			return 0;
+	if (mbIsSingle && mbIsSlave) {
+		if (mRFile.mHead & 0x10) {
+			if (idx == 7)
+				return 0;
+		}
 	}
 
 	// ATA-1 7.2.13 - if BSY=1, all reads of the command block return the status register
@@ -369,8 +386,8 @@ void ATIDEEmulator::WriteByte(uint8 address, uint8 value) {
 			break;
 
 		case 7:		// command
-			// ignore drive 1 commands except for EXECUTE DEVICE DIAGNOSTIC
-			if ((mRFile.mHead & 0x10) && value != 0x90)
+			// ignore other drive commands except for EXECUTE DEVICE DIAGNOSTIC
+			if (((mRFile.mHead & 0x10) != (mbIsSlave ? 0x10 : 0x00)) && value != 0x90)
 				return;
 
 			// check if drive is busy
@@ -391,6 +408,9 @@ uint8 ATIDEEmulator::ReadByteAlt(uint8 address) {
 			return 0xFF;
 
 		case 0x06:	// alternate status
+			if (mbIsSingle && !mbIsSlave)
+				return 0;
+
 			if (mbHardwareReset || mbSoftwareReset)
 				return 0xD0;
 
@@ -400,7 +420,7 @@ uint8 ATIDEEmulator::ReadByteAlt(uint8 address) {
 		case 0x07:	// device address (drive address)
 			UpdateStatus();
 
-			return ((mRFile.mHead & 0x10) ? 0x01 : 0x02) + ((~mRFile.mHead & 0x0f) << 2) + (mbWriteInProgress ? 0x00 : 0x40);
+			return (mbIsSlave ? 0x01 : 0x02) + ((~mRFile.mHead & 0x0f) << 2) + (mbWriteInProgress ? 0x00 : 0x40);
 	}
 }
 
@@ -814,21 +834,16 @@ void ATIDEEmulator::UpdateStatus() {
 						dst[ 0*2+1] = 0x04;		// xfer >10Mbps
 
 						// word 1: cylinder count
-						if (mSectorCount >= 15614064) {
-							// ATA/ATAPI-4 6.2.1/1 (page 20) - must return 16384 for >8GB
-							dst[ 1*2+1] = 0x3F;
-							dst[ 1*2+0] = 0xFF;
-						} else {
-							dst[ 1*2+1] = (uint8)(mCylinderCount >> 8);
-							dst[ 1*2+0] = (uint8)mCylinderCount;	// cylinder count
-						}
+						dst[ 1*2+1] = (uint8)(mCylinderCount >> 8);
+						dst[ 1*2+0] = (uint8)mCylinderCount;	// cylinder count
 
 						// word 2: reserved
 						dst[ 2*2+0] = 0;			// reserved
 						dst[ 2*2+1] = 0;
 
 						// word 3: number of logical heads
-						dst[ 3*2+0] = (uint8)mHeadCount;// number of heads
+						// ATA-4 B.2.2 specifies the value of this parameter.
+						dst[ 3*2+0] = (uint8)mHeadCount;			// number of heads
 						dst[ 3*2+1] = 0;
 
 						// word 4: number of unformatted bytes per track
@@ -840,14 +855,15 @@ void ATIDEEmulator::UpdateStatus() {
 						dst[ 5*2+1] = 2;
 
 						// word 6: number of sectors per track (ATA-1), retired (ATA-4)
+						// ATA-4 B.2.3 specifies the value of this parameter.
 						dst[ 6*2+0] = (uint8)mSectorsPerTrack;		// sectors per track
 						dst[ 6*2+1] = 0;
 
 						// words 7-9: vendor unique (ATA-1), retired (ATA-4)
 
 						// words 10-19: serial number
-						char buf[16];
-						sprintf(buf, "%010u", (uint32)VDHashString32I(mPath.c_str()));
+						char buf[40+1];
+						sprintf(buf, "%010u", (unsigned)VDHashString32I(mPath.c_str()));
 
 						for(int i=0; i<10; ++i)
 							dst[10*2 + (i ^ 1)] = (uint8)buf[i];
@@ -868,16 +884,19 @@ void ATIDEEmulator::UpdateStatus() {
 						dst[23*2+1] = '1';
 						dst[23*2+0] = '.';
 						dst[24*2+1] = '0';
+						dst[24*2+0] = ' ';
+						dst[25*2+1] = ' ';
+						dst[25*2+0] = ' ';
+						dst[26*2+1] = ' ';
+						dst[26*2+0] = ' ';
 
-						// words 27-46: model number
-						dst[27*2+1] = 'G';
-						dst[27*2+0] = 'E';
-						dst[28*2+1] = 'N';
-						dst[28*2+0] = 'E';
-						dst[29*2+1] = 'R';
-						dst[29*2+0] = 'I';
-						dst[30*2+1] = 'C';
-						dst[30*2+0] = ' ';
+						// words 27-46: model number (note that we need to byte swap)
+						sprintf(buf, "GENERIC %uM %s", (unsigned)mSectorCount >> 11, mbFastDevice ? "SSD" : "HDD");
+						memset(&dst[27*2], ' ', 40);
+						memcpy(&dst[27*2], buf, strlen(buf));
+
+						for(int i=0; i<40; i+=2)
+							std::swap(dst[27*2+i], dst[27*2+i+1]);
 
 						// word 47
 						dst[47*2+0] = 0xFF;		// max sectors/interrupt
@@ -1068,6 +1087,17 @@ void ATIDEEmulator::StartCommand(uint8 cmd) {
 	mActiveCommand = cmd;
 	mActiveCommandState = 1;
 	mActiveCommandNextTime = ATSCHEDULER_GETTIME(mpScheduler);
+
+	g_ATLCIDE("Executing command: %02X %02X %02X %02X %02X %02X %02X %02X\n"
+		, mRegisters[0]
+		, mRegisters[1]
+		, mRegisters[2]
+		, mRegisters[3]
+		, mRegisters[4]
+		, mRegisters[5]
+		, mRegisters[6]
+		, cmd
+	);
 
 	UpdateStatus();
 }

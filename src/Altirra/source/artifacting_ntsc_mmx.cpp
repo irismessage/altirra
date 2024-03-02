@@ -39,7 +39,6 @@ void __declspec(naked) __cdecl ATArtifactNTSCAccum_MMX(void *rout, const void *t
 		movq	mm1, mm7
 		movq	mm2, mm7
 		movq	mm3, mm7
-		movq	mm4, mm7
 
 		align	16
 xloop:
@@ -51,8 +50,7 @@ xloop:
 		paddw	mm1, [ecx+8]
 		paddw	mm2, [ecx+16]
 		paddw	mm3, [ecx+24]
-		paddw	mm4, [ecx+32]
-		movq	mm5, [ecx+40]
+		movq	mm4, [ecx+32]
 
 		movzx	eax, byte ptr [ebx+1]
 		add		ebx, 2
@@ -68,10 +66,8 @@ xloop:
 		movq	mm1, mm2
 		paddw	mm4, [ecx+80]
 		movq	mm2, mm3
-		paddw	mm5, [ecx+88]
 
 		movq	mm3, mm4
-		movq	mm4, mm5
 
 		add		edx, 8
 		sub		ebp, 2
@@ -81,7 +77,6 @@ xloop:
 		movq	[edx+8], mm1
 		movq	[edx+16], mm2
 		movq	[edx+24], mm3
-		movq	[edx+32], mm4
 
 		emms
 		pop		ebx
@@ -111,7 +106,6 @@ void __declspec(naked) __cdecl ATArtifactNTSCAccumTwin_MMX(void *rout, const voi
 		movq	mm1, mm7
 		movq	mm2, mm7
 		movq	mm3, mm7
-		movq	mm4, mm7
 
 		align	16
 xloop:
@@ -127,12 +121,10 @@ xloop:
 		movq	mm0, mm1
 		paddw	mm3, [ecx+24]
 		movq	mm1, mm2
-		paddw	mm4, [ecx+32]
+		movq	mm4, [ecx+32]
 		movq	mm2, mm3
-		movq	mm5, [ecx+40]
 
 		movq	mm3, mm4
-		movq	mm4, mm5
 
 		add		edx, 8
 		sub		ebp, 2
@@ -142,7 +134,6 @@ xloop:
 		movq	[edx+8], mm1
 		movq	[edx+16], mm2
 		movq	[edx+24], mm3
-		movq	[edx+32], mm4
 
 		emms
 		pop		ebx

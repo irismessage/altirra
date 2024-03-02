@@ -19,10 +19,10 @@
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/math.h>
+#include <at/atcore/blockdevice.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/devicesio.h>
 #include "sio2sd.h"
-#include "idedisk.h"
 #include "uirender.h"
 
 void ATCreateDeviceSIO2SD(const ATPropertySet& pset, IATDevice **dev) {
@@ -92,7 +92,7 @@ void ATSIO2SDEmulator::ColdReset() {
 	WarmReset();
 }
 
-void ATSIO2SDEmulator::InitIndicators(IATUIRenderer *r) {
+void ATSIO2SDEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
 }
 

@@ -163,7 +163,7 @@ void ATUIDialogDeviceModem::OnDataExchange(bool write) {
 
 			for(size_t i=0; i<vdcountof(kTerminalTypes); ++i) {
 				if (!wcscmp(termType, kTerminalTypes[i]))
-					termIdx = i + 1;
+					termIdx = (int)i + 1;
 			}
 
 			if (termIdx)
@@ -195,7 +195,7 @@ void ATUIDialogDeviceModem::OnDataExchange(bool write) {
 		if (it != begin && connectRate - it[-1] < it[0] - connectRate)
 			--it;
 
-		mComboConnectSpeed.SetSelection(it - begin);
+		mComboConnectSpeed.SetSelection((int)(it - begin));
 
 		CheckButton(IDC_REQUIRE_MATCHED_DTE_RATE, mPropSet.GetBool("check_rate", false));
 

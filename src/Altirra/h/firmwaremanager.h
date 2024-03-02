@@ -37,6 +37,7 @@ enum ATFirmwareId {
 	kATFirmwareId_1030Firmware,
 	kATFirmwareId_NoMIO,
 	kATFirmwareId_NoBlackBox,
+	kATFirmwareId_NoGame,
 	kATFirmwareId_PredefCount1,
 	kATFirmwareId_PredefCount = kATFirmwareId_PredefCount1 - 1,
 	kATFirmwareId_Custom = 0x10000
@@ -69,7 +70,7 @@ enum ATFirmwareType {
 	kATFirmwareTypeCount
 };
 
-enum ATFirmwareFlags {
+enum ATFirmwareFlags : uint32 {
 	kATFirmwareFlags_None,
 	kATFirmwareFlags_InvertOPTION = 0x00000001,
 	kATFirmwareFlags_All = 0xFFFFFFFFUL

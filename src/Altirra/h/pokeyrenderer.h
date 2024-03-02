@@ -25,8 +25,8 @@ struct ATPokeyTables;
 struct ATPokeyAudioState;
 
 class ATPokeyRenderer {
-	ATPokeyRenderer(const ATPokeyRenderer&);
-	ATPokeyRenderer& operator=(const ATPokeyRenderer&);
+	ATPokeyRenderer(const ATPokeyRenderer&) = delete;
+	ATPokeyRenderer& operator=(const ATPokeyRenderer&) = delete;
 public:
 	ATPokeyRenderer();
 	~ATPokeyRenderer();
@@ -56,6 +56,8 @@ public:
 	void SetChannelDeferredEvents(int channel, uint32 start, uint32 period);
 	void SetChannelDeferredEventsLinked(int channel, uint32 loStart, uint32 loPeriod, uint32 hiStart, uint32 hiPeriod, uint32 loOffset);
 	void ClearChannelDeferredEvents(int channel, uint32 t);
+
+	void AddSerialNoisePulse(uint32 t);
 
 	uint32 EndBlock();
 
@@ -168,6 +170,9 @@ protected:
 
 	typedef vdfastvector<uint32> ChannelEdges;
 	ChannelEdges mChannelEdges[4];
+
+	vdfastvector<uint32> mSerialPulseTimes;
+	float mSerialPulse = 0;
 
 	enum {
 		// 1271 samples is the max (35568 cycles/frame / 28 cycles/sample + 1). We add a little bit here

@@ -22,6 +22,7 @@
 #include <vd2/system/VDString.h>
 #include <vd2/system/vdstl.h>
 
+class IVDStream;
 class ATMemoryManager;
 class ATFirmwareManager;
 class ATIRQController;
@@ -33,6 +34,8 @@ class IATAudioOutput;
 class ATConsoleOutput;
 class ATPIAEmulator;
 class IATDeviceCartridge;
+class IATDevicePortManager;
+class IATDeviceIndicatorManager;
 
 typedef void (*ATDeviceFactoryFn)(const ATPropertySet& pset, IATDevice **);
 
@@ -53,6 +56,15 @@ public:
 
 	virtual void InitMemMap(ATMemoryManager *memmap) = 0;
 
+	/// Enumerates memory regions used by the device in the form [lo, hi] for
+	/// indices starting from 0. Returns false if there are no more regions.
+	/// For instance, [0xD500, 0xD5FF] indicates full use of the CCTL region.
+	///
+	/// This routine should indicate what regions may be used, not what regions
+	/// are currently in use. This is used by the HLE system to try to determine
+	/// what regions are safe to use for callbacks. In particular, this routine
+	/// needs to report overlaps in the $D1xx and $D500-D7FF regions.
+	///
 	virtual bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const = 0;
 };
 
@@ -65,6 +77,10 @@ public:
 	// Reload firmware from firmware manager. Returns true if firmware was actually
 	// changed.
 	virtual bool ReloadFirmware() = 0;
+
+	virtual const wchar_t *GetWritableFirmwareDesc(uint32 idx) const = 0;
+	virtual bool IsWritableFirmwareDirty(uint32 idx) const = 0;
+	virtual void SaveWritableFirmware(uint32 idx, IVDStream& stream) = 0;
 };
 
 class IATDeviceIRQSource {
@@ -90,11 +106,23 @@ public:
 	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) = 0;
 };
 
+enum ATDeviceButton : uint32 {
+	kATDeviceButton_BlackBoxDumpScreen,
+	kATDeviceButton_BlackBoxMenu,
+	kATDeviceButton_CartridgeResetBank,
+	kATDeviceButton_CartridgeSDXEnable,
+	kATDeviceButton_IDEPlus2SwitchDisks,
+	kATDeviceButton_IDEPlus2WriteProtect,
+	kATDeviceButton_IDEPlus2SDX,
+};
+
 class IATDeviceButtons {
 public:
 	enum { kTypeID = 'adbt' };
 
-	virtual void ActivateButton(uint32 idx) = 0;
+	virtual uint32 GetSupportedButtons() const = 0;
+	virtual bool IsButtonDepressed(ATDeviceButton idx) const = 0;
+	virtual void ActivateButton(ATDeviceButton idx, bool state) = 0;
 };
 
 class IATDeviceParent {
@@ -111,7 +139,7 @@ class IATDeviceIndicators {
 public:
 	enum { kTypeID = 'adin' };
 
-	virtual void InitIndicators(IATUIRenderer *r) = 0;
+	virtual void InitIndicators(IATDeviceIndicatorManager *r) = 0;
 };
 
 class IATDeviceAudioOutput {
@@ -132,24 +160,7 @@ class IATDevicePortInput {
 public:
 	enum { kTypeID = 'adpi' };
 
-	virtual void InitPortInput(ATPIAEmulator *pia) = 0;
-};
-
-class IATDeviceCartridgePort {
-public:
-	virtual void AddCartridge(IATDeviceCartridge *cart) = 0;
-	virtual void RemoveCartridge(IATDeviceCartridge *cart) = 0;
-	virtual void UpdateRD5() = 0;
-};
-
-class IATDeviceCartridge {
-public:
-	enum { kTypeID = 'adct' };
-
-	virtual void InitCartridge(IATDeviceCartridgePort *port) = 0;
-
-	/// Returns true if the RD5 signal is active, which maps $A000-BFFF.
-	virtual bool IsRD5Active() const = 0;
+	virtual void InitPortInput(IATDevicePortManager *portmgr) = 0;
 };
 
 class IATDevice : public IVDRefUnknown {

@@ -12,6 +12,77 @@
     drive is accessible in the OS as <tt>D1:</tt>, with subsequent drives being <tt>D2:</tt>, <tt>D3:</tt>, and so on. Two-drive
     configurations are supported by plenty of software programs, and some support up to 15 disk drives.
   </p>
+  <h2>Using emulated disk images</h2>
+  <h3>Write modes</h3>
+  <p>
+    Disk images can be mounted on emulated drives with different <i>write modes</i>:
+  </p>
+  <blockquote><dl>
+    <dt>
+      Read only (RO)
+    </dt>
+    <dd>
+      No write access allowed, and no changes written back to source image. This is equivalent to placing
+      the write protect tab on a physical disk.
+    </dd>
+    <dt>
+      Read/write (R/W)
+    </dt>
+    <dd>
+      Write access allowed, with changes written back to the source image. This is equivalent to a physical
+      disk with the write enable notch uncovered.
+    </dd>
+    <dt>
+      Virtual read/write (VRW)
+    </dt>
+    <dd>
+      Write access allowed, but changes are kept in memory without automatically writing them back to the source.
+      This allows temporary modification of disks while keeping source files pristine. Modified disks are shown
+      in orange in the Disk Drives dialog and can be written back to image files via the Save command on each drive.
+    </dd>
+    <dd>
+      Newly created disk images
+      are automatically mounted in virtual read/write mode as they haven't been associated with an image file yet.
+    </dd>
+    <dt>
+      Virtual read/write safe (VRWSafe)
+    </dt>
+    <dd>
+      Similar to virtual read/write, except that format commands are blocked with a read-only disk error.
+      This allows virtualized write access to disks while still blocking writes for programs that attempt
+      to format their disk on boot as part of a protection check. Altirra defaults to this mode until changed
+      in Options.
+    </dd>
+  </dl></blockquote>
+  <p>
+    For disks mounted via drag-and-drop or the Boot Image command, the default mode is set in Options.
+    Individual disk drives can also be changed to specific modes via the Disk Drives dialog.
+  </p>
+  <h3>Temporary disk images</h3>
+  <p>
+    Sometimes, a disk image that is dropped into the emulator via drag-and-drop will show up as blue in the
+    Disk Options dialog. This means that the disk image is a temporary disk image created during the drag-and-drop
+    process. Temporary disk images have no associated disk image file and are common when dropping images from
+    a compressed archive, such as a .zip file.
+  </p>
+  <p>
+    Note that this does not apply to .zip files opened directly in the emulator, since in that case the emulator
+    knows the .zip file that the image came from.
+  </p>
+  <h3>Virtual folders</h3>
+  <p>
+    Altirra can also mount folders as virtualized disk images, creating a DOS 2 or SpartaDOS file system from the contents
+    of the folder. This is done through the flyout menu button on each drive in the Disk Drives dialog and is
+    useful for bringing files into the emulation without having to assemble them into a disk.
+    The disk image is dynamic, so it can adapt to live filesystem changes and the mapped files can be larger in
+    total than can normally fit on a disk image. A virtual DOS 2 image can have up to 64 files; a virtual
+    SpartaDOS image can have unlimited files. Virtual folder images are always read only.
+  </p>
+  <h3>.ARC archives</h3>
+  <p>
+    An .ARC archive can be mounted as a disk image. The emulator decompresses the contents of the archive
+    and creates a virtual SpartaDOS disk image to hold the contents.
+  </p>
   <h2>Hardware emulation modes</h2>
   <p>
     Altirra supports several different emulation modes, selectable through the <i>Disk Drives</i> dialog.

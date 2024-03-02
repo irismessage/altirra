@@ -18,6 +18,7 @@
 #include <stdafx.h>
 #include <vd2/system/hash.h>
 #include <vd2/system/int128.h>
+#include <at/atcore/blockdevice.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/deviceserial.h>
 #include "mio.h"
@@ -25,7 +26,6 @@
 #include "memorymanager.h"
 #include "firmwaremanager.h"
 #include "irqcontroller.h"
-#include "idedisk.h"
 #include "scsidisk.h"
 
 // HACK
@@ -272,7 +272,7 @@ void ATMIOEmulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 	mACIA.Init(sch, slowsch);
 }
 
-void ATMIOEmulator::InitIndicators(IATUIRenderer *r) {
+void ATMIOEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
 }
 
@@ -304,7 +304,7 @@ void ATMIOEmulator::GetChildDevices(vdfastvector<IATDevice *>& devs) {
 }
 
 void ATMIOEmulator::AddChildDevice(IATDevice *dev) {
-	IATIDEDisk *disk = vdpoly_cast<IATIDEDisk *>(dev);
+	IATBlockDevice *disk = vdpoly_cast<IATBlockDevice *>(dev);
 	if (disk) {
 		VDASSERT(vdpoly_cast<IATDevice *>(disk));
 
@@ -354,7 +354,7 @@ void ATMIOEmulator::RemoveChildDevice(IATDevice *dev) {
 		return;
 	}
 
-	IATIDEDisk *disk = vdpoly_cast<IATIDEDisk *>(dev);
+	IATBlockDevice *disk = vdpoly_cast<IATBlockDevice *>(dev);
 
 	if (!disk)
 		return;

@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <vd2/system/math.h>
 #include <vd2/system/strutil.h>
@@ -142,7 +142,7 @@ bool ATUIDialogDebugFont::OnLoaded() {
 
 	for(size_t i=0, n=mFontFamilies.size(); i<n; ++i) {
 		mFontList.AddItem(mFontFamilies[i].c_str());
-		mFontLookup.insert(mFontFamilies[i].c_str()).first->second = i;
+		mFontLookup.insert(mFontFamilies[i].c_str()).first->second = (uint32)i;
 	}
 
 	VDStringW s;
@@ -186,7 +186,7 @@ void ATUIDialogDebugFont::SelectSizeFromList() {
 	if (sel == end)
 		mSizeList.SetSelection(-1);
 	else {
-		mSizeList.SetSelection(sel - begin);
+		mSizeList.SetSelection((int)(sel - begin));
 		UpdateFont();
 	}
 }

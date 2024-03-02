@@ -62,7 +62,7 @@ protected:
 class IVDVideoDisplayManager {
 };
 
-class VDVideoDisplayManager : public VDThread, public IVDVideoDisplayManager {
+class VDVideoDisplayManager final : public VDThread, public IVDVideoDisplayManager {
 public:
 	VDVideoDisplayManager();
 	~VDVideoDisplayManager();

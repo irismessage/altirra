@@ -23,7 +23,7 @@
 #include <at/atio/diskfs.h>
 #include <at/atio/diskimage.h>
 
-class ATDiskFSDOS3 : public IATDiskFS {
+class ATDiskFSDOS3 final : public IATDiskFS {
 public:
 	ATDiskFSDOS3();
 	~ATDiskFSDOS3();
@@ -35,25 +35,26 @@ public:
 
 	bool IsReadOnly() { return mbReadOnly; }
 	void SetReadOnly(bool readOnly);
+	void SetAllowExtend(bool allow) {}
 
 	bool Validate(ATDiskFSValidationReport& report);
 	void Flush();
 
-	uintptr FindFirst(uintptr key, ATDiskFSEntryInfo& info);
+	uintptr FindFirst(uint32 key, ATDiskFSEntryInfo& info);
 	bool FindNext(uintptr searchKey, ATDiskFSEntryInfo& info);
 	void FindEnd(uintptr searchKey);
 
-	void GetFileInfo(uintptr key, ATDiskFSEntryInfo& info);
-	uintptr GetParentDirectory(uintptr dirKey);
+	void GetFileInfo(uint32 key, ATDiskFSEntryInfo& info);
+	uint32 GetParentDirectory(uint32 dirKey);
 
-	uintptr LookupFile(uintptr parentKey, const char *filename);
+	uint32 LookupFile(uint32 parentKey, const char *filename);
 
-	void DeleteFile(uintptr key);
-	void ReadFile(uintptr key, vdfastvector<uint8>& dst);
-	uintptr WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len);
-	void RenameFile(uintptr key, const char *newFileName);
-	void SetFileTimestamp(uintptr key, const VDExpandedDate& date) {}
-	void CreateDir(uintptr parentKey, const char *filename);
+	void DeleteFile(uint32 key);
+	void ReadFile(uint32 key, vdfastvector<uint8>& dst);
+	uint32 WriteFile(uint32 parentKey, const char *filename, const void *src, uint32 len);
+	void RenameFile(uint32 key, const char *newFileName);
+	void SetFileTimestamp(uint32 key, const VDExpandedDate& date) {}
+	uint32 CreateDir(uint32 parentKey, const char *filename);
 
 protected:
 	struct DirEnt;
@@ -147,7 +148,7 @@ void ATDiskFSDOS3::Init(IATDiskImage *image, bool readOnly) {
 
 	uint32 sectorSize = image->GetSectorSize();
 	if (sectorSize != 128 && sectorSize != 256)
-		throw MyError("Unsupported sector size for DOS 2.x image: %d bytes.", sectorSize);
+		throw MyError("Unsupported sector size for DOS 3.x image: %d bytes.", sectorSize);
 
 	const uint32 sectorCount = mpImage->GetVirtualSectorCount();
 	if (sectorCount != 720 && sectorCount != 1040)
@@ -232,9 +233,7 @@ void ATDiskFSDOS3::SetReadOnly(bool readOnly) {
 }
 
 bool ATDiskFSDOS3::Validate(ATDiskFSValidationReport& report) {
-	report.mbBrokenFiles = false;
-	report.mbBitmapIncorrect = false;
-	report.mbOpenWriteFiles = false;
+	report = {};
 
 	bool clusterMarked[128] = {false};
 
@@ -318,7 +317,7 @@ void ATDiskFSDOS3::Flush() {
 	mbDirty = false;
 }
 
-uintptr ATDiskFSDOS3::FindFirst(uintptr key, ATDiskFSEntryInfo& info) {
+uintptr ATDiskFSDOS3::FindFirst(uint32 key, ATDiskFSEntryInfo& info) {
 	if (key)
 		return 0;
 
@@ -356,7 +355,7 @@ void ATDiskFSDOS3::FindEnd(uintptr searchKey) {
 	delete (FindHandle *)searchKey;
 }
 
-void ATDiskFSDOS3::GetFileInfo(uintptr key, ATDiskFSEntryInfo& info) {
+void ATDiskFSDOS3::GetFileInfo(uint32 key, ATDiskFSEntryInfo& info) {
 	const DirEnt& de = mDirectory[key - 1];
 
 	int nameLen = 8;
@@ -375,15 +374,15 @@ void ATDiskFSDOS3::GetFileInfo(uintptr key, ATDiskFSEntryInfo& info) {
 	info.mbDateValid = false;
 }
 
-uintptr ATDiskFSDOS3::GetParentDirectory(uintptr dirKey) {
+uint32 ATDiskFSDOS3::GetParentDirectory(uint32 dirKey) {
 	return 0;
 }
 
-uintptr ATDiskFSDOS3::LookupFile(uintptr parentKey, const char *filename) {
+uint32 ATDiskFSDOS3::LookupFile(uint32 parentKey, const char *filename) {
 	if (parentKey)
 		return 0;
 
-	uintptr fileKey = 0;
+	uint32 fileKey = 0;
 	for(const DirEnt& de : mDirectory) {
 		++fileKey;
 
@@ -401,7 +400,7 @@ uintptr ATDiskFSDOS3::LookupFile(uintptr parentKey, const char *filename) {
 	return 0;
 }
 
-void ATDiskFSDOS3::DeleteFile(uintptr key) {
+void ATDiskFSDOS3::DeleteFile(uint32 key) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
@@ -454,7 +453,7 @@ void ATDiskFSDOS3::DeleteFile(uintptr key) {
 	mbDirty = true;
 }
 
-void ATDiskFSDOS3::ReadFile(uintptr key, vdfastvector<uint8>& dst) {
+void ATDiskFSDOS3::ReadFile(uint32 key, vdfastvector<uint8>& dst) {
 	VDASSERT(key >= 1 && key <= 63);
 
 	const uint8 fileId = (uint8)key - 1;
@@ -505,7 +504,7 @@ void ATDiskFSDOS3::ReadFile(uintptr key, vdfastvector<uint8>& dst) {
 	}
 }
 
-uintptr ATDiskFSDOS3::WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len) {
+uint32 ATDiskFSDOS3::WriteFile(uint32 parentKey, const char *filename, const void *src, uint32 len) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
@@ -590,14 +589,14 @@ uintptr ATDiskFSDOS3::WriteFile(uintptr parentKey, const char *filename, const v
 	return dirIdx + 1;
 }
 
-void ATDiskFSDOS3::RenameFile(uintptr key, const char *filename) {
+void ATDiskFSDOS3::RenameFile(uint32 key, const char *filename) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
 	if (!IsValidFileName(filename))
 		throw ATDiskFSException(kATDiskFSError_InvalidFileName);
 
-	uintptr conflictingKey = LookupFile(0, filename);
+	uint32 conflictingKey = LookupFile(0, filename);
 
 	if (conflictingKey == key)
 		return;
@@ -609,7 +608,7 @@ void ATDiskFSDOS3::RenameFile(uintptr key, const char *filename) {
 	mbDirty = true;
 }
 
-void ATDiskFSDOS3::CreateDir(uintptr parentKey, const char *filename) {
+uint32 ATDiskFSDOS3::CreateDir(uint32 parentKey, const char *filename) {
 	throw ATDiskFSException(kATDiskFSError_NotSupported);
 }
 

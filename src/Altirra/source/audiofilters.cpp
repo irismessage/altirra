@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/math.h>
 #include <vd2/system/win32/intrin.h>

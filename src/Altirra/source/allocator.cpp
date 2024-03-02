@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <crtdbg.h>
 
 extern "C" void *_ReturnAddress();
@@ -34,7 +34,7 @@ void *operator new(size_t bytes) {
 	return _malloc_dbg(bytes, _NORMAL_BLOCK, fname, ENCODED_RETURN_ADDRESS);
 }
 
-void *operator new(size_t bytes, const std::nothrow_t&) {
+void *operator new(size_t bytes, const std::nothrow_t&) throw() {
 	static const char fname[]="return address";
 
 	return _malloc_dbg(bytes, _NORMAL_BLOCK, fname, ENCODED_RETURN_ADDRESS);
@@ -46,7 +46,7 @@ void *operator new[](size_t bytes) {
 	return _malloc_dbg(bytes, _NORMAL_BLOCK, fname, ENCODED_RETURN_ADDRESS);
 }
 
-void *operator new[](size_t bytes, const std::nothrow_t&) {
+void *operator new[](size_t bytes, const std::nothrow_t&) throw() {
 	static const char fname[]="return address";
 
 	return _malloc_dbg(bytes, _NORMAL_BLOCK, fname, ENCODED_RETURN_ADDRESS);

@@ -15,20 +15,18 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 
+#include <at/atnativeui/dialog.h>
+#include <at/atnativeui/uiproxies.h>
 #include <windows.h>
 #include <richedit.h>
 
 #include "resource.h"
 
-#include <vd2/system/thread.h>
-#include <vd2/system/profile.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/w32assist.h>
-
-extern HINSTANCE g_hInst;
 
 namespace {
 	struct StreamInData {
@@ -128,7 +126,7 @@ namespace {
 
 		while(*s!='\r') ++s;
 
-		SetWindowTextA(hdlg, VDString(title, s-title).c_str());
+		SetWindowTextA(hdlg, VDString(title, (uint32)(s-title)).c_str());
 		s+=2;
 
 		tTextStream rtf;
@@ -217,7 +215,7 @@ namespace {
 
 		EDITSTREAM_fixed es;
 
-		StreamInData sd={rtf.data(), rtf.size()};
+		StreamInData sd={rtf.data(), (int)rtf.size()};
 
 		es.dwCookie = (DWORD_PTR)&sd;
 		es.dwError = 0;
@@ -229,25 +227,36 @@ namespace {
 	}
 }
 
-INT_PTR CALLBACK ATShowChangeLogDlgProcW32(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lParam) {
-	switch(msg) {
-	case WM_INITDIALOG:
-		TextToRichTextControl((LPCTSTR)lParam, hdlg, GetDlgItem(hdlg, IDC_TEXT));
-		return FALSE;
-	case WM_COMMAND:
-		switch(LOWORD(wParam)) {
-		case IDOK: case IDCANCEL:
-			EndDialog(hdlg, 0);
-			return TRUE;
-		}
-		break;
-	}
+class ATUIDialogChangeLog final : public VDResizableDialogFrameW32 {
+public:
+	ATUIDialogChangeLog();
 
-	return FALSE;
+private:
+	bool OnLoaded();
+	void OnDataExchange(bool write);
+};
+
+void ATUIDialogChangeLog::OnDataExchange(bool write) {
+	if (!write) {
+		TextToRichTextControl(MAKEINTRESOURCE(IDR_CHANGES), mhdlg, GetDlgItem(mhdlg, IDC_TEXT));
+	}
+}
+
+ATUIDialogChangeLog::ATUIDialogChangeLog()
+	: VDResizableDialogFrameW32(IDD_CHANGE_LOG)
+{
+}
+
+bool ATUIDialogChangeLog::OnLoaded() {
+	SetCurrentSizeAsMinSize();
+
+	mResizer.Add(IDC_TEXT, mResizer.kMC | mResizer.kAvoidFlicker);
+	mResizer.Add(IDOK, mResizer.kBR);
+
+	return VDResizableDialogFrameW32::OnLoaded();
 }
 
 void ATShowChangeLog(VDGUIHandle hParent) {
-	HMODULE hmod = VDLoadSystemLibraryW32("riched32.dll");
-	DialogBoxParam(g_hInst, MAKEINTRESOURCE(IDD_CHANGE_LOG), (HWND)hParent, ATShowChangeLogDlgProcW32, (LPARAM)MAKEINTRESOURCE(IDR_CHANGES));
-	FreeLibrary(hmod);
+	ATUIDialogChangeLog dlg;
+	dlg.ShowDialog(hParent);
 }

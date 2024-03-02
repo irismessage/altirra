@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/strutil.h>
 #include <at/atnativeui/dialog.h>
 #include "inputmanager.h"
@@ -73,7 +73,11 @@ void ATGetInputTriggerModeName(uint32 mode, bool addSpeed, VDStringW& s) {
 
 	if (addSpeed) {
 		const uint32 idx = (mode & kATInputTriggerSpeed_Mask) >> kATInputTriggerSpeed_Shift;
-		s.append_sprintf(L" %d", idx);
+		s.append_sprintf(L" %u", idx);
+
+		const uint32 accel = (mode & kATInputTriggerAccel_Mask) >> kATInputTriggerAccel_Shift;
+		if (accel)
+			s.append_sprintf(L" >>%u", accel);
 	}
 }
 
@@ -125,7 +129,7 @@ ATUIDialogEditControllerMapping::ATUIDialogEditControllerMapping(ATInputControll
 }
 
 bool ATUIDialogEditControllerMapping::OnLoaded() {
-	CBAddString(IDC_CONTROLLER, L"Joystick");
+	CBAddString(IDC_CONTROLLER, L"Joystick (CX40)");
 	CBAddString(IDC_CONTROLLER, L"Mouse (Atari ST)");
 	CBAddString(IDC_CONTROLLER, L"Mouse (Amiga)");
 	CBAddString(IDC_CONTROLLER, L"Paddle A");
@@ -136,9 +140,11 @@ bool ATUIDialogEditControllerMapping::OnLoaded() {
 	CBAddString(IDC_CONTROLLER, L"Light Pen");
 	CBAddString(IDC_CONTROLLER, L"Tablet (Atari touch tablet)");
 	CBAddString(IDC_CONTROLLER, L"Tablet (KoalaPad)");
-	CBAddString(IDC_CONTROLLER, L"CX-85 Numerical Keypad");
-	CBAddString(IDC_CONTROLLER, L"CX-80 Trackball (V1)");
+	CBAddString(IDC_CONTROLLER, L"CX85 Numerical Keypad");
+	CBAddString(IDC_CONTROLLER, L"CX80 Trackball (V1)");
 	CBAddString(IDC_CONTROLLER, L"5200 Trackball");
+	CBAddString(IDC_CONTROLLER, L"Driving Controller");
+	CBAddString(IDC_CONTROLLER, L"Keyboard Controller (CX21/23/50)");
 
 	CBAddString(IDC_PORT, L"Port 1");
 	CBAddString(IDC_PORT, L"Port 2");
@@ -223,6 +229,14 @@ void ATUIDialogEditControllerMapping::OnDataExchange(bool write) {
 				mControllerType = kATInputControllerType_5200Trackball;
 				mControllerIndex = index;
 				break;
+			case 14:
+				mControllerType = kATInputControllerType_Driving;
+				mControllerIndex = index;
+				break;
+			case 15:
+				mControllerType = kATInputControllerType_Keyboard;
+				mControllerIndex = index;
+				break;
 		}
 
 		if (mbDefaultEnabled)
@@ -303,6 +317,14 @@ void ATUIDialogEditControllerMapping::OnDataExchange(bool write) {
 				CBSetSelectedIndex(IDC_CONTROLLER, 13);
 				CBSetSelectedIndex(IDC_PORT, mControllerIndex);
 				break;
+			case kATInputControllerType_Driving:
+				CBSetSelectedIndex(IDC_CONTROLLER, 14);
+				CBSetSelectedIndex(IDC_PORT, mControllerIndex);
+				break;
+			case kATInputControllerType_Keyboard:
+				CBSetSelectedIndex(IDC_CONTROLLER, 15);
+				CBSetSelectedIndex(IDC_PORT, mControllerIndex);
+				break;
 		}
 
 		
@@ -376,7 +398,8 @@ protected:
 	bool OnCommand(uint32 id, uint32 extcode);
 	void OnHScroll(uint32 id, int code);
 	void UpdateSpeedLabel();
-	void UpdateSpeedEnable();
+	void UpdateAccelLabel();
+	void UpdateSpeedAccelEnable();
 
 	ATInputControllerType mControllerType;
 	uint32 mInputCode;
@@ -400,6 +423,8 @@ protected:
 	static const uint32 kTargetCodesKeypad[];
 	static const uint32 kTargetCodesTrackballCX80V1[];
 	static const uint32 kTargetCodes5200Trackball[];
+	static const uint32 kTargetCodesDriving[];
+	static const uint32 kTargetCodesKeyboard[];
 	static const uint32 kTargetModes[];
 };
 
@@ -733,6 +758,21 @@ const uint32 ATUIDialogEditInputMapping::kTargetCodes5200Trackball[] = {
 	kATInputTrigger_5200_Pause
 };
 
+const uint32 ATUIDialogEditInputMapping::kTargetCodesKeyboard[] = {
+	kATInputTrigger_Button0,
+	kATInputTrigger_Button0+1,
+	kATInputTrigger_Button0+2,
+	kATInputTrigger_Button0+3,
+	kATInputTrigger_Button0+4,
+	kATInputTrigger_Button0+5,
+	kATInputTrigger_Button0+6,
+	kATInputTrigger_Button0+7,
+	kATInputTrigger_Button0+8,
+	kATInputTrigger_Button0+9,
+	kATInputTrigger_Button0+10,
+	kATInputTrigger_Button0+11,
+};
+
 const uint32 ATUIDialogEditInputMapping::kTargetModes[] = {
 	kATInputTriggerMode_Default,
 	kATInputTriggerMode_AutoFire,
@@ -741,6 +781,13 @@ const uint32 ATUIDialogEditInputMapping::kTargetModes[] = {
 	kATInputTriggerMode_Relative,
 	kATInputTriggerMode_Absolute,
 	kATInputTriggerMode_Inverted
+};
+
+const uint32 ATUIDialogEditInputMapping::kTargetCodesDriving[] = {
+	kATInputTrigger_Axis0,
+	kATInputTrigger_Left,
+	kATInputTrigger_Right,
+	kATInputTrigger_Button0,
 };
 
 ATUIDialogEditInputMapping::ATUIDialogEditInputMapping(ATInputManager& iman, IATJoystickManager *ijoy, uint32 inputCode, uint32 targetCode)
@@ -793,6 +840,12 @@ const vdspan<const uint32> ATUIDialogEditInputMapping::GetTargetCodes(ATInputCon
 
 		case kATInputControllerType_5200Trackball:
 			return vdspan<const uint32>(kTargetCodes5200Trackball);
+
+		case kATInputControllerType_Driving:
+			return vdspan<const uint32>(kTargetCodesDriving);
+
+		case kATInputControllerType_Keyboard:
+			return vdspan<const uint32>(kTargetCodesKeyboard);
 	}
 }
 
@@ -800,7 +853,7 @@ bool ATUIDialogEditInputMapping::OnLoaded() {
 	const vdspan<const uint32>& targetCodes = GetTargetCodes(mControllerType);
 
 	mpTargetCodes = targetCodes.data();
-	mTargetCodeCount = targetCodes.size();
+	mTargetCodeCount = (uint32)targetCodes.size();
 
 	VDStringW name;
 	for(uint32 i=0; i<sizeof(kInputCodes)/sizeof(kInputCodes[0]); ++i) {
@@ -824,6 +877,10 @@ bool ATUIDialogEditInputMapping::OnLoaded() {
 	TBSetRange(IDC_SPEED, 0, 10);
 	TBSetValue(IDC_SPEED, 5);
 	TBSetPageStep(IDC_SPEED, 1);
+
+	TBSetRange(IDC_ACCEL, 0, 10);
+	TBSetValue(IDC_ACCEL, 5);
+	TBSetPageStep(IDC_ACCEL, 1);
 
 	OnDataExchange(false);
 	SetFocusToControl(IDC_SOURCE);
@@ -853,6 +910,7 @@ void ATUIDialogEditInputMapping::OnDataExchange(bool write) {
 			case kATInputTriggerMode_ToggleAF:
 			case kATInputTriggerMode_Relative:
 				mTargetCode += TBGetValue(IDC_SPEED) << kATInputTriggerSpeed_Shift;
+				mTargetCode += TBGetValue(IDC_ACCEL) << kATInputTriggerAccel_Shift;
 				break;
 		}
 	} else {
@@ -879,22 +937,25 @@ void ATUIDialogEditInputMapping::OnDataExchange(bool write) {
 		const uint32 *tmEnd = kTargetModes + sizeof(kTargetModes)/sizeof(kTargetModes[0]);
 		const uint32 *tm = std::find(kTargetModes, tmEnd, mTargetCode & kATInputTriggerMode_Mask);
 
-		CBSetSelectedIndex(IDC_MODE, tm != tmEnd ? tm - kTargetModes : 0);
+		CBSetSelectedIndex(IDC_MODE, tm != tmEnd ? (sint32)(tm - kTargetModes) : 0);
 
 		switch(mTargetCode & kATInputTriggerMode_Mask) {
 			case kATInputTriggerMode_AutoFire:
 			case kATInputTriggerMode_ToggleAF:
 			case kATInputTriggerMode_Relative:
 				TBSetValue(IDC_SPEED, (mTargetCode & kATInputTriggerSpeed_Mask) >> kATInputTriggerSpeed_Shift);
+				TBSetValue(IDC_ACCEL, (mTargetCode & kATInputTriggerAccel_Mask) >> kATInputTriggerAccel_Shift);
 				break;
 
 			default:
 				TBSetValue(IDC_SPEED, 5);
+				TBSetValue(IDC_ACCEL, 0);
 				break;
 		}
 
 		UpdateSpeedLabel();
-		UpdateSpeedEnable();
+		UpdateAccelLabel();
+		UpdateSpeedAccelEnable();
 	}
 }
 
@@ -930,7 +991,7 @@ bool ATUIDialogEditInputMapping::OnTimer(uint32 id) {
 bool ATUIDialogEditInputMapping::OnCommand(uint32 id, uint32 extcode) {
 	switch(id) {
 		case IDC_MODE:
-			UpdateSpeedEnable();
+			UpdateSpeedAccelEnable();
 			break;
 	}
 
@@ -938,14 +999,21 @@ bool ATUIDialogEditInputMapping::OnCommand(uint32 id, uint32 extcode) {
 }
 
 void ATUIDialogEditInputMapping::OnHScroll(uint32 id, int code) {
-	UpdateSpeedLabel();
+	if (id == IDC_SPEED)
+		UpdateSpeedLabel();
+	else if (id == IDC_ACCEL)
+		UpdateAccelLabel();
 }
 
 void ATUIDialogEditInputMapping::UpdateSpeedLabel() {
 	SetControlTextF(IDC_STATIC_SPEED, L"%d", TBGetValue(IDC_SPEED));
 }
 
-void ATUIDialogEditInputMapping::UpdateSpeedEnable() {
+void ATUIDialogEditInputMapping::UpdateAccelLabel() {
+	SetControlTextF(IDC_STATIC_ACCEL, L"%d", TBGetValue(IDC_ACCEL));
+}
+
+void ATUIDialogEditInputMapping::UpdateSpeedAccelEnable() {
 	bool speedValid = false;
 
 	switch(kTargetModes[CBGetSelectedIndex(IDC_MODE)]) {
@@ -958,6 +1026,8 @@ void ATUIDialogEditInputMapping::UpdateSpeedEnable() {
 
 	EnableControl(IDC_SPEED, speedValid);
 	EnableControl(IDC_STATIC_SPEED, speedValid);
+	EnableControl(IDC_ACCEL, speedValid);
+	EnableControl(IDC_STATIC_ACCEL, speedValid);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -983,7 +1053,7 @@ public:
 
 	uint32 GetFlagCheckBits() const { return mFlagCheckBits; }
 
-	uint32 GetItemCount() const { return mMappings.size(); }
+	uint32 GetItemCount() const { return (uint32)mMappings.size(); }
 	ATUIDialogInputMapListItem *GetItem(uint32 i) const { return mMappings[i]; }
 	sint32 GetIndexForItem(ATUIDialogInputMapListItem *item) const;
 
@@ -1067,7 +1137,7 @@ sint32 ATUIDialogInputMapControllerItem::GetIndexForItem(ATUIDialogInputMapListI
 	if (it == mMappings.end())
 		return -1;
 
-	return it - mMappings.begin();
+	return (sint32)(it - mMappings.begin());
 }
 
 void ATUIDialogInputMapControllerItem::AddItem(ATUIDialogInputMapListItem *item) {
@@ -1151,6 +1221,14 @@ void ATUIDialogInputMapControllerItem::GetText(VDStringW& s) const {
 
 		case kATInputControllerType_5200Trackball:
 			s.sprintf(L"5200 Trackball (port %d)", mControllerUnit + 1);
+			break;
+
+		case kATInputControllerType_Driving:
+			s.sprintf(L"Driving controller (port %d)", mControllerUnit + 1);
+			break;
+
+		case kATInputControllerType_Keyboard:
+			s.sprintf(L"Keyboard controller (port %d)", mControllerUnit + 1);
 			break;
 	}
 

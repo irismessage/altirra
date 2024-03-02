@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <shlobj.h>
 #include <shellapi.h>
 #include <ole2.h>
@@ -26,11 +26,13 @@
 #include <vd2/system/event.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
+#include <vd2/system/registry.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/thunk.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
+#include "oshelper.h"
 #include "resource.h"
 #include <at/atio/diskimage.h>
 #include <at/atio/diskfs.h>
@@ -45,8 +47,9 @@ public:
 	void SetBuffer(const void *buf, size_t len);
 
 protected:
-	bool OnLoaded();
-	void OnSize();
+	bool OnLoaded() override;
+	void OnSize() override;
+	void OnDestroy() override;
 	void OnWrapModeChanged(VDUIProxyComboBoxControl *sender, int sel);
 	void ReloadFile();
 
@@ -91,11 +94,15 @@ bool ATUIFileViewer::OnLoaded() {
 	mViewModeCombo.AddItem(L"Hex dump");
 	mViewModeCombo.AddItem(L"Executable");
 
-	mViewMode = kViewMode_38Columns;
+	VDRegistryAppKey key("Settings", false);
+	mViewMode = (ViewMode)key.getEnumInt("File Viewer: View mode", kViewModeCount, (int)kViewMode_38Columns);
+
 	mViewModeCombo.SetSelection(mViewMode);
 
 	mResizer.Init(mhdlg);
 	mResizer.Add(IDC_RICHEDIT, mResizer.kMC);
+	
+	ATUIRestoreWindowPlacement(mhdlg, "File viewer", SW_SHOW);
 
 	HWND hwndHelp = GetDlgItem(mhdlg, IDC_RICHEDIT);
 	if (hwndHelp) {
@@ -115,6 +122,15 @@ bool ATUIFileViewer::OnLoaded() {
 
 void ATUIFileViewer::OnSize() {
 	mResizer.Relayout();
+}
+
+void ATUIFileViewer::OnDestroy() {
+	VDRegistryAppKey key("Settings");
+	key.setInt("File Viewer: View mode", (int)mViewMode);
+
+	ATUISaveWindowPlacement(mhdlg, "File viewer");
+
+	VDDialogFrameW32::OnDestroy();
 }
 
 void ATUIFileViewer::OnWrapModeChanged(VDUIProxyComboBoxControl *sender, int sel) {
@@ -193,7 +209,7 @@ void ATUIFileViewer::ReloadFile() {
 
 				// dump the remainder of the file
 				pos += 4;
-				len = mSrcLen - pos;
+				len = (uint32)(mSrcLen - pos);
 			} else if (start == 0x2E0 && end == 0x2E1) {
 				rtf.append_sprintf("%08X: Run $%04X\\line ", pos, VDReadUnalignedLEU16(&src[pos+4]));
 				pos += 6;
@@ -353,7 +369,7 @@ void ATUIFileViewer::ReloadFile() {
 struct ATUIDiskExplorerFileEntry {
 public:
 	VDStringW mFileName;
-	uintptr mFileKey;
+	uint32 mFileKey;
 	uint32 mSectors;
 	uint32 mBytes;
 	bool mbIsDirectory;
@@ -731,7 +747,7 @@ protected:
 
 	uint32	mIconFile;
 	uint32	mIconFolder;
-	uintptr	mCurrentDirKey;
+	uint32	mCurrentDirKey;
 	bool	mbWriteEnabled;
 	bool	mbAutoFlush;
 
@@ -884,7 +900,11 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 					if (!mpFS->Validate(validationReport)) {
 						mpFS->SetReadOnly(true);
 
-						ShowWarning(L"The file system on this disk is damaged and has been mounted as read-only to prevent further damage.", L"Altirra Warning");
+						ShowWarning(
+							validationReport.mbBrokenFiles || validationReport.mbOpenWriteFiles
+								? L"The file system on this disk is damaged and has been mounted as read-only to prevent further damage."
+								: L"The allocation bitmap on this disk is incorrect. The disk has been mounted read-only as a precaution to prevent further damage.",
+							L"Altirra Warning");
 					}
 				}
 			}
@@ -1045,7 +1065,6 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 		vdfastvector<int> indices;
 		mList.GetSelectedIndices(indices);
 
-		HMODULE hmod = VDLoadSystemLibraryW32("riched32.dll");
 		if (!indices.empty()) {
 			const int index = indices.front();
 			FileListEntry *fle = static_cast<FileListEntry *>(mList.GetVirtualItem(index));
@@ -1054,22 +1073,18 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 				if (fle->mbIsDirectory) {
 					OnItemDoubleClick(nullptr, index);
 				} else if (fle->mFileKey) {
-					if (hmod) {
-						vdfastvector<uint8> buf;
+					vdfastvector<uint8> buf;
 
-						try {
-							mpFS->ReadFile(fle->mFileKey, buf);
+					try {
+						mpFS->ReadFile(fle->mFileKey, buf);
 
-							ATUIFileViewer viewer;
-							viewer.SetBuffer(buf.data(), buf.size());
-							viewer.ShowDialog(this);
-						} catch(const MyError& e) {
-							VDStringW str;
-							str.sprintf(L"Cannot view file: %hs", e.gets());
-							ShowError(str.c_str(), L"Altirra Error");
-						}
-
-						FreeLibrary(hmod);
+						ATUIFileViewer viewer;
+						viewer.SetBuffer(buf.data(), buf.size());
+						viewer.ShowDialog(this);
+					} catch(const MyError& e) {
+						VDStringW str;
+						str.sprintf(L"Cannot view file: %hs", e.gets());
+						ShowError(str.c_str(), L"Altirra Error");
 					}
 				}
 			}
@@ -1422,7 +1437,7 @@ namespace {
 				return STG_E_READFAULT;
 			}
 
-			stream->Write(buf.data(), buf.size(), NULL);
+			stream->Write(buf.data(), (ULONG)buf.size(), NULL);
 
 			// Required for Directory Opus to work.
 			LARGE_INTEGER lizero = {0};
@@ -1513,7 +1528,7 @@ namespace {
 				return STG_E_READFAULT;
 			}
 
-			stream->Write(buf.data(), buf.size(), NULL);
+			stream->Write(buf.data(), (ULONG)buf.size(), NULL);
 		}
 
 		return S_OK;
@@ -1579,7 +1594,7 @@ namespace {
 	}
 
 	void DataObject::GenerateFileDescriptors(FILEGROUPDESCRIPTORA *group) {
-		uint32 n = mFiles.size();
+		uint32 n = (uint32)mFiles.size();
 		group->cItems = (DWORD)n;
 
 		for(uint32 i=0; i<n; ++i) {
@@ -1598,7 +1613,7 @@ namespace {
 	}
 
 	void DataObject::GenerateFileDescriptors(FILEGROUPDESCRIPTORW *group) {
-		uint32 n = mFiles.size();
+		uint32 n = (uint32)mFiles.size();
 		group->cItems = (DWORD)n;
 
 		for(uint32 i=0; i<n; ++i) {
@@ -1799,7 +1814,7 @@ void ATUIDialogDiskExplorer::RefreshList() {
 	s.sprintf(L"Mounted %hs file system%hs. %d block%s (%uKB) free"
 		, fsinfo.mFSType.c_str(), mpFS->IsReadOnly() ? " (read-only)" : ""
 		, fsinfo.mFreeBlocks
-		, fsinfo.mFreeBlocks != 1 ? "s" : ""
+		, fsinfo.mFreeBlocks != 1 ? L"s" : L""
 		, (fsinfo.mFreeBlocks * fsinfo.mBlockSize) >> 10
 		);
 

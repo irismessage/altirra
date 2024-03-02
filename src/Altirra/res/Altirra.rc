@@ -227,6 +227,7 @@ BEGIN
         MENUITEM "Mount &folder as virtual DOS 2 disk...", ID_CONTEXT_MOUNTFOLDERDOS2
         MENUITEM "Mount folder as virtual S&partaDOS disk...", ID_CONTEXT_MOUNTFOLDERSDFS
         MENUITEM "Extract boot sectors for virtual DOS 2 disk...", ID_CONTEXT_EXTRACTBOOTSECTORS
+        MENUITEM "Recursively expand all .ARChive files...", ID_CONTEXT_EXPANDARCS
     END
 END
 
@@ -381,13 +382,13 @@ BEGIN
     EDITTEXT        IDC_EDIT,7,7,296,102,ES_MULTILINE | ES_READONLY | NOT WS_BORDER | WS_VSCROLL,WS_EX_STATICEDGE
 END
 
-IDD_CHANGE_LOG DIALOG 0, 0, 350, 199
-STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_CHANGE_LOG DIALOGEX 0, 0, 350, 199
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
 CAPTION "Altirra Change Log"
-FONT 8, "MS Shell Dlg"
+FONT 8, "MS Shell Dlg", 0, 0, 0x0
 BEGIN
     DEFPUSHBUTTON   "OK",IDOK,293,178,50,14
-    CONTROL         "",IDC_TEXT,"RICHEDIT",TCS_HOTTRACK | TCS_RAGGEDRIGHT | TCS_MULTISELECT | WS_BORDER | WS_VSCROLL | WS_TABSTOP,7,7,336,166
+    CONTROL         "",IDC_TEXT,"RichEdit20W",WS_BORDER | WS_VSCROLL | WS_TABSTOP | 0x844,7,7,336,166
 END
 
 IDD_DEVICE_HARDDISK DIALOGEX 0, 0, 312, 144
@@ -399,7 +400,6 @@ BEGIN
     EDITTEXT        IDC_IDE_IMAGEPATH,67,7,203,12,ES_AUTOHSCROLL
     PUSHBUTTON      "File...",IDC_IDE_IMAGEBROWSE,273,7,32,12
     PUSHBUTTON      "C&reate VHD Image...",IDC_CREATE_VHD,67,22,81,12
-    PUSHBUTTON      "Eject",IDC_EJECT,150,22,50,12
     PUSHBUTTON      "Physical Disk...",IDC_IDE_DISKBROWSE,231,22,74,12
     LTEXT           "&Geometry",IDC_STATIC_IDE_GEOMETRY,7,39,55,12,SS_CENTERIMAGE
     LTEXT           "Cylinders",IDC_STATIC_IDE_CYLINDERS,67,39,80,12,SS_CENTERIMAGE
@@ -451,58 +451,71 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,243,177,50,14
 END
 
-IDD_INPUTMAP_ADDMAPPING DIALOGEX 0, 0, 186, 90
+IDD_INPUTMAP_ADDMAPPING DIALOGEX 0, 0, 187, 103
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Add/Edit Input Mapping"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
     LTEXT           "&Target",IDC_STATIC,7,7,45,12,SS_CENTERIMAGE
-    COMBOBOX        IDC_TARGET,56,7,123,135,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    COMBOBOX        IDC_TARGET,56,7,124,135,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT           "&Source",IDC_STATIC,7,22,45,12,SS_CENTERIMAGE
-    COMBOBOX        IDC_SOURCE,56,22,123,157,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    COMBOBOX        IDC_SOURCE,56,22,124,157,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT           "&Mode",IDC_STATIC,7,37,45,12,SS_CENTERIMAGE
-    COMBOBOX        IDC_MODE,56,37,123,157,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    DEFPUSHBUTTON   "OK",IDOK,77,69,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,129,69,50,14
+    COMBOBOX        IDC_MODE,56,37,124,157,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT           "S&peed",IDC_STATIC,7,52,45,12,SS_CENTERIMAGE
     CONTROL         "",IDC_SPEED,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,56,52,87,12
-    LTEXT           "Static",IDC_STATIC_SPEED,148,52,31,12,SS_CENTERIMAGE
+    LTEXT           "Static",IDC_STATIC_SPEED,149,52,31,12,SS_CENTERIMAGE
+    LTEXT           "&Acceleration",IDC_STATIC,7,66,45,12,SS_CENTERIMAGE
+    CONTROL         "",IDC_ACCEL,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,56,66,87,12
+    LTEXT           "Static",IDC_STATIC_ACCEL,149,66,31,12,SS_CENTERIMAGE
+    DEFPUSHBUTTON   "OK",IDOK,77,82,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,130,82,50,14
 END
 
-IDD_AUDIO_OPTIONS DIALOGEX 0, 0, 320, 153
+IDD_AUDIO_OPTIONS DIALOGEX 0, 0, 321, 170
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Audio options"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
     LTEXT           "&Volume",IDC_STATIC,7,7,58,15,SS_CENTERIMAGE
     CONTROL         "",IDC_VOLUME,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,66,7,211,15
-    LTEXT           "0 dB",IDC_STATIC_VOLUME,278,7,35,15,SS_CENTERIMAGE,WS_EX_RIGHT
+    LTEXT           "0 dB",IDC_STATIC_VOLUME,278,7,36,15,SS_CENTERIMAGE,WS_EX_RIGHT
     LTEXT           "Drive Volume",IDC_STATIC,7,26,58,15,SS_CENTERIMAGE
     CONTROL         "",IDC_DRIVEVOL,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,66,26,211,15
-    LTEXT           "0 dB",IDC_STATIC_DRIVEVOL,278,26,35,15,SS_CENTERIMAGE,WS_EX_RIGHT
-    LTEXT           "Audio API",IDC_STATIC,7,48,58,10,SS_CENTERIMAGE
-    CONTROL         "WaveOut",IDC_API_WAVEOUT,"Button",BS_AUTORADIOBUTTON | WS_GROUP,66,48,47,10
-    CONTROL         "DirectSound",IDC_API_DIRECTSOUND,"Button",BS_AUTORADIOBUTTON,122,48,55,10
-    CONTROL         "Show debug info",IDC_DEBUG,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,197,48,69,10
-    LTEXT           "&Latency",IDC_STATIC,7,65,58,15,SS_CENTERIMAGE
-    CONTROL         "",IDC_LATENCY,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,66,65,211,15
-    LTEXT           "0 ms",IDC_STATIC_LATENCY,278,65,35,15,SS_CENTERIMAGE,WS_EX_RIGHT
-    LTEXT           "&Extra Buffer",IDC_STATIC,7,84,58,15,SS_CENTERIMAGE
-    CONTROL         "",IDC_EXTRABUFFER,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,66,84,211,15
-    LTEXT           "0 ms",IDC_STATIC_EXTRABUFFER,278,84,35,15,SS_CENTERIMAGE,WS_EX_RIGHT
-    LTEXT           "The latency setting controls the delay between input and sound output. Increase it if you are hearing clicking; decrease it for better input response.",IDC_STATIC,7,105,306,21
-    DEFPUSHBUTTON   "OK",IDOK,211,132,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,263,132,50,14
+    LTEXT           "0 dB",IDC_STATIC_DRIVEVOL,278,26,36,15,SS_CENTERIMAGE,WS_EX_RIGHT
+    LTEXT           "Covox Volume",IDC_STATIC,7,45,58,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_COVOXVOL,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,66,45,211,15
+    LTEXT           "0 dB",IDC_STATIC_COVOXVOL,278,45,36,15,SS_CENTERIMAGE,WS_EX_RIGHT
+    LTEXT           "Audio API",IDC_STATIC,7,65,58,10,SS_CENTERIMAGE
+    CONTROL         "WaveOut",IDC_API_WAVEOUT,"Button",BS_AUTORADIOBUTTON | WS_GROUP,66,65,47,10
+    CONTROL         "DirectSound",IDC_API_DIRECTSOUND,"Button",BS_AUTORADIOBUTTON,122,65,55,10
+    CONTROL         "Show debug info",IDC_DEBUG,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,197,65,69,10
+    LTEXT           "&Latency",IDC_STATIC,7,82,58,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_LATENCY,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,66,82,211,15
+    LTEXT           "0 ms",IDC_STATIC_LATENCY,278,82,36,15,SS_CENTERIMAGE,WS_EX_RIGHT
+    LTEXT           "&Extra Buffer",IDC_STATIC,7,101,58,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_EXTRABUFFER,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,66,101,211,15
+    LTEXT           "0 ms",IDC_STATIC_EXTRABUFFER,278,101,36,15,SS_CENTERIMAGE,WS_EX_RIGHT
+    LTEXT           "The latency setting controls the delay between input and sound output. Increase it if you are hearing clicking; decrease it for better input response.",IDC_STATIC,7,122,307,21
+    DEFPUSHBUTTON   "OK",IDOK,211,149,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,264,149,50,14
 END
 
-IDD_TAPE_CONTROL DIALOGEX 0, 0, 250, 74
-STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_TAPE_CONTROL DIALOGEX 0, 0, 251, 96
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+EXSTYLE WS_EX_TOOLWINDOW
 CAPTION "Cassette Tape Control"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    CONTROL         "",IDC_POSITION,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,7,52,169,15
-    LTEXT           "Static",IDC_STATIC_POSITION,180,52,63,15,SS_CENTERIMAGE,WS_EX_RIGHT
-    LTEXT           "",IDC_PEAK_IMAGE,7,7,236,40,0,WS_EX_CLIENTEDGE
+    CTEXT           "There is no tape in the cassette tape drive.",IDC_PEAK_IMAGE,7,7,237,40,SS_CENTERIMAGE,WS_EX_TRANSPARENT
+    CONTROL         "",IDC_POSITION,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,7,53,169,15
+    LTEXT           "Static",IDC_STATIC_POSITION,180,53,64,15,SS_CENTERIMAGE,WS_EX_RIGHT
+    CHECKBOX        "<",IDC_STOP,7,73,19,16,BS_PUSHLIKE
+    CHECKBOX        ";",IDC_PAUSE,28,73,19,16,BS_PUSHLIKE
+    CHECKBOX        "4",IDC_PLAY,49,73,19,16,BS_PUSHLIKE
+    CHECKBOX        "9",IDC_SEEK_START,77,73,19,16,BS_PUSHLIKE
+    CHECKBOX        ":",IDC_SEEK_END,97,73,19,16,BS_PUSHLIKE
+    CHECKBOX        "=",IDC_RECORD,125,73,19,16,BS_PUSHLIKE
 END
 
 IDD_ADJUST_ARTIFACTING DIALOGEX 0, 0, 389, 60
@@ -875,8 +888,10 @@ IDD_OPTIONS_FILEASSOC DIALOGEX 0, 0, 222, 108
 STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    PUSHBUTTON      "Set File Associations...",IDC_SETFILEASSOC,0,0,102,14
-    PUSHBUTTON      "Remove File Associations",IDC_REMOVEFILEASSOC,0,17,102,14
+    PUSHBUTTON      "Set File Associations (all users)...",IDC_SETFILEASSOC,0,0,177,14
+    PUSHBUTTON      "Remove File Associations (all users)",IDC_REMOVEFILEASSOC,0,17,177,14
+    PUSHBUTTON      "Set File Associations (current user only)...",IDC_SETUSERFILEASSOC,0,44,177,14
+    PUSHBUTTON      "Remove File Associations (current user only)",IDC_REMOVEUSERFILEASSOC,0,62,177,14
 END
 
 IDD_HDEVICE DIALOGEX 0, 0, 320, 109
@@ -992,6 +1007,7 @@ END
 
 IDD_FIRMWARE DIALOGEX 0, 0, 281, 193
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
+EXSTYLE WS_EX_ACCEPTFILES
 CAPTION "Firmware"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
@@ -1030,6 +1046,7 @@ FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
     LTEXT           "Default scale (%)",IDC_STATIC,2,0,57,12,SS_CENTERIMAGE
     EDITTEXT        IDC_SCALE,69,0,59,12,ES_AUTOHSCROLL
+    CONTROL         "Pause when menus are open",IDC_PAUSE_ON_MENU,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,0,19,111,10
 END
 
 IDD_DEVICES DIALOGEX 0, 0, 316, 182
@@ -1039,8 +1056,9 @@ FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
     CONTROL         "",IDC_TREE,"SysTreeView32",TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_TRACKSELECT | WS_HSCROLL | WS_TABSTOP,7,7,302,146,WS_EX_CLIENTEDGE
     PUSHBUTTON      "&Add...",IDC_ADD,7,161,50,14
-    PUSHBUTTON      "Remove",IDC_REMOVE,59,161,50,14
-    PUSHBUTTON      "&Settings...",IDC_SETTINGS,111,161,50,14,WS_DISABLED
+    PUSHBUTTON      "&Remove",IDC_REMOVE,59,161,50,14
+    PUSHBUTTON      "Remove All",IDC_REMOVEALL,111,161,50,14
+    PUSHBUTTON      "&Settings...",IDC_SETTINGS,164,161,50,14,WS_DISABLED
     DEFPUSHBUTTON   "OK",IDOK,259,161,50,14
 END
 
@@ -1053,38 +1071,6 @@ BEGIN
     CONTROL         "",IDC_TREE,"SysTreeView32",TVS_HASBUTTONS | TVS_LINESATROOT | TVS_DISABLEDRAGDROP | TVS_SHOWSELALWAYS | TVS_FULLROWSELECT | WS_HSCROLL | WS_TABSTOP,162,7,147,151,WS_EX_CLIENTEDGE
     DEFPUSHBUTTON   "OK",IDOK,205,161,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,259,161,50,14
-END
-
-IDD_HARD_DISK DIALOGEX 0, 0, 320, 181
-STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Hard disk setup"
-FONT 8, "MS Shell Dlg", 400, 0, 0x1
-BEGIN
-    GROUPBOX        "",IDC_STATIC,7,7,306,148
-    CONTROL         "Enable IDE hard disk",IDC_IDE_ENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,16,7,81,10
-    LTEXT           "&Image path",IDC_STATIC_IDE_IMAGEPATH,16,18,46,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_IDE_IMAGEPATH,67,18,203,12,ES_AUTOHSCROLL
-    PUSHBUTTON      "File...",IDC_IDE_IMAGEBROWSE,273,18,32,12
-    PUSHBUTTON      "C&reate VHD Image...",IDC_CREATE_VHD,67,33,81,12
-    PUSHBUTTON      "Eject",IDC_EJECT,150,33,50,12
-    PUSHBUTTON      "Physical Disk...",IDC_IDE_DISKBROWSE,231,33,74,12
-    LTEXT           "&Geometry",IDC_STATIC_IDE_GEOMETRY,16,50,46,12,SS_CENTERIMAGE
-    LTEXT           "Cylinders",IDC_STATIC_IDE_CYLINDERS,67,50,80,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_IDE_CYLINDERS,147,50,83,12,ES_AUTOHSCROLL | ES_NUMBER,WS_EX_RIGHT
-    LTEXT           "Heads",IDC_STATIC_IDE_HEADS,67,63,80,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_IDE_HEADS,147,63,83,12,ES_AUTOHSCROLL | ES_NUMBER,WS_EX_RIGHT
-    LTEXT           "Sectors per track",IDC_STATIC_IDE_SPT,67,76,60,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_IDE_SPT,147,76,83,12,ES_AUTOHSCROLL | ES_NUMBER,WS_EX_RIGHT
-    LTEXT           "Resulting size (MB)",IDC_STATIC_IDE_SIZE,67,88,80,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_IDE_SIZE,147,88,83,12,ES_AUTOHSCROLL | ES_NUMBER,WS_EX_RIGHT
-    CONTROL         "R&ead only",IDC_IDEREADONLY,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,67,101,48,10
-    LTEXT           "Hardware",IDC_STATIC_IDE_IOREGION,16,114,46,12,SS_CENTERIMAGE
-    COMBOBOX        IDC_HW_MODE,67,114,238,30,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Device speed",IDC_STATIC_IDE_SPEED,16,136,46,10
-    CONTROL         "Solid-state (fast)",IDC_SPEED_FAST,"Button",BS_AUTORADIOBUTTON,67,136,70,10
-    CONTROL         "Spinning platter (slow)",IDC_SPEED_SLOW,"Button",BS_AUTORADIOBUTTON,146,136,87,10
-    DEFPUSHBUTTON   "OK",IDOK,210,160,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,263,160,50,14
 END
 
 IDD_DEVICE_BLACKBOX DIALOGEX 0, 0, 275, 163
@@ -1340,6 +1326,218 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,252,61,50,14
 END
 
+IDD_PROFILES DIALOGEX 0, 0, 309, 181
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
+CAPTION "Profiles"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Profiles",IDC_STATIC,7,7,180,8
+    CONTROL         "",IDC_PROFILES,"SysTreeView32",TVS_HASBUTTONS | TVS_HASLINES | TVS_EDITLABELS | TVS_SHOWSELALWAYS | WS_HSCROLL | WS_TABSTOP,7,17,180,122,WS_EX_CLIENTEDGE
+    LTEXT           "Categories in profile",IDC_STATIC_CATEGORIES,194,7,108,8
+    CONTROL         "",IDC_CATEGORIES,"SysListView32",LVS_REPORT | LVS_ALIGNLEFT | LVS_NOCOLUMNHEADER | WS_BORDER | WS_TABSTOP,194,17,108,122,WS_EX_CLIENTEDGE
+    PUSHBUTTON      "&Add",IDC_ADD,7,143,50,14
+    PUSHBUTTON      "&Delete",IDC_DELETE,59,143,50,14
+    PUSHBUTTON      "&Set Default",IDC_SETDEFAULT,111,143,50,14
+    PUSHBUTTON      "S&witch",IDC_SWITCH,7,160,50,14
+    CONTROL         "&Visible",IDC_VISIBLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,64,160,43,14
+    PUSHBUTTON      "&Edit Categories",IDC_UPDATE,194,143,108,14
+    DEFPUSHBUTTON   "OK",IDOK,252,160,50,14
+END
+
+IDD_PROFILE_CATEGORIES DIALOGEX 0, 0, 309, 181
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
+CAPTION "Edit Profile Categories"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    CONTROL         "",IDC_CATEGORIES,"SysListView32",LVS_REPORT | LVS_ALIGNLEFT | LVS_NOCOLUMNHEADER | WS_BORDER | WS_TABSTOP,7,7,110,149,WS_EX_CLIENTEDGE
+    PUSHBUTTON      "OK",IDOK,199,160,50,14
+    DEFPUSHBUTTON   "Cancel",IDCANCEL,252,160,50,14
+    CONTROL         "",IDC_HELP_TEXT,"RichEdit20W",WS_TABSTOP | 0x804,122,7,180,149
+END
+
+IDD_OPTIONS_SETTINGS DIALOGEX 0, 0, 222, 108
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_SYSMENU
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    PUSHBUTTON      "Reset All Settings",IDC_RESETALL,0,0,86,14
+END
+
+IDD_DEVICE_POCKETMODEM DIALOGEX 0, 0, 343, 129
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Pocket Modem Options"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Protocol support",IDC_STATIC_PROTOCOL,7,7,54,10,SS_CENTERIMAGE
+    CONTROL         "Emulate &Telnet protocol",IDC_TELNET,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,73,7,91,10
+    CONTROL         "Automatic CR/LF conversion (improves compatibility, but disables binary xfers; auto-disables on received EOL)",IDC_TELNET_LFCONVERSION,
+                    "Button",BS_AUTOCHECKBOX | BS_TOP | BS_MULTILINE | WS_TABSTOP,83,18,250,18
+    LTEXT           "Permissions",IDC_STATIC_PERMISSIONS,7,38,38,8
+    CONTROL         "Allow &outbound connections",IDC_ALLOW_OUTBOUND,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,73,37,105,10
+    LTEXT           "Negotiate terminal type:",IDC_STATIC_TERMINAL_TYPE,87,48,79,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_TERMINAL_TYPE,177,48,160,81,CBS_DROPDOWN | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "&Accept incoming connections on port (1024-65535):",IDC_ACCEPT_CONNECTIONS,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,73,65,181,10
+    EDITTEXT        IDC_LISTEN_PORT,257,64,80,12,ES_AUTOHSCROLL | ES_NUMBER
+    CONTROL         "Accept IPv&6 connections",IDC_ACCEPT_IPV6,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,84,75,95,10
+    LTEXT           "Dial proxy address",IDC_STATIC_DIAL_ADDRESS,7,91,60,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_DIAL_ADDRESS,107,91,114,12,ES_AUTOHSCROLL
+    LTEXT           "Service",IDC_STATIC_DIAL_SERVICE,232,91,26,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_DIAL_SERVICE,260,91,77,12,ES_AUTOHSCROLL
+    DEFPUSHBUTTON   "OK",IDOK,233,108,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,287,108,50,14
+END
+
+IDD_DEVICE_CORVUS DIALOGEX 0, 0, 251, 48
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Corvus Interface Options"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "&Controller port",IDC_STATIC,7,7,75,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_PORT,88,7,156,58,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON   "OK",IDOK,141,27,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,195,27,50,14
+END
+
+IDD_OPTIONS_MEDIA DIALOGEX 0, 0, 222, 108
+STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x0
+BEGIN
+    LTEXT           "Default write mode",-1,0,0,74,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_WRITEMODE,78,0,143,55,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+END
+
+IDD_DEVICE_MYIDE2 DIALOGEX 0, 0, 251, 48
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "MyIDE-II options"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "&CPLD Version",IDC_STATIC,7,7,75,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_VERSION,88,7,156,58,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON   "OK",IDOK,141,27,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,195,27,50,14
+END
+
+IDD_DEVICE_DONGLE DIALOGEX 0, 0, 257, 86
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Joystick dongle options"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "&Controller port",IDC_STATIC,7,7,75,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_PORT,85,7,165,58,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "&Mapping",IDC_STATIC,7,24,75,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_MAPPING,85,24,165,12,ES_AUTOHSCROLL
+    DEFPUSHBUTTON   "OK",IDOK,146,65,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,200,65,50,14
+    LTEXT           "The mapping determines the dongle's 4-bit response to each possible 4-bit output from the joystick port.",IDC_STATIC,7,41,243,21
+END
+
+IDD_WIZARD DIALOGEX 0, 0, 321, 176
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+EXSTYLE WS_EX_CONTROLPARENT
+CAPTION "Altirra - First Time Setup"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    PUSHBUTTON      "&Next >",IDC_NEXT,214,155,50,14
+    PUSHBUTTON      "Close",IDCANCEL,265,155,50,14
+    PUSHBUTTON      "< &Prev",IDC_PREV,161,155,50,14
+    LTEXT           "Static",IDC_STEP_AREA,100,7,215,141,WS_BORDER
+    CONTROL         "",IDC_STEPS_LIST,"RichEdit20W",0x844,7,7,81,140
+    CONTROL         "",IDC_STATIC,"Static",SS_WHITERECT,0,150,321,2
+    CONTROL         "",IDC_STATIC,"Static",SS_WHITERECT,93,0,2,150
+    PUSHBUTTON      "Finish",IDOK,214,155,50,14
+END
+
+IDD_WIZARD_MESSAGE DIALOGEX 0, 0, 215, 141
+STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD | WS_SYSMENU
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    CONTROL         "",IDC_MESSAGE,"RichEdit20W",WS_TABSTOP | 0x844,0,0,215,140
+END
+
+IDD_WIZARD_SELECTTYPE DIALOGEX 0, 0, 215, 141
+STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD | WS_SYSMENU
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Which type of system do you want to start with?",IDC_MESSAGE,0,0,215,14
+    CONTROL         "&XL/XE Home Computer",IDC_TYPE_COMPUTER,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,11,16,193,10
+    CONTROL         "&5200 SuperSystem",IDC_TYPE_5200,"Button",BS_AUTORADIOBUTTON | WS_TABSTOP,11,65,193,10
+    LTEXT           "Computer with a keyboard, two joystick ports, a cartridge port, and an SIO bus for peripherals including disk drives and a cassette tape recorder.",IDC_STATIC,21,28,183,33
+    LTEXT           "Cartridge-based video game console with up to four analog controllers.",IDC_STATIC,21,80,183,23
+    LTEXT           "You can change the system type later with the System | Profiles menu.",IDC_STATIC,0,110,215,30
+END
+
+IDD_WIZARD_FIRMWARE DIALOGEX 0, 0, 215, 141
+STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD | WS_SYSMENU
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Long message here",IDC_MESSAGE,0,0,215,52
+    CONTROL         "",IDC_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_ALIGNLEFT | LVS_NOCOLUMNHEADER | WS_TABSTOP,0,55,215,67,WS_EX_CLIENTEDGE
+    PUSHBUTTON      "&Scan folder for firmware images...",IDC_SCAN,0,127,215,14
+END
+
+IDD_WIZARD_SELECTVIDEOTYPE DIALOGEX 0, 0, 215, 141
+STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD | WS_SYSMENU
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Select a video standard type for the computer:",IDC_MESSAGE,0,0,215,14
+    CONTROL         "&NTSC (60Hz)",IDC_TYPE_NTSC,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,11,16,193,10
+    CONTROL         "&PAL (50Hz)",IDC_TYPE_PAL,"Button",BS_AUTORADIOBUTTON | WS_TABSTOP,11,65,193,10
+    LTEXT           "Used in North America, Central America, and parts of South America. NTSC runs at a faster frame rate and also is required for some color patterning tricks (artifacting).",IDC_STATIC,21,29,183,33
+    LTEXT           "Used in parts of South America and most of Europe. PAL runs at a slower frame rate but allows for more CPU time; some late games written in Europe will only run on PAL machines.",IDC_STATIC,21,78,183,35
+    LTEXT           "You can change the video standard type later in the menu under System | Video.",IDC_STATIC,0,120,215,20
+END
+
+IDD_WIZARD_EXPERIENCE DIALOGEX 0, 0, 215, 141
+STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD | WS_SYSMENU
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "What type of experience do you want?",IDC_MESSAGE,0,0,215,14
+    CONTROL         "&Streamlined",IDC_TYPE_STREAMLINED,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,11,16,193,10
+    CONTROL         "&Authentic",IDC_TYPE_AUTHENTIC,"Button",BS_AUTORADIOBUTTON | WS_TABSTOP,11,63,193,10
+    LTEXT           "Run with enhancements so that the display is sharp and programs load faster.",IDC_STATIC,21,31,183,33
+    LTEXT           "Run disk and tape drives at realistic speeds, play simulated disk drive sounds, and tune the display to look like a CRT. This is like the real thing... including the load times.",IDC_STATIC,21,78,183,35
+    LTEXT           "Realism options can be tweaked later in the menu under the View and System menus.",IDC_STATIC,0,120,215,20
+END
+
+IDD_OPTIONS_DISPLAY_EFFECTS DIALOGEX 0, 0, 222, 108
+STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "Display effects",IDC_STATIC,0,0,218,108
+    LTEXT           "&Custom effect path",IDC_STATIC,5,12,207,8
+    EDITTEXT        IDC_PATH,4,22,187,12,ES_AUTOHSCROLL
+    PUSHBUTTON      "...",IDC_BROWSE,194,22,18,12
+END
+
+IDD_DEVICE_KMKJZIDEV2 DIALOGEX 0, 0, 251, 91
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "IDE Plus 2.0 options"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "&Revision",IDC_STATIC,7,7,53,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_REVISION,64,7,180,48,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "&PBI device ID",IDC_STATIC,7,23,53,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_DEVICE_ID,64,23,180,48,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "&Enable SpartaDOS X module on boot",IDC_ENABLE_SDX,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,42,132,10
+    CONTROL         "&Write protect hard disks",IDC_WRITE_PROTECT,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,54,93,10
+    DEFPUSHBUTTON   "OK",IDOK,141,70,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,195,70,50,14
+END
+
+IDD_DEVICE_COVOX DIALOGEX 0, 0, 251, 63
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Covox Options"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "&Base Address",IDC_STATIC,7,7,75,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_ADDRESS,88,7,156,58,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "&Channels",IDC_STATIC,7,23,75,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_CHANNELS,88,23,156,58,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON   "OK",IDOK,141,42,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,195,42,50,14
+END
+
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -1427,31 +1625,31 @@ BEGIN
     IDD_INPUTMAP_ADDMAPPING, DIALOG
     BEGIN
         LEFTMARGIN, 7
-        RIGHTMARGIN, 179
+        RIGHTMARGIN, 180
         VERTGUIDE, 52
         VERTGUIDE, 56
         TOPMARGIN, 7
-        BOTTOMMARGIN, 83
+        BOTTOMMARGIN, 96
     END
 
     IDD_AUDIO_OPTIONS, DIALOG
     BEGIN
         LEFTMARGIN, 7
-        RIGHTMARGIN, 313
+        RIGHTMARGIN, 314
         VERTGUIDE, 66
         VERTGUIDE, 278
         TOPMARGIN, 7
-        BOTTOMMARGIN, 146
+        BOTTOMMARGIN, 163
     END
 
     IDD_TAPE_CONTROL, DIALOG
     BEGIN
         LEFTMARGIN, 7
-        RIGHTMARGIN, 243
+        RIGHTMARGIN, 244
         VERTGUIDE, 176
         VERTGUIDE, 180
         TOPMARGIN, 7
-        BOTTOMMARGIN, 67
+        BOTTOMMARGIN, 89
     END
 
     IDD_ADJUST_ARTIFACTING, DIALOG
@@ -1622,6 +1820,10 @@ BEGIN
         HORZGUIDE, 160
     END
 
+    IDD_OPTIONS_DISPLAY, DIALOG
+    BEGIN
+    END
+
     IDD_OPTIONS_DISPLAY_MODE, DIALOG
     BEGIN
         LEFTMARGIN, 7
@@ -1644,6 +1846,11 @@ BEGIN
         RIGHTMARGIN, 254
         TOPMARGIN, 7
         BOTTOMMARGIN, 151
+    END
+
+    IDD_OPTIONS_FILEASSOC, DIALOG
+    BEGIN
+        VERTGUIDE, 177
     END
 
     IDD_HDEVICE, DIALOG
@@ -1719,6 +1926,10 @@ BEGIN
         BOTTOMMARGIN, 173
     END
 
+    IDD_OPTIONS_UI, DIALOG
+    BEGIN
+    END
+
     IDD_DEVICES, DIALOG
     BEGIN
         LEFTMARGIN, 7
@@ -1733,18 +1944,6 @@ BEGIN
         RIGHTMARGIN, 309
         TOPMARGIN, 7
         BOTTOMMARGIN, 175
-    END
-
-    IDD_HARD_DISK, DIALOG
-    BEGIN
-        LEFTMARGIN, 7
-        RIGHTMARGIN, 305
-        VERTGUIDE, 7
-        VERTGUIDE, 62
-        VERTGUIDE, 67
-        VERTGUIDE, 288
-        TOPMARGIN, 7
-        BOTTOMMARGIN, 137
     END
 
     IDD_DEVICE_BLACKBOX, DIALOG
@@ -1848,6 +2047,140 @@ BEGIN
         TOPMARGIN, 7
         BOTTOMMARGIN, 75
     END
+
+    IDD_PROFILES, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 302
+        VERTGUIDE, 187
+        VERTGUIDE, 194
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 174
+        HORZGUIDE, 17
+        HORZGUIDE, 139
+        HORZGUIDE, 143
+    END
+
+    IDD_PROFILE_CATEGORIES, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 302
+        VERTGUIDE, 117
+        VERTGUIDE, 122
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 174
+        HORZGUIDE, 156
+    END
+
+    IDD_OPTIONS_SETTINGS, DIALOG
+    BEGIN
+    END
+
+    IDD_DEVICE_POCKETMODEM, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 337
+        VERTGUIDE, 7
+        VERTGUIDE, 73
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 122
+    END
+
+    IDD_DEVICE_CORVUS, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 244
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 41
+    END
+
+    IDD_OPTIONS_MEDIA, DIALOG
+    BEGIN
+        VERTGUIDE, 74
+        VERTGUIDE, 78
+    END
+
+    IDD_DEVICE_MYIDE2, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 244
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 41
+    END
+
+    IDD_DEVICE_DONGLE, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 250
+        VERTGUIDE, 82
+        VERTGUIDE, 85
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 79
+    END
+
+    IDD_WIZARD, DIALOG
+    BEGIN
+        VERTGUIDE, 7
+        VERTGUIDE, 315
+        BOTTOMMARGIN, 169
+    END
+
+    IDD_WIZARD_MESSAGE, DIALOG
+    BEGIN
+        RIGHTMARGIN, 209
+    END
+
+    IDD_WIZARD_SELECTTYPE, DIALOG
+    BEGIN
+        RIGHTMARGIN, 209
+        VERTGUIDE, 11
+        VERTGUIDE, 21
+        VERTGUIDE, 204
+    END
+
+    IDD_WIZARD_FIRMWARE, DIALOG
+    BEGIN
+        RIGHTMARGIN, 209
+    END
+
+    IDD_WIZARD_SELECTVIDEOTYPE, DIALOG
+    BEGIN
+        RIGHTMARGIN, 209
+        VERTGUIDE, 11
+        VERTGUIDE, 21
+        VERTGUIDE, 204
+    END
+
+    IDD_WIZARD_EXPERIENCE, DIALOG
+    BEGIN
+        RIGHTMARGIN, 209
+        VERTGUIDE, 11
+        VERTGUIDE, 21
+        VERTGUIDE, 204
+    END
+
+    IDD_OPTIONS_DISPLAY_EFFECTS, DIALOG
+    BEGIN
+        VERTGUIDE, 212
+    END
+
+    IDD_DEVICE_KMKJZIDEV2, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 244
+        VERTGUIDE, 60
+        VERTGUIDE, 64
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 84
+    END
+
+    IDD_DEVICE_COVOX, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 244
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 56
+    END
 END
 #endif    // APSTUDIO_INVOKED
 
@@ -1858,8 +2191,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 2,7,0,0
- PRODUCTVERSION 2,7,0,0
+ FILEVERSION 2,8,0,0
+ PRODUCTVERSION 2,8,0,0
  FILEFLAGSMASK 0x17L
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -1876,12 +2209,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "virtualdub.org"
             VALUE "FileDescription", "Altirra 8-bit computer emulator"
-            VALUE "FileVersion", "2.7.1.0"
+            VALUE "FileVersion", "2.8.0.0"
             VALUE "InternalName", "Altirra"
             VALUE "LegalCopyright", "Copyright (C) 2008-2016 Avery Lee, All Rights Reserved."
             VALUE "OriginalFilename", "Altirra.exe"
             VALUE "ProductName", "Altirra"
-            VALUE "ProductVersion", "2.7.1.0"
+            VALUE "ProductVersion", "2.8.0.0"
         END
     END
     BLOCK "VarFileInfo"
@@ -1897,20 +2230,35 @@ END
 //
 
 IDR_KERNEL              KERNEL                  "..\\..\\..\\out\\release\\kernel.rom"
+
 IDR_KERNELXL            KERNEL                  "..\\..\\..\\out\\release\\kernelxl.rom"
+
 IDR_HLEKERNEL           KERNEL                  "..\\..\\..\\out\\release\\hlekernel.rom"
+
 IDR_NOKERNEL            KERNEL                  "..\\..\\..\\out\\release\\nokernel.rom"
+
 IDR_BASIC               KERNEL                  "..\\..\\..\\out\\release\\atbasic.bin"
+
 IDR_5200KERNEL          KERNEL                  "..\\..\\..\\out\\Release\\superkernel.rom"
+
 IDR_NOCARTRIDGE         KERNEL                  "..\\..\\..\\out\\Release\\nocartridge.rom"
+
 IDR_NOHDBIOS            KERNEL                  "..\\..\\..\\out\\Release\\nohdbios.rom"
+
 IDR_NOGAME              KERNEL                  "..\\..\\..\\out\\Release\\nogame.rom"
+
 IDR_U1MBBIOS            KERNEL                  "..\\..\\..\\out\\release\\ultimate.lzrom"
+
 IDR_850RELOCATOR        KERNEL                  "..\\..\\..\\out\\release\\850relocator.bin"
+
 IDR_850HANDLER          KERNEL                  "..\\..\\..\\out\\release\\850handler.bin"
+
 IDR_1030FIRMWARE        KERNEL                  "..\\..\\..\\out\\release\\1030firmware.bin"
+
 IDR_NOMIO               KERNEL                  "..\\..\\..\\out\\release\\nomio.lzrom"
+
 IDR_NOBLACKBOX          KERNEL                  "..\\..\\..\\out\\release\\noblackbox.lzrom"
+
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -1918,14 +2266,23 @@ IDR_NOBLACKBOX          KERNEL                  "..\\..\\..\\out\\release\\nobla
 //
 
 IDR_CHANGES             STUFF                   "changes.txt"
+
 IDR_DEBUG_HELP          STUFF                   "dbghelp.txt"
+
 IDR_TRACK_STEP          STUFF                   "TrackStep.pcm"
+
 IDR_TRACK_STEP_2        STUFF                   "TrackStep2.pcm"
+
 IDR_TRACK_STEP_3        STUFF                   "TrackStep3.pcm"
+
 IDR_DISK_SPIN           STUFF                   "DiskSpin.pcm"
+
 IDR_DISKLOADER128       STUFF                   "..\\..\\..\\out\\Release\\atdiskloader128.bin"
+
 IDR_ABOUT               STUFF                   "about.txt"
+
 IDR_MENU_DEFAULT        STUFF                   "menu_default.txt"
+
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -1934,13 +2291,16 @@ IDR_MENU_DEFAULT        STUFF                   "menu_default.txt"
 
 IDB_TOOLBAR_PROFILER    BITMAP                  "profilerToolbar.bmp"
 
+
 /////////////////////////////////////////////////////////////////////////////
 //
 // Cursor
 //
 
 IDC_TARGET              CURSOR                  "target.cur"
+
 IDC_TARGET_OFF          CURSOR                  "targetoff.cur"
+
 #endif    // English (United States) resources
 /////////////////////////////////////////////////////////////////////////////
 

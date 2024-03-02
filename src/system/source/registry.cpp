@@ -23,8 +23,9 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
+#include <shlwapi.h>
 
 #include <vd2/system/VDString.h>
 #include <vd2/system/registry.h>
@@ -32,7 +33,7 @@
 
 ///////////////////////////////////////////////////////////////////////////
 
-class VDRegistryProviderW32 : public IVDRegistryProvider {
+class VDRegistryProviderW32 final : public IVDRegistryProvider {
 public:
 	void *GetUserKey();
 	void *GetMachineKey();
@@ -56,6 +57,7 @@ public:
 
 	bool RemoveValue(void *key, const char *name);
     bool RemoveKey(void *key, const char *name);
+    bool RemoveKeyRecursive(void *key, const char *name);
 
 	void *EnumKeysBegin(void *key);
 	const char *EnumKeysNext(void *enumerator);
@@ -246,6 +248,10 @@ bool VDRegistryProviderW32::RemoveKey(void *key, const char *name) {
 	return 0 != RegDeleteKey((HKEY)key, name);
 }
 
+bool VDRegistryProviderW32::RemoveKeyRecursive(void *key, const char *name) {
+	return 0 != SHDeleteKey((HKEY)key, name);
+}
+
 void *VDRegistryProviderW32::EnumKeysBegin(void *key) {
 	KeyEnumerator *ke = new KeyEnumerator;
 
@@ -416,6 +422,10 @@ bool VDRegistryKey::removeValue(const char *name) {
 
 bool VDRegistryKey::removeKey(const char *name) {
 	return mKey && VDGetRegistryProvider()->RemoveKey(mKey, name);
+}
+
+bool VDRegistryKey::removeKeyRecursive(const char *name) {
+	return mKey && VDGetRegistryProvider()->RemoveKeyRecursive(mKey, name);
 }
 
 ///////////////////////////////////////////////////////////////////////////////

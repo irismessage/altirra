@@ -64,6 +64,11 @@ VDString VDFileSplitPathRight(const VDString&);
 VDStringW VDFileSplitPathLeft(const VDStringW&);
 VDStringW VDFileSplitPathRight(const VDStringW&);
 
+VDStringSpanA VDFileSplitPathLeftSpan(const VDStringSpanA&);
+VDStringSpanA VDFileSplitPathRightSpan(const VDStringSpanA&);
+VDStringSpanW VDFileSplitPathLeftSpan(const VDStringSpanW&);
+VDStringSpanW VDFileSplitPathRightSpan(const VDStringSpanW&);
+
 // VDSplitRoot returns a pointer to the second component of the filename,
 // or the beginning of the string if there is no second component.
 
@@ -99,6 +104,11 @@ VDString VDFileSplitExtLeft(const VDString&);
 VDStringW VDFileSplitExtLeft(const VDStringW&);
 VDString VDFileSplitExtRight(const VDString&);
 VDStringW VDFileSplitExtRight(const VDStringW&);
+
+VDStringSpanA VDFileSplitExtLeftSpan(const VDStringSpanA&);
+VDStringSpanW VDFileSplitExtLeftSpan(const VDStringSpanW&);
+VDStringSpanA VDFileSplitExtRightSpan(const VDStringSpanA&);
+VDStringSpanW VDFileSplitExtRightSpan(const VDStringSpanW&);
 
 /////////////////////////////////////////////////////////////////////////////
 
@@ -192,6 +202,8 @@ VDStringW VDGetFullPath(const wchar_t *partialPath);
 VDStringW VDGetLongPath(const wchar_t *path);
 
 VDStringW VDMakePath(const wchar_t *base, const wchar_t *file);
+VDStringW VDMakePath(const VDStringSpanW& base, const VDStringSpanW& file);
+
 bool VDFileIsPathEqual(const wchar_t *path1, const wchar_t *path2);
 void VDFileFixDirPath(VDStringW& path);
 VDStringW VDGetLocalModulePath();
@@ -204,7 +216,7 @@ VDStringW VDGetRootVolumeLabel(const wchar_t *rootPath);
 
 /////////////////////////////////////////////////////////////////////////////
 
-enum VDFileAttributes {
+enum VDFileAttributes : uint32 {
 	kVDFileAttr_ReadOnly	= 0x01,
 	kVDFileAttr_System		= 0x02,
 	kVDFileAttr_Hidden		= 0x04,

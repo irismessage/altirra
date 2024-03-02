@@ -35,6 +35,8 @@ public:
 	void GetExecState(ATCPUExecState& state) override;
 	void SetExecState(const ATCPUExecState& state) override;
 
+	sint32 GetTimeSkew() override;
+
 	uint8 ReadByte(uint32 address) override;
 	void ReadMemory(uint32 address, void *dst, uint32 n) override;
 

@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/text.h>
 #include <vd2/system/VDString.h>
@@ -157,6 +157,12 @@ uint32 ATSaveStateReader::ReadUint32() {
 	return v;
 }
 
+uint64 ATSaveStateReader::ReadUint64() {
+	uint64 v = 0;
+	ReadData(&v, 8);
+	return v;
+}
+
 void ATSaveStateReader::ReadString(VDStringW& str) {
 	uint32 len = 0;
 	int shift = 0;
@@ -255,8 +261,12 @@ void ATSaveStateWriter::WriteUint32(uint32 v) {
 	WriteData(&v, 4);
 }
 
+void ATSaveStateWriter::WriteUint64(uint64 v) {
+	WriteData(&v, 8);
+}
+
 void ATSaveStateWriter::WriteString(const wchar_t *s) {
-	const VDStringA& s8 = VDTextWToU8(s, wcslen(s));
+	const VDStringA& s8 = VDTextWToU8(s, (uint32)wcslen(s));
 	size_t len = s8.size();
 
 	do {

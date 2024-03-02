@@ -33,7 +33,8 @@ public:
 enum ATEthernetFrameDecodedType {
 	kATEthernetFrameDecodedType_None,
 	kATEthernetFrameDecodedType_ARP,
-	kATEthernetFrameDecodedType_IPv4
+	kATEthernetFrameDecodedType_IPv4,
+	kATEthernetFrameDecodedType_IPv6
 };
 
 class IATEthernetEndpoint {

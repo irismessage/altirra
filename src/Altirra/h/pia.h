@@ -18,6 +18,8 @@
 #ifndef f_AT_PIA_H
 #define f_AT_PIA_H
 
+#include <at/atcore/deviceport.h>
+
 class ATIRQController;
 class ATSaveStateReader;
 class ATSaveStateWriter;
@@ -37,8 +39,6 @@ enum ATPIAOutputBits {
 	kATPIAOutput_CB2 = 0x20000		// command
 };
 
-typedef void (*ATPIAOutputFn)(void *data, uint32 outputState);
-
 struct ATPIAFloatingInputs {
 	ATScheduler *mpScheduler;
 	uint8 mFloatingInputMask;
@@ -48,18 +48,20 @@ struct ATPIAFloatingInputs {
 	uint64	mFloatTimers[8];
 };
 
-class ATPIAEmulator {
+class ATPIAEmulator final : public IATDevicePortManager {
 public:
 	ATPIAEmulator();
 
 	uint8 GetPortBOutput() const { return (uint8)(mOutput >> 8); }
 
-	int AllocInput();
-	void FreeInput(int index);
-	void SetInput(int index, uint32 rval);
+	int AllocInput() override;
+	void FreeInput(int index) override;
+	void SetInput(int index, uint32 rval) override;
 
-	int AllocOutput(ATPIAOutputFn fn, void *ptr, uint32 changeMask);
-	void FreeOutput(int index);
+	uint32 GetOutputState() const override { return mOutput; }
+	int AllocOutput(ATPortOutputFn fn, void *ptr, uint32 changeMask) override;
+	void ModifyOutputMask(int index, uint32 changeMask);
+	void FreeOutput(int index) override;
 
 	void Init(ATIRQController *irqcon);
 	void ColdReset();
@@ -126,17 +128,17 @@ protected:
 	};
 
 	uint32	mOutputReportMask;
-	uint8	mOutputAllocBitmap;
+	uint16	mOutputAllocBitmap;
 	uint8	mInputAllocBitmap;
 	uint16	mInputs[4];
 
 	struct OutputEntry {
 		uint32 mChangeMask;
-		ATPIAOutputFn mpFn;
+		ATPortOutputFn mpFn;
 		void *mpData;
 	};
 
-	OutputEntry mOutputs[8];
+	OutputEntry mOutputs[12];
 };
 
 #endif

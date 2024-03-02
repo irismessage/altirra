@@ -63,6 +63,8 @@ void ATPokeyRenderer::Init(ATScheduler *sch, ATPokeyTables *tables) {
 	mLastOutputTime = ATSCHEDULER_GETTIME(mpScheduler);
 	mLastOutputSampleTime = mLastOutputTime;
 
+	mSerialPulse = 200;
+
 	ColdReset();
 }
 
@@ -269,19 +271,54 @@ void ATPokeyRenderer::ClearChannelDeferredEvents(int channel, uint32 t) {
 	mDeferredEvents[channel].mbEnabled = false;
 }
 
-uint32 ATPokeyRenderer::EndBlock() {
-	static uint32 lastFlush = 0;
+void ATPokeyRenderer::AddSerialNoisePulse(uint32 t) {
+	if (mSerialPulseTimes.size() > 65536)
+		return;
 
+	if (!mSerialPulseTimes.empty() && mSerialPulseTimes.back() - t < 0x80000000)
+		return;
+
+	mSerialPulseTimes.push_back(t);
+}
+
+uint32 ATPokeyRenderer::EndBlock() {
 	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 
 	Flush(t);
 	GenerateSamples(t);
 
-	uint32 sampleCount = mOutputSampleCount;
+	// Merge noise samples
+	const uint32 sampleCount = mOutputSampleCount;
+
+	if (!mSerialPulseTimes.empty()) {
+		const uint32 baseTime = t - sampleCount * 28;
+		float pulse = mSerialPulse;
+
+		auto it = mSerialPulseTimes.begin();
+		auto itEnd = mSerialPulseTimes.end();
+
+		while(it != itEnd) {
+			const uint32 pulseTime = *it;
+			const uint32 rawOffset = pulseTime - baseTime;
+
+			if (rawOffset < 0x80000000) {
+				const uint32 sampleOffset = rawOffset / 28;
+
+				if (sampleOffset >= sampleCount)
+					break;
+
+				mRawOutputBuffer[sampleOffset] += pulse;
+				pulse = -pulse;
+			}
+		
+			++it;
+		}
+	
+		mSerialPulse = pulse;
+		mSerialPulseTimes.erase(mSerialPulseTimes.begin(), it);
+	}
 
 	mOutputSampleCount = 0;
-
-	lastFlush = t;
 
 	VDASSERT(t - mLastOutputSampleTime <= 28);
 
@@ -391,10 +428,10 @@ void ATPokeyRenderer::Flush(const uint32 t) {
 			FlushDeferredEvents(i, t);
 	}
 
-	const uint32 n0 = mChannelEdges[0].size();
-	const uint32 n1 = mChannelEdges[1].size();
-	const uint32 n2 = mChannelEdges[2].size();
-	const uint32 n3 = mChannelEdges[3].size();
+	const uint32 n0 = (uint32)mChannelEdges[0].size();
+	const uint32 n1 = (uint32)mChannelEdges[1].size();
+	const uint32 n2 = (uint32)mChannelEdges[2].size();
+	const uint32 n3 = (uint32)mChannelEdges[3].size();
 	const uint32 n01 = n0 + n1;
 	const uint32 n23 = n2 + n3;
 

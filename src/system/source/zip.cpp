@@ -23,7 +23,7 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/zip.h>
 #include <vd2/system/error.h>
 #include <vd2/system/binary.h>
@@ -87,24 +87,7 @@ uint32 VDCRCChecker::CRC(uint32 crc, const void *src, sint32 len) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-VDZipStream::VDZipStream()
-	: mPos(0)
-	, mbCRCEnabled(false)
-{
-}
-
-VDZipStream::VDZipStream(IVDStream *pSrc, uint64 limit, bool bStored)
-	: mPos(0)
-	, mbCRCEnabled(false)
-{
-	Init(pSrc, limit, bStored);
-}
-
-VDZipStream::~VDZipStream() {
-}
-
-
-void VDZipStream::Init(IVDStream *pSrc, uint64 limit, bool bStored) {
+void VDDeflateStream::Init(IVDStream *pSrc, uint64 limit, bool bStored) {
 	mBits.init(pSrc, limit);
 	mBlockType = kNoBlock;
 	mReadPt = mWritePt = mBufferLevel = 0;
@@ -118,20 +101,20 @@ void VDZipStream::Init(IVDStream *pSrc, uint64 limit, bool bStored) {
 	}
 }
 
-const wchar_t *VDZipStream::GetNameForError() {
+const wchar_t *VDDeflateStream::GetNameForError() {
 	return mBits.stream()->GetNameForError();
 }
 
-sint64 VDZipStream::Pos() {
+sint64 VDDeflateStream::Pos() {
 	return mPos;
 }
 
-void VDZipStream::Read(void *buffer, sint32 bytes) {
+void VDDeflateStream::Read(void *buffer, sint32 bytes) {
 	if (bytes != ReadData(buffer, bytes))
 		throw MyError("Read error on compressed data");
 }
 
-sint32 VDZipStream::ReadData(void *dst0, sint32 bytes) {
+sint32 VDDeflateStream::ReadData(void *dst0, sint32 bytes) {
 	sint32 actual = 0;
 
 	uint8 *dst = (uint8 *)dst0;
@@ -175,11 +158,11 @@ sint32 VDZipStream::ReadData(void *dst0, sint32 bytes) {
 	return actual;
 }
 
-void VDZipStream::Write(const void *buffer, sint32 bytes) {
+void VDDeflateStream::Write(const void *buffer, sint32 bytes) {
 	throw MyError("Zip streams are read-only.");
 }
 
-bool VDZipStream::Inflate() {
+bool VDDeflateStream::Inflate() {
 	if (mBlockType == kNoBlock)
 		if (mbNoMoreBlocks || !ParseBlockHeader())
 			return false;
@@ -328,7 +311,7 @@ namespace {
 	}
 }
 
-bool VDZipStream::ParseBlockHeader() {
+bool VDDeflateStream::ParseBlockHeader() {
 	unsigned char ltbl_lengths[20];
 	unsigned char ltbl_decode[256];
 
@@ -479,7 +462,8 @@ bool VDZipStream::ParseBlockHeader() {
 namespace {
 	enum {
 		kZipMethodStore		= 0,
-		kZipMethodDeflate	= 8
+		kZipMethodDeflate	= 8,
+		kZipMethodEnhancedDeflate	= 9
 	};
 
 	struct ZipFileHeader {
@@ -603,8 +587,12 @@ found_directory:
 		if (ent.signature != ZipFileEntry::kSignature)
 			throw MyError("Zip directory is bad");
 
-		if (ent.method != kZipMethodStore && ent.method != kZipMethodDeflate)
-			throw MyError("Unsupported compression method in zip archive");
+		if (ent.method != kZipMethodStore && ent.method != kZipMethodDeflate) {
+			if (ent.method == kZipMethodEnhancedDeflate)
+				throw MyError("The Enhanced Deflate compression method in .zip files is not currently supported.");
+			else
+				throw MyError("Unsupported compression method in zip archive");
+		}
 
 		fii.mDataStart			= ent.reloff_localhdr;
 		fii.mCompressedSize		= ent.compressed_size;
@@ -645,16 +633,6 @@ IVDStream *VDZipArchive::OpenRawStream(sint32 idx) {
 }
 
 ///////////////////////////////////////////////////////////////////////////
-
-VDGUnzipStream::VDGUnzipStream() {
-}
-
-VDGUnzipStream::VDGUnzipStream(IVDStream *pSrc, uint64 limit) {
-	Init(pSrc, limit);
-}
-
-VDGUnzipStream::~VDGUnzipStream() {
-}
 
 void VDGUnzipStream::Init(IVDStream *pSrc, uint64 limit) {
 	// See RFC1952 for a description of the gzip header format.
@@ -729,6 +707,6 @@ void VDGUnzipStream::Init(IVDStream *pSrc, uint64 limit) {
 
 	limit -= gzipContainerBytes;
 
-	VDZipStream::Init(pSrc, limit, false);
+	VDDeflateStream::Init(pSrc, limit, false);
 }
 

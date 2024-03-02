@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <vd2/system/error.h>
 #include <vd2/system/linearalloc.h>
@@ -33,15 +33,13 @@
 
 extern HWND g_hwnd;
 extern HMENU g_hMenu;
-extern HMENU g_hMenuMRU;
-extern ATUIMenu *g_pMenuMRU;
 extern ATUICommandManager g_ATUICommandMgr;
 
-HMENU g_hMenuFirmware[2];
-ATUIMenu *g_pMenuFirmware[2];
+HMENU g_hMenuDynamic[kATUIDynamicMenuCount];
+ATUIMenu *g_pMenuDynamic[kATUIDynamicMenuCount];
 
-IATUIDynamicMenuProvider *g_pDynamicMenuProvider[2];
-int g_dynamicMenuItemBaseCount[2];
+IATUIDynamicMenuProvider *g_pDynamicMenuProvider[kATUIDynamicMenuCount];
+int g_dynamicMenuItemBaseCount[kATUIDynamicMenuCount];
 
 VDLinearAllocator g_ATUIMenuBoundCommandsAlloc;
 vdfastvector<std::pair<const char *, const wchar_t *> > g_ATUIMenuBoundCommands;
@@ -56,8 +54,8 @@ void ATUILoadMenu() {
 	g_ATUIMenuBoundCommands.clear();
 
 	HMENU hmenu = CreateMenu();
-	HMENU hmenuSpecialMenus[7] = {NULL};
-	ATUIMenu *pmenuSpecialMenus[7] = {NULL};
+	HMENU hmenuSpecialMenus[5 + kATUIDynamicMenuCount] = {NULL};
+	ATUIMenu *pmenuSpecialMenus[5 + kATUIDynamicMenuCount] = {NULL};
 	UINT id = 40000;
 
 	VDStringW menuItemText;
@@ -201,6 +199,8 @@ void ATUILoadMenu() {
 						specialidx = 5;
 					else if (cmdname == L"$firmware_basic")
 						specialidx = 6;
+					else if (cmdname == L"$profiles")
+						specialidx = 7;
 					else if (cmdname == L"$port1none")
 						itemid = ID_INPUT_PORT1_NONE;
 					else if (cmdname == L"$port2none")
@@ -288,6 +288,8 @@ void ATUILoadMenu() {
 		throw;
 	}
 
+	ATUnregisterMRUListMenu();
+
 	HMENU hmenuPrev = g_hMenu;
 	g_hMenu = hmenu;
 
@@ -298,16 +300,15 @@ void ATUILoadMenu() {
 			DestroyMenu(hmenuPrev);
 	}
 
-	g_hMenuMRU = hmenuSpecialMenus[0];
-	g_pMenuMRU = pmenuSpecialMenus[0];
+	HMENU hMenuMRU = hmenuSpecialMenus[0];
+	ATUIMenu *pMenuMRU = pmenuSpecialMenus[0];
 
-	if (g_hMenuMRU)
-		ATUpdateMRUListMenu(g_hMenuMRU, g_pMenuMRU, ID_FILE_MRU_BASE, ID_FILE_MRU_BASE + 99);
+	ATRegisterMRUListMenu(hMenuMRU, pMenuMRU, ID_FILE_MRU_BASE, ID_FILE_MRU_BASE + 99);
 
-	for(int i=0; i<2; ++i) {
-		g_hMenuFirmware[i] = hmenuSpecialMenus[i+5];
-		g_pMenuFirmware[i] = pmenuSpecialMenus[i+5];
-		g_dynamicMenuItemBaseCount[i] = pmenuSpecialMenus[i+5]->GetItemCount();
+	for(int i=0; i<kATUIDynamicMenuCount; ++i) {
+		g_hMenuDynamic[i] = hmenuSpecialMenus[i+5];
+		g_pMenuDynamic[i] = pmenuSpecialMenus[i+5];
+		g_dynamicMenuItemBaseCount[i] = pmenuSpecialMenus[i+5] ? pmenuSpecialMenus[i+5]->GetItemCount() : 0;
 
 		ATUIRebuildDynamicMenu(i);
 	}
@@ -332,7 +333,7 @@ void ATUISetDynamicMenuProvider(int index, IATUIDynamicMenuProvider *provider) {
 }
 
 void ATUIRebuildDynamicMenu(int index) {
-	ATUIMenu *menu = g_pMenuFirmware[index];
+	ATUIMenu *menu = g_pMenuDynamic[index];
 
 	if (!menu)
 		return;
@@ -342,7 +343,7 @@ void ATUIRebuildDynamicMenu(int index) {
 	if (g_pDynamicMenuProvider[index])
 		g_pDynamicMenuProvider[index]->RebuildMenu(*menu, ID_DYNAMIC_BASE + 100*index);
 
-	HMENU hmenu = g_hMenuFirmware[index];
+	HMENU hmenu = g_hMenuDynamic[index];
 	if (hmenu) {
 		int count = ::GetMenuItemCount(hmenu);
 		for(int i=count-1; i>=g_dynamicMenuItemBaseCount[index]; --i)
@@ -419,9 +420,12 @@ void ATUIUpdateMenu() {
 		}
 	}
 
-	for(int i=0; i<2; ++i) {
-		if (g_pDynamicMenuProvider[i] && g_pMenuFirmware[i]) {
-			ATUIMenu& menu = *g_pMenuFirmware[i];
+	for(int i=0; i<kATUIDynamicMenuCount; ++i) {
+		if (g_pDynamicMenuProvider[i] && g_pMenuDynamic[i]) {
+			if (g_pDynamicMenuProvider[i]->IsRebuildNeeded())
+				ATUIRebuildDynamicMenu(i);
+
+			ATUIMenu& menu = *g_pMenuDynamic[i];
 			const uint32 base = g_dynamicMenuItemBaseCount[i];
 			const uint32 n = menu.GetItemCount() - g_dynamicMenuItemBaseCount[i];
 
@@ -435,17 +439,17 @@ void ATUIUpdateMenu() {
 
 			g_pDynamicMenuProvider[i]->UpdateMenu(menu, base, n);
 
-			if (g_hMenuFirmware[i]) {
+			if (g_hMenuDynamic[i]) {
 				for(uint32 j=0; j<n; ++j) {
 					const ATUIMenuItem *item = menu.GetItemByIndex(base + j);
 
 					if (oldState[j] != ((item->mbChecked ? 1 : 0) + (item->mbRadioChecked ? 2 : 0))) {
 						if (item->mbRadioChecked)
-							VDCheckRadioMenuItemByPositionW32(g_hMenuFirmware[i], base + j, true);
+							VDCheckRadioMenuItemByPositionW32(g_hMenuDynamic[i], base + j, true);
 						else if (item->mbChecked)
-							VDCheckMenuItemByPositionW32(g_hMenuFirmware[i], base + j, true);
+							VDCheckMenuItemByPositionW32(g_hMenuDynamic[i], base + j, true);
 						else
-							VDCheckMenuItemByPositionW32(g_hMenuFirmware[i], base + j, false);
+							VDCheckMenuItemByPositionW32(g_hMenuDynamic[i], base + j, false);
 					}
 				}				
 			}
@@ -454,7 +458,7 @@ void ATUIUpdateMenu() {
 }
 
 bool ATUIHandleMenuCommand(uint32 id) {
-	if (id >= ID_DYNAMIC_BASE && id < ID_DYNAMIC_BASE + 200) {
+	if (id >= ID_DYNAMIC_BASE && id < ID_DYNAMIC_BASE + 300) {
 		int dynOffset = id - ID_DYNAMIC_BASE;
 		int menuIndex = dynOffset / 100;
 		int itemIndex = dynOffset % 100;

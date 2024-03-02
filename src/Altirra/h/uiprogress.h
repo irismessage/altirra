@@ -18,35 +18,9 @@
 #ifndef f_AT_UIPROGRESS_H
 #define f_AT_UIPROGRESS_H
 
-#include <vd2/system/VDString.h>
-#include <vd2/system/win32/miniwindows.h>
+#include <vd2/system/vdtypes.h>
 
-VDZHWND ATUISetProgressWindowParentW32(VDZHWND hwnd);
-
-bool ATUIBeginProgressDialog(const wchar_t *desc, const wchar_t *statusFormat, uint32 total, const VDGUIHandle *parent = 0);
-void ATUIUpdateProgressDialog(uint32 count);
-void ATUIEndProgressDialog();
-
-class ATUIProgress {
-	ATUIProgress(const ATUIProgress&);
-	ATUIProgress& operator=(const ATUIProgress&);
-public:
-	ATUIProgress();
-	~ATUIProgress();
-
-	void InitF(VDGUIHandle parent, uint32 n, const wchar_t *statusFormat, const wchar_t *descFormat, ...);
-	void InitF(uint32 n, const wchar_t *statusFormat, const wchar_t *descFormat, ...);
-
-	void Shutdown();
-
-	void Update(uint32 value) {
-		ATUIUpdateProgressDialog(value);
-	}
-
-protected:
-	VDStringW mDesc;
-	VDStringW mStatusFormat;
-	bool mbCreated;
-};
+void ATUIInitProgressDialog();
+void ATUIShutdownProgressDialog();
 
 #endif

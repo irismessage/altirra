@@ -524,7 +524,7 @@ void ATCPUProfiler::UpdateCallGraph() {
 						ATProfileCallGraphRecord& cgr = mpCurrentFrame->mCallGraphRecords.push_back();
 						memset(&cgr, 0, sizeof cgr);
 
-						mSession.mContexts.push_back(ATProfileCallGraphContext { mCurrentContext, newScope });
+						mSession.mContexts.push_back(ATProfileCallGraphContext { (uint32)mCurrentContext, newScope });
 
 						++mTotalContexts;
 					}

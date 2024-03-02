@@ -39,6 +39,7 @@ a {
 
 table {
 	padding: 0;
+	font-size: 10pt;
 }
 
 tr {
@@ -57,6 +58,19 @@ td {
 	margin: 0;
 }
 
+table.std {
+	margin-left: auto;
+	margin-right: auto;
+}
+
+table.std th {
+	background-color: #afb;
+}
+
+table.std td {
+	background-color: #eee;
+}
+
 dt {
 	font-weight: bold;
 }
@@ -64,6 +78,20 @@ dt {
 dd {
 	margin-top: 5pt;
 	margin-bottom: 5pt;
+}
+
+pre {
+	white-space: pre-wrap;
+	white-space: -moz-pre-wrap;
+	white-space: -pre-wrap;
+	white-space: -o-pre-wrap;
+	word-wrap: break-word;
+}
+
+pre.example {
+	margin-left: 0px;
+	padding: 8px;
+	background: #ddd;
 }
 
 .main {
@@ -141,4 +169,13 @@ dd {
 
 .featurelist-no {
 	background-color: #fee;
+}
+
+.note {
+	border-left: 3px solid brown;
+	padding-left: 6px;
+}
+
+.note-title {
+	font-weight: bold;
 }

@@ -31,7 +31,7 @@ struct ATCPUDecoderTables65816 {
 
 class ATCPUDecoderGenerator65816 {
 public:
-	void	RebuildTables(ATCPUDecoderTables65816& dst, bool stopOnBRK, bool historyTracing);
+	void	RebuildTables(ATCPUDecoderTables65816& dst, bool stopOnBRK, bool historyTracing, bool enableBreakpoints);
 
 private:
 	bool	DecodeInsn(uint8 opcode, bool unalignedDP, bool emu, bool mode16, bool index16);

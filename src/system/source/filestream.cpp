@@ -23,7 +23,7 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/file.h>
 
 VDFileStream::~VDFileStream() {
@@ -225,6 +225,88 @@ void VDBufferedStream::Skip(sint64 size) {
 
 	// issue a seek
 	Seek(targetPos);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+VDBufferedWriteStream::VDBufferedWriteStream(IVDRandomAccessStream *pSrc, uint32 bufferSize)
+	: mpSrc(pSrc)
+	, mBuffer(bufferSize)
+	, mBasePosition(0)
+	, mBufferOffset(0)
+	, mBufferSize(bufferSize)
+{
+}
+
+VDBufferedWriteStream::~VDBufferedWriteStream() {
+}
+
+const wchar_t *VDBufferedWriteStream::GetNameForError() {
+	return mpSrc->GetNameForError();
+}
+
+sint64 VDBufferedWriteStream::Pos() {
+	return mBasePosition + mBufferOffset;
+}
+
+void VDBufferedWriteStream::Read(void *buffer, sint32 bytes) {
+	throw MyError("Buffered write streams are write-only.");
+}
+
+sint32 VDBufferedWriteStream::ReadData(void *buffer, sint32 bytes) {
+	return -1;
+}
+
+void VDBufferedWriteStream::Write(const void *buffer, sint32 bytes) {
+	if (bytes <= 0)
+		return;
+
+	const uint32 ubytes = (uint32)bytes;
+	if (ubytes <= mBufferSize) {
+		const uint32 space = mBufferSize - mBufferOffset;
+		if (space < ubytes) {
+			memcpy(mBuffer.data() + mBufferOffset, buffer, space);
+			mBufferOffset += space;
+
+			Flush();
+
+			mBufferOffset = ubytes - space;
+			memcpy(mBuffer.data(), (const char *)buffer + space, mBufferOffset);
+		} else {
+			memcpy(mBuffer.data() + mBufferOffset, buffer, bytes);
+			mBufferOffset += bytes;
+		}
+	} else {
+		Flush();
+
+		mpSrc->Write(buffer, bytes);
+		mBasePosition += bytes;
+	}
+}
+
+sint64 VDBufferedWriteStream::Length() {
+	return mpSrc->Length();
+}
+
+void VDBufferedWriteStream::Seek(sint64 offset) {
+	Flush();
+
+	// issue seek
+	mpSrc->Seek(offset);
+	mBasePosition = offset;
+}
+
+void VDBufferedWriteStream::Skip(sint64 size) {
+	if (size)
+		Seek(size + Pos());
+}
+
+void VDBufferedWriteStream::Flush() {
+	if (mBufferOffset) {
+		mpSrc->Write(mBuffer.data(), mBufferOffset);
+		mBasePosition += mBufferOffset;
+		mBufferOffset = 0;
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////

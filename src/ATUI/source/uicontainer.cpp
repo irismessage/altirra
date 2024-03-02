@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <at/atui/uicontainer.h>
 #include <at/atui/uimanager.h>
 #include <at/atui/uianchor.h>

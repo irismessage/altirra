@@ -22,11 +22,13 @@
 
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive;
 extern const ATDeviceDefinition g_ATDeviceDefExeLoader;
+extern const ATDeviceDefinition g_ATDeviceDefCorvus;
 
 void ATRegisterDeviceLibrary(ATDeviceManager& dm) {
 	for(const auto& def : {
 		g_ATDeviceDefDiskDrive,
-		g_ATDeviceDefExeLoader
+		g_ATDeviceDefExeLoader,
+		g_ATDeviceDefCorvus
 	})
 		dm.AddDeviceFactory(def.mpTag, def.mpFactoryFn);
 }

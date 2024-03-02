@@ -30,7 +30,7 @@
 
 class ATMemoryLayer;
 class ATIRQController;
-class IATIDEDisk;
+class IATBlockDevice;
 
 class ATMIOEmulator final : public ATDevice
 	, public IATDeviceMemMap
@@ -62,8 +62,11 @@ public:
 	virtual bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const;
 
 public:
-	virtual void InitFirmware(ATFirmwareManager *fwman);
-	virtual bool ReloadFirmware();
+	void InitFirmware(ATFirmwareManager *fwman) override;
+	bool ReloadFirmware() override;
+	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override { return nullptr; }
+	bool IsWritableFirmwareDirty(uint32 idx) const override { return false; }
+	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override {}
 
 public:
 	virtual void InitIRQSource(ATIRQController *fwirq);
@@ -78,7 +81,7 @@ public:
 	virtual void RemoveChildDevice(IATDevice *dev) override;
 
 public:
-	virtual void InitIndicators(IATUIRenderer *r) override;
+	virtual void InitIndicators(IATDeviceIndicatorManager *r) override;
 
 public:
 	virtual void SetPrinterOutput(IATPrinterOutput *out) override;
@@ -119,7 +122,7 @@ protected:
 	bool	mbACIAIRQActive;
 
 	ATFirmwareManager *mpFwMan;
-	IATUIRenderer *mpUIRenderer;
+	IATDeviceIndicatorManager *mpUIRenderer;
 
 	ATIRQController *mpIRQController;
 	uint32	mIRQBit;
@@ -136,7 +139,7 @@ protected:
 	struct SCSIDiskEntry {
 		IATDevice *mpDevice;
 		IATSCSIDevice *mpSCSIDevice;
-		IATIDEDisk *mpDisk;
+		IATBlockDevice *mpDisk;
 	};
 
 	vdfastvector<SCSIDiskEntry> mSCSIDisks;

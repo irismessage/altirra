@@ -8,6 +8,7 @@
     <t name="Using the emulated computer" href="using-the-emulated-computer.html"/>
     <t name="Configuring input" href="input.html"/>
     <t name="On-screen indicators" href="indicators.html"/>
+    <t name="Profiles" href="profiles.html"/>
     <t name="Portable mode" href="portable-mode.html"/>
     <t name="Touch support" href="touch.html"/>
   </t>
@@ -17,6 +18,7 @@
       <t name="Introduction" href="devices-cartintro.html" />
       <t name="DragonCart" href="dragoncart.html"/>
       <t name="MyIDE" href="myide.html"/>
+      <t name="R-Time 8" href="devices-rtime8.html"/>
     </t>
     <t name="Internal devices">
       <t name="Ultimate1MB" href="ultimate1mb.html"/>
@@ -24,16 +26,19 @@
     </t>
     <t name="SIO-based devices">
       <t name="Introduction" href="devices-serintro.html" />
-      <t name="Disk drives" href="disk.html"/>
+      <t name="410/1010 Program Recorder" href="devices-cassette.html"/>
       <t name="850 Interface Module" href="serial.html"/>
       <t name="1030 Modem" href="1030.html"/>
-      <t name="SX212 Modem" href="sx212.html"/>
+      <t name="Disk drives" href="disk.html"/>
       <t name="PCLink" href="pclink.html"/>
+      <t name="Pocket Modem" href="devices-pocketmodem.html"/>
+      <t name="SX212 Modem" href="sx212.html"/>
     </t>
     <t name="High-level emulation (HLE) devices">
       <t name="Host (H:) device" href="host-device.html"/>
     </t>
     <t name="Other devices">
+      <t name="Corvus Disk Interface" href="devices-corvus.html" />
       <t name="XEP-80 Interface Module" href="xep80.html" />
     </t>
   </t>
@@ -47,7 +52,12 @@
     <t name="Debugging BASIC programs" href="debug-basic.html"/>
   </t>
   <t name="Reference">
-    <t name="Options" href="options.html"/>
+    <t name="Options" href="options.html">
+      <t name="Acceleration" href="options-accel.html" />
+      <t name="Hardware" href="options-hardware.html" />
+      <t name="Firmware" href="options-firmware.html" />
+      <t name="System" href="options-system.html" />
+    </t>
   </t>
   <t name="Troubleshooting">
     <t name="General issues" href="troubleshooting.html"/>

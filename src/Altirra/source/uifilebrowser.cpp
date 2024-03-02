@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/error.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/math.h>
@@ -136,7 +136,7 @@ void ATUIFileBrowser::OnCreate() {
 			--nameLen;
 
 		if (volLabel.empty())
-			item->mDescription.assign(item->mName, 0, nameLen);
+			item->mDescription.assign(item->mName, 0, (uint32)nameLen);
 		else {
 			item->mDescription.sprintf(L"%ls (%.*ls)", volLabel.c_str(), nameLen, item->mName.c_str());
 		}

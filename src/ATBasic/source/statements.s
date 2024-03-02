@@ -39,11 +39,9 @@
 _vectmp = $0500
 
 		;Use IOCB #7 for compatibility with Atari BASIC
-		jsr		IoSetupIOCB7
-		
 		;get filename
-		jsr		evaluate
-		
+		jsr		IoSetupIOCB7AndEval
+				
 		;issue open call for read
 		jsr		IoDoOpenReadWithFilename
 
@@ -60,391 +58,6 @@ stLet = evaluateAssignment
 
 ;===========================================================================
 stData = stRem
-
-;===========================================================================
-; FOR avar=aexp TO aexp [STEP aexp]
-;
-; The runtime stack is scanned for conflicting FOR statements, stopping if
-; a GOSUB frame is reached. If a FOR statement with the same variable is
-; reached, it and any FOR statements in between are removed before the new
-; one is added.
-;
-.proc stFor
-		;get and save variable
-		lda		(stmcur),y
-		sta		stScratch
-		
-		;clean out stale frames
-		lda		memtop2
-		pha
-		lda		memtop2+1
-		pha
-		bne		loop_start
-loop:
-		lda		#$fc
-		jsr		stPop.dec_ptr_2
-
-		;fetch the variable
-		ldy		#0
-		lda		(memtop2),y
-
-		;if this isn't a FOR...NEXT loop, stop here -- Escape From Epsilon
-		;requires this
-		bpl		done
-
-		;check if the variable matches
-		cmp		stScratch
-		php
-
-		;advance pointer
-		jsr		stPop.pop_frame_remainder
-
-		plp
-		beq		found_it
-
-loop_start:
-		;check if we're at the bottom of the stack
-		jsr		stReturn.check_rtstack_empty
-		bcc		loop
-
-done:
-		pla
-		sta		memtop2+1
-		pla
-		sta		memtop2
-
-		dta		{bit $0100}		;BIT $6868
-found_it:
-		pla
-		pla
-
-		;check that we have enough room
-		lda		#16
-		jsr		ExecCheckStack
-
-		;execute assignment to set variable initial value
-		jsr		evaluateAssignment
-				
-		;skip TO keyword, evaluate stop value and push
-		jsr		ExprSkipCommaAndEval		;actually skipping TO, not a comma
-		ldy		#0
-		jsr		push_number
-		
-		;check for a STEP keyword
-		jsr		ExecTestEnd
-		beq		no_step
-		
-		;skip STEP keyword, then evaluate and store step
-		jsr		ExprSkipCommaAndEval
-		jmp		had_step
-no_step:
-		jsr		fld1
-had_step:
-		ldy		#6
-		jsr		push_number
-
-		;push frame and exit
-		lda		stScratch
-push_frame:
-		ldx		stmcur
-		jsr		push_ax
-		lda		stmcur+1
-		ldx		exLineOffsetNxt
-		jsr		push_ax
-
-advance_memtop2_y:
-		tya
-		jmp		stNext.advance_memtop2
-
-push_ax_1:
-		ldy		#1
-push_ax:
-		sta		(memtop2),y+
-		txa
-		sta		(memtop2),y+
-		rts
-		
-push_number:
-		ldx		#$80-6
-_loop1:
-		lda		fr0+6-$80,x
-		sta		(memtop2),y
-		iny
-		inx
-		bpl		_loop1
-chkstk_ok:
-		rts
-.endp
-
-
-;===========================================================================
-; NEXT avar
-;
-; Closes a FOR loop, checks the loop condition, and loops back to the FOR
-; statement if the loop is still active. The runtime stack is search for
-; the appropriate matching FOR; any other FOR frames found in between are
-; discarded. If a GOSUB frame is found first, error 13 is issued.
-;
-; The step factor is added to the loop variable before a check occurs. This
-; means that a FOR I=1 TO 10:NEXT I will run ten times for I=[0..10] and
-; exit with I=11. The check is > for a positive STEP and < for a negative
-; STEP; the loop will terminate if the loop variable is manually modified
-; to be beyond the end value. A FOR I=0 TO 0 STEP 0 loop will not normally
-; terminate, but is considered positive step and will stop if I is modified
-; to 1 or greater.
-;
-.proc stNext
-		;pop entries off runtime stack until we find the right frame
-loop:
-		jsr		stReturn.fix_and_check_rtstack_empty
-		bcc		stack_not_empty
-		
-error:
-		jmp		errorNoMatchingFOR
-		
-stack_not_empty:
-
-		;pop back one frame
-		lda		#$f0
-		jsr		stPop.dec_ptr_2
-		
-		;check that it's a FOR
-		ldy		#$0c
-		lda		(memtop2),y
-		beq		error
-		
-		;check that it's the right one
-		ldy		exLineOffset
-		cmp		(stmcur),y
-		bne		loop
-		
-		;compute variable address
-		jsr		VarGetAddr0
-		
-		;load loop variable
-		jsr		VarLoadFR0
-		
-		;load step		
-		ldy		#11
-		ldx		#5
-pop_loop:
-		lda		(memtop2),y
-		dey
-		sta		fr1,x
-		dex
-		bpl		pop_loop
-
-		;save off step sign
-		sta		stScratch
-
-		;add step to variable		
-		jsr		fadd
-		jsr		VarStoreFR0
-		
-		;compare to end value
-		ldx		memtop2
-		ldy		memtop2+1
-		jsr		fld1r
-		
-		;;##TRACE "NEXT: Checking %g <= %g" fr0 fr1
-		jsr		fcomp
-		
-		;exit if current value is > termination value for positive step,
-		;< termination value for negative step
-		beq		not_done
-		
-		ror
-		eor		stScratch
-		bmi		loop_done
-
-not_done:
-		;warp to FOR end
-		;;##TRACE "Continuing FOR loop"
-		ldy		#$0d
-		jsr		pop_frame
-		
-		;restore frame on stack and continue execution after for
-		lda		#$10
-advance_memtop2:
-		ldx		#memtop2
-		jmp		VarAdvancePtrX
-		
-pop_frame:
-		mva		(memtop2),y+ stmcur
-		mva		(memtop2),y+ stmcur+1
-		mva		(memtop2),y exLineOffsetNxt
-		
-		;fixup line info cache
-restart_line:
-		ldy		#2
-		mva		(stmcur),y+ exLineEnd		;!! - set Y=3 for exec.direct_bypass
-
-		;##ASSERT dw(stmcur) >= dw(stmtab) and dw(stmcur) < dw(starp)
-		;##ASSERT dw(memtop2) >= dw(runstk) and ((dw(memtop2)-dw(runstk))&3)=0
-		;##ASSERT dw(memtop2) = dw(runstk) or db(dw(memtop2)-4)=0 or db(dw(memtop2)-4)>=$80
-loop_done:
-		rts
-.endp
-
-
-;===========================================================================
-; ON aexp {GOTO | GOSUB} lineno [,lineno...]
-;
-; aexp is converted to integer with rounding, using standard FPI rules. The
-; resulting integer is then used to select following line numbers, where
-; 1 selects the first lineno, etc. Zero or greater than the number provided
-; results in execution continuing with the next statement.
-;
-; The selection value and all line numbers up to that value must pass
-; FPI conversion and be below 32768, or else errors 3 and 7 result,
-; respectively. In addition, the selection value must be below 256 or
-; error 3 results. If the selection value converts to 0, none of the line
-; numbers are evaluated or checked, and if it is greater than the number
-; provided, all are evaluated.
-;
-; Examples:
-;	ON 1 GOTO 10, 20 (Jumps to line 10)
-;	ON 2 GOTO 10, 20 (Jumps to line 20)
-;	ON 3 GOTO 10, 20 (Continues execution)
-;	ON -0.01 GOTO 10 (Error 3)
-;	ON 255.5 GOTO 10 (Error 3)
-;	ON 32768 GOTO 10 (Error 7)
-;	ON 65536 GOTO 10 (Error 3)
-;	ON 0 GOTO 1/0 (Continues execution)
-;	ON 2 GOTO 1/0 (Error 11)
-;	ON 1 GOTO 10,1/0 (Jumps to line 10)
-;
-stOn = _stOn._entry
-.proc _stOn
-_index = stScratch
-
-fail_value_err:
-		jmp		errorValueErr
-
-_entry:
-		;fetch and convert the selection value
-		jsr		ExprEvalPopIntPos
-
-		;issue error 3 if value is greater than 255		
-		bne		fail_value_err
-				
-		;exit immediately if index is zero		
-		txa
-		beq		xit
-		sta		_index
-
-		;next token should be GOTO or GOSUB
-		jsr		ExecGetComma
-
-		;save GOTO/GOSUB token
-		pha
-
-count_loop:
-		;check if it's time to branch
-		dec		_index
-		beq		do_branch
-
-		;evaluate a line number
-		jsr		ExprEvalPopIntPos
-		
-		;read next token and check if it is a comma
-		jsr		ExecGetComma
-		beq		count_loop
-		
-		;out of line numbers -- continue with next statement
-		pla
-xit:
-		rts
-				
-do_branch:
-		;check if we should do GOTO or GOSUB
-		pla
-		eor		#TOK_EXP_GOTO
-		beq		stGoto
-
-		;!! fall through to stGosub!
-.endp
-
-stGosub:
-		;push gosub frame
-		;##TRACE "Pushing GOSUB frame: $%04x+$%02x" dw(stmcur) db(exLineOffset)
-		lda		#4
-		jsr		ExecCheckStack
-		lda		#0
-		tay
-		jsr		stFor.push_frame
-
-		;fall through
-
-.proc stGoto
-		;get line number
-		jsr		ExprEvalPopIntPos
-gotoFR0Int:
-		jsr		exFindLineInt
-		bcc		not_found
-		sta		stmcur
-		sty		stmcur+1
-
-		;jump to it
-		pla
-		pla
-		jmp		exec.new_line
-
-not_found:
-		jmp		errorLineNotFound
-.endp
-
-;===========================================================================
-stGoto2 = stGoto
-
-;===========================================================================
-.proc stTrap
-		jsr		evaluateInt
-		stx		exTrapLine
-		sta		exTrapLine+1
-xit:
-		rts
-.endp
-
-
-;===========================================================================
-stBye = blkbdv
-
-;===========================================================================
-; CONT
-;
-; Resumes execution from the last stop or error point.
-;
-; Quirks:
-;	- The documentation says that CONT resumes execution at the next lineno,
-;	  but this is incorrect. Instead, Atari BASIC appears to do an insertion
-;	  search for the stop line itself, then skip to the end of that line.
-;	  This means that if the stop line is deleted, execution will resume at
-;	  the line AFTER the next line.
-;
-.proc stCont
-		;check if we are executing the immediate mode line
-		ldy		#1
-		lda		(stmcur),y
-
-		;if we aren't (deferred mode), it's a no-op
-		bpl		stTrap.xit
-
-		;bail if stop line is >=32K
-		ldx		stopln
-		lda		stopln+1
-		bmi		stGoto.not_found
-
-		;search for the stop line -- okay if this fails
-		jsr		exFindLineInt
-
-		;jump to that line
-		sta		stmcur
-		sty		stmcur+1
-
-		;warp to end of line and continue execution
-		jmp		exec.next_line
-.endp
 
 ;===========================================================================
 stCom = stDim
@@ -468,8 +81,7 @@ close_iocb:
 
 ;===========================================================================
 .proc stDir
-		jsr		evaluate
-		jsr		IoSetupIOCB7
+		jsr		IoSetupIOCB7AndEval
 		lda		#6
 		ldy		argsp
 		bne		open_fn
@@ -558,6 +170,7 @@ loop:
 		jsr		evaluate._assign_entry
 		jsr		ExecGetComma
 		beq		loop
+xit:
 		rts
 .endp
 
@@ -569,6 +182,18 @@ loop:
 ; clear variables.
 ;
 stEnd = immediateModeReset
+
+;==========================================================================
+.proc IoCheckBusy
+		;unterminate if we had one active from reset
+		lda		ioTermFlag
+		beq		stDim.xit
+
+		;check if we need to do a full program reset
+		bmi		_stNew.reset_entry
+
+		jmp		IoUnterminateString
+.endp
 
 ;===========================================================================
 ; NEW
@@ -605,15 +230,15 @@ reset_entry:
 		iny
 		sty		lomem+1
 
-		;reset I/O termination flag
-		lsr		ioTermFlag
-
 		;clear remaining tables
 		;reset trap line
 		;copy LOMEM to VNTP/VNTD/VVTP/STMTAB/STMCUR/STARP/RUNSTK/MEMTOP2
 		ldx		#<-16
 		stx		exTrapLine+1
 		jsr		stClr.reset_loop
+
+		;reset I/O termination flag
+		stx		ioTermFlag		;!! - 0
 
 		dec		lomem+1
 
@@ -687,10 +312,8 @@ _loadflg = stScratch		;N=0 for run, N=1 for load
 		
 run_entry:
 		;Use IOCB #7 for compatibility with Atari BASIC
-		jsr		IoSetupIOCB7
-		
 		;pop filename
-		jsr		evaluate
+		jsr		IoSetupIOCB7AndEval	
 
 loader_entry:
 		;do open
@@ -705,7 +328,10 @@ with_open_iocb:
 		lda		_vectmp
 		ora		_vectmp+1
 		bne		bogus
-		
+
+		;taint program to force reset if we fail
+		dec		ioTermFlag
+
 		;relocate pointers
 		ldx		#$80-12
 relocloop:
@@ -716,21 +342,19 @@ relocloop:
 		lda		_vectmp+15-$80,x
 		adc		lomem+1
 		sta		lomem+15-$80,x
-		bcs		too_long
+		jsr		MemCheckAddrAY
 		inx
 		inx
 		bpl		relocloop
-		
-		;check if MEMTOP2 will be pushed at or above OS MEMTOP
-		cpy		memtop
-		sbc		memtop+1
-		bcs		too_long
-memory_ok:
 
 		;load remaining data at VNTP
 		jsr		setup_main_io
 
 do_imm_or_run:
+
+		;mark program as OK
+		inc		ioTermFlag
+
 		;close IOCBs (including the one we just used) and reset sound
 		jsr		ExecReset
 		
@@ -743,10 +367,7 @@ do_imm_or_run:
 		
 		;jump to immediate mode loop
 		jmp		immediateMode
-		
-too_long:
-		;program pointers are now trashed, so we must NEW
-		jsr		_stNew.reset_entry
+
 bogus:
 		jmp		errorLoadError
 		
@@ -801,10 +422,8 @@ _vectmp = fr0
 
 		;Use IOCB #7 for compatibility with Atari BASIC
 		;close it in case ENTER is active
-		jsr		IoSetupIOCB7
-		
 		;get filename
-		jsr		evaluate
+		jsr		IoSetupIOCB7AndEval
 		
 		;issue open call for write
 		lda		#8
@@ -1352,17 +971,14 @@ loop:
 		lda		pmgbase
 		seq:jsr	pmDisable
 
-		;close IOCB 6
-		ldx		#$60
-		jsr		IoCloseX
-				
-		;reopen IOCB 6 with S:
+		;close and reopen IOCB 6 with S:
 		lda		fr0
 		sta		icax2+$60
 		and		#$30
 		eor		#$1c 
 		ldy		#<devname_s
-		jmp		IoOpenStockDevice
+		ldx		#$60
+		jmp		IoOpenStockDeviceX
 .endp
 
 
@@ -1379,36 +995,6 @@ loop:
 .proc stPlot
 		jsr		stSetupCommandXY
 		jmp		IoPutCharDirectX
-.endp
-
-
-;===========================================================================
-stSetupCommandXY = stPosition
-.proc stPosition
-		;evaluate X
-		jsr		evaluateInt
-		pha					;push X high
-		txa
-		pha					;push X low
-
-		;skip comma and evaluate Y
-		jsr		ExprSkipCommaAndEvalPopIntPos
-		bne		out_of_range
-		
-		;position at (X,Y)
-		stx		rowcrs
-		pla
-		sta		colcrs
-		pla
-		sta		colcrs+1
-
-		;preload IOCB #6 and current color for PLOT/DRAWTO
-		lda		grColor
-		ldx		#$60			;!! - exit NZ for unconditional branch in LOCATE
-		rts
-		
-out_of_range:
-		jmp		errorValueErr
 .endp
 
 
@@ -1431,6 +1017,413 @@ stCp = stDos
 		jmp		IoDoCmdX
 .endp
 
+;===========================================================================
+.proc stTrap
+		jsr		evaluateInt
+		stx		exTrapLine
+		sta		exTrapLine+1
+		rts
+.endp
+
+;===========================================================================
+; FOR avar=aexp TO aexp [STEP aexp]
+;
+; The runtime stack is scanned for conflicting FOR statements, stopping if
+; a GOSUB frame is reached. If a FOR statement with the same variable is
+; reached, it and any FOR statements in between are removed before the new
+; one is added.
+;
+.proc stFor
+		;get and save variable
+		lda		(stmcur),y
+		sta		stScratch
+		
+		;clean out stale frames
+		lda		memtop2
+		pha
+		lda		memtop2+1
+		pha
+		bne		loop_start
+loop:
+		lda		#$fc
+		jsr		stPop.dec_ptr_2
+
+		;fetch the variable
+		ldy		#0
+		lda		(memtop2),y
+
+		;if this isn't a FOR...NEXT loop, stop here -- Escape From Epsilon
+		;requires this
+		bpl		done
+
+		;check if the variable matches
+		cmp		stScratch
+		php
+
+		;advance pointer
+		jsr		stPop.pop_frame_remainder
+
+		plp
+		beq		found_it
+
+loop_start:
+		;check if we're at the bottom of the stack
+		jsr		stReturn.check_rtstack_empty
+		bcc		loop
+
+done:
+		pla
+		sta		memtop2+1
+		pla
+		sta		memtop2
+
+		dta		{bit $0100}		;BIT $6868
+found_it:
+		pla
+		pla
+
+		;check that we have enough room
+		lda		#16
+		jsr		ExecCheckStack
+
+		;execute assignment to set variable initial value
+		jsr		evaluateAssignment
+				
+		;skip TO keyword, evaluate stop value and push
+		jsr		ExprSkipCommaAndEval		;actually skipping TO, not a comma
+		ldy		#0
+		jsr		push_number
+		
+		;assume STEP 1
+		jsr		fld1
+
+		;check for a STEP keyword
+		jsr		ExecTestEnd
+		beq		no_step
+		
+		;skip STEP keyword, then evaluate and store step
+		jsr		ExprSkipCommaAndEval
+no_step:
+		ldy		#6
+		jsr		push_number
+
+		;push frame and exit
+		lda		stScratch
+push_frame:
+		ldx		stmcur
+		jsr		push_ax
+		lda		stmcur+1
+		ldx		exLineOffsetNxt
+		jsr		push_ax
+
+advance_memtop2_y:
+		tya
+		jmp		stNext.advance_memtop2
+
+push_ax_1:
+		ldy		#1
+push_ax:
+		sta		(memtop2),y+
+		txa
+		sta		(memtop2),y+
+		rts
+		
+push_number:
+		ldx		#$80-6
+_loop1:
+		lda		fr0+6-$80,x
+		sta		(memtop2),y
+		iny
+		inx
+		bpl		_loop1
+chkstk_ok:
+		rts
+.endp
+
+
+;===========================================================================
+; NEXT avar
+;
+; Closes a FOR loop, checks the loop condition, and loops back to the FOR
+; statement if the loop is still active. The runtime stack is search for
+; the appropriate matching FOR; any other FOR frames found in between are
+; discarded. If a GOSUB frame is found first, error 13 is issued.
+;
+; The step factor is added to the loop variable before a check occurs. This
+; means that a FOR I=1 TO 10:NEXT I will run ten times for I=[0..10] and
+; exit with I=11. The check is > for a positive STEP and < for a negative
+; STEP; the loop will terminate if the loop variable is manually modified
+; to be beyond the end value. A FOR I=0 TO 0 STEP 0 loop will not normally
+; terminate, but is considered positive step and will stop if I is modified
+; to 1 or greater.
+;
+.proc stNext
+		;pop entries off runtime stack until we find the right frame
+loop:
+		jsr		stReturn.fix_and_check_rtstack_empty
+		bcc		stack_not_empty
+		
+error:
+		jmp		errorNoMatchingFOR
+		
+stack_not_empty:
+
+		;pop back one frame
+		lda		#$f0
+		jsr		stPop.dec_ptr_2
+		
+		;check that it's a FOR
+		ldy		#$0c
+		lda		(memtop2),y
+		beq		error
+		
+		;check that it's the right one
+		ldy		exLineOffset
+		cmp		(stmcur),y
+		bne		loop
+		
+		;compute variable address
+		jsr		VarGetAddr0
+		
+		;load loop variable
+		jsr		VarLoadFR0
+		
+		;load step		
+		ldy		#11
+		ldx		#5
+pop_loop:
+		lda		(memtop2),y
+		dey
+		sta		fr1,x
+		dex
+		bpl		pop_loop
+
+		;save off step sign
+		sta		stScratch
+
+		;add step to variable		
+		jsr		fadd
+		jsr		VarStoreFR0
+		
+		;compare to end value
+		ldx		memtop2
+		ldy		memtop2+1
+		jsr		fld1r
+		
+		;;##TRACE "NEXT: Checking %g <= %g" fr0 fr1
+		jsr		fcomp
+		
+		;exit if current value is > termination value for positive step,
+		;< termination value for negative step
+		beq		not_done
+		
+		ror
+		eor		stScratch
+		bmi		loop_done
+
+not_done:
+		;warp to FOR end
+		;;##TRACE "Continuing FOR loop"
+		ldy		#$0d
+		jsr		pop_frame
+		
+		;restore frame on stack and continue execution after for
+		lda		#$10
+advance_memtop2:
+		ldx		#memtop2
+		jmp		VarAdvancePtrX
+		
+pop_frame:
+		mva		(memtop2),y+ stmcur
+		mva		(memtop2),y+ stmcur+1
+		mva		(memtop2),y exLineOffsetNxt
+		
+		;fixup line info cache
+restart_line:
+		ldy		#2
+		mva		(stmcur),y+ exLineEnd		;!! - set Y=3 for exec.direct_bypass
+
+		;##ASSERT dw(stmcur) >= dw(stmtab) and dw(stmcur) < dw(starp)
+		;##ASSERT dw(memtop2) >= dw(runstk) and ((dw(memtop2)-dw(runstk))&3)=0
+		;##ASSERT dw(memtop2) = dw(runstk) or db(dw(memtop2)-4)=0 or db(dw(memtop2)-4)>=$80
+loop_done:
+		rts
+.endp
+
+
+;===========================================================================
+; ON aexp {GOTO | GOSUB} lineno [,lineno...]
+;
+; aexp is converted to integer with rounding, using standard FPI rules. The
+; resulting integer is then used to select following line numbers, where
+; 1 selects the first lineno, etc. Zero or greater than the number provided
+; results in execution continuing with the next statement.
+;
+; The selection value and all line numbers up to that value must pass
+; FPI conversion and be below 32768, or else errors 3 and 7 result,
+; respectively. In addition, the selection value must be below 256 or
+; error 3 results. If the selection value converts to 0, none of the line
+; numbers are evaluated or checked, and if it is greater than the number
+; provided, all are evaluated.
+;
+; Examples:
+;	ON 1 GOTO 10, 20 (Jumps to line 10)
+;	ON 2 GOTO 10, 20 (Jumps to line 20)
+;	ON 3 GOTO 10, 20 (Continues execution)
+;	ON -0.01 GOTO 10 (Error 3)
+;	ON 255.5 GOTO 10 (Error 3)
+;	ON 32768 GOTO 10 (Error 7)
+;	ON 65536 GOTO 10 (Error 3)
+;	ON 0 GOTO 1/0 (Continues execution)
+;	ON 2 GOTO 1/0 (Error 11)
+;	ON 1 GOTO 10,1/0 (Jumps to line 10)
+;
+.proc stOn
+_index = stScratch
+		;fetch and convert the selection value
+		jsr		ExprEvalPopIntPos
+
+		;issue error 3 if value is greater than 255		
+		bne		stErrorValueError
+				
+		;exit immediately if index is zero		
+		txa
+		beq		xit
+		sta		_index
+
+		;next token should be GOTO or GOSUB
+		jsr		ExecGetComma
+
+		;save GOTO/GOSUB token
+		pha
+
+count_loop:
+		;check if it's time to branch
+		dec		_index
+		beq		do_branch
+
+		;evaluate a line number
+		jsr		ExprEvalPopIntPos
+		
+		;read next token and check if it is a comma
+		jsr		ExecGetComma
+		beq		count_loop
+		
+		;out of line numbers -- continue with next statement
+		pla
+xit:
+		rts
+				
+do_branch:
+		;check if we should do GOTO or GOSUB
+		pla
+		lsr
+		bcs		stGoto
+
+		;!! fall through to stGosub!
+.endp
+
+stGosub:
+		;push gosub frame
+		;##TRACE "Pushing GOSUB frame: $%04x+$%02x" dw(stmcur) db(exLineOffset)
+		lda		#4
+		jsr		ExecCheckStack
+		lda		#0
+		tay
+		jsr		stFor.push_frame
+
+		;fall through
+
+.proc stGoto
+		;get line number
+		jsr		ExprEvalPopIntPos
+gotoFR0Int:
+		jsr		exFindLineInt
+		bcc		not_found
+		sta		stmcur
+		sty		stmcur+1
+
+		;jump to it
+		pla
+		pla
+		jmp		exec.new_line
+
+not_found:
+		jmp		errorLineNotFound
+.endp
+
+;===========================================================================
+stGoto2 = stGoto
+
+;===========================================================================
+stBye = blkbdv
+
+;===========================================================================
+; CONT
+;
+; Resumes execution from the last stop or error point.
+;
+; Quirks:
+;	- The documentation says that CONT resumes execution at the next lineno,
+;	  but this is incorrect. Instead, Atari BASIC appears to do an insertion
+;	  search for the stop line itself, then skip to the end of that line.
+;	  This means that if the stop line is deleted, execution will resume at
+;	  the line AFTER the next line.
+;
+.proc stCont
+		;check if we are executing the immediate mode line
+		ldy		#1
+		lda		(stmcur),y
+
+		;if we aren't (deferred mode), it's a no-op
+		bpl		stPosition.xit
+
+		;bail if stop line is >=32K
+		ldx		stopln
+		lda		stopln+1
+		bmi		stGoto.not_found
+
+		;search for the stop line -- okay if this fails
+		jsr		exFindLineInt
+
+		;jump to that line
+		sta		stmcur
+		sty		stmcur+1
+
+		;warp to end of line and continue execution
+		jmp		exec.next_line
+.endp
+
+;===========================================================================
+stSetupCommandXY = stPosition
+.proc stPosition
+		;evaluate X
+		jsr		evaluateInt
+		pha					;push X high
+		txa
+		pha					;push X low
+
+		;skip comma and evaluate Y
+		jsr		ExprSkipCommaAndEvalPopIntPos
+		bne		stErrorValueError
+		
+		;position at (X,Y)
+		stx		rowcrs
+		pla
+		sta		colcrs
+		pla
+		sta		colcrs+1
+
+		;preload IOCB #6 and current color for PLOT/DRAWTO
+		lda		grColor
+		ldx		#$60			;!! - exit NZ for unconditional branch in LOCATE
+xit:
+		rts
+.endp
+
+;===========================================================================
+stErrorValueError:
+		jmp		errorValueErr
 
 ;===========================================================================
 ; SOUND voice, pitch, distortion, volume
@@ -1460,10 +1453,10 @@ _channel = stScratch
 
 		;get voice
 		jsr		ExprEvalPopIntPos
-		bne		oob_value
+		bne		stErrorValueError
 		txa
 		cmp		#4
-		bcs		oob_value
+		bcs		stErrorValueError
 		asl
 		sta		_channel
 		
@@ -1486,9 +1479,6 @@ _channel = stScratch
 		;force off asynchronous mode so that channels 3 and 4 work
 		mva		#3 skctl
 		rts
-
-oob_value:
-		jmp		errorValueErr
 .endp
 
 ;===========================================================================
@@ -1504,7 +1494,7 @@ oob_value:
 		;get color index
 		jsr		ExprEvalPopIntPos
 		cpx		#4
-		bcs		stSound.oob_value
+		bcs		stErrorValueError
 		txa
 		bpl		stSetcolor.pmcolor_entry
 .endp
@@ -1515,7 +1505,7 @@ _channel = stScratch
 		;get color index
 		jsr		ExprEvalPopIntPos
 		cpx		#5
-		bcs		stSound.oob_value
+		bcs		stErrorValueError
 		txa
 		adc		#4
 pmcolor_entry:
@@ -1570,8 +1560,7 @@ stSyntaxError = errorWTF
 .proc stFileOp
 		lda		op_table-TOK_ERASE,x
 		pha
-		jsr		evaluate
-		jsr		IoSetupIOCB7
+		jsr		IoSetupIOCB7AndEval
 		pla
 		jmp		IoDoWithFilename
 
@@ -1696,13 +1685,8 @@ single_line:
 		jmp		errorNoMemory
 
 .def :ExecReset
-		;unterminate if we had one active from reset
-		lda		ioTermFlag
-		bpl		no_termination_active
+		jsr		IoCheckBusy
 
-		jsr		IoUnterminateString
-
-no_termination_active:
 
 		;close IOCBs 1-7
 		ldx		#$70

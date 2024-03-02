@@ -17,6 +17,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <at/atcpu/breakpoints.h>
 #include <at/atcpu/co65802.h>
 #include <at/atcpu/execstate.h>
 #include <at/atcpu/history.h>
@@ -30,9 +31,10 @@
 #define ATCP_DUMMY_READ_BYTE(addr) ((void)(0))
 #define ATCP_DEBUG_READ_BYTE(addr) (tmpaddr = (addr), tmpbase = mReadMap[(uint8)(tmpaddr >> 8)], (tmpbase & 1 ? DebugReadByteSlow(tmpbase, tmpaddr) : *(uint8 *)(tmpbase + tmpaddr)))
 #define ATCP_READ_BYTE(addr) (tmpaddr = (addr), tmpbase = mReadMap[(uint8)(tmpaddr >> 8)], (tmpbase & 1 ? ReadByteSlow(tmpbase, tmpaddr) : *(uint8 *)(tmpbase + tmpaddr)))
-#define ATCP_WRITE_BYTE(addr, value) ((void)(tmpaddr = (addr), tmpval = (value), tmpbase = mWriteMap[(uint8)(tmpaddr >> 8)], (tmpbase & 1 ? WriteByteSlow(tmpbase, tmpaddr, tmpval) : (*(uint8 *)(tmpbase + tmpaddr) = tmpval))))
+#define ATCP_WRITE_BYTE(addr, value) ((void)(tmpaddr = (addr), tmpval = (value), tmpbase = mWriteMap[(uint8)(tmpaddr >> 8)], (tmpbase & 1 ? WriteByteSlow(tmpbase, tmpaddr, tmpval) : (void)(*(uint8 *)(tmpbase + tmpaddr) = tmpval))))
 
 const uint8 ATCoProc65802::kInitialState = ATCPUStates::kStateReadOpcode;
+const uint8 ATCoProc65802::kInitialStateNoBreak = ATCPUStates::kStateReadOpcodeNoBreak;
 
 ATCoProc65802::ATCoProc65802()
 	: mA(0)
@@ -58,7 +60,7 @@ ATCoProc65802::ATCoProc65802()
 	memset(mWriteMap, 0, sizeof mWriteMap);
 
 	ATCPUDecoderGenerator65816 gen;
-	gen.RebuildTables(mDecoderTables, false, false);
+	gen.RebuildTables(mDecoderTables, false, false, false);
 }
 
 void ATCoProc65802::SetHistoryBuffer(ATCPUHistoryEntry buffer[131072]) {
@@ -69,7 +71,7 @@ void ATCoProc65802::SetHistoryBuffer(ATCPUHistoryEntry buffer[131072]) {
 
 	if (historyWasOn != historyNowOn) {
 		for(uint8& op : mDecoderTables.mDecodeHeap) {
-			if (op == ATCPUStates::kStateReadOpcode)
+			if (op == ATCPUStates::kStateReadOpcode || op == ATCPUStates::kStateReadOpcodeNoBreak)
 				op = ATCPUStates::kStateRegenerateDecodeTables;
 			else if (op == ATCPUStates::kStateAddToHistory)
 				op = ATCPUStates::kStateNop;
@@ -99,8 +101,7 @@ void ATCoProc65802::SetExecState(const ATCPUExecState& state) {
 		mPC = state.mPC;
 		mInsnPC = state.mPC;
 
-		static const uint8 kInitialState = ATCPUStates::kStateReadOpcode;
-		mpNextState = &kInitialState;
+		mpNextState = &kInitialStateNoBreak;
 	}
 
 	mA = state.mA;
@@ -154,6 +155,31 @@ void ATCoProc65802::SetExecState(const ATCPUExecState& state) {
 		UpdateDecodeTable();
 }
 
+void ATCoProc65802::SetBreakpointMap(const bool bpMap[65536], IATCPUBreakpointHandler *bpHandler) {
+	bool wasEnabled = (mpBreakpointMap != nullptr);
+	bool nowEnabled = (bpMap != nullptr);
+
+	mpBreakpointMap = bpMap;
+	mpBreakpointHandler = bpHandler;
+
+	if (wasEnabled != nowEnabled) {
+		if (nowEnabled) {
+			for(uint8& op : mDecoderTables.mDecodeHeap) {
+				if (op == ATCPUStates::kStateReadOpcodeNoBreak)
+					op = ATCPUStates::kStateReadOpcode;
+			}
+		} else {
+			for(uint8& op : mDecoderTables.mDecodeHeap) {
+				if (op == ATCPUStates::kStateReadOpcode)
+					op = ATCPUStates::kStateReadOpcodeNoBreak;
+			}
+
+			if (mpNextState == &kInitialState)
+				mpNextState = &kInitialStateNoBreak;
+		}
+	}
+}
+
 void ATCoProc65802::ColdReset() {
 	mA = 0;
 	mAH = 0;
@@ -175,7 +201,8 @@ void ATCoProc65802::ColdReset() {
 void ATCoProc65802::WarmReset() {
 	ATCP_MEMORY_CONTEXT;
 
-	mPC = ATCP_READ_BYTE(0xFFFC) + ((uint32)ATCP_READ_BYTE(0xFFFD) << 8);
+	mPC = ATCP_READ_BYTE(0xFFFC);
+	mPC += ((uint32)ATCP_READ_BYTE(0xFFFD) << 8);
 
 	// clear D flag
 	mP &= 0xF7;
@@ -190,7 +217,7 @@ void ATCoProc65802::WarmReset() {
 	mSH = 1;
 	mSubMode = kSubMode_Emulation;
 
-	mpNextState = &kInitialState;
+	mpNextState = mpBreakpointMap ? &kInitialState : &kInitialStateNoBreak;
 	mInsnPC = mPC;
 
 	UpdateDecodeTable();
@@ -205,7 +232,6 @@ void ATCoProc65802::Run() {
 		return;
 
 	uint32		cyclesLeft = mCyclesLeft;
-	mCyclesBase += cyclesLeft;
 	const uint32 cyclesBase = mCyclesBase;
 
 	const uint8 *nextState = mpNextState;
@@ -232,6 +258,16 @@ inline void ATCoProc65802::WriteByteSlow(uintptr base, uint32 addr, uint8 value)
 	auto node = (ATCoProcWriteMemNode *)(base - 1);
 
 	node->mpWrite(addr, value, node->mpThis);
+}
+
+bool ATCoProc65802::CheckBreakpoint() {
+	if (mpBreakpointHandler->CheckBreakpoint(((uint32)mK << 16) + mPC)) {
+		mpNextState = &kInitialStateNoBreak;
+		mInsnPC = mPC;
+		return true;
+	}
+
+	return false;
 }
 
 void ATCoProc65802::UpdateDecodeTable() {
@@ -262,8 +298,8 @@ void ATCoProc65802::UpdateDecodeTable() {
 
 const uint8 *ATCoProc65802::RegenerateDecodeTables() {
 	ATCPUDecoderGenerator65816 gen;
-	gen.RebuildTables(mDecoderTables, false, mpHistory != nullptr);
+	gen.RebuildTables(mDecoderTables, false, mpHistory != nullptr, mpBreakpointMap != nullptr);
 
-	return &kInitialState;
+	return mpBreakpointMap ? &kInitialState : &kInitialStateNoBreak;
 }
 

@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
@@ -110,7 +110,7 @@ uint8 ATHLEBasicLoader::OnCIOV(uint16) {
 				if (mProgramIndex >= mProgramToLoad.size()) {
 					mpCPU->Ldy(ATCIOSymbols::CIOStatEndOfFile);
 				} else {
-					uint32 maxRead = mProgramToLoad.size() - mProgramIndex;
+					uint32 maxRead = (uint32)(mProgramToLoad.size() - mProgramIndex);
 					uint32 addr = mem->ReadByte(ATKernelSymbols::ICBAL + iocb) + 256*mem->ReadByte(ATKernelSymbols::ICBAH + iocb);
 					uint32 len = mem->ReadByte(ATKernelSymbols::ICBLL + iocb) + 256*mem->ReadByte(ATKernelSymbols::ICBLH + iocb);
 					bool trunc = false;

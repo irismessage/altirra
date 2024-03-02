@@ -61,7 +61,8 @@ public:
 
 	bool IsControlReadEnabled() const { return mReadMode != kReadMode_Normal; }
 
-	bool ReadByte(uint32 address, uint8& value) const;
+	bool DebugReadByte(uint32 address, uint8& value) const;
+	bool ReadByte(uint32 address, uint8& value);
 	bool WriteByte(uint32 address, uint8 value);
 
 protected:
@@ -74,7 +75,8 @@ protected:
 	enum ReadMode {
 		kReadMode_Normal,
 		kReadMode_Autoselect,
-		kReadMode_WriteStatusPending
+		kReadMode_WriteStatusPending,
+		kReadMode_SectorEraseStatus
 	};
 
 	ReadMode mReadMode;
@@ -84,6 +86,7 @@ protected:
 	bool mbAtmelSDP;
 	bool mbA11Unlock;
 	bool mbA12iUnlock;
+	uint8 mToggleBits;
 	uint32	mSectorEraseTimeoutCycles;
 	uint32	mWriteSector;
 	ATEvent *mpWriteEvent;

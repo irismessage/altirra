@@ -27,32 +27,44 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\h\at\atcore\blockdevice.h" />
     <ClInclude Include="..\h\at\atcore\cio.h" />
     <ClInclude Include="..\h\at\atcore\consoleoutput.h" />
+    <ClInclude Include="..\h\at\atcore\deferredevent.h" />
     <ClInclude Include="..\h\at\atcore\device.h" />
+    <ClInclude Include="..\h\at\atcore\devicecart.h" />
+    <ClInclude Include="..\h\at\atcore\deviceindicators.h" />
     <ClInclude Include="..\h\at\atcore\devicecio.h" />
     <ClInclude Include="..\h\at\atcore\deviceimpl.h" />
     <ClInclude Include="..\h\at\atcore\devicemanager.h" />
+    <ClInclude Include="..\h\at\atcore\devicepbi.h" />
+    <ClInclude Include="..\h\at\atcore\deviceport.h" />
     <ClInclude Include="..\h\at\atcore\deviceprinter.h" />
     <ClInclude Include="..\h\at\atcore\deviceserial.h" />
     <ClInclude Include="..\h\at\atcore\devicesio.h" />
     <ClInclude Include="..\h\at\atcore\deviceu1mb.h" />
     <ClInclude Include="..\h\at\atcore\devicevideo.h" />
     <ClInclude Include="..\h\at\atcore\logging.h" />
+    <ClInclude Include="..\h\at\atcore\media.h" />
     <ClInclude Include="..\h\at\atcore\memoryutils.h" />
+    <ClInclude Include="..\h\at\atcore\notifylist.h" />
     <ClInclude Include="..\h\at\atcore\profile.h" />
+    <ClInclude Include="..\h\at\atcore\progress.h" />
     <ClInclude Include="..\h\at\atcore\propertyset.h" />
     <ClInclude Include="..\h\at\atcore\scheduler.h" />
     <ClInclude Include="..\h\at\atcore\sioutils.h" />
+    <ClInclude Include="..\h\at\atcore\vfs.h" />
     <ClInclude Include="h\stdafx.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\consoleoutput.cpp" />
+    <ClCompile Include="source\deferredevent.cpp" />
     <ClCompile Include="source\deviceimpl.cpp" />
     <ClCompile Include="source\devicemanager.cpp" />
     <ClCompile Include="source\logging.cpp" />
     <ClCompile Include="source\memoryutils.cpp" />
     <ClCompile Include="source\profile.cpp" />
+    <ClCompile Include="source\progress.cpp" />
     <ClCompile Include="source\propertyset.cpp" />
     <ClCompile Include="source\scheduler.cpp" />
     <ClCompile Include="source\sioutils.cpp" />
@@ -64,6 +76,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="source\vfs.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{B3C54D9A-6CBC-4A10-93EE-7A88B1B6E5AF}</ProjectGuid>

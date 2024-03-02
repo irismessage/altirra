@@ -27,8 +27,10 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="source\corvus.cpp" />
     <ClCompile Include="source\devices.cpp" />
     <ClCompile Include="source\diskdrive.cpp" />
+    <ClCompile Include="source\dongle.cpp" />
     <ClCompile Include="source\exeloader.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
@@ -41,6 +43,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\at\atdevices\devices.h" />
+    <ClInclude Include="h\at\atdevices\corvus.h" />
+    <ClInclude Include="h\at\atdevices\dongle.h" />
     <ClInclude Include="h\diskdrive.h" />
     <ClInclude Include="h\exeloader.h" />
     <ClInclude Include="h\stdafx.h" />

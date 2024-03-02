@@ -16,8 +16,10 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#ifndef f_AT_ATUI_MESSAGELOOP_H
-#define f_AT_ATUI_MESSAGELOOP_H
+#ifndef f_AT_ATNATIVEUI_MESSAGELOOP_H
+#define f_AT_ATNATIVEUI_MESSAGELOOP_H
+
+#include <vd2/system/win32/miniwindows.h>
 
 // Process messages in the Windows message queue. Returns true if
 // successful, or false if WM_QUIT was encountered.
@@ -30,5 +32,11 @@
 //	- WM_QUIT is automatically reposted when encountered.
 //
 bool ATUIProcessMessages(bool waitForMessage, int& returnCode);
+
+void ATUIRegisterModelessDialog(VDZHWND h);
+void ATUIUnregisterModelessDialog(VDZHWND h);
+bool ATUIProcessModelessDialogs(MSG *msg);
+void ATUIEnableModelessDialogs(VDZHWND parent, bool enable);
+void ATUIDestroyModelessDialogs(VDZHWND parent);
 
 #endif

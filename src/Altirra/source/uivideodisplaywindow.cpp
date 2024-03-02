@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/math.h>
 #include <vd2/system/time.h>
 #include <vd2/VDDisplay/font.h>
@@ -130,7 +130,8 @@ bool ATUIVideoDisplayWindow::Init(ATSimulatorEventManager& sem, ATDeviceManager&
 	mpDevMgr = &devMgr;
 	mpDevMgr->AddDeviceChangeCallback(IATDeviceVideoOutput::kTypeID, this);
 
-	mpDevMgr->ForEachInterface<IATDeviceVideoOutput>(false, [this](IATDeviceVideoOutput& vo) { SetXEP(&vo); });
+	for(IATDeviceVideoOutput *vo : mpDevMgr->GetInterfaces<IATDeviceVideoOutput>(false, false))
+		SetXEP(vo);
 
 	return true;
 }
@@ -451,207 +452,6 @@ ATUITouchMode ATUIVideoDisplayWindow::GetTouchModeAtPoint(const vdpoint32& pt) c
 	return kATUITouchMode_Default;
 }
 
-void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dblclk) {
-	ATInputManager *im = g_sim.GetInputManager();
-
-	Focus();
-
-	if (mpOSK) {
-		CloseOSK();
-		return;
-	}
-
-	// If the mouse is mapped, it gets first crack at inputs.
-	if (im->IsMouseMapped() && g_sim.IsRunning()) {
-
-		// Check if auto-capture is on and we haven't captured the mouse yet. If so, we
-		// should capture the mouse but otherwise eat the click
-		if (g_mouseAutoCapture && !g_mouseCaptured) {
-			if (vk == kATUIVK_LButton) {
-				CaptureMouse();
-				return;
-			}
-		} else {
-			const bool absMode = im->IsMouseAbsoluteMode();
-
-			// Check if the mouse is captured or we are in absolute mode. If we are in
-			// relative mode and haven't captured the mouse we should not route this
-			// shunt to the input manager.
-			if (g_mouseCaptured || absMode) {
-				if (absMode)
-					UpdateMousePosition(x, y);
-
-				switch(vk) {
-					case kATUIVK_LButton:
-						im->OnButtonDown(0, kATInputCode_MouseLMB);
-						break;
-
-					case kATUIVK_MButton:
-						if (im->IsInputMapped(0, kATInputCode_MouseMMB))
-							im->OnButtonDown(0, kATInputCode_MouseMMB);
-						else if (g_mouseCaptured)
-							ReleaseMouse();
-						break;
-
-					case kATUIVK_RButton:
-						im->OnButtonDown(0, kATInputCode_MouseRMB);
-						break;
-
-					case kATUIVK_XButton1:
-						im->OnButtonDown(0, kATInputCode_MouseX1B);
-						break;
-
-					case kATUIVK_XButton2:
-						im->OnButtonDown(0, kATInputCode_MouseX2B);
-						break;
-				}
-
-				return;
-			}
-		}
-	}
-	
-	// We aren't routing this mouse event to the input manager, so do selection if it's the
-	// LMB.
-
-	if (vk == kATUIVK_LButton) {
-		// double-click on the left 10% of the screen opens the side panel
-		if (dblclk) {
-			if (x < GetArea().width() / 10) {
-				mbOpenSidePanelDeferred = true;
-				return;
-			}
-		}
-
-		if (mpAltVideoOutput) {
-			mbDragActive = GetAltDisplayArea().contains(vdpoint32(x, y));
-
-			if (mbDragActive) {
-				mDragAnchorX = x;
-				mDragAnchorY = y;
-			}
-		} else {
-			mbDragActive = MapPixelToBeamPosition(x, y, mDragAnchorX, mDragAnchorY, true)
-				&& GetModeLineYPos(mDragAnchorY, true) >= 0;
-		}
-
-		if (mbDragActive) {
-			// We specifically don't clear the drag preview here as that would make it
-			// impossible to use Copy from the context menu with touch.
-			mbDragInitial = true;
-			mDragStartTime = VDGetCurrentTick();
-			mbMouseHidden = false;
-			CaptureCursor();
-		}
-	}
-}
-
-void ATUIVideoDisplayWindow::OnMouseUp(sint32 x, sint32 y, uint32 vk) {
-	if (vk == kATUIVK_LButton) {
-		if (mbDragActive) {
-			mbDragActive = false;
-
-			if (VDGetCurrentTick() - mDragStartTime < 250)
-				mbDragInitial = false;
-
-			ReleaseCursor();
-			UpdateDragPreview(x, y);
-			return;
-		}
-
-		if (mbOpenSidePanelDeferred) {
-			mbOpenSidePanelDeferred = false;
-			OpenSidePanel();
-			return;
-		}
-	}
-
-	ATInputManager *im = g_sim.GetInputManager();
-
-	if (g_mouseCaptured || im->IsMouseAbsoluteMode()) {
-		if (im->IsMouseMapped()) {
-			switch(vk) {
-				case kATUIVK_LButton:
-					im->OnButtonUp(0, kATInputCode_MouseLMB);
-					break;
-				case kATUIVK_RButton:
-					im->OnButtonUp(0, kATInputCode_MouseRMB);
-					break;
-				case kATUIVK_MButton:
-					im->OnButtonUp(0, kATInputCode_MouseMMB);
-					break;
-				case kATUIVK_XButton1:
-					im->OnButtonUp(0, kATInputCode_MouseX1B);
-					break;
-				case kATUIVK_XButton2:
-					im->OnButtonUp(0, kATInputCode_MouseX2B);
-					break;
-			}
-
-			// Eat the message to prevent a context menu.
-			return;
-		}
-	}
-
-	if (vk == kATUIVK_RButton) {
-		if (mpOnAllowContextMenu)
-			mpOnAllowContextMenu();
-	}
-}
-
-void ATUIVideoDisplayWindow::OnMouseRelativeMove(sint32 dx, sint32 dy) {
-	ATInputManager *im = g_sim.GetInputManager();
-
-	im->OnMouseMove(0, dx, dy);
-	SetCursorImage(kATUICursorImage_Hidden);
-}
-
-void ATUIVideoDisplayWindow::OnMouseMove(sint32 x, sint32 y) {
-	// MPC-HC sometimes injects mouse moves in order to prevent the screen from
-	// going to sleep. We need to filter out these moves to prevent the cursor
-	// from blinking.
-	if (mbMouseHidden) {
-		if (mMouseHideX == x && mMouseHideY == y)
-			return;
-
-		mbMouseHidden = false;
-	}
-
-	// If we have already entered a selection drag, it has highest priority.
-	if (mbDragActive) {
-		SetCursorImage(kATUICursorImage_IBeam);
-		UpdateDragPreview(x, y);
-		return;
-	}
-
-	// Check if we're stopped and should do debug queries.
-	if (mpManager->IsKeyDown(kATUIVK_Shift) && !g_sim.IsRunning() && ATIsDebugConsoleActive() && HasFocus()) {
-		SetCoordinateIndicator(x, y);
-		SetCursorImage(kATUICursorImage_Cross);
-		return;
-	}
-
-	SetCursorImage(ComputeCursorImage(vdpoint32(x, y)));
-
-	if ((g_mouseCaptured || !g_mouseAutoCapture) && g_sim.GetInputManager()->IsMouseAbsoluteMode()) {
-		UpdateMousePosition(x, y);
-	} else if (mbHoverTipActive) {
-		if (!mHoverTipArea.contains(vdpoint32(x, y))) {
-			g_sim.GetUIRenderer()->SetHoverTip(0, 0, NULL);
-			mbHoverTipActive = false;
-		}
-	}
-}
-
-void ATUIVideoDisplayWindow::OnMouseLeave() {
-	ClearCoordinateIndicator();
-
-	if (mbHoverTipActive)
-		g_sim.GetUIRenderer()->SetHoverTip(0, 0, NULL);
-
-	mbOpenSidePanelDeferred = false;
-}
-
 namespace {
 	VDStringW GetMessageForError(char *data) {
 		// trim and null-terminate the string
@@ -770,108 +570,318 @@ namespace {
 	}
 }
 
+void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dblclk) {
+	ATInputManager *im = g_sim.GetInputManager();
+
+	Focus();
+
+	if (mpOSK) {
+		CloseOSK();
+		return;
+	}
+
+	// If the mouse is mapped, it gets first crack at inputs unless Alt is down.
+	const bool alt = mpManager->IsKeyDown(kATUIVK_Alt);
+	if (im->IsMouseMapped() && g_sim.IsRunning() && !alt) {
+
+		// Check if auto-capture is on and we haven't captured the mouse yet. If so, we
+		// should capture the mouse but otherwise eat the click
+		if (g_mouseAutoCapture && !g_mouseCaptured) {
+			if (vk == kATUIVK_LButton) {
+				CaptureMouse();
+				return;
+			}
+		} else {
+			const bool absMode = im->IsMouseAbsoluteMode();
+
+			// Check if the mouse is captured or we are in absolute mode. If we are in
+			// relative mode and haven't captured the mouse we should not route this
+			// shunt to the input manager.
+			if (g_mouseCaptured || absMode) {
+				if (absMode)
+					UpdateMousePosition(x, y);
+
+				switch(vk) {
+					case kATUIVK_LButton:
+						im->OnButtonDown(0, kATInputCode_MouseLMB);
+						break;
+
+					case kATUIVK_MButton:
+						if (im->IsInputMapped(0, kATInputCode_MouseMMB))
+							im->OnButtonDown(0, kATInputCode_MouseMMB);
+						else if (g_mouseCaptured)
+							ReleaseMouse();
+						break;
+
+					case kATUIVK_RButton:
+						im->OnButtonDown(0, kATInputCode_MouseRMB);
+						break;
+
+					case kATUIVK_XButton1:
+						im->OnButtonDown(0, kATInputCode_MouseX1B);
+						break;
+
+					case kATUIVK_XButton2:
+						im->OnButtonDown(0, kATInputCode_MouseX2B);
+						break;
+				}
+
+				return;
+			}
+		}
+	}
+	
+	// We aren't routing this mouse event to the input manager, so do selection if it's the
+	// LMB.
+
+	if (vk == kATUIVK_LButton) {
+		if (alt) {
+			// tooltip request -- let's try to grab text
+			int xc;
+			int yc;
+
+			bool valid = false;
+
+			if (mpAltVideoOutput) {
+				const auto& videoInfo = mpAltVideoOutput->GetVideoInfo();
+				const vdrect32& rBlit = GetAltDisplayArea();
+				const vdrect32& rDisp = videoInfo.mDisplayArea;
+
+				if (rBlit.contains(vdpoint32(x, y)) && !rDisp.empty()) {
+					int dx = VDRoundToInt((float)x * (float)rDisp.width() / (float)rBlit.width());
+					int dy = VDRoundToInt((float)y * (float)rDisp.height() / (float)rBlit.height());
+
+					const vdpoint32 caretPos = mpAltVideoOutput->PixelToCaretPos(vdpoint32(dx, dy));
+
+					uint8 buf[81];
+					int actual = mpAltVideoOutput->ReadRawText(buf, 0, caretPos.y, 80);
+
+					char text[81];
+					for(int i=0; i<actual; ++i) {
+						uint8 c = buf[i] & 0x7f;
+
+						if ((uint8)(c - 0x20) > 0x5f)
+							c = 0x20;
+
+						text[i] = (char)c;
+					}
+
+					text[actual] = 0;
+
+					const VDStringW& msg = GetMessageForError(text);
+
+					if (!msg.empty()) {
+						const vdrect32& lineRect = mpAltVideoOutput->CharToPixelRect(vdrect32(0, caretPos.y, videoInfo.mTextColumns, caretPos.y + 1));
+
+						float scaleX = (float)rBlit.width() / (float)rDisp.width();
+						float scaleY = (float)rBlit.height() / (float)rDisp.height();
+
+						mHoverTipArea.set(
+							VDRoundToInt(lineRect.left * scaleX + rBlit.left),
+							VDRoundToInt(lineRect.top * scaleY + rBlit.top),
+							VDRoundToInt(lineRect.right * scaleX + rBlit.left),
+							VDRoundToInt(lineRect.bottom * scaleY + rBlit.top));
+
+						g_sim.GetUIRenderer()->SetHoverTip(x, y, msg.c_str());
+						mbHoverTipActive = true;
+						valid = true;
+					}
+				}
+			} else if (!g_sim.IsRunning() && ATIsDebugConsoleActive()) {
+				mbCoordIndicatorEnabled = true;
+				CaptureCursor();
+				SetCoordinateIndicator(x, y);
+				SetCursorImage(kATUICursorImage_Cross);
+			} else if (MapPixelToBeamPosition(x, y, xc, yc, false)) {
+				// attempt to copy out text
+				int ymode = GetModeLineYPos(yc, true);
+
+				if (ymode >= 0) {
+					char data[49];
+
+					int actual = ReadText(data, ymode, 0, 48);
+					data[actual] = 0;
+
+					const VDStringW& msg = GetMessageForError(data);
+
+					if (!msg.empty()) {
+						int xp1, xp2, yp1, yp2;
+						MapBeamPositionToPixel(0, ymode, xp1, yp1);
+
+						ATAnticEmulator& antic = g_sim.GetAntic();
+						const ATAnticEmulator::DLHistoryEntry *dlhist = antic.GetDLHistory();
+						while(++ymode < 248 && !dlhist[ymode].mbValid)
+							;
+
+						MapBeamPositionToPixel(228, ymode, xp2, yp2);
+
+						mHoverTipArea.set(xp1, yp1, xp2, yp2);
+
+						g_sim.GetUIRenderer()->SetHoverTip(x, y, msg.c_str());
+						mbHoverTipActive = true;
+						valid = true;
+					}
+				}
+			}
+
+			if (!valid)
+				ClearHoverTip();
+		} else {
+			// double-click on the left 10% of the screen opens the side panel
+			if (dblclk) {
+				if (x < GetArea().width() / 10) {
+					mbOpenSidePanelDeferred = true;
+					return;
+				}
+			}
+
+			if (mpAltVideoOutput) {
+				mbDragActive = GetAltDisplayArea().contains(vdpoint32(x, y));
+
+				if (mbDragActive) {
+					mDragAnchorX = x;
+					mDragAnchorY = y;
+				}
+			} else {
+				mbDragActive = MapPixelToBeamPosition(x, y, mDragAnchorX, mDragAnchorY, true)
+					&& GetModeLineYPos(mDragAnchorY, true) >= 0;
+			}
+
+			if (mbDragActive) {
+				// We specifically don't clear the drag preview here as that would make it
+				// impossible to use Copy from the context menu with touch.
+				mbDragInitial = true;
+				mDragStartTime = VDGetCurrentTick();
+				mbMouseHidden = false;
+				CaptureCursor();
+			}
+		}
+	}
+}
+
+void ATUIVideoDisplayWindow::OnMouseUp(sint32 x, sint32 y, uint32 vk) {
+	if (vk == kATUIVK_LButton) {
+		ClearCoordinateIndicator();
+		ClearHoverTip();
+
+		if (mbCoordIndicatorEnabled) {
+			mbCoordIndicatorEnabled = false;
+			ReleaseCursor();
+		}
+
+		if (mbDragActive) {
+			mbDragActive = false;
+
+			if (VDGetCurrentTick() - mDragStartTime < 250)
+				mbDragInitial = false;
+
+			ReleaseCursor();
+			UpdateDragPreview(x, y);
+			return;
+		}
+
+		if (mbOpenSidePanelDeferred) {
+			mbOpenSidePanelDeferred = false;
+			OpenSidePanel();
+			return;
+		}
+	}
+
+	ATInputManager *im = g_sim.GetInputManager();
+
+	if (g_mouseCaptured || im->IsMouseAbsoluteMode()) {
+		if (im->IsMouseMapped()) {
+			switch(vk) {
+				case kATUIVK_LButton:
+					im->OnButtonUp(0, kATInputCode_MouseLMB);
+					break;
+				case kATUIVK_RButton:
+					im->OnButtonUp(0, kATInputCode_MouseRMB);
+					break;
+				case kATUIVK_MButton:
+					im->OnButtonUp(0, kATInputCode_MouseMMB);
+					break;
+				case kATUIVK_XButton1:
+					im->OnButtonUp(0, kATInputCode_MouseX1B);
+					break;
+				case kATUIVK_XButton2:
+					im->OnButtonUp(0, kATInputCode_MouseX2B);
+					break;
+			}
+
+			// Eat the message to prevent a context menu.
+			return;
+		}
+	}
+
+	if (vk == kATUIVK_RButton) {
+		if (mpOnAllowContextMenu)
+			mpOnAllowContextMenu();
+	}
+}
+
+void ATUIVideoDisplayWindow::OnMouseRelativeMove(sint32 dx, sint32 dy) {
+	ATInputManager *im = g_sim.GetInputManager();
+
+	im->OnMouseMove(0, dx, dy);
+	SetCursorImage(kATUICursorImage_Hidden);
+}
+
+void ATUIVideoDisplayWindow::OnMouseMove(sint32 x, sint32 y) {
+	// MPC-HC sometimes injects mouse moves in order to prevent the screen from
+	// going to sleep. We need to filter out these moves to prevent the cursor
+	// from blinking.
+	if (mbMouseHidden) {
+		if (mMouseHideX == x && mMouseHideY == y)
+			return;
+
+		mbMouseHidden = false;
+	}
+
+	// If we have already entered a selection drag, it has highest priority.
+	if (mbDragActive) {
+		SetCursorImage(kATUICursorImage_IBeam);
+		UpdateDragPreview(x, y);
+		return;
+	}
+
+	// Check if we're stopped and should do debug queries.
+	if (mbCoordIndicatorEnabled) {
+		SetCoordinateIndicator(x, y);
+		SetCursorImage(kATUICursorImage_Cross);
+		return;
+	}
+
+	SetCursorImage(ComputeCursorImage(vdpoint32(x, y)));
+
+	auto *pIM = g_sim.GetInputManager();
+	if ((g_mouseCaptured || !g_mouseAutoCapture) && pIM->IsMouseAbsoluteMode()) {
+		UpdateMousePosition(x, y);
+	} else if (mbHoverTipActive) {
+		if (!mHoverTipArea.contains(vdpoint32(x, y))) {
+			ClearHoverTip();
+		}
+	}
+}
+
+void ATUIVideoDisplayWindow::OnMouseLeave() {
+	ClearCoordinateIndicator();
+	mbCoordIndicatorEnabled = false;
+
+	ClearHoverTip();
+
+	mbOpenSidePanelDeferred = false;
+}
+
 void ATUIVideoDisplayWindow::OnMouseHover(sint32 x, sint32 y) {
 	if (g_mouseCaptured)
 		return;
 
-	if (!mpManager->IsKeyDown(kATUIVK_Shift)) {
+	if (!mpManager->IsKeyDown(kATUIVK_Alt)) {
 		SetCursorImage(kATUICursorImage_Hidden);
 		mbMouseHidden = true;
 		mMouseHideX = x;
 		mMouseHideY = y;
-		return;
-	}
-
-	// don't process if we're in query mode
-	if (!g_sim.IsRunning() && ATIsDebugConsoleActive())
-		return;
-
-	// tooltip request -- let's try to grab text
-	int xc;
-	int yc;
-
-	bool valid = false;
-
-	if (mpAltVideoOutput) {
-		const auto& videoInfo = mpAltVideoOutput->GetVideoInfo();
-		const vdrect32& rBlit = GetAltDisplayArea();
-		const vdrect32& rDisp = videoInfo.mDisplayArea;
-
-		if (rBlit.contains(vdpoint32(x, y)) && !rDisp.empty()) {
-			int dx = VDRoundToInt((float)x * (float)rDisp.width() / (float)rBlit.width());
-			int dy = VDRoundToInt((float)y * (float)rDisp.height() / (float)rBlit.height());
-
-			const vdpoint32 caretPos = mpAltVideoOutput->PixelToCaretPos(vdpoint32(dx, dy));
-
-			uint8 buf[81];
-			int actual = mpAltVideoOutput->ReadRawText(buf, 0, caretPos.y, 80);
-
-			char text[81];
-			for(int i=0; i<actual; ++i) {
-				uint8 c = buf[i] & 0x7f;
-
-				if ((uint8)(c - 0x20) > 0x5f)
-					c = 0x20;
-
-				text[i] = (char)c;
-			}
-
-			text[actual] = 0;
-
-			const VDStringW& msg = GetMessageForError(text);
-
-			if (!msg.empty()) {
-				const vdrect32& lineRect = mpAltVideoOutput->CharToPixelRect(vdrect32(0, caretPos.y, videoInfo.mTextColumns, caretPos.y + 1));
-
-				float scaleX = (float)rBlit.width() / (float)rDisp.width();
-				float scaleY = (float)rBlit.height() / (float)rDisp.height();
-
-				mHoverTipArea.set(
-					VDRoundToInt(lineRect.left * scaleX + rBlit.left),
-					VDRoundToInt(lineRect.top * scaleY + rBlit.top),
-					VDRoundToInt(lineRect.right * scaleX + rBlit.left),
-					VDRoundToInt(lineRect.bottom * scaleY + rBlit.top));
-
-				g_sim.GetUIRenderer()->SetHoverTip(x, y, msg.c_str());
-				mbHoverTipActive = true;
-				valid = true;
-			}
-		}
-	} else if (MapPixelToBeamPosition(x, y, xc, yc, false)) {
-		// attempt to copy out text
-		int ymode = GetModeLineYPos(yc, true);
-
-		if (ymode >= 0) {
-			char data[49];
-
-			int actual = ReadText(data, ymode, 0, 48);
-			data[actual] = 0;
-
-			const VDStringW& msg = GetMessageForError(data);
-
-			if (!msg.empty()) {
-				int xp1, xp2, yp1, yp2;
-				MapBeamPositionToPixel(0, ymode, xp1, yp1);
-
-				ATAnticEmulator& antic = g_sim.GetAntic();
-				const ATAnticEmulator::DLHistoryEntry *dlhist = antic.GetDLHistory();
-				while(++ymode < 248 && !dlhist[ymode].mbValid)
-					;
-
-				MapBeamPositionToPixel(228, ymode, xp2, yp2);
-
-				mHoverTipArea.set(xp1, yp1, xp2, yp2);
-
-				g_sim.GetUIRenderer()->SetHoverTip(x, y, msg.c_str());
-				mbHoverTipActive = true;
-				valid = true;
-			}
-		}
-	}
-
-	if (!valid) {
-		g_sim.GetUIRenderer()->SetHoverTip(x, y, NULL);
-		mbHoverTipActive = false;
 	}
 }
 
@@ -895,26 +905,7 @@ bool ATUIVideoDisplayWindow::OnKeyDown(const ATUIKeyEvent& event) {
 		return true;
 	}
 
-	if (event.mVirtKey == kATUIVK_Shift) {
-		if (HasCursor() && !g_mouseCaptured) {
-			if (!g_sim.IsRunning() && ATIsDebugConsoleActive()) {
-				mbCoordIndicatorEnabled = true;
-
-				mbMouseHidden = false;
-				SetCursorImage(kATUICursorImage_Cross);
-
-				vdpoint32 cpt;
-				if (TranslateScreenPtToClientPt(mpManager->GetCursorPosition(), cpt)) {
-					SetCoordinateIndicator(cpt.x, cpt.y);
-				}
-			}
-
-			// We don't switch to the query cursor here as that would cause annoying cursor
-			// blinking while typing with the Shift key.
-		}
-	}
-
-	// fall through so the simulator still receives the shift key, in case a key is typed
+	// fall through so the simulator still receives the alt key, in case a key is typed
 	if (ProcessKeyDown(event, !mpEnhTextEngine || mpEnhTextEngine->IsRawInputEnabled())) {
 		ClearDragPreview();
 		return true;
@@ -937,20 +928,6 @@ bool ATUIVideoDisplayWindow::OnKeyDown(const ATUIKeyEvent& event) {
 }
 
 bool ATUIVideoDisplayWindow::OnKeyUp(const ATUIKeyEvent& event) {
-	if (event.mVirtKey == kATUIVK_Shift) {
-		mbCoordIndicatorEnabled = false;
-		ClearCoordinateIndicator();
-
-		g_sim.GetUIRenderer()->SetHoverTip(0, 0, NULL);
-		mbHoverTipActive = false;
-
-		vdpoint32 cpt;
-		if (TranslateScreenPtToClientPt(mpManager->GetCursorPosition(), cpt)) {
-			mbMouseHidden = false;
-			SetCursorImage(ComputeCursorImage(cpt));
-		}
-	}
-
 	if (ProcessKeyUp(event, !mpEnhTextEngine || mpEnhTextEngine->IsRawInputEnabled()) || (mpEnhTextEngine && mpEnhTextEngine->OnKeyUp(event.mVirtKey)))
 		return true;
 
@@ -1106,38 +1083,7 @@ void ATUIVideoDisplayWindow::OnSize() {
 		mpOSKPanel->SetArea(vdrect32(0, csz.h - osksz.h, csz.w, csz.h));
 	}
 
-	if (mpEnhTextEngine) {
-		auto *vo = mpEnhTextEngine->GetVideoOutput();
-
-		const auto videoInfoPrev = vo->GetVideoInfo();
-
-		mpEnhTextEngine->OnSize(csz.w, csz.h);
-
-		const auto videoInfoNext = vo->GetVideoInfo();
-
-		if (videoInfoPrev.mTextRows != videoInfoNext.mTextRows || videoInfoPrev.mTextColumns != videoInfoNext.mTextColumns) {
-			if (mbShowEnhSizeIndicator) {
-				if (!mpUILabelEnhTextSize) {
-					mpUILabelEnhTextSize = new ATUILabel;
-					mpUILabelEnhTextSize->AddRef();
-
-					vdrefptr<IATUIAnchor> anchor;
-					ATUICreateTranslationAnchor(0.5f, 0.5f, ~anchor);
-					mpUILabelEnhTextSize->SetFont(mpManager->GetThemeFont(kATUIThemeFont_Default));
-					mpUILabelEnhTextSize->SetAnchor(anchor);
-					mpUILabelEnhTextSize->SetTextOffset(8, 8);
-					mpUILabelEnhTextSize->SetTextColor(0xFFFFFF);
-					mpUILabelEnhTextSize->SetBorderColor(0xFFFFFF);
-					mpUILabelEnhTextSize->SetFillColor(0x404040);
-
-					AddChild(mpUILabelEnhTextSize);
-				}
-
-				mpUILabelEnhTextSize->SetTextF(L"%ux%u", videoInfoNext.mTextColumns, videoInfoNext.mTextRows);
-				mpUILabelEnhTextSize->AutoSize();
-			}
-		}
-	}
+	UpdateEnhTextSize();
 
 	ATUIContainer::OnSize();
 }
@@ -1150,9 +1096,6 @@ void ATUIVideoDisplayWindow::OnSetFocus() {
 
 void ATUIVideoDisplayWindow::OnKillFocus() {
 	g_sim.GetInputManager()->SetRestrictedMode(true);
-
-	mbCoordIndicatorEnabled = false;
-	ClearCoordinateIndicator();
 
 	if (mbDragActive) {
 		mbDragActive = false;
@@ -1479,7 +1422,8 @@ uint32 ATUIVideoDisplayWindow::ComputeCursorImage(const vdpoint32& pt) const {
 
 	bool cursorSet = false;
 
-	if (!g_mouseCaptured && validBeamPosition && mpManager->IsKeyDown(kATUIVK_Shift))
+	auto *pIM = g_sim.GetInputManager();
+	if (!g_mouseCaptured && validBeamPosition && mpManager->IsKeyDown(kATUIVK_Alt))
 		return kATUICursorImage_Query;
 
 	if (g_sim.GetInputManager()->IsMouseMapped()) {
@@ -1493,7 +1437,7 @@ uint32 ATUIVideoDisplayWindow::ComputeCursorImage(const vdpoint32& pt) const {
 
 			return kATUICursorImage_Arrow;
 
-		} else if (g_sim.GetInputManager()->IsMouseAbsoluteMode()) {
+		} else if (pIM->IsMouseAbsoluteMode()) {
 
 			// We're in absolute mode, and either the mouse is captured or auto-capture is off.
 			// In this case we will be passing absolute mouse inputs to the input manager. Show
@@ -1562,8 +1506,10 @@ const vdrect32 ATUIVideoDisplayWindow::GetAltDisplayArea() const {
 	sint32 dh = h;
 
 	if (mpAltVideoOutput != mpXEP) {
-		dw = r.width();
-		dh = r.height();
+		double ratio = std::min<double>(1, std::min<double>((double)dw / (double)r.width(), (double)dh / (double)r.height()));
+
+		dw = VDRoundToInt32((double)r.width() * ratio);
+		dh = VDRoundToInt32((double)r.height() * ratio);
 	} else if (g_displayStretchMode != kATDisplayStretchMode_Unconstrained) {
 		double par = 0.5;
 		
@@ -2068,5 +2014,48 @@ void ATUIVideoDisplayWindow::SetCoordinateIndicator(int x, int y) {
 			s.append(L"<b>DL:</b> None");
 
 		uir->SetHoverTip(x, y, s.c_str());
+	}
+}
+
+void ATUIVideoDisplayWindow::ClearHoverTip() {
+	if (mbHoverTipActive) {
+		mbHoverTipActive = false;
+		g_sim.GetUIRenderer()->SetHoverTip(0, 0, NULL);
+	}
+}
+
+void ATUIVideoDisplayWindow::UpdateEnhTextSize() {
+	if (mpEnhTextEngine) {
+		auto *vo = mpEnhTextEngine->GetVideoOutput();
+
+		const auto videoInfoPrev = vo->GetVideoInfo();
+
+		const auto csz = GetClientArea().size();
+		mpEnhTextEngine->OnSize(csz.w, csz.h);
+
+		const auto videoInfoNext = vo->GetVideoInfo();
+
+		if (videoInfoPrev.mTextRows != videoInfoNext.mTextRows || videoInfoPrev.mTextColumns != videoInfoNext.mTextColumns) {
+			if (mbShowEnhSizeIndicator) {
+				if (!mpUILabelEnhTextSize) {
+					mpUILabelEnhTextSize = new ATUILabel;
+					mpUILabelEnhTextSize->AddRef();
+
+					vdrefptr<IATUIAnchor> anchor;
+					ATUICreateTranslationAnchor(0.5f, 0.5f, ~anchor);
+					mpUILabelEnhTextSize->SetFont(mpManager->GetThemeFont(kATUIThemeFont_Default));
+					mpUILabelEnhTextSize->SetAnchor(anchor);
+					mpUILabelEnhTextSize->SetTextOffset(8, 8);
+					mpUILabelEnhTextSize->SetTextColor(0xFFFFFF);
+					mpUILabelEnhTextSize->SetBorderColor(0xFFFFFF);
+					mpUILabelEnhTextSize->SetFillColor(0x404040);
+
+					AddChild(mpUILabelEnhTextSize);
+				}
+
+				mpUILabelEnhTextSize->SetTextF(L"%ux%u", videoInfoNext.mTextColumns, videoInfoNext.mTextRows);
+				mpUILabelEnhTextSize->AutoSize();
+			}
+		}
 	}
 }

@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/error.h>
 #include <vd2/system/registry.h>
 #include <vd2/system/VDString.h>
@@ -691,7 +691,7 @@ void ATUISetCustomKeyMap(const uint32 *mappings, size_t n) {
 bool ATIsValidScanCode(uint32 c) {
 	// check for our special scan codes
 	if (c >= 0x100)
-		return c < kATUIKeyScanCodeLast;
+		return c <= kATUIKeyScanCodeLast;
 
 	// six values are never produced by the matrix
 	switch(c & 0x3F) {
@@ -719,6 +719,7 @@ bool ATIsValidScanCode(uint32 c) {
 const VDAccelTableEntry kATDefaultAccelTableDisplay[]={
 	{ "System.PulseWarpOn", 0, { VK_F1, 0 } },
 	{ "System.PulseWarpOff", 0, { VK_F1, UP } },
+	{ "Input.CycleQuickMaps", 0, { VK_F1, SHIFT } },
 	{ "System.WarmReset", 0, { VK_F5, 0 } },
 	{ "System.ColdReset", 0, { VK_F5, SHIFT } },
 	{ "Video.ToggleStandardNTSCPAL", 0, { VK_F7, CTRL } },

@@ -17,8 +17,54 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <vd2/system/function.h>
+#include <vd2/system/win32/miniwindows.h>
+#include <at/atcore/notifylist.h>
 #include <at/atcore/profile.h>
 #include <at/atnativeui/uiframe.h>
+
+ATNotifyList<HWND> g_ATModelessDialogs;
+
+void ATUIRegisterModelessDialog(VDZHWND h) {
+	g_ATModelessDialogs.Add(h);
+}
+
+void ATUIUnregisterModelessDialog(VDZHWND h) {
+	g_ATModelessDialogs.Remove(h);
+}
+
+bool ATUIProcessModelessDialogs(MSG *msg) {
+	return g_ATModelessDialogs.Notify(
+		[&](HWND hwnd) {
+			if (IsDialogMessage(hwnd, msg))
+				return true;
+
+			return false;
+		}
+	);
+}
+
+void ATUIEnableModelessDialogs(VDZHWND parent, bool enable) {
+	g_ATModelessDialogs.Notify(
+		[parent,enable](HWND hwnd) {
+			if (GetParent(hwnd) == parent)
+				EnableWindow(hwnd, enable);
+
+			return false;
+		}
+	);
+}
+
+void ATUIDestroyModelessDialogs(VDZHWND parent) {
+	g_ATModelessDialogs.Notify(
+		[parent](HWND hwnd) {
+			if (GetParent(hwnd) == parent)
+				DestroyWindow(hwnd);
+
+			return false;
+		}
+	);
+}
 
 bool ATUIProcessMessages(bool waitForMessage, int& returnCode) {
 	ATProfileBeginRegion(kATProfileRegion_NativeEvents);
@@ -105,6 +151,9 @@ bool ATUIProcessMessages(bool waitForMessage, int& returnCode) {
 						break;
 				}
 			}
+
+			if (ATUIProcessModelessDialogs(&msg))
+				continue;
 
 			TranslateMessage(&msg);
 			DispatchMessage(&msg);

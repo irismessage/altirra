@@ -47,6 +47,9 @@
     <ClInclude Include="..\h\at\atcpu\history.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\h\at\atcpu\breakpoints.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="h\co65802.inl">

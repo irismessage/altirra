@@ -45,6 +45,8 @@ uint16 ATIPComputeChecksum(uint64 initialSum, const uint8 *data, uint32 dwords);
 bool ATIPv4DecodeHeader(ATIPv4HeaderInfo& dstInfo, const uint8 *data, uint32 len);
 uint32 ATIPv4EncodeHeader(uint8 *data, uint32 len, const ATIPv4HeaderInfo& srcInfo);
 
+bool ATIPv6DecodeHeader(const uint8 *data, uint32 len);
+
 inline ATEthernetAddr ATEthernetGetBroadcastAddr() {
 	return ATEthernetAddr { { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } };
 }

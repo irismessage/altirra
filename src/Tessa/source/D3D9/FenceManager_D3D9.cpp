@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include <stdafx.h>
 #include <d3d9.h>
 #include "D3D9/FenceManager_D3D9.h"
 

@@ -19,27 +19,27 @@
 #include <vd2/system/file.h>
 #include <vd2/system/hash.h>
 #include <vd2/system/int128.h>
+#include <at/atcore/propertyset.h>
 #include "myide.h"
 #include "memorymanager.h"
 #include "ide.h"
 #include "uirender.h"
-#include "simulator.h"
 #include "firmwaremanager.h"
 
-ATMyIDEEmulator::ATMyIDEEmulator()
-	: mpMemMan(NULL)
-	, mpMemLayerIDE(NULL)
-	, mpMemLayerLeftCart(NULL)
-	, mpMemLayerRightCart(NULL)
-	, mpMemLayerLeftCartFlash(NULL)
-	, mpMemLayerRightCartFlash(NULL)
-	, mpIDE(NULL)
-	, mpUIRenderer(NULL)
-	, mpSim(NULL)
-	, mbVersion2(false)
-	, mbVersion2Ex(false)
-	, mCartBank(0)
-	, mCartBank2(0)
+template<bool T_Ver2, bool T_UseD5xx>
+void ATCreateDeviceMyIDE(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATMyIDEEmulator> p(new ATMyIDEEmulator(T_Ver2, T_UseD5xx));
+
+	*dev = p.release();
+}
+
+extern const ATDeviceDefinition g_ATDeviceDefMyIDED1xx = { "myide-d1xx", nullptr, L"MyIDE (internal)", ATCreateDeviceMyIDE<false, false> };
+extern const ATDeviceDefinition g_ATDeviceDefMyIDED5xx = { "myide-d5xx", nullptr, L"MyIDE (cartridge)", ATCreateDeviceMyIDE<false, true> };
+extern const ATDeviceDefinition g_ATDeviceDefMyIDE2 = { "myide2", "myide2", L"MyIDE-II", ATCreateDeviceMyIDE<true, true> };
+
+ATMyIDEEmulator::ATMyIDEEmulator(bool ver2, bool useD5xx)
+	: mbVersion2(ver2)
+	, mbUseD5xx(useD5xx)
 {
 	memset(mFirmware, 0xFF, sizeof mFirmware);
 }
@@ -47,17 +47,22 @@ ATMyIDEEmulator::ATMyIDEEmulator()
 ATMyIDEEmulator::~ATMyIDEEmulator() {
 }
 
-bool ATMyIDEEmulator::IsLeftCartEnabled() const {
-	return mCartBank >= 0;
+void *ATMyIDEEmulator::AsInterface(uint32 id) {
+	switch(id) {
+		case IATDeviceScheduling::kTypeID:	return static_cast<IATDeviceScheduling *>(this);
+		case IATDeviceMemMap::kTypeID:		return static_cast<IATDeviceMemMap *>(this);
+		case IATDeviceCartridge::kTypeID:	return static_cast<IATDeviceCartridge *>(this);
+		case IATDeviceIndicators::kTypeID:	return static_cast<IATDeviceIndicators *>(this);
+		case IATDeviceFirmware::kTypeID:	return static_cast<IATDeviceFirmware *>(this);
+		case IATDeviceParent::kTypeID:		return static_cast<IATDeviceParent *>(this);
+		case ATIDEEmulator::kTypeID:		return static_cast<ATIDEEmulator *>(&mIDE[0]);
+		default:
+			return nullptr;
+	}
 }
 
-void ATMyIDEEmulator::Init(ATMemoryManager *memman, IATUIRenderer *uir, ATScheduler *sch, ATSimulator *sim, bool used5xx, bool v2, bool v2ex) {
-	mpMemMan = memman;
-	mpUIRenderer = uir;
-	mbVersion2 = v2;
-	mbVersion2Ex = v2ex;
-	mpSim = sim;
-	mbUseD5xx = used5xx;
+void ATMyIDEEmulator::Init() {
+	ReloadFirmware();
 
 	mFlash.SetDirty(false);
 
@@ -67,8 +72,8 @@ void ATMyIDEEmulator::Init(ATMemoryManager *memman, IATUIRenderer *uir, ATSchedu
 	handlerTable.mbPassReads = true;
 	handlerTable.mbPassWrites = true;
 
-	if (v2) {
-		mFlash.Init(mFirmware, kATFlashType_Am29F040B, sch);
+	if (mbVersion2) {
+		mFlash.Init(mFirmware, kATFlashType_Am29F040B, mpScheduler);
 
 		handlerTable.mpThis = this;
 		handlerTable.mpDebugReadHandler = OnDebugReadByte_CCTL_V2;
@@ -76,8 +81,9 @@ void ATMyIDEEmulator::Init(ATMemoryManager *memman, IATUIRenderer *uir, ATSchedu
 		handlerTable.mpWriteHandler = OnWriteByte_CCTL_V2;
 
 		mpMemLayerIDE = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay, handlerTable, 0xD5, 0x01);
+		mpMemMan->SetLayerName(mpMemLayerIDE, "MyIDE-II control");
 
-		handlerTable.mpDebugReadHandler = ReadByte_Cart_V2;
+		handlerTable.mpDebugReadHandler = DebugReadByte_Cart_V2;
 		handlerTable.mpReadHandler = ReadByte_Cart_V2;
 		handlerTable.mpWriteHandler = WriteByte_Cart_V2;
 
@@ -86,6 +92,11 @@ void ATMyIDEEmulator::Init(ATMemoryManager *memman, IATUIRenderer *uir, ATSchedu
 
 		mpMemLayerLeftCart = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay, mFirmware, 0xA0, 0x20, true);
 		mpMemLayerRightCart = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay, mFirmware, 0x80, 0x20, true);
+
+		mpMemMan->SetLayerName(mpMemLayerLeftCart, "MyIDE-II left cartridge window");
+		mpMemMan->SetLayerName(mpMemLayerRightCart, "MyIDE-II right cartridge window");
+		mpMemMan->SetLayerName(mpMemLayerLeftCartFlash, "MyIDE-II left cartridge flash read");
+		mpMemMan->SetLayerName(mpMemLayerRightCartFlash, "MyIDE-II right cartridge flash read");
 
 		mCartBank = 0;
 		mCartBank2 = -1;
@@ -98,7 +109,9 @@ void ATMyIDEEmulator::Init(ATMemoryManager *memman, IATUIRenderer *uir, ATSchedu
 		handlerTable.mpReadHandler = OnReadByte_CCTL;
 		handlerTable.mpWriteHandler = OnWriteByte_CCTL;
 
-		mpMemLayerIDE = mpMemMan->CreateLayer(kATMemoryPri_Cartridge1 - 1, handlerTable, used5xx ? 0xD5 : 0xD1, 0x01);
+		mpMemLayerIDE = mpMemMan->CreateLayer(kATMemoryPri_Cartridge1 - 1, handlerTable, mbUseD5xx ? 0xD5 : 0xD1, 0x01);
+		mpMemMan->SetLayerName(mpMemLayerIDE, "MyIDE control");
+		mpMemMan->EnableLayer(mpMemLayerIDE, !mbVersion2 || mbCCTLEnabled);
 
 		mCartBank = -1;
 		mCartBank2 = -1;
@@ -106,98 +119,94 @@ void ATMyIDEEmulator::Init(ATMemoryManager *memman, IATUIRenderer *uir, ATSchedu
 
 	mpMemMan->EnableLayer(mpMemLayerIDE, true);
 
+	mIDE[0].Init(mpScheduler, mpUIRenderer, mpBlockDevices[1] == nullptr, false);
+	mIDE[1].Init(mpScheduler, mpUIRenderer, mpBlockDevices[0] == nullptr, true);
+
 	ColdReset();
 }
 
 void ATMyIDEEmulator::Shutdown() {
+	if (mpCartridgePort) {
+		mpCartridgePort->RemoveCartridge(mCartId, this);
+		mpCartridgePort = nullptr;
+	}
+
 	mFlash.Shutdown();
 
 	if (mpMemLayerRightCartFlash) {
 		mpMemMan->DeleteLayer(mpMemLayerRightCartFlash);
-		mpMemLayerRightCartFlash = NULL;
+		mpMemLayerRightCartFlash = nullptr;
 	}
 
 	if (mpMemLayerLeftCartFlash) {
 		mpMemMan->DeleteLayer(mpMemLayerLeftCartFlash);
-		mpMemLayerLeftCartFlash = NULL;
+		mpMemLayerLeftCartFlash = nullptr;
 	}
 
 	if (mpMemLayerRightCart) {
 		mpMemMan->DeleteLayer(mpMemLayerRightCart);
-		mpMemLayerRightCart = NULL;
+		mpMemLayerRightCart = nullptr;
 	}
 
 	if (mpMemLayerLeftCart) {
 		mpMemMan->DeleteLayer(mpMemLayerLeftCart);
-		mpMemLayerLeftCart = NULL;
+		mpMemLayerLeftCart = nullptr;
 	}
 
 	if (mpMemLayerIDE) {
 		mpMemMan->DeleteLayer(mpMemLayerIDE);
-		mpMemLayerIDE = NULL;
+		mpMemLayerIDE = nullptr;
 	}
 
-	mpUIRenderer = NULL;
-	mpMemMan = NULL;
-	mpIDE = NULL;
-	mpSim = NULL;
+	for(auto& ide : mIDE)
+		ide.Shutdown();
+
+	for(auto& blockDev : mpBlockDevices) {
+		if (blockDev) {
+			vdpoly_cast<IATDevice *>(blockDev)->SetParent(nullptr);
+			blockDev = nullptr;
+		}
+	}
+
+	mpScheduler = nullptr;
+	mpUIRenderer = nullptr;
+	mpMemMan = nullptr;
+	mpFirmwareManager = nullptr;
 }
 
-void ATMyIDEEmulator::SetIDEImage(ATIDEEmulator *ide) {
-	mpIDE = ide;
-
-	UpdateIDEReset();
+void ATMyIDEEmulator::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mpDef = mbVersion2 ? &g_ATDeviceDefMyIDE2 : mbUseD5xx ? &g_ATDeviceDefMyIDED5xx : &g_ATDeviceDefMyIDED1xx;
 }
 
-bool ATMyIDEEmulator::LoadFirmware(const void *ptr, uint32 len) {
-	vduint128 oldHash = VDHash128(mFirmware, sizeof mFirmware);
-
-	if (len > sizeof mFirmware)
-		len = sizeof mFirmware;
-
-	memset(mFirmware, 0xFF, sizeof mFirmware);
-	memcpy(mFirmware, ptr, len);
-	mFlash.SetDirty(false);
-
-	return oldHash != VDHash128(mFirmware, sizeof mFirmware);
+void ATMyIDEEmulator::GetSettings(ATPropertySet& settings) {
+	if (mbVersion2) {
+		settings.SetUint32("cpldver", mbVersion2Ex ? 2 : 1);
+	}
 }
 
-bool ATMyIDEEmulator::LoadFirmware(ATFirmwareManager& fwmgr, uint64 id) {
-	void *flash = mFirmware;
-	uint32 flashSize = sizeof mFirmware;
+bool ATMyIDEEmulator::SetSettings(const ATPropertySet& settings) {
+	if (mbVersion2) {
+		mbVersion2Ex = settings.GetUint32("cpldver") >= 2;
+	}
 
-	vduint128 oldHash = VDHash128(flash, flashSize);
-
-	mFlash.SetDirty(false);
-
-	memset(flash, 0xFF, flashSize);
-
-	fwmgr.LoadFirmware(id, flash, 0, flashSize);
-
-	return oldHash != VDHash128(flash, flashSize);
-}
-
-void ATMyIDEEmulator::SaveFirmware(const wchar_t *path) {
-	void *flash = mFirmware;
-	uint32 flashSize = sizeof mFirmware;
-
-	VDFile f;
-	f.open(path, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
-	f.write(flash, flashSize);
-
-	mFlash.SetDirty(false);
+	return true;
 }
 
 void ATMyIDEEmulator::ColdReset() {
 	if (mbVersion2) {
-		mbCFPower = false;
-		mbCFReset = true;
+		mbCFPowerLatch = false;
+		mbCFResetLatch = true;
 	} else {
-		mbCFPower = true;
-		mbCFReset = false;
+		mbCFPowerLatch = true;
+		mbCFResetLatch = false;
 	}
 
+	mbCFPower = mbCFPowerLatch;
+	mbCFReset = mbCFResetLatch;
+
 	mbCFAltReg = false;
+
+	mbSelectSlave = false;
 
 	mLeftPage = 0;
 	mRightPage = 0;
@@ -217,29 +226,207 @@ void ATMyIDEEmulator::ColdReset() {
 	UpdateIDEReset();
 }
 
+void ATMyIDEEmulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
+	mpScheduler = sch;
+}
+
+void ATMyIDEEmulator::InitMemMap(ATMemoryManager *memmap) {
+	mpMemMan = memmap;
+}
+
+bool ATMyIDEEmulator::GetMappedRange(uint32 index, uint32& lo, uint32& hi) const {
+	if (index == 0) {
+		if (mbUseD5xx) {
+			lo = 0xD500;
+			hi = 0xD5FF;
+		} else {
+			lo = 0xD100;
+			hi = 0xD1FF;
+		}
+
+		return true;
+	}
+
+	return false;
+}
+
+void ATMyIDEEmulator::InitCartridge(IATDeviceCartridgePort *cartPort) {
+	if (mbVersion2) {
+		mpCartridgePort = cartPort;
+		mpCartridgePort->AddCartridge(this, kATCartridgePriority_Internal, mCartId);
+	}
+}
+
+bool ATMyIDEEmulator::IsLeftCartActive() const {
+	return mCartBank >= 0;
+}
+
+void ATMyIDEEmulator::SetCartEnables(bool leftEnable, bool rightEnable, bool cctlEnable) {
+	if (mbLeftWindowEnabled != leftEnable) {
+		mbLeftWindowEnabled = leftEnable;
+
+		if (mpMemMan && mpMemLayerLeftCart)
+			UpdateCartBank();
+	}
+
+	if (mbRightWindowEnabled != rightEnable) {
+		mbRightWindowEnabled = rightEnable;
+
+		if (mpMemMan && mpMemLayerRightCart)
+			UpdateCartBank2();
+	}
+
+	if (mbCCTLEnabled != cctlEnable) {
+		mbCCTLEnabled = cctlEnable;
+
+		if (mpMemLayerIDE)
+			mpMemMan->EnableLayer(mpMemLayerIDE, cctlEnable);
+	}
+}
+
+void ATMyIDEEmulator::UpdateCartSense(bool leftActive) {
+}
+
+void ATMyIDEEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
+	mpUIRenderer = r;
+}
+
+void ATMyIDEEmulator::InitFirmware(ATFirmwareManager *fwman) {
+	mpFirmwareManager = fwman;
+}
+
+bool ATMyIDEEmulator::ReloadFirmware() {
+	if (!mbVersion2)
+		return false;
+
+	void *flash = mFirmware;
+	uint32 flashSize = sizeof mFirmware;
+
+	vduint128 oldHash = VDHash128(flash, flashSize);
+
+	mFlash.SetDirty(false);
+
+	memset(flash, 0xFF, flashSize);
+
+	const uint64 id = mpFirmwareManager->GetCompatibleFirmware(kATFirmwareType_MyIDE2);
+	mpFirmwareManager->LoadFirmware(id, flash, 0, flashSize);
+
+	return oldHash != VDHash128(flash, flashSize);
+}
+
+const wchar_t *ATMyIDEEmulator::GetWritableFirmwareDesc(uint32 idx) const {
+	if (idx == 0)
+		return L"Cartridge ROM";
+	else
+		return nullptr;
+}
+
+bool ATMyIDEEmulator::IsWritableFirmwareDirty(uint32 idx) const {
+	return idx == 0 && mFlash.IsDirty();
+}
+
+void ATMyIDEEmulator::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
+	if (mbVersion2) {
+		stream.Write(mFirmware, sizeof mFirmware);
+
+		mFlash.SetDirty(false);
+	}
+}
+
+const char *ATMyIDEEmulator::GetSupportedType(uint32 index) {
+	if (index == 0)
+		return "harddisk";
+
+	return nullptr;
+}
+
+void ATMyIDEEmulator::GetChildDevices(vdfastvector<IATDevice *>& devs) {
+	for(const auto& blockDev : mpBlockDevices) {
+		auto *cdev = vdpoly_cast<IATDevice *>(&*blockDev);
+
+		if (cdev)
+			devs.push_back(cdev);
+	}
+}
+
+void ATMyIDEEmulator::AddChildDevice(IATDevice *dev) {
+	IATBlockDevice *blockDevice = vdpoly_cast<IATBlockDevice *>(dev);
+	if (!blockDevice)
+		return;
+
+	for(size_t i=0; i<2; ++i) {
+		if (!mpBlockDevices[i]) {
+			mpBlockDevices[i] = blockDevice;
+			dev->SetParent(this);
+
+			mIDE[i].OpenImage(blockDevice);
+			mIDE[i^1].SetIsSingle(false);
+			UpdateIDEReset();
+			break;
+		}
+
+		if (mbVersion2)
+			break;
+	}
+}
+
+void ATMyIDEEmulator::RemoveChildDevice(IATDevice *dev) {
+	IATBlockDevice *blockDevice = vdpoly_cast<IATBlockDevice *>(dev);
+	if (!blockDevice)
+		return;
+
+	for(size_t i=0; i<2; ++i) {
+		if (mpBlockDevices[i] == blockDevice) {
+			mIDE[i].CloseImage();
+			mIDE[i^1].SetIsSingle(true);
+
+			dev->SetParent(nullptr);
+			mpBlockDevices[i] = nullptr;
+
+			// Pulling the CF device resets the state back to unpowered, reset, and
+			// alt reg off. It does NOT change the latch bits!
+			if (mbVersion2) {
+				mbCFPower = false;
+				mbCFReset = true;
+				mbCFAltReg = false;
+			}
+
+			UpdateIDEReset();
+		}
+	}
+}
+
 sint32 ATMyIDEEmulator::OnDebugReadByte_CCTL(void *thisptr0, uint32 addr) {
 	ATMyIDEEmulator *thisptr = (ATMyIDEEmulator *)thisptr0;
+	int selIdx = (thisptr->mbSelectSlave && thisptr->mpBlockDevices[1] ? 1 : 0);
 
-	if (!thisptr->mpIDE)
+	if (!thisptr->mpBlockDevices[selIdx])
 		return 0xFF;
 
-	return (uint8)thisptr->mpIDE->DebugReadByte((uint8)addr);
+	return (uint8)thisptr->mIDE[selIdx].DebugReadByte((uint8)addr);
 }
 
 sint32 ATMyIDEEmulator::OnReadByte_CCTL(void *thisptr0, uint32 addr) {
 	ATMyIDEEmulator *thisptr = (ATMyIDEEmulator *)thisptr0;
+	int selIdx = (thisptr->mbSelectSlave && thisptr->mpBlockDevices[1] ? 1 : 0);
 
-	if (!thisptr->mpIDE)
+	if (!thisptr->mpBlockDevices[selIdx])
 		return 0xFF;
 
-	return (uint8)thisptr->mpIDE->ReadByte((uint8)addr);
+	return (uint8)thisptr->mIDE[selIdx].ReadByte((uint8)addr);
 }
 
 bool ATMyIDEEmulator::OnWriteByte_CCTL(void *thisptr0, uint32 addr, uint8 value) {
 	ATMyIDEEmulator *thisptr = (ATMyIDEEmulator *)thisptr0;
 
-	if (thisptr->mpIDE)
-		thisptr->mpIDE->WriteByte((uint8)addr, value);
+	for(size_t i=0; i<2; ++i) {
+		if (thisptr->mpBlockDevices[i])
+			thisptr->mIDE[i].WriteByte((uint8)addr, value);
+	}
+
+	// check for a write to drive/head register
+	if ((addr & 7) == 6)
+		thisptr->mbSelectSlave = (value & 0x10) != 0;
 
 	return true;
 }
@@ -254,13 +441,13 @@ sint32 ATMyIDEEmulator::OnDebugReadByte_CCTL_V2(void *thisptr0, uint32 addr) {
 
 	if (addr < 0xD508) {
 
-		if (!thisptr->mbCFPower || !thisptr->mpIDE)
+		if (!thisptr->mbCFPower || !thisptr->mpBlockDevices[0])
 			return 0xFF;
 
 		if (thisptr->mbCFAltReg)
-			return (uint8)thisptr->mpIDE->ReadByteAlt((uint8)addr);
+			return (uint8)thisptr->mIDE[0].ReadByteAlt((uint8)addr);
 		else
-			return (uint8)thisptr->mpIDE->DebugReadByte((uint8)addr);
+			return (uint8)thisptr->mIDE[0].DebugReadByte((uint8)addr);
 	}
 
 	return OnReadByte_CCTL_V2(thisptr0, addr);
@@ -279,28 +466,38 @@ sint32 ATMyIDEEmulator::OnReadByte_CCTL_V2(void *thisptr0, uint32 addr) {
 			// bit 7 = CF present
 			// bit 6 = CF /RESET
 			// bit 5 = CF powered
+			//
+			// Bits 5 and 7 always reflect the actual state of the device and
+			// are always 0 when no CF device is inserted. They do NOT report
+			// the state of bits 0 and 1 written to $D50E, which have no effect
+			// but ARE remembered in this state (and can cause problems once
+			// a CF card is reinserted).
+			//
+			// The green light on the MyIDE-II also lights up when the CF card
+			// is powered.
 
 			uint8 status = 0x1F;
 
-			if (thisptr->mpIDE)
+			if (thisptr->mpBlockDevices[0]) {
 				status |= 0x80;
 
-			if (!thisptr->mbCFReset)
-				status |= 0x40;
+				if (!thisptr->mbCFReset)
+					status |= 0x40;
 
-			if (thisptr->mbCFPower)
-				status |= 0x20;
+				if (thisptr->mbCFPower)
+					status |= 0x20;
+			}
 
 			return status;
 		}
 
-		if (!thisptr->mbCFPower || !thisptr->mpIDE)
+		if (!thisptr->mbCFPower || !thisptr->mpBlockDevices[0])
 			return 0xFF;
 
 		if (thisptr->mbCFAltReg)
-			return (uint8)thisptr->mpIDE->ReadByteAlt((uint8)addr);
+			return (uint8)thisptr->mIDE[0].ReadByteAlt((uint8)addr);
 		else
-			return (uint8)thisptr->mpIDE->ReadByte((uint8)addr);
+			return (uint8)thisptr->mIDE[0].ReadByte((uint8)addr);
 	} else if (addr >= 0xD580) {
 		uint8 data;
 
@@ -357,11 +554,11 @@ bool ATMyIDEEmulator::OnWriteByte_CCTL_V2(void *thisptr0, uint32 addr, uint8 val
 		case 0xD505:
 		case 0xD506:
 		case 0xD507:
-			if (thisptr->mbCFPower && thisptr->mpIDE) {
+			if (thisptr->mbCFPower && thisptr->mpBlockDevices[0]) {
 				if (thisptr->mbCFAltReg)
-					thisptr->mpIDE->WriteByteAlt((uint8)addr, value);
+					thisptr->mIDE[0].WriteByteAlt((uint8)addr, value);
 				else
-					thisptr->mpIDE->WriteByte((uint8)addr, value);
+					thisptr->mIDE[0].WriteByte((uint8)addr, value);
 			}
 			break;
 
@@ -398,17 +595,50 @@ bool ATMyIDEEmulator::OnWriteByte_CCTL_V2(void *thisptr0, uint32 addr, uint8 val
 		case 0xD50E:
 			// bit 1 = CF power
 			// bit 0 = CF reset unlock & alternate status
+			//
+			// When a CF card is inserted, it is initially unpowered. A rising edge on
+			// bit 1 is required to transition to the powered-reset state; after that,
+			// a rising edge on bit 0 transitions to powered-active, and bit 0 can then
+			// be toggled afterward to switch between normal and alternate status. The
+			// device cannot be put back into reset without powering it down.
+			//
+			// If bits 0 and 1 are simultaneously raised at the same time, the device
+			// only powers up and is still held in reset, and the transition on bit 0
+			// is ignored.
+			//
+			// Both bits are NOT reset when the CF card is removed. If bit 1 is raised
+			// when a CF card is inserted, it must be lowered and raised again for the
+			// device to power up. The green LED does NOT light if bit 1 is raised and
+			// the device is not actually powered.
 
-			thisptr->mbCFPower = (value & 2) != 0;
+			if (thisptr->mpBlockDevices[0]) {
+				const bool power = (value & 2) != 0;
+				const bool reset = (value & 1) == 0;
 
-			if (!thisptr->mbCFPower)
-				thisptr->mbCFReset = true;
+				if (!thisptr->mbCFPower) {		// unpowered
+					// possibly powering up device
+					if (power && !thisptr->mbCFPowerLatch)
+						thisptr->mbCFPower = true;
+				} else if (!power) {
+					// powering down device
+					thisptr->mbCFPower = false;
+					thisptr->mbCFReset = true;
+					thisptr->mbCFAltReg = false;
+				} else if (thisptr->mbCFReset) {
+					// device is powered and in reset state -- check if we are
+					// pulling it out of reset
+					if (!reset && thisptr->mbCFResetLatch)
+						thisptr->mbCFReset = false;
+				} else {
+					// device is not in reset state -- toggle alt reg status
+					thisptr->mbCFAltReg = reset;
+				}
 
-			// 0 -> 1 transition on bit 0 when CF is powered blocks /RESET.
-			if (thisptr->mbCFReset && (value & 1))
-				thisptr->mbCFReset = false;
-
-			thisptr->mbCFAltReg = !(value & 1);
+				// store new state in latches, regardless of any effect it actually
+				// had
+				thisptr->mbCFPowerLatch = power;
+				thisptr->mbCFResetLatch = reset;
+			}
 
 			thisptr->UpdateIDEReset();
 			break;
@@ -459,6 +689,32 @@ bool ATMyIDEEmulator::OnWriteByte_CCTL_V2(void *thisptr0, uint32 addr, uint8 val
 	}
 
 	return false;
+}
+
+sint32 ATMyIDEEmulator::DebugReadByte_Cart_V2(void *thisptr0, uint32 address) {
+	ATMyIDEEmulator *thisptr = (ATMyIDEEmulator *)thisptr0;
+
+	// A tricky part here: it's possible that both left and right banks are pointing to the same
+	// bank and therefore we may have to remap BOTH banks on a flash state change. Fortunately,
+	// we don't have to worry about the keyhole as we always use memory routines for that. We
+	// are a bit lazy here and just turn off the read layer for the window that was hit, and turn
+	// of the other window if/when that one gets hit too.
+
+	uint8 data;
+
+	if (address < 0xA000) {
+		if (thisptr->mFlash.DebugReadByte(address - 0x8000 + (thisptr->mCartBank2 << 13), data)) {
+			thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerLeftCartFlash, kATMemoryAccessMode_CPURead, false);
+			thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerLeftCartFlash, kATMemoryAccessMode_AnticRead, false);
+		}
+	} else {
+		if (thisptr->mFlash.DebugReadByte(address - 0xA000 + (thisptr->mCartBank << 13), data)) {
+			thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerRightCartFlash, kATMemoryAccessMode_CPURead, false);
+			thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerRightCartFlash, kATMemoryAccessMode_AnticRead, false);
+		}
+	}
+
+	return data;
 }
 
 sint32 ATMyIDEEmulator::ReadByte_Cart_V2(void *thisptr0, uint32 address) {
@@ -525,8 +781,8 @@ bool ATMyIDEEmulator::WriteByte_Cart_V2(void *thisptr0, uint32 address, uint8 va
 }
 
 void ATMyIDEEmulator::UpdateIDEReset() {
-	if (mpIDE)
-		mpIDE->SetReset(!mbCFPower || mbCFReset);
+	for(size_t i=0; i<2; ++i)
+		mIDE[i].SetReset(!mbCFPower || mbCFReset || !mpBlockDevices[i]);
 }
 
 void ATMyIDEEmulator::SetCartBank(int bank) {
@@ -546,39 +802,57 @@ void ATMyIDEEmulator::SetCartBank2(int bank) {
 }
 
 void ATMyIDEEmulator::UpdateCartBank() {
-	mpSim->UpdateXLCartridgeLine();
+	// Note that we need to tell the cartridge port when we want to
+	// activate the left window, and not if it is actually active. This should
+	// NOT include the enable that the cartridge port pushes down to us.
+	mpCartridgePort->OnLeftWindowChanged(mCartId, IsLeftCartActive());
+
+	if (!mbLeftWindowEnabled || mCartBank < 0) {
+		mpMemMan->EnableLayer(mpMemLayerLeftCart, false);
+		mpMemMan->EnableLayer(mpMemLayerLeftCartFlash, false);
+		return;
+	}
 
 	const bool flashControlRead = !(mCartBank & 0xf00) && mFlash.IsControlReadEnabled();
 	mpMemMan->EnableLayer(mpMemLayerLeftCartFlash, kATMemoryAccessMode_CPURead, flashControlRead);
 	mpMemMan->EnableLayer(mpMemLayerLeftCartFlash, kATMemoryAccessMode_AnticRead, flashControlRead);
 
+	bool enabled = true;
 	switch(mCartBank & 0xf00) {
 		case 0x000:
+			enabled = true;
 			mpMemMan->SetLayerMemory(mpMemLayerLeftCart, mFirmware + (mCartBank << 13), 0xA0, 0x20, (uint32)-1, true);
-			mpMemMan->EnableLayer(mpMemLayerLeftCart, true);
 			mpMemMan->EnableLayer(mpMemLayerLeftCartFlash, kATMemoryAccessMode_CPUWrite, true);
 			break;
 
 		case 0x100:
+			enabled = true;
 			mpMemMan->SetLayerMemory(mpMemLayerLeftCart, mRAM + ((mCartBank - 0x100) << 13), 0xA0, 0x20, (uint32)-1, false);
-			mpMemMan->EnableLayer(mpMemLayerLeftCart, true);
 			mpMemMan->EnableLayer(mpMemLayerLeftCartFlash, kATMemoryAccessMode_CPUWrite, false);
 			break;
 
 		case 0x200:
+			enabled = true;
 			mpMemMan->SetLayerMemory(mpMemLayerLeftCart, mRAM + ((mCartBank - 0x200) << 13), 0xA0, 0x20, (uint32)-1, true);
-			mpMemMan->EnableLayer(mpMemLayerLeftCart, true);
 			mpMemMan->EnableLayer(mpMemLayerLeftCartFlash, kATMemoryAccessMode_CPUWrite, false);
 			break;
 
 		default:
-			mpMemMan->EnableLayer(mpMemLayerLeftCart, false);
+			enabled = false;
 			mpMemMan->EnableLayer(mpMemLayerLeftCartFlash, kATMemoryAccessMode_CPUWrite, false);
 			break;
 	}
+	
+	mpMemMan->EnableLayer(mpMemLayerLeftCart, enabled);
 }
 
 void ATMyIDEEmulator::UpdateCartBank2() {
+	if (!mbRightWindowEnabled || mCartBank2 < 0) {
+		mpMemMan->EnableLayer(mpMemLayerRightCart, false);
+		mpMemMan->EnableLayer(mpMemLayerRightCartFlash, false);
+		return;
+	}
+
 	const bool flashControlRead = !(mCartBank2 & 0xf00) && mFlash.IsControlReadEnabled();
 	mpMemMan->EnableLayer(mpMemLayerRightCartFlash, kATMemoryAccessMode_CPURead, flashControlRead);
 	mpMemMan->EnableLayer(mpMemLayerRightCartFlash, kATMemoryAccessMode_AnticRead, flashControlRead);

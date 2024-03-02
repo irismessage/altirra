@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/registry.h>
+#include <at/atcore/media.h>
 #include "options.h"
 
 ATOptions::ATOptions()
@@ -26,11 +27,13 @@ ATOptions::ATOptions()
 	, mbDisplay3D(false)
 	, mbDisplayOpenGL(false)
 	, mbSingleInstance(false)
+	, mbPauseDuringMenu(false)
 	, mThemeScale(100)
 	, mErrorMode(kATErrorMode_Dialog)
 	, mFullScreenWidth(0)
 	, mFullScreenHeight(0)
 	, mFullScreenRefreshRate(0)
+	, mDefaultWriteMode(kATMediaWriteMode_VRWSafe)
 {
 }
 
@@ -83,6 +86,8 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "Flash: SIC! cartridge flash mode", opts.mSICFlashChip);
 	ATOptionsExchange(key, write, "Flash: Ultimate1MB flash mode", opts.mU1MBFlashChip);
 	ATOptionsExchange(key, write, "UI: Theme scale factor", opts.mThemeScale);
+	ATOptionsExchange(key, write, "UI: Pause during menus", opts.mbPauseDuringMenu);
+	ATOptionsExchangeEnum(key, write, "Media: Default write mode", opts.mDefaultWriteMode, (ATMediaWriteMode)(kATMediaWriteMode_All + 1));
 }
 
 void ATOptionsLoad() {

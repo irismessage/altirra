@@ -21,10 +21,19 @@
 #include "uimrulist.h"
 #include <at/atui/uimenulist.h>
 
+namespace {
+	HMENU g_hMenuMRU;
+	ATUIMenu *g_pMenuMRU;
+	UINT g_menuMRUBaseId;
+	UINT g_menuMRUClearId;
+}
+
 void ATClearMRUList() {
 	VDRegistryAppKey key("MRU List", true);
 
 	key.removeValue("Order");
+
+	ATUpdateMRUListMenu();
 }
 
 void ATAddMRUListItem(const wchar_t *path) {
@@ -43,7 +52,7 @@ void ATAddMRUListItem(const wchar_t *path) {
 		key.getString(keyname, existingPath);
 
 		if (existingPath.comparei(path) == 0) {
-			size_t existingIndex = it - mrustr.begin();
+			uint32 existingIndex = (uint32)(it - mrustr.begin());
 			ATPromoteMRUListItem(existingIndex);
 			return;
 		}
@@ -63,9 +72,11 @@ void ATAddMRUListItem(const wchar_t *path) {
 
 	mrustr.insert(mrustr.begin(), L'A' + recycleIndex);
 
-	char keyname[2] = { 'A' + recycleIndex, 0 };
+	char keyname[2] = { (char)('A' + recycleIndex), 0 };
 	key.setString(keyname, path);
 	key.setString("Order", mrustr.c_str());
+
+	ATUpdateMRUListMenu();
 }
 
 VDStringW ATGetMRUListItem(uint32 index) {
@@ -99,10 +110,31 @@ void ATPromoteMRUListItem(uint32 index) {
 		mrustr.erase(index, 1);
 		mrustr.insert(mrustr.begin(), c);
 		key.setString("Order", mrustr.c_str());
+
+		ATUpdateMRUListMenu();
 	}
 }
 
-void ATUpdateMRUListMenu(HMENU hmenu, ATUIMenu *pmenu, UINT baseId, UINT clearId) {
+void ATRegisterMRUListMenu(HMENU hmenu, ATUIMenu *pmenu, UINT baseId, UINT clearId) {
+	g_hMenuMRU = hmenu;
+	g_pMenuMRU = pmenu;
+	g_menuMRUBaseId = baseId;
+	g_menuMRUClearId = clearId;
+
+	ATUpdateMRUListMenu();
+}
+
+void ATUnregisterMRUListMenu() {
+	g_hMenuMRU = nullptr;
+	g_pMenuMRU = nullptr;
+}
+
+void ATUpdateMRUListMenu() {
+	const HMENU hmenu = g_hMenuMRU;
+	ATUIMenu *const pmenu = g_pMenuMRU;
+	const UINT baseId = g_menuMRUBaseId;
+	const UINT clearId = g_menuMRUClearId;
+
 	// clear the menu
 	if (hmenu) {
 		int n = GetMenuItemCount(hmenu);

@@ -23,7 +23,7 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <vd2/system/date.h>
 #include <vd2/system/w32assist.h>
 #include <windows.h>
@@ -36,6 +36,10 @@ VDDate VDGetCurrentDate() {
 	r.mTicks = ft.dwLowDateTime + ((uint64)ft.dwHighDateTime << 32);
 
 	return r;
+}
+
+sint64 VDGetDateAsTimeT(const VDDate& date) {
+	return ((sint64)date.mTicks - 116444736000000000) / 10000000;
 }
 
 VDExpandedDate VDGetLocalDate(const VDDate& date) {

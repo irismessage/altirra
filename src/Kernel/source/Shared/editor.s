@@ -1,20 +1,11 @@
 ;	Altirra - Atari 800/800XL/5200 emulator
 ;	Modular Kernel ROM - Editor Handler
-;	Copyright (C) 2008-2012 Avery Lee
+;	Copyright (C) 2008-2016 Avery Lee
 ;
-;	This program is free software; you can redistribute it and/or modify
-;	it under the terms of the GNU General Public License as published by
-;	the Free Software Foundation; either version 2 of the License, or
-;	(at your option) any later version.
-;
-;	This program is distributed in the hope that it will be useful,
-;	but WITHOUT ANY WARRANTY; without even the implied warranty of
-;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-;	GNU General Public License for more details.
-;
-;	You should have received a copy of the GNU General Public License
-;	along with this program; if not, write to the Free Software
-;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+;	Copying and distribution of this file, with or without modification,
+;	are permitted in any medium without royalty provided the copyright
+;	notice and this notice are preserved.  This file is offered as-is,
+;	without any warranty.
 
 ;==========================================================================
 .proc	EditorOpen
@@ -289,12 +280,8 @@ screenok:
 	;might be special, but not EOL... search the special char table
 	ldx		#special_code_tab_end-special_code_tab-1
 	tya
-special_binsearch:
-	cmp		special_code_tab,x
-	beq		special_found
-	dex
-	bpl		special_binsearch
-	bmi		not_special
+	jsr		EditorIsSpecial
+	bne		not_special
 	
 special_found:
 	;check if display of control codes is desired; if so, we need to ignore this
@@ -314,6 +301,28 @@ not_special:
 xit2:
 	;swap back to main context and exit
 	jmp		EditorSwapToScreen
+
+;---------------
+special_code_tab:
+	dta		$1b
+	dta		$1c
+	dta		$1d
+	dta		$1e
+	dta		$1f
+	dta		$7d
+	dta		$7e
+	dta		$7f
+	dta		$9c
+	dta		$9d
+	dta		$9e
+	dta		$9f
+	dta		$fd
+	dta		$fe
+	dta		$ff
+special_code_tab_end:
+	dta		$9b				;these are only for the K: check
+	dta		$7c
+special_code_tab_end_2:
 
 ;---------------
 special_escape:
@@ -433,7 +442,8 @@ tab_scan_loop:
 	iny
 	cpy		#120
 	bcs		tab_found
-	jsr		EditorIsTabPosition
+	jsr		EditorSetupTabIndex
+	and		tabmap,x
 	beq		tab_scan_loop
 tab_found:
 	sty		colcrs
@@ -717,23 +727,6 @@ delete_not_blank:
 	rts
 
 ;----------------
-special_code_tab:
-	dta		$1b
-	dta		$1c
-	dta		$1d
-	dta		$1e
-	dta		$1f
-	dta		$7d
-	dta		$7e
-	dta		$7f
-	dta		$9c
-	dta		$9d
-	dta		$9e
-	dta		$9f
-	dta		$fd
-	dta		$fe
-	dta		$ff
-special_code_tab_end:
 
 special_dispatch_lo_tab:
 	dta		<(special_escape-1)
@@ -755,6 +748,17 @@ special_dispatch_lo_tab:
 .if [((special_escape-1)^(special_insert_char-1))&$ff00]
 	.error 'Special character routines cross a page boundary: ',special_escape,'-',special_insert_char
 .endif
+.endp
+
+;==========================================================================
+.proc EditorIsSpecial
+special_binsearch:
+	cmp		EditorPutByte.special_code_tab,x
+	beq		special_found
+	dex
+	bpl		special_binsearch
+special_found:
+	rts
 .endp
 
 ;==========================================================================
@@ -806,10 +810,25 @@ use_line:
 scroll_loop:
 	;compute base address and set that as destination
 	ldy		hold1
+
 .if _KERNEL_XLXE
-	bne		notscroll
-	jsr		fine_scroll
-notscroll:
+	sec
+	bne		nofine
+	ldx		fine
+	beq		nofine
+	ldx		#0
+xloop:
+	lda		rtclok+2
+	cmp:req	rtclok+2
+	inx
+	stx		vscrol
+	cpx		#7
+	bne		xloop
+	lda		#32/2
+	cmp:rcc	vcount
+	cmp:rcs	vcount
+nofine:
+	php					;C=0 for fine scroll, C=1 for coarse scroll
 .endif
 
 	;set TOADR to the line to be deleted
@@ -837,12 +856,10 @@ line_loop_start:
 	sta:rpl	(toadr),y-
 	
 .if _KERNEL_XLXE
-	ldy		hold1
-	bne		notscroll2
-	ldx		fine
-	beq		notscroll2
+	plp
+	bcs		nofinescroll2
 	sta		vscrol
-notscroll2:
+nofinescroll2:
 .endif
 	
 	jsr		adjust_lines
@@ -901,25 +918,6 @@ adjust_line_below:
 	dec		0,x
 adjust_line_above:
 	rts	
-	
-.if _KERNEL_XLXE
-fine_scroll:
-	ldx		fine
-	beq		nofine
-	tax
-xloop:
-	lda		rtclok+2
-	cmp:req	rtclok+2
-	inx
-	stx		vscrol
-	cpx		#7
-	bne		xloop
-	lda		#32/2
-	cmp:rcc	vcount
-	cmp:rcs	vcount
-nofine:
-	rts
-.endif
 .endp
 
 ;==========================================================================
@@ -1055,24 +1053,6 @@ found:
 	lsr
 	tax
 	pla
-	rts
-.endp
-
-;==========================================================================
-; Test if a position has a tab.
-;
-; Entry:
-;	Y = column (0-119)
-;
-; Exit:
-;	Z = 0 if tab, 1 if not tab
-;
-; Modified:
-;	A, X
-;
-.proc	EditorIsTabPosition
-	jsr		EditorSetupTabIndex
-	and		tabmap,x
 	rts
 .endp
 

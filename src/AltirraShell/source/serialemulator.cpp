@@ -462,15 +462,19 @@ void ATSSerialEmulator::SendNAK() {
 	SendData("N", 1, false);
 }
 
-void ATSSerialEmulator::SendComplete() {
+void ATSSerialEmulator::SendComplete(bool autoDelay) {
 	// SIO protocol requires minimum 250us delay here.
-	Delay(450);
+	if (autoDelay)
+		Delay(450);
+
 	SendData("C", 1, false);
 }
 
-void ATSSerialEmulator::SendError() {
+void ATSSerialEmulator::SendError(bool autoDelay) {
 	// SIO protocol requires minimum 250us delay here.
-	Delay(450);
+	if (autoDelay)
+		Delay(450);
+
 	SendData("E", 1, false);
 }
 
@@ -529,6 +533,10 @@ void ATSSerialEmulator::InsertFence(uint32 id) {
 	Step& step = mStepQueue.push_back();
 	step.mType = kStepType_Fence;
 	step.mFenceId = id;
+}
+
+void ATSSerialEmulator::FlushQueue() {
+	mStepQueue.clear();
 }
 
 void ATSSerialEmulator::EndCommand() {

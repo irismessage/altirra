@@ -45,7 +45,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTReadbackBufferD3D11 : public vdrefcounted<IVDTReadbackBuffer>, VDTResourceD3D11 {
+class VDTReadbackBufferD3D11 final : public vdrefcounted<IVDTReadbackBuffer>, VDTResourceD3D11 {
 public:
 	VDTReadbackBufferD3D11();
 	~VDTReadbackBufferD3D11();
@@ -68,7 +68,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTSurfaceD3D11 : public vdrefcounted<IVDTSurface>, VDTResourceD3D11 {
+class VDTSurfaceD3D11 final : public vdrefcounted<IVDTSurface>, VDTResourceD3D11 {
 public:
 	VDTSurfaceD3D11();
 	~VDTSurfaceD3D11();
@@ -109,7 +109,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTTexture2DD3D11 : public VDTTextureD3D11, public vdrefcounted<IVDTTexture2D> {
+class VDTTexture2DD3D11 final : public VDTTextureD3D11, public vdrefcounted<IVDTTexture2D> {
 public:
 	VDTTexture2DD3D11();
 	~VDTTexture2DD3D11();
@@ -142,7 +142,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTVertexBufferD3D11 : public vdrefcounted<IVDTVertexBuffer>, VDTResourceD3D11 {
+class VDTVertexBufferD3D11 final : public vdrefcounted<IVDTVertexBuffer>, VDTResourceD3D11 {
 public:
 	VDTVertexBufferD3D11();
 	~VDTVertexBufferD3D11();
@@ -164,7 +164,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTIndexBufferD3D11 : public vdrefcounted<IVDTIndexBuffer>, VDTResourceD3D11 {
+class VDTIndexBufferD3D11 final : public vdrefcounted<IVDTIndexBuffer>, VDTResourceD3D11 {
 public:
 	VDTIndexBufferD3D11();
 	~VDTIndexBufferD3D11();
@@ -189,7 +189,7 @@ protected:
 ///////////////////////////////////////////////////////////////////////////////
 class VDTVertexProgramD3D11;
 
-class VDTVertexFormatD3D11 : public vdrefcounted<IVDTVertexFormat>, VDTResourceD3D11 {
+class VDTVertexFormatD3D11 final : public vdrefcounted<IVDTVertexFormat>, VDTResourceD3D11 {
 public:
 	VDTVertexFormatD3D11();
 	~VDTVertexFormatD3D11();
@@ -208,7 +208,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTVertexProgramD3D11 : public vdrefcounted<IVDTVertexProgram>, VDTResourceD3D11 {
+class VDTVertexProgramD3D11 final : public vdrefcounted<IVDTVertexProgram>, VDTResourceD3D11 {
 public:
 	VDTVertexProgramD3D11();
 	~VDTVertexProgramD3D11();
@@ -229,7 +229,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTFragmentProgramD3D11 : public vdrefcounted<IVDTFragmentProgram>, VDTResourceD3D11 {
+class VDTFragmentProgramD3D11 final : public vdrefcounted<IVDTFragmentProgram>, VDTResourceD3D11 {
 public:
 	VDTFragmentProgramD3D11();
 	~VDTFragmentProgramD3D11();
@@ -248,7 +248,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTBlendStateD3D11 : public vdrefcounted<IVDTBlendState>, VDTResourceD3D11 {
+class VDTBlendStateD3D11 final : public vdrefcounted<IVDTBlendState>, VDTResourceD3D11 {
 public:
 	VDTBlendStateD3D11();
 	~VDTBlendStateD3D11();
@@ -268,7 +268,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTRasterizerStateD3D11 : public vdrefcounted<IVDTRasterizerState>, VDTResourceD3D11 {
+class VDTRasterizerStateD3D11 final : public vdrefcounted<IVDTRasterizerState>, VDTResourceD3D11 {
 public:
 	VDTRasterizerStateD3D11();
 	~VDTRasterizerStateD3D11();
@@ -288,7 +288,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTSamplerStateD3D11 : public vdrefcounted<IVDTSamplerState>, VDTResourceD3D11 {
+class VDTSamplerStateD3D11 final : public vdrefcounted<IVDTSamplerState>, VDTResourceD3D11 {
 public:
 	VDTSamplerStateD3D11();
 	~VDTSamplerStateD3D11();
@@ -308,7 +308,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTSwapChainD3D11 : public vdrefcounted<IVDTSwapChain>, VDTResourceD3D11, VDThread {
+class VDTSwapChainD3D11 final : public vdrefcounted<IVDTSwapChain>, VDTResourceD3D11, VDThread {
 public:
 	VDTSwapChainD3D11();
 	~VDTSwapChainD3D11();
@@ -356,7 +356,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTContextD3D11 : public IVDTContext, public IVDTProfiler, public VDTResourceManagerD3D11 {
+class VDTContextD3D11 final : public IVDTContext, public IVDTProfiler, public VDTResourceManagerD3D11 {
 public:
 	VDTContextD3D11();
 	~VDTContextD3D11();

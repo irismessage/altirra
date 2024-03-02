@@ -38,7 +38,7 @@ ATDeviceManager::~ATDeviceManager() {
 void ATDeviceManager::Init() {
 }
 
-IATDevice *ATDeviceManager::AddDevice(const char *tag, const ATPropertySet& pset, bool child) {
+IATDevice *ATDeviceManager::AddDevice(const char *tag, const ATPropertySet& pset, bool child, bool hidden) {
 	vdrefptr<IATDevice> dev;
 
 	for(auto it = mDeviceFactories.begin(), itEnd = mDeviceFactories.end();
@@ -53,20 +53,26 @@ IATDevice *ATDeviceManager::AddDevice(const char *tag, const ATPropertySet& pset
 
 	if (dev) {
 		dev->SetSettings(pset);
-		AddDevice(dev, child);
+		AddDevice(dev, child, hidden);
 	}
 
 	return dev;
 }
 
-void ATDeviceManager::AddDevice(IATDevice *dev, bool child) {
+void ATDeviceManager::AddDevice(IATDevice *dev, bool child, bool hidden) {
 	try {
+		mInterfaceListCache.clear();
+
 		for(const auto& fn : mInitHandlers)
 			fn(*dev);
 
+		ATDeviceInfo info;
+		dev->GetDeviceInfo(info);
+
+		DeviceEntry ent = { dev, info.mpDef->mpTag, child, hidden };
+		mDevices.push_back(ent);
+
 		try {
-			DeviceEntry ent = { dev, child };
-			mDevices.push_back(ent);
 			dev->AddRef();
 
 			dev->Init();
@@ -81,6 +87,8 @@ void ATDeviceManager::AddDevice(IATDevice *dev, bool child) {
 	}
 
 	dev->ColdReset();
+
+	++mChangeCounter;
 
 	for(const auto& changeClass : mChangeCallbacks) {
 		const uint32 iid = changeClass.first;
@@ -99,6 +107,8 @@ void ATDeviceManager::RemoveDevice(const char *tag) {
 }
 
 void ATDeviceManager::RemoveDevice(IATDevice *dev) {
+	mInterfaceListCache.clear();
+
 	for(auto it = mDevices.begin(), itEnd = mDevices.end();
 		it != itEnd;
 		++it)
@@ -119,6 +129,8 @@ void ATDeviceManager::RemoveDevice(IATDevice *dev) {
 
 			mDevices.erase(it);
 
+			++mChangeCounter;
+
 			for(const auto& changeClass : mChangeCallbacks) {
 				const uint32 iid = changeClass.first;
 				void *iface = dev->AsInterface(iid);
@@ -136,9 +148,12 @@ void ATDeviceManager::RemoveDevice(IATDevice *dev) {
 	}
 }
 
-void ATDeviceManager::RemoveAllDevices() {
-	while(!mDevices.empty())
-		RemoveDevice(mDevices.front().mpDevice);
+void ATDeviceManager::RemoveAllDevices(bool includeHidden) {
+	auto devs = GetDevices(false, !includeHidden);
+	vdfastvector<IATDevice *> devices(devs.begin(), devs.end());
+
+	for(IATDevice *dev : devices)
+		RemoveDevice(dev);
 }
 
 void ATDeviceManager::ToggleDevice(const char *tag) {
@@ -147,7 +162,7 @@ void ATDeviceManager::ToggleDevice(const char *tag) {
 	if (dev)
 		RemoveDevice(dev);
 	else
-		AddDevice(tag, ATPropertySet(), false);
+		AddDevice(tag, ATPropertySet(), false, false);
 }
 
 uint32 ATDeviceManager::GetDeviceCount() const {
@@ -155,17 +170,12 @@ uint32 ATDeviceManager::GetDeviceCount() const {
 }
 
 IATDevice *ATDeviceManager::GetDeviceByTag(const char *tag) const {
-	ATDeviceInfo info;
-
 	for(auto it = mDevices.begin(), itEnd = mDevices.end();
 		it != itEnd;
 		++it)
 	{
-		IATDevice *dev = it->mpDevice;
-
-		dev->GetDeviceInfo(info);
-		if (!strcmp(info.mpDef->mpTag, tag))
-			return dev;
+		if (!strcmp(it->mpTag, tag))
+			return it->mpDevice;
 	}
 
 	return nullptr;
@@ -173,6 +183,17 @@ IATDevice *ATDeviceManager::GetDeviceByTag(const char *tag) const {
 
 IATDevice *ATDeviceManager::GetDeviceByIndex(uint32 i) const {
 	return i < mDevices.size() ? mDevices[i].mpDevice : nullptr;
+}
+
+void *ATDeviceManager::GetInterface(uint32 id) const {
+	for(const auto& entry : mDevices) {
+		void *p = entry.mpDevice->AsInterface(id);
+
+		if (p)
+			return p;
+	}
+
+	return nullptr;
 }
 
 ATDeviceConfigureFn ATDeviceManager::GetDeviceConfigureFn(const char *tag) const {
@@ -254,6 +275,37 @@ void ATDeviceManager::MarkAndSweep(IATDevice *const *pExcludedDevs, size_t numEx
 	{
 		garbage.push_back(*it);
 	}
+}
+
+auto ATDeviceManager::GetInterfaceList(uint32 iid, bool rootOnly, bool visibleOnly) const -> const InterfaceList * {
+	auto r = mInterfaceListCache.insert(iid + (rootOnly ? UINT64_C(1) << 32 : UINT64_C(0)) + (visibleOnly ? UINT64_C(1) << 33 : UINT64_C(0)));
+	InterfaceList& ilist = r.first->second;
+
+	if (r.second) {
+		if (iid) {
+			for(auto it = mDevices.begin(), itEnd = mDevices.end();
+				it != itEnd;
+				++it)
+			{
+				if ((!rootOnly || !it->mbChild) && (!visibleOnly || !it->mbHidden)) {
+					void *p = it->mpDevice->AsInterface(iid);
+
+					if (p)
+						ilist.push_back(p);
+				}
+			}
+		} else {
+			for(auto it = mDevices.begin(), itEnd = mDevices.end();
+				it != itEnd;
+				++it)
+			{
+				if ((!rootOnly || !it->mbChild) && (!visibleOnly || !it->mbHidden))
+					ilist.push_back(it->mpDevice);
+			}
+		}
+	}
+
+	return &ilist;
 }
 
 void ATDeviceManager::Mark(IATDevice *dev, IATDevice *const *pExcludedDevs, size_t numExcludedDevs, vdhashset<IATDevice *>& devSet) {
@@ -345,7 +397,8 @@ void ATDeviceManager::SerializeDevice(IATDevice *dev, VDJSONWriter& out) const {
 	} else {
 		out.OpenArray();
 
-		ForEachDevice(true, [&, this](IATDevice *child) { SerializeDevice(child, out); } );
+		for(IATDevice *child : GetDevices(true, true))
+			SerializeDevice(child, out);
 
 		out.Close();
 	}
@@ -430,7 +483,7 @@ void ATDeviceManager::DeserializeDevice(IATDeviceParent *parent, const VDJSONVal
 
 	IATDevice *dev;
 	try {
-		dev = AddDevice(VDTextWToA(tag).c_str(), pset, parent != nullptr);
+		dev = AddDevice(VDTextWToA(tag).c_str(), pset, parent != nullptr, false);
 	} catch(const MyError&) {
 		return;
 	}

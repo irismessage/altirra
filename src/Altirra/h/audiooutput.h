@@ -22,6 +22,8 @@
 #pragma once
 #endif
 
+#include "audiosource.h"
+
 class IATUIRenderer;
 class IATSyncAudioSource;
 
@@ -60,6 +62,9 @@ public:
 
 	virtual float GetVolume() = 0;
 	virtual void SetVolume(float vol) = 0;
+
+	virtual float GetMixLevel(ATAudioMix mix) const = 0;
+	virtual void SetMixLevel(ATAudioMix mix, float level) = 0;
 
 	virtual int GetLatency() = 0;
 	virtual void SetLatency(int ms) = 0;

@@ -156,14 +156,15 @@ compare_mode_tab:
 ;===========================================================================
 .proc funOr
 		jsr		expPopFR1
-		ora		fr0
-		jmp		funCompare.push_nz_as_bool
+		bne		fld1
+		beq		funAnd.push_fr0_bool
 .endp
 
 ;===========================================================================
 .proc funAnd
 		jsr		expPopFR1
 		beq		funCompare.push_0
+push_fr0_bool:
 		lda		fr0
 		jmp		funCompare.push_nz_as_bool
 .endp
@@ -171,8 +172,9 @@ compare_mode_tab:
 ;===========================================================================
 ; ^ operator (exponentiation)
 ;
+; 0^0 = 1.
+;
 ; Quirks (arguably bugs):
-;	0^0 = 0
 ;	0^1E+80 -> Error 11
 ;	1^131072 = 2 with XL/XE OS, even though LOG/CLOG(1) = 0
 ;
@@ -217,17 +219,18 @@ pop_loop:
 		inx
 		bne		pop_loop
 
+		;if y=0, always return 1
+		lda		fr1
+		beq		y_zero
+
+		;check for x<=0
 		asl		_flags
 		bcc		x_zero2
 		bpl		x_positive
 
 		;x is negative... check if y is an integer
-		lda		fr1
-		beq		y_zero
-		and		#$7f
-
 		;bias y and skip if it's too large to be odd or have a fraction
-		sbc		#$45
+		sbc		#$c5
 		bpl		y_large_integer
 
 		;check if y>0 and y<1, which means it must be fractional
@@ -237,11 +240,11 @@ pop_loop:
 		;load least significant integer byte and copy oddness to sign
 		tax
 		lda		fr1+6,x
-		lsr
-		ror		_rneg
+		sta		_rneg
 
 		;check for fraction
-		bcc		y_fracstart
+		bcs		y_fracstart
+
 y_fracloop:
 		lda		fr1+6,x
 		bne		funAdd.arith_error
@@ -260,10 +263,8 @@ y_zero:
 		bcs		funAdd.arith_error
 
 		;flip sign if x<0 and y odd
-		lda		fr0
-		eor		_rneg
-		sta		fr0
-
+		lsr		_rneg
+		bcs		funUnaryMinus
 push_exit:
 		rts
 
@@ -273,6 +274,17 @@ x_zero2:
 		bmi		funAdd.arith_error
 
 		;return zero
+		rts
+.endp
+
+;===========================================================================
+.proc funUnaryMinus
+		;test for zero
+		lda		fr0
+		beq		done
+		eor		#$80
+		sta		fr0
+done:
 		rts
 .endp
 
@@ -450,15 +462,15 @@ update_length:
 		sta		(lvarptr),y
 no_update_length:
 
-		;copy source address to dest pointer (a1)
-		ldx		fr1
-		lda		fr1+1
-
 		;##TRACE "String assignment: copy ($%04x+%d -> $%04x)" dw(fr1) dw(a3) dw(a0)
 		;##ASSERT dw(a0) >= dw(starp) and dw(a0)+dw(a3) <= dw(runstk)
+		;copy source address to dest pointer (a1)
+		ldy		fr1
+		lda		fr1+1
 		
 		;do memcpy and we're done
-		stx		a1
+.def :copyAscendingSrcAY
+		sty		a1
 		sta		a1+1
 
 ;==========================================================================
@@ -468,7 +480,7 @@ no_update_length:
 ;	A3	bytes to copy
 ;
 ; Modified:
-;	A0, A1
+;	A0, A1, A, X, Y
 ;
 ; Preserved:
 ;	A2
@@ -501,17 +513,6 @@ finish_loop:
 		bne		finish_loop
 		
 leftovers_done:
-		rts
-.endp
-
-;===========================================================================
-.proc funUnaryMinus
-		;test for zero
-		lda		fr0
-		beq		done
-		eor		#$80
-		sta		fr0
-done:
 		rts
 .endp
 
@@ -768,7 +769,7 @@ skip_add_dim2:
 		
 not_first:
 		;load variable to fr0
-		ldy		#5
+		ldy		#0
 		jsr		VarLoadFR0_OffsetY
 		
 		;all done - do standard open parens processing
@@ -812,8 +813,7 @@ dim_error:
 		sty		fr1
 		sty		fr1+1
 		beq		one_dim
-		stx		fr1
-		sta		fr1+1
+		jsr		fmove
 		jsr		expPopFR0Int
 one_dim:
 		tay
@@ -1132,9 +1132,7 @@ peek_cont:
 		jsr		IoTerminateString
 		jsr		MathParseFP
 		jsr		IoUnterminateString
-		bcs		err
-		rts
-err:
+		bcc		funAtn.xit2
 		jmp		errorInvalidString
 .endp
 
@@ -1198,6 +1196,7 @@ use_radians:
 		asl		fr0
 		asl		_sign
 		ror		fr0
+xit2:
 		rts
 
 do_approx:
@@ -1332,30 +1331,22 @@ abs_below_one:
 _temp = fr0+6
 _temp2 = fr0+7
 		ldx		#5
-loop:
-		;Why do we have this in the loop? Well, it acts as a spoiler for
-		;the PRNG. If we don't have this, the loop is ~25 cycles, which
-		;is exactly +8 cycles from a round of the 17-bit PRNG. That's bad
-		;for quality. This adds five more cycles to shake things up a bit.
 		lda		#$3f		;2
 		sta		fr0			;3
-
+loop:
 		;keep looping until we get a valid BCD number
 loop2:
 		lda		random		;4
 		cmp		#$a0		;2
 		bcs		loop2		;2
-		tay					;2
+		sta		fr0,x		;4
 		and		#$0f		;2
 		cmp		#$0a		;2
 		bcs		loop2		;2
 		
-		;store digit pair
-		sty		fr0,x		;4
-		
 		;continue until we have 5 digits
 		dex					;2
-		bne		loop		;3   total = 28 cycles
+		bne		loop		;3   total = 23 cycles
 		
 		;renormalize random value and exit
 		jmp		normalize

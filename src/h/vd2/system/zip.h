@@ -37,8 +37,6 @@
 
 class VDDeflateBitReader {
 public:
-	VDDeflateBitReader() : mpSrc(0), mBufferPt(0), accum(0), bits(0) {}
-
 	void init(IVDStream *pSrc, uint64 limit) {
 		mpSrc = pSrc;
 		mBytesLeft = limit;
@@ -115,13 +113,13 @@ protected:
 	enum { kBigAvailThreshold = 16777216 };
 	enum { kBufferSize = 256 };
 
-	unsigned long accum;
-	unsigned	bits;
-	int			mBufferPt;			// counts from -256 to 0
-	uint64		mBytesLeft;
-	unsigned	mBytesLeftLimited;
+	unsigned	accum = 0;
+	unsigned	bits = 0;
+	int			mBufferPt = 0;			// counts from -256 to 0
+	uint64		mBytesLeft = 0;
+	unsigned	mBytesLeftLimited = 0;
 
-	IVDStream *mpSrc;
+	IVDStream *mpSrc = nullptr;
 	uint8	mBuffer[kBufferSize];
 };
 
@@ -145,41 +143,39 @@ protected:
 	uint32	mTable[256];
 };
 
-class VDZipStream : public IVDStream {
+class VDDeflateStream : public IVDStream {
 public:
-	VDZipStream();
-	VDZipStream(IVDStream *pSrc, uint64 limit, bool bStored);
-	~VDZipStream();
-
 	void	Init(IVDStream *pSrc, uint64 limit, bool bStored);
 	void	EnableCRC(uint32 crc = VDCRCChecker::kCRC32) { mCRCChecker.Init(crc); mbCRCEnabled = true; }
 	uint32	CRC() { return mCRCChecker.CRC(); }
 
-	const wchar_t *GetNameForError();
+	const wchar_t *GetNameForError() final override;
 
-	sint64	Pos();
-	void	Read(void *buffer, sint32 bytes);
-	sint32	ReadData(void *buffer, sint32 bytes);
-	void	Write(const void *buffer, sint32 bytes);
+	sint64	Pos() final override;
+	void	Read(void *buffer, sint32 bytes) final override;
+	sint32	ReadData(void *buffer, sint32 bytes) final override;
+	void	Write(const void *buffer, sint32 bytes) final override;
 
 protected:
 	bool	ParseBlockHeader();
 	bool	Inflate();
 
 	VDDeflateBitReader mBits;					// critical -- make this first!
-	uint32	mReadPt, mWritePt, mBufferLevel;
+	uint32	mReadPt = 0;
+	uint32	mWritePt = 0;
+	uint32	mBufferLevel = 0;
 
 	enum {
 		kNoBlock,
 		kStoredBlock,
 		kDeflatedBlock
-	} mBlockType;
+	} mBlockType = kNoBlock;
 
-	uint32	mStoredBytesLeft;
-	bool	mbNoMoreBlocks;
-	bool	mbCRCEnabled;
+	uint32	mStoredBytesLeft = 0;
+	bool	mbNoMoreBlocks = false;
+	bool	mbCRCEnabled = false;
 
-	sint64	mPos;
+	sint64	mPos = 0;
 	uint8	mBuffer[65536];
 
 	uint16	mCodeDecode[32768];
@@ -217,11 +213,21 @@ protected:
 	IVDRandomAccessStream			*mpStream;
 };
 
-class VDGUnzipStream : public VDZipStream {
+class VDZipStream final : public VDDeflateStream {
 public:
-	VDGUnzipStream();
-	VDGUnzipStream(IVDStream *pSrc, uint64 limit);
-	~VDGUnzipStream();
+	VDZipStream() = default;
+
+	VDZipStream(IVDStream *pSrc, uint64 limit, bool bStored) {
+		Init(pSrc, limit, bStored);
+	}
+};
+
+class VDGUnzipStream final : public VDDeflateStream {
+public:
+	VDGUnzipStream() = default;
+	VDGUnzipStream(IVDStream *pSrc, uint64 limit) {
+		Init(pSrc, limit);
+	}
 
 	void Init(IVDStream *pSrc, uint64 limit);
 

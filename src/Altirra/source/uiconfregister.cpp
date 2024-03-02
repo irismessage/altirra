@@ -29,6 +29,12 @@ bool ATUIConfDev850(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevSX212(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevVeronica(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevSoundBoard(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevPocketModem(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevCorvus(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevMyIDE2(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevDongle(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevKMKJZIDE2(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevCovox(VDGUIHandle hParent, ATPropertySet& props);
 
 void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("harddisk", ATUIConfDevHardDisk);
@@ -42,4 +48,10 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("sx212", ATUIConfDevSX212);
 	dev.AddDeviceConfigurer("veronica", ATUIConfDevVeronica);
 	dev.AddDeviceConfigurer("soundboard", ATUIConfDevSoundBoard);
+	dev.AddDeviceConfigurer("pocketmodem", ATUIConfDevPocketModem);
+	dev.AddDeviceConfigurer("corvus", ATUIConfDevCorvus);
+	dev.AddDeviceConfigurer("myide2", ATUIConfDevMyIDE2);
+	dev.AddDeviceConfigurer("dongle", ATUIConfDevDongle);
+	dev.AddDeviceConfigurer("kmkjzide2", ATUIConfDevKMKJZIDE2);
+	dev.AddDeviceConfigurer("covox", ATUIConfDevCovox);
 }

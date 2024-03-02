@@ -15,7 +15,7 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include "vbxe.h"
 #include "gtiarenderer.h"
 #include "gtiatables.h"
@@ -1076,7 +1076,7 @@ void ATVBXEEmulator::RenderScanline(int xend, bool pfpmrendered) {
 				++rc;
 			} while(++mRCIndex < mRCCount);
 
-			UpdateRegisters(rc0, rc - rc0);
+			UpdateRegisters(rc0, (int)(rc - rc0));
 		}
 
 		// render out attpixels
@@ -1418,7 +1418,7 @@ void ATVBXEEmulator::RenderAttrDefaultPixels(int x1h, int x2h) {
 		mpColorTable[kColorPF0],
 		mpColorTable[kColorPF1],
 		mpColorTable[kColorPF2],
-		(mPfPaletteIndex << 6) + (mOvPaletteIndex << 4),
+		(uint8)((mPfPaletteIndex << 6) + (mOvPaletteIndex << 4)),
 		0,
 		mOvMainPriority
 	};

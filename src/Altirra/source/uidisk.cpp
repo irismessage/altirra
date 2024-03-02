@@ -15,18 +15,21 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#include "stdafx.h"
+#include <stdafx.h>
 #include <windows.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
+#include <at/atcore/media.h>
 #include <at/atnativeui/dialog.h>
 #include "resource.h"
 #include "disk.h"
 #include <at/atio/diskfs.h>
+#include <at/atio/diskfsutil.h>
 #include "simulator.h"
 #include "uifilefilters.h"
+#include "options.h"
 
 extern ATSimulator g_sim;
 
@@ -35,9 +38,10 @@ void ATUIShowDialogDiskExplorer(VDGUIHandle h, IATDiskImage *image, const wchar_
 enum ATDiskFormatFileSystem {
 	kATDiskFFS_None,
 	kATDiskFFS_DOS2,
+	kATDiskFFS_DOS1,
 	kATDiskFFS_DOS3,
 	kATDiskFFS_MyDOS,
-	kATDiskFFS_SDFS
+	kATDiskFFS_SDFS,
 };
 
 class ATNewDiskDialog : public VDDialogFrameW32 {
@@ -99,6 +103,7 @@ bool ATNewDiskDialog::OnLoaded() {
 
 	CBAddString(IDC_FILESYSTEM, L"None (unformatted)");
 	CBAddString(IDC_FILESYSTEM, L"DOS 2.0/2.5");
+	CBAddString(IDC_FILESYSTEM, L"DOS 1");
 	CBAddString(IDC_FILESYSTEM, L"DOS 3");
 	CBAddString(IDC_FILESYSTEM, L"MyDOS");
 	CBAddString(IDC_FILESYSTEM, L"SpartaDOS File System (SDFS)");
@@ -145,6 +150,14 @@ void ATNewDiskDialog::OnDataExchange(bool write) {
 				break;
 
 			case 2:
+				if (mSectorCount != 720 || mSectorSize != 128)
+					break;
+
+				mDiskFFS = kATDiskFFS_DOS1;
+				supported = true;
+				break;
+
+			case 3:
 				if ((mSectorCount != 720 && mSectorCount != 1040) || mSectorSize != 128)
 					break;
 
@@ -152,7 +165,7 @@ void ATNewDiskDialog::OnDataExchange(bool write) {
 				supported = true;
 				break;
 
-			case 3:
+			case 4:
 				if (mSectorCount < 720 || (mSectorSize != 128 && mSectorSize != 256))
 					break;
 
@@ -160,7 +173,7 @@ void ATNewDiskDialog::OnDataExchange(bool write) {
 				supported = true;
 				break;
 
-			case 4:
+			case 5:
 				if (mSectorCount < 16)
 					break;
 
@@ -418,7 +431,8 @@ bool ATDiskDriveDialog::OnLoaded() {
 		uint32 id = kWriteModeID[i];
 		CBAddString(id, L"Off");
 		CBAddString(id, L"R/O");
-		CBAddString(id, L"VirtRW");
+		CBAddString(id, L"VRWSafe");
+		CBAddString(id, L"VRW");
 		CBAddString(id, L"R/W");
 	}
 
@@ -485,7 +499,13 @@ void ATDiskDriveDialog::OnDataExchange(bool write) {
 			ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIdx);
 			SetControlText(kDiskPathID[i], disk.GetPath());
 
-			CBSetSelectedIndex(kWriteModeID[i], !disk.IsEnabled() ? 0 : disk.IsWriteEnabled() ? disk.IsAutoFlushEnabled() ? 3 : 2 : 1);
+			CBSetSelectedIndex(kWriteModeID[i],
+				!disk.IsEnabled()
+				? 0
+				: disk.IsWriteEnabled()
+					? disk.IsAutoFlushEnabled() ? 4
+						: disk.IsFormatEnabled() ? 3 : 2
+					: 1);
 		}
 
 		UpdateActionButtons();
@@ -555,10 +575,7 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 						ctx.mLoadType = kATLoadType_Disk;
 						ctx.mLoadIndex = driveIndex;
 
-						bool writeEnabled = disk.IsWriteEnabled();
-						bool autoFlushEnabled = disk.IsAutoFlushEnabled();
-
-						g_sim.Load(s.c_str(), writeEnabled, writeEnabled && autoFlushEnabled, &ctx);
+						g_sim.Load(s.c_str(), disk.IsEnabled() ? disk.GetWriteMode() : g_ATOptions.mDefaultWriteMode, &ctx);
 						OnDataExchange(false);
 					} catch(const MyError& e) {
 						e.post(mhdlg, "Disk load error");
@@ -633,11 +650,15 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 								disk.UnloadDisk();
 								disk.CreateDisk(dlg.GetSectorCount(), dlg.GetBootSectorCount(), dlg.GetSectorSize());
 								disk.SetWriteFlushMode(true, false);
+								disk.SetFormatEnabled(true);
 
 								vdautoptr<IATDiskFS> fs;
 
 								try {
 									switch(dlg.GetFormatFFS()) {
+										case kATDiskFFS_DOS1:
+											fs = ATDiskFormatImageDOS1(disk.GetDiskImage());
+											break;
 										case kATDiskFFS_DOS2:
 											fs = ATDiskFormatImageDOS2(disk.GetDiskImage());
 											break;
@@ -659,7 +680,7 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 								}
 
 								SetControlText(kDiskPathID[index], disk.GetPath());
-								CBSetSelectedIndex(kWriteModeID[index], 2);
+								CBSetSelectedIndex(kWriteModeID[index], 3);
 							}
 						}
 						break;
@@ -806,6 +827,30 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 						mbSwapMode = false;
 						UpdateActionButtons();
 						break;
+
+					case ID_CONTEXT_EXPANDARCS:
+						if (disk.IsDiskLoaded() && !disk.GetDiskImage()->IsDynamic()) {
+							try {
+								// If the disk drive is read-only, make the image VRWSafe.
+								if (!(disk.GetWriteMode() & kATMediaWriteMode_AllowWrite)) {
+									disk.SetWriteFlushMode(true, false);
+									disk.SetFormatEnabled(false);
+								}
+
+								vdautoptr<IATDiskFS> fs(ATDiskMountImage(disk.GetDiskImage(), false));
+								fs->SetAllowExtend(true);
+								uint32 expanded = ATDiskRecursivelyExpandARCs(*fs);
+								fs->Flush();
+
+								ShowInfo(VDStringW().sprintf(L"Archives expanded: %u", expanded).c_str());
+							} catch(const MyError& e) {
+								ShowError(e);
+							}
+
+							disk.RefreshDiskImage();
+							OnDataExchange(false);
+						}
+						break;
 				}
 			}
 			return true;
@@ -831,7 +876,8 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 					disk.SetEnabled(false);
 				} else {
 					disk.SetEnabled(true);
-					disk.SetWriteFlushMode(mode > 1, mode == 3);
+					disk.SetWriteFlushMode(mode >= 2, mode == 4);
+					disk.SetFormatEnabled(mode >= 3);
 				}
 			}
 			return true;
